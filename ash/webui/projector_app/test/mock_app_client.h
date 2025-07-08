@@ -54,14 +54,8 @@ class MockAppClient : public ProjectorAppClient {
   MOCK_CONST_METHOD0(OpenFeedbackDialog, void());
   MOCK_CONST_METHOD3(GetVideo,
                      void(const std::string&,
-                          const absl::optional<std::string>&,
+                          const std::optional<std::string>&,
                           ProjectorAppClient::OnGetVideoCallback));
-  MOCK_METHOD1(SetAnnotatorPageHandler,
-               void(UntrustedAnnotatorPageHandlerImpl*));
-  MOCK_METHOD1(ResetAnnotatorPageHandler,
-               void(UntrustedAnnotatorPageHandlerImpl*));
-  MOCK_METHOD1(SetTool, void(const AnnotatorTool&));
-  MOCK_METHOD0(Clear, void());
   MOCK_METHOD1(NotifyAppUIActive, void(bool active));
   MOCK_METHOD2(ToggleFileSyncingNotificationForPaths,
                void(const std::vector<base::FilePath>&, bool));

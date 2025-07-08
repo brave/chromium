@@ -70,6 +70,15 @@ _DEDUPE_ENTRY_TYPES = _COMPONENT_TYPES + ('activity-alias', 'meta-data')
 
 _ROTATION_METADATA_KEY = 'com.google.play.apps.signing/RotationConfig.textproto'
 
+_ALLOWLISTED_NON_BASE_SERVICES = {
+    # Only on API level 33+ which is past the fix for b/169196314.
+    'androidx.pdf.service.PdfDocumentServiceImpl',
+    'androidx.pdf.service.PdfDocumentService',
+    # These need to be burned down - these have likely never fully worked.
+    'com.google.apps.tiktok.concurrent.AndroidFuturesService',
+    'com.google.apps.tiktok.concurrent.InternalForegroundService',
+}
+
 
 def _ParseArgs(args):
   parser = argparse.ArgumentParser()
@@ -237,6 +246,7 @@ def _GenerateBundleConfigJson(uncompressed_assets, compress_dex,
           },
           'uncompressNativeLibraries': {
               'enabled': True,
+              'alignment': 'PAGE_ALIGNMENT_16K'
           },
           'uncompressDexFiles': {
               'enabled': True,  # Applies only for P+.
@@ -268,8 +278,12 @@ def _RewriteLanguageAssetPath(src_path):
   if not src_path.startswith(_LOCALES_SUBDIR) or not src_path.endswith('.pak'):
     return [src_path]
 
+  # Note that |locale| may include a gender as well as a language.
   locale = src_path[len(_LOCALES_SUBDIR):-4]
   android_locale = resource_utils.ToAndroidLocaleName(locale)
+
+  # Trim _GENDER suffix so it doesn't end up in a directory name.
+  android_locale = android_locale.split('_')[0]
 
   # The locale format is <lang>-<region> or <lang> or BCP-47 (e.g b+sr+Latn).
   # Extract the language.
@@ -364,11 +378,11 @@ def _ConcatTextFiles(in_paths, out_path):
     in_paths: List of input file paths.
     out_path: Path to output file.
   """
-  with open(out_path, 'w') as out_file:
+  with open(out_path, 'w', encoding='utf-8') as out_file:
     for in_path in in_paths:
       if not os.path.exists(in_path):
         continue
-      with open(in_path, 'r') as in_file:
+      with open(in_path, 'r', encoding='utf-8') as in_file:
         out_file.write('-- Contents of {}\n'.format(os.path.basename(in_path)))
         out_file.write(in_file.read())
 
@@ -383,7 +397,7 @@ def _LoadPathmap(pathmap_path):
     return {}
 
   pathmap = {}
-  with open(pathmap_path, 'r') as f:
+  with open(pathmap_path, 'r', encoding='utf-8') as f:
     for line in f:
       line = line.strip()
       if line.startswith('--') or line == '':
@@ -401,7 +415,7 @@ def _WriteBundlePathmap(module_pathmap_paths, module_names,
   to the bundle pathmap. So res/a.xml inside the base module pathmap would be
   base/res/a.xml in the bundle pathmap.
   """
-  with open(bundle_pathmap_path, 'w') as bundle_pathmap_file:
+  with open(bundle_pathmap_path, 'w', encoding='utf-8') as bundle_pathmap_file:
     for module_pathmap_path, module_name in zip(module_pathmap_paths,
                                                 module_names):
       if not os.path.exists(module_pathmap_path):
@@ -427,7 +441,10 @@ def _GetManifestForModule(bundle_path, module_name):
 
 def _GetComponentNames(manifest, tag_name):
   android_name = '{%s}name' % manifest_utils.ANDROID_NAMESPACE
-  return [s.attrib.get(android_name) for s in manifest.iter(tag_name)]
+  return [
+      s.attrib.get(android_name)
+      for s in manifest.iterfind(f'application/{tag_name}')
+  ]
 
 
 def _ClassesFromZip(module_zip):
@@ -484,7 +501,7 @@ def _ValidateSplits(bundle_path, module_zips):
 
   # Remaining checks apply only when isolatedSplits="true".
   isolated_splits = manifests_by_name['base'].get(
-      f'{manifest_utils.ANDROID_NAMESPACE}isolatedSplits')
+      f'{{{manifest_utils.ANDROID_NAMESPACE}}}isolatedSplits')
   if isolated_splits != 'true':
     return errors
 
@@ -495,18 +512,22 @@ def _ValidateSplits(bundle_path, module_zips):
     if module_name == 'base':
       continue
     provider_names = _GetComponentNames(cur_manifest, 'provider')
-    if provider_names:
-      errors.append('Providers should all be declared in the base manifest.'
-                    ' "%s" module declared: %s' % (module_name, provider_names))
+    for p in provider_names:
+      errors.append(f'Provider {p} should be declared in the base manifest,'
+                    f' but is in "{module_name}" module. For details, see '
+                    'https://chromium.googlesource.com/chromium/src/+/main/'
+                    'docs/android_isolated_splits.md#contentproviders')
 
   # Ensure all services are present in base module because service classes are
   # not found if they are not present in the base module. b/169196314
   # It is fine if they are defined in split manifests though.
-  for cur_manifest in manifests_by_name.values():
+  for module_name, cur_manifest in manifests_by_name.items():
     for service_name in _GetComponentNames(cur_manifest, 'service'):
-      if service_name not in base_classes:
-        errors.append("Service %s should be present in the base module's dex."
-                      " See b/169196314 for more details." % service_name)
+      if (service_name not in base_classes
+          and service_name not in _ALLOWLISTED_NON_BASE_SERVICES):
+        errors.append(f'Service {service_name} should be declared in the base'
+                      f' manifest, but is in "{module_name}" module. For'
+                      ' details, see b/169196314.')
 
   return errors
 
@@ -545,7 +566,7 @@ def main(args):
     # named with a .pb.json extension.
     tmp_bundle_config = tmp_bundle + '.BundleConfig.pb.json'
 
-    with open(tmp_bundle_config, 'w') as f:
+    with open(tmp_bundle_config, 'w', encoding='utf-8') as f:
       f.write(bundle_config)
 
     logging.info('Running bundletool')
@@ -571,7 +592,7 @@ def main(args):
         fail_on_output=options.warnings_as_errors)
 
     if options.validate_services:
-      # TODO(crbug.com/1126301): This step takes 0.4s locally for bundles with
+      # TODO(crbug.com/40148088): This step takes 0.4s locally for bundles with
       # isolated splits disabled and 2s for bundles with isolated splits
       # enabled.  Consider making this run in parallel or move into a separate
       # step before enabling isolated splits by default.

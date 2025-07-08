@@ -6,28 +6,29 @@ package org.chromium.chrome.browser.partnercustomizations;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
-import android.os.SystemClock;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+
+import org.jni_zero.CalledByNative;
 
 import org.chromium.base.CommandLine;
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.ServiceLoaderUtil;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.version_info.VersionInfo;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.url_formatter.UrlFormatter;
-import org.chromium.components.version_info.VersionInfo;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.url.GURL;
 
@@ -35,30 +36,27 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Reads and caches partner browser customizations information if it exists.
- */
+/** Reads and caches partner browser customizations information if it exists. */
+@NullMarked
 public class PartnerBrowserCustomizations {
     private static final String TAG = "PartnerCustomize";
-    private static final String PROVIDER_AUTHORITY = "com.android.partnerbrowsercustomizations";
 
     /** Default timeout in ms for reading PartnerBrowserCustomizations provider. */
     private static final int DEFAULT_TIMEOUT_MS = 10_000;
 
     private static final int HOMEPAGE_URL_MAX_LENGTH = 1000;
     // Private homepage structure.
-    @VisibleForTesting
-    static final String PARTNER_HOMEPAGE_PATH = "homepage";
+    @VisibleForTesting static final String PARTNER_HOMEPAGE_PATH = "homepage";
+
     @VisibleForTesting
     static final String PARTNER_DISABLE_BOOKMARKS_EDITING_PATH = "disablebookmarksediting";
+
     @VisibleForTesting
     static final String PARTNER_DISABLE_INCOGNITO_MODE_PATH = "disableincognitomode";
-    private static Boolean sIgnoreSystemPackageCheck;
-    private static Boolean sValid;
 
-    private static volatile PartnerBrowserCustomizations sInstance;
+    private static volatile @Nullable PartnerBrowserCustomizations sInstance;
 
-    private volatile GURL mHomepage;
+    private volatile @Nullable GURL mHomepage;
     private volatile boolean mIncognitoModeDisabled;
     private volatile boolean mBookmarksEditingDisabled;
     private @Nullable Boolean mIsInitialized;
@@ -71,25 +69,26 @@ public class PartnerBrowserCustomizations {
     private @Nullable PartnerCustomizationsUma mPartnerCustomizationsUma;
 
     private final List<Runnable> mInitializeAsyncCallbacks;
-    private PartnerHomepageListener mListener;
+    private @Nullable PartnerHomepageListener mListener;
 
-    /**
-     * Provider of partner customizations.
-     */
+    /** Provider of partner customizations. */
     public interface Provider extends CustomizationProviderDelegate {}
 
-    /**
-     * Partner customizations provided by ContentProvider package.
-     */
+    /** Partner customizations provided by ContentProvider package. */
     public static class ProviderPackage implements Provider {
         CustomizationProviderDelegate mDelegate;
 
         public ProviderPackage() {
-            mDelegate = new CustomizationProviderDelegateImpl();
+            CustomizationProviderDelegate delegate =
+                    ServiceLoaderUtil.maybeCreate(CustomizationProviderDelegate.class);
+            if (delegate == null) {
+                delegate = new CustomizationProviderDelegateUpstreamImpl();
+            }
+            mDelegate = delegate;
         }
 
         @Override
-        public String getHomepage() {
+        public @Nullable String getHomepage() {
             return mDelegate.getHomepage();
         }
 
@@ -104,9 +103,7 @@ public class PartnerBrowserCustomizations {
         }
     }
 
-    /**
-     * Interface that listen to homepage URI updates from provider packages.
-     */
+    /** Interface that listen to homepage URI updates from provider packages. */
     public interface PartnerHomepageListener {
         /**
          * Will be called if homepage have any update after {@link #initializeAsync(Context, long)}.
@@ -203,76 +200,79 @@ public class PartnerBrowserCustomizations {
         final PartnerCustomizationsUma partnerCustomizationsUma = new PartnerCustomizationsUma();
         mIsInitialized = false;
         // Setup an initializing async task.
-        final AsyncTask<Void> initializeAsyncTask = new AsyncTask<Void>() {
-            private boolean mHomepageUriChanged;
-            private long mStartTime = SystemClock.elapsedRealtime();
+        final AsyncTask<Void> initializeAsyncTask =
+                new AsyncTask<>() {
+                    private boolean mHomepageUriChanged;
 
-            @Override
-            protected Void doInBackground() {
-                try {
-                    partnerCustomizationsUma.logAsyncInitStarted();
-                    boolean systemOrPreStable =
-                            (context.getApplicationInfo().flags & ApplicationInfo.FLAG_SYSTEM) == 1
-                            || !VersionInfo.isStableBuild();
-                    if (!systemOrPreStable) {
-                        // Only allow partner customization if this browser is a system package, or
-                        // is in pre-stable channels.
+                    @Override
+                    protected Void doInBackground() {
+                        try {
+                            partnerCustomizationsUma.logAsyncInitStarted();
+                            boolean systemOrPreStable =
+                                    (context.getApplicationInfo().flags
+                                                            & ApplicationInfo.FLAG_SYSTEM)
+                                                    == 1
+                                            || !VersionInfo.isStableBuild();
+                            if (!systemOrPreStable) {
+                                // Only allow partner customization if this browser is a system
+                                // package, or is in pre-stable channels.
+                                return null;
+                            }
+
+                            if (isCancelled()) return null;
+
+                            CustomizationProviderDelegate delegate =
+                                    ServiceLoaderUtil.maybeCreate(
+                                            CustomizationProviderDelegate.class);
+                            if (delegate == null) {
+                                delegate = new CustomizationProviderDelegateUpstreamImpl();
+                            }
+
+                            // Refresh the homepage first, as it has potential impact on the URL to
+                            // use for the initial tab.
+                            if (isCancelled()) return null;
+                            mHomepageUriChanged = refreshHomepage(delegate);
+
+                            if (isCancelled()) return null;
+                            refreshIncognitoModeDisabled(delegate);
+
+                            if (isCancelled()) return null;
+                            refreshBookmarksEditingDisabled(delegate);
+                        } catch (Exception e) {
+                            Log.w(TAG, "Fetching partner customizations failed", e);
+                            partnerCustomizationsUma.logAsyncInitException();
+                        }
                         return null;
                     }
 
-                    if (isCancelled()) return null;
-                    CustomizationProviderDelegateImpl delegate =
-                            new CustomizationProviderDelegateImpl();
+                    @Override
+                    protected void onPostExecute(Void result) {
+                        partnerCustomizationsUma.logAsyncInitCompleted();
+                        onFinalized();
+                    }
 
-                    // Refresh the homepage first, as it has potential impact on the URL to use
-                    // for the initial tab.
-                    if (isCancelled()) return null;
-                    mHomepageUriChanged = refreshHomepage(delegate);
+                    @Override
+                    protected void onCancelled(@Nullable Void result) {
+                        partnerCustomizationsUma.logAsyncInitCancelled();
+                        onFinalized();
+                    }
 
-                    if (isCancelled()) return null;
-                    refreshIncognitoModeDisabled(delegate);
+                    private void onFinalized() {
+                        assert mIsInitialized != null;
+                        assert !mIsInitialized;
 
-                    if (isCancelled()) return null;
-                    refreshBookmarksEditingDisabled(delegate);
-                } catch (Exception e) {
-                    Log.w(TAG, "Fetching partner customizations failed", e);
-                    partnerCustomizationsUma.logAsyncInitException();
-                }
-                return null;
-            }
+                        mIsInitialized = true;
+                        for (Runnable callback : mInitializeAsyncCallbacks) {
+                            callback.run();
+                        }
+                        mInitializeAsyncCallbacks.clear();
 
-            @Override
-            protected void onPostExecute(Void result) {
-                partnerCustomizationsUma.logAsyncInitCompleted();
-                onFinalized();
-            }
-
-            @Override
-            protected void onCancelled(Void result) {
-                partnerCustomizationsUma.logAsyncInitCancelled();
-                onFinalized();
-            }
-
-            private void onFinalized() {
-                assert mIsInitialized != null;
-                assert !mIsInitialized;
-
-                mIsInitialized = true;
-                PartnerCustomizationsUma.logPartnerBrowserCustomizationInitDuration(
-                        mStartTime, SystemClock.elapsedRealtime());
-
-                for (Runnable callback : mInitializeAsyncCallbacks) {
-                    callback.run();
-                }
-                mInitializeAsyncCallbacks.clear();
-
-                if (mHomepageUriChanged && mListener != null) {
-                    mListener.onHomepageUpdate();
-                }
-                partnerCustomizationsUma.logAsyncInitFinalized(
-                        mStartTime, SystemClock.elapsedRealtime(), mHomepageUriChanged);
-            }
-        };
+                        if (mHomepageUriChanged && mListener != null) {
+                            mListener.onHomepageUpdate();
+                        }
+                        partnerCustomizationsUma.logAsyncInitFinalized(mHomepageUriChanged);
+                    }
+                };
 
         initializeAsyncTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 
@@ -283,33 +283,24 @@ public class PartnerBrowserCustomizations {
     }
 
     /**
-     * Logs whether we failed to create an initial tab due to the app finishing or being destroyed.
-     * @param isActivityFinishingOrDestroyed Whether the Activity is going away.
-     */
-    public static void logActivityFinishingOrDestroyed(boolean isActivityFinishingOrDestroyed) {
-        PartnerCustomizationsUma.logActivityFinishingOrDestroyed(isActivityFinishingOrDestroyed);
-    }
-
-    /**
-     * Called when Chrome creates an initial tab.
-     * This notifies the UMA instance so it tracks how much initialization progresses relative to
-     * initial Tab creation.
+     * Called when Chrome creates an initial tab. This notifies the UMA instance so it tracks how
+     * much initialization progresses relative to initial Tab creation.
+     *
      * @param homepageUrlCreated The URL of the initial Tab that was created or {@code null} if
-     *         something other than a Homepage was used for an initial Tab.
-     * @param createInitialTabTime The timestamp when we started to create an initial tab.
-     * @param isOverviewPageOrStartSurface indicates that there was no created Homepage because some
-     *         kind of overview page or Start Surface was presented in place of the initial Tab.
+     *     something other than a Homepage was used for an initial Tab.
      * @param activityLifecycleDispatcher The {@link ActivityLifecycleDispatcher} to use to wait for
-     *         native initialization.
+     *     native initialization.
      * @param homepageCharacterizationHelper A supplier to characterize a Homepage.
      */
-    public void onCreateInitialTab(@Nullable String homepageUrlCreated, long createInitialTabTime,
-            boolean isOverviewPageOrStartSurface,
-            @NonNull ActivityLifecycleDispatcher activityLifecycleDispatcher,
-            @NonNull Supplier<HomepageCharacterizationHelper> homepageCharacterizationHelper) {
+    public void onCreateInitialTab(
+            @Nullable String homepageUrlCreated,
+            ActivityLifecycleDispatcher activityLifecycleDispatcher,
+            Supplier<HomepageCharacterizationHelper> homepageCharacterizationHelper) {
         if (mPartnerCustomizationsUma != null) {
-            mPartnerCustomizationsUma.onCreateInitialTab(isInitialized(), homepageUrlCreated,
-                    createInitialTabTime, isOverviewPageOrStartSurface, activityLifecycleDispatcher,
+            mPartnerCustomizationsUma.onCreateInitialTab(
+                    isInitialized(),
+                    homepageUrlCreated,
+                    activityLifecycleDispatcher,
                     homepageCharacterizationHelper);
         }
     }
@@ -341,8 +332,10 @@ public class PartnerBrowserCustomizations {
             mHomepage = homepageGurl;
             String valueToWrite =
                     mHomepage == null ? GURL.emptyGURL().serialize() : mHomepage.serialize();
-            SharedPreferencesManager.getInstance().writeString(
-                    ChromePreferenceKeys.HOMEPAGE_PARTNER_CUSTOMIZED_DEFAULT_GURL, valueToWrite);
+            ChromeSharedPreferences.getInstance()
+                    .writeString(
+                            ChromePreferenceKeys.HOMEPAGE_PARTNER_CUSTOMIZED_DEFAULT_GURL,
+                            valueToWrite);
         } catch (Exception e) {
             Log.w(TAG, "Partner homepage delegate URL read failed : ", e);
         }
@@ -391,14 +384,17 @@ public class PartnerBrowserCustomizations {
     public void setOnInitializeAsyncFinished(final Runnable callback, long timeoutMs) {
         mInitializeAsyncCallbacks.add(callback);
 
-        PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, () -> {
-            if (mInitializeAsyncCallbacks.remove(callback)) {
-                if (!isInitialized()) {
-                    Log.w(TAG, "mInitializeAsyncCallbacks executed as timeout expired.");
-                }
-                callback.run();
-            }
-        }, isInitialized() ? 0 : timeoutMs);
+        PostTask.postDelayedTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    if (mInitializeAsyncCallbacks.remove(callback)) {
+                        if (!isInitialized()) {
+                            Log.w(TAG, "mInitializeAsyncCallbacks executed as timeout expired.");
+                        }
+                        callback.run();
+                    }
+                },
+                isInitialized() ? 0 : timeoutMs);
     }
 
     public static void destroy() {
@@ -408,6 +404,7 @@ public class PartnerBrowserCustomizations {
 
     private void destroyInternal() {
         mInitializeAsyncCallbacks.clear();
+        mPartnerCustomizationsUma = null;
         mListener = null;
     }
 
@@ -415,7 +412,7 @@ public class PartnerBrowserCustomizations {
      * @return Home page URL from Android provider. If null, that means either there is no homepage
      * provider or provider set it to null to disable homepage.
      */
-    public GURL getHomePageUrl() {
+    public @Nullable GURL getHomePageUrl() {
         CommandLine commandLine = CommandLine.getInstance();
         if (commandLine.hasSwitch(ChromeSwitches.PARTNER_HOMEPAGE_FOR_TESTING)) {
             return new GURL(
@@ -430,10 +427,10 @@ public class PartnerBrowserCustomizations {
             return false;
         }
 
-        if (!url.isValid() || (!UrlUtilities.isHttpOrHttps(url) && !UrlUtilities.isNTPUrl(url))) {
-            Log.w(TAG,
-                    "Partner homepage must be HTTP(S) or NewTabPage. "
-                            + "Got invalid URL \"%s\"",
+        if (!url.isValid() || (!UrlUtilities.isHttpOrHttps(url) && !UrlUtilities.isNtpUrl(url))) {
+            Log.w(
+                    TAG,
+                    "Partner homepage must be HTTP(S) or NewTabPage. " + "Got invalid URL \"%s\"",
                     url.getPossiblyInvalidSpec());
             return false;
         }

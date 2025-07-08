@@ -6,18 +6,21 @@ package org.chromium.content.browser;
 
 import android.os.Handler;
 
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.ChildProcessImportance;
+import org.chromium.content_public.browser.ContentFeatureList;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 
-/**
- * Ranking of ChildProcessConnections for a particular ChildConnectionAllocator.
- */
+/** Ranking of ChildProcessConnections for a particular ChildConnectionAllocator. */
+@NullMarked
 public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
     private static final boolean ENABLE_CHECKS = BuildConfig.ENABLE_ASSERTS;
     private static final int NO_GROUP = 0;
@@ -41,16 +44,21 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         public boolean visible;
         public long frameDepth;
         public boolean intersectsViewport;
-        @ChildProcessImportance
-        public int importance;
+        public boolean isSpareRenderer;
+        @ChildProcessImportance public int importance;
 
-        public ConnectionWithRank(ChildProcessConnection connection, boolean visible,
-                long frameDepth, boolean intersectsViewport,
+        public ConnectionWithRank(
+                ChildProcessConnection connection,
+                boolean visible,
+                long frameDepth,
+                boolean intersectsViewport,
+                boolean isSpareRenderer,
                 @ChildProcessImportance int importance) {
             this.connection = connection;
             this.visible = visible;
             this.frameDepth = frameDepth;
             this.intersectsViewport = intersectsViewport;
+            this.isSpareRenderer = isSpareRenderer;
             this.importance = importance;
         }
 
@@ -61,7 +69,9 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         // important or that it only has waived binding.
         public boolean shouldBeInLowRankGroup() {
             boolean inViewport = visible && (frameDepth == 0 || intersectsViewport);
-            return importance == ChildProcessImportance.NORMAL && !inViewport;
+            return !inViewport
+                    && ((isSpareRenderer && ChildProcessRanking.isSpareRendererOfLowestRanking())
+                            || (importance <= ChildProcessImportance.PERCEPTIBLE));
         }
     }
 
@@ -87,14 +97,20 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
             // * (visible and subframe and intersect viewport) or ChildProcessImportance.MODERATE
             // ---- cutoff for shouldBeInLowRankGroup ----
             // * visible subframe and not intersect viewport
+            //   * These processes are bound with NotPerceptibleBinding by BindingManager in
+            //   * practice.
+            // * ChildProcessImportance.PERCEPTIBLE
             // * invisible main and sub frames (not ranked by frame depth)
+            // * spare renderer (if lowest-ranking parameter is set).
             // Within each group, ties are broken by intersect viewport and then frame depth where
             // applicable. Note boostForPendingViews is not used for ranking.
 
-            boolean o1IsVisibleMainOrImportant = (o1.visible && o1.frameDepth == 0)
-                    || o1.importance == ChildProcessImportance.IMPORTANT;
-            boolean o2IsVisibleMainOrImportant = (o2.visible && o2.frameDepth == 0)
-                    || o2.importance == ChildProcessImportance.IMPORTANT;
+            boolean o1IsVisibleMainOrImportant =
+                    (o1.visible && o1.frameDepth == 0)
+                            || o1.importance == ChildProcessImportance.IMPORTANT;
+            boolean o2IsVisibleMainOrImportant =
+                    (o2.visible && o2.frameDepth == 0)
+                            || o2.importance == ChildProcessImportance.IMPORTANT;
             if (o1IsVisibleMainOrImportant && o2IsVisibleMainOrImportant) {
                 return compareByIntersectsViewportAndDepth(o1, o2);
             } else if (o1IsVisibleMainOrImportant && !o2IsVisibleMainOrImportant) {
@@ -105,10 +121,10 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
 
             boolean o1VisibleIntersectSubframeOrModerate =
                     (o1.visible && o1.frameDepth > 0 && o1.intersectsViewport)
-                    || o1.importance == ChildProcessImportance.MODERATE;
+                            || o1.importance == ChildProcessImportance.MODERATE;
             boolean o2VisibleIntersectSubframeOrModerate =
                     (o2.visible && o2.frameDepth > 0 && o2.intersectsViewport)
-                    || o2.importance == ChildProcessImportance.MODERATE;
+                            || o2.importance == ChildProcessImportance.MODERATE;
             if (o1VisibleIntersectSubframeOrModerate && o2VisibleIntersectSubframeOrModerate) {
                 return compareByIntersectsViewportAndDepth(o1, o2);
             } else if (o1VisibleIntersectSubframeOrModerate
@@ -125,6 +141,24 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
                 return -1;
             } else if (!o1.visible && o2.visible) {
                 return 1;
+            }
+
+            boolean o1Perceptible = o1.importance == ChildProcessImportance.PERCEPTIBLE;
+            boolean o2Perceptible = o2.importance == ChildProcessImportance.PERCEPTIBLE;
+            if (o1Perceptible && o2Perceptible) {
+                return compareByIntersectsViewportAndDepth(o1, o2);
+            } else if (o1Perceptible && !o2Perceptible) {
+                return -1;
+            } else if (!o1Perceptible && o2Perceptible) {
+                return 1;
+            }
+
+            if (isSpareRendererOfLowestRanking()) {
+                if (!o1.isSpareRenderer && o2.isSpareRenderer) {
+                    return -1;
+                } else if (o1.isSpareRenderer && !o2.isSpareRenderer) {
+                    return 1;
+                }
             }
 
             // Invisible are in one group and are purposefully not ranked by frame depth.
@@ -175,13 +209,15 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
     private boolean mEnableServiceGroupImportance;
     private boolean mRebindRunnablePending;
 
+    private static boolean isSpareRendererOfLowestRanking() {
+        return ContentFeatureList.sSpareRendererLowestRanking.getValue();
+    }
+
     public ChildProcessRanking() {
         mMaxSize = -1;
     }
 
-    /**
-     * Create with a maxSize. Trying to insert more will throw exceptions.
-     */
+    /** Create with a maxSize. Trying to insert more will throw exceptions. */
     public ChildProcessRanking(int maxSize) {
         assert maxSize > 0;
         mMaxSize = maxSize;
@@ -204,16 +240,27 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         return new ReverseRankIterator();
     }
 
-    public void addConnection(ChildProcessConnection connection, boolean visible, long frameDepth,
-            boolean intersectsViewport, @ChildProcessImportance int importance) {
+    public void addConnection(
+            ChildProcessConnection connection,
+            boolean visible,
+            long frameDepth,
+            boolean intersectsViewport,
+            boolean isSpareRenderer,
+            @ChildProcessImportance int importance) {
         assert connection != null;
         assert indexOf(connection) == -1;
         if (mMaxSize != -1 && mRankings.size() >= mMaxSize) {
             throw new RuntimeException(
                     "mRankings.size:" + mRankings.size() + " mMaxSize:" + mMaxSize);
         }
-        mRankings.add(new ConnectionWithRank(
-                connection, visible, frameDepth, intersectsViewport, importance));
+        mRankings.add(
+                new ConnectionWithRank(
+                        connection,
+                        visible,
+                        frameDepth,
+                        intersectsViewport,
+                        isSpareRenderer,
+                        importance));
         reposition(mRankings.size() - 1);
     }
 
@@ -228,8 +275,13 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         if (ENABLE_CHECKS) checkOrder();
     }
 
-    public void updateConnection(ChildProcessConnection connection, boolean visible,
-            long frameDepth, boolean intersectsViewport, @ChildProcessImportance int importance) {
+    public void updateConnection(
+            @Nullable ChildProcessConnection connection,
+            boolean visible,
+            long frameDepth,
+            boolean intersectsViewport,
+            boolean isSpareRenderer,
+            @ChildProcessImportance int importance) {
         assert connection != null;
         assert mRankings.size() > 0;
         int i = indexOf(connection);
@@ -240,12 +292,30 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         rank.frameDepth = frameDepth;
         rank.intersectsViewport = intersectsViewport;
         rank.importance = importance;
+        rank.isSpareRenderer = isSpareRenderer;
         reposition(i);
     }
 
-    public ChildProcessConnection getLowestRankedConnection() {
+    public @Nullable ChildProcessConnection getLowestRankedConnection() {
         if (mRankings.isEmpty()) return null;
         return mRankings.get(mRankings.size() - 1).connection;
+    }
+
+    public void recordProcessRanking() {
+        int lowRankCount = 0;
+        int highRankCount = 0;
+        for (int i = 0; i < mRankings.size(); ++i) {
+            ConnectionWithRank connection = mRankings.get(i);
+            if (connection.shouldBeInLowRankGroup()) {
+                lowRankCount++;
+            } else {
+                highRankCount++;
+            }
+        }
+        RecordHistogram.recordCount1000Histogram(
+                "Android.ChildProcessRanking.LowRank.Count", lowRankCount);
+        RecordHistogram.recordCount1000Histogram(
+                "Android.ChildProcessRanking.HighRank.Count", highRankCount);
     }
 
     private int indexOf(ChildProcessConnection connection) {
@@ -268,8 +338,10 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         if (!mEnableServiceGroupImportance) return;
 
         if (!connection.shouldBeInLowRankGroup()) {
-            if (connection.connection.getGroup() != NO_GROUP) {
-                connection.connection.updateGroupImportance(NO_GROUP, 0);
+            if (connection.connection.getGroup() != NO_GROUP
+                    && connection.connection.updateGroupImportance(NO_GROUP, 0)) {
+                // Rebind a service binding to apply the group importance change.
+                connection.connection.rebind();
             }
             return;
         }
@@ -281,8 +353,10 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
                 atStart ? 0 : mRankings.get(newIndex - 1).connection.getImportanceInGroup();
 
         assert atEnd || mRankings.get(newIndex + 1).connection.getGroup() > NO_GROUP;
-        final int right = atEnd ? Integer.MAX_VALUE
-                                : mRankings.get(newIndex + 1).connection.getImportanceInGroup();
+        final int right =
+                atEnd
+                        ? Integer.MAX_VALUE
+                        : mRankings.get(newIndex + 1).connection.getImportanceInGroup();
 
         if (connection.connection.getImportanceInGroup() > left
                 && connection.connection.getImportanceInGroup() < right) {
@@ -298,9 +372,15 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
         // If gap is small, use average.
         // If there is no room left, reshuffle everything.
         if (gap > 2 * FROM_RIGHT) {
-            connection.connection.updateGroupImportance(LOW_RANK_GROUP, right - FROM_RIGHT);
+            if (connection.connection.updateGroupImportance(LOW_RANK_GROUP, right - FROM_RIGHT)) {
+                // Rebind a service binding to apply the group importance change.
+                connection.connection.rebind();
+            }
         } else if (gap > 2) {
-            connection.connection.updateGroupImportance(LOW_RANK_GROUP, left + gap / 2);
+            if (connection.connection.updateGroupImportance(LOW_RANK_GROUP, left + gap / 2)) {
+                // Rebind a service binding to apply the group importance change.
+                connection.connection.rebind();
+            }
         } else {
             reshuffleGroupImportance();
         }
@@ -311,11 +391,23 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
 
     private void reshuffleGroupImportance() {
         int importance = Integer.MAX_VALUE - FROM_RIGHT;
+        ConnectionWithRank lastUpdatedConnection = null;
         for (int i = mRankings.size() - 1; i >= 0; --i) {
             ConnectionWithRank connection = mRankings.get(i);
             if (!connection.shouldBeInLowRankGroup()) break;
-            connection.connection.updateGroupImportance(LOW_RANK_GROUP, importance);
+            if (connection.connection.updateGroupImportance(LOW_RANK_GROUP, importance)) {
+                if (ContentFeatureList.sGroupRebindingForGroupImportance.isEnabled()) {
+                    lastUpdatedConnection = connection;
+                } else {
+                    // Rebind a service binding to apply the group importance change.
+                    connection.connection.rebind();
+                }
+            }
             importance -= FROM_RIGHT;
+        }
+        if (lastUpdatedConnection != null) {
+            // Rebind a service connection in the group to apply the group importance changes.
+            lastUpdatedConnection.connection.rebind();
         }
     }
 
@@ -358,8 +450,13 @@ public class ChildProcessRanking implements Iterable<ChildProcessConnection> {
                     throw new RuntimeException("Not in low rank group " + connection);
                 }
                 if (connection.connection.getImportanceInGroup() <= importance) {
-                    throw new RuntimeException("Wrong group importance order " + connection + " "
-                            + connection.connection.getImportanceInGroup() + " " + importance);
+                    throw new RuntimeException(
+                            "Wrong group importance order "
+                                    + connection
+                                    + " "
+                                    + connection.connection.getImportanceInGroup()
+                                    + " "
+                                    + importance);
                 }
                 importance = connection.connection.getImportanceInGroup();
             } else {

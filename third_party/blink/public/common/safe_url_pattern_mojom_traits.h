@@ -5,17 +5,19 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_SAFE_URL_PATTERN_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_SAFE_URL_PATTERN_MOJOM_TRAITS_H_
 
+#include <string_view>
+
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
 #include "third_party/blink/public/mojom/safe_url_pattern.mojom.h"
-#include "third_party/liburlpattern/pattern.h"
+#include "third_party/liburlpattern/part.h"
 
 namespace mojo {
 namespace internal {
 
-inline base::StringPiece TruncateString(const std::string& string) {
-  return base::StringPiece(string).substr(0, 4 * 1024);
+inline std::string_view TruncateString(const std::string& string) {
+  return std::string_view(string).substr(0, 4 * 1024);
 }
 
 }  // namespace internal
@@ -44,7 +46,7 @@ struct BLINK_COMMON_EXPORT
 template <>
 struct BLINK_COMMON_EXPORT
     StructTraits<blink::mojom::FixedPatternDataView, ::liburlpattern::Part> {
-  static base::StringPiece value(const ::liburlpattern::Part& part) {
+  static std::string_view value(const ::liburlpattern::Part& part) {
     return internal::TruncateString(part.value);
   }
 
@@ -55,16 +57,16 @@ struct BLINK_COMMON_EXPORT
 template <>
 struct BLINK_COMMON_EXPORT
     StructTraits<blink::mojom::WildcardPatternDataView, ::liburlpattern::Part> {
-  static base::StringPiece name(const ::liburlpattern::Part& part) {
+  static std::string_view name(const ::liburlpattern::Part& part) {
     return internal::TruncateString(part.name);
   }
-  static base::StringPiece prefix(const ::liburlpattern::Part& part) {
+  static std::string_view prefix(const ::liburlpattern::Part& part) {
     return internal::TruncateString(part.prefix);
   }
-  static base::StringPiece value(const ::liburlpattern::Part& part) {
+  static std::string_view value(const ::liburlpattern::Part& part) {
     return internal::TruncateString(part.value);
   }
-  static base::StringPiece suffix(const ::liburlpattern::Part& part) {
+  static std::string_view suffix(const ::liburlpattern::Part& part) {
     return internal::TruncateString(part.suffix);
   }
 
@@ -118,17 +120,57 @@ struct BLINK_COMMON_EXPORT
 template <>
 struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::SafeUrlPatternDataView,
                                         ::blink::SafeUrlPattern> {
+  static const std::vector<liburlpattern::Part>& protocol(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.protocol;
+  }
+  static const std::vector<liburlpattern::Part>& username(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.username;
+  }
+  static const std::vector<liburlpattern::Part>& password(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.password;
+  }
   static const std::vector<liburlpattern::Part>& hostname(
       const ::blink::SafeUrlPattern& pattern) {
     return pattern.hostname;
+  }
+  static const std::vector<liburlpattern::Part>& port(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.port;
   }
   static const std::vector<liburlpattern::Part>& pathname(
       const ::blink::SafeUrlPattern& pattern) {
     return pattern.pathname;
   }
+  static const std::vector<liburlpattern::Part>& search(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.search;
+  }
+  static const std::vector<liburlpattern::Part>& hash(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.hash;
+  }
+  static const blink::SafeUrlPatternOptions& options(
+      const ::blink::SafeUrlPattern& pattern) {
+    return pattern.options;
+  }
 
   static bool Read(blink::mojom::SafeUrlPatternDataView data,
                    ::blink::SafeUrlPattern* out);
+};
+
+template <>
+struct BLINK_COMMON_EXPORT
+    StructTraits<blink::mojom::SafeUrlPatternOptionsDataView,
+                 blink::SafeUrlPatternOptions> {
+  static bool ignore_case(const ::blink::SafeUrlPatternOptions& data) {
+    return data.ignore_case;
+  }
+
+  static bool Read(blink::mojom::SafeUrlPatternOptionsDataView data,
+                   ::blink::SafeUrlPatternOptions* out);
 };
 
 }  // namespace mojo

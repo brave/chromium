@@ -9,9 +9,10 @@
 
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/password_manager/core/browser/sharing/recipient_info.h"
 
 namespace syncer {
-class ModelTypeControllerDelegate;
+class DataTypeControllerDelegate;
 }  // namespace syncer
 
 namespace password_manager {
@@ -22,9 +23,8 @@ struct PasswordForm;
 struct PasswordRecipient {
   // Recipient's user identifier (obfuscated Gaia ID).
   std::string user_id;
-
-  // TODO(crbug.com/1456309): Add a field for the public key of the receiver
-  // once the discussion concluded which type to use.
+  // Recipient's Public Key, encoded in base64.
+  PublicKey public_key;
 };
 
 // The PasswordSenderService class defines the interface for sending passwords.
@@ -35,12 +35,14 @@ class PasswordSenderService : public KeyedService {
   PasswordSenderService& operator=(const PasswordSenderService&) = delete;
   ~PasswordSenderService() override = default;
 
-  // Sends `passwords` to the specified `recipient`.
+  // Sends `passwords` to the specified `recipient`. All entries in `passwords`
+  // are expected to belong to the same credentials group. i.e. they all share
+  // the same username and password, and all origins are affiliated.
   virtual void SendPasswords(const std::vector<PasswordForm>& passwords,
                              const PasswordRecipient& recipient) = 0;
 
   // Used to wire sync data type.
-  virtual base::WeakPtr<syncer::ModelTypeControllerDelegate>
+  virtual base::WeakPtr<syncer::DataTypeControllerDelegate>
   GetControllerDelegate() = 0;
 };
 

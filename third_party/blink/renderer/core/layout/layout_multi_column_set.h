@@ -71,6 +71,8 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
 
   void Trace(Visitor*) const override;
 
+  bool IsLayoutNGObject() const final;
+
   const MultiColumnFragmentainerGroup& FirstFragmentainerGroup() const {
     NOT_DESTROYED();
     UpdateGeometryIfNeeded();
@@ -88,14 +90,6 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
   }
   unsigned FragmentainerGroupIndexAtFlowThreadOffset(LayoutUnit,
                                                      PageBoundaryRule) const;
-  MultiColumnFragmentainerGroup& FragmentainerGroupAtFlowThreadOffset(
-      LayoutUnit flow_thread_offset,
-      PageBoundaryRule rule) {
-    NOT_DESTROYED();
-    UpdateGeometryIfNeeded();
-    return fragmentainer_groups_[FragmentainerGroupIndexAtFlowThreadOffset(
-        flow_thread_offset, rule)];
-  }
   const MultiColumnFragmentainerGroup& FragmentainerGroupAtFlowThreadOffset(
       LayoutUnit flow_thread_offset,
       PageBoundaryRule rule) const {
@@ -105,17 +99,16 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
         flow_thread_offset, rule)];
   }
   const MultiColumnFragmentainerGroup& FragmentainerGroupAtVisualPoint(
-      const LayoutPoint&) const;
+      const LogicalOffset&) const;
   const MultiColumnFragmentainerGroupList& FragmentainerGroups() const {
     NOT_DESTROYED();
     UpdateGeometryIfNeeded();
     return fragmentainer_groups_;
   }
 
-  bool IsOfType(LayoutObjectType type) const override {
+  bool IsLayoutMultiColumnSet() const final {
     NOT_DESTROYED();
-    return type == kLayoutObjectMultiColumnSet ||
-           LayoutBlockFlow::IsOfType(type);
+    return true;
   }
   bool CanHaveChildren() const final {
     NOT_DESTROYED();
@@ -131,7 +124,7 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
 
   LayoutFlowThread* FlowThread() const {
     NOT_DESTROYED();
-    return flow_thread_;
+    return flow_thread_.Get();
   }
 
   LayoutBlockFlow* MultiColumnBlockFlow() const {
@@ -148,18 +141,8 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
 
   MultiColumnFragmentainerGroup& AppendNewFragmentainerGroup();
 
-  // Logical top relative to the content edge of the multicol container.
-  LayoutUnit LogicalTopFromMulticolContentEdge() const;
-
   LayoutUnit LogicalTopInFlowThread() const;
   LayoutUnit LogicalBottomInFlowThread() const;
-  LayoutUnit LogicalHeightInFlowThread() const {
-    NOT_DESTROYED();
-    // Due to negative margins, logical bottom may actually end up above logical
-    // top, but we never want to return negative logical heights.
-    return (LogicalBottomInFlowThread() - LogicalTopInFlowThread())
-        .ClampNegativeToZero();
-  }
 
   // Return the amount of flow thread contents that the specified fragmentainer
   // group can hold without overflowing.
@@ -180,29 +163,15 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
   // translation needed to get from flow thread coordinates to visual
   // coordinates.
   PhysicalOffset FlowThreadTranslationAtOffset(LayoutUnit,
-                                               PageBoundaryRule,
-                                               CoordinateSpaceConversion) const;
+                                               PageBoundaryRule) const;
 
-  LayoutPoint VisualPointToFlowThreadPoint(
-      const LayoutPoint& visual_point) const;
+  LogicalOffset VisualPointToFlowThreadPoint(
+      const PhysicalOffset& visual_point) const;
 
   // Reset previously calculated column height. Will mark for layout if needed.
   void ResetColumnHeight();
 
-  // Layout of flow thread content that's to be rendered inside this column set
-  // begins. This happens at the beginning of flow thread layout, and when
-  // advancing from a previous column set or spanner to this one.
-  void BeginFlow(LayoutUnit offset_in_flow_thread);
-
-  // Layout of flow thread content that was to be rendered inside this column
-  // set has finished. This happens at end of flow thread layout, and when
-  // advancing to the next column set or spanner.
-  void EndFlow(LayoutUnit offset_in_flow_thread);
-
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
-  void UpdateLayout() override;
-
-  MinMaxSizes ComputeIntrinsicLogicalWidths() const final;
 
   void AttachToFlowThread();
   void DetachFromFlowThread();
@@ -220,15 +189,7 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
     NOT_DESTROYED();
     return "LayoutMultiColumnSet";
   }
-  LayoutPoint LocationInternal() const override;
-
-  // Sets |column_rule_bounds| to the bounds of each column rule rect's painted
-  // extent, adjusted by paint offset, before pixel snapping. Returns true if
-  // column rules should be painted at all.
-  bool ComputeColumnRuleBounds(const PhysicalOffset& paint_offset,
-                               Vector<PhysicalRect>& column_rule_bounds) const;
-
-  void FinishLayoutFromNG();
+  DeprecatedLayoutPoint DeprecatedLocationInternal() const override;
 
   // Tell the column set that it shouldn't really exist. This happens when
   // there's a leftover column set after DOM / style changes, that NG doesn't
@@ -238,15 +199,9 @@ class CORE_EXPORT LayoutMultiColumnSet final : public LayoutBlockFlow {
   LayoutMultiColumnSet(LayoutFlowThread*);
 
  private:
-  PhysicalRect LocalVisualRectIgnoringVisibility() const final;
-
   void InsertedIntoTree() final;
   void WillBeRemovedFromTree() final;
   PhysicalSize Size() const override;
-
-  void ComputeLogicalHeight(LayoutUnit logical_height,
-                            LayoutUnit logical_top,
-                            LogicalExtentComputedValues&) const override;
 
   // This function updates frame_location_, frame_size_, and build
   // fragmentainer_groups_.

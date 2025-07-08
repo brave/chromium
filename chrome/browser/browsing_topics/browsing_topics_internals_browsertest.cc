@@ -3,28 +3,32 @@
 // found in the LICENSE file.
 
 #include "base/i18n/time_formatting.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browsing_topics/browsing_topics_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/webui/browsing_topics/browsing_topics_internals_page_handler.h"
+#include "chrome/browser/ui/webui/browsing_topics/browsing_topics_internals_ui.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/browsing_topics/browsing_topics_service.h"
 #include "components/browsing_topics/epoch_topics.h"
 #include "components/browsing_topics/test_util.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/browsing_topics_test_util.h"
 #include "content/public/test/fenced_frame_test_util.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "services/network/public/cpp/features.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -71,6 +75,8 @@ class FixedBrowsingTopicsService
     return {};
   }
 
+  void ValidateCalculationSchedule() override {}
+
   Annotator* GetAnnotator() override { return &test_annotator_; }
 
   void ClearTopic(
@@ -98,6 +104,17 @@ class BrowsingTopicsInternalsBrowserTestBase : public InProcessBrowserTest {
  public:
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
+  }
+
+  void FlushForTesting() {
+    BrowsingTopicsInternalsUI* internals_ui =
+        static_cast<BrowsingTopicsInternalsUI*>(
+            web_contents()->GetWebUI()->GetController());
+
+    BrowsingTopicsInternalsPageHandler* page_handler =
+        internals_ui->page_handler();
+
+    page_handler->FlushForTesting();
   }
 
   // Executing javascript in the WebUI requires using an isolated world in which
@@ -333,10 +350,9 @@ class BrowsingTopicsDisabledInternalsBrowserTest
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/{},
         /*disabled_features=*/{
-            blink::features::kBrowsingTopics,
+            network::features::kBrowsingTopics,
+            blink::features::kBrowsingTopicsParameters,
             features::kPrivacySandboxAdsAPIsOverride,
-            privacy_sandbox::kPrivacySandboxSettings3,
-            privacy_sandbox::kPrivacySandboxSettings4,
         });
   }
 
@@ -351,13 +367,11 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsDisabledInternalsBrowserTest,
 
   EXPECT_EQ(GetFeaturesAndParametersTabContent(), R"(BrowsingTopics: disabled
 PrivacySandboxAdsAPIsOverride: disabled
-PrivacySandboxSettings3: disabled
 OverridePrivacySandboxSettingsLocalTesting: disabled
 BrowsingTopicsBypassIPIsPubliclyRoutableCheck: disabled
-BrowsingTopicsXHR: disabled
 BrowsingTopicsDocumentAPI: enabled
-Configuration version: 1
-BrowsingTopicsParameters: enabled
+Configuration version: 2
+BrowsingTopicsParameters: disabled
 BrowsingTopicsParameters:number_of_epochs_to_expose: 3
 BrowsingTopicsParameters:time_period_per_epoch: 7d-0h-0m-0s
 BrowsingTopicsParameters:number_of_top_topics_per_epoch: 5
@@ -367,7 +381,7 @@ BrowsingTopicsParameters:number_of_epochs_of_observation_data_to_use_for_filteri
 BrowsingTopicsParameters:max_number_of_api_usage_context_domains_to_keep_per_topic: 1000
 BrowsingTopicsParameters:max_number_of_api_usage_context_entries_to_load_per_epoch: 100000
 BrowsingTopicsParameters:max_number_of_api_usage_context_domains_to_store_per_page_load: 30
-BrowsingTopicsParameters:taxonomy_version: 1
+BrowsingTopicsParameters:taxonomy_version: 2
 BrowsingTopicsParameters:disabled_topics_list: 
 )");
 }
@@ -414,22 +428,22 @@ class BrowsingTopicsInternalsBrowserTest
         {{blink::features::kBrowsingTopicsParameters,
           {{"number_of_top_topics_per_epoch", "2"},
            {"time_period_per_epoch", "15s"}}},
-         {blink::features::kBrowsingTopics, {}},
+         {network::features::kBrowsingTopics, {}},
          {features::kPrivacySandboxAdsAPIsOverride, {}},
-         {privacy_sandbox::kPrivacySandboxSettings3, {}},
          {privacy_sandbox::kPrivacySandboxSettings4,
           {{"consent-required", "true"}}}},
         /*disabled_features=*/{});
   }
 
   // BrowserTestBase::SetUpInProcessBrowserTestFixture
-  void SetUpInProcessBrowserTestFixture() override {
-    subscription_ =
-        BrowserContextDependencyManager::GetInstance()
-            ->RegisterCreateServicesCallbackForTesting(
-                base::BindRepeating(&BrowsingTopicsInternalsBrowserTest::
-                                        OnWillCreateBrowserContextServices,
-                                    base::Unretained(this)));
+  void SetUpBrowserContextKeyedServices(
+      content::BrowserContext* context) override {
+    browsing_topics::BrowsingTopicsServiceFactory::GetInstance()
+        ->SetTestingFactory(
+            context, base::BindRepeating([](content::BrowserContext* context)
+                                             -> std::unique_ptr<KeyedService> {
+              return std::make_unique<FixedBrowsingTopicsService>();
+            }));
   }
 
   FixedBrowsingTopicsService* fixed_browsing_topics_service() {
@@ -439,21 +453,6 @@ class BrowsingTopicsInternalsBrowserTest
   }
 
  protected:
-  void OnWillCreateBrowserContextServices(content::BrowserContext* context) {
-    browsing_topics::BrowsingTopicsServiceFactory::GetInstance()
-        ->SetTestingFactory(
-            context, base::BindRepeating(&BrowsingTopicsInternalsBrowserTest::
-                                             CreateFixedBrowsingTopicsService,
-                                         base::Unretained(this)));
-  }
-
-  std::unique_ptr<KeyedService> CreateFixedBrowsingTopicsService(
-      content::BrowserContext* context) {
-    return std::make_unique<FixedBrowsingTopicsService>();
-  }
-
-  base::CallbackListSubscription subscription_;
-
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -467,12 +466,10 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsInternalsBrowserTest, FeaturesEnabled) {
 
   EXPECT_EQ(GetFeaturesAndParametersTabContent(), R"(BrowsingTopics: enabled
 PrivacySandboxAdsAPIsOverride: enabled
-PrivacySandboxSettings3: enabled
 OverridePrivacySandboxSettingsLocalTesting: disabled
 BrowsingTopicsBypassIPIsPubliclyRoutableCheck: disabled
-BrowsingTopicsXHR: disabled
 BrowsingTopicsDocumentAPI: enabled
-Configuration version: 1
+Configuration version: 2
 BrowsingTopicsParameters: enabled
 BrowsingTopicsParameters:number_of_epochs_to_expose: 3
 BrowsingTopicsParameters:time_period_per_epoch: 0d-0h-0m-15s
@@ -483,7 +480,7 @@ BrowsingTopicsParameters:number_of_epochs_of_observation_data_to_use_for_filteri
 BrowsingTopicsParameters:max_number_of_api_usage_context_domains_to_keep_per_topic: 1000
 BrowsingTopicsParameters:max_number_of_api_usage_context_entries_to_load_per_epoch: 100000
 BrowsingTopicsParameters:max_number_of_api_usage_context_domains_to_store_per_page_load: 30
-BrowsingTopicsParameters:taxonomy_version: 1
+BrowsingTopicsParameters:taxonomy_version: 2
 BrowsingTopicsParameters:disabled_topics_list: 
 )");
 }
@@ -724,9 +721,11 @@ Model file path: /test_path/test_model.tflite
                      content::EXECUTE_SCRIPT_DEFAULT_OPTIONS,
                      /*world_id=*/1));
 
+  FlushForTesting();
+
   EXPECT_EQ(GetHostsClassificationResultTableContent(),
-            R"(foo1.com|1. Arts & entertainment;2. Acting & theater;|
-foo2.com|3. Comics;4. Concerts & music festivals;5. Dance;|
+            R"(foo1.com|1. Arts & Entertainment;2. Acting & Theater;|
+foo2.com|3. Comics;4. Concerts & Music Festivals;5. Dance;|
 )");
 
   EXPECT_TRUE(GetHostsClassificationInputValidationError().empty());
@@ -805,7 +804,8 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsInternalsBrowserTest,
       PrivacySandboxServiceFactory::GetForProfile(browser()->profile());
 
   privacy_sandbox_service->PromptActionOccurred(
-      PrivacySandboxService::PromptAction::kConsentAccepted);
+      PrivacySandboxService::PromptAction::kConsentAccepted,
+      PrivacySandboxService::SurfaceType::kDesktop);
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), GURL(kBrowsingTopicsInternalsConsentInfoUrl)));

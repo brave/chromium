@@ -9,6 +9,10 @@
 #include "content/public/browser/web_contents.h"
 #include "content/shell/browser/shell.h"
 
+#if !BUILDFLAG(IS_IOS)
+#include "content/public/browser/color_chooser.h"
+#endif
+
 namespace content {
 
 void ShellPlatformDelegate::DidCreateOrAttachWebContents(
@@ -24,7 +28,7 @@ ShellPlatformDelegate::CreateJavaScriptDialogManager(Shell* shell) {
   return nullptr;
 }
 
-bool ShellPlatformDelegate::HandleRequestToLockMouse(
+bool ShellPlatformDelegate::HandlePointerLockRequest(
     Shell* shell,
     WebContents* web_contents,
     bool user_gesture,

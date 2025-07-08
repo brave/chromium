@@ -30,8 +30,7 @@ void MediaControlScrubbingMessageElement::PopulateChildren() {
   // This stylesheet element will contain rules that are specific to the
   // scrubbing message. The shadow DOM protects these rules from bleeding
   // across to the parent DOM.
-  auto* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
-                                                       CreateElementFlags());
+  auto* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument());
   style->setTextContent(
       MediaControlsResourceLoader::GetScrubbingMessageStyleSheet());
   shadow_root->ParserAppendChild(style);
@@ -49,15 +48,15 @@ void MediaControlScrubbingMessageElement::PopulateChildren() {
       MediaControlElementsHelper::CreateDivWithId(AtomicString("arrow-right2"),
                                                   shadow_root);
 
-  arrow_left_div1->setInnerHTML(
+  arrow_left_div1->SetInnerHTMLWithoutTrustedTypes(
       MediaControlsResourceLoader::GetArrowLeftSVGImage());
-  arrow_left_div2->setInnerHTML(
+  arrow_left_div2->SetInnerHTMLWithoutTrustedTypes(
       MediaControlsResourceLoader::GetArrowLeftSVGImage());
   message_div->setInnerText(
       MediaElement().GetLocale().QueryString(IDS_MEDIA_SCRUBBING_MESSAGE_TEXT));
-  arrow_right_div1->setInnerHTML(
+  arrow_right_div1->SetInnerHTMLWithoutTrustedTypes(
       MediaControlsResourceLoader::GetArrowRightSVGImage());
-  arrow_right_div2->setInnerHTML(
+  arrow_right_div2->SetInnerHTMLWithoutTrustedTypes(
       MediaControlsResourceLoader::GetArrowRightSVGImage());
 }
 

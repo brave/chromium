@@ -9,11 +9,12 @@ import android.view.ViewGroup;
 
 import androidx.viewpager.widget.PagerAdapter;
 
+import org.chromium.build.annotations.NullMarked;
+
 import java.util.ArrayList;
 
-/**
- * QrCodePageAdapter instantiates and destroys provided tab views.
- */
+/** QrCodePageAdapter instantiates and destroys provided tab views. */
+@NullMarked
 class QrCodePageAdapter extends PagerAdapter {
     ArrayList<View> mPages;
 

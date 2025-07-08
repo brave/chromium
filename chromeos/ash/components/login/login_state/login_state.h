@@ -25,7 +25,6 @@ class COMPONENT_EXPORT(LOGIN_STATE) LoginState
   enum LoggedInUserType {
     LOGGED_IN_USER_NONE,     // User is not logged in
     LOGGED_IN_USER_REGULAR,  // A regular user is logged in
-    LOGGED_IN_USER_OWNER,    // The owner of the device is logged in
     LOGGED_IN_USER_GUEST,    // A guest is logged in (i.e. incognito)
     // A user is logged in to a managed guest session ("Public Session v2").
     LOGGED_IN_USER_PUBLIC_ACCOUNT,
@@ -74,8 +73,8 @@ class COMPONENT_EXPORT(LOGIN_STATE) LoginState
   // Returns true if logged in to a guest session.
   bool IsGuestSessionUser() const;
 
-  // Returns true if logged in to a public session.
-  bool IsPublicSessionUser() const;
+  // Returns true if logged in to a managed guest session.
+  bool IsManagedGuestSessionUser() const;
 
   // Returns true if logged in as a kiosk session.
   bool IsKioskSession() const;
@@ -103,8 +102,7 @@ class COMPONENT_EXPORT(LOGIN_STATE) LoginState
   void OnUserManagerWillBeDestroyed(user_manager::UserManager* user_manager);
 
   // user_manager::UserManager::UserSessionStateObserver:
-  void OnLoginStateUpdated(const user_manager::User* active_user,
-                           bool is_current_user_owner) override;
+  void OnLoginStateUpdated(const user_manager::User* active_user) override;
 
  private:
   LoginState();

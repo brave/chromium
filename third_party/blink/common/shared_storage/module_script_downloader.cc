@@ -4,6 +4,7 @@
 
 #include "third_party/blink/public/common/shared_storage/module_script_downloader.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -62,7 +63,7 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
 
 // Checks if `charset` is a valid charset, in lowercase ASCII. Takes `body` as
 // well, to ensure it uses the specified charset.
-bool IsAllowedCharset(base::StringPiece charset, const std::string& body) {
+bool IsAllowedCharset(std::string_view charset, const std::string& body) {
   if (charset == "utf-8" || charset.empty()) {
     return base::IsStringUTF8(body);
   } else if (charset == "us-ascii") {
@@ -91,7 +92,8 @@ ModuleScriptDownloader::ModuleScriptDownloader(
       network::mojom::CredentialsMode::kSameOrigin;
   resource_request->headers.SetHeader(
       net::HttpRequestHeaders::kAccept,
-      base::StringPiece("application/javascript"));
+      std::string_view("application/javascript"));
+  resource_request->site_for_cookies = net::SiteForCookies::FromUrl(source_url);
 
   simple_url_loader_ = network::SimpleURLLoader::Create(
       std::move(resource_request), kTrafficAnnotation);
@@ -110,12 +112,12 @@ ModuleScriptDownloader::ModuleScriptDownloader(
 
 ModuleScriptDownloader::~ModuleScriptDownloader() = default;
 
-void ModuleScriptDownloader::OnBodyReceived(std::unique_ptr<std::string> body) {
+void ModuleScriptDownloader::OnBodyReceived(std::optional<std::string> body) {
   DCHECK(module_script_downloader_callback_);
 
   auto simple_url_loader = std::move(simple_url_loader_);
 
-  if (!body) {
+  if (!body.has_value()) {
     std::string error_message;
     if (simple_url_loader->ResponseInfo() &&
         simple_url_loader->ResponseInfo()->headers &&
@@ -132,32 +134,36 @@ void ModuleScriptDownloader::OnBodyReceived(std::unique_ptr<std::string> body) {
           net::ErrorToString(simple_url_loader->NetError()).c_str());
     }
     std::move(module_script_downloader_callback_)
-        .Run(/*body=*/nullptr, error_message);
+        .Run(/*body=*/std::nullopt, error_message,
+             simple_url_loader->TakeResponseInfo());
     return;
   }
 
   if (!blink::IsSupportedJavascriptMimeType(
           simple_url_loader->ResponseInfo()->mime_type)) {
     std::move(module_script_downloader_callback_)
-        .Run(/*body=*/nullptr,
+        .Run(/*body=*/std::nullopt,
              base::StringPrintf(
                  "Rejecting load of %s due to unexpected MIME type.",
-                 source_url_.spec().c_str()));
+                 source_url_.spec().c_str()),
+             simple_url_loader->TakeResponseInfo());
     return;
   }
 
   if (!IsAllowedCharset(simple_url_loader->ResponseInfo()->charset, *body)) {
     std::move(module_script_downloader_callback_)
-        .Run(/*body=*/nullptr,
+        .Run(/*body=*/std::nullopt,
              base::StringPrintf(
                  "Rejecting load of %s due to unexpected charset.",
-                 source_url_.spec().c_str()));
+                 source_url_.spec().c_str()),
+             simple_url_loader->TakeResponseInfo());
     return;
   }
 
   // All OK!
   std::move(module_script_downloader_callback_)
-      .Run(std::move(body), /*error_message=*/{});
+      .Run(std::move(body), /*error_message=*/{},
+           simple_url_loader->TakeResponseInfo());
 }
 
 void ModuleScriptDownloader::OnRedirect(
@@ -171,8 +177,10 @@ void ModuleScriptDownloader::OnRedirect(
   simple_url_loader_.reset();
 
   std::move(module_script_downloader_callback_)
-      .Run(/*body=*/nullptr, base::StringPrintf("Unexpected redirect on %s.",
-                                                source_url_.spec().c_str()));
+      .Run(/*body=*/std::nullopt,
+           base::StringPrintf("Unexpected redirect on %s.",
+                              source_url_.spec().c_str()),
+           nullptr);
 }
 
 }  // namespace blink

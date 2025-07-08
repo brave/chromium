@@ -4,67 +4,112 @@
 
 #include "media/filters/hls_test_helpers.h"
 
+#include <optional>
+
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
+#include "base/test/gmock_callback_support.h"
 #include "media/base/test_data_util.h"
 #include "media/filters/hls_data_source_provider.h"
 
 namespace media {
+using testing::_;
 
-namespace {
+MockDataSource::~MockDataSource() = default;
+MockDataSource::MockDataSource() = default;
 
-std::vector<uint8_t> FileToDataVec(const std::string& filename) {
-  base::FilePath file_path = GetTestDataFilePath(filename);
-  int64_t file_size = 0;
-  CHECK(base::GetFileSize(file_path, &file_size))
-      << "Failed to get file size for '" << filename << "'";
-  std::vector<uint8_t> result(file_size);
-  char* raw = reinterpret_cast<char*>(result.data());
-  CHECK_EQ(file_size, base::ReadFile(file_path, raw, file_size))
-      << "Failed to read '" << filename << "'";
-  return result;
-}
-
-std::vector<uint8_t> ContentToDataVec(base::StringPiece content) {
-  std::vector<uint8_t> result(content.begin(), content.end());
-  return result;
-}
-
-}  // namespace
+MockHlsDataSourceProvider::MockHlsDataSourceProvider() = default;
+MockHlsDataSourceProvider::~MockHlsDataSourceProvider() = default;
 
 MockManifestDemuxerEngineHost::MockManifestDemuxerEngineHost() = default;
 MockManifestDemuxerEngineHost::~MockManifestDemuxerEngineHost() = default;
 
-MockHlsRenditionHost::MockHlsRenditionHost() {}
-MockHlsRenditionHost::~MockHlsRenditionHost() {}
+MockHlsRenditionHost::MockHlsRenditionHost() = default;
+MockHlsRenditionHost::~MockHlsRenditionHost() = default;
 
-MockHlsRendition::MockHlsRendition() {}
-MockHlsRendition::~MockHlsRendition() {}
+MockHlsRendition::MockHlsRendition(GURL uri) : uri_(std::move(uri)) {}
+MockHlsRendition::~MockHlsRendition() = default;
 
-FakeHlsDataSource::FakeHlsDataSource(std::vector<uint8_t> data)
-    : HlsDataSource(data.size()), data_(std::move(data)) {}
+MockHlsNetworkAccess::MockHlsNetworkAccess() = default;
+MockHlsNetworkAccess::~MockHlsNetworkAccess() = default;
 
-FakeHlsDataSource::~FakeHlsDataSource() {}
+void MockHlsRendition::UpdatePlaylistURI(const GURL& uri) {
+  MockUpdatePlaylistURI(uri);
+  uri_ = uri;
+}
 
-void FakeHlsDataSource::Read(uint64_t pos,
-                             size_t size,
-                             uint8_t* buf,
-                             HlsDataSource::ReadCb cb) {
-  if (pos > data_.size()) {
-    return std::move(cb).Run(HlsDataSource::ReadStatusCodes::kError);
+const GURL& MockHlsRendition::MediaPlaylistUri() const {
+  return uri_;
+}
+
+// static
+std::unique_ptr<HlsDataSourceStream>
+StringHlsDataSourceStreamFactory::CreateStream(std::string content,
+                                               bool taint_origin) {
+  HlsDataSourceProvider::SegmentQueue segments;
+  auto stream = std::make_unique<HlsDataSourceStream>(
+      HlsDataSourceStream::StreamId::FromUnsafeValue(42), std::move(segments),
+      base::DoNothing());
+  auto* buffer = stream->LockStreamForWriting(content.length());
+  UNSAFE_TODO(memcpy(buffer, content.c_str(), content.length()));
+  stream->UnlockStreamPostWrite(content.length(), true);
+  if (taint_origin) {
+    stream->set_would_taint_origin();
   }
-  size_t len = std::min(size, data_.size() - pos);
-  memcpy(buf, &data_[pos], len);
-  std::move(cb).Run(len);
+  return stream;
 }
 
-base::StringPiece FakeHlsDataSource::GetMimeType() const {
-  return "";
+// static
+std::unique_ptr<HlsDataSourceStream>
+FileHlsDataSourceStreamFactory::CreateStream(std::string filename,
+                                             bool taint_origin) {
+  base::FilePath file_path = GetTestDataFilePath(filename);
+  std::optional<int64_t> file_size = base::GetFileSize(file_path);
+  CHECK(file_size.has_value())
+      << "Failed to get file size for '" << filename << "'";
+  HlsDataSourceProvider::SegmentQueue segments;
+  auto stream = std::make_unique<HlsDataSourceStream>(
+      HlsDataSourceStream::StreamId::FromUnsafeValue(42), std::move(segments),
+      base::DoNothing());
+  auto* buffer = stream->LockStreamForWriting(file_size.value());
+  CHECK_EQ(file_size.value(),
+           base::ReadFile(file_path, reinterpret_cast<char*>(buffer),
+                          file_size.value()));
+  stream->UnlockStreamPostWrite(file_size.value(), true);
+  if (taint_origin) {
+    stream->set_would_taint_origin();
+  }
+  return stream;
 }
 
-FileHlsDataSource::FileHlsDataSource(const std::string& filename)
-    : FakeHlsDataSource(FileToDataVec(filename)) {}
+MockDataSourceFactory::~MockDataSourceFactory() = default;
+MockDataSourceFactory::MockDataSourceFactory() = default;
 
-StringHlsDataSource::StringHlsDataSource(base::StringPiece content)
-    : FakeHlsDataSource(ContentToDataVec(content)) {}
+void MockDataSourceFactory::CreateDataSource(GURL uri, bool, DataSourceCb cb) {
+  if (!next_mock_) {
+    PregenerateNextMock();
+    EXPECT_CALL(*next_mock_, Initialize)
+        .WillOnce(base::test::RunOnceCallback<0>(true));
+    for (const auto& e : read_expectations_) {
+      EXPECT_CALL(*next_mock_, Read(std::get<0>(e), std::get<1>(e), _, _))
+          .WillOnce(base::test::RunOnceCallback<3>(std::get<2>(e)));
+    }
+    read_expectations_.clear();
+    EXPECT_CALL(*next_mock_, Stop());
+  }
+  std::move(cb).Run(std::move(next_mock_));
+}
+
+void MockDataSourceFactory::AddReadExpectation(size_t from,
+                                               size_t to,
+                                               int response) {
+  read_expectations_.emplace_back(from, to, response);
+}
+
+testing::NiceMock<MockDataSource>*
+MockDataSourceFactory::PregenerateNextMock() {
+  next_mock_ = std::make_unique<testing::NiceMock<MockDataSource>>();
+  return next_mock_.get();
+}
 
 }  // namespace media

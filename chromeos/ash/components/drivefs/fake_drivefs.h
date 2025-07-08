@@ -15,6 +15,7 @@
 #include "chromeos/ash/components/drivefs/drivefs_bootstrap.h"
 #include "chromeos/ash/components/drivefs/drivefs_host.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
+#include "components/drive/file_errors.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -94,6 +95,11 @@ class FakeDriveFs : public drivefs::mojom::DriveFs,
               (drivefs::mojom::DriveFs::GetSyncingPathsCallback callback),
               (override));
 
+  void GetSyncingPathsForTesting(
+      drivefs::mojom::DriveFs::GetSyncingPathsCallback callback) {
+    std::move(callback).Run(drive::FILE_ERROR_OK, syncing_paths_);
+  }
+
   MOCK_METHOD(void,
               StartSearchQuery,
               (mojo::PendingReceiver<drivefs::mojom::SearchQuery> receiver,
@@ -105,6 +111,11 @@ class FakeDriveFs : public drivefs::mojom::DriveFs,
       GetOfflineFilesSpaceUsage,
       (drivefs::mojom::DriveFs::GetOfflineFilesSpaceUsageCallback callback),
       (override));
+
+  MOCK_METHOD(void,
+              ClearOfflineFiles,
+              (drivefs::mojom::DriveFs::ClearOfflineFilesCallback callback),
+              (override));
 
   MOCK_METHOD(void,
               ImmediatelyUpload,
@@ -126,11 +137,15 @@ class FakeDriveFs : public drivefs::mojom::DriveFs,
 
   const base::FilePath& mount_path() { return mount_path_; }
 
-  absl::optional<bool> IsItemPinned(const std::string& path);
+  std::optional<bool> IsItemPinned(const std::string& path);
 
-  absl::optional<bool> IsItemDirty(const std::string& path);
+  std::optional<bool> IsItemDirty(const std::string& path);
 
   bool SetCanPin(const std::string& path, bool can_pin);
+
+  void SetPooledStorageQuotaUsage(int64_t used_user_bytes,
+                                  int64_t total_user_bytes,
+                                  bool organization_limit_exceeded);
 
   struct FileMetadata {
     FileMetadata();
@@ -150,15 +165,22 @@ class FakeDriveFs : public drivefs::mojom::DriveFs,
     std::string doc_id;
     int64_t stable_id = 0;
     std::string alternate_url;
-    absl::optional<mojom::ShortcutDetails> shortcut_details;
+    std::optional<mojom::ShortcutDetails> shortcut_details;
     bool can_pin = true;
   };
 
-  absl::optional<FakeDriveFs::FileMetadata> GetItemMetadata(
+  std::optional<FakeDriveFs::FileMetadata> GetItemMetadata(
       const base::FilePath& path);
 
  private:
   class SearchQuery;
+
+  struct PooledQuotaUsage {
+    mojom::UserType user_type = mojom::UserType::kUnmanaged;
+    int64_t used_user_bytes = int64_t(1) << 30;
+    int64_t total_user_bytes = int64_t(2) << 30;
+    bool organization_limit_exceeded = false;
+  } pooled_quota_usage_;
 
   // drivefs::mojom::DriveFsBootstrap:
   void Init(
@@ -243,17 +265,25 @@ class FakeDriveFs : public drivefs::mojom::DriveFs,
 
   void PollHostedFilePinStates() override;
 
-  void CancelUploadByPath(const base::FilePath& path) override;
+  void CancelUploadByPath(
+      const base::FilePath& path,
+      drivefs::mojom::DriveFs::CancelUploadMode cancel_mode) override;
 
   void SetDocsOfflineEnabled(
       bool enabled,
       drivefs::mojom::DriveFs::SetDocsOfflineEnabledCallback callback) override;
 
-  void ClearOfflineFiles(
-      drivefs::mojom::DriveFs::ClearOfflineFilesCallback) override;
-
   void GetDocsOfflineStats(
       drivefs::mojom::DriveFs::GetDocsOfflineStatsCallback) override;
+
+  void GetMirrorSyncStatusForFile(
+      const base::FilePath& path,
+      GetMirrorSyncStatusForFileCallback callback) override;
+
+  void GetMirrorSyncStatusForDirectory(
+      const base::FilePath& path,
+      GetMirrorSyncStatusForDirectoryCallback callback)
+      override;
 
   const base::FilePath mount_path_;
   int64_t next_stable_id_ = 1;

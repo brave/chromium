@@ -7,23 +7,24 @@
 #include <type_traits>
 #include <utility>
 
-#include "ash/public/cpp/tablet_mode.h"
 #include "ash/shell.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/configuration_keys.h"
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
+#include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_requisition_manager.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/webui/ash/login/fjord_oobe_util.h"
 #include "chrome/browser/ui/webui/ash/login/oobe_ui.h"
 #include "chrome/common/channel_info.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 #include "components/strings/grit/components_strings.h"
 #include "google_apis/google_api_keys.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_sink.h"
 
 // Enable VLOG level 1.
@@ -41,7 +42,6 @@ void CoreOobeHandler::DeclareLocalizedValues(
   builder->Add("title", IDS_SHORT_PRODUCT_NAME);
   builder->Add("productName", IDS_SHORT_PRODUCT_NAME);
   builder->Add("learnMore", IDS_LEARN_MORE);
-
 
   // Strings for Asset Identifier shown in version string.
   builder->Add("assetIdLabel", IDS_OOBE_ASSET_ID_LABEL);
@@ -79,9 +79,10 @@ void CoreOobeHandler::DeclareJSCallbacks() {
 }
 
 void CoreOobeHandler::GetAdditionalParameters(base::Value::Dict* dict) {
-  dict->Set("isInTabletMode", TabletMode::Get()->InTabletMode());
   dict->Set("isDemoModeEnabled", DemoSetupController::IsDemoModeAllowed());
-  if (policy::EnrollmentRequisitionManager::IsMeetDevice()) {
+  if (fjord_util::ShouldShowFjordOobe()) {
+    dict->Set("deviceFlowType", "fjord");
+  } else if (policy::EnrollmentRequisitionManager::IsMeetDevice()) {
     // The value is used to show a different UI for this type of the devices.
     dict->Set("deviceFlowType", "meet");
   }
@@ -93,10 +94,11 @@ ui::EventSink* CoreOobeHandler::GetEventSink() {
 
 void CoreOobeHandler::ShowScreenWithData(
     const OobeScreenId& screen,
-    absl::optional<base::Value::Dict> data) {
+    std::optional<base::Value::Dict> data) {
   const bool is_safe_priority_call =
-      IsPriorityScreen(screen.name) &&
-      ui_init_state_ == UiState::kPriorityScreensLoaded;
+      ui_init_state_ == UiState::kPriorityScreensLoaded &&
+      PriorityScreenChecker::IsPriorityScreen(screen);
+
   CHECK(ui_init_state_ == UiState::kFullyInitialized || is_safe_priority_call);
 
   base::Value::Dict screen_params;
@@ -169,14 +171,8 @@ void CoreOobeHandler::SetBluetoothDeviceInfo(
   CallJS("cr.ui.Oobe.setBluetoothDeviceInfo", bluetooth_name);
 }
 
-bool CoreOobeHandler::IsPriorityScreen(const std::string& screen_name) {
-  // List of screens that are supported for prioritization. Currently, only the
-  // Welcome Screen ('connect') is supported.
-  const std::vector<std::string> supported_screens{"connect"};
-
-  const auto iter = std::find(supported_screens.begin(),
-                              supported_screens.end(), screen_name);
-  return iter != supported_screens.end();
+base::WeakPtr<CoreOobeView> CoreOobeHandler::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 void CoreOobeHandler::HandleInitializeCoreHandler() {
@@ -232,9 +228,9 @@ void CoreOobeHandler::HandleUpdateOobeUIState(int state) {
 }
 
 void CoreOobeHandler::HandleRaiseTabKeyEvent(bool reverse) {
-  ui::KeyEvent event(ui::ET_KEY_PRESSED, ui::VKEY_TAB, ui::EF_NONE);
+  ui::KeyEvent event(ui::EventType::kKeyPressed, ui::VKEY_TAB, ui::EF_NONE);
   if (reverse) {
-    event.set_flags(ui::EF_SHIFT_DOWN);
+    event.SetFlags(ui::EF_SHIFT_DOWN);
   }
   SendEventToSink(&event);
 }

@@ -8,11 +8,16 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import org.chromium.components.browser_ui.widget.listmenu.ListMenuButton;
-import org.chromium.components.browser_ui.widget.listmenu.ListMenuButtonDelegate;
+import androidx.core.content.ContextCompat;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.ui.listmenu.ListMenuButton;
+import org.chromium.ui.listmenu.ListMenuDelegate;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
+@NullMarked
 class InstanceSwitcherItemViewBinder {
 
     public static void bind(PropertyModel model, View view, PropertyKey propertyKey) {
@@ -20,8 +25,25 @@ class InstanceSwitcherItemViewBinder {
             ((ImageView) view.findViewById(R.id.favicon))
                     .setImageDrawable(model.get(InstanceSwitcherItemProperties.FAVICON));
 
+        } else if (InstanceSwitcherItemProperties.IS_SELECTED == propertyKey) {
+            ImageView faviconView = view.findViewById(R.id.favicon);
+            boolean isSelected = model.get(InstanceSwitcherItemProperties.IS_SELECTED);
+
+            view.setSelected(isSelected);
+            view.findViewById(R.id.title).setSelected(isSelected);
+            view.findViewById(R.id.desc).setSelected(isSelected);
+            view.findViewById(R.id.last_accessed).setSelected(isSelected);
+            view.findViewById(R.id.close_button).setSelected(isSelected);
+
+            // Show check mark if selected, otherwise fallback to favicon.
+            faviconView.setImageDrawable(
+                    isSelected
+                            ? ContextCompat.getDrawable(
+                                    view.getContext(), R.drawable.checkmark_circle_24dp)
+                            : model.get(InstanceSwitcherItemProperties.FAVICON));
+
         } else if (InstanceSwitcherItemProperties.TITLE == propertyKey) {
-            TextView titleView = (TextView) view.findViewById(R.id.title);
+            TextView titleView = view.findViewById(R.id.title);
             String text = model.get(InstanceSwitcherItemProperties.TITLE);
             if (text != null) {
                 titleView.setText(text);
@@ -30,7 +52,7 @@ class InstanceSwitcherItemViewBinder {
             }
 
         } else if (InstanceSwitcherItemProperties.DESC == propertyKey) {
-            TextView descView = (TextView) view.findViewById(R.id.desc);
+            TextView descView = view.findViewById(R.id.desc);
             String text = model.get(InstanceSwitcherItemProperties.DESC);
             if (text != null) {
                 descView.setText(text);
@@ -48,15 +70,30 @@ class InstanceSwitcherItemViewBinder {
             view.setOnClickListener(model.get(InstanceSwitcherItemProperties.CLICK_LISTENER));
 
         } else if (InstanceSwitcherItemProperties.MORE_MENU == propertyKey) {
-            ListMenuButtonDelegate delegate = model.get(InstanceSwitcherItemProperties.MORE_MENU);
+            ListMenuDelegate delegate = model.get(InstanceSwitcherItemProperties.MORE_MENU);
             ((ListMenuButton) view.findViewById(R.id.more)).setDelegate(delegate);
 
         } else if (InstanceSwitcherItemProperties.ENABLE_COMMAND == propertyKey) {
             View newWindow = view.findViewById(R.id.new_window);
-            View maxInfo = view.findViewById(R.id.max_info);
             boolean enabled = model.get(InstanceSwitcherItemProperties.ENABLE_COMMAND);
             newWindow.setVisibility(enabled ? View.VISIBLE : View.GONE);
-            maxInfo.setVisibility(enabled ? View.GONE : View.VISIBLE);
+            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.INSTANCE_SWITCHER_V2)) {
+                View maxInfo = view.findViewById(R.id.max_info);
+                maxInfo.setVisibility(enabled ? View.GONE : View.VISIBLE);
+            }
+
+        } else if (InstanceSwitcherItemProperties.MAX_INFO_TEXT == propertyKey) {
+            TextView maxInfo = view.findViewById(R.id.max_info);
+            maxInfo.setText(model.get(InstanceSwitcherItemProperties.MAX_INFO_TEXT));
+
+        } else if (InstanceSwitcherItemProperties.LAST_ACCESSED == propertyKey) {
+            TextView lastAccessedView = view.findViewById(R.id.last_accessed);
+            String text = model.get(InstanceSwitcherItemProperties.LAST_ACCESSED);
+            lastAccessedView.setText(text);
+        } else if (InstanceSwitcherItemProperties.CLOSE_BUTTON_CLICK_LISTENER == propertyKey) {
+            ImageView closeButton = view.findViewById(R.id.close_button);
+            closeButton.setOnClickListener(
+                    model.get(InstanceSwitcherItemProperties.CLOSE_BUTTON_CLICK_LISTENER));
         }
     }
 }

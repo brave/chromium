@@ -5,9 +5,11 @@
 import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as Platform from 'devtools/core/platform/platform.js';
+import * as Console from 'devtools/panels/console/console.js';
+
 (async function() {
   TestRunner.addResult(`Tests that console viewport handles selection properly.\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('console');
   await TestRunner.evaluateInPagePromise(`
       function populateConsoleWithMessages(count)
@@ -20,7 +22,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
     `);
 
   ConsoleTestRunner.fixConsoleViewportDimensions(600, 200);
-  var consoleView = Console.ConsoleView.instance();
+  var consoleView = Console.ConsoleView.ConsoleView.instance();
   var viewport = consoleView.viewport;
   const minimumViewportMessagesCount = 10;
   const messagesCount = 150;
@@ -130,25 +132,6 @@ import {ConsoleTestRunner} from 'console_test_runner';
       next();
     },
 
-    function testSelectAll(next) {
-      viewport.forceScrollItemToBeFirst(0);
-
-      // Set some initial selection in console.
-      var base = consoleView.itemElement(messagesCount - 2).element();
-      var extent = consoleView.itemElement(messagesCount - 1).element();
-      window.getSelection().setBaseAndExtent(base, 0, extent, 0);
-
-      // Try to select all messages.
-      document.execCommand('selectAll');
-
-      var text = viewport.selectedText();
-      var count = text ? text.split('\n').length : 0;
-      TestRunner.addResult(
-          count === messagesCount ? 'Selected all ' + count + ' messages.' :
-                                    'Selected ' + count + ' messages instead of ' + messagesCount);
-      next();
-    },
-
     function testSelectWithNonTextNodeContainer(next) {
       viewport.forceScrollItemToBeFirst(0);
 
@@ -177,17 +160,17 @@ import {ConsoleTestRunner} from 'console_test_runner';
   }
 
   ConsoleTestRunner.addConsoleSniffer(messageAdded, true);
-  TestRunner.evaluateInPage(String.sprintf('populateConsoleWithMessages(%d)', messagesCount));
+  TestRunner.evaluateInPage(Platform.StringUtilities.sprintf('populateConsoleWithMessages(%d)', messagesCount));
 
   function dumpSelectionModelElement(model) {
     if (!model)
       return 'null';
-    return String.sprintf('{item: %d, offset: %d}', model.item, model.offset);
+    return Platform.StringUtilities.sprintf('{item: %d, offset: %d}', model.item, model.offset);
   }
 
   function dumpSelectionModel() {
     viewport.refresh();
-    var text = String.sprintf(
+    var text = Platform.StringUtilities.sprintf(
         'anchor = %s, head = %s', dumpSelectionModelElement(viewport.anchorSelection),
         dumpSelectionModelElement(viewport.headSelection));
     TestRunner.addResult(text);
@@ -216,7 +199,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
 
   async function selectMessages(fromMessage, fromTextOffset, toMessage, toTextOffset) {
     if (Math.abs(toMessage - fromMessage) > minimumViewportMessagesCount) {
-      TestRunner.addResult(String.sprintf(
+      TestRunner.addResult(Platform.StringUtilities.sprintf(
           'FAILURE: Cannot select more than %d messages (requested to select from %d to %d',
           minimumViewportMessagesCount, fromMessage, toMessage));
       TestRunner.completeTest();

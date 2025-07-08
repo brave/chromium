@@ -9,8 +9,9 @@
  * given that holds the elements to be loaded lazily.
  */
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {PolymerElement, TemplateInstanceBase, templatize} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import type {TemplateInstanceBase} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement, templatize} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {ensureLazyLoaded} from '../ensure_lazy_loaded.js';
 
@@ -44,15 +45,15 @@ export class SettingsIdleLoadElement extends PolymerElement {
   }
 
 
-  override connectedCallback() {
+  override connectedCallback(): void {
     super.connectedCallback();
 
-    this.idleCallback_ = window.requestIdleCallback(() => {
+    this.idleCallback_ = requestIdleCallback(() => {
       this.get();
     });
   }
 
-  override disconnectedCallback() {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
 
     // No-op if callback already fired.
@@ -108,7 +109,7 @@ export class SettingsIdleLoadElement extends PolymerElement {
   }
 
   /* eslint-disable-next-line @typescript-eslint/naming-convention */
-  private _forwardHostPropV2(prop: string, value: any) {
+  private _forwardHostPropV2(prop: string, value: any): void {
     if (this.instance_) {
       this.instance_.forwardHostProp(prop, value);
     }

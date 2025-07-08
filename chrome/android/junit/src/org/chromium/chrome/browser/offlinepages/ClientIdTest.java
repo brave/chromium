@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.offlinepages;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -17,9 +16,7 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkType;
 
-/**
- * Unit tests for ClientId.
- */
+/** Unit tests for ClientId. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class ClientIdTest {
@@ -36,25 +33,22 @@ public class ClientIdTest {
     @Test
     @Feature({"OfflinePages"})
     public void testCreateClientIdForBookmarkId() {
-        ClientId clientId = ClientId.createClientIdForBookmarkId(
-                new BookmarkId(TEST_BOOKMARK_ID, BookmarkType.NORMAL));
+        ClientId clientId =
+                ClientId.createClientIdForBookmarkId(
+                        new BookmarkId(TEST_BOOKMARK_ID, BookmarkType.NORMAL));
         assertNotNull(clientId);
         assertEquals(OfflinePageBridge.BOOKMARK_NAMESPACE, clientId.getNamespace());
         assertEquals(Long.toString(TEST_BOOKMARK_ID), clientId.getId());
 
-        clientId = ClientId.createClientIdForBookmarkId(
-                new BookmarkId(INVALID_BOOKMARK_ID, BookmarkType.NORMAL));
+        clientId =
+                ClientId.createClientIdForBookmarkId(
+                        new BookmarkId(INVALID_BOOKMARK_ID, BookmarkType.NORMAL));
         assertNotNull(clientId);
         assertEquals(OfflinePageBridge.BOOKMARK_NAMESPACE, clientId.getNamespace());
         assertEquals(Long.toString(INVALID_BOOKMARK_ID), clientId.getId());
-
-        clientId = ClientId.createClientIdForBookmarkId(null);
-        assertNull(clientId);
     }
 
-    /**
-     * Ensure that ClientId works properly.
-     */
+    /** Ensure that ClientId works properly. */
     @Test
     @Feature({"OfflinePages"})
     public void testClientIdConstructor() {

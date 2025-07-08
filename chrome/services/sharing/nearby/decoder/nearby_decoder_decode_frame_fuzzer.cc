@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/services/sharing/nearby/decoder/nearby_decoder.h"
 
 #include <stddef.h>
@@ -32,7 +37,7 @@ struct Environment {
   }
 
   base::SingleThreadTaskExecutor task_executor;
-  mojo::Remote<sharing::mojom::NearbySharingDecoder> remote;
+  mojo::Remote<::sharing::mojom::NearbySharingDecoder> remote;
   std::unique_ptr<sharing::NearbySharingDecoder> decoder;
 };
 
@@ -44,7 +49,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   environment->decoder->DecodeFrame(
       buffer,
       base::BindOnce([](base::RunLoop* run_loop,
-                        sharing::mojom::FramePtr frame) { run_loop->Quit(); },
+                        ::sharing::mojom::FramePtr frame) { run_loop->Quit(); },
                      &run_loop));
   run_loop.Run();
 

@@ -8,6 +8,7 @@
 
 #include "base/auto_reset.h"
 #include "base/feature_list.h"
+#include "base/trace_event/trace_event.h"
 #include "cc/trees/layer_tree_host.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/web/web_content_capture_client.h"
@@ -18,6 +19,7 @@
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -53,6 +55,17 @@ ContentCaptureTask::ContentCaptureTask(LocalFrame& local_frame_root,
   task_delay_ = std::make_unique<TaskDelay>(local_frame_root.Client()
                                                 ->GetWebContentCaptureClient()
                                                 ->GetTaskInitialDelay());
+
+  // The histogram is all about time, just disable it if high resolution isn't
+  // supported.
+  if (base::TimeTicks::IsHighResolution()) {
+    histogram_reporter_ =
+        base::MakeRefCounted<ContentCaptureTaskHistogramReporter>();
+    task_session_->SetSentNodeCountCallback(
+        WTF::BindRepeating(&ContentCaptureTaskHistogramReporter::
+                               RecordsSentContentCountPerDocument,
+                           histogram_reporter_));
+  }
 }
 
 ContentCaptureTask::~ContentCaptureTask() = default;
@@ -89,10 +102,26 @@ bool ContentCaptureTask::CaptureContent(Vector<cc::NodeInfo>& data) {
 bool ContentCaptureTask::CaptureContent() {
   DCHECK(task_session_);
   Vector<cc::NodeInfo> buffer;
+  if (histogram_reporter_) {
+    histogram_reporter_->OnCaptureContentStarted();
+  }
   bool result = CaptureContent(buffer);
   if (!buffer.empty())
     task_session_->SetCapturedContent(buffer);
+  if (histogram_reporter_) {
+    histogram_reporter_->OnCaptureContentEnded(buffer.size());
+  }
   return result;
+}
+
+void ContentCaptureTask::EndBatchContent(
+    TaskSession::DocumentSession& doc_session) {
+  auto* document = doc_session.GetDocument();
+  CHECK(document);
+  auto* client = GetWebContentCaptureClient(*document);
+  CHECK(client);
+
+  client->DidCompleteBatchCaptureContent();
 }
 
 void ContentCaptureTask::SendContent(
@@ -102,7 +131,7 @@ void ContentCaptureTask::SendContent(
   auto* client = GetWebContentCaptureClient(*document);
   DCHECK(client);
 
-  WebVector<WebContentHolder> content_batch;
+  std::vector<WebContentHolder> content_batch;
   content_batch.reserve(kBatchSize);
   // Only send changed content after the new content was sent.
   bool sending_changed_content = !doc_session.HasUnsentCapturedContent();
@@ -159,12 +188,15 @@ bool ContentCaptureTask::ProcessDocumentSession(
          doc_session.HasUnsentChangedContent()) {
     SendContent(doc_session);
     if (ShouldPause()) {
+      EndBatchContent(doc_session);
       return !doc_session.HasUnsentData();
     }
   }
   // Sent the detached nodes.
-  if (doc_session.HasUnsentDetachedNodes())
+  if (doc_session.HasUnsentDetachedNodes()) {
     content_capture_client->DidRemoveContent(doc_session.MoveDetachedNodes());
+  }
+  EndBatchContent(doc_session);
   DCHECK(!doc_session.HasUnsentData());
   return true;
 }
@@ -260,6 +292,9 @@ bool ContentCaptureTask::ShouldPause() {
 void ContentCaptureTask::CancelTask() {
   if (delay_task_.IsActive())
     delay_task_.Stop();
+}
+void ContentCaptureTask::ClearDocumentSessionsForTesting() {
+  task_session_->ClearDocumentSessionsForTesting();
 }
 
 base::TimeDelta ContentCaptureTask::GetTaskNextFireIntervalForTesting() const {

@@ -57,6 +57,16 @@ void ExtensionsTest::SetUp() {
   browser_context_ = std::make_unique<content::TestBrowserContext>();
   incognito_context_ = CreateTestIncognitoContext();
 
+  // Ensure `browser_context_` and `incognito_context_` are marked as live
+  // objects. This prevents issues where they might be allocated to the same
+  // memory addresses as objects that were deleted in the TearDown() of previous
+  // tests. Otherwise, this can trigger the CHECK failure of
+  // DependencyManager::AssertContextWasntDestroyed().
+  BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(
+      browser_context_.get());
+  BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(
+      incognito_context_.get());
+
   if (!extensions_browser_client_) {
     extensions_browser_client_ =
         std::make_unique<TestExtensionsBrowserClient>();
@@ -81,11 +91,11 @@ void ExtensionsTest::SetUp() {
   pref_service_ = factory.Create(pref_registry);
   extensions_browser_client_->set_pref_service(pref_service_.get());
 
-  std::unique_ptr<ExtensionPrefs> extension_prefs(ExtensionPrefs::Create(
+  std::unique_ptr<ExtensionPrefs> extension_prefs = ExtensionPrefs::Create(
       browser_context(), pref_service_.get(),
       browser_context()->GetPath().AppendASCII("Extensions"),
       extension_pref_value_map_.get(), false /* extensions_disabled */,
-      std::vector<EarlyExtensionPrefsObserver*>()));
+      std::vector<EarlyExtensionPrefsObserver*>());
 
   ExtensionPrefsFactory::GetInstance()->SetInstanceForTesting(
       browser_context(), std::move(extension_prefs));

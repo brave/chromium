@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/web/js_messaging/web_frame_impl.h"
-
 #import <WebKit/WebKit.h>
 
 #import "base/functional/bind.h"
@@ -11,6 +9,7 @@
 #import "base/test/ios/wait_util.h"
 #import "ios/web/js_messaging/java_script_content_world.h"
 #import "ios/web/js_messaging/page_script_util.h"
+#import "ios/web/js_messaging/web_frame_impl.h"
 #import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/test/web_state_test_util.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
@@ -19,10 +18,6 @@
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using base::test::ios::kWaitForJSCompletionTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
@@ -42,7 +37,7 @@ web::WebFrame* GetChildWebFrameForWebState(web::WebState* web_state) {
   }
   return iframe;
 }
-}
+}  // namespace
 
 namespace web {
 
@@ -60,7 +55,7 @@ TEST_F(WebFrameImplIntTest, CallJavaScriptFunctionOnMainFrame) {
 
   __block bool called = false;
   main_frame->CallJavaScriptFunction(
-      "message.getFrameId", base::Value::List(),
+      "getFrameId", base::Value::List(),
       base::BindOnce(^(const base::Value* value) {
         ASSERT_TRUE(value->is_string());
         EXPECT_EQ(value->GetString(), main_frame->GetFrameId());
@@ -89,7 +84,7 @@ TEST_F(WebFrameImplIntTest, CallJavaScriptFunctionOnIframe) {
 
   __block bool called = false;
   iframe->CallJavaScriptFunction(
-      "message.getFrameId", base::Value::List(),
+      "getFrameId", base::Value::List(),
       base::BindOnce(^(const base::Value* value) {
         ASSERT_TRUE(value->is_string());
         EXPECT_EQ(value->GetString(), iframe->GetFrameId());
@@ -166,33 +161,88 @@ TEST_F(WebFrameImplIntTest, CallJavaScriptFunctionMainFramePageContentWorld) {
   }));
 }
 
-// Tests that the expected result is received from executing a JavaScript
-// function via `CallJavaScriptFunction` on the main frame in an isolated
-// world.
-TEST_F(WebFrameImplIntTest, CallJavaScriptFunctionMainFrameIsolatedWorld) {
-  ASSERT_TRUE(LoadHtml("<p>"));
-  WKWebView* web_view =
-      [web::test::GetWebController(web_state()) ensureWebViewCreated];
-  test::ExecuteJavaScript(web_view, WKContentWorld.defaultClientWorld,
-                          @"__gCrWeb = {};"
-                          @"__gCrWeb['fakeFunction'] = function() {"
-                          @"  return '10';"
-                          @"}");
+// Test fixture for testing WebFrameImpl in different content worlds.
+class WebFrameImplContentWorldIntTest
+    : public WebFrameImplIntTest,
+      public testing::WithParamInterface<ContentWorld> {
+ protected:
+  // Returns the main frame of the test's content world.
+  WebFrameImpl* main_frame() {
+    return static_cast<web::WebFrameImpl*>(
+        web_state()->GetWebFramesManager(GetParam())->GetMainWebFrame());
+  }
 
-  web::WebFrameImpl* main_frame_impl = static_cast<web::WebFrameImpl*>(
-      web_state()->GetPageWorldWebFramesManager()->GetMainWebFrame());
+  // Returns the `WKContentWorld` in which `WebFrameImpl` should execute
+  // scripts.
+  WKContentWorld* GetWKContentWorld() {
+    switch (GetParam()) {
+      case ContentWorld::kIsolatedWorld:
+        return WKContentWorld.defaultClientWorld;
+      case ContentWorld::kPageContentWorld:
+        return WKContentWorld.pageWorld;
+      case ContentWorld::kAllContentWorlds:
+        NOTREACHED();
+    }
+  }
+
+  // Executes `script` in the WKWebView associated to the current WebState in
+  // the test's content world.
+  void ExecuteJavaScriptInTestContentWorld(NSString* script) {
+    WKWebView* web_view =
+        [web::test::GetWebController(web_state()) ensureWebViewCreated];
+    test::ExecuteJavaScript(web_view, GetWKContentWorld(), script);
+  }
+};
+
+// Tests that the expected result is received from executing a script via
+// `ExecuteJavaScript` on the main frame in each content world.
+TEST_P(WebFrameImplContentWorldIntTest, ExecuteJavaScriptMainFrame) {
+  ASSERT_TRUE(LoadHtml("<p>"));
+  ExecuteJavaScriptInTestContentWorld(@"__gCrWeb = {};"
+                                      @"__gCrWeb['fakeFunction'] = function() {"
+                                      @"  return '10';"
+                                      @"}");
+
+  web::WebFrameImpl* main_frame_impl = main_frame();
   ASSERT_TRUE(main_frame_impl);
 
-  JavaScriptContentWorld world(GetBrowserState(),
-                               WKContentWorld.defaultClientWorld);
+  __block bool called = false;
+  auto block = ^(const base::Value* value, NSError* error) {
+    ASSERT_FALSE(error);
+    ASSERT_TRUE(value->is_string());
+    EXPECT_EQ(value->GetString(), "10");
+    called = true;
+  };
+  EXPECT_TRUE(main_frame_impl->ExecuteJavaScript(u"__gCrWeb['fakeFunction']()",
+                                                 base::BindOnce(block)));
+
+  EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
+    return called;
+  }));
+}
+
+// Tests that the expected result is received from executing a JavaScript
+// function via `CallJavaScriptFunction` on the main frame in each content
+// world.
+TEST_P(WebFrameImplContentWorldIntTest,
+       CallJavaScriptFunctionMainFrameIsolatedWorld) {
+  ASSERT_TRUE(LoadHtml("<p>"));
+  ExecuteJavaScriptInTestContentWorld(@"__gCrWeb = {};"
+                                      @"__gCrWeb['fakeFunction'] = function() {"
+                                      @"  return '10';"
+                                      @"}");
+
+  web::WebFrameImpl* main_frame_impl = main_frame();
+  ASSERT_TRUE(main_frame_impl);
+
   __block bool called = false;
   auto block = ^(const base::Value* value) {
     ASSERT_TRUE(value->is_string());
     EXPECT_EQ(value->GetString(), "10");
     called = true;
   };
-  EXPECT_TRUE(main_frame_impl->CallJavaScriptFunctionInContentWorld(
-      "fakeFunction", base::Value::List(), &world, base::BindOnce(block),
+  EXPECT_TRUE(main_frame_impl->CallJavaScriptFunction(
+      "fakeFunction", base::Value::List(), base::BindOnce(block),
       // Increase feature timeout in order to fail on test specific timeout.
       2 * kWaitForJSCompletionTimeout));
 
@@ -200,5 +250,10 @@ TEST_F(WebFrameImplIntTest, CallJavaScriptFunctionMainFrameIsolatedWorld) {
     return called;
   }));
 }
+
+INSTANTIATE_TEST_SUITE_P(/*no prefix*/,
+                         WebFrameImplContentWorldIntTest,
+                         ::testing::Values(ContentWorld::kIsolatedWorld,
+                                           ContentWorld::kPageContentWorld));
 
 }  // namespace web

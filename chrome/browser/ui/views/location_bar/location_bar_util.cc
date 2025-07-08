@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/views/location_bar/location_bar_util.h"
+
 #include "base/feature_list.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/user_education/common/user_education_class_properties.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop.h"
@@ -18,11 +19,6 @@
 void ConfigureInkDropForRefresh2023(views::View* const view,
                                     const ChromeColorIds hover_color_id,
                                     const ChromeColorIds ripple_color_id) {
-  // TODO(crbug.com/1450984): Figure out if one of these are redundant.
-  CHECK(features::IsChromeRefresh2023() ||
-        OmniboxFieldTrial::IsChromeRefreshIconsEnabled() ||
-        base::FeatureList::IsEnabled(omnibox::kExpandedStateColors));
-
   views::InkDrop::Get(view)->SetMode(views::InkDropHost::InkDropMode::ON);
   views::InkDrop::Get(view)->SetLayerRegion(views::LayerRegion::kAbove);
 
@@ -43,8 +39,15 @@ void ConfigureInkDropForRefresh2023(views::View* const view,
 
   views::InkDrop::Get(view)->SetCreateHighlightCallback(base::BindRepeating(
       [](views::View* view, ChromeColorIds hover_color_id) {
-        const SkColor hover_color =
-            view->GetColorProvider()->GetColor(hover_color_id);
+        const auto* color_provider = view->GetColorProvider();
+        SkColor hover_color = color_provider->GetColor(hover_color_id);
+
+        // override the hover color if this is triggered by `user_education`.
+        if (view->GetProperty(user_education::kHasInProductHelpPromoKey)) {
+          hover_color = color_provider->GetColor(
+              ui::kColorButtonFeatureAttentionHighlight);
+        }
+
         const float hover_alpha = SkColorGetA(hover_color);
 
         auto ink_drop_highlight = std::make_unique<views::InkDropHighlight>(

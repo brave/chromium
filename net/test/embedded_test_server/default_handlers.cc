@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -26,6 +27,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -137,7 +139,7 @@ std::unique_ptr<HttpResponse> HandleEchoCookieWithStatus(
   return http_response;
 }
 
-// TODO(https://crbug.com/1138913): Remove when request handlers are
+// TODO(crbug.com/40153192): Remove when request handlers are
 // implementable in Android's embedded test server implementation
 std::unique_ptr<HttpResponse> HandleEchoCriticalHeader(
     const HttpRequest& request) {
@@ -191,8 +193,9 @@ std::unique_ptr<HttpResponse> HandleEchoTitle(const HttpRequest& request) {
 // /echoall?QUERY
 // Responds with the list of QUERY and the request headers.
 //
-// Alternative form:
-// /echoall/nocache?QUERY prevents caching of the response.
+// Alternative forms:
+// - /echoall/nocache?QUERY prevents caching of the response.
+// - /echoall/cache?QUERY caches the response using a max-age.
 std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   auto http_response = std::make_unique<BasicHttpResponse>();
 
@@ -221,10 +224,11 @@ std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   http_response->set_content_type("text/html");
   http_response->set_content(body);
 
-  if (base::EndsWith(request.GetURL().path_piece(), "/nocache",
-                     base::CompareCase::SENSITIVE)) {
+  if (request.GetURL().path_piece().ends_with("/nocache")) {
     http_response->AddCustomHeader("Cache-Control",
                                    "no-cache, no-store, must-revalidate");
+  } else if (request.GetURL().path_piece().ends_with("/cache")) {
+    http_response->AddCustomHeader("Cache-Control", "max-age=3600");
   }
 
   return http_response;
@@ -321,8 +325,9 @@ std::unique_ptr<HttpResponse> HandleExpectAndSetCookie(
 
 // An internal utility to extract HTTP Headers from a URL in the format of
 // "/url&KEY1: VALUE&KEY2: VALUE2". Returns a header key to header value map.
-std::map<std::string, std::string> ExtractHeadersFromQuery(const GURL& url) {
-  std::map<std::string, std::string> key_to_value;
+std::multimap<std::string, std::string> ExtractHeadersFromQuery(
+    const GURL& url) {
+  std::multimap<std::string, std::string> key_to_value;
   if (url.has_query()) {
     RequestQuery headers = ParseQuery(url);
     for (const auto& header : headers) {
@@ -387,7 +392,7 @@ std::unique_ptr<HttpResponse> HandleSetHeaderWithFile(
   auto http_response = std::make_unique<BasicHttpResponse>();
 
   base::FilePath server_root;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &server_root);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &server_root);
   base::FilePath file_path =
       server_root.AppendASCII(request_url.path().substr(prefix.size() + 1));
   std::string file_content;
@@ -513,7 +518,7 @@ std::unique_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
       base::FilePath().AppendASCII(request.relative_url.substr(1));
   if (file_path.FinalExtension() == FILE_PATH_LITERAL("gif")) {
     base::FilePath server_root;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &server_root);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &server_root);
     base::FilePath gif_path = server_root.AppendASCII(kLogoPath);
     std::string gif_data;
     base::ReadFileToString(gif_path, &gif_data);
@@ -631,9 +636,12 @@ std::unique_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
   return http_response;
 }
 
-// /server-redirect?URL (Also /server-redirect-xxx?URL)
-// Returns a server redirect to URL.
+// 1. /server-redirect?URL or /server-redirect-xxx?URL
+//    Returns a server redirect to URL.
+// 2. /no-cors-server-redirect?URL or /no-cors-server-redirect-xxx?URL
+//    Returns a server redirect to URL which does not allow CORS.
 std::unique_ptr<HttpResponse> HandleServerRedirect(HttpStatusCode redirect_code,
+                                                   bool allow_cors,
                                                    const HttpRequest& request) {
   GURL request_url = request.GetURL();
   std::string dest =
@@ -643,16 +651,20 @@ std::unique_ptr<HttpResponse> HandleServerRedirect(HttpStatusCode redirect_code,
   if (request.method == METHOD_OPTIONS) {
     auto http_response = std::make_unique<BasicHttpResponse>();
     http_response->set_code(HTTP_OK);
-    http_response->AddCustomHeader("Access-Control-Allow-Origin", "*");
-    http_response->AddCustomHeader("Access-Control-Allow-Methods", "*");
-    http_response->AddCustomHeader("Access-Control-Allow-Headers", "*");
+    if (allow_cors) {
+      http_response->AddCustomHeader("Access-Control-Allow-Origin", "*");
+      http_response->AddCustomHeader("Access-Control-Allow-Methods", "*");
+      http_response->AddCustomHeader("Access-Control-Allow-Headers", "*");
+    }
     return http_response;
   }
 
   auto http_response = std::make_unique<BasicHttpResponse>();
   http_response->set_code(redirect_code);
   http_response->AddCustomHeader("Location", dest);
-  http_response->AddCustomHeader("Access-Control-Allow-Origin", "*");
+  if (allow_cors) {
+    http_response->AddCustomHeader("Access-Control-Allow-Origin", "*");
+  }
   http_response->set_content_type("text/html");
   http_response->set_content(
       base::StringPrintf("<!doctype html><p>Redirecting to %s", dest.c_str()));
@@ -836,21 +848,10 @@ std::unique_ptr<HttpResponse> HandleExabyteResponse(
 // enough memory to contain the body, but DCHECKs if that fails.
 std::unique_ptr<HttpResponse> HandleGzipBody(const HttpRequest& request) {
   std::string uncompressed_body = request.GetURL().query();
-  // Attempt to pick size that's large enough even in the worst case (deflate
-  // block headers should be shorter than 512 bytes, and deflating should never
-  // double size of data, modulo headers).
-  // TODO(mmenke): This is rather awkward. Worth improving CompressGzip?
-  std::vector<char> compressed_body(uncompressed_body.size() * 2 + 512);
-  size_t compressed_size = compressed_body.size();
-  CompressGzip(uncompressed_body.c_str(), uncompressed_body.size(),
-               compressed_body.data(), &compressed_size,
-               true /* gzip_framing */);
-  // CompressGzip should DCHECK itself if this fails, anyways.
-  DCHECK_GE(compressed_body.size(), compressed_size);
+  auto compressed_body = CompressGzip(uncompressed_body);
 
   auto http_response = std::make_unique<BasicHttpResponse>();
-  http_response->set_content(
-      std::string(compressed_body.data(), compressed_size));
+  http_response->set_content(base::as_string_view(compressed_body));
   http_response->AddCustomHeader("Content-Encoding", "gzip");
   http_response->AddCustomHeader("Cache-Control", "max-age=60");
   return http_response;
@@ -1000,6 +1001,28 @@ EmbeddedTestServer::HandleRequestCallback PrefixHandler(
 EmbeddedTestServer::HandleRequestCallback ServerRedirectHandler(
     const std::string& prefix,
     std::unique_ptr<HttpResponse> (*handler)(HttpStatusCode redirect_code,
+                                             bool allow_cors,
+                                             const HttpRequest& request),
+    HttpStatusCode redirect_code) {
+  return base::BindRepeating(
+      &HandlePrefixedRequest, prefix,
+      base::BindRepeating(handler, redirect_code, /*allow_cors=*/true));
+}
+
+EmbeddedTestServer::HandleRequestCallback NoCorsServerRedirectHandler(
+    const std::string& prefix,
+    std::unique_ptr<HttpResponse> (*handler)(HttpStatusCode redirect_code,
+                                             bool allow_cors,
+                                             const HttpRequest& request),
+    HttpStatusCode redirect_code) {
+  return base::BindRepeating(
+      &HandlePrefixedRequest, prefix,
+      base::BindRepeating(handler, redirect_code, /*allow_cors=*/false));
+}
+
+EmbeddedTestServer::HandleRequestCallback ServerRedirectWithCookieHandler(
+    const std::string& prefix,
+    std::unique_ptr<HttpResponse> (*handler)(HttpStatusCode redirect_code,
                                              const HttpRequest& request),
     HttpStatusCode redirect_code) {
   return base::BindRepeating(&HandlePrefixedRequest, prefix,
@@ -1056,10 +1079,27 @@ void RegisterDefaultHandlers(EmbeddedTestServer* server) {
   server->RegisterDefaultHandler(ServerRedirectHandler(
       "/server-redirect-308", &HandleServerRedirect, HTTP_PERMANENT_REDIRECT));
 
-  server->RegisterDefaultHandler(ServerRedirectHandler(
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect", &HandleServerRedirect,
+      HTTP_MOVED_PERMANENTLY));
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect-301", &HandleServerRedirect,
+      HTTP_MOVED_PERMANENTLY));
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect-302", &HandleServerRedirect, HTTP_FOUND));
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect-303", &HandleServerRedirect, HTTP_SEE_OTHER));
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect-307", &HandleServerRedirect,
+      HTTP_TEMPORARY_REDIRECT));
+  server->RegisterDefaultHandler(NoCorsServerRedirectHandler(
+      "/no-cors-server-redirect-308", &HandleServerRedirect,
+      HTTP_PERMANENT_REDIRECT));
+
+  server->RegisterDefaultHandler(ServerRedirectWithCookieHandler(
       "/server-redirect-with-cookie", &HandleServerRedirectWithCookie,
       HTTP_MOVED_PERMANENTLY));
-  server->RegisterDefaultHandler(ServerRedirectHandler(
+  server->RegisterDefaultHandler(ServerRedirectWithCookieHandler(
       "/server-redirect-with-secure-cookie",
       &HandleServerRedirectWithSecureCookie, HTTP_MOVED_PERMANENTLY));
 

@@ -10,19 +10,21 @@ import android.os.Bundle;
 import android.view.View;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /**
- * This collection of static methods provides reauthentication primitives for passwords
- * settings UI.
+ * This collection of static methods provides reauthentication primitives for passwords settings UI.
  */
+@NullMarked
 public final class ReauthenticationManager {
     // Used for various ways to override checks provided by this class.
     @IntDef({OverrideState.NOT_OVERRIDDEN, OverrideState.AVAILABLE, OverrideState.UNAVAILABLE})
@@ -47,13 +49,11 @@ public final class ReauthenticationManager {
     public static final String FRAGMENT_TAG = "reauthentication-manager-fragment";
 
     // Defines how long a successful reauthentication remains valid.
-    @VisibleForTesting
-    public static final int VALID_REAUTHENTICATION_TIME_INTERVAL_MILLIS = 60000;
+    @VisibleForTesting public static final int VALID_REAUTHENTICATION_TIME_INTERVAL_MILLIS = 60000;
 
     // Used for verifying if the last successful reauthentication is still valid. The null value
     // means there was no successful reauthentication yet.
-    @Nullable
-    private static Long sLastReauthTimeMillis;
+    private static @Nullable Long sLastReauthTimeMillis;
 
     // Stores the reauth scope used when |sLastReauthTimeMillis| was reset last time.
     private static @ReauthScope int sLastReauthScope = ReauthScope.ONE_AT_A_TIME;
@@ -128,15 +128,18 @@ public final class ReauthenticationManager {
     /**
      * Initiates the reauthentication prompt with a given description.
      *
-     * @param descriptionId   The resource ID of the string to be displayed to explain the reason
-     *                        for the reauthentication.
+     * @param descriptionId The resource ID of the string to be displayed to explain the reason for
+     *     the reauthentication.
      * @param containerViewId The ID of the container, fragments of which will get replaced with the
-     *                        reauthentication prompt. It may be equal to View.NO_ID in tests or
-     *                        when coming from password check.
+     *     reauthentication prompt. It may be equal to View.NO_ID in tests or when coming from
+     *     password check.
      * @param fragmentManager For putting the lock screen on the transaction stack.
      */
-    public static void displayReauthenticationFragment(int descriptionId, int containerViewId,
-            FragmentManager fragmentManager, @ReauthScope int scope) {
+    public static void displayReauthenticationFragment(
+            int descriptionId,
+            int containerViewId,
+            FragmentManager fragmentManager,
+            @ReauthScope int scope) {
         if (sSkipSystemReauth) return;
 
         Fragment passwordReauthentication = new PasswordReauthenticationFragment();
@@ -160,19 +163,22 @@ public final class ReauthenticationManager {
      * long as the user authenticated less than {@code VALID_REAUTHENTICATION_TIME_INTERVAL_MILLIS}
      * milliseconds ago, for a scope including the passed {@code scope} argument. The {@code BULK}
      * scope includes the {@code ONE_AT_A_TIME} scope.
+     *
      * @param scope The scope the reauth should be valid for.
      */
     public static boolean authenticationStillValid(@ReauthScope int scope) {
         final boolean scopeIncluded =
                 scope == sLastReauthScope || sLastReauthScope == ReauthScope.BULK;
-        return sLastReauthTimeMillis != null && scopeIncluded
+        return sLastReauthTimeMillis != null
+                && scopeIncluded
                 && (System.currentTimeMillis() - sLastReauthTimeMillis)
-                < VALID_REAUTHENTICATION_TIME_INTERVAL_MILLIS;
+                        < VALID_REAUTHENTICATION_TIME_INTERVAL_MILLIS;
     }
 
     /**
      * Checks whether the user set up screen lock so that it can be used for reauthentication. Can
      * be overridden in tests.
+     *
      * @param context The context to retrieve the KeyguardManager to find out.
      */
     public static boolean isScreenLockSetUp(Context context) {

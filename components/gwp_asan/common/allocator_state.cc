@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/gwp_asan/common/allocator_state.h"
 
 #include <algorithm>
@@ -16,7 +21,7 @@
 namespace gwp_asan {
 namespace internal {
 
-AllocatorState::AllocatorState() {}
+AllocatorState::AllocatorState() = default;
 
 AllocatorState::GetMetadataReturnType AllocatorState::GetMetadataForAddress(
     uintptr_t exception_address,
@@ -84,10 +89,6 @@ bool AllocatorState::IsValid() const {
 
   if (!metadata_addr || !slot_to_metadata_addr)
     return false;
-
-  if (num_lightweight_detector_metadata > kMaxLightweightMetadata) {
-    return false;
-  }
 
   return true;
 }
@@ -172,21 +173,6 @@ AllocatorState::SlotIdx AllocatorState::AddrToSlot(uintptr_t addr) const {
 }
 
 AllocatorState::SlotMetadata::SlotMetadata() = default;
-
-AllocatorState::LightweightSlotMetadata::LightweightSlotMetadata() = default;
-
-AllocatorState::LightweightSlotMetadata&
-AllocatorState::GetLightweightSlotMetadataById(
-    LightweightDetector::MetadataId id,
-    LightweightSlotMetadata* metadata_arr) {
-  return metadata_arr[id % num_lightweight_detector_metadata];
-}
-
-bool AllocatorState::HasLightweightMetadataForId(
-    LightweightDetector::MetadataId id,
-    LightweightSlotMetadata* metadata_arr) {
-  return GetLightweightSlotMetadataById(id, metadata_arr).lightweight_id == id;
-}
 
 }  // namespace internal
 }  // namespace gwp_asan

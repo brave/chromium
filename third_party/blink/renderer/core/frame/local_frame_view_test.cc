@@ -7,15 +7,19 @@
 #include <memory>
 
 #include "base/test/scoped_feature_list.h"
+#include "base/test/with_feature_override.h"
 #include "content/test/test_blink_web_unit_test_support.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
+#include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
+#include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/media_type_names.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/paint/paint_property_tree_printer.h"
@@ -25,6 +29,9 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -48,7 +55,8 @@ class AnimationMockChromeClient : public RenderingTestChromeClient {
   }
 
   void ScheduleAnimation(const LocalFrameView*,
-                         base::TimeDelta = base::TimeDelta()) override {
+                         base::TimeDelta = base::TimeDelta(),
+                         bool urgent = false) override {
     has_scheduled_animation_ = true;
   }
   bool has_scheduled_animation_;
@@ -158,7 +166,7 @@ TEST_F(LocalFrameViewTest, UpdateLifecyclePhasesForPrintingDetachedFrame) {
   SetBodyInnerHTML("<iframe style='display: none'></iframe>");
   SetChildFrameHTML("A");
 
-  ChildFrame().StartPrinting(gfx::SizeF(200, 200), 1);
+  ChildFrame().StartPrinting(WebPrintParams(gfx::SizeF(200, 200)));
   ChildDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   // The following checks that the detached frame has been walked for PrePaint.
@@ -174,7 +182,7 @@ TEST_F(LocalFrameViewTest, PrintFrameUpdateAllLifecyclePhases) {
   SetBodyInnerHTML("<iframe></iframe>");
   SetChildFrameHTML("A");
 
-  ChildFrame().StartPrinting(gfx::SizeF(200, 200), 1);
+  ChildFrame().StartPrinting(WebPrintParams(gfx::SizeF(200, 200)));
   ChildDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
@@ -204,7 +212,8 @@ TEST_F(LocalFrameViewTest, CanHaveScrollbarsIfScrollingAttrEqualsNoChanged) {
 
   ChildDocument().WillChangeFrameOwnerProperties(
       0, 0, mojom::blink::ScrollbarMode::kAlwaysOn, false,
-      mojom::blink::ColorScheme::kLight);
+      mojom::blink::ColorScheme::kLight,
+      mojom::blink::PreferredColorScheme::kLight);
   EXPECT_TRUE(ChildDocument().View()->CanHaveScrollbars());
 }
 
@@ -715,6 +724,17 @@ TEST_F(LocalFrameViewTest, DarkModeDocumentBackground) {
   EXPECT_EQ(frame_view->DocumentBackgroundColor(), Color(18, 18, 18));
 }
 
+TEST_F(LocalFrameViewTest,
+       AdjustMediaTypeForPrintingRestoresMediaTypeCorrectly) {
+  auto* frame_view = GetDocument().View();
+  frame_view->SetMediaType(media_type_names::kScreen);
+  GetDocument().GetSettings()->SetMediaTypeOverride("print");
+  frame_view->AdjustMediaTypeForPrinting(true);
+  frame_view->AdjustMediaTypeForPrinting(false);
+  GetDocument().GetSettings()->SetMediaTypeOverride(g_null_atom);
+  EXPECT_EQ(frame_view->MediaType(), "screen");
+}
+
 class FencedFrameLocalFrameViewTest : private ScopedFencedFramesForTest,
                                       public SimTest {
  public:
@@ -732,6 +752,118 @@ TEST_F(FencedFrameLocalFrameViewTest, DoNotDeferCommitsInFencedFrames) {
       blink::FencedFrame::DeprecatedFencedFrameMode::kDefault);
   GetDocument().SetDeferredCompositorCommitIsAllowed(true);
   EXPECT_FALSE(GetDocument().View()->WillDoPaintHoldingForFCP());
+}
+
+class ResizableLocalFrameViewTest : public testing::Test {
+ public:
+  void SetUp() override { web_view_helper_.Initialize(); }
+
+  void TearDown() override { web_view_helper_.Reset(); }
+
+  Document& GetDocument() {
+    return *static_cast<Document*>(
+        web_view_helper_.LocalMainFrame()->GetDocument());
+  }
+
+  void UpdateAllLifecyclePhasesForTest() {
+    GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+  }
+
+  void SetHtmlInnerHTML(const char* content) {
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        String::FromUTF8(content));
+    UpdateAllLifecyclePhasesForTest();
+  }
+
+  void Resize(const gfx::Size& size) { web_view_helper_.Resize(size); }
+
+  void Focus() {
+    web_view_helper_.GetWebView()->MainFrameWidget()->SetFocus(true);
+  }
+
+ private:
+  test::TaskEnvironment task_environment_;
+  frame_test_helpers::WebViewHelper web_view_helper_;
+};
+
+TEST_F(ResizableLocalFrameViewTest, FocusedElementStaysOnResizeWithCQ) {
+  Resize(gfx::Size(640, 480));
+  Focus();
+  test::RunPendingTasks();
+
+  UpdateAllLifecyclePhasesForTest();
+  SetHtmlInnerHTML(R"HTML(
+    <style>
+      #fixed {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 10px;
+        height: 10px;
+        background: blue;
+      }
+      #container {
+        container-type: size;
+      }
+      @container (max-width: 630px) {
+        input {
+          background: blue;
+        }
+      }
+    </style>
+    <div id=fixed></div>
+    <div id=container>
+      <input id=input type=text></input>
+    </div>
+  )HTML");
+
+  auto* element = GetDocument().getElementById(AtomicString("input"));
+  ASSERT_TRUE(element);
+
+  element->Focus();
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(element, GetDocument().FocusedElement());
+
+  Resize(gfx::Size(600, 480));
+
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(element, GetDocument().FocusedElement());
+}
+
+class PrerenderLocalFrameViewTest : public base::test::WithFeatureOverride,
+                                    public SimTest {
+ public:
+  PrerenderLocalFrameViewTest()
+      : base::test::WithFeatureOverride(
+            features::kPrerender2EarlyDocumentLifecycleUpdate) {}
+};
+
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PrerenderLocalFrameViewTest);
+
+TEST_P(PrerenderLocalFrameViewTest, DryRunPaintBeforePrerenderActivation) {
+  InitializePrerenderPageRoot();
+  ASSERT_TRUE(GetDocument().IsPrerendering());
+  SimRequest resource("https://example.test", "text/html");
+  LoadURL("https://example.test");
+  resource.Complete(R"(
+    <body>
+    This is a prerendering page.
+    </body>
+  )");
+  PaintControllerPersistentData& pd =
+      GetDocument().View()->GetPaintControllerPersistentDataForTesting();
+
+  if (base::FeatureList::IsEnabled(
+          features::kPrerender2EarlyDocumentLifecycleUpdate)) {
+    EXPECT_EQ(DocumentLifecycle::kPaintClean,
+              GetDocument().Lifecycle().GetState());
+    EXPECT_FALSE(GetPage().GetVisualViewport().NeedsPaintPropertyUpdate());
+    EXPECT_EQ(1u, pd.GetPaintChunks().size());
+  } else {
+    EXPECT_EQ(DocumentLifecycle::kLayoutClean,
+              GetDocument().Lifecycle().GetState());
+    EXPECT_TRUE(GetPage().GetVisualViewport().NeedsPaintPropertyUpdate());
+  }
 }
 
 }  // namespace

@@ -8,7 +8,7 @@
 
 #include "base/json/values_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/reporting/extension_info.h"
 #include "chrome/browser/enterprise/reporting/extension_request/extension_request_report_generator.h"
@@ -41,6 +41,7 @@ void ProfileReportGeneratorDesktop::GetExtensionInfo(
 
 void ProfileReportGeneratorDesktop::GetExtensionRequest(
     enterprise_management::ChromeUserProfileInfo* report) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (!profile_->GetPrefs()->GetBoolean(prefs::kCloudExtensionRequestEnabled))
     return;
   const base::Value::Dict& pending_requests =
@@ -70,10 +71,10 @@ void ProfileReportGeneratorDesktop::GetExtensionRequest(
     request->set_id(extension_id);
 
     const auto& request_data_dict = request_data.GetDict();
-    absl::optional<base::Time> timestamp = ::base::ValueToTime(
+    std::optional<base::Time> timestamp = ::base::ValueToTime(
         request_data_dict.Find(extension_misc::kExtensionRequestTimestamp));
     if (timestamp)
-      request->set_request_timestamp(timestamp->ToJavaTime());
+      request->set_request_timestamp(timestamp->InMillisecondsSinceUnixEpoch());
 
     const std::string* justification = request_data_dict.FindString(
         extension_misc::kExtensionWorkflowJustification);
@@ -81,6 +82,7 @@ void ProfileReportGeneratorDesktop::GetExtensionRequest(
       request->set_justification(*justification);
     }
   }
+#endif
 }
 
 }  // namespace enterprise_reporting

@@ -4,7 +4,9 @@
 
 #include "ash/system/privacy_hub/microphone_privacy_switch_controller.h"
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,7 +33,6 @@
 #include "components/account_id/account_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
@@ -53,7 +54,7 @@ class FakeSensorDisabledNotificationDelegate
   }
 
   void LaunchAppAccessingMicrophone(
-      const absl::optional<std::u16string> app_name) {
+      const std::optional<std::u16string> app_name) {
     if (app_name.has_value()) {
       apps_accessing_microphone_.insert(apps_accessing_microphone_.begin(),
                                         app_name.value());
@@ -63,8 +64,7 @@ class FakeSensorDisabledNotificationDelegate
   }
 
   void CloseAppAccessingMicrophone(const std::u16string& app_name) {
-    auto it = std::find(apps_accessing_microphone_.begin(),
-                        apps_accessing_microphone_.end(), app_name);
+    auto it = std::ranges::find(apps_accessing_microphone_, app_name);
     ASSERT_NE(apps_accessing_microphone_.end(), it);
     apps_accessing_microphone_.erase(it);
 
@@ -95,44 +95,34 @@ class MockNewWindowDelegate : public testing::NiceMock<TestNewWindowDelegate> {
 class MockFrontendAPI : public PrivacyHubDelegate {
  public:
   MOCK_METHOD(void, MicrophoneHardwareToggleChanged, (bool), (override));
+  MOCK_METHOD(void, SetForceDisableCameraSwitch, (bool), (override));
+  MOCK_METHOD(void,
+              SystemGeolocationAccessLevelChanged,
+              (GeolocationAccessLevel),
+              (override));
 };
 
 }  // namespace
 
 // Test fixture used to test privacy hub specific behavior.
-// The two bool params are as follows, and every combination of the two are ran:
-// 0. `IsPrivacyIndicatorsEnabled()`
-// 1. `IsVideoConferenceEnabled()`
 class PrivacyHubMicrophoneControllerTest
     : public AshTestBase,
-      public testing::WithParamInterface<std::tuple<bool, bool>> {
+      public testing::WithParamInterface<bool> {
  public:
   PrivacyHubMicrophoneControllerTest()
       : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
     std::vector<base::test::FeatureRef> enabled_features{
         ash::features::kCrosPrivacyHub};
-    if (IsPrivacyIndicatorsEnabled()) {
-      enabled_features.push_back(features::kPrivacyIndicators);
-    }
     if (IsVideoConferenceEnabled()) {
       fake_video_conference_tray_controller_ =
           std::make_unique<FakeVideoConferenceTrayController>();
-      enabled_features.push_back(features::kVideoConference);
-      base::CommandLine::ForCurrentProcess()->AppendSwitch(
-          switches::kCameraEffectsSupportedByHardware);
+      enabled_features.push_back(features::kFeatureManagementVideoConference);
     }
     scoped_feature_list_ = std::make_unique<base::test::ScopedFeatureList>();
     scoped_feature_list_->InitWithFeatures(enabled_features, {});
-
-    auto delegate = std::make_unique<MockNewWindowDelegate>();
-    new_window_delegate_ = delegate.get();
-    window_delegate_provider_ =
-        std::make_unique<TestNewWindowDelegateProvider>(std::move(delegate));
   }
   ~PrivacyHubMicrophoneControllerTest() override {
     fake_video_conference_tray_controller_.reset();
-    new_window_delegate_ = nullptr;
-    window_delegate_provider_.reset();
   }
 
   // AshTestBase:
@@ -141,7 +131,7 @@ class PrivacyHubMicrophoneControllerTest
 
     // This makes sure a global instance of `SensorDisabledNotificationDelegate`
     // is created before running tests.
-    Shell::Get()->privacy_hub_controller()->set_frontend(&mock_frontend_);
+    Shell::Get()->privacy_hub_controller()->SetFrontend(&mock_frontend_);
 
     // Set up the fake SensorDisabledNotificationDelegate.
     scoped_delegate_ =
@@ -157,9 +147,7 @@ class PrivacyHubMicrophoneControllerTest
     AshTestBase::TearDown();
   }
 
-  bool IsPrivacyIndicatorsEnabled() { return std::get<0>(GetParam()); }
-
-  bool IsVideoConferenceEnabled() { return std::get<1>(GetParam()); }
+  bool IsVideoConferenceEnabled() { return GetParam(); }
 
   void SetUserPref(bool allowed) {
     Shell::Get()->session_controller()->GetActivePrefService()->SetBoolean(
@@ -227,7 +215,7 @@ class PrivacyHubMicrophoneControllerTest
         false, CrasAudioHandler::InputMuteChangeMethod::kOther);
   }
 
-  void LaunchApp(absl::optional<std::u16string> app_name) {
+  void LaunchApp(std::optional<std::u16string> app_name) {
     sensor_delegate()->LaunchAppAccessingMicrophone(app_name);
   }
 
@@ -245,15 +233,13 @@ class PrivacyHubMicrophoneControllerTest
     return histogram_tester_;
   }
 
-  MockNewWindowDelegate& new_window_delegate() { return *new_window_delegate_; }
+  MockNewWindowDelegate& new_window_delegate() { return new_window_delegate_; }
 
   ::testing::NiceMock<MockFrontendAPI> mock_frontend_;
 
  private:
   const base::HistogramTester histogram_tester_;
-  raw_ptr<MockNewWindowDelegate, ExperimentalAsh> new_window_delegate_ =
-      nullptr;
-  std::unique_ptr<TestNewWindowDelegateProvider> window_delegate_provider_;
+  MockNewWindowDelegate new_window_delegate_;
   std::unique_ptr<FakeVideoConferenceTrayController>
       fake_video_conference_tray_controller_;
   std::unique_ptr<base::test::ScopedFeatureList> scoped_feature_list_;
@@ -263,7 +249,7 @@ class PrivacyHubMicrophoneControllerTest
 
 INSTANTIATE_TEST_SUITE_P(All,
                          PrivacyHubMicrophoneControllerTest,
-                         testing::Combine(testing::Bool(), testing::Bool()));
+                         testing::Bool());
 
 TEST_P(PrivacyHubMicrophoneControllerTest, SetSystemMuteOnLogin) {
   for (bool microphone_allowed : {false, true, false}) {
@@ -273,11 +259,11 @@ TEST_P(PrivacyHubMicrophoneControllerTest, SetSystemMuteOnLogin) {
     const AccountId user1_account_id =
         Shell::Get()->session_controller()->GetActiveAccountId();
 
-    SimulateUserLogin("other@user.test");
+    SimulateUserLogin({"other@user.test"});
     SetUserPref(microphone_muted);
     EXPECT_EQ(CrasAudioHandler::Get()->IsInputMuted(), microphone_allowed);
 
-    SimulateUserLogin(user1_account_id);
+    SwitchActiveUser(user1_account_id);
     EXPECT_EQ(CrasAudioHandler::Get()->IsInputMuted(), microphone_muted);
   }
 }
@@ -301,10 +287,8 @@ TEST_P(PrivacyHubMicrophoneControllerTest, OnInputMuteChanged) {
 
 TEST_P(PrivacyHubMicrophoneControllerTest, OnMicrophoneMuteSwitchValueChanged) {
   EXPECT_CALL(mock_frontend_, MicrophoneHardwareToggleChanged(_));
-  Shell::Get()
-      ->privacy_hub_controller()
-      ->microphone_controller()
-      .OnInputMutedByMicrophoneMuteSwitchChanged(true);
+  MicrophonePrivacySwitchController::Get()
+      ->OnInputMutedByMicrophoneMuteSwitchChanged(true);
 }
 
 TEST_P(PrivacyHubMicrophoneControllerTest, SimpleMuteUnMute) {
@@ -705,7 +689,7 @@ TEST_P(PrivacyHubMicrophoneControllerTest, NotificationText) {
 
   // Launch an app that's using the mic, but the name of the app can not be
   // determined.
-  LaunchApp(absl::nullopt);
+  LaunchApp(std::nullopt);
 
   if (IsVideoConferenceEnabled()) {
     EXPECT_FALSE(GetSWSwitchNotification());

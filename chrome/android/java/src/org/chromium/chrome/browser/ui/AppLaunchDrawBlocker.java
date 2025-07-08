@@ -5,14 +5,12 @@
 package org.chromium.chrome.browser.ui;
 
 import android.content.Intent;
-import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.IntentHandler;
@@ -23,7 +21,7 @@ import org.chromium.chrome.browser.lifecycle.InflationObserver;
 import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
@@ -44,8 +42,6 @@ public class AppLaunchDrawBlocker {
     private final Supplier<Intent> mIntentSupplier;
     private final Supplier<Boolean> mShouldIgnoreIntentSupplier;
     private final Supplier<Boolean> mIsTabletSupplier;
-    private final Supplier<Boolean> mShouldShowOverviewPageOnStartSupplier;
-    private final Supplier<Boolean> mIsInstantStartEnabledSupplier;
     private final ObservableSupplier<Profile> mProfileSupplier;
 
     /**
@@ -59,66 +55,67 @@ public class AppLaunchDrawBlocker {
      * before the tab is ready.
      */
     private boolean mBlockDrawForInitialTab;
-    private boolean mBlockDrawForOverviewPage;
+
     private boolean mBlockDrawForIncognitoRestore;
-    private long mTimeStartedBlockingDrawForInitialTab;
-    private long mTimeStartedBlockingDrawForIncognitoRestore;
 
     /**
      * Constructor for AppLaunchDrawBlocker.
-     * @param activityLifecycleDispatcher {@link ActivityLifecycleDispatcher} for the
-     *        {@link ChromeTabbedActivity}.
+     *
+     * @param activityLifecycleDispatcher {@link ActivityLifecycleDispatcher} for the {@link
+     *     ChromeTabbedActivity}.
      * @param viewSupplier {@link Supplier<Boolean>} for the Activity's content view.
      * @param intentSupplier The {@link Intent} the app was launched with.
      * @param shouldIgnoreIntentSupplier {@link Supplier<Boolean>} for whether the ignore should be
-     *        ignored.
+     *     ignored.
      * @param isTabletSupplier {@link Supplier<Boolean>} for whether the device is a tablet.
-     * @param shouldShowTabSwitcherOnStartSupplier {@link Supplier<Boolean>} for whether the tab
-     *        switcher should be shown on start.
-     * @param incognitoRestoreAppLaunchDrawBlockerFactory Factory to create
-     *    {@link IncognitoRestoreAppLaunchDrawBlocker}.
+     * @param incognitoRestoreAppLaunchDrawBlockerFactory Factory to create {@link
+     *     IncognitoRestoreAppLaunchDrawBlocker}.
      */
-    public AppLaunchDrawBlocker(@NonNull ActivityLifecycleDispatcher activityLifecycleDispatcher,
-            @NonNull Supplier<View> viewSupplier, @NonNull Supplier<Intent> intentSupplier,
+    public AppLaunchDrawBlocker(
+            @NonNull ActivityLifecycleDispatcher activityLifecycleDispatcher,
+            @NonNull Supplier<View> viewSupplier,
+            @NonNull Supplier<Intent> intentSupplier,
             @NonNull Supplier<Boolean> shouldIgnoreIntentSupplier,
             @NonNull Supplier<Boolean> isTabletSupplier,
-            @NonNull Supplier<Boolean> shouldShowTabSwitcherOnStartSupplier,
-            @NonNull Supplier<Boolean> isInstantStartEnabledSupplier,
             @NonNull ObservableSupplier<Profile> profileSupplier,
-            @NonNull IncognitoRestoreAppLaunchDrawBlockerFactory
-                    incognitoRestoreAppLaunchDrawBlockerFactory) {
+            @NonNull
+                    IncognitoRestoreAppLaunchDrawBlockerFactory
+                            incognitoRestoreAppLaunchDrawBlockerFactory) {
         mActivityLifecycleDispatcher = activityLifecycleDispatcher;
         mViewSupplier = viewSupplier;
-        mInflationObserver = new InflationObserver() {
-            @Override
-            public void onPreInflationStartup() {}
+        mInflationObserver =
+                new InflationObserver() {
+                    @Override
+                    public void onPreInflationStartup() {}
 
-            @Override
-            public void onPostInflationStartup() {
-                maybeBlockDraw();
-                maybeBlockDrawForIncognitoRestore();
-            }
-        };
+                    @Override
+                    public void onPostInflationStartup() {
+                        maybeBlockDraw();
+                        maybeBlockDrawForIncognitoRestore();
+                    }
+                };
         mActivityLifecycleDispatcher.register(mInflationObserver);
-        mStartStopWithNativeObserver = new StartStopWithNativeObserver() {
-            @Override
-            public void onStartWithNative() {}
+        mStartStopWithNativeObserver =
+                new StartStopWithNativeObserver() {
+                    @Override
+                    public void onStartWithNative() {}
 
-            @Override
-            public void onStopWithNative() {
-                writeSearchEngineHadLogoPref();
-            }
-        };
+                    @Override
+                    public void onStopWithNative() {
+                        writeSearchEngineHadLogoPref();
+                    }
+                };
         mActivityLifecycleDispatcher.register(mStartStopWithNativeObserver);
         mIntentSupplier = intentSupplier;
         mShouldIgnoreIntentSupplier = shouldIgnoreIntentSupplier;
         mIsTabletSupplier = isTabletSupplier;
-        mShouldShowOverviewPageOnStartSupplier = shouldShowTabSwitcherOnStartSupplier;
-        mIsInstantStartEnabledSupplier = isInstantStartEnabledSupplier;
         mProfileSupplier = profileSupplier;
-        mIncognitoRestoreAppLaunchDrawBlocker = incognitoRestoreAppLaunchDrawBlockerFactory.create(
-                intentSupplier, shouldIgnoreIntentSupplier, activityLifecycleDispatcher,
-                this::onIncognitoRestoreUnblockConditionsFired);
+        mIncognitoRestoreAppLaunchDrawBlocker =
+                incognitoRestoreAppLaunchDrawBlockerFactory.create(
+                        intentSupplier,
+                        shouldIgnoreIntentSupplier,
+                        activityLifecycleDispatcher,
+                        this::onIncognitoRestoreUnblockConditionsFired);
     }
 
     /** Unregister lifecycle observers. */
@@ -129,30 +126,20 @@ public class AppLaunchDrawBlocker {
     }
 
     /** Should be called when the initial tab is available. */
-    public void onActiveTabAvailable(boolean isTabNtp) {
+    public void onActiveTabAvailable() {
         mBlockDrawForInitialTab = false;
-    }
-
-    /** Should be called when the overview page is available. */
-    public void onOverviewPageAvailable(boolean isOverviewShownWithoutInstantStart) {
-        mBlockDrawForOverviewPage = false;
     }
 
     /**
      * A method that is passed as a {@link Runnable} to {@link
      * IncognitoRestoreAppLaunchDrawBlocker}.
      *
-     * This gets fired when all the conditions needed to unblock the draw from the Incognito restore
-     * are fired.
+     * <p>This gets fired when all the conditions needed to unblock the draw from the Incognito
+     * restore are fired.
      */
     @VisibleForTesting
     public void onIncognitoRestoreUnblockConditionsFired() {
-        if (mBlockDrawForIncognitoRestore) {
-            mBlockDrawForIncognitoRestore = false;
-            RecordHistogram.recordTimesHistogram(
-                    "Android.AppLaunch.DurationDrawWasBlocked.OnIncognitoReauth",
-                    SystemClock.elapsedRealtime() - mTimeStartedBlockingDrawForIncognitoRestore);
-        }
+        mBlockDrawForIncognitoRestore = false;
     }
 
     private void writeSearchEngineHadLogoPref() {
@@ -161,8 +148,10 @@ public class AppLaunchDrawBlocker {
         boolean searchEngineHasLogo =
                 TemplateUrlServiceFactory.getForProfile(profile.getOriginalProfile())
                         .doesDefaultSearchEngineHaveLogo();
-        SharedPreferencesManager.getInstance().writeBoolean(
-                ChromePreferenceKeys.APP_LAUNCH_SEARCH_ENGINE_HAD_LOGO, searchEngineHasLogo);
+        ChromeSharedPreferences.getInstance()
+                .writeBoolean(
+                        ChromePreferenceKeys.APP_LAUNCH_SEARCH_ENGINE_HAD_LOGO,
+                        searchEngineHasLogo);
     }
 
     /**
@@ -172,41 +161,34 @@ public class AppLaunchDrawBlocker {
     private void maybeBlockDrawForIncognitoRestore() {
         if (!mIncognitoRestoreAppLaunchDrawBlocker.shouldBlockDraw()) return;
         mBlockDrawForIncognitoRestore = true;
-        mTimeStartedBlockingDrawForIncognitoRestore = SystemClock.elapsedRealtime();
         ViewDrawBlocker.blockViewDrawUntilReady(
                 mViewSupplier.get(), () -> !mBlockDrawForIncognitoRestore);
     }
 
     /** Only block the draw if we believe the initial tab will be the NTP. */
     private void maybeBlockDraw() {
-        if (mShouldShowOverviewPageOnStartSupplier.get()) {
-            if (!mIsInstantStartEnabledSupplier.get()) {
-                mTimeStartedBlockingDrawForInitialTab = SystemClock.elapsedRealtime();
-                mBlockDrawForOverviewPage = true;
-                ViewDrawBlocker.blockViewDrawUntilReady(
-                        mViewSupplier.get(), () -> !mBlockDrawForOverviewPage);
-            }
-            return;
-        }
-
-        @ActiveTabState
-        int tabState = TabPersistentStore.readLastKnownActiveTabStatePref();
-        boolean searchEngineHasLogo = SharedPreferencesManager.getInstance().readBoolean(
-                ChromePreferenceKeys.APP_LAUNCH_SEARCH_ENGINE_HAD_LOGO, true);
+        @ActiveTabState int tabState = TabPersistentStore.readLastKnownActiveTabStatePref();
+        boolean searchEngineHasLogo =
+                ChromeSharedPreferences.getInstance()
+                        .readBoolean(ChromePreferenceKeys.APP_LAUNCH_SEARCH_ENGINE_HAD_LOGO, true);
         boolean singleUrlBarMode =
                 NewTabPage.isInSingleUrlBarMode(mIsTabletSupplier.get(), searchEngineHasLogo);
 
         String url = IntentHandler.getUrlFromIntent(mIntentSupplier.get());
         boolean hasValidIntentUrl = !mShouldIgnoreIntentSupplier.get() && !TextUtils.isEmpty(url);
-        boolean isNtpUrl = UrlUtilities.isCanonicalizedNTPUrl(url);
+        boolean isNtpUrl = UrlUtilities.isCanonicalizedNtpUrl(url);
 
-        boolean shouldBlockWithoutIntent = shouldBlockDrawForNtpOnColdStartWithoutIntent(
-                tabState, HomepageManager.isHomepageNonNtpPreNative(), singleUrlBarMode);
+        boolean shouldBlockWithoutIntent =
+                shouldBlockDrawForNtpOnColdStartWithoutIntent(
+                        tabState,
+                        HomepageManager.getInstance().isHomepageNonNtp(),
+                        singleUrlBarMode);
 
-        if (shouldBlockDrawForNtpOnColdStartWithIntent(hasValidIntentUrl, isNtpUrl,
-                    IncognitoTabLauncher.didCreateIntent(mIntentSupplier.get()),
-                    shouldBlockWithoutIntent)) {
-            mTimeStartedBlockingDrawForInitialTab = SystemClock.elapsedRealtime();
+        if (shouldBlockDrawForNtpOnColdStartWithIntent(
+                hasValidIntentUrl,
+                isNtpUrl,
+                IncognitoTabLauncher.didCreateIntent(mIntentSupplier.get()),
+                shouldBlockWithoutIntent)) {
             mBlockDrawForInitialTab = true;
             ViewDrawBlocker.blockViewDrawUntilReady(
                     mViewSupplier.get(), () -> !mBlockDrawForInitialTab);
@@ -221,10 +203,12 @@ public class AppLaunchDrawBlocker {
      * @return Whether the View draw should be blocked because the NTP will be shown on cold start.
      */
     private boolean shouldBlockDrawForNtpOnColdStartWithoutIntent(
-            @ActiveTabState int lastKnownActiveTabState, boolean homepageNonNtp,
+            @ActiveTabState int lastKnownActiveTabState,
+            boolean homepageNonNtp,
             boolean singleUrlBarMode) {
-        boolean willShowNtp = lastKnownActiveTabState == ActiveTabState.NTP
-                || (lastKnownActiveTabState == ActiveTabState.EMPTY && !homepageNonNtp);
+        boolean willShowNtp =
+                lastKnownActiveTabState == ActiveTabState.NTP
+                        || (lastKnownActiveTabState == ActiveTabState.EMPTY && !homepageNonNtp);
         return willShowNtp && singleUrlBarMode;
     }
 
@@ -236,8 +220,10 @@ public class AppLaunchDrawBlocker {
      *        {@link #shouldBlockDrawForNtpOnColdStartWithoutIntent}.
      * @return Whether the View draw should be blocked because the NTP will be shown on cold start.
      */
-    private boolean shouldBlockDrawForNtpOnColdStartWithIntent(boolean hasValidIntentUrl,
-            boolean isNtpUrl, boolean shouldLaunchIncognitoTab,
+    private boolean shouldBlockDrawForNtpOnColdStartWithIntent(
+            boolean hasValidIntentUrl,
+            boolean isNtpUrl,
+            boolean shouldLaunchIncognitoTab,
             boolean shouldBlockDrawForNtpOnColdStartWithoutIntent) {
         if (hasValidIntentUrl && isNtpUrl) {
             return !shouldLaunchIncognitoTab;

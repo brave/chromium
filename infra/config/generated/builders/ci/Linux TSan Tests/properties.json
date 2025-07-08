@@ -19,7 +19,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_tsan2",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -42,7 +43,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_tsan2",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -68,14 +70,22 @@
           "builder": "linux_chromium_tsan_rel_ng",
           "group": "tryserver.chromium.linux"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Linux TSan Tests/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 80,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 80
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -85,6 +95,9 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

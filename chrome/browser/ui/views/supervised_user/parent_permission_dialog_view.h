@@ -14,8 +14,8 @@
 #include "chrome/browser/ui/supervised_user/parent_permission_dialog.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "google_apis/gaia/gaia_auth_consumer.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "ui/base/metadata/metadata_header_macros.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/views/view.h"
 #include "ui/views/window/dialog_delegate.h"
 
@@ -43,9 +43,9 @@ class ParentPermissionInputSection;
 // asynchronously fetched).
 class ParentPermissionDialogView : public views::DialogDelegateView,
                                    public GaiaAuthConsumer {
- public:
-  METADATA_HEADER(ParentPermissionDialogView);
+  METADATA_HEADER(ParentPermissionDialogView, views::DialogDelegateView)
 
+ public:
   class Observer {
    public:
     // Tells observers that their references to the view are becoming invalid.
@@ -106,28 +106,25 @@ class ParentPermissionDialogView : public views::DialogDelegateView,
   void AddInvalidCredentialLabel();
   void LoadParentEmailAddresses();
   void CloseWithReason(views::Widget::ClosedReason reason);
-  void OnDialogClose();
 
   // Given an email address of the child's parent, return the parents'
   // obfuscated gaia id.
-  std::string GetParentObfuscatedGaiaID(
-      const std::u16string& parent_email) const;
+  GaiaId GetParentObfuscatedGaiaID(const std::u16string& parent_email) const;
 
   // Starts the Reauth-scoped OAuth access token fetch process.
-  void StartReauthAccessTokenFetch(const std::string& parent_obfuscated_gaia_id,
+  void StartReauthAccessTokenFetch(const GaiaId& parent_obfuscated_gaia_id,
                                    const std::string& parent_credential);
 
   // Handles the result of the access token
-  void OnAccessTokenFetchComplete(const std::string& parent_obfuscated_gaia_id,
+  void OnAccessTokenFetchComplete(const GaiaId& parent_obfuscated_gaia_id,
                                   const std::string& parent_credential,
                                   GoogleServiceAuthError error,
                                   signin::AccessTokenInfo access_token_info);
 
   // Starts the Parent Reauth proof token fetch process.
-  void StartParentReauthProofTokenFetch(
-      const std::string& child_access_token,
-      const std::string& parent_obfuscated_gaia_id,
-      const std::string& credential);
+  void StartParentReauthProofTokenFetch(const std::string& child_access_token,
+                                        const GaiaId& parent_obfuscated_gaia_id,
+                                        const std::string& credential);
 
   // GaiaAuthConsumer
   void OnReAuthProofTokenSuccess(
@@ -173,10 +170,6 @@ class ParentPermissionDialogView : public views::DialogDelegateView,
 
   // Used to ensure we don't try to show same dialog twice.
   bool is_showing_ = false;
-
-  // Used to set close reason if the dialog is closed without clicking
-  // "approve."
-  bool is_approve_clicked_ = false;
 
   // Used to fetch the Reauth token.
   std::unique_ptr<GaiaAuthFetcher> reauth_token_fetcher_;

@@ -26,7 +26,6 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "sandbox/features.h"
 #include "sandbox/policy/features.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/transferable_socket.h"
@@ -54,7 +53,7 @@ class TransferableSocketBrowserTest : public ContentBrowserTest {
 
   void SetUp() override {
 #if BUILDFLAG(IS_WIN)
-    if (!sandbox::features::IsAppContainerSandboxSupported()) {
+    if (!sandbox::policy::features::IsNetworkSandboxSupported()) {
       // On *some* Windows, sandboxing cannot be enabled. We skip all the tests
       // on such platforms.
       GTEST_SKIP();
@@ -101,9 +100,10 @@ IN_PROC_BROWSER_TEST_F(TransferableSocketBrowserTest, TransferSocket) {
       network_service_pending;
   GetNetworkService()->BindTestInterfaceForTesting(
       network_service_pending.InitWithNewPipeAndPassReceiver());
-  net::TCPSocket socket(nullptr, nullptr, net::NetLogSource());
-  socket.Open(net::AddressFamily::ADDRESS_FAMILY_IPV4);
-  socket.DetachFromThread();
+  std::unique_ptr<net::TCPSocket> socket =
+      net::TCPSocket::Create(nullptr, nullptr, net::NetLogSource());
+  socket->Open(net::AddressFamily::ADDRESS_FAMILY_IPV4);
+  socket->DetachFromThread();
 
   net::IPEndPoint endpoint(net::IPAddress::IPv4Localhost(),
                            embedded_test_server()->port());
@@ -111,7 +111,7 @@ IN_PROC_BROWSER_TEST_F(TransferableSocketBrowserTest, TransferSocket) {
   content::GetIOThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
-          &net::TCPSocket::Connect, base::Unretained(&socket), endpoint,
+          &net::TCPSocket::Connect, base::Unretained(socket.get()), endpoint,
           base::BindLambdaForTesting([&connect_run_loop](int result) {
             EXPECT_EQ(result, net::OK);
             connect_run_loop.Quit();
@@ -123,7 +123,7 @@ IN_PROC_BROWSER_TEST_F(TransferableSocketBrowserTest, TransferSocket) {
         EXPECT_EQ(result, net::ERR_IO_PENDING);
       }));
   connect_run_loop.Run();
-  socket.DetachFromThread();
+  socket->DetachFromThread();
 #if BUILDFLAG(IS_WIN)
   // Obtain the running process id of the network service, as this is needed to
   // duplicate the socket on Windows only.
@@ -137,12 +137,12 @@ IN_PROC_BROWSER_TEST_F(TransferableSocketBrowserTest, TransferSocket) {
   }
   ASSERT_TRUE(network_process.IsValid());
   network::TransferableSocket transferable(
-      socket.ReleaseSocketDescriptorForTesting(), network_process);
+      socket->ReleaseSocketDescriptorForTesting(), network_process);
 #else
   base::test::TestFuture<net::SocketDescriptor> socket_descriptor;
   GetIOThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE, base::BindLambdaForTesting([&]() {
-        return socket.ReleaseSocketDescriptorForTesting();
+        return socket->ReleaseSocketDescriptorForTesting();
       }),
       socket_descriptor.GetCallback());
   network::TransferableSocket transferable(socket_descriptor.Get());

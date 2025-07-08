@@ -7,9 +7,13 @@
  */
 
 // clang-format off
-import {dedupingMixin, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {ContentSetting,ContentSettingsTypes, SiteSettingSource} from './constants.js';
-import {RawSiteException,SiteException,SiteSettingsPrefsBrowserProxy,SiteSettingsPrefsBrowserProxyImpl} from './site_settings_prefs_browser_proxy.js';
+import type { PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import type {ContentSettingsTypes} from './constants.js';
+import {SiteSettingSource} from './constants.js';
+import type {RawSiteException,SiteException,SiteSettingsPrefsBrowserProxy} from './site_settings_prefs_browser_proxy.js';
+import {SiteSettingsPrefsBrowserProxyImpl} from './site_settings_prefs_browser_proxy.js';
 // clang-format on
 
 type Constructor<T> = new (...args: any[]) => T;
@@ -39,8 +43,8 @@ export const SiteSettingsMixin = dedupingMixin(
           };
         }
 
-        category: ContentSettingsTypes;
-        private contentTypes_: ContentSettingsTypes[];
+        declare category: ContentSettingsTypes;
+        declare private contentTypes_: ContentSettingsTypes[];
         browserProxy: SiteSettingsPrefsBrowserProxy;
 
         constructor(...args: any[]) {
@@ -81,13 +85,6 @@ export const SiteSettingsMixin = dedupingMixin(
             return url.slice(0, -3);
           }
           return url;
-        }
-
-        /**
-         * @return true if the passed content setting is considered 'enabled'.
-         */
-        computeIsSettingEnabled(setting: ContentSetting): boolean {
-          return setting !== ContentSetting.BLOCK;
         }
 
         /**
@@ -149,7 +146,7 @@ export const SiteSettingsMixin = dedupingMixin(
           }
 
           return {
-            category: this.category,
+            category: exception.type as ContentSettingsTypes,
             embeddingOrigin: embeddingOrigin,
             incognito: exception.incognito,
             isEmbargoed: exception.isEmbargoed,
@@ -169,7 +166,6 @@ export const SiteSettingsMixin = dedupingMixin(
 export interface SiteSettingsMixinInterface {
   browserProxy: SiteSettingsPrefsBrowserProxy;
   category: ContentSettingsTypes;
-  computeIsSettingEnabled(setting: string): boolean;
   originRepresentation(origin: string): string;
   toUrl(originOrPattern: string): URL|null;
   expandSiteException(exception: RawSiteException): SiteException;

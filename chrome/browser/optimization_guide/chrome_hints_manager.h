@@ -7,10 +7,14 @@
 
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor_keyed_service.h"
-#include "components/optimization_guide/core/hints_manager.h"
+#include "components/optimization_guide/core/hints/hints_manager.h"
 
 class OptimizationGuideLogger;
 class Profile;
+
+namespace signin {
+class IdentityManager;
+}  // namespace signin
 
 namespace optimization_guide {
 
@@ -26,6 +30,7 @@ class ChromeHintsManager : public HintsManager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::unique_ptr<optimization_guide::PushNotificationManager>
           push_notification_manager,
+      signin::IdentityManager* identity_manager,
       OptimizationGuideLogger* optimization_guide_logger);
 
   ~ChromeHintsManager() override;
@@ -35,8 +40,7 @@ class ChromeHintsManager : public HintsManager,
 
   // NavigationPredictorKeyedService::Observer:
   void OnPredictionUpdated(
-      const absl::optional<NavigationPredictorKeyedService::Prediction>
-          prediction) override;
+      const NavigationPredictorKeyedService::Prediction& prediction) override;
 
  private:
   // A reference to the profile. Not owned.

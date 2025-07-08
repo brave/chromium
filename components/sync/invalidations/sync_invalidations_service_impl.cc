@@ -35,6 +35,12 @@ void SyncInvalidationsServiceImpl::AddListener(
   fcm_handler_->AddListener(listener);
 }
 
+bool SyncInvalidationsServiceImpl::HasListener(
+    InvalidationsListener* listener) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return fcm_handler_->HasListener(listener);
+}
+
 void SyncInvalidationsServiceImpl::RemoveListener(
     InvalidationsListener* listener) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -74,7 +80,7 @@ void SyncInvalidationsServiceImpl::StopListeningPermanently() {
   fcm_handler_->StopListeningPermanently();
 }
 
-absl::optional<std::string>
+std::optional<std::string>
 SyncInvalidationsServiceImpl::GetFCMRegistrationToken() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return fcm_handler_->GetFCMRegistrationToken();
@@ -87,14 +93,14 @@ void SyncInvalidationsServiceImpl::SetInterestedDataTypesHandler(
   interested_data_types_handler_ = handler;
 }
 
-absl::optional<ModelTypeSet>
+std::optional<DataTypeSet>
 SyncInvalidationsServiceImpl::GetInterestedDataTypes() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return interested_data_types_;
 }
 
 void SyncInvalidationsServiceImpl::SetInterestedDataTypes(
-    const ModelTypeSet& data_types) {
+    const DataTypeSet& data_types) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(interested_data_types_handler_);
 

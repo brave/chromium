@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_SIGNIN_E2E_TESTS_SIGN_IN_TEST_OBSERVER_H_
 #define CHROME_BROWSER_SIGNIN_E2E_TESTS_SIGN_IN_TEST_OBSERVER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -27,12 +28,13 @@ class SignInTestObserver : public IdentityManager::Observer,
   void OnRefreshTokenRemovedForAccount(const CoreAccountId&) override;
   void OnErrorStateOfRefreshTokenUpdatedForAccount(
       const CoreAccountInfo&,
-      const GoogleServiceAuthError&) override;
+      const GoogleServiceAuthError&,
+      signin_metrics::SourceForRefreshTokenOperation) override;
   void OnAccountsInCookieUpdated(const AccountsInCookieJarInfo&,
                                  const GoogleServiceAuthError&) override;
 
   // AccountReconcilor::Observer:
-  // TODO(https://crbug.com/1051864): Remove this observer method once the bug
+  // TODO(crbug.com/40673982): Remove this observer method once the bug
   // is fixed.
   void OnStateChanged(signin_metrics::AccountReconcilorState state) override;
 

@@ -8,6 +8,7 @@
 #include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -86,7 +87,7 @@ class VirtualTimeController {
   // the WebScopedVirtualTimePauser returned by this method is initially
   // unpaused.
   virtual WebScopedVirtualTimePauser CreateWebScopedVirtualTimePauser(
-      const String& name,
+      const WTF::String& name,
       WebScopedVirtualTimePauser::VirtualTaskDuration) = 0;
 };
 

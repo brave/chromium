@@ -41,10 +41,8 @@ constexpr char kLanguagePackManifestName[] = "SODA %s Models";
 SodaLanguagePackComponentInstallerPolicy::
     SodaLanguagePackComponentInstallerPolicy(
         speech::SodaLanguagePackComponentConfig language_config,
-        PrefService* prefs,
         OnSodaLanguagePackComponentReadyCallback on_ready_callback)
     : language_config_(language_config),
-      prefs_(prefs),
       on_ready_callback_(std::move(on_ready_callback)) {}
 
 SodaLanguagePackComponentInstallerPolicy::
@@ -52,12 +50,11 @@ SodaLanguagePackComponentInstallerPolicy::
 
 std::string SodaLanguagePackComponentInstallerPolicy::GetExtensionId(
     speech::LanguageCode language_code) {
-  absl::optional<speech::SodaLanguagePackComponentConfig> config =
+  std::optional<speech::SodaLanguagePackComponentConfig> config =
       speech::GetLanguageComponentConfig(language_code);
 
   if (config) {
-    return crx_file::id_util::GenerateIdFromHash(
-        config.value().public_key_sha, sizeof(config.value().public_key_sha));
+    return crx_file::id_util::GenerateIdFromHash(config.value().public_key_sha);
   }
 
   return std::string();
@@ -68,8 +65,7 @@ SodaLanguagePackComponentInstallerPolicy::GetExtensionIds() {
   base::flat_set<std::string> ids;
   for (const speech::SodaLanguagePackComponentConfig& config :
        speech::kLanguageComponentConfigs) {
-    ids.insert(crx_file::id_util::GenerateIdFromHash(
-        config.public_key_sha, sizeof(config.public_key_sha)));
+    ids.insert(crx_file::id_util::GenerateIdFromHash(config.public_key_sha));
   }
 
   return ids;
@@ -84,11 +80,12 @@ void SodaLanguagePackComponentInstallerPolicy::
       crx_id, OnDemandUpdater::Priority::FOREGROUND,
       base::BindOnce([](update_client::Error error) {
         if (error != update_client::Error::NONE &&
-            error != update_client::Error::UPDATE_IN_PROGRESS)
+            error != update_client::Error::UPDATE_IN_PROGRESS) {
           LOG(ERROR)
               << "On demand update of the SODA language component failed "
                  "with error: "
               << static_cast<int>(error);
+        }
       }));
 }
 
@@ -127,13 +124,18 @@ void SodaLanguagePackComponentInstallerPolicy::ComponentReady(
           << install_dir.value();
 
 #if !BUILDFLAG(IS_ANDROID)
-  prefs_->SetFilePath(
-      language_config_.config_path_pref,
-      install_dir.Append(speech::kSodaLanguagePackDirectoryRelativePath));
+  // The component updater may post ready tasks during shutdown. Confirm that the
+  // `BrowserProcess` is still valid before setting the pref.
+  if (g_browser_process) {
+    g_browser_process->local_state()->SetFilePath(
+        language_config_.config_path_pref,
+        install_dir.Append(speech::kSodaLanguagePackDirectoryRelativePath));
+  }
 #endif  //! BUILDFLAG(IS_ANDROID)
 
-  if (on_ready_callback_)
+  if (on_ready_callback_) {
     std::move(on_ready_callback_).Run(language_config_.language_code);
+  }
 }
 
 base::FilePath SodaLanguagePackComponentInstallerPolicy::GetRelativeInstallDir()
@@ -161,13 +163,12 @@ SodaLanguagePackComponentInstallerPolicy::GetInstallerAttributes() const {
 void RegisterSodaLanguagePackComponent(
     speech::SodaLanguagePackComponentConfig language_config,
     ComponentUpdateService* cus,
-    PrefService* prefs,
     OnSodaLanguagePackComponentReadyCallback on_ready_callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   auto installer = base::MakeRefCounted<ComponentInstaller>(
       std::make_unique<SodaLanguagePackComponentInstallerPolicy>(
-          language_config, prefs, std::move(on_ready_callback)));
+          language_config, std::move(on_ready_callback)));
 
   installer->Register(
       cus, base::BindOnce(&SodaLanguagePackComponentInstallerPolicy::

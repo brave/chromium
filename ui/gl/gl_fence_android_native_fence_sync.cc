@@ -23,9 +23,9 @@
 
 namespace gl {
 
-GLFenceAndroidNativeFenceSync::GLFenceAndroidNativeFenceSync() {}
+GLFenceAndroidNativeFenceSync::GLFenceAndroidNativeFenceSync() = default;
 
-GLFenceAndroidNativeFenceSync::~GLFenceAndroidNativeFenceSync() {}
+GLFenceAndroidNativeFenceSync::~GLFenceAndroidNativeFenceSync() = default;
 
 // static
 std::unique_ptr<GLFenceAndroidNativeFenceSync>
@@ -52,9 +52,9 @@ std::unique_ptr<GLFenceAndroidNativeFenceSync>
 GLFenceAndroidNativeFenceSync::CreateFromGpuFence(
     const gfx::GpuFence& gpu_fence) {
   gfx::GpuFenceHandle handle = gpu_fence.GetGpuFenceHandle().Clone();
-  DCHECK_GE(handle.owned_fd.get(), 0);
+  DCHECK_GE(handle.Peek(), 0);
   EGLint attribs[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
-                      handle.owned_fd.release(), EGL_NONE};
+                      handle.Release().release(), EGL_NONE};
   return CreateInternal(EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
 }
 
@@ -62,12 +62,15 @@ std::unique_ptr<gfx::GpuFence> GLFenceAndroidNativeFenceSync::GetGpuFence() {
   DCHECK(GLSurfaceEGL::GetGLDisplayEGL()->IsAndroidNativeFenceSyncSupported());
 
   const EGLint sync_fd = eglDupNativeFenceFDANDROID(display_, sync_);
+
   if (sync_fd < 0) {
+    LOG(ERROR)
+        << "eglDupNativeFenceFDANDROID duplication failure. Returned error="
+        << sync_fd;
     return nullptr;
   }
-
   gfx::GpuFenceHandle handle;
-  handle.owned_fd = base::ScopedFD(sync_fd);
+  handle.Adopt(base::ScopedFD(sync_fd));
 
   return std::make_unique<gfx::GpuFence>(std::move(handle));
 }

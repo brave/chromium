@@ -5,30 +5,23 @@
 #import "ios/chrome/app/dump_documents_statistics.h"
 
 #import "base/apple/backup_util.h"
+#import "base/apple/foundation_util.h"
 #import "base/files/file.h"
 #import "base/files/file_enumerator.h"
 #import "base/files/file_path.h"
 #import "base/files/file_util.h"
+#import "base/i18n/time_formatting.h"
 #import "base/json/json_writer.h"
-#import "base/mac/foundation_util.h"
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/task/thread_pool.h"
 #import "base/time/time.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace documents_statistics {
 
 // Converts time to a human readable string in the device's local time.
 std::string TimeToLocalString(base::Time time) {
-  base::Time::Exploded exploded;
-  time.LocalExplode(&exploded);
-  return base::StringPrintf("%04d-%02d-%02dT%02d:%02d:%02d", exploded.year,
-                            exploded.month, exploded.day_of_month,
-                            exploded.hour, exploded.minute, exploded.second);
+  return base::UnlocalizedTimeFormatWithPattern(time, "yyyy-MM-dd'T'HH:mm:ss");
 }
 
 // Gathers statistics for `root`, recusively if `root` is a directory.
@@ -87,8 +80,7 @@ void WriteSandboxStatisticsToFile(base::FilePath root,
       base::CreateDirectory(statistics_dir);
     }
 
-    std::string file_name = base::StringPrintf(
-        "%s.json", TimeToLocalString(base::Time::Now()).c_str());
+    std::string file_name = TimeToLocalString(base::Time::Now()) + ".json";
 
     base::FilePath statistics_file_path = statistics_dir.Append(file_name);
     base::File statistics_file(
@@ -107,9 +99,9 @@ void WriteSandboxStatisticsToFile(base::FilePath root,
 
 // Dumps statistics in JSON format for the user's entire Document directory.
 void DumpSandboxFileStatistics() {
-  base::FilePath documents_path = base::mac::GetUserDocumentPath();
+  base::FilePath documents_path = base::apple::GetUserDocumentPath();
   base::FilePath file_stats_directory =
-      base::mac::GetUserDocumentPath().Append("sandboxFileStats");
+      base::apple::GetUserDocumentPath().Append("sandboxFileStats");
 
   // Go up one directory from documents to include all surrounding directories.
   base::FilePath root = documents_path.DirName();

@@ -4,6 +4,8 @@
 
 #include "components/feedback/redaction_tool/inprocess_metrics_recorder.h"
 
+#include <string_view>
+
 #include "base/metrics/histogram_macros.h"
 
 namespace {
@@ -27,12 +29,18 @@ void InprocessMetricsRecorder::RecordCreditCardRedactionHistogram(
   UMA_HISTOGRAM_ENUMERATION(kCreditCardRedactionHistogram, step);
 }
 
-void InprocessMetricsRecorder::RecordTimeSpentRedactingHistogram(
-    base::TimeDelta time_spent) {
-  UMA_HISTOGRAM_MEDIUM_TIMES(kTimeSpentRedactingHistogram, time_spent);
+void InprocessMetricsRecorder::RecordRedactionToolCallerHistogram(
+    RedactionToolCaller step) {
+  UMA_HISTOGRAM_ENUMERATION(kRedactionToolCallerHistogram, step);
 }
 
-base::StringPiece
+void InprocessMetricsRecorder::RecordTimeSpentRedactingHistogram(
+    base::TimeDelta time_spent) {
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(kTimeSpentRedactingHistogram,
+                                        time_spent);
+}
+
+std::string_view
 RedactionToolMetricsRecorder::GetTimeSpentRedactingHistogramNameForTesting() {
   return kTimeSpentRedactingHistogram;
 }

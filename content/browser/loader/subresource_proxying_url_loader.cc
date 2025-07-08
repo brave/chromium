@@ -60,7 +60,7 @@ void SubresourceProxyingURLLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const absl::optional<GURL>& new_url) {
+    const std::optional<GURL>& new_url) {
   std::vector<std::string> new_removed_headers = removed_headers;
   net::HttpRequestHeaders new_modified_headers = modified_headers;
 
@@ -78,14 +78,6 @@ void SubresourceProxyingURLLoader::SetPriority(net::RequestPriority priority,
   loader_->SetPriority(priority, intra_priority_value);
 }
 
-void SubresourceProxyingURLLoader::PauseReadingBodyFromNet() {
-  loader_->PauseReadingBodyFromNet();
-}
-
-void SubresourceProxyingURLLoader::ResumeReadingBodyFromNet() {
-  loader_->ResumeReadingBodyFromNet();
-}
-
 void SubresourceProxyingURLLoader::OnReceiveEarlyHints(
     network::mojom::EarlyHintsPtr early_hints) {
   forwarding_client_->OnReceiveEarlyHints(std::move(early_hints));
@@ -94,7 +86,7 @@ void SubresourceProxyingURLLoader::OnReceiveEarlyHints(
 void SubresourceProxyingURLLoader::OnReceiveResponse(
     network::mojom::URLResponseHeadPtr head,
     mojo::ScopedDataPipeConsumerHandle body,
-    absl::optional<mojo_base::BigBuffer> cached_metadata) {
+    std::optional<mojo_base::BigBuffer> cached_metadata) {
   for (auto& interceptor : interceptors_) {
     interceptor->OnReceiveResponse(head);
   }

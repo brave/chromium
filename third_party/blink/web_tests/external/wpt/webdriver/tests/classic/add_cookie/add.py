@@ -1,6 +1,6 @@
 import pytest
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from webdriver.transport import Response
 
@@ -121,7 +121,7 @@ def test_add_domain_cookie(session, url, server_config):
         cookie["domain"] == ".%s" % server_config["browser_host"]
 
 
-def test_add_cookie_for_ip(session, url, server_config, configuration):
+def test_add_cookie_for_ip(session, server_config):
     new_cookie = {
         "name": "hello",
         "value": "world",
@@ -131,7 +131,9 @@ def test_add_cookie_for_ip(session, url, server_config, configuration):
         "secure": False
     }
 
-    session.url = "http://127.0.0.1:%s/common/blank.html" % (server_config["ports"]["http"][0])
+    port = server_config["ports"]["http"][0]
+    session.url = f"http://127.0.0.1:{port}/common/blank.html"
+
     clear_all_cookies(session)
 
     result = add_cookie(session, new_cookie)
@@ -152,7 +154,7 @@ def test_add_cookie_for_ip(session, url, server_config, configuration):
 
 def test_add_non_session_cookie(session, url):
     a_day_from_now = int(
-        (datetime.utcnow() + timedelta(days=1) - datetime.utcfromtimestamp(0)).total_seconds())
+        (datetime.now(timezone.utc) + timedelta(days=1) - datetime.fromtimestamp(0, timezone.utc)).total_seconds())
 
     new_cookie = {
         "name": "hello",
@@ -230,12 +232,38 @@ def test_add_session_cookie_with_leading_dot_character_in_domain(session, url, s
         cookie["domain"] == ".%s" % server_config["browser_host"]
 
 
+def test_add_cookie_with_expiry_in_the_future(session, url):
+    five_years_from_now = int(
+        (datetime.now(timezone.utc) + timedelta(days=5 * 365) - datetime.fromtimestamp(0, timezone.utc)).total_seconds())
+
+    new_cookie = {
+        "name": "hello",
+        "value": "world",
+        "expiry": five_years_from_now
+    }
+
+    session.url = url("/common/blank.html")
+    clear_all_cookies(session)
+
+    result = add_cookie(session, new_cookie)
+    assert_success(result)
+
+    cookie = session.cookies("hello")
+    assert cookie["name"] == "hello"
+    assert cookie["value"] == "world"
+
+    # There is a recommended upper limit of 400 days on the allowed expiry
+    # value, which user agent can adjust.
+    assert cookie["expiry"] <= five_years_from_now
+
+
 @pytest.mark.parametrize("same_site", ["None", "Lax", "Strict"])
 def test_add_cookie_with_valid_samesite_flag(session, url, same_site):
     new_cookie = {
         "name": "hello",
         "value": "world",
-        "sameSite": same_site
+        "secure": True,
+        "sameSite": same_site,
     }
 
     session.url = url("/common/blank.html")

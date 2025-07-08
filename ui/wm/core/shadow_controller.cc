@@ -7,23 +7,23 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/scoped_multi_source_observation.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/class_property.h"
-#include "ui/base/ui_base_types.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/wm/core/shadow_controller_delegate.h"
 #include "ui/wm/core/shadow_types.h"
 #include "ui/wm/core/window_util.h"
@@ -32,7 +32,7 @@
 using std::make_pair;
 
 DEFINE_UI_CLASS_PROPERTY_TYPE(ui::Shadow*)
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey, nullptr)
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey)
 
 namespace wm {
 
@@ -119,6 +119,9 @@ class ShadowController::Impl :
   // Checks if |window| is visible and contains a property requesting a shadow.
   bool ShouldShowShadowForWindow(aura::Window* window) const;
 
+  // Sets rounded corner on the shadow for the `window`.
+  void MaybeSetShadowRadiusForWindow(aura::Window* window) const;
+
   // Updates the shadow for windows when activation changes.
   void HandleWindowActivationChange(aura::Window* gaining_active,
                                     aura::Window* losing_active);
@@ -183,13 +186,24 @@ void ShadowController::Impl::OnWindowPropertyChanged(aura::Window* window,
 
   if (key == aura::client::kShowStateKey) {
     shadow_will_change = window->GetProperty(aura::client::kShowStateKey) !=
-                         static_cast<ui::WindowShowState>(old);
+                         static_cast<ui::mojom::WindowShowState>(old);
   }
+
+  if (key == aura::client::kWindowRoundedCornersKey) {
+    shadow_will_change =
+        *window->GetProperty(aura::client::kWindowRoundedCornersKey) !=
+        static_cast<gfx::RoundedCornersF>(old);
+  }
+
+  shadow_will_change |=
+      delegate_ &&
+      delegate_->ShouldUpdateShadowOnWindowPropertyChange(window, key, old);
 
   // Check the target visibility. IsVisible() may return false if a parent layer
   // is hidden, but |this| only observes calls to Show()/Hide() on |window|.
-  if (shadow_will_change && window->TargetVisibility())
+  if (shadow_will_change && window->TargetVisibility()) {
     HandlePossibleShadowVisibilityChange(window);
+  }
 }
 
 void ShadowController::Impl::OnWindowVisibilityChanging(aura::Window* window,
@@ -251,14 +265,35 @@ bool ShadowController::Impl::ShouldShowShadowForWindow(
     return should_show;
   }
 
-  ui::WindowShowState show_state =
+  ui::mojom::WindowShowState show_state =
       window->GetProperty(aura::client::kShowStateKey);
-  if (show_state == ui::SHOW_STATE_FULLSCREEN ||
-      show_state == ui::SHOW_STATE_MAXIMIZED) {
+  if (show_state == ui::mojom::WindowShowState::kFullscreen ||
+      show_state == ui::mojom::WindowShowState::kMaximized) {
     return false;
   }
 
   return GetShadowElevationConvertDefault(window) > 0;
+}
+
+void ShadowController::Impl::MaybeSetShadowRadiusForWindow(
+    aura::Window* window) const {
+  ui::Shadow* shadow = GetShadowForWindow(window);
+  CHECK(shadow);
+
+  if (delegate_ && !delegate_->ShouldRoundShadowForWindow(window)) {
+    shadow->SetRoundedCornerRadius(0);
+    return;
+  }
+
+  gfx::RoundedCornersF* rounded_corners =
+      window->GetProperty(aura::client::kWindowRoundedCornersKey);
+
+  // If `aura::client::kWindowRoundedCornersKey` is not set, it means
+  // unspecified radius. i.e window server may want to apply rounded corners
+  // implicitly.
+  if (rounded_corners) {
+    shadow->SetRoundedCornerRadius(rounded_corners->upper_left());
+  }
 }
 
 void ShadowController::Impl::HandlePossibleShadowVisibilityChange(
@@ -267,6 +302,7 @@ void ShadowController::Impl::HandlePossibleShadowVisibilityChange(
   ui::Shadow* shadow = GetShadowForWindow(window);
   if (shadow) {
     shadow->SetElevation(GetShadowElevationForActiveState(window));
+    MaybeSetShadowRadiusForWindow(window);
     shadow->layer()->SetVisible(should_show);
   } else if (should_show) {
     CreateShadowForWindow(window);
@@ -278,18 +314,19 @@ void ShadowController::Impl::CreateShadowForWindow(aura::Window* window) {
   ui::Shadow* shadow =
       window->SetProperty(kShadowLayerKey, std::make_unique<ui::Shadow>());
 
-  int corner_radius = window->GetProperty(aura::client::kWindowCornerRadiusKey);
-  if (corner_radius >= 0)
-    shadow->SetRoundedCornerRadius(corner_radius);
-
+  MaybeSetShadowRadiusForWindow(window);
   shadow->Init(GetShadowElevationForActiveState(window));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   shadow->SetShadowStyle(gfx::ShadowStyle::kChromeOSSystemUI);
 #endif
   shadow->SetContentBounds(gfx::Rect(window->bounds().size()));
   shadow->layer()->SetVisible(ShouldShowShadowForWindow(window));
   window->layer()->Add(shadow->layer());
   window->layer()->StackAtBottom(shadow->layer());
+
+  if (delegate_) {
+    delegate_->ApplyColorThemeToWindowShadow(window);
+  }
 }
 
 ShadowController::Impl::Impl(aura::Env* env)
@@ -319,6 +356,10 @@ ui::Shadow* ShadowController::GetShadowForWindow(aura::Window* window) {
 ui::Shadow::ElevationToColorsMap ShadowController::GenerateShadowColorsMap(
     const ui::ColorProvider* color_provider) {
   ui::Shadow::ElevationToColorsMap color_map;
+  color_map[kShadowElevationPopup] = std::make_pair(
+      color_provider->GetColor(ui::kColorShadowValueKeyShadowElevationFour),
+      color_provider->GetColor(
+          ui::kColorShadowValueAmbientShadowElevationFour));
   color_map[kShadowElevationInactiveWindow] = std::make_pair(
       color_provider->GetColor(ui::kColorShadowValueKeyShadowElevationTwelve),
       color_provider->GetColor(

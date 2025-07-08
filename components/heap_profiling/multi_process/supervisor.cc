@@ -28,15 +28,11 @@ namespace heap_profiling {
 
 namespace {
 
-base::trace_event::TraceConfig GetBackgroundTracingConfig(bool anonymize) {
+base::trace_event::TraceConfig GetBackgroundTracingConfig() {
   // Disable all categories other than memory-infra.
   base::trace_event::TraceConfig trace_config(
       "-*,disabled-by-default-memory-infra",
       base::trace_event::RECORD_UNTIL_FULL);
-
-  // This flag is set by background tracing to filter out undesired events.
-  if (anonymize)
-    trace_config.EnableArgumentFilter();
 
   return trace_config;
 }
@@ -107,7 +103,8 @@ Mode Supervisor::GetMode() {
 
 void Supervisor::StartManualProfiling(
     base::ProcessId pid,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   DCHECK(HasStarted());
   client_connection_manager_->StartProfilingProcess(
@@ -170,9 +167,9 @@ void Supervisor::RequestTraceWithHeapDump(TraceFinishedCallback callback,
              finished_dump_callback) {
         memory_instrumentation::MemoryInstrumentation::GetInstance()
             ->RequestGlobalDumpAndAppendToTrace(
-                base::trace_event::MemoryDumpType::EXPLICITLY_TRIGGERED,
-                base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND,
-                base::trace_event::MemoryDumpDeterminism::NONE,
+                base::trace_event::MemoryDumpType::kExplicitlyTriggered,
+                base::trace_event::MemoryDumpLevelOfDetail::kBackground,
+                base::trace_event::MemoryDumpDeterminism::kNone,
                 std::move(finished_dump_callback));
       },
       std::move(finished_dump_callback));
@@ -180,8 +177,7 @@ void Supervisor::RequestTraceWithHeapDump(TraceFinishedCallback callback,
   // The only reason this should return false is if tracing is already enabled,
   // which we've already checked.
   bool result = content::TracingController::GetInstance()->StartTracing(
-      GetBackgroundTracingConfig(anonymize),
-      std::move(trigger_memory_dump_callback));
+      GetBackgroundTracingConfig(), std::move(trigger_memory_dump_callback));
   DCHECK(result);
 }
 

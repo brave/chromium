@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_MEDIA_ROUTER_DISCOVERY_ACCESS_CODE_ACCESS_CODE_CAST_PREF_UPDATER_H_
 #define CHROME_BROWSER_MEDIA_ROUTER_DISCOVERY_ACCESS_CODE_ACCESS_CODE_CAST_PREF_UPDATER_H_
 
+#include <vector>
+
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/media_router/common/discovery/media_sink_internal.h"
@@ -12,8 +14,7 @@
 
 namespace media_router {
 
-// An interface used by both LaCros and other desktop platforms for pref
-// updating in AccessCodeCasting.
+// An interface used for pref updating in AccessCodeCasting.
 class AccessCodeCastPrefUpdater {
  public:
   AccessCodeCastPrefUpdater() = default;
@@ -78,7 +79,7 @@ class AccessCodeCastPrefUpdater {
   // |get_sink_callback| with this value, otherwise runs the callback with
   // absl::nullop.
   void GetDeviceAddedTime(const MediaSink::Id sink_id,
-                          base::OnceCallback<void(absl::optional<base::Time>)>
+                          base::OnceCallback<void(std::optional<base::Time>)>
                               get_device_added_time_callback);
 
   // Returns a list of media sink id's of devices in |devices_dict| whose ip
@@ -90,7 +91,7 @@ class AccessCodeCastPrefUpdater {
 
   // Sets the key for the given |sink| id with the actual |sink| itself. This
   // function will overwrite a sink id if it already exists.
-  virtual void UpdateDevicesDictForTest(const MediaSinkInternal& sink) = 0;
+  virtual void UpdateDevicesDictForTesting(const MediaSinkInternal& sink) = 0;
 };
 
 }  // namespace media_router

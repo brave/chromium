@@ -14,23 +14,26 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Manual;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 
-/** Tests that intentionally crash in different ways.
+/**
+ * Tests that intentionally crash in different ways.
  *
- *  These are all purposefully disabled and should only be run manually.
+ * <p>These are all purposefully disabled and should only be run manually.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
 public class IntentionalCrashTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Test
     @SmallTest
     @Manual(message = "Intentional crash.")
     public void testRendererCrash() {
-        mActivityTestRule.startMainActivityFromLauncher();
+        mActivityTestRule.startFromLauncherAtNtp();
         mActivityTestRule.loadUrl("chrome://crash");
     }
 
@@ -38,7 +41,7 @@ public class IntentionalCrashTest {
     @SmallTest
     @Manual(message = "Intentional crash.")
     public void testBrowserCrash() {
-        mActivityTestRule.startMainActivityFromLauncher();
+        mActivityTestRule.startFromLauncherAtNtp();
         mActivityTestRule.loadUrl("chrome://inducebrowsercrashforrealz");
     }
 
@@ -46,7 +49,7 @@ public class IntentionalCrashTest {
     @SmallTest
     @Manual(message = "Intentional crash.")
     public void testJavaCrash() {
-        mActivityTestRule.startMainActivityFromLauncher();
+        mActivityTestRule.startFromLauncherAtNtp();
         mActivityTestRule.loadUrl("chrome://java-crash/");
     }
 
@@ -54,7 +57,7 @@ public class IntentionalCrashTest {
     @SmallTest
     @Manual(message = "Intentional crash.")
     public void testGpuCrash() {
-        mActivityTestRule.startMainActivityFromLauncher();
+        mActivityTestRule.startFromLauncherAtNtp();
         mActivityTestRule.loadUrl("chrome://gpucrash");
     }
 }

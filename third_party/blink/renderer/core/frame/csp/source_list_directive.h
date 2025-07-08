@@ -16,7 +16,7 @@ namespace blink {
 class KURL;
 
 CORE_EXPORT
-bool CSPSourceListAllows(
+CSPCheckResult CSPSourceListAllows(
     const network::mojom::blink::CSPSourceList& source_list,
     const network::mojom::blink::CSPSource& self_source,
     const KURL&,
@@ -34,6 +34,16 @@ bool CSPSourceListAllowHash(
     const network::mojom::blink::CSPHashSource& hash);
 
 CORE_EXPORT
+bool CSPSourceListAllowEvalHash(
+    const network::mojom::blink::CSPSourceList& source_list,
+    const network::mojom::blink::CSPHashSource& hash);
+
+CORE_EXPORT
+bool CSPSourceListAllowUrlHash(
+    const network::mojom::blink::CSPSourceList& source_list,
+    const network::mojom::blink::CSPHashSource& url_hash);
+
+CORE_EXPORT
 bool CSPSourceListIsNone(
     const network::mojom::blink::CSPSourceList& source_list);
 
@@ -43,6 +53,10 @@ bool CSPSourceListIsSelf(
 
 CORE_EXPORT
 bool CSPSourceListIsHashOrNoncePresent(
+    const network::mojom::blink::CSPSourceList& source_list);
+
+CORE_EXPORT
+bool CSPSourceListIsEvalHashPresent(
     const network::mojom::blink::CSPSourceList& source_list);
 
 CORE_EXPORT

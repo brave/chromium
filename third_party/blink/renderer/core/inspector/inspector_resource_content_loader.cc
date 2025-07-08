@@ -124,7 +124,7 @@ void InspectorResourceContentLoader::Start() {
 
     ResourceFetcher* fetcher = document->Fetcher();
 
-    scoped_refptr<const DOMWrapperWorld> world =
+    const DOMWrapperWorld* world =
         document->GetExecutionContext()->GetCurrentWorld();
     if (!ShouldSkipFetchingUrl(resource_request.Url())) {
       urls_to_fetch.insert(resource_request.Url().GetString());
@@ -153,6 +153,10 @@ void InspectorResourceContentLoader::Start() {
           mojom::blink::RequestContextType::INTERNAL);
       ResourceLoaderOptions options(world);
       options.initiator_info.name = fetch_initiator_type_names::kInternal;
+      auto* owner_element = DynamicTo<HTMLElement>(style_sheet->ownerNode());
+      if (owner_element && owner_element->nonce()) {
+        options.content_security_policy_nonce = owner_element->nonce();
+      }
       FetchParameters params(std::move(style_sheet_resource_request), options);
       ResourceClient* resource_client =
           MakeGarbageCollected<ResourceClient>(this);
@@ -242,7 +246,7 @@ void InspectorResourceContentLoader::DidCommitLoadForLocalFrame(
 Resource* InspectorResourceContentLoader::ResourceForURL(const KURL& url) {
   for (const auto& resource : resources_) {
     if (resource->Url() == url)
-      return resource;
+      return resource.Get();
   }
   return nullptr;
 }

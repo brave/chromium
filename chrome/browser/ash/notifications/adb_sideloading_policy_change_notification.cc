@@ -8,11 +8,10 @@
 
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/public/cpp/notification_utils.h"
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -33,10 +32,12 @@ constexpr char kAdbSideloadingPowerwashOnRebootNotificationId[] =
 
 namespace ash {
 
+AdbSideloadingPolicyChangeNotification::AdbSideloadingPolicyChangeNotification(
+    const policy::BrowserPolicyConnectorAsh* browser_policy_connector_ash)
+    : browser_policy_connector_ash_(CHECK_DEREF(browser_policy_connector_ash)) {
+}
 AdbSideloadingPolicyChangeNotification::
-    AdbSideloadingPolicyChangeNotification() {}
-AdbSideloadingPolicyChangeNotification::
-    ~AdbSideloadingPolicyChangeNotification() {}
+    ~AdbSideloadingPolicyChangeNotification() = default;
 
 void AdbSideloadingPolicyChangeNotification::Show(Type type) {
   std::u16string title, text;
@@ -45,16 +46,13 @@ void AdbSideloadingPolicyChangeNotification::Show(Type type) {
   bool pinned = false;
   std::vector<message_center::ButtonInfo> notification_actions;
 
-  auto enterprise_manager =
-      base::UTF8ToUTF16(g_browser_process->platform_part()
-                            ->browser_policy_connector_ash()
-                            ->GetEnterpriseDomainManager());
+  auto enterprise_manager = base::UTF8ToUTF16(
+      browser_policy_connector_ash_->GetEnterpriseDomainManager());
   std::u16string device_type = ui::GetChromeOSDeviceName();
 
   switch (type) {
     case Type::kNone:
       NOTREACHED();
-      return;
     case Type::kSideloadingDisallowed:
       title = l10n_util::GetStringUTF16(
           IDS_ADB_SIDELOADING_POLICY_CHANGE_SIDELOADING_DISALLOWED_NOTIFICATION_TITLE);
@@ -110,7 +108,7 @@ void AdbSideloadingPolicyChangeNotification::Show(Type type) {
 }
 
 void AdbSideloadingPolicyChangeNotification::HandleNotificationClick(
-    absl::optional<int> button_index) {
+    std::optional<int> button_index) {
   // Only request restart when the button is clicked, i.e. ignore the clicks
   // on the body of the notification.
   if (!button_index)

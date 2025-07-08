@@ -18,7 +18,7 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/profile_picker.h"
+#include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/profile_waiter.h"
@@ -29,7 +29,7 @@
 
 class ProfileListDesktopBrowserTest : public InProcessBrowserTest {
  public:
-  ProfileListDesktopBrowserTest() {}
+  ProfileListDesktopBrowserTest() = default;
 
   ProfileListDesktopBrowserTest(const ProfileListDesktopBrowserTest&) = delete;
   ProfileListDesktopBrowserTest& operator=(
@@ -45,7 +45,7 @@ class ProfileListDesktopBrowserTest : public InProcessBrowserTest {
   std::unique_ptr<AvatarMenu> avatar_menu_;
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // This test doesn't make sense for Chrome OS since it has a different
 // multi-profiles menu in the system tray instead.
 #define MAYBE_SwitchToProfile DISABLED_SwitchToProfile

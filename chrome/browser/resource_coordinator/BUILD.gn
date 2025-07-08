@@ -9,11 +9,6 @@ import("//third_party/protobuf/proto_library.gni")
 mojom("mojo_bindings") {
   sources = [ "lifecycle_unit_state.mojom" ]
   webui_module_path = "/"
-  use_typescript_sources = true
-}
-
-proto_library("intervention_policy_database_proto") {
-  sources = [ "intervention_policy_database.proto" ]
 }
 
 source_set("tab_manager_features") {
@@ -25,4 +20,23 @@ source_set("tab_manager_features") {
     "//base",
     "//chrome/common:chrome_features",
   ]
+}
+
+source_set("resource_coordinator") {
+  sources = []
+  public_deps = []
+
+  if (!is_android) {
+    sources += [
+      "decision_details.h",
+      "lifecycle_unit.h",
+      "tab_load_tracker.h",
+    ]
+    public_deps += [
+      ":mojo_bindings",
+      ":mojo_bindings__generator",
+      "//base",
+      "//content/public/browser",
+    ]
+  }
 }

@@ -23,15 +23,20 @@
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_change_registrar.h"
+#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
+
+namespace network {
+class SharedURLLoaderFactory;
+}
 
 namespace signin {
 class IdentityManager;
 }
 
-namespace network {
-class SharedURLLoaderFactory;
+namespace syncer {
+class SyncService;
 }
 
 namespace safe_browsing {
@@ -80,6 +85,7 @@ class TailoredSecurityService : public KeyedService {
   using CompletionCallback = base::OnceCallback<void(Request*, bool success)>;
 
   TailoredSecurityService(signin::IdentityManager* identity_manager,
+                          syncer::SyncService* sync_service,
                           PrefService* prefs);
   ~TailoredSecurityService() override;
 
@@ -154,6 +160,9 @@ class TailoredSecurityService : public KeyedService {
   // callback.
   virtual void MaybeNotifySyncUser(bool is_enabled, base::Time previous_update);
 
+  // Returns whether the user has history sync enabled in preferences.
+  bool HistorySyncEnabledForUser();
+
   PrefService* prefs() { return prefs_; }
 
   signin::IdentityManager* identity_manager() { return identity_manager_; }
@@ -164,19 +173,24 @@ class TailoredSecurityService : public KeyedService {
  private:
   FRIEND_TEST_ALL_PREFIXES(
       TailoredSecurityServiceTest,
-      RetryEnabledTimestampUpdateCallbackSetsOutcomeToUnknown);
-  FRIEND_TEST_ALL_PREFIXES(TailoredSecurityServiceTest,
-                           RetryEnabledTimestampUpdateCallbackRecordsStartTime);
+      HistorySyncEnabledForUserReturnsFalseWhenSyncServiceIsNull);
   FRIEND_TEST_ALL_PREFIXES(
       TailoredSecurityServiceTest,
-      RetryDisabledTimestampUpdateCallbackDoesNotRecordStartTime);
+      RetryLogicTimestampUpdateCallbackSetsStateToRetryNeeded);
   FRIEND_TEST_ALL_PREFIXES(TailoredSecurityServiceTest,
-                           RetryDisabledOutcomeRemainsUnset);
+                           RetryLogicTimestampUpdateCallbackRecordsStartTime);
   friend class TailoredSecurityTabHelperTest;
 
-  // Stores pointer to IdentityManager instance. It must outlive the
-  // TailoredSecurityService and can be null during tests.
-  raw_ptr<signin::IdentityManager, DanglingUntriaged> identity_manager_;
+  // Saves the supplied `TailoredSecurityRetryState` to preferences.
+  void SaveRetryState(TailoredSecurityRetryState state);
+
+  // Stores pointer to `IdentityManager` instance. It must outlive the
+  // `TailoredSecurityService` and can be null during tests.
+  raw_ptr<signin::IdentityManager> identity_manager_;
+
+  // Stores pointer to `SyncService` instance. It must outlive the
+  // `TailoredSecurityService` and can be null during tests.
+  raw_ptr<syncer::SyncService> sync_service_;
 
   // Pending TailoredSecurity queries to be canceled if not complete by
   // profile shutdown.
@@ -208,11 +222,7 @@ class TailoredSecurityService : public KeyedService {
   QueryTailoredSecurityBitCallback saved_callback_;
 
   // The preferences for the given profile.
-  // This dangling raw_ptr occurred in:
-  // unit_tests:
-  // All/IsolatedWebAppReaderRegistryFactoryTest.GuardedBehindFeatureFlag/1
-  // https://ci.chromium.org/ui/p/chromium/builders/try/linux-rel/1428246/test-results?q=ExactID%3Aninja%3A%2F%2Fchrome%2Ftest%3Aunit_tests%2FIsolatedWebAppReaderRegistryFactoryTest.GuardedBehindFeatureFlag%2FAll.1+VHash%3A728d3f3a440b40c1
-  raw_ptr<PrefService, FlakyDanglingUntriaged> prefs_;
+  raw_ptr<PrefService> prefs_;
 
   // This is used to observe when sync users update their Tailored Security
   // setting.

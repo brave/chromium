@@ -18,7 +18,6 @@
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
@@ -134,7 +133,7 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
     scope_ = GURL("http://www.example.com/test/");
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope_;
-    registration_ = base::MakeRefCounted<ServiceWorkerRegistration>(
+    registration_ = ServiceWorkerRegistration::Create(
         options,
         blink::StorageKey::CreateFirstParty(url::Origin::Create(scope_)), 1L,
         context()->AsWeakPtr(), blink::mojom::AncestorFrameType::kNormalFrame);
@@ -155,7 +154,7 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
 
   EmbeddedWorkerTestHelper* helper() { return helper_.get(); }
   ServiceWorkerContextCore* context() { return helper_->context(); }
-  ServiceWorkerRegistry* registry() { return context()->registry(); }
+  ServiceWorkerRegistry& registry() { return context()->registry(); }
   ServiceWorkerVersion* version() { return version_.get(); }
 
  private:
@@ -708,7 +707,7 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, StorageDisabled) {
   version()->script_cache_map()->SetResources(records);
 
   base::RunLoop loop;
-  registry()->DisableStorageForTesting(loop.QuitClosure());
+  registry().DisableStorageForTesting(loop.QuitClosure());
   loop.Run();
 
   auto sender =

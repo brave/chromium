@@ -46,21 +46,20 @@ function sendCommand(cmd) {
 }
 
 function makeImageSet(url1x, url2x) {
-  return '-webkit-image-set(url(' + url1x + ') 1x, url(' + url2x + ') 2x)';
+  return 'image-set(url(' + url1x + ') 1x, url(' + url2x + ') 2x)';
 }
 
 /** Perform all initialization that can be done at DOMContentLoaded time. */
 function initialize() {
   const allowAccessRequests = loadTimeData.getBoolean('allowAccessRequests');
-  const avatarURL1x = loadTimeData.getString('avatarURL1x');
-  const avatarURL2x = loadTimeData.getString('avatarURL2x');
   const custodianName = loadTimeData.getString('custodianName');
   localWebApprovalsEnabled =
       loadTimeData.getBoolean('isLocalWebApprovalsEnabled');
-  const localWebApprovalsPreferred =
-      loadTimeData.getBoolean('isLocalWebApprovalsPreferred');
 
   if (custodianName && allowAccessRequests) {
+    const avatarURL1x = loadTimeData.getString('avatarURL1x');
+    const avatarURL2x = loadTimeData.getString('avatarURL2x');
+
     $('custodians-information').hidden = false;
     if (avatarURL1x) {
       $('custodian-avatar-img').style.content =
@@ -68,10 +67,11 @@ function initialize() {
     }
     $('custodian-name').textContent = custodianName;
     $('custodian-email').textContent = loadTimeData.getString('custodianEmail');
-    const secondAvatarURL1x = loadTimeData.getString('secondAvatarURL1x');
-    const secondAvatarURL2x = loadTimeData.getString('secondAvatarURL2x');
     const secondCustodianName = loadTimeData.getString('secondCustodianName');
     if (secondCustodianName) {
+      const secondAvatarURL1x = loadTimeData.getString('secondAvatarURL1x');
+      const secondAvatarURL2x = loadTimeData.getString('secondAvatarURL2x');
+
       $('second-custodian-information').hidden = false;
       $('second-custodian-avatar-img').hidden = false;
       if (secondAvatarURL1x) {
@@ -84,10 +84,6 @@ function initialize() {
     }
   }
 
-  const showBanner = loadTimeData.getBoolean('showBanner');
-  if (!showBanner) {
-    $('banner').style.display = 'none';
-  }
 
   const alreadyRequestedAccessRemote =
       loadTimeData.getBoolean('alreadySentRemoteRequest');
@@ -105,13 +101,8 @@ function initialize() {
     $('remote-approvals-button').hidden = false;
     if (localWebApprovalsEnabled) {
       $('local-approvals-button').hidden = false;
-      if (localWebApprovalsPreferred) {
-        $('local-approvals-button').classList.add('primary-button');
-        $('remote-approvals-button').classList.add('secondary-button');
-      } else {
-        $('remote-approvals-button').classList.add('primary-button');
-        $('local-approvals-button').classList.add('secondary-button');
-      }
+      $('local-approvals-button').classList.add('primary-button');
+      $('remote-approvals-button').classList.add('secondary-button');
     }
     $('remote-approvals-button').onclick = function(event) {
       $('remote-approvals-button').disabled = true;
@@ -166,9 +157,9 @@ function requestCreated(isSuccessful, isMainFrame) {
   $('block-page-message').hidden = true;
   $('hide-details-link').hidden = true;
   // Hide block reason from the waiting screen.
-  $('block-reason').hidden = true;
-  $('block-reason-show-details-link').hidden = true;
-  $('block-reason-hide-details-link').hidden = true;
+  $('block-reason').style.display = 'none';
+  $('block-reason-show-details-link').style.display = 'none';
+  $('block-reason-hide-details-link').style.display = 'none';
   if (localWebApprovalsEnabled) {
     $('local-approvals-button').hidden = false;
   }
@@ -186,13 +177,11 @@ function requestCreated(isSuccessful, isMainFrame) {
           event) {
         sendCommand('requestUrlAccessLocal');
       };
-      $('local-approvals-remote-request-sent-button').focus();
     } else {
       $('back-button').hidden = !isMainFrame;
       $('back-button').onclick = function(event) {
         sendCommand('back');
       };
-      $('back-button').focus();
     }
     $('error-page-illustration').hidden = true;
     $('waiting-for-approval-illustration').hidden = false;
@@ -203,6 +192,8 @@ function requestCreated(isSuccessful, isMainFrame) {
     $('remote-approvals-button').disabled = false;
     $('show-details-link').hidden = false;
   }
+  // After updating the contents, focus the top-level div for screen readers.
+  $('frame-blocked').focus();
 }
 
 document.addEventListener('DOMContentLoaded', initialize);

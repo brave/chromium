@@ -4,32 +4,18 @@
 
 #include "chrome/test/media_router/media_router_cast_ui_for_test.h"
 
-#include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/ui/media_router/media_router_ui.h"
 #include "chrome/browser/ui/views/media_router/cast_dialog_coordinator.h"
 #include "chrome/browser/ui/views/media_router/cast_dialog_sink_button.h"
 #include "chrome/browser/ui/views/media_router/media_router_dialog_controller_views.h"
-#include "ui/events/base_event_utils.h"
-#include "ui/events/event.h"
-#include "ui/events/event_constants.h"
-#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/views/test/button_test_api.h"
 
 namespace media_router {
-
-namespace {
-
-ui::MouseEvent CreateMousePressedEvent() {
-  return ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::Point(0, 0),
-                        gfx::Point(0, 0), ui::EventTimeForNow(),
-                        ui::EF_LEFT_MOUSE_BUTTON, 0);
-}
-
-}  // namespace
 
 MediaRouterCastUiForTest::MediaRouterCastUiForTest(
     content::WebContents* web_contents)
@@ -39,9 +25,7 @@ MediaRouterCastUiForTest::~MediaRouterCastUiForTest() {
   CHECK(!watch_callback_);
 }
 
-void MediaRouterCastUiForTest::SetUp() {
-  feature_list_.InitAndDisableFeature(kGlobalMediaControlsCastStartStop);
-}
+void MediaRouterCastUiForTest::SetUp() {}
 
 void MediaRouterCastUiForTest::ShowDialog() {
   dialog_controller_->ShowMediaRouterDialog(
@@ -63,8 +47,7 @@ void MediaRouterCastUiForTest::ChooseSourceType(
   CastDialogView* dialog_view = GetDialogView();
   CHECK(dialog_view);
 
-  views::test::ButtonTestApi(dialog_view->sources_button_for_test())
-      .NotifyClick(CreateMousePressedEvent());
+  ClickOnButton(dialog_view->sources_button_for_test());
   int source_index;
   switch (source_type) {
     case CastDialogView::kTab:
@@ -86,13 +69,13 @@ CastDialogView::SourceType MediaRouterCastUiForTest::GetChosenSourceType()
 
 void MediaRouterCastUiForTest::StartCasting(const std::string& sink_name) {
   CastDialogSinkView* sink_view = GetSinkView(sink_name);
-  ClickOnView(sink_view->cast_sink_button_for_test());
+  ClickOnButton(sink_view->cast_sink_button_for_test());
 }
 
 void MediaRouterCastUiForTest::StopCasting(const std::string& sink_name) {
   CastDialogSinkView* sink_view = GetSinkView(sink_name);
   if (sink_view->stop_button_for_test()) {
-    ClickOnView(sink_view->stop_button_for_test());
+    ClickOnButton(sink_view->stop_button_for_test());
     return;
   }
   NOTREACHED() << "No stop button found for sink " << sink_name;
@@ -119,7 +102,6 @@ std::string MediaRouterCastUiForTest::GetIssueTextForSink(
       static_cast<CastDialogSinkButton*>(GetSinkButton(sink_name));
   if (!sink_button->sink().issue) {
     NOTREACHED() << "Issue not found for sink " << sink_name;
-    return "";
   }
   return sink_button->sink().issue->info().title;
 }
@@ -171,7 +153,7 @@ void MediaRouterCastUiForTest::OnDialogModelUpdated(
 
   const std::vector<raw_ptr<CastDialogSinkView, DanglingUntriaged>>&
       sink_views = dialog_view->sink_views_for_test();
-  if (base::ranges::any_of(
+  if (std::ranges::any_of(
           sink_views, [&, this](CastDialogSinkView* sink_view) {
             switch (watch_type_) {
               case WatchType::kSink:
@@ -190,7 +172,6 @@ void MediaRouterCastUiForTest::OnDialogModelUpdated(
               case WatchType::kDialogShown:
               case WatchType::kDialogHidden:
                 NOTREACHED() << "Invalid WatchType";
-                return false;
             }
           })) {
     std::move(*watch_callback_).Run();
@@ -219,7 +200,7 @@ CastDialogSinkButton* MediaRouterCastUiForTest::GetSinkButton(
 
 void MediaRouterCastUiForTest::ObserveDialog(
     WatchType watch_type,
-    absl::optional<std::string> sink_name) {
+    std::optional<std::string> sink_name) {
   CHECK(!watch_sink_name_);
   CHECK(!watch_callback_);
   CHECK_EQ(watch_type_, WatchType::kNone);
@@ -254,13 +235,12 @@ CastDialogSinkView* MediaRouterCastUiForTest::GetSinkView(
   CHECK(dialog_view);
   const std::vector<raw_ptr<CastDialogSinkView, DanglingUntriaged>>&
       sink_views = dialog_view->sink_views_for_test();
-  auto it = base::ranges::find(sink_views, base::UTF8ToUTF16(sink_name),
-                               [](CastDialogSinkView* sink_view) {
-                                 return sink_view->sink().friendly_name;
-                               });
+  auto it = std::ranges::find(sink_views, base::UTF8ToUTF16(sink_name),
+                              [](CastDialogSinkView* sink_view) {
+                                return sink_view->sink().friendly_name;
+                              });
   if (it == sink_views.end()) {
     NOTREACHED() << "Sink view not found for sink: " << sink_name;
-    return nullptr;
   } else {
     return it->get();
   }

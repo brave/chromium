@@ -70,8 +70,6 @@ CoordinatorImpl::CoordinatorImpl()
   g_coordinator_impl = this;
   base::trace_event::MemoryDumpManager::GetInstance()->set_tracing_process_id(
       mojom::kServiceTracingProcessId);
-  tracing_observer_ = std::make_unique<TracingObserverProto>(
-      base::trace_event::TraceLog::GetInstance(), nullptr);
 }
 
 CoordinatorImpl::~CoordinatorImpl() {
@@ -96,7 +94,7 @@ void CoordinatorImpl::RegisterClientProcess(
     mojo::PendingRemote<mojom::ClientProcess> client_process,
     mojom::ProcessType process_type,
     base::ProcessId process_id,
-    const absl::optional<std::string>& service_name) {
+    const std::optional<std::string>& service_name) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   mojo::Remote<mojom::ClientProcess> process(std::move(client_process));
   if (receiver.is_valid())
@@ -154,9 +152,9 @@ void CoordinatorImpl::RequestGlobalMemoryDumpForPid(
   };
 
   QueuedRequest::Args args(
-      base::trace_event::MemoryDumpType::SUMMARY_ONLY,
-      base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND,
-      base::trace_event::MemoryDumpDeterminism::NONE, allocator_dump_names,
+      base::trace_event::MemoryDumpType::kSummaryOnly,
+      base::trace_event::MemoryDumpLevelOfDetail::kBackground,
+      base::trace_event::MemoryDumpDeterminism::kNone, allocator_dump_names,
       false /* add_to_trace */, pid,
       /*memory_footprint_only=*/false);
   RequestGlobalMemoryDumpInternal(args,
@@ -175,9 +173,9 @@ void CoordinatorImpl::RequestPrivateMemoryFootprint(
   };
 
   QueuedRequest::Args args(
-      base::trace_event::MemoryDumpType::SUMMARY_ONLY,
-      base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND,
-      base::trace_event::MemoryDumpDeterminism::NONE, {},
+      base::trace_event::MemoryDumpType::kSummaryOnly,
+      base::trace_event::MemoryDumpLevelOfDetail::kBackground,
+      base::trace_event::MemoryDumpDeterminism::kNone, {},
       false /* add_to_trace */, pid, /*memory_footprint_only=*/true);
   RequestGlobalMemoryDumpInternal(args,
                                   base::BindOnce(adapter, std::move(callback)));
@@ -288,7 +286,7 @@ void CoordinatorImpl::RequestGlobalMemoryDumpInternal(
   // another request in the queue with the same level of detail, there's no
   // point in enqueuing this request.
   if (another_dump_is_queued &&
-      args.dump_type == MemoryDumpType::PERIODIC_INTERVAL) {
+      args.dump_type == MemoryDumpType::kPeriodicInterval) {
     for (const auto& request : queued_memory_dump_requests_) {
       if (request.args.level_of_detail == args.level_of_detail) {
         VLOG(1) << "RequestGlobalMemoryDump("
@@ -390,14 +388,12 @@ void CoordinatorImpl::PerformNextQueuedGlobalMemoryDump() {
   if (request->args.add_to_trace && heap_profiler_) {
     request->heap_dump_in_progress = true;
 
-    // |IsArgumentFilterEnabled| is the round-about way of asking to anonymize
-    // the trace. The only way that PII gets leaked is if the full path is
-    // emitted for mapped files. Passing |strip_path_from_mapped_files|
-    // is all that is necessary to anonymize the trace.
+    // We use level_of_detail == kBackground as a way of asking to anonymize the
+    // trace. The only way that PII gets leaked is if the full path is emitted
+    // for mapped files. Passing |strip_path_from_mapped_files| is all that is
+    // necessary to anonymize the trace.
     bool strip_path_from_mapped_files =
-        base::trace_event::TraceLog::GetInstance()
-            ->GetCurrentTraceConfig()
-            .IsArgumentFilterEnabled();
+        request->args.level_of_detail == MemoryDumpLevelOfDetail::kBackground;
     heap_profiler_->DumpProcessesForTracing(
         strip_path_from_mapped_files, write_proto_heap_profile_,
         base::BindOnce(&CoordinatorImpl::OnDumpProcessesForTracing,
@@ -485,11 +481,11 @@ void CoordinatorImpl::OnOSMemoryDumpForVMRegions(uint64_t dump_guid,
                                                  OSMemDumpMap os_dumps) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   auto request_it = in_progress_vm_region_requests_.find(dump_guid);
-  DCHECK(request_it != in_progress_vm_region_requests_.end());
+  CHECK(request_it != in_progress_vm_region_requests_.end());
 
   QueuedVmRegionRequest* request = request_it->second.get();
   auto it = request->pending_responses.find(process_id);
-  DCHECK(it != request->pending_responses.end());
+  CHECK(it != request->pending_responses.end());
   request->pending_responses.erase(it);
   request->responses[process_id].os_dumps = std::move(os_dumps);
 
@@ -547,7 +543,6 @@ void CoordinatorImpl::RemovePendingResponse(
   QueuedRequest* request = GetCurrentRequest();
   if (request == nullptr) {
     NOTREACHED() << "No current dump request.";
-    return;
   }
   auto it = request->pending_responses.find({process_id, type});
   if (it == request->pending_responses.end()) {
@@ -568,7 +563,8 @@ void CoordinatorImpl::FinalizeGlobalMemoryDumpIfAllManagersReplied() {
     return;
   }
 
-  QueuedRequestDispatcher::Finalize(request, tracing_observer_.get());
+  QueuedRequestDispatcher::Finalize(request,
+                                    TracingObserverProto::GetInstance());
 
   queued_memory_dump_requests_.pop_front();
   request = nullptr;
@@ -585,7 +581,7 @@ void CoordinatorImpl::FinalizeGlobalMemoryDumpIfAllManagersReplied() {
 CoordinatorImpl::ClientInfo::ClientInfo(
     mojo::Remote<mojom::ClientProcess> client,
     mojom::ProcessType process_type,
-    absl::optional<std::string> service_name)
+    std::optional<std::string> service_name)
     : client(std::move(client)),
       process_type(process_type),
       service_name(std::move(service_name)) {}

@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/l10n/l10n_util.h"
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
 
@@ -22,7 +29,7 @@
 #include "base/test/icu_test_util.h"
 #include "base/test/scoped_path_override.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #include "third_party/icu/source/common/unicode/locid.h"
@@ -34,10 +41,11 @@
 #include <cstdlib>
 #endif
 
-using base::ASCIIToUTF16;
-using base::UTF8ToUTF16;
-
 namespace {
+
+using ::base::ASCIIToUTF16;
+using ::base::UTF8ToUTF16;
+using ::testing::ElementsAre;
 
 class StringWrapper {
  public:
@@ -81,7 +89,7 @@ TEST_F(L10nUtilTest, GetString) {
 // On Android, we are disabling this test since GetApplicationLocale() just
 // returns the system's locale, which, similarly, is not easily unit tested.
 
-#if BUILDFLAG(IS_POSIX) && defined(USE_GLIB) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_POSIX) && defined(USE_GLIB) && !BUILDFLAG(IS_CHROMEOS)
 const bool kPlatformHasDefaultLocale = true;
 const bool kUseLocaleFromEnvironment = true;
 const bool kSupportsLocalePreference = false;
@@ -110,10 +118,23 @@ TEST_F(L10nUtilTest, GetAppLocale) {
   base::FilePath new_locale_dir;
   ASSERT_TRUE(base::PathService::Get(ui::DIR_LOCALES, &new_locale_dir));
   // Make fake locale files.
-  std::string filenames[] = {
-      "am", "ca", "ca@valencia", "en-GB", "en-US", "es",    "es-419", "fil",
-      "fr", "he", "nb",          "pt-BR", "pt-PT", "zh-CN", "zh-TW",
-  };
+  auto filenames = std::to_array<std::string>({
+      "am",
+      "ca",
+      "ca@valencia",
+      "en-GB",
+      "en-US",
+      "es",
+      "es-419",
+      "fil",
+      "fr",
+      "he",
+      "nb",
+      "pt-BR",
+      "pt-PT",
+      "zh-CN",
+      "zh-TW",
+  });
 
   for (size_t i = 0; i < std::size(filenames); ++i) {
     base::FilePath filename = new_locale_dir.AppendASCII(
@@ -541,14 +562,8 @@ TEST_F(L10nUtilTest, MAYBE_GetDisplayNameForCountry) {
 }
 
 TEST_F(L10nUtilTest, GetParentLocales) {
-  std::vector<std::string> locales;
-  const std::string top_locale("sr_Cyrl_RS");
-  l10n_util::GetParentLocales(top_locale, &locales);
-
-  ASSERT_EQ(3U, locales.size());
-  EXPECT_EQ("sr_Cyrl_RS", locales[0]);
-  EXPECT_EQ("sr_Cyrl", locales[1]);
-  EXPECT_EQ("sr", locales[2]);
+  EXPECT_THAT(l10n_util::GetParentLocales("sr_Cyrl_RS"),
+              ElementsAre("sr_Cyrl_RS", "sr_Cyrl", "sr"));
 }
 
 TEST_F(L10nUtilTest, IsValidLocaleSyntax) {
@@ -659,55 +674,54 @@ TEST_F(L10nUtilTest, GetUserFacingUILocaleList) {
 }
 
 TEST_F(L10nUtilTest, PlatformLocalesIsSorted) {
-  const char* const* locales = l10n_util::GetPlatformLocalesForTesting();
-  const size_t locales_size = l10n_util::GetPlatformLocalesSizeForTesting();
+  const base::span<const std::string_view> locales =
+      l10n_util::GetPlatformLocalesForTesting();
 
-  // Check adjacent pairs and ensure they are in sorted order without
-  // duplicates.
-
-  // All 0-length and 1-length lists are sorted.
-  if (locales_size <= 1) {
-    return;
-  }
-
-  const char* last_locale = locales[0];
-  for (size_t i = 1; i < locales_size; i++) {
-    const char* cur_locale = locales[i];
-    EXPECT_LT(strcmp(last_locale, cur_locale), 0)
-        << "Incorrect ordering in kPlatformLocales: " << last_locale
-        << " >= " << cur_locale;
-    last_locale = cur_locale;
-  }
+  // Check adjacent pairs and ensure they are in sorted order ...
+  EXPECT_TRUE(std::ranges::is_sorted(locales));
+  // ... and without duplicates.
+  EXPECT_EQ(std::ranges::adjacent_find(locales), locales.end());
 }
 
-TEST_F(L10nUtilTest, AcceptLocalesIsSorted) {
-  // Accept-Language List should be sorted and have no duplicates.
-  const char* const* locales = l10n_util::GetAcceptLanguageListForTesting();
-  const size_t locales_size = l10n_util::GetAcceptLanguageListSizeForTesting();
+TEST_F(L10nUtilTest, IsPossibleAcceptLanguage) {
+  EXPECT_TRUE(l10n_util::IsPossibleAcceptLanguage("en"));
+  EXPECT_TRUE(l10n_util::IsPossibleAcceptLanguage("en-CA"));
+  EXPECT_TRUE(l10n_util::IsPossibleAcceptLanguage("fil"));
+  EXPECT_TRUE(l10n_util::IsPossibleAcceptLanguage("zu"));
 
-  // All 0-length and 1-length lists are sorted.
-  if (locales_size <= 1) {
-    return;
-  }
+  EXPECT_FALSE(l10n_util::IsPossibleAcceptLanguage("tl"));
+  EXPECT_FALSE(l10n_util::IsPossibleAcceptLanguage("fr-CO"));
+  EXPECT_FALSE(l10n_util::IsPossibleAcceptLanguage("iw"));
 
-  const char* last_locale = locales[0];
-  for (size_t i = 1; i < locales_size; i++) {
-    const char* cur_locale = locales[i];
-    EXPECT_LT(strcmp(last_locale, cur_locale), 0)
-        << "Incorrect ordering in kPlatformLocales: " << last_locale
-        << " >= " << cur_locale;
-    last_locale = cur_locale;
-  }
+  EXPECT_FALSE(l10n_util::IsPossibleAcceptLanguage("dne"));
 }
 
-TEST_F(L10nUtilTest, IsLanguageAccepted) {
-  EXPECT_TRUE(l10n_util::IsLanguageAccepted("en", "es-419"));
-  EXPECT_TRUE(l10n_util::IsLanguageAccepted("en", "en-GB"));
-  EXPECT_TRUE(l10n_util::IsLanguageAccepted("es", "fil"));
-  EXPECT_TRUE(l10n_util::IsLanguageAccepted("de", "zu"));
+TEST_F(L10nUtilTest, IsAcceptLanguageDisplayable) {
+  EXPECT_TRUE(l10n_util::IsAcceptLanguageDisplayable("en", "es-419"));
+  EXPECT_TRUE(l10n_util::IsAcceptLanguageDisplayable("en", "en-GB"));
+  EXPECT_TRUE(l10n_util::IsAcceptLanguageDisplayable("es", "fil"));
+  EXPECT_TRUE(l10n_util::IsAcceptLanguageDisplayable("de", "zu"));
 
   // The old code for "he" is not supported.
-  EXPECT_FALSE(l10n_util::IsLanguageAccepted("es", "iw"));
+  EXPECT_FALSE(l10n_util::IsAcceptLanguageDisplayable("es", "iw"));
+}
+
+TEST_F(L10nUtilTest, KeepAcceptedLanguages) {
+  // All valid languages.
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"en", "es", "fr"}),
+            std::vector<std::string>({"en", "es", "fr"}));
+  // Some invalid languages.
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"en", "es", "iw"}),
+            std::vector<std::string>({"en", "es"}));
+  // All invalid languages.
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"iw", "ch_ZN"}),
+            std::vector<std::string>{});
+  // Empty input.
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({}), std::vector<std::string>{});
+  // Maintain languages order.
+  EXPECT_EQ(
+      l10n_util::KeepAcceptedLanguages({"en", "aa", "es", "iw", "fr", "xx"}),
+      std::vector<std::string>({"en", "es", "fr"}));
 }
 
 TEST_F(L10nUtilTest, FormatStringComputeCorrectOffsetInRTL) {

@@ -31,12 +31,14 @@ bool g_libassistant_enabled = false;
 
 // static
 std::string AssistantOptInFlowScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::NEXT:
       return "Next";
     case Result::NOT_APPLICABLE:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 AssistantOptInFlowScreen::AssistantOptInFlowScreen(
@@ -58,7 +60,7 @@ bool AssistantOptInFlowScreen::MaybeSkip(WizardContext& context) {
   }
 
   if (context.skip_post_login_screens_for_tests || !g_libassistant_enabled ||
-      chrome_user_manager_util::IsPublicSessionOrEphemeralLogin()) {
+      chrome_user_manager_util::IsManagedGuestSessionOrEphemeralLogin()) {
     exit_callback_.Run(Result::NOT_APPLICABLE);
     return true;
   }

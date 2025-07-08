@@ -6,23 +6,30 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/barrier_closure.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
-#include "base/ranges/algorithm.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "components/payments/content/browser_binding/passkey_browser_binder.h"
+#include "components/payments/content/payment_app.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/payment_request_spec.h"
 #include "components/payments/content/secure_payment_confirmation_app.h"
 #include "components/payments/core/features.h"
 #include "components/payments/core/method_strings.h"
 #include "components/payments/core/native_error_strings.h"
+#include "components/payments/core/payments_experimental_features.h"
 #include "components/payments/core/secure_payment_confirmation_credential.h"
 #include "components/payments/core/sizes.h"
 #include "components/webauthn/core/browser/internal_authenticator.h"
@@ -33,7 +40,7 @@
 #include "content/public/browser/webauthn_security_utils.h"
 #include "content/public/common/content_features.h"
 #include "services/data_decoder/public/cpp/decode_image.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -45,11 +52,15 @@ namespace {
 // secure_payment_confirmation_helper.cc.
 constexpr int64_t kMaxTimeoutInMilliseconds = 1000 * 60 * 60;
 
+// The maximum size of the payment instrument details string. Arbitrarily chosen
+// while being much larger than any reasonable input.
+constexpr size_t kMaxInstrumentDetailsSize = 4096;
+
 // Determine whether an RP ID is a 'valid domain' as per the URL spec:
 // https://url.spec.whatwg.org/#valid-domain
 //
-// TODO(crbug.com/1354209): This is a workaround to a lack of support for 'valid
-// domain's in the //url code.
+// TODO(crbug.com/40858925): This is a workaround to a lack of support for
+// 'valid domain's in the //url code.
 bool IsValidDomain(const std::string& rp_id) {
   // A valid domain, such as 'site.example', should be a URL host (and nothing
   // more of the URL!) that is not an IP address.
@@ -105,6 +116,23 @@ bool IsValid(const mojom::SecurePaymentConfirmationRequestPtr& request,
     return false;
   }
 
+  if (request->instrument->details.has_value()) {
+    if (!base::IsStringUTF8(*request->instrument->details)) {
+      *error_message = errors::kNonUtf8InstrumentDetailsString;
+      return false;
+    }
+
+    if (request->instrument->details->empty()) {
+      *error_message = errors::kEmptyInstrumentDetailsString;
+      return false;
+    }
+
+    if (request->instrument->details->size() > kMaxInstrumentDetailsSize) {
+      *error_message = errors::kTooLongInstrumentDetailsString;
+      return false;
+    }
+  }
+
   if (!IsValidDomain(request->rp_id)) {
     *error_message = errors::kRpIdRequired;
     return false;
@@ -123,6 +151,30 @@ bool IsValid(const mojom::SecurePaymentConfirmationRequestPtr& request,
     return false;
   }
 
+  if (!request->payment_entities_logos.empty()) {
+    for (const mojom::PaymentEntityLogoPtr& logo :
+         request->payment_entities_logos) {
+      if (logo.is_null()) {
+        *error_message = errors::kNonNullPaymentEntityLogoRequired;
+        return false;
+      }
+
+      if (!logo->url.is_valid()) {
+        *error_message = errors::kValidLogoUrlRequired;
+        return false;
+      }
+      if (!logo->url.SchemeIsHTTPOrHTTPS() &&
+          !logo->url.SchemeIs(url::kDataScheme)) {
+        *error_message = errors::kValidLogoUrlSchemeRequired;
+        return false;
+      }
+      if (logo->label.empty()) {
+        *error_message = errors::kLogoLabelRequired;
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
@@ -135,8 +187,33 @@ bool RequiresThirdPartyPaymentBit(const url::Origin& caller_origin,
                                                         caller_origin);
 }
 
+struct IconInfo {
+  GURL url;
+  std::optional<int> request_id;
+  SkBitmap icon;
+};
+
+// Handles the download of a given IconInfo; copying the downloaded bitmap into
+// the IconInfo and notifying the BarrierClosure.
+void DidDownloadIcon(IconInfo* icon_info,
+                     base::OnceClosure done_closure,
+                     int request_id,
+                     int unused_http_status_code,
+                     const GURL& unused_image_url,
+                     const std::vector<SkBitmap>& bitmaps,
+                     const std::vector<gfx::Size>& unused_sizes) {
+  CHECK(icon_info);
+  bool has_icon = icon_info->request_id.has_value() &&
+                  icon_info->request_id.value() == request_id &&
+                  !bitmaps.empty();
+  icon_info->icon = has_icon ? bitmaps.front() : SkBitmap();
+  std::move(done_closure).Run();
+}
+
 }  // namespace
 
+// Holds information pertaining to a specific request to create an SPC payment
+// app, i.e. for a single PaymentRequest object construction.
 struct SecurePaymentConfirmationAppFactory::Request
     : public content::WebContentsObserver {
   Request(
@@ -168,7 +245,9 @@ struct SecurePaymentConfirmationAppFactory::Request
   scoped_refptr<payments::PaymentManifestWebDataService> web_data_service;
   mojom::SecurePaymentConfirmationRequestPtr mojo_request;
   std::unique_ptr<webauthn::InternalAuthenticator> authenticator;
-  absl::optional<int> pending_icon_download_request_id;
+  IconInfo payment_instrument_icon_info;
+  std::vector<IconInfo> payment_entities_logos_infos;
+  std::unique_ptr<SecurePaymentConfirmationCredential> credential;
 };
 
 void SecurePaymentConfirmationAppFactory::
@@ -181,6 +260,17 @@ void SecurePaymentConfirmationAppFactory::
   if (!request->authenticator ||
       (!is_available && !base::FeatureList::IsEnabled(
                             ::features::kSecurePaymentConfirmationDebug))) {
+#if BUILDFLAG(IS_ANDROID)
+    if (base::FeatureList::IsEnabled(
+            blink::features::kSecurePaymentConfirmationUxRefresh)) {
+      request->delegate->SetCanMakePaymentEvenWithoutApps();
+      // Skip getting matching credential IDs since the authenticator is not
+      // available.
+      OnRetrievedCredentials(std::move(request), /*credentials=*/{});
+      return;
+    }
+#endif  // BUILDFLAG(IS_ANDROID)
+
     request->delegate->OnDoneCreatingPaymentApps();
     return;
   }
@@ -236,7 +326,7 @@ SecurePaymentConfirmationAppFactory::SecurePaymentConfirmationAppFactory()
     : PaymentAppFactory(PaymentApp::Type::INTERNAL) {}
 
 SecurePaymentConfirmationAppFactory::~SecurePaymentConfirmationAppFactory() {
-  base::ranges::for_each(requests_, [&](const auto& pair) {
+  std::ranges::for_each(requests_, [&](const auto& pair) {
     if (pair.second->web_data_service)
       pair.second->web_data_service->CancelRequest(pair.first);
   });
@@ -263,11 +353,22 @@ void SecurePaymentConfirmationAppFactory::Create(
         return;
       }
 
+      mojom::SecurePaymentConfirmationRequestPtr spc_request =
+          method_data->secure_payment_confirmation.Clone();
+
+      // Since only the first 2 icons are shown, remove the remaining logos.
+      // Note that the SPC dialog on Chrome Android will CHECK() that no more
+      // than 2 logos are provided.
+      if (spc_request->payment_entities_logos.size() > 2) {
+        spc_request->payment_entities_logos.erase(
+            spc_request->payment_entities_logos.begin() + 2);
+      }
+
       // Record if the user will be offered an opt-out experience. Technically
       // SPC has not been 'selected' yet in the conceptual PaymentRequest flow,
       // however we know that for SPC it must be the only payment method offered
       // so we are safe to record this now.
-      if (method_data->secure_payment_confirmation->show_opt_out) {
+      if (spc_request->show_opt_out) {
         delegate->SetOptOutOffered();
       }
 
@@ -288,10 +389,9 @@ void SecurePaymentConfirmationAppFactory::Create(
           base::BindOnce(&SecurePaymentConfirmationAppFactory::
                              OnIsUserVerifyingPlatformAuthenticatorAvailable,
                          weak_ptr_factory_.GetWeakPtr(),
-                         std::make_unique<Request>(
-                             delegate, web_data_service,
-                             method_data->secure_payment_confirmation.Clone(),
-                             std::move(authenticator))));
+                         std::make_unique<Request>(delegate, web_data_service,
+                                                   std::move(spc_request),
+                                                   std::move(authenticator))));
       return;
     }
   }
@@ -312,19 +412,25 @@ void SecurePaymentConfirmationAppFactory::OnWebDataServiceRequestDone(
   if (!request->delegate || !request->web_contents())
     return;
 
-  if (!result || result->GetType() != SECURE_PAYMENT_CONFIRMATION) {
+  if (result && result->GetType() == SECURE_PAYMENT_CONFIRMATION) {
+    std::vector<std::unique_ptr<SecurePaymentConfirmationCredential>>
+        credentials = static_cast<WDResult<std::vector<
+            std::unique_ptr<SecurePaymentConfirmationCredential>>>*>(
+                          result.get())
+                          ->GetValue();
+    OnRetrievedCredentials(std::move(request), std::move(credentials));
+  } else {
     request->delegate->OnDoneCreatingPaymentApps();
     return;
   }
-
-  std::vector<std::unique_ptr<SecurePaymentConfirmationCredential>>
-      credentials = static_cast<WDResult<
-          std::vector<std::unique_ptr<SecurePaymentConfirmationCredential>>>*>(
-                        result.get())
-                        ->GetValue();
-
-  OnRetrievedCredentials(std::move(request), std::move(credentials));
 }
+
+#if BUILDFLAG(IS_ANDROID)
+void SecurePaymentConfirmationAppFactory::SetBrowserBoundKeyStoreForTesting(
+    scoped_refptr<BrowserBoundKeyStore> key_store) {
+  browser_bound_key_store_for_testing_ = std::move(key_store);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 void SecurePaymentConfirmationAppFactory::OnGetMatchingCredentialIdsFromStore(
     std::unique_ptr<Request> request,
@@ -344,51 +450,80 @@ void SecurePaymentConfirmationAppFactory::OnRetrievedCredentials(
     std::unique_ptr<Request> request,
     std::vector<std::unique_ptr<SecurePaymentConfirmationCredential>>
         credentials) {
-  std::unique_ptr<SecurePaymentConfirmationCredential> credential;
-
   // For the pilot phase, arbitrarily use the first matching credential.
-  // TODO(https://crbug.com/1110320): Handle multiple credentials.
+  // TODO(crbug.com/40142088): Handle multiple credentials.
   if (!credentials.empty())
-    credential = std::move(credentials.front());
+    request->credential = std::move(credentials.front());
 
-  // Download the icon for the payment instrument. The download URL was passed
-  // into the PaymentRequest API.
+  // Download the icons for the payment instrument icon and the payment entity
+  // logos. These download URLs were passed into the PaymentRequest API. If
+  // given icon URL wasn't specified, then DownloadImageInFrame will simply
+  // return an empty set of bitmaps.
   //
-  // Perform this download regardless of whether there is a matching
-  // credential, so that the server that hosts the image cannot detect presence
-  // of the credential on file.
+  // Perform these downloads regardless of whether there is a matching
+  // credential, so that the hosting server(s) cannot detect presence of the
+  // credential on file.
   auto* request_ptr = request.get();
-  gfx::Size preferred_size(
-      kSecurePaymentConfirmationInstrumentIconMaximumWidthPx,
-      kSecurePaymentConfirmationInstrumentIconHeightPx);
-  request_ptr->pending_icon_download_request_id =
+
+  request_ptr->payment_instrument_icon_info = {
+      .url = request_ptr->mojo_request->instrument->icon};
+  for (const mojom::PaymentEntityLogoPtr& logo :
+       request_ptr->mojo_request->payment_entities_logos) {
+    request_ptr->payment_entities_logos_infos.push_back({.url = logo->url});
+  }
+
+  auto barrier_closure = base::BarrierClosure(
+      // The payment instrument icon download, plus any payment entity logos.
+      1 + request_ptr->payment_entities_logos_infos.size(),
+      base::BindOnce(&SecurePaymentConfirmationAppFactory::DidDownloadAllIcons,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(request)));
+
+  gfx::Size preferred_size(kSecurePaymentConfirmationIconMaximumWidthPx,
+                           kSecurePaymentConfirmationIconHeightPx);
+
+  request_ptr->payment_instrument_icon_info.request_id =
       request_ptr->web_contents()->DownloadImageInFrame(
           request_ptr->delegate->GetInitiatorRenderFrameHostId(),
-          request_ptr->mojo_request->instrument->icon,  // source URL
-          false,                                        // is_favicon
+          request_ptr->payment_instrument_icon_info.url,  // source URL
+          false,                                          // is_favicon
           preferred_size,
           0,      // no max size
           false,  // normal cache policy (a.k.a. do not bypass cache)
-          base::BindOnce(&SecurePaymentConfirmationAppFactory::DidDownloadIcon,
-                         weak_ptr_factory_.GetWeakPtr(), std::move(credential),
-                         std::move(request)));
+          base::BindOnce(&DidDownloadIcon,
+                         &request_ptr->payment_instrument_icon_info,
+                         barrier_closure));
+
+  for (IconInfo& info : request_ptr->payment_entities_logos_infos) {
+    if (info.url.is_empty()) {
+      // This IconInfo is a placeholder value. No download is necessary.
+      barrier_closure.Run();
+    } else {
+      info.request_id = request_ptr->web_contents()->DownloadImageInFrame(
+          request_ptr->delegate->GetInitiatorRenderFrameHostId(),
+          info.url,  // source URL
+          false,     // is_favicon
+          preferred_size,
+          0,      // no max size
+          false,  // normal cache policy (a.k.a. do not bypass cache)
+          base::BindOnce(&DidDownloadIcon, &info, barrier_closure));
+    }
+  }
 }
 
-void SecurePaymentConfirmationAppFactory::OnAppIcon(
-    std::unique_ptr<SecurePaymentConfirmationCredential> credential,
-    std::unique_ptr<Request> request,
-    const SkBitmap& icon) {
+void SecurePaymentConfirmationAppFactory::DidDownloadAllIcons(
+    std::unique_ptr<Request> request) {
   DCHECK(request);
   if (!request->delegate || !request->web_contents())
     return;
 
-  if (icon.drawsNothing()) {
+  SkBitmap payment_instrument_icon = request->payment_instrument_icon_info.icon;
+  if (payment_instrument_icon.drawsNothing()) {
     // If the option iconMustBeShown is true, which it is by default, in the
-    // case of a failed icon download/decode, we reject the show() promise
-    // without showing any user UX. To avoid a privacy leak here, we MUST do
-    // this check ahead of checking whether any credential matched, as otherwise
-    // an attacker could deliberately pass an invalid icon and do a timing
-    // attack to see if a credential matches.
+    // case of a failed instrument icon download/decode, we reject the show()
+    // promise without showing any user UX. To avoid a privacy leak here, we
+    // MUST do this check ahead of checking whether any credential matched, as
+    // otherwise an attacker could deliberately pass an invalid icon and do a
+    // timing attack to see if a credential matches.
     if (request->mojo_request->instrument->iconMustBeShown) {
       request->delegate->OnPaymentAppCreationError(
           errors::kInvalidIcon, AppCreationFailureReason::ICON_DOWNLOAD_FAILED);
@@ -401,41 +536,94 @@ void SecurePaymentConfirmationAppFactory::OnAppIcon(
     request->mojo_request->instrument->icon = GURL();
   }
 
-  if (!request->delegate->GetSpec() || !request->authenticator || !credential) {
+  bool skipSpcAppCreation = !request->delegate->GetSpec() ||
+                            !request->authenticator || !request->credential;
+#if BUILDFLAG(IS_ANDROID)
+  skipSpcAppCreation =
+      skipSpcAppCreation &&
+      !PaymentsExperimentalFeatures::IsEnabled(
+          features::kSecurePaymentConfirmationFallback) &&
+      !base::FeatureList::IsEnabled(
+          blink::features::kSecurePaymentConfirmationUxRefresh);
+#endif  // BUILDFLAG(IS_ANDROID)
+  if (skipSpcAppCreation) {
     request->delegate->OnDoneCreatingPaymentApps();
     return;
   }
 
-  std::u16string label =
+  std::u16string payment_instrument_label =
       base::UTF8ToUTF16(request->mojo_request->instrument->display_name);
+  std::u16string payment_instrument_details = base::UTF8ToUTF16(
+      request->mojo_request->instrument->details.value_or(""));
+
+  CHECK_EQ(request->mojo_request->payment_entities_logos.size(),
+           request->payment_entities_logos_infos.size());
+  std::vector<SecurePaymentConfirmationApp::PaymentEntityLogo>
+      payment_entities_logos;
+  for (size_t i = 0; i < request->payment_entities_logos_infos.size(); i++) {
+    SkBitmap& bitmap = request->payment_entities_logos_infos[i].icon;
+    payment_entities_logos.emplace_back(
+        base::UTF8ToUTF16(
+            request->mojo_request->payment_entities_logos[i]->label),
+        bitmap.drawsNothing() ? nullptr : std::make_unique<SkBitmap>(bitmap),
+        std::move(request->mojo_request->payment_entities_logos[i]->url));
+  }
+
+  if (!request->authenticator || !request->credential) {
+    CHECK(PaymentsExperimentalFeatures::IsEnabled(
+              features::kSecurePaymentConfirmationFallback) ||
+          base::FeatureList::IsEnabled(
+              blink::features::kSecurePaymentConfirmationUxRefresh));
+    // In the case of no authenticator or credentials, we still create the
+    // SecurePaymentConfirmationApp, which holds the information to be shown
+    // in the fallback UX.
+    request->delegate->OnPaymentAppCreated(
+        std::make_unique<SecurePaymentConfirmationApp>(
+            request->web_contents(),
+            /*effective_relying_party_identity=*/std::string(),
+            payment_instrument_label, payment_instrument_details,
+            std::make_unique<SkBitmap>(payment_instrument_icon),
+            /*credential_id=*/std::vector<uint8_t>(),
+            /*passkey_browser_binder=*/nullptr,
+            /*device_supports_browser_bound_keys_in_hardware=*/false,
+            url::Origin::Create(request->delegate->GetTopOrigin()),
+            request->delegate->GetSpec()->AsWeakPtr(),
+            std::move(request->mojo_request), /*authenticator=*/nullptr,
+            std::move(payment_entities_logos)));
+    request->delegate->OnDoneCreatingPaymentApps();
+    return;
+  }
+
+  std::unique_ptr<PasskeyBrowserBinder> passkey_browser_binder;
+  bool device_supports_browser_bound_keys_in_hardware = false;
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(
+          blink::features::kSecurePaymentConfirmationBrowserBoundKeys)) {
+    scoped_refptr key_store =
+        browser_bound_key_store_for_testing_
+            ? std::move(browser_bound_key_store_for_testing_)
+            : GetBrowserBoundKeyStoreInstance();
+    device_supports_browser_bound_keys_in_hardware =
+        key_store->GetDeviceSupportsHardwareKeys();
+    passkey_browser_binder = std::make_unique<PasskeyBrowserBinder>(
+        std::move(key_store), request->web_data_service);
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
 
   request->delegate->OnPaymentAppCreated(
       std::make_unique<SecurePaymentConfirmationApp>(
-          request->web_contents(), credential->relying_party_id,
-          std::make_unique<SkBitmap>(icon), label,
-          std::move(credential->credential_id),
+          request->web_contents(), request->credential->relying_party_id,
+          payment_instrument_label, payment_instrument_details,
+          std::make_unique<SkBitmap>(payment_instrument_icon),
+          std::move(request->credential->credential_id),
+          std::move(passkey_browser_binder),
+          device_supports_browser_bound_keys_in_hardware,
           url::Origin::Create(request->delegate->GetTopOrigin()),
           request->delegate->GetSpec()->AsWeakPtr(),
-          std::move(request->mojo_request), std::move(request->authenticator)));
+          std::move(request->mojo_request), std::move(request->authenticator),
+          std::move(payment_entities_logos)));
 
   request->delegate->OnDoneCreatingPaymentApps();
-}
-
-void SecurePaymentConfirmationAppFactory::DidDownloadIcon(
-    std::unique_ptr<SecurePaymentConfirmationCredential> credential,
-    std::unique_ptr<Request> request,
-    int request_id,
-    int unused_http_status_code,
-    const GURL& unused_image_url,
-    const std::vector<SkBitmap>& bitmaps,
-    const std::vector<gfx::Size>& unused_sizes) {
-  DCHECK(request);
-  bool has_icon =
-      request->pending_icon_download_request_id.has_value() &&
-      request->pending_icon_download_request_id.value() == request_id &&
-      !bitmaps.empty();
-  OnAppIcon(std::move(credential), std::move(request),
-            has_icon ? bitmaps.front() : SkBitmap());
 }
 
 }  // namespace payments

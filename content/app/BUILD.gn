@@ -2,10 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/apple/mobile_config.gni")
 import("//build/config/chrome_build.gni")
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/features.gni")
-import("//ppapi/buildflags/buildflags.gni")
 import("//third_party/tflite/features.gni")
 
 extra_configs = [
@@ -37,10 +36,9 @@ if (is_win) {
   content_app_deps += [
     "//content/browser",
     "//content/child",
-    "//content/public/android:jni",
+    "//content/public/android:content_app_jni",
     "//device/bluetooth",
     "//device/gamepad",
-    "//gpu",
     "//media",
     "//media/capture",
     "//media/midi",
@@ -53,8 +51,8 @@ if (is_win) {
   ]
 }
 
-if (enable_ppapi) {
-  content_app_deps += [ "//content/ppapi_plugin:ppapi_plugin_sources" ]
+if (is_ios && target_platform != "tvos") {
+  content_app_deps += [ "//content/app/ios/appex:child_process_bridge" ]
 }
 
 # Compile content_main_runner_impl.[h, cc] in a separate target to exempt from
@@ -73,7 +71,6 @@ source_set("content_main_runner_app") {
 
   configs += extra_configs
   deps = content_app_deps + [
-           "//components/optimization_guide:machine_learning_tflite_buildflags",
            "//components/power_monitor",
            "//content/browser",
            "//content/gpu:gpu_sources",
@@ -84,14 +81,9 @@ source_set("content_main_runner_app") {
            "//content/renderer",
            "//content/utility",
            "//content/zygote",
+           "//third_party/tflite:buildflags",
            "//tools/v8_context_snapshot:buildflags",
          ]
-  if (is_chromeos_lacros) {
-    deps += [
-      "//chromeos/startup",
-      "//chromeos/startup:constants",
-    ]
-  }
   if (build_tflite_with_xnnpack) {
     deps += [ "//third_party/cpuinfo" ]
   }

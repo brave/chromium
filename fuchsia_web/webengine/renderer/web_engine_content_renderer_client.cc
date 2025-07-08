@@ -4,10 +4,13 @@
 
 #include "fuchsia_web/webengine/renderer/web_engine_content_renderer_client.h"
 
+#include <optional>
 #include <tuple>
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/synchronization/lock.h"
 #include "build/chromecast_buildflags.h"
 #include "components/media_control/renderer/media_playback_options.h"
 #include "components/memory_pressure/multi_source_memory_pressure_monitor.h"
@@ -24,9 +27,10 @@
 #include "media/base/video_codecs.h"
 #include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/url_loader_throttle_provider.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "third_party/widevine/cdm/buildflags.h"
 
@@ -46,8 +50,8 @@ namespace {
 // Returns true if the specified video format can be decoded on hardware.
 bool IsSupportedHardwareVideoCodec(const media::VideoType& type) {
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
-  // TODO(crbug.com/1013412): Replace these hardcoded checks with a query to the
-  // fuchsia.mediacodec FIDL service.
+  // TODO(crbug.com/42050020): Replace these hardcoded checks with a query to
+  // the fuchsia.mediacodec FIDL service.
   if (type.codec == media::VideoCodec::kH264 && type.level <= 41)
     return true;
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -92,7 +96,7 @@ class PlayreadyKeySystemInfo : public ::media::KeySystemInfo {
       const std::string& requested_robustness,
       const bool* /*hw_secure_requirement*/) const override {
     // Only empty robustness string is currently supported.
-    // TODO(crbug.com/1205716): Add support for robustness strings.
+    // TODO(crbug.com/40180587): Add support for robustness strings.
     if (requested_robustness.empty()) {
       return media::EmeConfig{.hw_secure_codecs =
                                   media::EmeConfigRuleState::kRequired};
@@ -132,18 +136,26 @@ class PlayreadyKeySystemInfo : public ::media::KeySystemInfo {
 
 WebEngineContentRendererClient::WebEngineContentRendererClient() = default;
 
-WebEngineContentRendererClient::~WebEngineContentRendererClient() = default;
-
-WebEngineRenderFrameObserver*
-WebEngineContentRendererClient::GetWebEngineRenderFrameObserverForRenderFrameId(
-    int render_frame_id) const {
-  auto iter = render_frame_id_to_observer_map_.find(render_frame_id);
-  DCHECK(iter != render_frame_id_to_observer_map_.end());
-  return iter->second.get();
+WebEngineContentRendererClient::~WebEngineContentRendererClient() {
+  base::AutoLock lock(observer_map_lock_);
+  frame_token_to_observer_map_.clear();
 }
 
-void WebEngineContentRendererClient::OnRenderFrameDeleted(int render_frame_id) {
-  size_t count = render_frame_id_to_observer_map_.erase(render_frame_id);
+scoped_refptr<url_rewrite::UrlRequestRewriteRules>
+WebEngineContentRendererClient::GetRewriteRulesForFrameToken(
+    const blink::LocalFrameToken& frame_token) const {
+  base::AutoLock lock(observer_map_lock_);
+  auto iter = frame_token_to_observer_map_.find(frame_token);
+  if (iter == frame_token_to_observer_map_.end()) {
+    return nullptr;
+  }
+  return iter->second->url_request_rules_receiver()->GetCachedRules();
+}
+
+void WebEngineContentRendererClient::OnRenderFrameDeleted(
+    const blink::LocalFrameToken& frame_token) {
+  base::AutoLock lock(observer_map_lock_);
+  size_t count = frame_token_to_observer_map_.erase(frame_token);
   DCHECK_EQ(count, 1u);
 }
 
@@ -165,15 +177,18 @@ void WebEngineContentRendererClient::RenderFrameCreated(
   // The objects' lifetimes are bound to the RenderFrame's lifetime.
   new on_load_script_injector::OnLoadScriptInjector(render_frame);
 
-  int render_frame_id = render_frame->GetRoutingID();
+  auto frame_token = render_frame->GetWebFrame()->GetLocalFrameToken();
 
   auto render_frame_observer = std::make_unique<WebEngineRenderFrameObserver>(
       render_frame,
       base::BindOnce(&WebEngineContentRendererClient::OnRenderFrameDeleted,
                      base::Unretained(this)));
-  auto render_frame_observer_iter = render_frame_id_to_observer_map_.emplace(
-      render_frame_id, std::move(render_frame_observer));
-  DCHECK(render_frame_observer_iter.second);
+  {
+    base::AutoLock lock(observer_map_lock_);
+    auto render_frame_observer_iter = frame_token_to_observer_map_.emplace(
+        frame_token, std::move(render_frame_observer));
+    DCHECK(render_frame_observer_iter.second);
+  }
 
   // Lifetime is tied to |render_frame| via content::RenderFrameObserver.
   new media_control::MediaPlaybackOptions(render_frame);
@@ -182,14 +197,12 @@ void WebEngineContentRendererClient::RenderFrameCreated(
 std::unique_ptr<blink::URLLoaderThrottleProvider>
 WebEngineContentRendererClient::CreateURLLoaderThrottleProvider(
     blink::URLLoaderThrottleProviderType type) {
-  // TODO(crbug.com/1378791): Add support for workers.
-  if (type == blink::URLLoaderThrottleProviderType::kWorker)
-    return nullptr;
-
   return std::make_unique<WebEngineURLLoaderThrottleProvider>(this);
 }
 
-void WebEngineContentRendererClient::GetSupportedKeySystems(
+std::unique_ptr<media::KeySystemSupportRegistration>
+WebEngineContentRendererClient::GetSupportedKeySystems(
+    content::RenderFrame* render_frame,
     media::GetSupportedKeySystemsCB cb) {
   media::KeySystemInfos key_systems;
   media::SupportedCodecs supported_video_codecs = 0;
@@ -231,7 +244,7 @@ void WebEngineContentRendererClient::GetSupportedKeySystems(
     // Fuchsia always decrypts audio into clear buffers and return them back to
     // Chromium. Hardware secured decoders are only available for supported
     // video codecs.
-    // TODO(crbug.com/1013412): Replace these hardcoded values with a query to
+    // TODO(crbug.com/42050020): Replace these hardcoded values with a query to
     // the fuchsia.mediacodec FIDL service.
     key_systems.push_back(std::make_unique<cdm::WidevineKeySystemInfo>(
         supported_codecs,             // codecs
@@ -262,20 +275,21 @@ void WebEngineContentRendererClient::GetSupportedKeySystems(
 #endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
   std::move(cb).Run(std::move(key_systems));
+  return nullptr;
 }
 
-bool WebEngineContentRendererClient::IsSupportedVideoType(
+bool WebEngineContentRendererClient::IsDecoderSupportedVideoType(
     const media::VideoType& type) {
   // Fall back to default codec querying logic if software-only codecs are
   // enabled.
   if (base::FeatureList::IsEnabled(features::kEnableSoftwareOnlyVideoCodecs)) {
-    return ContentRendererClient::IsSupportedVideoType(type);
+    return ContentRendererClient::IsDecoderSupportedVideoType(type);
   }
 
   return IsSupportedHardwareVideoCodec(type);
 }
 
-// TODO(crbug.com/1067435): Look into the ChromiumContentRendererClient version
+// TODO(crbug.com/40682958): Look into the ChromiumContentRendererClient version
 // of this method and how it may apply here.
 bool WebEngineContentRendererClient::DeferMediaLoad(
     content::RenderFrame* render_frame,
@@ -290,11 +304,10 @@ WebEngineContentRendererClient::GetBaseRendererFactory(
     media::MediaLog* media_log,
     media::DecoderFactory* decoder_factory,
     base::RepeatingCallback<media::GpuVideoAcceleratorFactories*()>
-        get_gpu_factories_cb) {
-  auto* interface_broker = render_frame->GetBrowserInterfaceBroker();
-
+        get_gpu_factories_cb,
+    int element_id) {
   mojo::Remote<mojom::WebEngineMediaResourceProvider> media_resource_provider;
-  interface_broker->GetInterface(
+  render_frame->GetBrowserInterfaceBroker().GetInterface(
       media_resource_provider.BindNewPipeAndPassReceiver());
 
   bool use_audio_consumer = false;

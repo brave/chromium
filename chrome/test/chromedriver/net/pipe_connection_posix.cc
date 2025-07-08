@@ -4,13 +4,22 @@
 
 #include "chrome/test/chromedriver/net/pipe_connection_posix.h"
 
+#include "base/functional/callback_forward.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include <list>
 #include <memory>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/net/command_id.h"
@@ -27,7 +36,7 @@ const int kMinReadBufferCapacity = 4096;
 
 void DetermineRecipient(const std::string& message,
                         bool* send_to_chromedriver) {
-  absl::optional<base::Value> message_value =
+  std::optional<base::Value> message_value =
       base::JSONReader::Read(message, base::JSON_REPLACE_INVALID_CHARACTERS);
   base::Value::Dict* message_dict =
       message_value ? message_value->GetIfDict() : nullptr;
@@ -148,17 +157,18 @@ class PipeReader {
       }
       return;
     }
-    for (int k = 0; k < rv;) {
-      int j = k;
-      for (; j < rv && read_buffer_->StartOfBuffer()[j] != '\0'; ++j) {
-      }
-      next_message_.insert(next_message_.end(),
-                           read_buffer_->StartOfBuffer() + k,
-                           read_buffer_->StartOfBuffer() + j);
-      k = j + 1;
-      if (j < rv) {
+    base::span<uint8_t> buffer =
+        read_buffer_->everything().first(base::checked_cast<size_t>(rv));
+    auto iter = buffer.begin();
+    while (iter != buffer.end()) {
+      auto pos = std::find(iter, buffer.end(), '\0');
+      next_message_.insert(next_message_.end(), iter, pos);
+      if (pos != buffer.end()) {
         OnMessageReceivedOnIOThread(std::move(next_message_));
         next_message_ = std::string();
+        iter = pos + 1;
+      } else {
+        break;
       }
     }
     if (read_again) {
@@ -177,7 +187,7 @@ class PipeReader {
     DetermineRecipient(message, &send_to_chromedriver);
     if (send_to_chromedriver) {
       notification_is_needed = received_queue_.empty();
-      received_queue_.push_back(message);
+      received_queue_.push_back(std::move(message));
     }
     on_update_event_.Signal();
 
@@ -240,7 +250,7 @@ class PipeWriter {
       : owning_sequence_(base::SequencedTaskRunner::GetCurrentDefault()),
         pipe_connection_(std::move(pipe_connection)),
         write_buffer_(base::MakeRefCounted<net::DrainableIOBuffer>(
-            base::MakeRefCounted<net::IOBuffer>(0),
+            base::MakeRefCounted<net::IOBufferWithSize>(),
             0)),
         thread_(new base::Thread("PipeConnectionPosixWriteThread")) {
     DETACH_FROM_THREAD(io_thread_checker_);
@@ -283,8 +293,10 @@ class PipeWriter {
     queued_.insert(queued_.end(), message.c_str(),
                    message.c_str() + message.size() + 1);
     if (!write_buffer_->BytesRemaining()) {
+      const size_t queued_size = queued_.size();
       write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
-          base::MakeRefCounted<net::StringIOBuffer>(queued_), queued_.size());
+          base::MakeRefCounted<net::StringIOBuffer>(std::move(queued_)),
+          queued_size);
       queued_ = std::string();
       WriteFromBuffer();
     }
@@ -328,8 +340,10 @@ class PipeWriter {
     write_buffer_->DidConsume(rv);
     int sent = WriteFromBuffer();
     if (sent >= 0 && !write_buffer_->BytesRemaining() && !queued_.empty()) {
+      const size_t queued_size = queued_.size();
       write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
-          base::MakeRefCounted<net::StringIOBuffer>(queued_), queued_.size());
+          base::MakeRefCounted<net::StringIOBuffer>(std::move(queued_)),
+          queued_size);
       queued_ = std::string();
       WriteFromBuffer();
     }
@@ -395,6 +409,7 @@ PipeConnectionPosix::PipeConnectionPosix(base::ScopedPlatformFile read_file,
 }
 
 PipeConnectionPosix::~PipeConnectionPosix() {
+  notify_ = base::RepeatingClosure();
   Shutdown();
 }
 
@@ -464,6 +479,9 @@ void PipeConnectionPosix::Shutdown() {
   pipe_writer_ = std::unique_ptr<PipeWriter>();
   PipeReader::Shutdown(std::move(pipe_reader_));
   pipe_reader_ = std::unique_ptr<PipeReader>();
+  if (notify_) {
+    notify_.Run();
+  }
 }
 
 bool PipeConnectionPosix::IsNull() const {

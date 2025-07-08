@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
@@ -18,9 +19,9 @@
 #include "content/public/test/browser_test.h"
 #include "ui/display/display_switches.h"
 
-// TODO(crbug.com/1448244): enable this test on all supported platforms.
+// TODO(crbug.com/40269208): enable this test on all supported platforms.
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/ui/views/eye_dropper/eye_dropper_view.h"
+#include "components/eye_dropper/eye_dropper_view.h"
 #endif
 
 class EyeDropperBrowserTest : public UiBrowserTest,
@@ -47,14 +48,16 @@ class EyeDropperBrowserTest : public UiBrowserTest,
 
   bool VerifyUi() override {
 #if BUILDFLAG(IS_WIN)
-    if (!eye_dropper_)
+    if (!eye_dropper_) {
       return false;
+    }
 
     views::Widget* widget =
-        static_cast<EyeDropperView*>(eye_dropper_.get())->GetWidget();
+        static_cast<eye_dropper::EyeDropperView*>(eye_dropper_.get())
+            ->GetWidget();
     auto* test_info = testing::UnitTest::GetInstance()->current_test_info();
     const std::string screenshot_name =
-        base::StrCat({test_info->test_case_name(), "_", test_info->name()});
+        base::StrCat({test_info->test_suite_name(), "_", test_info->name()});
     return VerifyPixelUi(widget, "EyeDropperBrowserTest", screenshot_name) !=
            ui::test::ActionResult::kFailed;
 #else
@@ -74,7 +77,8 @@ class EyeDropperBrowserTest : public UiBrowserTest,
 };
 
 // Invokes the eye dropper.
-IN_PROC_BROWSER_TEST_P(EyeDropperBrowserTest, InvokeUi_default) {
+// Flaky: https://crbug.com/40150152, https://crbug.com/402170536
+IN_PROC_BROWSER_TEST_P(EyeDropperBrowserTest, DISABLED_InvokeUi_default) {
   ShowAndVerifyUi();
 }
 

@@ -108,6 +108,7 @@ void BlockedInterceptionUI::HandleCommand(SecurityInterstitialCommand command) {
           security_interstitials::MetricsHelper::OPEN_ENHANCED_PROTECTION);
       controller_->OpenEnhancedProtectionSettings();
       break;
+    case CMD_OPEN_ANDROID_ADVANCED_PROTECTION_SETTINGS:
     case CMD_OPEN_HELP_CENTER:
     case CMD_DONT_PROCEED:
     case CMD_RELOAD:
@@ -119,7 +120,6 @@ void BlockedInterceptionUI::HandleCommand(SecurityInterstitialCommand command) {
     case CMD_REQUEST_SITE_ACCESS_PERMISSION:
       // Not supported by the SSL error page.
       NOTREACHED() << "Unsupported command: " << command;
-      break;
     case CMD_ERROR:
     case CMD_TEXT_FOUND:
     case CMD_TEXT_NOT_FOUND:

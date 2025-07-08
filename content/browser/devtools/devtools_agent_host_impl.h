@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "content/browser/devtools/devtools_io_context.h"
@@ -42,14 +43,11 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   // DevToolsAgentHost implementation.
   bool AttachClient(DevToolsAgentHostClient* client) override;
-  bool AttachClientWithoutWakeLock(DevToolsAgentHostClient* client) override;
   bool DetachClient(DevToolsAgentHostClient* client) override;
   void DispatchProtocolMessage(DevToolsAgentHostClient* client,
                                base::span<const uint8_t> message) override;
   bool IsAttached() override;
   void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
-  void GetUniqueFormControlId(int node_id,
-                              GetUniqueFormControlIdCallback callback) override;
   std::string GetId() override;
   std::string CreateIOStreamFromData(
       scoped_refptr<base::RefCountedMemory> data) override;
@@ -101,11 +99,11 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
     return result;
   }
 
-  virtual absl::optional<network::CrossOriginEmbedderPolicy>
+  virtual std::optional<network::CrossOriginEmbedderPolicy>
   cross_origin_embedder_policy(const std::string& id);
-  virtual absl::optional<network::CrossOriginOpenerPolicy>
+  virtual std::optional<network::CrossOriginOpenerPolicy>
   cross_origin_opener_policy(const std::string& id);
-  virtual absl::optional<
+  virtual std::optional<
       std::vector<network::mojom::ContentSecurityPolicyHeader>>
   content_security_policy(const std::string& id);
 
@@ -121,7 +119,7 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   static bool ShouldForceCreation();
 
   // Returning |false| will block the attach.
-  virtual bool AttachSession(DevToolsSession* session, bool acquire_wake_lock);
+  virtual bool AttachSession(DevToolsSession* session);
   virtual void DetachSession(DevToolsSession* session);
   virtual void UpdateRendererChannel(bool force);
 
@@ -137,11 +135,21 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   DevToolsIOContext* GetIOContext() { return &io_context_; }
   DevToolsRendererChannel* GetRendererChannel() { return &renderer_channel_; }
 
-  const std::vector<DevToolsSession*>& sessions() const { return sessions_; }
+  const std::vector<raw_ptr<DevToolsSession, VectorExperimental>>& sessions()
+      const {
+    return sessions_;
+  }
   // Returns refptr retaining `this`. All other references may be removed
   // at this point, so `this` will become invalid as soon as returned refptr
   // gets destroyed.
   [[nodiscard]] scoped_refptr<DevToolsAgentHost> ForceDetachAllSessionsImpl();
+
+  // Called when the corresponding renderer process notifies that the main
+  // thread debugger is paused or resumed.
+  // TODO(crbug.com/40269649): Remove this method when we collect enough
+  // data to understand how likely that situation could happen.
+  virtual void MainThreadDebuggerPaused();
+  virtual void MainThreadDebuggerResumed();
 
  private:
   // Note that calling this may result in the instance being deleted,
@@ -155,8 +163,6 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   friend class DevToolsRendererChannel;
 
   bool AttachInternal(std::unique_ptr<DevToolsSession> session);
-  bool AttachInternal(std::unique_ptr<DevToolsSession> session,
-                      bool acquire_wake_lock);
   void DetachInternal(DevToolsSession* session);
   void NotifyAttached();
   void NotifyDetached();
@@ -164,7 +170,7 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   DevToolsSession* SessionByClient(DevToolsAgentHostClient* client);
 
   const std::string id_;
-  std::vector<DevToolsSession*> sessions_;
+  std::vector<raw_ptr<DevToolsSession, VectorExperimental>> sessions_;
   base::flat_map<DevToolsAgentHostClient*, std::unique_ptr<DevToolsSession>>
       session_by_client_;
   DevToolsIOContext io_context_;

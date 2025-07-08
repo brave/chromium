@@ -13,6 +13,8 @@
 
 namespace blink {
 
+class KURL;
+
 class StubSpeculationHost : public mojom::blink::SpeculationHost {
  public:
   using Candidates = Vector<mojom::blink::SpeculationCandidatePtr>;
@@ -34,24 +36,18 @@ class StubSpeculationHost : public mojom::blink::SpeculationHost {
   void BindUnsafe(mojo::ScopedMessagePipeHandle handle);
   void Bind(mojo::PendingReceiver<SpeculationHost> receiver);
 
-  // mojom::blink::SpeculationHost.
-  void UpdateSpeculationCandidates(Candidates candidates) override;
-
-  // mojom::blink::SpeculationHost.
-  void EnableNoVarySearchSupport() override;
-
   void OnConnectionLost();
 
   bool is_bound() const { return receiver_.is_bound(); }
 
-  bool sent_no_vary_search_support_to_browser() const {
-    return sent_no_vary_search_support_to_browser_;
-  }
+  // mojom::blink::SpeculationHost.
+  void UpdateSpeculationCandidates(Candidates candidates) override;
+  void OnLCPPredicted() override {}
+  void InitiatePreview(const KURL& url) override;
 
  private:
   mojo::Receiver<SpeculationHost> receiver_{this};
   Vector<mojom::blink::SpeculationCandidatePtr> candidates_;
-  bool sent_no_vary_search_support_to_browser_ = false;
   base::OnceClosure done_closure_;
   base::RepeatingCallback<void(const Candidates&)> candidates_updated_callback_;
 };

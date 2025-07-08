@@ -192,9 +192,8 @@ const char kCanMakePaymentEventNoExplicitlyVerifiedMethods[] =
 const char kGenericPaymentMethodNotSupportedMessage[] =
     "Payment method not supported.";
 
-const char kNoContentAndNoLinkHeader[] =
-    "No content and no \"Link: rel=payment-method-manifest\" HTTP header found "
-    "at \"$1\".";
+const char kNoLinkHeader[] =
+    "No \"Link: rel=payment-method-manifest\" HTTP header found at \"$1\".";
 
 const char kNoContentInPaymentManifest[] =
     "No content found in payment manifest \"$1\".";
@@ -235,6 +234,18 @@ const char kValidInstrumentIconRequired[] =
 const char kInvalidIcon[] =
     "The \"instrument.icon\" either could not be downloaded or decoded.";
 
+const char kNonUtf8InstrumentDetailsString[] =
+    "The \"secure-payment-confirmation\" method requires the "
+    "\"instrument.details\" field to be UTF8.";
+
+const char kEmptyInstrumentDetailsString[] =
+    "The \"secure-payment-confirmation\" method requires the "
+    "\"instrument.details\" field, if present, to be non-empty.";
+
+const char kTooLongInstrumentDetailsString[] =
+    "The \"secure-payment-confirmation\" method requires the "
+    "\"instrument.details\" field to be at most 4096 characters long.";
+
 const char kRpIdRequired[] =
     "The \"secure-payment-confirmation\" method requires a valid domain in the "
     "\"rpId\" field.";
@@ -246,6 +257,23 @@ const char kPayeeOriginOrPayeeNameRequired[] =
 const char kPayeeOriginMustBeHttps[] =
     "The \"secure-payment-confirmation\" method requires that the "
     "\"payeeOrigin\" field must be https.";
+
+const char kNonNullPaymentEntityLogoRequired[] =
+    "The \"secure-payment-confirmation\" method requires that each entry in "
+    "\"paymentEntitiesLogos\" is non-null.";
+
+extern const char kValidLogoUrlRequired[] =
+    "The \"secure-payment-confirmation\" method requires that each entry in "
+    "\"paymentEntitiesLogos\" has a valid URL in the \"url\" field.";
+
+extern const char kValidLogoUrlSchemeRequired[] =
+    "The \"secure-payment-confirmation\" method requires that each entry in "
+    "\"paymentEntitiesLogos\" has a URL whose scheme is one of \"https\", "
+    "\"http\", or \"data\" in the \"url\" field.";
+
+extern const char kLogoLabelRequired[] =
+    "The \"secure-payment-confirmation\" method requires that each entry in "
+    "\"paymentEntitiesLogos\" has a non-empty \"label\" field.";
 
 }  // namespace errors
 }  // namespace payments

@@ -26,12 +26,14 @@ var PROPERTY_ON_RESIZE = 'onresize';
 
 var getIframeContentWindow = function(viewInstanceId) {
   var view = GuestViewInternalNatives.GetViewFromID(viewInstanceId);
-  if (!view)
+  if (!view) {
     return null;
+  }
 
   var internalIframeElement = view.internalElement;
-  if (internalIframeElement)
+  if (internalIframeElement) {
     return $HTMLIFrameElement.contentWindow.get(internalIframeElement);
+  }
 
   return null;
 };
@@ -272,10 +274,10 @@ GuestViewImpl.prototype.createImpl = function(
   // Determine the window which owns the guest view element, so we can inform
   // the browser of the prospective owner of the guest.
   var ownerWindow = getOwnerWindow(viewInstanceId);
-  var ownerRoutingId = GuestViewInternalNatives.GetRoutingId(ownerWindow);
+  var ownerFrameToken = GuestViewInternalNatives.GetFrameToken(ownerWindow);
 
   GuestViewInternal.createGuest(
-      this.viewType, ownerRoutingId, createParams,
+      this.viewType, ownerFrameToken, createParams,
       $Function.bind(callbackWrapper, this, callback));
 
   this.state = GuestViewImpl.GuestState.GUEST_STATE_CREATED;

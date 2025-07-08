@@ -5,6 +5,7 @@
 #include "chrome/browser/ash/plugin_vm/plugin_vm_license_checker.h"
 
 #include <cstddef>
+#include <string_view>
 
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
@@ -101,7 +102,7 @@ bool ResponseIndicatesValidLicense(int response_code,
 
   // Expected response body:
   // { "status": "ACTIVE", ...}
-  absl::optional<base::Value::Dict> response =
+  std::optional<base::Value::Dict> response =
       base::JSONReader::ReadDict(response_body);
   if (!response) {
     LOG(ERROR) << "response_body was of unexpected format.";
@@ -154,7 +155,8 @@ void PluginVmLicenseChecker::FetchAccessToken() {
       "ChromePluginVm", identity_manager, validation_scope,
       base::BindOnce(&PluginVmLicenseChecker::CallEndpointWithAccessToken,
                      weak_ptr_factory_.GetWeakPtr()),
-      signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate);
+      signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
+      signin::ConsentLevel::kSync);
 }
 
 void PluginVmLicenseChecker::CallEndpointWithAccessToken(
@@ -185,7 +187,7 @@ void PluginVmLicenseChecker::CallEndpointWithAccessToken(
 }
 
 std::unique_ptr<network::ResourceRequest>
-PluginVmLicenseChecker::CreateResourceRequest(base::StringPiece access_token) {
+PluginVmLicenseChecker::CreateResourceRequest(std::string_view access_token) {
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url =
       GURL(base::StrCat({validation_url_.spec(), access_token}));

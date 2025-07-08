@@ -10,6 +10,7 @@ More information at //docs/speed/binary_size/metrics.md.
 import argparse
 import collections
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -37,17 +38,13 @@ DIR_SOURCE_ROOT = os.environ.get(
     os.path.abspath(
         os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)))
 
-BUILD_COMMON_PATH = os.path.join(DIR_SOURCE_ROOT, 'build', 'util', 'lib',
-                                 'common')
+BUILD_UTIL_PATH = os.path.join(DIR_SOURCE_ROOT, 'build', 'util')
 
 TRACING_PATH = os.path.join(DIR_SOURCE_ROOT, 'third_party', 'catapult',
                             'tracing')
 
-EU_STRIP_PATH = os.path.join(DIR_SOURCE_ROOT, 'buildtools', 'third_party',
-                             'eu-strip', 'bin', 'eu-strip')
-
-with _SysPath(BUILD_COMMON_PATH):
-  import perf_tests_results_helper  # pylint: disable=import-error
+with _SysPath(BUILD_UTIL_PATH):
+  from lib.common import perf_tests_results_helper
 
 with _SysPath(TRACING_PATH):
   from tracing.value import convert_chart_json  # pylint: disable=import-error
@@ -160,7 +157,8 @@ def _get_gzipped_filesize(filename):
   return 0
 
 
-def _get_catagorized_filesizes(filename, track_compressed=False):
+def _get_catagorized_filesizes(llvm_strip_path, filename,
+                               track_compressed=False):
   """Measures |filename| sizes under various transforms.
 
   Returns: A Counter (keyed by _Key_* constants) that stores measured sizes.
@@ -178,7 +176,10 @@ def _get_catagorized_filesizes(filename, track_compressed=False):
   if _is_probably_elf(filename):
     try:
       temp_file = tempfile.NamedTemporaryFile()
-      cmd = [EU_STRIP_PATH, filename, '-o', temp_file.name]
+      cmd = [
+          llvm_strip_path, '--strip-debug', '--strip-unneeded', '-o',
+          temp_file.name, filename
+      ]
       subprocess.check_output(cmd)
       sizes[_KEY_STRIPPED] = _get_filesize(temp_file.name)
       if track_compressed:
@@ -262,7 +263,8 @@ def _run_resource_sizes(args):
 
   for g in _TRACKED_GROUPS:
     sizes = sum(
-        map(_get_catagorized_filesizes, _visit_paths(args.out_dir, g.paths),
+        map(functools.partial(_get_catagorized_filesizes, args.llvm_strip_path),
+            _visit_paths(args.out_dir, g.paths),
             [g.track_compressed] * len(g.paths)), collections.Counter())
     report_sizes(sizes, g.title, g.track_stripped, g.track_compressed)
 
@@ -286,6 +288,9 @@ def main():
                          required=True,
                          type=os.path.realpath,
                          help='Location of the build artifacts.')
+  argparser.add_argument('--llvm-strip-path',
+                         required=True,
+                         help='Path to llvm-strip binary.')
 
   output_group = argparser.add_mutually_exclusive_group()
 

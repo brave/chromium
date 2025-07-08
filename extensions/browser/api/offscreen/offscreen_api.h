@@ -10,6 +10,9 @@
 #include "extensions/browser/extension_function_histogram_value.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_observer.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -37,6 +40,9 @@ class OffscreenCreateDocumentFunction : public ExtensionFunction,
   // ExtensionHostObserver:
   void OnExtensionHostDestroyed(ExtensionHost* host) override;
   void OnExtensionHostDidStopFirstLoad(const ExtensionHost* host) override;
+
+  // Called (asynchronously) if the page fails to load.
+  void NotifyPageFailedToLoad();
 
   // Sends a reply asynchronously to the extension.
   void SendResponseToExtension(ResponseValue response_value);

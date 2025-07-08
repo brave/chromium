@@ -10,12 +10,13 @@
 #include <lib/fidl/cpp/binding.h>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
 #include "base/component_export.h"
 #include "base/functional/callback.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/accessibility/platform/fuchsia/semantic_provider.h"
 
 namespace ui {
@@ -150,8 +151,8 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXFuchsiaSemanticProviderImpl
                                uint32_t parent_id);
 
   // Returns the ID of the parent of this node if it has one. If it does not
-  // have a parent or it has multiple parents, returns absl::nullopt.
-  absl::optional<uint32_t> GetParentForNode(const uint32_t node_id);
+  // have a parent or it has multiple parents, returns std::nullopt.
+  std::optional<uint32_t> GetParentForNode(const uint32_t node_id);
 
   // fuchsia_accessibility_semantics::SemanticListener:
   void OnAccessibilityActionRequested(
@@ -167,15 +168,15 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXFuchsiaSemanticProviderImpl
       OnSemanticsModeChangedRequest& request,
       OnSemanticsModeChangedCompleter::Sync& completer) override;
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
 
-  absl::optional<
+  std::optional<
       fidl::ServerBinding<fuchsia_accessibility_semantics::SemanticListener>>
       semantic_listener_binding_;
 
   fidl::Client<fuchsia_accessibility_semantics::SemanticTree> semantic_tree_;
 
-  absl::optional<SemanticTreeEventHandler> semantic_tree_event_handler_;
+  std::optional<SemanticTreeEventHandler> semantic_tree_event_handler_;
 
   bool semantic_updates_enabled_ = false;
 

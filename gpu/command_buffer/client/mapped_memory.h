@@ -2,29 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef GPU_COMMAND_BUFFER_CLIENT_MAPPED_MEMORY_H_
 #define GPU_COMMAND_BUFFER_CLIENT_MAPPED_MEMORY_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <bit>
 #include <memory>
 
-#include "base/bits.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "gpu/command_buffer/client/fenced_allocator.h"
+#include "gpu/command_buffer/client/gpu_command_buffer_client_export.h"
 #include "gpu/command_buffer/common/buffer.h"
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/gpu_export.h"
 
 namespace gpu {
 
 class CommandBufferHelper;
 
 // Manages a shared memory segment.
-class GPU_EXPORT MemoryChunk {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT MemoryChunk {
  public:
   MemoryChunk(int32_t shm_id,
               scoped_refptr<gpu::Buffer> shm,
@@ -119,7 +124,7 @@ class GPU_EXPORT MemoryChunk {
 };
 
 // Manages MemoryChunks.
-class GPU_EXPORT MappedMemoryManager {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT MappedMemoryManager {
  public:
   enum MemoryLimit {
     kNoLimit = 0,
@@ -138,7 +143,7 @@ class GPU_EXPORT MappedMemoryManager {
   uint32_t chunk_size_multiple() const { return chunk_size_multiple_; }
 
   void set_chunk_size_multiple(uint32_t multiple) {
-    DCHECK(base::bits::IsPowerOfTwo(multiple));
+    DCHECK(std::has_single_bit(multiple));
     DCHECK_GE(multiple, FencedAllocator::kAllocAlignment);
     chunk_size_multiple_ = multiple;
   }
@@ -228,7 +233,7 @@ class GPU_EXPORT MappedMemoryManager {
 };
 
 // A class that will manage the lifetime of a mapped memory allocation
-class GPU_EXPORT ScopedMappedMemoryPtr {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT ScopedMappedMemoryPtr {
  public:
   ScopedMappedMemoryPtr(uint32_t size,
                         CommandBufferHelper* helper,

@@ -122,8 +122,9 @@ void ArrowButtonView::RunTransformAnimation() {
 
   // Translate by |center_offset| so that the view scales outward from center
   // point.
-  auto center_offset = gfx::Vector2d(CalculatePreferredSize().width() / 2.0,
-                                     CalculatePreferredSize().height() / 2.0);
+  gfx::Size preferred_size = CalculatePreferredSize({});
+  auto center_offset = gfx::Vector2d(preferred_size.width() / 2.0,
+                                     preferred_size.height() / 2.0);
   gfx::Transform transform;
   transform.Translate(center_offset);
   // Make view larger.
@@ -176,9 +177,7 @@ void ArrowButtonView::EnableLoadingAnimation(bool enabled) {
   // LinearAnimation.
   loading_animation_ =
       std::make_unique<gfx::MultiAnimation>(gfx::MultiAnimation::Parts{
-          gfx::MultiAnimation::Part(kLoadingAnimationStepDuration,
-                                    gfx::Tween::LINEAR),
-      });
+          {kLoadingAnimationStepDuration, gfx::Tween::LINEAR}});
   loading_animation_->set_delegate(&loading_animation_delegate_);
   loading_animation_->Start();
 }
@@ -196,11 +195,11 @@ void ArrowButtonView::LoadingAnimationDelegate::AnimationProgressed(
 }
 
 void ArrowButtonView::SetBackgroundColorId(ui::ColorId color_id) {
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       color_id, GetPreferredSize().width() / 2, 2 * kBorderForFocusRingDp));
 }
 
-BEGIN_METADATA(ArrowButtonView, LoginButton)
+BEGIN_METADATA(ArrowButtonView)
 END_METADATA
 
 }  // namespace ash

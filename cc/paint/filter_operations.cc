@@ -14,19 +14,12 @@
 #include "base/feature_list.h"
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
+#include "cc/base/features.h"
 #include "cc/paint/filter_operation.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace cc {
-namespace {
-
-// Kill switch for using MapRect() to compute filter pixel movement.
-BASE_FEATURE(kUseMapRectForPixelMovement,
-             "UseMapRectForPixelMovement",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-}  // namespace
 
 FilterOperations::FilterOperations() = default;
 
@@ -68,20 +61,20 @@ bool FilterOperations::IsEmpty() const {
 }
 
 gfx::Rect FilterOperations::MapRect(const gfx::Rect& rect,
-                                    const SkMatrix& matrix) const {
-  auto accumulate_rect = [matrix](const gfx::Rect& rect,
-                                  const FilterOperation& op) {
-    return op.MapRect(rect, matrix);
+                                    const std::optional<SkMatrix>& ctm) const {
+  auto accumulate_rect = [&ctm](const gfx::Rect& rect,
+                                const FilterOperation& op) {
+    return op.MapRect(rect, ctm);
   };
   return std::accumulate(operations_.begin(), operations_.end(), rect,
                          accumulate_rect);
 }
 
 gfx::Rect FilterOperations::MapRectReverse(const gfx::Rect& rect,
-                                           const SkMatrix& matrix) const {
-  auto accumulate_rect = [&matrix](const gfx::Rect& rect,
-                                   const FilterOperation& op) {
-    return op.MapRectReverse(rect, matrix);
+                                           const SkMatrix& ctm) const {
+  auto accumulate_rect = [&ctm](const gfx::Rect& rect,
+                                const FilterOperation& op) {
+    return op.MapRectReverse(rect, ctm);
   };
   return std::accumulate(operations_.rbegin(), operations_.rend(), rect,
                          accumulate_rect);
@@ -115,64 +108,6 @@ bool FilterOperations::HasFilterThatMovesPixels() const {
     }
   }
   return false;
-}
-
-gfx::Rect FilterOperations::ExpandRectForPixelMovement(
-    const gfx::Rect& rect) const {
-  if (base::FeatureList::IsEnabled(kUseMapRectForPixelMovement)) {
-    return MapRect(rect, SkMatrix::I());
-  }
-
-  gfx::RectF expanded_rect(rect);
-  expanded_rect.Outset(MaximumPixelMovement());
-  return gfx::ToEnclosingRect(expanded_rect);
-}
-
-float FilterOperations::MaximumPixelMovement() const {
-  float max_movement = 0.;
-  for (size_t i = 0; i < operations_.size(); ++i) {
-    const FilterOperation& op = operations_[i];
-    switch (op.type()) {
-      case FilterOperation::BLUR:
-        // |op.amount| here is the blur radius.
-        max_movement = fmax(max_movement, op.amount() * 3.f);
-        continue;
-      case FilterOperation::DROP_SHADOW:
-        // |op.amount| here is the blur radius.
-        max_movement = fmax(max_movement, fmax(std::abs(op.offset().x()),
-                                               std::abs(op.offset().y())) +
-                                              op.amount() * 3.f);
-        continue;
-      case FilterOperation::ZOOM:
-        max_movement = fmax(max_movement, op.zoom_inset());
-        continue;
-      case FilterOperation::REFERENCE:
-        // TODO(hendrikw): SkImageFilter needs a function that tells us how far
-        // the filter can move pixels. See crbug.com/523538 (sort of).
-        max_movement = fmax(max_movement, 100);
-        continue;
-      case FilterOperation::OFFSET:
-        // TODO(crbug/1379125): Work out how to correctly set maximum pixel
-        // movement when an offset filter may be combined with other pixel
-        // moving filters.
-        max_movement =
-            fmax(std::abs(op.offset().x()), std::abs(op.offset().y()));
-        continue;
-      case FilterOperation::OPACITY:
-      case FilterOperation::COLOR_MATRIX:
-      case FilterOperation::GRAYSCALE:
-      case FilterOperation::SEPIA:
-      case FilterOperation::SATURATE:
-      case FilterOperation::HUE_ROTATE:
-      case FilterOperation::INVERT:
-      case FilterOperation::BRIGHTNESS:
-      case FilterOperation::CONTRAST:
-      case FilterOperation::SATURATING_BRIGHTNESS:
-      case FilterOperation::ALPHA_THRESHOLD:
-        continue;
-    }
-  }
-  return max_movement;
 }
 
 bool FilterOperations::HasFilterThatAffectsOpacity() const {
@@ -258,6 +193,54 @@ FilterOperations FilterOperations::Blend(const FilterOperations& from,
   }
 
   return blended_filters;
+}
+
+bool FilterOperations::AllowsLCDText() const {
+  if (operations_.empty()) {
+    return true;
+  }
+  if (!base::FeatureList::IsEnabled(features::kAllowLCDTextWithFilter)) {
+    return false;
+  }
+  // Assumes any complex filter can cause color fringing of LCD-text pixels.
+  if (operations_.size() > 1) {
+    return false;
+  }
+  switch (operations_[0].type()) {
+    // These filters reduce or don't change the color difference between
+    // LCD-text pixels and text pixels.
+    case FilterOperation::GRAYSCALE:
+    case FilterOperation::SEPIA:
+    case FilterOperation::OPACITY:
+    case FilterOperation::BRIGHTNESS:
+    // A blur filter may change color, but it's very common, and the color
+    // change of LCD-text pixels is not obvious.
+    case FilterOperation::BLUR:
+    // A drop shadow draws over the original pixels.
+    case FilterOperation::DROP_SHADOW:
+      return true;
+
+    // These filters are good for LCD text if they reduce or don't change
+    // contrast/saturation.
+    case FilterOperation::CONTRAST:
+    case FilterOperation::SATURATE:
+      return operations_[0].amount() <= 1;
+
+    // Invert<=50% is like combined grayscale and contrast<100%.
+    case FilterOperation::INVERT:
+      return operations_[0].amount() <= 0.5;
+
+    // Other filters may change colors of pixels dramatically, or are not or
+    // rarely used in web.
+    case FilterOperation::COLOR_MATRIX:
+    case FilterOperation::HUE_ROTATE:
+    case FilterOperation::ZOOM:
+    case FilterOperation::REFERENCE:
+    case FilterOperation::SATURATING_BRIGHTNESS:
+    case FilterOperation::ALPHA_THRESHOLD:
+    case FilterOperation::OFFSET:
+      return false;
+  }
 }
 
 void FilterOperations::AsValueInto(

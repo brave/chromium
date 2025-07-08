@@ -32,12 +32,12 @@ void GeometryMapperTransformCache::Update(
     DCHECK(node.IsIdentity());
     to_2d_translation_root_ = gfx::Vector2dF();
     root_of_2d_translation_ = &node;
-    plane_root_transform_ = absl::nullopt;
-    screen_transform_ = absl::nullopt;
+    plane_root_transform_ = nullptr;
+    screen_transform_ = std::nullopt;
     screen_transform_updated_ = true;
 
     DCHECK(node.ScrollNode());
-    nearest_scroll_translation_ = &node;
+    nearest_scroll_translation_ = scroll_translation_state_ = &node;
     return;
   }
 
@@ -53,12 +53,19 @@ void GeometryMapperTransformCache::Update(
       node.IsBackfaceHiddenInternal(parent.is_backface_hidden_);
 
   nearest_scroll_translation_ =
-      node.ScrollNode() ? &node : parent.nearest_scroll_translation_;
+      node.ScrollNode() ? &node : parent.nearest_scroll_translation_.Get();
+  if (auto* for_fixed = node.ScrollTranslationForFixed()) {
+    scroll_translation_state_ = for_fixed;
+  } else if (node.ScrollNode()) {
+    scroll_translation_state_ = &node;
+  } else {
+    scroll_translation_state_ = parent.scroll_translation_state_;
+  }
 
   nearest_directly_composited_ancestor_ =
       node.HasDirectCompositingReasons()
           ? &node
-          : parent.nearest_directly_composited_ancestor_;
+          : parent.nearest_directly_composited_ancestor_.Get();
 
   if (node.IsIdentityOr2dTranslation() && !node.HasActiveTransformAnimation()) {
     root_of_2d_translation_ = parent.root_of_2d_translation_;
@@ -67,7 +74,7 @@ void GeometryMapperTransformCache::Update(
     to_2d_translation_root_ += translation;
 
     if (parent.plane_root_transform_) {
-      plane_root_transform_.emplace();
+      plane_root_transform_ = MakeGarbageCollected<PlaneRootTransform>();
       plane_root_transform_->plane_root = parent.plane_root();
       plane_root_transform_->to_plane_root = parent.to_plane_root();
       plane_root_transform_->to_plane_root.Translate(translation.x(),
@@ -82,7 +89,7 @@ void GeometryMapperTransformCache::Update(
       // plane root is the same as the 2d translation root, so this node
       // which is a 2d translation also doesn't need plane root transform
       // because the plane root is still the same as the 2d translation root.
-      plane_root_transform_ = absl::nullopt;
+      plane_root_transform_ = nullptr;
     }
   } else {
     root_of_2d_translation_ = &node;
@@ -93,9 +100,9 @@ void GeometryMapperTransformCache::Update(
     if (is_plane_root) {
       // We don't need plane root transform because the plane root is the same
       // as the 2d translation root.
-      plane_root_transform_ = absl::nullopt;
+      plane_root_transform_ = nullptr;
     } else {
-      plane_root_transform_.emplace();
+      plane_root_transform_ = MakeGarbageCollected<PlaneRootTransform>();
       plane_root_transform_->plane_root = parent.plane_root();
       plane_root_transform_->to_plane_root.MakeIdentity();
       parent.ApplyToPlaneRoot(plane_root_transform_->to_plane_root);
@@ -111,7 +118,7 @@ void GeometryMapperTransformCache::Update(
   // screen_transform_ will be updated only when needed.
   if (plane_root()->IsRoot()) {
     // We won't need screen_transform_.
-    screen_transform_ = absl::nullopt;
+    screen_transform_ = std::nullopt;
     screen_transform_updated_ = true;
   } else {
     screen_transform_updated_ = false;
@@ -137,7 +144,7 @@ void GeometryMapperTransformCache::UpdateScreenTransform(
   parent_node->UpdateScreenTransform();
   const auto& parent = parent_node->GetTransformCache();
 
-  screen_transform_.emplace();
+  screen_transform_.emplace(ScreenTransform());
   parent.ApplyToScreen(screen_transform_->to_screen);
   if (node.FlattensInheritedTransform())
     screen_transform_->to_screen.Flatten();

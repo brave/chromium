@@ -11,10 +11,12 @@
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/media/webrtc/fake_desktop_media_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 
 FakeDesktopMediaPicker::FakeDesktopMediaPicker(
     FakeDesktopMediaPickerFactory::TestFlags* expectation)
-    : expectation_(expectation) {
+    : expectation_(expectation),
+      picker_params_(Params::RequestSource::kUnknown) {
   expectation_->picker_created = true;
 }
 FakeDesktopMediaPicker::~FakeDesktopMediaPicker() {
@@ -55,7 +57,7 @@ void FakeDesktopMediaPicker::Show(
   EXPECT_EQ(expectation_->expect_tabs, show_tabs);
   EXPECT_EQ(expectation_->expect_current_tab, show_current_tab);
   EXPECT_EQ(expectation_->expect_audio, params.request_audio);
-  EXPECT_EQ(params.modality, ui::ModalType::MODAL_TYPE_CHILD);
+  EXPECT_EQ(params.modality, ui::mojom::ModalType::kChild);
 
   if (!expectation_->cancelled) {
     // Post a task to call the callback asynchronously.
@@ -75,7 +77,8 @@ DesktopMediaPicker::Params FakeDesktopMediaPicker::GetParams() {
 }
 
 void FakeDesktopMediaPicker::CallCallback(DoneCallback done_callback) {
-  std::move(done_callback).Run(expectation_->selected_source);
+  CHECK(expectation_->picker_result.has_value());
+  std::move(done_callback).Run(expectation_->picker_result.value());
 }
 
 FakeDesktopMediaPickerFactory::FakeDesktopMediaPickerFactory() = default;

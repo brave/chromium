@@ -16,7 +16,6 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/dbus/attestation/attestation_ca.pb.h"
 #include "chromeos/ash/components/dbus/constants/attestation_constants.h"
-#include "components/pref_registry/pref_registry_syncable.h"
 
 class Profile;
 class AttestationFlow;
@@ -30,7 +29,7 @@ TpmChallengeKey* TpmChallengeKeyFactory::next_result_for_testing_ = nullptr;
 
 // static
 std::unique_ptr<TpmChallengeKey> TpmChallengeKeyFactory::Create() {
-  if (UNLIKELY(next_result_for_testing_)) {
+  if (next_result_for_testing_) [[unlikely]] {
     std::unique_ptr<TpmChallengeKey> result(next_result_for_testing_);
     next_result_for_testing_ = nullptr;
     return result;
@@ -48,11 +47,6 @@ void TpmChallengeKeyFactory::SetForTesting(
 }
 
 //=========================== TpmChallengeKeyImpl ==============================
-
-void TpmChallengeKey::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(prefs::kAttestationEnabled, false);
-}
 
 TpmChallengeKeyImpl::TpmChallengeKeyImpl() {
   tpm_challenge_key_subtle_ = TpmChallengeKeySubtleFactory::Create();
@@ -77,7 +71,7 @@ void TpmChallengeKeyImpl::BuildResponse(
     bool register_key,
     ::attestation::KeyType key_crypto_type,
     const std::string& key_name,
-    const absl::optional<std::string>& signals) {
+    const std::optional<std::string>& signals) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback_.is_null());
   DCHECK(!callback.is_null());

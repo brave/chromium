@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/core/inspector/worker_inspector_controller.h"
+#include "third_party/blink/renderer/core/shadow_realm/shadow_realm_global_scope.h"
 #include "third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
@@ -80,7 +81,14 @@ void WorkerThreadDebugger::ReportConsoleMessage(
     SourceLocation* location) {
   if (!context)
     return;
-  To<WorkerOrWorkletGlobalScope>(context)
+
+  ExecutionContext* root_worker_context =
+      context->IsShadowRealmGlobalScope()
+          ? To<ShadowRealmGlobalScope>(context)
+                ->GetRootInitiatorExecutionContext()
+          : context;
+
+  To<WorkerOrWorkletGlobalScope>(root_worker_context)
       ->GetThread()
       ->GetWorkerReportingProxy()
       .ReportConsoleMessage(source, level, message, location);
@@ -235,12 +243,11 @@ void WorkerThreadDebugger::consoleAPIMessage(
   if (!worker_threads_.Contains(context_group_id))
     return;
   WorkerThread* worker_thread = worker_threads_.at(context_group_id);
-  std::unique_ptr<SourceLocation> location = std::make_unique<SourceLocation>(
+  SourceLocation* location = MakeGarbageCollected<SourceLocation>(
       ToCoreString(url), String(), line_number, column_number,
       stack_trace ? stack_trace->clone() : nullptr, 0);
   worker_thread->GlobalScope()->OnConsoleApiMessage(
-      V8MessageLevelToMessageLevel(level), ToCoreString(message),
-      location.get());
+      V8MessageLevelToMessageLevel(level), ToCoreString(message), location);
 }
 
 void WorkerThreadDebugger::consoleClear(int context_group_id) {
@@ -254,7 +261,6 @@ v8::MaybeLocal<v8::Value> WorkerThreadDebugger::memoryInfo(
     v8::Isolate*,
     v8::Local<v8::Context>) {
   NOTREACHED();
-  return v8::MaybeLocal<v8::Value>();
 }
 
 }  // namespace blink

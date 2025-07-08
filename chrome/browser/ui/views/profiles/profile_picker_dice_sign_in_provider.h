@@ -5,17 +5,20 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_PROFILES_PROFILE_PICKER_DICE_SIGN_IN_PROVIDER_H_
 #define CHROME_BROWSER_UI_VIEWS_PROFILES_PROFILE_PICKER_DICE_SIGN_IN_PROVIDER_H_
 
+#include <optional>
+
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
+#include "chrome/browser/ui/views/profiles/profile_management_types.h"
 #include "chrome/browser/ui/views/profiles/profile_picker_web_contents_host.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
+struct CoreAccountInfo;
 class DiceTabHelper;
 class ProfilePickerWebContentsHost;
 
@@ -31,26 +34,28 @@ class ProfilePickerDiceSignInProvider
       public ChromeWebModalDialogManagerDelegate {
  public:
   // The callback returns the newly created profile and a valid WebContents
-  // instance within this profile. If `is_saml` is true, sign-in is not
-  // completed there yet. Otherwise, the newly created profile is properly
-  // signed-in, i.e. its IdentityManager has a (unconsented) primary account.
+  // instance within this profile. If the account info is empty, sign-in is not
+  // completed there yet. Otherwise, the newly created profile has the account
+  // in its `IdentityManager`, but the account may not be set as primary yet.
   // If the flow gets canceled by closing the window, the callback never gets
   // called.
-  // TODO(crbug.com/1240650): Properly support saml sign in so that the special
+  // TODO(crbug.com/40785551): Properly support saml sign in so that the special
   // casing is not needed here.
   using SignedInCallback =
-      base::OnceCallback<void(Profile* profile,
-                              bool is_saml,
+      base::OnceCallback<void(Profile*,
+                              const CoreAccountInfo&,
                               std::unique_ptr<content::WebContents>)>;
 
   // Creates a new provider that will render the Gaia sign-in flow in `host` for
   // a profile at `profile_path`.
+  // `initial_email` is used to pre-fill the email field in the sign-in screen.
   // If no `profile_path` is provided, a new profile (and associated directory)
   // will be created.
   explicit ProfilePickerDiceSignInProvider(
       ProfilePickerWebContentsHost* host,
       signin_metrics::AccessPoint signin_access_point,
-      absl::optional<base::FilePath> profile_path = absl::nullopt);
+      const std::string& initial_email,
+      base::FilePath profile_path = base::FilePath());
   ~ProfilePickerDiceSignInProvider() override;
   ProfilePickerDiceSignInProvider(const ProfilePickerDiceSignInProvider&) =
       delete;
@@ -63,7 +68,7 @@ class ProfilePickerDiceSignInProvider
   // the sign-in screen is displayed, `switch_finished_callback` gets called.
   // When the sign-in finishes (if it ever happens), `signin_finished_callback`
   // gets called.
-  void SwitchToSignIn(base::OnceCallback<void(bool)> switch_finished_callback,
+  void SwitchToSignIn(StepSwitchFinishedCallback switch_finished_callback,
                       SignedInCallback signin_finished_callback);
 
   // Reloads the sign-in page if applicable.
@@ -82,16 +87,16 @@ class ProfilePickerDiceSignInProvider
   // content::WebContentsDelegate:
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                          const content::ContextMenuParams& params) override;
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
-  bool HandleKeyboardEvent(
+  content::WebContents* AddNewContents(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes changed_flags) override;
 
@@ -100,15 +105,23 @@ class ProfilePickerDiceSignInProvider
       override;
 
   // Initializes the flow with the newly created or loaded profile.
-  void OnProfileInitialized(
-      base::OnceCallback<void(bool)> switch_finished_callback,
-      Profile* new_profile);
+  void OnProfileInitialized(StepSwitchFinishedCallback switch_finished_callback,
+                            Profile* new_profile);
 
-  // Finishes the sign-in (if `is_saml` is true, it's due to SAML signin getting
-  // detected).
-  void FinishFlow(bool is_saml);
+  // `account_info` is empty if the signin could not complete and must continue
+  // in a browser (e.g. for SAML).
+  void FinishFlow(const CoreAccountInfo& account_info);
+
+  // Callback for the `DiceTabHelper`. Calls `FinishFlow()`.
+  void FinishFlowInPicker(Profile* profile,
+                          signin_metrics::AccessPoint access_point,
+                          signin_metrics::PromoAction promo_action,
+                          content::WebContents* contents,
+                          const CoreAccountInfo& account_info);
 
   void OnSignInContentsFreedUp();
+
+  void ResetWebContentsDelegates();
 
   GURL BuildSigninURL() const;
 
@@ -130,9 +143,13 @@ class ProfilePickerDiceSignInProvider
 
   const signin_metrics::AccessPoint signin_access_point_;
 
-  // The path to the profile in which to perform the sign-in. If absent, a new
+  // The email to be prefilled in the profile creation flow.
+  const std::string initial_email_;
+
+  // The path to the profile in which to perform the sign-in. If empty, a new
   // profile will be created.
-  const absl::optional<base::FilePath> profile_path_;
+  const base::FilePath profile_path_;
+
   // Sign-in callback, valid until it's called.
   SignedInCallback callback_;
 
@@ -147,7 +164,7 @@ class ProfilePickerDiceSignInProvider
 
   // Because of ProfileOAuth2TokenService intricacies, the sign in should not
   // finish before both the notification gets called.
-  // TODO(crbug.com/1249488): Remove this if the bug gets resolved.
+  // TODO(crbug.com/40791271): Remove this if the bug gets resolved.
   bool refresh_token_updated_ = false;
 
   base::WeakPtrFactory<ProfilePickerDiceSignInProvider> weak_ptr_factory_{this};

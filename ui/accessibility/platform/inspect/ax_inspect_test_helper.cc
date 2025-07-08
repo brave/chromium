@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "ui/accessibility/platform/inspect/ax_inspect_test_helper.h"
 
 #include <string>
@@ -145,7 +150,7 @@ bool is_atk_version_supported() {
 }  // namespace
 
 AXInspectTestHelper::AXInspectTestHelper(AXApiType::Type type)
-    : expectation_type_(type) {}
+    : expectation_type_(std::string(type)) {}
 
 AXInspectTestHelper::AXInspectTestHelper(const char* expectation_type)
     : expectation_type_(expectation_type) {}
@@ -203,7 +208,7 @@ AXInspectScenario AXInspectTestHelper::ParseScenario(
                                  default_filters);
 }
 
-absl::optional<AXInspectScenario> AXInspectTestHelper::ParseScenario(
+std::optional<AXInspectScenario> AXInspectTestHelper::ParseScenario(
     const base::FilePath& scenario_path,
     const std::vector<AXPropertyFilter>& default_filters) {
   const TypeInfo::Mapping* mapping = TypeMapping(expectation_type_);
@@ -250,7 +255,7 @@ std::vector<AXApiType::Type> AXInspectTestHelper::EventTestPasses() {
 }
 
 // static
-absl::optional<std::vector<std::string>>
+std::optional<std::vector<std::string>>
 AXInspectTestHelper::LoadExpectationFile(const base::FilePath& expected_file) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
@@ -263,7 +268,7 @@ AXInspectTestHelper::LoadExpectationFile(const base::FilePath& expected_file) {
   base::RemoveChars(expected_contents_raw, "\r", &expected_contents);
 
   if (!expected_contents.compare(0, strlen(kMarkSkipFile), kMarkSkipFile)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::vector<std::string> expected_lines =
@@ -311,7 +316,7 @@ bool AXInspectTestHelper::ValidateAgainstExpectation(
     diff += base::JoinString(actual_lines, "\n");
     diff += "\n";
 
-    // This is used by rebase_dump_accessibility_tree_test.py to signify
+    // This is used by rebase_dump_accessibility_tree_tests.py to signify
     // the end of the file when parsing the actual output from remote logs.
     diff += kMarkEndOfFile;
     diff += "\n";
@@ -375,18 +380,6 @@ FilePath::StringType AXInspectTestHelper::GetVersionSpecificExpectedFileSuffix(
     if (!expectations_qualifier.empty())
       suffix = FILE_PATH_LITERAL("-") + expectations_qualifier;
     return suffix + FILE_PATH_LITERAL("-expected-blink-cros.txt");
-  }
-#endif
-#if BUILDFLAG(IS_MAC)
-  // When running tests in a platform specific test directory (such as
-  // content/test/data/accessibility/mac/) the expectation_type_ == content.
-  if ((expectation_type_ == "mac" || expectation_type_ == "content") &&
-      !base::mac::IsAtLeastOS11()) {
-    FilePath::StringType suffix;
-    if (!expectations_qualifier.empty()) {
-      suffix = FILE_PATH_LITERAL("-") + expectations_qualifier;
-    }
-    return suffix + FILE_PATH_LITERAL("-expected-mac-before-11.txt");
   }
 #endif
   return FILE_PATH_LITERAL("");

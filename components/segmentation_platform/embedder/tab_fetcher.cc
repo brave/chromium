@@ -4,7 +4,8 @@
 
 #include "components/segmentation_platform/embedder/tab_fetcher.h"
 
-#include "base/notreached.h"
+#include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/synced_session.h"
@@ -13,10 +14,11 @@ namespace segmentation_platform {
 namespace {
 
 void FillTabsFromSessionsAfterTime(
-    const std::vector<const sync_sessions::SyncedSession*> sessions,
+    const std::vector<raw_ptr<const sync_sessions::SyncedSession,
+                              VectorExperimental>> sessions,
     std::vector<TabFetcher::TabEntry>& tabs,
     base::Time tabs_loaded_after_timestamp) {
-  for (const auto* session : sessions) {
+  for (const sync_sessions::SyncedSession* session : sessions) {
     for (const auto& session_and_window : session->windows) {
       const auto& window = session_and_window.second->wrapped_window;
       for (const auto& tab : window.tabs) {
@@ -48,7 +50,8 @@ bool TabFetcher::FillAllRemoteTabs(std::vector<TabEntry>& tabs) {
   if (!open_ui_delegate) {
     return false;
   }
-  std::vector<const sync_sessions::SyncedSession*> sessions;
+  std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
+      sessions;
   open_ui_delegate->GetAllForeignSessions(&sessions);
   FillTabsFromSessionsAfterTime(sessions, tabs, base::Time());
   return true;
@@ -61,28 +64,32 @@ bool TabFetcher::FillAllRemoteTabsAfterTime(
   if (!open_ui_delegate) {
     return false;
   }
-  std::vector<const sync_sessions::SyncedSession*> sessions;
+  std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
+      sessions;
   open_ui_delegate->GetAllForeignSessions(&sessions);
   FillTabsFromSessionsAfterTime(sessions, tabs, tabs_loaded_after_timestamp);
   return true;
 }
 
 bool TabFetcher::FillAllLocalTabs(std::vector<TabEntry>& tabs) {
-  if (!session_sync_service_->GetOpenTabsUIDelegate()) {
-    return FillAllLocalTabsFromTabModel(tabs);
+  if (FillAllLocalTabsFromTabModel(tabs)) {
+    return true;
   }
-  FillAllLocalTabsFromSyncSessions(tabs);
-  return true;
+  return FillAllLocalTabsFromSyncSessions(tabs);
 }
 
 TabFetcher::Tab TabFetcher::FindTab(const TabEntry& entry) {
   auto* open_ui_delegate = session_sync_service_->GetOpenTabsUIDelegate();
-  if (!open_ui_delegate) {
+  if (!open_ui_delegate || entry.session_tag.empty()) {
     return FindLocalTab(entry);
   }
   const sessions::SessionTab* tab;
   open_ui_delegate->GetForeignTab(entry.session_tag, entry.tab_id, &tab);
-  return Tab{.session_tab = tab};
+  GURL url =
+      tab->navigations.size() ? tab->navigations.back().virtual_url() : GURL();
+  return Tab{.session_tab = tab,
+             .tab_url = url,
+             .time_since_modified = base::Time::Now() - tab->timestamp};
 }
 
 bool TabFetcher::FillAllLocalTabsFromTabModel(std::vector<TabEntry>& tabs) {
@@ -106,20 +113,6 @@ TabFetcher::Tab TabFetcher::FindLocalTab(const TabEntry& entry) {
   return Tab{};
 }
 
-base::TimeDelta TabFetcher::GetTimeSinceModified(const TabEntry& tab_entry) {
-  Tab tab = FindTab(tab_entry);
-  if (tab.session_tab) {
-    return base::Time::Now() - tab.session_tab->timestamp;
-  }
-  return GetLocalTabTimeSinceModified(tab);
-}
-
-base::TimeDelta TabFetcher::GetLocalTabTimeSinceModified(
-    const TabFetcher::Tab& tab) {
-  NOTIMPLEMENTED();
-  return base::TimeDelta::Max();
-}
-
 size_t TabFetcher::GetRemoteTabsCountAfterTime(
     base::Time tabs_loaded_after_timestamp) {
   std::vector<TabFetcher::TabEntry> all_tabs;
@@ -127,15 +120,16 @@ size_t TabFetcher::GetRemoteTabsCountAfterTime(
   return all_tabs.size();
 }
 
-absl::optional<base::Time> TabFetcher::GetLatestRemoteSessionModifiedTime() {
+std::optional<base::Time> TabFetcher::GetLatestRemoteSessionModifiedTime() {
   auto* open_ui_delegate = session_sync_service_->GetOpenTabsUIDelegate();
   if (!open_ui_delegate) {
-    return absl::nullopt;
+    return std::nullopt;
   }
-  std::vector<const sync_sessions::SyncedSession*> sessions;
+  std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
+      sessions;
   open_ui_delegate->GetAllForeignSessions(&sessions);
   if (sessions.empty()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   // Get latest session modified time.
   return sessions[0]->GetModifiedTime();

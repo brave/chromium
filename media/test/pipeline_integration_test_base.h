@@ -6,27 +6,31 @@
 #define MEDIA_TEST_PIPELINE_INTEGRATION_TEST_BASE_H_
 
 #include <stdint.h>
+
 #include <memory>
 
 #include "base/functional/callback_forward.h"
-#include "base/hash/md5.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "media/audio/clockless_audio_sink.h"
 #include "media/audio/null_audio_sink.h"
+#include "media/base/data_source.h"
 #include "media/base/demuxer.h"
+#include "media/base/media_switches.h"
 #include "media/base/mock_media_log.h"
 #include "media/base/null_video_sink.h"
 #include "media/base/pipeline_impl.h"
 #include "media/base/pipeline_status.h"
-#include "media/base/text_track.h"
-#include "media/base/text_track_config.h"
 #include "media/base/video_frame.h"
 #include "media/renderers/audio_renderer_impl.h"
 #include "media/renderers/video_renderer_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/scoped_com_initializer.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 using ::testing::NiceMock;
 
@@ -39,7 +43,7 @@ namespace media {
 class FakeEncryptedMedia;
 class TestMediaSource;
 
-// Empty MD5 hash string.  Used to verify empty video tracks.
+// Empty SHA-256 hash string.  Used to verify empty video tracks.
 extern const char kNullVideoHash[];
 
 // Empty hash string.  Used to verify empty audio tracks.
@@ -78,7 +82,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
     kFuzzing = 64,
   };
 
-  // Setup method to intialize various state according to flags.
+  // Setup method to initialize various state according to flags.
   void ParseTestTypeFlags(uint8_t flags);
 
   // Starts the pipeline with a file specified by |filename|, optionally with a
@@ -111,8 +115,8 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   bool WaitUntilOnEnded();
   PipelineStatus WaitUntilEndedOrError();
 
-  // Returns the MD5 hash of all video frames seen.  Should only be called once
-  // after playback completes.  First time hashes should be generated with
+  // Returns the SHA-256 hash of all video frames seen.  Should only be called
+  // once after playback completes.  First time hashes should be generated with
   // --video-threads=1 to ensure correctness.  Pipeline must have been started
   // with hashing enabled.
   std::string GetVideoHash();
@@ -144,19 +148,19 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   }
 
   std::unique_ptr<Renderer> CreateRenderer(
-      absl::optional<RendererType> renderer_type);
+      std::optional<RendererType> renderer_type);
 
  protected:
   NiceMock<MockMediaLog> media_log_;
   base::test::TaskEnvironment task_environment_;
-  base::MD5Context md5_context_;
+  std::optional<crypto::hash::Hasher> hash_context_;
   bool hashing_enabled_;
   bool clockless_playback_;
   bool webaudio_attached_;
   bool mono_output_;
   bool fuzzing_;
 #if defined(ADDRESS_SANITIZER) || defined(UNDEFINED_SANITIZER)
-  // TODO(https://crbug.com/924030): ASAN causes Run() timeouts to be reached.
+  // TODO(crbug.com/40610469): ASAN causes Run() timeouts to be reached.
   const base::test::ScopedDisableRunLoopTimeout disable_run_timeout_;
 #endif
   std::unique_ptr<Demuxer> demuxer_;
@@ -179,11 +183,11 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // if |create_renderer_cb_| is set, it'll be used to create the Renderer
   // instead.
   using CreateRendererCB = base::RepeatingCallback<std::unique_ptr<Renderer>(
-      absl::optional<RendererType> renderer_type)>;
+      std::optional<RendererType> renderer_type)>;
   CreateRendererCB create_renderer_cb_;
 
   std::unique_ptr<Renderer> CreateRendererImpl(
-      absl::optional<RendererType> renderer_type);
+      std::optional<RendererType> renderer_type);
 
   // Sets |create_renderer_cb_| which will be used to wrap the Renderer created
   // by CreateRendererImpl().
@@ -218,6 +222,10 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
       uint8_t test_type,
       CreateAudioDecodersCB prepend_audio_decoders_cb);
 
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+  PipelineStatus StartPipelineWithHlsManifest(const std::string& filename);
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
+
   void OnSeeked(base::TimeDelta seek_time, PipelineStatus status);
   void OnStatusCallback(const base::RepeatingClosure& quit_run_loop_closure,
                         PipelineStatus status);
@@ -249,14 +257,12 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   MOCK_METHOD2(OnBufferingStateChange,
                void(BufferingState, BufferingStateChangeReason));
   MOCK_METHOD0(OnDurationChange, void());
-  MOCK_METHOD2(OnAddTextTrack,
-               void(const TextTrackConfig& config, AddTextTrackDoneCB done_cb));
   MOCK_METHOD1(OnWaiting, void(WaitingReason));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig&));
   MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
-  MOCK_METHOD1(OnVideoFrameRateChange, void(absl::optional<int>));
+  MOCK_METHOD1(OnVideoFrameRateChange, void(std::optional<int>));
   MOCK_METHOD0(OnVideoAverageKeyframeDistanceUpdate, void());
   MOCK_METHOD1(OnAudioPipelineInfoChange, void(const AudioPipelineInfo&));
   MOCK_METHOD1(OnVideoPipelineInfoChange, void(const VideoPipelineInfo&));
@@ -279,11 +285,16 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   void OnBufferingStateChangeForSeek(BufferingState state,
                                      BufferingStateChangeReason reason);
 
+#if BUILDFLAG(IS_WIN)
+  // MediaFoundationAudioDecoder calls CoInitialize() when creating the decoder.
+  base::win::ScopedCOMInitializer com_initializer_;
+#endif  // BUILDFLAG(IS_WIN)
+
   CreateVideoDecodersCB prepend_video_decoders_cb_;
   CreateAudioDecodersCB prepend_audio_decoders_cb_;
 
   // First buffering state we get from the pipeline.
-  absl::optional<BufferingState> buffering_state_;
+  std::optional<BufferingState> buffering_state_;
 
   base::OnceClosure on_ended_closure_;
   base::OnceClosure on_error_closure_;

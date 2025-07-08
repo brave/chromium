@@ -40,6 +40,10 @@
 #include "absl/memory/memory.h"
 #include "absl/strings/string_view.h"
 
+#if defined(MAP_ANON) && !defined(MAP_ANONYMOUS)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
+
 using testing::Contains;
 
 #ifdef _WIN32
@@ -86,21 +90,13 @@ int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.unlikely) unlikely_func() {
   return 0;
 }
 
-int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.hot) hot_func() {
-  return 0;
-}
+int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.hot) hot_func() { return 0; }
 
-int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.startup) startup_func() {
-  return 0;
-}
+int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.startup) startup_func() { return 0; }
 
-int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.exit) exit_func() {
-  return 0;
-}
+int ABSL_ATTRIBUTE_SECTION_VARIABLE(.text.exit) exit_func() { return 0; }
 
-int /*ABSL_ATTRIBUTE_SECTION_VARIABLE(.text)*/ regular_func() {
-  return 0;
-}
+int /*ABSL_ATTRIBUTE_SECTION_VARIABLE(.text)*/ regular_func() { return 0; }
 
 // Thread-local data may confuse the symbolizer, ensure that it does not.
 // Variable sizes and order are important.
@@ -121,7 +117,7 @@ static volatile bool volatile_bool = false;
 // Force the binary to be large enough that a THP .text remap will succeed.
 static constexpr size_t kHpageSize = 1 << 21;
 const char kHpageTextPadding[kHpageSize * 4] ABSL_ATTRIBUTE_SECTION_VARIABLE(
-    .text) = "";
+        .text) = "";
 
 #else
 static void *GetPCFromFnPtr(void *ptr) {
@@ -171,9 +167,8 @@ void ABSL_ATTRIBUTE_NOINLINE TestWithReturnAddress() {
 #if defined(ABSL_HAVE_ATTRIBUTE_NOINLINE)
   void *return_address = __builtin_return_address(0);
   const char *symbol = TrySymbolize(return_address);
-  CHECK_NE(symbol, nullptr) << "TestWithReturnAddress failed";
-  CHECK_STREQ(symbol, "main") << "TestWithReturnAddress failed";
-  std::cout << "TestWithReturnAddress passed" << std::endl;
+  ASSERT_NE(symbol, nullptr) << "TestWithReturnAddress failed";
+  EXPECT_STREQ(symbol, "main") << "TestWithReturnAddress failed";
 #endif
 }
 
@@ -313,10 +308,8 @@ TEST(Symbolize, SymbolizeWithDemanglingStackConsumption) {
 const size_t kPageSize = 64 << 10;
 // We place a read-only symbols into the .text section and verify that we can
 // symbolize them and other symbols after remapping them.
-const char kPadding0[kPageSize * 4] ABSL_ATTRIBUTE_SECTION_VARIABLE(.text) =
-    "";
-const char kPadding1[kPageSize * 4] ABSL_ATTRIBUTE_SECTION_VARIABLE(.text) =
-    "";
+const char kPadding0[kPageSize * 4] ABSL_ATTRIBUTE_SECTION_VARIABLE(.text) = "";
+const char kPadding1[kPageSize * 4] ABSL_ATTRIBUTE_SECTION_VARIABLE(.text) = "";
 
 static int FilterElfHeader(struct dl_phdr_info *info, size_t size, void *data) {
   for (int i = 0; i < info->dlpi_phnum; i++) {
@@ -474,9 +467,9 @@ extern "C" {
 inline void *ABSL_ATTRIBUTE_ALWAYS_INLINE inline_func() {
   void *pc = nullptr;
 #if defined(__i386__)
-  __asm__ __volatile__("call 1f;\n 1: pop %[PC]" : [ PC ] "=r"(pc));
+  __asm__ __volatile__("call 1f;\n 1: pop %[PC]" : [PC] "=r"(pc));
 #elif defined(__x86_64__)
-  __asm__ __volatile__("leaq 0(%%rip),%[PC];\n" : [ PC ] "=r"(pc));
+  __asm__ __volatile__("leaq 0(%%rip),%[PC];\n" : [PC] "=r"(pc));
 #endif
   return pc;
 }
@@ -484,9 +477,9 @@ inline void *ABSL_ATTRIBUTE_ALWAYS_INLINE inline_func() {
 void *ABSL_ATTRIBUTE_NOINLINE non_inline_func() {
   void *pc = nullptr;
 #if defined(__i386__)
-  __asm__ __volatile__("call 1f;\n 1: pop %[PC]" : [ PC ] "=r"(pc));
+  __asm__ __volatile__("call 1f;\n 1: pop %[PC]" : [PC] "=r"(pc));
 #elif defined(__x86_64__)
-  __asm__ __volatile__("leaq 0(%%rip),%[PC];\n" : [ PC ] "=r"(pc));
+  __asm__ __volatile__("leaq 0(%%rip),%[PC];\n" : [PC] "=r"(pc));
 #endif
   return pc;
 }
@@ -496,10 +489,9 @@ void ABSL_ATTRIBUTE_NOINLINE TestWithPCInsideNonInlineFunction() {
     (defined(__i386__) || defined(__x86_64__))
   void *pc = non_inline_func();
   const char *symbol = TrySymbolize(pc);
-  CHECK_NE(symbol, nullptr) << "TestWithPCInsideNonInlineFunction failed";
-  CHECK_STREQ(symbol, "non_inline_func")
+  ASSERT_NE(symbol, nullptr) << "TestWithPCInsideNonInlineFunction failed";
+  EXPECT_STREQ(symbol, "non_inline_func")
       << "TestWithPCInsideNonInlineFunction failed";
-  std::cout << "TestWithPCInsideNonInlineFunction passed" << std::endl;
 #endif
 }
 
@@ -508,9 +500,8 @@ void ABSL_ATTRIBUTE_NOINLINE TestWithPCInsideInlineFunction() {
     (defined(__i386__) || defined(__x86_64__))
   void *pc = inline_func();  // Must be inlined.
   const char *symbol = TrySymbolize(pc);
-  CHECK_NE(symbol, nullptr) << "TestWithPCInsideInlineFunction failed";
-  CHECK_STREQ(symbol, __FUNCTION__) << "TestWithPCInsideInlineFunction failed";
-  std::cout << "TestWithPCInsideInlineFunction passed" << std::endl;
+  ASSERT_NE(symbol, nullptr) << "TestWithPCInsideInlineFunction failed";
+  EXPECT_STREQ(symbol, __FUNCTION__) << "TestWithPCInsideInlineFunction failed";
 #endif
 }
 }
@@ -551,9 +542,8 @@ __attribute__((target("arm"))) int ArmThumbOverlapArm(int x) {
 void ABSL_ATTRIBUTE_NOINLINE TestArmThumbOverlap() {
 #if defined(ABSL_HAVE_ATTRIBUTE_NOINLINE)
   const char *symbol = TrySymbolize((void *)&ArmThumbOverlapArm);
-  CHECK_NE(symbol, nullptr) << "TestArmThumbOverlap failed";
-  CHECK_STREQ("ArmThumbOverlapArm()", symbol) << "TestArmThumbOverlap failed";
-  std::cout << "TestArmThumbOverlap passed" << std::endl;
+  ASSERT_NE(symbol, nullptr) << "TestArmThumbOverlap failed";
+  EXPECT_STREQ("ArmThumbOverlapArm()", symbol) << "TestArmThumbOverlap failed";
 #endif
 }
 
@@ -601,7 +591,7 @@ TEST(Symbolize, SymbolizeWithDemangling) {
 }
 
 #endif  // !defined(ABSL_CONSUME_DLL)
-#else  // Symbolizer unimplemented
+#else   // Symbolizer unimplemented
 TEST(Symbolize, Unimplemented) {
   char buf[64];
   EXPECT_FALSE(absl::Symbolize((void *)(&nonstatic_func), buf, sizeof(buf)));

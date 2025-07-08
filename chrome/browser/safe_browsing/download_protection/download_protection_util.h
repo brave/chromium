@@ -7,17 +7,27 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_DOWNLOAD_PROTECTION_DOWNLOAD_PROTECTION_UTIL_H_
 #define CHROME_BROWSER_SAFE_BROWSING_DOWNLOAD_PROTECTION_DOWNLOAD_PROTECTION_UTIL_H_
 
+#include <optional>
+
 #include "base/callback_list.h"
+#include "chrome/browser/enterprise/connectors/common.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item.h"
+#include "components/safe_browsing/buildflags.h"
+#include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
 #include "components/safe_browsing/core/browser/download_check_result.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
+#include "content/public/browser/file_system_access_write_item.h"
 #include "net/cert/x509_certificate.h"
 
 namespace safe_browsing {
 
+class DeepScanningMetadata;
+
 // Enum to keep track why a particular download verdict was chosen.
 // Used for UMA metrics. Do not reorder.
+//
+// The UMA enum is called SBClientDownloadCheckDownloadStats.
 enum DownloadCheckResultReason {
   REASON_INVALID_URL = 0,
   REASON_SB_DISABLED = 1,
@@ -56,6 +66,10 @@ enum DownloadCheckResultReason {
   REASON_DEEP_SCAN_PROMPT = 34,
   REASON_BLOCKED_UNSUPPORTED_FILE_TYPE = 35,
   REASON_DOWNLOAD_DANGEROUS_ACCOUNT_COMPROMISE = 36,
+  REASON_LOCAL_DECRYPTION_PROMPT = 37,
+  REASON_LOCAL_DECRYPTION_FAILED = 38,
+  REASON_IMMEDIATE_DEEP_SCAN = 39,
+  REASON_IGNORED_VERDICT = 40,
   REASON_MAX  // Always add new values before this one.
 };
 
@@ -91,8 +105,31 @@ enum class DeepScanEvent {
   kPromptAccepted = 2,
   kScanCanceled = 3,
   kScanCompleted = 4,
-  kMaxValue = kScanCompleted,
+  kScanFailed = 5,
+  kScanDeleted = 6,
+  kPromptAcceptedFromWebUI = 7,
+  kIncorrectPassword = 8,
+  kMaxValue = kIncorrectPassword,
 };
+
+// Describes whether a given download may send a download ping.
+enum class MayCheckDownloadResult {
+  // The download may not send a ping. This may be due to properties of the
+  // download/file itself (see DownloadCheckResultReason) or due to other logic
+  // applied by DownloadProtection{Service,Delegate}.
+  kMayNotCheckDownload,
+  // The download may send a ping, but only a "light" ping may be sent if the
+  // download is sampled.
+  kMaySendSampledPingOnly,
+  // The download is fully supported for CheckClientDownload and may send a full
+  // download ping.
+  kMayCheckDownload,
+};
+
+void LogDeepScanEvent(download::DownloadItem* item, DeepScanEvent event);
+void LogDeepScanEvent(const DeepScanningMetadata& metadata,
+                      DeepScanEvent event);
+void LogLocalDecryptionEvent(DeepScanEvent event);
 
 // Callback type which is invoked once the download request is done.
 typedef base::OnceCallback<void(DownloadCheckResult)> CheckDownloadCallback;
@@ -120,12 +157,27 @@ using FileSystemAccessWriteRequestCallbackList =
 using FileSystemAccessWriteRequestCallback =
     FileSystemAccessWriteRequestCallbackList::CallbackType;
 
-// Callbacks run on the main thread when a PPAPI ClientDownloadRequest has been
-// formed for a download.
-using PPAPIDownloadRequestCallbackList =
-    base::RepeatingCallbackList<void(const ClientDownloadRequest*)>;
-using PPAPIDownloadRequestCallback =
-    PPAPIDownloadRequestCallbackList::CallbackType;
+// Types used for the BarrierCallback mechanism in
+// CheckClientDownloadRequestBase::StartModificationsFromDelegate():
+
+// Callback that, when invoked, makes a modification to a ClientDownloadRequest.
+using ClientDownloadRequestModification =
+    base::OnceCallback<void(ClientDownloadRequest*)>;
+// Type of the helper callback that should be called exactly once for each
+// ClientDownloadRequestModification that should be done. Calling the
+// CollectModificationCallback collects a modification, i.e. registers the
+// modification to be executed on the ClientDownloadRequest after all such
+// modifications have been collected.
+using CollectModificationCallback =
+    base::OnceCallback<void(ClientDownloadRequestModification)>;
+// Callback that, when run, generates an appropriate
+// ClientDownloadRequestModification that should be executed, and invokes
+// the passed-in CollectModificationCallback with the desired modification.
+using PendingClientDownloadRequestModification =
+    base::OnceCallback<void(CollectModificationCallback)>;
+
+// Returns a ClientDownloadRequestModification that is a no-op.
+ClientDownloadRequestModification NoModificationToRequestProto();
 
 // Given a certificate and its immediate issuer certificate, generates the
 // list of strings that need to be checked against the download allowlist to
@@ -142,6 +194,45 @@ GURL GetFileSystemAccessDownloadUrl(const GURL& frame_url);
 google::protobuf::RepeatedPtrField<ClientDownloadRequest::ArchivedBinary>
 SelectArchiveEntries(const google::protobuf::RepeatedPtrField<
                      ClientDownloadRequest::ArchivedBinary>& src_binaries);
+
+// Identify referrer chain info of a download. This function also
+// records UMA stats of download attribution result. The referrer chain
+// will include at most `user_gesture_limit` user gestures.
+std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
+    const download::DownloadItem& item,
+    int user_gesture_limit);
+
+// Identify referrer chain info of a File System Access write. This
+// function also records UMA stats of download attribution result. The
+// referrer chain will include at most `user_gesture_limit` user
+// gestures.
+std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
+    const content::FileSystemAccessWriteItem& item,
+    int user_gesture_limit);
+
+// Returns the referrer chain based on download item for enterprise reporting.
+// This function will identify and attach the referrer chain to the
+// `DownloadItem` if it has not been previously identified.
+ReferrerChain GetOrIdentifyReferrerChainForEnterprise(
+    download::DownloadItem& item);
+
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+// Returns true if dangerous download report should be sent.
+bool ShouldSendDangerousDownloadReport(
+    download::DownloadItem* item,
+    ClientSafeBrowsingReportRequest::ReportType report_type);
+#endif
+
+// If the item should be uploaded for deep scanning, this returns the content
+// analysis settings to use. If the item should not be uploaded, this returns
+// nullopt.
+std::optional<enterprise_connectors::AnalysisSettings>
+ShouldUploadBinaryForDeepScanning(download::DownloadItem* item);
+
+// Returns whether the filetype is eligible for a full download protection ping,
+// based only on the file name extension.
+bool IsFiletypeSupportedForFullDownloadProtection(
+    const base::FilePath& file_name);
 
 }  // namespace safe_browsing
 

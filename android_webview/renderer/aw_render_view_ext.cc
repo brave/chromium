@@ -6,6 +6,7 @@
 
 #include <map>
 
+#include "android_webview/common/aw_features.h"
 #include "android_webview/common/mojom/frame.mojom.h"
 #include "base/containers/contains.h"
 #include "base/no_destructor.h"
@@ -61,7 +62,7 @@ void AwRenderViewExt::WebViewCreated(blink::WebView* web_view,
 AwRenderViewExt* AwRenderViewExt::FromWebView(blink::WebView* web_view) {
   DCHECK(web_view != nullptr);
   auto iter = GetViewExtMap()->find(web_view);
-  DCHECK(GetViewExtMap()->end() != iter)
+  CHECK(GetViewExtMap()->end() != iter)
       << "AwRenderViewExt should always exist for a WebView";
   AwRenderViewExt* render_view_ext = iter->second;
   return render_view_ext;
@@ -101,7 +102,9 @@ void AwRenderViewExt::UpdateContentsSize() {
 
   // Fall back to contentsPreferredMinimumSize if the mainFrame is reporting a
   // 0x0 size (this happens during initial load).
-  if (contents_size.IsEmpty()) {
+  if (contents_size.IsEmpty() &&
+      !base::FeatureList::IsEnabled(
+          features::kWebViewSkipPreferredSizeForContentsSize)) {
     contents_size = webview->ContentsPreferredMinimumSize();
   }
 

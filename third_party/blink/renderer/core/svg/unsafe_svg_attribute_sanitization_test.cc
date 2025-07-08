@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 // FIXME(dominicc): Poor confused check-webkit-style demands Attribute.h here.
-#include "third_party/blink/renderer/core/dom/attribute.h"
-
 #include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/clipboard/system_clipboard.h"
+#include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -60,6 +61,7 @@ namespace blink {
 // |expected_partial_contents|.
 void PasteAndVerifySanitization(const char* html_to_paste,
                                 const char* expected_partial_contents) {
+  test::TaskEnvironment task_environment;
   auto page_holder = std::make_unique<DummyPageHolder>(gfx::Size(1, 1));
   LocalFrame& frame = page_holder.get()->GetFrame();
 
@@ -73,8 +75,9 @@ void PasteAndVerifySanitization(const char* html_to_paste,
   body->setAttribute(html_names::kContenteditableAttr, keywords::kTrue);
   body->Focus();
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
-  frame.Selection().SetSelectionAndEndTyping(
-      SelectionInDOMTree::Builder().SelectAllChildren(*body).Build());
+  frame.Selection().SetSelection(
+      SelectionInDOMTree::Builder().SelectAllChildren(*body).Build(),
+      SetSelectionOptions());
   EXPECT_TRUE(frame.Selection().ComputeVisibleSelectionInDOMTree().IsCaret());
   EXPECT_TRUE(
       frame.Selection().ComputeVisibleSelectionInDOMTree().IsContentEditable())
@@ -90,7 +93,7 @@ void PasteAndVerifySanitization(const char* html_to_paste,
 
   // Verify that sanitization during pasting strips JavaScript, but keeps at
   // least |expected_partial_contents|.
-  String sanitized_content = body->innerHTML();
+  String sanitized_content = body->GetInnerHTMLString();
   EXPECT_TRUE(sanitized_content.Contains(expected_partial_contents))
       << "We should have pasted *something*; the document is: "
       << sanitized_content.Utf8();
@@ -215,6 +218,7 @@ TEST(
 // Element::stripScriptingAttributes, perhaps to strip all
 // SVG animation attributes.
 TEST(UnsafeSVGAttributeSanitizationTest, stringsShouldNotSupportAddition) {
+  test::TaskEnvironment task_environment;
   ScopedNullExecutionContext execution_context;
   auto* document =
       Document::CreateForTest(execution_context.GetExecutionContext());
@@ -238,6 +242,7 @@ TEST(UnsafeSVGAttributeSanitizationTest, stringsShouldNotSupportAddition) {
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      stripScriptingAttributes_animateElement) {
+  test::TaskEnvironment task_environment;
   Vector<Attribute, kAttributePrealloc> attributes;
   attributes.push_back(
       Attribute(xlink_names::kHrefAttr, AtomicString("javascript:alert()")));
@@ -268,6 +273,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      isJavaScriptURLAttribute_hrefContainingJavascriptURL) {
+  test::TaskEnvironment task_environment;
   Attribute attribute(svg_names::kHrefAttr, AtomicString("javascript:alert()"));
   ScopedNullExecutionContext execution_context;
   auto* document =
@@ -280,6 +286,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      isJavaScriptURLAttribute_xlinkHrefContainingJavascriptURL) {
+  test::TaskEnvironment task_environment;
   Attribute attribute(xlink_names::kHrefAttr,
                       AtomicString("javascript:alert()"));
   ScopedNullExecutionContext execution_context;
@@ -294,6 +301,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 TEST(
     UnsafeSVGAttributeSanitizationTest,
     isJavaScriptURLAttribute_xlinkHrefContainingJavascriptURL_alternatePrefix) {
+  test::TaskEnvironment task_environment;
   QualifiedName href_alternate_prefix(AtomicString("foo"), AtomicString("href"),
                                       xlink_names::kNamespaceURI);
   Attribute evil_attribute(href_alternate_prefix,
@@ -310,6 +318,7 @@ TEST(
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_fromContainingJavaScriptURL) {
+  test::TaskEnvironment task_environment;
   Attribute evil_attribute(svg_names::kFromAttr,
                            AtomicString("javascript:alert()"));
   ScopedNullExecutionContext execution_context;
@@ -324,6 +333,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_toContainingJavaScripURL) {
+  test::TaskEnvironment task_environment;
   Attribute evil_attribute(svg_names::kToAttr,
                            AtomicString("javascript:window.close()"));
   ScopedNullExecutionContext execution_context;
@@ -339,6 +349,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 TEST(
     UnsafeSVGAttributeSanitizationTest,
     isSVGAnimationAttributeSettingJavaScriptURL_valuesContainingJavaScriptURL) {
+  test::TaskEnvironment task_environment;
   Attribute evil_attribute(svg_names::kValuesAttr,
                            AtomicString("hi!; javascript:confirm()"));
   ScopedNullExecutionContext execution_context;
@@ -353,6 +364,7 @@ TEST(
 
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_innocuousAnimationAttribute) {
+  test::TaskEnvironment task_environment;
   Attribute fine_attribute(svg_names::kFromAttr, AtomicString("hello, world!"));
   ScopedNullExecutionContext execution_context;
   auto* document =

@@ -5,13 +5,16 @@
 #ifndef CHROME_BROWSER_WEBID_FEDERATED_IDENTITY_API_PERMISSION_CONTEXT_H_
 #define CHROME_BROWSER_WEBID_FEDERATED_IDENTITY_API_PERMISSION_CONTEXT_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/federated_identity_api_permission_context_delegate.h"
+#include "url/gurl.h"
 
 namespace content {
 class BrowserContext;
+class RenderFrameHost;
 }
 
 namespace permissions {
@@ -44,6 +47,15 @@ class FederatedIdentityApiPermissionContext
       const url::Origin& relying_party_embedder) override;
   void RemoveEmbargoAndResetCounts(
       const url::Origin& relying_party_embedder) override;
+  void RecordIgnoreAndEmbargo(
+      const url::Origin& relying_party_embedder) override;
+
+  bool HasThirdPartyCookiesAccess(
+      content::RenderFrameHost& host,
+      const GURL& provider_url,
+      const url::Origin& relying_party_embedder) const override;
+
+  bool AreThirdPartyCookiesEnabledInSettings() const override;
 
  private:
   const raw_ptr<HostContentSettingsMap> host_content_settings_map_;

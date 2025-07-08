@@ -4,6 +4,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/command_line.h"
@@ -24,10 +25,10 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "url/gurl.h"
@@ -88,14 +89,16 @@ class ContentIndexTest : public InProcessBrowserTest,
     offline_items_.erase(GetDescriptionIdFromOfflineItemKey(id.id));
   }
 
-  void OnItemUpdated(
-      const OfflineItem& item,
-      const absl::optional<offline_items_collection::UpdateDelta>& update_delta)
-      override {
+  void OnItemUpdated(const OfflineItem& item,
+                     const std::optional<offline_items_collection::UpdateDelta>&
+                         update_delta) override {
     NOTREACHED();
   }
 
-  void OnContentProviderGoingDown() override {}
+  void OnContentProviderGoingDown() override {
+    // Clear the cached pointer to avoid a dangling pointer error later.
+    provider_ = nullptr;
+  }
 
   // TabStripModelObserver implementation:
   void TabChangedAt(content::WebContents* contents,
@@ -109,15 +112,14 @@ class ContentIndexTest : public InProcessBrowserTest,
     wait_for_tab_change_ = std::move(closure);
   }
 
-  absl::optional<OfflineItem> GetItem(const ContentId& id) {
-    absl::optional<OfflineItem> out_item;
+  std::optional<OfflineItem> GetItem(const ContentId& id) {
+    std::optional<OfflineItem> out_item;
     base::RunLoop run_loop;
-    provider_->GetItemById(id,
-                           base::BindLambdaForTesting(
-                               [&](const absl::optional<OfflineItem>& item) {
-                                 out_item = item;
-                                 run_loop.Quit();
-                               }));
+    provider_->GetItemById(id, base::BindLambdaForTesting(
+                                   [&](const std::optional<OfflineItem>& item) {
+                                     out_item = item;
+                                     run_loop.Quit();
+                                   }));
     run_loop.Run();
     return out_item;
   }
@@ -153,7 +155,7 @@ class ContentIndexTest : public InProcessBrowserTest,
 
  private:
   std::map<std::string, OfflineItem> offline_items_;
-  raw_ptr<ContentIndexProviderImpl, DanglingUntriaged> provider_;
+  raw_ptr<ContentIndexProviderImpl> provider_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   base::OnceClosure wait_for_tab_change_;
 };
@@ -285,7 +287,7 @@ IN_PROC_BROWSER_TEST_F(ContentIndexTest, UserDeletedEntryDispatchesEvent) {
   EXPECT_TRUE(GetAllItems().empty());
 }
 
-// TODO(crbug.com/1080922): flaky.
+// TODO(crbug.com/40691072): flaky.
 IN_PROC_BROWSER_TEST_F(ContentIndexTest, DISABLED_MetricsCollected) {
   // Record that two articles were added.
   {

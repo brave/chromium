@@ -6,7 +6,9 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_utils.h"
 #include "ui/gl/init/gl_factory.h"
@@ -32,6 +34,7 @@ void GetEGLInitDisplays(bool supports_angle_d3d,
                         bool supports_angle_metal,
                         const base::CommandLine* command_line,
                         std::vector<DisplayType>* init_displays) {
+  TRACE_EVENT("gpu,startup", "gl_display_initializer::GetEGLInitDisplays");
   // Check which experiment groups we're in. Check these early in the function
   // so that finch assigns a group before the final decision to use the API is
   // made. If we check too late, it will appear that some users are missing from
@@ -50,7 +53,8 @@ void GetEGLInitDisplays(bool supports_angle_d3d,
 
   std::string requested_renderer =
       force_software_gl
-          ? kANGLEImplementationSwiftShaderName
+          ? std::string(
+                GetGLImplementationANGLEName(GetGLImplementationParts()))
           : command_line->GetSwitchValueASCII(switches::kUseANGLE);
 
   bool use_angle_default =
@@ -99,6 +103,8 @@ void GetEGLInitDisplays(bool supports_angle_d3d,
         AddInitDisplay(init_displays, ANGLE_D3D11_NULL);
       } else if (requested_renderer == kANGLEImplementationD3D11on12Name) {
         AddInitDisplay(init_displays, ANGLE_D3D11on12);
+      } else if (requested_renderer == kANGLEImplementationD3D11WarpName) {
+        AddInitDisplay(init_displays, ANGLE_D3D11_WARP);
       }
     }
   }

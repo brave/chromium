@@ -9,11 +9,15 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/sync/test/integration/status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class Profile;
 
@@ -22,14 +26,6 @@ namespace extensions_helper {
 // Returns true iff profiles with indices |index1| and |index2| have the same
 // extensions.
 [[nodiscard]] bool HasSameExtensions(int index1, int index2);
-
-// Returns true iff the profile with index |index| has the same extensions
-// as the verifier.
-[[nodiscard]] bool HasSameExtensionsAsVerifier(int index);
-
-// Returns true iff all existing profiles have the same extensions
-// as the verifier.
-[[nodiscard]] bool AllProfilesHaveSameExtensionsAsVerifier();
 
 // Returns true iff all existing profiles have the same extensions.
 [[nodiscard]] bool AllProfilesHaveSameExtensions();
@@ -79,11 +75,7 @@ bool AwaitAllProfilesHaveSameExtensions();
 }  // namespace extensions_helper
 
 // A helper class to implement waiting for a set of profiles to have matching
-// extensions lists. It waits for calls on both interfaces:
-// ExtensionRegistryObserver and NotificationObserver. Observing
-// NOTIFICATION_EXTENSION_UPDATING_STARTED notification is needed for tests
-// against local server because in such tests extensions are not installed and
-// ExtensionRegistryObserver methods are not called.
+// extensions lists.
 class ExtensionsMatchChecker : public StatusChangeChecker,
                                public extensions::ExtensionRegistryObserver {
  public:
@@ -113,8 +105,7 @@ class ExtensionsMatchChecker : public StatusChangeChecker,
  private:
   void OnExtensionUpdatingStarted(Profile* profile);
 
-  std::vector<Profile*> profiles_;
-  content::NotificationRegistrar registrar_;
+  std::vector<raw_ptr<Profile, VectorExperimental>> profiles_;
 
   base::WeakPtrFactory<ExtensionsMatchChecker> weak_ptr_factory_{this};
 };

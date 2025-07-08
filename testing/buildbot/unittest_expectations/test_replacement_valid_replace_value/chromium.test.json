@@ -10,13 +10,12 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "kvm": "1",
-              "os": "Linux"
-            }
-          ]
+          "dimensions": {
+            "kvm": "1",
+            "os": "Linux"
+          }
         },
         "test": "foo_test"
       }

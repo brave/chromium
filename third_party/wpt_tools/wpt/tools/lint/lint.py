@@ -13,7 +13,7 @@ from collections import defaultdict
 from typing import (Any, Callable, Dict, IO, Iterable, List, Optional, Sequence, Set, Text, Tuple,
                     Type, TypeVar)
 
-from urllib.parse import urlsplit, urljoin
+from urllib.parse import urlsplit, urljoin, parse_qs
 
 try:
     from xml.etree import cElementTree as ElementTree
@@ -26,10 +26,14 @@ from .. import localpaths
 from ..ci.tc.github_checks_output import get_gh_checks_outputter, GitHubChecksOutputter
 from ..gitignore.gitignore import PathFilter
 from ..wpt import testfiles
+from ..manifest.mputil import max_parallelism
 from ..manifest.vcs import walk
 
 from ..manifest.sourcefile import SourceFile, js_meta_re, python_meta_re, space_chars, get_any_variants
 
+from ..metadata.yaml.load import load_data_to_dict
+from ..metadata.meta.schema import META_YML_FILENAME, MetaFile
+from ..metadata.webfeatures.schema import WEB_FEATURES_YML_FILENAME, WebFeaturesFile
 
 # The Ignorelist is a two level dictionary. The top level is indexed by
 # error names (e.g. 'TRAILING WHITESPACE'). Each of those then has a map of
@@ -351,7 +355,8 @@ regexps = [item() for item in  # type: ignore
             rules.SpecialPowersRegexp,
             rules.AssertThrowsRegexp,
             rules.PromiseRejectsRegexp,
-            rules.AssertPreconditionRegexp]]
+            rules.AssertPreconditionRegexp,
+            rules.HTMLInvalidSyntaxRegexp]]
 
 
 def check_regexp_line(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]:
@@ -389,10 +394,12 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
     if source_file.root is None:
         return [rules.ParseFailed.error(path)]
 
-    if source_file.type == "manual" and not source_file.name_is_manual:
+    test_type = source_file.type
+
+    if test_type == "manual" and not source_file.name_is_manual:
         errors.append(rules.ContentManual.error(path))
 
-    if source_file.type == "visual" and not source_file.name_is_visual:
+    if test_type == "visual" and not source_file.name_is_visual:
         errors.append(rules.ContentVisual.error(path))
 
     about_blank_parts = urlsplit("about:blank")
@@ -423,6 +430,10 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
             errors.append(rules.NonexistentRef.error(path,
                                                      (reference_rel, href)))
 
+    if source_file.reftest_nodes:
+        if test_type not in ("print-reftest", "reftest"):
+            errors.append(rules.ReferenceInOtherType.error(path, (test_type,)))
+
     if len(source_file.timeout_nodes) > 1:
         errors.append(rules.MultipleTimeout.error(path))
 
@@ -431,11 +442,20 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
         if timeout_value != "long":
             errors.append(rules.InvalidTimeout.error(path, (timeout_value,)))
 
+    if source_file.content_is_ref_node or source_file.content_is_testharness:
+        for element in source_file.variant_nodes:
+            if "content" not in element.attrib:
+                errors.append(rules.VariantMissing.error(path))
+            else:
+                variant = element.attrib["content"]
+                if is_variant_malformed(variant):
+                    value = f"{path} `<meta name=variant>` 'content' attribute"
+                    errors.append(rules.MalformedVariant.error(path, (value,)))
+
     required_elements: List[Text] = []
 
     testharnessreport_nodes: List[ElementTree.Element] = []
     if source_file.testharness_nodes:
-        test_type = source_file.manifest_items()[0]
         if test_type not in ("testharness", "manual"):
             errors.append(rules.TestharnessInOtherType.error(path, (test_type,)))
         if len(source_file.testharness_nodes) > 1:
@@ -448,17 +468,6 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
             if len(testharnessreport_nodes) > 1:
                 errors.append(rules.MultipleTestharnessReport.error(path))
 
-        for element in source_file.variant_nodes:
-            if "content" not in element.attrib:
-                errors.append(rules.VariantMissing.error(path))
-            else:
-                variant = element.attrib["content"]
-                if variant != "":
-                    if (variant[0] not in ("?", "#") or
-                        len(variant) == 1 or
-                        (variant[0] == "?" and variant[1] == "#")):
-                        errors.append(rules.MalformedVariant.error(path, (path,)))
-
         required_elements.extend(key for key, value in {"testharness": True,
                                                         "testharnessreport": len(testharnessreport_nodes) > 0,
                                                         "timeout": len(source_file.timeout_nodes) > 0}.items()
@@ -466,6 +475,9 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
 
     testdriver_vendor_nodes: List[ElementTree.Element] = []
     if source_file.testdriver_nodes:
+        if test_type not in {"testharness", "reftest", "print-reftest", "crashtest", "support"}:
+            errors.append(rules.TestdriverInUnsupportedType.error(path, (test_type,)))
+
         if len(source_file.testdriver_nodes) > 1:
             errors.append(rules.MultipleTestdriver.error(path))
 
@@ -511,20 +523,87 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
     for element in source_file.root.findall(".//{http://www.w3.org/1999/xhtml}script[@src]"):
         src = element.attrib["src"]
 
-        def incorrect_path(script: Text, src: Text) -> bool:
-            return (script == src or
-                ("/%s" % script in src and src != "/resources/%s" % script))
+        def is_path_correct(script: Text, src: Text) -> bool:
+            """
+            If the `src` relevant to the `script`, check that the `src` is the
+            correct path for `script`.
+            :param script: the script name to check the `src` for.
+            :param src: the included path.
+            :return: if the `src` irrelevant to the `script`, or if the `src`
+                     path is the correct path.
+            """
+            if script == src:
+                # The src does not provide the full path.
+                return False
 
-        if incorrect_path("testharness.js", src):
+            if "/%s" % script not in src:
+                # The src is not relevant to the script.
+                return True
+
+            return ("%s" % src).startswith("/resources/%s" % script)
+
+        def is_query_string_correct(script: Text, src: Text,
+                allowed_query_string_params: Dict[str, List[str]]) -> bool:
+            """
+            Checks if the query string in a script tag's `src` is valid.
+
+            Specifically, it verifies that the query string parameters and their
+            values are among those allowed for the given script. It handles vendor
+            prefixes (parameters or values containing a colon) by allowing them
+            unconditionally.
+
+            :param script: the name of the script (e.g., "testharness.js"). Used
+                           to verify is the given `src` is related to the
+                           script.
+            :param src: the full `src` attribute value from the script tag.
+            :param allowed_query_string_params: A dictionary where keys are
+                                                allowed parameter names and
+                                                values are lists of allowed
+                                                values for each parameter.
+            :return: if the query string is empty or contains only allowed
+                     params.
+            """
+            if not ("%s" % src).startswith("/resources/%s?" % script):
+                # The src is not related to the script.
+                return True
+
+            try:
+                query_string = urlsplit(urljoin(source_file.url, src)).query
+                query_string_params = parse_qs(query_string,
+                                               keep_blank_values=True)
+            except ValueError:
+                # Parsing error means that the query string is incorrect.
+                return False
+
+            for param_name in query_string_params:
+                if param_name not in allowed_query_string_params:
+                    return False
+
+                for param_value in query_string_params[param_name]:
+                    if ':' in param_value:
+                        # Allow for vendor-specific values in query parameters.
+                        continue
+                    if param_value not in allowed_query_string_params[
+                            param_name]:
+                        return False
+            return True
+
+        if (not is_path_correct("testharness.js", src) or
+                not is_query_string_correct("testharness.js", src, {})):
             errors.append(rules.TestharnessPath.error(path))
 
-        if incorrect_path("testharnessreport.js", src):
+        if (not is_path_correct("testharnessreport.js", src) or
+                not is_query_string_correct("testharnessreport.js", src, {})):
             errors.append(rules.TestharnessReportPath.error(path))
 
-        if incorrect_path("testdriver.js", src):
+        if not is_path_correct("testdriver.js", src):
             errors.append(rules.TestdriverPath.error(path))
+        if not is_query_string_correct("testdriver.js", src,
+                                       {'feature': ['bidi']}):
+            errors.append(rules.TestdriverUnsupportedQueryParameter.error(path))
 
-        if incorrect_path("testdriver-vendor.js", src):
+        if (not is_path_correct("testdriver-vendor.js", src) or
+                not is_query_string_correct("testdriver-vendor.js", src, {})):
             errors.append(rules.TestdriverVendorPath.error(path))
 
         script_path = None
@@ -538,6 +617,12 @@ def check_parsed(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]
             errors.append(rules.MissingReftestWait.error(path))
 
     return errors
+
+
+def is_variant_malformed(variant: str) -> bool:
+    return (variant == "" or variant[0] not in ("?", "#") or
+            len(variant) == 1 or (variant[0] == "?" and variant[1] == "#"))
+
 
 class ASTCheck(metaclass=abc.ABCMeta):
     @abc.abstractproperty
@@ -593,7 +678,7 @@ def check_global_metadata(value: bytes) -> Iterable[Tuple[Type[rules.Rule], Tupl
 
 
 def check_script_metadata(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]:
-    if path.endswith((".worker.js", ".any.js")):
+    if path.endswith((".window.js", ".worker.js", ".any.js")):
         meta_re = js_meta_re
         broken_metadata = broken_js_metadata
     elif path.endswith(".py"):
@@ -604,7 +689,7 @@ def check_script_metadata(repo_root: Text, path: Text, f: IO[bytes]) -> List[rul
 
     done = False
     errors = []
-    for idx, line in enumerate(f):
+    for line_no, line in enumerate(f, 1):
         assert isinstance(line, bytes), line
 
         m = meta_re.match(line)
@@ -612,25 +697,32 @@ def check_script_metadata(repo_root: Text, path: Text, f: IO[bytes]) -> List[rul
             key, value = m.groups()
             if key == b"global":
                 for rule_class, context in check_global_metadata(value):
-                    errors.append(rule_class.error(path, context, idx + 1))
+                    errors.append(rule_class.error(path, context, line_no))
             elif key == b"timeout":
                 if value != b"long":
                     errors.append(rules.UnknownTimeoutMetadata.error(path,
-                                                                     line_no=idx + 1))
-            elif key not in (b"title", b"script", b"variant", b"quic"):
-                errors.append(rules.UnknownMetadata.error(path,
-                                                          line_no=idx + 1))
+                                                                     line_no=line_no))
+            elif key == b"variant":
+                if is_variant_malformed(value.decode()):
+                    value = f"{path} `META: variant=...` value"
+                    errors.append(rules.MalformedVariant.error(path, (value,), line_no))
+            elif key == b"script":
+                if value == b"/resources/testharness.js":
+                    errors.append(rules.MultipleTestharness.error(path, line_no=line_no))
+                elif value == b"/resources/testharnessreport.js":
+                    errors.append(rules.MultipleTestharnessReport.error(path, line_no=line_no))
+            elif key not in (b"title", b"quic"):
+                errors.append(rules.UnknownMetadata.error(path, line_no=line_no))
         else:
             done = True
 
         if done:
             if meta_re.match(line):
-                errors.append(rules.StrayMetadata.error(path, line_no=idx + 1))
+                errors.append(rules.StrayMetadata.error(path, line_no=line_no))
             elif meta_re.search(line):
-                errors.append(rules.IndentedMetadata.error(path,
-                                                           line_no=idx + 1))
+                errors.append(rules.IndentedMetadata.error(path, line_no=line_no))
             elif broken_metadata.search(line):
-                errors.append(rules.BrokenMetadata.error(path, line_no=idx + 1))
+                errors.append(rules.BrokenMetadata.error(path, line_no=line_no))
 
     return errors
 
@@ -649,6 +741,36 @@ def check_ahem_system_font(repo_root: Text, path: Text, f: IO[bytes]) -> List[ru
     errors = []
     if ahem_font_re.search(contents) and not ahem_stylesheet_re.search(contents):
         errors.append(rules.AhemSystemFont.error(path))
+    return errors
+
+
+def check_meta_file(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]:
+    if os.path.basename(path) != META_YML_FILENAME:
+        return []
+    try:
+        MetaFile(load_data_to_dict(f))
+    except Exception:
+        return [rules.InvalidMetaFile.error(path)]
+    return []
+
+
+def check_web_features_file(repo_root: Text, path: Text, f: IO[bytes]) -> List[rules.Error]:
+    if os.path.basename(path) != WEB_FEATURES_YML_FILENAME:
+        return []
+    try:
+        web_features_file: WebFeaturesFile = WebFeaturesFile(load_data_to_dict(f))
+    except Exception:
+        return [rules.InvalidWebFeaturesFile.error(path)]
+    errors = []
+    base_dir = os.path.join(repo_root, os.path.dirname(path))
+    files_in_directory = [
+        f for f in os.listdir(base_dir) if os.path.isfile(os.path.join(base_dir, f))]
+    for feature in web_features_file.features:
+        if isinstance(feature.files, list):
+            for file in feature.files:
+                if not file.match_files(files_in_directory):
+                    errors.append(rules.MissingTestInWebFeaturesFile.error(path, (file)))
+
     return errors
 
 
@@ -677,7 +799,7 @@ def check_all_paths(repo_root: Text, paths: List[Text]) -> List[rules.Error]:
     """
 
     errors = []
-    for paths_fn in all_paths_lints:
+    for paths_fn in all_paths_lints():
         errors.extend(paths_fn(repo_root, paths))
     return errors
 
@@ -836,7 +958,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(**kwargs: Any) -> int:
+def main(venv: Any = None, **kwargs: Any) -> int:
 
     assert logger is not None
     if kwargs.get("json") and kwargs.get("markdown"):
@@ -877,12 +999,7 @@ def lint(repo_root: Text,
     last = None
 
     if jobs == 0:
-        jobs = multiprocessing.cpu_count()
-        if sys.platform == 'win32':
-            # Using too many child processes in Python 3 hits either hangs or a
-            # ValueError exception, and, has diminishing returns. Clamp to 56 to
-            # give margin for error.
-            jobs = min(jobs, 56)
+        jobs = max_parallelism()
 
     with open(os.path.join(repo_root, "lint.ignore")) as f:
         ignorelist, skipped_files = parse_ignorelist(f)
@@ -977,17 +1094,21 @@ def lint(repo_root: Text,
 
 path_lints = [check_file_type, check_path_length, check_worker_collision, check_ahem_copy,
               check_mojom_js, check_tentative_directories, check_gitignore_file]
-all_paths_lints = [check_unique_testharness_basenames,
-                   check_unique_case_insensitive_paths]
 file_lints = [check_regexp_line, check_parsed, check_python_ast, check_script_metadata,
-              check_ahem_system_font]
+              check_ahem_system_font, check_meta_file, check_web_features_file]
 
-# Don't break users of the lint that don't have git installed.
-try:
-    subprocess.check_output(["git", "--version"])
-    all_paths_lints += [check_git_ignore]
-except (subprocess.CalledProcessError, FileNotFoundError):
-    print('No git present; skipping .gitignore lint.')
+
+def all_paths_lints() -> Any:
+    paths = [check_unique_testharness_basenames,
+             check_unique_case_insensitive_paths]
+    # Don't break users of the lint that don't have git installed.
+    try:
+        subprocess.check_output(["git", "--version"])
+        paths += [check_git_ignore]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print('No git present; skipping .gitignore lint.')
+    return paths
+
 
 if __name__ == "__main__":
     args = create_parser().parse_args()

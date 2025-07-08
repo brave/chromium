@@ -13,16 +13,19 @@ proto_library("attribution_reporting_proto") {
 mojom("mojo_bindings") {
   sources = [ "attribution_reporting.mojom" ]
   webui_module_path = "/"
-  use_typescript_sources = true
   generate_java = false
   disable_variants = true
   disallow_interfaces = true
 }
 
-mojom("store_source_result_mojom") {
-  sources = [ "store_source_result.mojom" ]
+mojom("registration_result_mojom") {
+  sources = [
+    "aggregatable_result.mojom",
+    "event_level_result.mojom",
+    "process_aggregatable_debug_report_result.mojom",
+    "store_source_result.mojom",
+  ]
   webui_module_path = "/"
-  use_typescript_sources = true
   generate_java = false
   disable_variants = true
   disallow_interfaces = true
@@ -32,14 +35,13 @@ mojom("internals_mojo_bindings") {
   sources = [ "attribution_internals.mojom" ]
   public_deps = [
     ":mojo_bindings",
-    ":store_source_result_mojom",
+    ":registration_result_mojom",
     "//components/attribution_reporting:registration_mojom",
     "//components/attribution_reporting:source_type_mojom",
     "//services/network/public/mojom:mojom_attribution",
     "//url/mojom:url_mojom_origin",
   ]
   webui_module_path = "/"
-  use_typescript_sources = true
   generate_java = false
   disable_variants = true
 
@@ -49,6 +51,7 @@ mojom("internals_mojo_bindings") {
         {
           mojom = "attribution_internals.mojom.ReportID"
           cpp = "::content::AttributionReport::Id"
+          copyable_pass_by_value = true
         },
       ]
       traits_headers = [
@@ -79,4 +82,14 @@ if (is_win || is_mac || is_linux || is_chromeos) {
 
     data_deps = [ "//third_party/sqlite:sqlite_dev_shell" ]
   }
+}
+
+executable("attribution_reporting_interop") {
+  sources = [ "interop/interop_main.cc" ]
+  deps = [
+    "//base",
+    "//content/public/browser",
+    "//content/test:test_support",
+  ]
+  testonly = true
 }

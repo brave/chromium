@@ -18,18 +18,16 @@ namespace blink {
 struct IndexedDBDatabaseMetadata;
 }
 
-namespace content {
+namespace content::indexed_db {
 
-class MockMojoIndexedDBFactoryClient : public blink::mojom::IDBFactoryClient {
+class MockMojoFactoryClient : public blink::mojom::IDBFactoryClient {
  public:
-  explicit MockMojoIndexedDBFactoryClient();
+  explicit MockMojoFactoryClient();
 
-  MockMojoIndexedDBFactoryClient(const MockMojoIndexedDBFactoryClient&) =
-      delete;
-  MockMojoIndexedDBFactoryClient& operator=(
-      const MockMojoIndexedDBFactoryClient&) = delete;
+  MockMojoFactoryClient(const MockMojoFactoryClient&) = delete;
+  MockMojoFactoryClient& operator=(const MockMojoFactoryClient&) = delete;
 
-  ~MockMojoIndexedDBFactoryClient() override;
+  ~MockMojoFactoryClient() override;
 
   mojo::PendingAssociatedRemote<blink::mojom::IDBFactoryClient>
   CreateInterfacePtrAndBind();
@@ -62,23 +60,23 @@ class MockMojoIndexedDBFactoryClient : public blink::mojom::IDBFactoryClient {
                         data_loss_message, metadata);
   }
 
-  MOCK_METHOD2(MockedSuccessDatabase,
+  MOCK_METHOD2(MockedOpenSuccess,
                void(mojo::PendingAssociatedRemote<blink::mojom::IDBDatabase>*
                         pending_database,
                     const blink::IndexedDBDatabaseMetadata& metadata));
-  void SuccessDatabase(
+  void OpenSuccess(
       mojo::PendingAssociatedRemote<blink::mojom::IDBDatabase> pending_database,
       const blink::IndexedDBDatabaseMetadata& metadata) override {
-    MockedSuccessDatabase(&pending_database, metadata);
+    MockedOpenSuccess(&pending_database, metadata);
   }
 
-  MOCK_METHOD1(SuccessInteger, void(int64_t value));
+  MOCK_METHOD1(DeleteSuccess, void(int64_t old_version));
   MOCK_METHOD0(Success, void());
 
  private:
   mojo::AssociatedReceiver<blink::mojom::IDBFactoryClient> receiver_{this};
 };
 
-}  // namespace content
+}  // namespace content::indexed_db
 
 #endif  // CONTENT_BROWSER_INDEXED_DB_MOCK_MOJO_INDEXED_DB_FACTORY_CLIENT_H_

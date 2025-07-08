@@ -4,7 +4,6 @@
 
 #include "remoting/host/chromeos/frame_sink_desktop_capturer.h"
 
-#include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/video_capture_target.h"
 #include "media/base/video_types.h"
@@ -21,13 +20,8 @@ constexpr int kMaxFrameRate = 60;
 constexpr auto kPixelFormat = media::VideoPixelFormat::PIXEL_FORMAT_ARGB;
 constexpr bool kAutoThrottle = false;
 
-const char kUmaKeyForCapturerCreated[] =
-    "Enterprise.DeviceRemoteCommand.Crd.Capturer.FrameSink.Created";
-const char kUmaKeyForCapturerDestroyed[] =
-    "Enterprise.DeviceRemoteCommand.Crd.Capturer.FrameSink.Destroyed";
-
-void SendEventToUma(const char* event_name) {
-  base::UmaHistogramBoolean(event_name, true);
+bool IsEqual(gfx::Size lhs, webrtc::DesktopSize rhs) {
+  return (lhs.width() == rhs.width()) && (lhs.height() == rhs.height());
 }
 
 }  // namespace
@@ -38,14 +32,12 @@ FrameSinkDesktopCapturer::FrameSinkDesktopCapturer()
 FrameSinkDesktopCapturer::FrameSinkDesktopCapturer(AshProxy& ash_proxy)
     : ash_(ash_proxy) {
   LOG(INFO) << "CRD: Starting frame sink desktop capturer";
-  SendEventToUma(kUmaKeyForCapturerCreated);
 }
 
 FrameSinkDesktopCapturer::~FrameSinkDesktopCapturer() {
   if (video_capturer_) {
     video_capturer_->Stop();
   }
-  SendEventToUma(kUmaKeyForCapturerDestroyed);
 }
 
 void FrameSinkDesktopCapturer::Start(DesktopCapturer::Callback* callback) {
@@ -65,7 +57,10 @@ void FrameSinkDesktopCapturer::Start(DesktopCapturer::Callback* callback) {
   // Disable auto-throttling so the capturer will always use the real resolution
   // of the display we're capturing.
   video_capturer_->SetAutoThrottlingEnabled(kAutoThrottle);
-  SelectSource(ash_->GetPrimaryDisplayId());
+  if (source_display_id_ == display::kInvalidDisplayId) {
+    source_display_id_ = ash_->GetPrimaryDisplayId();
+  }
+  SelectSource(source_display_id_);
   video_capturer_->Start(&video_consumer_,
                          viz::mojom::BufferFormatPreference::kDefault);
 }
@@ -91,8 +86,7 @@ void FrameSinkDesktopCapturer::CaptureFrame() {
     callback_->OnCaptureResult(Result::ERROR_TEMPORARY, nullptr);
     return;
   }
-  if (source->size().width() != frame->size().width() ||
-      source->size().height() != frame->size().height()) {
+  if (!IsEqual(source->GetSizeInPixel(), frame->size())) {
     SelectSource(source_display_id_);
     callback_->OnCaptureResult(Result::ERROR_TEMPORARY, nullptr);
     return;
@@ -103,7 +97,6 @@ void FrameSinkDesktopCapturer::CaptureFrame() {
 
 bool FrameSinkDesktopCapturer::GetSourceList(SourceList* sources) {
   NOTREACHED();
-  return false;
 }
 
 bool FrameSinkDesktopCapturer::SelectSource(SourceId id) {
@@ -112,17 +105,23 @@ bool FrameSinkDesktopCapturer::SelectSource(SourceId id) {
   }
 
   source_display_id_ = id;
+  if (!video_capturer_) {
+    // SelectSource() will be called again by Start() after creating the
+    // capturer.
+    return true;
+  }
 
   scoped_window_capture_request_ =
       ash_->MakeDisplayCapturable(source_display_id_);
 
-  video_capturer_->SetResolutionConstraints(GetSourceDisplay()->size(),
-                                            GetSourceDisplay()->size(),
-                                            /*use_fixed_aspect_ratio=*/false);
+  video_capturer_->SetResolutionConstraints(
+      GetSourceDisplay()->GetSizeInPixel(),
+      GetSourceDisplay()->GetSizeInPixel(),
+      /*use_fixed_aspect_ratio=*/false);
   video_capturer_->ChangeTarget(
       viz::VideoCaptureTarget(ash_->GetFrameSinkId(source_display_id_),
                               scoped_window_capture_request_.GetCaptureId()),
-      /*crop_version=*/0);
+      /*sub_capture_target_version=*/0);
   return true;
 }
 

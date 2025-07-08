@@ -10,8 +10,7 @@
 
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/ui/accessory_sheet_enums.h"
-#include "url/gurl.h"
+#include "chrome/browser/keyboard_accessory/android/accessory_sheet_enums.h"
 
 class ManualFillingController;
 
@@ -24,12 +23,13 @@ class WebContents;
 }  // namespace content
 
 // The interface for creating and controlling a view for the password accessory.
-// The view gets data from a given |ManualFillingController| and forwards
+// The view gets data from a given `ManualFillingController` and forwards
 // any request (like filling a suggestion) back to the controller.
 class ManualFillingViewInterface {
  public:
   // Defines which item types exist.
-  // TODO(crbug.com/902425): Remove this once AccessorySheetData is used on the
+  // TODO(crbug.com/40601211): Remove this once AccessorySheetData is used on
+  // the
   //                         frontend to represent data to present.
   // GENERATED_JAVA_ENUM_PACKAGE: (
   //   org.chromium.chrome.browser.autofill.keyboard_accessory)
@@ -75,14 +75,14 @@ class ManualFillingViewInterface {
   // Opens a keyboard which dismisses the sheet. NoOp without open sheet.
   virtual void SwapSheetWithKeyboard() = 0;
 
-  // Shows the accessory bar. If |wait_for_keyboard|, shows the bar when the
+  // Shows the accessory bar. If `wait_for_keyboard`, shows the bar when the
   // keyboard is also shown.
   virtual void Show(WaitForKeyboard wait_for_keyboard) = 0;
 
   // Hides the accessory bar and the accessory sheet (if open).
   virtual void Hide() = 0;
 
-  // Shows the accessory sheet for the given |tab_type|.
+  // Shows the accessory sheet for the given `tab_type`.
   virtual void ShowAccessorySheetTab(
       const autofill::AccessoryTabType& tab_type) = 0;
 

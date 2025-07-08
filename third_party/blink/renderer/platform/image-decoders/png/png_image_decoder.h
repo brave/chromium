@@ -33,6 +33,9 @@
 
 namespace blink {
 
+// This class decodes the PNG image format using `libpng`.  This class also
+// provides support for chunks that are not directly supported by `libpng` (e.g.
+// APNG chunks like `acTL` or `fdAT`, or color-space chunks like `cICP`).
 class PLATFORM_EXPORT PNGImageDecoder final : public ImageDecoder {
  public:
   PNGImageDecoder(AlphaOption,
@@ -50,6 +53,7 @@ class PLATFORM_EXPORT PNGImageDecoder final : public ImageDecoder {
   bool SetSize(unsigned, unsigned) override;
   int RepetitionCount() const override;
   bool ImageIsHighBitDepth() override;
+  std::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
   bool FrameIsReceivedAtIndex(wtf_size_t) const override;
   base::TimeDelta FrameDurationAtIndex(wtf_size_t) const override;
   bool SetFailed() override;
@@ -83,6 +87,7 @@ class PLATFORM_EXPORT PNGImageDecoder final : public ImageDecoder {
   bool current_buffer_saw_alpha_;
   bool decode_to_half_float_;
   wtf_size_t bit_depth_;
+  std::optional<gfx::HDRMetadata> hdr_metadata_;
   std::unique_ptr<ImageFrame::PixelData[]> color_transform_scanline_;
 };
 

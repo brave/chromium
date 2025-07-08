@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_SCREEN_AI_SCREEN_AI_INSTALL_STATE_H_
 #define CHROME_BROWSER_SCREEN_AI_SCREEN_AI_INSTALL_STATE_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
-#include "base/observer_list_types.h"
+#include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
+#include "base/version.h"
 
 class PrefService;
 
@@ -22,16 +25,10 @@ class ScreenAIInstallState {
     kNotDownloaded,
     // Component download is in progress.
     kDownloading,
-    // Either component download or initialization failed. Component load and
-    // initialization may fail due to different OS or malware protection
-    // restrictions, however this is expected to be quite rare.
-    // Note that if library load and initialization crashes, the Failed state
-    // may never be set.
-    kFailed,
+    // Component download failed.
+    kDownloadFailed,
     // Component is downloaded but not loaded yet.
-    kDownloaded,
-    // Component is initialized successfully by at least one profile.
-    kReady
+    kDownloaded
   };
 
   class Observer : public base::CheckedObserver {
@@ -47,10 +44,15 @@ class ScreenAIInstallState {
 
   static ScreenAIInstallState* GetInstance();
 
+  // These functions are implemented in `ScreenAIDownloaderChromeOS` and
+  // `ScreenAIDownloaderNonChromeOS`.
+  static std::unique_ptr<ScreenAIInstallState> Create();
+  static ScreenAIInstallState* CreateForTesting();
+
   // Verifies that the library version is compatible with current Chromium
   // version. Will be used to avoid accepting the library if a newer version is
   // expected.
-  static bool VerifyLibraryVersion(const std::string& version);
+  static bool VerifyLibraryVersion(const base::Version& version);
 
   // Returns true if the library is used recently and we need to keep it on
   // device and updated.
@@ -68,8 +70,6 @@ class ScreenAIInstallState {
 
   // Returns true if the component is downloaded and not failed to initialize.
   bool IsComponentAvailable();
-
-  void SetComponentReadyForTesting();
 
   // Sets the component state and informs the observers.
   void SetState(State state);
@@ -100,7 +100,7 @@ class ScreenAIInstallState {
   base::FilePath component_binary_path_;
   State state_ = State::kNotDownloaded;
 
-  std::vector<Observer*> observers_;
+  base::ObserverList<Observer> observers_;
 };
 
 }  // namespace screen_ai

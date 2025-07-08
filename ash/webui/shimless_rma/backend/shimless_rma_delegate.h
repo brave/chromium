@@ -5,15 +5,24 @@
 #ifndef ASH_WEBUI_SHIMLESS_RMA_BACKEND_SHIMLESS_RMA_DELEGATE_H_
 #define ASH_WEBUI_SHIMLESS_RMA_BACKEND_SHIMLESS_RMA_DELEGATE_H_
 
+#include <optional>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
+#include "content/public/browser/media_stream_request.h"
+#include "content/public/browser/web_contents.h"
 
 namespace content {
 class BrowserContext;
+}
+
+namespace extensions {
+class Extension;
 }
 
 namespace ash::shimless_rma {
@@ -47,9 +56,25 @@ class ShimlessRmaDelegate {
   // object or an error message. This method is also responsible to check if the
   // extension and the IWA are allowed by the system.
   struct PrepareDiagnosticsAppBrowserContextResult {
-    base::raw_ptr<content::BrowserContext> context;
+    PrepareDiagnosticsAppBrowserContextResult(
+        const raw_ptr<content::BrowserContext>& context,
+        const std::string& extension_id,
+        const web_package::SignedWebBundleId& iwa_id,
+        const std::string& name,
+        const std::optional<std::string>& permission_message);
+    PrepareDiagnosticsAppBrowserContextResult(
+        const PrepareDiagnosticsAppBrowserContextResult&);
+    PrepareDiagnosticsAppBrowserContextResult& operator=(
+        const PrepareDiagnosticsAppBrowserContextResult&);
+    ~PrepareDiagnosticsAppBrowserContextResult();
+
+    raw_ptr<content::BrowserContext> context;
     std::string extension_id;
     web_package::SignedWebBundleId iwa_id;
+    std::string name;
+    // Permission message to show. This is a multi-line string. Is omitted if no
+    // permission is required.
+    std::optional<std::string> permission_message;
   };
   using PrepareDiagnosticsAppBrowserContextCallback = base::OnceCallback<void(
       base::expected<PrepareDiagnosticsAppBrowserContextResult, std::string>)>;
@@ -57,6 +82,21 @@ class ShimlessRmaDelegate {
       const base::FilePath& crx_path,
       const base::FilePath& swbn_path,
       PrepareDiagnosticsAppBrowserContextCallback callback) = 0;
+
+  // Check if `manufacturer` provides any chromeos system extension.
+  virtual bool IsChromeOSSystemExtensionProvider(
+      const std::string& manufacturer) = 0;
+
+  // Request for media device access. `extension` is set to NULL if request was
+  // made from a webpage.
+  virtual void ProcessMediaAccessRequest(
+      content::WebContents* web_contents,
+      const content::MediaStreamRequest& request,
+      content::MediaResponseCallback callback,
+      const extensions::Extension* extension) = 0;
+
+  // Gets a weak ptr reference to this object.
+  virtual base::WeakPtr<ShimlessRmaDelegate> GetWeakPtr() = 0;
 };
 
 }  // namespace ash::shimless_rma

@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -25,6 +26,7 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/media/webrtc/media_device_salt_service_factory.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/recently_audible_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -50,7 +52,6 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -94,12 +95,14 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
       auto* audible_helper = RecentlyAudibleHelper::FromWebContents(tab);
       audio_playing = audible_helper->WasRecentlyAudible();
       base::RunLoop().RunUntilIdle();
-      if (audio_playing)
+      if (audio_playing) {
         break;
+      }
       base::PlatformThread::Sleep(base::Milliseconds(100));
     }
-    if (!audio_playing)
+    if (!audio_playing) {
       FAIL() << "Audio did not start playing within ~5 seconds.";
+    }
   }
 };
 
@@ -118,7 +121,7 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
     params->Append(base::Value(std::move(request_info)));
   }
 
-  absl::optional<base::Value> InvokeGetSinks() {
+  std::optional<base::Value> InvokeGetSinks() {
     scoped_refptr<WebrtcAudioPrivateGetSinksFunction> function =
         new WebrtcAudioPrivateGetSinksFunction();
     function->set_source_url(source_url_);
@@ -145,7 +148,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
   AudioDeviceDescriptions devices;
   GetAudioDeviceDescriptions(false, &devices);
 
-  absl::optional<base::Value> result = InvokeGetSinks();
+  std::optional<base::Value> result = InvokeGetSinks();
   const base::Value::List& sink_list = result->GetList();
 
   std::string result_string;
@@ -212,7 +215,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAssociatedSink) {
     std::string parameter_string;
     JSONWriter::Write(parameters, &parameter_string);
 
-    absl::optional<base::Value> result = RunFunctionAndReturnSingleResult(
+    std::optional<base::Value> result = RunFunctionAndReturnSingleResult(
         function.get(), parameter_string, profile());
     std::string result_string;
     JSONWriter::Write(*result, &result_string);
@@ -296,7 +299,7 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
   // others.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(),
-      https_server().GetURL("any-subdomain.google.com",
+      https_server().GetURL("meet.google.com",
                             "/extensions/hangout_services_test.html")));
 
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
@@ -304,7 +307,7 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
 
   // Use a test server URL for uploading.
   g_browser_process->webrtc_log_uploader()->SetUploadUrlForTesting(
-      https_server().GetURL("any-subdomain.google.com", kLogUploadUrlPath));
+      https_server().GetURL("meet.google.com", kLogUploadUrlPath));
 
   ASSERT_TRUE(content::ExecJs(tab, "browsertestRunAllTests();"));
 

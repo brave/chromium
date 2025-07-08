@@ -26,12 +26,11 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/extensions/crx_installer.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/gcm/gcm_product_util.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -42,6 +41,7 @@
 #include "components/gcm_driver/fake_gcm_app_handler.h"
 #include "components/gcm_driver/fake_gcm_client.h"
 #include "components/gcm_driver/fake_gcm_client_factory.h"
+#include "components/gcm_driver/fake_gcm_profile_service.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_profile_service.h"
@@ -52,10 +52,14 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -67,11 +71,17 @@
 #include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/login/users/scoped_test_user_manager.h"
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ash/login/users/user_manager_delegate_impl.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/browser_process.h"
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
+#include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/user_manager_impl.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -79,6 +89,7 @@ namespace {
 
 const char kTestExtensionName[] = "FooBar";
 
+#if !BUILDFLAG(IS_ANDROID)
 void RequestProxyResolvingSocketFactoryOnUIThread(
     Profile* profile,
     base::WeakPtr<gcm::GCMProfileService> service,
@@ -100,18 +111,19 @@ void RequestProxyResolvingSocketFactory(
       FROM_HERE, base::BindOnce(&RequestProxyResolvingSocketFactoryOnUIThread,
                                 profile, service, std::move(receiver)));
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
 // Helper class for asynchronous waiting.
 class Waiter {
  public:
-  Waiter() {}
+  Waiter() = default;
 
   Waiter(const Waiter&) = delete;
   Waiter& operator=(const Waiter&) = delete;
 
-  ~Waiter() {}
+  ~Waiter() = default;
 
   // Waits until the asynchronous operation finishes.
   void WaitUntilCompleted() {
@@ -166,18 +178,13 @@ class Waiter {
 class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
  public:
   FakeExtensionGCMAppHandler(Profile* profile, Waiter* waiter)
-      : ExtensionGCMAppHandler(profile),
-        waiter_(waiter),
-        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR),
-        delete_id_result_(instance_id::InstanceID::UNKNOWN_ERROR),
-        app_handler_count_drop_to_zero_(false) {
-  }
+      : ExtensionGCMAppHandler(profile), waiter_(waiter) {}
 
   FakeExtensionGCMAppHandler(const FakeExtensionGCMAppHandler&) = delete;
   FakeExtensionGCMAppHandler& operator=(const FakeExtensionGCMAppHandler&) =
       delete;
 
-  ~FakeExtensionGCMAppHandler() override {}
+  ~FakeExtensionGCMAppHandler() override = default;
 
   void OnMessage(const std::string& app_id,
                  const gcm::IncomingMessage& message) override {}
@@ -219,15 +226,19 @@ class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
 
  private:
   raw_ptr<Waiter> waiter_;
-  gcm::GCMClient::Result unregistration_result_;
-  instance_id::InstanceID::Result delete_id_result_;
-  bool app_handler_count_drop_to_zero_;
+  gcm::GCMClient::Result unregistration_result_ = gcm::GCMClient::UNKNOWN_ERROR;
+  instance_id::InstanceID::Result delete_id_result_ =
+      instance_id::InstanceID::UNKNOWN_ERROR;
+  bool app_handler_count_drop_to_zero_ = false;
 };
 
 class ExtensionGCMAppHandlerTest : public testing::Test {
  public:
   static std::unique_ptr<KeyedService> BuildGCMProfileService(
       content::BrowserContext* context) {
+#if BUILDFLAG(IS_ANDROID)
+    return gcm::FakeGCMProfileService::Build(context);
+#else
     Profile* profile = Profile::FromBrowserContext(context);
     scoped_refptr<base::SequencedTaskRunner> ui_thread =
         content::GetUIThreadTaskRunner({});
@@ -247,19 +258,21 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
         IdentityManagerFactory::GetForProfile(profile),
         base::WrapUnique(new gcm::FakeGCMClientFactory(ui_thread, io_thread)),
         ui_thread, io_thread, blocking_task_runner);
+#endif  // BUILDFLAG(IS_ANDROID)
   }
 
   ExtensionGCMAppHandlerTest()
-      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
-        extension_service_(nullptr),
-        registration_result_(gcm::GCMClient::UNKNOWN_ERROR),
-        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR) {}
+      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD) {
+    // Allow unpacked extensions without developer mode for testing.
+    scoped_feature_list_.InitAndDisableFeature(
+        extensions_features::kExtensionDisableUnsupportedDeveloper);
+  }
 
   ExtensionGCMAppHandlerTest(const ExtensionGCMAppHandlerTest&) = delete;
   ExtensionGCMAppHandlerTest& operator=(const ExtensionGCMAppHandlerTest&) =
       delete;
 
-  ~ExtensionGCMAppHandlerTest() override {}
+  ~ExtensionGCMAppHandlerTest() override = default;
 
   // Overridden from test::Test:
   void SetUp() override {
@@ -270,8 +283,10 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
         std::make_unique<content::InProcessUtilityThreadHelper>();
 
     // This is needed to create extension service under CrOS.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    test_user_manager_ = std::make_unique<ash::ScopedTestUserManager>();
+#if BUILDFLAG(IS_CHROMEOS)
+    user_manager_.Reset(std::make_unique<user_manager::UserManagerImpl>(
+        std::make_unique<ash::UserManagerDelegateImpl>(),
+        g_browser_process->local_state(), ash::CrosSettings::Get()));
     ash::ConciergeClient::InitializeFake(/*fake_cicerone_client=*/nullptr);
 #endif
 
@@ -286,7 +301,6 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
         temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Extensions"));
     extension_system->CreateExtensionService(
         base::CommandLine::ForCurrentProcess(), extensions_install_dir, false);
-    extension_service_ = extension_system->Get(profile())->extension_service();
 
     // Create GCMProfileService that talks with fake GCMClient.
     gcm::GCMProfileServiceFactory::GetInstance()->SetTestingFactoryAndUse(
@@ -299,8 +313,8 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
   void TearDown() override {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    test_user_manager_.reset();
+#if BUILDFLAG(IS_CHROMEOS)
+    user_manager_.Reset();
 #endif
 
     waiter_.PumpUILoop();
@@ -309,7 +323,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     if (partition)
       partition->WaitForDeletionTasksForTesting();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     gcm_app_handler_.reset();
     profile_.reset();
     ash::ConciergeClient::Shutdown();
@@ -320,7 +334,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   scoped_refptr<const Extension> CreateExtension() {
     scoped_refptr<const Extension> extension =
         ExtensionBuilder(kTestExtensionName)
-            .AddPermission("gcm")
+            .AddAPIPermission("gcm")
             .SetPath(temp_dir_.GetPath())
             .SetID("ldnnhddmnhbkjipkidpdiheffobcpfmf")
             .Build();
@@ -330,11 +344,15 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     return extension;
   }
 
-  void LoadExtension(const Extension* extension) {
-    extension_service_->AddExtension(extension);
+  ExtensionRegistrar* extension_registrar() {
+    return ExtensionRegistrar::Get(profile());
   }
 
-  void InstallerDone(const absl::optional<CrxInstallError>& error) {
+  void LoadExtension(scoped_refptr<const Extension> extension) {
+    extension_registrar()->AddExtension(extension);
+  }
+
+  void InstallerDone(const std::optional<CrxInstallError>& error) {
     ASSERT_FALSE(error);
     waiter_.SignalCompleted();
   }
@@ -356,7 +374,11 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     extensions::CRXFileInfo crx_info(path, extensions::GetTestVerifierFormat());
     crx_info.extension_id = extension->id();
 
-    auto installer = extension_service_->CreateUpdateInstaller(crx_info, true);
+    ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+    ExtensionUpdater updater(profile());
+    updater.InitAndEnable(prefs, prefs->pref_service(), base::Minutes(10),
+                          /*cache=*/nullptr, ExtensionDownloader::Factory());
+    auto installer = updater.CreateUpdateInstaller(crx_info, true);
     installer->AddInstallerCallback(base::BindOnce(
         &ExtensionGCMAppHandlerTest::InstallerDone, base::Unretained(this)));
     installer->InstallCrxFile(crx_info);
@@ -365,16 +387,16 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
   void DisableExtension(const Extension* extension) {
-    extension_service_->DisableExtension(extension->id(),
-                                         disable_reason::DISABLE_USER_ACTION);
+    extension_registrar()->DisableExtension(
+        extension->id(), {disable_reason::DISABLE_USER_ACTION});
   }
 
   void EnableExtension(const Extension* extension) {
-    extension_service_->EnableExtension(extension->id());
+    extension_registrar()->EnableExtension(extension->id());
   }
 
   void UninstallExtension(const Extension* extension) {
-    extension_service_->UninstallExtension(
+    extension_registrar()->UninstallExtension(
         extension->id(), extensions::UNINSTALL_REASON_FOR_TESTING, nullptr);
   }
 
@@ -413,31 +435,30 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
   std::unique_ptr<TestingProfile> profile_;
-  raw_ptr<ExtensionService, DanglingUntriaged>
-      extension_service_;  // Not owned.
   base::ScopedTempDir temp_dir_;
 
   // This is needed to create extension service under CrOS.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   ash::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
-  std::unique_ptr<ash::ScopedTestUserManager> test_user_manager_;
+  user_manager::ScopedUserManager user_manager_;
 #endif
 
   Waiter waiter_;
   std::unique_ptr<FakeExtensionGCMAppHandler> gcm_app_handler_;
-  gcm::GCMClient::Result registration_result_;
-  gcm::GCMClient::Result unregistration_result_;
+  gcm::GCMClient::Result registration_result_ = gcm::GCMClient::UNKNOWN_ERROR;
+  gcm::GCMClient::Result unregistration_result_ = gcm::GCMClient::UNKNOWN_ERROR;
 };
 
 TEST_F(ExtensionGCMAppHandlerTest, AddAndRemoveAppHandler) {
   scoped_refptr<const Extension> extension(CreateExtension());
 
   // App handler is added when extension is loaded.
-  LoadExtension(extension.get());
+  LoadExtension(extension);
   waiter()->PumpUILoop();
   EXPECT_TRUE(HasAppHandlers(extension->id()));
 
@@ -459,7 +480,7 @@ TEST_F(ExtensionGCMAppHandlerTest, AddAndRemoveAppHandler) {
 
 TEST_F(ExtensionGCMAppHandlerTest, UnregisterOnExtensionUninstall) {
   scoped_refptr<const Extension> extension(CreateExtension());
-  LoadExtension(extension.get());
+  LoadExtension(extension);
 
   // Kick off registration.
   std::vector<std::string> sender_ids;
@@ -474,15 +495,22 @@ TEST_F(ExtensionGCMAppHandlerTest, UnregisterOnExtensionUninstall) {
   waiter()->WaitUntilCompleted();
   EXPECT_EQ(instance_id::InstanceID::SUCCESS,
             gcm_app_handler()->delete_id_result());
+#if BUILDFLAG(IS_ANDROID)
+  // Unregistration is not supported on Android.
+  // TODO(crbug.com/421235963): Consider dropping support on other platforms.
+  EXPECT_EQ(gcm::GCMClient::UNKNOWN_ERROR,
+            gcm_app_handler()->unregistration_result());
+#else
   EXPECT_EQ(gcm::GCMClient::SUCCESS,
             gcm_app_handler()->unregistration_result());
+#endif
 }
 
 TEST_F(ExtensionGCMAppHandlerTest, UpdateExtensionWithGcmPermissionKept) {
   scoped_refptr<const Extension> extension(CreateExtension());
 
   // App handler is added when the extension is loaded.
-  LoadExtension(extension.get());
+  LoadExtension(extension);
   waiter()->PumpUILoop();
   EXPECT_TRUE(HasAppHandlers(extension->id()));
 
@@ -497,7 +525,7 @@ TEST_F(ExtensionGCMAppHandlerTest, UpdateExtensionWithGcmPermissionRemoved) {
   scoped_refptr<const Extension> extension(CreateExtension());
 
   // App handler is added when the extension is loaded.
-  LoadExtension(extension.get());
+  LoadExtension(extension);
   waiter()->PumpUILoop();
   EXPECT_TRUE(HasAppHandlers(extension->id()));
 

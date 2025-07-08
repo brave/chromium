@@ -8,8 +8,8 @@
 #include <memory>
 
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/media/capture_access_handler_base.h"
 #include "chrome/browser/media/media_access_handler.h"
 #include "chrome/browser/media/webrtc/capture_policy_utils.h"
@@ -19,6 +19,7 @@
 #include "chrome/browser/tab_contents/web_contents_collection.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/web_contents.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 
 namespace extensions {
 class Extension;
@@ -41,12 +42,12 @@ class DisplayMediaAccessHandler : public CaptureAccessHandlerBase,
   ~DisplayMediaAccessHandler() override;
 
   // MediaAccessHandler implementation.
-  bool SupportsStreamType(content::WebContents* web_contents,
+  bool SupportsStreamType(content::RenderFrameHost* render_frame_host,
                           const blink::mojom::MediaStreamType stream_type,
                           const extensions::Extension* extension) override;
   bool CheckMediaAccessPermission(
       content::RenderFrameHost* render_frame_host,
-      const GURL& security_origin,
+      const url::Origin& security_origin,
       blink::mojom::MediaStreamType type,
       const extensions::Extension* extension) override;
   void HandleRequest(content::WebContents* web_contents,
@@ -61,6 +62,15 @@ class DisplayMediaAccessHandler : public CaptureAccessHandlerBase,
 
  private:
   friend class DisplayMediaAccessHandlerTest;
+
+  void ShowMediaSelectionDialog(content::WebContents* web_contents,
+                                const content::MediaStreamRequest& request,
+                                content::MediaResponseCallback callback);
+
+  void BypassMediaSelectionDialog(content::WebContents* web_contents,
+                                  const content::MediaStreamRequest& request,
+                                  const content::DesktopMediaID& media_id,
+                                  content::MediaResponseCallback callback);
 
   void ProcessChangeSourceRequest(content::WebContents* web_contents,
                                   const content::MediaStreamRequest& request,
@@ -89,12 +99,33 @@ class DisplayMediaAccessHandler : public CaptureAccessHandlerBase,
   void AcceptRequest(content::WebContents* web_contents,
                      const content::DesktopMediaID& media_id);
 
-  // Called back after the user chooses one of the possible desktop media
-  // sources for the request that's currently being processed. If no |media_id|
-  // is given, the request was rejected, either by the browser or by the user.
+  void OnDesktopCaptureDevicesObtainedAfterAcceptRequest(
+      base::WeakPtr<content::WebContents> web_contents,
+      content::MediaStreamRequest request,
+      const content::DesktopMediaID& media_id,
+      blink::mojom::StreamDevices devices,
+      std::unique_ptr<content::MediaStreamUI> ui);
+
+  bool IsRequestFirstInQueue(const RequestsQueue& queue,
+                             const content::MediaStreamRequest& request) const;
+
+  // Called after the user interacts with the media-picker.
+  // - If the user chooses to share a tab/window/screen, `result.value()` holds
+  //   the media-ID of the chosen surface.
+  // - If the user rejects the prompt, or if any error occurs, or if the system
+  //   automatically rejects the request, `result.error()` holds the relevant
+  //   error code.
   void OnDisplaySurfaceSelected(
       base::WeakPtr<content::WebContents> web_contents,
-      content::DesktopMediaID media_id);
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult> result);
+
+  void OnDesktopCaptureDevicesObtainedAfterBypassMediaSelectionDialog(
+      base::WeakPtr<content::WebContents> web_contents,
+      content::MediaStreamRequest request,
+      content::MediaResponseCallback callback,
+      blink::mojom::StreamDevices devices,
+      std::unique_ptr<content::MediaStreamUI> ui);
 
 #if BUILDFLAG(IS_CHROMEOS)
   // Called back after checking Data Leak Prevention (DLP) restrictions.

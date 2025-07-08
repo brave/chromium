@@ -20,7 +20,7 @@ ShellBluetoothDelegateImplClient::~ShellBluetoothDelegateImplClient() = default;
 permissions::BluetoothChooserContext*
 ShellBluetoothDelegateImplClient::GetBluetoothChooserContext(
     RenderFrameHost* frame) {
-  // TODO(crbug.com/1431447): Implement ShellBluetoothChooserContextFactory.
+  // TODO(crbug.com/40263537): Implement ShellBluetoothChooserContextFactory.
   return nullptr;
 }
 
@@ -39,7 +39,7 @@ std::unique_ptr<BluetoothScanningPrompt>
 ShellBluetoothDelegateImplClient::ShowBluetoothScanningPrompt(
     RenderFrameHost* frame,
     const BluetoothScanningPrompt::EventHandler& event_handler) {
-  // TODO(crbug.com/1431447): Implement BluetoothScanningPrompt for iOS.
+  // TODO(crbug.com/40263537): Implement BluetoothScanningPrompt for iOS.
   return nullptr;
 }
 
@@ -48,7 +48,7 @@ void ShellBluetoothDelegateImplClient::ShowBluetoothDevicePairDialog(
     const std::u16string& device_identifier,
     BluetoothDelegate::PairPromptCallback callback,
     BluetoothDelegate::PairingKind,
-    const absl::optional<std::u16string>& pin) {
+    const std::optional<std::u16string>& pin) {
   std::move(callback).Run(BluetoothDelegate::PairPromptResult(
       BluetoothDelegate::PairPromptStatus::kCancelled));
 }

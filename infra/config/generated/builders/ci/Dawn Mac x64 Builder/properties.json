@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/Dawn Mac x64 Builder/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,6 +22,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -47,6 +51,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -77,6 +82,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -107,6 +113,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -137,6 +144,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -195,14 +203,21 @@
           "builder": "mac-dawn-rel",
           "group": "tryserver.chromium.dawn"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Dawn Mac x64 Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -212,6 +227,10 @@
     ]
   },
   "builder_group": "chromium.dawn",
+  "dawn_ref": "refs/heads/main",
+  "gardener_rotations": [
+    "dawn"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "dawn"

@@ -19,7 +19,6 @@ import android.text.TextUtils;
 
 import androidx.test.filters.LargeTest;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -27,11 +26,11 @@ import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.PackageManagerWrapper;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -51,8 +50,10 @@ import java.io.FileInputStream;
 /** Integration tests for WebAPK feature. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @DoNotBatch(reason = "The update pipeline runs once per startup.")
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeSwitches.CHECK_FOR_WEB_MANIFEST_UPDATE_ON_STARTUP})
+@CommandLineFlags.Add({
+    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+    ChromeSwitches.CHECK_FOR_WEB_MANIFEST_UPDATE_ON_STARTUP
+})
 public class WebApkUpdateIntegrationTest {
     public final WebApkActivityTestRule mActivityTestRule = new WebApkActivityTestRule();
 
@@ -86,7 +87,6 @@ public class WebApkUpdateIntegrationTest {
     private static final String DARK_BACKGROUND_COLOR = "4L";
 
     private EmbeddedTestServer mTestServer;
-    private Context mContextToRestore;
     private TestContext mTestContext;
 
     private Bundle mTestMetaData;
@@ -118,21 +118,13 @@ public class WebApkUpdateIntegrationTest {
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.getEmbeddedTestServerRule().setServerUsesHttps(true);
-        mContextToRestore = ContextUtils.getApplicationContext();
-        mTestContext = new TestContext(mContextToRestore);
+        mTestContext = new TestContext(ContextUtils.getApplicationContext());
         ContextUtils.initApplicationContextForTests(mTestContext);
         mTestServer = mActivityTestRule.getTestServer();
         mTestMetaData = defaultMetaData();
 
         WebApkValidator.setDisableValidationForTesting(true);
         WebApkUpdateManager.setUpdatesDisabledForTesting(false);
-    }
-
-    @After
-    public void tearDown() {
-        if (mContextToRestore != null) {
-            ContextUtils.initApplicationContextForTests(mContextToRestore);
-        }
     }
 
     private Bundle defaultMetaData() throws Exception {
@@ -152,33 +144,36 @@ public class WebApkUpdateIntegrationTest {
         bundle.putString(WebApkMetaDataKeys.SCOPE, mTestServer.getURL(WEBAPK_SCOPE_URL));
         Resources res =
                 mTestContext.getPackageManager().getResourcesForApplication(WEBAPK_PACKAGE_NAME);
-        bundle.putInt(WebApkMetaDataKeys.ICON_ID,
+        bundle.putInt(
+                WebApkMetaDataKeys.ICON_ID,
                 res.getIdentifier("app_icon", "mipmap", WEBAPK_PACKAGE_NAME));
-        bundle.putInt(WebApkMetaDataKeys.SPLASH_ID,
+        bundle.putInt(
+                WebApkMetaDataKeys.SPLASH_ID,
                 res.getIdentifier("splash_icon", "drawable", WEBAPK_PACKAGE_NAME));
 
-        bundle.putString(WebApkMetaDataKeys.ICON_URLS_AND_ICON_MURMUR2_HASHES,
-                String.join(" ", mTestServer.getURL(ICON_URL), ICON_MURMUR2_HASH,
-                        mTestServer.getURL(ICON_URL2), ICON_MURMUR2_HASH2));
+        bundle.putString(
+                WebApkMetaDataKeys.ICON_URLS_AND_ICON_MURMUR2_HASHES,
+                String.join(
+                        " ",
+                        mTestServer.getURL(ICON_URL),
+                        ICON_MURMUR2_HASH,
+                        mTestServer.getURL(ICON_URL2),
+                        ICON_MURMUR2_HASH2));
         return bundle;
     }
 
     // Wait for the name change dialog and dismiss it.
     private void waitForDialog() {
-        CriteriaHelper.pollUiThread(() -> {
-            ModalDialogManager manager = mActivityTestRule.getActivity().getModalDialogManager();
-            PropertyModel dialog = manager.getCurrentDialogForTest();
-            if (dialog == null) return false;
-            dialog.get(ModalDialogProperties.CONTROLLER)
-                    .onClick(dialog, ModalDialogProperties.ButtonType.POSITIVE);
-            return true;
-        });
-    }
-
-    private void waitForHistogram(String name, int count) {
-        CriteriaHelper.pollUiThread(() -> {
-            return RecordHistogram.getHistogramTotalCountForTesting(name) >= count;
-        }, "waitForHistogram timeout", 10000, 200);
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    ModalDialogManager manager =
+                            mActivityTestRule.getActivity().getModalDialogManager();
+                    PropertyModel dialog = manager.getCurrentDialogForTest();
+                    if (dialog == null) return false;
+                    dialog.get(ModalDialogProperties.CONTROLLER)
+                            .onClick(dialog, ModalDialogProperties.ButtonType.POSITIVE);
+                    return true;
+                });
     }
 
     private WebApkProto.WebApk parseRequestProto(String path) throws Exception {
@@ -194,60 +189,65 @@ public class WebApkUpdateIntegrationTest {
     @Feature({"Webapps"})
     public void testStoreUpdateRequestToFile() throws Exception {
         String pageUrl = mTestServer.getURL(WEBAPK_START_URL);
+        HistogramWatcher histogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "WebApk.Update.ShellVersion", SHELL_APK_VERSION);
 
         WebappActivity activity = mActivityTestRule.startWebApkActivity(pageUrl);
         assertEquals(ActivityType.WEB_APK, activity.getActivityType());
         assertEquals(pageUrl, activity.getIntentDataProvider().getUrlToLoad());
 
         waitForDialog();
-        waitForHistogram("WebApk.Update.RequestQueued", 1);
+        histogramWatcher.pollInstrumentationThreadUntilSatisfied();
 
-        WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(
-                WebApkConstants.WEBAPK_ID_PREFIX + WEBAPK_PACKAGE_NAME);
+        WebappDataStorage storage =
+                WebappRegistry.getInstance()
+                        .getWebappDataStorage(
+                                WebApkConstants.WEBAPK_ID_PREFIX + WEBAPK_PACKAGE_NAME);
         String updateRequestPath = storage.getPendingUpdateRequestPath();
         assertNotNull(updateRequestPath);
 
         WebApkProto.WebApk proto = parseRequestProto(updateRequestPath);
 
-        assertEquals(proto.getPackageName(), WEBAPK_PACKAGE_NAME);
-        assertEquals(proto.getVersion(), "1");
+        assertEquals(WEBAPK_PACKAGE_NAME, proto.getPackageName());
+        assertEquals("1", proto.getVersion());
         assertEquals(proto.getManifestUrl(), mTestServer.getURL(WEBAPK_MANIFEST_URL));
         assertEquals(proto.getAppKey(), mTestServer.getURL(WEBAPK_MANIFEST_URL));
-        assertEquals(proto.getManifest().getName(), WEBAPK_NAME);
-        assertEquals(proto.getManifest().getShortName(), WEBAPK_SHORT_NAME);
+        assertEquals(WEBAPK_NAME, proto.getManifest().getName());
+        assertEquals(WEBAPK_SHORT_NAME, proto.getManifest().getShortName());
         assertEquals(proto.getManifest().getStartUrl(), mTestServer.getURL(WEBAPK_START_URL));
         assertEquals(proto.getManifest().getScopes(0), mTestServer.getURL(WEBAPK_SCOPE_URL));
         assertEquals(proto.getManifest().getId(), mTestServer.getURL(WEBAPK_START_URL));
-        assertEquals(proto.getManifest().getOrientation(), "landscape");
-        assertEquals(proto.getManifest().getDisplayMode(), "standalone");
+        assertEquals("landscape", proto.getManifest().getOrientation());
+        assertEquals("standalone", proto.getManifest().getDisplayMode());
 
-        assertEquals(proto.getManifest().getIconsCount(), 3);
+        assertEquals(3, proto.getManifest().getIconsCount());
         // 1st: primary icon from old shell icon, has image data but no hash.
         WebApkProto.Image icon1 = proto.getManifest().getIconsList().get(0);
         assertFalse(icon1.hasSrc());
         assertFalse(icon1.hasHash());
         assertTrue(icon1.hasImageData());
         assertFalse(icon1.getImageData().isEmpty());
-        assertEquals(icon1.getPurposesCount(), 1);
-        assertEquals(icon1.getPurposesList().get(0), WebApkProto.Image.Purpose.ANY);
-        assertEquals(icon1.getUsagesCount(), 1);
-        assertEquals(icon1.getUsagesList().get(0), WebApkProto.Image.Usage.PRIMARY_ICON);
+        assertEquals(1, icon1.getPurposesCount());
+        assertEquals(WebApkProto.Image.Purpose.ANY, icon1.getPurposesList().get(0));
+        assertEquals(1, icon1.getUsagesCount());
+        assertEquals(WebApkProto.Image.Usage.PRIMARY_ICON, icon1.getUsagesList().get(0));
 
         // 2nd: splash icon url matches the hash map. has image data and hash.
         WebApkProto.Image icon2 = proto.getManifest().getIconsList().get(1);
         assertEquals(icon2.getSrc(), mTestServer.getURL(ICON_URL));
-        assertEquals(icon2.getHash(), ICON_MURMUR2_HASH);
+        assertEquals(ICON_MURMUR2_HASH, icon2.getHash());
         assertTrue(icon2.hasImageData());
         assertFalse(icon2.getImageData().isEmpty());
-        assertEquals(icon2.getPurposesCount(), 1);
-        assertEquals(icon2.getPurposesList().get(0), WebApkProto.Image.Purpose.ANY);
-        assertEquals(icon2.getUsagesCount(), 1);
-        assertEquals(icon2.getUsagesList().get(0), WebApkProto.Image.Usage.SPLASH_ICON);
+        assertEquals(1, icon2.getPurposesCount());
+        assertEquals(WebApkProto.Image.Purpose.ANY, icon2.getPurposesList().get(0));
+        assertEquals(1, icon2.getUsagesCount());
+        assertEquals(WebApkProto.Image.Usage.SPLASH_ICON, icon2.getUsagesList().get(0));
 
         // 3nd icon from the url2hash map, has url and hash but no data.
         WebApkProto.Image icon3 = proto.getManifest().getIconsList().get(2);
         assertEquals(icon3.getSrc(), mTestServer.getURL(ICON_URL2));
-        assertEquals(icon3.getHash(), ICON_MURMUR2_HASH2);
+        assertEquals(ICON_MURMUR2_HASH2, icon3.getHash());
         assertFalse(icon3.hasImageData());
     }
 }

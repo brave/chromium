@@ -45,12 +45,9 @@ class MockSessionSyncService : public sync_sessions::SessionSyncService {
               SubscribeToForeignSessionsChanged,
               (const base::RepeatingClosure& cb),
               (override));
-  MOCK_METHOD(base::WeakPtr<syncer::ModelTypeControllerDelegate>,
+  MOCK_METHOD(base::WeakPtr<syncer::DataTypeControllerDelegate>,
               GetControllerDelegate,
               ());
-  MOCK_METHOD(void,
-              ProxyTabsStateChanged,
-              (syncer::DataTypeController::State state));
 };
 
 class LocalTabHandlerTest : public testing::Test {
@@ -65,7 +62,7 @@ class LocalTabHandlerTest : public testing::Test {
     params.type = Browser::TYPE_NORMAL;
     test_window_ = std::make_unique<TestBrowserWindow>();
     params.window = test_window_.get();
-    browser_ = std::unique_ptr<Browser>(Browser::Create(params));
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
     handler_ = std::make_unique<LocalTabHandler>(&session_sync_service_,
                                                  profile_.get());
 
@@ -173,10 +170,12 @@ TEST_F(LocalTabHandlerTest, LocalTabSource) {
   handler_->FillAllLocalTabsFromTabModel(tabs);
 
   float time1 = GetModifiedTime(tabs[0]);
-  EXPECT_NEAR(time1, 20, 0.01);
+  EXPECT_NEAR(TabSessionSource::BucketizeExp(/*value=*/20, /*max_buckets=*/50), 16, 0.01);
+  EXPECT_NEAR(time1, 16, 0.01);
 
   float time2 = GetModifiedTime(tabs[1]);
-  EXPECT_NEAR(time2, 10, 0.01);
+  EXPECT_NEAR(TabSessionSource::BucketizeExp(/*value=*/10, /*max_buckets=*/50), 8, 0.01);
+  EXPECT_NEAR(time2, 8, 0.01);
 }
 
 }  // namespace segmentation_platform::processing

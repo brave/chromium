@@ -39,7 +39,7 @@ class TestResultLoader : public ResultLoader {
                                    std::string());
   }
   void ProcessResponse(const PreprocessedOutput& preprocessed_output,
-                       std::unique_ptr<std::string> response_body,
+                       std::optional<std::string> response_body,
                        ResponseParserCallback complete_callback) override {}
 };
 
@@ -163,7 +163,7 @@ TEST_F(QuickAnswersClientTest, NetworkError) {
 }
 
 TEST_F(QuickAnswersClientTest, SendRequest) {
-  fake_quick_answers_state()->SetConsentStatus(
+  fake_quick_answers_state()->AsyncSetConsentStatus(
       quick_answers::prefs::ConsentStatus::kAccepted);
 
   std::unique_ptr<QuickAnswersRequest> quick_answers_request =
@@ -203,7 +203,7 @@ TEST_F(QuickAnswersClientTest, SendRequest) {
 
 TEST_F(QuickAnswersClientTest, SendRequestForPreprocessing) {
   // Make the status to kUnknown as this test case is for pre-process.
-  fake_quick_answers_state()->SetConsentStatus(
+  fake_quick_answers_state()->AsyncSetConsentStatus(
       quick_answers::prefs::ConsentStatus::kUnknown);
 
   std::unique_ptr<QuickAnswersRequest> quick_answers_request =
@@ -226,7 +226,7 @@ TEST_F(QuickAnswersClientTest, SendRequestForPreprocessing) {
 }
 
 TEST_F(QuickAnswersClientTest, FetchQuickAnswers) {
-  fake_quick_answers_state()->SetConsentStatus(
+  fake_quick_answers_state()->AsyncSetConsentStatus(
       quick_answers::prefs::ConsentStatus::kAccepted);
 
   std::unique_ptr<QuickAnswersRequest> quick_answers_request =
@@ -246,7 +246,7 @@ TEST_F(QuickAnswersClientTest, FetchQuickAnswers) {
 
 TEST_F(QuickAnswersClientTest, PreprocessDefinitionIntent) {
   // Make the status to kUnknown as this test case is for pre-process.
-  fake_quick_answers_state()->SetConsentStatus(
+  fake_quick_answers_state()->AsyncSetConsentStatus(
       quick_answers::prefs::ConsentStatus::kUnknown);
 
   std::unique_ptr<QuickAnswersRequest> quick_answers_request =
@@ -274,7 +274,7 @@ TEST_F(QuickAnswersClientTest, PreprocessDefinitionIntent) {
 
 TEST_F(QuickAnswersClientTest, PreprocessUnitConversionIntent) {
   // Make the status to kUnknown as this test case is for pre-process.
-  fake_quick_answers_state()->SetConsentStatus(
+  fake_quick_answers_state()->AsyncSetConsentStatus(
       quick_answers::prefs::ConsentStatus::kUnknown);
 
   std::unique_ptr<QuickAnswersRequest> quick_answers_request =

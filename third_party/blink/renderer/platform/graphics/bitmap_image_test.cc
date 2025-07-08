@@ -28,7 +28,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
+
+#include <array>
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -47,7 +50,6 @@
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
 #include "third_party/blink/renderer/platform/graphics/test/mock_image_decoder.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
@@ -143,9 +145,13 @@ class BitmapImageTest : public testing::Test {
     int last_decoded_size_changed_delta_;
   };
 
-  static scoped_refptr<SharedBuffer> ReadFile(const char* file_name) {
+  void TearDown() override { image_.reset(); }
+
+  static Vector<char> ReadFile(const char* file_name) {
     String file_path = test::PlatformTestDataPath(file_name);
-    return test::ReadFromFile(file_path);
+    std::optional<Vector<char>> data = test::ReadFromFile(file_path);
+    CHECK(data && data->size());
+    return std::move(*data);
   }
 
   // Accessors to BitmapImage's protected methods.
@@ -160,7 +166,8 @@ class BitmapImageTest : public testing::Test {
   void LoadImage(const char* file_name) {
     CreateImage();
 
-    scoped_refptr<SharedBuffer> image_data = ReadFile(file_name);
+    scoped_refptr<SharedBuffer> image_data =
+        SharedBuffer::Create(ReadFile(file_name));
     ASSERT_TRUE(image_data.get());
 
     image_->SetData(image_data, true);
@@ -170,9 +177,10 @@ class BitmapImageTest : public testing::Test {
     CreateImage();
 
     String file_path = test::BlinkWebTestsImagesTestDataPath(relative_path);
-    scoped_refptr<SharedBuffer> image_data = test::ReadFromFile(file_path);
-    ASSERT_TRUE(image_data.get());
-
+    std::optional<Vector<char>> data = test::ReadFromFile(file_path);
+    ASSERT_TRUE(data && data->size());
+    scoped_refptr<SharedBuffer> image_data =
+        SharedBuffer::Create(std::move(*data));
     image_->SetData(image_data, true);
   }
 
@@ -185,7 +193,8 @@ class BitmapImageTest : public testing::Test {
   }
 
   SkBitmap GenerateBitmapForImage(const char* file_name) {
-    scoped_refptr<SharedBuffer> image_data = ReadFile(file_name);
+    scoped_refptr<SharedBuffer> image_data =
+        SharedBuffer::Create(ReadFile(file_name));
     EXPECT_TRUE(image_data.get());
     if (!image_data)
       return SkBitmap();
@@ -279,7 +288,8 @@ TEST_F(BitmapImageTest, maybeAnimated) {
 }
 
 TEST_F(BitmapImageTest, isAllDataReceived) {
-  scoped_refptr<SharedBuffer> image_data = ReadFile("green.jpg");
+  scoped_refptr<SharedBuffer> image_data =
+      SharedBuffer::Create(ReadFile("green.jpg"));
   ASSERT_TRUE(image_data.get());
 
   scoped_refptr<BitmapImage> image = BitmapImage::Create();
@@ -351,12 +361,12 @@ TEST_F(BitmapImageTest, recachingFrameAfterDataChanged) {
 }
 
 TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
-  scoped_refptr<SharedBuffer> image_data = ReadFile("green.jpg");
-  ASSERT_TRUE(image_data.get());
+  Vector<char> image_data_binary = ReadFile("green.jpg");
 
   // Create a new buffer to partially supply the data.
   scoped_refptr<SharedBuffer> partial_buffer = SharedBuffer::Create();
-  partial_buffer->Append(image_data->Data(), image_data->size() - 4);
+  partial_buffer->Append(
+      base::span(image_data_binary).first(image_data_binary.size() - 4));
 
   // First partial load. Repeated calls for a PaintImage should have the same
   // image until the data changes or the decoded data is destroyed.
@@ -387,6 +397,8 @@ TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
             image3.GetKeyForFrame(PaintImage::kDefaultFrameIndex));
 
   // Load complete. This should generate a new image id.
+  scoped_refptr<SharedBuffer> image_data =
+      SharedBuffer::Create(image_data_binary);
   image_->SetData(image_data, true);
   auto complete_image = image_->PaintImageForCurrentFrame();
   auto complete_sk_image = complete_image.GetSwSkImage();
@@ -465,9 +477,13 @@ TEST_F(BitmapImageTest, GifDecoderMultiThreaded) {
     cc::PaintImage::GeneratorClientId client_id;
   };
 
-  Decode decodes[4];
-  SkColor expected_color[4] = {SkColorSetARGB(255, 0, 128, 0), SK_ColorRED,
-                               SK_ColorBLUE, SK_ColorYELLOW};
+  std::array<Decode, 4> decodes;
+  std::array<SkColor, 4> expected_color = {
+      SkColorSetARGB(255, 0, 128, 0),
+      SK_ColorRED,
+      SK_ColorBLUE,
+      SK_ColorYELLOW,
+  };
   for (int i = 0; i < 4; ++i) {
     decodes[i].thread =
         std::make_unique<base::Thread>("Decode" + std::to_string(i));
@@ -645,13 +661,13 @@ TEST_F(BitmapImageTestWithMockDecoder, ImageMetadataTracking) {
   repetition_count_ = kAnimationLoopOnce;
   frame_count_ = 4u;
   last_frame_complete_ = false;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   PaintImage image = image_->PaintImageForCurrentFrame();
   ASSERT_TRUE(image);
   EXPECT_EQ(image.FrameCount(), frame_count_);
   EXPECT_EQ(image.completion_state(),
-            PaintImage::CompletionState::PARTIALLY_DONE);
+            PaintImage::CompletionState::kPartiallyDone);
   EXPECT_EQ(image.repetition_count(), repetition_count_);
   for (size_t i = 0; i < image.GetFrameMetadata().size(); ++i) {
     const auto& data = image.GetFrameMetadata()[i];
@@ -667,12 +683,12 @@ TEST_F(BitmapImageTestWithMockDecoder, ImageMetadataTracking) {
   repetition_count_ = kAnimationLoopInfinite;
   frame_count_ = 6u;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), true);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), true);
 
   image = image_->PaintImageForCurrentFrame();
   ASSERT_TRUE(image);
   EXPECT_EQ(image.FrameCount(), frame_count_);
-  EXPECT_EQ(image.completion_state(), PaintImage::CompletionState::DONE);
+  EXPECT_EQ(image.completion_state(), PaintImage::CompletionState::kDone);
   EXPECT_EQ(image.repetition_count(), repetition_count_);
   for (size_t i = 0; i < image.GetFrameMetadata().size(); ++i) {
     const auto& data = image.GetFrameMetadata()[i];
@@ -689,7 +705,7 @@ TEST_F(BitmapImageTestWithMockDecoder,
   repetition_count_ = kAnimationNone;
   frame_count_ = 4u;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   PaintImage image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), repetition_count_);
@@ -720,7 +736,7 @@ TEST_F(BitmapImageTestWithMockDecoder,
   repetition_count_ = kAnimationLoopOnce;
   frame_count_ = 4u;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   PaintImage image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), repetition_count_);
@@ -752,7 +768,7 @@ TEST_F(BitmapImageTestWithMockDecoder,
   repetition_count_ = kAnimationLoopInfinite;
   frame_count_ = 4u;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   PaintImage image = image_->PaintImageForCurrentFrame();
   EXPECT_EQ(image.repetition_count(), repetition_count_);
@@ -782,7 +798,7 @@ TEST_F(BitmapImageTestWithMockDecoder, ResetAnimation) {
   repetition_count_ = kAnimationLoopInfinite;
   frame_count_ = 4u;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   PaintImage image = image_->PaintImageForCurrentFrame();
   image_->ResetAnimation();
@@ -795,7 +811,7 @@ TEST_F(BitmapImageTestWithMockDecoder, PaintImageForStaticBitmapImage) {
   repetition_count_ = kAnimationLoopInfinite;
   frame_count_ = 5;
   last_frame_complete_ = true;
-  image_->SetData(SharedBuffer::Create("data", sizeof("data")), false);
+  image_->SetData(SharedBuffer::Create(base::span_from_cstring("data")), false);
 
   // PaintImage for the original image is animated.
   EXPECT_TRUE(image_->PaintImageForCurrentFrame().ShouldAnimate());

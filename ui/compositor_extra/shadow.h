@@ -64,6 +64,9 @@ class Shadow : public ui::ImplicitAnimationObserver, public ui::LayerOwner {
   void SetElevationToColorsMap(const ElevationToColorsMap& color_map);
 
   const gfx::ShadowDetails* details_for_testing() const { return details_; }
+  int rounded_corner_radius_for_testing() const {
+    return rounded_corner_radius_;
+  }
 
   // ui::ImplicitAnimationObserver overrides:
   void OnImplicitAnimationsCompleted() override;
@@ -127,6 +130,9 @@ class Shadow : public ui::ImplicitAnimationObserver, public ui::LayerOwner {
 
   // Bounds of the content that the shadow encloses.
   gfx::Rect content_bounds_;
+
+  // The layer bounds since content bounds were last set.
+  gfx::Rect last_layer_bounds_;
 };
 
 }  // namespace ui

@@ -2,25 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from __future__ import print_function
-
 import math
 import os
 import random
 import sys
-from typing import Any, List
+from typing import Any
 import unittest
-
-from gpu_tests import color_profile_manager
-from gpu_tests import common_browser_args as cba
-from gpu_tests import common_typing as ct
-from gpu_tests import gpu_integration_test
-
-import gpu_path_util
 
 from telemetry.util import image_util
 from telemetry.util import rgba_color
 
+import gpu_path_util
+from gpu_tests import color_profile_manager
+from gpu_tests import common_browser_args as cba
+from gpu_tests import common_typing as ct
+from gpu_tests import gpu_integration_test
 
 class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   """Tests that screenshots are properly synchronized with the frame on
@@ -35,14 +31,13 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   @classmethod
   def AddCommandlineArgs(cls, parser: ct.CmdArgParser) -> None:
     super(ScreenshotSyncIntegrationTest, cls).AddCommandlineArgs(parser)
-    parser.add_option(
+    parser.add_argument(
         '--dont-restore-color-profile-after-test',
-        dest='dont_restore_color_profile_after_test',
         action='store_true',
         default=False,
-        help="(Mainly on Mac) don't restore the system's original color "
-        'profile after the test completes; leave the system using the sRGB '
-        'color profile. See http://crbug.com/784456.')
+        help=("(Mainly on Mac) don't restore the system's original color "
+              'profile after the test completes; leave the system using the '
+              'sRGB color profile. See http://crbug.com/784456.'))
 
   @classmethod
   def SetUpProcess(cls) -> None:
@@ -55,7 +50,7 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     cls.SetStaticServerDirs([gpu_path_util.GPU_DATA_DIR])
 
   @classmethod
-  def GenerateBrowserArgs(cls, additional_args: List[str]) -> List[str]:
+  def GenerateBrowserArgs(cls, additional_args: list[str]) -> list[str]:
     """Adds default arguments to |additional_args|.
 
     See the parent class' method documentation for additional information.
@@ -70,6 +65,13 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         # in tests.
         cba.TEST_TYPE_GPU,
     ])
+
+    # TODO(crbug.com/394842006): This flag is an android optimization which
+    # results in the toolbar hairline # being always drawn. The hariline
+    # overlaps with the page's contents and interferes with the tests. Disable
+    # it so the hairline isn't drawn.
+    default_args.extend(['--disable-features=AndroidBrowserControlsInViz'])
+
     return default_args
 
   @classmethod
@@ -118,17 +120,22 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
                            green=canvasRGB.g,
                            blue=canvasRGB.b)
     screenshot = tab.Screenshot(10)
+    # This takes into account the fact that the page can be automatically scaled
+    # on mobile, causing the effective DPR to be lower than the true DPR
+    # reported by the device.
+    effective_dpr = tab.EvaluateJavaScript(
+        'window.devicePixelRatio * window.visualViewport.scale')
     # Avoid checking along antialiased boundary due to limited Adreno 3xx
     # interpolation precision (crbug.com/847984). We inset by one CSS pixel
     # adjusted by the device pixel ratio.
-    inset = int(math.ceil(tab.EvaluateJavaScript('window.devicePixelRatio')))
+    inset = int(math.ceil(effective_dpr))
     # It seems that we should be able to set start_x to 2 * inset (one to
     # account for the inner div having left=1 and one to avoid sampling the
     # aa edge). For reasons not fully understood this is insufficent on
     # several bots (N9, 6P, mac-rel).
     start_x = 10
     start_y = inset
-    outer_size = 256 - inset
+    outer_size = int(math.floor(256 * effective_dpr)) - inset
     skip = 10
     for y in range(start_y, outer_size, skip):
       for x in range(start_x, outer_size, skip):
@@ -143,7 +150,7 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       self._CheckScreenshot()
 
   @classmethod
-  def ExpectationsFiles(cls) -> List[str]:
+  def ExpectationsFiles(cls) -> list[str]:
     return [
         os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'test_expectations',

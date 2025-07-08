@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/ash/login/drive_pinning_screen_handler.h"
 
 #include "base/logging.h"
-
 #include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ui/webui/ash/login/base_screen_handler.h"
@@ -38,14 +37,12 @@ void DrivePinningScreenHandler::DeclareLocalizedValues(
                IDS_OOBE_CHOOBE_DRIVE_PINNING_SUBTITLE_DISABLED);
 }
 
-void DrivePinningScreenHandler::SetRequiredSpaceInfo(
-    std::u16string required_space,
-    std::u16string free_space) {
-  CallExternalAPI("setRequiredSpaceInfo", required_space, free_space);
-}
-
 void DrivePinningScreenHandler::Show(base::Value::Dict data) {
   ShowInWebUI(std::move(data));
+}
+
+base::WeakPtr<DrivePinningScreenView> DrivePinningScreenHandler::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 }  // namespace ash

@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/web_ui_mocha_browser_test.h"
+#include "components/history_clusters/core/features.h"
 #include "components/search/ntp_features.h"
 #include "content/public/test/browser_test.h"
 
@@ -17,50 +19,22 @@ class NewTabPageBrowserTest : public WebUIMochaBrowserTest {
 
 using NewTabPageTest = NewTabPageBrowserTest;
 
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, CustomizeDialog) {
-  RunTest("new_tab_page/customize_dialog_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, Utils) {
-  RunTest("new_tab_page/utils_test.js", "mocha.run()");
-}
-
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, MetricsUtils) {
   RunTest("new_tab_page/metrics_utils_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, CustomizeShortcuts) {
-  RunTest("new_tab_page/customize_shortcuts_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, CustomizeModules) {
-  RunTest("new_tab_page/customize_modules_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, CustomizeBackgrounds) {
-  RunTest("new_tab_page/customize_backgrounds_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, VoiceSearchOverlay) {
   RunTest("new_tab_page/voice_search_overlay_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, LensForm) {
+// TODO(crbug.com/40933410):  Re-enable once no longer fails.
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, DISABLED_LensForm) {
   RunTest("new_tab_page/lens_form_test.js", "mocha.run()");
 }
 
-// TODO(crbug.com/1431290): Test is flaky across platforms.
+// TODO(crbug.com/40902230): Test is flaky across platforms.
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, DISABLED_LensUploadDialog) {
   RunTest("new_tab_page/lens_upload_dialog_test.js", "mocha.run()");
-}
-
-// TODO(crbug.com/1431290): Test is flaky across platforms.
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, DISABLED_Realbox) {
-  RunTest("new_tab_page/realbox/realbox_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, RealboxLens) {
-  RunTest("new_tab_page/realbox/lens_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, Logo) {
@@ -79,6 +53,26 @@ IN_PROC_BROWSER_TEST_F(NewTabPageTest, MiddleSlotPromo) {
   RunTest("new_tab_page/middle_slot_promo_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, ImageProcessor) {
+  RunTest("new_tab_page/image_processor_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, Transparency) {
+  RunTest("new_tab_page/transparency_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, Composebox) {
+  RunTest("new_tab_page/composebox/composebox_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, ComposeboxFileCarousel) {
+  RunTest("new_tab_page/composebox/file_carousel_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, ComposeboxFileThumbnail) {
+  RunTest("new_tab_page/composebox/file_thumbnail_test.js", "mocha.run()");
+}
+
 using NewTabPageModulesTest = NewTabPageBrowserTest;
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleWrapper) {
@@ -89,8 +83,8 @@ IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModulesV2) {
   RunTest("new_tab_page/modules/v2/modules_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, Modules) {
-  RunTest("new_tab_page/modules/modules_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleHeaderV2) {
+  RunTest("new_tab_page/modules/v2/module_header_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleDescriptor) {
@@ -99,10 +93,6 @@ IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleDescriptor) {
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleRegistry) {
   RunTest("new_tab_page/modules/module_registry_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleHeader) {
-  RunTest("new_tab_page/modules/module_header_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, InfoDialog) {
@@ -114,40 +104,58 @@ IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, InfoDialog) {
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DummyModule) {
   RunTest("new_tab_page/modules/v2/dummy/module_test.js", "mocha.run()");
 }
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, PhotosModule) {
-  RunTest("new_tab_page/modules/photos/module_test.js", "mocha.run()");
-}
 #endif  // !defined(OFFICIAL_BUILD)
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DriveModule) {
-  RunTest("new_tab_page/modules/drive/module_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, Calendar) {
+  RunTest("new_tab_page/modules/v2/calendar/calendar_test.js",
+          "runMochaSuite('NewTabPageModulesCalendarTest general')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DriveV2Module) {
-  RunTest("new_tab_page/modules/v2/drive/module_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, CalendarMetrics) {
+  RunTest("new_tab_page/modules/v2/calendar/calendar_test.js",
+          "runMochaSuite('NewTabPageModulesCalendarTest metrics')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, RecipesModule) {
-  RunTest("new_tab_page/modules/recipes/module_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, CalendarEvent) {
+  RunTest("new_tab_page/modules/v2/calendar/calendar_event_test.js",
+          "runMochaSuite('NewTabPageModulesCalendarEventTest general')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ChromeCartModule) {
-  RunTest("new_tab_page/modules/cart/module_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, CalendarEventMetrics) {
+  RunTest("new_tab_page/modules/v2/calendar/calendar_event_test.js",
+          "runMochaSuite('NewTabPageModulesCalendarEventTest metrics')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, FeedModule) {
-  RunTest("new_tab_page/modules/feed/module_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DiscountConsentCard) {
-  RunTest("new_tab_page/modules/cart/discount_consent_card_test.js",
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, GoogleCalendarModule) {
+  RunTest("new_tab_page/modules/v2/calendar/google_calendar_module_test.js",
           "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DiscountConsentDialog) {
-  RunTest("new_tab_page/modules/cart/discount_consent_dialog_test.js",
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, OutlookCalendarModule) {
+  RunTest("new_tab_page/modules/v2/calendar/outlook_calendar_module_test.js",
           "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, DriveModuleV2) {
+  RunTest("new_tab_page/modules/v2/file_suggestion/drive_module_test.js",
+          "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, FileSuggestion) {
+  RunTest("new_tab_page/modules/v2/file_suggestion/file_suggestion_test.js",
+          "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, MicrosoftFilesModule) {
+  RunTest(
+      "new_tab_page/modules/v2/file_suggestion/microsoft_files_module_test.js",
+      "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, MicrosoftAuthModule) {
+  RunTest(
+      "new_tab_page/modules/v2/authentication/microsoft_auth_module_test.js",
+      "mocha.run()");
 }
 
 using NewTabPageAppTest = NewTabPageBrowserTest;
@@ -157,14 +165,9 @@ IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, Misc) {
           "runMochaSuite('NewTabPageAppTest Misc')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, OgbThemingRemoveScrimFalse) {
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, OgbThemingRemoveScrim) {
   RunTest("new_tab_page/app_test.js",
-          "runMochaSuite('NewTabPageAppTest OgbThemingRemoveScrim_false')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, OgbThemingRemoveScrimTrue) {
-  RunTest("new_tab_page/app_test.js",
-          "runMochaSuite('NewTabPageAppTest OgbThemingRemoveScrim_true')");
+          "runMochaSuite('NewTabPageAppTest OgbThemingRemoveScrim')");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, OgbScrim) {
@@ -187,11 +190,6 @@ IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, Clicks) {
           "runMochaSuite('NewTabPageAppTest Clicks')");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, Modules) {
-  RunTest("new_tab_page/app_test.js",
-          "runMochaSuite('NewTabPageAppTest Modules')");
-}
-
 IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, V2Modules) {
   RunTest("new_tab_page/app_test.js",
           "runMochaSuite('NewTabPageAppTest V2Modules')");
@@ -200,11 +198,6 @@ IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, V2Modules) {
 IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, CounterfactualModules) {
   RunTest("new_tab_page/app_test.js",
           "runMochaSuite('NewTabPageAppTest CounterfactualModules')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, CustomizeDialog) {
-  RunTest("new_tab_page/app_test.js",
-          "runMochaSuite('NewTabPageAppTest CustomizeDialog')");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, CustomizeChromeSidePanel) {
@@ -217,61 +210,48 @@ IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, LensUploadDialog) {
           "runMochaSuite('NewTabPageAppTest LensUploadDialog')");
 }
 
-class NewTabPageModulesHistoryClustersModuleTest
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, Composebox) {
+  RunTest("new_tab_page/app_test.js",
+          "runMochaSuite('NewTabPageAppTest Composebox')");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, ComposeEntryPoint) {
+  RunTest("new_tab_page/app_test.js",
+          "runMochaSuite('NewTabPageAppTest ComposeEntryPoint')");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, WallpaperSearch) {
+  RunTest("new_tab_page/app_test.js",
+          "runMochaSuite('NewTabPageAppTest WallpaperSearch')");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, MicrosoftAuth) {
+  RunTest("new_tab_page/app_test.js",
+          "runMochaSuite('NewTabPageAppTest MicrosoftAuth')");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageAppTest, NewTabFooter) {
+  RunTest("new_tab_page/app_test.js",
+          "runMochaSuite('NewTabPageAppTest NewTabFooter')");
+}
+
+class NewTabPageModulesMostRelevantTabResumptionModuleTest
     : public NewTabPageBrowserTest {
+ protected:
+  NewTabPageModulesMostRelevantTabResumptionModuleTest() {
+    scoped_feature_list_.InitWithFeatures(
+        /*enabled_features=*/{ntp_features::
+                                  kNtpMostRelevantTabResumptionModule},
+        /*disabled_features=*/{});
+  }
+
  private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      ntp_features::kNtpHistoryClustersModule};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest, Core) {
-  RunTest("new_tab_page/modules/history_clusters/module_test.js",
-          "runMochaSuite('NewTabPageModulesHistoryClustersModuleTest Core')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest, CoreV2) {
-  RunTest("new_tab_page/modules/v2/history_clusters/module_test.js",
-          "runMochaSuite('NewTabPageModulesHistoryClustersV2ModuleTest Core')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest, Layouts) {
-  RunTest(
-      "new_tab_page/modules/history_clusters/module_test.js",
-      "runMochaSuite('NewTabPageModulesHistoryClustersModuleTest Layouts')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest,
-                       UnloadMetricImageDisplayStateNone) {
-  RunTest("new_tab_page/modules/history_clusters/module_test.js",
-          "runMochaSuite('NewTabPageModulesHistoryClustersModuleTest "
-          "UnloadMetricNoImages')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest,
-                       UnloadMetricImageDisplayStateAll) {
-  RunTest("new_tab_page/modules/history_clusters/module_test.js",
-          "runMochaSuite('NewTabPageModulesHistoryClustersModuleTest "
-          "UnloadMetricAllImages')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest,
-                       CartTileRendering) {
-  RunTest("new_tab_page/modules/history_clusters/module_test.js",
-          "runMochaSuite('NewTabPageModulesHistoryClustersModuleTest "
-          "CartTileRendering')");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest, Tile) {
-  RunTest("new_tab_page/modules/history_clusters/tile_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest,
-                       SuggestTile) {
-  RunTest("new_tab_page/modules/history_clusters/suggest_tile_test.js",
-          "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesHistoryClustersModuleTest, CartTile) {
-  RunTest("new_tab_page/modules/history_clusters/cart/cart_tile_test.js",
-          "mocha.run()");
+IN_PROC_BROWSER_TEST_F(NewTabPageModulesMostRelevantTabResumptionModuleTest,
+                       Core) {
+  RunTest("new_tab_page/modules/v2/most_relevant_tab_resumption/module_test.js",
+          "runMochaSuite('NewTabPageModulesMostRelevantTabResumptionModuleTest "
+          "Core')");
 }

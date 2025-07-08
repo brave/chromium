@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/graphics/gpu/webgl_image_conversion.h"
 
+#include <array>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -11,6 +17,7 @@
 #include "base/compiler_specific.h"
 #include "base/numerics/checked_math.h"
 #include "build/build_config.h"
+#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/cpu/arm/webgl_image_conversion_neon.h"
 #include "third_party/blink/renderer/platform/graphics/cpu/loongarch64/webgl_image_conversion_lsx.h"
 #include "third_party/blink/renderer/platform/graphics/cpu/mips/webgl_image_conversion_msa.h"
@@ -339,7 +346,7 @@ void generatetables(){
 }
 */
 
-const uint16_t g_base_table[512] = {
+const std::array<uint16_t, 512> g_base_table = {
     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
@@ -386,9 +393,10 @@ const uint16_t g_base_table[512] = {
     64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512,
     64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512,
     64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512, 64512,
-    64512, 64512, 64512, 64512, 64512, 64512};
+    64512, 64512, 64512, 64512, 64512, 64512,
+};
 
-const unsigned char g_shift_table[512] = {
+const std::array<unsigned char, 512> g_shift_table = {
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
@@ -415,7 +423,8 @@ const unsigned char g_shift_table[512] = {
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
     24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24,
-    24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 13};
+    24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 13,
+};
 
 uint16_t ConvertFloatToHalfFloat(float f) {
   unsigned temp;
@@ -468,7 +477,7 @@ void generatef16tof32tables() {
 }
 */
 
-const uint32_t g_mantissa_table[2048] = {
+const std::array<uint32_t, 2048> g_mantissa_table = {
     0x0,        0x33800000, 0x34000000, 0x34400000, 0x34800000, 0x34a00000,
     0x34c00000, 0x34e00000, 0x35000000, 0x35100000, 0x35200000, 0x35300000,
     0x35400000, 0x35500000, 0x35600000, 0x35700000, 0x35800000, 0x35880000,
@@ -810,17 +819,19 @@ const uint32_t g_mantissa_table[2048] = {
     0x387d8000, 0x387da000, 0x387dc000, 0x387de000, 0x387e0000, 0x387e2000,
     0x387e4000, 0x387e6000, 0x387e8000, 0x387ea000, 0x387ec000, 0x387ee000,
     0x387f0000, 0x387f2000, 0x387f4000, 0x387f6000, 0x387f8000, 0x387fa000,
-    0x387fc000, 0x387fe000};
+    0x387fc000, 0x387fe000,
+};
 
-const uint16_t g_offset_table[64] = {
+const std::array<uint16_t, 64> g_offset_table = {
     0,    1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
     1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
     1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 0,
     1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
     1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
-    1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024};
+    1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
+};
 
-const uint32_t g_exponent_table[64] = {
+const std::array<uint32_t, 64> g_exponent_table = {
     0x0,        0x800000,   0x1000000,  0x1800000,  0x2000000,  0x2800000,
     0x3000000,  0x3800000,  0x4000000,  0x4800000,  0x5000000,  0x5800000,
     0x6000000,  0x6800000,  0x7000000,  0x7800000,  0x8000000,  0x8800000,
@@ -831,7 +842,8 @@ const uint32_t g_exponent_table[64] = {
     0x85000000, 0x85800000, 0x86000000, 0x86800000, 0x87000000, 0x87800000,
     0x88000000, 0x88800000, 0x89000000, 0x89800000, 0x8a000000, 0x8a800000,
     0x8b000000, 0x8b800000, 0x8c000000, 0x8c800000, 0x8d000000, 0x8d800000,
-    0x8e000000, 0x8e800000, 0x8f000000, 0xc7800000};
+    0x8e000000, 0x8e800000, 0x8f000000, 0xc7800000,
+};
 
 float ConvertHalfFloatToFloat(uint16_t half) {
   uint32_t temp =
@@ -3303,6 +3315,7 @@ void FormatConverter::Convert(WebGLImageConversion::DataFormat src_format,
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatRA8)
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatRA32F)
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatRGBA8)
+    FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatRGBA16)
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatARGB8)
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatABGR8)
     FORMATCONVERTER_CASE_SRCFORMAT(WebGLImageConversion::kDataFormatAR8)
@@ -3414,13 +3427,11 @@ void FormatConverter::Convert() {
   if (SrcFormat == DstFormat &&
       alphaOp == WebGLImageConversion::kAlphaDoNothing) {
     NOTREACHED();
-    return;
   }
   // Note that ImageBitmaps with SrcFormat==kDataFormatRGBA16F return
   // false for IsFloatFormat since the input data is uint16_t.
   if (!IsFloatFormat<DstFormat>::value && IsFloatFormat<SrcFormat>::value) {
     NOTREACHED();
-    return;
   }
 
   // Only textures uploaded from DOM elements or ImageData can allow DstFormat
@@ -3430,25 +3441,21 @@ void FormatConverter::Convert() {
   if (!src_format_comes_from_dom_element_or_image_data &&
       SrcFormat != DstFormat) {
     NOTREACHED();
-    return;
   }
   // Likewise, only textures uploaded from DOM elements or ImageData can
   // possibly need to be unpremultiplied.
   if (!src_format_comes_from_dom_element_or_image_data &&
       alphaOp == WebGLImageConversion::kAlphaDoUnmultiply) {
     NOTREACHED();
-    return;
   }
   if (src_format_comes_from_dom_element_or_image_data &&
       alphaOp == WebGLImageConversion::kAlphaDoUnmultiply &&
       !SupportsConversionFromDomElements<DstFormat>::value) {
     NOTREACHED();
-    return;
   }
   if ((!HasAlpha(SrcFormat) || !HasColor(SrcFormat) || !HasColor(DstFormat)) &&
       alphaOp != WebGLImageConversion::kAlphaDoNothing) {
     NOTREACHED();
-    return;
   }
   // If converting DOM element data to UNSIGNED_INT_5_9_9_9_REV or
   // UNSIGNED_INT_10F_11F_11F_REV, we should always switch to FLOAT instead to
@@ -3458,7 +3465,6 @@ void FormatConverter::Convert() {
       (DstFormat == WebGLImageConversion::kDataFormatRGB5999 ||
        DstFormat == WebGLImageConversion::kDataFormatRGB10F11F11F)) {
     NOTREACHED();
-    return;
   }
 
   typedef typename DataTypeForFormat<SrcFormat>::Type SrcType;
@@ -3534,11 +3540,6 @@ void FormatConverter::Convert() {
   return;
 }
 
-bool FrameIsValid(const SkBitmap& frame_bitmap) {
-  return !frame_bitmap.isNull() && !frame_bitmap.empty() &&
-         frame_bitmap.colorType() == kN32_SkColorType;
-}
-
 }  // anonymous namespace
 
 WebGLImageConversion::PixelStoreParams::PixelStoreParams()
@@ -3564,7 +3565,6 @@ WebGLImageConversion::DataFormat WebGLImageConversion::SkColorTypeToDataFormat(
       return kDataFormatRGBA32F;
     default:
       NOTREACHED();
-      return kDataFormatNumFormats;
   }
 }
 
@@ -3782,73 +3782,6 @@ GLenum WebGLImageConversion::ComputeImageSizeInBytes(
   if (!checked_value.IsValid())
     return GL_INVALID_VALUE;
   return GL_NO_ERROR;
-}
-
-WebGLImageConversion::ImageExtractor::ImageExtractor(
-    Image* image,
-    bool premultiply_alpha,
-    sk_sp<SkColorSpace> target_color_space) {
-  if (!image)
-    return;
-
-  sk_sp<SkImage> skia_image = image->PaintImageForCurrentFrame().GetSwSkImage();
-  if (skia_image && !skia_image->colorSpace())
-    skia_image = skia_image->reinterpretColorSpace(SkColorSpace::MakeSRGB());
-
-  if (image->HasData()) {
-    bool has_alpha = skia_image ? !skia_image->isOpaque() : true;
-    bool need_unpremultiplied = has_alpha && !premultiply_alpha;
-    bool need_color_conversion =
-        skia_image && target_color_space &&
-        !SkColorSpace::Equals(skia_image->colorSpace(),
-                              target_color_space.get());
-    if (!skia_image || !target_color_space || need_unpremultiplied ||
-        need_color_conversion) {
-      // Attempt to get raw unpremultiplied image data.
-      const bool data_complete = true;
-      // Always decode as unpremultiplied. If premultiplication is desired, it
-      // will be applied later.
-      const auto alpha_option = ImageDecoder::kAlphaNotPremultiplied;
-      // Decode to the default 8-bit depth (as opposed to floating-point).
-      // TODO(1320812): This is not always the correct choice.
-      auto bit_depth = ImageDecoder::kDefaultBitDepth;
-      // If we are not ignoring the color space, then tag the image with the
-      // target color space. It will be converted later on.
-      auto color_behavior =
-          target_color_space ? ColorBehavior::kTag : ColorBehavior::kIgnore;
-      std::unique_ptr<ImageDecoder> decoder(
-          ImageDecoder::Create(image->Data(), data_complete, alpha_option,
-                               bit_depth, color_behavior));
-      if (!decoder || !decoder->FrameCount())
-        return;
-      ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
-      if (!frame || frame->GetStatus() != ImageFrame::kFrameComplete)
-        return;
-      has_alpha = frame->HasAlpha();
-      SkBitmap bitmap = frame->Bitmap();
-      if (!FrameIsValid(bitmap))
-        return;
-
-      // TODO(fmalita): Partial frames are not supported currently: only fully
-      // decoded frames make it through.  We could potentially relax this and
-      // use SkImages::RasterFromBitmap(bitmap) to make a copy.
-      skia_image = frame->FinalizePixelsAndGetImage();
-    }
-  }
-
-  if (!skia_image)
-    return;
-
-  DCHECK(skia_image->width());
-  DCHECK(skia_image->height());
-
-  // Fail if the image was downsampled because of memory limits.
-  if (skia_image->width() != image->width() ||
-      skia_image->height() != image->height()) {
-    return;
-  }
-
-  sk_image_ = std::move(skia_image);
 }
 
 unsigned WebGLImageConversion::GetChannelBitsByFormat(GLenum format) {

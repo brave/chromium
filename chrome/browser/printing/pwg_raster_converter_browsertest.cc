@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/browser/printing/pwg_raster_converter.h"
 
+#include <optional>
+
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/hash/sha1.h"
@@ -13,13 +16,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "chrome/browser/printing/pwg_raster_converter.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/pdf_render_settings.h"
 #include "printing/pwg_raster_settings.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace printing {
 
@@ -53,11 +55,8 @@ void GetPdfData(const char* file_name,
       base::MakeRefCounted<base::RefCountedString>(std::move(pdf_data_str));
 }
 
-std::string HashData(const char* data, size_t len) {
-  char hash[base::kSHA1Length];
-  base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(data), len,
-                      reinterpret_cast<unsigned char*>(hash));
-  return base::HexEncode(hash, base::kSHA1Length);
+std::string HashData(base::span<const uint8_t> data) {
+  return base::HexEncode(base::SHA1Hash(data));
 }
 
 void ComparePwgOutput(const base::FilePath& expected_file,
@@ -69,15 +68,15 @@ void ComparePwgOutput(const base::FilePath& expected_file,
   ASSERT_TRUE(pwg_mapping.IsValid());
   size_t size = pwg_mapping.size();
   ASSERT_EQ(pwg_expected_data_str.length(), size);
-  EXPECT_EQ(HashData(pwg_expected_data_str.c_str(), size),
-            HashData(static_cast<const char*>(pwg_mapping.memory()), size));
+  EXPECT_EQ(HashData(base::as_byte_span(pwg_expected_data_str)),
+            HashData(pwg_mapping.GetMemoryAsSpan<uint8_t>()));
 }
 
 class PdfToPwgRasterBrowserTest : public InProcessBrowserTest {
  public:
   PdfToPwgRasterBrowserTest()
       : converter_(PwgRasterConverter::CreateDefault()) {}
-  ~PdfToPwgRasterBrowserTest() override {}
+  ~PdfToPwgRasterBrowserTest() override = default;
 
   void Convert(const base::RefCountedMemory* pdf_data,
                const PdfRenderSettings& conversion_settings,
@@ -86,7 +85,7 @@ class PdfToPwgRasterBrowserTest : public InProcessBrowserTest {
                base::ReadOnlySharedMemoryRegion* pwg_region) {
     bool called = false;
     base::RunLoop run_loop;
-    converter_->Start(/*use_skia=*/absl::nullopt, pdf_data, conversion_settings,
+    converter_->Start(/*use_skia=*/std::nullopt, pdf_data, conversion_settings,
                       bitmap_settings,
                       base::BindOnce(&ResultCallbackImpl, &called, pwg_region,
                                      run_loop.QuitClosure()));
@@ -103,7 +102,8 @@ class PdfToPwgRasterBrowserTest : public InProcessBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(PdfToPwgRasterBrowserTest, TestFailure) {
   scoped_refptr<base::RefCountedStaticMemory> bad_pdf_data =
-      base::MakeRefCounted<base::RefCountedStaticMemory>("0123456789", 10);
+      base::MakeRefCounted<base::RefCountedStaticMemory>(
+          base::byte_span_from_cstring("0123456789"));
   base::ReadOnlySharedMemoryRegion pwg_region;
   Convert(bad_pdf_data.get(), PdfRenderSettings(), PwgRasterSettings(),
           /*expect_success=*/false, &pwg_region);

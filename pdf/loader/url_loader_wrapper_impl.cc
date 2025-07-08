@@ -11,9 +11,11 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -21,6 +23,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/http/http_util.h"
+#include "pdf/loader/result_codes.h"
 #include "pdf/loader/url_loader.h"
 #include "ui/gfx/range/range.h"
 
@@ -76,7 +79,7 @@ bool GetByteRangeFromStr(const std::string& content_range_str,
 // response.
 // Returns false if not even a start position could be parsed.
 bool GetByteRangeFromHeaders(const std::string& headers, int* start, int* end) {
-  net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n");
+  net::HttpUtil::HeadersIterator it(headers, "\n");
   while (it.GetNext()) {
     if (base::EqualsCaseInsensitiveASCII(it.name_piece(), "content-range")) {
       if (GetByteRangeFromStr(it.values().c_str(), start, end))
@@ -90,14 +93,20 @@ bool IsDoubleEndLineAtEnd(const char* buffer, int size) {
   if (size < 2)
     return false;
 
-  if (buffer[size - 1] == '\n' && buffer[size - 2] == '\n')
-    return true;
+  UNSAFE_TODO({
+    if (buffer[size - 1] == '\n' && buffer[size - 2] == '\n') {
+      return true;
+    }
+  });
 
-  if (size < 4)
+  if (size < 4) {
     return false;
+  }
 
-  return buffer[size - 1] == '\n' && buffer[size - 2] == '\r' &&
-         buffer[size - 3] == '\n' && buffer[size - 4] == '\r';
+  UNSAFE_TODO({
+    return buffer[size - 1] == '\n' && buffer[size - 2] == '\r' &&
+           buffer[size - 3] == '\n' && buffer[size - 4] == '\r';
+  });
 }
 
 }  // namespace
@@ -154,7 +163,7 @@ void URLLoaderWrapperImpl::OpenRange(const std::string& url,
                                      const std::string& referrer_url,
                                      uint32_t position,
                                      uint32_t size,
-                                     base::OnceCallback<void(int)> callback) {
+                                     base::OnceCallback<void(bool)> callback) {
   url_loader_->Open(
       MakeRangeRequest(url, referrer_url, position, size),
       base::BindOnce(&URLLoaderWrapperImpl::DidOpen, weak_factory_.GetWeakPtr(),
@@ -191,10 +200,9 @@ void URLLoaderWrapperImpl::ParseHeaders(const std::string& response_headers) {
   if (response_headers.empty())
     return;
 
-  net::HttpUtil::HeadersIterator it(response_headers.begin(),
-                                    response_headers.end(), "\n");
+  net::HttpUtil::HeadersIterator it(response_headers, "\n");
   while (it.GetNext()) {
-    base::StringPiece name = it.name_piece();
+    std::string_view name = it.name_piece();
     if (base::EqualsCaseInsensitiveASCII(name, "content-length")) {
       content_length_ = atoi(it.values().c_str());
     } else if (base::EqualsCaseInsensitiveASCII(name, "accept-ranges")) {
@@ -212,12 +220,14 @@ void URLLoaderWrapperImpl::ParseHeaders(const std::string& response_headers) {
       // multipart boundary.
       std::string type = base::ToLowerASCII(it.values_piece());
       if (base::StartsWith(type, "multipart/", base::CompareCase::SENSITIVE)) {
-        const char* boundary = strstr(type.c_str(), "boundary=");
-        DCHECK(boundary);
-        if (boundary) {
-          multipart_boundary_ = std::string(boundary + 9);
-          is_multipart_ = !multipart_boundary_.empty();
-        }
+        UNSAFE_TODO({
+          const char* boundary = strstr(type.c_str(), "boundary=");
+          DCHECK(boundary);
+          if (boundary) {
+            multipart_boundary_ = std::string(boundary + 9);
+            is_multipart_ = !multipart_boundary_.empty();
+          }
+        });
       }
     } else if (base::EqualsCaseInsensitiveASCII(name, "content-disposition")) {
       content_disposition_ = it.values();
@@ -231,10 +241,10 @@ void URLLoaderWrapperImpl::ParseHeaders(const std::string& response_headers) {
   }
 }
 
-void URLLoaderWrapperImpl::DidOpen(base::OnceCallback<void(int)> callback,
-                                   int32_t result) {
+void URLLoaderWrapperImpl::DidOpen(base::OnceCallback<void(bool)> callback,
+                                   Result result) {
   SetHeadersFromLoader();
-  std::move(callback).Run(result);
+  std::move(callback).Run(result == Result::kSuccess);
 }
 
 void URLLoaderWrapperImpl::DidRead(base::OnceCallback<void(int)> callback,
@@ -266,7 +276,7 @@ void URLLoaderWrapperImpl::DidRead(base::OnceCallback<void(int)> callback,
       if (GetByteRangeFromHeaders(std::string(buffer_.data(), i), &start_pos,
                                   &end_pos)) {
         byte_range_ = gfx::Range(start_pos, end_pos);
-        start += i;
+        UNSAFE_TODO({ start += i; });
         length -= i;
       }
       break;
@@ -278,7 +288,7 @@ void URLLoaderWrapperImpl::DidRead(base::OnceCallback<void(int)> callback,
     return ReadResponseBodyImpl(std::move(callback));
   }
   DCHECK_GT(result, 0);
-  memmove(buffer_.data(), start, result);
+  UNSAFE_TODO(memmove(buffer_.data(), start, result));
 
   std::move(callback).Run(result);
 }

@@ -8,34 +8,38 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker.h"
 #include "chrome/browser/ui/views/desktop_capture/share_this_tab_source_view.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/controls/button/toggle_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/window/dialog_delegate.h"
 
-class ShareThisTabDialogViews;
+class ShareThisTabMediaPicker;
 
-// Dialog view used for ShareThisTabDialogViews.
+// Dialog view used for ShareThisTabMediaPicker.
 class ShareThisTabDialogView : public views::DialogDelegateView {
+  METADATA_HEADER(ShareThisTabDialogView, views::DialogDelegateView)
+
  public:
-  METADATA_HEADER(ShareThisTabDialogView);
   ShareThisTabDialogView(const DesktopMediaPicker::Params& params,
-                         ShareThisTabDialogViews* parent);
+                         ShareThisTabMediaPicker* parent);
   ShareThisTabDialogView(const ShareThisTabDialogView&) = delete;
   ShareThisTabDialogView& operator=(const ShareThisTabDialogView&) = delete;
   ~ShareThisTabDialogView() override;
 
   void RecordUmaDismissal() const;
 
-  // Called by parent (ShareThisTabDialogViews) when it's destroyed.
+  // Called by parent (ShareThisTabMediaPicker) when it's destroyed.
   void DetachParent();
 
   // views::DialogDelegateView:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& /*available_size*/) const override;
   bool ShouldShowWindowTitle() const override;
   bool Accept() override;
   bool Cancel() override;
@@ -53,14 +57,13 @@ class ShareThisTabDialogView : public views::DialogDelegateView {
   const base::WeakPtr<content::WebContents> web_contents_;
   const std::u16string app_name_;
 
-  raw_ptr<ShareThisTabDialogViews> parent_;
+  raw_ptr<ShareThisTabMediaPicker> parent_;
 
   // Child view displaying a preview, icon and title for the tab being shared,
   // or a throbber while the dialog is not yet activated.
   raw_ptr<ShareThisTabSourceView> source_view_ = nullptr;
 
-  raw_ptr<views::ToggleButton, DanglingUntriaged> audio_toggle_button_ =
-      nullptr;
+  raw_ptr<views::ToggleButton> audio_toggle_button_ = nullptr;
 
   // Timer for an initial delay during which the allow-button is disabled.
   base::OneShotTimer activation_timer_;
@@ -78,14 +81,16 @@ class ShareThisTabDialogView : public views::DialogDelegateView {
 };
 
 // Implementation of DesktopMediaPicker for the ShareThisTabDialogView.
-class ShareThisTabDialogViews : public DesktopMediaPicker {
+class ShareThisTabMediaPicker : public DesktopMediaPicker {
  public:
-  ShareThisTabDialogViews();
-  ShareThisTabDialogViews(const ShareThisTabDialogViews&) = delete;
-  ShareThisTabDialogViews& operator=(const ShareThisTabDialogViews&) = delete;
-  ~ShareThisTabDialogViews() override;
+  ShareThisTabMediaPicker();
+  ShareThisTabMediaPicker(const ShareThisTabMediaPicker&) = delete;
+  ShareThisTabMediaPicker& operator=(const ShareThisTabMediaPicker&) = delete;
+  ~ShareThisTabMediaPicker() override;
 
-  void NotifyDialogResult(const content::DesktopMediaID& source);
+  void NotifyDialogResult(
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult> result);
 
   // DesktopMediaPicker:
   void Show(const DesktopMediaPicker::Params& params,
@@ -96,7 +101,7 @@ class ShareThisTabDialogViews : public DesktopMediaPicker {
   DoneCallback callback_;
 
   // The |dialog_| is owned by the corresponding views::Widget instance.
-  // When ShareThisTabDialogViews is destroyed the |dialog_| is destroyed
+  // When ShareThisTabMediaPicker is destroyed the |dialog_| is destroyed
   // asynchronously by closing the widget.
   raw_ptr<ShareThisTabDialogView> dialog_;
 };

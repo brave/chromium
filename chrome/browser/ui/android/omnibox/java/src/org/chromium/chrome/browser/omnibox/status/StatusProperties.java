@@ -16,12 +16,13 @@ import android.view.View;
 import androidx.annotation.ColorInt;
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.core.util.ObjectsCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.ui.UiUtils;
@@ -33,21 +34,22 @@ import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** Model properties for the Status. */
+@NullMarked
 public class StatusProperties {
     // TODO(wylieb): Investigate the case where we only want to swap the tint (if any).
     /** Encapsulates an icon and tint to allow atomic drawable updates for StatusView. */
     public static class StatusIconResource {
-        private @DrawableRes Integer mIconRes;
+        private @DrawableRes @Nullable Integer mIconRes;
         private @ColorRes int mTint;
-        private String mIconIdentifier;
-        private Bitmap mBitmap;
-        private Drawable mDrawable;
+        private @Nullable String mIconIdentifier;
+        private @Nullable Bitmap mBitmap;
+        private @Nullable Drawable mDrawable;
         private @StatusView.IconTransitionType int mIconTransitionType =
                 StatusView.IconTransitionType.CROSSFADE;
-        private Runnable mCallback;
+        private @Nullable Runnable mCallback;
 
         /** Constructor for a custom drawable. */
-        public StatusIconResource(Drawable drawable) {
+        public StatusIconResource(@Nullable Drawable drawable) {
             mDrawable = drawable;
         }
 
@@ -70,15 +72,19 @@ public class StatusProperties {
             mTint = tint;
         }
 
-        /** @return The tint associated with this resource. */
+        /**
+         * @return The tint associated with this resource.
+         */
         @ColorRes
         int getTint() {
             return mTint;
         }
 
-        /** @return The icon res. */
+        /**
+         * @return The icon res.
+         */
         @DrawableRes
-        int getIconResForTesting() {
+        public int getIconRes() {
             if (mIconRes == null) return 0;
             return mIconRes;
         }
@@ -88,14 +94,18 @@ public class StatusProperties {
             mIconTransitionType = type;
         }
 
-        /** @return The animation transition type for this icon. */
+        /**
+         * @return The animation transition type for this icon.
+         */
         @StatusView.IconTransitionType
         int getTransitionType() {
             return mIconTransitionType;
         }
 
-        /** @return The {@link Drawable} for this StatusIconResource. */
-        Drawable getDrawable(Context context, Resources resources) {
+        /**
+         * @return The {@link Drawable} for this StatusIconResource.
+         */
+        public @Nullable Drawable getDrawable(Context context, Resources resources) {
             if (mBitmap != null) {
                 Drawable drawable = new BitmapDrawable(resources, mBitmap);
                 if (mTint != 0) {
@@ -115,9 +125,10 @@ public class StatusProperties {
             }
         }
 
-        /** @return The icon identifier, used for testing. */
-        @Nullable
-        String getIconIdentifierForTesting() {
+        /**
+         * @return The icon identifier, used for testing.
+         */
+        @Nullable String getIconIdentifierForTesting() {
             return mIconIdentifier;
         }
 
@@ -136,16 +147,18 @@ public class StatusProperties {
 
         /**
          * Sets the callback to be run after this icon has been set.
-         * @param callback  The Runnable to be called. Only works for the ROTATE transition and
-         *                  called if the animation has run to completion.
+         *
+         * @param callback The Runnable to be called. Only works for the ROTATE transition and
+         *     called if the animation has run to completion.
          */
         void setAnimationFinishedCallback(Runnable callback) {
             mCallback = callback;
         }
 
-        /** @return the callback to be run after this icon has been set, if any. */
-        @Nullable
-        Runnable getAnimationFinishedCallback() {
+        /**
+         * @return the callback to be run after this icon has been set, if any.
+         */
+        @Nullable Runnable getAnimationFinishedCallback() {
             return mCallback;
         }
     }
@@ -160,9 +173,9 @@ public class StatusProperties {
         public static final int OMNIBOX_ICON_DP = 24;
         public static final int INNER_ICON_DP = 20;
 
-        private boolean mIsIncognito;
+        private final boolean mIsIncognito;
 
-        PermissionIconResource(Drawable drawable, boolean isIncognito) {
+        PermissionIconResource(@Nullable Drawable drawable, boolean isIncognito) {
             super(drawable);
             mIsIncognito = isIncognito;
         }
@@ -174,7 +187,7 @@ public class StatusProperties {
 
         /** Returns a {@link Drawable} for this StatusIconResource. */
         @Override
-        Drawable getDrawable(Context context, Resources resources) {
+        public @Nullable Drawable getDrawable(Context context, Resources resources) {
             Drawable icon = super.getDrawable(context, resources);
             if (icon == null) {
                 return null;
@@ -183,7 +196,7 @@ public class StatusProperties {
             int width = ViewUtils.dpToPx(context, OMNIBOX_ICON_DP);
             Bitmap bitmap = Bitmap.createBitmap(width, width, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(bitmap);
-            drawCircleBackground(canvas, context, resources);
+            drawCircleBackground(canvas, context);
             drawCenteredIcon(context, canvas, icon);
             return new BitmapDrawable(resources, bitmap);
         }
@@ -199,13 +212,14 @@ public class StatusProperties {
         }
 
         /** Draws a circle background on canvas. */
-        private void drawCircleBackground(Canvas canvas, Context context, Resources resources) {
+        private void drawCircleBackground(Canvas canvas, Context context) {
             float radius = 0.5f * canvas.getWidth();
             Paint paint = new Paint();
             // Use the dark mode color if in incognito mode.
-            final @ColorInt int color = mIsIncognito
-                    ? context.getColor(R.color.toolbar_background_primary_dark)
-                    : SemanticColorUtils.getToolbarBackgroundPrimary(context);
+            final @ColorInt int color =
+                    mIsIncognito
+                            ? context.getColor(R.color.toolbar_background_primary_dark)
+                            : SemanticColorUtils.getToolbarBackgroundPrimary(context);
             paint.setColor(color);
             paint.setAntiAlias(true);
             canvas.drawCircle(radius, radius, radius, paint);
@@ -227,10 +241,6 @@ public class StatusProperties {
 
     /** Whether the icon is shown. */
     static final WritableBooleanPropertyKey SHOW_STATUS_ICON = new WritableBooleanPropertyKey();
-
-    /** Whether the icon background is shown. */
-    static final WritableBooleanPropertyKey SHOW_STATUS_ICON_BACKGROUND =
-            new WritableBooleanPropertyKey();
 
     /** The handler of status click events. */
     static final WritableObjectPropertyKey<View.OnClickListener> STATUS_CLICK_LISTENER =
@@ -254,6 +264,13 @@ public class StatusProperties {
     static final WritableObjectPropertyKey<StatusIconResource> STATUS_ICON_RESOURCE =
             new WritableObjectPropertyKey<>();
 
+    /** The StatusView tooltip text resource. */
+    static final WritableIntPropertyKey STATUS_VIEW_TOOLTIP_TEXT = new WritableIntPropertyKey();
+
+    /** The StatusView background drawable. */
+    static final WritableObjectPropertyKey<Drawable> STATUS_VIEW_BACKGROUND =
+            new WritableObjectPropertyKey<>();
+
     /** The x translation of the status view. */
     static final WritableFloatPropertyKey TRANSLATION_X = new WritableFloatPropertyKey();
 
@@ -271,26 +288,35 @@ public class StatusProperties {
     /** Specifies width of the verbose status text field. */
     static final WritableIntPropertyKey VERBOSE_STATUS_TEXT_WIDTH = new WritableIntPropertyKey();
 
+    /**
+     * Whether the status view is shown. This is different from SHOW_STATUS_ICON, which is
+     * responsible for whether the icon sub-view is shown or not and is managed independently.
+     */
+    static final WritableBooleanPropertyKey SHOW_STATUS_VIEW = new WritableBooleanPropertyKey();
+
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
-    public static final PropertyKey[] ALL_KEYS = new PropertyKey[] {
-            ALPHA,
-            ANIMATIONS_ENABLED,
-            INCOGNITO_BADGE_VISIBLE,
-            SEPARATOR_COLOR,
-            SHOW_STATUS_ICON,
-            SHOW_STATUS_ICON_BACKGROUND,
-            STATUS_CLICK_LISTENER,
-            STATUS_ACCESSIBILITY_TOAST_RES,
-            STATUS_ACCESSIBILITY_DOUBLE_TAP_DESCRIPTION_RES,
-            STATUS_ICON_ALPHA,
-            STATUS_ICON_DESCRIPTION_RES,
-            STATUS_ICON_RESOURCE,
-            TRANSLATION_X,
-            VERBOSE_STATUS_TEXT_COLOR,
-            VERBOSE_STATUS_TEXT_STRING_RES,
-            VERBOSE_STATUS_TEXT_VISIBLE,
-            VERBOSE_STATUS_TEXT_WIDTH,
-    };
+    public static final PropertyKey[] ALL_KEYS =
+            new PropertyKey[] {
+                ALPHA,
+                ANIMATIONS_ENABLED,
+                INCOGNITO_BADGE_VISIBLE,
+                SEPARATOR_COLOR,
+                SHOW_STATUS_ICON,
+                SHOW_STATUS_VIEW,
+                STATUS_CLICK_LISTENER,
+                STATUS_ACCESSIBILITY_TOAST_RES,
+                STATUS_ACCESSIBILITY_DOUBLE_TAP_DESCRIPTION_RES,
+                STATUS_ICON_ALPHA,
+                STATUS_ICON_DESCRIPTION_RES,
+                STATUS_ICON_RESOURCE,
+                STATUS_VIEW_TOOLTIP_TEXT,
+                STATUS_VIEW_BACKGROUND,
+                TRANSLATION_X,
+                VERBOSE_STATUS_TEXT_COLOR,
+                VERBOSE_STATUS_TEXT_STRING_RES,
+                VERBOSE_STATUS_TEXT_VISIBLE,
+                VERBOSE_STATUS_TEXT_WIDTH,
+            };
 
     private StatusProperties() {}
 }

@@ -9,6 +9,7 @@
 #include "ash/login/ui/login_button.h"
 #include "ash/style/system_shadow.h"
 #include "base/memory/weak_ptr.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/view.h"
@@ -21,6 +22,8 @@ class LoginBubbleHandler;
 // Base bubble view for login screen bubbles.
 class ASH_EXPORT LoginBaseBubbleView : public views::View,
                                        public ui::LayerAnimationObserver {
+  METADATA_HEADER(LoginBaseBubbleView, views::View)
+
  public:
   enum class PositioningStrategy {
     // Try to show the bubble after the anchor (on the right side in LTR), if
@@ -56,6 +59,8 @@ class ASH_EXPORT LoginBaseBubbleView : public views::View,
   void set_persistent(bool is_persistent) { is_persistent_ = is_persistent; }
 
   void SetAnchorView(base::WeakPtr<views::View> anchor_view);
+  // Returns the anchor view. May be `nullptr`.
+  views::View* GetAnchorView() const;
 
   // ui::LayerAnimationObserver:
   void OnLayerAnimationEnded(ui::LayerAnimationSequence* sequence) override;
@@ -64,8 +69,9 @@ class ASH_EXPORT LoginBaseBubbleView : public views::View,
       ui::LayerAnimationSequence* sequence) override {}
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
-  void Layout() override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+  void Layout(PassKey) override;
   void OnBlur() override;
 
   void set_positioning_strategy(PositioningStrategy positioning_strategy) {
@@ -84,9 +90,6 @@ class ASH_EXPORT LoginBaseBubbleView : public views::View,
  private:
   // Create a layer for this view if doesn't exist.
   void EnsureLayer();
-
-  // Returns the anchor view. May be `nullptr`.
-  views::View* GetAnchorView() const;
 
   // Return bounds of the anchors root view. This bounds excludes virtual
   // keyboard.

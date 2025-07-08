@@ -6,23 +6,27 @@
 
 #import <Foundation/Foundation.h>
 
-#include "base/command_line.h"
-#include "base/feature_list.h"
-#include "base/no_destructor.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/sys_string_conversions.h"
-#include "base/values.h"
-#include "components/autofill/core/common/autofill_features.h"
-#include "components/autofill/ios/browser/autofill_switches.h"
+#import "base/command_line.h"
+#import "base/feature_list.h"
+#import "base/no_destructor.h"
+#import "base/strings/string_number_conversions.h"
+#import "base/strings/sys_string_conversions.h"
+#import "base/values.h"
+#import "components/autofill/core/common/autofill_features.h"
+#import "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "components/autofill/ios/browser/autofill_util.h"
+#import "components/autofill/ios/common/field_data_manager_factory_ios.h"
+#import "components/autofill/ios/common/javascript_feature_util.h"
+#import "components/autofill/ios/form_util/autofill_form_features_java_script_feature.h"
+#import "components/autofill/ios/form_util/autofill_renderer_id_java_script_feature.h"
 #import "components/autofill/ios/form_util/form_util_java_script_feature.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/web/public/js_messaging/web_frame.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
+#import "ios/web/public/web_state.h"
 
 namespace {
 const char kScriptName[] = "autofill_controller";
+constexpr char kFormFilledCommand[] = "formFilled";
 
 // The timeout for any JavaScript call in this file.
 const int64_t kJavaScriptExecutionTimeoutInSeconds = 5;
@@ -39,47 +43,27 @@ AutofillJavaScriptFeature* AutofillJavaScriptFeature::GetInstance() {
 
 AutofillJavaScriptFeature::AutofillJavaScriptFeature()
     : web::JavaScriptFeature(
-          web::ContentWorld::kIsolatedWorld,
+          ContentWorldForAutofillJavascriptFeatures(),
           {FeatureScript::CreateWithFilename(
               kScriptName,
               FeatureScript::InjectionTime::kDocumentStart,
               FeatureScript::TargetFrames::kAllFrames,
               FeatureScript::ReinjectionBehavior::kInjectOncePerWindow)},
-          {FormUtilJavaScriptFeature::GetInstance()}) {}
+          {FormUtilJavaScriptFeature::GetInstance(),
+           AutofillFormFeaturesJavaScriptFeature::GetInstance(),
+           AutofillRendererIDJavaScriptFeature::GetInstance()}) {}
 
 AutofillJavaScriptFeature::~AutofillJavaScriptFeature() = default;
 
-void AutofillJavaScriptFeature::AddJSDelayInFrame(web::WebFrame* frame) {
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(
-          autofill::switches::kAutofillIOSDelayBetweenFields)) {
-    return;
-  }
-
-  const std::string delay_string = command_line->GetSwitchValueASCII(
-      autofill::switches::kAutofillIOSDelayBetweenFields);
-  int command_line_delay = 0;
-  if (base::StringToInt(delay_string, &command_line_delay)) {
-    return;
-  }
-
-  CallJavaScriptFunction(frame, "autofill.setDelay",
-                         base::Value::List().Append(command_line_delay));
-}
-
 void AutofillJavaScriptFeature::FetchForms(
     web::WebFrame* frame,
-    NSUInteger required_fields_count,
     base::OnceCallback<void(NSString*)> callback) {
   DCHECK(!callback.is_null());
 
   bool restrict_unowned_fields_to_formless_checkout = false;
   CallJavaScriptFunction(
       frame, "autofill.extractForms",
-      base::Value::List()
-          .Append(static_cast<int>(required_fields_count))
-          .Append(restrict_unowned_fields_to_formless_checkout),
+      base::Value::List().Append(restrict_unowned_fields_to_formless_checkout),
       autofill::CreateStringCallback(std::move(callback)),
       base::Seconds(kJavaScriptExecutionTimeoutInSeconds));
 }
@@ -89,6 +73,16 @@ void AutofillJavaScriptFeature::FillActiveFormField(
     base::Value::Dict data,
     base::OnceCallback<void(BOOL)> callback) {
   CallJavaScriptFunction(frame, "autofill.fillActiveFormField",
+                         base::Value::List().Append(std::move(data)),
+                         autofill::CreateBoolCallback(std::move(callback)),
+                         base::Seconds(kJavaScriptExecutionTimeoutInSeconds));
+}
+
+void AutofillJavaScriptFeature::FillSpecificFormField(
+    web::WebFrame* frame,
+    base::Value::Dict data,
+    base::OnceCallback<void(BOOL)> callback) {
+  CallJavaScriptFunction(frame, "autofill.fillSpecificFormField",
                          base::Value::List().Append(std::move(data)),
                          autofill::CreateBoolCallback(std::move(callback)),
                          base::Seconds(kJavaScriptExecutionTimeoutInSeconds));
@@ -131,5 +125,56 @@ void AutofillJavaScriptFeature::FillPredictionData(web::WebFrame* frame,
   CallJavaScriptFunction(frame, "autofill.fillPredictionData",
                          base::Value::List().Append(std::move(data)));
 }
+
+std::optional<std::string>
+AutofillJavaScriptFeature::GetScriptMessageHandlerName() const {
+  return kScriptName;
+}
+
+void AutofillJavaScriptFeature::ScriptMessageReceived(
+    web::WebState* web_state,
+    const web::ScriptMessage& message) {
+  if (!message.body() || !message.body()->is_dict()) {
+    return;
+  }
+  const std::string* command = message.body()->GetDict().FindString("command");
+  const std::string* frame_id = message.body()->GetDict().FindString("frame");
+  const base::Value::Dict* form_dict =
+      message.body()->GetDict().FindDict("form_data");
+  if (!command || !frame_id || !form_dict || *command != kFormFilledCommand) {
+    return;
+  }
+
+  web::WebFrame* frame =
+      GetWebFramesManager(web_state)->GetFrameWithId(*frame_id);
+  if (!frame) {
+    return;
+  }
+
+  auto* driver =
+      autofill::AutofillDriverIOS::FromWebStateAndWebFrame(web_state, frame);
+
+  const scoped_refptr<FieldDataManager> field_data_manager =
+      FieldDataManagerFactoryIOS::GetRetainable(frame);
+
+  if (std::optional<autofill::FormData> form_data = ExtractFormData(
+          *form_dict, /*filtered=*/false, /*form_name=*/u"",
+          web_state->GetLastCommittedURL(), frame->GetSecurityOrigin(),
+          *field_data_manager, frame->GetFrameId())) {
+    driver->DidFillAutofillFormData(*std::move(form_data),
+                                    base::TimeTicks::Now());
+  }
+}
+
+AutofillJavaScriptFeature::AutofillJavaScriptFeature(
+    AutofillRendererIDJavaScriptFeature* renderer_id_feature)
+    : web::JavaScriptFeature(
+          ContentWorldForAutofillJavascriptFeatures(),
+          {FeatureScript::CreateWithFilename(
+              kScriptName,
+              FeatureScript::InjectionTime::kDocumentStart,
+              FeatureScript::TargetFrames::kAllFrames,
+              FeatureScript::ReinjectionBehavior::kInjectOncePerWindow)},
+          {FormUtilJavaScriptFeature::GetInstance(), renderer_id_feature}) {}
 
 }  // namespace autofill

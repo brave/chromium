@@ -7,36 +7,27 @@
 #include "base/check.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
-namespace content {
-
-// static
-blink::mojom::IDBValuePtr IndexedDBValue::ConvertAndEraseValue(
-    IndexedDBValue* value) {
-  auto mojo_value = blink::mojom::IDBValue::New();
-  if (!value->empty()) {
-    // TODO(crbug.com/902498): Use mojom traits to map directly from
-    //                         std::string.
-    const char* value_data = value->bits.data();
-    mojo_value->bits =
-        std::vector<uint8_t>(value_data, value_data + value->bits.length());
-    // Release value->bits std::string.
-    value->bits.clear();
-  }
-  IndexedDBExternalObject::ConvertToMojo(value->external_objects,
-                                         &mojo_value->external_objects);
-  return mojo_value;
-}
+namespace content::indexed_db {
 
 IndexedDBValue::IndexedDBValue() = default;
+IndexedDBValue::~IndexedDBValue() = default;
+
+IndexedDBValue::IndexedDBValue(IndexedDBValue&& other) = default;
+IndexedDBValue& IndexedDBValue::operator=(IndexedDBValue&& other) = default;
+
+IndexedDBValue IndexedDBValue::Clone() const {
+  IndexedDBValue copy;
+  copy.bits = bits;
+  copy.external_objects = external_objects;
+  return copy;
+}
+
 IndexedDBValue::IndexedDBValue(
     const std::string& input_bits,
     const std::vector<IndexedDBExternalObject>& external_objects)
-    : bits(input_bits), external_objects(external_objects) {
+    : bits(input_bits.begin(), input_bits.end()),
+      external_objects(external_objects) {
   DCHECK(external_objects.empty() || input_bits.size());
 }
-IndexedDBValue::IndexedDBValue(const IndexedDBValue& other) = default;
-IndexedDBValue::~IndexedDBValue() = default;
-IndexedDBValue& IndexedDBValue::operator=(const IndexedDBValue& other) =
-    default;
 
-}  // namespace content
+}  // namespace content::indexed_db

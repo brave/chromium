@@ -9,11 +9,13 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/browser/user_education/user_education_service.h"
+#include "chrome/browser/user_education/user_education_service_factory.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
-#include "components/user_education/common/help_bubble_factory_registry.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "components/user_education/common/help_bubble/help_bubble_factory_registry.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "components/user_education/views/help_bubble_factory_views.h"
 #include "components/user_education/views/help_bubble_view.h"
 #include "content/public/test/browser_test.h"
@@ -28,34 +30,35 @@ class HelpBubbleFactoryViewsUiTest : public InteractiveBrowserTest {
  protected:
   auto CreateHelpBubble(ui::ElementIdentifier anchor,
                         user_education::HelpBubbleParams params) {
-    auto create_step = base::BindOnce(
-        [](HelpBubbleFactoryViewsUiTest* test,
-           user_education::HelpBubbleParams params,
-           ui::TrackedElement* anchor) {
-          BrowserView* const browser_view =
-              BrowserView::GetBrowserViewForBrowser(test->browser());
-          test->browser_native_view_ =
-              browser_view->GetWidget()->GetNativeView();
-          auto* const registry = browser_view->GetFeaturePromoController()
-                                     ->bubble_factory_registry();
-          test->help_bubble_ =
-              registry->CreateHelpBubble(anchor, std::move(params));
-        },
-        base::Unretained(this), std::move(params));
     return Steps(
-        WithElement(anchor, std::move(create_step)),
+        WithElement(anchor,
+                    [this, params = std::move(params)](
+                        ui::TrackedElement* anchor) mutable {
+                      BrowserView* const browser_view =
+                          BrowserView::GetBrowserViewForBrowser(browser());
+                      browser_widget_ = browser_view->GetWidget();
+                      auto& registry =
+                          UserEducationServiceFactory::GetForBrowserContext(
+                              browser()->profile())
+                              ->help_bubble_factory_registry();
+                      help_bubble_ =
+                          registry.CreateHelpBubble(anchor, std::move(params));
+                    }),
         WaitForShow(
             user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
         WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
                  [this](views::View* view) {
-                   help_bubble_native_view_ =
-                       view->GetWidget()->GetNativeView();
+                   help_bubble_widget_ = view->GetWidget();
                  }));
   }
 
   auto CloseHelpBubble() {
     return Steps(
-        Do([this]() { help_bubble_.reset(); }),
+        Do([this]() {
+          browser_widget_ = nullptr;
+          help_bubble_widget_ = nullptr;
+          help_bubble_.reset();
+        }),
         WaitForHide(
             user_education::HelpBubbleView::kHelpBubbleElementIdForTesting));
   }
@@ -68,8 +71,8 @@ class HelpBubbleFactoryViewsUiTest : public InteractiveBrowserTest {
 
  protected:
   std::unique_ptr<user_education::HelpBubble> help_bubble_;
-  gfx::NativeView browser_native_view_ = gfx::NativeView();
-  gfx::NativeView help_bubble_native_view_ = gfx::NativeView();
+  raw_ptr<views::Widget> browser_widget_ = nullptr;
+  raw_ptr<views::Widget> help_bubble_widget_ = nullptr;
 };
 
 IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryViewsUiTest,
@@ -77,16 +80,17 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryViewsUiTest,
   RunTestSequence(
       ObserveState(views::test::kCurrentWidgetFocus),
       // A help bubble without buttons should not start focused.
-      CreateHelpBubble(kAppMenuButtonElementId, GetDefaultHelpBubbleParams()),
+      CreateHelpBubble(kToolbarAppMenuButtonElementId,
+                       GetDefaultHelpBubbleParams()),
       // Toggle focus to the help bubble.
       Do([this]() { help_bubble_->ToggleFocusForAccessibility(); }),
       WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(help_bubble_native_view_)),
+                   std::ref(help_bubble_widget_)),
       // Toggle focus to the anchor view.
       Do([this]() { help_bubble_->ToggleFocusForAccessibility(); }),
-      WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(browser_native_view_)),
-      CheckViewProperty(kAppMenuButtonElementId, &views::View::HasFocus, true),
+      WaitForState(views::test::kCurrentWidgetFocus, std::ref(browser_widget_)),
+      CheckViewProperty(kToolbarAppMenuButtonElementId, &views::View::HasFocus,
+                        true),
       CloseHelpBubble());
 }
 
@@ -101,14 +105,14 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryViewsUiTest,
   RunTestSequence(
       ObserveState(views::test::kCurrentWidgetFocus),
       // A help bubble with a button should start focused.
-      CreateHelpBubble(kAppMenuButtonElementId, std::move(params)),
+      CreateHelpBubble(kToolbarAppMenuButtonElementId, std::move(params)),
       WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(help_bubble_native_view_)),
+                   std::ref(help_bubble_widget_)),
       // Toggle focus to the anchor view.
       Do([this]() { help_bubble_->ToggleFocusForAccessibility(); }),
-      WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(browser_native_view_)),
-      CheckViewProperty(kAppMenuButtonElementId, &views::View::HasFocus, true),
+      WaitForState(views::test::kCurrentWidgetFocus, std::ref(browser_widget_)),
+      CheckViewProperty(kToolbarAppMenuButtonElementId, &views::View::HasFocus,
+                        true),
       CloseHelpBubble());
 }
 
@@ -120,14 +124,14 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryViewsUiTest,
 
   RunTestSequence(
       ObserveState(views::test::kCurrentWidgetFocus),
-      CreateHelpBubble(kAppMenuButtonElementId, GetDefaultHelpBubbleParams()),
+      CreateHelpBubble(kToolbarAppMenuButtonElementId,
+                       GetDefaultHelpBubbleParams()),
       SendAccelerator(kBrowserViewElementId, next_pane),
       WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(help_bubble_native_view_)),
+                   std::ref(help_bubble_widget_)),
       SendAccelerator(
           user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
           next_pane),
-      WaitForState(views::test::kCurrentWidgetFocus,
-                   std::ref(browser_native_view_)),
+      WaitForState(views::test::kCurrentWidgetFocus, std::ref(browser_widget_)),
       CloseHelpBubble());
 }

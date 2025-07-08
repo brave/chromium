@@ -9,14 +9,15 @@
 
 #include "base/check_op.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/expected.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/printing/oop_features.h"
 #include "chrome/browser/printing/print_backend_service_manager.h"
 #include "chrome/browser/printing/print_job_worker_oop.h"
 #include "components/device_event_log/device_event_log.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/web_contents.h"
 #include "printing/buildflags/buildflags.h"
-#include "printing/printing_features.h"
 
 namespace printing {
 
@@ -28,9 +29,9 @@ PrinterQueryOop::~PrinterQueryOop() = default;
 std::unique_ptr<PrintJobWorker> PrinterQueryOop::TransferContextToNewWorker(
     PrintJob* print_job) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  // TODO(crbug.com/1414968)  Do extra setup on the worker as needed for
+  // TODO(crbug.com/40256381)  Do extra setup on the worker as needed for
   // supporting OOP system print dialogs.
-  return CreatePrintJobWorker(print_job);
+  return CreatePrintJobWorkerOop(print_job);
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -63,21 +64,21 @@ void PrinterQueryOop::SetClientId(
 
 void PrinterQueryOop::OnDidUseDefaultSettings(
     SettingsCallback callback,
-    mojom::PrintSettingsResultPtr print_settings) {
+    base::expected<PrintSettings, mojom::ResultCode> print_settings) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   mojom::ResultCode result;
-  if (print_settings->is_result_code()) {
-    result = print_settings->get_result_code();
+  if (!print_settings.has_value()) {
+    result = print_settings.error();
     DCHECK_NE(result, mojom::ResultCode::kSuccess);
     PRINTER_LOG(ERROR) << "Error trying to use default settings via service: "
                        << result;
 
-    // TODO(crbug.com/809738)  Fill in support for handling of access-denied
+    // TODO(crbug.com/40561724)  Fill in support for handling of access-denied
     // result code.  Blocked on crbug.com/1243873 for Windows.
   } else {
     VLOG(1) << "Use default settings from service complete";
     result = mojom::ResultCode::kSuccess;
-    printing_context()->ApplyPrintSettings(print_settings->get_settings());
+    printing_context()->SetPrintSettings(print_settings.value());
   }
 
   InvokeSettingsCallback(std::move(callback), result);
@@ -86,13 +87,13 @@ void PrinterQueryOop::OnDidUseDefaultSettings(
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
 void PrinterQueryOop::OnDidAskUserForSettings(
     SettingsCallback callback,
-    mojom::PrintSettingsResultPtr print_settings) {
+    base::expected<PrintSettings, mojom::ResultCode> print_settings) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   mojom::ResultCode result;
-  if (print_settings->is_settings()) {
+  if (print_settings.has_value()) {
     VLOG(1) << "Ask user for settings from service complete";
     result = mojom::ResultCode::kSuccess;
-    printing_context()->ApplyPrintSettings(print_settings->get_settings());
+    printing_context()->SetPrintSettings(print_settings.value());
 
     // Use the same PrintBackendService for querying and printing, so that the
     // same device context can be used with both.
@@ -100,15 +101,22 @@ void PrinterQueryOop::OnDidAskUserForSettings(
         PrintBackendServiceManager::GetInstance()
             .RegisterPrintDocumentClientReusingClientRemote(
                 *query_with_ui_client_id_);
+    if (!print_document_client_id_.has_value()) {
+      // A failure after getting settings, override result to failure.
+      result = mojom::ResultCode::kFailed;
+      PRINTER_LOG(ERROR)
+          << "Error after getting settings due to client registration failure; "
+             "service or renderer likely has terminated";
+    }
   } else {
-    result = print_settings->get_result_code();
+    result = print_settings.error();
     DCHECK_NE(result, mojom::ResultCode::kSuccess);
     if (result != mojom::ResultCode::kCanceled) {
       PRINTER_LOG(ERROR) << "Error getting settings from user via service: "
                          << result;
     }
 
-    // TODO(crbug.com/809738)  Fill in support for handling of access-denied
+    // TODO(crbug.com/40561724)  Fill in support for handling of access-denied
     // result code.  Blocked on crbug.com/1243873 for Windows.
   }
 
@@ -127,6 +135,13 @@ void PrinterQueryOop::OnDidAskUserForSettings(
         PrintBackendServiceManager::GetInstance()
             .RegisterPrintDocumentClientReusingClientRemote(
                 *query_with_ui_client_id_);
+    if (!print_document_client_id_.has_value()) {
+      // A failure after getting settings, override result to failure.
+      result = mojom::ResultCode::kFailed;
+      PRINTER_LOG(ERROR)
+          << "Error after getting settings due to client registration failure; "
+             "service or renderer likely has terminated";
+    }
   }
   std::move(callback).Run(std::move(new_settings), result);
 }
@@ -170,7 +185,8 @@ void PrinterQueryOop::GetSettingsWithUI(uint32_t document_page_count,
   //   - macOS:  It is impossible to invoke a system dialog UI from a service
   //       utility and have that dialog be application modal for a window that
   //       was launched by the browser process.
-  //   - Linux:  TODO(crbug.com/809738)  Determine if Linux Wayland can be made
+  //   - Linux:  TODO(crbug.com/40561724)  Determine if Linux Wayland can be
+  //   made
   //       to have a system dialog be modal against an application window in the
   //       browser process.
   //   - Other platforms don't have a system print UI or do not use OOP
@@ -238,11 +254,11 @@ void PrinterQueryOop::UpdatePrintSettings(base::Value::Dict new_settings,
 void PrinterQueryOop::OnDidUpdatePrintSettings(
     const std::string& device_name,
     SettingsCallback callback,
-    mojom::PrintSettingsResultPtr print_settings) {
+    base::expected<PrintSettings, mojom::ResultCode> print_settings) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   mojom::ResultCode result;
-  if (print_settings->is_result_code()) {
-    result = print_settings->get_result_code();
+  if (!print_settings.has_value()) {
+    result = print_settings.error();
     DCHECK_NE(result, mojom::ResultCode::kSuccess);
     PRINTER_LOG(ERROR) << "Error updating print settings via service for `"
                        << device_name << "`: " << result;
@@ -251,12 +267,22 @@ void PrinterQueryOop::OnDidUpdatePrintSettings(
     // unregister it.  Just drop any local reference to it.
     query_with_ui_client_id_.reset();
 
-    // TODO(crbug.com/809738)  Fill in support for handling of access-denied
+    // With the failure to update the setting, the registered client must be
+    // released.  The context ID is also no longer relevant to use.
+    if (print_document_client_id_.has_value()) {
+      PrintBackendServiceManager::GetInstance().UnregisterClient(
+          print_document_client_id_.value());
+      print_document_client_id_.reset();
+      CHECK(context_id_.has_value());
+      context_id_.reset();
+    }
+
+    // TODO(crbug.com/40561724)  Fill in support for handling of access-denied
     // result code.
   } else {
     VLOG(1) << "Update print settings via service complete for " << device_name;
     result = mojom::ResultCode::kSuccess;
-    printing_context()->ApplyPrintSettings(print_settings->get_settings());
+    printing_context()->SetPrintSettings(print_settings.value());
 
     if (query_with_ui_client_id_.has_value()) {
       // Use the same PrintBackendService for querying and printing, so that the
@@ -266,6 +292,13 @@ void PrinterQueryOop::OnDidUpdatePrintSettings(
           PrintBackendServiceManager::GetInstance()
               .RegisterPrintDocumentClientReusingClientRemote(
                   *query_with_ui_client_id_);
+      if (!print_document_client_id_.has_value()) {
+        // A failure after getting settings, override result to failure.
+        result = mojom::ResultCode::kFailed;
+        PRINTER_LOG(ERROR)
+            << "Error after updating print settings due to client registration "
+               "failure; service or renderer likely has terminated";
+      }
     }
   }
   InvokeSettingsCallback(std::move(callback), result);
@@ -291,7 +324,7 @@ void PrinterQueryOop::SendEstablishPrintingContext(
     PrintBackendServiceManager::ClientId client_id,
     const std::string& printer_name) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(features::kEnableOopPrintDriversJobPrint.Get());
+  DCHECK(ShouldPrintJobOop());
 
   DVLOG(1) << "Establishing printing context for system print";
 
@@ -314,7 +347,7 @@ void PrinterQueryOop::SendEstablishPrintingContext(
 
 void PrinterQueryOop::SendUseDefaultSettings(SettingsCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(features::kEnableOopPrintDriversJobPrint.Get());
+  DCHECK(ShouldPrintJobOop());
   CHECK(query_with_ui_client_id_.has_value());
 
   PrintBackendServiceManager& service_mgr =
@@ -332,7 +365,7 @@ void PrinterQueryOop::SendAskUserForSettings(uint32_t document_page_count,
                                              bool is_scripted,
                                              SettingsCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(features::kEnableOopPrintDriversJobPrint.Get());
+  DCHECK(ShouldPrintJobOop());
 
   if (document_page_count > kMaxPageCount) {
     InvokeSettingsCallback(std::move(callback), mojom::ResultCode::kFailed);
@@ -357,7 +390,7 @@ void PrinterQueryOop::SendAskUserForSettings(uint32_t document_page_count,
 }
 #endif  // BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
 
-std::unique_ptr<PrintJobWorkerOop> PrinterQueryOop::CreatePrintJobWorker(
+std::unique_ptr<PrintJobWorkerOop> PrinterQueryOop::CreatePrintJobWorkerOop(
     PrintJob* print_job) {
   return std::make_unique<PrintJobWorkerOop>(
       std::move(printing_context_delegate_), std::move(printing_context_),

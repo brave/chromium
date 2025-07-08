@@ -11,7 +11,8 @@
 #include "chrome/browser/ash/input_method/autocorrect_enums.h"
 #include "chrome/browser/ash/input_method/autocorrect_prefs.h"
 #include "chrome/browser/ash/input_method/suggestion_enums.h"
-#include "chrome/browser/ash/input_method/ui/suggestion_details.h"
+#include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+#include "chrome/browser/ui/ash/input_method/suggestion_details.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -403,12 +404,12 @@ ui::ime::AssistiveWindowButton CreateHighlightedLearnMoreButton() {
 
 // A helper for creating key event.
 ui::KeyEvent CreateKeyEvent(ui::DomKey key, ui::DomCode code) {
-  return ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code, ui::EF_NONE,
-                      key, ui::EventTimeForNow());
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code,
+                      ui::EF_NONE, key, ui::EventTimeForNow());
 }
 
 ui::KeyEvent PressKeyWithCtrl(const ui::DomCode& code) {
-  return ui::KeyEvent(ui::EventType::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code,
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code,
                       ui::EF_CONTROL_DOWN, ui::DomKey::NONE,
                       ui::EventTimeForNow());
 }
@@ -443,6 +444,8 @@ std::string ToString(const AutocorrectSuggestionProvider& provider) {
   switch (provider) {
     case AutocorrectSuggestionProvider::kUsEnglish840:
       return "UsEnglish840";
+    case AutocorrectSuggestionProvider::kUsEnglish840V2:
+      return "UsEnglish840V2";
     case AutocorrectSuggestionProvider::kUsEnglishDownloaded:
       return "UsEnglishDownloaded";
     case AutocorrectSuggestionProvider::kUsEnglishPrebundled:
@@ -489,7 +492,6 @@ class MockSuggestionHandler : public SuggestionHandlerInterface {
               (int context_id,
                const std::u16string& candidate,
                size_t delete_previous_utf16_len,
-               bool use_replace_surrounding_text,
                std::string* error),
               (override));
   MOCK_METHOD(bool,
@@ -505,6 +507,11 @@ std::vector<base::test::FeatureRef> DisabledFeatures() {
   return {ash::features::kImeRuleConfig};
 }
 
+std::vector<base::test::FeatureRef>
+DisabledFeaturesIncludingAutocorrectByDefault() {
+  return {ash::features::kImeRuleConfig, ash::features::kAutocorrectByDefault};
+}
+
 std::vector<base::test::FeatureRef> RequiredForAutocorrectByDefault() {
   return {ash::features::kAutocorrectByDefault,
           ash::features::kImeFstDecoderParamsUpdate,
@@ -518,6 +525,7 @@ class AutocorrectManagerTest : public testing::Test {
         manager_(&mock_suggestion_handler_, profile_.get()) {
     // Disable ImeRulesConfigs by default.
     feature_list_.InitWithFeatures({}, DisabledFeatures());
+
     IMEBridge::Get()->SetInputContextHandler(&mock_ime_input_context_handler_);
     keyboard_client_ = ChromeKeyboardControllerClient::CreateForTest();
     keyboard_client_->set_keyboard_enabled_for_test(false);
@@ -738,8 +746,7 @@ TEST_F(AutocorrectManagerTest,
             gfx::Range());
 }
 
-TEST_F(AutocorrectManagerTest,
-       OnBlurClearsAutocorrectRange) {
+TEST_F(AutocorrectManagerTest, OnBlurClearsAutocorrectRange) {
   manager_.HandleAutocorrect(gfx::Range(1, 4), u"teh", u"the");
   manager_.OnBlur();
 
@@ -747,8 +754,7 @@ TEST_F(AutocorrectManagerTest,
             gfx::Range());
 }
 
-TEST_F(AutocorrectManagerTest,
-       OnFocusClearsAutocorrectRange) {
+TEST_F(AutocorrectManagerTest, OnFocusClearsAutocorrectRange) {
   manager_.HandleAutocorrect(gfx::Range(1, 4), u"teh", u"the");
   manager_.OnFocus(1);
 
@@ -825,8 +831,7 @@ TEST_F(AutocorrectManagerTest,
   manager_.OnSurroundingTextChanged(u"te ", gfx::Range(1));
 }
 
-TEST_F(AutocorrectManagerTest,
-       MovingCursorRetriesPrevFailedUndoWindowHide) {
+TEST_F(AutocorrectManagerTest, MovingCursorRetriesPrevFailedUndoWindowHide) {
   manager_.HandleAutocorrect(gfx::Range(0, 3), u"teh", u"the");
   manager_.OnSurroundingTextChanged(u"the ", gfx::Range(4));
 
@@ -2810,8 +2815,14 @@ TEST_F(AutocorrectManagerTest, RecordRejectionForPkControlBackspace) {
   histogram_tester_.ExpectTotalCount(kAutocorrectV2PkRejectionHistName, 2);
 }
 
-TEST_F(AutocorrectManagerTest,
-       IsNotDisabledWhenNoSuggestionProviderAndNoExperimentFlag) {
+TEST_F(
+    AutocorrectManagerTest,
+    IsNotDisabledWhenNoSuggestionProviderAndAutocorrectByDefaultFlagIsDisabled) {
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
+
   manager_.OnActivate(kUsEnglishEngineId);
   manager_.OnFocus(kContextId);
 
@@ -2869,6 +2880,7 @@ INSTANTIATE_TEST_SUITE_P(
         AutocorrectSuggestionProvider::kUsEnglishPrebundled,
         AutocorrectSuggestionProvider::kUsEnglishDownloaded,
         AutocorrectSuggestionProvider::kUsEnglish840,
+        AutocorrectSuggestionProvider::kUsEnglish840V2,
     }),
     [](const testing::TestParamInfo<AutocorrectSuggestionProvider> info) {
       return ToString(info.param);
@@ -2876,6 +2888,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(NotDisabledByInvalidSuggestionProvider,
        WhenAutocorrectByDefaultFlagDisabled) {
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
   const AutocorrectSuggestionProvider& provider = GetParam();
 
   manager_.OnActivate(kUsEnglishEngineId);
@@ -2954,16 +2970,31 @@ TEST_F(AutocorrectManagerTest,
   EXPECT_TRUE(manager_.DisabledByInvalidExperimentContext());
 }
 
-TEST_F(AutocorrectManagerTest,
-       IsNotDisabledWhenUserInDefaultBucketAndAllRequiredConstraintsMet) {
+class EnabledByValidSuggestionProvider
+    : public AutocorrectManagerTest,
+      public testing::WithParamInterface<AutocorrectSuggestionProvider> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    AutocorrectManagerTest,
+    EnabledByValidSuggestionProvider,
+    testing::ValuesIn<>({
+        AutocorrectSuggestionProvider::kUsEnglish840,
+        AutocorrectSuggestionProvider::kUsEnglish840V2,
+    }),
+    [](const testing::TestParamInfo<AutocorrectSuggestionProvider> info) {
+      return ToString(info.param);
+    });
+
+TEST_P(EnabledByValidSuggestionProvider,
+       IsNotDisabledWhenUserInDefaultBucketAndValidSuggestionProviderUsed) {
+  const AutocorrectSuggestionProvider& provider = GetParam();
   feature_list_.Reset();
   feature_list_.InitWithFeatures(RequiredForAutocorrectByDefault(),
                                  DisabledFeatures());
 
   manager_.OnActivate(kUsEnglishEngineId);
   manager_.OnFocus(kContextId);
-  manager_.OnConnectedToSuggestionProvider(
-      AutocorrectSuggestionProvider::kUsEnglish840);
+  manager_.OnConnectedToSuggestionProvider(provider);
 
   EXPECT_FALSE(manager_.DisabledByInvalidExperimentContext());
 }
@@ -3205,7 +3236,7 @@ INSTANTIATE_TEST_SUITE_P(
 struct PkUserPrefCase {
   std::string test_name;
   std::string engine_id;
-  absl::optional<int> autocorrect_level;
+  std::optional<int> autocorrect_level;
   AutocorrectPreference expected_pref;
 };
 
@@ -3227,8 +3258,8 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"UsEnglishDefault",
          /*engine_id=*/kUsEnglishEngineId,
-         /*autocorrect_level=*/absl::nullopt,
-         /*expected_pref=*/AutocorrectPreference::kDefault},
+         /*autocorrect_level=*/std::nullopt,
+         /*expected_pref=*/AutocorrectPreference::kEnabledByDefault},
     }),
     [](const testing::TestParamInfo<PkUserPrefCase> info) {
       return info.param.test_name;
@@ -3333,7 +3364,7 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"UsInternationalDefault",
          /*engine_id=*/kUsInternationalEngineId,
-         /*autocorrect_level=*/absl::nullopt,
+         /*autocorrect_level=*/std::nullopt,
          /*expected_pref=*/AutocorrectPreference::kDefault},
 
         {"SpainSpanishEnabled",
@@ -3346,7 +3377,7 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"SpainSpanishDefault",
          /*engine_id=*/kSpainSpanishEngineId,
-         /*autocorrect_level=*/absl::nullopt,
+         /*autocorrect_level=*/std::nullopt,
          /*expected_pref=*/AutocorrectPreference::kDefault},
 
         {"LatinAmericaSpanishEnabled",
@@ -3359,7 +3390,7 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"LatinAmericaSpanishDefault",
          /*engine_id=*/kLatinAmericaSpanishEngineId,
-         /*autocorrect_level=*/absl::nullopt,
+         /*autocorrect_level=*/std::nullopt,
          /*expected_pref=*/AutocorrectPreference::kDefault},
 
         {"BrazilPortugeseEnabled",
@@ -3372,7 +3403,7 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"BrazilPortugeseDefault",
          /*engine_id=*/kBrazilPortugeseEngineId,
-         /*autocorrect_level=*/absl::nullopt,
+         /*autocorrect_level=*/std::nullopt,
          /*expected_pref=*/AutocorrectPreference::kDefault},
 
         {"FranceFrenchEnabled",
@@ -3385,7 +3416,7 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_pref=*/AutocorrectPreference::kDisabled},
         {"FranceFrenchDefault",
          /*engine_id=*/kFranceFrenchEngineId,
-         /*autocorrect_level=*/absl::nullopt,
+         /*autocorrect_level=*/std::nullopt,
          /*expected_pref=*/AutocorrectPreference::kDefault},
     }),
     [](const testing::TestParamInfo<PkUserPrefCase> info) {
@@ -3435,7 +3466,7 @@ TEST_F(AutocorrectManagerTest,
 struct PkEnabledByDefaultCase {
   std::string test_name;
   std::string engine_id;
-  absl::optional<int> autocorrect_level;
+  std::optional<int> autocorrect_level;
   AutocorrectPreference preference_before;
   AutocorrectPreference preference_after;
 };
@@ -3466,6 +3497,10 @@ TEST_P(PkEnabledByDefaultTest, ItIsEnabledByDefaultWhenFlagIsEnabled) {
 TEST_P(PkEnabledByDefaultTest, ItIsNotEnabledByDefaultWhenFlagIsDisabled) {
   const PkEnabledByDefaultCase& test_case = GetParam();
   PrefService* prefs = profile_->GetPrefs();
+  feature_list_.Reset();
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/DisabledFeaturesIncludingAutocorrectByDefault());
   if (test_case.autocorrect_level) {
     SetAutocorrectPreferenceTo(*profile_, kUsEnglishEngineId,
                                *test_case.autocorrect_level);
@@ -3487,7 +3522,7 @@ INSTANTIATE_TEST_SUITE_P(
         PkEnabledByDefaultCase{
             "EnglishDefaultToEnabledByDefault",
             /*engine_id=*/kUsEnglishEngineId,
-            /*autocorrect_level=*/absl::nullopt,
+            /*autocorrect_level=*/std::nullopt,
             /*preference_before=*/AutocorrectPreference::kDefault,
             /*preference_after=*/AutocorrectPreference::kEnabledByDefault},
         PkEnabledByDefaultCase{
@@ -3512,7 +3547,7 @@ INSTANTIATE_TEST_SUITE_P(
         PkEnabledByDefaultCase{
             "PortugeseDefaultRemainsDefault",
             /*engine_id=*/kBrazilPortugeseEngineId,
-            /*autocorrect_level=*/absl::nullopt,
+            /*autocorrect_level=*/std::nullopt,
             /*preference_before=*/AutocorrectPreference::kDefault,
             /*preference_after=*/AutocorrectPreference::kDefault},
         PkEnabledByDefaultCase{
@@ -3537,7 +3572,7 @@ INSTANTIATE_TEST_SUITE_P(
         PkEnabledByDefaultCase{
             "SpainSpanishDefaultRemainsDefault",
             /*engine_id=*/kSpainSpanishEngineId,
-            /*autocorrect_level=*/absl::nullopt,
+            /*autocorrect_level=*/std::nullopt,
             /*preference_before=*/AutocorrectPreference::kDefault,
             /*preference_after=*/AutocorrectPreference::kDefault},
         PkEnabledByDefaultCase{
@@ -3575,6 +3610,7 @@ INSTANTIATE_TEST_SUITE_P(
         AutocorrectSuggestionProvider::kUsEnglishPrebundled,
         AutocorrectSuggestionProvider::kUsEnglishDownloaded,
         AutocorrectSuggestionProvider::kUsEnglish840,
+        AutocorrectSuggestionProvider::kUsEnglish840V2,
     }),
     [](const testing::TestParamInfo<AutocorrectSuggestionProvider> info) {
       return ToString(info.param);

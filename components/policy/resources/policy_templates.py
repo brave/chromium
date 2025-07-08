@@ -35,7 +35,7 @@ def _SafeListDir(directory):
   # On macOS, Finder.app creates .DS_Store files when a user visit a
   # directory causing failure of the script laters on because there
   # are no such group as .DS_Store. Skip the file to prevent the error.
-  return filter(lambda name:(name != '.DS_Store'),os.listdir(directory))
+  return filter(lambda name:(name != '.DS_Store'),sorted(os.listdir(directory)))
 
 TEMPLATES_PATH =  os.path.join(
   os.path.dirname(__file__), 'templates')
@@ -114,7 +114,8 @@ def _BuildPolicyTemplate(data):
         "[A-Za-z]": { "desc": "string", "text": "String" }
       }
     },
-    //components/policy/resources/templates/device_policy_proto_map.yaml
+    //components/policy/resources/templates/manual_device_policy_proto_map.yaml
+    // Includes policies where generate_device_proto is true.
     "device_policy_proto_map": {
       "type": "Object",
       "patternProperties": {
@@ -190,6 +191,17 @@ def _BuildPolicyTemplate(data):
         'name': name, **atomic_group
       })
 
+  device_policy_proto_map = data['manual_device_policy_proto_map'].copy()
+
+  for policy in policies:
+    if not policy.get('device_only', False):
+      continue
+
+    if not policy.get('generate_device_proto', True):
+      continue
+
+    device_policy_proto_map[policy['name']] = policy['name'] + '.value'
+
   result = {
       POLICY_DEFINITIONS_KEY: policies + policy_groups,
       'deleted_policy_ids':
@@ -204,7 +216,7 @@ def _BuildPolicyTemplate(data):
       len(data['policies']['atomic_groups']),
       'placeholders': [],
       'legacy_device_policy_proto_map': [],
-      'device_policy_proto_map': data['device_policy_proto_map'],
+      'device_policy_proto_map': device_policy_proto_map,
       'messages': data['messages'],
       'risk_tag_definitions': [{'name': name, **value}
         for name, value in data['risk_tag_definitions'].items()]
@@ -310,8 +322,8 @@ def _LoadPolicies():
         }
       }
     },
-    // components/policy/resources/templates/device_policy_proto_map.yaml
-    "device_policy_proto_map": {
+    // components/policy/resources/templates/manual_device_policy_proto_map.yaml
+    "manual_device_policy_proto_map": {
       "type": "Object",
       "patternProperties": {
         "[A-Za-z]": { "type": "Object", "properties": "String" }

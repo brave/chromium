@@ -7,13 +7,15 @@
  *     edge snapping and collisions.
  */
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {dedupingMixin, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import type {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {Constructor} from '../common/types.js';
+import type {Constructor} from '../common/types.js';
 
 import {getDisplayApi} from './device_page_browser_proxy.js';
-import {DragMixin, DragMixinInterface, Position} from './drag_mixin.js';
+import type {DragMixinInterface} from './drag_mixin.js';
+import {DragMixin, Position} from './drag_mixin.js';
 
 import Bounds = chrome.system.display.Bounds;
 import DisplayLayout = chrome.system.display.DisplayLayout;
@@ -55,6 +57,8 @@ export interface LayoutMixinInterface extends DragMixinInterface {
   getCalculatedDisplayBounds<T extends boolean>(displayId: string, notest: T):
       T extends false? Bounds: (Bounds|undefined);
   getCalculatedDisplayBounds(displayId: string): Bounds;
+
+  getDisplayLayoutMapForTesting(): Map<string, DisplayLayout>;
 }
 
 export const LayoutMixin = dedupingMixin(
@@ -87,6 +91,10 @@ export const LayoutMixin = dedupingMixin(
         private dragLayoutId_: string = '';
         private dragLayoutPosition_: LayoutPosition|undefined = undefined;
         private dragParentId_: string = '';
+
+        getDisplayLayoutMapForTesting(): Map<string, DisplayLayout> {
+          return this.displayLayoutMap_;
+        }
 
         initializeDisplayLayout(
             displays: DisplayUnitInfo[], layouts: DisplayLayout[]): void {
@@ -703,7 +711,7 @@ export const LayoutMixin = dedupingMixin(
          * |layoutPosition| is undefined, removes all highlights.
          */
         private highlightEdge_(
-            id: string, layoutPosition: LayoutPosition|undefined) {
+            id: string, layoutPosition: LayoutPosition|undefined): void {
           for (let i = 0; i < this.layouts.length; ++i) {
             const layout = this.layouts[i];
             const highlight = (layout.id === id || layout.parentId === id) ?

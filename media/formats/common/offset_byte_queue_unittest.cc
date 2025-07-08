@@ -2,11 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/numerics/safe_conversions.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/common/offset_byte_queue.h"
 
 #include <stdint.h>
 #include <string.h>
 
+#include <array>
 #include <memory>
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,13 +23,13 @@ namespace media {
 class OffsetByteQueueTest : public testing::Test {
  public:
   void SetUp() override {
-    uint8_t buf[256];
+    std::array<uint8_t, 256> buf;
     for (int i = 0; i < 256; i++) {
       buf[i] = i;
     }
     queue_ = std::make_unique<OffsetByteQueue>();
-    ASSERT_TRUE(queue_->Push(buf, sizeof(buf))) << "Test should not hit OOM";
-    ASSERT_TRUE(queue_->Push(buf, sizeof(buf))) << "Test should not hit OOM";
+    ASSERT_TRUE(queue_->Push(buf)) << "Test should not hit OOM";
+    ASSERT_TRUE(queue_->Push(buf)) << "Test should not hit OOM";
     queue_->Pop(384);
 
     // Queue will start with 128 bytes of data and an offset of 384 bytes.
@@ -37,26 +44,20 @@ TEST_F(OffsetByteQueueTest, SetUp) {
   EXPECT_EQ(384, queue_->head());
   EXPECT_EQ(512, queue_->tail());
 
-  const uint8_t* buf;
-  int size;
+  base::span<const uint8_t> buf = queue_->Data();
 
-  queue_->Peek(&buf, &size);
-  EXPECT_EQ(128, size);
-  EXPECT_EQ(128, buf[0]);
-  EXPECT_EQ(255, buf[size-1]);
+  EXPECT_EQ(128u, buf.size());
+  EXPECT_EQ(128, buf.front());
+  EXPECT_EQ(255, buf.back());
 }
 
 TEST_F(OffsetByteQueueTest, PeekAt) {
-  const uint8_t* buf;
-  int size;
-
-  queue_->PeekAt(400, &buf, &size);
-  EXPECT_EQ(queue_->tail() - 400, size);
+  base::span<const uint8_t> buf = queue_->DataAt(400);
+  EXPECT_EQ(queue_->tail() - 400, base::checked_cast<int64_t>(buf.size()));
   EXPECT_EQ(400 - 256, buf[0]);
 
-  queue_->PeekAt(512, &buf, &size);
-  EXPECT_EQ(NULL, buf);
-  EXPECT_EQ(0, size);
+  buf = queue_->DataAt(512);
+  EXPECT_TRUE(buf.empty());
 }
 
 TEST_F(OffsetByteQueueTest, Trim) {
@@ -69,21 +70,18 @@ TEST_F(OffsetByteQueueTest, Trim) {
   EXPECT_EQ(400, queue_->head());
   EXPECT_EQ(512, queue_->tail());
 
-  const uint8_t* buf;
-  int size;
-  queue_->PeekAt(400, &buf, &size);
-  EXPECT_EQ(queue_->tail() - 400, size);
+  base::span<const uint8_t> buf = queue_->DataAt(400);
+  EXPECT_EQ(queue_->tail() - 400, base::checked_cast<int64_t>(buf.size()));
   EXPECT_EQ(400 - 256, buf[0]);
 
   // Trimming to the exact end of the buffer should return 'true'. This
-  // accomodates EOS cases.
+  // accommodates EOS cases.
   EXPECT_TRUE(queue_->Trim(512));
   EXPECT_EQ(512, queue_->head());
-  queue_->Peek(&buf, &size);
-  EXPECT_EQ(NULL, buf);
+  EXPECT_TRUE(queue_->Data().empty());
 
   // Trimming past the end of the buffer should return 'false'; we haven't seen
-  // the preceeding bytes.
+  // the preceding bytes.
   EXPECT_FALSE(queue_->Trim(513));
 
   // However, doing that shouldn't affect the EOS case. Only adding new data

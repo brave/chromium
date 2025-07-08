@@ -9,6 +9,8 @@ import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageButton;
 
+import org.chromium.build.annotations.NullMarked;
+
 /**
  * <p>
  * A RadioButton with a primary and descriptive text to the right, and an aux button at the end.
@@ -52,6 +54,7 @@ import android.widget.ImageButton;
  * </p>
  *
  */
+@NullMarked
 public class RadioButtonWithDescriptionAndAuxButton extends RadioButtonWithDescription {
     /**
      * Interface that will subscribe to aux button clicked event inside {@link
@@ -67,7 +70,10 @@ public class RadioButtonWithDescriptionAndAuxButton extends RadioButtonWithDescr
         void onAuxButtonClicked(int clickedButtonId);
     }
 
+    @SuppressWarnings("NullAway.Init")
     private OnAuxButtonClickedListener mListener;
+
+    @SuppressWarnings("NullAway.Init")
     private ImageButton mAuxButton;
 
     public RadioButtonWithDescriptionAndAuxButton(Context context, AttributeSet attrs) {
@@ -81,10 +87,14 @@ public class RadioButtonWithDescriptionAndAuxButton extends RadioButtonWithDescr
         // Space between the radio container and the separator. The padding is added in the radio
         // container instead of the separator, because the padding needs to be highlighted when the
         // radio container is clicked.
-        final int radioContainerEndPadding = getResources().getDimensionPixelSize(
-                R.dimen.radio_button_with_description_and_aux_button_spacing);
-        radioContainer.setPaddingRelative(radioContainer.getPaddingStart(),
-                radioContainer.getPaddingTop(), radioContainerEndPadding,
+        final int radioContainerEndPadding =
+                getResources()
+                        .getDimensionPixelSize(
+                                R.dimen.radio_button_with_description_and_aux_button_spacing);
+        radioContainer.setPaddingRelative(
+                radioContainer.getPaddingStart(),
+                radioContainer.getPaddingTop(),
+                radioContainerEndPadding,
                 radioContainer.getPaddingBottom());
     }
 
@@ -132,9 +142,7 @@ public class RadioButtonWithDescriptionAndAuxButton extends RadioButtonWithDescr
         mAuxButton.setOnClickListener(v -> mListener.onAuxButtonClicked(getId()));
     }
 
-    /**
-     * @return the aux button living inside this widget.
-     */
+    /** @return the aux button living inside this widget. */
     public ImageButton getAuxButtonForTests() {
         return mAuxButton;
     }

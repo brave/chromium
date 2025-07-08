@@ -9,7 +9,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_navigation_policy.h"
 #include "content/public/browser/navigation_controller.h"
@@ -458,8 +457,7 @@ IN_PROC_BROWSER_TEST_F(SessionHistoryTest, JavascriptHistory) {
   // types.  For example, load about:network in a tab, then a real page, then
   // try to go back and forward with JavaScript.  Bug 1136715.
   // (Hard to test right now, because pages like about:network cause the
-  // TabProxy to hang.  This is because they do not appear to use the
-  // NotificationService.)
+  // TabProxy to hang.)
 }
 
 IN_PROC_BROWSER_TEST_F(SessionHistoryTest, LocationReplace) {

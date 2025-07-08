@@ -6,15 +6,11 @@
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ui {
 
 // static
 std::unique_ptr<KeyboardHook> KeyboardHook::CreateModifierKeyboardHook(
-    absl::optional<base::flat_set<DomCode>> dom_codes,
+    std::optional<base::flat_set<DomCode>> dom_codes,
     gfx::AcceleratedWidget accelerated_widget,
     KeyEventCallback callback) {
   return nullptr;

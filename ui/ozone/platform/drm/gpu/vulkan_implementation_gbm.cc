@@ -14,11 +14,12 @@
 #include "gpu/vulkan/vulkan_surface.h"
 #include "gpu/vulkan/vulkan_util.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace ui {
 
-VulkanImplementationGbm::VulkanImplementationGbm() = default;
+VulkanImplementationGbm::VulkanImplementationGbm(bool allow_protected_memory)
+    : VulkanImplementation(/*use_switfshader=*/false, allow_protected_memory) {}
 
 VulkanImplementationGbm::~VulkanImplementationGbm() = default;
 
@@ -26,26 +27,25 @@ bool VulkanImplementationGbm::InitializeVulkanInstance(bool using_surface) {
   DLOG_IF(ERROR, using_surface) << "VK_KHR_surface is not supported.";
 
   std::vector<const char*> required_extensions = {
-      "VK_KHR_external_fence_capabilities",
       "VK_KHR_get_physical_device_properties2",
   };
   if (!vulkan_instance_.Initialize(base::FilePath("libvulkan.so.1"),
                                    required_extensions, {})) {
     return false;
   }
-
-  vkGetPhysicalDeviceExternalFencePropertiesKHR_ =
-      reinterpret_cast<PFN_vkGetPhysicalDeviceExternalFencePropertiesKHR>(
-          vkGetInstanceProcAddr(
-              vulkan_instance_.vk_instance(),
-              "vkGetPhysicalDeviceExternalFencePropertiesKHR"));
-  if (!vkGetPhysicalDeviceExternalFencePropertiesKHR_)
+  vkGetPhysicalDeviceExternalFenceProperties_ =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceExternalFenceProperties>(
+          vkGetInstanceProcAddr(vulkan_instance_.vk_instance(),
+                                "vkGetPhysicalDeviceExternalFenceProperties"));
+  if (!vkGetPhysicalDeviceExternalFenceProperties_) {
     return false;
+  }
 
   vkGetFenceFdKHR_ = reinterpret_cast<PFN_vkGetFenceFdKHR>(
       vkGetInstanceProcAddr(vulkan_instance_.vk_instance(), "vkGetFenceFdKHR"));
-  if (!vkGetFenceFdKHR_)
+  if (!vkGetFenceFdKHR_) {
     return false;
+  }
 
   return true;
 }
@@ -67,7 +67,7 @@ bool VulkanImplementationGbm::GetPhysicalDevicePresentationSupport(
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO,
       .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT};
   VkExternalFenceProperties external_fence_properties;
-  vkGetPhysicalDeviceExternalFencePropertiesKHR_(
+  vkGetPhysicalDeviceExternalFenceProperties_(
       physical_device, &external_fence_info, &external_fence_properties);
   if (!(external_fence_properties.externalFenceFeatures &
         VK_EXTERNAL_FENCE_FEATURE_EXPORTABLE_BIT)) {
@@ -130,13 +130,8 @@ std::unique_ptr<gfx::GpuFence> VulkanImplementationGbm::ExportVkFenceToGpuFence(
   }
 
   gfx::GpuFenceHandle gpu_fence_handle;
-  gpu_fence_handle.owned_fd = base::ScopedFD(fence_fd);
+  gpu_fence_handle.Adopt(base::ScopedFD(fence_fd));
   return std::make_unique<gfx::GpuFence>(std::move(gpu_fence_handle));
-}
-
-VkExternalMemoryHandleTypeFlagBits
-VulkanImplementationGbm::GetExternalImageHandleType() {
-  return VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 }
 
 VkExternalSemaphoreHandleTypeFlagBits
@@ -165,13 +160,14 @@ VulkanImplementationGbm::CreateImageFromGpuMemoryHandle(
   constexpr auto kUsage =
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-  auto tiling = gmb_handle.native_pixmap_handle.modifier ==
+  auto tiling = gmb_handle.native_pixmap_handle().modifier ==
                         gfx::NativePixmapHandle::kNoModifier
                     ? VK_IMAGE_TILING_OPTIMAL
                     : VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
   return gpu::VulkanImage::CreateFromGpuMemoryBufferHandle(
-      device_queue, std::move(gmb_handle), size, vk_format, kUsage, /*flags=*/0,
-      tiling, VK_QUEUE_FAMILY_FOREIGN_EXT);
+      device_queue, std::move(gmb_handle), size, vk_format, kUsage,
+      allow_protected_memory() ? VK_IMAGE_CREATE_PROTECTED_BIT : 0, tiling,
+      VK_QUEUE_FAMILY_FOREIGN_EXT);
 }
 
 }  // namespace ui

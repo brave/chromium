@@ -22,11 +22,15 @@ void DesktopWindowTreeHost::UpdateWindowShapeIfNeeded(
 
 void DesktopWindowTreeHost::PaintAsActiveChanged() {}
 
+void DesktopWindowTreeHost::ShowWindowControlsMenu(const gfx::Point& point) {}
+
 std::unique_ptr<aura::client::ScreenPositionClient>
 DesktopWindowTreeHost::CreateScreenPositionClient() {
   return std::make_unique<DesktopScreenPositionClient>(
       AsWindowTreeHost()->window());
 }
+
+void DesktopWindowTreeHost::ClientDestroyedWidget() {}
 
 DesktopNativeCursorManager*
 DesktopWindowTreeHost::GetSingletonDesktopNativeCursorManager() {

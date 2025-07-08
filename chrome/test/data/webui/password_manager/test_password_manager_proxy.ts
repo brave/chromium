@@ -4,7 +4,7 @@
 
 /** @fileoverview Test implementation of PasswordManagerProxy. */
 
-import {AccountStorageOptInStateChangedListener, BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener, PasswordCheckInteraction, PasswordCheckStatusChangedListener, PasswordManagerAuthTimeoutListener, PasswordManagerProxy, PasswordsFileExportProgressListener, PasswordViewPageInteractions} from 'chrome://password-manager/password_manager.js';
+import type {AccountStorageEnabledStateChangedListener, BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener, PasswordCheckInteraction, PasswordCheckStatusChangedListener, PasswordManagerAuthTimeoutListener, PasswordManagerProxy, PasswordsFileExportProgressListener, PasswordViewPageInteractions, ShouldShowAccountStorageToggleChangedListener} from 'chrome://password-manager/password_manager.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 import {makeFamilyFetchResults, makePasswordCheckStatus} from './test_util.js';
@@ -21,14 +21,22 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
     familyFetchResults: chrome.passwordsPrivate.FamilyFetchResults,
     groups: chrome.passwordsPrivate.CredentialGroup[],
     insecureCredentials: chrome.passwordsPrivate.PasswordUiEntry[],
-    isOptedInAccountStorage: boolean,
-    isAccountStorageDefault: boolean,
+    isAccountStorageEnabled: boolean,
+    shouldShowAccountStorageSettingToggle: boolean,
     passwords: chrome.passwordsPrivate.PasswordUiEntry[],
+    isPasswordManagerPinAvailable: boolean,
+    isCloudAuthenticatorConnected: boolean,
+    changePasswordManagerPinSuccesful: boolean|null,
+    disconnectCloudAuthenticatorSuccessful: boolean|null,
+    isConnectedToCloudAuthenticator: boolean|null,
+    deleteAllPasswordManagerData: boolean|null,
   };
 
   listeners: {
-    accountStorageOptInStateListener: AccountStorageOptInStateChangedListener|
-    null,
+    accountStorageEnabledStateListener:
+        AccountStorageEnabledStateChangedListener|null,
+    shouldShowAccountStorageToggleListener:
+        ShouldShowAccountStorageToggleChangedListener|null,
     blockedSitesListChangedListener: BlockedSitesListChangedListener|null,
     savedPasswordListChangedListener: CredentialsChangedListener|null,
     passwordCheckStatusListener: PasswordCheckStatusChangedListener|null,
@@ -41,6 +49,8 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
   private requestCredentialsDetailsResponse_:
       chrome.passwordsPrivate.PasswordUiEntry[]|null = null;
 
+  private switchBiometricAuthBeforeFillingStateResult_: boolean = false;
+
   private importResults_: chrome.passwordsPrivate.ImportResults = {
     status: chrome.passwordsPrivate.ImportResultsStatus.SUCCESS,
     numberImported: 0,
@@ -51,15 +61,16 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
   constructor() {
     super([
       'addPassword',
-      'changeCredential',
       'cancelExportPasswords',
+      'changeCredential',
+      'changePasswordManagerPin',
       'continueImport',
+      'deleteAllPasswordManagerData',
+      'disconnectCloudAuthenticator',
+      'dismissSafetyHubPasswordMenuNotification',
       'exportPasswords',
       'extendAuthValidity',
       'fetchFamilyMembers',
-      'importPasswords',
-      'isAccountStoreDefault',
-      'isOptedInForAccountStorage',
       'getBlockedSitesList',
       'getCredentialGroups',
       'getCredentialsWithReusedPassword',
@@ -67,17 +78,23 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
       'getPasswordCheckStatus',
       'getSavedPasswordList',
       'getUrlCollection',
+      'importPasswords',
+      'isConnectedToCloudAuthenticator',
+      'isAccountStorageEnabled',
+      'shouldShowAccountStorageSettingToggle',
+      'isPasswordManagerPinAvailable',
       'movePasswordsToAccount',
       'muteInsecureCredential',
-      'optInForAccountStorage',
+      'setAccountStorageEnabled',
       'recordPasswordCheckInteraction',
       'recordPasswordViewInteraction',
       'removeBlockedSite',
       'removeCredential',
-      'resetImporter',
       'requestCredentialsDetails',
       'requestExportProgressStatus',
       'requestPlaintextPassword',
+      'resetImporter',
+      'sharePassword',
       'showAddShortcutDialog',
       'showExportedFileInShell',
       'startBulkPasswordCheck',
@@ -94,14 +111,21 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
       familyFetchResults: makeFamilyFetchResults(),
       groups: [],
       insecureCredentials: [],
-      isOptedInAccountStorage: false,
-      isAccountStorageDefault: false,
+      isAccountStorageEnabled: false,
+      shouldShowAccountStorageSettingToggle: false,
       passwords: [],
+      isPasswordManagerPinAvailable: false,
+      isCloudAuthenticatorConnected: false,
+      changePasswordManagerPinSuccesful: null,
+      disconnectCloudAuthenticatorSuccessful: null,
+      isConnectedToCloudAuthenticator: null,
+      deleteAllPasswordManagerData: null,
     };
 
     // Holds listeners so they can be called when needed.
     this.listeners = {
-      accountStorageOptInStateListener: null,
+      accountStorageEnabledStateListener: null,
+      shouldShowAccountStorageToggleListener: null,
       blockedSitesListChangedListener: null,
       insecureCredentialsListener: null,
       passwordCheckStatusListener: null,
@@ -273,6 +297,11 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
 
   switchBiometricAuthBeforeFillingState() {
     this.methodCalled('switchBiometricAuthBeforeFillingState');
+    return Promise.resolve(this.switchBiometricAuthBeforeFillingStateResult_);
+  }
+
+  setSwitchBiometricAuthBeforeFillingStateResponse(result: boolean) {
+    this.switchBiometricAuthBeforeFillingStateResult_ = result;
   }
 
   undoRemoveSavedPasswordOrException() {
@@ -310,19 +339,34 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
     this.methodCalled('extendAuthValidity');
   }
 
-  addAccountStorageOptInStateListener(
-      listener: AccountStorageOptInStateChangedListener) {
-    this.listeners.accountStorageOptInStateListener = listener;
+  addAccountStorageEnabledStateListener(
+      listener: AccountStorageEnabledStateChangedListener) {
+    this.listeners.accountStorageEnabledStateListener = listener;
   }
 
-  removeAccountStorageOptInStateListener(
-      _listener: AccountStorageOptInStateChangedListener) {
-    this.listeners.accountStorageOptInStateListener = null;
+  removeAccountStorageEnabledStateListener(
+      _listener: AccountStorageEnabledStateChangedListener) {
+    this.listeners.accountStorageEnabledStateListener = null;
+  }
+
+  addShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener) {
+    this.listeners.shouldShowAccountStorageToggleListener = listener;
+  }
+
+  removeShouldShowAccountStorageSettingToggleListener(
+      _listener: ShouldShowAccountStorageToggleChangedListener) {
+    this.listeners.shouldShowAccountStorageToggleListener = null;
   }
 
   fetchFamilyMembers() {
     this.methodCalled('fetchFamilyMembers');
     return Promise.resolve(this.data.familyFetchResults);
+  }
+
+  sharePassword(
+      id: number, recipients: chrome.passwordsPrivate.RecipientInfo[]) {
+    this.methodCalled('sharePassword', id, recipients);
   }
 
   /**
@@ -347,22 +391,67 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
     return Promise.resolve();
   }
 
-  isOptedInForAccountStorage() {
-    this.methodCalled('isOptedInForAccountStorage');
-    return Promise.resolve(this.data.isOptedInAccountStorage);
+  isAccountStorageEnabled() {
+    this.methodCalled('isAccountStorageEnabled');
+    return Promise.resolve(this.data.isAccountStorageEnabled);
   }
 
-  optInForAccountStorage(optIn: boolean) {
-    this.methodCalled('optInForAccountStorage');
-    this.data.isOptedInAccountStorage = optIn;
+  setAccountStorageEnabled(enabled: boolean) {
+    this.methodCalled('setAccountStorageEnabled');
+    this.data.isAccountStorageEnabled = enabled;
   }
 
-  isAccountStoreDefault() {
-    this.methodCalled('isAccountStoreDefault');
-    return Promise.resolve(this.data.isAccountStorageDefault);
+  shouldShowAccountStorageSettingToggle() {
+    this.methodCalled('shouldShowAccountStorageSettingToggle');
+    return Promise.resolve(this.data.shouldShowAccountStorageSettingToggle);
   }
+
 
   movePasswordsToAccount(ids: number[]) {
     this.methodCalled('movePasswordsToAccount', ids);
+  }
+
+  dismissSafetyHubPasswordMenuNotification() {
+    this.methodCalled('dismissSafetyHubPasswordMenuNotification');
+  }
+
+  changePasswordManagerPin() {
+    this.methodCalled('changePasswordManagerPin');
+    if (this.data.changePasswordManagerPinSuccesful !== null) {
+      return Promise.resolve(this.data.changePasswordManagerPinSuccesful);
+    }
+    return Promise.reject(new Error());
+  }
+
+  isPasswordManagerPinAvailable(): Promise<boolean> {
+    this.methodCalled('isPasswordManagerPinAvailable');
+    return Promise.resolve(this.data.isPasswordManagerPinAvailable);
+  }
+
+  disconnectCloudAuthenticator(): Promise<boolean> {
+    this.methodCalled('disconnectCloudAuthenticator');
+    if (this.data.isConnectedToCloudAuthenticator !== null &&
+        this.data.disconnectCloudAuthenticatorSuccessful !== null) {
+      this.data.isConnectedToCloudAuthenticator = false;
+      return Promise.resolve(this.data.disconnectCloudAuthenticatorSuccessful);
+    }
+    return Promise.reject(new Error());
+  }
+
+  deleteAllPasswordManagerData(): Promise<boolean> {
+    this.methodCalled('deleteAllPasswordManagerData');
+    if (this.data.deleteAllPasswordManagerData !== null) {
+      return Promise.resolve(this.data.deleteAllPasswordManagerData);
+    }
+    return Promise.reject(new Error());
+  }
+
+  isConnectedToCloudAuthenticator(): Promise<boolean> {
+    this.methodCalled('isConnectedToCloudAuthenticator');
+    if (this.data.isConnectedToCloudAuthenticator !== null) {
+      return Promise.resolve(this.data.isConnectedToCloudAuthenticator);
+    }
+
+    return Promise.reject(new Error());
   }
 }

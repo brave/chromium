@@ -4,10 +4,14 @@
 
 #include "third_party/blink/renderer/core/dom/child_node_part.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_node_string.h"
+#include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
 #include "third_party/blink/renderer/core/dom/document_part_root.h"
 #include "third_party/blink/renderer/core/dom/node_cloning_data.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -17,6 +21,14 @@ ChildNodePart* ChildNodePart::Create(PartRootUnion* root_union,
                                      Node* next_sibling,
                                      const PartInit* init,
                                      ExceptionState& exception_state) {
+  if (!IsAcceptableNodeType(*previous_sibling) ||
+      !IsAcceptableNodeType(*next_sibling)) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidNodeTypeError,
+        "The provided previous_sibling and next_sibling nodes are not valid "
+        "for a ChildNodePart.");
+    return nullptr;
+  }
   return MakeGarbageCollected<ChildNodePart>(*GetPartRootFromUnion(root_union),
                                              *previous_sibling, *next_sibling,
                                              init);
@@ -25,36 +37,52 @@ ChildNodePart* ChildNodePart::Create(PartRootUnion* root_union,
 ChildNodePart::ChildNodePart(PartRoot& root,
                              Node& previous_sibling,
                              Node& next_sibling,
-                             const Vector<String> metadata)
-    : Part(root, metadata),
+                             Vector<String> metadata)
+    : Part(root, std::move(metadata)),
       previous_sibling_(previous_sibling),
       next_sibling_(next_sibling) {
-  if (parentNode()) {
-    parentNode()->AddDOMPart(*this);
+  CHECK(IsAcceptableNodeType(previous_sibling));
+  CHECK(IsAcceptableNodeType(next_sibling));
+  if (RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled()) {
+    previous_sibling.SetHasNodePart();
+    next_sibling.SetHasNodePart();
+  } else {
+    previous_sibling.AddDOMPart(*this);
+    if (previous_sibling != next_sibling) {
+      next_sibling.AddDOMPart(*this);
+    }
+    root.AddPart(*this);
   }
-  previous_sibling.AddDOMPart(*this);
-  next_sibling.AddDOMPart(*this);
 }
 
 void ChildNodePart::disconnect() {
-  if (disconnected_) {
+  if (!IsConnected()) {
     CHECK(!previous_sibling_ && !next_sibling_);
     return;
   }
-  if (parentNode()) {
-    parentNode()->RemoveDOMPart(*this);
+  if (RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled()) {
+    // TODO(crbug.com/40271855): This assumes the endpoint nodes have exactly
+    // one NodePart/ChildNodePart attached. The consequence of that is that if
+    // you (imperatively) construct multiple Parts attached to the same Nodes,
+    // disconnecting one of them will disconnect all of them.
+    previous_sibling_->ClearHasNodePart();
+    next_sibling_->ClearHasNodePart();
+  } else {
+    previous_sibling_->RemoveDOMPart(*this);
+    if (next_sibling_ != previous_sibling_) {
+      next_sibling_->RemoveDOMPart(*this);
+    }
   }
-  previous_sibling_->RemoveDOMPart(*this);
-  next_sibling_->RemoveDOMPart(*this);
   previous_sibling_ = nullptr;
   next_sibling_ = nullptr;
   Part::disconnect();
 }
 
-PartRootUnion* ChildNodePart::clone(ExceptionState& exception_state) const {
+PartRootUnion* ChildNodePart::clone(ExceptionState& exception_state) {
   // Since we're only cloning a part of the tree, not including this
   // ChildNodePart's `root`, we use a temporary DocumentFragment and its
   // PartRoot during the clone.
+  DCHECK(RuntimeEnabledFeatures::DOMPartsAPIEnabled());
   if (!IsValid()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -63,33 +91,41 @@ PartRootUnion* ChildNodePart::clone(ExceptionState& exception_state) const {
     return nullptr;
   }
   auto& document = GetDocument();
-  auto* fragment = To<DocumentFragment>(DocumentFragment::Create(document));
-  NodeCloningData data{CloneOption::kPreserveDOMParts};
-  data.ConnectPartRootToClone(*root(), fragment->getPartRoot());
-  ContainerNode* new_parent =
-      To<ContainerNode>(parentNode()->Clone(document, data));
-  fragment->appendChild(new_parent, exception_state);
+  auto* fragment = DocumentFragment::Create(document);
+  NodeCloningData data{RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled()
+                           ? CloneOption::kPreserveDOMPartsMinimalAPI
+                           : CloneOption::kPreserveDOMParts};
+  auto& fragment_part_root = fragment->getPartRoot();
+  data.PushPartRoot(fragment_part_root);
+  ContainerNode* new_parent = To<ContainerNode>(
+      parentNode()->Clone(document, data, fragment, exception_state));
   if (exception_state.HadException()) {
     return nullptr;
   }
   data.Put(CloneOption::kIncludeDescendants);
   Node* node = previous_sibling_;
+  ChildNodePart* part_root = nullptr;
   while (true) {
-    new_parent->appendChild(node->Clone(document, data), exception_state);
+    bool final_node = node == next_sibling_;
+    if (final_node) {
+      part_root = static_cast<ChildNodePart*>(&data.CurrentPartRoot());
+    }
+    node->Clone(document, data, new_parent, exception_state);
     if (exception_state.HadException()) {
       return nullptr;
     }
-    if (node == next_sibling_) {
+    if (final_node) {
       break;
     }
     node = node->nextSibling();
     CHECK(node) << "IsValid should detect invalid siblings";
   }
-  data.Finalize();
-  return PartRoot::GetUnionFromPartRoot(data.ClonedPartRootFor(*this));
+  DCHECK_EQ(&data.CurrentPartRoot(), &fragment_part_root);
+  return PartRoot::GetUnionFromPartRoot(part_root);
 }
 
 void ChildNodePart::setNextSibling(Node& next_sibling) {
+  DCHECK(!RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled());
   if (next_sibling_ == &next_sibling) {
     return;
   }
@@ -97,15 +133,15 @@ void ChildNodePart::setNextSibling(Node& next_sibling) {
     // Unregister this part from the old |next_sibling_| node, unless previous
     // and next were the same before.
     if (next_sibling_ != parentNode()) {
-      // TODO(crbug.com/1453291) It is currently possible to build
+      // TODO(crbug.com/40271855) It is currently possible to build
       // ChildNodeParts with `next_sibling === parentNode`. Eventually,
       // outlaw that in the appropriate place, and CHECK() here that it isn't
       // true. For now, in that case, don't remove the part.
       next_sibling_->RemoveDOMPart(*this);
     }
   }
-  next_sibling_ = &next_sibling;
   next_sibling.AddDOMPart(*this);
+  next_sibling_ = &next_sibling;
 }
 
 HeapVector<Member<Node>> ChildNodePart::children() const {
@@ -123,7 +159,7 @@ HeapVector<Member<Node>> ChildNodePart::children() const {
 }
 
 void ChildNodePart::replaceChildren(
-    const HeapVector<Member<V8UnionNodeOrStringOrTrustedScript>>& nodes,
+    const HeapVector<Member<V8UnionNodeOrString>>& nodes,
     ExceptionState& exception_state) {
   if (!IsValid()) {
     exception_state.ThrowDOMException(
@@ -132,15 +168,48 @@ void ChildNodePart::replaceChildren(
         "previous_sibling before next_sibling, and both with the same parent.");
     return;
   }
+  ContainerNode* parent = parentNode();
+  DCHECK(parent) << "Should be guaranteed by IsValid";
   // Remove existing children, leaving endpoints.
   Node* node = previous_sibling_->nextSibling();
   while (node != next_sibling_) {
-    Node* remove = node;
+    Node* to_remove = node;
     node = node->nextSibling();
-    remove->remove();
+    parent->RemoveChild(to_remove, exception_state);
+    if (exception_state.HadException()) {
+      return;
+    }
   }
+  // TODO(masonf) This can be removed when/if ParentNode/ChildNode eventually
+  // have TrustedScript removed as well. See
+  // https://groups.google.com/a/chromium.org/g/blink-dev/c/wIADRnljZDA/m/whzEaaAADAAJ.
+  // Before that, if this is a performance concern for the DOM Parts API, we
+  // could as well make Node::ConvertNodeUnionsIntoNodes and friends accept the
+  // union type as a template parameter. Then use std::is_same_v to skip the
+  // trusted type handling if that template parameter is a V8UnionNodeOrString.
+  HeapVector<Member<V8UnionNodeOrStringOrTrustedScript>> nodes_mapped;
+  nodes_mapped.ReserveInitialCapacity(nodes.size());
+  for (auto node_or_string : nodes) {
+    if (node_or_string->IsNode()) {
+      nodes_mapped.push_back(
+          MakeGarbageCollected<V8UnionNodeOrStringOrTrustedScript>(
+              node_or_string->GetAsNode()));
+    } else {
+      CHECK(node_or_string->IsString());
+      nodes_mapped.push_back(
+          MakeGarbageCollected<V8UnionNodeOrStringOrTrustedScript>(
+              node_or_string->GetAsString()));
+    }
+  }
+
   // Insert new contents.
-  next_sibling_->before(nodes, exception_state);
+  VectorOf<Node> node_vector = Node::ConvertNodeUnionsIntoNodes(
+      parent, nodes_mapped, parent->GetDocument(), "replaceChildren",
+      exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  parent->InsertBefore(node_vector, next_sibling_, exception_state);
 }
 
 void ChildNodePart::Trace(Visitor* visitor) const {
@@ -150,67 +219,24 @@ void ChildNodePart::Trace(Visitor* visitor) const {
   Part::Trace(visitor);
 }
 
-// A ChildNodePart is valid if:
-//  1. The base |Part| is valid (it has a |root|).
-//  2. previous_sibling_ and next_sibling_ are non-null.
-//  3. previous_sibling_ and next_sibling_ have the same (non-null) parent.
-//  4. previous_sibling_ comes strictly before next_sibling_ in the tree.
-bool ChildNodePart::IsValid() const {
-  if (!Part::IsValid()) {
-    return false;
-  }
-  if (!previous_sibling_ || !next_sibling_) {
-    return false;
-  }
-  ContainerNode* parent = parentNode();
-  if (!parent) {
-    return false;
-  }
-  if (next_sibling_->parentNode() != parent) {
-    return false;
-  }
-  if (previous_sibling_ == next_sibling_) {
-    return false;
-  }
-  Node* left = previous_sibling_;
-  do {
-    left = left->nextSibling();
-    if (left == next_sibling_) {
-      return true;
-    }
-  } while (left);
-  return false;
-}
-
 Node* ChildNodePart::NodeToSortBy() const {
-  return previous_sibling_;
+  return previous_sibling_.Get();
 }
 
 ContainerNode* ChildNodePart::rootContainer() const {
   return IsValid() ? parentNode() : nullptr;
 }
 
-Part* ChildNodePart::ClonePart(NodeCloningData& data) const {
-  CHECK(IsValid());
-  PartRoot* new_part_root = data.ClonedPartRootFor(*root());
-  // TODO(crbug.com/1453291) Eventually it should *not* be possible to construct
-  // Parts that get cloned without their PartRoots. But as-is, that can happen
-  // if, for example, a ChildNodePart contains child Nodes that are part of
-  // other ChildNodeParts or NodeParts whose `root` is not this ChildNodePart.
-  if (!new_part_root) {
-    return nullptr;
-  }
-  Node* new_previous = data.ClonedNodeFor(*previous_sibling_);
-  Node* new_next = data.ClonedNodeFor(*next_sibling_);
-  CHECK(new_previous && new_next);
+Part* ChildNodePart::ClonePart(NodeCloningData& data, Node& node_clone) const {
+  DCHECK(IsValid());
   ChildNodePart* clone = MakeGarbageCollected<ChildNodePart>(
-      *new_part_root, *new_previous, *new_next, metadata());
-  data.ConnectPartRootToClone(*this, *clone);
+      data.CurrentPartRoot(), node_clone, node_clone, metadata().AsVector());
+  data.PushPartRoot(*clone);
   return clone;
 }
 
 Document& ChildNodePart::GetDocument() const {
-  CHECK(IsValid());
+  DCHECK(IsValid());
   return previous_sibling_->GetDocument();
 }
 

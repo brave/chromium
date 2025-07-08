@@ -10,7 +10,6 @@
 #include "base/compiler_specific.h"
 #include "base/debug/crash_logging.h"
 #include "base/format_macros.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/crash/core/common/crash_key.h"
@@ -117,7 +116,7 @@ TEST_F(CrashKeysTest, PrinterInfoReset) {
   // After ScopedPrinterInfo goes out of scope, printer keys should be reset.
   {
     const std::vector<std::string> kPrinterInfoFull{"1", "2", "3", "4"};
-    crash_keys::ScopedPrinterInfo keys(kPrinterInfoFull);
+    crash_keys::ScopedPrinterInfo keys("dummy-printer", kPrinterInfoFull);
     EXPECT_EQ(GetCrashKeyValue("prn-info-1"), "1");
     EXPECT_EQ(GetCrashKeyValue("prn-info-2"), "2");
     EXPECT_EQ(GetCrashKeyValue("prn-info-3"), "3");
@@ -135,9 +134,19 @@ TEST_F(CrashKeysTest, PrinterInfoContainsSemicolon) {
   constexpr char kWithSemicolon[] = "CUPS version 1.2; OS version 3.4";
   const std::vector<std::string> kPrinterInfo{kWithoutSemicolon,
                                               kWithSemicolon};
-  crash_keys::ScopedPrinterInfo keys(kPrinterInfo);
+  crash_keys::ScopedPrinterInfo keys("dummy-printer", kPrinterInfo);
   EXPECT_EQ(GetCrashKeyValue("prn-info-1"), kWithoutSemicolon);
   EXPECT_EQ(GetCrashKeyValue("prn-info-2"), kWithSemicolon);
+  EXPECT_TRUE(GetCrashKeyValue("prn-info-3").empty());
+  EXPECT_TRUE(GetCrashKeyValue("prn-info-4").empty());
+}
+
+TEST_F(CrashKeysTest, PrinterInfoNoData) {
+  // Provided data has no entries, so printer name is used for one key.
+  constexpr char kPrinterName[] = "dummy-printer";
+  crash_keys::ScopedPrinterInfo keys(kPrinterName, std::vector<std::string>());
+  EXPECT_EQ(GetCrashKeyValue("prn-info-1"), kPrinterName);
+  EXPECT_TRUE(GetCrashKeyValue("prn-info-2").empty());
   EXPECT_TRUE(GetCrashKeyValue("prn-info-3").empty());
   EXPECT_TRUE(GetCrashKeyValue("prn-info-4").empty());
 }

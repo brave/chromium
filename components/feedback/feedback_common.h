@@ -33,16 +33,20 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
   using SystemLogsMap = std::map<std::string, std::string>;
 
   struct AttachedFile {
-    explicit AttachedFile(const std::string& filename, std::string data);
+    explicit AttachedFile(const std::string& filename,
+                          std::vector<uint8_t> data);
     ~AttachedFile();
+    AttachedFile(AttachedFile&&);
+    AttachedFile& operator=(AttachedFile&&);
 
     std::string name;
-    std::string data;
+    std::vector<uint8_t> data;
   };
 
   FeedbackCommon();
 
   void AddFile(const std::string& filename, std::string data);
+  void AddFile(const std::string& filename, std::vector<uint8_t> data);
 
   void AddLog(std::string name, std::string value);
   void AddLogs(SystemLogsMap logs);
@@ -60,26 +64,39 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
   // the feedback report's system logs.
   static bool IncludeInSystemLogs(const std::string& key, bool is_google_email);
 
+  static int GetChromeBrowserProductId();
+
+  // Mahi feature has the dedicated product id.
+  static int GetMahiProductId();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  static int GetChromeOSProductId();
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
   // Getters
-  const absl::optional<std::string>& mac_address() const {
-    return mac_address_;
-  }
+  const std::optional<std::string>& mac_address() const { return mac_address_; }
   const std::string& category_tag() const { return category_tag_; }
   const std::string& page_url() const { return page_url_; }
   const std::string& description() const { return description_; }
   const std::string& user_email() const { return user_email_; }
   const std::string& image() const { return image_; }
+  const std::string& image_mime_type() const { return image_mime_type_; }
   const SystemLogsMap* sys_info() const { return &logs_; }
   int32_t product_id() const { return product_id_; }
   std::string user_agent() const { return user_agent_; }
   std::string locale() const { return locale_; }
   std::string& autofill_metadata() { return autofill_metadata_; }
+  bool include_chrome_platform() const { return include_chrome_platform_; }
+  const std::optional<bool>& is_offensive_or_unsafe() {
+    return is_offensive_or_unsafe_;
+  }
+  std::string& ai_metadata() { return ai_metadata_; }
 
   const AttachedFile* attachment(size_t i) const { return &attachments_[i]; }
   size_t attachments() const { return attachments_.size(); }
 
   // Setters
-  void set_mac_address(const absl::optional<std::string>& mac_address) {
+  void set_mac_address(const std::optional<std::string>& mac_address) {
     mac_address_ = mac_address;
   }
   void set_category_tag(const std::string& category_tag) {
@@ -93,6 +110,9 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
     user_email_ = user_email;
   }
   void set_image(std::string image) { image_ = std::move(image); }
+  void set_image_mime_type(std::string image_mime_type) {
+    image_mime_type_ = std::move(image_mime_type);
+  }
   void set_product_id(int32_t product_id) { product_id_ = product_id; }
   void set_user_agent(const std::string& user_agent) {
     user_agent_ = user_agent;
@@ -101,6 +121,15 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
   void set_autofill_metadata(const std::string& autofill_metadata) {
     autofill_metadata_ = autofill_metadata;
   }
+  // If true, includes whether the report is from ChromeOS or Chrome on another
+  // platform.
+  void set_include_chrome_platform(bool include_chrome_platform) {
+    include_chrome_platform_ = include_chrome_platform;
+  }
+  void set_is_offensive_or_unsafe(const std::optional<bool>& value) {
+    is_offensive_or_unsafe_ = value;
+  }
+  void set_ai_metadata(const std::string& value) { ai_metadata_ = value; }
 
  protected:
   virtual ~FeedbackCommon();
@@ -124,7 +153,7 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
   // Returns true if a product ID was set in the feedback report.
   bool HasProductId() const { return product_id_ != -1; }
 
-  absl::optional<std::string> mac_address_;
+  std::optional<std::string> mac_address_;
   std::string category_tag_;
   std::string page_url_;
   std::string description_;
@@ -133,8 +162,13 @@ class FeedbackCommon : public base::RefCountedThreadSafe<FeedbackCommon> {
   std::string user_agent_;
   std::string locale_;
   std::string autofill_metadata_;
+  bool include_chrome_platform_ = true;
+  std::optional<bool> is_offensive_or_unsafe_;
+  std::string ai_metadata_;
 
   std::string image_;
+  // If empty, assumed to be PNG.
+  std::string image_mime_type_;
 
   // It is possible that multiple attachment add calls are running in
   // parallel, so synchronize access.

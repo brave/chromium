@@ -8,18 +8,14 @@
 
 #include <utility>
 
+#include "base/apple/foundation_util.h"
 #include "base/functional/bind.h"
-#include "base/mac/foundation_util.h"
 #include "base/memory/weak_ptr.h"
 #import "base/task/sequenced_task_runner.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_bound.h"
 #include "remoting/base/string_resources.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface FileTransferOpenPanelDelegate : NSObject <NSOpenSavePanelDelegate> {
 }
@@ -70,6 +66,7 @@ class MacFileChooserOnUiThread {
   NSOpenPanel* __strong open_panel_;
   scoped_refptr<base::SequencedTaskRunner> caller_task_runner_;
   base::WeakPtr<FileChooserMac> file_chooser_mac_;
+  base::WeakPtrFactory<MacFileChooserOnUiThread> weak_ptr_factory_;
 };
 
 class FileChooserMac : public FileChooser {
@@ -96,13 +93,15 @@ class FileChooserMac : public FileChooser {
 MacFileChooserOnUiThread::MacFileChooserOnUiThread(
     scoped_refptr<base::SequencedTaskRunner> caller_task_runner,
     base::WeakPtr<FileChooserMac> file_chooser_mac)
-    : delegate_([FileTransferOpenPanelDelegate new]),
+    : delegate_([[FileTransferOpenPanelDelegate alloc] init]),
       caller_task_runner_(std::move(caller_task_runner)),
-      file_chooser_mac_(std::move(file_chooser_mac)) {}
+      file_chooser_mac_(std::move(file_chooser_mac)),
+      weak_ptr_factory_(this) {}
 
 MacFileChooserOnUiThread::~MacFileChooserOnUiThread() {
   if (open_panel_) {
-    // Will synchronously invoke completion handler.
+    // Note: In existing implementations, this synchronously invokes the
+    // completion handler.
     [open_panel_ cancel:open_panel_];
   }
 }
@@ -115,20 +114,34 @@ void MacFileChooserOnUiThread::Show() {
   open_panel_.canChooseFiles = YES;
   open_panel_.canChooseDirectories = NO;
   open_panel_.delegate = delegate_;
+
+  // Because the MacFileChooserOnUiThread destructor calls `cancel` on the open
+  // panel if it is still open, which in turn causes the completion handler to
+  // be invoked synchronously, weak_this is expected always to be valid.
+  // However, because `cancel` does not appear to be explicitly documented to
+  // invoke the completion handler synchronously, using a weak pointer guards
+  // against any hypothetical future change in behavior.
+  base::WeakPtr<MacFileChooserOnUiThread> weak_this =
+      weak_ptr_factory_.GetWeakPtr();
   [open_panel_ beginWithCompletionHandler:^(NSModalResponse result) {
+    if (!weak_this) {
+      return;
+    }
     if (result == NSModalResponseOK) {
-      NSURL* url = open_panel_.URLs[0];
-      if (!url.fileURL) {
-        // Delegate should prevent this.
-        RunCallback(protocol::MakeFileTransferError(
+      NSURL* url = weak_this->open_panel_.URLs[0];
+      if (url.fileURL) {
+        weak_this->RunCallback(base::apple::NSStringToFilePath([url path]));
+      } else {
+        // The panel delegate should prevent the user making a selection where
+        // `url.fileURL` is false, so this is unexpected.
+        weak_this->RunCallback(protocol::MakeFileTransferError(
             FROM_HERE, protocol::FileTransfer_Error_Type_UNEXPECTED_ERROR));
       }
-      RunCallback(base::mac::NSStringToFilePath([url path]));
     } else {
-      RunCallback(protocol::MakeFileTransferError(
+      weak_this->RunCallback(protocol::MakeFileTransferError(
           FROM_HERE, protocol::FileTransfer_Error_Type_CANCELED));
     }
-    open_panel_ = nil;
+    weak_this->open_panel_ = nil;
   }];
   // Bring to front.
   [NSApp activateIgnoringOtherApps:YES];

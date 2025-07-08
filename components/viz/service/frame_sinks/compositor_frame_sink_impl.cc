@@ -14,6 +14,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
+#include "components/viz/common/features.h"
 #include "components/viz/service/frame_sinks/frame_sink_bundle_impl.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "services/viz/public/mojom/compositing/layer_context.mojom.h"
@@ -51,12 +52,10 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
 
   void OnBeginFrame(const BeginFrameArgs& args,
                     const FrameTimingDetailsMap& timing_details,
-                    bool frame_ack,
                     std::vector<ReturnedResource> resources) override {
     if (auto* bundle = GetBundle()) {
       bundle->EnqueueOnBeginFrame(frame_sink_id_.sink_id(), args,
-                                  timing_details, frame_ack,
-                                  std::move(resources));
+                                  timing_details, std::move(resources));
     }
   }
 
@@ -81,6 +80,8 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
     }
   }
 
+  void OnSurfaceEvicted(const LocalSurfaceId& local_surface_id) override {}
+
  private:
   FrameSinkBundleImpl* GetBundle() {
     return manager_->GetFrameSinkBundle(bundle_id_);
@@ -96,8 +97,8 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
 CompositorFrameSinkImpl::CompositorFrameSinkImpl(
     FrameSinkManagerImpl* frame_sink_manager,
     const FrameSinkId& frame_sink_id,
-    absl::optional<FrameSinkBundleId> bundle_id,
-    mojo::PendingReceiver<mojom::CompositorFrameSink> receiver,
+    std::optional<FrameSinkBundleId> bundle_id,
+    mojo::PendingReceiver<mojom::CompositorFrameSink> interface_receiver,
     mojo::PendingRemote<mojom::CompositorFrameSinkClient> client)
     : compositor_frame_sink_client_(std::move(client)),
       proxying_client_(
@@ -106,16 +107,26 @@ CompositorFrameSinkImpl::CompositorFrameSinkImpl(
                                                     frame_sink_id,
                                                     *bundle_id)
               : nullptr),
-      compositor_frame_sink_receiver_(this, std::move(receiver)),
+      compositor_frame_sink_receiver_(std::in_place_type<Receiver>, this),
       support_(std::make_unique<CompositorFrameSinkSupport>(
           proxying_client_ ? proxying_client_.get()
                            : compositor_frame_sink_client_.get(),
           frame_sink_manager,
           frame_sink_id,
           false /* is_root */)) {
-  compositor_frame_sink_receiver_.set_disconnect_handler(
-      base::BindOnce(&CompositorFrameSinkImpl::OnClientConnectionLost,
-                     base::Unretained(this)));
+  if (mojo::IsDirectReceiverSupported() &&
+      features::IsVizDirectCompositorThreadIpcNonRootEnabled()) {
+    compositor_frame_sink_receiver_.emplace<DirectReceiver>(
+        mojo::DirectReceiverKey{}, this);
+  }
+  std::visit(
+      [&](auto& receiver) {
+        receiver.Bind(std::move(interface_receiver));
+        receiver.set_disconnect_handler(
+            base::BindOnce(&CompositorFrameSinkImpl::OnClientConnectionLost,
+                           base::Unretained(this)));
+      },
+      compositor_frame_sink_receiver_);
   if (bundle_id.has_value()) {
     support_->SetBundle(*bundle_id);
   }
@@ -131,42 +142,21 @@ void CompositorFrameSinkImpl::SetWantsAnimateOnlyBeginFrames() {
   support_->SetWantsAnimateOnlyBeginFrames();
 }
 
-void CompositorFrameSinkImpl::SetWantsBeginFrameAcks() {
-  support_->SetWantsBeginFrameAcks();
+void CompositorFrameSinkImpl::SetAutoNeedsBeginFrame() {
+  support_->SetAutoNeedsBeginFrame();
 }
 
 void CompositorFrameSinkImpl::SubmitCompositorFrame(
     const LocalSurfaceId& local_surface_id,
     CompositorFrame frame,
-    absl::optional<HitTestRegionList> hit_test_region_list,
+    std::optional<HitTestRegionList> hit_test_region_list,
     uint64_t submit_time) {
   // Non-root surface frames should not have display transform hint.
   DCHECK_EQ(gfx::OVERLAY_TRANSFORM_NONE, frame.metadata.display_transform_hint);
-  SubmitCompositorFrameInternal(local_surface_id, std::move(frame),
-                                std::move(hit_test_region_list), submit_time,
-                                SubmitCompositorFrameSyncCallback());
-}
 
-void CompositorFrameSinkImpl::SubmitCompositorFrameSync(
-    const LocalSurfaceId& local_surface_id,
-    CompositorFrame frame,
-    absl::optional<HitTestRegionList> hit_test_region_list,
-    uint64_t submit_time,
-    SubmitCompositorFrameSyncCallback callback) {
-  SubmitCompositorFrameInternal(local_surface_id, std::move(frame),
-                                std::move(hit_test_region_list), submit_time,
-                                std::move(callback));
-}
-
-void CompositorFrameSinkImpl::SubmitCompositorFrameInternal(
-    const LocalSurfaceId& local_surface_id,
-    CompositorFrame frame,
-    absl::optional<HitTestRegionList> hit_test_region_list,
-    uint64_t submit_time,
-    mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback callback) {
   const auto result = support_->MaybeSubmitCompositorFrame(
       local_surface_id, std::move(frame), std::move(hit_test_region_list),
-      submit_time, std::move(callback));
+      submit_time);
   if (result == SubmitResult::ACCEPTED)
     return;
 
@@ -174,9 +164,12 @@ void CompositorFrameSinkImpl::SubmitCompositorFrameInternal(
       CompositorFrameSinkSupport::GetSubmitResultAsString(result);
   DLOG(ERROR) << "SubmitCompositorFrame failed for " << local_surface_id
               << " because " << reason;
-  compositor_frame_sink_receiver_.ResetWithReason(static_cast<uint32_t>(result),
-                                                  reason);
-  OnClientConnectionLost();
+
+  std::visit(
+      [&](auto& receiver) {
+        receiver.ResetWithReason(static_cast<uint32_t>(result), reason);
+      },
+      compositor_frame_sink_receiver_);
 }
 
 void CompositorFrameSinkImpl::DidNotProduceFrame(
@@ -184,36 +177,19 @@ void CompositorFrameSinkImpl::DidNotProduceFrame(
   support_->DidNotProduceFrame(begin_frame_ack);
 }
 
-void CompositorFrameSinkImpl::DidAllocateSharedBitmap(
-    base::ReadOnlySharedMemoryRegion region,
-    const SharedBitmapId& id) {
-  if (!support_->DidAllocateSharedBitmap(std::move(region), id)) {
-    DLOG(ERROR) << "DidAllocateSharedBitmap failed for duplicate "
-                << "SharedBitmapId";
-    compositor_frame_sink_receiver_.reset();
-    OnClientConnectionLost();
-  }
-}
-
-void CompositorFrameSinkImpl::DidDeleteSharedBitmap(const SharedBitmapId& id) {
-  support_->DidDeleteSharedBitmap(id);
-}
-
-void CompositorFrameSinkImpl::InitializeCompositorFrameSinkType(
-    mojom::CompositorFrameSinkType type) {
-  support_->InitializeCompositorFrameSinkType(type);
+void CompositorFrameSinkImpl::NotifyNewLocalSurfaceIdExpectedWhilePaused() {
+  support_->NotifyNewLocalSurfaceIdExpectedWhilePaused();
 }
 
 void CompositorFrameSinkImpl::BindLayerContext(
-    mojom::PendingLayerContextPtr context) {
-  support_->BindLayerContext(*context);
+    mojom::PendingLayerContextPtr context,
+    mojom::LayerContextSettingsPtr settings) {
+  support_->BindLayerContext(*context, std::move(settings));
 }
 
 #if BUILDFLAG(IS_ANDROID)
-void CompositorFrameSinkImpl::SetThreadIds(
-    const std::vector<int32_t>& thread_ids) {
-  support_->SetThreadIds(/*from_untrusted_client=*/true,
-                         base::MakeFlatSet<base::PlatformThreadId>(thread_ids));
+void CompositorFrameSinkImpl::SetThreads(const std::vector<Thread>& threads) {
+  support_->SetThreads(/*from_untrusted_client=*/true, threads);
 }
 #endif
 
@@ -222,8 +198,8 @@ void CompositorFrameSinkImpl::OnClientConnectionLost() {
   // has done something invalid and the connection to the client was terminated.
   // Destroy |this| to free up resources as it's no longer useful.
   FrameSinkId frame_sink_id = support_->frame_sink_id();
-  support_->frame_sink_manager()->DestroyCompositorFrameSink(frame_sink_id,
-                                                             base::DoNothing());
+  support_->frame_sink_manager()->DestroyCompositorFrameSink(
+      frame_sink_id, std::nullopt, base::DoNothing());
 }
 
 }  // namespace viz

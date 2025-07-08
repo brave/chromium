@@ -12,6 +12,7 @@
 
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
+#import "base/memory/raw_ptr.h"
 #include "ios/web/navigation/navigation_initiation_type.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #include "ios/web/navigation/synthesized_session_restore.h"
@@ -40,10 +41,6 @@ class NavigationManagerDelegate;
 // greater than 100. This is just a requested count and actual number of
 // restored items can be smaller.
 extern const char kRestoreNavigationItemCount[];
-
-// Name of UMA histogram to log the time spent on asynchronous session
-// restoration.
-extern const char kRestoreNavigationTime[];
 
 // WKBackForwardList-based implementation of NavigationManager.
 // Generally mirrors upstream's NavigationController.
@@ -129,9 +126,6 @@ class NavigationManagerImpl final : public NavigationManager {
   // into this layer.
   void OnNavigationItemCommitted();
 
-  // Called when a navigation has started.
-  void OnNavigationStarted(const GURL& url);
-
   // Prepares for the deletion of WKWebView such as caching necessary data.
   void DetachFromWebView();
 
@@ -141,17 +135,19 @@ class NavigationManagerImpl final : public NavigationManager {
   // nil if there isn't one. The item starts out as pending, and will be lost
   // unless `-commitPendingItem` is called.
   // `is_post_navigation` is true if the navigation is using a POST HTTP method.
-  // `https_upgrade_type` indicates the type of the HTTPS upgrade applied on
-  // this navigation.
+  // `is_error_navigation` is true if the navigation leads to an internal error
+  // page. `https_upgrade_type` indicates the type of the HTTPS upgrade applied
+  // on this navigation.
   void AddPendingItem(const GURL& url,
                       const web::Referrer& referrer,
                       ui::PageTransition navigation_type,
                       NavigationInitiationType initiation_type,
                       bool is_post_navigation,
+                      bool is_error_navigation,
                       web::HttpsUpgradeType https_upgrade_type);
 
   // Commits the pending item, if any.
-  // TODO(crbug.com/936933): Remove this method.
+  // TODO(crbug.com/41444193): Remove this method.
   void CommitPendingItem();
 
   // Commits given pending `item` stored outside of navigation manager
@@ -173,7 +169,7 @@ class NavigationManagerImpl final : public NavigationManager {
   // Returns the navigation index that differs from the current item (or pending
   // item if it exists) by the specified `offset`, skipping redirect navigation
   // items. The index returned is not guaranteed to be valid.
-  // TODO(crbug.com/661316): Make this method private once navigation code is
+  // TODO(crbug.com/41284081): Make this method private once navigation code is
   // moved from CRWWebController to NavigationManagerImpl.
   int GetIndexForOffset(int offset) const;
 
@@ -198,16 +194,19 @@ class NavigationManagerImpl final : public NavigationManager {
 
   // The current NavigationItem. During a pending navigation, returns the
   // NavigationItem for that navigation.
-  // TODO(crbug.com/661316): Make this private once all navigation code is moved
-  // out of CRWWebController.
+  // TODO(crbug.com/41284081): Make this private once all navigation code is
+  // moved out of CRWWebController.
   NavigationItemImpl* GetCurrentItemImpl() const;
+
+  // Implementation for corresponding NavigationManager getters.
+  NavigationItemImpl* GetPendingItemImpl() const;
 
   // Returns the last committed NavigationItem, which may be null if there
   // are no committed entries or session restoration is in-progress.
   NavigationItemImpl* GetLastCommittedItemImpl() const;
 
   // Updates the pending or last committed navigation item after replaceState.
-  // TODO(crbug.com/783382): This is a legacy method to maintain backward
+  // TODO(crbug.com/41354482): This is a legacy method to maintain backward
   // compatibility for PageLoad stat. Remove this method once PageLoad no longer
   // depend on WebStateObserver::DidStartLoading.
   void UpdateCurrentItemForReplaceState(const GURL& url,
@@ -246,17 +245,6 @@ class NavigationManagerImpl final : public NavigationManager {
   std::vector<NavigationItem*> GetForwardItems() const final;
   void Restore(int last_committed_item_index,
                std::vector<std::unique_ptr<NavigationItem>> items) final;
-  bool IsRestoreSessionInProgress() const final;
-  void AddRestoreCompletionCallback(base::OnceClosure callback) final;
-
-  // Implementation for corresponding NavigationManager getters.
-  NavigationItemImpl* GetPendingItemInCurrentOrRestoredSession() const;
-  // Unlike GetLastCommittedItem(), this method does not return null during
-  // session restoration (and returns last known committed item instead).
-  NavigationItemImpl* GetLastCommittedItemInCurrentOrRestoredSession() const;
-  // Unlike GetLastCommittedItemIndex(), this method does not return -1 during
-  // session restoration (and returns last known committed item index instead).
-  int GetLastCommittedItemIndexInCurrentOrRestoredSession() const;
 
   // Identical to GetItemAtIndex() but returns the underlying NavigationItemImpl
   // instead of the public NavigationItem interface.
@@ -322,7 +310,7 @@ class NavigationManagerImpl final : public NavigationManager {
     WKBackForwardListItem* GetWKItemAtIndex(size_t index) const;
 
    private:
-    NavigationManagerImpl* navigation_manager_;
+    raw_ptr<NavigationManagerImpl> navigation_manager_;
     bool attached_to_web_view_;
 
     mutable GURL cached_visible_origin_url_;
@@ -331,6 +319,10 @@ class NavigationManagerImpl final : public NavigationManager {
 
     std::vector<std::unique_ptr<NavigationItemImpl>> cached_items_;
     int cached_current_item_index_;
+
+    // Returns the WKWebView title. Must only be called when
+    // IsAttachedToWebView() is true.
+    const std::u16string GetWKWebViewTitle() const;
   };
 
   // Type of the list passed to restore items.
@@ -349,15 +341,6 @@ class NavigationManagerImpl final : public NavigationManager {
   void RestoreItemsState(
       RestoreItemListType list_type,
       std::vector<std::unique_ptr<NavigationItem>> items_restored);
-
-  // Restores the specified navigation session in the current web view. This
-  // differs from Restore() in that it doesn't reset the current navigation
-  // history to empty before restoring. It simply appends the restored session
-  // after the current item, effectively replacing only the forward history.
-  // `last_committed_item_index` is the 0-based index into `items` that the web
-  // view should be navigated to at the end of the restoration.
-  void UnsafeRestore(int last_committed_item_index,
-                     std::vector<std::unique_ptr<NavigationItem>> items);
 
   // Must be called by subclasses before restoring `item_count` navigation
   // items.
@@ -401,10 +384,10 @@ class NavigationManagerImpl final : public NavigationManager {
   void FinalizeSessionRestore();
 
   // The primary delegate for this manager.
-  NavigationManagerDelegate* const delegate_;
+  const raw_ptr<NavigationManagerDelegate> delegate_;
 
   // The BrowserState that is associated with this instance.
-  BrowserState* const browser_state_;
+  const raw_ptr<BrowserState> browser_state_;
 
   // List of transient url rewriters added by `AddTransientURLRewriter()`.
   std::vector<BrowserURLRewriter::URLRewriter> transient_url_rewriters_;
@@ -445,9 +428,8 @@ class NavigationManagerImpl final : public NavigationManager {
   WKWebViewCache web_view_cache_{this};
 
   // Whether this navigation manager is in the process of restoring session
-  // history into WKWebView. It is set in Restore() and unset in
-  // FinalizeSessionRestore().
-  bool is_restore_session_in_progress_ = false;
+  // history into WKWebView using native restoration.
+  bool native_restore_in_progress_ = false;
 
   // Set to true when delegate_->GoToBackForwardListItem is being called, which
   // is useful to know when comparing the VisibleWebViewURL with the last
@@ -469,11 +451,6 @@ class NavigationManagerImpl final : public NavigationManager {
   // clients of this navigation manager gets sane values for visible title and
   // URL.
   std::unique_ptr<NavigationItem> restored_visible_item_;
-
-  // Non-empty only during the session restoration. The callbacks are
-  // registered in AddRestoreCompletionCallback() and are executed in
-  // FinalizeSessionRestore().
-  std::vector<base::OnceClosure> restore_session_completion_callbacks_;
 
   // Stores the different WKWebView session data blob loaders. Loaders are
   // tried in the order they are registered, and the native session loading

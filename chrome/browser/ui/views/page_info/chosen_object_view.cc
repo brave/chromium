@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/page_info/chosen_object_view.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -34,7 +35,7 @@ ChosenObjectView::ChosenObjectView(
     std::unique_ptr<PageInfoUI::ChosenObjectInfo> info,
     std::u16string display_name)
     : info_(std::move(info)) {
-  // TODO(crbug.com/1446230): Directly subclass `RichControlsContainerView`
+  // TODO(crbug.com/40064612): Directly subclass `RichControlsContainerView`
   // instead of adding it as the only child.
   SetUseDefaultFillLayout(true);
   row_view_ = AddChildView(std::make_unique<RichControlsContainerView>());
@@ -54,7 +55,7 @@ ChosenObjectView::ChosenObjectView(
   // allowed by policy string below for |secondary_label|.
   std::unique_ptr<views::Label> secondary_label;
   if (info_->chooser_object->source ==
-      content_settings::SettingSource::SETTING_SOURCE_POLICY) {
+      content_settings::SettingSource::kPolicy) {
     delete_button->SetEnabled(false);
     row_view_->AddSecondaryLabel(l10n_util::GetStringUTF16(
         info_->ui_info->allowed_by_policy_description_string_id));
@@ -100,7 +101,7 @@ void ChosenObjectView::ExecuteDeleteCommand() {
   // reachable but views::test::ButtonTestApi::NotifyClick doesn't check
   // before executing the PressedCallback.
   if (info_->chooser_object->source ==
-      content_settings::SettingSource::SETTING_SOURCE_POLICY) {
+      content_settings::SettingSource::kPolicy) {
     return;
   }
 
@@ -114,9 +115,8 @@ void ChosenObjectView::ExecuteDeleteCommand() {
   // Hide the row after revoking access.
   SetVisible(false);
 
-  for (ChosenObjectViewObserver& observer : observer_list_) {
-    observer.OnChosenObjectDeleted(*info_);
-  }
+  observer_list_.Notify(&ChosenObjectViewObserver::OnChosenObjectDeleted,
+                        *info_);
 }
 
 void ChosenObjectView::UpdateIconImage(bool is_deleted) const {
@@ -124,5 +124,13 @@ void ChosenObjectView::UpdateIconImage(bool is_deleted) const {
       PageInfoViewFactory::GetChosenObjectIcon(*info_, is_deleted));
 }
 
-BEGIN_METADATA(ChosenObjectView, views::View)
+std::u16string_view ChosenObjectView::GetObjectNameForTesting() const {
+  return row_view_->GetTitleForTesting();  // IN-TEST
+}
+
+views::ImageButton* ChosenObjectView::GetDeleteButtonForTesting() const {
+  return delete_button_;
+}
+
+BEGIN_METADATA(ChosenObjectView)
 END_METADATA

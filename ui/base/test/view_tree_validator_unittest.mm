@@ -7,10 +7,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/test/cocoa_helper.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using ViewTreeValidatorTest = ui::CocoaTest;
 
 namespace {
@@ -69,7 +65,7 @@ TEST_F(ViewTreeValidatorTest, CorrectnessTest) {
 
   {
     // The original layout is well-formed.
-    absl::optional<ui::ViewTreeProblemDetails> details =
+    std::optional<ui::ViewTreeProblemDetails> details =
         ui::ValidateViewTree(window.contentView);
     EXPECT_FALSE(details.has_value());
   }
@@ -77,7 +73,7 @@ TEST_F(ViewTreeValidatorTest, CorrectnessTest) {
   {
     // Make view_3 no longer contained within view_1.
     AdjustWidth(view_3, 1);
-    absl::optional<ui::ViewTreeProblemDetails> details =
+    std::optional<ui::ViewTreeProblemDetails> details =
         ui::ValidateViewTree(window.contentView);
     ASSERT_TRUE(details.has_value());
     EXPECT_EQ(details->type,
@@ -90,7 +86,7 @@ TEST_F(ViewTreeValidatorTest, CorrectnessTest) {
   {
     // Make view_1 overlap view_2.
     AdjustWidth(view_1, 1);
-    absl::optional<ui::ViewTreeProblemDetails> details =
+    std::optional<ui::ViewTreeProblemDetails> details =
         ui::ValidateViewTree(window.contentView);
     ASSERT_TRUE(details.has_value());
     EXPECT_EQ(details->type,
@@ -109,7 +105,7 @@ TEST_F(ViewTreeValidatorTest, CorrectnessTest) {
     // Make view_4 overlap view_5. Since they're both not localizable, this
     // isn't an error.
     AdjustHeight(view_4, 1);
-    absl::optional<ui::ViewTreeProblemDetails> details =
+    std::optional<ui::ViewTreeProblemDetails> details =
         ui::ValidateViewTree(window.contentView);
     EXPECT_FALSE(details.has_value());
     AdjustHeight(view_4, -1);

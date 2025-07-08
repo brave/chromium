@@ -13,10 +13,9 @@
 
 namespace blink {
 
-class AnchorPositionScrollDataTest : public RenderingTest,
-                                     private ScopedCSSAnchorPositioningForTest {
+class AnchorPositionScrollDataTest : public RenderingTest {
  public:
-  AnchorPositionScrollDataTest() : ScopedCSSAnchorPositioningForTest(true) {}
+  AnchorPositionScrollDataTest() = default;
 
   void SimulateFrame() {
     // Advance time by 100 ms.
@@ -40,7 +39,7 @@ class AnchorPositionScrollDataTest : public RenderingTest,
   }
 };
 
-TEST_F(AnchorPositionScrollDataTest, HasDataAndTranslation) {
+TEST_F(AnchorPositionScrollDataTest, HasDataAndScrollAdjustment) {
   SetBodyInnerHTML(R"HTML(
     <div style="position: relative">
       <div style="overflow: scroll; height: 20px;">
@@ -49,13 +48,20 @@ TEST_F(AnchorPositionScrollDataTest, HasDataAndTranslation) {
         dolor sit amet
         <div style="height: 100px"></div>
       </div>
-      <div id="anchored" style="position: absolute; anchor-default: --a1">
+      <div id="anchored"
+           style="position: absolute; position-anchor: --a1; top: anchor(top)">
         anchored
       </div>
-      <div id="no-anchor" style="position: absolute; anchor-default: --b1">
+      <div id="no-anchor-usage"
+           style="position: absolute; position-anchor: --a1;">
+        anchor not used in any anchor function
+      </div>
+      <div id="no-anchor"
+           style="position: absolute; position-anchor: --b1; top: anchor(top)">
         anchor not found
       </div>
-      <div id="not-anchor-positioned" style="anchor-default: --a1">
+      <div id="not-anchor-positioned"
+           style="position-anchor: --a1; top: anchor(top)">
         not anchor positioned
       </div>
     </div>
@@ -63,11 +69,17 @@ TEST_F(AnchorPositionScrollDataTest, HasDataAndTranslation) {
 
   const Element* anchored = GetElementById("anchored");
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_TRUE(anchored->GetAnchorPositionScrollData()->HasTranslation());
+  EXPECT_TRUE(anchored->GetAnchorPositionScrollData()->NeedsScrollAdjustment());
+
+  const Element* no_anchor_usage = GetElementById("no-anchor-usage");
+  EXPECT_TRUE(no_anchor_usage->GetAnchorPositionScrollData());
+  EXPECT_FALSE(
+      no_anchor_usage->GetAnchorPositionScrollData()->NeedsScrollAdjustment());
 
   const Element* no_anchor = GetElementById("no-anchor");
   EXPECT_TRUE(no_anchor->GetAnchorPositionScrollData());
-  EXPECT_FALSE(no_anchor->GetAnchorPositionScrollData()->HasTranslation());
+  EXPECT_FALSE(
+      no_anchor->GetAnchorPositionScrollData()->NeedsScrollAdjustment());
 
   const Element* not_anchor_positioned =
       GetElementById("not-anchor-positioned");
@@ -78,7 +90,7 @@ TEST_F(AnchorPositionScrollDataTest, HasDataAndTranslation) {
 // changes from anchor-positioned to no longer anchor-positioned
 TEST_F(AnchorPositionScrollDataTest, Detach) {
   SetBodyInnerHTML(R"HTML(
-    <style>.anchored { position: absolute; anchor-default: --a1; }</style>
+    <style>.anchored { position: absolute; position-anchor: --a1; }</style>
     <div style="position: relative>
       <div style="overflow: scroll; height: 20px;">
         Lorem ipsum
@@ -134,7 +146,7 @@ TEST_F(AnchorPositionScrollDataTest, ScrollerSizeChange) {
       #anchored {
         position: absolute;
         top: anchor(--a top);
-        anchor-default: --a;
+        position-anchor: --a;
       }
     </style>
     <div style="position: relative">
@@ -153,8 +165,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollerSizeChange) {
 
   Element* anchored = GetElementById("anchored");
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 300),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(300)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   GetElementById("scroller")->classList().Add(AtomicString("changed"));
 
@@ -162,8 +174,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollerSizeChange) {
   // yet.
   SimulateFrame();
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 300),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(300)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   UnsetAnimationScheduled();
   UpdateAllLifecyclePhasesForTest();
@@ -176,8 +188,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollerSizeChange) {
   // Snapshot is updated in the next frame.
   SimulateFrame();
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 200),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(200)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   // Should not schedule another frame after all updates are done.
   UnsetAnimationScheduled();
@@ -197,7 +209,7 @@ TEST_F(AnchorPositionScrollDataTest, ScrollContentSizeChange) {
       #anchored {
         position: absolute;
         top: anchor(--a top);
-        anchor-default: --a;
+        position-anchor: --a;
       }
     </style>
     <div style="position: relative">
@@ -216,8 +228,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollContentSizeChange) {
 
   Element* anchored = GetElementById("anchored");
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 300),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(300)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   GetElementById("spacer")->classList().Add(AtomicString("changed"));
 
@@ -225,8 +237,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollContentSizeChange) {
   // yet.
   SimulateFrame();
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 300),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(300)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   UnsetAnimationScheduled();
   UpdateAllLifecyclePhasesForTest();
@@ -239,8 +251,8 @@ TEST_F(AnchorPositionScrollDataTest, ScrollContentSizeChange) {
   // Snapshot is updated in the next frame.
   SimulateFrame();
   EXPECT_TRUE(anchored->GetAnchorPositionScrollData());
-  EXPECT_EQ(ScrollOffset(0, 200),
-            anchored->GetAnchorPositionScrollData()->AccumulatedScrollOffset());
+  EXPECT_EQ(PhysicalOffset(LayoutUnit(), LayoutUnit(200)),
+            anchored->GetAnchorPositionScrollData()->AccumulatedAdjustment());
 
   // Should not schedule another frame after all updates are done.
   UnsetAnimationScheduled();

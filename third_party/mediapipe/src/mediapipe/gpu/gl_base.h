@@ -55,6 +55,7 @@
 #define HAS_EGL 1
 
 #include <EGL/egl.h>
+// TODO: b/377324183 - add <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #if defined(__ANDROID__)
@@ -76,6 +77,9 @@
 #undef None
 #undef Bool
 #undef Success
+
+// When using Windows, we may end up pulling a #define for GetObject.
+#undef GetObject
 
 #endif  // defined(__APPLE__)
 

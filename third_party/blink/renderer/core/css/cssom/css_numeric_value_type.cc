@@ -4,9 +4,8 @@
 
 #include "third_party/blink/renderer/core/css/cssom/css_numeric_value_type.h"
 
+#include <algorithm>
 #include <functional>
-
-#include "base/ranges/algorithm.h"
 
 namespace blink {
 
@@ -86,13 +85,12 @@ CSSNumericValueType::BaseType UnitTypeToBaseType(
     case UnitType::kDotsPerInch:
     case UnitType::kDotsPerCentimeter:
       return BaseType::kResolution;
-    case UnitType::kFraction:
+    case UnitType::kFlex:
       return BaseType::kFlex;
     case UnitType::kPercentage:
       return BaseType::kPercent;
     default:
       NOTREACHED();
-      return BaseType::kLength;
   }
 }
 
@@ -119,7 +117,6 @@ String CSSNumericValueType::BaseTypeToString(BaseType base_type) {
   }
 
   NOTREACHED();
-  return "";
 }
 
 CSSNumericValueType::CSSNumericValueType(CSSPrimitiveValue::UnitType unit) {
@@ -139,8 +136,8 @@ CSSNumericValueType::CSSNumericValueType(int exponent,
 
 CSSNumericValueType CSSNumericValueType::NegateExponents(
     CSSNumericValueType type) {
-  base::ranges::transform(type.exponents_, type.exponents_.begin(),
-                          std::negate());
+  std::ranges::transform(type.exponents_, type.exponents_.begin(),
+                         std::negate());
   return type;
 }
 

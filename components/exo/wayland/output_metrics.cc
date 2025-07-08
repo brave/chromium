@@ -38,7 +38,7 @@ std::vector<OutputMetrics::OutputScale> GetOutputScales(
   std::vector<float> zoom_factors = display::GetDisplayZoomFactors(active_mode);
 
   // Ensure that the current zoom factor is a part of the list.
-  if (base::ranges::none_of(zoom_factors, [&display_info](float zoom_factor) {
+  if (std::ranges::none_of(zoom_factors, [&display_info](float zoom_factor) {
         return std::abs(display_info.zoom_factor() - zoom_factor) <=
                std::numeric_limits<float>::epsilon();
       })) {
@@ -106,6 +106,10 @@ OutputMetrics::OutputMetrics(const display::Display& display)
   // fractional we need to round it up to the closest integer.
   scale = std::ceil(display.device_scale_factor());
 }
+
+OutputMetrics::OutputMetrics(const OutputMetrics&) = default;
+
+OutputMetrics& OutputMetrics::operator=(const OutputMetrics&) = default;
 
 OutputMetrics::~OutputMetrics() = default;
 

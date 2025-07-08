@@ -45,13 +45,22 @@ source_set("form_input_accessory") {
   ]
   deps = [
     ":elements",
-    "resources:mf_arrow_down",
-    "resources:mf_arrow_up",
     "//base",
     "//base:i18n",
-    "//ios/chrome/common:button_config",
     "//ios/chrome/common/ui/colors",
+    "//ios/chrome/common/ui/elements/resources",
     "//ios/chrome/common/ui/util",
   ]
   frameworks = [ "UIKit.framework" ]
+}
+
+source_set("branded_navigation_item_title_view") {
+  sources = [
+    "branded_navigation_item_title_view.h",
+    "branded_navigation_item_title_view.mm",
+  ]
+
+  frameworks = [ "UIKit.framework" ]
+
+  deps = [ "//ios/chrome/common/ui/colors" ]
 }

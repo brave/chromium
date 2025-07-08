@@ -4,19 +4,24 @@
 
 #include "chrome/browser/metrics/chrome_android_metrics_provider.h"
 
+#include <optional>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/system/sys_info.h"
+#include "base/task/thread_pool.h"
 #include "chrome/browser/android/customtabs/custom_tab_session_state_tracker.h"
-#include "chrome/browser/android/locale/locale_manager.h"
 #include "chrome/browser/android/metrics/uma_session_stats.h"
 #include "chrome/browser/flags/android/chrome_session_state.h"
-#include "chrome/browser/notifications/jni_headers/NotificationSystemStatusUtil_jni.h"
 #include "components/metrics/android_metrics_helper.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "system_profile.pb.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/metrics_proto/chrome_user_metrics_extension.pb.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/android/metrics/jni_headers/AppUpdateInfoUtils_jni.h"
+#include "chrome/browser/notifications/jni_headers/NotificationSystemStatusUtil_jni.h"
 
 namespace {
 
@@ -26,7 +31,7 @@ const int kAppNotificationStatusBoundary = 3;
 
 void EmitAppNotificationStatusHistogram() {
   auto status = Java_NotificationSystemStatusUtil_getAppNotificationStatus(
-      base::android::AttachCurrentThread());
+      jni_zero::AttachCurrentThread());
   UMA_HISTOGRAM_ENUMERATION("Android.AppNotificationStatus", status,
                             kAppNotificationStatusBoundary);
 }
@@ -37,6 +42,10 @@ void EmitMultipleUserProfilesHistogram() {
           chrome::android::GetMultipleUserProfilesState();
   base::UmaHistogramEnumeration("Android.MultipleUserProfilesState",
                                 multiple_user_profiles_state);
+}
+
+void GetAppUpdateData() {
+  Java_AppUpdateInfoUtils_emitToHistogram(jni_zero::AttachCurrentThread());
 }
 
 metrics::SystemProfileProto::OS::DarkModeState ToProtoDarkModeState(
@@ -61,7 +70,7 @@ ChromeAndroidMetricsProvider::ChromeAndroidMetricsProvider(
     PrefService* local_state)
     : local_state_(local_state) {}
 
-ChromeAndroidMetricsProvider::~ChromeAndroidMetricsProvider() {}
+ChromeAndroidMetricsProvider::~ChromeAndroidMetricsProvider() = default;
 
 // static
 void ChromeAndroidMetricsProvider::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -69,8 +78,16 @@ void ChromeAndroidMetricsProvider::RegisterPrefs(PrefRegistrySimple* registry) {
   metrics::AndroidMetricsHelper::RegisterPrefs(registry);
 }
 
+void ChromeAndroidMetricsProvider::AsyncInit(base::OnceClosure done_callback) {
+  hardware_class_ = base::SysInfo::GetAndroidHardwareClass();
+  std::move(done_callback).Run();
+}
+
 void ChromeAndroidMetricsProvider::OnDidCreateMetricsLog() {
   const auto type = chrome::android::GetActivityType();
+
+  // Determine and emit to histogram if AppUpdate is available.
+  base::ThreadPool::PostTask(FROM_HERE, base::BindOnce(&GetAppUpdateData));
 
   // All records should be created with an activity type, even if no activity
   // type has yet been declared. If an activity type is declared before the UMA
@@ -128,10 +145,20 @@ void ChromeAndroidMetricsProvider::ProvideCurrentSessionData(
 
   UmaSessionStats::GetInstance()->ProvideCurrentSessionData();
   EmitAppNotificationStatusHistogram();
-  LocaleManager::RecordUserTypeMetrics();
 }
 
 // static
 void ChromeAndroidMetricsProvider::ResetGlobalStateForTesting() {
   metrics::AndroidMetricsHelper::ResetGlobalStateForTesting();
+}
+
+void ChromeAndroidMetricsProvider::ProvideSystemProfileMetrics(
+    metrics::SystemProfileProto* system_profile_proto) {
+  if (hardware_class_.empty()) {
+    return;
+  }
+
+  metrics::SystemProfileProto::Hardware* hardware =
+      system_profile_proto->mutable_hardware();
+  hardware->set_full_hardware_class(hardware_class_);
 }

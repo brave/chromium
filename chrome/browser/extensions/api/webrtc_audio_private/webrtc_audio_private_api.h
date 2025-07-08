@@ -91,7 +91,7 @@ class WebrtcAudioPrivateFunction : public ExtensionFunction {
 
 class WebrtcAudioPrivateGetSinksFunction : public WebrtcAudioPrivateFunction {
  protected:
-  ~WebrtcAudioPrivateGetSinksFunction() override {}
+  ~WebrtcAudioPrivateGetSinksFunction() override = default;
 
  private:
   using SinkInfoVector = std::vector<api::webrtc_audio_private::SinkInfo>;
@@ -124,7 +124,7 @@ class WebrtcAudioPrivateGetAssociatedSinkFunction
   ResponseAction Run() override;
 
   // Receives the input device descriptions, looks up the raw source device ID
-  // basing on |params|, and requests the associated raw sink ID for it.
+  // basing on `params`, and requests the associated raw sink ID for it.
   void ReceiveInputDeviceDescriptions(
       const url::Origin& origin,
       const std::string& salt,
@@ -135,12 +135,12 @@ class WebrtcAudioPrivateGetAssociatedSinkFunction
 
   // Calculates HMAC and calls Reply().
   void CalculateHMACAndReply(const std::string& extension_salt,
-                             const absl::optional<std::string>& raw_sink_id);
+                             const std::optional<std::string>& raw_sink_id);
 
   // Receives the associated sink ID as HMAC and sends the response.
   void Reply(const std::string& hmac);
 
-  absl::optional<api::webrtc_audio_private::GetAssociatedSink::Params> params_;
+  std::optional<api::webrtc_audio_private::GetAssociatedSink::Params> params_;
 };
 
 }  // namespace extensions

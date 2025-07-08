@@ -26,6 +26,8 @@
 #include "third_party/blink/renderer/core/css/css_font_face.h"
 
 #include <algorithm>
+
+#include "base/trace_event/typed_macros.h"
 #include "third_party/blink/renderer/core/css/css_font_face_source.h"
 #include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/css/css_segmented_font_face.h"
@@ -35,6 +37,7 @@
 #include "third_party/blink/renderer/core/css/remote_font_face_source.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
+#include "third_party/blink/renderer/platform/fonts/font_custom_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -83,6 +86,14 @@ bool CSSFontFace::FontLoaded(CSSFontFaceSource* source) {
   for (CSSSegmentedFontFace* segmented_font_face : segmented_font_faces_) {
     segmented_font_face->FontFaceInvalidated();
   }
+
+  const FontCustomPlatformData* platform_data = source->GetCustomPlaftormData();
+  if (LoadStatus() == FontFace::kLoaded && platform_data) {
+    TRACE_EVENT("devtools.timeline", "RemoteFontLoaded", "url",
+                source->GetURL(), "name",
+                platform_data->GetPostScriptNameOrFamilyNameForInspector());
+  }
+
   return true;
 }
 
@@ -114,7 +125,7 @@ bool CSSFontFace::FallbackVisibilityChanged(RemoteFontFaceSource* source) {
   return true;
 }
 
-scoped_refptr<SimpleFontData> CSSFontFace::GetFontData(
+const SimpleFontData* CSSFontFace::GetFontData(
     const FontDescription& font_description) {
   if (!IsValid()) {
     return nullptr;
@@ -128,6 +139,15 @@ scoped_refptr<SimpleFontData> CSSFontFace::GetFontData(
                 font_face_->GetSizeAdjust())
           : font_description;
 
+  if (RuntimeEnabledFeatures::FontFeatureSettingsDescriptorEnabled()) {
+    size_adjusted_description.MergeFontFeatureSettingsWithDescriptor(
+        font_face_->GetFontFeatureSettings().get());
+  }
+  if (RuntimeEnabledFeatures::FontVariationSettingsDescriptorEnabled()) {
+    size_adjusted_description.MergeFontVariationSettingsWithDescriptor(
+        font_face_->GetFontVariationSettings().get());
+  }
+
   // https://www.w3.org/TR/css-fonts-4/#src-desc
   // "When a font is needed the user agent iterates over the set of references
   // listed, using the first one it can successfully activate."
@@ -140,7 +160,7 @@ scoped_refptr<SimpleFontData> CSSFontFace::GetFontData(
       return nullptr;
     }
 
-    if (scoped_refptr<SimpleFontData> result =
+    if (const SimpleFontData* result =
             source->GetFontData(size_adjusted_description,
                                 font_face_->GetFontSelectionCapabilities())) {
       // The font data here is created using the primary font's description.
@@ -149,7 +169,7 @@ scoped_refptr<SimpleFontData> CSSFontFace::GetFontData(
       if (size_adjusted_description.HasSizeAdjust()) {
         if (auto adjusted_size =
                 FontSizeFunctions::MetricsMultiplierAdjustedFontSize(
-                    result.get(), size_adjusted_description)) {
+                    result, size_adjusted_description)) {
           size_adjusted_description.SetAdjustedSize(adjusted_size.value());
           result =
               source->GetFontData(size_adjusted_description,
@@ -216,9 +236,8 @@ bool CSSFontFace::MaybeLoadFont(const FontDescription& font_description,
 
 void CSSFontFace::Load() {
   FontDescription font_description;
-  FontFamily font_family;
-  font_family.SetFamily(font_face_->family(), FontFamily::Type::kFamilyName);
-  font_description.SetFamily(font_family);
+  font_description.SetFamily(
+      FontFamily(font_face_->family(), FontFamily::Type::kFamilyName));
   Load(font_description);
 }
 
@@ -292,6 +311,7 @@ bool CSSFontFace::UpdatePeriod() {
 void CSSFontFace::Trace(Visitor* visitor) const {
   visitor->Trace(segmented_font_faces_);
   visitor->Trace(sources_);
+  visitor->Trace(ranges_);
   visitor->Trace(font_face_);
 }
 

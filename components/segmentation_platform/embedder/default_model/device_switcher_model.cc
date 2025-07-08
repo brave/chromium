@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/task/sequenced_task_runner.h"
-#include "build/chromeos_buildflags.h"
 #include "components/segmentation_platform/internal/metadata/metadata_writer.h"
 #include "components/segmentation_platform/public/config.h"
 #include "components/segmentation_platform/public/constants.h"
@@ -91,8 +90,8 @@ DeviceSwitcherModel::GetModelConfig() {
   (*sync_input->mutable_additional_args())["wait_for_device_info_in_seconds"] =
       "60";
 
-  writer.AddOutputConfigForMultiClassClassifier(
-      kOutputLabels.begin(), kOutputLabels.size(), kOutputLabels.size(), 0.1);
+  writer.AddOutputConfigForMultiClassClassifier(kOutputLabels,
+                                                kOutputLabels.size(), 0.1);
 
   constexpr int kModelVersion = 1;
   return std::make_unique<ModelConfig>(std::move(metadata), kModelVersion);
@@ -104,7 +103,7 @@ void DeviceSwitcherModel::ExecuteModelWithInput(
   // The custom input added should return 10 float values.
   if (inputs.size() != 10) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
+        FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
     return;
   }
 

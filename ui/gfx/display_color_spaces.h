@@ -5,16 +5,15 @@
 #ifndef UI_GFX_DISPLAY_COLOR_SPACES_H_
 #define UI_GFX_DISPLAY_COLOR_SPACES_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "skia/ext/skcolorspace_primaries.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_space_export.h"
-#include "ui/gfx/hdr_static_metadata.h"
 
 namespace mojo {
 template <class T, class U>
@@ -96,7 +95,10 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
     return hdr_max_luminance_relative_;
   }
 
-  // TODO(https://crbug.com/1116870): These helper functions exist temporarily
+  // Returns log2 of GetHDRMaxLuminanceRelative.
+  float GetHdrHeadroom() const;
+
+  // TODO(crbug.com/40144904): These helper functions exist temporarily
   // to handle the transition of display::ScreenInfo off of ColorSpace. All
   // calls to these functions are to be eliminated.
   ColorSpace GetScreenInfoColorSpace() const;
@@ -128,12 +130,11 @@ class COLOR_SPACE_EXPORT DisplayColorSpaces {
                  std::vector<gfx::BufferFormat>* out_buffer_formats) const;
 
   bool operator==(const DisplayColorSpaces& other) const;
-  bool operator!=(const DisplayColorSpaces& other) const;
 
   // Return true if the two parameters are equal except for their
-  // `hdr_max_luminance_relative_` and `sdr_max_luminance_nits_` members.
-  static bool EqualExceptForHdrParameters(const DisplayColorSpaces& a,
-                                          const DisplayColorSpaces& b);
+  // `hdr_max_luminance_relative_` member.
+  static bool EqualExceptForHdrHeadroom(const DisplayColorSpaces& a,
+                                        const DisplayColorSpaces& b);
 
  private:
   // Serialization of DisplayColorSpaces directly accesses members.

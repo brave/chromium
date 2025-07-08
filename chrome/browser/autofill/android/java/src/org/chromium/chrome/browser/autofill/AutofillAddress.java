@@ -4,62 +4,66 @@
 
 package org.chromium.chrome.browser.autofill;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.telephony.PhoneNumberUtils;
 import android.text.TextUtils;
 import android.util.Pair;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
-import org.chromium.base.StrictModeContext;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.EditableOption;
-import org.chromium.components.autofill.ServerFieldType;
+import org.chromium.components.autofill.FieldType;
 import org.chromium.payments.mojom.PaymentAddress;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.List;
-import java.util.Locale;
 import java.util.regex.Pattern;
 
-/**
- * The locally stored autofill address.
- */
+/** The locally stored autofill address. */
+@NullMarked
 public class AutofillAddress extends EditableOption {
     /** The pattern for a valid region code. */
     private static final String REGION_CODE_PATTERN = "^[A-Z]{2}$";
 
     // Bit field values are identical to ProfileFields in payments_profile_comparator.h.
-    @IntDef({CompletionStatus.COMPLETE, CompletionStatus.INVALID_RECIPIENT,
-            CompletionStatus.INVALID_PHONE_NUMBER, CompletionStatus.INVALID_ADDRESS})
+    @IntDef({
+        CompletionStatus.COMPLETE,
+        CompletionStatus.INVALID_RECIPIENT,
+        CompletionStatus.INVALID_PHONE_NUMBER,
+        CompletionStatus.INVALID_ADDRESS
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CompletionStatus {
         /** Can be sent to the merchant as-is without editing first. */
         int COMPLETE = 0;
+
         /** The recipient is missing. */
         int INVALID_RECIPIENT = 1 << 0;
+
         /** The phone number is invalid or missing. */
         int INVALID_PHONE_NUMBER = 1 << 1;
+
         /**
          * The address is invalid. For example, missing state or city name. To have consistent bit
          * field values between Android and Desktop 1 << 2 is reserved for email address.
          */
         int INVALID_ADDRESS = 1 << 3;
+
         int MAX_VALUE = 1 << 4;
     }
 
-    @Nullable
-    private static Pattern sRegionCodePattern;
+    private @Nullable static Pattern sRegionCodePattern;
 
     private final Context mContext;
+    private final PersonalDataManager mPersonalDataManager;
     private AutofillProfile mProfile;
-    @Nullable
-    private String mShippingLabelWithCountry;
-    @Nullable
-    private String mShippingLabelWithoutCountry;
-    @Nullable
-    private String mBillingLabel;
+    private @Nullable String mShippingLabelWithCountry;
+    private @Nullable String mShippingLabelWithoutCountry;
 
     /**
      * Builds the autofill address.
@@ -67,11 +71,17 @@ public class AutofillAddress extends EditableOption {
      * @param context The context where this address was created.
      * @param profile The autofill profile containing the address information.
      */
-    public AutofillAddress(Context context, AutofillProfile profile) {
-        super(profile.getGUID(), profile.getFullName(), profile.getLabel(),
-                profile.getPhoneNumber(), null);
+    public AutofillAddress(
+            Context context, AutofillProfile profile, PersonalDataManager personalDataManager) {
+        super(
+                profile.getGUID(),
+                profile.getInfo(FieldType.NAME_FULL),
+                profile.getLabel(),
+                profile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER),
+                null);
         mContext = context;
         mProfile = profile;
+        mPersonalDataManager = personalDataManager;
         mIsEditable = true;
         checkAndUpdateAddressCompleteness();
     }
@@ -105,11 +115,13 @@ public class AutofillAddress extends EditableOption {
         // labels are recomputed next time they are needed.
         mShippingLabelWithCountry = null;
         mShippingLabelWithoutCountry = null;
-        mBillingLabel = null;
 
         mProfile = profile;
-        updateIdentifierAndLabels(mProfile.getGUID(), mProfile.getFullName(), mProfile.getLabel(),
-                mProfile.getPhoneNumber());
+        updateIdentifierAndLabels(
+                mProfile.getGUID(),
+                mProfile.getInfo(FieldType.NAME_FULL),
+                mProfile.getLabel(),
+                mProfile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER));
         checkAndUpdateAddressCompleteness();
     }
 
@@ -122,12 +134,12 @@ public class AutofillAddress extends EditableOption {
 
         if (mShippingLabelWithCountry == null) {
             mShippingLabelWithCountry =
-                    PersonalDataManager.getInstance()
-                            .getShippingAddressLabelWithCountryForPaymentRequest(mProfile);
+                    mPersonalDataManager.getShippingAddressLabelWithCountryForPaymentRequest(
+                            mProfile);
         }
 
         mProfile.setLabel(mShippingLabelWithCountry);
-        updateSublabel(mProfile.getLabel());
+        updateSublabel(assumeNonNull(mProfile.getLabel()));
     }
 
     /**
@@ -139,29 +151,12 @@ public class AutofillAddress extends EditableOption {
 
         if (mShippingLabelWithoutCountry == null) {
             mShippingLabelWithoutCountry =
-                    PersonalDataManager.getInstance()
-                            .getShippingAddressLabelWithoutCountryForPaymentRequest(mProfile);
-        }
-
-        mProfile.setLabel(mShippingLabelWithoutCountry);
-        updateSublabel(mProfile.getLabel());
-    }
-
-    /*
-     * Gets the billing address label for the profile associated with this address and sets it as
-     * sublabel for this EditableOption.
-     */
-    public void setBillingAddressLabel() {
-        assert mProfile != null;
-
-        if (mBillingLabel == null) {
-            mBillingLabel =
-                    PersonalDataManager.getInstance().getBillingAddressLabelForPaymentRequest(
+                    mPersonalDataManager.getShippingAddressLabelWithoutCountryForPaymentRequest(
                             mProfile);
         }
 
-        mProfile.setLabel(mBillingLabel);
-        updateSublabel(mProfile.getLabel());
+        mProfile.setLabel(mShippingLabelWithoutCountry);
+        updateSublabel(assumeNonNull(mProfile.getLabel()));
     }
 
     /**
@@ -170,14 +165,17 @@ public class AutofillAddress extends EditableOption {
      */
     private void checkAndUpdateAddressCompleteness() {
         Pair<Integer, Integer> messageResIds =
-                getEditMessageAndTitleResIds(checkAddressCompletionStatus(mProfile));
+                getEditMessageAndTitleResIds(
+                        checkAddressCompletionStatus(mProfile, mPersonalDataManager));
 
-        mEditMessage = messageResIds.first.intValue() == 0
-                ? null
-                : mContext.getString(messageResIds.first);
-        mEditTitle = messageResIds.second.intValue() == 0
-                ? null
-                : mContext.getString(messageResIds.second);
+        mEditMessage =
+                messageResIds.first.intValue() == 0
+                        ? null
+                        : mContext.getString(messageResIds.first);
+        mEditTitle =
+                messageResIds.second.intValue() == 0
+                        ? null
+                        : mContext.getString(messageResIds.second);
         mIsComplete = mEditMessage == null;
         mCompletenessScore = calculateCompletenessScore();
     }
@@ -217,42 +215,38 @@ public class AutofillAddress extends EditableOption {
                 editTitleResId = R.string.payments_add_more_information;
         }
 
-        return new Pair<Integer, Integer>(editMessageResId, editTitleResId);
+        return new Pair<>(editMessageResId, editTitleResId);
     }
 
     /**
      * Checks address completion status in the given profile.
      *
-     * If the country code is not set or invalid, but all fields for the default locale's country
+     * <p>If the country code is not set or invalid, but all fields for the default locale's country
      * code are present, then the profile is deemed "complete." AutoflllAddress.toPaymentAddress()
      * will use the default locale to fill in a blank country code before sending the address to the
      * renderer.
      *
-     * @param profile   The autofill profile containing the address information.
-     * @return int      The completion status.
+     * @param profile The autofill profile containing the address information.
+     * @return int The completion status.
      */
-    public static @CompletionStatus int checkAddressCompletionStatus(AutofillProfile profile) {
-        @CompletionStatus
-        int completionStatus = CompletionStatus.COMPLETE;
+    public static @CompletionStatus int checkAddressCompletionStatus(
+            AutofillProfile profile, PersonalDataManager personalDataManager) {
+        @CompletionStatus int completionStatus = CompletionStatus.COMPLETE;
 
-        if (TextUtils.isEmpty(profile.getFullName())) {
+        if (TextUtils.isEmpty(profile.getInfo(FieldType.NAME_FULL))) {
             completionStatus |= CompletionStatus.INVALID_RECIPIENT;
         }
 
-        // TODO(crbug.com/999286): PhoneNumberUtils internally trigger disk reads for certain
-        //                         devices/configurations.
-        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
-            if (!PhoneNumberUtils.isGlobalPhoneNumber(
-                        PhoneNumberUtils.stripSeparators(profile.getPhoneNumber().toString()))) {
-                completionStatus |= CompletionStatus.INVALID_PHONE_NUMBER;
-            }
+        if (!PhoneNumberUtils.isGlobalPhoneNumber(
+                PhoneNumberUtils.stripSeparators(
+                        profile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER).toString()))) {
+            completionStatus |= CompletionStatus.INVALID_PHONE_NUMBER;
         }
 
-        List<Integer> requiredFields = AutofillProfileBridge.getRequiredAddressFields(
-                AutofillAddress.getCountryCode(profile));
-        for (int fieldId : requiredFields) {
-            if (fieldId == ServerFieldType.NAME_FULL
-                    || fieldId == ServerFieldType.ADDRESS_HOME_COUNTRY) {
+        for (int fieldId :
+                AutofillProfileBridge.getRequiredAddressFields(
+                        AutofillAddress.getCountryCode(profile, personalDataManager))) {
+            if (fieldId == FieldType.NAME_FULL || fieldId == FieldType.ADDRESS_HOME_COUNTRY) {
                 continue;
             }
             if (!TextUtils.isEmpty(profile.getInfo(fieldId))) continue;
@@ -263,17 +257,20 @@ public class AutofillAddress extends EditableOption {
         return completionStatus;
     }
 
-    /** @return The country code to use, e.g., when constructing an editor for this address. */
-    public static String getCountryCode(@Nullable AutofillProfile profile) {
+    /**
+     * @return The country code to use, e.g., when constructing an editor for this address.
+     */
+    public static String getCountryCode(
+            @Nullable AutofillProfile profile, PersonalDataManager personalDataManager) {
         if (sRegionCodePattern == null) {
             sRegionCodePattern = Pattern.compile(REGION_CODE_PATTERN);
         }
         if (profile == null) {
-            return Locale.getDefault().getCountry();
+            return personalDataManager.getDefaultCountryCodeForNewAddress();
         }
-        final String countryCode = profile.getInfo(ServerFieldType.ADDRESS_HOME_COUNTRY);
+        final String countryCode = profile.getInfo(FieldType.ADDRESS_HOME_COUNTRY);
         return TextUtils.isEmpty(countryCode) || !sRegionCodePattern.matcher(countryCode).matches()
-                ? Locale.getDefault().getCountry()
+                ? personalDataManager.getDefaultCountryCodeForNewAddress()
                 : countryCode;
     }
 
@@ -282,22 +279,22 @@ public class AutofillAddress extends EditableOption {
         assert mIsComplete;
         PaymentAddress result = new PaymentAddress();
 
-        result.country = getCountryCode(mProfile);
-        result.addressLine = mProfile.getStreetAddress().split("\n");
-        result.region = mProfile.getRegion();
-        result.city = mProfile.getLocality();
-        result.dependentLocality = mProfile.getDependentLocality();
-        result.postalCode = mProfile.getPostalCode();
-        result.sortingCode = mProfile.getSortingCode();
-        result.organization = mProfile.getCompanyName();
-        result.recipient = mProfile.getFullName();
-        result.phone = mProfile.getPhoneNumber();
+        result.country = getCountryCode(mProfile, mPersonalDataManager);
+        result.addressLine = mProfile.getInfo(FieldType.ADDRESS_HOME_STREET_ADDRESS).split("\n");
+        result.region = mProfile.getInfo(FieldType.ADDRESS_HOME_STATE);
+        result.city = mProfile.getInfo(FieldType.ADDRESS_HOME_CITY);
+        result.dependentLocality = mProfile.getInfo(FieldType.ADDRESS_HOME_DEPENDENT_LOCALITY);
+        result.postalCode = mProfile.getInfo(FieldType.ADDRESS_HOME_ZIP);
+        result.sortingCode = mProfile.getInfo(FieldType.ADDRESS_HOME_SORTING_CODE);
+        result.organization = mProfile.getInfo(FieldType.COMPANY_NAME);
+        result.recipient = mProfile.getInfo(FieldType.NAME_FULL);
+        result.phone = mProfile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER);
 
         return result;
     }
 
     private int calculateCompletenessScore() {
-        int missingFields = checkAddressCompletionStatus(mProfile);
+        int missingFields = checkAddressCompletionStatus(mProfile, mPersonalDataManager);
 
         // Count how many are set. The completeness of the address is weighted so as
         // to dominate the other fields.

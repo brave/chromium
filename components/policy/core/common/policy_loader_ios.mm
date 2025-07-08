@@ -8,11 +8,11 @@
 #import <UIKit/UIKit.h>
 #import <stddef.h>
 
+#import "base/apple/foundation_util.h"
 #import "base/check.h"
 #import "base/functional/bind.h"
 #import "base/json/json_reader.h"
 #import "base/location.h"
-#import "base/mac/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/time/time.h"
@@ -24,10 +24,6 @@
 #import "components/policy/core/common/schema.h"
 #import "components/policy/core/common/schema_registry.h"
 #import "components/policy/policy_constants.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -106,7 +102,7 @@ base::Value PolicyLoaderIOS::ConvertPolicyDataIfNecessary(
   if ((schema.type() == base::Value::Type::DICT ||
        schema.type() == base::Value::Type::LIST) &&
       value.is_string()) {
-    absl::optional<base::Value> decoded_value = base::JSONReader::Read(
+    std::optional<base::Value> decoded_value = base::JSONReader::Read(
         value.GetString(), base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS);
     if (decoded_value.has_value()) {
       return std::move(decoded_value.value());

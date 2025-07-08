@@ -78,12 +78,14 @@ void ReportScreenCompletedToChoobe(ChoobeFlowController* controller) {
 
 // static
 std::string ThemeSelectionScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::kProceed:
       return "Proceed";
     case Result::kNotApplicable:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 ThemeSelectionScreen::ThemeSelectionScreen(
@@ -123,9 +125,9 @@ bool ThemeSelectionScreen::ShouldBeSkipped(const WizardContext& context) const {
   if (features::IsOobeChoobeEnabled()) {
     auto* choobe_controller =
         WizardController::default_controller()->choobe_flow_controller();
-    if (choobe_controller) {
-      return choobe_controller->ShouldScreenBeSkipped(
-          ThemeSelectionScreenView::kScreenId);
+    if (choobe_controller && choobe_controller->ShouldScreenBeSkipped(
+                                 ThemeSelectionScreenView::kScreenId)) {
+      return true;
     }
   }
 
@@ -182,9 +184,7 @@ void ThemeSelectionScreen::OnUserAction(const base::Value::List& args) {
         WizardController::default_controller()->choobe_flow_controller());
     exit_callback_.Run(Result::kProceed);
   } else if (action_id == kUserActionReturn) {
-    LoginDisplayHost::default_host()
-        ->GetWizardContext()
-        ->return_to_choobe_screen = true;
+    context()->return_to_choobe_screen = true;
     RecordSelectedTheme(profile, initial_theme_);
     ReportScreenCompletedToChoobe(
         WizardController::default_controller()->choobe_flow_controller());

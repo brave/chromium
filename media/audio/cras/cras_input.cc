@@ -18,6 +18,8 @@
 #include "base/time/time.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/cras/audio_manager_cras_base.h"
+#include "media/audio/cras/cras_util.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/media_switches.h"
 
@@ -117,8 +119,6 @@ CrasInputStream::~CrasInputStream() {
 AudioInputStream::OpenOutcome CrasInputStream::Open() {
   if (client_) {
     NOTREACHED() << "CrasInputStream already open";
-    ReportStreamOpenResult(StreamOpenResult::kCallbackOpenClientAlreadyOpen);
-    return OpenOutcome::kAlreadyOpen;
   }
 
   // Sanity check input values.
@@ -147,7 +147,7 @@ AudioInputStream::OpenOutcome CrasInputStream::Open() {
     return OpenOutcome::kFailed;
   }
 
-  if (libcras_client_connect(client_)) {
+  if (libcras_client_connect_timeout(client_, kCrasConnectTimeoutMs)) {
     DLOG(WARNING) << "Couldn't connect CRAS client.\n";
     ReportStreamOpenResult(
         StreamOpenResult::kCallbackOpenCannotConnectToCrasClient);
@@ -181,17 +181,23 @@ AudioInputStream::OpenOutcome CrasInputStream::Open() {
     if (is_loopback_without_chrome_) {
       uint32_t client_types = 0;
       client_types |= 1 << CRAS_CLIENT_TYPE_CHROME;
-      client_types |= 1 << CRAS_CLIENT_TYPE_LACROS;
       client_types = ~client_types;
       rc = pin_device_ = libcras_client_get_floop_dev_idx_by_client_types(
           client_, client_types);
     } else {
-      rc = libcras_client_get_loopback_dev_idx(client_, &pin_device_);
+      if (base::FeatureList::IsEnabled(
+              media::kAudioFlexibleLoopbackForSystemLoopback)) {
+        rc = pin_device_ = libcras_client_get_floop_dev_idx_by_client_types(
+            client_, ~(uint32_t)0);
+      } else {
+        rc = libcras_client_get_loopback_dev_idx(client_, &pin_device_);
+      }
     }
     if (rc < 0) {
       DLOG(WARNING) << "Couldn't find CRAS loopback device "
-                    << (is_loopback_without_chrome_ ? " for flexible loopback."
-                                                    : " for full loopback.");
+                    << (is_loopback_without_chrome_
+                            ? " for non-chrome loopback."
+                            : " for full loopback.");
       ReportStreamOpenResult(
           StreamOpenResult::kCallbackOpenCannotFindLoopbackDevice);
       libcras_client_destroy(client_);
@@ -619,7 +625,7 @@ void CrasInputStream::CalculateAudioGlitches(
       overrun_glitch_duration + dropped_samples_glitch_duration;
   glitch_reporter_.UpdateStats(glitch_duration);
   if (glitch_duration.is_positive()) {
-    glitch_info_accumulator_.Add(AudioGlitchInfo::SingleBoundedGlitch(
+    glitch_info_accumulator_.Add(AudioGlitchInfo::SingleBoundedSystemGlitch(
         glitch_duration, AudioGlitchInfo::Direction::kCapture));
   }
 

@@ -25,6 +25,10 @@ gfx::Image OmniboxClient::GetFavicon() const {
   return gfx::Image();
 }
 
+ukm::SourceId OmniboxClient::GetUKMSourceId() const {
+  return ukm::kInvalidSourceId;
+}
+
 bool OmniboxClient::IsLoading() const {
   return false;
 }
@@ -61,8 +65,12 @@ bool OmniboxClient::IsUsingFakeHttpsForHttpsUpgradeTesting() const {
   return false;
 }
 
-gfx::Image OmniboxClient::GetIconIfExtensionMatch(
-    const AutocompleteMatch& match) const {
+gfx::Image OmniboxClient::GetExtensionIcon(
+    const TemplateURL* template_url) const {
+  return gfx::Image();
+}
+
+gfx::Image OmniboxClient::GetSizedIcon(const SkBitmap* bitmap) const {
   return gfx::Image();
 }
 
@@ -75,12 +83,15 @@ gfx::Image OmniboxClient::GetSizedIcon(const gfx::Image& icon) const {
   return gfx::Image();
 }
 
-bool OmniboxClient::ProcessExtensionKeyword(const std::u16string& text,
-                                            const TemplateURL* template_url,
-                                            const AutocompleteMatch& match,
-                                            WindowOpenDisposition disposition) {
-  return false;
+std::optional<lens::proto::LensOverlaySuggestInputs>
+OmniboxClient::GetLensOverlaySuggestInputs() const {
+  return std::nullopt;
 }
+
+void OmniboxClient::ProcessExtensionMatch(const std::u16string& text,
+                                          const TemplateURL* template_url,
+                                          const AutocompleteMatch& match,
+                                          WindowOpenDisposition disposition) {}
 
 void OmniboxClient::OnUserPastedInOmniboxResultingInValidURL() {}
 
@@ -99,4 +110,8 @@ gfx::Image OmniboxClient::GetFaviconForKeywordSearchProvider(
     const TemplateURL* template_url,
     FaviconFetchedCallback on_favicon_fetched) {
   return gfx::Image();
+}
+
+bool OmniboxClient::IsHistoryEmbeddingsEnabled() const {
+  return false;
 }

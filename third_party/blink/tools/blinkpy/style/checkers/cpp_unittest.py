@@ -468,8 +468,8 @@ class CppStyleTest(CppStyleTestBase):
     # Test get line width.
     def test_get_line_width(self):
         self.assertEqual(0, cpp_style.get_line_width(''))
-        self.assertEqual(10, cpp_style.get_line_width(u'x' * 10))
-        self.assertEqual(16, cpp_style.get_line_width(u'都|道|府|県|支庁'))
+        self.assertEqual(10, cpp_style.get_line_width('x' * 10))
+        self.assertEqual(16, cpp_style.get_line_width('都|道|府|県|支庁'))
 
     def test_find_next_multi_line_comment_start(self):
         self.assertEqual(1,
@@ -1374,7 +1374,7 @@ class CppStyleTest(CppStyleTestBase):
         do_test(self, b'\xe9\x8e\xbd\n', False)
         do_test(self, b'\xe9x\x8e\xbd\n', True)
         # This is the encoding of the replacement character itself (which
-        # you can see by evaluating codecs.getencoder('utf8')(u'\ufffd')).
+        # you can see by evaluating codecs.getencoder('utf8')('\ufffd')).
         do_test(self, b'\xef\xbf\xbd\n', True)
 
     def test_is_blank_line(self):
@@ -1576,37 +1576,6 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_lint('mutable int a : 14;', errmsg)
         self.assert_lint('const char a : 6;', errmsg)
         self.assert_lint('int a = 1 ? 0 : 30;', '')
-
-    # Bitfields which are not declared unsigned or bool will generate a warning.
-    def test_unsigned_bool_bitfields(self):
-        def errmsg(member, name, bit_type):
-            return (
-                'Member %s of class %s defined as a bitfield of type %s. '
-                'Please declare all bitfields as unsigned.  [runtime/bitfields] [4]'
-                % (member, name, bit_type))
-
-        def warning_bitfield_test(member, name, bit_type, bits):
-            self.assert_multi_line_lint(
-                'class %s {\n%s %s: %d;\n}\n' % (name, bit_type, member, bits),
-                errmsg(member, name, bit_type))
-
-        def safe_bitfield_test(member, name, bit_type, bits):
-            self.assert_multi_line_lint(
-                'class %s {\n%s %s: %d;\n}\n' % (name, bit_type, member, bits),
-                '')
-
-        warning_bitfield_test('a', 'A', 'int32_t', 25)
-        warning_bitfield_test('m_someField', 'SomeClass', 'signed', 4)
-        warning_bitfield_test('m_someField', 'SomeClass', 'SomeEnum', 2)
-
-        safe_bitfield_test('a', 'A', 'unsigned', 22)
-        safe_bitfield_test('m_someField', 'SomeClass', 'bool', 1)
-        safe_bitfield_test('m_someField', 'SomeClass', 'unsigned', 2)
-
-        # Declarations in 'Expected' or 'SameSizeAs' classes are OK.
-        warning_bitfield_test('m_bitfields', 'SomeClass', 'int32_t', 32)
-        safe_bitfield_test('m_bitfields', 'ExpectedSomeClass', 'int32_t', 32)
-        safe_bitfield_test('m_bitfields', 'SameSizeAsSomeClass', 'int32_t', 32)
 
 
 class CleansedLinesTest(unittest.TestCase):
@@ -2191,6 +2160,20 @@ class WebKitStyleTest(CppStyleTestBase):
             '  doSomethingElse();\n', '')
         self.assert_multi_line_lint(
             'if (condition) {\n'
+            '  doSomething();\n'
+            '} else {\n'
+            '  doSomethingElse();\n'
+            '  doSomethingElseAgain();\n'
+            '}\n', '')
+        self.assert_multi_line_lint(
+            'if (condition) {\n'
+            '  doSomething();\n'
+            '} else [[likely]] {\n'
+            '  doSomethingElse();\n'
+            '}\n', '')
+        self.assert_multi_line_lint(
+            'if (condition)\n'
+            '    [[unlikely]] {\n'
             '  doSomething();\n'
             '} else {\n'
             '  doSomethingElse();\n'

@@ -4,11 +4,17 @@
 
 #include "chromeos/ash/components/osauth/impl/auth_hub_attempt_handler.h"
 
+#include <optional>
+#include <utility>
+
+#include "base/check.h"
+#include "base/containers/enum_set.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "chromeos/ash/components/osauth/impl/auth_hub_common.h"
 #include "chromeos/ash/components/osauth/public/auth_factor_engine.h"
 #include "chromeos/ash/components/osauth/public/auth_factor_status_consumer.h"
 #include "chromeos/ash/components/osauth/public/common_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash {
 
@@ -31,7 +37,7 @@ AuthHubConnector* AuthHubAttemptHandler::GetConnector() {
 }
 
 void AuthHubAttemptHandler::SetConsumer(
-    base::raw_ptr<AuthFactorStatusConsumer> consumer) {
+    raw_ptr<AuthFactorStatusConsumer> consumer) {
   status_consumer_ = std::move(consumer);
   status_consumer_->InitializeUi(initial_factors_, this);
 }
@@ -63,7 +69,7 @@ void AuthHubAttemptHandler::PrepareForShutdown(base::OnceClosure callback) {
 
 void AuthHubAttemptHandler::OnFactorsChecked(AuthFactorsSet available_factors,
                                              AuthFactorsSet failed_factors) {
-  DCHECK(Intersection(available_factors, failed_factors).Empty());
+  DCHECK(Intersection(available_factors, failed_factors).empty());
   // TODO(b/286814076): Refine this strategy.
   // All factors can be split into 4 groups, according to initial_factors_ and
   // two parameters passed:
@@ -85,7 +91,7 @@ void AuthHubAttemptHandler::OnFactorsChecked(AuthFactorsSet available_factors,
 
   AuthFactorsSet failed_initial =
       Intersection(initial_factors_, failed_factors);
-  bool same_factor_list = new_factors.Empty() && removed_factors.Empty();
+  bool same_factor_list = new_factors.empty() && removed_factors.empty();
 
   if (same_factor_list) {
     for (AshAuthFactor f : failed_initial) {
@@ -176,7 +182,20 @@ void AuthHubAttemptHandler::OnFactorAttemptResult(AshAuthFactor factor,
     authenticated_ = true;
     // Keep an `ongoing_attempt_factor_` to prevent
     // factors from being re-enabled.
+    status_consumer_->OnEndAuthentication();
+
+    // Calling `OnEndAuthentication` signals the end of interaction with UI for
+    // this particular attempt, which would eventually destroy UI, so we reset
+    // the pointer here to avoid calling into a danling pointer.
+    status_consumer_ = nullptr;
+
+    // Signal the successful auth to every auth engine.
+    for (const auto& [unused, engine] : engines_) {
+      engine->OnSuccessfulAuthentiation();
+    }
+
     owner_->OnAuthenticationSuccess(attempt_, factor);
+    return;
   } else {
     status_consumer_->OnFactorAuthFailure(factor);
     owner_->OnFactorAttemptFailed(attempt_, factor);

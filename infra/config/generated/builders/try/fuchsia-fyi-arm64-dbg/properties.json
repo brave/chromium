@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/fuchsia-fyi-arm64-dbg/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -29,8 +32,7 @@
                   "fuchsia_arm64_host"
                 ],
                 "config": "chromium"
-              },
-              "run_tests_serially": true
+              }
             }
           }
         ]
@@ -41,14 +43,23 @@
           "builder": "fuchsia-fyi-arm64-dbg",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/fuchsia-fyi-arm64-dbg/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 500,
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "output_local_strategy": "greedy",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

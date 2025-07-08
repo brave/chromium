@@ -38,13 +38,8 @@ class FileChooserChromeOs::Core : public ui::SelectFileDialog::Listener {
   void Show();
 
   // ui::SelectFileDialog::Listener implementation.
-  void FileSelected(const base::FilePath& path,
-                    int index,
-                    void* params) override;
-  void FileSelectedWithExtraInfo(const ui::SelectedFileInfo& file,
-                                 int index,
-                                 void* params) override;
-  void FileSelectionCanceled(void* params) override;
+  void FileSelected(const ui::SelectedFileInfo& file, int index) override;
+  void FileSelectionCanceled() override;
 
  private:
   void RunCallback(const FileChooser::Result& result);
@@ -52,7 +47,7 @@ class FileChooserChromeOs::Core : public ui::SelectFileDialog::Listener {
   void Cleanup();
 
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
-  const raw_ref<AshProxy, ExperimentalAsh> ash_;
+  const raw_ref<AshProxy, LeakedDanglingUntriaged> ash_;
   FileChooser::ResultCallback callback_;
 };
 
@@ -86,20 +81,12 @@ FileChooserChromeOs::Core::~Core() {
   select_file_dialog_->ListenerDestroyed();
 }
 
-void FileChooserChromeOs::Core::FileSelected(const base::FilePath& path,
-                                             int index,
-                                             void* params) {
-  RunCallback(path);
-}
-
-void FileChooserChromeOs::Core::FileSelectedWithExtraInfo(
-    const ui::SelectedFileInfo& file,
-    int index,
-    void* params) {
+void FileChooserChromeOs::Core::FileSelected(const ui::SelectedFileInfo& file,
+                                             int index) {
   RunCallback(file.file_path);
 }
 
-void FileChooserChromeOs::Core::FileSelectionCanceled(void* params) {
+void FileChooserChromeOs::Core::FileSelectionCanceled() {
   RunCallback(protocol::MakeFileTransferError(
       FROM_HERE, protocol::FileTransfer_Error_Type_CANCELED));
 }
@@ -109,15 +96,22 @@ void FileChooserChromeOs::Core::RunCallback(const FileChooser::Result& result) {
 }
 
 void FileChooserChromeOs::Core::Show() {
+  // Restrict file access to the native volumes on the device and USB drives.
+  // This will prevent the remote user from selecting files from mapped network
+  // drives and other url paths (for eg. Google Drive). See b/297183388 for more
+  // information.
+  ui::SelectFileDialog::FileTypeInfo file_type_info;
+  file_type_info.allowed_paths =
+      ui::SelectFileDialog::FileTypeInfo::AllowedPaths::NATIVE_PATH;
+
   select_file_dialog_->SelectFile(
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       /*title=*/std::u16string(),
       /*default_path=*/base::FilePath(),
-      /*file_types=*/nullptr,
+      /*file_types=*/&file_type_info,
       /*file_type_index=*/0,
       /*default_extension=*/base::FilePath::StringType(),
-      /*owning_window=*/ash_->GetSelectFileContainer(),
-      /*params=*/nullptr);
+      /*owning_window=*/ash_->GetSelectFileContainer());
 }
 
 std::unique_ptr<FileChooser> FileChooser::Create(

@@ -24,7 +24,6 @@ class PrefService;
 namespace media_device_salt {
 
 BASE_DECLARE_FEATURE(kMediaDeviceIdPartitioning);
-BASE_DECLARE_FEATURE(kMediaDeviceIdRandomSaltsPerStorageKey);
 
 class MediaDeviceIDSalt;
 
@@ -61,13 +60,13 @@ class MediaDeviceSaltService : public KeyedService {
 
  private:
   void FinalizeGetSalt(base::OnceCallback<void(const std::string&)> callback,
-                       absl::optional<std::string> new_salt);
+                       std::optional<std::string> new_salt);
   void FinalizeDeleteSalts(base::OnceClosure done_closure);
   void FinalizeGetAllStorageKeys(
       base::OnceCallback<void(std::vector<blink::StorageKey>)> callback,
       std::vector<blink::StorageKey> storage_keys);
 
-  // TODO(crbug.com/1462956): Remove these operations.
+  // TODO(crbug.com/40922096): Remove these operations.
   std::string GetGlobalSalt();
   void ResetGlobalSalt();
 
@@ -75,7 +74,7 @@ class MediaDeviceSaltService : public KeyedService {
   std::string fallback_salt_;
   base::Time fallback_salt_creation_time_;
 
-  // TODO(crbug.com/1462956): Remove these two fields.
+  // TODO(crbug.com/40922096): Remove these two fields.
   const scoped_refptr<MediaDeviceIDSalt> media_device_id_salt_;
   const raw_ptr<PrefService> pref_service_;
 

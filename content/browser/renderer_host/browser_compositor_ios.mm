@@ -17,16 +17,12 @@
 #include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "content/browser/compositor/image_transport_factory.h"
+#include "content/browser/renderer_host/begin_frame_source_ios.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/compositor/compositor_switches.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace content {
 
@@ -227,7 +223,9 @@ void BrowserCompositorIOS::TransitionToState(State new_state) {
   }
   if (state_ == HasOwnCompositor) {
     compositor_->SetRootLayer(nullptr);
+    begin_frame_source_.reset();
     compositor_.reset();
+    InvalidateSurface();
   }
 
   // The compositor is now detached. If this is the target state, we're done.
@@ -252,13 +250,18 @@ void BrowserCompositorIOS::TransitionToState(State new_state) {
     compositor_ = std::make_unique<ui::Compositor>(
         context_factory->AllocateFrameSinkId(), context_factory,
         base::SingleThreadTaskRunner::GetCurrentDefault(),
-        ui::IsPixelCanvasRecordingEnabled());
+        features::IsPixelCanvasRecordingEnabled(),
+        /*use_external_begin_frame_control=*/true);
+    begin_frame_source_ =
+        std::make_unique<BeginFrameSourceIOS>(compositor_.get());
+    Suspend();
     display::ScreenInfo current = client_->GetCurrentScreenInfo();
     UpdateSurface(dfh_size_pixels_, current.device_scale_factor,
                   current.display_color_spaces);
     compositor_->SetRootLayer(root_layer_.get());
     compositor_->SetBackgroundColor(background_color_);
     compositor_->SetAcceleratedWidget(accelerated_widget_);
+    Unsuspend();
     state_ = HasOwnCompositor;
   }
   DCHECK_EQ(state_, new_state);
@@ -302,9 +305,11 @@ void BrowserCompositorIOS::InvalidateLocalSurfaceIdOnEviction() {
   dfh_local_surface_id_allocator_.Invalidate();
 }
 
-std::vector<viz::SurfaceId>
+viz::FrameEvictorClient::EvictIds
 BrowserCompositorIOS::CollectSurfaceIdsForEviction() {
-  return client_->CollectSurfaceIdsForEviction();
+  viz::FrameEvictorClient::EvictIds ids;
+  ids.embedded_ids = client_->CollectSurfaceIdsForEviction();
+  return ids;
 }
 
 bool BrowserCompositorIOS::ShouldShowStaleContentOnEviction() {
@@ -318,6 +323,10 @@ void BrowserCompositorIOS::DidNavigateMainFramePreCommit() {
 void BrowserCompositorIOS::DidEnterBackForwardCache() {
   dfh_local_surface_id_allocator_.GenerateId();
   delegated_frame_host_->DidEnterBackForwardCache();
+}
+
+void BrowserCompositorIOS::ActivatedOrEvictedFromBackForwardCache() {
+  delegated_frame_host_->ActivatedOrEvictedFromBackForwardCache();
 }
 
 void BrowserCompositorIOS::DidNavigate() {
@@ -398,6 +407,11 @@ ui::Compositor* BrowserCompositorIOS::GetCompositor() const {
   return compositor_.get();
 }
 
+void BrowserCompositorIOS::InvalidateSurfaceAllocationGroup() {
+  local_surface_id_allocator_.Invalidate(
+      /*also_invalidate_allocation_group=*/true);
+}
+
 cc::DeadlinePolicy BrowserCompositorIOS::GetDeadlinePolicy(
     bool is_resize) const {
   // Determined empirically for smoothness. Don't wait for non-resize frames,
@@ -430,6 +444,24 @@ void BrowserCompositorIOS::UpdateSurface(
     display_color_spaces_ = display_color_spaces;
     compositor_->SetDisplayColorSpaces(display_color_spaces_);
   }
+}
+
+void BrowserCompositorIOS::InvalidateSurface() {
+  size_pixels_ = gfx::Size();
+  scale_factor_ = 1.f;
+  local_surface_id_allocator_.Invalidate(
+      /*also_invalidate_allocation_group=*/true);
+}
+
+void BrowserCompositorIOS::Suspend() {
+  DCHECK(compositor_);
+  // Requests a compositor lock without a timeout.
+  compositor_suspended_lock_ =
+      compositor_->GetCompositorLock(nullptr, base::TimeDelta());
+}
+
+void BrowserCompositorIOS::Unsuspend() {
+  compositor_suspended_lock_ = nullptr;
 }
 
 }  // namespace content

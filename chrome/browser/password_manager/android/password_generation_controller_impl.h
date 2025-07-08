@@ -10,15 +10,15 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/password_manager/android/password_generation_controller.h"
-#include "chrome/browser/touch_to_fill/password_generation/android/touch_to_fill_password_generation_bridge.h"
+#include "chrome/browser/touch_to_fill/password_manager/password_generation/android/touch_to_fill_password_generation_bridge.h"
 #include "components/autofill/core/common/password_generation_util.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/gfx/geometry/rect.h"
 
 class ManualFillingController;
-class PasswordGenerationDialogViewInterface;
 class TouchToFillPasswordGenerationController;
+struct PasswordGenerationElementData;
 
 namespace password_manager {
 class ContentPasswordManagerDriver;
@@ -36,8 +36,6 @@ class PasswordGenerationControllerImpl
       public content::WebContentsObserver,
       public content::WebContentsUserData<PasswordGenerationControllerImpl> {
  public:
-  using CreateDialogFactory = base::RepeatingCallback<std::unique_ptr<
-      PasswordGenerationDialogViewInterface>(PasswordGenerationController*)>;
   using CreateTouchToFillGenerationControllerFactory = base::RepeatingCallback<
       std::unique_ptr<TouchToFillPasswordGenerationController>()>;
 
@@ -52,13 +50,14 @@ class PasswordGenerationControllerImpl
   base::WeakPtr<password_manager::ContentPasswordManagerDriver>
   GetActiveFrameDriver() const override;
   void FocusedInputChanged(
-      autofill::mojom::FocusedFieldType focused_field_type,
+      bool is_field_eligible_for_generation,
       base::WeakPtr<password_manager::ContentPasswordManagerDriver> driver)
       override;
   void OnAutomaticGenerationAvailable(
       base::WeakPtr<password_manager::ContentPasswordManagerDriver>
           target_frame_driver,
       const autofill::password_generation::PasswordGenerationUIData& ui_data,
+      bool has_saved_credentials,
       gfx::RectF element_bounds_in_screen_space) override;
   void ShowManualGenerationDialog(
       const password_manager::ContentPasswordManagerDriver* target_frame_driver,
@@ -77,7 +76,12 @@ class PasswordGenerationControllerImpl
   // for testing.
   std::unique_ptr<TouchToFillPasswordGenerationController>
   CreateTouchToFillGenerationControllerForTesting(
-      std::unique_ptr<TouchToFillPasswordGenerationBridge> bridge) override;
+      std::unique_ptr<TouchToFillPasswordGenerationBridge> bridge,
+      base::WeakPtr<ManualFillingController> manual_filling_controller)
+      override;
+  TouchToFillPasswordGenerationController*
+  GetTouchToFillGenerationControllerForTesting() override;
+
   gfx::NativeWindow top_level_native_window() override;
   content::WebContents* web_contents() override;
   autofill::FieldSignature get_field_signature_for_testing() override;
@@ -90,7 +94,6 @@ class PasswordGenerationControllerImpl
       content::WebContents* web_contents,
       password_manager::PasswordManagerClient* client,
       base::WeakPtr<ManualFillingController> manual_filling_controller,
-      CreateDialogFactory create_dialog_callback,
       CreateTouchToFillGenerationControllerFactory
           create_touch_to_fill_generation_controller);
 
@@ -99,10 +102,6 @@ class PasswordGenerationControllerImpl
   explicit PasswordGenerationControllerImpl(content::WebContents* web_contents);
 
  private:
-  // Data including the form and field for which generation was requested,
-  // their signatures and the maximum password size.
-  struct GenerationElementData;
-
   enum class TouchToFillState {
     kNone,
     kIsShowing,
@@ -116,7 +115,6 @@ class PasswordGenerationControllerImpl
       content::WebContents* web_contents,
       password_manager::PasswordManagerClient* client,
       base::WeakPtr<ManualFillingController> manual_filling_controller,
-      CreateDialogFactory create_dialog_callback,
       CreateTouchToFillGenerationControllerFactory
           create_touch_to_fill_generation_controller);
 
@@ -142,7 +140,10 @@ class PasswordGenerationControllerImpl
   // for metrics.
   void ShowDialog(autofill::password_generation::PasswordGenerationType type);
 
-  bool TryToShowGenerationTouchToFill();
+  bool TryToShowGenerationTouchToFill(bool has_saved_credentials);
+
+  bool ShowBottomSheet(
+      autofill::password_generation::PasswordGenerationType type);
 
   void OnTouchToFillForGenerationDismissed();
 
@@ -150,12 +151,16 @@ class PasswordGenerationControllerImpl
   // and the generation element data.
   void ResetFocusState();
 
+  // Sets the number of generation bottom sheet rejections in a row to 0.
+  // Expected to be called when user voluntary triggers password generation.
+  void ResetPasswordGenerationDismissBottomSheetCount();
+
   // The PasswordManagerClient associated with the current `web_contents_`.
   // Used to tell the renderer that manual generation was requested.
   const raw_ptr<password_manager::PasswordManagerClient> client_;
 
   // Data for the generation element used to generate the password.
-  std::unique_ptr<GenerationElementData> generation_element_data_;
+  std::unique_ptr<PasswordGenerationElementData> generation_element_data_;
 
   // Password manager driver for the currently active frame. This is set
   // when a password field focus event arrives from the renderer and unset
@@ -168,12 +173,6 @@ class PasswordGenerationControllerImpl
 
   std::unique_ptr<TouchToFillPasswordGenerationController>
       touch_to_fill_generation_controller_;
-
-  // Modal dialog view meant to display the generated password.
-  std::unique_ptr<PasswordGenerationDialogViewInterface> dialog_view_;
-
-  // Creation callback for the modal dialog view meant to facilitate testing.
-  CreateDialogFactory create_dialog_factory_;
 
   // Creation callback for the password generation bottom sheet controller to
   // facilitate testing.

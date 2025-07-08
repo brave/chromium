@@ -14,7 +14,6 @@ inline constexpr char kTestChromeAppId[] = "test_chrome_app_id";
 inline constexpr char kTestPwaAppId[] = "test_pwa_app_id";
 inline constexpr char kTestSwaAppId[] = "test_swa_app_id";
 inline constexpr char kTestArcAppId[] = "test_arc_app_id";
-inline constexpr char kTestLacrosChromeAppId[] = "test_lacros_chrome_app_id";
 inline constexpr char kTestUnsupportedAppId[] = "test_unsupported_app_id";
 inline constexpr char kTestChromeAppId1[] = "test_chrome_app_1";
 inline constexpr char kTestPwaAppId1[] = "test_pwa_app_1";
@@ -27,7 +26,8 @@ inline constexpr char kValidPolicyTemplateBrowser[] =
     "usec\": "
     "\"1633535632\",\"desk_type\":\"TEMPLATE\",\"desk\":{\"apps\":[{\"window_"
     "bound\":{\"left\":0,\"top\":1,\"height\":121,\"width\":120},\"window_"
-    "state\":\"NORMAL\",\"z_index\":1,\"app_type\":\"BROWSER\",\"tabs\":[{"
+    "state\":\"NORMAL\",\"z_index\":1,\"app_type\":\"BROWSER\",\"app_id\":"
+    "\"mgndgikekgjfcpckkfioiadnlibdjbkf\",\"tabs\":[{"
     "\"url\":\"https://example.com/\"},{\"url\":\"https://"
     "example.com/"
     "2\"}],\"tab_groups\":[{\"first_"
@@ -44,7 +44,8 @@ inline constexpr char kValidPolicyTemplateBrowserMinimized[] =
     "usec\": "
     "\"1633535632\",\"desk_type\":\"TEMPLATE\",\"desk\":{\"apps\":[{\"window_"
     "bound\":{\"left\":0,\"top\":1,\"height\":121,\"width\":120},\"window_"
-    "state\":\"MINIMIZED\",\"z_index\":1,\"app_type\":\"BROWSER\",\"tabs\":[{"
+    "state\":\"MINIMIZED\",\"z_index\":1,\"app_type\":\"BROWSER\",\"app_id\":"
+    "\"mgndgikekgjfcpckkfioiadnlibdjbkf\",\"tabs\":[{"
     "\"url\":\"https://example.com/\"},{\"url\":\"https://"
     "example.com/"
     "2\"}],\"tab_groups\":[{\"first_"
@@ -67,11 +68,11 @@ inline constexpr char kValidPolicyTemplateChromeAndProgressive[] =
     "\"PRIMARY_SNAPPED\",\"z_index\":2,\"app_type\":\"CHROME_APP\",\"app_id\":"
     "\"test_chrome_app_1\",\"window_id\":0,\"display_id\":\"100\",\"event_"
     "flag\":0, "
-    "\"snap_percent\":75},{\"window_"
+    "\"snap_percent\":75,\"override_url\":\"https://example.com/\"},{\"window_"
     "bound\":{\"left\":0,\"top\":0,\"height\":120,\"width\":120},\"window_"
     "state\":\"NORMAL\",\"z_index\":1,\"app_type\":\"CHROME_APP\",\"app_id\":"
     "\"test_pwa_app_1\",\"window_id\":1,\"display_id\":\"100\",\"event_flag\":"
-    "0}]}}";
+    "0,\"override_url\":\"https://example.com/\"}]}}";
 
 inline constexpr char kValidPolicyTemplateChromeForFloatingWorkspace[] =
     "{\"auto_launch_on_startup\": "
@@ -145,6 +146,15 @@ void PopulateAppRegistryCache(AccountId account_id,
 void AddAppIdToAppRegistryCache(AccountId account_id,
                                 apps::AppRegistryCache* cache,
                                 const char* app_id);
+
+// Populates browser apps and notifies cache observers. Note: This app assumes
+// that `cache` has been added to the AppRegistryCacheWrapper already.
+void PopulateAdminTestAppRegistryCache(AccountId account_id,
+                                       apps::AppRegistryCache* cache);
+
+// Similar to `PopulateAdminTestAppRegistryCache`, but includes web apps.
+void PopulateFloatingWorkspaceAppRegistryCache(AccountId account_id,
+                                               apps::AppRegistryCache* cache);
 
 }  // namespace desks_storage::desk_test_util
 

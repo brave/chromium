@@ -1,8 +1,10 @@
-# META: timeout=long
-
 import pytest
 
-from webdriver.error import NoSuchWindowException, StaleElementReferenceException
+from webdriver.error import (
+    MoveTargetOutOfBoundsException,
+    NoSuchWindowException,
+    StaleElementReferenceException
+)
 from tests.classic.perform_actions.support.mouse import (
     get_inview_center,
     get_viewport_rect,
@@ -10,6 +12,7 @@ from tests.classic.perform_actions.support.mouse import (
 from tests.classic.perform_actions.support.refine import get_events
 
 from . import assert_pointer_events, record_pointer_events
+
 
 def test_null_response_value(session, touch_chain):
     value = touch_chain.click().perform()
@@ -26,12 +29,70 @@ def test_no_browsing_context(session, closed_frame, touch_chain):
         touch_chain.click().perform()
 
 
+def test_pointer_down_closes_browsing_context(
+    session, configuration, http_new_tab, inline, touch_chain
+):
+    session.url = inline(
+        """<input onpointerdown="window.close()">close</input>""")
+    origin = session.find.css("input", all=False)
+
+    with pytest.raises(NoSuchWindowException):
+        touch_chain.pointer_move(0, 0, origin=origin) \
+            .pointer_down(button=0) \
+            .pause(100 * configuration["timeout_multiplier"]) \
+            .pointer_up(button=0) \
+            .perform()
+
+
 @pytest.mark.parametrize("as_frame", [False, True], ids=["top_context", "child_context"])
 def test_stale_element_reference(session, stale_element, touch_chain, as_frame):
     element = stale_element("input#text", as_frame=as_frame)
 
     with pytest.raises(StaleElementReferenceException):
         touch_chain.click(element=element).perform()
+
+
+@pytest.mark.parametrize("origin", ["element", "pointer", "viewport"])
+def test_params_actions_origin_outside_viewport(session, test_actions_page, touch_chain, origin):
+    if origin == "element":
+        origin = session.find.css("#outer", all=False)
+
+    with pytest.raises(MoveTargetOutOfBoundsException):
+        touch_chain.pointer_move(-100, -100, origin=origin).perform()
+
+
+def test_move_to_fractional_position(session, inline, touch_chain):
+    session.url = inline("""
+        <script>
+          var allEvents = { events: [] };
+          window.addEventListener("pointermove", ev => {
+            allEvents.events.push({
+                "type": event.type,
+                "pageX": event.pageX,
+                "pageY": event.pageY,
+            });
+          }, { once: true });
+        </script>
+        """)
+
+    target_point = {
+        "x": 5.75,
+        "y": 10.25,
+    }
+
+    touch_chain \
+        .pointer_down(button=0) \
+        .pointer_move(target_point["x"], target_point["y"]) \
+        .perform()
+
+    events = get_events(session)
+    assert len(events) == 1
+
+    # For now we are allowing any of floor, ceil, or precise values, because
+    # it's unclear what the actual spec requirements really are
+    assert events[0]["type"] == "pointermove"
+    assert events[0]["pageX"] == pytest.approx(target_point["x"], abs=1.0)
+    assert events[0]["pageY"] == pytest.approx(target_point["y"], abs=1.0)
 
 
 @pytest.mark.parametrize("mode", ["open", "closed"])
@@ -73,8 +134,8 @@ def test_touch_pointer_properties(session, test_actions_pointer_page, touch_chai
     pointerArea = session.find.css("#pointerArea", all=False)
     center = get_inview_center(pointerArea.rect, get_viewport_rect(session))
     touch_chain.pointer_move(0, 0, origin=pointerArea) \
-        .pointer_down(width=23, height=31, pressure=0.78, tilt_x=21, tilt_y=-8, twist=355) \
-        .pointer_move(10, 10, origin=pointerArea, width=39, height=35, pressure=0.91, tilt_x=-19, tilt_y=62, twist=345) \
+        .pointer_down(width=23, height=31, pressure=0.78, twist=355) \
+        .pointer_move(10, 10, origin=pointerArea, width=39, height=35, pressure=0.91, twist=345) \
         .pointer_up() \
         .pointer_move(80, 50, origin=pointerArea) \
         .perform()
@@ -101,13 +162,31 @@ def test_touch_pointer_properties(session, test_actions_pointer_page, touch_chai
     assert round(events[3]["pressure"], 2) == 0.91
 
 
-def test_touch_pointer_properties_tilt_twist(session, test_actions_pointer_page, touch_chain):
-    # This test only covers the tilt/twist properties which are
-    # more specific to pen-type pointers, but which the spec allows
-    # for generic touch pointers. Seperating this out gives better
-    # coverage of the basic properties in test_touch_pointer_properties
+def test_touch_pointer_properties_angle_twist(session, test_actions_pointer_page, touch_chain):
     pointerArea = session.find.css("#pointerArea", all=False)
-    center = get_inview_center(pointerArea.rect, get_viewport_rect(session))
+    touch_chain.pointer_move(0, 0, origin=pointerArea) \
+        .pointer_down(width=23, height=31, pressure=0.78, altitude_angle=1.2, azimuth_angle=6, twist=355) \
+        .pointer_move(10, 10, origin=pointerArea, width=39, height=35, pressure=0.91, altitude_angle=0.5, azimuth_angle=1.8, twist=345) \
+        .pointer_up() \
+        .pointer_move(80, 50, origin=pointerArea) \
+        .perform()
+    events = get_events(session)
+    assert len(events) == 7
+    event_types = [e["type"] for e in events]
+    assert ["pointerover", "pointerenter", "pointerdown", "pointermove",
+            "pointerup", "pointerout", "pointerleave"] == event_types
+    assert events[2]["type"] == "pointerdown"
+    assert events[2]["tiltX"] == 20
+    assert events[2]["tiltY"] == -6
+    assert events[2]["twist"] == 355
+    assert events[3]["type"] == "pointermove"
+    assert events[3]["tiltX"] == -23
+    assert events[3]["tiltY"] == 61
+    assert events[3]["twist"] == 345
+
+
+def test_touch_pointer_properties_tilt_twist(session, test_actions_pointer_page, touch_chain):
+    pointerArea = session.find.css("#pointerArea", all=False)
     touch_chain.pointer_move(0, 0, origin=pointerArea) \
         .pointer_down(width=23, height=31, pressure=0.78, tilt_x=21, tilt_y=-8, twist=355) \
         .pointer_move(10, 10, origin=pointerArea, width=39, height=35, pressure=0.91, tilt_x=-19, tilt_y=62, twist=345) \

@@ -6,6 +6,7 @@
 
 #include "base/time/time.h"
 #include "ui/aura/window.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/wm/public/activation_change_observer.h"
 #include "ui/wm/public/tooltip_client.h"
 #include "ui/wm/public/tooltip_observer.h"
@@ -26,14 +27,6 @@ TooltipControllerTestHelper::~TooltipControllerTestHelper() {
   if (root_window_) {
     root_window_->RemoveObserver(this);
   }
-}
-
-bool TooltipControllerTestHelper::UseServerSideTooltip() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return true;
-#else
-  return false;
-#endif
 }
 
 const std::u16string& TooltipControllerTestHelper::GetTooltipText() {
@@ -66,15 +59,6 @@ void TooltipControllerTestHelper::UpdateIfRequired(TooltipTrigger trigger) {
 
 void TooltipControllerTestHelper::FireHideTooltipTimer() {
   state_manager()->HideAndReset();
-}
-
-void TooltipControllerTestHelper::AddObserver(wm::TooltipObserver* observer) {
-  controller_->AddObserver(observer);
-}
-
-void TooltipControllerTestHelper::RemoveObserver(
-    wm::TooltipObserver* observer) {
-  controller_->RemoveObserver(observer);
 }
 
 bool TooltipControllerTestHelper::IsWillShowTooltipTimerRunning() {
@@ -124,8 +108,7 @@ TooltipTestView::TooltipTestView() = default;
 
 TooltipTestView::~TooltipTestView() = default;
 
-std::u16string TooltipTestView::GetTooltipText(const gfx::Point& p) const {
-  return tooltip_text_;
-}
+BEGIN_METADATA(TooltipTestView)
+END_METADATA
 
 }  // namespace views::corewm::test

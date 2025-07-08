@@ -10,6 +10,7 @@ import android.view.ViewGroup.MarginLayoutParams;
 import android.widget.RadioButton;
 
 import androidx.test.InstrumentationRegistry;
+import androidx.test.annotation.UiThreadTest;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -18,16 +19,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseJUnit4ClassRunner;
-import org.chromium.base.test.UiThreadTest;
 import org.chromium.base.test.util.Batch;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * Tests for {@link RadioButtonLayout}.
- */
+/** Tests for {@link RadioButtonLayout}. */
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
 public class RadioButtonLayoutTest {
@@ -45,7 +43,7 @@ public class RadioButtonLayoutTest {
         RadioButtonLayout layout = new RadioButtonLayout(mContext);
 
         // Add one set of options.
-        List<CharSequence> messages = new ArrayList<CharSequence>();
+        List<CharSequence> messages = new ArrayList<>();
         messages.add("a");
         messages.add("b");
         messages.add("c");
@@ -59,7 +57,7 @@ public class RadioButtonLayoutTest {
         }
 
         // Add more options.
-        List<CharSequence> moreMessages = new ArrayList<CharSequence>();
+        List<CharSequence> moreMessages = new ArrayList<>();
         moreMessages.add("d");
         moreMessages.add("e");
         moreMessages.add("f");
@@ -80,7 +78,7 @@ public class RadioButtonLayoutTest {
         RadioButtonLayout layout = new RadioButtonLayout(mContext);
 
         // Add one set of options.
-        List<CharSequence> messages = new ArrayList<CharSequence>();
+        List<CharSequence> messages = new ArrayList<>();
         messages.add("a");
         messages.add("b");
         messages.add("c");
@@ -93,7 +91,7 @@ public class RadioButtonLayoutTest {
         }
 
         // Add even more options, but without tags.
-        List<CharSequence> moreMessages = new ArrayList<CharSequence>();
+        List<CharSequence> moreMessages = new ArrayList<>();
         moreMessages.add("d");
         moreMessages.add("e");
         moreMessages.add("f");
@@ -117,7 +115,7 @@ public class RadioButtonLayoutTest {
         final RadioButtonLayout layout = new RadioButtonLayout(mContext);
 
         // Add one set of options.
-        List<CharSequence> messages = new ArrayList<CharSequence>();
+        List<CharSequence> messages = new ArrayList<>();
         messages.add("a");
         messages.add("b");
         messages.add("c");
@@ -138,7 +136,7 @@ public class RadioButtonLayoutTest {
         }
 
         // Add even more options.
-        List<CharSequence> moreMessages = new ArrayList<CharSequence>();
+        List<CharSequence> moreMessages = new ArrayList<>();
         moreMessages.add("d");
         moreMessages.add("e");
         moreMessages.add("f");

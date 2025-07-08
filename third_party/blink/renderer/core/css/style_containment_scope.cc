@@ -4,16 +4,26 @@
 
 #include "third_party/blink/renderer/core/css/style_containment_scope.h"
 
+#include "third_party/blink/renderer/core/css/style_containment_scope_tree.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
+#include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/layout/layout_quote.h"
 
 namespace blink {
+
+StyleContainmentScope::StyleContainmentScope(
+    const Element* element,
+    StyleContainmentScopeTree* style_containment_tree)
+    : element_(element),
+      parent_(nullptr),
+      style_containment_tree_(style_containment_tree) {}
 
 void StyleContainmentScope::Trace(Visitor* visitor) const {
   visitor->Trace(quotes_);
   visitor->Trace(children_);
   visitor->Trace(parent_);
   visitor->Trace(element_);
+  visitor->Trace(style_containment_tree_);
 }
 
 // If the scope is about to be removed, detach self from the parent,
@@ -59,6 +69,20 @@ void StyleContainmentScope::RemoveChild(StyleContainmentScope* child) {
   child->SetParent(nullptr);
 }
 
+void StyleContainmentScope::Remove() {
+  if (parent_) {
+    parent_->RemoveChild(this);
+  }
+  for (StyleContainmentScope* child : children_) {
+    child->SetParent(nullptr);
+  }
+  children_.clear();
+  for (LayoutQuote* quote : quotes_) {
+    quote->SetScope(nullptr);
+  }
+  quotes_.clear();
+}
+
 // Get the quote which would be the last in preorder traversal before we hit
 // Element*.
 const LayoutQuote* StyleContainmentScope::FindQuotePrecedingElement(
@@ -70,7 +94,7 @@ const LayoutQuote* StyleContainmentScope::FindQuotePrecedingElement(
                element, *quote->GetOwningPseudo()) < 0;
   };
   // Find the first quote for which comp will return true.
-  auto* it = std::upper_bound(quotes_.begin(), quotes_.end(), element, comp);
+  auto it = std::upper_bound(quotes_.begin(), quotes_.end(), element, comp);
   // And get the previous quote as it will be the one we are searching for.
   return it == quotes_.begin() ? nullptr : *std::prev(it);
 }
@@ -110,23 +134,16 @@ int StyleContainmentScope::ComputeInitialQuoteDepth() const {
 }
 
 void StyleContainmentScope::UpdateQuotes() const {
-  bool needs_children_update = false;
   if (quotes_.size()) {
     int depth = ComputeInitialQuoteDepth();
     for (LayoutQuote* quote : quotes_) {
-      if (depth != quote->GetDepth()) {
-        needs_children_update = true;
-      }
       quote->SetDepth(depth);
       quote->UpdateText();
       depth = quote->GetNextDepth();
     }
   }
-  // If nothing has changed on this level don't update children.
-  if (needs_children_update || !quotes_.size()) {
-    for (StyleContainmentScope* child : Children()) {
-      child->UpdateQuotes();
-    }
+  for (StyleContainmentScope* child : Children()) {
+    child->UpdateQuotes();
   }
 }
 

@@ -16,7 +16,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "components/feed/core/proto/v2/store.pb.h"
 #include "components/feed/core/v2/config.h"
@@ -42,7 +41,7 @@ DocViewDigest CreateDigest(std::vector<feedstore::DocView> all_views) {
   DocViewDigest digest;
 
   // Remove all views that are too old.
-  base::EraseIf(all_views, [&](const feedstore::DocView& view) {
+  std::erase_if(all_views, [&](const feedstore::DocView& view) {
     base::Time view_time =
         feedstore::FromTimestampMillis(view.view_time_millis());
     if (view_time > now || view_time < too_old) {
@@ -87,7 +86,7 @@ DocViewDigest CreateDigest(std::vector<feedstore::DocView> all_views) {
       }
     }
 
-    base::ranges::sort(latest_view_to_docid);
+    std::ranges::sort(latest_view_to_docid);
 
     std::vector<uint64_t> docids_to_remove;
     docids_to_remove.reserve(remove_count);
@@ -98,7 +97,7 @@ DocViewDigest CreateDigest(std::vector<feedstore::DocView> all_views) {
 
     // Finally, remove the old docids, and add to old_doc_views.
     base::flat_set<uint64_t> docids_to_remove_set(std::move(docids_to_remove));
-    base::EraseIf(digest.doc_view_counts, [&](const DocViewCount& view_count) {
+    std::erase_if(digest.doc_view_counts, [&](const DocViewCount& view_count) {
       return docids_to_remove_set.contains(view_count.docid);
     });
     for (const feedstore::DocView& view : all_views) {

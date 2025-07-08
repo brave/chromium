@@ -10,6 +10,7 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_gatt_discoverer_winrt.h"
@@ -135,7 +136,6 @@ uint8_t BluetoothRemoteGattServiceWinrt::ToProtocolError(
   }
 
   NOTREACHED();
-  return 0x00;
 }
 
 BluetoothRemoteGattServiceWinrt::BluetoothRemoteGattServiceWinrt(

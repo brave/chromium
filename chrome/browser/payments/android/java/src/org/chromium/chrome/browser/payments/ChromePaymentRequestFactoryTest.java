@@ -19,7 +19,6 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.JUnitProcessor;
 import org.chromium.chrome.browser.payments.test_support.ShadowProfile;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.payments.InvalidPaymentRequest;
@@ -34,19 +33,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** A test for ChromePaymentRequestFactory. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, shadows = {ShadowWebContentsStatics.class, ShadowProfile.class})
+@Config(
+        manifest = Config.NONE,
+        shadows = {ShadowWebContentsStatics.class, ShadowProfile.class})
 public class ChromePaymentRequestFactoryTest {
-    @Rule
-    public MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
-    @Rule
-    public JUnitProcessor mFeaturesProcessor = new JUnitProcessor();
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
 
-    @Mock
-    RenderFrameHost mRenderFrameHost;
-    @Mock
-    WebContents mWebContents;
-    @Mock
-    Profile mProfile;
+    @Mock RenderFrameHost mRenderFrameHost;
+    @Mock WebContents mWebContents;
+    @Mock Profile mProfile;
 
     @Before
     public void setUp() {
@@ -78,8 +73,9 @@ public class ChromePaymentRequestFactoryTest {
     @Test
     @Feature({"Payments"})
     public void testNullFrameCausesInvalidPaymentRequest() {
-        Assert.assertTrue(createFactory(/*renderFrameHost=*/null).createImpl()
-                                  instanceof InvalidPaymentRequest);
+        Assert.assertTrue(
+                createFactory(/* renderFrameHost= */ null).createImpl()
+                        instanceof InvalidPaymentRequest);
     }
 
     @Test
@@ -87,15 +83,16 @@ public class ChromePaymentRequestFactoryTest {
     public void testDisabledPolicyCausesBadMessage() {
         setPaymentPermissionsPolicy(false);
         AtomicInteger isKilledReason = new AtomicInteger(0);
-        Mockito.doAnswer(invocation -> {
-                   isKilledReason.set((int) invocation.getArguments()[0]);
-                   return null;
-               })
+        Mockito.doAnswer(
+                        invocation -> {
+                            isKilledReason.set((int) invocation.getArguments()[0]);
+                            return null;
+                        })
                 .when(mRenderFrameHost)
                 .terminateRendererDueToBadMessage(Mockito.anyInt());
         Assert.assertNull(createFactory(mRenderFrameHost).createImpl());
         // 241 == PAYMENTS_WITHOUT_PERMISSION.
-        Assert.assertEquals(isKilledReason.get(), 241);
+        Assert.assertEquals(241, isKilledReason.get());
     }
 
     @Test

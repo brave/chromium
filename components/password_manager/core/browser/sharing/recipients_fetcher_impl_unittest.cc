@@ -15,12 +15,10 @@
 #include "components/sync/protocol/password_sharing_recipients.pb.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace password_manager {
-
 namespace {
 
 using ::testing::_;
@@ -29,8 +27,8 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::StrictMock;
 
-// TODO(crbug.com/) Move this to a common test helper to simplyfy the setup in
-// tests and the maintainace later.
+// TODO(crbug.com/40272762): Move this to a common test helper to simplify the
+// setup in tests and the maintenance later.
 void SetupIdentityEnvironment(
     raw_ptr<signin::IdentityTestEnvironment> identity_test_env) {
   identity_test_env->MakePrimaryAccountAvailable("test@email.com",
@@ -58,6 +56,14 @@ class RecipientsFetcherImplTest : public testing::Test {
         response.SerializeAsString());
   }
 
+  signin::IdentityTestEnvironment* identity_test_env() {
+    return &identity_test_env_;
+  }
+
+  network::TestURLLoaderFactory* test_url_loader_factory() {
+    return &test_url_loader_factory_;
+  }
+
  protected:
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
@@ -69,16 +75,20 @@ class RecipientsFetcherImplTest : public testing::Test {
 
 // Tests the happy case in which the server returns a potential candidate to
 // share a password with. This is done by pre-configuring the expected server
-// response. In a real encironment the user the sends the request and the
-// returned conadiate also need ot be in the same family cicle.
-TEST_F(RecipientsFetcherImplTest, ShouldFetchRecpientInfoWhenRequestSucceeds) {
+// response. In a real environment the user that sends the request and the
+// returned candidate also needs to be in the same family circle.
+TEST_F(RecipientsFetcherImplTest, ShouldFetchRecipientInfoWhenRequestSucceeds) {
   const std::string kTestUserId = "12345";
   const std::string kTestUserName = "Theo Tester";
   const std::string kTestEmail = "theo@example.com";
   const std::string kTestProfileImageUrl =
       "https://3837fjsdjaka.image.example.com";
+  const std::string kTestPublicKey = "01234567890123456789012345678912";
+  const std::string kTestPublicKeyBase64 =
+      "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MTI=";
+  const uint32_t kTestPublicKeyVersion = 0;
 
-  // Create set the server response.
+  // Create the server response.
   sync_pb::PasswordSharingRecipientsResponse response;
   response.set_result(sync_pb::PasswordSharingRecipientsResponse::SUCCESS);
 
@@ -88,6 +98,10 @@ TEST_F(RecipientsFetcherImplTest, ShouldFetchRecpientInfoWhenRequestSucceeds) {
   user_info->mutable_user_display_info()->set_email(kTestEmail);
   user_info->mutable_user_display_info()->set_profile_image_url(
       kTestProfileImageUrl);
+  user_info->mutable_cross_user_sharing_public_key()->set_x25519_public_key(
+      kTestPublicKey);
+  user_info->mutable_cross_user_sharing_public_key()->set_version(
+      kTestPublicKeyVersion);
 
   SetServerResponse(response);
 
@@ -97,12 +111,14 @@ TEST_F(RecipientsFetcherImplTest, ShouldFetchRecpientInfoWhenRequestSucceeds) {
   expected_recipient_info.user_name = kTestUserName;
   expected_recipient_info.email = kTestEmail;
   expected_recipient_info.profile_image_url = kTestProfileImageUrl;
+  expected_recipient_info.public_key.key = kTestPublicKeyBase64;
+  expected_recipient_info.public_key.key_version = kTestPublicKeyVersion;
   StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
       callback;
   EXPECT_CALL(callback, Run(ElementsAre(expected_recipient_info),
                             Eq(FetchFamilyMembersRequestStatus::kSuccess)));
 
-  // Create the RecipientFetcher and make a request.
+  // Create the RecipientsFetcher and make a request.
   RecipientsFetcherImpl recipient_fetcher = CreateRecipientFetcher();
   recipient_fetcher.FetchFamilyMembers(callback.Get());
 
@@ -112,7 +128,7 @@ TEST_F(RecipientsFetcherImplTest, ShouldFetchRecpientInfoWhenRequestSucceeds) {
 // Tests the scenario in which the sender of the request is not part of a family
 // circle. This is simulated by pre-configuring the expected server response.
 TEST_F(RecipientsFetcherImplTest,
-       ShouldReturnNotFamilyMemeberStatusIfUserIsNotInFamilyCircle) {
+       ShouldReturnNotFamilyMemberStatusIfUserIsNotInFamilyCircle) {
   sync_pb::PasswordSharingRecipientsResponse response;
   response.set_result(
       sync_pb::PasswordSharingRecipientsResponse::NOT_FAMILY_MEMBER);
@@ -122,6 +138,27 @@ TEST_F(RecipientsFetcherImplTest,
       callback;
   EXPECT_CALL(callback,
               Run(IsEmpty(), Eq(FetchFamilyMembersRequestStatus::kNoFamily)));
+
+  RecipientsFetcherImpl recipient_fetcher = CreateRecipientFetcher();
+  recipient_fetcher.FetchFamilyMembers(callback.Get());
+
+  RunUntilIdle();
+}
+
+// Tests the scenario in which the sender of the request is the only member of a
+// family circle. This is simulated by pre-configuring the expected server
+// response.
+TEST_F(RecipientsFetcherImplTest,
+       ShouldReturnNoOtherFamilyMembersStatusIfUserIsTheOnlyMember) {
+  sync_pb::PasswordSharingRecipientsResponse response;
+  response.set_result(sync_pb::PasswordSharingRecipientsResponse::SUCCESS);
+  SetServerResponse(response);
+
+  StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
+      callback;
+  EXPECT_CALL(callback,
+              Run(IsEmpty(),
+                  Eq(FetchFamilyMembersRequestStatus::kNoOtherFamilyMembers)));
 
   RecipientsFetcherImpl recipient_fetcher = CreateRecipientFetcher();
   recipient_fetcher.FetchFamilyMembers(callback.Get());
@@ -152,7 +189,9 @@ TEST_F(RecipientsFetcherImplTest,
 TEST_F(RecipientsFetcherImplTest, ShouldNotFetchRecipientIfPendingRequest) {
   StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
       callback;
-  EXPECT_CALL(callback, Run(_, Eq(FetchFamilyMembersRequestStatus::kSuccess)));
+  EXPECT_CALL(
+      callback,
+      Run(_, Eq(FetchFamilyMembersRequestStatus::kNoOtherFamilyMembers)));
 
   StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
       callback2;
@@ -172,14 +211,18 @@ TEST_F(RecipientsFetcherImplTest, ShouldNotFetchRecipientIfPendingRequest) {
 }
 
 TEST_F(RecipientsFetcherImplTest,
-       ShouldFetchRecpientInfoWhenRequestSucceedsForConsequitiveRequests) {
+       ShouldFetchRecpientInfoWhenRequestSucceedsForConsecutiveRequests) {
   StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
       callback;
-  EXPECT_CALL(callback, Run(_, Eq(FetchFamilyMembersRequestStatus::kSuccess)));
+  EXPECT_CALL(
+      callback,
+      Run(_, Eq(FetchFamilyMembersRequestStatus::kNoOtherFamilyMembers)));
 
   StrictMock<base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback>>
       callback2;
-  EXPECT_CALL(callback2, Run(_, Eq(FetchFamilyMembersRequestStatus::kSuccess)));
+  EXPECT_CALL(
+      callback2,
+      Run(_, Eq(FetchFamilyMembersRequestStatus::kNoOtherFamilyMembers)));
 
   RecipientsFetcherImpl recipient_fetcher = CreateRecipientFetcher();
   recipient_fetcher.FetchFamilyMembers(callback.Get());
@@ -194,10 +237,28 @@ TEST_F(RecipientsFetcherImplTest,
   RunUntilIdle();
 }
 
-// TODO(crbug.com/1454712) Implement test case once the error handling in the
-// PasswordSharingRecipientsDownloader is implemented.
-TEST_F(RecipientsFetcherImplTest, FetchRecipientDuringAuthError) {}
+TEST_F(RecipientsFetcherImplTest, FetchRecipientDuringAuthError) {
+  identity_test_env()->SetAutomaticIssueOfAccessTokens(false);
+  base::MockCallback<RecipientsFetcher::FetchFamilyMembersCallback> callback;
+
+  // Create the RecipientsFetcher and make a request.
+  RecipientsFetcherImpl recipient_fetcher = CreateRecipientFetcher();
+  recipient_fetcher.FetchFamilyMembers(callback.Get());
+
+  // Simulate the permanent Auth error.
+  EXPECT_CALL(
+      callback,
+      Run(IsEmpty(), Eq(FetchFamilyMembersRequestStatus::kNetworkError)));
+  identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
+      GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+          GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+              CREDENTIALS_REJECTED_BY_SERVER));
+
+  RunUntilIdle();
+
+  // Double check that there were no network requests to the server.
+  EXPECT_EQ(test_url_loader_factory()->total_requests(), 0u);
+}
 
 }  // namespace
-
 }  // namespace password_manager

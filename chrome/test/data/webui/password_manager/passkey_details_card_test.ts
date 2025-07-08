@@ -4,7 +4,8 @@
 
 import 'chrome://password-manager/password_manager.js';
 
-import {DeletePasskeyDialogElement, EditPasskeyDialogElement, Page, PasskeyDetailsCardElement, PasswordManagerImpl, PasswordViewPageInteractions, Router} from 'chrome://password-manager/password_manager.js';
+import type {DeletePasskeyDialogElement, EditPasskeyDialogElement, PasskeyDetailsCardElement} from 'chrome://password-manager/password_manager.js';
+import {Page, PasswordManagerImpl, PasswordViewPageInteractions, Router} from 'chrome://password-manager/password_manager.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
@@ -39,9 +40,14 @@ suite('PasskeyDetailsCardTest', function() {
     await flushTasks();
   });
 
-  test('Content displayed properly', async function() {
+  test('Content displayed properly', function() {
     assertEquals(passkey.username, card.$.usernameValue.value);
     assertEquals(passkey.displayName, card.$.displayNameValue.value);
+    assertEquals(
+        // 1/12/70 is the date that matches the creation time set by
+        // `createPasswordEntry`.
+        card.i18n('passkeyManagementInfoLabel', '1/12/70'),
+        card.$.infoLabel.innerText.trim());
     assertTrue(isVisible(card.$.editButton));
     assertTrue(isVisible(card.$.deleteButton));
 
@@ -49,8 +55,8 @@ suite('PasskeyDetailsCardTest', function() {
         card.shadowRoot!.querySelectorAll<HTMLAnchorElement>('a.site-link');
     assertEquals(domains.length, 1);
     assertEquals(
-        passkey.affiliatedDomains![0]!.name, domains[0]!.textContent!.trim());
-    assertEquals(passkey.affiliatedDomains![0]!.url, domains[0]!.href);
+        passkey.affiliatedDomains[0]!.name, domains[0]!.textContent!.trim());
+    assertEquals(passkey.affiliatedDomains[0]!.url, domains[0]!.href);
   });
 
   test('Clicking edit button opens an edit dialog', async function() {
@@ -101,5 +107,4 @@ suite('PasskeyDetailsCardTest', function() {
     await domChange;
     assertEquals(card.shadowRoot!.querySelector('delete-passkey-dialog'), null);
   });
-
 });

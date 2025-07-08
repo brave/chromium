@@ -9,6 +9,7 @@
 #include "base/notreached.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/types/cxx23_to_underlying.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "url/gurl.h"
 
@@ -24,20 +25,18 @@ blink::mojom::PermissionDescriptorPtr MediaPermissionTypeToPermissionDescriptor(
     Type type) {
   auto descriptor = blink::mojom::PermissionDescriptor::New();
   switch (type) {
-    case Type::PROTECTED_MEDIA_IDENTIFIER:
+    case Type::kProtectedMediaIdentifier:
       descriptor->name =
           blink::mojom::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
       break;
-    case Type::AUDIO_CAPTURE:
+    case Type::kAudioCapture:
       descriptor->name = blink::mojom::PermissionName::AUDIO_CAPTURE;
       break;
-    case Type::VIDEO_CAPTURE:
+    case Type::kVideoCapture:
       descriptor->name = blink::mojom::PermissionName::VIDEO_CAPTURE;
       break;
     default:
-      NOTREACHED() << type;
-      descriptor->name =
-          blink::mojom::PermissionName::PROTECTED_MEDIA_IDENTIFIER;
+      NOTREACHED() << base::to_underlying(type);
   }
   return descriptor;
 }
@@ -133,7 +132,7 @@ uint32_t MediaPermissionDispatcher::RegisterCallback(
 blink::mojom::PermissionService*
 MediaPermissionDispatcher::GetPermissionService() {
   if (!permission_service_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+    render_frame_->GetBrowserInterfaceBroker().GetInterface(
         permission_service_.BindNewPipeAndPassReceiver());
     permission_service_.set_disconnect_handler(base::BindOnce(
         &MediaPermissionDispatcher::OnPermissionServiceConnectionError,
@@ -150,7 +149,7 @@ void MediaPermissionDispatcher::OnPermissionStatus(
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   auto iter = requests_.find(request_id);
-  DCHECK(iter != requests_.end()) << "Request not found.";
+  CHECK(iter != requests_.end());
 
   PermissionStatusCB permission_status_cb = std::move(iter->second);
   requests_.erase(iter);
@@ -169,7 +168,7 @@ void MediaPermissionDispatcher::IsHardwareSecureDecryptionAllowed(
 media::mojom::MediaFoundationPreferences*
 MediaPermissionDispatcher::GetMediaFoundationPreferences() {
   if (!mf_preferences_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+    render_frame_->GetBrowserInterfaceBroker().GetInterface(
         mf_preferences_.BindNewPipeAndPassReceiver());
     mf_preferences_.set_disconnect_handler(base::BindOnce(
         &MediaPermissionDispatcher::OnMediaFoundationPreferencesConnectionError,

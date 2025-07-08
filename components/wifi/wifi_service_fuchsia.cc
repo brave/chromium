@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/notreached.h"
+#include "components/wifi/wifi_service.h"
+
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "components/wifi/wifi_service.h"
 
 namespace wifi {
 
-// TODO(https://crbug.com/1251349): Implement WifiServiceFuchsia.
+// TODO(crbug.com/40198322): Implement WifiServiceFuchsia.
 class WifiServiceFuchsia : public WiFiService {
  public:
   WifiServiceFuchsia() = default;

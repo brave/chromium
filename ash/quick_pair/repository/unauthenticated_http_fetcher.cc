@@ -5,8 +5,8 @@
 #include "ash/quick_pair/repository/unauthenticated_http_fetcher.h"
 
 #include "ash/quick_pair/common/fast_pair/fast_pair_http_result.h"
-#include "ash/quick_pair/common/logging.h"
 #include "ash/quick_pair/common/quick_pair_browser_delegate.h"
+#include "components/cross_device/logging/logging.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -32,7 +32,7 @@ UnauthenticatedHttpFetcher::~UnauthenticatedHttpFetcher() = default;
 void UnauthenticatedHttpFetcher::ExecuteGetRequest(
     const GURL& url,
     FetchCompleteCallback callback) {
-  QP_LOG(VERBOSE) << __func__ << ": executing request to: " << url;
+  CD_LOG(VERBOSE, Feature::FP) << __func__ << ": executing request to: " << url;
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
@@ -51,8 +51,9 @@ void UnauthenticatedHttpFetcher::ExecuteGetRequest(
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
       QuickPairBrowserDelegate::Get()->GetURLLoaderFactory();
   if (!url_loader_factory) {
-    QP_LOG(WARNING) << __func__ << ": No SharedURLLoaderFactory is available.";
-    std::move(callback).Run(nullptr, nullptr);
+    CD_LOG(WARNING, Feature::FP)
+        << __func__ << ": No SharedURLLoaderFactory is available.";
+    std::move(callback).Run(std::nullopt, nullptr);
     return;
   }
 
@@ -68,26 +69,26 @@ void UnauthenticatedHttpFetcher::ExecuteGetRequest(
 void UnauthenticatedHttpFetcher::OnComplete(
     std::unique_ptr<network::SimpleURLLoader> simple_loader,
     FetchCompleteCallback callback,
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   std::unique_ptr<FastPairHttpResult> http_result =
       std::make_unique<FastPairHttpResult>(
           /*net_error=*/simple_loader->NetError(),
           /*head=*/simple_loader->ResponseInfo());
 
   if (http_result->IsSuccess()) {
-    QP_LOG(VERBOSE) << "Successfully fetched "
-                    << simple_loader->GetContentSize() << " bytes from "
-                    << simple_loader->GetFinalURL();
+    CD_LOG(VERBOSE, Feature::FP)
+        << "Successfully fetched " << simple_loader->GetContentSize()
+        << " bytes from " << simple_loader->GetFinalURL();
     std::move(callback).Run(std::move(response_body), std::move(http_result));
     return;
   }
 
-  QP_LOG(WARNING) << "Downloading to string from "
-                  << simple_loader->GetFinalURL()
-                  << " failed: " << http_result->ToString();
+  CD_LOG(WARNING, Feature::FP)
+      << "Downloading to string from " << simple_loader->GetFinalURL()
+      << " failed: " << http_result->ToString();
 
   // TODO(jonmann): Implement retries with back-off.
-  std::move(callback).Run(nullptr, std::move(http_result));
+  std::move(callback).Run(std::nullopt, std::move(http_result));
 }
 
 }  // namespace quick_pair

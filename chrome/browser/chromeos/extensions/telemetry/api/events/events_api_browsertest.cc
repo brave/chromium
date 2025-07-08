@@ -2,20 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/extensions/telemetry/api/events/events_api.h"
+
 #include <cstddef>
 #include <memory>
 #include <utility>
+#include <vector>
 
-#include "base/allocator/partition_allocator/pointers/raw_ptr.h"
 #include "base/location.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/base_telemetry_extension_browser_test.h"
-#include "chrome/browser/chromeos/extensions/telemetry/api/events/events_api.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/events/fake_events_service.h"
-#include "chrome/test/base/ui_test_utils.h"
+#include "chrome/browser/chromeos/extensions/telemetry/api/events/fake_events_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chromeos/ash/components/telemetry_extension/events/telemetry_event_service_ash.h"
+#include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_event_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_extension_exception.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_keyboard_event.mojom.h"
@@ -25,29 +36,14 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "base/memory/weak_ptr.h"
-#include "chrome/browser/ash/telemetry_extension/events/telemetry_event_service_ash.h"
-#include "chrome/browser/chromeos/extensions/telemetry/api/events/fake_events_service_factory.h"
-#include "chrome/browser/profiles/profile.h"         // nogncheck
-#include "chrome/browser/ui/browser_list.h"          // nogncheck
-#include "chrome/browser/ui/tabs/tab_strip_model.h"  // nogncheck
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
-#include "mojo/public/cpp/bindings/pending_receiver.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-
 namespace chromeos {
 
 namespace {
 
 namespace crosapi = ::crosapi::mojom;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-const char kKeyboardDiagnosticsUrl[] = "chrome://diagnostics?input";
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+const char kKeyboardDiagnosticsUrl[] =
+    "chrome://diagnostics?input&showDefaultKeyboardTester";
 
 }  // namespace
 
@@ -56,7 +52,6 @@ class TelemetryExtensionEventsApiBrowserTest
  public:
   void SetUpOnMainThread() override {
     BaseTelemetryExtensionBrowserTest::SetUpOnMainThread();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     fake_events_service_impl_ = new FakeEventsService();
     // SAFETY: We hand over ownership over the destruction of this pointer to
     // the first caller of `TelemetryEventsServiceAsh::Create`. The only
@@ -67,55 +62,133 @@ class TelemetryExtensionEventsApiBrowserTest
         std::unique_ptr<FakeEventsService>(fake_events_service_impl_));
     ash::TelemetryEventServiceAsh::Factory::SetForTesting(
         &fake_events_service_factory_);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    fake_events_service_impl_ = std::make_unique<FakeEventsService>();
-    // Replace the production TelemetryEventsService with a fake for testing.
-    chromeos::LacrosService::Get()->InjectRemoteForTesting(
-        fake_events_service_impl_->BindNewPipeAndPassRemote());
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  }
+
+  void TearDownOnMainThread() override {
+    fake_events_service_impl_ = nullptr;
+    BaseTelemetryExtensionBrowserTest::TearDownOnMainThread();
   }
 
  protected:
+  void CheckIsEventSupported(const std::vector<std::string>& events,
+                             const std::string& status);
+
   FakeEventsService* GetFakeService() {
     return fake_events_service_impl_.get();
   }
 
  private:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // SAFETY: This pointer is owned in a unique_ptr by the EventManager. Since
   // the EventManager lives longer than this test, it is always safe to access
   // the fake in the test body.
-  raw_ptr<FakeEventsService, base::RawPtrTraits::kMayDangle>
-      fake_events_service_impl_;
+  raw_ptr<FakeEventsService> fake_events_service_impl_;
   FakeEventsServiceFactory fake_events_service_factory_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  std::unique_ptr<FakeEventsService> fake_events_service_impl_;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 };
 
-// Checks that the correct events are available. This checks all released events
-// that are not behind a feature flag.
-IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       CheckCorrectEventsAvailable) {
-  constexpr char kEnabledEvents[] =
-      "['onAudioJackEvent', 'onLidEvent', 'onUsbEvent', "
-      "'onKeyboardDiagnosticEvent', 'onSdCardEvent', 'onPowerEvent']";
+void TelemetryExtensionEventsApiBrowserTest::CheckIsEventSupported(
+    const std::vector<std::string>& events,
+    const std::string& status) {
+  if (events.empty()) {
+    return;
+  }
 
+  std::string event_str;
+  for (const auto& event : events) {
+    if (event_str.empty()) {
+      event_str.append("[");
+    } else {
+      event_str.append(",");
+    }
+    event_str.append("'");
+    event_str.append(event);
+    event_str.append("'");
+  }
+  event_str.append("]");
+
+  // Don't use array.forEach because it doesn't support await.
   CreateExtensionAndRunServiceWorker(base::StringPrintf(R"(
     chrome.test.runTests([
-      function checkSupportedEvents() {
-        const methods = Object.getOwnPropertyNames(chrome.os.events)
-            .filter(item =>
-               typeof chrome.os.events[item].addListener === 'function');
-
-        chrome.test.assertEq(methods.sort(), %s.sort());
+      async function isEventSupported() {
+        const events = %s;
+        for (let i = 0; i < events.length; i++) {
+          const result = await chrome.os.events.isEventSupported(events[i]);
+          chrome.test.assertEq(result, {
+            status: '%s'
+          });
+        }
         chrome.test.succeed();
       }
     ]);
     )",
-                                                        kEnabledEvents));
+                                                        event_str.c_str(),
+                                                        status.c_str()));
+}
+
+// Checks the event supportability.
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       IsEventSupported) {
+  auto supported = crosapi::TelemetryExtensionSupportStatus::NewSupported(
+      crosapi::TelemetryExtensionSupported::New());
+  GetFakeService()->SetIsEventSupportedResponse(std::move(supported));
+
+  std::vector<std::string> unsupported_events;
+  std::vector<std::string> supported_events;
+  crosapi::TelemetryEventCategoryEnum category =
+      crosapi::TelemetryEventCategoryEnum::kUnmappedEnumField;
+  switch (category) {
+    // Features behind a feature flag.
+    case crosapi::TelemetryEventCategoryEnum::kUnmappedEnumField:
+      [[fallthrough]];
+    // Features without a feature flag.
+    case crosapi::TelemetryEventCategoryEnum::kAudioJack:
+      supported_events.push_back("audio_jack");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kLid:
+      supported_events.push_back("lid");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kUsb:
+      supported_events.push_back("usb");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kExternalDisplay:
+      supported_events.push_back("external_display");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kSdCard:
+      supported_events.push_back("sd_card");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kPower:
+      supported_events.push_back("power");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kKeyboardDiagnostic:
+      supported_events.push_back("keyboard_diagnostic");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kStylusGarage:
+      supported_events.push_back("stylus_garage");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kTouchpadButton:
+      supported_events.push_back("touchpad_button");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kTouchpadTouch:
+      supported_events.push_back("touchpad_touch");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kTouchpadConnected:
+      supported_events.push_back("touchpad_connected");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kStylusTouch:
+      supported_events.push_back("stylus_touch");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kStylusConnected:
+      supported_events.push_back("stylus_connected");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kTouchscreenTouch:
+      supported_events.push_back("touchscreen_touch");
+      [[fallthrough]];
+    case crosapi::TelemetryEventCategoryEnum::kTouchscreenConnected:
+      supported_events.push_back("touchscreen_connected");
+      break;
+  }
+
+  CheckIsEventSupported(unsupported_events, "unsupported");
+  CheckIsEventSupported(supported_events, "supported");
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
@@ -201,8 +274,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        StartListeningToEvents_Success) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   // Emit an event as soon as the subscription is registered with the fake.
   GetFakeService()->SetOnSubscriptionChange(
@@ -244,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
       async function startCapturingEvents() {
         await chrome.test.assertPromiseRejects(
             chrome.os.events.startCapturingEvents("audio_jack"),
-            'Error: Companion PWA UI is not open.'
+            'Error: Companion app UI is not open.'
         );
         chrome.test.succeed();
       }
@@ -253,9 +325,157 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       StartListeningToRegularEvents_SuccessPwaUnfocused) {
+  OpenAppUiAndMakeItSecure();
+  AddBlankTabAndShow(browser());
+
+  // Emit an event as soon as the subscription is registered with the fake.
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        auto audio_jack_info = crosapi::TelemetryAudioJackEventInfo::New();
+        audio_jack_info->state =
+            crosapi::TelemetryAudioJackEventInfo::State::kAdd;
+        audio_jack_info->device_type =
+            crosapi::TelemetryAudioJackEventInfo::DeviceType::kHeadphone;
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kAudioJack,
+            crosapi::TelemetryEventInfo::NewAudioJackEventInfo(
+                std::move(audio_jack_info)));
+      }));
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        chrome.os.events.onAudioJackEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            event: 'connected',
+            deviceType: 'headphone'
+          });
+
+          chrome.test.succeed();
+        });
+
+        await chrome.os.events.startCapturingEvents("audio_jack");
+      }
+    ]);
+  )");
+
+  base::test::TestFuture<size_t> remote_set_size;
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this, &remote_set_size]() {
+        auto* remote_set = GetFakeService()->GetObserversByCategory(
+            crosapi::TelemetryEventCategoryEnum::kAudioJack);
+        ASSERT_TRUE(remote_set);
+
+        remote_set->FlushForTesting();
+        remote_set_size.SetValue(remote_set->size());
+      }));
+
+  // Calling `stopCapturingEvents` will result in the connection being cut.
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function stopCapturingEvents() {
+        await chrome.os.events.stopCapturingEvents("audio_jack");
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+
+  EXPECT_EQ(remote_set_size.Get(), 0UL);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionEventsApiBrowserTest,
+    StartListeningToFocusRestrictedEvents_ErrorPwaUnfocused) {
+  OpenAppUiAndMakeItSecure();
+  AddBlankTabAndShow(browser());
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        await chrome.test.assertPromiseRejects(
+            chrome.os.events.startCapturingEvents("touchpad_connected"),
+            'Error: Companion app UI is not focused.'
+        );
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+}
+
+// TODO(b/284428237): Add more browser tests regarding focus changes.
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionEventsApiBrowserTest,
+    StartListeningToRegularAndFocusRestrictedEvents_Success) {
+  OpenAppUiAndMakeItSecure();
+
+  // Emit an event as soon as the subscription is registered with the fake.
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        auto audio_jack_info = crosapi::TelemetryAudioJackEventInfo::New();
+        audio_jack_info->state =
+            crosapi::TelemetryAudioJackEventInfo::State::kAdd;
+        audio_jack_info->device_type =
+            crosapi::TelemetryAudioJackEventInfo::DeviceType::kHeadphone;
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kAudioJack,
+            crosapi::TelemetryEventInfo::NewAudioJackEventInfo(
+                std::move(audio_jack_info)));
+      }));
+
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        std::vector<crosapi::TelemetryInputTouchButton> buttons{
+            crosapi::TelemetryInputTouchButton::kLeft,
+            crosapi::TelemetryInputTouchButton::kMiddle,
+            crosapi::TelemetryInputTouchButton::kRight};
+
+        auto connected_event =
+            crosapi::TelemetryTouchpadConnectedEventInfo::New(
+                1, 2, 3, std::move(buttons));
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kTouchpadConnected,
+            crosapi::TelemetryEventInfo::NewTouchpadConnectedEventInfo(
+                std::move(connected_event)));
+      }));
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        chrome.os.events.onAudioJackEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            event: 'connected',
+            deviceType: 'headphone'
+          });
+        });
+
+        chrome.os.events.onTouchpadConnectedEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            maxX: 1,
+            maxY: 2,
+            maxPressure: 3,
+            buttons: [
+              'left',
+              'middle',
+              'right'
+            ]
+          });
+        });
+
+        await chrome.os.events.startCapturingEvents("audio_jack");
+        await chrome.os.events.startCapturingEvents("touchpad_connected");
+
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+}
+
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        StopListeningToEvents) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   // Emit an event as soon as the subscription is registered with the fake.
   GetFakeService()->SetOnSubscriptionChange(
@@ -315,8 +535,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        ClosePwaConnection) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   // Emit an event as soon as the subscription is registered with the fake.
   GetFakeService()->SetOnSubscriptionChange(
@@ -369,8 +588,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        OnKeyboardDiagnosticEvent_Success) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -428,9 +646,84 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       DISABLED_KeyboardDiagnosticEventOpensDiagnosticApp) {
+  OpenAppUiAndMakeItSecure();
+
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        auto keyboard_info = crosapi::TelemetryKeyboardInfo::New();
+        keyboard_info->id = crosapi::UInt32Value::New(1);
+        keyboard_info->connection_type =
+            crosapi::TelemetryKeyboardConnectionType::kBluetooth;
+        keyboard_info->name = "TestName";
+        keyboard_info->physical_layout =
+            crosapi::TelemetryKeyboardPhysicalLayout::kChromeOS;
+        keyboard_info->mechanical_layout =
+            crosapi::TelemetryKeyboardMechanicalLayout::kAnsi;
+        keyboard_info->region_code = "de";
+        keyboard_info->number_pad_present =
+            crosapi::TelemetryKeyboardNumberPadPresence::kPresent;
+
+        auto info = crosapi::TelemetryKeyboardDiagnosticEventInfo::New();
+        info->keyboard_info = std::move(keyboard_info);
+        info->tested_keys = {1, 2, 3};
+        info->tested_top_row_keys = {4, 5, 6};
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kKeyboardDiagnostic,
+            crosapi::TelemetryEventInfo::NewKeyboardDiagnosticEventInfo(
+                std::move(info)));
+      }));
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        chrome.os.events.onKeyboardDiagnosticEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            "keyboardInfo": {
+              "connectionType":"bluetooth",
+              "id":1,
+              "mechanicalLayout":"ansi",
+              "name":"TestName",
+              "numberPadPresent":"present",
+              "physicalLayout":"chrome_os",
+              "regionCode":"de",
+              "topRowKeys":[]
+            },
+            "testedKeys":[1,2,3],
+            "testedTopRowKeys":[4,5,6]
+            }
+          );
+
+          chrome.test.succeed();
+        });
+
+        await chrome.os.events.startCapturingEvents("keyboard_diagnostic");
+      }
+    ]);
+  )");
+
+  // Check that the UI was correctly open.
+  bool is_diagnostic_app_open = false;
+  for (Browser* target_browser : *BrowserList::GetInstance()) {
+    TabStripModel* target_tab_strip = target_browser->tab_strip_model();
+    for (int i = 0; i < target_tab_strip->count(); ++i) {
+      content::WebContents* target_contents =
+          target_tab_strip->GetWebContentsAt(i);
+
+      if (target_contents->GetLastCommittedURL() ==
+          GURL(kKeyboardDiagnosticsUrl)) {
+        is_diagnostic_app_open = true;
+      }
+    }
+  }
+
+  EXPECT_TRUE(is_diagnostic_app_open);
+}
+
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        OnSdCardEvent_Success) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -462,8 +755,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
                        OnPowerEvent_Success) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -495,200 +787,8 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusGarageApiWithoutFeatureFlagFail) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      function stylusGarageNotWorking() {
-        chrome.test.assertThrows(() => {
-          chrome.os.events.onStylusGarageEvent.addListener((event) => {
-            // unreachable.
-          });
-        }, [],
-          'Cannot read properties of undefined (reading \'addListener\')'
-        );
-
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       CheckExternalDisplayApiWithoutFeatureFlagFail) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      function external_displayNotWorking() {
-        chrome.test.assertThrows(() => {
-          chrome.os.events.onExternalDisplayEvent.addListener((event) => {
-            // unreachable.
-          });
-        }, [],
-          'Cannot read properties of undefined (reading \'addListener\')'
-        );
-
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusTouchApiWithoutFeatureFlagFail) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      function stylusNotWorking() {
-        chrome.test.assertThrows(() => {
-          chrome.os.events.onStylusTouchEvent.addListener((event) => {
-            // unreachable.
-          });
-        }, [],
-          'Cannot read properties of undefined (reading \'addListener\')'
-        );
-
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusConnectedApiWithoutFeatureFlagFail) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      function stylusNotWorking() {
-        chrome.test.assertThrows(() => {
-          chrome.os.events.onStylusConnectedEvent.addListener((event) => {
-            // unreachable.
-          });
-        }, [],
-          'Cannot read properties of undefined (reading \'addListener\')'
-        );
-
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-class PendingApprovalTelemetryExtensionEventsApiBrowserTest
-    : public TelemetryExtensionEventsApiBrowserTest {
- public:
-  PendingApprovalTelemetryExtensionEventsApiBrowserTest() {
-    feature_list_.InitAndEnableFeature(
-        extensions_features::kTelemetryExtensionPendingApprovalApi);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-// TODO(crbug.com/1454755): Flaky on ChromeOS.
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp \
-  DISABLED_KeyboardDiagnosticEventOpensDiagnosticApp
-#else
-#define MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp \
-  KeyboardDiagnosticEventOpensDiagnosticApp
-#endif
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
-
-  GetFakeService()->SetOnSubscriptionChange(
-      base::BindLambdaForTesting([this]() {
-        auto keyboard_info = crosapi::TelemetryKeyboardInfo::New();
-        keyboard_info->id = crosapi::UInt32Value::New(1);
-        keyboard_info->connection_type =
-            crosapi::TelemetryKeyboardConnectionType::kBluetooth;
-        keyboard_info->name = "TestName";
-        keyboard_info->physical_layout =
-            crosapi::TelemetryKeyboardPhysicalLayout::kChromeOS;
-        keyboard_info->mechanical_layout =
-            crosapi::TelemetryKeyboardMechanicalLayout::kAnsi;
-        keyboard_info->region_code = "de";
-        keyboard_info->number_pad_present =
-            crosapi::TelemetryKeyboardNumberPadPresence::kPresent;
-
-        auto info = crosapi::TelemetryKeyboardDiagnosticEventInfo::New();
-        info->keyboard_info = std::move(keyboard_info);
-        info->tested_keys = {1, 2, 3};
-        info->tested_top_row_keys = {4, 5, 6};
-
-        GetFakeService()->EmitEventForCategory(
-            crosapi::TelemetryEventCategoryEnum::kKeyboardDiagnostic,
-            crosapi::TelemetryEventInfo::NewKeyboardDiagnosticEventInfo(
-                std::move(info)));
-      }));
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function startCapturingEvents() {
-        chrome.os.events.onKeyboardDiagnosticEvent.addListener((event) => {
-          chrome.test.assertEq(event, {
-            "keyboardInfo": {
-              "connectionType":"bluetooth",
-              "id":1,
-              "mechanicalLayout":"ansi",
-              "name":"TestName",
-              "numberPadPresent":"present",
-              "physicalLayout":"chrome_os",
-              "regionCode":"de",
-              "topRowKeys":[]
-            },
-            "testedKeys":[1,2,3],
-            "testedTopRowKeys":[4,5,6]
-            }
-          );
-
-          chrome.test.succeed();
-        });
-
-        await chrome.os.events.startCapturingEvents("keyboard_diagnostic");
-      }
-    ]);
-  )");
-
-// If this is executed in Lacros we can stop the test here. If the above
-// call succeeded, a request for opening the diagnostics application was
-// sent to Ash. Since we only test Lacros, we stop the test here instead
-// of checking if Ash opened the UI correctly.
-// If we run in Ash however, we can check that the UI was correctly open.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  bool is_diagnostic_app_open = false;
-  for (auto* target_browser : *BrowserList::GetInstance()) {
-    TabStripModel* target_tab_strip = target_browser->tab_strip_model();
-    for (int i = 0; i < target_tab_strip->count(); ++i) {
-      content::WebContents* target_contents =
-          target_tab_strip->GetWebContentsAt(i);
-
-      if (target_contents->GetLastCommittedURL() ==
-          GURL(kKeyboardDiagnosticsUrl)) {
-        is_diagnostic_app_open = true;
-      }
-    }
-  }
-
-  EXPECT_TRUE(is_diagnostic_app_open);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
-
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusGarageApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+                       OnStylusGarageEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -720,10 +820,9 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckTouchpadButtonApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnTouchpadButtonEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -756,10 +855,9 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckTouchpadTouchApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnTouchpadTouchEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -807,10 +905,9 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckTouchpadConnectedApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnTouchpadConnectedEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -853,10 +950,93 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckExternalDisplayApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnTouchscreenTouchEvent_Success) {
+  OpenAppUiAndMakeItSecure();
+
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        std::vector<crosapi::TelemetryTouchPointInfoPtr> touch_points;
+        touch_points.push_back(crosapi::TelemetryTouchPointInfo::New(
+            1, 2, 3, crosapi::UInt32Value::New(4), crosapi::UInt32Value::New(5),
+            crosapi::UInt32Value::New(6)));
+        touch_points.push_back(crosapi::TelemetryTouchPointInfo::New(
+            7, 8, 9, nullptr, nullptr, nullptr));
+
+        auto touch_event = crosapi::TelemetryTouchscreenTouchEventInfo::New(
+            std::move(touch_points));
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kTouchscreenTouch,
+            crosapi::TelemetryEventInfo::NewTouchscreenTouchEventInfo(
+                std::move(touch_event)));
+      }));
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        chrome.os.events.onTouchscreenTouchEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            touchPoints: [{
+              trackingId: 1,
+              x: 2,
+              y: 3,
+              pressure: 4,
+              touchMajor: 5,
+              touchMinor: 6
+            },{
+              trackingId: 7,
+              x: 8,
+              y: 9,
+            }]
+          });
+
+          chrome.test.succeed();
+        });
+
+        await chrome.os.events.startCapturingEvents("touchscreen_touch");
+      }
+    ]);
+  )");
+}
+
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnTouchscreenConnectedEvent_Success) {
+  OpenAppUiAndMakeItSecure();
+
+  GetFakeService()->SetOnSubscriptionChange(
+      base::BindLambdaForTesting([this]() {
+        auto connected_event =
+            crosapi::TelemetryTouchscreenConnectedEventInfo::New(1, 2, 3);
+
+        GetFakeService()->EmitEventForCategory(
+            crosapi::TelemetryEventCategoryEnum::kTouchscreenConnected,
+            crosapi::TelemetryEventInfo::NewTouchscreenConnectedEventInfo(
+                std::move(connected_event)));
+      }));
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function startCapturingEvents() {
+        chrome.os.events.onTouchscreenConnectedEvent.addListener((event) => {
+          chrome.test.assertEq(event, {
+            maxX: 1,
+            maxY: 2,
+            maxPressure: 3
+          });
+
+          chrome.test.succeed();
+        });
+
+        await chrome.os.events.startCapturingEvents("touchscreen_connected");
+      }
+    ]);
+  )");
+}
+
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnExternalDisplayEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -864,6 +1044,23 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
             crosapi::TelemetryExternalDisplayEventInfo::New();
         external_display_info->state =
             crosapi::TelemetryExternalDisplayEventInfo::State::kAdd;
+
+        auto display_info = crosapi::ProbeExternalDisplayInfo::New();
+        display_info->display_width = 1;
+        display_info->display_height = 2;
+        display_info->resolution_horizontal = 3;
+        display_info->resolution_vertical = 4;
+        display_info->refresh_rate = 5;
+        display_info->manufacturer = "manufacturer";
+        display_info->model_id = 6;
+        display_info->serial_number = 7;
+        display_info->manufacture_week = 8;
+        display_info->manufacture_year = 9;
+        display_info->edid_version = "1.4";
+        display_info->input_type = crosapi::ProbeDisplayInputType::kAnalog;
+        display_info->display_name = "display";
+
+        external_display_info->display_info = std::move(display_info);
 
         GetFakeService()->EmitEventForCategory(
             crosapi::TelemetryEventCategoryEnum::kExternalDisplay,
@@ -876,7 +1073,21 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
       async function startCapturingEvents() {
         chrome.os.events.onExternalDisplayEvent.addListener((event) => {
           chrome.test.assertEq(event, {
-            event: 'connected'
+            event: 'connected',
+            displayInfo: {
+                "displayHeight": 2,
+                "displayName": "display",
+                "displayWidth": 1,
+                "edidVersion": "1.4",
+                "inputType": "analog",
+                "manufactureWeek": 8,
+                "manufactureYear": 9,
+                "manufacturer": "manufacturer",
+                "modelId": 6,
+                "refreshRate": 5,
+                "resolutionHorizontal": 3,
+                "resolutionVertical": 4
+              }
           });
 
           chrome.test.succeed();
@@ -888,10 +1099,9 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusConnectedApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnStylusConnectedEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {
@@ -923,10 +1133,9 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
   )");
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionEventsApiBrowserTest,
-                       CheckStylusTouchApiWithFeatureFlagWork) {
-  // Open the PWA.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(pwa_page_url())));
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
+                       OnStylusTouchEvent_Success) {
+  OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(
       base::BindLambdaForTesting([this]() {

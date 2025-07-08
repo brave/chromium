@@ -6,16 +6,13 @@
 
 #include "base/auto_reset.h"
 #include "base/environment.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/strings/utf_offset_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/base/ime/constants.h"
 #include "ui/base/ime/linux/linux_input_method_context_factory.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/text_input_flags.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/events/event.h"
 
 namespace {
@@ -46,8 +43,11 @@ bool IsSameKeyEvent(const ui::KeyEvent& lhs, const ui::KeyEvent& rhs) {
 namespace ui {
 
 InputMethodAuraLinux::InputMethodAuraLinux(
-    ImeKeyEventDispatcher* ime_key_event_dispatcher)
+
+    ImeKeyEventDispatcher* ime_key_event_dispatcher,
+    gfx::AcceleratedWidget widget)
     : InputMethodBase(ime_key_event_dispatcher),
+      widget_(widget),
       text_input_type_(TEXT_INPUT_TYPE_NONE),
       is_sync_mode_(false),
       composition_changed_(false) {
@@ -64,7 +64,8 @@ LinuxInputMethodContext* InputMethodAuraLinux::GetContextForTesting() {
 
 ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
     ui::KeyEvent* event) {
-  DCHECK(event->type() == ET_KEY_PRESSED || event->type() == ET_KEY_RELEASED);
+  DCHECK(event->type() == EventType::kKeyPressed ||
+         event->type() == EventType::kKeyReleased);
   // If there's pending deadkey event, i.e. a key event which is expected to
   // trigger input method actions (like OnCommit, OnPreedit* invocation)
   // and to be dispatched from there, but not yet, dispatch the pending event
@@ -89,9 +90,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
   //   method does not consume the event, the framework internally re-generates
   //   the same key event, and post it back again to the application.
   // This happens some common input method framework, such as iBus/fcitx and
-  // GTK-IMmodule. Also, wayland extension implemented by exosphere in
-  // ash-chrome for Lacros behaves in the same way from InputMethodAuraLinux's
-  // point of view.
+  // GTK-IMmodule.
   // To avoid dispatching twice, do not dispatch it here. Following code
   // will handle the second (i.e. fallback) key event, including event
   // dispatching.
@@ -111,7 +110,8 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
     // dispatched. crbug.com/1225747
     // Do not keep release events. Non-peek Release key event is dispatched,
     // so the event will be stale. See WaylandKeyboard::OnKey for details.
-    if (event->type() == ET_KEY_PRESSED && context_->IsPeekKeyEvent(*event)) {
+    if (event->type() == EventType::kKeyPressed &&
+        context_->IsPeekKeyEvent(*event)) {
       ime_filtered_key_event_ = std::move(*event);
       return ui::EventDispatchDetails();
     }
@@ -126,7 +126,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
       return details;
     }
     if ((event->is_char() || event->GetDomKey().IsCharacter()) &&
-        event->type() == ui::ET_KEY_PRESSED) {
+        event->type() == ui::EventType::kKeyPressed) {
       GetTextInputClient()->InsertChar(*event);
     }
     return details;
@@ -138,7 +138,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
     suppress_non_key_input_until_ = base::TimeTicks::UnixEpoch();
     composition_changed_ = false;
     last_commit_result_.reset();
-    result_text_ = absl::nullopt;
+    result_text_ = std::nullopt;
     base::AutoReset<bool> flipper(&is_sync_mode_, true);
     filtered = context_->DispatchKeyEvent(*event);
   }
@@ -161,17 +161,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
   // consumed by IME and commit/preedit string update will happen
   // asynchronously. The remaining case is covered in OnCommit and
   // OnPreeditChanged/End.
-  // TODO(crbug.com/1199385): On Lacros CTRL+TAB events are sent twice if
-  // user types it on loading page, because the connected client is considered
-  // None type, and so the peek key event is not held here.
-  // To derisk the regression in other platform, and to prioritize the fix
-  // on Lacros, we conditionally do not check whether the connected client
-  // is None type for Lacros only. We should remove this soon.
-  if (filtered && !HasInputMethodResult()
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
-      && !IsTextInputTypeNone()
-#endif
-  ) {
+  if (filtered && !HasInputMethodResult() && !IsTextInputTypeNone()) {
     ime_filtered_key_event_ = std::move(*event);
     return ui::EventDispatchDetails();
   }
@@ -180,7 +170,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
   // before updating commit/preedit string so that, e.g., JavaScript keydown
   // event is delivered to the page before keypress.
   ui::EventDispatchDetails details;
-  if (event->type() == ui::ET_KEY_PRESSED && filtered) {
+  if (event->type() == ui::EventType::kKeyPressed && filtered) {
     details = DispatchImeFilteredKeyPressEvent(event);
     if (details.target_destroyed || details.dispatcher_destroyed ||
         event->stopped_propagation()) {
@@ -217,7 +207,7 @@ ui::EventDispatchDetails InputMethodAuraLinux::DispatchKeyEvent(
     }
     if (event->stopped_propagation() || details.target_destroyed) {
       ResetContext();
-    } else if (event->type() == ui::ET_KEY_PRESSED) {
+    } else if (event->type() == ui::EventType::kKeyPressed) {
       // If a key event was not filtered by |context_|,
       // then it means the key event didn't generate any result text. For some
       // cases, the key event may still generate a valid character, eg. a
@@ -290,7 +280,7 @@ InputMethodAuraLinux::CommitResult InputMethodAuraLinux::MaybeCommitResult(
 
   // Take the ownership of |result_text_|.
   std::u16string result_text = std::move(*result_text_);
-  result_text_ = absl::nullopt;
+  result_text_ = std::nullopt;
 
   if (filtered && NeedInsertChar(result_text)) {
     for (const auto ch : result_text) {
@@ -401,27 +391,23 @@ void InputMethodAuraLinux::OnCaretBoundsChanged(const TextInputClient* client) {
   NotifyTextInputCaretBoundsChanged(client);
   context_->SetCursorLocation(GetTextInputClient()->GetCaretBounds());
 
-  gfx::Range text_range, selection_range;
+  gfx::Range text_range, composition_range, selection_range;
   std::u16string text;
   if (client->GetTextRange(&text_range) &&
       client->GetTextFromRange(text_range, &text) &&
       client->GetEditableSelectionRange(&selection_range)) {
-    absl::optional<GrammarFragment> fragment;
-    absl::optional<AutocorrectInfo> autocorrect;
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    fragment = client->GetGrammarFragmentAtCursor();
-    autocorrect = AutocorrectInfo{
-        client->GetAutocorrectRange(),
-        client->GetAutocorrectCharacterBounds(),
-    };
-#endif
+    if (!client->GetCompositionTextRange(&composition_range)) {
+      // Some TextInputClients, like ARC for ChromeOS, may not support getting
+      // composition text. So set it to invalid range in that case.
+      composition_range = gfx::Range::InvalidRange();
+    }
     if (surrounding_text_ != text || text_range_ != text_range ||
         selection_range_ != selection_range) {
       surrounding_text_ = text;
       text_range_ = text_range;
       selection_range_ = selection_range;
-      context_->SetSurroundingText(text, text_range, selection_range, fragment,
-                                   autocorrect);
+      context_->SetSurroundingText(text, text_range, composition_range,
+                                   selection_range);
     }
   }
 }
@@ -449,7 +435,7 @@ void InputMethodAuraLinux::ResetContext() {
   context_->Reset();
 
   composition_ = CompositionText();
-  result_text_ = absl::nullopt;
+  result_text_ = std::nullopt;
   is_sync_mode_ = false;
   composition_changed_ = false;
 }
@@ -474,6 +460,10 @@ InputMethodAuraLinux::GetVirtualKeyboardController() {
 
 // Overriden from ui::LinuxInputMethodContextDelegate
 
+gfx::AcceleratedWidget InputMethodAuraLinux::GetClientWindowKey() const {
+  return widget_;
+}
+
 void InputMethodAuraLinux::OnCommit(const std::u16string& text) {
   if (IgnoringNonKeyInput() || !GetTextInputClient())
     return;
@@ -494,7 +484,7 @@ void InputMethodAuraLinux::OnCommit(const std::u16string& text) {
   // the focused text input client does not support text input.
   if (!is_sync_mode_ && !IsTextInputTypeNone()) {
     ui::KeyEvent event =
-        ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_PROCESSKEY, 0);
+        ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_PROCESSKEY, 0);
     if (ime_filtered_key_event_.has_value()) {
       event = std::move(*ime_filtered_key_event_);
       ime_filtered_key_event_.reset();
@@ -554,36 +544,6 @@ void InputMethodAuraLinux::OnSetPreeditRegion(
   last_commit_result_.reset();
 }
 
-void InputMethodAuraLinux::OnClearGrammarFragments(const gfx::Range& range) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto* text_input_client = GetTextInputClient();
-  if (!text_input_client)
-    return;
-
-  text_input_client->ClearGrammarFragments(range);
-#endif
-}
-
-void InputMethodAuraLinux::OnAddGrammarFragment(
-    const ui::GrammarFragment& fragment) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto* text_input_client = GetTextInputClient();
-  if (!text_input_client)
-    return;
-
-  text_input_client->AddGrammarFragments({fragment});
-#endif
-}
-
-void InputMethodAuraLinux::OnSetAutocorrectRange(const gfx::Range& range) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto* text_input_client = GetTextInputClient();
-  if (!text_input_client)
-    return;
-  text_input_client->SetAutocorrectRange(range);
-#endif
-}
-
 void InputMethodAuraLinux::OnSetVirtualKeyboardOccludedBounds(
     const gfx::Rect& screen_bounds) {
   SetVirtualKeyboardBounds(screen_bounds);
@@ -634,15 +594,8 @@ void InputMethodAuraLinux::OnPreeditUpdate(
       return;
     }
   }
-  {
-    bool set_composition_text_called = false;
-    if (base::FeatureList::IsEnabled(
-            features::kRedundantImeCompositionClearing)) {
-      set_composition_text_called = UpdateCompositionIfTextSelected();
-    }
-    if (!set_composition_text_called) {
-      UpdateCompositionIfChanged(last_commit_result_ == CommitResult::kSuccess);
-    }
+  if (!UpdateCompositionIfTextSelected()) {
+    UpdateCompositionIfChanged(last_commit_result_ == CommitResult::kSuccess);
   }
   last_commit_result_.reset();
 }
@@ -652,7 +605,7 @@ bool InputMethodAuraLinux::HasInputMethodResult() {
 }
 
 bool InputMethodAuraLinux::NeedInsertChar(
-    const absl::optional<std::u16string>& result_text) const {
+    const std::optional<std::u16string>& result_text) const {
   return IsTextInputTypeNone() ||
          (!composition_changed_ && composition_.text.empty() && result_text &&
           result_text->length() == 1);
@@ -660,8 +613,8 @@ bool InputMethodAuraLinux::NeedInsertChar(
 
 ui::EventDispatchDetails InputMethodAuraLinux::SendFakeProcessKeyEvent(
     ui::KeyEvent* event) const {
-  ui::KeyEvent key_event(ui::ET_KEY_PRESSED, ui::VKEY_PROCESSKEY, event->code(),
-                         event->flags(), ui::DomKey::PROCESS,
+  ui::KeyEvent key_event(ui::EventType::kKeyPressed, ui::VKEY_PROCESSKEY,
+                         event->code(), event->flags(), ui::DomKey::PROCESS,
                          event->time_stamp());
   ui::EventDispatchDetails details = DispatchKeyEventPostIME(&key_event);
   if (key_event.stopped_propagation())

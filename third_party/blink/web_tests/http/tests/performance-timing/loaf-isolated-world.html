@@ -17,7 +17,7 @@ function wait_for_entries() {
   return new Promise(resolve => {
     new PerformanceObserver((entries, observer) => {
       if (entries.getEntriesByType("long-animation-frame").some(entry =>
-        entry.scripts.some(script => script.sourceLocation?.includes("from_main")))) {
+        entry.scripts.some(script => script.sourceFunctionName?.includes("from_main")))) {
           resolve();
           observer.disconnect();
         }
@@ -64,10 +64,36 @@ promise_test(async() => {
 
   const forbidden = performance.getEntriesByType("long-animation-frame")
     .flatMap(e => e.scripts)
-    .find(script => script.sourceLocation?.includes("forbidden"));
+    .find(script => script.sourceFunctionName?.includes("forbidden"));
 
-  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceLocation}`);
+  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceFunctionName}`);
   }, "LoAF should only expose HTTP(s) scripts");
+
+promise_test(async t => {
+  window.xhr = new XMLHttpRequest();
+  t.add_cleanup(() => { delete window.xhr })
+  xhr.open("GET", "/resources/dummy.xml");
+
+  const forbidden_url = "forbidden://event-listener";
+
+  await new Promise(resolve => testRunner.evaluateScriptInOwnTask(`
+      xhr.addEventListener("load", function in_forbidden_script() {
+        const deadline = performance.now() + 360;
+        while (performance.now() < deadline) {}
+      });
+  `, forbidden_url, resolve));
+
+  xhr.send();
+  await new Promise(resolve => xhr.addEventListener("load", () => resolve()));
+  await wait_for_entries();
+
+  const forbidden = performance.getEntriesByType("long-animation-frame")
+    .flatMap(e => e.scripts)
+    .find(script => script.sourceURL === forbidden_url);
+
+  console.log(JSON.stringify(forbidden))
+  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceURL}`);
+}, "LoAF should only expose HTTP(s) event listeners");
 
 promise_test(async () => {
   await exec_isolated(() => new Promise(resolve => {
@@ -83,9 +109,9 @@ promise_test(async () => {
 
   const forbidden = performance.getEntriesByType("long-animation-frame")
     .flatMap(e => e.scripts)
-    .find(script => script.sourceLocation?.includes("from_isolated"));
+    .find(script => script.sourceFunctionName?.includes("from_isolated"));
 
-  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceLocation} ${forbidden?.name}`);
+  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceFunctionName} ${forbidden?.name}`);
 }, "Test that LoAF doesn't expose scripts from isolated worlds for callbacks");
 
 promise_test(async () => {
@@ -104,9 +130,9 @@ promise_test(async () => {
 
   const forbidden = performance.getEntriesByType("long-animation-frame")
     .flatMap(e => e.scripts)
-    .find(script => script.sourceLocation?.includes("from_isolated"));
+    .find(script => script.sourceFunctionName?.includes("from_isolated"));
 
-  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceLocation} ${forbidden?.name}`);
+  assert_false(!!forbidden, `Forbidden script exposed ${forbidden?.sourceFunctionName} ${forbidden?.name}`);
 }, "Test that LoAF doesn't expose scripts from isolated worlds for events");
 
   promise_test(async () => {

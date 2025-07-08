@@ -31,16 +31,19 @@ SettingsPrivateDelegateFactory::SettingsPrivateDelegateFactory()
           "SettingsPrivateDelegate",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {}
 
 SettingsPrivateDelegateFactory::~SettingsPrivateDelegateFactory() = default;
 
-KeyedService* SettingsPrivateDelegateFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SettingsPrivateDelegateFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* profile) const {
-  return new SettingsPrivateDelegate(static_cast<Profile*>(profile));
+  return std::make_unique<SettingsPrivateDelegate>(
+      static_cast<Profile*>(profile));
 }
 
 }  // namespace extensions

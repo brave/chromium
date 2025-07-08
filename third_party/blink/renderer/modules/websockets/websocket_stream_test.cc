@@ -16,6 +16,8 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_dom_exception.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_websocket_close_info.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_websocket_error.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_websocket_open_info.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_websocket_stream_options.h"
 #include "third_party/blink/renderer/core/dom/abort_controller.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
@@ -26,6 +28,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -79,6 +82,11 @@ class WebSocketStreamTest : public ::testing::Test {
     return dom_exception->code() == static_cast<uint16_t>(code);
   }
 
+  bool IsWebSocketError(ScriptState* script_state, ScriptValue value) {
+    return V8WebSocketError::HasInstance(script_state->GetIsolate(),
+                                         value.V8Value());
+  }
+
   // Returns the value of the property |key| on object |object|, stringified as
   // a UTF-8 encoded std::string so that it can be compared and printed by
   // EXPECT_EQ. |object| must have been verified to be a v8::Object. |key| must
@@ -102,6 +110,7 @@ class WebSocketStreamTest : public ::testing::Test {
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   Persistent<MockWebSocketChannel> channel_;
 };
 
@@ -118,8 +127,8 @@ TEST_F(WebSocketStreamTest, ConstructWithBadURL) {
   EXPECT_EQ(DOMExceptionCode::kSyntaxError,
             exception_state.CodeAs<DOMExceptionCode>());
   EXPECT_EQ(
-      "The URL's scheme must be either 'ws' or 'wss'. 'bad-scheme' is not "
-      "allowed.",
+      "The URL's scheme must be either 'http', 'https', 'ws', or 'wss'. "
+      "'bad-scheme' is not allowed.",
       exception_state.Message());
 }
 
@@ -193,11 +202,10 @@ TEST_F(WebSocketStreamTest, ConnectWithFailedHandshake) {
   closed_tester.WaitUntilSettled();
 
   EXPECT_TRUE(opened_tester.IsRejected());
-  EXPECT_TRUE(IsDOMException(script_state, opened_tester.Value(),
-                             DOMExceptionCode::kNetworkError));
+  EXPECT_TRUE(IsWebSocketError(script_state, opened_tester.Value()));
+
   EXPECT_TRUE(closed_tester.IsRejected());
-  EXPECT_TRUE(IsDOMException(script_state, closed_tester.Value(),
-                             DOMExceptionCode::kNetworkError));
+  EXPECT_TRUE(IsWebSocketError(script_state, closed_tester.Value()));
 }
 
 TEST_F(WebSocketStreamTest, ConnectWithSuccessfulHandshake) {
@@ -268,9 +276,9 @@ TEST_F(WebSocketStreamTest, ConnectThenCloseCleanly) {
   closed_tester.WaitUntilSettled();
   EXPECT_TRUE(closed_tester.IsFulfilled());
   ASSERT_TRUE(closed_tester.Value().IsObject());
-  EXPECT_EQ(
-      PropertyAsString(script_state, closed_tester.Value().V8Value(), "code"),
-      "1005");
+  EXPECT_EQ(PropertyAsString(script_state, closed_tester.Value().V8Value(),
+                             "closeCode"),
+            "1005");
   EXPECT_EQ(
       PropertyAsString(script_state, closed_tester.Value().V8Value(), "reason"),
       "");
@@ -310,11 +318,9 @@ TEST_F(WebSocketStreamTest, CloseDuringHandshake) {
   closed_tester.WaitUntilSettled();
 
   EXPECT_TRUE(opened_tester.IsRejected());
-  EXPECT_TRUE(IsDOMException(script_state, opened_tester.Value(),
-                             DOMExceptionCode::kNetworkError));
+  EXPECT_TRUE(IsWebSocketError(script_state, opened_tester.Value()));
   EXPECT_TRUE(closed_tester.IsRejected());
-  EXPECT_TRUE(IsDOMException(script_state, closed_tester.Value(),
-                             DOMExceptionCode::kNetworkError));
+  EXPECT_TRUE(IsWebSocketError(script_state, closed_tester.Value()));
 }
 
 TEST_F(WebSocketStreamTest, AbortBeforeHandshake) {

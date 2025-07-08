@@ -30,6 +30,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_ANDROID)
+#include "media/audio/android/aaudio_stream_wrapper.h"
 #include "media/audio/android/audio_manager_android.h"
 #endif
 
@@ -124,9 +125,9 @@ class AudioInputTest : public testing::TestWithParam<bool> {
     if (should_use_aaudio_) {
       features_.InitAndEnableFeature(features::kUseAAudioInput);
 
-      aaudio_is_supported_ =
-          reinterpret_cast<AudioManagerAndroid*>(audio_manager_.get())
-              ->IsUsingAAudioForTesting();
+      if (__builtin_available(android AAUDIO_MIN_API, *)) {
+        aaudio_is_supported_ = true;
+      }
     }
 #endif
     base::RunLoop().RunUntilIdle();
@@ -150,7 +151,7 @@ class AudioInputTest : public testing::TestWithParam<bool> {
     }
     return true;
 #elif BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)
-    // TODO(crbug.com/1128458): macOS on ARM64 says it has devices, but won't
+    // TODO(crbug.com/40719640): macOS on ARM64 says it has devices, but won't
     // let any of them be opened or listed.
     return false;
 #else
@@ -165,9 +166,10 @@ class AudioInputTest : public testing::TestWithParam<bool> {
   }
 
   void CloseAudioInputStreamOnAudioThread() {
-    RunOnAudioThread(base::BindOnce(&AudioInputStream::Close,
-                                    base::Unretained(audio_input_stream_)));
+    AudioInputStream* stream_to_close = audio_input_stream_;
     audio_input_stream_ = nullptr;
+    RunOnAudioThread(base::BindOnce(&AudioInputStream::Close,
+                                    base::Unretained(stream_to_close)));
   }
 
   void OpenAndCloseAudioInputStreamOnAudioThread() {
@@ -208,8 +210,9 @@ class AudioInputTest : public testing::TestWithParam<bool> {
     ASSERT_TRUE(audio_input_stream_);
     EXPECT_EQ(audio_input_stream_->Open(),
               AudioInputStream::OpenOutcome::kSuccess);
-    audio_input_stream_->Close();
+    AudioInputStream* stream_to_close = audio_input_stream_;
     audio_input_stream_ = nullptr;
+    stream_to_close->Close();
   }
 
   void OpenAndStart(AudioInputStream::AudioInputCallback* sink) {
@@ -226,16 +229,18 @@ class AudioInputTest : public testing::TestWithParam<bool> {
     EXPECT_EQ(audio_input_stream_->Open(),
               AudioInputStream::OpenOutcome::kSuccess);
     audio_input_stream_->Stop();
-    audio_input_stream_->Close();
+    AudioInputStream* stream_to_close = audio_input_stream_;
     audio_input_stream_ = nullptr;
+    stream_to_close->Close();
   }
 
   void StopAndClose() {
     DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
     ASSERT_TRUE(audio_input_stream_);
     audio_input_stream_->Stop();
-    audio_input_stream_->Close();
+    AudioInputStream* stream_to_close = audio_input_stream_;
     audio_input_stream_ = nullptr;
+    stream_to_close->Close();
   }
 
   // Synchronously runs the provided callback/closure on the audio thread.
@@ -272,7 +277,13 @@ TEST_P(AudioInputTest, CreateAndClose) {
 }
 
 // Test create, open and close of an AudioInputStream without recording audio.
-TEST_P(AudioInputTest, OpenAndClose) {
+// TODO(crbug.com/40262701): This test is failing on ios-blink-rel-fyi bot.
+#if BUILDFLAG(IS_IOS)
+#define MAYBE_OpenAndClose DISABLED_OpenAndClose
+#else
+#define MAYBE_OpenAndClose OpenAndClose
+#endif
+TEST_P(AudioInputTest, MAYBE_OpenAndClose) {
   if (should_use_aaudio_ && !aaudio_is_supported_) {
     return;
   }
@@ -283,7 +294,13 @@ TEST_P(AudioInputTest, OpenAndClose) {
 }
 
 // Test create, open, stop and close of an AudioInputStream without recording.
-TEST_P(AudioInputTest, OpenStopAndClose) {
+// TODO(crbug.com/40262701): This test is failing on ios-blink-rel-fyi bot.
+#if BUILDFLAG(IS_IOS)
+#define MAYBE_OpenStopAndClose DISABLED_OpenStopAndClose
+#else
+#define MAYBE_OpenStopAndClose OpenStopAndClose
+#endif
+TEST_P(AudioInputTest, MAYBE_OpenStopAndClose) {
   if (should_use_aaudio_ && !aaudio_is_supported_) {
     return;
   }
@@ -295,7 +312,7 @@ TEST_P(AudioInputTest, OpenStopAndClose) {
 
 // Test a normal recording sequence using an AudioInputStream.
 // Very simple test which starts capturing and verifies that recording starts.
-// TODO(crbug.com/1429490): This test is failing on ios-blink-dbg-fyi bot.
+// TODO(crbug.com/40262701): This test is failing on ios-blink-rel-fyi bot.
 #if BUILDFLAG(IS_IOS)
 #define MAYBE_Record DISABLED_Record
 #else

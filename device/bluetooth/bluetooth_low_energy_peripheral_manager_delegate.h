@@ -13,23 +13,15 @@
 #import <IOBluetooth/IOBluetooth.h>
 #endif
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace device {
-class BluetoothLowEnergyAdapterApple;
 class BluetoothLowEnergyAdvertisementManagerMac;
 }  // namespace device
 
 @interface BluetoothLowEnergyPeripheralManagerDelegate
     : NSObject<CBPeripheralManagerDelegate>
 
-- (instancetype)
-    initWithAdvertisementManager:
-        (device::BluetoothLowEnergyAdvertisementManagerMac*)advertisementManager
-                      andAdapter:
-                          (device::BluetoothLowEnergyAdapterApple*)adapter;
+- (instancetype)initWithAdvertisementManager:
+    (device::BluetoothLowEnergyAdvertisementManagerMac*)advertisementManager;
 
 @end
 

@@ -32,7 +32,7 @@ namespace openscreen_platform {
 class TlsConnectionFactory final : public openscreen::TlsConnectionFactory {
  public:
   explicit TlsConnectionFactory(
-      openscreen::TlsConnectionFactory::Client* client);
+      openscreen::TlsConnectionFactory::Client& client);
 
   ~TlsConnectionFactory() final;
 
@@ -89,8 +89,8 @@ class TlsConnectionFactory final : public openscreen::TlsConnectionFactory {
 
   void OnTcpConnect(TcpConnectRequest request,
                     int32_t net_result,
-                    const absl::optional<net::IPEndPoint>& local_address,
-                    const absl::optional<net::IPEndPoint>& remote_address,
+                    const std::optional<net::IPEndPoint>& local_address,
+                    const std::optional<net::IPEndPoint>& remote_address,
                     mojo::ScopedDataPipeConsumerHandle receive_stream,
                     mojo::ScopedDataPipeProducerHandle send_stream);
 
@@ -98,9 +98,9 @@ class TlsConnectionFactory final : public openscreen::TlsConnectionFactory {
                     int32_t net_result,
                     mojo::ScopedDataPipeConsumerHandle receive_stream,
                     mojo::ScopedDataPipeProducerHandle send_stream,
-                    const absl::optional<net::SSLInfo>& ssl_info);
+                    const std::optional<net::SSLInfo>& ssl_info);
 
-  raw_ptr<openscreen::TlsConnectionFactory::Client> client_;
+  raw_ref<openscreen::TlsConnectionFactory::Client> client_;
   base::WeakPtrFactory<TlsConnectionFactory> weak_factory_{this};
 };
 

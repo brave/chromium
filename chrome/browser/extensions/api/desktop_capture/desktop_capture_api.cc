@@ -32,12 +32,10 @@ const char kTargetTabRequiredFromServiceWorker[] =
 }  // namespace
 
 DesktopCaptureChooseDesktopMediaFunction::
-    DesktopCaptureChooseDesktopMediaFunction() {
-}
+    DesktopCaptureChooseDesktopMediaFunction() = default;
 
 DesktopCaptureChooseDesktopMediaFunction::
-    ~DesktopCaptureChooseDesktopMediaFunction() {
-}
+    ~DesktopCaptureChooseDesktopMediaFunction() = default;
 
 ExtensionFunction::ResponseAction
 DesktopCaptureChooseDesktopMediaFunction::Run() {
@@ -48,9 +46,9 @@ DesktopCaptureChooseDesktopMediaFunction::Run() {
   DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(source_process_id(),
                                                             request_id_, this);
 
-  mutable_args().erase(args().begin());
+  GetMutableArgs().erase(args().begin());
 
-  absl::optional<api::desktop_capture::ChooseDesktopMedia::Params> params =
+  std::optional<api::desktop_capture::ChooseDesktopMedia::Params> params =
       api::desktop_capture::ChooseDesktopMedia::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -99,18 +97,19 @@ DesktopCaptureChooseDesktopMediaFunction::Run() {
     target_render_frame_host = render_frame_host();
   }
 
-  if (!target_render_frame_host)
+  if (!target_render_frame_host) {
     return RespondNow(Error(kTargetTabRequiredFromServiceWorker));
+  }
 
   const bool exclude_system_audio =
       params->options &&
       params->options->system_audio ==
-          api::desktop_capture::SYSTEM_AUDIO_PREFERENCE_ENUM_EXCLUDE;
+          api::desktop_capture::SystemAudioPreferenceEnum::kExclude;
 
   const bool exclude_self_browser_surface =
       params->options &&
       params->options->self_browser_surface ==
-          api::desktop_capture::SELF_CAPTURE_PREFERENCE_ENUM_EXCLUDE;
+          api::desktop_capture::SelfCapturePreferenceEnum::kExclude;
 
   const bool suppress_local_audio_playback_intended =
       params->options &&
@@ -136,9 +135,9 @@ std::string DesktopCaptureChooseDesktopMediaFunction::GetExtensionTargetName()
 }
 
 DesktopCaptureCancelChooseDesktopMediaFunction::
-    DesktopCaptureCancelChooseDesktopMediaFunction() {}
+    DesktopCaptureCancelChooseDesktopMediaFunction() = default;
 
 DesktopCaptureCancelChooseDesktopMediaFunction::
-    ~DesktopCaptureCancelChooseDesktopMediaFunction() {}
+    ~DesktopCaptureCancelChooseDesktopMediaFunction() = default;
 
 }  // namespace extensions

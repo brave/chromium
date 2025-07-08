@@ -4,7 +4,9 @@
 
 #include "base/base64url.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+#include <string_view>
+
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,11 +24,11 @@ TEST(Base64UrlTest, BinaryIncludePaddingPolicy) {
   Base64UrlEncode(kData, Base64UrlEncodePolicy::INCLUDE_PADDING,
                   &binary_encoded_with_padding);
 
-  // Check that encoding the same binary data through the StringPiece interface
-  // gives the same result.
+  // Check that encoding the same binary data through the std::string_view
+  // interface gives the same result.
   std::string string_encoded_with_padding;
   Base64UrlEncode(
-      StringPiece(reinterpret_cast<const char*>(kData), sizeof(kData)),
+      std::string_view(reinterpret_cast<const char*>(kData), sizeof(kData)),
       Base64UrlEncodePolicy::INCLUDE_PADDING, &string_encoded_with_padding);
   EXPECT_EQ(binary_encoded_with_padding, string_encoded_with_padding);
 
@@ -41,7 +43,7 @@ TEST(Base64UrlTest, BinaryIncludePaddingPolicy) {
 
   EXPECT_THAT(Base64UrlDecode(string_encoded_with_padding,
                               Base64UrlDecodePolicy::DISALLOW_PADDING),
-              absl::nullopt);
+              std::nullopt);
 }
 
 TEST(Base64UrlTest, BinaryOmitPaddingPolicy) {
@@ -51,11 +53,11 @@ TEST(Base64UrlTest, BinaryOmitPaddingPolicy) {
   Base64UrlEncode(kData, Base64UrlEncodePolicy::OMIT_PADDING,
                   &binary_encoded_without_padding);
 
-  // Check that encoding the same binary data through the StringPiece interface
-  // gives the same result.
+  // Check that encoding the same binary data through the std::string_view
+  // interface gives the same result.
   std::string string_encoded_without_padding;
   Base64UrlEncode(
-      StringPiece(reinterpret_cast<const char*>(kData), sizeof(kData)),
+      std::string_view(reinterpret_cast<const char*>(kData), sizeof(kData)),
       Base64UrlEncodePolicy::OMIT_PADDING, &string_encoded_without_padding);
   EXPECT_EQ(binary_encoded_without_padding, string_encoded_without_padding);
 
@@ -70,7 +72,7 @@ TEST(Base64UrlTest, BinaryOmitPaddingPolicy) {
 
   EXPECT_THAT(Base64UrlDecode(string_encoded_without_padding,
                               Base64UrlDecodePolicy::REQUIRE_PADDING),
-              absl::nullopt);
+              std::nullopt);
 }
 
 TEST(Base64UrlTest, EncodeIncludePaddingPolicy) {
@@ -104,10 +106,22 @@ TEST(Base64UrlTest, EncodeOmitPaddingPolicy) {
   EXPECT_EQ("", output);
 }
 
+TEST(Base64UrlTest, EncodeInPlaceOmitPaddingPolicy) {
+  std::string input = "hello?world";
+  Base64UrlEncode(input, Base64UrlEncodePolicy::OMIT_PADDING, &input);
+  EXPECT_EQ("aGVsbG8_d29ybGQ", input);
+}
+
+TEST(Base64UrlTest, EncodeInPlaceIncludePaddingPolicy) {
+  std::string input = "hello?world";
+  Base64UrlEncode(input, Base64UrlEncodePolicy::INCLUDE_PADDING, &input);
+  EXPECT_EQ("aGVsbG8_d29ybGQ=", input);
+}
+
 TEST(Base64UrlTest, DecodeRequirePaddingPolicy) {
   std::string output;
-  ASSERT_TRUE(Base64UrlDecode("aGVsbG8_d29ybGQ=",
-                              Base64UrlDecodePolicy::REQUIRE_PADDING, &output));
+  ASSERT_TRUE(Base64UrlDecode(
+      "aGVsbG8_d29ybGQ=", Base64UrlDecodePolicy::REQUIRE_PADDING, &output));
 
   EXPECT_EQ("hello?world", output);
 
@@ -132,8 +146,8 @@ TEST(Base64UrlTest, DecodeIgnorePaddingPolicy) {
   EXPECT_EQ("hello?world", output);
 
   // Including the padding is accepted as well.
-  ASSERT_TRUE(Base64UrlDecode("aGVsbG8_d29ybGQ=",
-                              Base64UrlDecodePolicy::IGNORE_PADDING, &output));
+  ASSERT_TRUE(Base64UrlDecode(
+      "aGVsbG8_d29ybGQ=", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
 
   EXPECT_EQ("hello?world", output);
 }
@@ -143,9 +157,9 @@ TEST(Base64UrlTest, DecodeIntoVector) {
       Base64UrlDecode("invalid=", Base64UrlDecodePolicy::DISALLOW_PADDING));
 
   static constexpr uint8_t kExpected[] = {'1', '2', '3', '4'};
-  absl::optional<std::vector<uint8_t>> result =
+  std::optional<std::vector<uint8_t>> result =
       Base64UrlDecode("MTIzNA", Base64UrlDecodePolicy::DISALLOW_PADDING);
-  ASSERT_TRUE(ranges::equal(*result, kExpected));
+  ASSERT_TRUE(std::ranges::equal(*result, kExpected));
 }
 
 TEST(Base64UrlTest, DecodeDisallowPaddingPolicy) {
@@ -172,14 +186,14 @@ TEST(Base64UrlTest, DecodeDisallowsBase64Alphabet) {
 TEST(Base64UrlTest, DecodeDisallowsPaddingOnly) {
   std::string output;
 
-  ASSERT_FALSE(Base64UrlDecode(
-      "=", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
-  ASSERT_FALSE(Base64UrlDecode(
-      "==", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
-  ASSERT_FALSE(Base64UrlDecode(
-      "===", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
-  ASSERT_FALSE(Base64UrlDecode(
-      "====", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
+  ASSERT_FALSE(
+      Base64UrlDecode("=", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
+  ASSERT_FALSE(
+      Base64UrlDecode("==", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
+  ASSERT_FALSE(
+      Base64UrlDecode("===", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
+  ASSERT_FALSE(
+      Base64UrlDecode("====", Base64UrlDecodePolicy::IGNORE_PADDING, &output));
 }
 
 }  // namespace

@@ -10,15 +10,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/strings/string_piece.h"
+#include <string_view>
+
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/service/gpu_command_buffer_service_export.h"
 
 namespace gpu {
 
 // This class defines the interface for an asynchronous API handler, that
 // is responsible for de-multiplexing commands and their arguments.
-class GPU_EXPORT AsyncAPIInterface {
+class GPU_COMMAND_BUFFER_SERVICE_EXPORT AsyncAPIInterface {
  public:
   AsyncAPIInterface() = default;
   virtual ~AsyncAPIInterface() = default;
@@ -37,7 +38,7 @@ class GPU_EXPORT AsyncAPIInterface {
                                   int num_entries,
                                   int* entries_processed) = 0;
 
-  virtual base::StringPiece GetLogPrefix() = 0;
+  virtual std::string_view GetLogPrefix() = 0;
 };
 
 }  // namespace gpu

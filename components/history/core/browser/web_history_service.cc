@@ -5,6 +5,7 @@
 #include "components/history/core/browser/web_history_service.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/command_line.h"
@@ -23,6 +24,7 @@
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "components/signin/public/identity_manager/scope_set.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/sync_util.h"
 #include "components/sync/protocol/history_status.pb.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -34,7 +36,6 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace history {
@@ -162,12 +163,21 @@ class RequestImpl : public WebHistoryService::Request {
     signin::ScopeSet oauth_scopes;
     oauth_scopes.insert(kHistoryOAuthScope);
 
+    // TODO(crbug.com/40066882): Simplify this once
+    // kReplaceSyncPromosWithSignInPromos has rolled out on all platforms.
+    signin::ConsentLevel consent_level = signin::ConsentLevel::kSync;
+    if (base::FeatureList::IsEnabled(
+            syncer::kReplaceSyncPromosWithSignInPromos)) {
+      consent_level = signin::ConsentLevel::kSignin;
+    }
+
     access_token_fetcher_ =
         std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
             "web_history", identity_manager_, oauth_scopes,
             base::BindOnce(&RequestImpl::OnAccessTokenFetchComplete,
                            base::Unretained(this)),
-            signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate);
+            signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
+            consent_level);
     is_pending_ = true;
   }
 
@@ -225,7 +235,7 @@ class RequestImpl : public WebHistoryService::Request {
   GURL url_;
 
   // POST data to be sent with the request (may be empty).
-  absl::optional<std::string> post_data_;
+  std::optional<std::string> post_data_;
 
   // MIME type of the post requests. Defaults to text/plain.
   std::string post_data_mime_type_;
@@ -361,18 +371,18 @@ WebHistoryService::Request* WebHistoryService::CreateRequest(
 }
 
 // static
-absl::optional<base::Value::Dict> WebHistoryService::ReadResponse(
+std::optional<base::Value::Dict> WebHistoryService::ReadResponse(
     WebHistoryService::Request* request) {
   if (request->GetResponseCode() != net::HTTP_OK) {
-    return absl::nullopt;
+    return std::nullopt;
   }
-  absl::optional<base::Value> value =
+  std::optional<base::Value> value =
       base::JSONReader::Read(request->GetResponseBody());
   if (value && value->is_dict()) {
     return std::move(*value).TakeDict();
   }
   DLOG(WARNING) << "Non-JSON response received from history server.";
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 std::unique_ptr<WebHistoryService::Request> WebHistoryService::QueryHistory(
@@ -560,7 +570,7 @@ void WebHistoryService::QueryHistoryCompletionCallback(
     WebHistoryService::Request* request,
     bool success) {
   std::move(callback).Run(request,
-                          success ? ReadResponse(request) : absl::nullopt);
+                          success ? ReadResponse(request) : std::nullopt);
 }
 
 void WebHistoryService::ExpireHistoryCompletionCallback(
@@ -576,7 +586,7 @@ void WebHistoryService::ExpireHistoryCompletionCallback(
     return;
   }
 
-  absl::optional<base::Value::Dict> response = ReadResponse(request);
+  std::optional<base::Value::Dict> response = ReadResponse(request);
   if (!response) {
     std::move(callback).Run(/*success=*/false);
     return;
@@ -605,9 +615,9 @@ void WebHistoryService::AudioHistoryCompletionCallback(
     return;
   }
 
-  if (absl::optional<base::Value::Dict> response = ReadResponse(request)) {
+  if (std::optional<base::Value::Dict> response = ReadResponse(request)) {
     bool enabled_value = false;
-    if (absl::optional<bool> enabled =
+    if (std::optional<bool> enabled =
             response->FindBool("history_recording_enabled")) {
       enabled_value = *enabled;
     }
@@ -634,8 +644,8 @@ void WebHistoryService::QueryWebAndAppActivityCompletionCallback(
     return;
   }
 
-  if (absl::optional<base::Value::Dict> response = ReadResponse(request)) {
-    if (absl::optional<bool> enabled =
+  if (std::optional<base::Value::Dict> response = ReadResponse(request)) {
+    if (std::optional<bool> enabled =
             response->FindBool("history_recording_enabled")) {
       std::move(callback).Run(
           /*web_and_app_activity_enabled=*/*enabled);

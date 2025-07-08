@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -9,22 +10,23 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
+#include "base/test/test_future.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/ash/extensions/users_private/users_private_delegate.h"
 #include "chrome/browser/ash/extensions/users_private/users_private_delegate_factory.h"
 #include "chrome/browser/ash/login/lock/screen_locker.h"
 #include "chrome/browser/ash/login/lock/screen_locker_tester.h"
+#include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/oobe_base_test.h"
+#include "chrome/browser/ash/ownership/owner_settings_service_ash.h"
 #include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/extensions/api/settings_private/prefs_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/users_private.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/policy/device_policy/cached_device_policy_updater.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ownership/mock_owner_key_util.h"
@@ -43,14 +45,14 @@ class TestPrefsUtil : public PrefsUtil {
  public:
   explicit TestPrefsUtil(Profile* profile) : PrefsUtil(profile) {}
 
-  absl::optional<api::settings_private::PrefObject> GetPref(
+  std::optional<api::settings_private::PrefObject> GetPref(
       const std::string& name) override {
     if (name != "cros.accounts.users")
       return PrefsUtil::GetPref(name);
 
     api::settings_private::PrefObject pref_object;
     pref_object.key = name;
-    pref_object.type = api::settings_private::PrefType::PREF_TYPE_LIST;
+    pref_object.type = api::settings_private::PrefType::kList;
 
     base::Value::List value;
     for (auto& email : user_list_) {
@@ -82,7 +84,7 @@ class TestPrefsUtil : public PrefsUtil {
     if (value.is_string())
       email = value.GetString();
 
-    auto iter = base::ranges::find(user_list_, email);
+    auto iter = std::ranges::find(user_list_, email);
     if (iter != user_list_.end())
       user_list_.erase(iter);
 
@@ -113,47 +115,45 @@ class TestDelegate : public UsersPrivateDelegate {
   }
 
  private:
-  raw_ptr<Profile, ExperimentalAsh> profile_;  // weak
+  raw_ptr<Profile, LeakedDanglingUntriaged> profile_;  // weak
   std::unique_ptr<TestPrefsUtil> prefs_util_;
 };
 
-class UsersPrivateApiTest : public ExtensionApiTest {
+class UsersPrivateApiTest
+    : public InProcessBrowserTestMixinHostSupport<ExtensionApiTest> {
  public:
-  UsersPrivateApiTest() {
-    // Mock owner key pairs. Note this needs to happen before
-    // OwnerSettingsServiceAsh is created.
-    scoped_refptr<ownership::MockOwnerKeyUtil> owner_key_util =
-        new ownership::MockOwnerKeyUtil();
-    owner_key_util->ImportPrivateKeyAndSetPublicKey(
-        crypto::RSAPrivateKey::Create(2048));
-
-    ash::OwnerSettingsServiceAshFactory::GetInstance()
-        ->SetOwnerKeyUtilForTesting(owner_key_util);
-
-    scoped_testing_cros_settings_.device_settings()->Set(
-        ash::kDeviceOwner, base::Value("testuser@gmail.com"));
-  }
-
+  UsersPrivateApiTest() = default;
   UsersPrivateApiTest(const UsersPrivateApiTest&) = delete;
   UsersPrivateApiTest& operator=(const UsersPrivateApiTest&) = delete;
-
   ~UsersPrivateApiTest() override = default;
 
-  static std::unique_ptr<KeyedService> GetUsersPrivateDelegate(
-      content::BrowserContext* profile) {
-    CHECK(s_test_delegate_);
-    return base::WrapUnique(s_test_delegate_);
+  void SetUpInProcessBrowserTestFixture() override {
+    InProcessBrowserTestMixinHostSupport<
+        ExtensionApiTest>::SetUpInProcessBrowserTestFixture();
+
+    policy::CachedDevicePolicyUpdater updater;
+    updater.policy_data().set_username("testuser@gmail.com");
+    updater.policy_data().set_management_mode(
+        enterprise_management::PolicyData::LOCAL_OWNER);
+    updater.Commit();
   }
 
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
-    if (!s_test_delegate_)
-      s_test_delegate_ = new TestDelegate(profile());
+    InProcessBrowserTestMixinHostSupport<ExtensionApiTest>::SetUpOnMainThread();
 
     UsersPrivateDelegateFactory::GetInstance()->SetTestingFactory(
-        profile(),
-        base::BindRepeating(&UsersPrivateApiTest::GetUsersPrivateDelegate));
+        profile(), base::BindRepeating([](content::BrowserContext* context)
+                                           -> std::unique_ptr<KeyedService> {
+          return std::make_unique<TestDelegate>(
+              Profile::FromBrowserContext(context));
+        }));
     content::RunAllPendingInMessageLoop();
+
+    auto* owner_settings_service =
+        ash::OwnerSettingsServiceAshFactory::GetForBrowserContext(profile());
+    base::test::TestFuture<bool> future;
+    owner_settings_service->IsOwnerAsync(future.GetCallback());
+    ASSERT_TRUE(future.Get());
   }
 
  protected:
@@ -164,17 +164,13 @@ class UsersPrivateApiTest : public ExtensionApiTest {
                             {.load_as_component = true});
   }
 
-  // Static pointer to the TestDelegate so that it can be accessed in
-  // GetUsersPrivateDelegate() passed to SetTestingFactory().
-  static TestDelegate* s_test_delegate_;
-
  private:
-  ash::ScopedStubInstallAttributes scoped_stub_install_attributes_;
-  ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
+  ash::ScopedStubInstallAttributes scoped_stub_install_attributes_{
+      ash::StubInstallAttributes::CreateConsumerOwned()};
+  ash::DeviceStateMixin device_state_{
+      &mixin_host_,
+      ash::DeviceStateMixin::State::OOBE_COMPLETED_CONSUMER_OWNED};
 };
-
-// static
-TestDelegate* UsersPrivateApiTest::s_test_delegate_ = nullptr;
 
 class LoginStatusTestConfig {
  public:

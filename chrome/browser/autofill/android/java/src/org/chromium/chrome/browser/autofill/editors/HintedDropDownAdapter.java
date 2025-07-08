@@ -11,7 +11,8 @@ import android.widget.TextView;
 
 import androidx.core.view.ViewCompat;
 
-import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.R;
 
 import java.util.List;
@@ -33,9 +34,10 @@ import java.util.List;
  * (with selected item) | option X |                       .    ...     .
  *                       ----------                        .------------.
  */
+@NullMarked
 class HintedDropDownAdapter<T> extends DropdownFieldAdapter<T> {
     protected final int mTextViewResourceId;
-    protected TextView mTextView;
+    protected @Nullable TextView mTextView;
 
     /**
      * Creates an array adapter for which the first element is a hint.
@@ -59,24 +61,31 @@ class HintedDropDownAdapter<T> extends DropdownFieldAdapter<T> {
 
     @Override
     public View getDropDownView(int position, View convertView, ViewGroup parent) {
-        mTextView = convertView == null ? null
-                                        : (TextView) convertView.findViewById(mTextViewResourceId);
+        mTextView =
+                convertView == null
+                        ? null
+                        : (TextView) convertView.findViewById(mTextViewResourceId);
         if (mTextView != null) {
             // Clear the possible changes for the first and last view.
-            ViewCompat.setPaddingRelative(convertView, ViewCompat.getPaddingStart(convertView), 0,
-                    ViewCompat.getPaddingEnd(convertView), 0);
+            convertView.setPaddingRelative(
+                    ViewCompat.getPaddingStart(convertView),
+                    0,
+                    ViewCompat.getPaddingEnd(convertView),
+                    0);
             mTextView.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
-            ApiCompatibilityUtils.setTextAppearance(
-                    mTextView, R.style.TextAppearance_TextLarge_Primary);
+            mTextView.setTextAppearance(R.style.TextAppearance_TextLarge_Primary);
         }
         convertView = super.getDropDownView(position, convertView, parent);
 
         if (position == 0) {
             // Padding at the top of the dropdown.
-            ViewCompat.setPaddingRelative(convertView, ViewCompat.getPaddingStart(convertView),
-                    getContext().getResources().getDimensionPixelSize(
-                            R.dimen.editor_dialog_section_small_spacing),
-                    ViewCompat.getPaddingEnd(convertView), convertView.getPaddingBottom());
+            convertView.setPaddingRelative(
+                    ViewCompat.getPaddingStart(convertView),
+                    getContext()
+                            .getResources()
+                            .getDimensionPixelSize(R.dimen.editor_dialog_section_small_spacing),
+                    ViewCompat.getPaddingEnd(convertView),
+                    convertView.getPaddingBottom());
         }
         return convertView;
     }

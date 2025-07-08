@@ -6,15 +6,17 @@ package org.chromium.chrome.browser.init;
 
 import android.content.Intent;
 
-import androidx.annotation.Nullable;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 /**
  * An activity level delegate to handle native initialization and activity lifecycle related tasks
  * that depend on native code. The lifecycle callbacks defined here are called synchronously with
  * their counterparts in Activity only if the native libraries have been loaded. If the libraries
  * have not been loaded yet, the calls in ChromeActivityNativeDelegate will be in the right order
- * among themselves, but can be deferrred and out of sync wrt to Activity calls.
+ * among themselves, but can be deferred and out of sync wrt to Activity calls.
  */
+@NullMarked
 public interface ChromeActivityNativeDelegate {
     /**
      * Carry out native initialization related tasks and any other java tasks that can be done async
@@ -22,24 +24,29 @@ public interface ChromeActivityNativeDelegate {
      */
     void onCreateWithNative();
 
-    /**
-     * Carry out native code dependent tasks that should happen during on Activity.onStart().
-     */
+    /** Carry out native code dependent tasks that should happen during on Activity.onStart(). */
     void onStartWithNative();
 
-    /**
-     * Carry out native code dependent tasks that should happen during on Activity.onResume().
-     */
+    /** Carry out native code dependent tasks that should happen during on Activity.onResume(). */
     void onResumeWithNative();
 
     /**
-     * Carry out native code dependent tasks that should happen during on Activity.onPause().
+     * Carry out native code dependent tasks that should happen during
+     * Activity.onTopResumedActivityChanged(isTopResumedActivity).
+     *
+     * <p>If the last lifecycle event before native initialization arrives with
+     * isTopResumedActivity=false, it cancels the previously pending top resumed state resulting in
+     * no callback at native initialization time.
+     *
+     * @param isTopResumedActivity is taken directly from the activity lifecycle callback; only the
+     *     last value arriving before native initialization is passed, previous ones are lost.
      */
+    void onTopResumedActivityChangedWithNative(boolean isTopResumedActivity);
+
+    /** Carry out native code dependent tasks that should happen during on Activity.onPause(). */
     void onPauseWithNative();
 
-    /**
-     * Carry out native code dependent tasks that should happen during on Activity.onStop().
-     */
+    /** Carry out native code dependent tasks that should happen during on Activity.onStop(). */
     void onStopWithNative();
 
     /**

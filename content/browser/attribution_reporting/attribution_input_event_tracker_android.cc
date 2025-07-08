@@ -5,7 +5,9 @@
 #include "content/browser/attribution_reporting/attribution_input_event_tracker_android.h"
 
 #include <jni.h>
+#include <stdint.h>
 
+#include <optional>
 #include <tuple>
 
 #include "base/android/scoped_java_ref.h"
@@ -21,7 +23,7 @@ namespace content {
 
 AttributionInputEventTrackerAndroid::AttributionInputEventTrackerAndroid(
     WebContents* web_contents) {
-  DCHECK(web_contents);
+  CHECK(web_contents);
 
   // Lazy initialization
   std::ignore = static_cast<WebContentsImpl*>(web_contents)
@@ -29,7 +31,7 @@ AttributionInputEventTrackerAndroid::AttributionInputEventTrackerAndroid(
                     ->GetOrCreateEventForwarder(/*env=*/nullptr);
   ui::EventForwarder* event_forwarder =
       web_contents->GetNativeView()->event_forwarder();
-  DCHECK(event_forwarder);
+  CHECK(event_forwarder);
   // `this` will outlive `event_forwarder` in non-test code, therefore
   // the observer doesn't need to be removed.
   event_forwarder->AddObserver(this);
@@ -47,26 +49,36 @@ void AttributionInputEventTrackerAndroid::PushEvent(
     const ui::MotionEventAndroid& event) {
   most_recent_event_ =
       base::android::ScopedJavaGlobalRef<jobject>(event.GetJavaObject());
+  most_recent_event_id_ = event.GetUniqueEventId();
   most_recent_event_cache_time_ = base::TimeTicks::Now();
 }
 
-base::android::ScopedJavaGlobalRef<jobject>
+AttributionInputEventTrackerAndroid::InputEvent
 AttributionInputEventTrackerAndroid::GetMostRecentEvent() {
   if (most_recent_event_cache_time_.is_null() ||
       base::TimeTicks::Now() - most_recent_event_cache_time_ > kEventExpiry) {
     most_recent_event_.Reset();
+    most_recent_event_id_.reset();
   }
 
-  return most_recent_event_;
+  return AttributionInputEventTrackerAndroid::InputEvent(most_recent_event_id_,
+                                                         most_recent_event_);
 }
 
 void AttributionInputEventTrackerAndroid::RemoveObserverForTesting(
     WebContents* web_contents) {
-  DCHECK(web_contents);
+  CHECK(web_contents);
   ui::EventForwarder* event_forwarder =
       web_contents->GetNativeView()->event_forwarder();
-  DCHECK(event_forwarder);
+  CHECK(event_forwarder);
   event_forwarder->RemoveObserver(this);
 }
+
+AttributionInputEventTrackerAndroid::InputEvent::InputEvent(
+    std::optional<uint32_t> id,
+    base::android::ScopedJavaGlobalRef<jobject> event)
+    : id(id), event(std::move(event)) {}
+
+AttributionInputEventTrackerAndroid::InputEvent::~InputEvent() = default;
 
 }  // namespace content

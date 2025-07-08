@@ -31,12 +31,12 @@ ConsoleMessage::ConsoleMessage(mojom::blink::ConsoleMessageSource source,
 
 ConsoleMessage::ConsoleMessage(mojom::blink::ConsoleMessageLevel level,
                                const String& message,
-                               std::unique_ptr<SourceLocation> location,
+                               SourceLocation* location,
                                WorkerThread* worker_thread)
     : ConsoleMessage(mojom::blink::ConsoleMessageSource::kWorker,
                      level,
                      message,
-                     std::move(location)) {
+                     location) {
   worker_id_ =
       IdentifiersFactory::IdFromToken(worker_thread->GetDevToolsWorkerToken());
 }
@@ -48,15 +48,15 @@ ConsoleMessage::ConsoleMessage(const WebConsoleMessage& message,
                          : mojom::blink::ConsoleMessageSource::kRecommendation,
                      message.level,
                      message.text,
-                     std::make_unique<SourceLocation>(message.url,
-                                                      String(),
-                                                      message.line_number,
-                                                      message.column_number,
-                                                      nullptr)) {
+                     MakeGarbageCollected<SourceLocation>(message.url,
+                                                          String(),
+                                                          message.line_number,
+                                                          message.column_number,
+                                                          nullptr)) {
   if (local_frame) {
     Vector<DOMNodeId> nodes;
     for (const WebNode& web_node : message.nodes)
-      nodes.push_back(DOMNodeIds::IdForNode(&(*web_node)));
+      nodes.push_back(web_node.GetDomNodeId());
     SetNodes(local_frame, std::move(nodes));
   }
 }
@@ -64,12 +64,12 @@ ConsoleMessage::ConsoleMessage(const WebConsoleMessage& message,
 ConsoleMessage::ConsoleMessage(mojom::blink::ConsoleMessageSource source,
                                mojom::blink::ConsoleMessageLevel level,
                                const String& message,
-                               std::unique_ptr<SourceLocation> location)
+                               SourceLocation* location)
     : source_(source),
       level_(level),
       message_(message),
-      location_(std::move(location)),
-      timestamp_(base::Time::Now().ToDoubleT() * 1000.0),
+      location_(location),
+      timestamp_(base::Time::Now().InMillisecondsFSinceUnixEpoch()),
       frame_(nullptr) {
   DCHECK(location_);
 }
@@ -77,7 +77,7 @@ ConsoleMessage::ConsoleMessage(mojom::blink::ConsoleMessageSource source,
 ConsoleMessage::~ConsoleMessage() = default;
 
 SourceLocation* ConsoleMessage::Location() const {
-  return location_.get();
+  return location_.Get();
 }
 
 const String& ConsoleMessage::RequestIdentifier() const {
@@ -88,11 +88,11 @@ double ConsoleMessage::Timestamp() const {
   return timestamp_;
 }
 
-mojom::blink::ConsoleMessageSource ConsoleMessage::Source() const {
+ConsoleMessage::Source ConsoleMessage::GetSource() const {
   return source_;
 }
 
-mojom::blink::ConsoleMessageLevel ConsoleMessage::Level() const {
+ConsoleMessage::Level ConsoleMessage::GetLevel() const {
   return level_;
 }
 
@@ -107,7 +107,7 @@ const String& ConsoleMessage::WorkerId() const {
 LocalFrame* ConsoleMessage::Frame() const {
   // Do not reference detached frames.
   if (frame_ && frame_->Client())
-    return frame_;
+    return frame_.Get();
   return nullptr;
 }
 
@@ -120,7 +120,7 @@ void ConsoleMessage::SetNodes(LocalFrame* frame, Vector<DOMNodeId> nodes) {
   nodes_ = std::move(nodes);
 }
 
-const absl::optional<mojom::blink::ConsoleMessageCategory>&
+const std::optional<mojom::blink::ConsoleMessageCategory>&
 ConsoleMessage::Category() const {
   return category_;
 }
@@ -132,6 +132,7 @@ void ConsoleMessage::SetCategory(
 
 void ConsoleMessage::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
+  visitor->Trace(location_);
 }
 
 }  // namespace blink

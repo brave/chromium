@@ -6,11 +6,12 @@
 #define MEDIA_CAPTURE_VIDEO_APPLE_PIXEL_BUFFER_POOL_H_
 
 #import <VideoToolbox/VideoToolbox.h>
-#include <memory>
 
-#include "base/mac/scoped_cftyperef.h"
+#include <memory>
+#include <optional>
+
+#include "base/apple/scoped_cftyperef.h"
 #include "media/capture/capture_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -26,7 +27,7 @@ class CAPTURE_EXPORT PixelBufferPool {
       OSType format,
       int width,
       int height,
-      absl::optional<size_t> max_buffers);
+      std::optional<size_t> max_buffers);
   ~PixelBufferPool();
 
   // Creates a new buffer from the pool, if possible. The underlying buffers are
@@ -41,27 +42,28 @@ class CAPTURE_EXPORT PixelBufferPool {
   //
   // Retaining a pixel buffer and preventing it from returning to the pool can
   // be done either by keeping a reference directly to the CVPixelBuffer, e.g.
-  // with a base::ScopedCFTypeRef<CVPixelBufferRef>, or by incrementing the use
-  // count of the IOSurface, i.e. with IOSurfaceIncrementUseCount().
+  // with a base::apple::ScopedCFTypeRef<CVPixelBufferRef>, or by incrementing
+  // the use count of the IOSurface, i.e. with IOSurfaceIncrementUseCount().
   //
   // WARNING: Retaining references to the pixel buffer's IOSurface (e.g. with
-  // base::ScopedCFTypeRef<IOSurfaceRef>) without incrementing its use count
-  // does NOT prevent it from being recycled!
-  base::ScopedCFTypeRef<CVPixelBufferRef> CreateBuffer();
+  // base::apple::ScopedCFTypeRef<IOSurfaceRef>) without incrementing its use
+  // count does NOT prevent it from being recycled!
+  base::apple::ScopedCFTypeRef<CVPixelBufferRef> CreateBuffer();
 
   // Frees the memory of any released buffers returned to the pool.
   void Flush();
 
  private:
   friend std::unique_ptr<PixelBufferPool> std::make_unique<PixelBufferPool>(
-      base::ScopedCFTypeRef<CVPixelBufferPoolRef>&& buffer_pool,
-      absl::optional<size_t>&& max_buffers);
+      base::apple::ScopedCFTypeRef<CVPixelBufferPoolRef>&& buffer_pool,
+      std::optional<size_t>&& max_buffers);
 
-  PixelBufferPool(base::ScopedCFTypeRef<CVPixelBufferPoolRef> buffer_pool,
-                  absl::optional<size_t> max_buffers);
+  PixelBufferPool(
+      base::apple::ScopedCFTypeRef<CVPixelBufferPoolRef> buffer_pool,
+      std::optional<size_t> max_buffers);
 
-  base::ScopedCFTypeRef<CVPixelBufferPoolRef> buffer_pool_;
-  const absl::optional<size_t> max_buffers_;
+  base::apple::ScopedCFTypeRef<CVPixelBufferPoolRef> buffer_pool_;
+  const std::optional<size_t> max_buffers_;
   size_t num_consecutive_errors_;
 };
 

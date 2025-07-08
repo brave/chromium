@@ -15,7 +15,7 @@
 
 namespace blink {
 
-PLATFORM_EXPORT uint32_t AtomicStringToFourByteTag(AtomicString tag);
+PLATFORM_EXPORT uint32_t AtomicStringToFourByteTag(const AtomicString& tag);
 PLATFORM_EXPORT AtomicString FourByteTagToAtomicString(uint32_t tag);
 
 template <typename T>
@@ -43,6 +43,9 @@ class FontTagValuePair {
   }
   bool operator==(const FontTagValuePair& other) const {
     return tag_ == other.tag_ && value_ == other.value_;
+  }
+  bool operator<(const FontTagValuePair& other) const {
+    return tag_ < other.tag_;
   }
 
   uint32_t Tag() const { return tag_; }
@@ -94,10 +97,10 @@ class FontSettings {
     return false;
   }
 
-  const T* begin() const { return list_.begin(); }
-  const T* end() const { return list_.end(); }
-  T* begin() { return list_.begin(); }
-  T* end() { return list_.end(); }
+  Vector<T, 0>::const_iterator begin() const { return list_.begin(); }
+  Vector<T, 0>::const_iterator end() const { return list_.end(); }
+  Vector<T, 0>::iterator begin() { return list_.begin(); }
+  Vector<T, 0>::iterator end() { return list_.end(); }
 
  protected:
   FontSettings() = default;

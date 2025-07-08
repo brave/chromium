@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+
 (async function() {
   TestRunner.addResult(`Tests "Bypass for network" checkbox works with navigations. crbug.com/746220\n`);
-  await TestRunner.loadLegacyModule('console');
   // Note: every test that uses a storage API must manually clean-up state from previous tests.
   await ApplicationTestRunner.resetState();
 
@@ -42,12 +43,12 @@ import {ApplicationTestRunner} from 'application_test_runner';
       })
       .then(() => {
         TestRunner.addResult('Enable BypassServiceWorker.');
-        Common.settings.settingForTest('bypassServiceWorker').set(true);
+        Common.Settings.settingForTest('bypass-service-worker').set(true);
         return loadIframe('frame_id2');
       })
       .then(() => {
         TestRunner.addResult('Disable BypassServiceWorker.');
-        Common.settings.settingForTest('bypassServiceWorker').set(false);
+        Common.Settings.settingForTest('bypass-service-worker').set(false);
         return loadIframe('frame_id3');
       })
       .then(() => {

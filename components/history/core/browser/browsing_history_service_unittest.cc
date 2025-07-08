@@ -12,6 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
@@ -21,7 +22,7 @@
 #include "components/history/core/test/fake_web_history_service.h"
 #include "components/history/core/test/history_service_test_util.h"
 #include "components/sync/service/sync_service_observer.h"
-#include "components/sync/test/fake_sync_service.h"
+#include "components/sync/test/mock_sync_service.h"
 #include "net/http/http_status_code.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -55,21 +56,6 @@ struct TestResult {
   int64_t hour_offset;  // Visit time in hours past the baseline time.
   HistoryEntry::EntryType type;
   std::string remote_icon_url_for_uma;
-};
-
-class TestSyncService : public syncer::FakeSyncService {
- public:
-  int GetObserverCount() { return observer_count_; }
-
- private:
-  void AddObserver(syncer::SyncServiceObserver* observer) override {
-    observer_count_++;
-  }
-  void RemoveObserver(syncer::SyncServiceObserver* observer) override {
-    observer_count_--;
-  }
-
-  int observer_count_ = 0;
 };
 
 class TestBrowsingHistoryDriver : public BrowsingHistoryDriver {
@@ -238,6 +224,16 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
     AddHistory(data, web_history());
   }
 
+  HistoryEntry CreateEntry(const std::string& url,
+                           const std::vector<int>& hour_offsets) {
+    HistoryEntry entry;
+    entry.url = GURL(url);
+    for (int hour_offset : hour_offsets) {
+      entry.all_timestamps.insert(OffsetToTime(hour_offset));
+    }
+    return entry;
+  }
+
   void VerifyEntry(const TestResult& expected, const HistoryEntry& actual) {
     EXPECT_EQ(GURL(expected.url), actual.url);
     EXPECT_EQ(OffsetToTime(expected.hour_offset), actual.time);
@@ -295,7 +291,7 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
 
   HistoryService* local_history() { return local_history_.get(); }
   TestWebHistoryService* web_history() { return &web_history_; }
-  TestSyncService* sync() { return &sync_service_; }
+  syncer::MockSyncService* sync() { return &sync_service_; }
   TestBrowsingHistoryDriver* driver() { return &driver_; }
   base::MockOneShotTimer* timer() { return timer_; }
   TestBrowsingHistoryService* service() {
@@ -312,7 +308,7 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
   base::ScopedTempDir history_dir_;
   std::unique_ptr<HistoryService> local_history_;
   TestWebHistoryService web_history_;
-  TestSyncService sync_service_;
+  syncer::MockSyncService sync_service_;
   TestBrowsingHistoryDriver driver_;
   raw_ptr<base::MockOneShotTimer, DanglingUntriaged> timer_;
   std::unique_ptr<TestBrowsingHistoryService> browsing_history_service_;
@@ -685,25 +681,26 @@ TEST_F(BrowsingHistoryServiceTest, WebHistoryTimeout) {
 }
 
 TEST_F(BrowsingHistoryServiceTest, ObservingWebHistory) {
-  ResetService(driver(), nullptr, sync());
-
   // No need to observe SyncService since we have a WebHistory already.
-  EXPECT_EQ(0, sync()->GetObserverCount());
+  EXPECT_CALL(*sync(), AddObserver).Times(0);
+  EXPECT_CALL(*sync(), RemoveObserver).Times(0);
+
+  ResetService(driver(), nullptr, sync());
 
   web_history()->TriggerOnWebHistoryDeleted();
   EXPECT_EQ(1, driver()->GetHistoryDeletedCount());
 }
 
 TEST_F(BrowsingHistoryServiceTest, ObservingWebHistoryDelayedWeb) {
+  // Since there's no WebHistory, observations should be set up on Sync.
+  EXPECT_CALL(*sync(), AddObserver);
+  EXPECT_CALL(*sync(), RemoveObserver).Times(0);
+
   driver()->SetWebHistory(nullptr);
   ResetService(driver(), nullptr, sync());
 
-  // Since there's no WebHistory, observations should have been setup on Sync.
-  EXPECT_EQ(1, sync()->GetObserverCount());
-
   // OnStateChanged() is a no-op if WebHistory is still inaccessible.
   service()->OnStateChanged(sync());
-  EXPECT_EQ(1, sync()->GetObserverCount());
 
   driver()->SetWebHistory(web_history());
   // Since WebHistory is currently not being observed, triggering a history
@@ -714,8 +711,10 @@ TEST_F(BrowsingHistoryServiceTest, ObservingWebHistoryDelayedWeb) {
   // Once OnStateChanged() gets called, the BrowsingHistoryService switches from
   // observing SyncService to WebHistoryService. As such, RemoveObserver should
   // have been called on SyncService, so lets verify.
+  testing::Mock::VerifyAndClearExpectations(sync());
+  EXPECT_CALL(*sync(), AddObserver).Times(0);
+  EXPECT_CALL(*sync(), RemoveObserver);
   service()->OnStateChanged(sync());
-  EXPECT_EQ(0, sync()->GetObserverCount());
 
   // Only now should deletion should be propagated through.
   web_history()->TriggerOnWebHistoryDeleted();
@@ -744,6 +743,39 @@ TEST_F(BrowsingHistoryServiceTest, IncorrectlyOrderedRemoteResults) {
   // BrowsingHistoryService before `reversed` goes out of scope.
   driver()->SetWebHistory(nullptr);
   ResetService(driver(), nullptr, nullptr);
+}
+
+TEST_F(BrowsingHistoryServiceTest, RemoveVisitsMetric) {
+  // `kUrl1` was visited 3 times on day 1, and 4 times on day 2. `kUrl2` was
+  // visited once on day 1. In total, there are 3 `HistoryEntry` instances
+  // (since every "entry" groups all visits to a URL for a single day).
+  // Note that for this test it doesn't matter that no such history entries were
+  // actually added to the service first.
+  const std::vector<HistoryEntry> entries{CreateEntry(kUrl1, {1, 2, 3}),
+                                          CreateEntry(kUrl2, {4}),
+                                          CreateEntry(kUrl1, {25, 26, 27, 28})};
+
+  {
+    base::HistogramTester histograms;
+
+    service()->RemoveVisits(entries);
+
+    histograms.ExpectUniqueSample(
+        "History.RemoveVisitsFromWebHistory.EntryCount", 3, 1);
+  }
+
+  {
+    // Simulate that history sync is disabled, so `WebHistoryService` is null.
+    driver()->SetWebHistory(nullptr);
+
+    base::HistogramTester histograms;
+
+    service()->RemoveVisits(entries);
+
+    // Without WebHistoryService, nothing should be recorded.
+    histograms.ExpectTotalCount("History.RemoveVisitsFromWebHistory.EntryCount",
+                                0);
+  }
 }
 
 }  // namespace

@@ -7,6 +7,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_observer.h"
+#include "chrome/browser/picture_in_picture/scoped_picture_in_picture_occlusion_observation.h"
 #include "components/payments/content/secure_payment_confirmation_view.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/controls/button/button.h"
@@ -24,10 +26,12 @@ class PaymentUIObserver;
 // the SecurePaymentConfirmationController.
 class SecurePaymentConfirmationDialogView
     : public SecurePaymentConfirmationView,
-      public views::DialogDelegateView {
- public:
-  METADATA_HEADER(SecurePaymentConfirmationDialogView);
+      public views::DialogDelegateView,
+      public PictureInPictureOcclusionObserver {
+  METADATA_HEADER(SecurePaymentConfirmationDialogView,
+                  views::DialogDelegateView)
 
+ public:
   class ObserverForTest {
    public:
     virtual void OnDialogClosed() = 0;
@@ -41,7 +45,6 @@ class SecurePaymentConfirmationDialogView
   enum class DialogViewID : int {
     VIEW_ID_NONE = 0,
     HEADER_ICON,
-    PROGRESS_BAR,
     TITLE,
     MERCHANT_LABEL,
     MERCHANT_VALUE,
@@ -49,7 +52,7 @@ class SecurePaymentConfirmationDialogView
     INSTRUMENT_VALUE,
     INSTRUMENT_ICON,
     TOTAL_LABEL,
-    TOTAL_VALUE
+    TOTAL_VALUE,
   };
 
   explicit SecurePaymentConfirmationDialogView(
@@ -94,6 +97,9 @@ class SecurePaymentConfirmationDialogView
 
   void UpdateLabelView(DialogViewID id, const std::u16string& text);
 
+  // PictureInPictureOcclusionObserver:
+  void OnOcclusionStateChanged(bool occluded) override;
+
   base::WeakPtr<ObserverForTest> observer_for_test_;
   const base::WeakPtr<PaymentUIObserver> ui_observer_for_test_;
 
@@ -112,6 +118,8 @@ class SecurePaymentConfirmationDialogView
   // The opt-out view stored in the dialog footnote. This is always created in
   // InitChildViews, but is only marked visible if opt-out was requested.
   raw_ptr<views::StyledLabel> opt_out_view_ = nullptr;
+
+  ScopedPictureInPictureOcclusionObservation occlusion_observation_{this};
 
   base::WeakPtrFactory<SecurePaymentConfirmationDialogView> weak_ptr_factory_{
       this};

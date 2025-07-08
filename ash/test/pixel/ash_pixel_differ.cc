@@ -9,11 +9,12 @@
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 
 namespace ash {
 
 AshPixelDiffer::AshPixelDiffer(const std::string& screenshot_prefix,
-                               const absl::optional<std::string>& corpus)
+                               const std::optional<std::string>& corpus)
     : pixel_diff_(screenshot_prefix, corpus) {}
 
 AshPixelDiffer::~AshPixelDiffer() = default;

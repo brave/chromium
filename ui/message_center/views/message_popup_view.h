@@ -5,6 +5,8 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_MESSAGE_POPUP_VIEW_H_
 #define UI_MESSAGE_CENTER_VIEWS_MESSAGE_POPUP_VIEW_H_
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "ui/message_center/message_center_export.h"
@@ -22,9 +24,9 @@ class Notification;
 class MESSAGE_CENTER_EXPORT MessagePopupView
     : public views::FocusChangeListener,
       public views::WidgetDelegateView {
- public:
-  METADATA_HEADER(MessagePopupView);
+  METADATA_HEADER(MessagePopupView, views::WidgetDelegateView)
 
+ public:
   MessagePopupView(MessageView* message_view,
                    MessagePopupCollection* popup_collection,
                    bool a11y_feedback_on_init);
@@ -35,11 +37,20 @@ class MESSAGE_CENTER_EXPORT MessagePopupView
   // Update notification contents to |notification|. Virtual for unit testing.
   virtual void UpdateContents(const Notification& notification);
 
+  // Updates the content of the child notification view inside this popup.
+  // Virtual for unit testing.
+  virtual void UpdateContentsForChildNotification(
+      const std::string& notification_id,
+      const Notification& notification);
+
   // Return opacity of the widget.
   float GetOpacity() const;
 
   // Sets widget bounds.
   void SetPopupBounds(const gfx::Rect& bounds);
+
+  // Sets widget transform.
+  void SetPopupTransform(const gfx::Transform& transform);
 
   // Set widget opacity.
   void SetOpacity(float opacity);
@@ -50,30 +61,35 @@ class MESSAGE_CENTER_EXPORT MessagePopupView
 
   // Shows popup. After this call, MessagePopupView should be owned by the
   // widget.
-  void Show();
+  std::unique_ptr<views::Widget> Show();
 
   // Closes popup. It should be callable even if Show() is not called, and
   // in such case MessagePopupView should be deleted. Virtual for unit testing.
   virtual void Close();
 
-  void OnWillChangeFocus(views::View* before, views::View* now) override {}
+  // views::FocusChangeListener,
   void OnDidChangeFocus(views::View* before, views::View* now) override;
 
   // views::WidgetDelegateView:
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
   void ChildPreferredSizeChanged(views::View* child) override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnDisplayChanged() override;
   void OnWorkAreaChanged() override;
   void OnFocus() override;
   void AddedToWidget() override;
   void RemovedFromWidget() override;
 
+  // Returns the cached height if `width` is the same as last call. Otherwise,
+  // call `GetHeightForWidth` to recalculate.
+  int GetCachedHeightForWidth(int width);
+
   bool is_hovered() const { return is_hovered_; }
   bool is_focused() const { return is_focused_; }
 
   MessageView* message_view() { return message_view_; }
+
+  bool view_added_to_widget() { return view_added_to_widget_; }
 
  protected:
   // For unit testing.
@@ -82,6 +98,10 @@ class MESSAGE_CENTER_EXPORT MessagePopupView
  private:
   // True if the view has a widget and the widget is not closed.
   bool IsWidgetValid() const;
+  void UpdateAccessibleName(const std::u16string& new_name) const;
+
+  void OnMessageViewNameUpdated(
+      bool should_make_spoken_feedback_for_popup_updates);
 
   // Owned by views hierarchy.
   raw_ptr<MessageView> message_view_;
@@ -92,9 +112,17 @@ class MESSAGE_CENTER_EXPORT MessagePopupView
   const bool a11y_feedback_on_init_;
   bool is_hovered_ = false;
   bool is_focused_ = false;
+  // Was this view ever hosted in a Widget? If so, the Widget will "own" this
+  // view and delete it accordingly. Otherwise, the MessagePopupCollection is
+  // responsible for its destruction.
+  bool view_added_to_widget_ = false;
 
   // Owned by the widget associated with this view.
   raw_ptr<views::FocusManager> focus_manager_ = nullptr;
+
+  std::optional<gfx::Size> cached_preferred_size_;
+
+  base::WeakPtrFactory<MessagePopupView> weak_ptr_factory_{this};
 };
 
 }  // namespace message_center

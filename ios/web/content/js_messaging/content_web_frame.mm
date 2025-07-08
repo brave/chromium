@@ -11,10 +11,6 @@
 #import "content/public/browser/render_frame_host.h"
 #import "ios/web/content/web_state/content_web_state.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace web {
 
 namespace {
@@ -26,7 +22,7 @@ void WebToContentJavaScriptCallbackAdapter(
 }
 
 void WebWithErrorToContentJavaScriptCallbackAdapter(
-    WebFrame::ExecuteJavaScriptCallbackWithError web_callback,
+    ExecuteJavaScriptCallbackWithError web_callback,
     base::Value value) {
   std::move(web_callback).Run(&value, /*error=*/nil);
 }
@@ -71,15 +67,17 @@ bool ContentWebFrame::IsMainFrame() const {
   return render_frame_host_->IsInPrimaryMainFrame();
 }
 
-GURL ContentWebFrame::GetSecurityOrigin() const {
-  // TODO(crbug.com/1423501):  Once GetSecurityOrigin is changed to return an
-  // Origin instead of a URL, this should use GetLastCommittedOrigin().
-  return render_frame_host_->GetLastCommittedURL().DeprecatedGetOriginAsURL();
+url::Origin ContentWebFrame::GetSecurityOrigin() const {
+  return render_frame_host_->GetLastCommittedOrigin();
 }
 
 BrowserState* ContentWebFrame::GetBrowserState() {
   return content_web_state_->GetBrowserState();
   ;
+}
+
+base::WeakPtr<WebFrame> ContentWebFrame::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 bool ContentWebFrame::CallJavaScriptFunction(
@@ -93,7 +91,7 @@ bool ContentWebFrame::CallJavaScriptFunction(
     const base::Value::List& parameters,
     base::OnceCallback<void(const base::Value*)> callback,
     base::TimeDelta timeout) {
-  // TODO(crbug.com/1423527): Handle timeouts.
+  // TODO(crbug.com/40260088): Handle timeouts.
   return ExecuteJavaScript(CreateFunctionCallWithParameters(name, parameters),
                            std::move(callback));
 }
@@ -102,7 +100,7 @@ bool ContentWebFrame::CallJavaScriptFunctionInContentWorld(
     const std::string& name,
     const base::Value::List& parameters,
     JavaScriptContentWorld* content_world) {
-  // TODO(crbug.com/1423527): Handle injecting into an isolated world.
+  // TODO(crbug.com/40260088): Handle injecting into an isolated world.
   return ExecuteJavaScript(CreateFunctionCallWithParameters(name, parameters));
 }
 
@@ -112,10 +110,20 @@ bool ContentWebFrame::CallJavaScriptFunctionInContentWorld(
     JavaScriptContentWorld* content_world,
     base::OnceCallback<void(const base::Value*)> callback,
     base::TimeDelta timeout) {
-  // TODO(crbug.com/1423527): Handle timeouts and injecting into an isolated
+  // TODO(crbug.com/40260088): Handle timeouts and injecting into an isolated
   // world.
   return ExecuteJavaScript(CreateFunctionCallWithParameters(name, parameters),
                            std::move(callback));
+}
+
+bool ContentWebFrame::ExecuteJavaScriptInContentWorld(
+    const std::u16string& script,
+    JavaScriptContentWorld* content_world,
+    ExecuteJavaScriptCallbackWithError callback) {
+  render_frame_host_->ExecuteJavaScript(
+      script, base::BindOnce(&WebWithErrorToContentJavaScriptCallbackAdapter,
+                             std::move(callback)));
+  return true;
 }
 
 bool ContentWebFrame::ExecuteJavaScript(const std::u16string& script) {

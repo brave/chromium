@@ -13,9 +13,15 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/content_uri_utils.h"
+#include "base/test/android/content_uri_test_utils.h"
+#endif
 
 using testing::ElementsAre;
 using testing::IsEmpty;
@@ -91,13 +97,14 @@ circular_deque<FilePath> RunEnumerator(
   FileEnumerator enumerator(root_path, recursive, file_type, pattern,
                             folder_search_policy,
                             FileEnumerator::ErrorPolicy::IGNORE_ERRORS);
-  for (auto file = enumerator.Next(); !file.empty(); file = enumerator.Next())
+  for (auto file = enumerator.Next(); !file.empty(); file = enumerator.Next()) {
     rv.emplace_back(std::move(file));
+  }
   return rv;
 }
 
 bool CreateDummyFile(const FilePath& path) {
-  return WriteFile(path, "42", sizeof("42")) == sizeof("42");
+  return WriteFile(path, byte_span_from_cstring("42"));
 }
 
 bool GetFileInfo(const FilePath& file_path, File::Info& info) {
@@ -458,8 +465,15 @@ TEST(FileEnumerator, GetInfo) {
       TestFile(FILE_PATH_LITERAL("file3"), "Third-third-third")};
   SetUpTestFiles(temp_dir, files);
 
-  FileEnumerator file_enumerator(temp_dir.GetPath(), false,
-                                 FileEnumerator::FILES);
+#if BUILDFLAG(IS_ANDROID)
+  FilePath root_dir =
+      *base::test::android::GetInMemoryContentTreeUriFromCacheDirDirectory(
+          temp_dir.GetPath());
+#else
+  FilePath root_dir = temp_dir.GetPath();
+#endif
+  FileEnumerator file_enumerator(
+      root_dir, false, FileEnumerator::FILES | FileEnumerator::DIRECTORIES);
   while (!file_enumerator.Next().empty()) {
     auto info = file_enumerator.GetInfo();
     bool found = false;
@@ -487,9 +501,9 @@ TEST(FileEnumerator, GetInfoRecursive) {
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
   TestDirectory directories[] = {TestDirectory(FILE_PATH_LITERAL("dir1")),
-                                 TestDirectory(FILE_PATH_LITERAL("dir2")),
+                                 TestDirectory(FILE_PATH_LITERAL("dir2-empty")),
                                  TestDirectory(FILE_PATH_LITERAL("dir3")),
-                                 TestDirectory(FILE_PATH_LITERAL("dirempty"))};
+                                 TestDirectory(FILE_PATH_LITERAL("dir4"))};
 
   for (const TestDirectory& dir : directories) {
     const FilePath dir_path = temp_dir.GetPath().Append(dir.name);
@@ -499,9 +513,9 @@ TEST(FileEnumerator, GetInfoRecursive) {
   std::vector<TestFile> files = {
       TestFile(FILE_PATH_LITERAL("dir1"), FILE_PATH_LITERAL("file1"), "First"),
       TestFile(FILE_PATH_LITERAL("dir1"), FILE_PATH_LITERAL("file2"), "Second"),
-      TestFile(FILE_PATH_LITERAL("dir2"), FILE_PATH_LITERAL("fileA"),
+      TestFile(FILE_PATH_LITERAL("dir3"), FILE_PATH_LITERAL("fileA"),
                "Third-third-3"),
-      TestFile(FILE_PATH_LITERAL("dir3"), FILE_PATH_LITERAL(".file"), "Dot")};
+      TestFile(FILE_PATH_LITERAL("dir4"), FILE_PATH_LITERAL(".file"), "Dot")};
   SetUpTestFiles(temp_dir, files);
 
   // Get last-modification times for directories. Must be done after we create
@@ -511,9 +525,15 @@ TEST(FileEnumerator, GetInfoRecursive) {
     ASSERT_TRUE(GetFileInfo(dir_path, dir.info));
   }
 
+#if BUILDFLAG(IS_ANDROID)
+  FilePath root_dir =
+      *base::test::android::GetInMemoryContentTreeUriFromCacheDirDirectory(
+          temp_dir.GetPath());
+#else
+  FilePath root_dir = temp_dir.GetPath();
+#endif
   FileEnumerator file_enumerator(
-      temp_dir.GetPath(), true,
-      FileEnumerator::FILES | FileEnumerator::DIRECTORIES);
+      root_dir, true, FileEnumerator::FILES | FileEnumerator::DIRECTORIES);
   while (!file_enumerator.Next().empty()) {
     auto info = file_enumerator.GetInfo();
     bool found = false;
@@ -529,6 +549,11 @@ TEST(FileEnumerator, GetInfoRecursive) {
       for (TestFile& file : files) {
         if (info.GetName() == file.path.BaseName()) {
           CheckFileAgainstInfo(info, file);
+#if BUILDFLAG(IS_ANDROID)
+          std::string expected =
+              temp_dir.GetPath().BaseName().Append(file.path.DirName()).value();
+          EXPECT_EQ(base::JoinString(info.subdirs(), "/"), expected);
+#endif
           found = true;
           break;
         }
@@ -630,7 +655,28 @@ TEST(FileEnumerator, OnlyName) {
   EXPECT_THAT(found_paths, UnorderedElementsAre(subdir, dummy_file));
 }
 
-TEST(FileEnumerator, ForEach) {
+struct FileEnumeratorForEachTestCase {
+  const bool recursive;
+  const int file_type;
+  const int expected_invocation_count;
+};
+
+class FileEnumeratorForEachTest
+    : public ::testing::TestWithParam<FileEnumeratorForEachTestCase> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    FileEnumeratorForEachTestCases,
+    FileEnumeratorForEachTest,
+    ::testing::ValuesIn(std::vector<FileEnumeratorForEachTestCase>{
+        {false, FileEnumerator::FILES, 2},
+        {true, FileEnumerator::FILES, 8},
+        {false, FileEnumerator::DIRECTORIES, 3},
+        {true, FileEnumerator::DIRECTORIES, 3},
+        {false, FileEnumerator::FILES | FileEnumerator::DIRECTORIES, 5},
+        {true, FileEnumerator::FILES | FileEnumerator::DIRECTORIES, 11},
+    }));
+
+TEST_P(FileEnumeratorForEachTest, TestCases) {
   ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   const FilePath mock_path(temp_dir.GetPath());
@@ -651,34 +697,19 @@ TEST(FileEnumerator, ForEach) {
     }
   }
 
-  const struct {
-    bool recursive;
-    int file_type;
-    const int expected_invocation_count;
-  } test_cases[] = {
-      {false, FileEnumerator::FILES, 2},
-      {true, FileEnumerator::FILES, 8},
-      {false, FileEnumerator::DIRECTORIES, 3},
-      {true, FileEnumerator::DIRECTORIES, 3},
-      {false, FileEnumerator::FILES | FileEnumerator::DIRECTORIES, 5},
-      {true, FileEnumerator::FILES | FileEnumerator::DIRECTORIES, 11},
-  };
+  int invocation_count = 0;
 
-  for (const auto& test_case : test_cases) {
-    int invocation_count = 0;
+  FileEnumerator(mock_path, GetParam().recursive, GetParam().file_type)
+      .ForEach([&invocation_count](const FilePath& item) {
+        ++invocation_count;
+        if (invocation_count > GetParam().expected_invocation_count) {
+          ADD_FAILURE() << "Unexpected file/directory found: " << item << ": "
+                        << invocation_count << ": "
+                        << GetParam().expected_invocation_count;
+        }
+      });
 
-    FileEnumerator(mock_path, test_case.recursive, test_case.file_type)
-        .ForEach([&invocation_count, &test_case](const FilePath& item) {
-          ++invocation_count;
-          if (invocation_count > test_case.expected_invocation_count) {
-            ADD_FAILURE() << "Unexpected file/directory found: " << item << ": "
-                          << invocation_count << ": "
-                          << test_case.expected_invocation_count;
-          }
-        });
-
-    EXPECT_EQ(invocation_count, test_case.expected_invocation_count);
-  }
+  EXPECT_EQ(invocation_count, GetParam().expected_invocation_count);
 }
 
 }  // namespace base

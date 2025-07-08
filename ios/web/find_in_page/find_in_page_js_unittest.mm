@@ -5,8 +5,11 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 
+#import <optional>
+
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
+#import "base/memory/raw_ptr.h"
 #import "base/run_loop.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
@@ -24,11 +27,6 @@
 #import "ios/web/public/web_state.h"
 #import "ios/web/web_state/ui/wk_web_view_configuration_provider.h"
 #import "testing/gtest_mac.h"
-#import "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using base::test::ios::kWaitForJSCompletionTimeout;
 using base::test::ios::kWaitForPageLoadTimeout;
@@ -51,7 +49,6 @@ namespace web {
 // correct.
 class FindInPageJsTest : public WebTestWithWebState {
  protected:
-
   void SetUp() override {
     WebTestWithWebState::SetUp();
 
@@ -88,7 +85,7 @@ class FindInPageJsTest : public WebTestWithWebState {
     return main_frame->GetWebFrameInternal();
   }
 
-  JavaScriptContentWorld* content_world_;
+  raw_ptr<JavaScriptContentWorld> content_world_;
 };
 
 // Tests that FindInPage searches in main frame containing a match and responds
@@ -617,11 +614,11 @@ TEST_F(FindInPageJsTest, HiddenMatchBecomesVisible) {
         ASSERT_TRUE(result);
         ASSERT_TRUE(result->is_dict());
         const base::Value::Dict& result_dict = result->GetDict();
-        const absl::optional<double> count =
+        const std::optional<double> count =
             result_dict.FindDouble(kSelectAndScrollResultMatches);
         ASSERT_TRUE(count);
         ASSERT_EQ(2.0, count.value());
-        const absl::optional<double> index =
+        const std::optional<double> index =
             result_dict.FindDouble(kSelectAndScrollResultIndex);
         ASSERT_TRUE(index);
         ASSERT_EQ(0.0, index.value());
@@ -667,7 +664,7 @@ TEST_F(FindInPageJsTest, MatchBecomesInvisible) {
         ASSERT_TRUE(result);
         ASSERT_TRUE(result->is_dict());
         const base::Value::Dict& result_dict = result->GetDict();
-        const absl::optional<double> index =
+        const std::optional<double> index =
             result_dict.FindDouble(kSelectAndScrollResultIndex);
         ASSERT_TRUE(index);
         EXPECT_EQ(3.0, index.value());
@@ -690,7 +687,7 @@ TEST_F(FindInPageJsTest, MatchBecomesInvisible) {
         ASSERT_TRUE(result);
         ASSERT_TRUE(result->is_dict());
         const base::Value::Dict& result_dict = result->GetDict();
-        const absl::optional<double> index =
+        const std::optional<double> index =
             result_dict.FindDouble(kSelectAndScrollResultIndex);
         ASSERT_TRUE(index);
         // Since there are only two visible matches now and this

@@ -23,13 +23,13 @@
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/unloaded_extension_reason.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
 namespace content {
 
 class BrowserContext;
-class PepperVpnProviderResourceHostProxy;
 
 }  // namespace content
 
@@ -52,12 +52,9 @@ class VpnServiceForExtension
   VpnServiceForExtension& operator=(const VpnServiceForExtension&) = delete;
 
   // crosapi::mojom::EventObserverForExtension:
-  void OnAddDialog() override;
-  void OnConfigureDialog(const std::string& configuration_name) override;
   void OnConfigRemoved(const std::string& configuration_name) override;
   void OnPlatformMessage(const std::string& configuration_name,
-                         int32_t platform_message,
-                         const absl::optional<std::string>& error) override;
+                         int32_t platform_message) override;
   void OnPacketReceived(const std::vector<uint8_t>& data) override;
 
   mojo::Remote<crosapi::mojom::VpnServiceForExtension>& Proxy() {
@@ -67,7 +64,7 @@ class VpnServiceForExtension
  private:
   void DispatchEvent(std::unique_ptr<extensions::Event>) const;
 
-  const std::string extension_id_;
+  const extensions::ExtensionId extension_id_;
   raw_ptr<content::BrowserContext> browser_context_;
 
   mojo::Remote<crosapi::mojom::VpnServiceForExtension> vpn_service_;
@@ -110,7 +107,6 @@ class VpnService : public extensions::api::VpnServiceInterface,
                                     bool connection_success,
                                     SuccessCallback,
                                     FailureCallback) override;
-  std::unique_ptr<content::VpnServiceProxy> GetVpnServiceProxy() override;
   void Shutdown() override;
 
   // ExtensionRegistryObserver:
@@ -127,6 +123,7 @@ class VpnService : public extensions::api::VpnServiceInterface,
  private:
   class VpnServiceProxyImpl;
   class PepperVpnProxyAdapter;
+  friend class VpnProviderApiTest;
   friend class VpnServiceForExtension;
   friend class VpnServiceFactory;
 
@@ -135,15 +132,13 @@ class VpnService : public extensions::api::VpnServiceInterface,
   mojo::Remote<crosapi::mojom::VpnServiceForExtension>&
   GetVpnServiceForExtension(const std::string& extension_id);
 
-  // Binds |pepper_vpn_provider_proxy| to the active configuration if it's owned
-  // by extension with id |extension_id|. On success all packets will be routed
-  // through Pepper API.
-  void BindPepperVpnProxy(
-      const std::string& extension_id,
-      const std::string& configuration_name,
-      SuccessCallback,
-      FailureCallback,
-      std::unique_ptr<content::PepperVpnProviderResourceHostProxy>);
+  // Sends the given event to the given extension.
+  void SendToExtension(const std::string& extension_id,
+                       std::unique_ptr<extensions::Event> event);
+
+  void SendOnPlatformMessageToExtension(const std::string& extension_id,
+                                        const std::string& configuration_name,
+                                        uint32_t platform_message);
 
   void OnBindPepperVpnProxy(
       SuccessCallback,
@@ -162,26 +157,6 @@ class VpnService : public extensions::api::VpnServiceInterface,
       extension_id_to_service_;
 
   base::WeakPtrFactory<VpnService> weak_factory_{this};
-};
-
-// Listens to incoming events and forwards them to the underlying
-// PepperVpnProviderResourseHostProxy.
-// * ::OnUnbind() -> pepper->SendOnUnbind()
-// * ::OnPacketReceived(...) -> pepper->SendOnPacketReceived(...)
-class VpnService::PepperVpnProxyAdapter
-    : public crosapi::mojom::PepperVpnProxyObserver {
- public:
-  explicit PepperVpnProxyAdapter(
-      std::unique_ptr<content::PepperVpnProviderResourceHostProxy>);
-  ~PepperVpnProxyAdapter() override;
-
-  // crosapi::mojom::PepperVpnProxyObserver:
-  void OnUnbind() override;
-  void OnPacketReceived(const std::vector<uint8_t>& data) override;
-
- private:
-  std::unique_ptr<content::PepperVpnProviderResourceHostProxy>
-      pepper_vpn_proxy_;
 };
 
 }  // namespace chromeos

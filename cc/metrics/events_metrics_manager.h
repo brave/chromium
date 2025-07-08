@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "cc/cc_export.h"
 #include "cc/metrics/event_metrics.h"
 
@@ -72,6 +73,8 @@ class CC_EXPORT EventsMetricsManager {
     return saved_events_.size();
   }
 
+  void set_did_scroll(bool did_scroll) { did_scroll_ = did_scroll; }
+
  private:
   class ScopedMonitorImpl;
 
@@ -80,10 +83,16 @@ class CC_EXPORT EventsMetricsManager {
   void OnScopedMonitorEnded(std::unique_ptr<EventMetrics> metrics);
 
   // Stack of active, potentially nested, scoped monitors.
-  std::vector<ScopedMonitorImpl*> active_scoped_monitors_;
+  std::vector<raw_ptr<ScopedMonitorImpl, VectorExperimental>>
+      active_scoped_monitors_;
 
   // List of event metrics saved for reporting.
   EventMetrics::List saved_events_;
+
+  // Scroll updates may not result in applying a scroll delta. This is used to
+  // denote that a scroll did occur. `OnScopedMonitorEnded` will clear this,
+  // applying the flag to the `EventMetric` that was saved.
+  bool did_scroll_ = false;
 };
 
 }  // namespace cc

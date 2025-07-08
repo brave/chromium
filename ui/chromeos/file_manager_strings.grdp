@@ -333,9 +333,6 @@
   <message name="IDS_FILE_BROWSER_ARCHIVE_MOUNT_FAILED" desc="Error message when an archive mount operation failed.">
     Could not open "<ph name="PATH">$1<ex>zipfile.zip</ex></ph>"
   </message>
-  <message name="IDS_FILE_BROWSER_ARCHIVE_MOUNT_INVALID_PATH" desc="Error message when trying to mount an archive from an unsupported path.">
-    Could not open "<ph name="PATH">$1<ex>zipfile.zip</ex></ph>" from this location. Please copy to "My files" to open.
-  </message>
   <message name="IDS_FILE_BROWSER_UNMOUNT_FAILED" desc="Title of the error dialog when device unmount operation failed.">
    <ph name="BEGIN_BOLD">&lt;b&gt;</ph>Don't remove your device just yet!<ph name="END_BOLD">&lt;/b&gt;</ph>
    <ph name="LINE_BREAKS">&lt;br/&gt;&lt;br/&gt;</ph>
@@ -382,6 +379,9 @@
   <message name="IDS_FILE_BROWSER_TASK_OPEN" desc="Title of the action to open (and possibly edit) a file.">
     Open
   </message>
+  <message name="IDS_FILE_BROWSER_TASK_OPEN_GDRIVE" desc="Title of the action to open a file in Google Drive.">
+    Google Drive
+  </message>
   <message name="IDS_FILE_BROWSER_TASK_OPEN_GDOC" desc="Title of the action to open a Google Docs document.">
     Google Docs
   </message>
@@ -396,6 +396,9 @@
   </message>
   <message name="IDS_FILE_BROWSER_TASK_LISTEN" desc="Title of the action to play an audio file.">
     Listen
+  </message>
+  <message name="IDS_FILE_BROWSER_TASK_INSTALL_ISOLATED_WEB_APP" desc="Title of the action to install an Isolated Web App from a swbn file">
+    Install
   </message>
   <message name="IDS_FILE_BROWSER_TASK_INSTALL_LINUX_PACKAGE" desc="Title of the action to install a Linux package.">
     Install with Linux
@@ -521,8 +524,8 @@
   <message name="IDS_FILE_BROWSER_GO_TO_FILE_LOCATION_BUTTON_LABEL" desc="Menu item label, navigating the user to the file's containing folder.">
     Go to file location
   </message>
-  <message name="IDS_FILE_BROWSER_ZIP_SELECTION_BUTTON_LABEL" desc="Menu item label, showing dialog to create zip file for selected files.">
-    Zip selection
+  <message name="IDS_FILE_BROWSER_ZIP_SELECTION_BUTTON_LABEL" desc="Menu item label, creating a ZIP archive containing the selected files and/or folders. This must be a verb. For languages in which the verb 'to zip' does not have any obvious or direct translation, consider expressions such as 'Compress', or 'Compress as ZIP', or 'Create ZIP archive'.">
+    Zip
   </message>
   <message name="IDS_FILE_BROWSER_SET_WALLPAPER_BUTTON_LABEL" desc="The context menu item to set wallpaper.">
     Set as wallpaper
@@ -561,10 +564,10 @@
     Manage Parallels Desktop sharing
   </message>
   <message name="IDS_FILE_BROWSER_SHARE_WITH_BRUSCHETTA_BUTTON_LABEL" desc="Label for menu that will share a folder with the VM type codenamed Bruschetta.">
-    Share with Bruschetta
+    Share with <ph name="VM_NAME">$1<ex>MyVm</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_MANAGE_BRUSCHETTA_SHARING_BUTTON_LABEL" desc="Label for menu that will take users to the settings page where they can manage which files and folders are shared with the VM type codenamed Bruschetta.">
-    Manage Bruschetta sharing
+    Manage <ph name="VM_NAME">$1<ex>MyVm</ex></ph> sharing
   </message>
   <message name="IDS_FILE_BROWSER_UNABLE_TO_OPEN_WITH_PLUGIN_VM_DIRECTORY_NOT_SHARED_MESSAGE" desc="Body of the dialog shown to users when they try to open a file with an application in a virtual machine, but the file is not in a directory shared into the VM.">
     To open files with <ph name="APP_NAME">$1<ex>Paint (Windows)</ex></ph>, first move them to the Windows files folder.
@@ -652,11 +655,23 @@
   <message name="IDS_FILE_BROWSER_COPY_FILESYSTEM_ERROR" desc="File Manager error message.">
     Copy operation failed. <ph name="ERROR_MESSAGE">$1<ex>An error occurred (code: ABORT)</ex></ph>
   </message>
+  <message name="IDS_FILE_BROWSER_COPY_SKIPPED_ENCRYPTED_SINGLE_FILE" desc="File Manager error message. An encrypted (Google Drive CSE) file wasn't copied.">
+    <ph name="FILE_NAME">$1<ex>encrypted.pdf</ex></ph> could not be copied because it is encrypted.
+  </message>
+  <message name="IDS_FILE_BROWSER_MOVE_SKIPPED_ENCRYPTED_SINGLE_FILE" desc="File Manager error message. An encrypted (Google Drive CSE) file wasn't moved..">
+    <ph name="FILE_NAME">$1<ex>encrypted.pdf</ex></ph> could not be moved because it is encrypted.
+  </message>
+  <message name="IDS_FILE_BROWSER_COPY_SKIPPED_ENCRYPTED_FILES" desc="File Manager error message. Several encrypted (Google Drive CSE) files weren't moved.">
+    <ph name="NUMBER_OF_FILES">$1<ex>3</ex></ph> files could not be copied because they are encrypted.
+  </message>
+  <message name="IDS_FILE_BROWSER_MOVE_SKIPPED_ENCRYPTED_FILES" desc="File Manager error message. Several encrypted (Google Drive CSE) files weren't moved.">
+    <ph name="NUMBER_OF_FILES">$1<ex>3</ex></ph> files could not be moved because they are encrypted.
+  </message>
+  <message name="IDS_FILE_BROWSER_ENCRYPTED_DETAILS" desc="File manager secondary error message when encrypted (Google Drive CSE) files caused an error.">
+    Contact your administrator for details.
+  </message>
   <message name="IDS_FILE_BROWSER_EMPTY_TRASH_UNEXPECTED_ERROR" desc="File manager error whilst emptying trash">
     Failed to empty the trash.
-  </message>
-  <message name="IDS_FILE_BROWSER_COPY_UNEXPECTED_ERROR" desc="File Manager error message.">
-    Copy operation failed, unexpected error: <ph name="ERROR_MESSAGE">$1<ex>Could not copy</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_FILE_COPIED" desc="File Manager status message. 'Item' is used here as a generic term for file or directory.">
     <ph name="FILE_NAME">$1<ex>big.xz</ex></ph> copied.
@@ -698,10 +713,10 @@
     Whoops, <ph name="FILE_NAME">$1<ex>movie.avi</ex></ph> no longer exists.
   </message>
   <message name="IDS_FILE_BROWSER_MOVE_FILESYSTEM_ERROR" desc="File Manager error message.">
-    Move failed. <ph name="ERROR_MESSAGE">$1<ex>An error occurred (code: ABORT)</ex></ph>
+    Can't move file. <ph name="ERROR_MESSAGE">$1<ex>An error occurred (code: ABORT)</ex></ph>
   </message>
-  <message name="IDS_FILE_BROWSER_MOVE_UNEXPECTED_ERROR" desc="File Manager error message.">
-    Move failed, unexpected error: <ph name="ERROR_MESSAGE">$1<ex>Could not move</ex></ph>
+  <message name="IDS_FILE_BROWSER_MOVE_IN_USE_ERROR" desc="File Manager error message shown when a move operation of a file failed because the file is in use.">
+    Can't move file. File is in use.
   </message>
   <message name="IDS_FILE_BROWSER_ZIP_FILE_NAME" desc="File Manager status message.">
     Zipping <ph name="FILE_NAME">$1<ex>movie.avi</ex></ph>...
@@ -714,15 +729,6 @@
   </message>
   <message name="IDS_FILE_BROWSER_ZIP_FILESYSTEM_ERROR" desc="File Manager error message.">
     Zipping failed. <ph name="ERROR_MESSAGE">$1<ex>An error occurred (code: ABORT)</ex></ph>
-  </message>
-  <message name="IDS_FILE_BROWSER_ZIP_UNEXPECTED_ERROR" desc="File Manager error message.">
-    Zipping failed, unexpected error: <ph name="ERROR_MESSAGE">$1<ex>Could not zip</ex></ph>
-  </message>
-  <message name="IDS_FILE_BROWSER_SYNC_FILE_NAME" desc="File Manager status message.">
-    Syncing <ph name="FILE_NAME">$1<ex>movie.avi</ex></ph>...
-  </message>
-  <message name="IDS_FILE_BROWSER_SYNC_FILE_NUMBER" desc="File Manager status message.">
-    Syncing <ph name="NUMBER_OF_FILES">$1<ex>7</ex></ph> items...
   </message>
   <message name="IDS_FILE_BROWSER_SYNC_DELETE_WITHOUT_PERMISSION_ERROR" desc="File Manager status message shown when the drive sync is failed because a user try to remove shared files that the user does not own.">
     "<ph name="FILENAME">$1<ex>photo.jpg</ex></ph>" has been shared with you. You cannot delete it because you do not own it.
@@ -753,6 +759,9 @@
   </message>
   <message name="IDS_FILE_BROWSER_DELETE_ERROR" desc="Message informing about error while deleting an item or items.">
     An error occurred. Some items may not have been deleted.
+  </message>
+  <message name="IDS_FILE_BROWSER_DELETE_IN_USE_ERROR" desc="File Manager error message shown when a delete operation of an item failed because the item is in use.">
+    Can't delete. Item is in use.
   </message>
   <message name="IDS_FILE_BROWSER_RESTORING_FROM_TRASH_FILE_NAME" desc="File Manager status message shown when restoring items from trash / recycle bin.">
     Restoring "<ph name="FILENAME">$1<ex>photo.jpg</ex></ph>"
@@ -787,8 +796,15 @@
   <message name="IDS_FILE_BROWSER_OPEN_TRASHED_FILES_ERROR_DESC" desc="Description of message informing users they can't open files from the Trash folder">
     Restore the items or drag them to a new folder outside of trash
   </message>
-  <message name="IDS_FILE_BROWSER_ERROR_PROGRESS_SUMMARY_PLURAL" desc="Summary message for multiple errors above the progress bar. This message may be placed at the next to ohter *_PROGERSS_SUMMARY messages.">
-    <ph name="COUNT">$1<ex>10</ex></ph> errors.
+  <message name="IDS_FILE_BROWSER_ERROR_PROGRESS_SUMMARY" desc="Summary message for one or more errors above the progress bar. This message may be placed at the next to other *_PROGRESS_SUMMARY messages.">
+    {NUM_ERROR, plural,
+        =1 {1 error.}
+        other {# errors.}}
+  </message>
+  <message name="IDS_FILE_BROWSER_WARNING_PROGRESS_SUMMARY" desc="Summary message for one or more warnings above the progress bar. This message may be placed next to other *_PROGRESS_SUMMARY messages.">
+    {NUM_WARNING, plural,
+        =1 {1 warning.}
+        other {# warnings.}}
   </message>
   <message name="IDS_FILE_BROWSER_PERCENT_COMPLETE" desc="Percentage of file operation that is complete in a progress message.">
     <ph name="PERCENT">$1<ex>10</ex></ph>% complete.
@@ -835,8 +851,11 @@
   <message name="IDS_FILE_BROWSER_PENDING_LABEL" desc="Pending label.">
     Pending
   </message>
-  <message name="IDS_FILE_BROWSER_SCANNING_LABEL" desc="Scanning label.">
-    Scanning
+  <message name="IDS_FILE_BROWSER_SCANNING_LABEL" desc="Scanning label for single file.">
+    Checking file against your organization's security policies...
+  </message>
+  <message name="IDS_FILE_BROWSER_SCANNING_LABEL_PLURAL" desc="Scanning label for multiple files.">
+    Checking files against your organization's security policies...
   </message>
   <message name="IDS_FILE_BROWSER_SEARCH_TEXT_LABEL" desc="Search text field label.">
     Search
@@ -1176,6 +1195,9 @@
   <message name="IDS_FILE_BROWSER_METADATA_BOX_MODIFIED_BY" desc="Label for who modified the file.">
     Modified by
   </message>
+  <message name="IDS_FILE_BROWSER_METADATA_BOX_DATE_TAKEN" desc="Label for the date that the image/photo was taken.">
+    Date taken
+  </message>
   <message name="IDS_FILE_BROWSER_METADATA_BOX_PAGE_COUNT" desc="Label for pdf page count.">
     Page count
   </message>
@@ -1211,12 +1233,6 @@
   </message>
   <message name="IDS_FILE_BROWSER_DRIVE_OFFLINE_BANNER_SUBTITLE" desc="Message title of banner informing user they can make files available offline.">
     Select a file, and toggle <ph name="OFFLINE_CHECKBOX_NAME">'$1'<ex>'Available offline'</ex></ph> on for offline access to your files.
-  </message>
-  <message name="IDS_FILE_BROWSER_OFFLINE_PROGRESS_MESSAGE" desc="Message informing the user a Google Drive file is being downloaded for offline use.">
-    Making <ph name="FILE_NAME">$1<ex>document.pdf</ex></ph> available offline
-  </message>
-  <message name="IDS_FILE_BROWSER_OFFLINE_PROGRESS_MESSAGE_PLURAL" desc="Message informing the user multiple Google Drive files are being downloaded for offline use.">
-    Making <ph name="NUMBER_OF_ITEMS">$1<ex>3</ex></ph> files available offline
   </message>
   <message name="IDS_FILE_BROWSER_OFFLINE_FAILURE_MESSAGE" desc="Message informing the user a Google Drive file failed to be downloaded for offline use.">
     Could not make <ph name="FILE_NAME">$1<ex>document.pdf</ex></ph> available offline
@@ -1260,8 +1276,8 @@
   <message name="IDS_FILE_BROWSER_OPEN_IN_OTHER_DESKTOP_MESSAGE_PLURAL" desc="Prural verson of the message of an alert dialog that is shown when a user opens a file in a desktop of another profile but the file is opened in the original desktop.">
     These files opened on a different desktop. Move to <ph name="USER_NAME">$1<ex>John Doe</ex></ph> (<ph name="MAIL_ADDRESS">$2<ex>xxxxxx@gmail.com</ex></ph>) to view it.
   </message>
-  <message name="IDS_FILE_BROWSER_DRIVE_MOBILE_CONNECTION_OPTION" desc="Option that determines if we will allow Google Drive content sync over mobile connections.">
-    Do not use mobile data for sync
+  <message name="IDS_FILE_BROWSER_DRIVE_METERED_CONNECTION_OPTION" desc="Option that determines if we will allow Google Drive content sync over metered connections.">
+    Allow sync on metered networks
   </message>
   <message name="IDS_FILE_BROWSER_DRIVE_MENU_HELP" desc="In the Google Drive settings menu, name of the Help item.">
     Help
@@ -1367,10 +1383,10 @@
   <message name="IDS_FILE_BROWSER_NO_TASK_FOR_CRX" desc="Message shown when a user tries to open a *.crx file, which we don't handle in the Files app.">
     We're constantly looking for ways to make your browsing safer. Previously, any website could prompt you to add an extension into your browser. In the latest versions of Google Chrome, you must explicitly tell Chrome that you want to install these extensions by adding them through the Extensions page. <ph name="BEGIN_LINK">&lt;a target='_blank' href='https://support.google.com/chrome_webstore/answer/2664769?p=crx_warning&amp;rd=1'&gt;</ph>Learn more<ph name="END_LINK">&lt;/a&gt;</ph>
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_CROSTINI_TITLE" desc="Message title shown when a user shares the root of a volume such as 'My files' with the crostini container.">
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_CROSTINI_TITLE" desc="Message title shown when a user shares the root of a volume with the Crostini container.">
     Share folder with Linux
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_CROSTINI" desc="Confirmation message shown when a user shares the root of a volume such as 'My files' with the crostini container.">
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_CROSTINI" desc="Confirmation message shown when a user shares the root of a volume with the Crostini container.">
     Give Linux apps permission to access files in the <ph name="FOLDER_NAME">$1<ex>Downloads</ex></ph> folder
   </message>
   <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_CROSTINI_DRIVE" desc="Confirmation message shown when a user shares the root of a Drive volume (My Drive, Team Drives, Computers) with the crostini container.">
@@ -1382,10 +1398,10 @@
   <message name="IDS_FILE_BROWSER_FOLDER_SHARED_WITH_CROSTINI_PLURAL" desc="Confirmation message shown when a user shares more than 1 folder with the crostini container.">
     <ph name="NUMBER_OF_ITEMS">$1<ex>3</ex></ph> folders shared with Linux
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_PLUGIN_VM_TITLE" desc="Message title shown when a user shares the root of a volume such as 'My files' with the Parallels.">
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_PLUGIN_VM_TITLE" desc="Message title shown when a user shares the root of a volume with Parallels.">
     Share folder with Parallels Desktop
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_PLUGIN_VM" desc="Confirmation message shown when a user shares the root of a volume such as 'My files' with Parallels." >
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_PLUGIN_VM" desc="Confirmation message shown when a user shares the root of a volume with Parallels." >
     Give Parallels Desktop permission to access files in the <ph name="FOLDER_NAME">$1<ex>Downloads</ex></ph> folder
   </message>
   <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_PLUGIN_VM_DRIVE" desc="Confirmation message shown when a user shares the root of a Drive volume (My Drive, Team Drives, Computers) with Parallels.">
@@ -1397,20 +1413,20 @@
   <message name="IDS_FILE_BROWSER_FOLDER_SHARED_WITH_PLUGIN_VM_PLURAL" desc="Confirmation message shown when a user shares more than 1 folder with Parallels.">
     <ph name="NUMBER_OF_ITEMS">$1<ex>3</ex></ph> folders shared with Parallels Desktop
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_BRUSCHETTA_TITLE" desc="Message title shown when a user shares the root of a volume such as 'My files' with the VM type codenamed Bruschetta.">
-    Share folder with Bruschetta
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_BRUSCHETTA_TITLE" desc="Message title shown when a user shares the root of a volume with the VM type codenamed Bruschetta.">
+    Share folder with <ph name="VM_NAME">$1<ex>MyVm</ex></ph>
   </message>
-  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_BRUSCHETTA" desc="Confirmation message shown when a user shares the root of a volume such as 'My files' with the VM type codenamed Bruschetta" >
-    Give Bruschetta permission to access files in the <ph name="FOLDER_NAME">$1<ex>Downloads</ex></ph> folder
+  <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_BRUSCHETTA" desc="Confirmation message shown when a user shares the root of a volume with the VM type codenamed Bruschetta." >
+    Give <ph name="VM_NAME">$1<ex>MyVm</ex></ph> permission to access files in the <ph name="FOLDER_NAME">$2<ex>Downloads</ex></ph> folder
   </message>
   <message name="IDS_FILE_BROWSER_SHARE_ROOT_FOLDER_WITH_BRUSCHETTA_DRIVE" desc="Confirmation message shown when a user shares the root of a Drive volume (My Drive, Team Drives, Computers) with the VM type codenamed Bruschetta.">
-    Give Bruschetta permission to access files in your Google Drive. Changes will sync to your other devices.
+    Give <ph name="VM_NAME">$1<ex>MyVm</ex></ph> permission to access files in your Google Drive. Changes will sync to your other devices.
   </message>
   <message name="IDS_FILE_BROWSER_FOLDER_SHARED_WITH_BRUSCHETTA" desc="Confirmation message shown when a user shares a folder with the VM type codenamed Bruschetta.">
-    1 folder shared with Bruschetta
+    1 folder shared with <ph name="VM_NAME">$1<ex>MyVm</ex></ph>
   </message>
-  <message name="IDS_FILE_BROWSER_FOLDER_SHARED_WITH_BRUSCHETTA_PLURAL" desc="Confirmation message shown when a user shares more than 1 folder with the VM type codenamed Bruscheta.">
-    <ph name="NUMBER_OF_ITEMS">$1<ex>3</ex></ph> folders shared with Bruschetta
+  <message name="IDS_FILE_BROWSER_FOLDER_SHARED_WITH_BRUSCHETTA_PLURAL" desc="Confirmation message shown when a user shares more than 1 folder with the VM type codenamed Bruschetta.">
+    <ph name="NUMBER_OF_ITEMS">$1<ex>3</ex></ph> folders shared with <ph name="VM_NAME">$2<ex>MyVm</ex></ph>
   </message>
   <message name="IDS_FILE_BROWSER_MESSAGE_FOLDER_SHARED_WITH_CROSTINI" desc="Message shown in FilesApp message bar when a user has shared a folder with the crostini container.">
     This folder is shared with Linux
@@ -1492,13 +1508,13 @@
   <message name="IDS_FILE_BROWSER_GSITE_DOCUMENT_FILE_TYPE" desc="Google site file type">
     Google site
   </message>
+  <message name="IDS_FILE_BROWSER_EMAIL_LAYOUTS_DOCUMENT_FILE_TYPE" desc="Email layouts file type">
+    Email layouts
+  </message>
   <message name="IDS_FILE_BROWSER_GLINK_DOCUMENT_FILE_TYPE" desc="Google Drive link file type">
     Google Drive link
   </message>
 
-  <message name="IDS_FILE_BROWSER_ERROR_VIEWING_FILE_TITLE" desc="Title of error message propmt when user attempts to open a non-supported file in file browser.">
-    <ph name="FILENAME">$1</ph>
-  </message>
   <message name="IDS_FILE_BROWSER_ERROR_VIEWING_FILE" desc="Error message when user attempts to open a non-supported file in the Files app via Downloads panel.">
     This file type is not supported. Please visit the Chrome Web Store to find an app that can open this type of file.
   </message>
@@ -1622,12 +1638,6 @@
   </message>
 
 <!-- Holding space -->
-  <message name="IDS_FILE_BROWSER_HOLDING_SPACE_PIN_COMMAND_LABEL" desc="Label for the command which pins one or more files to the holding space.">
-    Pin to quick files
-  </message>
-  <message name="IDS_FILE_BROWSER_HOLDING_SPACE_UNPIN_COMMAND_LABEL" desc="Label for the command which unpins one or more files from the holding space.">
-    Unpin from quick files
-  </message>
   <message name="IDS_FILE_BROWSER_HOLDING_SPACE_PIN_TO_SHELF_COMMAND_LABEL" desc="Label for the command which pins one or more files to the holding space in the shelf.">
     Pin to shelf
   </message>
@@ -1788,6 +1798,12 @@
   <message name="IDS_FILE_BROWSER_BULK_PINNING_LISTING" desc="Information message displayed when the Google Drive bulk pinning feature is computing the space requirements">
     Checking storage space…
   </message>
+  <message name="IDS_FILE_BROWSER_BULK_PINNING_LISTING_WITH_MULTIPLE_ITEMS" desc="Information message displayed when the Google Drive bulk pinning feature is computing the space requirements and it knows how many files have currently been enumerated">
+    Checking storage space… <ph name="ITEMS_FOUND">$1<ex>1,072</ex></ph> items found
+  </message>
+  <message name="IDS_FILE_BROWSER_BULK_PINNING_LISTING_WITH_SINGLE_ITEM" desc="Information message displayed when the Google Drive bulk pinning feature is computing the space requirements and it knows how many files have currently been enumerated">
+    Checking storage space… 1 item found
+  </message>
   <message name="IDS_FILE_BROWSER_BULK_PINNING_ERROR" desc="Error message displayed when the Google Drive bulk pinning feature could not compute the space requirements">
     Something went wrong.
   </message>
@@ -1802,6 +1818,9 @@
   </message>
   <message name="IDS_FILE_BROWSER_BULK_PINNING_BATTERY_SAVER_LABEL" desc="The text used when the device is in battery saver mode and has paused syncing.">
     Battery is low. File sync will resume when you are connected to power.
+  </message>
+  <message name="IDS_FILE_BROWSER_BULK_PINNING_METERED_NETWORK_LABEL" desc="The text used when the bulk pinning of Google Drive items has been paused due to being on a metered network.">
+    You are on a metered network. File sync has been paused.
   </message>
   <message name="IDS_FILE_BROWSER_BULK_PINNING_ITEM_TEMPORARILY_UNAVAILABLE_OFFLINE" desc="The text used when the bulk pinning of Google Drive items has failed due to insufficient space.">
     Can’t sync this file right now
@@ -1842,11 +1861,10 @@
   <message name="IDS_FILE_BROWSER_DRIVE_DATA_DIR_MISSING" desc="Body of the system notification displayed when the Google Drive cache file were removed while the user was logged out">
     Storage space was extremely low. File sync has been turned off.
   </message>
-  <!-- TODO(b/276126188): Remove the translateable="false" when the copy has been landed on. -->
-  <message name="IDS_FILE_BROWSER_BULK_PINNING_BATTERY_SAVER" translateable="false" desc="Error message displayed when the Google Drive bulk pinning feature cannot be enabled because battery saver mode is active">
+  <message name="IDS_FILE_BROWSER_BULK_PINNING_BATTERY_SAVER" desc="Error message displayed when the Google Drive bulk pinning feature cannot be enabled because battery saver mode is active">
     Battery saver mode on. Try again when battery saver mode is turned off.
   </message>
-  <!-- Empty state inside OneDrive folder -->
+  <!-- Empty states inside OneDrive folder -->
   <message name="IDS_FILE_BROWSER_ONEDRIVE_LOGGED_OUT_TITLE" desc="Title of an empty state section displayed in OneDrive folder when the user has been logged out from OneDrive.">
     You've been logged out
   </message>
@@ -1855,5 +1873,14 @@
   </message>
   <message name="IDS_FILE_BROWSER_ONEDRIVE_SIGN_IN_LINK" desc="Text of a link in an empty state section displayed in OneDrive folder when the user has been logged out from OneDrive.">
     Sign in
+  </message>
+  <message name="IDS_FILE_BROWSER_ONEDRIVE_FROZEN_ACCOUNT_TITLE" desc="Title of an empty state section displayed in OneDrive folder when the user's OneDrive account is frozen.">
+    There is an issue accessing your OneDrive account
+  </message>
+  <message name="IDS_FILE_BROWSER_ONEDRIVE_FROZEN_ACCOUNT_SUBTITLE" desc="Subtitle of an empty state section displayed in OneDrive folder when the user's OneDrive account is frozen.">
+    Visit <ph name="LINK_BEGIN">&lt;a href="https://onedrive.live.com" target="_blank"&gt;</ph>onedrive.live.com<ph name="LINK_END">&lt;/a&gt;</ph> for more information
+  </message>
+  <message name="IDS_FILE_BROWSER_ONEDRIVE_OFFLINE_TITLE" desc="Title of banner informing the user that OneDrive can't be used while the device is offline.">
+    OneDrive isn't available while offline
   </message>
 </grit-part>

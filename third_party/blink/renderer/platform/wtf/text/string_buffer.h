@@ -26,6 +26,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_BUFFER_H_
 
@@ -34,8 +39,10 @@
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 
-namespace WTF {
+namespace blink {
 
+// StringBuffer is a thin wrapper of StringImpl::CreateUninitialized().
+// It is helpful if the length and Is8Bit flag are known when creating a string.
 template <typename CharType>
 class StringBuffer {
   DISALLOW_NEW();
@@ -44,7 +51,7 @@ class StringBuffer {
   StringBuffer() = default;
 
   explicit StringBuffer(unsigned length) {
-    CharType* characters;
+    base::span<CharType> characters;
     data_ = StringImpl::CreateUninitialized(length, characters);
   }
 
@@ -56,9 +63,7 @@ class StringBuffer {
   void Shrink(unsigned new_length);
 
   // Prefer Span() to length()/Characters().
-  base::span<CharType> Span() {
-    return base::span<CharType>(Characters(), length());
-  }
+  base::span<CharType> Span() { return data_->Span<CharType>(); }
 
   unsigned length() const { return data_ ? data_->length() : 0; }
   CharType* Characters() {
@@ -85,8 +90,6 @@ void StringBuffer<CharType>::Shrink(unsigned new_length) {
   data_ = data_->Substring(0, new_length);
 }
 
-}  // namespace WTF
-
-using WTF::StringBuffer;
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_BUFFER_H_

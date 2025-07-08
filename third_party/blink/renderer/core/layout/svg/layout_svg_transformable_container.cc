@@ -21,10 +21,13 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_transformable_container.h"
 
+#include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/transform_helper.h"
+#include "third_party/blink/renderer/core/svg/svg_a_element.h"
 #include "third_party/blink/renderer/core/svg/svg_g_element.h"
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
-#include "third_party/blink/renderer/core/svg/svg_length_context.h"
+#include "third_party/blink/renderer/core/svg/svg_length_functions.h"
+#include "third_party/blink/renderer/core/svg/svg_switch_element.h"
 #include "third_party/blink/renderer/core/svg/svg_use_element.h"
 
 namespace blink {
@@ -80,9 +83,9 @@ SVGTransformChange LayoutSVGTransformableContainer::UpdateLocalTransform(
   // attributes.
   if (IsA<SVGUseElement>(element)) {
     const ComputedStyle& style = StyleRef();
-    SVGLengthContext length_context(element);
+    const SVGViewportResolver viewport_resolver(*this);
     additional_translation_ =
-        length_context.ResolveLengthPair(style.X(), style.Y(), style);
+        VectorForLengthPair(style.X(), style.Y(), viewport_resolver, style);
   }
 
   SVGTransformChangeDetector change_detector(local_transform_);
@@ -99,18 +102,37 @@ void LayoutSVGTransformableContainer::StyleDidChange(
   NOT_DESTROYED();
   LayoutSVGContainer::StyleDidChange(diff, old_style);
 
+  const ComputedStyle& style = StyleRef();
+
   // Check for changes to the 'x' or 'y' properties if this is a <use> element.
   SVGElement& element = *GetElement();
   if (old_style && IsA<SVGUseElement>(element)) {
-    const ComputedStyle& style = StyleRef();
     if (old_style->X() != style.X() || old_style->Y() != style.Y()) {
       SetNeedsTransformUpdate();
     }
+    // Any descendant could use context-fill or context-stroke, so we must
+    // repaint the whole subtree.
+    if (old_style->FillPaint() != style.FillPaint() ||
+        old_style->StrokePaint() != style.StrokePaint()) {
+      SetSubtreeShouldDoFullPaintInvalidation(
+          PaintInvalidationReason::kSVGResource);
+    }
+  }
+
+  // To support context-fill and context-stroke
+  if (IsA<SVGUseElement>(element)) {
+    SVGResources::UpdatePaints(*this, old_style, style);
   }
 
   TransformHelper::UpdateOffsetPath(element, old_style);
-  SetTransformUsesReferenceBox(
-      TransformHelper::UpdateReferenceBoxDependency(*this));
+  SetTransformUsesReferenceBox(TransformHelper::DependsOnReferenceBox(style));
+}
+
+void LayoutSVGTransformableContainer::WillBeDestroyed() {
+  if (IsA<SVGUseElement>(GetElement())) {
+    SVGResources::ClearPaints(*this, Style());
+  }
+  LayoutSVGContainer::WillBeDestroyed();
 }
 
 }  // namespace blink

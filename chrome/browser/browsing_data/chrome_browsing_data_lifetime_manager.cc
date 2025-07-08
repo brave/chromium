@@ -6,11 +6,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <string>
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/containers/flat_set.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -41,6 +41,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
+#include "content/public/browser/download_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
@@ -98,8 +99,6 @@ class BrowsingDataRemoverObserver
       profile_->GetPrefs()->ClearPref(
           browsing_data::prefs::kClearBrowsingDataOnExitDeletionPending);
     }
-    base::UmaHistogramBoolean(state_histogram(),
-                              /*BooleanStartedCompleted.Completed*/ true);
     // The profile and browser should not be shutting down yet.
     DCHECK(!keep_browser_alive_ || !profile_->ShutdownStarted());
     delete this;
@@ -122,8 +121,6 @@ class BrowsingDataRemoverObserver
     }
 #endif
     browsing_data_remover_observer_.Observe(remover);
-    base::UmaHistogramBoolean(state_histogram(),
-                              /*BooleanStartedCompleted.Started*/ false);
   }
 
   const char* duration_histogram() const {
@@ -137,19 +134,6 @@ class BrowsingDataRemoverObserver
                ? kDurationBrowserShutdownDeletion
                : filterable_deletion_ ? kDurationScheduledFilterableDeletion
                                       : kDurationScheduledUnfilterableDeletion;
-  }
-
-  const char* state_histogram() const {
-    static constexpr char kStateScheduledFilterableDeletion[] =
-        "History.BrowsingDataLifetime.State.ScheduledFilterableDeletion";
-    static constexpr char kStateScheduledUnfilterableDeletion[] =
-        "History.BrowsingDataLifetime.State.ScheduledUnfilterableDeletion";
-    static constexpr char kStateBrowserShutdownDeletion[] =
-        "History.BrowsingDataLifetime.State.BrowserShutdownDeletion";
-    return keep_browser_alive_
-               ? kStateBrowserShutdownDeletion
-               : filterable_deletion_ ? kStateScheduledFilterableDeletion
-                                      : kStateScheduledUnfilterableDeletion;
   }
 
   base::ScopedObservation<content::BrowsingDataRemover,
@@ -168,7 +152,7 @@ class BrowsingDataRemoverObserver
 uint64_t GetOriginTypeMask(const base::Value::List& data_types) {
   uint64_t result = 0;
   for (const auto& data_type : data_types) {
-    absl::optional<browsing_data::PolicyDataType> policy_data_type =
+    std::optional<browsing_data::PolicyDataType> policy_data_type =
         browsing_data::NameToPolicyDataType(data_type.GetString());
     if (!policy_data_type.has_value()) {
       continue;
@@ -190,7 +174,7 @@ uint64_t GetOriginTypeMask(const base::Value::List& data_types) {
 uint64_t GetRemoveMask(const base::Value::List& data_types) {
   uint64_t result = 0;
   for (const auto& data_type : data_types) {
-    absl::optional<browsing_data::PolicyDataType> policy_data_type =
+    std::optional<browsing_data::PolicyDataType> policy_data_type =
         browsing_data::NameToPolicyDataType(data_type.GetString());
     if (!policy_data_type.has_value()) {
       continue;
@@ -222,7 +206,6 @@ uint64_t GetRemoveMask(const base::Value::List& data_types) {
         break;
       case browsing_data::PolicyDataType::kNumTypes:
         NOTREACHED();
-        break;
     }
   }
   return result;
@@ -244,11 +227,11 @@ std::vector<ScheduledRemovalSettings> ConvertToScheduledRemovalSettings(
   return scheduled_removals_settings;
 }
 
-base::flat_set<GURL> GetOpenedUrls(Profile* profile) {
-  base::flat_set<GURL> result;
+std::set<GURL> GetOpenedUrlsAndOngoingDownloads(Profile* profile) {
+  std::set<GURL> result;
   // TODO (crbug/1288416): Enable this for android.
 #if !BUILDFLAG(IS_ANDROID)
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     if (browser->profile() != profile) {
       continue;
     }
@@ -265,6 +248,18 @@ base::flat_set<GURL> GetOpenedUrls(Profile* profile) {
     }
   }
 #endif
+
+  download::SimpleDownloadManager::DownloadVector downloads;
+  if (auto* download_manager = profile->GetDownloadManager()) {
+    download_manager->GetAllDownloads(&downloads);
+  }
+  for (const download::DownloadItem* download : downloads) {
+    auto state = download->GetState();
+    if (state != download::DownloadItem::DownloadState::IN_PROGRESS) {
+      continue;
+    }
+    result.insert(download->GetURL());
+  }
   return result;
 }
 
@@ -404,7 +399,7 @@ void ChromeBrowsingDataLifetimeManager::StartScheduledBrowsingDataRemoval() {
     if (filterable_remove_mask) {
       auto filter_builder = content::BrowsingDataFilterBuilder::Create(
           content::BrowsingDataFilterBuilder::Mode::kPreserve);
-      for (const auto& url : GetOpenedUrls(profile_)) {
+      for (const auto& url : GetOpenedUrlsAndOngoingDownloads(profile_)) {
         std::string domain = GetDomainAndRegistry(
             url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
         if (domain.empty()) {
@@ -440,10 +435,8 @@ bool ChromeBrowsingDataLifetimeManager::
     IsConditionSatisfiedForBrowsingDataRemoval(
         const syncer::UserSelectableTypeSet sync_types) {
   bool sync_disabled = !SyncServiceFactory::IsSyncAllowed(profile_);
-  // Return the state of sync if
-  // `features::kDataRetentionPoliciesDisableSyncTypesNeeded` is disabled or if
-  // sync is already disabled.
-  if (!browsing_data::IsPolicyDependencyEnabled() || sync_disabled) {
+  // Condition is satisfied if sync is fully disabled by policy.
+  if (sync_disabled) {
     return sync_disabled;
   }
 
@@ -474,6 +467,11 @@ bool ChromeBrowsingDataLifetimeManager::
 
   for (syncer::UserSelectableType type : sync_types) {
     if (!sync_service->GetUserSettings()->IsTypeManagedByPolicy(type)) {
+      return false;
+    } else if (sync_service->GetActiveDataTypes().HasAny(
+                   syncer::UserSelectableTypeToAllDataTypes(type))) {
+      // If the sync type is disabled by policy, but the sync service has not
+      // deactivated the type yet, then data can not be safely cleared yet.
       return false;
     }
   }

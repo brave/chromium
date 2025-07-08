@@ -7,6 +7,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/speculation_rules/speculation_rule_set.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink::internal {
 
@@ -23,6 +24,8 @@ class InspectorPreloadAgentTest : public testing::Test {
   }
 
  private:
+  test::TaskEnvironment task_environment_;
+
   Persistent<ExecutionContext> execution_context_;
 };
 
@@ -36,7 +39,7 @@ TEST_F(InspectorPreloadAgentTest, OutOfDocumentSpeculationRules) {
     }]
   })";
 
-  auto* source = MakeGarbageCollected<SpeculationRuleSet::Source>(
+  auto* source = SpeculationRuleSet::Source::FromRequest(
       source_text, KURL("https://example.com/speculationrules.js"), 42);
   auto* rule_set = SpeculationRuleSet::Parse(source, execution_context());
   CHECK(rule_set);
@@ -58,7 +61,7 @@ TEST_F(InspectorPreloadAgentTest, NoRequestIdIfInvalidId) {
     }]
   })";
 
-  auto* source = MakeGarbageCollected<SpeculationRuleSet::Source>(
+  auto* source = SpeculationRuleSet::Source::FromRequest(
       source_text, KURL("https://example.com/speculationrules.js"), 0);
   auto* rule_set = SpeculationRuleSet::Parse(source, execution_context());
   CHECK(rule_set);

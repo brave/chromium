@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_EXTERNAL_PROTOCOL_DIALOG_TEST_HARNESS_H_
 
 #include "base/memory/raw_ptr.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/external_protocol_dialog.h"
@@ -29,6 +30,23 @@ class ExternalProtocolDialogBrowserTest
 
   void SetChecked(bool checked);
 
+  // Returns true if the `ExternalProtocolDialog` is occluded by a
+  // Picture-in-Picture window.
+  bool OccludedByPictureInPicture() const;
+
+  // Sets the `ExternalProtocolDialog` Picture-in-Picture occlusion state to the
+  // `occluded` value.
+  void SimulateOcclusionStateChanged(bool occluded);
+
+  // Returns true if button pressed events on the `ExternalProtocolDialog`
+  // should be ignored.
+  bool ShouldIgnoreButtonPressedEventHandling(views::View* button,
+                                              const ui::Event& event) const;
+
+  // Returns true if key events on the `ExternalProtocolDialog` should be
+  // allowed when input protection is active.
+  bool ShouldAllowKeyEventsDuringInputProtection() const;
+
   // ExternalProtocolHandler::Delegate:
   scoped_refptr<shell_integration::DefaultSchemeClientWorker> CreateShellWorker(
       const GURL& url) override;
@@ -41,7 +59,7 @@ class ExternalProtocolDialogBrowserTest
       content::WebContents* web_contents,
       ui::PageTransition page_transition,
       bool has_user_gesture,
-      const absl::optional<url::Origin>& initiating_origin,
+      const std::optional<url::Origin>& initiating_origin,
       const std::u16string& program_name) override;
   void LaunchUrlWithoutSecurityCheck(
       const GURL& url,

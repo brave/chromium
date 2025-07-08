@@ -8,7 +8,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/platform_locale_settings.h"
@@ -31,12 +30,9 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/monogram_utils.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/resources/grit/ui_resources.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace favicon {
 
@@ -57,11 +53,9 @@ SkColor ComputeBackgroundColorForUrl(const GURL& icon_url) {
   if (!icon_url.is_valid())
     return SK_ColorGRAY;
 
-  unsigned char hash[20];
-  const std::string origin = icon_url.DeprecatedGetOriginAsURL().spec();
-  base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(origin.c_str()),
-                      origin.size(), hash);
-  return SkColorSetRGB(hash[0], hash[1], hash[2]);
+  base::SHA1Digest hash = base::SHA1Hash(
+      base::as_byte_span(icon_url.DeprecatedGetOriginAsURL().spec()));
+  return SkColorSetRGB(hash[0u], hash[1u], hash[2u]);
 }
 
 // Gets the appropriate light or dark rasterized default favicon.
@@ -100,9 +94,11 @@ SkBitmap GenerateMonogramFavicon(GURL url, int icon_size, int circle_size) {
       color_utils::BlendForMinContrast(ComputeBackgroundColorForUrl(url),
                                        kFallbackIconLetterColor)
           .color;
-
-  monogram::DrawMonogramInCanvas(&canvas, icon_size, circle_size, monogram,
-                                 kFallbackIconLetterColor, fallback_color);
+  const std::vector<std::string> font_names = {
+      l10n_util::GetStringUTF8(IDS_NTP_FONT_FAMILY)};
+  gfx::DrawMonogramInCanvas(&canvas, icon_size, circle_size, monogram,
+                            font_names, kFallbackIconLetterColor,
+                            fallback_color);
   return bitmap;
 }
 
@@ -111,7 +107,7 @@ gfx::Image TabFaviconFromWebContents(content::WebContents* contents) {
 
   favicon::FaviconDriver* favicon_driver =
       favicon::ContentFaviconDriver::FromWebContents(contents);
-  // TODO(crbug.com/3041580): Investigate why some WebContents do not have
+  // TODO(crbug.com/40190724): Investigate why some WebContents do not have
   // an attached ContentFaviconDriver.
   if (!favicon_driver) {
     return gfx::Image();
@@ -189,18 +185,23 @@ void SaveFaviconEvenIfInIncognito(content::WebContents* contents) {
                                favicon_status.image);
 }
 
+bool ShouldThemifyFavicon(GURL url) {
+  if (!url.SchemeIs(content::kChromeUIScheme)) {
+    return false;
+  }
+  return url.host_piece() != chrome::kChromeUIAppLauncherPageHost &&
+         url.host_piece() != chrome::kChromeUIHelpHost &&
+         url.host_piece() != chrome::kChromeUIVersionHost &&
+         url.host_piece() != chrome::kChromeUINetExportHost &&
+         url.host_piece() != chrome::kChromeUINewTabHost &&
+         url.host_piece() != password_manager::kChromeUIPasswordManagerHost;
+}
+
 bool ShouldThemifyFaviconForEntry(content::NavigationEntry* entry) {
   const GURL& virtual_url = entry->GetVirtualURL();
   const GURL& actual_url = entry->GetURL();
 
-  if (virtual_url.SchemeIs(content::kChromeUIScheme) &&
-      virtual_url.host_piece() != chrome::kChromeUIAppLauncherPageHost &&
-      virtual_url.host_piece() != chrome::kChromeUIHelpHost &&
-      virtual_url.host_piece() != chrome::kChromeUIVersionHost &&
-      virtual_url.host_piece() != chrome::kChromeUINetExportHost &&
-      virtual_url.host_piece() != chrome::kChromeUINewTabHost &&
-      virtual_url.host_piece() !=
-          password_manager::kChromeUIPasswordManagerHost) {
+  if (ShouldThemifyFavicon(virtual_url)) {
     return true;
   }
 

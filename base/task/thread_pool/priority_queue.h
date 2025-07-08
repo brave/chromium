@@ -5,6 +5,7 @@
 #ifndef BASE_TASK_THREAD_POOL_PRIORITY_QUEUE_H_
 #define BASE_TASK_THREAD_POOL_PRIORITY_QUEUE_H_
 
+#include <array>
 #include <functional>
 #include <memory>
 
@@ -74,6 +75,8 @@ class BASE_EXPORT PriorityQueue {
   // destroyed; needed to prevent memory leaks caused by a reference cycle
   // (TaskSource -> Task -> TaskRunner -> TaskSource...) during test teardown.
   void EnableFlushTaskSourcesOnDestroyForTesting();
+
+  void swap(PriorityQueue& other);
 
  private:
   // A class combining a TaskSource and the TaskSourceSortKey that determines

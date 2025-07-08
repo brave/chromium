@@ -23,7 +23,6 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_nss_types.h"
 #include "net/base/net_errors.h"
@@ -34,7 +33,7 @@
 #include "net/third_party/mozilla_security_manager/nsNSSCertificateDB.h"
 #include "net/third_party/mozilla_security_manager/nsPKCS12Blob.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "crypto/chaps_support.h"
 #endif
 
@@ -76,10 +75,10 @@ class CertNotificationForwarder : public NSSCertDatabase::Observer {
   raw_ptr<CertDatabase> cert_db_;
 };
 
-// TODO(https://crbug.com/1412591): once the other IsUntrusted impl is deleted,
+// TODO(crbug.com/40890963): once the other IsUntrusted impl is deleted,
 // rename this.
 bool IsUntrustedUsingTrustStore(const CERTCertificate* cert,
-                                CertificateTrust trust) {
+                                bssl::CertificateTrust trust) {
   if (trust.IsDistrusted()) {
     return true;
   }
@@ -238,9 +237,10 @@ int NSSCertDatabase::ImportFromPKCS12(
   return result;
 }
 
+// static
 int NSSCertDatabase::ExportToPKCS12(const ScopedCERTCertificateList& certs,
                                     const std::u16string& password,
-                                    std::string* output) const {
+                                    std::string* output) {
   return psm::nsPKCS12Blob_Export(output, certs, password);
 }
 
@@ -273,11 +273,11 @@ CERTCertificate* NSSCertDatabase::FindRootInList(
 int NSSCertDatabase::ImportUserCert(const std::string& data) {
   ScopedCERTCertificateList certificates =
       x509_util::CreateCERTCertificateListFromBytes(
-          data.c_str(), data.size(), net::X509Certificate::FORMAT_AUTO);
+          base::as_byte_span(data), net::X509Certificate::FORMAT_AUTO);
   if (certificates.empty())
     return ERR_CERT_INVALID;
 
-  int result = psm::ImportUserCert(certificates[0].get());
+  int result = psm::ImportUserCert(certificates[0].get(), GetPublicSlot());
 
   if (result == OK) {
     NotifyObserversClientCertStoreChanged();
@@ -287,7 +287,7 @@ int NSSCertDatabase::ImportUserCert(const std::string& data) {
 }
 
 int NSSCertDatabase::ImportUserCert(CERTCertificate* cert) {
-  int result = psm::ImportUserCert(cert);
+  int result = psm::ImportUserCert(cert, GetPublicSlot());
 
   if (result == OK) {
     NotifyObserversClientCertStoreChanged();
@@ -486,7 +486,7 @@ bool NSSCertDatabase::IsHardwareBacked(const CERTCertificate* cert) {
   if (!slot)
     return false;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
   // For keys in Chaps, it's possible that they are truly hardware backed, or
   // they can be software-backed, such as if the creator requested it, or if the
   // TPM does not support the key algorithm. Chaps sets a kKeyInSoftware
@@ -555,7 +555,6 @@ NSSCertDatabase::CertInfoList NSSCertDatabase::ListCertsInfoImpl(
     // ListCertsInfo call is not expensive. If that ever changes this might
     // need to be rethought.
     TrustStoreNSS trust_store_nss(
-        TrustStoreNSS::kIgnoreSystemTrust,
         slot ? TrustStoreNSS::UserSlotTrustSetting(
                    crypto::ScopedPK11Slot(PK11_ReferenceSlot(slot.get())))
              : TrustStoreNSS::UseTrustFromAllUserSlots());

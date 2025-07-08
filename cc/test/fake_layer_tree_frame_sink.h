@@ -23,7 +23,6 @@
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gles2_interface.h"
-#include "components/viz/test/test_gpu_memory_buffer_manager.h"
 #include "components/viz/test/test_raster_interface.h"
 
 namespace viz {
@@ -100,9 +99,9 @@ class FakeLayerTreeFrameSink : public LayerTreeFrameSink {
                              bool hit_test_data_changed) override;
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           FrameSkippedReason reason) override;
-  void DidAllocateSharedBitmap(base::ReadOnlySharedMemoryRegion region,
-                               const viz::SharedBitmapId& id) override;
-  void DidDeleteSharedBitmap(const viz::SharedBitmapId& id) override;
+  std::unique_ptr<LayerContext> CreateLayerContext(
+      LayerTreeHostImpl& host_impl) override;
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override {}
 
   viz::CompositorFrame* last_sent_frame() { return last_sent_frame_.get(); }
   size_t num_sent_frames() { return num_sent_frames_; }
@@ -114,10 +113,6 @@ class FakeLayerTreeFrameSink : public LayerTreeFrameSink {
   }
 
   gfx::Rect last_swap_rect() const { return last_swap_rect_; }
-
-  const std::vector<viz::SharedBitmapId>& shared_bitmaps() const {
-    return shared_bitmaps_;
-  }
 
   void ReturnResourcesHeldByParent();
 
@@ -132,9 +127,6 @@ class FakeLayerTreeFrameSink : public LayerTreeFrameSink {
       scoped_refptr<viz::RasterContextProvider> context_provider,
       scoped_refptr<viz::RasterContextProvider> worker_context_provider);
 
-  viz::TestGpuMemoryBufferManager test_gpu_memory_buffer_manager_;
-
-  std::vector<viz::SharedBitmapId> shared_bitmaps_;
   std::unique_ptr<viz::CompositorFrame> last_sent_frame_;
   size_t num_sent_frames_ = 0;
   std::vector<viz::TransferableResource> resources_held_by_parent_;

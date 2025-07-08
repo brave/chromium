@@ -7,10 +7,6 @@
 #include "base/check.h"
 #import "skia/ext/skia_utils_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @interface TitlebarBackgroundView ()
 - (void)setColor:(NSColor*)color inactiveColor:(NSColor*)inactiveColor;
 @end
@@ -57,10 +53,11 @@
   [[NSBezierPath bezierPathWithRoundedRect:roundedRect
                                    xRadius:cornerRadius
                                    yRadius:cornerRadius] addClip];
-  if ([[self window] isMainWindow] || [[self window] isKeyWindow])
+  if ([[self window] isMainWindow] || [[self window] isKeyWindow]) {
     [_color set];
-  else
+  } else {
     [_inactiveColor set];
+  }
   NSRectFill(rect);
 }
 

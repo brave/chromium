@@ -13,6 +13,8 @@
 #include "chrome/browser/ash/login/oobe_configuration.h"
 #include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ui/webui/ash/login/base_webui_handler.h"
+#include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
+#include "chrome/browser/ui/webui/ash/login/welcome_screen_handler.h"
 #include "ui/events/event_source.h"
 
 namespace ui {
@@ -21,7 +23,23 @@ class EventSink;
 
 namespace ash {
 
-class CoreOobeView : public base::SupportsWeakPtr<CoreOobeView> {
+class PriorityScreenChecker {
+ public:
+  static bool IsPriorityScreen(OobeScreenId screen_id) {
+    for (const auto& priority_screen : priority_screens_) {
+      if (screen_id == priority_screen) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  constexpr static StaticOobeScreenId priority_screens_[] = {
+      WelcomeView::kScreenId, UserCreationView::kScreenId};
+};
+
+class CoreOobeView {
  public:
   // Possible Initialization States of the UI
   enum class UiState {
@@ -37,7 +55,7 @@ class CoreOobeView : public base::SupportsWeakPtr<CoreOobeView> {
   // (kFullyInitialized). It is the responsibility of the client (CoreOobe) to
   // ensure that this invariant is met. Otherwise it will CHECK().
   virtual void ShowScreenWithData(const OobeScreenId& screen,
-                                  absl::optional<base::Value::Dict> data) = 0;
+                                  std::optional<base::Value::Dict> data) = 0;
   virtual void UpdateOobeConfiguration() = 0;
   virtual void ReloadContent() = 0;
   virtual void ForwardCancel() = 0;
@@ -56,15 +74,14 @@ class CoreOobeView : public base::SupportsWeakPtr<CoreOobeView> {
   virtual void SetOsVersionLabelText(const std::string& label_text) = 0;
   virtual void SetBluetoothDeviceInfo(const std::string& bluetooth_name) = 0;
 
-  // Whether the screen being checked belongs to the group of screens that are
-  // prioritized during OOBE's initialization.
-  virtual bool IsPriorityScreen(const std::string& screen_name) = 0;
+  // Gets a WeakPtr to the instance.
+  virtual base::WeakPtr<CoreOobeView> AsWeakPtr() = 0;
 };
 
 // The core handler for Javascript messages related to the "oobe" view.
-class CoreOobeHandler : public BaseWebUIHandler,
-                        public CoreOobeView,
-                        public ui::EventSource {
+class CoreOobeHandler final : public BaseWebUIHandler,
+                              public CoreOobeView,
+                              public ui::EventSource {
  public:
   CoreOobeHandler();
   CoreOobeHandler(const CoreOobeHandler&) = delete;
@@ -77,13 +94,16 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void DeclareJSCallbacks() override;
   void GetAdditionalParameters(base::Value::Dict* dict) override;
 
+  // CoreOobeView
+  base::WeakPtr<CoreOobeView> AsWeakPtr() override;
+
  private:
   // ui::EventSource implementation:
   ui::EventSink* GetEventSink() override;
 
   // ---- BEGIN --- CoreOobeView
   void ShowScreenWithData(const OobeScreenId& screen,
-                          absl::optional<base::Value::Dict> data) override;
+                          std::optional<base::Value::Dict> data) override;
   void UpdateOobeConfiguration() override;
   void ReloadContent() override;
   void ForwardCancel() override;
@@ -99,7 +119,6 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void SetVirtualKeyboardShown(bool shown) override;
   void SetOsVersionLabelText(const std::string& label_text) override;
   void SetBluetoothDeviceInfo(const std::string& bluetooth_name) override;
-  bool IsPriorityScreen(const std::string& screen_name) override;
   // ---- END --- CoreOobeView
 
   // ---- Handlers for JS WebUI messages.
@@ -119,6 +138,8 @@ class CoreOobeHandler : public BaseWebUIHandler,
 
   // Initialization state that is kept in sync with |CoreOobe|.
   UiState ui_init_state_ = UiState::kUninitialized;
+
+  base::WeakPtrFactory<CoreOobeView> weak_ptr_factory_{this};
 };
 
 }  // namespace ash

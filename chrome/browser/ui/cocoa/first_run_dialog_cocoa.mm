@@ -27,10 +27,6 @@
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @interface FirstRunDialogController (PrivateMethods)
 // Show the dialog.
 - (void)show;
@@ -73,7 +69,8 @@ void ShowFirstRunModal() {
   // If the dialog asked the user to opt-in for stats and crash reporting,
   // record the decision and enable the crash reporter if appropriate.
   bool consent_given = [dialog isStatsReportingEnabled];
-  ChangeMetricsReportingState(consent_given);
+  ChangeMetricsReportingState(
+      consent_given, ChangeMetricsReportingStateCalledFrom::kUiFirstRun);
 
   // If selected, set as default browser. Skip in automated tests so that an OS
   // dialog confirming the default browser choice isn't left on screen.
@@ -84,13 +81,6 @@ void ShowFirstRunModal() {
     bool success = shell_integration::SetAsDefaultBrowser();
     DCHECK(success);
   }
-}
-
-// True when the stats checkbox should be checked by default. This is only
-// the case when the canary is running.
-bool StatsCheckboxDefault() {
-  // Opt-in means the checkbox is unchecked by default.
-  return !first_run::IsMetricsReportingOptIn();
 }
 
 }  // namespace
@@ -108,8 +98,7 @@ void ShowFirstRunDialogCocoa() {
 }
 
 - (instancetype)init {
-  _viewController = [[FirstRunDialogViewController alloc]
-      initWithStatsCheckboxInitiallyChecked:StatsCheckboxDefault()];
+  _viewController = [[FirstRunDialogViewController alloc] init];
 
   // Create the content view controller (and the content view) *before* the
   // window, so that we can find out what the content view's frame is supposed

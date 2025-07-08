@@ -4,30 +4,15 @@
 
 #include "chrome/browser/metrics/tab_stats/tab_stats_data_store.h"
 
-#include <algorithm>
 #include <utility>
 
 #include "base/containers/contains.h"
-#include "base/notreached.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents.h"
 
 namespace metrics {
-
-namespace {
-
-// Computes a new, unique, TabID.
-TabStatsDataStore::TabID GetNewTabId() {
-  static TabStatsDataStore::TabID web_contents_id = 0U;
-  return ++web_contents_id;
-}
-
-}  // namespace
 
 TabStatsDataStore::TabsStats::TabsStats()
     : total_tab_count(0U),
@@ -62,6 +47,13 @@ TabStatsDataStore::TabStatsDataStore(PrefService* pref_service)
   tab_stats_.tab_discard_counts[static_cast<size_t>(
       LifecycleUnitDiscardReason::PROACTIVE)] =
       pref_service->GetInteger(::prefs::kTabStatsDiscardsProactive);
+  tab_stats_.tab_discard_counts[static_cast<size_t>(
+      LifecycleUnitDiscardReason::SUGGESTED)] =
+      pref_service->GetInteger(::prefs::kTabStatsDiscardsSuggested);
+  tab_stats_.tab_discard_counts[static_cast<size_t>(
+      LifecycleUnitDiscardReason::FROZEN_WITH_GROWING_MEMORY)] =
+      pref_service->GetInteger(
+          ::prefs::kTabStatsDiscardsFrozenWithGrowingMemory);
   tab_stats_.tab_reload_counts[static_cast<size_t>(
       LifecycleUnitDiscardReason::EXTERNAL)] =
       pref_service->GetInteger(::prefs::kTabStatsReloadsExternal);
@@ -71,9 +63,16 @@ TabStatsDataStore::TabStatsDataStore(PrefService* pref_service)
   tab_stats_.tab_reload_counts[static_cast<size_t>(
       LifecycleUnitDiscardReason::PROACTIVE)] =
       pref_service->GetInteger(::prefs::kTabStatsReloadsProactive);
+  tab_stats_.tab_reload_counts[static_cast<size_t>(
+      LifecycleUnitDiscardReason::SUGGESTED)] =
+      pref_service->GetInteger(::prefs::kTabStatsReloadsSuggested);
+  tab_stats_.tab_reload_counts[static_cast<size_t>(
+      LifecycleUnitDiscardReason::FROZEN_WITH_GROWING_MEMORY)] =
+      pref_service->GetInteger(
+          ::prefs::kTabStatsReloadsFrozenWithGrowingMemory);
 }
 
-TabStatsDataStore::~TabStatsDataStore() {}
+TabStatsDataStore::~TabStatsDataStore() = default;
 
 void TabStatsDataStore::OnWindowAdded() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -90,71 +89,21 @@ void TabStatsDataStore::OnWindowRemoved() {
 void TabStatsDataStore::OnTabAdded(content::WebContents* web_contents) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(web_contents);
-  DCHECK(!base::Contains(existing_tabs_, web_contents));
   ++tab_stats_.total_tab_count;
   RecordSamplingMetaData();
-  TabID tab_id = GetNewTabId();
-  existing_tabs_.insert(std::make_pair(web_contents, tab_id));
-  for (auto& interval_map : interval_maps_) {
-    AddTabToIntervalMap(web_contents, tab_id,
-                        /* existed_before_interval */ false,
-                        interval_map.get());
-  }
   UpdateTotalTabCountMaxIfNeeded();
 }
 
 void TabStatsDataStore::OnTabRemoved(content::WebContents* web_contents) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(web_contents);
-  DCHECK(base::Contains(existing_tabs_, web_contents));
   DCHECK_GT(tab_stats_.total_tab_count, 0U);
   --tab_stats_.total_tab_count;
   RecordSamplingMetaData();
-  TabID web_contents_id = GetTabID(web_contents);
-  existing_tabs_.erase(web_contents);
-  for (auto& interval_map : interval_maps_) {
-    auto iter = interval_map->find(web_contents_id);
-    DCHECK(iter != interval_map->end());
-    iter->second.exists_currently = false;
-  }
-}
-
-void TabStatsDataStore::OnTabReplaced(content::WebContents* old_contents,
-                                      content::WebContents* new_contents) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(old_contents);
-  DCHECK(new_contents);
-  DCHECK(base::Contains(existing_tabs_, old_contents));
-  DCHECK_GT(tab_stats_.total_tab_count, 0U);
-  TabID old_contents_id = existing_tabs_[old_contents];
-  existing_tabs_.erase(old_contents);
-  existing_tabs_[new_contents] = old_contents_id;
-}
-
-void TabStatsDataStore::OnTabInteraction(content::WebContents* web_contents) {
-  DCHECK(base::Contains(existing_tabs_, web_contents));
-  TabID web_contents_id = GetTabID(web_contents);
-  // Mark the tab as interacted with in all the intervals.
-  for (auto& interval_map : interval_maps_) {
-    DCHECK(base::Contains(*interval_map, web_contents_id));
-    (*interval_map)[web_contents_id].interacted_during_interval = true;
-  }
-}
-
-void TabStatsDataStore::OnTabIsAudibleChanged(
-    content::WebContents* web_contents) {
-  if (web_contents->IsCurrentlyAudible())
-    OnTabAudibleOrVisible(web_contents);
 }
 
 void TabStatsDataStore::RecordSamplingMetaData() {
   tab_number_sample_meta_data_.Set(tab_stats_.total_tab_count);
-}
-
-void TabStatsDataStore::OnTabVisibilityChanged(
-    content::WebContents* web_contents) {
-  if (web_contents->GetVisibility() == content::Visibility::VISIBLE)
-    OnTabAudibleOrVisible(web_contents);
 }
 
 void TabStatsDataStore::UpdateMaxTabsPerWindowIfNeeded(size_t value) {
@@ -177,30 +126,10 @@ void TabStatsDataStore::ResetMaximumsToCurrentState() {
 
   // Iterates over the list of browsers to find the one with the maximum number
   // of tabs opened.
-  BrowserList* browser_list = BrowserList::GetInstance();
-  for (Browser* browser : *browser_list) {
-    UpdateMaxTabsPerWindowIfNeeded(
-        static_cast<size_t>(browser->tab_strip_model()->count()));
-  }
-}
-
-TabStatsDataStore::TabsStateDuringIntervalMap*
-TabStatsDataStore::AddInterval() {
-  // Creates the interval and initialize its data.
-  std::unique_ptr<TabsStateDuringIntervalMap> interval_map =
-      std::make_unique<TabsStateDuringIntervalMap>();
-  ResetIntervalData(interval_map.get());
-  interval_maps_.emplace_back(std::move(interval_map));
-  return interval_maps_.back().get();
-}
-
-void TabStatsDataStore::ResetIntervalData(
-    TabsStateDuringIntervalMap* interval_map) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(interval_map);
-  interval_map->clear();
-  for (auto& iter : existing_tabs_)
-    AddTabToIntervalMap(iter.first, GetTabID(iter.first), true, interval_map);
+  TabStatsTracker::TabStripInterface::ForEach(
+      [this](const TabStatsTracker::TabStripInterface& tab_strip) {
+        UpdateMaxTabsPerWindowIfNeeded(tab_strip.GetTabCount());
+      });
 }
 
 void TabStatsDataStore::OnTabDiscardStateChange(
@@ -231,6 +160,21 @@ void TabStatsDataStore::OnTabDiscardStateChange(
         pref_service_->SetInteger(::prefs::kTabStatsReloadsProactive, count);
       }
       break;
+    case LifecycleUnitDiscardReason::SUGGESTED:
+      if (is_discarded) {
+        pref_service_->SetInteger(::prefs::kTabStatsDiscardsSuggested, count);
+      } else {
+        pref_service_->SetInteger(::prefs::kTabStatsReloadsSuggested, count);
+      }
+      break;
+    case LifecycleUnitDiscardReason::FROZEN_WITH_GROWING_MEMORY:
+      if (is_discarded) {
+        pref_service_->SetInteger(
+            ::prefs::kTabStatsDiscardsFrozenWithGrowingMemory, count);
+      } else {
+        pref_service_->SetInteger(
+            ::prefs::kTabStatsReloadsFrozenWithGrowingMemory, count);
+      }
   }
 }
 
@@ -240,16 +184,15 @@ void TabStatsDataStore::ClearTabDiscardAndReloadCounts() {
   pref_service_->SetInteger(::prefs::kTabStatsDiscardsExternal, 0);
   pref_service_->SetInteger(::prefs::kTabStatsDiscardsUrgent, 0);
   pref_service_->SetInteger(::prefs::kTabStatsDiscardsProactive, 0);
+  pref_service_->SetInteger(::prefs::kTabStatsDiscardsSuggested, 0);
+  pref_service_->SetInteger(::prefs::kTabStatsDiscardsFrozenWithGrowingMemory,
+                            0);
   pref_service_->SetInteger(::prefs::kTabStatsReloadsExternal, 0);
   pref_service_->SetInteger(::prefs::kTabStatsReloadsUrgent, 0);
   pref_service_->SetInteger(::prefs::kTabStatsReloadsProactive, 0);
-}
-
-absl::optional<TabStatsDataStore::TabID> TabStatsDataStore::GetTabIDForTesting(
-    content::WebContents* web_contents) {
-  if (!base::Contains(existing_tabs_, web_contents))
-    return absl::nullopt;
-  return GetTabID(web_contents);
+  pref_service_->SetInteger(::prefs::kTabStatsReloadsSuggested, 0);
+  pref_service_->SetInteger(::prefs::kTabStatsReloadsFrozenWithGrowingMemory,
+                            0);
 }
 
 void TabStatsDataStore::UpdateTotalTabCountMaxIfNeeded() {
@@ -268,42 +211,6 @@ void TabStatsDataStore::UpdateWindowCountMaxIfNeeded() {
   tab_stats_.window_count_max = tab_stats_.window_count;
   pref_service_->SetInteger(::prefs::kTabStatsWindowCountMax,
                             tab_stats_.window_count_max);
-}
-
-void TabStatsDataStore::AddTabToIntervalMap(
-    content::WebContents* web_contents,
-    TabID tab_id,
-    bool existed_before_interval,
-    TabsStateDuringIntervalMap* interval_map) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(interval_map);
-  DCHECK(web_contents);
-  bool visible_or_audible =
-      web_contents->GetVisibility() == content::Visibility::VISIBLE ||
-      web_contents->IsCurrentlyAudible();
-
-  auto& tab_state = (*interval_map)[tab_id];
-  tab_state.existed_before_interval = existed_before_interval;
-  tab_state.exists_currently = true;
-  tab_state.visible_or_audible_during_interval = visible_or_audible;
-  tab_state.interacted_during_interval = false;
-}
-
-TabStatsDataStore::TabID TabStatsDataStore::GetTabID(
-    content::WebContents* web_contents) {
-  DCHECK(base::Contains(existing_tabs_, web_contents));
-  return existing_tabs_[web_contents];
-}
-
-void TabStatsDataStore::OnTabAudibleOrVisible(
-    content::WebContents* web_contents) {
-  DCHECK(base::Contains(existing_tabs_, web_contents));
-  TabID web_contents_id = GetTabID(web_contents);
-  // Mark the tab as visible or audible in all the intervals.
-  for (auto& interval_map : interval_maps_) {
-    DCHECK(base::Contains(*interval_map, web_contents_id));
-    (*interval_map)[web_contents_id].visible_or_audible_during_interval = true;
-  }
 }
 
 }  // namespace metrics

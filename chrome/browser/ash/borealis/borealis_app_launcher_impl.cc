@@ -3,16 +3,20 @@
 // found in the LICENSE file.
 #include "chrome/browser/ash/borealis/borealis_app_launcher_impl.h"
 
+#include "ash/constants/ash_features.h"
 #include "base/functional/bind.h"
 #include "chrome/browser/ash/borealis/borealis_app_launcher.h"
 #include "chrome/browser/ash/borealis/borealis_context.h"
 #include "chrome/browser/ash/borealis/borealis_context_manager.h"
 #include "chrome/browser/ash/borealis/borealis_features.h"
 #include "chrome/browser/ash/borealis/borealis_service.h"
+#include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/views/borealis/borealis_installer_view.h"
+#include "chrome/browser/ui/views/borealis/borealis_launch_error_dialog.h"
 #include "chrome/browser/ui/views/borealis/borealis_splash_screen_view.h"
+#include "chrome/browser/ui/webui/ash/borealis_installer/borealis_installer_dialog.h"
+#include "chrome/browser/ui/webui/ash/borealis_motd/borealis_motd_dialog.h"
 
 namespace borealis {
 BorealisAppLauncherImpl::~BorealisAppLauncherImpl() = default;
@@ -21,28 +25,46 @@ BorealisAppLauncherImpl::BorealisAppLauncherImpl(Profile* profile)
     : profile_(profile) {}
 
 void BorealisAppLauncherImpl::Launch(std::string app_id,
+                                     BorealisLaunchSource source,
                                      OnLaunchedCallback callback) {
-  Launch(std::move(app_id), {}, std::move(callback));
+  Launch(std::move(app_id), {}, std::move(source), std::move(callback));
 }
 
 void BorealisAppLauncherImpl::Launch(std::string app_id,
                                      const std::vector<std::string>& args,
+                                     BorealisLaunchSource source,
                                      OnLaunchedCallback callback) {
-  if (!borealis::BorealisService::GetForProfile(profile_)
+  borealis::MaybeShowBorealisMOTDDialog(
+      base::BindOnce(&BorealisAppLauncherImpl::LaunchAfterMOTD,
+                     weak_factory_.GetWeakPtr(), std::move(app_id),
+                     std::move(args), std::move(source), std::move(callback)),
+      profile_);
+}
+
+void BorealisAppLauncherImpl::LaunchAfterMOTD(
+    std::string app_id,
+    const std::vector<std::string>& args,
+    BorealisLaunchSource source,
+    OnLaunchedCallback callback) {
+  if (!borealis::BorealisServiceFactory::GetForProfile(profile_)
            ->Features()
            .IsEnabled()) {
-    borealis::ShowBorealisInstallerView(profile_);
+    ash::BorealisInstallerDialog::Show(profile_);
+    RecordBorealisInstallSourceHistogram(source);
     std::move(callback).Run(LaunchResult::kSuccess);
     return;
   }
-  if (!borealis::BorealisService::GetForProfile(profile_)
+  if (!borealis::BorealisServiceFactory::GetForProfile(profile_)
            ->ContextManager()
            .IsRunning()) {
     borealis::ShowBorealisSplashScreenView(profile_);
   }
-  BorealisService::GetForProfile(profile_)->ContextManager().StartBorealis(
-      base::BindOnce(
-          [](std::string app_id, const std::vector<std::string>& args,
+  RecordBorealisLaunchSourceHistogram(source);
+  BorealisServiceFactory::GetForProfile(profile_)
+      ->ContextManager()
+      .StartBorealis(base::BindOnce(
+          [](Profile* profile, std::string app_id,
+             const std::vector<std::string>& args,
              BorealisAppLauncherImpl::OnLaunchedCallback callback,
              BorealisContextManager::ContextOrFailure result) {
             if (!result.has_value()) {
@@ -52,13 +74,15 @@ void BorealisAppLauncherImpl::Launch(std::string app_id,
               // If splash screen is showing and borealis did not launch
               // properly, close it.
               borealis::CloseBorealisSplashScreenView();
+              views::borealis::ShowBorealisLaunchErrorView(
+                  profile, result.error().error());
               std::move(callback).Run(LaunchResult::kError);
               return;
             }
             BorealisAppLauncher::Launch(*result.value(), std::move(app_id),
                                         std::move(args), std::move(callback));
           },
-          std::move(app_id), std::move(args), std::move(callback)));
+          profile_, std::move(app_id), std::move(args), std::move(callback)));
 }
 
 }  // namespace borealis

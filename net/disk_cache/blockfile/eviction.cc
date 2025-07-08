@@ -155,11 +155,11 @@ void Eviction::TrimCache(bool empty) {
   return;
 }
 
-void Eviction::UpdateRank(EntryImpl* entry, bool modified) {
+void Eviction::UpdateRank(EntryImpl* entry) {
   if (new_eviction_)
-    return UpdateRankV2(entry, modified);
+    return UpdateRankV2(entry);
 
-  rankings_->UpdateRank(entry->rankings(), modified, GetListForEntry(entry));
+  rankings_->UpdateRank(entry->rankings(), GetListForEntry(entry));
 }
 
 void Eviction::OnOpenEntry(EntryImpl* entry) {
@@ -171,7 +171,7 @@ void Eviction::OnCreateEntry(EntryImpl* entry) {
   if (new_eviction_)
     return OnCreateEntryV2(entry);
 
-  rankings_->Insert(entry->rankings(), true, GetListForEntry(entry));
+  rankings_->Insert(entry->rankings(), GetListForEntry(entry));
 }
 
 void Eviction::OnDoomEntry(EntryImpl* entry) {
@@ -284,7 +284,7 @@ bool Eviction::EvictEntry(CacheRankingsBlock* node, bool empty,
     rankings_->Remove(entry->rankings(), GetListForEntryV2(entry.get()), true);
     info->state = ENTRY_EVICTED;
     entry->entry()->Store();
-    rankings_->Insert(entry->rankings(), true, Rankings::DELETED);
+    rankings_->Insert(entry->rankings(), Rankings::DELETED);
   }
   if (!empty)
     backend_->OnEvent(Stats::TRIM_ENTRY);
@@ -300,8 +300,7 @@ void Eviction::TrimCacheV2(bool empty) {
   trimming_ = true;
   TimeTicks start = TimeTicks::Now();
 
-  const int kListsToSearch = 3;
-  Rankings::ScopedRankingsBlock next[kListsToSearch];
+  std::array<Rankings::ScopedRankingsBlock, kListsToSearch> next;
   int list = Rankings::LAST_ELEMENT;
 
   // Get a node from each list.
@@ -371,8 +370,8 @@ void Eviction::TrimCacheV2(bool empty) {
   return;
 }
 
-void Eviction::UpdateRankV2(EntryImpl* entry, bool modified) {
-  rankings_->UpdateRank(entry->rankings(), modified, GetListForEntryV2(entry));
+void Eviction::UpdateRankV2(EntryImpl* entry) {
+  rankings_->UpdateRank(entry->rankings(), GetListForEntryV2(entry));
 }
 
 void Eviction::OnOpenEntryV2(EntryImpl* entry) {
@@ -386,11 +385,11 @@ void Eviction::OnOpenEntryV2(EntryImpl* entry) {
     // We may need to move this to a new list.
     if (1 == info->reuse_count) {
       rankings_->Remove(entry->rankings(), Rankings::NO_USE, true);
-      rankings_->Insert(entry->rankings(), false, Rankings::LOW_USE);
+      rankings_->Insert(entry->rankings(), Rankings::LOW_USE);
       entry->entry()->Store();
     } else if (kHighUse == info->reuse_count) {
       rankings_->Remove(entry->rankings(), Rankings::LOW_USE, true);
-      rankings_->Insert(entry->rankings(), false, Rankings::HIGH_USE);
+      rankings_->Insert(entry->rankings(), Rankings::HIGH_USE);
       entry->entry()->Store();
     }
   }
@@ -419,10 +418,10 @@ void Eviction::OnCreateEntryV2(EntryImpl* entry) {
       break;
     };
     default:
-      NOTREACHED();
+      DUMP_WILL_BE_NOTREACHED();
   }
 
-  rankings_->Insert(entry->rankings(), true, GetListForEntryV2(entry));
+  rankings_->Insert(entry->rankings(), GetListForEntryV2(entry));
 }
 
 void Eviction::OnDoomEntryV2(EntryImpl* entry) {
@@ -440,7 +439,7 @@ void Eviction::OnDoomEntryV2(EntryImpl* entry) {
 
   info->state = ENTRY_DOOMED;
   entry->entry()->Store();
-  rankings_->Insert(entry->rankings(), true, Rankings::DELETED);
+  rankings_->Insert(entry->rankings(), Rankings::DELETED);
 }
 
 void Eviction::OnDestroyEntryV2(EntryImpl* entry) {
@@ -520,7 +519,8 @@ bool Eviction::NodeIsOldEnough(CacheRankingsBlock* node, int list) {
   return (Time::Now() - used).InHours() > kTargetTime * multiplier;
 }
 
-int Eviction::SelectListByLength(Rankings::ScopedRankingsBlock* next) {
+int Eviction::SelectListByLength(
+    std::array<Rankings::ScopedRankingsBlock, kListsToSearch>& next) {
   int data_entries = header_->num_entries -
                      header_->lru.sizes[Rankings::DELETED];
   // Start by having each list to be roughly the same size.

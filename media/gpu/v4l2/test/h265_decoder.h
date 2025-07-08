@@ -6,12 +6,13 @@
 #ifndef MEDIA_GPU_V4L2_TEST_H265_DECODER_H_
 #define MEDIA_GPU_V4L2_TEST_H265_DECODER_H_
 
-#include "media/gpu/v4l2/test/video_decoder.h"
+#include <queue>
 
 #include "base/memory/raw_ref.h"
 #include "media/base/video_codecs.h"
 #include "media/gpu/v4l2/test/h265_dpb.h"
-#include "media/video/h265_parser.h"
+#include "media/gpu/v4l2/test/video_decoder.h"
+#include "media/parsers/h265_parser.h"
 
 namespace media {
 namespace v4l2_test {
@@ -34,7 +35,8 @@ class H265Decoder : public VideoDecoder {
                                        std::vector<uint8_t>& y_plane,
                                        std::vector<uint8_t>& u_plane,
                                        std::vector<uint8_t>& v_plane,
-                                       gfx::Size& size) override;
+                                       gfx::Size& size,
+                                       BitDepth& bit_depth) override;
 
  private:
   H265Decoder(std::unique_ptr<V4L2IoctlShim> v4l2_ioctl,
@@ -71,6 +73,7 @@ class H265Decoder : public VideoDecoder {
                           // properly (e.g. allocate buffers with the new
                           // resolution).
     kRanOutOfStreamData,  // Need more stream data to proceed.
+    kOk,
   };
 
   // Output all pictures in DPB that have not been outputted yet.
@@ -114,6 +117,9 @@ class H265Decoder : public VideoDecoder {
                         const H265PPS* pps,
                         const H265SliceHeader* slice_hdr);
 
+  // Notifies client that a picture is ready for output.
+  bool OutputPic(scoped_refptr<H265Picture> pic);
+
   // Performs DPB management operations for |curr_pic_| by removing no longer
   // needed entries from the DPB and outputting pictures from the DPB. |sps|
   // should be the corresponding SPS for |curr_pic_|.
@@ -124,8 +130,20 @@ class H265Decoder : public VideoDecoder {
   // reference picture marking, DPB management and picture output.
   bool StartNewFrame(const H265SliceHeader* slice_hdr);
 
+  // Returns all CAPTURE buffer indexes that can be reused
+  // for VIDIOC_QBUF ioctl call.
+  std::set<uint32_t> GetReusableReferenceSlots(
+      const MmappedBuffer& buffer,
+      const std::set<uint32_t>& queued_buffer_ids);
+
+  // Commits all pending data for HW decoder and starts HW decoder.
+  bool DecodePicture();
+
+  // Called after we are done processing |pic|.
+  void FinishPicture(scoped_refptr<H265Picture> pic);
+
   // All data for a frame received, process it and decode.
-  bool FinishPrevFrameIfPresent();
+  void FinishPrevFrameIfPresent();
 
   // This is the main method used for running the decode loop. It will try to
   // decode all frames in the stream until there is a configuration change,
@@ -143,6 +161,8 @@ class H265Decoder : public VideoDecoder {
   // Picture currently being processed/decoded.
   scoped_refptr<H265Picture> curr_pic_;
 
+  int global_pic_count_ = 0;
+
   // Used to identify first picture in decoding order
   // or first picture that follows an EOS NALU.
   bool first_picture_ = true;
@@ -152,6 +172,27 @@ class H265Decoder : public VideoDecoder {
   // Global state values needed for decoding. See spec.
   scoped_refptr<H265Picture> prev_tid0_pic_;
   int max_pic_order_cnt_lsb_;
+  bool curr_delta_poc_msb_present_flag_[kMaxDpbSize];
+  bool foll_delta_poc_msb_present_flag_[kMaxDpbSize];
+  int num_poc_st_curr_before_;
+  int num_poc_st_curr_after_;
+  int num_poc_st_foll_;
+  int num_poc_lt_curr_;
+  int num_poc_lt_foll_;
+  int poc_st_curr_before_[kMaxDpbSize];
+  int poc_st_curr_after_[kMaxDpbSize];
+  int poc_st_foll_[kMaxDpbSize];
+  int poc_lt_curr_[kMaxDpbSize];
+  int poc_lt_foll_[kMaxDpbSize];
+  H265Picture::Vector ref_pic_list0_;
+  H265Picture::Vector ref_pic_list1_;
+  H265Picture::Vector ref_pic_set_lt_curr_;
+  H265Picture::Vector ref_pic_set_st_curr_after_;
+  H265Picture::Vector ref_pic_set_st_curr_before_;
+
+  // |ref_pic_list_| is the collection of all pictures from StCurrBefore,
+  // StCurrAfter, StFoll, LtCurr and LtFoll.
+  H265Picture::Vector ref_pic_list_;
 
   // Currently active SPS and PPS.
   int curr_sps_id_ = -1;
@@ -176,6 +217,12 @@ class H265Decoder : public VideoDecoder {
 
   // If this is true, then the entire steam has been parsed.
   bool is_stream_over_ = false;
+
+  // Checks whether |OUTPUT_queue_| is newly created at the current frame.
+  bool is_OUTPUT_queue_new_ = true;
+
+  // Stores decoded frames ready to be outputted in a queue.
+  std::queue<scoped_refptr<H265Picture>> frames_ready_to_be_outputted_;
 };
 }  // namespace v4l2_test
 }  // namespace media

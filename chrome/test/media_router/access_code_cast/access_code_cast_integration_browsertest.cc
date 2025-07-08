@@ -4,9 +4,10 @@
 
 #include "chrome/test/media_router/access_code_cast/access_code_cast_integration_browsertest.h"
 
+#include <algorithm>
+
 #include "base/auto_reset.h"
 #include "base/memory/ptr_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -21,6 +22,7 @@
 #include "chrome/browser/media/router/chrome_media_router_factory.h"
 #include "chrome/browser/media/router/discovery/access_code/access_code_cast_constants.h"
 #include "chrome/browser/media/router/discovery/access_code/access_code_cast_feature.h"
+#include "chrome/browser/media/router/discovery/access_code/access_code_cast_pref_updater_impl.h"
 #include "chrome/browser/media/router/discovery/access_code/access_code_test_util.h"
 #include "chrome/browser/media/router/discovery/media_sink_discovery_metrics.h"
 #include "chrome/browser/media/router/providers/cast/dual_media_sink_service.h"
@@ -31,6 +33,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/media_router/browser/media_router_factory.h"
 #include "components/media_router/common/test/test_helper.h"
+#include "components/performance_manager/public/features.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -42,20 +45,11 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
+#include "third_party/abseil-cpp/absl/strings/ascii.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "base/barrier_closure.h"
-#include "base/json/values_util.h"
-#include "chrome/browser/media/router/discovery/access_code/access_code_cast_pref_updater_lacros.h"
-#include "chromeos/crosapi/mojom/prefs.mojom-test-utils.h"
-#include "chromeos/crosapi/mojom/prefs.mojom.h"
-#include "chromeos/lacros/lacros_service.h"
-#else
-#include "chrome/browser/media/router/discovery/access_code/access_code_cast_pref_updater_impl.h"
-#endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ui/ash/cast_config_controller_media_router.h"
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/ash/cast_config/cast_config_controller_media_router.h"
 #endif
 
 using testing::_;
@@ -106,7 +100,10 @@ AccessCodeCastIntegrationBrowserTest::AccessCodeCastIntegrationBrowserTest()
     : url_to_intercept_(std::string(kDefaultDiscoveryEndpoint) +
                         kDiscoveryServicePath),
       mock_cast_socket_service_(nullptr, base::OnTaskRunnerDeleter(nullptr)) {
-  feature_list_.InitAndEnableFeature(features::kAccessCodeCastUI);
+  // TODO(crbug.com/323780452): Remove performance manager feature after deflake
+  feature_list_.InitAndEnableFeature(
+      performance_manager::features::
+          kBackgroundTabLoadingFromPerformanceManager);
   task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
 }
 
@@ -116,7 +113,7 @@ AccessCodeCastIntegrationBrowserTest::~AccessCodeCastIntegrationBrowserTest() =
 void AccessCodeCastIntegrationBrowserTest::SetUp() {
 // This makes sure CastDeviceCache is not initialized until after the
 // MockMediaRouter is ready. (MockMediaRouter can't be constructed yet.)
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   CastConfigControllerMediaRouter::SetMediaRouterForTest(nullptr);
 #endif
   InProcessBrowserTest::SetUp();
@@ -155,7 +152,7 @@ void AccessCodeCastIntegrationBrowserTest::OnWillCreateBrowserContextServices(
   // this to occur).
   ON_CALL(*media_router_, UnregisterMediaSinksObserver(_))
       .WillByDefault([this](MediaSinksObserver* observer) {
-        auto it = base::ranges::find(media_sinks_observers_, observer);
+        auto it = std::ranges::find(media_sinks_observers_, observer);
         if (it != media_sinks_observers_.end()) {
           media_sinks_observers_.erase(it);
         }
@@ -164,12 +161,12 @@ void AccessCodeCastIntegrationBrowserTest::OnWillCreateBrowserContextServices(
   // Handler so MockMediaRouter will respond to requests to create a route.
   // Will construct a RouteRequestResult based on the set result code and
   // then call the handler's callback, which should call the page's callback.
-  ON_CALL(*media_router_, CreateRouteInternal(_, _, _, _, _, _, _))
+  ON_CALL(*media_router_, CreateRouteInternal(_, _, _, _, _, _))
       .WillByDefault(
           [this](const MediaSource::Id& source_id, const MediaSink::Id& sink_id,
                  const url::Origin& origin, content::WebContents* web_contents,
-                 MediaRouteResponseCallback& callback, base::TimeDelta timeout,
-                 bool incognito) {
+                 MediaRouteResponseCallback& callback,
+                 base::TimeDelta timeout) {
             std::unique_ptr<RouteRequestResult> result;
             if (result_code_ == mojom::RouteRequestResultCode::OK) {
               MediaSource source(source_id);
@@ -252,11 +249,10 @@ void AccessCodeCastIntegrationBrowserTest::SetUpPrimaryAccountWithHostedDomain(
 
   switch (consent_level) {
     case signin::ConsentLevel::kSignin:
-      sync_service(profile)->SetTransportState(
-          syncer::SyncService::TransportState::PAUSED);
+      sync_service(profile)->SetPersistentAuthError();
       break;
     case signin::ConsentLevel::kSync:
-      sync_service(profile)->SetTransportState(
+      sync_service(profile)->SetMaxTransportState(
           syncer::SyncService::TransportState::ACTIVE);
       break;
   }
@@ -286,13 +282,15 @@ content::WebContents* AccessCodeCastIntegrationBrowserTest::ShowDialog() {
   // won't do anything and the test will hang.
   EXPECT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
 
+  // Setting the flag to prevent widget deactivation before creating the dialog.
+  AccessCodeCastDialog::ShouldBlockWidgetActivationChangedForTest(true);
+
   // This string is empty since the ShowUi function requires a string. We do not
   // need one in the context we are using the function.
   ShowUi("");
   EXPECT_TRUE(VerifyUi());
   content::WebContents* dialog_contents = observer.GetWebContents();
   EXPECT_TRUE(content::WaitForLoadStop(dialog_contents));
-  AccessCodeCastDialog::ShouldBlockWidgetActivationChangedForTest(true);
 
   return dialog_contents;
 }
@@ -336,13 +334,9 @@ void AccessCodeCastIntegrationBrowserTest::CloseDialogUsingKeyPress() {
 
 void AccessCodeCastIntegrationBrowserTest::SetAccessCodeUsingKeyPress(
     const std::string& access_code) {
-  for (const char& letter : access_code) {
-#if BUILDFLAG(IS_WIN)
-    ui::KeyboardCode keyboard_code = ui::KeyboardCode(toupper(letter));
-#else
-    ui::KeyboardCode keyboard_code =
-        static_cast<ui::KeyboardCode>(toupper(letter));
-#endif
+  for (char letter : access_code) {
+    const auto keyboard_code = static_cast<ui::KeyboardCode>(
+        absl::ascii_toupper(static_cast<unsigned char>(letter)));
     EXPECT_TRUE(ui_test_utils::SendKeyPressSync(browser(), keyboard_code, false,
                                                 false, false, false));
   }
@@ -382,36 +376,19 @@ bool AccessCodeCastIntegrationBrowserTest::HasSinkInDevicesDict(
   return !media_sink.Get().empty();
 }
 
-absl::optional<base::Time>
+std::optional<base::Time>
 AccessCodeCastIntegrationBrowserTest::GetDeviceAddedTimeFromDict(
     const MediaSink::Id& sink_id) {
   if (!GetPrefUpdater()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  base::test::TestFuture<absl::optional<base::Time>> time;
+  base::test::TestFuture<std::optional<base::Time>> time;
   GetPrefUpdater()->GetDeviceAddedTime(sink_id, time.GetCallback());
   return time.Get();
 }
 
 void AccessCodeCastIntegrationBrowserTest::TearDownOnMainThread() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // Clear the prefs value manually on Lacros because Lacros is querying for
-  // prefs stored in Ash, which doesn't reset after each test finishes.
-  // The prefs value should not be cleared for tests that span a browser restart
-  // because it's intended to keep the user data directory.
-  if (GetTestPreCount() == 0 && IsAccessCodeCastLacrosSyncEnabled()) {
-    auto* pref_updater = GetPrefUpdater();
-    if (pref_updater) {
-      base::RunLoop run_loop;
-      auto barrier_callback = base::BarrierClosure(2, run_loop.QuitClosure());
-      pref_updater->ClearDevicesDict(barrier_callback);
-      pref_updater->ClearDeviceAddedTimeDict(barrier_callback);
-      run_loop.Run();
-    }
-  }
-#endif
-
   url_loader_interceptor_.reset();
 
   base::RunLoop().RunUntilIdle();
@@ -461,7 +438,7 @@ AccessCodeCastIntegrationBrowserTest::CreateImpl() {
       new MockCastMediaSinkServiceImpl(OnSinksDiscoveredCallback(),
                                        mock_cast_socket_service_.get(),
                                        DiscoveryNetworkMonitor::GetInstance(),
-                                       mock_dual_media_sink_service_.get());
+                                       dial_media_sink_service_.get());
 
   ON_CALL(*cast_media_sink_service_impl, OpenChannel(_, _, _, _, _))
       .WillByDefault(testing::Invoke(
@@ -613,16 +590,15 @@ void AccessCodeCastIntegrationBrowserTest::ExpectStartRouteCallFromTabMirroring(
         media_router::MediaRouterFactory::GetInstance()
             ->GetApiForBrowserContext(browser()->profile()));
   }
-  EXPECT_CALL(*media_router,
-              CreateRouteInternal(media_source_id, sink_name, _, web_contents,
-                                  _, timeout, false));
+  EXPECT_CALL(*media_router, CreateRouteInternal(media_source_id, sink_name, _,
+                                                 web_contents, _, timeout));
 }
 
 AccessCodeCastPrefUpdater*
 AccessCodeCastIntegrationBrowserTest::GetPrefUpdater() {
   auto* service = AccessCodeCastSinkServiceFactory::GetForProfile(
       ProfileManager::GetLastUsedProfile());
-  return service ? service->pref_updater_.get() : nullptr;
+  return service ? service->GetPrefUpdaterForTesting() : nullptr;
 }
 
 void AccessCodeCastIntegrationBrowserTest::AddScreenplayTag(
@@ -642,7 +618,7 @@ void AccessCodeCastIntegrationBrowserTest::UpdateDeviceAddedTime(
 
   GetPrefUpdater()->GetDeviceAddedTime(
       sink_id,
-      base::BindLambdaForTesting([this](absl::optional<base::Time> time) {
+      base::BindLambdaForTesting([this](std::optional<base::Time> time) {
         if (time.has_value()) {
           this->device_added_time_ = time.value();
         }
@@ -654,21 +630,8 @@ void AccessCodeCastIntegrationBrowserTest::
   auto* service = AccessCodeCastSinkServiceFactory::GetForProfile(
       ProfileManager::GetLastUsedProfile());
   if (service) {
-    service->SetTaskRunnerForTest(task_runner_);
+    service->SetTaskRunnerForTesting(task_runner_);
   }
-}
-
-bool AccessCodeCastIntegrationBrowserTest::IsAccessCodeCastLacrosSyncEnabled() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  crosapi::mojom::PrefsAsyncWaiter async_waiter(
-      chromeos::LacrosService::Get()->GetRemote<crosapi::mojom::Prefs>().get());
-  absl::optional<base::Value> pref_value;
-  async_waiter.GetPref(crosapi::mojom::PrefPath::kAccessCodeCastDevices,
-                       &pref_value);
-  return pref_value.has_value();
-#else
-  return false;
-#endif
 }
 
 }  // namespace media_router

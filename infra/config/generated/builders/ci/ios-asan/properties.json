@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/ios-asan/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -47,14 +50,22 @@
           "builder": "ios-asan",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/ios-asan/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 500,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 500
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -64,9 +75,12 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "ios"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "ios"
   ],
-  "xcode_build_version": "14c18"
+  "xcode_build_version": "16c5032a"
 }

@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/renderer_host/render_frame_host_impl.h"
-
 #include <memory>
 #include <vector>
 
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -19,10 +19,10 @@
 #include "content/browser/file_system/file_system_manager_impl.h"
 #include "content/browser/geolocation/geolocation_service_impl.h"
 #include "content/browser/manifest/manifest_manager_host.h"
-#include "content/browser/portal/portal.h"
 #include "content/browser/renderer_host/back_forward_cache_impl.h"
 #include "content/browser/renderer_host/page_lifecycle_state_manager.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/shared_storage/shared_storage_document_service_impl.h"
 #include "content/common/dom_automation_controller.mojom.h"
@@ -36,8 +36,8 @@
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "net/base/features.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/mojom/screen_orientation.mojom.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "services/service_manager/public/mojom/interface_provider.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
@@ -49,13 +49,7 @@
 #include "third_party/blink/public/mojom/frame/frame.mojom.h"
 #include "third_party/blink/public/mojom/manifest/manifest_observer.mojom.h"
 #include "third_party/blink/public/mojom/page/display_cutout.mojom.h"
-#include "third_party/blink/public/mojom/portal/portal.mojom.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage.mojom.h"
-
-#if BUILDFLAG(ENABLE_PPAPI)
-#include "content/browser/renderer_host/render_frame_host_impl_ppapi_support.h"
-#include "content/common/pepper_plugin.mojom.h"
-#endif
 
 namespace content {
 
@@ -149,7 +143,7 @@ class BackForwardCacheMessageFilter : public mojo::MessageFilter {
 
   void DidDispatchOrReject(mojo::Message* message, bool accepted) override {}
 
-  // TODO(https://crbug.com/1125996): Remove once a well-behaved frozen
+  // TODO(crbug.com/40147948): Remove once a well-behaved frozen
   // RenderFrame never send IPCs messages, even if there are active pages in the
   // process.
   bool ProcessHoldsNonCachedPages() {
@@ -209,15 +203,6 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
       },
       base::Unretained(this)));
 
-  associated_registry_->AddInterface<blink::mojom::PortalHost>(
-      base::BindRepeating(
-          [](RenderFrameHostImpl* self,
-             mojo::PendingAssociatedReceiver<blink::mojom::PortalHost>
-                 receiver) {
-            Portal::BindPortalHostReceiver(self, std::move(receiver));
-          },
-          base::Unretained(this)));
-
   associated_registry_->AddInterface<blink::mojom::LocalFrameHost>(
       base::BindRepeating(
           [](RenderFrameHostImpl* impl,
@@ -230,20 +215,40 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
           },
           base::Unretained(this)));
 
-  if (base::FeatureList::IsEnabled(blink::features::kSharedStorageAPI)) {
+  if (base::FeatureList::IsEnabled(network::features::kSharedStorageAPI)) {
     associated_registry_->AddInterface<
         blink::mojom::SharedStorageDocumentService>(base::BindRepeating(
         [](RenderFrameHostImpl* impl,
            mojo::PendingAssociatedReceiver<
                blink::mojom::SharedStorageDocumentService> receiver) {
           if (SharedStorageDocumentServiceImpl::GetForCurrentDocument(impl)) {
-            // The renderer somehow requested two shared storage worklets
-            // associated with the same document. This could indicate a
-            // compromised renderer, so let's terminate it.
-            mojo::ReportBadMessage(
-                "Attempted to request two shared storage worklets associated "
-                "with the same document.");
-            return;
+            // TODO(crbug.com/401559926): The renderer somehow requested two
+            // SharedStorageDocumentServiceImpl associated with the same
+            // document. In theory, this shouldn't be possible, but in practice
+            // it does happen. We add diagnostics to help diagnose why.
+            SCOPED_CRASH_KEY_BOOL("RFHI", "IsInPrimaryMainFrame",
+                                  impl->IsInPrimaryMainFrame());
+            SCOPED_CRASH_KEY_BOOL(
+                "RFHI", "IsSameOriginToMainFrame",
+                impl->GetLastCommittedOrigin().IsSameOriginWith(
+                    impl->GetMainFrame()->GetLastCommittedOrigin()));
+            SCOPED_CRASH_KEY_BOOL("RFHI", "IsCrossProcessSubframe",
+                                  impl->IsCrossProcessSubframe());
+            SCOPED_CRASH_KEY_BOOL("RFHI", "HasPendingCommitNavigation",
+                                  impl->HasPendingCommitNavigation());
+            SCOPED_CRASH_KEY_BOOL(
+                "RFHI", "HasPendingCommitForXDocNav",
+                impl->HasPendingCommitForCrossDocumentNavigation());
+            SCOPED_CRASH_KEY_BOOL("RFHI", "IsPendingDeletion",
+                                  impl->IsPendingDeletion());
+            SCOPED_CRASH_KEY_BOOL("RFHI", "IsInBackForwardCache",
+                                  impl->IsInBackForwardCache());
+            SCOPED_CRASH_KEY_BOOL("RFHI", "BeforeUnloadTimedOut",
+                                  impl->BeforeUnloadTimedOut());
+            SCOPED_CRASH_KEY_BOOL("RFHI", "IsWaitingForUnloadACK",
+                                  impl->IsWaitingForUnloadACK());
+            base::debug::DumpWithoutCrashing();
+            SharedStorageDocumentServiceImpl::DeleteForCurrentDocument(impl);
           }
 
           SharedStorageDocumentServiceImpl::GetOrCreateForCurrentDocument(impl)
@@ -276,7 +281,7 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
             base::Unretained(this)));
   }
 
-  // TODO(crbug.com/1395830): Avoid binding the DomAutomationControllerHost
+  // TODO(crbug.com/40249262): Avoid binding the DomAutomationControllerHost
   // interface outside of tests.
   associated_registry_->AddInterface<mojom::DomAutomationControllerHost>(
       base::BindRepeating(
@@ -288,18 +293,9 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
           base::Unretained(this)));
 
   file_system_manager_.reset(new FileSystemManagerImpl(
-      GetProcess()->GetID(),
+      GetProcess()->GetDeprecatedID(),
       GetProcess()->GetStoragePartition()->GetFileSystemContext(),
       ChromeBlobStorageContext::GetFor(GetProcess()->GetBrowserContext())));
-
-#if BUILDFLAG(ENABLE_PPAPI)
-  associated_registry_->AddInterface<mojom::PepperHost>(base::BindRepeating(
-      [](RenderFrameHostImpl* impl,
-         mojo::PendingAssociatedReceiver<mojom::PepperHost> receiver) {
-        impl->GetPpapiSupport().Bind(std::move(receiver));
-      },
-      base::Unretained(this)));
-#endif
 
   associated_registry_->AddInterface<media::mojom::MediaPlayerHost>(
       base::BindRepeating(
@@ -342,19 +338,14 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
       base::BindRepeating(&RenderFrameHostImpl::CreateBroadcastChannelProvider,
                           base::Unretained(this)));
 
-  if (base::FeatureList::IsEnabled(net::features::kSupportPartitionedBlobUrl)) {
-    associated_registry_->AddInterface<blink::mojom::BlobURLStore>(
-        base::BindRepeating(
-            &RenderFrameHostImpl::BindBlobUrlStoreAssociatedReceiver,
-            base::Unretained(this)));
-  }
+  associated_registry_->AddInterface<blink::mojom::BlobURLStore>(
+      base::BindRepeating(
+          &RenderFrameHostImpl::BindBlobUrlStoreAssociatedReceiver,
+          base::Unretained(this)));
 
-  if (base::FeatureList::IsEnabled(
-          blink::features::kEnableFileBackedBlobFactory)) {
-    associated_registry_->AddInterface<blink::mojom::FileBackedBlobFactory>(
-        base::BindRepeating(&RenderFrameHostImpl::BindFileBackedBlobFactory,
-                            base::Unretained(this)));
-  }
+  associated_registry_->AddInterface<blink::mojom::FileBackedBlobFactory>(
+      base::BindRepeating(&RenderFrameHostImpl::BindFileBackedBlobFactory,
+                          base::Unretained(this)));
 
   // Allow embedders to register their binders.
   GetContentClient()
@@ -370,11 +361,6 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
   remote_interfaces_ = std::make_unique<service_manager::InterfaceProvider>(
       base::SingleThreadTaskRunner::GetCurrentDefault());
   remote_interfaces_->Bind(std::move(remote_interfaces));
-
-  // Called to bind the receiver for this interface to the local frame. We need
-  // to eagarly bind here because binding happens at normal priority on the main
-  // thread and future calls to this interface need to be high priority.
-  GetHighPriorityLocalFrame();
 }
 
 void RenderFrameHostImpl::TearDownMojoConnection() {
@@ -388,7 +374,6 @@ void RenderFrameHostImpl::TearDownMojoConnection() {
   find_in_page_.reset();
   local_frame_.reset();
   local_main_frame_.reset();
-  high_priority_local_frame_.reset();
 
   frame_host_associated_receiver_.reset();
   associated_interface_provider_receiver_.reset();
@@ -405,10 +390,6 @@ void RenderFrameHostImpl::TearDownMojoConnection() {
   render_accessibility_host_.Reset();
 
   dom_automation_controller_receiver_.reset();
-
-#if BUILDFLAG(ENABLE_PPAPI)
-  ppapi_support_.reset();
-#endif
 
   // Audio stream factories are tied to a live RenderFrame: see
   // //content/browser/media/forwarding_audio_stream_factory.h.

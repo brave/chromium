@@ -10,53 +10,16 @@
 
 namespace content_settings {
 
-RefCountedAutoLock::RefCountedAutoLock(base::Lock& lock) : auto_lock_(lock) {}
-RefCountedAutoLock::~RefCountedAutoLock() = default;
-
-Rule::Rule(const ContentSettingsPattern& primary_pattern,
-           const ContentSettingsPattern& secondary_pattern,
-           const RuleMetaData& metadata)
-    : primary_pattern(primary_pattern),
-      secondary_pattern(secondary_pattern),
-      metadata(metadata) {}
+Rule::Rule(ContentSettingsPattern primary_pattern,
+           ContentSettingsPattern secondary_pattern,
+           base::Value value,
+           RuleMetaData metadata)
+    : primary_pattern(std::move(primary_pattern)),
+      secondary_pattern(std::move(secondary_pattern)),
+      value(std::move(value)),
+      metadata(std::move(metadata)) {}
 
 Rule::~Rule() = default;
-
-UnownedRule::UnownedRule(const ContentSettingsPattern& primary_pattern,
-                         const ContentSettingsPattern& secondary_pattern,
-                         const base::Value* unowned_value,
-                         scoped_refptr<RefCountedAutoLock> value_lock,
-                         const RuleMetaData& metadata)
-    : Rule(primary_pattern, secondary_pattern, metadata),
-      unowned_value(unowned_value),
-      value_lock(value_lock) {}
-
-UnownedRule::~UnownedRule() = default;
-
-const base::Value& UnownedRule::value() const {
-  return *unowned_value;
-}
-
-base::Value UnownedRule::TakeValue() {
-  return unowned_value->Clone();
-}
-
-OwnedRule::OwnedRule(const ContentSettingsPattern& primary_pattern,
-                     const ContentSettingsPattern& secondary_pattern,
-                     base::Value owned_value,
-                     const RuleMetaData& metadata)
-    : Rule(primary_pattern, secondary_pattern, metadata),
-      owned_value(std::move(owned_value)) {}
-
-OwnedRule::~OwnedRule() = default;
-
-const base::Value& OwnedRule::value() const {
-  return owned_value;
-}
-
-base::Value OwnedRule::TakeValue() {
-  return std::move(owned_value);
-}
 
 RuleIterator::~RuleIterator() = default;
 
@@ -80,7 +43,7 @@ bool ConcatenationIterator::HasNext() const {
 
 std::unique_ptr<Rule> ConcatenationIterator::Next() {
   auto current_iterator = iterators_.begin();
-  DCHECK(current_iterator != iterators_.end());
+  CHECK(current_iterator != iterators_.end());
   DCHECK((*current_iterator)->HasNext());
   std::unique_ptr<Rule> next_rule = (*current_iterator)->Next();
   if (!(*current_iterator)->HasNext()) {

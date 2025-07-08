@@ -3,23 +3,22 @@
 // found in the LICENSE file.
 
 #include "base/android/meminfo_dump_provider.h"
+
 #include <jni.h>
+
 #include "base/android/jni_android.h"
 #include "base/logging.h"
+#include "base/memory_jni/MemoryInfoBridge_jni.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/base_jni/MemoryInfoBridge_jni.h"
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
+#include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/trace_event.h"
 
 namespace base::android {
 
 MeminfoDumpProvider::MeminfoDumpProvider() {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, kDumpProviderName, nullptr);
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 // static
@@ -31,7 +30,6 @@ MeminfoDumpProvider& MeminfoDumpProvider::Initialize() {
 bool MeminfoDumpProvider::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // This is best-effort, and will be wrong if there are other callers of
   // ActivityManager#getProcessMemoryInfo(), either in this process or from
   // another process which is allowed to do so (typically, adb).
@@ -53,7 +51,7 @@ bool MeminfoDumpProvider::OnMemoryDump(
   // would confuse data in UMA. In particular, the background/foreground session
   // filter would no longer be accurate.
   if (stale_data && args.level_of_detail !=
-                        base::trace_event::MemoryDumpLevelOfDetail::DETAILED) {
+                        base::trace_event::MemoryDumpLevelOfDetail::kDetailed) {
     return true;
   }
 
@@ -97,9 +95,6 @@ bool MeminfoDumpProvider::OnMemoryDump(
                   static_cast<uint64_t>(other_pss_kb) * 1024);
 
   return true;
-#else   // BUILDFLAG(ENABLE_BASE_TRACING)
-  return false;
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 }  // namespace base::android

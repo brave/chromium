@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that adding a property is undone properly.\n`);
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('elements');
   await TestRunner.loadHTML(`
       <style>
@@ -49,7 +50,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
       TestRunner.addResult('(After adding property)');
       await ElementsTestRunner.dumpSelectedElementStyles(true);
 
-      SDK.domModelUndoStack.undo();
+      SDK.DOMModel.DOMModelUndoStack.instance().undo();
       ElementsTestRunner.selectNodeAndWaitForStyles('other', step2);
     }
 
@@ -57,7 +58,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
       TestRunner.addResult('(After undo)');
       await ElementsTestRunner.dumpSelectedElementStyles(true);
 
-      SDK.domModelUndoStack.redo();
+      SDK.DOMModel.DOMModelUndoStack.instance().redo();
       ElementsTestRunner.selectNodeAndWaitForStyles('container', step3);
     }
 

@@ -37,7 +37,7 @@ class CSSBorderImageSliceValue : public CSSValue {
  public:
   CSSBorderImageSliceValue(CSSQuadValue* slices, bool fill);
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   // TODO(sashab): Change this to a quad of CSSPrimitiveValues, or add separate
   // methods for topSlice(), leftSlice(), etc.

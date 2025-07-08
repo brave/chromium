@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,6 @@
 #define COMPONENTS_SEGMENTATION_PLATFORM_EMBEDDER_DEFAULT_MODEL_SEARCH_USER_MODEL_H_
 
 #include "components/segmentation_platform/public/model_provider.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform {
 

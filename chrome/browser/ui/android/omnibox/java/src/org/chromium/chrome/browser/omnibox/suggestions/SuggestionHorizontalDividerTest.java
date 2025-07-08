@@ -4,14 +4,11 @@
 
 package org.chromium.chrome.browser.omnibox.suggestions;
 
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 
 import android.app.Activity;
 import android.graphics.Canvas;
-import android.graphics.Rect;
 import android.graphics.Region.Op;
 import android.view.View;
 
@@ -34,33 +31,24 @@ import org.chromium.chrome.R;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 
-/**
- * Tests for {@link SuggestionHorizontalDivider}.
- */
+/** Tests for {@link SuggestionHorizontalDivider}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class SuggestionHorizontalDividerTest {
     public @Rule MockitoRule mockitoRule = MockitoJUnit.rule();
-    @Mock
-    private RecyclerView mRecyclerView;
-    @Mock
-    private View mChildViewWithDivider;
-    @Mock
-    private View mChildViewWithNoDivider;
-    @Mock
-    private RecyclerView.State mState;
-    @Mock
-    private SimpleRecyclerViewAdapter.ViewHolder mShowDividerViewHolder;
-    @Mock
-    private SimpleRecyclerViewAdapter.ViewHolder mNoDividerViewHolder;
-    @Mock
-    private Canvas mCanvas;
+    @Mock private RecyclerView mRecyclerView;
+    @Mock private View mChildViewWithDivider;
+    @Mock private View mChildViewWithNoDivider;
+    @Mock private RecyclerView.State mState;
+    @Mock private SimpleRecyclerViewAdapter.ViewHolder mShowDividerViewHolder;
+    @Mock private SimpleRecyclerViewAdapter.ViewHolder mNoDividerViewHolder;
+    @Mock private Canvas mCanvas;
 
-    private PropertyModel mShowDividerModel =
+    private final PropertyModel mShowDividerModel =
             new PropertyModel.Builder(DropdownCommonProperties.ALL_KEYS)
                     .with(DropdownCommonProperties.SHOW_DIVIDER, true)
                     .build();
-    private PropertyModel mNoDividerModel =
+    private final PropertyModel mNoDividerModel =
             new PropertyModel.Builder(DropdownCommonProperties.ALL_KEYS)
                     .with(DropdownCommonProperties.SHOW_DIVIDER, false)
                     .build();
@@ -97,14 +85,12 @@ public class SuggestionHorizontalDividerTest {
     @Test
     @SmallTest
     public void testDraw() {
-        doAnswer((invocation -> {
-            ((Rect) invocation.getArgument(1)).set(0, 0, 100, 30);
-            return null;
-        }))
-                .when(mRecyclerView)
-                .getDecoratedBoundsWithMargins(any(View.class), any(Rect.class));
+        doReturn(8.0f).when(mChildViewWithDivider).getX();
+        doReturn(92).when(mChildViewWithDivider).getWidth();
+        doReturn(10.0f).when(mChildViewWithDivider).getY();
+        doReturn(30).when(mChildViewWithDivider).getHeight();
 
         mDecoration.onDraw(mCanvas, mRecyclerView, mState);
-        verify(mCanvas).clipRect(0, 29, 100, 30, Op.DIFFERENCE);
+        verify(mCanvas).clipRect(8, 40 - 1, 100, 40, Op.DIFFERENCE);
     }
 }

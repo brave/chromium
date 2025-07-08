@@ -11,6 +11,7 @@
 #include "chromeos/ash/components/report/utils/network_utils.h"
 #include "chromeos/ash/components/report/utils/psm_utils.h"
 #include "chromeos/ash/components/report/utils/time_utils.h"
+#include "chromeos/ash/components/report/utils/uma_utils.h"
 #include "components/prefs/pref_service.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -39,9 +40,12 @@ void CohortImpl::Run(base::OnceCallback<void()> callback) {
   callback_ = std::move(callback);
 
   if (!IsDevicePingRequired()) {
+    utils::RecordIsDevicePingRequired(utils::PsmUseCase::kCohort, false);
     std::move(callback_).Run();
     return;
   }
+
+  utils::RecordIsDevicePingRequired(utils::PsmUseCase::kCohort, true);
 
   // Perform check membership if the local state pref has default value.
   // This is done to avoid duplicate check in if the device pinged already.
@@ -55,10 +59,16 @@ void CohortImpl::Run(base::OnceCallback<void()> callback) {
   }
 }
 
-void CohortImpl::CheckMembershipOprf() {
-  SetPsmRlweClient(kPsmUseCase, GetPsmIdentifiersToQuery());
+base::WeakPtr<CohortImpl> CohortImpl::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
+}
 
-  if (!GetPsmRlweClient()) {
+void CohortImpl::CheckMembershipOprf() {
+  PsmClientManager* psm_client_manager = GetParams()->GetPsmClientManager();
+
+  psm_client_manager->SetPsmRlweClient(kPsmUseCase, GetPsmIdentifiersToQuery());
+
+  if (!psm_client_manager->GetPsmRlweClient()) {
     LOG(ERROR) << "Check membership failed since the PSM RLWE client could "
                << "not be initialized.";
     std::move(callback_).Run();
@@ -66,7 +76,7 @@ void CohortImpl::CheckMembershipOprf() {
   }
 
   // Generate PSM Oprf request body.
-  const auto status_or_oprf_request = GetPsmRlweClient()->CreateOprfRequest();
+  const auto status_or_oprf_request = psm_client_manager->CreateOprfRequest();
   if (!status_or_oprf_request.ok()) {
     LOG(ERROR) << "Failed to create OPRF request.";
     std::move(callback_).Run();
@@ -99,22 +109,22 @@ void CohortImpl::CheckMembershipOprf() {
 }
 
 void CohortImpl::OnCheckMembershipOprfComplete(
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
   int net_code = url_loader->NetError();
+  utils::RecordNetErrorCode(utils::PsmUseCase::kCohort,
+                            utils::PsmRequest::kOprf, net_code);
 
   // Convert serialized response body to oprf response protobuf.
   FresnelPsmRlweOprfResponse psm_oprf_response;
-  bool is_response_body_set = response_body.get() != nullptr;
-
-  if (!is_response_body_set ||
+  if (!response_body.has_value() ||
       !psm_oprf_response.ParseFromString(*response_body)) {
     LOG(ERROR) << "Oprf response net code = " << net_code;
     LOG(ERROR) << "Response body was not set or could not be parsed into "
                << "FresnelPsmRlweOprfResponse proto. "
-               << "Is response body set = " << is_response_body_set;
+               << "Is response body set = " << response_body.has_value();
     std::move(callback_).Run();
     return;
   }
@@ -135,9 +145,11 @@ void CohortImpl::OnCheckMembershipOprfComplete(
 
 void CohortImpl::CheckMembershipQuery(
     const psm_rlwe::PrivateMembershipRlweOprfResponse& oprf_response) {
+  PsmClientManager* psm_client_manager = GetParams()->GetPsmClientManager();
+
   // Generate PSM Query request body.
   const auto status_or_query_request =
-      GetPsmRlweClient()->CreateQueryRequest(oprf_response);
+      psm_client_manager->CreateQueryRequest(oprf_response);
   if (!status_or_query_request.ok()) {
     std::move(callback_).Run();
     return;
@@ -169,22 +181,22 @@ void CohortImpl::CheckMembershipQuery(
 }
 
 void CohortImpl::OnCheckMembershipQueryComplete(
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
   int net_code = url_loader->NetError();
+  utils::RecordNetErrorCode(utils::PsmUseCase::kCohort,
+                            utils::PsmRequest::kQuery, net_code);
 
   // Convert serialized response body to fresnel query response protobuf.
   FresnelPsmRlweQueryResponse psm_query_response;
-  bool is_response_body_set = response_body.get() != nullptr;
-
-  if (!is_response_body_set ||
+  if (!response_body.has_value() ||
       !psm_query_response.ParseFromString(*response_body)) {
     LOG(ERROR) << "Query response net code = " << net_code;
     LOG(ERROR) << "Response body was not set or could not be parsed into "
                << "FresnelPsmRlweQueryResponse proto. "
-               << "Is response body set = " << is_response_body_set;
+               << "Is response body set = " << response_body.has_value();
     std::move(callback_).Run();
     return;
   }
@@ -200,7 +212,7 @@ void CohortImpl::OnCheckMembershipQueryComplete(
   psm_rlwe::PrivateMembershipRlweQueryResponse query_response =
       psm_query_response.rlwe_query_response();
   auto status_or_response =
-      GetPsmRlweClient()->ProcessQueryResponse(query_response);
+      GetParams()->GetPsmClientManager()->ProcessQueryResponse(query_response);
 
   if (!status_or_response.ok()) {
     LOG(ERROR) << "Failed to process query response.";
@@ -237,7 +249,7 @@ void CohortImpl::OnCheckMembershipQueryComplete(
 }
 
 void CohortImpl::CheckIn() {
-  absl::optional<FresnelImportDataRequest> import_request =
+  std::optional<FresnelImportDataRequest> import_request =
       GenerateImportRequestBody();
   if (!import_request.has_value()) {
     LOG(ERROR) << "Failed to create the import request body.";
@@ -261,11 +273,13 @@ void CohortImpl::CheckIn() {
                                 utils::GetMaxFresnelResponseSizeBytes());
 }
 
-void CohortImpl::OnCheckInComplete(std::unique_ptr<std::string> response_body) {
+void CohortImpl::OnCheckInComplete(std::optional<std::string> response_body) {
   // Use RAII to reset |url_loader_| after current function scope.
   auto url_loader = std::move(url_loader_);
 
   int net_code = url_loader->NetError();
+  utils::RecordNetErrorCode(utils::PsmUseCase::kCohort,
+                            utils::PsmRequest::kImport, net_code);
 
   if (net_code == net::OK) {
     UpdateLocalStateOnCheckInSuccess();
@@ -293,7 +307,7 @@ std::vector<psm_rlwe::RlwePlaintextId> CohortImpl::GetPsmIdentifiersToQuery() {
   return query_psm_ids;
 }
 
-absl::optional<FresnelImportDataRequest>
+std::optional<FresnelImportDataRequest>
 CohortImpl::GenerateImportRequestBody() {
   FresnelImportDataRequest import_request;
   import_request.set_use_case(kPsmUseCase);
@@ -305,21 +319,21 @@ CohortImpl::GenerateImportRequestBody() {
       GetParams()->GetChromeDeviceParams().market_segment;
 
   DeviceMetadata* device_metadata = import_request.mutable_device_metadata();
-  device_metadata->set_chromeos_version(utils::GetChromeMilestone());
+  device_metadata->set_chrome_milestone(utils::GetChromeMilestone());
   device_metadata->set_hardware_id(utils::GetFullHardwareClass());
   device_metadata->set_chromeos_channel(
       utils::GetChromeChannel(version_channel));
   device_metadata->set_market_segment(market_segment);
 
   std::string window_id = utils::TimeToYYYYMMString(GetParams()->GetActiveTs());
-  absl::optional<psm_rlwe::RlwePlaintextId> psm_id =
+  std::optional<psm_rlwe::RlwePlaintextId> psm_id =
       utils::GeneratePsmIdentifier(GetParams()->GetHighEntropySeed(),
                                    psm_rlwe::RlweUseCase_Name(kPsmUseCase),
                                    window_id);
 
   if (window_id.empty() || !psm_id.has_value()) {
     LOG(ERROR) << "Window ID or Psm ID is empty.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   FresnelImportData* import_data = import_request.add_import_data();
@@ -329,11 +343,33 @@ CohortImpl::GenerateImportRequestBody() {
 
   ChurnCohortMetadata* cohort_metadata =
       import_data->mutable_churn_cohort_metadata();
-  absl::optional<ChurnCohortMetadata> new_cohort_metadata =
+  std::optional<ChurnCohortMetadata> new_cohort_metadata =
       active_status_->CalculateCohortMetadata(GetParams()->GetActiveTs());
   if (!new_cohort_metadata.has_value()) {
     LOG(ERROR) << "Failed to calculate new cohort metadata.";
-    return absl::nullopt;
+    return std::nullopt;
+  }
+
+  base::Time active_ts = GetParams()->GetActiveTs();
+  std::optional<base::Time> first_active_week_ts = utils::GetFirstActiveWeek();
+
+  if (!first_active_week_ts.has_value() ||
+      first_active_week_ts.value() == base::Time() ||
+      first_active_week_ts.value() == base::Time::UnixEpoch()) {
+    LOG(ERROR) << "Failed to retrieve first active week from VPD. "
+                  "Setting first active week to UNKNOWN.";
+    cohort_metadata->set_first_active_week("UNKNOWN");
+  } else {
+    int max_days_in_5_weeks = 7 * 5;
+    bool within_date_range = utils::IsFirstActiveUnderNDaysAgo(
+        active_ts, first_active_week_ts.value(), max_days_in_5_weeks);
+
+    // Privacy approved 5 weeks of first active week history in cohort ping.
+    // In order for analysts to avoid double counting on the server-side.
+    if (within_date_range) {
+      cohort_metadata->set_first_active_week(
+          utils::ConvertTimeToISO8601String(first_active_week_ts.value()));
+    }
   }
 
   *cohort_metadata = new_cohort_metadata.value();
@@ -342,7 +378,7 @@ CohortImpl::GenerateImportRequestBody() {
 
 void CohortImpl::UpdateLocalStateOnCheckInSuccess() {
   // Check the new cohort active status value is valid.
-  absl::optional<int> new_active_val =
+  std::optional<int> new_active_val =
       active_status_->CalculateNewValue(GetParams()->GetActiveTs());
   if (!new_active_val.has_value()) {
     LOG(ERROR)

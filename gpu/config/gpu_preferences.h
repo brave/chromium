@@ -6,13 +6,12 @@
 #define GPU_CONFIG_GPU_PREFERENCES_H_
 
 #include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "gpu/gpu_export.h"
-#include "media/media_buildflags.h"
+#include "gpu/config/gpu_config_export.h"
 #include "ui/gfx/buffer_types.h"
 
 #if BUILDFLAG(IS_OZONE)
@@ -29,7 +28,7 @@ const size_t kDefaultMaxProgramCacheMemoryBytes = 2 * 1024 * 1024;
 const size_t kLowEndMaxProgramCacheMemoryBytes = 128 * 1024;
 #endif
 
-GPU_EXPORT size_t GetDefaultGpuDiskCacheSize();
+GPU_CONFIG_EXPORT size_t GetDefaultGpuDiskCacheSize();
 
 enum class VulkanImplementationName : uint32_t {
   kNone = 0,
@@ -62,11 +61,34 @@ enum class WebGPUPowerPreference : uint32_t {
 };
 
 enum class GrContextType : uint32_t {
+  kNone,
   kGL,      // Ganesh
   kVulkan,  // Ganesh
   kGraphiteDawn,
   kGraphiteMetal,
 };
+
+GPU_CONFIG_EXPORT std::string GrContextTypeToString(GrContextType type);
+
+// Used to represent the Skia backend that the GPU process has initialized.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class SkiaBackendType {
+  kUnknown = 0,
+  kNone = 1,
+  kGaneshGL = 2,
+  kGaneshVulkan = 3,
+  kGraphiteDawnVulkan = 4,
+  kGraphiteDawnMetal = 5,
+  kGraphiteDawnD3D11 = 6,
+  kGraphiteDawnD3D12 = 7,
+  kGraphiteMetal = 8,
+  // It's not clear what granularity of kGraphiteDawnGL* backend dawn will
+  // provided yet so those values are to be added later.
+  kMaxValue = kGraphiteMetal
+};
+
+GPU_CONFIG_EXPORT std::string SkiaBackendTypeToString(SkiaBackendType type);
 
 enum class DawnBackendValidationLevel : uint32_t {
   kDisabled = 0,
@@ -78,7 +100,7 @@ enum class DawnBackendValidationLevel : uint32_t {
 // following two files to keep them in sync:
 //   src/gpu/ipc/common/gpu_preferences.mojom
 //   src/gpu/ipc/common/gpu_preferences_mojom_traits.h
-struct GPU_EXPORT GpuPreferences {
+struct GPU_CONFIG_EXPORT GpuPreferences {
  public:
   GpuPreferences();
 
@@ -159,9 +181,6 @@ struct GPU_EXPORT GpuPreferences {
   // Enforce GL minimums.
   bool enforce_gl_minimums = false;
 
-  // Sets the total amount of memory that may be allocated for GPU resources.
-  uint32_t force_gpu_mem_available_bytes = 0u;
-
   // Sets the maximum discardable cache size limit for GPU resources.
   uint32_t force_gpu_mem_discardable_limit_bytes = 0u;
 
@@ -188,6 +207,10 @@ struct GPU_EXPORT GpuPreferences {
   // Enables the use of SurfaceControl for overlays on Android.
   bool enable_android_surface_control = false;
 
+  // An additional Graphite Precompilation control that only enables
+  // precompilation when not testing.
+  bool perform_graphite_precompilation = false;
+
   // ===================================
   // Settings from //ui/gl/gl_switches.h
 
@@ -200,14 +223,6 @@ struct GPU_EXPORT GpuPreferences {
   // Use the Pass-through command decoder, skipping all validation and state
   // tracking.
   bool use_passthrough_cmd_decoder = false;
-
-  // Disable using a single multiplanar GpuMemoryBuffer to store biplanar
-  // VideoFrames (e.g. NV12), see https://crbug.com/791676.
-  bool disable_biplanar_gpu_memory_buffers_for_video_frames = false;
-
-  // List of texture usage & formats that require use of a platform specific
-  // texture target.
-  std::vector<gfx::BufferUsageAndFormat> texture_target_exception_list;
 
   // ===================================
   // Settings from //gpu/config/gpu_switches.h
@@ -257,6 +272,13 @@ struct GPU_EXPORT GpuPreferences {
   // Enable usage of unsafe WebGPU features.
   bool enable_unsafe_webgpu = false;
 
+  // Enable usage of WebGPU features intended only for use during development.
+  bool enable_webgpu_developer_features = false;
+
+  // Enable usage of experimental WebGPU features that would eventually land in
+  // the WebGPU spec.
+  bool enable_webgpu_experimental_features = false;
+
   // Enable validation layers in Dawn backends.
   DawnBackendValidationLevel enable_dawn_backend_validation =
       DawnBackendValidationLevel::kDisabled;
@@ -294,14 +316,6 @@ struct GPU_EXPORT GpuPreferences {
 
   // Enable native CPU-mappable GPU memory buffer support on Linux.
   bool enable_native_gpu_memory_buffers = false;
-
-  // ===================================
-  // Settings from //media/base/media_switches.h
-
-#if BUILDFLAG(IS_CHROMEOS)
-  // Enable the hardware-accelerated direct video decoder on ChromeOS.
-  bool enable_chromeos_direct_video_decoder = false;
-#endif
 
   // Disables oppr debug crash dumps.
   bool disable_oopr_debug_crash_dump = false;

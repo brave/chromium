@@ -17,6 +17,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -85,7 +86,7 @@ bool JavascriptErrorDetectingLogHandler(int severity,
   if (file == nullptr || std::string("CONSOLE") != file)
     return false;
 
-  // TODO(crbug.com/918871): Fix AppRTC and stop ignoring this error.
+  // TODO(crbug.com/40608140): Fix AppRTC and stop ignoring this error.
   if (str.find("Synchronous XHR in page dismissal") != std::string::npos)
     return false;
 
@@ -304,10 +305,6 @@ std::string WebRtcTestBase::ExecuteJavascript(
   return content::EvalJs(tab_contents, javascript).ExtractString();
 }
 
-void WebRtcTestBase::ChangeToLegacyGetStats(content::WebContents* tab) const {
-  content::ExecuteScriptAsync(tab, "changeToLegacyGetStats()");
-}
-
 void WebRtcTestBase::SetupPeerconnectionWithLocalStream(
     content::WebContents* tab,
     const std::string& certificate_keygen_algorithm) const {
@@ -505,7 +502,7 @@ scoped_refptr<content::TestStatsReportDictionary>
 WebRtcTestBase::GetStatsReportDictionary(content::WebContents* tab) const {
   std::string result = ExecuteJavascript("getStatsReportDictionary()", tab);
   EXPECT_TRUE(base::StartsWith(result, "ok-", base::CompareCase::SENSITIVE));
-  absl::optional<base::Value> parsed_json =
+  std::optional<base::Value> parsed_json =
       base::JSONReader::Read(result.substr(3));
   CHECK(parsed_json);
   base::Value::Dict* dictionary = parsed_json->GetIfDict();
@@ -542,7 +539,7 @@ void WebRtcTestBase::SetDefaultVideoCodec(content::WebContents* tab,
 
   EXPECT_EQ("ok", ExecuteJavascript(
                       "setDefaultVideoCodec('" + video_codec + "'," +
-                          (prefer_hw_codec ? "true" : "false") + "," +
+                          base::ToString(prefer_hw_codec) + "," +
                           (codec_profile.empty() ? "null"
                                                  : "'" + codec_profile + "'") +
                           ")",
@@ -560,8 +557,8 @@ std::string WebRtcTestBase::GetDesktopMediaStream(content::WebContents* tab) {
   return ExecuteJavascript("openDesktopMediaStream()", tab);
 }
 
-absl::optional<std::string> WebRtcTestBase::LoadDesktopCaptureExtension() {
-  absl::optional<std::string> extension_id;
+std::optional<std::string> WebRtcTestBase::LoadDesktopCaptureExtension() {
+  std::optional<std::string> extension_id;
   if (!desktop_capture_extension_.get()) {
     extensions::ChromeTestExtensionLoader loader(browser()->profile());
     base::FilePath extension_path;

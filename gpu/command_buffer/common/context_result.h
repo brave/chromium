@@ -5,7 +5,7 @@
 #ifndef GPU_COMMAND_BUFFER_COMMON_CONTEXT_RESULT_H_
 #define GPU_COMMAND_BUFFER_COMMON_CONTEXT_RESULT_H_
 
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/common/gpu_command_buffer_common_export.h"
 
 namespace gpu {
 
@@ -13,8 +13,6 @@ namespace gpu {
 // steps which bubble up to the final result. If any fatal error occurs, the
 // entire result should be fatal - as any attempt to retry is expected to get
 // the same fatal result.
-// Note: This enum is used to back an UMA histogram. Therefore these values
-// should never be reordered, renumbered, or reused.
 enum class ContextResult {
   // The context was created and initialized successfully.
   kSuccess,
@@ -32,7 +30,8 @@ enum class ContextResult {
   kMaxValue = kSurfaceFailure
 };
 
-GPU_EXPORT bool IsFatalOrSurfaceFailure(ContextResult result);
+GPU_COMMAND_BUFFER_COMMON_EXPORT bool IsFatalOrSurfaceFailure(
+    ContextResult result);
 
 }  // namespace gpu
 

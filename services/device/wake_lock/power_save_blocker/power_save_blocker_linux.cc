@@ -89,7 +89,6 @@ bool ShouldPreventDisplaySleep(mojom::WakeLockType type) {
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 const char* GetUninhibitMethodName(DBusAPI api) {
@@ -101,7 +100,6 @@ const char* GetUninhibitMethodName(DBusAPI api) {
       return "UnInhibit";
   }
   NOTREACHED();
-  return nullptr;
 }
 
 void GetDbusStringsForApi(DBusAPI api,

@@ -63,7 +63,6 @@
 namespace blink {
 
 using protocol::Array;
-using protocol::Maybe;
 unsigned InspectorLayerTreeAgent::last_snapshot_id_;
 
 inline String IdForLayer(const cc::Layer* layer) {
@@ -106,9 +105,9 @@ static std::unique_ptr<Array<protocol::LayerTree::ScrollRect>>
 BuildScrollRectsForLayer(const cc::Layer* layer) {
   auto scroll_rects =
       std::make_unique<protocol::Array<protocol::LayerTree::ScrollRect>>();
-  const cc::Region& non_fast_scrollable_rects =
-      layer->non_fast_scrollable_region();
-  for (gfx::Rect rect : non_fast_scrollable_rects) {
+  for (gfx::Rect rect : layer->main_thread_scroll_hit_test_region()) {
+    // TODO(crbug.com/41495630): Now main thread scroll hit test and
+    // RepaintsOnScroll are different things.
     scroll_rects->emplace_back(BuildScrollRect(
         rect, protocol::LayerTree::ScrollRect::TypeEnum::RepaintsOnScroll));
   }
@@ -168,16 +167,20 @@ BuildStickyInfoForLayer(const cc::Layer* root, const cc::Layer* layer) {
               .setContainingBlockRect(std::move(containing_block_rect))
               .build();
   if (constraints.nearest_element_shifting_sticky_box) {
-    constraints_obj->setNearestLayerShiftingStickyBox(String::Number(
-        FindLayerByElementId(root,
-                             constraints.nearest_element_shifting_sticky_box)
-            ->id()));
+    const cc::Layer* constraint_layer = FindLayerByElementId(
+        root, constraints.nearest_element_shifting_sticky_box);
+    if (!constraint_layer)
+      return nullptr;
+    constraints_obj->setNearestLayerShiftingStickyBox(
+        String::Number(constraint_layer->id()));
   }
   if (constraints.nearest_element_shifting_containing_block) {
-    constraints_obj->setNearestLayerShiftingContainingBlock(String::Number(
-        FindLayerByElementId(
-            root, constraints.nearest_element_shifting_containing_block)
-            ->id()));
+    const cc::Layer* constraint_layer = FindLayerByElementId(
+        root, constraints.nearest_element_shifting_containing_block);
+    if (!constraint_layer)
+      return nullptr;
+    constraints_obj->setNearestLayerShiftingContainingBlock(
+        String::Number(constraint_layer->id()));
   }
 
   return constraints_obj;
@@ -456,9 +459,9 @@ protocol::Response InspectorLayerTreeAgent::GetSnapshotById(
 
 protocol::Response InspectorLayerTreeAgent::replaySnapshot(
     const String& snapshot_id,
-    Maybe<int> from_step,
-    Maybe<int> to_step,
-    Maybe<double> scale,
+    std::optional<int> from_step,
+    std::optional<int> to_step,
+    std::optional<double> scale,
     String* data_url) {
   const PictureSnapshot* snapshot = nullptr;
   protocol::Response response = GetSnapshotById(snapshot_id, snapshot);
@@ -468,7 +471,7 @@ protocol::Response InspectorLayerTreeAgent::replaySnapshot(
                                    scale.value_or(1.0));
   if (png_data.empty())
     return protocol::Response::ServerError("Image encoding failed");
-  *data_url = "data:image/png;base64," + Base64Encode(png_data);
+  *data_url = StrCat({"data:image/png;base64,", Base64Encode(png_data)});
   return protocol::Response::Success();
 }
 
@@ -479,21 +482,21 @@ static void ParseRect(protocol::DOM::Rect& object, gfx::RectF* rect) {
 
 protocol::Response InspectorLayerTreeAgent::profileSnapshot(
     const String& snapshot_id,
-    Maybe<int> min_repeat_count,
-    Maybe<double> min_duration,
-    Maybe<protocol::DOM::Rect> clip_rect,
+    std::optional<int> min_repeat_count,
+    std::optional<double> min_duration,
+    std::unique_ptr<protocol::DOM::Rect> clip_rect,
     std::unique_ptr<protocol::Array<protocol::Array<double>>>* out_timings) {
   const PictureSnapshot* snapshot = nullptr;
   protocol::Response response = GetSnapshotById(snapshot_id, snapshot);
   if (!response.IsSuccess())
     return response;
   gfx::RectF rect;
-  if (clip_rect.has_value()) {
-    ParseRect(clip_rect.value(), &rect);
+  if (clip_rect) {
+    ParseRect(*clip_rect, &rect);
   }
   auto timings = snapshot->Profile(min_repeat_count.value_or(1),
                                    base::Seconds(min_duration.value_or(0)),
-                                   clip_rect.has_value() ? &rect : nullptr);
+                                   clip_rect ? &rect : nullptr);
   *out_timings = std::make_unique<Array<Array<double>>>();
   for (const auto& row : timings) {
     auto out_row = std::make_unique<protocol::Array<double>>();
@@ -515,14 +518,10 @@ protocol::Response InspectorLayerTreeAgent::snapshotCommandLog(
   const String& json = snapshot->SnapshotCommandLog()->ToJSONString();
   std::vector<uint8_t> cbor;
   if (json.Is8Bit()) {
-    crdtp::json::ConvertJSONToCBOR(
-        crdtp::span<uint8_t>(json.Characters8(), json.length()), &cbor);
+    crdtp::json::ConvertJSONToCBOR(crdtp::span<uint8_t>(json.Span8()), &cbor);
   } else {
-    crdtp::json::ConvertJSONToCBOR(
-        crdtp::span<uint16_t>(
-            reinterpret_cast<const uint16_t*>(json.Characters16()),
-            json.length()),
-        &cbor);
+    crdtp::json::ConvertJSONToCBOR(crdtp::span<uint16_t>(json.SpanUint16()),
+                                   &cbor);
   }
   auto log_value = protocol::Value::parseBinary(cbor.data(), cbor.size());
   *command_log = protocol::ValueConversions<

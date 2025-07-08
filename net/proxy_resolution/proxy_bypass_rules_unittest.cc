@@ -4,6 +4,9 @@
 
 #include "net/proxy_resolution/proxy_bypass_rules.h"
 
+#include <string_view>
+
+#include "base/containers/span.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "net/proxy_resolution/proxy_config_service_common_unittest.h"
@@ -23,17 +26,14 @@ namespace {
 // and checks that the result is |bypasses|. If the host is in |inverted_hosts|
 // then the expectation is reversed.
 void ExpectRulesMatch(const ProxyBypassRules& rules,
-                      const char* hosts[],
-                      size_t num_hosts,
+                      base::span<const std::string_view> hosts,
                       bool bypasses,
                       const std::set<std::string>& inverted_hosts) {
   // The scheme of the URL shouldn't matter.
   const char* kUrlSchemes[] = {"http://", "https://", "ftp://"};
 
   for (auto* scheme : kUrlSchemes) {
-    for (size_t i = 0; i < num_hosts; ++i) {
-      const char* host = hosts[i];
-
+    for (std::string_view host : hosts) {
       bool expectation = bypasses;
 
       if (inverted_hosts.count(std::string(host)) != 0)
@@ -51,33 +51,33 @@ void ExpectBypassLocalhost(
     const ProxyBypassRules& rules,
     bool bypasses,
     const std::set<std::string>& inverted_hosts = std::set<std::string>()) {
-  const char* kHosts[] = {
-    "localhost",
-    "localhost.",
-    "foo.localhost",
-    "127.0.0.1",
-    "127.100.0.2",
-    "[::1]",
-    "[::0:FFFF:127.0.0.1]",
-    "[::fFfF:127.100.0.0]",
-    "[0::ffff:7f00:1]",
+  std::string_view kHosts[] = {
+      "localhost",
+      "localhost.",
+      "foo.localhost",
+      "127.0.0.1",
+      "127.100.0.2",
+      "[::1]",
+      "[::0:FFFF:127.0.0.1]",
+      "[::fFfF:127.100.0.0]",
+      "[0::ffff:7f00:1]",
 #if defined(BYPASS_LOOPBACK)
-    "loopback",
-    "loopback.",
+      "loopback",
+      "loopback.",
 #endif
   };
 
-  ExpectRulesMatch(rules, kHosts, std::size(kHosts), bypasses, inverted_hosts);
+  ExpectRulesMatch(rules, kHosts, bypasses, inverted_hosts);
 }
 
 // Tests calling |rules.Matches()| for link-local URLs returns |bypasses|.
 void ExpectBypassLinkLocal(const ProxyBypassRules& rules, bool bypasses) {
-  const char* kHosts[] = {
+  std::string_view kHosts[] = {
       "169.254.3.2", "169.254.100.1",        "[FE80::8]",
       "[fe91::1]",   "[::ffff:169.254.3.2]",
   };
 
-  ExpectRulesMatch(rules, kHosts, std::size(kHosts), bypasses, {});
+  ExpectRulesMatch(rules, kHosts, bypasses, {});
 }
 
 // Tests calling |rules.Matches()| with miscelaneous URLs that are neither
@@ -86,26 +86,26 @@ void ExpectBypassMisc(
     const ProxyBypassRules& rules,
     bool bypasses,
     const std::set<std::string>& inverted_hosts = std::set<std::string>()) {
-  const char* kHosts[] = {
-    "192.168.0.1",
-    "170.254.0.0",
-    "128.0.0.1",
-    "[::2]",
-    "[FD80::1]",
-    "foo",
-    "www.example3.com",
-    "[::ffff:128.0.0.1]",
-    "[::ffff:126.100.0.0]",
-    "[::ffff::ffff:127.0.0.1]",
-    "[::ffff:0:127.0.0.1]",
-    "[::127.0.0.1]",
+  std::string_view kHosts[] = {
+      "192.168.0.1",
+      "170.254.0.0",
+      "128.0.0.1",
+      "[::2]",
+      "[FD80::1]",
+      "foo",
+      "www.example3.com",
+      "[::ffff:128.0.0.1]",
+      "[::ffff:126.100.0.0]",
+      "[::ffff::ffff:127.0.0.1]",
+      "[::ffff:0:127.0.0.1]",
+      "[::127.0.0.1]",
 #if !defined(BYPASS_LOOPBACK)
-    "loopback",
-    "loopback.",
+      "loopback",
+      "loopback.",
 #endif
   };
 
-  ExpectRulesMatch(rules, kHosts, std::size(kHosts), bypasses, inverted_hosts);
+  ExpectRulesMatch(rules, kHosts, bypasses, inverted_hosts);
 }
 
 TEST(ProxyBypassRulesTest, ParseAndMatchBasicHost) {

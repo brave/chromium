@@ -6,35 +6,39 @@
 
 #include <memory>
 
+#include "base/functional/callback_forward.h"
+#include "chrome/browser/extensions/chrome_extension_system_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/install_gate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/storage_partition.h"
+#include "extensions/browser/delayed_install_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/install_gate.h"
+#include "extensions/browser/pref_names.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 
 namespace web_app {
 
-// This class registers itself to ExtensionService on construction and
+// This class registers itself to DelayedInstallManager on construction and
 // unregisters itself on destruction. It always delays extension install.
 class ExtensionInstallGateImpl : public extensions::InstallGate,
                                  public ExtensionInstallGate {
  public:
-  explicit ExtensionInstallGateImpl(Profile* profile)
-      : extension_service_(
-            extensions::ExtensionSystem::Get(profile)->extension_service()) {
-    extension_service_->RegisterInstallGate(
-        extensions::ExtensionPrefs::DelayReason::DELAY_REASON_GC,
+  explicit ExtensionInstallGateImpl(Profile* profile) : profile_(profile) {
+    CHECK(profile);
+    extensions::DelayedInstallManager::Get(profile)->RegisterInstallGate(
+        extensions::ExtensionPrefs::DelayReason::kGc,
         static_cast<ExtensionInstallGateImpl*>(this));
   }
 
   ~ExtensionInstallGateImpl() override {
-    extension_service_->UnregisterInstallGate(this);
+    extensions::DelayedInstallManager::Get(profile_)->UnregisterInstallGate(
+        this);
   }
 
   extensions::InstallGate::Action ShouldDelay(
@@ -44,7 +48,7 @@ class ExtensionInstallGateImpl : public extensions::InstallGate,
   }
 
  private:
-  base::raw_ptr<extensions::ExtensionService> extension_service_;
+  raw_ptr<Profile> profile_ = nullptr;
 };
 
 ExtensionInstallGate::~ExtensionInstallGate() = default;
@@ -70,15 +74,13 @@ ExtensionsManager::GetIsolatedStoragePaths() {
   return allowlist;
 }
 
-bool ExtensionsManager::ShouldGarbageCollectStoragePartitions() {
-  extensions::ExtensionPrefs* extension_prefs =
-      extensions::ExtensionPrefs::Get(profile_);
-  return extension_prefs && extension_prefs->NeedsStorageGarbageCollection();
-}
-
 std::unique_ptr<ExtensionInstallGate>
 ExtensionsManager::RegisterGarbageCollectionInstallGate() {
   return std::make_unique<web_app::ExtensionInstallGateImpl>(profile_);
+}
+
+KeyedServiceBaseFactory* ExtensionsManager::GetExtensionSystemSharedFactory() {
+  return extensions::ChromeExtensionSystemSharedFactory::GetInstance();
 }
 
 }  // namespace web_app

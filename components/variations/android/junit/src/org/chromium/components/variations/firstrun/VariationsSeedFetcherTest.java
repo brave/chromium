@@ -5,8 +5,6 @@
 package org.chromium.components.variations.firstrun;
 
 import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
@@ -32,7 +30,6 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.components.variations.VariationsCompressionUtils;
@@ -49,9 +46,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 
-/**
- * Tests for VariationsSeedFetcher
- */
+/** Tests for VariationsSeedFetcher */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class VariationsSeedFetcherTest {
@@ -81,14 +76,9 @@ public class VariationsSeedFetcherTest {
                                 .setChannel(sChannel)
                                 .build());
         mPrefs = ContextUtils.getAppSharedPreferences();
-        UmaRecorderHolder.resetForTesting();
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#fetchSeed()}.
-     *
-     * @throws IOException
-     */
+    /** Test method for {@link VariationsSeedFetcher#fetchSeed()}. */
     @Test
     public void testFetchSeed() throws IOException {
         // Pretend we are on a background thread; set the UI thread looper to something other than
@@ -98,6 +88,7 @@ public class VariationsSeedFetcherTest {
         when(mConnection.getHeaderField("X-Seed-Signature")).thenReturn("signature");
         when(mConnection.getHeaderField("X-Country")).thenReturn("Nowhere Land");
         when(mConnection.getHeaderField("IM")).thenReturn("gzip");
+        when(mConnection.getHeaderFieldDate("Date", 0)).thenReturn(12345L);
         when(mConnection.getInputStream())
                 .thenReturn(new ByteArrayInputStream(ApiCompatibilityUtils.getBytesUtf8("1234")));
         doReturn(mConnection)
@@ -111,31 +102,35 @@ public class VariationsSeedFetcherTest {
                                 .setRestrictMode(null)
                                 .build());
 
-        long startTime = new Date().getTime();
         mFetcher.fetchSeed(sRestrict, sMilestone, sChannel);
-        long endTime = new Date().getTime();
 
-        assertThat(mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_SIGNATURE, ""),
+        assertThat(
+                mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_SIGNATURE, ""),
                 equalTo("signature"));
-        assertThat(mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_COUNTRY, ""),
+        assertThat(
+                mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_COUNTRY, ""),
                 equalTo("Nowhere Land"));
-        long seedDate = mPrefs.getLong(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_DATE, 0);
-        // We use *OrEqualTo comparisons here to account for when both points in time fall into the
-        // same tick of the clock.
-        assertThat("Seed date should be after the test start time", seedDate,
-                greaterThanOrEqualTo(startTime));
-        assertThat("Seed date should be before the test end time", seedDate,
-                lessThanOrEqualTo(endTime));
-        assertTrue(mPrefs.getBoolean(
-                VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_IS_GZIP_COMPRESSED, false));
-        assertThat(mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_BASE64, ""),
-                equalTo(Base64.encodeToString(
-                        ApiCompatibilityUtils.getBytesUtf8("1234"), Base64.NO_WRAP)));
-        assertEquals("Should be logged as HTTP code", 1,
+        assertEquals(
+                "Seed date should be set to the value from the header",
+                12345L,
+                mPrefs.getLong(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_DATE, 0));
+        assertTrue(
+                mPrefs.getBoolean(
+                        VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_IS_GZIP_COMPRESSED, false));
+        assertThat(
+                mPrefs.getString(VariationsSeedBridge.VARIATIONS_FIRST_RUN_SEED_BASE64, ""),
+                equalTo(
+                        Base64.encodeToString(
+                                ApiCompatibilityUtils.getBytesUtf8("1234"), Base64.NO_WRAP)));
+        assertEquals(
+                "Should be logged as HTTP code",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         HttpURLConnection.HTTP_OK));
-        assertEquals("Should only log Variations.FirstRun.SeedFetchResult once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.SeedFetchResult once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM));
     }
@@ -157,13 +152,17 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should be logged as requested and received", 1,
+        assertEquals(
+                "Should be logged as requested and received",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION,
                         VariationsSeedFetcher.DeltaCompression.REQUESTED_RECEIVED));
-        assertEquals("Should only log Variations.FirstRun.DeltaCompression once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.DeltaCompression once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION));
     }
@@ -185,13 +184,17 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should be logged as requested but not received", 1,
+        assertEquals(
+                "Should be logged as requested but not received",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION,
                         VariationsSeedFetcher.DeltaCompression.REQUESTED_NOT_RECEIVED));
-        assertEquals("Should only log Variations.FirstRun.DeltaCompression once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.DeltaCompression once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION));
     }
@@ -212,13 +215,17 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should be logged as not requested but received", 1,
+        assertEquals(
+                "Should be logged as not requested but received",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION,
                         VariationsSeedFetcher.DeltaCompression.NOT_REQUESTED_RECEIVED));
-        assertEquals("Should only log Variations.FirstRun.DeltaCompression once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.DeltaCompression once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION));
     }
@@ -239,13 +246,17 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should be logged as not requested and not received", 1,
+        assertEquals(
+                "Should be logged as not requested and not received",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION,
                         VariationsSeedFetcher.DeltaCompression.NOT_REQUESTED_NOT_RECEIVED));
-        assertEquals("Should only log Variations.FirstRun.DeltaCompression once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.DeltaCompression once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION));
     }
@@ -267,9 +278,11 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should not log Variations.FirstRun.DeltaCompression", 0,
+        assertEquals(
+                "Should not log Variations.FirstRun.DeltaCompression",
+                0,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_DELTA_COMPRESSION));
     }
@@ -277,14 +290,13 @@ public class VariationsSeedFetcherTest {
     /**
      * Test method for {@link VariationsSeedFetcher#downloadContent()} when no fetch is needed as
      * If-None-Match header matches.
-     *
-     * @throws IOException
      */
     @Test
     public void downloadContentNotModified() throws IOException {
         // Pretend we are on a background thread; set the UI thread looper to something other than
         // the current thread.
         when(mConnection.getResponseCode()).thenReturn(HttpURLConnection.HTTP_NOT_MODIFIED);
+        when(mConnection.getHeaderFieldDate("Date", 0)).thenReturn(34567L);
 
         SeedInfo curSeedInfo = new SeedInfo();
         curSeedInfo.signature = "";
@@ -300,10 +312,11 @@ public class VariationsSeedFetcherTest {
         when(dt.newDate()).thenReturn(date);
         mFetcher.setDateTime(dt);
 
-        VariationsSeed seed = VariationsSeed.newBuilder()
-                                      .setVersion("V")
-                                      .setSerialNumber("savedSerialNumber")
-                                      .build();
+        VariationsSeed seed =
+                VariationsSeed.newBuilder()
+                        .setVersion("V")
+                        .setSerialNumber("savedSerialNumber")
+                        .build();
         curSeedInfo.seedData = seed.toByteArray();
 
         final VariationsSeedFetcher.SeedFetchParameters params =
@@ -315,21 +328,19 @@ public class VariationsSeedFetcherTest {
                         .build();
         SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, curSeedInfo);
 
-        assertEquals(seedFetchInfo.seedFetchResult, HttpURLConnection.HTTP_NOT_MODIFIED);
+        assertEquals(HttpURLConnection.HTTP_NOT_MODIFIED, seedFetchInfo.seedFetchResult);
 
         SeedInfo updatedSeedInfo = seedFetchInfo.seedInfo;
         assertEquals(curSeedInfo.signature, updatedSeedInfo.signature);
         assertEquals(curSeedInfo.country, updatedSeedInfo.country);
         assertEquals(curSeedInfo.isGzipCompressed, updatedSeedInfo.isGzipCompressed);
-        assertEquals(67890L, updatedSeedInfo.date);
+        assertEquals(34567L, updatedSeedInfo.date);
         Arrays.equals(curSeedInfo.seedData, updatedSeedInfo.seedData);
 
-        assertEquals(curSeedInfo.getParsedVariationsSeed().getSerialNumber(), "savedSerialNumber");
+        assertEquals("savedSerialNumber", curSeedInfo.getParsedVariationsSeed().getSerialNumber());
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is invalid.
-     */
+    /** Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is invalid. */
     @Test
     public void testDownloadContent_invalidImHeader() throws IOException {
         when(mConnection.getResponseCode()).thenReturn(HttpURLConnection.HTTP_OK);
@@ -344,17 +355,19 @@ public class VariationsSeedFetcherTest {
                         .setMilestone(sMilestone)
                         .setChannel(sChannel)
                         .build();
-        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /*currInfo=*/null);
+        SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, /* currInfo= */ null);
 
-        assertEquals("Should be logged as InvalidImHeader", 1,
+        assertEquals(
+                "Should be logged as InvalidImHeader",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_INVALID_IM_HEADER));
     }
 
     /**
-     * Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is valid,
-     * but delta patch fails.
+     * Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is valid, but
+     * delta patch fails.
      */
     @Test
     @CommandLineFlags.Add(VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)
@@ -362,8 +375,9 @@ public class VariationsSeedFetcherTest {
         when(mConnection.getResponseCode()).thenReturn(HttpURLConnection.HTTP_OK);
         when(mConnection.getHeaderField("IM")).thenReturn("x-bm,gzip");
         when(mConnection.getInputStream())
-                .thenReturn(new ByteArrayInputStream(
-                        ApiCompatibilityUtils.getBytesUtf8("bogusDeltaPatch")));
+                .thenReturn(
+                        new ByteArrayInputStream(
+                                ApiCompatibilityUtils.getBytesUtf8("bogusDeltaPatch")));
 
         SeedInfo seed = new SeedInfo();
         seed.seedData = ApiCompatibilityUtils.getBytesUtf8("bogusDeltaPatch");
@@ -377,57 +391,65 @@ public class VariationsSeedFetcherTest {
                         .build();
         SeedFetchInfo seedFetchInfo = mFetcher.downloadContent(params, seed);
 
-        assertEquals("Should not be logged as invalidImHeader", 0,
+        assertEquals(
+                "Should not be logged as invalidImHeader",
+                0,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_INVALID_IM_HEADER));
-        assertEquals("Should be logged as SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION", 1,
+        assertEquals(
+                "Should be logged as SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION));
     }
 
     /**
-     * Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is valid,
-     * and delta patch succeeds.
+     * Test method for {@link VariationsSeedFetcher#downloadContent()} when IM-header is valid, and
+     * delta patch succeeds.
      */
     @Test
     @CommandLineFlags.Add(VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)
     public void testDownloadContent_success() throws IOException {
         String mockSignature = "bogus seed signature";
         String mockCountry = "GB";
+        long mockDate = 1234L;
         String base64Delta =
                 "KgooMjRkM2EzN2UwMWJlYjlmMDVmMzIzOGI1MzVmNzA4NWZmZWViODc0MAAqW+4BkgEKH1VN"
-                + "QS1Vbmlmb3JtaXR5LVRyaWFsLTIwLVBlcmNlbnQYgOOFwAU4AUIHZGVmYXVsdEoRCghncm91"
-                + "cF8wMRABGKO2yQFKEQoIZ3JvdXBfMDIQARiktskBShEKCGdyb3VwXzAzEAEYpbbJAUoRCghn"
-                + "cm91cF8wNBABGKa2yQFKEAoHZGVmYXVsdBABGKK2yQFgARJYCh9VTUEtVW5pZm9ybWl0eS1U"
-                + "cmlhbC01MC1QZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKDwoLbm9uX2RlZmF1bHQQAUoLCgdk"
-                + "ZWZhdWx0EAFSBCgAKAFgAQ==";
+                        + "QS1Vbmlmb3JtaXR5LVRyaWFsLTIwLVBlcmNlbnQYgOOFwAU4AUIHZGVmYXVsdEoRCghncm91"
+                        + "cF8wMRABGKO2yQFKEQoIZ3JvdXBfMDIQARiktskBShEKCGdyb3VwXzAzEAEYpbbJAUoRCghn"
+                        + "cm91cF8wNBABGKa2yQFKEAoHZGVmYXVsdBABGKK2yQFgARJYCh9VTUEtVW5pZm9ybWl0eS1U"
+                        + "cmlhbC01MC1QZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKDwoLbm9uX2RlZmF1bHQQAUoLCgdk"
+                        + "ZWZhdWx0EAFSBCgAKAFgAQ==";
 
         String base64BeforeSeed =
                 "CigxN2E4ZGJiOTI4ODI0ZGU3ZDU2MGUyODRlODY1ZDllYzg2NzU1MTE0ElgKDFVNQVN0YWJp"
-                + "bGl0eRjEyomgBTgBQgtTZXBhcmF0ZUxvZ0oLCgdEZWZhdWx0EABKDwoLU2VwYXJhdGVMb2cQ"
-                + "ZFIVEgszNC4wLjE4MDEuMCAAIAEgAiADEkQKIFVNQS1Vbmlmb3JtaXR5LVRyaWFsLTEwMC1Q"
-                + "ZXJjZW50GIDjhcAFOAFCCGdyb3VwXzAxSgwKCGdyb3VwXzAxEAFgARJPCh9VTUEtVW5pZm9y"
-                + "bWl0eS1UcmlhbC01MC1QZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKDAoIZ3JvdXBfMDEQAUoL"
-                + "CgdkZWZhdWx0EAFgAQ==";
+                        + "bGl0eRjEyomgBTgBQgtTZXBhcmF0ZUxvZ0oLCgdEZWZhdWx0EABKDwoLU2VwYXJhdGVMb2cQ"
+                        + "ZFIVEgszNC4wLjE4MDEuMCAAIAEgAiADEkQKIFVNQS1Vbmlmb3JtaXR5LVRyaWFsLTEwMC1Q"
+                        + "ZXJjZW50GIDjhcAFOAFCCGdyb3VwXzAxSgwKCGdyb3VwXzAxEAFgARJPCh9VTUEtVW5pZm9y"
+                        + "bWl0eS1UcmlhbC01MC1QZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKDAoIZ3JvdXBfMDEQAUoL"
+                        + "CgdkZWZhdWx0EAFgAQ==";
 
         String base64ExpectedSeedData =
                 "CigyNGQzYTM3ZTAxYmViOWYwNWYzMjM4YjUzNWY3MDg1ZmZlZWI4NzQwElgKDFVNQVN0YWJp"
-                + "bGl0eRjEyomgBTgBQgtTZXBhcmF0ZUxvZ0oLCgdEZWZhdWx0EABKDwoLU2VwYXJhdGVMb2cQ"
-                + "ZFIVEgszNC4wLjE4MDEuMCAAIAEgAiADEpIBCh9VTUEtVW5pZm9ybWl0eS1UcmlhbC0yMC1Q"
-                + "ZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKEQoIZ3JvdXBfMDEQARijtskBShEKCGdyb3VwXzAy"
-                + "EAEYpLbJAUoRCghncm91cF8wMxABGKW2yQFKEQoIZ3JvdXBfMDQQARimtskBShAKB2RlZmF1"
-                + "bHQQARiitskBYAESWAofVU1BLVVuaWZvcm1pdHktVHJpYWwtNTAtUGVyY2VudBiA44XABTgB"
-                + "QgdkZWZhdWx0Sg8KC25vbl9kZWZhdWx0EAFKCwoHZGVmYXVsdBABUgQoACgBYAE=";
+                        + "bGl0eRjEyomgBTgBQgtTZXBhcmF0ZUxvZ0oLCgdEZWZhdWx0EABKDwoLU2VwYXJhdGVMb2cQ"
+                        + "ZFIVEgszNC4wLjE4MDEuMCAAIAEgAiADEpIBCh9VTUEtVW5pZm9ybWl0eS1UcmlhbC0yMC1Q"
+                        + "ZXJjZW50GIDjhcAFOAFCB2RlZmF1bHRKEQoIZ3JvdXBfMDEQARijtskBShEKCGdyb3VwXzAy"
+                        + "EAEYpLbJAUoRCghncm91cF8wMxABGKW2yQFKEQoIZ3JvdXBfMDQQARimtskBShAKB2RlZmF1"
+                        + "bHQQARiitskBYAESWAofVU1BLVVuaWZvcm1pdHktVHJpYWwtNTAtUGVyY2VudBiA44XABTgB"
+                        + "QgdkZWZhdWx0Sg8KC25vbl9kZWZhdWx0EAFKCwoHZGVmYXVsdBABUgQoACgBYAE=";
 
         when(mConnection.getResponseCode()).thenReturn(HttpURLConnection.HTTP_OK);
         when(mConnection.getHeaderField("IM")).thenReturn("x-bm,gzip");
         when(mConnection.getHeaderField("X-Seed-Signature")).thenReturn(mockSignature);
         when(mConnection.getHeaderField("X-Country")).thenReturn(mockCountry);
+        when(mConnection.getHeaderFieldDate("Date", 0)).thenReturn(mockDate);
         when(mConnection.getInputStream())
-                .thenReturn(new ByteArrayInputStream(VariationsCompressionUtils.gzipCompress(
-                        Base64.decode(base64Delta, Base64.NO_WRAP))));
+                .thenReturn(
+                        new ByteArrayInputStream(
+                                VariationsCompressionUtils.gzipCompress(
+                                        Base64.decode(base64Delta, Base64.NO_WRAP))));
 
         SeedInfo seed = new SeedInfo();
         seed.seedData = Base64.decode(base64BeforeSeed, Base64.NO_WRAP);
@@ -442,21 +464,28 @@ public class VariationsSeedFetcherTest {
         SeedFetchInfo fetchInfo = mFetcher.downloadContent(params, seed);
 
         // Check the counters.
-        assertEquals("Should not be logged as invalidImHeader", 0,
+        assertEquals(
+                "Should not be logged as invalidImHeader",
+                0,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_INVALID_IM_HEADER));
-        assertEquals("Should not be logged as SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION", 0,
+        assertEquals(
+                "Should not be logged as SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION",
+                0,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION));
-        assertEquals("Should be logged as HTTP code", 1,
+        assertEquals(
+                "Should be logged as HTTP code",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         HttpURLConnection.HTTP_OK));
 
         // Check the returned SeedInfo.
-        assertEquals("Delta patched seed data should result in expectedSeedData",
+        assertEquals(
+                "Delta patched seed data should result in expectedSeedData",
                 base64ExpectedSeedData,
                 Base64.encodeToString(
                         VariationsCompressionUtils.gzipUncompress(fetchInfo.seedInfo.seedData),
@@ -464,11 +493,10 @@ public class VariationsSeedFetcherTest {
         assertTrue(fetchInfo.seedInfo.isGzipCompressed);
         assertEquals(mockSignature, fetchInfo.seedInfo.signature);
         assertEquals(mockCountry, fetchInfo.seedInfo.country);
+        assertEquals(mockDate, fetchInfo.seedInfo.date);
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#fetchSeed()} when no fetch is needed
-     */
+    /** Test method for {@link VariationsSeedFetcher#fetchSeed()} when no fetch is needed */
     @Test
     public void testFetchSeed_noFetchNeeded() throws IOException {
         mPrefs.edit().putBoolean(VariationsSeedFetcher.VARIATIONS_INITIALIZED_PREF, true).apply();
@@ -476,14 +504,14 @@ public class VariationsSeedFetcherTest {
         mFetcher.fetchSeed(sRestrict, sMilestone, sChannel);
 
         verify(mConnection, never()).connect();
-        assertEquals("Should not log Variations.FirstRun.SeedFetchResult if no fetch needed", 0,
+        assertEquals(
+                "Should not log Variations.FirstRun.SeedFetchResult if no fetch needed",
+                0,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM));
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#fetchSeed()} with a bad response
-     */
+    /** Test method for {@link VariationsSeedFetcher#fetchSeed()} with a bad response */
     @Test
     public void testFetchSeed_badResponse() throws IOException {
         when(mConnection.getResponseCode()).thenReturn(HttpURLConnection.HTTP_NOT_FOUND);
@@ -500,18 +528,20 @@ public class VariationsSeedFetcherTest {
 
         assertTrue(mPrefs.getBoolean(VariationsSeedFetcher.VARIATIONS_INITIALIZED_PREF, false));
         assertFalse(VariationsSeedBridge.hasJavaPref());
-        assertEquals("Should be logged as HTTP code", 1,
+        assertEquals(
+                "Should be logged as HTTP code",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         HttpURLConnection.HTTP_NOT_FOUND));
-        assertEquals("Should only log Variations.FirstRun.SeedFetchResult once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.SeedFetchResult once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM));
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#fetchSeed()} with an exception when connecting
-     */
+    /** Test method for {@link VariationsSeedFetcher#fetchSeed()} with an exception when connecting */
     @Test
     public void testFetchSeed_IOException() throws IOException {
         doThrow(new IOException()).when(mConnection).connect();
@@ -528,18 +558,20 @@ public class VariationsSeedFetcherTest {
 
         assertTrue(mPrefs.getBoolean(VariationsSeedFetcher.VARIATIONS_INITIALIZED_PREF, false));
         assertFalse(VariationsSeedBridge.hasJavaPref());
-        assertEquals("Should be logged as IOException", 1,
+        assertEquals(
+                "Should be logged as IOException",
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM,
                         VariationsSeedFetcher.SEED_FETCH_RESULT_IOEXCEPTION));
-        assertEquals("Should only log Variations.FirstRun.SeedFetchResult once", 1,
+        assertEquals(
+                "Should only log Variations.FirstRun.SeedFetchResult once",
+                1,
                 RecordHistogram.getHistogramTotalCountForTesting(
                         VariationsSeedFetcher.SEED_FETCH_RESULT_HISTOGRAM));
     }
 
-    /**
-     * Test method for {@link VariationsSeedFetcher#getConnectionString()} has URl params.
-     */
+    /** Test method for {@link VariationsSeedFetcher#getConnectionString()} has URl params. */
     @Test
     public void testGetConnectionString_HasParams() {
         @VariationsSeedFetcher.VariationsPlatform
@@ -564,36 +596,39 @@ public class VariationsSeedFetcherTest {
         assertTrue(urlString, urlString.contains(sMilestone));
         assertTrue(urlString, urlString.contains(sChannel));
 
-        params = VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
-                         .setPlatform(platform)
-                         .setRestrictMode("")
-                         .setMilestone(sMilestone)
-                         .setChannel(sChannel)
-                         .build();
+        params =
+                VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
+                        .setPlatform(platform)
+                        .setRestrictMode("")
+                        .setMilestone(sMilestone)
+                        .setChannel(sChannel)
+                        .build();
         urlString = mFetcher.getConnectionString(params);
         assertFalse(urlString.contains("restrict"));
         assertTrue(urlString.contains("osname"));
         assertTrue(urlString.contains("milestone"));
         assertTrue(urlString.contains("channel"));
 
-        params = VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
-                         .setPlatform(platform)
-                         .setRestrictMode(sRestrict)
-                         .setMilestone("")
-                         .setChannel(sChannel)
-                         .build();
+        params =
+                VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
+                        .setPlatform(platform)
+                        .setRestrictMode(sRestrict)
+                        .setMilestone("")
+                        .setChannel(sChannel)
+                        .build();
         urlString = mFetcher.getConnectionString(params);
         assertTrue(urlString.contains("restrict"));
         assertTrue(urlString.contains("osname"));
         assertFalse(urlString.contains("milestone"));
         assertTrue(urlString.contains("channel"));
 
-        params = VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
-                         .setPlatform(platform)
-                         .setRestrictMode(sRestrict)
-                         .setMilestone(sMilestone)
-                         .setChannel("")
-                         .build();
+        params =
+                VariationsSeedFetcher.SeedFetchParameters.Builder.newBuilder()
+                        .setPlatform(platform)
+                        .setRestrictMode(sRestrict)
+                        .setMilestone(sMilestone)
+                        .setChannel("")
+                        .build();
         urlString = mFetcher.getConnectionString(params);
         assertTrue(urlString.contains("restrict"));
         assertTrue(urlString.contains("osname"));
@@ -689,8 +724,7 @@ public class VariationsSeedFetcherTest {
 
     /**
      * Test method to make sure {@link VariationsSeedFetcher#getAvailableInstanceManipulations()}
-     * honors the
-     * "--enable-finch-seed-delta-compression" switch.
+     * honors the "--enable-finch-seed-delta-compression" switch.
      */
     @Test
     @CommandLineFlags.Add(VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)

@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/file_manager/mount_test_util.h"
-#include "base/memory/raw_ptr.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 
 namespace file_manager {
 namespace test_util {
@@ -15,19 +16,14 @@ namespace {
 
 // Helper class used to wait for |OnFileSystemMounted| event from a drive file
 // system.
-class DriveMountPointWaiter : public drive::DriveIntegrationServiceObserver {
+class DriveMountPointWaiter : public drive::DriveIntegrationService::Observer {
  public:
-  explicit DriveMountPointWaiter(
-      drive::DriveIntegrationService* integration_service)
-      : integration_service_(integration_service) {
-    integration_service_->AddObserver(this);
+  explicit DriveMountPointWaiter(drive::DriveIntegrationService* service)
+      : service_(service) {
+    Observe(service_);
   }
 
-  ~DriveMountPointWaiter() override {
-    integration_service_->RemoveObserver(this);
-  }
-
-  // DriveIntegrationServiceObserver override.
+  // DriveIntegrationService::Observer implementation.
   void OnFileSystemMounted() override {
     // Note that it is OK for |run_loop_.Quit| to be called before
     // |run_loop_.Run|. In this case |Run| will return immediately.
@@ -38,7 +34,7 @@ class DriveMountPointWaiter : public drive::DriveIntegrationServiceObserver {
   void Wait() { run_loop_.Run(); }
 
  private:
-  raw_ptr<drive::DriveIntegrationService, ExperimentalAsh> integration_service_;
+  const raw_ptr<drive::DriveIntegrationService> service_;
   base::RunLoop run_loop_;
 };
 
@@ -63,9 +59,9 @@ void WaitUntilDriveMountPointIsAdded(Profile* profile) {
     return;
   }
 
-  DriveMountPointWaiter mount_point_waiter(integration_service);
+  DriveMountPointWaiter waiter(integration_service);
   VLOG(1) << "Waiting for drive mount point to get mounted.";
-  mount_point_waiter.Wait();
+  waiter.Wait();
   VLOG(1) << "Drive mount point found.";
 }
 

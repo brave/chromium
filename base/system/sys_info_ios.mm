@@ -11,38 +11,29 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 
+#include "base/apple/scoped_mach_port.h"
 #include "base/check_op.h"
-#include "base/mac/scoped_mach_port.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/posix/sysctl.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "build/build_config.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace base {
 
+#if BUILDFLAG(IS_IOS)
 namespace {
-
-// Queries sysctlbyname() for the given key and returns the value from the
-// system or the empty string on failure.
-std::string GetSysctlValue(const char* key_name) {
-  char value[256];
-  size_t len = std::size(value);
-  if (sysctlbyname(key_name, &value, &len, nullptr, 0) == 0) {
-    DCHECK_GE(len, 1u);
-    DCHECK_EQ('\0', value[len - 1]);
-    return std::string(value, len - 1);
-  }
-  return std::string();
+// Accessor for storage of overridden HardwareModelName.
+std::string& GetHardwareModelNameStorage() {
+  static base::NoDestructor<std::string> instance;
+  return *instance;
 }
-
 }  // namespace
+#endif
 
 // static
 std::string SysInfo::OperatingSystemName() {
@@ -100,36 +91,26 @@ std::string SysInfo::OperatingSystemArchitecture() {
 
 // static
 std::string SysInfo::GetIOSBuildNumber() {
-  int mib[2] = {CTL_KERN, KERN_OSVERSION};
-  unsigned int namelen = sizeof(mib) / sizeof(mib[0]);
-  size_t buffer_size = 0;
-  sysctl(mib, namelen, nullptr, &buffer_size, nullptr, 0);
-  char build_number[buffer_size];
-  int result = sysctl(mib, namelen, build_number, &buffer_size, nullptr, 0);
-  DCHECK(result == 0);
-  return build_number;
+  std::optional<std::string> build_number =
+      StringSysctl({CTL_KERN, KERN_OSVERSION});
+  return build_number.value();
 }
 
 // static
-uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
-  struct host_basic_info hostinfo;
-  mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
-  base::mac::ScopedMachSendRight host(mach_host_self());
-  int result = host_info(host.get(), HOST_BASIC_INFO,
-                         reinterpret_cast<host_info_t>(&hostinfo), &count);
-  if (result != KERN_SUCCESS) {
-    NOTREACHED();
-    return 0;
-  }
-  DCHECK_EQ(HOST_BASIC_INFO_COUNT, count);
-  return hostinfo.max_mem;
+void SysInfo::OverrideHardwareModelName(std::string name) {
+  // Normally, HardwareModelName() should not be called before overriding the
+  // value, but StartCrashController(), which eventually calls
+  // HardwareModelName(), is called before overriding the name.
+  CHECK(!name.empty());
+  GetHardwareModelNameStorage() = std::move(name);
 }
 
 // static
 uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfoKB info;
-  if (!GetSystemMemoryInfo(&info))
+  if (!GetSystemMemoryInfo(&info)) {
     return 0;
+  }
   // We should add inactive file-backed memory also but there is no such
   // information from iOS unfortunately.
   return checked_cast<uint64_t>(info.free + info.speculative) * 1024;
@@ -137,7 +118,7 @@ uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
 
 // static
 std::string SysInfo::CPUModelName() {
-  return GetSysctlValue("machdep.cpu.brand_string");
+  return StringSysctlByName("machdep.cpu.brand_string").value_or(std::string{});
 }
 
 // static
@@ -161,9 +142,13 @@ std::string SysInfo::HardwareModelName() {
   }
   return base::StringPrintf("iOS Simulator (%s)", model);
 #else
+  const std::string& override = GetHardwareModelNameStorage();
+  if (!override.empty()) {
+    return override;
+  }
   // Note: This uses "hw.machine" instead of "hw.model" like the Mac code,
   // because "hw.model" doesn't always return the right string on some devices.
-  return GetSysctlValue("hw.machine");
+  return StringSysctl({CTL_HW, HW_MACHINE}).value_or(std::string{});
 #endif
 }
 

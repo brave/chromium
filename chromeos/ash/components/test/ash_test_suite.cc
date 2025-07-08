@@ -10,13 +10,13 @@
 #include "base/i18n/rtl.h"
 #include "base/path_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/accessibility/platform/provide_ax_platform_for_tests.h"
 #include "ui/aura/env.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/test/gl_surface_test_support.h"
-#include "ui/lottie/resource.h"
 
 namespace ash {
 
@@ -27,6 +27,9 @@ AshTestSuite::~AshTestSuite() = default;
 
 void AshTestSuite::Initialize() {
   base::TestSuite::Initialize();
+
+  testing::UnitTest::GetInstance()->listeners().Append(
+      new ui::ProvideAXPlatformForTests());
 
   // Force software-gl. This is necessary for tests that trigger launching ash
   // in its own process
@@ -40,9 +43,6 @@ void AshTestSuite::Initialize() {
   // Force unittests to run using en-US so if we test against string output,
   // it'll pass regardless of the system language.
   base::i18n::SetICUDefaultLocale("en_US");
-
-  ui::ResourceBundle::SetLottieParsingFunctions(
-      &lottie::ParseLottieAsStillImage, &lottie::ParseLottieAsThemedStillImage);
 
   LoadTestResources();
 

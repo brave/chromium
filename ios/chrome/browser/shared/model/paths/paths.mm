@@ -14,10 +14,6 @@
 #import "components/gcm_driver/gcm_driver_constants.h"
 #import "ios/chrome/browser/shared/model/paths/paths_internal.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ios {
 namespace {
 
@@ -31,7 +27,7 @@ const base::FilePath::CharType kProductDirName[] =
 
 bool GetDefaultUserDataDirectory(base::FilePath* result) {
   if (!base::PathService::Get(base::DIR_APP_DATA, result)) {
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED();
     return false;
   }
   *result = result->Append(kProductDirName);
@@ -46,21 +42,24 @@ bool PathProvider(int key, base::FilePath* result) {
   base::FilePath cur;
   switch (key) {
     case DIR_USER_DATA:
-      if (!GetDefaultUserDataDirectory(&cur))
+      if (!GetDefaultUserDataDirectory(&cur)) {
         return false;
+      }
       create_dir = true;
       break;
 
     case DIR_CRASH_DUMPS:
-      if (!GetDefaultUserDataDirectory(&cur))
+      if (!GetDefaultUserDataDirectory(&cur)) {
         return false;
+      }
       cur = cur.Append(FILE_PATH_LITERAL("Crash Reports"));
       create_dir = true;
       break;
 
     case DIR_TEST_DATA:
-      if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &cur))
+      if (!base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &cur)) {
         return false;
+      }
       cur = cur.Append(FILE_PATH_LITERAL("ios"));
       cur = cur.Append(FILE_PATH_LITERAL("chrome"));
       cur = cur.Append(FILE_PATH_LITERAL("test"));
@@ -68,14 +67,16 @@ bool PathProvider(int key, base::FilePath* result) {
       break;
 
     case DIR_GLOBAL_GCM_STORE:
-      if (!base::PathService::Get(DIR_USER_DATA, &cur))
+      if (!base::PathService::Get(DIR_USER_DATA, &cur)) {
         return false;
+      }
       cur = cur.Append(gcm_driver::kGCMStoreDirname);
       break;
 
     case FILE_LOCAL_STATE:
-      if (!base::PathService::Get(DIR_USER_DATA, &cur))
+      if (!base::PathService::Get(DIR_USER_DATA, &cur)) {
         return false;
+      }
       cur = cur.Append(FILE_PATH_LITERAL("Local State"));
       break;
 
@@ -83,14 +84,16 @@ bool PathProvider(int key, base::FilePath* result) {
       // Catalyst builds are packaged like macOS, with the binary and resource
       // directories separate. On iOS they are all together in a single dir.
       // base::DIR_ASSETS does the right thing on each platform.
-      if (!base::PathService::Get(base::DIR_ASSETS, &cur))
+      if (!base::PathService::Get(base::DIR_ASSETS, &cur)) {
         return false;
+      }
       cur = cur.Append(FILE_PATH_LITERAL("resources.pak"));
       break;
 
     case DIR_OPTIMIZATION_GUIDE_PREDICTION_MODELS:
-      if (!base::PathService::Get(DIR_USER_DATA, &cur))
+      if (!base::PathService::Get(DIR_USER_DATA, &cur)) {
         return false;
+      }
       cur = cur.Append(FILE_PATH_LITERAL("OptimizationGuidePredictionModels"));
       create_dir = true;
       break;
@@ -99,8 +102,9 @@ bool PathProvider(int key, base::FilePath* result) {
       return false;
   }
 
-  if (create_dir && !base::PathExists(cur) && !base::CreateDirectory(cur))
+  if (create_dir && !base::PathExists(cur) && !base::CreateDirectory(cur)) {
     return false;
+  }
 
   *result = cur;
   return true;
@@ -112,22 +116,25 @@ void RegisterPathProvider() {
   base::PathService::RegisterProvider(PathProvider, PATH_START, PATH_END);
 }
 
-void GetUserCacheDirectory(const base::FilePath& browser_state_dir,
+void GetUserCacheDirectory(const base::FilePath& profile_dir,
                            base::FilePath* result) {
-  // If the browser state directory is under ~/Library/Application Support,
+  // If the profile directory is under ~/Library/Application Support,
   // use a suitable cache directory under ~/Library/Caches.
 
   // Default value in cases where any of the following fails.
-  *result = browser_state_dir;
+  *result = profile_dir;
 
   base::FilePath app_data_dir;
-  if (!base::PathService::Get(base::DIR_APP_DATA, &app_data_dir))
+  if (!base::PathService::Get(base::DIR_APP_DATA, &app_data_dir)) {
     return;
+  }
   base::FilePath cache_dir;
-  if (!base::PathService::Get(base::DIR_CACHE, &cache_dir))
+  if (!base::PathService::Get(base::DIR_CACHE, &cache_dir)) {
     return;
-  if (!app_data_dir.AppendRelativePath(browser_state_dir, &cache_dir))
+  }
+  if (!app_data_dir.AppendRelativePath(profile_dir, &cache_dir)) {
     return;
+  }
 
   *result = cache_dir;
 }

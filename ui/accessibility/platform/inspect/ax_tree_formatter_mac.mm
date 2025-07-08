@@ -20,13 +20,9 @@
 #include "ui/accessibility/platform/inspect/ax_property_node.h"
 #include "ui/accessibility/platform/inspect/ax_script_instruction.h"
 #include "ui/accessibility/platform/inspect/ax_transform_mac.h"
+#include "ui/gfx/native_widget_types.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-// This file uses the deprecated NSObject accessibility interface.
-// TODO(crbug.com/948844): Migrate to the new NSAccessibility interface.
+// TODO(https://crbug.com/406190900): Remove this deprecation pragma.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -65,17 +61,17 @@ void AXTreeFormatterMac::AddDefaultFilters(
 base::Value::Dict AXTreeFormatterMac::BuildTree(
     AXPlatformNodeDelegate* root) const {
   DCHECK(root);
-  return BuildTree(root->GetNativeViewAccessible());
+  return BuildTree(root->GetNativeViewAccessible().Get());
 }
 
 base::Value::Dict AXTreeFormatterMac::BuildTreeForSelector(
     const AXTreeSelector& selector) const {
-  base::ScopedCFTypeRef<AXUIElementRef> node;
+  base::apple::ScopedCFTypeRef<AXUIElementRef> node;
   std::tie(node, std::ignore) = FindAXUIElement(selector);
-  if (node == nil) {
+  if (!node) {
     return base::Value::Dict();
   }
-  return BuildTreeForAXUIElement(node);
+  return BuildTreeForAXUIElement(node.get());
 }
 
 base::Value::Dict AXTreeFormatterMac::BuildTreeForAXUIElement(
@@ -83,10 +79,10 @@ base::Value::Dict AXTreeFormatterMac::BuildTreeForAXUIElement(
   return BuildTree((__bridge id)node);
 }
 
-base::Value::Dict AXTreeFormatterMac::BuildTree(const id root) const {
+base::Value::Dict AXTreeFormatterMac::BuildTree(id root) const {
   DCHECK(root);
 
-  AXTreeIndexerMac indexer(root);
+  AXTreeIndexerMac indexer((gfx::NativeViewAccessible(root)));
   base::Value::Dict dict;
 
   AXElementWrapper ax_element(root);
@@ -102,7 +98,7 @@ base::Value::Dict AXTreeFormatterMac::BuildTree(const id root) const {
 std::string AXTreeFormatterMac::EvaluateScript(
     const AXTreeSelector& selector,
     const AXInspectScenario& scenario) const {
-  base::ScopedCFTypeRef<AXUIElementRef> root;
+  base::apple::ScopedCFTypeRef<AXUIElementRef> root;
   std::tie(root, std::ignore) = FindAXUIElement(selector);
   if (!root)
     return "";
@@ -119,7 +115,7 @@ std::string AXTreeFormatterMac::EvaluateScript(
     const std::vector<AXScriptInstruction>& instructions,
     size_t start_index,
     size_t end_index) const {
-  return EvaluateScript(root->GetNativeViewAccessible(), instructions,
+  return EvaluateScript(root->GetNativeViewAccessible().Get(), instructions,
                         start_index, end_index);
 }
 
@@ -129,7 +125,7 @@ std::string AXTreeFormatterMac::EvaluateScript(
     size_t start_index,
     size_t end_index) const {
   base::Value::List scripts;
-  AXTreeIndexerMac indexer(platform_root);
+  AXTreeIndexerMac indexer((gfx::NativeViewAccessible(platform_root)));
   std::map<std::string, id> storage;
   AXCallStatementInvoker invoker(&indexer, &storage);
   for (size_t index = start_index; index < end_index; index++) {
@@ -174,13 +170,24 @@ base::Value::Dict AXTreeFormatterMac::BuildNode(
   return BuildNode(node->GetNativeViewAccessible());
 }
 
-base::Value::Dict AXTreeFormatterMac::BuildNode(const id node) const {
+base::Value::Dict AXTreeFormatterMac::BuildNodeForSelector(
+    const AXTreeSelector& selector) const {
+  base::apple::ScopedCFTypeRef<AXUIElementRef> node;
+  std::tie(node, std::ignore) = FindAXUIElement(selector);
+  if (!node) {
+    return base::Value::Dict();
+  }
+  return BuildNode(gfx::NativeViewAccessible((__bridge id)node.get()));
+}
+
+base::Value::Dict AXTreeFormatterMac::BuildNode(
+    gfx::NativeViewAccessible node) const {
   DCHECK(node);
 
   AXTreeIndexerMac indexer(node);
   base::Value::Dict dict;
 
-  AXElementWrapper ax_element(node);
+  AXElementWrapper ax_element(node.Get());
   NSPoint position = ax_element.Position();
   NSSize size = ax_element.Size();
   NSRect rect = NSMakeRect(position.x, position.y, size.width, size.height);
@@ -236,7 +243,8 @@ void AXTreeFormatterMac::AddProperties(const AXElementWrapper& ax_element,
   }
 
   // Otherwise dump attributes matching allow filters only.
-  std::string line_index = indexer->IndexBy(ax_element.AsId());
+  std::string line_index =
+      indexer->IndexBy(gfx::NativeViewAccessible(ax_element.AsId()));
   for (const AXPropertyNode& property_node :
        PropertyFilterNodesFor(line_index)) {
     AXCallStatementInvoker invoker(ax_element.AsId(), indexer);

@@ -10,6 +10,7 @@
 #include "ash/shelf/shelf_background_animator.h"
 #include "ash/shelf/shelf_background_animator_observer.h"
 #include "ash/shell.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 namespace views {
@@ -19,13 +20,14 @@ class View;
 namespace ash {
 
 // A base class for all shelf tooltip bubbles.
-class ASH_EXPORT ShelfBubble : public views::BubbleDialogDelegateView,
-                               public ShelfBackgroundAnimatorObserver {
+class ASH_EXPORT ShelfBubble : public views::BubbleDialogDelegateView {
+  METADATA_HEADER(ShelfBubble, views::BubbleDialogDelegateView)
+
  public:
   ShelfBubble(views::View* anchor,
               ShelfAlignment alignment,
               bool for_tooltip,
-              absl::optional<views::BubbleBorder::Arrow> arrow_position);
+              std::optional<views::BubbleBorder::Arrow> arrow_position);
 
   ShelfBubble(const ShelfBubble&) = delete;
   ShelfBubble& operator=(const ShelfBubble&) = delete;
@@ -47,9 +49,6 @@ class ASH_EXPORT ShelfBubble : public views::BubbleDialogDelegateView,
   void CreateBubble();
 
  private:
-  // ShelfBackgroundAnimatorObserver:
-  void UpdateShelfBackground(SkColor color) override;
-
   // views::BubbleDialogDelegateView:
   std::unique_ptr<views::NonClientFrameView> CreateNonClientFrameView(
       views::Widget* widget) override;
@@ -57,8 +56,6 @@ class ASH_EXPORT ShelfBubble : public views::BubbleDialogDelegateView,
   int border_radius_ = 0;
 
   const bool for_tooltip_;
-
-  ShelfBackgroundAnimator background_animator_;
 };
 
 }  // namespace ash

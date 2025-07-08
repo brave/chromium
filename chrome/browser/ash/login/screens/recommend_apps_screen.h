@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/apps/app_discovery_service/app_discovery_service.h"
 #include "chrome/browser/ash/login/screens/base_screen.h"
@@ -27,7 +28,7 @@ class RecommendAppsScreen : public BaseScreen {
  public:
   using TView = RecommendAppsScreenView;
 
-  enum class Result { SELECTED, SKIPPED, NOT_APPLICABLE, LOAD_ERROR };
+  enum class Result { kSelected, kSkipped, kNotApplicable, kLoadError };
 
   static std::string GetResultString(Result result);
 

@@ -29,7 +29,6 @@ constexpr BinaryUploadService::Result kAllBinaryUploadServiceResults[]{
     BinaryUploadService::Result::FAILED_TO_GET_TOKEN,
     BinaryUploadService::Result::UNAUTHORIZED,
     BinaryUploadService::Result::FILE_ENCRYPTED,
-    BinaryUploadService::Result::DLP_SCAN_UNSUPPORTED_FILE_TYPE,
 };
 
 #if !BUILDFLAG(USE_CRASH_KEY_STUBS)
@@ -54,13 +53,17 @@ constexpr base::TimeDelta kInvalidDuration = base::Seconds(0);
 
 class DeepScanningUtilsUMATest
     : public testing::TestWithParam<
-          std::tuple<bool, DeepScanAccessPoint, BinaryUploadService::Result>> {
+          std::tuple<bool,
+                     enterprise_connectors::DeepScanAccessPoint,
+                     BinaryUploadService::Result>> {
  public:
-  DeepScanningUtilsUMATest() {}
+  DeepScanningUtilsUMATest() = default;
 
   bool is_cloud() const { return std::get<0>(GetParam()); }
 
-  DeepScanAccessPoint access_point() const { return std::get<1>(GetParam()); }
+  enterprise_connectors::DeepScanAccessPoint access_point() const {
+    return std::get<1>(GetParam());
+  }
 
   std::string access_point_string() const {
     return DeepScanAccessPointToString(access_point());
@@ -90,14 +93,16 @@ class DeepScanningUtilsUMATest
 INSTANTIATE_TEST_SUITE_P(
     Tests,
     DeepScanningUtilsUMATest,
-    testing::Combine(testing::Bool(),
-                     testing::Values(DeepScanAccessPoint::DOWNLOAD,
-                                     DeepScanAccessPoint::UPLOAD,
-                                     DeepScanAccessPoint::DRAG_AND_DROP,
-                                     DeepScanAccessPoint::PASTE,
-                                     DeepScanAccessPoint::PRINT,
-                                     DeepScanAccessPoint::FILE_TRANSFER),
-                     testing::ValuesIn(kAllBinaryUploadServiceResults)));
+    testing::Combine(
+        testing::Bool(),
+        testing::Values(
+            enterprise_connectors::DeepScanAccessPoint::DOWNLOAD,
+            enterprise_connectors::DeepScanAccessPoint::UPLOAD,
+            enterprise_connectors::DeepScanAccessPoint::DRAG_AND_DROP,
+            enterprise_connectors::DeepScanAccessPoint::PASTE,
+            enterprise_connectors::DeepScanAccessPoint::PRINT,
+            enterprise_connectors::DeepScanAccessPoint::FILE_TRANSFER),
+        testing::ValuesIn(kAllBinaryUploadServiceResults)));
 
 TEST_P(DeepScanningUtilsUMATest, SuccessfulScanVerdicts) {
   // Record metrics for the 5 successful scan possibilities:
@@ -107,11 +112,11 @@ TEST_P(DeepScanningUtilsUMATest, SuccessfulScanVerdicts) {
   RecordDeepScanMetrics(is_cloud(), access_point(), kDuration, kTotalBytes,
                         result(),
                         enterprise_connectors::ContentAnalysisResponse());
-  RecordDeepScanMetrics(is_cloud(), access_point(), kDuration, kTotalBytes,
-                        result(),
-                        SimpleContentAnalysisResponseForTesting(
-                            /*dlp_success*/ true,
-                            /*malware_success*/ absl::nullopt));
+  RecordDeepScanMetrics(
+      is_cloud(), access_point(), kDuration, kTotalBytes, result(),
+      SimpleContentAnalysisResponseForTesting(
+          /*dlp_success*/ true,
+          /*malware_success*/ std::nullopt, /*has_custom_rule_message*/ false));
   for (const std::string& verdict : {"malware", "uws", "safe"}) {
     enterprise_connectors::ContentAnalysisResponse response;
     auto* malware_result = response.add_results();

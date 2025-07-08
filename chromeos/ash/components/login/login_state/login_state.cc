@@ -27,36 +27,24 @@ bool AlwaysLoggedInByDefault() {
 }
 
 LoginState::LoggedInUserType GetLoggedInUserTypeFromUser(
-    const user_manager::User& active_user,
-    bool is_current_user_owner) {
-  if (is_current_user_owner) {
-    return LoginState::LOGGED_IN_USER_OWNER;
-  }
-
+    const user_manager::User& active_user) {
   switch (active_user.GetType()) {
-    case user_manager::USER_TYPE_REGULAR:
+    case user_manager::UserType::kRegular:
       return LoginState::LOGGED_IN_USER_REGULAR;
-    case user_manager::USER_TYPE_GUEST:
+    case user_manager::UserType::kGuest:
       return LoginState::LOGGED_IN_USER_GUEST;
-    case user_manager::USER_TYPE_PUBLIC_ACCOUNT:
+    case user_manager::UserType::kPublicAccount:
       return LoginState::LOGGED_IN_USER_PUBLIC_ACCOUNT;
-    case user_manager::USER_TYPE_KIOSK_APP:
-      return LoginState::LOGGED_IN_USER_KIOSK;
-    case user_manager::USER_TYPE_CHILD:
+    case user_manager::UserType::kChild:
       return LoginState::LOGGED_IN_USER_CHILD;
-    case user_manager::USER_TYPE_ARC_KIOSK_APP:
+    case user_manager::UserType::kKioskChromeApp:
+    case user_manager::UserType::kKioskWebApp:
+    case user_manager::UserType::kKioskIWA:
+    case user_manager::UserType::kKioskArcvmApp:
       return LoginState::LOGGED_IN_USER_KIOSK;
-    case user_manager::USER_TYPE_ACTIVE_DIRECTORY:
-      // NOTE(olsen) There's no LOGGED_IN_USER_ACTIVE_DIRECTORY - is it needed?
-      return LoginState::LOGGED_IN_USER_REGULAR;
-    case user_manager::USER_TYPE_WEB_KIOSK_APP:
-      return LoginState::LOGGED_IN_USER_KIOSK;
-    case user_manager::NUM_USER_TYPES:
-      break;  // Go to invalid-type handling code.
       // Since there is no default, the compiler warns about unhandled types.
   }
   NOTREACHED() << "Invalid type for active user: " << active_user.GetType();
-  return LoginState::LOGGED_IN_USER_REGULAR;
 }
 
 }  // namespace
@@ -123,7 +111,7 @@ bool LoginState::IsGuestSessionUser() const {
   return logged_in_user_type_ == LOGGED_IN_USER_GUEST;
 }
 
-bool LoginState::IsPublicSessionUser() const {
+bool LoginState::IsManagedGuestSessionUser() const {
   return logged_in_user_type_ == LOGGED_IN_USER_PUBLIC_ACCOUNT;
 }
 
@@ -138,12 +126,11 @@ bool LoginState::IsChildUser() const {
 bool LoginState::UserHasNetworkProfile() const {
   if (!IsUserLoggedIn())
     return false;
-  return !IsPublicSessionUser();
+  return !IsManagedGuestSessionUser();
 }
 
 bool LoginState::IsUserAuthenticated() const {
   return logged_in_user_type_ == LOGGED_IN_USER_REGULAR ||
-         logged_in_user_type_ == LOGGED_IN_USER_OWNER ||
          logged_in_user_type_ == LOGGED_IN_USER_CHILD;
 }
 
@@ -170,14 +157,12 @@ void LoginState::OnUserManagerWillBeDestroyed(
   observation_.Reset();
 }
 
-void LoginState::OnLoginStateUpdated(const user_manager::User* active_user,
-                                     bool is_current_user_owner) {
+void LoginState::OnLoginStateUpdated(const user_manager::User* active_user) {
   LoginState::LoggedInState logged_in_state = LOGGED_IN_NONE;
   LoginState::LoggedInUserType logged_in_user_type = LOGGED_IN_USER_NONE;
   if (active_user) {
     logged_in_state = LOGGED_IN_ACTIVE;
-    logged_in_user_type =
-        GetLoggedInUserTypeFromUser(*active_user, is_current_user_owner);
+    logged_in_user_type = GetLoggedInUserTypeFromUser(*active_user);
   }
   SetLoggedInState(logged_in_state, logged_in_user_type);
 }

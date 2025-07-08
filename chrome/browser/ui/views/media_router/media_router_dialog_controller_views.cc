@@ -44,12 +44,6 @@ MediaRouterDialogControllerViews::~MediaRouterDialogControllerViews() {
 
 bool MediaRouterDialogControllerViews::ShowMediaRouterDialogForPresentation(
     std::unique_ptr<StartPresentationContext> context) {
-  if (!GlobalMediaControlsCastStartStopEnabled(
-          initiator()->GetBrowserContext())) {
-    // Delegate to the base class, which will show the Cast dialog.
-    return MediaRouterDialogController::ShowMediaRouterDialogForPresentation(
-        std::move(context));
-  }
 #if BUILDFLAG(IS_CHROMEOS)
   ShowGlobalMediaControlsDialog(std::move(context));
 #else
@@ -68,12 +62,12 @@ void MediaRouterDialogControllerViews::CreateMediaRouterDialog(
       Profile::FromBrowserContext(initiator()->GetBrowserContext());
 
   InitializeMediaRouterUI();
-  Browser* browser = chrome::FindBrowserWithWebContents(initiator());
+  Browser* browser = chrome::FindBrowserWithTab(initiator());
   BrowserView* browser_view =
       browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
   if (browser_view) {
     // Show the Cast dialog anchored to the Cast toolbar button.
-    if (browser_view->toolbar()->cast_button()) {
+    if (browser_view->toolbar()->GetCastButton()) {
       cast_dialog_coordinator_.ShowDialogWithToolbarAction(
           ui_.get(), browser, dialog_creation_time, activation_location);
     } else {
@@ -217,7 +211,7 @@ void MediaRouterDialogControllerViews::ShowGlobalMediaControlsDialog() {
         global_media_controls::GlobalMediaControlsEntryPoint::kPresentation));
     return;
   }
-  Browser* const browser = chrome::FindBrowserWithWebContents(initiator());
+  Browser* const browser = chrome::FindBrowserWithTab(initiator());
   BrowserView* const browser_view =
       browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
   // If there exists a browser_view, anchor the dialog to the top center of the
@@ -245,7 +239,7 @@ MediaToolbarButtonView* MediaRouterDialogControllerViews::GetMediaButton() {
   if (hide_media_button_for_testing_) {
     return nullptr;
   }
-  Browser* const browser = chrome::FindBrowserWithWebContents(initiator());
+  Browser* const browser = chrome::FindBrowserWithTab(initiator());
   BrowserView* const browser_view =
       browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
   ToolbarView* const toolbar_view =
@@ -259,12 +253,12 @@ MediaToolbarButtonView* MediaRouterDialogControllerViews::GetMediaButton() {
   // Show the |media_button| before opening the dialog so that when the bubble
   // dialog is opened, it has an anchor.
   media_button->media_toolbar_button_controller()->ShowToolbarButton();
-  toolbar_view->Layout();
+  toolbar_view->DeprecatedLayoutImmediately();
 
   return media_button;
 }
 
-MediaRouterActionController*
+CastToolbarButtonController*
 MediaRouterDialogControllerViews::GetActionController() {
   return media_router_ui_service_->action_controller();
 }

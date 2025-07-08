@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/raw_ptr.h"
-
 #import "chrome/browser/ui/cocoa/touchbar/browser_window_default_touch_bar.h"
 
 #include <memory>
 
 #include "base/functional/bind.h"
 #include "base/mac/mac_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "build/branding_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -25,8 +24,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #import "chrome/browser/ui/cocoa/touchbar/browser_window_touch_bar_controller.h"
-#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
-#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+#include "chrome/browser/ui/fullscreen_util_mac.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/omnibox/browser/vector_icons.h"
@@ -46,10 +44,6 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/paint_vector_icon.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -88,9 +82,8 @@ const int kSearchBtnMinWidth = 205;
 // Creates an NSImage from the given VectorIcon.
 NSImage* CreateNSImageFromIcon(const gfx::VectorIcon& icon,
                                SkColor color = kTouchBarDefaultIconColor) {
-  return NSImageFromImageSkiaWithColorSpace(
-      gfx::CreateVectorIcon(icon, kTouchBarIconSize, color),
-      base::mac::GetSRGBColorSpace());
+  return NSImageFromImageSkia(
+      gfx::CreateVectorIcon(icon, kTouchBarIconSize, color));
 }
 
 // Creates an NSButton for the touch bar using an existing NSImage.
@@ -169,10 +162,12 @@ class TouchBarNotificationBridge : public CommandObserver,
   void UpdateTouchBar() { [[owner_ controller] invalidateTouchBar]; }
 
   void UpdateWebContents(content::WebContents* new_contents) {
-    if (contents_ == new_contents)
+    if (contents_ == new_contents) {
       return;
-    if (contents_)
+    }
+    if (contents_) {
       BookmarkTabHelper::FromWebContents(contents_)->RemoveObserver(this);
+    }
 
     contents_ = new_contents;
 
@@ -182,8 +177,9 @@ class TouchBarNotificationBridge : public CommandObserver,
 
     BookmarkTabHelper* bookmark_helper =
         contents_ ? BookmarkTabHelper::FromWebContents(contents_) : nullptr;
-    if (bookmark_helper)
+    if (bookmark_helper) {
       bookmark_helper->AddObserver(this);
+    }
 
     owner_.isPageLoading = contents_ && contents_->IsLoading();
     owner_.isStarred = bookmark_helper && bookmark_helper->is_starred();
@@ -201,10 +197,11 @@ class TouchBarNotificationBridge : public CommandObserver,
   // CommandObserver:
   void EnabledStateChangedForCommand(int command, bool enabled) override {
     DCHECK(command == IDC_BACK || command == IDC_FORWARD);
-    if (command == IDC_BACK)
+    if (command == IDC_BACK) {
       owner_.canGoBack = enabled;
-    else if (command == IDC_FORWARD)
+    } else if (command == IDC_FORWARD) {
       owner_.canGoForward = enabled;
+    }
   }
 
   // TabStripModelObserver:
@@ -216,8 +213,9 @@ class TouchBarNotificationBridge : public CommandObserver,
   }
 
   void OnBrowserRemoved(Browser* browser) override {
-    if (browser == owner_.browser)
+    if (browser == owner_.browser) {
       owner_.browser = nullptr;
+    }
   }
 
   // WebContentsObserver:
@@ -240,7 +238,7 @@ class TouchBarNotificationBridge : public CommandObserver,
 
  private:
   BrowserWindowDefaultTouchBar* __weak owner_;
-  raw_ptr<Browser> browser_;             // Weak.
+  raw_ptr<Browser> browser_;                // Weak.
   raw_ptr<content::WebContents> contents_;  // Weak.
 
   // Used to monitor the optional home button pref.
@@ -302,10 +300,7 @@ class TouchBarNotificationBridge : public CommandObserver,
   // When in tab or extension fullscreen, we should show a touch bar containing
   // only items associated with that mode. Since the toolbar is hidden, only
   // the option to exit fullscreen should show up.
-  FullscreenController* controller =
-      _browser->exclusive_access_manager()->fullscreen_controller();
-  if (controller->IsWindowFullscreenForTabOrPending() ||
-      controller->IsExtensionFullscreenOrPending()) {
+  if (fullscreen_utils::IsInContentFullscreen(_browser)) {
     return [self createTabFullscreenTouchBar];
   }
 
@@ -314,8 +309,9 @@ class TouchBarNotificationBridge : public CommandObserver,
 
 - (NSTouchBarItem*)touchBar:(NSTouchBar*)touchBar
       makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier {
-  if (!touchBar)
+  if (!touchBar) {
     return nil;
+  }
 
   if ([identifier hasSuffix:kBackForwardTouchId]) {
     auto* items = @[
@@ -386,8 +382,9 @@ class TouchBarNotificationBridge : public CommandObserver,
     content::WebContents* contents =
         _browser->tab_strip_model()->GetActiveWebContents();
 
-    if (!contents)
+    if (!contents) {
       return nil;
+    }
 
     // Strip the trailing slash.
     url::Parsed parsed;
@@ -480,8 +477,9 @@ class TouchBarNotificationBridge : public CommandObserver,
 }
 
 - (void)setBrowser:(Browser*)browser {
-  if (_browser == browser)
+  if (_browser == browser) {
     return;
+  }
   _browser = browser;
   _notificationBridge.reset(
       _browser ? new TouchBarNotificationBridge(self, _browser) : nullptr);
@@ -556,16 +554,16 @@ class TouchBarNotificationBridge : public CommandObserver,
   NSImage* image = nil;
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   if (isGoogle) {
-    image = NSImageFromImageSkiaWithColorSpace(
+    image = NSImageFromImageSkia(
         gfx::CreateVectorIcon(vector_icons::kGoogleGLogoIcon, kTouchBarIconSize,
-                              gfx::kPlaceholderColor),
-        base::mac::GetSRGBColorSpace());
+                              gfx::kPlaceholderColor));
   } else {
     image = CreateNSImageFromIcon(vector_icons::kSearchIcon);
   }
 #endif
-  if (!image)
+  if (!image) {
     image = CreateNSImageFromIcon(vector_icons::kSearchIcon);
+  }
 
   if (!_searchButton) {
     _searchButton = [NSButton buttonWithTitle:buttonTitle

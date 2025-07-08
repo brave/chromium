@@ -15,12 +15,6 @@ namespace ash {
 // static
 desks_storage::AdminTemplateService* AdminTemplateServiceFactory::GetForProfile(
     Profile* profile) {
-  // Service should not be available if the flag is not enabled.
-  if (!base::FeatureList::IsEnabled(ash::features::kAppLaunchAutomation)) {
-    LOG(WARNING) << "AppLaunchAutomation flag not set!";
-    return nullptr;
-  }
-
   return static_cast<desks_storage::AdminTemplateService*>(
       GetInstance()->GetServiceForBrowserContext(profile, /*create=*/true));
 }
@@ -36,13 +30,17 @@ AdminTemplateServiceFactory::AdminTemplateServiceFactory()
           "AdminTemplateService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {}
 
-KeyedService* AdminTemplateServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AdminTemplateServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
 
-  return new desks_storage::AdminTemplateService(
+  return std::make_unique<desks_storage::AdminTemplateService>(
       profile->GetPath(), multi_user_util::GetAccountIdFromProfile(profile),
       profile->GetPrefs());
 }

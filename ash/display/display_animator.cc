@@ -32,7 +32,7 @@ const int kFadingTimeoutDurationInSeconds = 10;
 // runs the specified |callback| when all of the animations have finished.
 class CallbackRunningObserver {
  public:
-  CallbackRunningObserver(base::OnceClosure callback)
+  explicit CallbackRunningObserver(base::OnceClosure callback)
       : completed_counter_(0),
         animation_aborted_(false),
         callback_(std::move(callback)) {}
@@ -90,8 +90,8 @@ class CallbackRunningObserver {
     }
 
    private:
-    raw_ptr<ui::LayerAnimator, ExperimentalAsh> animator_;
-    raw_ptr<CallbackRunningObserver, ExperimentalAsh> observer_;
+    raw_ptr<ui::LayerAnimator> animator_;
+    raw_ptr<CallbackRunningObserver> observer_;
   };
 
   size_t completed_counter_;
@@ -199,13 +199,13 @@ void DisplayAnimator::StartFadeInAnimation() {
   }
 }
 
-void DisplayAnimator::OnDisplayModeChanged(
+void DisplayAnimator::OnDisplayConfigurationChanged(
     const display::DisplayConfigurator::DisplayStateList& displays) {
   if (!hiding_layers_.empty())
     StartFadeInAnimation();
 }
 
-void DisplayAnimator::OnDisplayModeChangeFailed(
+void DisplayAnimator::OnDisplayConfigurationChangeFailed(
     const display::DisplayConfigurator::DisplayStateList& displays,
     display::MultipleDisplayState failed_new_state) {
   if (!hiding_layers_.empty())

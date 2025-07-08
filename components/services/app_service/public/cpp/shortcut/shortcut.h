@@ -6,26 +6,33 @@
 #define COMPONENTS_SERVICES_APP_SERVICE_PUBLIC_CPP_SHORTCUT_SHORTCUT_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/stack_allocated.h"
 #include "base/types/strong_alias.h"
+#include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/cpp/macros.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace apps {
 
 using ShortcutId = base::StrongAlias<class ShortcutIdTag, std::string>;
 
 // Where the shortcut was created from.
-ENUM_FOR_COMPONENT(SHORTCUT,
-                   ShortcutSource,
-                   kUnknown = 0,
-                   kUser = 1,      // Created by the user.
-                   kDeveloper = 2  // Created by the developer. e.g. jumplist
-)
+enum class ShortcutSource {
+  kUnknown = 0,
+  kUser = 1,    // Created by the user and managed by sync. This includes any
+                // shortcuts created by syncing between devices.
+  kPolicy = 2,  // Created by organization policy.
+  kDefault = 3  // Created by default.
+};
+
+COMPONENT_EXPORT(SHORTCUT)
+std::ostream& operator<<(std::ostream& os, ShortcutSource v);
 
 struct COMPONENT_EXPORT(SHORTCUT) Shortcut {
   Shortcut(const std::string& host_app_id, const std::string& local_id);
@@ -48,9 +55,10 @@ struct COMPONENT_EXPORT(SHORTCUT) Shortcut {
   // - source: Source::kUser
   // - host_app_id: app_1
   // - local_id: shortcut_1
+  // - allow_removal: true
   std::string ToString() const;
   // Name of the shortcut.
-  absl::optional<std::string> name;
+  std::optional<std::string> name;
   // Shortcut creation source.
   ShortcutSource shortcut_source = ShortcutSource::kUnknown;
 
@@ -66,6 +74,26 @@ struct COMPONENT_EXPORT(SHORTCUT) Shortcut {
   // 'shortcut_id' is generated from the hash of 'host_app_id' and 'local_id',
   // these value should not be updated separately.
   const ShortcutId shortcut_id;
+
+  // Represents what icon should be loaded for this shortcut, icon key will
+  // change if the icon has been updated from the publisher.
+  std::optional<IconKey> icon_key;
+
+  // Whether the shortcut publisher allows the shortcut to be removed by user.
+  std::optional<bool> allow_removal;
+};
+
+// A view class to reduce the risk of lifetime issues by preventing
+// long-term storage on the heap.
+class COMPONENT_EXPORT(SHORTCUT) ShortcutView {
+ public:
+  explicit ShortcutView(const Shortcut* shortcut) : shortcut_(shortcut) {}
+  const Shortcut* operator->() const { return shortcut_.get(); }
+  explicit operator bool() const { return shortcut_; }
+
+ private:
+  const raw_ptr<const Shortcut> shortcut_;
+  STACK_ALLOCATED();
 };
 
 using ShortcutPtr = std::unique_ptr<Shortcut>;

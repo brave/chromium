@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_REDUCE_ACCEPT_LANGUAGE_BROWSER_REDUCE_ACCEPT_LANGUAGE_SERVICE_H_
 #define COMPONENTS_REDUCE_ACCEPT_LANGUAGE_BROWSER_REDUCE_ACCEPT_LANGUAGE_SERVICE_H_
 
+#include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_member.h"
@@ -31,7 +33,7 @@ class ReduceAcceptLanguageService
 
   ~ReduceAcceptLanguageService() override;
 
-  absl::optional<std::string> GetReducedLanguage(
+  std::optional<std::string> GetReducedLanguage(
       const url::Origin& origin) override;
 
   std::vector<std::string> GetUserAcceptLanguages() const override;
@@ -40,6 +42,9 @@ class ReduceAcceptLanguageService
                               const std::string& language) override;
 
   void ClearReducedLanguage(const url::Origin& origin) override;
+
+  // KeyedService:
+  void Shutdown() override;
 
  private:
   // Forwards changes to `pref_accept_language_` to `user_accept_languages_`,

@@ -5,12 +5,23 @@
 #ifndef CHROME_BROWSER_PICTURE_IN_PICTURE_PICTURE_IN_PICTURE_WINDOW_MANAGER_H_
 #define CHROME_BROWSER_PICTURE_IN_PICTURE_PICTURE_IN_PICTURE_WINDOW_MANAGER_H_
 
+#include <functional>
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
+#include "base/observer_list.h"
+#include "base/observer_list_types.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/picture_in_picture_window_options/picture_in_picture_window_options.mojom.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/bubble/bubble_border.h"
+#include "url/gurl.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "base/types/pass_key.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager_uma_helper.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace content {
 enum class PictureInPictureResult;
@@ -22,12 +33,32 @@ namespace display {
 class Display;
 }  // namespace display
 
+#if !BUILDFLAG(IS_ANDROID)
+class AutoPipSettingOverlayView;
+class PictureInPictureOcclusionTracker;
+class PictureInPictureWindow;
+class ScopedDisallowPictureInPicture;
+class ScopedTuckPictureInPicture;
+
+namespace views {
+class View;
+}  // namespace views
+#endif
+
+struct NavigateParams;
+
 // PictureInPictureWindowManager is a singleton that handles the lifetime of the
 // current Picture-in-Picture window and its PictureInPictureWindowController.
 // The class also guarantees that only one window will be present per Chrome
 // instances regardless of the number of windows, tabs, profiles, etc.
 class PictureInPictureWindowManager {
  public:
+  // Observer for PictureInPictureWindowManager events.
+  class Observer : public base::CheckedObserver {
+   public:
+    virtual void OnEnterPictureInPicture() {}
+  };
+
   // Returns the singleton instance.
   static PictureInPictureWindowManager* GetInstance();
 
@@ -62,6 +93,25 @@ class PictureInPictureWindowManager {
   void EnterPictureInPictureWithController(
       content::PictureInPictureWindowController* pip_window_controller);
 
+  // Expected behavior of the window UI-initiated close.
+  enum class UiBehavior {
+    // Close the window, but don't try to pause the video.  This is also the
+    // behavior of `ExitPictureInPicture()`.
+    kCloseWindowOnly,
+
+    // Close the window, and also pause the video.
+    kCloseWindowAndPauseVideo,
+
+    // Act like the back-to-tab button: focus the opener window, and don't pause
+    // the video.
+    kCloseWindowAndFocusOpener,
+  };
+
+  // The user has requested to close the pip window.  This is similar to
+  // `ExitPictureInPicture()`, except that it's strictly user-initiated via the
+  // window UI.
+  bool ExitPictureInPictureViaWindowUi(UiBehavior behavior);
+
   // Closes any existing picture-in-picture windows (video or document pip).
   // Returns true if a picture-in-picture window was closed, and false if there
   // were no picture-in-picture windows to close.
@@ -81,9 +131,21 @@ class PictureInPictureWindowManager {
   // document PiP window.
   static bool IsChildWebContents(content::WebContents*);
 
+  // When a website requests size `requested_size` for a document
+  // picture-in-picture window (either when creating the window or when resizing
+  // the window via resizeTo()/resizeBy() APIs), we restrict the maximum size
+  // we'll make the pip window (this is a smaller maximum than the maximum size
+  // the user can manually resize to). If the given `requested_size` is small
+  // enough, this just returns the requested size. Otherwise, this shrinks the
+  // requested size to fit within the constraints, and attempts to keep the
+  // aspect ratio the same.
+  static gfx::Size AdjustRequestedSizeIfNecessary(
+      const gfx::Size& requested_size,
+      const display::Display& display);
+
   // Returns the window bounds of the video picture-in-picture or the document
   // picture-in-picture if either of them is present.
-  absl::optional<gfx::Rect> GetPictureInPictureWindowBounds() const;
+  std::optional<gfx::Rect> GetPictureInPictureWindowBounds() const;
 
   // Used for Document picture-in-picture windows only. The returned dimensions
   // represent the outer window bounds.
@@ -91,7 +153,7 @@ class PictureInPictureWindowManager {
   // bounds may be later re-adjusted by the |PictureInPictureBrowserFrameView|
   // to accommodate non-client view elements, while respecting the minimum inner
   // window size.
-  static gfx::Rect CalculateInitialPictureInPictureWindowBounds(
+  gfx::Rect CalculateInitialPictureInPictureWindowBounds(
       const blink::mojom::PictureInPictureWindowOptions& pip_options,
       const display::Display& display);
 
@@ -101,10 +163,16 @@ class PictureInPictureWindowManager {
   // picture window bounds are only adjusted when, the requested window size
   // would cause the minimum inner window size to be smaller than the allowed
   // minimum (|GetMinimumInnerWindowSize|).
-  static gfx::Rect AdjustPictureInPictureWindowBounds(
+  gfx::Rect CalculateOuterWindowBounds(
       const blink::mojom::PictureInPictureWindowOptions& pip_options,
       const display::Display& display,
-      const gfx::Size& minimum_window_size);
+      const gfx::Size& minimum_window_size,
+      const gfx::Size& excluded_margin);
+
+  // Update the most recent window bounds for the pip window in the cache.  Call
+  // this when the pip window moves or resizes, though it's okay if not every
+  // update makes it here.
+  void UpdateCachedBounds(const gfx::Rect& most_recent_bounds);
 
   // Used for Document picture-in-picture windows only.
   // Note that this is meant to represent the inner window bounds. When the pip
@@ -116,19 +184,129 @@ class PictureInPictureWindowManager {
   // Used for Document picture-in-picture windows only.
   static gfx::Size GetMaximumWindowSize(const display::Display& display);
 
+  // Properly sets the `window_action` on `params`.
+  static void SetWindowParams(NavigateParams& params);
+
+  void AddObserver(Observer* observer) { observers_.AddObserver(observer); }
+  void RemoveObserver(Observer* observer) {
+    observers_.RemoveObserver(observer);
+  }
+
+  // Notify observers that picture-in-picture window is created.
+  void NotifyObserversOnEnterPictureInPicture();
+
+#if !BUILDFLAG(IS_ANDROID)
+  std::unique_ptr<AutoPipSettingOverlayView> GetOverlayView(
+      views::View* anchor_view,
+      views::BubbleBorder::Arrow arrow);
+
+  // Returns the PictureInPictureOcclusionTracker, which can inform observers
+  // when a widget has been occluded by a video or document picture-in-picture
+  // window.
+  PictureInPictureOcclusionTracker* GetOcclusionTracker();
+
+  // Returns true if a file dialog opened by `owner_web_contents` should create
+  // a `ScopedDisallowPictureInPicture` to block picture-in-picture.
+  bool ShouldFileDialogBlockPictureInPicture(
+      content::WebContents* owner_web_contents);
+
+  // Called by `ScopedDisallowPictureInPicture` to block picture-in-picture
+  // windows from opening, as well as close any existing picture-in-picture
+  // windows.
+  void OnScopedDisallowPictureInPictureCreated(
+      base::PassKey<ScopedDisallowPictureInPicture>);
+  void OnScopedDisallowPictureInPictureDestroyed(
+      base::PassKey<ScopedDisallowPictureInPicture>);
+
+  // Called by a picture-in-picture window (either video picture-in-picture or
+  // document picture-in-picture) when it is opened. This allows us to
+  // communicate directly with the window for things that can't be handled
+  // through the PictureInPictureWindowController.
+  void OnPictureInPictureWindowShown(PictureInPictureWindow* window);
+
+  // Called by a picture-in-picture window when it closes or hides to end the
+  // connection opened by a previous call to `OnPictureInPictureWindowShown`.
+  void OnPictureInPictureWindowHidden(PictureInPictureWindow* window);
+
+  // Returns true if a file dialog opened by `owner_web_contents` should create
+  // a `ScopedTuckPictureInPicture` to tuck picture-in-picture.
+  bool ShouldFileDialogTuckPictureInPicture(
+      content::WebContents* owner_web_contents);
+
+  // Called by `ScopedTuckPictureInPicture` to force-tuck any existing or future
+  // picture-in-picture windows until it's destroyed.
+  void OnScopedTuckPictureInPictureCreated(
+      base::PassKey<ScopedTuckPictureInPicture>);
+  void OnScopedTuckPictureInPictureDestroyed(
+      base::PassKey<ScopedTuckPictureInPicture>);
+
+  // Returns true if picture-in-picture windows are currently force-tucked (e.g.
+  // due to a ScopedTuckPictureInPicture object existing).
+  bool IsPictureInPictureForceTucked() const;
+#endif
+
+  // Returns true if picture-in-picture is currently disabled (e.g. due to a
+  // ScopedDisallowPictureInPicture object existing).
+  bool IsPictureInPictureDisabled() const;
+
+  void set_window_controller_for_testing(
+      content::PictureInPictureWindowController* controller) {
+    pip_window_controller_ = controller;
+  }
+
+  // Return true if and only if the URL is can be used as an opener.  This check
+  // allows us to explicitly opt-in opener URL types, to ensure that the pip
+  // window's title bar is formatted properly.  Allowing any secure context, for
+  // example, might result in a misleading window title.
+  static bool IsSupportedForDocumentPictureInPicture(const GURL& url);
+
+#if !BUILDFLAG(IS_ANDROID)
+  void set_uma_helper_for_testing(
+      std::unique_ptr<PictureInPictureWindowManagerUmaHelper> uma_helper) {
+    uma_helper_ = std::move(uma_helper);
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
  private:
   friend struct base::DefaultSingletonTraits<PictureInPictureWindowManager>;
   class VideoWebContentsObserver;
 #if !BUILDFLAG(IS_ANDROID)
   class DocumentWebContentsObserver;
-#endif  // !BUILDFLAG(IS_ANDROID)
 
-  // Helper method Used to calculate the outer window bounds for Document
-  // picture-in-picture windows only.
-  static gfx::Rect CalculatePictureInPictureWindowBounds(
-      const blink::mojom::PictureInPictureWindowOptions& pip_options,
-      const display::Display& display,
-      const gfx::Size& minimum_outer_window_size);
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(PictureInPictureDisallowedType)
+  enum class PictureInPictureDisallowedType {
+    // An existing picture-in-picture window was closed because we started
+    // disallowing picture-in-picture windows.
+    kExistingWindowClosed = 0,
+
+    // A new picture-in-picture window was closed because it was created while
+    // we were already disallowing picture-in-picture windows.
+    kNewWindowClosed = 1,
+
+    kMaxValue = kNewWindowClosed,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/media/enums.xml:PictureInPictureDisallowedTypeEnum)
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(PictureInPictureTuckedType)
+  enum class PictureInPictureTuckedType {
+    // An existing picture-in-picture window was tucked because we started
+    // force-tucking picture-in-picture windows.
+    kExistingWindowTucked = 0,
+
+    // A new picture-in-picture window was tucked because it was created while
+    // we were already force-tucking picture-in-picture windows.
+    kNewWindowTucked = 1,
+
+    kMaxValue = kNewWindowTucked,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/media/enums.xml:PictureInPictureTuckedTypeEnum)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Create a Picture-in-Picture window and register it in order to be closed
   // when needed.
@@ -146,12 +324,73 @@ class PictureInPictureWindowManager {
   void DocumentWebContentsDestroyed();
 #endif  // !BUILDFLAG(IS_ANDROID)
 
+  // Exits picture in picture soon, but not before this call returns.  If
+  // picture in picture closes between now and then, that's okay.  Intended as a
+  // helper class for callbacks, to avoid re-entrant calls during pip set-up.
+  static void ExitPictureInPictureSoon();
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Creates the `occlusion_tracker_` if it does not already exist and should
+  // exist.
+  void CreateOcclusionTrackerIfNecessary();
+
+  // Records metrics about the requested size of a document picture-in-picture
+  // window.
+  void RecordDocumentPictureInPictureRequestedSizeMetrics(
+      const blink::mojom::PictureInPictureWindowOptions& pip_options,
+      const display::Display& display);
+
+  // Records whether a new or existing picture-in-picture window was closed due
+  // to an existing ScopedDisallowPictureInPicture.
+  void RecordPictureInPictureDisallowed(PictureInPictureDisallowedType type);
+
+  // Records whether a new or existing picture-in-picture window was tucked due
+  // to an existing ScopedTuckPictureInPicture.
+  void RecordPictureInPictureTucked(PictureInPictureTuckedType type);
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Records the total time spent on a picture in picture window, regardless of
+  // the Picture-in-Picture window type (document vs video) and the reason for
+  // closing the window (UI interaction, returning back to opener tab, etc.).
+  //
+  // The metric is recorded using the `PictureInPictureWindowManagerUmaHelper`,
+  // which this method will create if one does not already exist.
+  void MaybeRecordPictureInPictureChanged(bool is_picture_in_picture);
+#endif  // !BUILDFLAG(IS_ANDROID)
+
   PictureInPictureWindowManager();
   ~PictureInPictureWindowManager();
+
+  // Observers that listen to updates of this instance.
+  base::ObserverList<Observer> observers_;
 
   std::unique_ptr<VideoWebContentsObserver> video_web_contents_observer_;
 #if !BUILDFLAG(IS_ANDROID)
   std::unique_ptr<DocumentWebContentsObserver> document_web_contents_observer_;
+
+  std::unique_ptr<PictureInPictureOcclusionTracker> occlusion_tracker_;
+
+  // The number of `ScopedDisallowPictureInPicture` objects currently in
+  // existence. If at least one exists, then picture-in-picture windows will be
+  // blocked.
+  uint32_t number_of_existing_scoped_disallow_picture_in_pictures_ = 0;
+
+  // True if we're currently calculating document pip's initial size. Used to
+  // determine whether we should record the
+  // `Media.DocumentPictureInPicture.RequestedLargeInitialSize` metric and
+  // should be removed when that metric is removed.
+  bool is_calculating_initial_document_pip_size_ = false;
+
+  // The number of `ScopedTuckPictureInPicture` objects currently in
+  // existence. If at least one exists, then picture-in-picture windows will be
+  // tucked.
+  uint32_t number_of_existing_scoped_tuck_picture_in_pictures_ = 0;
+
+  // Pointer to the currently shown picture-in-picture window, if any.
+  raw_ptr<PictureInPictureWindow> picture_in_picture_window_ = nullptr;
+
+  std::unique_ptr<PictureInPictureWindowManagerUmaHelper> uma_helper_;
 #endif  //! BUILDFLAG(IS_ANDROID)
 
   raw_ptr<content::PictureInPictureWindowController, DanglingUntriaged>

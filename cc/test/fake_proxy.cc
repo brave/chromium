@@ -32,6 +32,14 @@ bool FakeProxy::IsDeferringCommits() const {
 
 bool FakeProxy::CommitRequested() const { return false; }
 
+void FakeProxy::QueueImageDecode(int request_id,
+                                 const DrawImage& image,
+                                 bool speculative) {}
+
+bool FakeProxy::SpeculativeDecodeRequestInFlight() const {
+  return false;
+}
+
 void FakeProxy::SetMutator(std::unique_ptr<LayerTreeMutator> mutator) {}
 
 void FakeProxy::SetPaintWorkletLayerPainter(
@@ -41,8 +49,12 @@ bool FakeProxy::MainFrameWillHappenForTesting() {
   return false;
 }
 
-double FakeProxy::GetPercentDroppedFrames() const {
+double FakeProxy::GetAverageThroughput() const {
   return 0.0;
+}
+
+bool FakeProxy::IsRenderingPaused() const {
+  return false;
 }
 
 }  // namespace cc

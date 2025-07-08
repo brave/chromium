@@ -8,12 +8,12 @@
  * up screen lock.
  */
 
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import '../os_people_page/lock_screen_password_prompt_dialog.js';
 import '../os_people_page/setup_pin_dialog.js';
 
 import {fireAuthTokenInvalidEvent} from 'chrome://resources/ash/common/quick_unlock/utils.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {AuthFactor, AuthFactorConfig, ConfigureResult, FactorObserverReceiver, PinFactorEditor} from 'chrome://resources/mojo/chromeos/ash/services/auth_factor_config/public/mojom/auth_factor_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -108,7 +108,7 @@ export class SettingsMultideviceScreenLockSubpageElement extends
     }
   }
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
     // Register this object as listener to factor change events (via
@@ -119,7 +119,9 @@ export class SettingsMultideviceScreenLockSubpageElement extends
   }
 
   async onFactorChanged(factor: AuthFactor): Promise<void> {
-    if (factor !== AuthFactor.kPin) {
+    if (factor !== AuthFactor.kPrefBasedPin &&
+        factor !== AuthFactor.kCryptohomePin &&
+        factor !== AuthFactor.kCryptohomePinV2) {
       return;
     }
     if (!this.authTokenInfo_) {
@@ -146,14 +148,14 @@ export class SettingsMultideviceScreenLockSubpageElement extends
     const authToken = authTokenInfo.token;
     assert(this.authTokenInfo_ && this.authTokenInfo_.token === authToken);
 
-    const {configured} = await AuthFactorConfig.getRemote().isConfigured(
-        authToken, AuthFactor.kPin);
-    if (configured) {
+    const {pinFactor} =
+        await PinFactorEditor.getRemote().getConfiguredPinFactor(authToken);
+
+    if (pinFactor !== null) {
       this.hasPin = true;
       this.selectedUnlockType = LockScreenUnlockType.PIN_PASSWORD;
       return;
     }
-    assert(!configured);
 
     // A race condition can occur:
     // (1) User selects PIN_PASSSWORD, and successfully sets a pin, adding

@@ -13,7 +13,7 @@
 #include "media/capture/video_capture_types.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace media {
 
@@ -42,6 +42,8 @@ class VideoCaptureBufferHandle;
 class CAPTURE_EXPORT VideoCaptureBufferPool
     : public base::RefCountedThreadSafe<VideoCaptureBufferPool> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   static constexpr int kInvalidId = -1;
 
   // Provides a duplicate region referring to the buffer. Destruction of this
@@ -50,8 +52,6 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
   // create regions.
   virtual base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion(
       int buffer_id) = 0;
-  virtual mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer(
-      int buffer_id) = 0;
 
   // Try and obtain a read/write access to the buffer.
   virtual std::unique_ptr<VideoCaptureBufferHandle> GetHandleForInProcessAccess(
@@ -59,6 +59,10 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
 
   virtual gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle(
       int buffer_id) = 0;
+
+  // Returns the buffer type of the buffer. Useful when deciding whether to
+  // serialize the buffer for IPC either as shared memory or GMB.
+  virtual VideoCaptureBufferType GetBufferType(int buffer_id) = 0;
 
   // Reserve or allocate a buffer to support a packed frame of |dimensions| of
   // pixel |format| and return its id. If the pool is already at maximum
@@ -122,10 +126,8 @@ class CAPTURE_EXPORT VideoCaptureBufferPool
   virtual void RelinquishConsumerHold(int buffer_id, int num_clients) = 0;
 
  protected:
-  virtual ~VideoCaptureBufferPool() {}
-
- private:
   friend class base::RefCountedThreadSafe<VideoCaptureBufferPool>;
+  virtual ~VideoCaptureBufferPool() = default;
 };
 
 }  // namespace media

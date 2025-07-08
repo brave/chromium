@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "media/capture/video/linux/fake_v4l2_impl.h"
 
 #include <string.h>
@@ -9,6 +14,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <bit>
 #include <queue>
 #include <vector>
 
@@ -16,7 +23,8 @@
 #include "base/containers/flat_set.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/ranges/algorithm.h"
+#include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -55,7 +63,7 @@ int Error(int error_code) {
 }
 
 __u32 RoundUpToMultipleOfPageSize(__u32 size) {
-  CHECK(base::bits::IsPowerOfTwo(getpagesize()));
+  CHECK(std::has_single_bit(base::checked_cast<__u32>(getpagesize())));
   return base::bits::AlignUp(size, base::checked_cast<__u32>(getpagesize()));
 }
 
@@ -155,7 +163,7 @@ class FakeV4L2Impl::OpenedDevice {
 
   FakeV4L2Buffer* LookupBufferFromOffset(off_t offset) {
     auto buffer_iter =
-        base::ranges::find(device_buffers_, offset, &FakeV4L2Buffer::offset);
+        std::ranges::find(device_buffers_, offset, &FakeV4L2Buffer::offset);
     if (buffer_iter == device_buffers_.end())
       return nullptr;
     return &(*buffer_iter);
@@ -246,7 +254,9 @@ class FakeV4L2Impl::OpenedDevice {
   int s_fmt(v4l2_format* format) {
     if (format->type != V4L2_BUF_TYPE_VIDEO_CAPTURE ||
         format->fmt.pix.width > kMaxWidth ||
-        format->fmt.pix.height > kMaxHeight) {
+        format->fmt.pix.height > kMaxHeight || format->fmt.pix.width == 0 ||
+        format->fmt.pix.height == 0 || format->fmt.pix.width % 2 == 1 ||
+        format->fmt.pix.height % 2 == 1) {
       return Error(EINVAL);
     }
     v4l2_pix_format& pix_format = format->fmt.pix;
@@ -297,8 +307,8 @@ class FakeV4L2Impl::OpenedDevice {
       // We only support device-owned buffers
       return Error(EINVAL);
     }
-    incoming_queue_ = std::queue<FakeV4L2Buffer*>();
-    outgoing_queue_ = std::queue<FakeV4L2Buffer*>();
+    incoming_queue_ = std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>>();
+    outgoing_queue_ = std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>>();
     device_buffers_.clear();
     uint32_t target_buffer_count = std::min(bufs->count, kMaxBufferCount);
     bufs->count = target_buffer_count;
@@ -357,7 +367,7 @@ class FakeV4L2Impl::OpenedDevice {
       wait_for_outgoing_queue_event_.Wait();
     }
     base::AutoLock lock(outgoing_queue_lock_);
-    auto* buffer = outgoing_queue_.front();
+    auto* buffer = outgoing_queue_.front().get();
     outgoing_queue_.pop();
     buffer->flags = V4L2_BUF_FLAG_MAPPED & V4L2_BUF_FLAG_DONE;
     buf->index = buffer->index;
@@ -411,8 +421,8 @@ class FakeV4L2Impl::OpenedDevice {
       return Error(EINVAL);
     should_quit_frame_production_loop_.Set();
     frame_production_thread_.Stop();
-    incoming_queue_ = std::queue<FakeV4L2Buffer*>();
-    outgoing_queue_ = std::queue<FakeV4L2Buffer*>();
+    incoming_queue_ = std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>>();
+    outgoing_queue_ = std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>>();
     return kSuccessReturnValue;
   }
 
@@ -491,7 +501,7 @@ class FakeV4L2Impl::OpenedDevice {
       return;
     }
 
-    auto* buffer = incoming_queue_.front();
+    auto* buffer = incoming_queue_.front().get();
     gettimeofday(&buffer->timestamp, NULL);
     static __u32 frame_counter = 0;
     buffer->sequence = frame_counter++;
@@ -506,8 +516,8 @@ class FakeV4L2Impl::OpenedDevice {
   v4l2_fract timeperframe_;
   base::flat_set<uint32_t> control_event_subscriptions_;
   std::vector<FakeV4L2Buffer> device_buffers_;
-  std::queue<FakeV4L2Buffer*> incoming_queue_;
-  std::queue<FakeV4L2Buffer*> outgoing_queue_;
+  std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>> incoming_queue_;
+  std::queue<raw_ptr<FakeV4L2Buffer, CtnExperimental>> outgoing_queue_;
   std::queue<v4l2_event> pending_events_;
   base::WaitableEvent wait_for_outgoing_queue_event_;
   base::Thread frame_production_thread_;
@@ -678,7 +688,7 @@ int FakeV4L2Impl::ioctl(int fd, int request, void* argp) {
   }
 
   // Invalid |request|.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // We ignore |start| in this implementation

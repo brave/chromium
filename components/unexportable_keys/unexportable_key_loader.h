@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/component_export.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
@@ -24,7 +25,7 @@ class UnexportableKeyService;
 //
 // This class is designed for a single use: it allows loading only one key.
 // Create multiple instances of this class to load multiple keys.
-class UnexportableKeyLoader {
+class COMPONENT_EXPORT(UNEXPORTABLE_KEYS) UnexportableKeyLoader {
  public:
   enum class State {
     // A key hasn't been requested yet by this class.
@@ -63,8 +64,7 @@ class UnexportableKeyLoader {
 
   // If a key hasn't been loaded yet, returns ServiceError::kKeyNotReady.
   // Otherwise, returns a loaded key ID or a terminal error state.
-  // Public for testing.
-  ServiceErrorOr<UnexportableKeyId> GetKeyIdOrErrorForTesting();
+  ServiceErrorOr<UnexportableKeyId> GetKeyIdOrError();
 
   // Returns the current state of the loader.
   // Public for testing.

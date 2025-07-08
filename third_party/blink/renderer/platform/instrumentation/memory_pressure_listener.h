@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
-#include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 
 namespace blink {
 
@@ -24,6 +23,8 @@ class PLATFORM_EXPORT MemoryPressureListener : public GarbageCollectedMixin {
   virtual void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel) {}
 
+  // This is called just after calling OnMemoryPressure(
+  // MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL).
   virtual void OnPurgeMemory() {}
 };
 
@@ -49,10 +50,6 @@ class PLATFORM_EXPORT MemoryPressureListenerRegistry final
   static bool
   IsLowEndDeviceOrPartialLowEndModeEnabledIncludingCanvasFontCache();
 
-  // Returns true when available memory is low.
-  // This is not cheap and should not be called repeatedly.
-  static bool IsCurrentlyLowMemory();
-
   // Caches whether this device is a low-end device and the device physical
   // memory in static members. instance() is not used as it's a heap allocated
   // object - meaning it's not thread-safe as well as might break tests counting
@@ -68,6 +65,7 @@ class PLATFORM_EXPORT MemoryPressureListenerRegistry final
   void RegisterThread(NonMainThread*) LOCKS_EXCLUDED(threads_lock_);
   void UnregisterThread(NonMainThread*) LOCKS_EXCLUDED(threads_lock_);
 
+  // RegisterClient() and UnregisterClient() work only in the main thread.
   void RegisterClient(MemoryPressureListener*);
   void UnregisterClient(MemoryPressureListener*);
 

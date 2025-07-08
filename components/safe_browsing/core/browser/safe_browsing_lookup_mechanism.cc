@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "components/safe_browsing/core/browser/safe_browsing_lookup_mechanism.h"
+
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 
 namespace safe_browsing {
@@ -10,40 +13,30 @@ namespace safe_browsing {
 SafeBrowsingLookupMechanism::SafeBrowsingLookupMechanism(
     const GURL& url,
     const SBThreatTypeSet& threat_types,
-    scoped_refptr<SafeBrowsingDatabaseManager> database_manager,
-    MechanismExperimentHashDatabaseCache experiment_cache_selection)
+    scoped_refptr<SafeBrowsingDatabaseManager> database_manager)
     : url_(url),
       threat_types_(threat_types),
-      database_manager_(database_manager),
-      experiment_cache_selection_(experiment_cache_selection) {}
+      database_manager_(database_manager) {}
 
 SafeBrowsingLookupMechanism::~SafeBrowsingLookupMechanism() = default;
 
 SafeBrowsingLookupMechanism::StartCheckResult::StartCheckResult(
     bool is_safe_synchronously,
-    bool did_check_url_real_time_allowlist)
+    std::optional<ThreatSource> threat_source)
     : is_safe_synchronously(is_safe_synchronously),
-      did_check_url_real_time_allowlist(did_check_url_real_time_allowlist) {}
+      threat_source(threat_source) {}
 
 SafeBrowsingLookupMechanism::CompleteCheckResult::CompleteCheckResult(
     const GURL& url,
     SBThreatType threat_type,
     const ThreatMetadata& metadata,
-    absl::optional<ThreatSource> threat_source,
-    std::unique_ptr<RTLookupResponse> url_real_time_lookup_response,
-    absl::optional<bool> matched_high_confidence_allowlist,
-    absl::optional<SBThreatType> locally_cached_results_threat_type,
-    bool real_time_request_failed)
+    std::optional<ThreatSource> threat_source,
+    std::unique_ptr<RTLookupResponse> url_real_time_lookup_response)
     : url(url),
       threat_type(threat_type),
       metadata(metadata),
       threat_source(threat_source),
-      url_real_time_lookup_response(std::move(url_real_time_lookup_response)),
-      matched_high_confidence_allowlist(matched_high_confidence_allowlist),
-      locally_cached_results_threat_type(locally_cached_results_threat_type),
-      real_time_request_failed(real_time_request_failed) {
-  DCHECK(threat_source.has_value() || threat_type == SB_THREAT_TYPE_SAFE);
-}
+      url_real_time_lookup_response(std::move(url_real_time_lookup_response)) {}
 
 SafeBrowsingLookupMechanism::CompleteCheckResult::~CompleteCheckResult() =
     default;
@@ -63,6 +56,31 @@ void SafeBrowsingLookupMechanism::CompleteCheck(
     std::unique_ptr<CompleteCheckResult> result) {
   DCHECK(complete_check_callback_);
   std::move(complete_check_callback_).Run(std::move(result));
+  // NOTE: Invoking the callback results in the synchronous destruction of this
+  // object, so there is nothing safe to do here but return.
+}
+
+void SafeBrowsingLookupMechanism::LogHashDatabaseFallbackResult(
+    const std::string& metric_variation,
+    HashDatabaseFallbackTrigger trigger,
+    SBThreatType threat_type) {
+  CHECK(metric_variation == "RT" || metric_variation == "HPRT");
+  std::string suffix;
+  switch (trigger) {
+    case HashDatabaseFallbackTrigger::kAllowlistMatch:
+      suffix = "AllowlistMatch";
+      break;
+    case HashDatabaseFallbackTrigger::kCacheMatch:
+      suffix = "CacheMatch";
+      break;
+    case HashDatabaseFallbackTrigger::kOriginalCheckFailed:
+      suffix = "OriginalCheckFailed";
+      break;
+  }
+  std::string histogram_name =
+      base::StrCat({"SafeBrowsing.", metric_variation,
+                    ".HashDatabaseFallbackThreatType.", suffix});
+  base::UmaHistogramEnumeration(histogram_name, threat_type);
 }
 
 }  // namespace safe_browsing

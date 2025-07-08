@@ -34,6 +34,11 @@ found in the LICENSE file.
         android:persistent="false"/>
 
     <org.chromium.components.browser_ui.settings.ChromeBaseCheckBoxPreference
+        android:key="sync_extensions"
+        android:title="@string/sync_extensions"
+        android:persistent="false"/>
+
+    <org.chromium.components.browser_ui.settings.ChromeBaseCheckBoxPreference
         android:key="sync_payments_integration"
         android:title="@string/sync_payments_integration"
         android:persistent="false"/>
@@ -61,6 +66,11 @@ found in the LICENSE file.
     <org.chromium.components.browser_ui.settings.ChromeBaseCheckBoxPreference
         android:key="sync_settings"
         android:title="@string/sync_settings"
+        android:persistent="false"/>
+
+    <org.chromium.components.browser_ui.settings.ChromeBaseCheckBoxPreference
+        android:key="sync_apps"
+        android:title="@string/sync_apps"
         android:persistent="false"/>
 
     <org.chromium.components.browser_ui.settings.ChromeBasePreference

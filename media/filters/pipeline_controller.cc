@@ -10,12 +10,14 @@
 namespace media {
 
 PipelineController::PipelineController(std::unique_ptr<Pipeline> pipeline,
+                                       PipelineStatusCB started_cb,
                                        SeekedCB seeked_cb,
                                        SuspendedCB suspended_cb,
                                        BeforeResumeCB before_resume_cb,
                                        ResumedCB resumed_cb,
                                        PipelineStatusCB error_cb)
     : pipeline_(std::move(pipeline)),
+      started_cb_(std::move(started_cb)),
       seeked_cb_(std::move(seeked_cb)),
       suspended_cb_(std::move(suspended_cb)),
       before_resume_cb_(std::move(before_resume_cb)),
@@ -164,6 +166,10 @@ void PipelineController::OnPipelineStatus(State expected_state,
                                           PipelineStatus pipeline_status) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
+  if (state_ == State::STARTING) {
+    started_cb_.Run(pipeline_status);
+  }
+
   if (pipeline_status != PIPELINE_OK) {
     error_cb_.Run(pipeline_status);
     return;
@@ -292,7 +298,7 @@ void PipelineController::Dispatch() {
     if (pending_audio_track_change_) {
       pending_audio_track_change_ = false;
       pipeline_->OnEnabledAudioTracksChanged(
-          pending_audio_track_change_ids_,
+          std::move(pending_audio_track_change_id_),
           base::BindOnce(&PipelineController::OnTrackChangeComplete,
                          weak_factory_.GetWeakPtr()));
       return;
@@ -301,7 +307,7 @@ void PipelineController::Dispatch() {
     if (pending_video_track_change_) {
       pending_video_track_change_ = false;
       pipeline_->OnSelectedVideoTrackChanged(
-          pending_video_track_change_id_,
+          std::move(pending_video_track_change_id_),
           base::BindOnce(&PipelineController::OnTrackChangeComplete,
                          weak_factory_.GetWeakPtr()));
       return;
@@ -384,7 +390,7 @@ void PipelineController::SetVolume(float volume) {
 }
 
 void PipelineController::SetLatencyHint(
-    absl::optional<base::TimeDelta> latency_hint) {
+    std::optional<base::TimeDelta> latency_hint) {
   DCHECK(!latency_hint || (*latency_hint >= base::TimeDelta()));
   pipeline_->SetLatencyHint(latency_hint);
 }
@@ -393,9 +399,10 @@ void PipelineController::SetPreservesPitch(bool preserves_pitch) {
   pipeline_->SetPreservesPitch(preserves_pitch);
 }
 
-void PipelineController::SetWasPlayedWithUserActivation(
-    bool was_played_with_user_activation) {
-  pipeline_->SetWasPlayedWithUserActivation(was_played_with_user_activation);
+void PipelineController::SetWasPlayedWithUserActivationAndHighMediaEngagement(
+    bool was_played_with_user_activation_and_high_media_engagement) {
+  pipeline_->SetWasPlayedWithUserActivationAndHighMediaEngagement(
+      was_played_with_user_activation_and_high_media_engagement);
 }
 
 base::TimeDelta PipelineController::GetMediaTime() const {
@@ -424,21 +431,21 @@ void PipelineController::SetCdm(CdmContext* cdm_context,
 }
 
 void PipelineController::OnEnabledAudioTracksChanged(
-    const std::vector<MediaTrack::Id>& enabled_track_ids) {
+    std::optional<MediaTrack::Id> enabled_track_id) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   pending_audio_track_change_ = true;
-  pending_audio_track_change_ids_ = enabled_track_ids;
+  pending_audio_track_change_id_ = std::move(enabled_track_id);
 
   Dispatch();
 }
 
 void PipelineController::OnSelectedVideoTrackChanged(
-    absl::optional<MediaTrack::Id> selected_track_id) {
+    std::optional<MediaTrack::Id> selected_track_id) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   pending_video_track_change_ = true;
-  pending_video_track_change_id_ = selected_track_id;
+  pending_video_track_change_id_ = std::move(selected_track_id);
 
   Dispatch();
 }
@@ -451,6 +458,10 @@ void PipelineController::OnExternalVideoFrameRequest() {
 void PipelineController::FireOnTrackChangeCompleteForTesting(State set_to) {
   previous_track_change_state_ = set_to;
   OnTrackChangeComplete();
+}
+
+void PipelineController::SetRenderMutedAudio(bool render_muted_audio) {
+  pipeline_->SetRenderMutedAudio(render_muted_audio);
 }
 
 void PipelineController::OnTrackChangeComplete() {

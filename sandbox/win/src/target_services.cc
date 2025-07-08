@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "sandbox/win/src/target_services.h"
 
 #include <windows.h>
 #include <winsock2.h>
 
-#include <new>
-
 #include <process.h>
 #include <stdint.h>
+
+#include <new>
+#include <optional>
 
 #include "base/containers/span.h"
 #include "base/logging.h"
@@ -18,7 +24,6 @@
 #include "sandbox/win/src/acl.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/handle_closer_agent.h"
-#include "sandbox/win/src/heap_helper.h"
 #include "sandbox/win/src/ipc_tags.h"
 #include "sandbox/win/src/process_mitigations.h"
 #include "sandbox/win/src/restricted_token_utils.h"
@@ -26,7 +31,6 @@
 #include "sandbox/win/src/sandbox_nt_util.h"
 #include "sandbox/win/src/sandbox_types.h"
 #include "sandbox/win/src/sharedmem_ipc_client.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace sandbox {
 namespace {
@@ -54,46 +58,15 @@ bool FlushCachedRegHandles() {
           FlushRegKey(HKEY_USERS));
 }
 
-// Cleans up this process if CSRSS will be disconnected, as this disconnection
-// is not supported Windows behavior.
-// Currently, this step requires closing a heap that this shared with csrss.exe.
-// Closing the ALPC Port handle to csrss.exe leaves this heap in an invalid
-// state. This causes problems if anyone enumerates the heap.
-bool CsrssDisconnectCleanup() {
-  HANDLE csr_port_heap = FindCsrPortHeap();
-  if (!csr_port_heap) {
-    DLOG(ERROR) << "Failed to find CSR Port heap handle";
-    return false;
-  }
-  HeapDestroy(csr_port_heap);
-  return true;
-}
-
-// Used by EnumSystemLocales for warming up.
-static BOOL CALLBACK EnumLocalesProcEx(LPWSTR lpLocaleString,
-                                       DWORD dwFlags,
-                                       LPARAM lParam) {
-  return TRUE;
-}
-
-// Additional warmup done just when CSRSS is being disconnected.
-bool CsrssDisconnectWarmup() {
-  return ::EnumSystemLocalesEx(EnumLocalesProcEx, LOCALE_WINDOWS, 0, 0);
-}
-
 // Checks if we have handle entries pending and runs the closer.
 // Updates is_csrss_connected based on which handle types are closed.
 bool CloseOpenHandles(bool* is_csrss_connected) {
   if (HandleCloserAgent::NeedsHandlesClosed()) {
     HandleCloserAgent handle_closer;
-    handle_closer.InitializeHandlesToClose(is_csrss_connected);
-    if (!*is_csrss_connected) {
-      if (!CsrssDisconnectWarmup() || !CsrssDisconnectCleanup()) {
-        return false;
-      }
-    }
-    if (!handle_closer.CloseHandles())
+    if (!handle_closer.CloseHandles()) {
       return false;
+    }
+    *is_csrss_connected = handle_closer.IsCsrssConnected();
   }
   return true;
 }
@@ -110,18 +83,18 @@ bool WarmupWindowsLocales() {
   // warmup all of these functions, but let's not assume that.
   ::GetUserDefaultLangID();
   ::GetUserDefaultLCID();
-  wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {0};
+  wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {};
   return (0 != ::GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH));
 }
 
 bool SetProcessIntegrityLevel(IntegrityLevel integrity_level) {
-  absl::optional<DWORD> rid = GetIntegrityLevelRid(integrity_level);
+  std::optional<DWORD> rid = GetIntegrityLevelRid(integrity_level);
   if (!rid) {
     // No mandatory level specified, we don't change it.
     return true;
   }
 
-  absl::optional<base::win::AccessToken> token =
+  std::optional<base::win::AccessToken> token =
       base::win::AccessToken::FromCurrentProcess(/*impersonation=*/false,
                                                  TOKEN_ADJUST_DEFAULT);
   if (!token) {
@@ -149,8 +122,7 @@ ResultCode TargetServicesBase::Init() {
   return SBOX_ALL_OK;
 }
 
-absl::optional<base::span<const uint8_t>>
-TargetServicesBase::GetDelegateData() {
+std::optional<base::span<const uint8_t>> TargetServicesBase::GetDelegateData() {
   CHECK(process_state_.InitCalled());
   return sandbox::GetGlobalDelegateData();
 }

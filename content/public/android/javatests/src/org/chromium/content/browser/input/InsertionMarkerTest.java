@@ -17,7 +17,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
@@ -31,11 +30,9 @@ import java.util.concurrent.Callable;
  * being sent when there's a caret on screen.
  */
 @RunWith(ContentJUnit4ClassRunner.class)
-@CommandLineFlags.Add({"enable-features=HiddenSelectionBounds"})
 @Batch(Batch.PER_CLASS)
 public class InsertionMarkerTest {
-    @Rule
-    public ImeActivityTestRule mRule = new ImeActivityTestRule();
+    @Rule public ImeActivityTestRule mRule = new ImeActivityTestRule();
 
     @Before
     public void setUp() throws Exception {
@@ -69,20 +66,24 @@ public class InsertionMarkerTest {
 
     private void requestCursorUpdates(int cursorUpdateMode) throws Exception {
         InputConnection connection = mRule.getConnection();
-        mRule.runBlockingOnImeThread((Callable<Void>) () -> {
-            connection.requestCursorUpdates(cursorUpdateMode);
-            return null;
-        });
+        mRule.runBlockingOnImeThread(
+                (Callable<Void>)
+                        () -> {
+                            connection.requestCursorUpdates(cursorUpdateMode);
+                            return null;
+                        });
     }
 
     private void waitForCursorAnchorInfoToHaveInsertionBounds() {
-        CriteriaHelper.pollUiThread(() -> {
-            CursorAnchorInfo info = mRule.getInputMethodManagerWrapper().getLastCursorAnchorInfo();
-            Criteria.checkThat(info, Matchers.notNullValue());
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    CursorAnchorInfo info =
+                            mRule.getInputMethodManagerWrapper().getLastCursorAnchorInfo();
+                    Criteria.checkThat(info, Matchers.notNullValue());
 
-            Assert.assertFalse(Float.isNaN(info.getInsertionMarkerTop()));
-            Assert.assertFalse(Float.isNaN(info.getInsertionMarkerBottom()));
-            Assert.assertFalse(Float.isNaN(info.getInsertionMarkerHorizontal()));
-        });
+                    Assert.assertFalse(Float.isNaN(info.getInsertionMarkerTop()));
+                    Assert.assertFalse(Float.isNaN(info.getInsertionMarkerBottom()));
+                    Assert.assertFalse(Float.isNaN(info.getInsertionMarkerHorizontal()));
+                });
     }
 }

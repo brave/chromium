@@ -10,16 +10,22 @@
 
 import argparse
 import functools
+import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
 
+logging.basicConfig(stream=sys.stderr,
+                    level=logging.INFO,
+                    format='%(name)s [%(levelname)s]: %(message)s')
+logger = logging.getLogger(os.path.basename(sys.argv[0]))
+
 
 @functools.lru_cache(maxsize=1)
 def build_apt_package_list():
-  print("Building apt package list.", file=sys.stderr)
+  logger.info("Building apt package list.")
   output = subprocess.check_output(["apt-cache", "dumpavail"]).decode()
   arch_map = {"i386": ":i386"}
   package_regex = re.compile(r"^Package: (.+?)$.+?^Architecture: (.+?)$",
@@ -52,14 +58,16 @@ def parse_args(argv):
   parser.add_argument(
       "--android",
       action="store_true",
-      help="Enable installation of android dependencies",
-  )
+      # Deprecated flag retained as functional for backward compatibility:
+      # Enable installation of android dependencies
+      help=argparse.SUPPRESS)
   parser.add_argument(
       "--no-android",
       action="store_false",
       dest="android",
-      help="Disable installation of android dependencies",
-  )
+      # Deprecated flag retained as functional for backward compatibility:
+      # Enable installation of android dependencies
+      help=argparse.SUPPRESS)
   parser.add_argument("--arm",
                       action="store_true",
                       help="Enable installation of arm cross toolchain")
@@ -83,14 +91,16 @@ def parse_args(argv):
   parser.add_argument(
       "--nacl",
       action="store_true",
-      help="Enable installation of prerequisites for building NaCl",
-  )
+      # Deprecated flag retained as functional for backward compatibility:
+      # Enable installation of nacl dependencies
+      help=argparse.SUPPRESS)
   parser.add_argument(
       "--no-nacl",
       action="store_false",
       dest="nacl",
-      help="Disable installation of prerequisites for building NaCl",
-  )
+      # Deprecated flag retained as functional for backward compatibility:
+      # Enable installation of nacl dependencies
+      help=argparse.SUPPRESS)
   parser.add_argument(
       "--backwards-compatible",
       action="store_true",
@@ -130,8 +140,8 @@ def parse_args(argv):
 
 def check_lsb_release():
   if not shutil.which("lsb_release"):
-    print("ERROR: lsb_release not found in $PATH", file=sys.stderr)
-    print("try: sudo apt-get install lsb-release", file=sys.stderr)
+    logger.error("lsb_release not found in $PATH")
+    logger.error("try: sudo apt-get install lsb-release")
     sys.exit(1)
 
 
@@ -141,6 +151,20 @@ def distro_codename():
                                   "--short"]).decode().strip()
 
 
+@functools.lru_cache(maxsize=1)
+def requires_pinned_linux_libc():
+  # See: https://crbug.com/403291652 and b/408002335
+  name = subprocess.check_output(["uname", "-r"]).decode().strip()
+  return name == '6.12.12-1rodete2-amd64'
+
+
+def add_version_workaround(packages):
+  if 'linux-libc-dev:i386' in packages:
+    idx = packages.index('linux-libc-dev:i386')
+    packages[idx] += '=5.8.14-1'
+    packages += ['linux-libc-dev=5.8.14-1']
+
+
 def check_distro(options):
   if options.unsupported or options.quick_check:
     return
@@ -148,42 +172,41 @@ def check_distro(options):
   distro_id = subprocess.check_output(["lsb_release", "--id",
                                        "--short"]).decode().strip()
 
-  supported_codenames = ["bionic", "focal", "jammy"]
+  supported_codenames = ["focal", "jammy", "noble"]
   supported_ids = ["Debian"]
 
   if (distro_codename() not in supported_codenames
       and distro_id not in supported_ids):
-    print(
-        "WARNING: The following distributions are supported,",
-        "but distributions not in the list below can also try to install",
-        "dependencies by passing the `--unsupported` parameter",
-        "\tUbuntu 18.04 LTS (bionic with EoL April 2028)",
-        "\tUbuntu 20.04 LTS (focal with EoL April 2030)",
-        "\tUbuntu 22.04 LTS (jammy with EoL April 2032)",
-        "\tDebian 10 (buster) or later",
-        sep="\n",
-        file=sys.stderr,
-    )
+    logger.warning(
+        ("The following distributions are supported, "
+         "but distributions not in the list below can also try to install "
+         "dependencies by passing the `--unsupported` parameter."))
+    logger.warning(
+        ("EoS refers to end of standard support and does not include "
+         "extended security support.\n"
+         "\tUbuntu 20.04 LTS (focal with EoS April 2025)\n"
+         "\tUbuntu 22.04 LTS (jammy with EoS June 2027)\n"
+         "\tUbuntu 24.04 LTS (noble with EoS June 2029)\n"
+         "\tDebian 11 (bullseye) or later"))
     sys.exit(1)
 
 
 def check_architecture():
   architecture = subprocess.check_output(["uname", "-m"]).decode().strip()
-  if architecture not in ["i686", "x86_64"]:
-    print("Only x86 architectures are currently supported", file=sys.stderr)
+  if architecture not in ["i686", "x86_64", 'aarch64']:
+    logger.error("Only x86 and ARM64 architectures are currently supported")
     sys.exit(1)
 
 
 def check_root():
   if os.geteuid() != 0:
-    print("Running as non-root user.", file=sys.stderr)
-    print("You might have to enter your password one or more times for 'sudo'.",
-          file=sys.stderr)
-    print(file=sys.stderr)
+    logger.info("Running as non-root user.")
+    logger.info(
+        "You might have to enter your password one or more times for 'sudo'.\n")
 
 
 def apt_update(options):
-  if options.lib32 or options.nacl:
+  if options.lib32 or options.backwards_compatible:
     subprocess.check_call(["sudo", "dpkg", "--add-architecture", "i386"])
   subprocess.check_call(["sudo", "apt-get", "update"])
 
@@ -234,6 +257,7 @@ def dev_list():
       "libssl-dev",
       "libsystemd-dev",
       "libudev-dev",
+      "libudev1",
       "libva-dev",
       "libwww-perl",
       "libxshmfence-dev",
@@ -247,10 +271,9 @@ def dev_list():
       "p7zip",
       "patch",
       "perl",
-      "pkg-config",
+      "pkgconf",
       "rpm",
       "ruby",
-      "subversion",
       "uuid-dev",
       "wdiff",
       "x11-utils",
@@ -275,11 +298,6 @@ def dev_list():
   else:
     packages.append("libjpeg62-dev")
 
-  if package_exists("libudev1"):
-    packages.append("libudev1")
-  else:
-    packages.append("libudev0")
-
   if package_exists("libbrlapi0.8"):
     packages.append("libbrlapi0.8")
   elif package_exists("libbrlapi0.7"):
@@ -298,6 +316,10 @@ def dev_list():
   if package_exists("libinput-dev"):
     packages.append("libinput-dev")
 
+  # So accessibility APIs work, needed for AX fuzzer
+  if package_exists("at-spi2-core"):
+    packages.append("at-spi2-core")
+
   # Cross-toolchain strip is needed for building the sysroots.
   if package_exists("binutils-arm-linux-gnueabihf"):
     packages.append("binutils-arm-linux-gnueabihf")
@@ -309,10 +331,15 @@ def dev_list():
     packages.append("binutils-mips64el-linux-gnuabi64")
 
   # 64-bit systems need a minimum set of 32-bit compat packages for the
-  # pre-built NaCl binaries.
+  # pre-built NaCl binaries or Android SDK
+  # See https://developer.android.com/sdk/installing/index.html?pkg=tools
   if "ELF 64-bit" in subprocess.check_output(["file", "-L",
                                               "/sbin/init"]).decode():
-    packages.extend(["libc6-i386", "lib32stdc++6"])
+    # ARM64 may not support these.
+    if package_exists("libc6-i386"):
+      packages.append("libc6-i386")
+    if package_exists("lib32stdc++6"):
+      packages.append("lib32stdc++6")
 
     # lib32gcc-s1 used to be called lib32gcc1 in older distros.
     if package_exists("lib32gcc-s1"):
@@ -326,8 +353,6 @@ def dev_list():
 # List of required run-time libraries
 def lib_list():
   packages = [
-      "lib32z1",
-      "libasound2",
       "libatk1.0-0",
       "libatspi2.0-0",
       "libc6",
@@ -345,7 +370,6 @@ def lib_list():
       "libglib2.0-0",
       "libgl1",
       "libgtk-3-0",
-      "libncurses5",
       "libpam0g",
       "libpango-1.0-0",
       "libpangocairo-1.0-0",
@@ -357,7 +381,6 @@ def lib_list():
       "libsqlite3-0",
       "libuuid1",
       "libwayland-egl1",
-      "libwayland-egl1-mesa",
       "libx11-6",
       "libx11-xcb1",
       "libxau6",
@@ -374,6 +397,9 @@ def lib_list():
       "libxrender1",
       "libxtst6",
       "x11-utils",
+      "x11-xserver-utils",
+      "xserver-xorg-core",
+      "xserver-xorg-video-dummy",
       "xvfb",
       "zlib1g",
   ]
@@ -384,6 +410,10 @@ def lib_list():
       "libbz2-1.0",
   ]
 
+  # May not exist (e.g. ARM64)
+  if package_exists("lib32z1"):
+    packages.append("lib32z1")
+
   if package_exists("libffi8"):
     packages.append("libffi8")
   elif package_exists("libffi7"):
@@ -391,7 +421,9 @@ def lib_list():
   elif package_exists("libffi6"):
     packages.append("libffi6")
 
-  if package_exists("libpng16-16"):
+  if package_exists("libpng16-16t64"):
+    packages.append("libpng16-16t64")
+  elif package_exists("libpng16-16"):
     packages.append("libpng16-16")
   else:
     packages.append("libpng12-0")
@@ -412,14 +444,30 @@ def lib_list():
   if package_exists("libinput10"):
     packages.append("libinput10")
 
+  if package_exists("libncurses6"):
+    packages.append("libncurses6")
+  else:
+    packages.append("libncurses5")
+
+  if package_exists("libasound2t64"):
+    packages.append("libasound2t64")
+  else:
+    packages.append("libasound2")
+
+  # Run-time packages required by interactive_ui_tests on mutter
+  if package_exists("libgraphene-1.0-0"):
+    packages.append("libgraphene-1.0-0")
+  if package_exists("mutter-common"):
+    packages.append("mutter-common")
+
   return packages
 
 
 def lib32_list(options):
   if not options.lib32:
-    print("Skipping 32-bit libraries.", file=sys.stderr)
+    logger.info("Skipping 32-bit libraries.")
     return []
-  print("Including 32-bit libraries.", file=sys.stderr)
+  logger.info("Including 32-bit libraries.")
 
   packages = [
       # 32-bit libraries needed for a 32-bit build
@@ -433,7 +481,6 @@ def lib32_list(options):
       "libegl1:i386",
       "libgl1:i386",
       "libglib2.0-0:i386",
-      "libncurses5:i386",
       "libnss3:i386",
       "libpango-1.0-0:i386",
       "libpangocairo-1.0-0:i386",
@@ -448,6 +495,7 @@ def lib32_list(options):
       "zlib1g:i386",
       # 32-bit libraries needed e.g. to compile V8 snapshot for Android or armhf
       "linux-libc-dev:i386",
+      "libexpat1:i386",
       "libpci3:i386",
   ]
 
@@ -465,6 +513,11 @@ def lib32_list(options):
     pattern = re.compile(r"g\+\+-[0-9.]+-multilib")
     packages += re.findall(pattern, lines)
 
+  if package_exists("libncurses6:i386"):
+    packages.append("libncurses6:i386")
+  else:
+    packages.append("libncurses5:i386")
+
   return packages
 
 
@@ -473,9 +526,9 @@ def lib32_list(options):
 # added here.
 def backwards_compatible_list(options):
   if not options.backwards_compatible:
-    print("Skipping backwards compatible packages.", file=sys.stderr)
+    logger.info("Skipping backwards compatible packages.")
     return []
-  print("Including backwards compatible packages.", file=sys.stderr)
+  logger.info("Including backwards compatible packages.")
 
   packages = [
       "7za",
@@ -540,6 +593,45 @@ def backwards_compatible_list(options):
       "ttf-kochi-mincho",
       "ttf-mscorefonts-installer",
       "xfonts-mathml",
+
+      # for NaCl
+      "g++-mingw-w64-i686",
+      "lib32z1-dev",
+      "libasound2:i386",
+      "libcap2:i386",
+      "libelf-dev:i386",
+      "libfontconfig1:i386",
+      "libglib2.0-0:i386",
+      "libgpm2:i386",
+      "libncurses5:i386",
+      "libnss3:i386",
+      "libpango-1.0-0:i386",
+      "libssl-dev:i386",
+      "libtinfo-dev",
+      "libtinfo-dev:i386",
+      "libtool",
+      "libudev1:i386",
+      "libuuid1:i386",
+      "libxcomposite1:i386",
+      "libxcursor1:i386",
+      "libxdamage1:i386",
+      "libxi6:i386",
+      "libxrandr2:i386",
+      "libxss1:i386",
+      "libxtst6:i386",
+      "texinfo",
+      "xvfb",
+
+      # Packages to build NaCl, its toolchains, and its ports.
+      "ant",
+      "autoconf",
+      "bison",
+      "cmake",
+      "gawk",
+      "intltool",
+      "libtinfo5",
+      "xutils-dev",
+      "xsltproc",
   ]
 
   if package_exists("python-is-python2"):
@@ -567,6 +659,15 @@ def backwards_compatible_list(options):
   else:
     packages.append("apache2-bin")
 
+  # for NaCl.
+  # Prefer lib32ncurses5-dev to match libncurses5:i386 if it exists.
+  # In some Ubuntu releases, lib32ncurses5-dev is a transition package to
+  # lib32ncurses-dev, so use that as a fallback.
+  if package_exists("lib32ncurses5-dev"):
+    packages.append("lib32ncurses5-dev")
+  else:
+    packages.append("lib32ncurses-dev")
+
   php_versions = [
       ("php8.1-cgi", "libapache2-mod-php8.1"),
       ("php8.0-cgi", "libapache2-mod-php8.0"),
@@ -588,33 +689,28 @@ def backwards_compatible_list(options):
 
 def arm_list(options):
   if not options.arm:
-    print("Skipping ARM cross toolchain.", file=sys.stderr)
+    logger.info("Skipping ARM cross toolchain.")
     return []
-  print("Including ARM cross toolchain.", file=sys.stderr)
+  logger.info("Including ARM cross toolchain.")
 
   # arm cross toolchain packages needed to build chrome on armhf
   packages = [
+      "g++-arm-linux-gnueabihf",
+      "gcc-arm-linux-gnueabihf",
       "libc6-dev-armhf-cross",
       "linux-libc-dev-armhf-cross",
-      "g++-arm-linux-gnueabihf",
   ]
 
-  # Work around for dependency issue Ubuntu: http://crbug.com/435056
-  if distro_codename() == "bionic":
-    packages.extend([
-        "g++-5-multilib-arm-linux-gnueabihf",
-        "gcc-5-multilib-arm-linux-gnueabihf",
-        "gcc-arm-linux-gnueabihf",
-    ])
-  elif distro_codename() == "focal":
+  # Work around an Ubuntu dependency issue.
+  # TODO(https://crbug.com/40549424): Remove this when support for Focal
+  # and Jammy are dropped.
+  if distro_codename() == "focal":
     packages.extend([
         "g++-10-multilib-arm-linux-gnueabihf",
         "gcc-10-multilib-arm-linux-gnueabihf",
-        "gcc-arm-linux-gnueabihf",
     ])
   elif distro_codename() == "jammy":
     packages.extend([
-        "gcc-arm-linux-gnueabihf",
         "g++-11-arm-linux-gnueabihf",
         "gcc-11-arm-linux-gnueabihf",
     ])
@@ -622,71 +718,12 @@ def arm_list(options):
   return packages
 
 
-def nacl_list(options):
-  if not options.nacl:
-    print("Skipping NaCl, NaCl toolchain, NaCl ports dependencies.",
-          file=sys.stderr)
-    return []
-  print("Including NaCl, NaCl toolchain, NaCl ports dependencies.",
-        file=sys.stderr)
-
-  packages = [
-      "g++-mingw-w64-i686",
-      "lib32z1-dev",
-      "libasound2:i386",
-      "libcap2:i386",
-      "libelf-dev:i386",
-      "libfontconfig1:i386",
-      "libglib2.0-0:i386",
-      "libgpm2:i386",
-      "libncurses5:i386",
-      "lib32ncurses5-dev",
-      "libnss3:i386",
-      "libpango-1.0-0:i386",
-      "libssl-dev:i386",
-      "libtinfo-dev",
-      "libtinfo-dev:i386",
-      "libtool",
-      "libuuid1:i386",
-      "libxcomposite1:i386",
-      "libxcursor1:i386",
-      "libxdamage1:i386",
-      "libxi6:i386",
-      "libxrandr2:i386",
-      "libxss1:i386",
-      "libxtst6:i386",
-      "texinfo",
-      "xvfb",
-      # Packages to build NaCl, its toolchains, and its ports.
-      "ant",
-      "autoconf",
-      "bison",
-      "cmake",
-      "gawk",
-      "intltool",
-      "xutils-dev",
-      "xsltproc",
-  ]
-
-  # Some package names have changed over time
-  if package_exists("libssl-dev"):
-    packages.append("libssl-dev:i386")
-  elif package_exists("libssl1.1"):
-    packages.append("libssl1.1:i386")
-  elif package_exists("libssl1.0.2"):
-    packages.append("libssl1.0.2:i386")
-  else:
-    packages.append("libssl1.0.0:i386")
-
-  if package_exists("libtinfo5"):
-    packages.append("libtinfo5")
-
-  if package_exists("libudev1"):
-    packages.append("libudev1:i386")
-  else:
-    packages.append("libudev0:i386")
-
-  return packages
+# Packages suffixed with t64 are "transition packages" and should be preferred.
+def maybe_append_t64(package):
+  name = package.split(":")
+  name[0] += "t64"
+  renamed = ":".join(name)
+  return renamed if package_exists(renamed) else package
 
 
 # Debian is in the process of transitioning to automatic debug packages, which
@@ -694,6 +731,7 @@ def nacl_list(options):
 # Untransitioned packages have the -dbg suffix.  And on some systems, neither
 # will be available, so exclude the ones that are missing.
 def dbg_package_name(package):
+  package = maybe_append_t64(package)
   if package_exists(package + "-dbgsym"):
     return [package + "-dbgsym"]
   if package_exists(package + "-dbg"):
@@ -703,9 +741,9 @@ def dbg_package_name(package):
 
 def dbg_list(options):
   if not options.syms:
-    print("Skipping debugging symbols.", file=sys.stderr)
+    logger.info("Skipping debugging symbols.")
     return []
-  print("Including debugging symbols.", file=sys.stderr)
+  logger.info("Including debugging symbols.")
 
   packages = [
       dbg_package for package in lib_list()
@@ -730,12 +768,16 @@ def dbg_list(options):
 
 def package_list(options):
   packages = (dev_list() + lib_list() + dbg_list(options) +
-              lib32_list(options) + arm_list(options) + nacl_list(options) +
+              lib32_list(options) + arm_list(options) +
               backwards_compatible_list(options))
+  packages = [maybe_append_t64(package) for package in set(packages)]
+
+  if requires_pinned_linux_libc():
+    add_version_workaround(packages)
 
   # Sort all the :i386 packages to the front, to avoid confusing dpkg-query
   # (https://crbug.com/446172).
-  return sorted(set(packages), key=lambda x: (not x.endswith(":i386"), x))
+  return sorted(packages, key=lambda x: (not x.endswith(":i386"), x))
 
 
 def missing_packages(packages):
@@ -744,15 +786,16 @@ def missing_packages(packages):
         ["dpkg-query", "-W", "-f", " "] + packages,
         check=True,
         capture_output=True,
-    ).decode()
+    )
     return []
   except subprocess.CalledProcessError as e:
-    return [line.split(" ")[-1] for line in e.stderr.strip().splitlines()]
+    return [
+        line.split(" ")[-1] for line in e.stderr.decode().strip().splitlines()
+    ]
 
 
 def package_is_installable(package):
-  result = subprocess.run(["apt-cache", "show", package],
-                          capture_output=True).decode()
+  result = subprocess.run(["apt-cache", "show", package], capture_output=True)
   return result.returncode == 0
 
 
@@ -773,25 +816,23 @@ def quick_check(options):
       unknown.append(p)
 
   if not_installed:
-    print("WARNING: The following packages are not installed:", file=sys.stderr)
-    print(" ".join(not_installed), file=sys.stderr)
+    logger.warning("The following packages are not installed:")
+    logger.warning(" ".join(not_installed))
 
   if unknown:
-    print("WARNING: The following packages are unknown to your system",
-          file=sys.stderr)
-    print("(maybe missing a repo or need to 'sudo apt-get update'):",
-          file=sys.stderr)
-    print(" ".join(unknown), file=sys.stderr)
+    logger.error("The following packages are unknown to your system")
+    logger.error("(maybe missing a repo or need to `sudo apt-get update`):")
+    logger.error(" ".join(unknown))
 
   sys.exit(1)
 
 
 def find_missing_packages(options):
-  print("Finding missing packages...", file=sys.stderr)
+  logger.info("Finding missing packages...")
 
   packages = package_list(options)
-  packages_str = " ".join(packages)
-  print("Packages required: " + packages_str, file=sys.stderr)
+  packages_str = "\n  ".join(packages)
+  logger.info("Packages required:\n  " + packages_str)
 
   query_cmd = ["apt-get", "--just-print", "install"] + packages
   env = os.environ.copy()
@@ -810,6 +851,10 @@ def find_missing_packages(options):
         if not line.startswith("  "):
           break
         install += line.strip().split(" ")
+
+  if requires_pinned_linux_libc():
+    add_version_workaround(install)
+
   return install
 
 
@@ -819,20 +864,17 @@ def install_packages(options):
     if packages:
       quiet = ["-qq", "--assume-yes"] if options.no_prompt else []
       subprocess.check_call(["sudo", "apt-get", "install"] + quiet + packages)
-      print(file=sys.stderr)
+      logger.info("")
     else:
-      print("No missing packages, and the packages are up to date.",
-            file=sys.stderr)
+      logger.info("No missing packages, and the packages are up to date.")
 
   except subprocess.CalledProcessError as e:
     # An apt-get exit status of 100 indicates that a real error has occurred.
-    print("`apt-get --just-print install ...` failed", file=sys.stderr)
-    print("It produced the following output:", file=sys.stderr)
-    print(e.output.decode(), file=sys.stderr)
-    print(file=sys.stderr)
-    print("You will have to install the above packages yourself.",
-          file=sys.stderr)
-    print(file=sys.stderr)
+    logger.error("`apt-get --just-print install ...` failed")
+    if e.stdout is not None:
+      logger.error("It produced the following output:\n")
+      logger.error(e.stdout.decode("utf-8"))
+    logger.error("You will have to install the above packages yourself.\n")
     sys.exit(100)
 
 
@@ -840,9 +882,9 @@ def install_packages(options):
 # apt-get, since install-chromeos-fonts depends on curl.
 def install_chromeos_fonts(options):
   if not options.chromeos_fonts:
-    print("Skipping installation of Chrome OS fonts.", file=sys.stderr)
+    logger.info("Skipping installation of Chrome OS fonts.")
     return
-  print("Installing Chrome OS fonts.", file=sys.stderr)
+  logger.info("Installing Chrome OS fonts.")
 
   dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -851,30 +893,27 @@ def install_chromeos_fonts(options):
         ["sudo",
          os.path.join(dir, "linux", "install-chromeos-fonts.py")])
   except subprocess.CalledProcessError:
-    print("ERROR: The installation of the Chrome OS default fonts failed.",
-          file=sys.stderr)
+    logger.error("The installation of the Chrome OS default fonts failed.")
     if (subprocess.check_output(
         ["stat", "-f", "-c", "%T", dir], ).decode().startswith("nfs")):
-      print(
-          "The reason is that your repo is installed on a remote file system.",
-          file=sys.stderr)
+      logger.error(
+          "The reason is that your repo is installed on a remote file system.")
     else:
-      print(
-          "This is expected if your repo is installed on a remote file system.",
-          file=sys.stderr)
+      logger.info(
+          "This is expected if your repo is installed on a remote file system.")
 
-    print("It is recommended to install your repo on a local file system.",
-          file=sys.stderr)
-    print("You can skip the installation of the Chrome OS default fonts with",
-          file=sys.stderr)
-    print("the command line option: --no-chromeos-fonts.", file=sys.stderr)
+    logger.info(
+        "It is recommended to install your repo on a local file system.")
+    logger.info(
+        "You can skip the installation of the Chrome OS default fonts with")
+    logger.info("the command line option: --no-chromeos-fonts.")
     sys.exit(1)
 
 
 def install_locales():
-  print("Installing locales.", file=sys.stderr)
+  logger.info("Installing locales.")
   CHROMIUM_LOCALES = [
-      "da_DK.UTF-8", "fr_FR.UTF-8", "he_IL.UTF-8", "zh_TW.UTF-8"
+      "da_DK.UTF-8", "en_US.UTF-8", "fr_FR.UTF-8", "he_IL.UTF-8", "zh_TW.UTF-8"
   ]
   LOCALE_GEN = "/etc/locale.gen"
   if os.path.exists(LOCALE_GEN):
@@ -889,7 +928,7 @@ def install_locales():
     if locale_gen != old_locale_gen:
       subprocess.check_call(["sudo", "locale-gen"])
     else:
-      print("Locales already up-to-date.", file=sys.stderr)
+      logger.info("Locales already up-to-date.")
   else:
     for locale in CHROMIUM_LOCALES:
       subprocess.check_call(["sudo", "locale-gen", locale])

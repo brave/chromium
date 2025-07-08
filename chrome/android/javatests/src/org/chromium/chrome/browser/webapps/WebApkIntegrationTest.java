@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.webapps;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
 
 import android.content.ComponentName;
 import android.content.Context;
@@ -29,6 +28,7 @@ import org.chromium.base.CommandLine;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
@@ -44,6 +44,7 @@ import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.webapk.lib.client.WebApkValidator;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.common.ContentSwitches;
+import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.webapk.lib.client.WebApkServiceConnectionManager;
 import org.chromium.webapk.lib.runtime_library.IWebApkApi;
 
@@ -60,9 +61,8 @@ public class WebApkIntegrationTest {
             new MockCertVerifierRuleAndroid(0 /* net::OK */);
 
     @Rule
-    public RuleChain mRuleChain = RuleChain.emptyRuleChain()
-                                          .around(mActivityTestRule)
-                                          .around(mCertVerifierRule);
+    public RuleChain mRuleChain =
+            RuleChain.emptyRuleChain().around(mActivityTestRule).around(mCertVerifierRule);
 
     private static final long STARTUP_TIMEOUT = 15000L;
 
@@ -71,14 +71,13 @@ public class WebApkIntegrationTest {
         mActivityTestRule.getEmbeddedTestServerRule().setServerUsesHttps(true);
         Uri mapToUri =
                 Uri.parse(mActivityTestRule.getEmbeddedTestServerRule().getServer().getURL("/"));
-        CommandLine.getInstance().appendSwitchWithValue(
-                ContentSwitches.HOST_RESOLVER_RULES, "MAP * " + mapToUri.getAuthority());
+        CommandLine.getInstance()
+                .appendSwitchWithValue(
+                        ContentSwitches.HOST_RESOLVER_RULES, "MAP * " + mapToUri.getAuthority());
         WebApkValidator.setDisableValidationForTesting(true);
     }
 
-    /**
-     * Tests that sending deep link intent to WebAPK launches WebAPK Activity.
-     */
+    /** Tests that sending deep link intent to WebAPK launches WebAPK Activity. */
     @Test
     @LargeTest
     @Feature({"Webapps"})
@@ -98,8 +97,8 @@ public class WebApkIntegrationTest {
     }
 
     /**
-     * Tests that Chrome will trampoline out to WebAPKs if they exist but are not verified.
-     * See https://crbug.com/1232514
+     * Tests that Chrome will trampoline out to WebAPKs if they exist but are not verified. See
+     * https://crbug.com/1232514
      */
     @Test
     @LargeTest
@@ -128,9 +127,7 @@ public class WebApkIntegrationTest {
         ChromeActivityTestRule.waitFor(WebappActivity.class, STARTUP_TIMEOUT);
     }
 
-    /**
-     * Tests launching WebAPK via POST share intent.
-     */
+    /** Tests launching WebAPK via POST share intent. */
     @Test
     @LargeTest
     @Feature({"Webapps"})
@@ -155,8 +152,9 @@ public class WebApkIntegrationTest {
 
         Tab tab = lastActivity.getActivityTab();
         ChromeTabUtils.waitForTabPageLoaded(tab, expectedShareUrl);
-        String postDataJson = JavaScriptUtils.executeJavaScriptAndWaitForResult(
-                tab.getWebContents(), "document.getElementsByTagName('pre')[0].innerText");
+        String postDataJson =
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(
+                        tab.getWebContents(), "document.getElementsByTagName('pre')[0].innerText");
         assertEquals("\"title=Fun+tea+parties\\ntext=Boston\\n\"", postDataJson);
     }
 
@@ -167,12 +165,15 @@ public class WebApkIntegrationTest {
     @Test
     @LargeTest
     @Feature({"Webapps"})
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/362218524
     public void testWebApkServiceIntegration() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
 
         // Launch WebAPK in order to cache host browser.
-        Intent intent = new Intent(
-                Intent.ACTION_VIEW, Uri.parse("https://pwa-directory.appspot.com/defaultresponse"));
+        Intent intent =
+                new Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://pwa-directory.appspot.com/defaultresponse"));
         intent.setPackage("org.chromium.webapk.test");
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         context.startActivity(intent);
@@ -185,9 +186,13 @@ public class WebApkIntegrationTest {
                 res.getIdentifier("notification_badge", "drawable", "org.chromium.webapk.test");
 
         CallbackHelper callbackHelper = new CallbackHelper();
-        WebApkServiceConnectionManager connectionManager = new WebApkServiceConnectionManager(
-                TaskTraits.UI_DEFAULT, WebApkServiceClient.CATEGORY_WEBAPK_API, null /* action */);
-        connectionManager.connect(ApplicationProvider.getApplicationContext(),
+        WebApkServiceConnectionManager connectionManager =
+                new WebApkServiceConnectionManager(
+                        TaskTraits.UI_DEFAULT,
+                        WebApkServiceClient.CATEGORY_WEBAPK_API,
+                        /* action= */ null);
+        connectionManager.connect(
+                ApplicationProvider.getApplicationContext(),
                 "org.chromium.webapk.test",
                 new WebApkServiceConnectionManager.ConnectionCallback() {
                     @Override
@@ -195,10 +200,11 @@ public class WebApkIntegrationTest {
                         try {
                             int actualSmallIconId =
                                     IWebApkApi.Stub.asInterface(api).getSmallIconId();
-                            assertEquals(actualSmallIconId, expectedSmallIconId);
+                            assertEquals(expectedSmallIconId, actualSmallIconId);
                             callbackHelper.notifyCalled();
                         } catch (Exception e) {
-                            fail("WebApkService binder call threw exception");
+                            throw new AssertionError(
+                                    "WebApkService binder call threw exception", e);
                         }
                     }
                 });

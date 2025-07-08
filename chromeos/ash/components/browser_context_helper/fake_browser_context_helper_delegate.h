@@ -41,9 +41,13 @@ class FakeBrowserContextHelperDelegate : public BrowserContextHelper::Delegate {
   // BrowserContextHelper::Delegate overrides.
   content::BrowserContext* GetBrowserContextByPath(
       const base::FilePath& path) override;
+  content::BrowserContext* GetBrowserContextByAccountId(
+      const AccountId& account_id) override;
   content::BrowserContext* DeprecatedGetBrowserContext(
       const base::FilePath& path) override;
   content::BrowserContext* GetOrCreatePrimaryOTRBrowserContext(
+      content::BrowserContext* browser_context) override;
+  content::BrowserContext* GetOriginalBrowserContext(
       content::BrowserContext* browser_context) override;
   const base::FilePath* GetUserDataDir() override;
 

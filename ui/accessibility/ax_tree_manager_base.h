@@ -6,9 +6,8 @@
 #define UI_ACCESSIBILITY_AX_TREE_MANAGER_BASE_H_
 
 #include <memory>
-#include <unordered_map>
+#include <optional>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree.h"
@@ -43,7 +42,7 @@ class AX_EXPORT AXTreeManagerBase final {
 
   explicit AXTreeManagerBase(std::unique_ptr<AXTree> tree);
   explicit AXTreeManagerBase(const AXTreeUpdate& initial_state);
-  virtual ~AXTreeManagerBase();
+  ~AXTreeManagerBase();
   AXTreeManagerBase(const AXTreeManagerBase&) = delete;
   AXTreeManagerBase& operator=(const AXTreeManagerBase&) = delete;
   AXTreeManagerBase(AXTreeManagerBase&& manager);
@@ -109,10 +108,10 @@ class AX_EXPORT AXTreeManagerBase final {
 
   // Creates a child tree based on `initial_state` and attaches it to the given
   // host node. Returns the child tree's manager if successful.
-  absl::optional<AXTreeManagerBase> AttachChildTree(
+  std::optional<AXTreeManagerBase> AttachChildTree(
       const AXNodeID& host_node_id,
       const AXTreeUpdate& initial_state);
-  absl::optional<AXTreeManagerBase> AttachChildTree(
+  std::optional<AXTreeManagerBase> AttachChildTree(
       AXNode& host_node,
       const AXTreeUpdate& initial_state);
 
@@ -122,9 +121,6 @@ class AX_EXPORT AXTreeManagerBase final {
   AXTreeManagerBase* DetachChildTree(AXNode& host_node);
 
  private:
-  static std::unordered_map<AXTreeID, AXTreeManagerBase*, AXTreeIDHash>&
-  GetTreeManagerMapInstance();
-
   std::unique_ptr<AXTree> tree_;
 };
 

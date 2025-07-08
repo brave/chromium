@@ -33,7 +33,8 @@ However, the official Chrome build is
 [codesigned](../../chrome/installer/mac/signing/README.md) with the `restrict`
 and `runtime` options, which generally prohibit debuggers from attaching.
 
-In order to debug production/released Chrome, you need to do one of two things:
+In order to debug production/released Chrome, you need to do one of two things
+while Chrome is not running:
 
 1. Disable [System Integrity
 Protection](https://developer.apple.com/documentation/security/disabling_and_enabling_system_integrity_protection),
@@ -43,7 +44,7 @@ by:
     3. Running `csrutil enable --without debug`
     4. Rebooting
 2. Stripping or force-re-codesigning the binary to not use those options:
-   `codesign --force --sign - path/to/Google\ Chrome.app`
+   `codesign --sign=- --deep --force  path/to/Google\ Chrome.app`
 
 If you will frequently debug official builds, (1) is recommended. Note that
 disabling SIP reduces the overall security of the system, so your system
@@ -220,11 +221,11 @@ This approach creates an empty Xcode project that only provides a GUI debugger:
 ### (2) Use *gn*
 
 1. Tell `gn` to generate an Xcode project for your out directory:
-   `gn gen --ide=xcode out/debug`
+   `gn gen --ide=xcode out/debug --ninja-executable=autoninja`
 2. Open *out/debug/all.xcodeproj*
 3. Have it automatically generate schemes for you
 4. You can now build targets from within Xcode, which will simply call out to
-   `ninja` via an Xcode script. But the resulting binaries are available as
+   `autoninja` via an Xcode script. But the resulting binaries are available as
    debuggable targets in Xcode.
 
 Note that any changes to the .xcodeproj will be overwritten; all changes to the
@@ -352,10 +353,21 @@ Chrome has [built-in memory instrumentation](../memory-infra/README.md) that can
 be used to identify allocations and potential leaks.
 
 MacOS also provides several low-level command-line tools that can be used to
-inspect what's going on with memory inside a process.
+inspect what's going on with memory inside a process. Note that most of these
+tools only work effectively with system malloc and not PartitionAlloc. Since
+[PartitionAlloc Everywhere](https://docs.google.com/document/d/1R1H9z5IVUAnXJgDjnts3nTJVcRbufWWT9ByXLgecSUM/preview),
+you should additionally disable PartitionAlloc with these GN args:
 
-**`heap`** summarizes what's currently in the malloc heap(s) of a process. (It
-only works with regular malloc, of course, but Mac Chrome still uses that.) It
+```
+use_partition_alloc_as_malloc = false
+enable_backup_ref_ptr_support = false
+```
+
+Note that PartitionAlloc will still be used in Blink, just not for `malloc` in
+other places anymore. See [PartitionAlloc build config](../../base/allocator/partition_allocator/build_config.md)
+for disabling PartitionAlloc completely via GN arg `use_partition_alloc`.
+
+**`heap`** summarizes what's currently in the malloc heap(s) of a process. It
 shows a number of useful things:
 
 * How much of the heap is used or free
@@ -379,7 +391,7 @@ when it launches. The `env` command is handy for this:
 
 Then in another shell you run
 
-    $ malloc_history <pid> -all_by_size
+    $ malloc_history <pid> -allBySize
 
 Watch out: the output is *big*.
 

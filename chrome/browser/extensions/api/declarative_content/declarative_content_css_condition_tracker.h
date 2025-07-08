@@ -17,6 +17,9 @@
 #include "chrome/browser/extensions/api/declarative_content/content_predicate_evaluator.h"
 #include "content/public/browser/render_process_host_creation_observer.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace base {
 class Value;
@@ -157,7 +160,9 @@ class DeclarativeContentCssConditionTracker
   std::map<std::string, int> watched_css_selector_predicate_count_;
 
   // Grouped predicates tracked by this object.
-  std::map<const void*, std::vector<const DeclarativeContentCssPredicate*>>
+  std::map<const void*,
+           std::vector<raw_ptr<const DeclarativeContentCssPredicate,
+                               VectorExperimental>>>
       tracked_predicates_;
 
   // Maps WebContents to the tracker for that WebContents state.

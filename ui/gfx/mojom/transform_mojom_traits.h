@@ -5,6 +5,8 @@
 #ifndef UI_GFX_MOJOM_TRANSFORM_MOJOM_TRAITS_H_
 #define UI_GFX_MOJOM_TRANSFORM_MOJOM_TRAITS_H_
 
+#include <array>
+
 #include "mojo/public/cpp/bindings/array_traits.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/mojom/transform.mojom-shared.h"
@@ -13,10 +15,10 @@ namespace mojo {
 
 template <>
 struct StructTraits<gfx::mojom::TransformDataView, gfx::Transform> {
-  static absl::optional<std::array<float, 16>> matrix(
+  static std::optional<std::array<float, 16>> matrix(
       const gfx::Transform& transform) {
     if (transform.IsIdentity())
-      return absl::nullopt;
+      return std::nullopt;
     std::array<float, 16> matrix;
     transform.GetColMajorF(matrix.data());
     return matrix;

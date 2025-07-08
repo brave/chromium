@@ -8,40 +8,41 @@
  * settings for each device in system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
-import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
+import './per_device_keyboard_subsection.js';
 
-import {I18nMixin, I18nMixinInterface} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin, DeepLinkingMixinInterface} from '../deep_linking_mixin.js';
-import {KeyboardPolicies} from '../mojom-webui/input_device_settings.mojom-webui.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {PrefsState} from '../common/types.js';
+import type {KeyboardPolicies} from '../mojom-webui/input_device_settings.mojom-webui.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin, RouteObserverMixinInterface} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
-import {DevicePageBrowserProxy, DevicePageBrowserProxyImpl} from './device_page_browser_proxy.js';
-import {Keyboard} from './input_device_settings_types.js';
+import type {DevicePageBrowserProxy} from './device_page_browser_proxy.js';
+import {DevicePageBrowserProxyImpl} from './device_page_browser_proxy.js';
+import type {Keyboard} from './input_device_settings_types.js';
+import {getDeviceStateChangesToAnnounce} from './input_device_settings_utils.js';
 import {getTemplate} from './per_device_keyboard.html.js';
 
 const SettingsPerDeviceKeyboardElementBase =
-    DeepLinkingMixin(RouteObserverMixin(I18nMixin(PolymerElement))) as {
-      new (): PolymerElement & I18nMixinInterface &
-          RouteObserverMixinInterface & DeepLinkingMixinInterface,
-    };
+    DeepLinkingMixin(RouteObserverMixin(I18nMixin(PolymerElement)));
 
 export class SettingsPerDeviceKeyboardElement extends
     SettingsPerDeviceKeyboardElementBase {
-  static get is(): string {
+  static get is() {
     return 'settings-per-device-keyboard';
   }
 
@@ -59,6 +60,7 @@ export class SettingsPerDeviceKeyboardElement extends
 
       keyboards: {
         type: Array,
+        observer: 'onKeyboardListUpdated',
       },
 
       keyboardPolicies: {
@@ -72,7 +74,9 @@ export class SettingsPerDeviceKeyboardElement extends
        */
       autoRepeatDelays: {
         type: Array,
-        value: [2000, 1500, 1000, 500, 300, 200, 150],
+        value() {
+          return [150, 200, 300, 500, 1000, 1500, 2000];
+        },
         readOnly: true,
       },
 
@@ -86,36 +90,25 @@ export class SettingsPerDeviceKeyboardElement extends
         value: [2000, 1000, 500, 300, 200, 100, 50, 30, 20],
         readOnly: true,
       },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kKeyboardAutoRepeat,
-          Setting.kKeyboardShortcuts,
-        ]),
-      },
-
-      /**
-       * Whether the setting for long press diacritics should be shown
-       */
-      shouldShowDiacriticSetting: Boolean,
     };
   }
 
+  prefs: PrefsState;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kKeyboardAutoRepeat,
+    Setting.kKeyboardShortcuts,
+  ]);
+
   protected keyboards: Keyboard[];
   protected keyboardPolicies: KeyboardPolicies;
-  protected shouldShowDiacriticSetting: boolean =
-      loadTimeData.getBoolean('allowDiacriticsOnPhysicalKeyboardLongpress');
-  private prefs: chrome.settingsPrivate.PrefObject;
   private autoRepeatDelays: number[];
   private autoRepeatIntervals: number[];
   private browserProxy: DevicePageBrowserProxy =
       DevicePageBrowserProxyImpl.getInstance();
 
-  override connectedCallback() {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     this.browserProxy.initializeKeyboard();
@@ -130,8 +123,21 @@ export class SettingsPerDeviceKeyboardElement extends
     this.attemptDeepLink();
   }
 
-  private onShowKeyboardShortcutViewerClick(): void {
-    this.browserProxy.showKeyboardShortcutViewer();
+  private onKeyboardListUpdated(
+      newKeyboardList: Keyboard[],
+      oldKeyboardList: Keyboard[]|undefined): void {
+    if (!oldKeyboardList) {
+      return;
+    }
+    const {msgId, deviceNames} =
+        getDeviceStateChangesToAnnounce(newKeyboardList, oldKeyboardList);
+    for (const deviceName of deviceNames) {
+      getAnnouncerInstance().announce(this.i18n(msgId, deviceName));
+    }
+  }
+
+  private onShowShortcutCustomizationAppClick(): void {
+    this.browserProxy.showShortcutCustomizationApp();
   }
 
   private onShowInputSettingsClick(): void {
@@ -140,11 +146,17 @@ export class SettingsPerDeviceKeyboardElement extends
         /*dynamicParams=*/ undefined, /*removeSearch=*/ true);
   }
 
+  private onShowA11yKeyboardSettingsClick(): void {
+    Router.getInstance().navigateTo(
+        routes.A11Y_KEYBOARD_AND_TEXT_INPUT,
+        /*dynamicParams=*/ undefined, /*removeSearch=*/ true);
+  }
+
   protected hasKeyboards(): boolean {
     return this.keyboards.length > 0;
   }
 
-  private computeIsLastDevice(index: number) {
+  private computeIsLastDevice(index: number): boolean {
     return index === this.keyboards.length - 1;
   }
 }

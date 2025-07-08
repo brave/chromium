@@ -5,13 +5,17 @@
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
 
 #include <memory>
+#include <optional>
 
+#include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -23,7 +27,6 @@
 #include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/component_updater/cros_component_installer_chromeos.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/ash/components/cryptohome/system_salt_getter.h"
@@ -35,7 +38,6 @@
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash {
 namespace {
@@ -106,9 +108,9 @@ class DemoSetupControllerTestHelper {
   }
 
  private:
-  absl::optional<bool> succeeded_;
-  absl::optional<DemoSetupController::DemoSetupStep> setup_step_;
-  absl::optional<DemoSetupController::DemoSetupError> error_;
+  std::optional<bool> succeeded_;
+  std::optional<DemoSetupController::DemoSetupStep> setup_step_;
+  std::optional<DemoSetupController::DemoSetupError> error_;
   std::unique_ptr<base::RunLoop> run_loop_;
 };
 
@@ -150,6 +152,7 @@ class DemoSetupControllerTest : public testing::Test {
 
   DemoSetupController tested_controller_;
   base::test::ScopedFeatureList feature_list_;
+  base::HistogramTester histogram_tester_;
 
  private:
   ScopedTestingLocalState testing_local_state_;
@@ -176,6 +179,24 @@ TEST_F(DemoSetupControllerTest, OnlineSuccess) {
   EXPECT_TRUE(
       helper_.WaitResult(true, DemoSetupController::DemoSetupStep::kComplete));
   EXPECT_EQ("", GetDeviceRequisition());
+
+  // The enum of success (no error) is recorded to DemoMode.Setup.Error on
+  // success.
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kSuccess, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 1);
+
+  // Both components were successfully loaded on the initial attempt.
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult", 0);
 }
 
 TEST_F(DemoSetupControllerTest, OnlineErrorDefault) {
@@ -199,6 +220,29 @@ TEST_F(DemoSetupControllerTest, OnlineErrorDefault) {
       false, DemoSetupController::DemoSetupStep::kEnrollment));
   EXPECT_FALSE(helper_.RequiresPowerwash());
   EXPECT_EQ("", GetDeviceRequisition());
+
+  // SetupDemoModeOnlineEnrollment() with DemoModeSetupResult::ERROR_DEFAULT
+  // maps to policy::DeviceManagementStatus::DM_STATUS_TEMPORARY_UNAVAILABLE,
+  // which matches to
+  // DemoSetupController::DemoSetupError::ErrorCode::kTemporaryUnavailable in
+  // DemoSetupController::CreateFromClientStatus().
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kTemporaryUnavailable, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 1);
+
+  // The error occurred at the enrollment step. In the previous component
+  // loading step, both components were still successfully loaded on the initial
+  // attempt.
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult", 0);
 }
 
 TEST_F(DemoSetupControllerTest, OnlineErrorPowerwashRequired) {
@@ -222,6 +266,29 @@ TEST_F(DemoSetupControllerTest, OnlineErrorPowerwashRequired) {
       false, DemoSetupController::DemoSetupStep::kEnrollment));
   EXPECT_TRUE(helper_.RequiresPowerwash());
   EXPECT_EQ("", GetDeviceRequisition());
+
+  // SetupDemoModeOnlineEnrollment() with
+  // DemoModeSetupResult::ERROR_POWERWASH_REQUIRED maps to
+  // policy::DeviceManagementStatus::LOCK_ALREADY_LOCKED, which matches to
+  // DemoSetupController::DemoSetupError::ErrorCode::kAlreadyLocked in
+  // DemoSetupController::CreateFromClientStatus().
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kAlreadyLocked, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 1);
+
+  // The error occurred at the enrollment step. In the previous component
+  // loading step, both components were still successfully loaded on the initial
+  // attempt.
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult", 0);
 }
 
 TEST_F(DemoSetupControllerTest, OnlineComponentError) {
@@ -234,7 +301,7 @@ TEST_F(DemoSetupControllerTest, OnlineComponentError) {
 
   tested_controller_.set_demo_config(DemoSession::DemoModeConfig::kOnline);
   tested_controller_.SetCrOSComponentLoadErrorForTest(
-      component_updater::CrOSComponentManager::Error::
+      component_updater::ComponentManagerAsh::Error::
           COMPATIBILITY_CHECK_FAILED);
   tested_controller_.Enroll(
       base::BindOnce(&DemoSetupControllerTestHelper::OnSetupSuccess,
@@ -248,6 +315,13 @@ TEST_F(DemoSetupControllerTest, OnlineComponentError) {
       false, DemoSetupController::DemoSetupStep::kEnrollment));
   EXPECT_FALSE(helper_.RequiresPowerwash());
   EXPECT_EQ("", GetDeviceRequisition());
+
+  // SetCrOSComponentLoadErrorForTest() will lead to
+  // DemoSetupController::DemoSetupError::ErrorCode::kOnlineComponentError.
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kOnlineComponentError, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 1);
 }
 
 TEST_F(DemoSetupControllerTest, EnrollTwice) {
@@ -272,6 +346,29 @@ TEST_F(DemoSetupControllerTest, EnrollTwice) {
   EXPECT_FALSE(helper_.RequiresPowerwash());
   EXPECT_EQ("", GetDeviceRequisition());
 
+  // SetupDemoModeOnlineEnrollment() with DemoModeSetupResult::ERROR_DEFAULT
+  // maps to policy::DeviceManagementStatus::DM_STATUS_TEMPORARY_UNAVAILABLE,
+  // which matches to
+  // DemoSetupController::DemoSetupError::ErrorCode::kTemporaryUnavailable in
+  // DemoSetupController::CreateFromClientStatus().
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kTemporaryUnavailable, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 1);
+
+  // The error occurred at the enrollment step. In the previous component
+  // loading step, both components were still successfully loaded on the initial
+  // attempt.
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult", 0);
+
   helper_.Reset();
   Mock::VerifyAndClearExpectations(&mock_enrollment_launcher_);
 
@@ -290,6 +387,33 @@ TEST_F(DemoSetupControllerTest, EnrollTwice) {
   EXPECT_TRUE(
       helper_.WaitResult(true, DemoSetupController::DemoSetupStep::kComplete));
   EXPECT_EQ("", GetDeviceRequisition());
+
+  // The enum of success (no error) is recorded to DemoMode.Setup.Error on
+  // success. There should have been two counts because of two tries.
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kTemporaryUnavailable, 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.Error",
+      DemoSetupController::DemoSetupError::ErrorCode::kSuccess, 1);
+  histogram_tester_.ExpectTotalCount("DemoMode.Setup.Error", 2);
+
+  // On retry, both components were successfully loaded again regardless that
+  // they were successfully loaded before.
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentInitialLoadingResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult", 1);
+  histogram_tester_.ExpectBucketCount(
+      "DemoMode.Setup.ComponentLoadingRetryResult",
+      DemoSetupController::DemoSetupComponentLoadingResult::
+          kAppSuccessResourcesSuccess,
+      1);
 }
 
 TEST_F(DemoSetupControllerTest, GetSubOrganizationEmail) {

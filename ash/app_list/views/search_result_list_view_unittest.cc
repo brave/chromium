@@ -32,8 +32,8 @@ int kDefaultSearchItems = 3;
 // Preferred sizing for different types of search result views.
 constexpr int kPreferredWidth = 640;
 constexpr int kDefaultViewHeight = 40;
-constexpr int kInlineAnswerViewHeight = 80;
-constexpr gfx::Insets kInlineAnswerBorder(12);
+constexpr int kInlineAnswerViewHeight = 88;
+constexpr gfx::Insets kInlineAnswerBorder(16);
 
 // SearchResultListType::SearchResultListType::AnswerCard, and
 //  SearchResultListType::kBestMatch do not have associated categories.
@@ -59,21 +59,21 @@ class SearchResultListViewTest : public views::test::WidgetTest {
 
     default_view_ = std::make_unique<SearchResultListView>(
         &view_delegate_, nullptr,
-        SearchResultView::SearchResultViewType::kDefault, absl::nullopt);
+        SearchResultView::SearchResultViewType::kDefault, std::nullopt);
     default_view_->SetListType(
         SearchResultListView::SearchResultListType::kBestMatch);
     default_view_->SetActive(true);
 
     answer_card_view_ = std::make_unique<SearchResultListView>(
         &view_delegate_, nullptr,
-        SearchResultView::SearchResultViewType::kAnswerCard, absl::nullopt);
+        SearchResultView::SearchResultViewType::kAnswerCard, std::nullopt);
     answer_card_view_->SetListType(
         SearchResultListView::SearchResultListType::kAnswerCard);
     answer_card_view_->SetActive(true);
 
     widget_->SetBounds(gfx::Rect(0, 0, 700, 500));
-    widget_->GetContentsView()->AddChildView(default_view_.get());
-    widget_->GetContentsView()->AddChildView(answer_card_view_.get());
+    widget_->GetContentsView()->AddChildViewRaw(default_view_.get());
+    widget_->GetContentsView()->AddChildViewRaw(answer_card_view_.get());
     widget_->Show();
     default_view_->SetResults(GetResults());
     answer_card_view_->SetResults(GetResults());
@@ -122,7 +122,7 @@ class SearchResultListViewTest : public views::test::WidgetTest {
 
   std::vector<SearchResultView*> GetAssistantResultViews() const {
     std::vector<SearchResultView*> results;
-    for (auto* view : default_view_->search_result_views_) {
+    for (ash::SearchResultView* view : default_view_->search_result_views_) {
       auto* result = view->result();
       if (result &&
           result->result_type() == AppListSearchResultType::kAssistantText)
@@ -276,7 +276,7 @@ class SearchResultListViewTest : public views::test::WidgetTest {
   void DeleteResultAt(int index) { GetResults()->DeleteAt(index); }
 
   bool KeyPress(ui::KeyboardCode key_code) {
-    ui::KeyEvent event(ui::ET_KEY_PRESSED, key_code, ui::EF_NONE);
+    ui::KeyEvent event(ui::EventType::kKeyPressed, key_code, ui::EF_NONE);
     return default_view_->OnKeyPressed(event);
   }
 
@@ -299,7 +299,7 @@ class SearchResultListViewTest : public views::test::WidgetTest {
   AppListTestViewDelegate view_delegate_;
   std::unique_ptr<SearchResultListView> default_view_;
   std::unique_ptr<SearchResultListView> answer_card_view_;
-  raw_ptr<views::Widget, ExperimentalAsh> widget_;
+  raw_ptr<views::Widget, DanglingUntriaged> widget_;
 };
 
 TEST_F(SearchResultListViewTest, SpokenFeedback) {

@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 #include <sstream>
+#include <string_view>
 
 #include "base/android/jni_android.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
+#include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/system/sys_info.h"
@@ -59,7 +61,8 @@ JNI_ServicificationBackgroundService_TestPersistentHistogramsOnDiskSystemProfile
   // Map the file and validate it.
   std::unique_ptr<base::FilePersistentMemoryAllocator> memory_allocator =
       std::make_unique<base::FilePersistentMemoryAllocator>(
-          std::move(mapped), 0, 0, base::StringPiece(), /* read_only */ true);
+          std::move(mapped), 0, 0, std::string_view(),
+          base::FilePersistentMemoryAllocator::kReadOnly);
   if (memory_allocator->GetMemoryState() ==
       base::PersistentMemoryAllocator::MEMORY_DELETED) {
     LOG(ERROR) << "The memory allocator state shouldn't be MEMORY_DELETED!";

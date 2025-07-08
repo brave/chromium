@@ -5,6 +5,8 @@
 // Defines base::PathProviderAndroid which replaces base::PathProviderPosix for
 // Android in base/path_service.cc.
 
+#include "base/base_paths.h"
+
 #include <limits.h>
 #include <unistd.h>
 
@@ -12,11 +14,10 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/path_utils.h"
-#include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/process/process_metrics.h"
 
 namespace base {

@@ -67,16 +67,52 @@
     "static",
     "invisible",
 
+    // command attribute
+    // https://open-ui.org/components/invokers.explainer/
+    "auto",
+    // command for popovers
+    "toggle-popover",
+    "hide-popover",
+    "show-popover",
+    // command for dialog
+    "show-modal",
+    "close",
+    "request-close",
+    // command for details
+    "toggle",
+    "close",
+    "open",
+    // command for input and select
+    "show-picker",
+    // command for number input
+    "step-up",
+    "step-down",
+    // command for fullscreen
+    "toggle-fullscreen",
+    "request-fullscreen",
+    "exit-fullscreen",
+    // command for audio and video
+    "play-pause",
+    "pause",
+    "play",
+    "toggle-muted",
+    // command for menu elements
+    "toggle-menu",
+    "hide-menu",
+    "show-menu",
+
     // loading attribute
     // https://github.com/scott-little/lazyload#ways-the-loading-attribute-can-be-used
     "lazy",
     "eager",
     "auto",
 
-    // popover attribute (experimental)
-    // https://github.com/openui/open-ui/blob/main/research/src/pages/popup/popup.research.explainer.mdx
+    // popover attribute
+    // https://html.spec.whatwg.org/multipage/popover.html#dom-popover
     "auto",
     "manual",
+    // Experimental popover=hint value
+    // https://open-ui.org/components/popover-hint.research.explainer/
     "hint",
 
     // popovertargetaction attribute
@@ -84,7 +120,21 @@
     "toggle",
     "show",
     "hide",
-    "hover",
+
+    // Experimental fieldset attribute for the menu elements proposal.
+    // https://open-ui.org/components/menu.explainer/.
+    "single",
+    "multiple",
+
+    // hidden=until-found attribute
+    // https://html.spec.whatwg.org/#the-hidden-attribute
+    "until-found",
+
+    // dialog closedby attribute
+    // See https://github.com/whatwg/html/pull/10737.
+    "any",
+    "closerequest",
+    "none",
 
     // referrerpolicy attribute
     // https://w3c.github.io/webappsec-referrer-policy/#referrer-policies
@@ -122,6 +172,7 @@
     // Blocking attributes
     // https://html.spec.whatwg.org/C/#blocking-attribute
     "render",
+    "full-frame-rate",
 
     // dropEffect IDL attribute
     // https://html.spec.whatwg.org/C/#dom-datatransfer-dropeffect
@@ -160,5 +211,34 @@
     "nofullscreen",
     "noplaybackrate",
     "noremoteplayback",
+
+    // <meta> name attribute
+    // https://html.spec.whatwg.org/C/#standard-metadata-names
+    "color-scheme",
+    "responsive-embedded-sizing",
+
+    // Some values of KeyboardEvent.key.
+    // https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "End",
+    "Home",
+    "PageDown",
+    "PageUp",
+    {name: "Enter", Symbol: "kCapitalEnter"},
+    "Escape",
+    "Tab",
+
+    // common media types
+    "text/html",
+    "application/xml",
+
+    // Internal-only identifiers on the `id` attribute. These may appear
+    // multiple times in the same page.
+    "-internal-print-header",
+    "-internal-print-footer",
+    "-internal-print-page-number",
   ],
 }

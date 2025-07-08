@@ -28,7 +28,7 @@ JumpListFactory::JumpListFactory()
           "JumpList",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
               .Build()) {
@@ -39,7 +39,8 @@ JumpListFactory::JumpListFactory()
 
 JumpListFactory::~JumpListFactory() = default;
 
-KeyedService* JumpListFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+JumpListFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new JumpList(Profile::FromBrowserContext(context));
+  return base::WrapUnique(new JumpList(Profile::FromBrowserContext(context)));
 }

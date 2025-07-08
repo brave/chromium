@@ -13,14 +13,13 @@
 #include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
 #include "chrome/browser/ash/guest_os/guest_os_registry_service_factory.h"
 #include "chrome/browser/ash/guest_os/public/guest_os_service.h"
-#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/dbus/cicerone/cicerone_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 using vm_tools::apps::App;
@@ -30,20 +29,17 @@ namespace crostini {
 
 constexpr SkColor kTestContainerBadgeColor = SK_ColorBLUE;
 
-CrostiniTestHelper::CrostiniTestHelper(TestingProfile* profile,
-                                       bool enable_crostini)
-    : profile_(profile) {
+CrostiniTestHelper::CrostiniTestHelper(Profile* profile, bool enable_crostini)
+    : fake_user_manager_(std::make_unique<ash::FakeChromeUserManager>()),
+      profile_(profile) {
   scoped_feature_list_.InitAndEnableFeature(features::kCrostini);
 
   ash::ProfileHelper::SetAlwaysReturnPrimaryUserForTesting(true);
-  scoped_user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-      std::make_unique<ash::FakeChromeUserManager>());
-  auto* fake_user_manager = static_cast<ash::FakeChromeUserManager*>(
-      user_manager::UserManager::Get());
-  auto account = AccountId::FromUserEmailGaiaId("test@example.com", "12345");
-  fake_user_manager->AddUserWithAffiliationAndTypeAndProfile(
-      account, false, user_manager::USER_TYPE_REGULAR, profile);
-  fake_user_manager->LoginUser(account);
+  auto account =
+      AccountId::FromUserEmailGaiaId("test@example.com", GaiaId("12345"));
+  fake_user_manager_->AddUserWithAffiliationAndTypeAndProfile(
+      account, false, user_manager::UserType::kRegular, profile);
+  fake_user_manager_->LoginUser(account);
 
   if (enable_crostini) {
     EnableCrostini(profile);
@@ -134,11 +130,11 @@ void CrostiniTestHelper::UpdateAppKeywords(
 }
 
 // static
-void CrostiniTestHelper::EnableCrostini(TestingProfile* profile) {
+void CrostiniTestHelper::EnableCrostini(Profile* profile) {
   profile->GetPrefs()->SetBoolean(crostini::prefs::kCrostiniEnabled, true);
 }
 // static
-void CrostiniTestHelper::DisableCrostini(TestingProfile* profile) {
+void CrostiniTestHelper::DisableCrostini(Profile* profile) {
   profile->GetPrefs()->SetBoolean(crostini::prefs::kCrostiniEnabled, false);
 }
 

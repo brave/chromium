@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <bitset>
+#include <string_view>
 #include <vector>
+
 #include "base/base64.h"
 #include "base/command_line.h"
 #include "base/values.h"
@@ -16,6 +19,7 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_test.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/origin_trials/origin_trial_policy.h"
 
@@ -88,9 +92,9 @@ class ChromeOriginTrialsTest : public InProcessBrowserTest {
   ChromeOriginTrialsTest& operator=(const ChromeOriginTrialsTest&) = delete;
 
  protected:
-  ChromeOriginTrialsTest() {}
+  ChromeOriginTrialsTest() = default;
 
-  std::string GetCommandLineSwitch(const base::StringPiece& switch_name) {
+  std::string GetCommandLineSwitch(std::string_view switch_name) {
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     EXPECT_TRUE(command_line->HasSwitch(switch_name));
     return command_line->GetSwitchValueASCII(switch_name);
@@ -199,11 +203,10 @@ IN_PROC_BROWSER_TEST_P(ChromeOriginTrialsDisabledTokensTest,
 IN_PROC_BROWSER_TEST_P(ChromeOriginTrialsDisabledTokensTest,
                        DisabledTokensInPolicy) {
   // Convert the uint8_t[] from generate_token.py into strings.
-  std::set<std::string> expected_signatures;
-  std::transform(
-      GetParam().expected_list.begin(), GetParam().expected_list.end(),
-      std::inserter(expected_signatures, expected_signatures.begin()),
-      [](const uint8_t bytes[]) -> std::string {
+  std::vector<std::string> expected_signatures;
+  std::ranges::transform(
+      GetParam().expected_list, std::back_inserter(expected_signatures),
+      [](const uint8_t bytes[]) {
         return std::string(reinterpret_cast<const char*>(bytes),
                            kTokenSignatureSize);
       });
@@ -212,7 +215,8 @@ IN_PROC_BROWSER_TEST_P(ChromeOriginTrialsDisabledTokensTest,
   ASSERT_TRUE(local_state()->HasPrefPath(
       embedder_support::prefs::kOriginTrialDisabledTokens));
   ASSERT_TRUE(policy);
-  ASSERT_EQ(*(policy->GetDisabledTokensForTesting()), expected_signatures);
+  EXPECT_THAT(*policy->GetDisabledTokensForTesting(),
+              testing::UnorderedElementsAreArray(expected_signatures));
 }
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -238,9 +242,8 @@ class ChromeOriginTrialsDisabledTokensLimitTest
     // list of disabled tokens.
     std::vector<std::string> disabled_tokens;
     for (uint16_t i = 0; i < token_count; i++) {
-      std::string encoded_token;
       std::string token = std::bitset<kTokenSignatureSize>(i).to_string();
-      base::Base64Encode(token, &encoded_token);
+      std::string encoded_token = base::Base64Encode(token);
       disabled_tokens.push_back(encoded_token);
     }
     return disabled_tokens;

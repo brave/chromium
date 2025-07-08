@@ -4,8 +4,9 @@
 
 #include "cc/layers/picture_layer_impl.h"
 
+#include <algorithm>
+
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/timer/lap_timer.h"
 #include "cc/test/fake_picture_layer_impl.h"
 #include "cc/test/fake_raster_source.h"
@@ -31,7 +32,7 @@ void AddTiling(float scale,
   tiling->set_resolution(HIGH_RESOLUTION);
   tiling->CreateAllTilesForTesting();
   std::vector<Tile*> tiling_tiles = tiling->AllTilesForTesting();
-  base::ranges::copy(tiling_tiles, std::back_inserter(*all_tiles));
+  std::ranges::copy(tiling_tiles, std::back_inserter(*all_tiles));
 }
 
 class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
@@ -69,19 +70,15 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
                                              int num_tiles,
                                              const gfx::Rect& viewport_rect) {
     host_impl()->active_tree()->SetDeviceViewportRect(viewport_rect);
-    host_impl()->pending_tree()->UpdateDrawProperties();
+    host_impl()->pending_tree()->UpdateDrawProperties(
+        /*update_tiles=*/true, /*update_image_animation_controller=*/true);
 
     timer_.Reset();
     do {
-      int count = num_tiles;
-      std::unique_ptr<TilingSetRasterQueueAll> queue(
-          new TilingSetRasterQueueAll(
-              pending_layer_->picture_layer_tiling_set(), false, true));
-      while (count--) {
-        ASSERT_TRUE(!queue->IsEmpty()) << "count: " << count;
-        ASSERT_TRUE(queue->Top().tile()) << "count: " << count;
-        queue->Pop();
-      }
+      std::unique_ptr<TilingSetRasterQueueAll> queue =
+          TilingSetRasterQueueAll::Create(
+              pending_layer_->picture_layer_tiling_set(), true);
+      ASSERT_TRUE(queue);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -99,13 +96,14 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
         ->scroll_tree_mutable()
         .UpdateScrollOffsetBaseForTesting(pending_layer_->element_id(),
                                           gfx::PointF(viewport.origin()));
-    host_impl()->pending_tree()->UpdateDrawProperties();
+    host_impl()->pending_tree()->UpdateDrawProperties(
+        /*update_tiles=*/true, /*update_image_animation_controller=*/true);
 
     timer_.Reset();
     do {
-      std::unique_ptr<TilingSetRasterQueueAll> queue(
-          new TilingSetRasterQueueAll(
-              pending_layer_->picture_layer_tiling_set(), false, true));
+      std::unique_ptr<TilingSetRasterQueueAll> queue =
+          TilingSetRasterQueueAll::Create(
+              pending_layer_->picture_layer_tiling_set(), true);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -117,19 +115,15 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
                                                int num_tiles,
                                                const gfx::Rect& viewport_rect) {
     host_impl()->active_tree()->SetDeviceViewportRect(viewport_rect);
-    host_impl()->pending_tree()->UpdateDrawProperties();
+    host_impl()->pending_tree()->UpdateDrawProperties(
+        /*update_tiles=*/true, /*update_image_animation_controller=*/true);
 
     timer_.Reset();
     do {
-      int count = num_tiles;
       std::unique_ptr<TilingSetEvictionQueue> queue(new TilingSetEvictionQueue(
           pending_layer_->picture_layer_tiling_set(),
           pending_layer_->contributes_to_drawn_render_surface()));
-      while (count--) {
-        ASSERT_TRUE(!queue->IsEmpty()) << "count: " << count;
-        ASSERT_TRUE(queue->Top().tile()) << "count: " << count;
-        queue->Pop();
-      }
+      ASSERT_TRUE(queue);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -147,7 +141,8 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
         ->scroll_tree_mutable()
         .UpdateScrollOffsetBaseForTesting(pending_layer_->element_id(),
                                           gfx::PointF(viewport.origin()));
-    host_impl()->pending_tree()->UpdateDrawProperties();
+    host_impl()->pending_tree()->UpdateDrawProperties(
+        /*update_tiles=*/true, /*update_image_animation_controller=*/true);
 
     timer_.Reset();
     do {
@@ -166,6 +161,7 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
     perf_test::PerfResultReporter reporter("tiling_set", story_name);
     reporter.RegisterImportantMetric("_raster_queue_construct_and_iterate",
                                      "runs/s");
+    reporter.RegisterImportantMetric("_eviction_queue_construct", "runs/s");
     reporter.RegisterImportantMetric("_raster_queue_construct", "runs/s");
     reporter.RegisterImportantMetric("_eviction_queue_construct_and_iterate",
                                      "runs/s");
@@ -179,10 +175,6 @@ class PictureLayerImplPerfTest : public LayerTreeImplTestBase,
 TEST_F(PictureLayerImplPerfTest, TilingSetRasterQueueConstructAndIterate) {
   SetupPendingTree(gfx::Size(10000, 10000));
 
-  float low_res_factor = host_impl()->settings().low_res_contents_scale_factor;
-
-  pending_layer_->AddTiling(
-      gfx::AxisTransform2d(low_res_factor, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(0.3f, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(0.7f, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(1.0f, gfx::Vector2dF()));
@@ -197,10 +189,6 @@ TEST_F(PictureLayerImplPerfTest, TilingSetRasterQueueConstructAndIterate) {
 TEST_F(PictureLayerImplPerfTest, TilingSetRasterQueueConstruct) {
   SetupPendingTree(gfx::Size(10000, 10000));
 
-  float low_res_factor = host_impl()->settings().low_res_contents_scale_factor;
-
-  pending_layer_->AddTiling(
-      gfx::AxisTransform2d(low_res_factor, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(0.3f, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(0.7f, gfx::Vector2dF()));
   pending_layer_->AddTiling(gfx::AxisTransform2d(1.0f, gfx::Vector2dF()));
@@ -214,10 +202,7 @@ TEST_F(PictureLayerImplPerfTest, TilingSetRasterQueueConstruct) {
 TEST_F(PictureLayerImplPerfTest, TilingSetEvictionQueueConstructAndIterate) {
   SetupPendingTree(gfx::Size(10000, 10000));
 
-  float low_res_factor = host_impl()->settings().low_res_contents_scale_factor;
-
   std::vector<Tile*> all_tiles;
-  AddTiling(low_res_factor, pending_layer_, &all_tiles);
   AddTiling(0.3f, pending_layer_, &all_tiles);
   AddTiling(0.7f, pending_layer_, &all_tiles);
   AddTiling(1.0f, pending_layer_, &all_tiles);
@@ -240,10 +225,7 @@ TEST_F(PictureLayerImplPerfTest, TilingSetEvictionQueueConstructAndIterate) {
 TEST_F(PictureLayerImplPerfTest, TilingSetEvictionQueueConstruct) {
   SetupPendingTree(gfx::Size(10000, 10000));
 
-  float low_res_factor = host_impl()->settings().low_res_contents_scale_factor;
-
   std::vector<Tile*> all_tiles;
-  AddTiling(low_res_factor, pending_layer_, &all_tiles);
   AddTiling(0.3f, pending_layer_, &all_tiles);
   AddTiling(0.7f, pending_layer_, &all_tiles);
   AddTiling(1.0f, pending_layer_, &all_tiles);

@@ -17,6 +17,7 @@
 class HostContentSettingsMap;
 
 namespace content_settings {
+class PermissionSettingsInfo;
 
 typedef std::pair<ContentSettingsPattern, ContentSettingsPattern> PatternPair;
 
@@ -26,9 +27,8 @@ class MapValueIterator {
  public:
   explicit MapValueIterator(IteratorType iterator) : iterator_(iterator) {}
 
-  bool operator!=(const MapValueIterator& other) const {
-    return iterator_ != other.iterator_;
-  }
+  friend bool operator==(const MapValueIterator&,
+                         const MapValueIterator&) = default;
 
   MapValueIterator& operator++() {
     ++iterator_;
@@ -46,6 +46,7 @@ class MapValueIterator {
 const char kChromeDevToolsScheme[] = "devtools";
 const char kChromeUIScheme[] = "chrome";
 const char kExtensionScheme[] = "chrome-extension";
+const char kChromeUIUntrustedScheme[] = "chrome-untrusted";
 
 std::string ContentSettingToString(ContentSetting setting);
 
@@ -67,6 +68,10 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
 // Returns true if setting |a| is more permissive than setting |b|.
 bool IsMorePermissive(ContentSetting a, ContentSetting b);
 
+// Returns true if permission option |a| is more permissive than permission
+// option |b|.
+bool IsMorePermissive(PermissionOption a, PermissionOption b);
+
 // Returns whether or not the supplied constraint should be persistently stored.
 bool IsConstraintPersistent(const ContentSettingConstraints& constraints);
 
@@ -79,11 +84,48 @@ base::Time GetCoarseVisitedTime(base::Time time);
 // Returns a TimeDelta representing a week.
 base::TimeDelta GetCoarseVisitedTimePrecision();
 
-// Return whether the given permission can be auto-revoked using
-// ContentSettingConstraints::track_last_visit_for_autoexpiration.
+// Returns whether the permission is an eligible permission for auto-revocation.
 bool CanBeAutoRevoked(ContentSettingsType type,
-                      ContentSetting setting,
+                      const base::Value& value,
                       bool is_one_time = false);
+
+// Returns whether the chooser permission is allowlisted for auto-revoking.
+bool IsChooserPermissionEligibleForAutoRevocation(ContentSettingsType type);
+
+// Returns true if the type and metadata correspond
+// to a permission decision that was made by Related Website Sets.
+bool IsGrantedByRelatedWebsiteSets(ContentSettingsType type,
+                                   const RuleMetaData& metadata);
+
+// Returns the list of ContentSettingsTypes that can be granted for a short
+// period of time. This means the following:
+// - Permission prompts will have a button that is labeled along the lines of
+//   "Allow this time".
+// - The `permissions.query` API will report PermissionStatus.state as
+//   "granted" within this short time window.
+// - Subsequent requests to the permission-gated API in this time window will
+//   succeed without user mediation.
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrants();
+
+// Returns a subset of GetTypesWithTemporaryGrants() that are stored in
+// OneTimePermissionProvider in HostContentSettingsMap. Other types not stored
+// in the provider have their own custom grant expiry logic.
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrantsInHcsm();
+
+// Returns the list of ContentSettingsTypes which should be actively expired
+// upon their expiration. All other expired content settings will only be
+// expired upon the first reload after the expiration date.
+bool ShouldTypeExpireActively(ContentSettingsType type);
+
+// Convert a base::Value to a permission setting for a permission represented by
+// |info|. Expects that the value represents a valid setting.
+PermissionSetting ValueToPermissionSetting(const PermissionSettingsInfo* info,
+                                           const base::Value& value);
+
+// Convert a permission setting to a base::Value for a permission represented by
+// |info|. Expects that the setting is valid.
+base::Value PermissionSettingToValue(const PermissionSettingsInfo* info,
+                                     const PermissionSetting& setting);
 
 }  // namespace content_settings
 

@@ -14,23 +14,27 @@ namespace syncer {
 
 class SyncService;
 
-// Used for UMA. Exposed in the header file for testing.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. Keep in sync with the homonym enum
+// in tools/metrics/histograms/metadata/sync/enums.xml.
+// Exposed in the header file for testing.
+// LINT.IfChange(PassphraseTypeForMetrics)
 enum class PassphraseTypeForMetrics {
-  // Used if there are no syncing profiles or all syncing profiles are not in
-  // ACTIVE sync transport state.
-  kNoActiveSyncingProfiles,
-  // Used if there are multiple syncing profiles with different passphrase
-  // types or with different sync transport state is ACTIVE values.
-  kInconsistentStateAcrossProfiles,
+  // Passphrase type is unknown.
+  kUnknown = 0,
+  // Used if there are multiple signed-in profiles with different passphrase
+  // types.
+  kInconsistentStateAcrossProfiles = 1,
   // Further values correspond to regular PassphraseType. Used if there is only
-  // one syncing profile or all profiles have the same PassphraseType.
-  kImplicitPassphrase,
-  kKeystorePassphrase,
-  kFrozenImplicitPassphrase,
-  kCustomPassphrase,
-  kTrustedVaultPassphrase,
+  // one signed-in profile or all profiles have the same PassphraseType.
+  kImplicitPassphrase = 2,
+  kKeystorePassphrase = 3,
+  kFrozenImplicitPassphrase = 4,
+  kCustomPassphrase = 5,
+  kTrustedVaultPassphrase = 6,
   kMaxValue = kTrustedVaultPassphrase
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:PassphraseTypeForMetrics)
 
 // A registerable metrics provider that will emit sync passphrase type upon UMA
 // upload. If it's impossible to detect real passphrase type, special enum
@@ -38,12 +42,27 @@ enum class PassphraseTypeForMetrics {
 // kVariousStateAcrossProfiles).
 class PassphraseTypeMetricsProvider : public metrics::MetricsProvider {
  public:
+  enum class HistogramVersion {
+    // Sync.PassphraseType2: Records kUnknown until Sync's TransportState
+    // becomes ACTIVE.
+    kV2,
+    // Sync.PassphraseType4: Records values based on state cached in prefs, so
+    // can be recorded before Sync's TransportState becomes ACTIVE, but records
+    // kImplicitPassphrase for signed-out users.
+    kV4,
+    // Sync.PassphraseType4: Records values based on state cached in prefs, so
+    // can be recorded before Sync's TransportState becomes ACTIVE.
+    kV5
+  };
+
   using GetAllSyncServicesCallback =
       base::RepeatingCallback<std::vector<const SyncService*>()>;
 
-  // All SyncServices returned by |get_all_sync_services_callback| must be not
-  // null.
-  explicit PassphraseTypeMetricsProvider(
+  // All SyncServices returned by `get_all_sync_services_callback` must be not
+  // null. `histogram_version` specifies which version of the histogram to
+  // record.
+  PassphraseTypeMetricsProvider(
+      HistogramVersion histogram_version,
       const GetAllSyncServicesCallback& get_all_sync_services_callback);
 
   PassphraseTypeMetricsProvider(const PassphraseTypeMetricsProvider& other) =
@@ -57,6 +76,9 @@ class PassphraseTypeMetricsProvider : public metrics::MetricsProvider {
   bool ProvideHistograms() override;
 
  private:
+  std::string_view GetHistogramName() const;
+
+  const HistogramVersion histogram_version_;
   const GetAllSyncServicesCallback get_all_sync_services_callback_;
 };
 

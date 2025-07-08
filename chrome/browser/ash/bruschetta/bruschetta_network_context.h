@@ -2,6 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CHROME_BROWSER_ASH_BRUSCHETTA_BRUSCHETTA_NETWORK_CONTEXT_H_
+#define CHROME_BROWSER_ASH_BRUSCHETTA_BRUSCHETTA_NETWORK_CONTEXT_H_
+
+#include <optional>
+
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/unguessable_token.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
@@ -20,11 +26,9 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
-#ifndef CHROME_BROWSER_ASH_BRUSCHETTA_BRUSCHETTA_NETWORK_CONTEXT_H_
-#define CHROME_BROWSER_ASH_BRUSCHETTA_BRUSCHETTA_NETWORK_CONTEXT_H_
+class PrefService;
 
 namespace bruschetta {
 
@@ -35,7 +39,7 @@ class BruschettaNetworkContext
     : public network::mojom::URLLoaderNetworkServiceObserver {
  public:
   // Class should not outlive the passed-in profile.
-  explicit BruschettaNetworkContext(Profile* profile);
+  BruschettaNetworkContext(Profile* profile, PrefService& local_state);
 
   BruschettaNetworkContext(const BruschettaNetworkContext&) = delete;
   BruschettaNetworkContext& operator=(const BruschettaNetworkContext&) = delete;
@@ -52,13 +56,13 @@ class BruschettaNetworkContext
                              bool fatal,
                              OnSSLCertificateErrorCallback response) override;
   void OnCertificateRequested(
-      const absl::optional<base::UnguessableToken>& window_id,
+      const std::optional<base::UnguessableToken>& window_id,
       const scoped_refptr<net::SSLCertRequestInfo>& cert_info,
       mojo::PendingRemote<network::mojom::ClientCertificateResponder>
           cert_responder) override;
   void OnAuthRequired(
-      const absl::optional<base::UnguessableToken>& window_id,
-      uint32_t request_id,
+      const std::optional<base::UnguessableToken>& window_id,
+      int32_t request_id,
       const GURL& url,
       bool first_auth_attempt,
       const net::AuthChallengeInfo& auth_info,
@@ -68,14 +72,16 @@ class BruschettaNetworkContext
   void OnPrivateNetworkAccessPermissionRequired(
       const GURL& url,
       const net::IPAddress& ip_address,
-      const std::string& private_network_device_id,
-      const std::string& private_network_device_name,
+      const std::optional<std::string>& private_network_device_id,
+      const std::optional<std::string>& private_network_device_name,
       OnPrivateNetworkAccessPermissionRequiredCallback callback) override;
+  void OnLocalNetworkAccessPermissionRequired(
+      OnLocalNetworkAccessPermissionRequiredCallback callback) override;
   void OnClearSiteData(
       const GURL& url,
       const std::string& header_value,
       int32_t load_flags,
-      const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
+      const std::optional<net::CookiePartitionKey>& cookie_partition_key,
       bool partitioned_state_allowed_only,
       OnClearSiteDataCallback callback) override;
   void OnLoadingStateUpdate(network::mojom::LoadInfoPtr info,
@@ -85,11 +91,23 @@ class BruschettaNetworkContext
                        int64_t sent_bytes) override;
   void OnSharedStorageHeaderReceived(
       const url::Origin& request_origin,
-      std::vector<network::mojom::SharedStorageOperationPtr> operations,
+      std::vector<network::mojom::SharedStorageModifierMethodWithOptionsPtr>
+          methods_with_options,
+      const std::optional<std::string>& with_lock,
       OnSharedStorageHeaderReceivedCallback callback) override;
+  void OnAdAuctionEventRecordHeaderReceived(
+      network::AdAuctionEventRecord event_record,
+      const std::optional<url::Origin>& top_frame_origin) override;
   void Clone(
       mojo::PendingReceiver<network::mojom::URLLoaderNetworkServiceObserver>
           listener) override;
+  void OnWebSocketConnectedToPrivateNetwork(
+      network::mojom::IPAddressSpace ip_address_space) override;
+  void OnUrlLoaderConnectedToPrivateNetwork(
+      const GURL& request_url,
+      network::mojom::IPAddressSpace response_address_space,
+      network::mojom::IPAddressSpace client_address_space,
+      network::mojom::IPAddressSpace target_address_space) override;
 
  private:
   void ContinueWithCertificate(

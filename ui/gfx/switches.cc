@@ -25,8 +25,16 @@ const char kEnableNativeGpuMemoryBuffers[] = "enable-native-gpu-memory-buffers";
 // settings.
 const char kForcePrefersReducedMotion[] = "force-prefers-reduced-motion";
 
+// Forces whether the user desires no reduced motion, regardless of system
+// settings.
+const char kForcePrefersNoReducedMotion[] = "force-prefers-no-reduced-motion";
+
 // Run in headless mode, i.e., without a UI or display server dependencies.
 const char kHeadless[] = "headless";
+
+// Headless screen info in the format: {0,0 800x600}{800,0 600x800}.
+// See //components/headless/screen_info/README.md for more details.
+const char kScreenInfo[] = "screen-info";
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 // Which X11 display to connect to. Emulates the GTK+ "--display=" command line
@@ -34,7 +42,7 @@ const char kHeadless[] = "headless";
 const char kX11Display[] = "display";
 // Disables MIT-SHM extension. In use only with Ozone/X11.
 const char kNoXshm[] = "no-xshm";
-#endif
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace switches
 
@@ -57,14 +65,10 @@ BASE_FEATURE(kOddWidthMultiPlanarBuffers,
 #endif
 );
 
-#if BUILDFLAG(IS_CHROMEOS)
-BASE_FEATURE(kVariableGoogleSansFont,
-             "VariableGoogleSansFont",
+BASE_FEATURE(kUseSmartRefForGPUFenceHandle,
+             "UseSmartRefForGPUFenceHandle",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-GFX_SWITCHES_EXPORT bool UseVariableGoogleSansFont() {
-  return base::FeatureList::IsEnabled(kVariableGoogleSansFont);
-}
-#endif
+BASE_FEATURE(kHdrAgtm, "HdrAgtm", base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

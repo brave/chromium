@@ -4,15 +4,14 @@
 
 #include "media/filters/hls_rendition.h"
 
-#include "media/filters/hls_live_rendition.h"
-#include "media/filters/hls_vod_rendition.h"
+#include "media/filters/hls_rendition_impl.h"
 #include "media/filters/manifest_demuxer.h"
 
 namespace media {
 
 namespace {
 
-absl::optional<base::TimeDelta> GetPlaylistDuration(
+std::optional<base::TimeDelta> GetPlaylistDuration(
     hls::MediaPlaylist* playlist) {
   if (!playlist->HasMediaSequenceTag()) {
     // Live playbacks have a media sequence tag, so if that's missing, then this
@@ -22,38 +21,32 @@ absl::optional<base::TimeDelta> GetPlaylistDuration(
 
   auto segments = playlist->GetSegments();
   // Usually manifests use an Endlist tag to end a live playback, but its
-  // also fairly common to see these on VOD content where the first media
-  // sequence is id 0 or 1.
+  // also fairly common to see these on VOD content that was clipped from
+  // live content.
   if (playlist->IsEndList()) {
-    if (!segments.empty() && segments[0]->GetMediaSequenceNumber() < 2) {
+    if (!segments.empty()) {
       return playlist->GetComputedDuration();
     }
   }
 
   // Live content doesn't have a defined duration.
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace
 
 // Static
-HlsDemuxerStatus::Or<std::unique_ptr<HlsRendition>>
-HlsRendition::CreateRendition(ManifestDemuxerEngineHost* engine_host,
-                              HlsRenditionHost* rendition_host,
-                              std::string role,
-                              scoped_refptr<hls::MediaPlaylist> playlist,
-                              GURL uri) {
-  std::unique_ptr<HlsRendition> rendition;
+std::unique_ptr<HlsRendition> HlsRendition::CreateRendition(
+    ManifestDemuxerEngineHost* engine_host,
+    HlsRenditionHost* rendition_host,
+    std::string role,
+    scoped_refptr<hls::MediaPlaylist> playlist,
+    GURL uri,
+    MediaLog* media_log) {
   auto duration = GetPlaylistDuration(playlist.get());
-  if (duration.has_value()) {
-    rendition = std::make_unique<HlsVodRendition>(
-        engine_host, rendition_host, std::move(role), std::move(playlist),
-        duration.value());
-  } else {
-    rendition = std::make_unique<HlsLiveRendition>(
-        engine_host, rendition_host, role, std::move(playlist), uri);
-  }
-  return rendition;
+  return std::make_unique<HlsRenditionImpl>(
+      engine_host, rendition_host, std::move(role), std::move(playlist),
+      duration, std::move(uri), media_log);
 }
 
 }  // namespace media

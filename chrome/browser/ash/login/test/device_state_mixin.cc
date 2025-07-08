@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 
 #include <utility>
@@ -14,12 +19,13 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
+#include "chrome/browser/ash/login/test/scoped_policy_update.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/test/policy_builder.h"
 #include "components/policy/proto/install_attributes.pb.h"

@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/platform_util.h"
+
 #include <jni.h>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/notreached.h"
-#include "chrome/browser/platform_util.h"
-#include "chrome/browser/util/jni_headers/PlatformUtil_jni.h"
+#include "base/notimplemented.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/util/jni_headers/PlatformUtil_jni.h"
 
 using base::android::ScopedJavaLocalRef;
 

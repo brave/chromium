@@ -26,7 +26,7 @@
 // for the given prefix.
 // At each search step, the executor feeds the token and cell states from the
 // previous step into the model to generate the predictions for the next token.
-// TODO(crbug.com/1372112): migrate to optimization_guide::TFLiteModelExecutor
+// TODO(crbug.com/40241602): migrate to optimization_guide::TFLiteModelExecutor
 // once it supports multi-subgraph model.
 class OnDeviceTailModelExecutor {
  public:
@@ -42,16 +42,11 @@ class OnDeviceTailModelExecutor {
     ModelInput();
     ModelInput(std::string prefix,
                std::string previous_query,
-               size_t max_num_suggestions,
-               size_t max_rnn_steps,
-               float probability_threshold);
-    ~ModelInput();
+               size_t max_num_suggestions);
 
     std::string prefix;
     std::string previous_query;
     size_t max_num_suggestions;
-    size_t max_rnn_steps;
-    float probability_threshold;
   };
 
   using ModelMetadata =
@@ -63,7 +58,7 @@ class OnDeviceTailModelExecutor {
   // Initializes the model executor.
   bool Init();
   bool Init(const base::FilePath& model_filepath,
-            const base::FilePath& vocab_filepath,
+            const base::flat_set<base::FilePath>& additional_files,
             const ModelMetadata& metadata);
 
   // Returns whether the executor is initialized.
@@ -90,18 +85,18 @@ class OnDeviceTailModelExecutor {
     RnnCellStates();
     RnnCellStates(size_t num_layer, size_t state_size);
     RnnCellStates(const RnnCellStates& other);
+    RnnCellStates(RnnCellStates&& other) noexcept;
+    RnnCellStates& operator=(const RnnCellStates& other);
+    RnnCellStates& operator=(RnnCellStates&& other) noexcept;
     ~RnnCellStates();
 
-    bool operator==(const RnnCellStates& other) const {
-      return c_i == other.c_i && m_i == other.m_i;
-    }
-    bool operator!=(const RnnCellStates& other) const {
-      return !(*this == other);
-    }
+    friend bool operator==(const RnnCellStates&,
+                           const RnnCellStates&) = default;
 
     // Cell states, see definitions at
     // https://github.com/tensorflow/lingvo/blob/master/lingvo/core/rnn_cell.py#L221.
-    std::vector<std::vector<float>> c_i, m_i;
+    std::vector<std::vector<float>> c_i;
+    std::vector<std::vector<float>> m_i;
   };
 
   // The struct which holds the output from subgraph `rnn_step_`.
@@ -132,6 +127,9 @@ class OnDeviceTailModelExecutor {
     BeamNode();
     BeamNode(int num_layer, int state_size);
     BeamNode(const BeamNode& other);
+    BeamNode(BeamNode&& other) noexcept;
+    BeamNode& operator=(const BeamNode& other);
+    BeamNode& operator=(BeamNode&& other) noexcept;
     ~BeamNode();
 
     bool operator>(const BeamNode& other) const {
@@ -210,6 +208,19 @@ class OnDeviceTailModelExecutor {
   // Helper to calculate log probability.
   static float GetLogProbability(float probability);
 
+  // Loads bad suggestion filter lists from filepaths.
+  void LoadBadSubstringSet();
+  void LoadBadwordHashSet();
+
+  // Determines if the given suggestion is bad and should be discarded, by
+  // checking if the suggestion contain words specified by `badword_hashes_`.
+  // Note currently this function might not support CJK language properly as it
+  // uses whitespace to split the suggestion.
+  // We use this on device filter since this model is an ML model and we do not
+  // have a good way to force the model to drop a given result in any
+  // circumstance during training.
+  bool IsSuggestionBad(const std::string& suggestion);
+
   // The tokenizer and tensorflow lite model & interpreter instances.
   std::unique_ptr<OnDeviceTailTokenizer> tokenizer_;
   std::unique_ptr<base::MemoryMappedFile> model_fb_;
@@ -232,6 +243,8 @@ class OnDeviceTailModelExecutor {
   size_t num_layer_;
   size_t embedding_dimension_;
   size_t vocab_size_;
+  size_t max_num_steps_;
+  float log_probability_threshold_;
 
   // The time when the executor is last called.
   base::TimeTicks executor_last_called_time_;
@@ -239,7 +252,14 @@ class OnDeviceTailModelExecutor {
   // Files and metadata needed to initialize the model executor;
   base::FilePath model_filepath_;
   base::FilePath vocab_filepath_;
+  base::FilePath badword_hashes_filepath_;
+  base::FilePath bad_substrings_filepath_;
   optimization_guide::proto::OnDeviceTailSuggestModelMetadata metadata_;
+
+  // The hashes (calculated by base::PersistentHash) of badword and the bad
+  // substrings which are encoded by BASE64 used to filter bad suggestions.
+  std::set<uint32_t> badword_hashes_;
+  std::set<std::string> bad_substrings_;
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_ON_DEVICE_TAIL_MODEL_EXECUTOR_H_

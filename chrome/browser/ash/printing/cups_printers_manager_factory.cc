@@ -47,13 +47,14 @@ CupsPrintersManagerProxy* CupsPrintersManagerFactory::GetProxy() {
   return proxy_.get();
 }
 
-KeyedService* CupsPrintersManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+CupsPrintersManagerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   auto* profile = Profile::FromBrowserContext(context);
   // This condition still needs to be explicitly stated here despite having
   // ProfileKeyedService logic implemented because `IsGuestSession()` and
   // `IsRegularProfile()` are not yet mutually exclusive in ASH and Lacros.
-  // TODO(crbug.com/1348572): remove this condition when `IsGuestSession() is
+  // TODO(crbug.com/40233408): remove this condition when `IsGuestSession() is
   // fixed.
   //
   // In Guest Mode, only use the OffTheRecord profile.
@@ -61,11 +62,12 @@ KeyedService* CupsPrintersManagerFactory::BuildServiceInstanceFor(
     return nullptr;
   }
 
-  auto manager = CupsPrintersManager::Create(profile);
+  std::unique_ptr<CupsPrintersManager> manager =
+      CupsPrintersManager::Create(profile);
   if (ProfileHelper::IsPrimaryProfile(profile)) {
     proxy_->SetManager(manager.get());
   }
-  return manager.release();
+  return manager;
 }
 
 void CupsPrintersManagerFactory::BrowserContextShutdown(

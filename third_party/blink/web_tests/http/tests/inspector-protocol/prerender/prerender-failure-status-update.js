@@ -1,4 +1,4 @@
-(async function(testRunner) {
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
   const {tabTargetSession} = await testRunner.startBlankWithTabTarget(
       `Test that prerender navigations receives the failure status updates`);
 
@@ -12,15 +12,9 @@
   // Navigate to speculation rules Prerender Page.
   session1.navigate('resources/bad-http-prerender.html');
 
-  testRunner.log(
-      await dp1.Preload.oncePrerenderStatusUpdated(), '',
-      ['loaderId', 'sessionId']);
-  testRunner.log(
-      await dp1.Preload.oncePrerenderStatusUpdated(), '',
-      ['loaderId', 'sessionId']);
-  testRunner.log(
-      await dp1.Preload.oncePrerenderStatusUpdated(), '',
-      ['loaderId', 'sessionId']);
+  testRunner.log(await dp1.Preload.oncePrerenderStatusUpdated());
+  testRunner.log(await dp1.Preload.oncePrerenderStatusUpdated());
+  testRunner.log(await dp1.Preload.oncePrerenderStatusUpdated());
 
   testRunner.completeTest();
 });

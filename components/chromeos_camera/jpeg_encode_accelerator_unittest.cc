@@ -1,15 +1,19 @@
 // Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "components/chromeos_camera/jpeg_encode_accelerator.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
 #include <sys/mman.h>
+
 #include <memory>
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -18,7 +22,6 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -28,12 +31,11 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/chromeos_camera/gpu_jpeg_encode_accelerator_factory.h"
-#include "components/chromeos_camera/jpeg_encode_accelerator.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/test_data_util.h"
 #include "media/gpu/buildflags.h"
 #include "media/gpu/chromeos/generic_dmabuf_video_frame_mapper.h"
-#include "media/gpu/test/local_gpu_memory_buffer_manager.h"
+#include "media/gpu/test/test_gbm_buffer_manager.h"
 #include "media/gpu/test/video_test_helpers.h"
 #include "media/parsers/jpeg_parser.h"
 #include "mojo/core/embedder/embedder.h"
@@ -89,11 +91,11 @@ enum class ClientState {
   ERROR,
 };
 
-scoped_refptr<media::VideoFrame> GetVideoFrameFromGpuMemoryBuffer(
-    gfx::GpuMemoryBuffer* buffer,
+scoped_refptr<media::VideoFrame> GetVideoFrameFromGbmBuffer(
+    media::TestGbmBuffer* buffer,
     gfx::Size size,
     media::VideoPixelFormat format) {
-  auto buffer_handle = buffer->CloneHandle().native_pixmap_handle;
+  auto buffer_handle = buffer->CloneHandle().native_pixmap_handle();
 
   size_t num_planes = media::VideoFrame::NumPlanes(format);
   std::vector<media::ColorPlaneLayout> planes(num_planes);
@@ -220,7 +222,7 @@ void JpegEncodeAcceleratorTestEnvironment::LogToFile(const std::string& key,
   std::string s = base::StringPrintf("%s: %s\n", key.c_str(), value.c_str());
   LOG(INFO) << s;
   if (log_file_) {
-    log_file_->WriteAtCurrentPos(s.data(), static_cast<int>(s.length()));
+    log_file_->WriteAtCurrentPos(base::as_byte_span(s));
   }
 }
 
@@ -237,8 +239,9 @@ JpegEncodeAcceleratorTestEnvironment::CreateTestYuvImage(
   // Fill in U and V values.
   std::fill(image_data.begin() + num_pixels, image_data.end(), 128);
 
-  base::FilePath output_filename(std::to_string(image_size.width()) + "x" +
-                                 std::to_string(image_size.height()) +
+  base::FilePath output_filename(base::NumberToString(image_size.width()) +
+                                 "x" +
+                                 base::NumberToString(image_size.height()) +
                                  (is_black ? "_black.jpg" : "_white.jpg"));
   return std::make_unique<TestImage>(std::move(image_data), image_size,
                                      output_filename);
@@ -248,11 +251,11 @@ std::unique_ptr<TestImage>
 JpegEncodeAcceleratorTestEnvironment::ReadTestYuvImage(
     const base::FilePath& input_file,
     const gfx::Size& image_size) {
-  int64_t file_size = 0;
-  LOG_ASSERT(GetFileSize(input_file, &file_size));
-  std::vector<uint8_t> image_data(file_size);
+  std::optional<int64_t> file_size = base::GetFileSize(input_file);
+  LOG_ASSERT(file_size.has_value());
+  std::vector<uint8_t> image_data(file_size.value());
   LOG_ASSERT(ReadFile(input_file, reinterpret_cast<char*>(image_data.data()),
-                      file_size) == file_size);
+                      file_size.value()) == file_size.value());
 
   base::FilePath output_filename = input_file.AddExtension(".jpg");
   return std::make_unique<TestImage>(std::move(image_data), image_size,
@@ -353,8 +356,8 @@ class JpegClient : public JpegEncodeAccelerator::Client {
   // Output for DMA-buf based encoding.
   scoped_refptr<media::VideoFrame> hw_out_frame_;
 
-  // Used to create Gpu memory buffer for DMA-buf encoding tests.
-  std::unique_ptr<gpu::GpuMemoryBufferManager> gpu_memory_buffer_manager_;
+  // Used to create gbm buffer for DMA-buf encoding tests.
+  std::unique_ptr<media::TestGbmBufferManager> gbm_buffer_manager_;
 
   base::WeakPtrFactory<JpegClient> weak_factory_{this};
 };
@@ -368,9 +371,9 @@ JpegClient::JpegClient(const std::vector<TestImage*>& test_aligned_images,
       state_(ClientState::CREATED),
       note_(note),
       exif_size_(exif_size),
-      gpu_memory_buffer_manager_(new media::LocalGpuMemoryBufferManager()) {}
+      gbm_buffer_manager_(new media::TestGbmBufferManager()) {}
 
-JpegClient::~JpegClient() {}
+JpegClient::~JpegClient() = default;
 
 void JpegClient::CreateJpegEncoder() {
   auto jea_factories =
@@ -470,7 +473,6 @@ bool JpegClient::GetSoftwareEncodeResult(int width,
   const uint8_t* yuv_src = static_cast<uint8_t*>(in_shm_->mapping.memory());
   const int kBytesPerPixel = 4;
   std::vector<uint8_t> rgba_buffer(width * height * kBytesPerPixel);
-  std::vector<uint8_t> encoded;
   libyuv::I420ToABGR(yuv_src, y_stride, yuv_src + y_stride * height, u_stride,
                      yuv_src + y_stride * height + u_stride * height / 2,
                      v_stride, rgba_buffer.data(), width * kBytesPerPixel,
@@ -479,12 +481,14 @@ bool JpegClient::GetSoftwareEncodeResult(int width,
   SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType,
                                        kOpaque_SkAlphaType);
   SkPixmap src(info, &rgba_buffer[0], width * kBytesPerPixel);
-  if (!gfx::JPEGCodec::Encode(src, kJpegDefaultQuality, &encoded)) {
+  std::optional<std::vector<uint8_t>> encoded =
+      gfx::JPEGCodec::Encode(src, kJpegDefaultQuality);
+  if (!encoded) {
     return false;
   }
 
-  memcpy(sw_out_mapping_.memory(), encoded.data(), encoded.size());
-  *sw_encoded_size = encoded.size();
+  memcpy(sw_out_mapping_.memory(), encoded->data(), encoded->size());
+  *sw_encoded_size = encoded->size();
   *sw_encode_time = base::TimeTicks::Now() - sw_encode_start;
   return true;
 }
@@ -572,7 +576,7 @@ void JpegClient::PrepareMemory(int32_t bitstream_buffer_id) {
   if (exif_size_ > 0) {
     auto shm = base::UnsafeSharedMemoryRegion::Create(exif_size_);
     auto shm_mapping = shm.Map();
-    base::RandBytes(shm_mapping.memory(), exif_size_);
+    base::RandBytes(shm_mapping.GetMemoryAsSpan<uint8_t>());
     exif_buffer_ =
         media::BitstreamBuffer(bitstream_buffer_id, std::move(shm), exif_size_);
   }
@@ -627,19 +631,17 @@ void JpegClient::SaveToFile(TestImage* test_image,
             << out_filename_hw.MaybeAsASCII();
 
   ASSERT_TRUE(base::WriteFile(
-      out_filename_hw,
-      base::make_span(hw_out_frame_
-                          ? hw_out_frame_->data(0)
-                          : static_cast<uint8_t*>(hw_out_mapping_.memory()),
-                      hw_size)));
+      out_filename_hw, base::span(hw_out_frame_ ? hw_out_frame_->data(0)
+                                                : static_cast<uint8_t*>(
+                                                      hw_out_mapping_.memory()),
+                                  hw_size)));
 
   base::FilePath out_filename_sw = out_filename_hw.InsertBeforeExtension("_sw");
   LOG(INFO) << "Writing SW encode results to "
             << out_filename_sw.MaybeAsASCII();
   ASSERT_TRUE(base::WriteFile(
       out_filename_sw,
-      base::make_span(static_cast<uint8_t*>(sw_out_mapping_.memory()),
-                      sw_size)));
+      base::span(static_cast<uint8_t*>(sw_out_mapping_.memory()), sw_size)));
 }
 
 void JpegClient::StartEncode(int32_t bitstream_buffer_id) {
@@ -655,8 +657,9 @@ void JpegClient::StartEncode(int32_t bitstream_buffer_id) {
       media::VideoFrame::WrapExternalData(
           media::PIXEL_FORMAT_I420, test_image->visible_size,
           gfx::Rect(test_image->visible_size), test_image->visible_size,
-          static_cast<uint8_t*>(in_shm_->mapping.memory()),
-          test_image->image_data.size(), base::TimeDelta());
+          in_shm_->mapping.GetMemoryAsSpan<uint8_t>().first(
+              test_image->image_data.size()),
+          base::TimeDelta());
   LOG_ASSERT(input_frame_.get());
   input_frame_->BackWithSharedMemory(&in_shm_->region);
 
@@ -672,7 +675,7 @@ void JpegClient::StartEncodeDmaBuf(int32_t bitstream_buffer_id) {
       encoder_->GetMaxCodedBufferSize(test_image->visible_size);
   PrepareMemory(bitstream_buffer_id);
 
-  auto input_buffer = gpu_memory_buffer_manager_->CreateGpuMemoryBuffer(
+  auto input_buffer = gbm_buffer_manager_->CreateGbmBuffer(
       test_image->visible_size, gfx::BufferFormat::YUV_420_BIPLANAR,
       gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE,
       gpu::kNullSurfaceHandle, nullptr);
@@ -689,16 +692,16 @@ void JpegClient::StartEncodeDmaBuf(int32_t bitstream_buffer_id) {
                      input_buffer->stride(0), plane_buf[1],
                      input_buffer->stride(1), width, height);
 
-  auto input_frame = GetVideoFrameFromGpuMemoryBuffer(
+  auto input_frame = GetVideoFrameFromGbmBuffer(
       input_buffer.get(), test_image->visible_size, media::PIXEL_FORMAT_NV12);
   LOG_ASSERT(input_frame.get());
 
-  auto output_buffer = gpu_memory_buffer_manager_->CreateGpuMemoryBuffer(
+  auto output_buffer = gbm_buffer_manager_->CreateGbmBuffer(
       gfx::Size(kJpegMaxSize, 1), gfx::BufferFormat::R_8,
       gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE, gpu::kNullSurfaceHandle,
       nullptr);
   ASSERT_EQ(output_buffer->Map(), true);
-  hw_out_frame_ = GetVideoFrameFromGpuMemoryBuffer(
+  hw_out_frame_ = GetVideoFrameFromGbmBuffer(
       output_buffer.get(), test_image->visible_size, media::PIXEL_FORMAT_MJPEG);
   LOG_ASSERT(hw_out_frame_.get());
 
@@ -715,7 +718,7 @@ class JpegEncodeAcceleratorTest : public ::testing::Test {
       delete;
 
  protected:
-  JpegEncodeAcceleratorTest() {}
+  JpegEncodeAcceleratorTest() = default;
 
   void TestEncode(size_t num_concurrent_encoders,
                   bool is_dma,

@@ -65,10 +65,6 @@ class AppEventsObserver : public MetricEventObserver,
   // of the unified app storage setup in the app service once it is implemented.
   class AppInstallTracker {
    public:
-    // Disk consumption metrics name.
-    static constexpr char kDiskConsumptionMetricsName[] =
-        "Browser.ERP.AppInstallTrackerDiskConsumption";
-
     explicit AppInstallTracker(base::WeakPtr<Profile> profile);
     AppInstallTracker(const AppInstallTracker& other) = delete;
     AppInstallTracker& operator=(const AppInstallTracker& other) = delete;
@@ -128,7 +124,7 @@ class AppEventsObserver : public MetricEventObserver,
 
   // App install tracker used by the event observer to filter out install event
   // notifications that include pre-installed apps.
-  const std::unique_ptr<AppInstallTracker> app_install_tracker_
+  std::unique_ptr<AppInstallTracker> app_install_tracker_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
   // Retriever that retrieves the `AppPlatformMetrics` component so the

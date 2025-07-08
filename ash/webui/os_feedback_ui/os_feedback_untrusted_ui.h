@@ -12,7 +12,6 @@
 #include "ui/webui/untrusted_web_ui_controller.h"
 
 namespace content {
-class BrowserContext;
 class WebUI;
 }  // namespace content
 
@@ -23,18 +22,14 @@ class ColorChangeHandler;
 namespace ash {
 namespace feedback {
 
+class OsFeedbackUntrustedUI;
+
 // Class that stores properties for the chrome-untrusted://os-feedback WebUI.
-class OsFeedbackUntrustedUIConfig : public content::WebUIConfig {
+class OsFeedbackUntrustedUIConfig
+    : public content::DefaultWebUIConfig<OsFeedbackUntrustedUI> {
  public:
   OsFeedbackUntrustedUIConfig();
   ~OsFeedbackUntrustedUIConfig() override;
-
-  // content::WebUIConfig:
-  bool IsWebUIEnabled(content::BrowserContext* browser_context) override;
-
-  std::unique_ptr<content::WebUIController> CreateWebUIController(
-      content::WebUI* web_ui,
-      const GURL& url) override;
 };
 
 // WebUI for chrome-untrusted://os-feedback, intended to be used by the file

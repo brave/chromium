@@ -5,17 +5,24 @@
 #ifndef MEDIA_FORMATS_MP4_WRITABLE_BOX_DEFINITIONS_H_
 #define MEDIA_FORMATS_MP4_WRITABLE_BOX_DEFINITIONS_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/time/time.h"
+#include "media/base/audio_codecs.h"
 #include "media/base/media_export.h"
+#include "media/base/video_codecs.h"
+#include "media/formats/mp4/box_constants.h"
 #include "media/formats/mp4/box_definitions.h"
 #include "media/formats/mp4/fourccs.h"
 #include "media/media_buildflags.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/size.h"
+
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+#include "media/formats/mp4/hevc.h"
+#endif
 
 namespace media::mp4::writable_boxes {
 
@@ -59,9 +66,10 @@ struct MEDIA_EXPORT Box {};
 
 // Box header with version and flags.
 struct MEDIA_EXPORT FullBox : Box {
-  // version 1 is 64 bits where applicable, 0 is 32 bits.
-  uint8_t version;
-  uint32_t flags : 24;
+  // Default version 1, which is 64 bits where applicable.
+  // If it needs 32 bits, then the box writer should override it.
+  uint8_t version = 1;
+  uint32_t flags : 24 = 0;
 };
 
 // Pixel Aspect Ratio Box (`pasp`) box.
@@ -72,8 +80,8 @@ struct MEDIA_EXPORT PixelAspectRatioBox : Box {
 
 // Bit Rate Box (`btrt`) box.
 struct MEDIA_EXPORT BitRate : Box {
-  uint32_t max_bit_rate;
-  uint32_t avg_bit_rate;
+  uint32_t max_bit_rate = 0;
+  uint32_t avg_bit_rate = 0;
 };
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -90,24 +98,80 @@ struct MEDIA_EXPORT ElementaryStreamDescriptor : FullBox {
   std::vector<uint8_t> aac_codec_description;
 };
 
-// MP4A Audio Sample Entry (`mp4a`) box.
-struct MEDIA_EXPORT AudioSampleEntry : Box {
-  uint32_t sample_rate;  // AudioSampleEntry.
-
-  ElementaryStreamDescriptor elementary_stream_descriptor;
-  BitRate bit_rate;
-};
-
-// AVC DecoderConfiguration Record (`avcc`) box.
+// AVC DecoderConfiguration Record (`avcC`) box.
 struct MEDIA_EXPORT AVCDecoderConfiguration : Box {
   // Refer AVCDecoderConfigurationRecord of box_definitions.h
   // because it provides Serialize method and the format
   // is hard to be correct.
   AVCDecoderConfigurationRecord avc_config_record;
+
+  // Indicates whether the parameter sets can be copied to the output bitstream
+  // or not. When set to false, parameter sets are only stored in the
+  // `AVCDecoderConfigurationRecord`, which complies with the requirements of
+  // `avc1` as defined in ISO/IEC 14496-15:2019 - 5.3.2. When set to true,
+  // parameter sets are stored both in the output bitstream and in the
+  // `AVCDecoderConfigurationRecord`, which complies with the requirements of
+  // `avc3` as defined in ISO/IEC 14496-15:2019 - 5.3.2.
+  bool add_parameter_sets_in_bitstream;
+};
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+// HEVC DecoderConfiguration Record (`hvcC`) box.
+struct MEDIA_EXPORT HEVCDecoderConfiguration : Box {
+  // Refer HEVCDecoderConfigurationRecord of hevc.h
+  // because it provides Serialize method and the format
+  // is hard to be correct.
+  HEVCDecoderConfigurationRecord hevc_config_record;
+
+  // Indicates whether the parameter sets can be copied to the output bitstream
+  // or not. When set to false, parameter sets are only stored in the
+  // `HEVCDecoderConfigurationRecord`, which complies with the requirements of
+  // `hvc1` as defined in ISO/IEC 14496-15:2019 - 8.3.2. When set to true,
+  // parameter sets are stored both in the output bitstream and in the
+  // `HEVCDecoderConfigurationRecord`, which complies with the requirements of
+  // `hev1` as defined in ISO/IEC 14496-15:2019 - 8.3.2.
+  bool add_parameter_sets_in_bitstream;
+};
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+
+// VP9 DecoderConfiguration Record (`vpcC`) box.
+struct MEDIA_EXPORT VPCodecConfiguration : FullBox {
+  VPCodecConfiguration(VideoCodecProfile profile,
+                       uint8_t level,
+                       const gfx::ColorSpace& color_space);
+
+  VideoCodecProfile profile;
+  uint8_t level;
+  gfx::ColorSpace color_space;
 };
 
-// VisualSampleEtnry (`avc1`) box.
+// AV1 DecoderConfiguration Record (`av1C`) box.
+struct MEDIA_EXPORT AV1CodecConfiguration : FullBox {
+  AV1CodecConfiguration();
+  ~AV1CodecConfiguration();
+  AV1CodecConfiguration(const AV1CodecConfiguration&);
+  AV1CodecConfiguration& operator=(const AV1CodecConfiguration&);
+  std::vector<uint8_t> av1_decoder_configuration_data;
+};
+
+struct MEDIA_EXPORT ColorInformation : Box {
+  explicit ColorInformation(VideoColorSpace video_color_space);
+  ~ColorInformation();
+  ColorInformation(const ColorInformation&);
+  ColorInformation& operator=(const ColorInformation&);
+
+  VideoColorSpace video_color_space;
+};
+
+// VisualSampleEntry (`avc1`, `hvc1`, `vp09`, `av01`) box.
 struct MEDIA_EXPORT VisualSampleEntry : Box {
+  explicit VisualSampleEntry(VideoCodec codec);
+  ~VisualSampleEntry();
+  VisualSampleEntry(const VisualSampleEntry&);
+  VisualSampleEntry& operator=(const VisualSampleEntry&);
+
+  VideoCodec codec;
   gfx::Size coded_size;
   // It is formatted in a fixed 32-byte field, with the first
   // byte set to the number of bytes to be displayed, followed
@@ -117,10 +181,52 @@ struct MEDIA_EXPORT VisualSampleEntry : Box {
 
   // It will have browser brand name.
   std::string compressor_name;  // char compressor_name[32];
-  AVCDecoderConfiguration avc_decoder_configuration;
+
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  std::optional<AVCDecoderConfiguration> avc_decoder_configuration;
+#endif
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+  std::optional<HEVCDecoderConfiguration> hevc_decoder_configuration;
+#endif
+  std::optional<VPCodecConfiguration> vp_decoder_configuration;
+  std::optional<AV1CodecConfiguration> av1_decoder_configuration;
+
   PixelAspectRatioBox pixel_aspect_ratio;
+  BitRate bit_rate;
+  std::optional<ColorInformation> color_information;
 };
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+// Opus media data (`dOps`) box.
+// Spec is https://opus-codec.org/docs/opus_in_isobmff.html.
+struct MEDIA_EXPORT OpusSpecificBox : Box {
+  OpusSpecificBox();
+  ~OpusSpecificBox();
+  OpusSpecificBox(const OpusSpecificBox&);
+  OpusSpecificBox& operator=(const OpusSpecificBox&);
+
+  uint8_t channel_count;
+  uint32_t sample_rate;
+};
+
+// Audio Sample Entry (`mp4a` or `Opus`) box.
+struct MEDIA_EXPORT AudioSampleEntry : Box {
+  AudioSampleEntry(AudioCodec codec,
+                   uint32_t sample_rate,
+                   uint8_t channel_count);
+  ~AudioSampleEntry();
+  AudioSampleEntry(const AudioSampleEntry&);
+  AudioSampleEntry& operator=(const AudioSampleEntry&);
+
+  AudioCodec codec;
+  uint32_t sample_rate;  // AudioSampleEntry.
+  uint8_t channel_count;
+
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+  std::optional<ElementaryStreamDescriptor> elementary_stream_descriptor;
+#endif
+  std::optional<OpusSpecificBox> opus_specific_box;
+  BitRate bit_rate;
+};
 
 // Media sample table (`stsd`) box.
 struct MEDIA_EXPORT SampleDescription : FullBox {
@@ -129,12 +235,9 @@ struct MEDIA_EXPORT SampleDescription : FullBox {
   SampleDescription(const SampleDescription&);
   SampleDescription& operator=(const SampleDescription&);
 
-  uint32_t entry_count;
-
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-  absl::optional<VisualSampleEntry> visual_sample_entry;
-  absl::optional<AudioSampleEntry> audio_sample_entry;
-#endif
+  uint32_t entry_count = 0;
+  std::optional<AudioSampleEntry> audio_sample_entry;
+  std::optional<VisualSampleEntry> video_sample_entry;
 };
 
 // `stco`, `stsz`, `stts`, `stsc`' are mandatory boxes.
@@ -193,14 +296,16 @@ struct MEDIA_EXPORT VideoMediaHeader : FullBox {
 
 // Media information (`minf`) box.
 struct MEDIA_EXPORT MediaInformation : Box {
-  absl::optional<VideoMediaHeader> video_header;
-  absl::optional<SoundMediaHeader> sound_header;
+  std::optional<VideoMediaHeader> video_header;
+  std::optional<SoundMediaHeader> sound_header;
   DataInformation data_information;
   SampleTable sample_table;
 };
 
 // Media Handler (`hdlr`) box.
 struct MEDIA_EXPORT MediaHandler : FullBox {
+  explicit MediaHandler(bool is_audio);
+
   mp4::FourCC handler_type;
   std::string name;
 };
@@ -209,13 +314,14 @@ struct MEDIA_EXPORT MediaHandler : FullBox {
 struct MEDIA_EXPORT MediaHeader : FullBox {
   base::Time creation_time;
   base::Time modification_time;
-  uint32_t timescale;
+  uint32_t timescale = 0;
   base::TimeDelta duration;
   std::string language;  // 3 letters code ISO-639-2/T language.
 };
 
 // Media (`mdia`) box.
 struct MEDIA_EXPORT Media : Box {
+  explicit Media(bool is_audio);
   MediaHeader header;
   MediaHandler handler;
   MediaInformation information;
@@ -223,26 +329,29 @@ struct MEDIA_EXPORT Media : Box {
 
 // Track header (`tkhd`) box.
 struct MEDIA_EXPORT TrackHeader : FullBox {
+  TrackHeader(uint32_t track_id, bool is_audio);
   uint32_t track_id;
   base::Time creation_time;
   base::Time modification_time;
   base::TimeDelta duration;
   bool is_audio;
   gfx::Size natural_size;
+  int32_t matrix[9] = {};
 };
 
 // Track (`trak`) box.
 struct MEDIA_EXPORT Track : Box {
+  explicit Track(uint32_t track_id, bool is_audio);
   TrackHeader header;
   Media media;
 };
 
 // Track Extends (`trex`) box.
 struct MEDIA_EXPORT TrackExtends : FullBox {
-  uint32_t track_id;
-  uint32_t default_sample_description_index;
+  uint32_t track_id = 0;
+  uint32_t default_sample_description_index = 0;
   base::TimeDelta default_sample_duration;
-  uint32_t default_sample_size;
+  uint32_t default_sample_size = 0;
 
   // The sample flags field in sample fragments is coded as a 32-bit value.
   // bit(4) reserved=0;
@@ -253,7 +362,7 @@ struct MEDIA_EXPORT TrackExtends : FullBox {
   // bit(3) sample_padding_value;
   // bit(1) sample_is_non_sync_sample;
   // unsigned int(16) sample_degradation_priority;
-  uint32_t default_sample_flags;
+  uint32_t default_sample_flags = 0;
 };
 
 // Movie Extends (`mvex`) box.
@@ -274,9 +383,9 @@ struct MEDIA_EXPORT MovieHeader : FullBox {
   base::Time modification_time;
 
   // This is the number of time units that pass in one second.
-  uint32_t timescale;
+  uint32_t timescale = 0;
   base::TimeDelta duration;
-  uint32_t next_track_id;
+  uint32_t next_track_id = 0;
 };
 
 // Movie (`moov`) box.
@@ -295,8 +404,8 @@ struct MEDIA_EXPORT TrackFragmentRun : FullBox {
   TrackFragmentRun(const TrackFragmentRun&);
   TrackFragmentRun& operator=(const TrackFragmentRun&);
 
-  uint32_t sample_count;
-  uint32_t first_sample_flags;
+  uint32_t sample_count = 0;
+  uint32_t first_sample_flags = 0;
 
   // Optional fields, presence is indicated in `flags`. If not present, the
   // default value established in the `TrackFragmentHeader` is used.
@@ -309,18 +418,19 @@ struct MEDIA_EXPORT TrackFragmentRun : FullBox {
 
 // Track Fragment Decode Time (`tfdt`) box.
 struct MEDIA_EXPORT TrackFragmentDecodeTime : Box {
+  uint32_t track_id = 0;
   base::TimeDelta base_media_decode_time;
 };
 
 // Track Fragment Header(`tfhd`) box.
 struct MEDIA_EXPORT TrackFragmentHeader : FullBox {
-  uint32_t track_id;
+  uint32_t track_id = 0;
 
   // `base_data_offset` will be calculated during fragment write.
   // uint64_t base_data_offset;
   base::TimeDelta default_sample_duration;
-  uint32_t default_sample_size;
-  uint32_t default_sample_flags;
+  uint32_t default_sample_size = 0;
+  uint32_t default_sample_flags = 0;
 };
 
 // Track Fragment Header(`traf`) box.
@@ -332,12 +442,14 @@ struct MEDIA_EXPORT TrackFragment : Box {
 
 // Movie Fragment Header(`mfhd`) box.
 struct MEDIA_EXPORT MovieFragmentHeader : FullBox {
+  explicit MovieFragmentHeader(uint32_t sequence_number);
+
   uint32_t sequence_number;
 };
 
 // Movie Fragment (`moof`) box.
 struct MEDIA_EXPORT MovieFragment : Box {
-  MovieFragment();
+  explicit MovieFragment(uint32_t sequence_number);
   ~MovieFragment();
   MovieFragment(const MovieFragment&);
   MovieFragment& operator=(const MovieFragment&);
@@ -353,6 +465,50 @@ struct MEDIA_EXPORT MediaData : Box {
   MediaData(const MediaData&);
   MediaData& operator=(const MediaData&);
   std::vector<std::vector<uint8_t>> track_data;
+};
+
+// File Type (`ftyp`) box.
+struct MEDIA_EXPORT FileType : Box {
+  FileType(mp4::FourCC major_brand, uint32_t minor_version);
+  ~FileType();
+  const uint32_t major_brand;
+  const uint32_t minor_version;
+  std::vector<uint32_t> compatible_brands;
+};
+
+// Movie Track Fragment Random Access Box Entry.
+struct TrackFragmentRandomAccessEntry {
+  base::TimeDelta time;
+  uint64_t moof_offset = 0;
+  uint32_t traf_number = 0;
+  uint32_t trun_number = 0;
+  uint32_t sample_number = 0;
+};
+
+// Movie Track Fragment Random Access Box (`tfra`) box.
+struct MEDIA_EXPORT TrackFragmentRandomAccess : FullBox {
+  TrackFragmentRandomAccess();
+  ~TrackFragmentRandomAccess();
+  TrackFragmentRandomAccess(const TrackFragmentRandomAccess&);
+  TrackFragmentRandomAccess& operator=(const TrackFragmentRandomAccess&);
+
+  uint32_t track_id = 0;
+  std::vector<TrackFragmentRandomAccessEntry> entries;
+};
+
+// Movie Fragment Random Access Offset Box (`mfro`) box.
+struct MEDIA_EXPORT FragmentRandomAccessOffset : Box {
+  // It is `mfra` box size and should be located at the last of
+  // enclosing `mfra` box.
+};
+
+// Movie Fragment Random Access Box (`mfra`) box.
+struct MEDIA_EXPORT FragmentRandomAccess : Box {
+  FragmentRandomAccess();
+  ~FragmentRandomAccess();
+
+  std::vector<TrackFragmentRandomAccess> tracks;
+  FragmentRandomAccessOffset offset;
 };
 
 }  // namespace media::mp4::writable_boxes

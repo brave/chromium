@@ -5,403 +5,59 @@
 #include "services/webnn/webnn_graph_impl.h"
 
 #include <math.h>
+
+#include <algorithm>
 #include <utility>
 #include <vector>
 
-#include "base/types/expected.h"
-#include "components/ml/webnn/graph_validation_utils.h"
-#include "mojo/public/cpp/bindings/self_owned_receiver.h"
-#if BUILDFLAG(IS_WIN)
-#include "services/webnn/dml/graph_impl.h"
-#endif
+#include "base/dcheck_is_on.h"
+#include "base/task/bind_post_task.h"
+#include "base/types/optional_ref.h"
+#include "base/types/pass_key.h"
+#include "services/webnn/error.h"
+#include "services/webnn/public/cpp/operand_descriptor.h"
+#include "services/webnn/public/cpp/webnn_types.h"
+#include "services/webnn/webnn_context_impl.h"
+#include "services/webnn/webnn_tensor_impl.h"
+
 namespace webnn {
 
 namespace {
 
-bool g_is_validation_only_for_testing = false;
-
-// Maps the id to its `mojo::Operand`.
-using IdToOperandMap = base::flat_map<uint64_t, mojom::OperandPtr>;
-
-size_t GetBytesPerElement(mojom::Operand::DataType operand_type) {
-  switch (operand_type) {
-    case mojom::Operand::DataType::kFloat32:
-      return sizeof(float);
-    case mojom::Operand::DataType::kFloat16:
-      return sizeof(uint16_t);
-    case mojom::Operand::DataType::kInt32:
-      return sizeof(int32_t);
-    case mojom::Operand::DataType::kUint32:
-      return sizeof(uint32_t);
-    case mojom::Operand::DataType::kInt8:
-      return sizeof(int8_t);
-    case mojom::Operand::DataType::kUint8:
-      return sizeof(uint8_t);
-  }
-  NOTREACHED();
+// Return false if the named tensors for dispatch don't match the built
+// graph's expectation.
+bool ValidateWebNNTensors(
+    const base::flat_map<std::string, WebNNTensorImpl*>& named_tensors,
+    const base::flat_map<std::string, OperandDescriptor>&
+        names_to_descriptors) {
+  return std::ranges::equal(
+      named_tensors, names_to_descriptors,
+      [](const auto& named_tensor, const auto& tensor_spec) {
+        const auto& [tensor_name, tensor_impl] = named_tensor;
+        const auto& [tensor_spec_name, tensor_spec_descriptor] = tensor_spec;
+        return tensor_name == tensor_spec_name &&
+               tensor_impl->data_type() == tensor_spec_descriptor.data_type() &&
+               tensor_impl->shape() == tensor_spec_descriptor.shape();
+      });
 }
 
-webnn::Operand::DataType MojoOperandTypeToComponent(
-    mojom::Operand::DataType data_type) {
-  switch (data_type) {
-    case mojom::Operand::DataType::kFloat32:
-      return webnn::Operand::DataType::kFloat32;
-    case mojom::Operand::DataType::kFloat16:
-      return webnn::Operand::DataType::kFloat16;
-    case mojom::Operand::DataType::kInt32:
-      return webnn::Operand::DataType::kInt32;
-    case mojom::Operand::DataType::kUint32:
-      return webnn::Operand::DataType::kUint32;
-    case mojom::Operand::DataType::kInt8:
-      return webnn::Operand::DataType::kInt8;
-    case mojom::Operand::DataType::kUint8:
-      return webnn::Operand::DataType::kUint8;
-  }
-  NOTREACHED_NORETURN();
-}
-
-webnn::Operand ConvertToComponentOperand(const mojom::Operand* mojo_operand) {
-  return webnn::Operand(MojoOperandTypeToComponent(mojo_operand->data_type),
-                        mojo_operand->dimensions);
-}
-
-webnn::InputOperandLayout MojoInputOperandLayoutToComponent(
-    webnn::mojom::InputOperandLayout layout) {
-  switch (layout) {
-    case webnn::mojom::InputOperandLayout::kChannelsFirst:
-      return webnn::InputOperandLayout::kNchw;
-    case webnn::mojom::InputOperandLayout::kChannelsLast:
-      return webnn::InputOperandLayout::kNhwc;
-  }
-  NOTREACHED_NORETURN();
-}
-
-absl::optional<webnn::Pool2dAttributes> ConvertToPool2dAttributes(
-    const webnn::mojom::OperatorAttributesPtr& attributes,
-    const mojom::Operand* output) {
-  if (!attributes->is_pool2d()) {
-    // The type of attribute is not pool2d.
-    return absl::nullopt;
-  }
-  auto& mojo_attributes = attributes->get_pool2d();
-  if (!mojo_attributes) {
-    // The attributes of pool2d were not configured.
-    return absl::nullopt;
-  }
-  if (output->dimensions.size() != 4) {
-    // The element of output dimensions should be 4.
-    return absl::nullopt;
+// Return false if the same tensor was specified in inputs and outputs.
+bool ValidateWebNNTensorsUsage(
+    const base::flat_map<std::string, blink::WebNNTensorToken>& named_inputs,
+    const base::flat_map<std::string, blink::WebNNTensorToken>& named_outputs) {
+  // Validate that output tensors are unique.
+  std::set<blink::WebNNTensorToken> output_tensors;
+  for (const auto& named_output : named_outputs) {
+    output_tensors.insert(named_output.second);
   }
 
-  webnn::Pool2dAttributes component_attributes;
-  auto& window_dimensions = mojo_attributes->window_dimensions;
-  component_attributes.window_dimensions = webnn::Size2d{
-      .height = window_dimensions->height, .width = window_dimensions->width};
-  auto& mojo_padding = mojo_attributes->padding;
-  component_attributes.padding = webnn::Padding2d{
-      .beginning = webnn::Size2d{.height = mojo_padding->beginning->height,
-                                 .width = mojo_padding->beginning->width},
-      .ending = webnn::Size2d{.height = mojo_padding->ending->height,
-                              .width = mojo_padding->ending->width}};
-  component_attributes.strides =
-      webnn::Size2d{.height = mojo_attributes->strides->height,
-                    .width = mojo_attributes->strides->width};
-  component_attributes.dilations =
-      webnn::Size2d{.height = mojo_attributes->dilations->height,
-                    .width = mojo_attributes->dilations->width};
-  component_attributes.layout =
-      MojoInputOperandLayoutToComponent(mojo_attributes->layout);
-  switch (component_attributes.layout) {
-    case webnn::InputOperandLayout::kNchw:
-      component_attributes.output_sizes = webnn::Size2d{
-          .height = output->dimensions[2], .width = output->dimensions[3]};
-      break;
-    case webnn::InputOperandLayout::kNhwc:
-      component_attributes.output_sizes = webnn::Size2d{
-          .height = output->dimensions[1], .width = output->dimensions[2]};
-      break;
-  }
-  return component_attributes;
-}
-
-bool ValidateInputOperand(const IdToOperandMap& id_to_operand_map,
-                          uint64_t input_id) {
-  if (!id_to_operand_map.contains(input_id)) {
-    // Invalid input operand.
+  if (output_tensors.size() != named_outputs.size()) {
     return false;
   }
 
-  const mojom::OperandPtr& operand = id_to_operand_map.at(input_id);
-  if (operand->kind != mojom::Operand::Kind::kInput) {
-    // Invalid input kind.
-    return false;
-  }
-  const absl::optional<std::string>& name = operand->name;
-  if (name && name.value().empty()) {
-    // The name of input operand is empty.
-    return false;
-  }
-
-  return true;
-}
-
-bool ValidateOutputOperand(const IdToOperandMap& id_to_operand_map,
-                           uint64_t output_id) {
-  if (!id_to_operand_map.contains(output_id)) {
-    // Invalid output operand.
-    return false;
-  }
-
-  const mojom::OperandPtr& operand = id_to_operand_map.at(output_id);
-  if (operand->kind != mojom::Operand::Kind::kOutput) {
-    // Invalid output kind.
-    return false;
-  }
-  absl::optional<std::string>& name = operand->name;
-  if (name && name.value().empty()) {
-    // The name of output operand is empty.
-    return false;
-  }
-  return true;
-}
-
-const mojom::Operand* GetMojoOperand(
-    const IdToOperandMap& id_to_operand_map,
-    const std::vector<uint64_t>& operand_id_array,
-    size_t index = 0) {
-  if (index >= operand_id_array.size()) {
-    // Index out of range.
-    return nullptr;
-  }
-  uint64_t operand_id = operand_id_array[index];
-  if (!id_to_operand_map.contains(operand_id)) {
-    // There is no operand for the id.
-    return nullptr;
-  }
-  return id_to_operand_map.at(operand_id).get();
-}
-
-bool ValidateClamp(const IdToOperandMap& id_to_operand_map,
-                   const mojom::OperatorPtr& operation) {
-  auto* input = GetMojoOperand(id_to_operand_map, operation->input_operands);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!input || !output || !operation->attributes) {
-    // The clamp operator is invalid.
-    return false;
-  }
-  if (!operation->attributes->is_clamp()) {
-    // The type of attribute is not clamp.
-    return false;
-  }
-  auto& clamp_attributes = operation->attributes->get_clamp();
-  if (!clamp_attributes) {
-    // The attributes of clamp were not configured.
-    return false;
-  }
-  if (std::isnan(clamp_attributes->min_value) ||
-      std::isnan(clamp_attributes->max_value)) {
-    // The min or max value are nan.
-    return false;
-  }
-  if (clamp_attributes->min_value >= clamp_attributes->max_value) {
-    // The min value must be below the max value.
-    return false;
-  }
-  if (output->data_type != input->data_type) {
-    // The output data type doesn't match input data type.
-    return false;
-  }
-
-  if (output->dimensions != input->dimensions) {
-    // The output shape is not expected.
-    return false;
-  }
-
-  return true;
-}
-
-bool ValidateElementWiseBinary(const IdToOperandMap& id_to_operand_map,
-                               const mojom::OperatorPtr& operation) {
-  auto* a = GetMojoOperand(id_to_operand_map, operation->input_operands, 0);
-  auto* b = GetMojoOperand(id_to_operand_map, operation->input_operands, 1);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!a || !b || !output) {
-    // The elementWise binary operator is invalid.
-    return false;
-  }
-  if (a->data_type != b->data_type || output->data_type != a->data_type) {
-    // The input types don't match.
-    return false;
-  }
-
-  auto dims_output = BroadcastShapes(a->dimensions, b->dimensions);
-  if (!dims_output) {
-    // The input shapes are not broadcastable.
-    return false;
-  }
-  if (output->dimensions != dims_output.value()) {
-    // The output shape is not expected.
-    return false;
-  }
-  return true;
-}
-
-bool ValidatePool2d(const IdToOperandMap& id_to_operand_map,
-                    const mojom::OperatorPtr& operation) {
-  auto* input = GetMojoOperand(id_to_operand_map, operation->input_operands);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!input || !output || !operation->attributes) {
-    // The pool2d operator is invalid.
-    return false;
-  }
-  auto component_attributes =
-      ConvertToPool2dAttributes(operation->attributes, output);
-  if (!component_attributes) {
-    // Failed to convert the attributes of pool2d.
-    return false;
-  }
-  auto validated_output = ValidatePool2dAndInferOutput(
-      ConvertToComponentOperand(input), component_attributes.value());
-  if (!validated_output.has_value()) {
-    return false;
-  }
-  if (validated_output != ConvertToComponentOperand(output)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool ValidateRelu(const IdToOperandMap& id_to_operand_map,
-                  const mojom::OperatorPtr& operation) {
-  auto* input = GetMojoOperand(id_to_operand_map, operation->input_operands);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!input || !output) {
-    // The relu operator is invalid.
-    return false;
-  }
-  if (output->data_type != input->data_type) {
-    // The output data type doesn't match input data type.
-    return false;
-  }
-
-  if (output->dimensions != input->dimensions) {
-    // The output shape is not expected.
-    return false;
-  }
-  return true;
-}
-
-bool ValidateReshape(const IdToOperandMap& id_to_operand_map,
-                     const mojom::OperatorPtr& operation) {
-  auto* input = GetMojoOperand(id_to_operand_map, operation->input_operands);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!input || !output) {
-    // The reshape operator is invalid.
-    return false;
-  }
-  if (output->data_type != input->data_type) {
-    // The output data type doesn't match input data type.
-    return false;
-  }
-
-  base::expected<size_t, std::string> output_number_of_elements =
-      ValidateAndCalculateElementsNumber(output->dimensions);
-  // The dimensions of input and output operand are valid which were already
-  // validated before calling this function.
-  CHECK(output_number_of_elements.has_value());
-  base::expected<size_t, std::string> input_number_of_elements =
-      ValidateAndCalculateElementsNumber(input->dimensions);
-  CHECK(input_number_of_elements.has_value());
-  if (output_number_of_elements.value() != input_number_of_elements.value()) {
-    // The output shape is not expected.
-    return false;
-  }
-  return true;
-}
-
-bool ValidateSoftmax(const IdToOperandMap& id_to_operand_map,
-                     const mojom::OperatorPtr& operation) {
-  auto* input = GetMojoOperand(id_to_operand_map, operation->input_operands);
-  auto* output = GetMojoOperand(id_to_operand_map, operation->output_operands);
-  if (!input || !output) {
-    // The softmax operator is invalid.
-    return false;
-  }
-  auto validated_output =
-      ValidateSoftmaxAndInferOutput(ConvertToComponentOperand(input));
-  if (!validated_output.has_value()) {
-    return false;
-  }
-  if (validated_output != ConvertToComponentOperand(output)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool ValidateOperator(const IdToOperandMap& id_to_operand_map,
-                      const mojom::OperatorPtr& operation) {
-  switch (operation->kind) {
-    case mojom::Operator::Kind::kClamp:
-      return ValidateClamp(id_to_operand_map, operation);
-    case mojom::Operator::Kind::kAdd:
-    case mojom::Operator::Kind::kSub:
-    case mojom::Operator::Kind::kMul:
-    case mojom::Operator::Kind::kDiv:
-    case mojom::Operator::Kind::kMax:
-    case mojom::Operator::Kind::kMin:
-      return ValidateElementWiseBinary(id_to_operand_map, operation);
-    case mojom::Operator::Kind::kAveragePool2d:
-    case mojom::Operator::Kind::kMaxPool2d:
-      return ValidatePool2d(id_to_operand_map, operation);
-    case mojom::Operator::Kind::kRelu:
-      return ValidateRelu(id_to_operand_map, operation);
-    case mojom::Operator::Kind::kReshape:
-      return ValidateReshape(id_to_operand_map, operation);
-    case mojom::Operator::Kind::kSoftmax:
-      return ValidateSoftmax(id_to_operand_map, operation);
-  }
-  NOTREACHED_NORETURN();
-}
-
-bool ValidateGraphInfo(const mojom::GraphInfoPtr& graph_info) {
-  // The input operands of graph can be empty.
-  if (graph_info->id_to_operand_map.empty() || graph_info->operators.empty() ||
-      graph_info->output_operands.empty()) {
-    return false;
-  }
-
-  // Validate all operands in the graph for the dimensions and the byte length
-  // of operand that can't be out of range.
-  for (auto& [_, operand] : graph_info->id_to_operand_map) {
-    base::expected<size_t, std::string> byte_length =
-        ValidateAndCalculateByteLength(GetBytesPerElement(operand->data_type),
-                                       operand->dimensions);
-    if (!byte_length.has_value()) {
-      return false;
-    }
-  }
-
-  // Validate the input operands of graph for the name that can't be empty, and
-  // the kind of operand must be `kInput`.
-  for (auto& input_id : graph_info->input_operands) {
-    if (!ValidateInputOperand(graph_info->id_to_operand_map, input_id)) {
-      return false;
-    }
-  }
-
-  // Validate the operators which are sorted in the topological order.
-  for (auto& operation : graph_info->operators) {
-    if (!ValidateOperator(graph_info->id_to_operand_map, operation)) {
-      return false;
-    }
-  }
-
-  // Validate the output operands in the entire graph for the name that can't be
-  // empty, and the kind of operand must be `kOutput`.
-  for (auto& output_id : graph_info->output_operands) {
-    if (!ValidateOutputOperand(graph_info->id_to_operand_map, output_id)) {
+  // Validate tensors used for input and output are unique.
+  for (const auto& named_input : named_inputs) {
+    if (output_tensors.contains(named_input.second)) {
       return false;
     }
   }
@@ -411,36 +67,126 @@ bool ValidateGraphInfo(const mojom::GraphInfoPtr& graph_info) {
 
 }  // namespace
 
-WebNNGraphImpl::WebNNGraphImpl() = default;
+WebNNGraphImpl::ComputeResourceInfo::ComputeResourceInfo(
+    base::flat_map<std::string, OperandDescriptor> input_names_to_descriptors,
+    base::flat_map<std::string, OperandDescriptor> output_names_to_descriptors,
+    base::flat_map<OperandId, base::flat_set<OperationId>>
+        operand_to_dependent_operations,
+    base::flat_map<OperandId, OperationId> operand_to_producing_operation,
+    base::PassKey<WebNNGraphBuilderImpl> pass_key)
+    : input_names_to_descriptors(std::move(input_names_to_descriptors)),
+      output_names_to_descriptors(std::move(output_names_to_descriptors)),
+      operand_to_dependent_operations(
+          std::move(operand_to_dependent_operations)),
+      operand_to_producing_operation(
+          std::move(operand_to_producing_operation)) {}
+
+WebNNGraphImpl::ComputeResourceInfo::ComputeResourceInfo(
+    ComputeResourceInfo&&) = default;
+WebNNGraphImpl::ComputeResourceInfo&
+WebNNGraphImpl::ComputeResourceInfo::operator=(ComputeResourceInfo&&) = default;
+
+WebNNGraphImpl::ComputeResourceInfo::~ComputeResourceInfo() = default;
+
+WebNNGraphImpl::WebNNGraphImpl(
+    mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
+    WebNNContextImpl* context,
+    ComputeResourceInfo compute_resource_info,
+    std::vector<mojom::Device> devices)
+    : compute_resource_info_(std::move(compute_resource_info)),
+      context_(context),
+      receiver_(this, std::move(receiver)),
+      devices_(std::move(devices)) {
+  CHECK(context_);
+#if DCHECK_IS_ON()
+  context_->AssertCalledOnValidSequence();
+#endif
+  // Safe to use base::Unretained because `this` owns `receiver_`.
+  receiver_.set_disconnect_handler(
+      base::BindPostTask(context_->scheduler_task_runner(),
+                         base::BindOnce(&WebNNGraphImpl::OnConnectionError,
+                                        base::Unretained(this))));
+}
 
 WebNNGraphImpl::~WebNNGraphImpl() = default;
 
-// static
-void WebNNGraphImpl::SetValidationOnlyForTesting(
-    bool is_validation_only_for_testing) {
-  g_is_validation_only_for_testing = is_validation_only_for_testing;
+void WebNNGraphImpl::OnConnectionError() {
+  context_->DisconnectAndDestroyWebNNGraphImpl(handle());
 }
 
-// static
-bool WebNNGraphImpl::ValidateAndBuildGraph(
-    mojom::WebNNContext::CreateGraphCallback callback,
-    const mojom::GraphInfoPtr& graph_info) {
-  if (!ValidateGraphInfo(graph_info)) {
-    return false;
+void WebNNGraphImpl::Dispatch(
+    const base::flat_map<std::string, blink::WebNNTensorToken>& named_inputs,
+    const base::flat_map<std::string, blink::WebNNTensorToken>& named_outputs) {
+  if (!ValidateWebNNTensorsUsage(named_inputs, named_outputs)) {
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
+    return;
   }
 
-  if (g_is_validation_only_for_testing) {
-    std::move(callback).Run(mojo::NullRemote());
-    return true;
+  // Resolve the token of a input MLTensor to the corresponding `WebNNTensor`
+  // instance.
+  std::vector<std::pair<std::string, WebNNTensorImpl*>> name_to_input_tensors;
+  name_to_input_tensors.reserve(named_inputs.size());
+  for (const auto& [name, tensor_handle] : named_inputs) {
+    base::optional_ref<WebNNTensorImpl> input_tensor =
+        context_->GetWebNNTensorImpl(tensor_handle);
+    if (!input_tensor.has_value()) {
+      return;
+    }
+
+    // Input MLTensor is always dispatchable, which isn’t allowed when used as
+    // a graph constant.
+    if (input_tensor->usage().Has(MLTensorUsageFlags::kGraphConstant)) {
+      receiver_.ReportBadMessage(kBadMessageInvalidTensor);
+      return;
+    }
+
+    name_to_input_tensors.emplace_back(name, input_tensor.as_ptr());
+  }
+  base::flat_map<std::string, WebNNTensorImpl*> name_to_input_tensor_map(
+      std::move(name_to_input_tensors));
+  if (!ValidateWebNNTensors(
+          name_to_input_tensor_map,
+          compute_resource_info_.input_names_to_descriptors)) {
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
+    return;
   }
 
-#if BUILDFLAG(IS_WIN)
-  dml::GraphImpl::CreateAndBuild(graph_info, std::move(callback));
-  return true;
-#else
-  std::move(callback).Run(mojo::NullRemote());
-  return true;
-#endif
+  // Resolve the token of a output MLTensor to the corresponding `WebNNTensor`
+  // instance.
+  std::vector<std::pair<std::string, WebNNTensorImpl*>> name_to_output_tensors;
+  name_to_output_tensors.reserve(named_outputs.size());
+  for (const auto& [name, tensor_handle] : named_outputs) {
+    base::optional_ref<WebNNTensorImpl> output_tensor =
+        context_->GetWebNNTensorImpl(tensor_handle);
+    if (!output_tensor.has_value()) {
+      return;
+    }
+
+    // Output MLTensor is always dispatchable, which isn’t allowed when used as
+    // a graph constant.
+    if (output_tensor->usage().Has(MLTensorUsageFlags::kGraphConstant)) {
+      receiver_.ReportBadMessage(kBadMessageInvalidTensor);
+      return;
+    }
+
+    name_to_output_tensors.emplace_back(name, output_tensor.as_ptr());
+  }
+
+  base::flat_map<std::string, WebNNTensorImpl*> name_to_output_tensor_map(
+      std::move(name_to_output_tensors));
+  if (!ValidateWebNNTensors(
+          name_to_output_tensor_map,
+          compute_resource_info_.output_names_to_descriptors)) {
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
+    return;
+  }
+
+  // Call DispatchImpl() implemented by an `mojom::WebNNGraph` backend.
+  context_->scheduler_task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&WebNNGraphImpl::DispatchImpl, base::Unretained(this),
+                     std::move(name_to_input_tensor_map),
+                     std::move(name_to_output_tensor_map)));
 }
 
 }  // namespace webnn

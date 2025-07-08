@@ -9,6 +9,7 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "base/time/time.h"
 
 namespace base {
 
@@ -25,7 +26,7 @@ bool IOPMPowerSourceSamplingEventSource::Start(SamplingEventCallback callback) {
   callback_ = callback;
 
   service_.reset(IOServiceGetMatchingService(
-      kIOMasterPortDefault, IOServiceMatching("IOPMPowerSource")));
+      kIOMainPortDefault, IOServiceMatching("IOPMPowerSource")));
 
   if (!service_) {
     VLOG(1) << "IOPMPowerSource service not found. This is expected on desktop "
@@ -33,7 +34,7 @@ bool IOPMPowerSourceSamplingEventSource::Start(SamplingEventCallback callback) {
     return false;
   }
 
-  notify_port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
+  notify_port_.reset(IONotificationPortCreate(kIOMainPortDefault));
   if (!notify_port_.is_valid()) {
     LOG(ERROR) << "Could not create a notification port";
     return false;
@@ -43,8 +44,8 @@ bool IOPMPowerSourceSamplingEventSource::Start(SamplingEventCallback callback) {
                                      dispatch_get_main_queue());
 
   kern_return_t result = IOServiceAddInterestNotification(
-      notify_port_.get(), service_, kIOGeneralInterest, OnNotification, this,
-      notification_.InitializeInto());
+      notify_port_.get(), service_.get(), kIOGeneralInterest, OnNotification,
+      this, notification_.InitializeInto());
 
   if (result != KERN_SUCCESS) {
     LOG(ERROR) << "Could not register to IOPMPowerSource notifications";
@@ -52,6 +53,10 @@ bool IOPMPowerSourceSamplingEventSource::Start(SamplingEventCallback callback) {
   }
 
   return true;
+}
+
+TimeDelta IOPMPowerSourceSamplingEventSource::GetSampleInterval() {
+  return Minutes(1);
 }
 
 // static

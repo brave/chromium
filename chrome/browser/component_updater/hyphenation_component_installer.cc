@@ -11,8 +11,6 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
-using component_updater::ComponentUpdateService;
-
 namespace {
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the extension.
@@ -38,16 +36,18 @@ class HyphenationDirectory {
     DVLOG(1) << __func__;
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     callbacks_.push_back(std::move(callback));
-    if (!dir_.empty())
+    if (!dir_.empty()) {
       FireCallbacks();
+    }
   }
 
   void Set(const base::FilePath& new_dir) {
     DVLOG(1) << __func__ << "\"" << new_dir << "\"";
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     CHECK(!new_dir.empty());
-    if (new_dir == dir_)
+    if (new_dir == dir_) {
       return;
+    }
     dir_ = new_dir;
     FireCallbacks();
   }
@@ -125,9 +125,8 @@ base::FilePath HyphenationComponentInstallerPolicy::GetRelativeInstallDir()
 
 void HyphenationComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(
-      kHyphenationPublicKeySHA256,
-      kHyphenationPublicKeySHA256 + std::size(kHyphenationPublicKeySHA256));
+  hash->assign(std::begin(kHyphenationPublicKeySHA256),
+               std::end(kHyphenationPublicKeySHA256));
 }
 
 std::string HyphenationComponentInstallerPolicy::GetName() const {

@@ -65,7 +65,7 @@ class PluginDocumentParser : public RawDataDocumentParser {
   }
 
  private:
-  void AppendBytes(const char*, size_t) override;
+  void AppendBytes(base::span<const uint8_t>) override;
   void Finish() override;
   void StopParsing() override;
 
@@ -117,7 +117,7 @@ void PluginDocumentParser::CreateDocumentStructure() {
                                *cssvalue::CSSColor::Create(background_color_));
   root_element->AppendChild(body);
   if (IsStopped()) {
-    // Possibly detached by a mutation event listener installed in
+    // Possibly detached by a synchronous event listener installed in
     // runScriptsAtDocumentElementAvailable.
     return;
   }
@@ -135,7 +135,7 @@ void PluginDocumentParser::CreateDocumentStructure() {
                                GetDocument()->Loader()->MimeType());
   body->AppendChild(embed_element_);
   if (IsStopped()) {
-    // Possibly detached by a mutation event listener installed in
+    // Possibly detached by a synchronous event listener installed in
     // runScriptsAtDocumentElementAvailable.
     return;
   }
@@ -150,9 +150,9 @@ void PluginDocumentParser::CreateDocumentStructure() {
   frame->View()->FlushAnyPendingPostLayoutTasks();
   // Focus the plugin here, as the line above is where the plugin is created.
   if (frame->IsMainFrame()) {
-    embed_element_->Focus(FocusParams(/*gate_on_user_activation=*/true));
+    embed_element_->Focus();
     if (IsStopped()) {
-      // Possibly detached by a mutation event listener installed in
+      // Possibly detached by a synchronous event listener installed in
       // runScriptsAtDocumentElementAvailable.
       return;
     }
@@ -162,14 +162,16 @@ void PluginDocumentParser::CreateDocumentStructure() {
     view->DidReceiveResponse(GetDocument()->Loader()->GetResponse());
 }
 
-void PluginDocumentParser::AppendBytes(const char* data, size_t length) {
+void PluginDocumentParser::AppendBytes(base::span<const uint8_t> data) {
   CreateDocumentStructure();
   if (IsStopped())
     return;
-  if (!length)
+  if (data.empty()) {
     return;
-  if (WebPluginContainerImpl* view = GetPluginView())
-    view->DidReceiveData(data, length);
+  }
+  if (WebPluginContainerImpl* view = GetPluginView()) {
+    view->DidReceiveData(base::as_chars(data));
+  }
 }
 
 void PluginDocumentParser::Finish() {

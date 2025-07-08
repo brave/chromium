@@ -4,7 +4,14 @@
 
 #include "chromeos/ash/components/osauth/impl/auth_factor_presence_cache.h"
 
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+
 #include "base/strings/string_number_conversions.h"
+#include "base/values.h"
+#include "chromeos/ash/components/osauth/public/common_types.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 
@@ -15,12 +22,12 @@ std::string GetAuthPurposeKey(AuthPurpose purpose) {
   return base::NumberToString(static_cast<int>(purpose));
 }
 
-absl::optional<AuthFactorsSet> GetForPurpose(const base::Value::Dict& cache,
-                                             AuthPurpose purpose) {
+std::optional<AuthFactorsSet> GetForPurpose(const base::Value::Dict& cache,
+                                            AuthPurpose purpose) {
   std::string purpose_key = GetAuthPurposeKey(purpose);
   const base::Value::List* factor_list = cache.FindList(purpose_key);
   if (!factor_list) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   AuthFactorsSet result;
   for (const base::Value& element : *factor_list) {
@@ -35,7 +42,7 @@ absl::optional<AuthFactorsSet> GetForPurpose(const base::Value::Dict& cache,
 AuthFactorsSet GetWithFallback(const base::Value::Dict& cache,
                                AuthPurpose purpose) {
   {
-    absl::optional<AuthFactorsSet> result = GetForPurpose(cache, purpose);
+    std::optional<AuthFactorsSet> result = GetForPurpose(cache, purpose);
     if (result.has_value()) {
       return *result;
     }
@@ -77,7 +84,7 @@ AuthFactorPresenceCache::~AuthFactorPresenceCache() = default;
 void AuthFactorPresenceCache::StoreFactorPresenceCache(AuthAttemptVector vector,
                                                        AuthFactorsSet factors) {
   if (user_manager::UserManager::Get()->IsEphemeralAccountId(vector.account)) {
-    if (factors.Empty()) {
+    if (factors.empty()) {
       return;
     }
   }

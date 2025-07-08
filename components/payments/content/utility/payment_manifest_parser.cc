@@ -5,6 +5,7 @@
 #include "components/payments/content/utility/payment_manifest_parser.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -13,6 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/payments/content/utility/fingerprint_parser.h"
 #include "components/payments/core/error_logger.h"
@@ -53,13 +55,15 @@ const char* const kWebAppIconType = "type";
 const char* const kWebAppName = "name";
 
 // Truncates a std::string to 100 chars. This returns an empty string when the
-// input should be ASCII but it's not.
+// input should be printalbe ASCII but it's not.
 const std::string ValidateAndTruncateIfNeeded(const std::string& input,
-                                              bool* out_is_ASCII) {
-  if (out_is_ASCII) {
-    *out_is_ASCII = base::IsStringASCII(input);
-    if (!*out_is_ASCII)
+                                              bool* out_is_ascii_printable) {
+  if (out_is_ascii_printable) {
+    *out_is_ascii_printable = std::ranges::all_of(
+        input, [](char c) { return base::IsAsciiPrintable(c); });
+    if (!*out_is_ascii_printable) {
       return "";
+    }
   }
 
   return input.size() > kMaximumPrintedStringLength
@@ -79,7 +83,7 @@ bool ParseDefaultApplications(const GURL& manifest_url,
 
   const base::Value::List* list = dict->FindList(kDefaultApplications);
   if (!list) {
-    // TODO(crbug.com/1065337): Move the error message strings to
+    // TODO(crbug.com/40681786): Move the error message strings to
     // components/payments/core/native_error_strings.cc.
     log.Error(
         base::StringPrintf("\"%s\" must be a list.", kDefaultApplications));
@@ -103,7 +107,7 @@ bool ParseDefaultApplications(const GURL& manifest_url,
     }
 
     GURL url = manifest_url.Resolve(*item);
-    // TODO(crbug.com/1065337): Check that |url| is the same origin with
+    // TODO(crbug.com/40681786): Check that |url| is the same origin with
     // |manifest_url|. Currently that's checked by callers, but the earlier this
     // is caught, the fewer resources Chrome consumes.
     if (!UrlUtil::IsValidManifestUrl(url)) {
@@ -244,7 +248,7 @@ void ParsePreferredRelatedApplicationIdentifiers(
   if (!dict.Find(kPreferRelatedApplications))
     return;
 
-  absl::optional<bool> prefer_related_applications =
+  std::optional<bool> prefer_related_applications =
       dict.FindBool(kPreferRelatedApplications);
   if (!prefer_related_applications.has_value()) {
     log.Warn(base::StringPrintf("The \"%s\" field should be a boolean.",
@@ -316,7 +320,7 @@ void ParsePreferredRelatedApplicationIdentifiers(
 }
 
 bool GetString(const base::Value::Dict* dict,
-               base::StringPiece key,
+               std::string_view key,
                std::string& result) {
   DCHECK(dict);
   const std::string* value = dict->FindString(key);
@@ -562,7 +566,7 @@ bool PaymentManifestParser::ParseWebAppInstallationInfoIntoStructs(
       installation_info->sw_scope = *sw_scope;
     }
 
-    absl::optional<bool> use_cache =
+    std::optional<bool> use_cache =
         service_worker_dict->FindBool(kServiceWorkerUseCache);
     if (use_cache.has_value()) {
       installation_info->sw_use_cache = use_cache.value();
@@ -606,12 +610,13 @@ bool PaymentManifestParser::ParseWebAppInstallationInfoIntoStructs(
         } else if (delegation_name == "payerPhone") {
           installation_info->supported_delegations.payer_phone = true;
         } else {  // delegation_name is not valid
-          bool is_ASCII;
+          bool is_ascii_printable;
           const std::string delegation_name_to_print =
-              ValidateAndTruncateIfNeeded(delegation_name, &is_ASCII);
-          if (!is_ASCII) {
-            log.Error("Entries in delegation list must be ASCII strings.");
-          } else {  // ASCII string.
+              ValidateAndTruncateIfNeeded(delegation_name, &is_ascii_printable);
+          if (!is_ascii_printable) {
+            log.Error(
+                "Entries in delegation list must be printable ASCII strings.");
+          } else {  // Printable ASCII string.
             log.Error(base::StringPrintf(
                 "\"%s\" is not a valid value in \"%s\" array.",
                 delegation_name_to_print.c_str(), kSupportedDelegations));

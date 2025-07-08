@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/session_crashed_bubble_view.h"
 #include "chrome/common/chrome_constants.h"
@@ -26,6 +27,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/prefs/pref_value_map.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
@@ -45,7 +47,7 @@ void ClickButton(views::BubbleDialogDelegate* crash_bubble_delegate,
                  views::Button* button) {
   crash_bubble_delegate->ResetViewShownTimeStampForTesting();
   gfx::Point center(button->width() / 2, button->height() / 2);
-  const ui::MouseEvent event(ui::ET_MOUSE_PRESSED, center, center,
+  const ui::MouseEvent event(ui::EventType::kMousePressed, center, center,
                              ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
                              ui::EF_LEFT_MOUSE_BUTTON);
   button->OnMousePressed(event);
@@ -167,7 +169,7 @@ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, RestoreFromCrashBubble) {
   GetExitTypeService()->AddCrashAckCallback(run_loop.QuitClosure());
   run_loop.Run();
   EXPECT_TRUE(IsSessionServiceSavingEnabled());
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   const bool restores_to_initial_browser = false;
 #else
   const bool restores_to_initial_browser = true;
@@ -204,8 +206,16 @@ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, PRE_CloseCrashBubbleEnablesSaving) {
       ->SetWaitingForUserToAckCrashForTest(true);
 }
 
+// TODO(crbug.com/40927197): Re-enable test that flakily times out
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_CloseCrashBubbleEnablesSaving \
+  DISABLED_CloseCrashBubbleEnablesSaving
+#else
+#define MAYBE_CloseCrashBubbleEnablesSaving CloseCrashBubbleEnablesSaving
+#endif
 // Closes the crash bubble, which should enable saving.
-IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, CloseCrashBubbleEnablesSaving) {
+IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest,
+                       MAYBE_CloseCrashBubbleEnablesSaving) {
   ASSERT_EQ(ExitType::kCrashed, GetLastSessionExitType());
   EXPECT_FALSE(IsSessionServiceSavingEnabled());
 
@@ -219,4 +229,28 @@ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, CloseCrashBubbleEnablesSaving) {
   run_loop.Run();
   EXPECT_FALSE(GetExitTypeService()->waiting_for_user_to_ack_crash());
   EXPECT_TRUE(IsSessionServiceSavingEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, Defaults) {
+  ExitTypeService* service =
+      ExitTypeService::GetInstanceForProfile(browser()->profile());
+  ASSERT_TRUE(service);
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  // The initial state is crashed; store for later reference.
+  std::string crash_value(prefs->GetString(prefs::kSessionExitType));
+
+  // The first call to a type other than crashed should change the value.
+  service->SetCurrentSessionExitType(ExitType::kForcedShutdown);
+  std::string first_call_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_NE(crash_value, first_call_value);
+
+  // Subsequent calls to a non-crash value should be ignored.
+  service->SetCurrentSessionExitType(ExitType::kClean);
+  std::string second_call_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_EQ(first_call_value, second_call_value);
+
+  // Setting back to a crashed value should work.
+  service->SetCurrentSessionExitType(ExitType::kCrashed);
+  std::string final_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_EQ(crash_value, final_value);
 }

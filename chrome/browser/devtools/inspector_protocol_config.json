@@ -34,14 +34,18 @@
                 "domain": "WindowManager"
             },
             {
+                "domain": "Extensions",
+                "async": [ "loadUnpacked", "getStorageItems", "setStorageItems", "removeStorageItems", "clearStorageItems", "uninstall" ]
+            },
+            {
                 "domain": "Security",
                 "include": [ "enable", "disable" ],
                 "include_events": [ "visibleSecurityStateChanged" ]
             },
             {
                 "domain": "Storage",
-                "include": ["runBounceTrackingMitigations"],
-                "async": ["runBounceTrackingMitigations"]
+                "include": ["runBounceTrackingMitigations", "getRelatedWebsiteSets", "getAffectedUrlsForThirdPartyCookieMetadata"],
+                "async": ["runBounceTrackingMitigations", "getRelatedWebsiteSets"]
             },
             {
                 "domain": "SystemInfo",
@@ -49,7 +53,11 @@
             },
             {
                 "domain": "Autofill",
-                "async": [ "trigger", "setAddresses" ]
+                "async": [ "setAddresses" ]
+            },
+            {
+                "domain": "PWA",
+                "async": [ "changeAppUserSettings", "getOsAppState", "install", "launch", "launchFilesInApp", "uninstall" ]
             }
         ]
     },

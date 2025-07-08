@@ -8,39 +8,49 @@
  * objects.
  */
 
-import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
+import 'chrome://resources/ash/common/personalization/common.css.js';
+import 'chrome://resources/ash/common/personalization/wallpaper.css.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import '../../css/wallpaper.css.js';
-import '../../common/icons.html.js';
-import '../../css/common.css.js';
+import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 
-import {loadTimeData} from 'chrome://resources/ash/common/load_time_data.m.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {FilePath} from 'chrome://resources/mojo/mojo/public/mojom/base/file_path.mojom-webui.js';
-import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
+import {WallpaperGridItemSelectedEvent} from 'chrome://resources/ash/common/personalization/wallpaper_grid_item_element.js';
+import {isManagedSeaPenEnabled, isSeaPenEnabled, isSeaPenTextInputEnabled} from 'chrome://resources/ash/common/sea_pen/load_time_booleans.js';
+import {cleanUpSeaPenQueryStates} from 'chrome://resources/ash/common/sea_pen/sea_pen_controller.js';
+import {getSeaPenStore} from 'chrome://resources/ash/common/sea_pen/sea_pen_store.js';
+import {isImageDataUrl, isNonEmptyArray} from 'chrome://resources/ash/common/sea_pen/sea_pen_utils.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import type {FilePath} from 'chrome://resources/mojo/mojo/public/mojom/base/file_path.mojom-webui.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
+import type {IronListElement} from 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import {afterNextRender} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {GooglePhotosEnablementState, WallpaperCollection, WallpaperImage} from '../../personalization_app.mojom-webui.js';
-import {isGooglePhotosIntegrationEnabled, isPersonalizationJellyEnabled, isTimeOfDayWallpaperEnabled} from '../load_time_booleans.js';
-import {Paths, PersonalizationRouter} from '../personalization_router_element.js';
+import type {WallpaperCollection, WallpaperImage} from '../../personalization_app.mojom-webui.js';
+import {GooglePhotosEnablementState} from '../../personalization_app.mojom-webui.js';
+import {isGooglePhotosIntegrationEnabled, isTimeOfDayWallpaperEnabled} from '../load_time_booleans.js';
+import {Paths, PersonalizationRouterElement} from '../personalization_router_element.js';
 import {WithPersonalizationStore} from '../personalization_store.js';
-import {getCountText, isImageDataUrl, isNonEmptyArray, isSelectionEvent} from '../utils.js';
+import {getCountText, isSelectionEvent} from '../utils.js';
 
-import {DefaultImageSymbol, kDefaultImageSymbol, kMaximumLocalImagePreviews} from './constants.js';
+import type {DefaultImageSymbol} from './constants.js';
+import {kDefaultImageSymbol, kMaximumLocalImagePreviews} from './constants.js';
 import {getLoadingPlaceholderAnimationDelay, getLoadingPlaceholders, getPathOrSymbol} from './utils.js';
 import {getTemplate} from './wallpaper_collections_element.html.js';
 import {fetchGooglePhotosEnabled, fetchLocalData, getDefaultImageThumbnail, initializeBackdropData} from './wallpaper_controller.js';
-import {WallpaperGridItemSelectedEvent} from './wallpaper_grid_item_element.js';
 import {getWallpaperProvider} from './wallpaper_interface_provider.js';
 
 const kGooglePhotosCollectionId = 'google_photos_';
 const kLocalCollectionId = 'local_';
+const kSeaPenId = 'sea_pen_';
+const kSeaPenPromptingId = 'sea_pen_prompting_';
 
 enum TileType {
   IMAGE_GOOGLE_PHOTOS = 'image_google_photos',
   IMAGE_LOCAL = 'image_local',
   IMAGE_ONLINE = 'image_online',
   LOADING = 'loading',
+  SEA_PEN_TEMPLATES = 'sea_pen_templates',
+  SEA_PEN_PROMPTING = 'sea_pen_prompting',
 }
 
 interface LoadingTile {
@@ -54,6 +64,22 @@ interface GooglePhotosTile {
   name: string;
   type: TileType.IMAGE_GOOGLE_PHOTOS;
   preview: [Url];
+}
+
+interface SeaPenPromptingTile {
+  disabled: boolean;
+  id: typeof kSeaPenPromptingId;
+  name: string;
+  preview: [Url];
+  type: TileType.SEA_PEN_PROMPTING;
+}
+
+interface SeaPenTemplatesTile {
+  disabled: boolean;
+  id: typeof kSeaPenId;
+  name: string;
+  preview: [Url];
+  type: TileType.SEA_PEN_TEMPLATES;
 }
 
 interface LocalTile {
@@ -75,7 +101,8 @@ interface OnlineTile {
   type: TileType.IMAGE_ONLINE;
 }
 
-type Tile = LoadingTile|GooglePhotosTile|LocalTile|OnlineTile;
+type Tile = LoadingTile|GooglePhotosTile|LocalTile|OnlineTile|
+    SeaPenPromptingTile|SeaPenTemplatesTile;
 
 // "regular" backdrop collections are displayed differently than the special
 // "timeOfDay" wallpaper collection. Split them to make them easier to handle.
@@ -160,7 +187,7 @@ function getLocalTile(
     return {type: TileType.LOADING, id: kLocalCollectionId};
   }
 
-  if (!localImages || localImages.length === 0) {
+  if (!isNonEmptyArray(localImages)) {
     // TODO(b/282050032): After Jelly is launched, remove the preview image.
     return {
       count: getCountText(0),
@@ -207,6 +234,32 @@ function getOnlineTile(
   };
 }
 
+function getSeaPenPromptingTile(): SeaPenPromptingTile {
+  return {
+    disabled: false,
+    id: kSeaPenPromptingId,
+    name: 'Sea Pen Prompting',
+    type: TileType.SEA_PEN_PROMPTING,
+    preview: [{
+      url:
+          'chrome://resources/ash/common/sea_pen/sea_pen_images/sea_pen_freeform.jpg',
+    }],
+  };
+}
+
+function getSeaPenTemplatesTile(): SeaPenTemplatesTile {
+  return {
+    disabled: !isManagedSeaPenEnabled(),
+    id: kSeaPenId,
+    name: 'Sea Pen',
+    type: TileType.SEA_PEN_TEMPLATES,
+    preview: [{
+      url:
+          'chrome://resources/ash/common/sea_pen/sea_pen_images/sea_pen_tile.jpg',
+    }],
+  };
+}
+
 function getTemporaryBackdropCollectionId(index: number) {
   return `backdrop_collection_${index}`;
 }
@@ -215,7 +268,13 @@ function isTimeOfDay({id}: WallpaperCollection|Tile): boolean {
   return id === loadTimeData.getString('timeOfDayWallpaperCollectionId');
 }
 
-export class WallpaperCollections extends WithPersonalizationStore {
+export interface WallpaperCollectionsElement {
+  $: {
+    grid: IronListElement,
+  };
+}
+
+export class WallpaperCollectionsElement extends WithPersonalizationStore {
   static get is() {
     return 'wallpaper-collections';
   }
@@ -278,7 +337,32 @@ export class WallpaperCollections extends WithPersonalizationStore {
       },
 
       /**
-       * List of tiles to be displayed to the user.
+       * Stores a list of promoted tiles, including Time of Day and SeaPen.
+       */
+      promotedTiles_: {
+        type: Array,
+        value() {
+          const tiles = [];
+          if (isSeaPenTextInputEnabled()) {
+            tiles.push(
+                {type: TileType.LOADING, id: kSeaPenPromptingId} as
+                LoadingTile);
+          }
+          tiles.push({type: TileType.LOADING, id: kSeaPenId} as LoadingTile);
+          if (isTimeOfDayWallpaperEnabled()) {
+            tiles.push({
+              type: TileType.LOADING,
+              id: loadTimeData.getString('timeOfDayWallpaperCollectionId'),
+            } as LoadingTile);
+          }
+          return tiles;
+        },
+      },
+
+      /**
+       * List of tiles to be displayed to the user. The Time of Day tile is in
+       * promotedTiles_ when SeaPen is enabled, and in tiles_ when SeaPen is
+       * disabled.
        */
       tiles_: {
         type: Array,
@@ -290,7 +374,7 @@ export class WallpaperCollections extends WithPersonalizationStore {
 
           let currentIndex = 0;
           // Time of day tile.
-          if (isTimeOfDayWallpaperEnabled()) {
+          if (isTimeOfDayWallpaperEnabled() && !isSeaPenEnabled()) {
             placeholders[currentIndex].id =
                 loadTimeData.getString('timeOfDayWallpaperCollectionId');
             currentIndex++;
@@ -320,12 +404,15 @@ export class WallpaperCollections extends WithPersonalizationStore {
         },
       },
 
-      hasError_: Boolean,
+      hasError_: {
+        type: Boolean,
+        observer: 'onHasErrorChanged_',
+      },
 
-      isPersonalizationJellyEnabled_: {
+      isSeaPenEnabled_: {
         type: Boolean,
         value() {
-          return isPersonalizationJellyEnabled();
+          return isSeaPenEnabled();
         },
       },
     };
@@ -338,12 +425,13 @@ export class WallpaperCollections extends WithPersonalizationStore {
   private imagesLoading_: Record<string, boolean>;
   private imageCounts_: Record<string, number|null>;
   private googlePhotosEnabled_: GooglePhotosEnablementState|undefined;
+  private isSeaPenEnabled_: boolean;
   private localImages_: Array<FilePath|DefaultImageSymbol>|null;
   private localImagesLoading_: boolean;
   private localImageData_: Record<string|DefaultImageSymbol, Url>;
   private tiles_: Tile[];
+  private promotedTiles_: Tile[];
   private hasError_: boolean;
-  private isPersonalizationJellyEnabled_: boolean;
 
   static get observers() {
     return [
@@ -354,30 +442,30 @@ export class WallpaperCollections extends WithPersonalizationStore {
 
   override connectedCallback() {
     super.connectedCallback();
-    this.watch<WallpaperCollections['hasError_']>(
+    this.watch<WallpaperCollectionsElement['hasError_']>(
         'hasError_',
         state => hasError(
             state.wallpaper.backdrop.collections,
             state.wallpaper.loading.collections, state.wallpaper.local.images,
             state.wallpaper.loading.local.images));
-    this.watch<WallpaperCollections['collections_']>(
+    this.watch<WallpaperCollectionsElement['collections_']>(
         'collections_', state => state.wallpaper.backdrop.collections);
-    this.watch<WallpaperCollections['images_']>(
+    this.watch<WallpaperCollectionsElement['images_']>(
         'images_', state => state.wallpaper.backdrop.images);
-    this.watch<WallpaperCollections['imagesLoading_']>(
+    this.watch<WallpaperCollectionsElement['imagesLoading_']>(
         'imagesLoading_', state => state.wallpaper.loading.images);
-    this.watch<WallpaperCollections['googlePhotosEnabled_']>(
+    this.watch<WallpaperCollectionsElement['googlePhotosEnabled_']>(
         'googlePhotosEnabled_', state => state.wallpaper.googlePhotos.enabled);
-    this.watch<WallpaperCollections['localImages_']>(
+    this.watch<WallpaperCollectionsElement['localImages_']>(
         'localImages_', state => state.wallpaper.local.images);
     // Treat as loading if either loading local images list or loading the
     // default image thumbnail. This prevents rapid churning of the UI on first
     // load.
-    this.watch<WallpaperCollections['localImagesLoading_']>(
+    this.watch<WallpaperCollectionsElement['localImagesLoading_']>(
         'localImagesLoading_',
         state => state.wallpaper.loading.local.images ||
             state.wallpaper.loading.local.data[kDefaultImageSymbol]);
-    this.watch<WallpaperCollections['localImageData_']>(
+    this.watch<WallpaperCollectionsElement['localImageData_']>(
         'localImageData_', state => state.wallpaper.local.data);
     this.updateFromStore();
     initializeBackdropData(getWallpaperProvider(), this.getStore());
@@ -389,6 +477,8 @@ export class WallpaperCollections extends WithPersonalizationStore {
     if (isGooglePhotosIntegrationEnabled()) {
       fetchGooglePhotosEnabled(getWallpaperProvider(), this.getStore());
     }
+    this.setSeaPenPromptingTile_();
+    this.setSeaPenTemplatesTile_();
   }
 
   /**
@@ -400,21 +490,39 @@ export class WallpaperCollections extends WithPersonalizationStore {
   private getFirstRegularBackdropTileIndex(): number {
     const firstBackdropIndex = this.tiles_.findIndex(
         tile => tile.id !== kLocalCollectionId &&
-            tile.id !== kGooglePhotosCollectionId && !isTimeOfDay(tile));
+            tile.id !== kGooglePhotosCollectionId && !isTimeOfDay(tile) &&
+            tile.id !== kSeaPenId);
     assert(
         firstBackdropIndex > 0,
         'first backdrop index must always be greater than 0');
     return firstBackdropIndex;
   }
 
+  private fireIronResize_() {
+    afterNextRender(this, () => {
+      this.$.grid.fire('iron-resize');
+      (this.shadowRoot!.getElementById('promoted') as IronListElement | null)
+          ?.fire('iron-resize');
+    });
+  }
+
   /**
    * Notify that this element visibility has changed.
    */
-  private async onHiddenChanged_(hidden: boolean) {
+  private onHiddenChanged_(hidden: boolean) {
     if (!hidden) {
       document.title = this.i18n('wallpaperLabel');
     }
-    afterNextRender(this, () => this.notifyResize());
+    this.fireIronResize_();
+  }
+
+  private onHasErrorChanged_(hasError: boolean) {
+    if (hasError) {
+      // Skip updating visibility when `hasError` is true because the iron-list
+      // elements will already be hidden.
+      return;
+    }
+    this.fireIronResize_();
   }
 
   /**
@@ -432,6 +540,8 @@ export class WallpaperCollections extends WithPersonalizationStore {
     if (!timeOfDay && isTimeOfDayWallpaperEnabled()) {
       console.error('missing time of day wallpaper from collections');
       this.tiles_ = this.tiles_.filter(tile => !isTimeOfDay(tile));
+      this.promotedTiles_ =
+          this.promotedTiles_.filter(tile => !isTimeOfDay(tile));
     }
 
     // Delay assigning `this.splitCollections_` until the correct number of
@@ -546,17 +656,23 @@ export class WallpaperCollections extends WithPersonalizationStore {
 
     if (splitCollections.timeOfDay &&
         imageCounts[splitCollections.timeOfDay.id] !== undefined) {
-      const tileIndex = this.tiles_.findIndex(isTimeOfDay);
+      const timeOfDayContainer =
+          isSeaPenEnabled() ? this.promotedTiles_ : this.tiles_;
+      const tileIndex = timeOfDayContainer.findIndex(isTimeOfDay);
       if (tileIndex < 0) {
         console.warn('received time of day collection when not supported');
         return;
       }
-      const tile = this.tiles_[tileIndex];
+      const tile = timeOfDayContainer[tileIndex];
       const newTile = getOnlineTile(
           splitCollections.timeOfDay,
           imageCounts[splitCollections.timeOfDay.id]);
       if (tile.type !== newTile.type || tile.count !== newTile.count) {
-        this.set(`tiles_.${tileIndex}`, newTile);
+        if (isSeaPenEnabled()) {
+          this.set(`promotedTiles_.${tileIndex}`, newTile);
+        } else {
+          this.set(`tiles_.${tileIndex}`, newTile);
+        }
       }
     }
   }
@@ -577,6 +693,27 @@ export class WallpaperCollections extends WithPersonalizationStore {
     }
   }
 
+  private setSeaPenPromptingTile_() {
+    if (!isSeaPenTextInputEnabled()) {
+      return;
+    }
+    const tile = getSeaPenPromptingTile();
+    const index =
+        this.promotedTiles_.findIndex(tile => tile.id === kSeaPenPromptingId);
+    assert(index >= 0, `${kSeaPenPromptingId} not found`);
+    this.set(`promotedTiles_.${index}`, tile);
+  }
+
+  private setSeaPenTemplatesTile_() {
+    if (!isSeaPenEnabled()) {
+      return;
+    }
+    const tile = getSeaPenTemplatesTile();
+    const index = this.promotedTiles_.findIndex(tile => tile.id === kSeaPenId);
+    assert(index >= 0, `${kSeaPenId} not found`);
+    this.set(`promotedTiles_.${index}`, tile);
+  }
+
   /**
    * Called with updated local image list or local image thumbnail data when
    * either of those properties changes.
@@ -585,10 +722,18 @@ export class WallpaperCollections extends WithPersonalizationStore {
       localImages: Array<FilePath|DefaultImageSymbol>|null,
       localImagesLoading: boolean,
       localImageData: Record<FilePath['path']|DefaultImageSymbol, Url>) {
-    const tile = getLocalTile(localImages, localImagesLoading, localImageData);
+    const newLocalTile =
+        getLocalTile(localImages, localImagesLoading, localImageData);
     const index = this.tiles_.findIndex(tile => tile.id === kLocalCollectionId);
     assert(index >= 0, 'could not find local tile');
-    this.set(`tiles_.${index}`, tile);
+    const currentLocalTile = this.get(`tiles_.${index}`);
+    if (this.isLoadingTile_(currentLocalTile) ||
+        !isNonEmptyArray(localImages) || this.isLocalTile_(newLocalTile)) {
+      // Displays loading tile only when no preview images have been fetched. If
+      // the local tile has already had some preview images, do not display
+      // loading again to avoid flickering.
+      this.set(`tiles_.${index}`, newLocalTile);
+    }
   }
 
   /** Navigate to the correct route based on user selection. */
@@ -608,11 +753,25 @@ export class WallpaperCollections extends WithPersonalizationStore {
     }
     switch (tile.id) {
       case kGooglePhotosCollectionId:
-        PersonalizationRouter.instance().goToRoute(
+        PersonalizationRouterElement.instance().goToRoute(
             Paths.GOOGLE_PHOTOS_COLLECTION);
         return;
       case kLocalCollectionId:
-        PersonalizationRouter.instance().goToRoute(Paths.LOCAL_COLLECTION);
+        PersonalizationRouterElement.instance().goToRoute(
+            Paths.LOCAL_COLLECTION);
+        return;
+      case kSeaPenId:
+        PersonalizationRouterElement.instance().goToRoute(
+            Paths.SEA_PEN_COLLECTION);
+        return;
+      case kSeaPenPromptingId:
+        // cleans up the Sea Pen states such as thumbnail response status code,
+        // thumbnail loading status and Sea Pen query when
+        // switching template; otherwise, states from the last query search will
+        // remain in sea-pen-images element.
+        cleanUpSeaPenQueryStates(getSeaPenStore());
+        PersonalizationRouterElement.instance().goToRoute(
+            Paths.SEA_PEN_FREEFORM);
         return;
       default:
         assert(
@@ -620,7 +779,7 @@ export class WallpaperCollections extends WithPersonalizationStore {
         const collection =
             this.collections_.find(collection => collection.id === tile.id);
         assert(collection, 'collection with matching id required');
-        PersonalizationRouter.instance().selectCollection(collection);
+        PersonalizationRouterElement.instance().selectCollection(collection);
         return;
     }
   }
@@ -631,6 +790,14 @@ export class WallpaperCollections extends WithPersonalizationStore {
 
   private isLocalTile_(item: Tile|null): item is LocalTile {
     return !!item && item.type === TileType.IMAGE_LOCAL;
+  }
+
+  private isSeaPenPromptingTile_(item: Tile|null): item is SeaPenPromptingTile {
+    return !!item && item.type === TileType.SEA_PEN_PROMPTING;
+  }
+
+  private isSeaPenTemplatesTile_(item: Tile|null): item is SeaPenTemplatesTile {
+    return !!item && item.type === TileType.SEA_PEN_TEMPLATES;
   }
 
   private isOnlineTile_(item: Tile|null): item is OnlineTile {
@@ -654,9 +821,47 @@ export class WallpaperCollections extends WithPersonalizationStore {
     return this.isOnlineTile_(item) && isTimeOfDay(item);
   }
 
+  private getOuterContainerClass_(): string {
+    return isSeaPenTextInputEnabled() ? 'outer-container-with-prompting' :
+                                        'outer-container';
+  }
+
   private getAriaIndex_(index: number): number {
     return index + 1;
   }
+
+  private getSeaPenTileTagClass_(item: Tile|null): string {
+    const defaultTag = 'tile-tag';
+    return this.isSelectableTile_(item) ? defaultTag :
+                                          `${defaultTag} unavailable-tag`;
+  }
+
+  private getSeaPenTileTagLabel_(item: Tile|null): string {
+    return this.isSelectableTile_(item) ? this.i18n('seaPenExperimentLabel') :
+                                          this.i18n('seaPenUnavailableLabel');
+  }
+
+  private getSeaPenTileAriaDescription_(item: Tile|null): string|null {
+    // Do not set the aria-description for Sea Pen tile if the tile is
+    // unavailable.
+    return this.isSelectableTile_(item) ? this.getSeaPenTileTagLabel_(item) :
+                                          null;
+  }
+
+  private getSeaPenTemplatesTileLabel_(): string {
+    return isSeaPenTextInputEnabled() ?
+        this.i18n('seaPenTemplatesWallpaperLabel') :
+        this.i18n('seaPenLabel');
+  }
+
+  private getOnlineTileSecondaryText_(item: Tile): string {
+    assert(this.isOnlineTile_(item), 'item must be online tile');
+    if (this.isTimeOfDayCollection_(item)) {
+      return loadTimeData.getString('timeOfDayWallpaperCollectionSublabel');
+    }
+    return item.count;
+  }
 }
 
-customElements.define(WallpaperCollections.is, WallpaperCollections);
+customElements.define(
+    WallpaperCollectionsElement.is, WallpaperCollectionsElement);

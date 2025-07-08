@@ -21,13 +21,11 @@ namespace password_manager {
 
 ContentPasswordManagerDriverFactory::ContentPasswordManagerDriverFactory(
     content::WebContents* web_contents,
-    PasswordManagerClient* password_client,
-    autofill::AutofillClient* autofill_client)
+    PasswordManagerClient* password_client)
     : content::WebContentsObserver(web_contents),
       content::WebContentsUserData<ContentPasswordManagerDriverFactory>(
           *web_contents),
-      password_client_(password_client),
-      autofill_client_(autofill_client) {}
+      password_client_(password_client) {}
 
 ContentPasswordManagerDriverFactory::~ContentPasswordManagerDriverFactory() =
     default;
@@ -44,7 +42,7 @@ void ContentPasswordManagerDriverFactory::BindPasswordManagerDriver(
   // the request will be just dropped, this would cause closing the message pipe
   // which would raise connection error to peer side.
   // Peer side could reconnect later when needed.
-  // TODO(https://crbug.com/1286342): WebContents should never be null here; the
+  // TODO(crbug.com/40815551): WebContents should never be null here; the
   // helper function above only returns a null WebContents if
   // `render_frame_host` is null, but that should never be the case here.
   if (!web_contents)
@@ -60,10 +58,8 @@ void ContentPasswordManagerDriverFactory::BindPasswordManagerDriver(
   if (!factory)
     return;
 
-  // TODO(crbug.com/1294378): Remove nullptr check once
-  // EnablePasswordManagerWithinFencedFrame is launched.
-  if (auto* driver = factory->GetDriverForFrame(render_frame_host))
-    driver->BindPendingReceiver(std::move(pending_receiver));
+  factory->GetDriverForFrame(render_frame_host)
+      ->BindPendingReceiver(std::move(pending_receiver));
 }
 
 ContentPasswordManagerDriver*
@@ -91,7 +87,7 @@ ContentPasswordManagerDriverFactory::GetDriverForFrame(
       // Args passed to the ContentPasswordManagerDriver
       // constructor if none exists for `render_frame_host`
       // yet.
-      render_frame_host, password_client_, autofill_client_);
+      render_frame_host, password_client_);
   return &it->second;
 }
 
@@ -100,18 +96,11 @@ void ContentPasswordManagerDriverFactory::DidFinishNavigation(
   if (navigation->IsSameDocument() || !navigation->HasCommitted()) {
     return;
   }
+  GetDriverForFrame(navigation->GetRenderFrameHost())->DidNavigate();
 
-  // Unbind receiver if the frame is anonymous, noted that anonymous frames are
-  // always iframes.
   if (!navigation->IsInPrimaryMainFrame()) {
-    if (auto* driver = GetDriverForFrame(navigation->GetRenderFrameHost())) {
-      if (navigation->GetRenderFrameHost()->IsCredentialless()) {
-        driver->UnbindReceiver();
-      }
-    }
     return;
   }
-
   // Clear page specific data after main frame navigation.
   NotifyDidNavigateMainFrame(navigation->IsRendererInitiated(),
                              navigation->GetPageTransition(),
@@ -119,10 +108,9 @@ void ContentPasswordManagerDriverFactory::DidFinishNavigation(
                              password_client_->GetPasswordManager());
   // A committed navigation always has a live RenderFrameHost.
   CHECK(navigation->GetRenderFrameHost()->IsRenderFrameLive());
-  // TODO(crbug.com/1294378): Remove nullptr check once
-  // EnablePasswordManagerWithinFencedFrame is launched.
-  if (auto* driver = GetDriverForFrame(navigation->GetRenderFrameHost()))
-    driver->GetPasswordAutofillManager()->DidNavigateMainFrame();
+  GetDriverForFrame(navigation->GetRenderFrameHost())
+      ->GetPasswordAutofillManager()
+      ->DidNavigateMainFrame();
 }
 
 void ContentPasswordManagerDriverFactory::RenderFrameDeleted(

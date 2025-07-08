@@ -7,15 +7,23 @@
 #include <memory>
 #include <unordered_set>
 
+#include "base/json/json_string_value_serializer.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/test/gtest_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
+#include "components/prefs/mock_pref_change_callback.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_store.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/features.h"
+#include "components/sync/protocol/entity_specifics.pb.h"
+#include "components/sync/protocol/preference_specifics.pb.h"
+#include "components/sync/test/fake_sync_change_processor.h"
 #include "components/sync_preferences/pref_model_associator_client.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
@@ -29,6 +37,7 @@ namespace sync_preferences {
 
 namespace {
 
+using testing::Eq;
 using testing::NotNull;
 
 const char kStringPrefName[] = "pref.string";
@@ -37,20 +46,49 @@ const char kDictionaryPrefName[] = "pref.dictionary";
 const char kCustomMergePrefName[] = "pref.custom";
 
 const char kStringPriorityPrefName[] = "priority.pref.string";
+#if BUILDFLAG(IS_CHROMEOS)
 const char kStringOsPrefName[] = "os.pref.string";
 const char kStringOsPriorityPrefName[] = "os.priority.pref.string";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Assigning an id of 0 to all the test prefs.
-const std::unordered_map<std::string, SyncablePrefMetadata>
-    kSyncablePrefsDatabase = {
-        {kStringPrefName, {0, syncer::PREFERENCES, false}},
-        {kListPrefName, {0, syncer::PREFERENCES, false}},
-        {kDictionaryPrefName, {0, syncer::PREFERENCES, false}},
-        {kCustomMergePrefName, {0, syncer::PREFERENCES, false}},
-        {kStringPriorityPrefName, {0, syncer::PRIORITY_PREFERENCES, false}},
-        {kStringOsPrefName, {0, syncer::OS_PREFERENCES, false}},
-        {kStringOsPriorityPrefName,
-         {0, syncer::OS_PRIORITY_PREFERENCES, false}}};
+const TestSyncablePrefsDatabase::PrefsMap kSyncablePrefsDatabase = {
+    {kStringPrefName,
+     {0, syncer::PREFERENCES, PrefSensitivity::kNone, MergeBehavior::kNone}},
+    {kListPrefName,
+     {0, syncer::PREFERENCES, PrefSensitivity::kNone,
+      MergeBehavior::kMergeableListWithRewriteOnUpdate}},
+    {kDictionaryPrefName,
+     {0, syncer::PREFERENCES, PrefSensitivity::kNone,
+      MergeBehavior::kMergeableDict}},
+    {kCustomMergePrefName,
+     {0, syncer::PREFERENCES, PrefSensitivity::kNone, MergeBehavior::kCustom}},
+    {kStringPriorityPrefName,
+     {0, syncer::PRIORITY_PREFERENCES, PrefSensitivity::kNone,
+      MergeBehavior::kNone}},
+#if BUILDFLAG(IS_CHROMEOS)
+    {kStringOsPrefName,
+     {0, syncer::OS_PREFERENCES, PrefSensitivity::kNone, MergeBehavior::kNone}},
+    {kStringOsPriorityPrefName,
+     {0, syncer::OS_PRIORITY_PREFERENCES, PrefSensitivity::kNone,
+      MergeBehavior::kNone}},
+#endif  // BUILDFLAG(IS_CHROMEOS)
+};
+
+// Creates SyncData for a remote pref change.
+syncer::SyncData CreateRemoteSyncData(const std::string& name,
+                                      base::ValueView value) {
+  std::string serialized;
+  JSONStringValueSerializer json(&serialized);
+  EXPECT_TRUE(json.Serialize(value));
+  sync_pb::EntitySpecifics specifics;
+  sync_pb::PreferenceSpecifics* pref_specifics = specifics.mutable_preference();
+  pref_specifics->set_name(name);
+  pref_specifics->set_value(serialized);
+  return syncer::SyncData::CreateRemoteData(
+      specifics,
+      syncer::ClientTagHash::FromUnhashed(syncer::DataType::PREFERENCES, name));
+}
 
 class TestPrefModelAssociatorClient : public PrefModelAssociatorClient {
  public:
@@ -61,20 +99,9 @@ class TestPrefModelAssociatorClient : public PrefModelAssociatorClient {
   TestPrefModelAssociatorClient& operator=(
       const TestPrefModelAssociatorClient&) = delete;
 
-  ~TestPrefModelAssociatorClient() override = default;
-
   // PrefModelAssociatorClient implementation.
-  bool IsMergeableListPreference(const std::string& pref_name) const override {
-    return pref_name == kListPrefName;
-  }
-
-  bool IsMergeableDictionaryPreference(
-      const std::string& pref_name) const override {
-    return pref_name == kDictionaryPrefName;
-  }
-
   base::Value MaybeMergePreferenceValues(
-      const std::string& pref_name,
+      std::string_view pref_name,
       const base::Value& local_value,
       const base::Value& server_value) const override {
     if (pref_name == kCustomMergePrefName) {
@@ -84,6 +111,8 @@ class TestPrefModelAssociatorClient : public PrefModelAssociatorClient {
   }
 
  private:
+  ~TestPrefModelAssociatorClient() override = default;
+
   const SyncablePrefsDatabase& GetSyncablePrefsDatabase() const override {
     return syncable_prefs_database_;
   }
@@ -91,29 +120,35 @@ class TestPrefModelAssociatorClient : public PrefModelAssociatorClient {
   TestSyncablePrefsDatabase syncable_prefs_database_;
 };
 
+scoped_refptr<user_prefs::PrefRegistrySyncable> CreatePrefRegistry() {
+  scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry =
+      base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
+  pref_registry->RegisterStringPref(
+      kStringPrefName, std::string(),
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  pref_registry->RegisterListPref(
+      kListPrefName, user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  pref_registry->RegisterDictionaryPref(
+      kDictionaryPrefName, user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  pref_registry->RegisterStringPref(
+      kCustomMergePrefName, std::string(),
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  return pref_registry;
+}
+
+std::unique_ptr<PrefServiceSyncable> CreatePrefService(
+    scoped_refptr<PrefModelAssociatorClient> client,
+    scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry,
+    scoped_refptr<PersistentPrefStore> user_prefs) {
+  PrefServiceMockFactory factory;
+  factory.SetPrefModelAssociatorClient(client);
+  factory.set_user_prefs(user_prefs);
+  return factory.CreateSyncable(pref_registry.get());
+}
+
 class AbstractPreferenceMergeTest : public testing::Test {
  protected:
-  AbstractPreferenceMergeTest()
-      : pref_registry_(
-            base::MakeRefCounted<user_prefs::PrefRegistrySyncable>()),
-        user_prefs_(base::MakeRefCounted<TestingPrefStore>()) {
-    PrefServiceMockFactory factory;
-    factory.SetPrefModelAssociatorClient(&client_);
-    factory.set_user_prefs(user_prefs_);
-    pref_registry_->RegisterStringPref(
-        kStringPrefName, std::string(),
-        user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-    pref_registry_->RegisterListPref(
-        kListPrefName, user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-    pref_registry_->RegisterDictionaryPref(
-        kDictionaryPrefName, user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-    pref_service_ = factory.CreateSyncable(pref_registry_.get());
-    pref_registry_->RegisterStringPref(
-        kCustomMergePrefName, std::string(),
-        user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-    pref_sync_service_ = static_cast<PrefModelAssociator*>(
-        pref_service_->GetSyncableService(syncer::PREFERENCES));
-  }
+  AbstractPreferenceMergeTest() = default;
 
   void SetContentPattern(base::Value::Dict& patterns_dict,
                          const std::string& expression,
@@ -137,11 +172,17 @@ class AbstractPreferenceMergeTest : public testing::Test {
     }
   }
 
-  TestPrefModelAssociatorClient client_;
-  scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry_;
-  scoped_refptr<TestingPrefStore> user_prefs_;
-  std::unique_ptr<PrefServiceSyncable> pref_service_;
-  raw_ptr<PrefModelAssociator> pref_sync_service_;
+  const scoped_refptr<TestPrefModelAssociatorClient> client_ =
+      base::MakeRefCounted<TestPrefModelAssociatorClient>();
+  const scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry_ =
+      CreatePrefRegistry();
+  const scoped_refptr<TestingPrefStore> user_prefs_ =
+      base::MakeRefCounted<TestingPrefStore>();
+  const std::unique_ptr<PrefServiceSyncable> pref_service_ =
+      CreatePrefService(client_, pref_registry_, user_prefs_);
+  const raw_ptr<PrefModelAssociator> pref_sync_service_ =
+      static_cast<PrefModelAssociator*>(
+          pref_service_->GetSyncableService(syncer::PREFERENCES));
 };
 
 using CustomPreferenceMergeTest = AbstractPreferenceMergeTest;
@@ -153,7 +194,7 @@ TEST_F(CustomPreferenceMergeTest, ClientMergesCustomPreference) {
   base::Value local_value(pref->GetValue()->Clone());
   base::Value server_value("server");
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), server_value));
+      client_.get(), pref->name(), *pref->GetValue(), server_value));
   // TestPrefModelAssociatorClient should have chosen local value instead of the
   // default server value.
   EXPECT_EQ(merged_value, local_value);
@@ -183,7 +224,7 @@ TEST_F(ListPreferenceMergeTest, NotListOrDictionary) {
       pref_service_->FindPreference(kStringPrefName);
   base::Value server_value(server_url0_);
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), server_value));
+      client_.get(), pref->name(), *pref->GetValue(), server_value));
   EXPECT_EQ(merged_value, server_value);
 }
 
@@ -192,7 +233,7 @@ TEST_F(ListPreferenceMergeTest, LocalEmpty) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(
-      helper::MergePreference(&client_, pref->name(), *pref->GetValue(),
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
                               base::Value(server_url_list_.Clone())));
   EXPECT_EQ(merged_value, server_url_list_);
 }
@@ -206,7 +247,7 @@ TEST_F(ListPreferenceMergeTest, ServerNull) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), base::Value()));
+      client_.get(), pref->name(), *pref->GetValue(), base::Value()));
   const base::Value::List& local_list_value =
       pref_service_->GetList(kListPrefName);
   EXPECT_EQ(merged_value, local_list_value);
@@ -222,7 +263,7 @@ TEST_F(ListPreferenceMergeTest, ServerEmpty) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(
-      helper::MergePreference(&client_, pref->name(), *pref->GetValue(),
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
                               base::Value(empty_value.Clone())));
   const base::Value::List& local_list_value =
       pref_service_->GetList(kListPrefName);
@@ -237,8 +278,9 @@ TEST_F(ListPreferenceMergeTest, ServerCorrupt) {
 
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
-  base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), base::Value("corrupt-type")));
+  base::Value merged_value(
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
+                              base::Value("corrupt-type")));
   const base::Value::List& local_list_value =
       pref_service_->GetList(kListPrefName);
   EXPECT_EQ(merged_value, local_list_value);
@@ -254,7 +296,7 @@ TEST_F(ListPreferenceMergeTest, Merge) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(
-      helper::MergePreference(&client_, pref->name(), *pref->GetValue(),
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
                               base::Value(server_url_list_.Clone())));
 
   auto expected = base::Value::List()
@@ -276,7 +318,7 @@ TEST_F(ListPreferenceMergeTest, Duplicates) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(
-      helper::MergePreference(&client_, pref->name(), *pref->GetValue(),
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
                               base::Value(server_url_list_.Clone())));
 
   auto expected = base::Value::List()
@@ -297,7 +339,7 @@ TEST_F(ListPreferenceMergeTest, Equals) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kListPrefName);
   base::Value merged_value(
-      helper::MergePreference(&client_, pref->name(), *pref->GetValue(),
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
                               base::Value(server_url_list_.Clone())));
   EXPECT_EQ(merged_value, original);
 }
@@ -328,7 +370,7 @@ TEST_F(DictionaryPreferenceMergeTest, LocalEmpty) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kDictionaryPrefName);
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), server_patterns_));
+      client_.get(), pref->name(), *pref->GetValue(), server_patterns_));
   EXPECT_EQ(merged_value, server_patterns_);
 }
 
@@ -341,7 +383,7 @@ TEST_F(DictionaryPreferenceMergeTest, ServerNull) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kDictionaryPrefName);
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), base::Value()));
+      client_.get(), pref->name(), *pref->GetValue(), base::Value()));
   const base::Value::Dict& local_dict_value =
       pref_service_->GetDict(kDictionaryPrefName);
   EXPECT_EQ(merged_value, local_dict_value);
@@ -356,7 +398,7 @@ TEST_F(DictionaryPreferenceMergeTest, ServerEmpty) {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kDictionaryPrefName);
   base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), base::Value()));
+      client_.get(), pref->name(), *pref->GetValue(), base::Value()));
   const base::Value::Dict& local_dict_value =
       pref_service_->GetDict(kDictionaryPrefName);
   EXPECT_EQ(merged_value, local_dict_value);
@@ -370,8 +412,9 @@ TEST_F(DictionaryPreferenceMergeTest, ServerCorrupt) {
 
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kDictionaryPrefName);
-  base::Value merged_value(helper::MergePreference(
-      &client_, pref->name(), *pref->GetValue(), base::Value("corrupt-type")));
+  base::Value merged_value(
+      helper::MergePreference(client_.get(), pref->name(), *pref->GetValue(),
+                              base::Value("corrupt-type")));
   const base::Value::Dict& local_dict_value =
       pref_service_->GetDict(kDictionaryPrefName);
   EXPECT_EQ(merged_value, local_dict_value);
@@ -384,7 +427,7 @@ TEST_F(DictionaryPreferenceMergeTest, MergeNoConflicts) {
   }
 
   base::Value merged_value(helper::MergePreference(
-      &client_, kDictionaryPrefName,
+      client_.get(), kDictionaryPrefName,
       *pref_service_->FindPreference(kDictionaryPrefName)->GetValue(),
       server_patterns_));
 
@@ -406,7 +449,7 @@ TEST_F(DictionaryPreferenceMergeTest, MergeConflicts) {
   }
 
   base::Value merged_value(helper::MergePreference(
-      &client_, kDictionaryPrefName,
+      client_.get(), kDictionaryPrefName,
       *pref_service_->FindPreference(kDictionaryPrefName)->GetValue(),
       server_patterns_));
 
@@ -426,10 +469,10 @@ TEST_F(DictionaryPreferenceMergeTest, MergeValueToDictionary) {
   base::Value::Dict server_dict_value;
   server_dict_value.SetByDottedPath("key.subkey", 0);
 
-  // TODO(https://crbug.com/1187026): Migrate MergePreference() to
+  // TODO(crbug.com/40754070): Migrate MergePreference() to
   // take a base::Value::Dict.
   base::Value merged_value(helper::MergePreference(
-      &client_, kDictionaryPrefName, base::Value(local_dict_value.Clone()),
+      client_.get(), kDictionaryPrefName, base::Value(local_dict_value.Clone()),
       base::Value(server_dict_value.Clone())));
 
   EXPECT_EQ(merged_value, server_dict_value);
@@ -444,7 +487,7 @@ TEST_F(DictionaryPreferenceMergeTest, Equal) {
   }
 
   base::Value merged_value(helper::MergePreference(
-      &client_, kDictionaryPrefName,
+      client_.get(), kDictionaryPrefName,
       *pref_service_->FindPreference(kDictionaryPrefName)->GetValue(),
       server_patterns_));
   EXPECT_EQ(merged_value, server_patterns_);
@@ -459,7 +502,7 @@ TEST_F(DictionaryPreferenceMergeTest, ConflictButServerWins) {
   }
 
   base::Value merged_value(helper::MergePreference(
-      &client_, kDictionaryPrefName,
+      client_.get(), kDictionaryPrefName,
       *pref_service_->FindPreference(kDictionaryPrefName)->GetValue(),
       server_patterns_));
   EXPECT_EQ(merged_value, server_patterns_);
@@ -483,7 +526,7 @@ class IndividualPreferenceMergeTest : public AbstractPreferenceMergeTest {
     }
 
     base::Value merged_value(helper::MergePreference(
-        &client_, pref, *pref_service_->GetUserPrefValue(pref),
+        client_.get(), pref, *pref_service_->GetUserPrefValue(pref),
         base::Value(server_url_list_.Clone())));
 
     auto expected = base::Value::List().Append(url0_).Append(url1_);
@@ -497,7 +540,7 @@ class IndividualPreferenceMergeTest : public AbstractPreferenceMergeTest {
     }
 
     base::Value merged_value(helper::MergePreference(
-        &client_, pref, *pref_service_->GetUserPrefValue(pref),
+        client_.get(), pref, *pref_service_->GetUserPrefValue(pref),
         server_patterns_));
 
     base::Value::Dict expected;
@@ -522,17 +565,15 @@ TEST_F(IndividualPreferenceMergeTest, ListPreference) {
 class SyncablePrefsDatabaseTest : public testing::Test {
  protected:
   SyncablePrefsDatabaseTest()
-      : feature_list_(syncer::kSyncEnforcePreferencesAllowlist),
+      : client_(base::MakeRefCounted<TestPrefModelAssociatorClient>()),
         pref_registry_(
             base::MakeRefCounted<user_prefs::PrefRegistrySyncable>()) {
     PrefServiceMockFactory factory;
-    factory.SetPrefModelAssociatorClient(&client_);
+    factory.SetPrefModelAssociatorClient(client_);
     pref_service_ = factory.CreateSyncable(pref_registry_.get());
   }
 
-  base::test::ScopedFeatureList feature_list_;
-
-  TestPrefModelAssociatorClient client_;
+  scoped_refptr<TestPrefModelAssociatorClient> client_;
   scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry_;
   std::unique_ptr<PrefServiceSyncable> pref_service_;
 };
@@ -558,7 +599,7 @@ TEST_F(SyncablePrefsDatabaseTest, ShouldAllowRegisteringSyncablePriorityPrefs) {
               NotNull());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(SyncablePrefsDatabaseTest, ShouldAllowRegisteringSyncableOSPrefs) {
   pref_registry_->RegisterStringPref(
       kStringOsPrefName, std::string(),
@@ -621,7 +662,7 @@ TEST_F(SyncablePrefsDatabaseDeathTest,
       kExpectedErrorMessageHint);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(SyncablePrefsDatabaseDeathTest, ShouldFailRegisteringIllegalOSPrefs) {
   const std::string kIllegalStringPrefName = "not-allowed_string_pref";
   const std::string kIllegalListPrefName = "not-allowed_list_pref";
@@ -682,7 +723,7 @@ TEST_F(SyncablePrefsDatabaseDeathTest,
                                kStringPriorityPrefName, std::string(),
                                user_prefs::PrefRegistrySyncable::SYNCABLE_PREF),
                            kExpectedErrorMessageHint);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   EXPECT_DCHECK_DEATH_WITH(
       pref_registry_->RegisterStringPref(
           kStringOsPrefName, std::string(),
@@ -694,6 +735,206 @@ TEST_F(SyncablePrefsDatabaseDeathTest,
           user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF),
       kExpectedErrorMessageHint);
 #endif
+}
+
+class PrefModelAssociatorWithPreferencesAccountStorageTest
+    : public testing::Test {
+ protected:
+  PrefModelAssociatorWithPreferencesAccountStorageTest()
+      : feature_list_(switches::kEnablePreferencesAccountStorage),
+        client_(base::MakeRefCounted<TestPrefModelAssociatorClient>()),
+        pref_registry_(
+            base::MakeRefCounted<user_prefs::PrefRegistrySyncable>()),
+        local_pref_store_(base::MakeRefCounted<TestingPrefStore>()),
+        account_pref_store_(base::MakeRefCounted<TestingPrefStore>()) {
+    pref_registry_->RegisterStringPref(
+        kStringPrefName, std::string(),
+        user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+
+    PrefServiceMockFactory factory;
+    factory.SetPrefModelAssociatorClient(client_);
+    factory.set_user_prefs(local_pref_store_);
+    factory.SetAccountPrefStore(account_pref_store_);
+    pref_service_ = factory.CreateSyncable(pref_registry_);
+    pref_model_associator_ = static_cast<PrefModelAssociator*>(
+        pref_service_->GetSyncableService(syncer::PREFERENCES));
+  }
+
+  void MergeDataAndStartSyncing(const syncer::SyncDataList& initial_data) {
+    auto error = pref_model_associator_->MergeDataAndStartSyncing(
+        syncer::PREFERENCES, initial_data,
+        std::make_unique<syncer::FakeSyncChangeProcessor>());
+    EXPECT_FALSE(error.has_value());
+  }
+
+  base::test::ScopedFeatureList feature_list_;
+
+  scoped_refptr<TestPrefModelAssociatorClient> client_;
+  scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry_;
+  scoped_refptr<TestingPrefStore> local_pref_store_;
+  scoped_refptr<TestingPrefStore> account_pref_store_;
+  std::unique_ptr<PrefServiceSyncable> pref_service_;
+  raw_ptr<PrefModelAssociator> pref_model_associator_ = nullptr;
+};
+
+// Tests that no notification is issued if the effective value is unchanged upon
+// initial merge.
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldNotNotifyUponInitIfSameValueExistsInLocalStoreOnly) {
+  // Load value to local store before initial merge.
+  local_pref_store_->SetValue(kStringPrefName, base::Value("value"), 0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "value");
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // No call should be made to the observer as the effective value of the pref
+  // is unchanged.
+  EXPECT_CALL(observer, OnPreferenceChanged).Times(0);
+
+  // Create initial sync data with the same pref value as that in the local
+  // store.
+  syncer::SyncDataList initial_data;
+  initial_data.push_back(
+      CreateRemoteSyncData(kStringPrefName, base::Value("value")));
+
+  MergeDataAndStartSyncing(initial_data);
+}
+
+// Tests that no notification is issued if the effective value is unchanged upon
+// initial merge.
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldNotNotifyUponInitIfSameValueExistsInAccountStoreOnly) {
+  // Load value to account store before initial merge.
+  account_pref_store_->SetValue(kStringPrefName, base::Value("value"), 0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "value");
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // No call should be made to the observer as the effective value of the pref
+  // is unchanged.
+  EXPECT_CALL(observer, OnPreferenceChanged).Times(0);
+
+  // Create initial sync data with the same pref value as that in the local
+  // store.
+  syncer::SyncDataList initial_data;
+  initial_data.push_back(
+      CreateRemoteSyncData(kStringPrefName, base::Value("value")));
+
+  MergeDataAndStartSyncing(initial_data);
+}
+
+// Tests that notification is issued if the effective value changes upon
+// initial merge.
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldNotifyUponInitIfDifferentValueExistsInLocalStoreOnly) {
+  // Load value to local store before initial merge.
+  local_pref_store_->SetValue(kStringPrefName, base::Value("value"), 0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "value");
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // Observer should get notified since the effective value changes.
+  EXPECT_CALL(observer, OnPreferenceChanged);
+
+  // Create initial sync data with a different pref value than that in the
+  // local store.
+  syncer::SyncDataList initial_data;
+  initial_data.push_back(
+      CreateRemoteSyncData(kStringPrefName, base::Value("new value")));
+
+  MergeDataAndStartSyncing(initial_data);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "new value");
+}
+
+// Tests that notification is issued if the effective value changes upon
+// initial merge.
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldNotifyUponInitIfDifferentValueExistsInAccountStoreOnly) {
+  // Load value to account store before initial merge.
+  account_pref_store_->SetValue(kStringPrefName, base::Value("value"), 0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "value");
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // Observer should get notified since the effective value changes.
+  EXPECT_CALL(observer, OnPreferenceChanged);
+
+  // Create initial sync data with a different pref value than that in the
+  // local store.
+  syncer::SyncDataList initial_data;
+  initial_data.push_back(
+      CreateRemoteSyncData(kStringPrefName, base::Value("new value")));
+
+  MergeDataAndStartSyncing(initial_data);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "new value");
+}
+
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldRemoveAccountValuesUponStayStoppedAndMaybeClearData) {
+  // Load pre-existing values in the local and the account stores.
+  local_pref_store_->SetValue(kStringPrefName, base::Value("local value"), 0);
+  account_pref_store_->SetValue(kStringPrefName, base::Value("account value"),
+                                0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "account value");
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // Observer should get notified since the effective value changes.
+  EXPECT_CALL(observer, OnPreferenceChanged(kStringPrefName));
+
+  pref_model_associator_->StayStoppedAndMaybeClearData(syncer::PREFERENCES);
+  EXPECT_EQ(pref_service_->GetString(kStringPrefName), "local value");
+
+  const base::Value* local_value = nullptr;
+  local_pref_store_->GetValue(kStringPrefName, &local_value);
+  EXPECT_THAT(local_value, Pointee(Eq("local value")));
+  EXPECT_TRUE(account_pref_store_->GetValues().empty());
+}
+
+TEST_F(PrefModelAssociatorWithPreferencesAccountStorageTest,
+       ShouldBeNoOpUponStayStoppedAndMaybeClearDataIfNoAccountValue) {
+  // Load pre-existing value in the local store.
+  local_pref_store_->SetValue(kStringPrefName, base::Value("local value"), 0);
+  ASSERT_EQ(pref_service_->GetString(kStringPrefName), "local value");
+  ASSERT_TRUE(account_pref_store_->GetValues().empty());
+
+  // Listen to pref changes.
+  MockPrefChangeCallback observer(pref_service_.get());
+  PrefChangeRegistrar registrar;
+  registrar.Init(pref_service_.get());
+  registrar.Add(kStringPrefName, observer.GetCallback());
+
+  // Observer should not get notified since there are no account values to
+  // be cleared.
+  EXPECT_CALL(observer, OnPreferenceChanged).Times(0);
+
+  pref_model_associator_->StayStoppedAndMaybeClearData(syncer::PREFERENCES);
+  EXPECT_EQ(pref_service_->GetString(kStringPrefName), "local value");
+
+  const base::Value* local_value = nullptr;
+  local_pref_store_->GetValue(kStringPrefName, &local_value);
+  EXPECT_THAT(local_value, Pointee(Eq("local value")));
+  EXPECT_TRUE(account_pref_store_->GetValues().empty());
 }
 
 }  // namespace

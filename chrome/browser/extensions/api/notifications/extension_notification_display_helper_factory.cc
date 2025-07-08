@@ -31,19 +31,20 @@ ExtensionNotificationDisplayHelperFactory::
           "ExtensionNotificationDisplayHelperFactory",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {}
 
 ExtensionNotificationDisplayHelperFactory::
     ~ExtensionNotificationDisplayHelperFactory() = default;
 
-KeyedService*
-ExtensionNotificationDisplayHelperFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
+std::unique_ptr<KeyedService> ExtensionNotificationDisplayHelperFactory::
+    BuildServiceInstanceForBrowserContext(
+        content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
-  return new ExtensionNotificationDisplayHelper(profile);
+  return std::make_unique<ExtensionNotificationDisplayHelper>(profile);
 }
 
 }  // namespace extensions

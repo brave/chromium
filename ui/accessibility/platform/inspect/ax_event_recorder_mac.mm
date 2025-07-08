@@ -10,19 +10,20 @@
 #include <string>
 
 #include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
+#include "ui/accessibility/platform/ax_platform_tree_manager.h"
+#include "ui/accessibility/platform/ax_private_attributes_mac.h"
 #include "ui/accessibility/platform/ax_private_webkit_constants_mac.h"
 #include "ui/accessibility/platform/inspect/ax_inspect_utils_mac.h"
 #include "ui/accessibility/platform/inspect/ax_tree_formatter_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/native_widget_types.h"
 
 namespace ui {
 
@@ -36,10 +37,12 @@ static void EventReceivedThunk(AXObserverRef observer_ref,
   this_ptr->EventReceived(element, notification, user_info);
 }
 
-AXEventRecorderMac::AXEventRecorderMac(base::ProcessId pid,
-                                       const AXTreeSelector& selector)
-    : observer_run_loop_source_(nullptr) {
-  base::ScopedCFTypeRef<AXUIElementRef> node;
+AXEventRecorderMac::AXEventRecorderMac(
+    base::WeakPtr<AXPlatformTreeManager> manager,
+    base::ProcessId pid,
+    const AXTreeSelector& selector)
+    : manager_(manager), observer_run_loop_source_(nullptr) {
+  base::apple::ScopedCFTypeRef<AXUIElementRef> node;
   if (pid) {
     node.reset(AXUIElementCreateApplication(pid));
     if (!node) {
@@ -126,7 +129,7 @@ AXEventRecorderMac::~AXEventRecorderMac() {
 }
 
 void AXEventRecorderMac::AddNotification(NSString* notification) {
-  AXObserverAddNotification(observer_ref_, application_,
+  AXObserverAddNotification(observer_ref_.get(), application_.get(),
                             base::apple::NSToCFPtrCast(notification), this);
 }
 
@@ -135,12 +138,38 @@ void AXEventRecorderMac::EventReceived(AXUIElementRef element,
                                        CFDictionaryRef user_info) {
   std::string notification_str = base::SysCFStringRefToUTF8(notification);
 
-  auto formatter = ui::AXTreeFormatterMac();
+  if (notification_str == "AXApplicationDeactivated") {
+    // The application deactivated event is used as an end-of-test signal
+    // because it never occurs in tests.
+    has_seen_end_of_test_sentinel_ = true;
+    if (end_of_test_loop_runner_) {
+      end_of_test_loop_runner_->Quit();
+    }
+    return;
+  }
+
+  if (only_web_events_ && !IsWebContent(element, manager_)) {
+    return;
+  }
+
+#if DCHECK_IS_ON()
+  // Log the AXNodeData for incoming events, for easier debugging.
+  AXElementWrapper wrapper((__bridge id)element);
+  NSString* chrome_node_id =
+      *wrapper.GetAttributeValue(NSAccessibilityChromeAXNodeIdAttribute);
+  AXPlatformNode* ax_platform_node =
+      manager_->GetPlatformNodeFromTree([chrome_node_id intValue]);
+  DVLOG(1) << "Receiving event: " << notification_str
+           << " with AXNodeData: " << ax_platform_node->ToString();
+#endif
+
+  auto formatter = AXTreeFormatterMac();
   formatter.SetPropertyFilters(property_filters_,
                                AXTreeFormatter::kFiltersDefaultSet);
 
+  gfx::NativeViewAccessible element_accessible((__bridge id)element);
   std::string element_str =
-      formatter.FormatTree(formatter.BuildNode((__bridge id)element));
+      formatter.FormatTree(formatter.BuildNode(element_accessible));
 
   // Element dumps contain a new line character at the end, remove it.
   if (!element_str.empty() && element_str.back() == '\n') {
@@ -166,7 +195,7 @@ std::string AXEventRecorderMac::SerializeTextSelectionChangedProperties(
   NSDictionary* ns_user_info = base::apple::CFToNSPtrCast(user_info);
   std::vector<std::string> serialized_info;
   for (NSString* key in ns_user_info) {
-    NSNumber* value = base::mac::ObjCCast<NSNumber>(ns_user_info[key]);
+    NSNumber* value = base::apple::ObjCCast<NSNumber>(ns_user_info[key]);
     std::string value_string;
     if ([key isEqual:NSAccessibilityTextStateChangeTypeKey]) {
       value_string =
@@ -191,6 +220,19 @@ std::string AXEventRecorderMac::SerializeTextSelectionChangedProperties(
   std::sort(serialized_info.begin(), serialized_info.end());
 
   return base::JoinString(serialized_info, " ");
+}
+
+void AXEventRecorderMac::WaitForDoneRecording() {
+  if (!manager_) {
+    return;
+  }
+  manager_->FireSentinelEventForTesting();  // IN-TEST
+  if (has_seen_end_of_test_sentinel_) {
+    return;
+  }
+
+  end_of_test_loop_runner_ = std::make_unique<base::RunLoop>();
+  end_of_test_loop_runner_->Run();
 }
 
 }  // namespace ui

@@ -74,7 +74,7 @@ DesktopMediaID BuildDesktopMediaID(content::WebContents* target_contents,
       target_contents->GetPrimaryMainFrame();
   DesktopMediaID source(
       DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
-      WebContentsMediaCaptureId(target_frame->GetProcess()->GetID(),
+      WebContentsMediaCaptureId(target_frame->GetProcess()->GetDeprecatedID(),
                                 target_frame->GetRoutingID()));
   return source;
 }
@@ -139,7 +139,7 @@ std::string GetAllowlistedExtensionID() {
 }  // namespace
 
 ExtensionFunction::ResponseAction TabCaptureCaptureFunction::Run() {
-  absl::optional<api::tab_capture::Capture::Params> params =
+  std::optional<api::tab_capture::Capture::Params> params =
       TabCapture::Capture::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -192,7 +192,7 @@ ExtensionFunction::ResponseAction TabCaptureCaptureFunction::Run() {
   TabCaptureRegistry* registry = TabCaptureRegistry::Get(browser_context());
   content::RenderFrameHost* main_frame =
       extension_web_contents->GetPrimaryMainFrame();
-  int caller_process_id = main_frame->GetProcess()->GetID();
+  int caller_process_id = main_frame->GetProcess()->GetDeprecatedID();
   int frame_id = main_frame->GetRoutingID();
   std::string device_id = registry->AddRequest(
       target_contents, extension_id, false, extension()->url(), source,
@@ -222,7 +222,7 @@ ExtensionFunction::ResponseAction TabCaptureGetCapturedTabsFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
-  absl::optional<api::tab_capture::GetMediaStreamId::Params> params =
+  std::optional<api::tab_capture::GetMediaStreamId::Params> params =
       TabCapture::GetMediaStreamId::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -259,7 +259,7 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
 
   GURL origin;
   int caller_process_id = -1;
-  absl::optional<int> restrict_to_render_frame_id;
+  std::optional<int> restrict_to_render_frame_id;
   bool should_restrict_to_render_frame = extension()->manifest_version() < 3;
   if (params->options && params->options->consumer_tab_id) {
     content::WebContents* consumer_contents = nullptr;
@@ -269,7 +269,7 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
       return RespondNow(Error(kInvalidTabIdError));
     }
 
-    // TODO(https://crbug.com/1270878): Use url::Origin directly here and
+    // TODO(crbug.com/40805196): Use url::Origin directly here and
     // throughout this stack.
     origin =
         consumer_contents->GetLastCommittedURL().DeprecatedGetOriginAsURL();
@@ -283,7 +283,7 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
 
     content::RenderFrameHost* main_frame =
         consumer_contents->GetPrimaryMainFrame();
-    caller_process_id = main_frame->GetProcess()->GetID();
+    caller_process_id = main_frame->GetProcess()->GetDeprecatedID();
     restrict_to_render_frame_id = main_frame->GetRoutingID();
   } else if (should_restrict_to_render_frame) {
     content::WebContents* sender_contents = GetSenderWebContents();
@@ -293,15 +293,15 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
           "manifest version 2."));
     }
 
-    // TODO(https://crbug.com/1270878): Use url::Origin directly here and
+    // TODO(crbug.com/40805196): Use url::Origin directly here and
     // throughout this stack.
     origin = extension()->url();
     content::RenderFrameHost* main_frame =
         sender_contents->GetPrimaryMainFrame();
-    caller_process_id = main_frame->GetProcess()->GetID();
+    caller_process_id = main_frame->GetProcess()->GetDeprecatedID();
     restrict_to_render_frame_id = main_frame->GetRoutingID();
   } else {
-    // TODO(https://crbug.com/1270878): Use url::Origin directly here and
+    // TODO(crbug.com/40805196): Use url::Origin directly here and
     // throughout this stack.
     origin = extension()->url();
     caller_process_id = source_process_id();

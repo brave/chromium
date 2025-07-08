@@ -33,9 +33,12 @@ PrinterEventTrackerFactory::PrinterEventTrackerFactory()
           "PrinterEventTracker",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {}
 PrinterEventTrackerFactory::~PrinterEventTrackerFactory() = default;
 
@@ -53,9 +56,10 @@ void PrinterEventTrackerFactory::SetLogging(bool enabled) {
 }
 
 // BrowserContextKeyedServiceFactory:
-KeyedService* PrinterEventTrackerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+PrinterEventTrackerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  PrinterEventTracker* tracker = new PrinterEventTracker();
+  std::unique_ptr<PrinterEventTracker> tracker = std::make_unique<PrinterEventTracker>();
   tracker->set_logging(logging_enabled_);
   return tracker;
 }

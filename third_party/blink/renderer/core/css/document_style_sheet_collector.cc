@@ -41,10 +41,15 @@ DocumentStyleSheetCollector::DocumentStyleSheetCollector(
     : collection_(collection),
       style_sheets_for_style_sheet_list_(sheets_for_list) {}
 
-void DocumentStyleSheetCollector::AppendActiveStyleSheet(
-    const ActiveStyleSheet& sheet) {
+void DocumentStyleSheetCollector::AppendActiveStyleSheet(CSSStyleSheet* sheet) {
   DCHECK(collection_);
   collection_->AppendActiveStyleSheet(sheet);
+}
+
+void DocumentStyleSheetCollector::FinishCollectingStylesheets(
+    StyleEngine& engine,
+    const MediaQueryEvaluator& medium) {
+  collection_->CreateRuleSets(engine, medium);
 }
 
 void DocumentStyleSheetCollector::AppendSheetForList(StyleSheet* sheet) {
@@ -53,6 +58,10 @@ void DocumentStyleSheetCollector::AppendSheetForList(StyleSheet* sheet) {
   } else {
     collection_->AppendSheetForList(sheet);
   }
+}
+
+void DocumentStyleSheetCollector::AppendRuleSetDiff(RuleSetDiff* diff) {
+  collection_->AppendRuleSetDiff(diff);
 }
 
 ActiveDocumentStyleSheetCollector::ActiveDocumentStyleSheetCollector(

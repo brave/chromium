@@ -4,20 +4,18 @@
 
 package org.chromium.chrome.browser.ntp;
 
+
 import androidx.annotation.IntDef;
 
-/**
- * Indicates where a new tab was launched from.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** Indicates where a new tab was launched from. */
 @IntDef({NewTabPageLaunchOrigin.UNKNOWN, NewTabPageLaunchOrigin.WEB_FEED})
+@NullMarked
 public @interface NewTabPageLaunchOrigin {
-    /**
-     * Unknown launch origin. Used as the default.
-     */
+    /** Unknown launch origin. Used as the default. */
     int UNKNOWN = 0;
 
-    /**
-     * Opened from the Web Feed go to feed option. Includes post-follow snackbar and dialog.
-     */
+    /** Opened from the Web Feed go to feed option. Includes post-follow snackbar and dialog. */
     int WEB_FEED = 1;
 }

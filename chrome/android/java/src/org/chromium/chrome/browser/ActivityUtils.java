@@ -10,15 +10,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.ContextUtils;
 import org.chromium.base.SysUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
 /** Provides a set of utilities to help with working with Activities. */
+@NullMarked
 public final class ActivityUtils {
     /** Constant used to express a missing or null resource id. */
     public static final int NO_RESOURCE_ID = -1;
@@ -45,8 +46,9 @@ public final class ActivityUtils {
     /** @return the theme ID to use. */
     public static int getThemeId() {
         boolean useLowEndTheme = SysUtils.isLowEndDevice();
-        return (useLowEndTheme ? R.style.Theme_Chromium_WithWindowAnimation_LowEnd
-                               : R.style.Theme_Chromium_WithWindowAnimation);
+        return (useLowEndTheme
+                ? R.style.Theme_Chromium_WithWindowAnimation_LowEnd
+                : R.style.Theme_Chromium_WithWindowAnimation);
     }
 
     /**
@@ -74,7 +76,8 @@ public final class ActivityUtils {
             return;
         }
         if (component.getClassName() != null
-                && TextUtils.equals(component.getClassName(),
+                && TextUtils.equals(
+                        component.getClassName(),
                         ChromeTabbedActivity.MAIN_LAUNCHER_ACTIVITY_NAME)) {
             // Keep in sync with the activities that the .Main alias points to in
             // AndroidManifest.xml.

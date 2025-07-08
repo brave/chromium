@@ -37,7 +37,7 @@
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
-namespace WTF {
+namespace blink {
 
 template <typename T>
 struct CrossThreadCopierPassThrough {
@@ -104,6 +104,12 @@ struct CrossThreadCopier<Vector<String, inlineCapacity, Allocator>>
 };
 
 template <>
+struct CrossThreadCopier<SegmentedBuffer>
+    : CrossThreadCopierByValuePassThrough<SegmentedBuffer> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
 struct CrossThreadCopier<AtomicString>
     : public CrossThreadCopierPassThrough<AtomicString> {
   STATIC_ONLY(CrossThreadCopier);
@@ -114,6 +120,6 @@ struct CrossThreadCopier<String> : public CrossThreadCopierPassThrough<String> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_H_

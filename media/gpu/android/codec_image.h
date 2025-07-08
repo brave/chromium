@@ -41,8 +41,8 @@ class MEDIA_GPU_EXPORT CodecImage
   // Callback to notify that a codec image is now unused in the sense of not
   // being out for display.  This lets us signal interested folks once a video
   // frame is destroyed and the sync token clears, so that that CodecImage may
-  // be re-used.  Once legacy mailboxes go away, SharedImageVideo can manage all
-  // of this instead.
+  // be re-used.  Once legacy mailboxes go away, AndroidVideoImageBacking can
+  // manage all of this instead.
   //
   // Also note that, presently, only destruction does this.  However, with
   // pooling, there will be a way to mark a CodecImage as unused without
@@ -74,7 +74,6 @@ class MEDIA_GPU_EXPORT CodecImage
 
   // gpu::StreamTextureSharedImageInterface implementation.
   void ReleaseResources() override;
-  bool IsUsingGpuMemory() const override;
   void UpdateAndBindTexImage() override;
   bool HasTextureOwner() const override;
   gpu::TextureBase* GetTextureBase() const override;
@@ -137,10 +136,6 @@ class MEDIA_GPU_EXPORT CodecImage
   // it to the back buffer if it's not already there, and then waiting for the
   // frame available event before calling UpdateTexImage().
   bool RenderToTextureOwnerFrontBuffer();
-
-  // Whether this image has been rendered to the front buffer via a flow that
-  // intentionally binds the texture.
-  bool rendered_via_binding_flow_ = false;
 
   // Whether this image is texture_owner or overlay backed.
   bool is_texture_owner_backed_ = false;

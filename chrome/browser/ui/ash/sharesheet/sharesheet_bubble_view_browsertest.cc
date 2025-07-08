@@ -9,14 +9,15 @@
 #include "ash/shell.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/metrics/histogram_base.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/app_service_test.h"
 #include "chrome/browser/ash/policy/dlp/dlp_files_controller_ash.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager_factory.h"
-#include "chrome/browser/chromeos/policy/dlp/mock_dlp_rules_manager.h"
+#include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/browser/nearby_sharing/common/nearby_share_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sharesheet/sharesheet_metrics.h"
@@ -43,22 +44,13 @@
 namespace ash {
 namespace sharesheet {
 
-class SharesheetBubbleViewBrowserTest
-    : public ::testing::WithParamInterface<bool>,
-      public InProcessBrowserTest {
+class SharesheetBubbleViewBrowserTest : public InProcessBrowserTest {
  public:
-  SharesheetBubbleViewBrowserTest() {
-    if (GetParam()) {
-      scoped_feature_list_.InitAndEnableFeature(::features::kNearbySharing);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(::features::kNearbySharing);
-    }
-  }
-
   void ShowUi() {
     views::Widget::Widgets old_widgets;
-    for (aura::Window* root_window : Shell::GetAllRootWindows())
-      views::Widget::GetAllChildWidgets(root_window, &old_widgets);
+    for (aura::Window* root_window : Shell::GetAllRootWindows()) {
+      old_widgets.merge(views::Widget::GetAllChildWidgets(root_window));
+    }
 
     ::sharesheet::SharesheetService* const sharesheet_service =
         ::sharesheet::SharesheetServiceFactory::GetForProfile(
@@ -72,8 +64,9 @@ class SharesheetBubbleViewBrowserTest
         base::DoNothing());
 
     views::Widget::Widgets new_widgets;
-    for (aura::Window* root_window : Shell::GetAllRootWindows())
-      views::Widget::GetAllChildWidgets(root_window, &new_widgets);
+    for (aura::Window* root_window : Shell::GetAllRootWindows()) {
+      new_widgets.merge(views::Widget::GetAllChildWidgets(root_window));
+    }
 
     views::Widget::Widgets added_widgets;
     std::set_difference(new_widgets.begin(), new_widgets.end(),
@@ -98,17 +91,10 @@ class SharesheetBubbleViewBrowserTest
   }
 
  protected:
-  raw_ptr<views::Widget, ExperimentalAsh> sharesheet_widget_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  raw_ptr<views::Widget, DanglingUntriaged> sharesheet_widget_;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         SharesheetBubbleViewBrowserTest,
-                         ::testing::Bool());
-
-IN_PROC_BROWSER_TEST_P(SharesheetBubbleViewBrowserTest, InvokeUi_Default) {
+IN_PROC_BROWSER_TEST_F(SharesheetBubbleViewBrowserTest, InvokeUi_Default) {
   ShowUi();
   ASSERT_TRUE(VerifyUi());
   DismissUi();
@@ -119,8 +105,9 @@ class SharesheetBubbleViewPolicyBrowserTest
  public:
   class MockFilesController : public policy::DlpFilesControllerAsh {
    public:
-    explicit MockFilesController(const policy::DlpRulesManager& rules_manager)
-        : DlpFilesControllerAsh(rules_manager) {}
+    explicit MockFilesController(const policy::DlpRulesManager& rules_manager,
+                                 Profile* profile)
+        : DlpFilesControllerAsh(rules_manager, profile) {}
     ~MockFilesController() override = default;
 
     MOCK_METHOD(bool,
@@ -128,6 +115,18 @@ class SharesheetBubbleViewPolicyBrowserTest
                 (const apps::AppUpdate&, const apps::IntentPtr&),
                 (override));
   };
+
+  void TearDownOnMainThread() override {
+    // Make sure the rules manager does not return a freed files controller.
+    ON_CALL(*rules_manager_, GetDlpFilesController)
+        .WillByDefault(testing::Return(nullptr));
+
+    // The files controller must be destroyed before the profile since it's
+    // holding a pointer to it.
+    mock_files_controller_.reset();
+
+    SharesheetBubbleViewBrowserTest::TearDownOnMainThread();
+  }
 
   void SetupRulesManager(bool is_dlp_blocked) {
     policy::DlpRulesManagerFactory::GetInstance()->SetTestingFactory(
@@ -139,10 +138,6 @@ class SharesheetBubbleViewPolicyBrowserTest
 
     ON_CALL(*rules_manager_, IsFilesPolicyEnabled)
         .WillByDefault(testing::Return(true));
-    mock_files_controller_ =
-        std::make_unique<MockFilesController>(*rules_manager_);
-    ON_CALL(*rules_manager_, GetDlpFilesController)
-        .WillByDefault(testing::Return(mock_files_controller_.get()));
 
     EXPECT_CALL(*mock_files_controller_.get(), IsLaunchBlocked)
         .WillOnce(testing::Return(is_dlp_blocked));
@@ -158,7 +153,7 @@ class SharesheetBubbleViewPolicyBrowserTest
   void AddAppServiceAppsForTesting(std::string app_id,
                                    apps::AppType app_type,
                                    std::string mime_type,
-                                   absl::optional<std::string> publisher_id) {
+                                   std::optional<std::string> publisher_id) {
     apps::AppServiceProxy* app_service_proxy =
         apps::AppServiceProxyFactory::GetForProfile(browser()->profile());
 
@@ -180,9 +175,8 @@ class SharesheetBubbleViewPolicyBrowserTest
 
     fake_apps.push_back(std::move(fake_app));
 
-    app_service_proxy->AppRegistryCache().OnApps(
-        std::move(fake_apps), app_type,
-        /*should_notify_initialized=*/false);
+    app_service_proxy->OnApps(std::move(fake_apps), app_type,
+                              /*should_notify_initialized=*/false);
   }
 
   bool VerifyDlp(bool is_dlp_blocked) {
@@ -208,22 +202,25 @@ class SharesheetBubbleViewPolicyBrowserTest
   std::unique_ptr<KeyedService> SetDlpRulesManager(
       content::BrowserContext* context) {
     auto dlp_rules_manager =
-        std::make_unique<testing::NiceMock<policy::MockDlpRulesManager>>();
+        std::make_unique<testing::NiceMock<policy::MockDlpRulesManager>>(
+            Profile::FromBrowserContext(context));
     rules_manager_ = dlp_rules_manager.get();
+
+    mock_files_controller_ = std::make_unique<MockFilesController>(
+        *rules_manager_, Profile::FromBrowserContext(context));
+    ON_CALL(*rules_manager_, GetDlpFilesController)
+        .WillByDefault(testing::Return(mock_files_controller_.get()));
+
     return dlp_rules_manager;
   }
 
   apps::AppServiceTest app_service_test_;
-  raw_ptr<policy::MockDlpRulesManager, ExperimentalAsh> rules_manager_ =
+  raw_ptr<policy::MockDlpRulesManager, DanglingUntriaged> rules_manager_ =
       nullptr;
   std::unique_ptr<MockFilesController> mock_files_controller_ = nullptr;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         SharesheetBubbleViewPolicyBrowserTest,
-                         ::testing::Bool());
-
-IN_PROC_BROWSER_TEST_P(SharesheetBubbleViewPolicyBrowserTest,
+IN_PROC_BROWSER_TEST_F(SharesheetBubbleViewPolicyBrowserTest,
                        InvokeUi_DlpAllowed) {
   SetupRulesManager(/*is_dlp_blocked*/ false);
   SetupAppService();
@@ -232,7 +229,7 @@ IN_PROC_BROWSER_TEST_P(SharesheetBubbleViewPolicyBrowserTest,
   DismissUi();
 }
 
-IN_PROC_BROWSER_TEST_P(SharesheetBubbleViewPolicyBrowserTest,
+IN_PROC_BROWSER_TEST_F(SharesheetBubbleViewPolicyBrowserTest,
                        InvokeUi_DlpBlocked) {
   SetupRulesManager(/*is_dlp_blocked*/ true);
   SetupAppService();
@@ -279,9 +276,11 @@ class SharesheetBubbleViewNearbyShareBrowserTest : public InProcessBrowserTest {
   }
 
   void CloseBubble() {
-    bubble_delegate_->CloseBubble(::sharesheet::SharesheetResult::kCancel);
-    // |bubble_delegate_| and |sharesheet_bubble_view_| destruct on close.
+    auto* bubble_delegate = bubble_delegate_.get();
+    // |bubble_delegate_| will be deleted during CloseBubble.
     bubble_delegate_ = nullptr;
+    bubble_delegate->CloseBubble(::sharesheet::SharesheetResult::kCancel);
+    // |sharesheet_bubble_view_| wlil be deleted asynchronously.
     sharesheet_bubble_view_ = nullptr;
   }
 

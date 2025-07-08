@@ -6,10 +6,12 @@ package org.chromium.chrome.browser.share.qrcode.share_tab;
 
 import android.graphics.Bitmap;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
+@NullMarked
 class QrCodeShareViewProperties {
     /** The action that occurs when the download button is tapped. */
     public static final WritableObjectPropertyKey<Bitmap> QRCODE_BITMAP =
@@ -27,6 +29,11 @@ class QrCodeShareViewProperties {
     public static final WritableBooleanPropertyKey IS_ON_FOREGROUND =
             new WritableBooleanPropertyKey();
 
-    public static final PropertyKey[] ALL_KEYS = {QRCODE_BITMAP, ERROR_STRING,
-            HAS_STORAGE_PERMISSION, CAN_PROMPT_FOR_PERMISSION, IS_ON_FOREGROUND};
+    public static final PropertyKey[] ALL_KEYS = {
+        QRCODE_BITMAP,
+        ERROR_STRING,
+        HAS_STORAGE_PERMISSION,
+        CAN_PROMPT_FOR_PERMISSION,
+        IS_ON_FOREGROUND
+    };
 }

@@ -4,19 +4,24 @@
 
 #include "third_party/blink/renderer/modules/webgpu/wgsl_language_features.h"
 
+#include "third_party/blink/renderer/modules/webgpu/dawn_enum_conversions.h"
+
 namespace blink {
 
-WGSLLanguageFeatures::WGSLLanguageFeatures() = default;
-
-bool WGSLLanguageFeatures::has(const String& feature) const {
-  return features_.Contains(feature);
+WGSLLanguageFeatures::WGSLLanguageFeatures(
+    const std::vector<wgpu::WGSLLanguageFeatureName>& features) {
+  for (const auto& dawn_feature : features) {
+    if (const char* feature = FromDawnEnum(dawn_feature)) {
+      features_.insert(feature);
+    }
+  }
 }
 
 bool WGSLLanguageFeatures::hasForBinding(
     ScriptState* script_state,
     const String& feature,
     ExceptionState& exception_state) const {
-  return has(feature);
+  return features_.Contains(feature);
 }
 
 WGSLLanguageFeatures::IterationSource::IterationSource(

@@ -4,29 +4,27 @@
 
 #include "components/performance_manager/public/metrics/metrics_collector.h"
 
-#include <set>
-#include <string>
+#include <optional>
+#include <string_view>
 
-#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
-#include "components/performance_manager/public/graph/graph_operations.h"
 #include "components/performance_manager/public/graph/node_attached_data.h"
 #include "content/public/common/process_type.h"
+#include "url/origin.h"
 
 namespace performance_manager {
 
 namespace {
 
-void RecordProcessLifetime(const std::string& histogram_name,
+void RecordProcessLifetime(std::string_view histogram_name,
                            base::TimeDelta lifetime) {
   base::UmaHistogramCustomTimes(histogram_name, lifetime, base::Seconds(1),
                                 base::Days(1), 100);
 }
 
-void RecordShortProcessLifetime(const std::string& histogram_name,
+void RecordShortProcessLifetime(std::string_view histogram_name,
                                 base::TimeDelta lifetime) {
   base::UmaHistogramLongTimes(histogram_name, lifetime);
 }
@@ -91,13 +89,11 @@ MetricsCollector::MetricsCollector() = default;
 MetricsCollector::~MetricsCollector() = default;
 
 void MetricsCollector::OnPassedToGraph(Graph* graph) {
-  graph_ = graph;
   RegisterObservers(graph);
 }
 
 void MetricsCollector::OnTakenFromGraph(Graph* graph) {
   UnregisterObservers(graph);
-  graph_ = nullptr;
 }
 
 void MetricsCollector::OnUkmSourceIdChanged(const PageNode* page_node) {
@@ -115,11 +111,10 @@ void MetricsCollector::OnMainFrameDocumentChanged(const PageNode* page_node) {
     return;
   }
 
-  for (const auto* page_node_it : graph_->GetAllPageNodes()) {
-    if (page_node_it != page_node) {
-      if (page_node_it->GetBrowserContextID() ==
-              page_node->GetBrowserContextID() &&
-          url::IsSameOriginWith(page_node_it->GetMainFrameUrl(),
+  for (const PageNode* page : GetOwningGraph()->GetAllPageNodes()) {
+    if (page != page_node) {
+      if (page->GetBrowserContextID() == page_node->GetBrowserContextID() &&
+          url::IsSameOriginWith(page->GetMainFrameUrl(),
                                 page_node->GetMainFrameUrl())) {
         found_same_origin_page = true;
         break;
@@ -134,8 +129,9 @@ void MetricsCollector::OnMainFrameDocumentChanged(const PageNode* page_node) {
 void MetricsCollector::OnProcessLifetimeChange(
     const ProcessNode* process_node) {
   // Ignore process creation.
-  if (!process_node->GetExitStatus().has_value())
+  if (!process_node->GetExitStatus().has_value()) {
     return;
+  }
 
   OnProcessDestroyed(process_node);
 }
@@ -144,8 +140,9 @@ void MetricsCollector::OnBeforeProcessNodeRemoved(
     const ProcessNode* process_node) {
   // If the ProcessNode is destroyed with a valid process handle, consider this
   // the end of the process' life.
-  if (process_node->GetProcess().IsValid())
+  if (process_node->GetProcess().IsValid()) {
     OnProcessDestroyed(process_node);
+  }
 }
 
 // static
@@ -163,13 +160,11 @@ MetricsCollector::UkmCollectionState* MetricsCollector::GetUkmCollectionState(
 }
 
 void MetricsCollector::RegisterObservers(Graph* graph) {
-  graph->AddFrameNodeObserver(this);
   graph->AddPageNodeObserver(this);
   graph->AddProcessNodeObserver(this);
 }
 
 void MetricsCollector::UnregisterObservers(Graph* graph) {
-  graph->RemoveFrameNodeObserver(this);
   graph->RemovePageNodeObserver(this);
   graph->RemoveProcessNodeObserver(this);
 }

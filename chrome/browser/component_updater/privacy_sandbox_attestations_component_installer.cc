@@ -18,12 +18,14 @@
 #include "base/path_service.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/component_updater/component_installer.h"
 #include "components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
+#include "components/startup_metric_utils/browser/startup_metric_utils.h"
 #include "components/update_client/update_client.h"
 
 namespace {
@@ -60,7 +62,7 @@ PrivacySandboxAttestationsComponentInstallerPolicy::
 bool PrivacySandboxAttestationsComponentInstallerPolicy::VerifyInstallation(
     const base::Value::Dict& manifest,
     const base::FilePath& install_dir) const {
-  return base::PathExists(GetInstalledPath(install_dir));
+  return base::PathExists(GetInstalledFilePath(install_dir));
 }
 
 bool PrivacySandboxAttestationsComponentInstallerPolicy::
@@ -102,10 +104,19 @@ void PrivacySandboxAttestationsComponentInstallerPolicy::ComponentReady(
     return;
   }
 
+  // Record the time taken for the downloaded attestations file to be detected.
+  startup_metric_utils::GetBrowser().RecordPrivacySandboxAttestationsFirstReady(
+      base::TimeTicks::Now());
+
   VLOG(1) << "Privacy Sandbox Attestations Component ready, version "
           << version.GetString() << " in " << install_dir.value();
 
-  on_attestations_ready_.Run(std::move(version), std::move(install_dir));
+  on_attestations_ready_.Run(
+      std::move(version),
+      /*installed_file_path=*/
+      PrivacySandboxAttestationsComponentInstallerPolicy::GetInstalledFilePath(
+          install_dir),
+      /*is_pre_installed=*/manifest.FindBool("pre_installed").value_or(false));
 }
 
 base::FilePath
@@ -131,16 +142,25 @@ PrivacySandboxAttestationsComponentInstallerPolicy::GetInstallerAttributes()
   return update_client::InstallerAttributes();
 }
 
+void PrivacySandboxAttestationsComponentInstallerPolicy::
+    ComponentReadyForTesting(const base::Version& version,
+                             const base::FilePath& install_dir,
+                             base::Value::Dict manifest) {
+  ComponentReady(version, install_dir, std::move(manifest));
+}
+
+// static
+base::FilePath
+PrivacySandboxAttestationsComponentInstallerPolicy::GetInstalledFilePath(
+    const base::FilePath& base) {
+  return base.Append(kPrivacySandboxAttestationsFileName);
+}
+
+// static
 base::FilePath
 PrivacySandboxAttestationsComponentInstallerPolicy::GetInstalledDirectory(
     const base::FilePath& base) {
   return base.Append(kPrivacySandboxAttestationsRelativeInstallDir);
-}
-
-base::FilePath
-PrivacySandboxAttestationsComponentInstallerPolicy::GetInstalledPath(
-    const base::FilePath& base) {
-  return base.Append(kPrivacySandboxAttestationsFileName);
 }
 
 void RegisterPrivacySandboxAttestationsComponent(ComponentUpdateService* cus) {
@@ -163,15 +183,22 @@ void RegisterPrivacySandboxAttestationsComponent(ComponentUpdateService* cus) {
   auto policy =
       std::make_unique<PrivacySandboxAttestationsComponentInstallerPolicy>(
           /*on_attestations_ready=*/base::BindRepeating(
-              [](base::Version version, base::FilePath install_dir) {
+              [](base::Version version, base::FilePath install_dir,
+                 bool is_pre_installed) {
                 VLOG(1) << "Received privacy sandbox attestations file";
                 privacy_sandbox::PrivacySandboxAttestations::GetInstance()
                     ->LoadAttestations(std::move(version),
-                                       std::move(install_dir));
+                                       std::move(install_dir),
+                                       is_pre_installed);
               }));
 
-  base::MakeRefCounted<ComponentInstaller>(std::move(policy))
-      ->Register(cus, base::OnceClosure(), base::TaskPriority::BEST_EFFORT);
+  base::MakeRefCounted<ComponentInstaller>(std::move(policy),
+                                           /*action_handler=*/nullptr,
+                                           base::TaskPriority::USER_BLOCKING)
+      ->Register(cus, base::BindOnce([]() {
+                   privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+                       ->OnAttestationsFileCheckComplete();
+                 }));
 }
 
 }  // namespace component_updater

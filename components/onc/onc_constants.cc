@@ -24,6 +24,7 @@ const char kRemove[] = "Remove";
 
 // Top Level Configuration
 namespace toplevel_config {
+const char kAdminAPNList[] = "AdminAPNList";
 const char kCertificates[] = "Certificates";
 const char kEncryptedConfiguration[] = "EncryptedConfiguration";
 const char kNetworkConfigurations[] = "NetworkConfigurations";
@@ -35,6 +36,7 @@ const char kUnencryptedConfiguration[] = "UnencryptedConfiguration";
 // Network Configuration
 namespace network_config {
 const char kCellular[] = "Cellular";
+const char kCheckCaptivePortal[] = "CheckCaptivePortal";
 const char kConnectable[] = "Connectable";
 const char kConnectionState[] = "ConnectionState";
 const char kDevice[] = "Device";
@@ -96,6 +98,12 @@ const char kWimaxDeprecated[] = "WiMAX";
 const char kWireless[] = "Wireless";
 }  // namespace network_type
 
+namespace check_captive_portal {
+const char kFalse[] = "False";
+const char kHTTPOnly[] = "HTTPOnly";
+const char kTrue[] = "True";
+}  // namespace check_captive_portal
+
 namespace cellular {
 const char kActivationState[] = "ActivationState";
 const char kActivated[] = "Activated";
@@ -104,6 +112,7 @@ const char kAutoConnect[] = "AutoConnect";
 const char kNotActivated[] = "NotActivated";
 const char kPartiallyActivated[] = "PartiallyActivated";
 const char kActivationType[] = "ActivationType";
+const char kAdminAssignedAPNIds[] = "AdminAssignedAPNIds";
 const char kAllowRoaming[] = "AllowRoaming";
 const char kAPN[] = "APN";
 const char kAPNList[] = "APNList";
@@ -187,6 +196,12 @@ const char kIpTypeIpv4Ipv6[] = "IPv4orIPv6";
 const char kApnTypes[] = "ApnTypes";
 const char kApnTypeDefault[] = "Default";
 const char kApnTypeAttach[] = "Attach";
+const char kApnTypeTether[] = "Tether";
+const char kSource[] = "Source";
+const char kSourceModem[] = "Modem";
+const char kSourceModb[] = "Modb";
+const char kSourceUi[] = "Ui";
+const char kSourceAdmin[] = "Admin";
 }  // namespace cellular_apn
 
 namespace cellular_found_network {
@@ -241,6 +256,7 @@ const char kIncludedRoutes[] = "IncludedRoutes";
 const char kExcludedRoutes[] = "ExcludedRoutes";
 const char kType[] = "Type";
 const char kWebProxyAutoDiscoveryUrl[] = "WebProxyAutoDiscoveryUrl";
+const char kMTU[] = "MTU";
 }  // namespace ipconfig
 
 namespace wifi {
@@ -336,6 +352,7 @@ const char kStretch[] = "Stretch";
 namespace eap {
 const char kAnonymousIdentity[] = "AnonymousIdentity";
 const char kAutomatic[] = "Automatic";
+const char kCHAP[] = "CHAP";
 const char kDomainSuffixMatch[] = "DomainSuffixMatch";
 const char kEAP_AKA[] = "EAP-AKA";
 const char kEAP_FAST[] = "EAP-FAST";
@@ -484,6 +501,8 @@ const char kProviderName[] = "ProviderName";
 }  // third_party_vpn
 
 namespace arc_vpn {
+// Deprecated. Property left here for ONC backward compatibility. See
+// b/185202698 for details.
 const char kTunnelChrome[] = "TunnelChrome";
 }  // namespace arc_vpn
 
@@ -531,7 +550,9 @@ const char kPasswordPlaceholderVerbatim[] = "${PASSWORD}";
 }  // namespace substitutes
 
 namespace global_network_config {
+const char kAllowAPNModification[] = "AllowAPNModification";
 const char kAllowCellularSimLock[] = "AllowCellularSimLock";
+const char kAllowCellularHotspot[] = "AllowCellularHotspot";
 const char kAllowOnlyPolicyCellularNetworks[] =
     "AllowOnlyPolicyCellularNetworks";
 const char kAllowOnlyPolicyNetworksToAutoconnect[] =
@@ -553,6 +574,14 @@ const char* const kAllowTextMessages = "AllowTextMessages";
 const char kBlacklistedHexSSIDs[] = "BlacklistedHexSSIDs";  // Deprecated
 const char kBlockedHexSSIDs[] = "BlockedHexSSIDs";
 const char kDisableNetworkTypes[] = "DisableNetworkTypes";
+const char kPSIMAdminAssignedAPNIds[] = "PSIMAdminAssignedAPNIds";
+const char kPSIMAdminAssignedAPNs[] = "PSIMAdminAssignedAPNs";
+const char kRecommendedValuesAreEphemeral[] = "RecommendedValuesAreEphemeral";
+const char kUserCreatedNetworkConfigurationsAreEphemeral[] =
+    "UserCreatedNetworkConfigurationsAreEphemeral";
+const char kDisconnectWiFiOnEthernet[] = "DisconnectWiFiOnEthernet";
+const char kDisconnectWiFiOnEthernetWhenConnected[] = "WhenConnected";
+const char kDisconnectWiFiOnEthernetWhenOnline[] = "WhenOnline";
 }  // global_network_config
 
 namespace device_state {

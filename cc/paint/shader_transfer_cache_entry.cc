@@ -28,7 +28,6 @@ bool ServiceShaderTransferCacheEntry::Deserialize(
     base::span<const uint8_t> data) {
   // These entries must be created directly via CreateLocalEntry.
   NOTREACHED();
-  return false;
 }
 
 }  // namespace cc

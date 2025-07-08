@@ -7,7 +7,7 @@
 #include "base/values.h"
 #include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 #include "ui/chromeos/devicetype_utils.h"
@@ -59,6 +59,8 @@ void UserCreationScreenHandler::DeclareLocalizedValues(
                IDS_OOBE_USER_CREATION_ENROLL_USE_BUTTON_DESCRIPTION);
   builder->Add("userCreationEnrollLearnMore",
                IDS_OOBE_USER_CREATION_ENROLL_LEARN_MORE);
+  builder->Add("userCreationLearnMoreAria",
+               IDS_OOBE_USER_CREATION_ENROLL_LEARN_MORE_ARIA);
 
   // Enrollment Triage Strings
   builder->Add("userCreationEnrollTriageTitle",
@@ -100,12 +102,20 @@ void UserCreationScreenHandler::Show() {
   ShowInWebUI();
 }
 
+void UserCreationScreenHandler::SetDefaultStep() {
+  CallExternalAPI("setDefaultStep");
+}
+
 void UserCreationScreenHandler::SetTriageStep() {
   CallExternalAPI("setTriageStep");
 }
 
 void UserCreationScreenHandler::SetChildSetupStep() {
   CallExternalAPI("setChildSetupStep");
+}
+
+base::WeakPtr<UserCreationView> UserCreationScreenHandler::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 void UserCreationScreenHandler::SetIsBackButtonVisible(bool value) {

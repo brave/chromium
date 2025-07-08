@@ -6,12 +6,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_PALETTE_MIX_VALUE_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
+
+class CSSPrimitiveValue;
+
 namespace cssvalue {
 
 class CORE_EXPORT CSSPaletteMixValue : public CSSValue {
@@ -31,7 +33,7 @@ class CORE_EXPORT CSSPaletteMixValue : public CSSValue {
         color_interpolation_space_(color_interpolation_space),
         hue_interpolation_method_(hue_interpolation_method) {}
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   void TraceAfterDispatch(blink::Visitor* visitor) const;
 
@@ -39,8 +41,8 @@ class CORE_EXPORT CSSPaletteMixValue : public CSSValue {
 
   const CSSValue& Palette1() const { return *palette1_; }
   const CSSValue& Palette2() const { return *palette2_; }
-  const CSSPrimitiveValue* Percentage1() const { return percentage1_; }
-  const CSSPrimitiveValue* Percentage2() const { return percentage2_; }
+  const CSSPrimitiveValue* Percentage1() const { return percentage1_.Get(); }
+  const CSSPrimitiveValue* Percentage2() const { return percentage2_.Get(); }
   Color::ColorSpace ColorInterpolationSpace() const {
     return color_interpolation_space_;
   }

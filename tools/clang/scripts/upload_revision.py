@@ -64,16 +64,19 @@ Cq-Include-Trybots: chromium/try:linux_chromium_cfi_rel_ng
 Cq-Include-Trybots: chromium/try:linux_chromium_chromeos_msan_rel_ng
 Cq-Include-Trybots: chromium/try:linux_chromium_msan_rel_ng
 Cq-Include-Trybots: chromium/try:mac11-arm64-rel,mac_chromium_asan_rel_ng
-Cq-Include-Trybots: chromium/try:ios-catalyst
-Cq-Include-Trybots: chromium/try:win-asan
-Cq-Include-Trybots: chromium/try:android-official,fuchsia-official
+Cq-Include-Trybots: chromium/try:ios-catalyst,win-asan,android-official
+Cq-Include-Trybots: chromium/try:fuchsia-arm64-cast-receiver-rel
 Cq-Include-Trybots: chromium/try:mac-official,linux-official
 Cq-Include-Trybots: chromium/try:win-official,win32-official
+Cq-Include-Trybots: chromium/try:win-arm64-rel
 Cq-Include-Trybots: chromium/try:linux-swangle-try-x64,win-swangle-try-x86
+Cq-Include-Trybots: chromium/try:android-cronet-riscv64-dbg
+Cq-Include-Trybots: chromium/try:android-cronet-riscv64-rel
 Cq-Include-Trybots: chrome/try:iphone-device,ipad-device
 Cq-Include-Trybots: chrome/try:linux-chromeos-chrome
 Cq-Include-Trybots: chrome/try:win-chrome,win64-chrome,linux-chrome,mac-chrome
-Cq-Include-Trybots: chrome/try:linux-pgo,mac-pgo,win32-pgo,win64-pgo'''
+Cq-Include-Trybots: chrome/try:linux-pgo,mac-pgo,win32-pgo,win64-pgo
+Cq-Include-Trybots: luci.chromium.try:linux-cast-x64-rel'''
 
 RUST_BOTS = \
 '''Cq-Include-Trybots: chromium/try:android-rust-arm32-rel
@@ -184,13 +187,14 @@ def PatchRustRevision(new_version: RustVersion) -> RustVersion:
 
 
 def PatchRustStage0():
-  verify_stage0 = subprocess.run([BUILD_RUST_PY_PATH, '--verify-stage0-hash'],
-                                 capture_output=True,
-                                 text=True)
+  verify_stage0 = subprocess.run(
+      [sys.executable, BUILD_RUST_PY_PATH, '--verify-stage0-hash'],
+      capture_output=True,
+      text=True)
   if verify_stage0.returncode == 0:
     return
 
-  # TODO(crbug.com/1405814): We're printing a warning that the hash has
+  # TODO(crbug.com/40252478): We're printing a warning that the hash has
   # changed, but we could require a verification step of some sort here. We
   # should do the same for both Rust and Clang if we do so.
   print(verify_stage0.stdout)
@@ -236,15 +240,9 @@ def Git(*args, no_run: bool):
     subprocess.check_call(['git'] + list(args), shell=is_win)
 
 
-def GitDiffHasChanges(from_git_hash, to_git_hash, glob, git_dir):
-  diff = subprocess.check_output(
-      ['git', '-C', git_dir, 'diff', f'{from_git_hash}..{to_git_hash}', glob])
-  return bool(diff)
-
-
 def main():
   parser = argparse.ArgumentParser(description='upload new clang revision')
-  # TODO(crbug.com/1401042): Remove this when the cron job doesn't pass a SHA.
+  # TODO(crbug.com/40250560): Remove this when the cron job doesn't pass a SHA.
   parser.add_argument(
       'ignored',
       nargs='?',
@@ -338,12 +336,6 @@ def main():
     if not args.skip_clang:
       PatchRustRemoveOverride()
 
-    # Changes to this file may require changes to gnrt or build_rust.py.
-    has_bootstrap_dist_changes = GitDiffHasChanges(old_rust_version.git_hash,
-                                                   rust_version.git_hash,
-                                                   'src/bootstrap/dist.rs',
-                                                   RUST_SRC_DIR)
-
   if args.skip_clang:
     clang_change = '[skipping Clang]'
     clang_change_log = ''
@@ -363,17 +355,6 @@ def main():
                        f'{old_rust_version.short_git_hash}..'
                        f'{rust_version.short_git_hash}'
                        f'\n\n')
-    if has_bootstrap_dist_changes:
-      rust_change_log += (
-          f'bootstrap/dist.rs changes: '
-          f'{RUST_GIT_URL}/+log/'
-          f'{old_rust_version.short_git_hash}..'
-          f'{rust_version.short_git_hash}'
-          f'/src/bootstrap/dist.rs\n'
-          f'Changes to the `cargo vendor` step need to be reflected in\n'
-          f'`CargoVendor() in //tools/rust/build_rust.py and in\n'
-          f'`gnrt gen --for-std` in //tools/crates/gnrt/gen.rs.'
-          f'\n\n')
 
   title = f'Roll clang+rust {clang_change} / {rust_change}'
 
@@ -389,7 +370,7 @@ def main():
       RUST_UPDATE_PY_PATH,
       no_run=args.no_git)
   Git('commit', '-m', commit_message, no_run=args.no_git)
-  Git('cl', 'upload', '-f', '--bypass-hooks', no_run=args.no_git)
+  Git('cl', 'upload', '-f', '--bypass-hooks', '--squash', no_run=args.no_git)
   if not args.skip_clang:
     Git('cl',
         'try',
@@ -406,7 +387,10 @@ def main():
       no_run=args.no_git)
 
   print('Please, wait until the try bots succeeded '
-        'and then push the binaries to goma.')
+        'and then push the binaries to RBE.')
+  print()
+  print('To update the Clang/Rust DEPS entries, run:\n  '
+        'tools/clang/scripts/sync_deps.py')
   print()
   print('To regenerate BUILD.gn rules for Rust stdlib (needed if dep versions '
         'in the stdlib change for example), run:\n  tools/rust/gnrt_stdlib.py.')

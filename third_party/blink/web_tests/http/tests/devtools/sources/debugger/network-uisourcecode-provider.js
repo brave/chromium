@@ -5,9 +5,12 @@
 import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+
 (async function() {
   TestRunner.addResult(`Tests NetworkUISourceCodeProvider class.\n`);
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.evaluateInPagePromise(`
       function removeStyleSheet()
@@ -26,13 +29,13 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
   function dumpUISourceCode(uiSourceCode, callback) {
     TestRunner.addResult('UISourceCode: ' + uiSourceCodeURL(uiSourceCode));
-    if (uiSourceCode.contentType() === Common.resourceTypes.Script ||
-        uiSourceCode.contentType() === Common.resourceTypes.Document)
+    if (uiSourceCode.contentType() === Common.ResourceType.resourceTypes.Script ||
+        uiSourceCode.contentType() === Common.ResourceType.resourceTypes.Document)
       TestRunner.addResult(
           'UISourceCode is content script: ' +
           (uiSourceCode.project().type() ===
-           Workspace.projectTypes.ContentScripts));
-    uiSourceCode.requestContent().then(didRequestContent);
+           Workspace.Workspace.projectTypes.ContentScripts));
+    uiSourceCode.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent).then(didRequestContent);
 
     function didRequestContent({ content, error, isEncoded }) {
       TestRunner.addResult('Highlighter type: ' + uiSourceCode.mimeType());
@@ -57,7 +60,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
       TestRunner.addResult('Creating script.');
       TestRunner.evaluateInPageAnonymously(
           'var foo=1;\n//# sourceURL=foo.js\n');
-      TestRunner.waitForUISourceCode('foo.js', Workspace.projectTypes.Network).then(uiSourceCodeAdded);
+      TestRunner.waitForUISourceCode('foo.js', Workspace.Workspace.projectTypes.Network).then(uiSourceCodeAdded);
 
       function uiSourceCodeAdded(uiSourceCode) {
         dumpUISourceCode(uiSourceCode, next);
@@ -66,7 +69,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
     function testScriptResource(next) {
       TestRunner.addResult('Creating script resource.');
-      TestRunner.waitForUISourceCode('script1.js', Workspace.projectTypes.Network).then(uiSourceCodeAdded);
+      TestRunner.waitForUISourceCode('script1.js', Workspace.Workspace.projectTypes.Network).then(uiSourceCodeAdded);
       TestRunner.addScriptTag('resources/script1.js');
 
       function uiSourceCodeAdded(uiSourceCode) {

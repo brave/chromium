@@ -16,15 +16,11 @@ size_t g_dictionary_size_limit = kDictionarySizeLimit;
 
 }  // namespace
 
-const char kSbrContentEncodingName[] = "sbr";
-
-const char kSecAvailableDictionaryHeaderName[] = "sec-available-dictionary";
-
 const char kUseAsDictionaryHeaderName[] = "use-as-dictionary";
-
 const char kOptionNameMatch[] = "match";
-const char kOptionNameExpires[] = "expires";
-const char kOptionNameAlgorithms[] = "algorithms";
+const char kOptionNameMatchDest[] = "match-dest";
+const char kOptionNameType[] = "type";
+const char kOptionNameId[] = "id";
 
 size_t GetDictionarySizeLimit() {
   return g_dictionary_size_limit;

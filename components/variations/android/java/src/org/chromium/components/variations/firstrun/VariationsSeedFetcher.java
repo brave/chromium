@@ -4,11 +4,12 @@
 
 package org.chromium.components.variations.firstrun;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -21,6 +22,8 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.variations.VariationsCompressionUtils;
 import org.chromium.components.variations.VariationsCompressionUtils.DeltaPatchException;
 import org.chromium.components.variations.VariationsCompressionUtils.InstanceManipulations;
@@ -46,34 +49,39 @@ import java.util.List;
 import java.util.Objects;
 
 /** Fetches the variations seed before the actual first run of Chrome. */
+@NullMarked
 public class VariationsSeedFetcher {
     private static final String TAG = "VariationsSeedFetch";
 
     // Note: ChromeVariations = 2 means "Disable all variations".
     private static final NetworkTrafficAnnotationTag TRAFFIC_ANNOTATION =
-            NetworkTrafficAnnotationTag.createComplete("chrome_variations_android",
-                    "semantics {"
-                            + "  sender: 'Chrome Variations Service (Android)'"
-                            + "  description:"
-                            + "      'The variations service is responsible for determining the '"
-                            + "      'state of field trials in Chrome. These field trials '"
-                            + "      'typically configure either A/B experiments, or launched '"
-                            + "      'features – oftentimes, critical security features.'"
-                            + "  trigger: 'This request is made once, on Chrome\\'s first run, to '"
-                            + "           'determine the initial state Chrome should be in.'"
-                            + "  data: 'None.'"
-                            + "  destination: GOOGLE_OWNED_SERVICE"
-                            + "}"
-                            + "policy {"
-                            + "  cookies_allowed: NO"
-                            + "  setting: 'Cannot be disabled in Settings. Chrome Variations are '"
-                            + "           'an essential part of Chrome releases.'"
-                            + "  chrome_policy {"
-                            + "    ChromeVariations {"
-                            + "      ChromeVariations: 2"
-                            + "    }"
-                            + "  }"
-                            + "}");
+            NetworkTrafficAnnotationTag.createComplete(
+                    "chrome_variations_android",
+                    """
+                    semantics {
+                      sender: "Chrome Variations Service (Android)"
+                      description:
+                          "The variations service is responsible for determining the state of "
+                          "field trials in Chrome. These field trials typically configure either "
+                          "A/B experiments, or launched features – oftentimes, critical security "
+                          "features."
+                      trigger:
+                        "This request is made once, on Chrome's first run, to determine the "
+                        "initial state Chrome should be in."
+                      data: "None."
+                      destination: GOOGLE_OWNED_SERVICE
+                    }
+                    policy {
+                      cookies_allowed: NO
+                      setting:
+                        "Cannot be disabled in Settings. Chrome Variations are an essential part "
+                        "of Chrome releases."
+                      chrome_policy {
+                        ChromeVariations {
+                          ChromeVariations: 2
+                        }
+                      }
+                    }""");
 
     @IntDef({VariationsPlatform.ANDROID, VariationsPlatform.ANDROID_WEBVIEW})
     @Retention(RetentionPolicy.SOURCE)
@@ -97,18 +105,14 @@ public class VariationsSeedFetcher {
     // Values for the "Variations.FirstRun.SeedFetchResult" sparse histogram, which also logs
     // HTTP result codes. These are negative so that they don't conflict with the HTTP codes.
     // These values should not be renumbered or re-used since they are logged to UMA.
-    @VisibleForTesting
-    public static final int SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION = -6;
-    @VisibleForTesting
-    public static final int SEED_FETCH_RESULT_INVALID_IM_HEADER = -5;
+    @VisibleForTesting public static final int SEED_FETCH_RESULT_DELTA_PATCH_EXCEPTION = -6;
+    @VisibleForTesting public static final int SEED_FETCH_RESULT_INVALID_IM_HEADER = -5;
     // private static final int SEED_FETCH_RESULT_INVALID_DATE_HEADER = -4;
     private static final int SEED_FETCH_RESULT_UNKNOWN_HOST_EXCEPTION = -3;
     private static final int SEED_FETCH_RESULT_TIMEOUT = -2;
-    @VisibleForTesting
-    public static final int SEED_FETCH_RESULT_IOEXCEPTION = -1;
+    @VisibleForTesting public static final int SEED_FETCH_RESULT_IOEXCEPTION = -1;
 
-    @VisibleForTesting
-    static final String VARIATIONS_INITIALIZED_PREF = "variations_initialized";
+    @VisibleForTesting static final String VARIATIONS_INITIALIZED_PREF = "variations_initialized";
 
     @VisibleForTesting
     public static final String SEED_FETCH_DELTA_COMPRESSION =
@@ -119,9 +123,13 @@ public class VariationsSeedFetcher {
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
     @VisibleForTesting
-    @IntDef({DeltaCompression.REQUESTED_RECEIVED, DeltaCompression.REQUESTED_NOT_RECEIVED,
-            DeltaCompression.NOT_REQUESTED_RECEIVED, DeltaCompression.NOT_REQUESTED_NOT_RECEIVED,
-            DeltaCompression.NUM_ENTRIES})
+    @IntDef({
+        DeltaCompression.REQUESTED_RECEIVED,
+        DeltaCompression.REQUESTED_NOT_RECEIVED,
+        DeltaCompression.NOT_REQUESTED_RECEIVED,
+        DeltaCompression.NOT_REQUESTED_NOT_RECEIVED,
+        DeltaCompression.NUM_ENTRIES
+    })
     public @interface DeltaCompression {
         int REQUESTED_RECEIVED = 0;
         int REQUESTED_NOT_RECEIVED = 1;
@@ -158,7 +166,7 @@ public class VariationsSeedFetcher {
     // Synchronization lock to make singleton thread-safe.
     private static final Object sLock = new Object();
 
-    private static VariationsSeedFetcher sInstance;
+    private static @Nullable VariationsSeedFetcher sInstance;
 
     @VisibleForTesting
     public VariationsSeedFetcher() {}
@@ -197,8 +205,8 @@ public class VariationsSeedFetcher {
     @VisibleForTesting
     protected List<String> getAvailableInstanceManipulations() {
         List<String> compressions = new ArrayList<String>();
-        if (CommandLine.getInstance().hasSwitch(
-                    VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)) {
+        if (CommandLine.getInstance()
+                .hasSwitch(VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)) {
             compressions.add(VariationsCompressionUtils.DELTA_COMPRESSION_HEADER);
         }
         compressions.add(VariationsCompressionUtils.GZIP_COMPRESSION_HEADER);
@@ -207,11 +215,13 @@ public class VariationsSeedFetcher {
 
     @VisibleForTesting
     protected String getConnectionString(SeedFetchParameters params) {
-        // TODO(crbug/1302862): Consider reusing native VariationsService::GetVariationsServerURL().
+        // TODO(crbug.com/40825562): Consider reusing native
+        // VariationsService::GetVariationsServerURL().
         String urlString;
         if (CommandLine.getInstance().hasSwitch(VariationsSwitches.VARIATIONS_SERVER_URL)) {
-            urlString = CommandLine.getInstance().getSwitchValue(
-                    VariationsSwitches.VARIATIONS_SERVER_URL);
+            urlString =
+                    CommandLine.getInstance()
+                            .getSwitchValue(VariationsSwitches.VARIATIONS_SERVER_URL);
         } else if (params.mIsFastFetchMode) {
             urlString = DEFAULT_FAST_VARIATIONS_SERVER_URL;
         } else {
@@ -236,8 +246,9 @@ public class VariationsSeedFetcher {
             urlString += "&milestone=" + params.mMilestone;
         }
 
-        String forcedChannel = CommandLine.getInstance().getSwitchValue(
-                VariationsSwitches.FAKE_VARIATIONS_CHANNEL);
+        String forcedChannel =
+                CommandLine.getInstance()
+                        .getSwitchValue(VariationsSwitches.FAKE_VARIATIONS_CHANNEL);
         if (forcedChannel != null) {
             params.mChannel = forcedChannel;
         }
@@ -250,11 +261,11 @@ public class VariationsSeedFetcher {
 
     /** Object holding information about the seed download parameters. */
     public static class SeedFetchParameters {
-        private @VariationsPlatform int mPlatform;
-        private String mRestrictMode;
-        private String mMilestone;
-        private String mChannel;
-        private boolean mIsFastFetchMode;
+        private final @VariationsPlatform int mPlatform;
+        private final @Nullable String mRestrictMode;
+        private final @Nullable String mMilestone;
+        private @Nullable String mChannel;
+        private final boolean mIsFastFetchMode;
 
         // This is added as a convenience for using Mockito.
         @Override
@@ -276,8 +287,12 @@ public class VariationsSeedFetcher {
             return Objects.hash(mPlatform, mRestrictMode, mMilestone, mChannel, mIsFastFetchMode);
         }
 
-        private SeedFetchParameters(@VariationsPlatform int platform, String restrictMode,
-                String milestone, String channel, boolean isFastFetchMode) {
+        private SeedFetchParameters(
+                @VariationsPlatform int platform,
+                @Nullable String restrictMode,
+                @Nullable String milestone,
+                @Nullable String channel,
+                boolean isFastFetchMode) {
             this.mPlatform = platform;
             this.mRestrictMode = restrictMode;
             this.mMilestone = milestone;
@@ -288,9 +303,9 @@ public class VariationsSeedFetcher {
         /** Builder class for {@link SeedFetchParameters}. */
         public static class Builder {
             private @VariationsPlatform int mPlatform;
-            private String mRestrictMode;
-            private String mMilestone;
-            private String mChannel;
+            private @Nullable String mRestrictMode;
+            private @Nullable String mMilestone;
+            private @Nullable String mChannel;
             private boolean mIsFastFetchMode;
 
             private Builder() {
@@ -312,7 +327,7 @@ public class VariationsSeedFetcher {
                 return this;
             }
 
-            public Builder setRestrictMode(String restrictMode) {
+            public Builder setRestrictMode(@Nullable String restrictMode) {
                 this.mRestrictMode = restrictMode;
                 return this;
             }
@@ -338,15 +353,15 @@ public class VariationsSeedFetcher {
             return mPlatform;
         }
 
-        public String getRestrictMode() {
+        public @Nullable String getRestrictMode() {
             return mRestrictMode;
         }
 
-        public String getMilestone() {
+        public @Nullable String getMilestone() {
             return mMilestone;
         }
 
-        public String getChannel() {
+        public @Nullable String getChannel() {
             return mChannel;
         }
 
@@ -364,27 +379,29 @@ public class VariationsSeedFetcher {
         public int seedFetchResult;
 
         // Information about the seed that was downloaded. Null if the download failed.
-        public SeedInfo seedInfo;
+        public @Nullable SeedInfo seedInfo;
     }
 
     /** Object holding the seed data and related fields retrieved from HTTP headers. */
     public static class SeedInfo {
         // If you add fields, see VariationsTestUtils.
-        public String signature;
-        public String country;
+        public @Nullable String signature;
+        public @Nullable String country;
         // Date according to the Variations server in milliseconds since UNIX epoch GMT.
         public long date;
         public boolean isGzipCompressed;
-        public byte[] seedData;
+        public byte @Nullable [] seedData;
 
         // Applies the {@code deltaPatch} to {@code previousSeedData} and returns the uncompressed
         // seed.
         @VisibleForTesting
-        public static byte[] resolveDeltaCompression(byte[] deltaPatch, byte[] previousSeedData,
-                boolean isGzipCompressed) throws DeltaPatchException {
-            assert CommandLine.getInstance().hasSwitch(
-                    VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)
-                : "Delta compression not enabled";
+        @SuppressWarnings("IgnoredPureGetter")
+        public static byte[] resolveDeltaCompression(
+                byte[] deltaPatch, byte @Nullable [] previousSeedData, boolean isGzipCompressed)
+                throws DeltaPatchException {
+            assert CommandLine.getInstance()
+                            .hasSwitch(VariationsSwitches.ENABLE_FINCH_SEED_DELTA_COMPRESSION)
+                    : "Delta compression not enabled";
             try {
                 if (isGzipCompressed) {
                     // Resolve gzip compression before applying the delta patch.
@@ -394,7 +411,6 @@ public class VariationsSeedFetcher {
                         VariationsCompressionUtils.applyDeltaPatch(previousSeedData, deltaPatch);
 
                 // Parse seed to make sure the decompression was successful.
-                VariationsSeed.parseFrom(patchedSeed);
 
                 return patchedSeed;
             } catch (IOException e) {
@@ -405,7 +421,7 @@ public class VariationsSeedFetcher {
 
         // Resolves the gzip compression of {@code seedData} and returns the byte array.
         @VisibleForTesting
-        public byte[] getVariationsSeedBytes() throws IOException {
+        public byte @Nullable [] getVariationsSeedBytes() throws IOException {
             if (this.isGzipCompressed) {
                 return VariationsCompressionUtils.gzipUncompress(this.seedData);
             }
@@ -414,9 +430,9 @@ public class VariationsSeedFetcher {
 
         // Returns the parsed VariationsSeed from {@code seedData}, if gzip compressed, resolves
         // gzip compression before parsing. Returns null if uncompressing or parsing fails.
-        @Nullable
+
         @VisibleForTesting
-        public VariationsSeed getParsedVariationsSeed() {
+        public @Nullable VariationsSeed getParsedVariationsSeed() {
             if (this.seedData == null) {
                 return null;
             }
@@ -436,9 +452,16 @@ public class VariationsSeedFetcher {
         @Override
         public String toString() {
             if (BuildConfig.ENABLE_ASSERTS) {
-                return "SeedInfo{signature=\"" + signature + "\" country=\"" + country
-                        + "\" date=\"" + date + "\" isGzipCompressed=" + isGzipCompressed
-                        + " seedData=" + Arrays.toString(seedData);
+                return "SeedInfo{signature=\""
+                        + signature
+                        + "\" country=\""
+                        + country
+                        + "\" date=\""
+                        + date
+                        + "\" isGzipCompressed="
+                        + isGzipCompressed
+                        + " seedData="
+                        + Arrays.toString(seedData);
             }
             return super.toString();
         }
@@ -476,8 +499,12 @@ public class VariationsSeedFetcher {
             SeedFetchInfo fetchInfo = downloadContent(params, null);
             if (fetchInfo.seedInfo != null) {
                 SeedInfo info = fetchInfo.seedInfo;
-                VariationsSeedBridge.setVariationsFirstRunSeed(info.seedData, info.signature,
-                        info.country, info.date, info.isGzipCompressed);
+                VariationsSeedBridge.setVariationsFirstRunSeed(
+                        info.seedData,
+                        info.signature,
+                        info.country,
+                        info.date,
+                        info.isGzipCompressed);
             }
             // VARIATIONS_INITIALIZED_PREF should still be set to true when exceptions occur
             prefs.edit().putBoolean(VARIATIONS_INITIALIZED_PREF, true).apply();
@@ -490,17 +517,25 @@ public class VariationsSeedFetcher {
 
     private void recordRequestedAndReceivedDeltaCompression(boolean requested, boolean received) {
         if (requested && received) {
-            RecordHistogram.recordEnumeratedHistogram(SEED_FETCH_DELTA_COMPRESSION,
-                    DeltaCompression.REQUESTED_RECEIVED, DeltaCompression.NUM_ENTRIES);
+            RecordHistogram.recordEnumeratedHistogram(
+                    SEED_FETCH_DELTA_COMPRESSION,
+                    DeltaCompression.REQUESTED_RECEIVED,
+                    DeltaCompression.NUM_ENTRIES);
         } else if (requested && !received) {
-            RecordHistogram.recordEnumeratedHistogram(SEED_FETCH_DELTA_COMPRESSION,
-                    DeltaCompression.REQUESTED_NOT_RECEIVED, DeltaCompression.NUM_ENTRIES);
+            RecordHistogram.recordEnumeratedHistogram(
+                    SEED_FETCH_DELTA_COMPRESSION,
+                    DeltaCompression.REQUESTED_NOT_RECEIVED,
+                    DeltaCompression.NUM_ENTRIES);
         } else if (!requested && received) {
-            RecordHistogram.recordEnumeratedHistogram(SEED_FETCH_DELTA_COMPRESSION,
-                    DeltaCompression.NOT_REQUESTED_RECEIVED, DeltaCompression.NUM_ENTRIES);
+            RecordHistogram.recordEnumeratedHistogram(
+                    SEED_FETCH_DELTA_COMPRESSION,
+                    DeltaCompression.NOT_REQUESTED_RECEIVED,
+                    DeltaCompression.NUM_ENTRIES);
         } else {
-            RecordHistogram.recordEnumeratedHistogram(SEED_FETCH_DELTA_COMPRESSION,
-                    DeltaCompression.NOT_REQUESTED_NOT_RECEIVED, DeltaCompression.NUM_ENTRIES);
+            RecordHistogram.recordEnumeratedHistogram(
+                    SEED_FETCH_DELTA_COMPRESSION,
+                    DeltaCompression.NOT_REQUESTED_NOT_RECEIVED,
+                    DeltaCompression.NUM_ENTRIES);
         }
     }
 
@@ -517,15 +552,11 @@ public class VariationsSeedFetcher {
     /**
      * Download the variations seed data with platform and restrictMode.
      *
-     * @param platform the platform parameter to let server only return experiments which can be run
-     *     on that platform.
-     * @param restrictMode the restrict mode parameter to pass to the server via a URL param.
-     * @param milestone the milestone parameter to pass to the server via a URL param.
-     * @param channel the channel parameter to pass to the server via a URL param.
-     * @param curSeedInfo optional currently saved seed info to set the `If-None-Match` header.
+     * @param currInfo optional currently saved seed info to set the `If-None-Match` header.
      * @return the object holds the request result and seed data with its related header fields.
      */
-    public SeedFetchInfo downloadContent(SeedFetchParameters params, SeedInfo currInfo) {
+    @SuppressWarnings("Finally")
+    public SeedFetchInfo downloadContent(SeedFetchParameters params, @Nullable SeedInfo currInfo) {
         SeedFetchInfo fetchInfo = new SeedFetchInfo();
         HttpURLConnection connection = null;
         try {
@@ -554,7 +585,7 @@ public class VariationsSeedFetcher {
                 SeedInfo seedInfo = new SeedInfo();
                 seedInfo.signature = getHeaderFieldOrEmpty(connection, "X-Seed-Signature");
                 seedInfo.country = getHeaderFieldOrEmpty(connection, "X-Country");
-                seedInfo.date = mDateTime.newDate().getTime();
+                seedInfo.date = connection.getHeaderFieldDate("Date", 0);
 
                 InstanceManipulations receivedIm =
                         VariationsCompressionUtils.getInstanceManipulations(
@@ -571,8 +602,11 @@ public class VariationsSeedFetcher {
                 boolean isGzipCompressed = receivedIm.isGzipCompressed;
                 // Resolve the delta compression immediately as we only use the patched data.
                 if (receivedIm.isDeltaCompressed) {
-                    seedData = SeedInfo.resolveDeltaCompression(
-                            seedData, currInfo.getVariationsSeedBytes(), isGzipCompressed);
+                    seedData =
+                            SeedInfo.resolveDeltaCompression(
+                                    seedData,
+                                    assumeNonNull(currInfo).getVariationsSeedBytes(),
+                                    isGzipCompressed);
                     isGzipCompressed = false;
                 }
                 // Ensure seed is gzip compressed.
@@ -590,8 +624,8 @@ public class VariationsSeedFetcher {
                 // next start up), since 304 is a successful response. Note that the
                 // serial number included in the request is always that of the latest
                 // seed, so it's appropriate to always modify the latest seed's date.
-                fetchInfo.seedInfo = currInfo;
-                fetchInfo.seedInfo.date = mDateTime.newDate().getTime();
+                fetchInfo.seedInfo = assumeNonNull(currInfo);
+                fetchInfo.seedInfo.date = connection.getHeaderFieldDate("Date", 0);
             } else {
                 String errorMsg = "Non-OK response code = " + responseCode;
                 Log.w(TAG, errorMsg);
@@ -616,6 +650,7 @@ public class VariationsSeedFetcher {
                 connection.disconnect();
             }
             recordFetchResultOrCode(fetchInfo.seedFetchResult);
+            // TODO(374177044): Remove SuppressWarnings("Finally").
             return fetchInfo;
         }
     }

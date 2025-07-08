@@ -7,7 +7,6 @@
 #include "base/atomic_sequence_num.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "gpu/command_buffer/service/command_buffer_task_executor.h"
-#include "gpu/command_buffer/service/gpu_command_buffer_memory_tracker.h"
 #include "gpu/ipc/common/gpu_client_ids.h"
 
 namespace gpu {
@@ -26,7 +25,6 @@ CommandBufferId GenNextCommandBufferId() {
 DisplayCompositorMemoryAndTaskControllerOnGpu::
     DisplayCompositorMemoryAndTaskControllerOnGpu(
         scoped_refptr<SharedContextState> shared_context_state,
-        MailboxManager* mailbox_manager,
         SharedImageManager* shared_image_manager,
         SyncPointManager* sync_point_manager,
         const GpuPreferences& gpu_preferences,
@@ -34,7 +32,6 @@ DisplayCompositorMemoryAndTaskControllerOnGpu::
         const GpuFeatureInfo& gpu_feature_info)
     : shared_context_state_(std::move(shared_context_state)),
       command_buffer_id_(g_next_shared_route_id.GetNext() + 1),
-      mailbox_manager_(mailbox_manager),
       shared_image_manager_(shared_image_manager),
       sync_point_manager_(sync_point_manager),
       gpu_preferences_(gpu_preferences),

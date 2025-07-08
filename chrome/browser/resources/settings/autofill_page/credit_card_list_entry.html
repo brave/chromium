@@ -1,9 +1,8 @@
-    <style include="settings-shared passwords-shared">
+    <style include="settings-shared passwords-shared screen-reader-only">
       .expiration-column,
       .misc-column {
         align-items: center;
         display: flex;
-        flex: 1;
       }
 
       .misc-column {
@@ -27,31 +26,56 @@
         margin-inline-end: 16px;
         vertical-align: middle;
       }
-
-      .screen-reader-only-substituted-parent {
-        position: relative;
-      }
-      .screen-reader-only-visually-hidden {
-        clip-path: inset(100%);
-        height: 100%;
-        position: absolute;
-        width: 100%;
-      }
     </style>
     <div class="list-item" role="row">
       <div class="type-column" role="cell">
-        <img id="cardImage" src="[[creditCard.imageSrc]]" alt="">
-        <div class="summary-column screen-reader-only-substituted-parent">
-          <div class="screen-reader-only-visually-hidden">
+        <img id="cardImage" srcset="[[getCardImage_(creditCard.imageSrc)]]" alt="">
+        <div class="summary-column screen-reader-only-host-node">
+          <div class="screen-reader-only">
             [[getSummaryAriaLabel_(creditCard)]],
             [[getSummaryAriaSublabel_(creditCard)]]
           </div>
-          <div id="summaryLabel" class="ellipses" aria-hidden="true">
-            [[creditCard.metadata.summaryLabel]]
-          </div>
-          <div id="summarySublabel"
-              class="ellipses sub-label" aria-hidden="true">
-            [[getSummarySublabel_(creditCard, virtualCardEnrollmentEnabled_)]]
+          <template is="dom-if" if="[[!shouldShowNewFopDisplay_()]]">
+            <div id="summaryLabel" class="ellipses" aria-hidden="true">
+              [[creditCard.metadata.summaryLabel]]
+            </div>
+          </template>
+          <template is="dom-if" if="[[shouldShowNewFopDisplay_()]]">
+            <div>
+              <span id="label" class="ellipses" aria-hidden="true">
+                [[creditCard.metadata.summaryLabel]]
+              </span>
+              <template is="dom-if" if="[[hasCardIdentifier_(creditCard)]]">
+                <div class="sub-label" aria-hidden="true">
+                  <span id="summaryLabel_1">
+                    [[creditCard.metadata.summarySublabel]]
+                  </span>
+                  <span id="summaryLabel_2">
+                    [[getExpirationlabel_(creditCard)]]
+                  </span>
+                </div>
+              </template>
+              <template is="dom-if" if="[[!hasCardIdentifier_(creditCard)]]">
+                <span id="expirationLabel" class="sub-label">
+                  [[getExpirationlabel_(creditCard)]]
+                </span>
+              </template>
+            </div>
+          </template>
+          <div id="summarySublabel" class="sub-label">
+            <span aria-hidden="true">[[getSummarySublabel_(creditCard)]]</span>
+            <template is="dom-if"
+                if="[[hasSummaryAndBenefitSublabel_(creditCard)]]">
+              |
+            </template>
+            <template is="dom-if" if="[[isCardBenefitsProductUrlAvailable_(creditCard)]]">
+              <a id="summaryTermsLink"
+                aria-label="[[getBenefitsTermsAriaLabel_(creditCard)]]"
+                aria-description="$i18n{opensInNewTab}"
+                on-click="onSummarySublabelTermsLinkClick_"
+                href="[[getCardBenefitsProductUrl_(creditCard)]]"
+                target="_blank">$i18n{benefitsTermsTagForCreditCardListEntry}</a>
+            </template>
           </div>
         </div>
       </div>
@@ -62,14 +86,14 @@
             <if expr="_google_chrome">
               <picture id="paymentsIcon">
                 <source
-                    srcset="chrome://theme/IDR_AUTOFILL_GOOGLE_PAY_DARK_SMALL"
+                    srcset="[[getScaledSrcSet_('chrome://theme/IDR_AUTOFILL_GOOGLE_PAY_DARK_SMALL')]]"
                     media="(prefers-color-scheme: dark)">
-                <img alt="" src="chrome://theme/IDR_AUTOFILL_GOOGLE_PAY_SMALL">
+                <img alt="" srcset="[[getScaledSrcSet_('chrome://theme/IDR_AUTOFILL_GOOGLE_PAY_SMALL')]]">
               </picture>
             </if>
             <if expr="not _google_chrome">
               <span class="sub-label">
-                [[getPaymentsLabel_(creditCard.metadata)]]
+                $i18n{googlePayments}
               </span>
             </if>
           </div>
@@ -81,8 +105,9 @@
           </template>
           <template is="dom-if" if="[[!showDots_(creditCard.metadata)]]">
             <cr-icon-button class="icon-external" id="remoteCreditCardLink"
-                title="$i18n{remoteCreditCardLinkLabel}" role="link"
-                on-click="onRemoteEditClick_"></cr-icon-button>
+                title="$i18n{remotePaymentMethodsLinkLabel}" role="link"
+                on-click="onRemoteEditClick_"
+                aria-description="$i18n{opensInNewTab}"></cr-icon-button>
           </template>
         </div>
       </div>

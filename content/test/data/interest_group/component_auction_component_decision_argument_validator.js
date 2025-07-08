@@ -39,7 +39,7 @@ function validateBid(bid) {
 }
 
 function validateAuctionConfig(auctionConfig) {
-  if (Object.keys(auctionConfig).length !== 15) {
+  if (Object.keys(auctionConfig).length !== 17) {
     throw 'Wrong number of auctionConfig fields ' +
         JSON.stringify(auctionConfig);
   }
@@ -53,23 +53,16 @@ function validateAuctionConfig(auctionConfig) {
     throw 'Wrong decisionLogicURL ' + auctionConfig.decisionLogicURL;
   }
 
-  if (auctionConfig.decisionLogicUrl !==
-      auctionConfig.seller + '/interest_group' +
-          '/component_auction_component_decision_argument_validator.js') {
-    throw 'Wrong decisionLogicUrl ' + auctionConfig.decisionLogicUrl;
-  }
-
   if (auctionConfig.trustedScoringSignalsURL !==
       auctionConfig.seller + '/interest_group/trusted_scoring_signals2.json') {
       throw 'Wrong trustedScoringSignalsURL ' +
           auctionConfig.trustedScoringSignalsURL;
   }
 
-  if (auctionConfig.trustedScoringSignalsUrl !==
-      auctionConfig.seller + '/interest_group/trusted_scoring_signals2.json') {
-      throw 'Wrong trustedScoringSignalsUrl ' +
-          auctionConfig.trustedScoringSignalsUrl;
-  }
+  if (auctionConfig.executionMode !== 'group-by-origin') {
+    throw 'Wrong executionMode ' +
+        auctionConfig.executionMode;
+}
 
   if (auctionConfig.interestGroupBuyers.length !== 1 ||
       !auctionConfig.interestGroupBuyers[0].startsWith('https://a.test')) {
@@ -86,7 +79,7 @@ function validateAuctionConfig(auctionConfig) {
   const sellerSignalsJson = JSON.stringify(auctionConfig.sellerSignals);
   if (sellerSignalsJson !== '["component seller signals"]')
     throw 'Wrong sellerSignals ' + auctionConfig.sellerSignalsJson;
-  if (auctionConfig.sellerTimeout !== 200)
+  if (auctionConfig.sellerTimeout !== 20000)
     throw 'Wrong sellerTimeout ' + auctionConfig.sellerTimeout;
 
   if (JSON.stringify(auctionConfig.perBuyerSignals[buyerOrigin]) !==
@@ -95,7 +88,7 @@ function validateAuctionConfig(auctionConfig) {
         JSON.stringify(auctionConfig.perBuyerSignals);
   }
 
-  if (auctionConfig.perBuyerTimeouts[buyerOrigin] !== 200) {
+  if (auctionConfig.perBuyerTimeouts[buyerOrigin] !== 20000) {
     throw 'Wrong perBuyerTimeouts ' +
         JSON.stringify(auctionConfig.perBuyerTimeouts);
   }
@@ -104,6 +97,9 @@ function validateAuctionConfig(auctionConfig) {
     throw 'Wrong perBuyerCumulativeTimeouts ' +
         JSON.stringify(auctionConfig.perBuyerCumulativeTimeouts);
   }
+
+  if (auctionConfig.reportingTimeout !== 2000)
+    throw 'Wrong reportingTimeout ' + auctionConfig.reportingTimeout;
 
   if (auctionConfig.perBuyerCurrencies[buyerOrigin] !== 'USD') {
     throw 'Wrong perBuyerCurrencies ' +
@@ -171,17 +167,28 @@ function validateBrowserSignals(browserSignals, isScoreAd) {
 
   // Fields that vary by method.
   if (isScoreAd) {
-    if (Object.keys(browserSignals).length !== 9) {
+    if (Object.keys(browserSignals).length !== 12) {
       throw 'Wrong number of browser signals fields ' +
           JSON.stringify(browserSignals);
     }
     const adComponentsJson = JSON.stringify(browserSignals.adComponents);
     if (adComponentsJson !== '["https://example.com/render-component"]')
       throw 'Wrong adComponents ' + adComponentsJson;
+    const componentsCreativeScanningMetadata =
+        JSON.stringify(browserSignals.adComponentsCreativeScanningMetadata);
+    if (componentsCreativeScanningMetadata !== '[null]')
+      throw 'Wrong adComponentsCreativeScanningMetadata ' +
+          componentsCreativeScanningMetadata;
     if (browserSignals.biddingDurationMsec < 0)
       throw 'Wrong biddingDurationMsec ' + browserSignals.biddingDurationMsec;
     if (browserSignals.dataVersion !== 5678)
       throw 'Wrong dataVersion ' + browserSignals.dataVersion;
+    if (browserSignals.forDebuggingOnlyInCooldownOrLockout)
+      throw 'Wrong forDebuggingOnlyInCooldownOrLockout ' +
+          browserSignals.forDebuggingOnlyInCooldownOrLockout;
+    if (browserSignals.forDebuggingOnlySampling)
+      throw 'Wrong forDebuggingOnlySampling ' +
+          browserSignals.forDebuggingOnlySampling;
   } else {
     if (Object.keys(browserSignals).length !== 13) {
       throw 'Wrong number of browser signals fields ' +
@@ -221,7 +228,9 @@ function validateDirectFromSellerSignals(directFromSellerSignals) {
   const auctionSignalsJSON =
       JSON.stringify(directFromSellerSignals.auctionSignals);
   if (auctionSignalsJSON !==
-      '{"from":"component","json":"for","all":["parties"]}') {
+          '{"from":"component","json":"for","all":["parties"]}' &&
+      auctionSignalsJSON !==
+          '{"all":["parties"],"from":"component","json":"for"}') {
     throw 'Wrong directFromSellerSignals.auctionSignals ' +
         auctionSignalsJSON;
   }

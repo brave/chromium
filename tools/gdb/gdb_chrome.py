@@ -244,19 +244,17 @@ pp_set.add_printer('absl::optional', '^absl::optional<.*>$',
                    AbslOptionalPrinter)
 
 
-class ClampedNumericPrinter(Printer):
-  type_re = r'^base::internal::ClampedNumeric<(.*)>$'
+class StdOptionalPrinter(Printer):
 
   def to_string(self):
-    m = type_re.search(self.val.type)
-    if m is None:
-      return self.val['value']
-    return '(%s) %s' % (m.group(1), self.val['value_'])
+    if self.val['__engaged_']:
+      return "%s: %s" % (str(self.val.type.tag), self.val['__val_'])
+    else:
+      return "%s: is empty" % str(self.val.type.tag)
 
 
-pp_set.add_printer('base::internal::ClampedNumeric',
-                   '^base::internal::ClampedNumeric<.*>$',
-                   ClampedNumericPrinter)
+pp_set.add_printer('std::optional', '^std::__Cr::optional<.*>$',
+                   StdOptionalPrinter)
 
 
 class TimeDeltaPrinter(object):
@@ -290,7 +288,7 @@ class TimePrinter(object):
     timet_offset = gdb.parse_and_eval('base::Time::kTimeTToMicrosecondsOffset')
     self._datetime = (
         datetime.datetime.fromtimestamp(0) + datetime.timedelta(
-            microseconds=int(val['us_']['value']) - int(timet_offset)))
+            microseconds=int(val['us_']['value_']) - int(timet_offset)))
 
   def datetime(self):
     return self._datetime
@@ -384,30 +382,6 @@ class IpcMessagePrinter(Printer):
 
 
 pp_set.add_printer('IPC::Message', '^IPC::Message$', IpcMessagePrinter)
-
-
-class NotificationRegistrarPrinter(Printer):
-
-  def to_string(self):
-    try:
-      registrations = self.val['registered_']
-      vector_finish = registrations['_M_impl']['_M_finish']
-      vector_start = registrations['_M_impl']['_M_start']
-      if vector_start == vector_finish:
-        return 'Not watching notifications'
-      if vector_start.dereference().type.sizeof == 0:
-        # Incomplete type: b/8242773
-        return 'Watching some notifications'
-      return ('Watching %s notifications; '
-              'print %s->registered_ for details') % (int(
-                  vector_finish - vector_start), typed_ptr(self.val.address))
-    except gdb.error:
-      return 'NotificationRegistrar'
-
-
-pp_set.add_printer('content::NotificationRegistrar',
-                   '^content::NotificationRegistrar$',
-                   NotificationRegistrarPrinter)
 
 
 class SiteInstanceImplPrinter(object):
@@ -518,11 +492,10 @@ class ReverseCallback(gdb.Command):
 
     # Find the stack frame which extracts the bind state from the task.
     bind_state_frame = find_nearest_frame_matching(
-        gdb.selected_frame(),
-        lambda frame : frame.function() and
-            re.match('^base::internal::Invoker<base::internal::BindState<.*>' +
-                     '::RunOnce\(base::internal::BindStateBase\*\)$',
-                     frame.function().name))
+        gdb.selected_frame(), lambda frame: frame.function() and re.match(
+            '^base::internal::Invoker<.*>' +
+            r'::RunOnce\(base::internal::BindStateBase\*\)$',
+            frame.function().name))
     if bind_state_frame is None:
       raise Exception(
           'base::internal::Invoker frame not found; are you in a callback?')

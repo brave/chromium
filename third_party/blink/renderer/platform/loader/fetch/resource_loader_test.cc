@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "mojo/public/c/system/data_pipe.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
+#include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_request_extra_data.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -34,7 +36,6 @@
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/test_resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
-#include "third_party/blink/renderer/platform/testing/code_cache_loader_mock.h"
 #include "third_party/blink/renderer/platform/testing/mock_context_lifecycle_notifier.h"
 #include "third_party/blink/renderer/platform/testing/noop_url_loader.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
@@ -50,6 +51,7 @@ class MockUseCounter : public GarbageCollected<MockUseCounter>,
                        public UseCounter {
  public:
   MOCK_METHOD1(CountUse, void(mojom::WebFeature));
+  MOCK_METHOD1(CountWebDXFeature, void(mojom::blink::WebDXFeature));
   MOCK_METHOD1(CountDeprecation, void(mojom::WebFeature));
 };
 
@@ -87,17 +89,17 @@ class ResourceLoaderTest : public testing::Test {
 
   class NoopLoaderFactory final : public ResourceFetcher::LoaderFactory {
     std::unique_ptr<URLLoader> CreateURLLoader(
-        const ResourceRequest& request,
+        const network::ResourceRequest& request,
         const ResourceLoaderOptions& options,
         scoped_refptr<base::SingleThreadTaskRunner> freezable_task_runner,
         scoped_refptr<base::SingleThreadTaskRunner> unfreezable_task_runner,
-        BackForwardCacheLoaderHelper* back_forward_cache_loader_helper)
-        override {
+        BackForwardCacheLoaderHelper* back_forward_cache_loader_helper,
+        const std::optional<base::UnguessableToken>&
+            service_worker_race_network_request_token,
+        bool is_from_origin_dirty_style_sheet) override {
       return std::make_unique<NoopURLLoader>(std::move(freezable_task_runner));
     }
-    std::unique_ptr<WebCodeCacheLoader> CreateCodeCacheLoader() override {
-      return std::make_unique<CodeCacheLoaderMock>();
-    }
+    CodeCacheHost* GetCodeCacheHost() override { return nullptr; }
   };
 
   static scoped_refptr<base::SingleThreadTaskRunner> CreateTaskRunner() {
@@ -163,22 +165,26 @@ TEST_F(ResourceLoaderTest, LoadResponseBody) {
   MojoResult result = CreateDataPipe(&options, producer, consumer);
   ASSERT_EQ(result, MOJO_RESULT_OK);
 
-  loader->DidReceiveResponse(WrappedResourceResponse(response));
-  loader->DidStartLoadingResponseBody(std::move(consumer));
-  loader->DidFinishLoading(base::TimeTicks(), 0, 0, 0, false);
+  loader->DidReceiveResponse(WrappedResourceResponse(response),
+                             std::move(consumer),
+                             /*cached_metadata=*/std::nullopt);
+  loader->DidFinishLoading(base::TimeTicks(), 0, 0, 0);
 
-  uint32_t num_bytes = 2;
-  result = producer->WriteData("he", &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+  size_t actually_written_bytes = 0;
+  result =
+      producer->WriteData(base::byte_span_from_cstring("he"),
+                          MOJO_WRITE_DATA_FLAG_NONE, actually_written_bytes);
   ASSERT_EQ(result, MOJO_RESULT_OK);
-  ASSERT_EQ(num_bytes, 2u);
+  ASSERT_EQ(actually_written_bytes, 2u);
 
   static_cast<scheduler::FakeTaskRunner*>(fetcher->GetTaskRunner().get())
       ->RunUntilIdle();
 
-  num_bytes = 3;
-  result = producer->WriteData("llo", &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+  result =
+      producer->WriteData(base::byte_span_from_cstring("llo"),
+                          MOJO_WRITE_DATA_FLAG_NONE, actually_written_bytes);
   ASSERT_EQ(result, MOJO_RESULT_OK);
-  ASSERT_EQ(num_bytes, 3u);
+  ASSERT_EQ(actually_written_bytes, 3u);
 
   static_cast<scheduler::FakeTaskRunner*>(fetcher->GetTaskRunner().get())
       ->RunUntilIdle();
@@ -193,7 +199,7 @@ TEST_F(ResourceLoaderTest, LoadResponseBody) {
   scoped_refptr<const SharedBuffer> buffer = resource->ResourceBuffer();
   StringBuilder data;
   for (const auto& span : *buffer) {
-    data.Append(span.data(), static_cast<wtf_size_t>(span.size()));
+    data.Append(base::as_bytes(span));
   }
   EXPECT_EQ(data.ToString(), "hello");
 }
@@ -218,7 +224,7 @@ TEST_F(ResourceLoaderTest, LoadDataURL_AsyncAndNonStream) {
   scoped_refptr<const SharedBuffer> buffer = resource->ResourceBuffer();
   StringBuilder data;
   for (const auto& span : *buffer) {
-    data.Append(span.data(), static_cast<wtf_size_t>(span.size()));
+    data.Append(base::as_bytes(span));
   }
   EXPECT_EQ(data.ToString(), "Hello World!");
 }
@@ -243,7 +249,7 @@ class TestRawResourceClient final
     RawResourceClient::Trace(visitor);
   }
 
-  BytesConsumer* body() { return body_; }
+  BytesConsumer* body() { return body_.Get(); }
 
  private:
   Member<BytesConsumer> body_;
@@ -323,7 +329,7 @@ TEST_F(ResourceLoaderTest, LoadDataURL_Sync) {
   scoped_refptr<const SharedBuffer> buffer = resource->ResourceBuffer();
   StringBuilder data;
   for (const auto& span : *buffer) {
-    data.Append(span.data(), static_cast<wtf_size_t>(span.size()));
+    data.Append(base::as_bytes(span));
   }
   EXPECT_EQ(data.ToString(), "Hello World!");
 }
@@ -386,7 +392,7 @@ TEST_F(ResourceLoaderTest, LoadDataURL_DefersAsyncAndNonStream) {
   scoped_refptr<const SharedBuffer> buffer = resource->ResourceBuffer();
   StringBuilder data;
   for (const auto& span : *buffer) {
-    data.Append(span.data(), static_cast<wtf_size_t>(span.size()));
+    data.Append(base::as_bytes(span));
   }
   EXPECT_EQ(data.ToString(), "Hello World!");
 }
@@ -426,10 +432,8 @@ TEST_F(ResourceLoaderTest, LoadDataURL_DefersAsyncAndStream) {
   fetcher->SetDefersLoading(LoaderFreezeMode::kStrict);
   task_runner->RunUntilIdle();
   EXPECT_EQ(resource->GetStatus(), ResourceStatus::kPending);
-  const char* buffer;
-  size_t available;
-  BytesConsumer::Result result =
-      raw_resource_client->body()->BeginRead(&buffer, &available);
+  base::span<const char> buffer;
+  BytesConsumer::Result result = raw_resource_client->body()->BeginRead(buffer);
   EXPECT_EQ(BytesConsumer::Result::kShouldWait, result);
 
   // The resource should still be pending if it's unset and set in a single
@@ -438,7 +442,7 @@ TEST_F(ResourceLoaderTest, LoadDataURL_DefersAsyncAndStream) {
   fetcher->SetDefersLoading(LoaderFreezeMode::kStrict);
   task_runner->RunUntilIdle();
   EXPECT_EQ(resource->GetStatus(), ResourceStatus::kPending);
-  result = raw_resource_client->body()->BeginRead(&buffer, &available);
+  result = raw_resource_client->body()->BeginRead(buffer);
   EXPECT_EQ(BytesConsumer::Result::kShouldWait, result);
 
   // Read through the bytes consumer passed back from the ResourceLoader.
@@ -465,10 +469,11 @@ bool WillFollowRedirect(ResourceLoader* loader, KURL new_url) {
                              /*report_security_info=*/true, /*request_id=*/1);
   bool has_devtools_request_id = false;
   std::vector<std::string> removed_headers;
+  net::HttpRequestHeaders modified_headers;
   return loader->WillFollowRedirect(
       new_url, net::SiteForCookies(), /*new_referrer=*/String(),
       network::mojom::ReferrerPolicy::kAlways, "GET", response,
-      has_devtools_request_id, &removed_headers,
+      has_devtools_request_id, &removed_headers, modified_headers,
       /*insecure_scheme_was_upgraded=*/false);
 }
 
@@ -527,73 +532,6 @@ TEST_F(ResourceLoaderTest, CrossOriginRedirect_NoAuthorization) {
   ::testing::Mock::VerifyAndClear(UseCounter());
 }
 
-class ResourceLoaderIsolatedCodeCacheTest : public ResourceLoaderTest {
- protected:
-  bool LoadAndCheckIsolatedCodeCache(ResourceResponse response) {
-    const scoped_refptr<const SecurityOrigin> origin =
-        SecurityOrigin::Create(foo_url_);
-
-    auto* properties =
-        MakeGarbageCollected<TestResourceFetcherProperties>(origin);
-    FetchContext* context = MakeGarbageCollected<MockFetchContext>();
-    auto* fetcher = MakeResourceFetcher(properties, context);
-    ResourceRequest request;
-    request.SetUrl(foo_url_);
-    request.SetRequestContext(mojom::blink::RequestContextType::FETCH);
-
-    FetchParameters fetch_parameters =
-        FetchParameters::CreateForTest(std::move(request));
-    Resource* resource = RawResource::Fetch(fetch_parameters, fetcher, nullptr);
-    ResourceLoader* loader = resource->Loader();
-
-    loader->DidReceiveResponse(WrappedResourceResponse(response));
-    return loader->should_use_isolated_code_cache_;
-  }
-};
-
-TEST_F(ResourceLoaderIsolatedCodeCacheTest, ResponseFromNetwork) {
-  ResourceResponse response(foo_url_);
-  response.SetHttpStatusCode(200);
-  EXPECT_EQ(true, LoadAndCheckIsolatedCodeCache(response));
-}
-
-TEST_F(ResourceLoaderIsolatedCodeCacheTest,
-       SyntheticResponseFromServiceWorker) {
-  ResourceResponse response(foo_url_);
-  response.SetHttpStatusCode(200);
-  response.SetWasFetchedViaServiceWorker(true);
-  EXPECT_EQ(false, LoadAndCheckIsolatedCodeCache(response));
-}
-
-TEST_F(ResourceLoaderIsolatedCodeCacheTest,
-       PassThroughResponseFromServiceWorker) {
-  ResourceResponse response(foo_url_);
-  response.SetHttpStatusCode(200);
-  response.SetWasFetchedViaServiceWorker(true);
-  response.SetUrlListViaServiceWorker(Vector<KURL>(1, foo_url_));
-  EXPECT_EQ(true, LoadAndCheckIsolatedCodeCache(response));
-}
-
-TEST_F(ResourceLoaderIsolatedCodeCacheTest,
-       DifferentUrlResponseFromServiceWorker) {
-  ResourceResponse response(foo_url_);
-  response.SetHttpStatusCode(200);
-  response.SetWasFetchedViaServiceWorker(true);
-  response.SetUrlListViaServiceWorker(Vector<KURL>(1, bar_url_));
-  EXPECT_EQ(false, LoadAndCheckIsolatedCodeCache(response));
-}
-
-TEST_F(ResourceLoaderIsolatedCodeCacheTest, CacheResponseFromServiceWorker) {
-  ResourceResponse response(foo_url_);
-  response.SetHttpStatusCode(200);
-  response.SetWasFetchedViaServiceWorker(true);
-  response.SetCacheStorageCacheName("dummy");
-  // The browser does support code cache for cache_storage Responses, but they
-  // are loaded via a different mechanism.  So the ResourceLoader code caching
-  // value should be false here.
-  EXPECT_EQ(false, LoadAndCheckIsolatedCodeCache(response));
-}
-
 class ResourceLoaderSubresourceFilterCnameAliasTest
     : public ResourceLoaderTest {
  public:
@@ -620,7 +558,9 @@ class ResourceLoaderSubresourceFilterCnameAliasTest
 
   void GiveResponseToLoader(ResourceResponse response, ResourceLoader* loader) {
     CreateMojoDataPipe();
-    loader->DidReceiveResponse(WrappedResourceResponse(response));
+    loader->DidReceiveResponse(WrappedResourceResponse(response),
+                               /*body=*/mojo::ScopedDataPipeConsumerHandle(),
+                               /*cached_metadata=*/std::nullopt);
   }
 
  protected:

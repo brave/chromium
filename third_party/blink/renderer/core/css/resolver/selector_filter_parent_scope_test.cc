@@ -10,6 +10,8 @@
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
@@ -20,11 +22,15 @@ class SelectorFilterParentScopeTest : public testing::Test {
     GetDocument().SetCompatibilityMode(Document::kNoQuirksMode);
   }
 
+  void TearDown() override {
+    dummy_page_holder_ = nullptr;
+    ThreadState::Current()->CollectAllGarbageForTesting();
+  }
+
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
 
-  static constexpr size_t max_identifier_hashes = 4;
-
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
@@ -38,14 +44,17 @@ TEST_F(SelectorFilterParentScopeTest, ParentScope) {
   SelectorFilter& filter = GetDocument().GetStyleResolver().GetSelectorFilter();
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
 
-  SelectorFilterRootScope root_scope(nullptr);
-  SelectorFilterParentScope html_scope(*GetDocument().documentElement());
+  SelectorFilterParentScope root_scope(
+      nullptr, SelectorFilterParentScope::ScopeType::kRoot);
+  SelectorFilterParentScope html_scope(
+      GetDocument().documentElement(),
+      SelectorFilterParentScope::ScopeType::kParent);
   {
-    SelectorFilterParentScope body_scope(*GetDocument().body());
-    SelectorFilterParentScope::EnsureParentStackIsPushed();
+    SelectorFilterParentScope body_scope(
+        GetDocument().body(), SelectorFilterParentScope::ScopeType::kParent);
     {
-      SelectorFilterParentScope div_scope(*div);
-      SelectorFilterParentScope::EnsureParentStackIsPushed();
+      SelectorFilterParentScope div_scope(
+          div, SelectorFilterParentScope::ScopeType::kParent);
 
       base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
           MakeGarbageCollected<CSSParserContext>(
@@ -57,19 +66,20 @@ TEST_F(SelectorFilterParentScopeTest, ParentScope) {
 
       for (const CSSSelector* selector = selectors->First(); selector;
            selector = CSSSelectorList::Next(*selector)) {
-        unsigned selector_hashes[max_identifier_hashes];
-        filter.CollectIdentifierHashes(*selector, selector_hashes,
-                                       max_identifier_hashes);
-        EXPECT_NE(selector_hashes[0], 0u);
-        EXPECT_FALSE(
-            filter.FastRejectSelector<max_identifier_hashes>(selector_hashes));
+        Element::TinyBloomFilter subject_filter = 0;
+        Vector<uint16_t> selector_hashes;
+        filter.CollectIdentifierHashes(*selector, /* style_scope */ nullptr,
+                                       selector_hashes, subject_filter);
+        EXPECT_NE(selector_hashes.size(), 0u);
+        EXPECT_FALSE(filter.FastRejectSelector(selector_hashes));
+        EXPECT_EQ(subject_filter, 0u);
       }
     }
   }
 }
 
 TEST_F(SelectorFilterParentScopeTest, RootScope) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div class=x>
       <span id=y></span>
     </div>
@@ -77,9 +87,9 @@ TEST_F(SelectorFilterParentScopeTest, RootScope) {
   SelectorFilter& filter = GetDocument().GetStyleResolver().GetSelectorFilter();
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
 
-  SelectorFilterRootScope span_scope(
-      GetDocument().getElementById(AtomicString("y")));
-  SelectorFilterParentScope::EnsureParentStackIsPushed();
+  SelectorFilterParentScope span_scope(
+      GetDocument().getElementById(AtomicString("y")),
+      SelectorFilterParentScope::ScopeType::kRoot);
 
   HeapVector<CSSSelector> arena;
   base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
@@ -92,17 +102,18 @@ TEST_F(SelectorFilterParentScopeTest, RootScope) {
 
   for (const CSSSelector* selector = selectors->First(); selector;
        selector = CSSSelectorList::Next(*selector)) {
-    unsigned selector_hashes[max_identifier_hashes];
-    filter.CollectIdentifierHashes(*selector, selector_hashes,
-                                   max_identifier_hashes);
-    EXPECT_NE(selector_hashes[0], 0u);
-    EXPECT_FALSE(
-        filter.FastRejectSelector<max_identifier_hashes>(selector_hashes));
+    Element::TinyBloomFilter subject_filter = 0;
+    Vector<uint16_t> selector_hashes;
+    filter.CollectIdentifierHashes(*selector, /* style_scope */ nullptr,
+                                   selector_hashes, subject_filter);
+    EXPECT_NE(selector_hashes.size(), 0u);
+    EXPECT_FALSE(filter.FastRejectSelector(selector_hashes));
+    EXPECT_EQ(subject_filter, 0u);
   }
 }
 
 TEST_F(SelectorFilterParentScopeTest, ReentrantSVGImageLoading) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div::before {
         content: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"></svg>');
@@ -116,10 +127,28 @@ TEST_F(SelectorFilterParentScopeTest, ReentrantSVGImageLoading) {
   // SelectorFilterParentScope with a SelectorFilterRootScope, this update may
   // cause DCHECKs to fail.
   GetDocument().UpdateStyleAndLayoutTree();
+
+  // Drop the reference to the SVG, which is an `IsolatedSVGDDocument`, and is
+  // not destroyed during GC, instead using a separate lifetime system. Without
+  // this, something keeps it alive until the next GC after test teardown. This
+  // is all the information available at the time of writing.
+  //
+  // This is a problem because it refers to a `blink::PerformanceMonitor`, which
+  // is a `CheckedObserver`, and which must be destroyed before resetting
+  // `blink::MainThread` during test teardown, because at that point, it is no
+  // longer possible to remove it from `ObserverList`s.
+  //
+  // TODO(crbug.com/337200890): Update this comment with more information and
+  // see whether removing this code is possible once this crashbug's root cause
+  // has been determined.
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <div></div>
+  )HTML");
+  GetDocument().UpdateStyleAndLayoutTree();
 }
 
 TEST_F(SelectorFilterParentScopeTest, AttributeFilter) {
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       R"HTML(<div ATTR><svg VIewBox></svg></div>)HTML");
   auto* outer = To<Element>(GetDocument().body()->firstChild());
   auto* svg = To<Element>(outer->firstChild());
@@ -135,8 +164,8 @@ TEST_F(SelectorFilterParentScopeTest, AttributeFilter) {
   SelectorFilter& filter = GetDocument().GetStyleResolver().GetSelectorFilter();
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
 
-  SelectorFilterRootScope span_scope(inner);
-  SelectorFilterParentScope::EnsureParentStackIsPushed();
+  SelectorFilterParentScope span_scope(
+      inner, SelectorFilterParentScope::ScopeType::kRoot);
 
   HeapVector<CSSSelector> arena;
   base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
@@ -149,12 +178,13 @@ TEST_F(SelectorFilterParentScopeTest, AttributeFilter) {
 
   for (const CSSSelector* selector = selectors->First(); selector;
        selector = CSSSelectorList::Next(*selector)) {
-    unsigned selector_hashes[max_identifier_hashes];
-    filter.CollectIdentifierHashes(*selector, selector_hashes,
-                                   max_identifier_hashes);
-    EXPECT_NE(selector_hashes[0], 0u);
-    EXPECT_FALSE(
-        filter.FastRejectSelector<max_identifier_hashes>(selector_hashes));
+    Vector<uint16_t> selector_hashes;
+    Element::TinyBloomFilter subject_filter = 0;
+    filter.CollectIdentifierHashes(*selector, /* style_scope */ nullptr,
+                                   selector_hashes, subject_filter);
+    EXPECT_NE(selector_hashes.size(), 0u);
+    EXPECT_FALSE(filter.FastRejectSelector(selector_hashes));
+    EXPECT_EQ(subject_filter, 0u);
   }
 }
 

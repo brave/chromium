@@ -4,9 +4,11 @@
 
 #include "chromeos/ash/components/browser_context_helper/fake_browser_context_helper_delegate.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/files/file_path.h"
+#include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/test_browser_context.h"
 
@@ -42,6 +44,17 @@ FakeBrowserContextHelperDelegate::GetBrowserContextByPath(
 }
 
 content::BrowserContext*
+FakeBrowserContextHelperDelegate::GetBrowserContextByAccountId(
+    const AccountId& account_id) {
+  auto it = std::ranges::find_if(
+      browser_context_list_, [&account_id](const auto& candidate) {
+        auto* annotated_id = AnnotatedAccountId::Get(candidate.get());
+        return annotated_id && *annotated_id == account_id;
+      });
+  return it != browser_context_list_.end() ? it->get() : nullptr;
+}
+
+content::BrowserContext*
 FakeBrowserContextHelperDelegate::DeprecatedGetBrowserContext(
     const base::FilePath& path) {
   auto* browser_context = GetBrowserContextByPath(path);
@@ -63,6 +76,12 @@ FakeBrowserContextHelperDelegate::GetOrCreatePrimaryOTRBrowserContext(
     }
   }
   return CreateBrowserContext(path, /*is_off_the_record=*/true);
+}
+
+content::BrowserContext*
+FakeBrowserContextHelperDelegate::GetOriginalBrowserContext(
+    content::BrowserContext* browser_context) {
+  return GetBrowserContextByPath(browser_context->GetPath());
 }
 
 const base::FilePath* FakeBrowserContextHelperDelegate::GetUserDataDir() {

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "sandbox/win/src/sandbox_nt_util.h"
 
 #include <ntstatus.h>
@@ -10,6 +15,7 @@
 
 #include <string>
 
+#include <optional>
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/win/pe_image.h"
@@ -17,7 +23,6 @@
 #include "sandbox/win/src/nt_internals.h"
 #include "sandbox/win/src/sandbox_factory.h"
 #include "sandbox/win/src/target_services.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace sandbox {
 
@@ -27,6 +32,10 @@ SANDBOX_INTERCEPT NtExports g_nt;
 }  // namespace sandbox
 
 namespace {
+
+// Uses value of FILE_INFORMATION_CLASS defined in Wdm.h but not in user-mode.
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ne-wdm-_file_information_class
+constexpr uint32_t FileRenameInformation = 10;
 
 #if defined(_WIN64)
 // Align a pointer to the next allocation granularity boundary.
@@ -222,8 +231,8 @@ bool MapGlobalMemory() {
       g_shared_policy_memory =
           reinterpret_cast<char*>(g_shared_IPC_memory) + g_shared_IPC_size;
     }
-    // TODO(1435571) make this a read-only mapping in the child, distinct from
-    // the IPC & policy memory as it should be const.
+    // TODO(crbug.com/40265190) make this a read-only mapping in the child,
+    // distinct from the IPC & policy memory as it should be const.
     if (g_delegate_data_size > 0) {
       g_shared_delegate_data = reinterpret_cast<char*>(g_shared_IPC_memory) +
                                g_shared_IPC_size + g_shared_policy_size;
@@ -245,16 +254,15 @@ void* GetGlobalPolicyMemoryForTesting() {
   return g_shared_policy_memory;
 }
 
-absl::optional<base::span<const uint8_t>> GetGlobalDelegateData() {
+std::optional<base::span<const uint8_t>> GetGlobalDelegateData() {
   if (!g_delegate_data_size) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   if (!MapGlobalMemory()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
-  return base::make_span(
-      reinterpret_cast<const uint8_t*>(g_shared_delegate_data),
-      g_delegate_data_size);
+  return base::span(reinterpret_cast<const uint8_t*>(g_shared_delegate_data),
+                    g_delegate_data_size);
 }
 
 const NtExports* GetNtExports() {
@@ -689,41 +697,6 @@ bool IsSupportedRenameCall(FILE_RENAME_INFORMATION* file_info,
       file_info->FileName[3] != kPathPrefix[3])
     return false;
 
-  return true;
-}
-
-bool NtGetPathFromHandle(HANDLE handle,
-                         std::unique_ptr<wchar_t, NtAllocDeleter>* path) {
-  OBJECT_NAME_INFORMATION initial_buffer;
-  OBJECT_NAME_INFORMATION* name;
-  ULONG size = 0;
-  // Query the name information a first time to get the size of the name.
-  NTSTATUS status = GetNtExports()->QueryObject(handle, ObjectNameInformation,
-                                                &initial_buffer, size, &size);
-
-  if (!NT_SUCCESS(status) && status != STATUS_INFO_LENGTH_MISMATCH)
-    return false;
-
-  std::unique_ptr<BYTE[], NtAllocDeleter> name_ptr;
-  if (!size)
-    return false;
-  name_ptr.reset(new (NT_ALLOC) BYTE[size]);
-  name = reinterpret_cast<OBJECT_NAME_INFORMATION*>(name_ptr.get());
-
-  // Query the name information a second time to get the name of the
-  // object referenced by the handle.
-  status = GetNtExports()->QueryObject(handle, ObjectNameInformation, name,
-                                       size, &size);
-
-  if (STATUS_SUCCESS != status)
-    return false;
-  size_t num_path_wchars = (name->ObjectName.Length / sizeof(wchar_t)) + 1;
-  path->reset(new (NT_ALLOC) wchar_t[num_path_wchars]);
-  status =
-      CopyData(path->get(), name->ObjectName.Buffer, name->ObjectName.Length);
-  path->get()[num_path_wchars - 1] = L'\0';
-  if (STATUS_SUCCESS != status)
-    return false;
   return true;
 }
 

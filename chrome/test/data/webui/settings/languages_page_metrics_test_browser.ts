@@ -4,16 +4,19 @@
 
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {LanguageHelper, LanguagesBrowserProxyImpl, LanguageSettingsMetricsProxyImpl, LanguageSettingsPageImpressionType, SettingsLanguagesPageElement} from 'chrome://settings/lazy_load.js';
+import type {LanguageHelper, SettingsLanguagesPageElement} from 'chrome://settings/lazy_load.js';
+import {LanguagesBrowserProxyImpl, LanguageSettingsMetricsProxyImpl, LanguageSettingsPageImpressionType} from 'chrome://settings/lazy_load.js';
 import {CrSettingsPrefs} from 'chrome://settings/settings.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {FakeSettingsPrivate} from 'chrome://webui-test/fake_settings_private.js';
 import {fakeDataBind} from 'chrome://webui-test/polymer_test_util.js';
+
 // <if expr="is_win">
 import {LanguageSettingsActionType} from 'chrome://settings/lazy_load.js';
 // </if>
 
-import {FakeLanguageSettingsPrivate, getFakeLanguagePrefs} from './fake_language_settings_private.js';
+import type {FakeLanguageSettingsPrivate} from './fake_language_settings_private.js';
+import {getFakeLanguagePrefs} from './fake_language_settings_private.js';
 import {TestLanguagesBrowserProxy} from './test_languages_browser_proxy.js';
 import {TestLanguageSettingsMetricsProxy} from './test_languages_settings_metrics_proxy.js';
 
@@ -30,8 +33,7 @@ suite('LanguagesPageMetricsBrowser', function() {
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     const settingsPrefs = document.createElement('settings-prefs');
-    const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs()) as
-        unknown as typeof chrome.settingsPrivate;
+    const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs());
     settingsPrefs.initialize(settingsPrivate);
     document.body.appendChild(settingsPrefs);
     return CrSettingsPrefs.initialized.then(function() {
@@ -53,6 +55,7 @@ suite('LanguagesPageMetricsBrowser', function() {
       settingsLanguages.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, settingsLanguages, 'prefs');
       document.body.appendChild(settingsLanguages);
+      languageHelper = settingsLanguages;
 
       languagesPage = document.createElement('settings-languages-page');
 
@@ -60,15 +63,12 @@ suite('LanguagesPageMetricsBrowser', function() {
       languagesPage.prefs = settingsLanguages.prefs;
       fakeDataBind(settingsLanguages, languagesPage, 'prefs');
 
-      languagesPage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, languagesPage, 'language-helper');
-
       languagesPage.languages = settingsLanguages.languages;
       fakeDataBind(settingsLanguages, languagesPage, 'languages');
 
       document.body.appendChild(languagesPage);
-      languageHelper = languagesPage.languageHelper;
-      return languageHelper.whenReady();
+
+      return settingsLanguages.whenReady();
     });
   });
 
@@ -121,7 +121,7 @@ suite('LanguagesPageMetricsBrowser', function() {
   });
   // </if>
 
-  test('records on language list reorder', async () => {
+  test('records on language list reorder', () => {
     // Add several languages.
     for (const language of ['en-CA', 'en-US', 'tk', 'no']) {
       languageHelper.enableLanguage(language);
@@ -146,7 +146,7 @@ suite('LanguagesPageMetricsBrowser', function() {
       const menuItem = Array.from(menuItems).find(
           item => item.textContent!.trim() === i18nString);
       assertTrue(!!menuItem, 'Menu item "' + i18nKey + '" not found');
-      return menuItem!;
+      return menuItem;
     }
 
     let moveButton = getMenuItem('moveUp');

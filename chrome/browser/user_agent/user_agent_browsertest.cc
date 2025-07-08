@@ -17,6 +17,7 @@
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "net/http/http_request_headers.h"
 #include "third_party/blink/public/common/features.h"
 
@@ -24,8 +25,6 @@ namespace policy {
 
 using ReductionPolicyState =
     embedder_support::UserAgentReductionEnterprisePolicyState;
-using ForceMajorVersionToMinorPolicyState =
-    embedder_support::ForceMajorVersionToMinorPosition;
 
 class UserAgentBrowserTest : public InProcessBrowserTest {
  public:
@@ -50,13 +49,6 @@ class UserAgentBrowserTest : public InProcessBrowserTest {
     return static_cast<ReductionPolicyState>(
         browser()->profile()->GetPrefs()->GetInteger(
             prefs::kUserAgentReduction));
-  }
-
-  void set_force_major_version_to_minor_policy(
-      ForceMajorVersionToMinorPolicyState policy) {
-    browser()->profile()->GetPrefs()->SetInteger(
-        prefs::kForceMajorVersionToMinorPositionInUserAgent,
-        static_cast<int>(policy));
   }
 
   std::string observed_user_agent() { return observered_user_agent_; }
@@ -87,40 +79,13 @@ IN_PROC_BROWSER_TEST_F(UserAgentBrowserTest, ReductionPolicyDefault) {
   EXPECT_EQ(observed_user_agent(), embedder_support::GetUserAgent());
 }
 
-IN_PROC_BROWSER_TEST_F(UserAgentBrowserTest, ForceMajorToMinorPolicyDisabled) {
-  set_force_major_version_to_minor_policy(
-      ForceMajorVersionToMinorPolicyState::kForceDisabled);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), empty_url()));
-  EXPECT_EQ(observed_user_agent(),
-            embedder_support::GetUserAgent(
-                ForceMajorVersionToMinorPolicyState::kForceDisabled));
-}
-
-IN_PROC_BROWSER_TEST_F(UserAgentBrowserTest, ForceMajorToMinorPolicyEnabled) {
-  set_force_major_version_to_minor_policy(
-      ForceMajorVersionToMinorPolicyState::kForceEnabled);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), empty_url()));
-  EXPECT_EQ(observed_user_agent(),
-            embedder_support::GetUserAgent(
-                ForceMajorVersionToMinorPolicyState::kForceEnabled));
-}
-
-IN_PROC_BROWSER_TEST_F(UserAgentBrowserTest, ForceMajorToMinorPolicyDefault) {
-  set_force_major_version_to_minor_policy(
-      ForceMajorVersionToMinorPolicyState::kDefault);
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), empty_url()));
-  EXPECT_EQ(observed_user_agent(),
-            embedder_support::GetUserAgent(
-                ForceMajorVersionToMinorPolicyState::kDefault));
-}
-
 class ReduceUserAgentPlatformBrowserTest : public InProcessBrowserTest {
  public:
   ReduceUserAgentPlatformBrowserTest() = default;
 
   void SetUp() override {
     std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
-    feature_list->InitializeFromCommandLine(
+    feature_list->InitFromCommandLine(
         "ReduceUserAgentMinorVersion,ReduceUserAgentPlatformOsCpu", "");
     scoped_feature_list_.InitWithFeatureList(std::move(feature_list));
     InProcessBrowserTest::SetUp();
@@ -135,9 +100,8 @@ class ReduceUserAgentPlatformBrowserTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ReduceUserAgentPlatformBrowserTest, NavigatorPlatform) {
-  // We should not reduce android navigator.platform in phase 5.
 #if BUILDFLAG(IS_ANDROID)
-  EXPECT_NE("Linux x86_64",
+  EXPECT_EQ("Linux armv81",
             content::EvalJs(web_contents(), "navigator.platform"));
 #elif BUILDFLAG(IS_MAC)
   EXPECT_EQ("MacIntel", content::EvalJs(web_contents(), "navigator.platform"));

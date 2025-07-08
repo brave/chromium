@@ -43,6 +43,7 @@ class ConsentDialogCoordinator : public ConsentRequester {
 
   void OnConsentDialogAccept();
   void OnConsentDialogCancel();
+  void OnConsentDialogClose();
 
   void OnConsentPreferenceUpdated(RequestConsentCallback callback);
 
@@ -54,4 +55,4 @@ class ConsentDialogCoordinator : public ConsentRequester {
   base::WeakPtrFactory<ConsentDialogCoordinator> weak_ptr_factory_{this};
 };
 
-#endif  // CHROME_BROWSER_UI_VIEWS_DEVICE_SIGNALS_CONSENT_DEVICE_SIGNALS_CONSENT_DIALOG_COORDINATOR_H_
+#endif  // CHROME_BROWSER_UI_VIEWS_DEVICE_SIGNALS_CONSENT_CONSENT_DIALOG_COORDINATOR_H_

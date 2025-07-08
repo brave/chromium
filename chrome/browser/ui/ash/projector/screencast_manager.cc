@@ -81,9 +81,8 @@ void GetVideoMetadata(const base::FilePath& video_path,
                       projector::mojom::VideoInfoPtr video,
                       ProjectorAppClient::OnGetVideoCallback callback) {
   DCHECK(!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  int64_t size_in_byte;
-  if (!base::PathExists(video_path) ||
-      !base::GetFileSize(video_path, &size_in_byte)) {
+  std::optional<int64_t> size_in_byte = base::GetFileSize(video_path);
+  if (!size_in_byte.has_value()) {
     content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(
@@ -97,7 +96,7 @@ void GetVideoMetadata(const base::FilePath& video_path,
   }
 
   auto parser = std::make_unique<SafeMediaMetadataParser>(
-      size_in_byte, kProjectorMediaMimeType,
+      size_in_byte.value(), kProjectorMediaMimeType,
       /*get_attached_images=*/false,
       std::make_unique<LocalMediaDataSourceFactory>(
           video_path, base::SingleThreadTaskRunner::GetCurrentDefault()));
@@ -121,7 +120,7 @@ ScreencastManager::~ScreencastManager() = default;
 
 void ScreencastManager::GetVideo(
     const std::string& video_file_id,
-    const absl::optional<std::string>& resource_key,
+    const std::optional<std::string>& resource_key,
     ProjectorAppClient::OnGetVideoCallback callback) const {
   // TODO(b/237089852): Handle the resource key once LocateFilesByItemIds()
   // supports it.
@@ -142,7 +141,7 @@ void ScreencastManager::ResetScopeSuppressDriveNotifications() {
 void ScreencastManager::OnVideoFilePathLocated(
     const std::string& video_id,
     ProjectorAppClient::OnGetVideoCallback callback,
-    absl::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths) {
+    std::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths) {
   if (!paths || paths.value().size() != 1u) {
     std::move(callback).Run(projector::mojom::GetVideoResult::NewErrorMessage(
         base::StringPrintf("Failed to find DriveFS path with video file id=%s",

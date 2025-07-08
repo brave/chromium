@@ -7,14 +7,13 @@
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
+#include <optional>
 
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace gpu {
 namespace {
@@ -100,7 +99,6 @@ std::unique_ptr<VulkanImage> VulkanImage::Create(
     VkImageTiling image_tiling,
     VkDeviceSize device_size,
     uint32_t memory_type_index,
-    absl::optional<VulkanYCbCrInfo>& ycbcr_info,
     VkImageUsageFlags usage,
     VkImageCreateFlags flags) {
   auto image = std::make_unique<VulkanImage>(base::PassKey<VulkanImage>());
@@ -112,7 +110,6 @@ std::unique_ptr<VulkanImage> VulkanImage::Create(
                                 static_cast<uint32_t>(size.height()), 1};
   image->create_info_.format = format;
   image->create_info_.tiling = image_tiling;
-  image->ycbcr_info_ = ycbcr_info;
   image->create_info_.usage = usage;
   image->create_info_.flags = flags;
   return image;

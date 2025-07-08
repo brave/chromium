@@ -5,6 +5,7 @@
 #include "content/shell/browser/shell_file_select_helper.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -112,11 +113,15 @@ void ShellFileSelectHelper::RunFileChooser(
   DCHECK(!listener_);
   DCHECK(!select_file_dialog_);
 
+  select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
+  if (!select_file_dialog_) {
+    listener->FileSelectionCanceled();
+    return;
+  }
+
   listener_ = std::move(listener);
   web_contents_ = content::WebContents::FromRenderFrameHost(render_frame_host)
                       ->GetWeakPtr();
-
-  select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
 
   select_file_types_ = GetFileTypesFromAcceptType(params->accept_types);
   select_file_types_->allowed_paths =
@@ -170,16 +175,8 @@ void ShellFileSelectHelper::RunFileChooserEnd() {
   Release();
 }
 
-void ShellFileSelectHelper::FileSelected(const base::FilePath& path,
-                                         int index,
-                                         void* params) {
-  FileSelectedWithExtraInfo(ui::SelectedFileInfo(path, path), index, params);
-}
-
-void ShellFileSelectHelper::FileSelectedWithExtraInfo(
-    const ui::SelectedFileInfo& file,
-    int index,
-    void* params) {
+void ShellFileSelectHelper::FileSelected(const ui::SelectedFileInfo& file,
+                                         int index) {
   if (dialog_type_ == ui::SelectFileDialog::SELECT_UPLOAD_FOLDER) {
     StartNewEnumeration(file.local_path);
     return;
@@ -188,21 +185,11 @@ void ShellFileSelectHelper::FileSelectedWithExtraInfo(
 }
 
 void ShellFileSelectHelper::MultiFilesSelected(
-    const std::vector<base::FilePath>& files,
-    void* params) {
-  std::vector<ui::SelectedFileInfo> selected_files =
-      ui::FilePathListToSelectedFileInfoList(files);
-
-  MultiFilesSelectedWithExtraInfo(selected_files, params);
-}
-
-void ShellFileSelectHelper::MultiFilesSelectedWithExtraInfo(
-    const std::vector<ui::SelectedFileInfo>& files,
-    void* params) {
+    const std::vector<ui::SelectedFileInfo>& files) {
   ConvertToFileChooserFileInfoList(files);
 }
 
-void ShellFileSelectHelper::FileSelectionCanceled(void* params) {
+void ShellFileSelectHelper::FileSelectionCanceled() {
   RunFileChooserEnd();
 }
 
@@ -238,7 +225,7 @@ void ShellFileSelectHelper::OnListDone(int error) {
   std::unique_ptr<ActiveDirectoryEnumeration> entry =
       std::move(directory_enumeration_);
   if (error) {
-    FileSelectionCanceled(nullptr);
+    FileSelectionCanceled();
     return;
   }
 
@@ -248,7 +235,8 @@ void ShellFileSelectHelper::OnListDone(int error) {
   std::vector<blink::mojom::FileChooserFileInfoPtr> chooser_files;
   for (const auto& file_path : entry->results_) {
     chooser_files.push_back(blink::mojom::FileChooserFileInfo::NewNativeFile(
-        blink::mojom::NativeFileInfo::New(file_path, std::u16string())));
+        blink::mojom::NativeFileInfo::New(file_path, std::u16string(),
+                                          std::vector<std::u16string>())));
   }
 
   listener_->FileSelected(std::move(chooser_files), base_dir_,
@@ -269,8 +257,8 @@ void ShellFileSelectHelper::ConvertToFileChooserFileInfoList(
   for (const auto& file : files) {
     chooser_files.push_back(blink::mojom::FileChooserFileInfo::NewNativeFile(
         blink::mojom::NativeFileInfo::New(
-            file.local_path,
-            base::FilePath(file.display_name).AsUTF16Unsafe())));
+            file.local_path, base::FilePath(file.display_name).AsUTF16Unsafe(),
+            std::vector<std::u16string>())));
   }
 
   listener_->FileSelected(std::move(chooser_files), base::FilePath(),

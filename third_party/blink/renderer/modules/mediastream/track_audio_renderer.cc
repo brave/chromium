@@ -25,7 +25,7 @@
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
-namespace WTF {
+namespace blink {
 
 template <>
 struct CrossThreadCopier<media::AudioParameters> {
@@ -34,17 +34,7 @@ struct CrossThreadCopier<media::AudioParameters> {
   static Type Copy(Type pointer) { return pointer; }
 };
 
-}  // namespace WTF
-
-namespace blink {
-
 namespace {
-
-enum LocalRendererSinkStates {
-  kSinkStarted = 0,
-  kSinkNeverStarted,
-  kSinkStatesMax  // Must always be last!
-};
 
 // Translates |num_samples_rendered| into a TimeDelta duration and adds it to
 // |prior_elapsed_render_time|.
@@ -100,9 +90,9 @@ int TrackAudioRenderer::Render(base::TimeDelta delay,
                                base::TimeTicks delay_timestamp,
                                const media::AudioGlitchInfo& glitch_info,
                                media::AudioBus* audio_bus) {
-  TRACE_EVENT2("audio", "TrackAudioRenderer::Render", "delay (ms)",
-               delay.InMillisecondsF(), "delay_timestamp (ms)",
-               (delay_timestamp - base::TimeTicks()).InMillisecondsF());
+  TRACE_EVENT("audio", "TrackAudioRenderer::Render", "playout_delay (ms)",
+              delay.InMillisecondsF(), "delay_timestamp (ms)",
+              (delay_timestamp - base::TimeTicks()).InMillisecondsF());
   base::AutoLock auto_lock(thread_lock_);
 
   if (!audio_shifter_) {
@@ -136,8 +126,10 @@ void TrackAudioRenderer::OnRenderError() {
 // WebMediaStreamAudioSink implementation
 void TrackAudioRenderer::OnData(const media::AudioBus& audio_bus,
                                 base::TimeTicks reference_time) {
-  TRACE_EVENT1("audio", "TrackAudioRenderer::OnData", "reference time (ms)",
-               (reference_time - base::TimeTicks()).InMillisecondsF());
+  TRACE_EVENT("audio", "TrackAudioRenderer::OnData", "capture_time (ms)",
+              (reference_time - base::TimeTicks()).InMillisecondsF(),
+              "capture_delay (ms)",
+              (base::TimeTicks::Now() - reference_time).InMillisecondsF());
 
   base::AutoLock auto_lock(thread_lock_);
 
@@ -252,10 +244,6 @@ void TrackAudioRenderer::Stop() {
     sink_ = nullptr;
   }
 
-  if (!sink_started_ && IsLocalRenderer()) {
-    UMA_HISTOGRAM_ENUMERATION("Media.LocalRendererSinkStates",
-                              kSinkNeverStarted, kSinkStatesMax);
-  }
   sink_started_ = false;
 
   // Ensure that the capturer stops feeding us with captured audio.
@@ -310,11 +298,6 @@ base::TimeDelta TrackAudioRenderer::GetCurrentRenderTime() {
   return prior_elapsed_render_time_;
 }
 
-bool TrackAudioRenderer::IsLocalRenderer() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
-  return MediaStreamAudioTrack::From(audio_component_.Get())->is_local_track();
-}
-
 void TrackAudioRenderer::SwitchOutputDevice(
     const std::string& device_id,
     media::OutputDeviceStatusCB callback) {
@@ -343,7 +326,7 @@ void TrackAudioRenderer::SwitchOutputDevice(
     return;
   }
 
-  output_device_id_ = String(device_id.data(), device_id.size());
+  output_device_id_ = String(device_id);
   bool was_sink_started = sink_started_;
 
   if (sink_)
@@ -406,10 +389,6 @@ void TrackAudioRenderer::MaybeStartSink(bool reconfiguring) {
   sink_->SetVolume(volume_);
   sink_->Play();  // Not all the sinks play on start.
   sink_started_ = true;
-  if (IsLocalRenderer()) {
-    UMA_HISTOGRAM_ENUMERATION("Media.LocalRendererSinkStates", kSinkStarted,
-                              kSinkStatesMax);
-  }
 }
 
 void TrackAudioRenderer::ReconfigureSink(

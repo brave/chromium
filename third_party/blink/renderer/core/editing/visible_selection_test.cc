@@ -76,10 +76,10 @@ static void TestFlatTreePositionsToEqualToDOMTreePositions(
   EXPECT_EQ(selection.Start(),
             ToPositionInDOMTree(selection_in_flat_tree.Start()));
   EXPECT_EQ(selection.End(), ToPositionInDOMTree(selection_in_flat_tree.End()));
-  EXPECT_EQ(selection.Base(),
-            ToPositionInDOMTree(selection_in_flat_tree.Base()));
-  EXPECT_EQ(selection.Extent(),
-            ToPositionInDOMTree(selection_in_flat_tree.Extent()));
+  EXPECT_EQ(selection.Anchor(),
+            ToPositionInDOMTree(selection_in_flat_tree.Anchor()));
+  EXPECT_EQ(selection.Focus(),
+            ToPositionInDOMTree(selection_in_flat_tree.Focus()));
 }
 
 template <typename Strategy>
@@ -88,7 +88,7 @@ VisibleSelectionTemplate<Strategy> ExpandUsingGranularity(
     TextGranularity granularity) {
   return CreateVisibleSelection(ExpandWithGranularity(
       typename SelectionTemplate<Strategy>::Builder()
-          .SetBaseAndExtent(selection.Base(), selection.Extent())
+          .SetBaseAndExtent(selection.Anchor(), selection.Focus())
           .Build(),
       granularity));
 }
@@ -107,8 +107,8 @@ TEST_F(VisibleSelectionTest, AnonymousPlaceholder) {
                                  .Extend(Position::AfterNode(img))
                                  .Build());
   EXPECT_TRUE(selection.IsCaret());
-  EXPECT_EQ(Position::BeforeNode(br), selection.Base());
-  EXPECT_EQ(Position::BeforeNode(br), selection.Extent());
+  EXPECT_EQ(Position::BeforeNode(br), selection.Anchor());
+  EXPECT_EQ(Position::BeforeNode(br), selection.Focus());
 }
 
 TEST_F(VisibleSelectionTest, expandUsingGranularity) {
@@ -142,13 +142,13 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   selection_in_flat_tree =
       ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(selection.Start(), selection.Base());
-  EXPECT_EQ(selection.End(), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Anchor());
+  EXPECT_EQ(selection.End(), selection.Focus());
   EXPECT_EQ(Position(five, 5), selection.Start());
   EXPECT_EQ(Position(five, 5), selection.End());
 
-  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
-  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Anchor());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Focus());
   EXPECT_EQ(PositionInFlatTree(one, 0), selection_in_flat_tree.Start());
   EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.End());
 
@@ -163,13 +163,13 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   selection_in_flat_tree =
       ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(selection.Start(), selection.Base());
-  EXPECT_EQ(selection.End(), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Anchor());
+  EXPECT_EQ(selection.End(), selection.Focus());
   EXPECT_EQ(Position(three, 0), selection.Start());
   EXPECT_EQ(Position(four, 4), selection.End());
 
-  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
-  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Anchor());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Focus());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
   EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
@@ -184,13 +184,13 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   selection_in_flat_tree =
       ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(selection.Start(), selection.Base());
-  EXPECT_EQ(selection.End(), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Anchor());
+  EXPECT_EQ(selection.End(), selection.Focus());
   EXPECT_EQ(Position(three, 0), selection.Start());
   EXPECT_EQ(Position(four, 4), selection.End());
 
-  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
-  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Anchor());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Focus());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
   EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
@@ -205,13 +205,13 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   selection_in_flat_tree =
       ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(selection.Start(), selection.Base());
-  EXPECT_EQ(selection.End(), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Anchor());
+  EXPECT_EQ(selection.End(), selection.Focus());
   EXPECT_EQ(Position(three, 0), selection.Start());
   EXPECT_EQ(Position(four, 4), selection.End());
 
-  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
-  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Anchor());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Focus());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
   EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
@@ -226,14 +226,14 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   selection_in_flat_tree =
       ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(selection.Start(), selection.Base());
-  EXPECT_EQ(selection.End(), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Anchor());
+  EXPECT_EQ(selection.End(), selection.Focus());
   // DOM tree canonicalization moves position to a wrong place
   EXPECT_EQ(Position(five, 5), selection.Start());
   EXPECT_EQ(Position(five, 5), selection.End());
 
-  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
-  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Anchor());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Focus());
   EXPECT_EQ(PositionInFlatTree(one, 0), selection_in_flat_tree.Start());
   EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.End());
 }
@@ -285,7 +285,7 @@ TEST_F(VisibleSelectionTest, FirstLetter) {
   SetBodyContent(
       "<style>p::first-letter { font-color: red; }</style>"
       "<p>abc def</p>");
-  const Element* sample = GetDocument().QuerySelector(AtomicString("p"));
+  const Element* sample = QuerySelector("p");
   const SelectionInDOMTree selection =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 0))
@@ -300,7 +300,7 @@ TEST_F(VisibleSelectionTest, FirstLetterCollapsedWhitespace) {
   SetBodyContent(
       "<style>p::first-letter { font-color: red; }</style>"
       "<p>  abc def</p>");
-  const Element* sample = GetDocument().QuerySelector(AtomicString("p"));
+  const Element* sample = QuerySelector("p");
   const SelectionInDOMTree selection =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 0))
@@ -320,7 +320,7 @@ TEST_F(VisibleSelectionTest, FirstLetterPartial) {
   SetBodyContent(
       "<style>p::first-letter { font-color: red; }</style>"
       "<p>((a))bc def</p>");
-  const Element* sample = GetDocument().QuerySelector(AtomicString("p"));
+  const Element* sample = QuerySelector("p");
   const SelectionInDOMTree selection =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 1))
@@ -336,7 +336,7 @@ TEST_F(VisibleSelectionTest, FirstLetterTextTransform) {
   SetBodyContent(
       "<style>p::first-letter { text-transform: uppercase; }</style>"
       "<p>\u00DFbc def</p>");  // uppercase(U+00DF) = "SS"
-  const Element* sample = GetDocument().QuerySelector(AtomicString("p"));
+  const Element* sample = QuerySelector("p");
   const SelectionInDOMTree selection =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 0))
@@ -351,7 +351,7 @@ TEST_F(VisibleSelectionTest, FirstLetterVisibilityHidden) {
   SetBodyContent(
       "<style>p::first-letter { visibility: hidden; }</style>"
       "<p>abc def</p>");
-  const Element* sample = GetDocument().QuerySelector(AtomicString("p"));
+  const Element* sample = QuerySelector("p");
   const SelectionInDOMTree selection =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 0))
@@ -371,7 +371,7 @@ TEST_F(VisibleSelectionTest, FirstLetterVisibilityHidden) {
 TEST_F(VisibleSelectionTest, SelectAllWithInputElement) {
   SetBodyContent("<input>123");
   Element* const html_element = GetDocument().documentElement();
-  Element* const input = GetDocument().QuerySelector(AtomicString("input"));
+  Element* const input = QuerySelector("input");
   Node* const last_child = GetDocument().body()->lastChild();
 
   const VisibleSelection& visible_selection_in_dom_tree =

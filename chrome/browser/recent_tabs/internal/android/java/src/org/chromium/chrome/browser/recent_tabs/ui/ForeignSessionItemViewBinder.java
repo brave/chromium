@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSession;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSessionWindow;
 import org.chromium.chrome.browser.recent_tabs.R;
@@ -23,6 +24,7 @@ import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** A binder class for device items on the detail sheet. */
+@NullMarked
 public class ForeignSessionItemViewBinder {
     static View create(ViewGroup parent) {
         return LayoutInflater.from(parent.getContext())
@@ -44,8 +46,8 @@ public class ForeignSessionItemViewBinder {
                 deviceIconView.setImageResource(R.drawable.restore_tabs_tablet_icon);
             }
             assert (session.formFactor == FormFactor.PHONE
-                    || session.formFactor == FormFactor.TABLET)
-                : "Unsupported form factor device retrieved.";
+                            || session.formFactor == FormFactor.TABLET)
+                    : "Unsupported form factor device retrieved.";
 
             String sessionInfo = getSessionInfo(view, session);
             TextView sessionInfoView =
@@ -66,9 +68,13 @@ public class ForeignSessionItemViewBinder {
         StringBuilder builder = new StringBuilder();
         builder.append(session.name);
         builder.append(sessionInfo);
-        builder.append(view.getContext().getResources().getString(isSelected
-                        ? R.string.restore_tabs_device_screen_selected_description
-                        : R.string.restore_tabs_device_screen_not_selected_description));
+        builder.append(
+                view.getContext()
+                        .getString(
+                                isSelected
+                                        ? R.string.restore_tabs_device_screen_selected_description
+                                        : R.string
+                                                .restore_tabs_device_screen_not_selected_description));
         view.setContentDescription(builder.toString());
     }
 
@@ -78,11 +84,17 @@ public class ForeignSessionItemViewBinder {
             tabCount += window.tabs.size();
         }
 
-        CharSequence lastModifiedTimeString = DateUtils.getRelativeTimeSpanString(
-                session.modifiedTime, System.currentTimeMillis(), 0);
-        String sessionInfo = view.getContext().getResources().getQuantityString(
-                R.plurals.restore_tabs_promo_sheet_device_info, tabCount,
-                Integer.toString(tabCount), lastModifiedTimeString);
+        CharSequence lastModifiedTimeString =
+                DateUtils.getRelativeTimeSpanString(
+                        session.modifiedTime, System.currentTimeMillis(), 0);
+        String sessionInfo =
+                view.getContext()
+                        .getResources()
+                        .getQuantityString(
+                                R.plurals.restore_tabs_promo_sheet_device_info,
+                                tabCount,
+                                Integer.toString(tabCount),
+                                lastModifiedTimeString);
         return sessionInfo;
     }
 }

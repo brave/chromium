@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/files/file_error_or.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
@@ -30,10 +31,6 @@ namespace base {
 class File;
 class FilePath;
 }  // namespace base
-
-namespace content {
-class RenderFrameHost;
-}
 
 namespace drive {
 class EventLogger;
@@ -97,7 +94,7 @@ class SingleEntryPropertiesGetterForDriveFs {
   ResultCallback callback_;
   const storage::FileSystemURL file_system_url_;
   base::FilePath relative_path_;
-  const raw_ptr<Profile, ExperimentalAsh> running_profile_;
+  const raw_ptr<Profile> running_profile_;
 
   // Values used in the process.
   std::unique_ptr<extensions::api::file_manager_private::EntryProperties>
@@ -119,15 +116,13 @@ void VolumeToVolumeMetadata(
     extensions::api::file_manager_private::VolumeMetadata* volume_metadata);
 
 // Returns the local FilePath associated with |url|. If the file isn't of the
-// type FileSystemBackend handles, returns an empty
-// FilePath. |render_frame_host| and |profile| are needed to obtain the
-// FileSystemContext currently in use.
+// type FileSystemBackend handles, returns an empty FilePath.
 //
-// Local paths will look like "/home/chronos/user/Downloads/foo/bar.txt" or
-// "/special/drive/foo/bar.txt".
-base::FilePath GetLocalPathFromURL(content::RenderFrameHost* render_frame_host,
-                                   Profile* profile,
-                                   const GURL& url);
+// Local paths will look like "/home/chronos/user/MyFiles/Downloads/foo/bar.txt"
+// or "/special/drive/foo/bar.txt".
+base::FilePath GetLocalPathFromURL(
+    scoped_refptr<storage::FileSystemContext> file_system_context,
+    const GURL& url);
 
 // The callback type is used for GetSelectedFileInfo().
 typedef base::OnceCallback<void(const std::vector<ui::SelectedFileInfo>&)>
@@ -148,10 +143,9 @@ enum GetSelectedFileInfoLocalPathOption {
   NEED_LOCAL_PATH_FOR_SAVING,
 };
 
-// Gets the information for |file_urls|.
-void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
-                         Profile* profile,
-                         const std::vector<GURL>& file_urls,
+// Gets the information for |local_paths|.
+void GetSelectedFileInfo(Profile* profile,
+                         std::vector<base::FilePath> local_paths,
                          GetSelectedFileInfoLocalPathOption local_path_option,
                          GetSelectedFileInfoCallback callback);
 
@@ -171,6 +165,16 @@ bool ToRecentSourceFileType(
 // pinning to its file manager private equivalent.
 extensions::api::file_manager_private::BulkPinProgress BulkPinProgressToJs(
     const drivefs::pinning::Progress& progress);
+
+// Converts the given GURL into an EntryData struct that can be returned by
+// fileManagerPrivate.
+void GURLToEntryData(
+    Profile* profile,
+    scoped_refptr<storage::FileSystemContext> file_system_context,
+    const GURL& url,
+    base::OnceCallback<void(
+        base::FileErrorOr<extensions::api::file_manager_private::EntryData>)>
+        callback);
 
 }  // namespace util
 }  // namespace file_manager

@@ -33,6 +33,7 @@
 namespace blink {
 
 class MediaQuerySet;
+class StyleScope;
 class StyleSheetContents;
 
 class StyleRuleImport : public StyleRuleBase {
@@ -41,11 +42,16 @@ class StyleRuleImport : public StyleRuleBase {
  public:
   StyleRuleImport(const String& href,
                   LayerName&& layer,
+                  const StyleScope*,
+                  bool supported,
+                  String supports,
                   const MediaQuerySet*,
                   OriginClean origin_clean);
   ~StyleRuleImport();
 
-  StyleSheetContents* ParentStyleSheet() const { return parent_style_sheet_; }
+  StyleSheetContents* ParentStyleSheet() const {
+    return parent_style_sheet_.Get();
+  }
   void SetParentStyleSheet(StyleSheetContents* sheet) {
     DCHECK(sheet);
     parent_style_sheet_ = sheet;
@@ -70,6 +76,11 @@ class StyleRuleImport : public StyleRuleBase {
   bool IsLayered() const { return layer_.size(); }
   const LayerName& GetLayerName() const { return layer_; }
   String GetLayerNameAsString() const;
+
+  const StyleScope* GetScope() const { return scope_.Get(); }
+
+  bool IsSupported() const { return supported_; }
+  String GetSupportsString() const { return supports_string_; }
 
   void TraceAfterDispatch(blink::Visitor*) const;
 
@@ -110,9 +121,12 @@ class StyleRuleImport : public StyleRuleBase {
   Member<ImportedStyleSheetClient> style_sheet_client_;
   String str_href_;
   LayerName layer_;
+  Member<const StyleScope> scope_;
+  String supports_string_;
   Member<const MediaQuerySet> media_queries_;
   Member<StyleSheetContents> style_sheet_;
   bool loading_;
+  bool supported_;
   // Whether the style sheet that has this import rule is origin-clean:
   // https://drafts.csswg.org/cssom-1/#concept-css-style-sheet-origin-clean-flag
   const OriginClean origin_clean_;
@@ -120,7 +134,7 @@ class StyleRuleImport : public StyleRuleBase {
   // If set, this holds the position of the import rule (start of the `@import`)
   // in the stylesheet text. The position is used to encode accurate initiator
   // info on the stylesheet request in order to report accurate failures.
-  absl::optional<TextPosition> position_hint_;
+  std::optional<TextPosition> position_hint_;
 };
 
 template <>

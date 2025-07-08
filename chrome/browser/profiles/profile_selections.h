@@ -5,9 +5,7 @@
 #ifndef CHROME_BROWSER_PROFILES_PROFILE_SELECTIONS_H_
 #define CHROME_BROWSER_PROFILES_PROFILE_SELECTIONS_H_
 
-#include "base/feature_list.h"
-
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <memory>
 
 class Profile;
 
@@ -56,14 +54,13 @@ class ProfileSelections {
 
     // Builder setters
     Builder& WithRegular(ProfileSelection selection);
-    // Note: When Guest and Regular are not mutually exclusive on Ash and
-    // Lacros, a Profile can potentially return true for both
-    // `IsRegularProfile()` and `IsGuestSession()`. This is currently not
-    // supported by the API, meaning that extra code might need to be added to
-    // make sure all the cases are properly covered. Using the API, if both
-    // `IsRegularProfile()` and `IsGuestSession()` are true, Regular
-    // ProfileSelection logic will be used.
-    // TODO(crbug.com/1348572): remove this comment once `IsGuestSession()` is
+    // Note: When Guest and Regular are not mutually exclusive on ChromeOS, a
+    // Profile can potentially return true for both `IsRegularProfile()` and
+    // `IsGuestSession()`. This is currently not supported by the API, meaning
+    // that extra code might need to be added to make sure all the cases are
+    // properly covered. Using the API, if both `IsRegularProfile()` and
+    // `IsGuestSession()` are true, Regular ProfileSelection logic will be used.
+    // TODO(crbug.com/40233408): remove this comment once `IsGuestSession()` is
     // fixed.
     Builder& WithGuest(ProfileSelection selection);
     Builder& WithSystem(ProfileSelection selection);
@@ -93,7 +90,7 @@ class ProfileSelections {
   // | Regular | self       | no profile |
   // | Guest   | no profile | no profile |
   // | System  | no profile | no profile |
-  // | Ash Int.| self       | no profile |
+  // | Ash Int.| no profile | no profile |
   // +---------+------------+------------+
   static ProfileSelections BuildForRegularProfile();
 
@@ -120,7 +117,7 @@ class ProfileSelections {
   // | Regular | self       | self       |
   // | Guest   | no profile | no profile |
   // | System  | no profile | no profile |
-  // | Ash Int.| self       | self       |
+  // | Ash Int.| no profile | no profile |
   // +---------+------------+------------+
   static ProfileSelections BuildForRegularAndIncognito();
 
@@ -136,12 +133,13 @@ class ProfileSelections {
   // | Regular | self       | original   |
   // | Guest   | no profile | no profile |
   // | System  | no profile | no profile |
-  // | Ash Int.| self       | original   |
+  // | Ash Int.| no profile | no profile |
   // +---------+------------+------------+
   static ProfileSelections BuildRedirectedInIncognito();
 
   // Given a Profile and a ProfileSelection enum, returns the right profile
   // (can potentially return nullptr).
+  // The `profile` is expected to be non-null.
   Profile* ApplyProfileSelection(Profile* profile) const;
 
  private:
@@ -158,16 +156,15 @@ class ProfileSelections {
 
   // Returns the `ProfileSelection` based on the profile information through the
   // set mapping.
-  ProfileSelection GetProfileSelection(const Profile* profile) const;
+  ProfileSelection GetProfileSelection(Profile* profile) const;
 
   // Default value for the mapping of
   // Regular Profile -> `ProfileSelection::kOriginalOnly`
-  // Not assigning values for Guest and System Profiles defaults to
-  // `ProfileSelection::kNone`.
+  // Other Profile -> `ProfileSelection::kNone`.
   ProfileSelection regular_profile_selection_ = ProfileSelection::kOriginalOnly;
-  absl::optional<ProfileSelection> guest_profile_selection_;
-  absl::optional<ProfileSelection> system_profile_selection_;
-  absl::optional<ProfileSelection> ash_internals_profile_selection_;
+  ProfileSelection guest_profile_selection_ = ProfileSelection::kNone;
+  ProfileSelection system_profile_selection_ = ProfileSelection::kNone;
+  ProfileSelection ash_internals_profile_selection_ = ProfileSelection::kNone;
 };
 
-#endif  // !CHROME_BROWSER_PROFILES_PROFILE_SELECTIONS_H_
+#endif  // CHROME_BROWSER_PROFILES_PROFILE_SELECTIONS_H_

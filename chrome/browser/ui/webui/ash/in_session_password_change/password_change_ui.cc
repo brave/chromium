@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/saml/password_expiry_notification.h"
@@ -19,7 +20,6 @@
 #include "chrome/browser/ui/webui/ash/in_session_password_change/password_change_dialogs.h"
 #include "chrome/browser/ui/webui/ash/in_session_password_change/password_change_handler.h"
 #include "chrome/browser/ui/webui/ash/in_session_password_change/urgent_password_expiry_notification_handler.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/gaia_auth_host_resources_map.h"
@@ -38,6 +38,7 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash {
 
@@ -104,13 +105,11 @@ PasswordChangeUI::PasswordChangeUI(content::WebUI* web_ui)
   source->AddString("hostedHeader", GetHostedHeaderText(password_change_url));
   source->UseStringsJs();
 
-  source->AddResourcePaths(
-      base::make_span(kPasswordChangeResources, kPasswordChangeResourcesSize));
+  source->AddResourcePaths(base::span(kPasswordChangeResources));
   source->SetDefaultResource(IDR_PASSWORD_CHANGE_PASSWORD_CHANGE_APP_HTML);
 
   // Add Gaia Authenticator resources
-  source->AddResourcePaths(
-      base::make_span(kGaiaAuthHostResources, kGaiaAuthHostResourcesSize));
+  source->AddResourcePaths(base::span(kGaiaAuthHostResources));
 }
 
 PasswordChangeUI::~PasswordChangeUI() = default;
@@ -155,9 +154,9 @@ ConfirmPasswordChangeUI::ConfirmPasswordChangeUI(content::WebUI* web_ui)
 
   source->UseStringsJs();
 
-  source->AddResourcePaths(
-      base::make_span(kPasswordChangeResources, kPasswordChangeResourcesSize));
-  source->SetDefaultResource(IDR_PASSWORD_CHANGE_CONFIRM_PASSWORD_CHANGE_HTML);
+  source->AddResourcePaths(base::span(kPasswordChangeResources));
+  source->SetDefaultResource(
+      IDR_PASSWORD_CHANGE_CONFIRM_PASSWORD_CHANGE_APP_HTML);
 
   // The ConfirmPasswordChangeHandler is added by the dialog, so no need to add
   // it here.
@@ -188,8 +187,9 @@ UrgentPasswordExpiryNotificationUI::UrgentPasswordExpiryNotificationUI(
     const base::Time expiration_time = attrs.expiration_time();
     source->AddString("initialTitle", PasswordExpiryNotification::GetTitleText(
                                           expiration_time - base::Time::Now()));
-    source->AddString("expirationTime",
-                      base::NumberToString(expiration_time.ToJsTime()));
+    source->AddString(
+        "expirationTime",
+        base::NumberToString(expiration_time.InMillisecondsFSinceUnixEpoch()));
   }
 
   static constexpr webui::LocalizedString kLocalizedStrings[] = {
@@ -199,8 +199,7 @@ UrgentPasswordExpiryNotificationUI::UrgentPasswordExpiryNotificationUI(
 
   source->UseStringsJs();
 
-  source->AddResourcePaths(
-      base::make_span(kPasswordChangeResources, kPasswordChangeResourcesSize));
+  source->AddResourcePaths(base::span(kPasswordChangeResources));
   source->SetDefaultResource(
       IDR_PASSWORD_CHANGE_URGENT_PASSWORD_EXPIRY_NOTIFICATION_HTML);
 

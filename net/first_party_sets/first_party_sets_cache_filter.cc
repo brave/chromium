@@ -4,6 +4,8 @@
 
 #include "net/first_party_sets/first_party_sets_cache_filter.h"
 
+#include "base/containers/map_util.h"
+
 namespace net {
 
 FirstPartySetsCacheFilter::MatchInfo::MatchInfo() = default;
@@ -14,10 +16,7 @@ FirstPartySetsCacheFilter::MatchInfo::MatchInfo(
 FirstPartySetsCacheFilter::MatchInfo::MatchInfo::~MatchInfo() = default;
 
 bool FirstPartySetsCacheFilter::MatchInfo::operator==(
-    const FirstPartySetsCacheFilter::MatchInfo& other) const {
-  return std::tie(clear_at_run_id, browser_run_id) ==
-         std::tie(other.clear_at_run_id, other.browser_run_id);
-}
+    const FirstPartySetsCacheFilter::MatchInfo& other) const = default;
 
 FirstPartySetsCacheFilter::FirstPartySetsCacheFilter() = default;
 FirstPartySetsCacheFilter::FirstPartySetsCacheFilter(
@@ -35,10 +34,7 @@ FirstPartySetsCacheFilter& FirstPartySetsCacheFilter::operator=(
 FirstPartySetsCacheFilter::~FirstPartySetsCacheFilter() = default;
 
 bool FirstPartySetsCacheFilter::operator==(
-    const FirstPartySetsCacheFilter& other) const {
-  return std::tie(filter_, browser_run_id_) ==
-         std::tie(other.filter_, other.browser_run_id_);
-}
+    const FirstPartySetsCacheFilter& other) const = default;
 
 FirstPartySetsCacheFilter FirstPartySetsCacheFilter::Clone() const {
   return FirstPartySetsCacheFilter(filter_, browser_run_id_);
@@ -49,8 +45,9 @@ FirstPartySetsCacheFilter::MatchInfo FirstPartySetsCacheFilter::GetMatchInfo(
   FirstPartySetsCacheFilter::MatchInfo res;
   if (browser_run_id_ > 0) {
     res.browser_run_id = browser_run_id_;
-    if (const auto it = filter_.find(site); it != filter_.end())
-      res.clear_at_run_id = it->second;
+    if (const int64_t* run_id = base::FindOrNull(filter_, site); run_id) {
+      res.clear_at_run_id = *run_id;
+    }
   }
   return res;
 }

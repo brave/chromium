@@ -30,14 +30,15 @@
 
 #include "third_party/blink/renderer/modules/websockets/dom_websocket.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
-#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
@@ -75,8 +76,6 @@ namespace blink {
 
 DOMWebSocket::EventQueue::EventQueue(EventTarget* target)
     : state_(kActive), target_(target) {}
-
-DOMWebSocket::EventQueue::~EventQueue() = default;
 
 void DOMWebSocket::EventQueue::Dispatch(Event* event) {
   switch (state_) {
@@ -177,7 +176,6 @@ DOMWebSocket::DOMWebSocket(ExecutionContext* context)
       buffered_amount_(0),
       consumed_buffered_amount_(0),
       buffered_amount_after_close_(0),
-      binary_type_(kBinaryTypeBlob),
       subprotocol_(""),
       extensions_(""),
       event_queue_(MakeGarbageCollected<EventQueue>(this)),
@@ -333,11 +331,9 @@ void DOMWebSocket::send(const String& message,
     return;
   }
 
-  RecordSendTypeHistogram(WebSocketSendType::kString);
-
   DCHECK(channel_);
   buffered_amount_ += encoded_message.length();
-  channel_->Send(encoded_message, base::OnceClosure());
+  channel_->Send(encoded_message, /*watcher=*/nullptr);
   NotifyWebSocketActivity();
 }
 
@@ -354,11 +350,10 @@ void DOMWebSocket::send(DOMArrayBuffer* binary_data,
     UpdateBufferedAmountAfterClose(binary_data->ByteLength());
     return;
   }
-  RecordSendTypeHistogram(WebSocketSendType::kArrayBuffer);
   DCHECK(channel_);
   buffered_amount_ += binary_data->ByteLength();
   channel_->Send(*binary_data, 0, binary_data->ByteLength(),
-                 base::OnceClosure());
+                 /*watcher=*/nullptr);
   NotifyWebSocketActivity();
 }
 
@@ -375,11 +370,10 @@ void DOMWebSocket::send(NotShared<DOMArrayBufferView> array_buffer_view,
     UpdateBufferedAmountAfterClose(array_buffer_view->byteLength());
     return;
   }
-  RecordSendTypeHistogram(WebSocketSendType::kArrayBufferView);
   DCHECK(channel_);
   buffered_amount_ += array_buffer_view->byteLength();
   channel_->Send(*array_buffer_view->buffer(), array_buffer_view->byteOffset(),
-                 array_buffer_view->byteLength(), base::OnceClosure());
+                 array_buffer_view->byteLength(), /*watcher=*/nullptr);
   NotifyWebSocketActivity();
 }
 
@@ -396,7 +390,6 @@ void DOMWebSocket::send(Blob* binary_data, ExceptionState& exception_state) {
     return;
   }
   uint64_t size = binary_data->size();
-  RecordSendTypeHistogram(WebSocketSendType::kBlob);
   buffered_amount_ += size;
   DCHECK(channel_);
 
@@ -419,15 +412,14 @@ void DOMWebSocket::close(uint16_t code,
 }
 
 void DOMWebSocket::close(ExceptionState& exception_state) {
-  CloseInternal(WebSocketChannel::kCloseEventCodeNotSpecified, String(),
-                exception_state);
+  CloseInternal(std::nullopt, String(), exception_state);
 }
 
 void DOMWebSocket::close(uint16_t code, ExceptionState& exception_state) {
   CloseInternal(code, String(), exception_state);
 }
 
-void DOMWebSocket::CloseInternal(int code,
+void DOMWebSocket::CloseInternal(std::optional<uint16_t> code,
                                  const String& reason,
                                  ExceptionState& exception_state) {
   common_.CloseInternal(code, reason, channel_, exception_state);
@@ -455,27 +447,12 @@ String DOMWebSocket::extensions() const {
   return extensions_;
 }
 
-String DOMWebSocket::binaryType() const {
-  switch (binary_type_) {
-    case kBinaryTypeBlob:
-      return "blob";
-    case kBinaryTypeArrayBuffer:
-      return "arraybuffer";
-  }
-  NOTREACHED();
-  return String();
+V8BinaryType DOMWebSocket::binaryType() const {
+  return V8BinaryType(binary_type_);
 }
 
-void DOMWebSocket::setBinaryType(const String& binary_type) {
-  if (binary_type == "blob") {
-    binary_type_ = kBinaryTypeBlob;
-    return;
-  }
-  if (binary_type == "arraybuffer") {
-    binary_type_ = kBinaryTypeArrayBuffer;
-    return;
-  }
-  NOTREACHED();
+void DOMWebSocket::setBinaryType(const V8BinaryType& binary_type) {
+  binary_type_ = binary_type.AsEnum();
 }
 
 const AtomicString& DOMWebSocket::InterfaceName() const {
@@ -556,10 +533,10 @@ void DOMWebSocket::DidReceiveBinaryMessage(
     return;
 
   switch (binary_type_) {
-    case kBinaryTypeBlob: {
+    case V8BinaryType::Enum::kBlob: {
       auto blob_data = std::make_unique<BlobData>();
       for (const auto& span : data) {
-        blob_data->AppendBytes(span.data(), span.size());
+        blob_data->AppendBytes(base::as_bytes(span));
       }
       auto* blob = MakeGarbageCollected<Blob>(
           BlobDataHandle::Create(std::move(blob_data), size));
@@ -567,7 +544,7 @@ void DOMWebSocket::DidReceiveBinaryMessage(
       break;
     }
 
-    case kBinaryTypeArrayBuffer:
+    case V8BinaryType::Enum::kArraybuffer:
       DOMArrayBuffer* array_buffer = DOMArrayBuffer::Create(data);
       event_queue_->Dispatch(
           MessageEvent::Create(array_buffer, origin_string_));
@@ -626,10 +603,6 @@ void DOMWebSocket::NotifyWebSocketActivity() {
   if (context) {
     context->NotifyWebSocketActivity();
   }
-}
-
-void DOMWebSocket::RecordSendTypeHistogram(WebSocketSendType type) {
-  base::UmaHistogramEnumeration("WebCore.WebSocket.SendType", type);
 }
 
 void DOMWebSocket::Trace(Visitor* visitor) const {

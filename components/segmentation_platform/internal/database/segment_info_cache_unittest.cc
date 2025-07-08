@@ -20,8 +20,12 @@ const proto::SegmentId kSegmentId =
 const proto::SegmentId kSegmentId2 =
     proto::SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_SHOPPING_USER;
 
+const proto::SegmentId kSegmentId3 =
+    proto::SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_SEARCH_USER;
+
 const ModelSource kDefaultModelSource = ModelSource::DEFAULT_MODEL_SOURCE;
 const ModelSource kServerModelSource = ModelSource::SERVER_MODEL_SOURCE;
+const ModelSource kUnknownModelSource = ModelSource::UNKNOWN_MODEL_SOURCE;
 
 proto::SegmentInfo CreateSegment(SegmentId segment_id,
                                  ModelSource model_source) {
@@ -50,30 +54,45 @@ class SegmentInfoCacheTest : public testing::Test {
 };
 
 TEST_F(SegmentInfoCacheTest, GetSegmentInfoFromEmptyCache) {
-  auto segment_info_ =
+  // Server Model
+  const auto* segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
-  EXPECT_EQ(absl::nullopt, segment_info_);
+  EXPECT_EQ(nullptr, segment_info_);
+  // Default model
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kDefaultModelSource);
+  EXPECT_EQ(nullptr, segment_info_);
 }
 
 TEST_F(SegmentInfoCacheTest, GetSegmentInfoFromCache) {
   segment_info_cache_->UpdateSegmentInfo(
       kSegmentId, kServerModelSource,
       CreateSegment(kSegmentId, kServerModelSource));
-  auto segment_info_ =
+  const auto* segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
-  EXPECT_TRUE(segment_info_.has_value());
-  EXPECT_EQ(kSegmentId, segment_info_.value().segment_id());
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
 
   // Calling GetSegmentInfo method again.
   segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
-  EXPECT_TRUE(segment_info_.has_value());
-  EXPECT_EQ(kSegmentId, segment_info_.value().segment_id());
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
 
   // Calling GetSegmentInfo method again for default model.
   segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kDefaultModelSource);
-  EXPECT_FALSE(segment_info_.has_value());
+  EXPECT_FALSE(segment_info_);
+
+  // Creating SegmentInfo for default model and querying it.
+  segment_info_cache_->UpdateSegmentInfo(
+      kSegmentId, kDefaultModelSource,
+      CreateSegment(kSegmentId, kDefaultModelSource));
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kDefaultModelSource);
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(kDefaultModelSource, segment_info_->model_source());
 }
 
 TEST_F(SegmentInfoCacheTest, GetSegmentInfoForSegmentsFromCache) {
@@ -114,10 +133,10 @@ TEST_F(SegmentInfoCacheTest, GetSegmentInfoForSegmentsFromCache) {
   EXPECT_EQ(kSegmentId, segments_found.get()->at(0).first);
   EXPECT_EQ(kSegmentId2, segments_found.get()->at(1).first);
 
-  // Updating absl::nullopt for 'kSegmentId2' and calling
+  // Updating std::nullopt for 'kSegmentId2' and calling
   // GetSegmentInfoForSegments with all segment ids.
   segment_info_cache_->UpdateSegmentInfo(kSegmentId2, kServerModelSource,
-                                         absl::nullopt);
+                                         std::nullopt);
   segments_found = segment_info_cache_->GetSegmentInfoForSegments(
       {kSegmentId, kSegmentId2}, kServerModelSource);
   EXPECT_EQ(1u, segments_found.get()->size());
@@ -146,11 +165,11 @@ TEST_F(SegmentInfoCacheTest, GetSegmentInfoForBothModelsFromCache) {
 
   EXPECT_EQ(kSegmentId, segments_found.get()->at(0).first);
   EXPECT_EQ(kServerModelSource,
-            segments_found.get()->at(0).second.model_source());
+            segments_found.get()->at(0).second->model_source());
 
   EXPECT_EQ(kSegmentId, segments_found.get()->at(1).first);
   EXPECT_EQ(kDefaultModelSource,
-            segments_found.get()->at(1).second.model_source());
+            segments_found.get()->at(1).second->model_source());
 
   // Updating SegmentInfo for 'kSegmentId2' and calling
   // GetSegmentInfoForBothModels with both segment ids.
@@ -162,42 +181,50 @@ TEST_F(SegmentInfoCacheTest, GetSegmentInfoForBothModelsFromCache) {
   EXPECT_EQ(3u, segments_found.get()->size());
   EXPECT_EQ(kSegmentId, segments_found.get()->at(0).first);
   EXPECT_EQ(kServerModelSource,
-            segments_found.get()->at(0).second.model_source());
+            segments_found.get()->at(0).second->model_source());
 
   EXPECT_EQ(kSegmentId, segments_found.get()->at(1).first);
   EXPECT_EQ(kDefaultModelSource,
-            segments_found.get()->at(1).second.model_source());
+            segments_found.get()->at(1).second->model_source());
 
   EXPECT_EQ(kSegmentId2, segments_found.get()->at(2).first);
   EXPECT_EQ(kDefaultModelSource,
-            segments_found.get()->at(2).second.model_source());
+            segments_found.get()->at(2).second->model_source());
 
-  // Updating SegmentInfo for 'kSegmentId2' with absl::nullopt and calling
+  // Updating SegmentInfo for 'kSegmentId2' with std::nullopt and calling
   // GetSegmentInfoForBothModels with both segment ids.
   segment_info_cache_->UpdateSegmentInfo(kSegmentId2, kDefaultModelSource,
-                                         absl::nullopt);
+                                         std::nullopt);
   segments_found = segment_info_cache_->GetSegmentInfoForBothModels(
       {kSegmentId, kSegmentId2});
   EXPECT_EQ(2u, segments_found.get()->size());
   EXPECT_EQ(kSegmentId, segments_found.get()->at(0).first);
   EXPECT_EQ(kServerModelSource,
-            segments_found.get()->at(0).second.model_source());
+            segments_found.get()->at(0).second->model_source());
 
   EXPECT_EQ(kSegmentId, segments_found.get()->at(1).first);
   EXPECT_EQ(kDefaultModelSource,
-            segments_found.get()->at(1).second.model_source());
+            segments_found.get()->at(1).second->model_source());
+
+  // Calling GetSegmentInfoForBothModels for `segment_id` not present in cache
+  // for both model sources.
+  segments_found =
+      segment_info_cache_->GetSegmentInfoForBothModels({kSegmentId3});
+  EXPECT_EQ(0u, segments_found.get()->size());
 }
 
 TEST_F(SegmentInfoCacheTest, UpdateSegmentInfo) {
+  // Server Model
   proto::SegmentInfo created_segment_info =
       CreateSegment(kSegmentId, kServerModelSource);
   segment_info_cache_->UpdateSegmentInfo(kSegmentId, kServerModelSource,
                                          created_segment_info);
 
-  auto segment_info_ =
+  const auto* segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
-  EXPECT_TRUE(segment_info_.has_value());
-  EXPECT_EQ(kSegmentId, segment_info_.value().segment_id());
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(0, segment_info_->model_version());
 
   // Update model_version of segment_info
   created_segment_info.set_model_version(4);
@@ -206,9 +233,63 @@ TEST_F(SegmentInfoCacheTest, UpdateSegmentInfo) {
 
   segment_info_ =
       segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
-  EXPECT_TRUE(segment_info_.has_value());
-  EXPECT_EQ(kSegmentId, segment_info_.value().segment_id());
-  EXPECT_EQ(4, segment_info_.value().model_version());
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(4, segment_info_->model_version());
+
+  // Default model
+  created_segment_info = CreateSegment(kSegmentId, kDefaultModelSource);
+  segment_info_cache_->UpdateSegmentInfo(kSegmentId, kDefaultModelSource,
+                                         created_segment_info);
+
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kDefaultModelSource);
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(0, segment_info_->model_version());
+
+  // Update model_version of segment_info
+  created_segment_info.set_model_version(7);
+  segment_info_cache_->UpdateSegmentInfo(kSegmentId, kDefaultModelSource,
+                                         created_segment_info);
+
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kDefaultModelSource);
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(7, segment_info_->model_version());
+
+  // Unknown model source
+  created_segment_info = CreateSegment(kSegmentId, kUnknownModelSource);
+  segment_info_cache_->UpdateSegmentInfo(kSegmentId, kServerModelSource,
+                                         created_segment_info);
+
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(0, segment_info_->model_version());
+  EXPECT_EQ(kServerModelSource, segment_info_->model_source());
+
+  // Update model_version of segment_info
+  created_segment_info.set_model_version(2);
+  segment_info_cache_->UpdateSegmentInfo(kSegmentId, kServerModelSource,
+                                         created_segment_info);
+
+  segment_info_ =
+      segment_info_cache_->GetSegmentInfo(kSegmentId, kServerModelSource);
+  EXPECT_TRUE(segment_info_);
+  EXPECT_EQ(kSegmentId, segment_info_->segment_id());
+  EXPECT_EQ(2, segment_info_->model_version());
+  // Deleting a non existing entry.
+  segment_info_cache_->UpdateSegmentInfo(kSegmentId3, kServerModelSource,
+                                         std::nullopt);
+}
+
+TEST_F(SegmentInfoCacheTest, GetSegmentInfoForBothModelsWithEmptyDatabase) {
+  auto segments_found = segment_info_cache_->GetSegmentInfoForBothModels(
+      {kSegmentId, kSegmentId2});
+  EXPECT_TRUE(segments_found.get()->empty());
 }
 
 }  // namespace segmentation_platform

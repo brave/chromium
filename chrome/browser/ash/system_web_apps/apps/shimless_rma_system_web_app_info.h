@@ -6,8 +6,7 @@
 #define CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_SHIMLESS_RMA_SYSTEM_WEB_APP_INFO_H_
 
 #include "ash/webui/shimless_rma/url_constants.h"
-#include "chrome/browser/ash/system_web_apps/types/system_web_app_delegate.h"
-#include "ui/gfx/geometry/size.h"
+#include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate.h"
 
 namespace web_app {
 struct WebAppInstallInfo;
@@ -21,14 +20,10 @@ class ShimlessRMASystemAppDelegate : public ash::SystemWebAppDelegate {
   std::unique_ptr<web_app::WebAppInstallInfo> GetWebAppInfo() const override;
   bool ShouldCaptureNavigations() const override;
   bool ShouldShowInLauncher() const override;
-  bool ShouldShowInSearch() const override;
+  bool ShouldShowInSearchAndShelf() const override;
   bool ShouldAllowResize() const override;
   bool ShouldAllowScriptsToCloseWindows() const override;
   bool IsAppEnabled() const override;
 };
-
-// Returns a WebAppInstallInfo used to install the app.
-std::unique_ptr<web_app::WebAppInstallInfo>
-CreateWebAppInfoForShimlessRMASystemWebApp();
 
 #endif  // CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_SHIMLESS_RMA_SYSTEM_WEB_APP_INFO_H_

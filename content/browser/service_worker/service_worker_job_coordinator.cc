@@ -144,7 +144,7 @@ void ServiceWorkerJobCoordinator::FinishJob(const GURL& scope,
                                             const blink::StorageKey& key,
                                             ServiceWorkerRegisterJobBase* job) {
   auto pending_jobs = job_queues_.find(UniqueRegistrationKey(scope, key));
-  DCHECK(pending_jobs != job_queues_.end()) << "Deleting non-existent job.";
+  CHECK(pending_jobs != job_queues_.end()) << "Deleting non-existent job.";
   pending_jobs->second.Pop(job);
   if (pending_jobs->second.empty())
     job_queues_.erase(pending_jobs);

@@ -89,8 +89,7 @@ void ServiceWorkerNewScriptFetcher::Start(StartCallback callback) {
 
 void ServiceWorkerNewScriptFetcher::StartScriptLoadingWithNewResourceID(
     int64_t resource_id) {
-  BrowserContext* browser_context =
-      context_->process_manager()->browser_context();
+  BrowserContext* browser_context = context_->wrapper()->browser_context();
   if (!browser_context) {
     std::move(callback_).Run(/*main_script_load_params=*/nullptr);
     return;
@@ -128,7 +127,7 @@ void ServiceWorkerNewScriptFetcher::OnReceiveEarlyHints(
 void ServiceWorkerNewScriptFetcher::OnReceiveResponse(
     network::mojom::URLResponseHeadPtr response_head,
     mojo::ScopedDataPipeConsumerHandle response_body,
-    absl::optional<mojo_base::BigBuffer> cached_metadata) {
+    std::optional<mojo_base::BigBuffer> cached_metadata) {
   if (!response_body)
     return;
 

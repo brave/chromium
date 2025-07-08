@@ -4,6 +4,7 @@
 
 #include "chrome/test/chromedriver/chrome/mobile_device.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/containers/contains.h"
@@ -87,7 +88,7 @@ TEST_P(MobileDevicePresetPerDeviceName, ValidatePresets) {
   if (device.user_agent.has_value()) {
     std::string user_agent = device.user_agent.value();
     mobile_ua =
-        base::StringPiece{user_agent}.find("Mobile") != base::StringPiece::npos;
+        std::string_view{user_agent}.find("Mobile") != std::string_view::npos;
   }
   const DeviceMetrics& device_metrics = device.device_metrics.value();
   // Testing the implication: mobile_ua => device_metrics.mobile
@@ -96,13 +97,12 @@ TEST_P(MobileDevicePresetPerDeviceName, ValidatePresets) {
   ASSERT_TRUE(device.user_agent.has_value() || device.client_hints.has_value());
   if (device.client_hints.has_value()) {
     const ClientHints& client_hints = device.client_hints.value();
-    EXPECT_NE("", client_hints.platform);
     if (client_hints.platform == "Android") {
       // This implies from GetUserAgentMetadata and GetReducedAgent functions
       // code in components/embedder_support/user_agent_utils.cc.
       // S/A: crbug.com/1442468, crbug.com/1442784
       EXPECT_EQ(mobile_ua, client_hints.mobile);
-    } else {
+    } else if (!client_hints.platform.empty()) {
       // Testing the implication: mobile_ua => client_hints.mobile
       EXPECT_TRUE(!mobile_ua || client_hints.mobile);
     }

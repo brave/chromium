@@ -6,10 +6,6 @@
 
 #include "ui/views/widget/native_widget_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace views {
 
 TestViewsDelegate::TestViewsDelegate() = default;
@@ -25,8 +21,9 @@ void TestViewsDelegate::OnBeforeWidgetInit(
                           : Widget::InitParams::WindowOpacity::kOpaque;
   }
   // TODO(tapted): This should return a *Desktop*NativeWidgetMac.
-  if (!params->native_widget && use_desktop_native_widgets_)
+  if (!params->native_widget && use_desktop_native_widgets_) {
     params->native_widget = new NativeWidgetMac(delegate);
+  }
 }
 
 ui::ContextFactory* TestViewsDelegate::GetContextFactory() {

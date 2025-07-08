@@ -11,6 +11,7 @@
 #include "components/segmentation_platform/internal/database/client_result_prefs.h"
 #include "components/segmentation_platform/internal/metadata/metadata_utils.h"
 #include "components/segmentation_platform/internal/metadata/metadata_writer.h"
+#include "components/segmentation_platform/internal/platform_options.h"
 #include "components/segmentation_platform/internal/post_processor/post_processing_test_utils.h"
 #include "components/segmentation_platform/public/config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -35,8 +36,8 @@ class CachedResultWriterTest : public testing::Test {
                                                  std::string());
 
     clock_.SetNow(base::Time::Now());
-    cached_result_writer_ =
-        std::make_unique<CachedResultWriter>(std::move(result_prefs_), &clock_);
+    cached_result_writer_ = std::make_unique<CachedResultWriter>(
+        client_result_prefs_.get(), &clock_);
   }
 
   proto::ClientResult CreateClientResult(
@@ -65,21 +66,24 @@ class CachedResultWriterTest : public testing::Test {
 TEST_F(CachedResultWriterTest, UpdatePrefsIfResultUnavailable) {
   std::unique_ptr<Config> config = test_utils::CreateTestConfig();
   // Prefs doesn't have result for this client config.
-  absl::optional<proto::ClientResult> client_result =
+  const proto::ClientResult* client_result =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
-  EXPECT_FALSE(client_result.has_value());
+  EXPECT_FALSE(client_result);
   proto::ClientResult new_client_result = CreateClientResult(
       /*model_scores=*/{0.8}, /*result_timestamp=*/base::Time::Now());
 
   // Pref will be updated with new client result.
+  bool is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), new_client_result, PlatformOptions(false));
+  EXPECT_TRUE(is_prefs_updated);
   cached_result_writer_->UpdatePrefsIfExpired(config.get(), new_client_result,
                                               PlatformOptions(false));
-  absl::optional<proto::ClientResult> result_from_pref =
+  const proto::ClientResult* result_from_pref =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
 
-  EXPECT_TRUE(result_from_pref.has_value());
+  EXPECT_TRUE(result_from_pref);
   EXPECT_EQ(new_client_result.SerializeAsString(),
-            result_from_pref.value().SerializeAsString());
+            result_from_pref->SerializeAsString());
 }
 
 TEST_F(CachedResultWriterTest, UpdatePrefsIfForceRefreshResult) {
@@ -94,25 +98,29 @@ TEST_F(CachedResultWriterTest, UpdatePrefsIfForceRefreshResult) {
       /*model_scores=*/{0.4}, /*result_timestamp=*/base::Time::Now());
 
   // Pref result not updated as unexpired result.
+  bool is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), new_client_result, PlatformOptions(false));
+  EXPECT_FALSE(is_prefs_updated);
   cached_result_writer_->UpdatePrefsIfExpired(config.get(), new_client_result,
                                               PlatformOptions(false));
-  absl::optional<proto::ClientResult> client_result =
+  const proto::ClientResult* client_result =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
 
-  EXPECT_TRUE(client_result.has_value());
+  EXPECT_TRUE(client_result);
   EXPECT_EQ(unexpired_client_result.SerializeAsString(),
-            client_result.value().SerializeAsString());
+            client_result->SerializeAsString());
 
   // Unexpired pref updates with new client result as force refresh result is
   // true.
-  cached_result_writer_->UpdatePrefsIfExpired(config.get(), new_client_result,
-                                              PlatformOptions(true));
+  is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), new_client_result, PlatformOptions(true));
   client_result =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
 
-  EXPECT_TRUE(client_result.has_value());
+  EXPECT_TRUE(is_prefs_updated);
+  EXPECT_TRUE(client_result);
   EXPECT_EQ(new_client_result.SerializeAsString(),
-            client_result.value().SerializeAsString());
+            client_result->SerializeAsString());
 }
 
 TEST_F(CachedResultWriterTest, UpdatePrefsIfModelIsUpdated) {
@@ -128,14 +136,16 @@ TEST_F(CachedResultWriterTest, UpdatePrefsIfModelIsUpdated) {
       /*model_version=*/2, /*ignore_previous_model_ttl=*/true);
 
   // Pref result updated as model is updated.
+  bool is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), new_client_result, PlatformOptions(false));
+  EXPECT_TRUE(is_prefs_updated);
   cached_result_writer_->UpdatePrefsIfExpired(config.get(), new_client_result,
                                               PlatformOptions(false));
-  absl::optional<proto::ClientResult> client_result =
+  const proto::ClientResult* client_result =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
-
-  EXPECT_TRUE(client_result.has_value());
+  EXPECT_TRUE(client_result);
   EXPECT_EQ(new_client_result.SerializeAsString(),
-            client_result.value().SerializeAsString());
+            client_result->SerializeAsString());
 }
 
 TEST_F(CachedResultWriterTest, UpdatePrefsIfExpiredResult) {
@@ -151,14 +161,118 @@ TEST_F(CachedResultWriterTest, UpdatePrefsIfExpiredResult) {
       /*model_scores=*/{0.8}, /*result_timestamp=*/base::Time::Now());
 
   // Expired pref updates with new client result.
+  bool is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), new_client_result, PlatformOptions(false));
+  EXPECT_TRUE(is_prefs_updated);
   cached_result_writer_->UpdatePrefsIfExpired(config.get(), new_client_result,
                                               PlatformOptions(false));
-  absl::optional<proto::ClientResult> result_from_pref =
+  const proto::ClientResult* result_from_pref =
       client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
 
-  EXPECT_TRUE(result_from_pref.has_value());
+  EXPECT_TRUE(result_from_pref);
   EXPECT_EQ(new_client_result.SerializeAsString(),
-            result_from_pref.value().SerializeAsString());
+            result_from_pref->SerializeAsString());
+}
+
+TEST_F(CachedResultWriterTest, MarkResultAsUsed) {
+  std::unique_ptr<Config> config = test_utils::CreateTestConfig();
+  proto::ClientResult client_result = CreateClientResult(
+      /*model_scores=*/{0.8}, /*result_timestamp=*/base::Time::Now());
+  bool is_prefs_updated = cached_result_writer_->UpdatePrefsIfExpired(
+      config.get(), client_result, PlatformOptions(false));
+
+  const proto::ClientResult* client_result_from_pref =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+
+  // Writing results to prefs the first time should not update used timestamp.
+  EXPECT_TRUE(is_prefs_updated);
+  ASSERT_TRUE(client_result_from_pref);
+  EXPECT_EQ(0, client_result_from_pref->first_used_timestamp());
+
+  // Marking result as used should update the used timestamp.
+  cached_result_writer_->MarkResultAsUsed(config.get());
+
+  const proto::ClientResult* client_result_first_use =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+  ASSERT_TRUE(client_result_first_use);
+  EXPECT_GT(client_result_first_use->first_used_timestamp(), 0);
+
+  // Marking result as used in the future should not reset first used timestamp.
+  clock_.Advance(base::Seconds(10));
+  cached_result_writer_->MarkResultAsUsed(config.get());
+
+  const proto::ClientResult* client_result_second_use =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+  ASSERT_TRUE(client_result_second_use);
+  EXPECT_EQ(client_result_first_use->first_used_timestamp(),
+            client_result_second_use->first_used_timestamp());
+}
+
+TEST_F(CachedResultWriterTest, CacheModelExecution) {
+  std::unique_ptr<Config> config = test_utils::CreateTestConfig();
+  proto::ClientResult save_result1 = CreateClientResult(
+      /*model_scores=*/{0.8}, /*result_timestamp=*/base::Time::Now());
+
+  // Caching should save the result to prefs and mark as used.
+  cached_result_writer_->CacheModelExecution(config.get(),
+                                             save_result1.client_result());
+
+  const proto::ClientResult* client_result_first_exec =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+
+  ASSERT_TRUE(client_result_first_exec);
+  EXPECT_EQ(save_result1.client_result().SerializeAsString(),
+            client_result_first_exec->client_result().SerializeAsString());
+  EXPECT_GT(client_result_first_exec->first_used_timestamp(), 0);
+  EXPECT_EQ(client_result_first_exec->timestamp_us(),
+            client_result_first_exec->first_used_timestamp());
+
+  constexpr base::TimeDelta kLater = base::Seconds(10);
+  clock_.Advance(kLater);
+
+  // Caching another result (before expiry) should still overwrite the existing
+  // result.
+  proto::ClientResult save_result2 = CreateClientResult(
+      /*model_scores=*/{0.5}, /*result_timestamp=*/base::Time::Now());
+  cached_result_writer_->CacheModelExecution(config.get(),
+                                             save_result2.client_result());
+
+  const proto::ClientResult* client_result_second_exec =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+
+  ASSERT_TRUE(client_result_second_exec);
+  EXPECT_EQ(save_result2.client_result().SerializeAsString(),
+            client_result_second_exec->client_result().SerializeAsString());
+  EXPECT_GT(client_result_second_exec->first_used_timestamp(), 0);
+  EXPECT_EQ(client_result_second_exec->timestamp_us(),
+            client_result_second_exec->first_used_timestamp());
+}
+
+TEST_F(CachedResultWriterTest, CacheModelExecutionOverwritesAnyPrefs) {
+  std::unique_ptr<Config> config = test_utils::CreateTestConfig();
+  // Saving unexpired result for client in prefs.
+  proto::ClientResult saved_client_result = CreateClientResult(
+      /*model_scores=*/{0.8}, /*result_timestamp=*/base::Time::Now());
+  cached_result_writer_->UpdatePrefsIfExpired(config.get(), saved_client_result,
+                                              PlatformOptions(false));
+  EXPECT_TRUE(client_result_prefs_->ReadClientResultFromPrefs(
+      config->segmentation_key));
+
+  // Cache execution should overwrite the existing result.
+  proto::ClientResult save_result2 = CreateClientResult(
+      /*model_scores=*/{0.5}, /*result_timestamp=*/base::Time::Now());
+  cached_result_writer_->CacheModelExecution(config.get(),
+                                             save_result2.client_result());
+
+  const proto::ClientResult* client_result_after_exec =
+      client_result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+
+  ASSERT_TRUE(client_result_after_exec);
+  EXPECT_EQ(save_result2.client_result().SerializeAsString(),
+            client_result_after_exec->client_result().SerializeAsString());
+  EXPECT_GT(client_result_after_exec->first_used_timestamp(), 0);
+  EXPECT_EQ(client_result_after_exec->timestamp_us(),
+            client_result_after_exec->first_used_timestamp());
 }
 
 }  // namespace segmentation_platform

@@ -14,43 +14,55 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.webauthn.AuthenticatorImpl;
 import org.chromium.components.webauthn.MockFido2CredentialRequest;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.components.webauthn.WebauthnMode;
+import org.chromium.components.webauthn.WebauthnModeProvider;
 import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
+import org.chromium.ui.test.util.DeviceRestriction;
 
 /** Test suite for navigator.credentials functionality. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1",
-        "enable-experimental-web-platform-features", "enable-features=WebAuthentication",
-        "ignore-certificate-errors"})
+@CommandLineFlags.Add({
+    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+    ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1",
+    "enable-experimental-web-platform-features",
+    "enable-features=WebAuthentication",
+    "ignore-certificate-errors"
+})
 @Batch(Batch.PER_CLASS)
+@Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
 public class AuthenticatorTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private static final String TEST_FILE = "/content/test/data/android/authenticator.html";
     private EmbeddedTestServer mTestServer;
     private String mUrl;
+    private WebPageStation mPage;
     private Tab mTab;
     private AuthenticatorUpdateWaiter mUpdateWaiter;
     private MockFido2CredentialRequest mMockCredentialRequest;
 
     /** Waits until the JavaScript code supplies a result. */
     private class AuthenticatorUpdateWaiter extends EmptyTabObserver {
-        private CallbackHelper mCallbackHelper;
+        private final CallbackHelper mCallbackHelper;
         private String mStatus;
 
         public AuthenticatorUpdateWaiter() {
@@ -75,29 +87,29 @@ public class AuthenticatorTest {
 
     @Before
     public void setUp() throws Exception {
-        mActivityTestRule.startMainActivityOnBlankPage();
-        mTestServer = EmbeddedTestServer.createAndStartHTTPSServer(
-                InstrumentationRegistry.getInstrumentation().getContext(),
-                ServerCertificate.CERT_OK);
+        mPage = mActivityTestRule.startOnBlankPage();
+        mTestServer =
+                EmbeddedTestServer.createAndStartHTTPSServer(
+                        InstrumentationRegistry.getInstrumentation().getContext(),
+                        ServerCertificate.CERT_OK);
         mUrl = mTestServer.getURLWithHostName("subdomain.example.test", TEST_FILE);
-        mTab = mActivityTestRule.getActivity().getActivityTab();
+        mTab = mPage.getTab();
         mUpdateWaiter = new AuthenticatorUpdateWaiter();
-        TestThreadUtils.runOnUiThreadBlocking(() -> mTab.addObserver(mUpdateWaiter));
+        ThreadUtils.runOnUiThreadBlocking(() -> mTab.addObserver(mUpdateWaiter));
+        WebauthnModeProvider.getInstance().setGlobalWebauthnMode(WebauthnMode.CHROME);
         mMockCredentialRequest = new MockFido2CredentialRequest();
         AuthenticatorImpl.overrideFido2CredentialRequestForTesting(mMockCredentialRequest);
     }
 
     @After
     public void tearDown() {
-        TestThreadUtils.runOnUiThreadBlocking(() -> mTab.removeObserver(mUpdateWaiter));
-        mTestServer.stopAndDestroyServer();
+        ThreadUtils.runOnUiThreadBlocking(() -> mTab.removeObserver(mUpdateWaiter));
     }
 
     /**
      * Verify that the Mojo bridge between Blink and Java is working for
-     * navigator.credentials.create. This test currently expects a
-     * "Not Implemented" response. Testing any real response would require
-     * setting up or mocking a real APK.
+     * navigator.credentials.create. This test currently expects a "Not Implemented" response.
+     * Testing any real response would require setting up or mocking a real APK.
      */
     @Test
     @MediumTest
@@ -109,10 +121,9 @@ public class AuthenticatorTest {
     }
 
     /**
-     * Verify that the Mojo bridge between Blink and Java is working for
-     * navigator.credentials.get. This test currently expects a
-     * "Not Implemented" response. Testing any real response would require
-     * setting up or mocking a real APK.
+     * Verify that the Mojo bridge between Blink and Java is working for navigator.credentials.get.
+     * This test currently expects a "Not Implemented" response. Testing any real response would
+     * require setting up or mocking a real APK.
      */
     @Test
     @MediumTest
@@ -125,8 +136,8 @@ public class AuthenticatorTest {
 
     /**
      * Verify that the Mojo bridge between Blink and Java is working for
-     * PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable.
-     * This test currently expects a "false" response.
+     * PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable. This test currently
+     * expects a "false" response.
      */
     @Test
     @MediumTest

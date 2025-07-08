@@ -11,14 +11,14 @@ import '../settings_shared.css.js';
 import './os_paired_bluetooth_list_item.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 
-import {CrScrollableMixin} from 'chrome://resources/cr_elements/cr_scrollable_mixin.js';
-import {PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
-import {PaperTooltipElement} from 'chrome://resources/polymer/v3_0/paper-tooltip/paper-tooltip.js';
+import {CrScrollableMixin} from 'chrome://resources/ash/common/cr_elements/cr_scrollable_mixin.js';
+import type {PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import type {PaperTooltipElement} from 'chrome://resources/polymer/v3_0/paper-tooltip/paper-tooltip.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './os_paired_bluetooth_list.html.js';
 
-interface SettingsPairedBluetoothListElement {
+export interface SettingsPairedBluetoothListElement {
   $: {
     tooltip: PaperTooltipElement,
   };
@@ -27,7 +27,7 @@ interface SettingsPairedBluetoothListElement {
 const SettingsPairedBluetoothListElementBase =
     CrScrollableMixin(PolymerElement);
 
-class SettingsPairedBluetoothListElement extends
+export class SettingsPairedBluetoothListElement extends
     SettingsPairedBluetoothListElementBase {
   static get is() {
     return 'os-settings-paired-bluetooth-list' as const;
@@ -87,9 +87,9 @@ class SettingsPairedBluetoothListElement extends
    */
   private onManagedTooltipStateChange_(
       e: CustomEvent<
-          {address: string, show: boolean, element: HTMLElement|null}>) {
+          {address: string, show: boolean, element: HTMLElement|null}>): void {
     const target = e.detail.element;
-    const hide = () => {
+    const hide = (): void => {
       this.$.tooltip.hide();
       this.$.tooltip.removeEventListener('mouseenter', hide);
       this.currentTooltipDeviceAddress_ = undefined;

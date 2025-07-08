@@ -3,14 +3,21 @@
 // found in the LICENSE file.
 
 // https://crbug.com/1453291
-// https://github.com/tbondwilkinson/dom-parts/blob/main/README.md
+// https://github.com/WICG/webcomponents/blob/gh-pages/proposals/DOM-Parts.md
 
 
 [RuntimeEnabled=DOMPartsAPI,Exposed=Window]
 interface mixin PartRootMixin {
   // Retrieve the parts list for this PartRoot, always in tree order breaking
   // ties for a Node using the order Parts were constructed.
-  FrozenArray<Part> getParts();
+  sequence<Part> getParts();
+  // Retrieve the Nodes corresponding to the NodeParts returned by getParts(),
+  // without building the Part objects.
+  [RuntimeEnabled=DOMPartsAPIMinimal] sequence<Node> getNodePartNodes();
+  // Retrieve the pairs of previous/next Nodes corresponding to the
+  // ChildNodeParts returned by getParts(), without building the Part objects.
+  // Nodes are paired, so for 3 ChildNodeParts, 6 Nodes will be returned.
+  [RuntimeEnabled=DOMPartsAPIMinimal] sequence<Node> getChildNodePartNodes();
   // This clones the PartRoot, and also clones the Node tree itself, starting
   // at the RootContainer. In the case of a DocumentPartRoot, the entire
   // document tree is cloned. In the case of a ChildPartRoot, only the children

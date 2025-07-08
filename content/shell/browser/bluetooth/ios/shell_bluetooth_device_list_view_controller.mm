@@ -4,11 +4,8 @@
 
 #import "content/shell/browser/bluetooth/ios/shell_bluetooth_device_list_view_controller.h"
 
+#include "build/build_config.h"
 #import "content/shell/browser/bluetooth/ios/shell_bluetooth_device_list_delegate.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Has device information to display it on a cell of UITableView.
 @interface DeviceInfo : NSObject
@@ -66,9 +63,35 @@
   }
   _selectedRowIndex = -1;
   _listTitle = [title copy];
+#if BUILDFLAG(IS_IOS_TVOS)
+  // On tvOS, the modal view has transparent background by default.
+  // Set the background color so that the texts from the dialog don't overlap
+  // the web page.
+  self.view.backgroundColor = [UIColor systemGrayColor];
+#endif
+  self.tableView.bounces = NO;
+
+#if !BUILDFLAG(IS_IOS_TVOS)
+  // Add Up/Down swipe actions to close this modal dialog.
+  // On tvOS, do not add any specific actions to close the dialog since
+  // the dialog is closed with a back button from a remote controller and
+  // swipe actions are used for focus navigation.
+  UISwipeGestureRecognizer* swipeUpDown = [[UISwipeGestureRecognizer alloc]
+      initWithTarget:self
+              action:@selector(recognizeSwipe:)];
+  [swipeUpDown setDirection:(UISwipeGestureRecognizerDirectionUp |
+                             UISwipeGestureRecognizerDirectionDown)];
+  [self.view addGestureRecognizer:swipeUpDown];
+#endif
 
   return self;
 }
+
+#if !BUILDFLAG(IS_IOS_TVOS)
+- (void)recognizeSwipe:(UITapGestureRecognizer*)gesture {
+  [self dismissViewControllerAnimated:YES completion:nil];
+}
+#endif
 
 - (NSString*)tableView:(UITableView*)tableView
     titleForHeaderInSection:(NSInteger)section {
@@ -98,7 +121,7 @@
   cell.textLabel.text = deviceID;
   DeviceInfo* info = [self.deviceInfos objectForKey:deviceID];
   cell.detailTextLabel.text = info.deviceName;
-  // TODO(crbug.com/1431447): Display more information if required.
+  // TODO(crbug.com/40263537): Display more information if required.
   return cell;
 }
 
@@ -160,7 +183,7 @@
     UITableViewCell* updatingCell =
         [self.tableView cellForRowAtIndexPath:updatingPath];
     updatingCell.detailTextLabel.text = deviceName;
-    // TODO(crbug.com/1431447): Display more information if required.
+    // TODO(crbug.com/40263537): Display more information if required.
   } else {
     if (!self.isViewLoaded || !self.view.window) {
       // If the view disappears, it skips updating the table.

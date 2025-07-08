@@ -8,29 +8,36 @@
  * subsection settings in system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/bluetooth/bluetooth_battery_icon_percentage.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
 import './input_device_settings_shared.css.js';
-import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
+import './per_device_app_installed_row.js';
+import './per_device_install_row.js';
+import './per_device_subsection_header.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {CrLinkRowElement} from 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getInputDeviceSettingsProvider} from './input_device_mojo_interface_provider.js';
-import {InputDeviceSettingsProviderInterface, Mouse, MousePolicies, MouseSettings} from './input_device_settings_types.js';
+import type {InputDeviceSettingsProviderInterface, Mouse, MousePolicies, MouseSettings} from './input_device_settings_types.js';
+import {CompanionAppState, CustomizationRestriction} from './input_device_settings_types.js';
 import {getPrefPolicyFields, settingsAreEqual} from './input_device_settings_utils.js';
 import {getTemplate} from './per_device_mouse_subsection.html.js';
 
@@ -38,7 +45,7 @@ const SettingsPerDeviceMouseSubsectionElementBase =
     DeepLinkingMixin(RouteObserverMixin(I18nMixin(PolymerElement)));
 export class SettingsPerDeviceMouseSubsectionElement extends
     SettingsPerDeviceMouseSubsectionElementBase {
-  static get is(): string {
+  static get is() {
     return 'settings-per-device-mouse-subsection';
   }
 
@@ -89,17 +96,6 @@ export class SettingsPerDeviceMouseSubsectionElement extends
         },
       },
 
-      scrollAccelerationPref: {
-        type: Object,
-        value() {
-          return {
-            key: 'fakeScrollAccelerationPref',
-            type: chrome.settingsPrivate.PrefType.BOOLEAN,
-            value: true,
-          };
-        },
-      },
-
       scrollSensitivityPref: {
         type: Object,
         value() {
@@ -116,7 +112,12 @@ export class SettingsPerDeviceMouseSubsectionElement extends
         value: false,
       },
 
-      swapPrimaryOptions: {
+      scrollAccelerationValue: {
+        type: Boolean,
+        value: true,
+      },
+
+      swapPrimaryOptions_: {
         readOnly: true,
         type: Array,
         value() {
@@ -164,20 +165,6 @@ export class SettingsPerDeviceMouseSubsectionElement extends
         type: Object,
       },
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kMouseSwapPrimaryButtons,
-          Setting.kMouseReverseScrolling,
-          Setting.kMouseAcceleration,
-          Setting.kMouseScrollAcceleration,
-          Setting.kMouseSpeed,
-        ]),
-      },
-
       mouseIndex: {
         type: Number,
       },
@@ -185,6 +172,25 @@ export class SettingsPerDeviceMouseSubsectionElement extends
       isLastDevice: {
         type: Boolean,
         reflectToAttribute: true,
+      },
+
+      customizationRestriction: {
+        type: Object,
+      },
+
+      /**
+         Used to track if the customize button row is clicked.
+       */
+      currentMouseChanged: {
+        type: Boolean,
+      },
+
+      isWelcomeExperienceEnabled: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableWelcomeExperience');
+        },
+        readOnly: true,
       },
     };
   }
@@ -194,17 +200,24 @@ export class SettingsPerDeviceMouseSubsectionElement extends
       'onSettingsChanged(primaryRightPref.value,' +
           'accelerationPref.value,' +
           'sensitivityPref.value,' +
-          'scrollAccelerationPref.value,' +
           'scrollSensitivityPref.value,' +
-          'reverseScrollValue)',
+          'reverseScrollValue,' +
+          'scrollAccelerationValue)',
       'onPoliciesChanged(mousePolicies)',
       'updateSettingsToCurrentPrefs(mouse)',
     ];
   }
 
-  override currentRouteChanged(route: Route): void {
+  override currentRouteChanged(route: Route) {
+    // Avoid override currentMouseChanged when on the customization subpage.
+    if (route === routes.CUSTOMIZE_MOUSE_BUTTONS) {
+      return;
+    }
+
     // Does not apply to this page.
     if (route !== routes.PER_DEVICE_MOUSE) {
+      // Reset the boolean when on other pages.
+      this.currentMouseChanged = false;
       return;
     }
 
@@ -212,22 +225,69 @@ export class SettingsPerDeviceMouseSubsectionElement extends
     if (this.mouseIndex === 0) {
       this.attemptDeepLink();
     }
+
+    // Don't attempt to focus any item unless the last navigation was a
+    // 'pop' (backwards) navigation.
+    if (!Router.getInstance().lastRouteChangeWasPopstate()) {
+      return;
+    } else if (this.currentMouseChanged) {
+      this.shadowRoot!
+          .querySelector<CrLinkRowElement>('#customizeMouseButtons')!.focus();
+    }
+
+    this.currentMouseChanged = false;
   }
+
+  isWelcomeExperienceEnabled: boolean;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kMouseSwapPrimaryButtons,
+    Setting.kMouseReverseScrolling,
+    Setting.kMouseAcceleration,
+    Setting.kMouseScrollAcceleration,
+    Setting.kMouseSpeed,
+  ]);
 
   private mouse: Mouse;
   protected mousePolicies: MousePolicies;
   private primaryRightPref: chrome.settingsPrivate.PrefObject;
   private accelerationPref: chrome.settingsPrivate.PrefObject;
   private sensitivityPref: chrome.settingsPrivate.PrefObject;
-  private scrollAccelerationPref: chrome.settingsPrivate.PrefObject;
   private scrollSensitivityPref: chrome.settingsPrivate.PrefObject;
   private reverseScrollValue: boolean;
+  private scrollAccelerationValue: boolean;
   private isInitialized: boolean = false;
   private isPeripheralCustomizationEnabled_: boolean;
   private inputDeviceSettingsProvider: InputDeviceSettingsProviderInterface =
       getInputDeviceSettingsProvider();
   private mouseIndex: number;
   private isLastDevice: boolean;
+  private customizationRestriction: CustomizationRestriction;
+  private currentMouseChanged: boolean;
+  private readonly allowScrollSettings_: boolean;
+  private readonly sensitivityValues_: number[];
+  private readonly swapPrimaryOptions_: Array<{value: boolean, name: string}>;
+
+  private showCustomizeButtonRow(): boolean {
+    return (this.customizationRestriction !==
+            CustomizationRestriction.kDisallowCustomizations) &&
+        this.isPeripheralCustomizationEnabled_;
+  }
+
+  private showSwapToggleButton(): boolean {
+    return this.customizationRestriction ===
+        CustomizationRestriction.kDisallowCustomizations &&
+        this.isPeripheralCustomizationEnabled_;
+  }
+
+  private showInstallAppRow(): boolean {
+    return this.mouse.appInfo?.state === CompanionAppState.kAvailable;
+  }
+
+  private onInstallCompanionAppButtonClicked(): void {
+    window.open(this.mouse.appInfo?.actionLink);
+  }
 
   private updateSettingsToCurrentPrefs(): void {
     // `updateSettingsToCurrentPrefs` gets called when the `keyboard` object
@@ -238,14 +298,14 @@ export class SettingsPerDeviceMouseSubsectionElement extends
     this.set('accelerationPref.value', this.mouse.settings.accelerationEnabled);
     this.set('sensitivityPref.value', this.mouse.settings.sensitivity);
     this.set(
-        'scrollAccelerationPref.value', this.mouse.settings.scrollAcceleration);
-    this.set(
         'scrollSensitivityPref.value', this.mouse.settings.scrollSensitivity);
     this.reverseScrollValue = this.mouse.settings.reverseScrolling;
+    this.scrollAccelerationValue = this.mouse.settings.scrollAcceleration;
+    this.customizationRestriction = this.mouse.customizationRestriction;
     this.isInitialized = true;
   }
 
-  private onPoliciesChanged() {
+  private onPoliciesChanged(): void {
     this.primaryRightPref = {
       ...this.primaryRightPref,
       ...getPrefPolicyFields(this.mousePolicies.swapRightPolicy),
@@ -268,6 +328,10 @@ export class SettingsPerDeviceMouseSubsectionElement extends
     this.reverseScrollValue = !this.reverseScrollValue;
   }
 
+  private onMouseControlledScrollingRowClicked_(): void {
+    this.scrollAccelerationValue = !this.scrollAccelerationValue;
+  }
+
   private onSettingsChanged(): void {
     if (!this.isInitialized) {
       return;
@@ -278,9 +342,9 @@ export class SettingsPerDeviceMouseSubsectionElement extends
       swapRight: this.primaryRightPref.value,
       accelerationEnabled: this.accelerationPref.value,
       sensitivity: this.sensitivityPref.value,
-      scrollAcceleration: this.scrollAccelerationPref.value,
       scrollSensitivity: this.scrollSensitivityPref.value,
       reverseScrolling: this.reverseScrollValue,
+      scrollAcceleration: this.scrollAccelerationValue,
     };
 
     if (settingsAreEqual(newSettings, this.mouse.settings)) {
@@ -333,6 +397,17 @@ export class SettingsPerDeviceMouseSubsectionElement extends
     Router.getInstance().navigateTo(
         routes.CUSTOMIZE_MOUSE_BUTTONS,
         /* dynamicParams= */ url, /* removeSearch= */ true);
+    this.currentMouseChanged = true;
+  }
+
+  private isCompanionAppInstalled(): boolean {
+    return this.mouse.appInfo?.state === CompanionAppState.kInstalled;
+  }
+
+  private onCompanionAppRowClick(): void {
+    assert(this.mouse.appInfo);
+    this.inputDeviceSettingsProvider.launchCompanionApp(
+        this.mouse.appInfo.packageId || '');
   }
 }
 

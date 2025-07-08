@@ -6,7 +6,9 @@
 #define CC_PAINT_FILTER_OPERATIONS_H_
 
 #include <stddef.h>
+
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -54,18 +56,15 @@ class CC_PAINT_EXPORT FilterOperations {
   bool IsEmpty() const;
 
   // Maps "forward" to determine which pixels in a destination rect are affected
-  // by pixels in the source rect.
-  gfx::Rect MapRect(const gfx::Rect& rect, const SkMatrix& matrix) const;
+  // by pixels in the source rect. See PaintFilter::MapRect() about `ctm`.
+  gfx::Rect MapRect(const gfx::Rect& rect,
+                    const std::optional<SkMatrix>& matrix = std::nullopt) const;
 
   // Maps "backward" to determine which pixels in the source affect the pixels
-  // in the destination rect.
+  // in the destination rect. See PaintFilter::MapRect() about `ctm`.
   gfx::Rect MapRectReverse(const gfx::Rect& rect, const SkMatrix& matrix) const;
 
   bool HasFilterThatMovesPixels() const;
-
-  // Expands `rect` to add any additional area that applying pixel moving
-  // filters will modify.
-  gfx::Rect ExpandRectForPixelMovement(const gfx::Rect& rect) const;
 
   bool HasFilterThatAffectsOpacity() const;
   bool HasReferenceFilter() const;
@@ -79,6 +78,10 @@ class CC_PAINT_EXPORT FilterOperations {
     DCHECK_LT(index, size());
     return operations_[index];
   }
+
+  // Returns false if the filter operations can potentially cause visible
+  // color fringing of LCD-text (i.e. subpixel anti-aliased) pixels.
+  bool AllowsLCDText() const;
 
   // If |from| is of the same size as this, where in each position, the filter
   // in |from| is of the same type as the filter in this, and if this doesn't
@@ -96,8 +99,6 @@ class CC_PAINT_EXPORT FilterOperations {
   std::string ToString() const;
 
  private:
-  float MaximumPixelMovement() const;
-
   std::vector<FilterOperation> operations_;
 };
 

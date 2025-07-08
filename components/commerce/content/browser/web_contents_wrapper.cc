@@ -4,6 +4,7 @@
 
 #include "components/commerce/content/browser/web_contents_wrapper.h"
 
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
@@ -16,11 +17,15 @@ WebContentsWrapper::WebContentsWrapper(content::WebContents* web_contents,
 
 WebContentsWrapper::~WebContentsWrapper() = default;
 
-const GURL& WebContentsWrapper::GetLastCommittedURL() {
+const GURL& WebContentsWrapper::GetLastCommittedURL() const {
   if (!web_contents_)
     return GURL::EmptyGURL();
 
   return web_contents_->GetLastCommittedURL();
+}
+
+const std::u16string& WebContentsWrapper::GetTitle() {
+  return web_contents_ ? web_contents_->GetTitle() : base::EmptyString16();
 }
 
 bool WebContentsWrapper::IsFirstLoadForNavigationFinished() {
@@ -50,8 +55,22 @@ void WebContentsWrapper::RunJavascript(
       script, std::move(callback), js_world_id_);
 }
 
+ukm::SourceId WebContentsWrapper::GetPageUkmSourceId() {
+  if (!web_contents_ || !web_contents_->GetPrimaryMainFrame()) {
+    return ukm::kInvalidSourceId;
+  }
+  return web_contents_->GetPrimaryMainFrame()->GetPageUkmSourceId();
+}
+
 void WebContentsWrapper::ClearWebContentsPointer() {
   web_contents_ = nullptr;
+}
+
+content::RenderFrameHost* WebContentsWrapper::GetPrimaryMainFrame() {
+  if (!web_contents_) {
+    return nullptr;
+  }
+  return web_contents_->GetPrimaryMainFrame();
 }
 
 }  // namespace commerce

@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "chrome/browser/ui/cocoa/applescript/browsercrapplication+applescript.h"
-
 #include <Foundation/Foundation.h>
 
 #include <map>
 
-#import "base/mac/foundation_util.h"
-#include "base/notreached.h"
+#import "base/apple/foundation_util.h"
+#include "base/notimplemented.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -18,14 +16,11 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/applescript/bookmark_folder_applescript.h"
+#import "chrome/browser/ui/cocoa/applescript/browsercrapplication+applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/constants_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/error_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/window_applescript.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using bookmarks::BookmarkModel;
 
@@ -33,7 +28,7 @@ using bookmarks::BookmarkModel;
 
 - (NSArray*)appleScriptWindows {
   std::map<NSWindow*, Browser*> browsers;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     if (browser->IsAttemptingToCloseBrowser()) {
       continue;
     }

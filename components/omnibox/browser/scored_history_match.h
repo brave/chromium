@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,14 +19,12 @@
 #include "components/omnibox/browser/history_match.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/metrics_proto/omnibox_scoring_signals.pb.h"
 
 // An HistoryMatch that has a score as well as metrics defining where in the
 // history item's URL and/or page title matches have occurred.
 struct ScoredHistoryMatch : public history::HistoryMatch {
-  using ScoringSignals =
-      ::metrics::OmniboxEventProto::Suggestion::ScoringSignals;
+  using ScoringSignals = ::metrics::OmniboxScoringSignals;
 
   // ScoreMaxRelevance maps from an intermediate-score to the maximum
   // final-relevance score given to a URL for this intermediate score.
@@ -40,9 +39,9 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
 
   // Struct for URL matching signals.
   struct UrlMatchingSignals {
-    absl::optional<bool> host_match_at_word_boundary = absl::nullopt;
-    absl::optional<bool> has_non_scheme_www_match = absl::nullopt;
-    absl::optional<size_t> first_url_match_position = absl::nullopt;
+    std::optional<bool> host_match_at_word_boundary = std::nullopt;
+    std::optional<bool> has_non_scheme_www_match = std::nullopt;
+    std::optional<size_t> first_url_match_position = std::nullopt;
     size_t total_url_match_length = 0;
     size_t total_host_match_length = 0;
     size_t total_path_match_length = 0;
@@ -81,7 +80,6 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
                      const RowWordStarts& word_starts,
                      bool is_url_bookmarked,
                      size_t num_matching_pages,
-                     bool is_highly_visited_host,
                      base::Time now);
 
   ~ScoredHistoryMatch();
@@ -148,11 +146,6 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
   // of the match.
   int raw_score = 0;
 
-  // `kDomainSuggestions` may boost the score. These record the original and
-  // boosted scores for logging.
-  int raw_score_before_domain_boosting = 0;
-  int raw_score_after_domain_boosting = 0;
-
   // Both these TermMatches contain the set of matches that are considered
   // important.  At this time, that means they exclude mid-word matches
   // except in the hostname of the URL.  (Technically, during early
@@ -168,7 +161,7 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
   // Signals used to score matches. These are propagated to the ACController
   // via ACMatch, and used by the ML Scorer as well as logged to
   // OmniboxEventProto in order to provide ML training data.
-  absl::optional<ScoringSignals> scoring_signals;
+  std::optional<ScoringSignals> scoring_signals;
 
  private:
   friend class ScoredHistoryMatchPublic;
@@ -229,8 +222,7 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
   // value to use as a relevancy score.
   static float GetFinalRelevancyScore(float topicality_score,
                                       float frequency_score,
-                                      float specificity_score,
-                                      float domain_score);
+                                      float specificity_score);
 
   // Helper function that returns the string containing the scoring buckets
   // (either the default ones or ones specified in an experiment).
@@ -243,13 +235,6 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
   // malformed |buckets_str|.
   static ScoreMaxRelevances GetHQPBucketsFromString(
       const std::string& buckets_str);
-
-  // Returns a score based on last visit time intended for suggestions from
-  // highly visited domains. This is an alternative to
-  // `GetFinalRelevancyScore()`; suggestions from highly visited domains will
-  // use the max of the 2 while other suggestions will use just
-  // `GetFinalRelevancyScore()`.
-  int GetDomainRelevancyScore(base::Time now) const;
 
   // If true, assign raw scores to be max(whatever it normally would be, a
   // score that's similar to the score HistoryURL provider would assign).

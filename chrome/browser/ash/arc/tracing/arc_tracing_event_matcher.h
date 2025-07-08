@@ -6,11 +6,11 @@
 #define CHROME_BROWSER_ASH_ARC_TRACING_ARC_TRACING_EVENT_MATCHER_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include <map>
+#include <optional>
 #include <string>
-
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace arc {
 
@@ -35,7 +35,7 @@ class ArcTracingEventMatcher {
   // Returns true in case |event| matches criteria set.
   bool Match(const ArcTracingEvent& event) const;
 
-  absl::optional<int64_t> ReadAndroidEventInt64(
+  std::optional<int64_t> ReadAndroidEventInt64(
       const ArcTracingEvent& event) const;
 
   // Sets the expected phase. Tested event does not match if its phase does not

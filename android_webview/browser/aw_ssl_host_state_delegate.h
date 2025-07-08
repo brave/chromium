@@ -68,12 +68,10 @@ class AwSSLHostStateDelegate : public content::SSLHostStateDelegate {
 
   // Records that a host has run insecure content.
   void HostRanInsecureContent(const std::string& host,
-                              int child_id,
                               InsecureContentType content_type) override;
 
   // Returns whether the specified host ran insecure content.
   bool DidHostRunInsecureContent(const std::string& host,
-                                 int child_id,
                                  InsecureContentType content_type) override;
 
   // HTTPS-First Mode is not implemented in Android Webview.
@@ -86,8 +84,8 @@ class AwSSLHostStateDelegate : public content::SSLHostStateDelegate {
       const std::string& host,
       bool enforce,
       content::StoragePartition* storage_partition) override;
-  bool IsHttpsEnforcedForHost(
-      const std::string& host,
+  bool IsHttpsEnforcedForUrl(
+      const GURL& url,
       content::StoragePartition* storage_partition) override;
 
   // Revokes all SSL certificate error allow exceptions made by the user for

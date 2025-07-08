@@ -8,7 +8,7 @@
 #include <array>
 #include <vector>
 
-#include "chrome/browser/ash/login/oobe_quick_start/connectivity/random_session_id.h"
+#include "chrome/browser/ash/login/oobe_quick_start/connectivity/advertising_id.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/session_context.h"
 
 namespace ash::quick_start {
@@ -19,25 +19,17 @@ class QRCode {
   using PixelData = std::vector<uint8_t>;
   using SharedSecret = SessionContext::SharedSecret;
 
-  QRCode(RandomSessionId random_session_id, SharedSecret shared_secret);
+  QRCode(AdvertisingId advertising_id, SharedSecret shared_secret);
   QRCode(const QRCode& other);
   QRCode& operator=(const QRCode& other);
   ~QRCode();
 
-  PixelData pixel_data() { return pixel_data_; }
+  std::string GetQRCodeURLString();
+  PixelData GetPixelData();
 
  private:
-  friend class QRCodeTest;
-
-  void GeneratePixelData();
-
-  // Returns a deep link URL as a vector of bytes that will form the QR code
-  // used to authenticate the connection.
-  std::vector<uint8_t> GetQRCodeData();
-
-  RandomSessionId random_session_id_;
+  AdvertisingId advertising_id_;
   SharedSecret shared_secret_;
-  PixelData pixel_data_;
 };
 
 }  // namespace ash::quick_start

@@ -74,11 +74,20 @@ class InterceptingHandshakeClient final : public WebTransportHandshakeClient {
   ~InterceptingHandshakeClient() override = default;
 
   // WebTransportHandshakeClient implementation:
+  void OnBeforeConnect(const net::IPEndPoint& server_address) override {
+    if (tracker_) {
+      tracker_->OnBeforeConnect(server_address);
+    }
+
+    // Here we pass an invalid IPEndPoint instance because it is dangerous to
+    // pass the error details to the initiator renderer.
+    remote_->OnBeforeConnect(net::IPEndPoint());
+  }
   void OnConnectionEstablished(
       mojo::PendingRemote<network::mojom::WebTransport> transport,
       mojo::PendingReceiver<network::mojom::WebTransportClient> client,
-      const scoped_refptr<net::HttpResponseHeaders>& response_headers)
-      override {
+      const scoped_refptr<net::HttpResponseHeaders>& response_headers,
+      network::mojom::WebTransportStatsPtr initial_stats) override {
     if (tracker_) {
       tracker_->OnHandshakeEstablished();
     }
@@ -87,17 +96,18 @@ class InterceptingHandshakeClient final : public WebTransportHandshakeClient {
     remote_->OnConnectionEstablished(
         std::move(transport), std::move(client),
         base::MakeRefCounted<net::HttpResponseHeaders>(
-            /*raw_headers=*/""));
+            /*raw_headers=*/""),
+        std::move(initial_stats));
   }
   void OnHandshakeFailed(
-      const absl::optional<net::WebTransportError>& error) override {
+      const std::optional<net::WebTransportError>& error) override {
     if (tracker_) {
       tracker_->OnHandshakeFailed();
     }
 
     // Here we pass null because it is dangerous to pass the error details
     // to the initiator renderer.
-    remote_->OnHandshakeFailed(absl::nullopt);
+    remote_->OnHandshakeFailed(std::nullopt);
 
     if (RenderFrameHostImpl* frame = frame_.get()) {
       devtools_instrumentation::OnWebTransportHandshakeFailed(frame, url_,
@@ -204,7 +214,7 @@ void WebTransportConnectorImpl::OnWillCreateWebTransportCompleted(
         fingerprints,
     mojo::PendingRemote<network::mojom::WebTransportHandshakeClient>
         handshake_client,
-    absl::optional<network::mojom::WebTransportErrorPtr> error) {
+    std::optional<network::mojom::WebTransportErrorPtr> error) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   RenderProcessHost* process = RenderProcessHost::FromID(process_id_);

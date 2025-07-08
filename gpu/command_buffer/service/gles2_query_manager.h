@@ -82,18 +82,13 @@ class GPU_GLES2_EXPORT GLES2QueryManager : public QueryManager {
   GLES2Decoder* decoder() const { return decoder_; }
 
  private:
-  GLenum AdjustTargetForEmulation(GLenum target) override;
-
   // Checks and notifies if a disjoint occurred.
   void UpdateDisjointValue();
 
   // Safely resets the disjoint value if no queries are active.
   void SafelyResetDisjointValue();
 
-  raw_ptr<GLES2Decoder, DanglingUntriaged> decoder_;
-
-  bool use_arb_occlusion_query2_for_occlusion_query_boolean_;
-  bool use_arb_occlusion_query_for_occlusion_query_boolean_;
+  raw_ptr<GLES2Decoder> decoder_;
 
   // Whether we are tracking disjoint values every frame.
   bool update_disjoints_continually_;

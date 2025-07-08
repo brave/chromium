@@ -4,6 +4,7 @@
 
 #include "components/favicon/content/content_favicon_driver.h"
 
+#include <optional>
 #include <set>
 #include <string>
 
@@ -19,7 +20,6 @@
 #include "base/test/test_future.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -48,7 +48,6 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/url_request/url_request.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
 #include "ui/gfx/image/image_unittest_util.h"
@@ -128,7 +127,7 @@ class PendingTaskWaiter : public content::WebContentsObserver {
   PendingTaskWaiter(const PendingTaskWaiter&) = delete;
   PendingTaskWaiter& operator=(const PendingTaskWaiter&) = delete;
 
-  ~PendingTaskWaiter() override {}
+  ~PendingTaskWaiter() override = default;
 
   void AlsoRequireUrl(const GURL& url) { required_url_ = url; }
 
@@ -192,7 +191,7 @@ class PendingTaskWaiter : public content::WebContentsObserver {
 
   base::RepeatingClosure quit_closure_;
   GURL required_url_;
-  absl::optional<std::u16string> required_title_;
+  std::optional<std::u16string> required_title_;
   base::WeakPtrFactory<PendingTaskWaiter> weak_factory_{this};
 };
 
@@ -204,7 +203,7 @@ class PageLoadStopper : public content::WebContentsObserver {
   PageLoadStopper(const PageLoadStopper&) = delete;
   PageLoadStopper& operator=(const PageLoadStopper&) = delete;
 
-  ~PageLoadStopper() override {}
+  ~PageLoadStopper() override = default;
 
   void StopOnDidFinishNavigation() { stop_on_finish_ = true; }
 
@@ -249,7 +248,7 @@ class ContentFaviconDriverTest : public InProcessBrowserTest {
   ~ContentFaviconDriverTest() override = default;
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     InProcessBrowserTest::SetUp();
   }
 
@@ -324,7 +323,8 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
   prerender_helper().WaitForRequest(prerender_url, 1);
   EXPECT_EQ(prerender_helper().GetRequestCount(icon_url), 0);
 
-  int host_id = prerender_helper().GetHostForUrl(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().GetHostForUrl(prerender_url);
   auto* prerendered = prerender_helper().GetPrerenderedMainFrameHost(host_id);
   EXPECT_CALL(observer, DidUpdateFaviconURL(prerendered, testing::_));
   prerender_helper().NavigatePrimaryPage(prerender_url);

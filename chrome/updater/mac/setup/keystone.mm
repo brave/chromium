@@ -4,17 +4,20 @@
 
 #include "chrome/updater/mac/setup/keystone.h"
 
+#import <Foundation/Foundation.h>
+
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/apple/bundle_locations.h"
+#include "base/apple/foundation_util.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/strings/string_split.h"
@@ -29,11 +32,6 @@
 #include "chrome/updater/util/mac_util.h"
 #include "chrome/updater/util/posix_util.h"
 #include "chrome/updater/util/util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Class to read the Keystone apps' client-regulated-counting data.
 @interface CountingMetricsStore : NSObject {
@@ -42,8 +40,8 @@
 
 + (instancetype)storeAtPath:(const base::FilePath&)path;
 
-- (absl::optional<int>)dateLastActiveForApp:(NSString*)appid;
-- (absl::optional<int>)dateLastRollcallForApp:(NSString*)appid;
+- (std::optional<int>)dateLastActiveForApp:(NSString*)appid;
+- (std::optional<int>)dateLastRollcallForApp:(NSString*)appid;
 
 @end
 
@@ -51,7 +49,7 @@
 
 + (instancetype)storeAtPath:(const base::FilePath&)path {
   return [[CountingMetricsStore alloc]
-      initWithURL:[base::mac::FilePathToNSURL(path)
+      initWithURL:[base::apple::FilePathToNSURL(path)
                       URLByAppendingPathComponent:@"CountingMetrics.plist"]];
 }
 
@@ -68,21 +66,21 @@
   return self;
 }
 
-- (absl::optional<int>)daynumValueOfKey:(NSString*)key forApp:(NSString*)appid {
+- (std::optional<int>)daynumValueOfKey:(NSString*)key forApp:(NSString*)appid {
   id appObject = [_metrics objectForKey:appid.lowercaseString];
   if (![appObject isKindOfClass:[NSDictionary class]]) {
     LOG(WARNING) << "Malformed input client-regulated-counting data.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   id daynumObject = appObject[key];
   if (!daynumObject) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (![daynumObject isKindOfClass:[NSNumber class]]) {
     LOG(WARNING) << "daynum is not a number.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // daynum the number of days since January 1, 2007. The accepted range is
@@ -90,17 +88,17 @@
   int daynum = [daynumObject intValue];
   if (daynum < 3000 || daynum > 50000) {
     LOG(WARNING) << "Ignored out-of-range daynum: " << daynum;
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return daynum;
 }
 
-- (absl::optional<int>)dateLastActiveForApp:(NSString*)appid {
+- (std::optional<int>)dateLastActiveForApp:(NSString*)appid {
   return [self daynumValueOfKey:@"DayOfLastActive" forApp:appid];
 }
 
-- (absl::optional<int>)dateLastRollcallForApp:(NSString*)appid {
+- (std::optional<int>)dateLastRollcallForApp:(NSString*)appid {
   return [self daynumValueOfKey:@"DayOfLastRollcall" forApp:appid];
 }
 
@@ -125,10 +123,11 @@ bool CopyKeystoneBundle(UpdaterScope scope) {
     return false;
   }
 
-  const absl::optional<base::FilePath> dest_folder_path =
+  const std::optional<base::FilePath> dest_folder_path =
       GetKeystoneFolderPath(scope);
-  if (!dest_folder_path)
+  if (!dest_folder_path) {
     return false;
+  }
   const base::FilePath dest_path = *dest_folder_path;
 
   // CopyDir() does not remove files in destination.
@@ -155,11 +154,11 @@ bool CopyKeystoneBundle(UpdaterScope scope) {
 
   // For system installs, set file permissions to be drwxr-xr-x.
   if (IsSystemInstall(scope)) {
-    constexpr int kPermissionsMask = base::FILE_PERMISSION_USER_MASK |
-                                     base::FILE_PERMISSION_READ_BY_GROUP |
-                                     base::FILE_PERMISSION_EXECUTE_BY_GROUP |
-                                     base::FILE_PERMISSION_READ_BY_OTHERS |
-                                     base::FILE_PERMISSION_EXECUTE_BY_OTHERS;
+    static constexpr int kPermissionsMask =
+        base::FILE_PERMISSION_USER_MASK | base::FILE_PERMISSION_READ_BY_GROUP |
+        base::FILE_PERMISSION_EXECUTE_BY_GROUP |
+        base::FILE_PERMISSION_READ_BY_OTHERS |
+        base::FILE_PERMISSION_EXECUTE_BY_OTHERS;
     if (!base::SetPosixFilePermissions(dest_path.DirName(), kPermissionsMask) ||
         !base::SetPosixFilePermissions(dest_path, kPermissionsMask)) {
       LOG(ERROR) << "Failed to set permissions to drwxr-xr-x at "
@@ -175,20 +174,43 @@ bool CopyKeystoneBundle(UpdaterScope scope) {
     return false;
   }
 
-  if (!RemoveQuarantineAttributes(dest_keystone_bundle_path)) {
-    VLOG(1) << "Couldn't remove quarantine bits for Keystone.";
+  if (!PrepareToRunBundle(dest_keystone_bundle_path)) {
+    VLOG(1) << "Gatekeeper may prompt for Keystone shim.";
   }
 
   return true;
 }
 
-bool CreateEmptyFileInDirectory(const base::FilePath& dir,
-                                const std::string& file_name) {
-  constexpr int kPermissionsMask = base::FILE_PERMISSION_READ_BY_USER |
-                                   base::FILE_PERMISSION_WRITE_BY_USER |
-                                   base::FILE_PERMISSION_READ_BY_GROUP |
-                                   base::FILE_PERMISSION_READ_BY_OTHERS;
+bool CreateKeystoneLaunchCtlPlistFiles(UpdaterScope scope) {
+  // If not all Keystone launchctl plist files are present, Keystone installer
+  // will proceed regardless of the bundle state. The empty launchctl files
+  // created here make legacy Keystone installer believe that a healthy newer
+  // version updater already exists and thus won't over-install.
+  if (IsSystemInstall(scope) &&
+      !CreateEmptyPlistFile(
+          GetLibraryFolderPath(scope)
+              ->Append("LaunchDaemons")
+              .Append(base::ToLowerASCII(LEGACY_GOOGLE_UPDATE_APPID
+                                         ".daemon.plist")))) {
+    return false;
+  }
 
+  base::FilePath launch_agent_dir =
+      GetLibraryFolderPath(scope)->Append("LaunchAgents");
+  return CreateEmptyPlistFile(launch_agent_dir.Append(
+             base::ToLowerASCII(LEGACY_GOOGLE_UPDATE_APPID ".agent.plist"))) &&
+         CreateEmptyPlistFile(launch_agent_dir.Append(base::ToLowerASCII(
+             LEGACY_GOOGLE_UPDATE_APPID ".xpcservice.plist")));
+}
+
+}  // namespace
+
+bool CreateEmptyPlistFile(const base::FilePath& file_path) {
+  static constexpr int kPermissionsMask = base::FILE_PERMISSION_READ_BY_USER |
+                                          base::FILE_PERMISSION_WRITE_BY_USER |
+                                          base::FILE_PERMISSION_READ_BY_GROUP |
+                                          base::FILE_PERMISSION_READ_BY_OTHERS;
+  const base::FilePath dir = file_path.DirName();
   if (!base::PathExists(dir)) {
     base::File::Error error;
     if (!base::CreateDirectoryAndGetError(dir, &error) ||
@@ -199,20 +221,26 @@ bool CreateEmptyFileInDirectory(const base::FilePath& dir,
     }
   }
 
-  base::FilePath file_path = dir.AppendASCII(file_name);
-  int64_t file_size;
-  if (base::GetFileSize(file_path, &file_size) && file_size == 0) {
-    VLOG(1) << "Skipping creation of " << file_path << ": file already empty.";
-    return true;
+  @autoreleasepool {
+    NSURL* const url = base::apple::FilePathToNSURL(file_path);
+    if (base::PathExists(file_path) && [@{
+        } isEqualToDictionary:[NSDictionary dictionaryWithContentsOfURL:url
+                                                                  error:nil]]) {
+      VLOG(2) << "Skipping updating " << file_path;
+      return true;
+    }
+    NSData* data = [NSPropertyListSerialization
+        dataWithPropertyList:@{}
+                      format:NSPropertyListXMLFormat_v1_0
+                     options:0
+                       error:nil];
+    NSError* error;
+    if (![data writeToURL:url options:NSDataWritingAtomic error:&error]) {
+      LOG(ERROR) << "Failed to write " << url << " error " << error.description;
+      return false;
+    }
   }
-  base::File file(file_path,
-                  base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-  file.Close();
 
-  if (!base::PathExists(file_path)) {
-    LOG(ERROR) << "Failed to create file: " << file_path.value().c_str();
-    return false;
-  }
   if (!base::SetPosixFilePermissions(file_path, kPermissionsMask)) {
     LOG(ERROR) << "Failed to set permissions: " << file_path.value().c_str();
     return false;
@@ -221,36 +249,12 @@ bool CreateEmptyFileInDirectory(const base::FilePath& dir,
   return true;
 }
 
-bool CreateKeystoneLaunchCtlPlistFiles(UpdaterScope scope) {
-  // If not all Keystone launchctl plist files are present, Keystone installer
-  // will proceed regardless of the bundle state. The empty launchctl files
-  // created here are used to make legacy Keystone installer believe that a
-  // healthy newer version updater already exists and thus won't over-install.
-  if (IsSystemInstall(scope) &&
-      !CreateEmptyFileInDirectory(
-          GetLibraryFolderPath(scope)->Append("LaunchDaemons"),
-          base::ToLowerASCII(LEGACY_GOOGLE_UPDATE_APPID ".daemon.plist"))) {
-    return false;
-  }
-
-  base::FilePath launch_agent_dir =
-      GetLibraryFolderPath(scope)->Append("LaunchAgents");
-  return CreateEmptyFileInDirectory(
-             launch_agent_dir,
-             base::ToLowerASCII(LEGACY_GOOGLE_UPDATE_APPID ".agent.plist")) &&
-         CreateEmptyFileInDirectory(
-             launch_agent_dir, base::ToLowerASCII(LEGACY_GOOGLE_UPDATE_APPID
-                                                  ".xpcservice.plist"));
-}
-
-}  // namespace
-
 bool InstallKeystone(UpdaterScope scope) {
   return CopyKeystoneBundle(scope) && CreateKeystoneLaunchCtlPlistFiles(scope);
 }
 
 void UninstallKeystone(UpdaterScope scope) {
-  const absl::optional<base::FilePath> keystone_folder_path =
+  const std::optional<base::FilePath> keystone_folder_path =
       GetKeystoneFolderPath(scope);
   if (!keystone_folder_path) {
     LOG(ERROR) << "Can't find Keystone path.";
@@ -316,9 +320,14 @@ bool MigrateKeystoneApps(
       } else {
         registration.version = base::Version(kNullVersion);
       }
+      if (ticket.versionPath && ticket.versionKey) {
+        registration.version_path =
+            base::apple::NSStringToFilePath(ticket.versionPath);
+        registration.version_key = base::SysNSStringToUTF8(ticket.versionKey);
+      }
       if (ticket.existenceChecker) {
         registration.existence_checker_path =
-            base::mac::NSStringToFilePath(ticket.existenceChecker.path);
+            base::apple::NSStringToFilePath(ticket.existenceChecker.path);
       }
       registration.brand_code =
           base::SysNSStringToUTF8([ticket determineBrand]);
@@ -326,7 +335,7 @@ bool MigrateKeystoneApps(
         // New updater only supports hard-coded brandKey, only migrate brand
         // path if the key matches.
         registration.brand_path =
-            base::mac::NSStringToFilePath(ticket.brandPath);
+            base::apple::NSStringToFilePath(ticket.brandPath);
       }
       registration.ap = base::SysNSStringToUTF8([ticket determineTag]);
 

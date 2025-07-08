@@ -6,8 +6,8 @@
 #define EXTENSIONS_RENDERER_BINDINGS_EVENT_EMITTER_H_
 
 #include <map>
-#include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "extensions/common/mojom/event_dispatcher.mojom-forward.h"
 #include "extensions/renderer/bindings/js_runner.h"
 #include "gin/wrappable.h"
@@ -21,10 +21,10 @@ namespace extensions {
 class APIEventListeners;
 class ExceptionHandler;
 
-// A gin::Wrappable Event object. One is expected to be created per event, per
-// context. Note: this object *does not* clear any events, so it must be
-// destroyed with the context to avoid leaking.
-class EventEmitter final : public gin::Wrappable<EventEmitter> {
+// A gin::DeprecatedWrappable Event object. One is expected to be created per
+// event, per context. Note: this object *does not* clear any events, so it must
+// be destroyed with the context to avoid leaking.
+class EventEmitter final : public gin::DeprecatedWrappable<EventEmitter> {
  public:
   EventEmitter(bool supports_filters,
                std::unique_ptr<APIEventListeners> listeners,
@@ -35,28 +35,28 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
 
   ~EventEmitter() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
-  // gin::Wrappable:
+  // gin::DeprecatedWrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) final;
   const char* GetTypeName() final;
 
   // Fires the event to any listeners.
-  // Warning: This can run arbitrary JS code, so the |context| may be
+  // Warning: This can run arbitrary JS code, so the `context` may be
   // invalidated after this!
   void Fire(v8::Local<v8::Context> context,
-            std::vector<v8::Local<v8::Value>>* args,
+            v8::LocalVector<v8::Value>* args,
             mojom::EventFilteringInfoPtr filter,
-            JSRunner::ResultCallback callback);
+            v8::Local<v8::Function> callback);
 
   // Fires the event to any listeners synchronously, and returns the result.
   // This should only be used if the caller is certain that JS is already
   // running (i.e., is not blocked).
-  // Warning: This can run arbitrary JS code, so the |context| may be
+  // Warning: This can run arbitrary JS code, so the `context` may be
   // invalidated after this!
   v8::Local<v8::Value> FireSync(v8::Local<v8::Context> context,
-                                std::vector<v8::Local<v8::Value>>* args,
+                                v8::LocalVector<v8::Value>* args,
                                 mojom::EventFilteringInfoPtr filter);
 
   // Removes all listeners and marks this object as invalid so that no more
@@ -66,6 +66,17 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   // TODO(devlin): Consider making this a test-only method and exposing
   // HasListeners() instead.
   size_t GetNumListeners() const;
+
+  // Saves a given filter in an internal filter_id based mapping. This is
+  // needed in order to allow asynchronous usage of filters.
+  // Returns this filter's filter_id, which may be kInvalidFilterId if
+  // `filter` is empty.
+  int PushFilter(mojom::EventFilteringInfoPtr filter);
+
+  // Fetches a given filter by it's filter_id and removes it from the internal
+  // storage. In case of a kInvalidFilterId, an empty
+  // mojom::EventFilteringInfoPtr is returned.
+  mojom::EventFilteringInfoPtr PopFilter(int filter_id);
 
  private:
   // Bound methods for the Event JS object.
@@ -77,14 +88,14 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
 
   // Dispatches an event synchronously to listeners, returning the result.
   v8::Local<v8::Value> DispatchSync(v8::Local<v8::Context> context,
-                                    std::vector<v8::Local<v8::Value>>* args,
+                                    v8::LocalVector<v8::Value>* args,
                                     mojom::EventFilteringInfoPtr filter);
 
   // Dispatches an event asynchronously to listeners.
   void DispatchAsync(v8::Local<v8::Context> context,
-                     std::vector<v8::Local<v8::Value>>* args,
+                     v8::LocalVector<v8::Value>* args,
                      mojom::EventFilteringInfoPtr filter,
-                     JSRunner::ResultCallback callback);
+                     v8::Local<v8::Function> callback);
   static void DispatchAsyncHelper(
       const v8::FunctionCallbackInfo<v8::Value>& info);
 
@@ -98,7 +109,8 @@ class EventEmitter final : public gin::Wrappable<EventEmitter> {
   std::unique_ptr<APIEventListeners> listeners_;
 
   // The associated exception handler; guaranteed to outlive this object.
-  ExceptionHandler* const exception_handler_ = nullptr;
+  const raw_ptr<ExceptionHandler, DanglingUntriaged> exception_handler_ =
+      nullptr;
 
   // The next id to use in the pending_filters_ map.
   int next_filter_id_ = 0;

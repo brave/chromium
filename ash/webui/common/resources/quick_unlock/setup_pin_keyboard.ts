@@ -10,16 +10,16 @@
  *
  */
 
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import './pin_keyboard.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {ConfigureResult, PinFactorEditor} from 'chrome://resources/mojo/chromeos/ash/services/auth_factor_config/public/mojom/auth_factor_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {LockScreenProgress, recordLockScreenProgress} from './lock_screen_constants.js';
-import {PinKeyboardElement} from './pin_keyboard.js';
+import type {PinKeyboardElement} from './pin_keyboard.js';
 import {getTemplate} from './setup_pin_keyboard.html.js';
 import {fireAuthTokenInvalidEvent} from './utils.js';
 
@@ -30,6 +30,7 @@ export enum MessageType {
   TOO_SHORT = 'configurePinTooShort',
   TOO_LONG = 'configurePinTooLong',
   TOO_WEAK = 'configurePinWeakPin',
+  CONTAINS_NONDIGIT = 'configurePinNondigit',
   MISMATCH = 'configurePinMismatched',
   INTERNAL_ERROR = 'internalError',
 }
@@ -130,6 +131,13 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
         value: false,
       },
 
+      // Whether the PIN keyboard is being used during ChromeOS recovery. In
+      // that case, a different API should be used.
+      useRecoveryModeApi: {
+        type: Boolean,
+        value: false,
+      },
+
       /**
        * Interface for chrome.quickUnlockPrivate calls.
        */
@@ -147,6 +155,14 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
        * Enables pin placeholder.
        */
       enablePlaceholder: {
+        type: Boolean,
+        value: false,
+      },
+
+      /**
+       * Enables the visibility icon for showing/hiding the PIN
+       */
+      enableVisibilityIcon: {
         type: Boolean,
         value: false,
       },
@@ -170,8 +186,10 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
   enableSubmit: boolean;
   writeUma: (progress: LockScreenProgress) => void;
   isConfirmStep: boolean;
+  useRecoveryModeApi: boolean;
   quickUnlockPrivate: typeof chrome.quickUnlockPrivate;
   enablePlaceholder: boolean;
+  enableVisibilityIcon: boolean;
 
   override focus(): void {
     this.$.pinKeyboard.focusInput();
@@ -196,6 +214,7 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
     this.enableSubmit = false;
     this.isConfirmStep = false;
     this.pinHasPassedMinimumLength_ = false;
+    this.useRecoveryModeApi = false;
     this.hideProblem_();
     this.onPinChange_(
         new CustomEvent('pin-change', {detail: {pin: this.pinKeyboardValue_}}));
@@ -227,6 +246,7 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
         additionalInformation = (requirements.maxLength + 1).toString();
         break;
       case MessageType.TOO_WEAK:
+      case MessageType.CONTAINS_NONDIGIT:
       case MessageType.MISMATCH:
       case MessageType.INTERNAL_ERROR:
         break;
@@ -295,6 +315,9 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
         case chrome.quickUnlockPrivate.CredentialProblem.TOO_WEAK:
           this.showProblem_(MessageType.TOO_WEAK, ProblemType.ERROR);
           break;
+        case chrome.quickUnlockPrivate.CredentialProblem.CONTAINS_NONDIGIT:
+          this.showProblem_(MessageType.CONTAINS_NONDIGIT, ProblemType.ERROR);
+          break;
         default:
           assertNotReached();
       }
@@ -313,6 +336,10 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
             this.processPinProblems_.bind(this));
       } else {
         this.enableSubmit = false;
+        this.showProblem_(
+            MessageType.TOO_SHORT,
+            this.pinHasPassedMinimumLength_ ? ProblemType.ERROR :
+                                              ProblemType.WARNING);
       }
       return;
     }
@@ -335,6 +362,7 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
       this.initialPin_ = this.pinKeyboardValue_;
       this.pinKeyboardValue_ = '';
       this.isConfirmStep = true;
+      this.$.pinKeyboard.resetPinVisibility();
       this.onPinChange_(new CustomEvent(
           'pin-change', {detail: {pin: this.pinKeyboardValue_}}));
       this.$.pinKeyboard.focusInput();
@@ -358,8 +386,14 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
 
     this.isSetPinCallPending_ = true;
     this.enableSubmit = false;
-    const {result} = await PinFactorEditor.getRemote().setPin(
-        this.authToken, this.pinKeyboardValue_);
+    let result: any;
+    if (this.useRecoveryModeApi) {
+      ({result} = await PinFactorEditor.getRemote().updatePin(
+           this.authToken, this.pinKeyboardValue_));
+    } else {
+      ({result} = await PinFactorEditor.getRemote().setPin(
+           this.authToken, this.pinKeyboardValue_));
+    }
     this.isSetPinCallPending_ = false;
 
     switch (result) {
@@ -371,8 +405,13 @@ export class SetupPinKeyboardElement extends SetupPinKeyboardElementBase {
       case ConfigureResult.kFatalError:
         console.error('Failed to update pin');
         this.showProblem_(MessageType.INTERNAL_ERROR, ProblemType.ERROR);
+        // Enable submission again: We don't know why this failed, and perhaps
+        // submitting again resolves the issue.
         this.enableSubmit = true;
-        break;
+        // Do not reset state, close the dialog or generate a set-pin-done
+        // event -- this would lead the user to think that setting PIN was
+        // successful when it has actually failed.
+        return;
     }
 
     this.resetState();

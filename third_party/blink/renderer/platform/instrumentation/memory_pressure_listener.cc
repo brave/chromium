@@ -4,12 +4,12 @@
 
 #include "third_party/blink/renderer/platform/instrumentation/memory_pressure_listener.h"
 
-#include "base/allocator/partition_allocator/memory_reclaimer.h"
 #include "base/feature_list.h"
 #include "base/synchronization/lock.h"
 #include "base/system/sys_info.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "build/build_config.h"
+#include "partition_alloc/memory_reclaimer.h"
 #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/web/blink.h"
@@ -22,10 +22,6 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
-
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/sys_utils.h"
-#endif
 
 namespace blink {
 
@@ -51,21 +47,12 @@ bool MemoryPressureListenerRegistry::
 
 bool MemoryPressureListenerRegistry::
     IsLowEndDeviceOrPartialLowEndModeEnabledIncludingCanvasFontCache() {
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
   return is_low_end_device_ ||
          base::SysInfo::IsLowEndDeviceOrPartialLowEndModeEnabled(
              blink::features::kPartialLowEndModeExcludeCanvasFontCache);
 #else
   return IsLowEndDeviceOrPartialLowEndModeEnabled();
-#endif
-}
-
-// static
-bool MemoryPressureListenerRegistry::IsCurrentlyLowMemory() {
-#if BUILDFLAG(IS_ANDROID)
-  return base::android::SysUtils::IsCurrentlyLowMemory();
-#else
-  return false;
 #endif
 }
 

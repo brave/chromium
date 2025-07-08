@@ -55,6 +55,7 @@ class ResultSinkClient(object):
     base_url = 'http://%s/prpc/luci.resultsink.v1.Sink' % context['address']
     self.test_results_url = base_url + '/ReportTestResults'
     self.report_artifacts_url = base_url + '/ReportInvocationLevelArtifacts'
+    self.update_invocation_url = base_url + '/UpdateInvocation'
 
     headers = {
         'Content-Type': 'application/json',
@@ -80,10 +81,12 @@ class ResultSinkClient(object):
            duration,
            test_log,
            test_file,
+           test_id_structured=None,
            variant=None,
            artifacts=None,
            failure_reason=None,
-           html_artifact=None):
+           html_artifact=None,
+           tags=None):
     """Uploads the test result to the ResultSink server.
 
     This assumes that the rdb stream has been called already and that
@@ -95,6 +98,7 @@ class ResultSinkClient(object):
       duration: An int representing time in ms.
       test_log: A string representing the test's output.
       test_file: A string representing the file location of the test.
+      test_id_structured: A dictionary containing structured test id fields.
       variant: An optional dict of variant key value pairs as the
           additional variant sent from test runners, which can override
           or add to the variants passed to `rdb stream` command.
@@ -104,6 +108,8 @@ class ResultSinkClient(object):
       html_artifact: An optional html-formatted string to prepend to the test's
           log. Useful to encode click-able URL links in the test log, since that
           won't be formatted in the test_log.
+      tags: An optional list of tuple of key name and value to prepend to the
+          test's tags.
 
     Returns:
       N/A
@@ -134,6 +140,15 @@ class ResultSinkClient(object):
             'name': test_id,
         }
     }
+
+    if test_id_structured:
+      tr['testIdStructured'] = test_id_structured
+
+    if tags:
+      tr['tags'].extend({
+          'key': key_name,
+          'value': value
+      } for (key_name, value) in tags)
 
     if variant:
       tr['variant'] = {'def': variant}
@@ -191,6 +206,57 @@ class ResultSinkClient(object):
     req = {'artifacts': artifacts}
     res = self.session.post(url=self.report_artifacts_url, data=json.dumps(req))
     res.raise_for_status()
+
+  def UpdateInvocation(self, invocation, update_mask):
+    """Update the invocation to the ResultSink server.
+
+    Details can be found in the proto luci.resultsink.v1.UpdateInvocationRequest
+
+    Args:
+      invocation: a dict representation of luci.resultsink.v1.Invocation proto
+      update_mask: a string representation of google.protobuf.FieldMask proto
+    """
+    req = {
+        'invocation': invocation,
+        'updateMask': update_mask,
+    }
+    res = self.session.post(url=self.update_invocation_url,
+                            data=json.dumps(req))
+    res.raise_for_status()
+
+  def UpdateInvocationExtendedProperties(self, extended_properties, keys=None):
+    """Update the extended_properties field of an invocation.
+
+    Details can be found in the "extended_properties" field of the proto
+    luci.resultdb.v1.Invocation.
+
+    Args:
+      extended_properties: a dict containing the content of extended_properties.
+        The value in the dict shall be a dict containing a "@type" key
+        representing the data schema, and corresponding data.
+      keys: (Optional) a list of keys in extended_properties to add, replace,
+        or remove. If a key exists in "keys", but not in "extended_properties",
+        this is considered as deleting the key from the resultdb record side
+        If None, the keys in "extended_properties" dict will be used.
+    """
+    # Sink server by default decodes payload with protojson, i.e. codecJSONV2
+    # in https://source.chromium.org/search?q=f:server.go%20func:requestCodec
+    # which requires loweCamelCase names in the json request.
+    # For the value for update mask, see "JSON Encoding of Field Masks" in
+    # https://protobuf.dev/reference/protobuf/google.protobuf/#field-masks
+    invocation = {'extendedProperties': extended_properties}
+    if not keys:
+      keys = extended_properties.keys()
+    mask_paths = ['extendedProperties.%s' % _ToCamelCase(key) for key in keys]
+    update_mask = ','.join(mask_paths)
+    self.UpdateInvocation(invocation, update_mask)
+
+
+def _ToCamelCase(s):
+  """Converts the string s from snake_case to lowerCamelCase."""
+
+  elems = s.split('_')
+  return elems[0] + ''.join(elem.capitalize() for elem in elems[1:])
 
 
 def _TruncateToUTF8Bytes(s, length):

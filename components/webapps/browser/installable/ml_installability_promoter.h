@@ -21,7 +21,6 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "mojo/public/cpp/bindings/struct_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "url/gurl.h"
@@ -44,7 +43,8 @@ class AppBannerManager;
 class MlInstallOperationTracker;
 class SiteManifestMetricsTask;
 
-constexpr base::TimeDelta kTimeToWaitForWebContentsObservers = base::Seconds(3);
+constexpr base::TimeDelta kTimeToWaitForWebContentsObservers =
+    base::Seconds(10);
 
 struct SiteInstallMetrics {
   bool is_fully_installed;
@@ -96,6 +96,7 @@ class MLInstallabilityPromoter
       public content::WebContentsUserData<MLInstallabilityPromoter> {
  public:
   static constexpr char kShowInstallPromptLabel[] = "ShowInstallPrompt";
+  static constexpr char kDontShowLabel[] = "DontShow";
 
   ~MLInstallabilityPromoter() override;
 
@@ -113,8 +114,12 @@ class MLInstallabilityPromoter
       scoped_refptr<base::SequencedTaskRunner> task_runner);
   void AwaitMetricsCollectionTasksCompleteForTesting();
 
-  bool IsPendingVisibilityForTesting() {
+  bool IsPendingVisibilityForTesting() const {
     return state_ == MLPipelineState::kWaitingForVisibility;
+  }
+
+  bool IsCompleteForTesting() const {
+    return state_ == MLPipelineState::kComplete;
   }
 
  private:
@@ -160,7 +165,9 @@ class MLInstallabilityPromoter
 
   // content::ServiceWorkerContextObserver overrides
   void OnRegistrationStored(int64_t registration_id,
-                            const GURL& scope) override;
+                            const GURL& scope,
+                            const content::ServiceWorkerRegistrationInformation&
+                                service_worker_info) override;
   void OnDestruct(content::ServiceWorkerContext* context) override;
 
   void ResetRunningStagesAndTasksMaybeReportResult();
@@ -179,7 +186,7 @@ class MLInstallabilityPromoter
 
   // These variables are set on page load.
   GURL site_url_;
-  // TODO(https://crbug.com/1455521) Use raw_ptr when this class is owned by
+  // TODO(crbug.com/40272826) Use raw_ptr when this class is owned by
   // AppBannerManager.
   base::WeakPtr<AppBannerManager> app_banner_manager_;
 

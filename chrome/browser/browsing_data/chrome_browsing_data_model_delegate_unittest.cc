@@ -3,14 +3,22 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/browsing_data/chrome_browsing_data_model_delegate.h"
-#include "base/containers/cxx20_erase_vector.h"
+
+#include <variant>
+#include <vector>
+
+#include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback_helpers.h"
 #include "base/test/bind.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_constants.h"
 #include "chrome/browser/browsing_topics/browsing_topics_service_factory.h"
 #include "chrome/browser/media/webrtc/media_device_salt_service_factory.h"
+#include "chrome/browser/webid/federated_identity_permission_context.h"
+#include "chrome/browser/webid/federated_identity_permission_context_factory.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/browsing_topics/test_util.h"
 #include "components/media_device_salt/media_device_salt_service.h"
 #include "content/public/browser/browsing_data_remover.h"
@@ -43,12 +51,13 @@ blink::StorageKey StorageKey2() {
 
 class ChromeBrowsingDataModelDelegateTest : public testing::Test {
  public:
-  ChromeBrowsingDataModelDelegateTest()
-      : profile_(std::make_unique<TestingProfile>()),
-        delegate_(
-            ChromeBrowsingDataModelDelegate::CreateForProfile(profile_.get())) {
-    feature_list_.InitAndEnableFeature(
-        media_device_salt::kMediaDeviceIdPartitioning);
+  ChromeBrowsingDataModelDelegateTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {
+              media_device_salt::kMediaDeviceIdPartitioning
+        },
+        /*disabled_features=*/{});
   }
 
   ChromeBrowsingDataModelDelegateTest(
@@ -59,6 +68,14 @@ class ChromeBrowsingDataModelDelegateTest : public testing::Test {
   ~ChromeBrowsingDataModelDelegateTest() override = default;
 
   void SetUp() override {
+    ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    profile_manager_ = std::make_unique<TestingProfileManager>(
+        TestingBrowserProcess::GetGlobal());
+    ASSERT_TRUE(profile_manager_->SetUp(temp_dir_.GetPath()));
+    profile_ = profile_manager_->CreateTestingProfile("test_profile");
+
+    delegate_ = ChromeBrowsingDataModelDelegate::CreateForProfile(profile_);
+
     browsing_topics::BrowsingTopicsServiceFactory::GetInstance()
         ->SetTestingFactoryAndUse(
             profile(),
@@ -84,16 +101,20 @@ class ChromeBrowsingDataModelDelegateTest : public testing::Test {
     // Get salts for test keys, so that they are stored in the service.
     base::test::TestFuture<const std::string&> future;
     media_device_salt_service()->GetSalt(StorageKey1(), future.GetCallback());
-    future.Wait();
+    ASSERT_TRUE(future.Wait());
     future.Clear();
     media_device_salt_service()->GetSalt(StorageKey2(), future.GetCallback());
-    future.Wait();
+    ASSERT_TRUE(future.Wait());
 
     base::test::TestFuture<std::vector<blink::StorageKey>> all_keys_future;
     media_device_salt_service()->GetAllStorageKeys(
         all_keys_future.GetCallback());
     ASSERT_THAT(all_keys_future.Get(),
                 UnorderedElementsAre(StorageKey1(), StorageKey2()));
+
+    federated_identity_permission_context_ =
+        FederatedIdentityPermissionContextFactory::GetForProfile(
+            profile_.get());
   }
 
   TestingProfile* profile() { return profile_.get(); }
@@ -108,15 +129,23 @@ class ChromeBrowsingDataModelDelegateTest : public testing::Test {
     return media_device_salt_service_;
   }
 
+  FederatedIdentityPermissionContext* federated_identity_permission_context() {
+    return federated_identity_permission_context_;
+  }
+
  protected:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   base::test::ScopedFeatureList feature_list_;
-  const std::unique_ptr<TestingProfile> profile_;
-  std::unique_ptr<ChromeBrowsingDataModelDelegate> delegate_;
+  base::ScopedTempDir temp_dir_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
+  raw_ptr<TestingProfile> profile_;  // Owned by `profile_manager_`.
   raw_ptr<browsing_topics::MockBrowsingTopicsService>
       mock_browsing_topics_service_;
+  std::unique_ptr<ChromeBrowsingDataModelDelegate> delegate_;
   raw_ptr<media_device_salt::MediaDeviceSaltService> media_device_salt_service_;
+  raw_ptr<FederatedIdentityPermissionContext>
+      federated_identity_permission_context_;
 };
 
 TEST_F(ChromeBrowsingDataModelDelegateTest, RemoveDataKeyForTopics) {
@@ -139,7 +168,7 @@ TEST_F(ChromeBrowsingDataModelDelegateTest, RemoveDataKeyForMediaDeviceSalts) {
       {static_cast<BrowsingDataModel::StorageType>(
           ChromeBrowsingDataModelDelegate::StorageType::kMediaDeviceSalt)},
       done_future.GetCallback());
-  done_future.Wait();
+  ASSERT_TRUE(done_future.Wait());
 
   base::test::TestFuture<std::vector<blink::StorageKey>> all_keys_future;
   media_device_salt_service()->GetAllStorageKeys(all_keys_future.GetCallback());
@@ -156,10 +185,10 @@ TEST_F(ChromeBrowsingDataModelDelegateTest, GetAllDataKeysAndGetDataOwner) {
   std::vector<blink::StorageKey> expected_keys = {StorageKey1(), StorageKey2()};
   for (const auto& entry : delegate_entries) {
     const blink::StorageKey* storage_key =
-        absl::get_if<blink::StorageKey>(&entry.data_key);
+        std::get_if<blink::StorageKey>(&entry.data_key);
     ASSERT_TRUE(storage_key);
     EXPECT_THAT(expected_keys, Contains(*storage_key));
-    base::Erase(expected_keys, *storage_key);
+    std::erase(expected_keys, *storage_key);
 
     EXPECT_GT(entry.storage_size, 0u);
 
@@ -167,14 +196,14 @@ TEST_F(ChromeBrowsingDataModelDelegateTest, GetAllDataKeysAndGetDataOwner) {
                   entry.storage_type),
               ChromeBrowsingDataModelDelegate::StorageType::kMediaDeviceSalt);
 
-    absl::optional<BrowsingDataModel::DataOwner> owner =
+    std::optional<BrowsingDataModel::DataOwner> owner =
         delegate()->GetDataOwner(
             entry.data_key, static_cast<BrowsingDataModel::StorageType>(
                                 ChromeBrowsingDataModelDelegate::StorageType::
                                     kMediaDeviceSalt));
     ASSERT_TRUE(owner.has_value());
 
-    const std::string* str_owner = absl::get_if<std::string>(&*owner);
+    const std::string* str_owner = std::get_if<std::string>(&*owner);
     ASSERT_TRUE(str_owner);
     EXPECT_EQ(*str_owner, storage_key->origin().host());
   }
@@ -188,10 +217,10 @@ TEST_F(ChromeBrowsingDataModelDelegateTest, RemoveIsolatedWebAppData) {
            "aerugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic/"));
   std::unique_ptr<ChromeBrowsingDataModelDelegate> delegate =
       ChromeBrowsingDataModelDelegate::CreateForProfile(profile());
-  EXPECT_TRUE(delegate);
+  ASSERT_TRUE(delegate);
 
   content::BrowsingDataRemover* remover = profile()->GetBrowsingDataRemover();
-  EXPECT_EQ(~0ULL, remover->GetLastUsedRemovalMaskForTesting());
+  ASSERT_EQ(~0ULL, remover->GetLastUsedRemovalMaskForTesting());
 
   base::RunLoop run_loop;
   delegate->RemoveDataKey(
@@ -201,8 +230,81 @@ TEST_F(ChromeBrowsingDataModelDelegateTest, RemoveIsolatedWebAppData) {
       run_loop.QuitClosure());
   run_loop.Run();
 
-  EXPECT_EQ(chrome_browsing_data_remover::DATA_TYPE_SITE_DATA &
+  EXPECT_EQ((chrome_browsing_data_remover::DATA_TYPE_SITE_DATA |
+             content::BrowsingDataRemover::DATA_TYPE_CACHE) &
                 ~content::BrowsingDataRemover::DATA_TYPE_COOKIES,
             remover->GetLastUsedRemovalMaskForTesting());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+TEST_F(ChromeBrowsingDataModelDelegateTest, CookieDeletionFilterChildUser) {
+  profile_->SetIsSupervisedProfile(true);
+
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://google.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://example.com")));
+  EXPECT_TRUE(delegate()->IsCookieDeletionDisabled(GURL("http://youtube.com")));
+  EXPECT_TRUE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://youtube.com")));
+}
+
+TEST_F(ChromeBrowsingDataModelDelegateTest, CookieDeletionFilterNormalUser) {
+  profile_->SetIsSupervisedProfile(false);
+
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://google.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://example.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("http://youtube.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://youtube.com")));
+}
+
+TEST_F(ChromeBrowsingDataModelDelegateTest, CookieDeletionFilterIncognitoUser) {
+  // Replace the delegate with an incognito profile delegate.
+  delegate_ = ChromeBrowsingDataModelDelegate::CreateForProfile(
+      profile_->GetOffTheRecordProfile(Profile::OTRProfileID::PrimaryID(),
+                                       /*create_if_needed=*/true));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://google.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://example.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("http://youtube.com")));
+  EXPECT_FALSE(
+      delegate()->IsCookieDeletionDisabled(GURL("https://youtube.com")));
+}
+
+TEST_F(ChromeBrowsingDataModelDelegateTest, RemoveFederatedIdentityData) {
+  const url::Origin kRequester =
+      url::Origin::Create(GURL("https://requester.com"));
+  const url::Origin kEmbedder =
+      url::Origin::Create(GURL("https://embedder.com"));
+  const url::Origin kIdentityProvider =
+      url::Origin::Create(GURL("https://idp.com"));
+  constexpr std::string kAccountId = "accountId";
+
+  FederatedIdentityPermissionContext* context =
+      federated_identity_permission_context();
+  context->GrantSharingPermission(kRequester, kEmbedder, kIdentityProvider,
+                                  kAccountId);
+  EXPECT_TRUE(context->GetLastUsedTimestamp(kRequester, kEmbedder,
+                                            kIdentityProvider, kAccountId));
+  EXPECT_TRUE(context->HasSharingPermission(kRequester));
+  EXPECT_FALSE(context->HasSharingPermission(kEmbedder));
+
+  base::RunLoop run_loop;
+  delegate_->RemoveDataKey(
+      webid::FederatedIdentityDataModel::DataKey(kRequester, kEmbedder,
+                                                 kIdentityProvider, kAccountId),
+      {static_cast<BrowsingDataModel::StorageType>(
+          ChromeBrowsingDataModelDelegate::StorageType::kFederatedIdentity)},
+      run_loop.QuitClosure());
+  run_loop.Run();
+
+  EXPECT_FALSE(context->GetLastUsedTimestamp(kRequester, kEmbedder,
+                                             kIdentityProvider, kAccountId));
+  EXPECT_FALSE(context->HasSharingPermission(kRequester));
+}

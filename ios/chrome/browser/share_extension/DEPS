@@ -1,4 +1,0 @@
-include_rules = [
-  "+ios/chrome/browser/bookmarks",
-  "+ios/chrome/browser/reading_list",
-]

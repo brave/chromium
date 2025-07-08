@@ -11,8 +11,7 @@
 #include "chrome/browser/ash/smb_client/smb_file_system_id.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
 
-namespace ash {
-namespace smb_client {
+namespace ash::smb_client {
 
 using file_system_provider::AbortCallback;
 
@@ -20,12 +19,11 @@ SmbFileSystem::SmbFileSystem(
     const file_system_provider::ProvidedFileSystemInfo& file_system_info)
     : file_system_info_(file_system_info) {}
 
-SmbFileSystem::~SmbFileSystem() {}
+SmbFileSystem::~SmbFileSystem() = default;
 
 AbortCallback SmbFileSystem::RequestUnmount(
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::GetMetadata(
@@ -33,7 +31,6 @@ AbortCallback SmbFileSystem::GetMetadata(
     ProvidedFileSystemInterface::MetadataFieldMask fields,
     ProvidedFileSystemInterface::GetMetadataCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::GetActions(
@@ -50,28 +47,24 @@ AbortCallback SmbFileSystem::ExecuteAction(
     const std::string& action_id,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::ReadDirectory(
     const base::FilePath& directory_path,
     storage::AsyncFileUtil::ReadDirectoryCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::OpenFile(const base::FilePath& file_path,
                                       file_system_provider::OpenFileMode mode,
                                       OpenFileCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::CloseFile(
     int file_handle,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::ReadFile(int file_handle,
@@ -80,7 +73,6 @@ AbortCallback SmbFileSystem::ReadFile(int file_handle,
                                       int length,
                                       ReadChunkReceivedCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::CreateDirectory(
@@ -88,14 +80,12 @@ AbortCallback SmbFileSystem::CreateDirectory(
     bool recursive,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::CreateFile(
     const base::FilePath& file_path,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::DeleteEntry(
@@ -103,7 +93,6 @@ AbortCallback SmbFileSystem::DeleteEntry(
     bool recursive,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::CopyEntry(
@@ -111,7 +100,6 @@ AbortCallback SmbFileSystem::CopyEntry(
     const base::FilePath& target_path,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::MoveEntry(
@@ -119,7 +107,6 @@ AbortCallback SmbFileSystem::MoveEntry(
     const base::FilePath& target_path,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::Truncate(
@@ -127,7 +114,6 @@ AbortCallback SmbFileSystem::Truncate(
     int64_t length,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::WriteFile(
@@ -137,14 +123,12 @@ AbortCallback SmbFileSystem::WriteFile(
     int length,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::FlushFile(
     int file_handle,
     storage::AsyncFileUtil::StatusCallback callback) {
   NOTREACHED();
-  return base::DoNothing();
 }
 
 AbortCallback SmbFileSystem::AddWatcher(
@@ -156,8 +140,6 @@ AbortCallback SmbFileSystem::AddWatcher(
     storage::WatcherManager::NotificationCallback notification_callback) {
   // Watchers are not supported.
   NOTREACHED();
-  std::move(callback).Run(base::File::FILE_ERROR_INVALID_OPERATION);
-  return base::DoNothing();
 }
 
 void SmbFileSystem::RemoveWatcher(
@@ -167,7 +149,6 @@ void SmbFileSystem::RemoveWatcher(
     storage::AsyncFileUtil::StatusCallback callback) {
   // Watchers are not supported.
   NOTREACHED();
-  std::move(callback).Run(base::File::FILE_ERROR_INVALID_OPERATION);
 }
 
 const file_system_provider::ProvidedFileSystemInfo&
@@ -178,18 +159,15 @@ SmbFileSystem::GetFileSystemInfo() const {
 file_system_provider::OperationRequestManager*
 SmbFileSystem::GetRequestManager() {
   NOTREACHED();
-  return nullptr;
 }
 
 file_system_provider::Watchers* SmbFileSystem::GetWatchers() {
   // Watchers are not supported.
   NOTREACHED();
-  return nullptr;
 }
 
 const file_system_provider::OpenedFiles& SmbFileSystem::GetOpenedFiles() const {
   NOTREACHED();
-  return opened_files_;
 }
 
 void SmbFileSystem::AddObserver(
@@ -219,14 +197,12 @@ void SmbFileSystem::Configure(storage::AsyncFileUtil::StatusCallback callback) {
 
 base::WeakPtr<file_system_provider::ProvidedFileSystemInterface>
 SmbFileSystem::GetWeakPtr() {
-  return AsWeakPtr();
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 std::unique_ptr<file_system_provider::ScopedUserInteraction>
 SmbFileSystem::StartUserInteraction() {
   NOTREACHED();
-  return nullptr;
 }
 
-}  // namespace smb_client
-}  // namespace ash
+}  // namespace ash::smb_client

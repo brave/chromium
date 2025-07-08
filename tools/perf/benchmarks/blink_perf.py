@@ -392,14 +392,15 @@ class BlinkPerfAccessibility(_BlinkPerfBenchmark):
     return 'blink_perf.accessibility'
 
   def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(['--force-renderer-accessibility'])
+    options.AppendExtraBrowserArgs(['--force-renderer-accessibility=complete'])
 
 
-@benchmark.Info(
-    component='Blink>Bindings',
-    emails=['jbroman@chromium.org', 'yukishiino@chromium.org',
-            'haraken@chromium.org'],
-    documentation_url='https://bit.ly/blink-perf-benchmarks')
+@benchmark.Info(component='Blink>Bindings',
+                emails=[
+                    'jbroman@chromium.org', 'japhet@chromium.org',
+                    'haraken@chromium.org'
+                ],
+                documentation_url='https://bit.ly/blink-perf-benchmarks')
 class BlinkPerfBindings(_BlinkPerfBenchmark):
   SUBDIR = 'bindings'
   TAGS = _BlinkPerfBenchmark.TAGS + ['all']
@@ -587,6 +588,18 @@ class BlinkPerfLayout(_BlinkPerfBenchmark):
     return 'blink_perf.layout'
 
 
+@benchmark.Info(emails=['pmeenan@chromium.org', 'kouhei@chromium.org'],
+                component='Blink>Loader',
+                documentation_url='https://bit.ly/blink-perf-benchmarks')
+class BlinkPerfLoading(_BlinkPerfBenchmark):
+  SUBDIR = 'loading'
+  TAGS = _BlinkPerfBenchmark.TAGS + ['all']
+
+  @classmethod
+  def Name(cls):
+    return 'UNSCHEDULED_blink_perf.loading'
+
+
 @benchmark.Info(emails=['ayui@chromium.org'],
                 component='Blink>Storage',
                 documentation_url='https://bit.ly/blink-perf-benchmarks')
@@ -620,7 +633,7 @@ class BlinkPerfPaint(_BlinkPerfBenchmark):
     return 'blink_perf.paint'
 
 
-@benchmark.Info(emails=['yoavweiss@chromium.org'],
+@benchmark.Info(emails=['sullivan@chromium.org'],
                 component='Blink>PerformanceAPIs',
                 documentation_url='https://bit.ly/blink-perf-benchmarks')
 class BlinkPerfPerformanceAPIs(_BlinkPerfBenchmark):
@@ -642,23 +655,6 @@ class BlinkPerfParser(_BlinkPerfBenchmark):
   @classmethod
   def Name(cls):
     return 'blink_perf.parser'
-
-
-@benchmark.Info(component='Blink>Security>SanitizerAPI',
-                emails=['lyf@chromium.org'],
-                documentation_url='https://bit.ly/blink-perf-benchmarks')
-class BlinkPerfSanitizerAPI(_BlinkPerfBenchmark):
-  SUBDIR = 'sanitizer-api'
-  TAGS = _BlinkPerfBenchmark.TAGS + ['all']
-
-  @classmethod
-  def Name(cls):
-    return 'blink_perf.sanitizer-api'
-
-  def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs([
-        '--enable-blink-features=SanitizerAPI',
-    ])
 
 
 @benchmark.Info(emails=['fs@opera.com', 'pdr@chromium.org'],
@@ -694,7 +690,7 @@ class BlinkPerfDisplayLocking(_BlinkPerfBenchmark):
 
   @classmethod
   def Name(cls):
-    return 'blink_perf.display_locking'
+    return 'UNSCHEDULED_blink_perf.display_locking'
 
   def SetExtraBrowserOptions(self, options):
     options.AppendExtraBrowserArgs(

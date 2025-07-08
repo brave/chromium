@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_ASH_SHELF_CROSTINI_APP_DISPLAY_H_
 #define CHROME_BROWSER_UI_ASH_SHELF_CROSTINI_APP_DISPLAY_H_
 
+#include <stdint.h>
+
 #include <deque>
 #include <map>
 #include <string>
@@ -27,7 +29,7 @@ class CrostiniAppDisplay {
  private:
   // Since there is no message when an app quits, maintain a maximum number so
   // that older ones are deleted.
-  const uint kMaxAppIdSize = 32;
+  const unsigned kMaxAppIdSize = 32;
 
   std::map<std::string, int64_t> app_id_to_display_id_;
   std::deque<std::string> app_ids_;

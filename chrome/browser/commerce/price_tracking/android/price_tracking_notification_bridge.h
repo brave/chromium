@@ -7,13 +7,15 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/supports_user_data.h"
-#include "components/optimization_guide/core/push_notification_manager.h"
+#include "components/optimization_guide/core/hints/push_notification_manager.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/push_notification.pb.h"
 
 namespace content {
 class BrowserContext;
 }  // namespace content
+
+class Profile;
 
 // JNI bridge that receives the price tracking notification payload from
 // optimization_guide::PushNotificationManager. This class is owned by a browser
@@ -33,7 +35,7 @@ class PriceTrackingNotificationBridge
       const optimization_guide::proto::Any& payload) override;
 
  private:
-  PriceTrackingNotificationBridge();
+  explicit PriceTrackingNotificationBridge(Profile* profile);
 
   // The Java object, owned by the native object.
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;

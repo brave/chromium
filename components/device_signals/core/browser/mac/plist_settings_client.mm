@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,11 @@
 
 #include <utility>
 
+#import "base/apple/foundation_util.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
-#import "base/mac/foundation_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/thread_pool.h"
@@ -19,10 +20,6 @@
 #include "components/device_signals/core/browser/settings_client.h"
 #include "components/device_signals/core/browser/signals_types.h"
 #include "components/device_signals/core/common/platform_utils.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace device_signals {
 
@@ -40,7 +37,7 @@ id ParseArrays(id data_obj, NSString* path) {
   NSArray* indexes = [path componentsSeparatedByString:@"["];
 
   for (NSString* index_with_bracket in indexes) {
-    NSArray* data_array = base::mac::ObjCCast<NSArray>(data_obj);
+    NSArray* data_array = base::apple::ObjCCast<NSArray>(data_obj);
     if (!data_array) {
       return nil;
     }
@@ -129,16 +126,16 @@ std::vector<SettingsItem> GetSettingItems(
       continue;
     }
 
-    int64_t plist_file_size = 0;
-    if (!base::GetFileSize(resolved_path, &plist_file_size) ||
-        plist_file_size > (kMaxFileSizeInMb << 20)) {
+    std::optional<int64_t> plist_file_size = base::GetFileSize(resolved_path);
+    if (!plist_file_size.has_value() ||
+        plist_file_size.value() > (kMaxFileSizeInMb << 20)) {
       item.presence = PresenceValue::kNotFound;
       items.push_back(item);
       continue;
     }
 
     NSError* error = nil;
-    NSURL* url = base::mac::FilePathToNSURL(resolved_path);
+    NSURL* url = base::apple::FilePathToNSURL(resolved_path);
     NSDictionary* plist_dict =
         [[NSDictionary alloc] initWithContentsOfURL:url error:&error];
     if (error && error.code == NSFileReadNoPermissionError) {
@@ -165,7 +162,7 @@ std::vector<SettingsItem> GetSettingItems(
       continue;
     }
 
-    if (NSString* setting_str = base::mac::ObjCCast<NSString>(value_ptr)) {
+    if (NSString* setting_str = base::apple::ObjCCast<NSString>(value_ptr)) {
       if (setting_str.length <= kMaxStringSizeInBytes) {
         std::string setting_json_string;
         base::JSONWriter::Write(
@@ -173,10 +170,12 @@ std::vector<SettingsItem> GetSettingItems(
             &setting_json_string);
         item.setting_json_value = setting_json_string;
       }
-    } else if (NSNumber* value_num = base::mac::ObjCCast<NSNumber>(value_ptr)) {
+    } else if (NSNumber* value_num =
+                   base::apple::ObjCCast<NSNumber>(value_ptr)) {
       // Differentiating between integer and float types.
       const char* value_type = value_num.objCType;
-      if (strcmp(value_type, "d") == 0 || strcmp(value_type, "f") == 0) {
+      if (UNSAFE_TODO(strcmp(value_type, "d")) == 0 ||
+          UNSAFE_TODO(strcmp(value_type, "f")) == 0) {
         double setting_num = value_num.doubleValue;
         item.setting_json_value = base::StringPrintf("%f", setting_num);
       } else {

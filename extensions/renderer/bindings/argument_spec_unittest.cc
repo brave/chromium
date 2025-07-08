@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #include "extensions/renderer/bindings/argument_spec.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
@@ -54,17 +58,17 @@ class ArgumentSpecUnitTest : public gin::V8Test {
 
   struct RunTestParams {
     RunTestParams(const ArgumentSpec& spec,
-                  base::StringPiece script_source,
+                  std::string_view script_source,
                   TestResult result)
         : spec(spec), script_source(script_source), expected_result(result) {}
 
-    const ArgumentSpec& spec;
-    base::StringPiece script_source;
+    const raw_ref<const ArgumentSpec> spec;
+    std::string_view script_source;
     TestResult expected_result;
-    base::StringPiece expected_json;
-    base::StringPiece expected_error;
-    base::StringPiece expected_thrown_message;
-    const base::Value* expected_value = nullptr;
+    std::string_view expected_json;
+    std::string_view expected_error;
+    std::string_view expected_thrown_message;
+    raw_ptr<const base::Value> expected_value = nullptr;
     bool should_convert_to_base = true;
     bool should_convert_to_v8 = false;
     V8Validator validate_v8;
@@ -156,7 +160,7 @@ void ArgumentSpecUnitTest::RunTest(RunTestParams& params) {
   std::string error;
   std::unique_ptr<base::Value> out_value;
   v8::Local<v8::Value> v8_out_value;
-  bool did_succeed = params.spec.ParseArgument(
+  bool did_succeed = params.spec->ParseArgument(
       context, val, type_refs_,
       params.should_convert_to_base ? &out_value : nullptr,
       params.should_convert_to_v8 ? &v8_out_value : nullptr, &error);
@@ -416,7 +420,7 @@ TEST_F(ArgumentSpecUnitTest, Test) {
     {
       // Actual data.
       const uint8_t kBuffer[] = {'p', 'i', 'n', 'g'};
-      base::Value expected_value(base::make_span(kBuffer));
+      base::Value expected_value{base::span(kBuffer)};
       ExpectSuccess(spec,
                     "var b = new ArrayBuffer(4);\n"
                     "var v = new Uint8Array(b);\n"
@@ -656,6 +660,41 @@ TEST_F(ArgumentSpecUnitTest, AdditionalPropertiesTest) {
     ExpectFailure(spec, "({prop1: 'alpha', prop2: 42})",
                   api_errors::PropertyError(
                       "prop2", InvalidType(kTypeString, kTypeInteger)));
+  }
+}
+
+TEST_F(ArgumentSpecUnitTest, IgnoreAdditionalPropertiesTest) {
+  {
+    constexpr char kPropertiesWithIgnoreAdditionalProperties[] =
+        R"({
+             'type': 'object',
+             'properties': {
+               'prop1': {'type': 'string'}
+             },
+             'ignoreAdditionalProperties': true
+           })";
+    ArgumentSpec spec(
+        DictValueFromString(kPropertiesWithIgnoreAdditionalProperties));
+    ExpectSuccess(spec, "({prop1: 'alpha', prop2: 42, prop3: {foo: 'bar'}})",
+                  "{'prop1':'alpha'}");
+    ExpectSuccess(spec, "({prop1: 'foo'})", "{'prop1':'foo'}");
+    ExpectFailure(spec, "({prop2: 42, prop3: {foo: 'bar'}})",
+                  MissingRequiredProperty("prop1"));
+    ExpectFailure(spec, "({prop1: 42})",
+                  api_errors::PropertyError(
+                      "prop1", InvalidType(kTypeString, kTypeInteger)));
+  }
+  {
+    constexpr char kEmptyPropertiesWithIgnoreAdditionalProperties[] =
+        R"({
+             'type': 'object',
+             'properties': {},
+             'ignoreAdditionalProperties': true
+           })";
+    ArgumentSpec spec(
+        DictValueFromString(kEmptyPropertiesWithIgnoreAdditionalProperties));
+    ExpectSuccess(spec, "({prop1: 'alpha', prop2: {foo: 'bar'}})", "{}");
+    ExpectSuccess(spec, "({})", "{}");
   }
 }
 
@@ -943,7 +982,7 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
       v8::Local<v8::Context> context = object->GetCreationContextChecked();
       // We expect a null prototype to ensure we avoid tricky getters/setters on
       // the Object prototype.
-      EXPECT_TRUE(object->GetPrototype()->IsNull());
+      EXPECT_TRUE(object->GetPrototypeV2()->IsNull());
       gin::Dictionary dict(context->GetIsolate(), object);
       v8::Local<v8::Value> result;
       ASSERT_TRUE(dict.Get("str", &result));

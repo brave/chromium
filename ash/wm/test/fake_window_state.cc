@@ -21,10 +21,8 @@ void FakeWindowState::OnWMEvent(WindowState* window_state,
       was_visible_on_minimize_ = window_state->window()->IsVisible();
       break;
     case WM_EVENT_SET_BOUNDS:
-      last_requested_bounds_ = event->AsSetBoundsWMEvent()->requested_bounds();
-      break;
-    case WM_EVENT_SYSTEM_UI_AREA_CHANGED:
-      ++num_system_ui_area_changes_;
+      last_requested_bounds_ =
+          event->AsSetBoundsWMEvent()->requested_bounds_in_parent();
       break;
     default:
       break;
@@ -48,11 +46,9 @@ void FakeWindowStateDelegate::ToggleLockedFullscreen(
   ++toggle_locked_fullscreen_count_;
 }
 
-std::unique_ptr<PresentationTimeRecorder>
-FakeWindowStateDelegate::OnDragStarted(int component) {
+void FakeWindowStateDelegate::OnDragStarted(int component) {
   drag_in_progress_ = true;
   drag_start_component_ = component;
-  return nullptr;
 }
 
 void FakeWindowStateDelegate::OnDragFinished(bool cancel,

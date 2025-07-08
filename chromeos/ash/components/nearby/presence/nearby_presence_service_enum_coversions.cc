@@ -9,7 +9,7 @@ namespace ash::nearby::presence {
 ::nearby::internal::DeviceType ConvertMojomDeviceType(
     mojom::PresenceDeviceType mojom_type) {
   switch (mojom_type) {
-    case mojom::PresenceDeviceType::kUnspecified:
+    case mojom::PresenceDeviceType::kUnknown:
       return ::nearby::internal::DeviceType::DEVICE_TYPE_UNKNOWN;
     case mojom::PresenceDeviceType::kPhone:
       return ::nearby::internal::DeviceType::DEVICE_TYPE_PHONE;
@@ -31,20 +31,22 @@ namespace ash::nearby::presence {
 }
 
 NearbyPresenceService::PresenceIdentityType ConvertToMojomIdentityType(
-    NearbyPresenceService::IdentityType identity_type) {
+    ::nearby::internal::IdentityType identity_type) {
   switch (identity_type) {
-    case NearbyPresenceService::IdentityType::kUnspecified:
+    case ::nearby::internal::IdentityType::IDENTITY_TYPE_UNSPECIFIED:
       return NearbyPresenceService::PresenceIdentityType::
           kIdentityTypeUnspecified;
-    case NearbyPresenceService::IdentityType::kPrivate:
-      return NearbyPresenceService::PresenceIdentityType::kIdentityTypePrivate;
-    case NearbyPresenceService::IdentityType::kTrusted:
-      return NearbyPresenceService::PresenceIdentityType::kIdentityTypeTrusted;
-    case NearbyPresenceService::IdentityType::kPublic:
-      return NearbyPresenceService::PresenceIdentityType::kIdentityTypePublic;
-    case NearbyPresenceService::IdentityType::kProvisioned:
+    case ::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE_GROUP:
       return NearbyPresenceService::PresenceIdentityType::
-          kIdentityTypeProvisioned;
+          kIdentityTypePrivateGroup;
+    case ::nearby::internal::IdentityType::IDENTITY_TYPE_CONTACTS_GROUP:
+      return NearbyPresenceService::PresenceIdentityType::
+          kIdentityTypeContactsGroup;
+    case ::nearby::internal::IdentityType::IDENTITY_TYPE_PUBLIC:
+      return NearbyPresenceService::PresenceIdentityType::kIdentityTypePublic;
+    default:
+      return NearbyPresenceService::PresenceIdentityType::
+          kIdentityTypeUnspecified;
   }
 }
 

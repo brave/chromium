@@ -43,9 +43,10 @@ class BorealisSplashScreenView
  private:
   void UpdateColors();
 
-  raw_ptr<Profile, ExperimentalAsh> profile_ = nullptr;
+  raw_ptr<Profile> profile_ = nullptr;
   raw_ptr<views::Label> title_label_;
   raw_ptr<views::Label> starting_label_;
+  base::TimeTicks start_tick_;
   base::WeakPtrFactory<BorealisSplashScreenView> weak_factory_;
 };
 

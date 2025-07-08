@@ -10,28 +10,23 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.Fiel
 
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.function.Predicate;
 
 /**
- * Class used for editor field validation. It supports following types of
- * error messages:
- * 1. Message to show before used has started to edit the field.
- * 2. Message to show when required field is left empty.
- * 3. Message to show when field contains invalid input.
+ * Class used for editor field validation. It supports following types of error messages: 1. Message
+ * to show before used has started to edit the field. 2. Message to show when required field is left
+ * empty. 3. Message to show when field contains invalid input.
  */
+@NullMarked
 public class EditorFieldValidator {
-    @Nullable
-    private String mInitialErrorMessage;
-    @Nullable
-    private String mRequiredErrorMessage;
-    @Nullable
-    private String mInvalidErrorMessage;
-    @Nullable
-    private Predicate<String> mValidationPredicate;
+    private @Nullable String mInitialErrorMessage;
+    private @Nullable String mRequiredErrorMessage;
+    private @Nullable String mInvalidErrorMessage;
+    private @Nullable Predicate<String> mValidationPredicate;
 
     public EditorFieldValidator() {}
 
@@ -39,16 +34,15 @@ public class EditorFieldValidator {
         return new Builder();
     }
 
-    /**
-     * Builder for the {@link EditorFieldValidator}.
-     */
+    /** Builder for the {@link EditorFieldValidator}. */
     public static class Builder {
-        private EditorFieldValidator mValidator;
+        private final EditorFieldValidator mValidator;
+
         public Builder() {
             mValidator = new EditorFieldValidator();
         }
 
-        public Builder withInitialErrorMessage(String initialErrorMessage) {
+        public Builder withInitialErrorMessage(@Nullable String initialErrorMessage) {
             mValidator.setInitialErrorMessage(initialErrorMessage);
             return this;
         }
@@ -69,7 +63,7 @@ public class EditorFieldValidator {
         }
     }
 
-    public void setInitialErrorMessage(String initialErrorMessage) {
+    public void setInitialErrorMessage(@Nullable String initialErrorMessage) {
         mInitialErrorMessage = initialErrorMessage;
     }
 
@@ -83,16 +77,14 @@ public class EditorFieldValidator {
         mInvalidErrorMessage = invalidErrorMessage;
     }
 
-    /**
-     * Called to check the validity of the field value.
-     *
-     * @param value The value of the field to check.
-     * @return True if the value is valid.
-     */
+    public void onUserEditedField() {
+        mInitialErrorMessage = null;
+    }
+
+    /** Called to check the validity of the field value. */
     public void validate(PropertyModel fieldModel) {
         if (!TextUtils.isEmpty(mInitialErrorMessage)) {
             fieldModel.set(ERROR_MESSAGE, mInitialErrorMessage);
-            mInitialErrorMessage = null;
             return;
         }
         if (fieldModel.get(IS_REQUIRED)) {

@@ -11,6 +11,15 @@
   #lockOptionsDiv {
     display: block;
   }
+
+  .underbar {
+    border-bottom: var(--cr-separator-line);
+  }
+
+  #passwordSettings {
+    border-top: var(--cr-separator-line);
+    padding: var(--cr-section-vertical-padding) 0;
+  }
 </style>
 <div>
   <settings-toggle-button id="enableLockScreen"
@@ -22,7 +31,7 @@
   <h2 class="settings-box">
     $i18n{lockScreenSignInOptions}
   </h2>
-  <div class="list-frame" id="signInOptionsList">
+  <div class="list-frame underbar" id="signInOptionsList">
     <settings-pin-settings
         id="pinSettings"
         auth-token="[[authToken]]"
@@ -30,12 +39,19 @@
         class="list-item"
         deep-link-focus-id$="[[Setting.kChangeAuthPinV2]]">
     </settings-pin-settings>
+    <template is="dom-if" if="[[showPasswordSettings_]]" restamp>
+      <settings-password-settings
+          id="passwordSettings"
+          auth-token="[[authToken]]"
+          class="list-item">
+      </settings-password-settings>
+    </template>
   </div>
   <template is="dom-if" if="[[lockScreenNotificationsEnabled_]]">
     <h2 class="settings-box">
       $i18n{lockScreenNotificationTitle}
     </h2>
-    <div class="list-frame">
+    <div class="list-frame underbar">
       <settings-radio-group
           id="notificationSettings"
           pref="{{prefs.ash.message_center.lock_screen_mode}}"
@@ -59,19 +75,18 @@
       </settings-radio-group>
     </div>
   </template>
-  <template is="dom-if" if="[[cryptohomeRecoveryEnabled_]]">
-    <settings-toggle-button
-        id="recoveryToggle"
-        label="$i18n{recoveryToggleLabel}"
-        sub-label="[[recoveryToggleSubLabel_(recovery_)]]"
-        learn-more-url="[[recoveryToggleLearnMoreUrl_(recovery_)]]"
-        pref="{{recoveryTogglePref_(recovery_)}}"
-        disabled="[[recoveryToggleDisabled_(recovery_,
-                        recoveryChangeInProcess_)]]"
-        no-set-pref
-        on-settings-boolean-control-change="onRecoveryChange_">
-    </settings-toggle-button>
-  </template>
+  <settings-toggle-button
+      id="recoveryToggle"
+      label="$i18n{recoveryToggleLabel}"
+      sub-label="[[recoveryToggleSubLabel_(recovery_)]]"
+      learn-more-url="[[recoveryToggleLearnMoreUrl_(recovery_)]]"
+      pref="{{recoveryTogglePref_(recovery_)}}"
+      disabled="[[recoveryToggleDisabled_(recovery_,
+                      recoveryChangeInProcess_)]]"
+      deep-link-focus-id$="[[Setting.kDataRecovery]]"
+      no-set-pref
+      on-settings-boolean-control-change="onRecoveryChange_">
+  </settings-toggle-button>
   <template is="dom-if" if="[[showDisableRecoveryDialog_]]" restamp>
     <local-data-recovery-dialog id="localDataRecoveryDialog"
       auth-token="[[authToken]]"
@@ -96,9 +111,7 @@
       </div>
     </div>
   </template>
-  <template is="dom-if" if="[[smartLockUIRevampEnabled_]]">
-    <settings-multidevice-smartlock-item
-      auth-token="[[authToken]]">
-    </settings-multidevice-smartlock-item>
-  </template>
+  <settings-multidevice-smartlock-item
+    auth-token="[[authToken]]">
+  </settings-multidevice-smartlock-item>
 </div>

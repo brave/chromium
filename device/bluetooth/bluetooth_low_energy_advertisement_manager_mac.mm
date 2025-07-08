@@ -4,16 +4,13 @@
 
 #include "device/bluetooth/bluetooth_low_energy_advertisement_manager_mac.h"
 
+#include <optional>
+
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/task/single_thread_task_runner.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace device {
 
@@ -108,9 +105,9 @@ void BluetoothLowEnergyAdvertisementManagerMac::RegisterAdvertisement(
     std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
     BluetoothAdapter::CreateAdvertisementCallback callback,
     BluetoothAdapter::AdvertisementErrorCallback error_callback) {
-  absl::optional<BluetoothAdvertisement::ErrorCode> error_code;
+  std::optional<BluetoothAdvertisement::ErrorCode> error_code;
 
-  const absl::optional<BluetoothAdvertisement::UUIDList>& service_uuids =
+  const std::optional<BluetoothAdvertisement::UUIDList>& service_uuids =
       advertisement_data->service_uuids();
   if (!service_uuids || advertisement_data->manufacturer_data() ||
       advertisement_data->solicit_uuids() ||

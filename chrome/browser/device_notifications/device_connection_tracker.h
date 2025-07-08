@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_DEVICE_NOTIFICATIONS_DEVICE_CONNECTION_TRACKER_H_
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "url/origin.h"
@@ -52,7 +53,7 @@ class DeviceConnectionTracker : public KeyedService {
 
   // The time period that an origin remains tracked before it is removed from
   // `origins_`.
-  static constexpr base::TimeDelta kOriginInactiveTime = base::Seconds(10);
+  static constexpr base::TimeDelta kOriginInactiveTime = base::Seconds(3);
 
   // Removes the `origin` from the `origins_` list if it has not had any new
   // connections since `timestamp`.
@@ -65,6 +66,9 @@ class DeviceConnectionTracker : public KeyedService {
   // The structure that tracks the connection count for each origin that has
   // active connection(s).
   base::flat_map<url::Origin, OriginState> origins_;
+
+  // Connection from whitelisted origins will not be tracked.
+  std::vector<url::Origin> whitelisted_origins_;
 
  private:
   virtual DeviceSystemTrayIcon* GetSystemTrayIcon() = 0;

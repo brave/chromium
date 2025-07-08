@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/span.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "components/shared_highlighting/core/common/shared_highlighting_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,6 +44,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
@@ -55,8 +58,13 @@ namespace {
 
 using test::RunPendingTasks;
 
-class TextFragmentAnchorTest : public TextFragmentAnchorTestBase {
+class TextFragmentAnchorTestController : public TextFragmentAnchorTestBase {
  public:
+  explicit TextFragmentAnchorTestController(
+      base::test::TaskEnvironment::TimeSource time_source)
+      : TextFragmentAnchorTestBase(time_source) {}
+  TextFragmentAnchorTestController() = default;
+
   void BeginEmptyFrame() {
     // If a test case doesn't find a match and therefore doesn't schedule the
     // beforematch event, we should still render a second frame as if we did
@@ -110,11 +118,12 @@ class TextFragmentAnchorTest : public TextFragmentAnchorTestBase {
   }
 
   void LoadAhem() {
-    scoped_refptr<SharedBuffer> shared_buffer =
+    std::optional<Vector<char>> data =
         test::ReadFromFile(test::CoreTestDataPath("Ahem.ttf"));
+    ASSERT_TRUE(data);
     auto* buffer =
         MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferViewOrString>(
-            DOMArrayBuffer::Create(shared_buffer));
+            DOMArrayBuffer::Create(base::as_byte_span(*data)));
     FontFace* ahem = FontFace::Create(GetDocument().GetFrame()->DomWindow(),
                                       AtomicString("Ahem"), buffer,
                                       FontFaceDescriptors::Create());
@@ -160,6 +169,13 @@ class TextFragmentAnchorTest : public TextFragmentAnchorTestBase {
                       "Implement others if new modality is needed.";
     }
   }
+};
+
+class TextFragmentAnchorTest : public TextFragmentAnchorTestController {
+ public:
+  TextFragmentAnchorTest()
+      : TextFragmentAnchorTestController(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 };
 
 // Basic test case, ensure we scroll the matching text into view.
@@ -933,8 +949,7 @@ INSTANTIATE_TEST_SUITE_P(
                     mojom::blink::ScrollType::kProgrammatic,
                     mojom::blink::ScrollType::kClamping,
                     mojom::blink::ScrollType::kCompositor,
-                    mojom::blink::ScrollType::kAnchoring,
-                    mojom::blink::ScrollType::kSequenced));
+                    mojom::blink::ScrollType::kAnchoring));
 
 // Test that a user scroll cancels the scroll into view.
 TEST_P(TextFragmentAnchorScrollTest, ScrollCancelled) {
@@ -1226,7 +1241,8 @@ TEST_F(TextFragmentAnchorTest, TargetStaysInView) {
   EXPECT_EQ(1u, GetDocument().Markers().Markers().size());
 }
 
-// Test that overlapping text ranges results in only the first one highlighted
+// Test that overlapping text ranges results in both highlights with
+// a merged highlight.
 TEST_F(TextFragmentAnchorTest, OverlappingTextRanges) {
   SimRequest request(
       "https://example.com/test.html#:~:text=This,test&text=is,page",
@@ -1249,14 +1265,14 @@ TEST_F(TextFragmentAnchorTest, OverlappingTextRanges) {
 
   EXPECT_EQ(1u, GetDocument().Markers().Markers().size());
 
-  // Expect marker on "This is a test".
+  // Expect marker on "This is a test page".
   auto* text = To<Text>(
       GetDocument().getElementById(AtomicString("text"))->firstChild());
   DocumentMarkerVector markers = GetDocument().Markers().MarkersFor(
       *text, DocumentMarker::MarkerTypes::TextFragment());
   ASSERT_EQ(1u, markers.size());
   EXPECT_EQ(0u, markers.at(0)->StartOffset());
-  EXPECT_EQ(14u, markers.at(0)->EndOffset());
+  EXPECT_EQ(19u, markers.at(0)->EndOffset());
 }
 
 // Test matching a space to &nbsp character.
@@ -2178,7 +2194,7 @@ TEST_F(TextFragmentAnchorTest, OpenedFromHighlightDoesNotSelectAdditionalText) {
   WebMouseEvent mouse_down_event(WebInputEvent::Type::kMouseDown,
                                  WebInputEvent::kNoModifiers,
                                  WebInputEvent::GetStaticTimeStampForTests());
-  const DOMRect* middle_rect = middle_element->getBoundingClientRect();
+  const DOMRect* middle_rect = middle_element->GetBoundingClientRect();
   gfx::PointF middle_elem_point(((middle_rect->left() + 1)),
                                 ((middle_rect->top() + 1)));
   mouse_down_event.SetPositionInWidget(middle_elem_point.x(),
@@ -2202,7 +2218,7 @@ TEST_F(TextFragmentAnchorTest, OpenedFromHighlightDoesNotSelectAdditionalText) {
   EXPECT_TRUE(selection.SelectedText().empty());
 
   // Create a mouse event at the center of <p> four.
-  const DOMRect* last_rect = last_element->getBoundingClientRect();
+  const DOMRect* last_rect = last_element->GetBoundingClientRect();
   gfx::PointF last_elem_point(((last_rect->left() + 1)),
                               ((last_rect->top() + 1)));
   mouse_down_event.SetPositionInWidget(last_elem_point.x(),
@@ -2546,16 +2562,14 @@ TEST_F(TextFragmentAnchorTest, InitialMatchPendingBecomesCollapsed) {
   EXPECT_TRUE(GetDocument().Markers().Markers().empty());
 }
 
-class TextFragmentAnchorPostLoadTest : public TextFragmentAnchorTest {
+// These tests are specifically testing the post-load timer task so use
+// the real clock to faithfully reproduce real-world behavior.
+class TextFragmentAnchorPostLoadTest : public TextFragmentAnchorTestController {
+ public:
+  TextFragmentAnchorPostLoadTest() = default;
   void SetUp() override {
-    TextFragmentAnchorTest::SetUp();
-
-    // These tests are specifically testing the post-load timer task so use
-    // the real clock to faithfully reproduce real-world behavior.
-    WebView()
-        .Scheduler()
-        ->GetVirtualTimeController()
-        ->DisableVirtualTimeForTesting();
+    TextFragmentAnchorTestController::SetUp();
+    DisableVirtualTimeIfSet();
   }
 };
 

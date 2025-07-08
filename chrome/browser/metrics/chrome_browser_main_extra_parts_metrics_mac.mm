@@ -8,10 +8,6 @@
 
 #include "base/metrics/histogram_macros.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // The possible values of the setting "Screens Have Separate Spaces".
@@ -23,12 +19,3 @@ enum ScreenSpacesConfiguration {
 };
 
 }  // namespace
-
-void ChromeBrowserMainExtraPartsMetrics::RecordMacMetrics() {
-  ScreenSpacesConfiguration separate_spaces =
-      [NSScreen screensHaveSeparateSpaces] ? SCREENS_HAVE_SEPARATE_SPACES
-                                           : SCREENS_HAVE_SHARED_SPACES;
-  UMA_HISTOGRAM_ENUMERATION("OSX.Settings.ScreensHaveSeparateSpaces",
-                            separate_spaces,
-                            SCREEN_SPACES_CONFIGURATION_COUNT);
-}

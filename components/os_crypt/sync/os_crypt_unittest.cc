@@ -8,19 +8,18 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/os_crypt/sync/os_crypt_metrics.h"
 #include "components/os_crypt/sync/os_crypt_mocker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
 #include "components/os_crypt/sync/os_crypt_mocker_linux.h"
 #endif
 
@@ -154,6 +153,53 @@ TEST_F(OSCryptTest, DecryptError) {
   EXPECT_TRUE(result.empty());
 }
 
+TEST_F(OSCryptTest, Metrics) {
+  {
+    std::string ciphertext;
+    EXPECT_TRUE(OSCrypt::EncryptString("secret", &ciphertext));
+    base::HistogramTester histograms;
+    std::string plaintext;
+    EXPECT_TRUE(OSCrypt::DecryptString(ciphertext, &plaintext));
+#if BUILDFLAG(IS_WIN)
+    histograms.ExpectTotalCount("OSCrypt.EncryptionPrefixVersion", 0);
+#else
+#if BUILDFLAG(IS_LINUX)
+    // Linux defaults to using a `v11` key.
+    const os_crypt::EncryptionPrefixVersion expected =
+        os_crypt::EncryptionPrefixVersion::kVersion11;
+#else
+    // All other non-Windows platforms use a `v10` key.
+    const os_crypt::EncryptionPrefixVersion expected =
+        os_crypt::EncryptionPrefixVersion::kVersion10;
+#endif  // BUILDFLAG(IS_LINUX)
+    histograms.ExpectUniqueSample("OSCrypt.EncryptionPrefixVersion", expected,
+                                  1u);
+#endif  // BUILDFLAG(IS_WIN)
+  }
+  {
+    base::HistogramTester histograms;
+    std::string plaintext;
+    // Empty string should not log any histograms, but only returns success on
+    // non-Windows.
+    std::ignore = OSCrypt::DecryptString(std::string(), &plaintext);
+    histograms.ExpectTotalCount("OSCrypt.EncryptionPrefixVersion", 0);
+  }
+  {
+    base::HistogramTester histograms;
+    std::string plaintext;
+    // On Windows, this call will fail so ignore the return value. That's tested
+    // elsewhere and this test only cares about metrics.
+    std::ignore = OSCrypt::DecryptString("invaliddata!", &plaintext);
+#if BUILDFLAG(IS_WIN)
+    histograms.ExpectTotalCount("OSCrypt.EncryptionPrefixVersion", 0);
+#else
+    histograms.ExpectUniqueSample("OSCrypt.EncryptionPrefixVersion",
+                                  os_crypt::EncryptionPrefixVersion::kNoVersion,
+                                  1u);
+#endif  // BUILDFLAG(IS_WIN)
+  }
+}
+
 class OSCryptConcurrencyTest : public testing::Test {
  public:
   OSCryptConcurrencyTest() { OSCryptMocker::SetUp(); }
@@ -202,7 +248,7 @@ TEST_F(OSCryptConcurrencyTest, MAYBE_ConcurrentInitialization) {
 
 class OSCryptTestWin : public testing::Test {
  public:
-  OSCryptTestWin() {}
+  OSCryptTestWin() = default;
 
   OSCryptTestWin(const OSCryptTestWin&) = delete;
   OSCryptTestWin& operator=(const OSCryptTestWin&) = delete;
@@ -219,11 +265,10 @@ class OSCryptTestWin : public testing::Test {
 // If this test ever breaks do not ignore it as it might result in data loss for
 // users.
 TEST_F(OSCryptTestWin, DPAPIHeader) {
-  std::string plaintext;
-  std::string ciphertext;
-
   OSCryptMocker::SetLegacyEncryption(true);
-  crypto::RandBytes(base::WriteInto(&plaintext, 11), 10);
+  std::string plaintext(10, '\0');
+  crypto::RandBytes(base::as_writable_byte_span(plaintext));
+  std::string ciphertext;
   ASSERT_TRUE(OSCrypt::EncryptString(plaintext, &ciphertext));
 
   using std::string_literals::operator""s;

@@ -6,6 +6,7 @@
 
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
 #include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
@@ -33,6 +34,14 @@ ResourceResponse CreateTestResponse() {
                               AtomicString("attachment; filename=a.txt"));
   return response;
 }
+
+class FakeUseCounter : public GarbageCollected<FakeUseCounter>,
+                       public UseCounter {
+ private:
+  void CountUse(mojom::WebFeature feature) override {}
+  void CountDeprecation(mojom::WebFeature feature) override {}
+  void CountWebDXFeature(WebDXFeature feature) override {}
+};
 
 }  // namespace
 
@@ -67,6 +76,21 @@ TEST(ResourceResponseTest, DnsAliasesCanBeSetAndAccessed) {
   response.SetDnsAliases(aliases);
 
   EXPECT_THAT(response.DnsAliases(), testing::ElementsAre("alias1", "alias2"));
+}
+
+TEST(ResourceResponseTest, TreatExpiresZeroAsExpired) {
+  ResourceResponse response(CreateTestResponse());
+
+  response.SetHttpHeaderField(http_names::kExpires, AtomicString("0"));
+
+  std::optional<base::Time> expires =
+      response.Expires(*MakeGarbageCollected<FakeUseCounter>());
+  EXPECT_EQ(base::Time::Min(), expires);
+
+  base::Time creation_time = base::Time::UnixEpoch();
+  base::TimeDelta calculated_expires = expires.value() - creation_time;
+  // Check the value is not overflow by ClampedNumeric after subtracting value
+  EXPECT_EQ(base::TimeDelta::Min(), calculated_expires);
 }
 
 }  // namespace blink

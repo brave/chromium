@@ -16,6 +16,9 @@ namespace ash {
 // Base class for GameDashboard related unittests, and contains common functions
 class GameDashboardTestBase : public AshTestBase {
  public:
+  // The bounds for the screen that will contain app windows.
+  static constexpr gfx::Rect kScreenBounds = gfx::Rect(10, 10, 2000, 1500);
+
   GameDashboardTestBase();
   GameDashboardTestBase(const GameDashboardTestBase&) = delete;
   GameDashboardTestBase& operator=(const GameDashboardTestBase&) = delete;
@@ -23,7 +26,8 @@ class GameDashboardTestBase : public AshTestBase {
 
   // AshTestBase:
   void SetUp() override;
-  void TearDown() override;
+
+  void AdvanceClock(base::TimeDelta delta);
 
  protected:
   // Returns true if the `GameDashboardController` is observing the `window`.
@@ -33,7 +37,7 @@ class GameDashboardTestBase : public AshTestBase {
   // bounds.
   std::unique_ptr<aura::Window> CreateAppWindow(
       const std::string& app_id,
-      AppType app_type = AppType::NON_APP,
+      chromeos::AppType app_type = chromeos::AppType::NON_APP,
       const gfx::Rect& bounds_in_screen = gfx::Rect());
 
  private:
@@ -61,7 +65,7 @@ class IsGameWindowPropertyObserver : public aura::WindowObserver {
 
  private:
   bool received_on_property_change_ = false;
-  raw_ptr<aura::Window, ExperimentalAsh> window_;
+  raw_ptr<aura::Window> window_;
 };
 
 }  // namespace ash

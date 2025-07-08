@@ -6,21 +6,18 @@ package org.chromium.chrome.browser.browsing_data;
 
 import android.content.Context;
 
-import androidx.annotation.NonNull;
+import org.chromium.build.annotations.NullMarked;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * A utility class to provide functionalities around clear browsing data {@link TimePeriod}.
- */
+/** A utility class to provide functionalities around clear browsing data {@link TimePeriod}. */
+@NullMarked
 public class TimePeriodUtils {
-    /**
-     * An option to be shown in the time period spiner.
-     */
+    /** An option to be shown in the time period spiner. */
     public static class TimePeriodSpinnerOption {
-        private @TimePeriod int mTimePeriod;
-        private String mTitle;
+        private final @TimePeriod int mTimePeriod;
+        private final String mTitle;
 
         /**
          * Constructs this time period spinner option.
@@ -49,20 +46,48 @@ public class TimePeriodUtils {
      * Returns the Array of time periods. Options are displayed in the same order as they appear
      * in the array.
      */
-    public static TimePeriodSpinnerOption[] getTimePeriodSpinnerOptions(@NonNull Context context) {
+    public static TimePeriodSpinnerOption[] getTimePeriodSpinnerOptions(Context context) {
         List<TimePeriodSpinnerOption> options = new ArrayList<>();
-        options.add(new TimePeriodSpinnerOption(TimePeriod.LAST_15_MINUTES,
-                context.getString(R.string.clear_browsing_data_tab_period_15_minutes)));
-        options.add(new TimePeriodSpinnerOption(TimePeriod.LAST_HOUR,
-                context.getString(R.string.clear_browsing_data_tab_period_hour)));
-        options.add(new TimePeriodSpinnerOption(TimePeriod.LAST_DAY,
-                context.getString(R.string.clear_browsing_data_tab_period_24_hours)));
-        options.add(new TimePeriodSpinnerOption(TimePeriod.LAST_WEEK,
-                context.getString(R.string.clear_browsing_data_tab_period_7_days)));
-        options.add(new TimePeriodSpinnerOption(TimePeriod.FOUR_WEEKS,
-                context.getString(R.string.clear_browsing_data_tab_period_four_weeks)));
-        options.add(new TimePeriodSpinnerOption(TimePeriod.ALL_TIME,
-                context.getString(R.string.clear_browsing_data_tab_period_everything)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.LAST_15_MINUTES,
+                        getTimePeriodString(context, TimePeriod.LAST_15_MINUTES)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.LAST_HOUR, getTimePeriodString(context, TimePeriod.LAST_HOUR)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.LAST_DAY, getTimePeriodString(context, TimePeriod.LAST_DAY)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.LAST_WEEK, getTimePeriodString(context, TimePeriod.LAST_WEEK)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.FOUR_WEEKS,
+                        getTimePeriodString(context, TimePeriod.FOUR_WEEKS)));
+        options.add(
+                new TimePeriodSpinnerOption(
+                        TimePeriod.ALL_TIME, getTimePeriodString(context, TimePeriod.ALL_TIME)));
         return options.toArray(new TimePeriodSpinnerOption[0]);
+    }
+
+    /** Returns the string associated with the time period. */
+    public static String getTimePeriodString(Context context, @TimePeriod int timePeriod) {
+        switch (timePeriod) {
+            case TimePeriod.LAST_15_MINUTES:
+                return context.getString(R.string.clear_browsing_data_tab_period_15_minutes);
+            case TimePeriod.LAST_HOUR:
+                return context.getString(R.string.clear_browsing_data_tab_period_hour);
+            case TimePeriod.LAST_DAY:
+                return context.getString(R.string.clear_browsing_data_tab_period_24_hours);
+            case TimePeriod.LAST_WEEK:
+                return context.getString(R.string.clear_browsing_data_tab_period_7_days);
+            case TimePeriod.FOUR_WEEKS:
+                return context.getString(R.string.clear_browsing_data_tab_period_four_weeks);
+            case TimePeriod.ALL_TIME:
+                return context.getString(R.string.clear_browsing_data_tab_period_everything);
+            default:
+                throw new IllegalStateException("Unexpected value: " + timePeriod);
+        }
     }
 }

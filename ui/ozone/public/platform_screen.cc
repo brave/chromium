@@ -4,9 +4,10 @@
 
 #include "ui/ozone/public/platform_screen.h"
 
-#include "base/notreached.h"
+#include <optional>
+
+#include "base/notimplemented.h"
 #include "base/time/time.h"
-#include "ui/display/tablet_state.h"
 #include "ui/gfx/geometry/point.h"
 
 namespace ui {
@@ -55,15 +56,11 @@ base::Value::List PlatformScreen::GetGpuExtraInfo(
   return base::Value::List();
 }
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-display::TabletState PlatformScreen::GetTabletState() const {
-  return display::TabletState::kInClamshellMode;
+std::optional<float>
+PlatformScreen::GetPreferredScaleFactorForAcceleratedWidget(
+    gfx::AcceleratedWidget widget) const {
+  return std::nullopt;
 }
-#endif
-
-#if BUILDFLAG(IS_LINUX)
-void PlatformScreen::SetDisplayConfig(const DisplayConfig& display_config) {}
-#endif
 
 void PlatformScreen::StorePlatformNameIntoListOfValues(
     base::Value::List& values,

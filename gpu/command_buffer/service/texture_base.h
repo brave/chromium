@@ -7,14 +7,11 @@
 
 #include <stdint.h>
 
-#include "base/memory/raw_ptr.h"
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/service/gpu_command_buffer_service_export.h"
 
 namespace gpu {
 
-class MailboxManager;
-
-class GPU_EXPORT TextureBase {
+class GPU_COMMAND_BUFFER_SERVICE_EXPORT TextureBase {
  public:
   explicit TextureBase(unsigned int service_id);
   virtual ~TextureBase();
@@ -26,9 +23,6 @@ class GPU_EXPORT TextureBase {
   // been bound. Once a texture is bound to a specific target it can never be
   // bound to a different target.
   unsigned int target() const { return target_; }
-
-  void SetMailboxManager(MailboxManager* mailbox_manager);
-  MailboxManager* mailbox_manager() const { return mailbox_manager_; }
 
   // An identifier for subclasses. Necessary for safe downcasting.
   enum class Type { kNone, kValidated, kPassthrough };
@@ -44,11 +38,6 @@ class GPU_EXPORT TextureBase {
   unsigned int target_;
 
   void SetTarget(unsigned int target);
-
-  void DeleteFromMailboxManager();
-
- private:
-  raw_ptr<MailboxManager> mailbox_manager_;
 };
 
 }  // namespace gpu

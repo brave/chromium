@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as Host from 'devtools/core/host/host.js';
+
 (async function() {
   TestRunner.addResult(`Tests that numeric and color values are incremented/decremented correctly.\n`);
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('elements');
   await TestRunner.loadHTML(`
       <style>
@@ -27,12 +28,12 @@ import {ElementsTestRunner} from 'elements_test_runner';
 
     function testAlterColor(next) {
       var colorTreeElement = ElementsTestRunner.getMatchedStylePropertyTreeItem('color');
-      colorTreeElement.startEditing(colorTreeElement.valueElement);
+      colorTreeElement.startEditingValue();
 
       // PageUp should change to 'FF3'
       colorTreeElement.valueElement.dispatchEvent(TestRunner.createKeyEvent('PageUp'));
       // Ctrl/Meta + Shift Down should change to 'EE3'
-      if (Host.isMac())
+      if (Host.Platform.isMac())
         colorTreeElement.valueElement.dispatchEvent(
             TestRunner.createKeyEvent('ArrowDown', /*Ctrl*/ false, /*Alt*/ false, /*Shift*/ true, /*Meta*/ true));
       else
@@ -45,7 +46,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
 
     function testAlterNumber(next) {
       var opacityTreeElement = ElementsTestRunner.getMatchedStylePropertyTreeItem('opacity');
-      opacityTreeElement.startEditing(opacityTreeElement.valueElement);
+      opacityTreeElement.startEditingValue();
       // 0.5 (initial). Alt + Up should change to 0.6
       opacityTreeElement.valueElement.dispatchEvent(
           TestRunner.createKeyEvent('ArrowUp', /*Ctrl*/ false, /*Alt*/ true, /*Shift*/ false));
@@ -60,7 +61,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
 
     function testAlterBigNumber(next) {
       var treeElement = ElementsTestRunner.getMatchedStylePropertyTreeItem('transform');
-      treeElement.startEditing(treeElement.valueElement);
+      treeElement.startEditingValue();
       var selection = treeElement.valueElement.getComponentSelection();
       var range = selection.getRangeAt(0);
       var newRange = document.createRange();

@@ -34,6 +34,10 @@ source_set("ozone_demo_lib") {
     "//ui/ozone",
     "//ui/platform_window",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//ui/gfx/linux:gbm" ]
+  }
 }
 
 executable("ozone_demo") {
@@ -51,7 +55,7 @@ executable("ozone_demo") {
 
   deps = [
     ":ozone_demo_lib",
-    "//components/tracing:startup_tracing",
+    "//components/tracing:tracing_config",
     "//gpu/vulkan:buildflags",
     "//mojo/core/embedder",
     "//ui/events/ozone/layout",
@@ -84,7 +88,7 @@ executable("skia_demo") {
 
   deps = [
     ":ozone_demo_lib",
-    "//components/tracing:startup_tracing",
+    "//components/tracing:tracing_config",
     "//mojo/core/embedder",
     "//skia",
     "//ui/events/ozone/layout",
@@ -92,4 +96,8 @@ executable("skia_demo") {
     "//ui/gl/init",
     "//ui/ozone",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//ui/gfx/linux:gbm" ]
+  }
 }

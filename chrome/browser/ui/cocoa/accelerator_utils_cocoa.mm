@@ -2,20 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/accelerator_utils.h"
-
 #import <Cocoa/Cocoa.h>
 
 #include "chrome/browser/global_keyboard_shortcuts_mac.h"
+#include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "ui/base/accelerators/accelerator.h"
 #import "ui/base/accelerators/platform_accelerator_cocoa.h"
 #import "ui/events/keycodes/keyboard_code_conversion_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace chrome {
 
@@ -36,8 +31,9 @@ bool IsChromeAccelerator(const ui::Accelerator& accelerator) {
   unichar character;
   int mac_keycode = ui::MacKeyCodeForWindowsKeyCode(
       accelerator.key_code(), modifiers, &shifted_character, &character);
-  if (mac_keycode == -1)
+  if (mac_keycode == -1) {
     return false;
+  }
 
   NSString* characters = [NSString stringWithFormat:@"%C", character];
   NSString* charactersIgnoringModifiers =

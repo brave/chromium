@@ -5,7 +5,10 @@
 #ifndef CC_TREES_CLIP_NODE_H_
 #define CC_TREES_CLIP_NODE_H_
 
+#include <string>
+
 #include "cc/cc_export.h"
+#include "cc/trees/property_ids.h"
 #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 #include "ui/gfx/geometry/rect_f.h"
 
@@ -40,9 +43,9 @@ struct CC_EXPORT ClipNode {
   bool AppliesLocalClip() const;
 
   // The node index of this node in the clip tree node vector.
-  int id;
+  int id = kInvalidPropertyNodeId;
   // The node index of the parent node in the clip tree node vector.
-  int parent_id;
+  int parent_id = kInvalidPropertyNodeId;
 
   // The clip rect that this node contributes, expressed in the space of its
   // transform node. This field is ignored if AppliesLocalClip() is false.
@@ -65,13 +68,14 @@ struct CC_EXPORT ClipNode {
   // Instead of applying |clip|, this clip node expands the accumulated clip
   // to include any pixels in the contents that can affect the rendering result
   // with the filter.
-  int pixel_moving_filter_id;
+  int pixel_moving_filter_id = kInvalidPropertyNodeId;
 
   // The id of the transform node that defines the clip node's local space.
-  int transform_id;
+  int transform_id = kInvalidPropertyNodeId;
 
 #if DCHECK_IS_ON()
   bool operator==(const ClipNode& other) const;
+  std::string ToString() const;
 #endif
 
   void AsValueInto(base::trace_event::TracedValue* value) const;

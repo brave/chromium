@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <cmath>
 #include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/strings/string_number_conversions.h"
 
 #if BUILDFLAG(IS_WIN)
-#include <fcntl.h>
 #include <windows.h>
+
+#include <fcntl.h>
 #endif
 
 #include "base/command_line.h"
@@ -30,7 +37,7 @@
 #if BUILDFLAG(IS_POSIX)
 #include "base/posix/eintr_wrapper.h"
 #elif BUILDFLAG(IS_WIN)
-#include "base/win/win_util.h"
+#include "base/win/windows_handle_util.h"
 #endif
 
 namespace {

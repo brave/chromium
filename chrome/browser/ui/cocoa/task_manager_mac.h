@@ -8,12 +8,9 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/callback_list.h"
+#include "chrome/browser/task_manager/task_manager_metrics_recorder.h"
 #include "chrome/browser/ui/task_manager/task_manager_table_model.h"
 #include "ui/base/models/table_model_observer.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class WindowSizeAutosaver;
 
@@ -70,9 +67,10 @@ class TaskManagerMac : public ui::TableModelObserver, public TableViewDelegate {
   void WindowWasClosed();
   NSImage* GetImageForRow(int row);
 
-  // Creates the task manager if it doesn't exist; otherwise, it activates the
-  // existing task manager window.
-  static TaskManagerTableModel* Show();
+  // Creates the task manager if it doesn't exist and records the location it
+  // was started from; otherwise, it activates the existing task manager window.
+  static TaskManagerTableModel* Show(
+      StartAction start_action = StartAction::kOther);
 
   // Hides the task manager if it is showing.
   static void Hide();
@@ -85,7 +83,7 @@ class TaskManagerMac : public ui::TableModelObserver, public TableViewDelegate {
   }
 
  private:
-  TaskManagerMac();
+  TaskManagerMac(StartAction start_action = StartAction::kOther);
   ~TaskManagerMac() override;
 
   // ui::TableModelObserver:
@@ -96,7 +94,7 @@ class TaskManagerMac : public ui::TableModelObserver, public TableViewDelegate {
 
   // TableViewDelegate:
   bool IsColumnVisible(int column_id) const override;
-  void SetColumnVisibility(int column_id, bool new_visibility) override;
+  bool SetColumnVisibility(int column_id, bool new_visibility) override;
   bool IsTableSorted() const override;
   TableSortDescriptor GetSortDescriptor() const override;
   void SetSortDescriptor(const TableSortDescriptor& descriptor) override;
@@ -108,6 +106,9 @@ class TaskManagerMac : public ui::TableModelObserver, public TableViewDelegate {
 
   // The window controller that runs the window.
   TaskManagerWindowController* __strong window_controller_;
+
+  // The first time this instance of the task manager was initialized.
+  const base::TimeTicks start_time_ = base::TimeTicks::Now();
 
   base::CallbackListSubscription on_app_terminating_subscription_;
 

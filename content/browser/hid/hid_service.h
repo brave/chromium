@@ -48,6 +48,16 @@ class CONTENT_EXPORT HidService : public blink::mojom::HidService,
                      const url::Origin&,
                      mojo::PendingReceiver<blink::mojom::HidService>);
 
+  // Removes reports from `device` if the report IDs match the IDs in the
+  // protected report ID lists. If all of the reports are removed from a
+  // collection, the collection is also removed. If `is_fido_allowed` is true,
+  // reports contained in FIDO collections are not removed. If
+  // both `is_fido_allowed` and `is_known_security_key` are true, no reports are
+  // removed.
+  static void RemoveProtectedReports(device::mojom::HidDeviceInfo& device,
+                                     bool is_known_security_key,
+                                     bool is_fido_allowed);
+
   // blink::mojom::HidService:
   void RegisterClient(
       mojo::PendingAssociatedRemote<device::mojom::HidManagerClient> client)
@@ -71,6 +81,20 @@ class CONTENT_EXPORT HidService : public blink::mojom::HidService,
       const device::mojom::HidDeviceInfo& device_info) override;
   void OnHidManagerConnectionError() override;
   void OnPermissionRevoked(const url::Origin& origin) override;
+
+  const mojo::AssociatedRemoteSet<device::mojom::HidManagerClient>& clients()
+      const {
+    return clients_;
+  }
+
+  base::WeakPtr<content::ServiceWorkerVersion> service_worker_version() {
+    return service_worker_version_;
+  }
+
+  const mojo::ReceiverSet<device::mojom::HidConnectionWatcher>&
+  GetWatchersForTesting() {
+    return watchers_;
+  }
 
  private:
   HidService(RenderFrameHostImpl* render_frame_host,
@@ -110,7 +134,7 @@ class CONTENT_EXPORT HidService : public blink::mojom::HidService,
   const base::WeakPtr<content::ServiceWorkerVersion> service_worker_version_;
 
   // The request uuid for keeping service worker alive.
-  absl::optional<base::Uuid> service_worker_activity_request_uuid_;
+  std::optional<base::Uuid> service_worker_activity_request_uuid_;
 
   // The last shown HID chooser UI.
   std::unique_ptr<HidChooser> chooser_;
@@ -126,6 +150,11 @@ class CONTENT_EXPORT HidService : public blink::mojom::HidService,
   // Maps every receiver to a guid to allow closing particular connections when
   // the user revokes a permission.
   std::multimap<std::string, mojo::ReceiverId> watcher_ids_;
+
+  // Prevent the document from going into an inactive state while the service is
+  // active.
+  RenderFrameHostImpl::BackForwardCacheDisablingFeatureHandle
+      back_forward_cache_feature_handle_;
 
   base::WeakPtrFactory<HidService> weak_factory_{this};
 };

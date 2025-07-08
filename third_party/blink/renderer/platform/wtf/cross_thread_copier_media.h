@@ -35,12 +35,41 @@
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 
 namespace media {
+class AudioBus;
+class AudioParameters;
+struct AudioGlitchInfo;
+template <typename T>
+class TypedStatus;
 class VideoFrame;
 struct VideoCaptureFeedback;
 struct VideoTransformation;
 }  // namespace media
 
-namespace WTF {
+namespace blink {
+
+template <>
+struct CrossThreadCopier<media::AudioBus>
+    : public CrossThreadCopierByValuePassThrough<media::AudioBus> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<media::AudioParameters>
+    : public CrossThreadCopierByValuePassThrough<media::AudioParameters> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <>
+struct CrossThreadCopier<media::AudioGlitchInfo>
+    : public CrossThreadCopierPassThrough<media::AudioGlitchInfo> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+template <typename T>
+struct CrossThreadCopier<media::TypedStatus<T>>
+    : public CrossThreadCopierPassThrough<media::TypedStatus<T>> {
+  STATIC_ONLY(CrossThreadCopier);
+};
 
 template <>
 struct CrossThreadCopier<media::VideoCaptureFeedback>
@@ -61,6 +90,6 @@ struct CrossThreadCopier<media::VideoTransformation>
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_MEDIA_H_

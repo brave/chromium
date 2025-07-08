@@ -5,6 +5,7 @@
 #ifndef STORAGE_BROWSER_FILE_SYSTEM_FILE_SYSTEM_URL_H_
 #define STORAGE_BROWSER_FILE_SYSTEM_FILE_SYSTEM_URL_H_
 
+#include <optional>
 #include <set>
 #include <string>
 
@@ -13,7 +14,6 @@
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "storage/common/file_system/file_system_mount_option.h"
 #include "storage/common/file_system/file_system_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "url/gurl.h"
 
@@ -58,6 +58,12 @@ namespace storage {
 //  - its 'origin' has grown from an `url::Origin` to be a `blink::StorageKey`.
 //    The distinction can matter for web pages containing third-party iframes.
 //  - see the "Cracking" section, below.
+//
+// Buckets and storage keys are relevant for the kFileSystemTypeTemporary mount
+// type.
+//
+// Cracking is relevant for kFileSystemTypeIsolated and kFileSystemTypeExternal
+// mount types.
 //
 // This extra data isn't part of the string form. Creating a `FileSystemURL`
 // (from a factory method) and then optionally calling its setter methods
@@ -150,7 +156,7 @@ namespace storage {
 //
 // # Known Issues
 //
-// TODO(crbug.com/956231): Look into making `virtual_path()` [and all
+// TODO(crbug.com/41454906): Look into making `virtual_path()` [and all
 // FileSystem API virtual paths] just a `std::string`, to prevent platform-
 // specific `base::FilePath` behavior from getting invoked by accident.
 // Currently the `base::FilePath` returned here needs special treatment, as it
@@ -224,7 +230,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemURL {
 
   // Returns the original path part of this URL.
   // See the class comment for details.
-  // TODO(crbug.com/956231): this must return std::string.
+  // TODO(crbug.com/41454906): this must return std::string.
   const base::FilePath& virtual_path() const { return virtual_path_; }
 
   // Returns the filesystem ID/mount name for isolated/external filesystem URLs.
@@ -241,7 +247,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemURL {
   // Returns the `BucketLocator` for this URL's partitioned file location. In
   // the majority of cases, this will not be populated and the default storage
   // bucket will be used.
-  const absl::optional<BucketLocator>& bucket() const { return bucket_; }
+  const std::optional<BucketLocator>& bucket() const { return bucket_; }
   void SetBucket(const BucketLocator& bucket) { bucket_ = bucket; }
 
   // Returns either `bucket_` or a `BucketLocator` corresponding to the default
@@ -261,6 +267,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemURL {
   bool operator==(const FileSystemURL& that) const;
 
   bool operator!=(const FileSystemURL& that) const { return !(*this == that); }
+
+  std::weak_ordering operator<=>(const FileSystemURL& that) const;
 
   struct COMPONENT_EXPORT(STORAGE_BROWSER) Comparator {
     bool operator()(const FileSystemURL& lhs, const FileSystemURL& rhs) const;
@@ -308,7 +316,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemURL {
   FileSystemMountOption mount_option_;
 
   // Fields that must be explicitly set separately.
-  absl::optional<BucketLocator> bucket_;
+  std::optional<BucketLocator> bucket_;
 };
 
 using FileSystemURLSet = std::set<FileSystemURL, FileSystemURL::Comparator>;

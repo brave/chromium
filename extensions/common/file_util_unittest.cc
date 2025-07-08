@@ -6,11 +6,15 @@
 
 #include <stddef.h>
 
+#include <array>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/json/json_string_value_serializer.h"
+#include "base/json/json_reader.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -27,7 +31,6 @@
 #include "extensions/strings/grit/extensions_strings.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -66,14 +69,13 @@ scoped_refptr<Extension> LoadExtensionManifest(
     ManifestLocation location,
     int extra_flags,
     std::string* error) {
-  JSONStringValueDeserializer deserializer(manifest_value);
-  std::unique_ptr<base::Value> result =
-      deserializer.Deserialize(nullptr, error);
-  if (!result.get())
+  std::optional<base::Value::Dict> result =
+      base::JSONReader::ReadDict(manifest_value);
+  if (!result) {
     return nullptr;
-  CHECK_EQ(base::Value::Type::DICT, result->type());
-  return LoadExtensionManifest(std::move(*result).TakeDict(), manifest_dir,
-                               location, extra_flags, error);
+  }
+  return LoadExtensionManifest(std::move(*result), manifest_dir, location,
+                               extra_flags, error);
 }
 
 void RunUnderscoreDirectoriesTest(
@@ -84,8 +86,9 @@ void RunUnderscoreDirectoriesTest(
   base::FilePath ext_path = temp.GetPath();
   ASSERT_TRUE(base::CreateDirectory(ext_path));
 
-  for (const auto& dir : underscore_directories)
+  for (const auto& dir : underscore_directories) {
     ASSERT_TRUE(base::CreateDirectory(ext_path.AppendASCII(dir)));
+  }
 
   ASSERT_TRUE(
       base::WriteFile(ext_path.AppendASCII("manifest.json"), kManifestContent));
@@ -106,8 +109,9 @@ void RunUnderscoreDirectoriesTest(
         "Cannot load extension with file or directory name %s. Filenames "
         "starting with \"_\" are reserved for use by the system.",
         dir.c_str());
-    if (expected_warning == warnings[0].message)
+    if (expected_warning == warnings[0].message) {
       warning_matched = true;
+    }
   }
 
   EXPECT_TRUE(warning_matched)
@@ -116,95 +120,95 @@ void RunUnderscoreDirectoriesTest(
 }
 
 struct UninstallTestData {
-  absl::optional<const base::FilePath> profile_dir;
-  absl::optional<const base::FilePath> extensions_install_dir;
-  absl::optional<const base::FilePath> extension_dir_to_delete;
+  std::optional<const base::FilePath> profile_dir;
+  std::optional<const base::FilePath> extensions_install_dir;
+  std::optional<const base::FilePath> extension_dir_to_delete;
   bool extension_directory_deleted;
 };
 
 const std::vector<UninstallTestData>& GetTestData() {
-  // TODO(crbug.com/1378775): Condense/enhance with testing::Combine to try all
+  // TODO(crbug.com/40875193): Condense/enhance with testing::Combine to try all
   // permutations of known bad values.
   static const auto* test_data = new std::vector<UninstallTestData>{
       // Valid directory.
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/true},
 
       // Empty profile directory.
       {/*profile_dir=*/base::FilePath(),
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       // Empty extensions directory.
-      {/*profile_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
        /*extensions_install_dir=*/base::FilePath(),
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       // Empty extensions directory to delete.
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt, base::FilePath(),
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt, base::FilePath(),
        /*extension_directory_deleted=*/false},
 
       // Nonabsolute profile directory.
       {/*profile_dir=*/base::FilePath(FILE_PATH_LITERAL("not/absolutepath")),
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       // Nonabsolute extensions directory.
-      {/*profile_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
        /*extensions_install_dir=*/
        base::FilePath(FILE_PATH_LITERAL("not/absolutepath")),
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       // Nonabsolute extensions directory to delete.
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
        /*extension_dir_to_delete=*/
        base::FilePath(FILE_PATH_LITERAL("not/absolutepath")),
        /*extension_directory_deleted=*/false},
 
       // Dangerous extensions directory to delete values.
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
        /*extension_dir_to_delete=*/base::FilePath(FILE_PATH_LITERAL(".")),
        /*extension_directory_deleted=*/false},
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
        /*extension_dir_to_delete=*/base::FilePath(FILE_PATH_LITERAL("..")),
        /*extension_directory_deleted=*/false},
-      {/*profile_dir=*/absl::nullopt,
-       /*extensions_install_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
        /*extension_dir_to_delete=*/base::FilePath(FILE_PATH_LITERAL("/")),
        /*extension_directory_deleted=*/false},
 
       // Dangerous profile directory values.
       {/*profile_dir=*/base::FilePath(FILE_PATH_LITERAL(".")),
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       {/*profile_dir=*/base::FilePath(FILE_PATH_LITERAL("..")),
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
       {/*profile_dir=*/base::FilePath(FILE_PATH_LITERAL("/")),
-       /*extensions_install_dir=*/absl::nullopt,
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extensions_install_dir=*/std::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
 
       // Dangerous extensions directory values.
-      {/*profile_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
        /*extensions_install_dir=*/base::FilePath(FILE_PATH_LITERAL(".")),
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
-      {/*profile_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
        /*extensions_install_dir=*/base::FilePath(FILE_PATH_LITERAL("..")),
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false},
-      {/*profile_dir=*/absl::nullopt,
+      {/*profile_dir=*/std::nullopt,
        /*extensions_install_dir=*/base::FilePath(FILE_PATH_LITERAL("/")),
-       /*extension_dir_to_delete=*/absl::nullopt,
+       /*extension_dir_to_delete=*/std::nullopt,
        /*extension_directory_deleted=*/false}};
 
   return *test_data;
@@ -212,7 +216,7 @@ const std::vector<UninstallTestData>& GetTestData() {
 
 }  // namespace
 
-typedef testing::Test FileUtilTest;
+using FileUtilTest = testing::Test;
 
 // Tests that packed extensions have all their versions deleted when the
 // extension is uninstalled.
@@ -354,11 +358,11 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  static const base::FilePath::CharType* const folders[] = {
-      kLocaleFolder, kPlatformSpecificFolder};
+  static const auto folders = std::to_array<const base::FilePath::CharType*>(
+      {kLocaleFolder, kPlatformSpecificFolder});
 
-  for (size_t i = 0; i < std::size(folders); i++) {
-    base::FilePath src_path = temp.GetPath().Append(folders[i]);
+  for (const auto* folder : folders) {
+    base::FilePath src_path = temp.GetPath().Append(folder);
     ASSERT_TRUE(base::CreateDirectory(src_path));
   }
 
@@ -438,9 +442,10 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
       install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == nullptr);
   ASSERT_FALSE(error.empty());
-  ASSERT_NE(std::string::npos,
-            error.find(manifest_errors::kManifestParseError +
-                       std::string("  Line: 2, column: 16,")));
+  ASSERT_NE(
+      std::string::npos,
+      error.find(manifest_errors::kManifestParseError +
+                 std::string("  expected `,` or `}` at line 2 column 16")));
 }
 
 TEST_F(FileUtilTest, ValidateThemeUTF8) {
@@ -514,7 +519,7 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
 
 // Private key, generated by Chrome specifically for this test, and
 // never used elsewhere.
-constexpr base::StringPiece private_key =
+constexpr std::string_view private_key =
     "-----BEGIN PRIVATE KEY-----\n"
     "MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAKt02SR0FYaYy6fpW\n"
     "MAA+kU1BgK3d+OmmWfdr+JATIjhRkyeSF4lTd/71JQsyKqPzYkQPi3EeROWM+goTv\n"
@@ -546,7 +551,7 @@ TEST_F(FileUtilTest, FindPrivateKeyFiles) {
   ASSERT_TRUE(
       base::WriteFile(src_path.AppendASCII("key.diff_ext"), private_key));
   // Shouldn't find a key that isn't parsable.
-  base::StringPiece private_key_substring =
+  std::string_view private_key_substring =
       private_key.substr(0, private_key.size() - 30);
   ASSERT_TRUE(base::WriteFile(src_path.AppendASCII("unparsable_key.pem"),
                               private_key_substring));
@@ -696,38 +701,38 @@ TEST_F(FileUtilTest, CheckInvisibleIconFilePacked) {
 
 TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
 #define URL_PREFIX "chrome-extension://extension-id/"
-  struct TestCase {
+  static constexpr struct {
     const char* url;
     const char* expected_relative_path;
   } test_cases[] = {
-    {URL_PREFIX "simple.html", "simple.html"},
-    {URL_PREFIX "directory/to/file.html", "directory/to/file.html"},
-    {URL_PREFIX "escape%20spaces.html", "escape spaces.html"},
-    {URL_PREFIX "%C3%9Cber.html",
-     "\xC3\x9C"
-     "ber.html"},
+      {URL_PREFIX "simple.html", "simple.html"},
+      {URL_PREFIX "directory/to/file.html", "directory/to/file.html"},
+      {URL_PREFIX "escape%20spaces.html", "escape spaces.html"},
+      {URL_PREFIX "%C3%9Cber.html",
+       "\xC3\x9C"
+       "ber.html"},
 #if BUILDFLAG(IS_WIN)
-    {URL_PREFIX "C%3A/simple.html", ""},
+      {URL_PREFIX "C%3A/simple.html", ""},
 #endif
-    {URL_PREFIX "////simple.html", "simple.html"},
-    {URL_PREFIX "/simple.html", "simple.html"},
-    {URL_PREFIX "\\simple.html", "simple.html"},
-    {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
-    // Escaped file paths result in failure.
-    {URL_PREFIX "..%2f..%2fsimple.html", ""},
-    // Escaped things that look like escaped file paths, on the other hand,
-    // should work.
-    {URL_PREFIX "..%252f..%252fsimple.html", "..%2f..%2fsimple.html"},
-    // This is a UTF-8 lock icon, which is unsafe to display in the omnibox, but
-    // is a valid, if unusual, file name.
-    {URL_PREFIX "%F0%9F%94%93.html", "\xF0\x9F\x94\x93.html"},
+      {URL_PREFIX "////simple.html", "simple.html"},
+      {URL_PREFIX "/simple.html", "simple.html"},
+      {URL_PREFIX "\\simple.html", "simple.html"},
+      {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
+      // Escaped file paths result in failure.
+      {URL_PREFIX "..%2f..%2fsimple.html", ""},
+      // Escaped things that look like escaped file paths, on the other hand,
+      // should work.
+      {URL_PREFIX "..%252f..%252fsimple.html", "..%2f..%2fsimple.html"},
+      // This is a UTF-8 lock icon, which is unsafe to display in the omnibox,
+      // but is a valid, if unusual, file name.
+      {URL_PREFIX "%F0%9F%94%93.html", "\xF0\x9F\x94\x93.html"},
   };
 #undef URL_PREFIX
 
-  for (size_t i = 0; i < std::size(test_cases); ++i) {
-    GURL url(test_cases[i].url);
+  for (const auto& test_case : test_cases) {
+    GURL url(test_case.url);
     base::FilePath expected_path =
-        base::FilePath::FromUTF8Unsafe(test_cases[i].expected_relative_path);
+        base::FilePath::FromUTF8Unsafe(test_case.expected_relative_path);
     base::FilePath actual_path = file_util::ExtensionURLToRelativeFilePath(url);
     EXPECT_FALSE(actual_path.IsAbsolute()) <<
       " For the path " << actual_path.value();
@@ -806,7 +811,7 @@ class UninstallTestParameterized
   }
 };
 
-// TODO(crbug.com/1378775): Create a custom test name generator that is more
+// TODO(crbug.com/40875193): Create a custom test name generator that is more
 // readable.
 // go/gunitadvanced#specifying-names-for-value-parameterized-test-parameters
 INSTANTIATE_TEST_SUITE_P(All,

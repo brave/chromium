@@ -1,8 +1,9 @@
 Name: mockito-subclass
 Short Name: mockito-subclass
 URL: https://github.com/mockito/mockito
-Version: 5.4.0
-License: The MIT License
+Version: 5.11.0
+Update Mechanism: Manual
+License: MIT
 License File: LICENSE
 CPEPrefix: unknown
 Security Critical: no

@@ -13,6 +13,7 @@ import androidx.annotation.VisibleForTesting;
 import org.xmlpull.v1.XmlSerializer;
 
 import org.chromium.base.BuildInfo;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.uid.SettingsSecureBasedIdentificationGenerator;
 import org.chromium.chrome.browser.uid.UniqueIdentificationGeneratorFactory;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -21,9 +22,8 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.util.Locale;
 
-/**
- * Generates XML requests to send to the Omaha server.
- */
+/** Generates XML requests to send to the Omaha server. */
+@NullMarked
 public abstract class RequestGenerator {
     // The Omaha specs say that new installs should use "-1".
     public static final int INSTALL_AGE_IMMEDIATELY_AFTER_INSTALLING = -1;
@@ -34,7 +34,8 @@ public abstract class RequestGenerator {
     protected RequestGenerator() {
         UniqueIdentificationGeneratorFactory.registerGenerator(
                 SettingsSecureBasedIdentificationGenerator.GENERATOR_ID,
-                new SettingsSecureBasedIdentificationGenerator(), false);
+                new SettingsSecureBasedIdentificationGenerator(),
+                false);
     }
 
     /**
@@ -55,8 +56,13 @@ public abstract class RequestGenerator {
      * https://github.com/google/omaha/blob/master/doc/ServerProtocolV3.md
      * with some additional placeholder values supplied.
      */
-    public String generateXML(String sessionID, String versionName, long installAge,
-            int lastCheckDate, RequestData data) throws RequestFailureException {
+    public String generateXML(
+            String sessionID,
+            String versionName,
+            long installAge,
+            int lastCheckDate,
+            RequestData data)
+            throws RequestFailureException {
         XmlSerializer serializer = Xml.newSerializer();
         StringWriter writer = new StringWriter();
         try {
@@ -68,7 +74,9 @@ public abstract class RequestGenerator {
             serializer.attribute(null, "protocol", "3.0");
             serializer.attribute(null, "updater", "Android");
             serializer.attribute(null, "updaterversion", versionName);
-            serializer.attribute(null, "updaterchannel",
+            serializer.attribute(
+                    null,
+                    "updaterchannel",
                     StringSanitizer.sanitize(BuildInfo.getInstance().hostPackageLabel));
             serializer.attribute(null, "ismachine", "1");
             serializer.attribute(null, "requestid", "{" + data.getRequestID() + "}");
@@ -80,7 +88,7 @@ public abstract class RequestGenerator {
             serializer.startTag(null, "os");
             serializer.attribute(null, "platform", "android");
             serializer.attribute(null, "version", Build.VERSION.RELEASE);
-            serializer.attribute(null, "arch", "arm");
+            serializer.attribute(null, "arch", BuildInfo.getArch());
             serializer.endTag(null, "os");
 
             // Set up <app version="" ...>
@@ -158,13 +166,11 @@ public abstract class RequestGenerator {
         return applicationLabel + ";" + brand + ";" + model;
     }
 
-    /**
-     * Return a device-specific ID.
-     */
+    /** Return a device-specific ID. */
     public String getDeviceID() {
         try {
-            return UniqueIdentificationGeneratorFactory
-                    .getInstance(SettingsSecureBasedIdentificationGenerator.GENERATOR_ID)
+            return UniqueIdentificationGeneratorFactory.getInstance(
+                            SettingsSecureBasedIdentificationGenerator.GENERATOR_ID)
                     .getUniqueId(SALT);
         } catch (SecurityException unused) {
             // In some cases the browser lacks permission to get the ID. Consult crbug.com/1158707.

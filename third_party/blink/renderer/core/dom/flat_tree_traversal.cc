@@ -151,7 +151,7 @@ ContainerNode* FlatTreeTraversal::TraverseParent(const Node& node) {
   // This code is called extensively, so it minimizes repetitive work (such
   // as avoiding multiple calls to parentElement()).
 
-  // TODO(hayato): Stop this hack for a pseudo element because a pseudo element
+  // TODO(hayato): Stop this hack for a pseudo-element because a pseudo-element
   // is not a child of its parentOrShadowHostNode() in a flat tree.
   if (node.IsPseudoElement())
     return node.ParentOrShadowHostNode();
@@ -325,6 +325,16 @@ Node& FlatTreeTraversal::LastWithinOrSelf(const Node& node) {
   Node& result = last_descendant ? *last_descendant : const_cast<Node&>(node);
   AssertPostcondition(&result);
   return result;
+}
+
+const Element* FlatTreeTraversal::InclusiveParentElement(const Node& node) {
+  AssertPrecondition(node);
+  const Element* inclusive_parent = DynamicTo<Element>(node);
+  if (!inclusive_parent) {
+    inclusive_parent = ParentElement(node);
+  }
+  AssertPostcondition(inclusive_parent);
+  return inclusive_parent;
 }
 
 }  // namespace blink

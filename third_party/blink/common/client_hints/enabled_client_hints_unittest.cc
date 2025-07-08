@@ -4,12 +4,13 @@
 
 #include "third_party/blink/public/common/client_hints/enabled_client_hints.h"
 
+#include <optional>
+
 #include "base/memory/scoped_refptr.h"
 #include "base/test/scoped_feature_list.h"
 #include "net/http/http_response_headers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
 
 namespace blink {
@@ -21,11 +22,10 @@ class EnabledClientHintsTest : public testing::Test {
  public:
   EnabledClientHintsTest()
       : response_headers_(base::MakeRefCounted<net::HttpResponseHeaders>("")) {
-    // The UserAgentClientHint feature is enabled, and the
-    // ClientHintsSaveData feature is disabled.
     scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{blink::features::kUserAgentClientHint},
-        /*disabled_features=*/{blink::features::kClientHintsSaveData});
+        /*enabled_features=*/{},
+        /*disabled_features=*/{
+            blink::features::kClientHintsDeviceMemory_DEPRECATED});
   }
 
   const net::HttpResponseHeaders* response_headers() const {
@@ -59,10 +59,10 @@ TEST_F(EnabledClientHintsTest, DisabledClientHint) {
 
 TEST_F(EnabledClientHintsTest, EnabledClientHintOnDisabledFeature) {
   EnabledClientHints hints;
-  // Attempting to enable the SaveData client hint, but the runtime flag for it
-  // is disabled.
-  hints.SetIsEnabled(WebClientHintsType::kSaveData, true);
-  EXPECT_FALSE(hints.IsEnabled(WebClientHintsType::kSaveData));
+  // Attempting to enable the device-memory-deprecated client hint, but the
+  // feature for it is disabled.
+  hints.SetIsEnabled(WebClientHintsType::kDeviceMemory_DEPRECATED, true);
+  EXPECT_FALSE(hints.IsEnabled(WebClientHintsType::kDeviceMemory_DEPRECATED));
 }
 
 TEST_F(EnabledClientHintsTest, GetEnabledHints) {

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/utility/importer/safari_importer.h"
 
 #include <stddef.h>
@@ -18,17 +23,13 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/importer/imported_bookmark_entry.h"
 #include "chrome/common/importer/importer_bridge.h"
 #include "chrome/common/importer/safari_importer_utils.h"
 #include "chrome/utility/importer/safari_importer.h"
 #include "components/favicon_base/favicon_usage_data.h"
+#include "components/user_data_importer/common/imported_bookmark_entry.h"
 #include "sql/database.h"
 #include "testing/platform_test.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // In order to test the Safari import functionality effectively, we store a
 // simulated Library directory containing dummy data files in the same
@@ -78,13 +79,13 @@ TEST_F(SafariImporterTest, BookmarkImport) {
   };
 
   scoped_refptr<SafariImporter> importer(GetSafariImporter());
-  std::vector<ImportedBookmarkEntry> bookmarks;
+  std::vector<user_data_importer::ImportedBookmarkEntry> bookmarks;
   importer->ParseBookmarks(u"Toolbar", &bookmarks);
   size_t num_bookmarks = bookmarks.size();
   ASSERT_EQ(std::size(kImportedBookmarksData), num_bookmarks);
 
   for (size_t i = 0; i < num_bookmarks; ++i) {
-    ImportedBookmarkEntry& entry = bookmarks[i];
+    user_data_importer::ImportedBookmarkEntry& entry = bookmarks[i];
     EXPECT_EQ(kImportedBookmarksData[i].in_toolbar, entry.in_toolbar);
     EXPECT_EQ(kImportedBookmarksData[i].url, entry.url);
 
@@ -120,13 +121,13 @@ TEST_F(SafariImporterTest, BookmarkImportWithEmptyBookmarksMenu) {
 
   scoped_refptr<SafariImporter> importer(
       GetSafariImporterWithPathSuffix("empty_bookmarks_menu"));
-  std::vector<ImportedBookmarkEntry> bookmarks;
+  std::vector<user_data_importer::ImportedBookmarkEntry> bookmarks;
   importer->ParseBookmarks(u"Toolbar", &bookmarks);
   size_t num_bookmarks = bookmarks.size();
   ASSERT_EQ(std::size(kImportedBookmarksData), num_bookmarks);
 
   for (size_t i = 0; i < num_bookmarks; ++i) {
-    ImportedBookmarkEntry& entry = bookmarks[i];
+    user_data_importer::ImportedBookmarkEntry& entry = bookmarks[i];
     EXPECT_EQ(kImportedBookmarksData[i].in_toolbar, entry.in_toolbar);
     EXPECT_EQ(kImportedBookmarksData[i].url, entry.url);
 
@@ -143,10 +144,10 @@ TEST_F(SafariImporterTest, BookmarkImportWithEmptyBookmarksMenu) {
 }
 
 TEST_F(SafariImporterTest, CanImport) {
-  uint16_t items = importer::NONE;
+  uint16_t items = user_data_importer::NONE;
   EXPECT_TRUE(SafariImporterCanImport(
       GetTestSafariLibraryPath("default"), &items));
-  EXPECT_EQ(items, importer::FAVORITES);
+  EXPECT_EQ(items, user_data_importer::FAVORITES);
 
   // Check that we don't import anything from a bogus library directory.
   base::ScopedTempDir fake_library_dir;

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/grit/generated_resources.h"
@@ -19,6 +20,39 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace ax::android {
+
+namespace {
+enum CollectionType { kGrid, kListWithCount, kListWithoutCount, kNone };
+
+CollectionType GetCollectionType(
+    mojom::AccessibilityCollectionInfoData* collection_info) {
+  if (collection_info == nullptr) {
+    return CollectionType::kNone;
+  }
+
+  if (collection_info->row_count > 1 && collection_info->column_count > 1) {
+    return CollectionType::kGrid;
+  }
+
+  bool is_linear =
+      collection_info->row_count == 1 || collection_info->column_count == 1;
+  // CollectionInfo might be missing count information. ChromeVox doesn't expect
+  // a list without count information. We don't want to announce it as a list in
+  // that case.
+  bool has_both_count =
+      collection_info->row_count > 0 && collection_info->column_count > 0;
+
+  if (is_linear) {
+    if (has_both_count) {
+      return CollectionType::kListWithCount;
+    }
+    return CollectionType::kListWithoutCount;
+  }
+
+  return CollectionType::kNone;
+}
+
+}  // namespace
 
 using AXActionType = mojom::AccessibilityActionType;
 using AXBooleanProperty = mojom::AccessibilityBooleanProperty;
@@ -162,24 +196,31 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
     return;
   }
 
-  if (node_ptr_->collection_info) {
-    AXCollectionInfoData* collection_info = node_ptr_->collection_info.get();
-    if (collection_info->row_count > 1 && collection_info->column_count > 1) {
+  AXCollectionInfoData* collection_info;
+  switch (GetCollectionType(node_ptr_->collection_info.get())) {
+    case CollectionType::kGrid:
+      collection_info = node_ptr_->collection_info.get();
       out_data->role = ax::mojom::Role::kGrid;
       out_data->AddIntAttribute(ax::mojom::IntAttribute::kTableRowCount,
                                 collection_info->row_count);
       out_data->AddIntAttribute(ax::mojom::IntAttribute::kTableColumnCount,
                                 collection_info->column_count);
       return;
-    }
 
-    if (collection_info->row_count == 1 || collection_info->column_count == 1) {
-      out_data->role = ax::mojom::Role::kList;
+    case CollectionType::kListWithCount:
+      collection_info = node_ptr_->collection_info.get();
       out_data->AddIntAttribute(
           ax::mojom::IntAttribute::kSetSize,
           std::max(collection_info->row_count, collection_info->column_count));
+      out_data->role = ax::mojom::Role::kList;
       return;
-    }
+
+    case CollectionType::kListWithoutCount:
+      out_data->role = ax::mojom::Role::kList;
+      return;
+
+    case CollectionType::kNone:
+      break;
   }
 
   if (node_ptr_->collection_item_info) {
@@ -193,7 +234,7 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
     // In order to properly resolve the role of this node, a collection item, we
     // need additional information contained only in the CollectionInfo. The
     // CollectionInfo should be an ancestor of this node.
-    AXCollectionInfoData* collection_info = nullptr;
+    collection_info = nullptr;
     for (AccessibilityInfoDataWrapper* container =
              const_cast<AccessibilityNodeInfoDataWrapper*>(this);
          container;) {
@@ -208,9 +249,9 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
       container = tree_source_->GetParent(container);
     }
 
-    if (collection_info) {
-      if (collection_info->row_count > 1 && collection_info->column_count > 1) {
-        out_data->role = ax::mojom::Role::kCell;
+    switch (GetCollectionType(collection_info)) {
+      case CollectionType::kGrid:
+        out_data->role = ax::mojom::Role::kGridCell;
         out_data->AddIntAttribute(ax::mojom::IntAttribute::kTableCellRowIndex,
                                   collection_item_info->row_index);
         out_data->AddIntAttribute(
@@ -221,13 +262,23 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
         out_data->AddIntAttribute(ax::mojom::IntAttribute::kAriaCellColumnIndex,
                                   collection_item_info->column_index + 1);
         return;
-      }
 
-      out_data->role = ax::mojom::Role::kListItem;
-      out_data->AddIntAttribute(ax::mojom::IntAttribute::kPosInSet,
-                                std::max(collection_item_info->row_index,
-                                         collection_item_info->column_index));
-      return;
+      case CollectionType::kListWithCount:
+        if (collection_info->row_count == 1) {
+          out_data->AddIntAttribute(ax::mojom::IntAttribute::kPosInSet,
+                                    collection_item_info->column_index);
+        } else if (collection_info->column_count == 1) {
+          out_data->AddIntAttribute(ax::mojom::IntAttribute::kPosInSet,
+                                    collection_item_info->row_index);
+        }
+        out_data->role = ax::mojom::Role::kListItem;
+        return;
+      case CollectionType::kListWithoutCount:
+        out_data->role = ax::mojom::Role::kListItem;
+        return;
+
+      case CollectionType::kNone:
+        break;
     }
   }
 
@@ -259,6 +310,7 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
   // sources.
   // EditText is excluded because it can be a container (b/150827734).
   MAP_ROLE(ui::kAXAbsListViewClassname, ax::mojom::Role::kList);
+  MAP_ROLE(ui::kAXAlertDialogClassname, ax::mojom::Role::kAlertDialog);
   MAP_ROLE(ui::kAXButtonClassname, ax::mojom::Role::kButton);
   MAP_ROLE(ui::kAXCheckBoxClassname, ax::mojom::Role::kCheckBox);
   MAP_ROLE(ui::kAXCheckedTextViewClassname, ax::mojom::Role::kStaticText);
@@ -289,7 +341,6 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
   MAP_ROLE(ui::kAXViewGroupClassname, ax::mojom::Role::kGroup);
 
 #undef MAP_ROLE
-
   if (node_ptr_->collection_info) {
     // Fallback for some RecyclerViews which doesn't correctly populate
     // row/col counts.
@@ -299,7 +350,8 @@ void AccessibilityNodeInfoDataWrapper::PopulateAXRole(
 
   std::string text;
   GetProperty(AXStringProperty::TEXT, &text);
-  std::vector<AccessibilityInfoDataWrapper*> children;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>
+      children;
   GetChildren(&children);
   if (!text.empty() && children.empty()) {
     out_data->role = ax::mojom::Role::kStaticText;
@@ -582,11 +634,7 @@ void AccessibilityNodeInfoDataWrapper::Serialize(
 
 std::string AccessibilityNodeInfoDataWrapper::ComputeAXName(
     bool do_recursive) const {
-  // Accessible name computation is a concatenated string comprising of:
-  // content description, text, labeled by text, pane title, and cached name
-  // from previous events.
-
-  // TODO(sarakato): Exposing all possible labels for a node, may result in
+  // TODO(hirokisato): Exposing all possible labels for a node, may result in
   // too much being spoken. For ARC ++, this may result in divergent behaviour
   // from Talkback.
   std::string text;
@@ -604,9 +652,6 @@ std::string AccessibilityNodeInfoDataWrapper::ComputeAXName(
     }
   }
 
-  std::string pane_title;
-  GetProperty(AXStringProperty::PANE_TITLE, &pane_title);
-
   // |hint_text| attribute in Android is often used as a placeholder text within
   // textfields.
   std::string hint_text;
@@ -619,9 +664,6 @@ std::string AccessibilityNodeInfoDataWrapper::ComputeAXName(
   }
   if (!label.empty()) {
     names.push_back(label);
-  }
-  if (!pane_title.empty()) {
-    names.push_back(pane_title);
   }
   if (!text.empty() && !GetProperty(AXBooleanProperty::EDITABLE)) {
     // EDITABLE is checked here, as EDITABLE field will have text set as value,
@@ -643,7 +685,8 @@ std::string AccessibilityNodeInfoDataWrapper::ComputeAXName(
 }
 
 void AccessibilityNodeInfoDataWrapper::GetChildren(
-    std::vector<AccessibilityInfoDataWrapper*>* children) const {
+    std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>*
+        children) const {
   if (!node_ptr_->int_list_properties) {
     return;
   }
@@ -799,7 +842,8 @@ bool AccessibilityNodeInfoDataWrapper::HasAccessibilityFocusableText() const {
 
 void AccessibilityNodeInfoDataWrapper::ComputeNameFromContents(
     std::vector<std::string>* names) const {
-  std::vector<AccessibilityInfoDataWrapper*> children;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>
+      children;
   GetChildren(&children);
   for (AccessibilityInfoDataWrapper* child : children) {
     static_cast<AccessibilityNodeInfoDataWrapper*>(child)
@@ -837,7 +881,8 @@ void AccessibilityNodeInfoDataWrapper::ComputeNameFromContentsInternal(
   }
 
   // Otherwise, continue looking for a name in this subtree.
-  std::vector<AccessibilityInfoDataWrapper*> children;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>
+      children;
   GetChildren(&children);
   for (AccessibilityInfoDataWrapper* child : children) {
     static_cast<AccessibilityNodeInfoDataWrapper*>(child)
@@ -925,7 +970,8 @@ bool AccessibilityNodeInfoDataWrapper::HasImportantPropertyInternal() const {
   }
 
   // Check if any ancestor has an important property.
-  std::vector<AccessibilityInfoDataWrapper*> children;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>
+      children;
   GetChildren(&children);
   for (AccessibilityInfoDataWrapper* child : children) {
     if (static_cast<AccessibilityNodeInfoDataWrapper*>(child)
@@ -939,7 +985,7 @@ bool AccessibilityNodeInfoDataWrapper::HasImportantPropertyInternal() const {
 
 ax::mojom::Role AccessibilityNodeInfoDataWrapper::GetChromeRole() const {
   std::string chrome_role;
-  absl::optional<ax::mojom::Role> result;
+  std::optional<ax::mojom::Role> result;
   if (GetProperty(AXStringProperty::CHROME_ROLE, &chrome_role)) {
     result = ui::MaybeParseAXEnum<ax::mojom::Role>(chrome_role.c_str());
   }

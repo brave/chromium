@@ -10,9 +10,8 @@ import android.os.Bundle;
 import com.google.android.material.color.DynamicColors;
 
 import org.chromium.base.TraceEvent;
-import org.chromium.chrome.R;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
 /**
  * Dispatches incoming intents to the appropriate activity based on the current configuration and
@@ -20,12 +19,12 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
  */
 public class ChromeLauncherActivity extends Activity {
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         // Third-party code adds disk access to Activity.onCreate. http://crbug.com/619824
         TraceEvent.begin("ChromeLauncherActivity.onCreate");
         super.onCreate(savedInstanceState);
 
-        // TODO(https://crbug.com/1225066): Figure out a scalable way to apply overlays to
+        // TODO(crbug.com/40775606): Figure out a scalable way to apply overlays to
         // activities like this.
         applyThemeOverlays();
 
@@ -39,8 +38,10 @@ public class ChromeLauncherActivity extends Activity {
                 this.finishAndRemoveTask();
                 break;
             default:
-                assert false : "Intent dispatcher finished with action " + dispatchAction
-                               + ", finishing anyway";
+                assert false
+                        : "Intent dispatcher finished with action "
+                                + dispatchAction
+                                + ", finishing anyway";
                 finish();
                 break;
         }
@@ -48,11 +49,6 @@ public class ChromeLauncherActivity extends Activity {
     }
 
     private void applyThemeOverlays() {
-        // The effect of this activity's theme is currently limited to CCTs, so we should only apply
-        // dynamic colors when we enable them everywhere.
-        if (ChromeFeatureList.sBaselineGm3SurfaceColors.isEnabled()) {
-            getTheme().applyStyle(R.style.SurfaceColorsThemeOverlay, /* force= */ true);
-        }
         DynamicColors.applyToActivityIfAvailable(this);
     }
 }

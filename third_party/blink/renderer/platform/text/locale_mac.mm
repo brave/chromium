@@ -32,6 +32,8 @@
 
 #import <Foundation/Foundation.h>
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 
 #include "base/memory/ptr_util.h"
@@ -41,10 +43,6 @@
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "ui/base/ui_base_features.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace blink {
 
@@ -89,6 +87,16 @@ static NSDateFormatter* CreateDateTimeFormatter(
   return formatter;
 }
 
+static inline String NormalizeWhitespace(const String& date_time_format) {
+  String normalized_date_time_format = date_time_format;
+  // Revert ICU 72 change that introduced U+202F instead of U+0020
+  // to separate time from AM/PM.
+  //
+  // TODO(https://crbug.com/1453047): Move this normalization to
+  // `//third_party/icu/` or `//third_party/icu/patches/`.
+  return normalized_date_time_format.Replace(0x202f, 0x20);
+}
+
 LocaleMac::LocaleMac(NSLocale* locale)
     : locale_(locale),
       gregorian_calendar_([[NSCalendar alloc]
@@ -122,33 +130,32 @@ NSDateFormatter* LocaleMac::ShortDateFormatter() {
 }
 
 const Vector<String>& LocaleMac::MonthLabels() {
-  if (!month_labels_.empty())
-    return month_labels_;
-  month_labels_.reserve(12);
-  NSArray* array = ShortDateFormatter().monthSymbols;
-  if (array.count == 12) {
-    for (unsigned i = 0; i < 12; ++i)
-      month_labels_.push_back(String(array[i]));
-    return month_labels_;
+  if (month_labels_.empty()) {
+    month_labels_.reserve(12);
+    NSArray* array = ShortDateFormatter().monthSymbols;
+    if (array.count == 12) {
+      for (unsigned i = 0; i < 12; ++i) {
+        month_labels_.push_back(String(array[i]));
+      }
+    } else {
+      std::ranges::copy(kFallbackMonthNames, std::back_inserter(month_labels_));
+    }
   }
-  for (unsigned i = 0; i < std::size(WTF::kMonthFullName); ++i)
-    month_labels_.push_back(WTF::kMonthFullName[i]);
   return month_labels_;
 }
 
 const Vector<String>& LocaleMac::WeekDayShortLabels() {
-  if (!week_day_short_labels_.empty())
-    return week_day_short_labels_;
-  week_day_short_labels_.reserve(7);
-  NSArray* array = ShortDateFormatter().veryShortWeekdaySymbols;
-  if (array.count == 7) {
-    for (unsigned i = 0; i < 7; ++i)
-      week_day_short_labels_.push_back(String(array[i]));
-    return week_day_short_labels_;
-  }
-  for (unsigned i = 0; i < std::size(WTF::kWeekdayName); ++i) {
-    // weekdayName starts with Monday.
-    week_day_short_labels_.push_back(WTF::kWeekdayName[(i + 6) % 7]);
+  if (week_day_short_labels_.empty()) {
+    week_day_short_labels_.reserve(7);
+    NSArray* array = ShortDateFormatter().veryShortWeekdaySymbols;
+    if (array.count == 7) {
+      for (unsigned i = 0; i < 7; ++i) {
+        week_day_short_labels_.push_back(String(array[i]));
+      }
+    } else {
+      std::ranges::copy(kFallbackWeekdayShortNames,
+                        std::back_inserter(week_day_short_labels_));
+    }
   }
   return week_day_short_labels_;
 }
@@ -221,21 +228,23 @@ String LocaleMac::ShortMonthFormat() {
 String LocaleMac::TimeFormat() {
   if (!time_format_with_seconds_.IsNull())
     return time_format_with_seconds_;
-  time_format_with_seconds_ = TimeFormatter().dateFormat;
+  time_format_with_seconds_ = NormalizeWhitespace(TimeFormatter().dateFormat);
   return time_format_with_seconds_;
 }
 
 String LocaleMac::ShortTimeFormat() {
   if (!time_format_without_seconds_.IsNull())
     return time_format_without_seconds_;
-  time_format_without_seconds_ = ShortTimeFormatter().dateFormat;
+  time_format_without_seconds_ =
+      NormalizeWhitespace(ShortTimeFormatter().dateFormat);
   return time_format_without_seconds_;
 }
 
 String LocaleMac::DateTimeFormatWithSeconds() {
   if (!date_time_format_with_seconds_.IsNull())
     return date_time_format_with_seconds_;
-  date_time_format_with_seconds_ = DateTimeFormatterWithSeconds().dateFormat;
+  date_time_format_with_seconds_ =
+      NormalizeWhitespace(DateTimeFormatterWithSeconds().dateFormat);
   return date_time_format_with_seconds_;
 }
 
@@ -243,22 +252,23 @@ String LocaleMac::DateTimeFormatWithoutSeconds() {
   if (!date_time_format_without_seconds_.IsNull())
     return date_time_format_without_seconds_;
   date_time_format_without_seconds_ =
-      DateTimeFormatterWithoutSeconds().dateFormat;
+      NormalizeWhitespace(DateTimeFormatterWithoutSeconds().dateFormat);
   return date_time_format_without_seconds_;
 }
 
 const Vector<String>& LocaleMac::ShortMonthLabels() {
-  if (!short_month_labels_.empty())
-    return short_month_labels_;
-  short_month_labels_.reserve(12);
-  NSArray* array = ShortDateFormatter().shortMonthSymbols;
-  if (array.count == 12) {
-    for (unsigned i = 0; i < 12; ++i)
-      short_month_labels_.push_back(array[i]);
-    return short_month_labels_;
+  if (short_month_labels_.empty()) {
+    short_month_labels_.reserve(12);
+    NSArray* array = ShortDateFormatter().shortMonthSymbols;
+    if (array.count == 12) {
+      for (unsigned i = 0; i < 12; ++i) {
+        short_month_labels_.push_back(array[i]);
+      }
+    } else {
+      std::ranges::copy(kFallbackMonthShortNames,
+                        std::back_inserter(short_month_labels_));
+    }
   }
-  for (unsigned i = 0; i < std::size(WTF::kMonthName); ++i)
-    short_month_labels_.push_back(WTF::kMonthName[i]);
   return short_month_labels_;
 }
 

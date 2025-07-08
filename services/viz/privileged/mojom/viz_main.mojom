@@ -5,12 +5,14 @@
 module viz.mojom;
 
 import "components/discardable_memory/public/mojom/discardable_shared_memory_manager.mojom";
+import "components/viz/service/debugger/mojom/viz_debugger.mojom";
 import "mojo/public/mojom/base/values.mojom";
 import "mojo/public/mojom/base/shared_memory.mojom";
 import "services/viz/public/mojom/compositing/compositing_mode_watcher.mojom";
 import "services/viz/privileged/mojom/compositing/frame_sink_manager.mojom";
 import "services/viz/privileged/mojom/compositing/renderer_settings.mojom";
 import "services/viz/privileged/mojom/gl/gpu_host.mojom";
+import "services/viz/privileged/mojom/gl/gpu_logging.mojom";
 [EnableIf=is_win]
 import "services/viz/privileged/mojom/gl/info_collection_gpu_service.mojom";
 import "services/viz/privileged/mojom/gl/gpu_service.mojom";
@@ -36,11 +38,12 @@ struct FrameSinkManagerParams {
   DebugRendererSettings debug_renderer_settings;
 };
 
-// This interface provides mechanism for the Viz Debugger to output data.
-[EnableIf=use_viz_debugger]
-interface VizDebugOutput {
- // Called by the VizDebugger instance at the end of each frame.
- LogFrame(mojo_base.mojom.Value frameData);
+struct GpuServiceCreationParams {
+  // On Ozone the information of whether overlays are supported is propagated
+  // from the browser.
+  [EnableIf=use_ozone]
+  bool supports_overlays = false;
+
 };
 
 // This is the primordial interface used to (re)start the viz services.
@@ -50,10 +53,17 @@ interface VizMain {
   CreateGpuService(
       pending_receiver<GpuService> gpu_service,
       pending_remote<GpuHost> gpu_host,
+      pending_remote<GpuLogging> gpu_logging,
       pending_remote<discardable_memory.mojom.DiscardableSharedMemoryManager>
           discardable_memory_manager,
-      mojo_base.mojom.UnsafeSharedMemoryRegion? activity_flags,
-      gfx.mojom.SubpixelRendering subpixel_rendering);
+      mojo_base.mojom.UnsafeSharedMemoryRegion? use_shader_cache_shm_count,
+      GpuServiceCreationParams params);
+
+  // Sets parameters necessary for rendering.
+  SetRenderParams(
+      gfx.mojom.SubpixelRendering subpixel_rendering,
+      float text_contrast,
+      float text_gamma);
 
   // Create a GPU info collection service provided by the info-collection GPU
   // process.

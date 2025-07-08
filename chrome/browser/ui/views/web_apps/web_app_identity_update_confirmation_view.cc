@@ -4,24 +4,27 @@
 
 #include "chrome/browser/ui/views/web_apps/web_app_identity_update_confirmation_view.h"
 
+#include <optional>
+
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/web_apps/web_app_uninstall_dialog_view.h"
-#include "chrome/browser/ui/web_applications/web_app_ui_manager_impl.h"
+#include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/web_app_callback_app_identity.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/vector_icons/vector_icons.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/color/color_id.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/image/image_skia.h"
@@ -67,9 +70,9 @@ WebAppIdentityUpdateConfirmationView::WebAppIdentityUpdateConfirmationView(
       .set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
           views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH))
       .SetButtonLabel(
-          ui::DIALOG_BUTTON_CANCEL,
+          ui::mojom::DialogButton::kCancel,
           l10n_util::GetStringUTF16(IDS_WEBAPP_UPDATE_NEGATIVE_BUTTON))
-      .SetModalType(ui::MODAL_TYPE_WINDOW)
+      .SetModalType(ui::mojom::ModalType::kWindow)
       .SetTitle(title_change
                     ? (icon_change
                            ? IDS_WEBAPP_UPDATE_DIALOG_TITLE_NAME_AND_ICON
@@ -83,7 +86,7 @@ WebAppIdentityUpdateConfirmationView::WebAppIdentityUpdateConfirmationView(
       .SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kVertical, gfx::Insets(),
           2 * layout_provider->GetDistanceMetric(
-                  DISTANCE_CONTROL_LIST_VERTICAL)))
+                  views::DISTANCE_CONTROL_LIST_VERTICAL)))
       .AddChildren(
           views::Builder<views::Label>()
               .SetID(VIEW_ID_APP_IDENTITY_UPDATE_HEADER)
@@ -118,7 +121,8 @@ WebAppIdentityUpdateConfirmationView::WebAppIdentityUpdateConfirmationView(
               .AddChildren(
                   views::Builder<views::ImageView>()
                       .SetImageSize(image_size)
-                      .SetImage(gfx::ImageSkia::CreateFrom1xBitmap(old_icon))
+                      .SetImage(ui::ImageModel::FromImageSkia(
+                          gfx::ImageSkia::CreateFrom1xBitmap(old_icon)))
                       .SetAccessibleName(l10n_util::GetStringUTF16(
                           IDS_WEBAPP_UPDATE_CURRENT_ICON)),
                   views::Builder<views::ImageView>().SetImage(
@@ -127,12 +131,13 @@ WebAppIdentityUpdateConfirmationView::WebAppIdentityUpdateConfirmationView(
                           kArrowIconSizeDp)),
                   views::Builder<views::ImageView>()
                       .SetImageSize(image_size)
-                      .SetImage(gfx::ImageSkia::CreateFrom1xBitmap(new_icon))
+                      .SetImage(ui::ImageModel::FromImageSkia(
+                          gfx::ImageSkia::CreateFrom1xBitmap(new_icon)))
                       .SetAccessibleName(l10n_util::GetStringUTF16(
                           IDS_WEBAPP_UPDATE_NEW_ICON)))
               .AddPaddingRow(views::TableLayout::kFixedSize,
                              layout_provider->GetDistanceMetric(
-                                 DISTANCE_CONTROL_LIST_VERTICAL))
+                                 views::DISTANCE_CONTROL_LIST_VERTICAL))
               .AddRows(1, views::TableLayout::kFixedSize, 0)
               .AddChildren(
                   views::Builder<views::Label>()
@@ -172,7 +177,7 @@ void WebAppIdentityUpdateConfirmationView::OnDialogAccepted() {
 bool WebAppIdentityUpdateConfirmationView::Cancel() {
   auto* provider = web_app::WebAppProvider::GetForWebApps(profile_);
   DCHECK(provider);
-  web_app::WebAppUiManagerImpl::Get(provider)->PresentUserUninstallDialog(
+  provider->ui_manager().PresentUserUninstallDialog(
       app_id_, webapps::WebappUninstallSource::kAppMenu,
       GetWidget()->GetNativeWindow(), base::DoNothing(),
       base::BindOnce(
@@ -194,24 +199,23 @@ void WebAppIdentityUpdateConfirmationView::OnWebAppUninstallScheduled(
   }
 }
 
-BEGIN_METADATA(WebAppIdentityUpdateConfirmationView, views::DialogDelegateView)
+BEGIN_METADATA(WebAppIdentityUpdateConfirmationView)
 END_METADATA
 
-namespace chrome {
+namespace web_app {
 
-void ShowWebAppIdentityUpdateDialog(
-    const std::string& app_id,
-    bool title_change,
-    bool icon_change,
-    const std::u16string& old_title,
-    const std::u16string& new_title,
-    const SkBitmap& old_icon,
-    const SkBitmap& new_icon,
-    content::WebContents* web_contents,
-    web_app::AppIdentityDialogCallback callback) {
-  if (web_app::GetIdentityUpdateDialogActionForTesting() ==  // IN-TEST
-      web_app::AppIdentityUpdate::kSkipped) {
-    std::move(callback).Run(web_app::AppIdentityUpdate::kSkipped);
+void ShowWebAppIdentityUpdateDialog(const std::string& app_id,
+                                    bool title_change,
+                                    bool icon_change,
+                                    const std::u16string& old_title,
+                                    const std::u16string& new_title,
+                                    const SkBitmap& old_icon,
+                                    const SkBitmap& new_icon,
+                                    content::WebContents* web_contents,
+                                    AppIdentityDialogCallback callback) {
+  if (GetIdentityUpdateDialogActionForTesting() ==  // IN-TEST
+      AppIdentityUpdate::kSkipped) {
+    std::move(callback).Run(AppIdentityUpdate::kSkipped);
     return;
   }
 
@@ -225,10 +229,10 @@ void ShowWebAppIdentityUpdateDialog(
           dialog, web_contents->GetTopLevelNativeWindow());
   dialog_widget->Show();
 
-  if (web_app::GetIdentityUpdateDialogActionForTesting() ==  // IN-TEST
-      web_app::AppIdentityUpdate::kAllowed) {
+  if (GetIdentityUpdateDialogActionForTesting() ==  // IN-TEST
+      AppIdentityUpdate::kAllowed) {
     dialog->AcceptDialog();
   }
 }
 
-}  // namespace chrome
+}  // namespace web_app

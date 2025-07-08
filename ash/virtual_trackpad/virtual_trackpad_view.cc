@@ -7,8 +7,12 @@
 #include <memory>
 
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/style/color_provider.h"
 #include "ash/shell.h"
+#include "ash/style/ash_color_id.h"
+#include "ash/style/blurred_background_shield.h"
 #include "ash/wm/window_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromeos/ui/base/chromeos_ui_constants.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_targeter.h"
@@ -17,6 +21,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/background.h"
@@ -87,9 +92,9 @@ std::unique_ptr<views::LabelButton> CreateFingerButton(
 
 // Captures mouse events and formats them before sending them to the event sink.
 class TrackpadInternalSurfaceView : public views::View {
- public:
-  METADATA_HEADER(TrackpadInternalSurfaceView);
+  METADATA_HEADER(TrackpadInternalSurfaceView, views::View)
 
+ public:
   TrackpadInternalSurfaceView() = default;
   TrackpadInternalSurfaceView(const TrackpadInternalSurfaceView&) = delete;
   TrackpadInternalSurfaceView& operator=(const TrackpadInternalSurfaceView&) =
@@ -134,7 +139,7 @@ class TrackpadInternalSurfaceView : public views::View {
   bool OnMousePressed(const ui::MouseEvent& event) override {
     scroll_data_ = ScrollData{event.location_f(), event.location_f()};
     SchedulePaint();
-    GenerateScrollEvent(ui::ET_SCROLL_FLING_CANCEL, event);
+    GenerateScrollEvent(ui::EventType::kScrollFlingCancel, event);
     return true;
   }
 
@@ -146,7 +151,7 @@ class TrackpadInternalSurfaceView : public views::View {
     // We generate the scroll event before we update `current_location` because
     // calculating the current scroll event's offset requires us to know where
     // it began, which is the `current_location` from the previous scroll.
-    GenerateScrollEvent(ui::ET_SCROLL, event);
+    GenerateScrollEvent(ui::EventType::kScroll, event);
     CHECK(scroll_data_);
     scroll_data_->current_location = event.location_f();
     SchedulePaint();
@@ -158,7 +163,7 @@ class TrackpadInternalSurfaceView : public views::View {
       return;
     }
 
-    GenerateScrollEvent(ui::ET_SCROLL_FLING_START, event);
+    GenerateScrollEvent(ui::EventType::kScrollFlingStart, event);
     scroll_data_.reset();
     SchedulePaint();
   }
@@ -179,7 +184,7 @@ class TrackpadInternalSurfaceView : public views::View {
     // `scroll_data_->current_location` is the position of the last mouse event.
     const gfx::Vector2dF distance =
         event.location_f() - scroll_data_->current_location;
-    if (type == ui::ET_SCROLL_FLING_CANCEL) {
+    if (type == ui::EventType::kScrollFlingCancel) {
       CHECK_EQ(gfx::Vector2dF(), distance);
     }
 
@@ -201,12 +206,12 @@ class TrackpadInternalSurfaceView : public views::View {
 
   // Contains the data during a scroll session. Empty when no scroll is
   // underway.
-  absl::optional<ScrollData> scroll_data_;
+  std::optional<ScrollData> scroll_data_;
 
   int fingers_ = kDefaultFingers;
 };
 
-BEGIN_METADATA(TrackpadInternalSurfaceView, views::View)
+BEGIN_METADATA(TrackpadInternalSurfaceView)
 END_METADATA
 
 // -----------------------------------------------------------------------------
@@ -239,22 +244,29 @@ VirtualTrackpadView::VirtualTrackpadView() {
             base::BindRepeating(&VirtualTrackpadView::OnFingerButtonPressed,
                                 base::Unretained(this), num_finger)));
   }
-  UpdateFingerButtonsColors();
 
-  // TODO(b/286303073): Add a blur effect to the transparent background
-  // while keeping the shadow effect.
   SetPaintToLayer();
   layer()->SetOpacity(kTrackpadContainerOpacity);
 
   SetBorder(views::CreateEmptyBorder(kTrackpadContainerPadding));
   SetBackground(
       views::CreateSolidBackground(kTrackpadContainerBackgroundColor));
+
+  blurred_background_ = std::make_unique<BlurredBackgroundShield>(
+      this, SK_ColorTRANSPARENT, ColorProvider::kBackgroundBlurSigma,
+      gfx::RoundedCornersF(
+          static_cast<float>(chromeos::kTopCornerRadiusWhenRestored)));
 }
 
 VirtualTrackpadView::~VirtualTrackpadView() = default;
 
 // static
 void VirtualTrackpadView::Toggle() {
+  // If we have a real trackpad, we should use that instead.
+  if (!ui::DeviceDataManager::GetInstance()->GetTouchpadDevices().empty()) {
+    return;
+  }
+
   if (g_fake_trackpad_widget) {
     g_fake_trackpad_widget->Close();
     g_fake_trackpad_widget = nullptr;
@@ -264,7 +276,7 @@ void VirtualTrackpadView::Toggle() {
   auto delegate = std::make_unique<views::WidgetDelegate>();
   delegate->RegisterWindowClosingCallback(
       base::BindOnce([]() { g_fake_trackpad_widget = nullptr; }));
-  delegate->SetOwnedByWidget(true);
+  delegate->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
   delegate->SetCanResize(true);
   delegate->SetTitle(u"Virtual Trackpad Simulator");
 
@@ -274,14 +286,15 @@ void VirtualTrackpadView::Toggle() {
   // `TYPE_WINDOW`.
   delegate->SetContentsView(std::make_unique<VirtualTrackpadView>());
 
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = delegate.release();
   // TODO(b/252556382): The bounds and root should be where the user last
   // closed the window if any.
   params.parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
                                       kShellWindowId_OverlayContainer);
   params.bounds = gfx::Rect(kDefaultSize);
-  params.ownership = views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET;
   params.name = "VirtualTrackpadWidget";
   params.activatable = views::Widget::InitParams::Activatable::kNo;
   params.accept_events = true;
@@ -300,8 +313,12 @@ void VirtualTrackpadView::Toggle() {
       std::move(targeter));
 }
 
-void VirtualTrackpadView::Layout() {
-  views::View::Layout();
+void VirtualTrackpadView::AddedToWidget() {
+  UpdateFingerButtonsColors();
+}
+
+void VirtualTrackpadView::Layout(PassKey) {
+  LayoutSuperclass<views::View>(this);
 
   // The height of the finger buttons container stays the same while the width
   // matches the parent width.
@@ -362,7 +379,7 @@ views::View* VirtualTrackpadView::GetTrackpadViewForTesting() {
   return trackpad_view_;
 }
 
-BEGIN_METADATA(VirtualTrackpadView, views::View)
+BEGIN_METADATA(VirtualTrackpadView)
 END_METADATA
 
 }  // namespace ash

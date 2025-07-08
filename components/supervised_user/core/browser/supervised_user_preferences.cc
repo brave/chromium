@@ -6,10 +6,16 @@
 
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "components/google/core/common/google_util.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
-#include "components/supervised_user/core/browser/proto/kidschromemanagement_messages.pb.h"
+#include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
+#include "components/supervised_user/core/browser/supervised_user_utils.h"
+#include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/pref_names.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 
@@ -19,45 +25,43 @@ namespace {
 
 // Helper class to break down response into family members.
 struct Family {
-  using Member = kids_chrome_management::FamilyMember;
+  using Member = kidsmanagement::FamilyMember;
 
-  const absl::optional<const Member>& GetHeadOfHousehold() const {
+  const std::optional<const Member>& GetHeadOfHousehold() const {
     return head_of_household_;
   }
-  const absl::optional<const Member>& GetParent() const { return parent_; }
+  const std::optional<const Member>& GetParent() const { return parent_; }
   const std::vector<Member>& GetRegularMembers() const {
     return regular_members_;
   }
   const std::vector<Member>& GetChildren() const { return children_; }
 
   Family() = delete;
-  explicit Family(
-      const kids_chrome_management::ListFamilyMembersResponse& response) {
-    for (const kids_chrome_management::FamilyMember& member :
-         response.members()) {
+  explicit Family(const kidsmanagement::ListMembersResponse& response) {
+    for (const kidsmanagement::FamilyMember& member : response.members()) {
       switch (member.role()) {
-        case kids_chrome_management::HEAD_OF_HOUSEHOLD:
+        case kidsmanagement::HEAD_OF_HOUSEHOLD:
           head_of_household_.emplace(member);
           break;
-        case kids_chrome_management::PARENT:
+        case kidsmanagement::PARENT:
           parent_.emplace(member);
           break;
-        case kids_chrome_management::CHILD:
+        case kidsmanagement::CHILD:
           children_.push_back(member);
           break;
-        case kids_chrome_management::MEMBER:
+        case kidsmanagement::MEMBER:
           regular_members_.push_back(member);
           break;
         default:
-          NOTREACHED_NORETURN();
+          NOTREACHED();
       }
     }
   }
   ~Family() = default;
 
  private:
-  absl::optional<const Member> head_of_household_;
-  absl::optional<const Member> parent_;
+  std::optional<const Member> head_of_household_;
+  std::optional<const Member> parent_;
   std::vector<Member> regular_members_;
   std::vector<Member> children_;
 };
@@ -86,7 +90,7 @@ const Custodian second_custodian{
 
 void SetCustodianPrefs(PrefService& pref_service,
                        const Custodian& custodian,
-                       const kids_chrome_management::FamilyMember& member) {
+                       const kidsmanagement::FamilyMember& member) {
   pref_service.SetString(custodian.display_name,
                          member.profile().display_name());
   pref_service.SetString(custodian.email, member.profile().email());
@@ -105,15 +109,16 @@ void ClearCustodianPrefs(PrefService& pref_service,
   pref_service.ClearPref(custodian.profile_image_url);
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 void SetIsChildAccountStatusKnown(PrefService& pref_service) {
   pref_service.SetBoolean(prefs::kChildAccountStatusKnown, true);
 }
+#endif
 
 }  // namespace
 
-void RegisterFamilyPrefs(
-    PrefService& pref_service,
-    const kids_chrome_management::ListFamilyMembersResponse& response) {
+void RegisterFamilyPrefs(PrefService& pref_service,
+                         const kidsmanagement::ListMembersResponse& response) {
   Family family(response);
 
   if (family.GetHeadOfHousehold().has_value()) {
@@ -131,20 +136,164 @@ void RegisterFamilyPrefs(
   }
 }
 
+void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+  // The default pref store should hold values that configure default browsing
+  // behavior.
+  registry->RegisterStringPref(prefs::kSupervisedUserId, std::string());
+  registry->RegisterDictionaryPref(prefs::kSupervisedUserManualHosts);
+  registry->RegisterDictionaryPref(prefs::kSupervisedUserManualURLs);
+  registry->RegisterIntegerPref(prefs::kDefaultSupervisedUserFilteringBehavior,
+                                static_cast<int>(FilteringBehavior::kAllow));
+  registry->RegisterBooleanPref(
+      prefs::kSupervisedUserSafeSites,
+      !base::FeatureList::IsEnabled(kAlignSafeSitesValueWithBrowserDefault));
+  for (const char* pref : kCustodianInfoPrefs) {
+    registry->RegisterStringPref(pref, std::string());
+  }
+  registry->RegisterBooleanPref(prefs::kChildAccountStatusKnown, false);
+  registry->RegisterStringPref(prefs::kFamilyLinkUserMemberRole, std::string());
+#if BUILDFLAG(ENABLE_EXTENSIONS) && \
+    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX))
+  registry->RegisterIntegerPref(
+      prefs::kLocallyParentApprovedExtensionsMigrationState,
+      static_cast<int>(
+          supervised_user::LocallyParentApprovedExtensionsMigrationState::
+              kNeedToRun));
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS) && (BUILDFLAG(IS_WIN) ||
+        // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX))
+}
+
 void EnableParentalControls(PrefService& pref_service) {
   pref_service.SetString(prefs::kSupervisedUserId,
                          supervised_user::kChildAccountSUID);
+#if BUILDFLAG(IS_CHROMEOS)
   SetIsChildAccountStatusKnown(pref_service);
+#endif
 }
 
 void DisableParentalControls(PrefService& pref_service) {
   pref_service.ClearPref(prefs::kSupervisedUserId);
   ClearCustodianPrefs(pref_service, first_custodian);
   ClearCustodianPrefs(pref_service, second_custodian);
+#if BUILDFLAG(IS_CHROMEOS)
   SetIsChildAccountStatusKnown(pref_service);
+#endif
 }
 
-bool IsChildAccountStatusKnown(PrefService& pref_service) {
+#if BUILDFLAG(IS_CHROMEOS)
+bool IsChildAccountStatusKnown(const PrefService& pref_service) {
   return pref_service.GetBoolean(prefs::kChildAccountStatusKnown);
+}
+#endif
+
+bool IsSafeSitesEnabled(const PrefService& pref_service) {
+  if (base::FeatureList::IsEnabled(kDecoupleSafeSitesFromMainSwitch) &&
+      base::FeatureList::IsEnabled(kAlignSafeSitesValueWithBrowserDefault)) {
+    return pref_service.GetBoolean(prefs::kSupervisedUserSafeSites);
+  }
+
+  return supervised_user::IsSubjectToParentalControls(pref_service) &&
+         pref_service.GetBoolean(prefs::kSupervisedUserSafeSites);
+}
+
+bool IsSubjectToParentalControls(const PrefService& pref_service) {
+  return pref_service.GetString(prefs::kSupervisedUserId) == kChildAccountSUID;
+}
+bool IsSubjectToUserControls(const PrefService& pref_service) {
+  return pref_service.GetString(prefs::kSupervisedUserId) ==
+         kSupervisedProfileSUID;
+}
+
+bool IsGoogleSafeSearchEnforced(const PrefService& pref_service) {
+  return pref_service.GetBoolean(policy::policy_prefs::kForceGoogleSafeSearch);
+}
+void SetGoogleSafeSearch(PrefService& pref_service,
+                         GoogleSafeSearchStateStatus status) {
+  pref_service.SetBoolean(policy::policy_prefs::kForceGoogleSafeSearch,
+                          static_cast<bool>(status));
+}
+
+namespace {
+void CheckEligibilityForContentFilters(PrefService& pref_service) {
+  CHECK(!IsSubjectToParentalControls(pref_service))
+      << "Users who are subject to Family Link parental controls cannot "
+         "change browser content filters";
+}
+}  // namespace
+
+void EnableBrowserContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  pref_service.SetString(prefs::kSupervisedUserId,
+                         supervised_user::kSupervisedProfileSUID);
+}
+
+void DisableBrowserContentFilters(PrefService& pref_service) {
+  DisableParentalControls(pref_service);
+}
+
+void EnableSearchContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  pref_service.SetBoolean(policy::policy_prefs::kForceGoogleSafeSearch, true);
+}
+void DisableSearchContentFilters(PrefService& pref_service) {
+  // Reset the setting to default.
+  pref_service.ClearPref(policy::policy_prefs::kForceGoogleSafeSearch);
+}
+void EnableIncognitoMode(PrefService& pref_service) {
+  pref_service.ClearPref(policy::policy_prefs::kIncognitoModeAvailability);
+}
+void DisableIncognitoMode(PrefService& pref_service) {
+  pref_service.SetInteger(
+      policy::policy_prefs::kIncognitoModeAvailability,
+      static_cast<int>(policy::IncognitoModeAvailability::kDisabled));
+}
+
+SupervisedControlsState::State SupervisedControlsState::GetCurrentState(
+    const PrefService& service) {
+  if (IsSubjectToParentalControls(service)) {
+    return State::kFamilyLinkParentalControlsEnabled;
+  } else if (IsSubjectToUserControls(service)) {
+    return State::kLocalParentalControlsEnabled;
+  }
+  return State::kDisabled;
+}
+
+SupervisedControlsState::SupervisedControlsState(
+    PrefService& service,
+    base::RepeatingClosure on_family_link_parental_controls_activated,
+    base::RepeatingClosure on_local_parental_controls_activated,
+    base::RepeatingClosure on_controls_deactivated)
+    : pref_service_(service),
+      state_(GetCurrentState(service)),
+      callbacks_({{State::kFamilyLinkParentalControlsEnabled,
+                   on_family_link_parental_controls_activated},
+                  {State::kLocalParentalControlsEnabled,
+                   on_local_parental_controls_activated},
+                  {State::kDisabled, on_controls_deactivated}}) {
+  registrar_.Init(&service);
+  // base::Unretained is safe, because `this` owns `registrar_`.
+  registrar_.Add(
+      prefs::kSupervisedUserId,
+      base::BindRepeating(&SupervisedControlsState::OnSupervisedUserIdChanged,
+                          base::Unretained(this)));
+}
+SupervisedControlsState::~SupervisedControlsState() = default;
+
+void SupervisedControlsState::OnSupervisedUserIdChanged() {
+  State new_state = GetCurrentState(pref_service_.get());
+  if (new_state == state_) {
+    return;
+  }
+
+  CHECK_NE(state_ == State::kDisabled, new_state == State::kDisabled)
+      << "Transitions between kParental and kUser are forbidden without going "
+         "through kDisabled first";
+
+  state_ = new_state;
+  Notify();
+}
+
+void SupervisedControlsState::Notify() const {
+  callbacks_.at(state_).Run();
 }
 }  // namespace supervised_user

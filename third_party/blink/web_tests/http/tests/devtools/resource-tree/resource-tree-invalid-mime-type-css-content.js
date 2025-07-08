@@ -5,10 +5,12 @@
 import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that content is correctly shown for css loaded with invalid mime type in quirks mode. https://bugs.webkit.org/show_bug.cgi?id=80528\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('resources');
   await TestRunner.addStylesheetTag('resources/stylesheet-text-plain.php');
   await TestRunner.waitForUISourceCode('stylesheet-text-plain.php');
@@ -19,9 +21,9 @@ import {ApplicationTestRunner} from 'application_test_runner';
   });
   TestRunner.addResult(cssResource.url);
   TestRunner.assertEquals(
-      cssResource.resourceType(), Common.resourceTypes.Stylesheet, 'Resource type should be Stylesheet.');
+      cssResource.resourceType(), Common.ResourceType.resourceTypes.Stylesheet, 'Resource type should be Stylesheet.');
   TestRunner.assertTrue(!cssResource.failed, 'Resource loading failed.');
-  const {isEncoded} = await cssResource.requestContent();
+  const {isEncoded} = await cssResource.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent);
 
   var content = isEncoded ? window.atob(cssResource.content) : cssResource.content;
   TestRunner.addResult('Resource.content: ' + content);

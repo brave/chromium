@@ -8,30 +8,19 @@
 #include "ash/webui/grit/ash_demo_mode_app_resources.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/system_web_apps/apps/system_web_app_install_utils.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/constants/chromeos_features.h"
 
-std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForDemoModeApp() {
-  std::unique_ptr<web_app::WebAppInstallInfo> info =
-      std::make_unique<web_app::WebAppInstallInfo>();
-  info->start_url = GURL(ash::kChromeUntrustedUIDemoModeAppIndexURL);
-  info->scope = GURL(ash::kChromeUntrustedUIDemoModeAppURL);
-  // TODO(b/185608502): Convert the title to a localized string
-  info->title = u"Demo Mode App";
-  web_app::CreateIconInfoForSystemWebApp(
-      info->start_url,
-      {{"app_icon_192.png", 192, IDR_ASH_DEMO_MODE_APP_APP_ICON_192_PNG}},
-      *info);
-  info->theme_color = 0xFF4285F4;
-  info->background_color = 0xFFFFFFFF;
-  info->display_mode = blink::mojom::DisplayMode::kStandalone;
-  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
-
-  return info;
-}
+namespace {
+// Set the minimum window size to 800 pixels in width and 600 pixels in height.
+// This is to avoid layout issue that text might be overlapping when the SWA
+// window is too small.
+constexpr int kDemoModeAppMinimumWidth = 800;
+constexpr int kDemoModeAppMinimumHeight = 600;
+}  // namespace
 
 DemoModeSystemAppDelegate::DemoModeSystemAppDelegate(Profile* profile)
     : ash::SystemWebAppDelegate(ash::SystemWebAppType::DEMO_MODE,
@@ -41,14 +30,34 @@ DemoModeSystemAppDelegate::DemoModeSystemAppDelegate(Profile* profile)
 
 std::unique_ptr<web_app::WebAppInstallInfo>
 DemoModeSystemAppDelegate::GetWebAppInfo() const {
-  return CreateWebAppInfoForDemoModeApp();
+  GURL start_url = GURL(ash::kChromeUntrustedUIDemoModeAppIndexURL);
+  auto info =
+      web_app::CreateSystemWebAppInstallInfoWithStartUrlAsIdentity(start_url);
+  info->scope = GURL(ash::kChromeUntrustedUIDemoModeAppURL);
+  // TODO(b/323002417): Convert the title to a localized string
+  info->title = u"ChromeOS Highlights";
+  web_app::CreateIconInfoForSystemWebApp(
+      info->start_url(),
+      {{"app_icon_192.png", 192, IDR_ASH_DEMO_MODE_APP_APP_ICON_192_PNG}},
+      *info);
+  info->theme_color =
+      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/false);
+  info->dark_mode_theme_color =
+      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/true);
+  info->background_color = info->theme_color;
+  info->display_mode = blink::mojom::DisplayMode::kStandalone;
+  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
+  return info;
 }
 
 bool DemoModeSystemAppDelegate::ShouldCaptureNavigations() const {
   return true;
 }
 
+gfx::Size DemoModeSystemAppDelegate::GetMinimumWindowSize() const {
+  return {kDemoModeAppMinimumWidth, kDemoModeAppMinimumHeight};
+}
+
 bool DemoModeSystemAppDelegate::IsAppEnabled() const {
-  return chromeos::features::IsDemoModeSWAEnabled() &&
-         ash::DemoSession::IsDeviceInDemoMode();
+  return ash::demo_mode::IsDeviceInDemoMode();
 }

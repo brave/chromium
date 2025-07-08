@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that adding a new rule can be undone.\n`);
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('elements');
   await TestRunner.loadHTML(`
       <div class="foo" id="inspected" style="font-size: 12px">Text</div>
@@ -33,7 +34,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
   }
 
   function step4() {
-    SDK.domModelUndoStack.undo();
+    SDK.DOMModel.DOMModelUndoStack.instance().undo();
     ElementsTestRunner.selectNodeAndWaitForStyles('other', step5);
   }
 
@@ -44,7 +45,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
   }
 
   function step6() {
-    SDK.domModelUndoStack.redo();
+    SDK.DOMModel.DOMModelUndoStack.instance().redo();
     ElementsTestRunner.selectNodeAndWaitForStyles('inspected', step7);
   }
 

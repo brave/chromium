@@ -4,6 +4,7 @@
 
 #include "chrome/browser/spellchecker/spellcheck_service.h"
 
+#include <algorithm>
 #include <iterator>
 #include <memory>
 #include <set>
@@ -14,14 +15,14 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/supports_user_data.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 #include "chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h"
 #include "components/language/core/browser/pref_names.h"
@@ -44,9 +45,8 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
-#include "chrome/browser/ash/profiles/profile_helper.h"
 #endif
 
 #if BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
@@ -67,16 +67,7 @@ SpellcheckService::SpellCheckerBinder& GetSpellCheckerBinderOverride() {
 // Only record spelling-configuration metrics for profiles in which the user
 // can configure spelling.
 bool RecordSpellingConfigurationMetrics(content::BrowserContext* context) {
-  Profile* profile = Profile::FromBrowserContext(context);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // ChromeOS creates various unusual profiles (login, lock screen...) which
-  // pass the IsRegularProfile() test above yet for which users cannot
-  // configure spelling.
-  if (!ash::ProfileHelper::IsUserProfile(profile)) {
-    return false;
-  }
-#endif
-  return profile->IsRegularProfile();
+  return profiles::IsRegularUserProfile(Profile::FromBrowserContext(context));
 }
 
 }  // namespace
@@ -292,7 +283,7 @@ std::string SpellcheckService::GetSupportedAcceptLanguageCode(
   // First try exact match. Per BCP47, tags are in ASCII and should be treated
   // as case-insensitive (although there are conventions for the capitalization
   // of subtags).
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       accept_languages,
       [supported_language_full_tag](const auto& accept_language) {
         return base::EqualsCaseInsensitiveASCII(supported_language_full_tag,
@@ -309,7 +300,7 @@ std::string SpellcheckService::GetSupportedAcceptLanguageCode(
   if (!base::Contains(supported_language_full_tag, "-"))
     return "";
 
-  iter = base::ranges::find_if(
+  iter = std::ranges::find_if(
       accept_languages,
       [supported_language_full_tag](const auto& accept_language) {
         return base::EqualsCaseInsensitiveASCII(
@@ -732,7 +723,7 @@ std::string SpellcheckService::GetLanguageAndScriptTag(
 std::string SpellcheckService::GetSupportedAcceptLanguageCodeGenericOnly(
     const std::string& supported_language_full_tag,
     const std::vector<std::string>& accept_languages) {
-  auto iter = base::ranges::find_if(
+  auto iter = std::ranges::find_if(
       accept_languages,
       [supported_language_full_tag](const auto& accept_language) {
         return base::EqualsCaseInsensitiveASCII(
@@ -867,7 +858,7 @@ void SpellcheckService::OnUseSpellingServiceChanged() {
 
 void SpellcheckService::OnAcceptLanguagesChanged() {
   // Accept-Languages and spell check are decoupled on CrOS.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   std::vector<std::string> accept_languages = GetNormalizedAcceptLanguages();
 
   StringListPrefMember dictionaries_pref;
@@ -889,7 +880,7 @@ void SpellcheckService::OnAcceptLanguagesChanged() {
     RecordChromeLocalesStats();
   }
 #endif  // BUILDFLAG(IS_WIN)
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 std::vector<std::string> SpellcheckService::GetNormalizedAcceptLanguages(
@@ -900,7 +891,7 @@ std::vector<std::string> SpellcheckService::GetNormalizedAcceptLanguages(
                         ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   if (normalize_for_spellcheck) {
-    base::ranges::transform(
+    std::ranges::transform(
         accept_languages, accept_languages.begin(),
         [&](const std::string& language) {
 #if BUILDFLAG(IS_WIN)
@@ -940,11 +931,13 @@ void SpellcheckService::RecordSpellcheckLocalesStats() {
 }
 
 void SpellcheckService::RecordChromeLocalesStats() {
-  const auto& accept_languages =
-      GetNormalizedAcceptLanguages(/* normalize_for_spellcheck */ false);
-  if (metrics_ && platform_spell_checker() && !accept_languages.empty()) {
-    spellcheck_platform::RecordChromeLocalesStats(platform_spell_checker(),
-                                                  std::move(accept_languages));
+  if (metrics_ && platform_spell_checker()) {
+    std::vector<std::string> accept_languages =
+        GetNormalizedAcceptLanguages(/* normalize_for_spellcheck */ false);
+    if (!accept_languages.empty()) {
+      spellcheck_platform::RecordChromeLocalesStats(
+          platform_spell_checker(), std::move(accept_languages));
+    }
   }
 }
 

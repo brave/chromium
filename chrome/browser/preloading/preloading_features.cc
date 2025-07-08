@@ -6,11 +6,19 @@
 
 namespace features {
 
-// Forces Chrome to use the Preload pages settings sub page on desktop
-// platforms. This allows a user to choose between no preloading, standard
-// preloading, and extended preloading.
-BASE_FEATURE(kPreloadingDesktopSettingsSubPage,
-             "PreloadingDesktopSettingsSubPage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPrewarm, "Prewarm", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(std::string, kPrewarmUrl, &kPrewarm, "url", "");
+BASE_FEATURE_PARAM(bool,
+                   kPrewarmZeroSuggestTrigger,
+                   &kPrewarm,
+                   "zero_suggest_trigger",
+                   false);
+
+BASE_FEATURE(kPrerender2WarmUpCompositorForBookmarkBar,
+             "Prerender2WarmUpCompositorForBookmarkBar",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kPrerender2WarmUpCompositorForNewTabPage,
+             "Prerender2WarmUpCompositorForNewTabPage",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

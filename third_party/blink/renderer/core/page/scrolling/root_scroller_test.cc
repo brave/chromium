@@ -11,6 +11,7 @@
 #include "third_party/blink/public/web/web_script_source.h"
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_node_string_trustedscript.h"
+#include "third_party/blink/renderer/core/css/css_default_style_sheets.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/frame/browser_controls.h"
 #include "third_party/blink/renderer/core/frame/dom_visual_viewport.h"
@@ -34,7 +35,10 @@
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
+#include "third_party/blink/renderer/core/testing/web_view_test_helper.h"
+#include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
@@ -149,6 +153,16 @@ class RootScrollerTest : public testing::Test,
     create_widget_callback_ = create_widget_callback;
   }
 
+  bool UsesCompositedScrolling(
+      const PaintLayerScrollableArea* scrollable_area) {
+    auto* property_trees =
+        MainFrameView()->RootCcLayer()->layer_tree_host()->property_trees();
+    auto* scroll_node =
+        property_trees->scroll_tree_mutable().FindNodeFromElementId(
+            scrollable_area->GetScrollElementId());
+    return scroll_node->is_composited;
+  }
+
  protected:
   WebViewImpl* InitializeInternal(const String& url) {
     helper_ = std::make_unique<frame_test_helpers::WebViewHelper>(
@@ -173,6 +187,7 @@ class RootScrollerTest : public testing::Test,
     view->UpdateAllLifecyclePhasesForTest();
   }
 
+  test::TaskEnvironment task_environment_;
   String base_url_;
   frame_test_helpers::CreateTestWebFrameWidgetCallback create_widget_callback_;
   std::unique_ptr<frame_test_helpers::WebViewHelper> helper_;
@@ -485,18 +500,18 @@ TEST_F(RootScrollerTest, AlwaysCreateCompositedScrollingLayers) {
       MainFrame()->GetDocument()->getElementById(AtomicString("container"));
 
   PaintLayerScrollableArea* container_scroller = GetScrollableArea(*container);
-  ASSERT_FALSE(container_scroller->UsesCompositedScrolling());
+  ASSERT_FALSE(UsesCompositedScrolling(container_scroller));
 
   ExecuteScript("document.querySelector('#container').style.width = '100%'");
   ASSERT_EQ(container, EffectiveRootScroller(MainFrame()->GetDocument()));
 
-  ASSERT_TRUE(container_scroller->UsesCompositedScrolling());
+  ASSERT_TRUE(UsesCompositedScrolling(container_scroller));
 
   ExecuteScript("document.querySelector('#container').style.width = '98%'");
   ASSERT_EQ(MainFrame()->GetDocument(),
             EffectiveRootScroller(MainFrame()->GetDocument()));
 
-  EXPECT_FALSE(container_scroller->UsesCompositedScrolling());
+  EXPECT_FALSE(UsesCompositedScrolling(container_scroller));
 }
 
 // Make sure that if an effective root scroller becomes a remote frame, it's
@@ -533,7 +548,7 @@ TEST_F(RootScrollerTest, RemoveRootScrollerFromDom) {
 
     ASSERT_EQ(iframe, EffectiveRootScroller(MainFrame()->GetDocument()));
 
-    iframe->contentDocument()->body()->setInnerHTML("");
+    iframe->contentDocument()->body()->SetInnerHTMLWithoutTrustedTypes("");
 
     // If the root scroller wasn't updated by the DOM removal above, this
     // will touch the disposed root scroller's ScrollableArea.
@@ -734,7 +749,7 @@ TEST_F(RootScrollerTest, RotationAnchoring) {
   UpdateAllLifecyclePhases(MainFrameView());
 
   // The visual viewport should remain fully filled by the target.
-  DOMRect* rect = target->getBoundingClientRect();
+  DOMRect* rect = target->GetBoundingClientRect();
   EXPECT_EQ(rect->left(), GetVisualViewport().GetScrollOffset().x());
   EXPECT_EQ(rect->top(), GetVisualViewport().GetScrollOffset().y());
 }
@@ -858,7 +873,12 @@ TEST_F(RootScrollerTest, ImmediateUpdateOfLayoutViewport) {
 class ImplicitRootScrollerSimTest : public SimTest {
  public:
   ImplicitRootScrollerSimTest() : implicit_root_scroller_for_test_(true) {}
-
+  ~ImplicitRootScrollerSimTest() override {
+    // TODO(crbug.com/1315595): Consider moving this to MainThreadIsolate.
+    MemoryCache::Get()->EvictResources();
+    // Clear lazily loaded style sheets.
+    CSSDefaultStyleSheets::Instance().PrepareForLeakDetection();
+  }
   void SetUp() override {
     SimTest::SetUp();
     WebView().GetPage()->GetSettings().SetViewportEnabled(true);
@@ -1975,9 +1995,10 @@ TEST_F(ImplicitRootScrollerSimTest, ScrollRestorationIgnoresImplicit) {
   GetDocument()
       .View()
       ->GetScrollableArea()
-      ->SetPendingHistoryRestoreScrollOffset(view_state, true);
+      ->SetPendingHistoryRestoreScrollOffset(
+          view_state, true, mojom::blink::ScrollBehavior::kAuto);
   GetDocument().View()->LayoutViewport()->SetPendingHistoryRestoreScrollOffset(
-      view_state, true);
+      view_state, true, mojom::blink::ScrollBehavior::kAuto);
   GetDocument().View()->ScheduleAnimation();
 
   Compositor().BeginFrame();
@@ -2070,7 +2091,7 @@ TEST_F(ImplicitRootScrollerSimTest,
   EXPECT_EQ(container,
             GetDocument().GetRootScrollerController().EffectiveRootScroller());
   EXPECT_EQ(To<LayoutBox>(container->GetLayoutObject())->Size().height, 600);
-  WebView().SetZoomLevel(PageZoomFactorToZoomLevel(2.0));
+  WebView().MainFrameWidget()->SetZoomLevel(ZoomFactorToZoomLevel(2.0));
   WebView().GetPage()->GetBrowserControls().SetShownRatio(0, 0);
   WebView().ResizeWithBrowserControls(gfx::Size(800, 650), 50, 50, false);
   Compositor().BeginFrame();
@@ -2364,22 +2385,22 @@ TEST_F(ImplicitRootScrollerSimTest, BottomFixedAffectedByTopControls) {
       To<HTMLFrameOwnerElement>(container1)->contentDocument();
   Document* child2_document =
       To<HTMLFrameOwnerElement>(container2)->contentDocument();
-  LayoutObject* fixed =
+  LayoutObject* fixed_layout =
       GetDocument().getElementById(AtomicString("fixed"))->GetLayoutObject();
-  LayoutObject* fixed1 =
+  LayoutObject* fixed_layout1 =
       child1_document->getElementById(AtomicString("fixed"))->GetLayoutObject();
-  LayoutObject* fixed2 =
+  LayoutObject* fixed_layout2 =
       child2_document->getElementById(AtomicString("fixed"))->GetLayoutObject();
 
-  EXPECT_TRUE(fixed->FirstFragment()
+  EXPECT_TRUE(fixed_layout->FirstFragment()
                   .PaintProperties()
                   ->PaintOffsetTranslation()
                   ->IsAffectedByOuterViewportBoundsDelta());
-  EXPECT_TRUE(fixed1->FirstFragment()
+  EXPECT_TRUE(fixed_layout1->FirstFragment()
                   .PaintProperties()
                   ->PaintOffsetTranslation()
                   ->IsAffectedByOuterViewportBoundsDelta());
-  EXPECT_FALSE(fixed2->FirstFragment()
+  EXPECT_FALSE(fixed_layout2->FirstFragment()
                    .PaintProperties()
                    ->PaintOffsetTranslation()
                    ->IsAffectedByOuterViewportBoundsDelta());
@@ -2820,7 +2841,7 @@ class RootScrollerHitTest : public ImplicitRootScrollerSimTest {
     // target.
     gfx::Point point(200, 445);
     gfx::Size tap_area(20, 20);
-    WebHitTestResult result = WebView().HitTestResultForTap(point, tap_area);
+    WebHitTestResult result = HitTestResultForTap(&WebView(), point, tap_area);
 
     Node* hit_node = result.GetNode().Unwrap<Node>();
     EXPECT_EQ(target, hit_node);

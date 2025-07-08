@@ -7,16 +7,23 @@
 
 #include <stddef.h>
 
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/task/deferred_sequenced_task_runner.h"
 #include "base/values.h"
+#include "components/prefs/transparent_unordered_string_map.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/preferences/public/mojom/preferences.mojom.h"
@@ -24,7 +31,6 @@
 #include "services/preferences/tracked/interceptable_pref_filter.h"
 #include "services/preferences/tracked/pref_hash_store.h"
 #include "services/preferences/tracked/tracked_preference.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class PrefService;
 
@@ -32,10 +38,8 @@ namespace base {
 class Time;
 }  // namespace base
 
-namespace prefs {
-namespace mojom {
+namespace prefs::mojom {
 class TrackedPreferenceValidationDelegate;
-}
 }
 
 namespace user_prefs {
@@ -45,10 +49,15 @@ class PrefRegistrySyncable;
 // Intercepts preference values as they are loaded from disk and verifies them
 // using a PrefHashStore. Keeps the PrefHashStore contents up to date as values
 // are changed.
-class PrefHashFilter : public InterceptablePrefFilter {
+class PrefHashFilter final : public InterceptablePrefFilter {
  public:
   using StoreContentsPair = std::pair<std::unique_ptr<PrefHashStore>,
                                       std::unique_ptr<HashStoreContents>>;
+
+  // A map from changed paths to their corresponding TrackedPreferences (which
+  // aren't owned by this map).
+  using ChangedPathsMap =
+      std::map<std::string, raw_ptr<const TrackedPreference, CtnExperimental>>;
 
   // Constructs a PrefHashFilter tracking the specified |tracked_preferences|
   // using |pref_hash_store| to check/store hashes. An optional |delegate| is
@@ -59,6 +68,10 @@ class PrefHashFilter : public InterceptablePrefFilter {
   // than |tracked_preferences.size()|).
   // |external_validation_hash_store_pair_| will be used (if non-null) to
   // perform extra validations without triggering resets.
+  // |os_crypt| provides an asynchronous interface to OS-level encryption for
+  // storing an additional encrypted hash if kEncryptedPrefHashing is enabled.
+  // The encryptor could be null on start-up but it will be retrieved
+  // asynchronously.
   PrefHashFilter(
       std::unique_ptr<PrefHashStore> pref_hash_store,
       StoreContentsPair external_validation_hash_store_pair_,
@@ -69,7 +82,8 @@ class PrefHashFilter : public InterceptablePrefFilter {
       scoped_refptr<base::RefCountedData<
           mojo::Remote<prefs::mojom::TrackedPreferenceValidationDelegate>>>
           delegate,
-      size_t reporting_ids_count);
+      size_t reporting_ids_count,
+      os_crypt_async::OSCryptAsync* os_crypt);
 
   PrefHashFilter(const PrefHashFilter&) = delete;
   PrefHashFilter& operator=(const PrefHashFilter&) = delete;
@@ -93,11 +107,22 @@ class PrefHashFilter : public InterceptablePrefFilter {
   void Initialize(base::Value::Dict& pref_store_contents);
 
   // PrefFilter remaining implementation.
-  void FilterUpdate(const std::string& path) override;
+  void FilterUpdate(std::string_view path) override;
   OnWriteCallbackPair FilterSerializeData(
       base::Value::Dict& pref_store_contents) override;
 
   void OnStoreDeletionFromDisk() override;
+
+  static void SetDeprecatedPrefsForTesting(
+      const std::vector<const char*>& deprecated_prefs);
+
+  // Sets a callback to be run for testing purposes when deferred revalidation
+  // is complete.
+  void SetOnDeferredRevalidationCompleteForTesting(base::OnceClosure callback);
+
+  // Sets the PrefService that owns this filter. This must be called after
+  // construction and before any deferred tasks can run that might need it.
+  void SetPrefService(PrefService* pref_service) override;
 
  private:
   // InterceptablePrefFilter implementation.
@@ -105,6 +130,8 @@ class PrefHashFilter : public InterceptablePrefFilter {
       PostFilterOnLoadCallback post_filter_on_load_callback,
       base::Value::Dict pref_store_contents,
       bool prefs_altered) override;
+
+  base::WeakPtr<InterceptablePrefFilter> AsWeakPtr() override;
 
   // Helper function to generate FilterSerializeData()'s pre-write and
   // post-write callbacks. The returned callbacks are thread-safe.
@@ -125,6 +152,13 @@ class PrefHashFilter : public InterceptablePrefFilter {
       std::unique_ptr<base::Value::Dict> changed_paths_and_macs,
       bool write_success);
 
+  void OnEncryptorReceived(os_crypt_async::Encryptor encryptor) override;
+
+  // Performs the deferred work of re-validating preferences after the
+  // encryptor has been fetched. This is posted from FinalizeFilterOnLoad.
+  void DeferredEncryptorRevalidation(
+      base::Value::Dict pref_store_contents_at_load);
+
   // Callback to be invoked only once (and subsequently reset) on the next
   // FilterOnLoad event. It will be allowed to modify the |prefs| handed to
   // FilterOnLoad before handing them back to this PrefHashFilter.
@@ -133,18 +167,14 @@ class PrefHashFilter : public InterceptablePrefFilter {
   // A map of paths to TrackedPreferences; this map owns this individual
   // TrackedPreference objects.
   using TrackedPreferencesMap =
-      std::unordered_map<std::string, std::unique_ptr<TrackedPreference>>;
-
-  // A map from changed paths to their corresponding TrackedPreferences (which
-  // aren't owned by this map).
-  using ChangedPathsMap = std::map<std::string, const TrackedPreference*>;
+      TransparentUnorderedStringMap<std::unique_ptr<TrackedPreference>>;
 
   std::unique_ptr<PrefHashStore> pref_hash_store_;
 
   // A store and contents on which to perform extra validations without
   // triggering resets.
   // Will be null if the platform does not support external validation.
-  absl::optional<StoreContentsPair> external_validation_hash_store_pair_;
+  std::optional<StoreContentsPair> external_validation_hash_store_pair_;
 
   // Notified if a reset occurs in a call to FilterOnLoad.
   mojo::Remote<prefs::mojom::ResetOnLoadObserver> reset_on_load_observer_;
@@ -157,6 +187,26 @@ class PrefHashFilter : public InterceptablePrefFilter {
   // The set of all paths whose value has changed since the last call to
   // FilterSerializeData.
   ChangedPathsMap changed_paths_;
+
+  // A deferred task runner to defer and start the async encryptor related
+  // validation task.
+  scoped_refptr<base::DeferredSequencedTaskRunner> deferred_task_runner_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  // A raw pointer to the PrefService that owns this filter. This is safe
+  // because the PrefService is guaranteed to outlive this filter.
+  raw_ptr<PrefService> pref_service_ = nullptr;
+
+  const bool encrypted_hashing_enabled_;
+  std::optional<os_crypt_async::Encryptor> encryptor_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
+  // A callback to be run for testing purposes when deferred revalidation is
+  // complete.
+  base::OnceClosure on_deferred_revalidation_complete_for_testing_;
+
+  base::WeakPtrFactory<PrefHashFilter> weak_ptr_factory_{this};
 };
 
 #endif  // SERVICES_PREFERENCES_TRACKED_PREF_HASH_FILTER_H_

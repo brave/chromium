@@ -8,9 +8,12 @@ import android.graphics.Rect;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.paintpreview.browser.NativePaintPreviewServiceProvider;
 import org.chromium.content_public.browser.WebContents;
@@ -22,13 +25,14 @@ import org.chromium.url.GURL;
  * capturing the Paint Preview representation of a tab.
  */
 @JNINamespace("long_screenshots")
+@NullMarked
 public class LongScreenshotsTabService implements NativePaintPreviewServiceProvider {
     /** Interface used for notifying in the event of navigation to a URL. */
     public interface CaptureProcessor {
         void processCapturedTab(long nativeCaptureResultPtr, @Status int status);
     }
 
-    private CaptureProcessor mCaptureProcessor;
+    private @Nullable CaptureProcessor mCaptureProcessor;
 
     private long mNativeLongScreenshotsTabService;
 
@@ -80,17 +84,25 @@ public class LongScreenshotsTabService implements NativePaintPreviewServiceProvi
             return;
         }
 
-        LongScreenshotsTabServiceJni.get().captureTabAndroid(mNativeLongScreenshotsTabService,
-                tab.getId(), tab.getUrl(), tab.getWebContents(), clipRect.left, clipRect.top,
-                clipRect.width(), clipRect.height(), inMemory);
+        LongScreenshotsTabServiceJni.get()
+                .captureTabAndroid(
+                        mNativeLongScreenshotsTabService,
+                        tab.getId(),
+                        tab.getUrl(),
+                        tab.getWebContents(),
+                        clipRect.left,
+                        clipRect.top,
+                        clipRect.width(),
+                        clipRect.height(),
+                        inMemory);
     }
 
     public void longScreenshotsClosed() {
         if (mNativeLongScreenshotsTabService == 0) {
             return;
         }
-        LongScreenshotsTabServiceJni.get().longScreenshotsClosedAndroid(
-                mNativeLongScreenshotsTabService);
+        LongScreenshotsTabServiceJni.get()
+                .longScreenshotsClosedAndroid(mNativeLongScreenshotsTabService);
     }
 
     @Override
@@ -106,10 +118,19 @@ public class LongScreenshotsTabService implements NativePaintPreviewServiceProvi
 
     @NativeMethods
     interface Natives {
-        void captureTabAndroid(long nativeLongScreenshotsTabService, int tabId, GURL url,
-                WebContents webContents, int clipX, int clipY, int clipWidth, int clipHeight,
+        void captureTabAndroid(
+                long nativeLongScreenshotsTabService,
+                int tabId,
+                GURL url,
+                WebContents webContents,
+                int clipX,
+                int clipY,
+                int clipWidth,
+                int clipHeight,
                 boolean inMemory);
+
         void longScreenshotsClosedAndroid(long nativeLongScreenshotsTabService);
+
         void releaseCaptureResultPtr(long captureResultPtr);
     }
 }

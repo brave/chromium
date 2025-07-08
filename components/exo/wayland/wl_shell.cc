@@ -9,10 +9,12 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/exo/display.h"
 #include "components/exo/shell_surface.h"
 #include "components/exo/wayland/server_util.h"
+#include "components/exo/wayland/wayland_display_observer.h"
 
 namespace exo {
 namespace wayland {
@@ -73,8 +75,12 @@ void shell_surface_set_fullscreen(wl_client* client,
   if (shell_surface->GetEnabled())
     return;
 
+  int64_t display_id =
+      output_resource
+          ? GetUserDataAs<WaylandDisplayHandler>(output_resource)->id()
+          : display::kInvalidDisplayId;
   shell_surface->SetEnabled(true);
-  shell_surface->SetFullscreen(true);
+  shell_surface->SetFullscreen(true, display_id);
 }
 
 void shell_surface_set_popup(wl_client* client,
@@ -129,7 +135,9 @@ uint32_t HandleShellSurfaceConfigureCallback(
     bool resizing,
     bool activated,
     const gfx::Vector2d& origin_offset,
-    float raster_scale) {
+    float raster_scale,
+    aura::Window::OcclusionState occlusion_state,
+    std::optional<chromeos::WindowStateType> restore_state_type) {
   wl_shell_surface_send_configure(resource, WL_SHELL_SURFACE_RESIZE_NONE,
                                   bounds.width(), bounds.height());
   wl_client_flush(wl_resource_get_client(resource));

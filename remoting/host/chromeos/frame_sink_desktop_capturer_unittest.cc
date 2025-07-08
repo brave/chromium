@@ -15,7 +15,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
@@ -63,11 +62,6 @@ constexpr int kFramePoolCapacity = kDesignLimitMaxFrames + 1;
 
 const auto kPixelFormat = VideoPixelFormat::PIXEL_FORMAT_ARGB;
 constexpr int kMaxFrameRate = 60;
-
-const char kUmaKeyForCapturerCreated[] =
-    "Enterprise.DeviceRemoteCommand.Crd.Capturer.FrameSink.Created";
-const char kUmaKeyForCapturerDestroyed[] =
-    "Enterprise.DeviceRemoteCommand.Crd.Capturer.FrameSink.Destroyed";
 
 std::unique_ptr<viz::VideoFramePool> GetVideoFramePool(int capacity) {
   return std::make_unique<viz::SharedMemoryVideoFramePool>(capacity);
@@ -202,6 +196,10 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
   MOCK_METHOD(void, SetAutoThrottlingEnabled, (bool enabled));
 
   MOCK_METHOD(void,
+              SetAnimationFpsLockIn,
+              (bool enabled, float majority_damaged_pixel_min_ratio));
+
+  MOCK_METHOD(void,
               SetResolutionConstraints,
               (const Size& min_size,
                const Size& max_size,
@@ -209,8 +207,8 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
 
   MOCK_METHOD(void,
               ChangeTarget,
-              (const absl::optional<viz::VideoCaptureTarget>& target,
-               uint32_t crop_version));
+              (const std::optional<viz::VideoCaptureTarget>& target,
+               uint32_t sub_capture_target_version));
 
   MOCK_METHOD(void,
               Start,
@@ -367,6 +365,18 @@ TEST_F(FrameSinkDesktopCapturerTest,
   StartCapturerForTesting();
 }
 
+TEST_F(
+    FrameSinkDesktopCapturerTest,
+    ShouldUseDisplaySizeInPixelsAsResolutionConstraintEvenIfScaleFactorIsSet) {
+  // the `@2` sets the scale factor to 2.
+  ash_proxy().UpdatePrimaryDisplaySpec("1000x500@2");
+  const Size expected_display_size(1000, 500);
+  EXPECT_CALL(video_capturer_,
+              SetResolutionConstraints(expected_display_size,
+                                       expected_display_size, _));
+  StartCapturerForTesting();
+}
+
 TEST_F(FrameSinkDesktopCapturerTest, ShouldDropFramesThatMismatchDisplaySize) {
   const Size other_size(110, 220);
   ash_proxy().UpdatePrimaryDisplaySpec("345x67");
@@ -374,6 +384,16 @@ TEST_F(FrameSinkDesktopCapturerTest, ShouldDropFramesThatMismatchDisplaySize) {
   CaptureResult result =
       SendAndCaptureSingleFrame(frame_params().WithSize(other_size));
   EXPECT_THAT(result.result, Eq(DesktopCapturer::Result::ERROR_TEMPORARY));
+}
+
+TEST_F(FrameSinkDesktopCapturerTest,
+       ShouldAcceptFramesThatMatchPhysicalDisplaySizeEvenIfScaleFactorIsSet) {
+  const Size scaled_size(1000, 500);
+  ash_proxy().UpdatePrimaryDisplaySpec("1000x500@2");
+  StartCapturerForTesting();
+  CaptureResult result =
+      SendAndCaptureSingleFrame(frame_params().WithSize(scaled_size));
+  EXPECT_THAT(result.result, Eq(DesktopCapturer::Result::SUCCESS));
 }
 
 TEST_F(FrameSinkDesktopCapturerTest,
@@ -400,7 +420,7 @@ TEST_F(FrameSinkDesktopCapturerTest, ShouldStartByCapturingThePrimaryDisplay) {
   AddMultipleDisplays();
 
   DisplayId primary_display_id = ash_proxy().GetPrimaryDisplayId();
-  const auto expected_target = absl::optional<viz::VideoCaptureTarget>(
+  const auto expected_target = std::optional<viz::VideoCaptureTarget>(
       ash_proxy().GetFrameSinkId(primary_display_id));
 
   EXPECT_CALL(video_capturer_, ChangeTarget(expected_target, 0));
@@ -558,7 +578,7 @@ TEST_F(FrameSinkDesktopCapturerTest, ShouldUpdateSourceOnDisplayChange) {
   Size size(234, 56);
 
   StartCapturerForTesting();
-  const absl::optional<viz::VideoCaptureTarget> expected_target(
+  const std::optional<viz::VideoCaptureTarget> expected_target(
       ash_proxy().GetFrameSinkId(new_display_id));
 
   EXPECT_CALL(video_capturer_, ChangeTarget(expected_target, 0));
@@ -595,20 +615,14 @@ TEST_F(FrameSinkDesktopCapturerTest,
   EXPECT_THAT(result.frame, IsNull());
 }
 
-TEST_F(FrameSinkDesktopCapturerTest,
-       ShouldSendUmaLogsOnCapturerConstructionAndDestruction) {
-  base::HistogramTester histogram_tester;
-
-  auto my_capturer = std::make_unique<FrameSinkDesktopCapturer>();
-  histogram_tester.ExpectUniqueSample(kUmaKeyForCapturerCreated, true, 1);
-
-  my_capturer = nullptr;
-  histogram_tester.ExpectUniqueSample(kUmaKeyForCapturerDestroyed, true, 1);
-}
-
 TEST_F(FrameSinkDesktopCapturerTest, ShouldNotCrashIfStartIsNeverCalled) {
   auto my_capturer = std::make_unique<FrameSinkDesktopCapturer>();
   my_capturer = nullptr;
+}
+
+TEST_F(FrameSinkDesktopCapturerTest, ShouldNotCrashIfSelectSourceBeforeStart) {
+  capturer_.SelectSource(kPrimarySourceId);
+  StartCapturerForTesting();
 }
 
 }  // namespace remoting

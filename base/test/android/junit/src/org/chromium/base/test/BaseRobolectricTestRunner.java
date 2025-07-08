@@ -11,12 +11,9 @@ import org.robolectric.DefaultTestLifecycle;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.TestLifecycle;
 import org.robolectric.internal.SandboxTestRunner;
-import org.robolectric.internal.bytecode.InstrumentationConfiguration;
 import org.robolectric.internal.bytecode.Sandbox;
 
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.TimeoutTimer;
 
 import java.lang.reflect.Method;
 
@@ -26,11 +23,10 @@ import java.lang.reflect.Method;
  * org.robolectric.RobolectricTestRunner} could be used directly.
  */
 public class BaseRobolectricTestRunner extends RobolectricTestRunner {
-    /**
-     * Tracks whether tests pass / fail for use in BaseTestLifecycle.
-     */
+    /** Tracks whether tests pass / fail for use in BaseTestLifecycle. */
     protected static class HelperTestRunner extends RobolectricTestRunner.HelperTestRunner {
         public static boolean sTestFailed;
+
         public HelperTestRunner(Class bootstrappedTestClass) throws InitializationError {
             super(bootstrappedTestClass);
         }
@@ -55,9 +51,7 @@ public class BaseRobolectricTestRunner extends RobolectricTestRunner {
         }
     }
 
-    /**
-     * Before / after hooks that run in the context of the sandbox classloader.
-     */
+    /** Before / after hooks that run in the context of the sandbox classloader. */
     public static class BaseTestLifecycle extends DefaultTestLifecycle {
         @Override
         public void beforeTest(Method method) {
@@ -71,6 +65,8 @@ public class BaseRobolectricTestRunner extends RobolectricTestRunner {
             BaseRobolectricTestRule.tearDown(HelperTestRunner.sTestFailed);
         }
     }
+
+    private static ClassLoader sSandboxClassLoader;
 
     public BaseRobolectricTestRunner(Class<?> testClass) throws InitializationError {
         super(testClass);
@@ -91,16 +87,18 @@ public class BaseRobolectricTestRunner extends RobolectricTestRunner {
     }
 
     @Override
-    protected void afterClass() {
-        super.afterClass();
-        ResettersForTesting.onAfterClass();
-    }
-
-    @Override
     protected void beforeTest(Sandbox sandbox, FrameworkMethod method, Method bootstrappedMethod)
             throws Throwable {
-        ResettersForTesting.setMethodMode();
         super.beforeTest(sandbox, method, bootstrappedMethod);
+
+        // Our test runner is designed to require only one Sandbox per-process.
+        var actualClassLoader = sandbox.getRobolectricClassLoader();
+        var expectedClassLoader = sSandboxClassLoader;
+        if (expectedClassLoader == null) {
+            sSandboxClassLoader = actualClassLoader;
+        } else if (actualClassLoader != expectedClassLoader) {
+            throw new RuntimeException("Invalid test batch detected. https://crbug.com/1465376");
+        }
     }
 
     @Override
@@ -110,14 +108,5 @@ public class BaseRobolectricTestRunner extends RobolectricTestRunner {
         }
         Class<?> testSuiteClass = method.getDeclaringClass();
         return testSuiteClass.getAnnotation(DisabledTest.class) != null;
-    }
-
-    @Override
-    protected InstrumentationConfiguration createClassLoaderConfig(final FrameworkMethod method) {
-        return new InstrumentationConfiguration.Builder(super.createClassLoaderConfig(method))
-                .doNotAcquireClass(HelperTestRunner.class)
-                .doNotAcquireClass(TimeoutTimer.class) // Requires access to non-fake SystemClock.
-                .doNotAcquireClass(ResettersForTesting.class)
-                .build();
     }
 }

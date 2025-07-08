@@ -30,6 +30,8 @@
 
 #include "third_party/blink/renderer/core/exported/web_settings_impl.h"
 
+#include <optional>
+
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -159,8 +161,14 @@ void WebSettingsImpl::SetTextAutosizingEnabled(bool enabled) {
   dev_tools_emulator_->SetTextAutosizingEnabled(enabled);
 }
 
+// TODO(pdr): Rename this OSTextScaleFactor.
 void WebSettingsImpl::SetAccessibilityFontScaleFactor(float font_scale_factor) {
-  settings_->SetAccessibilityFontScaleFactor(font_scale_factor);
+  dev_tools_emulator_->SetAccessibilityFontScaleFactor(font_scale_factor);
+}
+
+void WebSettingsImpl::SetAccessibilityTextSizeContrastFactor(
+    int text_size_contrast_factor) {
+  settings_->SetAccessibilityTextSizeContrastFactor(text_size_contrast_factor);
 }
 
 void WebSettingsImpl::SetAccessibilityAlwaysShowFocus(bool always_show_focus) {
@@ -171,8 +179,8 @@ void WebSettingsImpl::SetAccessibilityPasswordValuesEnabled(bool enabled) {
   settings_->SetAccessibilityPasswordValuesEnabled(enabled);
 }
 
-void WebSettingsImpl::SetInlineTextBoxAccessibilityEnabled(bool enabled) {
-  settings_->SetInlineTextBoxAccessibilityEnabled(enabled);
+void WebSettingsImpl::SetAccessibilityFontWeightAdjustment(int size) {
+  settings_->SetAccessibilityFontWeightAdjustment(size);
 }
 
 void WebSettingsImpl::SetDeviceScaleAdjustment(float device_scale_adjustment) {
@@ -320,12 +328,6 @@ void WebSettingsImpl::SetAllowScriptsToCloseWindows(bool allow) {
   settings_->SetAllowScriptsToCloseWindows(allow);
 }
 
-void WebSettingsImpl::SetUseLegacyBackgroundSizeShorthandBehavior(
-    bool use_legacy_background_size_shorthand_behavior) {
-  settings_->SetUseLegacyBackgroundSizeShorthandBehavior(
-      use_legacy_background_size_shorthand_behavior);
-}
-
 void WebSettingsImpl::SetWideViewportQuirkEnabled(
     bool wide_viewport_quirk_enabled) {
   settings_->SetWideViewportQuirkEnabled(wide_viewport_quirk_enabled);
@@ -348,6 +350,10 @@ void WebSettingsImpl::SetDoubleTapToZoomEnabled(
 
 void WebSettingsImpl::SetDownloadableBinaryFontsEnabled(bool enabled) {
   settings_->SetDownloadableBinaryFontsEnabled(enabled);
+}
+
+void WebSettingsImpl::SetDynamicSafeAreaInsetsEnabled(bool enabled) {
+  settings_->SetDynamicSafeAreaInsetsEnabled(enabled);
 }
 
 void WebSettingsImpl::SetJavaScriptCanAccessClipboard(bool enabled) {
@@ -428,10 +434,6 @@ void WebSettingsImpl::SetAllowGeolocationOnInsecureOrigins(bool allow) {
   settings_->SetAllowGeolocationOnInsecureOrigins(allow);
 }
 
-void WebSettingsImpl::SetThreadedScrollingEnabled(bool enabled) {
-  settings_->SetThreadedScrollingEnabled(enabled);
-}
-
 void WebSettingsImpl::SetTouchDragDropEnabled(bool enabled) {
   settings_->SetTouchDragDropEnabled(enabled);
 }
@@ -479,6 +481,10 @@ void WebSettingsImpl::SetEditingBehavior(
 
 void WebSettingsImpl::SetHideScrollbars(bool enabled) {
   dev_tools_emulator_->SetHideScrollbars(enabled);
+}
+
+void WebSettingsImpl::SetPrefersDefaultScrollbarStyles(bool enabled) {
+  settings_->SetPrefersDefaultScrollbarStyles(enabled);
 }
 
 void WebSettingsImpl::SetMockGestureTapHighlightsEnabled(bool enabled) {
@@ -574,6 +580,10 @@ void WebSettingsImpl::SetPrefersReducedTransparency(bool enabled) {
   settings_->SetPrefersReducedTransparency(enabled);
 }
 
+void WebSettingsImpl::SetInvertedColors(bool enabled) {
+  settings_->SetInvertedColors(enabled);
+}
+
 bool WebSettingsImpl::ViewportEnabled() const {
   return settings_->GetViewportEnabled();
 }
@@ -631,8 +641,8 @@ void WebSettingsImpl::SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(
   settings_->SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(enabled);
 }
 
-void WebSettingsImpl::SetAllowNonEmptyNavigatorPlugins(bool enabled) {
-  settings_->SetAllowNonEmptyNavigatorPlugins(enabled);
+void WebSettingsImpl::SetIgnorePermissionForDeviceChangedEvent(bool enabled) {
+  settings_->SetIgnorePermissionForDeviceChangedEvent(enabled);
 }
 
 void WebSettingsImpl::SetCaretBrowsingEnabled(bool enabled) {
@@ -641,10 +651,6 @@ void WebSettingsImpl::SetCaretBrowsingEnabled(bool enabled) {
 
 void WebSettingsImpl::SetCookieEnabled(bool enabled) {
   dev_tools_emulator_->SetCookieEnabled(enabled);
-}
-
-void WebSettingsImpl::SetNavigateOnDragDrop(bool enabled) {
-  settings_->SetNavigateOnDragDrop(enabled);
 }
 
 void WebSettingsImpl::SetAllowCustomScrollbarInMainFrame(bool enabled) {
@@ -697,68 +703,70 @@ void WebSettingsImpl::SetLazyLoadEnabled(bool enabled) {
   settings_->SetLazyLoadEnabled(enabled);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxUnknown(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxUnknown(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxUnknown(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxUnknown(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxOffline(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxOffline(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxOffline(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxOffline(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxSlow2G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxSlow2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxSlow2G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxSlow2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx2G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx2G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx3G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx3G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx3G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx3G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx4G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx4G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx4G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx4G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPxUnknown(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPxUnknown(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPxUnknown(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPxUnknown(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPxOffline(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPxOffline(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPxOffline(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPxOffline(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPxSlow2G(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPxSlow2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPxSlow2G(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPxSlow2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx2G(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPx2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPx2G(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPx2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx3G(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPx3G(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPx3G(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPx3G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx4G(
-    int distance_px) {
-  settings_->SetLazyImageLoadingDistanceThresholdPx4G(distance_px);
+void WebSettingsImpl::SetLazyLoadingImageMarginPx4G(int distance_px) {
+  settings_->SetLazyLoadingImageMarginPx4G(distance_px);
 }
 
 void WebSettingsImpl::SetForceDarkModeEnabled(bool enabled) {
   settings_->SetForceDarkModeEnabled(enabled);
+}
+
+void WebSettingsImpl::SetInForcedColors(bool in_forced_colors) {
+  settings_->SetInForcedColors(in_forced_colors);
+}
+
+void WebSettingsImpl::SetIsForcedColorsDisabled(
+    bool is_forced_colors_disabled) {
+  settings_->SetIsForcedColorsDisabled(is_forced_colors_disabled);
+}
+
+void WebSettingsImpl::SetPreferredRootScrollbarColorScheme(
+    mojom::blink::PreferredColorScheme color_scheme) {
+  settings_->SetPreferredRootScrollbarColorScheme(color_scheme);
 }
 
 void WebSettingsImpl::SetPreferredColorScheme(
@@ -780,10 +788,6 @@ void WebSettingsImpl::SetAriaModalPrunesAXTree(bool enabled) {
   settings_->SetAriaModalPrunesAXTree(enabled);
 }
 
-void WebSettingsImpl::SetUseAXMenuList(bool enabled) {
-  settings_->SetUseAXMenuList(enabled);
-}
-
 void WebSettingsImpl::SetSelectionClipboardBufferAvailable(bool available) {
   settings_->SetSelectionClipboardBufferAvailable(available);
 }
@@ -800,4 +804,17 @@ void WebSettingsImpl::SetWebXRImmersiveArAllowed(
 void WebSettingsImpl::SetModalContextMenu(bool is_available) {
   settings_->SetModalContextMenu(is_available);
 }
+
+void WebSettingsImpl::
+    SetRequireTransientActivationAndAuthorizationForSubAppsAPIs(
+        bool is_required) {
+  settings_->SetRequireTransientActivationAndAuthorizationForSubAppsAPI(
+      is_required);
+}
+
+void WebSettingsImpl::SetRootScrollbarThemeColor(
+    std::optional<SkColor> theme_color) {
+  settings_->SetRootScrollbarThemeColor(theme_color);
+}
+
 }  // namespace blink

@@ -10,11 +10,12 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "net/android/network_library.h"
-#include "net/cert/pki/cert_errors.h"
-#include "net/cert/pki/parse_name.h"
-#include "net/cert/pki/parsed_certificate.h"
+#include "net/cert/internal/platform_trust_store.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
+#include "third_party/boringssl/src/pki/cert_errors.h"
+#include "third_party/boringssl/src/pki/parse_name.h"
+#include "third_party/boringssl/src/pki/parsed_certificate.h"
 
 namespace net {
 
@@ -27,8 +28,8 @@ class TrustStoreAndroid::Impl
     std::vector<std::string> roots = net::android::GetUserAddedRoots();
 
     for (auto& root : roots) {
-      CertErrors errors;
-      auto parsed = net::ParsedCertificate::Create(
+      bssl::CertErrors errors;
+      auto parsed = bssl::ParsedCertificate::Create(
           net::x509_util::CreateCryptoBuffer(root),
           net::x509_util::DefaultParseCertificateOptions(), &errors);
       if (!parsed) {
@@ -40,15 +41,14 @@ class TrustStoreAndroid::Impl
   }
 
   // TODO(hchao): see if we can get SyncGetIssueresOf marked const
-  void SyncGetIssuersOf(const ParsedCertificate* cert,
-                        ParsedCertificateList* issuers) {
+  void SyncGetIssuersOf(const bssl::ParsedCertificate* cert,
+                        bssl::ParsedCertificateList* issuers) {
     trust_store_.SyncGetIssuersOf(cert, issuers);
   }
 
   // TODO(hchao): see if we can get GetTrust marked const again
-  CertificateTrust GetTrust(const ParsedCertificate* cert,
-                            base::SupportsUserData* debug_data) {
-    return trust_store_.GetTrust(cert, debug_data);
+  bssl::CertificateTrust GetTrust(const bssl::ParsedCertificate* cert) {
+    return trust_store_.GetTrust(cert);
   }
 
   int generation() { return generation_; }
@@ -60,12 +60,17 @@ class TrustStoreAndroid::Impl
   // Generation # that trust_store_ was loaded at.
   const int generation_;
 
-  TrustStoreInMemory trust_store_;
+  bssl::TrustStoreInMemory trust_store_;
 };
 
-TrustStoreAndroid::TrustStoreAndroid() = default;
+TrustStoreAndroid::TrustStoreAndroid() {
+  // It's okay for ObserveCertDBChanges to be called on a different sequence
+  // than the object was constructed on.
+  DETACH_FROM_SEQUENCE(certdb_observer_sequence_checker_);
+}
 
 TrustStoreAndroid::~TrustStoreAndroid() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(certdb_observer_sequence_checker_);
   if (is_observing_certdb_changes_) {
     CertDatabase::GetInstance()->RemoveObserver(this);
   }
@@ -79,6 +84,7 @@ void TrustStoreAndroid::Initialize() {
 // rather than in the constructor to avoid having to add a TaskEnvironment to
 // every unit test that uses TrustStoreAndroid.
 void TrustStoreAndroid::ObserveCertDBChanges() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(certdb_observer_sequence_checker_);
   if (!is_observing_certdb_changes_) {
     is_observing_certdb_changes_ = true;
     CertDatabase::GetInstance()->AddObserver(this);
@@ -110,15 +116,20 @@ TrustStoreAndroid::MaybeInitializeAndGetImpl() {
   return impl_;
 }
 
-void TrustStoreAndroid::SyncGetIssuersOf(const ParsedCertificate* cert,
-                                         ParsedCertificateList* issuers) {
+void TrustStoreAndroid::SyncGetIssuersOf(const bssl::ParsedCertificate* cert,
+                                         bssl::ParsedCertificateList* issuers) {
   MaybeInitializeAndGetImpl()->SyncGetIssuersOf(cert, issuers);
 }
 
-CertificateTrust TrustStoreAndroid::GetTrust(
-    const ParsedCertificate* cert,
-    base::SupportsUserData* debug_data) {
-  return MaybeInitializeAndGetImpl()->GetTrust(cert, debug_data);
+bssl::CertificateTrust TrustStoreAndroid::GetTrust(
+    const bssl::ParsedCertificate* cert) {
+  return MaybeInitializeAndGetImpl()->GetTrust(cert);
+}
+
+std::vector<net::PlatformTrustStore::CertWithTrust>
+TrustStoreAndroid::GetAllUserAddedCerts() {
+  // TODO(crbug.com/40928765): implement this.
+  return {};
 }
 
 }  // namespace net

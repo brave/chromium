@@ -8,16 +8,12 @@
 #include <ApplicationServices/ApplicationServices.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/memory/raw_ptr_exclusion.h"
-#include "base/strings/string_piece.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/print_job_constants.h"
 #include "printing/printing_context.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class NSPrintInfo;
 
@@ -25,7 +21,8 @@ namespace printing {
 
 class COMPONENT_EXPORT(PRINTING) PrintingContextMac : public PrintingContext {
  public:
-  explicit PrintingContextMac(Delegate* delegate);
+  PrintingContextMac(Delegate* delegate,
+                     OutOfProcessBehavior out_of_process_behavior);
   PrintingContextMac(const PrintingContextMac&) = delete;
   PrintingContextMac& operator=(const PrintingContextMac&) = delete;
   ~PrintingContextMac() override;
@@ -102,7 +99,7 @@ class COMPONENT_EXPORT(PRINTING) PrintingContextMac : public PrintingContext {
 
   // Sets key-value pair in PMPrintSettings.
   // Returns true is the pair is set.
-  bool SetKeyValue(base::StringPiece key, base::StringPiece value);
+  bool SetKeyValue(std::string_view key, std::string_view value);
 
   // Starts a new page.
   mojom::ResultCode NewPage();

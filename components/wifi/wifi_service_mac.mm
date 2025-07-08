@@ -5,17 +5,19 @@
 #include "components/wifi/wifi_service.h"
 
 #import <CoreWLAN/CoreWLAN.h>
-#import <netinet/in.h>
 #import <SystemConfiguration/SystemConfiguration.h>
+#import <netinet/in.h>
 
 #include <map>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/task/single_thread_task_runner.h"
@@ -24,10 +26,6 @@
 #include "components/onc/onc_constants.h"
 #include "components/wifi/network_properties.h"
 #include "crypto/apple_keychain.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace wifi {
 
@@ -357,22 +355,15 @@ void WiFiServiceMac::GetKeyFromSystem(const std::string& network_guid,
                                       std::string* error) {
   static const char kAirPortServiceName[] = "AirPort";
 
-  UInt32 password_length = 0;
-  void* password_data = nullptr;
-  crypto::AppleKeychain keychain;
-  OSStatus status = keychain.FindGenericPassword(
-      strlen(kAirPortServiceName), kAirPortServiceName, network_guid.length(),
-      network_guid.c_str(), &password_length, &password_data, /*item=*/nullptr);
-  if (status != errSecSuccess) {
+  auto keychain = crypto::AppleKeychain::DefaultKeychain();
+  auto password =
+      keychain->FindGenericPassword(kAirPortServiceName, network_guid);
+  if (!password.has_value()) {
     *error = kErrorNotFound;
     return;
   }
 
-  if (password_data) {
-    *key_data = std::string(reinterpret_cast<char*>(password_data),
-                            password_length);
-    keychain.ItemFreeContent(password_data);
-  }
+  key_data->assign(base::as_string_view(*password));
 }
 
 void WiFiServiceMac::SetEventObservers(
@@ -416,7 +407,7 @@ void WiFiServiceMac::SetEventObservers(
     // -[CWWiFiClient startMonitoringEventWithType:error:] API:
     // https://developer.apple.com/documentation/corewlan/cwwificlient/1512439-startmonitoringeventwithtype?language=objc
     //
-    // TODO(https://crbug.com/1054063): Switch to using the
+    // TODO(crbug.com/40675519): Switch to using the
     // -[CWWiFiClient startMonitoringEventWithType:error:] API.
     wlan_observer_ = [NSNotificationCenter.defaultCenter
         addObserverForName:@"com.apple.coreWLAN.notification.ssid.legacy"
@@ -443,16 +434,16 @@ std::string WiFiServiceMac::GetNetworkConnectionState(
 
   // Check whether WiFi network is reachable.
   struct sockaddr_in local_wifi_address;
-  bzero(&local_wifi_address, sizeof(local_wifi_address));
+  UNSAFE_TODO(bzero(&local_wifi_address, sizeof(local_wifi_address)));
   local_wifi_address.sin_len = sizeof(local_wifi_address);
   local_wifi_address.sin_family = AF_INET;
   local_wifi_address.sin_addr.s_addr = htonl(IN_LINKLOCALNETNUM);
-  base::ScopedCFTypeRef<SCNetworkReachabilityRef> reachability(
+  base::apple::ScopedCFTypeRef<SCNetworkReachabilityRef> reachability(
       SCNetworkReachabilityCreateWithAddress(
           kCFAllocatorDefault,
           reinterpret_cast<const struct sockaddr*>(&local_wifi_address)));
   SCNetworkReachabilityFlags flags = 0u;
-  if (SCNetworkReachabilityGetFlags(reachability, &flags) &&
+  if (SCNetworkReachabilityGetFlags(reachability.get(), &flags) &&
       (flags & kSCNetworkReachabilityFlagsReachable) &&
       (flags & kSCNetworkReachabilityFlagsIsDirect)) {
     // Network is reachable, report is as |kConnected|.
@@ -471,7 +462,8 @@ void WiFiServiceMac::UpdateNetworks() {
 
   std::string connected_bssid = base::SysNSStringToUTF8([interface_ bssid]);
   std::map<std::string, NetworkProperties*> network_properties_map;
-  networks_.clear();
+  NetworkList old_networks;
+  networks_.swap(old_networks);
 
   // There is one |cw_network| per BSS in |cw_networks|, so go through the set
   // and combine them, paying attention to supported frequencies.
@@ -500,8 +492,10 @@ void WiFiServiceMac::UpdateNetworks() {
   }
   // Sort networks, so connected/connecting is up front.
   networks_.sort(NetworkProperties::OrderByType);
-  // Notify observers that list has changed.
-  NotifyNetworkListChanged(networks_);
+  if (networks_ != old_networks) {
+    // Notify observers that list has changed.
+    NotifyNetworkListChanged(networks_);
+  }
 }
 
 bool WiFiServiceMac::CheckError(NSError* ns_error,

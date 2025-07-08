@@ -6,6 +6,7 @@
 #define CHROMEOS_ASH_COMPONENTS_EARLY_PREFS_EARLY_PREFS_WRITER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/component_export.h"
@@ -16,7 +17,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash {
 
@@ -41,10 +41,10 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_EARLY_PREFS) EarlyPrefsWriter
                        bool is_recommended,
                        base::Value::Dict& result) const;
 
-  absl::optional<std::string> SerializeData() override;
+  std::optional<std::string> SerializeData() override;
 
   base::Value::Dict root_;
-  base::raw_ptr<base::Value::Dict> data_;
+  raw_ptr<base::Value::Dict> data_;
   base::FilePath data_file_;
   std::unique_ptr<base::ImportantFileWriter> writer_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;

@@ -10,12 +10,14 @@
 #include <string>
 #include <vector>
 
-#include "ash/components/arc/metrics/arc_metrics_constants.h"
-#include "ash/components/arc/mojom/app.mojom-forward.h"
 #include "base/observer_list_types.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
+#include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
+#include "chromeos/ash/experiences/arc/metrics/arc_metrics_constants.h"
+#include "chromeos/ash/experiences/arc/mojom/app.mojom-forward.h"
 #include "components/services/app_service/public/cpp/intent.h"
 
+class ApplicationLocaleStorage;
 class Profile;
 
 namespace content {
@@ -23,30 +25,6 @@ class BrowserContext;
 }
 
 namespace arc {
-
-extern const char kPlayStoreActivity[];
-extern const char kPlayStorePackage[];
-
-extern const char kAndroidContactsAppId[];
-extern const char kCameraMigrationAppId[];
-extern const char kGmailAppId[];
-extern const char kGoogleCalendarAppId[];
-extern const char kGoogleDuoAppId[];
-extern const char kGoogleMapsAppId[];
-extern const char kGooglePhotosAppId[];
-extern const char kGoogleTVAppId[];
-extern const char kInfinitePainterAppId[];
-extern const char kLightRoomAppId[];
-extern const char kPackageInstallerAppId[];
-extern const char kPlayBooksAppId[];
-extern const char kPlayGamesAppId[];
-extern const char kPlayMoviesAppId[];
-extern const char kPlayMusicAppId[];
-extern const char kPlayStoreAppId[];
-extern const char kSettingsAppId[];
-extern const char kYoutubeAppId[];
-extern const char kYoutubeMusicAppId[];
-extern const char kYoutubeMusicWebApkAppId[];
 
 // Observes ARC app launches.
 class AppLaunchObserver : public base::CheckedObserver {
@@ -124,9 +102,11 @@ bool IsArcItem(content::BrowserContext* context, const std::string& id);
 
 // Returns current active locale and list of preferred languages for the given
 // |profile|.
-void GetLocaleAndPreferredLanguages(const Profile* profle,
-                                    std::string* out_locale,
-                                    std::string* out_preferred_languages);
+void GetLocaleAndPreferredLanguages(
+    const ApplicationLocaleStorage& application_locale_storage,
+    const Profile* profle,
+    std::string* out_locale,
+    std::string* out_preferred_languages);
 
 // Returns Android instance id. Result is returned in callback. |ok| is set to
 // true in case app instance is ready and Android id was successfully requested.

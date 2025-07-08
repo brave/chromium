@@ -3,20 +3,20 @@
 // found in the LICENSE file.
 
 import 'chrome://resources/ash/common/network/network_icon.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import '../os_settings_icons.html.js';
 import '../settings_shared.css.js';
 
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {htmlEscape} from 'chrome://resources/js/util_ts.js';
-import {ManagedProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import type {ManagedProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
@@ -151,7 +151,8 @@ export class TetherConnectionDialogElement extends
 
   private getDeviceName_(managedProperties: ManagedProperties|
                          undefined): string {
-    return managedProperties ? OncMojo.getNetworkName(managedProperties) : '';
+    return managedProperties ? OncMojo.getNetworkNameUnsafe(managedProperties) :
+                               '';
   }
 
   private getBatteryPercentageString_(managedProperties: ManagedProperties|
@@ -166,18 +167,18 @@ export class TetherConnectionDialogElement extends
   private getExplanation_(managedProperties: ManagedProperties|
                           undefined): string {
     return managedProperties ?
-        this.i18n(
+        loadTimeData.getStringF(
             'tetherConnectionExplanation',
-            htmlEscape(OncMojo.getNetworkName(managedProperties))) :
+            OncMojo.getNetworkNameUnsafe(managedProperties)) :
         '';
   }
 
   private getDescriptionTitle_(managedProperties: ManagedProperties|
                                undefined): string {
     return managedProperties ?
-        this.i18n(
+        loadTimeData.getStringF(
             'tetherConnectionDescriptionTitle',
-            htmlEscape(OncMojo.getNetworkName(managedProperties))) :
+            OncMojo.getNetworkNameUnsafe(managedProperties)) :
         '';
   }
 

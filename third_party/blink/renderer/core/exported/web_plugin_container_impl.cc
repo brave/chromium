@@ -49,6 +49,7 @@
 #include "third_party/blink/public/web/web_print_preset_options.h"
 #include "third_party/blink/public/web/web_view_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
 #include "third_party/blink/renderer/core/clipboard/clipboard_utilities.h"
@@ -95,14 +96,12 @@
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/keyboard_codes.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/mojom/cursor_type.mojom-blink.h"
@@ -176,7 +175,9 @@ void WebPluginContainerImpl::Paint(GraphicsContext& context,
 
   if (WantsWheelEvents()) {
     context.GetPaintController().RecordHitTestData(
-        *GetLayoutEmbeddedContent(), visual_rect, TouchAction::kAuto, true);
+        *GetLayoutEmbeddedContent(), visual_rect, TouchAction::kAuto,
+        /*blocking_wheel=*/true, cc::HitTestOpaqueness::kMixed,
+        DisplayItem::kWebPluginHitTest);
   }
 
   if (element_->GetRegionCaptureCropId()) {
@@ -345,11 +346,11 @@ float WebPluginContainerImpl::PageScaleFactor() {
   return page->PageScaleFactor();
 }
 
-float WebPluginContainerImpl::PageZoomFactor() {
+float WebPluginContainerImpl::LayoutZoomFactor() {
   LocalFrame* frame = element_->GetDocument().GetFrame();
   if (!frame)
     return 1.0;
-  return frame->PageZoomFactor();
+  return frame->LayoutZoomFactor();
 }
 
 void WebPluginContainerImpl::SetCcLayer(cc::Layer* new_layer) {
@@ -430,7 +431,7 @@ int WebPluginContainerImpl::PrintBegin(
   return web_plugin_->PrintBegin(print_params);
 }
 
-void WebPluginContainerImpl::PrintPage(int page_number, GraphicsContext& gc) {
+void WebPluginContainerImpl::PrintPage(int page_index, GraphicsContext& gc) {
   if (DrawingRecorder::UseCachedDrawingIfPossible(
           gc, *element_->GetLayoutObject(), DisplayItem::kWebPlugin))
     return;
@@ -440,7 +441,7 @@ void WebPluginContainerImpl::PrintPage(int page_number, GraphicsContext& gc) {
   gc.Save();
 
   cc::PaintCanvas* canvas = gc.Canvas();
-  web_plugin_->PrintPage(page_number, canvas);
+  web_plugin_->PrintPage(page_index, canvas);
   gc.Restore();
 }
 
@@ -549,16 +550,16 @@ v8::Local<v8::Object> WebPluginContainerImpl::V8ObjectForElement() {
   if (!context || !context->CanExecuteScripts(kNotAboutToExecuteScript))
     return v8::Local<v8::Object>();
 
-  ScriptState* script_state =
-      ToScriptState(context, DOMWrapperWorld::MainWorld());
+  ScriptState* script_state = ToScriptStateForMainWorld(context);
   if (!script_state)
     return v8::Local<v8::Object>();
 
-  v8::Local<v8::Value> v8value =
-      ToV8(element_.Get(), script_state->GetContext()->Global(),
-           script_state->GetIsolate());
-  if (v8value.IsEmpty())
+  v8::MaybeLocal<v8::Value> maybe_v8value =
+      ToV8Traits<HTMLPlugInElement>::ToV8(script_state, element_.Get());
+  v8::Local<v8::Value> v8value;
+  if (!maybe_v8value.ToLocal(&v8value)) {
     return v8::Local<v8::Object>();
+  }
   DCHECK(v8value->IsObject());
 
   return v8::Local<v8::Object>::Cast(v8value);
@@ -699,9 +700,8 @@ void WebPluginContainerImpl::DidReceiveResponse(
   web_plugin_->DidReceiveResponse(url_response);
 }
 
-void WebPluginContainerImpl::DidReceiveData(const char* data,
-                                            size_t data_length) {
-  web_plugin_->DidReceiveData(data, data_length);
+void WebPluginContainerImpl::DidReceiveData(base::span<const char> data) {
+  web_plugin_->DidReceiveData(data);
 }
 
 void WebPluginContainerImpl::DidFinishLoading() {

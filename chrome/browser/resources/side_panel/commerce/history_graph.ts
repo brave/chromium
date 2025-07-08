@@ -2,26 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../strings.m.js';
+import '/strings.m.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/d3/d3.min.js';
 
-import {PricePoint} from '//shopping-insights-side-panel.top-chrome/shared/shopping_list.mojom-webui.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {PricePoint} from '//resources/cr_components/commerce/shopping_service.mojom-webui.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './history_graph.html.js';
 
 const LINE_AREA_HEIGHT_PX = 92;
-const GRAPH_DATE_TOP_MARGIN_PX = 8;
-const GRAPH_PRICE_RIGHT_MARGIN_PX = 4;
 const GRAPH_BUBBLE_BOTTOM_MARGIN_PX = 8;
 const MIN_MONTH_LABEL_WIDTH_PX = 20;
 const LABEL_FONT_WEIGHT = '400';
 const LABEL_FONT_WEIGHT_BOLD = '700';
 const CIRCLE_RADIUS_PX = 4;
-const BUBBLE_PADDING_PX = 4;
-const BUBBLE_CORNER_RADIUS_PX = 3;
 const TICK_COUNT_Y = 4;
 
 enum CssClass {
@@ -59,19 +56,55 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     };
   }
 
-  data: PricePoint[];
-  locale: string;
-  currency: string;
+  declare data: PricePoint[];
+  declare locale: string;
+  declare currency: string;
   private points: Array<{date: Date, price: number}>;
   private isGraphInteracted_: boolean = false;
+  private currentPricePointIndex_?: number;
+  private resizeObserver_: ResizeObserver;
+  private currentWidth_: number;
+  private graphSvg_: any;
+  private dateTopMarginPx_ = 12;
+  private priceRightMarginPx_ = 8;
+  private bubbleHorizontalPaddingPx_ = 6;
+  private bubbleTopPaddingPx_ = 3;
+  private bubbleBottomPaddingPx_ = 2;
+  private bubbleCornerRadiusPx_ = 3;
 
   override connectedCallback() {
     super.connectedCallback();
 
-    this.points =
-        this.data.map(d => ({date: new Date(d.date), price: d.price}));
+    this.points = this.data.map(
+        d => ({date: this.stringToDate_(d.date), price: d.price}));
 
     this.drawHistoryGraph_();
+
+    this.currentWidth_ = this.$.historyGraph.offsetWidth;
+    this.resizeObserver_ = new ResizeObserver(this.onResize_.bind(this));
+    this.resizeObserver_.observe(this.$.historyGraph);
+  }
+
+  override disconnectedCallback() {
+    this.resizeObserver_.disconnect();
+  }
+
+  private stringToDate_(s: string): Date {
+    // When compiled, new Date('yyyy-mm-dd') does not return a valid Date
+    // object. Using Date(year, monthIndex, day) protects against that.
+    const [yearStr, monthStr, dayStr] = s.split('-');
+    const year: number = parseInt(yearStr, 10);
+    const month: number = parseInt(monthStr, 10);
+    const day: number = parseInt(dayStr, 10);
+    return new Date(year, month - 1, day);
+  }
+
+  private onResize_() {
+    if (this.$.historyGraph.offsetWidth !== this.currentWidth_) {
+      this.currentWidth_ = this.$.historyGraph.offsetWidth;
+      this.graphSvg_.remove();
+      this.drawHistoryGraph_();
+    }
   }
 
   private getTooltipText_(i: number): string {
@@ -79,7 +112,8 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
 
     const previousDay = new Date();
     previousDay.setDate(previousDay.getDate() - 1);
-    if (this.points[i].date.getDate() === previousDay.getDate() &&
+    if (i === this.points.length - 1 &&
+        this.points[i].date.getDate() === previousDay.getDate() &&
         this.points[i].date.getMonth() === previousDay.getMonth()) {
       formattedDate = loadTimeData.getString('yesterday');
     }
@@ -96,12 +130,12 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     const [maxLabelWidth, labelHeight] =
         this.getLabelSize_(formattedTicks[formattedTicks.length - 1]);
 
-    const graphMarginTopPx =
-        GRAPH_BUBBLE_BOTTOM_MARGIN_PX + 2 * BUBBLE_PADDING_PX + tooltipHeight;
-    const graphMarginBottomPx = GRAPH_DATE_TOP_MARGIN_PX + labelHeight;
+    const graphMarginTopPx = GRAPH_BUBBLE_BOTTOM_MARGIN_PX +
+        this.bubbleTopPaddingPx_ + this.bubbleBottomPaddingPx_ + tooltipHeight;
+    const graphMarginBottomPx = this.dateTopMarginPx_ + labelHeight;
     const graphHeightPx =
         LINE_AREA_HEIGHT_PX + graphMarginTopPx + graphMarginBottomPx;
-    const graphMarginLeftPx = maxLabelWidth + GRAPH_PRICE_RIGHT_MARGIN_PX;
+    const graphMarginLeftPx = maxLabelWidth + this.priceRightMarginPx_;
     const graphMarginRightPx = CIRCLE_RADIUS_PX + 1;
 
     const svg = d3.select(this.$.historyGraph)
@@ -109,6 +143,7 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
                     .attr('width', '100%')
                     .attr('height', graphHeightPx)
                     .attr('background-color', 'transparent');
+    this.graphSvg_ = svg;
     const node = svg.node();
     assert(node);
     const graphWidthPx = node.getBoundingClientRect().width;
@@ -128,12 +163,12 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
                       .tickValues(this.getAxisTicksX_(xScale))
                       .tickFormat(d3.timeFormat('%b'))
                       .tickSize(0)
-                      .tickPadding(GRAPH_DATE_TOP_MARGIN_PX);
+                      .tickPadding(this.dateTopMarginPx_);
     const yAxis = d3.axisLeft(yScale)
                       .tickValues(ticks)
                       .tickFormat((_, i) => formattedTicks[i])
                       .tickSize(0)
-                      .tickPadding(GRAPH_PRICE_RIGHT_MARGIN_PX);
+                      .tickPadding(this.priceRightMarginPx_);
 
     // Set up the line.
     const line = d3.line<{date: Date, price: number}>()
@@ -147,7 +182,10 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
             'transform', `translate(0,${graphHeightPx - graphMarginBottomPx})`)
         .call(xAxis)
         .call(g => g.select('.domain').classed(CssClass.AXIS, true))
-        .call(g => g.selectAll('text').classed(CssClass.TICK, true));
+        .call(
+            g => g.selectAll('text')
+                     .classed(CssClass.TICK, true)
+                     .attr('aria-hidden', 'true'));
 
     // Add the Y axis.
     svg.append('g')
@@ -161,7 +199,10 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
                          'x2',
                          graphWidthPx - graphMarginLeftPx - graphMarginRightPx)
                      .classed(CssClass.DIVIDER, true))
-        .call(g => g.selectAll('text').classed(CssClass.TICK, true));
+        .call(
+            g => g.selectAll('text')
+                     .classed(CssClass.TICK, true)
+                     .attr('aria-hidden', 'true'));
 
     // Add the line.
     svg.append('path')
@@ -170,31 +211,45 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
         .classed(CssClass.PATH, true);
 
     // Set up bubble and mouse listeners.
-    const verticalLine = svg.append('line')
-                             .attr('y1', 2 * BUBBLE_PADDING_PX + tooltipHeight)
-                             .attr('y2', graphHeightPx - graphMarginBottomPx)
-                             .attr('opacity', 0)
-                             .classed(CssClass.DASH_LINE, true);
+    const verticalLine =
+        svg.append('line')
+            .attr(
+                'y1',
+                this.bubbleTopPaddingPx_ + this.bubbleBottomPaddingPx_ +
+                    tooltipHeight)
+            .attr('y2', graphHeightPx - graphMarginBottomPx)
+            .attr('opacity', 0)
+            .classed(CssClass.DASH_LINE, true);
 
     const circle = svg.append('circle')
                        .attr('r', CIRCLE_RADIUS_PX)
                        .attr('opacity', 0)
                        .classed(CssClass.CIRCLE, true);
 
+    this.bubbleCornerRadiusPx_ =
+        (this.bubbleTopPaddingPx_ + this.bubbleBottomPaddingPx_ +
+        tooltipHeight) /
+        2;
     const bubble = svg.append('rect')
                        .attr('opacity', 0)
                        .attr('y', 0)
-                       .attr('height', 2 * BUBBLE_PADDING_PX + tooltipHeight)
-                       .attr('rx', BUBBLE_CORNER_RADIUS_PX)
-                       .attr('ry', BUBBLE_CORNER_RADIUS_PX)
+                       .attr(
+                           'height',
+                           this.bubbleTopPaddingPx_ +
+                               this.bubbleBottomPaddingPx_ + tooltipHeight)
+                       .attr('rx', this.bubbleCornerRadiusPx_)
+                       .attr('ry', this.bubbleCornerRadiusPx_)
                        .classed(CssClass.BUBBLE, true);
 
     const tooltip = svg.append('text')
-                        .attr('y', BUBBLE_PADDING_PX + tooltipHeight / 2)
+                        .attr('y', this.bubbleTopPaddingPx_ + tooltipHeight / 2)
                         .attr('dominant-baseline', 'middle')
-                        .attr('opacity', 0);
+                        .attr('opacity', 0)
+                        .attr('aria-hidden', 'true');
 
-    const initialIndex = this.points.length - 1;
+    const initialIndex = this.currentPricePointIndex_ == null ?
+        this.points.length - 1 :
+        this.currentPricePointIndex_;
     this.showTooltip_(
         verticalLine, circle, bubble, tooltip, initialIndex,
         xScale(this.points[initialIndex].date),
@@ -224,6 +279,31 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
           xScale(this.points[nearestIndex].date),
           yScale(this.points[nearestIndex].price), graphWidthPx);
     });
+
+    this.$.historyGraph.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (this.currentPricePointIndex_ != null) {
+        let nextIndex = -1;
+
+        if (e.key === 'ArrowLeft') {
+          nextIndex = this.currentPricePointIndex_ - 1;
+        } else if (e.key === 'ArrowRight') {
+          nextIndex = this.currentPricePointIndex_ + 1;
+        }
+
+        if (nextIndex >= 0 && nextIndex <= this.points.length - 1) {
+          this.showTooltip_(
+              verticalLine, circle, bubble, tooltip, nextIndex,
+              xScale(this.points[nextIndex].date),
+              yScale(this.points[nextIndex].price), graphWidthPx);
+        }
+      }
+    });
+
+    this.$.historyGraph.setAttribute(
+        'aria-label',
+        loadTimeData.getString('historyTitle') +
+            this.getTooltipText_(initialIndex) +
+            loadTimeData.getString('historyGraphAccessibility'));
   }
 
   // Calculate y-axis ticks.
@@ -234,21 +314,31 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     const ticks: number[] = [];
     const formattedTicks: string[] = [];
 
-    const minPrice = this.points.reduce((min, value) => {
+    let minPrice = this.points.reduce((min, value) => {
       return Math.min(min, value.price);
     }, this.points[0].price);
-    const maxPrice = this.points.reduce((max, value) => {
+    let maxPrice = this.points.reduce((max, value) => {
       return Math.max(max, value.price);
     }, this.points[0].price);
+
+    // To ensure that the Y-axis doesn't reflect trivial changes and that the
+    // line is in the middle of the graph, apply a padding max(median price /
+    // 10, $1) to the minPrice and maxPrice.
+    const medianPrice = ([...this.points].sort(
+        (a, b) => a.price - b.price))[Math.floor(this.points.length / 2)]
+                            .price;
+    const padding = Math.max(medianPrice / 10, 1);
+    minPrice = Math.max(minPrice - padding, 0);
+    maxPrice = maxPrice + padding;
+
     const valueRange = maxPrice - minPrice;
     let tickInterval = valueRange / (TICK_COUNT_Y - 1);
 
     // Ensure the tick interval is a multiple of below values to improve the
     // readability. Bigger values are used when possible.
-    const multipliers =
-        [100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01];
+    const multipliers = [100, 50, 20, 10, 5, 2, 1];
 
-    let multiplier = 0.01;
+    let multiplier = 1;
     for (const tempMultiplier of multipliers) {
       if (tickInterval >= 2 * tempMultiplier) {
         multiplier = tempMultiplier;
@@ -266,13 +356,11 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
         Math.ceil((maxPrice - tickLow) / (TICK_COUNT_Y - 1) / multiplier) *
         multiplier;
 
-    const fractionDigits = tickInterval > 1 ? 0 : 2;
-
     const formatter = new Intl.NumberFormat(this.locale, {
       style: 'currency',
       currency: this.currency,
-      minimumFractionDigits: fractionDigits,
-      maximumFractionDigits: fractionDigits,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     });
 
     // Populate results.
@@ -362,7 +450,7 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     circle.attr('cx', pointX).attr('cy', pointY).attr('opacity', 1);
 
     const tooltipWidth = tooltipNode.getBBox().width;
-    const bubbleWidth = tooltipWidth + 2 * BUBBLE_PADDING_PX;
+    const bubbleWidth = tooltipWidth + 2 * this.bubbleHorizontalPaddingPx_;
     let bubbleStart = pointX - bubbleWidth / 2;
     if (bubbleStart < 0) {
       bubbleStart = 0;
@@ -372,6 +460,9 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     }
     tooltip.attr('x', bubbleStart + bubbleWidth / 2).attr('opacity', 1);
     bubble.attr('x', bubbleStart).attr('width', bubbleWidth).attr('opacity', 1);
+
+    this.$.historyGraph.setAttribute('aria-label', this.getTooltipText_(index));
+    this.currentPricePointIndex_ = index;
   }
 }
 

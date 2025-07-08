@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import './app_management_cros_shared_style.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 
-import {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {CrIconButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './supported_links_dialog.html.js';
@@ -30,6 +32,26 @@ export class AppManagementSupportedLinksDialogElement extends
   }
 
   app: App;
+
+  override ready(): void {
+    super.ready();
+    this.addEventListener('keydown', e => this.trapDialogFocus_(e));
+  }
+
+  // The close button is the only tabbable element in the dialog, so focus
+  // should stay on it.
+  private trapDialogFocus_(e: KeyboardEvent): void {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const dialogElement = this.shadowRoot?.getElementById('dialog');
+      const buttonElement =
+          dialogElement?.shadowRoot?.querySelector<CrIconButtonElement>(
+              '#close');
+      if (buttonElement) {
+        buttonElement.focus();
+      }
+    }
+  }
 }
 
 declare global {

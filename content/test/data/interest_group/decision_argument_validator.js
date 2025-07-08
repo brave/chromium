@@ -41,7 +41,7 @@ function validateBid(bid) {
 }
 
 function validateAuctionConfig(auctionConfig) {
-  if (Object.keys(auctionConfig).length !== 15) {
+  if (Object.keys(auctionConfig).length !== 18) {
     throw 'Wrong number of auctionConfig fields ' +
         JSON.stringify(auctionConfig);
   }
@@ -54,24 +54,18 @@ function validateAuctionConfig(auctionConfig) {
     throw 'Wrong decisionLogicURL ' + auctionConfig.decisionLogicURL;
   }
 
-  if (auctionConfig.decisionLogicUrl !==
-      auctionConfig.seller + '/interest_group/decision_argument_validator.js') {
-    throw 'Wrong decisionLogicUrl ' + auctionConfig.decisionLogicUrl;
-  }
-
-  if (auctionConfig.trustedScoringSignalsURL !==
-    auctionConfig.seller + '/interest_group/trusted_scoring_signals.json') {
-    throw 'Wrong trustedScoringSignalsURL ' +
-        auctionConfig.trustedScoringSignalsURL;
-  }
-
   if (auctionConfig.trustedScoringSignalsUrl !==
     auctionConfig.seller + '/interest_group/trusted_scoring_signals.json') {
     throw 'Wrong trustedScoringSignalsUrl ' +
         auctionConfig.trustedScoringSignalsUrl;
   }
 
-  // TODO(crbug.com/1186444): Consider validating URL fields like
+  if (auctionConfig.executionMode !== 'compatibility') {
+    throw 'Wrong executionMode ' +
+    auctionConfig.executionMode;
+  }
+
+  // TODO(crbug.com/40172488): Consider validating URL fields like
   // auctionConfig.decisionLogicURL once we decide what to do about URL
   // normalization.
 
@@ -96,7 +90,7 @@ function validateAuctionConfig(auctionConfig) {
   const sellerSignalsJSON = JSON.stringify(auctionConfig.sellerSignals);
   if (sellerSignalsJSON !== '{"signals":"from","the":["seller"]}')
     throw 'Wrong sellerSignals ' + auctionConfig.sellerSignalsJSON;
-  if (auctionConfig.sellerTimeout !== 200)
+  if (auctionConfig.sellerTimeout !== 20000)
     throw 'Wrong sellerTimeout ' + auctionConfig.sellerTimeout;
 
   if (JSON.stringify(auctionConfig.perBuyerSignals[buyerAOrigin]) !==
@@ -105,9 +99,9 @@ function validateAuctionConfig(auctionConfig) {
         JSON.stringify(auctionConfig.perBuyerSignals);
   }
 
-  if (auctionConfig.perBuyerTimeouts[buyerAOrigin] !== 110 ||
-      auctionConfig.perBuyerTimeouts[buyerBOrigin] !== 120 ||
-      auctionConfig.perBuyerTimeouts['*'] !== 150) {
+  if (auctionConfig.perBuyerTimeouts[buyerAOrigin] !== 11000 ||
+      auctionConfig.perBuyerTimeouts[buyerBOrigin] !== 12000 ||
+      auctionConfig.perBuyerTimeouts['*'] !== 15000) {
     throw 'Wrong perBuyerTimeouts ' +
         JSON.stringify(auctionConfig.perBuyerTimeouts);
   }
@@ -118,6 +112,9 @@ function validateAuctionConfig(auctionConfig) {
     throw 'Wrong perBuyerCumulativeTimeouts ' +
         JSON.stringify(auctionConfig.perBuyerCumulativeTimeouts);
   }
+
+  if (auctionConfig.reportingTimeout !== 2000)
+    throw 'Wrong reportingTimeout ' + auctionConfig.reportingTimeout;
 
   if (auctionConfig.perBuyerCurrencies[buyerAOrigin] !== 'USD' ||
       auctionConfig.perBuyerCurrencies[buyerBOrigin] !== 'CAD' ||
@@ -138,6 +135,11 @@ function validateAuctionConfig(auctionConfig) {
          '{"BaR":-2}') {
     throw 'Wrong perBuyerPrioritySignals ' +
         JSON.stringify(perBuyerPrioritySignals);
+  }
+
+  if (auctionConfig.sendCreativeScanningMetadata !== true) {
+    throw 'Wrong sendCreativeScanningMetadata ' +
+        JSON.stringify(auctionConfig.sendCreativeScanningMetadata);
   }
 
   if ('componentAuctions' in auctionConfig) {
@@ -188,15 +190,26 @@ function validateBrowserSignals(browserSignals, isScoreAd) {
 
   // Fields that vary by method.
   if (isScoreAd) {
-    if (Object.keys(browserSignals).length !== 8) {
+    if (Object.keys(browserSignals).length !== 11) {
       throw 'Wrong number of browser signals fields ' +
           JSON.stringify(browserSignals);
     }
     const adComponentsJSON = JSON.stringify(browserSignals.adComponents);
     if (adComponentsJSON !== '["https://example.com/render-component"]')
       throw 'Wrong adComponents ' + browserSignals.adComponents;
+    const componentsCreativeScanningMetadata =
+        JSON.stringify(browserSignals.adComponentsCreativeScanningMetadata);
+    if (componentsCreativeScanningMetadata !== '[null]')
+      throw 'Wrong adComponentsCreativeScanningMetadata ' +
+          componentsCreativeScanningMetadata;
     if (browserSignals.biddingDurationMsec < 0)
       throw 'Wrong biddingDurationMsec ' + browserSignals.biddingDurationMsec;
+    if (browserSignals.forDebuggingOnlyInCooldownOrLockout)
+      throw 'Wrong forDebuggingOnlyInCooldownOrLockout ' +
+          browserSignals.forDebuggingOnlyInCooldownOrLockout;
+    if (browserSignals.forDebuggingOnlySampling)
+      throw 'Wrong forDebuggingOnlySampling ' +
+          browserSignals.forDebuggingOnlySampling;
   } else {
     if (Object.keys(browserSignals).length !== 10) {
       throw 'Wrong number of browser signals fields ' +
@@ -226,7 +239,8 @@ function validateDirectFromSellerSignals(directFromSellerSignals) {
   }
   const auctionSignalsJSON =
       JSON.stringify(directFromSellerSignals.auctionSignals);
-  if (auctionSignalsJSON !== '{"json":"for","all":["parties"]}') {
+  if (auctionSignalsJSON !== '{"json":"for","all":["parties"]}' &&
+      auctionSignalsJSON !== '{"all":["parties"],"json":"for"}') {
     throw 'Wrong directFromSellerSignals.auctionSignals ' +
         auctionSignalsJSON;
   }

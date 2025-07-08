@@ -5,6 +5,9 @@
 import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 
+import * as Network from 'devtools/panels/network/network.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests to ensure column names are matching data.\n`);
   await TestRunner.showPanel('network');
@@ -20,8 +23,11 @@ import {NetworkTestRunner} from 'network_test_runner';
     // Note that the expectation for the priority field is HighHigh, because in
     // the expanded view mode we show the initial priority and the requested
     // priority.
-    'name', 'method', 'status', 'protocol', 'scheme', 'domain', 'remoteaddress', 'type', 'initiator', 'cookies',
-    'setcookies', 'priority', 'cache-control', 'connection', 'content-encoding', 'content-length', 'vary'
+    'name', 'method', 'status', 'protocol', 'scheme', 'domain',
+    'remote-address', 'type', 'initiator', 'cookies', 'set-cookies', 'priority',
+    'response-header-cache-control', 'response-header-connection',
+    'response-header-content-encoding', 'response-header-content-length',
+    'response-header-vary'
   ];
 
   // Setup
@@ -34,7 +40,7 @@ import {NetworkTestRunner} from 'network_test_runner';
       request => request.name() === 'empty.html?xhr');
   var xhrNode = await NetworkTestRunner.waitForNetworkLogViewNodeForRequest(request);
 
-  UI.panels.network.networkLogView.refresh();
+  Network.NetworkPanel.NetworkPanel.instance().networkLogView.refresh();
   for (var columnName of columnsToTest) {
     const cell = xhrNode.createCell(columnName);
     // Cell may contain live locations that are unresolved.

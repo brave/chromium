@@ -5,28 +5,31 @@
 #include "ash/system/unified/date_tray.h"
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
+#include "ash/api/tasks/fake_tasks_client.h"
 #include "ash/constants/ash_features.h"
 #include "ash/glanceables/classroom/glanceables_classroom_client.h"
+#include "ash/glanceables/classroom/glanceables_classroom_student_view.h"
 #include "ash/glanceables/classroom/glanceables_classroom_types.h"
 #include "ash/glanceables/common/glanceables_list_footer_view.h"
 #include "ash/glanceables/common/glanceables_view_id.h"
-#include "ash/glanceables/glanceables_v2_controller.h"
-#include "ash/glanceables/tasks/fake_glanceables_tasks_client.h"
-#include "ash/glanceables/tasks/glanceables_task_view.h"
+#include "ash/glanceables/glanceables_controller.h"
+#include "ash/glanceables/tasks/test/glanceables_tasks_test_util.h"
 #include "ash/public/cpp/test/shell_test_api.h"
-#include "ash/public/cpp/test/test_new_window_delegate.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_focus_cycler.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
+#include "ash/style/combobox.h"
+#include "ash/system/model/clock_model.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_test_helper.h"
 #include "ash/system/time/calendar_view.h"
 #include "ash/system/time/time_tray_item_view.h"
 #include "ash/system/time/time_view.h"
-#include "ash/system/unified/classroom_bubble_student_view.h"
-#include "ash/system/unified/classroom_bubble_teacher_view.h"
 #include "ash/system/unified/glanceable_tray_bubble.h"
-#include "ash/system/unified/tasks_bubble_view.h"
 #include "ash/system/unified/unified_system_tray_bubble.h"
 #include "ash/test/ash_test_base.h"
 #include "base/memory/raw_ptr.h"
@@ -37,11 +40,15 @@
 #include "base/time/time_override.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "components/account_id/account_id.h"
-#include "testing/gmock/include/gmock/gmock.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
-#include "ui/views/controls/combobox/combobox.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/scroll_view.h"
+#include "ui/views/mouse_constants.h"
+#include "ui/views/test/ax_event_counter.h"
+#include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 #include "ui/wm/public/activation_change_observer.h"
 #include "ui/wm/public/activation_client.h"
@@ -52,43 +59,36 @@ namespace ash {
 namespace {
 
 std::vector<std::unique_ptr<GlanceablesClassroomAssignment>>
-CreateAssignmentsForTeachers(int count) {
-  std::vector<std::unique_ptr<GlanceablesClassroomAssignment>> assignments;
-  for (int i = 0; i < count; ++i) {
-    assignments.push_back(std::make_unique<GlanceablesClassroomAssignment>(
-        base::StringPrintf("Course %d", i),
-        base::StringPrintf("Course work %d", i), GURL(), absl::nullopt,
-        base::Time(), GlanceablesClassroomAggregatedSubmissionsState(2, 2, 0)));
-  }
-  return assignments;
-}
-
-std::vector<std::unique_ptr<GlanceablesClassroomAssignment>>
 CreateAssignmentsForStudents(int count) {
   std::vector<std::unique_ptr<GlanceablesClassroomAssignment>> assignments;
   for (int i = 0; i < count; ++i) {
     assignments.push_back(std::make_unique<GlanceablesClassroomAssignment>(
         base::StringPrintf("Course %d", i),
-        base::StringPrintf("Course work %d", i), GURL(), absl::nullopt,
-        base::Time(), absl::nullopt));
+        base::StringPrintf("Course work %d", i), GURL(), std::nullopt,
+        base::Time(), std::nullopt));
   }
   return assignments;
+}
+
+void WaitForTimeBetweenButtonOnClicks() {
+  base::RunLoop loop;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, loop.QuitClosure(), views::kMinimumTimeBetweenButtonClicks);
+  loop.Run();
 }
 
 class TestGlanceablesClassroomClient : public GlanceablesClassroomClient {
  public:
   TestGlanceablesClassroomClient() {
-    EXPECT_TRUE(features::AreGlanceablesV2Enabled());
+    EXPECT_TRUE(
+        features::IsGlanceablesTimeManagementClassroomStudentViewEnabled());
   }
 
   // GlanceablesClassroomClient:
+  bool IsDisabledByAdmin() const override { return false; }
   void IsStudentRoleActive(
       GlanceablesClassroomClient::IsRoleEnabledCallback cb) override {
     pending_is_student_role_enabled_callbacks_.push_back(std::move(cb));
-  }
-  void IsTeacherRoleActive(
-      GlanceablesClassroomClient::IsRoleEnabledCallback cb) override {
-    pending_is_teacher_role_enabled_callbacks_.push_back(std::move(cb));
   }
   void GetCompletedStudentAssignments(
       GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
@@ -106,23 +106,6 @@ class TestGlanceablesClassroomClient : public GlanceablesClassroomClient {
       GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
     pending_student_assignments_callbacks_.push_back(std::move(cb));
   }
-  void GetTeacherAssignmentsWithApproachingDueDate(
-      GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
-    pending_teacher_assignments_callbacks_.push_back(std::move(cb));
-  }
-  void GetTeacherAssignmentsRecentlyDue(
-      GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
-    pending_teacher_assignments_callbacks_.push_back(std::move(cb));
-  }
-  void GetTeacherAssignmentsWithoutDueDate(
-      GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
-    pending_teacher_assignments_callbacks_.push_back(std::move(cb));
-  }
-  void GetGradedTeacherAssignments(
-      GlanceablesClassroomClient::GetAssignmentsCallback cb) override {
-    pending_teacher_assignments_callbacks_.push_back(std::move(cb));
-  }
-  void OpenUrl(const GURL& url) const override {}
   void OnGlanceablesBubbleClosed() override { ++bubble_closed_count_; }
 
   // Returns `bubble_closed_count_`, while also resetting the counter.
@@ -139,13 +122,6 @@ class TestGlanceablesClassroomClient : public GlanceablesClassroomClient {
     pending_is_student_role_enabled_callbacks_.clear();
   }
 
-  void RespondToPendingIsTeacherRoleEnabledCallbacks(bool is_active) {
-    for (auto& cb : pending_is_teacher_role_enabled_callbacks_) {
-      std::move(cb).Run(is_active);
-    }
-    pending_is_teacher_role_enabled_callbacks_.clear();
-  }
-
   bool RespondToNextPendingStudentAssignmentsCallback(
       std::vector<std::unique_ptr<GlanceablesClassroomAssignment>>
           assignments) {
@@ -155,45 +131,18 @@ class TestGlanceablesClassroomClient : public GlanceablesClassroomClient {
 
     auto callback = std::move(pending_student_assignments_callbacks_.front());
     pending_student_assignments_callbacks_.pop_front();
-    std::move(callback).Run(std::move(assignments));
-    return true;
-  }
-
-  bool RespondToNextPendingTeacherAssignmentsCallback(
-      std::vector<std::unique_ptr<GlanceablesClassroomAssignment>>
-          assignments) {
-    if (pending_teacher_assignments_callbacks_.empty()) {
-      return false;
-    }
-
-    auto callback = std::move(pending_teacher_assignments_callbacks_.front());
-    pending_teacher_assignments_callbacks_.pop_front();
-    std::move(callback).Run(std::move(assignments));
+    std::move(callback).Run(/*success=*/true, std::move(assignments));
     return true;
   }
 
  private:
   std::vector<GlanceablesClassroomClient::IsRoleEnabledCallback>
       pending_is_student_role_enabled_callbacks_;
-  std::vector<GlanceablesClassroomClient::IsRoleEnabledCallback>
-      pending_is_teacher_role_enabled_callbacks_;
-
   std::list<GlanceablesClassroomClient::GetAssignmentsCallback>
       pending_student_assignments_callbacks_;
-  std::list<GlanceablesClassroomClient::GetAssignmentsCallback>
-      pending_teacher_assignments_callbacks_;
 
   // Number of times `OnGlanceablesBubbleClosed()` has been called.
   int bubble_closed_count_ = 0;
-};
-
-class MockNewWindowDelegate : public testing::NiceMock<TestNewWindowDelegate> {
- public:
-  // TestNewWindowDelegate:
-  MOCK_METHOD(void,
-              OpenUrl,
-              (const GURL& url, OpenUrlFrom from, Disposition disposition),
-              (override));
 };
 
 }  // namespace
@@ -201,22 +150,14 @@ class MockNewWindowDelegate : public testing::NiceMock<TestNewWindowDelegate> {
 class DateTrayTest
     : public AshTestBase,
       public wm::ActivationChangeObserver,
-      public testing::WithParamInterface</*glanceables_v2_enabled=*/bool> {
+      public testing::WithParamInterface</*glanceables_enabled=*/bool> {
  public:
   DateTrayTest() {
-    scoped_feature_list_.InitWithFeatureState(features::kGlanceablesV2,
-                                              GetParam());
-
-    auto delegate = std::make_unique<MockNewWindowDelegate>();
-    new_window_delegate_ = delegate.get();
-    window_delegate_provider_ =
-        std::make_unique<ash::TestNewWindowDelegateProvider>(
-            std::move(delegate));
+    scoped_feature_list_.InitWithFeatureStates(
+        {{features::kGlanceablesTimeManagementClassroomStudentView,
+          IsGlanceablesClassroomEnabled()},
+         {features::kGlanceablesTimeManagementTasksView, false}});
   }
-
-  DateTrayTest(const DateTrayTest&) = delete;
-  DateTrayTest& operator=(const DateTrayTest&) = delete;
-  ~DateTrayTest() override = default;
 
   void SetUp() override {
     // Set time override.
@@ -234,37 +175,29 @@ class DateTrayTest
 
     SimulateUserLogin(account_id_);
 
-    widget_ = CreateFramelessTestWidget();
-    widget_->SetContentsView(std::make_unique<views::View>());
-    widget_->SetFullscreen(true);
     date_tray_ = StatusAreaWidgetTestHelper::GetStatusAreaWidget()->date_tray();
-    unified_system_tray_ = StatusAreaWidgetTestHelper::GetStatusAreaWidget()
-                               ->unified_system_tray();
-    widget_->GetContentsView()->AddChildView(date_tray_.get());
-    widget_->GetContentsView()->AddChildView(unified_system_tray_.get());
     date_tray_->SetVisiblePreferred(true);
     date_tray_->unified_system_tray_->SetVisiblePreferred(true);
 
-    if (AreGlanceablesV2Enabled()) {
+    if (IsGlanceablesClassroomEnabled()) {
       glanceables_classroom_client_ =
           std::make_unique<TestGlanceablesClassroomClient>();
       fake_glanceables_tasks_client_ =
-          std::make_unique<FakeGlanceablesTasksClient>();
-      Shell::Get()->glanceables_v2_controller()->UpdateClientsRegistration(
+          glanceables_tasks_test_util::InitializeFakeTasksClient(
+              base::Time::Now());
+      Shell::Get()->glanceables_controller()->UpdateClientsRegistration(
           account_id_,
-          GlanceablesV2Controller::ClientsRegistration{
+          GlanceablesController::ClientsRegistration{
               .classroom_client = glanceables_classroom_client_.get(),
               .tasks_client = fake_glanceables_tasks_client_.get()});
     }
   }
 
   void TearDown() override {
-    if (AreGlanceablesV2Enabled()) {
-      Shell::Get()->glanceables_v2_controller()->UpdateClientsRegistration(
-          account_id_, GlanceablesV2Controller::ClientsRegistration{});
+    if (IsGlanceablesClassroomEnabled()) {
+      RemoveGlanceablesClients();
     }
 
-    widget_.reset();
     date_tray_ = nullptr;
     if (observering_activation_changes_) {
       Shell::Get()->activation_client()->RemoveObserver(this);
@@ -272,7 +205,7 @@ class DateTrayTest
     AshTestBase::TearDown();
   }
 
-  bool AreGlanceablesV2Enabled() { return GetParam(); }
+  bool IsGlanceablesClassroomEnabled() { return GetParam(); }
 
   DateTray* GetDateTray() { return date_tray_; }
 
@@ -280,37 +213,46 @@ class DateTrayTest
     return date_tray_->unified_system_tray_;
   }
 
-  GlanceableTrayBubble* GetGlanceableTrayBubble() {
+  GlanceableTrayBubble* GetGlanceableTrayBubble() const {
     return date_tray_->bubble_.get();
   }
 
+  TimeTrayItemView* GetTimeTrayItemView() {
+    return date_tray_->time_tray_item_view_;
+  }
+
   bool IsBubbleShown() {
-    if (AreGlanceablesV2Enabled()) {
+    if (IsGlanceablesClassroomEnabled()) {
       return !!GetGlanceableTrayBubble();
     }
     return GetUnifiedSystemTray()->IsBubbleShown();
   }
 
   bool AreContentsViewShown() {
-    if (AreGlanceablesV2Enabled()) {
+    if (IsGlanceablesClassroomEnabled()) {
       return !!GetGlanceableTrayBubble();
     }
     return GetUnifiedSystemTray()->IsShowingCalendarView();
   }
 
-  void LeftClickOnOpenBubble() {
-    if (AreGlanceablesV2Enabled()) {
-      LeftClickOn(GetGlanceableTrayBubble()->GetBubbleView());
-
-    } else {
-      LeftClickOn(GetUnifiedSystemTray()->bubble()->GetBubbleView());
+  views::View* GetBubbleView() {
+    if (IsGlanceablesClassroomEnabled()) {
+      return GetGlanceableTrayBubble()->GetBubbleView();
     }
+    return GetUnifiedSystemTray()->bubble()->GetBubbleView();
   }
 
-  std::u16string GetTimeViewText() {
-    return date_tray_->time_view_->time_view()
-        ->horizontal_label_date_for_test()
+  void LeftClickOnOpenBubble() { LeftClickOn(GetBubbleView()); }
+
+  std::u16string_view GetTimeViewText() {
+    return GetTimeTrayItemView()
+        ->time_view()
+        ->GetHorizontalDateLabelForTesting()
         ->GetText();
+  }
+
+  void UpdateTimeViewText() {
+    GetTimeTrayItemView()->time_view()->UpdateText();
   }
 
   void ImmediatelyCloseBubbleOnActivation() {
@@ -322,6 +264,9 @@ class DateTrayTest
   void OnWindowActivated(ActivationReason reason,
                          aura::Window* gained_active,
                          aura::Window* lost_active) override {
+    if (IsGlanceablesClassroomEnabled()) {
+      GetDateTray()->HideGlanceableBubble();
+    }
     GetUnifiedSystemTray()->CloseBubble();
   }
 
@@ -329,50 +274,65 @@ class DateTrayTest
     return glanceables_classroom_client_.get();
   }
 
-  FakeGlanceablesTasksClient* fake_glanceables_tasks_client() {
+  api::FakeTasksClient* fake_glanceables_tasks_client() {
     return fake_glanceables_tasks_client_.get();
   }
 
-  MockNewWindowDelegate* new_window_delegate() { return new_window_delegate_; }
-
   void RemoveGlanceablesClients() {
-    Shell::Get()->glanceables_v2_controller()->UpdateClientsRegistration(
-        account_id_, GlanceablesV2Controller::ClientsRegistration{
+    Shell::Get()->glanceables_controller()->UpdateClientsRegistration(
+        account_id_, GlanceablesController::ClientsRegistration{
                          .classroom_client = nullptr, .tasks_client = nullptr});
   }
 
+  static base::Time FakeTimeNow() { return fake_time_; }
+  static void SetFakeNow(base::Time fake_now) { fake_time_ = fake_now; }
+
  private:
-  std::unique_ptr<views::Widget> widget_;
-  AccountId account_id_ =
-      AccountId::FromUserEmailGaiaId("test_user@gmail.com", "123456");
-  std::unique_ptr<TestGlanceablesClassroomClient> glanceables_classroom_client_;
-  std::unique_ptr<FakeGlanceablesTasksClient> fake_glanceables_tasks_client_;
-  bool observering_activation_changes_ = false;
-
-  // Owned by `widget_`.
-  raw_ptr<DateTray, ExperimentalAsh> date_tray_ = nullptr;
-
-  raw_ptr<UnifiedSystemTray, ExperimentalAsh> unified_system_tray_ = nullptr;
-
   base::test::ScopedFeatureList scoped_feature_list_;
+  AccountId account_id_ =
+      AccountId::FromUserEmailGaiaId("test_user@gmail.com", GaiaId("123456"));
+  std::unique_ptr<TestGlanceablesClassroomClient> glanceables_classroom_client_;
+  std::unique_ptr<api::FakeTasksClient> fake_glanceables_tasks_client_;
+  bool observering_activation_changes_ = false;
+  static base::Time fake_time_;
 
-  std::unique_ptr<ash::TestNewWindowDelegateProvider> window_delegate_provider_;
-  raw_ptr<MockNewWindowDelegate, DanglingUntriaged> new_window_delegate_ =
-      nullptr;
+  // Owned by status area widget.
+  raw_ptr<DateTray> date_tray_ = nullptr;
 };
 
-INSTANTIATE_TEST_SUITE_P(GlanceablesV2, DateTrayTest, testing::Bool());
+base::Time DateTrayTest::fake_time_;
+
+INSTANTIATE_TEST_SUITE_P(GlanceablesClassroom, DateTrayTest, testing::Bool());
 
 using GlanceablesDateTrayTest = DateTrayTest;
-INSTANTIATE_TEST_SUITE_P(GlanceablesV2,
+INSTANTIATE_TEST_SUITE_P(GlanceablesClassroom,
                          GlanceablesDateTrayTest,
                          testing::Values(true));
 
 // Tests that toggling the `CalendarView` via the date tray accelerator does not
 // result in a crash when the unified system tray bubble is set to immediately
-// close upon activation. See crrev/c/1419499 for details.
+// close upon activation. See crbug/1419499 for details.
 TEST_P(DateTrayTest, AcceleratorOpenAndImmediateCloseDoesNotCrash) {
   ImmediatelyCloseBubbleOnActivation();
+  ShellTestApi().PressAccelerator(
+      ui::Accelerator(ui::VKEY_C, ui::EF_COMMAND_DOWN));
+  if (IsGlanceablesClassroomEnabled()) {
+    // The glanceables bubble cannot be closed during activation, so expect it
+    // to still be shown.
+    EXPECT_TRUE(IsBubbleShown());
+  } else {
+    EXPECT_FALSE(IsBubbleShown());
+  }
+}
+
+// Test that search + c shows and hides a glanceables or calendar bubble.
+TEST_P(DateTrayTest, AcceleratorTogglesBubble) {
+  EXPECT_FALSE(IsBubbleShown());
+
+  ShellTestApi().PressAccelerator(
+      ui::Accelerator(ui::VKEY_C, ui::EF_COMMAND_DOWN));
+  EXPECT_TRUE(IsBubbleShown());
+
   ShellTestApi().PressAccelerator(
       ui::Accelerator(ui::VKEY_C, ui::EF_COMMAND_DOWN));
   EXPECT_FALSE(IsBubbleShown());
@@ -386,105 +346,11 @@ TEST_P(DateTrayTest, InitialState) {
   // Initial state: not showing the calendar bubble.
   EXPECT_FALSE(IsBubbleShown());
   EXPECT_FALSE(AreContentsViewShown());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(0,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(0,
               glanceables_classroom_client()->GetAndResetBubbleClosedCount());
-  }
-}
-
-TEST_P(DateTrayTest, ShowTasksComboModel) {
-  LeftClickOn(GetDateTray());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
-  if (!AreGlanceablesV2Enabled()) {
-    EXPECT_EQ(GetGlanceableTrayBubble(), nullptr);
-  } else {
-    auto* tasks_view = GetGlanceableTrayBubble()->GetTasksView();
-    EXPECT_TRUE(tasks_view->GetVisible());
-    EXPECT_FALSE(tasks_view->IsMenuRunning());
-    EXPECT_TRUE(tasks_view->task_list_combo_box_view()->GetVisible());
-    tasks_view->GetWidget()->LayoutRootViewIfNecessary();
-
-    EXPECT_EQ(tasks_view->task_items_container_view()->children().size(), 2u);
-
-    tasks_view->task_list_combo_box_view()->ScrollViewToVisible();
-    tasks_view->GetWidget()->LayoutRootViewIfNecessary();
-
-    // Verify that tapping on combobox opens the selection menu.
-    GestureTapOn(tasks_view->task_list_combo_box_view());
-    base::RunLoop().RunUntilIdle();
-    EXPECT_TRUE(tasks_view->IsMenuRunning());
-
-    // Select the next task list using keyboard navigation.
-    PressAndReleaseKey(ui::KeyboardCode::VKEY_DOWN);
-    PressAndReleaseKey(ui::KeyboardCode::VKEY_DOWN);
-    PressAndReleaseKey(ui::KeyboardCode::VKEY_RETURN);
-
-    // Verify the number of items in task_items_container_view()->children().
-    EXPECT_EQ(tasks_view->task_items_container_view()->children().size(), 3u);
-  }
-}
-
-TEST_P(DateTrayTest, MarkTaskAsComplete) {
-  LeftClickOn(GetDateTray());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
-  if (!AreGlanceablesV2Enabled()) {
-    EXPECT_EQ(GetGlanceableTrayBubble(), nullptr);
-  } else {
-    EXPECT_TRUE(GetGlanceableTrayBubble()->GetTasksView()->GetVisible());
-    EXPECT_FALSE(GetGlanceableTrayBubble()->GetTasksView()->IsMenuRunning());
-    EXPECT_TRUE(GetGlanceableTrayBubble()
-                    ->GetTasksView()
-                    ->task_list_combo_box_view()
-                    ->GetVisible());
-    EXPECT_EQ(GetGlanceableTrayBubble()
-                  ->GetTasksView()
-                  ->task_items_container_view()
-                  ->children()
-                  .size(),
-              2u);
-
-    // Verify that tapping on combobox opens the selection menu.
-    GlanceablesTaskView* task_view = views::AsViewClass<GlanceablesTaskView>(
-        GetGlanceableTrayBubble()
-            ->GetTasksView()
-            ->task_items_container_view()
-            ->children()[0]);
-
-    ASSERT_TRUE(task_view);
-    task_view->GetWidget()->LayoutRootViewIfNecessary();
-    ASSERT_FALSE(task_view->GetCompletedForTest());
-    ASSERT_EQ(0u, fake_glanceables_tasks_client()->completed_tasks().size());
-    GestureTapOn(task_view->GetButtonForTest());
-    ASSERT_TRUE(task_view->GetCompletedForTest());
-    ASSERT_EQ(1u, fake_glanceables_tasks_client()->completed_tasks().size());
-    ASSERT_EQ("TaskListID1:TaskListItem1",
-              fake_glanceables_tasks_client()->completed_tasks().front());
-  }
-}
-
-// Tests that tapping the tasks glanceable action button opens a browser page.
-TEST_P(DateTrayTest, ShowTasksWebUI) {
-  LeftClickOn(GetDateTray());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
-  if (!AreGlanceablesV2Enabled()) {
-    EXPECT_EQ(GetGlanceableTrayBubble(), nullptr);
-  } else {
-    const auto* const see_all_button = views::AsViewClass<views::LabelButton>(
-        GetGlanceableTrayBubble()->GetTasksView()->GetViewByID(
-            base::to_underlying(GlanceablesViewId::kListFooterSeeAllButton)));
-    EXPECT_CALL(*new_window_delegate(), OpenUrl).Times(1);
-    GestureTapOn(see_all_button);
   }
 }
 
@@ -500,7 +366,7 @@ TEST_P(DateTrayTest, ShowCalendarBubble) {
   EXPECT_TRUE(GetDateTray()->is_active());
 
   histogram_tester.ExpectTotalCount("Ash.Calendar.ShowSource.TimeView",
-                                    AreGlanceablesV2Enabled() ? 0 : 1);
+                                    IsGlanceablesClassroomEnabled() ? 0 : 1);
 
   // Clicking on the `DateTray` again -> close the calendar bubble.
   LeftClickOn(GetDateTray());
@@ -508,7 +374,7 @@ TEST_P(DateTrayTest, ShowCalendarBubble) {
   EXPECT_FALSE(AreContentsViewShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
@@ -524,7 +390,7 @@ TEST_P(DateTrayTest, ShowCalendarBubble) {
   EXPECT_TRUE(GetDateTray()->is_active());
 
   histogram_tester.ExpectTotalCount("Ash.Calendar.ShowSource.TimeView",
-                                    AreGlanceablesV2Enabled() ? 0 : 2);
+                                    IsGlanceablesClassroomEnabled() ? 0 : 2);
 
   // Tapping on the `DateTray` again -> close the calendar bubble.
   GestureTapOn(GetDateTray());
@@ -533,12 +399,86 @@ TEST_P(DateTrayTest, ShowCalendarBubble) {
   EXPECT_FALSE(AreContentsViewShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
               glanceables_classroom_client()->GetAndResetBubbleClosedCount());
   }
+}
+
+TEST_P(DateTrayTest, DontActivateBubbleIfShownByTap) {
+  // Clicking on the `DateTray` -> show the calendar bubble.
+  LeftClickOn(GetDateTray());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(IsBubbleShown());
+  EXPECT_TRUE(AreContentsViewShown());
+  EXPECT_TRUE(GetDateTray()->is_active());
+
+  views::Widget* const bubble_widget = GetBubbleView()->GetWidget();
+  // The bubble should not be activated if the calendar/glanceables bubble gets
+  // shown by tapping the date tray.
+  EXPECT_FALSE(bubble_widget->IsActive());
+
+  if (IsGlanceablesClassroomEnabled()) {
+    glanceables_classroom_client()
+        ->RespondToPendingIsStudentRoleEnabledCallbacks(
+            /*is_active=*/true);
+    ASSERT_TRUE(glanceables_classroom_client()
+                    ->RespondToNextPendingStudentAssignmentsCallback(
+                        CreateAssignmentsForStudents(/*count=*/1)));
+  }
+  EXPECT_FALSE(bubble_widget->IsActive());
+
+  // The user should be able to activate the bubble
+  PressAndReleaseKey(ui::KeyboardCode::VKEY_TAB);
+
+  EXPECT_TRUE(bubble_widget->IsActive());
+
+  views::View* const focused_view =
+      bubble_widget->GetFocusManager()->GetFocusedView();
+  ASSERT_TRUE(focused_view);
+  // Verify that the calendar view gets the focus.
+  if (IsGlanceablesClassroomEnabled()) {
+    EXPECT_TRUE(
+        GetGlanceableTrayBubble()->GetCalendarView()->Contains(focused_view));
+  }
+  EXPECT_EQ("CalendarDateCellView", focused_view->GetClassName());
+}
+
+TEST_P(DateTrayTest, ActivateBubbleIfShownByKeyboard) {
+  GetPrimaryShelf()->shelf_focus_cycler()->FocusStatusArea(
+      false /* last_element */);
+  GetDateTray()->RequestFocus();
+  PressAndReleaseKey(ui::KeyboardCode::VKEY_RETURN);
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(IsBubbleShown());
+  EXPECT_TRUE(AreContentsViewShown());
+  EXPECT_TRUE(GetDateTray()->is_active());
+
+  views::Widget* const bubble_widget = GetBubbleView()->GetWidget();
+  // Verify that the bubble gets activated if opened via keyboard.
+  EXPECT_TRUE(bubble_widget->IsActive());
+
+  if (IsGlanceablesClassroomEnabled()) {
+    glanceables_classroom_client()
+        ->RespondToPendingIsStudentRoleEnabledCallbacks(
+            /*is_active=*/true);
+    ASSERT_TRUE(glanceables_classroom_client()
+                    ->RespondToNextPendingStudentAssignmentsCallback(
+                        CreateAssignmentsForStudents(/*count=*/1)));
+  }
+  EXPECT_TRUE(bubble_widget->IsActive());
+
+  views::View* const focused_view =
+      bubble_widget->GetFocusManager()->GetFocusedView();
+  ASSERT_TRUE(focused_view);
+  // Verify that the calendar view gets the focus.
+  if (IsGlanceablesClassroomEnabled()) {
+    EXPECT_TRUE(
+        GetGlanceableTrayBubble()->GetCalendarView()->Contains(focused_view));
+  }
+  EXPECT_EQ("CalendarDateCellView", focused_view->GetClassName());
 }
 
 // Tests the behavior when clicking on different areas.
@@ -563,7 +503,7 @@ TEST_P(DateTrayTest, ClickingArea) {
   EXPECT_TRUE(GetUnifiedSystemTray()->IsBubbleShown());
   EXPECT_TRUE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
@@ -584,7 +524,7 @@ TEST_P(DateTrayTest, ClickingArea) {
   EXPECT_FALSE(GetUnifiedSystemTray()->IsBubbleShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
@@ -603,7 +543,7 @@ TEST_P(DateTrayTest, EscapeKeyForClose) {
   EXPECT_TRUE(GetDateTray()->is_active());
 
   histogram_tester.ExpectTotalCount("Ash.Calendar.ShowSource.TimeView",
-                                    AreGlanceablesV2Enabled() ? 0 : 1);
+                                    IsGlanceablesClassroomEnabled() ? 0 : 1);
 
   // Hitting escape key -> close and deactivate the calendar bubble.
   PressAndReleaseKey(ui::KeyboardCode::VKEY_ESCAPE);
@@ -611,7 +551,7 @@ TEST_P(DateTrayTest, EscapeKeyForClose) {
   EXPECT_FALSE(AreContentsViewShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
@@ -634,7 +574,8 @@ TEST_P(DateTrayTest, CloseBubble) {
   EXPECT_FALSE(IsBubbleShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  base::RunLoop().RunUntilIdle();
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(1,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(1,
@@ -647,7 +588,8 @@ TEST_P(DateTrayTest, CloseBubble) {
   EXPECT_FALSE(IsBubbleShown());
   EXPECT_FALSE(GetUnifiedSystemTray()->is_active());
   EXPECT_FALSE(GetDateTray()->is_active());
-  if (AreGlanceablesV2Enabled()) {
+  base::RunLoop().RunUntilIdle();
+  if (IsGlanceablesClassroomEnabled()) {
     EXPECT_EQ(0,
               fake_glanceables_tasks_client()->GetAndResetBubbleClosedCount());
     EXPECT_EQ(0,
@@ -660,21 +602,16 @@ TEST_P(DateTrayTest, DoesNotRenderClassroomBubblesForInactiveRoles) {
   EXPECT_TRUE(IsBubbleShown());
   EXPECT_TRUE(AreContentsViewShown());
 
-  if (!AreGlanceablesV2Enabled()) {
+  if (!IsGlanceablesClassroomEnabled()) {
     EXPECT_FALSE(GetGlanceableTrayBubble());
     return;
   }
 
   glanceables_classroom_client()->RespondToPendingIsStudentRoleEnabledCallbacks(
       false);
-  glanceables_classroom_client()->RespondToPendingIsTeacherRoleEnabledCallbacks(
-      false);
 
-  // Only static bubbles are rendered in `scroll_view` (tasks and calendar).
-  const auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  ASSERT_TRUE(scroll_view);
-  EXPECT_EQ(scroll_view->contents()->children().size(), 2u);
+  // Only calendar is rendered in `GlanceableTrayBubbleView`.
+  EXPECT_EQ(GetGlanceableTrayBubble()->GetBubbleView()->children().size(), 1u);
 }
 
 TEST_P(DateTrayTest, RendersClassroomBubblesForActiveRoles) {
@@ -682,329 +619,180 @@ TEST_P(DateTrayTest, RendersClassroomBubblesForActiveRoles) {
   EXPECT_TRUE(IsBubbleShown());
   EXPECT_TRUE(AreContentsViewShown());
 
-  if (!AreGlanceablesV2Enabled()) {
+  if (!IsGlanceablesClassroomEnabled()) {
     EXPECT_FALSE(GetGlanceableTrayBubble());
     return;
   }
 
-  // Only static bubbles are rendered in `scroll_view` (tasks and calendar).
-  const auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  ASSERT_TRUE(scroll_view);
-  EXPECT_EQ(scroll_view->contents()->children().size(), 2u);
+  // Only calendar is rendered in `GlanceableTrayBubbleView`.
+  EXPECT_EQ(GetGlanceableTrayBubble()->GetBubbleView()->children().size(), 1u);
 
-  // Classroom student bubble is added.
+  // Classroom student bubble is added in TimeManagementContainer.
   glanceables_classroom_client()->RespondToPendingIsStudentRoleEnabledCallbacks(
       true);
-  EXPECT_EQ(scroll_view->contents()->children().size(), 3u);
-
-  // Classroom teacher bubble is added.
-  glanceables_classroom_client()->RespondToPendingIsTeacherRoleEnabledCallbacks(
-      true);
-  EXPECT_EQ(scroll_view->contents()->children().size(), 4u);
+  // Both calendar and the `TimeManagementContainer` should be rendered in
+  // `GlanceableTrayBubbleView`.
+  EXPECT_EQ(GetGlanceableTrayBubble()->GetBubbleView()->children().size(), 2u);
+  EXPECT_EQ("TimeManagementContainer", GetGlanceableTrayBubble()
+                                           ->GetBubbleView()
+                                           ->children()
+                                           .at(0)
+                                           ->GetClassName());
 }
 
-TEST_P(DateTrayTest, EmptyClientsFallbackToLegacyDateBubble) {
-  LeftClickOn(GetDateTray());
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
+TEST_P(DateTrayTest, AccessibleName) {
+  // Expect that the current time matches the time_override used in Setup(), and
+  // that the accessible name of the tray matches that time.
+  base::Time test_now;
+  ASSERT_TRUE(base::Time::FromString("24 Aug 2021 10:00 GMT", &test_now));
+  EXPECT_EQ(u"Aug 24", GetTimeViewText());
 
-  if (!AreGlanceablesV2Enabled()) {
-    EXPECT_FALSE(GetGlanceableTrayBubble());
-    return;
+  {
+    ui::AXNodeData node_data;
+    GetDateTray()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+    EXPECT_EQ(
+        node_data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+        l10n_util::GetStringFUTF16(
+            IDS_ASH_DATE_TRAY_ACCESSIBLE_DESCRIPTION,
+            base::TimeFormatFriendlyDate(test_now),
+            base::TimeFormatTimeOfDayWithHourClockType(
+                test_now,
+                Shell::Get()->system_tray_model()->clock()->hour_clock_type(),
+                base::kKeepAmPm)));
   }
 
-  // Remove glanceables clients and click on the date tray to close the bubble
-  // again.
-  RemoveGlanceablesClients();
-  LeftClickOn(GetDateTray());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(IsBubbleShown());
-  EXPECT_FALSE(AreContentsViewShown());
-  EXPECT_FALSE(GetGlanceableTrayBubble());
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
 
-  // Click on the date tray again, now, the unified system tray calendar view
-  // should show instead of the glanceables tray bubble.
-  LeftClickOn(GetDateTray());
-  EXPECT_TRUE(GetUnifiedSystemTray()->IsBubbleShown());
-  EXPECT_TRUE(GetUnifiedSystemTray()->IsShowingCalendarView());
-  EXPECT_FALSE(GetGlanceableTrayBubble());
+  // Mock changing the current time, in order to test that the tray's accessible
+  // name will be updated.
+  ASSERT_TRUE(base::Time::FromString("23 Nov 2021 02:40 GMT", &test_now));
+  SetFakeNow(test_now);
+  base::subtle::ScopedTimeClockOverrides time_override(
+      &DateTrayTest::FakeTimeNow,
+      /*time_ticks_override=*/nullptr, /*thread_ticks_override=*/nullptr);
+  UpdateTimeViewText();
+
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged, GetDateTray()));
+  {
+    ui::AXNodeData node_data;
+    GetDateTray()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+    EXPECT_EQ(
+        node_data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+        l10n_util::GetStringFUTF16(
+            IDS_ASH_DATE_TRAY_ACCESSIBLE_DESCRIPTION,
+            base::TimeFormatFriendlyDate(test_now),
+            base::TimeFormatTimeOfDayWithHourClockType(
+                test_now,
+                Shell::Get()->system_tray_model()->clock()->hour_clock_type(),
+                base::kKeepAmPm)));
+  }
 }
 
-TEST_P(GlanceablesDateTrayTest, TrayBubbleGrowsWithTeacherGlanceableViews) {
-  UpdateDisplay("512x1536");
-
+TEST_P(GlanceablesDateTrayTest,
+       TrayBubbleUpdatesBoundsOnDisplayConfigurationUpdate) {
   LeftClickOn(GetDateTray());
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
+  ASSERT_TRUE(IsBubbleShown());
   ASSERT_TRUE(GetGlanceableTrayBubble());
-
-  auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-
-  glanceables_classroom_client()->RespondToPendingIsTeacherRoleEnabledCallbacks(
-      true);
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-
-  auto* teacher_view = GetGlanceableTrayBubble()->GetClassroomTeacherView();
-  ASSERT_TRUE(teacher_view);
-
-  auto* calendar_view = GetGlanceableTrayBubble()->GetCalendarView();
-  ASSERT_TRUE(calendar_view);
-
-  auto* tasks_view = GetGlanceableTrayBubble()->GetTasksView();
-  ASSERT_TRUE(tasks_view);
-
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/3)));
-
-  // Verify that the glanceable bubble expands so both teacher view and calendar
-  // view remain in the scroll view viewport.
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  const int calendar_view_bottom = calendar_view->GetBoundsInScreen().bottom();
-  const int tasks_view_top = tasks_view->GetBoundsInScreen().y();
-
-  views::Combobox* assignment_selector =
-      views::AsViewClass<views::Combobox>(teacher_view->GetViewByID(
-          base::to_underlying(GlanceablesViewId::kClassroomBubbleComboBox)));
-  ASSERT_TRUE(assignment_selector);
-
-  assignment_selector->MenuSelectionAt(2);
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/1)));
-
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  EXPECT_EQ(calendar_view_bottom, calendar_view->GetBoundsInScreen().bottom());
-  EXPECT_LT(tasks_view_top, tasks_view->GetBoundsInScreen().y());
-}
-
-TEST_P(GlanceablesDateTrayTest, TrayBubbleGrowsWithStudentGlanceableView) {
-  UpdateDisplay("512x1536");
-
-  LeftClickOn(GetDateTray());
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
-  ASSERT_TRUE(GetGlanceableTrayBubble());
-
-  auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
 
   glanceables_classroom_client()->RespondToPendingIsStudentRoleEnabledCallbacks(
-      true);
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
+      /*is_active=*/true);
 
-  auto* student_view = GetGlanceableTrayBubble()->GetClassroomStudentView();
-  ASSERT_TRUE(student_view);
+  UpdateDisplay("1240x700");
+  const auto old_work_area =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+  const auto old_view_bounds =
+      GetGlanceableTrayBubble()->GetBubbleView()->GetBoundsInScreen();
 
-  auto* calendar_view = GetGlanceableTrayBubble()->GetCalendarView();
-  ASSERT_TRUE(calendar_view);
+  UpdateDisplay("800x480");
+  const auto new_work_area =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+  const auto new_view_bounds =
+      GetGlanceableTrayBubble()->GetBubbleView()->GetBoundsInScreen();
 
-  auto* tasks_view = GetGlanceableTrayBubble()->GetTasksView();
-  ASSERT_TRUE(tasks_view);
+  // Constant `kWideTrayMenuWidth`.
+  EXPECT_EQ(old_view_bounds.width(), new_view_bounds.width());
 
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      student_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
+  // Margins between the top, right and bottom edges of the view and the
+  // corresponding work area edges are the same, meaning that the view is
+  // correctly repositioned (including changing its height) after changing
+  // display configuration / zoom level.
+  EXPECT_GT(old_view_bounds.height(), new_view_bounds.height());
+  EXPECT_EQ(old_work_area.width() - old_view_bounds.right(),
+            new_work_area.width() - new_view_bounds.right());
+  EXPECT_EQ(old_work_area.height() - old_view_bounds.bottom(),
+            new_work_area.height() - new_view_bounds.bottom());
+}
 
+TEST_P(GlanceablesDateTrayTest, AssignmentListFetchedWhileBubbleClosing) {
+  LeftClickOn(GetDateTray());
+  ASSERT_TRUE(IsBubbleShown());
+  ASSERT_TRUE(GetGlanceableTrayBubble());
+
+  glanceables_classroom_client()->RespondToPendingIsStudentRoleEnabledCallbacks(
+      /*is_active=*/true);
+
+  GetGlanceableTrayBubble()->GetBubbleWidget()->Close();
   ASSERT_TRUE(glanceables_classroom_client()
                   ->RespondToNextPendingStudentAssignmentsCallback(
                       CreateAssignmentsForStudents(/*count=*/3)));
 
-  // Verify that the glanceable bubble expands so both student view and calendar
-  // view remain in the scroll view viewport.
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      student_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  views::Combobox* assignment_selector =
-      views::AsViewClass<views::Combobox>(student_view->GetViewByID(
-          base::to_underlying(GlanceablesViewId::kClassroomBubbleComboBox)));
-  ASSERT_TRUE(assignment_selector);
-
-  const int calendar_view_bottom = calendar_view->GetBoundsInScreen().bottom();
-  const int tasks_view_top = tasks_view->GetBoundsInScreen().y();
-
-  assignment_selector->MenuSelectionAt(2);
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingStudentAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/1)));
-
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      student_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      tasks_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  EXPECT_EQ(calendar_view_bottom, calendar_view->GetBoundsInScreen().bottom());
-  EXPECT_LT(tasks_view_top, tasks_view->GetBoundsInScreen().y());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(IsBubbleShown());
 }
 
-TEST_P(GlanceablesDateTrayTest, TrayBubbleGrowsUpward) {
-  UpdateDisplay("1024x512");
+TEST_P(GlanceablesDateTrayTest, ClickOutsideComboboxMenu) {
+  EXPECT_FALSE(GetGlanceableTrayBubble());
 
+  // Click the date tray to show the glanceable bubbles.
   LeftClickOn(GetDateTray());
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
+  EXPECT_TRUE(GetGlanceableTrayBubble());
 
-  ASSERT_TRUE(GetGlanceableTrayBubble());
+  glanceables_classroom_client()->RespondToPendingIsStudentRoleEnabledCallbacks(
+      /*is_active=*/true);
+  EXPECT_TRUE(GetGlanceableTrayBubble()->GetClassroomStudentView());
 
-  auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
+  // Click on the combo box to show the assignment types list.
+  const auto* combobox = views::AsViewClass<Combobox>(
+      GetGlanceableTrayBubble()->GetClassroomStudentView()->GetViewByID(
+          base::to_underlying(
+              GlanceablesViewId::kTimeManagementBubbleComboBox)));
+  LeftClickOn(combobox);
+  EXPECT_TRUE(combobox->IsMenuRunning());
+  EXPECT_TRUE(GetGlanceableTrayBubble());
 
-  glanceables_classroom_client()->RespondToPendingIsTeacherRoleEnabledCallbacks(
-      true);
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
+  // Click at the top of the classroom view and make sure the menu gets
+  // closed.
+  GetEventGenerator()->MoveMouseTo(GetGlanceableTrayBubble()
+                                       ->GetClassroomStudentView()
+                                       ->GetBoundsInScreen()
+                                       .top_center());
+  GetEventGenerator()->ClickLeftButton();
+  EXPECT_FALSE(combobox->IsMenuRunning());
+  EXPECT_TRUE(GetGlanceableTrayBubble());
 
-  auto* teacher_view = GetGlanceableTrayBubble()->GetClassroomTeacherView();
-  ASSERT_TRUE(teacher_view);
+  WaitForTimeBetweenButtonOnClicks();
 
-  auto* calendar_view = GetGlanceableTrayBubble()->GetCalendarView();
-  ASSERT_TRUE(calendar_view);
+  // Click on the combo box to show the assignment types list again.
+  LeftClickOn(combobox);
+  EXPECT_TRUE(combobox->IsMenuRunning());
+  EXPECT_TRUE(GetGlanceableTrayBubble());
 
-  // The display size cannot accommodate both teacher view and the calendar view
-  // - calendar view should be visible in the scroll view's viewport.
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
+  const gfx::Point left_side_of_screen =
+      Shell::Get()->GetPrimaryRootWindow()->GetBoundsInScreen().left_center();
 
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/3)));
+  // Click outside of the glanceables bubbles, on the left side of the screen.
+  GetEventGenerator()->MoveMouseTo(left_side_of_screen);
+  GetEventGenerator()->ClickLeftButton();
 
-  // The display size is not sufficient to fit both teacher glanceable and the
-  // calendar view. Verify that it's scrolled so the calendar remains visible.
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
+  // Check that the combobox menu is closed, but that the glaneable bubbles
+  // are still open.
+  EXPECT_FALSE(combobox->IsMenuRunning());
+  EXPECT_TRUE(GetGlanceableTrayBubble());
 
-  const int calendar_view_bottom = calendar_view->GetBoundsInScreen().bottom();
-
-  views::Combobox* assignment_selector =
-      views::AsViewClass<views::Combobox>(teacher_view->GetViewByID(
-          base::to_underlying(GlanceablesViewId::kClassroomBubbleComboBox)));
-  ASSERT_TRUE(assignment_selector);
-
-  assignment_selector->MenuSelectionAt(2);
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/1)));
-
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  EXPECT_EQ(calendar_view_bottom, calendar_view->GetBoundsInScreen().bottom());
-}
-
-TEST_P(GlanceablesDateTrayTest,
-       TeacherGlanceableGrowthDoesNotMoveFocusedViewOffscreen) {
-  UpdateDisplay("1024x512");
-
-  LeftClickOn(GetDateTray());
-  EXPECT_TRUE(IsBubbleShown());
-  EXPECT_TRUE(AreContentsViewShown());
-
-  ASSERT_TRUE(GetGlanceableTrayBubble());
-
-  auto* const scroll_view = views::AsViewClass<views::ScrollView>(
-      GetGlanceableTrayBubble()->GetBubbleView()->children().at(0));
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-
-  glanceables_classroom_client()->RespondToPendingIsTeacherRoleEnabledCallbacks(
-      true);
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-
-  auto* teacher_view = GetGlanceableTrayBubble()->GetClassroomTeacherView();
-  ASSERT_TRUE(teacher_view);
-
-  auto* calendar_view = GetGlanceableTrayBubble()->GetCalendarView();
-  ASSERT_TRUE(calendar_view);
-
-  // The display size cannot accommodate both teacher view and the calendar view
-  // - calendar view should be visible in the scroll view's viewport.
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/1)));
-
-  // The display size is not sufficient to fit both teacher glanceable and the
-  // calendar view. Verify that it's scrolled so the calendar remains visible.
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      teacher_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-
-  views::Combobox* assignment_selector =
-      views::AsViewClass<views::Combobox>(teacher_view->GetViewByID(
-          base::to_underlying(GlanceablesViewId::kClassroomBubbleComboBox)));
-  ASSERT_TRUE(assignment_selector);
-
-  // Focus the selector, and increase the glanceable size in response to the
-  // selection change - verify that the focused selector remains visible.
-  assignment_selector->ScrollViewToVisible();
-  assignment_selector->RequestFocus();
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      assignment_selector->GetBoundsInScreen()));
-
-  assignment_selector->MenuSelectionAt(2);
-
-  ASSERT_TRUE(glanceables_classroom_client()
-                  ->RespondToNextPendingTeacherAssignmentsCallback(
-                      CreateAssignmentsForTeachers(/*count=*/3)));
-
-  scroll_view->GetWidget()->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(scroll_view->GetBoundsInScreen().Contains(
-      calendar_view->GetBoundsInScreen()));
-  EXPECT_TRUE(scroll_view->GetBoundsInScreen().Contains(
-      assignment_selector->GetBoundsInScreen()));
+  // Click outside the glanceabes bubble again to ensure closing occurs.
+  GetEventGenerator()->MoveMouseTo(left_side_of_screen);
+  GetEventGenerator()->ClickLeftButton();
+  EXPECT_FALSE(GetGlanceableTrayBubble());
 }
 
 }  // namespace ash

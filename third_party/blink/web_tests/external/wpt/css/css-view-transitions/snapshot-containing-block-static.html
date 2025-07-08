@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html class=reftest-wait>
 <title>View transitions: use snapshot containing block for static position</title>
-<link rel="help" href="https://github.com/WICG/view-transitions">
+<link rel="help" href="https://drafts.csswg.org/css-view-transitions-1/">
 <link rel="author" href="mailto:bokan@chromium.org">
 <link rel="match" href="snapshot-containing-block-static-ref.html">
-<meta name="fuzzy" content="snapshot-containing-block-static-ref.html:0-20;0-100">
+<meta name="fuzzy" content="maxDifference=0-20; totalPixels=0-100">
 
 <script src="/common/reftest-wait.js"></script>
 <style>
@@ -33,8 +33,11 @@ div {
   view-transition-name: target;
 }
 
-::view-transition-group(target) {
-  animation-duration: 50s;
+::view-transition-group(target),
+::view-transition-image-pair(target),
+::view-transition-old(target),
+::view-transition-new(target) {
+  animation-play-state: paused;
 }
 
 ::view-transition {

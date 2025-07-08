@@ -6,8 +6,11 @@
  * The possible statuses of hosts on the logged in account that determine the
  * page content. Note that this is based on (and must include an analog of
  * all values in) the HostStatus enum in
- * services/multidevice_setup/public/mojom/multidevice_setup.mojom.
+ * //chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom
+ * and the MultiDevice_Setup_HostStatus enum in
+ * //tools/metrics/histograms/metadata/cross_device/enums.xml.
  */
+// LINT.IfChange(MultiDeviceSetupHostStatus)
 export enum MultiDeviceSettingsMode {
   NO_ELIGIBLE_HOSTS = 0,
   NO_HOST_SET = 1,
@@ -15,16 +18,18 @@ export enum MultiDeviceSettingsMode {
   HOST_SET_WAITING_FOR_VERIFICATION = 3,
   HOST_SET_VERIFIED = 4,
 }
+// LINT.ThenChange(//chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom:MultiDeviceSetupHostStatus)
 
 /**
  * Enum of MultiDevice features. Note that this is copied from (and must
  * include an analog of all values in) the Feature enum in
  * //chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom.
  */
+// LINT.IfChange(MultiDeviceFeature)
 export enum MultiDeviceFeature {
   BETTER_TOGETHER_SUITE = 0,
   INSTANT_TETHERING = 1,
-  MESSAGES = 2,
+  // MESSAGES (2) is deprecated.
   SMART_LOCK = 3,
   PHONE_HUB = 4,
   PHONE_HUB_NOTIFICATIONS = 5,
@@ -33,26 +38,32 @@ export enum MultiDeviceFeature {
   ECHE = 8,
   PHONE_HUB_CAMERA_ROLL = 9,
 }
+// LINT.ThenChange(//chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom:MultiDeviceFeature)
 
 /**
  * Possible states of MultiDevice features. Note that this is copied from (and
  * must include an analog of all values in) the FeatureState enum in
- * //chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom.
+ * //chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom
+ * and the MultiDevice_FeatureState UMA enum in
+ * //tools/metrics/histograms/enums.xml
  */
+// LINT.IfChange(MultiDeviceFeatureState)
 export enum MultiDeviceFeatureState {
   PROHIBITED_BY_POLICY = 0,
   DISABLED_BY_USER = 1,
   ENABLED_BY_USER = 2,
   NOT_SUPPORTED_BY_CHROMEBOOK = 3,
   NOT_SUPPORTED_BY_PHONE = 4,
-  UNAVAILABLE_NO_VERIFIED_HOST = 5,
+  // UNAVAILABLE_NO_VERIFIED_HOST (5) is deprecated.
   UNAVAILABLE_INSUFFICIENT_SECURITY = 6,
   UNAVAILABLE_SUITE_DISABLED = 7,
   FURTHER_SETUP_REQUIRED = 8,
   UNAVAILABLE_TOP_LEVEL_FEATURE_DISABLED = 9,
   UNAVAILABLE_NO_VERIFIED_HOST_CLIENT_NOT_READY = 10,
   UNAVAILABLE_NO_VERIFIED_HOST_NO_ELIGIBLE_HOST = 11,
+  UNAVAILABLE_NO_VERIFIED_HOST_HOST_EXISTS_BUT_NOT_SET_AND_VERIFIED = 12,
 }
+// LINT.ThenChange(//chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom:MultiDeviceFeatureState)
 
 /**
  * Possible states of Phone Hub's feature access. Access can be
@@ -94,8 +105,9 @@ export enum PhoneHubPermissionsSetupMode {
 /**
  * Numerical values the screens for combined set up dialog only.
  * Update of this enum should be propagate to PermissionsOnboardingStep
- * in chromeos/ash/components/phonehub/util/histogram_util.h.
+ * in //chromeos/ash/components/phonehub/util/histogram_util.h.
  */
+// LINT.IfChange(PhoneHubPermissionsSetupFlowScreens)
 export enum PhoneHubPermissionsSetupFlowScreens {
   NOT_APPLICABLE = 0,
   INTRO = 1,
@@ -106,12 +118,14 @@ export enum PhoneHubPermissionsSetupFlowScreens {
   CONNECTED = 6,
   SET_A_PIN_OR_PASSWORD = 7,
 }
+// LINT.ThenChange(//chromeos/ash/components/phonehub/util/histogram_util.h:PhoneHubPermissionsSetupFlowScreens)
 
 /**
  * Numerical values the screens for actions in combined set up dialog only.
  * Update of this enum should be propagate to PermissionsOnboardingScreenEvent
- * in chromeos/ash/components/phonehub/util/histogram_util.h.
+ * in //chromeos/ash/components/phonehub/util/histogram_util.h.
  */
+// LINT.IfChange(PhoneHubPermissionsOnboardingScreenEvent)
 export enum PhoneHubPermissionsSetupAction {
   UNKNOWN = 0,
   SHOWN = 1,
@@ -120,12 +134,14 @@ export enum PhoneHubPermissionsSetupAction {
   DONE = 4,
   NEXT_OR_TRY_AGAIN = 5,
 }
+// LINT.ThenChange(//chromeos/ash/components/phonehub/util/histogram_util.h:PhoneHubPermissionsOnboardingScreenEvent)
 
 /**
  * Numerical values the set up mode in combined set up dialog only.
  * Update of this enum should be propagate to PermissionsOnboardingSetUpMode in
- * chromeos/ash/components/phonehub/util/histogram_util.h.
+ * //chromeos/ash/components/phonehub/util/histogram_util.h.
  */
+// LINT.IfChange(PhoneHubPermissionsOnboardingSetUpMode)
 export enum PhoneHubPermissionsSetupFeatureCombination {
   NONE = 0,
   NOTIFICATION = 1,
@@ -136,6 +152,7 @@ export enum PhoneHubPermissionsSetupFeatureCombination {
   MESSAGING_APP_AND_CAMERA_ROLL = 6,
   ALL_PERMISSONS = 7,
 }
+// LINT.ThenChange(//chromeos/ash/components/phonehub/util/histogram_util.h:PhoneHubPermissionsOnboardingSetUpMode)
 
 /**
  * Container for the initial data that the page requires in order to display
@@ -155,7 +172,6 @@ export interface MultiDevicePageContentData {
   hostDeviceName: string|undefined;
   betterTogetherState: MultiDeviceFeatureState;
   instantTetheringState: MultiDeviceFeatureState;
-  messagesState: MultiDeviceFeatureState;
   smartLockState: MultiDeviceFeatureState;
   phoneHubState: MultiDeviceFeatureState;
   phoneHubCameraRollState: MultiDeviceFeatureState;
@@ -163,7 +179,6 @@ export interface MultiDevicePageContentData {
   phoneHubTaskContinuationState: MultiDeviceFeatureState;
   phoneHubAppsState: MultiDeviceFeatureState;
   wifiSyncState: MultiDeviceFeatureState;
-  isAndroidSmsPairingComplete: boolean;
   cameraRollAccessStatus: PhoneHubFeatureAccessStatus;
   notificationAccessStatus: PhoneHubFeatureAccessStatus;
   appsAccessStatus: PhoneHubFeatureAccessStatus;
@@ -172,6 +187,4 @@ export interface MultiDevicePageContentData {
   isPhoneHubPermissionsDialogSupported: boolean;
   isCameraRollFilePermissionGranted: boolean;
   isPhoneHubFeatureCombinedSetupSupported: boolean;
-  isChromeOSSyncedSessionSharingEnabled: boolean;
-  isLacrosTabSyncEnabled: boolean;
 }

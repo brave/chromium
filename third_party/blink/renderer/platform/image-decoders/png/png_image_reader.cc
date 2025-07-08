@@ -36,9 +36,15 @@
  * version of this file under any of the LGPL, the MPL or the GPL.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/image-decoders/png/png_image_reader.h"
 
 #include <memory>
+
 #include "base/numerics/checked_math.h"
 #include "third_party/blink/renderer/platform/image-decoders/fast_shared_buffer_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/png/png_image_decoder.h"
@@ -96,11 +102,13 @@ PNGImageReader::PNGImageReader(PNGImageDecoder* decoder,
       ignore_animation_(false) {
   png_ = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, pngFailed,
                                 nullptr);
-  // Configure the PNG encoder to always keep the cICP chunk if present.
-  // TODO(veluca): when libpng starts supporting cICP chunks explicitly, remove
-  // this code.
-  png_set_keep_unknown_chunks(png_, PNG_HANDLE_CHUNK_ALWAYS,
-                              reinterpret_cast<const png_byte*>("cICP"), 1);
+  // Configure the PNG encoder to always keep the cICP, cLLI and mDCV chunks if
+  // present.
+  // TODO(veluca): when libpng starts supporting cICP/cLLI chunks explicitly,
+  // remove this code.
+  png_set_keep_unknown_chunks(
+      png_, PNG_HANDLE_CHUNK_ALWAYS,
+      reinterpret_cast<const png_byte*>("cICP\0cLLi\0mDCv\0cLLI\0mDCV"), 5);
   info_ = png_create_info_struct(png_);
   png_set_progressive_read_fn(png_, decoder_, nullptr, pngRowAvailable,
                               pngFrameComplete);
@@ -423,9 +431,20 @@ bool PNGImageReader::Parse(SegmentReader& data, ParseQuery query) {
   // when the IEND chunk is found. This ensures that only complete frames are
   // reported, unless there is an error in the stream.
   char read_buffer[kPngReadBufferSize];
-  while (reader.size() >= read_offset_ + 8) {
-    const png_byte* chunk =
-        ReadAsConstPngBytep(reader, read_offset_, 8, read_buffer);
+  for (;;) {
+    constexpr wtf_size_t kChunkHeaderSize = 8;
+    wtf_size_t chunk_start_offset;
+    if (!base::CheckAdd(read_offset_, kChunkHeaderSize)
+             .AssignIfValid(&chunk_start_offset)) {
+      // Overflow.
+      return false;
+    }
+    if (reader.size() < chunk_start_offset) {
+      // Insufficient data to decode the next chunk header.
+      break;
+    }
+    const png_byte* chunk = ReadAsConstPngBytep(reader, read_offset_,
+                                                kChunkHeaderSize, read_buffer);
     const wtf_size_t length = png_get_uint_32(chunk);
     if (length > PNG_UINT_31_MAX) {
       return false;
@@ -433,7 +452,7 @@ bool PNGImageReader::Parse(SegmentReader& data, ParseQuery query) {
     wtf_size_t chunk_end_offset;
     if (!base::CheckAdd(read_offset_, base::CheckAdd(12, length))
              .AssignIfValid(&chunk_end_offset)) {
-      // Overflow
+      // Overflow.
       return false;
     }
 
@@ -570,14 +589,20 @@ bool PNGImageReader::ParseSize(const FastSharedBufferReader& reader) {
   }
 
   if (!parsed_signature_) {
-    if (reader.size() < read_offset_ + 8) {
+    constexpr wtf_size_t kNumSignatureBytes = 8;
+    wtf_size_t signature_end_offset;
+    if (!base::CheckAdd(read_offset_, kNumSignatureBytes)
+             .AssignIfValid(&signature_end_offset)) {
+      return false;
+    }
+    if (reader.size() < signature_end_offset) {
       return true;
     }
-
-    const png_byte* chunk =
-        ReadAsConstPngBytep(reader, read_offset_, 8, read_buffer);
-    png_process_data(png_, info_, const_cast<png_byte*>(chunk), 8);
-    read_offset_ += 8;
+    const png_byte* chunk = ReadAsConstPngBytep(
+        reader, read_offset_, kNumSignatureBytes, read_buffer);
+    png_process_data(png_, info_, const_cast<png_byte*>(chunk),
+                     kNumSignatureBytes);
+    read_offset_ = signature_end_offset;
     parsed_signature_ = true;
     new_frame_.start_offset = 0;
   }
@@ -673,8 +698,8 @@ bool PNGImageReader::ParseSize(const FastSharedBufferReader& reader) {
       ignore_animation_ = true;
     } else {
       auto is_necessary_ancillary = [](const png_byte* chunk) {
-        for (const char* tag :
-             {"tRNS", "cHRM", "iCCP", "sRGB", "gAMA", "cICP"}) {
+        for (const char* tag : {"tRNS", "cHRM", "iCCP", "sRGB", "gAMA", "cICP",
+                                "cLLi", "cLLI", "mDCv", "mDCV", "eXIf"}) {
           if (IsChunk(chunk, tag)) {
             return true;
           }

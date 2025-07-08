@@ -12,9 +12,11 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
 #include "media/audio/audio_manager_base.h"
-#include "media/base/android/media_jni_headers/AudioTrackOutputStream_jni.h"
 #include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "media/base/android/media_jni_headers/AudioTrackOutputStream_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
@@ -75,7 +77,6 @@ bool AudioTrackOutputStream::Open() {
       case AudioParameters::AUDIO_PCM_LINEAR:
       case AudioParameters::AUDIO_PCM_LOW_LATENCY:
         NOTREACHED();
-        break;
     }
   }
 
@@ -150,7 +151,6 @@ void AudioTrackOutputStream::GetVolume(double* volume) {
 // AudioOutputStream::SourceCallback implementation methods called from Java.
 ScopedJavaLocalRef<jobject> AudioTrackOutputStream::OnMoreData(
     JNIEnv* env,
-    jobject obj,
     jobject audio_data,
     jlong delay_in_frame) {
   DCHECK(callback_);
@@ -169,12 +169,13 @@ ScopedJavaLocalRef<jobject> AudioTrackOutputStream::OnMoreData(
 
     callback_->OnMoreData(delay, tick_clock_->NowTicks(), {}, audio_bus.get());
 
-    if (audio_bus->GetBitstreamDataSize() <= 0)
+    if (audio_bus->bitstream_data().empty()) {
       return nullptr;
+    }
 
     return Java_AudioTrackOutputStream_createAudioBufferInfo(
         env, j_audio_output_stream_, audio_bus->GetBitstreamFrames(),
-        audio_bus->GetBitstreamDataSize());
+        audio_bus->bitstream_data().size());
   }
 
   // For PCM format, we need extra memory to convert planar float32 into
@@ -191,13 +192,12 @@ ScopedJavaLocalRef<jobject> AudioTrackOutputStream::OnMoreData(
       sizeof(*native_bus) * audio_bus_->channels() * audio_bus_->frames());
 }
 
-void AudioTrackOutputStream::OnError(JNIEnv* env, jobject obj) {
+void AudioTrackOutputStream::OnError(JNIEnv* env) {
   DCHECK(callback_);
   callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
 }
 
 jlong AudioTrackOutputStream::GetAddress(JNIEnv* env,
-                                         jobject obj,
                                          jobject byte_buffer) {
   return reinterpret_cast<jlong>(env->GetDirectBufferAddress(byte_buffer));
 }

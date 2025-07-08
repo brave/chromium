@@ -6,14 +6,11 @@
 
 #include <vector>
 
-#include "base/containers/extend.h"
 #include "base/notreached.h"
-#include "chrome/common/chrome_features.h"
+#include "build/build_config.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
-#include "chrome/common/chrome_features.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/user_names.h"
 #endif
@@ -32,20 +29,11 @@ std::string TestProfileTypeToString(
       result = "Guest";
       break;
   }
-
-  if (info.param.crosapi_state == web_app::test::CrosapiParam::kEnabled) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    result += "_Crosapi";
-#else
-    NOTREACHED();
-#endif
-  }
-
   return result;
 }
 
 void ConfigureCommandLineForGuestMode(base::CommandLine* command_line) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   command_line->AppendSwitch(ash::switches::kGuestSession);
   command_line->AppendSwitch(::switches::kIncognito);
   command_line->AppendSwitchASCII(ash::switches::kLoginProfile, "hash");
@@ -54,25 +42,4 @@ void ConfigureCommandLineForGuestMode(base::CommandLine* command_line) {
 #else
   NOTREACHED();
 #endif
-}
-
-void InitCrosapiFeaturesForParam(
-    web_app::test::CrosapiParam crosapi_state,
-    base::test::ScopedFeatureList* scoped_feature_list) {
-  std::vector<base::test::FeatureRef> enabled_features;
-  std::vector<base::test::FeatureRef> disabled_features;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  std::vector<base::test::FeatureRef> lacros_flags = {
-      ash::features::kLacrosSupport, ash::features::kLacrosPrimary,
-      ash::features::kLacrosOnly,
-      ash::features::kLacrosProfileMigrationForceOff};
-  if (crosapi_state == web_app::test::CrosapiParam::kEnabled) {
-    base::Extend(enabled_features, lacros_flags);
-  } else {
-    base::Extend(disabled_features, lacros_flags);
-  }
-#else
-    NOTREACHED();
-#endif
-  scoped_feature_list->InitWithFeatures(enabled_features, disabled_features);
 }

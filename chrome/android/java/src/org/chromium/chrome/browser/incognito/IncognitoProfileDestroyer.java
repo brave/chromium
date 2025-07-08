@@ -4,7 +4,9 @@
 
 package org.chromium.chrome.browser.incognito;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabHostUtils;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -12,8 +14,9 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 /**
  * Destroys incognito {@link Profile}s when the last incognito tab is destroyed.
  *
- * Reacts to the presence or absence of incognito tabs.
+ * <p>Reacts to the presence or absence of incognito tabs.
  */
+@NullMarked
 public class IncognitoProfileDestroyer implements IncognitoTabModelObserver {
     private final TabModelSelector mTabModelSelector;
 
@@ -39,7 +42,7 @@ public class IncognitoProfileDestroyer implements IncognitoTabModelObserver {
             // model selector as the profile is shared between them.
             Profile profile = mTabModelSelector.getModel(true).getProfile();
             if (profile != null) {
-                profile.destroyWhenAppropriate();
+                ProfileManager.destroyWhenAppropriate(profile);
             }
         }
     }

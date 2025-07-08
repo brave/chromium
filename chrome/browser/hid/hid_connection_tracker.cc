@@ -9,7 +9,12 @@
 #include "chrome/browser/ui/chrome_pages.h"
 
 HidConnectionTracker::HidConnectionTracker(Profile* profile)
-    : DeviceConnectionTracker(profile) {}
+    : DeviceConnectionTracker(profile) {
+  whitelisted_origins_.push_back(url::Origin::Create(
+      GURL("chrome-extension://ckcendljdlmgnhghiaomidhiiclmapok")));
+  whitelisted_origins_.push_back(url::Origin::Create(
+      GURL("chrome-extension://lfboplenmmjcmpbkeemecobbadnmpfhi")));
+}
 
 HidConnectionTracker::~HidConnectionTracker() = default;
 
@@ -21,4 +26,9 @@ void HidConnectionTracker::ShowContentSettingsExceptions() {
 DeviceSystemTrayIcon* HidConnectionTracker::GetSystemTrayIcon() {
   return static_cast<DeviceSystemTrayIcon*>(
       g_browser_process->hid_system_tray_icon());
+}
+
+void HidConnectionTracker::Shutdown() {
+  CleanUp();
+  DeviceConnectionTracker::Shutdown();
 }

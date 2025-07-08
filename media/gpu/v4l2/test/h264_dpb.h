@@ -4,18 +4,11 @@
 #ifndef MEDIA_GPU_V4L2_TEST_H264_DPB_H_
 #define MEDIA_GPU_V4L2_TEST_H264_DPB_H_
 
-// build_config.h must come before BUILDFLAG()
-#include "build/build_config.h"
-
-// ChromeOS specific header; does not exist upstream
-#if BUILDFLAG(IS_CHROMEOS)
-#include <linux/media/h264-ctrls-upstream.h>
-#endif
-
-#include "media/video/h264_parser.h"
-
 #include <map>
 #include <set>
+
+#include "media/parsers/h264_parser.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace media {
 namespace v4l2_test {
@@ -48,6 +41,7 @@ struct H264SliceMetadata {
   int long_term_pic_num = 0;
   // The CAPTURE queue index this slice is queued in.
   int capture_queue_buffer_id = -1;
+  gfx::Rect visible_rect_;
 };
 
 // H264DPB is a class representing a Decoded Picture Buffer (DPB).

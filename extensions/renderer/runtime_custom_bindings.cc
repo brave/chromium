@@ -9,7 +9,9 @@
 #include <memory>
 
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "extensions/common/view_type_util.h"
 #include "extensions/renderer/extension_frame_helper.h"
@@ -53,7 +55,7 @@ void RuntimeCustomBindings::GetExtensionViews(
   if (!parsed_view_type)
     CHECK_EQ("ALL", view_type_string);
 
-  const std::string& extension_id = context()->GetExtensionID();
+  const ExtensionId& extension_id = context()->GetExtensionID();
   if (extension_id.empty())
     return;
 

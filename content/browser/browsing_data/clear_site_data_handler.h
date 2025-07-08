@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_BROWSING_DATA_CLEAR_SITE_DATA_HANDLER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/clear_site_data_utils.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "net/cookies/cookie_partition_key.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
@@ -52,10 +54,8 @@ class CONTENT_EXPORT ClearSiteDataHandler {
                             const std::string& text,
                             blink::mojom::ConsoleMessageLevel level);
 
-    // Outputs stored messages to the console of WebContents identified by
-    // |web_contents_getter|.
-    virtual void OutputMessages(
-        const base::RepeatingCallback<WebContents*()>& web_contents_getter);
+    // Outputs stored messages to the console of WebContents.
+    virtual void OutputMessages(base::WeakPtr<WebContents> web_contents);
 
     const std::vector<Message>& GetMessagesForTesting() const {
       return messages_;
@@ -77,13 +77,14 @@ class CONTENT_EXPORT ClearSiteDataHandler {
   // method calls ParseHeader() to parse it, and then ExecuteClearingTask() if
   // applicable.
   static void HandleHeader(
-      base::RepeatingCallback<BrowserContext*()> browser_context_getter,
-      base::RepeatingCallback<WebContents*()> web_contents_getter,
+      base::WeakPtr<BrowserContext> browser_context,
+      base::WeakPtr<WebContents> web_contents,
+      const StoragePartitionConfig& storage_partition_config,
       const GURL& url,
       const std::string& header_value,
       int load_flags,
-      const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
-      const absl::optional<blink::StorageKey>& storage_key,
+      const std::optional<net::CookiePartitionKey> cookie_partition_key,
+      const std::optional<blink::StorageKey> storage_key,
       bool partitioned_state_allowed_only,
       base::OnceClosure callback);
 
@@ -97,13 +98,14 @@ class CONTENT_EXPORT ClearSiteDataHandler {
 
  protected:
   ClearSiteDataHandler(
-      base::RepeatingCallback<BrowserContext*()> browser_context_getter,
-      base::RepeatingCallback<WebContents*()> web_contents_getter,
+      base::WeakPtr<BrowserContext> browser_context,
+      base::WeakPtr<WebContents> web_contents,
+      const StoragePartitionConfig& storage_partition_config,
       const GURL& url,
       const std::string& header_value,
       int load_flags,
-      const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
-      const absl::optional<blink::StorageKey>& storage_key,
+      const std::optional<net::CookiePartitionKey> cookie_partition_key,
+      const std::optional<blink::StorageKey> storage_key,
       bool partitioned_state_allowed_only,
       base::OnceClosure callback,
       std::unique_ptr<ConsoleMessagesDelegate> delegate);
@@ -137,11 +139,10 @@ class CONTENT_EXPORT ClearSiteDataHandler {
   // Signals that a parsing and deletion task was finished.
   // |clearing_started| is the time when the last clearing operation started.
   // Used when clearing finishes to compute the duration.
-  static void TaskFinished(
-      base::TimeTicks clearing_started,
-      std::unique_ptr<ConsoleMessagesDelegate> delegate,
-      base::RepeatingCallback<WebContents*()> web_contents_getter,
-      base::OnceClosure callback);
+  static void TaskFinished(base::TimeTicks clearing_started,
+                           std::unique_ptr<ConsoleMessagesDelegate> delegate,
+                           base::WeakPtr<WebContents> web_contents,
+                           base::OnceClosure callback);
 
   // Outputs the console messages in the |delegate_|.
   void OutputConsoleMessages();
@@ -149,14 +150,18 @@ class CONTENT_EXPORT ClearSiteDataHandler {
   // Run the callback to resume loading. No clearing actions were conducted.
   void RunCallbackNotDeferred();
 
+  const StoragePartitionConfig& StoragePartitionConfigForTesting() const {
+    return storage_partition_config_;
+  }
+
   const GURL& GetURLForTesting();
 
-  const absl::optional<net::CookiePartitionKey> CookiePartitionKeyForTesting()
+  const std::optional<net::CookiePartitionKey> CookiePartitionKeyForTesting()
       const {
     return cookie_partition_key_;
   }
 
-  const absl::optional<blink::StorageKey> StorageKeyForTesting() const {
+  const std::optional<blink::StorageKey> StorageKeyForTesting() const {
     return storage_key_;
   }
 
@@ -166,8 +171,11 @@ class CONTENT_EXPORT ClearSiteDataHandler {
 
  private:
   // Required to clear the data.
-  base::RepeatingCallback<BrowserContext*()> browser_context_getter_;
-  base::RepeatingCallback<WebContents*()> web_contents_getter_;
+  base::WeakPtr<BrowserContext> browser_context_;
+  base::WeakPtr<WebContents> web_contents_;
+
+  // The config for the target storage partition which stores the data.
+  const StoragePartitionConfig storage_partition_config_;
 
   // Target URL whose data will be cleared.
   const GURL url_;
@@ -180,11 +188,11 @@ class CONTENT_EXPORT ClearSiteDataHandler {
 
   // The cookie partition key for which we need to clear partitioned cookies
   // when we receive the Clear-Site-Data header.
-  const absl::optional<net::CookiePartitionKey> cookie_partition_key_;
+  const std::optional<net::CookiePartitionKey> cookie_partition_key_;
 
   // The storage key for which we need to clear partitioned storage when we
   // receive the Clear-Site-Data header.
-  const absl::optional<blink::StorageKey> storage_key_;
+  const std::optional<blink::StorageKey> storage_key_;
 
   // If third-party cookie blocking is enabled and applies to the response that
   // sent Clear-Site-Data.

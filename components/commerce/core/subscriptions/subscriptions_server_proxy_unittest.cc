@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/commerce/core/subscriptions/subscriptions_server_proxy.h"
+
+#include <optional>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -12,10 +15,9 @@
 #include "base/test/gtest_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "components/commerce/core/account_checker.h"
+#include "components/commerce/core/commerce_constants.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/subscriptions/commerce_subscription.h"
-#include "components/commerce/core/subscriptions/subscriptions_server_proxy.h"
 #include "components/commerce/core/subscriptions/subscriptions_storage.h"
 #include "components/endpoint_fetcher/mock_endpoint_fetcher.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -27,8 +29,10 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
+using endpoint_fetcher::EndpointFetcher;
+using endpoint_fetcher::FetchErrorType;
+using endpoint_fetcher::MockEndpointFetcher;
 using testing::_;
 using testing::InSequence;
 
@@ -40,6 +44,7 @@ const std::string kMockId2 = "222";
 const std::string kMockOfferId = "333";
 const long kMockPrice = 100;
 const std::string kMockCountry = "us";
+const std::string kMockLocale = "en-US";
 
 const char kServiceUrlForManage[] =
     "https://memex-pa.googleapis.com/v1/shopping/subscriptions"
@@ -55,6 +60,7 @@ const std::string kExpectedPostDataForCreate =
     "\"PRICE_TRACK\"},{\"identifier\":\"222\",\"identifierType\":\"PRODUCT_"
     "CLUSTER_ID\",\"managementType\":\"USER_MANAGED\","
     "\"type\":\"PRICE_TRACK\",\"userSeenOffer\":{\"countryCode\":\"us\","
+    "\"languageCode\":\"en-US\","
     "\"offerId\":\"333\","
     "\"seenPriceMicros\":\"100\"}}]}}";
 const std::string kExpectedPostDataForDelete =
@@ -88,8 +94,8 @@ BuildValidSubscriptions() {
       commerce::IdentifierType::kProductClusterId, kMockId2,
       commerce::ManagementType::kUserManaged,
       commerce::kUnknownSubscriptionTimestamp,
-      absl::make_optional<commerce::UserSeenOffer>(kMockOfferId, kMockPrice,
-                                                   kMockCountry)));
+      std::make_optional<commerce::UserSeenOffer>(kMockOfferId, kMockPrice,
+                                                  kMockCountry, kMockLocale)));
   return subscriptions;
 }
 
@@ -118,7 +124,7 @@ class SpySubscriptionsServerProxy : public SubscriptionsServerProxy {
   MOCK_METHOD(std::unique_ptr<EndpointFetcher>,
               CreateEndpointFetcher,
               (const GURL& url,
-               const std::string& http_method,
+               const endpoint_fetcher::HttpMethod http_method,
                const std::string& post_data,
                const net::NetworkTrafficAnnotationTag& annotation_tag),
               (override));
@@ -130,6 +136,8 @@ class SubscriptionsServerProxyTest : public testing::Test {
   ~SubscriptionsServerProxyTest() override = default;
 
   void SetUp() override {
+    scoped_feature_list_.InitAndEnableFeature(
+        commerce::kPriceTrackingSubscriptionServiceLocaleKey);
     fetcher_ = std::make_unique<MockEndpointFetcher>();
     scoped_refptr<network::SharedURLLoaderFactory> test_url_loader_factory =
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
@@ -144,6 +152,7 @@ class SubscriptionsServerProxyTest : public testing::Test {
 
  protected:
   base::test::TaskEnvironment task_environment_;
+  base::test::ScopedFeatureList scoped_feature_list_;
   signin::IdentityTestEnvironment identity_test_env_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
@@ -154,7 +163,8 @@ class SubscriptionsServerProxyTest : public testing::Test {
 TEST_F(SubscriptionsServerProxyTest, TestCreate) {
   fetcher_->SetFetchResponse(kResponseSucceeded);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForCreate, _))
       .Times(1);
 
@@ -195,7 +205,8 @@ TEST_F(SubscriptionsServerProxyTest, TestCreate_EmptyList) {
 TEST_F(SubscriptionsServerProxyTest, TestCreate_ServerFailed) {
   fetcher_->SetFetchResponse(kResponseFailed);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForCreate, _))
       .Times(1);
 
@@ -216,7 +227,8 @@ TEST_F(SubscriptionsServerProxyTest, TestCreate_ServerFailed) {
 TEST_F(SubscriptionsServerProxyTest, TestCreate_WrongHttpCode) {
   fetcher_->SetFetchResponse(kResponseSucceeded, net::HTTP_NOT_FOUND);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForCreate, _))
       .Times(1);
 
@@ -237,7 +249,8 @@ TEST_F(SubscriptionsServerProxyTest, TestCreate_WrongHttpCode) {
 TEST_F(SubscriptionsServerProxyTest, TestCreate_EmptyResponse) {
   fetcher_->SetFetchResponse("");
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForCreate, _))
       .Times(1);
 
@@ -258,7 +271,8 @@ TEST_F(SubscriptionsServerProxyTest, TestCreate_EmptyResponse) {
 TEST_F(SubscriptionsServerProxyTest, TestDelete) {
   fetcher_->SetFetchResponse(kResponseSucceeded);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForDelete, _))
       .Times(1);
 
@@ -299,7 +313,8 @@ TEST_F(SubscriptionsServerProxyTest, TestDelete_EmptyList) {
 TEST_F(SubscriptionsServerProxyTest, TestDelete_ServerFailed) {
   fetcher_->SetFetchResponse(kResponseFailed);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForManage), kPostHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForManage),
+                                    endpoint_fetcher::HttpMethod::kPost,
                                     kExpectedPostDataForDelete, _))
       .Times(1);
 
@@ -320,7 +335,8 @@ TEST_F(SubscriptionsServerProxyTest, TestDelete_ServerFailed) {
 TEST_F(SubscriptionsServerProxyTest, TestGet) {
   fetcher_->SetFetchResponse(kValidGetResponse);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForGet), kGetHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForGet),
+                                    endpoint_fetcher::HttpMethod::kGet,
                                     kEmptyPostData, _))
       .Times(1);
 
@@ -367,7 +383,8 @@ TEST_F(SubscriptionsServerProxyTest, TestGet_WrongType) {
 TEST_F(SubscriptionsServerProxyTest, TestGet_WrongHttpCode) {
   fetcher_->SetFetchResponse(kValidGetResponse, net::HTTP_NOT_FOUND);
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForGet), kGetHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForGet),
+                                    endpoint_fetcher::HttpMethod::kGet,
                                     kEmptyPostData, _))
       .Times(1);
 
@@ -388,9 +405,10 @@ TEST_F(SubscriptionsServerProxyTest, TestGet_WrongHttpCode) {
 TEST_F(SubscriptionsServerProxyTest, TestGet_FetchError) {
   fetcher_->SetFetchResponse(
       kValidGetResponse, net::HTTP_OK,
-      absl::make_optional<FetchErrorType>(FetchErrorType::kNetError));
+      std::make_optional<FetchErrorType>(FetchErrorType::kNetError));
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForGet), kGetHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForGet),
+                                    endpoint_fetcher::HttpMethod::kGet,
                                     kEmptyPostData, _))
       .Times(1);
 
@@ -411,7 +429,8 @@ TEST_F(SubscriptionsServerProxyTest, TestGet_FetchError) {
 TEST_F(SubscriptionsServerProxyTest, TestGet_NoSubscriptions) {
   fetcher_->SetFetchResponse("");
   EXPECT_CALL(*server_proxy_,
-              CreateEndpointFetcher(GURL(kServiceUrlForGet), kGetHttpMethod,
+              CreateEndpointFetcher(GURL(kServiceUrlForGet),
+                                    endpoint_fetcher::HttpMethod::kGet,
                                     kEmptyPostData, _))
       .Times(1);
 

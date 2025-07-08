@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/url_matcher/url_util.h"
+
 #include <memory>
 
 #include "base/values.h"
@@ -82,7 +83,7 @@ bool MatchFilters(const std::vector<std::string>& patterns,
   base::Value::List list;
   for (const auto& pattern : patterns)
     list.Append(pattern);
-  AddAllowFilters(&matcher, list);
+  AddAllowFiltersWithLimit(&matcher, list);
   return !matcher.MatchURL(GURL(url)).empty();
 }
 
@@ -347,7 +348,7 @@ TEST(URLUtilTest, SingleFilter) {
   EXPECT_TRUE(MatchFilters({"google.com"}, "http://google.com/"));
   EXPECT_TRUE(MatchFilters({"google.com"}, "http://google.com/whatever"));
   EXPECT_TRUE(MatchFilters({"google.com"}, "https://google.com/"));
-  EXPECT_FALSE(MatchFilters({"google.com"}, "bogus://google.com/"));
+  EXPECT_TRUE(MatchFilters({"google.com"}, "bogus://google.com/"));
   EXPECT_FALSE(MatchFilters({"google.com"}, "http://notgoogle.com/"));
   EXPECT_TRUE(MatchFilters({"google.com"}, "http://mail.google.com"));
   EXPECT_TRUE(MatchFilters({"google.com"}, "http://x.mail.google.com"));
@@ -412,48 +413,6 @@ TEST(URLUtilTest, SingleFilter) {
   EXPECT_FALSE(MatchFilters({"http://.google.com"}, "http://www.google.com/"));
 }
 
-TEST(URLUtilTest, MultipleFilters) {
-  // Test exceptions to path prefixes, and most specific matches.
-  std::vector<std::string> patterns = {"s.xxx.com/a/b",
-                                       "https://s.xxx.com/a/b/c/d"};
-  EXPECT_FALSE(MatchFilters(patterns, "http://s.xxx.com/a"));
-  EXPECT_FALSE(MatchFilters(patterns, "http://s.xxx.com/a/x"));
-  EXPECT_FALSE(MatchFilters(patterns, "https://s.xxx.com/a/x"));
-  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b"));
-  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b"));
-  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/x"));
-  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c"));
-  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c"));
-  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/x"));
-  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/d"));
-  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c/d"));
-  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/d/x"));
-  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c/d/x"));
-  EXPECT_FALSE(MatchFilters(patterns, "http://xxx.com/a"));
-  EXPECT_FALSE(MatchFilters(patterns, "http://xxx.com/a/b"));
-
-  // Match queries.
-  std::vector<std::string> queries = {"*?q=1234", "*?q=5678", "*?a=1&b=2",
-                                      "youtube.com?foo=baz",
-                                      "youtube.com?foo=bar*"};
-  EXPECT_TRUE(MatchFilters(queries, "http://google.com?q=1234"));
-  EXPECT_TRUE(MatchFilters(queries, "http://google.com?q=5678"));
-  EXPECT_TRUE(MatchFilters(queries, "http://google.com?a=1&b=2"));
-  EXPECT_TRUE(MatchFilters(queries, "http://google.com?b=2&a=1"));
-  EXPECT_TRUE(MatchFilters(queries, "http://google.com?a=1&b=4&q=1234"));
-  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?foo=baz"));
-  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?foo=barbaz"));
-  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?a=1&foo=barbaz"));
-  EXPECT_FALSE(MatchFilters(queries, "http://google.com?r=1234"));
-  EXPECT_FALSE(MatchFilters(queries, "http://google.com?r=5678"));
-  EXPECT_FALSE(MatchFilters(queries, "http://google.com?a=2&b=1"));
-  EXPECT_FALSE(MatchFilters(queries, "http://google.com?b=1&a=2"));
-  EXPECT_FALSE(MatchFilters(queries, "http://google.com?a=1&b=3"));
-  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=meh"));
-  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=bazbar"));
-  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=ba"));
-}
-
 TEST(URLUtilTest, BasicCoverage) {
   // Tests to cover the documentation from
   // http://www.chromium.org/administrators/url-blocklist-filter-format
@@ -463,6 +422,9 @@ TEST(URLUtilTest, BasicCoverage) {
   // must be followed by '://'.
   EXPECT_TRUE(MatchFilters({"file://*"}, "file:///abc.txt"));
   EXPECT_TRUE(MatchFilters({"file:*"}, "file:///usr/local/boot.txt"));
+  EXPECT_TRUE(MatchFilters(
+      {"data:*"},
+      "data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\"/>"));
   EXPECT_TRUE(MatchFilters({"https://*"}, "https:///abc.txt"));
   EXPECT_TRUE(MatchFilters({"ftp://*"}, "ftp://ftp.txt"));
   EXPECT_TRUE(MatchFilters({"chrome://*"}, "chrome:policy"));
@@ -490,11 +452,11 @@ TEST(URLUtilTest, BasicCoverage) {
   EXPECT_TRUE(MatchFilters({"example.com"}, "wss://example.com"));
 
   // Some schemes are not matched when the scheme is omitted.
-  EXPECT_FALSE(MatchFilters({"example.com"}, "about://example.com"));
   EXPECT_FALSE(MatchFilters({"example.com"}, "about:example.com"));
   EXPECT_FALSE(MatchFilters({"example.com/*"}, "filesystem:///something"));
-  EXPECT_FALSE(MatchFilters({"example.com"}, "custom://example.com"));
-  EXPECT_FALSE(MatchFilters({"example"}, "custom://example"));
+  EXPECT_TRUE(MatchFilters({"example.com"}, "about://example.com"));
+  EXPECT_TRUE(MatchFilters({"example.com"}, "custom://example.com"));
+  EXPECT_TRUE(MatchFilters({"example"}, "custom://example"));
 
   // An optional '.' (dot) can prefix the host field to disable subdomain
   // matching, see below for details.
@@ -570,6 +532,48 @@ TEST(URLUtilTest, BasicCoverage) {
       MatchFilters({"http://example.com/aB"}, "http://example.com/AB"));
   // Query is case sensitive.
   EXPECT_FALSE(MatchFilters({"host/path?Query=1"}, "http://host/path?query=1"));
+}
+
+TEST(URLUtilTest, MultipleFilters) {
+  // Test exceptions to path prefixes, and most specific matches.
+  std::vector<std::string> patterns = {"s.xxx.com/a/b",
+                                       "https://s.xxx.com/a/b/c/d"};
+  EXPECT_FALSE(MatchFilters(patterns, "http://s.xxx.com/a"));
+  EXPECT_FALSE(MatchFilters(patterns, "http://s.xxx.com/a/x"));
+  EXPECT_FALSE(MatchFilters(patterns, "https://s.xxx.com/a/x"));
+  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b"));
+  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b"));
+  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/x"));
+  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c"));
+  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c"));
+  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/x"));
+  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/d"));
+  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c/d"));
+  EXPECT_TRUE(MatchFilters(patterns, "https://s.xxx.com/a/b/c/d/x"));
+  EXPECT_TRUE(MatchFilters(patterns, "http://s.xxx.com/a/b/c/d/x"));
+  EXPECT_FALSE(MatchFilters(patterns, "http://xxx.com/a"));
+  EXPECT_FALSE(MatchFilters(patterns, "http://xxx.com/a/b"));
+
+  // Match queries.
+  std::vector<std::string> queries = {"*?q=1234", "*?q=5678", "*?a=1&b=2",
+                                      "youtube.com?foo=baz",
+                                      "youtube.com?foo=bar*"};
+  EXPECT_TRUE(MatchFilters(queries, "http://google.com?q=1234"));
+  EXPECT_TRUE(MatchFilters(queries, "http://google.com?q=5678"));
+  EXPECT_TRUE(MatchFilters(queries, "http://google.com?a=1&b=2"));
+  EXPECT_TRUE(MatchFilters(queries, "http://google.com?b=2&a=1"));
+  EXPECT_TRUE(MatchFilters(queries, "http://google.com?a=1&b=4&q=1234"));
+  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?foo=baz"));
+  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?foo=barbaz"));
+  EXPECT_TRUE(MatchFilters(queries, "http://youtube.com?a=1&foo=barbaz"));
+  EXPECT_FALSE(MatchFilters(queries, "http://google.com?r=1234"));
+  EXPECT_FALSE(MatchFilters(queries, "http://google.com?r=5678"));
+  EXPECT_FALSE(MatchFilters(queries, "http://google.com?a=2&b=1"));
+  EXPECT_FALSE(MatchFilters(queries, "http://google.com?b=1&a=2"));
+  EXPECT_FALSE(MatchFilters(queries, "http://google.com?a=1&b=3"));
+  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=meh"));
+  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=bazbar"));
+  EXPECT_FALSE(MatchFilters(queries, "http://youtube.com?foo=ba"));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -653,7 +657,13 @@ INSTANTIATE_TEST_SUITE_P(
                          std::string(),
                          true,
                          0u,
-                         "/whatever")));
+                         "/whatever"),
+        FilterTestParams("data:image/png",
+                         "data",
+                         std::string(),
+                         true,
+                         0u,
+                         "image/png")));
 
 TEST_P(FilterToComponentsTest, FilterToComponents) {
   std::string scheme;

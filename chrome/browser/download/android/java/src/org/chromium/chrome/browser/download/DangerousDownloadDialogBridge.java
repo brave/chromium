@@ -6,8 +6,11 @@ package org.chromium.chrome.browser.download;
 
 import android.app.Activity;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.download.dialogs.DangerousDownloadDialog;
 import org.chromium.chrome.browser.download.interstitial.NewDownloadTab;
 import org.chromium.ui.base.WindowAndroid;
@@ -17,12 +20,14 @@ import org.chromium.ui.modaldialog.ModalDialogManagerHolder;
  * Glues dangerous download dialogs UI code and handles the communication to download native
  * backend.
  */
+@NullMarked
 public class DangerousDownloadDialogBridge {
     private long mNativeDangerousDownloadDialogBridge;
 
     /**
      * Constructor, taking a pointer to the native instance.
-     * @nativeDangerousDownloadDialogBridge Pointer to the native object.
+     *
+     * @param nativeDangerousDownloadDialogBridge Pointer to the native object.
      */
     public DangerousDownloadDialogBridge(long nativeDangerousDownloadDialogBridge) {
         mNativeDangerousDownloadDialogBridge = nativeDangerousDownloadDialogBridge;
@@ -35,30 +40,43 @@ public class DangerousDownloadDialogBridge {
 
     /**
      * Called to show a warning dialog for dangerous download.
+     *
      * @param windowAndroid Window to show the dialog.
      * @param guid GUID of the download.
      * @param fileName Name of the download file.
      * @param totalBytes Total bytes of the file.
+     * @param downloadDomain Domain name to associate with the downloaded file.
      * @param iconId The icon resource for the warning dialog.
      */
     @CalledByNative
-    public void showDialog(WindowAndroid windowAndroid, String guid, String fileName,
-            long totalBytes, int iconId) {
+    public void showDialog(
+            WindowAndroid windowAndroid,
+            @JniType("std::string") String guid,
+            @JniType("std::u16string") String fileName,
+            long totalBytes,
+            String downloadDomain,
+            int iconId) {
         Activity activity = windowAndroid.getActivity().get();
         if (activity == null) {
             onCancel(guid, windowAndroid);
             return;
         }
 
-        new DangerousDownloadDialog().show(activity,
-                ((ModalDialogManagerHolder) activity).getModalDialogManager(), fileName, totalBytes,
-                iconId, (accepted) -> {
-                    if (accepted) {
-                        onAccepted(guid);
-                    } else {
-                        onCancel(guid, windowAndroid);
-                    }
-                });
+        new DangerousDownloadDialog()
+                .show(
+                        activity,
+                        ((ModalDialogManagerHolder) activity).getModalDialogManager(),
+                        fileName,
+                        totalBytes,
+                        downloadDomain,
+                        iconId,
+                        (accepted) -> {
+                            if (accepted) {
+                                onAccepted(guid);
+                            } else {
+                                onCancel(guid, windowAndroid);
+                            }
+                        });
     }
 
     @CalledByNative
@@ -71,14 +89,17 @@ public class DangerousDownloadDialogBridge {
     }
 
     private void onCancel(String guid, WindowAndroid windowAndroid) {
-        DangerousDownloadDialogBridgeJni.get().cancelled(
-                mNativeDangerousDownloadDialogBridge, guid);
+        DangerousDownloadDialogBridgeJni.get()
+                .cancelled(mNativeDangerousDownloadDialogBridge, guid);
         NewDownloadTab.closeExistingNewDownloadTab(windowAndroid);
     }
 
     @NativeMethods
     interface Natives {
-        void accepted(long nativeDangerousDownloadDialogBridge, String guid);
-        void cancelled(long nativeDangerousDownloadDialogBridge, String guid);
+        void accepted(
+                long nativeDangerousDownloadDialogBridge, @JniType("std::string") String guid);
+
+        void cancelled(
+                long nativeDangerousDownloadDialogBridge, @JniType("std::string") String guid);
     }
 }

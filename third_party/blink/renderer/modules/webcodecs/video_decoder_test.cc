@@ -20,6 +20,7 @@
 #include "third_party/blink/renderer/core/testing/mock_function_scope.h"
 #include "third_party/blink/renderer/modules/webcodecs/codec_pressure_manager.h"
 #include "third_party/blink/renderer/modules/webcodecs/codec_pressure_manager_provider.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 // For FakeVideoDecoder.
@@ -99,12 +100,13 @@ class VideoDecoderTest : public testing::Test {
                                                   exception_state);
   }
 
-  VideoDecoderInit* CreateVideoDecoderInit(MockFunctionScope& mock_functions) {
+  VideoDecoderInit* CreateVideoDecoderInit(ScriptState* script_state,
+                                           MockFunctionScope& mock_functions) {
     auto* init = MakeGarbageCollected<VideoDecoderInit>();
-    init->setOutput(
-        V8VideoFrameOutputCallback::Create(mock_functions.ExpectNoCall()));
-    init->setError(
-        V8WebCodecsErrorCallback::Create(mock_functions.ExpectNoCall()));
+    init->setOutput(V8VideoFrameOutputCallback::Create(
+        mock_functions.ExpectNoCall()->ToV8Function(script_state)));
+    init->setError(V8WebCodecsErrorCallback::Create(
+        mock_functions.ExpectNoCall()->ToV8Function(script_state)));
     return init;
   }
 
@@ -119,6 +121,7 @@ class VideoDecoderTest : public testing::Test {
     return NativeValueTraits<VideoDecoderSupport>::NativeValue(
         v8_scope->GetIsolate(), value.V8Value(), v8_scope->GetExceptionState());
   }
+  test::TaskEnvironment task_environment_;
 };
 
 TEST_F(VideoDecoderTest, HardwareDecodersApplyPressure) {
@@ -133,9 +136,10 @@ TEST_F(VideoDecoderTest, HardwareDecodersApplyPressure) {
   auto* encoder_pressure_manager =
       pressure_manager_provider.GetEncoderPressureManager();
 
-  auto* fake_decoder = CreateFakeDecoder(v8_scope.GetScriptState(),
-                                         CreateVideoDecoderInit(mock_functions),
-                                         v8_scope.GetExceptionState());
+  auto* fake_decoder = CreateFakeDecoder(
+      v8_scope.GetScriptState(),
+      CreateVideoDecoderInit(v8_scope.GetScriptState(), mock_functions),
+      v8_scope.GetExceptionState());
 
   ASSERT_TRUE(fake_decoder);
   ASSERT_FALSE(v8_scope.GetExceptionState().HadException());
@@ -177,9 +181,10 @@ TEST_F(VideoDecoderTest, ResetReleasesPressure) {
   V8TestingScope v8_scope;
   MockFunctionScope mock_functions(v8_scope.GetScriptState());
 
-  auto* fake_decoder = CreateFakeDecoder(v8_scope.GetScriptState(),
-                                         CreateVideoDecoderInit(mock_functions),
-                                         v8_scope.GetExceptionState());
+  auto* fake_decoder = CreateFakeDecoder(
+      v8_scope.GetScriptState(),
+      CreateVideoDecoderInit(v8_scope.GetScriptState(), mock_functions),
+      v8_scope.GetExceptionState());
 
   ASSERT_TRUE(fake_decoder);
   ASSERT_FALSE(v8_scope.GetExceptionState().HadException());

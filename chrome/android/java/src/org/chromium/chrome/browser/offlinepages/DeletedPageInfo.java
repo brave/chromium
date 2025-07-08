@@ -4,9 +4,10 @@
 
 package org.chromium.chrome.browser.offlinepages;
 
-/**
- * Simple object representing important information of a deleted offline page.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** Simple object representing important information of a deleted offline page. */
+@NullMarked
 public class DeletedPageInfo {
     private final long mOfflineId;
     private final ClientId mClientId;

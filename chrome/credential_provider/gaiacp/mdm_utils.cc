@@ -5,14 +5,10 @@
 #include "chrome/credential_provider/gaiacp/mdm_utils.h"
 
 #include <windows.h>
-#include <winternl.h>
-#include <lm.h>  // Needed for PNTSTATUS
 
-#define _NTDEF_  // Prevent redefition errors, must come after <winternl.h>
-#include <MDMRegistration.h>  // For RegisterDeviceWithManagement()
-#include <ntsecapi.h>         // For LsaQueryInformationPolicy()
-
+#include <MDMRegistration.h>
 #include <atlconv.h>
+#include <lm.h>
 
 #include "base/base64.h"
 #include "base/files/file_path.h"
@@ -20,6 +16,7 @@
 #include "base/scoped_native_library.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/win/ntsecapi_shim.h"
 #include "base/win/win_util.h"
 #include "base/win/wmi.h"
 #include "build/branding_buildflags.h"
@@ -305,8 +302,7 @@ HRESULT RegisterWithGoogleDeviceManagement(
     return false;
   }
 
-  std::string data_encoded;
-  base::Base64Encode(registration_data_str, &data_encoded);
+  std::string data_encoded = base::Base64Encode(registration_data_str);
 
   // This register call is blocking.  It won't return until the machine is
   // properly registered with the MDM server.
@@ -467,7 +463,7 @@ HRESULT EnrollToGoogleMdmIfNeeded(const base::Value::Dict& properties) {
   if (mdm_url.empty())
     return S_OK;
 
-  // TODO(crbug.com/935577): Check if machine is already enrolled because
+  // TODO(crbug.com/41443432): Check if machine is already enrolled because
   // attempting to enroll when already enrolled causes a crash.
   if (IsEnrolledWithGoogleMdm(mdm_url)) {
     LOGFN(VERBOSE) << "Already enrolled to Google MDM";

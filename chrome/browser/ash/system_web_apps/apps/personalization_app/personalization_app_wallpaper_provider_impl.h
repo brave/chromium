@@ -5,12 +5,10 @@
 #ifndef CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_WALLPAPER_PROVIDER_IMPL_H_
 #define CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_WALLPAPER_PROVIDER_IMPL_H_
 
-#include "ash/webui/personalization_app/personalization_app_wallpaper_provider.h"
-#include "base/memory/raw_ptr.h"
-
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -19,8 +17,11 @@
 #include "ash/public/cpp/wallpaper/wallpaper_controller_observer.h"
 #include "ash/public/cpp/wallpaper/wallpaper_info.h"
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
+#include "ash/webui/common/mojom/sea_pen.mojom-forward.h"
 #include "ash/webui/personalization_app/mojom/personalization_app.mojom.h"
+#include "ash/webui/personalization_app/personalization_app_wallpaper_provider.h"
 #include "base/files/file.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ash/wallpaper_handlers/wallpaper_fetcher_delegate.h"
@@ -30,6 +31,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
 
 namespace ash {
@@ -110,20 +112,20 @@ class PersonalizationAppWallpaperProviderImpl
       FetchImagesForCollectionCallback callback) override;
 
   void FetchGooglePhotosAlbums(
-      const absl::optional<std::string>& resume_token,
+      const std::optional<std::string>& resume_token,
       FetchGooglePhotosAlbumsCallback callback) override;
 
   void FetchGooglePhotosSharedAlbums(
-      const absl::optional<std::string>& resume_token,
+      const std::optional<std::string>& resume_token,
       FetchGooglePhotosAlbumsCallback callback) override;
 
   void FetchGooglePhotosEnabled(
       FetchGooglePhotosEnabledCallback callback) override;
 
   void FetchGooglePhotosPhotos(
-      const absl::optional<std::string>& item_id,
-      const absl::optional<std::string>& album_id,
-      const absl::optional<std::string>& resume_token,
+      const std::optional<std::string>& item_id,
+      const std::optional<std::string>& album_id,
+      const std::optional<std::string>& resume_token,
       FetchGooglePhotosPhotosCallback callback) override;
 
   void GetDefaultImageThumbnail(
@@ -187,6 +189,9 @@ class PersonalizationAppWallpaperProviderImpl
 
   void CancelPreviewWallpaper() override;
 
+  void ShouldShowTimeOfDayWallpaperDialog(
+      ShouldShowTimeOfDayWallpaperDialogCallback callback) override;
+
   wallpaper_handlers::GooglePhotosAlbumsFetcher*
   GetOrCreateGooglePhotosAlbumsFetcher();
 
@@ -218,7 +223,7 @@ class PersonalizationAppWallpaperProviderImpl
       ash::personalization_app::mojom::GooglePhotosEnablementState state);
 
   void OnFetchGooglePhotosPhotos(
-      absl::optional<std::string> album_id,
+      std::optional<std::string> album_id,
       FetchGooglePhotosPhotosCallback callback,
       mojo::StructPtr<mojom::FetchGooglePhotosPhotosResponse> response);
 
@@ -254,15 +259,22 @@ class PersonalizationAppWallpaperProviderImpl
 
   void FindAttribution(
       const ash::WallpaperInfo& info,
-      const absl::optional<std::vector<backdrop::Collection>>& collections);
+      const std::optional<std::vector<backdrop::Collection>>& collections);
 
   void FindImageMetadataInCollection(
       const ash::WallpaperInfo& info,
       std::size_t current_index,
-      const absl::optional<std::vector<backdrop::Collection>>& collections,
+      const std::optional<std::vector<backdrop::Collection>>& collections,
       bool success,
       const std::string& collection_id,
       const std::vector<backdrop::Image>& images);
+
+  void FindSeaPenWallpaperAttribution(uint32_t id);
+
+  void SendSeaPenWallpaperAttribution(
+      uint32_t id,
+      const gfx::ImageSkia& image,
+      mojom::RecentSeaPenImageInfoPtr sea_pen_metadata);
 
   void SendGooglePhotosAttribution(
       const ash::WallpaperInfo& info,
@@ -369,10 +381,10 @@ class PersonalizationAppWallpaperProviderImpl
   // user's background.
   std::set<base::FilePath> local_images_;
 
-  const raw_ptr<content::WebUI, ExperimentalAsh> web_ui_ = nullptr;
+  const raw_ptr<content::WebUI> web_ui_ = nullptr;
 
   // Pointer to profile of user that opened personalization SWA. Not owned.
-  const raw_ptr<Profile, ExperimentalAsh> profile_ = nullptr;
+  const raw_ptr<Profile> profile_ = nullptr;
 
   base::ScopedObservation<ash::WallpaperController,
                           ash::WallpaperControllerObserver>

@@ -6,15 +6,22 @@
 #define ASH_SYSTEM_TOAST_SYSTEM_NUDGE_VIEW_H_
 
 #include "ash/ash_export.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/layout/flex_layout_view.h"
+#include "ui/views/widget/widget_observer.h"
 
 namespace views {
-class ImageView;
-class Label;
-class LabelButton;
+class ImageButton;
+class ViewTracker;
+class Widget;
 }  // namespace views
+
+namespace gfx {
+class RoundedCornersF;
+}  // namespace gfx
 
 namespace ash {
 
@@ -25,42 +32,69 @@ class SystemShadow;
 // This view supports different configurations depending on the provided
 // nudge data parameters. It will always have a body text, and may have a
 // leading image view, a title text, and up to two buttons placed on the bottom.
-// If `use_toast_style` is true, the nudge will look like go/toast-style-spec.
-class ASH_EXPORT SystemNudgeView : public views::FlexLayoutView {
- public:
-  METADATA_HEADER(SystemNudgeView);
+class ASH_EXPORT SystemNudgeView : public views::FlexLayoutView,
+                                   public views::WidgetObserver {
+  METADATA_HEADER(SystemNudgeView, views::FlexLayoutView)
 
-  SystemNudgeView(const AnchoredNudgeData& nudge_data);
+ public:
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kBubbleIdForTesting);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPrimaryButtonIdForTesting);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kSecondaryButtonIdForTesting);
+
+  explicit SystemNudgeView(const AnchoredNudgeData& nudge_data,
+                           base::RepeatingCallback<void(bool)>
+                               hover_focus_callback = base::DoNothing());
   SystemNudgeView(const SystemNudgeView&) = delete;
   SystemNudgeView& operator=(const SystemNudgeView&) = delete;
   ~SystemNudgeView() override;
 
-  views::ImageView* image_view() const { return image_view_; }
-  views::Label* body_label() const { return body_label_; }
-  views::Label* title_label() const { return title_label_; }
-  views::LabelButton* first_button() const { return first_button_; }
-  views::LabelButton* second_button() const { return second_button_; }
+  // views::View:
+  void AddedToWidget() override;
+  void RemovedFromWidget() override;
+  void OnMouseEntered(const ui::MouseEvent& event) override;
+  void OnMouseExited(const ui::MouseEvent& event) override;
+
+  // views::WidgetObserver:
+  void OnWidgetBoundsChanged(views::Widget* widget,
+                             const gfx::Rect& new_bounds) override;
+  void OnWidgetDestroying(views::Widget* widget) override;
 
  private:
+  class FocusableChildrenObserver;
+
+  // Handles observed child focus state changes.
+  void HandleOnChildFocusStateChanged(bool focus_entered);
+
+  // Handles mouse enter/exit events to either show or hide `close_button_`.
+  void HandleOnMouseHovered(bool mouse_entered);
+
+  // Returns true if the nudge is mouse hovered or a child is focused.
+  bool IsHoveredOrChildHasFocus();
+
+  // Sets the corner radius for the nudge view, shadow and highlight border.
+  void SetNudgeRoundedCornerRadius(const gfx::RoundedCornersF& rounded_corners);
+
   // Owned by the views hierarchy.
-  raw_ptr<views::ImageView> image_view_ = nullptr;
-  raw_ptr<views::Label> body_label_ = nullptr;
-  raw_ptr<views::Label> title_label_ = nullptr;
-  raw_ptr<views::LabelButton> first_button_ = nullptr;
-  raw_ptr<views::LabelButton> second_button_ = nullptr;
+  raw_ptr<views::ImageButton> close_button_ = nullptr;
+
+  std::unique_ptr<views::ViewTracker> anchor_view_tracker_;
 
   std::unique_ptr<SystemShadow> shadow_;
 
-  // views::View:
-  void AddedToWidget() override;
+  // Used to determine if the nudge will draw a pointy corner.
+  const bool is_corner_anchored_;
 
-  // Sets the maximum width for `title_label_` and `body_label_`.
-  void SetLabelsMaxWidth(int max_width);
+  // Observes focus state changes in the nudge's focusable children.
+  std::unique_ptr<FocusableChildrenObserver> focusable_children_observer_;
 
-  // Updates the margins for a toast style nudge, along with the label's max
-  // width and rounded corners value. `with_button` specifies if the nudge has a
-  // button or not, since margins will be different.
-  void UpdateToastStyleMargins(bool with_button);
+  // Custom callback triggered whenever the nudge's hover state changes. It may
+  // be empty since it's an optional parameter set in `nudge_data`.
+  const base::RepeatingCallback<void(/*is_hovered=*/bool)>
+      hover_changed_callback_;
+
+  // Callback triggered whenever the hover or focus state changes.
+  const base::RepeatingCallback<void(/*is_hovered_or_has_focus=*/bool)>
+      hover_or_focus_changed_callback_;
 };
 
 }  // namespace ash

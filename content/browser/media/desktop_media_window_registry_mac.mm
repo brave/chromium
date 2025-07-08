@@ -7,10 +7,6 @@
 #include "base/no_destructor.h"
 #include "content/browser/media/desktop_media_window_registry.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 
 class DesktopMediaWindowRegistryMac final : public DesktopMediaWindowRegistry {
@@ -26,7 +22,7 @@ class DesktopMediaWindowRegistryMac final : public DesktopMediaWindowRegistry {
   DesktopMediaWindowRegistryMac& operator=(
       const DesktopMediaWindowRegistryMac&) = delete;
 
-  // Note that DesktopMediaPickerViews in //chrome depends on the fact that
+  // Note that DesktopMediaPickerImpl in //chrome depends on the fact that
   // the Id returned from this function is the NSWindow's windowNumber, but
   // that invariant is *not* part of the general contract for DesktopMediaID.
   DesktopMediaID::Id RegisterWindow(gfx::NativeWindow window) override {

@@ -27,10 +27,11 @@ class WebTestWithWebState : public WebTest {
 
  protected:
   explicit WebTestWithWebState(
-      WebTaskEnvironment::Options = WebTaskEnvironment::Options::DEFAULT);
-  WebTestWithWebState(
-      std::unique_ptr<web::WebClient> web_client,
-      WebTaskEnvironment::Options = WebTaskEnvironment::Options::DEFAULT);
+      WebTaskEnvironment::MainThreadType main_thread_type =
+          WebTaskEnvironment::MainThreadType::DEFAULT);
+  WebTestWithWebState(std::unique_ptr<web::WebClient> web_client,
+                      WebTaskEnvironment::MainThreadType main_thread_type =
+                          WebTaskEnvironment::MainThreadType::DEFAULT);
   ~WebTestWithWebState() override;
 
   // WebTest overrides.
@@ -66,7 +67,7 @@ class WebTestWithWebState : public WebTest {
   void WaitForBackgroundTasks();
   // Blocks until known NSRunLoop-based have completed, known message-loop-based
   // background tasks have completed and `condition` evaluates to true.
-  void WaitForCondition(ConditionBlock condition);
+  [[nodiscard]] bool WaitForCondition(ConditionBlock condition);
   // Blocks until web_state() navigation and background tasks are
   // completed. Returns false when timed out.
   bool WaitUntilLoaded();

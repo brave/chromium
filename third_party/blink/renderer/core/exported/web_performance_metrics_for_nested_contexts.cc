@@ -4,6 +4,7 @@
 
 #include "third_party/blink/public/web/web_performance_metrics_for_nested_contexts.h"
 
+#include "third_party/blink/renderer/core/timing/performance_timing_for_reporting.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 
 namespace blink {
@@ -28,17 +29,17 @@ WebPerformanceMetricsForNestedContexts::operator=(
   return *this;
 }
 
-absl::optional<base::TimeTicks>
+std::optional<base::TimeTicks>
 WebPerformanceMetricsForNestedContexts::UnloadStart() const {
   return private_->timingForReporting()->UnloadStart();
 }
 
-absl::optional<base::TimeTicks>
+std::optional<base::TimeTicks>
 WebPerformanceMetricsForNestedContexts::UnloadEnd() const {
   return private_->timingForReporting()->UnloadEnd();
 }
 
-absl::optional<base::TimeTicks>
+std::optional<base::TimeTicks>
 WebPerformanceMetricsForNestedContexts::CommitNavigationEnd() const {
   return private_->timingForReporting()->CommitNavigationEnd();
 }

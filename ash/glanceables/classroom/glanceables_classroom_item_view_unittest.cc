@@ -4,6 +4,7 @@
 
 #include "ash/glanceables/classroom/glanceables_classroom_item_view.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,7 @@
 #include "base/time/time_override.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/components/settings/scoped_timezone_settings.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/view_utils.h"
@@ -64,8 +65,8 @@ class GlanceablesClassroomItemViewTest : public AshTestBase {
 TEST_F(GlanceablesClassroomItemViewTest, RendersWithoutDueDateTime) {
   const auto assignment = GlanceablesClassroomAssignment(
       "Algebra", "Solve equation",
-      GURL("https://classroom.google.com/test-link-1"), absl::nullopt,
-      base::Time(), absl::nullopt);
+      GURL("https://classroom.google.com/test-link-1"), std::nullopt,
+      base::Time(), std::nullopt);
   const auto view =
       GlanceablesClassroomItemView(&assignment, base::DoNothing());
 
@@ -107,7 +108,7 @@ TEST_F(GlanceablesClassroomItemViewTest, RendersWithDueDateTime) {
     const auto assignment = GlanceablesClassroomAssignment(
         "Algebra", "Solve equation",
         GURL("https://classroom.google.com/test-link-1"), due, base::Time(),
-        absl::nullopt);
+        std::nullopt);
     const auto view =
         GlanceablesClassroomItemView(&assignment, base::DoNothing());
 
@@ -131,7 +132,7 @@ TEST_F(GlanceablesClassroomItemViewTest, RendersDueTimeIn24HrFormat) {
   const auto assignment = GlanceablesClassroomAssignment(
       "Algebra", "Solve equation",
       GURL("https://classroom.google.com/test-link-1"), due, base::Time(),
-      absl::nullopt);
+      std::nullopt);
   const auto view =
       GlanceablesClassroomItemView(&assignment, base::DoNothing());
   const auto* const due_time_label = GetDueTimeLabel(view);
@@ -151,13 +152,31 @@ TEST_F(GlanceablesClassroomItemViewTest, DoesNotRenderDueTimeFor2359) {
   const auto assignment = GlanceablesClassroomAssignment(
       "Algebra", "Solve equation",
       GURL("https://classroom.google.com/test-link-1"), due, base::Time(),
-      absl::nullopt);
+      std::nullopt);
   const auto view =
       GlanceablesClassroomItemView(&assignment, base::DoNothing());
   const auto* const due_time_label = GetDueTimeLabel(view);
 
   ASSERT_TRUE(due_time_label);
   EXPECT_TRUE(due_time_label->GetText().empty());
+}
+
+TEST_F(GlanceablesClassroomItemViewTest, AccessibleProperties) {
+  const auto assignment = GlanceablesClassroomAssignment(
+      "Algebra", "Solve equation",
+      GURL("https://classroom.google.com/test-link-1"), std::nullopt,
+      base::Time(), std::nullopt);
+  auto view = GlanceablesClassroomItemView(&assignment, base::DoNothing());
+  ui::AXNodeData data;
+
+  view.GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kListItem);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kClick);
+
+  view.SetEnabled(false);
+  data = ui::AXNodeData();
+  view.GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kClick);
 }
 
 }  // namespace ash

@@ -13,32 +13,34 @@ import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import 'chrome://resources/cr_elements/cr_search_field/cr_search_field.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/cr_elements/md_select.css.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import '../settings_shared.css.js';
 import './all_sites_icons.html.js';
 import './clear_storage_dialog_shared.css.js';
 import './site_entry.js';
 
-import {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import type {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
+import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {IronListElement} from 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import type {IronListElement} from 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import {afterNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {GlobalScrollTargetMixin} from '../global_scroll_target_mixin.js';
 import {loadTimeData} from '../i18n_setup.js';
-import {DeleteBrowsingDataAction, MetricsBrowserProxy, MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
+import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
+import {DeleteBrowsingDataAction, MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 import {routes} from '../route.js';
-import {Route, RouteObserverMixin, Router} from '../router.js';
+import type {Route} from '../router.js';
+import {RouteObserverMixin, Router} from '../router.js';
 
 import {getTemplate} from './all_sites.html.js';
 import {AllSitesAction2, AllSitesDialog, ContentSetting, SortMethod} from './constants.js';
 import {SiteSettingsMixin} from './site_settings_mixin.js';
-import {OriginInfo, SiteGroup} from './site_settings_prefs_browser_proxy.js';
+import type {OriginInfo, SiteGroup} from './site_settings_prefs_browser_proxy.js';
 
 interface ActionMenuModel {
   actionScope: string;
@@ -82,7 +84,7 @@ export interface AllSitesElement {
 const AllSitesElementBase = GlobalScrollTargetMixin(RouteObserverMixin(
     WebUiListenerMixin(I18nMixin(SiteSettingsMixin(PolymerElement)))));
 
-const FPS_RELATED_SEARCH_PREFIX: string = 'related:';
+const RWS_RELATED_SEARCH_PREFIX: string = 'related:';
 
 export class AllSitesElement extends AllSitesElementBase {
   static get is() {
@@ -95,7 +97,7 @@ export class AllSitesElement extends AllSitesElementBase {
 
   static get properties() {
     return {
-      // TODO(https://crbug.com/1037809): Refactor siteGroupMap to use an Object
+      // TODO(crbug.com/40112954): Refactor siteGroupMap to use an Object
       // instead of a Map so that it's observable by Polymer more naturally. As
       // it stands, one cannot use computed properties based off the value of
       // siteGroupMap nor can one use observable functions to listen to changes
@@ -140,10 +142,15 @@ export class AllSitesElement extends AllSitesElementBase {
       /**
        * All possible sort methods.
        */
-      sortMethods_: {
+      sortMethodEnum_: {
         type: Object,
         value: SortMethod,
         readOnly: true,
+      },
+
+      isRelatedWebsiteSetsV2UiEnabled_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('isRelatedWebsiteSetsV2UiEnabled'),
       },
 
       /**
@@ -186,18 +193,20 @@ export class AllSitesElement extends AllSitesElementBase {
     };
   }
 
-  siteGroupMap: Map<string, SiteGroup>;
-  private filteredList_: SiteGroup[];
-  subpageRoute: Route;
-  filter: string;
-  private selectedItem_: SelectedItem|null;
-  private listBlurred_: boolean;
-  private actionMenuModel_: ActionMenuModel|null;
-  private clearAllData_: boolean;
-  private sortMethod_?: SortMethod;
-  private totalUsage_: string;
+  declare siteGroupMap: Map<string, SiteGroup>;
+  declare private filteredList_: SiteGroup[];
+  declare subpageRoute: Route;
+  declare filter: string;
+  declare private selectedItem_: SelectedItem|null;
+  declare private lastFocused_: HTMLElement|null;
+  declare private listBlurred_: boolean;
+  declare private actionMenuModel_: ActionMenuModel|null;
+  declare private clearAllData_: boolean;
+  declare private sortMethod_?: SortMethod;
+  declare private totalUsage_: string;
   private metricsBrowserProxy: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
+  declare private isRelatedWebsiteSetsV2UiEnabled_: boolean;
 
   override ready() {
     super.ready();
@@ -300,12 +309,12 @@ export class AllSitesElement extends AllSitesElementBase {
       siteGroupMap: Map<string, SiteGroup>, searchQuery: string): SiteGroup[] {
     const result = [];
     for (const [_groupingKey, siteGroup] of siteGroupMap) {
-      if (this.isFpsFiltered_()) {
-        const fpsOwnerFilter =
+      if (this.isRwsFiltered_()) {
+        const rwsOwnerFilter =
             this.filter.substring(this.filter.indexOf(':') + 1);
-        // Checking `siteGroup.fpsOwner` to ensure that we're not matching with
-        // site entries that are not a member of a first party set.
-        if (siteGroup.fpsOwner && siteGroup.fpsOwner === fpsOwnerFilter) {
+        // Checking `siteGroup.rwsOwner` to ensure that we're not matching with
+        // site entries that are not a member of a related website set.
+        if (siteGroup.rwsOwner && siteGroup.rwsOwner === rwsOwnerFilter) {
           result.push(siteGroup);
         }
       } else {
@@ -454,9 +463,22 @@ export class AllSitesElement extends AllSitesElementBase {
     this.$.menu.get().showAt(target);
   }
 
-  private shouldShowFpsLearnMore_(): boolean {
-    return this.isFpsFiltered_() && this.filteredList_ &&
+  private shouldShowClearAllButton_(): boolean {
+    return this.filteredList_.length > 0;
+  }
+
+  private hasFilteredRwsSites_(): boolean {
+    return this.isRwsFiltered_() && this.filteredList_ &&
         this.filteredList_.length > 0;
+  }
+
+  private hasFilteredRwsSitesV2Ui_(): boolean {
+    return this.isRelatedWebsiteSetsV2UiEnabled_ && this.hasFilteredRwsSites_();
+  }
+
+  private shouldShowRwsV1LearnMore_(): boolean {
+    return !this.isRelatedWebsiteSetsV2UiEnabled_ &&
+        this.hasFilteredRwsSites_();
   }
 
   private onShowRelatedSites_() {
@@ -465,7 +487,7 @@ export class AllSitesElement extends AllSitesElementBase {
     const siteGroup = this.filteredList_[this.actionMenuModel_!.index];
     const searchParams = new URLSearchParams(
         'searchSubpage=' +
-        encodeURIComponent(FPS_RELATED_SEARCH_PREFIX + siteGroup.fpsOwner!));
+        encodeURIComponent(RWS_RELATED_SEARCH_PREFIX + siteGroup.rwsOwner!));
     const currentRoute = Router.getInstance().getCurrentRoute();
     Router.getInstance().navigateTo(currentRoute, searchParams);
   }
@@ -503,8 +525,8 @@ export class AllSitesElement extends AllSitesElementBase {
       displayName: siteGroupToUpdate.displayName,
       hasInstalledPWA: siteGroupToUpdate.hasInstalledPWA,
       numCookies: siteGroupToUpdate.numCookies,
-      fpsOwner: siteGroupToUpdate.fpsOwner,
-      fpsNumMembers: siteGroupToUpdate.fpsNumMembers,
+      rwsOwner: siteGroupToUpdate.rwsOwner,
+      rwsNumMembers: siteGroupToUpdate.rwsNumMembers,
       origins: [],
     };
 
@@ -547,8 +569,8 @@ export class AllSitesElement extends AllSitesElementBase {
       siteGroupToUpdate.origins.forEach(originEntry => {
         this.resetPermissionsForOrigin_(originEntry.origin);
       });
-      if (updatedSiteGroup.fpsOwner) {
-        this.decrementFpsNumMembers_(updatedSiteGroup.fpsOwner);
+      if (updatedSiteGroup.rwsOwner) {
+        this.decrementRwsNumMembers_(updatedSiteGroup.rwsOwner);
       }
     }
 
@@ -568,18 +590,32 @@ export class AllSitesElement extends AllSitesElementBase {
   }
 
   /**
-   * Checks if a first party set search filter is applied.
-   * @return True if filter starts with `FPS_RELATED_SEARCH_PREFIX`.
+   * Checks if a related website set search filter is applied.
+   * @return True if filter starts with `RWS_RELATED_SEARCH_PREFIX`.
    */
-  private isFpsFiltered_(): boolean {
-    return this.filter.startsWith(FPS_RELATED_SEARCH_PREFIX);
+  private isRwsFiltered_(): boolean {
+    return this.filter.startsWith(RWS_RELATED_SEARCH_PREFIX);
   }
 
-  private getFpsLearnMoreLabel_() {
-    const fpsOwner = this.filter.substring(this.filter.indexOf(':') + 1);
-    return loadTimeData.getStringF(
-        'siteSettingsFirstPartySetsLearnMore', fpsOwner);
+  /**
+   * Checks if the RWS V2 UI is enabled and an RWS filter is applied.
+   * @return True if the RWS V2 UI is enabled and `isRwsFiltered_` is true.
+   */
+  private isRwsV2Filtered_(): boolean {
+    return this.isRelatedWebsiteSetsV2UiEnabled_ && this.isRwsFiltered_();
   }
+
+  private getRwsLearnMoreLabel_() {
+    const rwsOwner = this.filter.substring(this.filter.indexOf(':') + 1);
+    return loadTimeData.getStringF(
+        'siteSettingsRelatedWebsiteSetsLearnMore', rwsOwner);
+  }
+
+  private getShowRwsButtonLabel_() {
+    return this.i18n(this.isRelatedWebsiteSetsV2UiEnabled_ ?
+      'allSitesShowRwsButton' : 'relatedWebsiteSetsShowRelatedSitesButton');
+  }
+
   /**
    * Selects the appropriate string to display for clear button based on whether
    * a filter is applied.
@@ -587,10 +623,13 @@ export class AllSitesElement extends AllSitesElementBase {
    *     is applied.
    */
   private getClearDataButtonString_(): string {
-    const buttonStringId = this.isFiltered_() ?
-        'siteSettingsClearDisplayedStorageLabel' :
-        'siteSettingsClearAllStorageLabel';
-    return this.i18n(buttonStringId);
+    if (this.isFiltered_()) {
+      const messageId = this.isRwsV2Filtered_() ?
+          'allSitesRwsDeleteDataButtonLabel' :
+          'siteSettingsDeleteDisplayedStorageLabel';
+      return this.i18n(messageId);
+    }
+    return this.i18n('siteSettingsDeleteAllStorageLabel');
   }
 
   /**
@@ -600,9 +639,12 @@ export class AllSitesElement extends AllSitesElementBase {
    *     is applied.
    */
   private getClearStorageDescription_(): string {
-    const descriptionId = this.isFiltered_() ?
-        'siteSettingsClearDisplayedStorageDescription' :
-        'siteSettingsClearAllStorageDescription';
+    let descriptionId = 'siteSettingsClearAllStorageDescription';
+    if (this.hasFilteredRwsSitesV2Ui_()) {
+      descriptionId = 'allSitesRwsFilterViewStorageDescription';
+    } else if (this.isFiltered_()) {
+      descriptionId = 'siteSettingsClearDisplayedStorageDescription';
+    }
     return loadTimeData.substituteString(
         this.i18n(descriptionId), this.totalUsage_);
   }
@@ -718,28 +760,40 @@ export class AllSitesElement extends AllSitesElementBase {
    * @return The appropriate title for clear storage confirmation dialog.
    */
   private getClearAllStorageDialogTitle_(): string {
-    const titleId = this.isFiltered_() ?
-        'siteSettingsClearDisplayedStorageDialogTitle' :
-        'siteSettingsClearAllStorageDialogTitle';
-    return loadTimeData.substituteString(this.i18n(titleId), this.totalUsage_);
+    if (this.isFiltered_()) {
+      const messageId = this.isRwsV2Filtered_() ?
+          'allSitesRwsDeleteDataDialogTitle' :
+          'siteSettingsDeleteDisplayedStorageDialogTitle';
+      return this.i18n(messageId);
+    }
+    return this.i18n('siteSettingsDeleteAllStorageDialogTitle');
   }
 
   /**
    * Get the appropriate label for the clear data confirmation dialog, depending
-   * on whether any apps are installed and/or filter is applied.
+   * on whether any apps are installed, a filter is applied, and/or the RWS V2
+   * view is shown.
    * @return The appropriate description for clear data confirmation dialog.
    */
   private getClearAllStorageDialogDescription_(): string {
     const anyAppsInstalled = this.filteredList_.some(g => g.hasInstalledPWA);
+    if (this.isRwsV2Filtered_()) {
+      const rwsOwner = this.filter.substring(this.filter.indexOf(':') + 1);
+      const messageId = anyAppsInstalled ?
+          'siteSettingsDeleteRwsStorageConfirmationInstalled' :
+          'siteSettingsDeleteRwsStorageConfirmation';
+      return loadTimeData.getStringF(messageId, this.totalUsage_, rwsOwner);
+    }
+
     let messageId;
     if (anyAppsInstalled) {
       messageId = this.isFiltered_() ?
-          'siteSettingsClearDisplayedStorageConfirmationInstalled' :
-          'siteSettingsClearAllStorageConfirmationInstalled';
+          'siteSettingsDeleteDisplayedStorageConfirmationInstalled' :
+          'siteSettingsDeleteAllStorageConfirmationInstalled';
     } else {
       messageId = this.isFiltered_() ?
-          'siteSettingsClearDisplayedStorageConfirmation' :
-          'siteSettingsClearAllStorageConfirmation';
+          'siteSettingsDeleteDisplayedStorageConfirmation' :
+          'siteSettingsDeleteAllStorageConfirmation';
     }
 
     return loadTimeData.substituteString(
@@ -750,13 +804,16 @@ export class AllSitesElement extends AllSitesElementBase {
    * Selects the appropriate string to display for the sign-out string in
    * confirmation popup based on whether a filter is applied.
    * @return The appropriate sign out confirmation string based on whether a
-   *     filter is applied.
+   *     filter is applied and/or the RWS V2 view is shown.
    */
   private getClearAllStorageDialogSignOutLabel_(): string {
-    const signOutLabelId = this.isFiltered_() ?
-        'siteSettingsClearDisplayedStorageSignOut' :
-        'siteSettingsClearAllStorageSignOut';
-    return this.i18n(signOutLabelId);
+    if (this.isFiltered_()) {
+      const messageId = this.isRwsV2Filtered_() ?
+          'siteSettingsClearRwsStorageSignOut' :
+          'siteSettingsClearDisplayedStorageSignOut';
+      return this.i18n(messageId);
+    }
+    return this.i18n('siteSettingsClearAllStorageSignOut');
   }
 
   private recordUserAction_(scopes: string[]) {
@@ -765,15 +822,15 @@ export class AllSitesElement extends AllSitesElementBase {
   }
 
   /**
-   * Decrements the number of fps members for a given owner eTLD+1 by 1.
-   * @param fpsOwner The first party set owner.
+   * Decrements the number of rws members for a given owner eTLD+1 by 1.
+   * @param rwsOwner The related website set owner.
    */
-  private decrementFpsNumMembers_(fpsOwner: string) {
+  private decrementRwsNumMembers_(rwsOwner: string) {
     this.filteredList_.forEach((siteGroup, index) => {
-      if (siteGroup.fpsOwner === fpsOwner) {
+      if (siteGroup.rwsOwner === rwsOwner) {
         this.set(
-            'filteredList_.' + index + '.fpsNumMembers',
-            siteGroup.fpsNumMembers! - 1);
+            'filteredList_.' + index + '.rwsNumMembers',
+            siteGroup.rwsNumMembers! - 1);
       }
     });
   }
@@ -798,8 +855,8 @@ export class AllSitesElement extends AllSitesElementBase {
       displayName: siteGroupToUpdate.displayName,
       hasInstalledPWA: siteGroupToUpdate.hasInstalledPWA,
       numCookies: 0,
-      fpsOwner: siteGroupToUpdate.fpsOwner,
-      fpsNumMembers: siteGroupToUpdate.fpsNumMembers,
+      rwsOwner: siteGroupToUpdate.rwsOwner,
+      rwsNumMembers: siteGroupToUpdate.rwsNumMembers,
       origins: [],
     };
 
@@ -846,7 +903,7 @@ export class AllSitesElement extends AllSitesElementBase {
     this.recordUserAction_([...scopes, installed, 'Confirm']);
     this.metricsBrowserProxy.recordDeleteBrowsingDataAction(
         DeleteBrowsingDataAction.SITES_SETTINGS_PAGE);
-    if (this.isFpsFiltered_()) {
+    if (this.isRwsFiltered_()) {
       this.browserProxy.recordAction(AllSitesAction2.DELETE_FOR_ENTIRE_FPS);
     }
     for (let index = this.filteredList_.length - 1; index >= 0; index--) {

@@ -55,6 +55,7 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
@@ -143,6 +144,8 @@ class TouchActionTest : public testing::Test {
   void SendTouchEvent(WebView*, WebInputEvent::Type, gfx::Point client_point);
   WebViewImpl* SetupTest(String file);
   void RunTestOnTree(ContainerNode* root, WebView*);
+
+  test::TaskEnvironment task_environment_;
 
   String base_url_;
   frame_test_helpers::WebViewHelper web_view_helper_;
@@ -338,7 +341,7 @@ void TouchActionTest::RunTestOnTree(ContainerNode* root, WebView* web_view) {
           << "Unexpected hit test result " << failure_context_pos
           << "  Got element: \""
           << result.InnerElement()
-                 ->outerHTML()
+                 ->GetOuterHTMLString()
                  .StripWhiteSpace()
                  .Left(80)
                  .Ascii()
@@ -377,9 +380,12 @@ void TouchActionTest::RunTestOnTree(ContainerNode* root, WebView* web_view) {
                                             ~TouchAction::kInternalNotWritable)
               << failure_context_pos;
         } else if (expected_action == "pan-x-y") {
-          EXPECT_EQ(TouchAction::kPan, widget->LastTouchAction() &
-                                           ~TouchAction::kInternalPanXScrolls &
-                                           ~TouchAction::kInternalNotWritable)
+          EXPECT_EQ(TouchAction::kPan,
+                    widget->LastTouchAction() &
+                        ~TouchAction::kInternalPanXScrolls &
+                        ~TouchAction::kInternalNotWritable &
+                        ~TouchAction::kInternalHandwriting &
+                        ~TouchAction::kInternalHandwritingPanningRules)
               << failure_context_pos;
         } else if (expected_action == "manipulation") {
           EXPECT_EQ(TouchAction::kManipulation,

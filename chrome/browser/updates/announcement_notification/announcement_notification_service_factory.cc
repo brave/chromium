@@ -33,10 +33,11 @@ AnnouncementNotificationServiceFactory::GetForProfile(Profile* profile) {
       GetInstance()->GetServiceForBrowserContext(profile, true /* create */));
 }
 
-KeyedService* AnnouncementNotificationServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AnnouncementNotificationServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   if (context->IsOffTheRecord()) {
-    return new EmptyAnnouncementNotificationService();
+    return std::make_unique<EmptyAnnouncementNotificationService>();
   }
 
   Profile* profile = Profile::FromBrowserContext(context);
@@ -60,9 +61,12 @@ AnnouncementNotificationServiceFactory::AnnouncementNotificationServiceFactory()
           "AnnouncementNotificationService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(NotificationDisplayServiceFactory::GetInstance());
 }

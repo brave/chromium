@@ -5,10 +5,11 @@
 #include "third_party/blink/renderer/core/html/media/media_custom_controls_fullscreen_detector.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace blink {
@@ -27,7 +28,7 @@ class MediaCustomControlsFullscreenDetectorTest : public testing::Test {
 
   static MediaCustomControlsFullscreenDetector* FullscreenDetectorFor(
       HTMLVideoElement* video_element) {
-    return video_element->custom_controls_fullscreen_detector_;
+    return video_element->custom_controls_fullscreen_detector_.Get();
   }
 
   MediaCustomControlsFullscreenDetector* FullscreenDetector() const {
@@ -60,6 +61,7 @@ class MediaCustomControlsFullscreenDetectorTest : public testing::Test {
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   std::unique_ptr<DummyPageHolder> new_page_holder_;
   Persistent<HTMLVideoElement> video_;
@@ -125,7 +127,8 @@ TEST_F(MediaCustomControlsFullscreenDetectorTest,
 
 TEST_F(MediaCustomControlsFullscreenDetectorTest,
        hasListenersAfterAddToDocumentByParser) {
-  GetDocument().body()->setInnerHTML("<body><video></video></body>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<body><video></video></body>");
 
   EXPECT_TRUE(CheckEventListenerRegistered(GetDocument(),
                                            event_type_names::kFullscreenchange,

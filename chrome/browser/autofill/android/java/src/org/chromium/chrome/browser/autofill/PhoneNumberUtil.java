@@ -6,30 +6,32 @@ package org.chromium.chrome.browser.autofill;
 
 import android.text.Editable;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.text.EmptyTextWatcher;
 
 /**
  * Android wrapper of i18n::phonenumbers::PhoneNumberUtil which provides convenient methods to
  * format and validate phone number.
  */
+@NullMarked
 @JNINamespace("autofill")
 public class PhoneNumberUtil {
     // Avoid instantiation by accident.
     private PhoneNumberUtil() {}
 
-    /**
-     * TextWatcher to watch phone number changes so as to format it based on country code.
-     */
+    /** TextWatcher to watch phone number changes so as to format it based on country code. */
     public static class CountryAwareFormatTextWatcher implements EmptyTextWatcher {
         /** Indicates the change was caused by ourselves. */
         private boolean mSelfChange;
-        @Nullable
-        private String mCountryCode;
+
+        private @Nullable String mCountryCode;
 
         /**
          * Updates the country code used to format phone numbers.
@@ -103,8 +105,14 @@ public class PhoneNumberUtil {
     @NativeMethods
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public interface Natives {
-        String formatForDisplay(String phoneNumber, String countryCode);
-        String formatForResponse(String phoneNumber);
-        boolean isPossibleNumber(String phoneNumber, String countryCode);
+        @JniType("std::string")
+        String formatForDisplay(
+                @JniType("std::string") String phoneNumber, @Nullable String countryCode);
+
+        @JniType("std::string")
+        String formatForResponse(@JniType("std::string") String phoneNumber);
+
+        boolean isPossibleNumber(
+                @JniType("std::string") String phoneNumber, @Nullable String countryCode);
     }
 }

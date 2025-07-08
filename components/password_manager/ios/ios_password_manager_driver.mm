@@ -4,22 +4,25 @@
 
 #import "components/password_manager/ios/ios_password_manager_driver.h"
 
-#include <string>
+#import <string>
 
-#include "base/hash/hash.h"
-#include "components/autofill/core/common/password_form_fill_data.h"
-#include "components/password_manager/core/browser/password_generation_frame_helper.h"
-#include "components/password_manager/core/browser/password_manager.h"
+#import "base/hash/hash.h"
+#include "base/notimplemented.h"
+#import "components/autofill/core/common/password_form_fill_data.h"
+#import "components/autofill/ios/common/field_data_manager_factory_ios.h"
+#import "components/password_manager/core/browser/password_generation_frame_helper.h"
+#import "components/password_manager/core/browser/password_manager.h"
 #import "components/password_manager/ios/ios_password_manager_driver_factory.h"
 #import "components/password_manager/ios/password_manager_java_script_feature.h"
-#import "ios/web/public/js_messaging/web_frames_manager.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/geometry/rect_f.h"
 
 using password_manager::PasswordAutofillManager;
 using password_manager::PasswordManager;
+
+namespace {
+// Maximal number of pending forms for proactive generation that can be queued.
+constexpr int kMaxPendingFormsForProactiveGeneration = 10;
+}  // namespace
 
 IOSPasswordManagerDriver::IOSPasswordManagerDriver(
     web::WebState* web_state,
@@ -32,7 +35,9 @@ IOSPasswordManagerDriver::IOSPasswordManagerDriver(
       password_manager_(password_manager),
       id_(driver_id),
       cached_frame_id_(base::FastHash(web_frame->GetFrameId())),
-      frame_id_(web_frame->GetFrameId()) {
+      frame_id_(web_frame->GetFrameId()),
+      field_data_manager_(
+          autofill::FieldDataManagerFactoryIOS::GetRetainable(web_frame)) {
   password_generation_helper_ =
       std::make_unique<password_manager::PasswordGenerationFrameHelper>(
           password_manager_->GetClient(), this);
@@ -48,8 +53,15 @@ int IOSPasswordManagerDriver::GetId() const {
   return id_;
 }
 
-void IOSPasswordManagerDriver::SetPasswordFillData(
+void IOSPasswordManagerDriver::PropagateFillDataOnParsingCompletion(
     const autofill::PasswordFormFillData& form_data) {
+  // Disable proactive generation and clear the pending forms if it is known
+  // that there are passwords available for the site. This signal won't work for
+  // passwords added after the frame is loaded, TODO(crbug.com/316132527): fix
+  // that.
+  can_use_proactive_generation_ = false;
+  pending_forms_for_proactive_generation_.clear();
+
   [bridge_ processPasswordFormFillData:form_data
                             forFrameId:frame_id_
                            isMainFrame:is_in_main_frame_
@@ -58,6 +70,19 @@ void IOSPasswordManagerDriver::SetPasswordFillData(
 
 void IOSPasswordManagerDriver::InformNoSavedCredentials(
     bool should_show_popup_without_passwords) {
+  // Allow using the proactive password generation bottom sheet from now on
+  // since it is now known that there are no credentials saved for this page.
+  // This signal won't work if the passwords are removed after the frame is
+  // loaded, TODO(crbug.com/316132527): fix that.
+  can_use_proactive_generation_ = true;
+
+  // Attach the listeners on forms that couldn't be processed yet.
+  for (const auto& form : pending_forms_for_proactive_generation_) {
+    [bridge_ attachListenersForPasswordGenerationFields:form
+                                             forFrameId:frame_id_];
+  }
+  pending_forms_for_proactive_generation_.clear();
+
   [bridge_ onNoSavedCredentialsWithFrameId:frame_id_];
 }
 
@@ -67,6 +92,17 @@ void IOSPasswordManagerDriver::FormEligibleForGenerationFound(
       GetPasswordGenerationHelper()->IsGenerationEnabled(
           /*log_debug_data*/ true)) {
     [bridge_ formEligibleForGenerationFound:form];
+    if (can_use_proactive_generation_) {
+      [bridge_ attachListenersForPasswordGenerationFields:form
+                                               forFrameId:frame_id_];
+    } else if (pending_forms_for_proactive_generation_.size() <
+               kMaxPendingFormsForProactiveGeneration) {
+      // Push processing the forms eligible for generation for later since it
+      // isn't yet known whether the proactive generation can be used. Don't
+      // push more than `kMaxPendingFormsForProactiveGeneration` to avoid
+      // bloating memory in the case the queue is never cleaned up.
+      pending_forms_for_proactive_generation_.push_back(form);
+    }
   }
 }
 
@@ -75,15 +111,34 @@ void IOSPasswordManagerDriver::GeneratedPasswordAccepted(
   NOTIMPLEMENTED();
 }
 
-void IOSPasswordManagerDriver::FillSuggestion(const std::u16string& username,
-                                              const std::u16string& password) {
+void IOSPasswordManagerDriver::FillSuggestion(
+    const std::u16string& username,
+    const std::u16string& password,
+    base::OnceCallback<void(bool)> success_callback) {
   NOTIMPLEMENTED();
+}
+
+void IOSPasswordManagerDriver::FillSuggestionById(
+    autofill::FieldRendererId username_element_id,
+    autofill::FieldRendererId password_element_id,
+    const std::u16string& username,
+    const std::u16string& password,
+    autofill::AutofillSuggestionTriggerSource suggestion_source) {
+  NOTIMPLEMENTED() << "This function is used for non-iOS manual fallback";
 }
 
 void IOSPasswordManagerDriver::PreviewSuggestion(
     const std::u16string& username,
     const std::u16string& password) {
   NOTIMPLEMENTED();
+}
+
+void IOSPasswordManagerDriver::PreviewSuggestionById(
+    autofill::FieldRendererId username_element_id,
+    autofill::FieldRendererId password_element_id,
+    const std::u16string& username,
+    const std::u16string& password) {
+  NOTIMPLEMENTED() << "This function is used for non-iOS manual fallback";
 }
 
 void IOSPasswordManagerDriver::PreviewGenerationSuggestion(
@@ -97,7 +152,7 @@ void IOSPasswordManagerDriver::ClearPreviewedForm() {
 
 void IOSPasswordManagerDriver::SetSuggestionAvailability(
     autofill::FieldRendererId generation_element_id,
-    const autofill::mojom::AutofillState state) {
+    autofill::mojom::AutofillSuggestionAvailability suggestion_availability) {
   NOTIMPLEMENTED();
 }
 
@@ -113,7 +168,7 @@ IOSPasswordManagerDriver::GetPasswordManager() {
 
 PasswordAutofillManager*
 IOSPasswordManagerDriver::GetPasswordAutofillManager() {
-  // TODO(crbug.com/341877): Use PasswordAutofillManager to implement password
+  // TODO(crbug.com/41088554): Use PasswordAutofillManager to implement password
   // autofill on iOS.
   return nullptr;
 }
@@ -126,14 +181,21 @@ bool IOSPasswordManagerDriver::CanShowAutofillUi() const {
   return true;
 }
 
-::ui::AXTreeID IOSPasswordManagerDriver::GetAxTreeId() const {
-  return {};
-}
-
 int IOSPasswordManagerDriver::GetFrameId() const {
   return cached_frame_id_;
 }
 
 const GURL& IOSPasswordManagerDriver::GetLastCommittedURL() const {
   return bridge_.lastCommittedURL;
+}
+
+gfx::RectF IOSPasswordManagerDriver::TransformToRootCoordinates(
+    const gfx::RectF& bounds_in_frame_coordinates) {
+  NOTIMPLEMENTED();
+  return bounds_in_frame_coordinates;
+}
+
+base::WeakPtr<password_manager::PasswordManagerDriver>
+IOSPasswordManagerDriver::AsWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }

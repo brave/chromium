@@ -6,52 +6,47 @@
 
 load("@stdlib//internal/graph.star", "graph")
 load("@stdlib//internal/luci/common.star", "keys")
-load("./nodes.star", "nodes")
+load("./args.star", "args")
+load("./targets-internal/common.star", _targets_common = "common")
+load("./targets-internal/magic_args.star", _targets_magic_args = "magic_args")
+load("./targets-internal/nodes.star", _targets_nodes = "nodes")
+load("./targets-internal/pyl-generators.star", "register_pyl_generators")
+load("./targets-internal/test-types/gpu_telemetry_test.star", "gpu_telemetry_test")
+load("./targets-internal/test-types/gtest_test.star", "gtest_test")
+load("./targets-internal/test-types/isolated_script_test.star", "isolated_script_test")
+load("./targets-internal/test-types/junit_test.star", "junit_test")
+load("./targets-internal/test-types/script_test.star", "script_test")
 
-_TARGET = nodes.create_unscoped_node_type("target")
-_TARGET_MIXIN = nodes.create_unscoped_node_type("target-mixin")
-_TARGET_VARIANT = nodes.create_unscoped_node_type("target-variant")
+register_pyl_generators()
 
-def _create_target(
-        *,
-        name,
-        type,
-        label,
-        label_type = None,
-        executable = None,
-        executable_suffix = None,
-        script = None,
-        skip_usage_check = False,
-        args = None):
-    target_key = _TARGET.add(name, props = dict(
-        type = type,
-        label = label,
-        label_type = label_type,
-        executable = executable,
-        executable_suffix = executable_suffix,
-        script = script,
-        skip_usage_check = skip_usage_check,
-        args = args,
-    ))
-    graph.add_edge(keys.project(), target_key)
-
-def _compile_target(*, name, label, skip_usage_check = False):
+def _compile_target(*, name, label = None, skip_usage_check = False):
     """Define a compile target to use in targets specs.
 
     A compile target provides a mapping to any ninja target that will
     only be built, not executed.
 
     Args:
-        name: The name that can be used to refer to the target.
+        name: The ninja target name. This is the name that can be used
+            to refer to the target in other starlark declarations.
         label: The GN label for the ninja target.
         skip_usage_check: Disables checking that the target is actually
             referenced in a targets spec for some builder.
     """
-    _create_target(
+
+    # The all target is a special ninja target that doesn't map to a GN label
+    # and so we don't create an entry in gn_isolate_map.pyl
+    if name != "all":
+        if label == None:
+            fail("label must be set in compile_target {}".format(name))
+        _targets_common.create_label_mapping(
+            name = name,
+            type = "additional_compile_target",
+            label = label,
+            skip_usage_check = skip_usage_check,
+        )
+
+    _targets_common.create_compile_target(
         name = name,
-        type = "additional_compile_target",
-        label = label,
-        skip_usage_check = skip_usage_check,
     )
 
 def _console_test_launcher(
@@ -68,7 +63,9 @@ def _console_test_launcher(
     not need Xvfb.
 
     Args:
-        name: The name that can be used to refer to the target.
+        name: The ninja target name. This is the name that can be used
+            to refer to the target/binary in other starlark
+            declarations.
         label: The GN label for the ninja target.
         label_type: The type of the label. This is used by MB to find
             the generated runtime files in the correct place if the
@@ -79,7 +76,7 @@ def _console_test_launcher(
         args: The arguments to the test. These arguments will be
             included when the test is run using "mb try"
     """
-    _create_target(
+    _targets_common.create_binary(
         name = name,
         type = "console_test_launcher",
         label = label,
@@ -88,7 +85,15 @@ def _console_test_launcher(
         args = args,
     )
 
-def _generated_script(*, name, label, skip_usage_check = False, args = None):
+def _generated_script(
+        *,
+        name,
+        label,
+        skip_usage_check = False,
+        args = None,
+        results_handler = None,
+        merge = None,
+        resultdb = None):
     """Define a generated script target to use in targets specs.
 
     A generated script target is a test that is executed via a script
@@ -97,46 +102,51 @@ def _generated_script(*, name, label, skip_usage_check = False, args = None):
     Windows).
 
     Args:
-        name: The name that can be used to refer to the target.
+        name: The ninja target name. This is the name that can be used
+            to refer to the target/binary in other starlark
+            declarations.
         label: The GN label for the ninja target.
         skip_usage_check: Disables checking that the target is actually
             referenced in a targets spec for some builder.
         args: The arguments to the test. These arguments will be
             included when the test is run using "mb try"
+        results_handler: The name of the results handler to use for the
+            test.
+        merge: A targets.merge describing the invocation to merge the
+            results from the test's tasks.
+        resultdb: A targets.resultdb describing the ResultDB integration
+            for the test.
     """
-    _create_target(
+    _targets_common.create_binary(
         name = name,
         type = "generated_script",
         label = label,
         skip_usage_check = skip_usage_check,
         args = args,
+        test_config = _targets_common.binary_test_config(
+            results_handler = results_handler,
+            merge = merge,
+            resultdb = resultdb,
+        ),
     )
 
-def _junit_test(*, name, label, skip_usage_check = False):
-    """Define a junit test target to use in targets specs.
-
-    A junit test target is a test using the JUnit test framework.
-
-    Args:
-        name: The name that can be used to refer to the target.
-        label: The GN label for the ninja target.
-        skip_usage_check: Disables checking that the target is actually
-            referenced in a targets spec for some builder.
-    """
-    _create_target(
-        name = name,
-        type = "junit_test",
-        label = label,
-        skip_usage_check = skip_usage_check,
-    )
-
-def _script(*, name, label, script, skip_usage_check = False, args = None):
+def _script(
+        *,
+        name,
+        label,
+        script,
+        skip_usage_check = False,
+        args = None,
+        merge = None,
+        resultdb = None):
     """Define a script target to use in targets specs.
 
     A script target is a test that is executed via a python script.
 
     Args:
-        name: The name that can be used to refer to the target.
+        name: The ninja target name. This is the name that can be used
+            to refer to the target/binary in other starlark
+            declarations.
         label: The GN label for the ninja target.
         script: The GN path (e.g. //testing/scripts/foo.py" to the python
             script to run.
@@ -144,14 +154,22 @@ def _script(*, name, label, script, skip_usage_check = False, args = None):
             referenced in a targets spec for some builder.
         args: The arguments to the test. These arguments will be
             included when the test is run using "mb try"
+        merge: A targets.merge describing the invocation to merge the
+            results from the test's tasks.
+        resultdb: A targets.resultdb describing the ResultDB integration
+            for the test.
     """
-    _create_target(
+    _targets_common.create_binary(
         name = name,
         type = "script",
         label = label,
         script = script,
         skip_usage_check = skip_usage_check,
         args = args,
+        test_config = _targets_common.binary_test_config(
+            merge = merge,
+            resultdb = resultdb,
+        ),
     )
 
 def _windowed_test_launcher(
@@ -171,7 +189,9 @@ def _windowed_test_launcher(
     Ozone CrOS).
 
     Args:
-        name: The name that can be used to refer to the target.
+        name: The ninja target name. This is the name that can be used
+            to refer to the target/binary in other starlark
+            declarations.
         label: The GN label for the ninja target.
         label_type: The type of the label. This is used by MB to find
             the generated runtime files in the correct place if the
@@ -186,7 +206,7 @@ def _windowed_test_launcher(
         args: The arguments to the test. These arguments will be
             included when the test is run using "mb try"
     """
-    _create_target(
+    _targets_common.create_binary(
         name = name,
         type = "windowed_test_launcher",
         label = label,
@@ -220,31 +240,13 @@ def _cipd_package(
         revision = revision,
     )
 
-def _merge(
-        *,
-        script,
-        args = None):
-    """Define a merge script to be used for a swarmed test.
-
-    Args:
-        script: GN-format path (e.g. //foo/bar/script.py) to the script
-            to use to merge results from the shard tasks.
-        args: Any args to pass to the merge script, in addition to any
-            arguments supplied by the recipe.
-
-    Returns:
-        A struct that can be passed to the merge argument of
-        `targets.mixin`.
-    """
-    return struct(
-        script = script,
-        args = args,
-    )
-
 def _resultdb(
         *,
-        enable = False,
-        has_native_resultdb_integration = False):
+        enable = None,
+        has_native_resultdb_integration = None,
+        result_format = None,
+        result_file = None,
+        inv_extended_properties_dir = None):
     """Define the ResultDB integration to be used for a test.
 
     Args:
@@ -253,6 +255,8 @@ def _resultdb(
             native integration with resultdb. If not, result_adapter
             will be used, which parses output to determine results to
             upload results to ResultDB.
+        result_format: The format of the test results.
+        result_file: The file to write out test results to.
 
     Return:
         A struct that can be passed to the resultdb argument of
@@ -261,90 +265,9 @@ def _resultdb(
     return struct(
         enable = enable,
         has_native_resultdb_integration = has_native_resultdb_integration,
-    )
-
-def _swarming(
-        *,
-        dimension_sets = None,
-        dimensions = None,
-        optional_dimensions = None,
-        containment_type = None,
-        cipd_packages = None,
-        expiration_sec = None,
-        hard_timeout_sec = None,
-        io_timeout_sec = None,
-        shards = None,
-        service_account = None,
-        named_caches = None):
-    """Define the swarming details for a test.
-
-    When specified as a mixin, fields will overwrites the test's values
-    unless otherwise indicated.
-
-    Args:
-        dimension_sets: A list of dicts with dimensions to set for
-            swarming tasks for the test. When specified on a mixin, the
-            dimension sets in the mixin will be added to those present
-            on the test. At build-time, a separate test is created for
-            each dimension set.
-        dimensions: A dict of dimensions to apply to all dimension sets
-            for the test. This can only be specified in a mixin. After
-            any dimension sets from the mixin are added to the test, the
-            dimensions will be applied to all of the dimension sets on
-            the test. If there are no dimension sets on the test, a
-            single dimension set with these dimensions will be added.
-        optional_dimensions: Optional dimensions to add to each
-            dimension set.
-        containment_type: The containment type to use for the swarming
-            task(s). See ContainmentType enum in
-            https://source.chromium.org/chromium/infra/infra/+/main:go/src/go.chromium.org/luci/swarming/proto/api/swarming.proto
-        cipd_packages: A list of targets.cipd_package that detail CIPD
-            packages to be downloaded for the test.
-        expiration_sec: The time that each task for the test should wait
-            to be scheduled.
-        hard_timeout_sec: The maximum time each task for the test can
-            take after starting.
-        io_timeout_sec: The maximum time that can elapse between output
-            from tasks for the test.
-        shards: The number of tasks to split the test into.
-        service_account: The service account used to run the test's
-            tasks.
-        named_caches: A list of swarming.cache that detail the named
-            caches that should be mounted for the test's tasks.
-    """
-    return struct(
-        dimension_sets = dimension_sets,
-        dimensions = dimensions,
-        optional_dimensions = optional_dimensions,
-        containment_type = containment_type,
-        cipd_packages = cipd_packages,
-        expiration_sec = expiration_sec,
-        hard_timeout_sec = hard_timeout_sec,
-        io_timeout_sec = io_timeout_sec,
-        shards = shards,
-        service_account = service_account,
-        named_caches = named_caches,
-    )
-
-def _skylab(
-        *,
-        cros_board,
-        cros_img,
-        autotest_name = None,
-        bucket = None,
-        dut_pool = None,
-        public_builder = None,
-        public_builder_bucket = None,
-        shards = None):
-    return struct(
-        cros_board = cros_board,
-        cros_img = cros_img,
-        autotest_name = autotest_name,
-        bucket = bucket,
-        dut_pool = dut_pool,
-        public_builder = public_builder,
-        public_builder_bucket = public_builder_bucket,
-        shards = shards,
+        result_format = result_format,
+        result_file = result_file,
+        inv_extended_properties_dir = inv_extended_properties_dir,
     )
 
 def _mixin_values(
@@ -352,19 +275,26 @@ def _mixin_values(
         args = None,
         precommit_args = None,
         android_args = None,
+        chromeos_args = None,
+        desktop_args = None,
+        lacros_args = None,
         linux_args = None,
         mac_args = None,
+        win_args = None,
         win64_args = None,
         swarming = None,
         android_swarming = None,
+        chromeos_swarming = None,
         skylab = None,
         use_isolated_scripts_api = None,
+        expand_as_isolated_script = None,
         ci_only = None,
+        retry_only_failed_tests = None,
         check_flakiness_for_new_tests = None,
         resultdb = None,
         isolate_profile_data = None,
         merge = None,
-        timeout_sec = None):
+        experiment_percentage = None):
     """Define values to be mixed into a target.
 
     Unless otherwise specified, each field will overwrite an existing
@@ -384,12 +314,24 @@ def _mixin_values(
         android_args: Arguments to be passed to the test when the
             builder is targeting android. Will be appended to any
             existing android_args for the test.
+        chromeos_args: Arguments to be passed to the test when the
+            builder is targeting chromeos. Will be appended to any
+            existing chromeos_args for the test.
+        desktop_args: Arguments to be passed to the test when the
+            builder is targeting linux, mac or windows. Will be appended
+            to any existing desktop_args for the test.
         linux_args: Arguments to be passed to the test when the builder
             is targeting linux. Will be appended to any existing
             linux_args for the test.
+        lacros_args: Arguments to be passed to the test when the
+            builder is targeting lacros. Will be appended to any
+            existing lacros_args for the test.
         mac_args: Arguments to be passed to the test when the builder is
             targeting mac. Will be appended to any existing mac_args for
             the test.
+        win_args: Arguments to be passed to the test when the builder
+            is targeting win. Will be appended to any existing
+            win_args for the test.
         win64_args: Arguments to be passed to the test when the builder
             is targeting win64. Will be appended to any existing
             win64_args for the test.
@@ -398,17 +340,32 @@ def _mixin_values(
             to the test's swarming details.
         android_swarming: A targets.swarming to be applied to the test
             when the builder is targeting android.
+        chromeos_swarming: A targets.swarming to be applied to the test
+            when the builder is targeting chromeos.
         skylab: A targets.skylab to be applied to the test. See
             targets.skylab for details about how each field is applied
             to the test.
         use_isolated_scripts_api: A bool indicating whether to use the
             isolated scripts interface to run the test. Only
             applicable to gtests.
+        expand_as_isolated_script: A bool indicating that the test
+            should be expanded as an isolated script. Only applicable to
+            gtests. Note this is different from
+            use_isolated_scripts_api; expand_as_isolated_script is not
+            part of the resultant spec and causes the spec to be output
+            as an isolated script, whereas use_isolated_scripts_api
+            is part of the expanded spec and tells the recipe to treat
+            it as an isolated script but the expanded spec is still that
+            of a gtest.
         ci_only: A bool indicating whether the test should only be run
             in CI by default.
         check_flakiness_for_new_tests: A bool indicating whether try
             builders running the test should rerun new tests additional
             times to check for flakiness.
+        retry_only_failed_tests: A bool indicating whether retrying the
+            failing test will limit execution to only the failed test
+            cases. By default, the entire shards that contain failing
+            test cases will be rerun. Applies only to swarmed tests.
         resultdb: A targets.resultdb describing the ResultDB integration
             for the test.
         isolate_profile_data: A bool indicating whether profile data for
@@ -416,7 +373,12 @@ def _mixin_values(
             isolates.
         merge: A targets.merge describing the invocation to merge the
             results from the test's tasks.
-        timeout_sec: The maximum time the test can take to run.
+        shards: The number of shards to use for running the test on
+            skylab.
+        experiment_percentage: An integer in the range [0, 100]
+            indicating the percentage chance that the test will be run,
+            with failures in the test not resulting in failures in the
+            build.
 
     Returns:
         A dict containing the values to be mixed in.
@@ -425,24 +387,33 @@ def _mixin_values(
         description = description,
         args = args,
         precommit_args = precommit_args,
+        android_args = android_args,
+        chromeos_args = chromeos_args,
+        desktop_args = desktop_args,
+        lacros_args = lacros_args,
         linux_args = linux_args,
         mac_args = mac_args,
+        win_args = win_args,
         win64_args = win64_args,
         swarming = swarming,
-        android_args = android_args,
         android_swarming = android_swarming,
+        chromeos_swarming = chromeos_swarming,
         skylab = skylab,
         use_isolated_scripts_api = use_isolated_scripts_api,
+        expand_as_isolated_script = expand_as_isolated_script,
         ci_only = ci_only,
+        retry_only_failed_tests = retry_only_failed_tests,
         check_flakiness_for_new_tests = check_flakiness_for_new_tests,
         resultdb = resultdb,
         isolate_profile_data = isolate_profile_data,
         merge = merge,
-        timeout_sec = timeout_sec,
+        experiment_percentage = experiment_percentage,
     )
     return {k: v for k, v in mixin_values.items() if v != None}
 
-def _mixin(*, name, **kwargs):
+_IGNORE_UNUSED = "ignore_unused"
+
+def _mixin(*, name = None, generate_pyl_entry = None, **kwargs):
     """Define a mixin used for defining tests.
 
     //infra/config/generated/testing/mixins.pyl will be generated from
@@ -451,26 +422,45 @@ def _mixin(*, name, **kwargs):
 
     Args:
         name: The name of the mixin.
+        generate_pyl_entry: If true, the generated mixin.pyl will
+            contain an entry allowing the mixin to be used by
+            generate_buildbot_json.py. If set to targets.IGNORE_UNUSED,
+            then an entry will be generated that
+            generate_buildbot_json.py which won't cause an error if it
+            isn't used. This enables mixins to be generated to the pyl
+            file that are only used by the angle repo, which reuses the
+            generated mixins.pyl. By default, this will be True if name
+            is provided.
         **kwargs: The mixin values, see _mixin_values for allowed
             keywords and their meanings.
     """
-    key = _TARGET_MIXIN.add(name, props = dict(
+    if generate_pyl_entry not in (None, False, True, _IGNORE_UNUSED):
+        fail("unexpected value for generate_pyl_entry: {}".format(generate_pyl_entry))
+    if generate_pyl_entry == None:
+        generate_pyl_entry = name != None
+    elif generate_pyl_entry:
+        if name == None:
+            fail("pyl entries can't be generated for anonymous mixins")
+    key = _targets_nodes.MIXIN.add(name, props = dict(
         mixin_values = _mixin_values(**kwargs),
+        pyl_fail_if_unused = generate_pyl_entry == True,
     ))
-
-    graph.add_edge(keys.project(), key)
+    if generate_pyl_entry and name != None:
+        graph.add_edge(keys.project(), key)
+    return graph.keyset(key)
 
 def _variant(
         *,
         name,
         identifier,
+        generate_pyl_entry = True,
         enabled = None,
         mixins = None,
         **kwargs):
     """Define a variant used for defining tests.
 
     //infra/config/generated/testing/variants.pyl will be generated from
-    the declared mixins to be copied to //testing/buildbot and consumed
+    the declared variants to be copied to //testing/buildbot and consumed
     by //testing/buildbot/generate_buildbot_json.py.
 
     Args:
@@ -479,6 +469,9 @@ def _variant(
             identifies the variant of the test being run. When tests are
             expanded with the variant, this will be appended to the test
             name.
+        generate_pyl_entry: If true, the generated variants.pyl will
+            contain an entry allowing the mixin to be used by
+            generate_buildbot_json.py.
         enabled: Whether or not the variant is enabled. By default, a
             variant is enabled. If a variant is not enabled, then it
             will be ignored when expanding a test suite with variants.
@@ -489,288 +482,261 @@ def _variant(
     """
     if enabled == None:
         enabled = True
-    key = _TARGET_VARIANT.add(name, props = dict(
+    variant_key = _targets_nodes.VARIANT.add(name, props = dict(
         identifier = identifier,
         enabled = enabled,
-        mixins = mixins,
         mixin_values = _mixin_values(**kwargs),
     ))
 
-    graph.add_edge(keys.project(), key)
+    for m in mixins or []:
+        if generate_pyl_entry and type(m) != type(""):
+            fail("variants used by //testing/buildbot cannot use anonymous mixins", trace = stacktrace(skip = 2))
+        mixin_key = _targets_nodes.MIXIN.key(m)
+        graph.add_edge(variant_key, mixin_key)
 
-targets = struct(
-    # Functions for declaring isolates
-    compile_target = _compile_target,
-    console_test_launcher = _console_test_launcher,
-    generated_script = _generated_script,
-    junit_test = _junit_test,
-    script = _script,
-    windowed_test_launcher = _windowed_test_launcher,
+    if generate_pyl_entry:
+        graph.add_edge(keys.project(), variant_key)
 
-    # Functions for declaring bundles
-    mixin = _mixin,
-    variant = _variant,
-    cipd_package = _cipd_package,
-    merge = _merge,
-    resultdb = _resultdb,
-    swarming = _swarming,
-    skylab = _skylab,
-)
+def _bundle(*, name = None, additional_compile_targets = None, targets = None, mixins = None, variants = None, per_test_modifications = None):
+    """Define a targets bundle.
 
-_PYL_HEADER_FMT = """\
-# THIS IS A GENERATED FILE DO NOT EDIT!!!
-# Instead:
-# 1. Modify //infra/config/targets/{star_file}
-# 2. Run //infra/config/main.star
-# 3. Run //infra/config/scripts/sync-py-files.py
-
-{{
-{entries}
-}}
-"""
-
-def _generate_gn_isolate_map_pyl(ctx):
-    entries = []
-    for n in graph.children(keys.project(), _TARGET.kind, graph.DEFINITION_ORDER):
-        entries.append('  "{}": {{'.format(n.key.id))
-        entries.append('    "label": "{}",'.format(n.props.label))
-        if n.props.label_type != None:
-            entries.append('    "label_type": "{}",'.format(n.props.label_type))
-        entries.append('    "type": "{}",'.format(n.props.type))
-        if n.props.executable != None:
-            entries.append('    "executable": "{}",'.format(n.props.executable))
-        if n.props.executable_suffix != None:
-            entries.append('    "executable_suffix": "{}",'.format(n.props.executable_suffix))
-        if n.props.script != None:
-            entries.append('    "script": "{}",'.format(n.props.script))
-        if n.props.skip_usage_check:
-            entries.append('    "skip_usage_check": {},'.format(n.props.skip_usage_check))
-        if n.props.args:
-            entries.append('    "args": [')
-            for a in n.props.args:
-                entries.append('      "{}",'.format(a))
-            entries.append("    ],")
-        entries.append("  },")
-    ctx.output["testing/gn_isolate_map.pyl"] = _PYL_HEADER_FMT.format(
-        star_file = "targets.star",
-        entries = "\n".join(entries),
-    )
-
-lucicfg.generator(_generate_gn_isolate_map_pyl)
-
-def _formatter(*, indent_level = 1, indent_size = 2):
-    state = dict(
-        lines = [],
-        indent = indent_level * indent_size,
-    )
-
-    def add_line(s):
-        state["lines"].append(" " * state["indent"] + s)
-
-    def open_scope(s):
-        add_line(s)
-        state["indent"] += indent_size
-
-    def close_scope(s):
-        state["indent"] -= indent_size
-        add_line(s)
-
-    def output():
-        return "\n".join(state["lines"])
-
-    return struct(
-        add_line = add_line,
-        open_scope = open_scope,
-        close_scope = close_scope,
-        output = output,
-    )
-
-def _generate_mixin_values(formatter, mixin, generate_skylab_container = False):
-    """Generate the pyl definitions for mixin/variant fields.
+    A bundle is a grouping of targets to build and test.
 
     Args:
-      formatter: The formatter object used for generating indented
-        output.
-      mixin: Dict containing the mixin values to output.
-      generate_skylab_container: Whether or not to generate the skylab
-        key to contain the fields of the skylab value. Mixins and the
-        generated test have those fields at top-level, but variants have
-        them under a skylab key.
+        name: The name of the bundle.
+        targets: A list of targets, bundles or legacy basic suites to
+            include in the bundle.
     """
-    if "description" in mixin:
-        formatter.add_line("'description': '{}',".format(mixin["description"]))
+    return graph.keyset(_targets_common.create_bundle(
+        name = name,
+        additional_compile_targets = args.listify(additional_compile_targets),
+        targets = args.listify(targets),
+        mixins = args.listify(mixins),
+        variants = args.listify(variants),
+        per_test_modifications = per_test_modifications or {},
+    ))
 
-    for args_attr in (
-        "args",
-        "precommit_args",
-        "linux_args",
-        "mac_args",
-        "win64_args",
-    ):
-        if args_attr in mixin:
-            formatter.open_scope("'{}': [".format(args_attr))
-            for a in mixin[args_attr]:
-                formatter.add_line("'{}',".format(a))
-            formatter.close_scope("],")
+def _legacy_basic_suite(*, name, tests):
+    """Define a basic suite.
 
-    if "check_flakiness_for_new_tests" in mixin:
-        formatter.add_line("'check_flakiness_for_new_tests': {},".format(mixin["check_flakiness_for_new_tests"]))
+    //infra/config/generated/testing/test_suites.pyl will be generated from the
+    declared basic suites, as well as declared compound suites (see
+    _legacy_compound_suite) and declared matrix compound suites (see
+    _legacy_matrix_compound_suite) to be copied to //testing/buildbot and
+    consumed by //testing/buildbot/generate_buildbot_json.py.
 
-    if "ci_only" in mixin:
-        formatter.add_line("'ci_only': {},".format(mixin["ci_only"]))
+    A basic suite is a collection of tests that can be specified in
+    waterfalls.pyl as the test suite for one of the test types or collected into
+    a compound suite or matrix compound suite.
 
-    if "isolate_profile_data" in mixin:
-        formatter.add_line("'isolate_profile_data': {},".format(mixin["isolate_profile_data"]))
+    Args:
+        name: The name of the suite.
+        tests: A dict mapping the name of the test to the base definition for
+            the test, which must be an instance returned from
+            targets.legacy_test_config.
+    """
+    basic_suite_key = _targets_nodes.LEGACY_BASIC_SUITE.add(name)
+    graph.add_edge(keys.project(), basic_suite_key)
 
-    if "timeout_sec" in mixin:
-        formatter.add_line("'timeout_sec': {},".format(mixin["timeout_sec"]))
+    def _per_test_modification(test_config):
+        mixins = args.listify(_mixin(**(test_config.mixin_values or {})), test_config.mixins)
+        return _targets_common.per_test_modification(
+            mixins = mixins,
+            remove_mixins = test_config.remove_mixins,
+        )
 
-    if "merge" in mixin:
-        merge = mixin["merge"]
-        formatter.open_scope("'merge': {")
-        formatter.add_line("'script': '{}',".format(merge.script))
-        if merge.args:
-            formatter.open_scope("'args': [")
-            for a in merge.args:
-                formatter.add_line("'{}',".format(a))
-            formatter.close_scope("],")
-        formatter.close_scope("},")
-
-    if "resultdb" in mixin:
-        resultdb = mixin["resultdb"]
-        formatter.open_scope("'resultdb': {")
-        if resultdb.enable:
-            formatter.add_line("'enable': True,")
-        if resultdb.has_native_resultdb_integration:
-            formatter.add_line("'has_native_resultdb_integration': True,")
-        formatter.close_scope("},")
-
-    def dimension_value(x):
-        if x == None:
-            return x
-        return "'{}'".format(x)
-
-    if "swarming" in mixin:
-        swarming = mixin["swarming"]
-        formatter.open_scope("'swarming': {")
-        if swarming.shards:
-            formatter.add_line("'shards': {},".format(swarming.shards))
-        if swarming.dimensions:
-            formatter.open_scope("'dimensions': {")
-            for dim, value in swarming.dimensions.items():
-                formatter.add_line("'{}': {},".format(dim, dimension_value(value)))
-            formatter.close_scope("},")
-        if swarming.dimension_sets:
-            formatter.open_scope("'dimension_sets': [")
-            for dimensions in swarming.dimension_sets:
-                formatter.open_scope("{")
-                for dim, value in dimensions.items():
-                    formatter.add_line("'{}': {},".format(dim, dimension_value(value)))
-                formatter.close_scope("},")
-            formatter.close_scope("],")
-        if swarming.optional_dimensions:
-            formatter.open_scope("'optional_dimensions': {")
-            for timeout, dimensions in swarming.optional_dimensions.items():
-                formatter.open_scope("'{}': [".format(timeout))
-                formatter.open_scope("{")
-                for dim, value in dimensions.items():
-                    formatter.add_line("'{}': {},".format(dim, dimension_value(value)))
-                formatter.close_scope("},")
-                formatter.close_scope("],")
-            formatter.close_scope("},")
-        if swarming.containment_type:
-            formatter.add_line("'containment_type': '{}',".format(swarming.containment_type))
-        if swarming.cipd_packages:
-            formatter.open_scope("'cipd_packages': [")
-            for package in swarming.cipd_packages:
-                formatter.open_scope("{")
-                formatter.add_line("'cipd_package': '{}',".format(package.package))
-                formatter.add_line("'location': '{}',".format(package.location))
-                formatter.add_line("'revision': '{}',".format(package.revision))
-                formatter.close_scope("},")
-            formatter.close_scope("],")
-        if swarming.expiration_sec:
-            formatter.add_line("'expiration': {},".format(swarming.expiration_sec))
-        if swarming.hard_timeout_sec:
-            formatter.add_line("'hard_timeout': {},".format(swarming.hard_timeout_sec))
-        if swarming.io_timeout_sec:
-            formatter.add_line("'io_timeout': {},".format(swarming.io_timeout_sec))
-        if swarming.named_caches:
-            formatter.open_scope("'named_caches': [")
-            for cache in swarming.named_caches:
-                formatter.open_scope("{")
-                formatter.add_line("'name': '{}',".format(cache.name))
-                formatter.add_line("'path': '{}',".format(cache.path))
-                formatter.close_scope("},")
-            formatter.close_scope("],")
-        if swarming.service_account:
-            formatter.add_line("'service_account': '{}',".format(swarming.service_account))
-        formatter.close_scope("},")
-
-    if "skylab" in mixin:
-        skylab = mixin["skylab"]
-        if generate_skylab_container:
-            formatter.open_scope("'skylab': {")
-        formatter.add_line("'cros_board': '{}',".format(skylab.cros_board))
-        formatter.add_line("'cros_img': '{}',".format(skylab.cros_img))
-        if skylab.autotest_name:
-            formatter.add_line("'autotest_name': '{}',".format(skylab.autotest_name))
-        if skylab.bucket:
-            formatter.add_line("'bucket': '{}',".format(skylab.bucket))
-        if skylab.dut_pool:
-            formatter.add_line("'dut_pool': '{}',".format(skylab.dut_pool))
-        if skylab.public_builder:
-            formatter.add_line("'public_builder': '{}',".format(skylab.public_builder))
-        if skylab.public_builder_bucket:
-            formatter.add_line("'public_builder_bucket': '{}',".format(skylab.public_builder_bucket))
-        if skylab.shards:
-            formatter.add_line("'shards': {},".format(skylab.shards))
-        if generate_skylab_container:
-            formatter.close_scope("},")
-
-def _generate_mixins_pyl(ctx):
-    formatter = _formatter()
-
-    for n in graph.children(keys.project(), _TARGET_MIXIN.kind, graph.DEFINITION_ORDER):
-        mixin = n.props.mixin_values
-        formatter.open_scope("'{}': {{".format(n.key.id))
-
-        _generate_mixin_values(formatter, mixin)
-
-        formatter.close_scope("},")
-
-    ctx.output["testing/mixins.pyl"] = _PYL_HEADER_FMT.format(
-        star_file = "mixins.star",
-        entries = formatter.output(),
+    _targets_common.create_bundle(
+        name = name,
+        targets = tests.keys(),
+        per_test_modifications = {
+            t: _per_test_modification(config)
+            for t, config in tests.items()
+        },
     )
 
-lucicfg.generator(_generate_mixins_pyl)
+    for t, config in tests.items():
+        if not config:
+            fail("The value for test {} in basic suite {} must be an object returned from targets.legacy_test_config"
+                .format(t, name))
+        d = {a: getattr(config, a) for a in dir(config)}
+        mixins = d.pop("mixins") or []
+        remove_mixins = d.pop("remove_mixins") or []
 
-def _generate_variants_pyl(ctx):
-    formatter = _formatter()
+        config_key = _targets_nodes.LEGACY_BASIC_SUITE_CONFIG.add(name, t, props = dict(
+            config = struct(**d),
+        ))
+        graph.add_edge(basic_suite_key, config_key)
+        graph.add_edge(config_key, _targets_nodes.LEGACY_TEST.key(t))
 
-    for n in graph.children(keys.project(), _TARGET_VARIANT.kind, graph.DEFINITION_ORDER):
-        mixin = n.props.mixin_values
-        formatter.open_scope("'{}': {{".format(n.key.id))
+        for m in mixins:
+            mixin_key = _targets_nodes.MIXIN.key(m)
+            graph.add_edge(config_key, mixin_key)
+        for r in remove_mixins:
+            _targets_nodes.LEGACY_BASIC_SUITE_REMOVE_MIXIN.link(config_key, _targets_nodes.MIXIN.key(r))
 
-        formatter.add_line("'identifier': '{}',".format(n.props.identifier))
+def _legacy_test_config(
+        *,
+        mixins = None,
+        remove_mixins = None,
+        **kwargs):
+    """Define the details of a test in a basic suite.
 
-        if not n.props.enabled:
-            formatter.add_line("'enabled': {},".format(n.props.enabled))
+    Args:
+        mixins: A list of names of mixins to apply to the test.
+        remove_mixins: A list of names of mixins to skip applying to the test.
+        **kwargs: The mixin values, see _mixin_values for allowed keywords and
+            their meanings.
 
-        _generate_mixin_values(formatter, mixin, generate_skylab_container = True)
-
-        if n.props.mixins:
-            formatter.open_scope("'mixins': [")
-            for m in n.props.mixins:
-                formatter.add_line("'{}',".format(m))
-            formatter.close_scope("],")
-
-        formatter.close_scope("},")
-
-    ctx.output["testing/variants.pyl"] = _PYL_HEADER_FMT.format(
-        star_file = "variants.star",
-        entries = formatter.output(),
+    Returns:
+        An object that can be used as a value in the dict passed to the
+        tests argument of targets.legacy_basic_suite.
+    """
+    return struct(
+        mixins = mixins,
+        remove_mixins = remove_mixins,
+        mixin_values = _mixin_values(**kwargs) or None,
     )
 
-lucicfg.generator(_generate_variants_pyl)
+def _legacy_compound_suite(*, name, basic_suites):
+    """Define a matrix compound suite.
+
+    //infra/config/generated/testing/test_suites.pyl will be generated from the
+    declared compound suites, as well as declared basic suites (see
+    _legacy_basic_suite) and declared matrix compound suites (see
+    _legacy_matrix_compound_suite) to be copied to //testing/buildbot and
+    consumed by //testing/buildbot/generate_buildbot_json.py.
+
+    A compound suite is a collection of basic suites that can be specified in
+    waterfalls.pyl as the test suite for one of the test types.
+
+    Args:
+        name: The name of the matrix compound suite.
+        basic_suites: A list of names of basic suites to compose.
+    """
+    legacy_compound_suite_key = _targets_nodes.LEGACY_COMPOUND_SUITE.add(name)
+    graph.add_edge(keys.project(), legacy_compound_suite_key)
+
+    for s in basic_suites:
+        graph.add_edge(legacy_compound_suite_key, _targets_nodes.LEGACY_BASIC_SUITE.key(s))
+
+    _targets_common.create_bundle(
+        name = name,
+        targets = basic_suites,
+    )
+
+def _legacy_matrix_compound_suite(*, name, basic_suites):
+    """Define a matrix compound suite.
+
+    //infra/config/generated/testing/test_suites.pyl will be generated from the
+    declared matrix compound suites, as well as declared basic suites (see
+    _legacy_basic_suite) and declared compound suites (see
+    _legacy_compound_suite) to be copied to //testing/buildbot and
+    consumed by //testing/buildbot/generate_buildbot_json.py.
+
+    A matrix compound suite is a suite that composes multiple basic suites, with
+    the capability to expand the tests of basic suites with specified variants.
+    A matrix compound suite can be specified in waterfalls.pyl as the test suite
+    for one of the test suite types.
+
+    Args:
+        name: The name of the matrix compound suite.
+        basic_suites: A dict mapping the name of a basic suite to the matrix
+            config for the suite, which must be an instance returned from
+            targets.legacy_matrix_config. A None value is equivalent to
+            targets.legacy_matrix_config(), which will add the tests from the
+            basic suite without performing any variant expansion.
+    """
+    key = _targets_nodes.LEGACY_MATRIX_COMPOUND_SUITE.add(name)
+    graph.add_edge(keys.project(), key)
+
+    dep_targets = []
+    for basic_suite_name, config in basic_suites.items():
+        # This edge won't actually be used, but it ensures that the basic suite exists
+        graph.add_edge(key, _targets_nodes.LEGACY_BASIC_SUITE.key(basic_suite_name))
+        matrix_config_key = _targets_nodes.LEGACY_MATRIX_CONFIG.add(name, basic_suite_name)
+        graph.add_edge(key, matrix_config_key)
+        config = config or _legacy_matrix_config()
+        for v in config.variants:
+            graph.add_edge(matrix_config_key, _targets_nodes.VARIANT.key(v))
+        for m in config.mixins:
+            graph.add_edge(matrix_config_key, _targets_nodes.MIXIN.key(m))
+        if config.variants or config.mixins:
+            dep_targets.append(_bundle(
+                targets = basic_suite_name,
+                variants = config.variants,
+                mixins = config.mixins,
+            ))
+        else:
+            dep_targets.append(basic_suite_name)
+
+    _targets_common.create_bundle(
+        name = name,
+        targets = dep_targets,
+    )
+
+def _legacy_matrix_config(*, mixins = [], variants = []):
+    """Define the matrix details for a basic suite.
+
+    Args:
+        mixins: An optional list of mixins to apply to the tests of the
+            corresponding basic suite.
+        variants: An optional list of variants with which to expand the tests of
+            the corresponding basic suite. If not provided, then the tests from
+            the basic suite will be used without any variants applied.
+
+    Returns:
+        An object that can be used as a value in the dict passed to the
+        basic_suites argument of targets.legacy_matrix_compound_suite.
+    """
+    return struct(
+        mixins = mixins,
+        variants = variants,
+    )
+
+targets = struct(
+    # Functions for declaring binaries, which can be referred to by gtests and
+    # isolated script tests
+    binaries = struct(
+        console_test_launcher = _console_test_launcher,
+        generated_script = _generated_script,
+        script = _script,
+        windowed_test_launcher = _windowed_test_launcher,
+    ),
+
+    # Functions for declaring tests
+    tests = struct(
+        gpu_telemetry_test = gpu_telemetry_test,
+        gtest_test = gtest_test,
+        isolated_script_test = isolated_script_test,
+        junit_test = junit_test,
+        script_test = script_test,
+    ),
+
+    # Functions for declaring compile targets
+    compile_target = _compile_target,
+
+    # Functions for declaring bundles
+    bundle = _bundle,
+    per_test_modification = _targets_common.per_test_modification,
+    replacements = _targets_common.replacements,
+    builder_defaults = _targets_common.builder_defaults,
+    settings = _targets_common.settings,
+    settings_defaults = _targets_common.settings_defaults,
+    browser_config = _targets_common.browser_config,
+    os_type = _targets_common.os_type,
+    legacy_basic_suite = _legacy_basic_suite,
+    legacy_test_config = _legacy_test_config,
+    legacy_compound_suite = _legacy_compound_suite,
+    legacy_matrix_compound_suite = _legacy_matrix_compound_suite,
+    legacy_matrix_config = _legacy_matrix_config,
+    mixin = _mixin,
+    IGNORE_UNUSED = _IGNORE_UNUSED,
+    variant = _variant,
+    cipd_package = _cipd_package,
+    merge = _targets_common.merge,
+    remove = _targets_common.remove,
+    resultdb = _resultdb,
+    swarming = _targets_common.swarming,
+    skylab = _targets_common.skylab,
+    magic_args = _targets_magic_args,
+)

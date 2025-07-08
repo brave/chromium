@@ -39,7 +39,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.BooleanCachedFieldTrialParameter;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSession;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSessionTab;
@@ -69,25 +68,16 @@ import java.util.List;
 public class RestoreTabsMediatorUnitTest {
     private static final String RESTORE_TABS_USED = EventConstants.RESTORE_TABS_PROMO_USED;
 
-    @Mock
-    private RestoreTabsControllerDelegate mDelegate;
-    @Mock
-    private ForeignSessionHelper mForeignSessionHelper;
-    @Mock
-    private TabCreatorManager mTabCreatorManager;
-    @Mock
-    private BottomSheetController mBottomSheetController;
-    @Mock
-    private Profile mProfile;
-    @Mock
-    private Tracker mTracker;
-    @Mock
-    private BottomSheetContent mBottomSheetContent;
-    @Mock
-    private BooleanCachedFieldTrialParameter mParam;
+    @Mock private RestoreTabsControllerDelegate mDelegate;
+    @Mock private ForeignSessionHelper mForeignSessionHelper;
+    @Mock private TabCreatorManager mTabCreatorManager;
+    @Mock private BottomSheetController mBottomSheetController;
+    @Mock private Profile mProfile;
+    @Mock private Tracker mTracker;
+    @Mock private BottomSheetContent mBottomSheetContent;
 
     private PropertyModel mModel = RestoreTabsProperties.createDefaultModel();
-    private RestoreTabsMediator mMediator = new RestoreTabsMediator();
+    private final RestoreTabsMediator mMediator = new RestoreTabsMediator();
 
     @Before
     public void setUp() {
@@ -105,27 +95,29 @@ public class RestoreTabsMediatorUnitTest {
 
     @Test
     public void testRestoreTabsMediator_initCreatesValidDefaultModel() {
-        Assert.assertEquals(mModel.get(VISIBLE), false);
+        Assert.assertEquals(false, mModel.get(VISIBLE));
         Assert.assertNotNull(mModel.get(HOME_SCREEN_DELEGATE));
-        assertThat(mModel.get(HOME_SCREEN_DELEGATE),
+        assertThat(
+                mModel.get(HOME_SCREEN_DELEGATE),
                 instanceOf(RestoreTabsPromoScreenCoordinator.Delegate.class));
         Assert.assertNotNull(mModel.get(DETAIL_SCREEN_BACK_CLICK_HANDLER));
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), UNINITIALIZED);
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(UNINITIALIZED, mModel.get(CURRENT_SCREEN));
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
     public void testRestoreTabsMediator_onDismissed() {
-        ForeignSession session = new ForeignSession(
-                "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session =
+                new ForeignSession(
+                        "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
         List<ForeignSession> testSessions = new ArrayList<>();
         testSessions.add(session);
 
         mMediator.showHomeScreen(mForeignSessionHelper, testSessions, mDelegate);
-        Assert.assertEquals(mModel.get(VISIBLE), true);
+        Assert.assertEquals(true, mModel.get(VISIBLE));
         mMediator.dismiss();
         verify(mDelegate).onDismissed();
-        Assert.assertEquals(mModel.get(VISIBLE), false);
+        Assert.assertEquals(false, mModel.get(VISIBLE));
     }
 
     @Test
@@ -151,14 +143,15 @@ public class RestoreTabsMediatorUnitTest {
 
     @Test
     public void testRestoreTabsMediator_showOptionsUpdatesModel() {
-        ForeignSession session = new ForeignSession(
-                "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session =
+                new ForeignSession(
+                        "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
         List<ForeignSession> testSessions = new ArrayList<>();
         testSessions.add(session);
 
         mMediator.showHomeScreen(mForeignSessionHelper, testSessions, mDelegate);
-        Assert.assertEquals(mModel.get(VISIBLE), true);
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(true, mModel.get(VISIBLE));
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
         Assert.assertEquals(mModel.get(SELECTED_DEVICE), testSessions.get(0));
     }
 
@@ -168,11 +161,11 @@ public class RestoreTabsMediatorUnitTest {
 
         // Testing the onShowDeviceList member function.
         delegate.onShowDeviceList();
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), DEVICE_SCREEN);
+        Assert.assertEquals(DEVICE_SCREEN, mModel.get(CURRENT_SCREEN));
 
         // Testing the onReviewTabsChosen member function.
         delegate.onReviewTabsChosen();
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), REVIEW_TABS_SCREEN);
+        Assert.assertEquals(REVIEW_TABS_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
@@ -181,14 +174,12 @@ public class RestoreTabsMediatorUnitTest {
         RestoreTabsPromoScreenCoordinator.Delegate delegate = mModel.get(HOME_SCREEN_DELEGATE);
         mModel.set(VISIBLE, true);
 
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-        PropertyModel model1 = TabItemProperties.create(/*tab=*/tab1, /*isSelected=*/true);
+        PropertyModel model1 = TabItemProperties.create(/* tab= */ tab1, /* isSelected= */ true);
         tabItems.add(new ListItem(DetailItemType.TAB, model1));
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-        PropertyModel model2 = TabItemProperties.create(/*tab=*/tab2, /*isSelected=*/true);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+        PropertyModel model2 = TabItemProperties.create(/* tab= */ tab2, /* isSelected= */ true);
         tabItems.add(new ListItem(DetailItemType.TAB, model2));
 
         // Only add the selected tab
@@ -206,24 +197,26 @@ public class RestoreTabsMediatorUnitTest {
         List<ForeignSession> sessions = new ArrayList<>();
         sessions.add(session);
 
-        when(mDelegate.getSkipFeatureEngagementParam()).thenReturn(mParam);
-        when(mParam.getValue()).thenReturn(false);
         mMediator.showHomeScreen(mForeignSessionHelper, sessions, mDelegate);
         delegate.onAllTabsChosen();
+        verify(mDelegate).getGTSTabListModelSize();
         verify(mForeignSessionHelper)
                 .openForeignSessionTabsAsBackgroundTabs(
                         tabs, mModel.get(SELECTED_DEVICE), mTabCreatorManager);
         verify(mTracker).notifyEvent(eq(RESTORE_TABS_USED));
-        Assert.assertEquals(mModel.get(VISIBLE), false);
+        Assert.assertEquals(false, mModel.get(VISIBLE));
+        verify(mDelegate).scrollGTSToRestoredTabs(0);
         RestoreTabsMetricsHelper.setPromoShownCount(0);
     }
 
     @Test
     public void testRestoreTabsMediator_setDeviceListItemsNoSelection() {
-        ForeignSession session1 = new ForeignSession(
-                "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
-        ForeignSession session2 = new ForeignSession(
-                "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session1 =
+                new ForeignSession(
+                        "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session2 =
+                new ForeignSession(
+                        "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
         List<ForeignSession> testSessions = new ArrayList<>();
         testSessions.add(session1);
         testSessions.add(session2);
@@ -235,10 +228,12 @@ public class RestoreTabsMediatorUnitTest {
 
     @Test
     public void testRestoreTabsMediator_setDeviceListItemsSelection() {
-        ForeignSession session1 = new ForeignSession(
-                "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
-        ForeignSession session2 = new ForeignSession(
-                "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session1 =
+                new ForeignSession(
+                        "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session2 =
+                new ForeignSession(
+                        "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
         List<ForeignSession> testSessions = new ArrayList<>();
         testSessions.add(session1);
         testSessions.add(session2);
@@ -257,8 +252,9 @@ public class RestoreTabsMediatorUnitTest {
 
     @Test
     public void testRestoreTabsMediator_setSelectedDeviceItem() {
-        ForeignSession session = new ForeignSession(
-                "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ForeignSession session =
+                new ForeignSession(
+                        "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
         mMediator.setSelectedDeviceItem(session);
 
         Assert.assertEquals(mModel.get(SELECTED_DEVICE), session);
@@ -266,20 +262,17 @@ public class RestoreTabsMediatorUnitTest {
 
     @Test
     public void testRestoreTabsMediator_setSelectedDeviceItemResetsTabList() {
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model1 = TabItemProperties.create(tab1, false);
 
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
         tabItems.add(new ListItem(DetailItemType.TAB, model1));
 
-        Assert.assertEquals(tabItems.size(), 1);
+        Assert.assertEquals(1, tabItems.size());
 
         // Add two new tabs to check they are not the same as the one above.
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title2", 32L, 0);
-        ForeignSessionTab tab3 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title3", 32L, 0);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title2", 32L, 32L, 0);
+        ForeignSessionTab tab3 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title3", 32L, 32L, 0);
         List<ForeignSessionTab> tabs = new ArrayList<>();
         tabs.add(tab2);
         tabs.add(tab3);
@@ -294,10 +287,10 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.setSelectedDeviceItem(session);
 
         Assert.assertEquals(mModel.get(SELECTED_DEVICE), session);
-        Assert.assertEquals(tabItems.size(), 2);
+        Assert.assertEquals(2, tabItems.size());
         Assert.assertEquals(tabItems.get(0).model.get(TabItemProperties.FOREIGN_SESSION_TAB), tab2);
         Assert.assertEquals(tabItems.get(1).model.get(TabItemProperties.FOREIGN_SESSION_TAB), tab3);
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
@@ -308,7 +301,7 @@ public class RestoreTabsMediatorUnitTest {
         Assert.assertEquals(
                 mModel.get(DETAIL_SCREEN_TITLE), R.string.restore_tabs_device_screen_sheet_title);
         Assert.assertNull(mModel.get(REVIEW_TABS_SCREEN_DELEGATE));
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), DEVICE_SCREEN);
+        Assert.assertEquals(DEVICE_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
@@ -318,11 +311,13 @@ public class RestoreTabsMediatorUnitTest {
         Assert.assertEquals(
                 mModel.get(DETAIL_SCREEN_MODEL_LIST), mModel.get(REVIEW_TABS_MODEL_LIST));
         Assert.assertNotNull(mModel.get(REVIEW_TABS_SCREEN_DELEGATE));
-        Assert.assertEquals(mModel.get(DETAIL_SCREEN_TITLE),
+        Assert.assertEquals(
+                mModel.get(DETAIL_SCREEN_TITLE),
                 R.string.restore_tabs_review_tabs_screen_sheet_title);
-        assertThat(mModel.get(REVIEW_TABS_SCREEN_DELEGATE),
+        assertThat(
+                mModel.get(REVIEW_TABS_SCREEN_DELEGATE),
                 instanceOf(RestoreTabsDetailScreenCoordinator.Delegate.class));
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), REVIEW_TABS_SCREEN);
+        Assert.assertEquals(REVIEW_TABS_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
@@ -330,13 +325,12 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.setCurrentScreen(HOME_SCREEN);
 
         Assert.assertNull(mModel.get(DETAIL_SCREEN_MODEL_LIST));
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
     public void testRestoreTabsMediator_setTabListItems() {
-        ForeignSessionTab tab = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         List<ForeignSessionTab> tabs = new ArrayList<>();
         tabs.add(tab);
 
@@ -349,29 +343,27 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.setTabListItems();
 
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-        Assert.assertEquals(tabItems.size(), 1);
+        Assert.assertEquals(1, tabItems.size());
     }
 
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateTrue() {
-        ForeignSessionTab tab = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model = TabItemProperties.create(tab, true);
         mMediator.toggleTabSelectedState(model);
 
-        Assert.assertEquals(model.get(TabItemProperties.IS_SELECTED), false);
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 1);
+        Assert.assertEquals(false, model.get(TabItemProperties.IS_SELECTED));
+        Assert.assertEquals(1, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateFalse() {
-        ForeignSessionTab tab = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model = TabItemProperties.create(tab, false);
         mMediator.toggleTabSelectedState(model);
 
-        Assert.assertEquals(model.get(TabItemProperties.IS_SELECTED), true);
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), -1);
+        Assert.assertEquals(true, model.get(TabItemProperties.IS_SELECTED));
+        Assert.assertEquals(-1, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
@@ -383,13 +375,12 @@ public class RestoreTabsMediatorUnitTest {
         // Testing the onChangeSelectionStateForAllTabs function with a deselected tab.
         mModel.set(NUM_TABS_DESELECTED, 1);
         delegate.onChangeSelectionStateForAllTabs();
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
 
         // Testing the onChangeSelectionStateForAllTabs function with no deselected tabs.
-        ForeignSessionTab tab = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-        PropertyModel model = TabItemProperties.create(/*tab=*/tab, /*isSelected=*/true);
+        PropertyModel model = TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
         tabItems.add(new ListItem(DetailItemType.TAB, model));
         delegate.onChangeSelectionStateForAllTabs();
         Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), tabItems.size());
@@ -404,13 +395,11 @@ public class RestoreTabsMediatorUnitTest {
                 mModel.get(REVIEW_TABS_SCREEN_DELEGATE);
 
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-        PropertyModel model1 = TabItemProperties.create(/*tab=*/tab1, /*isSelected=*/true);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+        PropertyModel model1 = TabItemProperties.create(/* tab= */ tab1, /* isSelected= */ true);
         tabItems.add(new ListItem(DetailItemType.TAB, model1));
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-        PropertyModel model2 = TabItemProperties.create(/*tab=*/tab2, /*isSelected=*/false);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+        PropertyModel model2 = TabItemProperties.create(/* tab= */ tab2, /* isSelected= */ false);
         tabItems.add(new ListItem(DetailItemType.TAB, model2));
 
         // Only add the selected tab
@@ -426,31 +415,28 @@ public class RestoreTabsMediatorUnitTest {
         List<ForeignSession> sessions = new ArrayList<>();
         sessions.add(session);
 
-        when(mDelegate.getSkipFeatureEngagementParam()).thenReturn(mParam);
-        when(mParam.getValue()).thenReturn(false);
         mMediator.showHomeScreen(mForeignSessionHelper, sessions, mDelegate);
         delegate.onSelectedTabsChosen();
+        verify(mDelegate).getGTSTabListModelSize();
         verify(mForeignSessionHelper)
                 .openForeignSessionTabsAsBackgroundTabs(
                         tabs, mModel.get(SELECTED_DEVICE), mTabCreatorManager);
         verify(mTracker).notifyEvent(eq(RESTORE_TABS_USED));
-        Assert.assertEquals(mModel.get(VISIBLE), false);
+        Assert.assertEquals(false, mModel.get(VISIBLE));
+        verify(mDelegate).scrollGTSToRestoredTabs(0);
         RestoreTabsMetricsHelper.setPromoShownCount(0);
     }
 
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateAllTabsTrueWithDelegate() {
         mMediator.setCurrentScreen(REVIEW_TABS_SCREEN);
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model1 = TabItemProperties.create(tab1, true);
 
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model2 = TabItemProperties.create(tab2, true);
 
-        ForeignSessionTab tab3 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab3 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model3 = TabItemProperties.create(tab3, true);
 
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
@@ -462,28 +448,25 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.toggleTabSelectedState(model2);
         mMediator.toggleTabSelectedState(model3);
 
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 3);
+        Assert.assertEquals(3, mModel.get(NUM_TABS_DESELECTED));
 
         RestoreTabsDetailScreenCoordinator.Delegate delegate =
                 mModel.get(REVIEW_TABS_SCREEN_DELEGATE);
 
         delegate.onChangeSelectionStateForAllTabs();
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateAllTabsFalseWithDelegate() {
         mMediator.setCurrentScreen(REVIEW_TABS_SCREEN);
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model1 = TabItemProperties.create(tab1, false);
 
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model2 = TabItemProperties.create(tab2, false);
 
-        ForeignSessionTab tab3 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab3 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model3 = TabItemProperties.create(tab3, false);
 
         mModel.set(NUM_TABS_DESELECTED, 3);
@@ -496,7 +479,7 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.toggleTabSelectedState(model2);
         mMediator.toggleTabSelectedState(model3);
 
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
 
         RestoreTabsDetailScreenCoordinator.Delegate delegate =
                 mModel.get(REVIEW_TABS_SCREEN_DELEGATE);
@@ -508,16 +491,13 @@ public class RestoreTabsMediatorUnitTest {
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateAllTabsMixedWithDelegate() {
         mMediator.setCurrentScreen(REVIEW_TABS_SCREEN);
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model1 = TabItemProperties.create(tab1, true);
 
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model2 = TabItemProperties.create(tab2, false);
 
-        ForeignSessionTab tab3 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab3 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model3 = TabItemProperties.create(tab3, true);
 
         mModel.set(NUM_TABS_DESELECTED, 1);
@@ -530,28 +510,25 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.toggleTabSelectedState(model2);
         mMediator.toggleTabSelectedState(model3);
 
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 2);
+        Assert.assertEquals(2, mModel.get(NUM_TABS_DESELECTED));
 
         RestoreTabsDetailScreenCoordinator.Delegate delegate =
                 mModel.get(REVIEW_TABS_SCREEN_DELEGATE);
 
         delegate.onChangeSelectionStateForAllTabs();
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
     }
 
     @Test
     public void testRestoreTabsMediator_toggleTabSelectedStateSubsetTabsWithDelegate() {
         mMediator.setCurrentScreen(REVIEW_TABS_SCREEN);
-        ForeignSessionTab tab1 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab1 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model1 = TabItemProperties.create(tab1, true);
 
-        ForeignSessionTab tab2 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab2 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model2 = TabItemProperties.create(tab2, true);
 
-        ForeignSessionTab tab3 = new ForeignSessionTab(
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ForeignSessionTab tab3 = new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
         PropertyModel model3 = TabItemProperties.create(tab3, true);
 
         ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
@@ -562,12 +539,12 @@ public class RestoreTabsMediatorUnitTest {
         mMediator.toggleTabSelectedState(model1);
         mMediator.toggleTabSelectedState(model3);
 
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 2);
+        Assert.assertEquals(2, mModel.get(NUM_TABS_DESELECTED));
 
         RestoreTabsDetailScreenCoordinator.Delegate delegate =
                 mModel.get(REVIEW_TABS_SCREEN_DELEGATE);
 
         delegate.onChangeSelectionStateForAllTabs();
-        Assert.assertEquals(mModel.get(NUM_TABS_DESELECTED), 0);
+        Assert.assertEquals(0, mModel.get(NUM_TABS_DESELECTED));
     }
 }

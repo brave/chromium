@@ -2,24 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/feedback/redaction_tool/redaction_tool.h"
 
 #include <algorithm>
 #include <set>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_restrictions.h"
-#include "build/chromeos_buildflags.h"
+#include "components/autofill/core/common/credit_card_number_validation.h"
 #include "components/feedback/redaction_tool/ip_address.h"
 #include "components/feedback/redaction_tool/pii_types.h"
-#include "components/feedback/redaction_tool/validation.h"
 #ifdef USE_SYSTEM_RE2
 #include <re2/re2.h>
 #else
@@ -44,259 +51,6 @@ BASE_FEATURE(kEnableIbanRedaction,
 }  // namespace features
 
 namespace {
-
-// The |kCustomPatternsWithContext| array defines patterns to match and
-// redact. Each pattern needs to define three capturing parentheses groups:
-//
-// - a group for the pattern before the identifier to be redacted;
-// - a group for the identifier to be redacted;
-// - a group for the pattern after the identifier to be redacted.
-//
-// The first and the last capture group are the origin of the "WithContext"
-// suffix in the name of this constant.
-//
-// Every matched identifier (in the context of the whole pattern) is redacted
-// by replacing it with an incremental instance identifier. Every different
-// pattern defines a separate instance identifier space. See the unit test for
-// RedactionToolTest::RedactCustomPatterns for pattern redaction examples.
-//
-// Useful regular expression syntax:
-//
-// +? is a non-greedy (lazy) +.
-// \b matches a word boundary.
-// (?i) turns on case insensitivity for the remainder of the regex.
-// (?-s) turns off "dot matches newline" for the remainder of the regex.
-// (?:regex) denotes non-capturing parentheses group.
-CustomPatternWithAlias kCustomPatternsWithContext[] = {
-    // ModemManager
-    {"CellID", "(\\bCell ID: ')([0-9a-fA-F]+)(')",
-     PIIType::kCellularLocationInfo},
-    {"LocAC", "(\\bLocation area code: ')([0-9a-fA-F]+)(')",
-     PIIType::kCellularLocationInfo},
-
-    // Android. Must run first since this expression matches the replacement.
-    //
-    // If we don't get helpful delimiters like a single/double quote, then we
-    // can only try our best and take out the next 32 characters, the max length
-    // of a SSID. Require at least one non-quote character though so we skip
-    // over the quoted SSIDs (which the following patterns will catch and
-    // redact).
-    {"SSID", "(?i-s)(\\bSSID: )([^'\"]{1,32})(.*)", PIIType::kSSID},
-    // Replace any SSID inside quotes.
-    {"SSID", "(?i-s)(\\bSSID: ['\"])(.+)(['\"])", PIIType::kSSID},
-    // Special WifiNetworkSpecifier#toString.
-    {"SSID", "(?i-s)(\\bSSID Match pattern=[^ ]*\\s?)(.+)(\\})",
-     PIIType::kSSID},
-
-    // wpa_supplicant
-    {"SSID", "(?i-s)(\\bssid[= ]')(.+)(')", PIIType::kSSID},
-    {"SSID", "(?i-s)(\\bssid[= ]\")(.+)(\")", PIIType::kSSID},
-    {"SSID", "(\\* SSID=)([^\n]+)(.*)", PIIType::kSSID},
-    {"SSIDHex", "(?-s)(\\bSSID - hexdump\\(len=[0-9]+\\): )(.+)()",
-     PIIType::kSSID},
-
-    // shill
-    {"SSID", "(?-s)(\\[SSID=)(.+?)(\\])", PIIType::kSSID},
-
-    // Serial numbers. The actual serial number itself can include any alphanum
-    // char as well as dashes, periods, colons, slashes and unprintable ASCII
-    // chars (except newline). The second one is for a special case in
-    // edid-decode, where if we genericized it further then we would catch too
-    // many other cases that we don't want to redact.
-    {"Serial",
-     "(?i-s)(\\bserial\\s*_?(?:number)?['\"]?\\s*[:=|]\\s*['\"]?)"
-     "([0-9a-zA-Z\\-.:\\/\\\\\\x00-\\x09\\x0B-\\x1F]+)(\\b)",
-     PIIType::kSerial},
-    {"Serial", "( Serial Number )(\\d+)(\\b)", PIIType::kSerial},
-    // The attested device id, a serial number, that comes from vpd_2.0.txt.
-    // The pattern was recently clarified as being a case insensitive string of
-    // ASCII letters and digits, plus the dash/hyphen character. The dash cannot
-    // appear first or last
-    {"Serial", "(\"attested_device_id\"=\")([^-][0-9a-zA-Z-]+[^-])(\")",
-     PIIType::kSerial},
-    // PSM identifier is a 4-character brand code, which can be encoded as 8 hex
-    // digits, followed by a slash ('/') and a serial number.
-    {"PSM ID",
-     "(?i)(PSM.*\\s+.*\\b)((?:[a-z]{4}|[0-9a-f]{8})\\/"
-     "[0-9a-z\\-.:\\/\\\\\\x00-\\x09\\x0B-\\x1F]+)(\\b)",
-     PIIType::kSerial},
-
-    // GAIA IDs
-    {"GAIA", R"xxx((\"?\bgaia_id\"?[=:]['\"])(\d+)(\b['\"]))xxx",
-     PIIType::kGaiaID},
-    {"GAIA", R"xxx((\{id: )(\d+)(, email:))xxx", PIIType::kGaiaID},
-
-    // UUIDs given by the 'blkid' tool. These don't necessarily look like
-    // standard UUIDs, so treat them specially.
-    {"UUID", R"xxx((UUID=")([0-9a-zA-Z-]+)("))xxx", PIIType::kStableIdentifier},
-    // Also cover UUIDs given by the 'lvs' and 'pvs' tools, which similarly
-    // don't necessarily look like standard UUIDs.
-    {"UUID", R"xxx(("[lp]v_uuid":")([0-9a-zA-Z-]+)("))xxx",
-     PIIType::kStableIdentifier},
-
-    // Volume labels presented in the 'blkid' tool, and as part of removable
-    // media paths shown in various logs such as cros-disks (in syslog).
-    // There isn't a well-defined format for these. For labels in blkid,
-    // capture everything between the open and closing quote.
-    {"Volume Label", R"xxx((LABEL=")([^"]+)("))xxx", PIIType::kVolumeLabel},
-    // For paths, this is harder. The only restricted characters are '/' and
-    // NUL, so use a simple heuristic. cros-disks generally quotes paths using
-    // single-quotes, so capture everything until a quote character. For lsblk,
-    // capture everything until the end of the line, since the mount path is the
-    // last field.
-    {"Volume Label", R"xxx((/media/removable/)(.+?)(['"/\n]|$))xxx",
-     PIIType::kVolumeLabel},
-
-    // IPP (Internet Printing Protocol) Addresses
-    {"IPP Address", R"xxx((ipp:\/\/)(.+?)(\/ipp))xxx", PIIType::kIPPAddress},
-    // Crash ID. This pattern only applies to ChromeOS and it matches the
-    // log entries from ChromeOS's crash_sender program.
-    {"Crash ID", R"xxx((Crash report receipt ID )([0-9a-fA-F]+)(.+?))xxx",
-     PIIType::kCrashId},
-};
-
-bool MaybeUnmapAddress(IPAddress* addr) {
-  if (!addr->IsIPv4MappedIPv6()) {
-    return false;
-  }
-
-  *addr = ConvertIPv4MappedIPv6ToIPv4(*addr);
-  return true;
-}
-
-bool MaybeUntranslateAddress(IPAddress* addr) {
-  if (!addr->IsIPv6()) {
-    return false;
-  }
-
-  static const IPAddress kTranslated6To4(0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0,
-                                         0, 0, 0, 0, 0, 0);
-  if (!IPAddressMatchesPrefix(*addr, kTranslated6To4, 96)) {
-    return false;
-  }
-
-  const auto bytes = addr->bytes();
-  *addr = IPAddress(bytes[12], bytes[13], bytes[14], bytes[15]);
-  return true;
-}
-
-// If |addr| points to a valid IPv6 address, this function truncates it at /32.
-bool MaybeTruncateIPv6(IPAddress* addr) {
-  if (!addr->IsIPv6()) {
-    return false;
-  }
-
-  const auto bytes = addr->bytes();
-  *addr = IPAddress(bytes[0], bytes[1], bytes[2], bytes[3], 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0);
-  return true;
-}
-
-// Returns an appropriately scrubbed version of |addr| if applicable.
-std::string MaybeScrubIPAddress(const std::string& addr) {
-  struct {
-    IPAddress ip_addr;
-    int prefix_length;
-    bool scrub;
-  } static const kNonIdentifyingIPRanges[] = {
-      // Private.
-      {IPAddress(10, 0, 0, 0), 8, true},
-      {IPAddress(172, 16, 0, 0), 12, true},
-      {IPAddress(192, 168, 0, 0), 16, true},
-      // Chrome OS containers and VMs.
-      {IPAddress(100, 115, 92, 0), 24, false},
-      // Loopback.
-      {IPAddress(127, 0, 0, 0), 8, true},
-      // Any.
-      {IPAddress(0, 0, 0, 0), 8, true},
-      // DNS.
-      {IPAddress(8, 8, 8, 8), 32, false},
-      {IPAddress(8, 8, 4, 4), 32, false},
-      {IPAddress(1, 1, 1, 1), 32, false},
-      // Multicast.
-      {IPAddress(224, 0, 0, 0), 4, true},
-      // Link local.
-      {IPAddress(169, 254, 0, 0), 16, true},
-      {IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
-       true},
-      // Broadcast.
-      {IPAddress(255, 255, 255, 255), 32, false},
-      // IPv6 loopback, unspecified and non-address strings.
-      {IPAddress::IPv6AllZeros(), 112, false},
-      // IPv6 multicast all nodes and routers.
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
-       false},
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
-       false},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
-       false},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
-       false},
-      // IPv6 other multicast (link and interface local).
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
-       true},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
-       true},
-
-  };
-  IPAddress input_addr;
-  if (input_addr.AssignFromIPLiteral(addr) && input_addr.IsValid()) {
-    bool mapped = MaybeUnmapAddress(&input_addr);
-    bool translated = !mapped ? MaybeUntranslateAddress(&input_addr) : false;
-    for (const auto& range : kNonIdentifyingIPRanges) {
-      if (IPAddressMatchesPrefix(input_addr, range.ip_addr,
-                                 range.prefix_length)) {
-        std::string prefix;
-        std::string out_addr = addr;
-        if (mapped) {
-          prefix = "M ";
-          out_addr = input_addr.ToString();
-        } else if (translated) {
-          prefix = "T ";
-          out_addr = input_addr.ToString();
-        }
-        if (range.scrub) {
-          out_addr = base::StringPrintf(
-              "%s/%d", range.ip_addr.ToString().c_str(), range.prefix_length);
-        }
-        return base::StrCat({prefix, out_addr});
-      }
-    }
-    // |addr| may have been over-aggressively matched as an IPv6 address when
-    // it's really just an arbitrary part of a sentence. If the string is the
-    // same as the coarsely truncated address then keep it because even if
-    // it happens to be a real address, there is no leak.
-    if (MaybeTruncateIPv6(&input_addr) && input_addr.ToString() == addr) {
-      return addr;
-    }
-  }
-  return "";
-}
-
-// Some strings can contain pieces that match like IPv4 addresses but aren't.
-// This function can be used to determine if this was the case by evaluating
-// the skipped piece. It returns true, if the matched address was erroneous
-// and should be skipped instead.
-bool ShouldSkipIPAddress(const re2::StringPiece& skipped) {
-  // MomdemManager can dump out firmware revision fields that can also
-  // confuse the IPv4 matcher e.g. "Revision: 81600.0000.00.29.19.16_DO"
-  // so ignore the replacement if the skipped piece looks like
-  // "Revision: .*<ipv4>". Note however that if this field contains
-  // values delimited by multiple spaces, any matches after the first
-  // will lose the context and be redacted.
-  static const re2::StringPiece rev("Revision: ");
-  static const re2::StringPiece space(" ");
-  const auto pos = skipped.rfind(rev);
-  if (pos != re2::StringPiece::npos &&
-      skipped.find(space, pos + rev.length()) == re2::StringPiece::npos) {
-    return true;
-  }
-
-  // USB paths can be confused with IPv4 Addresses because they can look
-  // similar: n-n.n.n.n . Ignore replacement if previous char is `-`
-  static const re2::StringPiece dash("-");
-  return skipped.ends_with(dash);
-}
 
 // Helper macro: Non capturing group
 #define NCG(x) "(?:" x ")"
@@ -430,21 +184,304 @@ bool ShouldSkipIPAddress(const re2::StringPiece& skipped) {
 #define IAUTHORITY OPT_NCG(IUSERINFO "@") IHOST OPT_NCG(":" PORT)
 
 #define IRELATIVE_PART                                                    \
-  NCG("//" IAUTHORITY IPATH_ABEMPTY "|" IPATH_ABSOLUTE "|" IPATH_NOSCHEME \
-      "|" IPATH_EMPTY)
+  "//" NCG(IAUTHORITY IPATH_ABEMPTY "|" IPATH_ABSOLUTE "|" IPATH_NOSCHEME \
+                                    "|" IPATH_EMPTY)
 
 #define IRELATIVE_REF IRELATIVE_PART OPT_NCG("?" IQUERY) OPT_NCG("#" IFRAGMENT)
 
 // RFC 3987 requires IPATH_EMPTY here but it is omitted so that statements
 // that end with "Android:" for example are not considered a URL.
 #define IHIER_PART \
-  NCG("//" IAUTHORITY IPATH_ABEMPTY "|" IPATH_ABSOLUTE "|" IPATH_ROOTLESS)
+  "//" NCG(IAUTHORITY IPATH_ABEMPTY "|" IPATH_ABSOLUTE "|" IPATH_ROOTLESS)
 
 #define ABSOLUTE_IRI SCHEME ":" IHIER_PART OPT_NCG("?" IQUERY)
 
 #define IRI SCHEME ":" IHIER_PART OPT_NCG("\\?" IQUERY) OPT_NCG("#" IFRAGMENT)
 
 #define IRI_REFERENCE NCG(IRI "|" IRELATIVE_REF)
+
+// The |kCustomPatternsWithContext| array defines patterns to match and
+// redact. Each pattern needs to define three capturing parentheses groups:
+//
+// - a group for the pattern before the identifier to be redacted;
+// - a group for the identifier to be redacted;
+// - a group for the pattern after the identifier to be redacted.
+//
+// The first and the last capture group are the origin of the "WithContext"
+// suffix in the name of this constant.
+//
+// Every matched identifier (in the context of the whole pattern) is redacted
+// by replacing it with an incremental instance identifier. Every different
+// pattern defines a separate instance identifier space. See the unit test for
+// RedactionToolTest::RedactCustomPatterns for pattern redaction examples.
+//
+// Useful regular expression syntax:
+//
+// +? is a non-greedy (lazy) +.
+// \b matches a word boundary.
+// (?i) turns on case insensitivity for the remainder of the regex.
+// (?-s) turns off "dot matches newline" for the remainder of the regex.
+// (?:regex) denotes non-capturing parentheses group.
+CustomPatternWithAlias kCustomPatternsWithContext[] = {
+    // ModemManager
+    {"CellID", "(\\bCell ID: ')([0-9a-fA-F]+)(')",
+     PIIType::kCellularLocationInfo},
+    {"LocAC", "(\\bLocation area code: ')([0-9a-fA-F]+)(')",
+     PIIType::kCellularLocationInfo},
+
+    // Android. Must run first since this expression matches the replacement.
+    //
+    // If we don't get helpful delimiters like a single/double quote, then we
+    // can only try our best and take out the next 32 characters, the max length
+    // of a SSID. Require at least one non-quote character though so we skip
+    // over the quoted SSIDs (which the following patterns will catch and
+    // redact).
+    {"SSID", "(?i-s)(\\bSSID: )([^'\"]{1,32})(.*)", PIIType::kSSID},
+    // Replace any SSID inside quotes.
+    {"SSID", "(?i-s)(\\bSSID: ['\"])(.+)(['\"])", PIIType::kSSID},
+    // Special WifiNetworkSpecifier#toString.
+    {"SSID", "(?i-s)(\\bSSID Match pattern=[^ ]*\\s?)(.+)(\\})",
+     PIIType::kSSID},
+
+    // wpa_supplicant
+    {"SSID", "(?i-s)(\\bssid[= ]')(.+)(')", PIIType::kSSID},
+    {"SSID", "(?i-s)(\\bssid[= ]\")(.+)(\")", PIIType::kSSID},
+    {"SSID", "(\\* SSID=)([^\n]+)(.*)", PIIType::kSSID},
+    {"SSIDHex", "(?-s)(\\bSSID - hexdump\\(len=[0-9]+\\): )(.+)()",
+     PIIType::kSSID},
+
+    // shill
+    {"SSID", "(?-s)(\\[SSID=)(.+?)(\\])", PIIType::kSSID},
+
+    // Serial numbers. The actual serial number itself can include any alphanum
+    // char as well as dashes, periods, colons, slashes and unprintable ASCII
+    // chars (except newline). The second one is for a special case in
+    // edid-decode, where if we genericized it further then we would catch too
+    // many other cases that we don't want to redact.
+    {"Serial",
+     "(?i-s)(\\bserial\\s*_?(?:number)?['\"]?\\s*[:=|]\\s*['\"]?)"
+     "([0-9a-zA-Z\\-.:\\/\\\\\\x00-\\x09\\x0B-\\x1F]+)(\\b)",
+     PIIType::kSerial},
+    {"Serial", "( Serial Number )(\\d+)(\\b)", PIIType::kSerial},
+    // USB Serial numbers, as outputted from the lsusb --verbose tool.
+    // "iSerial" followed by some spaces, then up to 5 digits of the iSerial
+    // index which is not part of the serial number itself, followed by the
+    // serial number string.
+    // The iSerial index must be nonzero, as an index of zero indicates no
+    // string descriptor is present.
+    // The serial number string itself is up to the manufacturer, but is
+    // observed to be alphanumetric (numbers, and both upper and lower case
+    // letters).
+    {"Serial", "(iSerial\\s*[1-9]\\d{0,4}\\s)([0-9a-zA-Z-]+)(\\b)",
+     PIIType::kSerial},
+    // USB Serial number as generated by usbguard.
+    {"Serial",
+     "(?i-s)(\\bserial\\s\")"
+     "([0-9a-z\\-.:\\/\\\\\\x00-\\x09\\x0B-\\x1F]+)(\")",
+     PIIType::kSerial},
+    // The attested device id, a serial number, that comes from vpd_2.0.txt.
+    // The pattern was recently clarified as being a case insensitive string of
+    // ASCII letters and digits, plus the dash/hyphen character. The dash cannot
+    // appear first or last
+    {"Serial", "(\"attested_device_id\"=\")([^-][0-9a-zA-Z-]+[^-])(\")",
+     PIIType::kSerial},
+    // PSM identifier is a 4-character brand code, which can be encoded as 8 hex
+    // digits, followed by a slash ('/') and a serial number.
+    {"PSM ID",
+     "(?i)(PSM.*[\t ]+.*\\b)((?:[a-z]{4}|[0-9a-f]{8})\\/"
+     "[0-9a-z\\-.:\\/\\\\\\x00-\\x09\\x0B-\\x1F]+)(\\b)",
+     PIIType::kSerial},
+
+    // GAIA IDs
+    {"GAIA", R"xxx((\"?\bgaia_id\"?[=:]['\"])(\d+)(\b['\"]))xxx",
+     PIIType::kGaiaID},
+    {"GAIA", R"xxx((\{id: )(\d+)(, email:))xxx", PIIType::kGaiaID},
+    // The next two patterns are used by support tool when exporting PII.
+    {"GAIA", R"xxx(("accountId":\s*")([^"]+)("))xxx", PIIType::kGaiaID},
+    {"GAIA",
+     R"xxx(("label":\s*"(?:Account|Gaia) Id",\s*"status":\s*")([^"]+)("))xxx",
+     PIIType::kGaiaID},
+
+    // UUIDs given by the 'blkid' tool. These don't necessarily look like
+    // standard UUIDs, so treat them specially.
+    {"UUID", R"xxx((UUID=")([0-9a-zA-Z-]+)("))xxx", PIIType::kStableIdentifier},
+    // Also cover UUIDs given by the 'lvs' and 'pvs' tools, which similarly
+    // don't necessarily look like standard UUIDs.
+    {"UUID", R"xxx(("[lp]v_uuid":")([0-9a-zA-Z-]+)("))xxx",
+     PIIType::kStableIdentifier},
+    // Cover UUIDs generated by vgcfgbackup, which also don't look like standard
+    // UUIDs.
+    {"UUID", R"xxx((id = ")([0-9a-zA-Z-]+)("))xxx", PIIType::kStableIdentifier},
+
+    // Volume labels presented in the 'blkid' tool, and as part of removable
+    // media paths shown in various logs such as cros-disks (in syslog).
+    // There isn't a well-defined format for these. For labels in blkid,
+    // capture everything between the open and closing quote.
+    {"Volume Label", R"xxx((LABEL=")([^"]+)("))xxx", PIIType::kVolumeLabel},
+    // For paths, this is harder. The only restricted characters are '/' and
+    // NUL, so use a simple heuristic. cros-disks generally quotes paths using
+    // single-quotes, so capture everything until a quote character. For lsblk,
+    // capture everything until the end of the line, since the mount path is the
+    // last field.
+    {"Volume Label", R"xxx((/media/removable/)(.+?)(['"/\n]|$))xxx",
+     PIIType::kVolumeLabel},
+
+    // IPP (Internet Printing Protocol) Addresses
+    {"IPP Address", R"xxx((ipp:\/\/)(.+?)(\/ipp))xxx", PIIType::kIPPAddress},
+    // Crash ID. This pattern only applies to ChromeOS and it matches the
+    // log entries from ChromeOS's crash_sender program.
+    {"Crash ID", R"xxx((Crash report receipt ID )([0-9a-fA-F]+)(.+?))xxx",
+     PIIType::kCrashId},
+
+    // Names of ChromeOS cryptohome logical volumes and device mapper devices,
+    // which include a partial hash of the user id.
+    {"UID", R"xxx(((?:cryptohome|dmcrypt)-+)([0-9a-fA-F]+)(-+))xxx",
+     PIIType::kStableIdentifier},
+
+    // GSC device id unique to each chip.
+    {"Serial",
+     R"xxx((DEV_ID:\s+)(0x[0-9a-zA-Z-]{8}\s+0x[0-9a-zA-Z-]{8})(.*?))xxx",
+     PIIType::kSerial},
+
+    // Chromebook serial hash stored in GSC.
+    {"Serial",
+     R"xxx((SN:\s+)([0-9a-zA-Z-]{8}\s+[0-9a-zA-Z-]{8}\s+[0-9a-zA-Z-]{8}))xxx"
+     R"xxx((.*?))xxx",
+     PIIType::kSerial},
+
+    // Memory dump from GSC log.
+    {"Memory Dump",
+     R"xxx((\[\s*[0-9]+\.[0-9]+\]\s+)(0x[0-9a-zA-Z-]{8}:\s+[0-9a-zA-Z-]{8})xxx"
+     R"xxx(\s+[0-9a-zA-Z-]{8}\s+[0-9a-zA-Z-]{8}\s+[0-9a-zA-Z-]{8})(.*?))xxx",
+     PIIType::kMemory},
+
+    // IPv4 addresses should not be prefixed or postfixed by a '.' or a '-'
+    // which indicates a version number or other identifier.
+    {"IPv4",
+     "([^-\\.0-9]|^)"
+     "(" IPV4ADDRESS ")"
+     "([^-\\.0-9]|$)",
+     PIIType::kIPAddress},
+};
+
+bool MaybeUnmapAddress(IPAddress* addr) {
+  if (!addr->IsIPv4MappedIPv6()) {
+    return false;
+  }
+
+  *addr = ConvertIPv4MappedIPv6ToIPv4(*addr);
+  return true;
+}
+
+bool MaybeUntranslateAddress(IPAddress* addr) {
+  if (!addr->IsIPv6()) {
+    return false;
+  }
+
+  static const base::NoDestructor<IPAddress> kTranslated6To4(
+      0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  if (!IPAddressMatchesPrefix(*addr, *kTranslated6To4, 96)) {
+    return false;
+  }
+
+  const auto bytes = addr->bytes();
+  *addr = IPAddress(bytes[12], bytes[13], bytes[14], bytes[15]);
+  return true;
+}
+
+// If |addr| points to a valid IPv6 address, this function truncates it at /32.
+bool MaybeTruncateIPv6(IPAddress* addr) {
+  if (!addr->IsIPv6()) {
+    return false;
+  }
+
+  const auto bytes = addr->bytes();
+  *addr = IPAddress(bytes[0], bytes[1], bytes[2], bytes[3], 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0);
+  return true;
+}
+
+// Returns an appropriately scrubbed version of |addr| if applicable.
+std::string MaybeScrubIPAddress(const std::string& addr) {
+  struct IPAddresScrub {
+    IPAddress ip_addr;
+    int prefix_length;
+    bool scrub;
+  };
+  static const base::NoDestructor<std::vector<IPAddresScrub>>
+      kNonIdentifyingIPRanges({
+          // Private.
+          {IPAddress(10, 0, 0, 0), 8, true},
+          {IPAddress(172, 16, 0, 0), 12, true},
+          {IPAddress(192, 168, 0, 0), 16, true},
+          // Chrome OS containers and VMs.
+          {IPAddress(100, 115, 92, 0), 24, false},
+          // Loopback.
+          {IPAddress(127, 0, 0, 0), 8, true},
+          // Any.
+          {IPAddress(0, 0, 0, 0), 8, true},
+          // DNS.
+          {IPAddress(8, 8, 8, 8), 32, false},
+          {IPAddress(8, 8, 4, 4), 32, false},
+          {IPAddress(1, 1, 1, 1), 32, false},
+          // Multicast.
+          {IPAddress(224, 0, 0, 0), 4, true},
+          // Link local.
+          {IPAddress(169, 254, 0, 0), 16, true},
+          {IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
+           true},
+          // Broadcast.
+          {IPAddress(255, 255, 255, 255), 32, false},
+          // IPv6 loopback, unspecified and non-address strings.
+          {IPAddress::IPv6AllZeros(), 112, false},
+          // IPv6 multicast all nodes and routers.
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
+           false},
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
+           false},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
+           false},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
+           false},
+          // IPv6 other multicast (link and interface local).
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
+           true},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
+           true},
+      });
+  IPAddress input_addr;
+  if (input_addr.AssignFromIPLiteral(addr) && input_addr.IsValid()) {
+    bool mapped = MaybeUnmapAddress(&input_addr);
+    bool translated = !mapped ? MaybeUntranslateAddress(&input_addr) : false;
+    for (const auto& range : *kNonIdentifyingIPRanges) {
+      if (IPAddressMatchesPrefix(input_addr, range.ip_addr,
+                                 range.prefix_length)) {
+        std::string prefix;
+        std::string out_addr = addr;
+        if (mapped) {
+          prefix = "M ";
+          out_addr = input_addr.ToString();
+        } else if (translated) {
+          prefix = "T ";
+          out_addr = input_addr.ToString();
+        }
+        if (range.scrub) {
+          out_addr = base::StringPrintf(
+              "%s/%d", range.ip_addr.ToString().c_str(), range.prefix_length);
+        }
+        return base::StrCat({prefix, out_addr});
+      }
+    }
+    // |addr| may have been over-aggressively matched as an IPv6 address when
+    // it's really just an arbitrary part of a sentence. If the string is the
+    // same as the coarsely truncated address then keep it because even if
+    // it happens to be a real address, there is no leak.
+    if (MaybeTruncateIPv6(&input_addr) && input_addr.ToString() == addr) {
+      return addr;
+    }
+  }
+  return "";
+}
 
 // TODO(battre): Use http://tools.ietf.org/html/rfc5322 to represent email
 // addresses. Capture names as well ("First Lastname" <foo@bar.com>).
@@ -456,9 +493,7 @@ CustomPatternWithAlias kCustomPatternsWithoutContext[] = {
     // Email Addresses need to come after URLs because they can be part
     // of a query parameter.
     {"email", "(?i)([0-9a-z._%+-]+@[a-z0-9.-]+\\.[a-z]{2,6})", PIIType::kEmail},
-    // IP filter rules need to come after URLs so that they don't disturb the
-    // URL pattern in case the IP address is part of a URL.
-    {"IPv4", "(?i)(" IPV4ADDRESS ")", PIIType::kIPAddress},
+    // IPv4 uses context to avoid false positives in version numbers, etc.
     {"IPv6", "(?i)(" IPV6ADDRESS ")", PIIType::kIPAddress},
     // Universal Unique Identifiers (UUIDs).
     {"UUID",
@@ -483,12 +518,12 @@ CustomPatternWithAlias kCustomPatternsWithoutContext[] = {
 // only contains "c".
 // Example: input = "aaabbbc", pattern = "(z+)" leads to input = "aaabbbc",
 // the args values are not modified and skipped_input is not modified.
-bool FindAndConsumeAndGetSkippedN(re2::StringPiece* input,
+bool FindAndConsumeAndGetSkippedN(std::string_view* input,
                                   const re2::RE2& pattern,
-                                  re2::StringPiece* skipped_input,
-                                  re2::StringPiece* args[],
+                                  std::string_view* skipped_input,
+                                  std::string_view* args[],
                                   int argc) {
-  re2::StringPiece old_input = *input;
+  std::string_view old_input = *input;
 
   CHECK_GE(argc, 1);
   re2::RE2::Arg a0(argc > 0 ? args[0] : nullptr);
@@ -507,18 +542,18 @@ bool FindAndConsumeAndGetSkippedN(re2::StringPiece* input,
   return result;
 }
 
-// All |match_groups| need to be of type re2::StringPiece*.
+// All |match_groups| need to be of type std::string_view*.
 template <typename... Arg>
-bool FindAndConsumeAndGetSkipped(re2::StringPiece* input,
+bool FindAndConsumeAndGetSkipped(std::string_view* input,
                                  const re2::RE2& pattern,
-                                 re2::StringPiece* skipped_input,
+                                 std::string_view* skipped_input,
                                  Arg*... match_groups) {
-  re2::StringPiece* args[] = {match_groups...};
+  std::string_view* args[] = {match_groups...};
   return FindAndConsumeAndGetSkippedN(input, pattern, skipped_input, args,
                                       std::size(args));
 }
 
-bool HasRepeatedChar(re2::StringPiece text, char c) {
+bool HasRepeatedChar(std::string_view text, char c) {
   return std::adjacent_find(text.begin(), text.end(), [c](char c1, char c2) {
            return (c1 == c) && (c2 == c);
          }) != text.end();
@@ -584,17 +619,21 @@ std::map<PIIType, std::set<std::string>> RedactionTool::Detect(
   return detected;
 }
 
-std::string RedactionTool::Redact(const std::string& input) {
+std::string RedactionTool::Redact(const std::string& input,
+                                  const base::Location& location) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return RedactAndKeepSelected(input, /*pii_types_to_keep=*/{});
+  return RedactAndKeepSelected(input, /*pii_types_to_keep=*/{}, location);
 }
 
 std::string RedactionTool::RedactAndKeepSelected(
     const std::string& input,
-    const std::set<PIIType>& pii_types_to_keep) {
+    const std::set<PIIType>& pii_types_to_keep,
+    const base::Location& location) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::AssertLongCPUWorkAllowed();
 
+  RedactionToolCaller caller = GetCaller(location);
+  metrics_recorder_->RecordRedactionToolCallerHistogram(caller);
   const base::TimeTicks redaction_start = base::TimeTicks::Now();
 
   // Copy |input| so we can modify it.
@@ -677,8 +716,8 @@ std::string RedactionTool::RedactMACAddresses(
   result.reserve(input.size());
 
   // Keep consuming, building up a result string as we go.
-  re2::StringPiece text(input);
-  re2::StringPiece skipped, oui, nic;
+  std::string_view text(input);
+  std::string_view skipped, oui, nic;
   static const char kMacSeparatorChars[] = "-_";
   while (FindAndConsumeAndGetSkipped(&text, *mac_re, &skipped, &oui, &nic)) {
     // Look up the MAC address in the hash. Force the separator to be a colon
@@ -726,8 +765,8 @@ std::string RedactionTool::RedactHashes(
   result.reserve(input.size());
 
   // Keep consuming, building up a result string as we go.
-  re2::StringPiece text(input);
-  re2::StringPiece skipped, pre_whitespace, hash_prefix, hash_suffix;
+  std::string_view text(input);
+  std::string_view skipped, pre_whitespace, hash_prefix, hash_suffix;
   while (FindAndConsumeAndGetSkipped(&text, *hash_re, &skipped, &pre_whitespace,
                                      &hash_prefix, &hash_suffix)) {
     result.append(skipped);
@@ -774,7 +813,7 @@ std::string RedactionTool::RedactAndroidAppStoragePaths(
   // We only use this on Chrome OS and there's differences in the API for
   // FilePath on Windows which prevents this from compiling, so only enable this
   // code for Chrome OS.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   std::string result;
   result.reserve(input.size());
 
@@ -792,12 +831,12 @@ std::string RedactionTool::RedactAndroidAppStoragePaths(
                 R"(/data/(data|app|user_de/\d+)/[^/\n]+)(/[^\n\s]+))");
 
   // Keep consuming, building up a result string as we go.
-  re2::StringPiece text(input);
-  re2::StringPiece skipped;
-  re2::StringPiece path_prefix;   // path before app_specific;
-  re2::StringPiece pre_data;      // (path=|exe=|/home/root/<hash>/android-data)
-  re2::StringPiece post_data;     // (data|app|user_de/\d+)
-  re2::StringPiece app_specific;  // (/[^\n\s]+)
+  std::string_view text(input);
+  std::string_view skipped;
+  std::string_view path_prefix;   // path before app_specific;
+  std::string_view pre_data;      // (path=|exe=|/home/root/<hash>/android-data)
+  std::string_view post_data;     // (data|app|user_de/\d+)
+  std::string_view app_specific;  // (/[^\n\s]+)
   while (FindAndConsumeAndGetSkipped(&text, *path_re, &skipped, &path_prefix,
                                      &pre_data, &post_data, &app_specific)) {
     // We can record these parts as-is.
@@ -836,7 +875,7 @@ std::string RedactionTool::RedactAndroidAppStoragePaths(
   return result;
 #else
   return input;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 std::string RedactionTool::RedactCreditCardNumbers(
@@ -857,10 +896,10 @@ std::string RedactionTool::RedactCreditCardNumbers(
                                 // after the potential match should either be a
                                 // newline or 2-3 non digits.
 
-  re2::StringPiece text(input);
-  re2::StringPiece skipped;
-  re2::StringPiece sequence;
-  re2::StringPiece post_sequence;
+  std::string_view text(input);
+  std::string_view skipped;
+  std::string_view sequence;
+  std::string_view post_sequence;
 
   while (FindAndConsumeAndGetSkipped(&text, *cc_re, &skipped, &sequence,
                                      &post_sequence)) {
@@ -871,7 +910,7 @@ std::string RedactionTool::RedactCreditCardNumbers(
     // Timestamps in ms have a surprisingly high number of false positives.
     // Also log entries but those usually only match if there are several spaces
     // tying unrelated numbers together.
-    if (post_sequence.find("ms") != re2::StringPiece::npos) {
+    if (post_sequence.find("ms") != std::string_view::npos) {
       metrics_recorder_->RecordCreditCardRedactionHistogram(
           CreditCardDetection::kTimestamp);
       result.append(sequence);
@@ -887,10 +926,11 @@ std::string RedactionTool::RedactCreditCardNumbers(
       continue;
     }
 
-    std::string number;
-    base::RemoveChars(base::StringPiece(sequence), "- ", &number);
+    const std::u16string stripped_number =
+        autofill::StripCardNumberSeparators(base::UTF8ToUTF16(sequence));
+    const std::string u8number = base::UTF16ToUTF8(stripped_number);
 
-    const auto cc_it = credit_cards_.find(number);
+    const auto cc_it = credit_cards_.find(u8number);
     if (cc_it != credit_cards_.cend()) {
       result += cc_it->second;
       result.append(post_sequence);
@@ -900,11 +940,13 @@ std::string RedactionTool::RedactCreditCardNumbers(
       continue;
     }
 
-    if (redaction::IsValidCreditCardNumber(number)) {
+    const bool only_zeros =
+        stripped_number.find_first_not_of(u'0', 0) == std::u16string::npos;
+    if (!only_zeros && autofill::IsValidCreditCardNumber(stripped_number)) {
       metrics_recorder_->RecordCreditCardRedactionHistogram(
           CreditCardDetection::kValidated);
       const auto& [it, success] = credit_cards_.emplace(
-          number,
+          u8number,
           base::StrCat({"(CREDITCARD: ",
                         base::NumberToString(credit_cards_.size() + 1), ")"}));
       if (redact_credit_cards_) {
@@ -942,11 +984,11 @@ std::string RedactionTool::RedactIbans(
       "S[AEIKMN]|T[NR]|UA|VG|XK)(?:\\d{2})[ -]?(?:[ \\-A-Z0-9]){11,30})"
       "([^a-zA-Z0-9_\\-\\+=/])");
 
-  re2::StringPiece text(input);
-  re2::StringPiece skipped;
-  re2::StringPiece pre_separating_char;
-  re2::StringPiece iban;
-  re2::StringPiece post_separating_char;
+  std::string_view text(input);
+  std::string_view skipped;
+  std::string_view pre_separating_char;
+  std::string_view iban;
+  std::string_view post_separating_char;
   while (FindAndConsumeAndGetSkipped(&text, *iban_re, &skipped,
                                      &pre_separating_char, &iban,
                                      &post_separating_char)) {
@@ -972,7 +1014,7 @@ std::string RedactionTool::RedactIbans(
 
     // Since the logic later relies on the size of this string not changing use
     // a lambda to initialize the constant.
-    const std::string numbers_only = [](base::StringPiece stripped) {
+    const std::string numbers_only = [](std::string_view stripped) {
       // Move the first 2 chars+digits to the back of the string.
       constexpr size_t prefix_offset = 4;
       std::string rearranged = std::string(stripped.substr(prefix_offset));
@@ -1068,6 +1110,67 @@ void RedactionTool::DetectWithCustomPatterns(
   }
 }
 
+RedactionToolCaller RedactionTool::GetCaller(const base::Location& location) {
+  std::string filePath = location.file_name();
+  if (filePath.empty() || filePath.c_str() == nullptr) {
+    return RedactionToolCaller::kUndetermined;
+  }
+
+  std::string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
+
+  if (filePath.find("support_tool") != std::string::npos) {
+    return RedactionToolCaller::kSupportTool;
+  } else if (filePath.find("error_reporting") != std::string::npos) {
+    return RedactionToolCaller::kErrorReporting;
+  } else if (fileName == "redaction_tool_unittest.cc") {
+    return RedactionToolCaller::kUnitTest;
+  } else if (fileName == "system_log_uploader.cc") {
+    return RedactionToolCaller::kSysLogUploader;
+  } else if (fileName == "system_logs_fetcher.cc") {
+    return RedactionToolCaller::kSysLogFetcher;
+  } else if (fileName == "chrome_js_error_report_processor.cc") {
+    return RedactionToolCaller::kCrashToolJSErrors;
+  } else if (fileName == "crash_collector.cc") {
+    return RedactionToolCaller::kCrashTool;
+  } else if (fileName == "feedback_common.cc") {
+    return RedactionToolCaller::kFeedbackToolUserDescriptions;
+  } else if (fileName == "log_source_access_manager.cc") {
+    return RedactionToolCaller::kFeedbackToolHotRod;
+  } else if (fileName == "system_logs_fetcher.cc") {
+    return RedactionToolCaller::kFeedbackToolLogs;
+  }
+  return RedactionToolCaller::kUnknown;
+}
+
+bool RedactionTool::ShouldSkipIPv4Address(std::string_view skipped) {
+  // Only look for patterns on the same line as the IPv4 address.
+  const auto nlpos = skipped.rfind("\n");
+  if (nlpos != std::string_view::npos) {
+    skipped = skipped.substr(nlpos);
+  }
+  // MomdemManager can dump out firmware revision fields that can also
+  // confuse the IPv4 matcher e.g. "Revision: 81600.0000.00.29.19.16_DO"
+  // so ignore the replacement if the skipped piece looks like
+  // "Revision: .*<ipv4>". Note however that if this field contains
+  // values delimited by multiple spaces, any matches after the first
+  // will lose the context and be redacted.
+  static const std::string_view rev("Revision: ");
+  static const std::string_view space(" ");
+  const auto pos = skipped.rfind(rev);
+  if (pos != std::string_view::npos &&
+      skipped.find(space, pos + rev.length()) == std::string_view::npos) {
+    return true;
+  }
+  // URLs with an IP Address should be handled by the "URL" entry in
+  // kCustomPatternsWithoutContext instead. If the skipped piece ends with an
+  // IRI, skip it.
+  RE2* re_iri = GetRegExp(".*" IRI);
+  if (RE2::FullMatch(skipped, *re_iri)) {
+    return true;
+  }
+  return false;
+}
+
 std::string RedactionTool::RedactCustomPatternWithContext(
     const std::string& input,
     const CustomPatternWithAlias& pattern,
@@ -1081,18 +1184,36 @@ std::string RedactionTool::RedactCustomPatternWithContext(
   result.reserve(input.size());
 
   // Keep consuming, building up a result string as we go.
-  re2::StringPiece text(input);
-  re2::StringPiece skipped;
-  re2::StringPiece pre_matched_id, matched_id, post_matched_id;
+  std::string_view text(input);
+  std::string_view skipped;
+  std::string_view pre_matched_id, matched_id, post_matched_id;
   while (FindAndConsumeAndGetSkipped(&text, *re, &skipped, &pre_matched_id,
                                      &matched_id, &post_matched_id)) {
     std::string matched_id_as_string(matched_id);
     std::string replacement_id;
+
+    std::string scrubbed_match;
+    if (pattern.pii_type == PIIType::kIPAddress) {
+      std::string prematch(skipped);
+      prematch.append(pre_matched_id);
+      scrubbed_match = MaybeScrubIPAddress(matched_id_as_string);
+      if (scrubbed_match == matched_id_as_string ||
+          ((strcmp("IPv4", pattern.alias) == 0) &&
+           ShouldSkipIPv4Address(prematch))) {
+        result.append(skipped);
+        result.append(pre_matched_id);
+        result.append(matched_id);
+        result.append(post_matched_id);
+        continue;
+      }
+    }
+
     if (identifier_space->count(matched_id_as_string) == 0) {
       // The weird NumberToString trick is because Windows does not like
       // to deal with %zu and a size_t in printf, nor does it support %llu.
       replacement_id = base::StringPrintf(
-          "(%s: %s)", pattern.alias,
+          "(%s: %s)",
+          scrubbed_match.empty() ? pattern.alias : scrubbed_match.c_str(),
           base::NumberToString(identifier_space->size() + 1).c_str());
       (*identifier_space)[matched_id_as_string] = replacement_id;
     } else {
@@ -1114,10 +1235,10 @@ std::string RedactionTool::RedactCustomPatternWithContext(
 
 // This takes a |url| argument and returns true if the URL is exempt from
 // redaction, returns false otherwise.
-bool IsUrlExempt(re2::StringPiece url,
+bool IsUrlExempt(std::string_view url,
                  const char* const* first_party_extension_ids) {
   // We do not exempt anything with a query parameter.
-  if (url.find("?") != re2::StringPiece::npos) {
+  if (url.find("?") != std::string_view::npos) {
     return false;
   }
 
@@ -1158,7 +1279,7 @@ bool IsUrlExempt(re2::StringPiece url,
 
   int i = 0;
   const char* test_id = first_party_extension_ids[i];
-  const re2::StringPiece url_sub =
+  const std::string_view url_sub =
       url.substr(sizeof("chrome-extension://") - 1);
   while (test_id) {
     if (url_sub.starts_with(test_id)) {
@@ -1183,9 +1304,9 @@ std::string RedactionTool::RedactCustomPatternWithoutContext(
   result.reserve(input.size());
 
   // Keep consuming, building up a result string as we go.
-  re2::StringPiece text(input);
-  re2::StringPiece skipped;
-  re2::StringPiece matched_id;
+  std::string_view text(input);
+  std::string_view skipped;
+  std::string_view matched_id;
   while (FindAndConsumeAndGetSkipped(&text, *re, &skipped, &matched_id)) {
     result.append(skipped);
 
@@ -1205,10 +1326,7 @@ std::string RedactionTool::RedactCustomPatternWithoutContext(
 
     const std::string scrubbed_match =
         MaybeScrubIPAddress(matched_id_as_string);
-    if (scrubbed_match == matched_id_as_string ||
-        // Double-check overly opportunistic IPv4 address matching.
-        ((strcmp("IPv4", pattern.alias) == 0) &&
-         ShouldSkipIPAddress(skipped))) {
+    if (scrubbed_match == matched_id_as_string) {
       result.append(matched_id);
       continue;
     }

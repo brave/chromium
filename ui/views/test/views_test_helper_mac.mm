@@ -6,10 +6,6 @@
 
 #import <Cocoa/Cocoa.h>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 #include "base/functional/bind.h"
 #include "ui/base/test/scoped_fake_nswindow_focus.h"
 #include "ui/base/test/scoped_fake_nswindow_fullscreen.h"
@@ -55,8 +51,10 @@ ViewsTestHelperMac::~ViewsTestHelperMac() {
   // down, but on Mac we need to be more explicit.
   @autoreleasepool {
     NSArray* native_windows = NSApp.windows;
-    for (NSWindow* window : native_windows)
-      DCHECK(!Widget::GetWidgetForNativeWindow(window)) << "Widget not closed.";
+    for (NSWindow* window : native_windows) {
+      DCHECK(!Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window)))
+          << "Widget not closed.";
+    }
 
     ui::test::EventGeneratorDelegate::SetFactoryFunction(
         ui::test::EventGeneratorDelegate::FactoryFunction());
@@ -65,9 +63,15 @@ ViewsTestHelperMac::~ViewsTestHelperMac() {
 
 void ViewsTestHelperMac::SetUpTestViewsDelegate(
     TestViewsDelegate* delegate,
-    absl::optional<ViewsDelegate::NativeWidgetFactory> factory) {
+    std::optional<ViewsDelegate::NativeWidgetFactory> factory) {
   ViewsTestHelper::SetUpTestViewsDelegate(delegate, std::move(factory));
   delegate->set_context_factory(context_factories_.GetContextFactory());
+}
+
+void ViewsTestHelperMac::TearDownTestViewsDelegate(
+    TestViewsDelegate* delegate) {
+  delegate->set_context_factory(nullptr);
+  ViewsTestHelper::TearDownTestViewsDelegate(delegate);
 }
 
 }  // namespace views

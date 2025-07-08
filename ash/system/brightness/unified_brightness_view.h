@@ -5,6 +5,8 @@
 #ifndef ASH_SYSTEM_BRIGHTNESS_UNIFIED_BRIGHTNESS_VIEW_H_
 #define ASH_SYSTEM_BRIGHTNESS_UNIFIED_BRIGHTNESS_VIEW_H_
 
+#include <array>
+
 #include "ash/ash_export.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/system/brightness/unified_brightness_slider_controller.h"
@@ -21,13 +23,13 @@ namespace ash {
 class ASH_EXPORT UnifiedBrightnessView
     : public UnifiedSliderView,
       public UnifiedSystemTrayModel::Observer {
- public:
-  METADATA_HEADER(UnifiedBrightnessView);
+  METADATA_HEADER(UnifiedBrightnessView, UnifiedSliderView)
 
+ public:
   UnifiedBrightnessView(UnifiedBrightnessSliderController* controller,
                         scoped_refptr<UnifiedSystemTrayModel> model,
-                        absl::optional<views::Button::PressedCallback>
-                            detailed_button_callback = absl::nullopt);
+                        std::optional<views::Button::PressedCallback>
+                            detailed_button_callback = std::nullopt);
   UnifiedBrightnessView(const UnifiedBrightnessView&) = delete;
   UnifiedBrightnessView& operator=(const UnifiedBrightnessView&) = delete;
   ~UnifiedBrightnessView() override;
@@ -38,16 +40,21 @@ class ASH_EXPORT UnifiedBrightnessView
   // References to the icons that correspond to different brightness levels.
   // Used in the `QuickSettingsSlider`. Defined as a public member to be used in
   // tests.
-  static constexpr const gfx::VectorIcon* kBrightnessLevelIcons[] = {
+  // clang-format off
+  static constexpr std::array<const gfx::VectorIcon*, 3>
+    kBrightnessLevelIcons = {
       &kUnifiedMenuBrightnessLowIcon,     // Low brightness.
       &kUnifiedMenuBrightnessMediumIcon,  // Medium brightness.
       &kUnifiedMenuBrightnessHighIcon,    // High brightness.
   };
+  // clang-format on
 
   // The maximum index of `kBrightnessLevelIcons`.
-  static constexpr int kBrightnessLevels = std::size(kBrightnessLevelIcons) - 1;
+  static constexpr int kBrightnessLevels = kBrightnessLevelIcons.size() - 1;
 
   IconButton* more_button() { return more_button_; }
+
+  IconButton* night_light_button() { return night_light_button_; }
 
  private:
   friend class UnifiedBrightnessViewTest;
@@ -66,10 +73,9 @@ class ASH_EXPORT UnifiedBrightnessView
   void VisibilityChanged(View* starting_from, bool is_visible) override;
 
   scoped_refptr<UnifiedSystemTrayModel> model_;
-  const raw_ptr<NightLightControllerImpl, ExperimentalAsh>
-      night_light_controller_;
+  const raw_ptr<NightLightControllerImpl> night_light_controller_;
   // Owned by the views hierarchy.
-  raw_ptr<IconButton, ExperimentalAsh> night_light_button_ = nullptr;
+  raw_ptr<IconButton> night_light_button_ = nullptr;
   raw_ptr<IconButton> more_button_ = nullptr;
 };
 

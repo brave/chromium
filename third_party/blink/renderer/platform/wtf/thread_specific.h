@@ -85,8 +85,9 @@ inline void ThreadSpecific<T>::Destroy(void* ptr) {
   // longer has a graceful shutdown sequence. Be careful to call this function
   // (which can be re-entrant) while the pointer is still set, to avoid lazily
   // allocating Threading after it is destroyed.
-  if (IsMainThread())
+  if (blink::IsMainThread()) {
     return;
+  }
 
   // The memory was allocated via Partitions::FastZeroedMalloc, and then the
   // object was placement-newed. To destroy, we must call the delete expression,
@@ -113,7 +114,7 @@ inline ThreadSpecific<T>::operator T*() {
 #else
   const bool kMainThreadAlwaysChecksTLS = false;
   T** ptr = &main_thread_storage_;
-  if (UNLIKELY(MayNotBeMainThread())) {
+  if (MayNotBeMainThread()) [[unlikely]] {
     off_thread_ptr = static_cast<T*>(Get());
     ptr = &off_thread_ptr;
   }
@@ -121,19 +122,19 @@ inline ThreadSpecific<T>::operator T*() {
   // Set up thread-specific value's memory pointer before invoking constructor,
   // in case any function it calls needs to access the value, to avoid
   // recursion.
-  if (UNLIKELY(!*ptr)) {
+  if (!*ptr) [[unlikely]] {
     *ptr = static_cast<T*>(Partitions::FastZeroedMalloc(
         sizeof(T), WTF_HEAP_PROFILER_TYPE_NAME(T)));
 
     // Even if we didn't realize we're on the main thread, we might still be.
     // We need to double-check so that |main_thread_storage_| is populated.
-    if (!kMainThreadAlwaysChecksTLS && UNLIKELY(ptr != &main_thread_storage_) &&
-        IsMainThread()) {
+    if (!kMainThreadAlwaysChecksTLS && ptr != &main_thread_storage_ &&
+        blink::IsMainThread()) [[unlikely]] {
       main_thread_storage_ = *ptr;
     }
 
     Set(*ptr);
-    new (NotNullTag::kNotNull, *ptr) T;
+    ::new (base::NotNullTag::kNotNull, *ptr) T;
   }
   return *ptr;
 }

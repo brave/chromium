@@ -76,7 +76,8 @@ class InstanceRegistryTest : public testing::Test,
 
   int num_running_apps_ = 0;
   std::set<std::string> updated_ids_;
-  std::set<const aura::Window*> updated_enclosing_windows_;
+  std::set<raw_ptr<const aura::Window, SetExperimental>>
+      updated_enclosing_windows_;
 
   apps::InstanceRegistry instance_registry_;
 };
@@ -193,7 +194,7 @@ class InstanceRecursiveObserver : public apps::InstanceRegistry::Observer {
     EXPECT_EQ(outer.BrowserContext(), inner.BrowserContext());
   }
 
-  base::raw_ptr<apps::InstanceRegistry> instance_registry_;
+  raw_ptr<apps::InstanceRegistry> instance_registry_;
 
   int expected_num_instances_ = -1;
   int num_instances_seen_on_instance_update_ = 0;
@@ -638,7 +639,7 @@ TEST_F(InstanceRegistryTest, GetInstances) {
   EXPECT_EQ(2U, instances.size());
 
   std::set<aura::Window*> windows;
-  for (const auto* instance : instances) {
+  for (const apps::Instance* instance : instances) {
     EXPECT_EQ("a", instance->AppId());
     windows.insert(instance->Window());
   }

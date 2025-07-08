@@ -112,7 +112,7 @@ class GrpcUnaryCall : public GrpcCall<TGrpcStub, TRequest> {
 
     void Start() override {
       ReactorBase::Start();
-      (async_interface_.get()->*AsyncMethodPtr)(context(), request(), &response_,
+      (async_interface_->*AsyncMethodPtr)(context(), request(), &response_,
                                           this);
       grpc::ClientUnaryReactor::StartCall();
     }
@@ -127,7 +127,7 @@ class GrpcUnaryCall : public GrpcCall<TGrpcStub, TRequest> {
       } else {
         std::move(response_callback_).Run(status);
       }
-      delete this;
+      ReactorBase::DeleteThis();
     }
 
     using AsyncStubCall = base::OnceCallback<void(grpc::ClientContext*,
@@ -135,7 +135,7 @@ class GrpcUnaryCall : public GrpcCall<TGrpcStub, TRequest> {
                                                   Response*,
                                                   grpc::ClientUnaryReactor*)>;
 
-    base::raw_ptr<AsyncInterface> async_interface_;
+    raw_ptr<AsyncInterface> async_interface_;
     ResponseCallback response_callback_;
     Response response_;
   };

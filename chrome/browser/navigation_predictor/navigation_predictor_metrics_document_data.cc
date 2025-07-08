@@ -4,15 +4,39 @@
 
 #include "navigation_predictor_metrics_document_data.h"
 
+#include <algorithm>
+
 #include "chrome/browser/navigation_predictor/navigation_predictor_metrics_document_data.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+
+namespace {
+
+std::optional<ukm::SourceId> GetUkmSourceId(
+    content::RenderFrameHost* render_frame_host) {
+  if (render_frame_host->IsInLifecycleState(
+          content::RenderFrameHost::LifecycleState::kPrerendering)) {
+    // We don't collect UKM while prerendering due to data collection policy.
+    return std::nullopt;
+  }
+  return render_frame_host->GetPageUkmSourceId();
+}
+
+}  // namespace
+
+NavigationPredictorMetricsDocumentData::UserInteractionsData::
+    UserInteractionsData() = default;
+NavigationPredictorMetricsDocumentData::UserInteractionsData::
+    UserInteractionsData(const UserInteractionsData&) = default;
+NavigationPredictorMetricsDocumentData::UserInteractionsData&
+NavigationPredictorMetricsDocumentData::UserInteractionsData::operator=(
+    const UserInteractionsData&) = default;
 
 NavigationPredictorMetricsDocumentData::NavigationPredictorMetricsDocumentData(
     content::RenderFrameHost* render_frame_host)
     : DocumentUserData<NavigationPredictorMetricsDocumentData>(
           render_frame_host),
-      ukm_source_id_(render_frame_host->GetMainFrame()->GetPageUkmSourceId()) {}
+      ukm_source_id_(GetUkmSourceId(render_frame_host)) {}
 
 NavigationPredictorMetricsDocumentData::
     ~NavigationPredictorMetricsDocumentData() {
@@ -27,12 +51,16 @@ NavigationPredictorMetricsDocumentData::AnchorsData::~AnchorsData() = default;
 
 int NavigationPredictorMetricsDocumentData::AnchorsData::MedianLinkLocation() {
   DCHECK(!link_locations_.empty());
-  sort(link_locations_.begin(), link_locations_.end());
-  size_t idx = link_locations_.size() / 2;
+  size_t median_idx = link_locations_.size() / 2;
+  std::nth_element(link_locations_.begin(),
+                   link_locations_.begin() + median_idx, link_locations_.end());
+  int median = link_locations_[median_idx];
   if (link_locations_.size() % 2 == 0) {
-    return (link_locations_[idx - 1] + link_locations_[idx]) * 50;
+    auto median2_it = std::max_element(link_locations_.begin(),
+                                       link_locations_.begin() + median_idx);
+    return (median + *median2_it) * 50;
   }
-  return link_locations_[link_locations_.size() / 2] * 100;
+  return median * 100;
 }
 
 void NavigationPredictorMetricsDocumentData::RecordAnchorData(
@@ -126,12 +154,12 @@ void NavigationPredictorMetricsDocumentData::RecordAnchorElementMetricsData(
   builder.SetIsInIframe(metrics.is_in_iframe_);
   builder.SetIsURLIncrementedByOne(metrics.is_url_incremented_by_one_);
   builder.SetContainsImage(metrics.contains_image_);
-  builder.SetSameOrigin(metrics.is_same_origin_);
+  builder.SetSameOrigin(metrics.is_same_host_);
   builder.SetHasTextSibling(metrics.has_text_sibling_);
   builder.SetIsBold(metrics.is_bold_);
   builder.SetNavigationStartToLinkLoggedMs(ukm::GetExponentialBucketMin(
       metrics.navigation_start_to_link_logged.InMilliseconds(), 1.3));
-  builder.SetFontSize(metrics.font_size_);
+  builder.SetFontSize(metrics.font_size_bucket_);
   builder.SetPathLength(metrics.path_length_);
   builder.SetPathDepth(metrics.path_depth_);
   builder.SetBucketedPathHash(metrics.bucketed_path_hash_);
@@ -171,7 +199,7 @@ void NavigationPredictorMetricsDocumentData::RecordUserInteractionsData(
   }
   DCHECK(ukm_source_id == ukm_source_id_);
 
-  absl::optional<base::TimeDelta> navigation_start_to_now;
+  std::optional<base::TimeDelta> navigation_start_to_now;
   if (!navigation_start_time_.is_null()) {
     navigation_start_to_now = base::TimeTicks::Now() - navigation_start_time_;
   }
@@ -183,8 +211,8 @@ void NavigationPredictorMetricsDocumentData::RecordUserInteractionsData(
   }
 
   auto get_max_time_ms =
-      [this](const absl::optional<base::TimeDelta>& max_time,
-             const absl::optional<base::TimeDelta>& last_navigation_start_to) {
+      [this](const std::optional<base::TimeDelta>& max_time,
+             const std::optional<base::TimeDelta>& last_navigation_start_to) {
         int64_t max_time_ms = -1;
         if (last_navigation_start_to.has_value() &&
             navigation_start_to_click_.has_value()) {
@@ -201,6 +229,11 @@ void NavigationPredictorMetricsDocumentData::RecordUserInteractionsData(
       };
 
   auto* ukm_recorder = ukm::UkmRecorder::Get();
+  auto get_exponential_bucket_for_signed_values = [](int64_t sample,
+                                                     double bucket_spacing) {
+    return ukm::GetExponentialBucketMin(std::abs(sample), bucket_spacing) *
+           (sample >= 0 ? 1 : -1);
+  };
 
   for (const auto& [anchor_index, user_interaction] : user_interactions_) {
     ukm::builders::NavigationPredictorUserInteractions builder(ukm_source_id);
@@ -208,6 +241,8 @@ void NavigationPredictorMetricsDocumentData::RecordUserInteractionsData(
     builder.SetIsInViewport(user_interaction.is_in_viewport);
     builder.SetPointerHoveringOverCount(ukm::GetExponentialBucketMin(
         user_interaction.pointer_hovering_over_count, 1.3));
+    builder.SetEnteredViewportCount(ukm::GetExponentialBucketMin(
+        user_interaction.entered_viewport_count, 1.3));
     builder.SetIsPointerHoveringOver(user_interaction.is_hovered);
     builder.SetMaxEnteredViewportToLeftViewportMs(ukm::GetExponentialBucketMin(
         get_max_time_ms(
@@ -218,6 +253,24 @@ void NavigationPredictorMetricsDocumentData::RecordUserInteractionsData(
         get_max_time_ms(user_interaction.max_hover_dwell_time,
                         user_interaction.last_navigation_start_to_pointer_over),
         1.3));
+    builder.SetMouseVelocity(get_exponential_bucket_for_signed_values(
+        user_interaction.mouse_velocity.value_or(0.0), 1.3));
+    builder.SetMouseAcceleration(get_exponential_bucket_for_signed_values(
+        user_interaction.mouse_acceleration.value_or(0.0), 1.3));
+    if (user_interaction.percent_vertical_position.has_value()) {
+      int64_t value = user_interaction.percent_vertical_position.value();
+      int64_t bucketed_value = ukm::GetLinearBucketMin(value, 10);
+      builder.SetVerticalPositionInViewport(
+          std::clamp<int64_t>(bucketed_value, 0, 100));
+    }
+    if (user_interaction.percent_distance_from_pointer_down.has_value()) {
+      // |value| is typically between -100 and 100, but there may be outliers.
+      int64_t value =
+          user_interaction.percent_distance_from_pointer_down.value();
+      int64_t bucketed_value = ukm::GetLinearBucketMin(value, 10);
+      builder.SetDistanceFromLastPointerDown(
+          std::clamp<int64_t>(bucketed_value, -100, 100));
+    }
     builder.Record(ukm_recorder);
   }
   // Clear the UserInteractionData for the next page load.

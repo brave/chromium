@@ -13,18 +13,23 @@ SerialChooserContextFactory::SerialChooserContextFactory()
           "SerialChooserContext",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(HostContentSettingsMapFactory::GetInstance());
 }
 
 SerialChooserContextFactory::~SerialChooserContextFactory() = default;
 
-KeyedService* SerialChooserContextFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SerialChooserContextFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new SerialChooserContext(Profile::FromBrowserContext(context));
+  return std::make_unique<SerialChooserContext>(
+      Profile::FromBrowserContext(context));
 }
 
 // static
@@ -45,12 +50,4 @@ SerialChooserContext* SerialChooserContextFactory::GetForProfileIfExists(
     Profile* profile) {
   return static_cast<SerialChooserContext*>(
       GetInstance()->GetServiceForBrowserContext(profile, /*create=*/false));
-}
-
-void SerialChooserContextFactory::BrowserContextShutdown(
-    content::BrowserContext* context) {
-  auto* serial_chooser_context =
-      GetForProfileIfExists(Profile::FromBrowserContext(context));
-  if (serial_chooser_context)
-    serial_chooser_context->FlushScheduledSaveSettingsCalls();
 }

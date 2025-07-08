@@ -9,7 +9,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #include "ui/base/l10n/l10n_util.h"
@@ -42,6 +42,16 @@ TEST_F(ResourcesTest, CriticalMessagesContainNoExtraWhitespaces) {
                                        FILE_PATH_LITERAL("*.pak"));
   for (base::FilePath locale_file_path = file_enumerator.Next();
        !locale_file_path.empty(); locale_file_path = file_enumerator.Next()) {
+    base::FilePath::StringType file_name = locale_file_path.BaseName().value();
+
+    // Gender-specific .pak files are deduped against the base .pak file, so
+    // these are not expected to contain the |messages_to_check|.
+    if (base::EndsWith(file_name, FILE_PATH_LITERAL("_FEMININE.pak")) ||
+        base::EndsWith(file_name, FILE_PATH_LITERAL("_MASCULINE.pak")) ||
+        base::EndsWith(file_name, FILE_PATH_LITERAL("_NEUTER.pak"))) {
+      continue;
+    }
+
     // Load the current locale file.
     ui::ResourceBundle::GetSharedInstance().OverrideLocalePakForTest(
         locale_file_path);

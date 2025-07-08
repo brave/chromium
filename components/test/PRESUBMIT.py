@@ -24,13 +24,31 @@ def CheckChange(input_api, output_api):
                 'data/dom_distiller/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
+                'data/autofill/label-doms/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/feed/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
                 'data/fenced_frames/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
                 'data/history/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
+                'data/history_embeddings/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
                 'data/language/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/optimization_guide/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/offline_pages/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/paint_preview/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
                 'data/password_manager/unit_tests_bundle_data')
@@ -41,7 +59,13 @@ def CheckChange(input_api, output_api):
                 input_api, output_api, 'data/history/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
+                'data/safe_browsing/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
                 'data/service_worker/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/subresource_filter/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
                 'data/url_rewrite/unit_tests_bundle_data')
@@ -51,6 +75,9 @@ def CheckChange(input_api, output_api):
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
                 'data/viz/unit_tests_bundle_data')
+        results += presubmit_support.CheckBundleData(
+                input_api, output_api,
+                'data/webapps/unit_tests_bundle_data')
         results += presubmit_support.CheckBundleData(
                 input_api, output_api,
                 'data/web_database/unit_tests_bundle_data')

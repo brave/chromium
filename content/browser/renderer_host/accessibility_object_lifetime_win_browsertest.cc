@@ -6,10 +6,11 @@
 #include "base/test/scoped_feature_list.h"
 #include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
-#include "content/public/browser/browser_accessibility_state.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/scoped_accessibility_mode_override.h"
 #include "content/shell/browser/shell.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
@@ -59,7 +60,7 @@ class AccessibilityObjectLifetimeWinBrowserTest
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeWinBrowserTest,
                        RootDoesNotLeak) {
-  testing::ScopedContentAXModeSetter ax_mode_setter(ui::kAXModeBasic.flags());
+  ScopedAccessibilityModeOverride ax_mode_override(ui::kAXModeBasic.flags());
 
   EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
 
@@ -130,6 +131,7 @@ class AccessibilityTeardownTestMessageFilter : public ui::HWNDMessageFilter {
       // Verify that the legacy window does not crash when asked for an
       // accessibility object.
       legacy_render_widget_host_HWND_->GetOrCreateWindowRootAccessible(false);
+      legacy_render_widget_host_HWND_ = nullptr;
 
       // Remove ourselves as a subclass.
       ui::HWNDSubclass::RemoveFilterFromAllTargets(this);
@@ -139,8 +141,7 @@ class AccessibilityTeardownTestMessageFilter : public ui::HWNDMessageFilter {
   }
 
  private:
-  raw_ptr<LegacyRenderWidgetHostHWND, DanglingUntriaged>
-      legacy_render_widget_host_HWND_;
+  raw_ptr<LegacyRenderWidgetHostHWND> legacy_render_widget_host_HWND_;
 };
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeWinBrowserTest,
@@ -171,7 +172,7 @@ class AccessibilityObjectLifetimeUiaWinBrowserTest
 
 IN_PROC_BROWSER_TEST_F(AccessibilityObjectLifetimeUiaWinBrowserTest,
                        RootDoesNotLeak) {
-  testing::ScopedContentAXModeSetter ax_mode_setter(ui::kAXModeBasic.flags());
+  ScopedAccessibilityModeOverride ax_mode_override(ui::kAXModeBasic.flags());
 
   EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
 

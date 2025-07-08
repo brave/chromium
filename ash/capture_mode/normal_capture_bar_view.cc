@@ -36,7 +36,8 @@ NormalCaptureBarView::NormalCaptureBarView(
   separator_2->SetColorId(ui::kColorAshSystemUIMenuSeparator);
   separator_2->SetPreferredLength(kSeparatorHeight);
 
-  AppendCommonElements();
+  AppendSettingsButton();
+  AppendCloseButton();
 }
 
 NormalCaptureBarView::~NormalCaptureBarView() = default;
@@ -59,7 +60,7 @@ void NormalCaptureBarView::OnCaptureTypeChanged(CaptureModeType new_type) {
   capture_source_view_->OnCaptureTypeChanged(new_type);
 }
 
-BEGIN_METADATA(NormalCaptureBarView, CaptureModeBarView)
+BEGIN_METADATA(NormalCaptureBarView)
 END_METADATA
 
 }  // namespace ash

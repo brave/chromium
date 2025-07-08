@@ -7,7 +7,6 @@
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ptr_exclusion.h"
 #include "base/win/scoped_gdi_object.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/frame/windows_caption_button.h"
@@ -18,14 +17,13 @@
 #include "ui/views/window/non_client_view.h"
 
 class BrowserView;
-class TabSearchBubbleHost;
 class BrowserCaptionButtonContainer;
 
 class BrowserFrameViewWin : public BrowserNonClientFrameView,
                             public TabIconViewModel {
- public:
-  METADATA_HEADER(BrowserFrameViewWin);
+  METADATA_HEADER(BrowserFrameViewWin, BrowserNonClientFrameView)
 
+ public:
   // Constructs a non-client view for an BrowserFrame.
   BrowserFrameViewWin(BrowserFrame* frame, BrowserView* browser_view);
   BrowserFrameViewWin(const BrowserFrameViewWin&) = delete;
@@ -38,17 +36,13 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
-  int GetThemeBackgroundXInset() const override;
   bool HasVisibleBackgroundTabShapes(
       BrowserFrameActiveState active_state) const override;
   SkColor GetCaptionColor(BrowserFrameActiveState active_state) const override;
   void UpdateThrobber(bool running) override;
   gfx::Size GetMinimumSize() const override;
   void WindowControlsOverlayEnabledChanged() override;
-  TabSearchBubbleHost* GetTabSearchBubbleHost() override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -57,9 +51,7 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
   int NonClientHitTest(const gfx::Point& point) override;
   void UpdateWindowIcon() override;
   void UpdateWindowTitle() override;
-  void GetWindowMask(const gfx::Size& size, SkPath* window_mask) override {}
   void ResetWindowControls() override;
-  void SizeConstraintsChanged() override {}
   void OnThemeChanged() override;
 
   // TabIconViewModel:
@@ -85,13 +77,15 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
     return caption_button_container_;
   }
 
+  const TabIconView* window_icon_for_testing() const { return window_icon_; }
+
  protected:
   // BrowserNonClientFrameView:
   void PaintAsActiveChanged() override;
 
   // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
-  void Layout() override;
+  void Layout(PassKey) override;
 
  private:
   friend class BrowserCaptionButtonContainer;
@@ -129,6 +123,9 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
   // Returns the height of the titlebar for popups or other browser types that
   // don't have tabs.
   int TitlebarHeight(bool restored) const;
+
+  // Returns the height of the frame, whether that is a tabstrip or a titlebar.
+  int GetFrameHeight() const;
 
   // Returns the width of the caption buttons region, including visible
   // system-drawn and custom-drawn caption buttons.
@@ -171,15 +168,13 @@ class BrowserFrameViewWin : public BrowserNonClientFrameView,
   gfx::Rect client_view_bounds_;
 
   // The small icon created from the bitmap image of the window icon.
-  base::win::ScopedHICON small_window_icon_;
+  base::win::ScopedGDIObject<HICON> small_window_icon_;
 
   // The big icon created from the bitmap image of the window icon.
-  base::win::ScopedHICON big_window_icon_;
+  base::win::ScopedGDIObject<HICON> big_window_icon_;
 
   // Icon and title. Only used when custom-drawing the titlebar for popups.
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #addr-of
-  RAW_PTR_EXCLUSION TabIconView* window_icon_ = nullptr;
+  raw_ptr<TabIconView> window_icon_ = nullptr;
   raw_ptr<views::Label> window_title_ = nullptr;
 
   // The container holding the caption buttons (minimize, maximize, close, etc.)

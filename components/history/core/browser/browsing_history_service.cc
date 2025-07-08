@@ -14,6 +14,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
@@ -120,7 +121,8 @@ BrowsingHistoryService::HistoryEntry::HistoryEntry(
     bool blocked_visit,
     const GURL& remote_icon_url_for_uma,
     int visit_count,
-    int typed_count)
+    int typed_count,
+    std::optional<std::string> app_id)
     : entry_type(entry_type),
       url(url),
       title(title),
@@ -131,8 +133,9 @@ BrowsingHistoryService::HistoryEntry::HistoryEntry(
       blocked_visit(blocked_visit),
       remote_icon_url_for_uma(remote_icon_url_for_uma),
       visit_count(visit_count),
-      typed_count(typed_count) {
-  all_timestamps.insert(time.ToInternalValue());
+      typed_count(typed_count),
+      app_id(app_id) {
+  all_timestamps.insert(time);
 }
 
 BrowsingHistoryService::HistoryEntry::HistoryEntry()
@@ -141,7 +144,7 @@ BrowsingHistoryService::HistoryEntry::HistoryEntry()
 BrowsingHistoryService::HistoryEntry::HistoryEntry(const HistoryEntry& other) =
     default;
 
-BrowsingHistoryService::HistoryEntry::~HistoryEntry() {}
+BrowsingHistoryService::HistoryEntry::~HistoryEntry() = default;
 
 bool BrowsingHistoryService::HistoryEntry::SortByTimeDescending(
     const BrowsingHistoryService::HistoryEntry& entry1,
@@ -173,8 +176,9 @@ BrowsingHistoryService::BrowsingHistoryService(
   DCHECK(driver_);
 
   // Get notifications when history is cleared.
-  if (local_history_)
+  if (local_history_) {
     history_service_observation_.Observe(local_history_.get());
+  }
 
   // Get notifications when web history is deleted.
   WebHistoryService* web_history = driver_->GetWebHistoryService();
@@ -211,14 +215,19 @@ void BrowsingHistoryService::OnStateChanged(syncer::SyncService* sync) {
   }
 }
 
+void BrowsingHistoryService::OnSyncShutdown(syncer::SyncService* sync) {
+  sync_service_observation_.Reset();
+}
+
 void BrowsingHistoryService::WebHistoryTimeout(
     scoped_refptr<QueryHistoryState> state) {
   state->remote_status = TIMED_OUT;
 
   // Don't reset `web_history_request_` so we can still record histogram.
   // TODO(dubroy): Communicate the failure to the front end.
-  if (!query_task_tracker_.HasTrackedTasks())
+  if (!query_task_tracker_.HasTrackedTasks()) {
     ReturnResultsToDriver(std::move(state));
+  }
 }
 
 void BrowsingHistoryService::QueryHistory(const std::u16string& search_text,
@@ -260,19 +269,23 @@ void BrowsingHistoryService::QueryHistoryInternal(
 
   WebHistoryService* web_history = driver_->GetWebHistoryService();
   if (web_history) {
-    if (state->remote_results.size() < desired_count &&
-        state->remote_status != REACHED_BEGINNING) {
-      // Start a timer with timeout before we make the actual query, otherwise
-      // tests get confused when completion callback is run synchronously.
-      web_history_timer_->Start(
-          FROM_HERE, base::Seconds(kWebHistoryTimeoutSeconds),
-          base::BindOnce(&BrowsingHistoryService::WebHistoryTimeout,
-                         weak_factory_.GetWeakPtr(), state));
+    // Run WebHistory query for full history. App-specific history uses the
+    // results from the local database only, since the legacy json API service
+    // WebHistory relies on can't be updated to process app_id.
+    if (state->original_options.app_id == kNoAppIdFilter) {
+      if (state->remote_results.size() < desired_count &&
+          state->remote_status != REACHED_BEGINNING) {
+        // Start a timer with timeout before we make the actual query, otherwise
+        // tests get confused when completion callback is run synchronously.
+        web_history_timer_->Start(
+            FROM_HERE, base::Seconds(kWebHistoryTimeoutSeconds),
+            base::BindOnce(&BrowsingHistoryService::WebHistoryTimeout,
+                           weak_factory_.GetWeakPtr(), state));
 
-      net::PartialNetworkTrafficAnnotationTag partial_traffic_annotation =
-          net::DefinePartialNetworkTrafficAnnotation("web_history_query",
-                                                     "web_history_service",
-                                                     R"(
+        net::PartialNetworkTrafficAnnotationTag partial_traffic_annotation =
+            net::DefinePartialNetworkTrafficAnnotation("web_history_query",
+                                                       "web_history_service",
+                                                       R"(
             semantics {
               description:
                 "If history sync is enabled, this downloads the synced "
@@ -296,22 +309,23 @@ void BrowsingHistoryService::QueryHistoryInternal(
                 }
               }
             })");
-      should_return_results_immediately = false;
-      web_history_request_ = web_history->QueryHistory(
-          state->search_text,
-          OptionsWithEndTime(state->original_options,
-                             state->remote_end_time_for_continuation),
-          base::BindOnce(&BrowsingHistoryService::WebHistoryQueryComplete,
-                         weak_factory_.GetWeakPtr(), state, clock_->Now()),
-          partial_traffic_annotation);
-
-      // Test the existence of other forms of browsing history.
-      driver_->ShouldShowNoticeAboutOtherFormsOfBrowsingHistory(
-          sync_service_, web_history,
-          base::BindOnce(
-              &BrowsingHistoryService::OtherFormsOfBrowsingHistoryQueryComplete,
-              weak_factory_.GetWeakPtr()));
+        should_return_results_immediately = false;
+        web_history_request_ = web_history->QueryHistory(
+            state->search_text,
+            OptionsWithEndTime(state->original_options,
+                               state->remote_end_time_for_continuation),
+            base::BindOnce(&BrowsingHistoryService::WebHistoryQueryComplete,
+                           weak_factory_.GetWeakPtr(), state, clock_->Now()),
+            partial_traffic_annotation);
+      }
     }
+    // Test the existence of other forms of browsing history. Performed for both
+    // full/app-specific history to display the privacy disclaimer on UI.
+    driver_->ShouldShowNoticeAboutOtherFormsOfBrowsingHistory(
+        sync_service_, web_history,
+        base::BindOnce(
+            &BrowsingHistoryService::OtherFormsOfBrowsingHistoryQueryComplete,
+            weak_factory_.GetWeakPtr()));
   } else {
     state->remote_status = NO_DEPENDENCY;
     // The notice could not have been shown, because there is no web history.
@@ -325,6 +339,13 @@ void BrowsingHistoryService::QueryHistoryInternal(
   if (should_return_results_immediately) {
     ReturnResultsToDriver(std::move(state));
   }
+}
+
+void BrowsingHistoryService::GetAllAppIds() {
+  local_history_->GetAllAppIds(
+      base::BindOnce(&BrowsingHistoryService::OnGetAllAppIds,
+                     weak_factory_.GetWeakPtr()),
+      &query_task_tracker_);
 }
 
 void BrowsingHistoryService::GetLastVisitToHostBeforeRecentNavigations(
@@ -380,7 +401,6 @@ void BrowsingHistoryService::RemoveVisits(
   std::vector<ExpireHistoryArgs> expire_list;
   expire_list.reserve(items.size());
 
-  DCHECK(urls_to_be_deleted_.empty());
   for (const BrowsingHistoryService::HistoryEntry& entry : items) {
     // In order to ensure that visits will be deleted from the server and other
     // clients (even if they are offline), create a sync delete directive for
@@ -390,18 +410,17 @@ void BrowsingHistoryService::RemoveVisits(
         delete_directive.mutable_global_id_directive();
     ExpireHistoryArgs* expire_args = nullptr;
 
-    for (int64_t timestamp : entry.all_timestamps) {
+    for (base::Time timestamp : entry.all_timestamps) {
       if (!expire_args) {
         GURL gurl(entry.url);
         expire_list.resize(expire_list.size() + 1);
         expire_args = &expire_list.back();
-        expire_args->SetTimeRangeForOneDay(
-            base::Time::FromInternalValue(timestamp));
+        expire_args->SetTimeRangeForOneDay(timestamp);
         expire_args->urls.insert(gurl);
-        urls_to_be_deleted_.insert(gurl);
       }
       // The local visit time is treated as a global ID for the visit.
-      global_id_directive->add_global_id(timestamp);
+      global_id_directive->add_global_id(
+          timestamp.ToDeltaSinceWindowsEpoch().InMicroseconds());
     }
 
     // Set the start and end time in microseconds since the Unix epoch.
@@ -416,9 +435,12 @@ void BrowsingHistoryService::RemoveVisits(
     global_id_directive->set_end_time_usec(
         (end_time - base::Time::UnixEpoch()).InMicroseconds() - 1);
 
+    expire_args->restrict_app_id = entry.app_id;
+
     // TODO(dubroy): Figure out the proper way to handle an error here.
-    if (web_history && local_history_)
+    if (web_history && local_history_) {
       local_history_->ProcessLocalDeleteDirective(delete_directive);
+    }
   }
 
   if (local_history_) {
@@ -460,6 +482,9 @@ void BrowsingHistoryService::RemoveVisits(
         base::BindOnce(&BrowsingHistoryService::RemoveWebHistoryComplete,
                        weak_factory_.GetWeakPtr()),
         partial_traffic_annotation);
+
+    base::UmaHistogramCounts1000(
+        "History.RemoveVisitsFromWebHistory.EntryCount", expire_list.size());
   }
 
   driver_->OnRemoveVisits(expire_list);
@@ -591,14 +616,20 @@ void BrowsingHistoryService::QueryComplete(
     output.emplace_back(HistoryEntry(
         HistoryEntry::LOCAL_ENTRY, page.url(), page.title(), page.visit_time(),
         std::string(), !state->search_text.empty(), page.snippet().text(),
-        page.blocked_visit(), GURL(), page.visit_count(), page.typed_count()));
+        page.blocked_visit(), GURL(), page.visit_count(), page.typed_count(),
+        page.app_id()));
   }
 
   state->local_status =
       results.reached_beginning() ? REACHED_BEGINNING : MORE_RESULTS;
 
-  if (!web_history_timer_->IsRunning())
+  if (!web_history_timer_->IsRunning()) {
     ReturnResultsToDriver(std::move(state));
+  }
+}
+
+void BrowsingHistoryService::OnGetAllAppIds(GetAllAppIdsResult result) {
+  driver_->OnGetAllAppIds(result.app_ids);
 }
 
 void BrowsingHistoryService::ReturnResultsToDriver(
@@ -645,8 +676,9 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
     base::optional_ref<const base::Value::Dict> results_dict) {
   // If the response came in too late, do nothing.
   // TODO(dubroy): Maybe show a banner, and prompt the user to reload?
-  if (!web_history_timer_->IsRunning())
+  if (!web_history_timer_->IsRunning()) {
     return;
+  }
   web_history_timer_->Stop();
   web_history_request_.reset();
 
@@ -682,13 +714,15 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
         if (state->original_options.host_only) {
           // Do post filter to skip entries that do not have the correct
           // hostname.
-          if (gurl.host() != host_name_utf8)
+          if (gurl.host() != host_name_utf8) {
             continue;
+          }
         }
 
         // Ignore any URLs that should not be shown in the history page.
-        if (driver_->ShouldHideWebHistoryUrl(gurl))
+        if (driver_->ShouldHideWebHistoryUrl(gurl)) {
           continue;
+        }
 
         std::u16string title;
 
@@ -713,7 +747,6 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
               !(timestamp_string = id_dict->FindString("timestamp_usec")) ||
               !base::StringToInt64(*timestamp_string, &timestamp_usec)) {
             NOTREACHED() << "Unable to extract timestamp.";
-            continue;
           }
           // The timestamp on the server is a Unix time.
           base::Time time =
@@ -728,7 +761,8 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
           state->remote_results.emplace_back(HistoryEntry(
               HistoryEntry::REMOTE_ENTRY, gurl, title, time, client_id,
               !state->search_text.empty(), std::u16string(),
-              /* blocked_visit */ false, GURL(favicon_url), 0, 0));
+              /* blocked_visit */ false, GURL(favicon_url), 0, 0,
+              /*app_id= */ std::nullopt));
         }
       }
     }
@@ -742,8 +776,9 @@ void BrowsingHistoryService::WebHistoryQueryComplete(
     state->remote_status = FAILURE;
   }
 
-  if (!query_task_tracker_.HasTrackedTasks())
+  if (!query_task_tracker_.HasTrackedTasks()) {
     ReturnResultsToDriver(std::move(state));
+  }
 }
 
 void BrowsingHistoryService::OtherFormsOfBrowsingHistoryQueryComplete(
@@ -754,47 +789,38 @@ void BrowsingHistoryService::OtherFormsOfBrowsingHistoryQueryComplete(
 }
 
 void BrowsingHistoryService::RemoveComplete() {
-  urls_to_be_deleted_.clear();
-
   // Notify the driver that the deletion request is complete, but only if
   // web history delete request is not still pending.
-  if (!has_pending_delete_request_)
+  if (!has_pending_delete_request_) {
     driver_->OnRemoveVisitsComplete();
+  }
 }
 
 void BrowsingHistoryService::RemoveWebHistoryComplete(bool success) {
   has_pending_delete_request_ = false;
   // TODO(dubroy): Should we handle failure somehow? Delete directives will
   // ensure that the visits are eventually deleted, so maybe it's not necessary.
-  if (!delete_task_tracker_.HasTrackedTasks())
+  if (!delete_task_tracker_.HasTrackedTasks()) {
     RemoveComplete();
-}
-
-// Helper function for Observe that determines if there are any differences
-// between the URLs noticed for deletion and the ones we are expecting.
-static bool DeletionsDiffer(const URLRows& deleted_rows,
-                            const std::set<GURL>& urls_to_be_deleted) {
-  if (deleted_rows.size() != urls_to_be_deleted.size())
-    return true;
-  for (const auto& i : deleted_rows) {
-    if (urls_to_be_deleted.find(i.url()) == urls_to_be_deleted.end())
-      return true;
   }
-  return false;
 }
 
-void BrowsingHistoryService::OnURLsDeleted(HistoryService* history_service,
-                                           const DeletionInfo& deletion_info) {
-  if (deletion_info.IsAllHistory() ||
-      DeletionsDiffer(deletion_info.deleted_rows(), urls_to_be_deleted_))
+void BrowsingHistoryService::OnHistoryDeletions(
+    HistoryService* history_service,
+    const DeletionInfo& deletion_info) {
+  // TODO(calamity): Only ignore history deletions when they are actually
+  // initiated by us, rather than ignoring them whenever we are deleting.
+  if (!delete_task_tracker_.HasTrackedTasks()) {
     driver_->HistoryDeleted();
+  }
 }
 
 void BrowsingHistoryService::OnWebHistoryDeleted() {
   // TODO(calamity): Only ignore web history deletions when they are actually
   // initiated by us, rather than ignoring them whenever we are deleting.
-  if (!has_pending_delete_request_)
+  if (!has_pending_delete_request_) {
     driver_->HistoryDeleted();
+  }
 }
 
 }  // namespace history

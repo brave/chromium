@@ -62,10 +62,13 @@ class ASH_EXPORT PrivacyScreenController
   void OnSigninScreenPrefServiceInitialized(PrefService* pref_service) override;
 
   // DisplayConfigurator::Observer:
-  void OnDisplayModeChanged(
-      const std::vector<display::DisplaySnapshot*>& displays) override;
+  void OnDisplayConfigurationChanged(
+      const std::vector<raw_ptr<display::DisplaySnapshot, VectorExperimental>>&
+          displays) override;
 
  private:
+  friend class PrivacyScreenToastControllerTest;
+
   // Calculates PrivacyScreen's logical status.
   bool CalculateCurrentStatus() const;
 
@@ -91,7 +94,7 @@ class ASH_EXPORT PrivacyScreenController
 
   // The pref service of the currently active user. Can be null in
   // ash_unittests.
-  raw_ptr<PrefService, ExperimentalAsh> active_user_pref_service_ = nullptr;
+  raw_ptr<PrefService> active_user_pref_service_ = nullptr;
 
   // Set to true when entering the login screen. This should happen once per
   // Chrome restart.

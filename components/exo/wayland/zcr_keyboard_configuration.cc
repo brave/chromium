@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/exo/wayland/zcr_keyboard_configuration.h"
 
-#include <keyboard-configuration-unstable-v1-server-protocol.h>
 #include <linux/input.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol-core.h>
 #include <xkbcommon/xkbcommon.h>
+
+#include <string_view>
 
 #include "ash/ime/ime_controller_impl.h"
 #include "ash/shell.h"
@@ -33,8 +39,7 @@
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
 
-namespace exo {
-namespace wayland {
+namespace exo::wayland {
 
 namespace {
 
@@ -45,7 +50,7 @@ class WaylandKeyboardDeviceConfigurationDelegate
     : public ash::input_method::InputMethodManager::ImeMenuObserver,
       public KeyboardDeviceConfigurationDelegate,
       public KeyboardObserver,
-      public ash::ImeControllerImpl::Observer,
+      public ash::ImeController::Observer,
       public ui::InputDeviceEventObserver {
  public:
   WaylandKeyboardDeviceConfigurationDelegate(wl_resource* resource,
@@ -93,7 +98,7 @@ class WaylandKeyboardDeviceConfigurationDelegate
     wl_client_flush(client());
   }
 
-  // Overridden from ImeControllerImpl::Observer:
+  // Overridden from ImeController::Observer:
   void OnCapsLockChanged(bool enabled) override {}
 
   void OnKeyboardLayoutNameChanged(const std::string& layout_name) override {
@@ -162,7 +167,7 @@ class WaylandKeyboardDeviceConfigurationDelegate
     // Wayland methods should be run in UI Thread.
     DCHECK(base::CurrentUIThread::IsSet());
 
-    base::StringPiece keymap = keymap_str.get();
+    std::string_view keymap = keymap_str.get();
     // Send the content of |keymap| with trailing '\0' termination via shared
     // memory.
     base::UnsafeSharedMemoryRegion shared_keymap_region =
@@ -244,8 +249,8 @@ class WaylandKeyboardDeviceConfigurationDelegate
 
   wl_client* client() const { return wl_resource_get_client(resource_); }
 
-  raw_ptr<wl_resource, ExperimentalAsh> resource_;
-  raw_ptr<Keyboard, ExperimentalAsh> keyboard_;
+  raw_ptr<wl_resource> resource_;
+  raw_ptr<Keyboard> keyboard_;
 
   // List of acknowledged installed keyboard layouts. Used to determine if there
   // are new keyboard layouts installed.
@@ -315,5 +320,4 @@ void bind_keyboard_configuration(wl_client* client,
       resource, &keyboard_configuration_implementation, data, nullptr);
 }
 
-}  // namespace wayland
-}  // namespace exo
+}  // namespace exo::wayland

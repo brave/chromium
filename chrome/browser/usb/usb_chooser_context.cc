@@ -5,6 +5,7 @@
 #include "chrome/browser/usb/usb_chooser_context.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -20,7 +21,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/usb/usb_blocklist.h"
 #include "chrome/browser/usb/web_usb_histograms.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -29,14 +29,9 @@
 #include "services/device/public/mojom/usb_device.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/settings/cros_settings.h"
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/device_settings_service.mojom.h"
-#include "chromeos/startup/browser_params_proxy.h"
 #endif
 
 namespace {
@@ -115,9 +110,6 @@ base::Value::Dict DeviceIdsToValue(int vendor_id, int product_id) {
 
 #if BUILDFLAG(IS_CHROMEOS)
 bool IsDetachable(int vid, int pid) {
-  // TOOD(huangs): Figure out how to do the following in Lacros, which does not
-  // have access to ash::CrosSettings (https://crbug.com/1219329).
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   const base::Value::List* policy_list;
   if (ash::CrosSettings::Get()->GetList(ash::kUsbDetachableAllowlist,
                                         &policy_list)) {
@@ -128,20 +120,6 @@ bool IsDetachable(int vid, int pid) {
       }
     }
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  const crosapi::mojom::DeviceSettings* device_settings =
-      chromeos::BrowserParamsProxy::Get()->DeviceSettings().get();
-  if (device_settings && device_settings->usb_detachable_allow_list) {
-    for (const auto& entry :
-         device_settings->usb_detachable_allow_list->usb_device_ids) {
-      if (entry->has_vendor_id && entry->vendor_id == vid &&
-          entry->has_product_id && entry->product_id == pid) {
-        return true;
-      }
-    }
-  }
-#endif
   return false;
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -201,7 +179,7 @@ base::Value::Dict UsbChooserContext::DeviceInfoToValue(
   base::Value::Dict device_value;
   device_value.Set(kDeviceNameKey, device_info.product_name
                                        ? *device_info.product_name
-                                       : base::StringPiece16());
+                                       : std::u16string_view());
   device_value.Set(kVendorIdKey, device_info.vendor_id);
   device_value.Set(kProductIdKey, device_info.product_id);
 
@@ -235,6 +213,11 @@ void UsbChooserContext::InitDeviceList(
         .Run(std::move(device_list));
     pending_get_devices_requests_.pop();
   }
+}
+
+void UsbChooserContext::Shutdown() {
+  FlushScheduledSaveSettingsCalls();
+  permissions::ObjectPermissionContextBase::Shutdown();
 }
 
 void UsbChooserContext::EnsureConnectionWithDeviceManager() {
@@ -309,8 +292,7 @@ UsbChooserContext::GetGrantedObjects(const url::Origin& origin) {
         DCHECK(base::Contains(devices_, guid));
         objects.push_back(std::make_unique<Object>(
             origin, DeviceInfoToValue(*devices_[guid]),
-            content_settings::SettingSource::SETTING_SOURCE_USER,
-            is_incognito_));
+            content_settings::SettingSource::kUser, is_incognito_));
       }
     }
   }
@@ -319,7 +301,7 @@ UsbChooserContext::GetGrantedObjects(const url::Origin& origin) {
   // to device object if the object is also allowed by policy. Any objects that
   // have been granted by policy are removed from |objects| to avoid duplicate
   // permissions from being displayed.
-  // TODO(https://crbug.com/926984): This logic is very similar to the logic for
+  // TODO(crbug.com/40611788): This logic is very similar to the logic for
   // GetAllGrantedObjects(), so it could potentially be centralized.
   std::map<std::pair<int, int>, base::Value::Dict> device_ids_to_object_map;
   for (auto it = objects.begin(); it != objects.end();) {
@@ -357,7 +339,7 @@ UsbChooserContext::GetGrantedObjects(const url::Origin& origin) {
       }
 
       objects.push_back(std::make_unique<Object>(
-          url, std::move(object), content_settings::SETTING_SOURCE_POLICY,
+          url, std::move(object), content_settings::SettingSource::kPolicy,
           is_incognito_));
     }
   }
@@ -380,14 +362,14 @@ UsbChooserContext::GetAllGrantedObjects() {
       DCHECK(base::Contains(devices_, guid));
       objects.push_back(std::make_unique<Object>(
           origin, DeviceInfoToValue(*devices_[guid]),
-          content_settings::SETTING_SOURCE_USER, is_incognito_));
+          content_settings::SettingSource::kUser, is_incognito_));
     }
   }
 
   // Iterate through the user granted objects to create a mapping of device IDs
   // to device object for the policy granted objects to use, and remove
   // objects that have already been granted permission by the policy.
-  // TODO(https://crbug.com/926984): This logic is very similar to the logic for
+  // TODO(crbug.com/40611788): This logic is very similar to the logic for
   // GetGrantedObjects(), so it could potentially be centralized.
   std::map<std::pair<int, int>, base::Value::Dict> device_ids_to_object_map;
   for (auto it = objects.begin(); it != objects.end();) {
@@ -422,8 +404,7 @@ UsbChooserContext::GetAllGrantedObjects() {
       }
 
       objects.push_back(std::make_unique<Object>(
-          url, std::move(object),
-          content_settings::SettingSource::SETTING_SOURCE_POLICY,
+          url, std::move(object), content_settings::SettingSource::kPolicy,
           is_incognito_));
     }
   }
@@ -496,8 +477,8 @@ std::u16string UsbChooserContext::GetObjectDisplayName(
   if (!name->empty())
     return base::UTF8ToUTF16(*name);
 
-  absl::optional<int> vendor_id = object.FindInt(kVendorIdKey);
-  absl::optional<int> product_id = object.FindInt(kProductIdKey);
+  std::optional<int> vendor_id = object.FindInt(kVendorIdKey);
+  std::optional<int> product_id = object.FindInt(kProductIdKey);
   DCHECK(vendor_id && product_id);
   return GetDeviceNameFromIds(*vendor_id, *product_id);
 }
@@ -516,8 +497,6 @@ void UsbChooserContext::GrantDevicePermission(
 bool UsbChooserContext::HasDevicePermission(
     const url::Origin& origin,
     const device::mojom::UsbDeviceInfo& device_info) {
-  if (UsbBlocklist::Get().IsExcluded(device_info))
-    return false;
 
   if (usb_policy_allowed_devices_->IsDeviceAllowed(origin, device_info)) {
     return true;
@@ -690,7 +669,12 @@ void UsbChooserContext::OnDeviceManagerConnectionError() {
 
 void UsbChooserContext::SetDeviceManagerForTesting(
     mojo::PendingRemote<device::mojom::UsbDeviceManager> fake_device_manager) {
-  DCHECK(!device_manager_);
+  // `device_manager_` can be bound in some test scenarios, in that case, just
+  // reset the connection.
+  if (device_manager_) {
+    device_manager_.reset();
+    client_receiver_.reset();
+  }
   DCHECK(fake_device_manager);
   device_manager_.Bind(std::move(fake_device_manager));
   SetUpDeviceManagerConnection();

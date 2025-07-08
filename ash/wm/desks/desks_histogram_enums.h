@@ -7,9 +7,11 @@
 
 namespace ash {
 
-// These values are logged to UMA. Entries should not be renumbered and
-// numeric values should never be reused. Please keep in sync with
-// DesksCreationRemovalSource in src/tools/metrics/histograms/enums.xml.
+// The enums below are used with UMA. Entries should not be renumbered and
+// numeric values should never be reused.
+
+// Please keep in sync with the matching enum in
+// tools/metrics/histograms/metadata/ash/enums.xml
 enum class DesksCreationRemovalSource {
   // TODO(b/291821991): Update this to reflect that there is now more than one
   // way to use a button to create or remove a desk.
@@ -23,24 +25,23 @@ enum class DesksCreationRemovalSource {
   kEnsureDefaultDesk = 7,
   kFloatingWorkspace = 8,
   kDeskButtonDeskBarButton = 9,
-  kMaxValue = kDeskButtonDeskBarButton,
+  kCoral = 10,
+  kMaxValue = kCoral,
 };
 
-// These values are logged to UMA. Entries should not be renumbered and
-// numeric values should never be reused. Please keep in sync with
-// DesksMoveWindowFromActiveDeskSource in
-// src/tools/metrics/histograms/enums.xml.
+// Please keep in sync with the matching enum in
+// tools/metrics/histograms/metadata/ash/enums.xml
 enum class DesksMoveWindowFromActiveDeskSource {
   kDragAndDrop = 0,
   kShortcut = 1,
   kSendToDesk = 2,
   kVisibleOnAllDesks = 3,
-  kMaxValue = kVisibleOnAllDesks,
+  kCoral = 4,
+  kMaxValue = kCoral,
 };
 
-// These values are logged to UMA. Entries should not be renumbered and
-// numeric values should never be reused. Please keep in sync with
-// DesksSwitchSource in src/tools/metrics/histograms/enums.xml.
+// Please keep in sync with the matching enum in
+// tools/metrics/histograms/metadata/ash/enums.xml
 enum class DesksSwitchSource {
   kNewDeskShortcut = 0,
   kDeskRemoved = 1,
@@ -60,52 +61,61 @@ enum class DesksSwitchSource {
   kDeskButtonSwitchButton = 13,
   kDeskButtonDeskRemoved = 14,
   kDeskButtonMiniViewButton = 15,
-  kMaxValue = kDeskButtonMiniViewButton,
+  kDeskRestored = 16,
+  kCoral = 17,
+  kMaxValue = kCoral,
 };
 
-constexpr char kNewDeskHistogramName[] = "Ash.Desks.NewDesk2";
-constexpr char kDeskSwitchHistogramName[] = "Ash.Desks.DesksSwitch";
-constexpr char kRemoveDeskHistogramName[] = "Ash.Desks.RemoveDesk";
+inline constexpr char kNewDeskHistogramName[] = "Ash.Desks.NewDesk2";
+inline constexpr char kDeskSwitchHistogramName[] = "Ash.Desks.DesksSwitch";
+inline constexpr char kRemoveDeskHistogramName[] = "Ash.Desks.RemoveDesk";
 
-constexpr char kNumberOfCustomNamesHistogramName[] =
+inline constexpr char kNumberOfCustomNamesHistogramName[] =
     "Ash.Desks.CustomNameCount";
-constexpr char kPercentageOfCustomNamesHistogramName[] =
+inline constexpr char kPercentageOfCustomNamesHistogramName[] =
     "Ash.Desks.CustomNamePercentage";
-constexpr char kCustomNameCreatedHistogramName[] =
+inline constexpr char kCustomNameCreatedHistogramName[] =
     "Ash.Desks.CustomNameCreated";
 
-constexpr char kDeskButtonPressesHistogramName[] =
+inline constexpr char kDeskButtonPressesHistogramName[] =
     "Ash.Desks.DeskButton.Presses";
 
-constexpr char kDeskButtonDeskBarActivateDeskHistogramName[] =
+inline constexpr char kDeskButtonDeskBarActivateDeskHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.ActivateDesk";
-constexpr char kDeskButtonDeskBarCloseDeskHistogramName[] =
+inline constexpr char kDeskButtonDeskBarCloseDeskHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.CloseDesk";
-constexpr char kDeskButtonDeskBarCombineDesksHistogramName[] =
+inline constexpr char kDeskButtonDeskBarCombineDesksHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.CombineDesks";
-constexpr char kDeskButtonDeskBarNewDeskHistogramName[] =
+inline constexpr char kDeskButtonDeskBarNewDeskHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.NewDesk";
-constexpr char kDeskButtonDeskBarOpenLibraryHistogramName[] =
+inline constexpr char kDeskButtonDeskBarOpenContextMenuHistogramName[] =
+    "Ash.Desks.DeskButton.BarAction.OpenContextMenu";
+inline constexpr char kDeskButtonDeskBarOpenLibraryHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.OpenLibrary";
-constexpr char kDeskButtonDeskBarRenameDeskHistogramName[] =
+inline constexpr char kDeskButtonDeskBarRenameDeskHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.RenameDesk";
-constexpr char kDeskButtonDeskBarReorderDeskHistogramName[] =
+inline constexpr char kDeskButtonDeskBarReorderDeskHistogramName[] =
     "Ash.Desks.DeskButton.BarAction.ReorderDesk";
 
-constexpr char kOverviewDeskBarActivateDeskHistogramName[] =
+inline constexpr char kOverviewDeskBarActivateDeskHistogramName[] =
     "Ash.Desks.Overview.BarAction.ActivateDesk";
-constexpr char kOverviewDeskBarCloseDeskHistogramName[] =
+inline constexpr char kOverviewDeskBarCloseDeskHistogramName[] =
     "Ash.Desks.Overview.BarAction.CloseDesk";
-constexpr char kOverviewDeskBarCombineDesksHistogramName[] =
+inline constexpr char kOverviewDeskBarCombineDesksHistogramName[] =
     "Ash.Desks.Overview.BarAction.CombineDesks";
-constexpr char kOverviewDeskBarNewDeskHistogramName[] =
+inline constexpr char kOverviewDeskBarNewDeskHistogramName[] =
     "Ash.Desks.Overview.BarAction.NewDesk";
-constexpr char kOverviewDeskBarOpenLibraryHistogramName[] =
+inline constexpr char kOverviewDeskBarOpenContextMenuHistogramName[] =
+    "Ash.Desks.Overview.BarAction.OpenContextMenu";
+inline constexpr char kOverviewDeskBarOpenLibraryHistogramName[] =
     "Ash.Desks.Overview.BarAction.OpenLibrary";
-constexpr char kOverviewDeskBarRenameDeskHistogramName[] =
+inline constexpr char kOverviewDeskBarRenameDeskHistogramName[] =
     "Ash.Desks.Overview.BarAction.RenameDesk";
-constexpr char kOverviewDeskBarReorderDeskHistogramName[] =
+inline constexpr char kOverviewDeskBarReorderDeskHistogramName[] =
     "Ash.Desks.Overview.BarAction.ReorderDesk";
+
+inline constexpr char kDeskSwitchScreenshotResultHistogramName[] =
+    "Ash.Desks.DesksSwitchScreenshotResult";
 
 }  // namespace ash
 

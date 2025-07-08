@@ -6,7 +6,9 @@
 
 #include "base/no_destructor.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/engagement/site_engagement_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_features.h"
 
 // static
 NotificationPermissionsReviewServiceFactory*
@@ -29,19 +31,38 @@ NotificationPermissionsReviewServiceFactory::
           "NotificationPermissionsReviewService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
-              .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(HostContentSettingsMapFactory::GetInstance());
+  DependsOn(site_engagement::SiteEngagementServiceFactory::GetInstance());
 }
 
 NotificationPermissionsReviewServiceFactory::
     ~NotificationPermissionsReviewServiceFactory() = default;
 
-KeyedService*
-NotificationPermissionsReviewServiceFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
-  return new NotificationPermissionsReviewService(
-      HostContentSettingsMapFactory::GetForProfile(context));
+std::unique_ptr<KeyedService> NotificationPermissionsReviewServiceFactory::
+    BuildServiceInstanceForBrowserContext(
+        content::BrowserContext* context) const {
+  site_engagement::SiteEngagementService* engagement_service =
+      site_engagement::SiteEngagementService::Get(
+          Profile::FromBrowserContext(context));
+  return std::make_unique<NotificationPermissionsReviewService>(
+      HostContentSettingsMapFactory::GetForProfile(context),
+      engagement_service);
+}
+
+bool NotificationPermissionsReviewServiceFactory::
+    ServiceIsCreatedWithBrowserContext() const {
+#if BUILDFLAG(IS_ANDROID)
+  return base::FeatureList::IsEnabled(features::kSafetyHub);
+#else   // BUILDFLAG(IS_ANDROID)
+  return base::FeatureList::IsEnabled(features::kSafetyHubServicesOnStartUp);
+#endif  // BUILDFLAG(IS_ANDROID)
+}
+
+bool NotificationPermissionsReviewServiceFactory::ServiceIsNULLWhileTesting()
+    const {
+  return true;
 }

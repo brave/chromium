@@ -25,7 +25,6 @@ class ProcessPriorityAggregatorTest : public GraphTestHarness {
   using Super = GraphTestHarness;
 
   void SetUp() override {
-    GetGraphFeatures().EnableExecutionContextRegistry();
     Super::SetUp();
     ppa_ = new ProcessPriorityAggregator();
     graph()->PassToGraph(base::WrapUnique(ppa_.get()));
@@ -34,19 +33,19 @@ class ProcessPriorityAggregatorTest : public GraphTestHarness {
   void ExpectPriorityCounts(ProcessNodeImpl* process_node,
                             size_t user_visible_count,
                             size_t user_blocking_count) {
-    auto* data = ProcessPriorityAggregator::Data::GetForTesting(process_node);
-    EXPECT_EQ(user_visible_count, data->user_visible_count_for_testing());
-    EXPECT_EQ(user_blocking_count, data->user_blocking_count_for_testing());
+    auto& data = ProcessPriorityAggregator::Data::Get(process_node);
+    EXPECT_EQ(user_visible_count, data.user_visible_count_for_testing());
+    EXPECT_EQ(user_blocking_count, data.user_blocking_count_for_testing());
 #if DCHECK_IS_ON()
     // In DCHECK mode the exact number of lowest priority contexts is tracked,
     // so IsEmpty only returns true when no ExecutionContexts exist. This is
     // only true during graph shutdown.
-    EXPECT_FALSE(data->IsEmpty());
+    EXPECT_FALSE(data.IsEmpty());
 #else
     // In non-DCHECK builds only the user visible and user blocking contexts
     // are counted.
     EXPECT_EQ(user_visible_count == 0 && user_blocking_count == 0,
-              data->IsEmpty());
+              data.IsEmpty());
 #endif
   }
 
@@ -66,24 +65,24 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   auto& worker1 = mock_graph.worker;
   auto& worker2 = mock_graph.other_worker;
 
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 0, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
   // Set the priority of a frame in process 1 to USER_VISIBLE.
   frame1_1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_VISIBLE, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
   // Set the priority of a frame in process 2 to USER_VISIBLE.
   frame2_1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_VISIBLE, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 0);
   ExpectPriorityCounts(proc2.get(), 1, 0);
 
@@ -91,8 +90,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // overwrites the vote from the first frame.
   frame1_2->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_BLOCKING, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 1);
   ExpectPriorityCounts(proc2.get(), 1, 0);
 
@@ -100,8 +99,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // the vote from the sole frame in this process.
   worker2->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_BLOCKING, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 1);
   ExpectPriorityCounts(proc2.get(), 1, 1);
 
@@ -109,8 +108,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // both frames in this process are at USER_VISIBLE.
   frame1_2->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_VISIBLE, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::USER_BLOCKING, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 2, 0);
   ExpectPriorityCounts(proc2.get(), 1, 1);
 
@@ -118,8 +117,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // execution context priority of that process is now due to the sole frame.
   worker2->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::LOWEST, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 2, 0);
   ExpectPriorityCounts(proc2.get(), 1, 0);
 
@@ -127,8 +126,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // execution contexts in this process are now at LOWEST.
   frame2_1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::LOWEST, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 2, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
@@ -136,8 +135,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // execution priority of that process is now due to the second frame.
   frame1_1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::LOWEST, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
@@ -145,8 +144,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // execution contexts in this process are now at LOWEST.
   frame1_2->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::LOWEST, kReason));
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 0, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
@@ -154,8 +153,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // with the highest priority and thus dictates the priority of this process.
   worker1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::USER_VISIBLE, kReason));
-  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::USER_VISIBLE, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 1, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 
@@ -163,8 +162,8 @@ TEST_F(ProcessPriorityAggregatorTest, ProcessAggregation) {
   // contexts in this process are now at LOWEST.
   worker1->SetPriorityAndReason(
       PriorityAndReason(base::TaskPriority::LOWEST, kReason));
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->priority());
-  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->priority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc1->GetPriority());
+  EXPECT_EQ(base::TaskPriority::LOWEST, proc2->GetPriority());
   ExpectPriorityCounts(proc1.get(), 0, 0);
   ExpectPriorityCounts(proc2.get(), 0, 0);
 }

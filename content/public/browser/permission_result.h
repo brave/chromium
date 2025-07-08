@@ -5,10 +5,13 @@
 #ifndef CONTENT_PUBLIC_BROWSER_PERMISSION_RESULT_H_
 #define CONTENT_PUBLIC_BROWSER_PERMISSION_RESULT_H_
 
+#include "components/content_settings/core/common/content_settings.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 
 namespace content {
+
+using PermissionStatus = blink::mojom::PermissionStatus;
 
 // Identifies the source or reason for a permission status being returned.
 enum class PermissionStatusSource {
@@ -39,22 +42,37 @@ enum class PermissionStatusSource {
   // permissions request.
   VIRTUAL_URL_DIFFERENT_ORIGIN,
 
-  // The status is the result of a permission being requested inside a portal.
-  // Permissions are currently always denied inside a portal.
-  PORTAL,
-
   // The status is the result of a permission being requested inside a fenced
   // frame. Permissions are currently always denied inside a fenced frame.
   FENCED_FRAME,
+
+  // The status is the result of being blocked due to having recently displayed
+  // the prompt to the user.
+  RECENT_DISPLAY,
 };
 
 struct CONTENT_EXPORT PermissionResult {
-  PermissionResult(blink::mojom::PermissionStatus status,
-                   PermissionStatusSource source);
+  PermissionResult();
+  PermissionResult(PermissionStatus permission_status,
+                   PermissionStatusSource permission_status_source,
+                   std::optional<PermissionSetting> retrieved_permission_data =
+                       std::nullopt);
+  PermissionResult(const PermissionResult& other);
+  PermissionResult& operator=(PermissionResult& other);
+  PermissionResult(PermissionResult&&);
+  PermissionResult& operator=(PermissionResult&&);
   ~PermissionResult();
 
-  blink::mojom::PermissionStatus status;
+  PermissionStatus status;
   PermissionStatusSource source;
+
+  // Holds the fully coalesced (i.e. combined persisted & ephemeral state)
+  // permission state that determined the `PermissionResult`. This is used to
+  // support permissions with options. It's possible that a request cannot be
+  // satisfied as is, because an option has been denied, but the request can be
+  // downgraded. To determine what to do, the permission implementation can use
+  // this field to inspect the permission state.
+  std::optional<PermissionSetting> retrieved_permission_setting;
 };
 
 }  // namespace content

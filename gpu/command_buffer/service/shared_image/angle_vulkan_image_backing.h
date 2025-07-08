@@ -5,6 +5,8 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_ANGLE_VULKAN_IMAGE_BACKING_H_
 #define GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_ANGLE_VULKAN_IMAGE_BACKING_H_
 
+#include <array>
+
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/gl_common_image_backing_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
@@ -20,14 +22,15 @@ class TexturePassthrough;
 
 class AngleVulkanImageBacking : public ClearTrackingSharedImageBacking {
  public:
-  AngleVulkanImageBacking(SharedContextState* context_state,
+  AngleVulkanImageBacking(scoped_refptr<SharedContextState> context_state,
                           const Mailbox& mailbox,
                           viz::SharedImageFormat format,
                           const gfx::Size& size,
                           const gfx::ColorSpace& color_space,
                           GrSurfaceOrigin surface_origin,
                           SkAlphaType alpha_type,
-                          uint32_t usage);
+                          gpu::SharedImageUsageSet usage,
+                          std::string debug_label);
   ~AngleVulkanImageBacking() override;
 
   bool Initialize(const base::span<const uint8_t>& data);
@@ -37,6 +40,7 @@ class AngleVulkanImageBacking : public ClearTrackingSharedImageBacking {
   // SharedImageBacking implementation.
   SharedImageBackingType GetType() const override;
   bool UploadFromMemory(const std::vector<SkPixmap>& pixmaps) override;
+  bool ReadbackToMemory(const std::vector<SkPixmap>& pixmaps) override;
   void Update(std::unique_ptr<gfx::GpuFence> in_fence) override;
   std::unique_ptr<GLTexturePassthroughImageRepresentation>
   ProduceGLTexturePassthrough(SharedImageManager* manager,
@@ -76,7 +80,7 @@ class AngleVulkanImageBacking : public ClearTrackingSharedImageBacking {
 
   GrDirectContext* gr_context() { return context_state_->gr_context(); }
 
-  const raw_ptr<SharedContextState> context_state_;
+  const scoped_refptr<SharedContextState> context_state_;
 
   // In general there will be the same number of Vulkan and GL textures.
   // For multi-planar VkFormats there are no equivalent multi-planar GL

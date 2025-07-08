@@ -44,10 +44,10 @@ class AssistantViewDelegateImpl : public AssistantViewDelegate {
   void OnOptInButtonPressed() override;
   void OnSuggestionPressed(
       const base::UnguessableToken& suggestion_id) override;
-  bool ShouldShowOnboarding() const override;
+  void OnLauncherSearchChipPressed(std::u16string_view query) override;
 
  private:
-  const raw_ptr<AssistantControllerImpl, ExperimentalAsh> assistant_controller_;
+  const raw_ptr<AssistantControllerImpl> assistant_controller_;
   base::ObserverList<AssistantViewDelegateObserver> view_delegate_observers_;
 };
 

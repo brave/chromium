@@ -17,19 +17,20 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.omnibox.suggestions.SuggestionHost;
+import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * Tests for {@link TailSuggestionProcessor}.
- */
+/** Tests for {@link TailSuggestionProcessor}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class TailSuggestionProcessorUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     private @Mock SuggestionHost mSuggestionHost;
+    private @Mock AutocompleteInput mInput;
 
     private TailSuggestionProcessor mProcessor;
     private AutocompleteMatch mSuggestion;
@@ -42,12 +43,13 @@ public class TailSuggestionProcessorUnitTest {
 
     /** Create search suggestion for test. */
     private void createSearchSuggestion(int type, String title) {
-        mSuggestion = AutocompleteMatchBuilder.searchWithType(type)
-                              .setDisplayText(title)
-                              .setFillIntoEdit("fill into edit: " + title)
-                              .build();
+        mSuggestion =
+                AutocompleteMatchBuilder.searchWithType(type)
+                        .setDisplayText(title)
+                        .setFillIntoEdit("fill into edit: " + title)
+                        .build();
         mModel = mProcessor.createModel();
-        mProcessor.populateModel(mSuggestion, mModel, 0);
+        mProcessor.populateModel(mInput, mSuggestion, mModel, 0);
     }
 
     @Test

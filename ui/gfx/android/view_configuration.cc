@@ -7,6 +7,8 @@
 #include "base/android/jni_android.h"
 #include "base/lazy_instance.h"
 #include "base/synchronization/lock.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "ui/gfx/gfx_jni_headers/ViewConfigurationHelper_jni.h"
 
 using base::android::AttachCurrentThread;
@@ -132,7 +134,6 @@ base::LazyInstance<ViewConfigurationData>::Leaky g_view_configuration =
 
 static void JNI_ViewConfigurationHelper_UpdateSharedViewConfiguration(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jfloat maximum_fling_velocity,
     jfloat minimum_fling_velocity,
     jfloat touch_slop,

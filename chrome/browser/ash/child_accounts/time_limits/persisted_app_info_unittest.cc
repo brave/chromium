@@ -11,8 +11,7 @@
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 using PersistedAppInfoTest = testing::Test;
 
@@ -75,7 +74,7 @@ TEST_F(PersistedAppInfoTest, UpdateAppActivityPreference) {
                              {{to_append}});
   app_info2.UpdateAppActivityPreference(entry, /* replace */ false);
 
-  absl::optional<PersistedAppInfo> updated_entry =
+  std::optional<PersistedAppInfo> updated_entry =
       PersistedAppInfo::PersistedAppInfoFromDict(
           &entry, /* include_app_activity_array */ true);
   ASSERT_TRUE(updated_entry.has_value());
@@ -90,7 +89,7 @@ TEST_F(PersistedAppInfoTest, UpdateAppActivityPreference) {
   EXPECT_EQ(active_times[3], to_append);
 
   app_info2.UpdateAppActivityPreference(entry, /* replace */ true);
-  absl::optional<PersistedAppInfo> final_entry =
+  std::optional<PersistedAppInfo> final_entry =
       PersistedAppInfo::PersistedAppInfoFromDict(
           &entry, /* include_app_activity_array */ true);
   EXPECT_TRUE(final_entry.has_value());
@@ -98,5 +97,4 @@ TEST_F(PersistedAppInfoTest, UpdateAppActivityPreference) {
   EXPECT_EQ(final_entry->active_times()[0], to_append);
 }
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time

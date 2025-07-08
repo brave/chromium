@@ -8,9 +8,16 @@
 #include <utility>
 #include <vector>
 
+#include "base/base_paths.h"
+#include "base/containers/to_vector.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/path_service.h"
+#include "base/process/launch.h"
+#include "base/process/process.h"
+#include "base/strings/strcat.h"
+#include "base/time/time.h"
 #include "components/update_client/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -70,25 +77,25 @@ TEST(UpdateClientUtils, IsValidBrand) {
 }
 
 TEST(UpdateClientUtils, GetCrxComponentId) {
-  static const uint8_t kHash[16] = {
+  static constexpr uint8_t kHash[16] = {
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
   };
   CrxComponent component;
-  component.pk_hash.assign(kHash, kHash + sizeof(kHash));
+  component.pk_hash = base::ToVector(kHash);
 
   EXPECT_EQ(std::string("abcdefghijklmnopabcdefghijklmnop"),
             GetCrxComponentID(component));
 }
 
 TEST(UpdateClientUtils, GetCrxIdFromPublicKeyHash) {
-  static const uint8_t kHash[16] = {
+  static constexpr uint8_t kHash[16] = {
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
   };
 
   EXPECT_EQ(std::string("abcdefghijklmnopabcdefghijklmnop"),
-            GetCrxIdFromPublicKeyHash({std::cbegin(kHash), std::cend(kHash)}));
+            GetCrxIdFromPublicKeyHash(kHash));
 }
 
 // Tests that the name of an InstallerAttribute matches ^[-_=a-zA-Z0-9]{1,256}$
@@ -105,16 +112,18 @@ TEST(UpdateClientUtils, IsValidInstallerAttributeName) {
 
   const char* const valid_names[] = {"A", "Z", "a", "a-b", "A_B",
                                      "z", "0", "9", "-_"};
-  for (const char* name : valid_names)
+  for (const char* name : valid_names) {
     EXPECT_TRUE(IsValidInstallerAttribute(
         make_pair(std::string(name), std::string("value"))));
+  }
 
   const char* const invalid_names[] = {
       "",   "a=1", " name", "name ", "na me", "<name", "name>",
       "\"", "\\",  "\xaa",  ".",     ",",     ";",     "+"};
-  for (const char* name : invalid_names)
+  for (const char* name : invalid_names) {
     EXPECT_FALSE(IsValidInstallerAttribute(
         make_pair(std::string(name), std::string("value"))));
+  }
 }
 
 // Tests that the value of an InstallerAttribute matches
@@ -130,74 +139,43 @@ TEST(UpdateClientUtils, IsValidInstallerAttributeValue) {
 
   const char* const valid_values[] = {"",  "a=1", "A", "Z",       "a",
                                       "z", "0",   "9", "-.,;+_=$"};
-  for (const char* value : valid_values)
+  for (const char* value : valid_values) {
     EXPECT_TRUE(IsValidInstallerAttribute(
         make_pair(std::string("name"), std::string(value))));
+  }
 
   const char* const invalid_values[] = {" ap", "ap ", "a p", "<ap",
                                         "ap>", "\"",  "\\",  "\xaa"};
-  for (const char* value : invalid_values)
+  for (const char* value : invalid_values) {
     EXPECT_FALSE(IsValidInstallerAttribute(
         make_pair(std::string("name"), std::string(value))));
+  }
 }
 
 TEST(UpdateClientUtils, RemoveUnsecureUrls) {
-  const GURL test1[] = {GURL("http://foo"), GURL("https://foo")};
-  std::vector<GURL> urls(std::begin(test1), std::end(test1));
+  std::vector<GURL> urls = {GURL("http://foo"), GURL("https://foo")};
   RemoveUnsecureUrls(&urls);
   EXPECT_EQ(1u, urls.size());
   EXPECT_EQ(urls[0], GURL("https://foo"));
 
-  const GURL test2[] = {GURL("https://foo"), GURL("http://foo")};
-  urls.assign(std::begin(test2), std::end(test2));
+  urls = {GURL("https://foo"), GURL("http://foo")};
   RemoveUnsecureUrls(&urls);
   EXPECT_EQ(1u, urls.size());
   EXPECT_EQ(urls[0], GURL("https://foo"));
 
-  const GURL test3[] = {GURL("https://foo"), GURL("https://bar")};
-  urls.assign(std::begin(test3), std::end(test3));
+  urls = {GURL("https://foo"), GURL("https://bar")};
   RemoveUnsecureUrls(&urls);
   EXPECT_EQ(2u, urls.size());
   EXPECT_EQ(urls[0], GURL("https://foo"));
   EXPECT_EQ(urls[1], GURL("https://bar"));
 
-  const GURL test4[] = {GURL("http://foo")};
-  urls.assign(std::begin(test4), std::end(test4));
+  urls = {GURL("http://foo")};
   RemoveUnsecureUrls(&urls);
   EXPECT_EQ(0u, urls.size());
 
-  const GURL test5[] = {GURL("http://foo"), GURL("http://bar")};
-  urls.assign(std::begin(test5), std::end(test5));
+  urls = {GURL("http://foo"), GURL("http://bar")};
   RemoveUnsecureUrls(&urls);
   EXPECT_EQ(0u, urls.size());
-}
-
-TEST(UpdateClientUtils, ToInstallerResult) {
-  enum EnumA {
-    ENTRY0 = 10,
-    ENTRY1 = 20,
-  };
-
-  enum class EnumB {
-    ENTRY0 = 0,
-    ENTRY1,
-  };
-
-  const auto result1 = ToInstallerResult(EnumA::ENTRY0);
-  EXPECT_EQ(110, result1.error);
-  EXPECT_EQ(0, result1.extended_error);
-
-  const auto result2 = ToInstallerResult(ENTRY1, 10000);
-  EXPECT_EQ(120, result2.error);
-  EXPECT_EQ(10000, result2.extended_error);
-
-  const auto result3 = ToInstallerResult(EnumB::ENTRY0);
-  EXPECT_EQ(100, result3.error);
-  EXPECT_EQ(0, result3.extended_error);
-
-  const auto result4 = ToInstallerResult(EnumB::ENTRY1, 20000);
-  EXPECT_EQ(101, result4.error);
-  EXPECT_EQ(20000, result4.extended_error);
 }
 
 TEST(UpdateClientUtils, GetArchitecture) {
@@ -207,6 +185,42 @@ TEST(UpdateClientUtils, GetArchitecture) {
   EXPECT_TRUE(arch == kArchIntel || arch == kArchAmd64 || arch == kArchArm64)
       << arch;
 #endif  // BUILDFLAG(IS_WIN)
+}
+
+namespace {
+#if BUILDFLAG(IS_WIN)
+base::FilePath CopyCmdExe(const base::FilePath& under_dir) {
+  static constexpr wchar_t kCmdExe[] = L"cmd.exe";
+
+  base::FilePath system_path;
+  EXPECT_TRUE(base::PathService::Get(base::DIR_SYSTEM, &system_path));
+
+  const base::FilePath cmd_exe_path = under_dir.Append(kCmdExe);
+  EXPECT_TRUE(base::CopyFile(system_path.Append(kCmdExe), cmd_exe_path));
+  return cmd_exe_path;
+}
+#endif  // BUILDFLAG(IS_WIN)
+}  // namespace
+
+TEST(UpdateClientUtils, RetryDeletePathRecursively) {
+  base::FilePath tempdir;
+  ASSERT_TRUE(base::CreateNewTempDirectory(
+      FILE_PATH_LITERAL("Test_RetryDeletePathRecursively"), &tempdir));
+
+#if BUILDFLAG(IS_WIN)
+  // Launch a process that runs for 3 seconds.
+  ASSERT_TRUE(
+      base::LaunchProcess(
+          base::StrCat({CopyCmdExe(tempdir).value(), L" /c \"timeout 3\""}), {})
+          .IsValid());
+
+  // Trying to delete once fails, because the process is running within
+  // `tempdir`.
+  ASSERT_FALSE(RetryDeletePathRecursivelyCustom(tempdir, 1, base::Seconds(1)));
+#endif  // BUILDFLAG(IS_WIN)
+
+  // Deleting with retries works.
+  ASSERT_TRUE(RetryDeletePathRecursively(tempdir));
 }
 
 }  // namespace update_client

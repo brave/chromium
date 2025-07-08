@@ -5,16 +5,18 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 
 #include <utility>
+#include <variant>
+#include <vector>
 
+#include "base/base64.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/strcat.h"
 #include "base/types/expected.h"
 #include "chrome/browser/web_applications/isolated_web_apps/error/unusable_swbn_file_error.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_location.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
 #include "chrome/browser/web_applications/isolated_web_apps/signed_web_bundle_reader.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/common/url_constants.h"
@@ -23,11 +25,12 @@
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_verifier.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition_config.h"
+#include "crypto/sha2.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web_app {
 
 namespace {
-
 base::expected<IsolatedWebAppUrlInfo, std::string> MakeIsolatedWebAppUrlInfo(
     base::expected<web_package::SignedWebBundleId, UnusableSwbnFileError>
         bundle_id) {
@@ -92,27 +95,30 @@ IsolatedWebAppUrlInfo IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
 }
 
 // static
-void IsolatedWebAppUrlInfo::CreateFromIsolatedWebAppLocation(
-    const IsolatedWebAppLocation& location,
+void IsolatedWebAppUrlInfo::CreateFromIsolatedWebAppSource(
+    const IwaSource& source,
     base::OnceCallback<void(base::expected<IsolatedWebAppUrlInfo, std::string>)>
         callback) {
-  absl::visit(base::Overloaded{
-                  [&](const InstalledBundle&) {
-                    std::move(callback).Run(base::unexpected(
-                        "Getting IsolationInfo from |InstalledBundle| is not "
-                        "implemented"));
-                  },
-                  [&](const DevModeBundle& dev_mode_bundle) {
-                    GetSignedWebBundleIdByPath(dev_mode_bundle.path,
-                                               std::move(callback));
-                  },
-                  [&](const DevModeProxy&) {
-                    std::move(callback).Run(
-                        IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
-                            web_package::SignedWebBundleId::
-                                CreateRandomForDevelopment()));
-                  }},
-              location);
+  std::visit(
+      absl::Overload{
+          [&](const IwaSourceBundle& bundle) {
+            GetSignedWebBundleIdByPath(bundle.path(), std::move(callback));
+          },
+          [&](const IwaSourceProxy& proxy) {
+            const web_package::SignedWebBundleId bundle_id = [&] {
+              if (proxy.explicit_bundle_id()) {
+                CHECK(proxy.explicit_bundle_id()->is_for_proxy_mode());
+                return *proxy.explicit_bundle_id();
+              } else {
+                return web_package::SignedWebBundleId::
+                    CreateRandomForProxyMode();
+              }
+            }();
+
+            std::move(callback).Run(
+                IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(bundle_id));
+          }},
+      source.variant());
 }
 
 IsolatedWebAppUrlInfo::IsolatedWebAppUrlInfo(
@@ -132,7 +138,7 @@ const url::Origin& IsolatedWebAppUrlInfo::origin() const {
   return origin_;
 }
 
-const AppId& IsolatedWebAppUrlInfo::app_id() const {
+const webapps::AppId& IsolatedWebAppUrlInfo::app_id() const {
   return app_id_;
 }
 
@@ -161,11 +167,16 @@ IsolatedWebAppUrlInfo::GetStoragePartitionConfigForControlledFrame(
       browser_context, partition_domain(), partition_name, in_memory);
 }
 
+bool IsolatedWebAppUrlInfo::operator==(
+    const IsolatedWebAppUrlInfo& other) const {
+  return origin_ == other.origin_ && app_id_ == other.app_id_ &&
+         web_bundle_id_ == other.web_bundle_id_;
+}
+
 std::string IsolatedWebAppUrlInfo::partition_domain() const {
-  constexpr char kIsolatedWebAppPartitionPrefix[] = "iwa-";
-  // We add a prefix to `partition_domain` to avoid potential name conflicts
-  // with Chrome Apps, which use their id/hostname as `partition_domain`.
-  return kIsolatedWebAppPartitionPrefix + origin().host();
+  // We add a prefix to `partition_domain` to distinguish from other users of
+  // storage partitions.
+  return "i" + base::Base64Encode(crypto::SHA256HashString(app_id_));
 }
 
 }  // namespace web_app

@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <atomic>
 #include <memory>
 
 #include "base/environment.h"
-#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/vr/test/mock_xr_device_hook_base.h"
@@ -14,7 +14,6 @@
 #include "chrome/browser/vr/test/webxr_vr_browser_test.h"
 
 namespace vr {
-
 namespace {
 
 const float kIPD = 0.2f;
@@ -27,9 +26,8 @@ struct Frame {
 
 class MyXRMock : public MockXRDeviceHookBase {
  public:
-  void OnFrameSubmitted(
-      std::vector<device_test::mojom::ViewDataPtr> views,
-      device_test::mojom::XRTestHook::OnFrameSubmittedCallback callback) final;
+  void ProcessSubmittedFrameUnlocked(
+      std::vector<device_test::mojom::ViewDataPtr> views) final;
   void WaitGetDeviceConfig(
       device_test::mojom::XRTestHook::WaitGetDeviceConfigCallback callback)
       final {
@@ -42,22 +40,11 @@ class MyXRMock : public MockXRDeviceHookBase {
       device_test::mojom::XRTestHook::WaitGetMagicWindowPoseCallback callback)
       final;
 
-  // The test waits for a submitted frame before returning.
-  void WaitForFrames(int count) {
-    DCHECK(!wait_loop_);
-    wait_frame_count_ = count;
-
-    base::RunLoop* wait_loop =
-        new base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed);
-    wait_loop_ = wait_loop;
-    wait_loop->Run();
-    delete wait_loop;
-  }
-
-  std::vector<Frame> submitted_frames;
-  device_test::mojom::PoseFrameDataPtr last_immersive_frame_data;
+  base::Lock frame_data_lock;
+  std::vector<Frame> submitted_frames GUARDED_BY(frame_data_lock);
 
   device_test::mojom::DeviceConfigPtr GetDeviceConfig() {
+    // Stateless helper function may be called on any thread.
     auto config = device_test::mojom::DeviceConfig::New();
     config->interpupillary_distance = kIPD;
     config->projection_left =
@@ -68,14 +55,9 @@ class MyXRMock : public MockXRDeviceHookBase {
   }
 
  private:
-  // Set to null on background thread after calling Quit(), so we can ensure we
-  // only call Quit once.
-  raw_ptr<base::RunLoop> wait_loop_ = nullptr;
-
-  int wait_frame_count_ = 0;
-  int num_frames_submitted_ = 0;
-
-  int frame_id_ = 0;
+  device_test::mojom::PoseFrameDataPtr last_immersive_frame_data
+      GUARDED_BY(frame_data_lock);
+  std::atomic_int frame_id_ = 0;
 };
 
 unsigned int ParseColorFrameId(const device_test::mojom::ColorPtr& color) {
@@ -85,38 +67,31 @@ unsigned int ParseColorFrameId(const device_test::mojom::ColorPtr& color) {
   return frame_id;
 }
 
-void MyXRMock::OnFrameSubmitted(
-    std::vector<device_test::mojom::ViewDataPtr> views,
-    device_test::mojom::XRTestHook::OnFrameSubmittedCallback callback) {
+void MyXRMock::ProcessSubmittedFrameUnlocked(
+    std::vector<device_test::mojom::ViewDataPtr> views) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(mock_device_sequence_);
+  base::AutoLock lock(frame_data_lock);
   // Since we clear the entire context to a single color, every view in the
   // frame has the same color (see onImmersiveXRFrameCallback in
   // test_webxr_poses.html).
   unsigned int frame_id = ParseColorFrameId(views[0]->color);
-  DLOG(ERROR) << "Frame Submitted: " << num_frames_submitted_ << " "
-              << frame_id;
+  DLOG(ERROR) << "Frame Submitted: " << GetFrameCount() << " " << frame_id;
   submitted_frames.push_back(
       {std::move(views), last_immersive_frame_data.Clone(), GetDeviceConfig()});
-
-  num_frames_submitted_++;
-  if (num_frames_submitted_ >= wait_frame_count_ && wait_frame_count_ > 0 &&
-      wait_loop_) {
-    wait_loop_->Quit();
-    wait_loop_ = nullptr;
-  }
 
   ASSERT_TRUE(last_immersive_frame_data)
       << "Frame submitted without any frame data provided";
 
   // We expect a waitGetPoses, then 2 submits (one for each eye), so after 2
   // submitted frames don't use the same frame_data again.
-  if (num_frames_submitted_ % 2 == 0)
+  if (GetFrameCount() % 2 == 0) {
     last_immersive_frame_data = nullptr;
-
-  std::move(callback).Run();
+  }
 }
 
 void MyXRMock::WaitGetMagicWindowPose(
     device_test::mojom::XRTestHook::WaitGetMagicWindowPoseCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(mock_device_sequence_);
   auto pose = device_test::mojom::PoseFrameData::New();
 
   // Almost identity matrix - enough different that we can identify if magic
@@ -128,6 +103,7 @@ void MyXRMock::WaitGetMagicWindowPose(
 
 void MyXRMock::WaitGetPresentingPose(
     device_test::mojom::XRTestHook::WaitGetPresentingPoseCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(mock_device_sequence_);
   DLOG(ERROR) << "WaitGetPresentingPose: " << frame_id_;
 
   auto pose = device_test::mojom::PoseFrameData::New();
@@ -140,7 +116,10 @@ void MyXRMock::WaitGetPresentingPose(
   pose->device_to_origin->Translate3d(0, 0, frame_id_);
 
   frame_id_++;
-  last_immersive_frame_data = pose.Clone();
+  {
+    base::AutoLock lock(frame_data_lock);
+    last_immersive_frame_data = pose.Clone();
+  }
 
   std::move(callback).Run(std::move(pose));
 }
@@ -165,7 +144,7 @@ std::string GetPoseAsString(const Frame& frame) {
 // Validates that submitted frames used expected pose.
 WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestPresentationPoses) {
   // Disable frame-timeout UI to test what WebXR renders.
-  UiUtils::DisableFrameTimeoutForTesting();
+  UiUtils::DisableOverlayForTesting();
   MyXRMock my_mock;
 
   // Load the test page, and enter presentation.
@@ -181,7 +160,7 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestPresentationPoses) {
       << "No frame submitted";
 
   // Render at least 20 frames.  Make sure each has the right submitted pose.
-  my_mock.WaitForFrames(20);
+  my_mock.WaitForTotalFrameCount(20);
 
   // Exit presentation.
   t->EndSessionOrFail();
@@ -189,6 +168,11 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestPresentationPoses) {
   // Stop hooking the VR runtime so we can safely analyze our cached data
   // without incoming calls (there may be leftover mojo messages queued).
   my_mock.StopHooking();
+
+  // While finishing up the test doesn't need the lock, the fact that we've
+  // disconnected the mock device means that it's safe to just hold onto it
+  // until the end of the function.
+  base::AutoLock lock(my_mock.frame_data_lock);
 
   // Analyze the submitted frames - check for a few things:
   // 1. Each frame id should be submitted at most once for each of the left and

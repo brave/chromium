@@ -8,14 +8,17 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/webui/projector_app/projector_app_client.h"
+#include "ash/webui/projector_app/public/mojom/projector_types.mojom-shared.h"
 #include "ash/webui/projector_app/public/mojom/projector_types.mojom.h"
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
+#include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/google_api_keys.h"
+#include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -103,8 +106,19 @@ const char* kUrlAllowlist[] = {
     "https://drive.google.com/u/0/get_video_info",
     "https://translation.googleapis.com/language/translate/v2"};
 
+bool IsDVSPlaybackUrl(const std::string& url) {
+  return base::MatchPattern(
+      url,
+      "https://workspacevideo-pa.googleapis.com/v1/drive/media/*/playback");
+}
+
 // Return true if the url matches the allowed URL prefix.
 bool IsUrlAllowlisted(const std::string& url) {
+  if (features::IsProjectorUseDVSPlaybackEndpointEnabled() &&
+      IsDVSPlaybackUrl(url)) {
+    return true;
+  }
+
   for (auto* urlPrefix : kUrlAllowlist) {
     if (base::StartsWith(url, urlPrefix, base::CompareCase::SENSITIVE))
       return true;
@@ -124,7 +138,7 @@ inline std::string RequestTypeToString(projector::mojom::RequestType method) {
       return "DELETE";
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // The maximum number of retries for the SimpleURLLoader requests. Three times
@@ -141,6 +155,35 @@ void HandleAccessTokenErrorState(const std::string& email,
   }
 }
 
+// Convert net error code from loader::NetError to JS style error code to
+// match xhr response from PWA.
+projector::mojom::JsNetErrorCode GetJsNetErrorCodeFromNetError(
+    int net_error_code) {
+  switch (net_error_code) {
+    case net::OK:
+      return projector::mojom::JsNetErrorCode::kNoError;
+    case net::ERR_ACCESS_DENIED:
+      return projector::mojom::JsNetErrorCode::kAccessDenied;
+    case net::ERR_ABORTED:
+      return projector::mojom::JsNetErrorCode::kAbort;
+    case net::ERR_TIMED_OUT:
+      return projector::mojom::JsNetErrorCode::kTimeout;
+    default:
+      return projector::mojom::JsNetErrorCode::kHttpError;
+  }
+}
+
+// Create Xhr Response with response body string and response code,
+// net error code is optional and need to be set separately if required.
+projector::mojom::XhrResponsePtr CreateXhrResposne(
+    std::string response_body,
+    projector::mojom::XhrResponseCode resposne_code) {
+  auto response = projector::mojom::XhrResponse::New();
+  response->response = response_body;
+  response->response_code = resposne_code;
+  return response;
+}
+
 }  // namespace
 
 ProjectorXhrSender::ProjectorXhrSender(
@@ -151,16 +194,15 @@ ProjectorXhrSender::~ProjectorXhrSender() = default;
 void ProjectorXhrSender::Send(
     const GURL& url,
     projector::mojom::RequestType method,
-    const absl::optional<std::string>& request_body,
+    const std::optional<std::string>& request_body,
     bool use_credentials,
     bool use_api_key,
     SendRequestCallback callback,
-    const absl::optional<base::flat_map<std::string, std::string>>& headers,
-    const absl::optional<std::string>& account_email) {
+    const std::optional<base::flat_map<std::string, std::string>>& headers,
+    const std::optional<std::string>& account_email) {
   if (!IsUrlAllowlisted(url.spec())) {
-    std::move(callback).Run(
-        /*response_body=*/std::string(),
-        /*response_code=*/projector::mojom::XhrResponseCode::kUnsupportedURL);
+    std::move(callback).Run(CreateXhrResposne(
+        std::string(), projector::mojom::XhrResponseCode::kUnsupportedURL));
     LOG(ERROR) << "URL is not supported.";
     return;
   }
@@ -180,10 +222,9 @@ void ProjectorXhrSender::Send(
   // email so it will fallback to use primary account email. We want to clean it
   // up so that account email is required.
   if (!IsValidEmail(account_email)) {
-    std::move(callback).Run(
-        /*response_body=*/std::string(),
-        /*response_code=*/projector::mojom::XhrResponseCode::
-            kInvalidAccountEmail);
+    std::move(callback).Run(CreateXhrResposne(
+        std::string(),
+        projector::mojom::XhrResponseCode::kInvalidAccountEmail));
     LOG(ERROR) << "User email is invalid";
     return;
   }
@@ -209,18 +250,16 @@ void ProjectorXhrSender::Send(
 void ProjectorXhrSender::OnAccessTokenRequestCompleted(
     const GURL& url,
     projector::mojom::RequestType method,
-    const absl::optional<std::string>& request_body,
-    const absl::optional<base::flat_map<std::string, std::string>>& headers,
+    const std::optional<std::string>& request_body,
+    const std::optional<base::flat_map<std::string, std::string>>& headers,
     bool use_credentials,
     SendRequestCallback callback,
     const std::string& email,
     GoogleServiceAuthError error,
     const signin::AccessTokenInfo& info) {
   if (error.state() != GoogleServiceAuthError::State::NONE) {
-    std::move(callback).Run(
-        /*response_body=*/std::string(),
-        /*response_code=*/projector::mojom::XhrResponseCode::
-            kTokenFetchFailure);
+    std::move(callback).Run(CreateXhrResposne(
+        std::string(), projector::mojom::XhrResponseCode::kTokenFetchFailure));
     HandleAccessTokenErrorState(email, error);
     return;
   }
@@ -232,9 +271,9 @@ void ProjectorXhrSender::OnAccessTokenRequestCompleted(
 void ProjectorXhrSender::SendRequest(
     const GURL& url,
     projector::mojom::RequestType method,
-    const absl::optional<std::string>& request_body,
+    const std::optional<std::string>& request_body,
     const std::string& token,
-    const absl::optional<base::flat_map<std::string, std::string>>& headers,
+    const std::optional<base::flat_map<std::string, std::string>>& headers,
     bool allow_cookie,
     SendRequestCallback callback) {
   // Build resource request.
@@ -300,12 +339,13 @@ void ProjectorXhrSender::OnSimpleURLLoaderComplete(
   bool is_success =
       response_body && response_code >= 200 && response_code < 300;
   auto response_body_or_empty = response_body ? *response_body : std::string();
+  auto xhr_response_code =
+      is_success ? projector::mojom::XhrResponseCode::kSuccess
+                 : projector::mojom::XhrResponseCode::kXhrFetchFailure;
+  auto response = CreateXhrResposne(response_body_or_empty, xhr_response_code);
+  response->net_error_code = GetJsNetErrorCodeFromNetError(loader->NetError());
 
-  std::move(callback).Run(
-      /*response_body=*/response_body_or_empty,
-      /*response_code=*/is_success
-          ? projector::mojom::XhrResponseCode::kSuccess
-          : projector::mojom::XhrResponseCode::kXhrFetchFailure);
+  std::move(callback).Run(std::move(response));
   if (!is_success) {
     LOG(ERROR) << "Failed to send XHR request, Http error code: "
                << response_code
@@ -323,7 +363,7 @@ void ProjectorXhrSender::OnSimpleURLLoaderComplete(
 }
 
 bool ProjectorXhrSender::IsValidEmail(
-    const absl::optional<std::string>& email_check) {
+    const std::optional<std::string>& email_check) {
   const auto email = email_check.value_or(std::string());
   if (email.empty()) {
     // TODO(b/288457397): Return false here and clean up to require account
@@ -338,4 +378,5 @@ bool ProjectorXhrSender::IsValidEmail(
   }
   return false;
 }
+
 }  // namespace ash

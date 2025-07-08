@@ -5,10 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SPECULATION_RULES_SPECULATION_RULE_SET_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SPECULATION_RULES_SPECULATION_RULE_SET_H_
 
+#include "base/containers/span.h"
 #include "base/types/pass_key.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/speculation_rules/speculation_rule.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
@@ -34,6 +35,8 @@ enum class SpeculationRuleSetErrorType {
   kMaxValue = kInvalidRulesSkipped,
 };
 
+enum class BrowserInjectedSpeculationRuleOptOut { kRespect, kIgnore };
+
 // A set of rules generated from a single <script type=speculationrules>, which
 // provides rules to identify URLs and corresponding conditions for speculation,
 // grouped by the action that is suggested.
@@ -46,29 +49,60 @@ class CORE_EXPORT SpeculationRuleSet final
   // the document's base URL) used for parsing a rule set.
   class CORE_EXPORT Source : public GarbageCollected<Source> {
    public:
-    Source(const String& source_text, Document&, DOMNodeId node_id);
-    Source(const String& source_text,
-           const KURL& base_url,
-           uint64_t request_id);
+    // Don't call this directly; use the factory methods below instead!
+    Source(base::PassKey<Source>,
+           const String& source_text,
+           Document*,
+           std::optional<DOMNodeId> node_id,
+           std::optional<KURL> base_url,
+           std::optional<uint64_t> request_id,
+           bool ignore_opt_out);
+
+    static Source* FromInlineScript(const String& source_text,
+                                    Document&,
+                                    DOMNodeId node_id);
+    static Source* FromRequest(const String& source_text,
+                               const KURL& base_url,
+                               uint64_t request_id);
+    static Source* FromBrowserInjected(
+        const String& source_text,
+        const KURL& base_url,
+        BrowserInjectedSpeculationRuleOptOut opt_out);
 
     const String& GetSourceText() const;
-    const absl::optional<DOMNodeId>& GetNodeId() const;
-    const absl::optional<KURL>& GetSourceURL() const;
-    const absl::optional<uint64_t>& GetRequestId() const;
+
+    // Has a value iff IsFromInlineScript() is true.
+    const std::optional<DOMNodeId>& GetNodeId() const;
+
+    // Have values iff IsFromRequest() is true.
+    const std::optional<KURL> GetSourceURL() const;
+    const std::optional<uint64_t>& GetRequestId() const;
+
     KURL GetBaseURL() const;
+
+    bool IsFromInlineScript() const;
+    bool IsFromRequest() const;
+    bool IsFromBrowserInjected() const;
+    bool IsFromBrowserInjectedAndRespectsOptOut() const;
 
     void Trace(Visitor*) const;
 
    private:
+    // Set for all types
     String source_text_;
-    // Fields below are only set when the SpeculationRuleSet was loaded from
-    // inline script.
+
+    // Set by FromInlineScript()
     Member<Document> document_;
-    absl::optional<DOMNodeId> node_id_;
-    // Fields below are only set when the SpeculationRuleSet was
-    // "out-of-document" (i.e. loaded by a SpeculationRuleLoader).
-    absl::optional<KURL> base_url_;
-    absl::optional<uint64_t> request_id_;
+    std::optional<DOMNodeId> node_id_;
+
+    // Set by FromRequest() and FromBrowserInjected()
+    std::optional<KURL> base_url_;
+
+    // Set by FromRequest()
+    std::optional<uint64_t> request_id_;
+
+    // Set by FromBrowserInjected();
+    bool ignore_opt_out_ = false;
   };
 
   SpeculationRuleSet(base::PassKey<SpeculationRuleSet>, Source* source);
@@ -94,7 +128,7 @@ class CORE_EXPORT SpeculationRuleSet final
   bool has_document_rule() const { return has_document_rule_; }
   bool requires_unfiltered_input() const { return requires_unfiltered_input_; }
 
-  Source* source() const { return source_; }
+  Source* source() const { return source_.Get(); }
 
   const HeapVector<Member<StyleRule>>& selectors() { return selectors_; }
 
@@ -124,7 +158,7 @@ class CORE_EXPORT SpeculationRuleSet final
 
  private:
   void SetError(SpeculationRuleSetErrorType error_type, String error_message);
-  void SetWarnings(Vector<String> warning_messages);
+  void AddWarnings(base::span<const String> warning_messages);
 
   SpeculationRuleSetId inspector_id_;
   HeapVector<Member<SpeculationRule>> prefetch_rules_;

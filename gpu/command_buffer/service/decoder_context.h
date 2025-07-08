@@ -8,15 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <string>
-
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/context_result.h"
-#include "gpu/command_buffer/service/abstract_texture.h"
 #include "gpu/command_buffer/service/async_api_interface.h"
 #include "gpu/command_buffer/service/gl_context_virtual_delegate.h"
 #include "gpu/gpu_gles2_export.h"
@@ -76,6 +74,8 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
   virtual void Destroy(bool have_context) = 0;
 
   virtual Capabilities GetCapabilities() = 0;
+
+  virtual GLCapabilities GetGLCapabilities() = 0;
 
   virtual const gles2::FeatureInfo* GetFeatureInfo() const = 0;
 
@@ -158,17 +158,6 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
   //
   virtual gles2::ContextGroup* GetContextGroup() = 0;
   virtual gles2::ErrorState* GetErrorState() = 0;
-#if !BUILDFLAG(IS_ANDROID)
-  virtual std::unique_ptr<gpu::gles2::AbstractTexture> CreateAbstractTexture(
-      unsigned /* GLenum */ target,
-      unsigned /* GLenum */ internal_format,
-      int /* GLsizei */ width,
-      int /* GLsizei */ height,
-      int /* GLsizei */ depth,
-      int /* GLint */ border,
-      unsigned /* GLenum */ format,
-      unsigned /* GLenum */ type) = 0;
-#endif
 
   //
   // Methods required by Texture.

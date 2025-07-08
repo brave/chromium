@@ -19,7 +19,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_asan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "mac"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -42,7 +43,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_asan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "mac"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -68,7 +70,9 @@
           "builder": "mac_chromium_asan_rel_ng",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Mac ASan 64 Tests (1)/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -79,6 +83,9 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

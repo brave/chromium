@@ -5,7 +5,7 @@
 import 'chrome://password-manager/password_manager.js';
 
 import {SyncBrowserProxyImpl} from 'chrome://password-manager/password_manager.js';
-import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
 
@@ -16,6 +16,13 @@ import {makeRecipientInfo} from './test_util.js';
 function assertVisibleTextContent(element: HTMLElement, expectedText: string) {
   assertTrue(isVisible(element));
   assertEquals(expectedText, element?.textContent!.trim());
+}
+
+function countSelectedRecipients(dialog: HTMLElement): number {
+  return Array
+      .from(dialog.shadowRoot!.querySelectorAll('share-password-recipient'))
+      .filter(item => item.selected)
+      .length;
 }
 
 suite('SharePasswordFamilyPickerDialogTest', function() {
@@ -42,9 +49,10 @@ suite('SharePasswordFamilyPickerDialogTest', function() {
     document.body.appendChild(dialog);
     await flushTasks();
 
-    dialog.querySelectorAll('share-password-recipient').forEach(element => {
-      assertTrue(isVisible(element));
-    });
+    dialog.shadowRoot!.querySelectorAll('share-password-recipient')
+        .forEach(element => {
+          assertTrue(isVisible(element));
+        });
 
     assertVisibleTextContent(dialog.$.header, expectedTitle);
     assertVisibleTextContent(
@@ -54,10 +62,10 @@ suite('SharePasswordFamilyPickerDialogTest', function() {
     assertVisibleTextContent(dialog.$.action, dialog.i18n('share'));
 
     assertEquals(syncProxy.accountInfo.avatarImage, dialog.$.avatar.src);
-    assertEquals(dialog.$.manageLink.href, dialog.i18n('familyGroupSiteURL'));
+    assertEquals(dialog.$.viewFamily.href, dialog.i18n('familyGroupViewURL'));
     assertVisibleTextContent(
         dialog.$.footerDescription,
-        dialog.i18n('sharePasswordManageFamily') + ' • ' +
+        dialog.i18n('sharePasswordViewFamily') + ' • ' +
             syncProxy.accountInfo.email);
   });
 
@@ -70,5 +78,94 @@ suite('SharePasswordFamilyPickerDialogTest', function() {
     const closeDialog = eventToPromise('close', dialog);
     dialog.$.cancel.click();
     await closeDialog;
+  });
+
+  test('Share button is available when a member is selected', async function() {
+    const dialog =
+        document.createElement('share-password-family-picker-dialog');
+    dialog.members =
+        [makeRecipientInfo(), makeRecipientInfo(/*isEligible=*/ false)];
+    document.body.appendChild(dialog);
+    await flushTasks();
+
+    assertTrue(dialog.$.action.disabled);
+
+    dialog.shadowRoot!.querySelectorAll('share-password-recipient')
+        .forEach(element => {
+          assertFalse(element.selected);
+          element.click();
+        });
+    await flushTasks();
+
+    assertFalse(dialog.$.action.disabled);
+    assertEquals(1, dialog.selectedRecipients.length);
+  });
+
+  test(
+      'Single family member is not pre-selected if ineligible',
+      async function() {
+        const dialog =
+            document.createElement('share-password-family-picker-dialog');
+        dialog.members = [makeRecipientInfo(/*isEligible=*/ false)];
+        document.body.appendChild(dialog);
+        await flushTasks();
+
+        assertEquals(countSelectedRecipients(dialog), 0);
+        assertTrue(dialog.$.action.disabled);
+      });
+
+  test('Single family member is pre-selected if eligible', async function() {
+    const dialog =
+        document.createElement('share-password-family-picker-dialog');
+    dialog.members = [makeRecipientInfo(/*isEligible=*/ true)];
+    document.body.appendChild(dialog);
+    await flushTasks();
+
+    assertEquals(countSelectedRecipients(dialog), 1);
+    assertFalse(dialog.$.action.disabled);
+  });
+
+  test('Multiple eligble members are not pre-selected', async function() {
+    const dialog =
+        document.createElement('share-password-family-picker-dialog');
+    dialog.members = [makeRecipientInfo(), makeRecipientInfo()];
+    document.body.appendChild(dialog);
+    await flushTasks();
+
+    assertEquals(countSelectedRecipients(dialog), 0);
+    assertTrue(dialog.$.action.disabled);
+  });
+
+  test(
+      'Single eligible member not pre-selected if ineligible members present',
+      async function() {
+        const dialog =
+            document.createElement('share-password-family-picker-dialog');
+        dialog.members = [makeRecipientInfo(), makeRecipientInfo()];
+        document.body.appendChild(dialog);
+        await flushTasks();
+
+        assertEquals(countSelectedRecipients(dialog), 0);
+        assertTrue(dialog.$.action.disabled);
+      });
+
+
+  test('Action button dispatches start-share event', async function() {
+    const dialog =
+        document.createElement('share-password-family-picker-dialog');
+
+    dialog.members = [makeRecipientInfo(), makeRecipientInfo()];
+    document.body.appendChild(dialog);
+    await flushTasks();
+
+    dialog.shadowRoot!.querySelectorAll('share-password-recipient')
+        .forEach(element => {
+          element.click();
+        });
+    await flushTasks();
+
+    const startShare = eventToPromise('start-share', dialog);
+    dialog.$.action.click();
+    await startShare;
   });
 });

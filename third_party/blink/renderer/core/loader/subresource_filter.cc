@@ -43,33 +43,28 @@ SubresourceFilter::SubresourceFilter(
     : execution_context_(execution_context),
       subresource_filter_(std::move(subresource_filter)) {
   DCHECK(subresource_filter_);
-  // Report the main resource as an ad if the subresource filter is
-  // associated with an ad subframe.
-  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context_.Get())) {
-    auto* frame = window->GetFrame();
-    if (frame->IsAdFrame()) {
-      ReportAdRequestId(
-          frame->Loader().GetDocumentLoader()->GetResponse().RequestId());
-    }
-  }
 }
 
 SubresourceFilter::~SubresourceFilter() = default;
 
 bool SubresourceFilter::AllowLoad(
     const KURL& resource_url,
-    mojom::blink::RequestContextType request_context,
+    network::mojom::RequestDestination request_destination,
     ReportingDisposition reporting_disposition) {
   // TODO(csharrison): Implement a caching layer here which is a HashMap of
   // Pair<url string, context> -> LoadPolicy.
+  subresource_filter::ScopedRule rule;
   WebDocumentSubresourceFilter::LoadPolicy load_policy =
-      subresource_filter_->GetLoadPolicy(resource_url, request_context);
+      subresource_filter_->GetLoadPolicy(resource_url, request_destination,
+                                         /*out_rule=*/&rule);
 
-  if (reporting_disposition == ReportingDisposition::kReport)
+  if (reporting_disposition == ReportingDisposition::kReport) {
     ReportLoad(resource_url, load_policy);
+  }
 
   last_resource_check_result_ = std::make_pair(
-      std::make_pair(resource_url, request_context), load_policy);
+      std::make_pair(resource_url, request_destination),
+      ResourceCheckResult{.load_policy = load_policy, .rule = std::move(rule)});
 
   return load_policy != WebDocumentSubresourceFilter::kDisallow;
 }
@@ -107,21 +102,21 @@ bool SubresourceFilter::AllowWebTransportConnection(const KURL& url) {
 
 bool SubresourceFilter::IsAdResource(
     const KURL& resource_url,
-    mojom::blink::RequestContextType request_context) {
+    network::mojom::RequestDestination request_destination,
+    subresource_filter::ScopedRule* out_rule) {
   WebDocumentSubresourceFilter::LoadPolicy load_policy;
   if (last_resource_check_result_.first ==
-      std::make_pair(resource_url, request_context)) {
-    load_policy = last_resource_check_result_.second;
+      std::make_pair(resource_url, request_destination)) {
+    load_policy = last_resource_check_result_.second.load_policy;
+    if (out_rule) {
+      *out_rule = last_resource_check_result_.second.rule;
+    }
   } else {
-    load_policy =
-        subresource_filter_->GetLoadPolicy(resource_url, request_context);
+    load_policy = subresource_filter_->GetLoadPolicy(
+        resource_url, request_destination, out_rule);
   }
 
   return load_policy != WebDocumentSubresourceFilter::kAllow;
-}
-
-void SubresourceFilter::ReportAdRequestId(int request_id) {
-  subresource_filter_->ReportAdRequestId(request_id);
 }
 
 void SubresourceFilter::ReportLoad(

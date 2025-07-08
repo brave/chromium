@@ -48,7 +48,7 @@ namespace {
 
 // Helpers used during word movement
 static bool IsLineBreak(UChar ch) {
-  return ch == kNewlineCharacter || ch == kCarriageReturnCharacter;
+  return ch == uchar::kLineFeed || ch == uchar::kCarriageReturn;
 }
 
 PositionInFlatTree EndOfWordPositionInternal(const PositionInFlatTree& position,
@@ -132,10 +132,10 @@ PositionInFlatTree NextWordPositionInternal(
           return SkipWhitespaceIfNeeded(text, runner);
         // Accumulate punctuation/surrogate pair runs.
         if (static_cast<unsigned>(runner) < text.length() &&
-            (WTF::unicode::IsPunct(text[runner]) ||
-             U16_IS_SURROGATE(text[runner]))) {
-          if (WTF::unicode::IsAlphanumeric(text[runner - 1]))
+            IsWordBoundary(text[runner])) {
+          if (unicode::IsAlphanumeric(text[runner - 1])) {
             return SkipWhitespaceIfNeeded(text, runner);
+          }
           continue;
         }
         // We stop searching in the following conditions:
@@ -154,8 +154,9 @@ PositionInFlatTree NextWordPositionInternal(
                  IsWhitespace(text[runner - 1]) && IsWordBreak(text[runner]))
           return SkipWhitespaceIfNeeded(text, runner);
       }
-      if (text[text.length() - 1] != kNewlineCharacter)
+      if (text[text.length() - 1] != uchar::kLineFeed) {
         return Position::After(text.length() - 1);
+      }
       return Position();
     }
 
@@ -167,10 +168,11 @@ PositionInFlatTree NextWordPositionInternal(
         for (unsigned runner = static_cast<unsigned>(offset);
              runner < text.length(); ++runner) {
           if (!(IsWhitespace(text[runner]) ||
-                WTF::unicode::Direction(text[runner]) ==
-                    WTF::unicode::kWhiteSpaceNeutral) ||
-              IsLineBreak(text[runner]))
+                unicode::Direction(text[runner]) ==
+                    unicode::kWhiteSpaceNeutral) ||
+              IsLineBreak(text[runner])) {
             return Position::Before(runner);
+          }
         }
       }
       return Position::Before(offset);
@@ -213,10 +215,10 @@ PositionInFlatTree PreviousWordPositionInternal(
            runner = it->preceding(runner)) {
         // Accumulate punctuation/surrogate pair runs.
         if (static_cast<unsigned>(runner) < text.length() &&
-            (WTF::unicode::IsPunct(text[runner]) ||
-             U16_IS_SURROGATE(text[runner]))) {
-          if (WTF::unicode::IsAlphanumeric(text[runner - 1]))
+            IsWordBoundary(text[runner])) {
+          if (unicode::IsAlphanumeric(text[runner - 1])) {
             return Position::Before(runner);
+          }
           punct_runner = runner;
           continue;
         }
@@ -366,7 +368,6 @@ PositionInFlatTree MiddleOfWordPosition(const PositionInFlatTree& word_start,
     middle -= length;
   }
   NOTREACHED();
-  return PositionInFlatTree(nullptr, 0);
 }
 
 Position MiddleOfWordPosition(const Position& word_start,
@@ -376,7 +377,15 @@ Position MiddleOfWordPosition(const Position& word_start,
 }
 
 bool IsWordBreak(UChar ch) {
-  return (WTF::unicode::IsPrintableChar(ch) && !IsWhitespace(ch)) ||
-         U16_IS_SURROGATE(ch) || IsLineBreak(ch) || ch == kLowLineCharacter;
+  return (unicode::IsPrintableChar(ch) && !IsWhitespace(ch)) ||
+         U16_IS_SURROGATE(ch) || IsLineBreak(ch) || ch == uchar::kLowLine;
 }
+
+bool IsWordBoundary(UChar ch) {
+  return unicode::IsPunct(ch) ||
+         (RuntimeEnabledFeatures::TreatSymbolsAsWordBoundaryEnabled() &&
+          unicode::IsSymbol(ch)) ||
+         U16_IS_SURROGATE(ch);
+}
+
 }  // namespace blink

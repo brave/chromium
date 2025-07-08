@@ -11,6 +11,7 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/task_environment.h"
 #include "chrome/browser/paint_preview/services/paint_preview_tab_service_file_mixin.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -231,7 +232,7 @@ TEST_F(PaintPreviewTabServiceTest, CaptureTabTwice) {
       base::BindOnce(&FileManager::CreateOrGetDirectory, file_manager, key,
                      false),
       base::BindOnce(
-          [](base::FilePath* out, const absl::optional<base::FilePath>& path) {
+          [](base::FilePath* out, const std::optional<base::FilePath>& path) {
             EXPECT_TRUE(path.has_value());
             *out = path.value();
           },
@@ -256,7 +257,7 @@ TEST_F(PaintPreviewTabServiceTest, CaptureTabTwice) {
       base::BindOnce(&FileManager::CreateOrGetDirectory, file_manager, key,
                      false),
       base::BindOnce(
-          [](base::FilePath* out, const absl::optional<base::FilePath>& path) {
+          [](base::FilePath* out, const std::optional<base::FilePath>& path) {
             EXPECT_TRUE(path.has_value());
             *out = path.value();
           },

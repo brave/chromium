@@ -10,11 +10,11 @@
 
 #include "base/containers/circular_deque.h"
 #include "base/containers/flat_map.h"
-#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/segmentation_platform/internal/database/storage_service.h"
+#include "components/segmentation_platform/internal/database_client_impl.h"
 #include "components/segmentation_platform/internal/metrics/field_trial_recorder.h"
 #include "components/segmentation_platform/internal/migration/prefs_migrator.h"
 #include "components/segmentation_platform/internal/platform_options.h"
@@ -65,6 +65,7 @@ class SegmentationPlatformServiceImpl : public SegmentationPlatformService {
     bool IsValid();
 
     // Profile data:
+    std::string profile_id;
     raw_ptr<leveldb_proto::ProtoDatabaseProvider> db_provider = nullptr;
     raw_ptr<history::HistoryService> history_service = nullptr;
     base::FilePath storage_dir;
@@ -115,18 +116,25 @@ class SegmentationPlatformServiceImpl : public SegmentationPlatformService {
       const PredictionOptions& prediction_options,
       scoped_refptr<InputContext> input_context,
       AnnotatedNumericResultCallback callback) override;
+  void GetInputKeysForModel(const std::string& segmentation_key,
+                            InputContextKeysCallback callback) override;
   SegmentSelectionResult GetCachedSegmentResult(
       const std::string& segmentation_key) override;
-  void GetSelectedSegmentOnDemand(const std::string& segmentation_key,
-                                  scoped_refptr<InputContext> input_context,
-                                  SegmentSelectionCallback callback) override;
   void CollectTrainingData(SegmentId segment_id,
                            TrainingRequestId request_id,
                            const TrainingLabels& param,
                            SuccessCallback callback) override;
+  void CollectTrainingData(SegmentId segment_id,
+                           TrainingRequestId request_id,
+                           ukm::SourceId ukm_source_id,
+                           const TrainingLabels& param,
+                           SuccessCallback callback) override;
   void EnableMetrics(bool signal_collection_allowed) override;
   ServiceProxy* GetServiceProxy() override;
+  DatabaseClient* GetDatabaseClient() override;
   bool IsPlatformInitialized() override;
+
+  bool IsMetricsEnabledForTesting() const { return is_metrics_enabled_; }
 
  private:
   friend class SegmentationPlatformServiceImplTest;
@@ -135,7 +143,8 @@ class SegmentationPlatformServiceImpl : public SegmentationPlatformService {
   void OnDatabaseInitialized(bool success);
 
   // Must only be invoked with a valid SegmentInfo.
-  void OnSegmentationModelUpdated(proto::SegmentInfo segment_info);
+  void OnSegmentationModelUpdated(proto::SegmentInfo segment_info,
+                                  std::optional<int64_t> old_model_version);
 
   // Callback sent to child classes to notify when model results need to be
   // refreshed. For example, when history is cleared.
@@ -166,12 +175,16 @@ class SegmentationPlatformServiceImpl : public SegmentationPlatformService {
 
   std::unique_ptr<StorageService> storage_service_;
   // Storage initialization status.
-  absl::optional<bool> storage_init_status_;
+  std::optional<bool> storage_init_status_;
 
   // Signal processing.
   SignalHandler signal_handler_;
 
+  bool is_metrics_enabled_{false};
+
   ExecutionService execution_service_;
+
+  std::unique_ptr<DatabaseClientImpl> database_client_;
 
   // Segment selection.
   // TODO(shaktisahu): Determine safe destruction ordering between

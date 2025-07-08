@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/capture/video/apple/video_capture_device_apple.h"
 
 #include <stddef.h>
@@ -27,36 +32,6 @@
 #if BUILDFLAG(IS_MAC)
 #include "media/capture/video/mac/uvc_control_mac.h"
 #endif
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-@implementation DeviceNameAndTransportType {
-  NSString* __strong _deviceName;
-  // The transport type of the device (USB, PCI, etc), values are defined in
-  // <IOKit/audio/IOAudioTypes.h> as kIOAudioDeviceTransportType*.
-  media::VideoCaptureTransportType _transportType;
-}
-
-- (instancetype)initWithName:(NSString*)deviceName
-               transportType:(media::VideoCaptureTransportType)transportType {
-  if (self = [super init]) {
-    _deviceName = [deviceName copy];
-    _transportType = transportType;
-  }
-  return self;
-}
-
-- (NSString*)deviceName {
-  return _deviceName;
-}
-
-- (media::VideoCaptureTransportType)deviceTransportType {
-  return _transportType;
-}
-
-@end  // @implementation DeviceNameAndTransportType
 
 namespace media {
 
@@ -255,6 +230,7 @@ void VideoCaptureDeviceApple::ReceiveFrame(
     int aspect_numerator,
     int aspect_denominator,
     base::TimeDelta timestamp,
+    std::optional<base::TimeTicks> capture_begin_time,
     int rotation) {
   if (capture_format_.frame_size != frame_format.frame_size) {
     ReceiveError(VideoCaptureError::kMacReceivedFrameWithUnexpectedResolution,
@@ -267,12 +243,14 @@ void VideoCaptureDeviceApple::ReceiveFrame(
   client_->OnIncomingCapturedData(
       video_frame, video_frame_length, frame_format, color_space,
       rotation /* clockwise_rotation */, false /* flip_y */,
-      base::TimeTicks::Now(), timestamp);
+      base::TimeTicks::Now(), timestamp, capture_begin_time,
+      GetVideoFrameMetadata());
 }
 
 void VideoCaptureDeviceApple::ReceiveExternalGpuMemoryBufferFrame(
     CapturedExternalVideoBuffer frame,
-    base::TimeDelta timestamp) {
+    base::TimeDelta timestamp,
+    std::optional<base::TimeTicks> capture_begin_time) {
   if (capture_format_.frame_size != frame.format.frame_size) {
     ReceiveError(VideoCaptureError::kMacReceivedFrameWithUnexpectedResolution,
                  FROM_HERE,
@@ -280,11 +258,10 @@ void VideoCaptureDeviceApple::ReceiveExternalGpuMemoryBufferFrame(
                      ", and expected " + capture_format_.frame_size.ToString());
     return;
   }
-  // TODO(https://crbug.com/1440075): Remove the `scaled_buffers` argument
-  // because the vector is always empty and no consumers are interested in them.
+
   client_->OnIncomingCapturedExternalBuffer(
-      std::move(frame), std::vector<CapturedExternalVideoBuffer>(),
-      base::TimeTicks::Now(), timestamp, gfx::Rect(capture_format_.frame_size));
+      std::move(frame), base::TimeTicks::Now(), timestamp, capture_begin_time,
+      gfx::Rect(capture_format_.frame_size), GetVideoFrameMetadata());
 }
 
 void VideoCaptureDeviceApple::OnPhotoTaken(const uint8_t* image_data,
@@ -328,6 +305,12 @@ void VideoCaptureDeviceApple::ReceiveCaptureConfigurationChanged() {
       FROM_HERE,
       base::BindOnce(&VideoCaptureDeviceApple::OnCaptureConfigurationChanged,
                      weak_factory_.GetWeakPtr()));
+}
+
+void VideoCaptureDeviceApple::OnLog(const std::string& message) {
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&VideoCaptureDeviceApple::LogMessage,
+                                        weak_factory_.GetWeakPtr(), message));
 }
 
 void VideoCaptureDeviceApple::OnCaptureConfigurationChanged() {
@@ -390,6 +373,16 @@ bool VideoCaptureDeviceApple::UpdateCaptureResolution() {
     return false;
   }
   return true;
+}
+
+VideoFrameMetadata VideoCaptureDeviceApple::GetVideoFrameMetadata() {
+  VideoFrameMetadata metadata;
+  if ([capture_device_ isPortraitEffectSupported]) {
+    bool isPortraitEffectActive = [capture_device_ isPortraitEffectActive];
+    metadata.background_blur = EffectInfo{.enabled = isPortraitEffectActive};
+  }
+
+  return metadata;
 }
 
 }  // namespace media

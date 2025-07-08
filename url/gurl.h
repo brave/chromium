@@ -10,11 +10,9 @@
 #include <iosfwd>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/component_export.h"
-#include "base/debug/alias.h"
-#include "base/debug/crash_logging.h"
-#include "base/strings/string_piece.h"
 #include "base/trace_event/base_tracing_forward.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
@@ -44,10 +42,14 @@
 // path that contains a literal '#'. Using string concatenation will generate a
 // URL with a truncated path and a reference fragment, while ReplaceComponents
 // will know to escape this and produce the desired result.
+//
+// WARNING: While there is no length limit on GURLs, the Mojo serialization
+// code will replace any very long URL with an invalid GURL.
+// See url::mojom::kMaxURLChars for more details.
 class COMPONENT_EXPORT(URL) GURL {
  public:
-  typedef url::StringPieceReplacements<char> Replacements;
-  typedef url::StringPieceReplacements<char16_t> ReplacementsW;
+  using Replacements = url::StringViewReplacements<char>;
+  using ReplacementsW = url::StringViewReplacements<char16_t>;
 
   // Creates an empty, invalid URL.
   GURL();
@@ -57,9 +59,11 @@ class COMPONENT_EXPORT(URL) GURL {
   GURL(const GURL& other);
   GURL(GURL&& other) noexcept;
 
-  // The strings to this contructor should be UTF-8 / UTF-16.
-  explicit GURL(base::StringPiece url_string);
-  explicit GURL(base::StringPiece16 url_string);
+  // The strings to this constructor should be UTF-8 / UTF-16. They will be
+  // parsed and canonicalized. For example, the host is lower cased, and
+  // characters may be percent-encoded or percent-decoded to normalize the URL.
+  explicit GURL(std::string_view url_string);
+  explicit GURL(std::u16string_view url_string);
 
   // Constructor for URLs that have already been parsed and canonicalized. This
   // is used for conversions from KURL, for example. The caller must supply all
@@ -135,8 +139,9 @@ class COMPONENT_EXPORT(URL) GURL {
   }
 
   // Allows GURL to used as a key in STL (for example, a std::set or std::map).
-  bool operator<(const GURL& other) const;
-  bool operator>(const GURL& other) const;
+  constexpr friend auto operator<=>(const GURL& lhs, const GURL& rhs) {
+    return lhs.spec_ <=> rhs.spec_;
+  }
 
   // Resolves a URL that's possibly relative to this object's URL, and returns
   // it. Absolute URLs are also handled according to the rules of URLs on web
@@ -152,8 +157,8 @@ class COMPONENT_EXPORT(URL) GURL {
   //
   // It is an error to resolve a URL relative to an invalid URL. The result
   // will be the empty URL.
-  GURL Resolve(base::StringPiece relative) const;
-  GURL Resolve(base::StringPiece16 relative) const;
+  [[nodiscard]] GURL Resolve(std::string_view relative) const;
+  [[nodiscard]] GURL Resolve(std::u16string_view relative) const;
 
   // Creates a new GURL by replacing the current URL's components with the
   // supplied versions. See the Replacements class in url_canon.h for more.
@@ -166,8 +171,8 @@ class COMPONENT_EXPORT(URL) GURL {
   //
   // Note that this intentionally disallows direct use of url::Replacements,
   // which is harder to use correctly.
-  GURL ReplaceComponents(const Replacements& replacements) const;
-  GURL ReplaceComponents(const ReplacementsW& replacements) const;
+  [[nodiscard]] GURL ReplaceComponents(const Replacements& replacements) const;
+  [[nodiscard]] GURL ReplaceComponents(const ReplacementsW& replacements) const;
 
   // A helper function that is equivalent to replacing the path with a slash
   // and clearing out everything after that. We sometimes need to know just the
@@ -178,7 +183,7 @@ class COMPONENT_EXPORT(URL) GURL {
   //
   // It is an error to get an empty path on an invalid URL. The result
   // will be the empty URL.
-  GURL GetWithEmptyPath() const;
+  [[nodiscard]] GURL GetWithEmptyPath() const;
 
   // A helper function to return a GURL without the filename, query values, and
   // fragment. For example,
@@ -187,7 +192,7 @@ class COMPONENT_EXPORT(URL) GURL {
   // GURL("https://www.foo.com/bar/").GetWithoutFilename().spec()
   // will return "https://www.foo.com/bar/". If the GURL is invalid or missing a
   // scheme, authority or path, it will return an empty, invalid GURL.
-  GURL GetWithoutFilename() const;
+  [[nodiscard]] GURL GetWithoutFilename() const;
 
   // A helper function to return a GURL without the Ref (also named Fragment
   // Identifier). For example,
@@ -195,7 +200,7 @@ class COMPONENT_EXPORT(URL) GURL {
   // will return "https://www.foo.com/index.html".
   // If the GURL is invalid or missing a
   // scheme, authority or path, it will return an empty, invalid GURL.
-  GURL GetWithoutRef() const;
+  [[nodiscard]] GURL GetWithoutRef() const;
 
   // A helper function to return a GURL containing just the scheme, host,
   // and port from a URL. Equivalent to clearing any username and password,
@@ -212,13 +217,13 @@ class COMPONENT_EXPORT(URL) GURL {
   // conversions will likely return a wrong result for about:blank and/or
   // in the presence of iframe.sandbox attribute. Prefer to get origins directly
   // from the source (e.g. RenderFrameHost::GetLastCommittedOrigin).
-  GURL DeprecatedGetOriginAsURL() const;
+  [[nodiscard]] GURL DeprecatedGetOriginAsURL() const;
 
   // A helper function to return a GURL stripped from the elements that are not
   // supposed to be sent as HTTP referrer: username, password and ref fragment.
   // For invalid URLs or URLs that no valid referrers, an empty URL will be
   // returned.
-  GURL GetAsReferrer() const;
+  [[nodiscard]] GURL GetAsReferrer() const;
 
   // Returns true if the scheme for the current URL is a known "standard-format"
   // scheme. A standard-format scheme adheres to what RFC 3986 calls "generic
@@ -238,7 +243,7 @@ class COMPONENT_EXPORT(URL) GURL {
   // Returns true if the given parameter (should be lower-case ASCII to match
   // the canonicalized scheme) is the scheme for this URL. Do not include a
   // colon.
-  bool SchemeIs(base::StringPiece lower_ascii_scheme) const;
+  bool SchemeIs(std::string_view lower_ascii_scheme) const;
 
   // Returns true if the scheme is "http" or "https".
   bool SchemeIsHTTPOrHTTPS() const;
@@ -267,7 +272,7 @@ class COMPONENT_EXPORT(URL) GURL {
   bool SchemeIsCryptographic() const;
 
   // As above, but static. Parameter should be lower-case ASCII.
-  static bool SchemeIsCryptographic(base::StringPiece lower_ascii_scheme);
+  static bool SchemeIsCryptographic(std::string_view lower_ascii_scheme);
 
   // Returns true if the scheme is "blob".
   bool SchemeIsBlob() const {
@@ -285,8 +290,12 @@ class COMPONENT_EXPORT(URL) GURL {
   //
   // It is an error to get the content of an invalid URL: the result will be an
   // empty string.
+  //
+  // Important note: GetContent() and GetContentPiece() for some non-special
+  // URLs have different outcomes to comply with standards. Please see
+  // GURLTest::ContentForNonStandardURLs for more information.
   std::string GetContent() const;
-  base::StringPiece GetContentPiece() const;
+  std::string_view GetContentPiece() const;
 
   // Returns true if the hostname is an IP address. Note: this function isn't
   // as cheap as a simple getter because it re-parses the hostname to verify.
@@ -297,7 +306,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string scheme() const {
     return ComponentString(parsed_.scheme);
   }
-  base::StringPiece scheme_piece() const {
+  std::string_view scheme_piece() const {
     return ComponentStringPiece(parsed_.scheme);
   }
 
@@ -305,7 +314,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string username() const {
     return ComponentString(parsed_.username);
   }
-  base::StringPiece username_piece() const {
+  std::string_view username_piece() const {
     return ComponentStringPiece(parsed_.username);
   }
 
@@ -313,7 +322,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string password() const {
     return ComponentString(parsed_.password);
   }
-  base::StringPiece password_piece() const {
+  std::string_view password_piece() const {
     return ComponentStringPiece(parsed_.password);
   }
 
@@ -327,7 +336,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string host() const {
     return ComponentString(parsed_.host);
   }
-  base::StringPiece host_piece() const {
+  std::string_view host_piece() const {
     return ComponentStringPiece(parsed_.host);
   }
 
@@ -338,7 +347,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string port() const {
     return ComponentString(parsed_.port);
   }
-  base::StringPiece port_piece() const {
+  std::string_view port_piece() const {
     return ComponentStringPiece(parsed_.port);
   }
 
@@ -348,7 +357,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string path() const {
     return ComponentString(parsed_.path);
   }
-  base::StringPiece path_piece() const {
+  std::string_view path_piece() const {
     return ComponentStringPiece(parsed_.path);
   }
 
@@ -357,7 +366,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string query() const {
     return ComponentString(parsed_.query);
   }
-  base::StringPiece query_piece() const {
+  std::string_view query_piece() const {
     return ComponentStringPiece(parsed_.query);
   }
 
@@ -367,7 +376,7 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string ref() const {
     return ComponentString(parsed_.ref);
   }
-  base::StringPiece ref_piece() const {
+  std::string_view ref_piece() const {
     return ComponentStringPiece(parsed_.ref);
   }
 
@@ -389,14 +398,14 @@ class COMPONENT_EXPORT(URL) GURL {
   std::string PathForRequest() const;
 
   // Returns the same characters as PathForRequest(), avoiding a copy.
-  base::StringPiece PathForRequestPiece() const;
+  std::string_view PathForRequestPiece() const;
 
   // Returns the host, excluding the square brackets surrounding IPv6 address
   // literals. This can be useful for passing to getaddrinfo().
   std::string HostNoBrackets() const;
 
   // Returns the same characters as HostNoBrackets(), avoiding a copy.
-  base::StringPiece HostNoBracketsPiece() const;
+  std::string_view HostNoBracketsPiece() const;
 
   // Returns true if this URL's host matches or is in the same domain as
   // the given input string. For example, if the hostname of the URL is
@@ -409,7 +418,7 @@ class COMPONENT_EXPORT(URL) GURL {
   // This call is more efficient than getting the host and checking whether the
   // host has the specific domain or not because no copies or object
   // constructions are done.
-  bool DomainIs(base::StringPiece canonical_domain) const;
+  bool DomainIs(std::string_view canonical_domain) const;
 
   // Checks whether or not two URLs differ only in the ref (the part after
   // the # character).
@@ -440,8 +449,8 @@ class COMPONENT_EXPORT(URL) GURL {
   size_t EstimateMemoryUsage() const;
 
   // Helper used by GURL::IsAboutUrl and KURL::IsAboutURL.
-  static bool IsAboutPath(base::StringPiece actual_path,
-                          base::StringPiece allowed_path);
+  static bool IsAboutPath(std::string_view actual_path,
+                          std::string_view allowed_path);
 
   void WriteIntoTrace(perfetto::TracedValue context) const;
 
@@ -460,17 +469,17 @@ class COMPONENT_EXPORT(URL) GURL {
   void InitializeFromCanonicalSpec();
 
   // Helper used by IsAboutBlank and IsAboutSrcdoc.
-  bool IsAboutUrl(base::StringPiece allowed_path) const;
+  bool IsAboutUrl(std::string_view allowed_path) const;
 
   // Returns the substring of the input identified by the given component.
   std::string ComponentString(const url::Component& comp) const {
     return std::string(ComponentStringPiece(comp));
   }
-  base::StringPiece ComponentStringPiece(const url::Component& comp) const {
+  std::string_view ComponentStringPiece(const url::Component& comp) const {
     if (comp.is_empty())
-      return base::StringPiece();
-    return base::StringPiece(spec_).substr(static_cast<size_t>(comp.begin),
-                                           static_cast<size_t>(comp.len));
+      return std::string_view();
+    return std::string_view(spec_).substr(static_cast<size_t>(comp.begin),
+                                          static_cast<size_t>(comp.len));
   }
 
   void ProcessFileSystemURLAfterReplaceComponents();
@@ -495,40 +504,11 @@ COMPONENT_EXPORT(URL)
 std::ostream& operator<<(std::ostream& out, const GURL& url);
 
 COMPONENT_EXPORT(URL) bool operator==(const GURL& x, const GURL& y);
-COMPONENT_EXPORT(URL) bool operator!=(const GURL& x, const GURL& y);
 
 // Equality operator for comparing raw spec_. This should be used in place of
 // url == GURL(spec) where |spec| is known (i.e. constants). This is to prevent
 // needlessly re-parsing |spec| into a temporary GURL.
 COMPONENT_EXPORT(URL)
-bool operator==(const GURL& x, const base::StringPiece& spec);
-COMPONENT_EXPORT(URL)
-bool operator==(const base::StringPiece& spec, const GURL& x);
-COMPONENT_EXPORT(URL)
-bool operator!=(const GURL& x, const base::StringPiece& spec);
-COMPONENT_EXPORT(URL)
-bool operator!=(const base::StringPiece& spec, const GURL& x);
-
-// DEBUG_ALIAS_FOR_GURL(var_name, url) copies |url| into a new stack-allocated
-// variable named |<var_name>|.  This helps ensure that the value of |url| gets
-// preserved in crash dumps.
-#define DEBUG_ALIAS_FOR_GURL(var_name, url) \
-  DEBUG_ALIAS_FOR_CSTR(var_name, (url).possibly_invalid_spec().c_str(), 128)
-
-namespace url::debug {
-
-class COMPONENT_EXPORT(URL) ScopedUrlCrashKey {
- public:
-  ScopedUrlCrashKey(base::debug::CrashKeyString* crash_key, const GURL& value);
-  ~ScopedUrlCrashKey();
-
-  ScopedUrlCrashKey(const ScopedUrlCrashKey&) = delete;
-  ScopedUrlCrashKey& operator=(const ScopedUrlCrashKey&) = delete;
-
- private:
-  base::debug::ScopedCrashKeyString scoped_string_value_;
-};
-
-}  // namespace url::debug
+bool operator==(const GURL& x, std::string_view spec);
 
 #endif  // URL_GURL_H_

@@ -2,16 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/common/net/x509_certificate_model.h"
 
-#include "net/cert/pki/parse_certificate.h"
+#include <string_view>
+
+#include "base/strings/string_view_util.h"
+#include "net/cert/qwac.h"
 #include "net/cert/x509_util.h"
 #include "net/test/cert_builder.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-class X509CertificateModel : public testing::TestWithParam<std::string> {};
+#include "third_party/boringssl/src/pki/parse_certificate.h"
 
 using x509_certificate_model::Error;
 using x509_certificate_model::NotPresent;
@@ -19,56 +26,44 @@ using x509_certificate_model::OptionalStringOrError;
 
 namespace {
 
-absl::optional<std::string> FindExtension(
+std::optional<std::string> FindExtension(
     const std::vector<x509_certificate_model::Extension>& extensions,
-    base::StringPiece name) {
+    std::string_view name) {
   for (const auto& extension : extensions) {
     if (extension.name == name) {
       return extension.value;
     }
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace
 
-TEST_P(X509CertificateModel, InvalidCert) {
+TEST(X509CertificateModel, InvalidCert) {
   x509_certificate_model::X509CertificateModel model(
       net::x509_util::CreateCryptoBuffer(
-          base::span<const uint8_t>({'b', 'a', 'd', '\n'})),
-      GetParam());
+          base::span<const uint8_t>({'b', 'a', 'd', '\n'})));
 
-  EXPECT_EQ(
-      "1D 7A 36 3C E1 24 30 88 1E C5 6C 9C F1 40 9C 49\nC4 91 04 36 18 E5 98 "
-      "C3 56 E2 95 90 40 87 2F 5A",
-      model.HashCertSHA256WithSeparators());
-  EXPECT_EQ("E9 B3 96 D2 DD DF FD B3 73 BF 2C 6A D0 73 69 6A\nA2 5B 4F 68",
-            model.HashCertSHA1WithSeparators());
-  if (GetParam().empty()) {
-    EXPECT_EQ(
-        "1D7A363CE12430881EC56C9CF1409C49C491043618E598C356E2959040872F5A",
-        model.GetTitle());
-  } else {
-    EXPECT_EQ(GetParam(), model.GetTitle());
-  }
+  EXPECT_EQ("1d7a363ce12430881ec56c9cf1409c49c491043618e598c356e2959040872f5a",
+            model.HashCertSHA256());
+  EXPECT_EQ("1d7a363ce12430881ec56c9cf1409c49c491043618e598c356e2959040872f5a",
+            model.GetTitle());
   EXPECT_FALSE(model.is_valid());
 }
 
-TEST_P(X509CertificateModel, GetGoogleCertFields) {
+TEST(X509CertificateModel, GetGoogleCertFields) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "google.single.pem");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
-  EXPECT_EQ(
-      "F6 41 C3 6C FE F4 9B C0 71 35 9E CF 88 EE D9 31\n7B 73 8B 59 89 41 6A "
-      "D4 01 72 0C 0A 4E 2E 63 52",
-      model.HashCertSHA256WithSeparators());
-  EXPECT_EQ("40 50 62 E5 BE FD E4 AF 97 E9 38 2A F1 6C C8 7C\n8F B7 C4 E2",
-            model.HashCertSHA1WithSeparators());
+      bssl::UpRef(cert->cert_buffer()));
+  EXPECT_EQ("f641c36cfef49bc071359ecf88eed9317b738b5989416ad401720c0a4e2e6352",
+            model.HashCertSHA256());
   ASSERT_TRUE(model.is_valid());
 
+  EXPECT_EQ("23a55ce68ea1b20623de09e93fdf3bb03287ac737b27335b4307fe9ec4855c34",
+            model.HashSpkiSHA256());
   EXPECT_EQ("3", model.GetVersion());
   EXPECT_EQ("2F:DF:BC:F6:AE:91:52:6D:0F:9A:A3:DF:40:34:3E:9A",
             model.GetSerialNumberHexified());
@@ -84,10 +79,7 @@ TEST_P(X509CertificateModel, GetGoogleCertFields) {
   EXPECT_EQ(OptionalStringOrError("Google Inc"), model.GetSubjectOrgName());
   EXPECT_EQ(OptionalStringOrError(NotPresent()), model.GetSubjectOrgUnitName());
 
-  if (GetParam().empty())
-    EXPECT_EQ("www.google.com", model.GetTitle());
-  else
-    EXPECT_EQ(GetParam(), model.GetTitle());
+  EXPECT_EQ("www.google.com", model.GetTitle());
 
   EXPECT_EQ(
       OptionalStringOrError(
@@ -103,10 +95,10 @@ TEST_P(X509CertificateModel, GetGoogleCertFields) {
   // Constants copied from x509_certificate_unittest.cc.
   // Dec 18 00:00:00 2009 GMT
   const double kGoogleParseValidFrom = 1261094400;
-  EXPECT_EQ(kGoogleParseValidFrom, not_before.ToDoubleT());
+  EXPECT_EQ(kGoogleParseValidFrom, not_before.InSecondsFSinceUnixEpoch());
   // Dec 18 23:59:59 2011 GMT
   const double kGoogleParseValidTo = 1324252799;
-  EXPECT_EQ(kGoogleParseValidTo, not_after.ToDoubleT());
+  EXPECT_EQ(kGoogleParseValidTo, not_after.InSecondsFSinceUnixEpoch());
 
   EXPECT_EQ("PKCS #1 SHA-1 With RSA Encryption",
             model.ProcessSecAlgorithmSignature());
@@ -160,12 +152,12 @@ TEST_P(X509CertificateModel, GetGoogleCertFields) {
       extensions[3].value);
 }
 
-TEST_P(X509CertificateModel, GetSCTField) {
+TEST(X509CertificateModel, GetSCTField) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "lets-encrypt-dst-x3-root.pem");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
 
   EXPECT_EQ("3", model.GetVersion());
@@ -197,12 +189,12 @@ TEST_P(X509CertificateModel, GetSCTField) {
       extension_value);
 }
 
-TEST_P(X509CertificateModel, GetNDNCertFields) {
+TEST(X509CertificateModel, GetNDNCertFields) {
   auto cert =
       net::ImportCertFromFile(net::GetTestCertsDirectory(), "ndn.ca.crt");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
   EXPECT_EQ("1", model.GetVersion());
   // The model just returns the hex of the DER bytes, so the leading zeros are
@@ -220,10 +212,7 @@ TEST_P(X509CertificateModel, GetNDNCertFields) {
             model.GetSubjectOrgName());
   EXPECT_EQ(OptionalStringOrError("Security"), model.GetSubjectOrgUnitName());
 
-  if (GetParam().empty())
-    EXPECT_EQ("New Dream Network Certificate Authority", model.GetTitle());
-  else
-    EXPECT_EQ(GetParam(), model.GetTitle());
+  EXPECT_EQ("New Dream Network Certificate Authority", model.GetTitle());
 
   EXPECT_EQ(OptionalStringOrError(
                 "emailAddress = support@dreamhost.com\nCN = New Dream Network "
@@ -247,17 +236,14 @@ TEST_P(X509CertificateModel, GetNDNCertFields) {
   EXPECT_EQ(0U, extensions.size());
 }
 
-TEST_P(X509CertificateModel, PunyCodeCert) {
+TEST(X509CertificateModel, PunyCodeCert) {
   auto cert =
       net::ImportCertFromFile(net::GetTestCertsDirectory(), "punycodetest.pem");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
-  if (GetParam().empty())
-    EXPECT_EQ("xn--wgv71a119e.com", model.GetTitle());
-  else
-    EXPECT_EQ(GetParam(), model.GetTitle());
+  EXPECT_EQ("xn--wgv71a119e.com", model.GetTitle());
   EXPECT_EQ(OptionalStringOrError("xn--wgv71a119e.com"),
             model.GetIssuerCommonName());
   EXPECT_EQ(OptionalStringOrError("xn--wgv71a119e.com"),
@@ -268,12 +254,12 @@ TEST_P(X509CertificateModel, PunyCodeCert) {
             model.GetSubjectName());
 }
 
-TEST_P(X509CertificateModel, SubjectAltNameSanityTest) {
+TEST(X509CertificateModel, SubjectAltNameSanityTest) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "subjectAltName_sanity_check.pem");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
 
   auto extensions = model.GetExtensions("critical", "notcrit");
   ASSERT_EQ(3U, extensions.size());
@@ -289,12 +275,12 @@ TEST_P(X509CertificateModel, SubjectAltNameSanityTest) {
       extensions[1].value);
 }
 
-TEST_P(X509CertificateModel, CertificatePoliciesSanityTest) {
+TEST(X509CertificateModel, CertificatePoliciesSanityTest) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "policies_sanity_check.pem");
   ASSERT_TRUE(cert);
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
 
   auto extensions = model.GetExtensions("critical", "notcrit");
   ASSERT_EQ(2U, extensions.size());
@@ -310,7 +296,7 @@ TEST_P(X509CertificateModel, CertificatePoliciesSanityTest) {
       extensions[0].value);
 }
 
-TEST_P(X509CertificateModel, CertificatePoliciesInvalidUtf8UserNotice) {
+TEST(X509CertificateModel, CertificatePoliciesInvalidUtf8UserNotice) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -340,11 +326,11 @@ TEST_P(X509CertificateModel, CertificatePoliciesInvalidUtf8UserNotice) {
       0x30, 0x11, 0x0c, 0x0f, 0x45, 0x78, 0x70, 0x6c, 0x69, 0x63, 0x69,
       0x74, 0x20, 0xa1, 0x20, 0x54, 0x65, 0x78, 0x74};
   builder->SetExtension(
-      net::der::Input(net::kCertificatePoliciesOid),
+      bssl::der::Input(bssl::kCertificatePoliciesOid),
       std::string(kExtension, kExtension + sizeof(kExtension)));
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   ASSERT_TRUE(model.is_valid());
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "policies_sanity_check.pem");
@@ -355,12 +341,12 @@ TEST_P(X509CertificateModel, CertificatePoliciesInvalidUtf8UserNotice) {
   EXPECT_EQ("notcrit\nError: Unable to decode extension", *extension_value);
 }
 
-TEST_P(X509CertificateModel, GlobalsignComCert) {
+TEST(X509CertificateModel, GlobalsignComCert) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "2029_globalsign_com_cert.pem");
   ASSERT_TRUE(cert.get());
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -415,12 +401,12 @@ TEST_P(X509CertificateModel, GlobalsignComCert) {
             extensions[8].value);
 }
 
-TEST_P(X509CertificateModel, NSCertComment) {
+TEST(X509CertificateModel, NSCertComment) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "foaf.me.chromium-test-cert.der");
   ASSERT_TRUE(cert.get());
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -429,12 +415,12 @@ TEST_P(X509CertificateModel, NSCertComment) {
   EXPECT_EQ("notcrit\nOpenSSL Generated Certificate", extensions[1].value);
 }
 
-TEST_P(X509CertificateModel, DiginotarCert) {
+TEST(X509CertificateModel, DiginotarCert) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "diginotar_public_ca_2025.pem");
   ASSERT_TRUE(cert.get());
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -463,12 +449,12 @@ TEST_P(X509CertificateModel, DiginotarCert) {
       extensions[3].value);
 }
 
-TEST_P(X509CertificateModel, AuthorityKeyIdentifierAllFields) {
+TEST(X509CertificateModel, AuthorityKeyIdentifierAllFields) {
   auto cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                       "diginotar_cyber_ca.pem");
   ASSERT_TRUE(cert.get());
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(cert->cert_buffer()), GetParam());
+      bssl::UpRef(cert->cert_buffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -482,7 +468,7 @@ TEST_P(X509CertificateModel, AuthorityKeyIdentifierAllFields) {
       extensions[3].value);
 }
 
-TEST_P(X509CertificateModel, CrlDpCrlIssuerAndRelativeName) {
+TEST(X509CertificateModel, CrlDpCrlIssuerAndRelativeName) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -524,11 +510,11 @@ TEST_P(X509CertificateModel, CrlDpCrlIssuerAndRelativeName) {
       0x63, 0x74, 0x43, 0x52, 0x4c, 0x20, 0x43, 0x41, 0x33, 0x20, 0x63, 0x52,
       0x4c, 0x49, 0x73, 0x73, 0x75, 0x65, 0x72};
 
-  builder->SetExtension(net::der::Input(net::kCrlDistributionPointsOid),
+  builder->SetExtension(bssl::der::Input(bssl::kCrlDistributionPointsOid),
                         std::string(kCrldp, kCrldp + sizeof(kCrldp)));
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -541,7 +527,7 @@ TEST_P(X509CertificateModel, CrlDpCrlIssuerAndRelativeName) {
       *extension_value);
 }
 
-TEST_P(X509CertificateModel, CrlDpReasons) {
+TEST(X509CertificateModel, CrlDpReasons) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -593,11 +579,11 @@ TEST_P(X509CertificateModel, CrlDpReasons) {
       0x0b, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x04, 0x43, 0x52, 0x4c,
       0x32, 0x81, 0x03, 0x07, 0x9f, 0x80};
 
-  builder->SetExtension(net::der::Input(net::kCrlDistributionPointsOid),
+  builder->SetExtension(bssl::der::Input(bssl::kCrlDistributionPointsOid),
                         std::string(kCrldp, kCrldp + sizeof(kCrldp)));
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -612,7 +598,7 @@ TEST_P(X509CertificateModel, CrlDpReasons) {
       *extension_value);
 }
 
-TEST_P(X509CertificateModel, AuthorityInfoAccessNonstandardOidAndLocationType) {
+TEST(X509CertificateModel, AuthorityInfoAccessNonstandardOidAndLocationType) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -627,11 +613,11 @@ TEST_P(X509CertificateModel, AuthorityInfoAccessNonstandardOidAndLocationType) {
   const uint8_t kAIA[] = {0x30, 0x18, 0x30, 0x16, 0x06, 0x03, 0x2c, 0x09, 0x14,
                           0x81, 0x0f, 0x66, 0x6f, 0x6f, 0x40, 0x65, 0x78, 0x61,
                           0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d};
-  builder->SetExtension(net::der::Input(net::kAuthorityInfoAccessOid),
+  builder->SetExtension(bssl::der::Input(bssl::kAuthorityInfoAccessOid),
                         std::string(kAIA, kAIA + sizeof(kAIA)));
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   ASSERT_TRUE(model.is_valid());
 
   auto extensions = model.GetExtensions("critical", "notcrit");
@@ -643,7 +629,7 @@ TEST_P(X509CertificateModel, AuthorityInfoAccessNonstandardOidAndLocationType) {
             *extension_value);
 }
 
-TEST_P(X509CertificateModel, SubjectIA5StringInvalidCharacters) {
+TEST(X509CertificateModel, SubjectIA5StringInvalidCharacters) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -665,19 +651,16 @@ TEST_P(X509CertificateModel, SubjectIA5StringInvalidCharacters) {
   builder->SetSubjectTLV(kSubject);
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   ASSERT_TRUE(model.is_valid());
-  if (GetParam().empty())
-    EXPECT_EQ(model.HashCertSHA256(), model.GetTitle());
-  else
-    EXPECT_EQ(GetParam(), model.GetTitle());
+  EXPECT_EQ(model.HashCertSHA256(), model.GetTitle());
   EXPECT_EQ(OptionalStringOrError(Error()), model.GetSubjectCommonName());
   EXPECT_EQ(OptionalStringOrError(NotPresent()), model.GetSubjectOrgName());
   EXPECT_EQ(OptionalStringOrError(NotPresent()), model.GetSubjectOrgUnitName());
   EXPECT_EQ(OptionalStringOrError(Error()), model.GetSubjectName());
 }
 
-TEST_P(X509CertificateModel, SubjectInvalid) {
+TEST(X509CertificateModel, SubjectInvalid) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -688,11 +671,11 @@ TEST_P(X509CertificateModel, SubjectInvalid) {
   builder->SetSubjectTLV(kSubject);
 
   x509_certificate_model::X509CertificateModel model(
-      bssl::UpRef(builder->GetCertBuffer()), GetParam());
+      bssl::UpRef(builder->GetCertBuffer()));
   EXPECT_FALSE(model.is_valid());
 }
 
-TEST_P(X509CertificateModel, SubjectEmptySequence) {
+TEST(X509CertificateModel, SubjectEmptySequence) {
   base::FilePath certs_dir = net::GetTestCertsDirectory();
   std::unique_ptr<net::CertBuilder> builder =
       net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
@@ -704,12 +687,9 @@ TEST_P(X509CertificateModel, SubjectEmptySequence) {
 
   {
     x509_certificate_model::X509CertificateModel model(
-        bssl::UpRef(builder->GetCertBuffer()), GetParam());
+        bssl::UpRef(builder->GetCertBuffer()));
     ASSERT_TRUE(model.is_valid());
-    if (GetParam().empty())
-      EXPECT_EQ(model.HashCertSHA256(), model.GetTitle());
-    else
-      EXPECT_EQ(GetParam(), model.GetTitle());
+    EXPECT_EQ(model.HashCertSHA256(), model.GetTitle());
     EXPECT_EQ(OptionalStringOrError(NotPresent()),
               model.GetSubjectCommonName());
     EXPECT_EQ(OptionalStringOrError(NotPresent()), model.GetSubjectOrgName());
@@ -722,25 +702,62 @@ TEST_P(X509CertificateModel, SubjectEmptySequence) {
     // there.
     builder->SetSubjectAltNames({"foo.com", "bar.com"}, {});
     x509_certificate_model::X509CertificateModel model(
-        bssl::UpRef(builder->GetCertBuffer()), GetParam());
+        bssl::UpRef(builder->GetCertBuffer()));
     ASSERT_TRUE(model.is_valid());
-    if (GetParam().empty())
-      EXPECT_EQ("foo.com", model.GetTitle());
-    else
-      EXPECT_EQ(GetParam(), model.GetTitle());
+    EXPECT_EQ("foo.com", model.GetTitle());
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         X509CertificateModel,
-                         testing::Values(std::string(),
-                                         std::string("nickname")));
+TEST(X509CertificateModel, QcStatements) {
+  base::FilePath certs_dir = net::GetTestCertsDirectory();
+  std::unique_ptr<net::CertBuilder> builder =
+      net::CertBuilder::FromFile(certs_dir.AppendASCII("ok_cert.pem"), nullptr);
+  ASSERT_TRUE(builder);
 
-// TODO(https://crbug.com/953425): This test suite has "2" at the end of the
-// name to avoid conflicting with x509_certificate_model_nss_unittest. Should
-// rename the test suite in that file to X509CertificateModelNSSTest and remove
-// the 2 from here.
-TEST(X509CertificateModelTest2, ProcessRawSubjectPublicKeyInfo) {
+  // SEQUENCE {
+  //   SEQUENCE {
+  //     OBJECT_IDENTIFIER { 1.3.6.1.5.5.7.11.2 }
+  //     SEQUENCE {
+  //       OBJECT_IDENTIFIER { 0.4.0.194121.1.2 }
+  //     }
+  //   }
+  //   SEQUENCE {
+  //     OBJECT_IDENTIFIER { 0.4.0.1862.1.1 }
+  //   }
+  //   SEQUENCE {
+  //     OBJECT_IDENTIFIER { 0.4.0.1862.1.6 }
+  //     SEQUENCE {
+  //       OBJECT_IDENTIFIER { 0.4.0.1862.1.6.3 }
+  //       OBJECT_IDENTIFIER { 0.4.0.1862.1.6.2 }
+  //     }
+  //   }
+  // }
+  constexpr uint8_t kQcStatementsValue[] = {
+      0x30, 0x3f, 0x30, 0x15, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05,
+      0x07, 0x0b, 0x02, 0x30, 0x09, 0x06, 0x07, 0x04, 0x00, 0x8b, 0xec,
+      0x49, 0x01, 0x02, 0x30, 0x08, 0x06, 0x06, 0x04, 0x00, 0x8e, 0x46,
+      0x01, 0x01, 0x30, 0x1c, 0x06, 0x06, 0x04, 0x00, 0x8e, 0x46, 0x01,
+      0x06, 0x30, 0x12, 0x06, 0x07, 0x04, 0x00, 0x8e, 0x46, 0x01, 0x06,
+      0x03, 0x06, 0x07, 0x04, 0x00, 0x8e, 0x46, 0x01, 0x06, 0x02};
+  builder->SetExtension(bssl::der::Input(net::kQcStatementsOid),
+                        std::string(base::as_string_view(kQcStatementsValue)));
+
+  x509_certificate_model::X509CertificateModel model(
+      bssl::UpRef(builder->GetCertBuffer()));
+  ASSERT_TRUE(model.is_valid());
+  auto extensions = model.GetExtensions("critical", "notcrit");
+  auto extension_value =
+      FindExtension(extensions, "Qualified Certificate Statements");
+  ASSERT_TRUE(extension_value);
+  EXPECT_EQ(
+      "notcrit\n"
+      "OID.1.3.6.1.5.5.7.11.2 = 30 09 06 07 04 00 8B EC 49 01 02\n"
+      "ETSI QcCompliance\n"
+      "ETSI QcType = ETSI qct-web, OID.0.4.0.1862.1.6.2\n",
+      *extension_value);
+}
+
+TEST(X509CertificateModel, ProcessRawSubjectPublicKeyInfo) {
   // SEQUENCE {
   //   SEQUENCE {
   //     # rsaEncryption

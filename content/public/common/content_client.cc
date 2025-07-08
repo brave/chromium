@@ -4,16 +4,17 @@
 
 #include "content/public/common/content_client.h"
 
+#include <string_view>
+
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
-#include "base/notreached.h"
-#include "base/strings/string_piece.h"
+#include "base/notimplemented.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/common/origin_util.h"
-#include "content/public/common/user_agent.h"
 #include "ui/gfx/image/image.h"
 
 namespace content {
@@ -104,10 +105,14 @@ std::u16string ContentClient::GetLocalizedString(
   return std::u16string();
 }
 
-base::StringPiece ContentClient::GetDataResource(
+bool ContentClient::HasDataResource(int resource_id) const {
+  return false;
+}
+
+std::string_view ContentClient::GetDataResource(
     int resource_id,
     ui::ResourceScaleFactor scale_factor) {
-  return base::StringPiece();
+  return std::string_view();
 }
 
 base::RefCountedMemory* ContentClient::GetDataResourceBytes(int resource_id) {
@@ -120,7 +125,7 @@ std::string ContentClient::GetDataResourceString(int resource_id) {
       GetDataResourceBytes(resource_id);
   if (!memory)
     return std::string();
-  return std::string(memory->front_as<char>(), memory->size());
+  return std::string(base::as_string_view(*memory));
 }
 
 gfx::Image& ContentClient::GetNativeImageNamed(int resource_id) {
@@ -150,5 +155,14 @@ media::MediaDrmBridgeClient* ContentClient::GetMediaDrmBridgeClient() {
 void ContentClient::ExposeInterfacesToBrowser(
     scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     mojo::BinderMap* binders) {}
+
+bool ContentClient::ShouldAllowDefaultSiteInstanceGroup() {
+  return true;
+}
+
+bool ContentClient::IsFilePickerAllowedForCrossOriginSubframe(
+    const url::Origin& origin) {
+  return false;
+}
 
 }  // namespace content

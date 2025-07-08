@@ -5,6 +5,9 @@
 #ifndef CONTENT_PUBLIC_TEST_RENDER_FRAME_HOST_TEST_SUPPORT_H_
 #define CONTENT_PUBLIC_TEST_RENDER_FRAME_HOST_TEST_SUPPORT_H_
 
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom.h"
+
 namespace content {
 class RenderFrameHost;
 
@@ -17,8 +20,21 @@ class RenderFrameHost;
 void LeaveInPendingDeletionState(RenderFrameHost* rfh);
 
 // Runs a check to determine whether the runtime-enabled feature, third-party
-// storage partitioning, is disabled in the current frame.
-bool IsDisableThirdPartyStoragePartitioningEnabled(RenderFrameHost* rfh);
+// storage partitioning user bypass, is enabled in the current frame.
+bool IsThirdPartyStoragePartitioningUserBypassEnabled(RenderFrameHost* rfh);
+
+// Create a permission service bound to the specified receiver.
+void CreatePermissionService(
+    RenderFrameHost* rfh,
+    mojo::PendingReceiver<blink::mojom::PermissionService> receiver);
+
+// Calls RenderFrameHostImpl::DisableUnloadTimerForTesting for the given
+// RenderFrameHost.
+void DisableUnloadTimerForTesting(RenderFrameHost* rfh);
+
+// Calls RenderFrameHostImpl::WebAuthnAssertionRequestSucceeded for the given
+// RenderFrameHost.
+void WebAuthnAssertionRequestSucceeded(RenderFrameHost* rfh);
 
 }  // namespace content
 

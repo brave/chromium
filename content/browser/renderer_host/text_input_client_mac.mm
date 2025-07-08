@@ -14,11 +14,8 @@
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/common/features.h"
 #include "ui/base/mojom/attributed_string.mojom.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace content {
 
@@ -34,7 +31,10 @@ RenderFrameHostImpl* GetFocusedRenderFrameHostImpl(RenderWidgetHost* widget) {
 }  // namespace
 
 TextInputClientMac::TextInputClientMac()
-    : character_index_(UINT32_MAX), lock_(), condition_(&lock_) {}
+    : character_index_(UINT32_MAX),
+      lock_(),
+      condition_(&lock_),
+      wait_timeout_(features::kTextInputClientIPCTimeout.Get()) {}
 
 TextInputClientMac::~TextInputClientMac() {
 }

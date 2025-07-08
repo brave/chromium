@@ -6,11 +6,15 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
+#include "cc/input/android/offset_tag_android.h"
 #include "cc/slim/solid_color_layer.h"
 #include "chrome/browser/android/compositor/layer/toolbar_layer.h"
-#include "chrome/browser/ui/android/toolbar/jni_headers/TopToolbarSceneLayer_jni.h"
+#include "components/viz/common/quads/offset_tag.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/gfx/android/java_bitmap.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/ui/android/toolbar/jni_headers/TopToolbarSceneLayer_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::JavaRef;
@@ -41,7 +45,8 @@ void TopToolbarSceneLayer::UpdateToolbarLayer(
     jfloat content_offset,
     bool show_shadow,
     bool visible,
-    bool anonymize) {
+    bool anonymize,
+    const base::android::JavaParamRef<jobject>& joffset_tag) {
   // If the toolbar layer has not been created yet, create it.
   if (!toolbar_layer_) {
     ui::ResourceManager* resource_manager =
@@ -56,9 +61,11 @@ void TopToolbarSceneLayer::UpdateToolbarLayer(
     return;
   }
 
+  viz::OffsetTag offset_tag = cc::android::FromJavaOffsetTag(env, joffset_tag);
   toolbar_layer_->PushResource(toolbar_resource_id, toolbar_background_color,
                                anonymize, url_bar_color, url_bar_resource_id,
-                               x_offset, content_offset, false, !show_shadow);
+                               x_offset, content_offset, false, !show_shadow,
+                               offset_tag);
 }
 
 void TopToolbarSceneLayer::UpdateProgressBar(
@@ -73,14 +80,27 @@ void TopToolbarSceneLayer::UpdateProgressBar(
     jint progress_bar_background_y,
     jint progress_bar_background_width,
     jint progress_bar_background_height,
-    jint progress_bar_background_color) {
+    jint progress_bar_background_color,
+    jint progress_bar_static_background_x,
+    jint progress_bar_static_background_width,
+    jint progress_bar_static_background_color,
+    jint progress_bar_end_indicator_x,
+    jint progress_bar_end_indicator_y,
+    jint progress_bar_end_indicator_width,
+    jint progress_bar_end_indicator_height,
+    jfloat corner_radius,
+    jboolean progress_bar_visual_update_available) {
   if (!toolbar_layer_)
     return;
   toolbar_layer_->UpdateProgressBar(
       progress_bar_x, progress_bar_y, progress_bar_width, progress_bar_height,
       progress_bar_color, progress_bar_background_x, progress_bar_background_y,
       progress_bar_background_width, progress_bar_background_height,
-      progress_bar_background_color);
+      progress_bar_background_color, progress_bar_static_background_x,
+      progress_bar_static_background_width, progress_bar_static_background_color,
+      progress_bar_end_indicator_x, progress_bar_end_indicator_y,
+      progress_bar_end_indicator_width, progress_bar_end_indicator_height, corner_radius,
+      progress_bar_visual_update_available);
 }
 
 void TopToolbarSceneLayer::SetContentTree(

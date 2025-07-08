@@ -20,7 +20,6 @@
 #include "third_party/blink/renderer/core/svg/svg_fe_diffuse_lighting_element.h"
 
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/graphics/filters/svg_filter_builder.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_number.h"
@@ -85,7 +84,7 @@ bool SVGFEDiffuseLightingElement::SetFilterEffectAttribute(
         diffuse_constant_->CurrentValue()->Value());
 
   if (const auto* light_element = SVGFELightElement::FindLightElement(*this)) {
-    absl::optional<bool> light_source_update =
+    std::optional<bool> light_source_update =
         light_element->SetLightSourceAttribute(diffuse_lighting, attr_name);
     if (light_source_update)
       return *light_source_update;
@@ -100,13 +99,11 @@ void SVGFEDiffuseLightingElement::SvgAttributeChanged(
   if (attr_name == svg_names::kSurfaceScaleAttr ||
       attr_name == svg_names::kDiffuseConstantAttr ||
       attr_name == svg_names::kLightingColorAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     PrimitiveAttributeChanged(attr_name);
     return;
   }
 
   if (attr_name == svg_names::kInAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     Invalidate();
     return;
   }

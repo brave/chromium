@@ -9,6 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/app_menu.h"
@@ -22,56 +23,29 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/text_constants.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/window/hit_test_utils.h"
 
-WebAppMenuButton::WebAppMenuButton(BrowserView* browser_view,
-                                   std::u16string accessible_name)
+WebAppMenuButton::WebAppMenuButton(BrowserView* browser_view)
     : AppMenuButton(base::BindRepeating(&WebAppMenuButton::ButtonPressed,
                                         base::Unretained(this))),
       browser_view_(browser_view) {
   views::SetHitTestComponent(this, static_cast<int>(HTCLIENT));
 
+  SetVectorIcons(kBrowserToolsIcon, kBrowserToolsTouchIcon);
+
   views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::ON);
 
   SetFocusBehavior(FocusBehavior::ALWAYS);
-
-  std::u16string application_name = accessible_name;
-  if (application_name.empty() && browser_view->browser()->app_controller()) {
-    application_name =
-        browser_view->browser()->app_controller()->GetAppShortName();
-  }
-
-  // Currently, |accessible_name| is ony set for custom tabs. Skip setting the
-  // tooltip because |IDS_WEB_APP_MENU_BUTTON_TOOLTIP| doesn't make sense
-  // combined with |accessible_name|.
-  if (accessible_name.empty()) {
-    SetTooltipText(l10n_util::GetStringFUTF16(IDS_WEB_APP_MENU_BUTTON_TOOLTIP,
-                                              application_name));
-  }
-
-  SetAccessibleName(application_name);
-  SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  SetImageLabelSpacing(2);
 }
 
 WebAppMenuButton::~WebAppMenuButton() = default;
-
-void WebAppMenuButton::SetColor(SkColor color) {
-  if (color_ == color)
-    return;
-  color_ = color;
-  SetImageModel(views::Button::STATE_NORMAL,
-                ui::ImageModel::FromVectorIcon(*icon_, color));
-  views::InkDrop::Get(this)->SetBaseColor(color_);
-  OnPropertyChanged(&color_, views::kPropertyEffectsNone);
-}
-
-SkColor WebAppMenuButton::GetColor() const {
-  return color_;
-}
 
 void WebAppMenuButton::StartHighlightAnimation() {
   views::InkDrop::Get(this)->GetInkDrop()->SetHoverHighlightFadeDuration(
@@ -99,6 +73,48 @@ void WebAppMenuButton::ButtonPressed(const ui::Event& event) {
       base::UserMetricsAction("HostedAppMenuButtonButton_Clicked"));
 }
 
+bool WebAppMenuButton::IsLabelPresentAndVisible() const {
+  if (!label()) {
+    return false;
+  }
+  return label()->GetVisible() && !label()->GetText().empty();
+}
+
+void WebAppMenuButton::UpdateStateForTesting() {
+  UpdateTextAndHighlightColor();
+}
+
+void WebAppMenuButton::OnThemeChanged() {
+  UpdateTextAndHighlightColor();
+  AppMenuButton::OnThemeChanged();
+}
+
+std::optional<SkColor> WebAppMenuButton::GetHighlightTextColor() const {
+  if (!IsLabelPresentAndVisible()) {
+    return std::nullopt;
+  }
+  return GetColorProvider()->GetColor(kColorAppMenuExpandedForegroundDefault);
+}
+
+SkColor WebAppMenuButton::GetForegroundColor(ButtonState state) const {
+  if (IsLabelPresentAndVisible()) {
+    return GetColorProvider()->GetColor(kColorAppMenuExpandedForegroundDefault);
+  }
+  return AppMenuButton::GetForegroundColor(state);
+}
+
+int WebAppMenuButton::GetIconSize() const {
+  // Rather than use the default toolbar icon size, use whatever icon size is
+  // embedded in the vector icon. This matches the behavior of
+  // BrowserAppMenuButton.
+  return 0;
+}
+
+std::optional<std::u16string> WebAppMenuButton::GetAccessibleNameOverride()
+    const {
+  return std::nullopt;
+}
+
 void WebAppMenuButton::FadeHighlightOff() {
   if (!ShouldEnterHoveredState()) {
     views::InkDrop::Get(this)->GetInkDrop()->SetHoverHighlightFadeDuration(
@@ -110,6 +126,60 @@ void WebAppMenuButton::FadeHighlightOff() {
   }
 }
 
-BEGIN_METADATA(WebAppMenuButton, AppMenuButton)
-ADD_PROPERTY_METADATA(SkColor, Color, ui::metadata::SkColorConverter)
+void WebAppMenuButton::UpdateTextAndHighlightColor() {
+  web_app::AppBrowserController* app_controller =
+      browser_view_->browser()->app_controller();
+  // `app_controller` can be null if this button is used in a (Chrome OS) custom
+  // tab bar view for an ARC app.
+
+  int tooltip_message_id;
+  std::u16string text;
+  if (!app_controller || !app_controller->HasPendingUpdate()) {
+    tooltip_message_id = IDS_WEB_APP_MENU_BUTTON_TOOLTIP;
+  } else {
+    tooltip_message_id = IDS_WEB_APP_MENU_BUTTON_TOOLTIP_UPDATE_AVAILABLE;
+    text = l10n_util::GetStringUTF16(IDS_WEB_APP_MENU_BUTTON_UPDATE);
+  }
+
+  const bool label_present_and_visible = !text.empty();
+
+  SetHorizontalAlignment(label_present_and_visible ? gfx::ALIGN_RIGHT
+                                                   : gfx::ALIGN_CENTER);
+
+  const auto* const color_provider = GetColorProvider();
+  SetHighlight(text, label_present_and_visible
+                         ? std::optional(color_provider->GetColor(
+                               kColorAppMenuHighlightDefault))
+                         : std::nullopt);
+
+  SetLayoutInsets(label_present_and_visible
+                      ? ::GetLayoutInsets(WEB_APP_APP_MENU_CHIP_PADDING)
+                      : gfx::Insets());
+
+  // In general all controls in the title bar of a web app should show up as
+  // disabled in an inactive widget, so to fit in we also do this for the app
+  // menu button. However setting the field to true when we have both a label
+  // and an icon results in icon and label using different colors. For now not
+  // supporting this behavior when the button is highlighted is easier (visually
+  // this also seems fine, since when highlighted the app menu button is a
+  // different color from all the other buttons anyway).
+  SetAppearDisabledInInactiveWidget(!label_present_and_visible);
+
+  // Custom tabs for ARC apps on ChromeOS use the same WebAppMenuButton, but
+  // override the accessible name of the button to make more sense in that
+  // context. In that case skip setting the tooltip because
+  // `IDS_WEB_APP_MENU_BUTTON_TOOLTIP` doesn't make sense combined with
+  // the overridden accessible name.
+  std::optional<std::u16string> accessible_name = GetAccessibleNameOverride();
+  if (!accessible_name.has_value()) {
+    CHECK(app_controller);
+    std::u16string application_name = app_controller->GetAppShortName();
+    accessible_name =
+        l10n_util::GetStringFUTF16(tooltip_message_id, application_name);
+    SetTooltipText(*accessible_name);
+  }
+  GetViewAccessibility().SetName(*accessible_name);
+}
+
+BEGIN_METADATA(WebAppMenuButton)
 END_METADATA

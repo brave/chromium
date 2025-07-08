@@ -30,10 +30,13 @@
 
 #include "third_party/blink/renderer/platform/link_hash.h"
 
-#include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
+#include <string_view>
 
+#include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "url/url_util.h"
 
 namespace blink {
@@ -44,15 +47,16 @@ static bool ResolveRelative(const KURL& base,
   // We use these low-level GURL functions to avoid converting back and forth
   // from UTF-8 unnecessarily.
   url::Parsed parsed;
-  StringUTF8Adaptor base_utf8(base.GetString());
+  StringUtf8Adaptor base_utf8(base.GetString());
   if (relative.Is8Bit()) {
-    StringUTF8Adaptor relative_utf8(relative);
+    StringUtf8Adaptor relative_utf8(relative);
     return url::ResolveRelative(base_utf8.data(), base_utf8.size(),
                                 base.GetParsed(), relative_utf8.data(),
                                 relative_utf8.size(), nullptr, buffer, &parsed);
   }
   return url::ResolveRelative(base_utf8.data(), base_utf8.size(),
-                              base.GetParsed(), relative.Characters16(),
+                              base.GetParsed(),
+                              UNSAFE_TODO(relative.Characters16()),
                               relative.length(), nullptr, buffer, &parsed);
 }
 
@@ -62,7 +66,31 @@ LinkHash VisitedLinkHash(const KURL& base, const AtomicString& relative) {
   url::RawCanonOutput<2048> buffer;
   if (!ResolveRelative(base, relative.GetString(), &buffer))
     return 0;
-  return Platform::Current()->VisitedLinkHash(buffer.data(), buffer.length());
+
+  return Platform::Current()->VisitedLinkHash(
+      std::string_view(buffer.data(), buffer.length()));
+}
+
+LinkHash PartitionedVisitedLinkFingerprint(
+    const KURL& base_link_url,
+    const AtomicString& relative_link_url,
+    const net::SchemefulSite& top_level_site,
+    const SecurityOrigin* frame_origin) {
+  // If there is no relative URL, we return the null-fingerprint.
+  if (relative_link_url.IsNull()) {
+    return 0;
+  }
+  url::RawCanonOutput<2048> buffer;
+  // Resolving the base and relative parts of the link_url into a single
+  // std::string_view via the URL Canonicalizer. If we are unable to resolve the
+  // two parts of the URL, we return the null-fingerprint.
+  if (!ResolveRelative(base_link_url, relative_link_url.GetString(), &buffer)) {
+    return 0;
+  }
+  std::string_view link_url = std::string_view(buffer.data(), buffer.length());
+
+  return Platform::Current()->PartitionedVisitedLinkFingerprint(
+      link_url, top_level_site, WebSecurityOrigin(frame_origin));
 }
 
 }  // namespace blink

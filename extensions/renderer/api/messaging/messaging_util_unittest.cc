@@ -4,13 +4,17 @@
 
 #include "extensions/renderer/api/messaging/messaging_util.h"
 
+#include <array>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "base/strings/stringprintf.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/messaging_endpoint.h"
-#include "extensions/common/api/messaging/serialization_format.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/mojom/context_type.mojom.h"
+#include "extensions/common/mojom/message_port.mojom-shared.h"
 #include "extensions/renderer/bindings/api_binding_test.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
 #include "extensions/renderer/native_extension_bindings_system_test_base.h"
@@ -19,6 +23,16 @@
 #include "v8/include/v8.h"
 
 namespace extensions {
+
+namespace {
+
+struct TestCase {
+  v8::Local<v8::Value> passed_id;
+  std::string_view expected_id;
+  bool should_pass;
+};
+
+}  // anonymous namespace
 
 using MessagingUtilTest = APIBindingTest;
 
@@ -33,7 +47,7 @@ TEST_F(MessagingUtilTest, TestMaximumMessageSize) {
       V8ValueFromScriptSource(context, "'a'.repeat(1024 *1024 * 65)");
   std::string error;
   std::unique_ptr<Message> message = messaging_util::MessageFromV8(
-      context, long_message, SerializationFormat::kJson, &error);
+      context, long_message, mojom::SerializationFormat::kJson, &error);
   EXPECT_FALSE(message);
   EXPECT_EQ(kMessageTooLongError, error);
 }
@@ -42,7 +56,7 @@ TEST_F(MessagingUtilTest, TestParseMessageOptionsFrameId) {
   v8::HandleScope handle_scope(isolate());
   v8::Local<v8::Context> context = MainContext();
 
-  struct {
+  static constexpr struct {
     int expected_frame_id;
     const char* string_options;
   } test_cases[] = {
@@ -80,34 +94,34 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
 
   // sendRequest, Extension -> Self
   {
-    EXPECT_EQ(
-        messaging_util::kOnRequestEvent,
-        messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id1),
-                                           id1, ChannelType::kSendRequest));
+    EXPECT_EQ(messaging_util::kOnRequestEvent,
+              messaging_util::GetEventForChannel(
+                  MessagingEndpoint::ForExtension(id1), id1,
+                  mojom::ChannelType::kSendRequest));
   }
 
   // sendRequest, Extension 2 -> Extension 1
   {
-    EXPECT_EQ(
-        messaging_util::kOnRequestExternalEvent,
-        messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id2),
-                                           id1, ChannelType::kSendRequest));
+    EXPECT_EQ(messaging_util::kOnRequestExternalEvent,
+              messaging_util::GetEventForChannel(
+                  MessagingEndpoint::ForExtension(id2), id1,
+                  mojom::ChannelType::kSendRequest));
   }
 
   // sendMessage, Extension -> Self
   {
-    EXPECT_EQ(
-        messaging_util::kOnMessageEvent,
-        messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id1),
-                                           id1, ChannelType::kSendMessage));
+    EXPECT_EQ(messaging_util::kOnMessageEvent,
+              messaging_util::GetEventForChannel(
+                  MessagingEndpoint::ForExtension(id1), id1,
+                  mojom::ChannelType::kSendMessage));
   }
 
   // sendMessage, Extension 2 -> Extension 1
   {
-    EXPECT_EQ(
-        messaging_util::kOnMessageExternalEvent,
-        messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id2),
-                                           id1, ChannelType::kSendMessage));
+    EXPECT_EQ(messaging_util::kOnMessageExternalEvent,
+              messaging_util::GetEventForChannel(
+                  MessagingEndpoint::ForExtension(id2), id1,
+                  mojom::ChannelType::kSendMessage));
   }
 
   // sendMessage, Web Page -> Extension
@@ -115,7 +129,7 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(
         messaging_util::kOnMessageExternalEvent,
         messaging_util::GetEventForChannel(MessagingEndpoint::ForWebPage(), id1,
-                                           ChannelType::kSendMessage));
+                                           mojom::ChannelType::kSendMessage));
   }
 
   // sendMessage, Content Script -> Extension
@@ -123,7 +137,7 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(messaging_util::kOnMessageEvent,
               messaging_util::GetEventForChannel(
                   MessagingEndpoint::ForContentScript(id1), id1,
-                  ChannelType::kSendMessage));
+                  mojom::ChannelType::kSendMessage));
   }
 
   // sendMessage, User Script -> Extension
@@ -131,7 +145,7 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(messaging_util::kOnUserScriptMessageEvent,
               messaging_util::GetEventForChannel(
                   MessagingEndpoint::ForUserScript(id1), id1,
-                  ChannelType::kSendMessage));
+                  mojom::ChannelType::kSendMessage));
   }
 
   // connect, Extension -> Self
@@ -139,7 +153,7 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(
         messaging_util::kOnConnectEvent,
         messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id1),
-                                           id1, ChannelType::kConnect));
+                                           id1, mojom::ChannelType::kConnect));
   }
 
   // connect, Extension 2 -> Extension 1
@@ -147,14 +161,15 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(
         messaging_util::kOnConnectExternalEvent,
         messaging_util::GetEventForChannel(MessagingEndpoint::ForExtension(id2),
-                                           id1, ChannelType::kConnect));
+                                           id1, mojom::ChannelType::kConnect));
   }
 
   // connect, Web Page -> Extension
   {
-    EXPECT_EQ(messaging_util::kOnConnectExternalEvent,
-              messaging_util::GetEventForChannel(
-                  MessagingEndpoint::ForWebPage(), id1, ChannelType::kConnect));
+    EXPECT_EQ(
+        messaging_util::kOnConnectExternalEvent,
+        messaging_util::GetEventForChannel(MessagingEndpoint::ForWebPage(), id1,
+                                           mojom::ChannelType::kConnect));
   }
 
   // connect, Content Script -> Extension
@@ -162,15 +177,15 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(messaging_util::kOnConnectEvent,
               messaging_util::GetEventForChannel(
                   MessagingEndpoint::ForContentScript(id1), id1,
-                  ChannelType::kConnect));
+                  mojom::ChannelType::kConnect));
   }
 
   // connect, User Script -> Extension
   {
-    EXPECT_EQ(
-        messaging_util::kOnUserScriptConnectEvent,
-        messaging_util::GetEventForChannel(
-            MessagingEndpoint::ForUserScript(id1), id1, ChannelType::kConnect));
+    EXPECT_EQ(messaging_util::kOnUserScriptConnectEvent,
+              messaging_util::GetEventForChannel(
+                  MessagingEndpoint::ForUserScript(id1), id1,
+                  mojom::ChannelType::kConnect));
   }
 
   // connect, Native App -> Extension
@@ -178,7 +193,7 @@ TEST_F(MessagingUtilTest, TestGetEventForChannel) {
     EXPECT_EQ(messaging_util::kOnConnectNativeEvent,
               messaging_util::GetEventForChannel(
                   MessagingEndpoint::ForNativeApp("some app"), id1,
-                  ChannelType::kNative));
+                  mojom::ChannelType::kNative));
   }
 }
 
@@ -192,15 +207,11 @@ TEST_F(MessagingUtilWithSystemTest, TestGetTargetIdFromExtensionContext) {
   RegisterExtension(extension);
 
   ScriptContext* script_context = CreateScriptContext(
-      context, extension.get(), Feature::BLESSED_EXTENSION_CONTEXT);
+      context, extension.get(), mojom::ContextType::kPrivilegedExtension);
   script_context->set_url(extension->url());
 
   std::string other_id(32, 'a');
-  struct {
-    v8::Local<v8::Value> passed_id;
-    base::StringPiece expected_id;
-    bool should_pass;
-  } test_cases[] = {
+  const auto test_cases = std::to_array<TestCase>({
       // If the extension ID is not provided, the bindings use the calling
       // extension's.
       {v8::Null(isolate()), extension->id(), true},
@@ -210,8 +221,8 @@ TEST_F(MessagingUtilWithSystemTest, TestGetTargetIdFromExtensionContext) {
       {gin::StringToV8(isolate(), ""), extension->id(), true},
       {gin::StringToV8(isolate(), extension->id()), extension->id(), true},
       {gin::StringToV8(isolate(), other_id), other_id, true},
-      {gin::StringToV8(isolate(), "invalid id"), base::StringPiece(), false},
-  };
+      {gin::StringToV8(isolate(), "invalid id"), std::string_view(), false},
+  });
 
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test Case: %d", static_cast<int>(i)));
@@ -232,21 +243,17 @@ TEST_F(MessagingUtilWithSystemTest, TestGetTargetIdFromWebContext) {
   v8::Local<v8::Context> context = MainContext();
 
   ScriptContext* script_context =
-      CreateScriptContext(context, nullptr, Feature::WEB_PAGE_CONTEXT);
+      CreateScriptContext(context, nullptr, mojom::ContextType::kWebPage);
   script_context->set_url(GURL("https://example.com"));
 
   std::string other_id(32, 'a');
-  struct {
-    v8::Local<v8::Value> passed_id;
-    base::StringPiece expected_id;
-    bool should_pass;
-  } test_cases[] = {
+  const auto test_cases = std::to_array<TestCase>({
       // A web page should always have to specify the extension id.
       {gin::StringToV8(isolate(), other_id), other_id, true},
-      {v8::Null(isolate()), base::StringPiece(), false},
-      {gin::StringToV8(isolate(), ""), base::StringPiece(), false},
-      {gin::StringToV8(isolate(), "invalid id"), base::StringPiece(), false},
-  };
+      {v8::Null(isolate()), std::string_view(), false},
+      {gin::StringToV8(isolate(), ""), std::string_view(), false},
+      {gin::StringToV8(isolate(), "invalid id"), std::string_view(), false},
+  });
 
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test Case: %d", static_cast<int>(i)));
@@ -270,15 +277,11 @@ TEST_F(MessagingUtilWithSystemTest, TestGetTargetIdFromUserScriptContext) {
   RegisterExtension(extension);
 
   ScriptContext* script_context = CreateScriptContext(
-      context, extension.get(), Feature::USER_SCRIPT_CONTEXT);
+      context, extension.get(), mojom::ContextType::kUserScript);
   script_context->set_url(extension->url());
 
   std::string other_id(32, 'a');
-  struct {
-    v8::Local<v8::Value> passed_id;
-    base::StringPiece expected_id;
-    bool should_pass;
-  } test_cases[] = {
+  const auto test_cases = std::to_array<TestCase>({
       // If the extension ID is not provided, the bindings use the calling
       // extension's.
       {v8::Null(isolate()), extension->id(), true},
@@ -288,8 +291,8 @@ TEST_F(MessagingUtilWithSystemTest, TestGetTargetIdFromUserScriptContext) {
       {gin::StringToV8(isolate(), ""), extension->id(), true},
       {gin::StringToV8(isolate(), extension->id()), extension->id(), true},
       // User scripts may not target other extensions.
-      {gin::StringToV8(isolate(), other_id), base::StringPiece(), false},
-  };
+      {gin::StringToV8(isolate(), other_id), std::string_view(), false},
+  });
 
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test Case: %d", static_cast<int>(i)));

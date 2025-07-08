@@ -27,6 +27,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_DEBUG_SHADERS_H_
 
 #include "third_party/blink/renderer/modules/webgl/webgl_extension.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -43,7 +44,7 @@ class WebGLDebugShaders final : public WebGLExtension {
 
   WebGLExtensionName GetName() const override;
 
-  String getTranslatedShaderSource(WebGLShader*);
+  WTF::String getTranslatedShaderSource(WebGLShader*);
 };
 
 }  // namespace blink

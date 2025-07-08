@@ -33,15 +33,11 @@ std::unique_ptr<Channel> Channel::CreateClient(
     const IPC::ChannelHandle& channel_handle,
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-#if BUILDFLAG(IS_NACL)
-  return Channel::Create(channel_handle, Channel::MODE_CLIENT, listener);
-#else
   DCHECK(channel_handle.is_mojo_channel_handle());
   return ChannelMojo::Create(
       mojo::ScopedMessagePipeHandle(channel_handle.mojo_handle),
       Channel::MODE_CLIENT, listener, ipc_task_runner,
       base::SingleThreadTaskRunner::GetCurrentDefault());
-#endif
 }
 
 // static
@@ -49,15 +45,11 @@ std::unique_ptr<Channel> Channel::CreateServer(
     const IPC::ChannelHandle& channel_handle,
     Listener* listener,
     const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-#if BUILDFLAG(IS_NACL)
-  return Channel::Create(channel_handle, Channel::MODE_SERVER, listener);
-#else
   DCHECK(channel_handle.is_mojo_channel_handle());
   return ChannelMojo::Create(
       mojo::ScopedMessagePipeHandle(channel_handle.mojo_handle),
       Channel::MODE_SERVER, listener, ipc_task_runner,
       base::SingleThreadTaskRunner::GetCurrentDefault());
-#endif
 }
 
 Channel::~Channel() = default;
@@ -66,11 +58,21 @@ Channel::AssociatedInterfaceSupport* Channel::GetAssociatedInterfaceSupport() {
   return nullptr;
 }
 
-void Channel::Pause() { NOTREACHED(); }
+void Channel::Pause() {
+  NOTREACHED();
+}
 
-void Channel::Unpause(bool flush) { NOTREACHED(); }
+void Channel::Unpause(bool flush) {
+  NOTREACHED();
+}
 
-void Channel::Flush() { NOTREACHED(); }
+void Channel::Flush() {
+  NOTREACHED();
+}
+
+void Channel::SetUrgentMessageObserver(UrgentMessageObserver* observer) {
+  // Ignored for non-mojo channels.
+}
 
 void Channel::WillConnect() {
   did_start_connect_ = true;

@@ -364,9 +364,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     'third_party/hunspell': [  # http://crbug.com/98134
         'UNKNOWN',
     ],
-    'third_party/iccjpeg': [  # http://crbug.com/98137
-        'UNKNOWN',
-    ],
     'third_party/icu': [  # http://crbug.com/98301
         'UNKNOWN',
     ],
@@ -474,9 +471,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     'third_party/sqlite': [
         'UNKNOWN',
     ],
-    'third_party/minizip': [
-        'UNKNOWN',
-    ],
 
     # BSD License. http://bugzilla.maptools.org/show_bug.cgi?id=2532
     'third_party/pdfium/third_party/libtiff/tif_ojpeg.c': [
@@ -530,9 +524,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
     'tools/python/google/__init__.py': [
         'UNKNOWN',
     ],
-    'tools/stats_viewer/Properties/AssemblyInfo.cs': [
-        'UNKNOWN',
-    ],
     'tools/symsrc/pefile.py': [
         'UNKNOWN',
     ],
@@ -572,9 +563,6 @@ PATH_SPECIFIC_ALLOWLISTED_LICENSES = {
 EXCLUDED_PATHS = [
     # Don't check generated files
     re.compile('^out/'),
-
-    # Don't check downloaded goma client binaries
-    re.compile('^build/goma/client/'),
 
     # Don't check sysroot directories
     re.compile('^build/linux/.+-sysroot/'),

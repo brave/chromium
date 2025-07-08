@@ -7,8 +7,10 @@
 
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/tracing/tracing_export.h"
+#include "third_party/metrics_proto/system_profile.pb.h"
 #include "third_party/metrics_proto/trace_log.pb.h"
 
 namespace tracing {
@@ -21,14 +23,19 @@ namespace tracing {
 class TRACING_EXPORT BackgroundTracingMetricsProvider
     : public metrics::MetricsProvider {
  public:
+  static base::RepeatingCallback<void(metrics::SystemProfileProto&)>
+  GetSystemProfileMetricsRecorder();
+
   BackgroundTracingMetricsProvider();
+  ~BackgroundTracingMetricsProvider() override;
 
   BackgroundTracingMetricsProvider(const BackgroundTracingMetricsProvider&) =
       delete;
   BackgroundTracingMetricsProvider& operator=(
       const BackgroundTracingMetricsProvider&) = delete;
 
-  ~BackgroundTracingMetricsProvider() override;
+  void RecordSystemProfileMetrics(
+      metrics::SystemProfileProto& system_profile_proto);
 
   // metrics::MetricsProvider:
   bool HasIndependentMetrics() override;
@@ -37,25 +44,25 @@ class TRACING_EXPORT BackgroundTracingMetricsProvider
       base::OnceCallback<void(bool)> done_callback,
       metrics::ChromeUserMetricsExtension* uma_proto,
       base::HistogramSnapshotManager* snapshot_manager) override;
-  void Init() override;
 
  protected:
   // Embedders can override this to do any additional processing of the log
   // before it is sent. This includes processing of the trace itself (e.g.
   // compression).
-  virtual void ProvideEmbedderMetrics(
-      metrics::ChromeUserMetricsExtension* uma_proto,
-      std::string&& serialized_trace,
-      metrics::TraceLog* log,
-      base::HistogramSnapshotManager* snapshot_manager,
-      base::OnceClosure serialize_log_callback,
-      base::OnceCallback<void(bool)> done_callback);
+  virtual base::OnceCallback<bool(metrics::ChromeUserMetricsExtension*,
+                                  std::string&&)>
+  GetEmbedderMetricsProvider();
+
+  virtual void RecordCoreSystemProfileMetrics(
+      metrics::SystemProfileProto& system_profile_proto) = 0;
 
   // Writes |serialized_trace| into |logs|'s |raw_data| field.
   static void SetTrace(metrics::TraceLog* log, std::string&& serialized_trace);
 
   std::vector<std::unique_ptr<metrics::MetricsProvider>>
       system_profile_providers_;
+
+  base::WeakPtrFactory<BackgroundTracingMetricsProvider> weak_factory_{this};
 };
 
 }  // namespace tracing

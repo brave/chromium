@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/frozen_array.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_file_formdata_usvstring.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_validity_state_flags.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
@@ -15,6 +16,7 @@
 #include "third_party/blink/renderer/core/html/custom/custom_state_set.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
+#include "third_party/blink/renderer/core/html/forms/html_field_set_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/forms/validity_state.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
@@ -138,14 +140,16 @@ void ElementInternals::setFormValue(const V8ControlValue* value,
   NotifyFormStateChanged();
 }
 
-HTMLFormElement* ElementInternals::form(ExceptionState& exception_state) const {
+HTMLElement* ElementInternals::formForBinding(
+    ExceptionState& exception_state) const {
   if (!IsTargetFormAssociated()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "The target element is not a form-associated custom element.");
     return nullptr;
   }
-  return ListedElement::Form();
+
+  return ListedElement::RetargetedForm();
 }
 
 void ElementInternals::setValidity(ValidityStateFlags* flags,
@@ -274,7 +278,7 @@ LabelsNodeList* ElementInternals::labels(ExceptionState& exception_state) {
 CustomStateSet* ElementInternals::states() {
   if (!custom_states_)
     custom_states_ = MakeGarbageCollected<CustomStateSet>(Target());
-  return custom_states_;
+  return custom_states_.Get();
 }
 
 bool ElementInternals::HasState(const AtomicString& state) const {
@@ -332,69 +336,119 @@ void ElementInternals::DidUpgrade() {
       *this);
 }
 
-void ElementInternals::SetElementAttribute(const QualifiedName& name,
+void ElementInternals::SetElementAttribute(const QualifiedName& attribute,
                                            Element* element) {
-  auto result = explicitly_set_attr_elements_map_.insert(name, nullptr);
-  if (result.is_new_entry) {
-    result.stored_value->value =
-        MakeGarbageCollected<HeapLinkedHashSet<WeakMember<Element>>>();
-  } else {
-    result.stored_value->value->clear();
-  }
-  result.stored_value->value->insert(element);
-}
-
-Element* ElementInternals::GetElementAttribute(const QualifiedName& name) {
-  const auto& iter = explicitly_set_attr_elements_map_.find(name);
-  if (iter == explicitly_set_attr_elements_map_.end())
-    return nullptr;
-  HeapLinkedHashSet<WeakMember<Element>>* stored_elements = iter->value;
-  DCHECK_EQ(stored_elements->size(), 1u);
-  return *(stored_elements->begin());
-}
-
-HeapVector<Member<Element>>* ElementInternals::GetElementArrayAttribute(
-    const QualifiedName& name) const {
-  const auto& iter = explicitly_set_attr_elements_map_.find(name);
-  if (iter == explicitly_set_attr_elements_map_.end())
-    return nullptr;
-  HeapLinkedHashSet<WeakMember<Element>>* stored_elements = iter->value;
-
-  // Convert from our internal HeapLinkedHashSet of weak references to a
-  // HeapVector of strong references so that V8 can implicitly convert to a
-  // FrozenArray.
-  HeapVector<Member<Element>>* results =
-      MakeGarbageCollected<HeapVector<Member<Element>>>(
-          stored_elements->size());
-  for (auto item : *stored_elements) {
-    results->push_back(item);
-  }
-
-  return results;
-}
-
-void ElementInternals::SetElementArrayAttribute(
-    const QualifiedName& name,
-    const HeapVector<Member<Element>>* given_elements) {
-  if (!given_elements) {
-    explicitly_set_attr_elements_map_.erase(name);
+  if (!element) {
+    explicitly_set_attr_elements_map_.erase(attribute);
+    setAttribute(attribute, g_null_atom);
     return;
   }
 
-  // Otherwise convert from our external strong references to our internal weak
-  // references.
-  auto stored_elements =
-      explicitly_set_attr_elements_map_.insert(name, nullptr);
-  if (stored_elements.is_new_entry) {
-    stored_elements.stored_value->value =
-        MakeGarbageCollected<HeapLinkedHashSet<WeakMember<Element>>>();
-  } else {
-    stored_elements.stored_value->value->clear();
+  HeapVector<Member<Element>> vector;
+  vector.push_back(element);
+  FrozenArray<Element>* array =
+      MakeGarbageCollected<FrozenArray<Element>>(std::move(vector));
+  explicitly_set_attr_elements_map_.Set(attribute, array);
+
+  // Ensure that the appropriate updates are made in the AXObjectCache, and that
+  // these attributes are serialized to the browser.
+  setAttribute(attribute, g_empty_atom);
+}
+
+Element* ElementInternals::GetElementAttribute(
+    const QualifiedName& attribute) const {
+  auto it = explicitly_set_attr_elements_map_.find(attribute);
+  if (it == explicitly_set_attr_elements_map_.end()) {
+    return nullptr;
   }
 
-  for (auto element : *given_elements) {
-    stored_elements.stored_value->value->insert(element);
+  FrozenArray<Element>* stored_elements = it->value.Get();
+  DCHECK_EQ(stored_elements->size(), 1u);
+  return stored_elements->front();
+}
+
+void ElementInternals::SetElementArrayAttribute(
+    const QualifiedName& attribute,
+    const GCedHeapVector<Member<Element>>* given_elements) {
+  if (!given_elements) {
+    explicitly_set_attr_elements_map_.erase(attribute);
+    setAttribute(attribute, g_empty_atom);
+    return;
   }
+
+  FrozenArray<Element>* frozen_elements =
+      MakeGarbageCollected<FrozenArray<Element>>(
+          HeapVector<Member<Element>>(std::move(*given_elements)));
+  explicitly_set_attr_elements_map_.Set(attribute, frozen_elements);
+
+  // Ensure that the appropriate updates are made in the AXObjectCache, and that
+  // these attributes are serialized to the browser.
+  setAttribute(attribute, g_empty_atom);
+}
+
+const FrozenArray<Element>* ElementInternals::GetElementArrayAttribute(
+    const QualifiedName& attribute) const {
+  auto it = explicitly_set_attr_elements_map_.find(attribute);
+  if (it == explicitly_set_attr_elements_map_.end()) {
+    return nullptr;
+  }
+  return it->value.Get();
+}
+
+const FrozenArray<Element>* ElementInternals::ariaControlsElements() const {
+  return GetElementArrayAttribute(html_names::kAriaControlsAttr);
+}
+void ElementInternals::setAriaControlsElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaControlsAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaDescribedByElements() const {
+  return GetElementArrayAttribute(html_names::kAriaDescribedbyAttr);
+}
+void ElementInternals::setAriaDescribedByElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaDescribedbyAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaDetailsElements() const {
+  return GetElementArrayAttribute(html_names::kAriaDetailsAttr);
+}
+void ElementInternals::setAriaDetailsElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaDetailsAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaErrorMessageElements() const {
+  return GetElementArrayAttribute(html_names::kAriaErrormessageAttr);
+}
+void ElementInternals::setAriaErrorMessageElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaErrormessageAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaFlowToElements() const {
+  return GetElementArrayAttribute(html_names::kAriaFlowtoAttr);
+}
+void ElementInternals::setAriaFlowToElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaFlowtoAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaLabelledByElements() const {
+  return GetElementArrayAttribute(html_names::kAriaLabelledbyAttr);
+}
+void ElementInternals::setAriaLabelledByElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaLabelledbyAttr, given_elements);
+}
+
+const FrozenArray<Element>* ElementInternals::ariaOwnsElements() const {
+  return GetElementArrayAttribute(html_names::kAriaOwnsAttr);
+}
+void ElementInternals::setAriaOwnsElements(
+    GCedHeapVector<Member<Element>>* given_elements) {
+  SetElementArrayAttribute(html_names::kAriaOwnsAttr, given_elements);
 }
 
 bool ElementInternals::IsTargetFormAssociated() const {
@@ -417,10 +471,6 @@ bool ElementInternals::IsTargetFormAssociated() const {
     return false;
   auto* definition = registry->DefinitionForName(Target().localName());
   return definition && definition->IsFormAssociated();
-}
-
-bool ElementInternals::IsFormControlElement() const {
-  return false;
 }
 
 bool ElementInternals::IsElementInternals() const {
@@ -531,8 +581,7 @@ FormControlState ElementInternals::SaveFormControlState() const {
     state.Append("Value");
     AppendToFormControlState(*value_, state);
   }
-  if (RuntimeEnabledFeatures::FormStateRestoreCallbackCallWithStateEnabled() &&
-      state_) {
+  if (state_) {
     state.Append("State");
     AppendToFormControlState(*state_, state);
   }
@@ -548,13 +597,6 @@ void ElementInternals::RestoreFormControlState(const FormControlState& state) {
   if (const V8ControlValue* restored_value = RestoreFromFormControlState(
           *execution_context, state, "Value", index)) {
     value_ = restored_value;
-  }
-  if (!RuntimeEnabledFeatures::FormStateRestoreCallbackCallWithStateEnabled()) {
-    if (value_) {
-      CustomElement::EnqueueFormStateRestoreCallback(Target(), value_,
-                                                     "restore");
-    }
-    return;
   }
 
   const V8ControlValue* restored_state =

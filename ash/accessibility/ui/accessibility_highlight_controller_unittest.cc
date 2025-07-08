@@ -9,7 +9,7 @@
 #include <cmath>
 #include <memory>
 
-#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility/ui/accessibility_cursor_ring_layer.h"
 #include "ash/accessibility/ui/accessibility_focus_ring_controller_impl.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -115,8 +115,8 @@ class AccessibilityHighlightControllerTest : public AshTestBase {
         run_loop->Quit();
       };
       base::RunLoop run_loop;
-      ui::GrabWindowSnapshotAsync(
-          window, bounds, base::BindOnce(on_got_snapshot, &run_loop, image));
+      ui::GrabWindowSnapshot(window, bounds,
+                             base::BindOnce(on_got_snapshot, &run_loop, image));
       run_loop.Run();
       if (image->Size() != bounds.size()) {
         LOG(INFO) << "Bitmap not correct size, trying to capture again";
@@ -212,7 +212,7 @@ TEST_F(AccessibilityHighlightControllerTest, CursorWorksOnMultipleDisplays) {
   AccessibilityHighlightController highlight_controller;
   highlight_controller.HighlightCursor(true);
   gfx::Point location(90, 90);
-  ui::MouseEvent event0(ui::ET_MOUSE_MOVED, location, location,
+  ui::MouseEvent event0(ui::EventType::kMouseMoved, location, location,
                         ui::EventTimeForNow(), 0, 0);
   ui::Event::DispatcherApi event_mod(&event0);
   event_mod.set_target(root_windows[0]);
@@ -229,7 +229,7 @@ TEST_F(AccessibilityHighlightControllerTest, CursorWorksOnMultipleDisplays) {
       std::abs(cursor_layer->layer()->GetTargetBounds().y() - location.y()),
       50);
 
-  ui::MouseEvent event1(ui::ET_MOUSE_MOVED, location, location,
+  ui::MouseEvent event1(ui::EventType::kMouseMoved, location, location,
                         ui::EventTimeForNow(), 0, 0);
   ui::Event::DispatcherApi event_mod1(&event1);
   event_mod1.set_target(root_windows[1]);
@@ -250,7 +250,8 @@ TEST_F(AccessibilityHighlightControllerTest, CursorWorksOnMultipleDisplays) {
 TEST_F(AccessibilityHighlightControllerTest, CaretRingDrawnOnlyWithinBounds) {
   // Given caret bounds that are not within the active window, expect that the
   // caret ring highlight is not drawn.
-  std::unique_ptr<views::Widget> window = CreateTestWidget();
+  std::unique_ptr<views::Widget> window =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   window->SetBounds(gfx::Rect(5, 5, 300, 300));
 
   AccessibilityHighlightController highlight_controller;
@@ -308,10 +309,11 @@ TEST_F(AccessibilityHighlightControllerTest, ZeroWidthCaretRingVisible) {
 // Tests setting the caret bounds explicitly via AccessibilityController, rather
 // than via the input method observer. This path is used in production in mash.
 TEST_F(AccessibilityHighlightControllerTest, SetCaretBounds) {
-  std::unique_ptr<views::Widget> window = CreateTestWidget();
+  std::unique_ptr<views::Widget> window =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   window->SetBounds(gfx::Rect(5, 5, 300, 300));
 
-  AccessibilityControllerImpl* accessibility_controller =
+  AccessibilityController* accessibility_controller =
       Shell::Get()->accessibility_controller();
   accessibility_controller->caret_highlight().SetEnabled(true);
 

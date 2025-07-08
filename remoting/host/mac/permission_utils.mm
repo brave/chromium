@@ -7,12 +7,12 @@
 #import <AVFoundation/AVFoundation.h>
 #import <Cocoa/Cocoa.h>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
@@ -23,10 +23,6 @@
 #include "ui/base/cocoa/permissions_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -118,6 +114,10 @@ bool CanInjectInput() {
 
 bool CanRecordScreen() {
   return ui::IsScreenCaptureAllowed();
+}
+
+void RequestScreenCapturePermission() {
+  ui::TryPromptUserForScreenCapture();
 }
 
 // macOS requires an additional runtime permission for injecting input using

@@ -104,7 +104,7 @@ class CreateDiskImage : public BorealisTask {
   void OnConciergeAvailable(BorealisContext* context, bool is_available);
   void OnCreateDiskImage(
       BorealisContext* context,
-      absl::optional<vm_tools::concierge::CreateDiskImageResponse> response);
+      std::optional<vm_tools::concierge::CreateDiskImageResponse> response);
   base::WeakPtrFactory<CreateDiskImage> weak_factory_{this};
 };
 
@@ -116,11 +116,13 @@ class StartBorealisVm : public BorealisTask {
   void RunInternal(BorealisContext* context) override;
 
  private:
+  void OnConciergeAvailable(BorealisContext* context,
+                            bool service_is_available);
   void StartBorealisWithExternalDisk(BorealisContext* context,
-                                     absl::optional<base::File> external_disk);
+                                     std::optional<base::File> external_disk);
   void OnStartBorealisVm(
       BorealisContext* context,
-      absl::optional<vm_tools::concierge::StartVmResponse> response);
+      std::optional<vm_tools::concierge::StartVmResponse> response);
   base::WeakPtrFactory<StartBorealisVm> weak_factory_{this};
 };
 
@@ -149,23 +151,8 @@ class UpdateChromeFlags : public BorealisTask {
  private:
   void OnFlagsUpdated(BorealisContext* context, std::string error);
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile> profile_;
   base::WeakPtrFactory<UpdateChromeFlags> weak_factory_{this};
-};
-
-// Checks the size of the disk and adjusts it if necessary.
-class SyncBorealisDisk : public BorealisTask {
- public:
-  SyncBorealisDisk();
-  ~SyncBorealisDisk() override;
-  void RunInternal(BorealisContext* context) override;
-
- private:
-  void OnSyncBorealisDisk(
-      BorealisContext* context,
-      base::expected<BorealisSyncDiskSizeResult,
-                     Described<BorealisSyncDiskSizeResult>> result);
-  base::WeakPtrFactory<SyncBorealisDisk> weak_factory_{this};
 };
 
 }  // namespace borealis

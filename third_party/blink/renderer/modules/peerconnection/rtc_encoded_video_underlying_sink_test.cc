@@ -21,6 +21,7 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_video_frame_delegate.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_encoded_video_stream_transformer.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/webrtc/api/frame_transformer_interface.h"
@@ -54,8 +55,8 @@ class RTCEncodedVideoUnderlyingSinkTest : public testing::Test {
       : main_task_runner_(
             blink::scheduler::GetSingleThreadTaskRunnerForTesting()),
         webrtc_callback_(
-            new rtc::RefCountedObject<MockWebRtcTransformedFrameCallback>()),
-        transformer_(main_task_runner_) {}
+            new webrtc::RefCountedObject<MockWebRtcTransformedFrameCallback>()),
+        transformer_(main_task_runner_, /*metronome=*/nullptr) {}
 
   void SetUp() override {
     EXPECT_FALSE(transformer_.HasTransformedFrameSinkCallback(kSSRC));
@@ -71,7 +72,8 @@ class RTCEncodedVideoUnderlyingSinkTest : public testing::Test {
 
   RTCEncodedVideoUnderlyingSink* CreateSink(ScriptState* script_state) {
     return MakeGarbageCollected<RTCEncodedVideoUnderlyingSink>(
-        script_state, transformer_.GetBroker());
+        script_state, transformer_.GetBroker(),
+        /*detach_frame_data_on_write=*/false);
   }
 
   RTCEncodedVideoStreamTransformer* GetTransformer() { return &transformer_; }
@@ -88,14 +90,14 @@ class RTCEncodedVideoUnderlyingSinkTest : public testing::Test {
         MakeGarbageCollected<RTCEncodedVideoFrame>(std::move(mock_frame));
     return ScriptValue(
         script_state->GetIsolate(),
-        ToV8Traits<RTCEncodedVideoFrame>::ToV8(script_state, frame)
-            .ToLocalChecked());
+        ToV8Traits<RTCEncodedVideoFrame>::ToV8(script_state, frame));
   }
 
  protected:
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
-  rtc::scoped_refptr<MockWebRtcTransformedFrameCallback> webrtc_callback_;
+  webrtc::scoped_refptr<MockWebRtcTransformedFrameCallback> webrtc_callback_;
   RTCEncodedVideoStreamTransformer transformer_;
 };
 
@@ -135,7 +137,9 @@ TEST_F(RTCEncodedVideoUnderlyingSinkTest, WriteInvalidDataFails) {
   V8TestingScope v8_scope;
   ScriptState* script_state = v8_scope.GetScriptState();
   auto* sink = CreateSink(script_state);
-  ScriptValue v8_integer = ScriptValue::From(script_state, 0);
+  ScriptValue v8_integer =
+      ScriptValue(script_state->GetIsolate(),
+                  v8::Integer::New(script_state->GetIsolate(), 0));
 
   // Writing something that is not an RTCEncodedVideoFrame integer to the sink
   // should fail.

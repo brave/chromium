@@ -11,21 +11,20 @@
 #include "base/json/json_writer.h"
 #include "base/values.h"
 #include "chrome/browser/ui/webui/ash/smb_shares/smb_handler.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "components/strings/grit/components_strings.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash::smb_dialog {
 namespace {
 
-constexpr int kSmbCredentialsDialogHeight = 230;
-constexpr int kSmbCredentialsDialogHeightWithJellyOn = 295;
+constexpr int kSmbCredentialsDialogHeight = 295;
 
 void AddSmbCredentialsDialogStrings(content::WebUIDataSource* html_source) {
   static const struct {
@@ -41,8 +40,6 @@ void AddSmbCredentialsDialogStrings(content::WebUIDataSource* html_source) {
   for (const auto& entry : localized_strings) {
     html_source->AddLocalizedString(entry.name, entry.id);
   }
-  bool is_jelly_enabled = chromeos::features::IsJellyEnabled();
-  html_source->AddBoolean("isJellyEnabled", is_jelly_enabled);
 }
 
 std::string GetDialogId(const std::string& mount_id) {
@@ -80,7 +77,6 @@ SmbCredentialsDialog::SmbCredentialsDialog(const std::string& mount_id,
                                            RequestCallback callback)
     : SystemWebDialogDelegate(GURL(GetDialogId(mount_id)),
                               std::u16string() /* title */),
-      mount_id_(mount_id),
       share_path_(share_path),
       callback_(std::move(callback)) {}
 
@@ -99,14 +95,11 @@ void SmbCredentialsDialog::Respond(const std::string& username,
 
 void SmbCredentialsDialog::GetDialogSize(gfx::Size* size) const {
   size->SetSize(SystemWebDialogDelegate::kDialogWidth,
-                chromeos::features::IsJellyEnabled()
-                    ? kSmbCredentialsDialogHeightWithJellyOn
-                    : kSmbCredentialsDialogHeight);
+                kSmbCredentialsDialogHeight);
 }
 
 std::string SmbCredentialsDialog::GetDialogArgs() const {
   base::Value::Dict args;
-  args.Set("mid", mount_id_);
   args.Set("path", share_path_);
   std::string json;
   base::JSONWriter::Write(args, &json);

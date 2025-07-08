@@ -5,8 +5,9 @@
 #ifndef BASE_TEST_SCOPED_PATH_OVERRIDE_H_
 #define BASE_TEST_SCOPED_PATH_OVERRIDE_H_
 
+#include <optional>
+
 #include "base/files/scoped_temp_dir.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -18,11 +19,16 @@ class FilePath;
 // scope of the test is left.
 class ScopedPathOverride {
  public:
-  // Contructor that initializes the override to a scoped temp directory.
+  // Constructor that initializes the override to a scoped temp directory.
   explicit ScopedPathOverride(int key);
 
   // Constructor that would use a path provided by the user.
-  ScopedPathOverride(int key, const FilePath& dir);
+  // If `should_skip_check` is set to true, it will call
+  // `PathService::OverrideWithoutCheckForTesting()` which may set an invalid or
+  // non-absolute path for testing.
+  ScopedPathOverride(int key,
+                     const FilePath& dir,
+                     bool should_skip_check = false);
 
   // See PathService::OverrideAndCreateIfNeeded.
   ScopedPathOverride(int key,
@@ -41,7 +47,7 @@ class ScopedPathOverride {
 
   int key_;
   ScopedTempDir temp_dir_;
-  absl::optional<FilePath> original_override_;
+  std::optional<FilePath> original_override_;
 };
 
 }  // namespace base

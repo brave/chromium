@@ -4,14 +4,17 @@
 
 package org.chromium.chrome.browser.share.long_screenshots.bitmap_generation;
 
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
 
 /**
  * The Java-side implementations of long_screenshots_tab_service_factory.cc. Provides an instance of
  * {@link LongScreenshotsTabService}.
  */
 @JNINamespace("long_screenshots")
+@NullMarked
 public class LongScreenshotsTabServiceFactory {
     public static LongScreenshotsTabService getServiceInstance() {
         return LongScreenshotsTabServiceFactoryJni.get().getServiceInstanceForCurrentProfile();

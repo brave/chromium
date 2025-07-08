@@ -17,7 +17,6 @@ import {
 } from '../../type.js';
 import {getFpsRangeFromConstraints} from '../../util.js';
 import {StreamConstraints} from '../stream_constraints.js';
-import {StreamManagerChrome} from '../stream_manager_chrome.js';
 
 import {
   ModeBase,
@@ -72,7 +71,7 @@ interface ModeConfig {
    */
   isSupported(deviceId: string|null): Promise<boolean>;
 
-  isSupportPTZ(captureResolution: Resolution, previewResolution: Resolution):
+  isSupportPtz(captureResolution: Resolution, previewResolution: Resolution):
       boolean;
 
   /**
@@ -111,14 +110,14 @@ export class Modes {
   /**
    * Mode classname and related functions and attributes.
    */
-  private readonly allModes: {[mode in Mode]: ModeConfig};
+  private readonly allModes: Record<Mode, ModeConfig>;
 
   private handler: CaptureHandler|null = null;
 
   constructor() {
     // Workaround for b/184089334 on PTZ camera to use preview frame as photo
     // result.
-    function checkSupportPTZForPhotoMode(
+    function checkSupportPtzForPhotoMode(
         captureResolution: Resolution, previewResolution: Resolution) {
       return captureResolution.equals(previewResolution);
     }
@@ -147,7 +146,7 @@ export class Modes {
               params.videoSnapshotResolution, assertExists(this.handler));
         },
         isSupported: () => Promise.resolve(true),
-        isSupportPTZ: () => true,
+        isSupportPtz: () => true,
         prepareDevice: async (constraints) => {
           const deviceOperator = DeviceOperator.getInstance();
           if (deviceOperator === null) {
@@ -155,25 +154,7 @@ export class Modes {
           }
           const deviceId = constraints.deviceId;
           await deviceOperator.setCaptureIntent(
-              deviceId, CaptureIntent.VIDEO_RECORD);
-          await deviceOperator.setMultipleStreamsEnabled(
-              deviceId,
-              expert.isEnabled(
-                  expert.ExpertOption.ENABLE_MULTISTREAM_RECORDING),
-          );
-          if (expert.isEnabled(
-                  expert.ExpertOption.ENABLE_MULTISTREAM_RECORDING_CHROME)) {
-            const captureResolution =
-                assertExists(this.getCaptureParams().captureResolution);
-            await StreamManagerChrome.getInstance().prepare({
-              ...constraints,
-              video: {
-                ...constraints.video,
-                width: captureResolution.width,
-                height: captureResolution.height,
-              },
-            });
-          }
+              deviceId, CaptureIntent.kVideoRecord);
 
           if (await deviceOperator.isBlobVideoSnapshotEnabled(deviceId)) {
             await deviceOperator.setStillCaptureResolution(
@@ -198,9 +179,9 @@ export class Modes {
               assertExists(this.handler));
         },
         isSupported: () => Promise.resolve(true),
-        isSupportPTZ: checkSupportPTZForPhotoMode,
+        isSupportPtz: checkSupportPtzForPhotoMode,
         prepareDevice: async (constraints, resolution) => prepareDeviceForPhoto(
-            constraints, resolution, CaptureIntent.STILL_CAPTURE),
+            constraints, resolution, CaptureIntent.kStillCapture),
         fallbackMode: Mode.SCAN,
       },
       [Mode.PORTRAIT]: {
@@ -220,9 +201,9 @@ export class Modes {
           }
           return deviceOperator.isPortraitModeSupported(deviceId);
         },
-        isSupportPTZ: checkSupportPTZForPhotoMode,
+        isSupportPtz: checkSupportPtzForPhotoMode,
         prepareDevice: async (constraints, resolution) => prepareDeviceForPhoto(
-            constraints, resolution, CaptureIntent.PORTRAIT_CAPTURE),
+            constraints, resolution, CaptureIntent.kPortraitCapture),
         fallbackMode: Mode.PHOTO,
       },
       [Mode.SCAN]: {
@@ -233,9 +214,9 @@ export class Modes {
               assertExists(this.handler));
         },
         isSupported: async () => Promise.resolve(true),
-        isSupportPTZ: checkSupportPTZForPhotoMode,
+        isSupportPtz: checkSupportPtzForPhotoMode,
         prepareDevice: async (constraints, resolution) => prepareDeviceForPhoto(
-            constraints, resolution, CaptureIntent.STILL_CAPTURE),
+            constraints, resolution, CaptureIntent.kStillCapture),
         fallbackMode: Mode.PHOTO,
       },
     };
@@ -311,10 +292,10 @@ export class Modes {
     return this.allModes[mode].isSupported(deviceId);
   }
 
-  isSupportPTZ(
+  isSupportPtz(
       mode: Mode, captureResolution: Resolution,
       previewResolution: Resolution): boolean {
-    return this.allModes[mode].isSupportPTZ(
+    return this.allModes[mode].isSupportPtz(
         captureResolution, previewResolution);
   }
 

@@ -8,12 +8,13 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "base/containers/cxx20_erase.h"
-#include "chrome/android/chrome_jni_headers/TabListSceneLayer_jni.h"
 #include "chrome/browser/android/compositor/layer/content_layer.h"
 #include "chrome/browser/android/compositor/layer/tab_layer.h"
 #include "chrome/browser/android/compositor/tab_content_manager.h"
 #include "ui/android/resources/resource_manager_impl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/TabListSceneLayer_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::JavaRef;
@@ -30,7 +31,7 @@ TabListSceneLayer::TabListSceneLayer(JNIEnv* env, const JavaRef<jobject>& jobj)
   layer()->AddChild(own_tree_);
 }
 
-TabListSceneLayer::~TabListSceneLayer() {}
+TabListSceneLayer::~TabListSceneLayer() = default;
 
 void TabListSceneLayer::BeginBuildingFrame(JNIEnv* env,
                                            const JavaParamRef<jobject>& jobj) {
@@ -103,7 +104,6 @@ void TabListSceneLayer::PutTabLayer(JNIEnv* env,
                                     jboolean anonymize_toolbar,
                                     jint toolbar_textbox_resource_id,
                                     jint toolbar_textbox_background_color,
-                                    jfloat toolbar_y_offset,
                                     jfloat content_offset) {
   DCHECK(tab_content_manager_)
       << "TabContentManager must be set before updating the TabLayer";
@@ -136,7 +136,7 @@ void TabListSceneLayer::PutTabLayer(JNIEnv* env,
         content_width, show_toolbar, default_theme_color,
         toolbar_background_color, anonymize_toolbar,
         toolbar_textbox_resource_id, toolbar_textbox_background_color,
-        toolbar_y_offset, content_offset);
+        content_offset);
   }
 
   gfx::RectF self(own_tree_->position(), gfx::SizeF(own_tree_->bounds()));
@@ -153,7 +153,7 @@ void TabListSceneLayer::PutBackgroundLayer(
     jint top_offset) {
   int ui_resource_id = resource_manager_->GetUIResourceId(
       ui::ANDROID_RESOURCE_TYPE_DYNAMIC, resource_id);
-  if (ui_resource_id == 0) {
+  if (ui_resource_id == ui::Resource::kInvalidResourceId) {
     return;
   }
 

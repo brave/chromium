@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_DOWNLOAD_BUBBLE_PARTIAL_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_DOWNLOAD_BUBBLE_PARTIAL_VIEW_H_
 
-#include <memory>
+#include <optional>
+#include <string_view>
 
 #include "base/functional/callback_forward.h"
 #include "chrome/browser/download/download_ui_model.h"
+#include "chrome/browser/ui/download/download_bubble_row_list_view_info.h"
 #include "chrome/browser/ui/views/download/bubble/download_bubble_primary_view.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/focus/focus_manager.h"
 
@@ -22,14 +23,14 @@ class DownloadBubbleNavigationHandler;
 // a compact representation of downloads that recently completed.
 class DownloadBubblePartialView : public DownloadBubblePrimaryView,
                                   public views::FocusChangeListener {
- public:
-  METADATA_HEADER(DownloadBubblePartialView);
+  METADATA_HEADER(DownloadBubblePartialView, DownloadBubblePrimaryView)
 
+ public:
   DownloadBubblePartialView(
       base::WeakPtr<Browser> browser,
       base::WeakPtr<DownloadBubbleUIController> bubble_controller,
       base::WeakPtr<DownloadBubbleNavigationHandler> navigation_handler,
-      std::vector<DownloadUIModel::DownloadUIModelPtr> rows,
+      const DownloadBubbleRowListViewInfo& info,
       base::OnceClosure on_interacted_closure);
   DownloadBubblePartialView(const DownloadBubblePartialView&) = delete;
   DownloadBubblePartialView& operator=(const DownloadBubblePartialView&) =
@@ -37,14 +38,12 @@ class DownloadBubblePartialView : public DownloadBubblePrimaryView,
   ~DownloadBubblePartialView() override;
 
   // DownloadBubblePrimaryView:
-  base::StringPiece GetVisibleTimeHistogramName() const override;
   void AddedToWidget() override;
   void RemovedFromWidget() override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
 
   // views::FocusChangeListener:
   void OnWillChangeFocus(views::View* before, views::View* now) override;
-  void OnDidChangeFocus(views::View* before, views::View* now) override {}
 
  private:
   // Run the |on_interacted_closure_|.
@@ -55,7 +54,7 @@ class DownloadBubblePartialView : public DownloadBubblePrimaryView,
   base::OnceClosure on_interacted_closure_;
 
   // Records the end time of the last download if it is successful.
-  absl::optional<base::Time> last_download_completed_time_;
+  std::optional<base::Time> last_download_completed_time_;
 };
 
-#endif
+#endif  // CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_DOWNLOAD_BUBBLE_PARTIAL_VIEW_H_

@@ -24,8 +24,10 @@ import java.util.List;
  */
 class RelatedSearchesList {
     private static final String TAG = "ContextualSearch";
+
     /** JSON keys sent by the server. */
     private static final String SELECTION_SUGGESTIONS = "selection";
+
     private static final String TITLE = "title";
     private static final String SEARCH_URL = "searchUrl";
 
@@ -43,8 +45,11 @@ class RelatedSearchesList {
             try {
                 suggestions = new JSONObject(jsonString);
             } catch (JSONException e) {
-                Log.w(TAG,
-                        "RelatedSearchesList cannot parse JSON: " + jsonString + "\n"
+                Log.w(
+                        TAG,
+                        "RelatedSearchesList cannot parse JSON: "
+                                + jsonString
+                                + "\n"
                                 + e.getMessage());
             }
         }
@@ -53,21 +58,26 @@ class RelatedSearchesList {
 
     /**
      * Returns a list of queries. This implementation may change based on whether we're showing
-     * suggestions in more than one place or not. This just returns the "default" list with
-     * the current interpretation of that concept.
+     * suggestions in more than one place or not. This just returns the "default" list with the
+     * current interpretation of that concept.
+     *
      * @return A {@code List<String>} of search suggestions.
      */
     List<String> getQueries() {
-        List<String> results = new ArrayList<String>();
+        List<String> results = new ArrayList<>();
         JSONArray suggestions = getSuggestions();
         if (suggestions == null) return results;
         for (int i = 0; i < suggestions.length(); i++) {
             try {
                 results.add(suggestions.getJSONObject(i).getString(TITLE));
             } catch (JSONException e) {
-                Log.w(TAG,
+                Log.w(
+                        TAG,
                         "RelatedSearchesList cannot find a query with a title at suggestion "
-                                + "index: " + i + "\n" + e.getMessage());
+                                + "index: "
+                                + i
+                                + "\n"
+                                + e.getMessage());
             }
         }
         return results;
@@ -88,9 +98,12 @@ class RelatedSearchesList {
             Uri searchUri = Uri.parse(searchUrl);
             return RelatedSearchesStamp.updateUriForSuggestionPosition(searchUri, suggestionIndex);
         } catch (JSONException e) {
-            Log.w(TAG,
-                    "RelatedSearchesList cannot find a searchUrl in suggestion " + suggestionIndex
-                            + "\n" + e.getMessage());
+            Log.w(
+                    TAG,
+                    "RelatedSearchesList cannot find a searchUrl in suggestion "
+                            + suggestionIndex
+                            + "\n"
+                            + e.getMessage());
         }
         return null;
     }

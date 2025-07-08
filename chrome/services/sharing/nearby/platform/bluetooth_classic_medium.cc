@@ -7,12 +7,13 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "chrome/services/sharing/nearby/platform/bluetooth_server_socket.h"
 #include "chrome/services/sharing/nearby/platform/bluetooth_socket.h"
+#include "components/cross_device/nearby/nearby_features.h"
 #include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
-namespace nearby {
-namespace chrome {
+namespace nearby::chrome {
 
 namespace {
 
@@ -71,6 +72,12 @@ BluetoothClassicMedium::~BluetoothClassicMedium() = default;
 
 bool BluetoothClassicMedium::StartDiscovery(
     DiscoveryCallback discovery_callback) {
+  if (!features::IsNearbyBluetoothClassicScanningEnabled()) {
+    VLOG(1) << ": Classic scanning disabled, failing to StartDiscovery for BT "
+               "Classic";
+    return false;
+  }
+
   if (adapter_observer_.is_bound() && discovery_callback_ &&
       discovery_session_.is_bound()) {
     LogStartDiscoveryResult(true);
@@ -302,5 +309,4 @@ void BluetoothClassicMedium::RemoveStaleBluetoothDevices() {
   }
 }
 
-}  // namespace chrome
-}  // namespace nearby
+}  // namespace nearby::chrome

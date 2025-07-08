@@ -23,16 +23,24 @@ found in the LICENSE file.
     overflow: hidden;
     width: 380px;
   }
-
   :host-context(.jelly-enabled) .slide-view {
-    /* TODO(b/289793104): Define new size for the carousel/slide. */
     border: none;
     border-radius: 20px;
+    height: 360px;
   }
 
   #checkingAnimation {
     height: 300px;
     width: 334px;
+  }
+
+  :host-context(.jelly-enabled) paper-progress {
+    --paper-progress-active-color: var(--cros-sys-primary);
+    --paper-progress-container-color: var(--cros-sys-primary_container);
+  }
+
+  div[slot="subtitle"] p {
+    margin-top: 0;
   }
 </style>
 <oobe-adaptive-dialog id="consumerUpdateCellularDialog"
@@ -40,8 +48,7 @@ found in the LICENSE file.
     aria-live="polite" footer-shrinkable>
   <iron-icon slot="icon" icon="oobe-32:googleg"></iron-icon>
   <h1 slot="title">
-    [[i18nRecursive(locale, 'updateOverCellularPromptTitle',
-                    'productName')]]
+    [[i18nDynamic(locale, 'consumerUpdateScreenCellularTitle')]]
   </h1>
   <p slot="subtitle">
     [[i18nDynamic(locale, 'updateOverCellularPromptMessage')]]
@@ -51,14 +58,21 @@ found in the LICENSE file.
         class="update-illustration  illustration-jelly">
     </iron-icon>
   </div>
+  <div slot="back-navigation">
+    <oobe-back-button id="updateCellularBackButton" on-click="onBackClicked">
+    </oobe-back-button>
+  </div>
   <div slot="bottom-buttons">
     <oobe-text-button id="declineButton"
-        text-key="consumerUpdateScreenDecline"
-        on-click="onDeclineCellularClicked_"
+        text-key="consumerUpdateScreenSkipButton"
+        on-click="onDeclineCellularClicked"
         border>
     </oobe-text-button>
-    <oobe-next-button id="acceptButton" inverse
-        on-click="onAcceptCellularClicked_"></oobe-next-button>
+    <oobe-text-button id="acceptButton" inverse
+        text-key="consumerUpdateScreenAcceptButton"
+        on-click="onAcceptCellularClicked"
+        border>
+    </oobe-text-button>
   </div>
 </oobe-adaptive-dialog>
 <oobe-adaptive-dialog footer-shrinkable id="consumerUpdateCheckingDialog"
@@ -67,7 +81,8 @@ found in the LICENSE file.
   <h1 slot="title">
     [[i18nDynamic(locale, 'checkingForUpdates')]]
   </h1>
-  <paper-progress slot="progress" id="checking-progress" indeterminate>
+  <paper-progress slot="progress" id="checking-progress" aria-hidden="true"
+    indeterminate>
   </paper-progress>
   <div slot="content" class="flex layout vertical center-justified center">
     <oobe-cr-lottie id="checkingAnimation"
@@ -77,20 +92,22 @@ found in the LICENSE file.
 </oobe-adaptive-dialog>
 <oobe-adaptive-dialog footer-shrinkable id="consumerUpdateInProgressDialog"
     for-step="update" aria-live="polite">
-  <iron-icon slot="icon" icon="oobe-32:googleg"></iron-icon>
+  <iron-icon slot="icon" icon="oobe-32:update-progress"></iron-icon>
   <h1 slot="title">
-    [[i18nDynamic(locale, 'updateStatusTitle')]]
+    [[i18nDynamic(locale, 'consumerUpdateScreenInProgressTitle')]]
   </h1>
   <div slot="subtitle">
+    <p>[[i18nDynamic(locale, 'consumerUpdateScreenInProgressSubtitle')]]</p>
+    <p>[[i18nDynamic(locale,
+                    'consumerUpdateScreenInProgressAdditionalSubtitle')]]</p>
     <span id="betterUpdatePercent">[[updateStatusMessagePercent]]</span>
     <span> | </span>
     <span id="betterUpdateTimeleft">
       [[updateStatusMessageTimeLeft]]
     </span>
+    <paper-progress id="update-progress" value="[[betterUpdateProgressValue]]">
+    </paper-progress>
   </div>
-  <paper-progress slot="progress" id="update-progress"
-      value="[[betterUpdateProgressValue]]">
-  </paper-progress>
   <div hidden="[[!showLowBatteryWarning]]" id="battery-warning"
       class="slide-view" slot="content">
     <oobe-slide is-warning>
@@ -107,8 +124,8 @@ found in the LICENSE file.
   </div>
   <div hidden="[[showLowBatteryWarning]]" id="carousel" class="slide-view"
       slot="content">
-    <oobe-carousel slide-duration-in-seconds=5
-        auto-transition="[[getAutoTransition_(uiStep, autoTransition)]]"
+    <oobe-carousel
+        auto-transition="[[getAutoTransition(uiStep, autoTransition)]]"
         slide-label="slideLabel"
         selected-button-label="slideSelectedButtonLabel"
         unselected-button-label="slideUnselectedButtonLabel">
@@ -155,12 +172,12 @@ found in the LICENSE file.
     </oobe-carousel>
   </div>
   <div slot="bottom-buttons">
-    <oobe-text-button id="skipButton" hidden="[[isUpdateMandatory]]"
-        text-key="consumerUpdateScreenSkip" on-click="onSkip_" border>
+    <oobe-text-button id="skipButton" hidden="[[isSkipButtonHidden]]"
+        text-key="consumerUpdateScreenSkipButton" on-click="onSkip" border>
     </oobe-text-button>
 </div>
 </oobe-adaptive-dialog>
-<oobe-loading-dialog id="consumerUpdaterestartingDialog"
+<oobe-loading-dialog id="consumerUpdateRestartingDialog"
     title-key="updateCompeletedRebootingMsg" for-step="restart">
   <iron-icon slot="icon" icon="oobe-32:googleg"></iron-icon>
 </oobe-loading-dialog>

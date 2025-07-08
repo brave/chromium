@@ -8,12 +8,11 @@
 #include "base/memory/ptr_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/enterprise/connectors/connectors_prefs.h"
 #include "chrome/browser/enterprise/connectors/device_trust/common/common_types.h"
 #include "chrome/browser/enterprise/connectors/device_trust/common/device_trust_constants.h"
 #include "chrome/browser/enterprise/connectors/device_trust/common/metrics_utils.h"
-#include "chrome/browser/enterprise/connectors/device_trust/device_trust_features.h"
 #include "chrome/browser/enterprise/connectors/device_trust/device_trust_service.h"
 #include "chrome/browser/enterprise/connectors/device_trust/device_trust_service_factory.h"
 #include "chrome/browser/enterprise/signals/user_permission_service_factory.h"
@@ -22,6 +21,7 @@
 #include "components/device_signals/core/browser/pref_names.h"
 #include "components/device_signals/core/browser/user_permission_service.h"
 #include "components/device_signals/core/common/signals_features.h"
+#include "components/enterprise/connectors/core/connectors_prefs.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
@@ -30,9 +30,9 @@
 #include "net/http/http_response_headers.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace enterprise_connectors {
 
@@ -68,16 +68,16 @@ bool VerifyURL(GURL url) {
   return (url.is_valid() && url.SchemeIsHTTPOrHTTPS());
 }
 
-Profile* GetProfile(content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle || !navigation_handle->GetWebContents()) {
+Profile* GetProfile(content::NavigationHandle& navigation_handle) {
+  if (!navigation_handle.GetWebContents()) {
     return nullptr;
   }
 
   return Profile::FromBrowserContext(
-      navigation_handle->GetWebContents()->GetBrowserContext());
+      navigation_handle.GetWebContents()->GetBrowserContext());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 DTOrigin GetAttestationFlowOrigin(content::BrowserContext* context) {
   if (context->IsOffTheRecord() && ash::ProfileHelper::IsSigninProfile(
                                        Profile::FromBrowserContext(context))) {
@@ -86,7 +86,7 @@ DTOrigin GetAttestationFlowOrigin(content::BrowserContext* context) {
 
   return DTOrigin::kInSession;
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -98,13 +98,9 @@ constexpr char kVerifiedAccessResponseHeader[] =
     "X-Verified-Access-Challenge-Response";
 
 // static
-std::unique_ptr<DeviceTrustNavigationThrottle>
-DeviceTrustNavigationThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* navigation_handle) {
-  if (!enterprise_connectors::IsDeviceTrustConnectorFeatureEnabled()) {
-    return nullptr;
-  }
-
+void DeviceTrustNavigationThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
+  content::NavigationHandle& navigation_handle = registry.GetNavigationHandle();
   auto* profile = GetProfile(navigation_handle);
   auto* device_trust_service =
       DeviceTrustServiceFactory::GetForProfile(profile);
@@ -114,22 +110,22 @@ DeviceTrustNavigationThrottle::MaybeCreateThrottleFor(
   if ((!device_trust_service || !device_trust_service->IsEnabled()) &&
       (!user_permission_service ||
        !user_permission_service->ShouldCollectConsent())) {
-    return nullptr;
+    return;
   }
 
-  return std::make_unique<DeviceTrustNavigationThrottle>(
-      device_trust_service, user_permission_service, navigation_handle);
+  registry.AddThrottle(std::make_unique<DeviceTrustNavigationThrottle>(
+      device_trust_service, user_permission_service, registry));
 }
 
 DeviceTrustNavigationThrottle::DeviceTrustNavigationThrottle(
     DeviceTrustService* device_trust_service,
     device_signals::UserPermissionService* user_permission_service,
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle),
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry),
       device_trust_service_(device_trust_service),
       user_permission_service_(user_permission_service),
       consent_requester_(ConsentRequester::CreateConsentRequester(
-          GetProfile(navigation_handle))) {}
+          GetProfile(registry.GetNavigationHandle()))) {}
 
 DeviceTrustNavigationThrottle::~DeviceTrustNavigationThrottle() = default;
 
@@ -200,72 +196,70 @@ DeviceTrustNavigationThrottle::AddHeadersIfNeeded() {
   }
 
   // If we are starting an attestation flow.
-  if (navigation_handle()->GetResponseHeaders() == nullptr) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (navigation_handle()->GetResponseHeaders() == nullptr ||
+      !navigation_handle()->GetResponseHeaders()->HasHeader(
+          kVerifiedAccessChallengeHeader)) {
+#if BUILDFLAG(IS_CHROMEOS)
     LogOrigin(GetAttestationFlowOrigin(
         navigation_handle()->GetWebContents()->GetBrowserContext()));
     LogEnrollmentStatus();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
     LogAttestationFunnelStep(DTAttestationFunnelStep::kAttestationFlowStarted);
     navigation_handle()->SetRequestHeader(kDeviceTrustHeader,
                                           kDeviceTrustHeaderValue);
     return PROCEED;
   }
 
-  // If a challenge is coming from the Idp.
-  if (navigation_handle()->GetResponseHeaders()->HasHeader(
-          kVerifiedAccessChallengeHeader)) {
-    // Remove request header since is not needed for challenge response.
-    navigation_handle()->RemoveRequestHeader(kDeviceTrustHeader);
+  // Reaching this point means there is a challenge coming from the Idp.
+  // Remove request header since is not needed for challenge response.
+  navigation_handle()->RemoveRequestHeader(kDeviceTrustHeader);
 
-    // Get challenge.
-    const net::HttpResponseHeaders* headers =
-        navigation_handle()->GetResponseHeaders();
-    std::string challenge;
-    if (headers->GetNormalizedHeader(kVerifiedAccessChallengeHeader,
-                                     &challenge)) {
-      LogAttestationFunnelStep(DTAttestationFunnelStep::kChallengeReceived);
+  // Get challenge.
+  const net::HttpResponseHeaders* headers =
+      navigation_handle()->GetResponseHeaders();
+  if (std::optional<std::string> challenge =
+          headers->GetNormalizedHeader(kVerifiedAccessChallengeHeader)) {
+    LogAttestationFunnelStep(DTAttestationFunnelStep::kChallengeReceived);
 
-      // Create callback for `ReplyChallengeResponseAndResume` which will
-      // be called after the challenge response is created. With this
-      // we can defer the navigation to unblock the main thread.
-      const base::TimeTicks start_time = base::TimeTicks::Now();
-      DeviceTrustCallback resume_navigation_callback = base::BindOnce(
-          &DeviceTrustNavigationThrottle::ReplyChallengeResponseAndResume,
-          weak_ptr_factory_.GetWeakPtr(), start_time);
+    // Create callback for `ReplyChallengeResponseAndResume` which will
+    // be called after the challenge response is created. With this
+    // we can defer the navigation to unblock the main thread.
+    const base::TimeTicks start_time = base::TimeTicks::Now();
+    DeviceTrustCallback resume_navigation_callback = base::BindOnce(
+        &DeviceTrustNavigationThrottle::ReplyChallengeResponseAndResume,
+        weak_ptr_factory_.GetWeakPtr(), start_time);
 
-      // Call `DeviceTrustService::BuildChallengeResponse` which is one step on
-      // the chain that builds the challenge response. In this chain we post a
-      // task that won't run in the main thread.
-      //
-      // Because BuildChallengeResponse() may run the resume callback
-      // synchronously, this call is deferred to ensure that this method returns
-      // DEFER before `resume_navigation_callback` is invoked.
-      LogAttestationPolicyLevel(levels);
-      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE,
-          base::BindOnce(
-              [](base::WeakPtr<DeviceTrustNavigationThrottle> throttler,
-                 const std::string& challenge,
-                 const std::set<DTCPolicyLevel>& levels,
-                 DeviceTrustCallback resume_navigation_callback) {
-                if (throttler) {
-                  throttler->device_trust_service_->BuildChallengeResponse(
-                      challenge, levels, std::move(resume_navigation_callback));
-                }
-              },
-              weak_ptr_factory_.GetWeakPtr(), challenge, levels,
-              std::move(resume_navigation_callback)));
+    // Call `DeviceTrustService::BuildChallengeResponse` which is one step on
+    // the chain that builds the challenge response. In this chain we post a
+    // task that won't run in the main thread.
+    //
+    // Because BuildChallengeResponse() may run the resume callback
+    // synchronously, this call is deferred to ensure that this method returns
+    // DEFER before `resume_navigation_callback` is invoked.
+    LogAttestationPolicyLevel(levels);
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::WeakPtr<DeviceTrustNavigationThrottle> throttler,
+               const std::string& challenge,
+               const std::set<DTCPolicyLevel>& levels,
+               DeviceTrustCallback resume_navigation_callback) {
+              if (throttler) {
+                throttler->device_trust_service_->BuildChallengeResponse(
+                    challenge, levels, std::move(resume_navigation_callback));
+              }
+            },
+            weak_ptr_factory_.GetWeakPtr(), *challenge, levels,
+            std::move(resume_navigation_callback)));
 
-      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-          FROM_HERE,
-          base::BindOnce(&DeviceTrustNavigationThrottle::OnResponseTimedOut,
-                         weak_ptr_factory_.GetWeakPtr(), start_time),
-          timeouts::kHandshakeTimeout);
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&DeviceTrustNavigationThrottle::OnResponseTimedOut,
+                       weak_ptr_factory_.GetWeakPtr(), start_time),
+        timeouts::kHandshakeTimeout);
 
-      is_resumed_ = false;
-      return DEFER;
-    }
+    is_resumed_ = false;
+    return DEFER;
   }
   return PROCEED;
 }

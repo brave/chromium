@@ -7,9 +7,10 @@ package org.chromium.chrome.browser.privacy.settings;
 import android.app.Activity;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.incognito.reauth.IncognitoReauthManager;
 import org.chromium.chrome.browser.incognito.reauth.IncognitoReauthSettingSwitchPreference;
 import org.chromium.chrome.browser.incognito.reauth.IncognitoReauthSettingUtils;
@@ -21,24 +22,28 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /**
- * A class to manage the Incognito lock setting shown in Privacy and Security page.
- * This is used in {@link PrivacySettings}.
+ * A class to manage the Incognito lock setting shown in Privacy and Security page. This is used in
+ * {@link PrivacySettings}.
  */
+@NullMarked
 public class IncognitoLockSettings {
     private final IncognitoReauthSettingSwitchPreference mIncognitoReauthPreference;
+    private final Profile mProfile;
+
     private boolean mIsChromeTriggered;
 
-    @Nullable
-    private IncognitoReauthManager mIncognitoReauthManager;
+    private @Nullable IncognitoReauthManager mIncognitoReauthManager;
 
     /**
-     * Represents the state of the Incognito lock setting that gets changed by the user.
-     * DO NOT reorder items in this interface, because it's mirrored to UMA
-     * (as IncognitoReauthToggleValueType).
+     * Represents the state of the Incognito lock setting that gets changed by the user. DO NOT
+     * reorder items in this interface, because it's mirrored to UMA (as
+     * IncognitoReauthToggleValueType).
      */
-    @IntDef({IncognitoReauthToggleValueType.SETTING_DISABLED,
-            IncognitoReauthToggleValueType.SETTING_ENABLED,
-            IncognitoReauthToggleValueType.NUM_ENTRIES})
+    @IntDef({
+        IncognitoReauthToggleValueType.SETTING_DISABLED,
+        IncognitoReauthToggleValueType.SETTING_ENABLED,
+        IncognitoReauthToggleValueType.NUM_ENTRIES
+    })
     @Retention(RetentionPolicy.SOURCE)
     @interface IncognitoReauthToggleValueType {
         int SETTING_DISABLED = 0;
@@ -47,8 +52,10 @@ public class IncognitoLockSettings {
         int NUM_ENTRIES = 2;
     }
 
-    public IncognitoLockSettings(IncognitoReauthSettingSwitchPreference incognitoReauthPreference) {
+    public IncognitoLockSettings(
+            IncognitoReauthSettingSwitchPreference incognitoReauthPreference, Profile profile) {
         mIncognitoReauthPreference = incognitoReauthPreference;
+        mProfile = profile;
     }
 
     /**
@@ -64,14 +71,17 @@ public class IncognitoLockSettings {
             return;
         }
 
-        mIncognitoReauthPreference.setLinkClickDelegate(() -> {
-            activity.startActivity(IncognitoReauthSettingUtils.getSystemSecuritySettingsIntent());
-        });
+        mIncognitoReauthPreference.setLinkClickDelegate(
+                () -> {
+                    activity.startActivity(
+                            IncognitoReauthSettingUtils.getSystemSecuritySettingsIntent());
+                });
 
-        mIncognitoReauthPreference.setOnPreferenceChangeListener((preference, newValue) -> {
-            onIncognitoReauthPreferenceChange((boolean) newValue);
-            return true;
-        });
+        mIncognitoReauthPreference.setOnPreferenceChangeListener(
+                (preference, newValue) -> {
+                    onIncognitoReauthPreferenceChange(activity, (boolean) newValue);
+                    return true;
+                });
         updateIncognitoReauthPreferenceIfNeeded(activity);
     }
 
@@ -91,9 +101,16 @@ public class IncognitoLockSettings {
         mIncognitoReauthPreference.setPreferenceInteractable(
                 IncognitoReauthSettingUtils.isDeviceScreenLockEnabled());
 
-        boolean lastPrefValue = UserPrefs.get(Profile.getLastUsedRegularProfile())
-                                        .getBoolean(Pref.INCOGNITO_REAUTHENTICATION_FOR_ANDROID);
+        boolean lastPrefValue =
+                UserPrefs.get(mProfile).getBoolean(Pref.INCOGNITO_REAUTHENTICATION_FOR_ANDROID);
         updateCheckedStatePerformedByChrome(lastPrefValue);
+    }
+
+    /** Performs cleanup. Should be called when the owning activity/fragment is destroyed. */
+    public void destroy() {
+        if (mIncognitoReauthManager != null) {
+            mIncognitoReauthManager.destroy();
+        }
     }
 
     /**
@@ -103,13 +120,13 @@ public class IncognitoLockSettings {
      *
      * @param newValue A boolean indicating the value of the potential new state.
      */
-    private void onIncognitoReauthPreferenceChange(boolean newValue) {
+    private void onIncognitoReauthPreferenceChange(Activity activity, boolean newValue) {
         if (mIsChromeTriggered) return;
-        boolean lastPrefValue = UserPrefs.get(Profile.getLastUsedRegularProfile())
-                                        .getBoolean(Pref.INCOGNITO_REAUTHENTICATION_FOR_ANDROID);
+        boolean lastPrefValue =
+                UserPrefs.get(mProfile).getBoolean(Pref.INCOGNITO_REAUTHENTICATION_FOR_ANDROID);
 
         if (mIncognitoReauthManager == null) {
-            mIncognitoReauthManager = new IncognitoReauthManager();
+            mIncognitoReauthManager = new IncognitoReauthManager(activity, mProfile);
         }
 
         mIncognitoReauthManager.startReauthenticationFlow(
@@ -121,12 +138,13 @@ public class IncognitoLockSettings {
 
                     @Override
                     public void onIncognitoReauthSuccess() {
-                        UserPrefs.get(Profile.getLastUsedRegularProfile())
+                        UserPrefs.get(mProfile)
                                 .setBoolean(Pref.INCOGNITO_REAUTHENTICATION_FOR_ANDROID, newValue);
                         RecordHistogram.recordEnumeratedHistogram(
                                 "Android.IncognitoReauth.PrefToggledFromSettingPage",
-                                newValue ? IncognitoReauthToggleValueType.SETTING_ENABLED
-                                         : IncognitoReauthToggleValueType.SETTING_DISABLED,
+                                newValue
+                                        ? IncognitoReauthToggleValueType.SETTING_ENABLED
+                                        : IncognitoReauthToggleValueType.SETTING_DISABLED,
                                 IncognitoReauthToggleValueType.NUM_ENTRIES);
                     }
 

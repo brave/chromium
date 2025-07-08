@@ -3,20 +3,19 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_page_handler.h"
+
 #include <cstddef>
 
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_manager.h"
-#include "chrome/browser/ash/crosapi/web_app_service_ash.h"
-#include "chrome/browser/ash/file_manager/file_tasks.h"
+#include "chrome/browser/ash/file_manager/office_file_tasks.h"
 #include "chrome/browser/chromeos/office_web_app/office_web_app.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload.mojom.h"
-#include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_dialog.h"
-#include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
 #include "components/webapps/browser/install_result_code.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_ui.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 
 namespace ash::cloud_upload {
@@ -48,13 +47,12 @@ void CloudUploadPageHandler::OnMountResponse(
 }
 
 void CloudUploadPageHandler::GetDialogArgs(GetDialogArgsCallback callback) {
-  std::move(callback).Run(dialog_args_ ? dialog_args_.Clone()
-                                       : mojom::DialogArgs::New());
+  std::move(callback).Run(dialog_args_ ? dialog_args_.Clone() : nullptr);
 }
 
 void CloudUploadPageHandler::IsOfficeWebAppInstalled(
     IsOfficeWebAppInstalledCallback callback) {
-  std::move(callback).Run(CloudUploadDialog::IsOfficeWebAppInstalled(profile_));
+  std::move(callback).Run(ash::cloud_upload::IsOfficeWebAppInstalled(profile_));
 }
 
 void CloudUploadPageHandler::InstallOfficeWebApp(
@@ -65,35 +63,24 @@ void CloudUploadPageHandler::InstallOfficeWebApp(
         std::move(callback).Run(webapps::IsSuccess(result_code));
       },
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback), false));
-
-  if (web_app::WebAppProvider::GetForWebApps(profile_)) {
-    // Web apps are managed in Ash.
-    chromeos::InstallMicrosoft365(profile_, std::move(wrapped_callback));
-  } else {
-    // Web apps are managed in Lacros.
-    crosapi::mojom::WebAppProviderBridge* web_app_provider_bridge =
-        crosapi::CrosapiManager::Get()
-            ->crosapi_ash()
-            ->web_app_service_ash()
-            ->GetWebAppProviderBridge();
-    if (!web_app_provider_bridge) {
-      std::move(wrapped_callback)
-          .Run(webapps::InstallResultCode::kWebAppProviderNotReady);
-      return;
-    }
-    web_app_provider_bridge->InstallMicrosoft365(std::move(wrapped_callback));
-  }
+  chromeos::InstallMicrosoft365(profile_, std::move(wrapped_callback));
 }
 
 void CloudUploadPageHandler::IsODFSMounted(IsODFSMountedCallback callback) {
   // Assume any file system mounted by ODFS is the correct one.
-  std::move(callback).Run(CloudUploadDialog::IsODFSMounted(profile_));
+  std::move(callback).Run(ash::cloud_upload::IsODFSMounted(profile_));
 }
 
 void CloudUploadPageHandler::SignInToOneDrive(
     SignInToOneDriveCallback callback) {
   web_ui_->GetWebContents()->GetTopLevelNativeWindow()->Hide();
-  CloudUploadDialog::RequestODFSMount(
+  if (!odfs_mount_called_) {
+    // Log only once per setup flow.
+    odfs_mount_called_ = true;
+    UMA_HISTOGRAM_BOOLEAN("FileBrowser.OfficeFiles.Setup.ODFSAvailability",
+                          IsODFSInstalled(profile_));
+  }
+  RequestODFSMount(
       profile_,
       base::BindOnce(&CloudUploadPageHandler::OnMountResponse,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));

@@ -22,7 +22,7 @@ namespace ash {
 class DemoAshPixelDiffTest : public AshTestBase {
  public:
   // AshTestBase:
-  absl::optional<pixel_test::InitParams> CreatePixelTestInitParams()
+  std::optional<pixel_test::InitParams> CreatePixelTestInitParams()
       const override {
     return pixel_test::InitParams();
   }
@@ -41,9 +41,8 @@ class DemoAshPixelDiffTest : public AshTestBase {
     // Create a top level widget.
     auto widget = std::make_unique<views::Widget>();
     views::Widget::InitParams init_params(
+        views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
         views::Widget::InitParams::TYPE_POPUP);
-    init_params.ownership =
-        views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     init_params.bounds = gfx::Rect(widget_bounds);
     init_params.parent = root_window;
     widget->Init(std::move(init_params));

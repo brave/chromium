@@ -15,12 +15,12 @@
  */
 
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
-import {dedupingMixin, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {dedupingMixin, type PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {RouteObserverMixin, RouteObserverMixinInterface} from '../route_observer_mixin.js';
-import {Route, Router} from '../router.js';
+import {RouteObserverMixin, type RouteObserverMixinInterface} from '../common/route_observer_mixin.js';
+import {type Route, Router} from '../router.js';
 
-import {Constructor} from './types.js';
+import type {Constructor} from './types.js';
 
 let scrollTargetResolver = new PromiseResolver<HTMLElement>();
 
@@ -80,7 +80,7 @@ export const GlobalScrollTargetMixin = dedupingMixin(
         subpageScrollTarget: HTMLElement;
         private active_: boolean;
 
-        override connectedCallback() {
+        override connectedCallback(): void {
           super.connectedCallback();
 
           this.active_ =
@@ -88,13 +88,13 @@ export const GlobalScrollTargetMixin = dedupingMixin(
           scrollTargetResolver.promise.then(this._setScrollTarget.bind(this));
         }
 
-        override currentRouteChanged(route: Route) {
+        override currentRouteChanged(route: Route): void {
           // Immediately set the scroll target to active when this page is
           // activated, but wait a task to remove the scroll target when the
           // page is deactivated. This gives scroll handlers like iron-list a
           // chance to handle scroll events that are fired as a result of the
           // route changing.
-          // TODO(https://crbug.com/859794): Having this timeout can result some
+          // TODO(crbug.com/40583428): Having this timeout can result some
           // jumpy behaviour in the scroll handlers. |this.active_| can be set
           // immediately when this bug is fixed.
           if (route === this.subpageRoute) {

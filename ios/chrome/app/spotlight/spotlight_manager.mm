@@ -5,6 +5,7 @@
 #import "ios/chrome/app/spotlight/spotlight_manager.h"
 
 #import "base/check.h"
+#import "base/memory/raw_ptr.h"
 #import "components/search_engines/template_url.h"
 #import "components/search_engines/template_url_service.h"
 #import "ios/chrome/app/spotlight/actions_spotlight_manager.h"
@@ -13,60 +14,50 @@
 #import "ios/chrome/app/spotlight/reading_list_spotlight_manager.h"
 #import "ios/chrome/app/spotlight/spotlight_util.h"
 #import "ios/chrome/app/spotlight/topsites_spotlight_manager.h"
-#import "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Called from the BrowserBookmarkModelBridge from C++ -> ObjC.
 @interface SpotlightManager () {
   BookmarksSpotlightManager* _bookmarkManager;
   TopSitesSpotlightManager* _topSitesManager;
   ActionsSpotlightManager* _actionsManager;
-  TemplateURLService* _templateURLService;
+  raw_ptr<TemplateURLService> _templateURLService;
 }
 
 @property(nonatomic, strong) ReadingListSpotlightManager* readingListManager;
 @property(nonatomic, strong) OpenTabsSpotlightManager* openTabsManager;
 
-- (instancetype)initWithBrowserState:(ChromeBrowserState*)browserState
-    NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithProfile:(ProfileIOS*)profile NS_DESIGNATED_INITIALIZER;
 
 @end
 
 @implementation SpotlightManager
 
-+ (SpotlightManager*)spotlightManagerWithBrowserState:
-    (ChromeBrowserState*)browserState {
++ (SpotlightManager*)spotlightManagerWithProfile:(ProfileIOS*)profile {
   if (spotlight::IsSpotlightAvailable()) {
-    return [[SpotlightManager alloc] initWithBrowserState:browserState];
+    return [[SpotlightManager alloc] initWithProfile:profile];
   }
   return nil;
 }
 
-- (instancetype)initWithBrowserState:(ChromeBrowserState*)browserState {
-  DCHECK(browserState);
+- (instancetype)initWithProfile:(ProfileIOS*)profile {
+  DCHECK(profile);
   DCHECK(spotlight::IsSpotlightAvailable());
   self = [super init];
   if (self) {
     _templateURLService =
-        ios::TemplateURLServiceFactory::GetForBrowserState(browserState);
-    _topSitesManager = [TopSitesSpotlightManager
-        topSitesSpotlightManagerWithBrowserState:browserState];
+        ios::TemplateURLServiceFactory::GetForProfile(profile);
+    _topSitesManager =
+        [TopSitesSpotlightManager topSitesSpotlightManagerWithProfile:profile];
     _bookmarkManager = [BookmarksSpotlightManager
-        bookmarksSpotlightManagerWithBrowserState:browserState];
+        bookmarksSpotlightManagerWithProfile:profile];
     _actionsManager = [ActionsSpotlightManager actionsSpotlightManager];
-    if (base::FeatureList::IsEnabled(kSpotlightReadingListSource)) {
-      _readingListManager = [ReadingListSpotlightManager
-          readingListSpotlightManagerWithBrowserState:browserState];
-    }
-    if (base::FeatureList::IsEnabled(kSpotlightOpenTabsSource)) {
-      _openTabsManager = [OpenTabsSpotlightManager
-          openTabsSpotlightManagerWithBrowserState:browserState];
-    }
+    _readingListManager = [ReadingListSpotlightManager
+        readingListSpotlightManagerWithProfile:profile];
+    _openTabsManager =
+        [OpenTabsSpotlightManager openTabsSpotlightManagerWithProfile:profile];
   }
   return self;
 }

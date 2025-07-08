@@ -22,7 +22,7 @@ class GpuBuilders(builders.Builders):
     # Builders running tests in Chrome Labs.
     tests = test_map.get('isolated_scripts', [])
     for t in tests:
-      if t.get('isolate_name') not in self.GetIsolateNames():
+      if t.get('test') not in self.GetIsolateNames():
         continue
       if self._suite in t.get('args', []):
         return True
@@ -59,7 +59,7 @@ class GpuBuilders(builders.Builders):
           'Mac V8 FYI Release (Intel)',
           'Linux V8 FYI Release - pointer compression (NVIDIA)',
           'Linux V8 FYI Release (NVIDIA)',
-          'Android V8 FYI Release (Nexus 5X)',
+          'Android V8 FYI Release',
       }
       self._non_chromium_builders = {
           data_types.BuilderEntry(b, constants.BuilderTypes.CI, False)

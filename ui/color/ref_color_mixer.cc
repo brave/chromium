@@ -16,7 +16,6 @@
 #include "ui/color/color_recipe.h"
 #include "ui/color/dynamic_color/palette.h"
 #include "ui/color/dynamic_color/palette_factory.h"
-#include "ui/color/temp_palette.h"
 #include "ui/gfx/color_palette.h"
 
 namespace ui {
@@ -244,13 +243,31 @@ void AddGeneratedPalette(ColorProvider* provider,
 }
 
 void AddRefColorMixer(ColorProvider* provider, const ColorProviderKey& key) {
-  if (!key.user_color.has_value()) {
+  // Typically user_color should always be set when the source has been set to
+  // kAccent, however there may still be cases when this can occur (e.g. failing
+  // to retrieve the system accent color on Windows).
+  // TODO(tluk): Investigate guaranteeing the user_color is defined when kAccent
+  // is set.
+  if (!key.user_color.has_value() ||
+      key.user_color_source == ColorProviderKey::UserColorSource::kBaseline ||
+      key.user_color_source == ColorProviderKey::UserColorSource::kGrayscale) {
     AddBaselinePalette(provider);
   } else {
     // The default value for schemes is Tonal Spot.
     auto variant = key.scheme_variant.value_or(
         ColorProviderKey::SchemeVariant::kTonalSpot);
-    AddGeneratedPalette(provider, key.user_color.value(), variant);
+
+    // If the user color is set to black libmonet will default to a pink primary
+    // color. This results in an unexpected user experience where all other
+    // shades of gray result in the default blue primary color. To avoid this
+    // edge case set the user_color one step above black to ensure the primary
+    // blue is used, see crbug.com/1457314.
+    SkColor user_color = key.user_color.value();
+    if (user_color == SK_ColorBLACK) {
+      user_color = SkColorSetRGB(0x01, 0x01, 0x01);
+    }
+
+    AddGeneratedPalette(provider, user_color, variant);
   }
 }
 

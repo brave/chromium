@@ -10,8 +10,10 @@
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_helper.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chromeos/ash/services/hotspot_config/public/cpp/cros_hotspot_config_test_helper.h"
@@ -23,6 +25,7 @@
 #include "ui/color/color_provider.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/widget/widget.h"
 
@@ -40,8 +43,7 @@ bool AreImagesEqual(const gfx::ImageSkia& image,
 
 }  // namespace
 
-class HotspotTrayViewTest : public AshTestBase,
-                            public testing::WithParamInterface<bool> {
+class HotspotTrayViewTest : public AshTestBase {
  public:
   HotspotTrayViewTest()
       : AshTestBase(std::make_unique<base::test::TaskEnvironment>(
@@ -50,15 +52,6 @@ class HotspotTrayViewTest : public AshTestBase,
   ~HotspotTrayViewTest() override = default;
 
   void SetUp() override {
-    if (IsJellyEnabled()) {
-      scoped_feature_list_.InitWithFeatures(
-          {features::kHotspot, chromeos::features::kJelly}, {});
-    } else {
-      scoped_feature_list_.InitAndEnableFeature(features::kHotspot);
-    }
-    cros_hotspot_config_test_helper_ =
-        std::make_unique<hotspot_config::CrosHotspotConfigTestHelper>(
-            /*use_fake_implementation=*/true);
     AshTestBase::SetUp();
     std::unique_ptr<HotspotTrayView> hotspot_tray_view =
         std::make_unique<HotspotTrayView>(GetPrimaryShelf());
@@ -72,7 +65,6 @@ class HotspotTrayViewTest : public AshTestBase,
 
   void TearDown() override {
     widget_.reset();
-    cros_hotspot_config_test_helper_.reset();
     AshTestBase::TearDown();
   }
 
@@ -80,13 +72,13 @@ class HotspotTrayViewTest : public AshTestBase,
     auto hotspot_info = HotspotInfo::New();
     hotspot_info->state = state;
     hotspot_info->client_count = client_count;
-    cros_hotspot_config_test_helper_->SetFakeHotspotInfo(
+    ash_test_helper()->cros_hotspot_config_test_helper()->SetFakeHotspotInfo(
         std::move(hotspot_info));
     base::RunLoop().RunUntilIdle();
   }
 
   std::u16string GetTooltip() {
-    return hotspot_tray_view_->GetTooltipText(gfx::Point());
+    return hotspot_tray_view_->GetRenderedTooltipText(gfx::Point());
   }
 
   std::u16string GetAccessibleNameString() {
@@ -95,19 +87,13 @@ class HotspotTrayViewTest : public AshTestBase,
 
   bool IsIconVisible() { return hotspot_tray_view_->GetVisible(); }
 
-  bool IsJellyEnabled() const { return GetParam(); }
-
  protected:
   base::test::ScopedFeatureList scoped_feature_list_;
-  std::unique_ptr<hotspot_config::CrosHotspotConfigTestHelper>
-      cros_hotspot_config_test_helper_;
   std::unique_ptr<views::Widget> widget_;
-  raw_ptr<HotspotTrayView, ExperimentalAsh> hotspot_tray_view_;
+  raw_ptr<HotspotTrayView, DanglingUntriaged> hotspot_tray_view_;
 };
 
-INSTANTIATE_TEST_SUITE_P(Jelly, HotspotTrayViewTest, testing::Bool());
-
-TEST_P(HotspotTrayViewTest, HotspotIconImage) {
+TEST_F(HotspotTrayViewTest, HotspotIconImage) {
   SetHotspotStateAndClientCount(HotspotState::kDisabled, 0);
   EXPECT_TRUE(AreImagesEqual(
       hotspot_tray_view_->image_view()->GetImage(),
@@ -143,7 +129,7 @@ TEST_P(HotspotTrayViewTest, HotspotIconImage) {
                                 cros_tokens::kCrosSysOnSurface))));
 }
 
-TEST_P(HotspotTrayViewTest, HotspotIconVisibility) {
+TEST_F(HotspotTrayViewTest, HotspotIconVisibility) {
   EXPECT_FALSE(IsIconVisible());
 
   SetHotspotStateAndClientCount(HotspotState::kEnabled, 0);
@@ -156,7 +142,7 @@ TEST_P(HotspotTrayViewTest, HotspotIconVisibility) {
   EXPECT_TRUE(IsIconVisible());
 }
 
-TEST_P(HotspotTrayViewTest, HotspotIconTooltip) {
+TEST_F(HotspotTrayViewTest, HotspotIconTooltip) {
   SetHotspotStateAndClientCount(HotspotState::kEnabled, 0);
   EXPECT_EQ(l10n_util::GetStringFUTF16(
                 IDS_ASH_STATUS_TRAY_HOTSPOT_ON_NO_CONNECTED_DEVICES,
@@ -177,6 +163,16 @@ TEST_P(HotspotTrayViewTest, HotspotIconTooltip) {
                 base::NumberToString16(3), ui::GetChromeOSDeviceName()),
             GetTooltip());
   EXPECT_EQ(GetTooltip(), GetAccessibleNameString());
+}
+
+TEST_F(HotspotTrayViewTest, AccessibleProperties) {
+  SetHotspotStateAndClientCount(HotspotState::kEnabled, 0);
+  ui::AXNodeData data;
+
+  hotspot_tray_view_->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kImage);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            GetTooltip());
 }
 
 }  // namespace ash

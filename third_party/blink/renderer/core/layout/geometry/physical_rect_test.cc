@@ -7,6 +7,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/geometry/infinite_int_rect.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
@@ -14,6 +15,7 @@ namespace blink {
 namespace {
 
 TEST(PhysicalRectTest, AddOffset) {
+  test::TaskEnvironment task_environment;
   EXPECT_EQ(PhysicalRect(1, 2, 3, 4) + PhysicalOffset(5, 6),
             PhysicalRect(6, 8, 3, 4));
 }
@@ -74,6 +76,7 @@ TEST_P(PhysicalRectUniteTest, Data) {
 }
 
 TEST(PhysicalRectTest, SquaredDistanceTo) {
+  test::TaskEnvironment task_environment;
   PhysicalRect rect(0, 0, 200, 200);
   EXPECT_EQ(200, rect.SquaredDistanceTo(PhysicalOffset(-10, -10)))
       << "over the top-left corner";
@@ -122,6 +125,7 @@ TEST(PhysicalRectTest, SquaredDistanceTo) {
 }
 
 TEST(PhysicalRectTest, InclusiveIntersect) {
+  test::TaskEnvironment task_environment;
   PhysicalRect rect(11, 12, 0, 0);
   EXPECT_TRUE(rect.InclusiveIntersect(PhysicalRect(11, 12, 13, 14)));
   EXPECT_EQ(rect, PhysicalRect(11, 12, 0, 0));
@@ -140,6 +144,7 @@ TEST(PhysicalRectTest, InclusiveIntersect) {
 }
 
 TEST(PhysicalRectTest, IntersectsInclusively) {
+  test::TaskEnvironment task_environment;
   PhysicalRect a(11, 12, 0, 0);
   PhysicalRect b(11, 12, 13, 14);
   // An empty rect can have inclusive intersection.
@@ -184,6 +189,7 @@ TEST(PhysicalRectTest, IntersectsInclusively) {
 }
 
 TEST(PhysicalRectTest, ToEnclosingRect) {
+  test::TaskEnvironment task_environment;
   LayoutUnit small;
   small.SetRawValue(1);
   PhysicalRect small_dimensions_rect(LayoutUnit(42.5f), LayoutUnit(84.5f),
@@ -234,7 +240,8 @@ TEST(PhysicalRectTest, ToEnclosingRect) {
             ToEnclosingRect(fractional_negpos_rect3));
 }
 
-TEST(LayoutRectTest, EdgesOnPixelBoundaries) {
+TEST(PhysicalRectTest, EdgesOnPixelBoundaries) {
+  test::TaskEnvironment task_environment;
   EXPECT_TRUE(PhysicalRect().EdgesOnPixelBoundaries());
   EXPECT_TRUE(PhysicalRect(1, 1, 1, 1).EdgesOnPixelBoundaries());
   EXPECT_TRUE(PhysicalRect(1, -1, 1, 1).EdgesOnPixelBoundaries());
@@ -272,6 +279,7 @@ TEST(LayoutRectTest, EdgesOnPixelBoundaries) {
 }
 
 TEST(PhysicalRectTest, ExpandEdgesToPixelBoundaries) {
+  test::TaskEnvironment task_environment;
   LayoutUnit small;
   small.SetRawValue(1);
   PhysicalRect small_dimensions_rect(LayoutUnit(42.5f), LayoutUnit(84.5f),
@@ -325,6 +333,7 @@ TEST(PhysicalRectTest, ExpandEdgesToPixelBoundaries) {
 }
 
 TEST(PhysicalRectTest, InfiniteIntRect) {
+  test::TaskEnvironment task_environment;
   gfx::Rect r = InfiniteIntRect();
   EXPECT_TRUE(r.Contains(gfx::Rect(-8000000, -8000000, 16000000, 16000000)));
 
@@ -334,7 +343,7 @@ TEST(PhysicalRectTest, InfiniteIntRect) {
   EXPECT_EQ(ToPixelSnappedRect(PhysicalRect(r)), r);
   for (int i = 0; i < 50; i++) {
     // Modified rect with visible right/bottom can be converted to gfx::RectF
-    // or LayoutRect and back without loss of accuracy.
+    // or PhysicalRect and back without loss of accuracy.
     r.set_width(r.x() + i);
     r.set_height(r.y() + i + 2000);
     EXPECT_EQ(gfx::ToEnclosingRect(gfx::RectF(r)), r);

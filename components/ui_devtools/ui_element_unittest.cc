@@ -4,7 +4,9 @@
 
 #include "components/ui_devtools/ui_element.h"
 
-#include "base/containers/cxx20_erase.h"
+#include <vector>
+
+#include "base/memory/raw_ptr.h"
 #include "components/ui_devtools/ui_devtools_unittest_utils.h"
 #include "components/ui_devtools/ui_element_delegate.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -30,15 +32,17 @@ class FakeUIElementDelegate : public UIElementDelegate {
   void OnUIElementReordered(UIElement* parent, UIElement* child) override {}
 
   void OnUIElementRemoved(UIElement* ui_element) override {
-    base::Erase(elements_, ui_element);
+    std::erase(elements_, ui_element);
   }
 
   void OnUIElementBoundsChanged(UIElement* ui_element) override {}
 
-  const std::vector<UIElement*>& elements() { return elements_; }
+  const std::vector<raw_ptr<UIElement, VectorExperimental>>& elements() {
+    return elements_;
+  }
 
  private:
-  std::vector<UIElement*> elements_;
+  std::vector<raw_ptr<UIElement, VectorExperimental>> elements_;
 };
 
 using UIElementsUnittest = testing::Test;

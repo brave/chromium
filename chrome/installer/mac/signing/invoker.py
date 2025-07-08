@@ -65,11 +65,7 @@ class Interface(Base):
         operations.
         """
 
-        def codesign(self,
-                     config,
-                     product,
-                     path,
-                     replace_existing_signature=False):
+        def codesign(self, config, product, path):
             """Signs the specified `product` that is located inside the
             directory specified by `path`.
 
@@ -79,9 +75,6 @@ class Interface(Base):
                     options.
                 path: A string path at which `product` and any associated
                     resources can be found.
-                replace_existing_signature: A boolean as to whether any
-                    existing signature on the product (e.g. one emitted by the
-                    linker) should be replaced.
             """
             raise NotImplementedError('codesign')
 
@@ -95,7 +88,7 @@ class Interface(Base):
         notarization-related operations.
         """
 
-        def submit(self, path, config):
+        async def submit_async(self, path, config):
             """Submits an artifact to Apple for notarization.
 
             Args:
@@ -103,30 +96,10 @@ class Interface(Base):
                 path: The path to the artifact that will be uploaded for
                     notarization.
 
-            Returns:
-                A string UUID from the notary service that represents the
-                request.
-
             Raises:
                 A `notarize.NotarizationError` on failure.
             """
             raise NotImplementedError('submit')
-
-        def get_result(self, uuid, config):
-            """Retrieves the current notarization status of the submission
-            referenced by `uuid`.
-
-            Args:
-                config: The `config.CodeSignConfig`.
-                uuid: The string UUID of the notarization submission.
-
-            Returns:
-                A `notarize.NotarizationResult` containing the status.
-
-            Raises:
-                A `notarize.NotarizationError` on failure.
-            """
-            raise NotImplementedError('get_result')
 
     @property
     def notarizer(self):

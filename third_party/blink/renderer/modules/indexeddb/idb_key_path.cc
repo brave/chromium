@@ -25,8 +25,10 @@
 
 #include "third_party/blink/renderer/modules/indexeddb/idb_key_path.h"
 
-#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_string_stringsequence.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/wtf/dtoa.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
@@ -38,26 +40,24 @@ namespace {
 
 // The following correspond to grammar in ECMA-262.
 const uint32_t kUnicodeLetter =
-    WTF::unicode::kLetter_Uppercase | WTF::unicode::kLetter_Lowercase |
-    WTF::unicode::kLetter_Titlecase | WTF::unicode::kLetter_Modifier |
-    WTF::unicode::kLetter_Other | WTF::unicode::kNumber_Letter;
+    unicode::kLetter_Uppercase | unicode::kLetter_Lowercase |
+    unicode::kLetter_Titlecase | unicode::kLetter_Modifier |
+    unicode::kLetter_Other | unicode::kNumber_Letter;
 const uint32_t kUnicodeCombiningMark =
-    WTF::unicode::kMark_NonSpacing | WTF::unicode::kMark_SpacingCombining;
-const uint32_t kUnicodeDigit = WTF::unicode::kNumber_DecimalDigit;
-const uint32_t kUnicodeConnectorPunctuation =
-    WTF::unicode::kPunctuation_Connector;
+    unicode::kMark_NonSpacing | unicode::kMark_SpacingCombining;
+const uint32_t kUnicodeDigit = unicode::kNumber_DecimalDigit;
+const uint32_t kUnicodeConnectorPunctuation = unicode::kPunctuation_Connector;
 
 static inline bool IsIdentifierStartCharacter(UChar c) {
-  return (WTF::unicode::Category(c) & kUnicodeLetter) || (c == '$') ||
-         (c == '_');
+  return (unicode::Category(c) & kUnicodeLetter) || (c == '$') || (c == '_');
 }
 
 static inline bool IsIdentifierCharacter(UChar c) {
-  return (WTF::unicode::Category(c) &
+  return (unicode::Category(c) &
           (kUnicodeLetter | kUnicodeCombiningMark | kUnicodeDigit |
            kUnicodeConnectorPunctuation)) ||
-         (c == '$') || (c == '_') || (c == kZeroWidthNonJoinerCharacter) ||
-         (c == kZeroWidthJoinerCharacter);
+         (c == '$') || (c == '_') || (c == uchar::kZeroWidthNonJoiner) ||
+         (c == uchar::kZeroWidthJoiner);
 }
 
 bool IsIdentifier(const String& s) {
@@ -156,7 +156,19 @@ bool IDBKeyPath::IsValid() const {
       return true;
   }
   NOTREACHED();
-  return false;
+}
+
+v8::Local<v8::Value> IDBKeyPath::ToV8(ScriptState* script_state) const {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  switch (type_) {
+    case mojom::IDBKeyPathType::Null:
+      return v8::Null(isolate);
+    case mojom::IDBKeyPathType::String:
+      return V8String(isolate, GetString());
+    case mojom::IDBKeyPathType::Array:
+      return ToV8Traits<IDLSequence<IDLString>>::ToV8(script_state, Array());
+  }
+  NOTREACHED();
 }
 
 bool IDBKeyPath::operator==(const IDBKeyPath& other) const {
@@ -172,7 +184,6 @@ bool IDBKeyPath::operator==(const IDBKeyPath& other) const {
       return array_ == other.array_;
   }
   NOTREACHED();
-  return false;
 }
 
 }  // namespace blink

@@ -4,6 +4,9 @@
 
 #include "extensions/browser/api/storage/storage_api.h"
 
+#include <stdint.h>
+
+#include <limits>
 #include <memory>
 #include <set>
 
@@ -14,6 +17,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/bind.h"
 #include "components/crx_file/id_util.h"
 #include "components/value_store/leveldb_value_store.h"
 #include "components/value_store/value_store.h"
@@ -24,9 +28,13 @@
 #include "extensions/browser/api/storage/settings_storage_quota_enforcer.h"
 #include "extensions/browser/api/storage/settings_test_util.h"
 #include "extensions/browser/api/storage/storage_frontend.h"
+#include "extensions/browser/api/storage/storage_utils.h"
+#include "extensions/browser/api/storage/value_store_cache.h"
+#include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/api_unittest.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/event_router_factory.h"
+#include "extensions/browser/extension_function.h"
 #include "extensions/browser/test_event_router_observer.h"
 #include "extensions/browser/test_extensions_browser_client.h"
 #include "extensions/common/api/storage.h"
@@ -55,8 +63,8 @@ std::unique_ptr<KeyedService> BuildEventRouter(
 
 class StorageApiUnittest : public ApiUnitTest {
  public:
-  StorageApiUnittest() {}
-  ~StorageApiUnittest() override {}
+  StorageApiUnittest() = default;
+  ~StorageApiUnittest() override = default;
 
  protected:
   void SetUp() override {
@@ -86,21 +94,82 @@ class StorageApiUnittest : public ApiUnitTest {
 
   // Runs the storage.set() API function with local storage.
   void RunSetFunction(const std::string& key, const std::string& value) {
-    RunFunction(
-        new StorageStorageAreaSetFunction(),
-        base::StringPrintf(
-            "[\"local\", {\"%s\": \"%s\"}]", key.c_str(), value.c_str()));
+    scoped_refptr<StorageStorageAreaSetFunction> function =
+        base::MakeRefCounted<StorageStorageAreaSetFunction>();
+    function->set_source_context_type(mojom::ContextType::kPrivilegedExtension);
+    RunFunction(function.get(),
+                base::StringPrintf("[\"local\", {\"%s\": \"%s\"}]", key.c_str(),
+                                   value.c_str()));
+  }
+
+  testing::AssertionResult RunSetFunctionWithContextAndExpectSuccess(
+      const std::string& storage_area_name,
+      const std::string& key,
+      const std::string& value,
+      mojom::ContextType context_type) {
+    scoped_refptr<StorageStorageAreaSetFunction> function =
+        base::MakeRefCounted<StorageStorageAreaSetFunction>();
+    function->set_source_context_type(context_type);
+    function->set_extension(extension());
+    std::string args = base::StringPrintf("[\"%s\", {\"%s\": \"%s\"}]",
+                                          storage_area_name.c_str(),
+                                          key.c_str(), value.c_str());
+
+    api_test_utils::RunFunction(function.get(), args, browser_context());
+    std::string error = function->GetError();
+
+    if (error.empty()) {
+      return testing::AssertionSuccess();
+    }
+    return testing::AssertionFailure()
+           << "Function failed unexpectedly for " << storage_area_name
+           << " with context " << static_cast<int>(context_type)
+           << ". Error: " << error;
+  }
+
+  testing::AssertionResult RunSetFunctionWithContextAndExpectError(
+      const std::string& storage_area_name,
+      const std::string& key,
+      const std::string& value,
+      mojom::ContextType context_type,
+      const std::string& expected_error_substring) {
+    scoped_refptr<StorageStorageAreaSetFunction> function =
+        base::MakeRefCounted<StorageStorageAreaSetFunction>();
+    function->set_source_context_type(context_type);
+    function->set_extension(extension());
+    std::string args = base::StringPrintf("[\"%s\", {\"%s\": \"%s\"}]",
+                                          storage_area_name.c_str(),
+                                          key.c_str(), value.c_str());
+
+    std::string error = RunFunctionAndReturnError(function.get(), args);
+    if (error.empty()) {
+      return testing::AssertionFailure()
+             << "Expected error containing '" << expected_error_substring
+             << "' but function succeeded for " << storage_area_name
+             << " with context " << static_cast<int>(context_type);
+    }
+    if (error.find(expected_error_substring) != std::string::npos) {
+      return testing::AssertionSuccess();
+    }
+    return testing::AssertionFailure()
+           << "Expected error containing '" << expected_error_substring
+           << "' for " << storage_area_name << " with context "
+           << static_cast<int>(context_type) << " but got error: '" << error
+           << "'.";
   }
 
   // Runs the storage.get() API function with the local storage, and populates
   // |out_value| with the string result.
   testing::AssertionResult RunGetFunction(const std::string& key,
                                           std::string* out_value) {
-    absl::optional<base::Value> result = RunFunctionAndReturnValue(
-        new StorageStorageAreaGetFunction(),
-        base::StringPrintf("[\"local\", \"%s\"]", key.c_str()));
-    if (!result)
+    scoped_refptr<StorageStorageAreaGetFunction> function =
+        base::MakeRefCounted<StorageStorageAreaGetFunction>();
+    function->set_source_context_type(mojom::ContextType::kPrivilegedExtension);
+    std::optional<base::Value> result = RunFunctionAndReturnValue(
+        function.get(), base::StringPrintf("[\"local\", \"%s\"]", key.c_str()));
+    if (!result) {
       return testing::AssertionFailure() << "No result";
+    }
 
     const base::Value::Dict* dict = result->GetIfDict();
     if (!dict) {
@@ -120,6 +189,56 @@ class StorageApiUnittest : public ApiUnitTest {
   ExtensionsAPIClient extensions_api_client_;
   std::unique_ptr<content::RenderProcessHost> render_process_host_;
 };
+
+TEST_F(StorageApiUnittest,
+       StorageAreaAccessControlByContextTypeAndAccessLevel) {
+  const std::string kAccessErrorMsg =
+      "Access to storage is not allowed from this context.";
+
+  const struct {
+    const char* area_name;
+    StorageAreaNamespace area_namespace;
+  } areas_to_test[] = {
+      // `local` and `sync` have similar access control logic and both have
+      // untrusted access level by default. Since sync isn't available in this
+      // instance of Chrome, we won't test it here.
+      {"local", StorageAreaNamespace::kLocal},
+      {"session", StorageAreaNamespace::kSession},
+  };
+
+  for (const auto& area_info : areas_to_test) {
+    // Test Case 1: AccessLevel = TRUSTED_CONTEXTS
+    storage_utils::SetAccessLevelForArea(
+        extension()->id(), *browser_context(), area_info.area_namespace,
+        api::storage::AccessLevel::kTrustedContexts);
+
+    // Privileged context should succeed.
+    EXPECT_TRUE(RunSetFunctionWithContextAndExpectSuccess(
+        area_info.area_name, "key_priv_ok", "value",
+        mojom::ContextType::kPrivilegedExtension));
+
+    // Unprivileged context should fail and get the expected access control
+    // error.
+    EXPECT_TRUE(RunSetFunctionWithContextAndExpectError(
+        area_info.area_name, "key_unpriv_fail", "value",
+        mojom::ContextType::kUnprivilegedExtension, kAccessErrorMsg));
+
+    // Test Case 2: AccessLevel = TRUSTED_AND_UNTRUSTED_CONTEXTS
+    storage_utils::SetAccessLevelForArea(
+        extension()->id(), *browser_context(), area_info.area_namespace,
+        api::storage::AccessLevel::kTrustedAndUntrustedContexts);
+
+    // Privileged context should succeed.
+    EXPECT_TRUE(RunSetFunctionWithContextAndExpectSuccess(
+        area_info.area_name, "key_priv_ok_all_access", "value",
+        mojom::ContextType::kPrivilegedExtension));
+
+    // Unprivileged context should also succeed.
+    EXPECT_TRUE(RunSetFunctionWithContextAndExpectSuccess(
+        area_info.area_name, "key_unpriv_ok_all_access", "value",
+        mojom::ContextType::kUnprivilegedExtension));
+  }
+}
 
 TEST_F(StorageApiUnittest, RestoreCorruptedStorage) {
   const char kKey[] = "key";
@@ -212,6 +331,114 @@ TEST_F(StorageApiUnittest, StorageAreaOnChangedOnlyOneListener) {
 
   EXPECT_TRUE(base::Contains(event_observer.events(),
                              api::storage::OnChanged::kEventName));
+}
+
+// This is a regression test for crbug.com/1483828.
+TEST_F(StorageApiUnittest, GetBytesInUseIntOverflow) {
+  // A fake value store that only implements the overloads of GetBytesInUse().
+  class FakeValueStore : public value_store::ValueStore {
+   public:
+    explicit FakeValueStore(size_t bytes_in_use)
+        : bytes_in_use_(bytes_in_use) {}
+
+    size_t GetBytesInUse(const std::string& key) override {
+      return bytes_in_use_;
+    }
+
+    size_t GetBytesInUse(const std::vector<std::string>& keys) override {
+      return bytes_in_use_;
+    }
+
+    size_t GetBytesInUse() override { return bytes_in_use_; }
+
+    ReadResult GetKeys() override { NOTREACHED(); }
+
+    ReadResult Get(const std::string& key) override { NOTREACHED(); }
+
+    ReadResult Get(const std::vector<std::string>& keys) override {
+      NOTREACHED();
+    }
+
+    ReadResult Get() override { NOTREACHED(); }
+
+    WriteResult Set(WriteOptions options,
+                    const std::string& key,
+                    const base::Value& value) override {
+      NOTREACHED();
+    }
+
+    WriteResult Set(WriteOptions options,
+                    const base::Value::Dict& values) override {
+      NOTREACHED();
+    }
+
+    WriteResult Remove(const std::string& key) override { NOTREACHED(); }
+
+    WriteResult Remove(const std::vector<std::string>& keys) override {
+      NOTREACHED();
+    }
+
+    WriteResult Clear() override { NOTREACHED(); }
+
+   private:
+    size_t bytes_in_use_ = 0;
+  };
+
+  // Create a fake ValueStoreCache that we can assign to a storage area in the
+  // StorageFrontend. This allows us to call StorageFrontend using an extension
+  // API and access our mock ValueStore.
+  class FakeValueStoreCache : public ValueStoreCache {
+   public:
+    explicit FakeValueStoreCache(FakeValueStore store) : store_(store) {}
+
+    // ValueStoreCache:
+    void ShutdownOnUI() override {}
+    void RunWithValueStoreForExtension(
+        FakeValueStoreCache::StorageCallback callback,
+        scoped_refptr<const Extension> extension) override {
+      std::move(callback).Run(&store_);
+    }
+    void DeleteStorageSoon(const ExtensionId& extension_id) override {}
+
+   private:
+    FakeValueStore store_;
+  };
+
+  static constexpr struct TestCase {
+    size_t bytes_in_use;
+    double result;
+  } test_cases[] = {
+      {1, 1.0},
+      {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()},
+      // Test the overflow case from the bug. It's enough to have a value
+      // that exceeds the max value that an int can represent.
+      {static_cast<size_t>(std::numeric_limits<int>::max()) + 1,
+       static_cast<size_t>(std::numeric_limits<int>::max()) + 1}};
+
+  StorageFrontend* frontend = StorageFrontend::Get(browser_context());
+
+  for (const auto& test_case : test_cases) {
+    FakeValueStore value_store(test_case.bytes_in_use);
+    frontend->SetCacheForTesting(
+        settings_namespace::Namespace::LOCAL,
+        std::make_unique<FakeValueStoreCache>(value_store));
+
+    auto function =
+        base::MakeRefCounted<StorageStorageAreaGetBytesInUseFunction>();
+
+    function->set_extension(extension());
+    function->set_source_context_type(mojom::ContextType::kPrivilegedExtension);
+
+    std::optional<base::Value> result =
+        api_test_utils::RunFunctionAndReturnSingleResult(
+            function.get(),
+            base::Value::List().Append("local").Append(base::Value()),
+            browser_context());
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->is_double());
+    EXPECT_EQ(test_case.result, result->GetDouble());
+    frontend->DisableStorageForTesting(settings_namespace::Namespace::LOCAL);
+  }
 }
 
 }  // namespace extensions

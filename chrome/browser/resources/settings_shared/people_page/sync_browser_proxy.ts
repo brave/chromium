@@ -13,14 +13,24 @@ export interface StoredAccount {
   fullName?: string;
   givenName?: string;
   email: string;
+  isPrimaryAccount?: boolean;  // With sign in consent level, unrelated to sync.
   avatarImage?: string;
 }
 
 /**
- * TODO(crbug.com/1322559): signedIn doesn't indicate if the user is signed-in,
- * but instead if the user is syncing.
- * TODO(crbug.com/1107771): signedIn actually means having primary account with
- * sync consent. Rename to make this clear.
+ * Equivalent to C++ counterpart.
+ * @see chrome/browser/signin/signin_ui_util.h
+ * TODO(b/336510160): Look into integrating SYNC_PAUSED value.
+ */
+export enum SignedInState {
+  SIGNED_OUT = 0,
+  SIGNED_IN = 1,
+  SYNCING = 2,
+  SIGNED_IN_PAUSED = 3,
+  WEB_ONLY_SIGNED_IN = 4,
+}
+
+/**
  * @see chrome/browser/ui/webui/settings/people_handler.cc
  */
 export interface SyncStatus {
@@ -32,11 +42,13 @@ export interface SyncStatus {
   hasUnrecoverableError?: boolean;
   managed?: boolean;
   firstSetupInProgress?: boolean;
-  signedIn?: boolean;
+  signedInState?: SignedInState;
   signedInUsername?: string;
   statusActionText?: string;
+  secondaryButtonActionText?: string;
   statusText?: string;
   supervisedUser?: boolean;
+  syncCookiesSupported?: boolean;
   syncSystemEnabled?: boolean;
 }
 
@@ -71,6 +83,9 @@ export interface SyncPrefs {
   bookmarksManaged: boolean;
   bookmarksRegistered: boolean;
   bookmarksSynced: boolean;
+  cookiesManaged: boolean;
+  cookiesRegistered: boolean;
+  cookiesSynced: boolean;
   customPassphraseAllowed: boolean;
   encryptAllData: boolean;
   extensionsManaged: boolean;
@@ -86,6 +101,9 @@ export interface SyncPrefs {
   preferencesManaged: boolean;
   preferencesRegistered: boolean;
   preferencesSynced: boolean;
+  productComparisonManaged: boolean;
+  productComparisonRegistered: boolean;
+  productComparisonSynced: boolean;
   readingListManaged: boolean;
   readingListRegistered: boolean;
   readingListSynced: boolean;
@@ -117,11 +135,13 @@ export const syncPrefsIndividualDataTypes: string[] = [
   'appsSynced',
   'autofillSynced',
   'bookmarksSynced',
+  'cookiesSynced',
   'extensionsSynced',
   'readingListSynced',
   'passwordsSynced',
   'paymentsSynced',
   'preferencesSynced',
+  'productComparisonSynced',
   'savedTabGroupsSynced',
   'tabsSynced',
   'themesSynced',
@@ -143,13 +163,22 @@ export enum TrustedVaultBannerState {
   OPTED_IN = 2,
 }
 
-/**
- * Key to be used with localStorage.
- */
-const PROMO_IMPRESSION_COUNT_KEY: string = 'signin-promo-count';
+// Always keep in sync with `ChromeSigninUserChoice` (C++).
+export enum ChromeSigninUserChoice {
+  NO_CHOICE = 0,
+  ALWAYS_ASK = 1,
+  SIGNIN = 2,
+  DO_NOT_SIGNIN = 3,
+}
+
+export interface ChromeSigninUserChoiceInfo {
+  shouldShowSettings: boolean;
+  choice: ChromeSigninUserChoice;
+  signedInEmail: string;
+}
 
 export interface SyncBrowserProxy {
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   /**
    * Starts the signin process for the user. Does nothing if the user is
    * already signed in.
@@ -167,17 +196,7 @@ export interface SyncBrowserProxy {
   pauseSync(): void;
   // </if>
 
-  /**
-   * @return the number of times the sync account promo was shown.
-   */
-  getPromoImpressionCount(): number;
-
-  /**
-   * Increment the number of times the sync account promo was shown.
-   */
-  incrementPromoImpressionCount(): void;
-
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   /**
    * Signs the user out.
    */
@@ -201,6 +220,12 @@ export interface SyncBrowserProxy {
   startKeyRetrieval(): void;
 
   /**
+   * Displays the sync passphrase dialog for users to enter passphrase to enable
+   * sync.
+   */
+  showSyncPassphraseDialog(): void;
+
+  /**
    * Gets the current sync status.
    */
   getSyncStatus(): Promise<SyncStatus>;
@@ -209,6 +234,11 @@ export interface SyncBrowserProxy {
    * Gets a list of stored accounts.
    */
   getStoredAccounts(): Promise<StoredAccount[]>;
+
+  /**
+   * Gets the current profile avatar.
+   */
+  getProfileAvatar(): Promise<string>;
 
   /**
    * Function to invoke when the sync page has been navigated to. This
@@ -265,10 +295,22 @@ export interface SyncBrowserProxy {
    * Forces a trusted-vault-banner-state-changed event to be fired.
    */
   sendTrustedVaultBannerStateChanged(): void;
+
+  /**
+   * Sets the ChromeSigninUserChoice from the signed in email after a user
+   * choice on the UI.
+   */
+  setChromeSigninUserChoice(
+      choice: ChromeSigninUserChoice, signedInEmail: string): void;
+
+  /**
+   * Gets the information related to the Chrome Signin user choice settings.
+   */
+  getChromeSigninUserChoiceInfo(): Promise<ChromeSigninUserChoiceInfo>;
 }
 
 export class SyncBrowserProxyImpl implements SyncBrowserProxy {
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   startSignIn() {
     chrome.send('SyncSetupStartSignIn');
   }
@@ -282,34 +324,26 @@ export class SyncBrowserProxyImpl implements SyncBrowserProxy {
   }
   // </if>
 
-  getPromoImpressionCount() {
-    return parseInt(
-               window.localStorage.getItem(PROMO_IMPRESSION_COUNT_KEY)!, 10) ||
-        0;
-  }
-
-  incrementPromoImpressionCount() {
-    window.localStorage.setItem(
-        PROMO_IMPRESSION_COUNT_KEY,
-        (this.getPromoImpressionCount() + 1).toString());
-  }
-
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   attemptUserExit() {
-    return chrome.send('AttemptUserExit');
+    chrome.send('AttemptUserExit');
   }
 
   turnOnSync() {
-    return chrome.send('TurnOnSync');
+    chrome.send('TurnOnSync');
   }
 
   turnOffSync() {
-    return chrome.send('TurnOffSync');
+    chrome.send('TurnOffSync');
   }
   // </if>
 
   startKeyRetrieval() {
     chrome.send('SyncStartKeyRetrieval');
+  }
+
+  showSyncPassphraseDialog() {
+    chrome.send('SyncShowSyncPassphraseDialog');
   }
 
   getSyncStatus() {
@@ -318,6 +352,10 @@ export class SyncBrowserProxyImpl implements SyncBrowserProxy {
 
   getStoredAccounts() {
     return sendWithPromise('SyncSetupGetStoredAccounts');
+  }
+
+  getProfileAvatar() {
+    return sendWithPromise('SyncSetupGetProfileAvatar');
   }
 
   didNavigateToSyncPage() {
@@ -356,6 +394,15 @@ export class SyncBrowserProxyImpl implements SyncBrowserProxy {
 
   sendTrustedVaultBannerStateChanged() {
     chrome.send('SyncTrustedVaultBannerStateDispatch');
+  }
+
+  setChromeSigninUserChoice(
+      choice: ChromeSigninUserChoice, signedInEmail: string): void {
+    chrome.send('SetChromeSigninUserChoice', [choice, signedInEmail]);
+  }
+
+  getChromeSigninUserChoiceInfo(): Promise<ChromeSigninUserChoiceInfo> {
+    return sendWithPromise('GetChromeSigninUserChoiceInfo');
   }
 
   static getInstance(): SyncBrowserProxy {

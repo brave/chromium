@@ -4,9 +4,11 @@
 
 #include "ash/user_education/welcome_tour/welcome_tour_accelerator_handler.h"
 
+#include <algorithm>
+
 #include "ash/accelerators/ash_accelerator_configuration.h"
+#include "ash/constants/ash_features.h"
 #include "ash/shell.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/sequenced_task_runner.h"
 #include "ui/events/event.h"
 #include "ui/events/event_target.h"
@@ -14,7 +16,7 @@
 namespace ash {
 
 // static
-constexpr std::array<WelcomeTourAcceleratorHandler::AllowedAction, 12>
+constexpr std::array<WelcomeTourAcceleratorHandler::AllowedAction, 13>
     WelcomeTourAcceleratorHandler::kAllowedActions;
 
 WelcomeTourAcceleratorHandler::WelcomeTourAcceleratorHandler(
@@ -36,13 +38,18 @@ void WelcomeTourAcceleratorHandler::OnKeyEvent(ui::KeyEvent* event) {
     return;
   }
 
-  auto* action_it =
-      base::ranges::find(kAllowedActions, *action, &AllowedAction::action);
+  auto action_it =
+      std::ranges::find(kAllowedActions, *action, &AllowedAction::action);
 
   if (action_it == kAllowedActions.cend()) {
     // Block `event` if `action` is not allowed.
     event->StopPropagation();
   } else if (action_it->aborts_tour) {
+    if (action_it->action == AcceleratorAction::kToggleSpokenFeedback &&
+        features::IsWelcomeTourChromeVoxSupported()) {
+      return;
+    }
+
     // Aborting the Welcome Tour could affect the enabling of `action`.
     // Therefore, abort the Welcome Tour asynchronously.
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(

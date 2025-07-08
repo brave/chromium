@@ -29,11 +29,6 @@ class MockSegmentationPlatformService : public SegmentationPlatformService {
               GetCachedSegmentResult,
               (const std::string&));
   MOCK_METHOD(void,
-              GetSelectedSegmentOnDemand,
-              (const std::string&,
-               scoped_refptr<InputContext>,
-               SegmentSelectionCallback));
-  MOCK_METHOD(void,
               GetClassificationResult,
               (const std::string&,
                const PredictionOptions&,
@@ -46,14 +41,26 @@ class MockSegmentationPlatformService : public SegmentationPlatformService {
                scoped_refptr<InputContext>,
                AnnotatedNumericResultCallback));
   MOCK_METHOD(void,
+              GetInputKeysForModel,
+              (const std::string& segmentation_key,
+               InputContextKeysCallback callback));
+  MOCK_METHOD(void,
               CollectTrainingData,
               (proto::SegmentId,
                TrainingRequestId,
                const TrainingLabels&,
                SuccessCallback));
+  MOCK_METHOD(void,
+              CollectTrainingData,
+              (proto::SegmentId,
+               TrainingRequestId,
+               ukm::SourceId,
+               const TrainingLabels&,
+               SuccessCallback));
   MOCK_METHOD(void, EnableMetrics, (bool));
   MOCK_METHOD(void, GetServiceStatus, ());
   MOCK_METHOD(bool, IsPlatformInitialized, ());
+  MOCK_METHOD(DatabaseClient*, GetDatabaseClient, ());
 };
 
 MATCHER_P(IsInputContextWithArgs,
@@ -69,8 +76,7 @@ MATCHER_P(IsInputContextWithArgs,
 
 MATCHER(TrainingLabelEmpty, "no training labels present") {
   return testing::ExplainMatchResult(
-      testing::Field(&TrainingLabels::output_metric,
-                     testing::Eq(absl::nullopt)),
+      testing::Field(&TrainingLabels::output_metric, testing::Eq(std::nullopt)),
       arg, result_listener);
 }
 
@@ -82,7 +88,7 @@ MATCHER_P2(HasTrainingLabel,
   return testing::ExplainMatchResult(
       testing::Field(
           &TrainingLabels::output_metric,
-          testing::Eq(std::pair<std::string, base::HistogramBase::Sample>(
+          testing::Eq(std::pair<std::string, base::HistogramBase::Sample32>(
               histogram_name, histogram_value))),
       arg, result_listener);
 }

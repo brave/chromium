@@ -126,7 +126,7 @@ void FirstMeaningfulPaintDetector::OnNetwork2Quiet() {
           paint_timing_
               ->FirstContentfulPaintRenderedButNotPresentedAsMonotonicTime();
       first_meaningful_paint_presentation =
-          paint_timing_->FirstContentfulPaintIgnoringSoftNavigations();
+          paint_timing_->FirstContentfulPaint();
       // It's possible that this timer fires between when the first contentful
       // paint is set and its presentation promise is fulfilled. If this
       // happens, defer until NotifyFirstContentfulPaint() is called.
@@ -159,13 +159,15 @@ void FirstMeaningfulPaintDetector::RegisterNotifyPresentationTime(
     PaintEvent event) {
   ++outstanding_presentation_promise_count_;
   paint_timing_->RegisterNotifyPresentationTime(
-      CrossThreadBindOnce(&FirstMeaningfulPaintDetector::ReportPresentationTime,
-                          WrapCrossThreadWeakPersistent(this), event));
+      WTF::BindOnce(&FirstMeaningfulPaintDetector::ReportPresentationTime,
+                    WrapCrossThreadWeakPersistent(this), event));
 }
 
 void FirstMeaningfulPaintDetector::ReportPresentationTime(
     PaintEvent event,
-    base::TimeTicks timestamp) {
+    const viz::FrameTimingDetails& presentation_details) {
+  base::TimeTicks timestamp =
+      presentation_details.presentation_feedback.timestamp;
   DCHECK(event == PaintEvent::kProvisionalFirstMeaningfulPaint);
   DCHECK_GT(outstanding_presentation_promise_count_, 0U);
   --outstanding_presentation_promise_count_;

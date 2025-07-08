@@ -4,13 +4,14 @@
 
 #include "ash/sensor_info/sensor_provider.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <iterator>
 #include <utility>
 
 #include "ash/sensor_info/sensor_types.h"
+#include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -264,8 +265,7 @@ void SensorProvider::RegisterSensor(DeviceType device_type, int32_t id) {
     // Location of lid_angle device is meaningless, so set to kOther.
     sensor.location = SensorLocation::kOther;
     sensor.scale = 1.0;
-    if (type_to_sensor_id_.find(SensorType::kLidAngle) !=
-        type_to_sensor_id_.end()) {
+    if (base::Contains(type_to_sensor_id_, SensorType::kLidAngle)) {
       LOG(WARNING) << "Duplicated location source "
                    << "id_angle"
                    << " of sensor id: " << id << ", and sensor id: "
@@ -387,7 +387,7 @@ void SensorProvider::CreateSensorSamplesObserver(DeviceType device_type,
   DCHECK(!sensor.ignored);
   DCHECK(sensor.scale.has_value() && sensor.location.has_value());
   if (device_type == DeviceType::ACCEL || device_type == DeviceType::ANGLVEL) {
-    sensor.samples_observer = std::make_unique<AccelGryoSamplesObserver>(
+    sensor.samples_observer = std::make_unique<AccelGyroSamplesObserver>(
         id, std::move(sensor.remote), sensor.scale.value(),
         base::BindRepeating(&SensorProvider::OnSampleUpdatedCallback,
                             weak_ptr_factory_.GetWeakPtr(), device_type),
@@ -413,7 +413,7 @@ bool SensorProvider::CheckSensorSamplesObserver() {
 void SensorProvider::OnAttributes(
     DeviceType device_type,
     int32_t id,
-    const std::vector<absl::optional<std::string>>& values) {
+    const std::vector<std::optional<std::string>>& values) {
   auto& sensor = sensors_[id][device_type];
   DCHECK(sensor.remote.is_bound());
   auto val_it = values.begin();
@@ -431,7 +431,7 @@ void SensorProvider::OnAttributes(
       return;
     }
 
-    auto* it = base::ranges::find(kLocationStrings, val_it->value());
+    auto* it = std::ranges::find(kLocationStrings, val_it->value());
     if (it == std::end(kLocationStrings)) {
       LOG(WARNING) << "Unrecognized location: " << val_it->value()
                    << " for device with id: " << id;
@@ -455,7 +455,7 @@ void SensorProvider::OnAttributes(
         source = SensorType::kGyroscopeLid;
       }
     }
-    if (type_to_sensor_id_.find(source) != type_to_sensor_id_.end()) {
+    if (base::Contains(type_to_sensor_id_, source)) {
       LOG(WARNING) << "Duplicated location source " << static_cast<int>(source)
                    << " of sensor id: " << id
                    << ", and sensor id: " << type_to_sensor_id_[source];
@@ -539,7 +539,7 @@ void SensorProvider::OnSampleUpdatedCallback(DeviceType device_type,
 }
 
 void SensorProvider::OnLidAngleValue(
-    const std::vector<absl::optional<std::string>>& values) {
+    const std::vector<std::optional<std::string>>& values) {
   if (values[0].has_value()) {
     int angle;
     if (base::StringToInt(values[0].value(), &angle)) {
@@ -571,11 +571,11 @@ void SensorProvider::NotifySensorUpdated(SensorUpdate update) {
   GetLidAngleUpdate();
 }
 
-void SensorProvider::AddObserver(Observer* observer) {
+void SensorProvider::AddObserver(SensorObserver* observer) {
   observers_.AddObserver(observer);
 }
 
-void SensorProvider::RemoveObserver(Observer* observer) {
+void SensorProvider::RemoveObserver(SensorObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 }  // namespace ash

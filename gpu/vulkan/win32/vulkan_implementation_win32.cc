@@ -8,6 +8,7 @@
 
 #include "base/check.h"
 #include "base/files/file_path.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_image.h"
@@ -15,7 +16,7 @@
 #include "gpu/vulkan/vulkan_util.h"
 #include "gpu/vulkan/win32/vulkan_surface_win32.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 
@@ -75,19 +76,12 @@ VulkanImplementationWin32::GetOptionalDeviceExtensions() {
 VkFence VulkanImplementationWin32::CreateVkFenceForGpuFence(
     VkDevice vk_device) {
   NOTREACHED();
-  return VK_NULL_HANDLE;
 }
 
 std::unique_ptr<gfx::GpuFence>
 VulkanImplementationWin32::ExportVkFenceToGpuFence(VkDevice vk_device,
                                                    VkFence vk_fence) {
   NOTREACHED();
-  return nullptr;
-}
-
-VkExternalMemoryHandleTypeFlagBits
-VulkanImplementationWin32::GetExternalImageHandleType() {
-  return VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
 }
 
 VkExternalSemaphoreHandleTypeFlagBits

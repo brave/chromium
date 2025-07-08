@@ -5,8 +5,8 @@
 #include "ash/quick_pair/repository/oauth_http_fetcher.h"
 
 #include "ash/quick_pair/common/fast_pair/fast_pair_http_result.h"
-#include "ash/quick_pair/common/logging.h"
 #include "ash/quick_pair/common/quick_pair_browser_delegate.h"
+#include "components/cross_device/logging/logging.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -52,23 +52,16 @@ void OAuthHttpFetcher::ExecuteDeleteRequest(const GURL& url,
 
 void OAuthHttpFetcher::StartRequest(const GURL& url,
                                     FetchCompleteCallback callback) {
-  QP_LOG(VERBOSE) << __func__ << ": executing request to: " << url;
+  CD_LOG(VERBOSE, Feature::FP) << __func__ << ": executing request to: " << url;
 
-  if (has_call_started_) {
-    QP_LOG(ERROR) << __func__
-                  << ": Attempted to make an API call, but there is already a "
-                     "request in progress.";
-    NOTREACHED();
-    return;
-  }
+  CHECK(!has_call_started_)
+      << __func__
+      << ": Attempted to make an API call, but there is already a "
+         "request in progress.";
 
-  signin::IdentityManager* identity_manager =
+  signin::IdentityManager* const identity_manager =
       QuickPairBrowserDelegate::Get()->GetIdentityManager();
-  if (!identity_manager) {
-    QP_LOG(ERROR) << __func__ << ": IdentityManager is not available.";
-    NOTREACHED();
-    return;
-  }
+  CHECK(identity_manager) << __func__ << ": IdentityManager is not available.";
 
   has_call_started_ = true;
   url_ = url;
@@ -87,21 +80,23 @@ void OAuthHttpFetcher::OnAccessTokenFetched(
     signin::AccessTokenInfo access_token_info) {
   access_token_fetcher_.reset();
   if (error.state() != GoogleServiceAuthError::NONE) {
-    QP_LOG(WARNING) << __func__ << ": Failed to retrieve access token. "
-                    << error.ToString();
-    std::move(callback_).Run(nullptr, nullptr);
+    CD_LOG(WARNING, Feature::FP)
+        << __func__ << ": Failed to retrieve access token. "
+        << error.ToString();
+    std::move(callback_).Run(std::nullopt, nullptr);
     return;
   }
 
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
       QuickPairBrowserDelegate::Get()->GetURLLoaderFactory();
   if (!url_loader_factory) {
-    QP_LOG(WARNING) << __func__ << ": URLLoaderFactory is not available.";
-    std::move(callback_).Run(nullptr, nullptr);
+    CD_LOG(WARNING, Feature::FP)
+        << __func__ << ": URLLoaderFactory is not available.";
+    std::move(callback_).Run(std::nullopt, nullptr);
     return;
   }
 
-  QP_LOG(VERBOSE) << "Access token fetched successfully.";
+  CD_LOG(VERBOSE, Feature::FP) << "Access token fetched successfully.";
 
   OAuth2ApiCallFlow::Start(std::move(url_loader_factory),
                            access_token_info.token);
@@ -133,7 +128,7 @@ std::string OAuthHttpFetcher::CreateApiCallBodyContentType() {
   }
 }
 
-std::string OAuthHttpFetcher::GetRequestTypeForBody(const std::string& body) {
+std::string OAuthHttpFetcher::GetRequestTypeForBody(std::string_view body) {
   switch (request_type_) {
     case RequestType::GET:
       return "GET";
@@ -148,8 +143,8 @@ std::string OAuthHttpFetcher::GetRequestTypeForBody(const std::string& body) {
 
 void OAuthHttpFetcher::ProcessApiCallSuccess(
     const network::mojom::URLResponseHead* head,
-    std::unique_ptr<std::string> body) {
-  QP_LOG(INFO) << __func__;
+    std::optional<std::string> body) {
+  CD_LOG(INFO, Feature::FP) << __func__;
 
   std::move(callback_).Run(
       std::move(body),
@@ -160,12 +155,12 @@ void OAuthHttpFetcher::ProcessApiCallSuccess(
 void OAuthHttpFetcher::ProcessApiCallFailure(
     int net_error,
     const network::mojom::URLResponseHead* head,
-    std::unique_ptr<std::string> body) {
-  QP_LOG(WARNING) << __func__ << ": net_err=" << net_error;
+    std::optional<std::string> body) {
+  CD_LOG(WARNING, Feature::FP) << __func__ << ": net_err=" << net_error;
 
-  std::move(callback_).Run(
-      nullptr, std::make_unique<FastPairHttpResult>(/*net_error=*/net_error,
-                                                    /*head=*/head));
+  std::move(callback_).Run(std::nullopt, std::make_unique<FastPairHttpResult>(
+                                             /*net_error=*/net_error,
+                                             /*head=*/head));
 }
 
 net::PartialNetworkTrafficAnnotationTag

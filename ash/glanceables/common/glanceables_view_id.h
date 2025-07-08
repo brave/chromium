@@ -12,13 +12,26 @@ enum class GlanceablesViewId {
   kDefaultIdZero,
 
   // `GlanceablesListFooterView`.
-  kListFooterItemsCountLabel,
+  kListFooterTitleLabel,
   kListFooterSeeAllButton,
 
-  // `ClassroomBubbleBaseView`.
-  kClassroomBubbleComboBox,
-  kClassroomBubbleListContainer,
-  kClassroomBubbleListFooter,
+  // `GlanceablesProgressBarView`.
+  kProgressBar,
+
+  // `GlanceablesTimeManagementBubbleView`.
+  kTimeManagementBubbleHeaderView,
+  kTimeManagementBubbleHeaderIcon,
+  kTimeManagementBubbleComboBox,
+  kTimeManagementBubbleExpandButton,
+  kTimeManagementBubbleListContainer,
+  kTimeManagementBubbleListFooter,
+  kTimeManagementErrorMessageToast,
+
+  // `GlanceablesClassroomStudentView`.
+  kClassroomBubbleEmptyListLabel,
+
+  // `GlanceablesTasksView`.
+  kTasksBubbleAddNewButton,
 
   // `GlanceablesClassroomItemView`.
   kClassroomItemIcon,
@@ -26,7 +39,17 @@ enum class GlanceablesViewId {
   kClassroomItemCourseTitleLabel,
   kClassroomItemDueDateLabel,
   kClassroomItemDueTimeLabel,
-  kClassroomItemTurnedInAndGradedLabel,
+
+  // `GlanceablesTaskView`.
+  kTaskItemTitleLabel,
+  kTaskItemTitleTextField,
+  kTaskItemDueLabel,
+  kTaskItemEditInBrowserLabel,
+  kOriginSurfaceTypeIcon,
+  kAssignedTaskNotice,
+
+  // `GlanceablesContentsScrollView`.
+  kContentsScrollView,
 };
 
 }  // namespace ash

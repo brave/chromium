@@ -31,6 +31,15 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
     [4] https://webidl.spec.whatwg.org/#create-a-map-iterator
     [5] https://webidl.spec.whatwg.org/#create-a-set-iterator
     """
+    @staticmethod
+    def identifier_for(interface_identifier):
+        """
+        Returns the identifier of the synchronous iterator type of the given
+        interface type.
+        """
+        assert isinstance(interface_identifier, Identifier)
+        return Identifier('SyncIterator_{}'.format(interface_identifier))
+
     class IR(IRMap.IR, WithExtendedAttributes, WithCodeGeneratorInfo,
              WithExposure, WithComponent, WithDebugInfo):
         def __init__(self,
@@ -47,8 +56,7 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
                 isinstance(operation, Operation.IR)
                 for operation in operations)
 
-            identifier = Identifier('SyncIterator_{}'.format(
-                interface.identifier))
+            identifier = SyncIterator.identifier_for(interface.identifier)
 
             IRMap.IR.__init__(self, identifier, IRMap.IR.Kind.SYNC_ITERATOR)
             WithExtendedAttributes.__init__(self)
@@ -66,6 +74,12 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
             self.legacy_factory_function_groups = []
             self.operations = list(operations)
             self.operation_groups = []
+
+            self.inherited = None
+            self.direct_subclasses = []
+            self.subclasses = []
+            self.tag = None
+            self.max_subclass_tag = None
 
         def iter_all_members(self):
             return list(self.operations)
@@ -99,6 +113,8 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
                            self._operations)),
                 owner=self) for group_ir in ir.operation_groups
         ])
+        self._tag = ir.tag
+        self._max_subclass_tag = ir.max_subclass_tag
 
     @property
     def interface(self):
@@ -121,7 +137,7 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
         return None
 
     @property
-    def deriveds(self):
+    def subclasses(self):
         # Just to be compatible with web_idl.Interface.
         return ()
 
@@ -169,6 +185,16 @@ class SyncIterator(UserDefinedType, WithExtendedAttributes,
     def exposed_constructs(self):
         """Returns exposed constructs."""
         return ()
+
+    @property
+    def tag(self):
+        """Returns a tag integer or None."""
+        return self._tag
+
+    @property
+    def max_subclass_tag(self):
+        """Returns a tag integer or None."""
+        return self._max_subclass_tag
 
     # UserDefinedType overrides
     @property

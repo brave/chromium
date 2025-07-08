@@ -5,8 +5,8 @@
 package org.chromium.chrome.browser.autofill.editors;
 
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.ERROR_MESSAGE;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.FOCUSED;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.IS_REQUIRED;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.LABEL;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALUE;
 
 import android.content.Context;
@@ -22,15 +22,16 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.TextView.OnEditorActionListener;
 
-import androidx.annotation.Nullable;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat;
 
 import com.google.android.material.textfield.TextInputLayout;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.R;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.EmptyTextWatcher;
@@ -39,119 +40,156 @@ import java.util.List;
 
 /** Handles validation and display of one field from the {@link EditorProperties.ItemType}. */
 // TODO(b/173103628): Re-enable this
-//@VisibleForTesting
+// @VisibleForTesting
+@NullMarked
 class TextFieldView extends FrameLayout implements FieldView {
-    // TODO(crbug.com/1300201): Replace with EditorDialog field once migrated.
+    // TODO(crbug.com/40824084): Replace with EditorDialog field once migrated.
     /** The indicator for input fields that are required. */
     public static final String REQUIRED_FIELD_INDICATOR = "*";
 
-    @Nullable
-    private static EditorObserverForTest sObserverForTest;
+    private @Nullable static EditorObserverForTest sObserverForTest;
 
-    @Nullable
-    private Runnable mDoneRunnable;
+    private @Nullable Runnable mDoneRunnable;
+
     @SuppressWarnings("WrongConstant") // https://crbug.com/1038784
-    private final OnEditorActionListener mEditorActionListener = (view, actionId, event) -> {
-        if (actionId == EditorInfo.IME_ACTION_DONE && mDoneRunnable != null) {
-            mDoneRunnable.run();
-            return true;
-        } else if (actionId != EditorInfo.IME_ACTION_NEXT) {
-            return false;
-        }
-        View next = view.focusSearch(View.FOCUS_FORWARD);
-        if (next == null) {
-            return false;
-        }
-        next.requestFocus();
-        return true;
-    };
-    private PropertyModel mEditorFieldModel;
-    private TextInputLayout mInputLayout;
-    private AutoCompleteTextView mInput;
-    private View mIconsLayer;
-    private ImageView mActionIcon;
-    private boolean mShowRequiredIndicator;
-    @Nullable
-    private EditorFieldValidator mValidator;
-    @Nullable
-    private TextWatcher mTextFormatter;
+    private final OnEditorActionListener mEditorActionListener =
+            (view, actionId, event) -> {
+                if (actionId == EditorInfo.IME_ACTION_DONE && mDoneRunnable != null) {
+                    mDoneRunnable.run();
+                    return true;
+                } else if (actionId != EditorInfo.IME_ACTION_NEXT) {
+                    return false;
+                }
+                View next = view.focusSearch(View.FOCUS_FORWARD);
+                if (next == null) {
+                    return false;
+                }
+                next.requestFocus();
+                return true;
+            };
+
+    private final PropertyModel mEditorFieldModel;
+    private final TextInputLayout mInputLayout;
+    private final AutoCompleteTextView mInput;
+    private final View mIconsLayer;
+    private @Nullable EditorFieldValidator mValidator;
+    private @Nullable TextWatcher mTextFormatter;
+    private boolean mInFocusChange;
+    private boolean mInValueChange;
 
     public TextFieldView(Context context, final PropertyModel fieldModel) {
         super(context);
         mEditorFieldModel = fieldModel;
 
-        LayoutInflater.from(context).inflate(R.layout.payments_request_editor_textview, this, true);
+        LayoutInflater.from(context).inflate(R.layout.autofill_editor_dialog_textview, this, true);
         mInputLayout = (TextInputLayout) findViewById(R.id.text_input_layout);
 
         mInput = (AutoCompleteTextView) mInputLayout.findViewById(R.id.text_view);
         mInput.setOnEditorActionListener(mEditorActionListener);
         // AutoCompleteTextView requires and explicit onKeyListener to show the OSK upon receiving
         // a KEYCODE_DPAD_CENTER.
-        mInput.setOnKeyListener((v, keyCode, event) -> {
-            if (!(keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                        && event.getAction() == KeyEvent.ACTION_UP)) {
-                return false;
-            }
-            InputMethodManager imm = (InputMethodManager) v.getContext().getSystemService(
-                    Context.INPUT_METHOD_SERVICE);
-            imm.viewClicked(v);
-            imm.showSoftInput(v, 0);
-            return true;
-        });
-
-        setShowRequiredIndicator(/*showRequiredIndicator=*/false);
+        mInput.setOnKeyListener(
+                (v, keyCode, event) -> {
+                    if (!(keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                            && event.getAction() == KeyEvent.ACTION_UP)) {
+                        return false;
+                    }
+                    InputMethodManager imm =
+                            (InputMethodManager)
+                                    v.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                    imm.viewClicked(v);
+                    imm.showSoftInput(v, 0);
+                    return true;
+                });
 
         mIconsLayer = findViewById(R.id.icons_layer);
-        mIconsLayer.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-            @Override
-            public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                    int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                // Padding at the end of mInput to preserve space for mIconsLayer.
-                ViewCompat.setPaddingRelative(mInput, ViewCompat.getPaddingStart(mInput),
-                        mInput.getPaddingTop(), mIconsLayer.getWidth(), mInput.getPaddingBottom());
-            }
-        });
-
-        mInput.setOnFocusChangeListener(new OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (!hasFocus) {
-                    // Validate the field when the user de-focuses it.
-                    // Show no errors until the user has already tried to edit the field once.
-                    if (mValidator != null) {
-                        mValidator.validate(mEditorFieldModel);
+        mIconsLayer.addOnLayoutChangeListener(
+                new View.OnLayoutChangeListener() {
+                    @Override
+                    public void onLayoutChange(
+                            View v,
+                            int left,
+                            int top,
+                            int right,
+                            int bottom,
+                            int oldLeft,
+                            int oldTop,
+                            int oldRight,
+                            int oldBottom) {
+                        // Padding at the end of mInput to preserve space for mIconsLayer.
+                        mInput.setPaddingRelative(
+                                ViewCompat.getPaddingStart(mInput),
+                                mInput.getPaddingTop(),
+                                mIconsLayer.getWidth(),
+                                mInput.getPaddingBottom());
                     }
-                }
-            }
-        });
+                });
+
+        mInput.setOnFocusChangeListener(
+                new OnFocusChangeListener() {
+                    @Override
+                    public void onFocusChange(View v, boolean hasFocus) {
+                        mInFocusChange = true;
+                        mEditorFieldModel.set(FOCUSED, hasFocus);
+                        mInFocusChange = false;
+
+                        if (!hasFocus && mValidator != null) {
+                            // Validate the field when the user de-focuses it.
+                            // We do not validate the form initially when all of the fields are
+                            // empty to avoid showing error messages in all of the fields.
+                            mValidator.validate(mEditorFieldModel);
+                        }
+                    }
+                });
 
         // Update the model as the user edits the field.
-        mInput.addTextChangedListener(new EmptyTextWatcher() {
-            @Override
-            public void afterTextChanged(Editable s) {
-                fieldModel.set(VALUE, s.toString());
-                mEditorFieldModel.set(ERROR_MESSAGE, null);
-                if (sObserverForTest != null) {
-                    sObserverForTest.onEditorTextUpdate();
-                }
-            }
+        mInput.addTextChangedListener(
+                new EmptyTextWatcher() {
+                    @Override
+                    public void afterTextChanged(Editable s) {
+                        fieldModel.set(VALUE, s.toString());
+                        if (sObserverForTest != null) {
+                            sObserverForTest.onEditorTextUpdate();
+                        }
+                    }
 
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                if (mInput.hasFocus()) {
-                    mEditorFieldModel.set(ERROR_MESSAGE, null);
-                }
-            }
-        });
+                    @Override
+                    public void onTextChanged(CharSequence s, int start, int before, int count) {
+                        if (mInput.hasFocus() && !mInValueChange) {
+                            if (mValidator != null) {
+                                mValidator.onUserEditedField();
+                            }
+
+                            // Hide the error message and wait till the user finishes editing the
+                            // field to re-show the error label.
+                            mEditorFieldModel.set(ERROR_MESSAGE, null);
+                        }
+                    }
+                });
     }
 
     void setLabel(String label, boolean isRequired) {
         // Build up the label. Required fields are indicated by appending a '*'.
-        if (isRequired && mShowRequiredIndicator) {
+        if (isRequired) {
+            // TODO(crbug.com/417413188): Fix a bug where label is announced too many times.
+            // Build the accessibility description manually by combining "required" string with  the
+            // label, because '*' are not announced by the screen reader and it is more informative.
+            final int requiredFieldContentDescriptionId =
+                    R.string.autofill_address_edit_dialog_required_field_content_description;
+            final String labelForAccessibility =
+                    getContext().getString(requiredFieldContentDescriptionId, label);
+            mInputLayout.setTextInputAccessibilityDelegate(
+                    new TextInputLayout.AccessibilityDelegate(mInputLayout) {
+                        @Override
+                        public void onInitializeAccessibilityNodeInfo(
+                                View host, AccessibilityNodeInfoCompat info) {
+                            super.onInitializeAccessibilityNodeInfo(host, info);
+                            info.setText(labelForAccessibility);
+                        }
+                    });
             label += REQUIRED_FIELD_INDICATOR;
         }
         mInputLayout.setHint(label);
-        mInput.setContentDescription(label);
     }
 
     void setValidator(@Nullable EditorFieldValidator validator) {
@@ -160,6 +198,9 @@ class TextFieldView extends FrameLayout implements FieldView {
 
     void setErrorMessage(@Nullable String errorMessage) {
         mInputLayout.setError(errorMessage);
+        if (sObserverForTest != null && errorMessage != null) {
+            sObserverForTest.onEditorValidationError();
+        }
     }
 
     void setValue(@Nullable String value) {
@@ -167,10 +208,15 @@ class TextFieldView extends FrameLayout implements FieldView {
         if (mInput.getText().toString().equals(value)) {
             return;
         }
+        // {@link mTextFormatter#afterTextChanged()} can trigger a nested {@link setValue()}
+        // call.
+        boolean inNestedValueChange = mInValueChange;
+        mInValueChange = true;
         mInput.setText(value);
         if (mTextFormatter != null) {
             mTextFormatter.afterTextChanged(mInput.getText());
         }
+        mInValueChange = inNestedValueChange;
     }
 
     void setTextInputType(int textInputType) {
@@ -180,8 +226,11 @@ class TextFieldView extends FrameLayout implements FieldView {
     void setTextSuggestions(@Nullable List<String> suggestions) {
         // Display any autofill suggestions.
         if (suggestions != null && !suggestions.isEmpty()) {
-            mInput.setAdapter(new ArrayAdapter<>(
-                    getContext(), android.R.layout.simple_spinner_dropdown_item, suggestions));
+            mInput.setAdapter(
+                    new ArrayAdapter<>(
+                            getContext(),
+                            android.R.layout.simple_spinner_dropdown_item,
+                            suggestions));
             mInput.setThreshold(0);
         }
     }
@@ -199,12 +248,6 @@ class TextFieldView extends FrameLayout implements FieldView {
     }
 
     @Override
-    public void setShowRequiredIndicator(boolean showRequiredIndicator) {
-        mShowRequiredIndicator = showRequiredIndicator;
-        setLabel(mEditorFieldModel.get(LABEL), mEditorFieldModel.get(IS_REQUIRED));
-    }
-
-    @Override
     public void onLayout(boolean changed, int left, int top, int right, int bottom) {
         super.onLayout(changed, left, top, right, bottom);
 
@@ -217,23 +260,32 @@ class TextFieldView extends FrameLayout implements FieldView {
             // other inside mInputLayout since mInputLayout must contain an instance of EditText
             // child view.
             // Note three: mInputLayout's bottom changes when displaying error.
-            float offset = mInputLayout.getY() + mInput.getY() + (float) mInput.getHeight()
-                    - (float) mIconsLayer.getHeight() - mIconsLayer.getTop();
+            float offset =
+                    mInputLayout.getY()
+                            + mInput.getY()
+                            + (float) mInput.getHeight()
+                            - (float) mIconsLayer.getHeight()
+                            - mIconsLayer.getTop();
             mIconsLayer.setTranslationY(offset);
         }
     }
 
-    /** @return The AutoCompleteTextView this field associates*/
+    /**
+     * @return The AutoCompleteTextView this field associates
+     */
     public AutoCompleteTextView getEditText() {
         return mInput;
     }
 
+    public TextInputLayout getInputLayoutForTesting() {
+        return mInputLayout;
+    }
+
     @Override
-    public boolean isValid() {
-        if (mValidator == null) {
-            return true;
+    public boolean validate() {
+        if (mValidator != null) {
+            mValidator.validate(mEditorFieldModel);
         }
-        mValidator.validate(mEditorFieldModel);
         return mInputLayout.getError() == null;
     }
 
@@ -244,6 +296,8 @@ class TextFieldView extends FrameLayout implements FieldView {
 
     @Override
     public void scrollToAndFocus() {
+        if (mInFocusChange) return;
+
         ViewGroup parent = (ViewGroup) getParent();
         if (parent != null) parent.requestChildFocus(this, this);
         requestFocus();

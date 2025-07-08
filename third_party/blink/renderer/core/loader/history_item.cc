@@ -25,13 +25,13 @@
 
 #include "third_party/blink/renderer/core/loader/history_item.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/ranges/algorithm.h"
 #include "third_party/blink/public/common/page_state/page_state.h"
 #include "third_party/blink/public/common/page_state/page_state_serialization.h"
 #include "third_party/blink/public/platform/web_http_body.h"
@@ -49,9 +49,9 @@ namespace blink {
 
 namespace {
 
-std::vector<absl::optional<std::u16string>> ToOptionalString16Vector(
+std::vector<std::optional<std::u16string>> ToOptionalString16Vector(
     base::span<const String> input) {
-  std::vector<absl::optional<std::u16string>> output;
+  std::vector<std::optional<std::u16string>> output;
   output.reserve(input.size());
   for (const auto& i : input) {
     output.emplace_back(WebString::ToOptionalString16(i));
@@ -65,7 +65,7 @@ static int64_t GenerateSequenceNumber() {
   // Initialize to the current time to reduce the likelihood of generating
   // identifiers that overlap with those from past/future browser sessions.
   static int64_t next =
-      static_cast<int64_t>(base::Time::Now().ToDoubleT() * 1000000.0);
+      (base::Time::Now() - base::Time::UnixEpoch()).InMicroseconds();
   return ++next;
 }
 
@@ -142,8 +142,8 @@ HistoryItem* HistoryItem::Create(const PageState& page_state) {
 HistoryItem::HistoryItem()
     : item_sequence_number_(GenerateSequenceNumber()),
       document_sequence_number_(GenerateSequenceNumber()),
-      navigation_api_key_(WTF::CreateCanonicalUUIDString()),
-      navigation_api_id_(WTF::CreateCanonicalUUIDString()) {}
+      navigation_api_key_(CreateCanonicalUUIDString()),
+      navigation_api_id_(CreateCanonicalUUIDString()) {}
 
 HistoryItem::~HistoryItem() = default;
 
@@ -180,29 +180,28 @@ void HistoryItem::SetReferrerPolicy(network::mojom::ReferrerPolicy policy) {
   referrer_policy_ = policy;
 }
 
+HistoryItem::ViewState& HistoryItem::GetOrCreateViewState() {
+  if (!view_state_) {
+    view_state_ = ViewState();
+  }
+  return *view_state_;
+}
+
 void HistoryItem::SetVisualViewportScrollOffset(const ScrollOffset& offset) {
-  if (!view_state_)
-    view_state_ = absl::make_optional<ViewState>();
-  view_state_->visual_viewport_scroll_offset_ = offset;
+  GetOrCreateViewState().visual_viewport_scroll_offset_ = offset;
 }
 
 void HistoryItem::SetScrollOffset(const ScrollOffset& offset) {
-  if (!view_state_)
-    view_state_ = absl::make_optional<ViewState>();
-  view_state_->scroll_offset_ = offset;
+  GetOrCreateViewState().scroll_offset_ = offset;
 }
 
 void HistoryItem::SetPageScaleFactor(float scale_factor) {
-  if (!view_state_)
-    view_state_ = absl::make_optional<ViewState>();
-  view_state_->page_scale_factor_ = scale_factor;
+  GetOrCreateViewState().page_scale_factor_ = scale_factor;
 }
 
 void HistoryItem::SetScrollAnchorData(
     const ScrollAnchorData& scroll_anchor_data) {
-  if (!view_state_)
-    view_state_ = absl::make_optional<ViewState>();
-  view_state_->scroll_anchor_data_ = scroll_anchor_data;
+  GetOrCreateViewState().scroll_anchor_data_ = scroll_anchor_data;
 }
 
 void HistoryItem::SetDocumentState(const Vector<String>& state) {
@@ -341,7 +340,7 @@ PageState HistoryItem::ToPageState() const {
   return PageState::CreateFromEncodedData(encoded_data);
 }
 
-std::vector<absl::optional<std::u16string>>
+std::vector<std::optional<std::u16string>>
 HistoryItem::GetReferencedFilePathsForSerialization() const {
   HashSet<String> file_paths;
 
@@ -362,10 +361,10 @@ HistoryItem::GetReferencedFilePathsForSerialization() const {
     file_paths.insert(path);
   }
 
-  std::vector<absl::optional<std::u16string>> result;
+  std::vector<std::optional<std::u16string>> result;
   result.reserve(file_paths.size());
-  base::ranges::transform(file_paths, std::back_inserter(result),
-                          WebString::ToOptionalString16);
+  std::ranges::transform(file_paths, std::back_inserter(result),
+                         WebString::ToOptionalString16);
   return result;
 }
 

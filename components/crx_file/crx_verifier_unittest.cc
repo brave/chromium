@@ -13,7 +13,7 @@ namespace {
 
 base::FilePath TestFile(const std::string& file) {
   base::FilePath path;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &path);
   return path.AppendASCII("components")
       .AppendASCII("test")
       .AppendASCII("data")
@@ -47,7 +47,7 @@ constexpr char kJlnKey[] =
 
 namespace crx_file {
 
-using CrxVerifierTest = testing::Test;
+using CrxVerifierTest = ::testing::Test;
 
 TEST_F(CrxVerifierTest, ValidFullCrx3) {
   const std::vector<std::vector<uint8_t>> keys;

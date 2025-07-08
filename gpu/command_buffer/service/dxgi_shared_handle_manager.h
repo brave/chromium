@@ -8,6 +8,10 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+// clang-format off
+#include <webgpu/webgpu_cpp.h>
+// clang-format on
+
 #include "base/containers/flat_map.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
@@ -15,7 +19,8 @@
 #include "base/types/pass_key.h"
 #include "base/win/scoped_handle.h"
 #include "gpu/gpu_gles2_export.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
+#include "ui/gl/buildflags.h"
 
 namespace gpu {
 
@@ -68,17 +73,17 @@ class GPU_GLES2_EXPORT DXGISharedHandleState
 
   // Acquires keyed mutex if necessary for given device. Disallows concurrent
   // access on different devices due to the possibility of deadlock.
-  bool BeginAccessD3D11(Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device);
+  bool AcquireKeyedMutex(Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device);
 
   // Releases keyed mutex if all pending access for given device are ended.
-  void EndAccessD3D11(Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device);
+  void ReleaseKeyedMutex(Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device);
 
-  // Returns true if there's no concurrent keyed mutex access on another device
-  // allowing Dawn to acquire the keyed mutex if needed.
-  bool BeginAccessDawn();
-
-  // Updates keyed mutex acquired state after Dawn has released it.
-  void EndAccessDawn();
+  // Returns the cached Dawn SharedTextureMemory associated with given device.
+  wgpu::SharedTextureMemory GetSharedTextureMemory(const wgpu::Device& device);
+  // Inserts the SharedTextureMemory for this device, if not already present.
+  void MaybeCacheSharedTextureMemory(const wgpu::Device& device,
+                                     wgpu::SharedTextureMemory memory);
+  void EraseDawnSharedTextureMemory(const wgpu::Device& device);
 
  private:
   struct D3D11TextureState {
@@ -94,20 +99,35 @@ class GPU_GLES2_EXPORT DXGISharedHandleState
 
   ~DXGISharedHandleState();
 
-  scoped_refptr<DXGISharedHandleManager> manager_;
+  mutable base::Lock lock_;
+
+  const scoped_refptr<DXGISharedHandleManager> manager_;
+
   const gfx::DXGIHandleToken token_;
 
-  base::win::ScopedHandle shared_handle_;
+  const base::win::ScopedHandle shared_handle_;
 
   using D3D11TextureStateMap =
       base::flat_map<Microsoft::WRL::ComPtr<ID3D11Device>, D3D11TextureState>;
-  D3D11TextureStateMap d3d11_texture_state_map_;
+  D3D11TextureStateMap d3d11_texture_state_map_ GUARDED_BY(lock_);
+
+  // When Dawn uses keyed mutex for synchronization with the D3D11 backend, we
+  // want a single instance of SharedTextureMemory (per device) for each unique
+  // texture even if we have multiple duplicated handles (and shared images)
+  // pointing to the texture. Caching the SharedTextureMemory here enables this.
+  // Note that it's ok to use raw WGPUDevice pointers here since the shared
+  // texture memory acts like a weak pointer to the device, and we can detect if
+  // the entry is valid by checking SharedTextureMemory::IsDeviceLost().
+  using DawnSharedTextureMemoryCache =
+      base::flat_map<WGPUDevice, wgpu::SharedTextureMemory>;
+  DawnSharedTextureMemoryCache dawn_shared_texture_memory_cache_
+      GUARDED_BY(lock_);
 
   // True if the texture has an underlying keyed mutex.
-  bool has_keyed_mutex_ = false;
+  const bool has_keyed_mutex_ = false;
 
   // True if the keyed mutex is acquired on any device.
-  bool keyed_mutex_acquired_ = false;
+  bool keyed_mutex_acquired_ GUARDED_BY(lock_) = false;
 };
 
 class GPU_GLES2_EXPORT DXGISharedHandleManager
@@ -121,7 +141,7 @@ class GPU_GLES2_EXPORT DXGISharedHandleManager
   // will refer to the same D3D11 texture. |d3d11_device| is used for opening
   // the shared handle if a state is not found. Returns a nullptr on error.
   scoped_refptr<DXGISharedHandleState> GetOrCreateSharedHandleState(
-      gfx::DXGIHandleToken token,
+      const gfx::DXGIHandleToken& token,
       base::win::ScopedHandle shared_handle,
       Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device);
 

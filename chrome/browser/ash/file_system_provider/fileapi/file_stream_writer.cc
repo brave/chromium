@@ -23,8 +23,7 @@
 
 using content::BrowserThread;
 
-namespace ash {
-namespace file_system_provider {
+namespace ash::file_system_provider {
 
 class FileStreamWriter::OperationRunner
     : public base::RefCountedThreadSafe<
@@ -116,14 +115,15 @@ class FileStreamWriter::OperationRunner
       content::BrowserThread::UI>;
   friend class base::DeleteHelper<OperationRunner>;
 
-  virtual ~OperationRunner() {}
+  virtual ~OperationRunner() = default;
 
   // Remembers a file handle for further operations and forwards the result to
   // the IO thread.
   void OnOpenFileCompletedOnUIThread(
       storage::AsyncFileUtil::StatusCallback callback,
       int file_handle,
-      base::File::Error result) {
+      base::File::Error result,
+      std::unique_ptr<EntryMetadata> metadata) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
     abort_callback_.Reset();
@@ -244,7 +244,6 @@ int FileStreamWriter::Write(net::IOBuffer* buffer,
 
     case INITIALIZING:
       NOTREACHED();
-      break;
 
     case INITIALIZED:
       WriteAfterInitialized(buffer, buffer_length,
@@ -257,7 +256,6 @@ int FileStreamWriter::Write(net::IOBuffer* buffer,
     case CANCELLING:
     case FINALIZED:
       NOTREACHED();
-      break;
   }
 
   return net::ERR_IO_PENDING;
@@ -384,5 +382,4 @@ void FileStreamWriter::WriteAfterInitialized(
                                     buffer_length, std::move(callback))));
 }
 
-}  // namespace file_system_provider
-}  // namespace ash
+}  // namespace ash::file_system_provider

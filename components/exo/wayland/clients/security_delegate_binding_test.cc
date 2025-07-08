@@ -30,11 +30,11 @@ class SecurityDelegateBindingTest : public test::WaylandServerTest {
   void SetUp() override {
     WaylandServerTest::SetUp();
     server_security_delegate_ =
-        GetSecurityDelegate(server_->GetWaylandDisplayForTesting());
+        GetSecurityDelegate(server_->GetWaylandDisplay());
     ASSERT_NE(server_security_delegate_, nullptr);
   }
 
-  raw_ptr<SecurityDelegate, ExperimentalAsh> server_security_delegate_ =
+  raw_ptr<SecurityDelegate, DanglingUntriaged> server_security_delegate_ =
       nullptr;
 };
 
@@ -67,7 +67,7 @@ TEST_F(SecurityDelegateBindingTest, ShellSurfaceHasSecurityDelegate) {
 
   PostToClientAndWait([](test::TestClient* client) {
     // Destroy the client objects.
-    client->set_data(nullptr);
+    client->DestroyData();
   });
 
   EXPECT_EQ(test::server_util::GetUserDataForResource<ShellSurface>(
@@ -104,7 +104,7 @@ TEST_F(SecurityDelegateBindingTest, XdgSurfaceHasSecurityDelegate) {
 
   PostToClientAndWait([](test::TestClient* client) {
     // Destroy the client objects.
-    client->set_data(nullptr);
+    client->DestroyData();
   });
 
   EXPECT_EQ(test::server_util::GetUserDataForResource<WaylandXdgSurface>(
@@ -143,7 +143,7 @@ TEST_F(SecurityDelegateBindingTest, ZcrRemoteSurfaceV1HasSecurityDelegate) {
 
   PostToClientAndWait([](test::TestClient* client) {
     // Destroy the client objects.
-    client->set_data(nullptr);
+    client->DestroyData();
   });
 
   EXPECT_EQ(
@@ -183,7 +183,7 @@ TEST_F(SecurityDelegateBindingTest, ZcrRemoteSurfaceV2HasSecurityDelegate) {
 
   PostToClientAndWait([](test::TestClient* client) {
     // Destroy the client objects.
-    client->set_data(nullptr);
+    client->DestroyData();
   });
 
   EXPECT_EQ(

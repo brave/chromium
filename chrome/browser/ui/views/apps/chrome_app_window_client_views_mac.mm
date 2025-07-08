@@ -3,12 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/apps/chrome_app_window_client.h"
-
 #include "chrome/browser/ui/views/apps/chrome_native_app_window_views_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // static
 extensions::NativeAppWindow* ChromeAppWindowClient::CreateNativeAppWindowImpl(

@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -25,7 +26,6 @@
 #include "components/infobars/core/infobar_manager.h"
 #include "components/translate/content/browser/content_translate_driver.h"
 #include "components/translate/content/common/translate.mojom.h"
-#include "components/translate/core/browser/translate_infobar_delegate.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "components/translate/core/browser/translate_ui_delegate.h"
 #include "components/translate/core/common/language_detection_details.h"
@@ -37,8 +37,6 @@
 #include "content/public/test/test_renderer_host.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "url/gurl.h"
 
 class FakeTranslateAgent : public translate::mojom::TranslateAgent {
  public:
@@ -65,8 +63,8 @@ class FakeTranslateAgent : public translate::mojom::TranslateAgent {
                       translate::TranslateErrors error);
 
   bool called_translate_;
-  absl::optional<std::string> source_lang_;
-  absl::optional<std::string> target_lang_;
+  std::optional<std::string> source_lang_;
+  std::optional<std::string> target_lang_;
   bool called_revert_translation_;
 
  private:

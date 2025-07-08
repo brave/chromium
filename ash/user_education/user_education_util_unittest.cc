@@ -5,6 +5,7 @@
 #include "ash/user_education/user_education_util.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -17,11 +18,13 @@
 #include "ash/test/test_widget_builder.h"
 #include "ash/user_education/user_education_types.h"
 #include "components/account_id/account_id.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
+#include "components/user_manager/user_names.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/interaction/element_tracker.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/views/metadata/view_factory.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
@@ -65,10 +68,26 @@ TEST_F(UserEducationUtilTest, CreateExtendedProperties) {
   const user_education::HelpBubbleParams::ExtendedProperties
       extended_properties = CreateExtendedProperties(
           CreateExtendedProperties(HelpBubbleId::kTest),
-          CreateExtendedProperties(HelpBubbleStyle::kNudge));
+          CreateExtendedProperties(ui::mojom::ModalType::kSystem));
 
   EXPECT_EQ(GetHelpBubbleId(extended_properties), HelpBubbleId::kTest);
-  EXPECT_EQ(GetHelpBubbleStyle(extended_properties), HelpBubbleStyle::kNudge);
+  EXPECT_EQ(GetHelpBubbleModalType(extended_properties),
+            ui::mojom::ModalType::kSystem);
+}
+
+// Verifies that `CreateExtendedProperties()` can be used to create extended
+// properties for a help bubble having set body icon, and that
+// `GetHelpBubbleBodyIcon()` can be used to retrieve help bubble body icon from
+// extended properties.
+TEST_F(UserEducationUtilTest, CreateExtendedPropertiesWithBodyIcon) {
+  EXPECT_EQ(&GetHelpBubbleBodyIcon(
+                 CreateExtendedProperties(gfx::VectorIcon::EmptyIcon()))
+                 ->get(),
+            &gfx::VectorIcon::EmptyIcon());
+
+  // It is permissible to query help bubble body icon even when absent.
+  EXPECT_EQ(GetHelpBubbleBodyIcon(HelpBubbleParams::ExtendedProperties()),
+            std::nullopt);
 }
 
 // Verifies that `CreateExtendedProperties()` can be used to create extended
@@ -80,16 +99,47 @@ TEST_F(UserEducationUtilTest, ExtendedPropertiesWithId) {
 }
 
 // Verifies that `CreateExtendedProperties()` can be used to create extended
-// properties for a help bubble having set style, and `GetHelpBubbleStyle()` can
-// be used to retrieve help bubble style from extended properties.
-TEST_F(UserEducationUtilTest, ExtendedPropertiesWithStyle) {
-  EXPECT_EQ(
-      GetHelpBubbleStyle(CreateExtendedProperties(HelpBubbleStyle::kNudge)),
-      HelpBubbleStyle::kNudge);
+// properties for a help bubble having set modal type, and that
+// `GetHelpBubbleModalType()` can be used to retrieve help bubble modal type
+// from extended properties.
+TEST_F(UserEducationUtilTest, CreateExtendedPropertiesWithModalType) {
+  EXPECT_EQ(GetHelpBubbleModalType(
+                CreateExtendedProperties(ui::mojom::ModalType::kSystem)),
+            ui::mojom::ModalType::kSystem);
 
-  // It is permissible to query help bubble style even when absent.
-  EXPECT_EQ(GetHelpBubbleStyle(HelpBubbleParams::ExtendedProperties()),
-            absl::nullopt);
+  // It is permissible to query help bubble modal type even when absent.
+  EXPECT_EQ(GetHelpBubbleModalType(HelpBubbleParams::ExtendedProperties()),
+            ui::mojom::ModalType::kNone);
+}
+
+// Verifies that `CreateExtendedPropertiesWithAccessibleName()` can be used to
+// create extended properties for a help bubble having set accessible name, and
+// that `GetHelpBubbleAccessibleName()` can be used to retrieve help bubble
+// accessible name from extended properties.
+TEST_F(UserEducationUtilTest, ExtendedPropertiesWithAccessibleName) {
+  std::string accessible_name = "Accessible Name";
+  EXPECT_EQ(GetHelpBubbleAccessibleName(
+                CreateExtendedPropertiesWithAccessibleName(accessible_name)),
+            accessible_name);
+
+  // It is permissible to query help bubble accessible name even when absent.
+  EXPECT_EQ(GetHelpBubbleAccessibleName(HelpBubbleParams::ExtendedProperties()),
+            std::nullopt);
+}
+
+// Verifies that `CreateExtendedPropertiesWithBodyText()` can be used to create
+// extended properties for a help bubble having set body text, and that
+// `GetHelpBubbleBodyText()` can be used to retrieve help bubble body text from
+// extended properties.
+TEST_F(UserEducationUtilTest, ExtendedPropertiesWithBodyText) {
+  std::string body_text = "Body Text";
+  EXPECT_EQ(
+      GetHelpBubbleBodyText(CreateExtendedPropertiesWithBodyText(body_text)),
+      body_text);
+
+  // It is permissible to query help bubble body text even when absent.
+  EXPECT_EQ(GetHelpBubbleBodyText(HelpBubbleParams::ExtendedProperties()),
+            std::nullopt);
 }
 
 // Verifies that `ToString()` is working as intended.
@@ -206,6 +256,29 @@ TEST_F(UserEducationUtilAshTest, GetMatchingViewInRootWindow) {
       AnyOf(Eq(secondary_display_view), Eq(another_secondary_display_view)));
 }
 
+// Verifies that `GetUserType()` is working as intended.
+TEST_F(UserEducationUtilAshTest, GetUserType) {
+  AccountId regular_account_id = AccountId::FromUserEmail(kDefaultUserEmail);
+  AccountId guest_account_id = user_manager::GuestAccountId();
+
+  // Case: no user sessions added.
+  EXPECT_FALSE(GetUserType(AccountId()));
+  EXPECT_FALSE(GetUserType(guest_account_id));
+  EXPECT_FALSE(GetUserType(regular_account_id));
+
+  EXPECT_EQ(SimulateGuestLogin(), guest_account_id);
+
+  EXPECT_FALSE(GetUserType(AccountId()));
+  EXPECT_EQ(GetUserType(guest_account_id), user_manager::UserType::kGuest);
+
+  ClearLogin();
+
+  SimulateUserLogin(regular_account_id);
+  EXPECT_FALSE(GetUserType(AccountId()));
+  // Case: multiple user sessions added.
+  EXPECT_EQ(GetUserType(regular_account_id), user_manager::UserType::kRegular);
+}
+
 // Verifies that `IsPrimaryAccountActive()` is working as intended.
 TEST_F(UserEducationUtilAshTest, IsPrimaryAccountActive) {
   AccountId primary_account_id = AccountId::FromUserEmail("primary@test");
@@ -214,10 +287,9 @@ TEST_F(UserEducationUtilAshTest, IsPrimaryAccountActive) {
   // Case: no user sessions added.
   EXPECT_FALSE(IsPrimaryAccountActive());
 
-  // Case: primary user session added but inactive.
+  // Case: primary user session added and activate it.
   auto* session_controller_client = GetSessionControllerClient();
-  session_controller_client->AddUserSession(primary_account_id.GetUserEmail());
-  EXPECT_FALSE(IsPrimaryAccountActive());
+  SimulateUserLogin({.activate_session = false}, primary_account_id);
 
   // Case: primary user session activated.
   session_controller_client->SetSessionState(SessionState::ACTIVE);
@@ -229,12 +301,8 @@ TEST_F(UserEducationUtilAshTest, IsPrimaryAccountActive) {
   session_controller_client->SetSessionState(SessionState::ACTIVE);
   EXPECT_TRUE(IsPrimaryAccountActive());
 
-  // Case: secondary user session added but inactive.
-  session_controller_client->AddUserSession(
-      secondary_account_id.GetUserEmail());
-  EXPECT_TRUE(IsPrimaryAccountActive());
-
-  // Case: secondary user activated and then deactivated.
+  // Case: secondary user session added and activate it.
+  SimulateUserLogin({.activate_session = false}, secondary_account_id);
   session_controller_client->SwitchActiveUser(secondary_account_id);
   EXPECT_FALSE(IsPrimaryAccountActive());
   session_controller_client->SwitchActiveUser(primary_account_id);
@@ -251,10 +319,8 @@ TEST_F(UserEducationUtilAshTest, IsPrimaryAccountId) {
   EXPECT_FALSE(IsPrimaryAccountId(primary_account_id));
   EXPECT_FALSE(IsPrimaryAccountId(secondary_account_id));
 
-  auto* session_controller_client = GetSessionControllerClient();
-  session_controller_client->AddUserSession(primary_account_id.GetUserEmail());
-  session_controller_client->AddUserSession(
-      secondary_account_id.GetUserEmail());
+  SimulateUserLogin(primary_account_id);
+  SimulateUserLogin(secondary_account_id);
 
   // Case: multiple user sessions added.
   EXPECT_FALSE(IsPrimaryAccountId(AccountId()));

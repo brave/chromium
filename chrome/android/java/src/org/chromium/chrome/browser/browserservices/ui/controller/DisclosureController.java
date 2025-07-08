@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.browserservices.ui.controller;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel.DISCLOSURE_EVENTS_CALLBACK;
 import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel.DISCLOSURE_FIRST_TIME;
 import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel.DISCLOSURE_SCOPE;
@@ -14,8 +15,9 @@ import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityM
 import static org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel.PACKAGE_NAME;
 
 import androidx.annotation.CallSuper;
-import androidx.annotation.Nullable;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browserservices.ui.TrustedWebActivityModel;
 import org.chromium.chrome.browser.browserservices.ui.controller.CurrentPageVerifier.VerificationState;
 import org.chromium.chrome.browser.browserservices.ui.controller.CurrentPageVerifier.VerificationStatus;
@@ -27,17 +29,21 @@ import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
  * Contains common implementation between WebappDisclosureController and
  * TrustedWebActivityDisclosureController.
  */
+@NullMarked
 public abstract class DisclosureController
-        implements NativeInitObserver, TrustedWebActivityModel.DisclosureEventsCallback,
-                   StartStopWithNativeObserver {
+        implements NativeInitObserver,
+                TrustedWebActivityModel.DisclosureEventsCallback,
+                StartStopWithNativeObserver {
     private final TrustedWebActivityModel mModel;
     private final CurrentPageVerifier mCurrentPageVerifier;
 
     private boolean mPreviousShouldShowDisclosure;
 
-    public DisclosureController(TrustedWebActivityModel model,
+    public DisclosureController(
+            TrustedWebActivityModel model,
             ActivityLifecycleDispatcher lifecycleDispatcher,
-            CurrentPageVerifier currentPageVerifier, String packageName) {
+            CurrentPageVerifier currentPageVerifier,
+            String packageName) {
         mModel = model;
         mCurrentPageVerifier = currentPageVerifier;
 
@@ -50,7 +56,7 @@ public abstract class DisclosureController
 
     private void onVerificationStatusChanged() {
         if (shouldShowInCurrentState()) {
-            setDisclosureScope(mCurrentPageVerifier.getState().scope);
+            setDisclosureScope(assumeNonNull(mCurrentPageVerifier.getState()).scope);
             showIfNeeded();
         } else {
             setDisclosureScope(null);

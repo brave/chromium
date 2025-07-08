@@ -15,10 +15,12 @@
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "chrome/browser/extensions/extension_gcm_app_handler.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/gcm.h"
 #include "components/gcm_driver/common/gcm_message.h"
+#include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "extensions/browser/event_router.h"
@@ -64,9 +66,6 @@ const char* GcmResultToError(gcm::GCMClient::Result result) {
       NOTREACHED() << "Unexpected value of result cannot be converted: "
                    << result;
   }
-
-  // Never reached, but prevents missing return statement warning.
-  return "";
 }
 
 bool IsMessageKeyValid(const std::string& key) {
@@ -104,21 +103,28 @@ gcm::GCMDriver* GcmApiFunction::GetGCMDriver() const {
       Profile::FromBrowserContext(browser_context()))->driver();
 }
 
-GcmRegisterFunction::GcmRegisterFunction() {}
+GcmRegisterFunction::GcmRegisterFunction() = default;
 
-GcmRegisterFunction::~GcmRegisterFunction() {}
+GcmRegisterFunction::~GcmRegisterFunction() = default;
 
 ExtensionFunction::ResponseAction GcmRegisterFunction::Run() {
-  absl::optional<api::gcm::Register::Params> params =
+  std::optional<api::gcm::Register::Params> params =
       api::gcm::Register::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
+#if BUILDFLAG(IS_ANDROID)
+  // This server API was deprecated by Firebase in 2019. Don't bother trying to
+  // implement register() on Android - it will just return an error.
+  // TODO(crbug.com/421235963): Consider deprecating on other platforms.
+  return RespondNow(Error(GcmResultToError(gcm::GCMClient::UNKNOWN_ERROR)));
+#else
   GetGCMDriver()->Register(
       extension()->id(), params->sender_ids,
       base::BindOnce(&GcmRegisterFunction::CompleteFunctionWithResult, this));
 
   // Register() might have returned synchronously.
   return did_respond() ? AlreadyResponded() : RespondLater();
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void GcmRegisterFunction::CompleteFunctionWithResult(
@@ -131,21 +137,28 @@ void GcmRegisterFunction::CompleteFunctionWithResult(
   Respond(succeeded
               ? ArgumentList(std::move(result))
               // TODO(lazyboy): We shouldn't be using |result| in case of error.
-              : ErrorWithArguments(std::move(result),
-                                   GcmResultToError(gcm_result)));
+              : ErrorWithArgumentsDoNotUse(std::move(result),
+                                           GcmResultToError(gcm_result)));
 }
 
-GcmUnregisterFunction::GcmUnregisterFunction() {}
+GcmUnregisterFunction::GcmUnregisterFunction() = default;
 
-GcmUnregisterFunction::~GcmUnregisterFunction() {}
+GcmUnregisterFunction::~GcmUnregisterFunction() = default;
 
 ExtensionFunction::ResponseAction GcmUnregisterFunction::Run() {
+#if BUILDFLAG(IS_ANDROID)
+  // This server API was deprecated by Firebase in 2019. Don't bother trying to
+  // implement register() on Android - it will just return an error.
+  // TODO(crbug.com/421235963): Consider deprecating on other platforms.
+  return RespondNow(Error(GcmResultToError(gcm::GCMClient::UNKNOWN_ERROR)));
+#else
   GetGCMDriver()->Unregister(
       extension()->id(),
       base::BindOnce(&GcmUnregisterFunction::CompleteFunctionWithResult, this));
 
   // Unregister might have responded already (synchronously).
   return did_respond() ? AlreadyResponded() : RespondLater();
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void GcmUnregisterFunction::CompleteFunctionWithResult(
@@ -154,12 +167,12 @@ void GcmUnregisterFunction::CompleteFunctionWithResult(
   Respond(succeeded ? NoArguments() : Error(GcmResultToError(result)));
 }
 
-GcmSendFunction::GcmSendFunction() {}
+GcmSendFunction::GcmSendFunction() = default;
 
-GcmSendFunction::~GcmSendFunction() {}
+GcmSendFunction::~GcmSendFunction() = default;
 
 ExtensionFunction::ResponseAction GcmSendFunction::Run() {
-  absl::optional<api::gcm::Send::Params> params =
+  std::optional<api::gcm::Send::Params> params =
       api::gcm::Send::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(
@@ -189,8 +202,8 @@ void GcmSendFunction::CompleteFunctionWithResult(
   Respond(succeeded
               ? ArgumentList(std::move(result))
               // TODO(lazyboy): We shouldn't be using |result| in case of error.
-              : ErrorWithArguments(std::move(result),
-                                   GcmResultToError(gcm_result)));
+              : ErrorWithArgumentsDoNotUse(std::move(result),
+                                           GcmResultToError(gcm_result)));
 }
 
 bool GcmSendFunction::ValidateMessageData(const gcm::MessageData& data) const {
@@ -210,8 +223,7 @@ bool GcmSendFunction::ValidateMessageData(const gcm::MessageData& data) const {
 GcmJsEventRouter::GcmJsEventRouter(Profile* profile) : profile_(profile) {
 }
 
-GcmJsEventRouter::~GcmJsEventRouter() {
-}
+GcmJsEventRouter::~GcmJsEventRouter() = default;
 
 void GcmJsEventRouter::OnMessage(const std::string& app_id,
                                  const gcm::IncomingMessage& message) {

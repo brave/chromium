@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/gfx/mac/io_surface.h"
 
 #include <Availability.h>
@@ -9,30 +14,27 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/apple/mach_logging.h"
 #include "base/bits.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/mach_logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/icc_profile.h"
+#include "ui/gfx/mac/color_space_util.h"
 
 namespace gfx {
 
 namespace {
 
-BASE_FEATURE(kIOSurfaceUseNamedSRGBForREC709,
-             "IOSurfaceUseNamedSRGBForREC709",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 void AddIntegerValue(CFMutableDictionaryRef dictionary,
                      const CFStringRef key,
                      int32_t value) {
-  base::ScopedCFTypeRef<CFNumberRef> number(
+  base::apple::ScopedCFTypeRef<CFNumberRef> number(
       CFNumberCreate(nullptr, kCFNumberSInt32Type, &value));
   CFDictionaryAddValue(dictionary, key, number.get());
 }
@@ -81,7 +83,6 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
     case gfx::BufferFormat::RGBA_1010102:
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -137,10 +138,9 @@ mach_port_t IOSurfaceMachPortTraits::Retain(mach_port_t port) {
 
 // static
 void IOSurfaceMachPortTraits::Release(mach_port_t port) {
-  kern_return_t kr =
-      mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, -1);
+  kern_return_t kr = mach_port_deallocate(mach_task_self(), port);
   MACH_LOG_IF(ERROR, kr != KERN_SUCCESS, kr)
-      << "IOSurfaceMachPortTraits::Release mach_port_mod_refs";
+      << "IOSurfaceMachPortTraits::Release mach_port_deallocate";
 }
 
 // Common method used by IOSurfaceSetColorSpace and IOSurfaceCanSetColorSpace.
@@ -153,8 +153,7 @@ bool IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
   // Prefer using named spaces.
   CFStringRef color_space_name = nullptr;
   if (color_space == ColorSpace::CreateSRGB() ||
-      (base::FeatureList::IsEnabled(kIOSurfaceUseNamedSRGBForREC709) &&
-       color_space == ColorSpace::CreateREC709())) {
+      color_space == ColorSpace::CreateREC709()) {
     color_space_name = kCGColorSpaceSRGB;
   } else if (color_space == ColorSpace::CreateDisplayP3D65()) {
     color_space_name = kCGColorSpaceDisplayP3;
@@ -176,26 +175,34 @@ bool IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
                                 ColorSpace::TransferID::PQ,
                                 ColorSpace::MatrixID::BT2020_NCL,
                                 ColorSpace::RangeID::LIMITED)) {
-    if (__builtin_available(macos 11.0, *)) {
-      color_space_name = kCGColorSpaceITUR_2100_PQ;
-    } else {
-      return true;
-    }
+    color_space_name = kCGColorSpaceITUR_2100_PQ;
   } else if (color_space == ColorSpace(ColorSpace::PrimaryID::BT2020,
                                        ColorSpace::TransferID::HLG,
                                        ColorSpace::MatrixID::BT2020_NCL,
                                        ColorSpace::RangeID::LIMITED)) {
-    if (__builtin_available(macos 11.0, *)) {
-      color_space_name = kCGColorSpaceITUR_2100_HLG;
-    } else {
-      return true;
+    color_space_name = kCGColorSpaceITUR_2100_HLG;
+  }
+
+  // https://crbug.com/1488397: Set parameters that will be rendering YUV
+  // content.
+  // TODO(b/304442486): Add gamma support here.
+  {
+    CFStringRef primaries = nullptr;
+    CFStringRef transfer = nullptr;
+    CFStringRef matrix = nullptr;
+    if (ColorSpaceToCVImageBufferKeys(color_space, /*prefer_srgb_trfn=*/true,
+                                      &primaries, &transfer, &matrix)) {
+      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorPrimaries"),
+                        primaries);
+      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceTransferFunction"),
+                        transfer);
+      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceYCbCrMatrix"), matrix);
     }
   }
+
   if (color_space_name) {
-    if (io_surface) {
-      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
-                        color_space_name);
-    }
+    IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
+                      color_space_name);
     return true;
   }
 
@@ -215,18 +222,18 @@ bool IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
 
   // Package it as a CFDataRef and send it to the IOSurface.
   std::vector<char> icc_profile_data = icc_profile.GetData();
-  base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(CFDataCreate(
+  base::apple::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(CFDataCreate(
       nullptr, reinterpret_cast<const UInt8*>(icc_profile_data.data()),
       icc_profile_data.size()));
 
   IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
-                    cf_data_icc_profile);
+                    cf_data_icc_profile.get());
   return true;
 }
 
 }  // namespace internal
 
-base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
+base::apple::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
     const gfx::Size& size,
     gfx::BufferFormat format,
     bool should_clear,
@@ -234,14 +241,14 @@ base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
   TRACE_EVENT0("ui", "CreateIOSurface");
   base::TimeTicks start_time = base::TimeTicks::Now();
 
-  base::ScopedCFTypeRef<CFMutableDictionaryRef> properties(
+  base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> properties(
       CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                 &kCFTypeDictionaryKeyCallBacks,
                                 &kCFTypeDictionaryValueCallBacks));
-  AddIntegerValue(properties, kIOSurfaceWidth, size.width());
-  AddIntegerValue(properties, kIOSurfaceHeight, size.height());
+  AddIntegerValue(properties.get(), kIOSurfaceWidth, size.width());
+  AddIntegerValue(properties.get(), kIOSurfaceHeight, size.height());
   AddIntegerValue(
-      properties, kIOSurfacePixelFormat,
+      properties.get(), kIOSurfacePixelFormat,
       BufferFormatToIOSurfacePixelFormat(format, override_rgba_to_bgra));
 
   // Don't specify plane information unless there are indeed multiple planes
@@ -249,7 +256,7 @@ base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
   // http://crbug.com/527556
   size_t num_planes = gfx::NumberOfPlanesForLinearBufferFormat(format);
   if (num_planes > 1) {
-    base::ScopedCFTypeRef<CFMutableArrayRef> planes(CFArrayCreateMutable(
+    base::apple::ScopedCFTypeRef<CFMutableArrayRef> planes(CFArrayCreateMutable(
         kCFAllocatorDefault, num_planes, &kCFTypeArrayCallBacks));
     size_t total_bytes_alloc = 0;
     for (size_t plane = 0; plane < num_planes; ++plane) {
@@ -268,60 +275,67 @@ base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
       const size_t plane_offset =
           IOSurfaceAlignProperty(kIOSurfacePlaneOffset, total_bytes_alloc);
 
-      base::ScopedCFTypeRef<CFMutableDictionaryRef> plane_info(
+      base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> plane_info(
           CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                     &kCFTypeDictionaryKeyCallBacks,
                                     &kCFTypeDictionaryValueCallBacks));
-      AddIntegerValue(plane_info, kIOSurfacePlaneWidth, plane_width);
-      AddIntegerValue(plane_info, kIOSurfacePlaneHeight, plane_height);
-      AddIntegerValue(plane_info, kIOSurfacePlaneBytesPerElement,
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneWidth, plane_width);
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneHeight, plane_height);
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneBytesPerElement,
                       plane_bytes_per_element);
-      AddIntegerValue(plane_info, kIOSurfacePlaneBytesPerRow,
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneBytesPerRow,
                       plane_bytes_per_row);
-      AddIntegerValue(plane_info, kIOSurfacePlaneSize, plane_bytes_alloc);
-      AddIntegerValue(plane_info, kIOSurfacePlaneOffset, plane_offset);
-      CFArrayAppendValue(planes, plane_info);
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneSize, plane_bytes_alloc);
+      AddIntegerValue(plane_info.get(), kIOSurfacePlaneOffset, plane_offset);
+      CFArrayAppendValue(planes.get(), plane_info.get());
       total_bytes_alloc = plane_offset + plane_bytes_alloc;
     }
-    CFDictionaryAddValue(properties, kIOSurfacePlaneInfo, planes);
+    CFDictionaryAddValue(properties.get(), kIOSurfacePlaneInfo, planes.get());
 
     total_bytes_alloc =
         IOSurfaceAlignProperty(kIOSurfaceAllocSize, total_bytes_alloc);
-    AddIntegerValue(properties, kIOSurfaceAllocSize, total_bytes_alloc);
+    AddIntegerValue(properties.get(), kIOSurfaceAllocSize, total_bytes_alloc);
   } else {
     const size_t bytes_per_element = BytesPerElement(format, 0);
     const size_t bytes_per_row = IOSurfaceAlignProperty(
         kIOSurfaceBytesPerRow,
-        base::bits::AlignUp(size.width(), 2) * bytes_per_element);
+        base::bits::AlignUp(static_cast<size_t>(size.width()), size_t{2}) *
+            bytes_per_element);
     const size_t bytes_alloc = IOSurfaceAlignProperty(
         kIOSurfaceAllocSize,
-        base::bits::AlignUp(size.height(), 2) * bytes_per_row);
-    AddIntegerValue(properties, kIOSurfaceBytesPerElement, bytes_per_element);
-    AddIntegerValue(properties, kIOSurfaceBytesPerRow, bytes_per_row);
-    AddIntegerValue(properties, kIOSurfaceAllocSize, bytes_alloc);
+        base::bits::AlignUp(static_cast<size_t>(size.height()), size_t{2}) *
+            bytes_per_row);
+    AddIntegerValue(properties.get(), kIOSurfaceBytesPerElement,
+                    bytes_per_element);
+    AddIntegerValue(properties.get(), kIOSurfaceBytesPerRow, bytes_per_row);
+    AddIntegerValue(properties.get(), kIOSurfaceAllocSize, bytes_alloc);
   }
 
-  base::ScopedCFTypeRef<IOSurfaceRef> surface(IOSurfaceCreate(properties));
+  base::apple::ScopedCFTypeRef<IOSurfaceRef> surface(
+      IOSurfaceCreate(properties.get()));
   if (!surface) {
     LOG(ERROR) << "Failed to allocate IOSurface of size " << size.ToString()
                << ".";
-    return base::ScopedCFTypeRef<IOSurfaceRef>();
+    return base::apple::ScopedCFTypeRef<IOSurfaceRef>();
   }
 
   if (should_clear) {
     // Zero-initialize the IOSurface. Calling IOSurfaceLock/IOSurfaceUnlock
     // appears to be sufficient. https://crbug.com/584760#c17
-    IOReturn r = IOSurfaceLock(surface, 0, nullptr);
-    DCHECK_EQ(kIOReturnSuccess, r);
-    r = IOSurfaceUnlock(surface, 0, nullptr);
-    DCHECK_EQ(kIOReturnSuccess, r);
+    kern_return_t r = IOSurfaceLock(surface.get(), 0, nullptr);
+    DCHECK_EQ(KERN_SUCCESS, r);
+    r = IOSurfaceUnlock(surface.get(), 0, nullptr);
+    DCHECK_EQ(KERN_SUCCESS, r);
   }
 
   // Ensure that all IOSurfaces start as sRGB.
-  IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), kCGColorSpaceSRGB);
+  IOSurfaceSetValue(surface.get(), CFSTR("IOSurfaceColorSpace"),
+                    kCGColorSpaceSRGB);
 
-  UMA_HISTOGRAM_TIMES("GPU.IOSurface.CreateTime",
-                      base::TimeTicks::Now() - start_time);
+  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+      "GPU.IOSurface.CreationTimeUs", base::TimeTicks::Now() - start_time,
+      base::Microseconds(1), base::Milliseconds(50), /*bucket_count=*/100);
+
   return surface;
 }
 
@@ -337,14 +351,14 @@ void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
   }
 }
 
-GFX_EXPORT base::ScopedCFTypeRef<IOSurfaceRef> IOSurfaceMachPortToIOSurface(
+ScopedIOSurface IOSurfaceMachPortToIOSurface(
     ScopedRefCountedIOSurfaceMachPort io_surface_mach_port) {
-  base::ScopedCFTypeRef<IOSurfaceRef> io_surface;
+  base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface;
   if (!io_surface_mach_port) {
     DLOG(ERROR) << "Invalid mach port.";
     return io_surface;
   }
-  io_surface.reset(IOSurfaceLookupFromMachPort(io_surface_mach_port));
+  io_surface.reset(IOSurfaceLookupFromMachPort(io_surface_mach_port.get()));
   if (!io_surface) {
     DLOG(ERROR) << "Unable to lookup IOSurface.";
     return io_surface;

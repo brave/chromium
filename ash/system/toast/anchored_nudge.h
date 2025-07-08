@@ -12,8 +12,13 @@
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_observer.h"
 #include "ash/shell_observer.h"
+#include "base/functional/callback_forward.h"
+#include "base/scoped_observation.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/display/display_observer.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
+#include "ui/views/widget/widget_observer.h"
 
 namespace views {
 class Widget;
@@ -35,23 +40,20 @@ class SystemNudgeView;
 // Creates and manages the widget and contents view for an anchored nudge.
 // TODO(b/285988235): `AnchoredNudge` will replace the existing `SystemNudge`
 // and take over its name.
-class ASH_EXPORT AnchoredNudge : public ShelfObserver,
+class ASH_EXPORT AnchoredNudge : public display::DisplayObserver,
+                                 public ShelfObserver,
                                  public ShellObserver,
-                                 public views::BubbleDialogDelegateView {
- public:
-  METADATA_HEADER(AnchoredNudge);
+                                 public views::BubbleDialogDelegateView,
+                                 public views::WidgetObserver {
+  METADATA_HEADER(AnchoredNudge, views::BubbleDialogDelegateView)
 
-  explicit AnchoredNudge(const AnchoredNudgeData& nudge_data);
+ public:
+  AnchoredNudge(AnchoredNudgeData& nudge_data,
+                base::RepeatingCallback<void(/*has_hover_or_focus=*/bool)>
+                    hover_or_focus_changed_callback);
   AnchoredNudge(const AnchoredNudge&) = delete;
   AnchoredNudge& operator=(const AnchoredNudge&) = delete;
   ~AnchoredNudge() override;
-
-  // Getters for `system_nudge_view_` elements.
-  views::ImageView* GetImageView();
-  const std::u16string& GetBodyText();
-  const std::u16string& GetTitleText();
-  views::LabelButton* GetFirstButton();
-  views::LabelButton* GetSecondButton();
 
   // views::BubbleDialogDelegateView:
   gfx::Rect GetBubbleBounds() override;
@@ -78,20 +80,48 @@ class ASH_EXPORT AnchoredNudge : public ShelfObserver,
   void OnShelfAlignmentChanged(aura::Window* root_window,
                                ShelfAlignment old_alignment) override;
 
+  // display::DisplayObserver:
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
+
+  // views::WidgetObserver:
+  void OnWidgetDestroying(views::Widget* widget) override;
+  void OnWidgetBoundsChanged(views::Widget* widget,
+                             const gfx::Rect& new_bounds) override;
+
   // Sets the arrow of the nudge based on the `shelf` alignment.
   void SetArrowFromShelf(Shelf* shelf);
 
   // Sets the default anchor rect for nudges that do not have an `anchor_view`.
   void SetDefaultAnchorRect();
 
-  const std::string& id() { return id_; }
+  const std::string& id() const { return id_; }
+
+  NudgeCatalogName catalog_name() const { return catalog_name_; }
 
  private:
   // Unique id used to find and dismiss the nudge through the manager.
   const std::string id_;
 
+  // Used to identify nudges that share an id but have different catalog names.
+  const NudgeCatalogName catalog_name_;
+
   // Whether the nudge should set its arrow based on shelf alignment.
   const bool anchored_to_shelf_;
+
+  // Whether the nudge should set its bounds anchored by its corners.
+  const bool is_corner_anchored_;
+
+  // Whether the nudge should set its parent as the `anchor_view`.
+  const bool set_anchor_view_as_parent_ = false;
+
+  // If not null, the nudge will anchor to one of the anchor widget internal
+  // corners. Currently only supports anchoring to the bottom corners.
+  raw_ptr<views::Widget> anchor_widget_ = nullptr;
+
+  // The corner of the `anchor_widget_` to which the nudge will anchor.
+  views::BubbleBorder::Arrow anchor_widget_corner_ =
+      views::BubbleBorder::Arrow::BOTTOM_LEFT;
 
   // Owned by the views hierarchy. Contents view of the anchored nudge.
   raw_ptr<SystemNudgeView> system_nudge_view_ = nullptr;
@@ -103,8 +133,14 @@ class ASH_EXPORT AnchoredNudge : public ShelfObserver,
   // Used to maintain the shelf visible while a shelf-anchored nudge is shown.
   std::unique_ptr<Shelf::ScopedDisableAutoHide> disable_shelf_auto_hide_;
 
+  base::ScopedObservation<views::Widget, views::WidgetObserver>
+      anchor_widget_scoped_observation_{this};
+
   // Used to observe hotseat state to update nudges default location baseline.
   base::ScopedObservation<Shelf, ShelfObserver> shelf_observation_{this};
+
+  // Observes display configuration changes.
+  display::ScopedDisplayObserver display_observer_{this};
 };
 
 }  // namespace ash

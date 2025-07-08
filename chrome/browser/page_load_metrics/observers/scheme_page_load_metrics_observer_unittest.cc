@@ -26,7 +26,7 @@ class SchemePageLoadMetricsObserverTest
   void InitializeTestPageLoadTiming(
       page_load_metrics::mojom::PageLoadTiming* timing) {
     page_load_metrics::InitPageLoadTimingForTest(timing);
-    timing->navigation_start = base::Time::FromDoubleT(1);
+    timing->navigation_start = base::Time::FromSecondsSinceUnixEpoch(1);
     timing->parse_timing->parse_start = base::Milliseconds(100);
     timing->paint_timing->first_paint = base::Milliseconds(200);
     timing->paint_timing->first_contentful_paint = base::Milliseconds(300);
@@ -84,7 +84,6 @@ class SchemePageLoadMetricsObserverTest
       }
     }
     NOTREACHED();
-    return 0;
   }
 
   void CheckHistograms(int expected_count,
@@ -107,7 +106,7 @@ class SchemePageLoadMetricsObserverTest
         prefix + ".PaintTiming.ParseStartToFirstContentfulPaint", 1);
     tester()->histogram_tester().ExpectUniqueSample(
         prefix + ".PaintTiming.ParseStartToFirstContentfulPaint",
-        static_cast<base::HistogramBase::Sample>(200), 1);
+        static_cast<base::HistogramBase::Sample32>(200), 1);
     tester()->histogram_tester().ExpectTotalCount(
         prefix + ".Experimental.PaintTiming.NavigationToFirstMeaningfulPaint",
         1);

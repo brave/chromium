@@ -7,7 +7,9 @@
 #ifndef COMPONENTS_SAFE_BROWSING_CORE_BROWSER_DB_HIT_REPORT_H_
 #define COMPONENTS_SAFE_BROWSING_CORE_BROWSER_DB_HIT_REPORT_H_
 
-#include "components/safe_browsing/core/browser/db/util.h"
+#include <string>
+
+#include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "url/gurl.h"
 
@@ -16,11 +18,32 @@ namespace safe_browsing {
 // What service classified this threat as unsafe.
 enum class ThreatSource {
   UNKNOWN,
-  LOCAL_PVER4,             // From V4LocalDatabaseManager, protocol v4
-  REMOTE,                  // From RemoteSafeBrowsingDatabaseManager
-  CLIENT_SIDE_DETECTION,   // From ClientSideDetectionHost
-  URL_REAL_TIME_CHECK,     // From RealTimeUrlLookupService
-  NATIVE_PVER5_REAL_TIME,  // From HashRealTimeService
+  // From V4LocalDatabaseManager, protocol v4. Desktop only.
+  LOCAL_PVER4,
+  // From ClientSideDetectionHost.
+  CLIENT_SIDE_DETECTION,
+  // From RealTimeUrlLookupService. Not including fallback to protocol v4.
+  URL_REAL_TIME_CHECK,
+  // From HashRealTimeService. Desktop only. Not including fallback to
+  // protocol v4.
+  NATIVE_PVER5_REAL_TIME,
+  // From GmsCore SafeBrowsing API. Android only. Including fallback to protocol
+  // v4 (through either SafeBrowsing API or SafetyNet API).
+  ANDROID_SAFEBROWSING_REAL_TIME,
+  // From GmsCore SafeBrowsing API. Android only. Protocol v4 only.
+  ANDROID_SAFEBROWSING,
+};
+
+// What subtype that expands more into details on what threat category
+// SBThreatType is targeting.
+enum class ThreatSubtype {
+  UNKNOWN,
+  // Scam experiment verdict 1
+  SCAM_EXPERIMENT_VERDICT_1,
+  // Scam experiment verdict 2
+  SCAM_EXPERIMENT_VERDICT_2,
+  // Scam experiment catch all enforcement
+  SCAM_EXPERIMENT_CATCH_ALL_ENFORCEMENT,
 };
 
 // Data to report about the contents of a particular threat (malware, phishing,
@@ -38,10 +61,6 @@ struct HitReport {
   bool is_subresource;
   SBThreatType threat_type;
   ThreatSource threat_source;
-
-  // Opaque string used for tracking Pver4-based experiments.
-  // NOTE(vakh): Unused at the moment, but may be used later.
-  std::string population_id;
 
   ExtendedReportingLevel extended_reporting_level;
   bool is_enhanced_protection = false;

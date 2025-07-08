@@ -5,17 +5,23 @@
 #include "chrome/browser/web_applications/commands/fetch_install_info_from_install_url_command.h"
 
 #include <memory>
+#include <optional>
 
+#include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/web_applications/jobs/manifest_to_web_app_install_info_job.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_lock.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_icon_operations.h"
+#include "chrome/browser/web_applications/web_app_install_utils.h"
 #include "chrome/browser/web_applications/web_contents/web_app_data_retriever.h"
-#include "chrome/browser/web_applications/web_contents/web_app_url_loader.h"
 #include "chrome/browser/web_applications/web_contents/web_contents_manager.h"
 #include "chrome/common/chrome_features.h"
+#include "components/webapps/browser/web_contents/web_app_url_loader.h"
 #include "content/public/browser/web_contents.h"
+#include "url/origin.h"
 
 namespace web_app {
 
@@ -25,25 +31,15 @@ std::ostream& operator<<(std::ostream& os, FetchInstallInfoResult result) {
       return os << "kAppInfoObtained";
     case FetchInstallInfoResult::kWebContentsDestroyed:
       return os << "kWebContentsDestroyed";
-    case FetchInstallInfoResult::kInstallUrlInvalid:
-      return os << "kInstallUrlInvalid";
-    case FetchInstallInfoResult::kManifestIdInvalid:
-      return os << "kManifestIdInvalid";
     case FetchInstallInfoResult::kUrlLoadingFailure:
       return os << "kUrlLoadingFailure";
     case FetchInstallInfoResult::kNoValidManifest:
       return os << "kNoValidManifest";
     case FetchInstallInfoResult::kWrongManifestId:
       return os << "kWrongManifestId";
-    case FetchInstallInfoResult::kSystemShutdown:
-      return os << "kSystemShutdown";
     case FetchInstallInfoResult::kFailure:
       return os << "kFailure";
   }
-}
-
-base::Value FetchInstallInfoFromInstallUrlCommand::ToDebugValue() const {
-  return base::Value(debug_log_.Clone());
 }
 
 bool FetchInstallInfoFromInstallUrlCommand::
@@ -51,25 +47,36 @@ bool FetchInstallInfoFromInstallUrlCommand::
   return lock_->shared_web_contents().IsBeingDestroyed();
 }
 
-const LockDescription& FetchInstallInfoFromInstallUrlCommand::lock_description()
-    const {
-  return *lock_description_;
-}
-
 FetchInstallInfoFromInstallUrlCommand::FetchInstallInfoFromInstallUrlCommand(
-    ManifestId manifest_id,
+    webapps::ManifestId manifest_id,
     GURL install_url,
+    std::optional<webapps::ManifestId> parent_manifest_id,
     base::OnceCallback<void(std::unique_ptr<WebAppInstallInfo>)> callback)
-    : WebAppCommandTemplate<SharedWebContentsLock>(
-          "FetchInstallInfoFromInstallUrlCommand"),
-      lock_description_(std::make_unique<SharedWebContentsLockDescription>()),
-      manifest_id_{manifest_id},
-      install_url_{install_url},
-      web_app_install_info_callback_{std::move(callback)},
+    : WebAppCommand<SharedWebContentsLock, std::unique_ptr<WebAppInstallInfo>>(
+          "FetchInstallInfoFromInstallUrlCommand",
+          SharedWebContentsLockDescription(),
+          std::move(callback),
+          /*args_for_shutdown=*/nullptr),
+      manifest_id_(manifest_id),
+      install_url_(install_url),
+      parent_manifest_id_(parent_manifest_id),
       install_error_log_entry_(/*background_installation=*/true,
                                webapps::WebappInstallSource::SUB_APP) {
-  debug_log_.Set("manifest_id", manifest_id_.spec());
-  debug_log_.Set("install_url", install_url_.spec());
+  CHECK(manifest_id_.is_valid());
+  CHECK(install_url_.is_valid());
+
+  if (parent_manifest_id_.has_value()) {
+    CHECK(parent_manifest_id_.value().is_valid());
+    CHECK(url::Origin::Create(manifest_id_)
+              .IsSameOriginWith(
+                  url::Origin::Create(parent_manifest_id_.value())));
+    CHECK_NE(parent_manifest_id_.value(), manifest_id_);
+  }
+
+  GetMutableDebugValue().Set("manifest_id", manifest_id_.spec());
+  GetMutableDebugValue().Set("parent_manifest_id",
+                             parent_manifest_id_.value_or(GURL("")).spec());
+  GetMutableDebugValue().Set("install_url", install_url_.spec());
 }
 
 FetchInstallInfoFromInstallUrlCommand::
@@ -89,35 +96,21 @@ void FetchInstallInfoFromInstallUrlCommand::StartWithLock(
     return;
   }
 
-  if (!install_url_.is_valid()) {
-    CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kInstallUrlInvalid,
-                                   /*install_info=*/nullptr);
-    return;
-  }
-
-  if (!manifest_id_.is_valid()) {
-    CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kManifestIdInvalid,
-                                   /*install_info=*/nullptr);
-    return;
-  }
-
-  url_loader_->LoadUrl(install_url_, &lock_->shared_web_contents(),
-                       WebAppUrlLoader::UrlComparison::kIgnoreQueryParamsAndRef,
-                       base::BindOnce(&FetchInstallInfoFromInstallUrlCommand::
-                                          OnWebAppUrlLoadedGetWebAppInstallInfo,
-                                      weak_ptr_factory_.GetWeakPtr()));
-}
-
-void FetchInstallInfoFromInstallUrlCommand::OnShutdown() {
-  CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kSystemShutdown,
-                                 /*install_info=*/nullptr);
+  url_loader_->LoadUrl(
+      install_url_, &lock_->shared_web_contents(),
+      webapps::WebAppUrlLoader::UrlComparison::kIgnoreQueryParamsAndRef,
+      base::BindOnce(&FetchInstallInfoFromInstallUrlCommand::
+                         OnWebAppUrlLoadedGetWebAppInstallInfo,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FetchInstallInfoFromInstallUrlCommand::
-    OnWebAppUrlLoadedGetWebAppInstallInfo(WebAppUrlLoader::Result result) {
-  debug_log_.Set("url_loading_result", ConvertUrlLoaderResultToString(result));
+    OnWebAppUrlLoadedGetWebAppInstallInfo(
+        webapps::WebAppUrlLoaderResult result) {
+  GetMutableDebugValue().Set("url_loading_result",
+                             ConvertUrlLoaderResultToString(result));
 
-  if (result != WebAppUrlLoader::Result::kUrlLoaded) {
+  if (result != webapps::WebAppUrlLoaderResult::kUrlLoaded) {
     install_error_log_entry_.LogUrlLoaderError(
         "OnWebAppUrlLoadedGetWebAppInstallInfo", install_url_.spec(), result);
     CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kUrlLoadingFailure,
@@ -140,22 +133,22 @@ void FetchInstallInfoFromInstallUrlCommand::OnGetWebAppInstallInfo(
     return;
   }
 
-  install_info->start_url = install_url_;
   install_info->install_url = install_url_;
+  install_info->parent_app_manifest_id = parent_manifest_id_;
 
   data_retriever_->CheckInstallabilityAndRetrieveManifest(
-      &lock_->shared_web_contents(), /*bypass_service_worker_check=*/false,
-      base::BindOnce(
-          &FetchInstallInfoFromInstallUrlCommand::OnManifestRetrieved,
-          weak_ptr_factory_.GetWeakPtr(), std::move(install_info)));
+      &lock_->shared_web_contents(),
+      base::BindOnce(&FetchInstallInfoFromInstallUrlCommand::
+                         OnManifestRetrievedMaybeFetchInstallInfo,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(install_info)));
 }
 
-void FetchInstallInfoFromInstallUrlCommand::OnManifestRetrieved(
-    std::unique_ptr<WebAppInstallInfo> web_app_info,
-    blink::mojom::ManifestPtr opt_manifest,
-    const GURL& manifest_url,
-    bool valid_manifest_for_web_app,
-    webapps::InstallableStatusCode error_code) {
+void FetchInstallInfoFromInstallUrlCommand::
+    OnManifestRetrievedMaybeFetchInstallInfo(
+        std::unique_ptr<WebAppInstallInfo> web_app_info,
+        blink::mojom::ManifestPtr opt_manifest,
+        bool valid_manifest_for_web_app,
+        webapps::InstallableStatusCode error_code) {
   CHECK(web_app_info);
   if (!valid_manifest_for_web_app) {
     LOG(WARNING) << "Did not install " << install_url_.spec()
@@ -165,34 +158,39 @@ void FetchInstallInfoFromInstallUrlCommand::OnManifestRetrieved(
     return;
   }
 
+  // If an optional manifest is found, start the job to parse the manifest and
+  // create a WebAppInstallInfo from it.
   if (opt_manifest) {
-    UpdateWebAppInfoFromManifest(*opt_manifest, manifest_url,
-                                 web_app_info.get());
-  }
+    WebAppInstallInfoConstructOptions construct_options;
+    construct_options.skip_page_favicons = !opt_manifest->icons.empty();
 
-  AppId app_id = GenerateAppIdFromManifestId(web_app_info->manifest_id);
-  const AppId expected_app_id = GenerateAppIdFromManifestId(manifest_id_);
-  if (app_id != expected_app_id) {
-    install_error_log_entry_.LogExpectedAppIdError(
-        "OnManifestRetrieved", web_app_info->start_url.spec(), app_id,
-        expected_app_id);
-    CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kWrongManifestId,
-                                   /*install_info=*/nullptr);
+    manifest_to_install_info_job_ =
+        ManifestToWebAppInstallInfoJob::CreateAndStart(
+            *opt_manifest, *data_retriever_.get(),
+            /*background_installation=*/true,
+            webapps::WebappInstallSource::SUB_APP,
+            lock_->shared_web_contents().GetWeakPtr(), [](IconUrlSizeSet&) {},
+            GetMutableDebugValue(),
+            base::BindOnce(
+                &FetchInstallInfoFromInstallUrlCommand::OnInstallInfoFetched,
+                weak_ptr_factory_.GetWeakPtr()),
+            construct_options, web_app_info->Clone());
+
     return;
   }
 
-  // If the manifest specified icons, don't use the page icons.
-  const bool skip_page_favicons = opt_manifest && !opt_manifest->icons.empty();
-  base::flat_set<GURL> icon_urls = GetValidIconUrlsToDownload(*web_app_info);
+  IconUrlSizeSet icon_urls = GetValidIconUrlsToDownload(*web_app_info);
 
   data_retriever_->GetIcons(
-      &lock_->shared_web_contents(), std::move(icon_urls), skip_page_favicons,
+      &lock_->shared_web_contents(), std::move(icon_urls),
+      /*skip_page_favicons=*/false,
       /*fail_all_if_any_fail=*/false,
-      base::BindOnce(&FetchInstallInfoFromInstallUrlCommand::OnIconsRetrieved,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(web_app_info)));
+      base::BindOnce(
+          &FetchInstallInfoFromInstallUrlCommand::OnIconsRetrievedForNoManifest,
+          weak_ptr_factory_.GetWeakPtr(), std::move(web_app_info)));
 }
 
-void FetchInstallInfoFromInstallUrlCommand::OnIconsRetrieved(
+void FetchInstallInfoFromInstallUrlCommand::OnIconsRetrievedForNoManifest(
     std::unique_ptr<WebAppInstallInfo> web_app_info,
     IconsDownloadedResult result,
     IconsMap icons_map,
@@ -205,17 +203,39 @@ void FetchInstallInfoFromInstallUrlCommand::OnIconsRetrieved(
                                  std::move(web_app_info));
 }
 
+void FetchInstallInfoFromInstallUrlCommand::OnInstallInfoFetched(
+    std::unique_ptr<WebAppInstallInfo> info_from_manifest) {
+  CHECK(info_from_manifest);
+  info_from_manifest->install_url = install_url_;
+  info_from_manifest->parent_app_manifest_id = parent_manifest_id_;
+
+  const webapps::AppId app_id =
+      GenerateAppIdFromManifestId(info_from_manifest->manifest_id(),
+                                  info_from_manifest->parent_app_manifest_id);
+  const webapps::AppId expected_app_id = GenerateAppIdFromManifestId(
+      manifest_id_, info_from_manifest->parent_app_manifest_id);
+  if (app_id != expected_app_id) {
+    install_error_log_entry_.LogExpectedAppIdError(
+        "OnManifestRetrieved", info_from_manifest->start_url().spec(), app_id,
+        expected_app_id);
+    CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kWrongManifestId,
+                                   /*install_info=*/nullptr);
+    return;
+  }
+
+  CompleteCommandAndSelfDestruct(FetchInstallInfoResult::kAppInfoObtained,
+                                 std::move(info_from_manifest));
+}
+
 void FetchInstallInfoFromInstallUrlCommand::CompleteCommandAndSelfDestruct(
     FetchInstallInfoResult result,
     std::unique_ptr<WebAppInstallInfo> install_info) {
-  debug_log_.Set("command_result", base::ToString(result));
+  GetMutableDebugValue().Set("command_result", base::ToString(result));
 
   CommandResult command_result = [&] {
     switch (result) {
       case FetchInstallInfoResult::kAppInfoObtained:
         return CommandResult::kSuccess;
-      case FetchInstallInfoResult::kSystemShutdown:
-        return CommandResult::kShutdown;
       default:
         return CommandResult::kFailure;
     }
@@ -227,9 +247,7 @@ void FetchInstallInfoFromInstallUrlCommand::CompleteCommandAndSelfDestruct(
         install_error_log_entry_.TakeErrorDict());
   }
 
-  SignalCompletionAndSelfDestruct(
-      command_result, base::BindOnce(std::move(web_app_install_info_callback_),
-                                     std::move(install_info)));
+  CompleteAndSelfDestruct(command_result, std::move(install_info));
 }
 
 }  // namespace web_app

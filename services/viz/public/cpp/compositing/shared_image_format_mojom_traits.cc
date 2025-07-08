@@ -19,9 +19,10 @@ EnumTraits<viz::mojom::PlaneConfig, viz::SharedImageFormat::PlaneConfig>::
       return viz::mojom::PlaneConfig::kY_UV;
     case viz::SharedImageFormat::PlaneConfig::kY_UV_A:
       return viz::mojom::PlaneConfig::kY_UV_A;
+    case viz::SharedImageFormat::PlaneConfig::kY_U_V_A:
+      return viz::mojom::PlaneConfig::kY_U_V_A;
   }
   NOTREACHED();
-  return viz::mojom::PlaneConfig::kY_UV;
 }
 
 // static
@@ -41,6 +42,9 @@ bool EnumTraits<viz::mojom::PlaneConfig, viz::SharedImageFormat::PlaneConfig>::
     case viz::mojom::PlaneConfig::kY_UV_A:
       *out = viz::SharedImageFormat::PlaneConfig::kY_UV_A;
       return true;
+    case viz::mojom::PlaneConfig::kY_U_V_A:
+      *out = viz::SharedImageFormat::PlaneConfig::kY_U_V_A;
+      return true;
   }
   return false;
 }
@@ -52,9 +56,12 @@ EnumTraits<viz::mojom::Subsampling, viz::SharedImageFormat::Subsampling>::
   switch (subsampling) {
     case viz::SharedImageFormat::Subsampling::k420:
       return viz::mojom::Subsampling::k420;
+    case viz::SharedImageFormat::Subsampling::k422:
+      return viz::mojom::Subsampling::k422;
+    case viz::SharedImageFormat::Subsampling::k444:
+      return viz::mojom::Subsampling::k444;
   }
   NOTREACHED();
-  return viz::mojom::Subsampling::k420;
 }
 
 // static
@@ -64,6 +71,12 @@ bool EnumTraits<viz::mojom::Subsampling, viz::SharedImageFormat::Subsampling>::
   switch (input) {
     case viz::mojom::Subsampling::k420:
       *out = viz::SharedImageFormat::Subsampling::k420;
+      return true;
+    case viz::mojom::Subsampling::k422:
+      *out = viz::SharedImageFormat::Subsampling::k422;
+      return true;
+    case viz::mojom::Subsampling::k444:
+      *out = viz::SharedImageFormat::Subsampling::k444;
       return true;
   }
   return false;
@@ -84,7 +97,6 @@ EnumTraits<viz::mojom::ChannelFormat, viz::SharedImageFormat::ChannelFormat>::
       return viz::mojom::ChannelFormat::k16F;
   }
   NOTREACHED();
-  return viz::mojom::ChannelFormat::k8;
 }
 
 // static
@@ -122,6 +134,9 @@ bool StructTraits<
     return false;
   if (!data.ReadChannelFormat(&out->channel_format))
     return false;
+#if BUILDFLAG(IS_OZONE)
+  out->prefers_external_sampler = data.prefers_external_sampler();
+#endif
 
   return true;
 }

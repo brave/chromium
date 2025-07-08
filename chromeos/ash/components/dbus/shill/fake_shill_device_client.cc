@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "ash/constants/ash_features.h"
@@ -27,7 +28,6 @@
 #include "dbus/object_proxy.h"
 #include "dbus/values_util.h"
 #include "net/base/ip_endpoint.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace ash {
@@ -101,7 +101,7 @@ void FakeShillDeviceClient::SetProperty(const dbus::ObjectPath& device_path,
     std::move(error_callback)
         .Run(set_property_error_name_.value(),
              /*error_message=*/std::string());
-    set_property_error_name_ = absl::nullopt;
+    set_property_error_name_ = std::nullopt;
     return;
   }
 
@@ -349,7 +349,8 @@ ShillDeviceClient::TestInterface* FakeShillDeviceClient::GetTestInterface() {
 
 void FakeShillDeviceClient::AddDevice(const std::string& device_path,
                                       const std::string& type,
-                                      const std::string& name) {
+                                      const std::string& name,
+                                      const std::string& address) {
   ShillManagerClient::Get()->GetTestInterface()->AddDevice(device_path);
 
   base::Value::Dict* properties = stub_devices_.EnsureDict(device_path);
@@ -358,6 +359,9 @@ void FakeShillDeviceClient::AddDevice(const std::string& device_path,
   properties->Set(shill::kDBusObjectProperty, device_path);
   properties->Set(shill::kDBusServiceProperty,
                   modemmanager::kModemManager1ServiceName);
+  if (!address.empty()) {
+    properties->Set(shill::kAddressProperty, address);
+  }
   if (type == shill::kTypeCellular) {
     properties->Set(shill::kCellularPolicyAllowRoamingProperty, false);
   }
@@ -463,7 +467,7 @@ void FakeShillDeviceClient::SetSimulateInhibitScanning(
 }
 
 void FakeShillDeviceClient::SetPropertyChangeDelay(
-    absl::optional<base::TimeDelta> time_delay) {
+    std::optional<base::TimeDelta> time_delay) {
   property_change_delay_ = time_delay;
 }
 
@@ -506,7 +510,6 @@ void FakeShillDeviceClient::SetSimLockStatus(const std::string& device_path,
   base::Value::Dict* device_properties = stub_devices_.FindDict(device_path);
   if (!device_properties) {
     NOTREACHED() << "Device not found: " << device_path;
-    return;
   }
 
   base::Value::Dict* simlock_dict =
@@ -584,7 +587,7 @@ void FakeShillDeviceClient::PassStubDeviceProperties(
   const base::Value::Dict* device_properties =
       stub_devices_.FindDict(device_path.value());
   if (!device_properties) {
-    std::move(callback).Run(absl::nullopt);
+    std::move(callback).Run(std::nullopt);
     return;
   }
   std::move(callback).Run(device_properties->Clone());

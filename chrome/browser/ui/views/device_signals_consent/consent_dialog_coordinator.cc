@@ -4,7 +4,10 @@
 
 #include "chrome/browser/ui/views/device_signals_consent/consent_dialog_coordinator.h"
 
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/no_destructor.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -18,12 +21,13 @@
 #include "components/prefs/pref_service.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ui/profile_picker.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/profiles/profile_picker.h"
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 using device_signals::prefs::kDeviceSignalsConsentReceived;
 
@@ -37,7 +41,7 @@ ui::ImageModel GetIcon() {
   return ui::ImageModel::FromVectorIcon(
       vector_icons::kBusinessIcon, ui::kColorIcon,
       ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
+          views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
 }
 
 }  // namespace
@@ -52,19 +56,22 @@ ConsentDialogCoordinator::CreateDeviceSignalsConsentDialogModel() {
       .AddOkButton(
           base::BindOnce(&ConsentDialogCoordinator::OnConsentDialogAccept,
                          weak_ptr_factory_.GetWeakPtr()),
-          ui::DialogModelButton::Params()
+          ui::DialogModel::Button::Params()
               .SetLabel(l10n_util::GetStringUTF16(
                   IDS_DEVICE_SIGNALS_CONSENT_DIALOG_PROCEED_BUTTON))
               .SetId(kDeviceSignalsConsentOkButtonElementId))
       .AddCancelButton(
           base::BindOnce(&ConsentDialogCoordinator::OnConsentDialogCancel,
                          weak_ptr_factory_.GetWeakPtr()),
-          ui::DialogModelButton::Params()
+          ui::DialogModel::Button::Params()
               .SetLabel(l10n_util::GetStringUTF16(
                   IDS_DEVICE_SIGNALS_CONSENT_DIALOG_CANCEL_BUTTON))
               .SetId(kDeviceSignalsConsentCancelButtonElementId))
-      .OverrideDefaultButton(ui::DialogButton::DIALOG_BUTTON_NONE)
+      .OverrideDefaultButton(ui::mojom::DialogButton::kNone)
       .AddParagraph(ui::DialogModelLabel(GetDialogBodyText()))
+      .SetCloseActionCallback(
+          base::BindOnce(&ConsentDialogCoordinator::OnConsentDialogClose,
+                         weak_ptr_factory_.GetWeakPtr()))
       .Build();
 }
 
@@ -113,11 +120,10 @@ void ConsentDialogCoordinator::RequestConsent(RequestConsentCallback callback) {
 }
 
 std::u16string ConsentDialogCoordinator::GetDialogBodyText() {
-  absl::optional<std::string> manager =
-      chrome::GetAccountManagerIdentity(profile_);
+  std::optional<std::string> manager = GetAccountManagerIdentity(profile_);
   if (!manager &&
       base::FeatureList::IsEnabled(features::kFlexOrgManagementDisclosure)) {
-    manager = chrome::GetDeviceManagerIdentity();
+    manager = GetDeviceManagerIdentity();
   }
   return (manager && manager.value().length())
              ? l10n_util::GetStringFUTF16(
@@ -134,21 +140,32 @@ void ConsentDialogCoordinator::Show() {
     }
     return;
   }
-
+  base::RecordAction(base::UserMetricsAction("DeviceSignalsConsent_Shown"));
   dialog_widget_ = chrome::ShowBrowserModal(
       browser_, CreateDeviceSignalsConsentDialogModel());
 }
 
 void ConsentDialogCoordinator::OnConsentDialogAccept() {
+  base::RecordAction(base::UserMetricsAction("DeviceSignalsConsent_Accepted"));
   profile_->GetPrefs()->SetBoolean(kDeviceSignalsConsentReceived, true);
 }
 
 void ConsentDialogCoordinator::OnConsentDialogCancel() {
+  base::RecordAction(base::UserMetricsAction("DeviceSignalsConsent_Cancelled"));
   profiles::CloseProfileWindows(profile_);
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
       ProfilePicker::EntryPoint::kProfileLocked));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+}
+
+void ConsentDialogCoordinator::OnConsentDialogClose() {
+  if (dialog_widget_->closed_reason() ==
+      views::Widget::ClosedReason::kEscKeyPressed) {
+    base::RecordAction(
+        base::UserMetricsAction("DeviceSignalsConsent_EscPressed"));
+    OnConsentDialogCancel();
+  }
 }
 
 void ConsentDialogCoordinator::OnConsentPreferenceUpdated(

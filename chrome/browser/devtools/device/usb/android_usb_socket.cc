@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/devtools/device/usb/android_usb_socket.h"
 
 #include <stddef.h>
 
 #include "base/check_op.h"
 #include "base/functional/callback_helpers.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
@@ -212,14 +217,9 @@ bool AndroidUsbSocket::WasEverUsed() const {
   return true;
 }
 
-bool AndroidUsbSocket::WasAlpnNegotiated() const {
-  NOTIMPLEMENTED();
-  return true;
-}
-
 net::NextProto AndroidUsbSocket::GetNegotiatedProtocol() const {
   NOTIMPLEMENTED();
-  return net::kProtoUnknown;
+  return net::NextProto::kProtoUnknown;
 }
 
 bool AndroidUsbSocket::GetSSLInfo(net::SSLInfo* ssl_info) {

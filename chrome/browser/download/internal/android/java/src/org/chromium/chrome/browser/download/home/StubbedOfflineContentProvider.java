@@ -4,14 +4,15 @@
 
 package org.chromium.chrome.browser.download.home;
 
-import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertNull;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import android.os.Handler;
 import android.os.Looper;
 
 import org.chromium.base.Callback;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.components.download.DownloadDangerType;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.OfflineContentProvider;
 import org.chromium.components.offline_items_collection.OfflineItem;
@@ -26,13 +27,19 @@ import java.util.ArrayList;
 public class StubbedOfflineContentProvider implements OfflineContentProvider {
     private final Handler mHandler;
     private final CallbackHelper mDeleteItemCallback;
+    private final CallbackHelper mValidateDangerousDownloadCallback;
     private final ArrayList<OfflineItem> mItems;
     private OfflineContentProvider.Observer mObserver;
 
     public StubbedOfflineContentProvider() {
         mHandler = new Handler(Looper.getMainLooper());
         mDeleteItemCallback = new CallbackHelper();
+        mValidateDangerousDownloadCallback = new CallbackHelper();
         mItems = new ArrayList<>();
+    }
+
+    public CallbackHelper getValidateDangerousDownloadHelper() {
+        return mValidateDangerousDownloadCallback;
     }
 
     public ArrayList<OfflineItem> getItems() {
@@ -92,10 +99,11 @@ public class StubbedOfflineContentProvider implements OfflineContentProvider {
             }
         }
 
-        mHandler.post(() -> {
-            if (mObserver != null) mObserver.onItemRemoved(id);
-            mDeleteItemCallback.notifyCalled();
-        });
+        mHandler.post(
+                () -> {
+                    if (mObserver != null) mObserver.onItemRemoved(id);
+                    mDeleteItemCallback.notifyCalled();
+                });
     }
 
     @Override
@@ -105,7 +113,25 @@ public class StubbedOfflineContentProvider implements OfflineContentProvider {
     public void pauseDownload(ContentId id) {}
 
     @Override
-    public void resumeDownload(ContentId id, boolean hasUserGesture) {}
+    public void resumeDownload(ContentId id) {}
+
+    @Override
+    public void validateDangerousDownload(ContentId id) {
+        for (int i = 0; i < mItems.size(); i++) {
+            if (mItems.get(i).id.equals(id)) {
+                OfflineItem validatedItem = mItems.get(i).clone();
+                validatedItem.isDangerous = false;
+                validatedItem.dangerType = DownloadDangerType.USER_VALIDATED;
+                mItems.set(i, validatedItem);
+                mValidateDangerousDownloadCallback.notifyCalled();
+                break;
+            }
+        }
+        mHandler.post(
+                () -> {
+                    notifyObservers(id);
+                });
+    }
 
     @Override
     public void cancelDownload(ContentId id) {}

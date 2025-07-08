@@ -7,6 +7,7 @@
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
 #include "components/viz/common/quads/shared_quad_state.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
+#include "ui/gfx/overlay_layer_id.h"
 
 namespace viz {
 namespace {
@@ -33,8 +34,6 @@ const char* MaterialToString(DrawQuad::Material material) {
       return "kTextureContent";
     case DrawQuad::Material::kTiledContent:
       return "kTiledContent";
-    case DrawQuad::Material::kYuvVideoContent:
-      return "kYuvVideoContent";
     case DrawQuad::Material::kVideoHole:
       return "kVideoHole";
   }
@@ -47,16 +46,14 @@ testing::Matcher<const DrawQuad*> IsQuadType(
                         testing::Eq(expected_material));
 }
 
-testing::Matcher<const DrawQuad*> HasSharedQuadState(
-    testing::Matcher<const SharedQuadState*> matcher) {
-  return testing::Field("shared_quad_state", &DrawQuad::shared_quad_state,
-                        matcher);
-}
-
 }  // namespace
 
 void PrintTo(DrawQuad::Material material, ::std::ostream* os) {
   *os << MaterialToString(material);
+}
+
+void PrintTo(const OffsetTag& offset_tag, ::std::ostream* os) {
+  *os << offset_tag.ToString();
 }
 
 testing::Matcher<const DrawQuad*> IsSolidColorQuad() {
@@ -73,10 +70,6 @@ testing::Matcher<const DrawQuad*> IsSolidColorQuad(SkColor4f expected_color) {
 
 testing::Matcher<const DrawQuad*> IsTextureQuad() {
   return IsQuadType(DrawQuad::Material::kTextureContent);
-}
-
-testing::Matcher<const DrawQuad*> IsYuvVideoQuad() {
-  return IsQuadType(DrawQuad::Material::kYuvVideoContent);
 }
 
 testing::Matcher<const DrawQuad*> IsSurfaceQuad() {
@@ -107,6 +100,12 @@ testing::Matcher<const DrawQuad*> HasVisibleRect(
                         testing::Eq(visible_rect));
 }
 
+testing::Matcher<const DrawQuad*> HasSharedQuadState(
+    testing::Matcher<const SharedQuadState*> matcher) {
+  return testing::Field("shared_quad_state", &DrawQuad::shared_quad_state,
+                        matcher);
+}
+
 testing::Matcher<const DrawQuad*> HasTransform(
     const gfx::Transform& transform) {
   return HasSharedQuadState(testing::Field(
@@ -125,13 +124,24 @@ testing::Matcher<const DrawQuad*> AreContentsOpaque(bool opaque) {
       testing::Eq(opaque)));
 }
 
+testing::Matcher<const DrawQuad*> HasClipRect(
+    std::optional<gfx::Rect> clip_rect) {
+  return HasSharedQuadState(testing::Field(
+      "clip_rect", &SharedQuadState::clip_rect, testing::Eq(clip_rect)));
+}
+
+testing::Matcher<const DrawQuad*> HasOffsetTag(OffsetTag offset_tag) {
+  return HasSharedQuadState(testing::Field(
+      "offset_tag", &SharedQuadState::offset_tag, testing::Eq(offset_tag)));
+}
+
 testing::Matcher<const DrawQuad*> HasLayerId(uint32_t layer_id) {
   return HasSharedQuadState(testing::Field(
       "layer_id", &SharedQuadState::layer_id, testing::Eq(layer_id)));
 }
 
 testing::Matcher<const DrawQuad*> HasLayerNamespaceId(
-    uint32_t layer_namespace_id) {
+    const gfx::OverlayLayerId::NamespaceId& layer_namespace_id) {
   return HasSharedQuadState(testing::Field("layer_namespace_id",
                                            &SharedQuadState::layer_namespace_id,
                                            testing::Eq(layer_namespace_id)));

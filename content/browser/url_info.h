@@ -5,10 +5,14 @@
 #ifndef CONTENT_BROWSER_URL_INFO_H_
 #define CONTENT_BROWSER_URL_INFO_H_
 
+#include <optional>
+
+#include "base/tracing/protos/chrome_track_event.pbzero.h"
+#include "content/browser/agent_cluster_key.h"
 #include "content/browser/web_exposed_isolation_info.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/storage_partition_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -81,8 +85,8 @@ struct CONTENT_EXPORT UrlInfo {
   // Used to convert GURL to UrlInfo in tests where opt-in isolation is not
   // being tested.
   static UrlInfo CreateForTesting(const GURL& url_in,
-                                  absl::optional<StoragePartitionConfig>
-                                      storage_partition_config = absl::nullopt);
+                                  std::optional<StoragePartitionConfig>
+                                      storage_partition_config = std::nullopt);
 
   // Depending on enabled features (some of which can change at runtime),
   // default can be no isolation, requests origin agent cluster only, or
@@ -123,6 +127,9 @@ struct CONTENT_EXPORT UrlInfo {
   // isolated.
   bool IsIsolated() const;
 
+  using TraceProto = perfetto::protos::pbzero::UrlInfo;
+  void WriteIntoTrace(perfetto::TracedProto<TraceProto> proto) const;
+
   GURL url;
 
   // This field indicates whether the URL is requesting additional process
@@ -138,18 +145,29 @@ struct CONTENT_EXPORT UrlInfo {
   // on site isolation for `url`'s site.
   bool is_coop_isolation_requested = false;
 
+  // True if this resource is served from the prefetch cache, and its success
+  // may have been influenced by cross-site state. Such responses may require
+  // special handling to make it harder to detect that this has happened.
+  bool is_prefetch_with_cross_site_contamination = false;
+
   // This allows overriding the origin of |url| for process assignment purposes
-  // in certain very special cases. If the navigation to |url| is performed via
-  // the loadDataWithBaseURL API (e.g., in a <webview> tag or on Android
-  // Webview), this will be the base origin provided via that API. For renderer-
-  // initiated about:blank navigations, this will be the initiator's origin that
-  // about:blank should inherit. Otherwise, this will be nullopt.
+  // in certain very special cases.
+  // - The navigation to |url| is through loadDataWithBaseURL (e.g., in a
+  //   <webview> tag or on Android Webview): this will be the base origin
+  //   provided via that API.
+  // - For renderer-initiated about:blank navigations: this will be the
+  //   initiator's origin that about:blank should inherit.
+  // - data: URLs that will be rendered (e.g. not downloads) that do NOT use
+  //   loadDataWithBaseURL: this will be the value of the tentative origin to
+  //   commit, which we will use to keep the nonce of the opaque origin
+  //   consistent across a navigation.
+  // - All other cases: this will be nullopt.
   //
   // TODO(alexmos): Currently, this is also used to hold the origin committed
   // by the renderer at DidCommitNavigation() time, for use in commit-time URL
   // and origin checks that require a UrlInfo.  Investigate whether there's a
   // cleaner way to organize these checks.  See https://crbug.com/1320402.
-  absl::optional<url::Origin> origin;
+  std::optional<url::Origin> origin;
 
   // If url is being loaded in a frame that is in a origin-restricted sandboxed,
   // then this flag will be true.
@@ -168,7 +186,7 @@ struct CONTENT_EXPORT UrlInfo {
   // containing a StoragePartitionConfig that isn't compatible with the
   // BrowsingInstance that the SiteInstance should belong to will lead to a
   // CHECK failure.
-  absl::optional<StoragePartitionConfig> storage_partition_config;
+  std::optional<StoragePartitionConfig> storage_partition_config;
 
   // Pages may choose to isolate themselves more strongly than the web's
   // default, thus allowing access to APIs that would be difficult to
@@ -178,26 +196,20 @@ struct CONTENT_EXPORT UrlInfo {
   // When we haven't yet been to the network or inherited properties that are
   // sufficient to know the future isolation state - we are in a speculative
   // state - this member will be empty.
-  absl::optional<WebExposedIsolationInfo> web_exposed_isolation_info;
+  std::optional<WebExposedIsolationInfo> web_exposed_isolation_info;
 
   // Indicates that the URL directs to PDF content, which should be isolated
-  // from other types of content.
+  // from other types of content.  On Android, this can only be true when a PDF
+  // NativePage is created for a main frame navigation.
   bool is_pdf = false;
 
-  // If set, indicates that this UrlInfo is for a document that sets either
-  // COOP: same-origin or COOP: restrict-properties from the given origin. For
-  // subframes, it is inherited from the top-level frame. This is used to select
-  // an appropriate BrowsingInstance when navigating within a CoopRelatedGroup.
-  //
-  // Note: This cannot be part of the WebExposedIsolationInfo, because while it
-  // might force a different BrowsingInstance to be used, it may not force a
-  // strict process isolation, which non-matching web_exposed_isolation_info
-  // implies. Example: a top-level a.com document sets COOP:
-  // restrict-properties, and an a.com iframe in another tab has no COOP set.
-  // Under memory pressure they should be able to reuse the same process. This
-  // is not the case if the top-level document sets COOP: restrict-properties +
-  // COEP, because it then has an isolated WebExposedIsolationInfo.
-  absl::optional<url::Origin> common_coop_origin;
+  // The CrossOriginIsolationKey to use for the navigation. This represents the
+  // isolation requested by the page itself through the use of COOP, COEP and
+  // DIP. Right now, this is only set when DocumentIsolationPolicy is enabled,
+  // but it should eventually for COOP and COEP. It will eventually replace
+  // WebExposedIsolationInfo.
+  std::optional<AgentClusterKey::CrossOriginIsolationKey>
+      cross_origin_isolation_key;
 
   // Any new UrlInfo fields should be added to UrlInfoInit as well, and the
   // UrlInfo constructor that takes a UrlInfoInit should be updated as well.
@@ -215,17 +227,20 @@ class CONTENT_EXPORT UrlInfoInit {
   UrlInfoInit& WithOriginIsolationRequest(
       UrlInfo::OriginIsolationRequest origin_isolation_request);
   UrlInfoInit& WithCOOPSiteIsolation(bool requests_coop_isolation);
+  UrlInfoInit& WithCrossSitePrefetchContamination(bool contaminated);
   UrlInfoInit& WithOrigin(const url::Origin& origin);
   UrlInfoInit& WithSandbox(bool is_sandboxed);
   UrlInfoInit& WithUniqueSandboxId(int unique_sandbox_id);
   UrlInfoInit& WithStoragePartitionConfig(
-      absl::optional<StoragePartitionConfig> storage_partition_config);
+      std::optional<StoragePartitionConfig> storage_partition_config);
   UrlInfoInit& WithWebExposedIsolationInfo(
-      absl::optional<WebExposedIsolationInfo> web_exposed_isolation_info);
+      std::optional<WebExposedIsolationInfo> web_exposed_isolation_info);
   UrlInfoInit& WithIsPdf(bool is_pdf);
-  UrlInfoInit& WithCommonCoopOrigin(const url::Origin& origin);
+  UrlInfoInit& WithCrossOriginIsolationKey(
+      const std::optional<AgentClusterKey::CrossOriginIsolationKey>&
+          cross_origin_isolation_key);
 
-  const absl::optional<url::Origin>& origin() { return origin_; }
+  const std::optional<url::Origin>& origin() { return origin_; }
 
  private:
   UrlInfoInit(UrlInfoInit&);
@@ -236,13 +251,15 @@ class CONTENT_EXPORT UrlInfoInit {
   UrlInfo::OriginIsolationRequest origin_isolation_request_ =
       UrlInfo::OriginIsolationRequest::kDefault;
   bool requests_coop_isolation_ = false;
-  absl::optional<url::Origin> origin_;
+  bool is_prefetch_with_cross_site_contamination_ = false;
+  std::optional<url::Origin> origin_;
   bool is_sandboxed_ = false;
   int64_t unique_sandbox_id_ = UrlInfo::kInvalidUniqueSandboxId;
-  absl::optional<StoragePartitionConfig> storage_partition_config_;
-  absl::optional<WebExposedIsolationInfo> web_exposed_isolation_info_;
+  std::optional<StoragePartitionConfig> storage_partition_config_;
+  std::optional<WebExposedIsolationInfo> web_exposed_isolation_info_;
   bool is_pdf_ = false;
-  absl::optional<url::Origin> common_coop_origin_;
+  std::optional<AgentClusterKey::CrossOriginIsolationKey>
+      cross_origin_isolation_key_;
 
   // Any new fields should be added to the UrlInfoInit(UrlInfo) constructor.
 };  // class UrlInfoInit

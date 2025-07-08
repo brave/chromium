@@ -16,6 +16,7 @@
 #include "content/browser/renderer_host/code_cache_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/service_worker/service_worker_consts.h"
+#include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/browser/webtransport/web_transport_connector_impl.h"
@@ -23,8 +24,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/origin_util.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "storage/browser/blob/blob_url_store_impl.h"
@@ -38,21 +41,20 @@ namespace content {
 ServiceWorkerHost::ServiceWorkerHost(
     mojo::PendingAssociatedReceiver<blink::mojom::ServiceWorkerContainerHost>
         host_receiver,
-    ServiceWorkerVersion* version,
+    ServiceWorkerVersion& version,
     base::WeakPtr<ServiceWorkerContextCore> context)
-    : version_(version),
+    : worker_process_id_(ChildProcessHost::kInvalidUniqueID),
+      version_(&version),
+      token_(blink::ServiceWorkerToken()),
       broker_(this),
-      container_host_(std::make_unique<content::ServiceWorkerContainerHost>(
-          std::move(context))),
+      container_host_(
+          std::make_unique<content::ServiceWorkerContainerHostForServiceWorker>(
+              std::move(context),
+              this,
+              version_->script_url(),
+              version_->key())),
       host_receiver_(container_host_.get(), std::move(host_receiver)) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(version_);
-
-  container_host_->set_service_worker_host(this);
-  container_host_->UpdateUrls(
-      version_->script_url(),
-      url::Origin::Create(version_->key().top_level_site().GetURL()),
-      version_->key());
 }
 
 ServiceWorkerHost::~ServiceWorkerHost() {
@@ -101,12 +103,13 @@ void ServiceWorkerHost::BindCacheStorage(
 
 void ServiceWorkerHost::GetSandboxedFileSystemForBucket(
     const storage::BucketInfo& bucket,
+    const std::vector<std::string>& directory_path_components,
     blink::mojom::FileSystemAccessManager::GetSandboxedFileSystemCallback
         callback) {
-  auto* process =
-      RenderProcessHost::FromID(version_->embedded_worker()->process_id());
+  auto* process = GetProcessHost();
   if (process) {
     process->GetSandboxedFileSystemForBucket(bucket.ToBucketLocator(),
+                                             directory_path_components,
                                              std::move(callback));
   } else {
     std::move(callback).Run(
@@ -129,8 +132,7 @@ void ServiceWorkerHost::BindHidService(
 void ServiceWorkerHost::BindUsbService(
     mojo::PendingReceiver<blink::mojom::WebUsbService> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(container_host_->top_frame_origin());
-  if (container_host_->top_frame_origin()->opaque()) {
+  if (container_host_->top_frame_origin().opaque()) {
     // Service worker should not be available to a window/worker client whose
     // origin is opaque according to Service Worker specification. However, this
     // can possibly be triggered by a compromised renderer, so reject it and
@@ -141,7 +143,7 @@ void ServiceWorkerHost::BindUsbService(
     return;
   }
   version_->embedded_worker()->BindUsbService(
-      *container_host_->top_frame_origin(), std::move(receiver));
+      container_host_->top_frame_origin(), std::move(receiver));
 }
 
 net::NetworkIsolationKey ServiceWorkerHost::GetNetworkIsolationKey() const {
@@ -164,10 +166,11 @@ StoragePartition* ServiceWorkerHost::GetStoragePartition() const {
   // before we had the opportunity to Detach because the disconnect handler
   // wasn't run yet. In such cases it is is safe to ignore these messages since
   // we are about to stop the service worker.
-  auto* process =
-      RenderProcessHost::FromID(version_->embedded_worker()->process_id());
-  if (process == nullptr)
+  auto* process = GetProcessHost();
+
+  if (process == nullptr) {
     return nullptr;
+  }
 
   return process->GetStoragePartition();
 }
@@ -182,8 +185,9 @@ void ServiceWorkerHost::CreateCodeCacheHost(
   // 3) Renderer gets the Stop() IPC and realize it should try to stop the
   // worker.
   // Given the worker is stopping it is safe to ignore these messages.
-  if (embedded_worker_status == EmbeddedWorkerStatus::STOPPING)
+  if (embedded_worker_status == blink::EmbeddedWorkerStatus::kStopping) {
     return;
+  }
 
   // Create a new CodeCacheHostImpl and bind it to the given receiver.
   StoragePartition* storage_partition = GetStoragePartition();
@@ -225,7 +229,21 @@ void ServiceWorkerHost::CreateBlobUrlStoreProvider(
   }
 
   storage_partition_impl->GetBlobUrlRegistry()->AddReceiver(
-      version()->key(), std::move(receiver));
+      version()->key(), version()->key().origin(),
+      GetProcessHost()->GetDeprecatedID(), std::move(receiver),
+      /*context_type_for_debugging=*/"Service Worker",
+      base::BindRepeating(
+          [](base::WeakPtr<ServiceWorkerHost> host) -> std::string {
+            if (!host) {
+              return "destroyed ServiceWorkerHost";
+            }
+            return host->version()->key().GetDebugString();
+          },
+          weak_factory_.GetWeakPtr()),
+      // Storage access can only be granted to dedicated workers.
+      base::BindRepeating([]() -> bool { return false; }),
+      !(GetContentClient()->browser()->IsBlobUrlPartitioningEnabled(
+          GetProcessHost()->GetBrowserContext())));
 }
 
 void ServiceWorkerHost::CreateBucketManagerHost(
@@ -251,15 +269,18 @@ blink::StorageKey ServiceWorkerHost::GetBucketStorageKey() {
 
 blink::mojom::PermissionStatus ServiceWorkerHost::GetPermissionStatus(
     blink::PermissionType permission_type) {
-  auto* process =
-      RenderProcessHost::FromID(version_->embedded_worker()->process_id());
-  if (!process)
+  auto* process = GetProcessHost();
+
+  if (!process) {
     return blink::mojom::PermissionStatus::DENIED;
+  }
 
   return process->GetBrowserContext()
       ->GetPermissionController()
-      ->GetPermissionStatusForWorker(permission_type, process,
-                                     GetBucketStorageKey().origin());
+      ->GetPermissionStatusForWorker(
+          content::PermissionDescriptorUtil::
+              CreatePermissionDescriptorForPermissionType(permission_type),
+          process, GetBucketStorageKey().origin());
 }
 
 void ServiceWorkerHost::BindCacheStorageForBucket(
@@ -269,10 +290,22 @@ void ServiceWorkerHost::BindCacheStorageForBucket(
                                                 bucket.ToBucketLocator());
 }
 
-GlobalRenderFrameHostId ServiceWorkerHost::GetAssociatedRenderFrameHostId()
-    const {
-  // For `ServiceWorkerHost` there is no associated `RenderFrameHost`.
-  return GlobalRenderFrameHostId();
+storage::BucketClientInfo ServiceWorkerHost::GetBucketClientInfo() const {
+  return storage::BucketClientInfo{worker_process_id(), token()};
+}
+
+RenderProcessHost* ServiceWorkerHost::GetProcessHost() const {
+  return RenderProcessHost::FromID(version_->embedded_worker()->process_id());
+}
+
+void ServiceWorkerHost::BindAIManager(
+    mojo::PendingReceiver<blink::mojom::AIManager> receiver) {
+  auto* process = GetProcessHost();
+  if (process) {
+    GetContentClient()->browser()->BindAIManager(process->GetBrowserContext(),
+                                                 this, /*rfh=*/nullptr,
+                                                 std::move(receiver));
+  }
 }
 
 }  // namespace content

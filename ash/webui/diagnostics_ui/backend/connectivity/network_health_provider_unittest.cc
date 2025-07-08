@@ -172,7 +172,7 @@ class NetworkHealthProviderTest : public AshTestBase {
     SystemTokenCertDbStorage::Initialize();
 
     scoped_user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-        std::make_unique<user_manager::FakeUserManager>());
+        std::make_unique<user_manager::FakeUserManager>(local_state()));
 
     // NetworkHandler has pieces that depend on NetworkCertLoader so it's better
     // to initialize NetworkHandlerTestHelper after
@@ -182,11 +182,11 @@ class NetworkHealthProviderTest : public AshTestBase {
     network_handler_test_helper_ = std::make_unique<NetworkHandlerTestHelper>();
     network_handler_test_helper_->AddDefaultProfiles();
     network_handler_test_helper_->RegisterPrefs(user_prefs_.registry(),
-                                                local_state_.registry());
+                                                local_state()->registry());
     PrefProxyConfigTrackerImpl::RegisterProfilePrefs(user_prefs_.registry());
-    PrefProxyConfigTrackerImpl::RegisterPrefs(local_state_.registry());
+    PrefProxyConfigTrackerImpl::RegisterPrefs(local_state()->registry());
 
-    network_handler_test_helper_->InitializePrefs(&user_prefs_, &local_state_);
+    network_handler_test_helper_->InitializePrefs(&user_prefs_, local_state());
     ClearDevicesAndServices();
 
     cros_network_config_ =
@@ -538,7 +538,6 @@ class NetworkHealthProviderTest : public AshTestBase {
   }
 
   sync_preferences::TestingPrefServiceSyncable user_prefs_;
-  TestingPrefServiceSimple local_state_;
   std::unique_ptr<user_manager::ScopedUserManager> scoped_user_manager_;
   std::unique_ptr<NetworkHandlerTestHelper> network_handler_test_helper_;
   std::unique_ptr<network_config::CrosNetworkConfig> cros_network_config_;
@@ -1065,6 +1064,15 @@ TEST_F(NetworkHealthProviderTest, ChangingCellularProperties) {
   EXPECT_EQ(
       observer.GetLatestState()->type_properties->get_cellular()->sim_locked,
       true);
+
+  SetCellularSimLockStatus(shill::kSIMLockNetworkPin, /**sim_locked=*/true);
+  ExpectStateObserverFired(observer, &state_call_count);
+  EXPECT_EQ(
+      mojom::LockType::kNetworkPin,
+      observer.GetLatestState()->type_properties->get_cellular()->lock_type);
+  EXPECT_EQ(
+      true,
+      observer.GetLatestState()->type_properties->get_cellular()->sim_locked);
 
   SetCellularSimLockStatus(/**lock_type=*/"", /**sim_locked=*/false);
   ExpectStateObserverFired(observer, &state_call_count);

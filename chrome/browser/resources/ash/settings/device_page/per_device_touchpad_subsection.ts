@@ -8,38 +8,50 @@
  * per-device-touchpad subsection settings in system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_dropdown_menu.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import '../controls/settings_dropdown_menu.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
 import './input_device_settings_shared.css.js';
-import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
+import './per_device_app_installed_row.js';
+import './per_device_install_row.js';
+import './per_device_subsection_header.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {MousePolicies} from '../mojom-webui/input_device_settings.mojom-webui.js';
+import {MouseSettingsObserverReceiver} from '../mojom-webui/input_device_settings_provider.mojom-webui.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, routes} from '../router.js';
+import {DisableTouchpadMode} from '../os_a11y_page/disable_touchpad_constants.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
+import {FakeInputDeviceSettingsProvider} from './fake_input_device_settings_provider.js';
 import {getInputDeviceSettingsProvider} from './input_device_mojo_interface_provider.js';
-import {InputDeviceSettingsProviderInterface, SimulateRightClickModifier, Touchpad, TouchpadSettings} from './input_device_settings_types.js';
+import type {InputDeviceSettingsProviderInterface, Mouse, Touchpad, TouchpadSettings} from './input_device_settings_types.js';
+import {CompanionAppState, SimulateRightClickModifier} from './input_device_settings_types.js';
 import {settingsAreEqual} from './input_device_settings_utils.js';
 import {getTemplate} from './per_device_touchpad_subsection.html.js';
 
 const SettingsPerDeviceTouchpadSubsectionElementBase =
-    DeepLinkingMixin(RouteObserverMixin(I18nMixin(PolymerElement)));
+    RouteObserverMixin(DeepLinkingMixin(
+        RouteObserverMixin(PrefsMixin(I18nMixin(PolymerElement)))));
+
 export class SettingsPerDeviceTouchpadSubsectionElement extends
     SettingsPerDeviceTouchpadSubsectionElementBase {
-  static get is(): string {
+  static get is() {
     return 'settings-per-device-touchpad-subsection';
   }
 
@@ -93,28 +105,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
         },
       },
 
-      scrollAccelerationPref: {
-        type: Object,
-        value() {
-          return {
-            key: 'fakeScrollAccelerationPref',
-            type: chrome.settingsPrivate.PrefType.BOOLEAN,
-            value: true,
-          };
-        },
-      },
-
-      scrollSensitivityPref: {
-        type: Object,
-        value() {
-          return {
-            key: 'fakeScrollSensitivityPref',
-            type: chrome.settingsPrivate.PrefType.NUMBER,
-            value: 3,
-          };
-        },
-      },
-
       hapticClickSensitivityPref: {
         type: Object,
         value() {
@@ -137,15 +127,15 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
         },
       },
 
-      simulateRightClickOptions: {
+      simulateRightClickOptions_: {
         readOnly: true,
         type: Array,
         value() {
           return [
             {
               value: SimulateRightClickModifier.kNone,
-              name:
-                  loadTimeData.getString('touchpadSimulateRightClickOptionOff'),
+              name: loadTimeData.getString(
+                  'touchpadSimulateRightClickOptionDisabled'),
             },
             {
               value: SimulateRightClickModifier.kSearch,
@@ -158,16 +148,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
                   loadTimeData.getString('touchpadSimulateRightClickOptionAlt'),
             },
           ];
-        },
-      },
-
-      /**
-       * TODO(khorimoto): Remove this conditional once the feature is launched.
-       */
-      allowTouchpadScrollSettings_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('allowTouchpadScrollSettings');
         },
       },
 
@@ -211,23 +191,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
 
       touchpad: {type: Object},
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kTouchpadTapToClick,
-          Setting.kTouchpadTapDragging,
-          Setting.kTouchpadReverseScrolling,
-          Setting.kTouchpadAcceleration,
-          Setting.kTouchpadScrollAcceleration,
-          Setting.kTouchpadSpeed,
-          Setting.kTouchpadHapticFeedback,
-          Setting.kTouchpadHapticClickSensitivity,
-        ]),
-      },
-
       touchpadIndex: {
         type: Number,
       },
@@ -245,6 +208,10 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
         },
         readOnly: true,
       },
+
+      mice: {
+        type: Array,
+      },
     };
   }
 
@@ -254,8 +221,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
           'enableTapDraggingPref.value,' +
           'accelerationPref.value,' +
           'sensitivityPref.value,' +
-          'scrollAccelerationPref.value,' +
-          'scrollSensitivityPref.value,' +
           'hapticClickSensitivityPref.value,' +
           'simulateRightClickPref.value,' +
           'reverseScrollValue,' +
@@ -276,13 +241,24 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
     }
   }
 
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kTouchpadTapToClick,
+    Setting.kTouchpadTapDragging,
+    Setting.kTouchpadReverseScrolling,
+    Setting.kTouchpadAcceleration,
+    Setting.kTouchpadScrollAcceleration,
+    Setting.kTouchpadSpeed,
+    Setting.kTouchpadHapticFeedback,
+    Setting.kTouchpadHapticClickSensitivity,
+    Setting.kTouchpadSimulateRightClick,
+  ]);
+
   private touchpad: Touchpad;
   private enableTapToClickPref: chrome.settingsPrivate.PrefObject;
   private enableTapDraggingPref: chrome.settingsPrivate.PrefObject;
   private accelerationPref: chrome.settingsPrivate.PrefObject;
   private sensitivityPref: chrome.settingsPrivate.PrefObject;
-  private scrollAccelerationPref: chrome.settingsPrivate.PrefObject;
-  private scrollSensitivityPref: chrome.settingsPrivate.PrefObject;
   private hapticClickSensitivityPref: chrome.settingsPrivate.PrefObject;
   private simulateRightClickPref: chrome.settingsPrivate.PrefObject;
   private reverseScrollValue: boolean;
@@ -293,6 +269,22 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
   private touchpadIndex: number;
   private isLastDevice: boolean;
   isAltClickAndSixPackCustomizationEnabled: boolean;
+  protected mice: Mouse[];
+  private mouseSettingsObserverReceiver: MouseSettingsObserverReceiver;
+  private readonly hapticClickSensitivityValues_:
+      Array<{value: number, ariaValue: number}>;
+  private readonly sensitivityValues_: number[];
+  private readonly simulateRightClickOptions_:
+      Array<{value: number, name: string}>;
+
+  constructor() {
+    super();
+    this.observeMouseSettings();
+  }
+
+  private showInstallAppRow(): boolean {
+    return this.touchpad.appInfo?.state === CompanionAppState.kAvailable;
+  }
 
   private updateSettingsToCurrentPrefs(): void {
     // `updateSettingsToCurrentPrefs` gets called when the `keyboard` object
@@ -310,12 +302,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
     this.set(
         'accelerationPref.value', this.touchpad.settings.accelerationEnabled);
     this.set('sensitivityPref.value', this.touchpad.settings.sensitivity);
-    this.set(
-        'scrollAccelerationPref.value',
-        this.touchpad.settings.scrollAcceleration);
-    this.set(
-        'scrollSensitivityPref.value',
-        this.touchpad.settings.scrollSensitivity);
     this.set(
         'hapticClickSensitivityPref.value',
         this.touchpad.settings.hapticSensitivity);
@@ -344,6 +330,26 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
     this.hapticFeedbackValue = !this.hapticFeedbackValue;
   }
 
+  onMouseListUpdated(mice: Mouse[]): void {
+    this.mice = mice;
+  }
+
+  onMousePoliciesUpdated(_mousePolicies: MousePolicies): void {}
+
+  private observeMouseSettings(): void {
+    if (this.inputDeviceSettingsProvider instanceof
+        FakeInputDeviceSettingsProvider) {
+      this.inputDeviceSettingsProvider.observeMouseSettings(this);
+      return;
+    }
+
+    this.mouseSettingsObserverReceiver =
+        new MouseSettingsObserverReceiver(this);
+
+    this.inputDeviceSettingsProvider.observeMouseSettings(
+        this.mouseSettingsObserverReceiver.$.bindNewPipeAndPassRemote());
+  }
+
   private onSettingsChanged(): void {
     if (!this.isInitialized) {
       return;
@@ -355,8 +361,6 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
       tapDraggingEnabled: this.enableTapDraggingPref.value,
       accelerationEnabled: this.accelerationPref.value,
       sensitivity: this.sensitivityPref.value,
-      scrollAcceleration: this.scrollAccelerationPref.value,
-      scrollSensitivity: this.scrollSensitivityPref.value,
       hapticSensitivity: this.hapticClickSensitivityPref.value,
       simulateRightClick: this.simulateRightClickPref.value,
       reverseScrolling: this.reverseScrollValue,
@@ -396,6 +400,30 @@ export class SettingsPerDeviceTouchpadSubsectionElement extends
     });
 
     return tempEl.innerHTML;
+  }
+
+  private isCompanionAppInstalled(): boolean {
+    return this.touchpad.appInfo?.state === CompanionAppState.kInstalled;
+  }
+
+  private isBuiltInTrackpadDisabled_(trackpadMode: number): boolean {
+    return !this.touchpad.isExternal &&
+        (trackpadMode === DisableTouchpadMode.ALWAYS ||
+         (trackpadMode === DisableTouchpadMode.ON_MOUSE_CONNECTED &&
+          this.isMouseConnected_()));
+  }
+
+  private onDisabledTouchpadSettingsClick_(): void {
+    const urlParams =
+        new URLSearchParams({settingId: Setting.kDisableTouchpad.toString()});
+    Router.getInstance().navigateTo(
+        routes.A11Y_CURSOR_AND_TOUCHPAD,
+        /* dynamicParams */ urlParams,
+    );
+  }
+
+  private isMouseConnected_(): boolean {
+    return this.mice && this.mice.length !== 0;
   }
 }
 

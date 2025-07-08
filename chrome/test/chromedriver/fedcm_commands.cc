@@ -58,6 +58,54 @@ Status ExecuteSelectAccount(Session* session,
   std::unique_ptr<base::Value> result;
   status = web_view->SendCommandAndGetResult("FedCm.selectAccount",
                                              command_params, &result);
+  // Only mark the dialog as closed if the command succeeded. For example,
+  // if there is a dialog up but it is not an account chooser, selectAccount
+  // will fail but the dialog is still up and a later canceldialog command
+  // should succeed.
+  if (status.IsOk()) {
+    tracker->DialogClosed();
+  }
+  return status;
+}
+
+Status ExecuteClickDialogButton(Session* session,
+                                WebView* web_view,
+                                const base::Value::Dict& params,
+                                std::unique_ptr<base::Value>* value,
+                                Timeout* timeout) {
+  FedCmTracker* tracker = nullptr;
+  Status status = web_view->GetFedCmTracker(&tracker);
+  if (!status.IsOk()) {
+    return status;
+  }
+  if (!tracker->HasDialog()) {
+    return Status(kNoSuchAlert);
+  }
+  if (!params.FindString("dialogButton")) {
+    return Status(kInvalidArgument, "dialogButton must be specified");
+  }
+
+  base::Value::Dict command_params;
+  command_params.Set("dialogId", tracker->GetLastDialogId());
+
+  std::string button = *params.FindString("dialogButton");
+  if (button == "TermsOfService" || button == "PrivacyPolicy") {
+    std::optional<int> index = params.FindInt("index");
+    if (!index) {
+      return Status(kInvalidArgument, "index must be specified");
+    }
+    command_params.Set("accountIndex", *index);
+    command_params.Set("accountUrlType", button);
+    std::unique_ptr<base::Value> result;
+    return web_view->SendCommandAndGetResult("FedCm.openUrl", command_params,
+                                             &result);
+  }
+
+  command_params.Set("dialogButton", button);
+
+  std::unique_ptr<base::Value> result;
+  status = web_view->SendCommandAndGetResult("FedCm.clickDialogButton",
+                                             command_params, &result);
   tracker->DialogClosed();
   return status;
 }
@@ -111,7 +159,7 @@ Status ExecuteGetFedCmTitle(Session* session,
   }
   base::Value::Dict dict;
   dict.Set("title", tracker->GetLastTitle());
-  absl::optional<std::string> subtitle = tracker->GetLastSubtitle();
+  std::optional<std::string> subtitle = tracker->GetLastSubtitle();
   if (subtitle) {
     dict.Set("subtitle", *subtitle);
   }

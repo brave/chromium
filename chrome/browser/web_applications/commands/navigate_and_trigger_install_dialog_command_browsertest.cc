@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/web_applications/commands/navigate_and_trigger_install_dialog_command.h"
+
 #include "base/run_loop.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/web_applications/web_app_controller_browsertest.h"
+#include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
@@ -18,9 +22,10 @@
 namespace web_app {
 
 class NavigateAndTriggerInstallDialogCommandTest
-    : public WebAppControllerBrowserTest {
+    : public WebAppBrowserTestBase {
  public:
   const GURL kOriginUrl = GURL("https://test.com");
+  NavigateAndTriggerInstallDialogCommandTest() = default;
 };
 
 IN_PROC_BROWSER_TEST_F(NavigateAndTriggerInstallDialogCommandTest,
@@ -137,5 +142,4 @@ IN_PROC_BROWSER_TEST_F(NavigateAndTriggerInstallDialogCommandTest,
 
   loop.Run();
 }
-
 }  // namespace web_app

@@ -18,6 +18,7 @@
 #include "base/functional/callback.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/vector_icon_types.h"
@@ -29,10 +30,35 @@ namespace ash {
 
 namespace {
 
-constexpr char kLoginShelfButtonClassName[] = "LoginShelfButton";
-
 // The highlight radius of the button.
-constexpr int kButtonHighlightRadiusDp = 16;
+// The large pill buttons height is 36 and the radius should be half of that.
+constexpr int kButtonHighlightRadiusDp = 18;
+constexpr int kButtonHighlightWidthDp = 1;
+
+ui::ColorId GetBackgroundColorId(bool is_active,
+                                 ShelfBackgroundType background_type) {
+  if (is_active) {
+    return cros_tokens::kCrosSysSystemPrimaryContainer;
+  }
+  if (background_type == ShelfBackgroundType::kLoginNonBlurredWallpaper) {
+    return cros_tokens::kCrosSysSystemOnBase;
+  }
+  return cros_tokens::kCrosSysSystemBaseElevated;
+}
+
+ui::ColorId GetIconColorId(bool is_active) {
+  if (is_active) {
+    return cros_tokens::kCrosSysOnPrimary;
+  }
+  return cros_tokens::kCrosSysOnSurface;
+}
+
+ui::ColorId GetEnabledTextColorId(bool is_active) {
+  if (is_active) {
+    return cros_tokens::kCrosSysSystemOnPrimaryContainer;
+  }
+  return cros_tokens::kCrosSysOnSurface;
+}
 
 }  // namespace
 
@@ -41,7 +67,7 @@ LoginShelfButton::LoginShelfButton(PressedCallback callback,
                                    const gfx::VectorIcon& icon)
     : PillButton(std::move(callback),
                  l10n_util::GetStringUTF16(text_resource_id),
-                 PillButton::Type::kDefaultLargeWithIconLeading,
+                 PillButton::Type::kDefaultElevatedLargeWithIconLeading,
                  &icon,
                  PillButton::kPillButtonHorizontalSpacing),
       icon_(icon),
@@ -49,25 +75,22 @@ LoginShelfButton::LoginShelfButton(PressedCallback callback,
   SetFocusBehavior(FocusBehavior::ALWAYS);
   set_suppress_default_focus_handling();
   SetFocusPainter(nullptr);
-  views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::ON);
-  UpdateColors(ShelfBackgroundType::kDefaultBg);
+
+  views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::OFF);
+  SetBorder(views::CreateRoundedRectBorder(kButtonHighlightWidthDp,
+                                           kButtonHighlightRadiusDp,
+                                           ui::kColorCrosSystemHighlight));
+  // PillButton has some custom tooltip logic that runs, but we don't want here.
+  SetUseLabelAsDefaultTooltip(false);
+  UpdateTooltipText(label());
+  label()->AddDisplayTextTruncationCallback(base::BindRepeating(
+      &LoginShelfButton::UpdateTooltipText, weak_ptr_factory_.GetWeakPtr()));
 }
 
 LoginShelfButton::~LoginShelfButton() = default;
 
 int LoginShelfButton::text_resource_id() const {
   return text_resource_id_;
-}
-
-const char* LoginShelfButton::GetClassName() const {
-  return kLoginShelfButtonClassName;
-}
-
-std::u16string LoginShelfButton::GetTooltipText(const gfx::Point& p) const {
-  if (label()->IsDisplayTextTruncated()) {
-    return label()->GetText();
-  }
-  return std::u16string();
 }
 
 void LoginShelfButton::OnFocus() {
@@ -85,31 +108,45 @@ void LoginShelfButton::AddedToWidget() {
 void LoginShelfButton::OnBackgroundTypeChanged(
     ShelfBackgroundType background_type,
     AnimationChangeType change_type) {
-  UpdateColors(background_type);
+  if (background_type_ == background_type) {
+    return;
+  }
+  background_type_ = background_type;
+
+  if (background_type_ == ShelfBackgroundType::kLoginNonBlurredWallpaper) {
+    SetPillButtonType(PillButton::kDefaultLargeWithIconLeading);
+  } else {
+    SetPillButtonType(PillButton::kDefaultElevatedLargeWithIconLeading);
+  }
 }
 
-void LoginShelfButton::UpdateColors(ShelfBackgroundType background_type) {
-  ui::ColorId icon_color = kColorAshButtonIconColor;
-  if (!chromeos::features::IsJellyrollEnabled()) {
-    ui::ColorId text_color = kColorAshButtonLabelColor;
-    if (background_type == ShelfBackgroundType::kOobe) {
-      text_color = kColorAshButtonLabelColorLight;
-      icon_color = kColorAshButtonIconColorLight;
-    }
-    SetEnabledTextColorIds(text_color);
-  } else {
-    if (background_type == ShelfBackgroundType::kLoginNonBlurredWallpaper) {
-      SetPillButtonType(PillButton::kDefaultLargeWithIconLeading);
-    } else {
-      SetPillButtonType(PillButton::kDefaultElevatedLargeWithIconLeading);
-    }
-    SetBorder(std::make_unique<views::HighlightBorder>(
-        kButtonHighlightRadiusDp,
-        views::HighlightBorder::Type::kHighlightBorderNoShadow));
-    icon_color = cros_tokens::kCrosSysOnSurface;
-  }
-  SetImageModel(views::Button::STATE_NORMAL,
-                ui::ImageModel::FromVectorIcon(*icon_, icon_color));
+void LoginShelfButton::OnActiveChanged() {
+  SetBackgroundColorId(GetBackgroundColorId(is_active_, background_type_));
+  SetEnabledTextColors(GetEnabledTextColorId(is_active_));
+  SetIconColorId(GetIconColorId(is_active_));
 }
+
+void LoginShelfButton::SetIsActive(bool is_active) {
+  if (is_active_ == is_active) {
+    return;
+  }
+  is_active_ = is_active;
+  OnActiveChanged();
+}
+
+bool LoginShelfButton::GetIsActive() const {
+  return is_active_;
+}
+
+void LoginShelfButton::UpdateTooltipText(views::Label* label) {
+  if (label->IsDisplayTextTruncated()) {
+    SetTooltipText(std::u16string(GetText()));
+  } else {
+    SetTooltipText(std::u16string());
+  }
+}
+
+BEGIN_METADATA(LoginShelfButton)
+END_METADATA
 
 }  // namespace ash

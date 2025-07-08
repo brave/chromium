@@ -9,6 +9,7 @@
 #include "ash/constants/ash_features.h"
 #include "ash/webui/media_app_ui/file_system_access_helpers.h"
 #include "ash/webui/media_app_ui/url_constants.h"
+#include "base/check_deref.h"
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
@@ -16,31 +17,34 @@
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
 #include "chrome/browser/ash/hats/hats_config.h"
 #include "chrome/browser/ash/hats/hats_notification_controller.h"
-#include "chrome/browser/browser_process.h"
+#include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/channel_info.h"
+#include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "components/services/app_service/public/cpp/intent_util.h"
+#include "components/user_manager/user.h"
 #include "components/version_info/channel.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/events/event_constants.h"
+#include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
 ChromeMediaAppUIDelegate::ChromeMediaAppUIDelegate(content::WebUI* web_ui)
     : web_ui_(web_ui) {}
 
-ChromeMediaAppUIDelegate::~ChromeMediaAppUIDelegate() {}
+ChromeMediaAppUIDelegate::~ChromeMediaAppUIDelegate() = default;
 
-absl::optional<std::string> ChromeMediaAppUIDelegate::OpenFeedbackDialog() {
+std::optional<std::string> ChromeMediaAppUIDelegate::OpenFeedbackDialog() {
   Profile* profile = Profile::FromWebUI(web_ui_);
   constexpr char kMediaAppFeedbackCategoryTag[] = "FromMediaApp";
 
@@ -49,7 +53,7 @@ absl::optional<std::string> ChromeMediaAppUIDelegate::OpenFeedbackDialog() {
   // Note that category_tag is the name of the listnr bucket we want our
   // reports to end up in.
   chrome::ShowFeedbackPage(GURL(ash::kChromeUIMediaAppURL), profile,
-                           chrome::kFeedbackSourceMediaApp,
+                           feedback::kFeedbackSourceMediaApp,
                            std::string() /* description_template */,
                            std::string() /* description_placeholder_text */,
                            kMediaAppFeedbackCategoryTag /* category_tag */,
@@ -57,15 +61,13 @@ absl::optional<std::string> ChromeMediaAppUIDelegate::OpenFeedbackDialog() {
 
   // TODO(crbug/1048368): Showing the feedback dialog can fail, communicate this
   // back to the client with an error string. For now assume dialog opened.
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void ChromeMediaAppUIDelegate::ToggleBrowserFullscreenMode() {
-  Browser* browser =
-      chrome::FindBrowserWithWebContents(web_ui_->GetWebContents());
-  if (browser) {
-    chrome::ToggleFullscreenMode(browser);
-  }
+  views::Widget* top = views::Widget::GetTopLevelWidgetForNativeView(
+      web_ui_->GetWebContents()->GetNativeView());
+  top->SetFullscreen(!top->IsFullscreen());
 }
 
 void ChromeMediaAppUIDelegate::MaybeTriggerPdfHats() {
@@ -102,7 +104,7 @@ void ChromeMediaAppUIDelegate::EditInPhotos(
 
 void ChromeMediaAppUIDelegate::IsFileArcWritableImpl(
     base::OnceCallback<void(bool)> is_file_arc_writable_callback,
-    absl::optional<storage::FileSystemURL> url) {
+    std::optional<storage::FileSystemURL> url) {
   if (!url.has_value()) {
     std::move(is_file_arc_writable_callback).Run(false);
     return;
@@ -149,7 +151,7 @@ void ChromeMediaAppUIDelegate::IsFileArcWritableImpl(
 void ChromeMediaAppUIDelegate::EditInPhotosImpl(
     const std::string& mime_type,
     base::OnceCallback<void()> edit_in_photos_callback,
-    absl::optional<storage::FileSystemURL> url) {
+    std::optional<storage::FileSystemURL> url) {
   constexpr char kPhotosKeepOpenExtraName[] =
       "com.google.android.apps.photos.editor.contract.keep_photos_open";
   constexpr char kPhotosKeepOpenExtraValue[] = "true";
@@ -179,10 +181,20 @@ void ChromeMediaAppUIDelegate::EditInPhotosImpl(
           [](base::OnceCallback<void()> callback,
              base::WeakPtr<content::WebContents> web_contents,
              apps::LaunchResult&& result) {
-            if (result.state == apps::State::SUCCESS && web_contents) {
+            if (result.state == apps::State::kSuccess && web_contents) {
               web_contents->Close();
             }
             std::move(callback).Run();
           },
           std::move(edit_in_photos_callback), web_contents->GetWeakPtr()));
+}
+
+void ChromeMediaAppUIDelegate::SubmitForm(const GURL& url,
+                                          const std::vector<int8_t>& payload,
+                                          const std::string& header) {
+  const user_manager::User& user =
+      CHECK_DEREF(ash::BrowserContextHelper::Get()->GetUserByBrowserContext(
+          Profile::FromWebUI(web_ui_)));
+  ash::BrowserController::GetInstance()->NewTabWithPostData(
+      user.GetAccountId(), url, base::as_byte_span(payload), header);
 }

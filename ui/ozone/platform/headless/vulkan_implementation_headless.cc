@@ -4,9 +4,12 @@
 
 #include "ui/ozone/platform/headless/vulkan_implementation_headless.h"
 
+#include <optional>
+
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/scoped_environment_variable_override.h"
@@ -15,9 +18,8 @@
 #include "gpu/vulkan/vulkan_instance.h"
 #include "gpu/vulkan/vulkan_surface.h"
 #include "gpu/vulkan/vulkan_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/ozone/platform/headless/vulkan_surface_headless.h"
 
 #if BUILDFLAG(IS_FUCHSIA)
@@ -98,36 +100,43 @@ VulkanImplementationHeadless::GetOptionalDeviceExtensions() {
       VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
       VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME,
       VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
+      VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
   };
 }
 
 VkFence VulkanImplementationHeadless::CreateVkFenceForGpuFence(
     VkDevice vk_device) {
   NOTREACHED();
-  return VK_NULL_HANDLE;
 }
 
 std::unique_ptr<gfx::GpuFence>
 VulkanImplementationHeadless::ExportVkFenceToGpuFence(VkDevice vk_device,
                                                       VkFence vk_fence) {
   NOTREACHED();
-  return nullptr;
-}
-
-VkExternalMemoryHandleTypeFlagBits
-VulkanImplementationHeadless::GetExternalImageHandleType() {
-  return VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
 }
 
 VkExternalSemaphoreHandleTypeFlagBits
 VulkanImplementationHeadless::GetExternalSemaphoreHandleType() {
+#if BUILDFLAG(IS_LINUX)
+  return VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+#else
   return VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 }
 
 bool VulkanImplementationHeadless::CanImportGpuMemoryBuffer(
     gpu::VulkanDeviceQueue* device_queue,
     gfx::GpuMemoryBufferType memory_buffer_type) {
+#if BUILDFLAG(IS_LINUX)
+  const auto& enabled_extensions = device_queue->enabled_extensions();
+  return gfx::HasExtension(enabled_extensions,
+                           VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) &&
+         gfx::HasExtension(enabled_extensions,
+                           VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME) &&
+         memory_buffer_type == gfx::GpuMemoryBufferType::NATIVE_PIXMAP;
+#else
   return memory_buffer_type == gfx::GpuMemoryBufferType::NATIVE_PIXMAP;
+#endif
 }
 
 std::unique_ptr<gpu::VulkanImage>
@@ -142,7 +151,7 @@ VulkanImplementationHeadless::CreateImageFromGpuMemoryHandle(
       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
   auto tiling = VK_IMAGE_TILING_OPTIMAL;
 #if BUILDFLAG(IS_LINUX)
-  if (gmb_handle.native_pixmap_handle.modifier !=
+  if (gmb_handle.native_pixmap_handle().modifier !=
       gfx::NativePixmapHandle::kNoModifier) {
     tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
   }

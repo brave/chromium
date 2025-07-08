@@ -75,12 +75,6 @@ class ScopedFfxConfig(AbstractContextManager):
         return False
 
 
-def test_connection(target_id: Optional[str]) -> None:
-    """Run an echo test to verify that the device can be connected to."""
-
-    run_ffx_command(cmd=('target', 'echo'), target_id=target_id)
-
-
 class FfxTestRunner(AbstractContextManager):
     """A context manager that manages a session for running a test via `ffx`.
 
@@ -121,7 +115,8 @@ class FfxTestRunner(AbstractContextManager):
     def run_test(self,
                  component_uri: str,
                  test_args: Optional[Iterable[str]] = None,
-                 node_name: Optional[str] = None) -> subprocess.Popen:
+                 node_name: Optional[str] = None,
+                 test_realm: Optional[str] = None) -> subprocess.Popen:
         """Starts a subprocess to run a test on a target.
         Args:
             component_uri: The test component URI.
@@ -132,8 +127,11 @@ class FfxTestRunner(AbstractContextManager):
         """
         command = [
             'test', 'run', '--output-directory', self._results_dir,
-            component_uri
         ]
+        if test_realm:
+            command.append("--realm")
+            command.append(test_realm)
+        command.append(component_uri)
         if test_args:
             command.append('--')
             command.extend(test_args)
@@ -220,8 +218,10 @@ class FfxTestRunner(AbstractContextManager):
         return self._debug_data_directory
 
 
-def run_symbolizer(symbol_paths: List[str], input_fd: IO,
-                   output_fd: IO) -> subprocess.Popen:
+def run_symbolizer(symbol_paths: List[str],
+                   input_fd: IO,
+                   output_fd: IO,
+                   raw_bytes: bool = False) -> subprocess.Popen:
     """Runs symbolizer that symbolizes |input| and outputs to |output|."""
 
     symbolize_cmd = ([
@@ -230,7 +230,13 @@ def run_symbolizer(symbol_paths: List[str], input_fd: IO,
     ])
     for path in symbol_paths:
         symbolize_cmd.extend(['--ids-txt', path])
+    if raw_bytes:
+        encoding = None
+    else:
+        encoding = 'utf-8'
     return run_continuous_ffx_command(symbolize_cmd,
                                       stdin=input_fd,
                                       stdout=output_fd,
-                                      stderr=subprocess.STDOUT)
+                                      stderr=subprocess.STDOUT,
+                                      encoding=encoding,
+                                      close_fds=True)

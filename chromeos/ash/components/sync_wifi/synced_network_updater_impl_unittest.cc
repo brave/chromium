@@ -2,32 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <memory>
+#include "chromeos/ash/components/sync_wifi/synced_network_updater_impl.h"
 
+#include <memory>
+#include <optional>
+
+#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/network_config_service.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chromeos/ash/components/dbus/shill/fake_shill_simulated_result.h"
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_metadata_store.h"
 #include "chromeos/ash/components/sync_wifi/fake_pending_network_configuration_tracker.h"
-#include "chromeos/ash/components/sync_wifi/fake_timer_factory.h"
 #include "chromeos/ash/components/sync_wifi/network_identifier.h"
 #include "chromeos/ash/components/sync_wifi/network_test_helper.h"
 #include "chromeos/ash/components/sync_wifi/pending_network_configuration_tracker_impl.h"
 #include "chromeos/ash/components/sync_wifi/synced_network_metrics_logger.h"
-#include "chromeos/ash/components/sync_wifi/synced_network_updater_impl.h"
 #include "chromeos/ash/components/sync_wifi/test_data_generator.h"
+#include "chromeos/ash/components/timer_factory/fake_timer_factory.h"
 #include "chromeos/ash/services/network_config/cros_network_config.h"
 #include "chromeos/ash/services/network_config/in_process_instance.h"
 #include "chromeos/ash/services/network_config/public/cpp/cros_network_config_test_helper.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
 namespace ash::network_config {
@@ -86,7 +89,7 @@ class SyncedNetworkUpdaterImplTest : public testing::Test {
     auto tracker_unique_ptr =
         std::make_unique<FakePendingNetworkConfigurationTracker>();
     tracker_ = tracker_unique_ptr.get();
-    timer_factory_ = std::make_unique<FakeTimerFactory>();
+    timer_factory_ = std::make_unique<ash::timer_factory::FakeTimerFactory>();
     metrics_logger_ = std::make_unique<SyncedNetworkMetricsLogger>(
         /*network_state_handler=*/nullptr,
         /*network_connection_handler=*/nullptr);
@@ -113,7 +116,9 @@ class SyncedNetworkUpdaterImplTest : public testing::Test {
   }
 
   FakePendingNetworkConfigurationTracker* tracker() { return tracker_; }
-  FakeTimerFactory* timer_factory() { return timer_factory_.get(); }
+  ash::timer_factory::FakeTimerFactory* timer_factory() {
+    return timer_factory_.get();
+  }
   SyncedNetworkUpdaterImpl* updater() { return updater_.get(); }
   NetworkStateTestHelper* network_state_helper() {
     return local_test_helper_->network_state_test_helper();
@@ -125,8 +130,8 @@ class SyncedNetworkUpdaterImplTest : public testing::Test {
  private:
   base::test::TaskEnvironment task_environment_;
   std::unique_ptr<NetworkTestHelper> local_test_helper_;
-  std::unique_ptr<FakeTimerFactory> timer_factory_;
-  raw_ptr<FakePendingNetworkConfigurationTracker, ExperimentalAsh> tracker_;
+  std::unique_ptr<ash::timer_factory::FakeTimerFactory> timer_factory_;
+  raw_ptr<FakePendingNetworkConfigurationTracker, DanglingUntriaged> tracker_;
   std::unique_ptr<SyncedNetworkMetricsLogger> metrics_logger_;
   std::unique_ptr<SyncedNetworkUpdaterImpl> updater_;
   mojo::Remote<chromeos::network_config::mojom::CrosNetworkConfig>
@@ -154,6 +159,32 @@ TEST_F(SyncedNetworkUpdaterImplTest, TestAdd_OneNetwork) {
       NetworkHandler::Get()->network_metadata_store()->GetIsConfiguredBySync(
           network->guid()));
   histogram_tester.ExpectBucketCount(kApplyResultHistogram, true, 1);
+}
+
+TEST_F(SyncedNetworkUpdaterImplTest, TestAdd_HasProxy_DoesntApply) {
+  sync_pb::WifiConfigurationSpecifics specifics = GenerateTestWifiSpecifics(
+      fred_network_id(), "passphrase", /*timestamp=*/1, /*has_proxy*/ true);
+  NetworkIdentifier id = NetworkIdentifier::FromProto(specifics);
+
+  updater()->AddOrUpdateNetwork(specifics);
+  base::RunLoop().RunUntilIdle();
+
+  const NetworkState* network = FindLocalNetworkById(id);
+  EXPECT_FALSE(network->proxy_config());
+}
+
+TEST_F(SyncedNetworkUpdaterImplTest, TestAdd_HasProxy_Applies) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kWifiSyncApplyProxyConfigs);
+  sync_pb::WifiConfigurationSpecifics specifics = GenerateTestWifiSpecifics(
+      fred_network_id(), "passphrase", /*timestamp=*/1, /*has_proxy*/ true);
+  NetworkIdentifier id = NetworkIdentifier::FromProto(specifics);
+
+  updater()->AddOrUpdateNetwork(specifics);
+  base::RunLoop().RunUntilIdle();
+
+  const NetworkState* network = FindLocalNetworkById(id);
+  EXPECT_TRUE(network->proxy_config());
 }
 
 TEST_F(SyncedNetworkUpdaterImplTest, TestUpdate_UnsetFields) {

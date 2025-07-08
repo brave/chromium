@@ -33,14 +33,15 @@
 #include <memory>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
-#include "third_party/blink/renderer/core/dom/events/event_queue.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database.h"
@@ -53,12 +54,12 @@
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
 #include "third_party/blink/renderer/modules/indexeddb/mock_idb_database.h"
 #include "third_party/blink/renderer/modules/indexeddb/mock_idb_transaction.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_database.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
-#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -82,14 +83,12 @@ class IDBTransactionTest : public testing::Test,
   void BuildTransaction(V8TestingScope& scope,
                         MockIDBDatabase& mock_database,
                         MockIDBTransaction& mock_transaction_remote) {
-    auto database_backend = std::make_unique<WebIDBDatabase>(
-        mock_database.BindNewEndpointAndPassDedicatedRemote(),
-        blink::scheduler::GetSingleThreadTaskRunnerForTesting());
-    db_ = MakeGarbageCollected<IDBDatabase>(
-        scope.GetExecutionContext(), std::move(database_backend),
-        mojo::NullAssociatedReceiver(), mojo::NullRemote());
-
     auto* execution_context = scope.GetExecutionContext();
+
+    db_ = MakeGarbageCollected<IDBDatabase>(
+        execution_context, mojo::NullAssociatedReceiver(),
+        mock_database.BindNewEndpointAndPassDedicatedRemote(), /*priority=*/0);
+
     IDBTransaction::TransactionMojoRemote transaction_remote(execution_context);
     mojo::PendingAssociatedReceiver<mojom::blink::IDBTransaction> receiver =
         transaction_remote.BindNewEndpointAndPassReceiver(
@@ -105,11 +104,12 @@ class IDBTransactionTest : public testing::Test,
 
     IDBKeyPath store_key_path("primaryKey");
     scoped_refptr<IDBObjectStoreMetadata> store_metadata = base::AdoptRef(
-        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true, 1));
+        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true));
     store_ = MakeGarbageCollected<IDBObjectStore>(store_metadata, transaction_);
   }
 
-  URLLoaderMockFactory* url_loader_mock_factory_;
+  test::TaskEnvironment task_environment_;
+  raw_ptr<URLLoaderMockFactory> url_loader_mock_factory_;
   Persistent<IDBDatabase> db_;
   Persistent<IDBTransaction> transaction_;
   Persistent<IDBObjectStore> store_;
@@ -125,11 +125,11 @@ TEST_F(IDBTransactionTest, ContextDestroyedEarlyDeath) {
   V8TestingScope scope;
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   BuildTransaction(scope, database_backend, transaction_backend);
 
-  Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-      MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+  Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
   live_transactions->insert(transaction_);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -163,11 +163,11 @@ TEST_F(IDBTransactionTest, ContextDestroyedAfterDone) {
   V8TestingScope scope;
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   BuildTransaction(scope, database_backend, transaction_backend);
 
-  Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-      MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+  Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
   live_transactions->insert(transaction_);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -177,9 +177,6 @@ TEST_F(IDBTransactionTest, ContextDestroyedAfterDone) {
       IDBRequest::Create(scope.GetScriptState(), store_.Get(),
                          transaction_.Get(), IDBRequest::AsyncTraceState());
   scope.PerformMicrotaskCheckpoint();
-
-  // This response should result in an event being enqueued immediately.
-  request->HandleResponse(CreateIDBValueForTesting(scope.GetIsolate(), false));
 
   request.Clear();  // The transaction is holding onto the request.
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -195,8 +192,6 @@ TEST_F(IDBTransactionTest, ContextDestroyedAfterDone) {
   store_.Clear();
   database_backend.Flush();
 
-  // The request completed, so it has enqueued a success event. Discard the
-  // event, so that the transaction can go away.
   EXPECT_EQ(1U, live_transactions->size());
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -207,11 +202,11 @@ TEST_F(IDBTransactionTest, ContextDestroyedWithQueuedResult) {
   V8TestingScope scope;
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   BuildTransaction(scope, database_backend, transaction_backend);
 
-  Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-      MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+  Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
   live_transactions->insert(transaction_);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -248,11 +243,11 @@ TEST_F(IDBTransactionTest, ContextDestroyedWithTwoQueuedResults) {
   V8TestingScope scope;
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   BuildTransaction(scope, database_backend, transaction_backend);
 
-  Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-      MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+  Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
   live_transactions->insert(transaction_);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -295,7 +290,7 @@ TEST_F(IDBTransactionTest, DocumentShutdownWithQueuedAndBlockedResults) {
 
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   {
     // The database isn't actually closed until `scope` is destroyed, so create
     // this object in a nested scope to allow mock expectations to be verified.
@@ -303,8 +298,8 @@ TEST_F(IDBTransactionTest, DocumentShutdownWithQueuedAndBlockedResults) {
 
     BuildTransaction(scope, database_backend, transaction_backend);
 
-    Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-        MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+    Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+        MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
     live_transactions->insert(transaction_);
 
     ThreadState::Current()->CollectAllGarbageForTesting();
@@ -350,11 +345,11 @@ TEST_F(IDBTransactionTest, TransactionFinish) {
   MockIDBDatabase database_backend;
   MockIDBTransaction transaction_backend;
   EXPECT_CALL(transaction_backend, Commit(0)).Times(1);
-  EXPECT_CALL(database_backend, Close()).Times(1);
+  EXPECT_CALL(database_backend, OnDisconnect()).Times(1);
   BuildTransaction(scope, database_backend, transaction_backend);
 
-  Persistent<HeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
-      MakeGarbageCollected<HeapHashSet<WeakMember<IDBTransaction>>>();
+  Persistent<GCedHeapHashSet<WeakMember<IDBTransaction>>> live_transactions =
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<IDBTransaction>>>();
   live_transactions->insert(transaction_);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
@@ -393,23 +388,21 @@ TEST_F(IDBTransactionTest, ValueSizeTest) {
   // of memory, which crashes on memory-constrained systems.
   const size_t kMaxValueSizeForTesting = 10 * 1024 * 1024;  // 10 MB
 
-  const Vector<char> data(kMaxValueSizeForTesting + 1);
-  const scoped_refptr<SharedBuffer> value_data =
-      SharedBuffer::Create(&data.front(), data.size());
-  const Vector<WebBlobInfo> blob_info;
-  auto value = std::make_unique<IDBValue>(value_data, blob_info);
+  const Vector<char> value_data(kMaxValueSizeForTesting + 1);
+  auto value = std::make_unique<IDBValue>();
+  value->SetData(Vector<char>(value_data));
   std::unique_ptr<IDBKey> key = IDBKey::CreateNumber(0);
   const int64_t object_store_id = 2;
 
-  ASSERT_GT(value_data->size() + key->SizeEstimate(), kMaxValueSizeForTesting);
+  ASSERT_GT(value_data.size() + key->SizeEstimate(), kMaxValueSizeForTesting);
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   bool got_error = false;
-  auto callback = base::BindOnce(
+  auto callback = WTF::BindOnce(
       [](bool* got_error, mojom::blink::IDBTransactionPutResultPtr result) {
         *got_error = result->is_error_result();
       },
-      &got_error);
+      WTF::Unretained(&got_error));
 
   V8TestingScope scope;
   MockIDBDatabase database_backend;
@@ -429,11 +422,9 @@ TEST_F(IDBTransactionTest, KeyAndValueSizeTest) {
   const size_t kMaxValueSizeForTesting = 10 * 1024 * 1024;  // 10 MB
   const size_t kKeySize = 1024 * 1024;
 
-  const Vector<char> data(kMaxValueSizeForTesting - kKeySize);
-  const scoped_refptr<SharedBuffer> value_data =
-      SharedBuffer::Create(&data.front(), data.size());
-  const Vector<WebBlobInfo> blob_info;
-  auto value = std::make_unique<IDBValue>(value_data, blob_info);
+  const Vector<char> value_data(kMaxValueSizeForTesting - kKeySize);
+  auto value = std::make_unique<IDBValue>();
+  value->SetData(Vector<char>(value_data));
   const int64_t object_store_id = 2;
 
   // For this test, we want IDBKey::SizeEstimate() minus kKeySize to be the
@@ -448,18 +439,18 @@ TEST_F(IDBTransactionTest, KeyAndValueSizeTest) {
   DCHECK_EQ(key_string.length(), number_of_chars);
 
   std::unique_ptr<IDBKey> key = IDBKey::CreateString(key_string);
-  DCHECK_EQ(value_data->size(), kMaxValueSizeForTesting - kKeySize);
+  DCHECK_EQ(value_data.size(), kMaxValueSizeForTesting - kKeySize);
   DCHECK_GT(key->SizeEstimate() - kKeySize, static_cast<size_t>(0));
-  DCHECK_GT(value_data->size() + key->SizeEstimate(), kMaxValueSizeForTesting);
+  DCHECK_GT(value_data.size() + key->SizeEstimate(), kMaxValueSizeForTesting);
 
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   bool got_error = false;
-  auto callback = base::BindOnce(
+  auto callback = WTF::BindOnce(
       [](bool* got_error, mojom::blink::IDBTransactionPutResultPtr result) {
         *got_error = result->is_error_result();
       },
-      &got_error);
+      WTF::Unretained(&got_error));
 
   V8TestingScope scope;
   MockIDBDatabase database_backend;

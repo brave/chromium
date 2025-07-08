@@ -34,8 +34,20 @@
 #include <sys/sysctl.h>
 #endif
 
+#ifdef __FreeBSD__
+#include <pthread_np.h>
+#endif
+
+#ifdef __NetBSD__
+#include <lwp.h>
+#endif
+
 #if defined(__myriad2__)
 #include <rtems.h>
+#endif
+
+#if defined(__Fuchsia__)
+#include <zircon/process.h>
 #endif
 
 #include <string.h>
@@ -432,6 +444,18 @@ pid_t GetTID() {
   return static_cast<pid_t>(tid);
 }
 
+#elif defined(__FreeBSD__)
+
+pid_t GetTID() { return static_cast<pid_t>(pthread_getthreadid_np()); }
+
+#elif defined(__OpenBSD__)
+
+pid_t GetTID() { return getthrid(); }
+
+#elif defined(__NetBSD__)
+
+pid_t GetTID() { return static_cast<pid_t>(_lwp_self()); }
+
 #elif defined(__native_client__)
 
 pid_t GetTID() {
@@ -439,6 +463,16 @@ pid_t GetTID() {
   static_assert(sizeof(pid_t) == sizeof(thread),
                 "In NaCL int expected to be the same size as a pointer");
   return reinterpret_cast<pid_t>(thread);
+}
+
+#elif defined(__Fuchsia__)
+
+pid_t GetTID() {
+  // Use our thread handle as the TID, which should be unique within this
+  // process (but may not be globally unique). The handle value was chosen over
+  // a kernel object ID (KOID) because zx_handle_t (32-bits) can be cast to a
+  // pid_t type without loss of precision, but a zx_koid_t (64-bits) cannot.
+  return static_cast<pid_t>(zx_thread_self());
 }
 
 #else

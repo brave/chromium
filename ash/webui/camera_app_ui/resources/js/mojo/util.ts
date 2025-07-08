@@ -85,3 +85,19 @@ export function wrapEndpoint<T extends MojoEndpoint>(endpoint: T): T {
 export function closeEndpoint(endpoint: MojoEndpoint): void {
   endpoint.$.close();
 }
+
+/**
+ * Returns a fake endpoint using proxy.
+ */
+export function fakeEndpoint<T>(): T {
+  // Disable type assertion since it is intended to make all function calls as
+  // no-ops.
+  const handler = {
+    apply: (): unknown =>
+        new Proxy(() => {/* Doing nothing for fake */}, handler),
+    get: (): unknown =>
+        new Proxy(() => {/* Doing nothing for fake */}, handler),
+  };
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return new Proxy({}, handler) as T;
+}

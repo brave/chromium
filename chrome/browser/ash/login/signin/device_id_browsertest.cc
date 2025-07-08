@@ -13,16 +13,18 @@
 #include "base/json/json_writer.h"
 #include "base/path_service.h"
 #include "base/test/test_future.h"
+#include "chrome/browser/ash/login/test/cryptohome_mixin.h"
 #include "chrome/browser/ash/login/test/js_checker.h"
 #include "chrome/browser/ash/login/test/oobe_base_test.h"
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/ash/login/test/oobe_screens_utils.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
+#include "chrome/browser/ash/login/test/user_auth_config.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/signin/chrome_device_id_helper.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
@@ -34,6 +36,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/browser_test.h"
+#include "google_apis/gaia/gaia_id.h"
 
 namespace ash {
 namespace {
@@ -45,7 +48,7 @@ const base::FilePath::CharType kRefreshTokenToDeviceIdMapFile[] =
 
 char kSecondUserEmail[] = "second_user@gmail.com";
 char kSecondUserPassword[] = "password";
-char kSecondUserGaiaId[] = "4321";
+constexpr GaiaId::Literal kSecondUserGaiaId("4321");
 char kSecondUserRefreshToken1[] = "refresh_token_second_user_1";
 char kSecondUserRefreshToken2[] = "refresh_token_second_user_2";
 
@@ -114,16 +117,20 @@ class DeviceIDTest : public OobeBaseTest,
   void SignInOnline(const std::string& user_id,
                     const std::string& password,
                     const std::string& refresh_token,
-                    const std::string& gaia_id) {
+                    const GaiaId& gaia_id) {
+    cryptohome_mixin_.ApplyAuthConfigIfUserExists(
+        AccountId::FromUserEmail(user_id),
+        test::UserAuthConfig::Create(test::kDefaultAuthSetup));
+
     OobeScreenWaiter(GaiaView::kScreenId).Wait();
     // On a real device the first user would create the install attributes file,
     // emulate that, so the following users don't try to establish ownership.
     EnsureInstallAttributesCreated();
 
-    FakeGaia::MergeSessionParams params;
-    params.email = user_id;
+    FakeGaia::Configuration params;
+    params.emails = {user_id};
     params.refresh_token = refresh_token;
-    fake_gaia_.fake_gaia()->UpdateMergeSessionParams(params);
+    fake_gaia_.fake_gaia()->UpdateConfiguration(params);
     fake_gaia_.fake_gaia()->MapEmailToGaiaId(user_id, gaia_id);
 
     LoginDisplayHost::default_host()
@@ -135,6 +142,10 @@ class DeviceIDTest : public OobeBaseTest,
   }
 
   void SignInOffline(const std::string& user_id, const std::string& password) {
+    cryptohome_mixin_.ApplyAuthConfigIfUserExists(
+        AccountId::FromUserEmail(user_id),
+        test::UserAuthConfig::Create(test::kDefaultAuthSetup));
+
     LoginScreenTestApi::SubmitPassword(AccountId::FromUserEmail(user_id),
                                        FakeGaiaMixin::kFakeUserPassword,
                                        false /* check_if_submittable */);
@@ -164,7 +175,7 @@ class DeviceIDTest : public OobeBaseTest,
     if (!base::ReadFileToString(GetRefreshTokenToDeviceIdMapFilePath(),
                                 &file_contents))
       return;
-    absl::optional<base::Value> value = base::JSONReader::Read(file_contents);
+    std::optional<base::Value> value = base::JSONReader::Read(file_contents);
     EXPECT_TRUE(value->is_dict());
     base::Value::Dict& dictionary = value->GetDict();
     FakeGaia::RefreshTokenToDeviceIdMap map;
@@ -197,6 +208,7 @@ class DeviceIDTest : public OobeBaseTest,
 
   std::unique_ptr<base::test::TestFuture<void>> user_removal_signal_;
   FakeGaiaMixin fake_gaia_{&mixin_host_};
+  CryptohomeMixin cryptohome_mixin_{&mixin_host_};
 };
 
 // Add the first user and check that device ID is consistent.
@@ -220,6 +232,7 @@ IN_PROC_BROWSER_TEST_F(DeviceIDTest, PRE_PRE_PRE_PRE_NewUsers) {
 
   ASSERT_TRUE(LoginScreenTestApi::ClickAddUserButton());
   OobeScreenWaiter(UserCreationView::kScreenId).Wait();
+  test::TapForPersonalUseCrRadioButton();
   test::TapUserCreationNext();
   SignInOnline(FakeGaiaMixin::kFakeUserEmail, FakeGaiaMixin::kFakeUserPassword,
                kRefreshToken2, FakeGaiaMixin::kFakeUserGaiaId);
@@ -253,6 +266,7 @@ IN_PROC_BROWSER_TEST_F(DeviceIDTest, PRE_PRE_PRE_NewUsers) {
 IN_PROC_BROWSER_TEST_F(DeviceIDTest, PRE_PRE_NewUsers) {
   ASSERT_TRUE(LoginScreenTestApi::ClickAddUserButton());
   OobeScreenWaiter(UserCreationView::kScreenId).Wait();
+  test::TapForPersonalUseCrRadioButton();
   test::TapUserCreationNext();
   SignInOnline(kSecondUserEmail, kSecondUserPassword, kSecondUserRefreshToken1,
                kSecondUserGaiaId);
@@ -269,6 +283,7 @@ IN_PROC_BROWSER_TEST_F(DeviceIDTest, NewUsers) {
   EXPECT_TRUE(GetDeviceId(AccountId::FromUserEmail(kSecondUserEmail)).empty());
   ASSERT_TRUE(LoginScreenTestApi::ClickAddUserButton());
   OobeScreenWaiter(UserCreationView::kScreenId).Wait();
+  test::TapForPersonalUseCrRadioButton();
   test::TapUserCreationNext();
   SignInOnline(kSecondUserEmail, kSecondUserPassword, kSecondUserRefreshToken2,
                kSecondUserGaiaId);

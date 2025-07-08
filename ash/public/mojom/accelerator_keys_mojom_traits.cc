@@ -4,6 +4,7 @@
 
 #include "ash/public/mojom/accelerator_keys_mojom_traits.h"
 
+#include "ash/public/mojom/accelerator_keys.mojom-shared.h"
 #include "ash/public/mojom/accelerator_keys.mojom.h"
 #include "base/notreached.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
@@ -407,10 +408,51 @@ mojom_vkey EnumTraits<mojom_vkey, ui::KeyboardCode>::ToMojom(
       return mojom_vkey::kDictate;
     case ui::KeyboardCode::VKEY_ALL_APPLICATIONS:
       return mojom_vkey::kAllApplications;
+    case ui::VKEY_FUNCTION:
+      return mojom_vkey::kFunction;
+    case ui::VKEY_QUICK_INSERT:
+      return mojom_vkey::kQuickInsert;
+    case ui::VKEY_ACCESSIBILITY:
+      return mojom_vkey::kAccessibility;
+    case ui::VKEY_DO_NOT_DISTURB:
+      return mojom_vkey::kDoNotDisturb;
+    case ui::VKEY_CAMERA_ACCESS_TOGGLE:
+      return mojom_vkey::kCameraAccessToggle;
+    case ui::VKEY_BUTTON_0:
+      return mojom_vkey::kButton0;
+    case ui::VKEY_BUTTON_1:
+      return mojom_vkey::kButton1;
+    case ui::VKEY_BUTTON_2:
+      return mojom_vkey::kButton2;
+    case ui::VKEY_BUTTON_3:
+      return mojom_vkey::kButton3;
+    case ui::VKEY_BUTTON_4:
+      return mojom_vkey::kButton4;
+    case ui::VKEY_BUTTON_5:
+      return mojom_vkey::kButton5;
+    case ui::VKEY_BUTTON_6:
+      return mojom_vkey::kButton6;
+    case ui::VKEY_BUTTON_7:
+      return mojom_vkey::kButton7;
+    case ui::VKEY_BUTTON_8:
+      return mojom_vkey::kButton8;
+    case ui::VKEY_BUTTON_9:
+      return mojom_vkey::kButton9;
+    case ui::VKEY_BUTTON_A:
+      return mojom_vkey::kButtonA;
+    case ui::VKEY_BUTTON_B:
+      return mojom_vkey::kButtonB;
+    case ui::VKEY_BUTTON_C:
+      return mojom_vkey::kButtonC;
+    case ui::VKEY_BUTTON_X:
+      return mojom_vkey::kButtonX;
+    case ui::VKEY_BUTTON_Y:
+      return mojom_vkey::kButtonY;
+    case ui::VKEY_BUTTON_Z:
+      return mojom_vkey::kButtonZ;
   }
 
   NOTREACHED();
-  return mojom_vkey::kUnknown;
 }
 
 bool EnumTraits<mojom_vkey, ui::KeyboardCode>::FromMojom(
@@ -1005,9 +1047,71 @@ bool EnumTraits<mojom_vkey, ui::KeyboardCode>::FromMojom(
     case mojom_vkey::kAllApplications:
       *out = ui::KeyboardCode::VKEY_ALL_APPLICATIONS;
       return true;
+    case ash::mojom::VKey::kQuickInsert:
+      *out = ui::KeyboardCode::VKEY_QUICK_INSERT;
+      return true;
+    case ash::mojom::VKey::kAccessibility:
+      *out = ui::KeyboardCode::VKEY_ACCESSIBILITY;
+      return true;
+    case ash::mojom::VKey::kDoNotDisturb:
+      *out = ui::KeyboardCode::VKEY_DO_NOT_DISTURB;
+      return true;
+    case ash::mojom::VKey::kCameraAccessToggle:
+      *out = ui::KeyboardCode::VKEY_CAMERA_ACCESS_TOGGLE;
+      return true;
+    case ash::mojom::VKey::kFunction:
+      *out = ui::KeyboardCode::VKEY_FUNCTION;
+      return true;
+    case mojom_vkey::kButton0:
+      *out = ui::KeyboardCode::VKEY_BUTTON_0;
+      return true;
+    case mojom_vkey::kButton1:
+      *out = ui::KeyboardCode::VKEY_BUTTON_1;
+      return true;
+    case mojom_vkey::kButton2:
+      *out = ui::KeyboardCode::VKEY_BUTTON_2;
+      return true;
+    case mojom_vkey::kButton3:
+      *out = ui::KeyboardCode::VKEY_BUTTON_3;
+      return true;
+    case mojom_vkey::kButton4:
+      *out = ui::KeyboardCode::VKEY_BUTTON_4;
+      return true;
+    case mojom_vkey::kButton5:
+      *out = ui::KeyboardCode::VKEY_BUTTON_5;
+      return true;
+    case mojom_vkey::kButton6:
+      *out = ui::KeyboardCode::VKEY_BUTTON_6;
+      return true;
+    case mojom_vkey::kButton7:
+      *out = ui::KeyboardCode::VKEY_BUTTON_7;
+      return true;
+    case mojom_vkey::kButton8:
+      *out = ui::KeyboardCode::VKEY_BUTTON_8;
+      return true;
+    case mojom_vkey::kButton9:
+      *out = ui::KeyboardCode::VKEY_BUTTON_9;
+      return true;
+    case mojom_vkey::kButtonA:
+      *out = ui::KeyboardCode::VKEY_BUTTON_A;
+      return true;
+    case mojom_vkey::kButtonB:
+      *out = ui::KeyboardCode::VKEY_BUTTON_B;
+      return true;
+    case mojom_vkey::kButtonC:
+      *out = ui::KeyboardCode::VKEY_BUTTON_C;
+      return true;
+    case mojom_vkey::kButtonX:
+      *out = ui::KeyboardCode::VKEY_BUTTON_X;
+      return true;
+    case mojom_vkey::kButtonY:
+      *out = ui::KeyboardCode::VKEY_BUTTON_Y;
+      return true;
+    case mojom_vkey::kButtonZ:
+      *out = ui::KeyboardCode::VKEY_BUTTON_Z;
+      return true;
   }
   NOTREACHED();
-  return false;
 }
 
 }  // namespace mojo

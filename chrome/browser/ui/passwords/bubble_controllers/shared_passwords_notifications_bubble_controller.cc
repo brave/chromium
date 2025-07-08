@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/passwords/bubble_controllers/shared_passwords_notifications_bubble_controller.h"
 
 #include "chrome/browser/password_manager/account_password_store_factory.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/ui/passwords/passwords_model_delegate.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/password_manager/core/browser/manage_passwords_referrer.h"
@@ -15,6 +15,8 @@
 #include "ui/base/l10n/l10n_util.h"
 
 using password_manager::PasswordForm;
+using password_manager::metrics_util::
+    SharedPasswordsNotificationBubbleInteractions;
 
 SharedPasswordsNotificationBubbleController::
     SharedPasswordsNotificationBubbleController(
@@ -22,7 +24,12 @@ SharedPasswordsNotificationBubbleController::
     : PasswordBubbleControllerBase(
           std::move(delegate),
           password_manager::metrics_util::
-              AUTOMATIC_SHARED_PASSWORDS_NOTIFICATION) {}
+              AUTOMATIC_SHARED_PASSWORDS_NOTIFICATION) {
+  password_manager::metrics_util::
+      LogUserInteractionsInSharedPasswordsNotificationBubble(
+          SharedPasswordsNotificationBubbleInteractions::
+              kNotificationDisplayed);
+}
 
 SharedPasswordsNotificationBubbleController::
     ~SharedPasswordsNotificationBubbleController() {
@@ -60,10 +67,17 @@ gfx::Range SharedPasswordsNotificationBubbleController::GetSenderNameRange()
 }
 
 void SharedPasswordsNotificationBubbleController::OnAcknowledgeClicked() {
+  password_manager::metrics_util::
+      LogUserInteractionsInSharedPasswordsNotificationBubble(
+          SharedPasswordsNotificationBubbleInteractions::kGotItButtonClicked);
   MarkSharedCredentialAsNotifiedInPasswordStore();
 }
 
 void SharedPasswordsNotificationBubbleController::OnManagePasswordsClicked() {
+  password_manager::metrics_util::
+      LogUserInteractionsInSharedPasswordsNotificationBubble(
+          SharedPasswordsNotificationBubbleInteractions::
+              kManagePasswordsButtonClicked);
   MarkSharedCredentialAsNotifiedInPasswordStore();
   delegate_->NavigateToPasswordManagerSettingsPage(
       password_manager::ManagePasswordsReferrer::
@@ -71,6 +85,9 @@ void SharedPasswordsNotificationBubbleController::OnManagePasswordsClicked() {
 }
 
 void SharedPasswordsNotificationBubbleController::OnCloseBubbleClicked() {
+  password_manager::metrics_util::
+      LogUserInteractionsInSharedPasswordsNotificationBubble(
+          SharedPasswordsNotificationBubbleInteractions::kCloseButtonClicked);
   MarkSharedCredentialAsNotifiedInPasswordStore();
 }
 
@@ -81,7 +98,7 @@ std::u16string SharedPasswordsNotificationBubbleController::GetTitle() const {
 }
 
 void SharedPasswordsNotificationBubbleController::ReportInteractions() {
-  // TODO(crbug.com/1464209): Report necessary interactions.
+  // TODO(crbug.com/40275527): Report necessary interactions.
 }
 
 std::vector<PasswordForm*> SharedPasswordsNotificationBubbleController::
@@ -109,7 +126,7 @@ void SharedPasswordsNotificationBubbleController::
         credential->IsUsingAccountStore()
             ? AccountPasswordStoreFactory::GetForProfile(
                   profile, ServiceAccessType::EXPLICIT_ACCESS)
-            : PasswordStoreFactory::GetForProfile(
+            : ProfilePasswordStoreFactory::GetForProfile(
                   profile, ServiceAccessType::EXPLICIT_ACCESS);
 
     PasswordForm updated_credential = *credential;

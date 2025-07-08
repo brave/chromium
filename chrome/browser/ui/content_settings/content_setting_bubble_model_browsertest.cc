@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
+
 #include <memory>
 #include <vector>
 
@@ -9,13 +11,14 @@
 #include "base/files/file_path.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/content_settings/chrome_content_settings_utils.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/content_settings/fake_owner.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/webui_url_constants.h"
@@ -24,6 +27,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/test/content_settings_mock_provider.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
@@ -66,11 +70,11 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
     // Create a bubble with the given camera and microphone access state.
     PageSpecificContentSettings::GetForFrame(
         web_contents->GetPrimaryMainFrame())
-        ->OnMediaStreamPermissionSet(web_contents->GetLastCommittedURL(), state,
-                                     std::string(), std::string(),
-                                     std::string(), std::string());
+        ->OnMediaStreamPermissionSet(web_contents->GetLastCommittedURL(),
+                                     state);
     return std::make_unique<ContentSettingMediaStreamBubbleModel>(
-        browser()->content_setting_bubble_model_delegate(), web_contents);
+        browser()->GetFeatures().content_setting_bubble_model_delegate(),
+        web_contents);
   }
 
   content::WebContents* GetActiveTab() {
@@ -90,6 +94,9 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
 
  protected:
   void SetUpInProcessBrowserTestFixture() override {
+    scoped_feature_list_.InitWithFeatures(
+        {}, {content_settings::features::kLeftHandSideActivityIndicators});
+
     https_server_ = std::make_unique<net::EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
     https_server_->ServeFilesFromSourceDirectory(GetChromeTestDataDir());
@@ -103,15 +110,19 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
       provider->SetWebsiteSetting(
           ContentSettingsPattern::Wildcard(),
           ContentSettingsPattern::Wildcard(), type,
-          base::Value(ContentSetting::CONTENT_SETTING_BLOCK));
+          base::Value(ContentSetting::CONTENT_SETTING_BLOCK),
+          /*constraints=*/{},
+          content_settings::PartitionKey::GetDefaultForTesting());
     }
     HostContentSettingsMap* map =
         HostContentSettingsMapFactory::GetForProfile(browser()->profile());
     content_settings::TestUtils::OverrideProvider(
-        map, std::move(provider), HostContentSettingsMap::SUPERVISED_PROVIDER);
+        map, std::move(provider),
+        content_settings::ProviderType::kSupervisedProvider);
   }
 
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests that clicking on the manage button in the media bubble opens the
@@ -169,11 +180,11 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelMediaStreamTest,
                   ->GetLastCommittedOrigin()
                   .GetURL(),
               web_contents->GetLastCommittedURL()),
-          {PageSpecificContentSettings::kMicrophoneAccessed}, std::string(),
-          std::string(), std::string(), std::string());
+          {PageSpecificContentSettings::kMicrophoneAccessed});
   std::unique_ptr<ContentSettingBubbleModel> mic_bubble =
       std::make_unique<ContentSettingMediaStreamBubbleModel>(
-          browser()->content_setting_bubble_model_delegate(), web_contents);
+          browser()->GetFeatures().content_setting_bubble_model_delegate(),
+          web_contents);
 
   EXPECT_TRUE(mic_bubble->bubble_content().is_user_modifiable);
 }
@@ -317,8 +328,7 @@ class ContentSettingBubbleModelPopupTest : public InProcessBrowserTest {
 };
 
 // Tests that each popup action is counted in the right bucket.
-IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelPopupTest,
-                       PopupsActionsCount){
+IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelPopupTest, PopupsActionsCount) {
   GURL url(https_server_->GetURL("/popup_blocker/popup-many.html"));
   base::HistogramTester histograms;
   histograms.ExpectTotalCount("ContentSettings.Popups", 0);
@@ -326,40 +336,41 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelPopupTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
 
   histograms.ExpectBucketCount(
-        "ContentSettings.Popups",
-        content_settings::POPUPS_ACTION_DISPLAYED_BLOCKED_ICON_IN_OMNIBOX, 1);
+      "ContentSettings.Popups",
+      content_settings::POPUPS_ACTION_DISPLAYED_BLOCKED_ICON_IN_OMNIBOX, 1);
 
   // Creates the ContentSettingPopupBubbleModel in order to emulate clicks.
   std::unique_ptr<ContentSettingBubbleModel> model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-          browser()->content_setting_bubble_model_delegate(),
+          browser()->GetFeatures().content_setting_bubble_model_delegate(),
           browser()->tab_strip_model()->GetActiveWebContents(),
           ContentSettingsType::POPUPS));
   std::unique_ptr<FakeOwner> owner =
       FakeOwner::Create(*model, kDisallowButtonIndex);
 
-  histograms.ExpectBucketCount(
-        "ContentSettings.Popups",
-        content_settings::POPUPS_ACTION_DISPLAYED_BUBBLE, 1);
+  histograms.ExpectBucketCount("ContentSettings.Popups",
+                               content_settings::POPUPS_ACTION_DISPLAYED_BUBBLE,
+                               1);
 
-  ui::MouseEvent click_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                             ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
+  ui::MouseEvent click_event(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), ui::EventTimeForNow(),
+                             ui::EF_LEFT_MOUSE_BUTTON,
                              ui::EF_LEFT_MOUSE_BUTTON);
 
   model->OnListItemClicked(0, click_event);
   histograms.ExpectBucketCount(
-        "ContentSettings.Popups",
-        content_settings::POPUPS_ACTION_CLICKED_LIST_ITEM_CLICKED, 1);
+      "ContentSettings.Popups",
+      content_settings::POPUPS_ACTION_CLICKED_LIST_ITEM_CLICKED, 1);
 
   model->OnManageButtonClicked();
   histograms.ExpectBucketCount(
-        "ContentSettings.Popups",
-        content_settings::POPUPS_ACTION_CLICKED_MANAGE_POPUPS_BLOCKING, 1);
+      "ContentSettings.Popups",
+      content_settings::POPUPS_ACTION_CLICKED_MANAGE_POPUPS_BLOCKING, 1);
 
   owner->SetSelectedRadioOptionAndCommit(model->kAllowButtonIndex);
   histograms.ExpectBucketCount(
-        "ContentSettings.Popups",
-        content_settings::POPUPS_ACTION_SELECTED_ALWAYS_ALLOW_POPUPS_FROM, 1);
+      "ContentSettings.Popups",
+      content_settings::POPUPS_ACTION_SELECTED_ALWAYS_ALLOW_POPUPS_FROM, 1);
 
   histograms.ExpectTotalCount("ContentSettings.Popups", 5);
 }

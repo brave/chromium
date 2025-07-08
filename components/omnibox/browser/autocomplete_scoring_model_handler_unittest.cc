@@ -9,15 +9,15 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "components/omnibox/browser/autocomplete_scoring_model_executor.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/proto/autocomplete_scoring_model_metadata.pb.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/metrics_proto/omnibox_scoring_signals.pb.h"
 
-using ScoringSignals = ::metrics::OmniboxEventProto::Suggestion::ScoringSignals;
+using ScoringSignals = ::metrics::OmniboxScoringSignals;
 using ::optimization_guide::proto::AutocompleteScoringModelMetadata;
 using ::optimization_guide::proto::ScoringSignalSpec;
 using ::optimization_guide::proto::ScoringSignalTransformation;
@@ -27,10 +27,10 @@ namespace {
 
 ScoringSignalSpec CreateScoringSignalSpec(
     ScoringSignalType type,
-    absl::optional<ScoringSignalTransformation> transformation = absl::nullopt,
-    absl::optional<float> min_val = absl::nullopt,
-    absl::optional<float> max_val = absl::nullopt,
-    absl::optional<float> missing_val = absl::nullopt) {
+    std::optional<ScoringSignalTransformation> transformation = std::nullopt,
+    std::optional<float> min_val = std::nullopt,
+    std::optional<float> max_val = std::nullopt,
+    std::optional<float> missing_val = std::nullopt) {
   ScoringSignalSpec spec;
   spec.set_type(type);
   if (transformation) {
@@ -57,16 +57,18 @@ class TestAutocompleteScoringModelExecutor
   ~TestAutocompleteScoringModelExecutor() override = default;
 
   void InitializeAndMoveToExecutionThread(
-      absl::optional<base::TimeDelta>,
+      std::optional<base::TimeDelta>,
       optimization_guide::proto::OptimizationTarget,
       scoped_refptr<base::SequencedTaskRunner>,
       scoped_refptr<base::SequencedTaskRunner>) override {}
 
-  void UpdateModelFile(const base::FilePath&) override {}
+  void UpdateModelFile(base::optional_ref<const base::FilePath>) override {}
 
   void UnloadModel() override {}
 
+  // These interfere with the test code which is injecting its own model.
   void SetShouldUnloadModelOnComplete(bool should_auto_unload) override {}
+  void SetShouldPreloadModel(bool should_preload_model) override {}
 };
 
 class AutocompleteScoringModelHandlerTest : public testing::Test {
@@ -82,10 +84,10 @@ class AutocompleteScoringModelHandlerTest : public testing::Test {
         std::make_unique<TestAutocompleteScoringModelExecutor>(),
         /*optimization_target=*/
         optimization_guide::proto::OPTIMIZATION_TARGET_OMNIBOX_URL_SCORING,
-        /*model_metadata=*/absl::nullopt);
+        /*model_metadata=*/std::nullopt);
 
     base::FilePath source_root_dir;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &source_root_dir);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_root_dir);
     // A model of `add` operator.
     model_file_path_ = source_root_dir.AppendASCII("components")
                            .AppendASCII("test")
@@ -101,17 +103,16 @@ class AutocompleteScoringModelHandlerTest : public testing::Test {
   }
 
   void PushModelFileToModelExecutor(
-      absl::optional<
-          optimization_guide::proto::AutocompleteScoringModelMetadata>
+      std::optional<optimization_guide::proto::AutocompleteScoringModelMetadata>
           metadata) {
-    absl::optional<optimization_guide::proto::Any> any;
+    std::optional<optimization_guide::proto::Any> any;
 
     // Craft a correct Any proto in the case we passed in metadata.
     if (metadata) {
       std::string serialized_metadata;
       metadata->SerializeToString(&serialized_metadata);
       optimization_guide::proto::Any any_proto;
-      any = absl::make_optional(any_proto);
+      any = std::make_optional(any_proto);
       any->set_value(serialized_metadata);
       any->set_type_url(
           "type.googleapis.com/"
@@ -159,12 +160,34 @@ TEST_F(AutocompleteScoringModelHandlerTest,
   *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
       optimization_guide::proto::
           SCORING_SIGNAL_TYPE_ELAPSED_TIME_LAST_SHORTCUT_VISIT_SEC,
-      /*transformation=*/absl::nullopt,
-      /*min_val=*/0, /*max_val=*/absl::nullopt, /*missing_val=*/-2);
+      /*transformation=*/std::nullopt,
+      /*min_val=*/0, /*max_val=*/std::nullopt, /*missing_val=*/-2);
   // Clamped by upper boundary.
   *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
       optimization_guide::proto::SCORING_SIGNAL_TYPE_TYPED_COUNT);
   model_metadata.mutable_scoring_signal_specs(4)->set_norm_upper_boundary(100);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::
+          SCORING_SIGNAL_TYPE_MATCHES_TITLE_OR_HOST_OR_SHORTCUT_TEXT);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::
+          SCORING_SIGNAL_TYPE_NUM_INPUT_TERMS_MATCHED_BY_BOOKMARK_TITLE);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_SITE_ENGAGEMENT);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_SEARCH_SUGGEST_RELEVANCE);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_SEARCH_SUGGEST_ENTITY);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_VERBATIM);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_NAVSUGGEST);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_SEARCH_SUGGEST_TAIL);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_ANSWER_SUGGEST);
+  *model_metadata.add_scoring_signal_specs() = CreateScoringSignalSpec(
+      optimization_guide::proto::SCORING_SIGNAL_TYPE_IS_CALCULATOR_SUGGEST);
 
   // Scoring signals.
   ScoringSignals scoring_signals;
@@ -172,15 +195,46 @@ TEST_F(AutocompleteScoringModelHandlerTest,
   scoring_signals.set_elapsed_time_last_visit_secs(32767);
   scoring_signals.set_elapsed_time_last_shortcut_visit_sec(-200);
   scoring_signals.set_typed_count(150);
+  scoring_signals.set_num_input_terms_matched_by_bookmark_title(10);
+  scoring_signals.set_site_engagement(50);
+  scoring_signals.set_search_suggest_relevance(1234);
+  scoring_signals.set_is_search_suggest_entity(true);
+  scoring_signals.set_is_verbatim(false);
+  scoring_signals.set_is_navsuggest(false);
+  scoring_signals.set_is_search_suggest_tail(false);
+  scoring_signals.set_is_answer_suggest(false);
+  scoring_signals.set_is_calculator_suggest(false);
 
-  const auto input_signals = model_handler_->ExtractInputFromScoringSignals(
+  auto input_signals = model_handler_->ExtractInputFromScoringSignals(
       scoring_signals, model_metadata);
-  ASSERT_EQ(input_signals.size(), 5u);
+  ASSERT_EQ(input_signals.size(), 15u);
   EXPECT_THAT(input_signals[0], 0.2);  // Normalized signal.
   EXPECT_THAT(input_signals[1], 15);
   EXPECT_NEAR(input_signals[2], 0.3792, 0.0001);
   EXPECT_THAT(input_signals[3], -2);
   EXPECT_NEAR(input_signals[4], 1.0f, 0.0001);  // Clamped and normalized.
+
+  // `matches_title_or_host_or_shortcut_text` is derived from host or title
+  // match length and shortcut visit count. Expect it to be false until those
+  // values are set.
+  EXPECT_THAT(input_signals[5], 0);
+
+  scoring_signals.set_total_host_match_length(20);
+  scoring_signals.set_total_title_match_length(0);
+  scoring_signals.set_shortcut_visit_count(1);
+  input_signals = model_handler_->ExtractInputFromScoringSignals(
+      scoring_signals, model_metadata);
+  EXPECT_THAT(input_signals[5], 1);
+
+  EXPECT_THAT(input_signals[6], 10);
+  EXPECT_THAT(input_signals[7], 50);
+  EXPECT_THAT(input_signals[8], 1234);
+  EXPECT_THAT(input_signals[9], 1);
+  EXPECT_THAT(input_signals[10], 0);
+  EXPECT_THAT(input_signals[11], 0);
+  EXPECT_THAT(input_signals[12], 0);
+  EXPECT_THAT(input_signals[13], 0);
+  EXPECT_THAT(input_signals[14], 0);
 }
 
 TEST_F(AutocompleteScoringModelHandlerTest, GetBatchModelInputTest) {
@@ -196,7 +250,7 @@ TEST_F(AutocompleteScoringModelHandlerTest, GetBatchModelInputTest) {
   scoring_signals_vec.push_back(&scoring_signals_1);
   scoring_signals_2.set_length_of_url(12);
   scoring_signals_vec.push_back(&scoring_signals_2);
-  const absl::optional<std::vector<std::vector<float>>> batch_model_input =
+  const std::optional<std::vector<std::vector<float>>> batch_model_input =
       model_handler_->GetBatchModelInput(scoring_signals_vec);
   ASSERT_TRUE(batch_model_input);
   ASSERT_EQ(batch_model_input->size(), 2u);

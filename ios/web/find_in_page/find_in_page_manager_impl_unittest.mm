@@ -14,10 +14,6 @@
 #import "ios/web/public/test/web_test.h"
 #import "testing/gtest/include/gtest/gtest.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // Timeout before failure if the FindInPageManager does not report to the
@@ -47,17 +43,16 @@ class FindInPageManagerImplTest : public WebTest {
       fake_web_state_ = std::make_unique<FakeWebState>();
       fake_web_state_->SetBrowserState(GetBrowserState());
 
-      FindInPageManagerImpl::CreateForWebState(fake_web_state_.get());
+      // Create the FindInPageManager with a shorter delay between each
+      // manager's call to `PollActiveFindSession()` so tests run faster.
+      FindInPageManager::CreateForWebState(fake_web_state_.get(),
+                                           base::Milliseconds(5));
       GetFindInPageManager()->SetDelegate(&fake_delegate_);
-      // Sets a smaller delay between each manager's call to
-      // `PollActiveFindSession()` so tests run faster.
-      GetFindInPageManager()->poll_active_find_session_delay_ =
-          base::Milliseconds(5);
 
-        // Enable and set up fake Find interaction in the fake web state.
-        fake_web_state_->SetFindInteractionEnabled(true);
-        fake_web_state_->SetFindInteraction(
-            [[CRWFakeFindInteraction alloc] init]);
+      // Enable and set up fake Find interaction in the fake web state.
+      fake_web_state_->SetFindInteractionEnabled(true);
+      fake_web_state_->SetFindInteraction(
+          [[CRWFakeFindInteraction alloc] init]);
     }
   }
 

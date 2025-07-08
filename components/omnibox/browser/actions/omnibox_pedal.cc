@@ -4,17 +4,16 @@
 
 #include "components/omnibox/browser/actions/omnibox_pedal.h"
 
-#include <cctype>
+#include <algorithm>
+#include <functional>
 #include <numeric>
 
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/buildflags.h"
 #include "components/omnibox/browser/omnibox_client.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/resources/grit/omnibox_pedal_synonyms.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -186,7 +185,7 @@ bool OmniboxPedal::SynonymGroup::EraseMatchesIn(
   auto eraser = fully_erase ? &TokenSequence::Erase : &TokenSequence::Consume;
   bool changed = false;
   for (const auto& synonym : synonyms_) {
-    if (base::invoke(eraser, remaining, synonym, match_once_)) {
+    if (std::invoke(eraser, remaining, synonym, match_once_)) {
       changed = true;
       if (match_once_) {
         break;
@@ -221,7 +220,7 @@ void OmniboxPedal::SynonymGroup::EraseIgnoreGroup(
 }
 
 bool OmniboxPedal::SynonymGroup::IsValid() const {
-  return base::ranges::all_of(
+  return std::ranges::all_of(
       synonyms_, [](const auto& synonym) { return synonym.Size() > 0; });
 }
 
@@ -253,9 +252,7 @@ void OmniboxPedal::SetNavigationUrl(const GURL& url) {
 #if defined(SUPPORT_PEDALS_VECTOR_ICONS)
 // static
 const gfx::VectorIcon& OmniboxPedal::GetDefaultVectorIcon() {
-  return OmniboxFieldTrial::IsChromeRefreshActionChipIconsEnabled()
-             ? omnibox::kProductChromeRefreshIcon
-             : omnibox::kPedalIcon;
+  return omnibox::kProductChromeRefreshIcon;
 }
 
 const gfx::VectorIcon& OmniboxPedal::GetVectorIcon() const {

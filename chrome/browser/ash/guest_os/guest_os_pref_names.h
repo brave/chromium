@@ -28,7 +28,6 @@ inline constexpr char kGuestOsRegistry[] = "crostini.registry";
 
 // Keys for the |kGuestOsRegistry| Dictionary stored in prefs for each app.
 inline constexpr char kAppDesktopFileIdKey[] = "desktop_file_id";
-inline constexpr char kAppCommentKey[] = "comment";
 inline constexpr char kAppExtensionsKey[] = "extensions";
 inline constexpr char kAppMimeTypesKey[] = "mime_types";
 inline constexpr char kAppKeywordsKey[] = "keywords";
@@ -64,6 +63,13 @@ inline constexpr char kBruschettaConfigId[] = "bruschetta_config_id";
 // Terminal
 // Dictionary of terminal UI settings such as font style, colors, etc.
 inline constexpr char kGuestOsTerminalSettings[] = "crostini.terminal_settings";
+
+inline constexpr char kGuestOsUSBNotificationEnabled[] =
+    "guest_os.usb_notification_enabled";
+inline constexpr char kGuestOsUSBPersistentPassthroughEnabled[] =
+    "guest_os.usb_persistent_passthrough_enabled";
+inline constexpr char kGuestOsUSBPersistentPassthroughDevices[] =
+    "guest_os.usb_persistent_passthrough_devices";
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
 

@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/Dawn Linux x64 Builder/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -34,7 +37,97 @@
           {
             "builder_id": {
               "bucket": "ci",
+              "builder": "Dawn Linux x64 Experimental Release (Intel UHD 630)",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "build_gs_bucket": "chromium-dawn-archive",
+              "builder_group": "chromium.dawn",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "linux"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "Dawn Linux x64 Builder",
+                "project": "chromium"
+              },
+              "run_tests_serially": true
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
+              "builder": "Dawn Linux x64 Experimental Release (NVIDIA GTX 1660)",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "build_gs_bucket": "chromium-dawn-archive",
+              "builder_group": "chromium.dawn",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "linux"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "Dawn Linux x64 Builder",
+                "project": "chromium"
+              },
+              "run_tests_serially": true
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
               "builder": "Dawn Linux x64 Release (Intel UHD 630)",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "build_gs_bucket": "chromium-dawn-archive",
+              "builder_group": "chromium.dawn",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "linux"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "Dawn Linux x64 Builder",
+                "project": "chromium"
+              },
+              "run_tests_serially": true
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
+              "builder": "Dawn Linux x64 Release (Intel UHD 770)",
               "project": "chromium"
             },
             "builder_spec": {
@@ -103,7 +196,22 @@
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
+          "builder": "Dawn Linux x64 Experimental Release (Intel UHD 630)",
+          "project": "chromium"
+        },
+        {
+          "bucket": "ci",
+          "builder": "Dawn Linux x64 Experimental Release (NVIDIA GTX 1660)",
+          "project": "chromium"
+        },
+        {
+          "bucket": "ci",
           "builder": "Dawn Linux x64 Release (Intel UHD 630)",
+          "project": "chromium"
+        },
+        {
+          "bucket": "ci",
+          "builder": "Dawn Linux x64 Release (Intel UHD 770)",
           "project": "chromium"
         },
         {
@@ -114,17 +222,36 @@
       ],
       "mirroring_builder_group_and_names": [
         {
+          "builder": "dawn-try-linux-x64-intel-uhd770-rel",
+          "group": "tryserver.chromium.dawn"
+        },
+        {
+          "builder": "linux-dawn-intel-exp-rel",
+          "group": "tryserver.chromium.dawn"
+        },
+        {
+          "builder": "linux-dawn-nvidia-1660-exp-rel",
+          "group": "tryserver.chromium.dawn"
+        },
+        {
           "builder": "linux-dawn-rel",
           "group": "tryserver.chromium.dawn"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Dawn Linux x64 Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -134,6 +261,10 @@
     ]
   },
   "builder_group": "chromium.dawn",
+  "dawn_ref": "refs/heads/main",
+  "gardener_rotations": [
+    "dawn"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "dawn"

@@ -10,11 +10,11 @@
 #include "base/time/time.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/ash/ime_controller_client_impl.h"
+#include "chrome/browser/ui/ash/input_method/ime_controller_client_impl.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/known_user.h"
@@ -70,7 +70,7 @@ void SetUserInputMethod(const AccountId& account_id,
     DVLOG(0) << "SetUserInputMethod: failed to set user layout. Switching to "
                 "default.";
 
-    ime_state->SetInputMethodLoginDefault();
+    ime_state->SetInputMethodLoginDefault(false /* is_in_oobe_context */);
   }
 }
 
@@ -134,12 +134,12 @@ void StopEnforcingPolicyInputMethods() {
   imm_state->SetAllowedInputMethods(std::vector<std::string>());
   if (ImeControllerClientImpl::Get())  // Can be null in tests.
     ImeControllerClientImpl::Get()->SetImesManagedByPolicy(false);
-  imm_state->SetInputMethodLoginDefault();
+  imm_state->SetInputMethodLoginDefault(false /* is_in_oobe_context */);
 }
 
 void SetKeyboardSettings(const AccountId& account_id) {
   user_manager::KnownUser known_user(g_browser_process->local_state());
-  if (absl::optional<bool> auto_repeat_enabled =
+  if (std::optional<bool> auto_repeat_enabled =
           known_user.FindBoolPath(account_id, prefs::kXkbAutoRepeatEnabled);
       auto_repeat_enabled.has_value()) {
     if (!auto_repeat_enabled.value()) {

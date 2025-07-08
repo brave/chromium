@@ -6,17 +6,19 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSKEY_CREDENTIAL_H_
 
 #include <stdint.h>
+
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/containers/span.h"
+#include "base/time/time.h"
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(IS_ANDROID)
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace password_manager {
 
@@ -28,6 +30,8 @@ class PasskeyCredential {
     kAndroidPhone,
     kTouchId,
     kWindowsHello,
+    kICloudKeychain,
+    kGooglePasswordManager,
     kOther,
   };
 
@@ -38,17 +42,19 @@ class PasskeyCredential {
   using Username = base::StrongAlias<class UsernameTag, std::string>;
   using DisplayName = base::StrongAlias<class DisplayNameTag, std::string>;
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(IS_ANDROID)
   static std::vector<PasskeyCredential> FromCredentialSpecifics(
       base::span<const sync_pb::WebauthnCredentialSpecifics> passkeys);
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   PasskeyCredential(Source source,
                     RpId rp_id,
                     CredentialId credential_id,
                     UserId user_id,
                     Username username = Username(""),
-                    DisplayName display_name = DisplayName(""));
+                    DisplayName display_name = DisplayName(""),
+                    // Must be provided for kAndroidPhone credentials.
+                    std::optional<base::Time> creation_time = std::nullopt);
   ~PasskeyCredential();
 
   PasskeyCredential(const PasskeyCredential&);
@@ -61,11 +67,9 @@ class PasskeyCredential {
   // belongs to.
   std::u16string GetAuthenticatorLabel() const;
 
-  // Sets an authenticator label for this passkey. If no label is set, a generic
-  // device name will be returned by GetAuthenticatorLabel().
-  void set_authenticator_label(const std::u16string& authenticator_label) {
-    authenticator_label_ = authenticator_label;
-  }
+  // Sets an authenticator label for this passkey. If no label is set, the
+  // source type will determine the result of GetAuthenticatorLabel().
+  void SetAuthenticatorLabel(const std::u16string& authenticator_label);
 
   Source source() const { return source_; }
   const std::string& rp_id() const { return rp_id_; }
@@ -73,8 +77,12 @@ class PasskeyCredential {
   const std::vector<uint8_t>& user_id() const { return user_id_; }
   const std::string& username() const { return username_; }
   const std::string& display_name() const { return display_name_; }
+  const std::optional<base::Time>& creation_time() const {
+    return creation_time_;
+  }
 
  private:
+  std::u16string GetAuthenticatorLabelBySourceType() const;
   friend bool operator==(const PasskeyCredential& lhs,
                          const PasskeyCredential& rhs);
 
@@ -103,7 +111,11 @@ class PasskeyCredential {
 
   // An optional label for the authenticator. If this is not set, a generic
   // device name will be returned by GetAuthenticatorLabel().
-  absl::optional<std::u16string> authenticator_label_;
+  std::optional<std::u16string> authenticator_label_;
+
+  // The time when the credential was created. Used for display in management
+  // UIs. This value is not available for passkeys from some sources.
+  std::optional<base::Time> creation_time_;
 };
 
 bool operator==(const PasskeyCredential& lhs, const PasskeyCredential& rhs);

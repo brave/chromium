@@ -77,10 +77,10 @@ PresentationRequestNotificationProducer::
         base::RepeatingCallback<bool(content::WebContents*)>
             has_active_notifications_callback,
         const base::UnguessableToken& source_id)
-    : has_active_notifications_callback_(
+    : observer_receiver_(this),
+      has_active_notifications_callback_(
           std::move(has_active_notifications_callback)),
-      source_id_(source_id),
-      observer_receiver_(this) {}
+      source_id_(source_id) {}
 
 PresentationRequestNotificationProducer::
     ~PresentationRequestNotificationProducer() = default;
@@ -165,7 +165,9 @@ void PresentationRequestNotificationProducer::OnPresentationsChanged(
   // If there is a presentation, there would already be an item associated with
   // that, so `this` doesn't have to provide another item.
   if (has_presentation && provider_.is_bound()) {
+#if !BUILDFLAG(IS_CHROMEOS)
     provider_->HideMediaUI();
+#endif
     provider_->HideItem();
   }
 }

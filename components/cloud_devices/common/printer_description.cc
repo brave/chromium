@@ -17,11 +17,9 @@
 #include "base/json/json_writer.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/cloud_devices/common/cloud_device_description_consts.h"
 #include "components/cloud_devices/common/description_items_inl.h"
 #include "ui/gfx/geometry/rect.h"
@@ -58,6 +56,7 @@ extern constexpr char kOptionDuplex[] = "duplex";
 extern constexpr char kOptionFitToPage[] = "fit_to_page";
 extern constexpr char kOptionMargins[] = "margins";
 extern constexpr char kOptionMediaSize[] = "media_size";
+extern constexpr char kOptionMediaType[] = "media_type";
 extern constexpr char kOptionPageOrientation[] = "page_orientation";
 extern constexpr char kOptionPageRange[] = "page_range";
 extern constexpr char kOptionReverse[] = "reverse_order";
@@ -88,6 +87,7 @@ constexpr char kMediaImageableAreaRight[] = "imageable_area_right_microns";
 constexpr char kMediaImageableAreaTop[] = "imageable_area_top_microns";
 constexpr char kMediaMinHeight[] = "min_height_microns";
 constexpr char kMediaMaxHeight[] = "max_height_microns";
+constexpr char kMediaHasBorderlessVariant[] = "has_borderless_variant";
 
 constexpr char kPageRangeInterval[] = "interval";
 constexpr char kPageRangeEnd[] = "end";
@@ -128,17 +128,13 @@ constexpr char kTypeDuplexLongEdge[] = "LONG_EDGE";
 constexpr char kTypeDuplexNoDuplex[] = "NO_DUPLEX";
 constexpr char kTypeDuplexShortEdge[] = "SHORT_EDGE";
 
-constexpr char kTypeFitToPageFillPage[] = "FILL_PAGE";
-constexpr char kTypeFitToPageFitToPage[] = "FIT_TO_PAGE";
-constexpr char kTypeFitToPageGrowToPage[] = "GROW_TO_PAGE";
-constexpr char kTypeFitToPageNoFitting[] = "NO_FITTING";
-constexpr char kTypeFitToPageShrinkToPage[] = "SHRINK_TO_PAGE";
+constexpr char kTypeFitToPageAuto[] = "AUTO";
+constexpr char kTypeFitToPageAutoFit[] = "AUTO_FIT";
+constexpr char kTypeFitToPageFill[] = "FILL";
+constexpr char kTypeFitToPageFit[] = "FIT";
+constexpr char kTypeFitToPageNone[] = "NONE";
 
-constexpr char kTypeMarginsBorderless[] = "BORDERLESS";
-constexpr char kTypeMarginsCustom[] = "CUSTOM";
-constexpr char kTypeMarginsStandard[] = "STANDARD";
 constexpr char kTypeOrientationAuto[] = "AUTO";
-
 constexpr char kTypeOrientationLandscape[] = "LANDSCAPE";
 constexpr char kTypeOrientationPortrait[] = "PORTRAIT";
 
@@ -211,24 +207,15 @@ constexpr struct OrientationNames {
     {OrientationType::AUTO_ORIENTATION, kTypeOrientationAuto},
 };
 
-constexpr struct MarginsNames {
-  MarginsType id;
-  const char* const json_name;
-} kMarginsNames[] = {
-    {MarginsType::NO_MARGINS, kTypeMarginsBorderless},
-    {MarginsType::STANDARD_MARGINS, kTypeMarginsStandard},
-    {MarginsType::CUSTOM_MARGINS, kTypeMarginsCustom},
-};
-
 constexpr struct FitToPageNames {
   FitToPageType id;
   const char* const json_name;
 } kFitToPageNames[] = {
-    {FitToPageType::NO_FITTING, kTypeFitToPageNoFitting},
-    {FitToPageType::FIT_TO_PAGE, kTypeFitToPageFitToPage},
-    {FitToPageType::GROW_TO_PAGE, kTypeFitToPageGrowToPage},
-    {FitToPageType::SHRINK_TO_PAGE, kTypeFitToPageShrinkToPage},
-    {FitToPageType::FILL_PAGE, kTypeFitToPageFillPage},
+    {FitToPageType::AUTO, kTypeFitToPageAuto},
+    {FitToPageType::AUTO_FIT, kTypeFitToPageAutoFit},
+    {FitToPageType::FILL, kTypeFitToPageFill},
+    {FitToPageType::FIT, kTypeFitToPageFit},
+    {FitToPageType::NONE, kTypeFitToPageNone},
 };
 
 constexpr struct DocumentSheetBackNames {
@@ -452,7 +439,6 @@ const gfx::Size& FindMediaSizeByType(MediaSize size_name) {
     }
   }
   NOTREACHED();
-  return kMediaDefinitions[0].size_um;
 }
 
 const MediaDefinition* FindMediaBySize(const gfx::Size& size_um) {
@@ -474,7 +460,6 @@ std::string TypeToString(const T& names, IdType id) {
       return name.json_name;
   }
   NOTREACHED();
-  return std::string();
 }
 
 template <class T, class IdType>
@@ -495,7 +480,7 @@ PwgRasterConfig::PwgRasterConfig()
       reverse_order_streaming(false),
       rotate_all_pages(false) {}
 
-PwgRasterConfig::~PwgRasterConfig() {}
+PwgRasterConfig::~PwgRasterConfig() = default;
 
 RangeVendorCapability::RangeVendorCapability() = default;
 
@@ -523,13 +508,6 @@ RangeVendorCapability::~RangeVendorCapability() = default;
 
 RangeVendorCapability& RangeVendorCapability::operator=(
     RangeVendorCapability&& other) = default;
-
-bool RangeVendorCapability::operator==(
-    const RangeVendorCapability& other) const {
-  return value_type_ == other.value_type_ && min_value_ == other.min_value_ &&
-         max_value_ == other.max_value_ &&
-         default_value_ == other.default_value_;
-}
 
 bool RangeVendorCapability::IsValid() const {
   if (min_value_.empty() || max_value_.empty())
@@ -570,7 +548,6 @@ bool RangeVendorCapability::IsValid() const {
     }
   }
   NOTREACHED() << "Bad range capability value type";
-  return false;
 }
 
 bool RangeVendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -612,11 +589,6 @@ SelectVendorCapabilityOption::SelectVendorCapabilityOption(
 
 SelectVendorCapabilityOption::~SelectVendorCapabilityOption() = default;
 
-bool SelectVendorCapabilityOption::operator==(
-    const SelectVendorCapabilityOption& other) const {
-  return value == other.value && display_name == other.display_name;
-}
-
 bool SelectVendorCapabilityOption::IsValid() const {
   return !value.empty() && !display_name.empty();
 }
@@ -639,12 +611,6 @@ TypedValueVendorCapability::~TypedValueVendorCapability() = default;
 TypedValueVendorCapability& TypedValueVendorCapability::operator=(
     TypedValueVendorCapability&& other) = default;
 
-bool TypedValueVendorCapability::operator==(
-    const TypedValueVendorCapability& other) const {
-  return value_type_ == other.value_type_ &&
-         default_value_ == other.default_value_;
-}
-
 bool TypedValueVendorCapability::IsValid() const {
   if (default_value_.empty())
     return true;
@@ -663,7 +629,6 @@ bool TypedValueVendorCapability::IsValid() const {
       return true;
   }
   NOTREACHED() << "Bad typed value capability value type";
-  return false;
 }
 
 bool TypedValueVendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -791,7 +756,6 @@ bool VendorCapability::IsValid() const {
       return typed_value_capability_.IsValid();
   }
   NOTREACHED() << "Bad vendor capability type";
-  return false;
 }
 
 bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
@@ -833,7 +797,6 @@ bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
     case Type::NONE:
     default:
       NOTREACHED();
-      break;
     case Type::RANGE:
       new (&range_capability_) RangeVendorCapability();
       return range_capability_.LoadFrom(*range_capability_value);
@@ -844,8 +807,6 @@ bool VendorCapability::LoadFrom(const base::Value::Dict& dict) {
       new (&typed_value_capability_) TypedValueVendorCapability();
       return typed_value_capability_.LoadFrom(*typed_value_capability_value);
   }
-
-  return false;
 }
 
 void VendorCapability::SaveTo(base::Value::Dict* dict) const {
@@ -857,7 +818,6 @@ void VendorCapability::SaveTo(base::Value::Dict* dict) const {
   switch (type_) {
     case Type::NONE:
       NOTREACHED();
-      break;
     case Type::RANGE: {
       base::Value::Dict range_capability_value;
       range_capability_.SaveTo(&range_capability_value);
@@ -885,11 +845,6 @@ Color::Color() : type(ColorType::AUTO_COLOR) {}
 Color::Color(ColorType type) : type(type) {
 }
 
-bool Color::operator==(const Color& other) const {
-  return type == other.type && vendor_id == other.vendor_id &&
-         custom_display_name == other.custom_display_name;
-}
-
 bool Color::IsValid() const {
   if (type != ColorType::CUSTOM_COLOR && type != ColorType::CUSTOM_MONOCHROME)
     return true;
@@ -905,31 +860,20 @@ bool VendorItem::IsValid() const {
   return !id.empty() && !value.empty();
 }
 
-bool VendorItem::operator==(const VendorItem& other) const {
-  return id == other.id && value == other.value;
-}
+Margins::Margins() : top_um(0), right_um(0), bottom_um(0), left_um(0) {}
 
-Margins::Margins()
-    : type(MarginsType::STANDARD_MARGINS),
-      top_um(0),
-      right_um(0),
-      bottom_um(0),
-      left_um(0) {}
-
-Margins::Margins(MarginsType type,
-                 int32_t top_um,
+Margins::Margins(int32_t top_um,
                  int32_t right_um,
                  int32_t bottom_um,
                  int32_t left_um)
-    : type(type),
-      top_um(top_um),
+    : top_um(top_um),
       right_um(right_um),
       bottom_um(bottom_um),
       left_um(left_um) {}
 
 bool Margins::operator==(const Margins& other) const {
-  return type == other.type && top_um == other.top_um &&
-         right_um == other.right_um && bottom_um == other.bottom_um;
+  return top_um == other.top_um && right_um == other.right_um &&
+         bottom_um == other.bottom_um;
 }
 
 Dpi::Dpi() : horizontal(0), vertical(0) {
@@ -942,14 +886,11 @@ bool Dpi::IsValid() const {
   return horizontal > 0 && vertical > 0;
 }
 
-bool Dpi::operator==(const Dpi& other) const {
-  return horizontal == other.horizontal && vertical == other.vertical;
-}
-
 Media::Media()
     : size_name(MediaSize::CUSTOM_MEDIA),
       is_continuous_feed(false),
-      max_height_um(0) {}
+      max_height_um(0),
+      has_borderless_variant(false) {}
 
 Media::Media(const Media& other) = default;
 
@@ -1031,6 +972,11 @@ MediaBuilder& MediaBuilder::WithMaxHeight(int max_height_um) {
   return *this;
 }
 
+MediaBuilder& MediaBuilder::WithBorderlessVariant(bool has_borderless_variant) {
+  has_borderless_variant_ = has_borderless_variant;
+  return *this;
+}
+
 Media MediaBuilder::Build() const {
   Media result;
   result.size_name = size_name_;
@@ -1040,6 +986,7 @@ Media MediaBuilder::Build() const {
   result.vendor_id = vendor_id_;
   result.printable_area_um = printable_area_um_;
   result.max_height_um = max_height_um_;
+  result.has_borderless_variant = has_borderless_variant_;
   return result;
 }
 
@@ -1054,8 +1001,14 @@ Interval::Interval(int32_t start, int32_t end) : start(start), end(end) {}
 
 Interval::Interval(int32_t start) : start(start), end(kMaxPageNumber) {}
 
-bool Interval::operator==(const Interval& other) const {
-  return start == other.start && end == other.end;
+MediaType::MediaType() = default;
+
+MediaType::MediaType(const std::string& vendor_id,
+                     const std::string& custom_display_name)
+    : vendor_id(vendor_id), custom_display_name(custom_display_name) {}
+
+bool MediaType::IsValid() const {
+  return !vendor_id.empty();
 }
 
 template <const char* kName>
@@ -1269,7 +1222,7 @@ class CopiesTicketItemTraits : public NoValueValidation,
                                public ItemsTraits<kOptionCopies> {
  public:
   static bool Load(const base::Value::Dict& dict, int32_t* option) {
-    absl::optional<int> copies = dict.FindInt(kOptionCopies);
+    std::optional<int> copies = dict.FindInt(kOptionCopies);
     if (!copies)
       return false;
 
@@ -1286,11 +1239,11 @@ class CopiesCapabilityTraits : public NoValueValidation,
                                public ItemsTraits<kOptionCopies> {
  public:
   static bool Load(const base::Value::Dict& dict, Copies* option) {
-    absl::optional<int> default_copies = dict.FindInt(kDefaultValue);
+    std::optional<int> default_copies = dict.FindInt(kDefaultValue);
     if (!default_copies)
       return false;
 
-    absl::optional<int> max_copies = dict.FindInt(kMaxValue);
+    std::optional<int> max_copies = dict.FindInt(kMaxValue);
     if (!max_copies)
       return false;
 
@@ -1309,13 +1262,10 @@ class MarginsTraits : public NoValueValidation,
                       public ItemsTraits<kOptionMargins> {
  public:
   static bool Load(const base::Value::Dict& dict, Margins* option) {
-    const std::string* type = dict.FindString(kKeyType);
-    if (!type || !TypeFromString(kMarginsNames, *type, &option->type))
-      return false;
-    absl::optional<int> top_um = dict.FindInt(kMarginTop);
-    absl::optional<int> right_um = dict.FindInt(kMarginRight);
-    absl::optional<int> bottom_um = dict.FindInt(kMarginBottom);
-    absl::optional<int> left_um = dict.FindInt(kMarginLeft);
+    std::optional<int> top_um = dict.FindInt(kMarginTop);
+    std::optional<int> right_um = dict.FindInt(kMarginRight);
+    std::optional<int> bottom_um = dict.FindInt(kMarginBottom);
+    std::optional<int> left_um = dict.FindInt(kMarginLeft);
     if (!top_um || !right_um || !bottom_um || !left_um)
       return false;
     option->top_um = top_um.value();
@@ -1326,7 +1276,6 @@ class MarginsTraits : public NoValueValidation,
   }
 
   static void Save(const Margins& option, base::Value::Dict* dict) {
-    dict->Set(kKeyType, TypeToString(kMarginsNames, option.type));
     dict->Set(kMarginTop, option.top_um);
     dict->Set(kMarginRight, option.right_um);
     dict->Set(kMarginBottom, option.bottom_um);
@@ -1339,8 +1288,8 @@ class DpiTraits : public ItemsTraits<kOptionDpi> {
   static bool IsValid(const Dpi& option) { return option.IsValid(); }
 
   static bool Load(const base::Value::Dict& dict, Dpi* option) {
-    absl::optional<int> horizontal = dict.FindInt(kDpiHorizontal);
-    absl::optional<int> vertical = dict.FindInt(kDpiVertical);
+    std::optional<int> horizontal = dict.FindInt(kDpiHorizontal);
+    std::optional<int> vertical = dict.FindInt(kDpiVertical);
     if (!horizontal || !vertical)
       return false;
     option->horizontal = horizontal.value();
@@ -1423,18 +1372,18 @@ class MediaTraits : public ItemsTraits<kOptionMediaSize> {
     const std::string* vendor_id = dict.FindString(kKeyVendorId);
     if (vendor_id)
       option->vendor_id = *vendor_id;
-    absl::optional<int> width_um = dict.FindInt(kMediaWidth);
+    std::optional<int> width_um = dict.FindInt(kMediaWidth);
     if (width_um) {
       option->size_um.set_width(width_um.value());
     }
-    absl::optional<bool> is_continuous_feed = dict.FindBool(kMediaIsContinuous);
+    std::optional<bool> is_continuous_feed = dict.FindBool(kMediaIsContinuous);
     if (is_continuous_feed) {
       option->is_continuous_feed = is_continuous_feed.value();
     }
     if (is_continuous_feed.value_or(false)) {
       // The min/max height is required for continuous feed media.
-      absl::optional<int> min_height_um = dict.FindInt(kMediaMinHeight);
-      absl::optional<int> max_height_um = dict.FindInt(kMediaMaxHeight);
+      std::optional<int> min_height_um = dict.FindInt(kMediaMinHeight);
+      std::optional<int> max_height_um = dict.FindInt(kMediaMaxHeight);
       if (!min_height_um || !max_height_um) {
         return false;
       }
@@ -1449,17 +1398,17 @@ class MediaTraits : public ItemsTraits<kOptionMediaSize> {
       option->printable_area_um = gfx::Rect(option->size_um);
       return true;
     }
-    absl::optional<int> height_um = dict.FindInt(kMediaHeight);
+    std::optional<int> height_um = dict.FindInt(kMediaHeight);
     if (height_um) {
       option->size_um.set_height(height_um.value());
     }
-    absl::optional<int> imageable_area_left =
+    std::optional<int> imageable_area_left =
         dict.FindInt(kMediaImageableAreaLeft);
-    absl::optional<int> imageable_area_bottom =
+    std::optional<int> imageable_area_bottom =
         dict.FindInt(kMediaImageableAreaBottom);
-    absl::optional<int> imageable_area_right =
+    std::optional<int> imageable_area_right =
         dict.FindInt(kMediaImageableAreaRight);
-    absl::optional<int> imageable_area_top =
+    std::optional<int> imageable_area_top =
         dict.FindInt(kMediaImageableAreaTop);
     if (imageable_area_left && imageable_area_bottom && imageable_area_right &&
         imageable_area_top) {
@@ -1469,6 +1418,13 @@ class MediaTraits : public ItemsTraits<kOptionMediaSize> {
           gfx::Rect(imageable_area_left.value(), imageable_area_bottom.value(),
                     width, height);
     }
+
+    std::optional<bool> has_borderless_variant =
+        dict.FindBool(kMediaHasBorderlessVariant);
+    if (has_borderless_variant) {
+      option->has_borderless_variant = has_borderless_variant.value();
+    }
+
     return true;
   }
 
@@ -1502,6 +1458,35 @@ class MediaTraits : public ItemsTraits<kOptionMediaSize> {
       dict->Set(kMediaImageableAreaTop, option.printable_area_um.y() +
                                             option.printable_area_um.height());
     }
+    if (option.has_borderless_variant) {
+      dict->Set(kMediaHasBorderlessVariant, true);
+    }
+  }
+};
+
+class MediaTypeTraits : public ItemsTraits<kOptionMediaType> {
+ public:
+  static bool IsValid(const MediaType& option) { return option.IsValid(); }
+
+  static bool Load(const base::Value::Dict& dict, MediaType* option) {
+    const std::string* vendor_id = dict.FindString(kKeyVendorId);
+    if (!vendor_id) {
+      return false;
+    }
+    option->vendor_id = *vendor_id;
+    const std::string* custom_display_name =
+        dict.FindString(kKeyCustomDisplayName);
+    if (custom_display_name) {
+      option->custom_display_name = *custom_display_name;
+    }
+    return true;
+  }
+
+  static void Save(const MediaType& option, base::Value::Dict* dict) {
+    dict->Set(kKeyVendorId, option.vendor_id);
+    if (!option.custom_display_name.empty()) {
+      dict->Set(kKeyCustomDisplayName, option.custom_display_name);
+    }
   }
 };
 
@@ -1511,7 +1496,7 @@ class CollateTraits : public NoValueValidation,
   static const bool kDefault = true;
 
   static bool Load(const base::Value::Dict& dict, bool* option) {
-    absl::optional<bool> collate = dict.FindBool(kOptionCollate);
+    std::optional<bool> collate = dict.FindBool(kOptionCollate);
     if (!collate)
       return false;
     *option = collate.value();
@@ -1529,7 +1514,7 @@ class ReverseTraits : public NoValueValidation,
   static const bool kDefault = false;
 
   static bool Load(const base::Value::Dict& dict, bool* option) {
-    absl::optional<bool> reverse = dict.FindBool(kOptionReverse);
+    std::optional<bool> reverse = dict.FindBool(kOptionReverse);
     if (!reverse)
       return false;
     *option = reverse.value();
@@ -1569,7 +1554,7 @@ class VendorItemTraits : public ItemsTraits<kOptionVendorItem> {
 class PinTraits : public NoValueValidation, public ItemsTraits<kOptionPin> {
  public:
   static bool Load(const base::Value::Dict& dict, bool* option) {
-    absl::optional<bool> supported = dict.FindBool(kPinSupported);
+    std::optional<bool> supported = dict.FindBool(kPinSupported);
     if (!supported)
       return false;
     *option = supported.value();
@@ -1600,6 +1585,8 @@ template class SelectionCapability<printer::Dpi, printer::DpiTraits>;
 template class SelectionCapability<printer::FitToPageType,
                                    printer::FitToPageTraits>;
 template class SelectionCapability<printer::Media, printer::MediaTraits>;
+template class SelectionCapability<printer::MediaType,
+                                   printer::MediaTypeTraits>;
 template class ValueCapability<printer::Copies,
                                printer::CopiesCapabilityTraits>;
 template class EmptyCapability<printer::PageRangeTraits>;

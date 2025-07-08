@@ -5,61 +5,28 @@
 #include "ash/public/cpp/login_screen_test_api.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/functional/bind.h"
-#include "base/memory/raw_ptr.h"
+#include "base/test/run_until.h"
 #include "chrome/browser/ash/login/login_manager_test.h"
 #include "chrome/browser/ash/login/test/js_checker.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
+#include "chromeos/ash/components/http_auth_dialog/http_auth_dialog.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 
 namespace ash {
-namespace {
-
-class ProxyAuthDialogWaiter : public content::WindowedNotificationObserver {
- public:
-  ProxyAuthDialogWaiter()
-      : WindowedNotificationObserver(
-            chrome::NOTIFICATION_AUTH_NEEDED,
-            base::BindRepeating(&ProxyAuthDialogWaiter::SetLoginHandler,
-                                base::Unretained(this))),
-        login_handler_(nullptr) {}
-
-  ProxyAuthDialogWaiter(const ProxyAuthDialogWaiter&) = delete;
-  ProxyAuthDialogWaiter& operator=(const ProxyAuthDialogWaiter&) = delete;
-
-  ~ProxyAuthDialogWaiter() override {}
-
-  LoginHandler* login_handler() const { return login_handler_; }
-
- private:
-  bool SetLoginHandler(const content::NotificationSource& /* source */,
-                       const content::NotificationDetails& details) {
-    login_handler_ =
-        content::Details<LoginNotificationDetails>(details)->handler();
-    return true;
-  }
-
-  raw_ptr<LoginHandler, ExperimentalAsh> login_handler_;
-};
-
-}  // namespace
 
 // Boolean parameter is used to run this test for webview (true) and for
 // iframe (false) GAIA sign in.
 class ProxyAuthOnUserBoardScreenTest : public LoginManagerTest {
  public:
-  ProxyAuthOnUserBoardScreenTest()
-      : proxy_server_(net::SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                      base::FilePath()) {
+  ProxyAuthOnUserBoardScreenTest() {
     login_manager_mixin_.AppendRegularUsers(1);
   }
 
@@ -68,9 +35,13 @@ class ProxyAuthOnUserBoardScreenTest : public LoginManagerTest {
   ProxyAuthOnUserBoardScreenTest& operator=(
       const ProxyAuthOnUserBoardScreenTest&) = delete;
 
-  ~ProxyAuthOnUserBoardScreenTest() override {}
+  ~ProxyAuthOnUserBoardScreenTest() override = default;
 
   void SetUp() override {
+    // No need to configure the "proxy" test server to proxy anything. This test
+    // only requires the configured "proxy" return proxy auth challenges.
+    net::test_server::RegisterProxyBasicAuthHandler(proxy_server_, "user",
+                                                    "pass");
     ASSERT_TRUE(proxy_server_.Start());
     LoginManagerTest::SetUp();
   }
@@ -82,20 +53,28 @@ class ProxyAuthOnUserBoardScreenTest : public LoginManagerTest {
   }
 
  private:
-  net::SpawnedTestServer proxy_server_;
+  net::test_server::EmbeddedTestServer proxy_server_{
+      net::test_server::EmbeddedTestServer::Type::TYPE_HTTP};
   LoginManagerMixin login_manager_mixin_{&mixin_host_};
 };
 
+// TODO(crbug.com/41486698): Re-enable this test
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_ProxyAuthDialogOnUserBoardScreen \
+  DISABLED_ProxyAuthDialogOnUserBoardScreen
+#else
+#define MAYBE_ProxyAuthDialogOnUserBoardScreen ProxyAuthDialogOnUserBoardScreen
+#endif
 IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
-                       ProxyAuthDialogOnUserBoardScreen) {
+                       MAYBE_ProxyAuthDialogOnUserBoardScreen) {
   ASSERT_FALSE(LoginScreenTestApi::IsOobeDialogVisible());
-  ProxyAuthDialogWaiter auth_dialog_waiter;
   ASSERT_TRUE(LoginScreenTestApi::ClickAddUserButton());
   OobeScreenWaiter(UserCreationView::kScreenId).Wait();
+  test::OobeJS().TapOnPath({"user-creation", "selfButton"});
   test::OobeJS().TapOnPath({"user-creation", "nextButton"});
   OobeScreenWaiter(GaiaView::kScreenId).Wait();
-  auth_dialog_waiter.Wait();
-  ASSERT_TRUE(auth_dialog_waiter.login_handler());
+  ASSERT_TRUE(base::test::RunUntil(
+      []() { return HttpAuthDialog::GetAllDialogsForTest().size() == 1; }));
 }
 
 }  // namespace ash

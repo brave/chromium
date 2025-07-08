@@ -35,18 +35,31 @@ bool RecordInfo::GetTemplateArgsInternal(
   }
   for (unsigned i = 0; i < count; ++i) {
     const TemplateArgument& arg = args[i];
-    if (arg.getKind() == TemplateArgument::Type && !arg.getAsType().isNull()) {
-      output_args->push_back(arg.getAsType().getTypePtr());
-    } else if (arg.getKind() == TemplateArgument::Pack) {
-      if (!getAllParameters) {
-        return false;
+    switch (arg.getKind()) {
+      case TemplateArgument::Type: {
+        if (!arg.getAsType().isNull()) {
+          output_args->push_back(arg.getAsType().getTypePtr());
+        }
+        break;
       }
-      const auto& packs = arg.getPackAsArray();
-      if (!GetTemplateArgsInternal(packs, 0, output_args)) {
-        return false;
+      case TemplateArgument::Integral: {
+        output_args->push_back(arg.getIntegralType().getTypePtr());
+        break;
       }
-    } else {
-      return false;
+      case TemplateArgument::Pack: {
+        if (!getAllParameters) {
+          return false;
+        }
+        const auto& packs = arg.getPackAsArray();
+        if (!GetTemplateArgsInternal(packs, 0, output_args)) {
+          return false;
+        }
+        break;
+      }
+      default:
+        // Other template argument kinds should not reach here. If this assert
+        // fails, handling for additional kinds is needed.
+        assert(false);
     }
   }
   return true;
@@ -64,51 +77,6 @@ bool RecordInfo::GetTemplateArgs(size_t count, TemplateArgs* output_args) {
   }
   const TemplateArgumentList& args = tmpl->getTemplateArgs();
   return GetTemplateArgsInternal(args.asArray(), count, output_args);
-}
-
-// Test if a record is a HeapAllocated collection.
-bool RecordInfo::IsHeapAllocatedCollection() {
-  if (!Config::IsGCCollection(name_) && !Config::IsWTFCollection(name_))
-    return false;
-
-  TemplateArgs args;
-  if (GetTemplateArgs(0, &args)) {
-    for (TemplateArgs::iterator it = args.begin(); it != args.end(); ++it) {
-      if (CXXRecordDecl* decl = (*it)->getAsCXXRecordDecl())
-        if (decl->getName() == kHeapAllocatorName)
-          return true;
-    }
-  }
-
-  return Config::IsGCCollection(name_);
-}
-
-bool RecordInfo::HasOptionalFinalizer() {
-  if (!IsHeapAllocatedCollection())
-    return false;
-  // Heap collections may have a finalizer but it is optional (i.e. may be
-  // delayed until FinalizeGarbageCollectedObject() gets called), unless there
-  // is an inline buffer. Vector and Deque can have an inline
-  // buffer.
-  if (name_ != "Vector" && name_ != "Deque" && name_ != "HeapVector" &&
-      name_ != "HeapDeque")
-    return true;
-  ClassTemplateSpecializationDecl* tmpl =
-      dyn_cast<ClassTemplateSpecializationDecl>(record_);
-  // These collections require template specialization so tmpl should always be
-  // non-null for valid code.
-  if (!tmpl)
-    return false;
-  const TemplateArgumentList& args = tmpl->getTemplateArgs();
-  if (args.size() < 2)
-    return true;
-  TemplateArgument arg = args[1];
-  // The second template argument must be void or 0 so there is no inline
-  // buffer.
-  return (arg.getKind() == TemplateArgument::Type &&
-          arg.getAsType()->isVoidType()) ||
-         (arg.getKind() == TemplateArgument::Integral &&
-          arg.getAsIntegral().getExtValue() == 0);
 }
 
 // Test if a record is derived from a garbage collected base.
@@ -226,11 +194,6 @@ bool RecordInfo::IsGCMixin() {
   }
   // This is a mixin if all GC bases are mixins.
   return true;
-}
-
-// Test if a record is allocated on the managed heap.
-bool RecordInfo::IsGCAllocated() {
-  return IsGCDerived() || IsHeapAllocatedCollection();
 }
 
 bool RecordInfo::HasDefinition() {
@@ -382,11 +345,6 @@ CXXMethodDecl* RecordInfo::InheritsNonVirtualTrace() {
   return 0;
 }
 
-bool RecordInfo::DeclaresGCMixinMethods() {
-  DetermineTracingMethods();
-  return has_gc_mixin_methods_;
-}
-
 bool RecordInfo::DeclaresLocalTraceMethod() {
   if (is_declaring_local_trace_ != kNotComputed)
     return is_declaring_local_trace_;
@@ -487,8 +445,6 @@ void RecordInfo::DetermineTracingMethods() {
     return;
   CXXMethodDecl* trace = nullptr;
   CXXMethodDecl* trace_after_dispatch = nullptr;
-  bool has_adjust_and_mark = false;
-  bool has_is_heap_object_alive = false;
   for (Decl* decl : record_->decls()) {
     CXXMethodDecl* method = dyn_cast<CXXMethodDecl>(decl);
     if (!method) {
@@ -509,18 +465,12 @@ void RecordInfo::DetermineTracingMethods() {
       case Config::NOT_TRACE_METHOD:
         if (method->getNameAsString() == kFinalizeName) {
           finalize_dispatch_method_ = method;
-        } else if (method->getNameAsString() == kAdjustAndMarkName) {
-          has_adjust_and_mark = true;
-        } else if (method->getNameAsString() == kIsHeapObjectAliveName) {
-          has_is_heap_object_alive = true;
         }
         break;
     }
   }
 
   // Record if class defines the two GCMixin methods.
-  has_gc_mixin_methods_ =
-      has_adjust_and_mark && has_is_heap_object_alive ? kTrue : kFalse;
   if (trace_after_dispatch) {
     trace_method_ = trace_after_dispatch;
     trace_dispatch_method_ = trace;
@@ -536,13 +486,16 @@ void RecordInfo::DetermineTracingMethods() {
   for (Bases::iterator it = GetBases().begin(); it != GetBases().end(); ++it) {
     // TODO: Does it make sense to inherit multiple dispatch methods?
     if (CXXMethodDecl* dispatch = it->second.info()->GetTraceDispatchMethod()) {
-      assert(!trace_dispatch_method_ && "Multiple trace dispatching methods");
+      if (trace_dispatch_method_ && !extra_trace_dispatch_method_) {
+        extra_trace_dispatch_method_ = trace_dispatch_method_;
+      }
       trace_dispatch_method_ = dispatch;
     }
     if (CXXMethodDecl* dispatch =
             it->second.info()->GetFinalizeDispatchMethod()) {
-      assert(!finalize_dispatch_method_ &&
-             "Multiple finalize dispatching methods");
+      if (finalize_dispatch_method_ && !extra_finalize_dispatch_method_) {
+        extra_finalize_dispatch_method_ = finalize_dispatch_method_;
+      }
       finalize_dispatch_method_ = dispatch;
     }
   }
@@ -551,11 +504,6 @@ void RecordInfo::DetermineTracingMethods() {
 // TODO: Add classes with a finalize() method that specialize FinalizerTrait.
 bool RecordInfo::NeedsFinalization() {
   if (does_need_finalization_ == kNotComputed) {
-    if (HasOptionalFinalizer()) {
-      does_need_finalization_ = kFalse;
-      return does_need_finalization_;
-    }
-
     // Rely on hasNonTrivialDestructor(), but if the only
     // identifiable reason for it being true is the presence
     // of a safely ignorable class as a direct base,
@@ -597,8 +545,9 @@ bool RecordInfo::NeedsFinalization() {
 // - it contains fields that need tracing.
 //
 TracingStatus RecordInfo::NeedsTracing(Edge::NeedsTracingOption option) {
-  if (IsGCAllocated())
+  if (IsGCDerived()) {
     return TracingStatus::Needed();
+  }
 
   if (IsStackAllocated())
     return TracingStatus::Unneeded();
@@ -642,16 +591,12 @@ Edge* RecordInfo::CreateEdgeFromOriginalType(const Type* type) {
   std::string typeName = typedefType->getDecl()->getNameAsString();
   if (!Config::IsIterator(typeName))
     return nullptr;
-  RecordInfo* info =
-      cache_->Lookup(elaboratedType->getQualifier()->getAsType());
+  const NestedNameSpecifier* qualifier = elaboratedType->getQualifier();
+  if (!qualifier)
+    return nullptr;
+  RecordInfo* info = cache_->Lookup(qualifier->getAsType());
 
-  bool on_heap = false;
-  // Silently handle unknown types; the on-heap collection types will
-  // have to be in scope for the declaration to compile, though.
-  if (info) {
-    on_heap = Config::IsGCCollection(info->name());
-  }
-  return new Iterator(info, on_heap);
+  return new Iterator(info);
 }
 
 Edge* RecordInfo::CreateEdge(const Type* type) {
@@ -738,11 +683,10 @@ Edge* RecordInfo::CreateEdge(const Type* type) {
   if (Config::IsGCCollection(info->name()) ||
       Config::IsWTFCollection(info->name()) ||
       Config::IsSTDCollection(info->name())) {
-    bool on_heap = info->IsHeapAllocatedCollection();
-    size_t count = Config::CollectionDimension(info->name());
-    if (!info->GetTemplateArgs(count, &args))
+    if (!info->GetTemplateArgs(0, &args)) {
       return 0;
-    Collection* edge = new Collection(info, on_heap);
+    }
+    Collection* edge = new Collection(info);
     for (TemplateArgs::iterator it = args.begin(); it != args.end(); ++it) {
       if (Edge* member = CreateEdge(*it)) {
         edge->members().push_back(member);

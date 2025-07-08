@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "absl/log/absl_check.h"
 #include "mediapipe/calculators/tensor/tensors_to_landmarks_calculator.pb.h"
 #include "mediapipe/framework/api2/node.h"
 #include "mediapipe/framework/calculator_framework.h"
@@ -125,7 +124,7 @@ absl::Status TensorsToLandmarksCalculator::Open(CalculatorContext* cc) {
        kFlipVertically(cc).IsConnected())) {
     RET_CHECK(options_.has_input_image_height() &&
               options_.has_input_image_width())
-        << "Must provide input width/height for using flipping when outputing "
+        << "Must provide input width/height for using flipping when outputting "
            "landmarks in absolute coordinates.";
   }
   return absl::OkStatus();

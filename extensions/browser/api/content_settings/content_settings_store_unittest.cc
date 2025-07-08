@@ -8,19 +8,26 @@
 
 #include <memory>
 
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
+#include "components/content_settings/core/browser/content_settings_uma_util.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
 #include "components/permissions/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/types.h"
+#include "extensions/common/extension_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::api::types::ChromeSettingScope;
 using ::testing::Mock;
@@ -35,7 +42,7 @@ void CheckRule(std::unique_ptr<content_settings::Rule> rule,
                ContentSetting setting) {
   EXPECT_EQ(primary_pattern.ToString(), rule->primary_pattern.ToString());
   EXPECT_EQ(secondary_pattern.ToString(), rule->secondary_pattern.ToString());
-  EXPECT_EQ(setting, content_settings::ValueToContentSetting(rule->value()));
+  EXPECT_EQ(setting, content_settings::ValueToContentSetting(rule->value));
 }
 
 // Helper class which returns monotonically-increasing base::Time objects.
@@ -55,7 +62,7 @@ class MockContentSettingsStoreObserver
     : public ContentSettingsStore::Observer {
  public:
   MOCK_METHOD2(OnContentSettingChanged,
-               void(const std::string& extension_id, bool incognito));
+               void(const ExtensionId& extension_id, bool incognito));
 };
 
 ContentSetting GetContentSettingFromStore(
@@ -63,12 +70,11 @@ ContentSetting GetContentSettingFromStore(
     const GURL& primary_url, const GURL& secondary_url,
     ContentSettingsType content_type,
     bool incognito) {
-  std::unique_ptr<content_settings::RuleIterator> rule_iterator(
-      store->GetRuleIterator(content_type, incognito));
-  const base::Value setting =
-      content_settings::TestUtils::GetContentSettingValueAndPatterns(
-          rule_iterator.get(), primary_url, secondary_url, nullptr, nullptr);
-  return content_settings::ValueToContentSetting(setting);
+  auto rule =
+      store->GetRule(primary_url, secondary_url, content_type, incognito);
+
+  return rule ? content_settings::ValueToContentSetting(rule->value)
+              : CONTENT_SETTING_DEFAULT;
 }
 
 std::vector<std::unique_ptr<content_settings::Rule>>
@@ -346,6 +352,38 @@ TEST_F(ContentSettingsStoreTest, RemoveEmbedded) {
 
   Mock::VerifyAndClear(&observer);
   store()->RemoveObserver(&observer);
+}
+
+TEST_F(ContentSettingsStoreTest, ChromeExtensionOriginMetrics) {
+  base::HistogramTester histogram_tester;
+  content_settings::ContentSettingsRegistry::GetInstance();
+  std::string extension_id(32, 'a');
+  ContentSettingsPattern chrome_extension_pattern =
+      ContentSettingsPattern::FromString("*://" + extension_id + "/*");
+  ContentSettingsPattern https_pattern =
+      ContentSettingsPattern::FromString("https://example.test/");
+
+  RegisterExtension(extension_id);
+  store()->SetExtensionContentSetting(
+      extension_id, chrome_extension_pattern, https_pattern,
+      ContentSettingsType::COOKIES, CONTENT_SETTING_ALLOW,
+      ChromeSettingScope::kRegular);
+  histogram_tester.ExpectUniqueSample(
+      "Extensions.ContentSettings.PrimaryPatternMatchesExtensionOrigin",
+      content_settings_uma_util::ContentSettingTypeToHistogramValue(
+          ContentSettingsType::COOKIES),
+      1);
+
+  RegisterExtension(extension_id);
+  store()->SetExtensionContentSetting(
+      extension_id, https_pattern, chrome_extension_pattern,
+      ContentSettingsType::IMAGES, CONTENT_SETTING_ALLOW,
+      ChromeSettingScope::kRegular);
+  histogram_tester.ExpectUniqueSample(
+      "Extensions.ContentSettings.SecondaryPatternMatchesExtensionOrigin",
+      content_settings_uma_util::ContentSettingTypeToHistogramValue(
+          ContentSettingsType::IMAGES),
+      1);
 }
 
 TEST_F(ContentSettingsStoreTest, SetExtensionContentSettingFromList) {

@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/chromeos-js-coverage-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -38,20 +41,25 @@
           "builder": "chromeos-js-code-coverage",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/chromeos-js-coverage-rel/targets"
     }
   },
   "$build/code_coverage": {
-    "coverage_test_types": [
-      "unit",
-      "overall"
-    ],
     "use_javascript_coverage": true
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "output_local_strategy": "minimum",
+    "project": "rbe-chromium-untrusted"
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

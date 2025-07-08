@@ -5,25 +5,25 @@
 #include "chrome/browser/ui/webui/support_tool/support_tool_ui_utils.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/base64url.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/containers/to_value_list.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/support_tool/data_collection_module.pb.h"
 #include "chrome/browser/support_tool/data_collector.h"
 #include "chrome/browser/support_tool/support_tool_util.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feedback/redaction_tool/pii_types.h"
 #include "net/base/url_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -43,7 +43,7 @@ const char kDataCollectorProtoEnum[] = "protoEnum";
 const char kDataCollectorIncluded[] = "isIncluded";
 
 const char kSupportTokenGenerationResultSuccess[] = "success";
-const char kSupportTokenGenerationResultToken[] = "result";
+const char kSupportTokenGenerationResultToken[] = "token";
 const char kSupportTokenGenerationResultErrorMessage[] = "errorMessage";
 
 }  // namespace support_tool_ui
@@ -71,10 +71,6 @@ std::string GetDataCollectorName(
       return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_INTEL_WIFI_DEBUG_DUMP);
     case support_tool::CHROMEOS_TOUCH_EVENTS:
       return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_TOUCH_EVENTS);
-    case support_tool::CHROMEOS_CROS_API:
-      return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_LACROS_SYSTEM_INFO);
-    case support_tool::CHROMEOS_LACROS:
-      return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_LACROS);
     case support_tool::CHROMEOS_REVEN:
       return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_CHROMEOS_FLEX_LOGS);
     case support_tool::CHROMEOS_DBUS:
@@ -106,8 +102,12 @@ std::string GetDataCollectorName(
           IDS_SUPPORT_TOOL_CHROMEOS_VIRTUAL_KEYBOARD);
     case support_tool::CHROMEOS_NETWORK_HEALTH:
       return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_CHROMEOS_NETWORK_HEALTH);
+    case support_tool::SIGN_IN_STATE:
+      return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_SIGN_IN);
     case support_tool::PERFORMANCE:
       return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_PERFORMANCE);
+    case support_tool::CHROMEOS_APP_SERVICE:
+      return l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_CHROMEOS_APP_SERVICE);
     default:
       return "Error: Undefined";
   }
@@ -168,7 +168,7 @@ std::string GetDataCollectionModuleQuery(
 // Returns a URL generation result in the type Support Tool UI expects.
 // type SupportTokenGenerationResult = {
 //   success: boolean,
-//   result: string,
+//   token: string,
 //   errorMessage: string,
 // }
 base::Value::Dict GetSupportTokenGenerationResult(bool success,
@@ -228,34 +228,25 @@ std::string GetPIITypeDescription(redaction::PIIType type_enum) {
 // type PIIDataItem = {
 //   piiTypeDescription: string,
 //   piiType: number,
-//   detectedData: string,
+//   detectedData: List<string>,
 //   count: number,
 //   keep: boolean,
 // }
 base::Value::List GetDetectedPIIDataItems(const PIIMap& detected_pii) {
-  base::Value::List detected_pii_data_items;
-  for (const auto& pii_entry : detected_pii) {
-    base::Value::Dict pii_data_item;
-    pii_data_item.Set(support_tool_ui::kPiiItemDescriptionKey,
-                      GetPIITypeDescription(pii_entry.first));
-    pii_data_item.Set(support_tool_ui::kPiiItemPIITypeKey,
-                      static_cast<int>(pii_entry.first));
-    pii_data_item.Set(
-        support_tool_ui::kPiiItemDetectedDataKey,
-        base::JoinString(
-            std::vector<base::StringPiece>(pii_entry.second.begin(),
-                                           pii_entry.second.end()),
-            // Join the PII strings with a comma in between them when displaying
-            // to the user to make it more easily readable.
-            ", "));
-    pii_data_item.Set(support_tool_ui::kPiiItemCountKey,
-                      static_cast<int>(pii_entry.second.size()));
-    // TODO(b/200511640): Set `keep` field to the value we'll get from URL's
-    // pii_masking_on query if it exists.
-    pii_data_item.Set(support_tool_ui::kPiiItemKeepKey, true);
-    detected_pii_data_items.Append(std::move(pii_data_item));
-  }
-  return detected_pii_data_items;
+  return base::ToValueList(detected_pii, [](const auto& detected_pii_entry) {
+    const auto& [pii_key, pii_data] = detected_pii_entry;
+    return base::Value::Dict()
+        .Set(support_tool_ui::kPiiItemDescriptionKey,
+             GetPIITypeDescription(pii_key))
+        .Set(support_tool_ui::kPiiItemPIITypeKey, static_cast<int>(pii_key))
+        .Set(support_tool_ui::kPiiItemDetectedDataKey,
+             base::ToValueList(pii_data))
+        .Set(support_tool_ui::kPiiItemCountKey,
+             static_cast<int>(pii_data.size()))
+        // TODO(b/200511640): Set `keep` field to the value we'll get from
+        // URL's pii_masking_on query if it exists.
+        .Set(support_tool_ui::kPiiItemKeepKey, true);
+  });
 }
 
 std::set<redaction::PIIType> GetPIITypesToKeep(
@@ -264,7 +255,7 @@ std::set<redaction::PIIType> GetPIITypesToKeep(
   for (const auto& item : *pii_items) {
     const base::Value::Dict* item_as_dict = item.GetIfDict();
     DCHECK(item_as_dict);
-    absl::optional<bool> keep =
+    std::optional<bool> keep =
         item_as_dict->FindBool(support_tool_ui::kPiiItemKeepKey);
     if (keep && keep.value()) {
       pii_to_keep.insert(static_cast<redaction::PIIType>(
@@ -315,7 +306,7 @@ std::set<support_tool::DataCollectorType> GetIncludedDataCollectorTypes(
   for (const auto& item : *data_collector_items) {
     const base::Value::Dict* item_as_dict = item.GetIfDict();
     DCHECK(item_as_dict);
-    absl::optional<bool> isIncluded = item_as_dict->FindBool("isIncluded");
+    std::optional<bool> isIncluded = item_as_dict->FindBool("isIncluded");
     if (isIncluded && isIncluded.value()) {
       included_data_collectors.insert(
           static_cast<support_tool::DataCollectorType>(

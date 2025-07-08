@@ -2,25 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/views/apps/chrome_native_app_window_views_aura_ash.h"
+
+#include <memory>
 
 #include "ash/public/cpp/split_view_test_api.h"
 #include "ash/public/cpp/tablet_mode.h"
 #include "ash/public/cpp/test/shell_test_api.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/apps/platform_apps/app_window_interactive_uitest_base.h"
+#include "chrome/browser/ash/login/test/local_state_mixin.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chromeos/ash/components/login/login_state/scoped_test_public_session_login_state.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/frame/immersive/immersive_fullscreen_controller.h"
+#include "components/user_manager/user_manager.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "ui/aura/window.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
@@ -36,8 +44,9 @@ class ViewBoundsChangeWaiter : public views::ViewObserver {
   ViewBoundsChangeWaiter& operator=(const ViewBoundsChangeWaiter&) = delete;
 
   static void VerifyY(views::View* view, int y) {
-    if (y != view->bounds().y())
+    if (y != view->bounds().y()) {
       ViewBoundsChangeWaiter(view).run_loop_.Run();
+    }
 
     EXPECT_EQ(y, view->bounds().y());
   }
@@ -158,7 +167,36 @@ class ChromeNativeAppWindowViewsAuraAshBrowserTest
         extensions::AppWindow::FULLSCREEN_TYPE_OS, /*is_shelf_hidden=*/false);
   }
 
-  raw_ptr<extensions::AppWindow, ExperimentalAsh> app_window_ = nullptr;
+  raw_ptr<extensions::AppWindow, DanglingUntriaged> app_window_ = nullptr;
+};
+
+class ChromeNativeAppWindowViewsAuraPublicSessionAshBrowserTest
+    : public ChromeNativeAppWindowViewsAuraAshBrowserTest,
+      public ash::LocalStateMixin::Delegate {
+ public:
+  void SetUpLocalState() override {
+    // Until ScopedTestPublicSessionLoginState is created, the setup runs in a
+    // regular user session. Marking another user as the owner prevents the
+    // current user from taking ownership and overriding the public session
+    // mode.
+    user_manager::UserManager::Get()->RecordOwner(
+        AccountId::FromUserEmail("not_current_user@example.com"));
+  }
+
+  void SetUpOnMainThread() override {
+    ChromeNativeAppWindowViewsAuraAshBrowserTest::SetUpOnMainThread();
+    // Emulate public session.
+    login_state_ = std::make_unique<ash::ScopedTestPublicSessionLoginState>();
+  }
+
+  void TearDownOnMainThread() override {
+    login_state_.reset();
+    ChromeNativeAppWindowViewsAuraAshBrowserTest::TearDownOnMainThread();
+  }
+
+ private:
+  ash::LocalStateMixin local_state_mixin_{&mixin_host_, this};
+  std::unique_ptr<ash::ScopedTestPublicSessionLoginState> login_state_;
 };
 
 // Verify that immersive mode is enabled or disabled as expected.
@@ -167,11 +205,12 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
   InitWindow();
   ASSERT_TRUE(window());
   EXPECT_FALSE(IsImmersiveActive());
-  constexpr int kFrameHeight = 32;
+  const int frame_height =
+      chromeos::features::IsRoundedWindowsEnabled() ? 40 : 32;
 
   views::ClientView* client_view =
       window()->widget()->non_client_view()->client_view();
-  EXPECT_EQ(kFrameHeight, client_view->bounds().y());
+  EXPECT_EQ(frame_height, client_view->bounds().y());
 
   // Verify that when fullscreen is toggled on, immersive mode is enabled and
   // that when fullscreen is toggled off, immersive mode is disabled.
@@ -181,7 +220,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 
   app_window_->Restore();
   EXPECT_FALSE(IsImmersiveActive());
-  ViewBoundsChangeWaiter::VerifyY(client_view, kFrameHeight);
+  ViewBoundsChangeWaiter::VerifyY(client_view, frame_height);
 
   // Verify that since the auto hide title bars in tablet mode feature turned
   // on, immersive mode is enabled once tablet mode is entered, and disabled
@@ -192,7 +231,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 
   ash::ShellTestApi().SetTabletModeEnabledForTest(false);
   EXPECT_FALSE(IsImmersiveActive());
-  ViewBoundsChangeWaiter::VerifyY(client_view, kFrameHeight);
+  ViewBoundsChangeWaiter::VerifyY(client_view, frame_height);
 
   // Verify that the window was fullscreened before entering tablet mode, it
   // will remain fullscreened after exiting tablet mode.
@@ -237,12 +276,12 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
   ASSERT_TRUE(window());
 
   app_window_->OSFullscreen();
-  EXPECT_EQ(ui::SHOW_STATE_NORMAL, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kNormal, window()->GetRestoredState());
   ash::ShellTestApi().SetTabletModeEnabledForTest(true);
   EXPECT_TRUE(window()->IsFullscreen());
-  EXPECT_EQ(ui::SHOW_STATE_NORMAL, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kNormal, window()->GetRestoredState());
   ash::ShellTestApi().SetTabletModeEnabledForTest(false);
-  EXPECT_EQ(ui::SHOW_STATE_NORMAL, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kNormal, window()->GetRestoredState());
 
   CloseAppWindow(app_window_);
 }
@@ -271,18 +310,17 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 
 // Verify that the shelf behavior when requesting fullscreen is consistent
 // for managed guest sessions.
-IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
-                       ShelfBehaviorWhenFullscreenForManagedGuestSessions) {
-  ash::ScopedTestPublicSessionLoginState login_state;
+IN_PROC_BROWSER_TEST_F(
+    ChromeNativeAppWindowViewsAuraPublicSessionAshBrowserTest,
+    ShelfBehaviorWhenFullscreenForManagedGuestSessions) {
   VerifyShelfBehaviorWhenFullscreen();
 }
 
 // Verify that immersive mode stays disabled in the public session, no matter
 // that the app is in a normal window or fullscreen mode.
-IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
-                       PublicSessionNoImmersiveModeWhenFullscreen) {
-  ash::ScopedTestPublicSessionLoginState login_state;
-
+IN_PROC_BROWSER_TEST_F(
+    ChromeNativeAppWindowViewsAuraPublicSessionAshBrowserTest,
+    PublicSessionNoImmersiveModeWhenFullscreen) {
   InitWindow();
   ASSERT_TRUE(window());
   EXPECT_FALSE(IsImmersiveActive());
@@ -304,12 +342,12 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
   // fullscreen.
   EXPECT_FALSE(window()->IsFullscreen());
   app_window_->OSFullscreen();
-  EXPECT_EQ(ui::SHOW_STATE_NORMAL, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kNormal, window()->GetRestoredState());
   EXPECT_TRUE(window()->IsFullscreen());
   EXPECT_TRUE(IsImmersiveActive());
   ash::ShellTestApi().SetTabletModeEnabledForTest(true);
   EXPECT_TRUE(window()->IsFullscreen());
-  EXPECT_EQ(ui::SHOW_STATE_NORMAL, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kNormal, window()->GetRestoredState());
 
   window()->Restore();
   // Restoring a window inside tablet mode should deactivate fullscreen, but not
@@ -323,7 +361,8 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
   app_window_->OSFullscreen();
   // Note that windows that are fullscreened before entering tablet mode are
   // maximized when leaving it.
-  EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED, window()->GetRestoredState());
+  EXPECT_EQ(ui::mojom::WindowShowState::kMaximized,
+            window()->GetRestoredState());
   EXPECT_TRUE(window()->IsFullscreen());
 
   window()->Restore();
@@ -359,9 +398,9 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 // Ensures that JS-activated fullscreen in the Public session doesn't trigger
 // the immersive mode, but shows a bubble to guide users how to exit the
 // fullscreen mode under different conditions. (Window API)
-IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
-                       BubbleInsidePublicSessionWindow) {
-  ash::ScopedTestPublicSessionLoginState state;
+IN_PROC_BROWSER_TEST_F(
+    ChromeNativeAppWindowViewsAuraPublicSessionAshBrowserTest,
+    BubbleInsidePublicSessionWindow) {
   std::unique_ptr<ExtensionTestMessageListener> launched_listener =
       LaunchPlatformAppWithFocusedWindow();
   WaitFullscreenChange(launched_listener.get());
@@ -373,9 +412,9 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 // Ensures that JS-activated fullscreen in the Public session doesn't trigger
 // the immersive mode, but shows a bubble to guide users how to exit the
 // fullscreen mode under different conditions. (DOM)
-IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
-                       BubbleInsidePublicSessionDom) {
-  ash::ScopedTestPublicSessionLoginState state;
+IN_PROC_BROWSER_TEST_F(
+    ChromeNativeAppWindowViewsAuraPublicSessionAshBrowserTest,
+    BubbleInsidePublicSessionDom) {
   std::unique_ptr<ExtensionTestMessageListener> launched_listener =
       LaunchPlatformAppWithFocusedWindow();
   WaitFullscreenChangeUntilKeyFocus(launched_listener.get());
@@ -460,15 +499,15 @@ IN_PROC_BROWSER_TEST_F(ChromeNativeAppWindowViewsAuraAshBrowserTest,
 
   ash::SplitViewTestApi split_view_test_api;
   split_view_test_api.SnapWindow(app1_window->GetNativeWindow(),
-                                 ash::SplitViewTestApi::SnapPosition::LEFT);
+                                 ash::SnapPosition::kPrimary);
   ASSERT_EQ(app1_window->GetNativeWindow(),
-            split_view_test_api.GetLeftWindow());
+            split_view_test_api.GetPrimaryWindow());
 
   // Open a second app window that should be created maximized. It should be
   // snapped.
-  params.state = ui::SHOW_STATE_MAXIMIZED;
+  params.state = ui::mojom::WindowShowState::kMaximized;
   extensions::AppWindow* app2_window =
       CreateAppWindowFromParams(browser()->profile(), extension, params);
   ASSERT_EQ(app2_window->GetNativeWindow(),
-            split_view_test_api.GetRightWindow());
+            split_view_test_api.GetSecondaryWindow());
 }

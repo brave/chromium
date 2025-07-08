@@ -14,6 +14,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/moving_window.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
 #include "media/base/audio_decoder.h"
@@ -22,7 +23,6 @@
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
 #include "media/base/media_log.h"
-#include "media/base/moving_average.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/waiting.h"
@@ -155,14 +155,14 @@ class MEDIA_EXPORT DecoderStream {
   }
 
  private:
-  enum State {
-    STATE_UNINITIALIZED,
-    STATE_INITIALIZING,
-    STATE_NORMAL,  // Includes idle, pending decoder decode/reset.
-    STATE_FLUSHING_DECODER,
-    STATE_REINITIALIZING_DECODER,
-    STATE_END_OF_STREAM,  // End of stream reached; returns EOS on all reads.
-    STATE_ERROR,
+  enum class State {
+    kStateUninitialized,
+    kStateInitializing,
+    kStateNormal,  // Includes idle, pending decoder decode/reset.
+    kStateFlushingDecoder,
+    kStateReinitializingDecoder,
+    kStateEndOfStream,  // End of stream reached; returns EOS on all reads.
+    kStateError,
   };
 
   // Returns the string representation of the StreamType for logging purpose.
@@ -170,6 +170,9 @@ class MEDIA_EXPORT DecoderStream {
 
   // Returns maximum concurrent decode requests for the current |decoder_|.
   int GetMaxDecodeRequests() const;
+
+  // Returns if current |decoder_| is a platform decoder.
+  bool IsPlatformDecoder() const;
 
   // Returns the maximum number of outputs we should keep ready at any one time.
   int GetMaxReadyOutputs() const;
@@ -196,10 +199,6 @@ class MEDIA_EXPORT DecoderStream {
 
   // Performs the heavy lifting of the decode call.
   void DecodeInternal(scoped_refptr<DecoderBuffer> buffer);
-
-  // Flushes the decoder with an EOS buffer to retrieve internally buffered
-  // decoder output.
-  void FlushDecoder();
 
   // Callback for Decoder::Decode().
   void OnDecodeDone(int buffer_size,
@@ -282,7 +281,7 @@ class MEDIA_EXPORT DecoderStream {
   int pending_decode_requests_;
 
   // Tracks the duration of incoming packets over time.
-  MovingAverage duration_tracker_;
+  base::MovingAverage<base::TimeDelta, base::TimeDelta> duration_tracker_;
 
   // Stores buffers that might be reused if the decoder fails right after
   // Initialize().
@@ -307,6 +306,10 @@ class MEDIA_EXPORT DecoderStream {
   bool encryption_type_reported_ = false;
 
   int fallback_buffers_being_decoded_ = 0;
+
+  // Last timestamp seen by DecodeInternal(), used for average duration when
+  // explicit duration information is missing.
+  base::TimeDelta last_buffer_timestamp_ = kNoTimestamp;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<DecoderStream<StreamType>> weak_factory_{this};

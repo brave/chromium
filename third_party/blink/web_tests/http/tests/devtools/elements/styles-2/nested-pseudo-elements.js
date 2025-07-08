@@ -5,9 +5,12 @@
 import {TestRunner} from 'test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as ElementsModule from 'devtools/panels/elements/elements.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that nested pseudo elements and their styles are handled properly.\n`);
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('elements');
   await TestRunner.loadHTML(`
       <style>
@@ -17,6 +20,14 @@ import {ElementsTestRunner} from 'elements_test_runner';
 
       #inspected::after {
         content: "AFTER";
+      }
+
+      #inspected::before::marker {
+        content: "before marker";
+      }
+
+      #inspected::after::marker {
+        content: "after marker";
       }
 
       #inspected::before {
@@ -128,12 +139,12 @@ import {ElementsTestRunner} from 'elements_test_runner';
     function domCallback() {
       TestRunner.domModel.removeEventListener(eventName, domCallback, this);
       ElementsTestRunner.firstElementsTreeOutline().addEventListener(
-          Elements.ElementsTreeOutline.Events.ElementsTreeUpdated, treeCallback, this);
+          ElementsModule.ElementsTreeOutline.ElementsTreeOutline.Events.ElementsTreeUpdated, treeCallback, this);
     }
 
     function treeCallback() {
       ElementsTestRunner.firstElementsTreeOutline().removeEventListener(
-          Elements.ElementsTreeOutline.Events.ElementsTreeUpdated, treeCallback, this);
+          ElementsModule.ElementsTreeOutline.ElementsTreeOutline.Events.ElementsTreeUpdated, treeCallback, this);
       ElementsTestRunner.dumpElementsTree(containerNode);
       next();
     }

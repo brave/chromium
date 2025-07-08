@@ -5,6 +5,7 @@
 #include "chromeos/ash/components/login/auth/auth_events_recorder.h"
 
 #include <numeric>
+#include <optional>
 #include <vector>
 
 #include "base/check_is_test.h"
@@ -16,8 +17,11 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
+#include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
 #include "chromeos/ash/components/login/auth/public/auth_failure.h"
+#include "chromeos/ash/components/login/auth/public/session_auth_factors.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "components/crash/core/common/crash_key.h"
 
@@ -57,6 +61,9 @@ constexpr char kNbPasswordAttemptsHistogramName[] =
 constexpr char kRecoveryResultHistogramName[] =
     "Login.CryptohomeRecoveryResult";
 
+constexpr char kPasswordlessRecoveryResultHistogramName[] =
+    "Login.CryptohomePasswordlessRecoveryResult";
+
 constexpr char kRecoveryDurationHistogramPrefix[] =
     "Login.CryptohomeRecoveryDuration.";
 
@@ -67,6 +74,19 @@ constexpr int kManyUserLimit = 5;
 // "Ash.OSAuth.Login.ConfiguredAuthFactors.{Pin,Password,...}"
 constexpr char kConfiguredAuthFactorsHistogramPrefix[] =
     "Ash.OSAuth.Login.ConfiguredAuthFactors.";
+
+// Histogram for recording the passwordless user login.
+constexpr char kPasswordlessLoginHistogram[] = "Ash.OSAuth.Login.Passwordless";
+
+// Histogram prefix for recording duration of various login flow phases.
+// Format: "Ash.OSAuth.Login.Times.{...}"
+constexpr char kLoginTimeHistogramPrefix[] = "Ash.OSAuth.Login.Times.";
+
+constexpr char kLoginTimeFactorConfigTotal[] = "FactorConfigTotal";
+constexpr char kLoginTimeEarlyPrefsReadSuffix[] = "EarlyPrefsRead";
+constexpr char kLoginTimeEarlyPrefsParseSuffix[] = "EarlyPrefsParse";
+constexpr char kLoginTimeFactorMigraionsSuffix[] = "FactorMigrations";
+constexpr char kLoginTimePolicyEnforcementSuffix[] = "PolicyEnforcement";
 
 // The auth factors tracked for "Ash.OSAuth.Login.ConfiguredAuthFactors.*"
 // histogram reporting. When adding new values here, update
@@ -117,7 +137,6 @@ std::string GetAuthenticationSurfaceName(AuthenticationSurface screen) {
       return "Login";
   }
   NOTREACHED();
-  return "";
 }
 
 // Suffix for grouping by screen exit type. Should match suffixes of the
@@ -133,7 +152,6 @@ std::string GetAuthenticationOutcomeSuffix(AuthenticationOutcome exit_type) {
       return "UntilRecovery";
   }
   NOTREACHED();
-  return "";
 }
 
 // Complete name of the login flow histogram.
@@ -158,17 +176,20 @@ std::string GetNbPasswordAttemptsHistogramName(
 // metrics in metadata/ash/histograms.xml.
 std::string GetConfiguredAuthFactorsHistogramSuffix(
     cryptohome::AuthFactorType factor) {
+  CHECK_NE(factor, cryptohome::AuthFactorType::kPassword);
   switch (factor) {
-    case cryptohome::AuthFactorType::kPassword:
-      return "GaiaPassword";
     case cryptohome::AuthFactorType::kPin:
       return "CryptohomePin";
     case cryptohome::AuthFactorType::kRecovery:
       return "Recovery";
     case cryptohome::AuthFactorType::kSmartCard:
       return "SmartCard";
+    case cryptohome::AuthFactorType::kPassword:
+      NOTREACHED() << "For password factor use "
+                      "`GetConfiguredPasswordFactorsHistogramSuffix()`";
     case cryptohome::AuthFactorType::kUnknownLegacy:
     case cryptohome::AuthFactorType::kLegacyFingerprint:
+    case cryptohome::AuthFactorType::kFingerprint:
     case cryptohome::AuthFactorType::kKiosk:
       // These factors are not recorded.
       DCHECK(false);
@@ -180,9 +201,37 @@ std::string GetConfiguredAuthFactorsHistogramSuffix(
 // Complete name of the configured auth factors histogram.
 std::string GetConfiguredAuthFactorsHistogramName(
     cryptohome::AuthFactorType factor) {
+  CHECK_NE(factor, cryptohome::AuthFactorType::kPassword)
+      << "For password factor use `GetConfiguredPasswordFactorHistogramName()`";
   return base::StrCat(
       {kConfiguredAuthFactorsHistogramPrefix,
        GetConfiguredAuthFactorsHistogramSuffix(factor).c_str()});
+}
+
+enum class ConfiguredPasswordType {
+  kGaia,
+  kLocal,
+};
+
+// Should match suffixes of the
+// "Ash.OSAuth.Login.ConfiguredAuthFactors.{GaiaPassword,LocalPassword...}"
+// metrics in metadata/ash/histograms.xml.
+std::string GetConfiguredPasswordFactorsHistogramSuffix(
+    const ConfiguredPasswordType& type) {
+  switch (type) {
+    case ConfiguredPasswordType::kGaia:
+      return "GaiaPassword";
+    case ConfiguredPasswordType::kLocal:
+      return "LocalPassword";
+  }
+}
+
+// Complete name of the configured auth factors histogram.
+std::string GetConfiguredPasswordFactorHistogramName(
+    const ConfiguredPasswordType& type) {
+  return base::StrCat(
+      {kConfiguredAuthFactorsHistogramPrefix,
+       GetConfiguredPasswordFactorsHistogramSuffix(type).c_str()});
 }
 
 std::string GetRecoveryOutcomeSuffix(CryptohomeRecoveryResult result) {
@@ -229,7 +278,6 @@ std::string GetUserLoginTypeName(AuthEventsRecorder::UserLoginType type) {
       return "ephemeral";
   }
   NOTREACHED();
-  return "";
 }
 
 std::string GetAuthenticationOutcomeName(AuthenticationOutcome exit_type) {
@@ -242,7 +290,6 @@ std::string GetAuthenticationOutcomeName(AuthenticationOutcome exit_type) {
       return "recovery";
   }
   NOTREACHED();
-  return "";
 }
 
 std::string GetUserVaultTypeName(
@@ -257,7 +304,6 @@ std::string GetUserVaultTypeName(
       return "guest";
   }
   NOTREACHED();
-  return "";
 }
 
 std::string GetCrashKeyStringWithStatus(const std::string& event_name,
@@ -305,7 +351,7 @@ void AuthEventsRecorder::ResetLoginData() {
   Reset();
 }
 
-void AuthEventsRecorder::OnKnowledgeFactorAuthFailue() {
+void AuthEventsRecorder::OnKnowledgeFactorAuthFailure() {
   knowledge_factor_auth_failure_count_++;
 }
 
@@ -363,8 +409,8 @@ void AuthEventsRecorder::OnExistingUserLoginScreenExit(
   AddAuthEvent("login_screen_exit_" + GetAuthenticationOutcomeName(exit_type));
 }
 
-void AuthEventsRecorder::RecordUserAuthFactors(
-    const std::vector<cryptohome::AuthFactorType>& auth_factors) const {
+void AuthEventsRecorder::RecordSessionAuthFactors(
+    const SessionAuthFactors& auth_factors) const {
   // These histograms are recorded only for login at the moment.
   // If we need to record the auth factors configured for unlock as well, the
   // DCHECK can be removed and `auth_surface_` value can be used to determine
@@ -372,22 +418,57 @@ void AuthEventsRecorder::RecordUserAuthFactors(
   DCHECK(auth_surface_.has_value());
   DCHECK_EQ(auth_surface_.value(), AuthenticationSurface::kLogin);
 
+  bool passwordless = true;
+
+  const auto factor_types = auth_factors.GetSessionFactors();
   for (const auto factor : kTrackedAuthFactors) {
+    if (factor == cryptohome::AuthFactorType::kPassword) {
+      auto* online_password = auth_factors.FindOnlinePasswordFactor();
+      base::UmaHistogramBoolean(GetConfiguredPasswordFactorHistogramName(
+                                    ConfiguredPasswordType::kGaia),
+                                online_password != nullptr);
+      auto* local_password = auth_factors.FindLocalPasswordFactor();
+      base::UmaHistogramBoolean(GetConfiguredPasswordFactorHistogramName(
+                                    ConfiguredPasswordType::kLocal),
+                                local_password != nullptr);
+      if (local_password || online_password) {
+        passwordless = false;
+      }
+      continue;
+    }
+
     base::UmaHistogramBoolean(GetConfiguredAuthFactorsHistogramName(factor),
-                              base::Contains(auth_factors, factor));
+                              base::Contains(factor_types, factor));
   }
+
+  base::UmaHistogramBoolean(kPasswordlessLoginHistogram, passwordless);
 }
 
 void AuthEventsRecorder::OnRecoveryDone(CryptohomeRecoveryResult result,
+                                        const SessionAuthFactors& auth_factors,
                                         const base::TimeDelta& time) {
   base::UmaHistogramMediumTimes(GetRecoveryDurationHistogramName(result), time);
   base::UmaHistogramEnumeration(kRecoveryResultHistogramName, result);
+  if (!auth_factors.FindAnyPasswordFactor()) {
+    base::UmaHistogramEnumeration(kPasswordlessRecoveryResultHistogramName,
+                                  result);
+  }
   AddAuthEvent(GetCrashKeyStringWithStatus(
       "recovery_done", result == CryptohomeRecoveryResult::kSucceeded));
 }
 
 void AuthEventsRecorder::OnAuthSubmit() {
   AddAuthEvent("auth_submit");
+}
+
+void AuthEventsRecorder::OnAuthComplete(std::optional<bool> auth_success) {
+  const std::string auth_complete_str = "auth_complete";
+  if (!auth_success.has_value()) {
+    AddAuthEvent(auth_complete_str);
+    return;
+  }
+  AddAuthEvent(
+      GetCrashKeyStringWithStatus(auth_complete_str, auth_success.value()));
 }
 
 void AuthEventsRecorder::OnPinSubmit() {
@@ -413,7 +494,28 @@ void AuthEventsRecorder::OnUserVaultPrepared(UserVaultType user_vault_type,
   AddAuthEvent(GetCrashKeyStringWithStatus(crash_key_prefix, success));
 }
 
+void AuthEventsRecorder::OnAddUser() {
+  AddAuthEvent("add_user");
+}
+
+std::string AuthEventsRecorder::GetAuthEventsLog() {
+  // Preallocate the space needed for all the events combined.
+  const size_t events_string_length =
+      std::accumulate(events_.begin(), events_.end(), 0,
+                      [](const size_t sum, const std::string& event) {
+                        return sum + event.length() + 1;
+                      });
+  std::stringstream result_string;
+  for (std::string_view event : events_) {
+    result_string << event;
+    result_string << kAuthEventSeparator;
+  }
+  DCHECK_EQ(result_string.str().length(), events_string_length);
+  return result_string.str();
+}
+
 void AuthEventsRecorder::OnSessionStateChanged() {
+  TRACE_EVENT0("login", "AuthEventsRecorder::OnSessionStateChanged");
   session_manager::SessionState session_state =
       session_manager::SessionManager::Get()->session_state();
   static crash_reporter::CrashKeyString<kMaxSessionStateCrashKeyLength> key(
@@ -462,23 +564,7 @@ void AuthEventsRecorder::UpdateAuthEventsCrashKey() {
     return;
   }
 
-  // Preallocate the space needed for all the events combined.
-  const size_t events_string_length =
-      std::accumulate(events_.begin(), events_.end(), 0,
-                      [](const size_t sum, const std::string& event) {
-                        return sum + event.length() + 1;
-                      });
-  std::string crash_key_string;
-  crash_key_string.reserve(events_string_length);
-
-  // Put new events at the front, so that we keep the most recent & relevant
-  // ones.
-  for (const std::string& event : events_) {
-    crash_key_string += event;
-    crash_key_string += kAuthEventSeparator;
-  }
-  DCHECK_EQ(crash_key_string.length(), events_string_length);
-
+  std::string crash_key_string = GetAuthEventsLog();
   if (crash_key_string.length() > kMaxAuthEventsCrashKeyLength) {
     crash_key_string = crash_key_string.substr(crash_key_string.length() -
                                                kMaxAuthEventsCrashKeyLength);
@@ -491,11 +577,77 @@ void AuthEventsRecorder::UpdateAuthEventsCrashKey() {
 }
 
 void AuthEventsRecorder::Reset() {
-  user_count_ = absl::nullopt;
-  show_users_on_signin_ = absl::nullopt;
-  user_login_type_ = absl::nullopt;
-  auth_surface_ = absl::nullopt;
+  user_count_ = std::nullopt;
+  show_users_on_signin_ = std::nullopt;
+  user_login_type_ = std::nullopt;
+  auth_surface_ = std::nullopt;
   knowledge_factor_auth_failure_count_ = 0;
+}
+
+void AuthEventsRecorder::StartPostLoginFactorAdjustments() {
+  factor_adjustment_start_ = base::TimeTicks::Now();
+  last_adjustment_event_ = factor_adjustment_start_;
+}
+
+void AuthEventsRecorder::OnEarlyPrefsRead() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (last_adjustment_event_) {
+    base::TimeDelta diff = now - *last_adjustment_event_;
+    base::UmaHistogramTimes(base::StrCat({kLoginTimeHistogramPrefix,
+                                          kLoginTimeEarlyPrefsReadSuffix}),
+                            diff);
+  }
+  last_adjustment_event_ = now;
+}
+
+void AuthEventsRecorder::OnEarlyPrefsParsed() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (last_adjustment_event_) {
+    base::TimeDelta diff = now - *last_adjustment_event_;
+    base::UmaHistogramTimes(base::StrCat({kLoginTimeHistogramPrefix,
+                                          kLoginTimeEarlyPrefsParseSuffix}),
+                            diff);
+  }
+  last_adjustment_event_ = now;
+}
+
+void AuthEventsRecorder::OnFactorUpdateStarted() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  last_adjustment_event_ = now;
+}
+
+void AuthEventsRecorder::OnMigrationsCompleted() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (last_adjustment_event_) {
+    base::TimeDelta diff = now - *last_adjustment_event_;
+    base::UmaHistogramTimes(base::StrCat({kLoginTimeHistogramPrefix,
+                                          kLoginTimeFactorMigraionsSuffix}),
+                            diff);
+  }
+  last_adjustment_event_ = now;
+}
+
+void AuthEventsRecorder::OnPoliciesApplied() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (last_adjustment_event_) {
+    base::TimeDelta diff = now - *last_adjustment_event_;
+    base::UmaHistogramTimes(base::StrCat({kLoginTimeHistogramPrefix,
+                                          kLoginTimePolicyEnforcementSuffix}),
+                            diff);
+  }
+  last_adjustment_event_ = now;
+}
+
+void AuthEventsRecorder::FinishPostLoginFactorAdjustments() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (factor_adjustment_start_) {
+    base::TimeDelta diff = now - *factor_adjustment_start_;
+    base::UmaHistogramTimes(
+        base::StrCat({kLoginTimeHistogramPrefix, kLoginTimeFactorConfigTotal}),
+        diff);
+  }
+  factor_adjustment_start_.reset();
+  last_adjustment_event_.reset();
 }
 
 }  // namespace ash

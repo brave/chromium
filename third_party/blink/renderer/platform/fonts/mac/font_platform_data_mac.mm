@@ -23,16 +23,21 @@
 
 #import "third_party/blink/renderer/platform/fonts/mac/font_platform_data_mac.h"
 
+#if BUILDFLAG(IS_MAC)
 #import <AppKit/AppKit.h>
+#import <CoreText/CoreText.h>
+#endif  // BUILDFLAG(IS_MAC)
 #import <AvailabilityMacros.h>
 
 #include "base/apple/bridging.h"
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/font_settings.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/skia/include/core/SkFont.h"
@@ -41,27 +46,28 @@
 #include "third_party/skia/include/core/SkTypes.h"
 #import "third_party/skia/include/ports/SkTypeface_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+using base::apple::ScopedCFTypeRef;
 
 namespace {
+#if BUILDFLAG(IS_MAC)
 constexpr SkFourByteTag kOpszTag = SkSetFourByteTag('o', 'p', 's', 'z');
+#endif  // BUILDFLAG(IS_MAC)
 }
 
 namespace blink {
 
+#if BUILDFLAG(IS_MAC)
 bool VariableAxisChangeEffective(SkTypeface* typeface,
                                  SkFourByteTag axis,
                                  float new_value) {
   // First clamp new value to within range of min and max of variable axis.
-  int num_axes = typeface->getVariationDesignParameters(nullptr, 0);
+  int num_axes = typeface->getVariationDesignParameters({});
   if (num_axes <= 0)
     return false;
 
   Vector<SkFontParameters::Variation::Axis> axes_parameters(num_axes);
   int returned_axes =
-      typeface->getVariationDesignParameters(axes_parameters.data(), num_axes);
+      typeface->getVariationDesignParameters(axes_parameters);
   DCHECK_EQ(num_axes, returned_axes);
   DCHECK_GE(num_axes, 0);
 
@@ -73,7 +79,7 @@ bool VariableAxisChangeEffective(SkTypeface* typeface,
     }
   }
 
-  int num_coordinates = typeface->getVariationDesignPosition(nullptr, 0);
+  int num_coordinates = typeface->getVariationDesignPosition({});
   if (num_coordinates <= 0)
     return true;  // Font has axes, but no positions, setting one would have an
                   // effect.
@@ -82,7 +88,7 @@ bool VariableAxisChangeEffective(SkTypeface* typeface,
   Vector<SkFontArguments::VariationPosition::Coordinate> coordinates(
       num_coordinates);
   int returned_coordinates =
-      typeface->getVariationDesignPosition(coordinates.data(), num_coordinates);
+      typeface->getVariationDesignPosition(coordinates);
 
   if (returned_coordinates != num_coordinates)
     return false;  // Something went wrong in retrieving actual axis positions,
@@ -95,16 +101,17 @@ bool VariableAxisChangeEffective(SkTypeface* typeface,
   return false;
 }
 
-static bool CanLoadInProcess(NSFont* ns_font) {
-  base::ScopedCFTypeRef<CGFontRef> cg_font(CTFontCopyGraphicsFont(
-      base::apple::NSToCFPtrCast(ns_font), /*attributes=*/nullptr));
-  NSString* font_name =
-      base::apple::CFToNSOwnershipCast(CGFontCopyPostScriptName(cg_font));
-  return ![font_name isEqualToString:@"LastResort"];
+static bool CanLoadInProcess(CTFontRef ct_font) {
+  ScopedCFTypeRef<CGFontRef> cg_font(
+      CTFontCopyGraphicsFont(ct_font, /*attributes=*/nullptr));
+  ScopedCFTypeRef<CFStringRef> font_name(
+      CGFontCopyPostScriptName(cg_font.get()));
+  return CFStringCompare(font_name.get(), CFSTR("LastResort"), 0) !=
+         kCFCompareEqualTo;
 }
 
-std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
-    NSFont* ns_font,
+const FontPlatformData* FontPlatformDataFromCTFont(
+    CTFontRef ct_font,
     float size,
     float specified_size,
     bool synthetic_bold,
@@ -113,21 +120,20 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
     ResolvedFontFeatures resolved_font_features,
     FontOrientation orientation,
     OpticalSizing optical_sizing,
-    FontVariationSettings* variation_settings) {
-  DCHECK(ns_font);
+    const FontVariationSettings* variation_settings) {
+  DCHECK(ct_font);
 
   // fontd automatically issues a sandbox extension to permit reading
   // activated fonts that would otherwise be restricted by the sandbox.
-  DCHECK(CanLoadInProcess(ns_font));
+  DCHECK(CanLoadInProcess(ct_font));
 
-  sk_sp<SkTypeface> typeface =
-      SkMakeTypefaceFromCTFont(base::apple::NSToCFPtrCast(ns_font));
+  sk_sp<SkTypeface> typeface = SkMakeTypefaceFromCTFont(ct_font);
 
   auto make_typeface_fontplatformdata = [&typeface, &size, &synthetic_bold,
                                          &synthetic_italic, &text_rendering,
                                          resolved_font_features,
                                          &orientation]() {
-    return std::make_unique<FontPlatformData>(
+    return MakeGarbageCollected<FontPlatformData>(
         std::move(typeface), std::string(), size, synthetic_bold,
         synthetic_italic, text_rendering, resolved_font_features, orientation);
   };
@@ -144,7 +150,7 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
   if (!typeface)
     return nullptr;
 
-  int existing_axes = typeface->getVariationDesignPosition(nullptr, 0);
+  int existing_axes = typeface->getVariationDesignPosition({});
   // Don't apply variation parameters if the font does not have axes or we
   // fail to retrieve the existing ones.
   if (existing_axes <= 0)
@@ -153,8 +159,7 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
   Vector<SkFontArguments::VariationPosition::Coordinate> coordinates_to_set;
   coordinates_to_set.resize(existing_axes);
 
-  if (typeface->getVariationDesignPosition(coordinates_to_set.data(),
-                                           existing_axes) != existing_axes) {
+  if (typeface->getVariationDesignPosition(coordinates_to_set) != existing_axes) {
     return make_typeface_fontplatformdata();
   }
 
@@ -201,6 +206,7 @@ std::unique_ptr<FontPlatformData> FontPlatformDataFromNSFont(
   typeface = cloned_typeface;
   return make_typeface_fontplatformdata();
 }
+#endif  // BUILDFLAG(IS_MAC)
 
 SkFont FontPlatformData::CreateSkFont(
     const FontDescription* font_description) const {
@@ -226,7 +232,8 @@ SkFont FontPlatformData::CreateSkFont(
     }
   }
 
-  if (WebTestSupport::IsRunningWebTest()) {
+  if (WebTestSupport::IsRunningWebTest() ||
+      RuntimeEnabledFeatures::NoFontAntialiasingEnabled()) {
     should_smooth_fonts = false;
     should_antialias =
         should_antialias && WebTestSupport::IsFontAntialiasingEnabledForTest();
@@ -234,7 +241,7 @@ SkFont FontPlatformData::CreateSkFont(
         WebTestSupport::IsTextSubpixelPositioningAllowedForTest();
   }
 
-  SkFont skfont;
+  SkFont skfont(typeface_);
   if (should_antialias && should_smooth_fonts) {
     skfont.setEdging(SkFont::Edging::kSubpixelAntiAlias);
   } else if (should_antialias) {
@@ -245,7 +252,6 @@ SkFont FontPlatformData::CreateSkFont(
   skfont.setEmbeddedBitmaps(false);
   const float ts = text_size_ >= 0 ? text_size_ : 12;
   skfont.setSize(SkFloatToScalar(ts));
-  skfont.setTypeface(typeface_);
   skfont.setEmbolden(synthetic_bold_);
   skfont.setSkewX(synthetic_italic_ ? -SK_Scalar1 / 4 : 0);
   skfont.setSubpixel(should_subpixel_position);

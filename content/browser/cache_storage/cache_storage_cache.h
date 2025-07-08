@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -30,7 +31,6 @@
 #include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/disk_cache/disk_cache.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 
@@ -60,10 +60,9 @@ class CacheStorageCacheTest;
 //  https://w3c.github.io/ServiceWorker/#cache-interface
 //
 // The asynchronous methods are executed serially. Callbacks to the public
-// functions will be called so long as the cache object lives. It is important
-// to for client code hold a |CacheStorageCacheHandle| to the cache for the
-// duration of any operations. Otherwise it is possible the operation may
-// get cancelled in some circumstances.
+// functions will be called so long as the cache object lives. Client code must
+// hold a `CacheStorageCacheHandle` for the duration of operations, otherwise
+// the operation may be cancelled in some circumstances.
 class CONTENT_EXPORT CacheStorageCache {
  public:
   using CacheEntriesCallback =
@@ -101,7 +100,7 @@ class CONTENT_EXPORT CacheStorageCache {
   static std::unique_ptr<CacheStorageCache> CreateMemoryCache(
       const storage::BucketLocator& bucket_locator,
       storage::mojom::CacheStorageOwner owner,
-      const std::string& cache_name,
+      const std::u16string& cache_name,
       CacheStorage* cache_storage,
       scoped_refptr<base::SequencedTaskRunner> scheduler_task_runner,
       scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
@@ -109,7 +108,7 @@ class CONTENT_EXPORT CacheStorageCache {
   static std::unique_ptr<CacheStorageCache> CreatePersistentCache(
       const storage::BucketLocator& bucket_locator,
       storage::mojom::CacheStorageOwner owner,
-      const std::string& cache_name,
+      const std::u16string& cache_name,
       CacheStorage* cache_storage,
       const base::FilePath& path,
       scoped_refptr<base::SequencedTaskRunner> scheduler_task_runner,
@@ -169,7 +168,7 @@ class CONTENT_EXPORT CacheStorageCache {
       int64_t trace_id,
       VerboseErrorCallback callback,
       BadMessageCallback bad_message_callback,
-      absl::optional<std::string> message,
+      std::optional<std::string> message,
       uint64_t space_required,
       uint64_t side_data_size,
       storage::QuotaErrorOr<int64_t> space_remaining);
@@ -224,7 +223,7 @@ class CONTENT_EXPORT CacheStorageCache {
 
   base::FilePath path() const { return path_; }
 
-  std::string cache_name() const { return cache_name_; }
+  std::u16string cache_name() const { return cache_name_; }
 
   int64_t cache_size() const { return cache_size_; }
 
@@ -302,7 +301,7 @@ class CONTENT_EXPORT CacheStorageCache {
   CacheStorageCache(
       const storage::BucketLocator& bucket_locator,
       storage::mojom::CacheStorageOwner owner,
-      const std::string& cache_name,
+      const std::u16string& cache_name,
       const base::FilePath& path,
       CacheStorage* cache_storage,
       scoped_refptr<base::SequencedTaskRunner> scheduler_task_runner,
@@ -591,7 +590,7 @@ class CONTENT_EXPORT CacheStorageCache {
 
   const storage::BucketLocator bucket_locator_;
   const storage::mojom::CacheStorageOwner owner_;
-  const std::string cache_name_;
+  const std::u16string cache_name_;
   const base::FilePath path_;
 
   // Raw pointer is safe because the CacheStorage instance owns this

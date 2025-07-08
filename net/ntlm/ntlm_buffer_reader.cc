@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 
 namespace net::ntlm {
 
@@ -56,7 +57,7 @@ bool NtlmBufferReader::ReadBytes(base::span<uint8_t> buffer) {
   if (buffer.empty())
     return true;
 
-  memcpy(buffer.data(), GetBufferAtCursor(), buffer.size());
+  UNSAFE_TODO(memcpy(buffer.data(), GetBufferAtCursor(), buffer.size()));
 
   AdvanceCursor(buffer.size());
   return true;
@@ -70,7 +71,8 @@ bool NtlmBufferReader::ReadBytesFrom(const SecurityBuffer& sec_buf,
   if (buffer.empty())
     return true;
 
-  memcpy(buffer.data(), GetBufferPtr() + sec_buf.offset, sec_buf.length);
+  UNSAFE_TODO(
+      memcpy(buffer.data(), GetBufferPtr() + sec_buf.offset, sec_buf.length));
 
   return true;
 }
@@ -81,7 +83,7 @@ bool NtlmBufferReader::ReadPayloadAsBufferReader(const SecurityBuffer& sec_buf,
     return false;
 
   *reader = NtlmBufferReader(
-      base::make_span(GetBufferPtr() + sec_buf.offset, sec_buf.length));
+      UNSAFE_TODO(base::span(GetBufferPtr() + sec_buf.offset, sec_buf.length)));
   return true;
 }
 
@@ -133,7 +135,8 @@ bool NtlmBufferReader::ReadTargetInfo(size_t target_info_len,
       return false;
 
     // Take a copy of the payload in the AVPair.
-    pair.buffer.assign(GetBufferAtCursor(), GetBufferAtCursor() + pair.avlen);
+    pair.buffer.assign(GetBufferAtCursor(),
+                       UNSAFE_TODO(GetBufferAtCursor() + pair.avlen));
     if (pair.avid == TargetInfoAvId::kEol) {
       // Terminator must have zero length.
       if (pair.avlen != 0)
@@ -240,8 +243,10 @@ bool NtlmBufferReader::MatchSignature() {
   if (!CanRead(kSignatureLen))
     return false;
 
-  if (memcmp(kSignature, GetBufferAtCursor(), kSignatureLen) != 0)
+  if (UNSAFE_TODO(memcmp(kSignature, GetBufferAtCursor(), kSignatureLen)) !=
+      0) {
     return false;
+  }
 
   AdvanceCursor(kSignatureLen);
   return true;
@@ -262,8 +267,9 @@ bool NtlmBufferReader::MatchZeros(size_t count) {
     return false;
 
   for (size_t i = 0; i < count; i++) {
-    if (GetBufferAtCursor()[i] != 0)
+    if (UNSAFE_TODO(GetBufferAtCursor()[i]) != 0) {
       return false;
+    }
   }
 
   AdvanceCursor(count);

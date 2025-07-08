@@ -6,25 +6,21 @@
 
 #import <UIKit/UIKit.h>
 
-#import "base/mac/foundation_util.h"
-#import "base/test/task_environment.h"
+#import "base/apple/foundation_util.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/test/scoped_key_window.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "ui/base/l10n/l10n_util.h"
 #import "ui/strings/grit/ui_strings.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 class ActionSheetCoordinatorTest : public PlatformTest {
  protected:
   ActionSheetCoordinatorTest() {
-    browser_state_ = TestChromeBrowserState::Builder().Build();
-    browser_ = std::make_unique<TestBrowser>(browser_state_.get());
+    profile_ = TestProfileIOS::Builder().Build();
+    browser_ = std::make_unique<TestBrowser>(profile_.get());
   }
 
   void SetUp() override {
@@ -49,14 +45,14 @@ class ActionSheetCoordinatorTest : public PlatformTest {
   UIAlertController* GetAlertController() {
     EXPECT_TRUE([base_view_controller_.presentedViewController
         isKindOfClass:[UIAlertController class]]);
-    return base::mac::ObjCCastStrict<UIAlertController>(
+    return base::apple::ObjCCastStrict<UIAlertController>(
         base_view_controller_.presentedViewController);
   }
 
-  base::test::TaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_;
 
   ScopedKeyWindow scoped_key_window_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   UIViewController* base_view_controller_;
   UIView* test_view_;

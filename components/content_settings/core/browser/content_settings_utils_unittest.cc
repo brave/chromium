@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <string>
 
 #include "base/test/scoped_feature_list.h"
@@ -13,6 +14,7 @@
 #include "base/time/time.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,14 +24,14 @@ namespace content_settings {
 namespace {
 
 // clang-format off
-const char* const kContentSettingNames[] = {
+constexpr auto kContentSettingNames = std::to_array<const char *>({
   "default",
   "allow",
   "block",
   "ask",
   "session_only",
   "detect_important_content",
-};
+});
 // clang-format on
 
 static_assert(std::size(kContentSettingNames) == CONTENT_SETTING_NUM_SETTINGS,
@@ -139,34 +141,46 @@ TEST(ContentSettingsUtilsTest, IsMorePermissive) {
 #if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 TEST(ContentSettingsUtilsTest, CanBeAutoRevoked) {
   EXPECT_TRUE(CanBeAutoRevoked(ContentSettingsType::GEOLOCATION,
-                               ContentSetting::CONTENT_SETTING_ALLOW));
+                               ContentSettingToValue(CONTENT_SETTING_ALLOW)));
 
   // One-time grants should not be auto revoked.
   EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::GEOLOCATION,
-                                ContentSetting::CONTENT_SETTING_ALLOW, true));
+                                ContentSettingToValue(CONTENT_SETTING_ALLOW),
+                                true));
 
   // Only allowed permissions should be auto revoked.
   EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::GEOLOCATION,
-                                ContentSetting::CONTENT_SETTING_DEFAULT));
+                                ContentSettingToValue(CONTENT_SETTING_ASK)));
 
   EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::GEOLOCATION,
-                                ContentSetting::CONTENT_SETTING_ASK));
-
-  EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::GEOLOCATION,
-                                ContentSetting::CONTENT_SETTING_BLOCK));
+                                ContentSettingToValue(CONTENT_SETTING_BLOCK)));
 
   // Notification permissions should not be auto revoked.
-  EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::NOTIFICATIONS,
-                                ContentSetting::CONTENT_SETTING_ALLOW));
+  EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::NOTIFICATION_INTERACTIONS,
+                                ContentSettingToValue(CONTENT_SETTING_ALLOW)));
 
   // Permissions that are not ask by default should not be auto revoked. IMAGES
   // permission is allowed by default, and ADS  permission is blocked by
   // default.
   EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::IMAGES,
-                                ContentSetting::CONTENT_SETTING_ALLOW));
+                                ContentSettingToValue(CONTENT_SETTING_ALLOW)));
 
   EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::ADS,
-                                ContentSetting::CONTENT_SETTING_ALLOW));
+                                ContentSettingToValue(CONTENT_SETTING_ALLOW)));
+
+  // Chooser permissions that are allowlisted should be auto-revoked.
+  EXPECT_TRUE(
+      CanBeAutoRevoked(ContentSettingsType::FILE_SYSTEM_ACCESS_CHOOSER_DATA,
+                       base::Value("foo")));
+
+  // Chooser permissions that are allowlisted but without any value
+  // should not be auto-revoked.
+  EXPECT_FALSE(CanBeAutoRevoked(
+      ContentSettingsType::FILE_SYSTEM_ACCESS_CHOOSER_DATA, base::Value()));
+
+  // Chooser permissions that are not allowlisted should not be auto-revoked.
+  EXPECT_FALSE(CanBeAutoRevoked(ContentSettingsType::USB_CHOOSER_DATA,
+                                base::Value("foo")));
 }
 #endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 

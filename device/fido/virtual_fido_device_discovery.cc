@@ -27,7 +27,8 @@ VirtualFidoDeviceDiscovery::VirtualFidoDeviceDiscovery(
     ProtocolVersion supported_protocol,
     const VirtualCtap2Device::Config& ctap2_config,
     std::unique_ptr<FidoDeviceDiscovery::EventStream<bool>> disconnect_events,
-    std::unique_ptr<FidoDeviceDiscovery::EventStream<size_t>>
+    std::unique_ptr<
+        FidoDeviceDiscovery::EventStream<std::unique_ptr<cablev2::Pairing>>>
         contact_device_stream)
     : FidoDeviceDiscovery(transport),
       trace_(std::move(trace)),
@@ -55,7 +56,7 @@ void VirtualFidoDeviceDiscovery::StartInternal() {
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&VirtualFidoDeviceDiscovery::NotifyDiscoveryStarted,
-                     AsWeakPtr(), true /* success */));
+                     weak_ptr_factory_.GetWeakPtr(), true /* success */));
 
   if (disconnect_events_) {
     // |disconnect_events_| is owned by this object therefore, when this object
@@ -66,10 +67,11 @@ void VirtualFidoDeviceDiscovery::StartInternal() {
   }
 }
 
-void VirtualFidoDeviceDiscovery::AddVirtualDeviceAsync(size_t _) {
+void VirtualFidoDeviceDiscovery::AddVirtualDeviceAsync(
+    std::unique_ptr<cablev2::Pairing> _) {
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&VirtualFidoDeviceDiscovery::AddVirtualDevice,
-                                AsWeakPtr()));
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void VirtualFidoDeviceDiscovery::AddVirtualDevice() {

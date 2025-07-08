@@ -17,12 +17,14 @@ constexpr char kAshSessionId[] = "ash";
 
 namespace ash::captions {
 
-CaptionBubbleContextAsh::CaptionBubbleContextAsh() = default;
+CaptionBubbleContextAsh::CaptionBubbleContextAsh(
+    ::captions::OpenCaptionSettingsCallback callback)
+    : open_caption_settings_callback_(std::move(callback)) {}
 
 CaptionBubbleContextAsh::~CaptionBubbleContextAsh() = default;
 
 void CaptionBubbleContextAsh::GetBounds(GetBoundsCallback callback) const {
-  const absl::optional<gfx::Rect> bounds =
+  const std::optional<gfx::Rect> bounds =
       WorkAreaInsets::ForWindow(Shell::GetRootWindowForNewWindows())
           ->user_work_area_bounds();
   if (!bounds.has_value()) {
@@ -41,6 +43,10 @@ bool CaptionBubbleContextAsh::IsActivatable() const {
   return false;
 }
 
+bool CaptionBubbleContextAsh::ShouldAvoidOverlap() const {
+  return false;
+}
+
 std::unique_ptr<::captions::CaptionBubbleSessionObserver>
 CaptionBubbleContextAsh::GetCaptionBubbleSessionObserver() {
   return nullptr;
@@ -48,9 +54,7 @@ CaptionBubbleContextAsh::GetCaptionBubbleSessionObserver() {
 
 ::captions::OpenCaptionSettingsCallback
 CaptionBubbleContextAsh::GetOpenCaptionSettingsCallback() {
-  // Live Translate is not implemented on ChromeOS.
-  NOTIMPLEMENTED();
-  return base::RepeatingClosure();
+  return open_caption_settings_callback_;
 }
 
 }  // namespace ash::captions

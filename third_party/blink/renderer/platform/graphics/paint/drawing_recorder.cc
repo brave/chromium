@@ -7,7 +7,6 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -30,7 +29,8 @@ DrawingRecorder::DrawingRecorder(GraphicsContext& context,
   context.BeginRecording();
 
   if (context.NeedsDOMNodeId()) {
-    DOMNodeId dom_node_id = display_item_client.OwnerNodeId();
+    DOMNodeId dom_node_id = display_item_client.OwnerNodeId(
+        context.PrintingInternalHeadersAndFooters());
     if (dom_node_id != kInvalidDOMNodeId) {
       dom_node_id_to_restore_ = context.GetDOMNodeId();
       context.SetDOMNodeId(dom_node_id);

@@ -20,8 +20,10 @@
 #include "base/unguessable_token.h"
 #include "chromeos/crosapi/mojom/video_conference.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -106,10 +108,10 @@ ReturnToAppButtonBase::ReturnToAppButtonBase(
 
   label->SetAutoColorReadabilityEnabled(false);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2, *label);
-  label->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  label->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
 
   label_ = AddChildView(std::move(label));
-  SetAccessibleName(GetPeripheralsAccessibleName() + display_text);
+  GetViewAccessibility().SetName(GetPeripheralsAccessibleName() + display_text);
 }
 
 ReturnToAppButtonBase::~ReturnToAppButtonBase() = default;
@@ -122,7 +124,7 @@ void ReturnToAppButtonBase::OnButtonClicked(
                                 app_type);
 }
 
-std::u16string ReturnToAppButtonBase::GetPeripheralsAccessibleName() {
+std::u16string ReturnToAppButtonBase::GetPeripheralsAccessibleName() const {
   std::u16string tooltip_text;
   if (is_capturing_camera_) {
     tooltip_text += l10n_util::GetStringFUTF16(
@@ -143,5 +145,12 @@ std::u16string ReturnToAppButtonBase::GetPeripheralsAccessibleName() {
   }
   return tooltip_text;
 }
+
+std::u16string_view ReturnToAppButtonBase::GetLabelText() const {
+  return label_->GetText();
+}
+
+BEGIN_METADATA(ReturnToAppButtonBase)
+END_METADATA
 
 }  // namespace ash::video_conference

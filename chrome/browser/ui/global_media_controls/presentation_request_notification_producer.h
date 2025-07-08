@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_GLOBAL_MEDIA_CONTROLS_PRESENTATION_REQUEST_NOTIFICATION_PRODUCER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
@@ -17,7 +18,6 @@
 #include "content/public/browser/presentation_observer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // An object that creates and manages media notifications related to
 // presentation requests by delegating to the implementer of
@@ -107,6 +107,11 @@ class PresentationRequestNotificationProducer final
   // Show or hide |item_| if the visibility changed.
   void ShowOrHideItem();
 
+  mojo::Remote<global_media_controls::mojom::DevicePickerProvider> provider_;
+
+  mojo::Receiver<global_media_controls::mojom::DevicePickerObserver>
+      observer_receiver_;
+
   // An observer for the WebContents associated with |item_| that closes the
   // dialog when the WebContents is destroyed or navigated.
   std::unique_ptr<PresentationRequestWebContentsObserver>
@@ -129,7 +134,7 @@ class PresentationRequestNotificationProducer final
       test_presentation_manager_;
 
   // The notification managed by this producer, if there is one.
-  absl::optional<PresentationRequestNotificationItem> item_;
+  std::optional<PresentationRequestNotificationItem> item_;
 
   // False if |notification_service_| should hide |item_| because there are
   // active notifications on WebContents managed by this producer.
@@ -141,11 +146,6 @@ class PresentationRequestNotificationProducer final
   // The MediaSession source ID for the current BrowserContext. This is passed
   // to `provider_` to distinguish `this` from other possible clients.
   const base::UnguessableToken source_id_;
-
-  mojo::Remote<global_media_controls::mojom::DevicePickerProvider> provider_;
-
-  mojo::Receiver<global_media_controls::mojom::DevicePickerObserver>
-      observer_receiver_;
 
   base::WeakPtrFactory<PresentationRequestNotificationProducer> weak_factory_{
       this};

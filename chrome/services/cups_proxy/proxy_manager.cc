@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "chrome/services/cups_proxy/cups_proxy_service_delegate.h"
 #include "chrome/services/cups_proxy/ipp_validator.h"
@@ -59,7 +61,7 @@ class ProxyManagerImpl : public ProxyManager {
   ProxyManagerImpl(const ProxyManagerImpl&) = delete;
   ProxyManagerImpl& operator=(const ProxyManagerImpl&) = delete;
 
-  ~ProxyManagerImpl() override = default;
+  ~ProxyManagerImpl() override;
 
   void ProxyRequest(const std::string& method,
                     const std::string& url,
@@ -115,7 +117,7 @@ class ProxyManagerImpl : public ProxyManager {
   base::WeakPtrFactory<ProxyManagerImpl> weak_factory_{this};
 };
 
-absl::optional<std::vector<uint8_t>> RebuildIppRequest(
+std::optional<std::vector<uint8_t>> RebuildIppRequest(
     const std::string& method,
     const std::string& url,
     const std::string& version,
@@ -124,12 +126,12 @@ absl::optional<std::vector<uint8_t>> RebuildIppRequest(
   auto request_line_buffer =
       ipp_converter::BuildRequestLine(method, url, version);
   if (!request_line_buffer.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   auto headers_buffer = ipp_converter::BuildHeaders(headers);
   if (!headers_buffer.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::vector<uint8_t> ret;
@@ -138,6 +140,12 @@ absl::optional<std::vector<uint8_t>> RebuildIppRequest(
   ret.insert(ret.end(), headers_buffer->begin(), headers_buffer->end());
   ret.insert(ret.end(), body.begin(), body.end());
   return ret;
+}
+
+ProxyManagerImpl::~ProxyManagerImpl() {
+  if (in_flight_) {
+    Fail("CupsProxy is shutting down", HTTP_STATUS_SERVICE_UNAVAILABLE);
+  }
 }
 
 void ProxyManagerImpl::ProxyRequest(
@@ -260,7 +268,7 @@ void ProxyManagerImpl::SpoofGetPrinters() {
       delegate_->GetPrinters(chromeos::PrinterClass::kSaved),
       delegate_->GetPrinters(chromeos::PrinterClass::kEnterprise),
       delegate_->GetRecentlyUsedPrinters());
-  absl::optional<IppResponse> response =
+  std::optional<IppResponse> response =
       BuildGetDestsResponse(in_flight_->request, printers);
   if (!response.has_value()) {
     return Fail("Failed to spoof CUPS-Get-Printers response",
@@ -306,15 +314,13 @@ void ProxyManagerImpl::OnProxyToCups(
 void ProxyManagerImpl::ProxyResponseToCaller(
     const std::vector<uint8_t>& response) {
   // Convert to string for parsing HTTP headers.
-  std::string response_str = ipp_converter::ConvertToString(response);
-  auto end_of_headers = net::HttpUtil::LocateEndOfHeaders(response_str.data(),
-                                                          response_str.size());
+  auto end_of_headers = net::HttpUtil::LocateEndOfHeaders(response);
   if (end_of_headers < 0) {
     return Fail("IPP response missing end of headers",
                 HTTP_STATUS_SERVER_ERROR);
   }
-
-  base::StringPiece headers_slice(response_str.data(), end_of_headers);
+  std::string_view headers_slice =
+      base::as_string_view(base::span(response).first(end_of_headers));
   scoped_refptr<net::HttpResponseHeaders> response_headers =
       net::HttpResponseHeaders::TryToCreate(headers_slice);
   if (!response_headers) {

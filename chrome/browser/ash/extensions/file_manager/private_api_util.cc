@@ -5,22 +5,26 @@
 #include "chrome/browser/ash/extensions/file_manager/private_api_util.h"
 
 #include <stddef.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "ash/constants/ash_features.h"
+#include "base/files/file_error_or.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
 #include "base/location.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router_factory.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/filesystem_api_util.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
@@ -31,13 +35,14 @@
 #include "chrome/browser/ash/guest_os/public/guest_os_mount_provider.h"
 #include "chrome/browser/ash/guest_os/public/guest_os_mount_provider_registry.h"
 #include "chrome/browser/ash/guest_os/public/guest_os_service.h"
+#include "chrome/browser/ash/guest_os/public/guest_os_service_factory.h"
 #include "chrome/browser/ash/guest_os/public/types.h"
+#include "chrome/browser/ash/policy/skyvault/policy_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
-#include "chromeos/ash/components/drivefs/drivefs_pin_manager.h"
+#include "chromeos/ash/components/drivefs/drivefs_pinning_manager.h"
 #include "chromeos/ash/components/drivefs/drivefs_util.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
-#include "chromeos/ash/components/drivefs/sync_status_tracker.h"
 #include "components/drive/drive_api_util.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_errors.h"
@@ -49,7 +54,9 @@
 #include "storage/browser/file_system/external_mount_points.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
+#include "storage/common/file_system/file_system_info.h"
 #include "ui/shell_dialogs/selected_file_info.h"
+#include "url/gurl.h"
 
 namespace file_manager::util {
 namespace {
@@ -66,7 +73,7 @@ struct GetSelectedFileInfoParams {
 
 // The callback type for GetFileNativeLocalPathFor{Opening,Saving}. It receives
 // the resolved local path when successful, and receives empty path for failure.
-typedef base::OnceCallback<void(const base::FilePath&)> LocalPathCallback;
+using LocalPathCallback = base::OnceCallback<void(const base::FilePath&)>;
 
 // Gets a resolved local file path of a non native |path| for file opening.
 void GetFileNativeLocalPathForOpening(Profile* profile,
@@ -82,7 +89,6 @@ void GetFileNativeLocalPathForSaving(Profile* profile,
                                      LocalPathCallback callback) {
   // TODO(kinaba): For now, there are no writable non-local volumes.
   NOTREACHED();
-  std::move(callback).Run(base::FilePath());
 }
 
 // Forward declarations of helper functions for GetSelectedFileInfo().
@@ -140,22 +146,20 @@ void GetSelectedFileInfoInternal(
         }
       }
     } else {
-      // Hosted docs can only accessed by navigating to their URLs. Get the
-      // metadata for the file from DriveFS and populate the |url| field in the
-      // SelectedFileInfo.
-      if (drive::util::HasHostedDocumentExtension(file_path)) {
-        auto* integration_service =
-            drive::util::GetIntegrationServiceByProfile(profile);
-        base::FilePath drive_mount_relative_path;
-        if (integration_service && integration_service->GetDriveFsInterface() &&
-            integration_service->GetRelativeDrivePath(
-                file_path, &drive_mount_relative_path)) {
-          integration_service->GetDriveFsInterface()->GetMetadata(
-              drive_mount_relative_path,
-              base::BindOnce(&ContinueGetSelectedFileInfoWithDriveFsMetadata,
-                             profile, std::move(params)));
-          return;
-        }
+      // Hosted docs and encrypted files can only accessed by navigating
+      // to their URLs. Get the metadata for the file from DriveFS and
+      // if needed populate the |url| field in the SelectedFileInfo.
+      auto* integration_service =
+          drive::util::GetIntegrationServiceByProfile(profile);
+      base::FilePath drive_mount_relative_path;
+      if (integration_service && integration_service->GetDriveFsInterface() &&
+          integration_service->GetRelativeDrivePath(
+              file_path, &drive_mount_relative_path)) {
+        integration_service->GetDriveFsInterface()->GetMetadata(
+            drive_mount_relative_path,
+            base::BindOnce(&ContinueGetSelectedFileInfoWithDriveFsMetadata,
+                           profile, std::move(params)));
+        return;
       }
       params->selected_files.emplace_back(file_path, file_path);
     }
@@ -204,7 +208,9 @@ void ContinueGetSelectedFileInfoWithDriveFsMetadata(
   const int index = params->selected_files.size();
   const auto& path = params->file_paths[index];
   params->selected_files.emplace_back(path, path);
-  if (metadata && drivefs::IsHosted(metadata->type) &&
+  if (metadata &&
+      (drivefs::IsHosted(metadata->type) ||
+       drive::util::IsEncryptedMimeType(metadata->content_mime_type)) &&
       !metadata->alternate_url.empty()) {
     params->selected_files.back().url.emplace(
         std::move(metadata->alternate_url));
@@ -227,20 +233,22 @@ std::string GetShareUrlFromAlternateUrl(const GURL& alternate_url) {
 fmp::VmType VmTypeToJs(guest_os::VmType vm_type) {
   switch (vm_type) {
     case guest_os::VmType::TERMINA:
-      return fmp::VM_TYPE_TERMINA;
+      return fmp::VmType::kTermina;
     case guest_os::VmType::PLUGIN_VM:
-      return fmp::VM_TYPE_PLUGIN_VM;
+      return fmp::VmType::kPluginVm;
     case guest_os::VmType::BOREALIS:
-      return fmp::VM_TYPE_BOREALIS;
+      return fmp::VmType::kBorealis;
     case guest_os::VmType::BRUSCHETTA:
-      return fmp::VM_TYPE_BRUSCHETTA;
+      return fmp::VmType::kBruschetta;
     case guest_os::VmType::ARCVM:
-      return fmp::VM_TYPE_ARCVM;
+      return fmp::VmType::kArcvm;
+    case guest_os::VmType::BAGUETTE:
+      // Baguette currently isn't hooked up to file manager
+      return fmp::VmType::kNone;
     case guest_os::VmType::UNKNOWN:
     case guest_os::VmType::VmType_INT_MIN_SENTINEL_DO_NOT_USE_:
     case guest_os::VmType::VmType_INT_MAX_SENTINEL_DO_NOT_USE_:
       NOTREACHED();
-      return fmp::VM_TYPE_NONE;
   }
 }
 
@@ -248,31 +256,30 @@ fmp::BulkPinStage DrivefsPinStageToJs(drivefs::pinning::Stage stage) {
   switch (stage) {
     using enum drivefs::pinning::Stage;
     case kStopped:
-      return fmp::BULK_PIN_STAGE_STOPPED;
+      return fmp::BulkPinStage::kStopped;
     case kPausedOffline:
-      return fmp::BULK_PIN_STAGE_PAUSED_OFFLINE;
+      return fmp::BulkPinStage::kPausedOffline;
     case kPausedBatterySaver:
-      return fmp::BULK_PIN_STAGE_PAUSED_BATTERY_SAVER;
+      return fmp::BulkPinStage::kPausedBatterySaver;
     case kGettingFreeSpace:
-      return fmp::BULK_PIN_STAGE_GETTING_FREE_SPACE;
+      return fmp::BulkPinStage::kGettingFreeSpace;
     case kListingFiles:
-      return fmp::BULK_PIN_STAGE_LISTING_FILES;
+      return fmp::BulkPinStage::kListingFiles;
     case kSyncing:
-      return fmp::BULK_PIN_STAGE_SYNCING;
+      return fmp::BulkPinStage::kSyncing;
     case kSuccess:
-      return fmp::BULK_PIN_STAGE_SUCCESS;
+      return fmp::BulkPinStage::kSuccess;
     case kNotEnoughSpace:
-      return fmp::BULK_PIN_STAGE_NOT_ENOUGH_SPACE;
+      return fmp::BulkPinStage::kNotEnoughSpace;
     case kCannotGetFreeSpace:
-      return fmp::BULK_PIN_STAGE_CANNOT_GET_FREE_SPACE;
+      return fmp::BulkPinStage::kCannotGetFreeSpace;
     case kCannotListFiles:
-      return fmp::BULK_PIN_STAGE_CANNOT_LIST_FILES;
+      return fmp::BulkPinStage::kCannotListFiles;
     case kCannotEnableDocsOffline:
-      return fmp::BULK_PIN_STAGE_CANNOT_ENABLE_DOCS_OFFLINE;
+      return fmp::BulkPinStage::kCannotEnableDocsOffline;
   }
 
   NOTREACHED();
-  return fmp::BULK_PIN_STAGE_NONE;
 }
 
 bool IsBulkPinningEnabledForProfile(Profile* profile) {
@@ -283,7 +290,7 @@ bool IsBulkPinningEnabledForProfile(Profile* profile) {
       drive::prefs::kDriveFsBulkPinningEnabled);
 }
 
-drivefs::pinning::PinManager* GetPinManager(Profile* profile) {
+drivefs::pinning::PinningManager* GetPinningManager(Profile* profile) {
   if (!profile) {
     return nullptr;
   }
@@ -293,13 +300,46 @@ drivefs::pinning::PinManager* GetPinManager(Profile* profile) {
     return nullptr;
   }
 
-  return integration_service->GetPinManager();
+  return integration_service->GetPinningManager();
 }
 
 bool IsPathUnderMyDrive(const base::FilePath& relative_path) {
   return base::FilePath("/")
       .Append(drive::util::kDriveMyDriveRootDirName)
       .IsParent(relative_path);
+}
+
+// Part of GURLToEntryData().
+void GURLToEntryDataOnResolve(
+    std::string entry_name,
+    const GURL& url,
+    base::OnceCallback<void(base::FileErrorOr<fmp::EntryData>)> callback,
+    base::File::Error result,
+    const storage::FileSystemInfo& file_system_info,
+    const base::FilePath& file_path,
+    storage::FileSystemContext::ResolvedEntryType type) {
+  if (result != base::File::FILE_OK) {
+    std::move(callback).Run(base::unexpected(result));
+    return;
+  }
+  fmp::EntryData entry_data;
+  switch (type) {
+    case storage::FileSystemContext::RESOLVED_ENTRY_FILE:
+      entry_data.is_directory = false;
+      break;
+    case storage::FileSystemContext::RESOLVED_ENTRY_DIRECTORY:
+      entry_data.is_directory = true;
+      break;
+    case storage::FileSystemContext::RESOLVED_ENTRY_NOT_FOUND:
+      std::move(callback).Run(
+          base::unexpected(base::File::FILE_ERROR_NOT_FOUND));
+      return;
+  }
+  entry_data.name = std::move(entry_name);
+  entry_data.entry_url = url.spec();
+  entry_data.filesystem.name = file_system_info.name;
+  entry_data.filesystem.root_url = file_system_info.root_url.spec();
+  std::move(callback).Run(std::move(entry_data));
 }
 
 }  // namespace
@@ -357,25 +397,23 @@ void SingleEntryPropertiesGetterForDriveFs::StartProcess() {
 
   file_manager::EventRouter* event_router =
       file_manager::EventRouterFactory::GetForProfile(running_profile_);
-  if (ash::features::IsInlineSyncStatusEnabled() && event_router) {
+  if (event_router) {
     drivefs::SyncState sync_state =
-        ash::features::IsInlineSyncStatusProgressEventsEnabled()
-            ? event_router->GetDriveSyncStateForPath(file_system_url_.path())
-            : integration_service->GetSyncStateForPath(file_system_url_.path());
+        event_router->GetDriveSyncStateForPath(file_system_url_.path());
     properties_->progress = sync_state.progress;
     switch (sync_state.status) {
       using enum drivefs::SyncStatus;
       case kQueued:
-        properties_->sync_status = fmp::SYNC_STATUS_QUEUED;
+        properties_->sync_status = fmp::SyncStatus::kQueued;
         break;
       case kInProgress:
-        properties_->sync_status = fmp::SYNC_STATUS_IN_PROGRESS;
+        properties_->sync_status = fmp::SyncStatus::kInProgress;
         break;
       case kError:
-        properties_->sync_status = fmp::SYNC_STATUS_ERROR;
+        properties_->sync_status = fmp::SyncStatus::kError;
         break;
       default:
-        properties_->sync_status = fmp::SYNC_STATUS_NOT_FOUND;
+        properties_->sync_status = fmp::SyncStatus::kNotFound;
         break;
     }
   }
@@ -404,17 +442,19 @@ void SingleEntryPropertiesGetterForDriveFs::OnGetFileInfo(
   // Dirty files have unsynced changes hence will eventually get queued for
   // syncing. Let's make sure we report them as queued as soon as possible.
   if (metadata->dirty) {
-    properties_->sync_status = file_manager_private::SYNC_STATUS_QUEUED;
+    properties_->sync_status = file_manager_private::SyncStatus::kQueued;
   }
   properties_->hosted = drivefs::IsHosted(metadata->type);
 
   properties_->available_offline =
-      metadata->available_offline || *properties_->hosted;
+      metadata->available_offline ||
+      drive::util::IsEncryptedMimeType(metadata->content_mime_type) ||
+      *properties_->hosted;
   properties_->available_when_metered =
       metadata->available_offline || *properties_->hosted;
   properties_->pinned = metadata->pinned;
 
-  if (drive::util::IsDriveFsBulkPinningEnabled(running_profile_)) {
+  if (drive::util::IsDriveFsBulkPinningAvailable(running_profile_)) {
     properties_->available_offline =
         (drivefs::IsHosted(metadata->type) &&
          !drive::util::IsPinnableGDocMimeType(metadata->content_mime_type))
@@ -425,20 +465,20 @@ void SingleEntryPropertiesGetterForDriveFs::OnGetFileInfo(
 
     if (IsBulkPinningEnabledForProfile(running_profile_) &&
         IsPathUnderMyDrive(relative_path_)) {
-      drivefs::pinning::PinManager* const pin_manager =
-          GetPinManager(running_profile_);
+      drivefs::pinning::PinningManager* const pinning_manager =
+          GetPinningManager(running_profile_);
 
       const auto stable_id =
-          drivefs::pinning::PinManager::Id(metadata->stable_id);
+          drivefs::pinning::PinningManager::Id(metadata->stable_id);
       if (properties_->sync_status ==
-              file_manager_private::SYNC_STATUS_NOT_FOUND &&
-          pin_manager->IsTrackedAndUnpinned(stable_id)) {
-        // The `PinManager` maintains a list of 200 items that it pins, if the
-        // item is not within these 200 items it will eventually be pinned, but
-        // does not enter into a queued state just yet. This ensures the queued
-        // state is reflected for items that will be pinned but haven't called
-        // `SetPinned` yet.
-        properties_->sync_status = file_manager_private::SYNC_STATUS_QUEUED;
+              file_manager_private::SyncStatus::kNotFound &&
+          pinning_manager->IsTrackedAndUnpinned(stable_id)) {
+        // The `PinningManager` maintains a list of 200 items that it pins, if
+        // the item is not within these 200 items it will eventually be pinned,
+        // but does not enter into a queued state just yet. This ensures the
+        // queued state is reflected for items that will be pinned but haven't
+        // called `SetPinned` yet.
+        properties_->sync_status = file_manager_private::SyncStatus::kQueued;
       }
 
       if (drive::util::IsPinnableGDocMimeType(metadata->content_mime_type)) {
@@ -453,11 +493,12 @@ void SingleEntryPropertiesGetterForDriveFs::OnGetFileInfo(
   properties_->starred = metadata->starred;
 
   if (metadata->modification_time != base::Time()) {
-    properties_->modification_time = metadata->modification_time.ToJsTime();
+    properties_->modification_time =
+        metadata->modification_time.InMillisecondsFSinceUnixEpoch();
   }
   if (metadata->last_viewed_by_me_time != base::Time()) {
     properties_->modification_by_me_time =
-        metadata->last_viewed_by_me_time.ToJsTime();
+        metadata->last_viewed_by_me_time.InMillisecondsFSinceUnixEpoch();
   }
   if (!metadata->content_mime_type.empty()) {
     properties_->content_mime_type = metadata->content_mime_type;
@@ -557,18 +598,18 @@ void VolumeToVolumeMetadata(Profile* profile,
 
   switch (volume.source()) {
     case SOURCE_FILE:
-      volume_metadata->source = fmp::SOURCE_FILE;
+      volume_metadata->source = fmp::Source::kFile;
       break;
     case SOURCE_DEVICE:
-      volume_metadata->source = fmp::SOURCE_DEVICE;
+      volume_metadata->source = fmp::Source::kDevice;
       volume_metadata->is_read_only_removable_device =
           volume.is_read_only_removable_device();
       break;
     case SOURCE_NETWORK:
-      volume_metadata->source = fmp::SOURCE_NETWORK;
+      volume_metadata->source = fmp::Source::kNetwork;
       break;
     case SOURCE_SYSTEM:
-      volume_metadata->source = fmp::SOURCE_SYSTEM;
+      volume_metadata->source = fmp::Source::kSystem;
       break;
   }
 
@@ -588,76 +629,75 @@ void VolumeToVolumeMetadata(Profile* profile,
 
   switch (volume.type()) {
     case VOLUME_TYPE_GOOGLE_DRIVE:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_DRIVE;
+      volume_metadata->volume_type = fmp::VolumeType::kDrive;
       break;
     case VOLUME_TYPE_DOWNLOADS_DIRECTORY:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_DOWNLOADS;
+      volume_metadata->volume_type = fmp::VolumeType::kDownloads;
       break;
     case VOLUME_TYPE_REMOVABLE_DISK_PARTITION:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_REMOVABLE;
+      volume_metadata->volume_type = fmp::VolumeType::kRemovable;
       break;
     case VOLUME_TYPE_MOUNTED_ARCHIVE_FILE:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_ARCHIVE;
+      volume_metadata->volume_type = fmp::VolumeType::kArchive;
       break;
     case VOLUME_TYPE_PROVIDED:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_PROVIDED;
+      volume_metadata->volume_type = fmp::VolumeType::kProvided;
       break;
     case VOLUME_TYPE_MTP:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_MTP;
+      volume_metadata->volume_type = fmp::VolumeType::kMtp;
       break;
     case VOLUME_TYPE_MEDIA_VIEW:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_MEDIA_VIEW;
+      volume_metadata->volume_type = fmp::VolumeType::kMediaView;
       break;
     case VOLUME_TYPE_CROSTINI:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_CROSTINI;
+      volume_metadata->volume_type = fmp::VolumeType::kCrostini;
       break;
     case VOLUME_TYPE_ANDROID_FILES:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_ANDROID_FILES;
+      volume_metadata->volume_type = fmp::VolumeType::kAndroidFiles;
       break;
     case VOLUME_TYPE_DOCUMENTS_PROVIDER:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_DOCUMENTS_PROVIDER;
+      volume_metadata->volume_type = fmp::VolumeType::kDocumentsProvider;
       break;
     case VOLUME_TYPE_TESTING:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_TESTING;
+      volume_metadata->volume_type = fmp::VolumeType::kTesting;
       break;
     case VOLUME_TYPE_SMB:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_SMB;
+      volume_metadata->volume_type = fmp::VolumeType::kSmb;
       break;
     case VOLUME_TYPE_SYSTEM_INTERNAL:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_SYSTEM_INTERNAL;
+      volume_metadata->volume_type = fmp::VolumeType::kSystemInternal;
       break;
     case VOLUME_TYPE_GUEST_OS:
-      volume_metadata->volume_type = fmp::VOLUME_TYPE_GUEST_OS;
+      volume_metadata->volume_type = fmp::VolumeType::kGuestOs;
       break;
     case NUM_VOLUME_TYPE:
       NOTREACHED();
-      break;
   }
 
   // Fill device_type iff the volume is removable partition.
   if (volume.type() == VOLUME_TYPE_REMOVABLE_DISK_PARTITION) {
     switch (volume.device_type()) {
       case ash::DeviceType::kUnknown:
-        volume_metadata->device_type = fmp::DEVICE_TYPE_UNKNOWN;
+        volume_metadata->device_type = fmp::DeviceType::kUnknown;
         break;
       case ash::DeviceType::kUSB:
-        volume_metadata->device_type = fmp::DEVICE_TYPE_USB;
+        volume_metadata->device_type = fmp::DeviceType::kUsb;
         break;
       case ash::DeviceType::kSD:
-        volume_metadata->device_type = fmp::DEVICE_TYPE_SD;
+        volume_metadata->device_type = fmp::DeviceType::kSd;
         break;
       case ash::DeviceType::kOpticalDisc:
       case ash::DeviceType::kDVD:
-        volume_metadata->device_type = fmp::DEVICE_TYPE_OPTICAL;
+        volume_metadata->device_type = fmp::DeviceType::kOptical;
         break;
       case ash::DeviceType::kMobile:
-        volume_metadata->device_type = fmp::DEVICE_TYPE_MOBILE;
+        volume_metadata->device_type = fmp::DeviceType::kMobile;
         break;
     }
     volume_metadata->device_path = volume.storage_device_path().AsUTF8Unsafe();
     volume_metadata->is_parent_device = volume.is_parent();
   } else {
-    volume_metadata->device_type = fmp::DEVICE_TYPE_NONE;
+    volume_metadata->device_type = fmp::DeviceType::kNone;
   }
 
   volume_metadata->is_read_only = volume.is_read_only();
@@ -669,24 +709,24 @@ void VolumeToVolumeMetadata(Profile* profile,
       LOG(ERROR) << "Unexpected mount condition: " << volume.mount_condition();
       [[fallthrough]];
     case ash::MountError::kSuccess:
-      volume_metadata->mount_condition = fmp::MOUNT_ERROR_NONE;
+      volume_metadata->mount_condition = fmp::MountError::kNone;
       break;
     case ash::MountError::kUnknownFilesystem:
-      volume_metadata->mount_condition = fmp::MOUNT_ERROR_UNKNOWN_FILESYSTEM;
+      volume_metadata->mount_condition = fmp::MountError::kUnknownFilesystem;
       break;
     case ash::MountError::kUnsupportedFilesystem:
       volume_metadata->mount_condition =
-          fmp::MOUNT_ERROR_UNSUPPORTED_FILESYSTEM;
+          fmp::MountError::kUnsupportedFilesystem;
       break;
   }
 
   // If the context is known, then pass it.
   switch (volume.mount_context()) {
     case MOUNT_CONTEXT_USER:
-      volume_metadata->mount_context = fmp::MOUNT_CONTEXT_USER;
+      volume_metadata->mount_context = fmp::MountContext::kUser;
       break;
     case MOUNT_CONTEXT_AUTO:
-      volume_metadata->mount_context = fmp::MOUNT_CONTEXT_AUTO;
+      volume_metadata->mount_context = fmp::MountContext::kAuto;
       break;
     case MOUNT_CONTEXT_UNKNOWN:
       break;
@@ -697,15 +737,9 @@ void VolumeToVolumeMetadata(Profile* profile,
   }
 }
 
-base::FilePath GetLocalPathFromURL(content::RenderFrameHost* render_frame_host,
-                                   Profile* profile,
-                                   const GURL& url) {
-  DCHECK(render_frame_host);
-  DCHECK(profile);
-
-  scoped_refptr<storage::FileSystemContext> file_system_context =
-      util::GetFileSystemContextForRenderFrameHost(profile, render_frame_host);
-
+base::FilePath GetLocalPathFromURL(
+    scoped_refptr<storage::FileSystemContext> file_system_context,
+    const GURL& url) {
   const storage::FileSystemURL filesystem_url(
       file_system_context->CrackURLInFirstPartyContext(url));
   base::FilePath path;
@@ -715,26 +749,15 @@ base::FilePath GetLocalPathFromURL(content::RenderFrameHost* render_frame_host,
   return filesystem_url.path();
 }
 
-void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
-                         Profile* profile,
-                         const std::vector<GURL>& file_urls,
+void GetSelectedFileInfo(Profile* profile,
+                         std::vector<base::FilePath> local_paths,
                          GetSelectedFileInfoLocalPathOption local_path_option,
                          GetSelectedFileInfoCallback callback) {
-  DCHECK(render_frame_host);
-  DCHECK(profile);
-
   std::unique_ptr<GetSelectedFileInfoParams> params =
       std::make_unique<GetSelectedFileInfoParams>();
   params->local_path_option = local_path_option;
   params->callback = std::move(callback);
-
-  for (const GURL& url : file_urls) {
-    base::FilePath path = GetLocalPathFromURL(render_frame_host, profile, url);
-    if (!path.empty()) {
-      DVLOG(1) << "Selected: file path: " << path;
-      params->file_paths.push_back(std::move(path));
-    }
-  }
+  params->file_paths = std::move(local_paths);
 
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
@@ -747,20 +770,27 @@ drive::EventLogger* GetLogger(Profile* profile) {
   }
   drive::DriveIntegrationService* service =
       drive::DriveIntegrationServiceFactory::FindForProfile(profile);
-  return service ? service->event_logger() : nullptr;
+  return service ? service->GetLogger() : nullptr;
 }
 
 std::vector<fmp::MountableGuest> CreateMountableGuestList(Profile* profile) {
-  auto* service = guest_os::GuestOsService::GetForProfile(profile);
+  auto* service = guest_os::GuestOsServiceFactory::GetForProfile(profile);
   if (!service) {
     return {};
   }
+
+  bool local_user_files_allowed =
+      policy::local_user_files::LocalUserFilesAllowed();
 
   auto* registry = service->MountProviderRegistry();
   std::vector<fmp::MountableGuest> guests;
   for (const auto id : registry->List()) {
     fmp::MountableGuest guest;
     auto* provider = registry->Get(id);
+    if (!local_user_files_allowed &&
+        provider->vm_type() == guest_os::VmType::ARCVM) {
+      continue;
+    }
     guest.id = id;
     guest.display_name = provider->DisplayName();
     guest.vm_type = VmTypeToJs(provider->vm_type());
@@ -773,29 +803,28 @@ bool ToRecentSourceFileType(fmp::FileCategory input_category,
                             ash::RecentSource::FileType* output_type) {
   switch (input_category) {
     using enum ash::RecentSource::FileType;
-    case fmp::FILE_CATEGORY_NONE:
+    case fmp::FileCategory::kNone:
       // The FileCategory is an optional parameter. Thus we convert NONE to All.
       // If the calling code does not specify the restrictions on the category
       // we do not enforce then.
-    case fmp::FILE_CATEGORY_ALL:
+    case fmp::FileCategory::kAll:
       *output_type = kAll;
       return true;
-    case fmp::FILE_CATEGORY_AUDIO:
+    case fmp::FileCategory::kAudio:
       *output_type = kAudio;
       return true;
-    case fmp::FILE_CATEGORY_IMAGE:
+    case fmp::FileCategory::kImage:
       *output_type = kImage;
       return true;
-    case fmp::FILE_CATEGORY_VIDEO:
+    case fmp::FileCategory::kVideo:
       *output_type = kVideo;
       return true;
-    case fmp::FILE_CATEGORY_DOCUMENT:
+    case fmp::FileCategory::kDocument:
       *output_type = kDocument;
       return true;
   }
 
   NOTREACHED();
-  return false;
 }
 
 fmp::BulkPinProgress BulkPinProgressToJs(
@@ -807,11 +836,30 @@ fmp::BulkPinProgress BulkPinProgressToJs(
   result.bytes_to_pin = progress.bytes_to_pin;
   result.pinned_bytes = progress.pinned_bytes;
   result.files_to_pin = progress.files_to_pin;
+  result.listed_files = progress.listed_files;
   result.remaining_seconds = !progress.remaining_time.is_inf()
                                  ? progress.remaining_time.InSecondsF()
                                  : 0;
+  result.should_pin = progress.should_pin;
   result.emptied_queue = progress.emptied_queue;
   return result;
+}
+
+void GURLToEntryData(
+    Profile* profile,
+    scoped_refptr<storage::FileSystemContext> file_system_context,
+    const GURL& url,
+    base::OnceCallback<void(base::FileErrorOr<fmp::EntryData>)> callback) {
+  storage::FileSystemURL file_system_url =
+      file_system_context->CrackURLInFirstPartyContext(url);
+  std::string entry_name = GetDisplayablePath(profile, file_system_url)
+                               .value_or(base::FilePath())
+                               .BaseName()
+                               .value();
+  file_system_context->ResolveURL(
+      file_system_url,
+      base::BindOnce(GURLToEntryDataOnResolve, std::move(entry_name), url,
+                     std::move(callback)));
 }
 
 }  // namespace file_manager::util

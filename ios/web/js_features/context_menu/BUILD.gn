@@ -12,7 +12,6 @@ source_set("context_menu") {
     "//base",
     "//components/url_formatter",
     "//ios/web/common",
-    "//ios/web/common:features",
     "//ios/web/public",
     "//ios/web/public/js_messaging",
   ]
@@ -66,6 +65,7 @@ source_set("unittests") {
     "//ios/web/js_messaging",
     "//ios/web/js_messaging:java_script_feature",
     "//ios/web/js_messaging:web_view_js_utils",
+    "//ios/web/public/js_messaging:web_view_js_utils",
     "//ios/web/public/test",
     "//ios/web/public/test:javascript_test",
     "//ios/web/public/test:test_fixture",

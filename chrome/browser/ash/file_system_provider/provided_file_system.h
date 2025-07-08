@@ -39,8 +39,7 @@ namespace extensions {
 class EventRouter;
 }  // namespace extensions
 
-namespace ash {
-namespace file_system_provider {
+namespace ash::file_system_provider {
 
 class NotificationManagerInterface;
 class RequestDispatcher;
@@ -215,7 +214,7 @@ class ProvidedFileSystem : public ProvidedFileSystemInterface {
   // Notifies about a notifier even within |watcher_queue_|.
   AbortCallback NotifyInQueue(std::unique_ptr<NotifyInQueueArgs> args);
 
-  // Called when adding a watcher is completed with either success or en error.
+  // Called when adding a watcher is completed with either success or an error.
   void OnAddWatcherInQueueCompleted(
       size_t token,
       const base::FilePath& entry_path,
@@ -224,7 +223,7 @@ class ProvidedFileSystem : public ProvidedFileSystemInterface {
       storage::AsyncFileUtil::StatusCallback callback,
       base::File::Error result);
 
-  // Called when adding a watcher is completed with either a success or an
+  // Called when removing a watcher is completed with either a success or an
   // error.
   void OnRemoveWatcherInQueueCompleted(
       size_t token,
@@ -244,21 +243,19 @@ class ProvidedFileSystem : public ProvidedFileSystemInterface {
                            OpenFileMode mode,
                            OpenFileCallback callback,
                            int file_handle,
-                           base::File::Error result);
+                           base::File::Error result,
+                           std::unique_ptr<EntryMetadata> metadata);
 
   // Called when closing a file is completed with either a success or an error.
   void OnCloseFileCompleted(int file_handle,
                             storage::AsyncFileUtil::StatusCallback callback,
                             base::File::Error result);
 
-  void OnLacrosOperationForwarded(int request_id, base::File::Error error);
-
   // Creates `request_manager_`, or replaces it if it exists (in tests).
   void ConstructRequestManager();
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;  // Not owned.
-  raw_ptr<extensions::EventRouter, ExperimentalAsh>
-      event_router_;  // Not owned. May be NULL.
+  raw_ptr<Profile> profile_;                       // Not owned.
+  raw_ptr<extensions::EventRouter> event_router_;  // Not owned. May be NULL.
   ProvidedFileSystemInfo file_system_info_;
   std::unique_ptr<NotificationManagerInterface> notification_manager_;
   std::unique_ptr<RequestDispatcher> request_dispatcher_;
@@ -272,7 +269,6 @@ class ProvidedFileSystem : public ProvidedFileSystemInterface {
   base::WeakPtrFactory<ProvidedFileSystem> weak_ptr_factory_{this};
 };
 
-}  // namespace file_system_provider
-}  // namespace ash
+}  // namespace ash::file_system_provider
 
 #endif  // CHROME_BROWSER_ASH_FILE_SYSTEM_PROVIDER_PROVIDED_FILE_SYSTEM_H_

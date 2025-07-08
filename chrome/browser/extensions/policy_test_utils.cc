@@ -6,6 +6,7 @@
 
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
@@ -33,8 +34,9 @@ constexpr char kFileNameToIntercept[] = "update_manifest.xml";
 std::unique_ptr<net::test_server::HttpResponse> InterceptMockHttp(
     net::EmbeddedTestServer* embedded_test_server,
     const net::test_server::HttpRequest& request) {
-  if (request.GetURL().ExtractFileName() != kFileNameToIntercept)
+  if (request.GetURL().ExtractFileName() != kFileNameToIntercept) {
     return nullptr;
+  }
 
   base::FilePath test_data_dir;
   base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);

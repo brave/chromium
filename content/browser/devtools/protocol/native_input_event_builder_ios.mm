@@ -6,14 +6,10 @@
 
 #include "base/apple/owned_objc.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content::protocol {
 
 gfx::NativeEvent NativeInputEventBuilder::CreateEvent(
-    const NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   // We only need this for Macs because they require an OS event to process
   // some keyboard events in browser (see: https://crbug.com/667387). TODO: Does
   // this hold true for iOS Blink?

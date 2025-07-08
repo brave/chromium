@@ -32,7 +32,7 @@ UnifiedConsentService::SyncState UnifiedConsentService::GetSyncState(
     return SyncState::kSignedInWithoutHistory;
   }
 
-  absl::optional<syncer::PassphraseType> passphrase_type =
+  std::optional<syncer::PassphraseType> passphrase_type =
       sync_service->GetUserSettings()->GetPassphraseType();
 
   if (!passphrase_type.has_value()) {
@@ -164,7 +164,7 @@ UnifiedConsentService::UnifiedConsentService(
   DCHECK(identity_manager_);
   DCHECK(sync_service_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (GetMigrationState() == MigrationState::kNotInitialized)
     MigrateProfileToUnifiedConsent();
 #endif
@@ -186,7 +186,7 @@ void UnifiedConsentService::RegisterPrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(prefs::kUrlKeyedAnonymizedDataCollectionEnabled,
                                 false);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   registry->RegisterIntegerPref(
       prefs::kUnifiedConsentMigrationState,
       static_cast<int>(MigrationState::kNotInitialized));
@@ -195,7 +195,7 @@ void UnifiedConsentService::RegisterPrefs(
 
 void UnifiedConsentService::SetUrlKeyedAnonymizedDataCollectionEnabled(
     bool enabled) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (GetMigrationState() != MigrationState::kCompleted)
     SetMigrationState(MigrationState::kCompleted);
 #endif
@@ -212,7 +212,7 @@ void UnifiedConsentService::Shutdown() {
 
 void UnifiedConsentService::OnPrimaryAccountChanged(
     const signin::PrimaryAccountChangeEvent& event) {
-  // TODO(crbug.com/1462552): Simplify once kSync becomes unreachable or is
+  // TODO(crbug.com/40066949): Simplify once kSync becomes unreachable or is
   // deleted from the codebase. See ConsentLevel::kSync documentation for
   // details.
   if (event.GetEventTypeFor(signin::ConsentLevel::kSync) ==
@@ -253,6 +253,10 @@ void UnifiedConsentService::OnStateChanged(syncer::SyncService* sync) {
   // |IsInitialSyncFeatureSetupComplete()|), because on Android
   // |SetInitialSyncFeatureSetupComplete()| is called automatically during the
   // first setup, i.e. the value could change in the meantime.
+  // TODO(crbug.com/40067025): Simplify (remove the following block) once
+  // kReplaceSyncPromosWithSigninPromos is rolled out on all platforms, and thus
+  // IsSetupInProgress() always returns false. See ConsentLevel::kSync
+  // documentation for details.
   if (sync->IsSetupInProgress() && !pref_service_->IsSyncing()) {
     StartObservingServicePrefChanges();
   } else {
@@ -263,7 +267,10 @@ void UnifiedConsentService::OnStateChanged(syncer::SyncService* sync) {
       service_pref_changes_.clear();
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+  // TODO(crbug.com/40066949): Simplify (remove the following block) after
+  // Sync-the-feature users are migrated to ConsentLevel::kSignin (and thus
+  // CanSyncFeatureStart() always returns false).
   if (!sync_service_->CanSyncFeatureStart() ||
       !sync_service_->IsEngineInitialized()) {
     return;
@@ -310,7 +317,7 @@ void UnifiedConsentService::ServicePrefChanged(const std::string& name) {
   service_pref_changes_[name] = value.Clone();
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 MigrationState UnifiedConsentService::GetMigrationState() {
   int migration_state_int =
       pref_service_->GetInteger(prefs::kUnifiedConsentMigrationState);
@@ -328,6 +335,9 @@ void UnifiedConsentService::SetMigrationState(MigrationState migration_state) {
 void UnifiedConsentService::MigrateProfileToUnifiedConsent() {
   DCHECK_EQ(GetMigrationState(), MigrationState::kNotInitialized);
 
+  // TODO(crbug.com/40066949): Simplify once kSync becomes unreachable or is
+  // deleted from the codebase. See ConsentLevel::kSync documentation for
+  // details.
   if (!identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSync)) {
     SetMigrationState(MigrationState::kCompleted);
     return;
@@ -344,6 +354,10 @@ void UnifiedConsentService::UpdateSettingsForMigration() {
 
   // Set URL-keyed anonymized metrics to the state it had before unified
   // consent.
+  // TODO(crbug.com/40066949): Simplify (remove the following block) after
+  // Sync-the-feature users are migrated to ConsentLevel::kSignin, and thus
+  // IsSyncFeatureEnabled() always returns false. (The UKM state for kSignin
+  // users is set in OnStateChanged(), so no need for the logic here.)
   bool url_keyed_metrics_enabled =
       sync_service_->IsSyncFeatureEnabled() &&
       sync_service_->GetUserSettings()->GetSelectedTypes().Has(
@@ -351,6 +365,6 @@ void UnifiedConsentService::UpdateSettingsForMigration() {
       !sync_service_->GetUserSettings()->IsUsingExplicitPassphrase();
   SetUrlKeyedAnonymizedDataCollectionEnabled(url_keyed_metrics_enabled);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  //  namespace unified_consent

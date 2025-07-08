@@ -7,7 +7,10 @@
 
 #include "ash/style/option_button_base.h"
 #include "ash/style/option_button_group.h"
+#include "base/memory/raw_ptr.h"
+#include "chrome/browser/ash/arc/input_overlay/db/proto/app_data.pb.h"
 #include "chrome/browser/ash/arc/input_overlay/ui/action_type_button.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 
 namespace arc::input_overlay {
 
@@ -21,6 +24,8 @@ class DisplayOverlayController;
 // change color.
 class ActionTypeButtonGroup : public ash::OptionButtonGroup,
                               public ash::OptionButtonBase::Delegate {
+  METADATA_HEADER(ActionTypeButtonGroup, ash::OptionButtonGroup)
+
  public:
   static std::unique_ptr<ActionTypeButtonGroup> CreateButtonGroup(
       DisplayOverlayController* controller,
@@ -30,6 +35,11 @@ class ActionTypeButtonGroup : public ash::OptionButtonGroup,
   ActionTypeButtonGroup(const ActionTypeButtonGroup&) = delete;
   ActionTypeButtonGroup& operator=(const ActionTypeButtonGroup&) = delete;
   ~ActionTypeButtonGroup() override;
+
+  // Process the arrow key pressed event. Returns `true` if `event` is
+  // processed.
+  bool HandleArrowKeyPressed(ActionTypeButton* button,
+                             const ui::KeyEvent& event);
 
   void set_action(Action* action) { action_ = action; }
 
@@ -57,7 +67,9 @@ class ActionTypeButtonGroup : public ash::OptionButtonGroup,
   void OnButtonClicked(ash::OptionButtonBase* button) override;
 
   raw_ptr<DisplayOverlayController> controller_ = nullptr;
-  raw_ptr<Action, ExperimentalAsh> action_;
+  raw_ptr<Action, DanglingUntriaged> action_;
+
+  ActionType selected_action_type_;
 };
 
 }  // namespace arc::input_overlay

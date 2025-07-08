@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <map>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/hash/md5.h"
-#include "base/strings/string_piece.h"
+#include "crypto/hash.h"
 #include "sandbox/linux/system_headers/linux_filter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,38 +36,28 @@ class Hash {
        const Hash& jt = kZero,
        const Hash& jf = kZero)
       : digest_() {
-    base::MD5Context ctx;
-    base::MD5Init(&ctx);
-    HashValue(&ctx, code);
-    HashValue(&ctx, k);
-    HashValue(&ctx, jt);
-    HashValue(&ctx, jf);
-    base::MD5Final(&digest_, &ctx);
+    crypto::hash::Hasher hasher(crypto::hash::HashKind::kSha256);
+    hasher.Update(base::byte_span_from_ref(code));
+    hasher.Update(base::byte_span_from_ref(k));
+    hasher.Update(jt.digest());
+    hasher.Update(jf.digest());
+    hasher.Finish(digest_);
   }
 
   Hash(const Hash& hash) = default;
   Hash& operator=(const Hash& rhs) = default;
 
   friend bool operator==(const Hash& lhs, const Hash& rhs) {
-    return lhs.Base16() == rhs.Base16();
+    return lhs.digest_ == rhs.digest_;
   }
   friend bool operator!=(const Hash& lhs, const Hash& rhs) {
     return !(lhs == rhs);
   }
 
+  base::span<const uint8_t> digest() const { return digest_; }
+
  private:
-  template <typename T>
-  void HashValue(base::MD5Context* ctx, const T& value) {
-    base::MD5Update(ctx,
-                    base::StringPiece(reinterpret_cast<const char*>(&value),
-                                      sizeof(value)));
-  }
-
-  std::string Base16() const {
-    return base::MD5DigestToBase16(digest_);
-  }
-
-  base::MD5Digest digest_;
+  std::array<uint8_t, crypto::hash::kSha256Size> digest_;
 };
 
 const Hash Hash::kZero;

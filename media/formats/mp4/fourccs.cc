@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "media/formats/mp4/fourccs.h"
 
+#include <array>
 #include <sstream>
 #include <string>
 
 namespace media::mp4 {
 
 std::string FourCCToString(FourCC fourcc) {
-  char buf[5];
+  std::array<char, 5> buf;
   buf[0] = (fourcc >> 24) & 0xff;
   buf[1] = (fourcc >> 16) & 0xff;
   buf[2] = (fourcc >> 8) & 0xff;
@@ -27,7 +29,7 @@ std::string FourCCToString(FourCC fourcc) {
     }
   }
 
-  return std::string(buf);
+  return std::string(buf.data());
 }
 
 }  // namespace media::mp4

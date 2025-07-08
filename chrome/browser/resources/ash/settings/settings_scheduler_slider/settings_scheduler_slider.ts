@@ -10,29 +10,32 @@
 
 import '../settings_shared.css.js';
 
-import {PrefsMixin, PrefsMixinInterface} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {I18nMixin, I18nMixinInterface} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {PrefsMixinInterface} from '/shared/settings/prefs/prefs_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import type {I18nMixinInterface} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {IronResizableBehavior} from 'chrome://resources/polymer/v3_0/iron-resizable-behavior/iron-resizable-behavior.js';
-import {PaperRippleBehavior} from 'chrome://resources/polymer/v3_0/paper-behaviors/paper-ripple-behavior.js';
-import {PaperRippleElement} from 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
+import type {PaperRippleMixinInterface} from 'chrome://resources/polymer/v3_0/paper-behaviors/paper-ripple-mixin.js';
+import {PaperRippleMixin} from 'chrome://resources/polymer/v3_0/paper-behaviors/paper-ripple-mixin.js';
+import type {PaperRippleElement} from 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
 import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {Constructor} from '../common/types.js';
+import type {Constructor} from '../common/types.js';
 
 import {getTemplate} from './settings_scheduler_slider.html.js';
 
 export interface SettingsSchedulerSliderElement {
   $: {
-    dummyRippleContainer: HTMLDivElement,
-    endKnob: HTMLDivElement,
-    endLabel: HTMLDivElement,
-    endProgress: HTMLDivElement,
-    markersContainer: HTMLDivElement,
-    sliderBar: HTMLDivElement,
-    sliderContainer: HTMLDivElement,
-    startKnob: HTMLDivElement,
-    startLabel: HTMLDivElement,
-    startProgress: HTMLDivElement,
+    dummyRippleContainer: HTMLElement,
+    endKnob: HTMLElement,
+    endLabel: HTMLElement,
+    endProgress: HTMLElement,
+    markersContainer: HTMLElement,
+    sliderBar: HTMLElement,
+    sliderContainer: HTMLElement,
+    startKnob: HTMLElement,
+    startLabel: HTMLElement,
+    startProgress: HTMLElement,
   };
 }
 
@@ -73,10 +76,10 @@ function modulo(x: number, y: number): number {
 
 const SettingsSchedulerSliderElementBase =
     mixinBehaviors(
-        [IronResizableBehavior, PaperRippleBehavior],
-        PrefsMixin(I18nMixin(PolymerElement))) as
+        [IronResizableBehavior],
+        PaperRippleMixin(PrefsMixin(I18nMixin(PolymerElement)))) as
     Constructor<PolymerElement&I18nMixinInterface&PrefsMixinInterface&
-                IronResizableBehavior&PaperRippleBehavior>;
+                IronResizableBehavior&PaperRippleMixinInterface>;
 
 export class SettingsSchedulerSliderElement extends
     SettingsSchedulerSliderElementBase {
@@ -165,7 +168,7 @@ export class SettingsSchedulerSliderElement extends
     this.dragObject_ = null;
   }
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
     this.addEventListener('iron-resize', this.onResize_);
@@ -174,11 +177,11 @@ export class SettingsSchedulerSliderElement extends
     this.addEventListener('keydown', this.onKeyDown_);
   }
 
-  override connectedCallback() {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     this.isRTL_ = window.getComputedStyle(this).direction === 'rtl';
-    this.$.sliderContainer.addEventListener('contextmenu', function(e) {
+    this.$.sliderContainer.addEventListener('contextmenu', (e) => {
       // Prevent the context menu from interfering with dragging the knobs using
       // touch.
       e.preventDefault();
@@ -199,7 +202,7 @@ export class SettingsSchedulerSliderElement extends
         pref => pref !== undefined);
   }
 
-  private updateMarkers_() {
+  private updateMarkers_(): void {
     if (!this.isReady_ || !this.prefsAvailable_()) {
       return;
     }
@@ -208,7 +211,7 @@ export class SettingsSchedulerSliderElement extends
     const endHour = this.prefEndTime.value / 60.0;
 
     const markersContainer = this.$.markersContainer;
-    markersContainer.innerHTML = '';
+    markersContainer.innerHTML = window.trustedTypes!.emptyHTML;
     for (let i = 0; i <= HOURS_PER_DAY; ++i) {
       const marker = document.createElement('div');
 
@@ -246,7 +249,7 @@ export class SettingsSchedulerSliderElement extends
   /**
    * Return whether either of the two knobs is focused.
    */
-  private isEitherKnobFocused_() {
+  private isEitherKnobFocused_(): boolean {
     return this.isStartKnobFocused_() || this.isEndKnobFocused_();
   }
 
@@ -254,7 +257,7 @@ export class SettingsSchedulerSliderElement extends
    * Invoked when the element is resized and the knobs positions need to be
    * updated.
    */
-  private onResize_() {
+  private onResize_(): void {
     this.updateKnobs_();
   }
 
@@ -262,7 +265,7 @@ export class SettingsSchedulerSliderElement extends
    * Called when the value of the pref associated with whether to use the
    * 24-hour clock format is changed. This will also refresh the slider.
    */
-  private hourFormatChanged_() {
+  private hourFormatChanged_(): void {
     this.shouldUse24Hours_ =
         this.getPref<boolean>('settings.clock.use_24hour_clock').value;
   }
@@ -274,8 +277,8 @@ export class SettingsSchedulerSliderElement extends
    * @return The CSS style of the legend div.
    */
   private getLegendStyle_(percent: number, isRTL: boolean): string {
-    percent = isRTL ? 100 - percent : percent;
-    return 'left: ' + percent + '%';
+    const percentage = isRTL ? 100 - percent : percent;
+    return `left: ${percentage}%`;
   }
 
   /**
@@ -302,7 +305,7 @@ export class SettingsSchedulerSliderElement extends
   /**
    * If one of the two knobs is focused, this function blurs it.
    */
-  private blurAnyFocusedKnob_() {
+  private blurAnyFocusedKnob_(): void {
     if (this.isEitherKnobFocused_()) {
       (this.shadowRoot!.activeElement as HTMLElement).blur();
     }
@@ -311,7 +314,7 @@ export class SettingsSchedulerSliderElement extends
   /**
    * Start dragging the target knob.
    */
-  private startDrag_(event: Event) {
+  private startDrag_(event: Event): void {
     event.preventDefault();
 
     // Only handle start or end knobs. Use the "knob-inner" divs just to display
@@ -335,7 +338,7 @@ export class SettingsSchedulerSliderElement extends
   /**
    * Continues dragging the selected knob if any.
    */
-  private continueDrag_(event: TrackEvent) {
+  private continueDrag_(event: TrackEvent): void {
     if (!this.dragObject_) {
       return;
     }
@@ -368,7 +371,7 @@ export class SettingsSchedulerSliderElement extends
    * will in turn update the location of the knob and its corresponding label
    * bubble and its text contents.
    */
-  private doKnobTracking_(event: TrackEvent) {
+  private doKnobTracking_(event: TrackEvent): void {
     const lastDeltaMinutes = this.getDeltaMinutes_(event.detail.ddx);
     if (Math.abs(lastDeltaMinutes) < 1) {
       return;
@@ -386,7 +389,7 @@ export class SettingsSchedulerSliderElement extends
   /**
    * Ends the dragging.
    */
-  private endDrag_(event: TrackEvent) {
+  private endDrag_(event: TrackEvent): void {
     event.preventDefault();
     this.dragObject_ = null;
     this.removeRipple_();
@@ -439,7 +442,7 @@ export class SettingsSchedulerSliderElement extends
    * Using the current start and end times prefs, this function updates the
    * knobs and their label bubbles and refreshes the slider.
    */
-  private updateKnobs_() {
+  private updateKnobs_(): void {
     if (!this.isReady_ || !this.prefsAvailable_() ||
         this.$.sliderBar.offsetWidth === 0) {
       return;
@@ -458,7 +461,7 @@ export class SettingsSchedulerSliderElement extends
    * Updates the absolute left coordinate of the given |knob| based on the time
    * it represents given as an |offsetMinutes| value.
    */
-  private updateKnobLeft_(knob: HTMLElement, offsetMinutes: number) {
+  private updateKnobLeft_(knob: HTMLElement, offsetMinutes: number): void {
     const offsetAfter6pm =
         (offsetMinutes + TOTAL_MINUTES_PER_DAY - OFFSET_MINUTES_6PM) %
         TOTAL_MINUTES_PER_DAY;
@@ -482,7 +485,7 @@ export class SettingsSchedulerSliderElement extends
    * Refreshes elements of the slider other than the knobs (the label bubbles,
    * and the progress bar).
    */
-  private refresh_() {
+  private refresh_(): void {
     // The label bubbles have the same left coordinates as their corresponding
     // knobs.
     this.$.startLabel.style.left = this.$.startKnob.style.left;
@@ -522,7 +525,7 @@ export class SettingsSchedulerSliderElement extends
    * If the label bubbles overlap, this function fixes them by moving the end
    * label up a little.
    */
-  private fixLabelsOverlapIfAny_() {
+  private fixLabelsOverlapIfAny_(): void {
     const startLabel = this.$.startLabel;
     const endLabel = this.$.endLabel;
     const distance = Math.abs(
@@ -573,7 +576,7 @@ export class SettingsSchedulerSliderElement extends
    * 7:00, if the start knob value is decreased, then the start knob will be
    * updated to 6:00.
    */
-  private updatePref_(updatedValue: number, fromUserGesture: boolean) {
+  private updatePref_(updatedValue: number, fromUserGesture: boolean): void {
     const otherValue = this.getOtherKnobPrefValue_();
 
     const totalMinutes = TOTAL_MINUTES_PER_DAY;
@@ -605,17 +608,17 @@ export class SettingsSchedulerSliderElement extends
   }
 
   /**
-   * Overrides _createRipple() from PaperRippleBehavior to create the ripple
+   * Overrides _createRipple() from PaperRippleMixin to create the ripple
    * only on a knob if it's focused, or on a dummy hidden element so that it
    * doesn't show.
    */
   /* eslint-disable-next-line @typescript-eslint/naming-convention */
-  override _createRipple() {
+  override _createRipple(): PaperRippleElement {
     if (this.isEitherKnobFocused_()) {
       this._rippleContainer = this.shadowRoot!.activeElement as HTMLElement;
     } else {
       // We can't just skip the ripple creation and return early with null here.
-      // The code inherited from PaperRippleBehavior expects that this function
+      // The code inherited from PaperRippleMixin expects that this function
       // returns a ripple element. So to avoid crashes, we'll setup the ripple
       // to be created under a hidden element.
       this._rippleContainer = this.$.dummyRippleContainer;
@@ -623,11 +626,11 @@ export class SettingsSchedulerSliderElement extends
     const ripple = super._createRipple();
     ripple.id = 'ink';
     ripple.setAttribute('recenters', '');
-    ripple.classList.add('circle', 'toggle-ink');
+    ripple.classList.add('circle');
     return ripple;
   }
 
-  private onFocus_(event: Event) {
+  private onFocus_(event: Event): void {
     this.handleKnobEvent_(event);
   }
 
@@ -636,7 +639,8 @@ export class SettingsSchedulerSliderElement extends
    * If |overrideElement| is provided, it will be the knob that gains focus and
    * and the ripple. Otherwise, the knob is determined from the |event|.
    */
-  private handleKnobEvent_(event: Event, overrideElement?: HTMLElement|null) {
+  private handleKnobEvent_(event: Event, overrideElement?: HTMLElement|null):
+      void {
     const knob = overrideElement ||
         (event.composedPath().find(
             el => (el as HTMLElement).classList?.contains('knob'))) as
@@ -663,21 +667,21 @@ export class SettingsSchedulerSliderElement extends
   /**
    * Handles blur events on the start and end knobs.
    */
-  private onBlur_() {
+  private onBlur_(): void {
     this.removeRipple_();
   }
 
   /**
    * Removes ripple if one exists.
    */
-  private removeRipple_() {
+  private removeRipple_(): void {
     if (this.hasRipple()) {
       this._ripple!.remove();
       this._ripple = null;
     }
   }
 
-  private onKeyDown_(event: KeyboardEvent) {
+  private onKeyDown_(event: KeyboardEvent): void {
     if (event.key === 'Tab') {
       if (event.shiftKey && this.isEndKnobFocused_()) {
         event.preventDefault();

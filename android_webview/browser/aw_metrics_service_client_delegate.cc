@@ -5,10 +5,11 @@
 #include "android_webview/browser/aw_metrics_service_client_delegate.h"
 
 #include "android_webview/browser/aw_browser_process.h"
+#include "android_webview/browser/debugging_metrics_provider.h"
 #include "android_webview/browser/lifecycle/aw_contents_lifecycle_notifier.h"
 #include "android_webview/browser/metrics/android_metrics_provider.h"
-#include "android_webview/browser/metrics/aw_client_side_sampling_status_metrics_provider.h"
 #include "android_webview/browser/metrics/aw_component_metrics_provider_delegate.h"
+#include "android_webview/browser/metrics/aw_metrics_filtering_status_metrics_provider.h"
 #include "android_webview/browser/metrics/aw_metrics_service_client.h"
 #include "android_webview/browser/metrics/aw_server_side_allowlist_metrics_provider.h"
 #include "android_webview/browser/metrics/renderer_process_metrics_provider.h"
@@ -36,6 +37,8 @@ void AwMetricsServiceClientDelegate::RegisterAdditionalMetricsProviders(
   service->RegisterMetricsProvider(
       std::make_unique<RendererProcessMetricsProvider>());
   service->RegisterMetricsProvider(
+      std::make_unique<DebuggingMetricsProvider>());
+  service->RegisterMetricsProvider(
       std::make_unique<metrics::ComponentMetricsProvider>(
           std::make_unique<AwComponentMetricsProviderDelegate>(
               AwMetricsServiceClient::GetInstance())));
@@ -45,7 +48,7 @@ void AwMetricsServiceClientDelegate::RegisterAdditionalMetricsProviders(
       std::make_unique<AwServerSideAllowlistMetricsProvider>(
           AwMetricsServiceClient::GetInstance()));
   service->RegisterMetricsProvider(
-      std::make_unique<AwClientSideSamplingStatusMetricsProvider>(
+      std::make_unique<AwMetricsFilteringStatusMetricsProvider>(
           AwMetricsServiceClient::GetInstance()));
 }
 

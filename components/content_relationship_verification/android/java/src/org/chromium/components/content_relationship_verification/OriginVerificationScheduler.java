@@ -4,10 +4,12 @@
 
 package org.chromium.components.content_relationship_verification;
 
-import androidx.annotation.Nullable;
+import static org.chromium.build.NullUtil.assumeNonNull;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.embedder_support.util.Origin;
 
 import java.util.Collections;
@@ -20,16 +22,14 @@ import java.util.Set;
  * OriginVerificationScheduler#verify} several times, the request for the statement list on the
  * website will only performed at most once.
  */
+@NullMarked
 public class OriginVerificationScheduler {
     private static final String HTTP_SCHEME = "http";
     private static final String HTTPS_SCHEME = "https";
 
-    private OriginVerifier mOriginVerifier;
+    private final OriginVerifier mOriginVerifier;
 
-    /**
-     * Origins that we have yet to call OriginVerifier#start or whose validatin is not yet finished.
-     */
-    @Nullable
+    /** Origins that we have yet to call OriginVerifier#start or whose validatin is not yet finished. */
     private Set<Origin> mPendingOrigins = Collections.synchronizedSet(new HashSet<>());
 
     public OriginVerificationScheduler(OriginVerifier originVerifier, Set<Origin> pendingOrigins) {
@@ -50,24 +50,27 @@ public class OriginVerificationScheduler {
         verify(Origin.create(url), callback);
     }
 
-    public void verify(Origin origin, Callback<Boolean> callback) {
+    public void verify(@Nullable Origin origin, Callback<Boolean> callback) {
         ThreadUtils.assertOnUiThread();
         if (origin == null) {
             callback.onResult(false);
             return;
         }
         String urlScheme = origin.uri().getScheme();
+        assumeNonNull(urlScheme);
         if (!urlScheme.equals(HTTPS_SCHEME) && !urlScheme.equals(HTTP_SCHEME)) {
             callback.onResult(true);
             return;
         }
 
         if (mPendingOrigins.contains(origin)) {
-            mOriginVerifier.start((packageName, unused, verified, online) -> {
-                mPendingOrigins.remove(origin);
+            mOriginVerifier.start(
+                    (packageName, unused, verified, online) -> {
+                        mPendingOrigins.remove(origin);
 
-                callback.onResult(verified);
-            }, origin);
+                        callback.onResult(verified);
+                    },
+                    origin);
             return;
         }
         callback.onResult(mOriginVerifier.wasPreviouslyVerified(origin));

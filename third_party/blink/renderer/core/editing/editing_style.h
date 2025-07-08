@@ -87,7 +87,7 @@ class CORE_EXPORT EditingStyle final : public GarbageCollected<EditingStyle> {
   explicit EditingStyle(const CSSPropertyValueSet*);
   EditingStyle(CSSPropertyID, const String& value, SecureContextMode);
 
-  MutableCSSPropertyValueSet* Style() { return mutable_style_.Get(); }
+  MutableCSSPropertyValueSet* Style() const { return mutable_style_.Get(); }
   bool GetTextDirection(mojo_base::mojom::blink::TextDirection&) const;
   bool IsEmpty() const;
   void OverrideWithStyle(const CSSPropertyValueSet*);
@@ -186,6 +186,7 @@ class CORE_EXPORT EditingStyle final : public GarbageCollected<EditingStyle> {
       EditingStyle* extracted_style,
       Vector<CSSPropertyID>* conflicting_properties) const;
   void MergeStyle(const CSSPropertyValueSet*, CSSPropertyOverrideMode);
+  void ComputeValues(Element*);
 
   Member<MutableCSSPropertyValueSet> mutable_style_;
   // This |EditingStyle| is constructed from |node_|. |node_| is null when

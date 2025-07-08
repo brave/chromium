@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_METRICS_H_
 #define CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_METRICS_H_
 
-#include "ash/constants/ambient_theme.h"
 #include "ash/constants/ambient_video.h"
 #include "ash/constants/personalization_entry_point.h"
 #include "ash/webui/personalization_app/mojom/personalization_app.mojom-shared.h"
@@ -36,15 +35,15 @@ enum class DurationOption {
   kMaxValue = kError,
 };
 
-constexpr char kAmbientModeAnimationThemeHistogramName[] =
+inline constexpr char kAmbientModeAnimationThemeHistogramName[] =
     "Ash.Personalization.AmbientMode.AnimationTheme2";
-constexpr char kAmbientModeVideoHistogramName[] =
+inline constexpr char kAmbientModeVideoHistogramName[] =
     "Ash.Personalization.AmbientMode.Video2";
-constexpr char kAmbientModeScreenSaverDurationHistogramName[] =
+inline constexpr char kAmbientModeScreenSaverDurationHistogramName[] =
     "Ash.Personalization.AmbientMode.ScreenSaverDuration";
-constexpr char kPersonalizationThemeColorModeHistogramName[] =
+inline constexpr char kPersonalizationThemeColorModeHistogramName[] =
     "Ash.Personalization.Theme.ColorMode";
-constexpr char kPersonalizationKeyboardBacklightColorHistogramName[] =
+inline constexpr char kPersonalizationKeyboardBacklightColorHistogramName[] =
     "Ash.Personalization.KeyboardBacklight.Color";
 
 // -----------------------------------------------------------------------------
@@ -53,7 +52,7 @@ constexpr char kPersonalizationKeyboardBacklightColorHistogramName[] =
 
 void LogPersonalizationTheme(ColorMode color_mode);
 
-void LogAmbientModeTheme(ash::AmbientTheme animation_theme);
+void LogAmbientModeTheme(mojom::AmbientTheme animation_theme);
 
 void LogAmbientModeVideo(ash::AmbientVideo video);
 

@@ -19,7 +19,7 @@ from chrome.test.variations.drivers import DriverFactory
 from chrome.test.variations.test_utils import SRC_DIR
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome import service
+
 
 # The module chromite is under third_party and imported relative to its root.
 sys.path.append(os.path.join(SRC_DIR, 'third_party'))
@@ -35,8 +35,9 @@ from telemetry.internal.platform import cros_device
 from telemetry.internal.platform.cros_platform_backend import CrosPlatformBackend
 from telemetry.internal.backends.chrome import cros_browser_finder
 
-
 CACHE_DIR = os.path.join(SRC_DIR, "build", "cros_cache")
+INITIAL_WAIT_TIME_SECONDS = 10
+
 
 class _PossibleCrOSBrowser(cros_browser_finder.PossibleCrOSBrowser):
   """The CrOS browser wrapper to filter out start-up args."""
@@ -59,7 +60,7 @@ def _launch_browser(browser_args: List[str]) -> 'Browser':
   finder_options.CreateParser().parse_args(args=[])
 
   b_options = finder_options.browser_options
-  b_options.browser_startup_timeout = 5
+  b_options.browser_startup_timeout = 15
   b_options.AppendExtraBrowserArgs(browser_args)
 
   device = cros_device.CrOSDevice(
@@ -97,9 +98,10 @@ class CrOSDriverFactory(DriverFactory):
   channel: str = attr.attrib()
   board: str = attr.attrib()
   server_port: int = attr.attrib()
-  chromedriver_path: str = attr.attrib()
 
+  #override
   def __attrs_post_init__(self):
+    super().__attrs_post_init__()
     # We use this to check whether we have started the VM before we attempt to
     # shut it down.
     self._vm_started = False
@@ -143,6 +145,12 @@ class CrOSDriverFactory(DriverFactory):
     remote_device.run(
       ['chmod', 'a+rw', remote_seed_path], remote_sudo=True, print_cmd=True)
     return remote_seed_path
+
+  #override
+  @property
+  def supports_startup_timeout(self) -> bool:
+    # ChromeOS is a remote driver that doesn't support browser startup timeout.
+    return False
 
   @functools.cached_property
   def device(self) -> device.Device:
@@ -189,18 +197,28 @@ class CrOSDriverFactory(DriverFactory):
         f'--fake-variations-channel={self.channel}',
         '--disable-variations-safe-mode',
         '--disable-field-trial-config',
+        # TODO(http://crbug.com/379869158) -- remove this once the new
+        # seed loading mechanism is fixed.
+        '--force-fieldtrials=SeedFileTrial/Default'
       ])
 
     browser = _launch_browser(browser_args)
     debugging_port, _ = browser._browser_backend._FindDevToolsPortAndTarget()
 
-    options = options or webdriver.ChromeOptions()
+    options = options or self.default_options
     options.debugger_address=f'localhost:{debugging_port}'
 
+
     with self.tunnel_context(debugging_port, self.server_port):
-      driver = webdriver.Chrome(
-        service=service.Service(self.chromedriver_path),
-        options=options)
+      # We want to make sure that the browser window has fully started
+      # on the VM. On LUCI workers it takes more time than in the local
+      # environment, which can cause tests flakiness.
+      time.sleep(INITIAL_WAIT_TIME_SECONDS)
+      driver = webdriver.Chrome(service=self.get_driver_service(),
+                                options=options)
+      # VM may not be fully ready before it returns, wait for window handle
+      # to double confirm.
+      self.wait_for_window(driver)
       try:
         yield driver
       finally:

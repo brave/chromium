@@ -7,10 +7,6 @@
 #import "base/metrics/field_trial_params.h"
 #import "build/blink_buildflags.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace web {
 namespace features {
 
@@ -34,10 +30,6 @@ BASE_FEATURE(kEnablePersistentDownloads,
              "EnablePersistentDownloads",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kRecordSnapshotSize,
-             "RecordSnapshotSize",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kSetRequestAttribution,
              "SetRequestAttribution",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -46,28 +38,8 @@ BASE_FEATURE(kIOSSharedHighlightingColorChange,
              "IOSSharedHighlightingColorChange",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSynthesizedRestoreSession,
-             "SynthesizedRestoreSession",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kEnableFullscreenAPI,
-             "EnableFullscreenAPI",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kUseLoadSimulatedRequestForOfflinePage,
-             "UseLoadSimulatedRequestForErrorPageNavigation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kEnableEmails,
-             "EnableEmailsExperience",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kEnablePhoneNumbers,
-             "EnablePhoneNumbersExperience",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kOneTapForMaps,
-             "EnableOneTapForMaps",
+BASE_FEATURE(kEnableMeasurements,
+             "EnableMeasurementsExperience",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kScrollViewProxyScrollEnabledWorkaround,
@@ -76,6 +48,10 @@ BASE_FEATURE(kScrollViewProxyScrollEnabledWorkaround,
 
 BASE_FEATURE(kPreventNavigationWithoutUserInteraction,
              "PreventNavigationWithoutUserInteraction",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAllowCrossWindowExternalAppNavigation,
+             "kAllowCrossWindowExternalAppNavigation",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kEnableWebInspector,
@@ -91,23 +67,26 @@ BASE_FEATURE(kSmoothScrollingDefault,
 #endif
 );
 
-BASE_FEATURE(kEnableSessionSerializationOptimizations,
-             "EnableSessionSerializationOptimizations",
+BASE_FEATURE(kFullscreenScrollThreshold,
+             "FullscreenScrollThreshold",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-bool IsLoadSimulatedRequestAPIEnabled() {
-  if (@available(iOS 15, *)) {
-    return base::FeatureList::IsEnabled(kUseLoadSimulatedRequestForOfflinePage);
-  }
-  return false;
+const char kFullscreenScrollThresholdAmount[] =
+    "fullscreen_scroll_threshold_amount";
+
+bool IsFullscreenScrollThresholdEnabled() {
+  return !base::FeatureList::IsEnabled(kSmoothScrollingDefault) &&
+         base::FeatureList::IsEnabled(kFullscreenScrollThreshold);
 }
 
-bool IsFullscreenAPIEnabled() {
-  if (@available(iOS 16.4, *)) {
-    return base::FeatureList::IsEnabled(kEnableFullscreenAPI);
-  }
-  return false;
-}
+// This feature will always be disabled and will only be enabled by tests.
+BASE_FEATURE(kForceSynthesizedRestoreSession,
+             "ForceSynthesizedRestoreSession",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kDetectDestroyedNavigationContexts,
+             "DetectDestroyedNavigationContexts",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 bool IsWebInspectorSupportEnabled() {
   if (@available(iOS 16.4, *)) {
@@ -116,9 +95,29 @@ bool IsWebInspectorSupportEnabled() {
   return false;
 }
 
-bool UseSessionSerializationOptimizations() {
-  return base::FeatureList::IsEnabled(kEnableSessionSerializationOptimizations);
-}
+BASE_FEATURE(kDisableRaccoon,
+             "DisableRaccoon",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kUserAgentBugFixVersion,
+             "UserAgentBugFixVersion",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kLogJavaScriptErrors,
+             "LogJavaScriptErrors",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kWebKitHandlesMarketplaceKitLinks,
+             "WebKitHandlesMarketplaceKitLinks",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kRestoreWKWebViewEditMenuHandler,
+             "RestoreWKWebViewEditMenuHandler",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kLogCrWebJavaScriptErrors,
+             "LogCrWebJavaScriptErrors",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features
 }  // namespace web

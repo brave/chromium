@@ -4,10 +4,10 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_version.h"
 
-#include <array>
+#include <string_view>
+#include <vector>
 
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/types/expected.h"
@@ -17,21 +17,17 @@ namespace web_app {
 
 // This parser validates that the given version matches `<version core>` in the
 // Semantic Versioning specification: https://semver.org.
-base::expected<std::array<uint32_t, 3>, IwaVersionParseError>
-ParseIwaVersionIntoComponents(base::StringPiece version_string) {
-  constexpr size_t NUM_COMPONENTS = 3;
-  std::array<uint32_t, NUM_COMPONENTS> components;
+base::expected<base::Version, IwaVersionParseError> ParseIwaVersion(
+    std::string_view version_string) {
+  std::vector<uint32_t> components;
 
-  std::vector<base::StringPiece> component_strings = base::SplitStringPiece(
+  std::vector<std::string_view> component_strings = base::SplitStringPiece(
       version_string, ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (component_strings.size() != NUM_COMPONENTS) {
-    return base::unexpected(IwaVersionParseError::kNotThreeComponents);
+  if (component_strings.empty()) {
+    return base::unexpected(IwaVersionParseError::kNoComponents);
   }
 
-  for (size_t component_idx = 0; component_idx < NUM_COMPONENTS;
-       ++component_idx) {
-    const auto& component_string = component_strings[component_idx];
-
+  for (const auto& component_string : component_strings) {
     if (component_string.empty()) {
       return base::unexpected(IwaVersionParseError::kEmptyComponent);
     }
@@ -42,7 +38,7 @@ ParseIwaVersionIntoComponents(base::StringPiece version_string) {
     }
 
     // Check that the component only consists of digits.
-    if (!base::ranges::all_of(component_string, &base::IsAsciiDigit<char>)) {
+    if (!std::ranges::all_of(component_string, &base::IsAsciiDigit<char>)) {
       return base::unexpected(IwaVersionParseError::kNonDigit);
     }
 
@@ -54,16 +50,15 @@ ParseIwaVersionIntoComponents(base::StringPiece version_string) {
     static_assert(sizeof(uint32_t) == sizeof(unsigned int),
                   "uint32_t must be same as unsigned int");
 
-    components[component_idx] = number;
+    components.push_back(number);
   }
-  return components;
+  return base::Version(std::move(components));
 }
 
 std::string IwaVersionParseErrorToString(IwaVersionParseError error) {
   switch (error) {
-    case IwaVersionParseError::kNotThreeComponents:
-      return "A version must consist of exactly three components separated by "
-             "dots (`x.y.z`)";
+    case IwaVersionParseError::kNoComponents:
+      return "A version must consist of at least one number";
     case IwaVersionParseError::kEmptyComponent:
       return "A version component may not be empty";
     case IwaVersionParseError::kNonDigit:

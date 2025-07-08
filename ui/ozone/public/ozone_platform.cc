@@ -18,11 +18,8 @@
 #include "ui/ozone/public/platform_keyboard_hook.h"
 #include "ui/ozone/public/platform_menu_utils.h"
 #include "ui/ozone/public/platform_screen.h"
+#include "ui/ozone/public/platform_session_manager.h"
 #include "ui/ozone/public/platform_user_input_monitor.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ui/ozone/public/palm_detector.h"
-#endif
 
 namespace ui {
 
@@ -47,9 +44,13 @@ void EnsureInstance() {
 
 }  // namespace
 
-OzonePlatform::PlatformRuntimeProperties::SupportsSsdForTest
+OzonePlatform::PlatformRuntimeProperties::SupportsForTest
     OzonePlatform::PlatformRuntimeProperties::override_supports_ssd_for_test =
-        OzonePlatform::PlatformRuntimeProperties::SupportsSsdForTest::kNotSet;
+        OzonePlatform::PlatformRuntimeProperties::SupportsForTest::kNotSet;
+
+OzonePlatform::PlatformRuntimeProperties::SupportsForTest OzonePlatform::
+    PlatformRuntimeProperties::override_supports_per_window_scaling_for_test =
+        OzonePlatform::PlatformRuntimeProperties::SupportsForTest::kNotSet;
 
 OzonePlatform::PlatformProperties::PlatformProperties() = default;
 OzonePlatform::PlatformProperties::~PlatformProperties() = default;
@@ -89,6 +90,7 @@ bool OzonePlatform::InitializeForUI(const InitParams& args) {
 
 // static
 void OzonePlatform::InitializeForGPU(const InitParams& args) {
+  TRACE_EVENT("gpu,startup", "ui::OzonePlatform::InitializeForGPU");
   EnsureInstance();
   if (g_instance->initialized_gpu_)
     return;
@@ -139,8 +141,12 @@ OzonePlatform::GetPlatformGlobalShortcutListener(
 std::unique_ptr<PlatformKeyboardHook> OzonePlatform::CreateKeyboardHook(
     PlatformKeyboardHookTypes type,
     base::RepeatingCallback<void(KeyEvent* event)> callback,
-    absl::optional<base::flat_set<DomCode>> dom_codes,
+    std::optional<base::flat_set<DomCode>> dom_codes,
     gfx::AcceleratedWidget accelerated_widget) {
+  return nullptr;
+}
+
+PlatformSessionManager* OzonePlatform::GetSessionManager() {
   return nullptr;
 }
 
@@ -199,16 +205,5 @@ void OzonePlatform::SetFailInitializeUIForTest(bool fail) {
 }
 
 void OzonePlatform::PreEarlyInitialize() {}
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-void OzonePlatform::SetPalmDetector(
-    std::unique_ptr<PalmDetector> palm_detector) {
-  palm_detector_ = std::move(palm_detector);
-}
-
-PalmDetector* OzonePlatform::GetPalmDetector() {
-  return palm_detector_.get();
-}
-#endif
 
 }  // namespace ui

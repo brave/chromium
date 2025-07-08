@@ -3,11 +3,14 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/policy/remote_commands/user_session_type_test_util.h"
+
 #include "base/check_deref.h"
-#include "chrome/browser/ash/app_mode/arc/arc_kiosk_app_manager.h"
-#include "chrome/browser/ash/app_mode/kiosk_app_manager.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
+#include "base/notreached.h"
+#include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
+#include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/account_id/account_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -18,61 +21,44 @@ namespace {
 
 constexpr char kTestAccountEmail[] = "test.email@example.com";
 
-AccountId CreateUserOfType(TestSessionType session_type,
-                           ash::FakeChromeUserManager& user_manager) {
+const user_manager::User* CreateUserOfType(
+    TestSessionType session_type,
+    ash::FakeChromeUserManager& user_manager) {
   AccountId account_id(AccountId::FromUserEmail(kTestAccountEmail));
 
   switch (session_type) {
-    case TestSessionType::kManuallyLaunchedArcKioskSession:
-      user_manager.AddArcKioskAppUser(account_id);
-      CHECK_DEREF(ash::ArcKioskAppManager::Get())
-          .set_current_app_was_auto_launched_with_zero_delay_for_testing(false);
-      break;
     case TestSessionType::kManuallyLaunchedWebKioskSession:
-      user_manager.AddWebKioskAppUser(account_id);
-      CHECK_DEREF(ash::WebKioskAppManager::Get())
+      CHECK_DEREF(ash::KioskWebAppManager::Get())
           .set_current_app_was_auto_launched_with_zero_delay_for_testing(false);
-      break;
+      return user_manager.AddKioskWebAppUser(account_id);
     case TestSessionType::kManuallyLaunchedKioskSession:
-      user_manager.AddKioskAppUser(account_id);
-      CHECK_DEREF(ash::KioskAppManager::Get())
+      CHECK_DEREF(ash::KioskChromeAppManager::Get())
           .set_current_app_was_auto_launched_with_zero_delay_for_testing(false);
-      break;
-    case TestSessionType::kAutoLaunchedArcKioskSession:
-      user_manager.AddArcKioskAppUser(account_id);
-      CHECK_DEREF(ash::ArcKioskAppManager::Get())
-          .set_current_app_was_auto_launched_with_zero_delay_for_testing(true);
-      break;
+      return user_manager.AddKioskChromeAppUser(account_id);
     case TestSessionType::kAutoLaunchedWebKioskSession:
-      user_manager.AddWebKioskAppUser(account_id);
-      CHECK_DEREF(ash::WebKioskAppManager::Get())
+      CHECK_DEREF(ash::KioskWebAppManager::Get())
           .set_current_app_was_auto_launched_with_zero_delay_for_testing(true);
-      break;
+      return user_manager.AddKioskWebAppUser(account_id);
     case TestSessionType::kAutoLaunchedKioskSession:
-      user_manager.AddKioskAppUser(account_id);
-      CHECK_DEREF(ash::KioskAppManager::Get())
+      CHECK_DEREF(ash::KioskChromeAppManager::Get())
           .set_current_app_was_auto_launched_with_zero_delay_for_testing(true);
-      break;
+      return user_manager.AddKioskChromeAppUser(account_id);
     case TestSessionType::kManagedGuestSession:
-      user_manager.AddPublicAccountUser(account_id);
-      break;
+      return user_manager.AddPublicAccountUser(account_id);
     case TestSessionType::kGuestSession:
-      account_id = user_manager.AddGuestUser()->GetAccountId();
-      break;
+      return user_manager.AddGuestUser();
     case TestSessionType::kAffiliatedUserSession:
-      user_manager.AddUserWithAffiliation(account_id,
-                                          /*is_affiliated=*/true);
-      break;
+      return user_manager.AddUserWithAffiliation(account_id,
+                                                 /*is_affiliated=*/true);
     case TestSessionType::kUnaffiliatedUserSession:
-      user_manager.AddUserWithAffiliation(account_id,
-                                          /*is_affiliated=*/false);
-      break;
+      return user_manager.AddUserWithAffiliation(account_id,
+                                                 /*is_affiliated=*/false);
     case TestSessionType::kNoSession:
       ADD_FAILURE();
-      break;
+      return nullptr;
   }
 
-  return account_id;
+  NOTREACHED();
 }
 
 }  // namespace
@@ -83,10 +69,8 @@ const char* SessionTypeToString(TestSessionType session_type) {
     return #type
 
   switch (session_type) {
-    CASE(kManuallyLaunchedArcKioskSession);
     CASE(kManuallyLaunchedWebKioskSession);
     CASE(kManuallyLaunchedKioskSession);
-    CASE(kAutoLaunchedArcKioskSession);
     CASE(kAutoLaunchedWebKioskSession);
     CASE(kAutoLaunchedKioskSession);
     CASE(kManagedGuestSession);
@@ -106,7 +90,8 @@ void StartSessionOfType(TestSessionType session_type,
     return;
   }
 
-  user_manager.LoginUser(CreateUserOfType(session_type, user_manager));
+  user_manager.LoginUser(
+      CreateUserOfType(session_type, user_manager)->GetAccountId());
 }
 
 TestingProfile* StartSessionOfTypeWithProfile(
@@ -118,10 +103,15 @@ TestingProfile* StartSessionOfTypeWithProfile(
     return nullptr;
   }
 
-  AccountId account_id = CreateUserOfType(session_type, user_manager);
-  user_manager.LoginUser(account_id);
-  return profile_manager.CreateTestingProfile(account_id.GetUserEmail(),
-                                              /* is_main_profile= */ true);
+  const user_manager::User* user = CreateUserOfType(session_type, user_manager);
+  user_manager.LoginUser(user->GetAccountId());
+
+  TestingProfile* profile = session_type == TestSessionType::kGuestSession
+                                ? profile_manager.CreateGuestProfile()
+                                : profile_manager.CreateTestingProfile(
+                                      user->GetAccountId().GetUserEmail());
+  ash::ProfileHelper::Get()->SetUserToProfileMappingForTesting(user, profile);
+  return profile;
 }
 
 }  // namespace policy::test

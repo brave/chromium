@@ -33,13 +33,12 @@ ChromeUserPopulation::UserPopulation GetUserPopulationPref(PrefService* prefs) {
 ChromeUserPopulation GetUserPopulation(
     PrefService* prefs,
     bool is_incognito,
-    bool is_history_sync_enabled,
+    bool is_history_sync_active,
     bool is_signed_in,
     bool is_under_advanced_protection,
     const policy::BrowserPolicyConnector* browser_policy_connector,
-    absl::optional<size_t> num_profiles,
-    absl::optional<size_t> num_loaded_profiles,
-    absl::optional<size_t> num_open_profiles) {
+    std::optional<size_t> num_profiles,
+    std::optional<size_t> num_loaded_profiles) {
   ChromeUserPopulation population;
 
   population.set_user_population(GetUserPopulationPref(prefs));
@@ -51,7 +50,7 @@ ChromeUserPopulation GetUserPopulation(
 
   population.set_is_incognito(is_incognito);
 
-  population.set_is_history_sync_enabled(is_history_sync_enabled);
+  population.set_is_history_sync_enabled(is_history_sync_active);
 
   population.set_is_under_advanced_protection(is_under_advanced_protection);
 
@@ -68,9 +67,6 @@ ChromeUserPopulation GetUserPopulation(
 
   if (num_loaded_profiles)
     population.set_number_of_loaded_profiles(*num_loaded_profiles);
-
-  if (num_open_profiles)
-    population.set_number_of_open_profiles(*num_open_profiles);
 
   population.set_is_signed_in(is_signed_in);
 

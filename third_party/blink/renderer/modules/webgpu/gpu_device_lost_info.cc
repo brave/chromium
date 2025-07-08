@@ -6,26 +6,23 @@
 
 namespace blink {
 
-GPUDeviceLostInfo::GPUDeviceLostInfo(const WGPUDeviceLostReason reason,
+GPUDeviceLostInfo::GPUDeviceLostInfo(const wgpu::DeviceLostReason reason,
                                      const String& message) {
   switch (reason) {
-    case WGPUDeviceLostReason_Undefined:
-      reason_ = "unknown";
+    case wgpu::DeviceLostReason::Unknown:
+    case wgpu::DeviceLostReason::CallbackCancelled:
+    case wgpu::DeviceLostReason::FailedCreation:
+      reason_ = V8GPUDeviceLostReason::Enum::kUnknown;
       break;
-    case WGPUDeviceLostReason_Destroyed:
-      reason_ = "destroyed";
-      break;
-    default:
-      // If this is hit, Dawn gave us a reason we haven't implemented here yet.
-      NOTREACHED();
-      reason_ = "unknown";
+    case wgpu::DeviceLostReason::Destroyed:
+      reason_ = V8GPUDeviceLostReason::Enum::kDestroyed;
       break;
   }
   message_ = message;
 }
 
-const String& GPUDeviceLostInfo::reason() const {
-  return reason_;
+V8GPUDeviceLostReason GPUDeviceLostInfo::reason() const {
+  return V8GPUDeviceLostReason(reason_);
 }
 
 const String& GPUDeviceLostInfo::message() const {

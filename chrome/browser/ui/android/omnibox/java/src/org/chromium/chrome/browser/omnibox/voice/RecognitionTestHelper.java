@@ -21,8 +21,8 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * A helper class that simplifies creation of {@link VoiceRecognitionHandler}'s
- * test dependencies and provides utility methods for tests.
+ * A helper class that simplifies creation of {@link VoiceRecognitionHandler}'s test dependencies
+ * and provides utility methods for tests.
  */
 public class RecognitionTestHelper {
     @Implements(UserPrefs.class)
@@ -42,21 +42,21 @@ public class RecognitionTestHelper {
     /**
      * Creates a test bundle.
      *
-     * @param texts       the queries representing transcription results
+     * @param texts the queries representing transcription results
      * @param confidences confidence values for corresponding queries
      */
     public static Bundle createPlaceholderBundle(String[] texts, float[] confidences) {
         Bundle b = new Bundle();
 
-        b.putStringArrayList(
-                RecognizerIntent.EXTRA_RESULTS, new ArrayList<String>(Arrays.asList(texts)));
+        b.putStringArrayList(RecognizerIntent.EXTRA_RESULTS, new ArrayList<>(Arrays.asList(texts)));
         b.putFloatArray(RecognizerIntent.EXTRA_CONFIDENCE_SCORES, confidences);
         return b;
     }
 
     public static void assertVoiceResultsAreEqual(
             List<VoiceResult> results, String[] texts, float[] confidences) {
-        Assert.assertTrue("Invalid array sizes",
+        Assert.assertTrue(
+                "Invalid array sizes",
                 results.size() == texts.length && texts.length == confidences.length);
         for (int i = 0; i < texts.length; ++i) {
             VoiceResult result = results.get(i);

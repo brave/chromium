@@ -20,7 +20,6 @@ enum class WKNavigationState;
 
 }  // namespace web
 
-@class CRWContextMenuItem;
 @protocol CRWScrollableContent;
 @class CRWWebViewContentView;
 @protocol CRWFindInteraction;
@@ -35,7 +34,7 @@ class NavigationItem;
 class NavigationItemImpl;
 class WebState;
 class WebStateImpl;
-}
+}  // namespace web
 
 // Manages a view that can be used either for rendering web content in a web
 // view. CRWWebController also transparently evicts and restores the internal
@@ -80,6 +79,9 @@ class WebStateImpl;
 // A Boolean value indicating whether horizontal swipe gestures will trigger
 // back-forward list navigations.
 @property(nonatomic) BOOL allowsBackForwardNavigationGestures;
+
+// Whether or not long pressing a link in the web view renders a link preview.
+@property(nonatomic) BOOL allowsLinkPreview;
 
 // Whether the WebController should attempt to keep the render process alive.
 @property(nonatomic, assign, getter=shouldKeepRenderProcessAlive)
@@ -143,8 +145,7 @@ class WebStateImpl;
 // if `URL` matches the current page's URL. This method creates a new navigation
 // entry if `URL` differs from the current page's URL.
 - (void)loadSimulatedRequest:(const GURL&)URL
-          responseHTMLString:(NSString*)responseHTMLString
-    API_AVAILABLE(ios(15.0));
+          responseHTMLString:(NSString*)responseHTMLString;
 
 // Loads the web content from the data you provide as if the data were the
 // response to the request. This method does not create a new navigation entry
@@ -152,7 +153,7 @@ class WebStateImpl;
 // entry if `URL` differs from the current page's URL.
 - (void)loadSimulatedRequest:(const GURL&)URL
                 responseData:(NSData*)responseData
-                    MIMEType:(NSString*)MIMEType API_AVAILABLE(ios(15.0));
+                    MIMEType:(NSString*)MIMEType;
 
 // Stops loading the page.
 - (void)stopLoading;
@@ -175,10 +176,12 @@ class WebStateImpl;
        navigationInitiationType:(web::NavigationInitiationType)type
                  hasUserGesture:(BOOL)hasUserGesture;
 
-// Takes snapshot of web view with `rect`. `rect` should be in self.view's
-// coordinate system.  `completion` is always called, but `snapshot` may be nil.
-// Prior to iOS 11, `completion` is called with a nil
-// snapshot. `completion` may be called more than once.
+// Takes snapshot of web view with `rect`. `rect` is converted to the
+// self.view's coordinate system. If the height of the content in WKWebView is
+// smaller than `rect`, `rect` will be adjusted because the snapshot outside the
+// content will be black (see crbug.com/399702753). `completion` is always
+// called, but `snapshot` may be nil. Prior to iOS 11, `completion` is called
+// with a nil snapshot. `completion` may be called more than once.
 - (void)takeSnapshotWithRect:(CGRect)rect
                   completion:(void (^)(UIImage* snapshot))completion;
 
@@ -200,10 +203,6 @@ class WebStateImpl;
 // Adds the webView back in the view hierarchy.
 - (void)addWebViewToViewHierarchy;
 
-// Notifies this controller that the surface size has changed due to
-// multiwindow action or orientation change.
-- (void)surfaceSizeChanged;
-
 // Injects an opaque NSData block into a WKWebView to restore or serialize. Only
 // supported on iOS15+. On earlier iOS versions, `setSessionStateData` is
 // a no-op, and `sessionStateData` will return nil.
@@ -212,28 +211,21 @@ class WebStateImpl;
 
 // Gets and sets the web state's state of a permission; for example, the one to
 // use the camera on the device. Only works on iOS 15+.
-- (web::PermissionState)stateForPermission:(web::Permission)permission
-    API_AVAILABLE(ios(15.0));
+- (web::PermissionState)stateForPermission:(web::Permission)permission;
 - (void)setState:(web::PermissionState)state
-    forPermission:(web::Permission)permission API_AVAILABLE(ios(15.0));
+    forPermission:(web::Permission)permission;
 
 // Gets a mapping of all permissions and their states. Only works on iOS 15+.
-- (NSDictionary<NSNumber*, NSNumber*>*)
-    statesForAllPermissions API_AVAILABLE(ios(15.0));
+- (NSDictionary<NSNumber*, NSNumber*>*)statesForAllPermissions;
 
-// Shows a custom iOS context menu with the given `items` for options targeted
-// to the data visible in given window `rect`.
-- (void)showMenuWithItems:(NSArray<CRWContextMenuItem*>*)items
-                     rect:(CGRect)rect;
-
-// Downloads the file from the `request` at `destination` path.
+// Downloads the current page as a file at `destination` path.
 // `completion_handler` is used to retrieve the created CRWWebViewDownload, so
 // the caller can manage the launched download.
-- (void)downloadCurrentPageWithRequest:(NSURLRequest*)request
-                       destinationPath:(NSString*)destination
-                              delegate:(id<CRWWebViewDownloadDelegate>)delegate
-                               handler:(void (^)(id<CRWWebViewDownload>))handler
-    API_AVAILABLE(ios(14.5));
+- (void)downloadCurrentPageToDestinationPath:(NSString*)destination
+                                    delegate:
+                                        (id<CRWWebViewDownloadDelegate>)delegate
+                                     handler:(void (^)(id<CRWWebViewDownload>))
+                                                 handler;
 
 // Returns whether the Find interaction is supported and can be enabled.
 - (BOOL)findInteractionSupported;
@@ -256,6 +248,15 @@ class WebStateImpl;
 // Returns the page theme color.
 - (UIColor*)themeColor;
 
+// Returns the under page background color.
+- (UIColor*)underPageBackgroundColor;
+
+#pragma mark Fullscreen Message Handlers
+
+// Handles the viewport fit value, `isCover` is true when the "viewport-fit" is
+// equal to "cover".
+- (void)handleViewportFit:(BOOL)isCover;
+
 #pragma mark Navigation Message Handlers
 
 // Handles a navigation hash change message for the current webpage.
@@ -273,11 +274,8 @@ class WebStateImpl;
 // Retrieves the existing web frames in `contentWorld`.
 - (void)retrieveExistingFramesInContentWorld:(WKContentWorld*)contentWorld;
 
-// Do not use these executeJavaScript functions directly, prefer
-// WebFrame::CallJavaScriptFunction if possible, otherwise use
-// WebState::ExecuteJavaScript and WebState::ExecuteUserJavaScript.
-- (void)executeJavaScript:(NSString*)javascript
-        completionHandler:(void (^)(id result, NSError* error))completion;
+// Do not call this function directly, instead use
+// WebState::ExecuteUserJavaScript.
 - (void)executeUserJavaScript:(NSString*)javascript
             completionHandler:(void (^)(id result, NSError* error))completion;
 
@@ -290,8 +288,10 @@ class WebStateImpl;
 @property(nonatomic, readonly) web::WebState* webState;
 @property(nonatomic, readonly) web::WebStateImpl* webStateImpl;
 // Returns the current page loading phase.
-// TODO(crbug.com/956511): Remove this once refactor is done.
+// TODO(crbug.com/40624624): Remove this once refactor is done.
 @property(nonatomic, readonly, assign) web::WKNavigationState navigationState;
+// YES if the web container view fill the screen.
+@property(nonatomic, readonly) BOOL isCover;
 
 // Injects a CRWWebViewContentView for testing.  Takes ownership of
 // `webViewContentView`.
@@ -303,6 +303,12 @@ class WebStateImpl;
 
 // Loads the HTML into the page at the given URL.
 - (void)loadHTML:(NSString*)HTML forURL:(const GURL&)URL;
+
+// Executes `javascript` in the current page.
+// Prefer `WebFrame::CallJavaScriptFunction` if possible, otherwise
+// use `WebState::ExecuteJavaScript`.
+- (void)executeJavaScript:(NSString*)javascript
+        completionHandler:(void (^)(id result, NSError* error))completion;
 
 @end
 

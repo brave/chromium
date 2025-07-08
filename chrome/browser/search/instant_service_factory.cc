@@ -22,7 +22,8 @@ BASE_FEATURE(kProfileBasedInstantService,
 // static
 InstantService* InstantServiceFactory::GetForProfile(Profile* profile) {
   DCHECK(search::IsInstantExtendedAPIEnabled());
-  TRACE_EVENT0("loading", "InstantServiceFactory::GetForProfile");
+  TRACE_EVENT(TRACE_DISABLED_BY_DEFAULT("loading"),
+              "InstantServiceFactory::GetForProfile");
   if (base::FeatureList::IsEnabled(kProfileBasedInstantService)) {
     if (!profile->instant_service()) {
       profile->set_instant_service(static_cast<InstantService*>(
@@ -46,19 +47,23 @@ InstantServiceFactory::InstantServiceFactory()
           "InstantService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(ThemeServiceFactory::GetInstance());
 }
 
 InstantServiceFactory::~InstantServiceFactory() = default;
 
-KeyedService* InstantServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+InstantServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   DCHECK(search::IsInstantExtendedAPIEnabled());
-  return new InstantService(Profile::FromBrowserContext(context));
+  return std::make_unique<InstantService>(Profile::FromBrowserContext(context));
 }
 
 void InstantServiceFactory::BrowserContextDestroyed(

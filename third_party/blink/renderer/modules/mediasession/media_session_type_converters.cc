@@ -9,26 +9,21 @@ namespace mojo {
 const blink::MediaSessionActionDetails*
 TypeConverter<const blink::MediaSessionActionDetails*,
               blink::mojom::blink::MediaSessionActionDetailsPtr>::
-    ConvertWithActionName(
+    ConvertWithV8Action(
         const blink::mojom::blink::MediaSessionActionDetailsPtr& details,
-        const WTF::AtomicString& action_name) {
-  DCHECK(!action_name.empty());
+        blink::V8MediaSessionAction::Enum action) {
   blink::MediaSessionActionDetails* blink_details;
 
   if (details && details->is_seek_to()) {
     blink_details = TypeConverter<
         blink::MediaSessionSeekToActionDetails*,
         blink::mojom::blink::MediaSessionActionDetailsPtr>::Convert(details);
-  } else if (details && details->is_picture_in_picture()) {
-    blink_details = TypeConverter<
-        blink::MediaSessionPictureInPictureActionDetails*,
-        blink::mojom::blink::MediaSessionActionDetailsPtr>::Convert(details);
   } else {
     DCHECK(!details);
     blink_details = blink::MediaSessionActionDetails::Create();
   }
 
-  blink_details->setAction(action_name);
+  blink_details->setAction(action);
 
   return blink_details;
 }
@@ -43,23 +38,15 @@ TypeConverter<blink::MediaSessionSeekToActionDetails*,
   return blink_details;
 }
 
-blink::MediaSessionPictureInPictureActionDetails*
-TypeConverter<blink::MediaSessionPictureInPictureActionDetails*,
-              blink::mojom::blink::MediaSessionActionDetailsPtr>::
-    Convert(const blink::mojom::blink::MediaSessionActionDetailsPtr& details) {
-  auto* blink_details =
-      blink::MediaSessionPictureInPictureActionDetails::Create();
-  blink_details->setAutomatic(details->get_picture_in_picture()->automatic);
-  return blink_details;
-}
-
 media_session::mojom::blink::MediaPositionPtr TypeConverter<
     media_session::mojom::blink::MediaPositionPtr,
     blink::MediaPositionState*>::Convert(const blink::MediaPositionState*
                                              position) {
   return media_session::mojom::blink::MediaPosition::New(
       position->hasPlaybackRate() ? position->playbackRate() : 1.0,
-      base::Seconds(position->duration()),
+      position->duration() == std::numeric_limits<double>::infinity()
+          ? base::TimeDelta::Max()
+          : base::Seconds(position->duration()),
       position->hasPosition() ? base::Seconds(position->position())
                               : base::TimeDelta(),
       base::TimeTicks::Now());

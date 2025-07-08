@@ -5,19 +5,36 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_PROFILES_PROFILE_MENU_COORDINATOR_H_
 #define CHROME_BROWSER_UI_VIEWS_PROFILES_PROFILE_MENU_COORDINATOR_H_
 
-#include "chrome/browser/ui/browser_user_data.h"
+#include <optional>
+
+#include "base/memory/raw_ptr.h"
 #include "ui/views/view_tracker.h"
 
+class BrowserWindowInterface;
+class Profile;
 class ProfileMenuViewBase;
+
+namespace signin_metrics {
+enum class AccessPoint;
+}  // namespace signin_metrics
 
 // Handles the lifetime and showing/hidden state of the profile menu bubble.
 // Owned by the associated browser.
-class ProfileMenuCoordinator : public BrowserUserData<ProfileMenuCoordinator> {
+class ProfileMenuCoordinator {
  public:
-  ~ProfileMenuCoordinator() override;
+  explicit ProfileMenuCoordinator(BrowserWindowInterface* browser);
+  ProfileMenuCoordinator(const ProfileMenuCoordinator&) = delete;
+  ProfileMenuCoordinator& operator=(const ProfileMenuCoordinator&) = delete;
+  ~ProfileMenuCoordinator();
 
   // Shows the the profile bubble for this browser.
-  void Show(bool is_source_accelerator);
+  //
+  // If `explicit_signin_access_point` is set, the signin (or sync) flow will be
+  // started with this access point. Otherwise, the default access point will be
+  // used (`signin_metrics::AccessPoint::kAvatarBubbleSignIn*`).
+  void Show(bool is_source_accelerator,
+            std::optional<signin_metrics::AccessPoint>
+                explicit_signin_access_point = std::nullopt);
 
   // Returns true if the bubble is currently showing for the owning browser.
   bool IsShowing() const;
@@ -25,13 +42,12 @@ class ProfileMenuCoordinator : public BrowserUserData<ProfileMenuCoordinator> {
   ProfileMenuViewBase* GetProfileMenuViewBaseForTesting();
 
  private:
-  friend class BrowserUserData<ProfileMenuCoordinator>;
+  // TODO(crbug.com/425953501): Replace with `ToolbarButtonProvider` once this
+  // bug is fixed.
+  const raw_ptr<BrowserWindowInterface> browser_;
 
-  explicit ProfileMenuCoordinator(Browser* browser);
-
+  const raw_ptr<Profile> profile_;
   views::ViewTracker bubble_tracker_;
-
-  BROWSER_USER_DATA_KEY_DECL();
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_PROFILES_PROFILE_MENU_COORDINATOR_H_

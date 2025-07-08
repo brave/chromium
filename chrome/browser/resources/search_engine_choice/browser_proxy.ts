@@ -7,25 +7,34 @@
  * to interact with the browser.
  */
 
-import {PageHandlerFactory, PageHandlerInterface, PageHandlerRemote} from './search_engine_choice.mojom-webui.js';
+import {PageHandlerFactory, PageHandlerRemote} from './search_engine_choice.mojom-webui.js';
 
 export interface SearchEngineChoice {
+  prepopulateId: number;
   name: string;
+  iconPath: string;
+  url: string;
+  marketingSnippet: string;
+  showMarketingSnippet: boolean;
 }
 
 export class SearchEngineChoiceBrowserProxy {
-  handler: PageHandlerInterface;
+  handler: PageHandlerRemote;
 
-  constructor() {
-    this.handler = new PageHandlerRemote();
-
-    const factory = PageHandlerFactory.getRemote();
-    factory.createPageHandler(
-        (this.handler as PageHandlerRemote).$.bindNewPipeAndPassReceiver());
+  constructor(handler: PageHandlerRemote) {
+    this.handler = handler;
   }
 
   static getInstance(): SearchEngineChoiceBrowserProxy {
-    return instance || (instance = new SearchEngineChoiceBrowserProxy());
+    if (instance) {
+      return instance;
+    }
+
+    const handler = new PageHandlerRemote();
+    const factory = PageHandlerFactory.getRemote();
+    factory.createPageHandler((handler).$.bindNewPipeAndPassReceiver());
+
+    return instance = new SearchEngineChoiceBrowserProxy(handler);
   }
 
   static setInstance(obj: SearchEngineChoiceBrowserProxy) {

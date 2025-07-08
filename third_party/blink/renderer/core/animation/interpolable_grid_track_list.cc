@@ -6,51 +6,49 @@
 
 #include <memory>
 #include "third_party/blink/renderer/core/animation/interpolable_grid_track_repeater.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
-InterpolableGridTrackList::InterpolableGridTrackList(
-    std::unique_ptr<InterpolableList> values,
-    double progress)
-    : values_(std::move(values)), progress_(progress) {
+InterpolableGridTrackList::InterpolableGridTrackList(InterpolableList* values,
+                                                     double progress)
+    : values_(values), progress_(progress) {
   DCHECK(values_);
 }
 
 // static
-std::unique_ptr<InterpolableGridTrackList>
-InterpolableGridTrackList::MaybeCreate(const NGGridTrackList& track_list,
-                                       float zoom) {
+InterpolableGridTrackList* InterpolableGridTrackList::MaybeCreate(
+    const GridTrackList& track_list,
+    const CSSProperty& property,
+    float zoom) {
   // Subgrids do not have sizes stored on their track list to interpolate.
   if (track_list.HasAutoRepeater() || track_list.IsSubgriddedAxis()) {
     return nullptr;
   }
 
   wtf_size_t repeater_count = track_list.RepeaterCount();
-  std::unique_ptr<InterpolableList> values =
-      std::make_unique<InterpolableList>(repeater_count);
+  InterpolableList* values =
+      MakeGarbageCollected<InterpolableList>(repeater_count);
 
   for (wtf_size_t i = 0; i < repeater_count; ++i) {
     Vector<GridTrackSize, 1> repeater_track_sizes;
     for (wtf_size_t j = 0; j < track_list.RepeatSize(i); ++j)
       repeater_track_sizes.push_back(track_list.RepeatTrackSize(i, j));
 
-    const NGGridTrackRepeater repeater(
+    const GridTrackRepeater repeater(
         track_list.RepeatIndex(i), track_list.RepeatSize(i),
-        track_list.RepeatCount(i, 0), track_list.LineNameIndicesCount(i),
-        track_list.RepeatType(i));
-    std::unique_ptr<InterpolableGridTrackRepeater> result =
+        track_list.RepeatCount(i, 0), track_list.RepeatType(i));
+    InterpolableGridTrackRepeater* result =
         InterpolableGridTrackRepeater::Create(repeater, repeater_track_sizes,
-                                              zoom);
+                                              property, zoom);
     DCHECK(result);
-    values->Set(i, std::move(result));
+    values->Set(i, result);
   }
-  return std::make_unique<InterpolableGridTrackList>(std::move(values), 0);
+  return MakeGarbageCollected<InterpolableGridTrackList>(values, 0);
 }
 
-NGGridTrackList InterpolableGridTrackList::CreateNGGridTrackList(
+GridTrackList InterpolableGridTrackList::CreateGridTrackList(
     const CSSToLengthConversionData& conversion_data) const {
-  NGGridTrackList new_track_list;
+  GridTrackList new_track_list;
   for (wtf_size_t i = 0; i < values_->length(); ++i) {
     const InterpolableGridTrackRepeater& repeater =
         To<InterpolableGridTrackRepeater>(*values_->Get(i));
@@ -61,15 +59,15 @@ NGGridTrackList InterpolableGridTrackList::CreateNGGridTrackList(
 }
 
 InterpolableGridTrackList* InterpolableGridTrackList::RawClone() const {
-  std::unique_ptr<InterpolableList> values(
-      DynamicTo<InterpolableList>(values_->Clone().release()));
-  return new InterpolableGridTrackList(std::move(values), progress_);
+  InterpolableList* values(values_->Clone());
+  return MakeGarbageCollected<InterpolableGridTrackList>(std::move(values),
+                                                         progress_);
 }
 
 InterpolableGridTrackList* InterpolableGridTrackList::RawCloneAndZero() const {
-  std::unique_ptr<InterpolableList> values(
-      DynamicTo<InterpolableList>(values_->CloneAndZero().release()));
-  return new InterpolableGridTrackList(std::move(values), progress_);
+  InterpolableList* values(values_->CloneAndZero());
+  return MakeGarbageCollected<InterpolableGridTrackList>(std::move(values),
+                                                         progress_);
 }
 
 bool InterpolableGridTrackList::Equals(const InterpolableValue& other) const {

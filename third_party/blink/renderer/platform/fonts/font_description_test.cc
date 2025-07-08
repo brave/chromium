@@ -23,8 +23,14 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 
+#include <array>
+
+#include "third_party/blink/renderer/platform/geometry/calculation_expression_node.h"
+#include "third_party/blink/renderer/platform/geometry/calculation_value.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/testing/font_test_base.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -34,20 +40,31 @@ namespace blink {
 class FontDescriptionTest : public FontTestBase {};
 
 TEST_F(FontDescriptionTest, TestHashCollision) {
-  FontSelectionValue weights[] = {
-      FontSelectionValue(100), FontSelectionValue(200),
-      FontSelectionValue(300), FontSelectionValue(400),
-      FontSelectionValue(500), FontSelectionValue(600),
-      FontSelectionValue(700), FontSelectionValue(800),
-      FontSelectionValue(900)};
-  FontSelectionValue stretches[]{
-      UltraCondensedWidthValue(), ExtraCondensedWidthValue(),
-      CondensedWidthValue(),      SemiCondensedWidthValue(),
-      NormalWidthValue(),         SemiExpandedWidthValue(),
-      ExpandedWidthValue(),       ExtraExpandedWidthValue(),
-      UltraExpandedWidthValue()};
+  auto weights = std::to_array<FontSelectionValue>({
+      FontSelectionValue(100),
+      FontSelectionValue(200),
+      FontSelectionValue(300),
+      FontSelectionValue(400),
+      FontSelectionValue(500),
+      FontSelectionValue(600),
+      FontSelectionValue(700),
+      FontSelectionValue(800),
+      FontSelectionValue(900),
+  });
+  auto stretches = std::to_array<FontSelectionValue>({
+      kUltraCondensedWidthValue,
+      kExtraCondensedWidthValue,
+      kCondensedWidthValue,
+      kSemiCondensedWidthValue,
+      kNormalWidthValue,
+      kSemiExpandedWidthValue,
+      kExpandedWidthValue,
+      kExtraExpandedWidthValue,
+      kUltraExpandedWidthValue,
+  });
 
-  FontSelectionValue slopes[] = {NormalSlopeValue(), ItalicSlopeValue()};
+  auto slopes =
+      std::to_array<FontSelectionValue>({kNormalSlopeValue, kItalicSlopeValue});
 
   FontDescription source;
   WTF::Vector<unsigned> hashes;
@@ -188,10 +205,29 @@ TEST_F(FontDescriptionTest, VariantAlternatesDifferentCacheKey) {
   ASSERT_NE(key_a, key_b);
 }
 
+TEST_F(FontDescriptionTest, VariantEmojiDifferentCacheKey) {
+  FontDescription a;
+  FontDescription b(a);
+
+  FontVariantEmoji variant_emoji_a = kEmojiVariantEmoji;
+  FontVariantEmoji variant_emoji_b = kUnicodeVariantEmoji;
+
+  a.SetVariantEmoji(variant_emoji_a);
+  b.SetVariantEmoji(variant_emoji_b);
+
+  ASSERT_NE(a, b);
+
+  FontFaceCreationParams test_creation_params;
+  FontCacheKey key_a = a.CacheKey(test_creation_params, false);
+  FontCacheKey key_b = b.CacheKey(test_creation_params, false);
+
+  ASSERT_NE(key_a, key_b);
+}
+
 TEST_F(FontDescriptionTest, AllFeaturesHash) {
   FontDescription font_description;
-  font_description.FirstFamily().SetFamily(font_family_names::kSerif,
-                                           FontFamily::Type::kGenericFamily);
+  font_description.SetFamily(
+      FontFamily(font_family_names::kSerif, FontFamily::Type::kGenericFamily));
   unsigned key_a = font_description.GetHash();
 
   // Test every relevant property except font families, which are tested in
@@ -397,7 +433,7 @@ TEST_F(FontDescriptionTest, AllFeaturesHash) {
   key_a = font_description.GetHash();
   EXPECT_EQ(key_a, key_b);
 
-  font_description.SetLetterSpacing(0.9);
+  font_description.SetLetterSpacing(Length::Fixed(0.9));
   key_b = font_description.GetHash();
   EXPECT_NE(key_a, key_b);
   key_a = font_description.GetHash();
@@ -418,13 +454,10 @@ TEST_F(FontDescriptionTest, FontFamiliesHash) {
   FontDescription a;
   FontDescription b(a);
 
-  FontFamily* family_a = &a.FirstFamily();
-  family_a->SetFamily(font_family_names::kSerif,
-                      FontFamily::Type::kGenericFamily);
-
-  FontFamily* family_b = &b.FirstFamily();
-  family_b->SetFamily(font_family_names::kSerif,
-                      FontFamily::Type::kGenericFamily);
+  a.SetFamily(
+      FontFamily(font_family_names::kSerif, FontFamily::Type::kGenericFamily));
+  b.SetFamily(
+      FontFamily(font_family_names::kSerif, FontFamily::Type::kGenericFamily));
 
   unsigned key_a = a.GetHash();
   unsigned key_b = b.GetHash();
@@ -432,35 +465,31 @@ TEST_F(FontDescriptionTest, FontFamiliesHash) {
   EXPECT_EQ(key_a, key_b);
 
   // Differing family lists
-  scoped_refptr<SharedFontFamily> next_family_a = SharedFontFamily::Create();
-  next_family_a->SetFamily(AtomicString("CustomFont1"),
-                           FontFamily::Type::kFamilyName);
-  family_a->AppendFamily(next_family_a);
-  family_a = next_family_a.get();
+  scoped_refptr<SharedFontFamily> next_family_a = SharedFontFamily::Create(
+      AtomicString("CustomFont1"), FontFamily::Type::kFamilyName);
+  a.SetFamily(FontFamily(font_family_names::kSerif,
+                         FontFamily::Type::kGenericFamily, next_family_a));
   key_a = a.GetHash();
   EXPECT_NE(key_a, key_b);
 
   // Same family lists with multiple entries
-  scoped_refptr<SharedFontFamily> next_family_b = SharedFontFamily::Create();
-  next_family_b->SetFamily(AtomicString("CustomFont1"),
-                           FontFamily::Type::kFamilyName);
-  family_b->AppendFamily(next_family_b);
-  family_b = next_family_b.get();
+  scoped_refptr<SharedFontFamily> next_family_b = SharedFontFamily::Create(
+      AtomicString("CustomFont1"), FontFamily::Type::kFamilyName);
+  b.SetFamily(FontFamily(font_family_names::kSerif,
+                         FontFamily::Type::kGenericFamily, next_family_b));
   key_b = b.GetHash();
   EXPECT_EQ(key_a, key_b);
 
   // Same number of entries, different names
-  next_family_a = SharedFontFamily::Create();
-  next_family_a->SetFamily(AtomicString("CustomFont2a"),
-                           FontFamily::Type::kFamilyName);
-  family_a->AppendFamily(next_family_a);
-  family_a = next_family_a.get();
+  next_family_a = SharedFontFamily::Create(AtomicString("CustomFont1a"),
+                                           FontFamily::Type::kFamilyName);
+  a.SetFamily(FontFamily(font_family_names::kSerif,
+                         FontFamily::Type::kGenericFamily, next_family_a));
   key_a = a.GetHash();
-  next_family_b = SharedFontFamily::Create();
-  next_family_b->SetFamily(AtomicString("CustomFont2b"),
-                           FontFamily::Type::kFamilyName);
-  family_b->AppendFamily(next_family_b);
-  family_b = next_family_b.get();
+  next_family_b = SharedFontFamily::Create(AtomicString("CustomFont1b"),
+                                           FontFamily::Type::kFamilyName);
+  b.SetFamily(FontFamily(font_family_names::kSerif,
+                         FontFamily::Type::kGenericFamily, next_family_b));
   key_b = b.GetHash();
   EXPECT_NE(key_a, key_b);
 }
@@ -472,11 +501,10 @@ TEST_F(FontDescriptionTest, GenericFamilyDifferentHash) {
   FontDescription a;
   FontDescription b(a);
 
-  FontFamily* family_a = &a.FirstFamily();
-  family_a->SetFamily(font_family_names::kSerif,
-                      FontFamily::Type::kGenericFamily);
-  FontFamily* family_b = &b.FirstFamily();
-  family_b->SetFamily(font_family_names::kSerif, FontFamily::Type::kFamilyName);
+  a.SetFamily(
+      FontFamily(font_family_names::kSerif, FontFamily::Type::kGenericFamily));
+  b.SetFamily(
+      FontFamily(font_family_names::kSerif, FontFamily::Type::kFamilyName));
 
   unsigned key_a = a.GetHash();
   unsigned key_b = b.GetHash();
@@ -487,12 +515,10 @@ TEST_F(FontDescriptionTest, GenericFamilyDifferentHash) {
 TEST_F(FontDescriptionTest, ToString) {
   FontDescription description;
 
-  FontFamily family;
-  family.SetFamily(AtomicString("A"), FontFamily::Type::kFamilyName);
-  scoped_refptr<SharedFontFamily> b_family = SharedFontFamily::Create();
-  b_family->SetFamily(AtomicString("B"), FontFamily::Type::kFamilyName);
-  family.AppendFamily(b_family);
-  description.SetFamily(family);
+  description.SetFamily(
+      FontFamily(AtomicString("A"), FontFamily::Type::kFamilyName,
+                 SharedFontFamily::Create(AtomicString("B"),
+                                          FontFamily::Type::kFamilyName)));
 
   description.SetLocale(LayoutLocale::Get(AtomicString("no")));
 
@@ -510,8 +536,9 @@ TEST_F(FontDescriptionTest, ToString) {
   description.SetSpecifiedSize(1.1f);
   description.SetComputedSize(2.2f);
   description.SetAdjustedSize(3.3f);
-  description.SetSizeAdjust(FontSizeAdjust(4.4f));
-  description.SetLetterSpacing(5.5f);
+  description.SetSizeAdjust(
+      FontSizeAdjust(4.4f, FontSizeAdjust::Metric::kCapHeight));
+  description.SetLetterSpacing(Length::Fixed(5.5f));
   description.SetWordSpacing(6.6f);
 
   description.SetStyle(FontSelectionValue(31.5));
@@ -523,8 +550,8 @@ TEST_F(FontDescriptionTest, ToString) {
   EXPECT_EQ(
       "family_list=[A, B], feature_settings=[cccc=76,dddd=94], "
       "variation_settings=[aaaa=42,bbbb=8118], locale=no, "
-      "specified_size=1.100000, "
-      "computed_size=2.200000, adjusted_size=3.300000, size_adjust=4.400000, "
+      "specified_size=1.100000, computed_size=2.200000, "
+      "adjusted_size=3.300000, size_adjust=cap-height 4.4, "
       "letter_spacing=5.500000, word_spacing=6.600000, "
       "font_selection_request=[weight=32.500000, width=33.500000, "
       "slope=31.500000], typesetting_features=[Kerning,Ligatures], "
@@ -540,7 +567,7 @@ TEST_F(FontDescriptionTest, ToString) {
       "slashed_zero=Off], variant_east_asian=[form=Normal, width=Normal, "
       "ruby=false], font_optical_sizing=Auto, font_synthesis_weight=Auto, "
       "font_synthesis_style=Auto, font_synthesis_small_caps=Auto, "
-      "font_variant_position=Normal",
+      "font_variant_position=Normal, font_variant_emoji=Normal",
       description.ToString());
 }
 
@@ -553,13 +580,11 @@ TEST_F(FontDescriptionTest, DefaultHashTrait) {
   FontDescription description2;
   description1.SetWeight(FontSelectionValue(100));
 
-  FontFamily family;
-  family.SetFamily(AtomicString("A"), FontFamily::Type::kFamilyName);
-  scoped_refptr<SharedFontFamily> b_family = SharedFontFamily::Create();
-  b_family->SetFamily(AtomicString("B"), FontFamily::Type::kFamilyName);
-  family.AppendFamily(b_family);
   FontDescription description3;
-  description3.SetFamily(family);
+  description3.SetFamily(
+      FontFamily(AtomicString("A"), FontFamily::Type::kFamilyName,
+                 SharedFontFamily::Create(AtomicString("B"),
+                                          FontFamily::Type::kFamilyName)));
 
   EXPECT_TRUE(map.insert(description1, 1).is_new_entry);
   EXPECT_FALSE(map.insert(description1, 1).is_new_entry);
@@ -612,6 +637,28 @@ TEST_F(FontDescriptionTest, NegativeZeroEmFontSize) {
   // Equal font descriptions must have equal hash values
   EXPECT_EQ(description1, description2);
   EXPECT_EQ(description1.GetHash(), description2.GetHash());
+}
+
+TEST_F(FontDescriptionTest, LetterSpacing) {
+  FontDescription description;
+  description.SetComputedSize(20.0);
+
+  description.SetLetterSpacing(Length::Fixed(10.0));
+  EXPECT_EQ(description.LetterSpacing(), 10.0);
+
+  description.SetLetterSpacing(Length::Percent(50.0));
+  EXPECT_EQ(description.LetterSpacing(), 10.0);
+
+  const auto twenty_px_ten_percent =
+      PixelsAndPercent(20.0, 50.0, /*has_explicit_pixels=*/true,
+                       /*has_explicit_percent=*/true);
+  const auto* expression =
+      MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
+          twenty_px_ten_percent);
+  const auto* calculation =
+      CalculationValue::CreateSimplified(expression, Length::ValueRange::kAll);
+  description.SetLetterSpacing(Length(calculation));
+  EXPECT_EQ(description.LetterSpacing(), 30.0);
 }
 
 }  // namespace blink

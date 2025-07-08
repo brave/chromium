@@ -5,6 +5,7 @@
 #include "chromecast/metrics/cast_metrics_service_client.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -29,7 +30,7 @@
 #include "components/metrics/metrics_state_manager.h"
 #include "components/metrics/net/net_metrics_log_uploader.h"
 #include "components/metrics/persistent_synthetic_trial_observer.h"
-#include "components/metrics/url_constants.h"
+#include "components/metrics/server_urls.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -179,7 +180,6 @@ bool CastMetricsServiceClient::GetBrand(std::string* brand_code) {
       return ::metrics::SystemProfileProto::CHANNEL_STABLE;
   }
   NOTREACHED();
-  return ::metrics::SystemProfileProto::CHANNEL_UNKNOWN;
 #else
   // Use the system (or signed) release channel here to avoid the noise in the
   // metrics caused by the virtual channel which could be temporary or
@@ -239,14 +239,14 @@ GURL CastMetricsServiceClient::GetMetricsServerUrl() {
   }
   // Note: This uses the old metrics service URL because some server-side
   // provisioning is needed to support the extra Cast traffic on the new URL.
-  return GURL(::metrics::kOldMetricsServerUrl);
+  return ::metrics::GetCastMetricsServerUrl();
 }
 
 std::unique_ptr<::metrics::MetricsLogUploader>
 CastMetricsServiceClient::CreateUploader(
     const GURL& server_url,
     const GURL& insecure_server_url,
-    base::StringPiece mime_type,
+    std::string_view mime_type,
     ::metrics::MetricsLogUploader::MetricServiceType service_type,
     const ::metrics::MetricsLogUploader::UploadCallback& on_upload_complete) {
   return std::make_unique<::metrics::NetMetricsLogUploader>(
@@ -270,20 +270,50 @@ bool CastMetricsServiceClient::IsConsentGiven() const {
   return pref_service_->GetBoolean(prefs::kOptInStats);
 }
 
-void CastMetricsServiceClient::EnableMetricsService(bool enabled) {
+bool CastMetricsServiceClient::IsReportingEnabled() const {
+  // Recording metrics is controlled by the opt-in stats preference
+  // (`IsConsentGiven()`), but reporting them to Google is controlled by
+  // ToS being accepted.
+  return pref_service_->GetBoolean(prefs::kTosAccepted) &&
+         ::metrics::EnabledStateProvider::IsReportingEnabled();
+}
+
+void CastMetricsServiceClient::UpdateMetricsServiceState() {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::BindOnce(&CastMetricsServiceClient::EnableMetricsService,
-                       base::Unretained(this), enabled));
+        base::BindOnce(&CastMetricsServiceClient::UpdateMetricsServiceState,
+                       base::Unretained(this)));
     return;
   }
 
-  if (enabled) {
+  if (IsConsentGiven()) {
     metrics_service_->Start();
+    if (!IsReportingEnabled()) {
+      // Metrics are only reported after ToS have been accepted. If usage
+      // reporting is enabled, but ToS is not accepted, we can record metrics
+      // but must not report/upload them.
+      //
+      // `MetricsServiceImpl::Start()` will start recording and reporting.
+      // We must call `DisableReporting()` which will update the internal
+      // state machine of the reporting service and stop the upload scheduler
+      // from running.
+      metrics_service_->DisableReporting();
+    }
   } else {
     metrics_service_->Stop();
   }
+}
+
+void CastMetricsServiceClient::DisableMetricsService() {
+  if (!task_runner_->BelongsToCurrentThread()) {
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&CastMetricsServiceClient::DisableMetricsService,
+                       base::Unretained(this)));
+    return;
+  }
+  metrics_service_->Stop();
 }
 
 CastMetricsServiceClient::CastMetricsServiceClient(
@@ -330,13 +360,13 @@ void CastMetricsServiceClient::InitializeMetricsService() {
   // Perform additional setup that should be done after the FieldTrialList, the
   // MetricsStateManager, and its CleanExitBeacon exist. Since the list already
   // exists, the entropy provider type is unused.
-  // TODO(crbug/1249485): Make Chromecast consistent with other platforms. I.e.
-  // create the FieldTrialList and the MetricsStateManager around the same time.
+  // TODO(crbug.com/40791269): Make Chromecast consistent with other platforms.
+  // I.e. create the FieldTrialList and the MetricsStateManager around the same
+  // time.
   metrics_state_manager_->InstantiateFieldTrialList();
 
   synthetic_trial_registry_ =
-      std::make_unique<variations::SyntheticTrialRegistry>(
-          IsExternalExperimentAllowlistEnabled());
+      std::make_unique<variations::SyntheticTrialRegistry>();
   synthetic_trial_observation_.Observe(synthetic_trial_registry_.get());
 
   metrics_service_.reset(new ::metrics::MetricsService(
@@ -361,12 +391,11 @@ void CastMetricsServiceClient::StartMetricsService() {
 #if !BUILDFLAG(IS_ANDROID)
   // Signal that the session has not yet exited cleanly. We later signal that
   // the session exited cleanly via MetricsService::LogCleanShutdown().
-  // TODO(crbug.com/1208587): See whether this can be called even earlier.
+  // TODO(crbug.com/40766116): See whether this can be called even earlier.
   metrics_state_manager_->LogHasSessionShutdownCleanly(false);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-  if (IsReportingEnabled())
-    metrics_service_->Start();
+  UpdateMetricsServiceState();
 }
 
 void CastMetricsServiceClient::Finalize() {

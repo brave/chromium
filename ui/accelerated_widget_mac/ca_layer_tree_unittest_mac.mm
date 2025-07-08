@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import <AVFoundation/AVFoundation.h>
 
 #include <memory>
@@ -17,10 +22,6 @@
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/ca_renderer_layer_params.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface CALayer (Private)
 @property BOOL wantsExtendedDynamicRangeContent;
@@ -48,16 +49,16 @@ struct CALayerProperties {
   unsigned filter = GL_LINEAR;
   gfx::ScopedIOSurface io_surface;
   gfx::ColorSpace color_space;
-  base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
+  base::apple::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
 
   bool allow_av_layers = true;
   bool allow_solid_color_layers = true;
 };
 
-base::ScopedCFTypeRef<CVPixelBufferRef> CreateCVPixelBuffer(
+base::apple::ScopedCFTypeRef<CVPixelBufferRef> CreateCVPixelBuffer(
     gfx::ScopedIOSurface io_surface) {
-  base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
-  CVPixelBufferCreateWithIOSurface(nullptr, io_surface, nullptr,
+  base::apple::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
+  CVPixelBufferCreateWithIOSurface(nullptr, io_surface.get(), nullptr,
                                    cv_pixel_buffer.InitializeInto());
   return cv_pixel_buffer;
 }

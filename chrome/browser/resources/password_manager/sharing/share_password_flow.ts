@@ -9,13 +9,16 @@
 import './share_password_family_picker_dialog.js';
 import './share_password_loading_dialog.js';
 import './share_password_error_dialog.js';
-import './share_password_no_members_dialog.js';
+import './share_password_no_other_family_members_dialog.js';
+import './share_password_not_family_member_dialog.js';
+import './share_password_confirmation_dialog.js';
 
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {assertNotReached} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {PasswordManagerImpl, PasswordManagerProxy} from '../password_manager_proxy.js';
+import type {PasswordManagerProxy} from '../password_manager_proxy.js';
+import {PasswordManagerImpl} from '../password_manager_proxy.js';
 
 import {getTemplate} from './share_password_flow.html.js';
 
@@ -23,8 +26,10 @@ export enum ShareFlowState {
   NO_DIALOG,
   FETCHING,
   ERROR,
-  NO_MEMBERS,
+  NO_OTHER_MEMBERS,
+  NOT_FAMILY_MEMBER,
   FAMILY_PICKER,
+  CONFIRMATION,
 }
 
 const SharePasswordFlowElementBase = I18nMixin(PolymerElement);
@@ -41,10 +46,23 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
   static get properties() {
     return {
       passwordName: String,
+      iconUrl: String,
+      password: Object,
 
-      flowState: Number,
+      flowState: {
+        type: Number,
+        lalue: ShareFlowState.NO_DIALOG,
+      },
 
-      fetchResults_: Object,
+      fetchResults_: {
+        type: Object,
+        value: null,
+      },
+
+      recipients_: {
+        type: Array,
+        value: [],
+      },
 
       flowStateEnum_: {
         type: Object,
@@ -54,9 +72,13 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
     };
   }
 
-  passwordName: string;
-  flowState: ShareFlowState = ShareFlowState.NO_DIALOG;
-  private fetchResults_: chrome.passwordsPrivate.FamilyFetchResults|null = null;
+  declare passwordName: string;
+  declare iconUrl: string;
+  declare password: chrome.passwordsPrivate.PasswordUiEntry;
+  declare flowState: ShareFlowState;
+  declare private recipients_: chrome.passwordsPrivate.RecipientInfo[];
+  declare private fetchResults_: chrome.passwordsPrivate.FamilyFetchResults|
+      null;
   private passwordManager_: PasswordManagerProxy =
       PasswordManagerImpl.getInstance();
 
@@ -67,7 +89,7 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
   }
 
   private async startSharing_() {
-    // TODO(crbug/1445526): Add timeout to avoid flickering.
+    // TODO(crbug.com/40268194): Add timeout to avoid flickering.
     this.flowState = ShareFlowState.FETCHING;
 
     this.fetchResults_ = await this.passwordManager_.fetchFamilyMembers();
@@ -76,9 +98,15 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
         this.flowState = ShareFlowState.ERROR;
         break;
       case chrome.passwordsPrivate.FamilyFetchStatus.NO_MEMBERS:
-        this.flowState = ShareFlowState.NO_MEMBERS;
+        // TODO(crbug.com/40268194): Rename FamilyFetchStatus.NO_MEMBERS to
+        // NOT_FAMILY_MEMBER.
+        this.flowState = ShareFlowState.NOT_FAMILY_MEMBER;
         break;
       case chrome.passwordsPrivate.FamilyFetchStatus.SUCCESS:
+        if (this.fetchResults_.familyMembers.length === 0) {
+          this.flowState = ShareFlowState.NO_OTHER_MEMBERS;
+          return;
+        }
         this.flowState = ShareFlowState.FAMILY_PICKER;
         break;
       default:
@@ -98,6 +126,10 @@ export class SharePasswordFlowElement extends SharePasswordFlowElementBase {
     this.dispatchEvent(
         new CustomEvent('share-flow-done', {bubbles: true, composed: true}));
     this.flowState = ShareFlowState.NO_DIALOG;
+  }
+
+  private onStartShare_() {
+    this.flowState = ShareFlowState.CONFIRMATION;
   }
 }
 

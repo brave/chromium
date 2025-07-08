@@ -42,9 +42,9 @@ class PaginationModel;
 // current indicator position, and then expand at the target indicator position.
 class ASH_EXPORT PaginationView : public views::View,
                                   public PaginationModelObserver {
- public:
-  METADATA_HEADER(PaginationView);
+  METADATA_HEADER(PaginationView, views::View)
 
+ public:
   enum class Orientation {
     kHorizontal,
     kVertical,
@@ -60,8 +60,9 @@ class ASH_EXPORT PaginationView : public views::View,
   ~PaginationView() override;
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
-  void Layout() override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+  void Layout(PassKey) override;
 
  private:
   // A filled circle with pagination motion effects.

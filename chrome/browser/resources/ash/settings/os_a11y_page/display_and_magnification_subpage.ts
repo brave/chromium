@@ -8,25 +8,26 @@
  * subpage for display and magnification accessibility settings.
  */
 
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
-import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteOriginMixin} from '../common/route_origin_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteOriginMixin} from '../route_origin_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './display_and_magnification_subpage.html.js';
 
@@ -84,6 +85,29 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
         },
       },
 
+      /**
+       * Whether the reduced animations feature is enabled.
+       */
+      isAccessibilityReducedAnimationsEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+            'isAccessibilityReducedAnimationsEnabled');
+        },
+      },
+
+      /**
+       * Whether the magnifier following ChromeVox focus feature is
+       * enabled.
+       */
+      isAccessibilityMagnifierFollowsChromeVoxEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'isAccessibilityMagnifierFollowsChromeVoxEnabled');
+        },
+      },
+
       colorVisionDeficiencyTypeOptions_: {
         readOnly: true,
         type: Array,
@@ -101,14 +125,6 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
         },
       },
 
-      experimentalColorEnhancementSettingsEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean(
-              'areExperimentalAccessibilityColorEnhancementSettingsEnabled');
-        },
-      },
-
       /**
        * Whether the user is in kiosk mode.
        */
@@ -118,30 +134,31 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
           return loadTimeData.getBoolean('isKioskModeActive');
         },
       },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kColorCorrectionEnabled,
-          Setting.kColorCorrectionFilterType,
-          Setting.kColorCorrectionFilterAmount,
-          Setting.kFullscreenMagnifier,
-          Setting.kFullscreenMagnifierMouseFollowingMode,
-          Setting.kFullscreenMagnifierFocusFollowing,
-          Setting.kDockedMagnifier,
-        ]),
-      },
     };
   }
 
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kAccessibilityMagnifierFollowsSts,
+    Setting.kColorCorrectionEnabled,
+    Setting.kColorCorrectionFilterType,
+    Setting.kColorCorrectionFilterAmount,
+    Setting.kDockedMagnifier,
+    Setting.kFullscreenMagnifier,
+    Setting.kFullscreenMagnifierMouseFollowingMode,
+    Setting.kFullscreenMagnifierFocusFollowing,
+    Setting.kMagnifierFollowsChromeVox,
+    Setting.kReducedAnimationsEnabled,
+    Setting.kAlwaysShowScrollbarsEnabled,
+  ]);
+
+  private readonly colorVisionDeficiencyTypeOptions_:
+      Array<{value: number, name: string}>;
   private isKioskModeActive_: boolean;
-  private experimentalColorEnhancementSettingsEnabled_: boolean;
   private screenMagnifierMouseFollowingModePrefValues_: {[key: string]: number};
   private screenMagnifierZoomOptions_: Array<{value: number, name: string}>;
-
+  private isAccessibilityReducedAnimationsEnabled_: boolean;
+  private isAccessibilityMagnifierFollowsChromeVoxEnabled_: boolean;
 
   constructor() {
     super();
@@ -150,7 +167,7 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
     this.route = routes.A11Y_DISPLAY_AND_MAGNIFICATION;
   }
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
     this.addFocusConfig(routes.DISPLAY, '#displaySubpageButton');
@@ -159,7 +176,7 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
   /**
    * Note: Overrides RouteOriginMixin implementation
    */
-  override currentRouteChanged(newRoute: Route, prevRoute?: Route) {
+  override currentRouteChanged(newRoute: Route, prevRoute?: Route): void {
     super.currentRouteChanged(newRoute, prevRoute);
 
     // Does not apply to this page.

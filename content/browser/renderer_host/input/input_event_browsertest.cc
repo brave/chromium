@@ -9,12 +9,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
-#include "content/browser/renderer_host/input/synthetic_gesture_controller.h"
-#include "content/browser/renderer_host/input/synthetic_gesture_target.h"
-#include "content/browser/renderer_host/input/synthetic_pointer_driver.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/input/synthetic_gesture_controller.h"
+#include "content/common/input/synthetic_gesture_target.h"
+#include "content/common/input/synthetic_pointer_driver.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/content_switches.h"
@@ -81,7 +81,6 @@ class InputEventBrowserTest : public ContentBrowserTest {
 
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ContentBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kExposeInternalsForTesting);
   }
 
@@ -148,7 +147,7 @@ class InputEventBrowserTest : public ContentBrowserTest {
   void SimulateSyntheticKeyDown(base::TimeTicks event_time) {
     DCHECK(URLLoaded());
 
-    content::NativeWebKeyboardEvent event(
+    input::NativeWebKeyboardEvent event(
         blink::WebKeyboardEvent::Type::kRawKeyDown,
         blink::WebInputEvent::kNoModifiers, event_time);
     event.windows_key_code = ui::VKEY_DOWN;

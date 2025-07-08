@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_ENTERPRISE_PLATFORM_AUTH_CLOUD_AP_PROVIDER_WIN_H_
 #define CHROME_BROWSER_ENTERPRISE_PLATFORM_AUTH_CLOUD_AP_PROVIDER_WIN_H_
 
+#include <optional>
+#include <vector>
+
 #include "base/callback_list.h"
 #include "base/gtest_prod_util.h"
 #include "chrome/browser/enterprise/platform_auth/platform_auth_provider.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class GURL;
 class ProofOfPossessionCookieInfo;
@@ -36,6 +38,7 @@ class CloudApProviderWin : public PlatformAuthProvider {
   ~CloudApProviderWin() override;
 
   // enterprise_auth::PlatformAuthProvider:
+  bool SupportsOriginFiltering() override;
   void FetchOrigins(FetchOriginsCallback on_fetch_complete) override;
   void GetData(const GURL& url,
                PlatformAuthProviderManager::GetDataCallback callback) override;
@@ -54,7 +57,7 @@ class CloudApProviderWin : public PlatformAuthProvider {
 
   // Overrides support detection with `level` if it has a value, or resets the
   // override if not.
-  static void SetSupportLevelForTesting(absl::optional<SupportLevel> level);
+  static void SetSupportLevelForTesting(std::optional<SupportLevel> level);
 
   // Allows cookie info to be parsed for testing purposes.
   void ParseCookieInfoForTesting(const ProofOfPossessionCookieInfo* cookie_info,
@@ -66,9 +69,9 @@ class CloudApProviderWin : public PlatformAuthProvider {
       base::OnceCallbackList<void(net::HttpRequestHeaders)>;
   GetDataCallbackList on_get_data_callback_list_;
 
-  // Subscription for auth data requests. Guarantees that the corresponding
+  // Subscriptions for auth data requests. Guarantees that the corresponding
   // callbacks are run on destruction.
-  base::CallbackListSubscription get_data_subscription_;
+  std::vector<base::CallbackListSubscription> get_data_subscriptions_;
 };
 
 }  // namespace enterprise_auth

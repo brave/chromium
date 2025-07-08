@@ -37,7 +37,6 @@ uint8_t Depth(gfx::BufferFormat format) {
       return 32;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -47,7 +46,6 @@ uint8_t Bpp(gfx::BufferFormat format) {
       return 32;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -108,7 +106,7 @@ x11::Pixmap XPixmapFromNativePixmap(const gfx::NativePixmap& native_pixmap,
     return x11::Pixmap::None;
   }
 
-  // TODO(https://crbug.com/1411749): this was made Sync() reportedly because
+  // TODO(crbug.com/40254955): this was made Sync() reportedly because
   // glXCreatePixmap() would fail on ChromeOS with "failed to create a drawable"
   // otherwise. Today, ChromeOS doesn't use X11, so that reason is obsolete. I
   // tried removing the Sync() for Linux, tested with hardware decoding a 4k
@@ -141,15 +139,28 @@ inline EGLDisplay FromXDisplay() {
 namespace ui {
 
 NativePixmapEGLX11Binding::NativePixmapEGLX11Binding(gfx::BufferFormat format)
-    : display_(gl::FromXDisplay()), format_(format) {}
+    : display_(gl::FromXDisplay()) {}
 
 NativePixmapEGLX11Binding::~NativePixmapEGLX11Binding() {
   if (surface_) {
     eglDestroySurface(display_, surface_);
   }
+
+  if (pixmap_ != x11::Pixmap::None) {
+    auto* connection = x11::Connection::Get();
+    connection->FreePixmap({pixmap_});
+  }
+}
+
+bool NativePixmapEGLX11Binding::IsBufferFormatSupported(
+    gfx::BufferFormat format) {
+  return gl::IsFormatSupported(format);
 }
 
 bool NativePixmapEGLX11Binding::Initialize(x11::Pixmap pixmap) {
+  CHECK_NE(pixmap, x11::Pixmap::None);
+  pixmap_ = pixmap;
+
   if (eglInitialize(display_, nullptr, nullptr) != EGL_TRUE) {
     return false;
   }
@@ -223,9 +234,7 @@ std::unique_ptr<NativePixmapGLBinding> NativePixmapEGLX11Binding::Create(
     return nullptr;
   }
 
-  // TODO(https://crbug.com/1411749): if we early out below, should we call
-  // FreePixmap()?
-
+  // Transfer the ownership of `pixmap` to `NativePixmapEGLX11Binding`.
   if (!binding->Initialize(std::move(pixmap))) {
     VLOG(1) << "Unable to initialize binding from pixmap";
     return nullptr;
@@ -266,15 +275,6 @@ bool NativePixmapEGLX11Binding::BindTexture(GLenum target, GLuint texture_id) {
   }
 
   return true;
-}
-
-GLuint NativePixmapEGLX11Binding::GetInternalFormat() {
-  return NativePixmapGLBinding::BufferFormatToGLInternalFormatDefaultMapping(
-      format_);
-}
-
-GLenum NativePixmapEGLX11Binding::GetDataType() {
-  return GL_UNSIGNED_BYTE;
 }
 
 }  // namespace ui

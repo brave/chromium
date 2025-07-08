@@ -2,24 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import '../settings_shared.css.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {assertExists} from '../assert_extras.js';
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {routes} from '../router.js';
 
-import {OsSyncBrowserProxy, OsSyncBrowserProxyImpl, OsSyncPrefs} from './os_sync_browser_proxy.js';
+import type {OsSyncBrowserProxy, OsSyncPrefs} from './os_sync_browser_proxy.js';
+import {OsSyncBrowserProxyImpl} from './os_sync_browser_proxy.js';
 import {getTemplate} from './os_sync_controls_subpage.html.js';
 
 /**
@@ -84,30 +85,16 @@ export class OsSyncControlsSubpageElement extends
         value: true,
         computed: `computeDataTypeTogglesDisabled_(osSyncPrefs.syncAllOsTypes)`,
       },
-
-      /**
-       * Whether to show the new UI for OS Sync Settings and
-       * Browser Sync Settings  which include sublabel and
-       * Apps toggle shared between Ash and Lacros.
-       */
-      showSyncSettingsRevamp_: {
-        type: Boolean,
-        value: loadTimeData.getBoolean('appsToggleSharingEnabled'),
-        readOnly: true,
-      },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([Setting.kSplitSyncOnOff]),
-      },
     };
   }
 
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kSplitSyncOnOff,
+  ]);
+
+  override hidden: boolean;
   private areDataTypeTogglesDisabled_: boolean;
-  private showSyncSettingsRevamp_: boolean;
   private supportedSettingsIds: Set<Setting>;
   private browserProxy_: OsSyncBrowserProxy;
   private osSyncPrefs: OsSyncPrefs|undefined;
@@ -135,11 +122,11 @@ export class OsSyncControlsSubpageElement extends
    * RouteObserverMixin override
    */
   override currentRouteChanged(newRoute: Route, oldRoute: Route): void {
-    if (newRoute === routes.OS_SYNC) {
+    if (newRoute === routes.OS_SYNC_CONTROLS) {
       this.browserProxy_.didNavigateToOsSyncPage();
       this.attemptDeepLink();
     }
-    if (oldRoute === routes.OS_SYNC) {
+    if (oldRoute === routes.OS_SYNC_CONTROLS) {
       this.browserProxy_.didNavigateAwayFromOsSyncPage();
     }
   }
@@ -168,8 +155,8 @@ export class OsSyncControlsSubpageElement extends
   /**
    * Called when the sync data radio button selection changes.
    */
-  private onSyncDataRadioSelectionChanged_(event:
-                                               CustomEvent<{value: string}>) {
+  private onSyncDataRadioSelectionChanged_(event: CustomEvent<{value: string}>):
+      void {
     assertExists(this.osSyncPrefs);
     const syncAllDataTypes =
         event.detail.value === RadioButtonNames.SYNC_EVERYTHING;
@@ -195,7 +182,8 @@ export class OsSyncControlsSubpageElement extends
   /**
    * Called when the link to the browser's sync settings is clicked.
    */
-  private onBrowserSyncSettingsClicked_(event: CustomEvent<{event: Event}>) {
+  private onBrowserSyncSettingsClicked_(event: CustomEvent<{event: Event}>):
+      void {
     // Prevent the default link click behavior.
     event.detail.event.preventDefault();
 
@@ -234,7 +222,7 @@ export class OsSyncControlsSubpageElement extends
    * Whether the sync data type toggles should be disabled.
    */
   private computeDataTypeTogglesDisabled_(): boolean {
-    return this.osSyncPrefs !== undefined && this.osSyncPrefs!.syncAllOsTypes;
+    return this.osSyncPrefs !== undefined && this.osSyncPrefs.syncAllOsTypes;
   }
 
   /**

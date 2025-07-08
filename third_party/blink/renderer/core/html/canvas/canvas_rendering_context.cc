@@ -25,15 +25,21 @@
 
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 
+#include "base/strings/stringprintf.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_hit_test_rect.h"
 #include "third_party/blink/renderer/core/animation_frame/worker_animation_frame_provider.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_image_source.h"
+#include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
@@ -43,13 +49,18 @@ CanvasRenderingContext::CanvasRenderingContext(
     CanvasRenderingAPI canvas_rendering_API)
     : ActiveScriptWrappable<CanvasRenderingContext>({}),
       host_(host),
-      color_params_(attrs.color_space, attrs.pixel_format, attrs.alpha),
       creation_attributes_(attrs),
-      canvas_rendering_type_(canvas_rendering_API) {}
-
-SkColorInfo CanvasRenderingContext::CanvasRenderingContextSkColorInfo() const {
-  return SkColorInfo(kN32_SkColorType, kPremul_SkAlphaType,
-                     SkColorSpace::MakeSRGB());
+      canvas_rendering_type_(canvas_rendering_API) {
+  // The following check is for investigating crbug.com/1470622
+  // If the crash stops happening in CanvasRenderingContext2D::
+  // GetOrCreatePaintCanvas(), and starts happening here instead,
+  // then we'll know that the bug is related to creation and the
+  // new crash reports pointing to this location will provide more
+  // actionable feedback on how to fix the issue. If the crash
+  // continues to happen at the old location, then we'll know that
+  // the problem has to do with a pre-finalizer being called
+  // prematurely.
+  CHECK(host_);
 }
 
 void CanvasRenderingContext::Dispose() {
@@ -61,20 +72,103 @@ void CanvasRenderingContext::Dispose() {
   // the other in order to break the circular reference.  This is to avoid
   // an error when CanvasRenderingContext::DidProcessTask() is invoked
   // after the HTMLCanvasElement is destroyed.
-  if (Host()) {
-    Host()->DetachContext();
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
+    host->DetachContext();
     host_ = nullptr;
   }
 }
 
-NoAllocDirectCallHost* CanvasRenderingContext::AsNoAllocDirectCallHost() {
-  return nullptr;
+bool CanvasRenderingContext::IsDrawElementEligible(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  if (!Host() || Host()->IsOffscreenCanvas()) {
+    return false;
+  }
+
+  HTMLCanvasElement* canvas_element = static_cast<HTMLCanvasElement*>(Host());
+  if (!canvas_element || !canvas_element->GetDocument().View()) {
+    return false;
+  }
+
+  auto build_error = [&func_name](const char* format) {
+    StringBuilder builder;
+    builder.AppendFormat(format, func_name.Utf8().c_str());
+    return builder.ToString();
+  };
+
+  if (element->parentElement() != canvas_element) {
+    exception_state.ThrowTypeError(
+        build_error("Only immediate children of the <canvas> element can be "
+                    "passed to %s."));
+    return false;
+  }
+
+  if (!canvas_element->layoutSubtree()) {
+    exception_state.ThrowTypeError(build_error(
+        "<canvas> elements without layoutsubtree do not support %s."));
+    return false;
+  }
+
+  if (!element->GetLayoutObject()) {
+    exception_state.ThrowTypeError(build_error(
+        "The canvas and element used with %s must have been laid "
+        "out. Detached canvases are not supported, nor canvas or children that "
+        "are `display: none`."));
+    return false;
+  }
+
+  // TODO(crbug.com/413728246): Maybe we can support canvas element.
+  if (IsA<HTMLCanvasElement>(element)) {
+    exception_state.ThrowTypeError(
+        build_error("<canvas> children of a <canvas> cannot be passed to %s."));
+    return false;
+  }
+
+  return true;
+}
+
+bool CanvasRenderingContext::ConvertHitTestRegionsToHTMLCanvasRegions(
+    const HeapVector<Member<CanvasElementHitTestRegion>>& hit_test_regions,
+    VectorOf<HTMLCanvasElement::ElementHitTestRegion>& result,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  for (const auto& region : hit_test_regions) {
+    if (!IsDrawElementEligible(region->element(), func_name, exception_state)) {
+      return false;
+    }
+
+    double width = [&]() -> double {
+      if (region->rect()->hasWidth()) {
+        return *region->rect()->width();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.width();
+    }();
+
+    double height = [&]() -> double {
+      if (region->rect()->hasHeight()) {
+        return *region->rect()->height();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.height();
+    }();
+
+    result.push_back(
+        MakeGarbageCollected<HTMLCanvasElement::ElementHitTestRegion>(
+            region->element(), gfx::RectF(region->rect()->x(),
+                                          region->rect()->y(), width, height)));
+  }
+  return true;
 }
 
 void CanvasRenderingContext::DidDraw(
     const SkIRect& dirty_rect,
     CanvasPerformanceMonitor::DrawType draw_type) {
-  Host()->DidDraw(dirty_rect);
+  CanvasRenderingContextHost* const host = Host();
+  host->DidDraw(dirty_rect);
 
   auto& monitor = GetCanvasPerformanceMonitor();
   monitor.DidDraw(draw_type);
@@ -86,7 +180,7 @@ void CanvasRenderingContext::DidDraw(
   // We need to store whether the document is being printed because the
   // document may exit printing state by the time DidProcessTask is called.
   // This is an issue with beforeprint event listeners.
-  did_print_in_current_task_ |= Host()->IsPrinting();
+  did_print_in_current_task_ |= host->IsPrinting();
   Thread::Current()->AddTaskObserver(this);
 }
 
@@ -96,27 +190,26 @@ void CanvasRenderingContext::DidProcessTask(
 
   // The end of a script task that drew content to the canvas is the point
   // at which the current frame may be considered complete.
-  if (Host())
-    Host()->PreFinalizeFrame();
-  CanvasResourceProvider::FlushReason reason =
-      did_print_in_current_task_
-          ? CanvasResourceProvider::FlushReason::kCanvasPushFrameWhilePrinting
-          : CanvasResourceProvider::FlushReason::kCanvasPushFrame;
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
+    host->PreFinalizeFrame();
+  }
+  FlushReason reason = did_print_in_current_task_
+                           ? FlushReason::kCanvasPushFrameWhilePrinting
+                           : FlushReason::kCanvasPushFrame;
   FinalizeFrame(reason);
   did_print_in_current_task_ = false;
-  if (Host())
-    Host()->PostFinalizeFrame(reason);
+  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
+    host->PostFinalizeFrame(reason);
+  }
 }
 
 void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
+  const CanvasRenderingContextHost* const host = Host();
   if (auto* window =
-          DynamicTo<LocalDOMWindow>(Host()->GetTopExecutionContext())) {
+          DynamicTo<LocalDOMWindow>(host->GetTopExecutionContext())) {
     WebFeature feature;
-    if (Host()->IsOffscreenCanvas()) {
+    if (host->IsOffscreenCanvas()) {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED();
-          U_FALLTHROUGH;
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kOffscreenCanvas_2D;
           break;
@@ -132,12 +225,11 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kOffscreenCanvas_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     } else {
       switch (canvas_rendering_type_) {
-        default:
-          NOTREACHED();
-          U_FALLTHROUGH;
         case CanvasRenderingContext::CanvasRenderingAPI::k2D:
           feature = WebFeature::kHTMLCanvasElement_2D;
           break;
@@ -153,6 +245,8 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
         case CanvasRenderingContext::CanvasRenderingAPI::kWebgpu:
           feature = WebFeature::kHTMLCanvasElement_WebGPU;
           break;
+        default:
+          NOTREACHED();
       }
     }
     UseCounter::Count(window->document(), feature);
@@ -160,9 +254,10 @@ void CanvasRenderingContext::RecordUMACanvasRenderingAPI() {
 }
 
 void CanvasRenderingContext::RecordUKMCanvasRenderingAPI() {
-  DCHECK(Host());
-  const auto& ukm_params = Host()->GetUkmParameters();
-  if (Host()->IsOffscreenCanvas()) {
+  CanvasRenderingContextHost* const host = Host();
+  DCHECK(host);
+  const auto& ukm_params = host->GetUkmParameters();
+  if (host->IsOffscreenCanvas()) {
     ukm::builders::ClientRenderingAPI(ukm_params.source_id)
         .SetOffscreenCanvas_RenderingContext(
             static_cast<int>(canvas_rendering_type_))
@@ -175,9 +270,10 @@ void CanvasRenderingContext::RecordUKMCanvasRenderingAPI() {
 }
 
 void CanvasRenderingContext::RecordUKMCanvasDrawnToRenderingAPI() {
-  DCHECK(Host());
-  const auto& ukm_params = Host()->GetUkmParameters();
-  if (Host()->IsOffscreenCanvas()) {
+  CanvasRenderingContextHost* const host = Host();
+  DCHECK(host);
+  const auto& ukm_params = host->GetUkmParameters();
+  if (host->IsOffscreenCanvas()) {
     ukm::builders::ClientRenderingAPI(ukm_params.source_id)
         .SetOffscreenCanvas_RenderingContextDrawnTo(
             static_cast<int>(canvas_rendering_type_))
@@ -215,7 +311,6 @@ CanvasRenderingContext::RenderingAPIFromId(const String& id) {
 
 void CanvasRenderingContext::Trace(Visitor* visitor) const {
   visitor->Trace(host_);
-  ScriptWrappable::Trace(visitor);
   ActiveScriptWrappable::Trace(visitor);
 }
 
@@ -232,6 +327,16 @@ CanvasRenderingContext::GetCanvasPerformanceMonitor() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<CanvasPerformanceMonitor>,
                                   monitor, ());
   return *monitor;
+}
+
+CanvasRenderingContext::ElementHitTestRegion::ElementHitTestRegion(
+    Element* element,
+    const gfx::RectF& rect)
+    : element_(element), rect_(rect) {}
+
+void CanvasRenderingContext::ElementHitTestRegion::Trace(
+    Visitor* visitor) const {
+  visitor->Trace(element_);
 }
 
 }  // namespace blink

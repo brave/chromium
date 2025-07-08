@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 
+#include <array>
+
 #include "base/check.h"
 #include "base/memory/raw_ref.h"
 
@@ -53,8 +55,9 @@ class RingBuffer {
     return &buffer_[buffer_index];
   }
 
-  void SaveToBuffer(const T& value) {
-    buffer_[BufferIndex(0)] = value;
+  template <typename U>
+  void SaveToBuffer(U&& value) {
+    buffer_[BufferIndex(0)] = std::forward<U>(value);
     current_index_++;
   }
 
@@ -70,14 +73,16 @@ class RingBuffer {
 
     Iterator& operator++() {
       index_++;
-      if (index_ == kSize)
+      if (index_ == kSize) {
         out_of_range_ = true;
+      }
       return *this;
     }
 
     Iterator& operator--() {
-      if (index_ == 0)
+      if (index_ == 0) {
         out_of_range_ = true;
+      }
       index_--;
       return *this;
     }
@@ -101,8 +106,9 @@ class RingBuffer {
   // Example usage (iterate from oldest to newest value):
   //  for (RingBuffer<T, kSize>::Iterator it = ring_buffer.Begin(); it; ++it) {}
   Iterator Begin() const {
-    if (current_index_ < kSize)
+    if (current_index_ < kSize) {
       return Iterator(*this, kSize - current_index_);
+    }
     return Iterator(*this, 0);
   }
 
@@ -124,7 +130,7 @@ class RingBuffer {
     return buffer_index < current_index_;
   }
 
-  T buffer_[kSize];
+  std::array<T, kSize> buffer_;
   size_t current_index_;
 };
 

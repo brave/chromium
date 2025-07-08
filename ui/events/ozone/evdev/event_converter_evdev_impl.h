@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/memory/raw_ptr.h"
-#include "base/message_loop/message_pump_libevent.h"
+#include "base/message_loop/message_pump_epoll.h"
 #include "ui/events/devices/input_device.h"
 #include "ui/events/devices/stylus_state.h"
 #include "ui/events/event.h"
@@ -23,6 +23,10 @@
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 #include "ui/events/ozone/evdev/mouse_button_map_evdev.h"
 #include "ui/ozone/public/input_controller.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "ui/events/ozone/evdev/microphone_mute_key_metrics.h"
+#endif
 
 struct input_event;
 
@@ -54,10 +58,12 @@ class COMPONENT_EXPORT(EVDEV) EventConverterEvdevImpl
   bool HasStylusSwitch() const override;
   ui::StylusState GetStylusSwitchState() override;
   bool HasAssistantKey() const override;
+  bool HasFunctionKey() const override;
   void SetKeyFilter(bool enable_filter,
                     std::vector<DomCode> allowed_keys) override;
   void OnDisabled() override;
   std::vector<uint64_t> GetKeyboardKeyBits() const override;
+  void SetBlockModifiers(bool block_modifiers) override;
 
   void ProcessEvents(const struct input_event* inputs, int count);
 
@@ -99,6 +105,8 @@ class COMPONENT_EXPORT(EVDEV) EventConverterEvdevImpl
   bool has_stylus_switch_;
   // `has_assistant_key_` can only be true if the device is a keyboard.
   bool has_assistant_key_;
+  // `has_function_key_` can only be true if the device is a keyboard.
+  bool has_function_key_;
 
   // LEDs for this device.
   bool has_caps_lock_led_;
@@ -115,13 +123,16 @@ class COMPONENT_EXPORT(EVDEV) EventConverterEvdevImpl
   unsigned int last_scan_code_ = 0;
 
   // Controller for watching the input fd.
-  base::MessagePumpLibevent::FdWatchController controller_;
+  base::MessagePumpEpoll::FdWatchController controller_;
 
   // The evdev codes of the keys which should be blocked.
   std::bitset<KEY_CNT> blocked_keys_;
 
   // Pressed keys bitset.
   std::bitset<KEY_CNT> key_state_;
+
+  // Whether modifier keys should be blocked from the input device.
+  bool block_modifiers_ = false;
 
   // Last mouse button state.
   static const int kMouseButtonCount = BTN_JOYSTICK - BTN_MOUSE;
@@ -138,6 +149,13 @@ class COMPONENT_EXPORT(EVDEV) EventConverterEvdevImpl
 
   // Supported keyboard key bits.
   std::vector<uint64_t> key_bits_;
+
+  // Whether telephony device phone mute scan code should be blocked.
+  bool block_telephony_device_phone_mute_ = false;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<MicrophoneMuteKeyMetrics> microphone_mute_key_metrics_;
+#endif
 };
 
 }  // namespace ui

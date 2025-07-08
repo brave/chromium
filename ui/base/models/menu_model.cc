@@ -28,6 +28,10 @@ bool MenuModel::IsNewFeatureAt(size_t index) const {
   return false;
 }
 
+bool MenuModel::GetForceShowAcceleratorForItemAt(size_t index) const {
+  return false;
+}
+
 ElementIdentifier MenuModel::GetElementIdentifierAt(size_t index) const {
   return ElementIdentifier();
 }
@@ -101,18 +105,18 @@ void MenuModel::SetMenuModelDelegate(MenuModelDelegate* delegate) {
   menu_model_delegate_ = delegate;
 }
 
-absl::optional<ui::ColorId> MenuModel::GetForegroundColorId(size_t index) {
-  return absl::nullopt;
+std::optional<ui::ColorId> MenuModel::GetForegroundColorId(size_t index) {
+  return std::nullopt;
 }
 
-absl::optional<ui::ColorId> MenuModel::GetSubmenuBackgroundColorId(
+std::optional<ui::ColorId> MenuModel::GetSubmenuBackgroundColorId(
     size_t index) {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<ui::ColorId> MenuModel::GetSelectedBackgroundColorId(
+std::optional<ui::ColorId> MenuModel::GetSelectedBackgroundColorId(
     size_t index) {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace ui

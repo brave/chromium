@@ -5,18 +5,21 @@
 import {TestRunner} from 'test_runner';
 import {BindingsTestRunner} from 'bindings_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+
 (async function() {
   TestRunner.addResult(`Verify that automapping is sane.\n`);
 
   var timestamp = new Date('December 1, 1989');
   var index_html = {
-    contentType: Common.resourceTypes.Document,
+    contentType: Common.ResourceType.resourceTypes.Document,
     content: '<body>this is main resource</body>',
     time: timestamp
   };
   var foo_js = {content: 'console.log(\'foo.js!\');', time: null};
   var bar_css = {
-    contentType: Common.resourceTypes.Stylesheet,
+    contentType: Common.ResourceType.resourceTypes.Stylesheet,
     content: '* { box-sizing: border-box }',
     time: timestamp
   };
@@ -24,7 +27,7 @@ import {BindingsTestRunner} from 'bindings_test_runner';
   var sources_module_json = {content: 'module descriptor 2'};
   var bazContent = 'alert(1);';
 
-  var automappingTest = new BindingsTestRunner.AutomappingTest(new Workspace.Workspace());
+  var automappingTest = new BindingsTestRunner.AutomappingTest(new Workspace.Workspace.WorkspaceImpl());
   automappingTest.addNetworkResources({
     // Make sure main resource gets mapped.
     'http://example.com': index_html,

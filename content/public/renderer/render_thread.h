@@ -13,9 +13,9 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
+#include "content/common/buildflags.h"
 #include "content/common/content_export.h"
 #include "content/public/child/child_thread.h"
-#include "services/network/public/mojom/attribution.mojom-forward.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
@@ -38,10 +38,7 @@ class RenderProcessHost;
 }
 
 namespace IPC {
-class Listener;
-class MessageFilter;
 class SyncChannel;
-class SyncMessageFilter;
 }  // namespace IPC
 
 namespace content {
@@ -61,29 +58,12 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
 
   virtual IPC::SyncChannel* GetChannel() = 0;
   virtual std::string GetLocale() = 0;
-  virtual IPC::SyncMessageFilter* GetSyncMessageFilter() = 0;
 
-  // Called to add or remove a listener for a particular message routing ID.
-  // These methods normally get delegated to a MessageRouter.
-  virtual void AddRoute(int32_t routing_id, IPC::Listener* listener) = 0;
-  // Attach a task runner to run received IPC tasks on for the given routing ID.
-  // This must be called after the route has already been added via AddRoute(),
-  // but it is optional. The default main thread task runner would be used if
-  // this method is not called.
-  virtual void AttachTaskRunnerToRoute(
-      int32_t routing_id,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner) = 0;
-  virtual void RemoveRoute(int32_t routing_id) = 0;
-  virtual int GenerateRoutingID() = 0;
   virtual bool GenerateFrameRoutingID(
       int32_t& routing_id,
       blink::LocalFrameToken& frame_token,
       base::UnguessableToken& devtools_frame_token,
       blink::DocumentToken& document_token) = 0;
-
-  // These map to IPC::ChannelProxy methods.
-  virtual void AddFilter(IPC::MessageFilter* filter) = 0;
-  virtual void RemoveFilter(IPC::MessageFilter* filter) = 0;
 
   // Add/remove observers for the process.
   virtual void AddObserver(RenderThreadObserver* observer) = 0;
@@ -98,10 +78,6 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   // Retrieve the process ID of the browser process.
   virtual int32_t GetClientId() = 0;
 
-  // Set the renderer process type.
-  virtual void SetRendererProcessType(
-      blink::scheduler::WebRendererProcessType type) = 0;
-
   // Returns the user-agent string.
   virtual blink::WebString GetUserAgent() = 0;
   virtual const blink::UserAgentMetadata& GetUserAgentMetadata() = 0;
@@ -110,12 +86,6 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void WriteIntoTrace(
       perfetto::TracedProto<perfetto::protos::pbzero::RenderProcessHost>
           proto) = 0;
-
-  // Returns whether web or OS-level Attribution Reporting is supported.
-  // See
-  // https://github.com/WICG/attribution-reporting-api/blob/main/app_to_web.md.
-  virtual network::mojom::AttributionSupport
-  GetAttributionReportingSupport() = 0;
 
  private:
   const base::AutoReset<RenderThread*> resetter_;

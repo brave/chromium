@@ -6,6 +6,7 @@
 
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_unittest.h"
+#include "chrome/grit/generated_resources.h"
 #include "extensions/common/extension_features.h"
 
 class ExtensionsToolbarButtonUnitTest : public ExtensionsToolbarUnitTest {
@@ -48,9 +49,7 @@ ExtensionsToolbarButtonUnitTest::extensions_coordinator() {
 
 void ExtensionsToolbarButtonUnitTest::ClickExtensionsButton() {
   ExtensionsToolbarButton* extensions_button =
-      extensions_container()
-          ->GetExtensionsToolbarControls()
-          ->extensions_button();
+      extensions_container()->GetExtensionsButton();
   ClickButton(extensions_button);
   LayoutContainerIfNecessary();
 }
@@ -75,4 +74,34 @@ TEST_F(ExtensionsToolbarButtonUnitTest, ButtonOpensMenu) {
 
   ClickExtensionsButton();
   EXPECT_FALSE(extensions_coordinator()->IsShowing());
+}
+
+// Tests that updating the button state properly modifies the tooltip and
+// accessible name.
+TEST_F(ExtensionsToolbarButtonUnitTest, UpdateState) {
+  InstallExtension("Extension");
+
+  extensions_button()->UpdateState(ExtensionsToolbarButton::State::kDefault);
+  EXPECT_EQ(extensions_button()->GetRenderedTooltipText({}),
+            l10n_util::GetStringUTF16(IDS_TOOLTIP_EXTENSIONS_BUTTON));
+  EXPECT_EQ(extensions_button()->GetViewAccessibility().GetCachedName(),
+            l10n_util::GetStringUTF16(IDS_ACC_NAME_EXTENSIONS_BUTTON));
+
+  extensions_button()->UpdateState(
+      ExtensionsToolbarButton::State::kAllExtensionsBlocked);
+  EXPECT_EQ(extensions_button()->GetRenderedTooltipText({}),
+            l10n_util::GetStringUTF16(
+                IDS_TOOLTIP_EXTENSIONS_BUTTON_ALL_EXTENSIONS_BLOCKED));
+  EXPECT_EQ(extensions_button()->GetViewAccessibility().GetCachedName(),
+            l10n_util::GetStringUTF16(
+                IDS_ACC_NAME_EXTENSIONS_BUTTON_ALL_EXTENSIONS_BLOCKED));
+
+  extensions_button()->UpdateState(
+      ExtensionsToolbarButton::State::kAnyExtensionHasAccess);
+  EXPECT_EQ(extensions_button()->GetRenderedTooltipText({}),
+            l10n_util::GetStringUTF16(
+                IDS_TOOLTIP_EXTENSIONS_BUTTON_ANY_EXTENSION_HAS_ACCESS));
+  EXPECT_EQ(extensions_button()->GetViewAccessibility().GetCachedName(),
+            l10n_util::GetStringUTF16(
+                IDS_ACC_NAME_EXTENSIONS_BUTTON_ANY_EXTENSION_HAS_ACCESS));
 }

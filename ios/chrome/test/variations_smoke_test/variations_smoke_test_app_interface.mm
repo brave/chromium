@@ -10,15 +10,8 @@
 #import "base/time/time.h"
 #import "components/prefs/pref_service.h"
 #import "components/variations/pref_names.h"
+#import "components/variations/service/variations_service.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-using variations::prefs::kVariationsCompressedSeed;
-using variations::prefs::kVariationsLastFetchTime;
-using variations::prefs::kVariationsSeedSignature;
 
 namespace {
 
@@ -36,20 +29,27 @@ base::Time GetProcessStartTime() {
 
 @implementation VariationsSmokeTestAppInterface
 
-+ (BOOL)variationsSeedInLocalStatePrefs {
-  PrefService* localState = GetApplicationContext()->GetLocalState();
-  const std::string& compressedSeed =
-      localState->GetString(kVariationsCompressedSeed);
-  const std::string& seedSignature =
-      localState->GetString(kVariationsSeedSignature);
-  return !compressedSeed.empty() && !seedSignature.empty();
++ (BOOL)isVariationsSeedStored {
+  variations::SeedReaderWriter* seedReaderWriter =
+      GetApplicationContext()
+          ->GetVariationsService()
+          ->GetSeedStoreForTesting()
+          ->GetSeedReaderWriterForTesting();
+  variations::StoredSeed storedSeed = seedReaderWriter->GetSeedData();
+  return !storedSeed.data.empty() && !storedSeed.signature.empty() &&
+         !seedReaderWriter->HasPendingWrite();
 }
 
 + (BOOL)variationsSeedFetchedInCurrentLaunch {
-  // If the pref value doesn't exist, the returned time will be 0 microseconds
+  // If there's no fetch time, the returned time will be std::nullopt.
+  base::Time lastFetchTime = GetApplicationContext()
+                                 ->GetVariationsService()
+                                 ->GetSeedStoreForTesting()
+                                 ->GetSeedReaderWriterForTesting()
+                                 ->GetSeedData()
+                                 .client_fetch_time;
+  // If there's no fetch time, the returned time will be 0 microseconds
   // from Windows epoch.
-  base::Time lastFetchTime = GetApplicationContext()->GetLocalState()->GetTime(
-      kVariationsLastFetchTime);
   return GetProcessStartTime() < lastFetchTime;
 }
 

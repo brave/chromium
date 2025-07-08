@@ -50,13 +50,6 @@ class CompressionModuleTest : public ::testing::Test {
     return output;
   }
 
-  void EnableCompression() {
-    scoped_feature_list_.InitAndEnableFeature(kCompressReportingPipeline);
-  }
-  void DisableCompression() {
-    scoped_feature_list_.InitAndDisableFeature(kCompressReportingPipeline);
-  }
-
   base::test::TaskEnvironment task_environment_;
   scoped_refptr<ResourceManager> memory_resource_;
   scoped_refptr<CompressionModule> compression_module_;
@@ -66,7 +59,6 @@ class CompressionModuleTest : public ::testing::Test {
 };
 
 TEST_F(CompressionModuleTest, CompressRecordSnappy) {
-  EnableCompression();
   scoped_refptr<CompressionModule> test_compression_module =
       CompressionModule::Create(0, CompressionInformation::COMPRESSION_SNAPPY);
 
@@ -74,13 +66,13 @@ TEST_F(CompressionModuleTest, CompressRecordSnappy) {
   const std::string expected_output =
       BenchmarkCompressRecordSnappy(kTestString);
 
-  test::TestMultiEvent<std::string, absl::optional<CompressionInformation>>
+  test::TestMultiEvent<std::string, std::optional<CompressionInformation>>
       compressed_record_event;
   // Compress string with CompressionModule
   test_compression_module->CompressRecord(kTestString, memory_resource_,
                                           compressed_record_event.cb());
 
-  const std::tuple<std::string, absl::optional<CompressionInformation>>
+  const std::tuple<std::string, std::optional<CompressionInformation>>
       compressed_record_tuple = compressed_record_event.result();
 
   const std::string_view compressed_string_callback =
@@ -89,7 +81,7 @@ TEST_F(CompressionModuleTest, CompressRecordSnappy) {
   // Expect that benchmark compression is the same as compression module
   EXPECT_THAT(compressed_string_callback, StrEq(expected_output));
 
-  const absl::optional<CompressionInformation> compression_info =
+  const std::optional<CompressionInformation> compression_info =
       std::get<1>(compressed_record_tuple);
 
   EXPECT_TRUE(compression_info.has_value());
@@ -100,7 +92,6 @@ TEST_F(CompressionModuleTest, CompressRecordSnappy) {
 }
 
 TEST_F(CompressionModuleTest, CompressPoorlyCompressibleRecordSnappy) {
-  EnableCompression();
   scoped_refptr<CompressionModule> test_compression_module =
       CompressionModule::Create(0, CompressionInformation::COMPRESSION_SNAPPY);
 
@@ -108,14 +99,14 @@ TEST_F(CompressionModuleTest, CompressPoorlyCompressibleRecordSnappy) {
   const std::string expected_output =
       BenchmarkCompressRecordSnappy(kPoorlyCompressibleTestString);
 
-  test::TestMultiEvent<std::string, absl::optional<CompressionInformation>>
+  test::TestMultiEvent<std::string, std::optional<CompressionInformation>>
       compressed_record_event;
   // Compress string with CompressionModule
   test_compression_module->CompressRecord(kPoorlyCompressibleTestString,
                                           memory_resource_,
                                           compressed_record_event.cb());
 
-  const std::tuple<std::string, absl::optional<CompressionInformation>>
+  const std::tuple<std::string, std::optional<CompressionInformation>>
       compressed_record_tuple = compressed_record_event.result();
 
   const std::string_view compressed_string_callback =
@@ -124,7 +115,7 @@ TEST_F(CompressionModuleTest, CompressPoorlyCompressibleRecordSnappy) {
   // Expect that benchmark compression is the same as compression module
   EXPECT_THAT(compressed_string_callback, StrEq(kPoorlyCompressibleTestString));
 
-  const absl::optional<CompressionInformation> compression_info =
+  const std::optional<CompressionInformation> compression_info =
       std::get<1>(compressed_record_tuple);
 
   EXPECT_TRUE(compression_info.has_value());
@@ -135,18 +126,17 @@ TEST_F(CompressionModuleTest, CompressPoorlyCompressibleRecordSnappy) {
 }
 
 TEST_F(CompressionModuleTest, CompressRecordBelowThreshold) {
-  EnableCompression();
   scoped_refptr<CompressionModule> test_compression_module =
       CompressionModule::Create(512,
                                 CompressionInformation::COMPRESSION_SNAPPY);
 
-  test::TestMultiEvent<std::string, absl::optional<CompressionInformation>>
+  test::TestMultiEvent<std::string, std::optional<CompressionInformation>>
       compressed_record_event;
   // Compress string with CompressionModule
   test_compression_module->CompressRecord(kTestString, memory_resource_,
                                           compressed_record_event.cb());
 
-  const std::tuple<std::string, absl::optional<CompressionInformation>>
+  const std::tuple<std::string, std::optional<CompressionInformation>>
       compressed_record_tuple = compressed_record_event.result();
 
   const std::string_view compressed_string_callback =
@@ -155,7 +145,7 @@ TEST_F(CompressionModuleTest, CompressRecordBelowThreshold) {
   // Expect that record is not compressed since size is smaller than 512 bytes
   EXPECT_THAT(compressed_string_callback, StrEq(kTestString));
 
-  const absl::optional<CompressionInformation> compression_info =
+  const std::optional<CompressionInformation> compression_info =
       std::get<1>(compressed_record_tuple);
 
   EXPECT_TRUE(compression_info.has_value());
@@ -166,47 +156,17 @@ TEST_F(CompressionModuleTest, CompressRecordBelowThreshold) {
               Eq(CompressionInformation::COMPRESSION_NONE));
 }
 
-TEST_F(CompressionModuleTest, CompressRecordCompressionDisabled) {
-  // Disable compression feature
-  DisableCompression();
-  scoped_refptr<CompressionModule> test_compression_module =
-      CompressionModule::Create(0, CompressionInformation::COMPRESSION_SNAPPY);
-
-  test::TestMultiEvent<std::string, absl::optional<CompressionInformation>>
-      compressed_record_event;
-
-  // Compress string with CompressionModule
-  test_compression_module->CompressRecord(kTestString, memory_resource_,
-                                          compressed_record_event.cb());
-
-  const std::tuple<std::string, absl::optional<CompressionInformation>>
-      compressed_record_tuple = compressed_record_event.result();
-
-  const std::string_view compressed_string_callback =
-      std::get<0>(compressed_record_tuple);
-
-  // Expect that record is not compressed since compression is not enabled
-  EXPECT_THAT(compressed_string_callback, StrEq(kTestString));
-
-  const absl::optional<CompressionInformation> compression_info =
-      std::get<1>(compressed_record_tuple);
-
-  // Expect no compression information since compression has been disabled.
-  EXPECT_FALSE(compression_info.has_value());
-}
-
 TEST_F(CompressionModuleTest, CompressRecordCompressionNone) {
-  EnableCompression();
   scoped_refptr<CompressionModule> test_compression_module =
       CompressionModule::Create(0, CompressionInformation::COMPRESSION_NONE);
 
-  test::TestMultiEvent<std::string, absl::optional<CompressionInformation>>
+  test::TestMultiEvent<std::string, std::optional<CompressionInformation>>
       compressed_record_event;
 
   // Compress string with CompressionModule
   test_compression_module->CompressRecord(kTestString, memory_resource_,
                                           compressed_record_event.cb());
-  const std::tuple<std::string, absl::optional<CompressionInformation>>
+  const std::tuple<std::string, std::optional<CompressionInformation>>
       compressed_record_tuple = compressed_record_event.result();
 
   const std::string_view compressed_string_callback =
@@ -216,7 +176,7 @@ TEST_F(CompressionModuleTest, CompressRecordCompressionNone) {
   // the compression_algorithm.
   EXPECT_THAT(compressed_string_callback, StrEq(kTestString));
 
-  const absl::optional<CompressionInformation> compression_info =
+  const std::optional<CompressionInformation> compression_info =
       std::get<1>(compressed_record_tuple);
 
   EXPECT_TRUE(compression_info.has_value());

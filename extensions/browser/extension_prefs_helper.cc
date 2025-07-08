@@ -11,6 +11,7 @@
 #include "extensions/browser/extension_prefs_helper_factory.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/api/types.h"
+#include "extensions/common/extension_id.h"
 
 namespace extensions {
 
@@ -28,7 +29,7 @@ ExtensionPrefsHelper::ExtensionPrefsHelper(ExtensionPrefs* prefs,
 ExtensionPrefsHelper::~ExtensionPrefsHelper() = default;
 
 void ExtensionPrefsHelper::SetExtensionControlledPref(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const std::string& pref_key,
     ChromeSettingScope scope,
     base::Value value) {
@@ -55,7 +56,7 @@ void ExtensionPrefsHelper::SetExtensionControlledPref(
 }
 
 void ExtensionPrefsHelper::RemoveExtensionControlledPref(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const std::string& pref_key,
     ChromeSettingScope scope) {
   DCHECK(prefs_->pref_service()->FindPreference(pref_key))
@@ -67,14 +68,15 @@ void ExtensionPrefsHelper::RemoveExtensionControlledPref(
     ExtensionPrefs::ScopedDictionaryUpdate update(prefs_, extension_id,
                                                   scope_string);
     auto preference = update.Get();
-    if (preference)
+    if (preference) {
       preference->RemoveWithoutPathExpansion(pref_key, nullptr);
+    }
   }
   value_map_->RemoveExtensionPref(extension_id, pref_key, scope);
 }
 
 bool ExtensionPrefsHelper::CanExtensionControlPref(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const std::string& pref_key,
     bool incognito) {
   DCHECK(prefs_->pref_service()->FindPreference(pref_key))
@@ -85,7 +87,7 @@ bool ExtensionPrefsHelper::CanExtensionControlPref(
 }
 
 bool ExtensionPrefsHelper::DoesExtensionControlPref(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const std::string& pref_key,
     bool* from_incognito) {
   DCHECK(prefs_->pref_service()->FindPreference(pref_key))

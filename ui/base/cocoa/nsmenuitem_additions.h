@@ -16,6 +16,14 @@
 // menu item to fire.
 - (BOOL)cr_firesForKeyEquivalentEvent:(NSEvent*)event;
 
+// Convenience method for setting a menu item's key equivalent.
+- (void)cr_setKeyEquivalent:(NSString*)aString
+               modifierMask:(NSEventModifierFlags)mask;
+
+// Convenience method for clearing a menu item's key equivalent. After calling,
+// the item has no keyEquivalent string or mask.
+- (void)cr_clearKeyEquivalent;
+
 @end
 
 namespace ui::cocoa {
@@ -30,6 +38,9 @@ void COMPONENT_EXPORT(UI_BASE)
 
 void COMPONENT_EXPORT(UI_BASE)
     SetIsInputSourceCommandHebrewForTesting(bool is_command_hebrew);
+
+void COMPONENT_EXPORT(UI_BASE)
+    SetIsInputSourceCommandArabicForTesting(bool is_command_arabic);
 
 // Returns whether the named keyboard layout has the command-qwerty behavior,
 // meaning that the layout acts as though it was QWERTY when the command key is

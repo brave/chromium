@@ -4,8 +4,9 @@
 
 #include "ash/system/input_device_settings/input_device_key_alias_manager.h"
 
+#include <string_view>
+
 #include "ash/system/input_device_settings/input_device_settings_utils.h"
-#include "base/strings/string_piece.h"
 
 namespace ash {
 namespace {
@@ -34,14 +35,20 @@ InputDeviceKeyAliasManager::~InputDeviceKeyAliasManager() = default;
 
 std::string InputDeviceKeyAliasManager::GetAliasedDeviceKey(
     const ui::InputDevice& device) {
-  const std::string key = BuildDeviceKey(device);
+  return GetAliasedDeviceKey(device.vendor_id, device.product_id);
+}
+
+std::string InputDeviceKeyAliasManager::GetAliasedDeviceKey(
+    uint16_t vendor_id,
+    uint16_t product_id) {
+  const std::string key = BuildDeviceKey(vendor_id, product_id);
   const auto it = alias_to_primary_key_map_.find(key);
   return it == alias_to_primary_key_map_.end() ? key : it->second;
 }
 
 const base::flat_set<std::string>*
 InputDeviceKeyAliasManager::GetAliasesForPrimaryDeviceKey(
-    base::StringPiece primary_device_key) const {
+    std::string_view primary_device_key) const {
   const auto it = primary_key_to_aliases_map_.find(primary_device_key);
   return it == primary_key_to_aliases_map_.end() ? nullptr : &it->second;
 }

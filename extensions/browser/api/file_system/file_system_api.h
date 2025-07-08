@@ -18,6 +18,7 @@
 #include "build/chromeos_buildflags.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/api/file_system.h"
+#include "extensions/common/extension_id.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -35,10 +36,10 @@ namespace file_system_api {
 
 // Returns an empty path on failure.
 base::FilePath GetLastChooseEntryDirectory(const ExtensionPrefs* prefs,
-                                           const std::string& extension_id);
+                                           const ExtensionId& extension_id);
 
 void SetLastChooseEntryDirectory(ExtensionPrefs* prefs,
-                                 const std::string& extension_id,
+                                 const ExtensionId& extension_id,
                                  const base::FilePath& path);
 
 }  // namespace file_system_api
@@ -121,9 +122,8 @@ class FileSystemChooseEntryFunction : public FileSystemEntryFunction {
     // These first three options are mutually exclusive and are chosen in
     // this order.
     bool use_suggested_path = false;
-    const base::raw_ptr<base::FilePath> path_to_be_picked = nullptr;
-    const base::raw_ptr<std::vector<base::FilePath>> paths_to_be_picked =
-        nullptr;
+    const raw_ptr<base::FilePath> path_to_be_picked = nullptr;
+    const raw_ptr<std::vector<base::FilePath>> paths_to_be_picked = nullptr;
     bool skip_directory_confirmation = false;
     // This option is true and is only set to false in tests that do not
     // expect a dialog box to be displayed and want the test to fail if
@@ -147,9 +147,9 @@ class FileSystemChooseEntryFunction : public FileSystemEntryFunction {
   static void BuildFileTypeInfo(
       ui::SelectFileDialog::FileTypeInfo* file_type_info,
       const base::FilePath::StringType& suggested_extension,
-      const absl::optional<AcceptOptions>& accepts,
-      const absl::optional<bool>& accepts_all_types);
-  static void BuildSuggestion(const absl::optional<std::string>& opt_name,
+      const std::optional<AcceptOptions>& accepts,
+      const std::optional<bool>& accepts_all_types);
+  static void BuildSuggestion(const std::optional<std::string>& opt_name,
                               base::FilePath* suggested_name,
                               base::FilePath::StringType* suggested_extension);
 

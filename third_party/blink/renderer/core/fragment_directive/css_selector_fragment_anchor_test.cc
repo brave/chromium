@@ -9,7 +9,6 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
@@ -34,10 +33,6 @@ class CssSelectorFragmentAnchorTest : public SimTest {
  public:
   void SetUp() override {
     SimTest::SetUp();
-
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(
-        blink::features::kCssSelectorFragmentAnchor);
 
     // Focus handlers aren't run unless the page is focused.
     GetDocument().GetPage()->GetFocusController().SetActive(true);
@@ -83,9 +78,9 @@ class CssSelectorFragmentAnchorTest : public SimTest {
   const CSSValue* GetComputedValue(const CSSPropertyID& property_id,
                                    const Element& element) {
     return CSSProperty::Get(property_id)
-        .CSSValueFromComputedStyle(element.ComputedStyleRef(),
-                                   nullptr /* layout_object */,
-                                   false /* allow_visited_style */);
+        .CSSValueFromComputedStyle(
+            element.ComputedStyleRef(), nullptr /* layout_object */,
+            false /* allow_visited_style */, CSSValuePhase::kComputedValue);
   }
 
   bool IsElementOutlined(const Element& element) {

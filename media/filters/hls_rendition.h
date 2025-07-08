@@ -11,6 +11,7 @@
 #include "media/filters/chunk_demuxer.h"
 #include "media/filters/hls_data_source_provider.h"
 #include "media/filters/hls_demuxer_status.h"
+#include "media/filters/hls_network_access.h"
 #include "media/filters/manifest_demuxer.h"
 #include "media/formats/hls/media_playlist.h"
 #include "media/formats/hls/media_segment.h"
@@ -20,29 +21,30 @@ namespace media {
 // Forward declare.
 class ManifestDemuxerEngineHost;
 
-// Interface for `HlsRendition` to make data requests to avoid having to own or
-// create data sources.
-class MEDIA_EXPORT HlsRenditionHost {
+// An extension to the HlsNetworkAccess interface, with additional operations
+// that the renditions must be able to apply to their host.
+class MEDIA_EXPORT HlsRenditionHost : public HlsNetworkAccess {
  public:
-  virtual ~HlsRenditionHost() {}
+  // Fetch a new playlist for live content at the requested URI.
+  virtual void UpdateRenditionManifestUri(std::string role,
+                                          GURL uri,
+                                          HlsDemuxerStatusCallback cb) = 0;
 
-  // Lets a rendition read URL data from `uri`. Usually this will be a chunked
-  // read, but can be configured with `read_chunked`, since live video needs to
-  // download full manifests. Additionally, some manifests can specify a custom
-  // byte range, which can be forwarded as `range`.
-  virtual void ReadFromUrl(GURL uri,
-                           bool read_chunked,
-                           absl::optional<hls::types::ByteRange> range,
-                           HlsDataSourceStream::ReadCb cb) = 0;
-  virtual hls::ParseStatus::Or<scoped_refptr<hls::MediaPlaylist>>
-  ParseMediaPlaylistFromStream(HlsDataSourceStream stream,
-                               GURL uri,
-                               hls::types::DecimalInteger version) = 0;
+  // Used to set network speed (bits per second) for the adaptation selector.
+  virtual void UpdateNetworkSpeed(uint64_t bps) = 0;
+
+  // Notifies the rendition host that this rendition's ended state has changed.
+  // When all renditions are ended, the rendition host can notify the engine
+  // host as well.
+  virtual void SetEndOfStream(bool ended) = 0;
+
+  // Quits demuxing because of an unrecoverable error.
+  virtual void Quit(HlsDemuxerStatus status) = 0;
 };
 
 class MEDIA_EXPORT HlsRendition {
  public:
-  virtual ~HlsRendition() {}
+  virtual ~HlsRendition() = default;
 
   // Checks the current playback time and starts any required network requests
   // for more data, or clears out old data.
@@ -52,20 +54,34 @@ class MEDIA_EXPORT HlsRendition {
 
   // Does any necessary seeking work, and returns true iff more data is needed
   // as the seek was outside of a loaded range.
-  virtual bool Seek(base::TimeDelta seek_time) = 0;
+  virtual ManifestDemuxer::SeekResponse Seek(base::TimeDelta seek_time) = 0;
 
-  // Cancels any outstanding pending network requests.
-  virtual void CancelPendingNetworkRequests() = 0;
+  // Lets the rendition know that any network requests which respond with an
+  // aborted status are not to be treated as errors until the seek is finished.
+  virtual void StartWaitingForSeek() = 0;
 
   // Live renditions should return a nullopt for duration.
-  virtual absl::optional<base::TimeDelta> GetDuration() = 0;
+  virtual std::optional<base::TimeDelta> GetDuration() = 0;
 
-  static HlsDemuxerStatus::Or<std::unique_ptr<HlsRendition>> CreateRendition(
+  // Stop the rendition, including canceling pending seeks. After stopping,
+  // `CheckState` and `Seek` should be no-ops.
+  virtual void Stop() = 0;
+
+  // Update playlist because we've adapted to a network or resolution change.
+  // These are separate, since it's possible to update one without the other.
+  virtual void UpdatePlaylist(scoped_refptr<hls::MediaPlaylist> playlist) = 0;
+  virtual void UpdatePlaylistURI(const GURL& playlist_uri) = 0;
+
+  // Gets the active media playlist URI for this rendition.
+  virtual const GURL& MediaPlaylistUri() const = 0;
+
+  static std::unique_ptr<HlsRendition> CreateRendition(
       ManifestDemuxerEngineHost* engine_host,
       HlsRenditionHost* rendition_host,
       std::string role,
       scoped_refptr<hls::MediaPlaylist> playlist,
-      GURL uri);
+      GURL uri,
+      MediaLog* media_log);
 };
 
 }  // namespace media

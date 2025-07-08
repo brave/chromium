@@ -22,23 +22,19 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.components.omnibox.EntityInfoProto;
 import org.chromium.components.omnibox.action.OmniboxActionFactoryJni;
 
-/**
- * Tests for {@link OmniboxActionFactoryImpl}.
- */
+/** Tests for {@link OmniboxActionFactoryImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class OmniboxActionFactoryImplUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
-    public @Rule JniMocker mJniMocker = new JniMocker();
     private @Mock OmniboxActionFactoryJni mNatives;
 
     @Before
     public void setUp() {
-        mJniMocker.mock(OmniboxActionFactoryJni.TEST_HOOKS, mNatives);
+        OmniboxActionFactoryJni.setInstanceForTesting(mNatives);
     }
 
     @After
@@ -71,20 +67,13 @@ public class OmniboxActionFactoryImplUnitTest {
     }
 
     @Test
-    public void historyClustersDowncasting() {
-        // The underlying code will throw if instance is not valid.
-        // Checking for null in case that changes.
-        assertNotNull(HistoryClustersAction.from(
-                OmniboxActionFactoryImpl.get().buildHistoryClustersAction(
-                        0, "hint", "accessibility", "query")));
-    }
-
-    @Test
     public void omniboxPedalsDowncasting() {
         // The underlying code will throw if instance is not valid.
         // Checking for null in case that changes.
-        assertNotNull(OmniboxPedal.from(
-                OmniboxActionFactoryImpl.get().buildOmniboxPedal(0, "hint", "accessibility", 1)));
+        assertNotNull(
+                OmniboxPedal.from(
+                        OmniboxActionFactoryImpl.get()
+                                .buildOmniboxPedal(0, "hint", "accessibility", 1)));
     }
 
     @Test
@@ -92,20 +81,34 @@ public class OmniboxActionFactoryImplUnitTest {
         // The underlying code will throw if instance is not valid.
         // Checking for null in case that changes.
         assertNotNull(
-                OmniboxActionInSuggest.from(OmniboxActionFactoryImpl.get().buildActionInSuggest(
-                        0, "hint", "accessibility", 1, "url")));
+                OmniboxActionInSuggest.from(
+                        OmniboxActionFactoryImpl.get()
+                                .buildActionInSuggest(0, "hint", "accessibility", 1, "url")));
     }
 
     @Test
     public void actionInSuggest_callActionNotCreatedWhenDialerUnavailable() {
-        assertNull(OmniboxActionFactoryImpl.get().setDialerAvailable(false).buildActionInSuggest(0,
-                "hint", "accessibility", EntityInfoProto.ActionInfo.ActionType.CALL_VALUE, "url"));
+        assertNull(
+                OmniboxActionFactoryImpl.get()
+                        .setDialerAvailable(false)
+                        .buildActionInSuggest(
+                                0,
+                                "hint",
+                                "accessibility",
+                                EntityInfoProto.ActionInfo.ActionType.CALL_VALUE,
+                                "url"));
     }
 
     @Test
     public void actionInSuggest_callActionCreatedWhenDialerAvailable() {
-        assertNotNull(OmniboxActionFactoryImpl.get().setDialerAvailable(true).buildActionInSuggest(
-                0, "hint", "accessibility", EntityInfoProto.ActionInfo.ActionType.CALL_VALUE,
-                "url"));
+        assertNotNull(
+                OmniboxActionFactoryImpl.get()
+                        .setDialerAvailable(true)
+                        .buildActionInSuggest(
+                                0,
+                                "hint",
+                                "accessibility",
+                                EntityInfoProto.ActionInfo.ActionType.CALL_VALUE,
+                                "url"));
     }
 }

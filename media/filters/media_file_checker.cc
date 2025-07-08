@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <utility>
@@ -15,6 +17,7 @@
 #include "media/ffmpeg/ffmpeg_common.h"
 #include "media/ffmpeg/ffmpeg_decoding_loop.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
+#include "media/ffmpeg/scoped_av_packet.h"
 #include "media/filters/blocking_url_protocol.h"
 #include "media/filters/ffmpeg_glue.h"
 #include "media/filters/file_data_source.h"
@@ -54,33 +57,41 @@ bool MediaFileChecker::Start(base::TimeDelta check_time) {
   if (!glue.OpenContext())
     return false;
 
-  if (avformat_find_stream_info(format_context, NULL) < 0)
+  if (avformat_find_stream_info(format_context, nullptr) < 0) {
     return false;
+  }
 
   // Remember the codec context for any decodable audio or video streams.
   bool found_streams = false;
   std::vector<Decoder> stream_contexts(format_context->nb_streams);
-  for (size_t i = 0; i < format_context->nb_streams; ++i) {
-    AVCodecParameters* cp = format_context->streams[i]->codecpar;
+  base::span<AVStream*> format_context_span =
+      AVFormatContextToSpan(format_context);
+  std::ranges::transform(
+      format_context_span, stream_contexts.begin(),
+      [&found_streams](AVStream* stream) {
+        AVCodecParameters* cp = stream->codecpar;
 
-    if (cp->codec_type == AVMEDIA_TYPE_AUDIO ||
-        cp->codec_type == AVMEDIA_TYPE_VIDEO) {
-      auto context = AVStreamToAVCodecContext(format_context->streams[i]);
-      if (!context)
-        continue;
-      const AVCodec* codec = avcodec_find_decoder(cp->codec_id);
-      if (codec && avcodec_open2(context.get(), codec, nullptr) >= 0) {
-        auto loop = std::make_unique<FFmpegDecodingLoop>(context.get());
-        stream_contexts[i] = {std::move(context), std::move(loop)};
-        found_streams = true;
-      }
-    }
-  }
+        if (cp->codec_type == AVMEDIA_TYPE_AUDIO ||
+            cp->codec_type == AVMEDIA_TYPE_VIDEO) {
+          auto context = AVStreamToAVCodecContext(stream);
+          if (!context) {
+            return Decoder{};
+          }
+          const AVCodec* codec = avcodec_find_decoder(cp->codec_id);
+          if (codec && avcodec_open2(context.get(), codec, nullptr) >= 0) {
+            auto loop = std::make_unique<FFmpegDecodingLoop>(context.get());
+            found_streams = true;
+            return Decoder{std::move(context), std::move(loop)};
+          }
+        }
+
+        return Decoder{};
+      });
 
   if (!found_streams)
     return false;
 
-  AVPacket packet;
+  auto packet = ScopedAVPacket::Allocate();
   int result = 0;
 
   auto do_nothing_cb = base::BindRepeating([](AVFrame*) { return true; });
@@ -88,19 +99,19 @@ bool MediaFileChecker::Start(base::TimeDelta check_time) {
       base::TimeTicks::Now() +
       std::min(check_time, base::Seconds(kMaxCheckTimeInSeconds));
   do {
-    result = av_read_frame(glue.format_context(), &packet);
+    result = av_read_frame(glue.format_context(), packet.get());
     if (result < 0)
       break;
 
-    auto& decoder = stream_contexts[packet.stream_index];
+    auto& decoder = stream_contexts[packet->stream_index];
     if (decoder.loop) {
-      result = decoder.loop->DecodePacket(&packet, do_nothing_cb) ==
+      result = decoder.loop->DecodePacket(packet.get(), do_nothing_cb) ==
                        FFmpegDecodingLoop::DecodeStatus::kOkay
                    ? 0
                    : -1;
     }
 
-    av_packet_unref(&packet);
+    av_packet_unref(packet.get());
   } while (base::TimeTicks::Now() < deadline && read_ok && result >= 0);
 
   stream_contexts.clear();

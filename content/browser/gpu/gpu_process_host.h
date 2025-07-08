@@ -17,15 +17,14 @@
 #include "base/location.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/weak_ptr.h"
-#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/viz/host/gpu_host_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/gpu_data_manager.h"
-#include "gpu/command_buffer/common/activity_flags.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/command_buffer/common/shm_count.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_mode.h"
@@ -167,8 +166,8 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   void DidInitialize(
       const gpu::GPUInfo& gpu_info,
       const gpu::GpuFeatureInfo& gpu_feature_info,
-      const absl::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
-      const absl::optional<gpu::GpuFeatureInfo>&
+      const std::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+      const std::optional<gpu::GpuFeatureInfo>&
           gpu_feature_info_for_hardware_gpu,
       const gfx::GpuExtraInfo& gpu_extra_info) override;
   void DidFailInitialize() override;
@@ -284,8 +283,6 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 #endif
 
   std::unique_ptr<viz::GpuHostImpl> gpu_host_;
-
-  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<GpuProcessHost> weak_ptr_factory_{this};
 };

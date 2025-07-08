@@ -7,32 +7,35 @@
  * existing printer's information and re-configure it.
  */
 
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
-import 'chrome://resources/cr_elements/cr_searchable_drop_down/cr_searchable_drop_down.js';
-import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/cr_searchable_drop_down/cr_searchable_drop_down.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import './cups_add_printer_dialog.js';
 import './cups_printer_dialog_error.js';
 import './cups_printer_shared.css.js';
 import './cups_printers_browser_proxy.js';
 
+import type {I18nMixinInterface} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {MojoInterfaceProviderImpl} from 'chrome://resources/ash/common/network/mojo_interface_provider.js';
-import {NetworkListenerBehavior, NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import type {NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import {NetworkListenerBehavior} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
-import {I18nMixin, I18nMixinInterface} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {CrosNetworkConfigInterface, FilterType, NetworkStateProperties, NO_LIMIT} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import type {CrosNetworkConfigInterface, NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {FilterType, NO_LIMIT} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
 import {NetworkType} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
 import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {cast} from '../assert_extras.js';
-import {Constructor} from '../common/types.js';
-import {recordSettingChange} from '../metrics_recorder.js';
+import type {Constructor} from '../common/types.js';
 
 import {getTemplate} from './cups_edit_printer_dialog.html.js';
 import {getBaseName, getErrorText, isNameAndAddressValid, isNetworkProtocol, isPPDInfoValid} from './cups_printer_dialog_util.js';
-import {CupsPrinterInfo, CupsPrintersBrowserProxy, CupsPrintersBrowserProxyImpl, ManufacturersInfo, ModelsInfo, PrinterPpdMakeModel, PrinterSetupResult} from './cups_printers_browser_proxy.js';
+import type {CupsPrinterInfo, CupsPrintersBrowserProxy, ManufacturersInfo, ModelsInfo, PrinterPpdMakeModel, PrinterSetupResult} from './cups_printers_browser_proxy.js';
+import {CupsPrintersBrowserProxyImpl} from './cups_printers_browser_proxy.js';
 
 /**
  * The types of actions that can be performed with the edit dialog.  These
@@ -45,9 +48,8 @@ enum DialogActions {
   VIEW_PPD_CLICKED = 1,
 }
 
-
 /** Keyword used for recording metrics */
-const METRICS_KEYWORD = 'Printing.CUPS.EditDialog';
+const METRICS_KEYWORD = 'Printing.CUPS.PrinterEditDialogActions';
 
 const SettingsCupsEditPrinterDialogElementBase =
     mixinBehaviors([NetworkListenerBehavior], I18nMixin(PolymerElement)) as
@@ -234,7 +236,7 @@ export class SettingsCupsEditPrinterDialogElement extends
   }
 
   override onActiveNetworksChanged(networks: NetworkStateProperties[]): void {
-    this.isOnline_ = networks.some(function(network) {
+    this.isOnline_ = networks.some((network) => {
       return OncMojo.connectionStateIsConnected(network.connectionState);
     });
   }
@@ -247,7 +249,7 @@ export class SettingsCupsEditPrinterDialogElement extends
 
   private onProtocolChange_(event: Event): void {
     const selectEl = cast(event.target, HTMLSelectElement);
-    this.set('pendingPrinter_.printerProtocol', selectEl!.value);
+    this.set('pendingPrinter_.printerProtocol', selectEl.value);
     this.onPrinterInfoChange_();
   }
 
@@ -278,8 +280,8 @@ export class SettingsCupsEditPrinterDialogElement extends
   /**
    * Handler for update|reconfigureCupsPrinter failure.
    */
-  private onPrinterEditFailed_(result: PrinterSetupResult) {
-    this.errorText_ = getErrorText((result));
+  private onPrinterEditFailed_(result: PrinterSetupResult): void {
+    this.errorText_ = getErrorText(result);
   }
 
   private onSaveClick_(): void {
@@ -299,7 +301,6 @@ export class SettingsCupsEditPrinterDialogElement extends
               this.onPrinterEditSucceeded_.bind(this),
               this.onPrinterEditFailed_.bind(this));
     }
-    recordSettingChange();
   }
 
   /**
@@ -409,7 +410,7 @@ export class SettingsCupsEditPrinterDialogElement extends
     this.eulaUrl_ = eulaUrl;
   }
 
-  private onViewPpd_() {
+  private onViewPpd_(): void {
     chrome.metricsPrivate.recordEnumerationValue(
         METRICS_KEYWORD, DialogActions.VIEW_PPD_CLICKED,
         Object.keys(DialogActions).length);

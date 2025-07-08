@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/fileapi/file_read_type.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer/array_buffer_contents.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -41,18 +42,18 @@ class CORE_EXPORT FileReaderData {
   DOMArrayBuffer* AsDOMArrayBuffer() &&;
   // AsBinaryString converts the underlying ArrayBufferContents to a binary
   // string representation.
-  String AsBinaryString() &&;
+  WTF::String AsBinaryString() &&;
   // AsText converts the underlying ArrayBufferContents to text.
-  String AsText(const String& encoding) &&;
+  WTF::String AsText(const WTF::String& encoding) &&;
   // AsDataURL converts the underlying ArrayBufferContents to a data URL
   // representation.
-  String AsDataURL(const String& data_type) &&;
+  WTF::String AsDataURL(const WTF::String& data_type) &&;
   // AsString is a convenience method that calls either AsBinaryString, AsText
   // or AsDataURL depending on the passed FileReadType. Depending on that type,
   // encoding or data_type must be set accordingly.
-  String AsString(FileReadType read_type,
-                  const String& encoding,
-                  const String& data_type) &&;
+  WTF::String AsString(FileReadType read_type,
+                       const WTF::String& encoding,
+                       const WTF::String& data_type) &&;
 
  private:
   ArrayBufferContents raw_data_;

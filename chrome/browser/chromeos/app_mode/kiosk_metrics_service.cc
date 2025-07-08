@@ -7,7 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "ash/constants/ash_switches.h"
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/functional/callback_helpers.h"
@@ -19,17 +21,11 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_switches.h"
-#include "base/command_line.h"
 #include "components/user_manager/user_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace chromeos {
 
@@ -44,7 +40,6 @@ const constexpr char* kCrashDirs[] = {
 };
 
 bool IsRestoredSession() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Return true for a kiosk session restored after crash.
   // The kiosk session gets restored to a state that was prior to crash:
   // * no --login-manager command line flag, since no login screen is shown
@@ -55,9 +50,6 @@ bool IsRestoredSession() {
              ash::switches::kLoginManager) &&
          base::CommandLine::ForCurrentProcess()->HasSwitch(
              ash::switches::kLoginUser);
-#else
-  return false;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
 // Returns true if there is a new crash in `crash_dirs` after
@@ -73,7 +65,7 @@ bool IsPreviousKioskSessionCrashed(const std::vector<std::string>& crash_dirs,
       continue;
     }
     base::FileEnumerator enumerator(
-        base::FilePath(crash_file_path), /* recursive= */ true,
+        base::FilePath(crash_file_path), /*recursive=*/true,
         base::FileEnumerator::FILES | base::FileEnumerator::DIRECTORIES);
     while (!enumerator.Next().empty()) {
       if (enumerator.GetInfo().GetLastModifiedTime() > previous_start_time) {
@@ -92,11 +84,7 @@ void ClearMetricFromPrefs(const std::string& metric_name, PrefService* prefs) {
 }
 
 bool IsFirstSessionAfterReboot() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   return user_manager::UserManager::Get()->IsFirstExecAfterBoot();
-#else
-  return false;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
 KioskSessionRestartReason RestartReasonWithRebootInfo(
@@ -155,17 +143,17 @@ KioskSessionRestartReason ConvertSessionEndReasonToSessionRestartReason(
 }
 
 // If the session termination reason was not saved, returns an empty optional.
-absl::optional<KioskSessionEndReason> GetSessionEndReason(
+std::optional<KioskSessionEndReason> GetSessionEndReason(
     const PrefService* prefs) {
   const base::Value::Dict& metrics_dict = prefs->GetDict(prefs::kKioskMetrics);
   const auto* kiosk_session_stop_reason_value =
       metrics_dict.Find(kKioskSessionEndReason);
   if (!kiosk_session_stop_reason_value) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   auto kiosk_session_stop_reason = kiosk_session_stop_reason_value->GetIfInt();
   if (!kiosk_session_stop_reason.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return static_cast<KioskSessionEndReason>(kiosk_session_stop_reason.value());
@@ -214,6 +202,10 @@ void KioskMetricsService::RecordKioskSessionWebStarted() {
   RecordKioskSessionStarted(KioskSessionState::kWebStarted);
 }
 
+void KioskMetricsService::RecordKioskSessionIwaStarted() {
+  RecordKioskSessionStarted(KioskSessionState::kIwaStarted);
+}
+
 void KioskMetricsService::RecordKioskSessionStopped() {
   if (!IsKioskSessionRunning()) {
     return;
@@ -257,6 +249,7 @@ void KioskMetricsService::RestartRequested(
     case power_manager::REQUEST_RESTART_FOR_USER:
     case power_manager::REQUEST_RESTART_FOR_UPDATE:
     case power_manager::REQUEST_RESTART_OTHER:
+    case power_manager::REQUEST_RESTART_HEARTD:
       return;
     case power_manager::REQUEST_RESTART_SCHEDULED_REBOOT_POLICY:
       SaveSessionEndReason(KioskSessionEndReason::kRebootPolicy);
@@ -332,7 +325,7 @@ void KioskMetricsService::RecordKioskSessionDuration(
 }
 
 void KioskMetricsService::RecordPreviousKioskSessionEndState() {
-  absl::optional<KioskSessionEndReason> previous_session_end_reason =
+  std::optional<KioskSessionEndReason> previous_session_end_reason =
       GetSessionEndReason(prefs_);
   // Avoid reading the old saved reason in the future.
   ClearMetricFromPrefs(kKioskSessionEndReason, prefs_);

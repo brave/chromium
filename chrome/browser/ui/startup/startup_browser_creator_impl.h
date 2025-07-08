@@ -18,7 +18,6 @@
 #include "url/gurl.h"
 
 class Browser;
-class OldLaunchModeRecorder;
 class Profile;
 class StartupBrowserCreator;
 class StartupTabProvider;
@@ -27,11 +26,10 @@ struct SessionStartupPref;
 namespace base {
 class CommandLine;
 class FilePath;
-}
+}  // namespace base
 
 namespace internals {
 GURL GetTriggeredResetSettingsURL();
-GURL GetWelcomePageURL();
 }  // namespace internals
 
 // Assists launching the application and appending the initial tabs for a
@@ -60,10 +58,13 @@ class StartupBrowserCreatorImpl {
 
   // Creates the necessary windows for startup. |process_startup| indicates
   // whether Chrome is just starting up or already running and the user wants to
-  // launch another instance.
+  // launch another instance. `restore_tabbed_browser` should only be
+  // flipped false by Ash full restore code path, suppressing restoring a normal
+  // browser when there were only PWAs open in previous session. See
+  // crbug.com/1463906.
   void Launch(Profile* profile,
               chrome::startup::IsProcessStartup process_startup,
-              std::unique_ptr<OldLaunchModeRecorder> launch_mode_recorder);
+              bool restore_tabbed_browser);
 
   // Convenience for OpenTabsInBrowser that converts |urls| into a set of
   // Tabs.
@@ -117,17 +118,13 @@ class StartupBrowserCreatorImpl {
     LaunchResult launch_result;
   };
 
-  enum class WelcomeRunType {
-    NONE,                // Do not inject the welcome page for this run.
-    FIRST_TAB,           // Inject the welcome page as the first tab.
-    FIRST_RUN_LAST_TAB,  // Inject the welcome page as the last first-run tab.
-  };
-
   // Window behaviors possible when opening Chrome.
   enum class BrowserOpenBehavior {
     NEW,                  // Open in a new browser.
     SYNCHRONOUS_RESTORE,  // Attempt a synchronous session restore.
     USE_EXISTING,         // Attempt to add to an existing tabbed browser.
+    USE_EXISTING_AND_OVERWRITE_ACTIVE_TAB,  // Attempt to replace the contents
+                                            // of the active tab
   };
 
   // Boolean flags used to indicate state for DetermineBrowserOpenBehavior.
@@ -136,6 +133,12 @@ class StartupBrowserCreatorImpl {
     IS_POST_CRASH_LAUNCH = (1 << 1),
     HAS_NEW_WINDOW_SWITCH = (1 << 2),
     HAS_CMD_LINE_TABS = (1 << 3),
+    HAS_SAME_TAB_SWITCH = (1 << 4)
+  };
+
+  enum class TabOverWrite {
+    kYes,  // If the tab needs to be overwritten
+    kNo,   // Default behavior
   };
 
   using BrowserOpenBehaviorOptions = uint32_t;
@@ -147,13 +150,17 @@ class StartupBrowserCreatorImpl {
   // browser, or nullptr if browser could not be created.
   Browser* OpenTabsInBrowser(Browser* browser,
                              chrome::startup::IsProcessStartup process_startup,
-                             const StartupTabs& tabs);
+                             const StartupTabs& tabs,
+                             TabOverWrite is_active_tab_overwrite);
 
   // Determines the URLs to be shown at startup by way of various policies
   // (welcome, pinned tabs, etc.), determines whether a session restore
   // is necessary, and opens the URLs in a new or restored browser accordingly.
-  LaunchResult DetermineURLsAndLaunch(
-      chrome::startup::IsProcessStartup process_startup);
+  // `restore_tabbed_browser` should only be flipped false by Ash full
+  // restore code path, suppressing restoring a normal browser when there were
+  // only PWAs open in previous session. See crbug.com/1463906.
+  void DetermineURLsAndLaunch(chrome::startup::IsProcessStartup process_startup,
+                              bool restore_tabbed_browser);
 
   // Returns a tuple of
   // - the tabs to be shown on startup, based on the policy functions in
@@ -165,9 +172,7 @@ class StartupBrowserCreatorImpl {
       chrome::startup::IsProcessStartup process_startup,
       bool is_ephemeral_profile,
       bool is_post_crash_launch,
-      bool has_incompatible_applications,
       bool promotional_tabs_enabled,
-      bool welcome_enabled,
       bool whats_new_enabled,
       bool privacy_sandbox_confirmation_required);
 
@@ -196,11 +201,14 @@ class StartupBrowserCreatorImpl {
       BrowserOpenBehaviorOptions options);
 
   // Returns the relevant bitmask options which must be passed when restoring a
-  // session.
+  // session. `restore_tabbed_browser` should only be flipped false by Ash
+  // full restore code path, suppressing restoring a normal browser when there
+  // were only PWAs open in previous session. See crbug.com/1463906.
   static SessionRestore::BehaviorBitmask DetermineSynchronousRestoreOptions(
       bool has_create_browser_default,
       bool has_create_browser_switch,
-      bool was_mac_login_or_resume);
+      bool was_mac_login_or_resume,
+      bool restore_tabbed_browser);
 
   // Returns whether `switches::kKioskMode` is set on the command line of
   // the current process. This is a static method to avoid accidentally reading

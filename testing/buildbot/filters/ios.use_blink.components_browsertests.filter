@@ -1,0 +1,26 @@
+# TODO(crbug.com/335001216): These tests are failing due to the duplicate
+# resource assertion.
+-DistilledPageJsTest.SettingsDialogTest
+-DistillerPageWebContentsTest.BasicDistillationWorks
+-DistillerPageWebContentsTest.HandlesRelativeImages
+-DistillerPageWebContentsTest.HandlesRelativeLinks
+-DistillerPageWebContentsTest.HandlesRelativeVideos
+-DistillerPageWebContentsTest.MarkupInfo
+-DistillerPageWebContentsTest.PageDestroyedBeforeFinishDistillation
+-DistillerPageWebContentsTest.TestNoContentDoesNotCrash
+-DistillerPageWebContentsTest.UsingCurrentWebContentsNotFinishedLoadingYet
+-DistillerPageWebContentsTest.UsingCurrentWebContentsReadyForDistillation
+-DistillerPageWebContentsTest.UsingCurrentWebContentsWrongUrl
+-DistillerPageWebContentsTest.VisibilityDetection
+-DomDistillerDistillablePageUtilsTest.TestIsDistillablePage
+-DomDistillerDistillablePageUtilsTest.TestIsNotDistillablePage
+-DomDistillerJsTest.RunJsTests
+
+# These tests are hitting a NOTREACHED() in WebContentsImpl::GetSize().
+-All/PageContentProtoProviderBrowserTestMultiProcess.*
+-All/PageContentProtoProviderBrowserTestSiteIsolation.*
+-PageContentProtoProviderBrowserTest.*
+-PageContentProtoProviderBrowserTestActionableElements.AIPageContent
+-PageContentProtoProviderBrowserTestFencedFrame.AIPageContentFencedFrame
+-PageContentProtoProviderBrowserTestPaidContentDisabled.PaidContentDisabled
+-ScaledPageContentProtoProviderBrowserTest.ScaleSizes

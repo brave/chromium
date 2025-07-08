@@ -18,7 +18,6 @@
 #include "third_party/blink/renderer/core/html/html_html_element.h"
 #include "third_party/blink/renderer/core/html/html_meta_element.h"
 #include "third_party/blink/renderer/core/html/html_pre_element.h"
-#include "third_party/blink/renderer/core/html/html_style_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_document_parser.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -28,37 +27,6 @@
 
 namespace blink {
 
-namespace {
-
-String GetStyleSheetContents() {
-  return R"CSS(
-    body {
-      margin: 0
-    }
-    pre {
-      word-wrap: break-word;
-      white-space: pre-wrap;
-    }
-    .line-wrap-control {
-      width: 100%;
-      font-size: initial;
-      font-family: monospace;
-      user-select: none;
-      background-color: rgb(240,240,240);
-      border-bottom: 1px solid rgb(187, 187, 187);
-      display: flex;
-      justify-content: flex-start;
-      align-items: center;
-    }
-    @media (prefers-color-scheme: dark) {
-    .line-wrap-control {
-      background-color: rgb(60, 60, 60);
-    }
-  )CSS";
-}
-
-}  // namespace
-
 class PrettyPrintJSONListener : public NativeEventListener {
  public:
   PrettyPrintJSONListener(HTMLPreElement* pre, HTMLInputElement* checkbox)
@@ -66,11 +34,11 @@ class PrettyPrintJSONListener : public NativeEventListener {
 
   void Invoke(ExecutionContext*, Event* event) override {
     DCHECK_EQ(event->type(), event_type_names::kChange);
-    JSONParseError opt_error{};
-    if (!parsed_json_value_) {
-      parsed_json_value_ = ParseJSON(pre_->textContent(), &opt_error);
+    if (!parsed_json_value_ &&
+        opt_error_.type == JSONParseErrorType::kNoError) {
+      parsed_json_value_ = ParseJSON(pre_->textContent(), &opt_error_);
     }
-    if (opt_error.type != JSONParseErrorType::kNoError) {
+    if (opt_error_.type != JSONParseErrorType::kNoError) {
       return;
     }
     if (checkbox_->Checked()) {
@@ -89,6 +57,7 @@ class PrettyPrintJSONListener : public NativeEventListener {
  private:
   Member<HTMLInputElement> checkbox_;
   Member<HTMLPreElement> pre_;
+  JSONParseError opt_error_{.type = JSONParseErrorType::kNoError};
   std::unique_ptr<JSONValue> parsed_json_value_;
 };
 
@@ -104,23 +73,20 @@ class JSONDocumentParser : public HTMLDocumentParser {
   }
 
  private:
-  void AppendBytes(const char* data, size_t length) override {
-    CHECK(RuntimeEnabledFeatures::PrettyPrintJSONDocumentEnabled());
+  void Append(const String& input) override {
     if (!document_initialized_) {
       CreateDocumentStructure();
     }
-    pre_->insertAdjacentText("beforeEnd", WTF::String::FromUTF8(data, length),
-                             ASSERT_NO_EXCEPTION);
+    pre_->insertAdjacentText("beforeEnd", input, ASSERT_NO_EXCEPTION);
   }
 
   void CreateDocumentStructure() {
-    CHECK(RuntimeEnabledFeatures::PrettyPrintJSONDocumentEnabled());
     auto* html = MakeGarbageCollected<HTMLHtmlElement>(*GetDocument());
     GetDocument()->ParserAppendChild(html);
     auto* head = MakeGarbageCollected<HTMLHeadElement>(*GetDocument());
     auto* meta = MakeGarbageCollected<HTMLMetaElement>(*GetDocument(),
                                                        CreateElementFlags());
-    meta->setAttribute(html_names::kNameAttr, AtomicString("color-scheme"));
+    meta->setAttribute(html_names::kNameAttr, keywords::kColorScheme);
     meta->setAttribute(html_names::kContentAttr, AtomicString("light dark"));
     auto* meta_charset = MakeGarbageCollected<HTMLMetaElement>(
         *GetDocument(), CreateElementFlags());
@@ -130,41 +96,39 @@ class JSONDocumentParser : public HTMLDocumentParser {
     html->ParserAppendChild(head);
     auto* body = MakeGarbageCollected<HTMLBodyElement>(*GetDocument());
     html->ParserAppendChild(body);
-    body->setAttribute(html_names::kStyleAttr, AtomicString("margin: 0"));
     pre_ = MakeGarbageCollected<HTMLPreElement>(html_names::kPreTag,
                                                 *GetDocument());
+
     auto* label = MakeGarbageCollected<HTMLLabelElement>(*GetDocument());
     label->ParserAppendChild(Text::Create(
-        *GetDocument(), WTF::AtomicString(Locale::DefaultLocale().QueryString(
+        *GetDocument(), AtomicString(Locale::DefaultLocale().QueryString(
                             IDS_PRETTY_PRINT_JSON))));
-    label->setAttribute(html_names::kClassAttr,
-                        AtomicString("line-wrap-control"));
-    auto* checkbox = MakeGarbageCollected<HTMLInputElement>(
-        *GetDocument(), CreateElementFlags());
+    label->SetShadowPseudoId(AtomicString("-internal-json-formatter-control"));
+    auto* checkbox = MakeGarbageCollected<HTMLInputElement>(*GetDocument());
     checkbox->setAttribute(html_names::kTypeAttr, input_type_names::kCheckbox);
     checkbox->addEventListener(
         event_type_names::kChange,
         MakeGarbageCollected<PrettyPrintJSONListener>(pre_, checkbox),
         /*use_capture=*/false);
-    checkbox->setAttribute(
-        html_names::kAriaLabelAttr,
-        WTF::AtomicString(
-            Locale::DefaultLocale().QueryString(IDS_PRETTY_PRINT_JSON)));
+    checkbox->setAttribute(html_names::kAriaLabelAttr,
+                           AtomicString(Locale::DefaultLocale().QueryString(
+                               IDS_PRETTY_PRINT_JSON)));
     label->ParserAppendChild(checkbox);
     // Add the checkbox to a form with autocomplete=off, to avoid form
     // restoration from changing the value of the checkbox.
     auto* form = MakeGarbageCollected<HTMLFormElement>(*GetDocument());
     form->setAttribute(html_names::kAutocompleteAttr, AtomicString("off"));
     form->ParserAppendChild(label);
-    HTMLStyleElement* style = MakeGarbageCollected<HTMLStyleElement>(
-        *GetDocument(), CreateElementFlags());
-    style->setTextContent(GetStyleSheetContents());
+    // See crbug.com/1485052: the div is fixed-positioned to maintain the
+    // DOM tree structure and avoid compatibility problems with extensions.
     auto* div = MakeGarbageCollected<HTMLDivElement>(*GetDocument());
+    div->setAttribute(html_names::kClassAttr,
+                      AtomicString("json-formatter-container"));
+
     ShadowRoot& shadow_root = div->EnsureUserAgentShadowRoot();
-    shadow_root.ParserAppendChild(style);
     shadow_root.ParserAppendChild(form);
-    body->ParserAppendChild(div);
     body->ParserAppendChild(pre_);
+    body->ParserAppendChild(div);
     document_initialized_ = true;
   }
 

@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
@@ -168,6 +169,12 @@ BASE_FEATURE(kEnableCastAudioOutputDevice,
              "enable_cast_audio_output_device",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// If true, codec/profile/level support will be checked against starboard via
+// SbMediaCanPlayMimeAndKeySystem.
+BASE_FEATURE(kEnableStarboardMimeChecks,
+             "enable_starboard_mime_checks",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // End Chromecast Feature definitions.
 const base::Feature* kFeatures[] = {
     &kAllowUserMediaAccess,
@@ -179,6 +186,7 @@ const base::Feature* kFeatures[] = {
     &kEnableSideGesturePassThrough,
     &kEnableChromeAudioManagerAndroid,
     &kEnableCastAudioOutputDevice,
+    &kEnableStarboardMimeChecks,
 };
 
 std::vector<const base::Feature*> GetInternalFeatures();
@@ -216,8 +224,7 @@ void InitializeFeatureList(const base::Value::Dict& dcs_features,
 
   // Initialize the FeatureList from the command line.
   auto feature_list = std::make_unique<base::FeatureList>();
-  feature_list->InitializeFromCommandLine(all_enable_features,
-                                          all_disable_features);
+  feature_list->InitFromCommandLine(all_enable_features, all_disable_features);
 
   // Override defaults from the DCS config.
   for (const auto kv : dcs_features) {

@@ -15,10 +15,10 @@ import org.chromium.chrome.browser.download.DownloadInfo;
 import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.download.DownloadMessageUiController;
 import org.chromium.chrome.browser.download.DownloadUtils;
-import org.chromium.chrome.browser.profiles.OTRProfileID;
+import org.chromium.chrome.browser.profiles.OtrProfileId;
 import org.chromium.components.messages.MessageDispatcher;
 import org.chromium.components.messages.MessageDispatcherProvider;
-import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
@@ -26,7 +26,7 @@ import java.lang.ref.WeakReference;
 
 /** Delegate for {@link DownloadMessageUiController} to provide chrome layer dependencies. */
 public class DownloadMessageUiDelegate implements DownloadMessageUiController.Delegate {
-    private WeakReference<ChromeActivity> mActivity = new WeakReference<ChromeActivity>(null);
+    private WeakReference<ChromeActivity> mActivity = new WeakReference<>(null);
 
     /** Constructor. */
     public DownloadMessageUiDelegate() {
@@ -61,19 +61,19 @@ public class DownloadMessageUiDelegate implements DownloadMessageUiController.De
         boolean shouldSwitchToFocusedActivity =
                 focusedActivity instanceof ChromeActivity && focusedActivity != mActivity.get();
         if (!shouldSwitchToFocusedActivity) return false;
-        mActivity = new WeakReference<ChromeActivity>((ChromeActivity) focusedActivity);
+        mActivity = new WeakReference<>((ChromeActivity) focusedActivity);
         return true;
     }
 
     @Override
-    public void openDownloadsPage(OTRProfileID otrProfileID, int source) {
-        DownloadManagerService.openDownloadsPage(otrProfileID, source);
+    public void openDownloadsPage(OtrProfileId otrProfileId, int source) {
+        DownloadManagerService.openDownloadsPage(otrProfileId, source);
     }
 
     @Override
     public void openDownload(
-            ContentId contentId, OTRProfileID otrProfileID, int source, Context context) {
-        DownloadUtils.openItem(contentId, otrProfileID, source, context);
+            OfflineItem offlineItem, OtrProfileId otrProfileId, int source, Context context) {
+        DownloadUtils.openItem(offlineItem, otrProfileId, source, context);
     }
 
     @Override

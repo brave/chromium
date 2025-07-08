@@ -23,18 +23,21 @@ found in the LICENSE file.
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <ViewStub
-            android:id="@+id/cryptid_holder"
-            android:layout="@layout/new_tab_page_cryptid_holder"
-            android:layout_width="@dimen/cryptid_width_in_logo_wrapper"
-            android:layout_height="@dimen/cryptid_height_in_logo_wrapper"
-            android:layout_gravity="bottom|start" />
-
         <include layout="@layout/logo_view_layout"/>
     </FrameLayout>
 
     <!-- Search box -->
     <include layout="@layout/fake_search_box_layout"/>
+
+    <ViewStub
+        android:id="@+id/composeplate_view_stub"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/composeplate_view_height"
+        android:layout_marginTop="@dimen/composeplate_view_margin_top"
+        android:layout_marginStart="@dimen/mvt_container_lateral_margin"
+        android:layout_marginEnd="@dimen/mvt_container_lateral_margin"
+        android:layout="@layout/composeplate_view_layout"
+        android:visibility="gone" />
 
     <!-- Query tiles -->
     <FrameLayout
@@ -62,6 +65,13 @@ found in the LICENSE file.
         android:layout_weight="1"
         android:inflatedId="@+id/tile_grid_placeholder"
         android:layout="@layout/new_tab_page_tile_grid_placeholder" />
+
+    <ViewStub
+        android:id="@+id/home_modules_recycler_view_stub"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout="@layout/home_modules_recycler_view_layout"
+        android:visibility="gone" />
 
     <!-- Single tab card -->
     <ViewStub

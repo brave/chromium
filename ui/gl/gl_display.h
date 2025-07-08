@@ -5,18 +5,15 @@
 #ifndef UI_GL_GL_DISPLAY_H_
 #define UI_GL_GL_DISPLAY_H_
 
+#include <EGL/egl.h>
 #include <stdint.h>
 
 #include <memory>
 #include <vector>
 
+#include "build/build_config.h"
 #include "ui/gl/gl_export.h"
-
-#if defined(USE_EGL)
-#include <EGL/egl.h>
-
-#include "ui/gl/gpu_switching_manager.h"
-#endif  // defined(USE_EGL)
+#include "ui/gl/gpu_switching_observer.h"
 
 #if BUILDFLAG(IS_APPLE)
 #if __OBJC__
@@ -49,7 +46,8 @@ class EGLDisplayPlatform {
 };
 
 // If adding a new type, also add it to EGLDisplayType in
-// tools/metrics/histograms/enums.xml. Don't remove or reorder entries.
+// tools/metrics/histograms/metadata/gpu/enums.xml. Don't remove or reorder
+// entries.
 enum DisplayType {
   DEFAULT = 0,
   SWIFT_SHADER = 1,
@@ -70,7 +68,8 @@ enum DisplayType {
   ANGLE_OPENGLES_EGL = 16,
   ANGLE_METAL = 17,
   ANGLE_METAL_NULL = 18,
-  DISPLAY_TYPE_MAX = 19,
+  ANGLE_D3D11_WARP = 19,
+  DISPLAY_TYPE_MAX = 20,
 };
 
 enum DisplayPlatform {
@@ -107,7 +106,7 @@ class GL_EXPORT GLDisplay {
   DisplayPlatform type_ = NONE;
 };
 
-#if defined(USE_EGL)
+// TODO(344606399): Consider merging GLDisplayEGL into GLDisplay.
 class GL_EXPORT GLDisplayEGL : public GLDisplay {
  public:
   GLDisplayEGL(const GLDisplayEGL&) = delete;
@@ -116,6 +115,8 @@ class GL_EXPORT GLDisplayEGL : public GLDisplay {
   ~GLDisplayEGL() override;
 
   static GLDisplayEGL* GetDisplayForCurrentContext();
+
+  static void EnableANGLEDebugLayer();
 
   EGLDisplay GetDisplay() const override;
   void Shutdown() override;
@@ -140,7 +141,6 @@ class GL_EXPORT GLDisplayEGL : public GLDisplay {
   std::unique_ptr<DisplayExtensionsEGL> ext;
 
 #if BUILDFLAG(IS_APPLE)
-  bool IsANGLEMetalSharedEventSyncSupported();
 #if __OBJC__
   bool CreateMetalSharedEvent(id<MTLSharedEvent>* shared_event_out,
                               uint64_t* signal_value_out);
@@ -151,8 +151,10 @@ class GL_EXPORT GLDisplayEGL : public GLDisplay {
   // Call periodically to clean up resources.
   void CleanupTempEGLSyncObjects();
 
-  // Call once upon shutdown of the display.
-  void CleanupMetalSharedEvent();
+  // Call during Initialize/Shutdown to clean initialize/delete the objective C
+  // shared event storage
+  void InitMetalSharedEventStorage();
+  void CleanupMetalSharedEventStorage();
 #endif
 
  private:
@@ -192,7 +194,6 @@ class GL_EXPORT GLDisplayEGL : public GLDisplay {
   std::unique_ptr<ObjCStorage> objc_storage_;
 #endif
 };
-#endif  // defined(USE_EGL)
 
 }  // namespace gl
 

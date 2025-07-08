@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
@@ -43,7 +44,8 @@ enum class KioskSessionState {
   // No longer used, use kWebStarted for lacros platform.
   // kWebWithLacrosStarted = 6,
   kRestored = 7,
-  kMaxValue = kRestored,
+  kIwaStarted = 8,
+  kMaxValue = kIwaStarted,
 };
 
 // These values are used in UMA metrics. When a kiosk session is restarted,
@@ -94,6 +96,7 @@ class KioskMetricsService : public chromeos::PowerManagerClient::Observer {
 
   void RecordKioskSessionStarted();
   void RecordKioskSessionWebStarted();
+  void RecordKioskSessionIwaStarted();
   void RecordKioskSessionStopped();
   void RecordKioskSessionPluginCrashed();
   void RecordKioskSessionPluginHung();

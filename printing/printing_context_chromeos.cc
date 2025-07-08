@@ -10,11 +10,14 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,8 +30,10 @@
 #include "printing/client_info_helpers.h"
 #include "printing/metafile.h"
 #include "printing/mojom/print.mojom.h"
+#include "printing/page_setup.h"
 #include "printing/print_job_constants.h"
 #include "printing/print_settings.h"
+#include "printing/printing_features.h"
 #include "printing/printing_utils.h"
 #include "printing/units.h"
 
@@ -42,9 +47,18 @@ const char kUsernamePlaceholder[] = "chronos";
 // We only support sending document name for secure printers.
 const char kDocumentNamePlaceholder[] = "-";
 
-bool IsUriSecure(base::StringPiece uri) {
+bool IsUriSecure(std::string_view uri) {
   return base::StartsWith(uri, "ipps:") || base::StartsWith(uri, "https:") ||
          base::StartsWith(uri, "usb:") || base::StartsWith(uri, "ippusb:");
+}
+
+// TODO(crbug.com/316999874): Remove this once sending custom margins to the
+// backend is fixed.
+bool AreMarginsUMConvertibleToPWG(const PageMargins& margins_microns) {
+  return margins_microns.bottom % kMicronsPerPwgUnit == 0 &&
+         margins_microns.left % kMicronsPerPwgUnit == 0 &&
+         margins_microns.right % kMicronsPerPwgUnit == 0 &&
+         margins_microns.top % kMicronsPerPwgUnit == 0;
 }
 
 // Populates the 'client-info' attribute of the IPP collection `options`. Each
@@ -102,16 +116,66 @@ void EncodeClientInfo(const std::vector<mojom::IppClientInfo>& client_infos,
 void EncodeMediaCol(ipp_t* options,
                     const gfx::Size& size_um,
                     const gfx::Rect& printable_area_um,
-                    const std::string& source) {
+                    const std::string& source,
+                    const PrintSettings& settings) {
+  const std::string& type = settings.media_type();
+
   // The size and printable area in microns were calculated from the size and
-  // margins in PWG units, so we can losslessly convert them back.
+  // margins in PWG units, so we can losslessly convert them back. If
+  // borderless printing was requested, though, set all margins to zero.
   DCHECK_EQ(size_um.width() % kMicronsPerPwgUnit, 0);
   DCHECK_EQ(size_um.height() % kMicronsPerPwgUnit, 0);
   int width = size_um.width() / kMicronsPerPwgUnit;
   int height = size_um.height() / kMicronsPerPwgUnit;
-  int bottom_margin = 0, left_margin = 0, right_margin = 0, top_margin = 0;
-  PwgMarginsFromSizeAndPrintableArea(size_um, printable_area_um, &bottom_margin,
-                                     &left_margin, &right_margin, &top_margin);
+  int bottom_margin = 0;
+  int left_margin = 0;
+  int right_margin = 0;
+  int top_margin = 0;
+  if (!settings.borderless()) {
+    if (base::FeatureList::IsEnabled(features::kApiPrintingMarginsAndScale)) {
+      CHECK_NE(settings.margin_type(), mojom::MarginType::kNoMargins);
+      // There are 2 ways how print settings are setup -
+      //   1) via print preview dialog, which allows to set any margins, but it
+      //      involves preprocessing the document as one cannot use any
+      //      arbitrary value for margins. Then, default printer margins must be
+      //      used to setup the print job. These custom margins are not
+      //      backwards convertible to PWG units.
+      //   2) via chrome.printing API, which allows to set only supported
+      //   margins,
+      //      meaning that this custom margins are backwards convertible to PWG
+      //      units.
+      //
+      // It's unknown if the custom margins here are the ones that were
+      // announced by the printer. Thus, first try to convert the custom margins
+      // to PWG units and if that fails, use the default margins. This preserves
+      // the original behaviour for the print preview dialog and usage of custom
+      // margins.
+      bool uses_custom_margins = false;
+      if (settings.margin_type() == mojom::MarginType::kCustomMargins) {
+        uses_custom_margins = AreMarginsUMConvertibleToPWG(
+            settings.requested_custom_margins_in_microns());
+        if (uses_custom_margins) {
+          bottom_margin = settings.requested_custom_margins_in_microns().bottom;
+          left_margin = settings.requested_custom_margins_in_microns().left;
+          right_margin = settings.requested_custom_margins_in_microns().right;
+          top_margin = settings.requested_custom_margins_in_microns().top;
+        }
+      }
+      if (!uses_custom_margins) {
+        MarginsMicronsFromSizeAndPrintableArea(size_um, printable_area_um,
+                                               &bottom_margin, &left_margin,
+                                               &right_margin, &top_margin);
+      }
+    } else {
+      MarginsMicronsFromSizeAndPrintableArea(size_um, printable_area_um,
+                                             &bottom_margin, &left_margin,
+                                             &right_margin, &top_margin);
+    }
+    bottom_margin = MarginMicronsToPWG(bottom_margin);
+    left_margin = MarginMicronsToPWG(left_margin);
+    right_margin = MarginMicronsToPWG(right_margin);
+    top_margin = MarginMicronsToPWG(top_margin);
+  }
 
   ScopedIppPtr media_col = WrapIpp(ippNew());
   ScopedIppPtr media_size = WrapIpp(ippNew());
@@ -132,6 +196,10 @@ void EncodeMediaCol(ipp_t* options,
   if (!source.empty()) {
     ippAddString(media_col.get(), IPP_TAG_ZERO, IPP_TAG_KEYWORD,
                  kIppMediaSource, nullptr, source.c_str());
+  }
+  if (!type.empty()) {
+    ippAddString(media_col.get(), IPP_TAG_ZERO, IPP_TAG_KEYWORD, kIppMediaType,
+                 nullptr, type.c_str());
   }
 
   ippAddCollection(options, IPP_TAG_JOB, kIppMediaCol, media_col.get());
@@ -161,12 +229,53 @@ void SetPrintableArea(PrintSettings* settings,
   }
 }
 
+std::string PrintScalingTypeToIPPString(mojom::PrintScalingType print_scaling) {
+  switch (print_scaling) {
+    case mojom::PrintScalingType::kAuto:
+      return "auto";
+    case mojom::PrintScalingType::kAutoFit:
+      return "auto-fit";
+    case mojom::PrintScalingType::kFill:
+      return "fill";
+    case mojom::PrintScalingType::kFit:
+      return "fit";
+    case mojom::PrintScalingType::kNone:
+      return "none";
+    default:
+      NOTREACHED();
+  }
+}
+
 }  // namespace
 
 ScopedIppPtr SettingsToIPPOptions(const PrintSettings& settings,
-                                  const gfx::Rect& printable_area_um) {
+                                  gfx::Rect printable_area_um) {
   ScopedIppPtr scoped_options = WrapIpp(ippNew());
   ipp_t* options = scoped_options.get();
+
+  // The media width/height may have been swapped to ensure the media is
+  // portrait (height greater than width).  When sending the IPP attributes to
+  // CUPS, the media needs to be in the original format.  The way to determine
+  // if the media size was swapped is to look at the vendor ID (which does not
+  // get altered).  If its width is greater than its height, that means the
+  // media size was swapped and needs to be swapped back when creating the IPP
+  // attributes.
+  gfx::Size media_size_microns = settings.requested_media().size_microns;
+  const gfx::Size vendor_id_paper_size =
+      ParsePaperSize(settings.requested_media().vendor_id);
+  if (!vendor_id_paper_size.IsEmpty() &&
+      vendor_id_paper_size.width() > vendor_id_paper_size.height()) {
+    // Rotate 90 degrees counter-clockwise to undo the rotation in
+    // cloud_print_cdd_conversion.cc.
+    int new_x = media_size_microns.height() - printable_area_um.height() -
+                printable_area_um.y();
+    int new_y = printable_area_um.x();
+
+    printable_area_um.SetRect(new_x, new_y, printable_area_um.height(),
+                              printable_area_um.width());
+    media_size_microns.SetSize(media_size_microns.height(),
+                               media_size_microns.width());
+  }
 
   const char* sides = nullptr;
   switch (settings.duplex_mode()) {
@@ -209,6 +318,20 @@ ScopedIppPtr SettingsToIPPOptions(const PrintSettings& settings,
                      settings.dpi_horizontal(), settings.dpi_vertical());
   }
 
+  // print scaling
+  if (settings.print_scaling() !=
+      mojom::PrintScalingType::kUnknownPrintScalingType) {
+    ippAddString(options, IPP_TAG_JOB, IPP_TAG_KEYWORD, kIppPrintScaling,
+                 nullptr,
+                 PrintScalingTypeToIPPString(settings.print_scaling()).c_str());
+  }
+
+  // print quality
+  if (settings.quality() != mojom::Quality::kUnknownQuality) {
+    ippAddInteger(options, IPP_TAG_JOB, IPP_TAG_ENUM, kIppPrintQuality,
+                  static_cast<int>(settings.quality()));
+  }
+
   std::map<std::string, std::vector<int>> multival;
   std::string media_source;
   for (const auto& setting : settings.advanced_settings()) {
@@ -242,8 +365,8 @@ ScopedIppPtr SettingsToIPPOptions(const PrintSettings& settings,
 
   // Construct the IPP media-col attribute specifying media size, margins,
   // source, etc.
-  EncodeMediaCol(options, settings.requested_media().size_microns,
-                 printable_area_um, media_source);
+  EncodeMediaCol(options, media_size_microns, printable_area_um, media_source,
+                 settings);
 
   // Add multivalue enum options.
   for (const auto& it : multival) {
@@ -269,34 +392,34 @@ ScopedIppPtr SettingsToIPPOptions(const PrintSettings& settings,
 // static
 std::unique_ptr<PrintingContext> PrintingContext::CreateImpl(
     Delegate* delegate,
-    bool skip_system_calls) {
-  auto context = std::make_unique<PrintingContextChromeos>(delegate);
-#if BUILDFLAG(ENABLE_OOP_PRINTING)
-  if (skip_system_calls)
-    context->set_skip_system_calls();
-#endif
-  return context;
+    OutOfProcessBehavior out_of_process_behavior) {
+  return std::make_unique<PrintingContextChromeos>(delegate,
+                                                   out_of_process_behavior);
 }
 
 // static
 std::unique_ptr<PrintingContextChromeos>
 PrintingContextChromeos::CreateForTesting(
     Delegate* delegate,
+    OutOfProcessBehavior out_of_process_behavior,
     std::unique_ptr<CupsConnection> connection) {
   // Private ctor.
-  return base::WrapUnique(
-      new PrintingContextChromeos(delegate, std::move(connection)));
+  return base::WrapUnique(new PrintingContextChromeos(
+      delegate, out_of_process_behavior, std::move(connection)));
 }
 
-PrintingContextChromeos::PrintingContextChromeos(Delegate* delegate)
-    : PrintingContext(delegate),
+PrintingContextChromeos::PrintingContextChromeos(
+    Delegate* delegate,
+    OutOfProcessBehavior out_of_process_behavior)
+    : PrintingContext(delegate, out_of_process_behavior),
       connection_(CupsConnection::Create()),
       ipp_options_(WrapIpp(nullptr)) {}
 
 PrintingContextChromeos::PrintingContextChromeos(
     Delegate* delegate,
+    OutOfProcessBehavior out_of_process_behavior,
     std::unique_ptr<CupsConnection> connection)
-    : PrintingContext(delegate),
+    : PrintingContext(delegate, out_of_process_behavior),
       connection_(std::move(connection)),
       ipp_options_(WrapIpp(nullptr)) {}
 
@@ -405,7 +528,7 @@ mojom::ResultCode PrintingContextChromeos::UpdatePrinterSettings(
   gfx::Rect printable_area_um =
       GetPrintableAreaForSize(*printer_, media.size_microns);
   SetPrintableArea(settings_.get(), media, printable_area_um);
-  ipp_options_ = SettingsToIPPOptions(*settings_, printable_area_um);
+  ipp_options_ = SettingsToIPPOptions(*settings_, std::move(printable_area_um));
   send_user_info_ = settings_->send_user_info();
   if (send_user_info_) {
     DCHECK(printer_);
@@ -436,8 +559,20 @@ mojom::ResultCode PrintingContextChromeos::NewDocument(
   DCHECK(!in_print_job_);
   in_print_job_ = true;
 
-  if (skip_system_calls())
+  // In case of out-of-process printing, code execution reaches the NewDocument
+  // function twice. First time the browser process ends here with a skip.
+  // The flow is later picked up by the print backend service process, where
+  // a new instance of the printing context is created and the flow goes through
+  // here without a skip.
+  //
+  // Other OS-es might do more than a quick skip, because of a potential need
+  // to handle OS-based printing dialogs.
+#if BUILDFLAG(ENABLE_OOP_PRINTING)
+  if (out_of_process_behavior() ==
+      OutOfProcessBehavior::kEnabledSkipSystemCalls) {
     return mojom::ResultCode::kSuccess;
+  }
+#endif
 
   std::string converted_name;
   if (send_user_info_) {
@@ -451,15 +586,16 @@ mojom::ResultCode PrintingContextChromeos::NewDocument(
       &job_id_, converted_name, username_, ipp_options_.get());
 
   if (job_id_ == 0) {
-    DLOG(WARNING) << "Creating cups job failed"
-                  << ippErrorString(create_status);
+    LOG(ERROR) << printer_->GetName() << ": Creating cups job failed: "
+               << ippErrorString(create_status);
     return OnError();
   }
 
   // we only send one document, so it's always the last one
   if (!printer_->StartDocument(job_id_, converted_name, true, username_,
                                ipp_options_.get())) {
-    LOG(ERROR) << "Starting document failed";
+    LOG(ERROR) << printer_->GetName() << ": Starting document failed for job "
+               << job_id_;
     return OnError();
   }
 
@@ -482,7 +618,6 @@ mojom::ResultCode PrintingContextChromeos::PrintDocument(
   return StreamData(buffer);
 #else
   NOTREACHED();
-  return mojom::ResultCode::kFailed;
 #endif  // BUILDFLAG(USE_CUPS)
 }
 

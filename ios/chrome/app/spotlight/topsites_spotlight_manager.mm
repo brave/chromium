@@ -7,9 +7,9 @@
 #import <memory>
 
 #import "base/functional/bind.h"
+#import "base/memory/raw_ptr.h"
 #import "base/memory/ref_counted.h"
 #import "base/strings/sys_string_conversions.h"
-#import "components/bookmarks/browser/bookmark_model.h"
 #import "components/history/core/browser/history_types.h"
 #import "components/history/core/browser/top_sites.h"
 #import "components/history/core/browser/top_sites_observer.h"
@@ -17,29 +17,22 @@
 #import "ios/chrome/app/spotlight/searchable_item_factory.h"
 #import "ios/chrome/app/spotlight/spotlight_interface.h"
 #import "ios/chrome/app/spotlight/spotlight_logger.h"
-#import "ios/chrome/browser/bookmarks/local_or_syncable_bookmark_model_factory.h"
-#import "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
-#import "ios/chrome/browser/history/top_sites_factory.h"
-#import "ios/chrome/browser/sync/sync_observer_bridge.h"
-#import "ios/chrome/browser/sync/sync_service_factory.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_mediator.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/chrome/browser/content_suggestions/ui_bundled/cells/most_visited_tiles_mediator.h"
+#import "ios/chrome/browser/favicon/model/ios_chrome_large_icon_service_factory.h"
+#import "ios/chrome/browser/history/model/top_sites_factory.h"
+#import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
+#import "ios/chrome/browser/sync/model/sync_service_factory.h"
 
 class SpotlightTopSitesBridge;
 class SpotlightTopSitesCallbackBridge;
 
-@interface TopSitesSpotlightManager ()<SyncObserverModelBridge> {
+@interface TopSitesSpotlightManager () <SyncObserverModelBridge> {
   // Bridge to register for top sites changes. It's important that this instance
   // variable is released before the _topSite one.
   std::unique_ptr<SpotlightTopSitesBridge> _topSitesBridge;
 
   // Bridge to register for top sites callbacks.
   std::unique_ptr<SpotlightTopSitesCallbackBridge> _topSitesCallbackBridge;
-
-  bookmarks::BookmarkModel* _bookmarkModel;             // weak
 
   scoped_refptr<history::TopSites> _topSites;
 
@@ -52,7 +45,6 @@ class SpotlightTopSitesCallbackBridge;
 - (instancetype)
     initWithLargeIconService:(favicon::LargeIconService*)largeIconService
                     topSites:(scoped_refptr<history::TopSites>)topSites
-               bookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
           spotlightInterface:(SpotlightInterface*)spotlightInterface
        searchableItemFactory:(SearchableItemFactory*)searchableItemFactory;
 
@@ -72,8 +64,7 @@ class SpotlightTopSitesCallbackBridge;
 
 @end
 
-class SpotlightTopSitesCallbackBridge
-    : public base::SupportsWeakPtr<SpotlightTopSitesCallbackBridge> {
+class SpotlightTopSitesCallbackBridge final {
  public:
   explicit SpotlightTopSitesCallbackBridge(TopSitesSpotlightManager* owner)
       : owner_(owner) {}
@@ -84,8 +75,13 @@ class SpotlightTopSitesCallbackBridge
     [owner_ onMostVisitedURLsAvailable:data];
   }
 
+  base::WeakPtr<SpotlightTopSitesCallbackBridge> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   __weak TopSitesSpotlightManager* owner_;
+  base::WeakPtrFactory<SpotlightTopSitesCallbackBridge> weak_ptr_factory_{this};
 };
 
 class SpotlightTopSitesBridge : public history::TopSitesObserver {
@@ -110,22 +106,19 @@ class SpotlightTopSitesBridge : public history::TopSitesObserver {
 
  private:
   __weak TopSitesSpotlightManager* owner_;
-  history::TopSites* top_sites_;
+  raw_ptr<history::TopSites> top_sites_;
 };
 
 @implementation TopSitesSpotlightManager
 @synthesize topSites = _topSites;
 
-+ (TopSitesSpotlightManager*)topSitesSpotlightManagerWithBrowserState:
-    (ChromeBrowserState*)browserState {
++ (TopSitesSpotlightManager*)topSitesSpotlightManagerWithProfile:
+    (ProfileIOS*)profile {
   favicon::LargeIconService* largeIconService =
-      IOSChromeLargeIconServiceFactory::GetForBrowserState(browserState);
+      IOSChromeLargeIconServiceFactory::GetForProfile(profile);
   return [[TopSitesSpotlightManager alloc]
       initWithLargeIconService:largeIconService
-                      topSites:ios::TopSitesFactory::GetForBrowserState(
-                                   browserState)
-                 bookmarkModel:ios::LocalOrSyncableBookmarkModelFactory::
-                                   GetForBrowserState(browserState)
+                      topSites:ios::TopSitesFactory::GetForProfile(profile)
             spotlightInterface:[SpotlightInterface defaultInterface]
          searchableItemFactory:
              [[SearchableItemFactory alloc]
@@ -137,20 +130,16 @@ class SpotlightTopSitesBridge : public history::TopSitesObserver {
 - (instancetype)
     initWithLargeIconService:(favicon::LargeIconService*)largeIconService
                     topSites:(scoped_refptr<history::TopSites>)topSites
-               bookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
           spotlightInterface:(SpotlightInterface*)spotlightInterface
        searchableItemFactory:(SearchableItemFactory*)searchableItemFactory {
-  self = [super init];
+  self = [super initWithSpotlightInterface:spotlightInterface
+                     searchableItemFactory:searchableItemFactory];
   if (self) {
     DCHECK(topSites);
-    DCHECK(bookmarkModel);
     _topSites = topSites;
     _topSitesBridge.reset(new SpotlightTopSitesBridge(self, _topSites.get()));
     _topSitesCallbackBridge.reset(new SpotlightTopSitesCallbackBridge(self));
-    _bookmarkModel = bookmarkModel;
     _isReindexPending = false;
-    _spotlightInterface = spotlightInterface;
-    _searchableItemFactory = searchableItemFactory;
   }
   return self;
 }
@@ -172,8 +161,9 @@ class SpotlightTopSitesBridge : public history::TopSitesObserver {
 }
 
 - (void)addAllTopSitesSpotlightItems {
-  if (!_topSites)
+  if (!_topSites) {
     return;
+  }
 
   [self addAllLocalTopSitesItems];
 }
@@ -187,7 +177,7 @@ class SpotlightTopSitesBridge : public history::TopSitesObserver {
 - (void)onMostVisitedURLsAvailable:
     (const history::MostVisitedURLList&)top_sites {
   NSUInteger sitesToIndex =
-      MIN(top_sites.size(), [ContentSuggestionsMediator maxSitesShown]);
+      MIN(top_sites.size(), [MostVisitedTilesMediator maxSitesShown]);
   for (size_t i = 0; i < sitesToIndex; i++) {
     const GURL& URL = top_sites[i].url;
 
@@ -221,11 +211,11 @@ class SpotlightTopSitesBridge : public history::TopSitesObserver {
 }
 
 - (void)shutdown {
+  [super shutdown];
   _topSitesBridge.reset();
   _topSitesCallbackBridge.reset();
 
   _topSites = nullptr;
-  _bookmarkModel = nullptr;
 }
 
 #pragma mark -

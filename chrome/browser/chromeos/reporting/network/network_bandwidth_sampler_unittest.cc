@@ -4,17 +4,18 @@
 
 #include "chrome/browser/chromeos/reporting/network/network_bandwidth_sampler.h"
 
-#include "base/test/scoped_feature_list.h"
+#include <optional>
+
 #include "base/test/task_environment.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/prefs/pref_service.h"
 #include "components/reporting/proto/synced/metric_data.pb.h"
 #include "components/reporting/util/test_support_callbacks.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace reporting {
 namespace {
@@ -46,15 +47,20 @@ class NetworkBandwidthSamplerTest : public ::testing::Test {
   raw_ptr<Profile, DanglingUntriaged> profile_;
 };
 
-TEST_F(NetworkBandwidthSamplerTest, DoesNotReportDownloadSpeedByDefault) {
+TEST_F(NetworkBandwidthSamplerTest, ReportsDownloadSpeedByDefault) {
   UpdateDownloadSpeedKbps(kInitDownloadSpeedKbps);
   NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
                                   profile_->GetWeakPtr());
 
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
-  ASSERT_FALSE(result.has_value());
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->telemetry_data()
+                .networks_telemetry()
+                .bandwidth_data()
+                .download_speed_kbps(),
+            kInitDownloadSpeedKbps);
 }
 
 TEST_F(NetworkBandwidthSamplerTest, ReportsDownloadSpeedWhenPrefSet) {
@@ -63,7 +69,7 @@ TEST_F(NetworkBandwidthSamplerTest, ReportsDownloadSpeedWhenPrefSet) {
   NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
                                   profile_->GetWeakPtr());
 
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
   ASSERT_TRUE(result.has_value());
@@ -76,14 +82,11 @@ TEST_F(NetworkBandwidthSamplerTest, ReportsDownloadSpeedWhenPrefSet) {
 
 TEST_F(NetworkBandwidthSamplerTest,
        ReportsDownloadSpeedWhenFeatureFlagEnabled) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(kEnableNetworkBandwidthReporting);
-
   UpdateDownloadSpeedKbps(kInitDownloadSpeedKbps);
   NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
                                   profile_->GetWeakPtr());
 
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
   ASSERT_TRUE(result.has_value());
@@ -94,39 +97,12 @@ TEST_F(NetworkBandwidthSamplerTest,
             kInitDownloadSpeedKbps);
 }
 
-TEST_F(NetworkBandwidthSamplerTest, DoesNotReportDownloadSpeedWhenPrefUnset) {
-  SetPrefValue(false);
-  UpdateDownloadSpeedKbps(kInitDownloadSpeedKbps);
-  NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
-                                  profile_->GetWeakPtr());
-
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
-  sampler.MaybeCollect(test_event.cb());
-  const auto result = test_event.result();
-  ASSERT_FALSE(result.has_value());
-}
-
-TEST_F(NetworkBandwidthSamplerTest,
-       DoesNotReportDownloadSpeedWhenFeatureFlagDisabled) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kEnableNetworkBandwidthReporting);
-
-  UpdateDownloadSpeedKbps(kInitDownloadSpeedKbps);
-  NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
-                                  profile_->GetWeakPtr());
-
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
-  sampler.MaybeCollect(test_event.cb());
-  const auto result = test_event.result();
-  ASSERT_FALSE(result.has_value());
-}
-
 TEST_F(NetworkBandwidthSamplerTest, DoesNotReportDownloadSpeedIfUnavailable) {
   SetPrefValue(true);
   NetworkBandwidthSampler sampler(g_browser_process->network_quality_tracker(),
                                   profile_->GetWeakPtr());
 
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
   ASSERT_FALSE(result.has_value());
@@ -143,7 +119,7 @@ TEST_F(NetworkBandwidthSamplerTest, ReportsUpdatedDownloadSpeed) {
   const int64_t download_speed_kbps = 100000;
   UpdateDownloadSpeedKbps(download_speed_kbps);
 
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
   ASSERT_TRUE(result.has_value());
@@ -164,7 +140,7 @@ TEST_F(NetworkBandwidthSamplerTest, CollectAfterProfileDestructed) {
   profile_manager_.DeleteAllTestingProfiles();
 
   // Verify no data is reported.
-  ::reporting::test::TestEvent<absl::optional<MetricData>> test_event;
+  ::reporting::test::TestEvent<std::optional<MetricData>> test_event;
   sampler.MaybeCollect(test_event.cb());
   const auto result = test_event.result();
   ASSERT_FALSE(result.has_value());

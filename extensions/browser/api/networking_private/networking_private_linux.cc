@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -128,28 +129,28 @@ void OnNetworkConnectOperationCompleted(
 // from the |dbus_thread_|.
 void GetCachedNetworkPropertiesCallback(
     std::unique_ptr<std::string> error,
-    base::Value::Dict properties,
+    std::unique_ptr<base::Value::Dict> properties,
     NetworkingPrivateDelegate::DictionaryCallback success_callback,
     NetworkingPrivateDelegate::FailureCallback failure_callback) {
   if (!error->empty()) {
     std::move(failure_callback).Run(*error);
     return;
   }
-  std::move(success_callback).Run(std::move(properties));
+  std::move(success_callback).Run(std::move(*properties));
 }
 
 // Fires the appropriate callback when the network properties are returned
 // from the |dbus_thread_|.
 void GetCachedNetworkPropertiesResultCallback(
     std::unique_ptr<std::string> error,
-    base::Value::Dict properties,
+    std::unique_ptr<base::Value::Dict> properties,
     NetworkingPrivateDelegate::PropertiesCallback callback) {
   if (!error->empty()) {
     LOG(ERROR) << "GetCachedNetworkProperties failed: " << *error;
-    std::move(callback).Run(absl::nullopt, *error);
+    std::move(callback).Run(std::nullopt, *error);
     return;
   }
-  std::move(callback).Run(std::move(properties), absl::nullopt);
+  std::move(callback).Run(std::move(*properties), std::nullopt);
 }
 
 }  // namespace
@@ -207,21 +208,24 @@ void NetworkingPrivateLinux::GetProperties(const std::string& guid,
                                            PropertiesCallback callback) {
   if (!network_manager_proxy_) {
     LOG(WARNING) << "NetworkManager over DBus is not supported";
-    std::move(callback).Run(absl::nullopt,
+    std::move(callback).Run(std::nullopt,
                             extensions::networking_private::kErrorNotSupported);
     return;
   }
 
-  std::unique_ptr<std::string> error(new std::string);
-  base::Value::Dict network_properties;
+  auto error = std::make_unique<std::string>();
+  auto network_properties = std::make_unique<base::Value::Dict>();
 
-  // Runs GetCachedNetworkProperties on |dbus_thread|.
+  // Runs GetCachedNetworkProperties() on |dbus_thread|. We can safely pass the
+  // internal raw pointers since it is guaranteed to outlive
+  // GetCachedNetworkProperties() because ownership is given to the callback.
   std::string* error_ptr = error.get();
+  base::Value::Dict* network_properties_ptr = network_properties.get();
   dbus_thread_.task_runner()->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(&NetworkingPrivateLinux::GetCachedNetworkProperties,
                      base::Unretained(this), guid,
-                     base::Unretained(&network_properties),
+                     base::Unretained(network_properties_ptr),
                      base::Unretained(error_ptr)),
       base::BindOnce(&GetCachedNetworkPropertiesResultCallback,
                      std::move(error), std::move(network_properties),
@@ -231,7 +235,7 @@ void NetworkingPrivateLinux::GetProperties(const std::string& guid,
 void NetworkingPrivateLinux::GetManagedProperties(const std::string& guid,
                                                   PropertiesCallback callback) {
   LOG(WARNING) << "GetManagedProperties is not supported";
-  std::move(callback).Run(absl::nullopt,
+  std::move(callback).Run(std::nullopt,
                           extensions::networking_private::kErrorNotSupported);
 }
 
@@ -243,16 +247,19 @@ void NetworkingPrivateLinux::GetState(const std::string& guid,
     return;
   }
 
-  std::unique_ptr<std::string> error(new std::string);
-  base::Value::Dict network_properties;
+  auto error = std::make_unique<std::string>();
+  auto network_properties = std::make_unique<base::Value::Dict>();
 
-  // Runs GetCachedNetworkProperties on |dbus_thread|.
+  // Runs GetCachedNetworkProperties() on |dbus_thread|. We can safely pass the
+  // internal raw pointers since it is guaranteed to outlive
+  // GetCachedNetworkProperties() because ownership is given to the callback.
   std::string* error_ptr = error.get();
+  base::Value::Dict* network_properties_ptr = network_properties.get();
   dbus_thread_.task_runner()->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(&NetworkingPrivateLinux::GetCachedNetworkProperties,
                      base::Unretained(this), guid,
-                     base::Unretained(&network_properties),
+                     base::Unretained(network_properties_ptr),
                      base::Unretained(error_ptr)),
       base::BindOnce(&GetCachedNetworkPropertiesCallback, std::move(error),
                      std::move(network_properties), std::move(success_callback),
@@ -419,8 +426,7 @@ void NetworkingPrivateLinux::ConnectToNetwork(const std::string& guid,
 
   dbus::MessageWriter variant_writer(&method_call);
   wifi_dict_writer.OpenVariant("ay", &variant_writer);
-  variant_writer.AppendArrayOfBytes(
-      reinterpret_cast<const uint8_t*>(ssid.c_str()), ssid.size());
+  variant_writer.AppendArrayOfBytes(base::as_byte_span(ssid));
 
   // Close all the arrays and dicts.
   wifi_dict_writer.CloseContainer(&variant_writer);
@@ -615,12 +621,11 @@ void NetworkingPrivateLinux::GetEnabledNetworkTypes(
 
 void NetworkingPrivateLinux::GetDeviceStateList(
     DeviceStateListCallback callback) {
-  std::unique_ptr<DeviceStateList> device_state_list(new DeviceStateList);
-  std::unique_ptr<api::networking_private::DeviceStateProperties> properties(
-      new api::networking_private::DeviceStateProperties);
-  properties->type = api::networking_private::NetworkType::kWiFi;
-  properties->state = api::networking_private::DeviceStateType::kEnabled;
-  device_state_list->push_back(std::move(properties));
+  DeviceStateList device_state_list;
+  api::networking_private::DeviceStateProperties& properties =
+      device_state_list.emplace_back();
+  properties.type = api::networking_private::NetworkType::kWiFi;
+  properties.state = api::networking_private::DeviceStateType::kEnabled;
   std::move(callback).Run(std::move(device_state_list));
 }
 
@@ -829,17 +834,13 @@ bool NetworkingPrivateLinux::GetAccessPointInfo(
       return false;
     }
 
-    const uint8_t* ssid_bytes = nullptr;
-    size_t ssid_length = 0;
-    if (!variant_reader.PopArrayOfBytes(&ssid_bytes, &ssid_length)) {
+    std::string ssidUTF8;
+    if (!variant_reader.PopString(&ssidUTF8)) {
       LOG(ERROR) << "Unexpected response for " << access_point_path.value()
                  << ": " << response->ToString();
       return false;
     }
-
-    std::string ssidUTF8(ssid_bytes, ssid_bytes + ssid_length);
     std::u16string ssid = base::UTF8ToUTF16(ssidUTF8);
-
     access_point_info->Set(kAccessPointInfoName, ssid);
   }
 

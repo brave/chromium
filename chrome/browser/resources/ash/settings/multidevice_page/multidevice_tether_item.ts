@@ -17,18 +17,22 @@ import '../settings_vars.css.js';
 import './multidevice_feature_item.js';
 
 import {MojoInterfaceProviderImpl} from 'chrome://resources/ash/common/network/mojo_interface_provider.js';
-import {NetworkListenerBehavior, NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import type {NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import {NetworkListenerBehavior} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {CrosNetworkConfigInterface, FilterType, InhibitReason, NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
-import {DeviceStateType, NetworkType} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
+import type {CrosNetworkConfigInterface, NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {FilterType, InhibitReason} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {ConnectionStateType, DeviceStateType, NetworkType} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
 import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
-import {Constructor} from '../common/types';
+import type {Constructor} from '../common/types.js';
 import {routes} from '../router.js';
 
-import {MultiDeviceFeatureMixin, MultiDeviceFeatureMixinInterface} from './multidevice_feature_mixin.js';
+import type {MultiDeviceFeatureMixinInterface} from './multidevice_feature_mixin.js';
+import {MultiDeviceFeatureMixin} from './multidevice_feature_mixin.js';
 import {getTemplate} from './multidevice_tether_item.html.js';
 
 const SettingsMultideviceTetherItemElementBase =
@@ -67,7 +71,7 @@ class SettingsMultideviceTetherItemElement extends
       /**
        * Alias for allowing Polymer bindings to routes.
        */
-      routes: {
+      routesEnum_: {
         type: Object,
         value: routes,
         readonly: true,
@@ -197,6 +201,36 @@ class SettingsMultideviceTetherItemElement extends
 
   private getTetherNetworkUrlSearchParams_(): URLSearchParams {
     return new URLSearchParams('type=Tether');
+  }
+
+  private getInstantTetheringDescription_(): string {
+    const deviceState = this.deviceState_;
+    // If the `deviceState` is enabled, the description depends on the
+    // `connectionState`, otherwise return the disabled description directly.
+    if (deviceState && deviceState.deviceState === DeviceStateType.kEnabled) {
+      assert(deviceState.type === NetworkType.kTether);
+      if (this.activeNetworkState_) {
+        const connectionState = this.activeNetworkState_.connectionState;
+        const deviceName = this.pageContentData.hostDeviceName || '';
+        if (OncMojo.connectionStateIsConnected(connectionState)) {
+          return this.i18n(
+              'multideviceInstantTetheringItemConnectedDescription',
+              deviceName);
+        }
+        if (connectionState === ConnectionStateType.kConnecting) {
+          return this.i18n(
+              'multideviceInstantTetheringItemConnectingDescription',
+              deviceName);
+        }
+        if (connectionState === ConnectionStateType.kNotConnected) {
+          return this.i18n(
+              'multideviceInstantTetheringItemNoNetworkDescription',
+              deviceName);
+        }
+      }
+    }
+
+    return this.i18n('multideviceInstantTetheringItemDisabledDescription');
   }
 }
 

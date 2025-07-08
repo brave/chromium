@@ -44,6 +44,9 @@ class DevToolsPageHandler : public ManifestHandler {
   ~DevToolsPageHandler() override;
 
   bool Parse(Extension* extension, std::u16string* error) override;
+  bool Validate(const Extension& extension,
+                std::string* error,
+                std::vector<InstallWarning>* warnings) const override;
 
  private:
   base::span<const char* const> Keys() const override;
@@ -60,7 +63,7 @@ class URLOverridesHandler : public ManifestHandler {
   ~URLOverridesHandler() override;
 
   bool Parse(Extension* extension, std::u16string* error) override;
-  bool Validate(const Extension* extension,
+  bool Validate(const Extension& extension,
                 std::string* error,
                 std::vector<InstallWarning>* warnings) const override;
 

@@ -51,13 +51,12 @@ class ASH_EXPORT ContextualNudge : public views::BubbleDialogDelegateView {
   void UpdateAnchorRect(const gfx::Rect& rect);
 
   // BubbleDialogDelegateView:
-  ui::LayerType GetLayerType() const override;
   void OnGestureEvent(ui::GestureEvent* event) override;
 
  private:
   base::RepeatingClosure tap_callback_;
 
-  raw_ptr<views::Label, ExperimentalAsh> label_;
+  raw_ptr<views::Label> label_;
 };
 
 }  // namespace ash

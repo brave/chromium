@@ -25,12 +25,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_SCOPED_SVG_PAINT_STATE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_SCOPED_SVG_PAINT_STATE_H_
 
+#include <optional>
+
 #include "base/dcheck_is_on.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/paint/object_paint_properties.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
-#include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -44,55 +44,34 @@ class ScopedSVGTransformState {
 
  public:
   ScopedSVGTransformState(const PaintInfo& paint_info,
-                          const LayoutObject& object) {
-    DCHECK(object.IsSVGChild());
+                          const LayoutObject& object);
 
-    const auto* fragment = paint_info.FragmentToPaint(object);
-    if (!fragment)
-      return;
-    const auto* properties = fragment->PaintProperties();
-    if (!properties)
-      return;
-
-    // TODO(https://crbug.com/1278452): Also consider Translate, Rotate,
-    // Scale, and Offset.
-    if (const auto* transform_node = properties->Transform()) {
-      transform_property_scope_.emplace(
-          paint_info.context.GetPaintController(), *transform_node, object,
-          DisplayItem::PaintPhaseToSVGTransformType(paint_info.phase));
-    }
-  }
+  PaintInfo& ContentPaintInfo() { return content_paint_info_; }
 
  private:
-  absl::optional<ScopedPaintChunkProperties> transform_property_scope_;
+  std::optional<SvgContextPaints> transformed_context_paints_;
+  std::optional<ScopedPaintChunkProperties> transform_property_scope_;
+  PaintInfo content_paint_info_;
 };
 
 class ScopedSVGPaintState {
   STACK_ALLOCATED();
 
  public:
-  ScopedSVGPaintState(const LayoutObject& object, const PaintInfo& paint_info)
-      : ScopedSVGPaintState(object, paint_info, object) {}
+  ScopedSVGPaintState(const LayoutObject& object, const PaintInfo& paint_info);
   ScopedSVGPaintState(const LayoutObject& object,
                       const PaintInfo& paint_info,
-                      const DisplayItemClient& display_item_client)
-      : object_(object),
-        paint_info_(paint_info),
-        display_item_client_(display_item_client) {
-    if (paint_info.phase == PaintPhase::kForeground)
-      ApplyEffects();
-  }
+                      const DisplayItemClient& display_item_client);
   ~ScopedSVGPaintState();
 
  private:
   void ApplyEffects();
   void ApplyPaintPropertyState(const ObjectPaintProperties&);
-  void ApplyMaskIfNecessary();
 
   const LayoutObject& object_;
   const PaintInfo& paint_info_;
   const DisplayItemClient& display_item_client_;
-  absl::optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties_;
+  std::optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties_;
   bool should_paint_mask_ = false;
   bool should_paint_clip_path_as_mask_image_ = false;
 #if DCHECK_IS_ON()

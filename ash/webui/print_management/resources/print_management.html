@@ -51,7 +51,7 @@
     display: flex;
   }
 
-  #deleteIcon {
+  :host-context(body:not(.jelly-enabled)) #deleteIcon {
     --iron-icon-height: 20px;
     --iron-icon-width: 20px;
     margin-inline-end: 4px;
@@ -150,7 +150,7 @@
 
   <div class="data-container">
     <div class="column-headers flex-center"
-        aria-labeledby="fileNameColumn printerNameColumn dateColumn statusColumn">
+        aria-labelledby="fileNameColumn printerNameColumn dateColumn statusColumn">
       <div id="fileNameColumn" class="file-name-header-column overflow-ellipsis"
           aria-hidden="true">
         [[i18n('fileNameColumn')]]
@@ -187,7 +187,7 @@
     </div>
 
     <printer-setup-info hidden="[[!shouldShowSetupAssistance(
-        ongoingPrintJobs.length, printJobs.length)]]">
+        printJobsLoaded, ongoingPrintJobs.length, printJobs.length)]]">
     </printer-setup-info>
 
     <template is="dom-if" if="[[printJobs.length]]" restamp>

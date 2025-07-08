@@ -6,16 +6,12 @@
 
 #import <Carbon/Carbon.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 base::Lock tis_lock_;
 
@@ -23,7 +19,7 @@ UniChar GetCharacter(UInt16 mac_key_code, UInt32 modifier_key_state) {
   UInt32 dead_key_state = 0;
 
   base::AutoLock lock(tis_lock_);
-  base::ScopedCFTypeRef<TISInputSourceRef> input_source(
+  base::apple::ScopedCFTypeRef<TISInputSourceRef> input_source(
       TISCopyCurrentKeyboardLayoutInputSource());
   return ui::TranslatedUnicodeCharFromKeyCode(
       input_source.get(), mac_key_code, kUCKeyActionDown, modifier_key_state,

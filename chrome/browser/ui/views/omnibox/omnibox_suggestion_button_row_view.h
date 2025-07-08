@@ -14,6 +14,7 @@
 
 class OmniboxPopupViewViews;
 class OmniboxSuggestionRowButton;
+class OmniboxSuggestionRowChip;
 
 namespace views {
 class Button;
@@ -21,8 +22,9 @@ class Button;
 
 // A view to contain the button row within a result view.
 class OmniboxSuggestionButtonRowView : public views::View {
+  METADATA_HEADER(OmniboxSuggestionButtonRowView, views::View)
+
  public:
-  METADATA_HEADER(OmniboxSuggestionButtonRowView);
   explicit OmniboxSuggestionButtonRowView(OmniboxPopupViewViews* popup_view,
                                           int model_index);
   OmniboxSuggestionButtonRowView(const OmniboxSuggestionButtonRowView&) =
@@ -32,7 +34,7 @@ class OmniboxSuggestionButtonRowView : public views::View {
   ~OmniboxSuggestionButtonRowView() override;
 
   // views::View:
-  void Layout() override;
+  void Layout(PassKey) override;
 
   // Called when the theme state may have changed.
   void SetThemeState(OmniboxPartState theme_state);
@@ -66,6 +68,8 @@ class OmniboxSuggestionButtonRowView : public views::View {
 
   const raw_ptr<OmniboxPopupViewViews> popup_view_;
   size_t const model_index_;
+
+  raw_ptr<OmniboxSuggestionRowChip> embeddings_chip_ = nullptr;
 
   raw_ptr<OmniboxSuggestionRowButton> keyword_button_ = nullptr;
 

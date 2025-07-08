@@ -65,6 +65,7 @@
 
 #include "absl/base/macros.h"
 #include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/synchronization/mutex.h"
 #include "mediapipe/framework/demangle.h"
 #include "mediapipe/framework/port/status.h"
@@ -147,7 +148,7 @@ class StaticMap {
    public:
     ValueInserter(const char* file_and_line, const KeyType& key,
                   const MediaPipeTypeData& value) {
-      MapName* static_map = GetMap();
+      StaticMap* static_map = GetMap();
       absl::MutexLock l(&(static_map->map_lock_));
 
       typename MapType::iterator it = static_map->internal_map_.find(key);
@@ -179,22 +180,24 @@ class StaticMap {
         const std::string previous_file_and_line = it->second.first;
         it->second.first = file_and_line;
         it->second.second = value;
-        LOG(WARNING) << "Redo mediapipe type registration of type "
-                     << value.type_string << " with serialization function at "
-                     << file_and_line << ". It was registered at "
-                     << previous_file_and_line;
+        ABSL_LOG(WARNING) << "Redo mediapipe type registration of type "
+                          << value.type_string
+                          << " with serialization function at " << file_and_line
+                          << ". It was registered at "
+                          << previous_file_and_line;
       } else if (!value.serialize_fn && !value.deserialize_fn) {
         // Prefers type registration with serialization functions. If type has
         // been registered with some serialization functions, the
         // non-serialization version will be ignored.
-        LOG(WARNING) << "Ignore mediapipe type registration of type "
-                     << value.type_string << " at " << file_and_line
-                     << ", since type has been registered with serialization "
-                        "functions at "
-                     << it->second.first;
+        ABSL_LOG(WARNING)
+            << "Ignore mediapipe type registration of type "
+            << value.type_string << " at " << file_and_line
+            << ", since type has been registered with serialization "
+               "functions at "
+            << it->second.first;
       } else {
         // Doesn't allow to only have one of serialize_fn and deserialize_fn.
-        LOG(FATAL)
+        ABSL_LOG(FATAL)
             << "Invalid mediapipe type registration at " << file_and_line
             << ". Serialization functions should be provided at the same time.";
       }
@@ -208,10 +211,10 @@ class StaticMap {
   friend class StaticMap::ValueInserter;
 
   // Returns a pointer to the one true instance of MapName class.
-  static MapName* GetMap() {
+  static StaticMap* GetMap() {
     // TODO: Uses gtl::NoDestructor for the thread-safe one-time
     // initialization if gtl::NoDestructor will be open sourced by ABSL.
-    static MapName* instance = new MapName();
+    static StaticMap* instance = new MapName();
     return instance;
   }
 

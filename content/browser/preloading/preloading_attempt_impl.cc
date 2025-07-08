@@ -4,6 +4,7 @@
 
 #include "content/browser/preloading/preloading_attempt_impl.h"
 
+#include "base/containers/span.h"
 #include "base/metrics/crc32.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/state_transitions.h"
@@ -15,6 +16,7 @@
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
@@ -88,7 +90,7 @@ void PreloadingAttemptImpl::SetEligibility(PreloadingEligibility eligibility) {
   eligibility_ = eligibility;
 }
 
-// TODO(crbug.com/1464836): most call sites of this should be removed, as
+// TODO(crbug.com/40275772): most call sites of this should be removed, as
 // PreloadingConfig should subsume most feature-specific holdbacks that exist
 // today. Some cases can remain as specific overrides of the PreloadingConfig
 // logic, e.g. if DevTools is open, or for features that are still launching and
@@ -111,8 +113,15 @@ bool PreloadingAttemptImpl::ShouldHoldback() {
     return holdback_status_ == PreloadingHoldbackStatus::kHoldback;
   }
 
-  bool should_holdback = PreloadingConfig::GetInstance().ShouldHoldback(
-      preloading_type_, predictor_type_);
+  bool should_holdback_due_to_preloading_config =
+      PreloadingConfig::GetInstance().ShouldHoldback(preloading_type_,
+                                                     creating_predictor_);
+  bool should_holdback_due_to_autosr_holdback =
+      creating_predictor_ == content_preloading_predictor::
+                                 kSpeculationRulesFromAutoSpeculationRules &&
+      blink::features::kAutoSpeculationRulesHoldback.Get();
+  bool should_holdback = should_holdback_due_to_preloading_config ||
+                         should_holdback_due_to_autosr_holdback;
   if (should_holdback) {
     holdback_status_ = PreloadingHoldbackStatus::kHoldback;
   } else {
@@ -143,7 +152,8 @@ void PreloadingAttemptImpl::SetTriggeringOutcome(
     case PreloadingTriggeringOutcome::kReady:
       CHECK(preloading_type_ == PreloadingType::kPrefetch ||
             preloading_type_ == PreloadingType::kPrerender ||
-            preloading_type_ == PreloadingType::kNoStatePrefetch);
+            preloading_type_ == PreloadingType::kNoStatePrefetch ||
+            preloading_type_ == PreloadingType::kLinkPreview);
       if (!ready_time_) {
         ready_time_ = elapsed_timer_.Elapsed();
       }
@@ -173,18 +183,27 @@ base::WeakPtr<PreloadingAttempt> PreloadingAttemptImpl::GetWeakPtr() {
 }
 
 PreloadingAttemptImpl::PreloadingAttemptImpl(
-    PreloadingPredictor predictor,
+    const PreloadingPredictor& creating_predictor,
+    const PreloadingPredictor& enacting_predictor,
     PreloadingType preloading_type,
     ukm::SourceId triggered_primary_page_source_id,
-    base::RepeatingCallback<bool(const GURL&)> url_match_predicate,
+    PreloadingURLMatchCallback url_match_predicate,
     uint32_t sampling_seed)
-    : predictor_type_(predictor),
+    : creating_predictor_(creating_predictor),
+      enacting_predictor_(enacting_predictor),
       preloading_type_(preloading_type),
       triggered_primary_page_source_id_(triggered_primary_page_source_id),
       url_match_predicate_(std::move(url_match_predicate)),
       sampling_seed_(sampling_seed) {}
 
 PreloadingAttemptImpl::~PreloadingAttemptImpl() = default;
+
+std::vector<PreloadingPredictor> PreloadingAttemptImpl::GetPredictors() const {
+  if (creating_predictor_ == enacting_predictor_) {
+    return {creating_predictor_};
+  }
+  return {creating_predictor_, enacting_predictor_};
+}
 
 void PreloadingAttemptImpl::RecordPreloadingAttemptMetrics(
     ukm::SourceId navigated_page_source_id) {
@@ -193,7 +212,7 @@ void PreloadingAttemptImpl::RecordPreloadingAttemptMetrics(
   // Ensure that when the `triggering_outcome_` is kSuccess, then the
   // accurate_triggering should be true.
   if (triggering_outcome_ == PreloadingTriggeringOutcome::kSuccess) {
-    // TODO(https://crbug.com/1431055): Fix PreloadingAttempt for Prefetching in
+    // TODO(crbug.com/40263357): Fix PreloadingAttempt for Prefetching in
     // a different WebContents. It is allowed to activate a prefetched result in
     // another WebContents instance, and the WebContents that stores `this`
     // instance does not have the opportunity to set the
@@ -222,70 +241,99 @@ void PreloadingAttemptImpl::RecordPreloadingAttemptMetrics(
   }
 
   PreloadingConfig& config = PreloadingConfig::GetInstance();
-  uint32_t sampled_num = sampling_seed_;
-  sampled_num =
-      base::Crc32(sampled_num, &sampling_source, sizeof(sampling_source));
 
-  double sampling_likelihood =
-      config.SamplingLikelihood(preloading_type_, predictor_type_);
-  if (sampled_num >
-      sampling_likelihood * std::numeric_limits<uint32_t>::max()) {
-    // PreloadingAttempt is sampled out.
-    return;
-  }
+  for (const auto& predictor : GetPredictors()) {
+    uint32_t sampled_num = sampling_seed_;
+    sampled_num =
+        base::Crc32(sampled_num, base::byte_span_from_ref(sampling_source));
 
-  // Turn sampling_likelihood into an int64_t for UKM logging. Multiply by one
-  // million to preserve accuracy.
-  int64_t sampling_likelihood_per_million =
-      static_cast<int64_t>(1'000'000 * sampling_likelihood);
+    double sampling_likelihood =
+        config.SamplingLikelihood(preloading_type_, predictor);
+    if (sampled_num >
+        sampling_likelihood * std::numeric_limits<uint32_t>::max()) {
+      // PreloadingAttempt is sampled out.
+      continue;
+    }
 
-  if (navigated_page_source_id != ukm::kInvalidSourceId) {
-    ukm::builders::Preloading_Attempt builder(navigated_page_source_id);
-    builder.SetPreloadingType(static_cast<int64_t>(preloading_type_))
-        .SetPreloadingPredictor(predictor_type_.ukm_value())
-        .SetEligibility(static_cast<int64_t>(eligibility_))
-        .SetHoldbackStatus(static_cast<int64_t>(holdback_status_))
-        .SetTriggeringOutcome(static_cast<int64_t>(triggering_outcome_))
-        .SetFailureReason(static_cast<int64_t>(failure_reason_))
-        .SetAccurateTriggering(is_accurate_triggering_)
-        .SetSamplingLikelihood(sampling_likelihood_per_million);
-    if (time_to_next_navigation_) {
-      builder.SetTimeToNextNavigation(ukm::GetExponentialBucketMinForCounts1000(
-          time_to_next_navigation_->InMilliseconds()));
-    }
-    if (ready_time_) {
-      builder.SetReadyTime(ukm::GetExponentialBucketMinForCounts1000(
-          ready_time_->InMilliseconds()));
-    }
-    if (eagerness_) {
-      builder.SetSpeculationEagerness(static_cast<int64_t>(eagerness_.value()));
-    }
-    builder.Record(ukm_recorder);
-  }
+    // Turn sampling_likelihood into an int64_t for UKM logging. Multiply by one
+    // million to preserve accuracy.
+    int64_t sampling_likelihood_per_million =
+        static_cast<int64_t>(1'000'000 * sampling_likelihood);
 
-  if (triggered_primary_page_source_id_ != ukm::kInvalidSourceId) {
-    ukm::builders::Preloading_Attempt_PreviousPrimaryPage builder(
-        triggered_primary_page_source_id_);
-    builder.SetPreloadingType(static_cast<int64_t>(preloading_type_))
-        .SetPreloadingPredictor(predictor_type_.ukm_value())
-        .SetEligibility(static_cast<int64_t>(eligibility_))
-        .SetHoldbackStatus(static_cast<int64_t>(holdback_status_))
-        .SetTriggeringOutcome(static_cast<int64_t>(triggering_outcome_))
-        .SetFailureReason(static_cast<int64_t>(failure_reason_))
-        .SetAccurateTriggering(is_accurate_triggering_)
-        .SetSamplingLikelihood(sampling_likelihood_per_million);
-    if (time_to_next_navigation_) {
-      builder.SetTimeToNextNavigation(ukm::GetExponentialBucketMinForCounts1000(
-          time_to_next_navigation_->InMilliseconds()));
+    if (navigated_page_source_id != ukm::kInvalidSourceId) {
+      ukm::builders::Preloading_Attempt builder(navigated_page_source_id);
+      builder.SetPreloadingType(static_cast<int64_t>(preloading_type_))
+          .SetPreloadingPredictor(predictor.ukm_value())
+          .SetEligibility(static_cast<int64_t>(eligibility_))
+          .SetHoldbackStatus(static_cast<int64_t>(holdback_status_))
+          .SetTriggeringOutcome(static_cast<int64_t>(triggering_outcome_))
+          .SetFailureReason(static_cast<int64_t>(failure_reason_))
+          .SetAccurateTriggering(is_accurate_triggering_)
+          .SetSamplingLikelihood(sampling_likelihood_per_million);
+      if (time_to_next_navigation_) {
+        builder.SetTimeToNextNavigation(
+            ukm::GetExponentialBucketMinForCounts1000(
+                time_to_next_navigation_->InMilliseconds()));
+      }
+      if (ready_time_) {
+        builder.SetReadyTime(ukm::GetExponentialBucketMinForCounts1000(
+            ready_time_->InMilliseconds()));
+      }
+      if (eagerness_) {
+        builder.SetSpeculationEagerness(
+            static_cast<int64_t>(eagerness_.value()));
+      }
+      if (service_worker_registered_check_) {
+        builder.SetPrefetchServiceWorkerRegisteredCheck(
+            static_cast<int64_t>(service_worker_registered_check_.value()));
+      }
+      if (service_worker_registered_check_duration_) {
+        builder.SetPrefetchServiceWorkerRegisteredForURLCheckDuration(
+            ukm::GetExponentialBucketMin(
+                service_worker_registered_check_duration_.value()
+                    .InMicroseconds(),
+                kServiceWorkerRegisteredCheckDurationBucketSpacing));
+      }
+      builder.Record(ukm_recorder);
     }
-    if (ready_time_) {
-      builder.SetReadyTime(ukm::GetExponentialBucketMinForCounts1000(
-          ready_time_->InMilliseconds()));
+
+    if (triggered_primary_page_source_id_ != ukm::kInvalidSourceId) {
+      ukm::builders::Preloading_Attempt_PreviousPrimaryPage builder(
+          triggered_primary_page_source_id_);
+      builder.SetPreloadingType(static_cast<int64_t>(preloading_type_))
+          .SetPreloadingPredictor(predictor.ukm_value())
+          .SetEligibility(static_cast<int64_t>(eligibility_))
+          .SetHoldbackStatus(static_cast<int64_t>(holdback_status_))
+          .SetTriggeringOutcome(static_cast<int64_t>(triggering_outcome_))
+          .SetFailureReason(static_cast<int64_t>(failure_reason_))
+          .SetAccurateTriggering(is_accurate_triggering_)
+          .SetSamplingLikelihood(sampling_likelihood_per_million);
+      if (time_to_next_navigation_) {
+        builder.SetTimeToNextNavigation(
+            ukm::GetExponentialBucketMinForCounts1000(
+                time_to_next_navigation_->InMilliseconds()));
+      }
+      if (ready_time_) {
+        builder.SetReadyTime(ukm::GetExponentialBucketMinForCounts1000(
+            ready_time_->InMilliseconds()));
+      }
+      if (eagerness_) {
+        builder.SetSpeculationEagerness(
+            static_cast<int64_t>(eagerness_.value()));
+      }
+      if (service_worker_registered_check_) {
+        builder.SetPrefetchServiceWorkerRegisteredCheck(
+            static_cast<int64_t>(service_worker_registered_check_.value()));
+      }
+      if (service_worker_registered_check_duration_) {
+        builder.SetPrefetchServiceWorkerRegisteredForURLCheckDuration(
+            ukm::GetExponentialBucketMin(
+                service_worker_registered_check_duration_.value()
+                    .InMicroseconds(),
+                kServiceWorkerRegisteredCheckDurationBucketSpacing));
+      }
+      builder.Record(ukm_recorder);
     }
-    if (eagerness_) {
-      builder.SetSpeculationEagerness(static_cast<int64_t>(eagerness_.value()));
-    }
-    builder.Record(ukm_recorder);
   }
 }
 
@@ -294,11 +342,19 @@ void PreloadingAttemptImpl::RecordPreloadingAttemptUMA() {
   // 1. Track the number of attempts;
   // 2. Track the attempts' rates of various terminal status (i.e. success
   // rate).
-  const auto uma_triggering_outcome_histogram =
-      base::StrCat({"Preloading.", PreloadingTypeToString(preloading_type_),
-                    ".Attempt.", predictor_type_.name(), ".TriggeringOutcome"});
-  base::UmaHistogramEnumeration(std::move(uma_triggering_outcome_histogram),
-                                triggering_outcome_);
+  for (const auto& predictor : GetPredictors()) {
+    const auto uma_triggering_outcome_histogram =
+        base::StrCat({"Preloading.", PreloadingTypeToString(preloading_type_),
+                      ".Attempt.", predictor.name(), ".TriggeringOutcome"});
+    base::UmaHistogramEnumeration(std::move(uma_triggering_outcome_histogram),
+                                  triggering_outcome_);
+  }
+}
+
+void PreloadingAttemptImpl::SetNoVarySearchMatchPredicate(
+    PreloadingURLMatchCallback no_vary_search_match_predicate) {
+  CHECK(!no_vary_search_match_predicate_);
+  no_vary_search_match_predicate_ = std::move(no_vary_search_match_predicate);
 }
 
 void PreloadingAttemptImpl::SetIsAccurateTriggering(const GURL& navigated_url) {
@@ -313,18 +369,33 @@ void PreloadingAttemptImpl::SetIsAccurateTriggering(const GURL& navigated_url) {
   // Use the predicate to match the URLs as the matching logic varies for each
   // predictor.
   is_accurate_triggering_ |= url_match_predicate_.Run(navigated_url);
+  if (no_vary_search_match_predicate_) {
+    is_accurate_triggering_ |=
+        no_vary_search_match_predicate_.Run(navigated_url);
+  }
 }
 
 void PreloadingAttemptImpl::SetSpeculationEagerness(
     blink::mojom::SpeculationEagerness eagerness) {
-  CHECK(predictor_type_.ukm_value() ==
-            content_preloading_predictor::kSpeculationRules.ukm_value() ||
-        predictor_type_.ukm_value() ==
-            content_preloading_predictor::kSpeculationRulesFromIsolatedWorld
-                .ukm_value())
-      << "predictor_type_: " << predictor_type_.name()
-      << " (ukm_value = " << predictor_type_.ukm_value() << ")";
+  CHECK(creating_predictor_ ==
+            content_preloading_predictor::kSpeculationRules ||
+        creating_predictor_ ==
+            content_preloading_predictor::kSpeculationRulesFromIsolatedWorld ||
+        creating_predictor_ == content_preloading_predictor::
+                                   kSpeculationRulesFromAutoSpeculationRules)
+      << "predictor_type_: " << creating_predictor_.name()
+      << " (ukm_value = " << creating_predictor_.ukm_value() << ")";
   eagerness_ = eagerness;
+}
+
+void PreloadingAttemptImpl::SetServiceWorkerRegisteredCheck(
+    ServiceWorkerRegisteredCheck check) {
+  service_worker_registered_check_ = check;
+}
+
+void PreloadingAttemptImpl::SetServiceWorkerRegisteredCheckDuration(
+    base::TimeDelta duration) {
+  service_worker_registered_check_duration_ = duration;
 }
 
 // Used for StateTransitions matching.

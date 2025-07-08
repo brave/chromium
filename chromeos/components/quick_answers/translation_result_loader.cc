@@ -4,6 +4,7 @@
 
 #include "chromeos/components/quick_answers/translation_result_loader.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/json/json_writer.h"
@@ -38,9 +39,9 @@ constexpr char kTranslationAPIUrl[] =
     "https://translation.googleapis.com/language/translate/v2";
 constexpr char kApiKeyName[] = "key";
 
-constexpr base::StringPiece kQueryKey = "q";
-constexpr base::StringPiece kSourceLanguageKey = "source";
-constexpr base::StringPiece kTargetLanguageKey = "target";
+constexpr std::string_view kQueryKey = "q";
+constexpr std::string_view kSourceLanguageKey = "source";
+constexpr std::string_view kTargetLanguageKey = "target";
 
 std::string BuildTranslationRequestBody(const IntentInfo& intent_info) {
   Value::Dict payload;
@@ -84,7 +85,7 @@ void TranslationResultLoader::BuildRequest(
 
 void TranslationResultLoader::ProcessResponse(
     const PreprocessedOutput& preprocessed_output,
-    std::unique_ptr<std::string> response_body,
+    std::optional<std::string> response_body,
     ResponseParserCallback complete_callback) {
   if (translation_response_parser_) {
     DCHECK(false) << "translation_response_parser_ must be nullptr";
@@ -97,7 +98,7 @@ void TranslationResultLoader::ProcessResponse(
           &TranslationResultLoader::ProcessParsedResponse,
           weak_ptr_factory_.GetWeakPtr(), preprocessed_output.intent_info,
           std::move(complete_callback)));
-  translation_response_parser_->ProcessResponse(std::move(response_body));
+  translation_response_parser_->ProcessResponse(*response_body);
 }
 
 void TranslationResultLoader::ProcessParsedResponse(
@@ -111,8 +112,7 @@ void TranslationResultLoader::ProcessParsedResponse(
     return;
   }
 
-  translation_result->text_to_translate =
-      base::UTF8ToUTF16(intent_info.intent_text);
+  translation_result->text_to_translate = intent_info.intent_text;
   translation_result->source_locale = intent_info.source_language;
   translation_result->target_locale = intent_info.device_language;
 
@@ -122,7 +122,7 @@ void TranslationResultLoader::ProcessParsedResponse(
       BuildTranslationTitleText(intent_info)));
   quick_answer->first_answer_row.push_back(
       std::make_unique<QuickAnswerResultText>(
-          base::UTF16ToUTF8(translation_result->translated_text)));
+          translation_result->translated_text));
 
   std::unique_ptr<QuickAnswersSession> session =
       std::make_unique<QuickAnswersSession>();

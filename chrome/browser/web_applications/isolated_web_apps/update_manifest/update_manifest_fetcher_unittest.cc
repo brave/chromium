@@ -4,16 +4,18 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest_fetcher.h"
 
+#include <string_view>
+
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string_piece.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/types/expected.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -31,19 +33,19 @@ using testing::IsEmpty;
 using testing::IsFalse;
 using testing::IsTrue;
 
-constexpr base::StringPiece kValidManifestUrl =
+constexpr std::string_view kValidManifestUrl =
     "https://example.com/valid_update_manifest.json";
 
-constexpr base::StringPiece kInvalidManifestUrl =
+constexpr std::string_view kInvalidManifestUrl =
     "https://example.com/invalid_update_manifest.json";
 
-constexpr base::StringPiece kManifestWithoutVersionsUrl =
+constexpr std::string_view kManifestWithoutVersionsUrl =
     "https://example.com/update_manifest_without_versions.json";
 
-constexpr base::StringPiece kInvalidJsonUrl =
+constexpr std::string_view kInvalidJsonUrl =
     "https://example.com/invalid_json.json";
 
-constexpr base::StringPiece k404Url = "https://example.com/404.json";
+constexpr std::string_view k404Url = "https://example.com/404.json";
 
 class UpdateManifestFetcherTest : public ::testing::Test {
  public:
@@ -77,7 +79,7 @@ class UpdateManifestFetcherTest : public ::testing::Test {
   }
 
  protected:
-  void AddJsonResponse(base::StringPiece url, std::string content) {
+  void AddJsonResponse(std::string_view url, std::string content) {
     network::mojom::URLResponseHeadPtr head =
         network::CreateURLResponseHead(net::HttpStatusCode::HTTP_OK);
     head->mime_type = "application/json";
@@ -87,7 +89,6 @@ class UpdateManifestFetcherTest : public ::testing::Test {
   }
 
   base::test::TaskEnvironment task_environment_;
-  data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
   network::TestURLLoaderFactory test_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
 };
@@ -108,13 +109,15 @@ TEST_F(UpdateManifestFetcherTest, FetchesValidManifest) {
       update_manifest->versions(),
       ElementsAre(
           UpdateManifest::VersionEntry{GURL("https://other.com/bundle.swbn"),
-                                       base::Version("1.2.3")},
+                                       base::Version("1.2.3"),
+                                       {*UpdateChannel::Create("default")}},
           UpdateManifest::VersionEntry{
               GURL("https://example.com/foo/bundle.swbn"),
-              base::Version("3.2.1")}));
+              base::Version("3.2.1"),
+              {*UpdateChannel::Create("default")}}));
 }
 
-TEST_F(UpdateManifestFetcherTest, FailsWhenManifestHasNoVersions) {
+TEST_F(UpdateManifestFetcherTest, SucceedsWhenManifestHasNoVersions) {
   auto fetcher = UpdateManifestFetcher(GURL(kManifestWithoutVersionsUrl),
                                        PARTIAL_TRAFFIC_ANNOTATION_FOR_TESTS,
                                        shared_url_loader_factory_);
@@ -123,11 +126,9 @@ TEST_F(UpdateManifestFetcherTest, FailsWhenManifestHasNoVersions) {
       base::expected<UpdateManifest, UpdateManifestFetcher::Error>>
       future;
   fetcher.FetchUpdateManifest(future.GetCallback());
-  auto update_manifest = future.Take();
+  ASSERT_OK_AND_ASSIGN(auto update_manifest, future.Take());
 
-  ASSERT_THAT(update_manifest.has_value(), IsFalse());
-  EXPECT_THAT(update_manifest.error(),
-              Eq(UpdateManifestFetcher::Error::kNoApplicableVersion));
+  EXPECT_THAT(update_manifest.versions(), IsEmpty());
 }
 
 TEST_F(UpdateManifestFetcherTest, FailsWhenManifestIsInvalid) {

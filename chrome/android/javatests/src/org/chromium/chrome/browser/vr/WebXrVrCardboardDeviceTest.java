@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.vr;
 
 import static org.chromium.chrome.browser.vr.XrTestFramework.PAGE_LOAD_TIMEOUT_S;
-import static org.chromium.chrome.test.util.ChromeRestriction.RESTRICTION_TYPE_VIEWER_NON_DAYDREAM;
 
 import androidx.test.filters.MediumTest;
 
@@ -20,7 +19,6 @@ import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.vr.rules.XrActivityRestriction;
 import org.chromium.chrome.browser.vr.util.VrCardboardTestRuleUtils;
@@ -36,16 +34,19 @@ import java.util.concurrent.Callable;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        "enable-features=LogJsConsoleMessages", "force-webxr-runtime=cardboard"})
+@CommandLineFlags.Add({
+    ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+    "enable-features=LogJsConsoleMessages",
+    "force-webxr-runtime=cardboard"
+})
 public class WebXrVrCardboardDeviceTest {
     @ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             VrCardboardTestRuleUtils.generateDefaultTestRuleParameters();
-    @Rule
-    public RuleChain mRuleChain;
 
-    private ChromeActivityTestRule mTestRule;
+    @Rule public RuleChain mRuleChain;
+
+    private final ChromeActivityTestRule mTestRule;
     private WebXrVrTestFramework mWebXrVrTestFramework;
 
     public WebXrVrCardboardDeviceTest(Callable<ChromeActivityTestRule> callable) throws Exception {
@@ -58,12 +59,9 @@ public class WebXrVrCardboardDeviceTest {
         mWebXrVrTestFramework = new WebXrVrTestFramework(mTestRule);
     }
 
-    /**
-     * Tests that reported WebXR capabilities match expectations.
-     */
+    /** Tests that reported WebXR capabilities match expectations. */
     @Test
     @MediumTest
-    @Restriction({RESTRICTION_TYPE_VIEWER_NON_DAYDREAM})
     @CommandLineFlags.Add({"enable-features=WebXR,Cardboard"})
     @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
     public void testWebXrCapabilities() {

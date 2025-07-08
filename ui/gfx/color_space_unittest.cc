@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "ui/gfx/color_space.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <tuple>
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/color_space.h"
 #include "ui/gfx/skia_color_space_util.h"
 
 namespace gfx {
@@ -22,14 +29,14 @@ float Diff(const SkV4& u, const SkV4& v) {
 TEST(ColorSpace, RGBToYUV) {
   const float kEpsilon = 1.0e-3f;
   const size_t kNumTestRGBs = 3;
-  SkV4 test_rgbs[kNumTestRGBs] = {
+  std::array<SkV4, kNumTestRGBs> test_rgbs = {{
       {1.f, 0.f, 0.f, 1.f},
       {0.f, 1.f, 0.f, 1.f},
       {0.f, 0.f, 1.f, 1.f},
-  };
+  }};
 
   const size_t kNumColorSpaces = 4;
-  gfx::ColorSpace color_spaces[kNumColorSpaces] = {
+  std::array<gfx::ColorSpace, kNumColorSpaces> color_spaces = {
       gfx::ColorSpace::CreateREC601(),
       gfx::ColorSpace::CreateREC709(),
       gfx::ColorSpace::CreateJpeg(),
@@ -81,16 +88,16 @@ TEST(ColorSpace, RGBToYUV) {
 TEST(ColorSpace, RangeAdjust) {
   const float kEpsilon = 1.0e-3f;
   const size_t kNumTestYUVs = 2;
-  SkV4 test_yuvs[kNumTestYUVs] = {
+  std::array<SkV4, kNumTestYUVs> test_yuvs = {{
       {1.f, 1.f, 1.f, 1.f},
       {0.f, 0.f, 0.f, 1.f},
-  };
+  }};
 
   const size_t kNumBitDepths = 3;
-  int bit_depths[kNumBitDepths] = {8, 10, 12};
+  std::array<int, kNumBitDepths> bit_depths = {8, 10, 12};
 
   const size_t kNumColorSpaces = 3;
-  ColorSpace color_spaces[kNumColorSpaces] = {
+  std::array<ColorSpace, kNumColorSpaces> color_spaces = {
       ColorSpace::CreateREC601(),
       ColorSpace::CreateJpeg(),
       ColorSpace(ColorSpace::PrimaryID::INVALID,
@@ -191,7 +198,7 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
   }};
   skcms_TransferFunction transfer_fn = {2.1f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f};
 
-  ColorSpace color_spaces[] = {
+  auto color_spaces = std::to_array<ColorSpace>({
       ColorSpace(ColorSpace::PrimaryID::BT709, ColorSpace::TransferID::SRGB),
       ColorSpace(ColorSpace::PrimaryID::ADOBE_RGB,
                  ColorSpace::TransferID::SRGB),
@@ -200,8 +207,8 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
       ColorSpace::CreateCustom(primary_matrix, transfer_fn),
       // HDR
       ColorSpace::CreateSRGBLinear(),
-  };
-  sk_sp<SkColorSpace> sk_color_spaces[] = {
+  });
+  auto sk_color_spaces = std::to_array<sk_sp<SkColorSpace>>({
       SkColorSpace::MakeSRGB(),
       SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kAdobeRGB),
       SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear,
@@ -210,7 +217,7 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
       SkColorSpace::MakeRGB(transfer_fn, primary_matrix),
       // HDR
       SkColorSpace::MakeSRGBLinear(),
-  };
+  });
 
   static_assert(std::size(color_spaces) == std::size(sk_color_spaces), "");
 
@@ -236,43 +243,30 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
 }
 
 TEST(ColorSpace, PQAndHLGToSkColorSpace) {
-  const float kEpsilon = 1.0e-2f;
   const auto hlg = ColorSpace::CreateHLG();
   const auto pq = ColorSpace::CreateHDR10();
 
-  // For each test case, `pq_signal` maps to `pq_nits`.
   constexpr size_t kNumCases = 3;
-  float pq_signal[kNumCases] = {
-      0.508078421517399f,
-      0.5806888810416109f,
-      0.6765848107833876,
-  };
-  float pq_nits[kNumCases] = {
+  std::array<float, kNumCases> pq_nits = {
       100,
       203,
       500,
   };
-  const float kPQSignalFor203Nits = pq_signal[1];
-  const float kHLGSignalFor203Nits = 0.75f;
 
   for (size_t i = 0; i < kNumCases; ++i) {
     const float sdr_white_level = pq_nits[i];
     sk_sp<SkColorSpace> sk_hlg = hlg.ToSkColorSpace(sdr_white_level);
     sk_sp<SkColorSpace> sk_pq = pq.ToSkColorSpace(sdr_white_level);
 
-    // The PQ signal that maps to `sdr_white_level` nits should map to 1.
+    // The SDR white level parameter should get put into a parameter for the PQ
+    // and HLG transfer function.
     skcms_TransferFunction pq_fn = {0};
     sk_pq->transferFn(&pq_fn);
-    EXPECT_NEAR(1.f, skcms_TransferFunction_eval(&pq_fn, pq_signal[i]),
-                kEpsilon);
+    EXPECT_EQ(pq_fn.a, sdr_white_level);
 
-    // The HLG signal value of 0.75 should always map to the same value that
-    // the PQ signal for 203 nits maps to.
     skcms_TransferFunction hlg_fn = {0};
     sk_hlg->transferFn(&hlg_fn);
-    EXPECT_NEAR(skcms_TransferFunction_eval(&pq_fn, kPQSignalFor203Nits),
-                skcms_TransferFunction_eval(&hlg_fn, kHLGSignalFor203Nits),
-                kEpsilon);
+    EXPECT_EQ(hlg_fn.a, sdr_white_level);
   }
 }
 
@@ -349,6 +343,13 @@ TEST(ColorSpace, ExpectationsMatchSRGB) {
     // performed on a custom color space with sRGB primaries.
     EXPECT_EQ(color_space.Contains(srgb), color_space.Contains(custom_srgb));
   }
+}
+
+TEST(ColorSpaceUtil, SkcmsMatrixConvert) {
+  skcms_Matrix3x3 in_m33 = SkNamedGamut::kSRGB;
+  SkM44 m44 = SkM44FromSkcmsMatrix3x3(in_m33);
+  skcms_Matrix3x3 out_m33 = SkcmsMatrix3x3FromSkM44(m44);
+  EXPECT_EQ(memcmp(&in_m33, &out_m33, sizeof(in_m33)), 0);
 }
 
 }  // namespace

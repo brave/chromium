@@ -51,6 +51,9 @@ struct HardwareRendererDrawParams {
   gfx::ColorSpace color_space;
 };
 
+using ReportRenderingThreadsCallback =
+    base::OnceCallback<void(const pid_t*, size_t)>;
+
 // Lifetime: WebView
 class HardwareRenderer {
  public:
@@ -78,7 +81,8 @@ class HardwareRenderer {
   ~HardwareRenderer();
 
   void Draw(const HardwareRendererDrawParams& params,
-            const OverlaysParams& overlays_params);
+            const OverlaysParams& overlays_params,
+            ReportRenderingThreadsCallback report_rendering_threads_callback);
   void CommitFrame();
   void SetChildFrameForTesting(std::unique_ptr<ChildFrame> child_frame);
   void RemoveOverlays(OverlaysParams::MergeTransactionFn merge_transaction);
@@ -89,6 +93,7 @@ class HardwareRenderer {
 
   void InitializeOnViz(RootFrameSinkGetter root_frame_sink_getter);
   bool IsUsingVulkan() const;
+  bool IsUsingANGLEOverGL() const;
   void MergeTransactionIfNeeded(
       OverlaysParams::MergeTransactionFn merge_transaction);
   void ReturnChildFrame(std::unique_ptr<ChildFrame> child_frame);
@@ -97,8 +102,11 @@ class HardwareRenderer {
                                    uint32_t layer_tree_frame_sink_id);
 
   void ReportDrawMetric(const HardwareRendererDrawParams& params);
-  void DrawAndSwap(const HardwareRendererDrawParams& params,
-                   const OverlaysParams& overlays_params);
+  void DrawAndSwap(
+      const HardwareRendererDrawParams& params,
+      const OverlaysParams& overlays_params,
+      ReportRenderingThreadsCallback report_rendering_threads_callback);
+  void MarkAllowContextLoss();
 
   THREAD_CHECKER(render_thread_checker_);
 
@@ -145,6 +153,10 @@ class HardwareRenderer {
 
   // These are accessed on the viz thread.
   std::unique_ptr<OnViz> on_viz_;
+
+  bool report_rendering_threads_ = false;
+
+  base::TimeDelta preferred_frame_interval_;
 };
 
 }  // namespace android_webview

@@ -5,13 +5,10 @@
 #ifndef UI_BASE_TEST_VIEW_TREE_VALIDATOR_H_
 #define UI_BASE_TEST_VIEW_TREE_VALIDATOR_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+#include <string>
 
 @class NSView;
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
@@ -37,7 +34,7 @@ struct ViewTreeProblemDetails {
 // Validates the view tree rooted at |root|. If at least one problem is found,
 // returns a |ViewTreeProblemDetails| as described above; if not, returns an
 // empty option.
-absl::optional<ViewTreeProblemDetails> ValidateViewTree(NSView* root);
+std::optional<ViewTreeProblemDetails> ValidateViewTree(NSView* root);
 
 }  // namespace ui
 

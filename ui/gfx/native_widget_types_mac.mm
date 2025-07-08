@@ -8,18 +8,36 @@
 
 #include "base/strings/sys_string_conversions.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace gfx {
 
+NativeView::NativeView() = default;
+
+NativeView::NativeView(NSView* ns_view) : base::apple::WeakNSView(ns_view) {}
+
+NSView* NativeView::GetNativeNSView() const {
+  return static_cast<const base::apple::WeakNSView*>(this)->Get();
+}
+
 std::string NativeView::ToString() const {
-  return base::SysNSStringToUTF8(ns_view_.description);
+  return base::SysNSStringToUTF8(GetNativeNSView().description);
+}
+
+NativeWindow::NativeWindow() = default;
+
+NativeWindow::NativeWindow(NSWindow* ns_window)
+    : base::apple::WeakNSWindow(ns_window),
+      pointer_bits_(reinterpret_cast<uintptr_t>(ns_window)) {}
+
+NSWindow* NativeWindow::GetNativeNSWindow() const {
+  return static_cast<const base::apple::WeakNSWindow*>(this)->Get();
+}
+
+bool NativeWindow::operator<(const NativeWindow& other) const {
+  return pointer_bits_ < other.pointer_bits_;
 }
 
 std::string NativeWindow::ToString() const {
-  return base::SysNSStringToUTF8(ns_window_.description);
+  return base::SysNSStringToUTF8(GetNativeNSWindow().description);
 }
 
 }  // namespace gfx

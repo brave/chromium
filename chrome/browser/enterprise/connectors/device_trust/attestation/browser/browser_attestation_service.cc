@@ -11,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/values.h"
@@ -19,7 +20,10 @@
 #include "chrome/browser/enterprise/connectors/device_trust/attestation/common/attestation_utils.h"
 #include "chrome/browser/enterprise/connectors/device_trust/attestation/common/proto/device_trust_attestation_ca.pb.h"
 #include "chrome/browser/enterprise/connectors/device_trust/common/common_types.h"
+#include "crypto/aes_cbc.h"
 #include "crypto/random.h"
+#include "third_party/boringssl/src/include/openssl/hmac.h"
+#include "third_party/boringssl/src/include/openssl/sha.h"
 
 namespace enterprise_connectors {
 
@@ -46,12 +50,28 @@ VAType GetVAType() {
   return VAType::DEFAULT_VA;
 }
 
+void FillHMAC(base::span<const uint8_t> key, EncryptedData* data) {
+  std::array<uint8_t, SHA512_DIGEST_LENGTH> hmac;
+  bssl::ScopedHMAC_CTX ctx;
+  CHECK(HMAC_Init_ex(ctx.get(), key.data(), key.size(), EVP_sha512(), nullptr));
+  {
+    auto iv = base::as_byte_span(data->iv());
+    CHECK(HMAC_Update(ctx.get(), iv.data(), iv.size()));
+  }
+  {
+    auto payload = base::as_byte_span(data->encrypted_data());
+    CHECK(HMAC_Update(ctx.get(), payload.data(), payload.size()));
+  }
+  CHECK(HMAC_Final(ctx.get(), hmac.data(), nullptr));
+  data->mutable_mac()->assign(base::as_string_view(hmac));
+}
+
 // The KeyInfo message encrypted using a public encryption key, with
 // the following parameters:
 //   Key encryption: RSA-OAEP with no custom parameters.
 //   Data encryption: 256-bit key, AES-CBC with PKCS5 padding.
 //   MAC: HMAC-SHA-512 using the AES key.
-absl::optional<std::string> CreateChallengeResponseString(
+std::optional<std::string> CreateChallengeResponseString(
     const std::string& serialized_key_info,
     const SignedData& signed_challenge_data,
     const std::string& wrapping_key_modulus_hex,
@@ -59,30 +79,38 @@ absl::optional<std::string> CreateChallengeResponseString(
   ChallengeResponse response_pb;
   *response_pb.mutable_challenge() = signed_challenge_data;
 
-  crypto::RandBytes(base::WriteInto(response_pb.mutable_nonce(),
-                                    kChallengeResponseNonceBytesSize + 1),
-                    kChallengeResponseNonceBytesSize);
+  std::string* nonce = response_pb.mutable_nonce();
+  nonce->resize(kChallengeResponseNonceBytesSize);
+  crypto::RandBytes(base::as_writable_byte_span(*nonce));
 
-  std::string key;
-  if (!CryptoUtility::EncryptWithSeed(
-          serialized_key_info, response_pb.mutable_encrypted_key_info(), key)) {
-    return absl::nullopt;
-  }
+  std::array<uint8_t, 32> key;
+  std::array<uint8_t, crypto::aes_cbc::kBlockSize> iv;
+
+  crypto::RandBytes(key);
+  crypto::RandBytes(iv);
+
+  EncryptedData* key_info = response_pb.mutable_encrypted_key_info();
+  key_info->mutable_encrypted_data()->assign(
+      base::as_string_view(crypto::aes_cbc::Encrypt(
+          key, iv, base::as_byte_span(serialized_key_info))));
+  key_info->mutable_iv()->assign(base::as_string_view(iv));
+
+  FillHMAC(key, key_info);
 
   bssl::UniquePtr<RSA> rsa(CryptoUtility::GetRSA(wrapping_key_modulus_hex));
   if (!rsa) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (!CryptoUtility::WrapKeyOAEP(key, rsa.get(), wrapping_key_id,
                                   response_pb.mutable_encrypted_key_info())) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Convert the challenge response proto to a string before returning it.
   std::string serialized_response;
   if (!response_pb.SerializeToString(&serialized_response)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return serialized_response;
 }
@@ -196,7 +224,7 @@ void BrowserAttestationService::OnKeyInfoDecorated(
 void BrowserAttestationService::OnResponseCreated(
     const std::set<DTCPolicyLevel>& levels,
     AttestationCallback callback,
-    absl::optional<std::string> encrypted_response) {
+    std::optional<std::string> encrypted_response) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!encrypted_response) {
     // Failed to create a response, so mark the device as untrusted (no

@@ -6,7 +6,9 @@
  */
 
 export * from "./components-chromium/node_modules/lit/index.js";
+export * from './components-chromium/node_modules/lit/async-directive.js';
 export * from "./components-chromium/node_modules/lit/decorators.js";
+export * from './components-chromium/node_modules/lit/directive-helpers.js';
 export * from './components-chromium/node_modules/lit/directive.js';
 export * from "./components-chromium/node_modules/lit/directives/async-append.js";
 export * from "./components-chromium/node_modules/lit/directives/async-replace.js";
@@ -28,4 +30,5 @@ export * from "./components-chromium/node_modules/lit/directives/unsafe-html.js"
 export * from "./components-chromium/node_modules/lit/directives/unsafe-svg.js";
 export * from "./components-chromium/node_modules/lit/directives/until.js";
 export * from './components-chromium/node_modules/lit/directives/when.js';
+export * from './components-chromium/node_modules/@lit/task/task.js';
 export {html as staticHtml, literal, svg as staticSvg, unsafeStatic, withStatic,} from './components-chromium/node_modules/lit/static-html.js';

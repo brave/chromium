@@ -9,21 +9,19 @@
 #include <cmath>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "ash/components/arc/arc_prefs.h"
 #include "ash/constants/ash_pref_names.h"
-#include "ash/public/cpp/tablet_mode.h"
 #include "ash/webui/file_manager/file_manager_ui.h"
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
@@ -32,13 +30,12 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/arc/arc_util.h"
-#include "chrome/browser/ash/crostini/crostini_pref_names.h"
 #include "chrome/browser/ash/crostini/crostini_util.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/extensions/file_manager/file_system_provider_metrics_util.h"
 #include "chrome/browser/ash/extensions/file_manager/private_api_util.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/io_task.h"
@@ -51,9 +48,10 @@
 #include "chrome/browser/ash/file_system_provider/provided_file_system_info.h"
 #include "chrome/browser/ash/file_system_provider/provided_file_system_interface.h"
 #include "chrome/browser/ash/guest_os/guest_os_share_path.h"
+#include "chrome/browser/ash/guest_os/guest_os_share_path_factory.h"
 #include "chrome/browser/ash/guest_os/public/guest_os_service.h"
+#include "chrome/browser/ash/guest_os/public/guest_os_service_factory.h"
 #include "chrome/browser/ash/login/lock/screen_locker.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/plugin_vm/plugin_vm_util.h"
 #include "chrome/browser/ash/policy/dlp/dialogs/files_policy_dialog.h"
 #include "chrome/browser/extensions/api/file_system/chrome_file_system_delegate_ash.h"
@@ -61,21 +59,26 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/disks/disk.h"
 #include "chromeos/ash/components/drivefs/drivefs_host.h"
 #include "chromeos/ash/components/login/login_state/login_state.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "chromeos/components/disks/disks_prefs.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/dbus/power/power_manager_client.h"
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/event_router.h"
@@ -84,18 +87,29 @@
 #include "extensions/browser/extension_registry.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "storage/browser/file_system/file_system_url.h"
-#include "storage/common/file_system/file_system_types.h"
 #include "storage/common/file_system/file_system_util.h"
+#include "ui/display/tablet_state.h"
 
-using ::ash::disks::Disk;
-using ::ash::disks::DiskMountManager;
+using apps::AppServiceProxy;
+using apps::AppServiceProxyFactory;
+using arc::ArcIntentHelperBridge;
+using ash::LoginState;
+using ash::disks::Disk;
+using ash::disks::DiskMountManager;
+using chromeos::DlpClient;
+using chromeos::PowerManagerClient;
 using content::BrowserThread;
 using drive::DriveIntegrationService;
 using drive::DriveIntegrationServiceFactory;
+using file_manager::io_task::IOTaskController;
 using file_manager::util::EntryDefinition;
 using file_manager::util::FileDefinition;
+using guest_os::GuestOsService;
+using guest_os::GuestOsServiceFactory;
+using guest_os::GuestOsSharePath;
+using guest_os::GuestOsSharePathFactory;
 
-namespace file_manager_private = extensions::api::file_manager_private;
+namespace fmp = extensions::api::file_manager_private;
 
 namespace file_manager {
 namespace {
@@ -152,84 +166,78 @@ void DispatchEventToExtension(
 }
 
 // Convert the IO Task State enum to the Private API enum.
-file_manager_private::IOTaskState GetIOTaskState(
-    file_manager::io_task::State state) {
+fmp::IoTaskState GetIoTaskState(io_task::State state) {
   switch (state) {
-    case file_manager::io_task::State::kQueued:
-      return file_manager_private::IO_TASK_STATE_QUEUED;
-    case file_manager::io_task::State::kScanning:
-      return file_manager_private::IO_TASK_STATE_SCANNING;
-    case file_manager::io_task::State::kInProgress:
-      return file_manager_private::IO_TASK_STATE_IN_PROGRESS;
-    case file_manager::io_task::State::kPaused:
-      return file_manager_private::IO_TASK_STATE_PAUSED;
-    case file_manager::io_task::State::kSuccess:
-      return file_manager_private::IO_TASK_STATE_SUCCESS;
-    case file_manager::io_task::State::kError:
-      return file_manager_private::IO_TASK_STATE_ERROR;
-    case file_manager::io_task::State::kNeedPassword:
-      return file_manager_private::IO_TASK_STATE_NEED_PASSWORD;
-    case file_manager::io_task::State::kCancelled:
-      return file_manager_private::IO_TASK_STATE_CANCELLED;
+    case io_task::State::kQueued:
+      return fmp::IoTaskState::kQueued;
+    case io_task::State::kScanning:
+      return fmp::IoTaskState::kScanning;
+    case io_task::State::kInProgress:
+      return fmp::IoTaskState::kInProgress;
+    case io_task::State::kPaused:
+      return fmp::IoTaskState::kPaused;
+    case io_task::State::kSuccess:
+      return fmp::IoTaskState::kSuccess;
+    case io_task::State::kError:
+      return fmp::IoTaskState::kError;
+    case io_task::State::kNeedPassword:
+      return fmp::IoTaskState::kNeedPassword;
+    case io_task::State::kCancelled:
+      return fmp::IoTaskState::kCancelled;
     default:
       NOTREACHED();
-      return file_manager_private::IO_TASK_STATE_ERROR;
   }
 }
 
 // Convert the IO Task Type enum to the Private API enum.
-file_manager_private::IOTaskType GetIOTaskType(
-    file_manager::io_task::OperationType type) {
+fmp::IoTaskType GetIoTaskType(io_task::OperationType type) {
   switch (type) {
-    case file_manager::io_task::OperationType::kCopy:
-      return file_manager_private::IO_TASK_TYPE_COPY;
-    case file_manager::io_task::OperationType::kDelete:
-      return file_manager_private::IO_TASK_TYPE_DELETE;
-    case file_manager::io_task::OperationType::kEmptyTrash:
-      return file_manager_private::IO_TASK_TYPE_EMPTY_TRASH;
-    case file_manager::io_task::OperationType::kExtract:
-      return file_manager_private::IO_TASK_TYPE_EXTRACT;
-    case file_manager::io_task::OperationType::kMove:
-      return file_manager_private::IO_TASK_TYPE_MOVE;
-    case file_manager::io_task::OperationType::kRestore:
-      return file_manager_private::IO_TASK_TYPE_RESTORE;
-    case file_manager::io_task::OperationType::kRestoreToDestination:
-      return file_manager_private::IO_TASK_TYPE_RESTORE_TO_DESTINATION;
-    case file_manager::io_task::OperationType::kTrash:
-      return file_manager_private::IO_TASK_TYPE_TRASH;
-    case file_manager::io_task::OperationType::kZip:
-      return file_manager_private::IO_TASK_TYPE_ZIP;
+    case io_task::OperationType::kCopy:
+      return fmp::IoTaskType::kCopy;
+    case io_task::OperationType::kDelete:
+      return fmp::IoTaskType::kDelete;
+    case io_task::OperationType::kEmptyTrash:
+      return fmp::IoTaskType::kEmptyTrash;
+    case io_task::OperationType::kExtract:
+      return fmp::IoTaskType::kExtract;
+    case io_task::OperationType::kMove:
+      return fmp::IoTaskType::kMove;
+    case io_task::OperationType::kRestore:
+      return fmp::IoTaskType::kRestore;
+    case io_task::OperationType::kRestoreToDestination:
+      return fmp::IoTaskType::kRestoreToDestination;
+    case io_task::OperationType::kTrash:
+      return fmp::IoTaskType::kTrash;
+    case io_task::OperationType::kZip:
+      return fmp::IoTaskType::kZip;
     default:
       NOTREACHED();
-      return file_manager_private::IO_TASK_TYPE_COPY;
   }
 }
 
-file_manager_private::PolicyErrorType GetPolicyErrorType(
-    absl::optional<file_manager::io_task::PolicyErrorType> type) {
+fmp::PolicyErrorType GetPolicyErrorType(
+    std::optional<io_task::PolicyErrorType> type) {
   if (!type.has_value()) {
-    return file_manager_private::PolicyErrorType::POLICY_ERROR_TYPE_NONE;
+    return fmp::PolicyErrorType::kNone;
   }
   switch (type.value()) {
     case io_task::PolicyErrorType::kDlp:
-      return file_manager_private::POLICY_ERROR_TYPE_DLP;
+      return fmp::PolicyErrorType::kDlp;
     case io_task::PolicyErrorType::kEnterpriseConnectors:
-      return file_manager_private::POLICY_ERROR_TYPE_ENTERPRISE_CONNECTORS;
+      return fmp::PolicyErrorType::kEnterpriseConnectors;
     case io_task::PolicyErrorType::kDlpWarningTimeout:
-      return file_manager_private::POLICY_ERROR_TYPE_DLP_WARNING_TIMEOUT;
+      return fmp::PolicyErrorType::kDlpWarningTimeout;
     default:
       NOTREACHED();
-      return file_manager_private::POLICY_ERROR_TYPE_NONE;
   }
 }
 
-file_manager_private::PolicyErrorType GetPolicyErrorType(
-    policy::Policy policy) {
+fmp::PolicyErrorType GetPolicyErrorType(policy::Policy policy) {
   switch (policy) {
     case policy::Policy::kDlp:
-      return file_manager_private::POLICY_ERROR_TYPE_DLP;
+      return fmp::PolicyErrorType::kDlp;
     case policy::Policy::kEnterpriseConnectors:
-      return file_manager_private::POLICY_ERROR_TYPE_ENTERPRISE_CONNECTORS;
+      return fmp::PolicyErrorType::kEnterpriseConnectors;
   }
 }
 
@@ -256,6 +264,8 @@ std::string FileErrorToErrorName(base::File::Error error_code) {
       return "QuotaExceededError";
     case base::File::FILE_ERROR_INVALID_URL:
       return "EncodingError";
+    case base::File::FILE_ERROR_IN_USE:
+      return "InUseError";
     default:
       return "InvalidModificationError";
   }
@@ -281,7 +291,7 @@ bool ShouldShowNotificationForVolume(
   // manager is opened only for the active user.
   if (ash::LoginDisplayHost::default_host() ||
       ash::ScreenLocker::default_screen_locker() ||
-      chrome::IsRunningInForcedAppMode() ||
+      IsRunningInForcedAppMode() ||
       profile != ProfileManager::GetActiveUserProfile()) {
     return false;
   }
@@ -338,7 +348,7 @@ std::set<GURL> GetEventListenerURLs(Profile* profile,
   // In the Files app, there may not be a window open to listen to the event,
   // so always add the File Manager URL so events can be sent to the
   // SystemNotificationManager.
-  urls.insert(file_manager::util::GetFileManagerURL());
+  urls.insert(util::GetFileManagerURL());
   return urls;
 }
 
@@ -353,33 +363,25 @@ class DeviceEventRouterImpl : public DeviceEventRouter {
   DeviceEventRouterImpl& operator=(const DeviceEventRouterImpl&) = delete;
 
   // DeviceEventRouter overrides.
-  void OnDeviceEvent(file_manager_private::DeviceEventType type,
+  void OnDeviceEvent(fmp::DeviceEventType type,
                      const std::string& device_path,
                      const std::string& device_label) override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-    file_manager_private::DeviceEvent event;
+    fmp::DeviceEvent event;
     event.type = type;
     event.device_path = device_path;
     event.device_label = device_label;
 
-    BroadcastEvent(profile_,
-                   extensions::events::FILE_MANAGER_PRIVATE_ON_DEVICE_CHANGED,
-                   file_manager_private::OnDeviceChanged::kEventName,
-                   file_manager_private::OnDeviceChanged::Create(event));
+    BroadcastEvent(
+        profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_DEVICE_CHANGED,
+        fmp::OnDeviceChanged::kEventName, fmp::OnDeviceChanged::Create(event));
 
     system_notification_manager()->HandleDeviceEvent(event);
   }
 
-  // DeviceEventRouter overrides.
-  bool IsExternalStorageDisabled() override {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    return profile_->GetPrefs()->GetBoolean(
-        disks::prefs::kExternalStorageDisabled);
-  }
-
  private:
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile> profile_;
 };
 
 class DriveFsEventRouterImpl : public DriveFsEventRouter {
@@ -404,7 +406,7 @@ class DriveFsEventRouterImpl : public DriveFsEventRouter {
   GURL ConvertDrivePathToFileSystemUrl(const base::FilePath& file_path,
                                        const GURL& listener_url) override {
     GURL url;
-    file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+    util::ConvertAbsoluteFilePathToFileSystemUrl(
         profile_,
         base::FilePath(DriveIntegrationServiceFactory::FindForProfile(profile_)
                            ->GetMountPointPath()
@@ -420,11 +422,9 @@ class DriveFsEventRouterImpl : public DriveFsEventRouter {
     std::vector<GURL> urls;
     for (const auto& path : paths) {
       GURL url;
-      bool did_convert =
-          file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
-              profile_, path, listener_url, &url);
-      LOG_IF(ERROR, !did_convert)
-          << "Failed to convert file path to file system URL";
+      const bool ok = util::ConvertAbsoluteFilePathToFileSystemUrl(
+          profile_, path, listener_url, &url);
+      LOG_IF(ERROR, !ok) << "Cannot convert filepath to filesystem URL";
       urls.emplace_back(std::move(url));
     }
     return urls;
@@ -458,36 +458,9 @@ class DriveFsEventRouterImpl : public DriveFsEventRouter {
     extensions::EventRouter::Get(profile_)->BroadcastEvent(std::move(event));
   }
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
-  const raw_ptr<const std::map<base::FilePath, std::unique_ptr<FileWatcher>>,
-                ExperimentalAsh>
+  const raw_ptr<Profile> profile_;
+  const raw_ptr<const std::map<base::FilePath, std::unique_ptr<FileWatcher>>>
       file_watchers_;
-};
-
-// Observes App Service and notifies Files app when there are any changes in the
-// apps which might affect which file tasks are currently available, e.g. when
-// an app is installed or uninstalled.
-class RecalculateTasksObserver : public apps::AppRegistryCache::Observer {
- public:
-  explicit RecalculateTasksObserver(base::WeakPtr<EventRouter> event_router)
-      : event_router_(event_router) {}
-
-  // Tell Files app frontend that file tasks might have changed.
-  void OnAppUpdate(const apps::AppUpdate& update) override {
-    // TODO(petermarshall): Filter update more carefully.
-    if (!event_router_) {
-      return;
-    }
-    event_router_->BroadcastOnAppsUpdatedEvent();
-  }
-
-  void OnAppRegistryCacheWillBeDestroyed(
-      apps::AppRegistryCache* cache) override {
-    apps::AppRegistryCache::Observer::Observe(nullptr);
-  }
-
- private:
-  base::WeakPtr<EventRouter> event_router_;
 };
 
 // Records mounted File System Provider type if known otherwise UNKNOWN.
@@ -515,7 +488,7 @@ void RecordFileSystemProviderMountMetrics(const Volume& volume) {
 
 // Returns a map from the given `files` to their parent directory.
 std::map<base::FilePath, std::vector<base::FilePath>>
-MapFilePathsToParentDirectory(const std::vector<base::FilePath> files) {
+MapFilePathsToParentDirectory(const std::vector<base::FilePath>& files) {
   std::map<base::FilePath, std::vector<base::FilePath>> dir_files_map;
   for (const auto& file : files) {
     dir_files_map[file.DirName()].push_back(file);
@@ -525,17 +498,16 @@ MapFilePathsToParentDirectory(const std::vector<base::FilePath> files) {
 
 // Creates a file watch event for the given `changed_files` in `directory`
 // belonging to a filesystem described by `info`.
-extensions::api::file_manager_private::FileWatchEvent CreateFileWatchEvent(
+fmp::FileWatchEvent CreateFileWatchEvent(
     Profile* profile,
     const GURL& listener_url,
     const std::vector<base::FilePath>& changed_files,
     const storage::FileSystemInfo& info,
     const base::FilePath& directory,
-    extensions::api::file_manager_private::ChangeType change_type) {
-  extensions::api::file_manager_private::FileWatchEvent event;
+    fmp::ChangeType change_type) {
+  fmp::FileWatchEvent event;
 
-  event.event_type =
-      extensions::api::file_manager_private::FILE_WATCH_EVENT_TYPE_CHANGED;
+  event.event_type = fmp::FileWatchEventType::kChanged;
   event.entry.additional_properties.Set("fileSystemRoot", info.root_url.spec());
   event.entry.additional_properties.Set("fileSystemName", info.name);
   event.entry.additional_properties.Set("fileFullPath",
@@ -548,8 +520,8 @@ extensions::api::file_manager_private::FileWatchEvent CreateFileWatchEvent(
   for (const base::FilePath& file : changed_files) {
     auto& change = event.changed_files->emplace_back();
     GURL url;
-    file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
-        profile, file, listener_url, &url);
+    util::ConvertAbsoluteFilePathToFileSystemUrl(profile, file, listener_url,
+                                                 &url);
     change.url = url.spec();
     change.changes.push_back(change_type);
   }
@@ -566,7 +538,7 @@ MaybeStartInteractionWithODFS(const storage::FileSystemURL& url,
   }
   if (parser.file_system()->GetFileSystemInfo().provider_id() !=
       ash::file_system_provider::ProviderId::CreateFromExtensionId(
-          file_tasks::GetODFSExtensionId(profile))) {
+          extension_misc::kODFSExtensionId)) {
     return nullptr;
   }
   return parser.file_system()->StartUserInteraction();
@@ -574,50 +546,49 @@ MaybeStartInteractionWithODFS(const storage::FileSystemURL& url,
 
 }  // namespace
 
-file_manager_private::MountError MountErrorToMountCompletedStatus(
-    ash::MountError error) {
+fmp::MountError MountErrorToMountCompletedStatus(ash::MountError error) {
   switch (error) {
     case ash::MountError::kSuccess:
-      return file_manager_private::MOUNT_ERROR_SUCCESS;
+      return fmp::MountError::kSuccess;
     case ash::MountError::kUnknownError:
-      return file_manager_private::MOUNT_ERROR_UNKNOWN_ERROR;
+      return fmp::MountError::kUnknownError;
     case ash::MountError::kInternalError:
-      return file_manager_private::MOUNT_ERROR_INTERNAL_ERROR;
+      return fmp::MountError::kInternalError;
     case ash::MountError::kInvalidArgument:
-      return file_manager_private::MOUNT_ERROR_INVALID_ARGUMENT;
+      return fmp::MountError::kInvalidArgument;
     case ash::MountError::kInvalidPath:
-      return file_manager_private::MOUNT_ERROR_INVALID_PATH;
+      return fmp::MountError::kInvalidPath;
     case ash::MountError::kPathAlreadyMounted:
-      return file_manager_private::MOUNT_ERROR_PATH_ALREADY_MOUNTED;
+      return fmp::MountError::kPathAlreadyMounted;
     case ash::MountError::kPathNotMounted:
-      return file_manager_private::MOUNT_ERROR_PATH_NOT_MOUNTED;
+      return fmp::MountError::kPathNotMounted;
     case ash::MountError::kDirectoryCreationFailed:
-      return file_manager_private::MOUNT_ERROR_DIRECTORY_CREATION_FAILED;
+      return fmp::MountError::kDirectoryCreationFailed;
     case ash::MountError::kInvalidMountOptions:
-      return file_manager_private::MOUNT_ERROR_INVALID_MOUNT_OPTIONS;
+      return fmp::MountError::kInvalidMountOptions;
     case ash::MountError::kInsufficientPermissions:
-      return file_manager_private::MOUNT_ERROR_INSUFFICIENT_PERMISSIONS;
+      return fmp::MountError::kInsufficientPermissions;
     case ash::MountError::kMountProgramNotFound:
-      return file_manager_private::MOUNT_ERROR_MOUNT_PROGRAM_NOT_FOUND;
+      return fmp::MountError::kMountProgramNotFound;
     case ash::MountError::kMountProgramFailed:
-      return file_manager_private::MOUNT_ERROR_MOUNT_PROGRAM_FAILED;
+      return fmp::MountError::kMountProgramFailed;
     case ash::MountError::kInvalidDevicePath:
-      return file_manager_private::MOUNT_ERROR_INVALID_DEVICE_PATH;
+      return fmp::MountError::kInvalidDevicePath;
     case ash::MountError::kUnknownFilesystem:
-      return file_manager_private::MOUNT_ERROR_UNKNOWN_FILESYSTEM;
+      return fmp::MountError::kUnknownFilesystem;
     case ash::MountError::kUnsupportedFilesystem:
-      return file_manager_private::MOUNT_ERROR_UNSUPPORTED_FILESYSTEM;
+      return fmp::MountError::kUnsupportedFilesystem;
     case ash::MountError::kNeedPassword:
-      return file_manager_private::MOUNT_ERROR_NEED_PASSWORD;
+      return fmp::MountError::kNeedPassword;
     case ash::MountError::kInProgress:
-      return file_manager_private::MOUNT_ERROR_IN_PROGRESS;
+      return fmp::MountError::kInProgress;
     case ash::MountError::kCancelled:
-      return file_manager_private::MOUNT_ERROR_CANCELLED;
+      return fmp::MountError::kCancelled;
     case ash::MountError::kBusy:
-      return file_manager_private::MOUNT_ERROR_BUSY;
+      return fmp::MountError::kBusy;
     default:
       LOG(ERROR) << "Unexpected mount error: " << error;
-      return file_manager_private::MOUNT_ERROR_UNKNOWN_ERROR;
+      return fmp::MountError::kUnknownError;
   }
 }
 
@@ -626,6 +597,7 @@ EventRouter::EventRouter(Profile* profile)
       profile_(profile),
       notification_manager_(
           std::make_unique<SystemNotificationManager>(profile)),
+      office_tasks_(std::make_unique<OfficeTasks>()),
       device_event_router_(
           std::make_unique<DeviceEventRouterImpl>(notification_manager_.get(),
                                                   profile)),
@@ -639,34 +611,25 @@ EventRouter::EventRouter(Profile* profile)
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // Notification manager can call into Drive FS for dialog handling.
   notification_manager_->SetDriveFSEventRouter(drivefs_event_router_.get());
-  recalculate_tasks_observer_ =
-      std::make_unique<RecalculateTasksObserver>(weak_factory_.GetWeakPtr());
   ObserveEvents();
 }
 
 EventRouter::~EventRouter() = default;
 
 void EventRouter::OnIntentFiltersUpdated(
-    const absl::optional<std::string>& package_name) {
+    const std::optional<std::string>& package_name) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_APPS_UPDATED,
-                 file_manager_private::OnAppsUpdated::kEventName,
-                 file_manager_private::OnAppsUpdated::Create());
+                 fmp::OnAppsUpdated::kEventName, fmp::OnAppsUpdated::Create());
 }
 
 void EventRouter::Shutdown() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  ash::TabletMode* tablet_mode = ash::TabletMode::Get();
-  if (tablet_mode) {
-    tablet_mode->RemoveObserver(this);
-  }
-
-  auto* intent_helper =
-      arc::ArcIntentHelperBridge::GetForBrowserContext(profile_);
-  if (intent_helper) {
-    intent_helper->RemoveObserver(this);
+  if (ArcIntentHelperBridge* const bridge =
+          arc::ArcIntentHelperBridge::GetForBrowserContext(profile_)) {
+    bridge->RemoveObserver(this);
   }
 
   ash::system::TimezoneSettings::GetInstance()->RemoveObserver(this);
@@ -681,54 +644,40 @@ void EventRouter::Shutdown() {
 
   extensions::ExtensionRegistry::Get(profile_)->RemoveObserver(this);
 
-  DriveIntegrationService* const integration_service =
-      DriveIntegrationServiceFactory::FindForProfile(profile_);
-  if (integration_service) {
-    integration_service->RemoveObserver(this);
-    integration_service->RemoveObserver(drivefs_event_router_.get());
-    integration_service->GetDriveFsHost()->RemoveObserver(
-        drivefs_event_router_.get());
-    integration_service->GetDriveFsHost()->set_dialog_handler({});
-  }
+  drivefs_event_router_->Reset();
+  DriveIntegrationService::Observer::Reset();
 
-  VolumeManager* const volume_manager = VolumeManager::Get(profile_);
-  if (volume_manager) {
-    volume_manager->RemoveObserver(this);
-    volume_manager->RemoveObserver(device_event_router_.get());
-    auto* io_task_controller = volume_manager->io_task_controller();
-    if (io_task_controller) {
-      io_task_controller->RemoveObserver(this);
+  if (VolumeManager* const manager = VolumeManager::Get(profile_)) {
+    manager->RemoveObserver(this);
+    manager->RemoveObserver(device_event_router_.get());
+    if (io_task::IOTaskController* const controller =
+            manager->io_task_controller()) {
+      controller->RemoveObserver(this);
     }
   }
 
-  chromeos::PowerManagerClient* const power_manager_client =
-      chromeos::PowerManagerClient::Get();
-  power_manager_client->RemoveObserver(device_event_router_.get());
-
-  auto* guest_os_service = guest_os::GuestOsService::GetForProfile(profile_);
-  if (guest_os_service) {
-    // GuestOsService doesn't exist for all profiles.
-    auto* registry = guest_os_service->MountProviderRegistry();
-    registry->RemoveObserver(this);
+  if (PowerManagerClient* const client = PowerManagerClient::Get()) {
+    client->RemoveObserver(device_event_router_.get());
   }
 
-  auto* guest_os_share_path =
-      guest_os::GuestOsSharePath::GetForProfile(profile_);
-  if (guest_os_share_path) {
-    guest_os_share_path->RemoveObserver(this);
+  // GuestOsService doesn't exist for all profiles.
+  if (GuestOsService* const service =
+          GuestOsServiceFactory::GetForProfile(profile_)) {
+    service->MountProviderRegistry()->RemoveObserver(this);
   }
 
-  if (apps::AppServiceProxyFactory::IsAppServiceAvailableForProfile(profile_)) {
-    apps::AppServiceProxy* proxy =
-        apps::AppServiceProxyFactory::GetForProfile(profile_);
-    DCHECK(proxy);
-    proxy->AppRegistryCache().RemoveObserver(recalculate_tasks_observer_.get());
+  if (GuestOsSharePath* const path =
+          GuestOsSharePathFactory::GetForProfile(profile_)) {
+    path->RemoveObserver(this);
   }
 
-  auto* dlp_client = chromeos::DlpClient::Get();
-  if (dlp_client) {
-    dlp_client->RemoveObserver(this);
+  app_registry_cache_observer_.Reset();
+
+  if (DlpClient* const client = DlpClient::Get()) {
+    client->RemoveObserver(this);
   }
+
+  content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(this);
 
   profile_ = nullptr;
 }
@@ -736,8 +685,7 @@ void EventRouter::Shutdown() {
 void EventRouter::ObserveEvents() {
   DCHECK(profile_);
 
-  if (!ash::LoginState::IsInitialized() ||
-      !ash::LoginState::Get()->IsUserLoggedIn()) {
+  if (!LoginState::IsInitialized() || !LoginState::Get()->IsUserLoggedIn()) {
     return;
   }
 
@@ -747,106 +695,83 @@ void EventRouter::ObserveEvents() {
   // VolumeManager's construction triggers DriveIntegrationService's
   // construction, so it is necessary to call VolumeManager's Get before
   // accessing DriveIntegrationService.
-  VolumeManager* const volume_manager = VolumeManager::Get(profile_);
-  if (volume_manager) {
-    volume_manager->AddObserver(this);
-    volume_manager->AddObserver(device_event_router_.get());
-    auto* io_task_controller = volume_manager->io_task_controller();
-    if (io_task_controller) {
-      io_task_controller->AddObserver(this);
-      notification_manager_->SetIOTaskController(io_task_controller);
+  if (VolumeManager* const manager = VolumeManager::Get(profile_)) {
+    manager->AddObserver(this);
+    manager->AddObserver(device_event_router_.get());
+    if (IOTaskController* const controller = manager->io_task_controller()) {
+      controller->AddObserver(this);
+      notification_manager_->SetIOTaskController(controller);
     }
   }
 
-  chromeos::PowerManagerClient* const power_manager_client =
-      chromeos::PowerManagerClient::Get();
-  power_manager_client->AddObserver(device_event_router_.get());
+  if (PowerManagerClient* const client = PowerManagerClient::Get()) {
+    client->AddObserver(device_event_router_.get());
+  }
 
-  DriveIntegrationService* const integration_service =
-      DriveIntegrationServiceFactory::FindForProfile(profile_);
-  if (integration_service) {
-    integration_service->AddObserver(this);
-    integration_service->AddObserver(drivefs_event_router_.get());
-    integration_service->GetDriveFsHost()->AddObserver(
-        drivefs_event_router_.get());
-    integration_service->GetDriveFsHost()->set_dialog_handler(
-        base::BindRepeating(&EventRouter::DisplayDriveConfirmDialog,
-                            weak_factory_.GetWeakPtr()));
+  if (DriveIntegrationService* const service =
+          DriveIntegrationServiceFactory::FindForProfile(profile_)) {
+    DriveIntegrationService::Observer::Observe(service);
+    drivefs_event_router_->Observe(service);
   }
 
   extensions::ExtensionRegistry::Get(profile_)->AddObserver(this);
 
   pref_change_registrar_->Init(profile_->GetPrefs());
 
-  auto file_manager_prefs_callback = base::BindRepeating(
-      &EventRouter::OnFileManagerPrefsChanged, weak_factory_.GetWeakPtr());
-  pref_change_registrar_->Add(drive::prefs::kDriveFsBulkPinningEnabled,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(drive::prefs::kDisableDriveOverCellular,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(drive::prefs::kDisableDrive,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(ash::prefs::kFilesAppTrashEnabled,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(prefs::kSearchSuggestEnabled,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(prefs::kUse24HourClock,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(arc::prefs::kArcEnabled,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(arc::prefs::kArcHasAccessToRemovableMedia,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(ash::prefs::kFilesAppFolderShortcuts,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(prefs::kOfficeFileMovedToOneDrive,
-                              file_manager_prefs_callback);
-  pref_change_registrar_->Add(prefs::kOfficeFileMovedToGoogleDrive,
-                              file_manager_prefs_callback);
+  {
+    const base::RepeatingClosure cb = base::BindRepeating(
+        &EventRouter::OnFileManagerPrefsChanged, weak_factory_.GetWeakPtr());
+    pref_change_registrar_->Add(drive::prefs::kDriveFsBulkPinningVisible, cb);
+    pref_change_registrar_->Add(drive::prefs::kDriveFsBulkPinningEnabled, cb);
+    pref_change_registrar_->Add(drive::prefs::kDisableDriveOverCellular, cb);
+    pref_change_registrar_->Add(drive::prefs::kDisableDrive, cb);
+    pref_change_registrar_->Add(ash::prefs::kFilesAppTrashEnabled, cb);
+    pref_change_registrar_->Add(prefs::kSearchSuggestEnabled, cb);
+    pref_change_registrar_->Add(prefs::kUse24HourClock, cb);
+    pref_change_registrar_->Add(arc::prefs::kArcEnabled, cb);
+    pref_change_registrar_->Add(arc::prefs::kArcHasAccessToRemovableMedia, cb);
+    pref_change_registrar_->Add(ash::prefs::kFilesAppFolderShortcuts, cb);
+    pref_change_registrar_->Add(prefs::kOfficeFileMovedToOneDrive, cb);
+    pref_change_registrar_->Add(prefs::kOfficeFileMovedToGoogleDrive, cb);
+  }
 
-  auto on_apps_update_callback = base::BindRepeating(
-      &EventRouter::BroadcastOnAppsUpdatedEvent, weak_factory_.GetWeakPtr());
-  pref_change_registrar_->Add(prefs::kDefaultTasksByMimeType,
-                              on_apps_update_callback);
-  pref_change_registrar_->Add(prefs::kDefaultTasksBySuffix,
-                              on_apps_update_callback);
+  {
+    const base::RepeatingClosure cb = base::BindRepeating(
+        &EventRouter::BroadcastOnAppsUpdatedEvent, weak_factory_.GetWeakPtr());
+    pref_change_registrar_->Add(prefs::kDefaultTasksByMimeType, cb);
+    pref_change_registrar_->Add(prefs::kDefaultTasksBySuffix, cb);
+  }
 
   ash::system::TimezoneSettings::GetInstance()->AddObserver(this);
 
-  auto* intent_helper =
-      arc::ArcIntentHelperBridge::GetForBrowserContext(profile_);
-  if (intent_helper) {
-    intent_helper->AddObserver(this);
+  if (ArcIntentHelperBridge* const bridge =
+          ArcIntentHelperBridge::GetForBrowserContext(profile_)) {
+    bridge->AddObserver(this);
   }
 
-  auto* guest_os_share_path =
-      guest_os::GuestOsSharePath::GetForProfile(profile_);
-  if (guest_os_share_path) {
-    guest_os_share_path->AddObserver(this);
+  if (GuestOsSharePath* const path =
+          GuestOsSharePathFactory::GetForProfile(profile_)) {
+    path->AddObserver(this);
   }
 
-  ash::TabletMode* tablet_mode = ash::TabletMode::Get();
-  if (tablet_mode) {
-    tablet_mode->AddObserver(this);
+  // GuestOsService doesn't exist for all profiles.
+  if (GuestOsService* const service =
+          GuestOsServiceFactory::GetForProfile(profile_)) {
+    service->MountProviderRegistry()->AddObserver(this);
   }
 
-  auto* guest_os_service = guest_os::GuestOsService::GetForProfile(profile_);
-  if (guest_os_service) {
-    // GuestOsService doesn't exist for all profiles.
-    auto* registry = guest_os_service->MountProviderRegistry();
-    registry->AddObserver(this);
-  }
-
-  if (apps::AppServiceProxyFactory::IsAppServiceAvailableForProfile(profile_)) {
-    apps::AppServiceProxy* proxy =
-        apps::AppServiceProxyFactory::GetForProfile(profile_);
+  if (AppServiceProxyFactory::IsAppServiceAvailableForProfile(profile_)) {
+    AppServiceProxy* const proxy =
+        AppServiceProxyFactory::GetForProfile(profile_);
     DCHECK(proxy);
-    proxy->AppRegistryCache().AddObserver(recalculate_tasks_observer_.get());
+    app_registry_cache_observer_.Observe(&proxy->AppRegistryCache());
   }
 
-  auto* dlp_client = chromeos::DlpClient::Get();
-  if (dlp_client) {
-    dlp_client->AddObserver(this);
+  if (DlpClient* const client = DlpClient::Get()) {
+    client->AddObserver(this);
   }
+
+  content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
 }
 
 // File watch setup routines.
@@ -922,8 +847,8 @@ void EventRouter::OnFileManagerPrefsChanged() {
 
   BroadcastEvent(
       profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_PREFERENCES_CHANGED,
-      file_manager_private::OnPreferencesChanged::kEventName,
-      file_manager_private::OnPreferencesChanged::Create());
+      fmp::OnPreferencesChanged::kEventName,
+      fmp::OnPreferencesChanged::Create());
 }
 
 void EventRouter::HandleFileWatchNotification(const base::FilePath& local_path,
@@ -959,7 +884,7 @@ void EventRouter::DispatchDirectoryChangeEventImpl(
     // API.
     file_definition.is_directory = true;
 
-    file_manager::util::ConvertFileDefinitionToEntryDefinition(
+    util::ConvertFileDefinitionToEntryDefinition(
         util::GetFileSystemContextForSourceURL(profile_, origin.GetURL()),
         origin, file_definition,
         base::BindOnce(
@@ -979,10 +904,9 @@ void EventRouter::DispatchDirectoryChangeEventWithEntryDefinition(
     return;
   }
 
-  file_manager_private::FileWatchEvent event;
-  event.event_type = watcher_error
-                         ? file_manager_private::FILE_WATCH_EVENT_TYPE_ERROR
-                         : file_manager_private::FILE_WATCH_EVENT_TYPE_CHANGED;
+  fmp::FileWatchEvent event;
+  event.event_type = watcher_error ? fmp::FileWatchEventType::kError
+                                   : fmp::FileWatchEventType::kChanged;
 
   event.entry.additional_properties.Set("fileSystemName",
                                         entry_definition.file_system_name);
@@ -995,8 +919,8 @@ void EventRouter::DispatchDirectoryChangeEventWithEntryDefinition(
 
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_DIRECTORY_CHANGED,
-                 file_manager_private::OnDirectoryChanged::kEventName,
-                 file_manager_private::OnDirectoryChanged::Create(event));
+                 fmp::OnDirectoryChanged::kEventName,
+                 fmp::OnDirectoryChanged::Create(event));
 }
 
 void EventRouter::OnDiskAdded(const Disk& disk, bool mounting) {
@@ -1030,9 +954,8 @@ void EventRouter::OnVolumeMounted(ash::MountError error_code,
     return;
   }
 
-  DispatchMountCompletedEvent(
-      file_manager_private::MOUNT_COMPLETED_EVENT_TYPE_MOUNT, error_code,
-      volume);
+  DispatchMountCompletedEvent(fmp::MountCompletedEventType::kMount, error_code,
+                              volume);
 
   // Record the UMA metrics for mounted FSPs.
   RecordFileSystemProviderMountMetrics(volume);
@@ -1046,9 +969,8 @@ void EventRouter::OnVolumeMounted(ash::MountError error_code,
 void EventRouter::OnVolumeUnmounted(ash::MountError error_code,
                                     const Volume& volume) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DispatchMountCompletedEvent(
-      file_manager_private::MOUNT_COMPLETED_EVENT_TYPE_UNMOUNT, error_code,
-      volume);
+  DispatchMountCompletedEvent(fmp::MountCompletedEventType::kUnmount,
+                              error_code, volume);
 
   // TODO(mtomasz): Move VolumeManager and part of the event router outside of
   // file_manager, so there is no dependency between File System API and the
@@ -1057,21 +979,20 @@ void EventRouter::OnVolumeUnmounted(ash::MountError error_code,
 }
 
 void EventRouter::DispatchMountCompletedEvent(
-    file_manager_private::MountCompletedEventType event_type,
+    fmp::MountCompletedEventType event_type,
     ash::MountError error,
     const Volume& volume) {
   // Build an event object.
-  file_manager_private::MountCompletedEvent event;
+  fmp::MountCompletedEvent event;
   event.event_type = event_type;
   event.status = MountErrorToMountCompletedStatus(error);
   util::VolumeToVolumeMetadata(profile_, volume, &event.volume_metadata);
   event.should_notify =
       ShouldShowNotificationForVolume(profile_, *device_event_router_, volume);
   notification_manager_->HandleMountCompletedEvent(event, volume);
-  BroadcastEvent(profile_,
-                 extensions::events::FILE_MANAGER_PRIVATE_ON_MOUNT_COMPLETED,
-                 file_manager_private::OnMountCompleted::kEventName,
-                 file_manager_private::OnMountCompleted::Create(event));
+  BroadcastEvent(
+      profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_MOUNT_COMPLETED,
+      fmp::OnMountCompleted::kEventName, fmp::OnMountCompleted::Create(event));
 }
 
 void EventRouter::OnFormatStarted(const std::string& device_path,
@@ -1126,15 +1047,14 @@ void EventRouter::OnFileSystemMountFailed() {
 }
 
 void EventRouter::OnDriveConnectionStatusChanged(
-    drive::util::ConnectionStatusType status) {
+    drive::util::ConnectionStatus status) {
   NotifyDriveConnectionStatusChanged();
 }
 
 // Send crostini share, unshare event.
-void EventRouter::SendCrostiniEvent(
-    file_manager_private::CrostiniEventType event_type,
-    const std::string& vm_name,
-    const base::FilePath& path) {
+void EventRouter::SendCrostiniEvent(fmp::CrostiniEventType event_type,
+                                    const std::string& vm_name,
+                                    const base::FilePath& path) {
   std::string mount_name;
   std::string file_system_name;
   std::string full_path;
@@ -1143,8 +1063,7 @@ void EventRouter::SendCrostiniEvent(
     return;
   }
 
-  const std::string event_name(
-      file_manager_private::OnCrostiniChanged::kEventName);
+  const std::string event_name(fmp::OnCrostiniChanged::kEventName);
   const extensions::EventListenerMap::ListenerList& listeners =
       extensions::EventRouter::Get(profile_)
           ->listeners()
@@ -1166,37 +1085,36 @@ void EventRouter::SendCrostiniEvent(
   for (const std::string& extension_id : extension_ids) {
     url::Origin origin = url::Origin::Create(
         extensions::Extension::GetBaseURLFromExtensionId(extension_id));
-    file_manager_private::CrostiniEvent event;
+    fmp::CrostiniEvent event;
     PopulateCrostiniEvent(event, event_type, vm_name, origin, mount_name,
                           file_system_name, full_path);
     DispatchEventToExtension(
         profile_, extension_id,
         extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
-        event_name, file_manager_private::OnCrostiniChanged::Create(event));
+        event_name, fmp::OnCrostiniChanged::Create(event));
   }
   for (const url::Origin& origin : origins) {
-    file_manager_private::CrostiniEvent event;
+    fmp::CrostiniEvent event;
     PopulateCrostiniEvent(event, event_type, vm_name, origin, mount_name,
                           file_system_name, full_path);
-    BroadcastEvent(
-        profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
-        event_name, file_manager_private::OnCrostiniChanged::Create(event));
+    BroadcastEvent(profile_,
+                   extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
+                   event_name, fmp::OnCrostiniChanged::Create(event));
   }
 }
 
 // static
-void EventRouter::PopulateCrostiniEvent(
-    file_manager_private::CrostiniEvent& event,
-    file_manager_private::CrostiniEventType event_type,
-    const std::string& vm_name,
-    const url::Origin& origin,
-    const std::string& mount_name,
-    const std::string& file_system_name,
-    const std::string& full_path) {
+void EventRouter::PopulateCrostiniEvent(fmp::CrostiniEvent& event,
+                                        fmp::CrostiniEventType event_type,
+                                        const std::string& vm_name,
+                                        const url::Origin& origin,
+                                        const std::string& mount_name,
+                                        const std::string& file_system_name,
+                                        const std::string& full_path) {
   event.event_type = event_type;
   event.vm_name = vm_name;
   event.container_name = "";  // Unused for the event types handled by this.
-  file_manager_private::CrostiniEvent::EntriesType entry;
+  fmp::CrostiniEvent::EntriesType entry;
   entry.additional_properties.Set(
       "fileSystemRoot",
       storage::GetExternalFileSystemRootURIString(origin.GetURL(), mount_name));
@@ -1208,81 +1126,68 @@ void EventRouter::PopulateCrostiniEvent(
 
 void EventRouter::OnPersistedPathRegistered(const std::string& vm_name,
                                             const base::FilePath& path) {
-  SendCrostiniEvent(file_manager_private::CROSTINI_EVENT_TYPE_SHARE, vm_name,
-                    path);
+  SendCrostiniEvent(fmp::CrostiniEventType::kShare, vm_name, path);
 }
 
 void EventRouter::OnUnshare(const std::string& vm_name,
                             const base::FilePath& path) {
-  SendCrostiniEvent(file_manager_private::CROSTINI_EVENT_TYPE_UNSHARE, vm_name,
-                    path);
+  SendCrostiniEvent(fmp::CrostiniEventType::kUnshare, vm_name, path);
 }
 
 void EventRouter::OnGuestRegistered(const guest_os::GuestId& guest) {
-  file_manager_private::CrostiniEvent event;
+  fmp::CrostiniEvent event;
   event.vm_name = guest.vm_name;
   event.container_name = guest.container_name;
-  event.event_type =
-      extensions::api::file_manager_private::CROSTINI_EVENT_TYPE_ENABLE;
+  event.event_type = fmp::CrostiniEventType::kEnable;
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
-                 file_manager_private::OnCrostiniChanged::kEventName,
-                 file_manager_private::OnCrostiniChanged::Create(event));
+                 fmp::OnCrostiniChanged::kEventName,
+                 fmp::OnCrostiniChanged::Create(event));
 }
 
 void EventRouter::OnGuestUnregistered(const guest_os::GuestId& guest) {
-  file_manager_private::CrostiniEvent event;
+  fmp::CrostiniEvent event;
   event.vm_name = guest.vm_name;
   event.container_name = guest.container_name;
-  event.event_type =
-      extensions::api::file_manager_private::CROSTINI_EVENT_TYPE_DISABLE;
+  event.event_type = fmp::CrostiniEventType::kDisable;
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
-                 file_manager_private::OnCrostiniChanged::kEventName,
-                 file_manager_private::OnCrostiniChanged::Create(event));
+                 fmp::OnCrostiniChanged::kEventName,
+                 fmp::OnCrostiniChanged::Create(event));
 }
 
-void EventRouter::OnTabletModeStarted() {
-  BroadcastEvent(
-      profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_TABLET_MODE_CHANGED,
-      file_manager_private::OnTabletModeChanged::kEventName,
-      file_manager_private::OnTabletModeChanged::Create(/*enabled=*/true));
-}
+void EventRouter::OnDisplayTabletStateChanged(display::TabletState state) {
+  if (display::IsTabletStateChanging(state)) {
+    return;
+  }
 
-void EventRouter::OnTabletModeEnded() {
   BroadcastEvent(
       profile_, extensions::events::FILE_MANAGER_PRIVATE_ON_TABLET_MODE_CHANGED,
-      file_manager_private::OnTabletModeChanged::kEventName,
-      file_manager_private::OnTabletModeChanged::Create(/*enabled=*/false));
+      fmp::OnTabletModeChanged::kEventName,
+      fmp::OnTabletModeChanged::Create(state ==
+                                       display::TabletState::kInTabletMode));
 }
 
 void EventRouter::NotifyDriveConnectionStatusChanged() {
   DCHECK(profile_);
   DCHECK(extensions::EventRouter::Get(profile_));
 
-  BroadcastEvent(
-      profile_,
-      extensions::events::
-          FILE_MANAGER_PRIVATE_ON_DRIVE_CONNECTION_STATUS_CHANGED,
-      file_manager_private::OnDriveConnectionStatusChanged::kEventName,
-      file_manager_private::OnDriveConnectionStatusChanged::Create());
+  BroadcastEvent(profile_,
+                 extensions::events::
+                     FILE_MANAGER_PRIVATE_ON_DRIVE_CONNECTION_STATUS_CHANGED,
+                 fmp::OnDriveConnectionStatusChanged::kEventName,
+                 fmp::OnDriveConnectionStatusChanged::Create());
 }
 
 void EventRouter::DropFailedPluginVmDirectoryNotShared() {
-  file_manager_private::CrostiniEvent event;
+  fmp::CrostiniEvent event;
   event.vm_name = plugin_vm::kPluginVmName;
-  event.event_type = file_manager_private::
-      CROSTINI_EVENT_TYPE_DROP_FAILED_PLUGIN_VM_DIRECTORY_NOT_SHARED;
+  event.event_type =
+      fmp::CrostiniEventType::kDropFailedPluginVmDirectoryNotShared;
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_CROSTINI_CHANGED,
-                 file_manager_private::OnCrostiniChanged::kEventName,
-                 file_manager_private::OnCrostiniChanged::Create(event));
-}
-
-void EventRouter::DisplayDriveConfirmDialog(
-    const drivefs::mojom::DialogReason& reason,
-    base::OnceCallback<void(drivefs::mojom::DialogResult)> callback) {
-  drivefs_event_router_->DisplayConfirmDialog(reason, std::move(callback));
+                 fmp::OnCrostiniChanged::kEventName,
+                 fmp::OnCrostiniChanged::Create(event));
 }
 
 void EventRouter::OnDriveDialogResult(drivefs::mojom::DialogResult result) {
@@ -1317,10 +1222,10 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
   // progress UI is already displayed.
   if (chromeos::features::IsUploadOfficeToCloudEnabled()) {
     if (status.IsCompleted()) {
-      odfs_interactions_.erase(status.task_id);
+      office_tasks_->odfs_interactions.erase(status.task_id);
     } else {
-      auto it = odfs_interactions_.find(status.task_id);
-      if (it == odfs_interactions_.end()) {
+      auto it = office_tasks_->odfs_interactions.find(status.task_id);
+      if (it == office_tasks_->odfs_interactions.end()) {
         auto interaction = MaybeStartInteractionWithODFS(
             status.GetDestinationFolder(), profile_);
         if (!interaction) {
@@ -1332,7 +1237,8 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
           }
         }
         if (interaction) {
-          odfs_interactions_[status.task_id] = std::move(interaction);
+          office_tasks_->odfs_interactions[status.task_id] =
+              std::move(interaction);
         }
       }
     }
@@ -1364,10 +1270,10 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
   }
 
   // If any Files app window exists we send the progress to all of them.
-  file_manager_private::ProgressStatus event_status;
+  fmp::ProgressStatus event_status;
   event_status.task_id = status.task_id;
-  event_status.type = GetIOTaskType(status.type);
-  event_status.state = GetIOTaskState(status.state);
+  event_status.type = GetIoTaskType(status.type);
+  event_status.state = GetIoTaskState(status.state);
   if (status.policy_error.has_value()) {
     event_status.policy_error.emplace();
     event_status.policy_error->type =
@@ -1375,6 +1281,8 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
     event_status.policy_error->policy_file_count =
         status.policy_error->blocked_files;
     event_status.policy_error->file_name = status.policy_error->file_name;
+    event_status.policy_error->always_show_review =
+        status.policy_error->always_show_review;
   }
   event_status.sources_scanned = status.sources_scanned;
   event_status.destination_volume_id = status.GetDestinationVolumeId();
@@ -1398,7 +1306,7 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
   std::vector<storage::FileSystemURL> outputs;
   for (const auto& file_status : status.outputs) {
     if (file_status.error) {
-      if (status.type == file_manager::io_task::OperationType::kTrash &&
+      if (status.type == io_task::OperationType::kTrash &&
           file_status.error.value() == base::File::FILE_OK) {
         // These entries are currently used to undo a TrashIOTask so only
         // consider the successfully trashed files.
@@ -1433,9 +1341,8 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
 
   // CopyOrMoveIOTask can enter PAUSED state when it needs the user to resolve
   // a file name conflict, or because it needs user to review a policy warning.
-  if (GetIOTaskState(status.state) ==
-      file_manager_private::IO_TASK_STATE_PAUSED) {
-    file_manager_private::PauseParams pause_params;
+  if (GetIoTaskState(status.state) == fmp::IoTaskState::kPaused) {
+    fmp::PauseParams pause_params;
     if (status.pause_params.conflict_params) {
       pause_params.conflict_params.emplace();
       pause_params.conflict_params->conflict_name =
@@ -1455,13 +1362,21 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
           status.pause_params.policy_params->warning_files_count;
       pause_params.policy_params->file_name =
           status.pause_params.policy_params->file_name;
+      pause_params.policy_params->always_show_review =
+          status.pause_params.policy_params->always_show_review;
     }
     event_status.pause_params = std::move(pause_params);
   }
 
+  for (const FileSystemURL& skipped_encrypted_file :
+       status.skipped_encrypted_files) {
+    event_status.skipped_encrypted_files.push_back(
+        skipped_encrypted_file.path().BaseName().value());
+  }
+
   // The TrashIOTask is the only IOTask that uses the output Entry's, so don't
   // try to resolve the outputs for all other IOTasks.
-  if (GetIOTaskType(status.type) != file_manager_private::IO_TASK_TYPE_TRASH ||
+  if (GetIoTaskType(status.type) != fmp::IoTaskType::kTrash ||
       outputs.size() == 0) {
     BroadcastIOTask(std::move(event_status));
     return;
@@ -1477,17 +1392,17 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
     return;
   }
 
-  file_manager::util::FileDefinitionList file_definition_list;
+  util::FileDefinitionList file_definition_list;
   for (const auto& url : outputs) {
-    file_manager::util::FileDefinition file_definition;
-    if (file_manager::util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
+    util::FileDefinition file_definition;
+    if (util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
             profile_, url.origin().GetURL(), url.path(),
             &file_definition.virtual_path)) {
       file_definition_list.push_back(std::move(file_definition));
     }
   }
 
-  file_manager::util::ConvertFileDefinitionListToEntryDefinitionList(
+  util::ConvertFileDefinitionListToEntryDefinitionList(
       file_system_context, outputs[0].origin(), std::move(file_definition_list),
       base::BindOnce(
           &EventRouter::OnConvertFileDefinitionListToEntryDefinitionList,
@@ -1495,9 +1410,8 @@ void EventRouter::OnIOTaskStatus(const io_task::ProgressStatus& status) {
 }
 
 void EventRouter::OnConvertFileDefinitionListToEntryDefinitionList(
-    file_manager_private::ProgressStatus event_status,
-    std::unique_ptr<file_manager::util::EntryDefinitionList>
-        entry_definition_list) {
+    fmp::ProgressStatus event_status,
+    std::unique_ptr<util::EntryDefinitionList> entry_definition_list) {
   if (entry_definition_list == nullptr) {
     BroadcastIOTask(std::move(event_status));
     return;
@@ -1526,11 +1440,11 @@ void EventRouter::OnConvertFileDefinitionListToEntryDefinitionList(
 
 void EventRouter::OnFilesChanged(
     const std::vector<base::FilePath>& changed_files,
-    extensions::api::file_manager_private::ChangeType change_type) {
+    fmp::ChangeType change_type) {
   std::map<base::FilePath, std::vector<base::FilePath>> files_to_directory_map =
       MapFilePathsToParentDirectory(changed_files);
-  for (const auto& listener_url : GetEventListenerURLs(
-           profile_, file_manager_private::OnDirectoryChanged::kEventName)) {
+  for (const auto& listener_url :
+       GetEventListenerURLs(profile_, fmp::OnDirectoryChanged::kEventName)) {
     BroadcastDirectoryChangeEvent(files_to_directory_map, listener_url,
                                   change_type);
   }
@@ -1540,7 +1454,7 @@ void EventRouter::BroadcastDirectoryChangeEvent(
     const std::map<base::FilePath, std::vector<base::FilePath>>&
         files_to_directory_map,
     const GURL& listener_url,
-    extensions::api::file_manager_private::ChangeType change_type) {
+    fmp::ChangeType change_type) {
   auto* file_system_context =
       util::GetFileSystemContextForSourceURL(profile_, listener_url);
   if (file_system_context == nullptr) {
@@ -1549,8 +1463,8 @@ void EventRouter::BroadcastDirectoryChangeEvent(
   }
   for (const auto& [dir, files] : files_to_directory_map) {
     GURL dir_url;
-    file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
-        profile_, dir, listener_url, &dir_url);
+    util::ConvertAbsoluteFilePathToFileSystemUrl(profile_, dir, listener_url,
+                                                 &dir_url);
 
     const storage::FileSystemURL dir_filesystem_url =
         file_system_context->CrackURLInFirstPartyContext(dir_url);
@@ -1571,27 +1485,25 @@ void EventRouter::BroadcastDirectoryChangeEvent(
 void EventRouter::BroadcastDirectoryChangeEventOnFilesystemInfoResolved(
     GURL listener_url,
     std::vector<base::FilePath> changed_files,
-    extensions::api::file_manager_private::ChangeType change_type,
+    fmp::ChangeType change_type,
     base::File::Error result,
     const storage::FileSystemInfo& info,
     const base::FilePath& dir_path,
     storage::FileSystemContext::ResolvedEntryType) {
-  extensions::api::file_manager_private::FileWatchEvent event =
-      CreateFileWatchEvent(profile_, listener_url, changed_files, info,
-                           dir_path, change_type);
+  fmp::FileWatchEvent event = CreateFileWatchEvent(
+      profile_, listener_url, changed_files, info, dir_path, change_type);
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_DIRECTORY_CHANGED,
-                 file_manager_private::OnDirectoryChanged::kEventName,
-                 file_manager_private::OnDirectoryChanged::Create(event));
+                 fmp::OnDirectoryChanged::kEventName,
+                 fmp::OnDirectoryChanged::Create(event));
 }
 
-void EventRouter::BroadcastIOTask(
-    const file_manager_private::ProgressStatus& event_status) {
+void EventRouter::BroadcastIOTask(const fmp::ProgressStatus& event_status) {
   BroadcastEvent(
       profile_,
       extensions::events::FILE_MANAGER_PRIVATE_ON_IO_TASK_PROGRESS_STATUS,
-      file_manager_private::OnIOTaskProgressStatus::kEventName,
-      file_manager_private::OnIOTaskProgressStatus::Create(event_status));
+      fmp::OnIOTaskProgressStatus::kEventName,
+      fmp::OnIOTaskProgressStatus::Create(event_status));
 }
 
 void EventRouter::OnRegistered(guest_os::GuestOsMountProviderRegistry::Id id,
@@ -1610,8 +1522,7 @@ void EventRouter::BroadcastOnAppsUpdatedEvent() {
 
   BroadcastEvent(profile_,
                  extensions::events::FILE_MANAGER_PRIVATE_ON_APPS_UPDATED,
-                 file_manager_private::OnAppsUpdated::kEventName,
-                 file_manager_private::OnAppsUpdated::Create());
+                 fmp::OnAppsUpdated::kEventName, fmp::OnAppsUpdated::Create());
 }
 
 void EventRouter::OnMountableGuestsChanged() {
@@ -1619,8 +1530,8 @@ void EventRouter::OnMountableGuestsChanged() {
   BroadcastEvent(
       profile_,
       extensions::events::FILE_MANAGER_PRIVATE_ON_IO_TASK_PROGRESS_STATUS,
-      file_manager_private::OnMountableGuestsChanged::kEventName,
-      file_manager_private::OnMountableGuestsChanged::Create(guests));
+      fmp::OnMountableGuestsChanged::kEventName,
+      fmp::OnMountableGuestsChanged::Create(guests));
 }
 
 drivefs::SyncState EventRouter::GetDriveSyncStateForPath(
@@ -1630,8 +1541,47 @@ drivefs::SyncState EventRouter::GetDriveSyncStateForPath(
 
 void EventRouter::OnFilesAddedToDlpDaemon(
     const std::vector<base::FilePath>& files) {
-  OnFilesChanged(files, extensions::api::file_manager_private::ChangeType::
-                            CHANGE_TYPE_ADD_OR_UPDATE);
+  OnFilesChanged(files, fmp::ChangeType::kAddOrUpdate);
+}
+
+// Observes App Service and notifies Files app when there are any changes in the
+// apps which might affect which file tasks are currently available, e.g. when
+// an app is installed or uninstalled.
+void EventRouter::OnAppUpdate(const apps::AppUpdate& update) {
+  BroadcastOnAppsUpdatedEvent();
+}
+
+void EventRouter::OnAppRegistryCacheWillBeDestroyed(
+    apps::AppRegistryCache* cache) {
+  app_registry_cache_observer_.Reset();
+}
+
+void EventRouter::OnConnectionChanged(
+    const network::mojom::ConnectionType type) {
+  fmp::DeviceConnectionState result =
+      content::GetNetworkConnectionTracker()->IsOffline()
+          ? fmp::DeviceConnectionState::kOffline
+          : fmp::DeviceConnectionState::kOnline;
+  BroadcastEvent(profile_,
+                 extensions::events::
+                     FILE_MANAGER_PRIVATE_ON_DEVICE_CONNECTION_STATUS_CHANGED,
+                 fmp::OnDeviceConnectionStatusChanged::kEventName,
+                 fmp::OnDeviceConnectionStatusChanged::Create(result));
+}
+
+void EventRouter::OnLocalUserFilesPolicyChanged() {
+  if (!base::FeatureList::IsEnabled(features::kSkyVault)) {
+    return;
+  }
+  OnFileManagerPrefsChanged();
+}
+
+bool EventRouter::AddCloudOpenTask(const storage::FileSystemURL& file_url) {
+  return office_tasks_->cloud_open_tasks.emplace(file_url.path()).second;
+}
+
+void EventRouter::RemoveCloudOpenTask(const storage::FileSystemURL& file_url) {
+  office_tasks_->cloud_open_tasks.erase(file_url.path());
 }
 
 }  // namespace file_manager

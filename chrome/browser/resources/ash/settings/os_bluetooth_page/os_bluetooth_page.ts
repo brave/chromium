@@ -9,30 +9,36 @@
  */
 
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
 import '../settings_shared.css.js';
 import '../os_settings_page/os_settings_animated_pages.js';
 import '../os_settings_page/os_settings_subpage.js';
 import '../os_settings_page/settings_card.js';
-import './os_bluetooth_devices_subpage.js';
 import './os_bluetooth_summary.js';
-import './os_bluetooth_device_detail_subpage.js';
 import './os_bluetooth_pairing_dialog.js';
+// This import is necessary to have since the devices subpage is the default
+// page for the Bluetooth section.
+// TODO(crbug.com/309808834) Remove this import once the Bluetooth L1 page is
+// revamped with up-leveled content.
+import './os_bluetooth_devices_subpage.js';
 
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {getBluetoothConfig} from 'chrome://resources/ash/common/bluetooth/cros_bluetooth_config.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {BluetoothSystemProperties, BluetoothSystemState, SystemPropertiesObserverReceiver} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {BluetoothSystemProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import {BluetoothSystemState, SystemPropertiesObserverReceiver} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {Section} from '../mojom-webui/routes.mojom-webui.js';
 
-import {OsBluetoothDevicesSubpageBrowserProxy, OsBluetoothDevicesSubpageBrowserProxyImpl} from './os_bluetooth_devices_subpage_browser_proxy.js';
+import type {OsBluetoothDevicesSubpageBrowserProxy} from './os_bluetooth_devices_subpage_browser_proxy.js';
+import {OsBluetoothDevicesSubpageBrowserProxyImpl} from './os_bluetooth_devices_subpage_browser_proxy.js';
 import {getTemplate} from './os_bluetooth_page.html.js';
 
 const SettingsBluetoothPageElementBase = PrefsMixin(I18nMixin(PolymerElement));
 
-class SettingsBluetoothPageElement extends SettingsBluetoothPageElementBase {
+export class SettingsBluetoothPageElement extends
+    SettingsBluetoothPageElementBase {
   static get is() {
     return 'os-settings-bluetooth-page' as const;
   }
@@ -80,8 +86,8 @@ class SettingsBluetoothPageElement extends SettingsBluetoothPageElementBase {
         OsBluetoothDevicesSubpageBrowserProxyImpl.getInstance();
   }
 
-  override ready(): void {
-    super.ready();
+  override connectedCallback(): void {
+    super.connectedCallback();
     getBluetoothConfig().observeSystemProperties(
         this.systemPropertiesObserverReceiver_.$.bindNewPipeAndPassRemote());
   }
@@ -107,9 +113,7 @@ class SettingsBluetoothPageElement extends SettingsBluetoothPageElementBase {
       return false;
     }
 
-    return this.systemProperties_.systemState ===
-        BluetoothSystemState.kEnabled ||
-        this.systemProperties_.systemState === BluetoothSystemState.kEnabling;
+    return this.systemProperties_.systemState === BluetoothSystemState.kEnabled;
   }
 }
 

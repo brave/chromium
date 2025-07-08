@@ -8,12 +8,13 @@
 #include <memory>
 
 #include "base/functional/callback.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/omnibox/browser/on_device_tail_model_executor.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 
 // The key service holds on device tail model executor and its model observer.
 class OnDeviceTailModelService
@@ -27,6 +28,9 @@ class OnDeviceTailModelService
       optimization_guide::OptimizationGuideModelProvider* model_provider);
   ~OnDeviceTailModelService() override;
 
+  // KeyedService implementation:
+  void Shutdown() override;
+
   // Disallow copy/assign.
   OnDeviceTailModelService(const OnDeviceTailModelService&) = delete;
   OnDeviceTailModelService& operator=(const OnDeviceTailModelService&) = delete;
@@ -34,12 +38,17 @@ class OnDeviceTailModelService
   // optimization_guide::OptimizationTargetModelObserver implementation:
   void OnModelUpdated(
       optimization_guide::proto::OptimizationTarget optimization_target,
-      const optimization_guide::ModelInfo& model_info) override;
+      base::optional_ref<const optimization_guide::ModelInfo> model_info)
+      override;
 
   // Calls the model executor to generate predictions for the input.
   void GetPredictionsForInput(
       const OnDeviceTailModelExecutor::ModelInput& input,
       ResultCallback result_callback);
+
+  // Helper which unloads the executor from memory when memory pressure is high.
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level);
 
  private:
   friend class OnDeviceTailModelServiceTest;
@@ -49,9 +58,6 @@ class OnDeviceTailModelService
   // for all private members such that tests can initialize members later on
   // demand.
   OnDeviceTailModelService();
-
-  // Checks if model executor is idle and maybe unload it from memory.
-  void CheckIfModelExecutorIdle();
 
   // The task runner to run tail model executor.
   scoped_refptr<base::SequencedTaskRunner> model_executor_task_runner_ =
@@ -67,8 +73,9 @@ class OnDeviceTailModelService
   raw_ptr<optimization_guide::OptimizationGuideModelProvider> model_provider_ =
       nullptr;
 
-  // A periodic timer which checks the model executor.
-  base::RepeatingTimer timer_;
+  // The memory pressure listener which unloads executor when memory pressure
+  // level is high.
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   base::WeakPtrFactory<OnDeviceTailModelService> weak_ptr_factory_{this};
 };

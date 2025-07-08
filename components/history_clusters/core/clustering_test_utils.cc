@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 #include "components/history_clusters/core/clustering_test_utils.h"
+
+#include <algorithm>
 #include <vector>
 
-#include "base/ranges/algorithm.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,8 +19,8 @@ namespace history_clusters::testing {
 std::vector<history::VisitID> ExtractDuplicateVisitIds(
     std::vector<history::DuplicateClusterVisit> duplicate_visits) {
   std::vector<history::VisitID> ids;
-  base::ranges::transform(duplicate_visits, std::back_inserter(ids),
-                          [](const auto& visit) { return visit.visit_id; });
+  std::ranges::transform(duplicate_visits, std::back_inserter(ids),
+                         [](const auto& visit) { return visit.visit_id; });
   return ids;
 }
 
@@ -42,11 +44,11 @@ VisitResult::~VisitResult() = default;
 
 std::string VisitResult::ToString() const {
   std::vector<std::string> duplicate_visits_strings;
-  base::ranges::transform(duplicate_visits_,
-                          std::back_inserter(duplicate_visits_strings),
-                          [&](const auto& duplicate_visit) {
-                            return std::to_string(duplicate_visit.visit_id);
-                          });
+  std::ranges::transform(
+      duplicate_visits_, std::back_inserter(duplicate_visits_strings),
+      [&](const auto& duplicate_visit) {
+        return base::NumberToString(duplicate_visit.visit_id);
+      });
   return base::StringPrintf(
       "VisitResult(visit_id=%d, score=%f, duplicate_visits=[%s], "
       "search_terms=%s)",
@@ -96,7 +98,7 @@ history::AnnotatedVisit CreateDefaultAnnotatedVisit(int visit_id,
 
 history::ClusterVisit CreateClusterVisit(
     const history::AnnotatedVisit& annotated_visit,
-    absl::optional<GURL> normalized_url,
+    std::optional<GURL> normalized_url,
     float score,
     history::ClusterVisit::InteractionState interaction_state) {
   history::ClusterVisit cluster_visit;

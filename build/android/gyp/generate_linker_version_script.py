@@ -57,9 +57,7 @@ def main():
   # for libcrashpad_handler_trampoline.so.
   symbol_list = ['CrashpadHandlerMain', 'JNI_OnLoad']
 
-  if options.jni_multiplexing:
-    symbol_list.append('Java_*_resolve_1for_*')
-  elif options.export_fortesting_java_symbols:
+  if options.export_fortesting_java_symbols or options.jni_multiplexing:
     symbol_list.append('Java_*')
   else:
     # The linker uses unix shell globbing patterns, not regex. So, we have to
@@ -86,7 +84,7 @@ def main():
     symbol_list.append('JNI_OnLoad_*')
 
   for allowlist in options.allowlists:
-    with open(allowlist, 'rt') as f:
+    with open(allowlist, 'rt', encoding='utf-8') as f:
       for line in f:
         line = line.strip()
         if not line or line[0] == '#':

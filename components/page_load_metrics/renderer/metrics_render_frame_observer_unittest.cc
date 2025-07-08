@@ -65,6 +65,11 @@ class TestMetricsRenderFrameObserver : public MetricsRenderFrameObserver,
                   PageTimingMetadataRecorder::MonotonicTiming());
   }
 
+  mojom::CustomUserTimingMarkPtr GetCustomUserTimingMark() const override {
+    return mojom::CustomUserTimingMark::New("fake_user_timing_mark",
+                                            base::Milliseconds(100));
+  }
+
   void ExpectSoftNavigationMetrics(
       const mojom::SoftNavigationMetrics& soft_navigation_metrics) {
     fake_soft_navigation_metrics_ = soft_navigation_metrics.Clone();
@@ -91,15 +96,16 @@ class TestMetricsRenderFrameObserver : public MetricsRenderFrameObserver,
 
   bool HasNoRenderFrame() const override { return false; }
 
+  bool IsMainFrame() const override { return true; }
+
  private:
   FakePageTimingSender::PageTimingValidator validator_;
   mutable mojom::PageLoadTimingPtr fake_timing_;
   mojom::SoftNavigationMetricsPtr fake_soft_navigation_metrics_ =
-      mojom::SoftNavigationMetrics::New(
-          blink::kSoftNavigationCountDefaultValue,
-          base::Milliseconds(0),
-          base::EmptyString(),
-          mojom::LargestContentfulPaintTiming::New());
+      mojom::SoftNavigationMetrics::New(blink::kSoftNavigationCountDefaultValue,
+                                        base::Milliseconds(0),
+                                        std::string(),
+                                        CreateLargestContentfulPaintTiming());
 };
 
 typedef testing::Test MetricsRenderFrameObserverTest;
@@ -111,7 +117,7 @@ TEST_F(MetricsRenderFrameObserverTest, NoMetrics) {
 }
 
 TEST_F(MetricsRenderFrameObserverTest, SingleMetric) {
-  base::Time nav_start = base::Time::FromDoubleT(10);
+  base::Time nav_start = base::Time::FromSecondsSinceUnixEpoch(10);
 
   TestMetricsRenderFrameObserver observer;
 
@@ -121,7 +127,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleMetric) {
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
 
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -136,7 +142,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleMetric) {
 
 TEST_F(MetricsRenderFrameObserverTest,
        MainFrameIntersectionUpdateBeforeMetricsSenderCreated) {
-  base::Time nav_start = base::Time::FromDoubleT(10);
+  base::Time nav_start = base::Time::FromSecondsSinceUnixEpoch(10);
 
   TestMetricsRenderFrameObserver observer;
   observer.OnMainFrameIntersectionChanged(gfx::Rect(1, 2, 3, 4));
@@ -146,7 +152,7 @@ TEST_F(MetricsRenderFrameObserverTest,
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
 
@@ -158,7 +164,7 @@ TEST_F(MetricsRenderFrameObserverTest,
 // Verify that when two CpuTimings come in, they're grouped into a single
 // Message with the total being the sum of the two.
 TEST_F(MetricsRenderFrameObserverTest, SingleCpuMetric) {
-  base::Time nav_start = base::Time::FromDoubleT(10);
+  base::Time nav_start = base::Time::FromSecondsSinceUnixEpoch(10);
   TestMetricsRenderFrameObserver observer;
   mojom::PageLoadTiming timing;
 
@@ -167,7 +173,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleCpuMetric) {
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
 
@@ -179,7 +185,7 @@ TEST_F(MetricsRenderFrameObserverTest, SingleCpuMetric) {
 }
 
 TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
-  base::Time nav_start = base::Time::FromDoubleT(10);
+  base::Time nav_start = base::Time::FromSecondsSinceUnixEpoch(10);
   base::TimeDelta dom_event = base::Milliseconds(2);
   base::TimeDelta load_event = base::Milliseconds(2);
 
@@ -188,14 +194,14 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
   mojom::PageLoadTiming timing;
   page_load_metrics::InitPageLoadTimingForTest(&timing);
   mojom::SoftNavigationMetricsPtr soft_navigation_metrics =
-      mojom::SoftNavigationMetrics::New(
-          blink::kSoftNavigationCountDefaultValue, base::Milliseconds(0),
-          base::EmptyString(), mojom::LargestContentfulPaintTiming::New());
+      mojom::SoftNavigationMetrics::New(blink::kSoftNavigationCountDefaultValue,
+                                        base::Milliseconds(0), std::string(),
+                                        CreateLargestContentfulPaintTiming());
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics(*soft_navigation_metrics);
 
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -252,7 +258,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
   observer.ExpectPageLoadTiming(timing);
 
   soft_navigation_metrics->largest_contentful_paint =
-      mojom::LargestContentfulPaintTiming::New();
+      CreateLargestContentfulPaintTiming();
 
   soft_navigation_metrics->largest_contentful_paint->largest_image_paint_size =
       1;
@@ -269,7 +275,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleMetrics) {
 }
 
 TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
-  base::Time nav_start = base::Time::FromDoubleT(10);
+  base::Time nav_start = base::Time::FromSecondsSinceUnixEpoch(10);
   base::TimeDelta dom_event = base::Milliseconds(2);
   base::TimeDelta load_event = base::Milliseconds(2);
 
@@ -280,7 +286,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
   timing.navigation_start = nav_start;
   observer.ExpectPageLoadTiming(timing);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();
@@ -297,7 +303,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
   // part of the test.
   observer.VerifyExpectedTimings();
 
-  base::Time nav_start_2 = base::Time::FromDoubleT(100);
+  base::Time nav_start_2 = base::Time::FromSecondsSinceUnixEpoch(100);
   base::TimeDelta dom_event_2 = base::Milliseconds(20);
   base::TimeDelta load_event_2 = base::Milliseconds(20);
   mojom::PageLoadTiming timing_2;
@@ -308,7 +314,7 @@ TEST_F(MetricsRenderFrameObserverTest, MultipleNavigations) {
 
   observer.ExpectPageLoadTiming(timing_2);
   observer.ExpectSoftNavigationMetrics();
-  observer.DidStartNavigation(GURL(), absl::nullopt);
+  observer.DidStartNavigation(GURL(), std::nullopt);
   observer.ReadyToCommitNavigation(nullptr);
   observer.DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   observer.GetMockTimer()->Fire();

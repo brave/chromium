@@ -5,7 +5,8 @@
 // clang-format off
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {NtpExtension, OnStartupBrowserProxy, OnStartupBrowserProxyImpl, SettingsOnStartupPageElement} from 'chrome://settings/settings.js';
+import type {NtpExtension, OnStartupBrowserProxy, SettingsOnStartupPageElement} from 'chrome://settings/settings.js';
+import {OnStartupBrowserProxyImpl} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 // clang-format on
@@ -144,5 +145,22 @@ suite('OnStartupPage', function() {
     await onStartupBrowserProxy.whenCalled('getNtpExtension');
     flush();
     assertTrue(extensionControlledIndicatorExists());
+  });
+
+  test('searchContents', async function() {
+    let result = await testElement.searchContents('Continue where');
+    assertFalse(result.canceled);
+    assertEquals(1, result.matchCount);
+    assertFalse(result.wasClearSearch);
+
+    result = await testElement.searchContents('non-existing-text');
+    assertFalse(result.canceled);
+    assertEquals(0, result.matchCount);
+    assertFalse(result.wasClearSearch);
+
+    result = await testElement.searchContents('');
+    assertFalse(result.canceled);
+    assertEquals(0, result.matchCount);
+    assertTrue(result.wasClearSearch);
   });
 });

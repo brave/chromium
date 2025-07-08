@@ -4,11 +4,13 @@
 
 #include "extensions/browser/extension_api_frame_id_map.h"
 
+#include <string_view>
 #include <tuple>
 #include <utility>
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/uuid.h"
 #include "content/public/browser/browser_thread.h"
@@ -84,7 +86,7 @@ int ExtensionApiFrameIdMap::GetFrameId(
     return kInvalidFrameId;
   }
   if (!render_frame_host->IsInPrimaryMainFrame()) {
-    return render_frame_host->GetFrameTreeNodeId();
+    return render_frame_host->GetFrameTreeNodeId().value();
   }
   return kTopFrameId;
 }
@@ -94,7 +96,7 @@ int ExtensionApiFrameIdMap::GetFrameId(
     content::NavigationHandle* navigation_handle) {
   return navigation_handle->IsInPrimaryMainFrame()
              ? kTopFrameId
-             : navigation_handle->GetFrameTreeNodeId();
+             : navigation_handle->GetFrameTreeNodeId().value();
 }
 
 // static
@@ -118,14 +120,17 @@ content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostById(
   // Although it is technically possible to map |frame_id| to a RenderFrameHost
   // without WebContents, we choose to not do that because in the extension API
   // frameIds are only guaranteed to be meaningful in combination with a tabId.
-  if (!web_contents)
+  if (!web_contents) {
     return nullptr;
+  }
 
-  if (frame_id == kInvalidFrameId)
+  if (frame_id == kInvalidFrameId) {
     return nullptr;
+  }
 
-  if (frame_id == kTopFrameId)
+  if (frame_id == kTopFrameId) {
     return web_contents->GetPrimaryMainFrame();
+  }
 
   DCHECK_GE(frame_id, 1);
 
@@ -134,7 +139,8 @@ content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostById(
   // different RenderFrameHost than the caller may have expected (e.g., one that
   // changed after a cross-process navigation).
   content::RenderFrameHost* render_frame_host =
-      web_contents->UnsafeFindFrameByFrameTreeNodeId(frame_id);
+      web_contents->UnsafeFindFrameByFrameTreeNodeId(
+          content::FrameTreeNodeId(frame_id));
 
   // Fail if the frame is not active or in prerendering (e.g. in the
   // back/forward cache).
@@ -152,17 +158,45 @@ content::RenderFrameHost*
 ExtensionApiFrameIdMap::GetRenderFrameHostByDocumentId(
     const DocumentId& document_id) {
   auto iter = document_id_map_.find(document_id);
-  if (iter == document_id_map_.end())
+  if (iter == document_id_map_.end()) {
     return nullptr;
+  }
   return &iter->second->render_frame_host();
+}
+
+content::RenderFrameHost* ExtensionApiFrameIdMap::GetRenderFrameHostByFrameId(
+    int frame_id) {
+  // Frame_id values of 0 are not guaranteed to be unique. Values less than 0
+  // are invalid.
+  CHECK_GE(frame_id, 1);
+
+  content::RenderFrameHost* render_frame_host = nullptr;
+  for (const auto& iter : document_id_map_) {
+    if (frame_id ==
+        ExtensionApiFrameIdMap::GetFrameId(&iter.second->render_frame_host())) {
+      render_frame_host = &iter.second->render_frame_host();
+      break;
+    }
+  }
+
+  // Fail if the frame is not active or in prerendering (e.g. in the
+  // back/forward cache).
+  if (!render_frame_host ||
+      (!render_frame_host->IsActive() &&
+       !render_frame_host->IsInLifecycleState(
+           content::RenderFrameHost::LifecycleState::kPrerendering))) {
+    return nullptr;
+  }
+  return render_frame_host;
 }
 
 ExtensionApiFrameIdMap::DocumentId ExtensionApiFrameIdMap::DocumentIdFromString(
     const std::string& document_id) {
-  if (document_id.length() != 32)
+  if (document_id.length() != 32) {
     return DocumentId();
+  }
 
-  base::StringPiece string_piece(document_id);
+  std::string_view string_piece(document_id);
   uint64_t high = 0;
   uint64_t low = 0;
   if (!base::HexStringToUInt64(string_piece.substr(0, 16), &high) ||
@@ -170,7 +204,7 @@ ExtensionApiFrameIdMap::DocumentId ExtensionApiFrameIdMap::DocumentIdFromString(
     return DocumentId();
   }
 
-  absl::optional<base::UnguessableToken> token =
+  std::optional<base::UnguessableToken> token =
       base::UnguessableToken::Deserialize(high, low);
   if (!token.has_value()) {
     return DocumentId();
@@ -212,8 +246,9 @@ ExtensionApiFrameIdMap::FrameData ExtensionApiFrameIdMap::GetFrameData(
     content::GlobalRenderFrameHostId render_frame_host_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   auto frame_id_iter = deleted_frame_data_map_.find(render_frame_host_id);
-  if (frame_id_iter != deleted_frame_data_map_.end())
+  if (frame_id_iter != deleted_frame_data_map_.end()) {
     return frame_id_iter->second;
+  }
 
   return KeyToValue(render_frame_host_id, true /* require_live_frame */);
 }
@@ -274,6 +309,7 @@ api::extension_types::FrameType ExtensionApiFrameIdMap::GetFrameType(
       return api::extension_types::FrameType::kFencedFrame;
     case content::FrameType::kPrimaryMainFrame:
     case content::FrameType::kPrerenderMainFrame:
+    case content::FrameType::kGuestMainFrame:
       return api::extension_types::FrameType::kOutermostFrame;
   }
 }

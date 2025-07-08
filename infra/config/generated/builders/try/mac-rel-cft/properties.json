@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/mac-rel-cft/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -22,6 +25,9 @@
                 "target_platform": "mac"
               },
               "legacy_gclient_config": {
+                "apply_configs": [
+                  "chromium_with_telemetry_dependencies"
+                ],
                 "config": "chromium"
               }
             }
@@ -34,17 +40,21 @@
           "builder": "mac-rel-cft",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/mac-rel-cft/targets"
     }
   },
-  "$build/flakiness": {
-    "check_for_flakiness": true
-  },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 150,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": 150
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

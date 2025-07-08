@@ -5,7 +5,7 @@
 // https://gpuweb.github.io/gpuweb/
 
 [
-    Exposed=(Window, DedicatedWorker),
+    Exposed=(Window, Worker),
     SecureContext,
     ActiveScriptWrappable
 ] interface GPUCanvasContext {
@@ -13,5 +13,7 @@
 
     [RaisesException] void configure(GPUCanvasConfiguration descriptor);
     void unconfigure();
+
+    GPUCanvasConfiguration? getConfiguration();
     [CallWith=ScriptState, RaisesException] GPUTexture getCurrentTexture();
 };

@@ -5,6 +5,7 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SEAT_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SEAT_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
@@ -15,6 +16,7 @@ namespace ui {
 class WaylandConnection;
 class WaylandKeyboard;
 class WaylandPointer;
+class WaylandTabletSeat;
 class WaylandTouch;
 
 // Wraps the Wayland seat abstraction.
@@ -51,11 +53,11 @@ class WaylandSeat : public wl::GlobalObjectRegistrar<WaylandSeat> {
   bool RefreshKeyboard();
 
  private:
-  // wl_seat_listener
-  static void Capabilities(void* data, wl_seat* seat, uint32_t capabilities);
-  static void Name(void* data, wl_seat* seat, const char* name);
+  // wl_seat_listener callbacks:
+  static void OnCapabilities(void* data, wl_seat* seat, uint32_t capabilities);
+  static void OnName(void* data, wl_seat* seat, const char* name);
 
-  void OnCapabilities(void* data, wl_seat* seat, uint32_t capabilities);
+  void HandleCapabilities(void* data, wl_seat* seat, uint32_t capabilities);
 
   // Wayland object wrapped by this class.
   wl::Object<wl_seat> obj_;
@@ -66,6 +68,7 @@ class WaylandSeat : public wl::GlobalObjectRegistrar<WaylandSeat> {
   std::unique_ptr<WaylandKeyboard> keyboard_;
   std::unique_ptr<WaylandPointer> pointer_;
   std::unique_ptr<WaylandTouch> touch_;
+  std::unique_ptr<WaylandTabletSeat> tablet_;
 };
 
 }  // namespace ui

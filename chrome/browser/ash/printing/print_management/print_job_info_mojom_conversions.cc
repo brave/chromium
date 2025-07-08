@@ -36,7 +36,6 @@ mojom::PrintJobCompletionStatus PrintJobStatusProtoToMojom(
     case proto::
         PrintJobInfo_PrintJobStatus_PrintJobInfo_PrintJobStatus_INT_MAX_SENTINEL_DO_NOT_USE_:
       NOTREACHED();
-      return mojom::PrintJobCompletionStatus::kFailed;
   }
   return mojom::PrintJobCompletionStatus::kFailed;
 }
@@ -58,7 +57,6 @@ mojom::ActivePrintJobState CupsPrintJobActiveStateToMojom(
       return mojom::ActivePrintJobState::kDocumentDone;
   }
   NOTREACHED();
-  return mojom::ActivePrintJobState::kDocumentDone;
 }
 
 mojom::PrinterErrorCode PrinterErrorCodeProtoToMojom(
@@ -95,7 +93,6 @@ mojom::PrinterErrorCode PrinterErrorCodeProtoToMojom(
     case proto::
         PrintJobInfo_PrinterErrorCode_PrintJobInfo_PrinterErrorCode_INT_MAX_SENTINEL_DO_NOT_USE_:
       NOTREACHED();
-      return mojom::PrinterErrorCode::kUnknownError;
   }
   return mojom::PrinterErrorCode::kUnknownError;
 }
@@ -145,8 +142,8 @@ mojom::PrintJobInfoPtr PrintJobProtoToMojom(
   mojom::PrintJobInfoPtr print_job_mojom = mojom::PrintJobInfo::New();
   print_job_mojom->id = print_job_info_proto.id();
   print_job_mojom->title = base::UTF8ToUTF16(print_job_info_proto.title());
-  print_job_mojom->creation_time =
-      base::Time::FromJsTime(print_job_info_proto.creation_time());
+  print_job_mojom->creation_time = base::Time::FromMillisecondsSinceUnixEpoch(
+      print_job_info_proto.creation_time());
   print_job_mojom->number_of_pages = print_job_info_proto.number_of_pages();
   print_job_mojom->printer_id = print_job_info_proto.printer().id();
   print_job_mojom->printer_name =

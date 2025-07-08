@@ -33,19 +33,21 @@ VerdictCacheManagerFactory::VerdictCacheManagerFactory()
           "VerdictCacheManager",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
-              .WithGuest(ProfileSelection::kOwnInstance)
+              .WithGuest(ProfileSelection::kOffTheRecordOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(HistoryServiceFactory::GetInstance());
   DependsOn(HostContentSettingsMapFactory::GetInstance());
   DependsOn(SyncServiceFactory::GetInstance());
 }
 
-KeyedService* VerdictCacheManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+VerdictCacheManagerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
-  return new VerdictCacheManager(
+  return std::make_unique<VerdictCacheManager>(
       HistoryServiceFactory::GetForProfile(profile,
                                            ServiceAccessType::EXPLICIT_ACCESS),
       HostContentSettingsMapFactory::GetForProfile(profile),

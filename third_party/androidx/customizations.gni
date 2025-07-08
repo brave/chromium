@@ -8,7 +8,10 @@ template("_androidx_prebuilt") {
   target(invoker.target_type, target_name) {
     forward_variables_from(invoker, "*", [ "target_type" ])
 
-    if (target_name == "androidx_annotation_annotation_jvm_java") {
+    if (target_name == "androidx_annotation_annotation_java") {
+      # Ensure this dep is the suggested one when targets are missing it.
+      preferred_dep = true
+    } else if (target_name == "androidx_annotation_annotation_jvm_java") {
       # https://crbug.com/989505
       jar_excluded_patterns = [ "META-INF/proguard/*" ]
       proguard_configs = [ "androidx_annotations.flags" ]
@@ -17,13 +20,12 @@ template("_androidx_prebuilt") {
     } else if (target_name == "androidx_benchmark_benchmark_macro_java") {
       # Manually add dep onto DISALLOWED_DEP androidx.profileinstaller.
       deps += [ ":androidx_profileinstaller_profileinstaller_java" ]
-    } else if (target_name == "androidx_biometric_biometric_java") {
-      bytecode_rewriter_target =
-          "//build/android/bytecode:fragment_activity_replacer"
     } else if (target_name ==
                "androidx_coordinatorlayout_coordinatorlayout_java") {
       # Reduce binary size. https:crbug.com/954584
       ignore_proguard_configs = true
+    } else if (target_name == "androidx_appcompat_appcompat_java") {
+      deps += [ ":core_overrides_java" ]
     } else if (target_name == "androidx_core_core_java") {
       # Target has AIDL, but we do not support it yet: http://crbug.com/644439
       ignore_aidl = true
@@ -36,7 +38,10 @@ template("_androidx_prebuilt") {
       ignore_proguard_configs = true
 
       # https://crbug.com/1414452
-      jar_excluded_patterns = [ "androidx/core/os/BuildCompat*" ]
+      jar_excluded_patterns = [
+        "androidx/core/os/BuildCompat*",
+        "androidx/core/content/res/TypedArrayUtils*",
+      ]
       public_deps = [ "//third_party/androidx/local_modifications/buildcompat:buildcompat_java" ]
 
       if (!enable_java_asserts) {
@@ -48,15 +53,11 @@ template("_androidx_prebuilt") {
       deps += [ "//third_party/android_deps/utils:java" ]
 
       proguard_configs = [ "androidx_fragment.flags" ]
-
-      bytecode_rewriter_target =
-          "//build/android/bytecode:fragment_activity_replacer"
     } else if (target_name == "androidx_lifecycle_lifecycle_process_java") {
       # Only useful for very old SDKs.
       ignore_proguard_configs = true
-    } else if (target_name == "androidx_lifecycle_lifecycle_runtime_java") {
-      # https://crbug.com/887942#c1
-      ignore_proguard_configs = true
+    } else if (target_name == "androidx_graphics_graphics_path_java") {
+      ignore_native_libraries = true
     } else if (target_name == "androidx_media_media_java") {
       # Target has AIDL, but we do not support it yet: http://crbug.com/644439
       ignore_aidl = true
@@ -64,34 +65,19 @@ template("_androidx_prebuilt") {
       # https://crbug.com/1000382
       proguard_configs = [ "androidx_mediarouter.flags" ]
     } else if (target_name == "androidx_preference_preference_java") {
-      bytecode_rewriter_target =
-          "//build/android/bytecode:fragment_activity_replacer"
-
       proguard_configs = [ "androidx_preferences.flags" ]
 
       # Replace broad library -keep rules with a more limited set in
       # chrome/android/java/proguard.flags instead.
       ignore_proguard_configs = true
-    } else if (target_name ==
-               "androidx_privacysandbox_ads_ads_adservices_java") {
-      alternative_android_sdk_dep =
-          "//third_party/android_sdk:android_privacy_sandbox_sdk_java"
-
-      # https://crbug.com/1448095
-      mergeable_android_manifests = [ "0_privacysandbox_AndroidManifest.xml" ]
     } else if (target_name == "androidx_startup_startup_runtime_java") {
       # Keeps emoji2 code. See http://crbug.com/1205141
       ignore_proguard_configs = true
-    } else if (target_name == "androidx_test_rules_java") {
-      # Target needs Android SDK deps which exist in third_party/android_sdk.
-
-      deps += [
-        "//third_party/android_sdk:android_test_base_java",
-        "//third_party/android_sdk:android_test_mock_java",
-        "//third_party/android_sdk:android_test_runner_java",
-      ]
     } else if (target_name == "androidx_test_uiautomator_uiautomator_java") {
       deps += [ ":androidx_test_runner_java" ]
+    } else if (target_name == "androidx_tracing_tracing_perfetto_java") {
+      # b/280878596
+      jar_excluded_patterns = [ "dalvik/*" ]
     } else if (target_name == "androidx_transition_transition_java") {
       # Not specified in the POM, compileOnly dependency not supposed to be used unless
       # the library is present: b/70887421
@@ -102,11 +88,52 @@ template("_androidx_prebuilt") {
                "androidx_versionedparcelable_versionedparcelable_java") {
       # Target has AIDL, but we do not support it yet: http://crbug.com/644439
       ignore_aidl = true
+    } else if (target_name == "androidx_window_window_java") {
+      deps += [
+        # This library has a <uses-library> to enable some extra OS APIs, so ensure the
+        # .jar file is made available to R8 via this dep.
+        "//third_party/android_sdk:android_window_extensions_java",
+
+        # Sidecar as a library seems to be gone in Maven, so deps don't exist
+        # onto sidecar.
+        "//third_party/androidx:androidx_window_sidecar_sidecar_java",
+      ]
     } else if (target_name == "androidx_webkit_webkit_java") {
       visibility = [
         "//android_webview/tools/system_webview_shell:*",
         "//third_party/android_deps:*",
       ]
+    } else if (target_name == "androidx_datastore_datastore_core_android_java") {
+      ignore_native_libraries = true
+    } else if (target_name == "androidx_compose_ui_ui_android_java") {
+      jar_excluded_patterns = [
+        "androidx/compose/ui/graphics/vector/compat/AndroidVectorParser*",
+        "androidx/compose/ui/graphics/vector/compat/XmlVectorParser*",
+      ]
+    } else if (target_name == "androidx_compose_ui_ui_java") {
+      public_deps = [ ":compose_ui_overrides_java" ]
+    } else if (filter_include([ target_name ], [ "androidx_xr_*" ]) != []) {
+      # Configs are overly broad.
+      ignore_proguard_configs = true
+      proguard_configs = [ "androidx_xr.flags" ]
+
+      # We do not use the APIs that require the native code.
+      ignore_native_libraries = true
+
+      # It adds:
+      #   <uses-native-library android:name="libopenxr.google.so" android:required="false"/>
+      #   <uses-library android:name="com.android.extensions.xr" android:required="false"/>
+      # We do not need the uses-native-library, but do need the uses-library.
+      # However, we add it via the dep onto android_xr_extensions_java.
+      ignore_manifest = true
+      deps += [ "//third_party/android_sdk:android_xr_extensions_java" ]
+    }
+  }
+
+  # Arbitrarily use this target to add new top-level GN targets.
+  if (target_name == "androidx_annotation_annotation_jvm_java") {
+    java_group("androidx_window_stubs_java") {
+      deps = [ "//third_party/androidx/local_modifications/window:androidx_window_shims_java" ]
     }
   }
 }
@@ -116,8 +143,11 @@ template("androidx_java_prebuilt") {
     forward_variables_from(invoker, "*")
     target_type = "java_prebuilt"
 
-    # https://crbug.com/1412551
-    requires_android = true
+    # If this target only "supports_android", then it will not be allowed to
+    # depend on a target that "requires_android". https://crbug.com/1412551
+    if (target_name != "androidx_annotation_annotation_jvm_java") {
+      requires_android = true
+    }
   }
 }
 
@@ -129,5 +159,18 @@ template("androidx_android_aar_prebuilt") {
     # The libraries have duplicate resources such as
     # "primary_text_default_material_dark".
     resource_overlay = true
+
+    if (target_name == "androidx_pdf_pdf_viewer_java" ||
+        target_name == "androidx_pdf_pdf_document_service_java") {
+      # Target has AIDL, which we do not need (and don't support).
+      ignore_aidl = true
+    }
+  }
+}
+
+template("androidx_java_group") {
+  _androidx_prebuilt(target_name) {
+    forward_variables_from(invoker, "*")
+    target_type = "java_group"
   }
 }

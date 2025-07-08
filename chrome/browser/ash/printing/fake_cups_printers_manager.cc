@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/observer_list.h"
 #include "chrome/browser/ash/printing/printer_configurer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,14 +32,18 @@ void FakeCupsPrintersManager::SavePrinter(const chromeos::Printer& printer) {
 
 void FakeCupsPrintersManager::RemoveSavedPrinter(
     const std::string& printer_id) {
-  configured_printers_.erase(printer_id);
   installed_.erase(printer_id);
   printers_.Remove(PrinterClass::kSaved, printer_id);
 }
 
-void FakeCupsPrintersManager::PrinterInstalled(const chromeos::Printer& printer,
-                                               bool is_automatic) {
-  installed_.insert(printer.id());
+void FakeCupsPrintersManager::AddLocalPrintersObserver(
+    LocalPrintersObserver* observer) {
+  local_printers_observer_list_.AddObserver(observer);
+}
+
+void FakeCupsPrintersManager::RemoveLocalPrintersObserver(
+    LocalPrintersObserver* observer) {
+  local_printers_observer_list_.RemoveObserver(observer);
 }
 
 bool FakeCupsPrintersManager::IsPrinterInstalled(
@@ -46,28 +51,23 @@ bool FakeCupsPrintersManager::IsPrinterInstalled(
   return installed_.contains(printer.id());
 }
 
-void FakeCupsPrintersManager::PrinterIsNotAutoconfigurable(
-    const chromeos::Printer& printer) {
-  printers_marked_as_not_autoconf_.insert(printer.id());
-}
-
 void FakeCupsPrintersManager::SetUpPrinter(const chromeos::Printer& printer,
+                                           bool is_automatic_installation,
                                            PrinterSetupCallback callback) {
   auto it = assigned_results_.find(printer.id());
   PrinterSetupResult result =
       it != assigned_results_.end() ? it->second : PrinterSetupResult::kSuccess;
   if (result == PrinterSetupResult::kSuccess) {
-    configured_printers_.insert(printer.id());
+    installed_.insert(printer.id());
   }
   std::move(callback).Run(result);
 }
 
 void FakeCupsPrintersManager::UninstallPrinter(const std::string& printer_id) {
-  configured_printers_.erase(printer_id);
   installed_.erase(printer_id);
 }
 
-absl::optional<Printer> FakeCupsPrintersManager::GetPrinter(
+std::optional<Printer> FakeCupsPrintersManager::GetPrinter(
     const std::string& id) const {
   return printers_.Get(id);
 }
@@ -96,13 +96,13 @@ void FakeCupsPrintersManager::SetPrinterStatus(
   printer_status_map_[status.GetPrinterId()] = status;
 }
 
-bool FakeCupsPrintersManager::IsConfigured(
-    const std::string& printer_id) const {
-  return configured_printers_.contains(printer_id);
+void FakeCupsPrintersManager::MarkInstalled(const std::string& printer_id) {
+  installed_.insert(printer_id);
 }
 
-void FakeCupsPrintersManager::MarkConfigured(const std::string& printer_id) {
-  configured_printers_.insert(printer_id);
+void FakeCupsPrintersManager::MarkPrinterAsNotAutoconfigurable(
+    const std::string& printer_id) {
+  printers_marked_as_not_autoconf_.insert(printer_id);
 }
 
 void FakeCupsPrintersManager::SetPrinterSetupResult(
@@ -111,15 +111,18 @@ void FakeCupsPrintersManager::SetPrinterSetupResult(
   assigned_results_[printer_id] = result;
 }
 
-bool FakeCupsPrintersManager::IsMarkedAsNotAutoconfigurable(
-    const chromeos::Printer& printer) {
-  return printers_marked_as_not_autoconf_.contains(printer.id());
-}
-
 void FakeCupsPrintersManager::QueryPrinterForAutoConf(
     const Printer& printer,
-    base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(!IsMarkedAsNotAutoconfigurable(printer));
+    base::OnceCallback<void(bool, const chromeos::IppPrinterInfo&)> callback) {
+  std::move(callback).Run(
+      !printers_marked_as_not_autoconf_.contains(printer.id()),
+      chromeos::IppPrinterInfo{});
+}
+
+void FakeCupsPrintersManager::TriggerLocalPrintersObserver() {
+  for (auto& observer : local_printers_observer_list_) {
+    observer.OnLocalPrintersUpdated();
+  }
 }
 
 }  // namespace ash

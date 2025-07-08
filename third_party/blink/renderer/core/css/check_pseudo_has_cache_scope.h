@@ -17,22 +17,22 @@ class CSSSelector;
 class Document;
 class CheckPseudoHasArgumentContext;
 
-// To determine whether a :has() pseudo class matches an element or not, we need
+// To determine whether a :has() pseudo-class matches an element or not, we need
 // to check the :has() argument selector on the descendants, next siblings or
 // next sibling descendants. While checking the :has() argument selector in
-// reversed DOM tree traversal order, we can get the :has() pseudo class
+// reversed DOM tree traversal order, we can get the :has() pseudo-class
 // checking result on the elements in the subtree. By caching these results, we
-// can prevent unnecessary :has() pseudo class checking operations. (Please
+// can prevent unnecessary :has() pseudo-class checking operations. (Please
 // refer the comments of CheckPseudoHasArgumentTraversalIterator)
 //
 // Caching the results on all elements in the subtree is a very memory consuming
 // approach. To prevent the large and inefficient cache memory consumption,
 // ElementCheckPseudoHasResultMap stores following flags for an element.
 //
-// - flag1 (Checked) : Indicates that the :has() pseudo class was already
+// - flag1 (Checked) : Indicates that the :has() pseudo-class was already
 //     checked on the element.
 //
-// - flag2 (Matched) : Indicates that the :has() pseudo class was already
+// - flag2 (Matched) : Indicates that the :has() pseudo-class was already
 //     checked on the element and it matched.
 //
 // - flag3 (AllDescendantsOrNextSiblingsChecked) : Indicates that all the
@@ -127,16 +127,16 @@ constexpr CheckPseudoHasResult
 constexpr CheckPseudoHasResult kCheckPseudoHasResultSomeChildrenChecked = 1
                                                                           << 3;
 
-// The :has() result cache keeps the :has() pseudo class checking result
-// regardless of the :has() pseudo class location (whether it is for subject or
+// The :has() result cache keeps the :has() pseudo-class checking result
+// regardless of the :has() pseudo-class location (whether it is for subject or
 // not).
 // (e.g. '.a:has(.b) .c', '.a .b:has(.c)', ':is(.a:has(.b) .c) .d', ...)
 //
-// It stores the checking result of a :has() pseudo class. For example, when we
+// It stores the checking result of a :has() pseudo-class. For example, when we
 // have the selector '.a:has(.b) .c', during the selector checking sequence,
 // checking result for ':has(.b)' will be inserted into the cache.
 //
-// To differentiate multiple :has() pseudo classes, the argument selector
+// To differentiate multiple :has() pseudo-classes, the argument selector
 // text is selected as a cache key. For example, if we already have the result
 // of ':has(.a)' in the cache with cache key '.a', and we have the selectors
 // '.b:has(.a) .c' and '.b .c:has(a)' to be checked, then the selector checking
@@ -152,7 +152,7 @@ constexpr CheckPseudoHasResult kCheckPseudoHasResultSomeChildrenChecked = 1
 // :has(<argument-selector>) checking result on each element.
 // - hashmap[<element>] = <result>
 using ElementCheckPseudoHasResultMap =
-    HeapHashMap<Member<const Element>, CheckPseudoHasResult>;
+    GCedHeapHashMap<Member<const Element>, CheckPseudoHasResult>;
 using CheckPseudoHasResultCache =
     HeapHashMap<String, Member<ElementCheckPseudoHasResultMap>>;
 
@@ -176,15 +176,15 @@ using CheckPseudoHasResultCache =
 // filter for each element.
 // - hashmap[<element>] = <filter>
 using ElementCheckPseudoHasFastRejectFilterMap =
-    HeapHashMap<Member<const Element>,
-                std::unique_ptr<CheckPseudoHasFastRejectFilter>>;
+    GCedHeapHashMap<Member<const Element>,
+                    std::unique_ptr<CheckPseudoHasFastRejectFilter>>;
 using CheckPseudoHasFastRejectFilterCache =
     HeapHashMap<CheckPseudoHasArgumentTraversalType,
                 Member<ElementCheckPseudoHasFastRejectFilterMap>>;
 
 // CheckPseudoHasCacheScope is the stack-allocated scoping class for :has()
-// pseudo class checking result cache and :has() pseudo class checking fast
-// reject filter cache.
+// pseudo-class checking result cache and :has() pseudo-class checking fast
+// reject filter cache. It also manages checking for recursive :has().
 //
 // This class has hashmap to hold the checking result and filter, so the
 // lifecycle of the caches follow the lifecycle of the CheckPseudoHasCacheScope
@@ -225,12 +225,18 @@ class CORE_EXPORT CheckPseudoHasCacheScope {
   STACK_ALLOCATED();
 
  public:
-  explicit CheckPseudoHasCacheScope(Document*);
+  // If within_selector_checking is false, we are just setting up the cache for
+  // later convenience. However, if it is true, we are actually within matching
+  // a selector, and document->IsInPseudoHasChecking() will return true while
+  // this object is in scope. This is used to make sure we do not run :has()
+  // within :has(), which isn't allowed. (It is typically disallowed by parsing,
+  // but it can be constructed through nesting.)
+  CheckPseudoHasCacheScope(Document* document, bool within_selector_checking);
   ~CheckPseudoHasCacheScope();
 
   // Context provides getter and setter of the following cache items.
-  // - :has() pseudo class checking result in ElementCheckPseudoHasResultMap
-  // - :has() pseudo class checking fast reject filter in
+  // - :has() pseudo-class checking result in ElementCheckPseudoHasResultMap
+  // - :has() pseudo-class checking fast reject filter in
   //   ElementCheckPseudoHasFastRejectFilterMap.
   class CORE_EXPORT Context {
     STACK_ALLOCATED();
@@ -284,8 +290,8 @@ class CORE_EXPORT CheckPseudoHasCacheScope {
   };
 
  private:
-  static ElementCheckPseudoHasResultMap& GetResultMap(const Document*,
-                                                      const CSSSelector*);
+  static ElementCheckPseudoHasResultMap&
+  GetResultMap(const Document*, const CSSSelector*, const ContainerNode* scope);
   static ElementCheckPseudoHasFastRejectFilterMap& GetFastRejectFilterMap(
       const Document*,
       CheckPseudoHasArgumentTraversalType);
@@ -300,6 +306,7 @@ class CORE_EXPORT CheckPseudoHasCacheScope {
   CheckPseudoHasFastRejectFilterCache fast_reject_filter_cache_;
 
   Document* document_;
+  const bool within_selector_checking_;
 };
 
 }  // namespace blink

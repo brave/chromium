@@ -2,20 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "chrome/browser/ui/cocoa/task_manager_mac.h"
+
 #import <Cocoa/Cocoa.h>
 #include <Foundation/Foundation.h>
 #include <stddef.h>
 
+#include <algorithm>
+
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/pattern.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/task_manager/common/task_manager_features.h"
 #include "chrome/browser/task_manager/task_manager_browsertest_util.h"
 #include "chrome/browser/task_manager/task_manager_tester.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/cocoa/task_manager_mac.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/task_manager/task_manager_columns.h"
 #include "chrome/browser/ui/task_manager/task_manager_table_model.h"
@@ -35,11 +43,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest_mac.h"
 #include "ui/base/test/ui_controls.h"
+#include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace task_manager {
 
@@ -47,7 +52,11 @@ using browsertest_util::WaitForTaskManagerRows;
 
 class TaskManagerMacTest : public InProcessBrowserTest {
  public:
-  TaskManagerMacTest() = default;
+  TaskManagerMacTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{},
+        /*disabled_features=*/{features::kTaskManagerDesktopRefresh});
+  }
   ~TaskManagerMacTest() override = default;
 
   TaskManagerMacTest(const TaskManagerMacTest&) = delete;
@@ -76,10 +85,10 @@ class TaskManagerMacTest : public InProcessBrowserTest {
                                : nullptr;
   }
 
-  absl::optional<size_t> TableFirstSelectedRow() const {
+  std::optional<size_t> TableFirstSelectedRow() const {
     int index = GetTable().selectedRowIndexes.firstIndex;
-    return (index < 0) ? absl::nullopt
-                       : absl::make_optional(static_cast<size_t>(index));
+    return (index < 0) ? std::nullopt
+                       : std::make_optional(static_cast<size_t>(index));
   }
 
   void PressKillButton() {
@@ -90,8 +99,9 @@ class TaskManagerMacTest : public InProcessBrowserTest {
 
   void ClearStoredColumnSettings() const {
     PrefService* local_state = g_browser_process->local_state();
-    if (!local_state)
+    if (!local_state) {
       FAIL();
+    }
 
     local_state->SetDict(prefs::kTaskManagerColumnVisibility,
                          base::Value::Dict());
@@ -105,31 +115,36 @@ class TaskManagerMacTest : public InProcessBrowserTest {
   // Looks up a tab based on its tab ID.
   content::WebContents* FindWebContentsByTabId(SessionID tab_id) {
     auto& all_tabs = AllTabContentses();
-    auto it = base::ranges::find(all_tabs, tab_id,
-                                 &sessions::SessionTabHelper::IdForTab);
+    auto it = std::ranges::find(all_tabs, tab_id,
+                                &sessions::SessionTabHelper::IdForTab);
 
     return (it == all_tabs.end()) ? nullptr : *it;
   }
 
   // Returns the current TaskManagerTableModel index for a particular tab. Don't
   // cache this value, since it can change whenever the message loop runs.
-  absl::optional<size_t> FindRowForTab(content::WebContents* tab) {
+  std::optional<size_t> FindRowForTab(content::WebContents* tab) {
     SessionID tab_id = sessions::SessionTabHelper::IdForTab(tab);
     std::unique_ptr<TaskManagerTester> tester =
         TaskManagerTester::Create(base::RepeatingClosure());
     for (size_t i = 0; i < tester->GetRowCount(); ++i) {
-      if (tester->GetTabId(i) == tab_id)
+      if (tester->GetTabId(i) == tab_id) {
         return i;
+      }
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Tests that all defined columns have a corresponding string IDs for keying
 // into the user preferences dictionary.
 IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, AllColumnsHaveStringIds) {
-  for (size_t i = 0; i < kColumnsSize; ++i)
+  for (size_t i = 0; i < kColumnsSize; ++i) {
     EXPECT_NE("", GetColumnIdAsString(kColumns[i].id));
+  }
 }
 
 // In the case of no settings stored in the user preferences local store, test
@@ -240,8 +255,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, PressingEnterKillsProcess) {
 
   for (size_t i = 0; i < tester->GetRowCount(); ++i) {
     // Press down to select the first/next row.
-    ui_controls::SendKeyPress(window_controller.window, ui::VKEY_DOWN, false,
-                              false, false, false);
+    ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                              ui::VKEY_DOWN, false, false, false, false);
 
     ASSERT_TRUE(TableFirstSelectedRow().has_value());
 
@@ -262,8 +277,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, PressingEnterKillsProcess) {
     content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
 
     // Press Enter/return to simulate a click on the end process button.
-    ui_controls::SendKeyPress(window_controller.window, ui::VKEY_RETURN, false,
-                              false, false, false);
+    ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                              ui::VKEY_RETURN, false, false, false, false);
 
     // The rows for the tab should disappear.
     size_t no_rows = 0;
@@ -271,7 +286,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, PressingEnterKillsProcess) {
   }
 }
 
-// TODO(crbug.com/1426429): Re-enable when fixed.
+// TODO(crbug.com/40261286): Re-enable when fixed.
 IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_SelectionConsistency) {
   ASSERT_NO_FATAL_FAILURE(ClearStoredColumnSettings());
 
@@ -302,8 +317,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_SelectionConsistency) {
   std::vector<content::WebContents*> tabs;
   for (size_t i = 0; i < tester->GetRowCount(); ++i) {
     // Filter based on our title.
-    if (!base::MatchPattern(tester->GetRowTitle(i), pattern))
+    if (!base::MatchPattern(tester->GetRowTitle(i), pattern)) {
       continue;
+    }
     content::WebContents* tab = FindWebContentsByTabId(tester->GetTabId(i));
     EXPECT_NE(nullptr, tab);
     tabs.push_back(tab);
@@ -378,7 +394,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_SelectionConsistency) {
   EXPECT_EQ(TableFirstSelectedRow(), FindRowForTab(tabs[2]));
 }
 
-// TODO(crbug.com/1426429): Re-enable when fixed.
+// TODO(crbug.com/40261286): Re-enable when fixed.
 IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_NavigateSelection) {
   ASSERT_NO_FATAL_FAILURE(ClearStoredColumnSettings());
   ui_controls::EnableUIControls();
@@ -404,8 +420,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_NavigateSelection) {
   std::vector<content::WebContents*> tabs;
   for (size_t i = 0; i < tester->GetRowCount(); ++i) {
     // Filter based on our title.
-    if (!base::MatchPattern(tester->GetRowTitle(i), pattern))
+    if (!base::MatchPattern(tester->GetRowTitle(i), pattern)) {
       continue;
+    }
     content::WebContents* tab = FindWebContentsByTabId(tester->GetTabId(i));
     EXPECT_NE(nullptr, tab);
     tabs.push_back(tab);
@@ -431,36 +448,36 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, DISABLED_NavigateSelection) {
     EXPECT_EQ(num_group_tasks, GetTable().numberOfSelectedRows);
   }
 
-  absl::optional<size_t> selected_row = TableFirstSelectedRow();
+  std::optional<size_t> selected_row = TableFirstSelectedRow();
   ASSERT_TRUE(selected_row.has_value());
   size_t expected_selected_row = selected_row.value();
   TaskManagerWindowController* window_controller =
       GetTaskManagerMac()->CocoaControllerForTests();
 
   // Navigate off of the grouped tasks into a different process task
-  ui_controls::SendKeyPress(window_controller.window, ui::VKEY_DOWN, false,
-                            false, false, false);
+  ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                            ui::VKEY_DOWN, false, false, false, false);
   expected_selected_row = expected_selected_row + 3;
   EXPECT_EQ(expected_selected_row, TableFirstSelectedRow().value());
   EXPECT_EQ(1, GetTable().numberOfSelectedRows);
 
   // Navigate into the three grouped tasks
-  ui_controls::SendKeyPress(window_controller.window, ui::VKEY_UP, false, false,
-                            false, false);
+  ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                            ui::VKEY_UP, false, false, false, false);
   expected_selected_row -= num_group_tasks;
   EXPECT_EQ(expected_selected_row, TableFirstSelectedRow().value());
   EXPECT_EQ(num_group_tasks, GetTable().numberOfSelectedRows);
 
   // Navigate off of grouped tasks
-  ui_controls::SendKeyPress(window_controller.window, ui::VKEY_UP, false, false,
-                            false, false);
+  ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                            ui::VKEY_UP, false, false, false, false);
   expected_selected_row--;
   EXPECT_EQ(expected_selected_row, TableFirstSelectedRow().value());
   EXPECT_EQ(1, GetTable().numberOfSelectedRows);
 
   // Navigate back into the three grouped tasks
-  ui_controls::SendKeyPress(window_controller.window, ui::VKEY_DOWN, false,
-                            false, false, false);
+  ui_controls::SendKeyPress(gfx::NativeWindow(window_controller.window),
+                            ui::VKEY_DOWN, false, false, false, false);
   expected_selected_row++;
   EXPECT_EQ(expected_selected_row, TableFirstSelectedRow().value());
   EXPECT_EQ(num_group_tasks, GetTable().numberOfSelectedRows);

@@ -21,8 +21,14 @@ constexpr char kDebugButton[] = "invokeDebuggerButton";
 constexpr char kDebugOverlay[] = "debuggerOverlay";
 constexpr char kScreensPanel[] = "DebuggerPanelScreens";
 
-constexpr int kOobeScreensCount = 49;
-constexpr int kLoginScreensCount = 45;
+constexpr int kCommonScreensCount = 53;
+constexpr int kOobeOnlyScreensCount = 10;
+constexpr int kLoginOnlyScreensCount = 4;
+
+constexpr int kOobeScreensCount = kCommonScreensCount + kOobeOnlyScreensCount;
+constexpr int kLoginScreensCount = kCommonScreensCount + kLoginOnlyScreensCount;
+
+// Feature-specific screens:
 constexpr int kOsInstallScreensCount = 2;
 
 std::string ElementsInPanel(const std::string& panel) {
@@ -36,8 +42,9 @@ class DebugOverlayTest : public OobeBaseTest {
   DebugOverlayTest() {
     feature_list_.InitWithFeatures(
         {features::kOobeChoobe, features::kOobeTouchpadScroll,
-         features::kOobeDisplaySize, features::kOobeGaiaInfoScreen,
-         features::kOobeSoftwareUpdate},
+         features::kOobeDisplaySize, features::kOobeSoftwareUpdate,
+         features::kOobePersonalizedOnboarding, features::kOobePerksDiscovery,
+         features::kOobeSplitModifierKeyboardInfo},
         {});
   }
 
@@ -81,8 +88,9 @@ class DebugOverlayScreensTest : public DebugOverlayTest,
   // DebugOverlayTest:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     DebugOverlayTest::SetUpCommandLine(command_line);
-    if (!GetParam())
+    if (!GetParam()) {
       return;
+    }
     command_line->AppendSwitch(switches::kAllowOsInstall);
   }
 };
@@ -95,13 +103,15 @@ IN_PROC_BROWSER_TEST_P(DebugOverlayScreensTest, ExpectScreenButtonsCount) {
   test::OobeJS().CreateVisibilityWaiter(true, kDebugOverlay)->Wait();
 
   int screens_count = kOobeScreensCount;
-  if (switches::IsOsInstallAllowed())
+  if (switches::IsOsInstallAllowed()) {
     screens_count += kOsInstallScreensCount;
+  }
 
   test::OobeJS().ExpectEQ(ElementsInPanel(kScreensPanel), screens_count);
 }
 
-INSTANTIATE_TEST_SUITE_P(All, DebugOverlayScreensTest, testing::Bool());
+/* No makes it easier to run all tests with one filter */
+INSTANTIATE_TEST_SUITE_P(, DebugOverlayScreensTest, testing::Bool());
 
 IN_PROC_BROWSER_TEST_F(DebugOverlayOnLoginTest, ExpectScreenButtonsCount) {
   ASSERT_TRUE(LoginScreenTestApi::ClickAddUserButton());
@@ -110,6 +120,7 @@ IN_PROC_BROWSER_TEST_F(DebugOverlayOnLoginTest, ExpectScreenButtonsCount) {
   test::OobeJS().ExpectVisible(kDebugButton);
   test::OobeJS().ClickOn(kDebugButton);
   test::OobeJS().CreateVisibilityWaiter(true, kDebugOverlay)->Wait();
+
   test::OobeJS().ExpectEQ(ElementsInPanel(kScreensPanel), kLoginScreensCount);
 }
 

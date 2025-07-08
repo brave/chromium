@@ -4,47 +4,30 @@
 
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/api_guard_delegate.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "ash/constants/ash_features.h"
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/queue.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/weak_ptr.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/hardware_info_delegate.h"
+#include "chrome/browser/chromeos/extensions/telemetry/api/common/util.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chromeos/extensions/chromeos_system_extension_info.h"
-#include "chrome/common/url_constants.h"
-#include "chromeos/constants/chromeos_features.h"
-#include "components/security_state/content/content_utils.h"
-#include "components/security_state/core/security_state.h"
-#include "content/public/browser/web_contents.h"
-#include "extensions/common/extension.h"
-#include "extensions/common/manifest_handlers/externally_connectable.h"
-#include "extensions/common/url_pattern_set.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "base/functional/callback_helpers.h"
-#include "base/memory/weak_ptr.h"
-#include "components/account_id/account_id.h"  // nogncheck
+#include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/crosapi.mojom.h"
-#include "chromeos/startup/browser_params_proxy.h"
-#include "components/policy/core/common/policy_loader_lacros.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "extensions/common/extension.h"
 
 namespace content {
 class BrowserContext;
@@ -73,7 +56,7 @@ using CheckCallback = base::OnceCallback<void(bool)>;
 class AsyncConditionChecker {
  public:
   explicit AsyncConditionChecker(
-      base::OnceCallback<void(absl::optional<std::string>)> result_callback);
+      base::OnceCallback<void(std::optional<std::string>)> result_callback);
   AsyncConditionChecker(AsyncConditionChecker&) = delete;
   AsyncConditionChecker& operator=(AsyncConditionChecker&) = delete;
   ~AsyncConditionChecker();
@@ -95,7 +78,7 @@ class AsyncConditionChecker {
  private:
   void OnCheckFinished(const std::string& error_message, bool result);
 
-  base::OnceCallback<void(absl::optional<std::string>)> result_callback_;
+  base::OnceCallback<void(std::optional<std::string>)> result_callback_;
   base::queue<std::pair<base::OnceCallback<void(CheckCallback)>, std::string>>
       callback_queue_;
 
@@ -103,7 +86,7 @@ class AsyncConditionChecker {
 };
 
 AsyncConditionChecker::AsyncConditionChecker(
-    base::OnceCallback<void(absl::optional<std::string>)> result_callback)
+    base::OnceCallback<void(std::optional<std::string>)> result_callback)
     : result_callback_(std::move(result_callback)) {}
 
 AsyncConditionChecker::~AsyncConditionChecker() = default;
@@ -128,7 +111,7 @@ void AsyncConditionChecker::AppendChecker(
 
 void AsyncConditionChecker::Run() {
   if (callback_queue_.empty()) {
-    std::move(result_callback_).Run(absl::nullopt);
+    std::move(result_callback_).Run(std::nullopt);
     return;
   }
 
@@ -156,73 +139,30 @@ bool IsExtensionForceInstalled(content::BrowserContext* context,
   return force_install_list.Find(extension_id) != nullptr;
 }
 
-bool IsPwaUiOpenAndSecure(content::BrowserContext* context,
-                          const extensions::Extension* extension) {
-  Profile* profile = Profile::FromBrowserContext(context);
-
-  const auto* externally_connectable_info =
-      extensions::ExternallyConnectableInfo::Get(extension);
-
-  for (auto* target_browser : *BrowserList::GetInstance()) {
-    // Ignore incognito.
-    if (target_browser->profile() != profile) {
-      continue;
-    }
-
-    TabStripModel* target_tab_strip = target_browser->tab_strip_model();
-    for (int i = 0; i < target_tab_strip->count(); ++i) {
-      content::WebContents* target_contents =
-          target_tab_strip->GetWebContentsAt(i);
-      if (externally_connectable_info->matches.MatchesURL(
-              target_contents->GetLastCommittedURL())) {
-        // Ensure the PWA URL connection is secure (e.g. valid certificate).
-        const auto visible_security_state =
-            security_state::GetVisibleSecurityState(target_contents);
-        // TODO(b/290909386): Remove this line once we reach a conclusion on
-        // how we should perform security check on IWA.
-        if (chromeos::features::IsIWAForTelemetryExtensionAPIEnabled() &&
-            target_contents->GetLastCommittedURL().SchemeIs(
-                chrome::kIsolatedAppScheme)) {
-          return true;
-        }
-        return security_state::GetSecurityLevel(
-                   *visible_security_state,
-                   /*used_policy_installed_certificate=*/false) ==
-               security_state::SecurityLevel::SECURE;
-      }
-    }
-  }
-
-  return false;
-}
-
-void OnGetManufacturer(
-    std::unique_ptr<HardwareInfoDelegate> hardware_info_delegate,
-    const std::string& extension_id,
-    CheckCallback callback,
-    std::string actual_manufacturer) {
+void OnGetManufacturer(const std::string& extension_id,
+                       CheckCallback callback,
+                       const std::string& actual_manufacturer) {
   const auto& extension_info = GetChromeOSExtensionInfoById(extension_id);
   const auto& expected_manufacturers = extension_info.manufacturers;
   std::move(callback).Run(expected_manufacturers.contains(actual_manufacturer));
-
-  // It is safe to destruct `hardware_info_delegate` here (the callback of
-  // `GetManufacturer`) because it will only return after calling the
-  // callback.
-  hardware_info_delegate.reset();
 }
 
 void IsExpectedManufacturerForExtensionId(const std::string& extension_id,
                                           CheckCallback callback) {
-  auto hardware_info_delegate = HardwareInfoDelegate::Factory::Create();
-  auto* ptr = hardware_info_delegate.get();
-  ptr->GetManufacturer(base::BindOnce(&OnGetManufacturer,
-                                      std::move(hardware_info_delegate),
-                                      extension_id, std::move(callback)));
+  auto& hardware_info_delegate = HardwareInfoDelegate::Get();
+  hardware_info_delegate.GetManufacturer(
+      base::BindOnce(&OnGetManufacturer, extension_id, std::move(callback)));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+bool IsExtensionUsedByShimlessRMA(content::BrowserContext* context) {
+  return ::ash::features::IsShimlessRMA3pDiagnosticsEnabled() &&
+         ::ash::IsShimlessRmaAppBrowserContext(context);
+}
+
 bool IsCurrentUserAffiliated() {
-  return user_manager::UserManager::Get()->GetActiveUser()->IsAffiliated();
+  auto* active_user = user_manager::UserManager::Get()->GetActiveUser();
+  CHECK(active_user);
+  return active_user->IsAffiliated();
 }
 
 void IsCurrentUserOwnerOnOwnerFetched(CheckCallback callback) {
@@ -238,22 +178,6 @@ void IsCurrentUserOwner(content::BrowserContext* context,
   user_manager::UserManager::Get()->GetOwnerAccountIdAsync(
       std::move(on_owner_fetched));
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-bool IsCurrentUserAffiliated() {
-  return policy::PolicyLoaderLacros::IsMainUserAffiliated();
-}
-
-bool IsCurrentUserOwner(content::BrowserContext* context) {
-  // In order to determine device ownership in LaCrOS, we need to check
-  // whether the current Ash user is the device owner (stored in
-  // browser init params) and if the current profile is the same profile
-  // as the one logged into Ash.
-  return BrowserParamsProxy::Get()->IsCurrentUserDeviceOwner() &&
-         Profile::FromBrowserContext(context)->IsMainProfile();
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 class ApiGuardDelegateImpl : public ApiGuardDelegate {
  public:
@@ -267,7 +191,8 @@ class ApiGuardDelegateImpl : public ApiGuardDelegate {
   // following constraints are satisfied:
   // 1. The user is either:
   //    a. managed and the extension was force-installed via policy, or
-  //    b. the user is the device owner.
+  //    b. the user is the device owner, or
+  //    c. the user is in the Shimless RMA flow.
   // 2. The PWA UI associated with the extension must be opened.
   // 3. The device hardware belongs to the OEM associated with the extension.
   void CanAccessApi(content::BrowserContext* context,
@@ -294,7 +219,10 @@ void ApiGuardDelegateImpl::CanAccessApi(content::BrowserContext* context,
   // these callbacks are bound to the `condition_checker_`, which is bound to
   // the delegate.
 
-  if (IsCurrentUserAffiliated()) {
+  if (IsExtensionUsedByShimlessRMA(context)) {
+    // No user to check for the Shimless RMA flow. Note that in this
+    // case there is no active user in UserManager.
+  } else if (IsCurrentUserAffiliated()) {
     condition_checker_->AppendChecker(
         base::BindOnce(&IsExtensionForceInstalled, base::Unretained(context),
                        extension->id()),
@@ -306,9 +234,9 @@ void ApiGuardDelegateImpl::CanAccessApi(content::BrowserContext* context,
   }
 
   condition_checker_->AppendChecker(
-      base::BindOnce(&IsPwaUiOpenAndSecure, base::Unretained(context),
-                     base::Unretained(extension)),
-      "Companion PWA UI is not open or not secure");
+      base::BindOnce(&IsTelemetryExtensionAppUiOpenAndSecure,
+                     base::Unretained(context), base::Unretained(extension)),
+      "Companion app UI is not open or not secure");
 
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kTelemetryExtensionSkipManufacturerCheckForTesting)) {

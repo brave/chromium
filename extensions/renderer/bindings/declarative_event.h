@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "gin/wrappable.h"
 #include "v8/include/v8.h"
 
@@ -18,10 +19,12 @@ namespace extensions {
 class APIRequestHandler;
 class APITypeReferenceMap;
 
-// A gin::Wrappable object for declarative events (i.e., events that support
-// "rules"). Unlike regular events, these do not have associated listeners, and
-// extensions register an action to perform when the event happens.
-class DeclarativeEvent final : public gin::Wrappable<DeclarativeEvent> {
+// A gin::DeprecatedWrappable object for declarative events (i.e., events that
+// support "rules"). Unlike regular events, these do not have associated
+// listeners, and extensions register an action to perform when the event
+// happens.
+class DeclarativeEvent final
+    : public gin::DeprecatedWrappable<DeclarativeEvent> {
  public:
   DeclarativeEvent(const std::string& name,
                    APITypeReferenceMap* type_refs,
@@ -33,7 +36,7 @@ class DeclarativeEvent final : public gin::Wrappable<DeclarativeEvent> {
   DeclarativeEvent& operator=(const DeclarativeEvent&) = delete;
   ~DeclarativeEvent() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   // gin::Wrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -52,9 +55,9 @@ class DeclarativeEvent final : public gin::Wrappable<DeclarativeEvent> {
 
   std::string event_name_;
 
-  APITypeReferenceMap* type_refs_;
+  raw_ptr<APITypeReferenceMap> type_refs_;
 
-  APIRequestHandler* request_handler_;
+  raw_ptr<APIRequestHandler, DanglingUntriaged> request_handler_;
 
   const int webview_instance_id_;
 };

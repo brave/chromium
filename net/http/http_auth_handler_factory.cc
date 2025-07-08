@@ -4,7 +4,10 @@
 
 #include "net/http/http_auth_handler_factory.h"
 
+#include <array>
+#include <optional>
 #include <set>
+#include <string_view>
 
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
@@ -22,26 +25,28 @@
 #include "net/log/net_log_values.h"
 #include "net/net_buildflags.h"
 #include "net/ssl/ssl_info.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/scheme_host_port.h"
 
 #if BUILDFLAG(USE_KERBEROS)
 #include "net/http/http_auth_handler_negotiate.h"
 #endif
 
+namespace net {
+
 namespace {
 
 base::Value::Dict NetLogParamsForCreateAuth(
-    const std::string& scheme,
-    const std::string& challenge,
+    std::string_view scheme,
+    std::string_view challenge,
     const int net_error,
     const url::SchemeHostPort& scheme_host_port,
-    const absl::optional<bool>& allows_default_credentials,
-    net::NetLogCaptureMode capture_mode) {
+    const std::optional<bool>& allows_default_credentials,
+    NetLogCaptureMode capture_mode) {
   base::Value::Dict dict;
-  dict.Set("scheme", net::NetLogStringValue(scheme));
-  if (net::NetLogCaptureIncludesSensitive(capture_mode))
-    dict.Set("challenge", net::NetLogStringValue(challenge));
+  dict.Set("scheme", NetLogStringValue(scheme));
+  if (NetLogCaptureIncludesSensitive(capture_mode)) {
+    dict.Set("challenge", NetLogStringValue(challenge));
+  }
   dict.Set("origin", scheme_host_port.Serialize());
   if (allows_default_credentials)
     dict.Set("allows_default_credentials", *allows_default_credentials);
@@ -50,12 +55,19 @@ base::Value::Dict NetLogParamsForCreateAuth(
   return dict;
 }
 
+// Since there are at most 4 schemes, a linear search is faster than a binary
+// search because it can cheaply discard strings when the length doesn't match.
+constexpr auto kDefaultAuthSchemes =
+    std::to_array<std::string_view>({kBasicAuthScheme, kDigestAuthScheme,
+#if BUILDFLAG(USE_KERBEROS) && !BUILDFLAG(IS_ANDROID)
+                                     kNegotiateAuthScheme,
+#endif
+                                     kNtlmAuthScheme});
+
 }  // namespace
 
-namespace net {
-
 int HttpAuthHandlerFactory::CreateAuthHandlerFromString(
-    const std::string& challenge,
+    std::string_view challenge,
     HttpAuth::Target target,
     const SSLInfo& ssl_info,
     const NetworkAnonymizationKey& network_anonymization_key,
@@ -63,7 +75,7 @@ int HttpAuthHandlerFactory::CreateAuthHandlerFromString(
     const NetLogWithSource& net_log,
     HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
-  HttpAuthChallengeTokenizer props(challenge.begin(), challenge.end());
+  HttpAuthChallengeTokenizer props(challenge);
   return CreateAuthHandler(&props, target, ssl_info, network_anonymization_key,
                            scheme_host_port, CREATE_CHALLENGE, 1, net_log,
                            host_resolver, handler);
@@ -78,7 +90,7 @@ int HttpAuthHandlerFactory::CreatePreemptiveAuthHandlerFromString(
     const NetLogWithSource& net_log,
     HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
-  HttpAuthChallengeTokenizer props(challenge.begin(), challenge.end());
+  HttpAuthChallengeTokenizer props(challenge);
   SSLInfo null_ssl_info;
   return CreateAuthHandler(&props, target, null_ssl_info,
                            network_anonymization_key, scheme_host_port,
@@ -233,8 +245,8 @@ int HttpAuthHandlerRegistryFactory::CreateAuthHandler(
         return NetLogParamsForCreateAuth(
             scheme, challenge->challenge_text(), net_error, scheme_host_port,
             *handler
-                ? absl::make_optional((*handler)->AllowsDefaultCredentials())
-                : absl::nullopt,
+                ? std::make_optional((*handler)->AllowsDefaultCredentials())
+                : std::nullopt,
             capture_mode);
       });
   return net_error;
@@ -247,21 +259,20 @@ bool HttpAuthHandlerRegistryFactory::IsSchemeAllowedForTesting(
 
 bool HttpAuthHandlerRegistryFactory::IsSchemeAllowed(
     const std::string& scheme) const {
-  const std::set<std::string>& allowed_schemes =
-      http_auth_preferences() && http_auth_preferences()->allowed_schemes()
-          ? *http_auth_preferences()->allowed_schemes()
-          : default_auth_schemes_;
-  return allowed_schemes.find(scheme) != allowed_schemes.end();
+  if (http_auth_preferences() && http_auth_preferences()->allowed_schemes()) {
+    return base::Contains(*http_auth_preferences()->allowed_schemes(), scheme);
+  }
+  return base::Contains(kDefaultAuthSchemes, scheme);
 }
 
 #if BUILDFLAG(USE_KERBEROS) && !BUILDFLAG(IS_ANDROID) && BUILDFLAG(IS_POSIX)
-absl::optional<std::string>
+std::optional<std::string>
 HttpAuthHandlerRegistryFactory::GetNegotiateLibraryNameForTesting() const {
   if (!IsSchemeAllowed(kNegotiateAuthScheme))
-    return absl::nullopt;
+    return std::nullopt;
 
-  return reinterpret_cast<net::HttpAuthHandlerNegotiate::Factory*>(
-             GetSchemeFactory(net::kNegotiateAuthScheme))
+  return reinterpret_cast<HttpAuthHandlerNegotiate::Factory*>(
+             GetSchemeFactory(kNegotiateAuthScheme))
       ->GetLibraryNameForTesting();  // IN-TEST
 }
 #endif

@@ -4,48 +4,59 @@
 
 package org.chromium.chrome.browser.accessibility.settings;
 
-import androidx.preference.PreferenceFragmentCompat;
 
-import org.chromium.chrome.R;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.image_descriptions.ImageDescriptionsController;
-import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.Pref;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.components.browser_ui.accessibility.AccessibilitySettingsDelegate;
-import org.chromium.components.browser_ui.accessibility.PageZoomUtils;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.BrowserContextHandle;
 
 /** The Chrome implementation of AccessibilitySettingsDelegate. */
+@NullMarked
 public class ChromeAccessibilitySettingsDelegate implements AccessibilitySettingsDelegate {
-    private static class AccessibilityTabSwitcherDelegate implements BooleanPreferenceDelegate {
-        @Override
-        public boolean isEnabled() {
-            return SharedPreferencesManager.getInstance().readBoolean(
-                    ChromePreferenceKeys.ACCESSIBILITY_TAB_SWITCHER, true);
+    private static class TextSizeContrastAccessibilityDelegate
+            implements IntegerPreferenceDelegate {
+        private final BrowserContextHandle mBrowserContextHandle;
+
+        public TextSizeContrastAccessibilityDelegate(BrowserContextHandle mBrowserContextHandle) {
+            this.mBrowserContextHandle = mBrowserContextHandle;
         }
 
         @Override
-        public void setEnabled(boolean value) {}
+        public int getValue() {
+            return UserPrefs.get(mBrowserContextHandle)
+                    .getInteger(Pref.ACCESSIBILITY_TEXT_SIZE_CONTRAST_FACTOR);
+        }
+
+        @Override
+        public void setValue(int value) {
+            UserPrefs.get(mBrowserContextHandle)
+                    .setInteger(Pref.ACCESSIBILITY_TEXT_SIZE_CONTRAST_FACTOR, value);
+        }
     }
 
-    private static class ReaderForAccessibilityDelegate implements BooleanPreferenceDelegate {
-        private final Profile mProfile;
+    private static class ChromeBooleanPreferenceDelegate implements BooleanPreferenceDelegate {
+        private final BrowserContextHandle mBrowserContextHandle;
+        private final String mPreferenceKey;
 
-        ReaderForAccessibilityDelegate(Profile profile) {
-            mProfile = profile;
+        public ChromeBooleanPreferenceDelegate(
+                BrowserContextHandle mBrowserContextHandle, String mPreferenceKey) {
+            this.mBrowserContextHandle = mBrowserContextHandle;
+            this.mPreferenceKey = mPreferenceKey;
         }
 
         @Override
-        public boolean isEnabled() {
-            return UserPrefs.get(mProfile).getBoolean(Pref.READER_FOR_ACCESSIBILITY);
+        public boolean getValue() {
+            return UserPrefs.get(mBrowserContextHandle).getBoolean(mPreferenceKey);
         }
 
         @Override
-        public void setEnabled(boolean value) {
-            UserPrefs.get(mProfile).setBoolean(Pref.READER_FOR_ACCESSIBILITY, (Boolean) value);
+        public void setValue(boolean value) {
+            UserPrefs.get(mBrowserContextHandle).setBoolean(mPreferenceKey, value);
         }
     }
 
@@ -53,6 +64,7 @@ public class ChromeAccessibilitySettingsDelegate implements AccessibilitySetting
 
     /**
      * Constructs a delegate for the given profile.
+     *
      * @param profile The profile associated with the delegate.
      */
     public ChromeAccessibilitySettingsDelegate(Profile profile) {
@@ -65,27 +77,29 @@ public class ChromeAccessibilitySettingsDelegate implements AccessibilitySetting
     }
 
     @Override
-    public BooleanPreferenceDelegate getAccessibilityTabSwitcherDelegate() {
-        if (!ChromeAccessibilityUtil.get().isAccessibilityEnabled()) {
-            return null;
-        }
-        return new AccessibilityTabSwitcherDelegate();
+    public boolean shouldShowImageDescriptionsSetting() {
+        return ImageDescriptionsController.getInstance().shouldShowImageDescriptionsMenuItem();
     }
 
     @Override
-    public BooleanPreferenceDelegate getReaderForAccessibilityDelegate() {
-        return new ReaderForAccessibilityDelegate(mProfile);
+    public SettingsNavigation getSiteSettingsNavigation() {
+        return SettingsNavigationFactory.createSettingsNavigation();
     }
 
     @Override
-    public void addExtraPreferences(PreferenceFragmentCompat fragment) {
-        if (ImageDescriptionsController.getInstance().shouldShowImageDescriptionsMenuItem()) {
-            fragment.addPreferencesFromResource(R.xml.image_descriptions_settings_preference);
-        }
+    public IntegerPreferenceDelegate getTextSizeContrastAccessibilityDelegate() {
+        return new TextSizeContrastAccessibilityDelegate(getBrowserContextHandle());
     }
 
     @Override
-    public boolean showPageZoomSettingsUI() {
-        return PageZoomUtils.shouldShowSettingsUI();
+    public BooleanPreferenceDelegate getForceEnableZoomAccessibilityDelegate() {
+        return new ChromeBooleanPreferenceDelegate(
+                getBrowserContextHandle(), Pref.ACCESSIBILITY_FORCE_ENABLE_ZOOM);
+    }
+
+    @Override
+    public BooleanPreferenceDelegate getReaderAccessibilityDelegate() {
+        return new ChromeBooleanPreferenceDelegate(
+                getBrowserContextHandle(), Pref.READER_FOR_ACCESSIBILITY);
     }
 }

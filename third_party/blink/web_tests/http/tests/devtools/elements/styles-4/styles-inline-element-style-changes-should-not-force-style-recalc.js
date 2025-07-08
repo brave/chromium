@@ -5,10 +5,12 @@
 import {TestRunner} from 'test_runner';
 import {PerformanceTestRunner} from 'performance_test_runner';
 
+import * as UI from 'devtools/ui/legacy/legacy.js';
+import * as Timeline from 'devtools/panels/timeline/timeline.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that inspector doesn't force styles recalc on operations with inline element styles that result in no changes.\n`);
-  await TestRunner.loadLegacyModule('timeline');
   await TestRunner.showPanel('timeline');
   await TestRunner.showPanel('elements');
   await TestRunner.loadHTML(`
@@ -23,6 +25,15 @@ import {PerformanceTestRunner} from 'performance_test_runner';
       }
   `);
 
-  UI.context.setFlavor(Timeline.TimelinePanel, UI.panels.timeline);
-  PerformanceTestRunner.performActionsAndPrint('performActions()', 'RecalculateStyles');
+  UI.Context.Context.instance().setFlavor(Timeline.TimelinePanel.TimelinePanel, Timeline.TimelinePanel.TimelinePanel.instance());
+  await PerformanceTestRunner.evaluateWithTimeline('performActions()');
+
+  const events = PerformanceTestRunner.traceEngineRawEvents();
+  if (events.length === 0) {
+    TestRunner.addResult('ERROR: did not find any trace engine events.');
+  }
+
+  const updateLayoutTreeEvents = events.filter(event => event.name === 'UpdateLayoutTree');
+  TestRunner.addResult(`Found ${updateLayoutTreeEvents.length} UpdateLayoutTree events (expecting 0).`);
+  TestRunner.completeTest();
 })();

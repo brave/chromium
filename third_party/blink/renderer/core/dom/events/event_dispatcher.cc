@@ -27,8 +27,12 @@
 
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 
+#include <optional>
+
+#include "base/feature_list.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
@@ -46,16 +50,17 @@
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/events/simulated_event_util.h"
 #include "third_party/blink/renderer/core/events/text_event.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/ad_tracker.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
+#include "third_party/blink/renderer/core/keywords.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
-#include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/page/spatial_navigation_controller.h"
 #include "third_party/blink/renderer/core/timing/event_timing.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -95,9 +100,9 @@ void EventDispatcher::DispatchSimulatedClick(
   // before dispatchSimulatedClick() returns. This vector is here just to
   // prevent the code from running into an infinite recursion of
   // dispatchSimulatedClick().
-  DEFINE_STATIC_LOCAL(Persistent<HeapHashSet<Member<Node>>>,
+  DEFINE_STATIC_LOCAL(Persistent<GCedHeapHashSet<Member<Node>>>,
                       nodes_dispatching_simulated_clicks,
-                      (MakeGarbageCollected<HeapHashSet<Member<Node>>>()));
+                      (MakeGarbageCollected<GCedHeapHashSet<Member<Node>>>()));
 
   if (IsDisabledFormControl(&node))
     return;
@@ -186,7 +191,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
     // path.
     return DispatchEventResult::kNotCanceled;
   }
-  std::unique_ptr<EventTiming> eventTiming;
+  std::optional<EventTiming> eventTiming;
   auto& document = node_->GetDocument();
   LocalFrame* frame = document.GetFrame();
   LocalDOMWindow* window = nullptr;
@@ -195,7 +200,7 @@ DispatchEventResult EventDispatcher::Dispatch() {
   }
 
   if (frame && window) {
-    eventTiming = EventTiming::Create(window, *event_);
+    eventTiming = EventTiming::TryCreate(window, *event_, event_->RawTarget());
   }
 
   if (event_->type() == event_type_names::kChange && event_->isTrusted() &&
@@ -207,13 +212,15 @@ DispatchEventResult EventDispatcher::Dispatch() {
   const bool is_click =
       event_->IsMouseEvent() && event_->type() == event_type_names::kClick;
 
-  std::unique_ptr<SoftNavigationEventScope> soft_navigation_scope;
-  if (is_click && event_->isTrusted() && frame) {
-    if (window && frame->IsMainFrame()) {
-      soft_navigation_scope = std::make_unique<SoftNavigationEventScope>(
-          SoftNavigationHeuristics::From(*window),
-          ToScriptStateForMainWorld(frame));
+  std::optional<SoftNavigationHeuristics::EventScope> soft_navigation_scope;
+  if (window) {
+    if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
+      soft_navigation_scope =
+          heuristics->MaybeCreateEventScopeForEvent(*event_);
     }
+  }
+
+  if (is_click && event_->isTrusted() && frame) {
     // A genuine mouse click cannot be triggered by script so we don't expect
     // there are any script in the stack.
     DCHECK(!frame->GetAdTracker() || !frame->GetAdTracker()->IsAdScriptInStack(
@@ -222,19 +229,6 @@ DispatchEventResult EventDispatcher::Dispatch() {
       UseCounter::Count(document, WebFeature::kAdClick);
     }
   }
-
-#if DCHECK_IS_ON()
-  // If Mutation Events are disabled, we should never dispatch trusted ones.
-  if (event_->isTrusted() &&
-      (event_->type() == event_type_names::kDOMCharacterDataModified ||
-       event_->type() == event_type_names::kDOMSubtreeModified ||
-       event_->type() == event_type_names::kDOMNodeInserted ||
-       event_->type() == event_type_names::kDOMNodeInsertedIntoDocument ||
-       event_->type() == event_type_names::kDOMNodeRemoved ||
-       event_->type() == event_type_names::kDOMNodeRemovedFromDocument)) {
-    DCHECK(document.SupportsLegacyDOMMutations());
-  }
-#endif
 
   // 6. Let isActivationEvent be true, if event is a MouseEvent object and
   // event's type attribute is "click", and false otherwise.
@@ -264,9 +258,10 @@ DispatchEventResult EventDispatcher::Dispatch() {
 #if DCHECK_IS_ON()
   DCHECK(!EventDispatchForbiddenScope::IsEventDispatchForbidden());
 #endif
-  DCHECK(event_->target());
+  DCHECK(event_->RawTarget());
   DEVTOOLS_TIMELINE_TRACE_EVENT("EventDispatch",
-                                inspector_event_dispatch_event::Data, *event_);
+                                inspector_event_dispatch_event::Data, *event_,
+                                document.GetAgent().isolate());
   EventDispatchHandlingState* pre_dispatch_event_handler_result = nullptr;
   if (DispatchEventPreProcess(activation_target,
                               pre_dispatch_event_handler_result) ==
@@ -279,9 +274,6 @@ DispatchEventResult EventDispatcher::Dispatch() {
                            pre_dispatch_event_handler_result);
 
   auto result = EventTarget::GetDispatchEventResult(*event_);
-  if (soft_navigation_scope) {
-    soft_navigation_scope->SetResult(result);
-  }
 
   return result;
 }
@@ -381,7 +373,7 @@ inline void EventDispatcher::DispatchEventPostProcess(
     // Fire an accessibility event indicating a node was clicked on.  This is
     // safe if event_->target()->ToNode() returns null.
     if (AXObjectCache* cache = node_->GetDocument().ExistingAXObjectCache())
-      cache->HandleClicked(event_->target()->ToNode());
+      cache->HandleClicked(event_->RawTarget()->ToNode());
 
     // Pass the data from the PreDispatchEventHandler to the
     // PostDispatchEventHandler.
@@ -440,14 +432,8 @@ inline void EventDispatcher::DispatchEventPostProcess(
 #endif  // BUILDFLAG(IS_MAC)
   }
 
-  auto* keyboard_event = DynamicTo<KeyboardEvent>(event_);
-  if (Page* page = node_->GetDocument().GetPage()) {
-    if (page->GetSettings().GetSpatialNavigationEnabled() &&
-        is_trusted_or_click && keyboard_event &&
-        keyboard_event->key() == "Enter" &&
-        event_->type() == event_type_names::kKeyup) {
-      page->GetSpatialNavigationController().ResetEnterKeyState();
-    }
+  if (event_->IsMouseEvent() && event_->type() == event_type_names::kMouseup) {
+    node_->GetDocument().SetCustomizableSelectMousedownLocation(std::nullopt);
   }
 
   // Track the usage of sending a mousedown event to a select element to force
@@ -462,8 +448,9 @@ inline void EventDispatcher::DispatchEventPostProcess(
   // 16. If target's root is a shadow root, then set event's target attribute
   // and event's relatedTarget to null.
   event_->SetTarget(event_->GetEventPath().GetWindowEventContext().Target());
-  if (!event_->target())
+  if (!event_->RawTarget()) {
     event_->SetRelatedTargetIfExists(nullptr);
+  }
 }
 
 }  // namespace blink

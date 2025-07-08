@@ -5,19 +5,15 @@
 #ifndef UI_OZONE_PUBLIC_PLATFORM_SCREEN_H_
 #define UI_OZONE_PUBLIC_PLATFORM_SCREEN_H_
 
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/component_export.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/gfx/gpu_extra_info.h"
 #include "ui/gfx/native_widget_types.h"
-
-#if BUILDFLAG(IS_LINUX)
-#include "ui/linux/linux_ui.h"
-#endif
 
 namespace base {
 class TimeDelta;
@@ -26,7 +22,6 @@ class TimeDelta;
 namespace display {
 class Display;
 class DisplayObserver;
-enum class TabletState;
 }  // namespace display
 
 namespace gfx {
@@ -136,19 +131,11 @@ class COMPONENT_EXPORT(OZONE_BASE) PlatformScreen {
   virtual base::Value::List GetGpuExtraInfo(
       const gfx::GpuExtraInfo& gpu_extra_info);
 
-#if BUILDFLAG(IS_LINUX)
-  // Sets device scale factor received from external sources such as toolkits.
-  virtual void SetDisplayConfig(const DisplayConfig& display_config);
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // Called when tablet state is changed.
-  virtual void OnTabletStateChanged(display::TabletState tablet_state) {}
-
-  // Returns tablet state. If a platform does not support this, returns
-  // display::TabletState::kInClamshellMode.
-  virtual display::TabletState GetTabletState() const;
-#endif
+  // Returns the preferred scale factor for a |widget|, if any. Used, for
+  // example, in Wayland implementation when wp-fractional-scale protocol is
+  // available.
+  virtual std::optional<float> GetPreferredScaleFactorForAcceleratedWidget(
+      gfx::AcceleratedWidget widget) const;
 
  protected:
   void StorePlatformNameIntoListOfValues(base::Value::List& values,

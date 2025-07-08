@@ -5,15 +5,16 @@
 import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that cache names are correctly loaded and displayed in the inspector.\n`);
-  await TestRunner.loadLegacyModule('console');
     // Note: every test that uses a storage API must manually clean-up state from previous tests.
   await ApplicationTestRunner.resetState();
 
   await TestRunner.showPanel('resources');
 
-  var cacheStorageModel = TestRunner.mainTarget.model(SDK.ServiceWorkerCacheModel);
+  var cacheStorageModel = TestRunner.mainTarget.model(SDK.ServiceWorkerCacheModel.ServiceWorkerCacheModel);
   cacheStorageModel.enable();
 
   function errorAndExit(error) {

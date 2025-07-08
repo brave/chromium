@@ -121,11 +121,77 @@ struct GeolocationDiagnostics {
 
   // Internal state of Wi-Fi data polling policy.
   WifiPollingPolicyDiagnostics? wifi_polling_policy_diagnostics;
+
+  // The operational mode of the LocationProviderManager, which determines
+  // the provider used for geolocation requests. This influences provider
+  // initialization, fallback behavior, and error handling. See
+  // LocationProviderManagerMode enum for details on the specific modes.
+  LocationProviderManagerMode? location_provider_manager_mode;
+};
+
+// A position estimate parsed from a location service response.
+struct NetworkLocationResponse {
+  // The estimated latitude in degrees.
+  double latitude;
+  // The estimated longitude in degrees.
+  double longitude;
+  // The estimated accuracy in meters, or null if accuracy was not included in
+  // the response.
+  double? accuracy;
+};
+
+// Defines the operational mode of the LocationProviderManager, determining
+// which location provider to use for geolocation. This influences provider
+// initialization, fallback behavior, and error handling.
+enum LocationProviderManagerMode {
+  // Always use NetworkLocationProvider, regardless of errors.
+  kNetworkOnly = 0,
+
+  // Always use PlatformLocationProvider, regardless of errors.
+  kPlatformOnly = 1,
+
+  // Always use CustomLocationProvider, regardless of errors.
+  kCustomOnly = 2,
+
+  // Start with PlatformLocationProvider. If a `kWifiDisabledError` is
+  // encountered, fall back to NetworkLocationProvider. Currently used only on
+  // macOS.
+  kHybridPlatform = 3,
+
+  // Indicates that NetworkLocationProvider is being used after a fallback has
+  // occurred.
+  kHybridFallbackNetwork = 4,
+
+  // Start with PlatformLocationProvider. If any error is encountered, fall
+  // back to NetworkLocationProvider. Currently used only on macOS for
+  // MacPlatformLocationProvider studies.
+  kHybridPlatform2 = 5,
+  // NOTE: Do not renumber these as that would confuse interpretation of
+  // previously logged data. When making changes, also update the enum list
+  // in tools/metrics/histograms/metadata/geolocation/enums.xml to keep it in
+  // sync.
+};
+
+// Interface for chrome://location-internals to be notified when the debug data
+// is updated.
+interface GeolocationInternalsObserver {
+  // Called after handling an event that may have changed the debug data.
+  OnDiagnosticsChanged(GeolocationDiagnostics diagnostics);
+
+  // Called when a request is sent to the location service. `request` contains
+  // the information about nearby access points sent to the service.
+  OnNetworkLocationRequested(array<AccessPointData> access_point_data);
+
+  // Called when a response is received for a request to the location service.
+  // `response` is the position estimate parsed from the response, or null if a
+  // position estimate was not included in the response.
+  OnNetworkLocationReceived(NetworkLocationResponse? response);
 };
 
 // Interface for chrome://location-internals to access geolocation debug data.
 interface GeolocationInternals {
-  // Returns diagnostic information used for debugging the geolocation service,
-  // or null if the geolocation service is not initialized.
-  GetDiagnostics() => (GeolocationDiagnostics? diagnostics);
+  // Registers a geolocation debug data observer. Responds with the current
+  // debug data, or null if the geolocation API has not been initialized.
+  AddInternalsObserver(pending_remote<GeolocationInternalsObserver> observer) =>
+      (GeolocationDiagnostics? diagnostics);
 };

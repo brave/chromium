@@ -32,7 +32,7 @@
 
 namespace blink {
 
-PLATFORM_EXPORT String MimeTypeFromDataURL(const String& url);
+PLATFORM_EXPORT WTF::String MimeTypeFromDataURL(const WTF::String& url);
 
 }  // namespace blink
 

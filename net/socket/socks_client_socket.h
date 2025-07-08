@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #include <memory>
-#include <string>
+#include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -17,6 +17,7 @@
 #include "net/base/address_list.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
@@ -57,7 +58,6 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   bool IsConnectedAndIdle() const override;
   const NetLogWithSource& NetLog() const override;
   bool WasEverUsed() const override;
-  bool WasAlpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
   int64_t GetTotalReceivedBytes() const override;
@@ -112,7 +112,7 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   int DoHandshakeWrite();
   int DoHandshakeWriteComplete(int result);
 
-  const std::string BuildHandshakeWriteBuffer() const;
+  std::vector<uint8_t> BuildHandshakeWriteBuffer() const;
 
   // Stores the underlying socket.
   std::unique_ptr<StreamSocket> transport_socket_;
@@ -122,28 +122,22 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   // Stores the callbacks to the layer above, called on completing Connect().
   CompletionOnceCallback user_callback_;
 
-  // This IOBuffer is used by the class to read and write
-  // SOCKS handshake data. The length contains the expected size to
-  // read or write.
-  scoped_refptr<IOBuffer> handshake_buf_;
+  // This IOBuffer is used by the class to write the SOCKS client handshake.
+  scoped_refptr<DrainableIOBuffer> handshake_write_buf_;
 
-  // While writing, this buffer stores the complete write handshake data.
-  // While reading, it stores the handshake information received so far.
-  std::string buffer_;
+  // This IOBuffer is used by the class to read the SOCKS handshake data. This
+  // will be sized to exactly match the size of the expected handshake.
+  scoped_refptr<GrowableIOBuffer> handshake_read_buf_;
 
   // This becomes true when the SOCKS handshake has completed and the
   // overlying connection is free to communicate.
   bool completed_handshake_ = false;
 
-  // These contain the bytes sent / received by the SOCKS handshake.
-  size_t bytes_sent_ = 0;
-  size_t bytes_received_ = 0;
-
   // This becomes true when the socket is used to send or receive data.
   bool was_ever_used_ = false;
 
   // Used to resolve the hostname to which the SOCKS proxy will connect.
-  raw_ptr<HostResolver, DanglingUntriaged> host_resolver_;
+  raw_ptr<HostResolver> host_resolver_;
   SecureDnsPolicy secure_dns_policy_;
   std::unique_ptr<HostResolver::ResolveHostRequest> resolve_host_request_;
   const HostPortPair destination_;

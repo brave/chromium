@@ -9,10 +9,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.net.Uri;
 import android.os.Build;
+
+import androidx.annotation.NonNull;
 
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
@@ -20,12 +24,17 @@ import org.chromium.base.PackageManagerUtils;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.ChromeTabbedActivity2;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.browserservices.intents.WebappConstants;
+import org.chromium.chrome.browser.document.ChromeLauncherActivity;
+import org.chromium.chrome.browser.password_manager.CctPasswordSavingMetricsRecorderBridge;
+import org.chromium.chrome.browser.safe_browsing.SafeBrowsingBridge;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorSupplier;
+import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.external_intents.ExternalNavigationDelegate;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
@@ -33,9 +42,7 @@ import org.chromium.url.GURL;
 
 import java.util.List;
 
-/**
- * The main implementation of the {@link ExternalNavigationDelegate}.
- */
+/** The main implementation of the {@link ExternalNavigationDelegate}. */
 public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegate {
     protected final Context mApplicationContext;
     private final Tab mTab;
@@ -48,12 +55,13 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
         mTab = tab;
         mTabModelSelectorSupplier = TabModelSelectorSupplier.from(tab.getWindowAndroid());
         mApplicationContext = ContextUtils.getApplicationContext();
-        mTabObserver = new EmptyTabObserver() {
-            @Override
-            public void onDestroyed(Tab tab) {
-                mIsTabDestroyed = true;
-            }
-        };
+        mTabObserver =
+                new EmptyTabObserver() {
+                    @Override
+                    public void onDestroyed(Tab tab) {
+                        mIsTabDestroyed = true;
+                    }
+                };
         mTab.addObserver(mTabObserver);
     }
 
@@ -81,20 +89,21 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
      * or components may be enabled that provide alternative handlers for this intent before it gets
      * fired.
      *
-     * @param intent            Intent that will be fired.
-     * @param matchDefaultOnly  See {@link PackageManager#MATCH_DEFAULT_ONLY}.
-     * @return                  True if Chrome will definitely handle the intent, false otherwise.
+     * @param intent Intent that will be fired.
+     * @param matchDefaultOnly See {@link PackageManager#MATCH_DEFAULT_ONLY}.
+     * @return True if Chrome will definitely handle the intent, false otherwise.
      */
     public static boolean willChromeHandleIntent(Intent intent, boolean matchDefaultOnly) {
-        Context context = ContextUtils.getApplicationContext();
         // Early-out if the intent targets Chrome.
-        if (IntentUtils.intentTargetsSelf(context, intent)) return true;
+        if (IntentUtils.intentTargetsSelf(intent)) return true;
 
         // Fall back to the more expensive querying of Android when the intent doesn't target
         // Chrome.
-        ResolveInfo info = PackageManagerUtils.resolveActivity(
-                intent, matchDefaultOnly ? PackageManager.MATCH_DEFAULT_ONLY : 0);
-        return info != null && info.activityInfo.packageName.equals(context.getPackageName());
+        ResolveInfo info =
+                PackageManagerUtils.resolveActivity(
+                        intent, matchDefaultOnly ? PackageManager.MATCH_DEFAULT_ONLY : 0);
+        return info != null
+                && info.activityInfo.packageName.equals(BuildInfo.getInstance().hostPackageName);
     }
 
     @Override
@@ -129,7 +138,11 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
     public void closeTab() {
         if (!hasValidTab()) return;
         if (!mTabModelSelectorSupplier.hasValue()) return;
-        mTabModelSelectorSupplier.get().closeTab(mTab);
+        mTabModelSelectorSupplier
+                .get()
+                .tryCloseTab(
+                        TabClosureParams.closeTab(mTab).allowUndo(false).build(),
+                        /* allowDialog= */ false);
     }
 
     @Override
@@ -159,8 +172,8 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
         IntentWithRequestMetadataHandler.RequestMetadata metadata =
                 new IntentWithRequestMetadataHandler.RequestMetadata(
                         hasUserGesture, isRendererInitiated);
-        IntentWithRequestMetadataHandler.getInstance().onNewIntentWithRequestMetadata(
-                intent, metadata);
+        IntentWithRequestMetadataHandler.getInstance()
+                .onNewIntentWithRequestMetadata(intent, metadata);
     }
 
     @Override
@@ -205,8 +218,7 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
 
     @Override
     public boolean shouldLaunchWebApksOnInitialIntent() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                && ChromeFeatureList.sWebApkTrampolineOnInitialIntent.isEnabled();
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S;
     }
 
     @Override
@@ -224,5 +236,56 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
         // The initial navigation off of things like typed navigations or bookmarks should stay in
         // the browser.
         return true;
+    }
+
+    @Override
+    public String getSelfScheme() {
+        return IntentHandler.GOOGLECHROME_SCHEME;
+    }
+
+    @Override
+    public boolean shouldDisableAllExternalIntents() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldReturnAsActivityResult(GURL url) {
+        return false;
+    }
+
+    @Override
+    public void returnAsActivityResult(GURL url) {
+        throw new UnsupportedOperationException("Returning as activity result is not supported.");
+    }
+
+    @Override
+    public void maybeRecordExternalNavigationSchemeHistogram(GURL url) {}
+
+    @Override
+    public void notifyCctPasswordSavingRecorderOfExternalNavigation() {
+        CctPasswordSavingMetricsRecorderBridge cctSavingMetricsRecorder =
+                CctPasswordSavingMetricsRecorderBridge.KEY.retrieveDataFromHost(
+                        getWindowAndroid().getUnownedUserDataHost());
+        if (cctSavingMetricsRecorder != null) {
+            cctSavingMetricsRecorder.onExternalNavigation();
+        }
+    }
+
+    @Override
+    public void reportIntentToSafeBrowsing(Intent intent) {
+        SafeBrowsingBridge.reportIntent(mTab.getWebContents(), intent);
+    }
+
+    @Override
+    public Intent createIntentToPreventIncognitoAccess(@NonNull GURL url) {
+        if (!url.getSpec().startsWith(UrlConstants.CHROME_EXTENSIONS_URL)) {
+            return null;
+        }
+        Intent intent = new Intent(getContext(), ChromeLauncherActivity.class);
+        intent.setAction(Intent.ACTION_VIEW);
+        intent.setData(Uri.parse(url.getSpec()));
+        intent.putExtra(WebappConstants.REUSE_URL_MATCHING_TAB_ELSE_NEW_TAB, true);
+
+        return intent;
     }
 }

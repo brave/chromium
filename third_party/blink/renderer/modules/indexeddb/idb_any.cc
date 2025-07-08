@@ -28,10 +28,13 @@
 #include <memory>
 #include <utility>
 
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_binding_for_modules.h"
 #include "third_party/blink/renderer/core/dom/dom_string_list.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_cursor_with_value.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_index.h"
+#include "third_party/blink/renderer/modules/indexeddb/idb_key.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_object_store.h"
 
 namespace blink {
@@ -80,9 +83,50 @@ const Vector<std::unique_ptr<IDBValue>>& IDBAny::Values() const {
   return idb_values_;
 }
 
+const IDBRecordArray& IDBAny::Records() const {
+  CHECK_EQ(type_, kIDBRecordArrayType);
+  CHECK(idb_records_.has_value());
+  return *idb_records_;
+}
+
 int64_t IDBAny::Integer() const {
   DCHECK_EQ(type_, kIntegerType);
   return integer_;
+}
+
+v8::Local<v8::Value> IDBAny::ToV8(ScriptState* script_state) {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  switch (type_) {
+    case IDBAny::kUndefinedType:
+      return v8::Undefined(isolate);
+    case IDBAny::kNullType:
+      return v8::Null(isolate);
+    case IDBAny::kIDBCursorType:
+      return ToV8Traits<IDBCursor>::ToV8(script_state, IdbCursor());
+    case IDBAny::kIDBCursorWithValueType:
+      return ToV8Traits<IDBCursorWithValue>::ToV8(script_state,
+                                                  IdbCursorWithValue());
+    case IDBAny::kIDBDatabaseType:
+      return ToV8Traits<IDBDatabase>::ToV8(script_state, IdbDatabase());
+    case IDBAny::kIDBValueType:
+      return DeserializeIDBValue(script_state, Value());
+    case IDBAny::kIDBValueArrayType:
+      return DeserializeIDBValueArray(script_state, Values());
+    case IDBAny::kIntegerType:
+      return v8::Number::New(isolate, Integer());
+    case IDBAny::kKeyType:
+      return Key()->ToV8(script_state);
+    case IDBAny::kIDBRecordArrayType: {
+      // `IDBAny` must not convert  `idb_records_` multiple times.  `ToV8()`
+      // consumes `idb_records_`.
+      CHECK(idb_records_.has_value());
+
+      v8::Local<v8::Value> v8_value =
+          IDBRecordArray::ToV8(script_state, *std::move(idb_records_));
+      idb_records_.reset();
+      return v8_value;
+    }
+  }
 }
 
 IDBAny::IDBAny(IDBCursor* value)
@@ -103,6 +147,9 @@ IDBAny::IDBAny(std::unique_ptr<IDBKey> key)
     : type_(kKeyType), idb_key_(std::move(key)) {}
 
 IDBAny::IDBAny(int64_t value) : type_(kIntegerType), integer_(value) {}
+
+IDBAny::IDBAny(IDBRecordArray idb_records)
+    : type_(kIDBRecordArrayType), idb_records_(std::move(idb_records)) {}
 
 void IDBAny::Trace(Visitor* visitor) const {
   visitor->Trace(idb_cursor_);

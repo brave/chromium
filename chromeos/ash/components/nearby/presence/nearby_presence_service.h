@@ -10,30 +10,25 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "chromeos/ash/components/nearby/presence/enums/nearby_presence_enums.h"
+#include "chromeos/ash/services/nearby/public/cpp/nearby_process_manager.h"
 #include "chromeos/ash/services/nearby/public/mojom/nearby_presence.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/nearby/internal/proto/metadata.pb.h"
+#include "third_party/nearby/src/presence/presence_device.h"
 
 namespace ash::nearby::presence {
+
+class NearbyPresenceConnectionsManager;
 
 // This service implements Nearby Presence on top of the Nearby Presence .mojom
 // interface.
 class NearbyPresenceService {
  public:
-  using PresenceStatus = ash::nearby::presence::mojom::StatusCode;
   using PresenceIdentityType = ash::nearby::presence::mojom::IdentityType;
   using PresenceFilter = ash::nearby::presence::mojom::PresenceScanFilter;
 
   NearbyPresenceService();
   virtual ~NearbyPresenceService();
-
-  enum class IdentityType {
-    kUnspecified,
-    kPrivate,
-    kTrusted,
-    kPublic,
-    kProvisioned
-  };
 
   enum class Action {
     kActiveUnlock = 8,
@@ -47,45 +42,13 @@ class NearbyPresenceService {
     kLast
   };
 
-  // TODO(b/276642472): Move PresenceDevice into its own class and file, to
-  // inherit from the upcoming Nearby Connections Device class.
-  class PresenceDevice {
-   public:
-    PresenceDevice(::nearby::internal::DeviceType device_type,
-                   absl::optional<std::string> stable_device_id,
-                   std::string endpoint_id,
-                   std::string device_name,
-                   std::vector<Action> actions,
-                   int rssi);
-    PresenceDevice(const PresenceDevice&) = delete;
-    PresenceDevice& operator=(const PresenceDevice&) = delete;
-    ~PresenceDevice();
-
-    ::nearby::internal::DeviceType GetType() const { return device_type_; }
-
-    const absl::optional<std::string> GetStableId() const {
-      return stable_device_id_;
-    }
-    const std::string& GetEndpointId() const { return endpoint_id_; }
-    const std::string& GetName() const { return device_name_; }
-    const std::vector<Action> GetActions() const { return actions_; }
-    int GetRssi() const { return rssi_; }
-
-   private:
-    ::nearby::internal::DeviceType device_type_;
-    absl::optional<std::string> stable_device_id_;
-    std::string endpoint_id_;
-    std::string device_name_;
-    std::vector<Action> actions_;
-    int rssi_;
-  };
-
   struct ScanFilter {
-    ScanFilter(IdentityType identity_type, const std::vector<Action>& actions);
+    ScanFilter(::nearby::internal::IdentityType identity_type,
+               const std::vector<Action>& actions);
     ScanFilter(const ScanFilter&);
     ~ScanFilter();
 
-    IdentityType identity_type_;
+    ::nearby::internal::IdentityType identity_type_;
     std::vector<Action> actions_;
   };
 
@@ -95,11 +58,11 @@ class NearbyPresenceService {
     virtual ~ScanDelegate();
 
     virtual void OnPresenceDeviceFound(
-        const PresenceDevice& presence_device) = 0;
+        ::nearby::presence::PresenceDevice presence_device) = 0;
     virtual void OnPresenceDeviceChanged(
-        const PresenceDevice& presence_device) = 0;
+        ::nearby::presence::PresenceDevice presence_device) = 0;
     virtual void OnPresenceDeviceLost(
-        const PresenceDevice& presence_device) = 0;
+        ::nearby::presence::PresenceDevice presence_device) = 0;
     virtual void OnScanSessionInvalidated() = 0;
   };
 
@@ -118,11 +81,27 @@ class NearbyPresenceService {
   virtual void StartScan(
       ScanFilter scan_filter,
       ScanDelegate* scan_delegate,
-      base::OnceCallback<void(std::unique_ptr<ScanSession>, PresenceStatus)>
+      base::OnceCallback<void(std::unique_ptr<ScanSession>, enums::StatusCode)>
           on_start_scan_callback) = 0;
 
-  virtual void Initialize() = 0;
+  virtual void Initialize(base::OnceClosure on_initialized_callback) = 0;
+
+  // Triggers an immediate request to update Nearby Presence credentials, which
+  // involves:
+  //     1. Fetching the local device's credentials from the NP library and
+  ///       uploading them to the NP server.
+  //     2. Downloading remote devices' credentials from the NP server and
+  //        saving them to the NP library.
+  virtual void UpdateCredentials() = 0;
+
+  virtual std::unique_ptr<NearbyPresenceConnectionsManager>
+  CreateNearbyPresenceConnectionsManager() = 0;
 };
+
+// TODO(b/342473553): Migrate this function and implementation to
+// //chromeos/ash/components/nearby/presence/enums.
+std::ostream& operator<<(std::ostream& stream,
+                         const enums::StatusCode status_code);
 
 }  // namespace ash::nearby::presence
 

@@ -6,18 +6,16 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "media/capture/video/video_capture_device_info.h"
 #include "third_party/decklink/mac/include/DeckLinkAPI.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -53,6 +51,8 @@ class DeckLinkCaptureDelegate
     : public IDeckLinkInputCallback,
       public base::RefCountedThreadSafe<DeckLinkCaptureDelegate> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   DeckLinkCaptureDelegate(
       const media::VideoCaptureDeviceDescriptor& device_descriptor,
       media::VideoCaptureDeviceDeckLinkMac* frame_receiver);
@@ -315,8 +315,9 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
 HRESULT DeckLinkCaptureDelegate::QueryInterface(REFIID iid, void** ppv) {
   DCHECK(thread_checker_.CalledOnValidThread());
   CFUUIDBytes iunknown = CFUUIDGetUUIDBytes(IUnknownUUID);
-  if (memcmp(&iid, &iunknown, sizeof(REFIID)) == 0 ||
-      memcmp(&iid, &IID_IDeckLinkInputCallback, sizeof(REFIID)) == 0) {
+  if (UNSAFE_TODO(memcmp(&iid, &iunknown, sizeof(REFIID))) == 0 ||
+      UNSAFE_TODO(memcmp(&iid, &IID_IDeckLinkInputCallback, sizeof(REFIID))) ==
+          0) {
     *ppv = static_cast<IDeckLinkInputCallback*>(this);
     AddRef();
     return S_OK;
@@ -442,7 +443,8 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDevices(
 VideoCaptureDeviceDeckLinkMac::VideoCaptureDeviceDeckLinkMac(
     const VideoCaptureDeviceDescriptor& device_descriptor)
     : decklink_capture_delegate_(
-          new DeckLinkCaptureDelegate(device_descriptor, this)) {}
+          base::MakeRefCounted<DeckLinkCaptureDelegate>(device_descriptor,
+                                                        this)) {}
 
 VideoCaptureDeviceDeckLinkMac::~VideoCaptureDeviceDeckLinkMac() {
   decklink_capture_delegate_->ResetVideoCaptureDeviceReference();
@@ -461,7 +463,9 @@ void VideoCaptureDeviceDeckLinkMac::OnIncomingCapturedData(
   if (!client_)
     return;
   client_->OnIncomingCapturedData(data, length, frame_format, color_space,
-                                  rotation, flip_y, reference_time, timestamp);
+                                  rotation, flip_y, reference_time, timestamp,
+                                  /*capture_begin_timestamp=*/std::nullopt,
+                                  /*metadata=*/std::nullopt);
 }
 
 void VideoCaptureDeviceDeckLinkMac::SendErrorString(

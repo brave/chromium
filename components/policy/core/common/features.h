@@ -6,49 +6,26 @@
 #define COMPONENTS_POLICY_CORE_COMMON_FEATURES_H_
 
 #include "base/feature_list.h"
-#include "base/metrics/field_trial_params.h"
-#include "base/time/time.h"
-#include "build/build_config.h"
 #include "components/policy/policy_export.h"
 
-namespace policy {
-namespace features {
+namespace policy::features {
 
-// Enable detection/upload Crowdstrike Agent signals with security
-// events.
-POLICY_EXPORT BASE_DECLARE_FEATURE(kCrowdstrikeSignalReporting);
+// Enable the PolicyBlocklistThrottle optimization to hide the DEFER latency
+// on WillStartRequest and WillRedirectRequest. See https://crbug.com/349964973.
+// This is launched, but the feature flag will be kept in 2025 for monitoring.
+POLICY_EXPORT BASE_DECLARE_FEATURE(kPolicyBlocklistProceedUntilResponse);
 
-// Enable the UserCloudSigninRestrictionPolicyFetcher to get the
-// ManagedAccountsSigninRestriction policy for a dasher account.
-POLICY_EXPORT
-BASE_DECLARE_FEATURE(kEnableUserCloudSigninRestrictionPolicyFetcher);
-
-// Enable the policy test page at chrome://policy/test.
-POLICY_EXPORT BASE_DECLARE_FEATURE(kEnablePolicyTestPage);
-
-#if BUILDFLAG(IS_ANDROID)
-// Enable comma-separated strings for list policies on Android.
-// Enabled by default, to be used as a kill switch.
+// Enables the fact that the ProfileSeparationDomainExceptionList retroactively
+// signs out accounts that require a new profile. This is used as a kill switch.
 POLICY_EXPORT BASE_DECLARE_FEATURE(
-    kListPoliciesAcceptCommaSeparatedStringsAndroid);
+    kProfileSeparationDomainExceptionListRetroactive);
 
-// Enable logging and chrome://policy/logs page on Android.
-POLICY_EXPORT BASE_DECLARE_FEATURE(kPolicyLogsPageAndroid);
+// Enables the addition of new security fields for SecOps.
+POLICY_EXPORT BASE_DECLARE_FEATURE(kEnhancedSecurityEventFields);
 
-// Enable SafeSitesFilterBehavior policy on Android.
-POLICY_EXPORT BASE_DECLARE_FEATURE(kSafeSitesFilterBehaviorPolicyAndroid);
-#endif  // BUILDFLAG(IS_ANDROID)
+// Controls if we can use the cec flag in PolicyData.
+POLICY_EXPORT BASE_DECLARE_FEATURE(kUseCECFlagInPolicyData);
 
-#if BUILDFLAG(IS_IOS)
-// Enable logging and chrome://policy/logs page on IOS.
-POLICY_EXPORT BASE_DECLARE_FEATURE(kPolicyLogsPageIOS);
-#endif  // BUILDFLAG(IS_IOS)
-
-#if !BUILDFLAG(IS_IOS) || !BUILDFLAG(IS_ANDROID)
-POLICY_EXPORT BASE_DECLARE_FEATURE(kPolicyLogsPageDesktop);
-#endif  // !BUILDFLAG(IS_IOS) || !!BUILDFLAG(IS_ANDROID)
-
-}  // namespace features
-}  // namespace policy
+}  // namespace policy::features
 
 #endif  // COMPONENTS_POLICY_CORE_COMMON_FEATURES_H_

@@ -15,6 +15,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/ostream_operators.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -22,6 +23,7 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
+#include "net/base/cache_type.h"
 
 namespace {
 
@@ -33,9 +35,15 @@ const int kMaxOldFolders = 100;
 base::FilePath GetPrefixedName(const base::FilePath& path,
                                const base::SafeBaseName& basename,
                                int index) {
-  const base::FilePath::StringType filename =
-      base::StringPrintf(FILE_PATH_LITERAL("old_%" PRFilePath "_%03d"),
-                         basename.path().value().c_str(), index);
+  const std::string index_str = base::StringPrintf("_%03d", index);
+  const base::FilePath::StringType filename = base::StrCat({
+    FILE_PATH_LITERAL("old_"), basename.path().value(),
+#if BUILDFLAG(IS_WIN)
+        base::ASCIIToWide(index_str)
+#else
+        index_str
+#endif
+  });
   return path.Append(filename);
 }
 
@@ -52,7 +60,7 @@ base::FilePath GetTempCacheName(const base::FilePath& dirname,
 
 void CleanupTemporaryDirectories(const base::FilePath& path) {
   const base::FilePath dirname = path.DirName();
-  const absl::optional<base::SafeBaseName> basename =
+  const std::optional<base::SafeBaseName> basename =
       base::SafeBaseName::Create(path);
   if (!basename.has_value()) {
     return;
@@ -65,7 +73,7 @@ void CleanupTemporaryDirectories(const base::FilePath& path) {
 
 bool MoveDirectoryToTemporaryDirectory(const base::FilePath& path) {
   const base::FilePath dirname = path.DirName();
-  const absl::optional<base::SafeBaseName> basename =
+  const std::optional<base::SafeBaseName> basename =
       base::SafeBaseName::Create(path);
   if (!basename.has_value()) {
     return false;
@@ -127,8 +135,8 @@ namespace disk_cache {
 
 const int kDefaultCacheSize = 80 * 1024 * 1024;
 
-BASE_FEATURE(kChangeDiskCacheSizeExperiment,
-             "ChangeDiskCacheSize",
+BASE_FEATURE(kChangeGeneratedCodeCacheSizeExperiment,
+             "ChangeGeneratedCodeCacheSize",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 void DeleteCache(const base::FilePath& path, bool remove_folder) {
@@ -175,12 +183,20 @@ int PreferredCacheSize(int64_t available, net::CacheType type) {
   // use 100% of the default size.
   int percent_relative_size = 100;
 
+// See go/change-disk-cache-size-results-2024 for an explanation of why the
+// size varies by platform.
+#if !BUILDFLAG(IS_WIN)
+  if (type == net::DISK_CACHE) {
+    percent_relative_size = 400;
+  }
+#endif
+
   if (base::FeatureList::IsEnabled(
-          disk_cache::kChangeDiskCacheSizeExperiment) &&
-      type == net::DISK_CACHE) {
+          disk_cache::kChangeGeneratedCodeCacheSizeExperiment) &&
+      type == net::GENERATED_BYTE_CODE_CACHE) {
     percent_relative_size = base::GetFieldTrialParamByFeatureAsInt(
-        disk_cache::kChangeDiskCacheSizeExperiment, "percent_relative_size",
-        100 /* default value */);
+        disk_cache::kChangeGeneratedCodeCacheSizeExperiment,
+        "percent_relative_size", 400 /* default value */);
   }
 
   // Cap scaling, as a safety check, to avoid overflow.

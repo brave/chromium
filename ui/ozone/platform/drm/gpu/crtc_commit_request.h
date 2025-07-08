@@ -44,6 +44,14 @@ class CrtcCommitRequest {
       uint32_t connector_id,
       HardwareDisplayPlaneList* plane_list = nullptr);
 
+  static CrtcCommitRequest DetachPlanesRequest(
+      uint32_t crtc_id,
+      uint32_t connector_id,
+      drmModeModeInfo mode,
+      gfx::Point origin,
+      HardwareDisplayPlaneList* plane_list,
+      bool enable_vrr);
+
   bool should_enable_crtc() const { return should_enable_crtc_; }
   uint32_t crtc_id() const { return crtc_id_; }
   uint32_t connector_id() const { return connector_id_; }
@@ -66,12 +74,21 @@ class CrtcCommitRequest {
                     bool enable_vrr,
                     bool should_enable_crtc);
 
+  // For requests without any overlays, such as DetachPlanesRequest().
+  CrtcCommitRequest(uint32_t crtc_id,
+                    uint32_t connector_id,
+                    drmModeModeInfo mode,
+                    gfx::Point origin,
+                    HardwareDisplayPlaneList* plane_list,
+                    bool enable_vrr,
+                    bool should_enable_crtc);
+
   const bool should_enable_crtc_ = false;
   const uint32_t crtc_id_ = 0;
   const uint32_t connector_id_ = 0;
   const drmModeModeInfo mode_ = {};
   const gfx::Point origin_;
-  raw_ptr<HardwareDisplayPlaneList, ExperimentalAsh> plane_list_ = nullptr;
+  raw_ptr<HardwareDisplayPlaneList, DanglingUntriaged> plane_list_ = nullptr;
   const DrmOverlayPlaneList overlays_;
   const bool enable_vrr_ = false;
 };

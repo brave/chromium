@@ -5,7 +5,7 @@
 #include "media/gpu/vp8_decoder.h"
 
 #include "base/logging.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "media/base/limits.h"
 #include "ui/gfx/hdr_metadata.h"
 
@@ -34,8 +34,9 @@ bool VP8Decoder::Flush() {
 }
 
 void VP8Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
-  const uint8_t* ptr = decoder_buffer.data();
-  const size_t size = decoder_buffer.data_size();
+  auto decoder_buffer_span = base::span(decoder_buffer);
+  const uint8_t* ptr = decoder_buffer_span.data();
+  const size_t size = decoder_buffer_span.size();
   const DecryptConfig* decrypt_config = decoder_buffer.decrypt_config();
 
   DCHECK(ptr);
@@ -69,7 +70,7 @@ VP8Decoder::DecodeResult VP8Decoder::Decode() {
     return kRanOutOfStreamData;
 
   if (!curr_frame_hdr_) {
-    curr_frame_hdr_.reset(new Vp8FrameHeader());
+    curr_frame_hdr_ = std::make_unique<Vp8FrameHeader>();
     if (!parser_.ParseFrame(curr_frame_start_, frame_size_,
                             curr_frame_hdr_.get())) {
       DVLOG(1) << "Error during decode";
@@ -199,9 +200,9 @@ VideoColorSpace VP8Decoder::GetVideoColorSpace() const {
   return VideoColorSpace();
 }
 
-absl::optional<gfx::HDRMetadata> VP8Decoder::GetHDRMetadata() const {
+std::optional<gfx::HDRMetadata> VP8Decoder::GetHDRMetadata() const {
   // VP8 doesn't support HDR metadata.
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 size_t VP8Decoder::GetRequiredNumOfPictures() const {

@@ -23,13 +23,13 @@ class OmniboxHeaderView;
 //  - Clicking the header doesn't navigate to the match.
 //  - It's the header for multiple matches, it's just painted above this row.
 class OmniboxRowView : public views::View {
+  METADATA_HEADER(OmniboxRowView, views::View)
+
  public:
-  METADATA_HEADER(OmniboxRowView);
   OmniboxRowView(size_t line, OmniboxPopupViewViews* popup_view);
 
   // Sets the header that appears above this row. Also shows the header.
-  void ShowHeader(const std::u16string& header_text,
-                  bool suggestion_group_hidden);
+  void ShowHeader(const std::u16string& header_text);
 
   // Hides the header.
   void HideHeader();
@@ -51,9 +51,6 @@ class OmniboxRowView : public views::View {
   gfx::Insets GetInsets() const override;
 
  private:
-  // Line number of this row.
-  const size_t line_;
-
   // Non-owning pointer to the popup view for this row. This is never nullptr.
   const raw_ptr<OmniboxPopupViewViews> popup_view_;
 

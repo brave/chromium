@@ -18,27 +18,7 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
-
-// Returns the NSImageRep whose pixel size most closely matches |desired_size|.
-NSImageRep* GetNSImageRepWithPixelSize(NSImage* image,
-                                       NSSize desired_size) {
-  float smallest_diff = std::numeric_limits<float>::max();
-  NSImageRep* closest_match = nil;
-  for (NSImageRep* image_rep in image.representations) {
-    float diff = std::abs(desired_size.width - image_rep.pixelsWide) +
-                 std::abs(desired_size.height - image_rep.pixelsHigh);
-    if (diff < smallest_diff) {
-      smallest_diff = diff;
-      closest_match = image_rep;
-    }
-  }
-  return closest_match;
-}
 
 // Returns true if the NSImage has no representations.
 bool IsNSImageEmpty(NSImage* image) {
@@ -68,14 +48,17 @@ gfx::ImageSkia ImageSkiaFromResizedNSImage(NSImage* image,
       ui::GetSupportedResourceScaleFactors();
   for (const auto resource_scale : supported_scales) {
     const float scale = ui::GetScaleForResourceScaleFactor(resource_scale);
+    NSAffineTransform* transform = [NSAffineTransform transform];
+    [transform scaleBy:scale];
+    NSDictionary<NSImageHintKey, id>* hints = @{NSImageHintCTM : transform};
+    NSImageRep* best_match =
+        [image bestRepresentationForRect:{NSZeroPoint, desired_size}
+                                 context:NULL
+                                   hints:hints];
     NSSize desired_size_for_scale =
         NSMakeSize(desired_size.width * scale, desired_size.height * scale);
-    NSImageRep* ns_image_rep = GetNSImageRepWithPixelSize(image,
-        desired_size_for_scale);
-
-    SkBitmap bitmap(skia::NSImageRepToSkBitmapWithColorSpace(
-        ns_image_rep, desired_size_for_scale, false,
-        base::mac::GetSRGBColorSpace()));
+    SkBitmap bitmap(
+        skia::NSImageRepToSkBitmap(best_match, desired_size_for_scale, false));
     if (bitmap.isNull())
       continue;
 
@@ -85,12 +68,6 @@ gfx::ImageSkia ImageSkiaFromResizedNSImage(NSImage* image,
 }
 
 NSImage* NSImageFromImageSkia(const gfx::ImageSkia& image_skia) {
-  return NSImageFromImageSkiaWithColorSpace(image_skia,
-                                            base::mac::GetSRGBColorSpace());
-}
-
-NSImage* NSImageFromImageSkiaWithColorSpace(const gfx::ImageSkia& image_skia,
-                                            CGColorSpaceRef color_space) {
   if (image_skia.isNull())
     return nil;
 
@@ -98,8 +75,7 @@ NSImage* NSImageFromImageSkiaWithColorSpace(const gfx::ImageSkia& image_skia,
   image_skia.EnsureRepsForSupportedScales();
   std::vector<gfx::ImageSkiaRep> image_reps = image_skia.image_reps();
   for (const auto& rep : image_reps) {
-    [image addRepresentation:skia::SkBitmapToNSBitmapImageRepWithColorSpace(
-                                 rep.GetBitmap(), color_space)];
+    [image addRepresentation:skia::SkBitmapToNSBitmapImageRep(rep.GetBitmap())];
   }
 
   image.size = NSMakeSize(image_skia.width(), image_skia.height());

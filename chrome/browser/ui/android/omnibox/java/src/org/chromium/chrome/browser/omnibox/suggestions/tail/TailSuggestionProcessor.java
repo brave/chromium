@@ -6,20 +6,22 @@ package org.chromium.chrome.browser.omnibox.suggestions.tail;
 
 import android.content.Context;
 
-import androidx.annotation.Nullable;
-
-import org.chromium.chrome.browser.omnibox.R;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.omnibox.styles.SuggestionSpannable;
 import org.chromium.chrome.browser.omnibox.suggestions.SuggestionHost;
 import org.chromium.chrome.browser.omnibox.suggestions.base.BaseSuggestionViewProcessor;
-import org.chromium.chrome.browser.omnibox.suggestions.base.SuggestionDrawableState;
-import org.chromium.chrome.browser.omnibox.suggestions.base.SuggestionSpannable;
+import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.omnibox.suggestions.OmniboxSuggestionUiType;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.modelutil.PropertyModel;
 
+import java.util.Optional;
+
 /** A class that handles model and view creation for the tail suggestions. */
+@NullMarked
 public class TailSuggestionProcessor extends BaseSuggestionViewProcessor {
     private final boolean mAlignTailSuggestions;
     private @Nullable AlignmentManager mAlignmentManager;
@@ -29,7 +31,7 @@ public class TailSuggestionProcessor extends BaseSuggestionViewProcessor {
      * @param suggestionHost A handle to the object using the suggestions.
      */
     public TailSuggestionProcessor(Context context, SuggestionHost suggestionHost) {
-        super(context, suggestionHost, null);
+        super(context, suggestionHost, Optional.empty());
         mAlignTailSuggestions = DeviceFormFactor.isNonMultiDisplayContextOnTablet(context);
     }
 
@@ -49,8 +51,12 @@ public class TailSuggestionProcessor extends BaseSuggestionViewProcessor {
     }
 
     @Override
-    public void populateModel(AutocompleteMatch suggestion, PropertyModel model, int position) {
-        super.populateModel(suggestion, model, position);
+    public void populateModel(
+            AutocompleteInput input,
+            AutocompleteMatch suggestion,
+            PropertyModel model,
+            int position) {
+        super.populateModel(input, suggestion, model, position);
 
         model.set(TailSuggestionViewProperties.ALIGNMENT_MANAGER, mAlignmentManager);
         model.set(TailSuggestionViewProperties.FILL_INTO_EDIT, suggestion.getFillIntoEdit());
@@ -60,12 +66,7 @@ public class TailSuggestionProcessor extends BaseSuggestionViewProcessor {
         applyHighlightToMatchRegions(text, suggestion.getDisplayTextClassifications());
         model.set(TailSuggestionViewProperties.TEXT, text);
 
-        setSuggestionDrawableState(model,
-                SuggestionDrawableState.Builder
-                        .forDrawableRes(mContext, R.drawable.ic_suggestion_magnifier)
-                        .setAllowTint(true)
-                        .build());
-        setTabSwitchOrRefineAction(model, suggestion, position);
+        setTabSwitchOrRefineAction(model, input, suggestion, position);
     }
 
     @Override

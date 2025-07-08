@@ -6,8 +6,9 @@ import {ModuleDescriptor} from 'chrome://new-tab-page/lazy_load.js';
 import {WindowProxy} from 'chrome://new-tab-page/new_tab_page.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals} from 'chrome://webui-test/chai_assert.js';
-import {fakeMetricsPrivate, MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
-import {TestMock} from 'chrome://webui-test/test_mock.js';
+import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
+import {fakeMetricsPrivate} from 'chrome://webui-test/metrics_test_support.js';
+import type {TestMock} from 'chrome://webui-test/test_mock.js';
 
 import {createElement, initNullModule, installMock} from '../test_support.js';
 
@@ -24,29 +25,38 @@ suite('NewTabPageModulesModuleDescriptorTest', () => {
     windowProxy = installMock(WindowProxy);
   });
 
-  test('instantiate module with data', async () => {
-    // Arrange.
-    const element = createElement();
-    const moduleDescriptor = new ModuleDescriptor('foo', () => {
-      // Move time forward to simulate delay instantiating module.
-      windowProxy.setResultFor('now', 128);
-      return Promise.resolve(element);
+  [true, false].forEach((onNtpLoad: boolean) => {
+    test(`module with data instantiated on ntp load ${onNtpLoad}`, async () => {
+      // Arrange.
+      const element = createElement();
+      const moduleDescriptor = new ModuleDescriptor('foo', () => {
+        // Move time forward to simulate delay instantiating module.
+        windowProxy.setResultFor('now', 128);
+        return Promise.resolve(element);
+      });
+      windowProxy.setResultFor('now', 123);
+
+      // Act.
+      const moduleElement = await moduleDescriptor.initialize(0, onNtpLoad);
+
+      // Assert.
+      assertEquals(element, moduleElement);
+      assertEquals(1, metrics.count('NewTabPage.Modules.Loaded'));
+      assertEquals(1, metrics.count('NewTabPage.Modules.Loaded', 128));
+      assertEquals(1, metrics.count('NewTabPage.Modules.Loaded.foo'));
+      assertEquals(1, metrics.count('NewTabPage.Modules.Loaded.foo', 128));
+      assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration'));
+      assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration', 5));
+      assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration.foo'));
+      assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration.foo', 5));
+
+      const histogramBase = onNtpLoad ? 'NewTabPage.Modules.LoadedOnNTPLoad' :
+                                        'NewTabPage.Modules.LoadedAfterNTPLoad';
+      assertEquals(1, metrics.count(`${histogramBase}`));
+      assertEquals(1, metrics.count(`${histogramBase}`, 128));
+      assertEquals(1, metrics.count(`${histogramBase}.foo`));
+      assertEquals(1, metrics.count(`${histogramBase}.foo`, 128));
     });
-    windowProxy.setResultFor('now', 123);
-
-    // Act.
-    const moduleElement = await moduleDescriptor.initialize(0);
-
-    // Assert.
-    assertEquals(element, moduleElement);
-    assertEquals(1, metrics.count('NewTabPage.Modules.Loaded'));
-    assertEquals(1, metrics.count('NewTabPage.Modules.Loaded', 128));
-    assertEquals(1, metrics.count('NewTabPage.Modules.Loaded.foo'));
-    assertEquals(1, metrics.count('NewTabPage.Modules.Loaded.foo', 128));
-    assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration'));
-    assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration', 5));
-    assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration.foo'));
-    assertEquals(1, metrics.count('NewTabPage.Modules.LoadDuration.foo', 5));
   });
 
   test('instantiate module without data', async () => {
@@ -60,6 +70,8 @@ suite('NewTabPageModulesModuleDescriptorTest', () => {
     assertEquals(null, moduleElement);
     assertEquals(0, metrics.count('NewTabPage.Modules.Loaded'));
     assertEquals(0, metrics.count('NewTabPage.Modules.Loaded.foo'));
+    assertEquals(0, metrics.count('NewTabPage.Modules.LoadedOnNTPLoad'));
+    assertEquals(0, metrics.count('NewTabPage.Modules.LoadedAfterNTPLoad'));
     assertEquals(0, metrics.count('NewTabPage.Modules.LoadDuration'));
     assertEquals(0, metrics.count('NewTabPage.Modules.LoadDuration.foo'));
   });

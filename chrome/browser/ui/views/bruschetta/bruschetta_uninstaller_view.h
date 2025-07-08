@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_BRUSCHETTA_BRUSCHETTA_UNINSTALLER_VIEW_H_
 
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/guest_os/guest_id.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
@@ -24,9 +25,9 @@ class Profile;
 // The Bruschetta uninstaller. Provides a warning to the user and
 // uninstalls Bruschetta if the user chooses to do so.
 class BruschettaUninstallerView : public views::BubbleDialogDelegateView {
- public:
-  METADATA_HEADER(BruschettaUninstallerView);
+  METADATA_HEADER(BruschettaUninstallerView, views::BubbleDialogDelegateView)
 
+ public:
   BruschettaUninstallerView(const BruschettaUninstallerView&) = delete;
   BruschettaUninstallerView& operator=(const BruschettaUninstallerView&) =
       delete;
@@ -42,6 +43,10 @@ class BruschettaUninstallerView : public views::BubbleDialogDelegateView {
     destructor_callback_for_testing_.ReplaceClosure(std::move(callback));
   }
 
+ protected:
+  // WidgetDelegate overrides
+  void OnWidgetInitialized() override;
+
  private:
   enum class State {
     PROMPT,  // Prompting the user to allow uninstallation.
@@ -53,7 +58,7 @@ class BruschettaUninstallerView : public views::BubbleDialogDelegateView {
                                      guest_os::GuestId guest_id);
   ~BruschettaUninstallerView() override;
 
-  void HandleError(const std::u16string& error_message);
+  void HandleError();
   void UninstallBruschettaFinished(bool success);
 
   State state_ = State::PROMPT;

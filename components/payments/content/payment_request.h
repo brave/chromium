@@ -32,13 +32,7 @@ class RenderFrameHost;
 
 namespace payments {
 class ContentPaymentRequestDelegate;
-
-enum class SPCTransactionMode {
-  NONE,
-  AUTOACCEPT,
-  AUTOREJECT,
-  AUTOOPTOUT,
-};
+enum class SPCTransactionMode;
 
 // This class manages the interaction between the renderer (through the
 // PaymentRequestClient and Mojo stub implementation) and the desktop Payment UI
@@ -78,7 +72,7 @@ class PaymentRequest : public content::DocumentService<mojom::PaymentRequest>,
     virtual void OnCompleteCalled() {}
 
    protected:
-    virtual ~ObserverForTest() {}
+    virtual ~ObserverForTest() = default;
   };
 
   PaymentRequest(std::unique_ptr<ContentPaymentRequestDelegate> delegate,
@@ -287,6 +281,11 @@ class PaymentRequest : public content::DocumentService<mojom::PaymentRequest>,
   // If not empty, use this error message for rejecting
   // PaymentRequest.show().
   std::string reject_show_error_message_;
+
+  // Whether the PaymentRequest.show() was successfully invoked without a user
+  // activation. Used to record the activationless show JourneyLogger event only
+  // if UI was shown.
+  bool is_activationless_show_ = false;
 
   base::WeakPtrFactory<PaymentRequest> weak_ptr_factory_{this};
 };

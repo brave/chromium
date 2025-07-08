@@ -5,6 +5,8 @@
 #include "components/supervised_user/core/browser/supervised_user_interstitial.h"
 
 #include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "base/functional/bind.h"
@@ -19,7 +21,9 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/prefs/pref_service.h"
+#include "components/supervised_user/core/browser/supervised_user_error_page.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
+#include "components/supervised_user/core/browser/supervised_user_utils.h"
 #include "components/supervised_user/core/browser/web_content_handler.h"
 #include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/pref_names.h"
@@ -38,7 +42,7 @@ std::unique_ptr<SupervisedUserInterstitial> SupervisedUserInterstitial::Create(
   std::unique_ptr<SupervisedUserInterstitial> interstitial =
       base::WrapUnique(new SupervisedUserInterstitial(
           std::move(web_content_handler), supervised_user_service, url,
-          supervised_user_name));
+          supervised_user_name, reason));
 
   interstitial->web_content_handler()->CleanUpInfoBarOnMainFrame();
   // Caller is responsible for deleting the interstitial.
@@ -49,45 +53,47 @@ SupervisedUserInterstitial::SupervisedUserInterstitial(
     std::unique_ptr<WebContentHandler> web_content_handler,
     SupervisedUserService& supervised_user_service,
     const GURL& url,
-    const std::u16string& supervised_user_name)
+    const std::u16string& supervised_user_name,
+    FilteringBehaviorReason reason)
     : supervised_user_service_(supervised_user_service),
       web_content_handler_(std::move(web_content_handler)),
       url_(url),
-      supervised_user_name_(supervised_user_name) {}
+      supervised_user_name_(supervised_user_name),
+      filtering_behavior_reason_(reason) {
+  CHECK(supervised_user_service.GetURLFilter());
+  url_formatter_ = std::make_unique<UrlFormatter>(
+      *supervised_user_service.GetURLFilter(), reason);
+}
 
-SupervisedUserInterstitial::~SupervisedUserInterstitial() = default;
+SupervisedUserInterstitial::~SupervisedUserInterstitial() {
+  web_content_handler_->MaybeCloseLocalApproval();
+}
+
+#if BUILDFLAG(IS_ANDROID)
+// static
+std::string SupervisedUserInterstitial::GetHTMLContentsWithoutApprovals(
+    const GURL& url,
+    const std::string& application_locale) {
+  return BuildErrorPageHtmlWithoutApprovals(url, application_locale);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 // static
-std::string SupervisedUserInterstitial::GetHTMLContents(
+std::string SupervisedUserInterstitial::GetHTMLContentsWithApprovals(
     SupervisedUserService* supervised_user_service,
     PrefService* pref_service,
     FilteringBehaviorReason reason,
     bool already_sent_request,
     bool is_main_frame,
-    const std::string& application_locale) {
-  std::string custodian = supervised_user_service->GetCustodianName();
-  std::string second_custodian =
-      supervised_user_service->GetSecondCustodianName();
-  std::string custodian_email =
-      supervised_user_service->GetCustodianEmailAddress();
-  std::string second_custodian_email =
-      supervised_user_service->GetSecondCustodianEmailAddress();
-  std::string profile_image_url =
-      pref_service->GetString(prefs::kSupervisedUserCustodianProfileImageURL);
-  std::string profile_image_url2 = pref_service->GetString(
-      prefs::kSupervisedUserSecondCustodianProfileImageURL);
-
+    const std::string& application_locale,
+    std::optional<float> ios_font_size_multiplier) {
   bool allow_access_requests =
       supervised_user_service->remote_web_approvals_manager()
           .AreApprovalRequestsEnabled();
-
-  bool show_banner =
-      supervised_user_service->ShouldShowFirstTimeInterstitialBanner();
-
-  return BuildErrorPageHtml(
-      allow_access_requests, profile_image_url, profile_image_url2, custodian,
-      custodian_email, second_custodian, second_custodian_email, reason,
-      application_locale, already_sent_request, is_main_frame, show_banner);
+  return BuildErrorPageHtmlWithApprovals(
+      allow_access_requests, supervised_user_service->GetCustodian(),
+      supervised_user_service->GetSecondCustodian(), reason, application_locale,
+      already_sent_request, is_main_frame, ios_font_size_multiplier);
 }
 
 void SupervisedUserInterstitial::GoBack() {
@@ -104,7 +110,7 @@ void SupervisedUserInterstitial::RequestUrlAccessRemote(
   OutputRequestPermissionSourceMetric();
 
   supervised_user_service_->remote_web_approvals_manager().RequestApproval(
-      url_, std::move(callback));
+      url_, *url_formatter_.get(), std::move(callback));
 }
 
 void SupervisedUserInterstitial::RequestUrlAccessLocal(
@@ -117,9 +123,19 @@ void SupervisedUserInterstitial::RequestUrlAccessLocal(
   DLOG_IF(WARNING, supervised_user_name_.empty())
       << "Supervised user name for local web approval request should not be "
          "empty";
-  web_content_handler_->RequestLocalApproval(url_, supervised_user_name_,
-                                             std::move(callback));
+  web_content_handler_->RequestLocalApproval(
+      url_, supervised_user_name_, *url_formatter_.get(),
+      filtering_behavior_reason_, std::move(callback));
 }
+
+#if BUILDFLAG(IS_ANDROID)
+void SupervisedUserInterstitial::LearnMore(base::OnceClosure open_help_page) {
+  web_content_handler_->LearnMore(std::move(open_help_page));
+  UMA_HISTOGRAM_ENUMERATION(kInterstitialCommandHistogramName,
+                            Commands::LEARN_MORE,
+                            Commands::HISTOGRAM_BOUNDING_VALUE);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 void SupervisedUserInterstitial::OutputRequestPermissionSourceMetric() {
   RequestPermissionSource source;

@@ -5,11 +5,13 @@
 #ifndef IOS_WEB_WEB_STATE_WEB_STATE_IMPL_SERIALIZED_DATA_H_
 #define IOS_WEB_WEB_STATE_WEB_STATE_IMPL_SERIALIZED_DATA_H_
 
+#import "base/memory/raw_ptr.h"
 #import "ios/web/public/favicon/favicon_status.h"
 #import "ios/web/web_state/web_state_impl.h"
 
 namespace web {
 namespace proto {
+class WebStateStorage;
 class WebStateMetadataStorage;
 }  // namespace proto
 
@@ -31,7 +33,7 @@ class WebStateImpl::SerializedData {
   SerializedData(WebStateImpl* owner,
                  BrowserState* browser_state,
                  NSString* stable_identifier,
-                 SessionID unique_identifier,
+                 WebStateID unique_identifier,
                  proto::WebStateMetadataStorage metadata,
                  WebStateStorageLoader storage_loader,
                  NativeSessionFetcher session_fetcher);
@@ -49,12 +51,15 @@ class WebStateImpl::SerializedData {
 
   // Getter and setter for the CRWSessionStorage; only available when the
   // session serialization optimisation feature is disabled.
-  // TODO(crbug.com/1383087): remove once the feature is fully launched.
+  // TODO(crbug.com/40245950): remove once the feature is fully launched.
   CRWSessionStorage* GetSessionStorage() const;
   void SetSessionStorage(CRWSessionStorage* storage);
 
-  // Returns the callback used to load the complete data from disk.
-  WebStateStorageLoader TakeStorageLoader();
+  // Serializes the metadata to `storage`.
+  void SerializeMetadataToProto(proto::WebStateMetadataStorage& storage) const;
+
+  // Loads the data from disk, or create a default one using the metadata.
+  proto::WebStateStorage LoadStorage();
 
   // Returns the callback used to fetch the native session data blob.
   NativeSessionFetcher TakeNativeSessionFetcher();
@@ -64,7 +69,7 @@ class WebStateImpl::SerializedData {
   base::Time GetCreationTime() const;
   BrowserState* GetBrowserState() const;
   NSString* GetStableIdentifier() const;
-  SessionID GetUniqueIdentifier() const;
+  WebStateID GetUniqueIdentifier() const;
   const std::u16string& GetTitle() const;
   const FaviconStatus& GetFaviconStatus() const;
   void SetFaviconStatus(const FaviconStatus& favicon_status);
@@ -82,14 +87,14 @@ class WebStateImpl::SerializedData {
   }
 
   // Owner. Never null. Owns this object.
-  WebStateImpl* const owner_;
+  const raw_ptr<WebStateImpl> owner_;
 
   // The owning BrowserState. Indirectly owns this object.
-  BrowserState* const browser_state_;
+  const raw_ptr<BrowserState> browser_state_;
 
   // The stable and unique identifiers.
   NSString* const stable_identifier_;
-  const SessionID unique_identifier_;
+  const WebStateID unique_identifier_;
 
   // Information about this WebState available when the object is not
   // yet realized. This is limited to the information accessible in
@@ -109,7 +114,7 @@ class WebStateImpl::SerializedData {
 
   // Serialized representation of the session; only available when the
   // session serialization optimisation feature is disabled.
-  // TODO(crbug.com/1383087): remove once the feature is fully launched.
+  // TODO(crbug.com/40245950): remove once the feature is fully launched.
   __strong CRWSessionStorage* session_storage_ = nil;
 };
 

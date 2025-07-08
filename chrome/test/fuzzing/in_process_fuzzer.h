@@ -9,6 +9,27 @@
 
 #include "chrome/test/base/in_process_browser_test.h"
 
+enum class RunLoopTimeoutBehavior {
+  // Default behavior that doesn't alter the current way run loop internal
+  // mechanism handles timeouts.
+  kDefault,
+  // Continues the normal execution after the call to RunLoop::Run. This
+  // basically ignores the timeouts.
+  kContinue,
+  // Calls InProcessFuzzer::DeclareInfiniteLoop. This will still run the fuzz
+  // case as `kContinue` would until the Fuzz method returns.
+  kDeclareInfiniteLoop,
+};
+
+struct InProcessFuzzerOptions {
+  // The behavior to be set when a run loop times out.
+  RunLoopTimeoutBehavior run_loop_timeout_behavior =
+      RunLoopTimeoutBehavior::kDefault;
+
+  // Sets the timeout for the "Fuzz" method to complete.
+  std::optional<base::TimeDelta> run_loop_timeout = std::nullopt;
+};
+
 // In-process fuzz test.
 //
 // This is equivalent to a browser test, in that the entire browser
@@ -40,7 +61,8 @@ class InProcessFuzzer : virtual public InProcessBrowserTest {
   // This is called prior to all the normal browser test setup,
   // so don't do anything important in your constructor.
   // Furthermore, this will be re-run even for child Chromium processes.
-  InProcessFuzzer();
+  // NOLINTNEXTLINE(runtime/explicit)
+  InProcessFuzzer(InProcessFuzzerOptions options = {});
   ~InProcessFuzzer() override;
 
   // Called by the main function to run this fuzzer, after the browser_test
@@ -51,6 +73,7 @@ class InProcessFuzzer : virtual public InProcessBrowserTest {
   void SetUpOnMainThread() override;
   void RunTestOnMainThread() override;
   void TestBody() override {}
+  void SetUp() override;
 
   friend int fuzz_callback(const uint8_t* data, size_t size);
 
@@ -65,14 +88,54 @@ class InProcessFuzzer : virtual public InProcessBrowserTest {
   // prepended automatically.
   virtual base::CommandLine::StringVector GetChromiumCommandLineArguments();
 
+  // Override if (unusually) your fuzzer should use Chromium in multi-
+  // process mode. This can make results more realistic, but impedes
+  // collection of coverage from the renderer.
+  virtual bool UseSingleProcessMode();
+
  protected:
   // Callback to actually do your fuzzing. This is called from the UI thread,
   // so you should take care not to block the thread too long. If you need
   // to run your fuzz case across multiple threads, consider a nested RunLoop.
+  // Return 0 if the input is valid, -1 if it's invalid and should not be
+  // evolved further by the fuzzing engine.
   virtual int Fuzz(const uint8_t* data, size_t size) = 0;
+
+  // Should be called by subclasses from within Fuzz if they believe that
+  // a fuzz case is going to take infinite time to run. This will arrange
+  // to communicate this status to the fuzz engine as far as possible,
+  // then for the whole process to exit, thus throwing away that fuzz case.
+  // However, after calling this method, Fuzz should return -1 to indicate
+  // invalid input.
+  // The normal pattern for using this is, within Fuzz, to do this:
+  // 1. Create a RunLoop but don't start it yet
+  // 2. Start a OneShotTimer which calls this method then stops the RunLoop
+  // 3. Start an async task which will run the test case, cancel the timer,
+  //    and then stop the run loop
+  // 4. Start the RunLoop.
+  // If the test case turns out not actually to be infinite, step 3 could
+  // cause a UaF, so this pattern can probably be improved in future.
+  void DeclareInfiniteLoop() { exit_after_fuzz_case_ = true; }
+
+  // Whether we're in corpus merging mode. Some fuzzers behave specially
+  // in this mode for efficiency reasons.
+  bool InMergeMode() const;
+
+ private:
+  int DoFuzz(const uint8_t* data, size_t size);
+
+  // Changes run loop timeout behavior to silently continue running the
+  // test/fuzzer instead of failing. Timed out run loops will stop running,
+  // but the rest of the test will continue executing.
+  void KeepRunningOnTimeout();
+
+  // Changes run loop timeouts behaviour to call `DeclareInfiniteLoop()`.
+  void DeclareInfiniteLoopOnTimeout();
 
  private:
   std::vector<std::string> libfuzzer_command_line_;
+  bool exit_after_fuzz_case_ = false;
+  InProcessFuzzerOptions options_;
 };
 
 class InProcessFuzzerFactoryBase {

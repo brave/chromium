@@ -10,20 +10,68 @@ import("//chrome/version.gni")
 # system identities for interfaces that are decorated with `BEGIN_INTERFACE` and
 # `END_INTERFACE`.
 template("generate_user_system_idl") {
-  action(target_name + "_generate_user_system_idl") {
+  assert(defined(invoker.idl_template_filename),
+         "Need `idl_template_filename` in $target_name.")
+
+  action(target_name) {
     script = "generate_user_system_idl.py"
     inputs = [
       script,
       invoker.idl_template_filename,
     ]
-    output_file = "$target_gen_dir/" + invoker.idl_template_filename
+
+    idl_filename = invoker.idl_template_filename
+    if (invoker.generate_for != "") {
+      idl_filename = get_path_info(invoker.idl_template_filename, "name") +
+                     "_" + invoker.generate_for + "." +
+                     get_path_info(invoker.idl_template_filename, "extension")
+    }
+
+    output_file = "${target_gen_dir}/${idl_filename}"
     args = [
       "--idl_template_file",
       rebase_path(invoker.idl_template_filename, root_build_dir),
       "--idl_output_file",
       rebase_path(output_file, root_build_dir),
     ]
+    if (invoker.generate_for != "") {
+      args += [
+        "--generate_for",
+        invoker.generate_for,
+      ]
+    }
     outputs = [ output_file ]
+  }
+}
+
+template("midl_user_system_idl") {
+  assert(defined(invoker.replacement_guids),
+         "Need `replacement_guids` in $target_name for placeholder guids.")
+
+  foreach(scope,
+          [
+            "",
+            "user",
+            "system",
+          ]) {
+    midl_target_name = target_name
+    if (scope != "") {
+      midl_target_name = target_name + "_" + scope
+    }
+    target_name_generate = midl_target_name + "_gen"
+    target_name_template = target_name + ".template"
+
+    generate_user_system_idl(target_name_generate) {
+      idl_template_filename = target_name_template
+      generate_for = scope
+    }
+
+    midl(midl_target_name) {
+      dynamic_guids = "ignore_proxy_stub," + invoker.replacement_guids
+      sources = get_target_outputs(":$target_name_generate")
+      writes_tlb = true
+      deps = [ ":$target_name_generate" ]
+    }
   }
 }
 
@@ -37,6 +85,10 @@ branding_only_placeholder_guids = [
   "PLACEHOLDER-GUID-63B8FFB1-5314-48C9-9C57-93EC8BC6184B",  # IUpdater
   "PLACEHOLDER-GUID-02AFCB67-0899-4676-91A9-67D92B3B7918",  # IUpdaterUser
   "PLACEHOLDER-GUID-FCE335F3-A55C-496E-814F-85971C9FA6F1",  # IUpdaterSystem
+
+  "PLACEHOLDER-GUID-295F15EF-23C8-4BC6-91EB-1E9DA4145250",  # IUpdater2
+  "PLACEHOLDER-GUID-0AB4AFBE-AEA1-4F22-9D45-E867423B8E01",  # IUpdater2User
+  "PLACEHOLDER-GUID-EEDAB506-FC1A-42B5-9264-BC6A053DDDF0",  # IUpdater2System
 
   "PLACEHOLDER-GUID-46ACF70B-AC13-406D-B53B-B2C4BF091FF6",  # IUpdateState
   "PLACEHOLDER-GUID-C3485D9F-C684-4C43-B85B-E339EA395C29",  # IUpdateStateUser
@@ -69,18 +121,8 @@ foreach(guid, branding_only_placeholder_guids) {
 }
 uuid5_guids = string_join(",", uuid5_guids)
 
-generate_user_system_idl("updater_idl") {
-  idl_template_filename = "updater_idl.template"
-}
-
-midl("updater_idl_idl") {
-  dynamic_guids = "ignore_proxy_stub," + uuid5_guids
-
-  sources = [ "$target_gen_dir/updater_idl.template" ]
-
-  writes_tlb = true
-
-  deps = [ ":updater_idl_generate_user_system_idl" ]
+midl_user_system_idl("updater_idl") {
+  replacement_guids = uuid5_guids
 }
 
 # These GUIDs must depend on branding and version.
@@ -103,18 +145,8 @@ foreach(guid, branding_version_placeholder_guids) {
 }
 uuid5_guids = string_join(",", uuid5_guids)
 
-generate_user_system_idl("updater_internal_idl") {
-  idl_template_filename = "updater_internal_idl.template"
-}
-
-midl("updater_internal_idl_idl") {
-  dynamic_guids = "ignore_proxy_stub," + uuid5_guids
-
-  sources = [ "$target_gen_dir/updater_internal_idl.template" ]
-
-  writes_tlb = true
-
-  deps = [ ":updater_internal_idl_generate_user_system_idl" ]
+midl_user_system_idl("updater_internal_idl") {
+  replacement_guids = uuid5_guids
 }
 
 updater_legacy_idl_guids = [
@@ -162,39 +194,38 @@ updater_legacy_idl_guids = [
   "PLACEHOLDER-GUID-BC39E1E1-E8FA-4E72-903F-3BF346E7E165=$IPolicyStatus3UserGUID",
   "PLACEHOLDER-GUID-7B26CC23-B2B8-441B-AA9C-8B551ABB611B=$IPolicyStatus3SystemGUID",
 
+  "PLACEHOLDER-GUID-C07BC046-32E0-4184-BC9F-13C4533C24AC=$IPolicyStatus4GUID",
+  "PLACEHOLDER-GUID-0F6696F3-7F48-446B-97FA-6B34EC2ADB32=$IPolicyStatus4UserGUID",
+  "PLACEHOLDER-GUID-423FDEC3-0DBC-441E-B51D-FD8B82B9DCF2=$IPolicyStatus4SystemGUID",
+
   "PLACEHOLDER-GUID-2A7D2AE7-8EEE-45B4-B17F-31DAAC82CCBB=$IPolicyStatusValueGUID",
   "PLACEHOLDER-GUID-7E0A6B39-7CEB-4944-ABFA-F419D201D6A0=$IPolicyStatusValueUserGUID",
   "PLACEHOLDER-GUID-CC2CCD05-119C-44E1-852D-6DCC2DFB72EC=$IPolicyStatusValueSystemGUID",
 
   "PLACEHOLDER-GUID-4779D540-F6A3-455F-A929-7ADFE85B6F09=$IProcessLauncherGUID",
+  "PLACEHOLDER-GUID-FFBAEC45-C5EC-4287-85CD-A831796BE952=$IProcessLauncherSystemGUID",
 
   "PLACEHOLDER-GUID-74F243B8-75D1-4E2D-BC89-5689798EEF3E=$IProcessLauncher2GUID",
+  "PLACEHOLDER-GUID-5F41DC50-029C-4F5A-9860-EF352A0B66D2=$IProcessLauncher2SystemGUID",
 ]
 updater_legacy_idl_guids = string_join(",", updater_legacy_idl_guids)
 
-generate_user_system_idl("updater_legacy_idl") {
-  idl_template_filename = "updater_legacy_idl.template"
+midl_user_system_idl("updater_legacy_idl") {
+  replacement_guids = updater_legacy_idl_guids
 }
 
-midl("updater_legacy_idl_idl") {
-  dynamic_guids = "ignore_proxy_stub," + updater_legacy_idl_guids
-
-  sources = [ "$target_gen_dir/updater_legacy_idl.template" ]
-
-  writes_tlb = true
-
-  deps = [ ":updater_legacy_idl_generate_user_system_idl" ]
-}
-
-# The COM server needs to work with Windows 7, so explicitly setting the defines
-# to reflect this. Otherwise, WRL uses APIs that are only available in later
-# Windows versions.
+# The COM servers only need to use classic COM, and not WinRT. <wrl/module.h>
+# will use WinRT when targeting `NTDDI` versions of Windows 8.1 and up, so the
+# `NTDDI_VERSION` is set explicitly to Windows 8.0 here to avoid the WinRT
+# dependency.
 config("winver") {
   defines = [
-    "NTDDI_VERSION=NTDDI_WIN7",
+    "NTDDI_VERSION=NTDDI_WIN8",
 
-    # Hardcoding version 0x0601, since _WIN32_WINNT_WIN7 may not be defined.
-    "_WIN32_WINNT=0x0601",
-    "WINVER=0x0601",
+    # We can't say `=_WIN32_WINNT_WIN10` here because some files do
+    # `#if WINVER < 0x0600` without including windows.h before,
+    # and then _WIN32_WINNT_WIN10 isn't yet known to be 0x0A00.
+    "_WIN32_WINNT=0x0A00",
+    "WINVER=0x0A00",
   ]
 }

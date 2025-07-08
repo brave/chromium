@@ -7,7 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h"
 #import "ui/base/cocoa/command_dispatcher.h"
 
@@ -42,11 +42,6 @@ REMOTE_COCOA_APP_SHIM_EXPORT
 // Set a CommandDispatcherDelegate, i.e. to implement key event handling.
 - (void)setCommandDispatcherDelegate:(id<CommandDispatcherDelegate>)delegate;
 
-// Selector passed to [NSApp beginSheet:]. Forwards to [self delegate], if set.
-- (void)sheetDidEnd:(NSWindow*)sheet
-         returnCode:(NSInteger)returnCode
-        contextInfo:(void*)contextInfo;
-
 // Set a WindowTouchBarDelegate to allow creation of a custom TouchBar when
 // AppKit follows the responder chain and reaches the NSWindow when trying to
 // create one.
@@ -57,10 +52,25 @@ REMOTE_COCOA_APP_SHIM_EXPORT
 // https://crbug.com/960904
 - (void)enforceNeverMadeVisible;
 
-// Order window for all cases, including for children windows that
-// -[NSWindow orderWindow:] can't properly handle.
-- (void)reallyOrderWindow:(NSWindowOrderingMode)place
-               relativeTo:(NSInteger)otherWin;
+// `- [NSWindow orderWindow:]` does not have any effect when called on child
+// windows. If you need to order a child window, use this method. Important:
+// this method adds or removes children from the parent. If you're observing
+// events related to adding or removing children, this could lead to issues. To
+// check whether ordering is currently in progress, inspect the
+// `isShufflingForOrdering` property on the child window.
+- (void)orderWindowByShuffling:(NSWindowOrderingMode)place
+                    relativeTo:(NSInteger)otherWin;
+
+// "Activation independence" allows the activation of the window to be
+// independent of the activation of the owning app. This is a combination of two
+// different properties:
+//
+// - !NSWindow.canHide
+// - The equivalent of NSWindowStyleMaskNonactivatingPanel being set, if that
+//   were possible on NSWindows.
+- (void)setActivationIndependence:(BOOL)independence;
+
+- (bool)activationIndependence;
 
 // Order the window to the front (space switch if necessary), and ensure that
 // the window maintains its key state. A space switch will normally activate a
@@ -71,17 +81,13 @@ REMOTE_COCOA_APP_SHIM_EXPORT
 // screen bounds.
 - (NSRect)constrainFrameRect:(NSRect)frameRect toScreen:(NSScreen*)screen;
 
-- (BOOL)isFullScreen;
+// Is the window a part of a browser window tree that is currently in an
+// immersive fullscreen session.
+- (BOOL)immersiveFullscreen;
 
-// Defers the removal of `childWindow` until the window is the active window
-// or ordered out, to avoid triggering a space change.
-- (void)removeChildOnActivation:(NSWindow*)childWindow;
-
-// Returns YES if aWindow is a child window that will be removed when the
-// window activates or orders out.
-- (BOOL)willRemoveChildOnActivation:(NSWindow*)aWindow;
-
-- (BOOL)hasDeferredChildWindowRemovalsForTesting;
+// The sheet parent that should be used. In immersive fullscreen the preferred
+// sheet parent is the root window (the browser window).
+- (NSWindow*)preferredSheetParent;
 
 // Identifier for the NativeWidgetMac from which this window was created. This
 // may be used to look up the NativeWidgetMacNSWindowHost in the browser process
@@ -97,11 +103,25 @@ REMOTE_COCOA_APP_SHIM_EXPORT
 // Whether this window is headless.
 @property(assign, nonatomic) BOOL isHeadless;
 
+// Whether this window is currently being added to and removed from parent for
+// ordering.
+@property(assign, nonatomic) BOOL isShufflingForOrdering;
+
+// Prevents the window from becoming the key window.
+@property(assign, nonatomic) BOOL preventKeyWindow;
+
 // Called whenever a child window is added to the receiver.
 @property(nonatomic, copy) void (^childWindowAddedHandler)(NSWindow* child);
 
-// Called whenever a child window is removed from the receiver.
+// Called whenever a child window is removed to the receiver.
 @property(nonatomic, copy) void (^childWindowRemovedHandler)(NSWindow* child);
+
+// Window to dispatch commands to. Needed for situations where the window that
+// needs to handle events is not the target's immediate parent; for example
+// alerts in immersive fullscreen.
+@property(nonatomic, weak)
+    NSWindow<CommandDispatchingWindow>* commandDispatchParentOverride;
+
 @end
 
 #endif  // COMPONENTS_REMOTE_COCOA_APP_SHIM_NATIVE_WIDGET_MAC_NSWINDOW_H_

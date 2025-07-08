@@ -16,14 +16,17 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.base.version_info.VersionInfo;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.net.connectivitydetector.ConnectivityDetector;
 import org.chromium.chrome.browser.net.connectivitydetector.ConnectivityDetector.ConnectionState;
-import org.chromium.components.version_info.VersionInfo;
 
 /**
  * Class that detects if the network is offline. Waits for the network to stablize before notifying
  * the observer.
  */
+@NullMarked
 class OfflineDetector
         implements ConnectivityDetector.Observer, ApplicationStatus.ApplicationStateListener {
     // If the connection is online, then we report that immediately via |mIsOfflineCallback|.
@@ -54,10 +57,10 @@ class OfflineDetector
     static final long STATUS_INDICATOR_WAIT_ON_SWITCH_ONLINE_TO_OFFLINE_DEFAULT_DURATION_MS = 10000;
     final long mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs;
 
-    private static ConnectivityDetector sMockConnectivityDetector;
-    private static Supplier<Long> sMockElapsedTimeSupplier;
+    private static @Nullable ConnectivityDetector sMockConnectivityDetector;
+    private static @Nullable Supplier<Long> sMockElapsedTimeSupplier;
 
-    private ConnectivityDetector mConnectivityDetector;
+    private @Nullable ConnectivityDetector mConnectivityDetector;
 
     // Maintains if the connection is effectively offline.
     // Effectively offline means that all checks have been passed and the
@@ -68,9 +71,9 @@ class OfflineDetector
     // True if the network is offline as detected by the connectivity detector.
     private boolean mIsOfflineLastReportedByConnectivityDetector;
 
-    private Context mContext;
+    private final Context mContext;
     private Handler mHandler;
-    private Runnable mUpdateOfflineStatusIndicatorDelayedRunnable;
+    private final Runnable mUpdateOfflineStatusIndicatorDelayedRunnable;
 
     // Used to inform the client when the system changes between online and offline. A value of true
     // is given when the system is offline, and a value of false is given when the system is online.
@@ -119,7 +122,9 @@ class OfflineDetector
      *        changes.
      * @param context The {@link Context} used to resolve device settings.
      */
-    OfflineDetector(Callback<Boolean> isOfflineCallback, Callback<Boolean> isForegroundCallback,
+    OfflineDetector(
+            Callback<Boolean> isOfflineCallback,
+            Callback<Boolean> isForegroundCallback,
             Context context) {
         mIsOfflineCallback = isOfflineCallback;
         mIsForegroundCallback = isForegroundCallback;
@@ -128,33 +133,37 @@ class OfflineDetector
         mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs =
                 STATUS_INDICATOR_WAIT_ON_SWITCH_ONLINE_TO_OFFLINE_DEFAULT_DURATION_MS;
 
-        mUpdateOfflineStatusIndicatorDelayedRunnable = () -> {
-            if (sLoggingEnabled) {
-                logToAdbConsoleNow("Running mUpdateOfflineStatusIndicatorDelayedRunnable start.");
-            }
+        mUpdateOfflineStatusIndicatorDelayedRunnable =
+                () -> {
+                    if (sLoggingEnabled) {
+                        logToAdbConsoleNow(
+                                "Running mUpdateOfflineStatusIndicatorDelayedRunnable start.");
+                    }
 
-            // |callback| is invoked only when the app is in foreground. If the app is in
-            // background, return early. When the app comes to foreground,
-            // |mUpdateOfflineStatusIndicatorDelayedRunnable| would be posted.
-            if (mApplicationState != ApplicationState.HAS_RUNNING_ACTIVITIES) {
-                return;
-            }
+                    // |callback| is invoked only when the app is in foreground. If the app is in
+                    // background, return early. When the app comes to foreground,
+                    // |mUpdateOfflineStatusIndicatorDelayedRunnable| would be posted.
+                    if (mApplicationState != ApplicationState.HAS_RUNNING_ACTIVITIES) {
+                        return;
+                    }
 
-            // Connection state has not changed since |mUpdateOfflineStatusIndicatorDelayedRunnable|
-            // was posted.
-            boolean wasEffectivelyOffline = mIsEffectivelyOffline;
-            mIsEffectivelyOffline =
-                    mIsOfflineLastReportedByConnectivityDetector && !mInAirplaneMode;
-            if (mIsEffectivelyOfflineInitialized
-                    && wasEffectivelyOffline == mIsEffectivelyOffline) {
-                return;
-            }
-            mIsEffectivelyOfflineInitialized = true;
-            mIsOfflineCallback.onResult(mIsEffectivelyOffline);
-            if (sLoggingEnabled) {
-                logToAdbConsoleNow("Running mUpdateOfflineStatusIndicatorDelayedRunnable end.");
-            }
-        };
+                    // Connection state has not changed since
+                    // |mUpdateOfflineStatusIndicatorDelayedRunnable|
+                    // was posted.
+                    boolean wasEffectivelyOffline = mIsEffectivelyOffline;
+                    mIsEffectivelyOffline =
+                            mIsOfflineLastReportedByConnectivityDetector && !mInAirplaneMode;
+                    if (mIsEffectivelyOfflineInitialized
+                            && wasEffectivelyOffline == mIsEffectivelyOffline) {
+                        return;
+                    }
+                    mIsEffectivelyOfflineInitialized = true;
+                    mIsOfflineCallback.onResult(mIsEffectivelyOffline);
+                    if (sLoggingEnabled) {
+                        logToAdbConsoleNow(
+                                "Running mUpdateOfflineStatusIndicatorDelayedRunnable end.");
+                    }
+                };
 
         // Register as an application state observer and initialize |mTimeWhenLastForegrounded|.
         ApplicationStatus.registerApplicationStateListener(this);
@@ -176,9 +185,10 @@ class OfflineDetector
         mIsOfflineLastReportedByConnectivityDetector =
                 (connectionState != ConnectionState.VALIDATED);
         boolean wasInAirplaneMode = mInAirplaneMode;
-        mInAirplaneMode = Settings.System.getInt(mContext.getContentResolver(),
-                                  Settings.Global.AIRPLANE_MODE_ON, 0)
-                != 0;
+        mInAirplaneMode =
+                Settings.System.getInt(
+                                mContext.getContentResolver(), Settings.Global.AIRPLANE_MODE_ON, 0)
+                        != 0;
 
         if (mConnectivityDetectorInitialized
                 && previousLastReportedStateByOfflineDetector
@@ -209,7 +219,9 @@ class OfflineDetector
 
         if (sLoggingEnabled) {
             logToAdbConsoleNow("Received connection change state message.");
-            Log.i(TAG, "onConnectionStateChanged(): previousLastReportedStateByOfflineDetector: %b",
+            Log.i(
+                    TAG,
+                    "onConnectionStateChanged(): previousLastReportedStateByOfflineDetector: %b",
                     previousLastReportedStateByOfflineDetector);
         }
 
@@ -217,8 +229,10 @@ class OfflineDetector
     }
 
     private void logToAdbConsoleNow(String prefix) {
-        Log.i(TAG,
-                prefix + " mConnectivityDetectorInitialized: %b,"
+        Log.i(
+                TAG,
+                prefix
+                        + " mConnectivityDetectorInitialized: %b,"
                         + " mTimeWhenLastForegrounded: %d,"
                         + " getElapsedTime: %d,"
                         + " mTimeWhenLastOfflineNotificationReceived: %d,"
@@ -228,10 +242,15 @@ class OfflineDetector
                         + " mIsOfflineLastReportedByConnectivityDetector: %b,"
                         + " mInAirplaneMode: %b"
                         + " mIsEffectivelyOffline: %b",
-                mConnectivityDetectorInitialized, mTimeWhenLastForegrounded, getElapsedTime(),
-                mTimeWhenLastOfflineNotificationReceived, mTimeWhenLastOnline,
-                mTimeWhenAirplaneModeToggledOff, mApplicationState,
-                mIsOfflineLastReportedByConnectivityDetector, mInAirplaneMode,
+                mConnectivityDetectorInitialized,
+                mTimeWhenLastForegrounded,
+                getElapsedTime(),
+                mTimeWhenLastOfflineNotificationReceived,
+                mTimeWhenLastOnline,
+                mTimeWhenAirplaneModeToggledOff,
+                mApplicationState,
+                mIsOfflineLastReportedByConnectivityDetector,
+                mInAirplaneMode,
                 mIsEffectivelyOffline);
     }
 
@@ -246,6 +265,7 @@ class OfflineDetector
         return mApplicationState == ApplicationState.HAS_RUNNING_ACTIVITIES;
     }
 
+    @SuppressWarnings("NullAway")
     void destroy() {
         ApplicationStatus.unregisterApplicationStateListener(this);
         if (mConnectivityDetector != null) {
@@ -271,8 +291,9 @@ class OfflineDetector
     }
 
     private long getElapsedTime() {
-        return sMockElapsedTimeSupplier != null ? sMockElapsedTimeSupplier.get()
-                                                : SystemClock.elapsedRealtime();
+        return sMockElapsedTimeSupplier != null
+                ? sMockElapsedTimeSupplier.get()
+                : SystemClock.elapsedRealtime();
     }
 
     @VisibleForTesting
@@ -290,8 +311,8 @@ class OfflineDetector
     }
 
     /*
-    ** Calls |mUpdateOfflineStatusIndicatorDelayedRunnable| to update the connection state.
-    */
+     ** Calls |mUpdateOfflineStatusIndicatorDelayedRunnable| to update the connection state.
+     */
     private void updateState() {
         mHandler.removeCallbacks(mUpdateOfflineStatusIndicatorDelayedRunnable);
 
@@ -314,28 +335,35 @@ class OfflineDetector
 
         // If the device has been online before, then we wait up to
         // |mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs| duration.
-        final long timeNeededAfterConnectionChangeFromOnlineToOffline = mTimeWhenLastOnline > 0
-                ? mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs - timeSinceLastOnline
-                : 0;
+        final long timeNeededAfterConnectionChangeFromOnlineToOffline =
+                mTimeWhenLastOnline > 0
+                        ? mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs
+                                - timeSinceLastOnline
+                        : 0;
 
         final long timeNeededAfterConnectionChangeFromAirplaneToOffline =
                 mTimeWhenAirplaneModeToggledOff > 0
-                ? mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs
-                        - timeSinceAirplaneModeToggledOff
-                : 0;
+                        ? mStatusIndicatorWaitOnSwitchOnlineToOfflineDurationMs
+                                - timeSinceAirplaneModeToggledOff
+                        : 0;
 
         assert mUpdateOfflineStatusIndicatorDelayedRunnable != null;
 
         logToAdbConsoleNow("Running updateState");
-        Log.i(TAG,
+        Log.i(
+                TAG,
                 "updateState(): timeSinceLastForeground: %d,"
                         + " timeSinceOfflineNotificationReceived: %d, timeSinceLastOnline: %d,"
                         + " timeNeededForForeground: %d, timeNeededForOffline: %d"
                         + " timeSinceAirplaneModeToggledOff: %d"
                         + " timeNeededAfterConnectionChangeFromOnlineToOffline: %d"
                         + " timeNeededAfterConnectionChangeFromAirplaneToOffline: %d",
-                timeSinceLastForeground, timeSinceOfflineNotificationReceived, timeSinceLastOnline,
-                timeNeededForForeground, timeNeededForOffline, timeSinceAirplaneModeToggledOff,
+                timeSinceLastForeground,
+                timeSinceOfflineNotificationReceived,
+                timeSinceLastOnline,
+                timeNeededForForeground,
+                timeNeededForOffline,
+                timeSinceAirplaneModeToggledOff,
                 timeNeededAfterConnectionChangeFromOnlineToOffline,
                 timeNeededAfterConnectionChangeFromAirplaneToOffline);
 
@@ -343,7 +371,8 @@ class OfflineDetector
         // been in foreground and connection has been offline for sufficient time, then report the
         // state immediately.
         if (!mIsOfflineLastReportedByConnectivityDetector
-                || (timeNeededForForeground <= 0 && timeNeededForOffline <= 0
+                || (timeNeededForForeground <= 0
+                        && timeNeededForOffline <= 0
                         && timeNeededAfterConnectionChangeFromOnlineToOffline <= 0
                         && timeNeededAfterConnectionChangeFromAirplaneToOffline <= 0)) {
             mUpdateOfflineStatusIndicatorDelayedRunnable.run();
@@ -351,9 +380,12 @@ class OfflineDetector
         }
 
         // Wait before calling |mUpdateOfflineStatusIndicatorDelayedRunnable|.
-        mHandler.postDelayed(mUpdateOfflineStatusIndicatorDelayedRunnable,
-                Math.max(Math.max(Math.max(timeNeededForForeground, timeNeededForOffline),
-                                 timeNeededAfterConnectionChangeFromOnlineToOffline),
+        mHandler.postDelayed(
+                mUpdateOfflineStatusIndicatorDelayedRunnable,
+                Math.max(
+                        Math.max(
+                                Math.max(timeNeededForForeground, timeNeededForOffline),
+                                timeNeededAfterConnectionChangeFromOnlineToOffline),
                         timeNeededAfterConnectionChangeFromAirplaneToOffline));
     }
 }

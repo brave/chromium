@@ -4,15 +4,12 @@
 
 #import "ios/web/js_features/error_page/error_page_java_script_feature.h"
 
+#import "base/strings/string_number_conversions.h"
 #import "base/values.h"
 #import "ios/web/navigation/crw_error_page_helper.h"
 #import "ios/web/public/js_messaging/script_message.h"
 #import "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/js_messaging/web_frames_manager.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 
@@ -38,7 +35,7 @@ ErrorPageJavaScriptFeature::ErrorPageJavaScriptFeature()
 
 ErrorPageJavaScriptFeature::~ErrorPageJavaScriptFeature() = default;
 
-absl::optional<std::string>
+std::optional<std::string>
 ErrorPageJavaScriptFeature::GetScriptMessageHandlerName() const {
   return kWebUIMessageHandlerName;
 }
@@ -51,7 +48,7 @@ void ErrorPageJavaScriptFeature::ScriptMessageReceived(
     return;
   }
 
-  absl::optional<GURL> url = script_message.request_url();
+  std::optional<GURL> url = script_message.request_url();
   // Messages must be from an error page.
   if (!url || ![CRWErrorPageHelper isErrorPageFileURL:url.value()]) {
     return;

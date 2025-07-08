@@ -15,9 +15,7 @@
 #include "chromeos/services/network_config/public/mojom/network_types.mojom-forward.h"
 #include "chromeos/services/network_health/public/mojom/network_health_types.mojom-forward.h"
 
-namespace chromeos {
-
-namespace converters {
+namespace chromeos::converters::telemetry {
 
 // This file contains helper functions used by telemetry_api.cc to convert its
 // types to/from telemetry service types.
@@ -107,6 +105,11 @@ chromeos::api::os_telemetry::EmbeddedDisplayInfo UncheckedConvertPtr(
 chromeos::api::os_telemetry::ExternalDisplayInfo UncheckedConvertPtr(
     crosapi::mojom::ProbeExternalDisplayInfoPtr input);
 
+chromeos::api::os_telemetry::ThermalInfo UncheckedConvertPtr(
+    crosapi::mojom::ProbeThermalInfoPtr input);
+
+chromeos::api::os_telemetry::ThermalSensorInfo UncheckedConvertPtr(
+    crosapi::mojom::ProbeThermalSensorInfoPtr input);
 }  // namespace unchecked
 
 chromeos::api::os_telemetry::CpuArchitectureEnum Convert(
@@ -133,6 +136,9 @@ chromeos::api::os_telemetry::UsbSpecSpeed Convert(
 chromeos::api::os_telemetry::DisplayInputType Convert(
     crosapi::mojom::ProbeDisplayInputType input);
 
+chromeos::api::os_telemetry::ThermalSensorSource Convert(
+    crosapi::mojom::ProbeThermalSensorSource input);
+
 template <class OutputT, class InputT>
 std::vector<OutputT> ConvertPtrVector(std::vector<InputT> input) {
   std::vector<OutputT> output;
@@ -147,14 +153,13 @@ template <class InputT,
           class... Types,
           class OutputT = decltype(unchecked::UncheckedConvertPtr(
               std::declval<InputT>(),
-              std::declval<Types>()...)),
-          class = std::enable_if_t<std::is_default_constructible_v<OutputT>>>
+              std::declval<Types>()...))>
+  requires(std::is_default_constructible_v<OutputT>)
 OutputT ConvertPtr(InputT input, Types... args) {
   return (input) ? unchecked::UncheckedConvertPtr(std::move(input), args...)
                  : OutputT();
 }
 
-}  // namespace converters
-}  // namespace chromeos
+}  // namespace chromeos::converters::telemetry
 
 #endif  // CHROME_BROWSER_CHROMEOS_EXTENSIONS_TELEMETRY_API_TELEMETRY_TELEMETRY_API_CONVERTERS_H_

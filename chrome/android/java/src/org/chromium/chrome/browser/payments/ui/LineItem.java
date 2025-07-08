@@ -4,9 +4,10 @@
 
 package org.chromium.chrome.browser.payments.ui;
 
-/**
- * The line item on the bill.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** The line item on the bill. */
+@NullMarked
 public class LineItem {
     private final String mLabel;
     private final String mCurrency;

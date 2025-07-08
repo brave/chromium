@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/functional/callback.h"
+#include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -12,6 +14,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/sessions/content/session_tab_helper.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/prerender_test_util.h"
@@ -45,7 +48,7 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
                                 base::Unretained(this))) {}
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     InProcessBrowserTest::SetUp();
   }
 
@@ -90,9 +93,8 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
     return observer_manager_->navigation_event_list();
   }
 
-  void CopyUrlToWebClipboard(
-      std::string urlToCopy,
-      absl::optional<int> subframe_index = absl::nullopt) {
+  void CopyUrlToWebClipboard(std::string urlToCopy,
+                             std::optional<int> subframe_index = std::nullopt) {
     TabStripModel* tab_strip = browser()->tab_strip_model();
     content::WebContents* current_web_contents =
         tab_strip->GetActiveWebContents();
@@ -102,6 +104,10 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
       script_executing_frame =
           ChildFrameAt(script_executing_frame, subframe_index.value());
     }
+#if BUILDFLAG(IS_MAC)
+    content::HandleMissingKeyWindow();
+#endif
+    script_executing_frame->GetView()->Focus();
     std::string script = base::StringPrintf(
         "navigator.clipboard.writeText('%s');", urlToCopy.c_str());
     ASSERT_TRUE(content::ExecJs(script_executing_frame, script));
@@ -182,8 +188,14 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
 // will fail if the window loose focus before it finished.
 // The test use kLandingURL as the target, not using any functionality from
 // this page.
+// TODO(crbug.com/41487061): Test is flaky on Mac ARM64 builders.
+#if BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)
+#define MAYBE_VerifyCopiedUrlReferrerChain DISABLED_VerifyCopiedUrlReferrerChain
+#else
+#define MAYBE_VerifyCopiedUrlReferrerChain VerifyCopiedUrlReferrerChain
+#endif
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
-                       VerifyCopiedUrlReferrerChain) {
+                       MAYBE_VerifyCopiedUrlReferrerChain) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL(kCopyReferrerUrl)));
   CopyUrlToWebClipboard(embedded_test_server()->GetURL(kLandingURL).spec());
@@ -293,8 +305,16 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // will fail if the window loose focus before it finished.
 // The test use kLandingURL as the target, not using any functionality from
 // this page.
+// TODO(crbug.com/41487061): Test is flaky on Mac Arm64 builders.
+#if BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)
+#define MAYBE_VerifyCopiedInnerUrlReferrerChain \
+  DISABLED_VerifyCopiedInnerUrlReferrerChain
+#else
+#define MAYBE_VerifyCopiedInnerUrlReferrerChain \
+  VerifyCopiedInnerUrlReferrerChain
+#endif
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
-                       VerifyCopiedInnerUrlReferrerChain) {
+                       MAYBE_VerifyCopiedInnerUrlReferrerChain) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL(kCopyReferrerUrl)));
   CopyUrlToWebClipboard(embedded_test_server()->GetURL(kLandingURL).spec(),

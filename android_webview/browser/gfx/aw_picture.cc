@@ -5,8 +5,12 @@
 #include "android_webview/browser/gfx/aw_picture.h"
 
 #include "android_webview/browser/gfx/java_browser_view_renderer_helper.h"
-#include "android_webview/browser_jni_headers/AwPicture_jni.h"
+#include "base/check.h"
+#include "base/logging.h"
 #include "third_party/skia/include/core/SkPicture.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/browser_jni_headers/AwPicture_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -22,16 +26,15 @@ void AwPicture::Destroy(JNIEnv* env) {
   delete this;
 }
 
-jint AwPicture::GetWidth(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+jint AwPicture::GetWidth(JNIEnv* env) {
   return picture_->cullRect().roundOut().width();
 }
 
-jint AwPicture::GetHeight(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+jint AwPicture::GetHeight(JNIEnv* env) {
   return picture_->cullRect().roundOut().height();
 }
 
 void AwPicture::Draw(JNIEnv* env,
-                     const JavaParamRef<jobject>& obj,
                      const JavaParamRef<jobject>& canvas) {
   const SkIRect bounds = picture_->cullRect().roundOut();
   if (bounds.isEmpty()) {

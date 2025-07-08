@@ -24,7 +24,7 @@ RoundedContainer::RoundedContainer(Behavior corner_behavior,
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical));
   SetBackground(
-      views::CreateThemedSolidBackground(cros_tokens::kCrosSysSystemOnBase));
+      views::CreateSolidBackground(cros_tokens::kCrosSysSystemOnBase));
 
   SetBorderInsets(kBorderInsets);
 
@@ -62,7 +62,7 @@ gfx::RoundedCornersF RoundedContainer::GetRoundedCorners() {
   }
 }
 
-BEGIN_METADATA(RoundedContainer, views::View);
+BEGIN_METADATA(RoundedContainer);
 END_METADATA
 
 }  // namespace ash

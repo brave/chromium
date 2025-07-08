@@ -11,10 +11,6 @@
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/platform_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 class FakeNavigationManager : public web::FakeNavigationManager {
@@ -54,7 +50,7 @@ class WebStateOpenerTest : public PlatformTest {
 TEST_F(WebStateOpenerTest, NullWebState) {
   WebStateOpener opener(nullptr);
 
-  EXPECT_EQ(nullptr, opener.opener);
+  EXPECT_EQ(nullptr, opener.opener.get());
   EXPECT_EQ(-1, opener.navigation_index);
 }
 

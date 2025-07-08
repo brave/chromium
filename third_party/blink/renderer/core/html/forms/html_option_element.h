@@ -78,7 +78,11 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   void setSelectedForBinding(bool);
 
   HTMLDataListElement* OwnerDataListElement() const;
+
+  // OwnerSelectElement gets nearest_ancestor_select_ and SetOwnerSelectElement
+  // assigns to it. See comment on nearest_ancestor_select_.
   HTMLSelectElement* OwnerSelectElement() const;
+  void SetOwnerSelectElement(HTMLSelectElement*);
 
   String label() const;
   void setLabel(const AtomicString&);
@@ -87,6 +91,7 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
 
   bool IsDisabledFormControl() const override;
   String DefaultToolTip() const override;
+  void DefaultEventHandler(Event&) override;
 
   String TextIndentedToRespectGroupLabel() const;
 
@@ -95,10 +100,10 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   // Update 'dirtiness'.
   void SetDirty(bool);
 
-  HTMLFormElement* form() const;
+  HTMLElement* formForBinding() const override;
   bool SpatialNavigationFocused() const;
 
-  bool IsDisplayNone() const;
+  bool IsDisplayNone(bool ensure_style);
 
   int ListIndex() const;
 
@@ -108,18 +113,26 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   void SetWasOptionInsertedCalled(bool flag) {
     was_option_inserted_called_ = flag;
   }
-  bool WasOptionInsertedCalled() const { return was_option_inserted_called_; }
+  bool WasOptionInsertedCalled() const;
 
-  void OptionInsertedIntoSelectMenuElement();
-  void OptionRemovedFromSelectMenuElement();
+  Node::InsertionNotificationRequest InsertedInto(ContainerNode&) override;
+  void RemovedFrom(ContainerNode&) override;
+
+  void FinishParsingChildren() override;
 
   // Callback for OptionTextObserver.
   void DidChangeTextContent();
 
   bool IsRichlyEditableForAccessibility() const override { return false; }
 
+  // This method returns true if the provided element is the label_container_ of
+  // an HTMLOptionElement.
+  static bool IsLabelContainerElement(const Element& element);
+
+  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior) const override;
+
  private:
-  bool SupportsFocus() const override;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
   bool MatchesDefaultPseudoClass() const override;
   bool MatchesEnabledPseudoClass() const override;
   void ParseAttribute(const AttributeModificationParams&) override;
@@ -132,7 +145,35 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
 
   void UpdateLabel();
 
+  void DefaultEventHandlerInternal(Event&);
+
+  void RecalcOwnerSelectElement() const;
+
+  // Helper to choose the option for customizable select event handling in
+  // DefaultEventHandler. Depending on the state of OwnerSelectElement, it may
+  // toggle selectedness and dirtiness, deselect other options, close the
+  // select's picker, and set default handled on the event.
+  void ChooseOption(Event&);
+
   Member<OptionTextObserver> text_observer_;
+
+  // The closest ancestor <select> in the DOM tree, without crossing any shadow
+  // boundaries. This is cached as a performance optimization for
+  // OwnerSelectElement(), and is kept up to date in InsertedInto() and
+  // RemovedFrom(). Because it is only updated in InsertedInto and RemovedFrom,
+  // there may be times where it isn't up to date with the actual nearest
+  // ancestor select in the DOM, such as in HTMLOptionElement::ChildrenChanged
+  // before InsertedInto gets called.
+  // Only set when SelectParserRelaxation is enabled.
+  // TODO(crbug.com/1511354): Consider using a flat tree traversal here
+  // instead of a node traversal. That would probably also require changing
+  // HTMLOptionsCollection to support flat tree traversals as well.
+  Member<HTMLSelectElement> nearest_ancestor_select_;
+
+  // label_container_ contains the text content of DisplayLabel(). Based on UA
+  // style rules, it is rendered when this option is not inside of a select
+  // element with appearance:base-select.
+  Member<HTMLElement> label_container_;
 
   // Represents 'selectedness'.
   // https://html.spec.whatwg.org/C/#concept-option-selectedness
@@ -147,11 +188,11 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   // True while HTMLSelectElement::OptionInserted(this) and OptionRemoved(this);
   // This flag is necessary to detect a state where DOM tree is updated and
   // OptionInserted() is not called yet.
+  // TODO(crbug.com/41483940): Remove this flag when the SelectParserRelaxation
+  // flag is removed.
   bool was_option_inserted_called_ = false;
 
-  // This flag is necessary to detect when an option is a descendant of
-  // <selectmenu> in order to be able to render arbitrary content.
-  bool is_descendant_of_select_menu_ = false;
+  friend class HTMLOptionElementTest;
 };
 
 }  // namespace blink

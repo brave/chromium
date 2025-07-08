@@ -4,12 +4,14 @@
 
 package org.chromium.components.browser_ui.bottomsheet;
 
-/**
- * Handles interaction with other UI's when a bottom sheet goes in and out of expanded mode.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** Handles interaction with other UI's when a bottom sheet goes in and out of expanded mode. */
+@NullMarked
 public interface ExpandedSheetHelper {
     /** Sheet gets expanded. */
     void onSheetExpanded();
+
     /** Sheet gets collapsed. */
     void onSheetCollapsed();
 }

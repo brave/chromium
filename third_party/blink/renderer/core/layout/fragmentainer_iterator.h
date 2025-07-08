@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_FRAGMENTAINER_ITERATOR_H_
 
 #include "third_party/blink/renderer/core/layout/multi_column_fragmentainer_group.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -34,13 +33,6 @@ class FragmentainerIterator {
 
   // Return true if we have walked through all relevant fragmentainers.
   bool AtEnd() const { return !current_column_set_; }
-
-  // The physical translation to apply to shift the box when converting from
-  // flowthread to visual coordinates.
-  PhysicalOffset PaginationOffset() const;
-
-  // The logical top of the current fragmentainer in flowthread.
-  LayoutUnit FragmentainerLogicalTopInFlowThread() const;
 
   // Return the physical clip rectangle of the current fragmentainer, relative
   // to the flow thread.

@@ -32,7 +32,8 @@ LockLayoutManager::~LockLayoutManager() {
 }
 
 void LockLayoutManager::OnWindowResized() {
-  const WMEvent event(WM_EVENT_WORKAREA_BOUNDS_CHANGED);
+  const DisplayMetricsChangedWMEvent event(
+      display::DisplayObserver::DISPLAY_METRIC_WORK_AREA);
   AdjustWindowsForWorkAreaChange(&event);
 }
 
@@ -40,7 +41,8 @@ void LockLayoutManager::OnWindowAddedToLayout(aura::Window* child) {
   child->AddObserver(this);
 
   // LockWindowState replaces default WindowState of a child.
-  WindowState* window_state = LockWindowState::SetLockWindowState(child);
+  WindowState* window_state =
+      LockWindowState::SetLockWindowState(child, /*shelf_excluded=*/false);
   WMEvent event(WM_EVENT_ADDED_TO_WORKSPACE);
   window_state->OnWMEvent(&event);
 
@@ -65,9 +67,6 @@ void LockLayoutManager::OnWindowRemovedFromLayout(aura::Window* child) {
   config.overscroll_behavior = keyboard::KeyboardOverscrollBehavior::kDefault;
   keyboard::KeyboardUIController::Get()->UpdateKeyboardConfig(config);
 }
-
-void LockLayoutManager::OnChildWindowVisibilityChanged(aura::Window* child,
-                                                       bool visible) {}
 
 void LockLayoutManager::SetChildBounds(aura::Window* child,
                                        const gfx::Rect& requested_bounds) {
@@ -106,7 +105,8 @@ void LockLayoutManager::OnDisplayMetricsChanged(const display::Display& display,
   }
 
   if (changed_metrics & display::DisplayObserver::DISPLAY_METRIC_WORK_AREA) {
-    const WMEvent event(WM_EVENT_WORKAREA_BOUNDS_CHANGED);
+    const DisplayMetricsChangedWMEvent event(
+        display::DisplayObserver::DISPLAY_METRIC_WORK_AREA);
     AdjustWindowsForWorkAreaChange(&event);
   }
 }
@@ -117,8 +117,10 @@ void LockLayoutManager::OnKeyboardOccludedBoundsChanged(
 }
 
 void LockLayoutManager::AdjustWindowsForWorkAreaChange(const WMEvent* event) {
-  DCHECK(event->type() == WM_EVENT_DISPLAY_BOUNDS_CHANGED ||
-         event->type() == WM_EVENT_WORKAREA_BOUNDS_CHANGED);
+  const DisplayMetricsChangedWMEvent* display_event =
+      event->AsDisplayMetricsChangedWMEvent();
+  CHECK(display_event->display_bounds_changed() ||
+        display_event->work_area_changed());
 
   for (aura::Window* child : window_->children())
     WindowState::Get(child)->OnWMEvent(event);

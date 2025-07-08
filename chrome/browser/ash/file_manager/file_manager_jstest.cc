@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/file_manager/file_manager_jstest_base.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "content/public/test/browser_test.h"
 
 class FileManagerJsTest : public FileManagerJsTestBase {
@@ -76,10 +77,6 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DirectoryModelTest) {
   RunTestURL("foreground/js/directory_model_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DirectoryTreeTest) {
-  RunTestURL("foreground/js/ui/directory_tree_unittest.js");
-}
-
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DriveBulkPinningBanner) {
   RunTestURL("foreground/js/ui/banners/drive_bulk_pinning_banner_unittest.js");
 }
@@ -112,24 +109,12 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileManagerDialogBaseTest) {
   RunTestURL("foreground/js/ui/file_manager_dialog_base_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileOperationHandlerTest) {
-  RunTestURL("background/js/file_operation_handler_unittest.js");
-}
-
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileOperationManagerTest) {
-  RunTestURL("background/js/file_operation_manager_unittest.js");
-}
-
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesAppEntryTypes) {
   RunTestURL("common/js/files_app_entry_types_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesDisplayPanel) {
   RunTestURL("foreground/elements/files_xf_elements_unittest.js");
-}
-
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesPasswordDialog) {
-  RunTestURL("foreground/elements/files_password_dialog_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FilesToast) {
@@ -174,6 +159,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, AsyncUtil) {
   RunTestURL("common/js/async_util_unittest.js");
 }
 
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileTypesBase) {
+  RunTestURL("common/js/file_types_base_unittest.js");
+}
+
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, FileType) {
   RunTestURL("common/js/file_type_unittest.js");
 }
@@ -188,6 +177,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Grid) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, InstallLinuxPackageDialogTest) {
   RunTestURL("foreground/js/ui/install_linux_package_dialog_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Id3Parser) {
+  RunTestURL("foreground/js/metadata/id3_parser_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, List) {
@@ -214,10 +207,6 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Menu) {
   RunTestURL("foreground/js/ui/menu_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MenuButton) {
-  RunTestURL("foreground/js/ui/menu_button_unittest.js");
-}
-
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MetadataCacheItem) {
   RunTestURL("foreground/js/metadata/metadata_cache_item_unittest.js");
 }
@@ -236,10 +225,6 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MultiMenu) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, MultiMetadataProvider) {
   RunTestURL("foreground/js/metadata/multi_metadata_provider_unittest.js");
-}
-
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, NavigationListModelTest) {
-  RunTestURL("foreground/js/navigation_list_model_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, PathComponent) {
@@ -278,6 +263,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ThumbnailModel) {
   RunTestURL("foreground/js/metadata/thumbnail_model_unittest.js");
 }
 
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, TranslationsTest) {
+  RunTestURL("common/js/translations_unittest.js");
+}
+
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, UtilTest) {
   RunTestURL("common/js/util_unittest.js");
 }
@@ -314,52 +303,64 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ActionsProducer) {
   RunTestURL("lib/actions_producer_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ActionsProducerAllEntries) {
-  RunTestURL("state/actions_producers/all_entries_unittest.js");
-}
-
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, BaseStore) {
   RunTestURL("lib/base_store_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerAllEntries) {
-  RunTestURL("state/reducers/all_entries_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, Selector) {
+  RunTestURL("lib/selector_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerAndroidApps) {
-  RunTestURL("state/reducers/android_apps_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksAllEntries) {
+  RunTestURL("state/ducks/all_entries_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerFolderShortcuts) {
-  RunTestURL("state/reducers/folder_shortcuts_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksAndroidApps) {
+  RunTestURL("state/ducks/android_apps_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerCurrentDirectory) {
-  RunTestURL("state/reducers/current_directory_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksDevice) {
+  RunTestURL("state/ducks/device_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerNavigation) {
-  RunTestURL("state/reducers/navigation_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksDrive) {
+  RunTestURL("state/ducks/drive_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerSearch) {
-  RunTestURL("state/reducers/search_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksLaunchParams) {
+  RunTestURL("state/ducks/launch_params_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerUiEntries) {
-  RunTestURL("state/reducers/ui_entries_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksFolderShortcuts) {
+  RunTestURL("state/ducks/folder_shortcuts_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerVolumes) {
-  RunTestURL("state/reducers/volumes_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksCurrentDirectory) {
+  RunTestURL("state/ducks/current_directory_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerBulkPinning) {
-  RunTestURL("state/reducers/bulk_pinning_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksNavigation) {
+  RunTestURL("state/ducks/navigation_unittest.js");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerJsTest, ReducerPreferences) {
-  RunTestURL("state/reducers/preferences_unittest.js");
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksSearch) {
+  RunTestURL("state/ducks/search_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksUiEntries) {
+  RunTestURL("state/ducks/ui_entries_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksVolumes) {
+  RunTestURL("state/ducks/volumes_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksBulkPinning) {
+  RunTestURL("state/ducks/bulk_pinning_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DucksPreferences) {
+  RunTestURL("state/ducks/preferences_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, NudgeContainer) {
@@ -388,6 +389,10 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, XfDlpRestrictionDetailsDialog) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, XfNudge) {
   RunTestURL("widgets/xf_nudge_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, XfPasswordDialog) {
+  RunTestURL("widgets/xf_password_dialog_unittest.js");
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, XfSelect) {
@@ -424,4 +429,25 @@ IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DirectoryTreeContainer) {
 
 IN_PROC_BROWSER_TEST_F(FileManagerJsTest, EntryUtils) {
   RunTestURL("common/js/entry_utils_unittest.js");
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsTest, DialogActionController) {
+  RunTestURL("foreground/js/dialog_action_controller_unittest.js");
+}
+
+// Rerun some of the tests above, using CrosComponents.
+class FileManagerJsCrosComponentsTest : public FileManagerJsTest {
+ public:
+  void SetUp() override {
+    FileManagerJsTest::SetUp();
+    scoped_feature_list_.InitWithFeatures({chromeos::features::kCrosComponents},
+                                          {});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(FileManagerJsCrosComponentsTest, BannerEducational) {
+  RunTestURL("foreground/js/ui/banners/educational_banner_unittest.js");
 }

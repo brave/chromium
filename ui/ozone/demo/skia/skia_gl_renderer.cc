@@ -12,14 +12,18 @@
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
+#include "skia/ext/font_utils.h"
 #include "skia/ext/legacy_display_globals.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkFont.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "third_party/skia/include/gpu/gl/GrGLAssembleInterface.h"
-#include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLAssembleInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "third_party/skia/include/private/chromium/GrDeferredDisplayList.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/gpu_fence.h"
@@ -59,14 +63,12 @@ bool SkiaGlRenderer::Initialize() {
                                           gl::GLContextAttribs());
   if (!gl_context_.get()) {
     LOG(FATAL) << "Failed to create GL context";
-    return false;
   }
 
   gl_surface_->Resize(size_, 1.f, gfx::ColorSpace(), true);
 
   if (!gl_context_->MakeCurrent(gl_surface_.get())) {
     LOG(FATAL) << "Failed to make GL context current";
-    return false;
   }
 
   sk_sp<const GrGLInterface> native_interface = GrGLMakeAssembledInterface(
@@ -77,7 +79,7 @@ bool SkiaGlRenderer::Initialize() {
   // TODO(csmartdalton): enable internal multisampling after the related Skia
   // rolls are in.
   options.fInternalMultisampleCount = 0;
-  gr_context_ = GrDirectContext::MakeGL(std::move(native_interface), options);
+  gr_context_ = GrDirectContexts::MakeGL(std::move(native_interface), options);
   DCHECK(gr_context_);
 
   PostRenderFrameTask(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK));
@@ -94,8 +96,8 @@ void SkiaGlRenderer::RenderFrame() {
     GrGLFramebufferInfo framebuffer_info;
     framebuffer_info.fFBOID = 0;
     framebuffer_info.fFormat = GL_RGBA8;
-    GrBackendRenderTarget render_target(size_.width(), size_.height(), 0, 8,
-                                        framebuffer_info);
+    auto render_target = GrBackendRenderTargets::MakeGL(
+        size_.width(), size_.height(), 0, 8, framebuffer_info);
 
     sk_surface_ = SkSurfaces::WrapBackendRenderTarget(
         gr_context_.get(), render_target, kBottomLeft_GrSurfaceOrigin,
@@ -164,7 +166,7 @@ void SkiaGlRenderer::Draw(SkCanvas* canvas, float fraction) {
   // Draw a message with a nice black paint
   paint.setColor(SK_ColorBLACK);
 
-  SkFont font;
+  SkFont font = skia::DefaultFont();
   font.setSize(32);
   font.setSubpixel(true);
 

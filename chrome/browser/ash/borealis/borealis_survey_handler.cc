@@ -6,8 +6,10 @@
 
 #include "base/containers/flat_map.h"
 #include "base/feature_list.h"
-#include "base/functional/bind_internal.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -37,12 +39,11 @@ BorealisSurveyHandler::BorealisSurveyHandler(
 }
 BorealisSurveyHandler::~BorealisSurveyHandler() = default;
 
-absl::optional<int> BorealisSurveyHandler::GetGameId(
-    const std::string& app_id) {
+std::optional<int> BorealisSurveyHandler::GetGameId(const std::string& app_id) {
   // Attempt to get the Borealis app ID.
   // TODO(b/173977876): Implement this in a more reliable way.
-  absl::optional<int> game_id;
-  absl::optional<guest_os::GuestOsRegistryService::Registration> registration =
+  std::optional<int> game_id;
+  std::optional<guest_os::GuestOsRegistryService::Registration> registration =
       guest_os::GuestOsRegistryServiceFactory::GetForProfile(profile_)
           ->GetRegistration(app_id);
   if (registration.has_value()) {
@@ -53,9 +54,9 @@ absl::optional<int> BorealisSurveyHandler::GetGameId(
 
 base::flat_map<std::string, std::string> BorealisSurveyHandler::GetSurveyData(
     std::string owner_id,
-    const std::string app_id,
+    std::string app_id,
     std::string window_title,
-    absl::optional<int> game_id) {
+    std::optional<int> game_id) {
   // Number of monitors
   int internal_displays = 0;
   int external_displays = 0;

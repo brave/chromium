@@ -5,7 +5,8 @@
 /** @fileoverview Suite of tests for extension-options-dialog. */
 import 'chrome://extensions/extensions.js';
 
-import {ExtensionsOptionsDialogElement, OptionsDialogMaxHeight, OptionsDialogMinWidth, Service} from 'chrome://extensions/extensions.js';
+import type {ExtensionsOptionsDialogElement} from 'chrome://extensions/extensions.js';
+import {OptionsDialogMaxHeight, OptionsDialogMinWidth, Service} from 'chrome://extensions/extensions.js';
 import {assertEquals, assertFalse, assertGE, assertLE, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 
@@ -49,7 +50,7 @@ suite('ExtensionOptionsDialogTests', function() {
           assertLE(rect.height, OptionsDialogMaxHeight);
           // This is the header height with default font size.
           assertGE(rect.height, 68);
-          const nameElement = optionsDialog.shadowRoot!.querySelector(
+          const nameElement = optionsDialog.shadowRoot.querySelector(
               '#icon-and-name-wrapper span');
           assertTrue(!!nameElement);
           assertEquals(data.name, nameElement.textContent!.trim());

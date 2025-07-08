@@ -42,13 +42,15 @@ class CORE_EXPORT CascadeMap {
   const CascadePriority* Find(const CSSPropertyName&, CascadeOrigin) const;
   CascadePriority* FindKnownToExist(const CSSPropertyID id) {
     DCHECK(native_properties_.Bits().Has(id));
-    return &native_properties_.Buffer()[static_cast<size_t>(id)].Top(
-        backing_vector_);
+    return UNSAFE_TODO(
+        &native_properties_.Buffer()[static_cast<size_t>(id)].Top(
+            backing_vector_));
   }
   const CascadePriority* FindKnownToExist(const CSSPropertyID id) const {
     DCHECK(native_properties_.Bits().Has(id));
-    return &native_properties_.Buffer()[static_cast<size_t>(id)].Top(
-        backing_vector_);
+    return UNSAFE_TODO(
+        &native_properties_.Buffer()[static_cast<size_t>(id)].Top(
+            backing_vector_));
   }
   // Similar to Find(name, origin), but returns the CascadePriority from cascade
   // layers below the given priority. The uint64_t is presumed to come from
@@ -65,7 +67,9 @@ class CORE_EXPORT CascadeMap {
   // Added properties with CSSPropertyPriority::kHighPropertyPriority cause the
   // corresponding high_priority_-bit to be set. This provides a fast way to
   // check which high-priority properties have been added (if any).
-  uint64_t HighPriorityBits() const { return high_priority_; }
+  uint64_t HighPriorityBits() const {
+    return native_properties_.Bits().HighPriorityBits();
+  }
   // True if any important declaration has been added.
   bool HasImportant() const { return has_important_; }
   // True if any inline style declaration lost the cascade to something
@@ -175,7 +179,6 @@ class CORE_EXPORT CascadeMap {
  private:
   ALWAYS_INLINE void Add(CascadePriorityList* list, CascadePriority);
 
-  uint64_t high_priority_ = 0;
   bool has_important_ = false;
   bool inline_style_lost_ = false;
   NativeMap native_properties_;

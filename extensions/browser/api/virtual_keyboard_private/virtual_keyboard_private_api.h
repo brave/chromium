@@ -6,15 +6,15 @@
 #define EXTENSIONS_BROWSER_API_VIRTUAL_KEYBOARD_PRIVATE_VIRTUAL_KEYBOARD_PRIVATE_API_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
-#include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_function.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "extensions/common/api/virtual_keyboard_private.h"
 
 namespace ash {
 class ClipboardHistoryItem;
@@ -131,7 +131,7 @@ class VirtualKeyboardPrivateGetKeyboardConfigFunction
   ResponseAction Run() override;
 
  private:
-  void OnKeyboardConfig(absl::optional<base::Value::Dict> results);
+  void OnKeyboardConfig(std::optional<base::Value::Dict> results);
 };
 
 class VirtualKeyboardPrivateOpenSettingsFunction
@@ -254,7 +254,7 @@ class VirtualKeyboardPrivateSetWindowBoundsInScreenFunction
   ResponseAction Run() override;
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 class VirtualKeyboardPrivateGetClipboardHistoryFunction
     : public VirtualKeyboardPrivateFunction {
  public:
@@ -301,7 +301,7 @@ class VirtualKeyboardPrivateDeleteClipboardItemFunction
   // ExtensionFunction:
   ResponseAction Run() override;
 };
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class VirtualKeyboardDelegate;
 

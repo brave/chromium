@@ -5,13 +5,16 @@
 import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as Console from 'devtools/panels/console/console.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult('Tests that console messages with invalid stacktraces will still be rendered, crbug.com/826210\n');
 
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('console');
 
-  var consoleView = Console.ConsoleView.instance();
+  var consoleView = Console.ConsoleView.ConsoleView.instance();
   consoleView.setImmediatelyFilterMessagesForTest();
 
   // Add invalid message.
@@ -26,14 +29,14 @@ import {ConsoleTestRunner} from 'console_test_runner';
       }
     ]
   };
-  var badStackTraceMessage = new SDK.ConsoleMessage(
+  var badStackTraceMessage = new SDK.ConsoleModel.ConsoleMessage(
       TestRunner.runtimeModel,
-      SDK.ConsoleMessage.FrontendMessageSource.ConsoleAPI,
+      Common.Console.FrontendMessageSource.ConsoleAPI,
       Protocol.Log.LogEntryLevel.Error, 'This should be visible', {
         type: Protocol.Runtime.ConsoleAPICalledEventType.Error,
         stackTrace: badStackTrace,
       });
-  const consoleModel = SDK.targetManager.primaryPageTarget().model(SDK.ConsoleModel);
+  const consoleModel = SDK.TargetManager.TargetManager.instance().primaryPageTarget().model(SDK.ConsoleModel.ConsoleModel);
   consoleModel.addMessage(badStackTraceMessage);
 
   await ConsoleTestRunner.dumpConsoleMessages();

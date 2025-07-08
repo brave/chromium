@@ -11,6 +11,7 @@
 
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/cstring_view.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -43,6 +44,11 @@ FilePath GetTempDirForTesting();
 // upon creation or deletion will cause a test failure.
 FilePath CreateUniqueTempDirectoryScopedToTest();
 
+// Creates a new unique temporary directory in `dir` and returns the generated
+// path. The directory will be automatically deleted when the test completes.
+// Failure upon creation or deletion will cause a test failure.
+FilePath CreateUniqueTempDirectoryScopedToTestInDir(const base::FilePath& dir);
+
 // Synchronize all the dirty pages from the page cache to disk (on POSIX
 // systems). The Windows analogy for this operation is to 'Flush file buffers'.
 // Note: This is currently implemented as a no-op on Windows.
@@ -59,6 +65,14 @@ bool EvictFileFromSystemCache(const FilePath& file);
 // Refer to https://msdn.microsoft.com/en-us/library/aa822867.aspx for a list of
 // possible values.
 bool DenyFilePermission(const FilePath& path, DWORD permission);
+
+// Gets the DACL object serialized to security descriptor string
+// for the provided path, or an empty string in case of failure.
+std::wstring GetFileDacl(const FilePath& path);
+
+// Create a file or a directory setting DACL using the given security
+// descriptor.
+bool CreateWithDacl(const FilePath& path, wcstring_view sddl, bool directory);
 #endif  // BUILDFLAG(IS_WIN)
 
 // For testing, make the file unreadable or unwritable.

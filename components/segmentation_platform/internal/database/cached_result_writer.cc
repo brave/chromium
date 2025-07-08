@@ -7,39 +7,66 @@
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "components/segmentation_platform/internal/logging.h"
+#include "components/segmentation_platform/internal/metadata/metadata_utils.h"
 #include "components/segmentation_platform/internal/post_processor/post_processor.h"
 #include "components/segmentation_platform/internal/stats.h"
 #include "components/segmentation_platform/public/config.h"
 
 namespace segmentation_platform {
 
-CachedResultWriter::CachedResultWriter(std::unique_ptr<ClientResultPrefs> prefs,
+CachedResultWriter::CachedResultWriter(ClientResultPrefs* prefs,
                                        base::Clock* clock)
-    : result_prefs_(std::move(prefs)), clock_(clock) {}
+    : result_prefs_(prefs), clock_(clock) {}
 
 CachedResultWriter::~CachedResultWriter() = default;
 
-void CachedResultWriter::UpdatePrefsIfExpired(
+bool CachedResultWriter::UpdatePrefsIfExpired(
     const Config* config,
-    const proto::ClientResult& client_result,
+    proto::ClientResult client_result,
     const PlatformOptions& platform_options) {
   if (!IsPrefUpdateRequiredForClient(config, client_result, platform_options)) {
-    return;
+    return false;
   }
   VLOG(1) << "CachedResultWriter updating prefs with new result: "
           << segmentation_platform::PredictionResultToDebugString(
                  client_result.client_result())
           << " for segmentation key: " << config->segmentation_key;
-  UpdateNewClientResultToPrefs(config, client_result);
+  UpdateNewClientResultToPrefs(config, std::move(client_result));
+  return true;
+}
+
+void CachedResultWriter::MarkResultAsUsed(const Config* config) {
+  const proto::ClientResult* old_result =
+      result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
+  if (!old_result || old_result->first_used_timestamp() > 0) {
+    return;
+  }
+  proto::ClientResult new_result = *old_result;
+
+  new_result.set_first_used_timestamp(
+      base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds());
+  result_prefs_->SaveClientResultToPrefs(config->segmentation_key,
+                                         std::move(new_result));
+}
+
+void CachedResultWriter::CacheModelExecution(
+    const Config* config,
+    const proto::PredictionResult& result) {
+  auto now = base::Time::Now();
+  proto::ClientResult update =
+      metadata_utils::CreateClientResultFromPredResult(result, now);
+  update.set_first_used_timestamp(
+      now.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  result_prefs_->SaveClientResultToPrefs(config->segmentation_key, update);
 }
 
 bool CachedResultWriter::IsPrefUpdateRequiredForClient(
     const Config* config,
     const proto::ClientResult& new_client_result,
     const PlatformOptions& platform_options) {
-  absl::optional<proto::ClientResult> old_client_result =
+  const proto::ClientResult* old_client_result =
       result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
-  if (!old_client_result.has_value()) {
+  if (!old_client_result) {
     return true;
   }
   const proto::PredictionResult& old_pred_result =
@@ -86,19 +113,21 @@ bool CachedResultWriter::IsPrefUpdateRequiredForClient(
 
 void CachedResultWriter::UpdateNewClientResultToPrefs(
     const Config* config,
-    const proto::ClientResult& client_result) {
-  auto prev_client_result =
+    proto::ClientResult client_result) {
+  const proto::ClientResult* prev_client_result =
       result_prefs_->ReadClientResultFromPrefs(config->segmentation_key);
-  absl::optional<proto::PredictionResult> prev_prediction_result =
-      prev_client_result.has_value()
-          ? absl::make_optional(prev_client_result->client_result())
-          : absl::nullopt;
-  stats::RecordClassificationResultUpdated(*config, prev_prediction_result,
-                                           client_result.client_result());
+  const proto::PredictionResult* prev_prediction_result =
+      prev_client_result ? &prev_client_result->client_result() : nullptr;
+  if (prev_prediction_result &&
+      PostProcessor::IsClassificationResult(*prev_prediction_result) &&
+      PostProcessor::IsClassificationResult(client_result.client_result())) {
+    stats::RecordClassificationResultUpdated(*config, prev_prediction_result,
+                                             client_result.client_result());
+  }
   stats::RecordSegmentSelectionFailure(
       *config, stats::SegmentationSelectionFailureReason::kProtoPrefsUpdated);
   result_prefs_->SaveClientResultToPrefs(config->segmentation_key,
-                                         client_result);
+                                         std::move(client_result));
 }
 
 }  // namespace segmentation_platform

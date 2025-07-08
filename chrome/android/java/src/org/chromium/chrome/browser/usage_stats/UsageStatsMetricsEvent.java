@@ -6,26 +6,27 @@ package org.chromium.chrome.browser.usage_stats;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
+
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-/**
- * Enumeration of usage stats-related metrics events.
- */
+/** Enumeration of usage stats-related metrics events. */
 @IntDef({
-        UsageStatsMetricsEvent.OPT_IN,
-        UsageStatsMetricsEvent.OPT_OUT,
-        UsageStatsMetricsEvent.START_TRACKING_TOKEN,
-        UsageStatsMetricsEvent.STOP_TRACKING_TOKEN,
-        UsageStatsMetricsEvent.SUSPEND_SITES,
-        UsageStatsMetricsEvent.UNSUSPEND_SITES,
-        UsageStatsMetricsEvent.QUERY_EVENTS,
-        UsageStatsMetricsEvent.CLEAR_ALL_HISTORY,
-        UsageStatsMetricsEvent.CLEAR_HISTORY_RANGE,
-        UsageStatsMetricsEvent.CLEAR_HISTORY_DOMAIN,
-        UsageStatsMetricsEvent.NUM_ENTRIES,
+    UsageStatsMetricsEvent.OPT_IN,
+    UsageStatsMetricsEvent.OPT_OUT,
+    UsageStatsMetricsEvent.START_TRACKING_TOKEN,
+    UsageStatsMetricsEvent.STOP_TRACKING_TOKEN,
+    UsageStatsMetricsEvent.SUSPEND_SITES,
+    UsageStatsMetricsEvent.UNSUSPEND_SITES,
+    UsageStatsMetricsEvent.QUERY_EVENTS,
+    UsageStatsMetricsEvent.CLEAR_ALL_HISTORY,
+    UsageStatsMetricsEvent.CLEAR_HISTORY_RANGE,
+    UsageStatsMetricsEvent.CLEAR_HISTORY_DOMAIN,
+    UsageStatsMetricsEvent.NUM_ENTRIES,
 })
 @Retention(RetentionPolicy.SOURCE)
+@NullMarked
 public @interface UsageStatsMetricsEvent {
     int OPT_IN = 0;
     int OPT_OUT = 1;

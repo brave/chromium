@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/startup_metric_utils/browser/startup_metric_utils.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -16,14 +23,17 @@
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
 #include "base/threading/scoped_thread_priority.h"
 #include "base/trace_event/trace_event.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "build/build_config.h"
+#include "components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations_histograms.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #include <winternl.h>
-#include "base/win/win_util.h"
+
+#include "base/win/windows_handle_util.h"
 
 namespace {
 
@@ -125,19 +135,21 @@ StartupTemperature g_startup_temperature = UNDETERMINED_STARTUP_TEMPERATURE;
 // This function must only be used in code that runs after
 // |g_startup_temperature| has been initialized.
 template <typename T>
-void UmaHistogramWithTemperature(
-    void (*histogram_function)(const std::string& name, T),
-    const std::string& histogram_basename,
-    T value) {
+void EmitHistogramWithTemperature(void (*histogram_function)(std::string_view,
+                                                             T),
+                                  std::string_view histogram_basename,
+                                  T value) {
   // Always record to the base histogram.
   (*histogram_function)(histogram_basename, value);
   // Record to the cold/warm suffixed histogram as appropriate.
   switch (g_startup_temperature) {
     case COLD_STARTUP_TEMPERATURE:
-      (*histogram_function)(histogram_basename + ".ColdStartup", value);
+      (*histogram_function)(base::StrCat({histogram_basename, ".ColdStartup"}),
+                            value);
       break;
     case WARM_STARTUP_TEMPERATURE:
-      (*histogram_function)(histogram_basename + ".WarmStartup", value);
+      (*histogram_function)(base::StrCat({histogram_basename, ".WarmStartup"}),
+                            value);
       break;
     case LUKEWARM_STARTUP_TEMPERATURE:
       // No suffix emitted for lukewarm startups.
@@ -146,28 +158,22 @@ void UmaHistogramWithTemperature(
       break;
     case STARTUP_TEMPERATURE_COUNT:
       NOTREACHED();
-      break;
   }
-}
-
-void UmaHistogramWithTraceAndTemperature(
-    void (*histogram_function)(const std::string& name, base::TimeDelta),
-    const char* histogram_basename,
-    base::TimeTicks begin_ticks,
-    base::TimeTicks end_ticks) {
-  UmaHistogramWithTemperature(histogram_function, histogram_basename,
-                              end_ticks - begin_ticks);
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-      "startup", histogram_basename, TRACE_ID_WITH_SCOPE(histogram_basename, 0),
-      begin_ticks, "Temperature", g_startup_temperature);
-  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-      "startup", histogram_basename, TRACE_ID_WITH_SCOPE(histogram_basename, 0),
-      end_ticks);
 }
 
 }  // namespace
 
 namespace startup_metric_utils {
+
+void BrowserStartupMetricRecorder::EmitHistogramWithTemperatureAndTraceEvent(
+    void (*histogram_function)(std::string_view, base::TimeDelta),
+    const char* histogram_basename,
+    base::TimeTicks begin_ticks,
+    base::TimeTicks end_ticks) {
+  EmitHistogramWithTemperature(histogram_function, histogram_basename,
+                               end_ticks - begin_ticks);
+  GetCommon().EmitTraceEvent(histogram_basename, begin_ticks, end_ticks);
+}
 
 BrowserStartupMetricRecorder& GetBrowser() {
   // If this ceases to be true, Get{Common,Browser} need to be changed to use
@@ -186,14 +192,14 @@ BrowserStartupMetricRecorder& GetBrowser() {
 #if BUILDFLAG(IS_WIN)
 // Returns the hard fault count of the current process, or nullopt if it can't
 // be determined.
-absl::optional<uint32_t>
+std::optional<uint32_t>
 BrowserStartupMetricRecorder::GetHardFaultCountForCurrentProcess() {
   // Get the function pointer.
   static const NtQuerySystemInformationPtr query_sys_info =
       reinterpret_cast<NtQuerySystemInformationPtr>(::GetProcAddress(
           GetModuleHandle(L"ntdll.dll"), "NtQuerySystemInformation"));
   if (query_sys_info == nullptr) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // The output of this system call depends on the number of threads and
@@ -224,7 +230,7 @@ BrowserStartupMetricRecorder::GetHardFaultCountForCurrentProcess() {
       // to fill a large buffer just to record histograms.
       constexpr ULONG kMaxLength = 512 * 1024;
       if (return_length >= kMaxLength) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 
       // Resize the buffer and retry, if the buffer hasn't already been
@@ -241,7 +247,7 @@ BrowserStartupMetricRecorder::GetHardFaultCountForCurrentProcess() {
     // times.
     DCHECK(return_length <= buffer.size() ||
            num_buffer_resize >= kMaxNumBufferResize);
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Look for the struct housing information for the current process.
@@ -257,12 +263,12 @@ BrowserStartupMetricRecorder::GetHardFaultCountForCurrentProcess() {
     // The list ends when NextEntryOffset is zero. This also prevents busy
     // looping if the data is in fact invalid.
     if (proc_info->NextEntryOffset <= 0) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     index += proc_info->NextEntryOffset;
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -270,8 +276,12 @@ void BrowserStartupMetricRecorder::ResetSessionForTesting() {
   GetCommon().ResetSessionForTesting();
   // Reset global ticks that will be recorded multiple times when multiple
   // tests run in the same process.
+  main_window_startup_interrupted_ = false;
   message_loop_start_ticks_ = base::TimeTicks();
   browser_window_display_ticks_ = base::TimeTicks();
+  browser_window_first_paint_ticks_ = base::TimeTicks();
+  is_privacy_sandbox_attestations_component_ready_recorded_ = false;
+  is_privacy_sandbox_attestations_first_check_recorded_ = false;
 }
 
 bool BrowserStartupMetricRecorder::WasMainWindowStartupInterrupted() const {
@@ -293,6 +303,12 @@ void BrowserStartupMetricRecorder::RecordMessageLoopStartTicks(
   DCHECK(!message_loop_start_ticks_.is_null());
 }
 
+base::TimeTicks BrowserStartupMetricRecorder::GetWebContentsStartTicks() const {
+  return web_contents_start_ticks_.is_null()
+             ? GetCommon().application_start_ticks_
+             : web_contents_start_ticks_;
+}
+
 void BrowserStartupMetricRecorder::RecordBrowserMainMessageLoopStart(
     base::TimeTicks ticks,
     bool is_first_run) {
@@ -307,12 +323,12 @@ void BrowserStartupMetricRecorder::RecordBrowserMainMessageLoopStart(
 
   // Record timing of the browser message-loop start time.
   if (is_first_run) {
-    UmaHistogramWithTraceAndTemperature(
+    EmitHistogramWithTemperatureAndTraceEvent(
         &base::UmaHistogramLongTimes100,
         "Startup.BrowserMessageLoopStartTime.FirstRun",
         GetCommon().application_start_ticks_, ticks);
   } else {
-    UmaHistogramWithTraceAndTemperature(
+    EmitHistogramWithTemperatureAndTraceEvent(
         &base::UmaHistogramLongTimes100, "Startup.BrowserMessageLoopStartTime",
         GetCommon().application_start_ticks_, ticks);
   }
@@ -321,7 +337,7 @@ void BrowserStartupMetricRecorder::RecordBrowserMainMessageLoopStart(
 
   // Record values stored prior to startup temperature evaluation.
   if (ShouldLogStartupHistogram() && !browser_window_display_ticks_.is_null()) {
-    UmaHistogramWithTraceAndTemperature(
+    EmitHistogramWithTemperatureAndTraceEvent(
         &base::UmaHistogramLongTimes, "Startup.BrowserWindowDisplay",
         GetCommon().application_start_ticks_, browser_window_display_ticks_);
   }
@@ -329,7 +345,7 @@ void BrowserStartupMetricRecorder::RecordBrowserMainMessageLoopStart(
   // Process creation to application start. See comment above
   // RecordApplicationStart().
   if (!GetCommon().process_creation_ticks_.is_null()) {
-    UmaHistogramWithTraceAndTemperature(
+    EmitHistogramWithTemperatureAndTraceEvent(
         &base::UmaHistogramLongTimes,
         "Startup.LoadTime.ProcessCreateToApplicationStart",
         GetCommon().process_creation_ticks_,
@@ -337,11 +353,19 @@ void BrowserStartupMetricRecorder::RecordBrowserMainMessageLoopStart(
 
     // Application start to ChromeMain().
     DCHECK(!GetCommon().chrome_main_entry_ticks_.is_null());
-    UmaHistogramWithTraceAndTemperature(
+    EmitHistogramWithTemperatureAndTraceEvent(
         &base::UmaHistogramLongTimes,
         "Startup.LoadTime.ApplicationStartToChromeMain",
         GetCommon().application_start_ticks_,
         GetCommon().chrome_main_entry_ticks_);
+  }
+
+  // PreReadFile time.
+  if (!GetCommon().preread_end_ticks_.is_null() &&
+      !GetCommon().preread_begin_ticks_.is_null()) {
+    EmitHistogramWithTemperatureAndTraceEvent(
+        &base::UmaHistogramLongTimes, "Startup.Browser.LoadTime.PreReadFile",
+        GetCommon().preread_begin_ticks_, GetCommon().preread_end_ticks_);
   }
 }
 
@@ -354,7 +378,7 @@ void BrowserStartupMetricRecorder::RecordBrowserMainLoopFirstIdle(
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(
+  EmitHistogramWithTemperatureAndTraceEvent(
       &base::UmaHistogramLongTimes100, "Startup.BrowserMessageLoopFirstIdle",
       GetCommon().application_start_ticks_, ticks);
 }
@@ -377,22 +401,33 @@ void BrowserStartupMetricRecorder::RecordBrowserWindowDisplay(
   browser_window_display_ticks_ = ticks;
 }
 
+void BrowserStartupMetricRecorder::RecordBrowserWindowFirstPaintTicks(
+    base::TimeTicks ticks) {
+  DCHECK(!ticks.is_null());
+
+  if (!browser_window_first_paint_ticks_.is_null()) {
+    return;
+  }
+
+  browser_window_first_paint_ticks_ = ticks;
+}
+
 void BrowserStartupMetricRecorder::RecordFirstWebContentsNonEmptyPaint(
     base::TimeTicks now,
     base::TimeTicks render_process_host_init_time) {
-  DCHECK(!GetCommon().application_start_ticks_.is_null());
+  const base::TimeTicks web_contents_start_ticks = GetWebContentsStartTicks();
+  DCHECK(!web_contents_start_ticks.is_null());
   GetCommon().AssertFirstCallInSession(FROM_HERE);
 
   if (!ShouldLogStartupHistogram()) {
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(&base::UmaHistogramLongTimes100,
-                                      "Startup.FirstWebContents.NonEmptyPaint3",
-                                      GetCommon().application_start_ticks_,
-                                      now);
+  EmitHistogramWithTemperatureAndTraceEvent(
+      &base::UmaHistogramLongTimes100,
+      "Startup.FirstWebContents.NonEmptyPaint3", web_contents_start_ticks, now);
 
-  UmaHistogramWithTemperature(
+  EmitHistogramWithTemperature(
       &base::UmaHistogramLongTimes100,
       "Startup.BrowserMessageLoopStart.To.NonEmptyPaint2",
       now - message_loop_start_ticks_);
@@ -400,50 +435,73 @@ void BrowserStartupMetricRecorder::RecordFirstWebContentsNonEmptyPaint(
 
 void BrowserStartupMetricRecorder::RecordFirstWebContentsMainNavigationStart(
     base::TimeTicks ticks) {
-  DCHECK(!GetCommon().application_start_ticks_.is_null());
+  const base::TimeTicks web_contents_start_ticks = GetWebContentsStartTicks();
+  DCHECK(!web_contents_start_ticks.is_null());
   GetCommon().AssertFirstCallInSession(FROM_HERE);
 
   if (!ShouldLogStartupHistogram()) {
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(
+  EmitHistogramWithTemperatureAndTraceEvent(
       &base::UmaHistogramLongTimes100,
-      "Startup.FirstWebContents.MainNavigationStart",
-      GetCommon().application_start_ticks_, ticks);
+      "Startup.FirstWebContents.MainNavigationStart", web_contents_start_ticks,
+      ticks);
 }
 
 void BrowserStartupMetricRecorder::RecordFirstWebContentsMainNavigationFinished(
     base::TimeTicks ticks) {
-  DCHECK(!GetCommon().application_start_ticks_.is_null());
+  const base::TimeTicks web_contents_start_ticks = GetWebContentsStartTicks();
+  DCHECK(!web_contents_start_ticks.is_null());
   GetCommon().AssertFirstCallInSession(FROM_HERE);
 
   if (!ShouldLogStartupHistogram()) {
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(
+  EmitHistogramWithTemperatureAndTraceEvent(
       &base::UmaHistogramLongTimes100,
       "Startup.FirstWebContents.MainNavigationFinished",
-      GetCommon().application_start_ticks_, ticks);
+      web_contents_start_ticks, ticks);
 }
 
 void BrowserStartupMetricRecorder::RecordBrowserWindowFirstPaint(
     base::TimeTicks ticks) {
-  DCHECK(!GetCommon().application_start_ticks_.is_null());
-
   static bool is_first_call = true;
   if (!is_first_call || ticks.is_null()) {
     return;
   }
   is_first_call = false;
+  RecordBrowserWindowFirstPaintTicks(ticks);
   if (!ShouldLogStartupHistogram()) {
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(
-      &base::UmaHistogramLongTimes100, "Startup.BrowserWindow.FirstPaint",
-      GetCommon().application_start_ticks_, ticks);
+  base::TimeTicks latency_origin;
+#if BUILDFLAG(IS_CHROMEOS)
+  // `application_start_ticks_` is inappropriate since the device often boots
+  // to a login screen, and an indefinite amount of time can elapse before a
+  // browser window is opened. Even when restoring a session after a crash
+  // (which has no login screen), the session is not restored automatically.
+  // The user must click a notification first before browser windows are
+  // created and restored, so using `application_start_ticks_` would have the
+  // same issue.
+  //
+  // If `web_contents_start_ticks_` is not set here, that could be intentional
+  // as this metric should not be recorded in certain cases (ex: a manually
+  // opened browser window).
+  if (web_contents_start_ticks_.is_null()) {
+    return;
+  }
+  latency_origin = web_contents_start_ticks_;
+#else
+  latency_origin = GetCommon().application_start_ticks_;
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  DCHECK(!latency_origin.is_null());
+
+  EmitHistogramWithTemperatureAndTraceEvent(&base::UmaHistogramLongTimes100,
+                                            "Startup.BrowserWindow.FirstPaint",
+                                            latency_origin, ticks);
 }
 
 void BrowserStartupMetricRecorder::RecordFirstRunSentinelCreation(
@@ -455,7 +513,7 @@ void BrowserStartupMetricRecorder::RecordHardFaultHistogram() {
 #if BUILDFLAG(IS_WIN)
   DCHECK_EQ(UNDETERMINED_STARTUP_TEMPERATURE, g_startup_temperature);
 
-  const absl::optional<uint32_t> hard_fault_count =
+  const std::optional<uint32_t> hard_fault_count =
       GetHardFaultCountForCurrentProcess();
 
   if (hard_fault_count.has_value()) {
@@ -470,10 +528,13 @@ void BrowserStartupMetricRecorder::RecordHardFaultHistogram() {
     // Determine the startup type based on the number of observed hard faults.
     if (hard_fault_count < kWarmStartHardFaultCountThreshold) {
       g_startup_temperature = WARM_STARTUP_TEMPERATURE;
+      GetCommon().EmitInstantEvent("Startup.Temperature.Warm");
     } else if (hard_fault_count >= kColdStartHardFaultCountThreshold) {
       g_startup_temperature = COLD_STARTUP_TEMPERATURE;
+      GetCommon().EmitInstantEvent("Startup.Temperature.Cold");
     } else {
       g_startup_temperature = LUKEWARM_STARTUP_TEMPERATURE;
+      GetCommon().EmitInstantEvent("Startup.Temperature.Lukewarm");
     }
   } else {
     // |g_startup_temperature| remains
@@ -491,6 +552,16 @@ bool BrowserStartupMetricRecorder::ShouldLogStartupHistogram() const {
   return !WasMainWindowStartupInterrupted();
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+void BrowserStartupMetricRecorder::RecordWebContentsStartTime(
+    base::TimeTicks ticks) {
+  if (web_contents_start_ticks_.is_null()) {
+    web_contents_start_ticks_ = ticks;
+    DCHECK(!web_contents_start_ticks_.is_null());
+  }
+}
+#endif
+
 void BrowserStartupMetricRecorder::RecordExternalStartupMetric(
     const char* histogram_name,
     base::TimeTicks completion_ticks,
@@ -501,13 +572,85 @@ void BrowserStartupMetricRecorder::RecordExternalStartupMetric(
     return;
   }
 
-  UmaHistogramWithTraceAndTemperature(
+  EmitHistogramWithTemperatureAndTraceEvent(
       &base::UmaHistogramMediumTimes, histogram_name,
       GetCommon().application_start_ticks_, completion_ticks);
 
   if (set_non_browser_ui_displayed) {
     SetNonBrowserUIDisplayed();
   }
+}
+
+// There are two possible callers of `ComponentReady()`:
+// a) Component registration, when there is existing component file on disk.
+// b) Component installation, when the component is downloaded.
+//
+// The following factors affect the timing of `ComponentReady()`:
+// Non-browser UI during startup, for example, profile picker.
+// - When the user stays at the profile picker indefinitely. The registration
+// takes place in around 4 minutes after opening the browser.
+//
+// The purpose of this metric is to understand the time gap between the time
+// users are able to navigate and the time the Privacy Sandbox attestations map
+// is ready. If navigation to sites that use Privacy Sandbox APIs takes place
+// during this gap, the API calls may be rejected because the attestations map
+// has not been ready yet.
+//
+// To reduce the noise introduced by non-browser UI, we measure from the first
+// browser window paint if it has been recorded. If it is not recorded, the
+// measurement is taken from application start.
+// TODO(crbug.com/329235182): The Privacy Sandbox Attestation start up related
+// histograms are not using the temperature breakouts. The logic for all these
+// histograms could just live in the privacy sandbox component itself, which
+// pulls from startup code just to get the application start timeticks.
+void BrowserStartupMetricRecorder::RecordPrivacySandboxAttestationsFirstReady(
+    base::TimeTicks ticks) {
+  DCHECK(!ticks.is_null());
+
+  // This metric should be recorded at most once for each Chrome session.
+  if (is_privacy_sandbox_attestations_component_ready_recorded_) {
+    return;
+  }
+
+  // The first browser window paint has been recorded.
+  if (!browser_window_first_paint_ticks_.is_null()) {
+    is_privacy_sandbox_attestations_component_ready_recorded_ = true;
+    base::UmaHistogramLongTimes100(
+        privacy_sandbox::kComponentReadyFromBrowserWindowFirstPaintUMA,
+        ticks - browser_window_first_paint_ticks_);
+    return;
+  }
+
+  // Otherwise, this implies the component is installed before first browser
+  // window paint.
+  is_privacy_sandbox_attestations_component_ready_recorded_ = true;
+  if (WasMainWindowStartupInterrupted()) {
+    // The durations should be a few minutes.
+    base::UmaHistogramLongTimes100(
+        privacy_sandbox::kComponentReadyFromApplicationStartWithInterruptionUMA,
+        ticks - GetCommon().application_start_ticks_);
+  } else {
+    // The durations should be a few milliseconds.
+    base::UmaHistogramLongTimes100(
+        privacy_sandbox::kComponentReadyFromApplicationStartUMA,
+        ticks - GetCommon().application_start_ticks_);
+  }
+}
+
+void BrowserStartupMetricRecorder::RecordPrivacySandboxAttestationFirstCheck(
+    base::TimeTicks ticks) {
+  DCHECK(!ticks.is_null());
+
+  // This metric should be recorded at most once for each Chrome session.
+  if (is_privacy_sandbox_attestations_first_check_recorded_) {
+    return;
+  }
+
+  is_privacy_sandbox_attestations_first_check_recorded_ = true;
+
+  // Record the first time a Privacy Sandbox API is checked for attestation.
+  base::UmaHistogramLongTimes100(privacy_sandbox::kAttestationFirstCheckTimeUMA,
+                                 ticks - GetCommon().application_start_ticks_);
 }
 
 }  // namespace startup_metric_utils

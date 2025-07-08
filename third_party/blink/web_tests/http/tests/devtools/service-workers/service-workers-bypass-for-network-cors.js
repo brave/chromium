@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+
 (async function() {
   TestRunner.addResult(`Tests "Bypass for network" checkbox works with CORS requests. crbug.com/771742\n`);
-  await TestRunner.loadLegacyModule('console');
   // Note: every test that uses a storage API must manually clean-up state from previous tests.
   await ApplicationTestRunner.resetState();
 
@@ -82,12 +83,12 @@ import {ApplicationTestRunner} from 'application_test_runner';
       })
       .then(() => {
         TestRunner.addResult('Enable bypassServiceWorker');
-        Common.settings.settingForTest('bypassServiceWorker').set(true);
+        Common.Settings.settingForTest('bypass-service-worker').set(true);
         return testCorsRequests('2');
       })
       .then(() => {
         TestRunner.addResult('Disable bypassServiceWorker');
-        Common.settings.settingForTest('bypassServiceWorker').set(false);
+        Common.Settings.settingForTest('bypass-service-worker').set(false);
         return testCorsRequests('3');
       })
       .then(() => {

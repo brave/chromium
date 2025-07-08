@@ -7,6 +7,11 @@
 
 #include "base/time/time.h"
 #include "components/content_settings/core/common/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_enums.mojom.h"
+
+namespace base {
+class Clock;
+}
 
 namespace mojo {
 template <typename DataViewType, typename T>
@@ -22,8 +27,14 @@ namespace content_settings {
 class RuleMetaData {
  public:
   RuleMetaData();
+  RuleMetaData(RuleMetaData&& other);
+  RuleMetaData(const RuleMetaData& other) = delete;
+  RuleMetaData& operator=(const RuleMetaData& other) = delete;
+  RuleMetaData& operator=(RuleMetaData&& other);
 
   bool operator==(const RuleMetaData& other) const;
+
+  RuleMetaData Clone() const;
 
   base::Time last_modified() const { return last_modified_; }
   void set_last_modified(base::Time last_modified) {
@@ -38,9 +49,31 @@ class RuleMetaData {
 
   base::Time expiration() const { return expiration_; }
 
-  SessionModel session_model() const { return session_model_; }
-  void set_session_model(SessionModel session_model) {
+  mojom::SessionModel session_model() const { return session_model_; }
+  void set_session_model(mojom::SessionModel session_model) {
     session_model_ = session_model;
+  }
+
+  mojom::TpcdMetadataRuleSource tpcd_metadata_rule_source() const {
+    return tpcd_metadata_rule_source_;
+  }
+  void set_tpcd_metadata_rule_source(
+      mojom::TpcdMetadataRuleSource const rule_source) {
+    tpcd_metadata_rule_source_ = rule_source;
+  }
+
+  mojom::TpcdMetadataCohort tpcd_metadata_cohort() const {
+    return tpcd_metadata_cohort_;
+  }
+  void set_tpcd_metadata_cohort(const mojom::TpcdMetadataCohort cohort) {
+    tpcd_metadata_cohort_ = cohort;
+  }
+
+  uint32_t tpcd_metadata_elected_dtrp() const {
+    return tpcd_metadata_elected_dtrp_;
+  }
+  void set_tpcd_metadata_elected_dtrp(uint32_t elected_dtrp) {
+    tpcd_metadata_elected_dtrp_ = elected_dtrp;
   }
 
   base::TimeDelta lifetime() const { return lifetime_; }
@@ -54,11 +87,29 @@ class RuleMetaData {
   void SetExpirationAndLifetime(base::Time expiration,
                                 base::TimeDelta lifetime);
 
+  // Returns whether the Rule is expired. Expiration is handled by
+  // HostContentSettingsMap automatically, clients do not have to check this
+  // attribute manually.
+  bool IsExpired(const base::Clock* clock) const;
+
   // Computes the setting's lifetime, based on the lifetime and expiration that
-  // were read from persistent storage. This is a helper to deal with missing
-  // lifetime data during migration/rollout.
+  // were read from persistent storage.
   static base::TimeDelta ComputeLifetime(base::TimeDelta lifetime,
                                          base::Time expiration);
+
+  bool decided_by_related_website_sets() const {
+    return decided_by_related_website_sets_;
+  }
+  void set_decided_by_related_website_sets(
+      bool decided_by_related_website_sets) {
+    decided_by_related_website_sets_ = decided_by_related_website_sets;
+  }
+
+  const base::Value& rule_options() const { return rule_options_; }
+
+  void set_rule_options(const base::Value& rule_options) {
+    rule_options_ = rule_options.Clone();
+  }
 
  private:
   // mojo (de)serialization needs access to private details.
@@ -79,9 +130,24 @@ class RuleMetaData {
   // zero.
   base::Time expiration_;
   // SessionModel as defined through a ContentSettingsConstraint.
-  SessionModel session_model_ = SessionModel::Durable;
+  mojom::SessionModel session_model_ = mojom::SessionModel::DURABLE;
   // The lifetime of the setting. This may be zero iff `expiration_` is zero.
   base::TimeDelta lifetime_;
+  // TPCD Metadata Source (go/measure3pcddtdeployment).
+  // TODO(http://b/324406007): The impl is currently specific to the TPCD
+  // Metadata Source and is expected to be cleaned up with the mitigation
+  // cleanup.
+  mojom::TpcdMetadataRuleSource tpcd_metadata_rule_source_ =
+      mojom::TpcdMetadataRuleSource::SOURCE_UNSPECIFIED;
+  mojom::TpcdMetadataCohort tpcd_metadata_cohort_ =
+      mojom::TpcdMetadataCohort::DEFAULT;
+  uint32_t tpcd_metadata_elected_dtrp_ = 0u;
+
+  // Set to true if the storage access was decided by a Related Website Set.
+  bool decided_by_related_website_sets_ = false;
+
+  // Represents options which apply to the rule. May be empty.
+  base::Value rule_options_;
 };
 
 }  // namespace content_settings

@@ -1,4 +1,4 @@
-(async function(testRunner) {
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
   const {tabTargetSession} = await testRunner.startBlankWithTabTarget(
       `Tests that prerender gets the UA override.`);
 
@@ -42,6 +42,6 @@
 
   // Success
   const resultSuccess = await dp2.Preload.oncePrerenderStatusUpdated();
-  testRunner.log(resultSuccess, '', ['loaderId', 'sessionId']);
+  testRunner.log(resultSuccess);
   testRunner.completeTest();
 });

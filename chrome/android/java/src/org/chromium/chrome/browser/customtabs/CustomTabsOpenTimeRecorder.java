@@ -12,12 +12,12 @@ import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Log;
-import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.crash.ChromePureJavaExceptionReporter;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController.FinishReason;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -42,35 +42,40 @@ import java.util.function.BooleanSupplier;
  * user-intervened ones.
  */
 class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
-    private static final String TAG = "CustomTabsOTR";
-    @VisibleForTesting
-    static final String PACKAGE_NAME_EMPTY_1P = "1p";
+    @VisibleForTesting static final String PACKAGE_NAME_EMPTY_1P = "1p";
     private final CustomTabActivityNavigationController mNavigationController;
     private final BooleanSupplier mIsCctFinishing;
     private final BrowserServicesIntentDataProvider mIntent;
 
     // Getting the package name from the Intent only works when the client is still connected.
-    @Nullable
-    private final String mCachedPackageName;
+    @Nullable private final String mCachedPackageName;
 
     private long mOnStartTimestampMs;
 
     // This should be kept in sync with the definition |CustomTabsCloseCause|
     // in tools/metrics/histograms/enums.xml.
-    @IntDef({CloseCause.USER_ACTION_CHROME, CloseCause.USER_ACTION_ANDROID, CloseCause.AUTOCLOSE})
+    @IntDef({
+        CloseCause.USER_ACTION_CHROME,
+        CloseCause.USER_ACTION_ANDROID,
+        CloseCause.AUTOCLOSE,
+        CloseCause.AUTH_TAB
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CloseCause {
         int USER_ACTION_CHROME = 0;
         int USER_ACTION_ANDROID = 1;
         int AUTOCLOSE = 2;
-        int COUNT = 3;
+        int AUTH_TAB = 3;
+        int COUNT = 4;
     }
 
     private @CloseCause int mCloseCause;
 
-    public CustomTabsOpenTimeRecorder(ActivityLifecycleDispatcher lifecycleDispatcher,
+    public CustomTabsOpenTimeRecorder(
+            ActivityLifecycleDispatcher lifecycleDispatcher,
             CustomTabActivityNavigationController navigationController,
-            BooleanSupplier isCctFinishing, BrowserServicesIntentDataProvider intent) {
+            BooleanSupplier isCctFinishing,
+            BrowserServicesIntentDataProvider intent) {
         lifecycleDispatcher.register(this);
         mNavigationController = navigationController;
         mIsCctFinishing = isCctFinishing;
@@ -87,6 +92,9 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
     @Override
     public void onStopWithNative() {
         assert mOnStartTimestampMs != 0;
+        if (mCloseCause == CloseCause.AUTOCLOSE && mIntent.isAuthTab()) {
+            mCloseCause = CloseCause.AUTH_TAB;
+        }
         RecordHistogram.recordEnumeratedHistogram(
                 "CustomTabs.CloseCause", mCloseCause, CloseCause.COUNT);
 
@@ -100,25 +108,21 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
 
         if (mIsCctFinishing.getAsBoolean()) {
             long time = System.currentTimeMillis() / DateUtils.SECOND_IN_MILLIS;
-            boolean wasUserClose = mCloseCause != CloseCause.AUTOCLOSE;
+            boolean wasUserClose =
+                    mCloseCause != CloseCause.AUTOCLOSE && mCloseCause != CloseCause.AUTH_TAB;
             boolean isPartial = mIntent.isPartialCustomTab();
 
             long recordDuration = Math.min(duration / DateUtils.SECOND_IN_MILLIS, 300);
             // For the real implementation, there'll be a native method on this class or a new
             // class entirely. Just for the proof-of-concept I tacked the native method onto another
             // class that already have natives.
-            CustomTabsOpenTimeRecorderJni.get().recordCustomTabSession(
-                    time, getPackageName(isPartial), recordDuration, wasUserClose, isPartial);
-
-            // TODO(crbug.com/1442388): Remove this after the investigation is over.
-            if (isPartial && TextUtils.isEmpty(mCachedPackageName)) {
-                String msg = "Partial CCT cannot have an empty package name."
-                        + " trusted: " + mIntent.isTrustedIntent() + " chrome: "
-                        + mIntent.isOpenedByChrome() + " incognito: " + mIntent.isIncognito()
-                        + " type: " + mIntent.getUiType() + " duration: " + recordDuration;
-                Log.e(TAG, msg);
-                ChromePureJavaExceptionReporter.reportJavaException(new Throwable(msg));
-            }
+            CustomTabsOpenTimeRecorderJni.get()
+                    .recordCustomTabSession(
+                            time,
+                            getPackageName(isPartial),
+                            recordDuration,
+                            wasUserClose,
+                            isPartial);
         }
 
         mOnStartTimestampMs = 0;
@@ -138,10 +142,11 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
     }
 
     void updateCloseCause() {
-        @FinishReason
-        int finishReason = mNavigationController.getFinishReason();
-        if (finishReason == FinishReason.USER_NAVIGATION || finishReason == FinishReason.REPARENTING
-                || finishReason == FinishReason.OPEN_IN_BROWSER) {
+        @FinishReason int finishReason = mNavigationController.getFinishReason();
+        if (finishReason == FinishReason.USER_NAVIGATION
+                || finishReason == FinishReason.REPARENTING
+                || finishReason == FinishReason.OPEN_IN_BROWSER
+                || finishReason == FinishReason.HANDLED_BY_OS) {
             mCloseCause = CloseCause.USER_ACTION_CHROME;
         }
     }
@@ -152,7 +157,11 @@ class CustomTabsOpenTimeRecorder implements StartStopWithNativeObserver {
 
     @NativeMethods
     interface Natives {
-        void recordCustomTabSession(long time, String packageName, long sessionDuration,
-                boolean wasAutomaticallyClosed, boolean isPartialCct);
+        void recordCustomTabSession(
+                long time,
+                @JniType("std::string") String packageName,
+                long sessionDuration,
+                boolean wasUserClosed,
+                boolean isPartialCct);
     }
 }

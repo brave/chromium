@@ -4,10 +4,6 @@
 
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer_bridge.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 WebStateListObserverBridge::WebStateListObserverBridge(
     id<WebStateListObserving> observer)
     : observer_(observer) {}
@@ -38,27 +34,6 @@ void WebStateListObserverBridge::WebStateListDidChange(
   }
 
   [observer_ didChangeWebStateList:web_state_list change:change status:status];
-}
-
-// TODO(crbug.com/1442546): Remove WebStateActivatedAt() once all observers
-// handle the activation inside -didChangeWebStateList:change:status:.
-void WebStateListObserverBridge::WebStateActivatedAt(
-    WebStateList* web_state_list,
-    web::WebState* old_web_state,
-    web::WebState* new_web_state,
-    int active_index,
-    ActiveWebStateChangeReason reason) {
-  const SEL selector = @selector(webStateList:
-                      didChangeActiveWebState:oldWebState:atIndex:reason:);
-  if (![observer_ respondsToSelector:selector]) {
-    return;
-  }
-
-  [observer_ webStateList:web_state_list
-      didChangeActiveWebState:new_web_state
-                  oldWebState:old_web_state
-                      atIndex:active_index
-                       reason:reason];
 }
 
 void WebStateListObserverBridge::WillBeginBatchOperation(

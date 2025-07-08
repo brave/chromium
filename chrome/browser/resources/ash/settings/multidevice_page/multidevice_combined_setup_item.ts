@@ -7,13 +7,14 @@
  * special logic for setting up multiple features from one click.
  */
 
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
 import './multidevice_feature_item.js';
 
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {MultiDeviceBrowserProxy, MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
+import type {MultiDeviceBrowserProxy} from './multidevice_browser_proxy.js';
+import {MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
 import {getTemplate} from './multidevice_combined_setup_item.html.js';
 import {PhoneHubPermissionsSetupFeatureCombination} from './multidevice_constants.js';
 import {MultiDeviceFeatureMixin} from './multidevice_feature_mixin.js';

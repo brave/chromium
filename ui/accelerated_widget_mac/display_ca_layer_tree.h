@@ -7,13 +7,9 @@
 
 #include <IOSurface/IOSurfaceRef.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac_export.h"
 #include "ui/accelerated_widget_mac/ca_layer_frame_sink.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class CALayer;
 @class CALayerHost;
@@ -39,7 +35,7 @@ class ACCELERATED_WIDGET_MAC_EXPORT DisplayCALayerTree
 
  private:
   void GotCALayerFrame(uint32_t ca_context_id);
-  void GotIOSurfaceFrame(base::ScopedCFTypeRef<IOSurfaceRef> io_surface,
+  void GotIOSurfaceFrame(base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface,
                          const gfx::Size& dip_size,
                          float scale_factor);
 

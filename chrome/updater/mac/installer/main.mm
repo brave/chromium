@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
 #include <mach-o/loader.h>
@@ -18,10 +23,6 @@
 #include "chrome/updater/constants.h"
 #include "chrome/updater/util/util.h"
 #include "third_party/zlib/google/zip_reader.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace updater {
 

@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/audio/android/opensles_input.h"
 
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "media/audio/android/audio_manager_android.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 
 #define LOG_ON_FAILURE_AND_RETURN(op, ...)      \
   do {                                          \
@@ -22,7 +28,10 @@ namespace media {
 
 OpenSLESInputStream::OpenSLESInputStream(AudioManagerAndroid* audio_manager,
                                          const AudioParameters& params)
-    : audio_manager_(audio_manager),
+    : peak_detector_(base::BindRepeating(&AudioManager::TraceAmplitudePeak,
+                                         base::Unretained(audio_manager),
+                                         /*trace_start=*/true)),
+      audio_manager_(audio_manager),
       callback_(nullptr),
       recorder_(nullptr),
       simple_buffer_queue_(nullptr),
@@ -306,6 +315,8 @@ void OpenSLESInputStream::ReadBufferQueue() {
   audio_bus_->FromInterleaved<SignedInt16SampleTypeTraits>(
       reinterpret_cast<int16_t*>(audio_data_[active_buffer_index_]),
       audio_bus_->frames());
+
+  peak_detector_.FindPeak(audio_bus_.get());
 
   // TODO(henrika): Investigate if it is possible to get an accurate
   // delay estimation.

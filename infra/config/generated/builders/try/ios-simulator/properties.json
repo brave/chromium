@@ -1,10 +1,13 @@
 {
   "$build/chromium_orchestrator": {
     "compilator": "ios-simulator-compilator",
-    "compilator_watcher_git_revision": "e6d08be3fd589d4f222dae5d18dbc972e6117b23"
+    "compilator_watcher_git_revision": "27c191f304c8d7329a393d8a69020fc14032c3c3"
   },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/ios-simulator/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -43,7 +46,8 @@
           "builder": "ios-simulator",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/ios-simulator/targets"
     }
   },
   "$build/code_coverage": {
@@ -55,7 +59,20 @@
     "use_clang_coverage": true
   },
   "$build/flakiness": {
-    "check_for_flakiness": true
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
+    "metrics_project": "chromium-reclient-metrics",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -66,5 +83,6 @@
   },
   "builder_group": "tryserver.chromium.mac",
   "cq": "required",
-  "recipe": "chromium/orchestrator"
+  "recipe": "chromium/orchestrator",
+  "xcode_build_version": "16c5032a"
 }

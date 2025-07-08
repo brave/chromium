@@ -9,7 +9,9 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.components.browser_ui.notifications.PendingNotificationTask;
 import org.chromium.components.browser_ui.notifications.ThrottlingNotificationScheduler;
+import org.chromium.components.browser_ui.util.DownloadUtils;
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.OfflineItemState;
 import org.chromium.components.offline_items_collection.PendingState;
 
 import java.lang.annotation.Retention;
@@ -24,13 +26,19 @@ public class SystemDownloadNotifier implements DownloadNotifier {
     private DownloadNotificationService mDownloadNotificationService;
 
     /**
-     * Notification type for constructing the notification later on.
-     * TODO(qinmin): this is very ugly and it doesn't scale if we want a more general notification
-     * frame work. A better solution is to pass a notification builder or a notification into the
-     * queue, so we don't need the switch statement in updateNotification().
+     * Notification type for constructing the notification later on. TODO(qinmin): this is very ugly
+     * and it doesn't scale if we want a more general notification frame work. A better solution is
+     * to pass a notification builder or a notification into the queue, so we don't need the switch
+     * statement in updateNotification().
      */
-    @IntDef({NotificationType.PROGRESS, NotificationType.PAUSED, NotificationType.SUCCEEDED,
-            NotificationType.FAILED, NotificationType.INTERRUPTED})
+    @IntDef({
+        NotificationType.PROGRESS,
+        NotificationType.PAUSED,
+        NotificationType.SUCCEEDED,
+        NotificationType.FAILED,
+        NotificationType.INTERRUPTED,
+        NotificationType.DANGEROUS,
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface NotificationType {
         int PROGRESS = 0;
@@ -38,11 +46,10 @@ public class SystemDownloadNotifier implements DownloadNotifier {
         int SUCCEEDED = 2;
         int FAILED = 3;
         int INTERRUPTED = 4;
+        int DANGEROUS = 5;
     }
 
-    /**
-     * Information related to a notification.
-     */
+    /** Information related to a notification. */
     private static final class NotificationInfo {
         final @NotificationType int mType;
         final DownloadInfo mInfo;
@@ -53,10 +60,11 @@ public class SystemDownloadNotifier implements DownloadNotifier {
         boolean mIsSupportedMimeType;
         boolean mCanDownloadWhileMetered;
         boolean mIsAutoResumable;
-        @PendingState
-        int mPendingState;
+        @PendingState int mPendingState;
 
-        NotificationInfo(@NotificationType int type, DownloadInfo info,
+        NotificationInfo(
+                @NotificationType int type,
+                DownloadInfo info,
                 @PendingNotificationTask.Priority int priority) {
             mType = type;
             mInfo = info;
@@ -64,9 +72,7 @@ public class SystemDownloadNotifier implements DownloadNotifier {
         }
     }
 
-    /**
-     * Constructor.
-     */
+    /** Constructor. */
     public SystemDownloadNotifier() {}
 
     DownloadNotificationService getDownloadNotificationService() {
@@ -88,10 +94,14 @@ public class SystemDownloadNotifier implements DownloadNotifier {
     }
 
     @Override
-    public void notifyDownloadSuccessful(DownloadInfo info, long systemDownloadId,
-            boolean canResolve, boolean isSupportedMimeType) {
-        NotificationInfo notificationInfo = new NotificationInfo(
-                NotificationType.SUCCEEDED, info, PendingNotificationTask.Priority.HIGH);
+    public void notifyDownloadSuccessful(
+            DownloadInfo info,
+            long systemDownloadId,
+            boolean canResolve,
+            boolean isSupportedMimeType) {
+        NotificationInfo notificationInfo =
+                new NotificationInfo(
+                        NotificationType.SUCCEEDED, info, PendingNotificationTask.Priority.HIGH);
         notificationInfo.mSystemDownloadId = systemDownloadId;
         notificationInfo.mCanResolve = canResolve;
         notificationInfo.mIsSupportedMimeType = isSupportedMimeType;
@@ -100,16 +110,25 @@ public class SystemDownloadNotifier implements DownloadNotifier {
 
     @Override
     public void notifyDownloadFailed(DownloadInfo info) {
-        NotificationInfo notificationInfo = new NotificationInfo(
-                NotificationType.FAILED, info, PendingNotificationTask.Priority.HIGH);
+        NotificationInfo notificationInfo =
+                new NotificationInfo(
+                        NotificationType.FAILED, info, PendingNotificationTask.Priority.HIGH);
         addPendingNotification(notificationInfo);
     }
 
     @Override
     public void notifyDownloadProgress(
             DownloadInfo info, long startTime, boolean canDownloadWhileMetered) {
-        NotificationInfo notificationInfo = new NotificationInfo(
-                NotificationType.PROGRESS, info, PendingNotificationTask.Priority.LOW);
+        boolean isDangerous =
+                DownloadUtils.shouldDisplayDownloadAsDangerous(
+                        info.getDangerType(), OfflineItemState.IN_PROGRESS);
+        NotificationInfo notificationInfo =
+                new NotificationInfo(
+                        isDangerous ? NotificationType.DANGEROUS : NotificationType.PROGRESS,
+                        info,
+                        isDangerous
+                                ? PendingNotificationTask.Priority.HIGH
+                                : PendingNotificationTask.Priority.LOW);
         notificationInfo.mStartTime = startTime;
         notificationInfo.mCanDownloadWhileMetered = canDownloadWhileMetered;
         addPendingNotification(notificationInfo);
@@ -117,16 +136,18 @@ public class SystemDownloadNotifier implements DownloadNotifier {
 
     @Override
     public void notifyDownloadPaused(DownloadInfo info) {
-        NotificationInfo notificationInfo = new NotificationInfo(
-                NotificationType.PAUSED, info, PendingNotificationTask.Priority.HIGH);
+        NotificationInfo notificationInfo =
+                new NotificationInfo(
+                        NotificationType.PAUSED, info, PendingNotificationTask.Priority.HIGH);
         addPendingNotification(notificationInfo);
     }
 
     @Override
     public void notifyDownloadInterrupted(
             DownloadInfo info, boolean isAutoResumable, @PendingState int pendingState) {
-        NotificationInfo notificationInfo = new NotificationInfo(
-                NotificationType.INTERRUPTED, info, PendingNotificationTask.Priority.HIGH);
+        NotificationInfo notificationInfo =
+                new NotificationInfo(
+                        NotificationType.INTERRUPTED, info, PendingNotificationTask.Priority.HIGH);
         notificationInfo.mIsAutoResumable = isAutoResumable;
         notificationInfo.mPendingState = pendingState;
         addPendingNotification(notificationInfo);
@@ -134,8 +155,8 @@ public class SystemDownloadNotifier implements DownloadNotifier {
 
     @Override
     public void removeDownloadNotification(int notificationId, DownloadInfo info) {
-        ThrottlingNotificationScheduler.getInstance().cancelPendingNotificationTask(
-                info.getContentId());
+        ThrottlingNotificationScheduler.getInstance()
+                .cancelPendingNotificationTask(info.getContentId());
         getDownloadNotificationService().cancelNotification(notificationId, info.getContentId());
     }
 
@@ -146,10 +167,14 @@ public class SystemDownloadNotifier implements DownloadNotifier {
      * @param notificationInfo Notification to be displayed.
      */
     void addPendingNotification(NotificationInfo notificationInfo) {
-        ThrottlingNotificationScheduler.getInstance().addPendingNotificationTask(
-                new PendingNotificationTask(notificationInfo.mInfo.getContentId(),
-                        notificationInfo.mPriority,
-                        () -> { updateNotification(notificationInfo); }));
+        ThrottlingNotificationScheduler.getInstance()
+                .addPendingNotificationTask(
+                        new PendingNotificationTask(
+                                notificationInfo.mInfo.getContentId(),
+                                notificationInfo.mPriority,
+                                () -> {
+                                    updateNotification(notificationInfo);
+                                }));
     }
 
     /**
@@ -160,46 +185,101 @@ public class SystemDownloadNotifier implements DownloadNotifier {
         DownloadInfo info = notificationInfo.mInfo;
         switch (notificationInfo.mType) {
             case NotificationType.PROGRESS:
-                getDownloadNotificationService().notifyDownloadProgress(info.getContentId(),
-                        info.getFileName(), info.getProgress(), info.getBytesReceived(),
-                        info.getTimeRemainingInMillis(), notificationInfo.mStartTime,
-                        info.getOTRProfileId(), notificationInfo.mCanDownloadWhileMetered,
-                        info.getIsTransient(), info.getIcon(), info.getOriginalUrl(),
-                        info.getShouldPromoteOrigin());
+                getDownloadNotificationService()
+                        .notifyDownloadProgress(
+                                info.getContentId(),
+                                info.getFileName(),
+                                info.getProgress(),
+                                info.getBytesReceived(),
+                                info.getTimeRemainingInMillis(),
+                                notificationInfo.mStartTime,
+                                info.getOtrProfileId(),
+                                notificationInfo.mCanDownloadWhileMetered,
+                                info.getIsTransient(),
+                                info.getIcon(),
+                                info.getOriginalUrl(),
+                                info.getShouldPromoteOrigin());
                 break;
             case NotificationType.PAUSED:
-                getDownloadNotificationService().notifyDownloadPaused(info.getContentId(),
-                        info.getFileName(), true, false, info.getOTRProfileId(),
-                        info.getIsTransient(), info.getIcon(), info.getOriginalUrl(),
-                        info.getShouldPromoteOrigin(), false, true, info.getPendingState());
+                getDownloadNotificationService()
+                        .notifyDownloadPaused(
+                                info.getContentId(),
+                                info.getFileName(),
+                                true,
+                                false,
+                                info.getOtrProfileId(),
+                                info.getIsTransient(),
+                                info.getIcon(),
+                                info.getOriginalUrl(),
+                                info.getShouldPromoteOrigin(),
+                                false,
+                                true,
+                                info.getPendingState());
                 break;
             case NotificationType.SUCCEEDED:
                 final int notificationId =
-                        getDownloadNotificationService().notifyDownloadSuccessful(
-                                info.getContentId(), info.getFilePath(), info.getFileName(),
-                                notificationInfo.mSystemDownloadId, info.getOTRProfileId(),
-                                notificationInfo.mIsSupportedMimeType, info.getIsOpenable(),
-                                info.getIcon(), info.getOriginalUrl(),
-                                info.getShouldPromoteOrigin(), info.getReferrer(),
-                                info.getBytesTotalSize());
+                        getDownloadNotificationService()
+                                .notifyDownloadSuccessful(
+                                        info.getContentId(),
+                                        info.getFilePath(),
+                                        info.getFileName(),
+                                        notificationInfo.mSystemDownloadId,
+                                        info.getOtrProfileId(),
+                                        notificationInfo.mIsSupportedMimeType,
+                                        info.getIsOpenable(),
+                                        info.getIcon(),
+                                        info.getOriginalUrl(),
+                                        info.getShouldPromoteOrigin(),
+                                        info.getReferrer(),
+                                        info.getBytesTotalSize());
 
                 if (info.getIsOpenable()) {
-                    DownloadManagerService.getDownloadManagerService().onSuccessNotificationShown(
-                            info, notificationInfo.mCanResolve, notificationId,
-                            notificationInfo.mSystemDownloadId);
+                    DownloadManagerService.getDownloadManagerService()
+                            .onSuccessNotificationShown(
+                                    info,
+                                    notificationInfo.mCanResolve,
+                                    notificationId,
+                                    notificationInfo.mSystemDownloadId);
                 }
                 break;
             case NotificationType.FAILED:
-                getDownloadNotificationService().notifyDownloadFailed(info.getContentId(),
-                        info.getFileName(), info.getIcon(), info.getOriginalUrl(),
-                        info.getShouldPromoteOrigin(), info.getOTRProfileId(), info.getFailState());
+                getDownloadNotificationService()
+                        .notifyDownloadFailed(
+                                info.getContentId(),
+                                info.getFileName(),
+                                info.getIcon(),
+                                info.getOriginalUrl(),
+                                info.getShouldPromoteOrigin(),
+                                info.getOtrProfileId(),
+                                info.getFailState());
                 break;
             case NotificationType.INTERRUPTED:
-                getDownloadNotificationService().notifyDownloadPaused(info.getContentId(),
-                        info.getFileName(), info.isResumable(), notificationInfo.mIsAutoResumable,
-                        info.getOTRProfileId(), info.getIsTransient(), info.getIcon(),
-                        info.getOriginalUrl(), info.getShouldPromoteOrigin(), false, false,
-                        notificationInfo.mPendingState);
+                getDownloadNotificationService()
+                        .notifyDownloadPaused(
+                                info.getContentId(),
+                                info.getFileName(),
+                                info.isResumable(),
+                                notificationInfo.mIsAutoResumable,
+                                info.getOtrProfileId(),
+                                info.getIsTransient(),
+                                info.getIcon(),
+                                info.getOriginalUrl(),
+                                info.getShouldPromoteOrigin(),
+                                false,
+                                false,
+                                notificationInfo.mPendingState);
+                break;
+            case NotificationType.DANGEROUS:
+                getDownloadNotificationService()
+                        .notifyDownloadDangerous(
+                                info.getContentId(),
+                                info.getFileName(),
+                                info.getOriginalUrl(),
+                                info.getShouldPromoteOrigin(),
+                                info.getOtrProfileId(),
+                                notificationInfo.mCanDownloadWhileMetered,
+                                info.getIsTransient(),
+                                info.getDangerType());
                 break;
         }
     }

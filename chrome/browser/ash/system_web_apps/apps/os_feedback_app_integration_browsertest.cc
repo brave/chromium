@@ -19,22 +19,21 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/webapps/browser/install_result_code.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/screen.h"
 #include "ui/display/test/display_manager_test_api.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
 class OSFeedbackAppIntegrationTest : public ash::SystemWebAppIntegrationTest {
  public:
   OSFeedbackAppIntegrationTest() {
-    scoped_feature_list_.InitWithFeatures({ash::features::kOsFeedback}, {});
     feedback_url_ = GURL(ash::kChromeUIOSFeedbackUrl);
   }
 
@@ -91,17 +90,14 @@ class OSFeedbackAppIntegrationTest : public ash::SystemWebAppIntegrationTest {
     EXPECT_EQ(nullptr, FindFeedbackAppBrowser());
   }
 
-  void SendKeyPressAltShiftI(Browser* browser) {
-    ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
-        browser, ui::VKEY_I, /* control= */ false, /* shift= */ true,
-        /* alt= */ true, /* command= */ false));
+  void SendKeyPressAltShiftI() {
+    ui::test::EventGenerator generator(ash::Shell::GetPrimaryRootWindow());
+    generator.PressKeyAndModifierKeys(ui::VKEY_I,
+                                      ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN);
   }
 
   GURL feedback_url_;
   base::HistogramTester histogram_tester_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // This test verifies that the Feedback app is opened in a new browser window.
@@ -127,7 +123,7 @@ IN_PROC_BROWSER_TEST_P(OSFeedbackAppIntegrationTest, OpenFeedbackByHotKey) {
   content::TestNavigationObserver navigation_observer(feedback_url_);
   navigation_observer.StartWatchingNewWebContents();
   // Try to press keyboard shortcut to open Feedback app.
-  SendKeyPressAltShiftI(browser());
+  SendKeyPressAltShiftI();
   navigation_observer.Wait();
 
   ExpectFeedbackAppLaunched(old_url);
@@ -150,7 +146,7 @@ IN_PROC_BROWSER_TEST_P(OSFeedbackAppIntegrationTest, UserFeedbackNotAllowed) {
   ExpectNoFeedbackAppLaunched(old_url);
 
   // Try to press keyboard shortcut to open Feedback app.
-  SendKeyPressAltShiftI(browser());
+  SendKeyPressAltShiftI();
 
   ExpectNoFeedbackAppLaunched(old_url);
 }
@@ -190,7 +186,7 @@ IN_PROC_BROWSER_TEST_P(OSFeedbackAppIntegrationTest, FeedbackAppAttributes) {
   auto* system_app =
       GetManager().GetSystemApp(ash::SystemWebAppType::OS_FEEDBACK);
   EXPECT_FALSE(system_app->ShouldShowInLauncher());
-  EXPECT_TRUE(system_app->ShouldShowInSearch());
+  EXPECT_TRUE(system_app->ShouldShowInSearchAndShelf());
   EXPECT_FALSE(system_app->ShouldShowNewWindowMenuOption());
   EXPECT_TRUE(system_app->ShouldAllowScriptsToCloseWindows());
   EXPECT_FALSE(system_app->ShouldAllowResize());
@@ -210,7 +206,7 @@ IN_PROC_BROWSER_TEST_P(OSFeedbackAppIntegrationTest,
   auto* system_app =
       GetManager().GetSystemApp(ash::SystemWebAppType::OS_FEEDBACK);
   EXPECT_FALSE(system_app->ShouldShowInLauncher());
-  EXPECT_FALSE(system_app->ShouldShowInSearch());
+  EXPECT_FALSE(system_app->ShouldShowInSearchAndShelf());
 }
 
 INSTANTIATE_SYSTEM_WEB_APP_MANAGER_TEST_SUITE_REGULAR_PROFILE_P(

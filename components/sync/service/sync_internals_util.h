@@ -11,10 +11,9 @@
 #include "base/types/strong_alias.h"
 #include "base/values.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/sync/service/sync_service.h"
 
 namespace syncer {
-
-class SyncService;
 
 namespace sync_ui_util {
 
@@ -47,7 +46,6 @@ inline constexpr char kRequestIncludeSpecificsInitialState[] =
     "requestIncludeSpecificsInitialState";
 inline constexpr char kRequestListOfTypes[] = "requestListOfTypes";
 inline constexpr char kRequestStart[] = "requestStart";
-inline constexpr char kRequestStopClearData[] = "requestStopClearData";
 inline constexpr char kSetIncludeSpecifics[] = "setIncludeSpecifics";
 inline constexpr char kTriggerRefresh[] = "triggerRefresh";
 inline constexpr char kWriteUserEvent[] = "writeUserEvent";
@@ -58,7 +56,7 @@ inline constexpr char kEntityCounts[] = "entityCounts";
 inline constexpr char kEntities[] = "entities";
 inline constexpr char kNonTombstoneEntities[] = "nonTombstoneEntities";
 inline constexpr char kIncludeSpecifics[] = "includeSpecifics";
-inline constexpr char kModelType[] = "modelType";
+inline constexpr char kDataType[] = "dataType";
 inline constexpr char kOnAboutInfoUpdated[] = "onAboutInfoUpdated";
 inline constexpr char kOnEntityCountsUpdated[] = "onEntityCountsUpdated";
 inline constexpr char kOnProtocolEvent[] = "onProtocolEvent";
@@ -70,10 +68,19 @@ inline constexpr char kOnInvalidationReceived[] = "onInvalidationReceived";
 
 using IncludeSensitiveData =
     base::StrongAlias<class IncludeSensitiveDataTag, bool>;
+
+// Returns a human-readable string representation of a DisableReasonSet.
+std::string GetDisableReasonsDebugString(
+    SyncService::DisableReasonSet disable_reasons);
+
+// Returns a human-readable string representation for `state`.
+std::string TransportStateStringToDebugString(
+    SyncService::TransportState state);
+
 // This function returns a base::Value::Dict which contains all the information
 // required to populate the 'About' tab of chrome://sync-internals.
-// Note that |service| may be null.
-// If |include_sensitive_data| is false, Personally Identifiable Information
+// Note that `service` may be null.
+// If `include_sensitive_data` is false, Personally Identifiable Information
 // won't be included in the return value.
 base::Value::Dict ConstructAboutInformation(
     IncludeSensitiveData include_sensitive_data,

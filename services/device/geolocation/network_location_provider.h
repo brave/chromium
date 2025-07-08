@@ -15,14 +15,12 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "services/device/geolocation/network_location_request.h"
 #include "services/device/geolocation/wifi_data_provider_handle.h"
-#include "services/device/public/cpp/geolocation/geolocation_manager.h"
 #include "services/device/public/cpp/geolocation/location_provider.h"
 #include "services/device/public/mojom/geolocation_internals.mojom.h"
 #include "services/device/public/mojom/geoposition.mojom.h"
@@ -30,19 +28,20 @@
 namespace device {
 class PositionCache;
 
-class NetworkLocationProvider : public LocationProvider
-#if BUILDFLAG(IS_APPLE)
-    ,
-                                public GeolocationManager::PermissionObserver
-#endif
-{
+class NetworkLocationProvider : public LocationProvider {
  public:
+  using NetworkRequestCallback =
+      base::RepeatingCallback<void(std::vector<mojom::AccessPointDataPtr>)>;
+  using NetworkResponseCallback =
+      base::RepeatingCallback<void(mojom::NetworkLocationResponsePtr)>;
+
   NetworkLocationProvider(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      GeolocationManager* geolocation_manager,
-      const scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
       const std::string& api_key,
-      PositionCache* position_cache);
+      PositionCache* position_cache,
+      base::RepeatingClosure internals_updated_closure,
+      NetworkRequestCallback network_request_callback,
+      NetworkResponseCallback network_response_callback);
 
   NetworkLocationProvider(const NetworkLocationProvider&) = delete;
   NetworkLocationProvider& operator=(const NetworkLocationProvider&) = delete;
@@ -57,12 +56,6 @@ class NetworkLocationProvider : public LocationProvider
   const mojom::GeopositionResult* GetPosition() override;
   void OnPermissionGranted() override;
 
-#if BUILDFLAG(IS_APPLE)
-  // GeolocationPermissionObserver implementation.
-  void OnSystemPermissionUpdated(
-      LocationSystemPermissionStatus new_status) override;
-#endif
-
  private:
   // Tries to update |position_| request from cache or network.
   void RequestPosition();
@@ -71,10 +64,7 @@ class NetworkLocationProvider : public LocationProvider
   // or callback from |wifi_data_provider_handle_|.
   void OnWifiDataUpdate();
 
-  bool IsStarted() const;
-
-  void OnLocationResponse(mojom::GeopositionResultPtr result,
-                          bool server_error,
+  void OnLocationResponse(LocationResponseResult result,
                           const WifiData& wifi_data);
 
   // The wifi data provider, acquired via global factories. Valid between
@@ -87,16 +77,6 @@ class NetworkLocationProvider : public LocationProvider
   bool high_accuracy_ = false;
 
   WifiDataProviderHandle::WifiDataUpdateCallback wifi_data_update_callback_;
-
-#if BUILDFLAG(IS_APPLE)
-  // Used to keep track of macOS System Permission changes. Also, ensures
-  // lifetime of PermissionObserverList as the BrowserProcess may destroy its
-  // reference on the UI Thread before we destroy this provider.
-  scoped_refptr<GeolocationManager::PermissionObserverList>
-      permission_observers_;
-
-  raw_ptr<GeolocationManager, DanglingUntriaged> geolocation_manager_;
-#endif
 
   // The  wifi data and a flag to indicate if the data set is complete.
   WifiData wifi_data_;
@@ -120,11 +100,27 @@ class NetworkLocationProvider : public LocationProvider
 
   base::ThreadChecker thread_checker_;
 
-#if BUILDFLAG(IS_APPLE)
-  bool is_system_permission_granted_ = false;
+  base::RepeatingClosure internals_updated_closure_;
 
-  bool is_awaiting_initial_permission_status_ = true;
-#endif
+  // Called when a network request is sent to provide the request data to
+  // diagnostics observers.
+  NetworkRequestCallback network_request_callback_;
+
+  // Called when a network response is received to provide the response data to
+  // diagnostics observers.
+  NetworkResponseCallback network_response_callback_;
+
+  // Indicates whether at least one valid position update has been received.
+  bool position_received_ = false;
+
+  // This will hold the first error encountered, or be empty to indicate a
+  // successful session with no errors.
+  std::optional<NetworkLocationRequestResult> first_session_error_;
+
+  // The time when `StartProvider` was called.
+  // This is used to calculate the time it takes to receive the first position
+  // update. Setting this value also indicates that the provider has started.
+  std::optional<base::TimeTicks> start_time_;
 
   base::WeakPtrFactory<NetworkLocationProvider> weak_factory_{this};
 };

@@ -11,10 +11,12 @@ import android.os.Build;
 import android.os.UserHandle;
 import android.os.UserManager;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.chromium.build.annotations.NullMarked;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -24,17 +26,26 @@ import java.util.Set;
  * Utility class to fetch information about system, or system-level information about the bundle.
  */
 @JNINamespace("android_webview")
+@NullMarked
 public class SystemStateUtil {
     /** Returns whether Android has multiple user profiles. */
     @CalledByNative
     public static @MultipleUserProfilesState int getMultipleUserProfilesState() {
-        UserManager userManager =
-                (UserManager) ContextUtils.getApplicationContext().getSystemService(
-                        Context.USER_SERVICE);
-        List<UserHandle> userHandles = userManager.getUserProfiles();
-        assert !userHandles.isEmpty();
-        return userHandles.size() > 1 ? MultipleUserProfilesState.MULTIPLE_PROFILES
-                                      : MultipleUserProfilesState.SINGLE_PROFILE;
+        try {
+            UserManager userManager =
+                    (UserManager)
+                            ContextUtils.getApplicationContext()
+                                    .getSystemService(Context.USER_SERVICE);
+            List<UserHandle> userHandles = userManager.getUserProfiles();
+            assert !userHandles.isEmpty();
+            return userHandles.size() > 1
+                    ? MultipleUserProfilesState.MULTIPLE_PROFILES
+                    : MultipleUserProfilesState.SINGLE_PROFILE;
+        } catch (SecurityException e) {
+            // If we don't have the QUERY_USERS permission, then we can't tell how many profiles
+            // there are. See https://crbug.com/332989719 for reference.
+            return MultipleUserProfilesState.UNKNOWN;
+        }
     }
 
     @CalledByNative
@@ -43,10 +54,11 @@ public class SystemStateUtil {
         ApplicationInfo applicationInfo = null;
         String packageName = BuildInfo.getInstance().packageName;
         try {
-            applicationInfo = ContextUtils.getApplicationContext()
-                                      .getPackageManager()
-                                      .getPackageInfo(packageName, 0)
-                                      .applicationInfo;
+            applicationInfo =
+                    ContextUtils.getApplicationContext()
+                            .getPackageManager()
+                            .getPackageInfo(packageName, 0)
+                            .applicationInfo;
             Field primaryCpuAbiField = ApplicationInfo.class.getDeclaredField("primaryCpuAbi");
             String primaryCpuAbi = (String) primaryCpuAbiField.get(applicationInfo);
             if (primaryCpuAbi != null) {

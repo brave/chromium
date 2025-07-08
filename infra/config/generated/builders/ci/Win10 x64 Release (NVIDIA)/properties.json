@@ -24,6 +24,7 @@
               },
               "legacy_gclient_config": {
                 "apply_configs": [
+                  "chromium_with_telemetry_dependencies",
                   "use_clang_coverage"
                 ],
                 "config": "chromium"
@@ -75,12 +76,9 @@
         {
           "builder": "win-rel",
           "group": "tryserver.chromium.win"
-        },
-        {
-          "builder": "win10_chromium_inverse_fieldtrials_x64_fyi_rel_ng",
-          "group": "tryserver.chromium.win"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Win10 x64 Release (NVIDIA)/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -91,6 +89,9 @@
     ]
   },
   "builder_group": "chromium.gpu",
+  "gardener_rotations": [
+    "chromium.gpu"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium.gpu"

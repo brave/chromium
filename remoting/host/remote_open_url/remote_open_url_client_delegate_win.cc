@@ -9,7 +9,7 @@
 #include <ios>
 #include <string>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -54,7 +54,7 @@ void ShowIncorrectConfigurationPrompt() {
   task_dialog.AppendButtonWithStringId(IDOK,
                                        IDS_OPEN_DEFAULT_APPS_SETTINGS_BUTTON);
   task_dialog.set_default_button(IDOK);
-  absl::optional<int> result = task_dialog.Show();
+  std::optional<int> result = task_dialog.Show();
   DCHECK_EQ(IDOK, *result);
   base::win::LaunchDefaultAppsSettingsModernDialog(/*protocol=*/std::wstring());
 }

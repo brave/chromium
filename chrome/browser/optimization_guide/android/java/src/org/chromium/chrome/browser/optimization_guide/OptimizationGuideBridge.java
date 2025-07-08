@@ -4,18 +4,21 @@
 
 package org.chromium.chrome.browser.optimization_guide;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
-import org.chromium.base.lifetime.Destroyable;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.optimization_guide.OptimizationGuideDecision;
 import org.chromium.components.optimization_guide.proto.CommonTypesProto.Any;
 import org.chromium.components.optimization_guide.proto.CommonTypesProto.RequestContext;
 import org.chromium.components.optimization_guide.proto.HintsProto.OptimizationType;
+import org.chromium.components.optimization_guide.proto.HintsProto.RequestContextMetadata;
 import org.chromium.components.optimization_guide.proto.PushNotificationProto.HintNotificationPayload;
 import org.chromium.url.GURL;
 
@@ -25,55 +28,34 @@ import java.util.List;
 /**
  * Provides access to the optimization guide using the C++ OptimizationGuideKeyedService.
  *
- * An instance of this class must be created, used, and destroyed on the UI thread.
+ * <p>An instance of this class must be created, used, and destroyed on the UI thread.
  */
 @JNINamespace("optimization_guide::android")
-public class OptimizationGuideBridge implements Destroyable {
-    private long mNativeOptimizationGuideBridge;
+@NullMarked
+public class OptimizationGuideBridge {
+    private final long mNativeOptimizationGuideBridge;
 
-    /**
-     * Interface to implement to receive decisions from the optimization guide.
-     */
+    /** Interface to implement to receive decisions from the optimization guide. */
     public interface OptimizationGuideCallback {
         void onOptimizationGuideDecision(
                 @OptimizationGuideDecision int decision, @Nullable Any metadata);
     }
 
-    /**
-     * Interface to implement to receive on-demand decisions from the optimization guide.
-     */
+    /** Interface to implement to receive on-demand decisions from the optimization guide. */
     public interface OnDemandOptimizationGuideCallback {
-        void onOnDemandOptimizationGuideDecision(GURL url, OptimizationType optimizationType,
-                @OptimizationGuideDecision int decision, @Nullable Any metadata);
-    }
-
-    /**
-     * Initializes the C++ side of this class, using the Optimization Guide Decider for the last
-     * used Profile.
-     */
-    @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
-    public OptimizationGuideBridge() {
-        ThreadUtils.assertOnUiThread();
-
-        mNativeOptimizationGuideBridge = OptimizationGuideBridgeJni.get().init();
+        void onOnDemandOptimizationGuideDecision(
+                GURL url,
+                OptimizationType optimizationType,
+                @OptimizationGuideDecision int decision,
+                @Nullable Any metadata);
     }
 
     @VisibleForTesting
+    @CalledByNative
     protected OptimizationGuideBridge(long nativeOptimizationGuideBridge) {
-        mNativeOptimizationGuideBridge = nativeOptimizationGuideBridge;
-    }
-
-    /**
-     * Deletes the C++ side of this class. This must be called when this object is no longer needed.
-     */
-    @Override
-    public void destroy() {
         ThreadUtils.assertOnUiThread();
 
-        if (mNativeOptimizationGuideBridge != 0) {
-            OptimizationGuideBridgeJni.get().destroy(mNativeOptimizationGuideBridge);
-            mNativeOptimizationGuideBridge = 0;
-        }
+        mNativeOptimizationGuideBridge = nativeOptimizationGuideBridge;
     }
 
     /**
@@ -92,8 +74,8 @@ public class OptimizationGuideBridge implements Destroyable {
             intOptimizationTypes[i] = optimizationTypes.get(i).getNumber();
         }
 
-        OptimizationGuideBridgeJni.get().registerOptimizationTypes(
-                mNativeOptimizationGuideBridge, intOptimizationTypes);
+        OptimizationGuideBridgeJni.get()
+                .registerOptimizationTypes(mNativeOptimizationGuideBridge, intOptimizationTypes);
     }
 
     /**
@@ -113,8 +95,26 @@ public class OptimizationGuideBridge implements Destroyable {
             return;
         }
 
-        OptimizationGuideBridgeJni.get().canApplyOptimization(
-                mNativeOptimizationGuideBridge, url, optimizationType.getNumber(), callback);
+        OptimizationGuideBridgeJni.get()
+                .canApplyOptimization(
+                        mNativeOptimizationGuideBridge,
+                        url,
+                        optimizationType.getNumber(),
+                        callback);
+    }
+
+    public OptimizationGuideDecisionWithMetadata canApplyOptimization(
+            GURL url, OptimizationType optimizationType) {
+        ThreadUtils.assertOnUiThread();
+
+        if (mNativeOptimizationGuideBridge == 0) {
+            return new OptimizationGuideDecisionWithMetadata(
+                    OptimizationGuideDecision.UNKNOWN, null);
+        }
+
+        return OptimizationGuideBridgeJni.get()
+                .canApplyOptimizationSync(
+                        mNativeOptimizationGuideBridge, url, optimizationType.getNumber());
     }
 
     /**
@@ -124,18 +124,18 @@ public class OptimizationGuideBridge implements Destroyable {
      * indicate when the request is being made to determine the appropriate permissions to make the
      * request for accounting purposes.
      *
-     * It is expected for consumers to consult with the Optimization Guide team before using this
+     * <p>It is expected for consumers to consult with the Optimization Guide team before using this
      * API. If approved, add your request context to the assertion list here.
      */
-    public void canApplyOptimizationOnDemand(List<GURL> urls,
-            List<OptimizationType> optimizationTypes, RequestContext requestContext,
-            OnDemandOptimizationGuideCallback callback) {
+    public void canApplyOptimizationOnDemand(
+            List<GURL> urls,
+            List<OptimizationType> optimizationTypes,
+            RequestContext requestContext,
+            OnDemandOptimizationGuideCallback callback,
+            RequestContextMetadata requestContextMetadata) {
         ThreadUtils.assertOnUiThread();
 
-        // TODO(b/279643150): Reconfigure this assertion once we have an actual client here.
-        //
-        // Currently, this is just for testing purposes to allow new tab page.
-        assert requestContext == RequestContext.CONTEXT_NEW_TAB_PAGE;
+        assert isRequestContextAllowedForOnDemandOptimizations(requestContext);
 
         if (mNativeOptimizationGuideBridge == 0) {
             for (GURL url : urls) {
@@ -153,9 +153,17 @@ public class OptimizationGuideBridge implements Destroyable {
         for (int i = 0; i < optimizationTypes.size(); i++) {
             intOptimizationTypes[i] = optimizationTypes.get(i).getNumber();
         }
-        OptimizationGuideBridgeJni.get().canApplyOptimizationOnDemand(
-                mNativeOptimizationGuideBridge, gurlsArray, intOptimizationTypes,
-                requestContext.getNumber(), callback);
+
+        byte[] requestContextMetadataSerialized = requestContextMetadata.toByteArray();
+
+        OptimizationGuideBridgeJni.get()
+                .canApplyOptimizationOnDemand(
+                        mNativeOptimizationGuideBridge,
+                        gurlsArray,
+                        intOptimizationTypes,
+                        requestContext.getNumber(),
+                        callback,
+                        requestContextMetadataSerialized);
     }
 
     public void onNewPushNotification(HintNotificationPayload notification) {
@@ -165,8 +173,8 @@ public class OptimizationGuideBridge implements Destroyable {
                     notification);
             return;
         }
-        OptimizationGuideBridgeJni.get().onNewPushNotification(
-                mNativeOptimizationGuideBridge, notification.toByteArray());
+        OptimizationGuideBridgeJni.get()
+                .onNewPushNotification(mNativeOptimizationGuideBridge, notification.toByteArray());
     }
 
     /**
@@ -182,28 +190,42 @@ public class OptimizationGuideBridge implements Destroyable {
         OptimizationGuideBridgeJni.get().onDeferredStartup(mNativeOptimizationGuideBridge);
     }
 
+    private boolean isRequestContextAllowedForOnDemandOptimizations(RequestContext requestContext) {
+        switch (requestContext) {
+            case CONTEXT_PAGE_INSIGHTS_HUB:
+            case CONTEXT_NON_PERSONALIZED_PAGE_INSIGHTS_HUB:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @CalledByNative
-    private static void onOptimizationGuideDecision(OptimizationGuideCallback callback,
+    private static void onOptimizationGuideDecision(
+            OptimizationGuideCallback callback,
             @OptimizationGuideDecision int optimizationGuideDecision,
-            @Nullable byte[] serializedAnyMetadata) {
+            byte @Nullable [] serializedAnyMetadata) {
         callback.onOptimizationGuideDecision(
                 optimizationGuideDecision, deserializeAnyMetadata(serializedAnyMetadata));
     }
 
     @CalledByNative
     private static void onOnDemandOptimizationGuideDecision(
-            OnDemandOptimizationGuideCallback callback, GURL url, int optimizationTypeInt,
+            OnDemandOptimizationGuideCallback callback,
+            GURL url,
+            int optimizationTypeInt,
             @OptimizationGuideDecision int optimizationGuideDecision,
-            @Nullable byte[] serializedAnyMetadata) {
+            byte @Nullable [] serializedAnyMetadata) {
         OptimizationType optimizationType = OptimizationType.forNumber(optimizationTypeInt);
         if (optimizationType == null) return;
-        callback.onOnDemandOptimizationGuideDecision(url, optimizationType,
-                optimizationGuideDecision, deserializeAnyMetadata(serializedAnyMetadata));
+        callback.onOnDemandOptimizationGuideDecision(
+                url,
+                optimizationType,
+                optimizationGuideDecision,
+                deserializeAnyMetadata(serializedAnyMetadata));
     }
 
-    /**
-     * Clears all cached push notifications for the given optimization type.
-     */
+    /** Clears all cached push notifications for the given optimization type. */
     @CalledByNative
     private static void clearCachedPushNotifications(int optimizationTypeInt) {
         OptimizationType optimizationType = OptimizationType.forNumber(optimizationTypeInt);
@@ -212,9 +234,7 @@ public class OptimizationGuideBridge implements Destroyable {
         OptimizationGuidePushNotificationManager.clearCacheForOptimizationType(optimizationType);
     }
 
-    /**
-     * Returns an array of all the optimization types that have cached push notifications.
-     */
+    /** Returns an array of all the optimization types that have cached push notifications. */
     @CalledByNative
     private static int[] getOptTypesWithPushNotifications() {
         List<OptimizationType> cachedTypes =
@@ -232,8 +252,9 @@ public class OptimizationGuideBridge implements Destroyable {
      */
     @CalledByNative
     private static int[] getOptTypesThatOverflowedPushNotifications() {
-        List<OptimizationType> overflows = OptimizationGuidePushNotificationManager
-                                                   .getOptTypesThatOverflowedPushNotifications();
+        List<OptimizationType> overflows =
+                OptimizationGuidePushNotificationManager
+                        .getOptTypesThatOverflowedPushNotifications();
         int[] intOverflows = new int[overflows.size()];
         for (int i = 0; i < overflows.size(); i++) {
             intOverflows[i] = overflows.get(i).getNumber();
@@ -241,11 +262,9 @@ public class OptimizationGuideBridge implements Destroyable {
         return intOverflows;
     }
 
-    /**
-     * Returns a 2D byte array of all cached push notifications for the given optimization type.
-     */
+    /** Returns a 2D byte array of all cached push notifications for the given optimization type. */
     @CalledByNative
-    private static byte[][] getEncodedPushNotifications(int optimizationTypeInt) {
+    private static byte @Nullable [][] getEncodedPushNotifications(int optimizationTypeInt) {
         OptimizationType optimizationType = OptimizationType.forNumber(optimizationTypeInt);
         if (optimizationType == null) return null;
 
@@ -277,7 +296,15 @@ public class OptimizationGuideBridge implements Destroyable {
         OptimizationGuidePushNotificationManager.onPushNotificationNotHandledByNative(notification);
     }
 
-    private static @Nullable Any deserializeAnyMetadata(@Nullable byte[] serializedAnyMetadata) {
+    @CalledByNative
+    private static OptimizationGuideDecisionWithMetadata createDecisionWithMetadata(
+            @OptimizationGuideDecision int optimizationGuideDecision,
+            byte @Nullable [] serializedAnyMetadata) {
+        return new OptimizationGuideDecisionWithMetadata(
+                optimizationGuideDecision, deserializeAnyMetadata(serializedAnyMetadata));
+    }
+
+    private static @Nullable Any deserializeAnyMetadata(byte @Nullable [] serializedAnyMetadata) {
         if (serializedAnyMetadata == null) {
             return null;
         }
@@ -294,15 +321,29 @@ public class OptimizationGuideBridge implements Destroyable {
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     @NativeMethods
     public interface Natives {
-        long init();
-        void destroy(long nativeOptimizationGuideBridge);
         void registerOptimizationTypes(long nativeOptimizationGuideBridge, int[] optimizationTypes);
-        void canApplyOptimization(long nativeOptimizationGuideBridge, GURL url,
-                int optimizationType, OptimizationGuideCallback callback);
-        void canApplyOptimizationOnDemand(long nativeOptimizationGuideBridge, GURL[] urls,
-                int[] optimizationTypes, int requestContext,
-                OnDemandOptimizationGuideCallback callback);
+
+        void canApplyOptimization(
+                long nativeOptimizationGuideBridge,
+                @JniType("GURL") GURL url,
+                int optimizationType,
+                OptimizationGuideCallback callback);
+
+        OptimizationGuideDecisionWithMetadata canApplyOptimizationSync(
+                long nativeOptimizationGuideBridge,
+                @JniType("GURL") GURL url,
+                int optimizationType);
+
+        void canApplyOptimizationOnDemand(
+                long nativeOptimizationGuideBridge,
+                @JniType("std::vector<GURL>") GURL[] urls,
+                int[] optimizationTypes,
+                int requestContext,
+                OnDemandOptimizationGuideCallback callback,
+                @JniType("jni_zero::ByteArrayView") byte[] requestContextMetadata);
+
         void onNewPushNotification(long nativeOptimizationGuideBridge, byte[] encodedNotification);
+
         void onDeferredStartup(long nativeOptimizationGuideBridge);
     }
 }

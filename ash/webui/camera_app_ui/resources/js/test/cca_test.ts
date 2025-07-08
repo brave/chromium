@@ -9,7 +9,15 @@ import {
   assertInstanceof,
 } from '../assert.js';
 import {TIME_LAPSE_INITIAL_SPEED} from '../device/mode/video.js';
+import {Preview} from '../device/preview.js';
+import {
+  DIGITAL_ZOOM_CAPABILITIES,
+  PtzCapabilities,
+  StrictPtzSettings,
+} from '../device/ptz_controller.js';
 import * as dom from '../dom.js';
+import {GalleryButton} from '../lit/components/gallery-button.js';
+import {ModeSelector} from '../lit/components/mode-selector.js';
 import * as localStorage from '../models/local_storage.js';
 import {
   TIME_LAPSE_MAX_DURATION,
@@ -17,10 +25,15 @@ import {
 } from '../models/video_saver.js';
 import {ChromeHelper} from '../mojo/chrome_helper.js';
 import {DeviceOperator} from '../mojo/device_operator.js';
+import {
+  getInstanceForTest as getPhotoModeAutoScanner,
+} from '../photo_mode_auto_scanner.js';
 import * as state from '../state.js';
 import {Facing, Mode, Resolution} from '../type.js';
-import * as untrustedScripts from '../untrusted_scripts.js';
 import {FpsObserver, sleep} from '../util.js';
+import {
+  getInstanceForTest as getDocumentReview,
+} from '../views/document_review.js';
 import {windowController} from '../window_controller.js';
 
 import {
@@ -29,7 +42,7 @@ import {
   SETTING_OPTION_MAP,
   SettingMenu,
   SettingOption,
-  UIComponent,
+  UiComponent,
 } from './cca_type.js';
 
 interface Coordinate {
@@ -46,7 +59,7 @@ interface InputRange {
  * Get HTMLInputElement from the specified component and ensure that the type of
  * the input element is "range".
  */
-function getRangeInputComponent(component: UIComponent): HTMLInputElement {
+function getRangeInputComponent(component: UiComponent): HTMLInputElement {
   const element = resolveElement(component);
   const inputElement = assertInstanceof(
       element, HTMLInputElement,
@@ -84,7 +97,7 @@ function getPreviewVideoTrack(): MediaStreamTrack {
  * Resolves selector of the component and returns a list of HTML elements with
  * that selector.
  */
-function getElementList(component: UIComponent): HTMLElement[] {
+function getElementList(component: UiComponent): HTMLElement[] {
   const selector = SELECTOR_MAP[component];
   // Value from Tast may not be UIComponent and results in undefined.
   assert(selector !== undefined, 'Invalid UIComponent value.');
@@ -97,7 +110,7 @@ function getElementList(component: UIComponent): HTMLElement[] {
 /**
  * Returns a list of HTML elements which are visible.
  */
-function getVisibleElementList(component: UIComponent): HTMLElement[] {
+function getVisibleElementList(component: UiComponent): HTMLElement[] {
   const elements = getElementList(component);
   const visibleElements =
       elements.filter((element) => isVisibleElement(element));
@@ -119,7 +132,7 @@ function isVisibleElement(element: HTMLElement): boolean {
  * specified, returns the |index|'th element, else returns the first element
  * found. This will throw an error if it cannot be resolved.
  */
-function resolveElement(component: UIComponent, index = 0): HTMLElement {
+function resolveElement(component: UiComponent, index = 0): HTMLElement {
   const elements = getElementList(component);
   assert(
       index < elements.length,
@@ -130,7 +143,7 @@ function resolveElement(component: UIComponent, index = 0): HTMLElement {
 /**
  * Resolves the |index|'th visible HTMLElement of the specified ui |component|.
  */
-function resolveVisibleElement(component: UIComponent, index = 0): HTMLElement {
+function resolveVisibleElement(component: UiComponent, index = 0): HTMLElement {
   const elements = getVisibleElementList(component);
   assert(
       index < elements.length,
@@ -141,7 +154,7 @@ function resolveVisibleElement(component: UIComponent, index = 0): HTMLElement {
 /**
  * Return test functionalities to be used in Tast automation test.
  */
-export class CCATest {
+export class CcaTest {
   /**
    * Checks if mojo connection could be constructed without error. In this check
    * we only check if the path works and does not check for the correctness of
@@ -169,10 +182,53 @@ export class CCATest {
     }
   }
 
+  static visitedFocusedElementSet = new Set();
+
+  /**
+   * Checks if the focused element is in `visitedFocusedElementSet`.
+   */
+  static checkFocusedElementVisited(): boolean {
+    const focused = document.activeElement;
+    if (this.visitedFocusedElementSet.has(focused)) {
+      return true;
+    }
+
+    this.visitedFocusedElementSet.add(focused);
+    return false;
+  }
+
+  /**
+   * Chooses a video resolution with the specified resolution for the camera
+   * with |facing| facing. Throws an error if there is no specified resolution.
+   */
+  static chooseVideoResolution(facing: Facing, resolution: Resolution): void {
+    const {width, height} = resolution;
+    const selector =
+        `#view-video-resolution-settings .menu-item>input[data-facing="${
+            facing}"][data-width="${width}"][data-height="${height}"]`;
+    try {
+      const resolutionPicker = dom.get(selector, HTMLInputElement);
+      resolutionPicker.click();
+    } catch {
+      throw new Error(`Cannot find a resolution`);
+    }
+  }
+
+  /**
+   * Returns aria-label of the focused element. Throws an error if a focused
+   * element is null.
+   */
+  static getFocusedElementAriaLabel(): string|null {
+    if (document.activeElement === null) {
+      throw new Error(`There is no active element`);
+    }
+    return document.activeElement.ariaLabel;
+  }
+
   /**
    * Clicks on the UI component if it's visible.
    */
-  static click(component: UIComponent, index?: number): void {
+  static click(component: UiComponent, index?: number): void {
     const element = resolveVisibleElement(component, index);
     element.click();
   }
@@ -194,21 +250,21 @@ export class CCATest {
   /**
    * Returns the number of ui elements of the specified component.
    */
-  static countUI(component: UIComponent): number {
+  static countUi(component: UiComponent): number {
     return getElementList(component).length;
   }
 
   /**
    * Returns the number of visible ui elements of the specified component.
    */
-  static countVisibleUI(component: UIComponent): number {
+  static countVisibleUi(component: UiComponent): number {
     return getVisibleElementList(component).length;
   }
 
   /**
    * Returns whether the UI exists in the current DOM tree.
    */
-  static exists(component: UIComponent): boolean {
+  static exists(component: UiComponent): boolean {
     const elements = getElementList(component);
     return elements.length > 0;
   }
@@ -224,7 +280,7 @@ export class CCATest {
   /**
    * Returns the attribute |attr| of the |index|'th ui.
    */
-  static getAttribute(component: UIComponent, attr: string, index?: number):
+  static getAttribute(component: UiComponent, attr: string, index?: number):
       string|null {
     const element = resolveElement(component, index);
     return element.getAttribute(attr);
@@ -236,6 +292,13 @@ export class CCATest {
   static getDeviceId(): string {
     const deviceId = getPreviewVideoTrack().getSettings().deviceId;
     return assertExists(deviceId, 'Invalid deviceId');
+  }
+
+  /**
+   * Gets the capabilities of digital zoom.
+   */
+  static getDigitalZoomCapabilities(): PtzCapabilities {
+    return DIGITAL_ZOOM_CAPABILITIES;
   }
 
   /**
@@ -252,7 +315,7 @@ export class CCATest {
       return facing ?? 'unknown';
     }
 
-    const deviceId = CCATest.getDeviceId();
+    const deviceId = CcaTest.getDeviceId();
     const facing = await deviceOperator.getCameraFacing(deviceId);
     switch (facing) {
       case Facing.USER:
@@ -268,7 +331,7 @@ export class CCATest {
    * Get [min, max] range of the component. Throws an error if the component is
    * not HTMLInputElement with type "range".
    */
-  static getInputRange(component: UIComponent): InputRange {
+  static getInputRange(component: UiComponent): InputRange {
     const element = getRangeInputComponent(component);
     const max = Number(element.max);
     const min = Number(element.min);
@@ -311,6 +374,14 @@ export class CCATest {
     return ctx;
   }
 
+  /**
+   * Returns current PTZ settings. Throws an error if PTZ is not enabled, or
+   * any of the pan, tilt, or zoom values are missing.
+   */
+  static getPtzSettings(): StrictPtzSettings {
+    return Preview.getPtzSettingsForTest();
+  }
+
   static getScreenOrientation(): OrientationType {
     return window.screen.orientation.type;
   }
@@ -318,7 +389,7 @@ export class CCATest {
   /**
    * Gets screen x, y of the center of |index|'th ui component.
    */
-  static getScreenXY(component: UIComponent, index?: number): Coordinate {
+  static getScreenXy(component: UiComponent, index?: number): Coordinate {
     const element = resolveVisibleElement(component, index);
     const rect = element.getBoundingClientRect();
     const actionBarH = window.outerHeight - window.innerHeight;
@@ -331,7 +402,7 @@ export class CCATest {
   /**
    * Gets rounded numbers of width and height of the specified ui component.
    */
-  static getSize(component: UIComponent, index?: number): Resolution {
+  static getSize(component: UiComponent, index?: number): Resolution {
     const element = resolveVisibleElement(component, index);
     const {width, height} = element.getBoundingClientRect();
     return new Resolution(Math.round(width), Math.round(height));
@@ -360,9 +431,18 @@ export class CCATest {
   }
 
   /**
+   * Gets the cover image URL of the gallery button.
+   */
+  static getGalleryButtonCoverUrl(): string {
+    const galleryButton =
+        assertInstanceof(resolveElement('galleryButton'), GalleryButton);
+    return galleryButton.getCoverUrlForTesting();
+  }
+
+  /**
    * Performs mouse hold by sending pointerdown and pointerup events.
    */
-  static async hold(component: UIComponent, ms: number, index?: number):
+  static async hold(component: UiComponent, ms: number, index?: number):
       Promise<void> {
     const element = resolveVisibleElement(component, index);
     element.dispatchEvent(new Event('pointerdown'));
@@ -374,7 +454,7 @@ export class CCATest {
    * Returns checked attribute of component. Throws an error if the component is
    * not HTMLInputElement.
    */
-  static isChecked(component: UIComponent, index?: number): boolean {
+  static isChecked(component: UiComponent, index?: number): boolean {
     const element = resolveElement(component, index);
     const inputElement = assertInstanceof(element, HTMLInputElement);
     return inputElement.checked;
@@ -384,7 +464,7 @@ export class CCATest {
    * Returns disabled attribute of the component. In case the element without
    * "disabled" attribute, always returns false.
    */
-  static isDisabled(component: UIComponent, index?: number): boolean {
+  static isDisabled(component: UiComponent, index?: number): boolean {
     const element = resolveElement(component, index);
     if ('disabled' in element && typeof element.disabled === 'boolean') {
       return element.disabled;
@@ -410,7 +490,7 @@ export class CCATest {
   /**
    * Returns whether the UI component is currently visible.
    */
-  static isVisible(component: UIComponent, index?: number): boolean {
+  static isVisible(component: UiComponent, index?: number): boolean {
     const element = resolveElement(component, index);
     return isVisibleElement(element);
   }
@@ -429,13 +509,13 @@ export class CCATest {
   static openSettingMenu(menu: SettingMenu): void {
     assert(menu !== undefined, 'Invalid SettingMenu value');
     const component = SETTING_MENU_MAP[menu].component;
-    CCATest.click(component);
+    CcaTest.click(component);
   }
 
   /**
    * Selects the select component with the option with the provided value.
    */
-  static selectOption(component: UIComponent, value: string): void {
+  static selectOption(component: UiComponent, value: string): void {
     const element = resolveElement(component);
     const selectElement = assertInstanceof(element, HTMLSelectElement);
     const option =
@@ -451,8 +531,15 @@ export class CCATest {
   /**
    * Hides all toasts, nudges and tooltips.
    */
-  static hideFloatingUI(): void {
+  static hideFloatingUi(): void {
     state.set(state.State.HIDE_FLOATING_UI_FOR_TESTING, true);
+  }
+
+  /**
+   * Disables resolution filter for video streams.
+   */
+  static disableVideoResolutionFilter(): void {
+    state.set(state.State.DISABLE_VIDEO_RESOLUTION_FILTER_FOR_TESTING, true);
   }
 
   /**
@@ -460,8 +547,8 @@ export class CCATest {
    * HTMLInputElement with type "range", or the value is not within [min, max]
    * range.
    */
-  static setRangeInputValue(component: UIComponent, value: number): void {
-    const {max, min} = CCATest.getInputRange(component);
+  static setRangeInputValue(component: UiComponent, value: number): void {
+    const {max, min} = CcaTest.getInputRange(component);
     if (value < min || value > max) {
       throw new Error(`Invalid value ${value} within range ${min}-${max}`);
     }
@@ -476,10 +563,9 @@ export class CCATest {
    */
   static switchMode(mode: Mode): void {
     assertEnumVariant(Mode, mode);
-    const modeSelector =
-        dom.get(`.mode-item>input[data-mode="${mode}"]`, HTMLInputElement);
+    const modeSelector = dom.get(SELECTOR_MAP.modeSelector, ModeSelector);
     assert(isVisibleElement(modeSelector), 'Mode selector is not visible');
-    modeSelector.click();
+    modeSelector.changeModeForTesting(mode);
   }
 
   /**
@@ -510,7 +596,7 @@ export class CCATest {
   static toggleOption(option: SettingOption): void {
     assert(option !== undefined, 'Invalid SettingOption value.');
     const component = SETTING_OPTION_MAP[option].component;
-    CCATest.click(component);
+    CcaTest.click(component);
   }
 
   static getFpsObserver(): FpsObserver {
@@ -542,18 +628,27 @@ export class CCATest {
   }
 
   /**
-   * Sets measurement protocol's URL.
+   * Gets vid:pid of current active USB camera device in the format of a 8
+   * digits hex string, such as abcd:1234, or return '' for MIPI.
    */
-  static async setMeasurementProtocolUrl(url: string): Promise<void> {
-    const helper = await untrustedScripts.getGaHelper();
-    return helper.setMeasurementProtocolUrl(url);
+  static async getVidPid(): Promise<string> {
+    const deviceOperator = assertExists(
+        DeviceOperator.getInstance(), 'Failed to get deviceOperator instance.');
+    return (await deviceOperator.getVidPid(CcaTest.getDeviceId())) ?? '';
   }
 
   /**
-   * Enables GA4 metrics.
+   * Returns average time performance of preview OCR in milliseconds.
    */
-  static async enableGa4Metrics(): Promise<void> {
-    const helper = await untrustedScripts.getGaHelper();
-    return helper.setGa4Enabled(true);
+  static getAverageOcrScanTime(): number {
+    return getPhotoModeAutoScanner().getAverageOcrScanTime();
+  }
+
+  /**
+   * Returns the processing time of last saved file from document scanning
+   * review dialog in milliseconds.
+   */
+  static getDocumentReviewLastFileProcessingTime(): number {
+    return getDocumentReview().getLastFileProcessingTime();
   }
 }

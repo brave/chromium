@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/constants/tray_background_view_catalog.h"
@@ -38,7 +38,6 @@
 #include "ash/system/tray/tray_utils.h"
 #include "ash/webui/eche_app_ui/mojom/eche_app.mojom-shared.h"
 #include "ash/webui/eche_app_ui/mojom/eche_app.mojom.h"
-#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
@@ -47,7 +46,6 @@
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "chromeos/ash/components/multidevice/logging/logging.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "components/account_id/account_id.h"
 #include "components/session_manager/session_manager_types.h"
 #include "components/vector_icons/vector_icons.h"
@@ -74,6 +72,7 @@
 #include "ui/gfx/text_constants.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
@@ -110,8 +109,6 @@ constexpr auto kHeaderDefaultSpacing = gfx::Insets::VH(0, 6);
 
 constexpr auto kBubblePadding = gfx::Insets::VH(8, 8);
 
-constexpr int kAppStreamingTitleTextFontSize = 14;
-
 constexpr float kDefaultAspectRatio = 16.0 / 9.0f;
 constexpr gfx::Size kDefaultBubbleSize(360, 360 * kDefaultAspectRatio);
 
@@ -124,9 +121,6 @@ constexpr base::TimeDelta kUnloadTimeoutDuration = base::Milliseconds(500);
 // Timeout for initializer connection attempts.
 constexpr base::TimeDelta kInitializerTimeout = base::Seconds(6);
 
-// The ID for the "Copy/paste not yet implemented" toast.
-constexpr char kEcheTrayCopyPasteNotImplementedToastId[] =
-    "eche_tray_toast_ids.copy_paste_not_implemented";
 // The ID for the "Tablet mode not supported" toast.
 constexpr char kEcheTrayTabletModeNotSupportedId[] =
     "eche_tray_toast_ids.tablet_mode_not_supported";
@@ -170,12 +164,11 @@ std::unique_ptr<views::Button> CreateButton(
     const gfx::VectorIcon& icon,
     int message_id) {
   auto button = views::CreateVectorImageButton(std::move(callback));
+
   views::SetImageFromVectorIconWithColorId(
       button.get(), icon,
-      chromeos::features::IsJellyrollEnabled()
-          ? static_cast<ui::ColorId>(cros_tokens::kCrosSysOnSurface)
-          : kColorAshIconColorPrimary,
-      kColorAshButtonIconDisabledColor);
+      static_cast<ui::ColorId>(cros_tokens::kCrosSysOnSurface),
+      static_cast<ui::ColorId>(cros_tokens::kButtonIconColorPrimaryDisabled));
   button->SetTooltipText(l10n_util::GetStringUTF16(message_id));
   button->SizeToPreferredSize();
 
@@ -195,24 +188,16 @@ void ConfigureLabelText(views::Label* title) {
   title->SetAllowCharacterBreak(true);
   title->SetProperty(
       views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded,
-                               /*adjust_height_for_width =*/true)
+      views::FlexSpecification(views::LayoutOrientation::kHorizontal,
+                               views::MinimumFlexSizeRule::kScaleToZero,
+                               views::MaximumFlexSizeRule::kUnbounded)
           .WithWeight(1));
+  title->SetProperty(views::kCrossAxisAlignmentKey,
+                     views::LayoutAlignment::kStretch);
   title->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-
-  if (chromeos::features::IsJellyrollEnabled()) {
-    title->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
-    TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosHeadline1,
-                                          *title);
-  } else {
-    gfx::Font default_font;
-    gfx::Font text_font = default_font.Derive(
-        kAppStreamingTitleTextFontSize - default_font.GetFontSize(),
-        gfx::Font::NORMAL, gfx::Font::Weight::NORMAL);
-    gfx::FontList font_list(text_font);
-    title->SetFontList(font_list);
-  }
+  title->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
+  TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosHeadline1,
+                                        *title);
 }
 
 }  // namespace
@@ -233,18 +218,9 @@ EcheTray::EcheTray(Shelf* shelf)
       icon_(
           tray_container()->AddChildView(std::make_unique<views::ImageView>())),
       event_interceptor_(std::make_unique<EventInterceptor>(this)) {
-  SetPressedCallback(base::BindRepeating(
-      [](EcheTray* eche_tray, const ui::Event& event) {
-        // The `bubble_` is cached, so don't check for existence (which is the
-        // base TrayBackgroundView implementation), check for visibility to
-        // decide on whether to show or hide.
-        if (eche_tray->IsBubbleVisible()) {
-          eche_tray->HideBubble();
-          return;
-        }
-        eche_tray->ShowBubble();
-      },
-      base::Unretained(this)));
+  SetCallback(
+      base::BindRepeating(&EcheTray::OnButtonPressed, base::Unretained(this)));
+
   const int icon_padding = (kTrayItemSize - kIconSize) / 2;
 
   icon_->SetBorder(
@@ -253,18 +229,14 @@ EcheTray::EcheTray(Shelf* shelf)
   // Observers setup
   // Note: `ScreenLayoutObserver` starts observing at its constructor.
   observed_session_.Observe(Shell::Get()->session_controller());
-  icon_->SetTooltipText(GetAccessibleNameForTray());
-  if (chromeos::features::IsJellyEnabled()) {
-    UpdateTrayItemColor(is_active());
-  } else {
-    icon_->SetImage(ui::ImageModel::FromVectorIcon(kPhoneHubPhoneIcon,
-                                                   kColorAshIconColorPrimary));
-  }
+  icon_->SetTooltipText(GetAccessibleName());
+  UpdateTrayItemColor(is_active());
 
   shelf_observation_.Observe(shelf);
-  tablet_mode_observation_.Observe(Shell::Get()->tablet_mode_controller());
   shell_observer_.Observe(Shell::Get());
   keyboard_observation_.Observe(keyboard::KeyboardUIController::Get());
+
+  GetViewAccessibility().SetName(GetAccessibleName());
 }
 
 EcheTray::~EcheTray() {
@@ -281,26 +253,19 @@ bool EcheTray::IsInitialized() const {
   return GetBubbleWidget() != nullptr;
 }
 
-void EcheTray::ClickedOutsideBubble() {
+void EcheTray::ClickedOutsideBubble(const ui::LocatedEvent& event) {
   //  Do nothing
 }
 
 void EcheTray::UpdateTrayItemColor(bool is_active) {
-  DCHECK(chromeos::features::IsJellyEnabled());
   icon_->SetImage(ui::ImageModel::FromVectorIcon(
       kPhoneHubPhoneIcon, is_active
                               ? cros_tokens::kCrosSysSystemOnPrimaryContainer
                               : cros_tokens::kCrosSysOnSurface));
 }
 
-std::u16string EcheTray::GetAccessibleNameForTray() {
-  // TODO(nayebi): Change this based on the final model of interaction
-  // between phone hub and Eche.
-  return l10n_util::GetStringUTF16(IDS_ASH_PHONE_HUB_TRAY_ACCESSIBLE_NAME);
-}
-
 void EcheTray::HandleLocaleChange() {
-  icon_->SetTooltipText(GetAccessibleNameForTray());
+  icon_->SetTooltipText(GetAccessibleName());
 }
 
 void EcheTray::HideBubbleWithView(const TrayBubbleView* bubble_view) {
@@ -324,7 +289,7 @@ void EcheTray::Initialize() {
   SetVisiblePreferred(visibility);
 }
 
-void EcheTray::CloseBubble() {
+void EcheTray::CloseBubbleInternal() {
   if (bubble_)
     HideBubble();
 }
@@ -363,6 +328,9 @@ void EcheTray::ShowBubble() {
   bubble_->GetBubbleWidget()->GetNativeWindow()->AddPreTargetHandler(
       event_interceptor_.get());
   shelf()->UpdateAutoHideState();
+  if (bubble_shown_callback_) {
+    bubble_shown_callback_.Run(web_view_);
+  }
 }
 
 TrayBubbleView* EcheTray::GetBubbleView() {
@@ -378,28 +346,12 @@ void EcheTray::OnVirtualKeyboardVisibilityChanged() {
   TrayBackgroundView::OnVirtualKeyboardVisibilityChanged();
 }
 
-void EcheTray::OnAnyBubbleVisibilityChanged(views::Widget* bubble_widget,
-                                            bool visible) {
-  // We only care about "other" bubbles being shown.
-  if (!bubble_ || bubble_widget == GetBubbleWidget())
-    return;
-
-  // Another bubble has become visible, so minimize this one.
-  if (visible && IsBubbleVisible())
-    HideBubble();
-}
-
 bool EcheTray::CacheBubbleViewForHide() const {
   return true;
 }
 
-void EcheTray::OnThemeChanged() {
-  TrayBackgroundView::OnThemeChanged();
-  RefreshHeaderView();
-}
-
 std::u16string EcheTray::GetAccessibleNameForBubble() {
-  return GetAccessibleNameForTray();
+  return GetAccessibleName();
 }
 
 bool EcheTray::ShouldEnableExtraKeyboardAccessibility() {
@@ -513,6 +465,20 @@ void EcheTray::OnRequestBackgroundConnectionAttempt() {
   SetIconVisibility(false);
 }
 
+void EcheTray::OnStatusAreaAnchoredBubbleVisibilityChanged(
+    TrayBubbleView* tray_bubble,
+    bool visible) {
+  // We only care about "other" bubbles being shown.
+  if (!bubble_ || tray_bubble == GetBubbleView()) {
+    return;
+  }
+
+  // Another bubble has become visible, so minimize this one.
+  if (visible && IsBubbleVisible()) {
+    HideBubble();
+  }
+}
+
 void EcheTray::CloseInitializer() {
   initializer_webview_.reset();
   if (on_initializer_closed_) {
@@ -544,6 +510,17 @@ void EcheTray::StartGracefulCloseInitializer() {
   unload_timer_->Reset();  // Starts the timer.
 }
 
+void EcheTray::OnButtonPressed() {
+  // The `bubble_` is cached, so don't check for existence (which is the base
+  // TrayBackgroundView implementation), check for visibility to decide on
+  // whether to show or hide.
+  if (IsBubbleVisible()) {
+    HideBubble();
+    return;
+  }
+  ShowBubble();
+}
+
 void EcheTray::SetUrl(const GURL& url) {
   if (web_view_ && url_ != url)
     web_view_->Navigate(url);
@@ -554,11 +531,12 @@ void EcheTray::SetIcon(const gfx::Image& icon,
                        const std::u16string& tooltip_text) {
   views::ImageButton* icon_view = GetIcon();
   if (icon_view) {
-    icon_view->SetImage(
+    icon_view->SetImageModel(
         views::ImageButton::STATE_NORMAL,
-        gfx::ImageSkiaOperations::CreateResizedImage(
-            icon.AsImageSkia(), skia::ImageOperations::RESIZE_BEST,
-            gfx::Size(kIconSize, kIconSize)));
+        ui::ImageModel::FromImageSkia(
+            gfx::ImageSkiaOperations::CreateResizedImage(
+                icon.AsImageSkia(), skia::ImageOperations::RESIZE_BEST,
+                gfx::Size(kIconSize, kIconSize))));
     icon_view->SetTooltipText(tooltip_text);
     SetIconVisibility(true);
   }
@@ -596,8 +574,8 @@ bool EcheTray::LoadBubble(
   StartLoadingAnimation();
   auto* phone_hub_tray = GetPhoneHubTray();
   if (phone_hub_tray) {
-    phone_hub_tray->SetEcheIconActivationCallback(
-        base::BindRepeating(&EcheTray::PerformAction, base::Unretained(this)));
+    phone_hub_tray->SetEcheIconActivationCallback(base::BindRepeating(
+        &EcheTray::OnButtonPressed, base::Unretained(this)));
   }
   // Hide bubble first until the streaming is ready.
   HideBubble();
@@ -639,6 +617,14 @@ void EcheTray::SetGracefulGoBackCallback(
   if (!graceful_go_back_callback)
     return;
   graceful_go_back_callback_ = std::move(graceful_go_back_callback);
+}
+
+void EcheTray::SetBubbleShownCallback(
+    BubbleShownCallback bubble_shown_callback) {
+  if (!bubble_shown_callback) {
+    return;
+  }
+  bubble_shown_callback_ = std::move(bubble_shown_callback);
 }
 
 void EcheTray::HideBubble() {
@@ -707,41 +693,32 @@ void EcheTray::InitBubble(
         break;
       case eche_app::mojom::AppStreamLaunchEntryPoint::UNKNOWN:
         NOTREACHED();
-        break;
     }
   }
   init_stream_timestamp_ = base::TimeTicks::Now();
-  TrayBubbleView::InitParams init_params;
-  init_params.delegate = GetWeakPtr();
+  TrayBubbleView::InitParams init_params = CreateInitParamsForTrayBubble(
+      /*tray=*/this, /*anchor_to_shelf_corner=*/true);
+
   // Note: The container id must be smaller than `kShellWindowId_ShelfContainer`
   // in order to let the notifications be shown on top of the eche window.
   init_params.parent_window = Shell::GetContainer(
       tray_container()->GetWidget()->GetNativeWindow()->GetRootWindow(),
       kShellWindowId_AlwaysOnTopContainer);
-  init_params.anchor_mode = TrayBubbleView::AnchorMode::kRect;
-  init_params.anchor_rect = GetAnchor();
-  init_params.insets = GetTrayBubbleInsets(GetBubbleWindowContainer());
-  init_params.shelf_alignment = shelf()->alignment();
   const gfx::Size eche_size = CalculateSizeForEche();
   init_params.preferred_width = eche_size.width();
   init_params.close_on_deactivate = false;
-  init_params.translucent = true;
   init_params.reroute_event_handler = false;
-  init_params.corner_radius = kTrayItemCornerRadius;
-  init_params.anchor_to_shelf_corner = true;
+
   phone_name_ = phone_name;
 
   auto bubble_view = std::make_unique<TrayBubbleView>(init_params);
   bubble_view->SetCanActivate(true);
-  bubble_view->SetBorder(views::CreateEmptyBorder(kBubblePadding));
 
   header_view_ = bubble_view->AddChildView(CreateBubbleHeaderView(phone_name));
 
   // We need the header be always visible with the same size.
-  static_cast<views::BoxLayout*>(bubble_view->GetLayoutManager())
-      ->SetFlexForView(header_view_, 0, true);
-  static_cast<views::BoxLayout*>(bubble_view->GetLayoutManager())
-      ->set_inside_border_insets(kBubblePadding);
+  bubble_view->box_layout()->SetFlexForView(header_view_, 0, true);
+  bubble_view->box_layout()->set_inside_border_insets(kBubblePadding);
 
   // TODO(b/271478560): Re-use initializer_webview_ when available, once support
   // launching apps on prewarmed connection is available.
@@ -844,7 +821,8 @@ std::unique_ptr<views::View> EcheTray::CreateBubbleHeaderView(
 
   // Add minimize button
   minimize_button_ = header->AddChildView(CreateButton(
-      base::BindRepeating(&EcheTray::CloseBubble, weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&EcheTray::CloseBubble, weak_factory_.GetWeakPtr(),
+                          TrayBackgroundView::CloseReason::kUnspecified),
       kEcheMinimizeIcon, IDS_APP_ACCNAME_MINIMIZE));
 
   // Add close button
@@ -875,15 +853,22 @@ views::ImageButton* EcheTray::GetIcon() {
   return phone_hub_tray->eche_icon_view();
 }
 
+std::u16string EcheTray::GetAccessibleName() {
+  // TODO(nayebi): Change this based on the final model of interaction
+  // between phone hub and Eche.
+  return l10n_util::GetStringUTF16(IDS_ASH_PHONE_HUB_TRAY_ACCESSIBLE_NAME);
+}
+
 void EcheTray::ResizeIcon(int offset_dip) {
   views::ImageButton* icon_view = GetIcon();
   if (icon_view) {
     auto icon = icon_view->GetImage(views::ImageButton::STATE_NORMAL);
-    icon_view->SetImage(
+    icon_view->SetImageModel(
         views::ImageButton::STATE_NORMAL,
-        gfx::ImageSkiaOperations::CreateResizedImage(
-            icon, skia::ImageOperations::RESIZE_BEST,
-            gfx::Size(kIconSize - offset_dip, kIconSize - offset_dip)));
+        ui::ImageModel::FromImageSkia(
+            gfx::ImageSkiaOperations::CreateResizedImage(
+                icon, skia::ImageOperations::RESIZE_BEST,
+                gfx::Size(kIconSize - offset_dip, kIconSize - offset_dip))));
     GetPhoneHubTray()->tray_container()->UpdateLayout();
   }
 }
@@ -923,37 +908,36 @@ EcheIconLoadingIndicatorView* EcheTray::GetLoadingIndicator() {
   return phone_hub_tray->eche_loading_indicator();
 }
 
-void EcheTray::RefreshHeaderView() {
-  if (!header_view_ || !bubble_) {
-    return;
-  }
-
-  auto* bubble_view = bubble_->GetBubbleView();
-  bubble_view->RemoveChildView(header_view_);
-  header_view_ = bubble_view->AddChildViewAt(
-      CreateBubbleHeaderView(phone_name_), /* index= */ 0);
-
-  static_cast<views::BoxLayout*>(bubble_view->GetLayoutManager())
-      ->SetFlexForView(header_view_, 0, true);
-  static_cast<views::BoxLayout*>(bubble_view->GetLayoutManager())
-      ->set_inside_border_insets(kBubblePadding);
-}
-
 void EcheTray::UpdateEcheSizeAndBubbleBounds() {
   if (!bubble_ || !bubble_->GetBubbleView())
     return;
   gfx::Size eche_size = CalculateSizeForEche();
   bubble_->GetBubbleView()->SetPreferredWidth(eche_size.width());
   web_view_->SetPreferredSize(eche_size);
-  bubble_->GetBubbleView()->ChangeAnchorRect(GetAnchor());
+  bubble_->GetBubbleView()->ChangeAnchorRect(
+      shelf()->GetSystemTrayAnchorRect());
 }
 
-void EcheTray::OnDisplayConfigurationChanged() {
+void EcheTray::OnDidApplyDisplayChanges() {
   UpdateEcheSizeAndBubbleBounds();
 }
 
 void EcheTray::OnAutoHideStateChanged(ShelfAutoHideState state) {
   UpdateEcheSizeAndBubbleBounds();
+}
+
+void EcheTray::OnDisplayTabletStateChanged(display::TabletState state) {
+  switch (state) {
+    case display::TabletState::kEnteringTabletMode:
+    case display::TabletState::kExitingTabletMode:
+      break;
+    case display::TabletState::kInTabletMode:
+      OnTabletModeStarted();
+      break;
+    case display::TabletState::kInClamshellMode:
+      UpdateEcheSizeAndBubbleBounds();
+      break;
+  }
 }
 
 void EcheTray::OnTabletModeStarted() {
@@ -976,10 +960,6 @@ void EcheTray::OnTabletModeStarted() {
   PurgeAndClose();
 }
 
-void EcheTray::OnTabletModeEnded() {
-  UpdateEcheSizeAndBubbleBounds();
-}
-
 void EcheTray::OnShelfAlignmentChanged(aura::Window* root_window,
                                        ShelfAlignment old_alignment) {
   UpdateEcheSizeAndBubbleBounds();
@@ -992,10 +972,6 @@ void EcheTray::OnStreamOrientationChanged(bool is_landscape) {
 
   is_landscape_ = is_landscape;
   UpdateEcheSizeAndBubbleBounds();
-}
-
-gfx::Rect EcheTray::GetAnchor() {
-  return shelf()->GetSystemTrayAnchorRect();
 }
 
 // TODO(b/234848974): Try to use View::AddAccelerator for the bubble view
@@ -1035,23 +1011,11 @@ bool EcheTray::ProcessAcceleratorKeys(ui::KeyEvent* event) {
   const bool any_modifier_pressed =
       ui::Accelerator::MaskOutKeyEventFlags(event->flags());
 
-  if (event->type() != ui::ET_KEY_PRESSED)
+  if (event->type() != ui::EventType::kKeyPressed) {
     return false;
+  }
 
   switch (key_code) {
-    case ui::VKEY_C:
-    case ui::VKEY_V:
-    case ui::VKEY_X:
-      if (!is_only_control_down)
-        return false;
-      ash::ToastManager::Get()->Show(ash::ToastData(
-          kEcheTrayCopyPasteNotImplementedToastId,
-          ash::ToastCatalogName::kEcheTrayCopyPasteNotImplemented,
-          l10n_util::GetStringUTF16(
-              IDS_ASH_ECHE_TOAST_COPY_PASTE_NOT_IMPLEMENTED),
-          ash::ToastData::kDefaultToastDuration,
-          /*visible_on_lock_screen=*/false));
-      return true;
     case ui::VKEY_W:
       if (!is_only_control_down)
         return false;
@@ -1093,7 +1057,7 @@ bool EcheTray::IsBackgroundConnectionAttemptInProgress() {
   return initializer_webview_ ? true : false;
 }
 
-BEGIN_METADATA(EcheTray, TrayBackgroundView)
+BEGIN_METADATA(EcheTray)
 END_METADATA
 
 }  // namespace ash

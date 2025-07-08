@@ -12,16 +12,19 @@ import android.view.ViewGroup.MarginLayoutParams;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
+@NullMarked
 class ContextMenuHeaderViewBinder {
     public static void bind(PropertyModel model, View view, PropertyKey propertyKey) {
         if (propertyKey == ContextMenuHeaderProperties.TITLE) {
             TextView titleText = view.findViewById(R.id.menu_header_title);
             titleText.setText(model.get(ContextMenuHeaderProperties.TITLE));
-            titleText.setVisibility(TextUtils.isEmpty(model.get(ContextMenuHeaderProperties.TITLE))
+            titleText.setVisibility(
+                    TextUtils.isEmpty(model.get(ContextMenuHeaderProperties.TITLE))
                             ? View.GONE
                             : View.VISIBLE);
         } else if (propertyKey == ContextMenuHeaderProperties.TITLE_MAX_LINES) {
@@ -36,7 +39,8 @@ class ContextMenuHeaderViewBinder {
         } else if (propertyKey == ContextMenuHeaderProperties.URL) {
             TextView urlText = view.findViewById(R.id.menu_header_url);
             urlText.setText(model.get(ContextMenuHeaderProperties.URL));
-            urlText.setVisibility(TextUtils.isEmpty(model.get(ContextMenuHeaderProperties.URL))
+            urlText.setVisibility(
+                    TextUtils.isEmpty(model.get(ContextMenuHeaderProperties.URL))
                             ? View.GONE
                             : View.VISIBLE);
         } else if (propertyKey == ContextMenuHeaderProperties.TITLE_AND_URL_CLICK_LISTENER) {

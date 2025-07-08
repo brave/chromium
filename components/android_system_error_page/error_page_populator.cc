@@ -43,9 +43,9 @@ void PopulateErrorPageHtml(const blink::WebURLError& error,
   if (err.empty())
     reason_id = IDS_ANDROID_ERROR_PAGE_WEBPAGE_TEMPORARILY_DOWN;
 
-  std::string escaped_url = base::EscapeForHTML(url_string);
-
   std::vector<std::string> replacements;
+
+  std::string escaped_url = base::EscapeForHTML(url_string);
 
   replacements.push_back(
       l10n_util::GetStringUTF8(IDS_ANDROID_ERROR_PAGE_WEBPAGE_NOT_AVAILABLE));

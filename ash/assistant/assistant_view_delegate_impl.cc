@@ -18,10 +18,10 @@
 #include "ash/public/cpp/session/user_info.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/command_line.h"
 #include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "chromeos/ash/services/assistant/public/cpp/switches.h"
+#include "ui/display/screen.h"
 
 namespace ash {
 
@@ -79,7 +79,7 @@ aura::Window* AssistantViewDelegateImpl::GetRootWindowForNewWindows() {
 }
 
 bool AssistantViewDelegateImpl::IsTabletMode() const {
-  return Shell::Get()->tablet_mode_controller()->InTabletMode();
+  return display::Screen::GetScreen()->InTabletMode();
 }
 
 void AssistantViewDelegateImpl::OnDialogPlateButtonPressed(
@@ -98,7 +98,7 @@ void AssistantViewDelegateImpl::OnNotificationButtonPressed(
     const std::string& notification_id,
     int notification_button_index) {
   assistant_controller_->notification_controller()->OnNotificationClicked(
-      notification_id, notification_button_index, /*reply=*/absl::nullopt);
+      notification_id, notification_button_index, /*reply=*/std::nullopt);
 }
 
 void AssistantViewDelegateImpl::OnOnboardingShown() {
@@ -117,40 +117,11 @@ void AssistantViewDelegateImpl::OnSuggestionPressed(
     observer.OnSuggestionPressed(suggestion_id);
 }
 
-bool AssistantViewDelegateImpl::ShouldShowOnboarding() const {
-  // UI developers need to be able to force the onboarding flow.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          assistant::switches::kForceAssistantOnboarding)) {
-    return true;
+void AssistantViewDelegateImpl::OnLauncherSearchChipPressed(
+    std::u16string_view query) {
+  for (auto& observer : view_delegate_observers_) {
+    observer.OnLauncherSearchChipPressed(query);
   }
-
-  // Once a user has had an interaction with Assistant, we will no longer show
-  // onboarding in that user session.
-  auto* interaction_controller = AssistantInteractionController::Get();
-  const bool has_had_interaction = interaction_controller->HasHadInteraction();
-  if (has_had_interaction)
-    return false;
-
-  // If we do show onboarding to a user in a session, we will keep showing it
-  // for that session until an Assistant interaction takes place.
-  auto* ui_controller = AssistantUiController::Get();
-  const bool has_shown_onboarding = ui_controller->HasShownOnboarding();
-  if (has_shown_onboarding)
-    return true;
-
-  // Once a user has seen onboarding in any session, they will continue to see
-  // onboarding each session until the maximum number of sessions is reached.
-  const int number_of_sessions_where_onboarding_shown =
-      ui_controller->GetNumberOfSessionsWhereOnboardingShown();
-  if (number_of_sessions_where_onboarding_shown > 0) {
-    return number_of_sessions_where_onboarding_shown <
-           kOnboardingMaxSessionsShown;
-  }
-
-  // The feature will start to show only for new users which we define as users
-  // who haven't had an interaction with Assistant in the last 28 days.
-  return interaction_controller->GetTimeDeltaSinceLastInteraction() >=
-         base::Days(28);
 }
 
 }  // namespace ash

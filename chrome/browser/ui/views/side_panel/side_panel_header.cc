@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/views/side_panel/side_panel_header.h"
 
-#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/views/layout/flex_layout.h"
 
@@ -13,20 +12,15 @@ SidePanelHeader::SidePanelHeader() {
   layer()->SetFillsBoundsOpaquely(false);
 }
 
-void SidePanelHeader::Layout() {
-  views::View::Layout();
+void SidePanelHeader::Layout(PassKey) {
+  LayoutSuperclass<views::View>(this);
 
-  if (features::IsChromeRefresh2023()) {
-    // The side panel header should draw on top of its parent's border.
-    gfx::Rect contents_bounds = parent()->GetContentsBounds();
+  // The side panel header should draw on top of its parent's border.
+  gfx::Rect contents_bounds = parent()->GetContentsBounds();
 
-    constexpr int kHeaderPaddingBottom = 6;
-    gfx::Rect header_bounds =
-        gfx::Rect(contents_bounds.x(),
-                  contents_bounds.y() - GetPreferredSize().height() -
-                      kHeaderPaddingBottom,
-                  contents_bounds.width(), GetPreferredSize().height());
+  gfx::Rect header_bounds = gfx::Rect(
+      contents_bounds.x(), contents_bounds.y() - GetPreferredSize().height(),
+      contents_bounds.width(), GetPreferredSize().height());
 
-    SetBoundsRect(header_bounds);
-  }
+  SetBoundsRect(header_bounds);
 }

@@ -6,12 +6,14 @@
 
 #include <utility>
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browsing_topics/browsing_topics_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/browsing_topics/browsing_topics_service.h"
 #include "components/browsing_topics/mojom/browsing_topics_internals.mojom.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "content/public/common/content_features.h"
+#include "services/network/public/cpp/features.h"
 #include "third_party/blink/public/common/features.h"
 
 BrowsingTopicsInternalsPageHandler::BrowsingTopicsInternalsPageHandler(
@@ -26,14 +28,12 @@ void BrowsingTopicsInternalsPageHandler::GetBrowsingTopicsConfiguration(
     browsing_topics::mojom::PageHandler::GetBrowsingTopicsConfigurationCallback
         callback) {
   auto config = browsing_topics::mojom::WebUIBrowsingTopicsConfiguration::New(
-      base::FeatureList::IsEnabled(blink::features::kBrowsingTopics),
+      base::FeatureList::IsEnabled(network::features::kBrowsingTopics),
       base::FeatureList::IsEnabled(features::kPrivacySandboxAdsAPIsOverride),
-      base::FeatureList::IsEnabled(privacy_sandbox::kPrivacySandboxSettings3),
       base::FeatureList::IsEnabled(
           privacy_sandbox::kOverridePrivacySandboxSettingsLocalTesting),
       base::FeatureList::IsEnabled(
           blink::features::kBrowsingTopicsBypassIPIsPubliclyRoutableCheck),
-      base::FeatureList::IsEnabled(blink::features::kBrowsingTopicsXHR),
       base::FeatureList::IsEnabled(blink::features::kBrowsingTopicsDocumentAPI),
       browsing_topics::CurrentConfigVersion(),
       base::FeatureList::IsEnabled(blink::features::kBrowsingTopicsParameters),
@@ -91,10 +91,17 @@ void BrowsingTopicsInternalsPageHandler::GetModelInfo(
     return;
   }
 
-  browsing_topics_service->GetAnnotator()->NotifyWhenModelAvailable(
-      base::BindOnce(
-          &BrowsingTopicsInternalsPageHandler::OnGetModelInfoCompleted,
-          weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  auto* annotator = browsing_topics_service->GetAnnotator();
+  if (!annotator) {
+    std::move(callback).Run(browsing_topics::mojom::WebUIGetModelInfoResult::
+                                NewOverrideStatusMessage(
+                                    "BrowsingTopicsService is shutting down."));
+    return;
+  }
+
+  annotator->NotifyWhenModelAvailable(base::BindOnce(
+      &BrowsingTopicsInternalsPageHandler::OnGetModelInfoCompleted,
+      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BrowsingTopicsInternalsPageHandler::ClassifyHosts(
@@ -114,8 +121,13 @@ void BrowsingTopicsInternalsPageHandler::ClassifyHosts(
     std::move(callback).Run({});
     return;
   }
+  auto* annotator = browsing_topics_service->GetAnnotator();
+  if (!annotator) {
+    std::move(callback).Run({});
+    return;
+  }
 
-  browsing_topics_service->GetAnnotator()->BatchAnnotate(
+  annotator->BatchAnnotate(
       base::BindOnce(
           &BrowsingTopicsInternalsPageHandler::OnGetTopicsForHostsCompleted,
           weak_ptr_factory_.GetWeakPtr(), std::move(callback)),
@@ -128,8 +140,16 @@ void BrowsingTopicsInternalsPageHandler::OnGetModelInfoCompleted(
       browsing_topics::BrowsingTopicsServiceFactory::GetForProfile(profile_);
   DCHECK(browsing_topics_service);
 
-  absl::optional<optimization_guide::ModelInfo> model_info =
-      browsing_topics_service->GetAnnotator()->GetBrowsingTopicsModelInfo();
+  auto* annotator = browsing_topics_service->GetAnnotator();
+  if (!annotator) {
+    std::move(callback).Run(browsing_topics::mojom::WebUIGetModelInfoResult::
+                                NewOverrideStatusMessage(
+                                    "BrowsingTopicsService is shutting down."));
+    return;
+  }
+
+  std::optional<optimization_guide::ModelInfo> model_info =
+      annotator->GetBrowsingTopicsModelInfo();
 
   if (!model_info) {
     std::move(callback).Run(browsing_topics::mojom::WebUIGetModelInfoResult::

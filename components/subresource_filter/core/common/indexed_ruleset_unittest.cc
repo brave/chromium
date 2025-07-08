@@ -5,15 +5,16 @@
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/check.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/subresource_filter/core/common/first_party_origin.h"
 #include "components/subresource_filter/core/common/load_policy.h"
 #include "components/url_pattern_index/proto/rules.pb.h"
 #include "components/url_pattern_index/url_pattern.h"
 #include "components/url_pattern_index/url_rule_test_support.h"
+#include "components/url_pattern_index/url_rule_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -35,31 +36,33 @@ class SubresourceFilterIndexedRulesetTest : public ::testing::Test {
       const SubresourceFilterIndexedRulesetTest&) = delete;
 
  protected:
-  LoadPolicy GetLoadPolicy(base::StringPiece url,
-                           base::StringPiece document_origin = "",
-                           proto::ElementType element_type = testing::kOther,
-                           bool disable_generic_rules = false) const {
-    DCHECK(matcher_);
+  LoadPolicy GetLoadPolicy(
+      std::string_view url,
+      std::string_view document_origin = "",
+      proto::ElementType element_type = testing::kOther,
+      bool disable_generic_rules = false,
+      const url_pattern_index::flat::UrlRule** out_rule = nullptr) const {
+    CHECK(matcher_);
     return matcher_->GetLoadPolicyForResourceLoad(
         GURL(url), FirstPartyOrigin(testing::GetOrigin(document_origin)),
-        element_type, disable_generic_rules);
+        element_type, disable_generic_rules, out_rule);
   }
 
-  bool MatchingRule(base::StringPiece url,
-                    base::StringPiece document_origin = "",
+  bool MatchingRule(std::string_view url,
+                    std::string_view document_origin = "",
                     proto::ElementType element_type = testing::kOther,
                     bool disable_generic_rules = false) const {
-    DCHECK(matcher_);
+    CHECK(matcher_);
     return matcher_->MatchedUrlRule(
                GURL(url), FirstPartyOrigin(testing::GetOrigin(document_origin)),
                element_type, disable_generic_rules) != nullptr;
   }
 
   bool ShouldDeactivate(
-      base::StringPiece document_url,
-      base::StringPiece parent_document_origin = "",
+      std::string_view document_url,
+      std::string_view parent_document_origin = "",
       proto::ActivationType activation_type = testing::kNoActivation) const {
-    DCHECK(matcher_);
+    CHECK(matcher_);
     return matcher_->ShouldDisableFilteringForDocument(
         GURL(document_url), testing::GetOrigin(parent_document_origin),
         activation_type);
@@ -69,18 +72,18 @@ class SubresourceFilterIndexedRulesetTest : public ::testing::Test {
     return indexer_->AddUrlRule(rule);
   }
 
-  bool AddSimpleRule(base::StringPiece url_pattern) {
+  bool AddSimpleRule(std::string_view url_pattern) {
     return AddUrlRule(
         MakeUrlRule(UrlPattern(url_pattern, testing::kSubstring)));
   }
 
-  bool AddSimpleAllowlistRule(base::StringPiece url_pattern) {
+  bool AddSimpleAllowlistRule(std::string_view url_pattern) {
     auto rule = MakeUrlRule(UrlPattern(url_pattern, testing::kSubstring));
     rule.set_semantics(proto::RULE_SEMANTICS_ALLOWLIST);
     return AddUrlRule(rule);
   }
 
-  bool AddSimpleAllowlistRule(base::StringPiece url_pattern,
+  bool AddSimpleAllowlistRule(std::string_view url_pattern,
                               int32_t activation_types) {
     auto rule = MakeUrlRule(UrlPattern(url_pattern, testing::kSubstring));
     rule.set_semantics(proto::RULE_SEMANTICS_ALLOWLIST);
@@ -91,8 +94,7 @@ class SubresourceFilterIndexedRulesetTest : public ::testing::Test {
 
   void Finish() {
     indexer_->Finish();
-    matcher_ = std::make_unique<IndexedRulesetMatcher>(indexer_->data(),
-                                                       indexer_->size());
+    matcher_ = std::make_unique<IndexedRulesetMatcher>(indexer_->data());
   }
 
   void Reset() {
@@ -121,6 +123,18 @@ TEST_F(SubresourceFilterIndexedRulesetTest, NoRuleApplies) {
   EXPECT_EQ(LoadPolicy::ALLOW, GetLoadPolicy("http://example.com?filter_not"));
 }
 
+TEST_F(SubresourceFilterIndexedRulesetTest, NoRuleApplies_OutRuleParameter) {
+  ASSERT_TRUE(AddSimpleRule("?filter_out="));
+  Finish();
+
+  const url_pattern_index::flat::UrlRule* rule = nullptr;
+  EXPECT_EQ(LoadPolicy::ALLOW,
+            GetLoadPolicy("http://example.com", /*document_origin=*/"",
+                          /*=element_type=*/testing::kOther,
+                          /*disable_generic_rules=*/false, /*out_rule=*/&rule));
+  EXPECT_FALSE(rule);
+}
+
 TEST_F(SubresourceFilterIndexedRulesetTest, SimpleBlocklist) {
   ASSERT_TRUE(AddSimpleRule("?param="));
   Finish();
@@ -128,6 +142,20 @@ TEST_F(SubresourceFilterIndexedRulesetTest, SimpleBlocklist) {
   EXPECT_EQ(LoadPolicy::ALLOW, GetLoadPolicy("https://example.com"));
   EXPECT_EQ(LoadPolicy::DISALLOW,
             GetLoadPolicy("http://example.org?param=image1"));
+}
+
+TEST_F(SubresourceFilterIndexedRulesetTest, SimpleBlocklist_OutRuleParameter) {
+  ASSERT_TRUE(AddSimpleRule("?param="));
+  Finish();
+
+  const url_pattern_index::flat::UrlRule* rule = nullptr;
+  EXPECT_EQ(
+      LoadPolicy::DISALLOW,
+      GetLoadPolicy("http://example.com?param=image1", /*document_origin=*/"",
+                    /*=element_type=*/testing::kOther,
+                    /*disable_generic_rules=*/false, /*out_rule=*/&rule));
+  EXPECT_TRUE(rule);
+  EXPECT_EQ(url_pattern_index::FlatUrlRuleToFilterlistString(rule), "?param=");
 }
 
 TEST_F(SubresourceFilterIndexedRulesetTest, SimpleBlocklistSubdocument) {
@@ -152,6 +180,19 @@ TEST_F(SubresourceFilterIndexedRulesetTest, SimpleAllowlist) {
             GetLoadPolicy("https://example.com?filter_out=true"));
 }
 
+TEST_F(SubresourceFilterIndexedRulesetTest, SimpleAllowlist_OutRuleParameter) {
+  ASSERT_TRUE(AddSimpleAllowlistRule("example.com/?filter_out="));
+  Finish();
+
+  const url_pattern_index::flat::UrlRule* rule = nullptr;
+  EXPECT_EQ(LoadPolicy::ALLOW,
+            GetLoadPolicy("https://example.com?filter_out=true",
+                          /*document_origin=*/"",
+                          /*=element_type=*/testing::kOther,
+                          /*disable_generic_rules=*/false, /*out_rule=*/&rule));
+  EXPECT_FALSE(rule);
+}
+
 TEST_F(SubresourceFilterIndexedRulesetTest, SimpleAllowlistSubdocument) {
   ASSERT_TRUE(AddSimpleAllowlistRule("example.com/?filter_out="));
   Finish();
@@ -170,6 +211,21 @@ TEST_F(SubresourceFilterIndexedRulesetTest,
 
   EXPECT_EQ(LoadPolicy::EXPLICITLY_ALLOW,
             GetLoadPolicy("https://example.com?filter_out=true"));
+}
+
+TEST_F(SubresourceFilterIndexedRulesetTest,
+       SimpleAllowlistWithMatchingBlocklist_OutRuleParameter) {
+  ASSERT_TRUE(AddSimpleRule("example.com/?filter_out="));
+  ASSERT_TRUE(AddSimpleAllowlistRule("example.com/?filter_out="));
+  Finish();
+
+  const url_pattern_index::flat::UrlRule* rule = nullptr;
+  EXPECT_EQ(LoadPolicy::EXPLICITLY_ALLOW,
+            GetLoadPolicy("https://example.com?filter_out=true",
+                          /*document_origin=*/"",
+                          /*=element_type=*/testing::kOther,
+                          /*disable_generic_rules=*/false, /*out_rule=*/&rule));
+  EXPECT_FALSE(rule);
 }
 
 TEST_F(SubresourceFilterIndexedRulesetTest,
@@ -238,12 +294,17 @@ TEST_F(SubresourceFilterIndexedRulesetTest, NonAsciiDomain) {
 }
 
 // Ensure patterns with percent encoded hosts match correctly.
+//
+// Warning: This test depends on the standard non-compliant URL behavior in
+// Chrome. Currently, Chrome escapes '*' (%2A) character in URL host, but this
+// behavior is non-compliant. See https://crbug.com/1416013 for details. We
+// probably no longer need this test once https://crbug.com/1416013 is fixed.
 TEST_F(SubresourceFilterIndexedRulesetTest, PercentEncodedHostPattern) {
-  const char* kPercentEncodedHost = "http://%2C.com/";
+  const char* kPercentEncodedHost = "http://%2A.com/";
   ASSERT_TRUE(AddSimpleRule(kPercentEncodedHost));
   Finish();
 
-  EXPECT_EQ(LoadPolicy::DISALLOW, GetLoadPolicy("http://,.com/"));
+  EXPECT_EQ(LoadPolicy::DISALLOW, GetLoadPolicy("http://*.com/"));
   EXPECT_EQ(LoadPolicy::DISALLOW, GetLoadPolicy(kPercentEncodedHost));
 }
 

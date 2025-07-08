@@ -7,12 +7,15 @@
 
 #include <aaudio/AAudio.h>
 
+#include "base/android/requires_api.h"
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "media/audio/android/aaudio_stream_wrapper.h"
+#include "media/audio/android/audio_device.h"
 #include "media/audio/android/muteable_audio_output_stream.h"
+#include "media/base/amplitude_peak_detector.h"
 #include "media/base/audio_parameters.h"
 
 namespace media {
@@ -20,12 +23,15 @@ namespace media {
 class AudioManagerAndroid;
 
 // Class which uses the AAudio library to playback output.
-class AAudioOutputStream : public MuteableAudioOutputStream,
-                           public AAudioStreamWrapper::DataCallback {
+class REQUIRES_ANDROID_API(AAUDIO_MIN_API) AAudioOutputStream
+    : public MuteableAudioOutputStream,
+      public AAudioStreamWrapper::DataCallback {
  public:
   AAudioOutputStream(AudioManagerAndroid* manager,
                      const AudioParameters& params,
-                     aaudio_usage_t usage);
+                     android::AudioDevice device,
+                     aaudio_usage_t usage,
+                     AmplitudePeakDetector::PeakDetectedCB peak_detected_cb);
 
   AAudioOutputStream(const AAudioOutputStream&) = delete;
   AAudioOutputStream& operator=(const AAudioOutputStream&) = delete;
@@ -52,6 +58,8 @@ class AAudioOutputStream : public MuteableAudioOutputStream,
 
   const raw_ptr<AudioManagerAndroid> audio_manager_;
   const AudioParameters params_;
+
+  AmplitudePeakDetector peak_detector_;
 
   std::unique_ptr<AudioBus> audio_bus_;
 

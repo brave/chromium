@@ -14,44 +14,51 @@
 #include "chrome/browser/ui/web_applications/web_app_menu_model.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_header_macros.h"
-#include "ui/gfx/color_palette.h"
 
 class BrowserView;
 
 // The 'app menu' button for a web app window.
 class WebAppMenuButton : public AppMenuButton {
+  METADATA_HEADER(WebAppMenuButton, AppMenuButton)
+
  public:
-  METADATA_HEADER(WebAppMenuButton);
   static int GetMenuButtonSizeForBrowser(Browser* browser);
-  explicit WebAppMenuButton(BrowserView* browser_view,
-                            std::u16string accessible_name = std::u16string());
+  explicit WebAppMenuButton(BrowserView* browser_view);
   WebAppMenuButton(const WebAppMenuButton&) = delete;
   WebAppMenuButton& operator=(const WebAppMenuButton&) = delete;
   ~WebAppMenuButton() override;
-
-  // Sets the color of the menu button icon and highlight.
-  void SetColor(SkColor color);
-  SkColor GetColor() const;
-
-  // Sets the icon.
-  void set_icon(const gfx::VectorIcon& icon) { icon_ = &icon; }
 
   // Fades the menu button highlight on and off.
   void StartHighlightAnimation();
 
   virtual void ButtonPressed(const ui::Event& event);
 
+  bool IsLabelPresentAndVisible() const;
+
+  // Causes this button to re-evaluate if a text label should be displayed
+  // alongside the three-dot icon. Currently only exposed for tests, but
+  // eventually production code needs to trigger something like this as well
+  // when the update available state changes.
+  void UpdateStateForTesting();
+
  protected:
   BrowserView* browser_view() { return browser_view_; }
+
+  // ToolbarButton:
+  void OnThemeChanged() override;
+  std::optional<SkColor> GetHighlightTextColor() const override;
+  SkColor GetForegroundColor(ButtonState state) const override;
+  int GetIconSize() const override;
+
+  virtual std::optional<std::u16string> GetAccessibleNameOverride() const;
 
  private:
   void FadeHighlightOff();
 
+  void UpdateTextAndHighlightColor();
+
   // The containing browser view.
   raw_ptr<BrowserView> browser_view_;
-
-  SkColor color_ = gfx::kPlaceholderColor;
-  raw_ptr<const gfx::VectorIcon> icon_ = &kBrowserToolsIcon;
 
   base::OneShotTimer highlight_off_timer_;
 };

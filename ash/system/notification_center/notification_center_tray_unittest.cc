@@ -10,6 +10,7 @@
 #include "ash/constants/ash_switches.h"
 #include "ash/public/cpp/system/toast_manager.h"
 #include "ash/public/cpp/test/shell_test_api.h"
+#include "ash/system/notification_center/message_center_utils.h"
 #include "ash/system/notification_center/notification_center_test_api.h"
 #include "ash/system/privacy/privacy_indicators_controller.h"
 #include "ash/system/privacy/privacy_indicators_tray_item_view.h"
@@ -25,43 +26,59 @@
 #include "chromeos/ash/components/login/auth/auth_events_recorder.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/views/accessibility/view_accessibility.h"
 
 namespace ash {
 
 constexpr char kNotificationCenterTrayNoNotificationsToastId[] =
     "notification_center_tray_toast_ids.no_notifications";
 
-class NotificationCenterTrayTest : public AshTestBase {
+class NotificationCenterTrayTestBase : public AshTestBase {
  public:
-  NotificationCenterTrayTest() = default;
-  NotificationCenterTrayTest(const NotificationCenterTrayTest&) = delete;
-  NotificationCenterTrayTest& operator=(const NotificationCenterTrayTest&) =
-      delete;
-  ~NotificationCenterTrayTest() override = default;
+  NotificationCenterTrayTestBase(bool enable_notification_center_controller)
+      : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
+        enable_notification_center_controller_(
+            enable_notification_center_controller) {
+    scoped_feature_list_.InitWithFeatureState(
+        features::kNotificationCenterController,
+        IsNotificationCenterControllerEnabled());
+  }
 
   void SetUp() override {
-    // Enable quick settings revamp feature.
-    scoped_feature_list_.InitAndEnableFeature(features::kQsRevamp);
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kCameraEffectsSupportedByHardware);
-
     AshTestBase::SetUp();
-
-    test_api_ = std::make_unique<NotificationCenterTestApi>(
-        StatusAreaWidgetTestHelper::GetStatusAreaWidget()
-            ->notification_center_tray());
+    test_api_ = std::make_unique<NotificationCenterTestApi>();
   }
 
   NotificationCenterTestApi* test_api() { return test_api_.get(); }
 
+  bool IsNotificationCenterControllerEnabled() const {
+    return enable_notification_center_controller_;
+  }
+
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
-
   std::unique_ptr<NotificationCenterTestApi> test_api_;
+  bool enable_notification_center_controller_ = false;
 };
 
+class NotificationCenterTrayTest
+    : public NotificationCenterTrayTestBase,
+      public testing::WithParamInterface<
+          /*enable_notification_center_controller=*/bool> {
+ public:
+  NotificationCenterTrayTest()
+      : NotificationCenterTrayTestBase(
+            /*enable_notification_center_controller=*/GetParam()) {}
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    NotificationCenterTrayTest,
+    /*enable_notification_center_controller=*/testing::Bool());
+
 // Test the initial state.
-TEST_F(NotificationCenterTrayTest, ShowTrayButtonOnNotificationAvailability) {
+TEST_P(NotificationCenterTrayTest, ShowTrayButtonOnNotificationAvailability) {
   EXPECT_FALSE(test_api()->GetTray()->GetVisible());
 
   std::string id = test_api()->AddNotification();
@@ -73,7 +90,7 @@ TEST_F(NotificationCenterTrayTest, ShowTrayButtonOnNotificationAvailability) {
 }
 
 // Bubble creation and destruction.
-TEST_F(NotificationCenterTrayTest, ShowAndHideBubbleOnUserInteraction) {
+TEST_P(NotificationCenterTrayTest, ShowAndHideBubbleOnUserInteraction) {
   test_api()->AddNotification();
 
   auto* tray = test_api()->GetTray();
@@ -89,7 +106,7 @@ TEST_F(NotificationCenterTrayTest, ShowAndHideBubbleOnUserInteraction) {
 
 // Hitting escape after opening the bubble should destroy the bubble
 // gracefully.
-TEST_F(NotificationCenterTrayTest, EscapeClosesBubble) {
+TEST_P(NotificationCenterTrayTest, EscapeClosesBubble) {
   auto* tray = test_api()->GetTray();
   LeftClickOn(tray);
   PressAndReleaseKey(ui::KeyboardCode::VKEY_ESCAPE);
@@ -99,7 +116,7 @@ TEST_F(NotificationCenterTrayTest, EscapeClosesBubble) {
 
 // Removing all notifications by hitting the `clear_all_button_` should result
 // in the bubble being destroyed and the tray bubble going invisible.
-TEST_F(NotificationCenterTrayTest,
+TEST_P(NotificationCenterTrayTest,
        ClearAllNotificationsDestroysBubbleAndHidesTray) {
   test_api()->AddNotification();
   test_api()->AddNotification();
@@ -115,8 +132,8 @@ TEST_F(NotificationCenterTrayTest,
 
 // The last notification being removed directly by the
 // `message_center::MessageCenter` API should result in the bubble being
-// destroyed and tray visibilty being updated.
-TEST_F(NotificationCenterTrayTest, NotificationsRemovedByMessageCenterApi) {
+// destroyed and tray visibility being updated.
+TEST_P(NotificationCenterTrayTest, NotificationsRemovedByMessageCenterApi) {
   std::string id = test_api()->AddNotification();
   test_api()->RemoveNotification(id);
 
@@ -124,10 +141,36 @@ TEST_F(NotificationCenterTrayTest, NotificationsRemovedByMessageCenterApi) {
   EXPECT_FALSE(test_api()->IsTrayShown());
 }
 
+// When the only notifications present are all in the same group, removing the
+// parent notification of that group should result in the bubble being destroyed
+// and the tray being hidden.
+TEST_P(NotificationCenterTrayTest,
+       RemovingGroupParentDestroysBubbleAndHidesTray) {
+  // Add two notifications that belong to the same group.
+  const std::string url = "http://test-url.com";
+  const std::string id0 = test_api()->AddNotificationWithSourceUrl(url);
+  const std::string id1 = test_api()->AddNotificationWithSourceUrl(url);
+  ASSERT_EQ(message_center_utils::GetNotificationCount(), 1u);
+  ASSERT_TRUE(test_api()->IsTrayShown());
+
+  // Show the bubble.
+  test_api()->ToggleBubble();
+  ASSERT_TRUE(test_api()->IsBubbleShown());
+
+  // Remove the parent notification.
+  const std::string parent_id =
+      test_api()->NotificationIdToParentNotificationId(id0);
+  test_api()->RemoveNotification(parent_id);
+
+  // Verify that the bubble and tray are both gone.
+  EXPECT_FALSE(test_api()->IsBubbleShown());
+  EXPECT_FALSE(test_api()->IsTrayShown());
+}
+
 // Tests that clicking on the tray immediately after all notifications have been
 // removed does not result in an empty bubble being shown. This addresses
 // b/293174118.
-TEST_F(NotificationCenterTrayTest, ClickOnTrayAfterRemovingNotifications) {
+TEST_P(NotificationCenterTrayTest, ClickOnTrayAfterRemovingNotifications) {
   // Add a notification to make the tray visible. Note that animations complete
   // immediately in this part of the test.
   std::string id = test_api()->AddNotification();
@@ -155,7 +198,7 @@ TEST_F(NotificationCenterTrayTest, ClickOnTrayAfterRemovingNotifications) {
 
 // Tests that opening the bubble results in existing popups being dismissed
 // and no new ones being created.
-TEST_F(NotificationCenterTrayTest, NotificationPopupsHiddenWithBubble) {
+TEST_P(NotificationCenterTrayTest, NotificationPopupsHiddenWithBubble) {
   // Adding a notification should generate a popup.
   std::string id = test_api()->AddNotification();
   EXPECT_TRUE(test_api()->IsPopupShown(id));
@@ -171,7 +214,7 @@ TEST_F(NotificationCenterTrayTest, NotificationPopupsHiddenWithBubble) {
 }
 
 // Tests that popups are shown after the notification center is closed.
-TEST_F(NotificationCenterTrayTest, NotificationPopupsShownAfterBubbleClose) {
+TEST_P(NotificationCenterTrayTest, NotificationPopupsShownAfterBubbleClose) {
   test_api()->AddNotification();
 
   // Open and close bubble to dismiss existing popups.
@@ -184,7 +227,7 @@ TEST_F(NotificationCenterTrayTest, NotificationPopupsShownAfterBubbleClose) {
 }
 
 // Keyboard accelerator shows/hides the bubble.
-TEST_F(NotificationCenterTrayTest, AcceleratorTogglesBubble) {
+TEST_P(NotificationCenterTrayTest, AcceleratorTogglesBubble) {
   test_api()->AddNotification();
   EXPECT_FALSE(test_api()->IsBubbleShown());
   // Pressing the accelerator should show the bubble.
@@ -198,21 +241,21 @@ TEST_F(NotificationCenterTrayTest, AcceleratorTogglesBubble) {
 }
 
 // Keyboard accelerator shows a toast when there are no notifications.
-TEST_F(NotificationCenterTrayTest, AcceleratorShowsToastWhenNoNotifications) {
+TEST_P(NotificationCenterTrayTest, AcceleratorShowsToastWhenNoNotifications) {
   ASSERT_EQ(test_api()->GetNotificationCount(), 0u);
-  EXPECT_FALSE(ToastManager::Get()->IsRunning(
+  EXPECT_FALSE(ToastManager::Get()->IsToastShown(
       kNotificationCenterTrayNoNotificationsToastId));
   // Pressing the accelerator should show the toast and not the bubble.
   ShellTestApi().PressAccelerator(
       ui::Accelerator(ui::VKEY_N, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN));
-  EXPECT_TRUE(ToastManager::Get()->IsRunning(
+  EXPECT_TRUE(ToastManager::Get()->IsToastShown(
       kNotificationCenterTrayNoNotificationsToastId));
   EXPECT_FALSE(test_api()->IsBubbleShown());
 }
 
 // Tests that the bubble automatically hides if it is visible when another
 // bubble becomes visible, and otherwise does not automatically show or hide.
-TEST_F(NotificationCenterTrayTest, BubbleHideBehavior) {
+TEST_P(NotificationCenterTrayTest, BubbleHideBehavior) {
   // Basic verification test that the notification center tray bubble can
   // show/hide itself when no other bubbles are visible.
   EXPECT_FALSE(test_api()->IsBubbleShown());
@@ -241,7 +284,7 @@ TEST_F(NotificationCenterTrayTest, BubbleHideBehavior) {
 
 // Tests that visibility of the Do not disturb icon changes with Do not disturb
 // mode.
-TEST_F(NotificationCenterTrayTest, DoNotDisturbIconVisibility) {
+TEST_P(NotificationCenterTrayTest, DoNotDisturbIconVisibility) {
   // Test the case where the tray is not initially visible.
   ASSERT_FALSE(test_api()->IsTrayShown());
   EXPECT_FALSE(test_api()->IsDoNotDisturbIconShown());
@@ -264,7 +307,7 @@ TEST_F(NotificationCenterTrayTest, DoNotDisturbIconVisibility) {
   EXPECT_FALSE(test_api()->IsDoNotDisturbIconShown());
 }
 
-TEST_F(NotificationCenterTrayTest, DoNotDisturbUpdatesPinnedIcons) {
+TEST_P(NotificationCenterTrayTest, DoNotDisturbUpdatesPinnedIcons) {
   test_api()->AddPinnedNotification();
   EXPECT_TRUE(test_api()->IsNotificationIconShown());
 
@@ -275,35 +318,9 @@ TEST_F(NotificationCenterTrayTest, DoNotDisturbUpdatesPinnedIcons) {
   EXPECT_TRUE(test_api()->IsNotificationIconShown());
 }
 
-TEST_F(NotificationCenterTrayTest, NoPrivacyIndicators) {
-  // No privacy indicators when the feature is not enabled.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      /*enabled_features=*/{},
-      /*disabled_features=*/{features::kVideoConference,
-                             features::kPrivacyIndicators});
-
-  auto notification_tray =
-      std::make_unique<NotificationCenterTray>(GetPrimaryShelf());
-  EXPECT_FALSE(notification_tray->privacy_indicators_view());
-}
-
-TEST_F(NotificationCenterTrayTest, NoPrivacyIndicatorsWhenVcEnabled) {
-  // No privacy indicators when `kVideoConference` is enabled.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      /*enabled_features=*/{features::kVideoConference,
-                            features::kPrivacyIndicators},
-      /*disabled_features=*/{});
-
-  auto notification_tray =
-      std::make_unique<NotificationCenterTray>(GetPrimaryShelf());
-  EXPECT_FALSE(notification_tray->privacy_indicators_view());
-}
-
 // Tests that the focus ring is visible and has proper size when the
 // notification center tray is focused.
-TEST_F(NotificationCenterTrayTest, FocusRing) {
+TEST_P(NotificationCenterTrayTest, FocusRing) {
   // Add a notification to make the notification center tray visible.
   test_api()->AddNotification();
   ASSERT_TRUE(test_api()->IsTrayShown());
@@ -321,10 +338,42 @@ TEST_F(NotificationCenterTrayTest, FocusRing) {
             test_api()->GetTray()->size() + kTrayBackgroundFocusPadding.size());
 }
 
+// Tests that removing all notifications while the lock screen is showing hides
+// the tray.
+TEST_P(NotificationCenterTrayTest,
+       RemovingAllNotificationsOnLockScreenHidesTray) {
+  // Add a notification to make the notification center tray visible.
+  const std::string id = test_api()->AddNotification();
+
+  // Show the lock screen.
+  BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
+  ASSERT_TRUE(test_api()->IsTrayShown());
+
+  // Remove the notification.
+  test_api()->RemoveNotification(id);
+
+  // Verify that the tray is hidden.
+  EXPECT_FALSE(test_api()->IsTrayShown());
+}
+
+// Tests that adding an initial notification while the lock screen is showing
+// shows the tray.
+TEST_P(NotificationCenterTrayTest, AddingNotificationOnLockScreenShowsTray) {
+  // Show the lock screen.
+  BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
+  ASSERT_FALSE(test_api()->IsTrayShown());
+
+  // Add a notification.
+  test_api()->AddNotification();
+
+  // Verify that the tray is shown.
+  EXPECT_TRUE(test_api()->IsTrayShown());
+}
+
 // Tests that `NotificationCounterView` is not still visible on secondary
 // display after logging in with a pinned notification present. This covers
 // b/284139989.
-TEST_F(NotificationCenterTrayTest,
+TEST_P(NotificationCenterTrayTest,
        NotificationCounterVisibilityForMultiDisplay) {
   // The behavior under test relies on `TrayItemView` animations being
   // scheduled, but `TrayItemView` animations are bypassed when the animation
@@ -368,80 +417,9 @@ TEST_F(NotificationCenterTrayTest,
   EXPECT_FALSE(secondary_notification_counter_view->GetVisible());
 }
 
-// Test fixture that disables notification popups.
-class NotificationCenterTrayNoPopupsTest : public NotificationCenterTrayTest {
- public:
-  NotificationCenterTrayNoPopupsTest() = default;
-  NotificationCenterTrayNoPopupsTest(
-      const NotificationCenterTrayNoPopupsTest&) = delete;
-  NotificationCenterTrayNoPopupsTest& operator=(
-      const NotificationCenterTrayNoPopupsTest&) = delete;
-  ~NotificationCenterTrayNoPopupsTest() override = default;
-
-  void SetUp() override {
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kSuppressMessageCenterPopups);
-    NotificationCenterTrayTest::SetUp();
-  }
-};
-
-// Tests that `NotificationCenterTray`'s `TrayItemView`s show up when adding a
-// secondary display. Notification popups are disabled for this test because the
-// presence of a popup actually hides the issue (i.e. the secondary display's
-// `NotificationCenterTray`'s `TrayItemView`s work as intended when a popup is
-// present). This covers b/281158734.
-TEST_F(NotificationCenterTrayNoPopupsTest,
-       TrayItemsVisibleWhenAddingSecondaryDisplay) {
-  // Start with one display.
-  UpdateDisplay("800x799");
-
-  // Add a pinned notification and a non-pinned notification.
-  test_api()->AddNotification();
-  test_api()->AddPinnedNotification();
-
-  // Verify that both the notification counter as well as an icon for the pinned
-  // notification are visible in the notification center tray.
-  ASSERT_TRUE(test_api()->IsNotificationIconShown());
-  ASSERT_TRUE(test_api()->IsNotificationCounterShown());
-
-  // Add a secondary display.
-  UpdateDisplay("800x799,800x799");
-  auto secondary_display_id = display_manager()->GetDisplayAt(1).id();
-
-  // Verify that both the notification counter as well as an icon for the pinned
-  // notification are visible in the secondary display's notification center
-  // tray.
-  EXPECT_TRUE(
-      test_api()->IsNotificationIconShownOnDisplay(secondary_display_id));
-  EXPECT_TRUE(
-      test_api()->IsNotificationCounterShownOnDisplay(secondary_display_id));
-}
-
-// Test suite for the notification center when `kPrivacyIndicators` is enabled.
-class NotificationCenterTrayPrivacyIndicatorsTest : public AshTestBase {
- public:
-  NotificationCenterTrayPrivacyIndicatorsTest() = default;
-  NotificationCenterTrayPrivacyIndicatorsTest(
-      const NotificationCenterTrayPrivacyIndicatorsTest&) = delete;
-  NotificationCenterTrayPrivacyIndicatorsTest& operator=(
-      const NotificationCenterTrayPrivacyIndicatorsTest&) = delete;
-  ~NotificationCenterTrayPrivacyIndicatorsTest() override = default;
-
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kQsRevamp, features::kPrivacyIndicators}, {});
-
-    AshTestBase::SetUp();
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
 // Tests that the privacy indicators view is created and show/hide accordingly
 // when updated.
-TEST_F(NotificationCenterTrayPrivacyIndicatorsTest,
-       PrivacyIndicatorsVisibility) {
+TEST_P(NotificationCenterTrayTest, PrivacyIndicatorsVisibility) {
   auto* notification_tray = StatusAreaWidgetTestHelper::GetStatusAreaWidget()
                                 ->notification_center_tray();
   auto* privacy_indicators_view = notification_tray->privacy_indicators_view();
@@ -466,7 +444,78 @@ TEST_F(NotificationCenterTrayPrivacyIndicatorsTest,
       /*app_id=*/"app_id", /*app_name=*/u"App Name",
       /*is_camera_used=*/false,
       /*is_microphone_used=*/false, delegate, PrivacyIndicatorsSource::kApps);
+  // Fast forward by the minimum duration the privacy indicator should be held.
+  task_environment()->FastForwardBy(
+      PrivacyIndicatorsController::kPrivacyIndicatorsMinimumHoldDuration);
   EXPECT_FALSE(privacy_indicators_view->GetVisible());
+}
+
+// Tests that the TrayBubbleView instance has the correct name in the
+// accessibility cache.
+TEST_P(NotificationCenterTrayTest, BubbleViewAccessibleName) {
+  test_api()->AddNotification();
+  test_api()->ToggleBubble();
+  EXPECT_TRUE(test_api()->IsBubbleShown());
+
+  TrayBubbleView* bubble_view = test_api()->GetBubble()->GetBubbleView();
+  ui::AXNodeData node_data;
+  bubble_view->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+  EXPECT_EQ(node_data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            test_api()->GetTray()->GetAccessibleNameForBubble());
+}
+
+// Test fixture that disables notification popups.
+class NotificationCenterTrayNoPopupsTest
+    : public NotificationCenterTrayTestBase,
+      public testing::WithParamInterface<
+          /*enable_notification_center_controller=*/bool> {
+ public:
+  NotificationCenterTrayNoPopupsTest()
+      : NotificationCenterTrayTestBase(
+            /*enable_notification_center_controller=*/GetParam()) {}
+
+  void SetUp() override {
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kSuppressMessageCenterPopups);
+    NotificationCenterTrayTestBase::SetUp();
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    NotificationCenterTrayNoPopupsTest,
+    /*enable_notification_center_controller=*/testing::Bool());
+
+// Tests that `NotificationCenterTray`'s `TrayItemView`s show up when adding a
+// secondary display. Notification popups are disabled for this test because the
+// presence of a popup actually hides the issue (i.e. the secondary display's
+// `NotificationCenterTray`'s `TrayItemView`s work as intended when a popup is
+// present). This covers b/281158734.
+TEST_P(NotificationCenterTrayNoPopupsTest,
+       TrayItemsVisibleWhenAddingSecondaryDisplay) {
+  // Start with one display.
+  UpdateDisplay("800x799");
+
+  // Add a pinned notification and a non-pinned notification.
+  test_api()->AddNotification();
+  test_api()->AddPinnedNotification();
+
+  // Verify that both the notification counter as well as an icon for the pinned
+  // notification are visible in the notification center tray.
+  ASSERT_TRUE(test_api()->IsNotificationIconShown());
+  ASSERT_TRUE(test_api()->IsNotificationCounterShown());
+
+  // Add a secondary display.
+  UpdateDisplay("800x799,800x799");
+  auto secondary_display_id = display_manager()->GetDisplayAt(1).id();
+
+  // Verify that both the notification counter as well as an icon for the pinned
+  // notification are visible in the secondary display's notification center
+  // tray.
+  EXPECT_TRUE(
+      test_api()->IsNotificationIconShownOnDisplay(secondary_display_id));
+  EXPECT_TRUE(
+      test_api()->IsNotificationCounterShownOnDisplay(secondary_display_id));
 }
 
 // TODO(b/252875025):

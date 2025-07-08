@@ -63,23 +63,6 @@ struct Config {
   // reverse chronologically, but the clusters within batches will be resorted.
   bool sort_clusters_within_batch_for_query = false;
 
-  // The `kJourneysLabels` feature and child params.
-
-  // Whether to assign labels to clusters from the hostnames of the cluster.
-  // Does nothing if `should_label_clusters` is false. Note that since every
-  // cluster has a hostname, this flag in conjunction with
-  // `should_label_clusters` will give every cluster a label.
-  bool labels_from_hostnames = true;
-
-  // Whether to assign labels to clusters from the Entities of the cluster.
-  // Does nothing if `should_label_clusters` is false.
-  bool labels_from_entities = false;
-
-  // Whether to assign labels to clusters from the entities associated with
-  // search visits within a cluster if there are multiple search visits for the
-  // cluster.
-  bool labels_from_search_visit_entities = false;
-
   // The `kJourneysImages` feature and child params.
 
   // Whether to attempt to provide images for eligible Journeys.
@@ -88,33 +71,8 @@ struct Config {
   // Whether the image covers the whole icon container.
   bool images_cover = true;
 
-  // The `kPersistedClusters` feature and child params.
-
-  // If enabled, updating clusters will persist the results to the history DB
-  // and accessing clusters will retrieve them from the history DB. If disabled,
-  // updating clusters is a no-op and accessing clusters will generate and
-  // return new clusters without persisting them.
-  bool persist_clusters_in_history_db = true;
-
-  // No effect if `persist_clusters_in_history_db` is disabled. Determines how
-  // soon to update clusters after startup in minutes. E.g., by default, will
-  // update clusters 5 minutes after startup.
-  int persist_clusters_in_history_db_after_startup_delay_minutes = 1;
-
-  // No effect if `persist_clusters_in_history_db` is disabled. Determines how
-  // often to update clusters in minutes. E.g., by default, will update clusters
-  // every 1 hour.
+  // Determines the minimum period to update clusters in minutes.
   int persist_clusters_in_history_db_period_minutes = 1;
-
-  // No effect if `persist_clusters_in_history_db` is disabled. If disabled,
-  // persistence occurs on a timer (see the above 2 params). If enabled, will
-  // instead occur on query like refreshing the keyword cache does. This may
-  // help bound the number of persistence requests. If enabled, will continue to
-  // also be capped to at most 1 request per
-  // `persist_clusters_in_history_db_period_minutes`, but
-  // `persist_clusters_in_history_db_after_startup_delay_minutes` will be
-  // unused.
-  bool persist_on_query = true;
 
   // Hard cap on max clusters to fetch after exhausting unclustered visits and
   // fetching persisted clusters for the get most recent flow. Doesn't affect
@@ -174,6 +132,13 @@ struct Config {
   // aren't too many strong navigation matches.
   int omnibox_history_cluster_provider_score = 900;
 
+  // If enabled, will inherit the score from the matched search suggestion
+  // minus 1. This will force the journey suggestion immediately after the
+  // search suggestion, except if there's a tie with another suggestion, in
+  // which case it's indeterminate which is ordered first. If enabled,
+  // `omnibox_history_cluster_provider_score` becomes a no-op.
+  bool omnibox_history_cluster_provider_inherit_search_match_score = false;
+
   // If `omnibox_history_cluster_provider_on_navigation_intents` is false, this
   // threshold helps determine when the user is intending to perform a
   // navigation. Meaningless if either `omnibox_history_cluster_provider` is
@@ -226,52 +191,6 @@ struct Config {
   // on the zero state UI).
   size_t number_interesting_visits_filter_threshold = 1;
 
-  // The `kUseEngagementScoreCache` feature and child params.
-
-  // Whether to use a cache to store the site engagement scores per host. Used
-  // in both the old (OnDeviceClusteringBackend) and new
-  // (ContextClustererHistoryServiceObserver) clustering paths.
-  bool use_engagement_score_cache = true;
-
-  // The max number of hosts that should be stored in the engagement score
-  // cache.
-  int engagement_score_cache_size = 100;
-
-  // The max time a host should be stored in the engagement score cache.
-  base::TimeDelta engagement_score_cache_refresh_duration = base::Minutes(120);
-
-  // The `kOnDeviceClusteringContentClustering` feature and child params.
-
-  // Returns whether content clustering is enabled and
-  // should be performed by the clustering backend.
-  bool content_clustering_enabled = false;
-
-  // Returns whether content clustering should only be done across clusters that
-  // contain a search.
-  bool content_clustering_search_visits_only = false;
-
-  // Returns the similarity threshold, between 0 and 1, used to determine if
-  // two clusters are similar enough to be combined into
-  // a single cluster.
-  float content_clustering_similarity_threshold = 0.2;
-
-  // Returns whether we should exclude entities that do not have associated
-  // collections from content clustering.
-  bool exclude_entities_that_have_no_collections_from_content_clustering = true;
-
-  // The set of collections to block from being content clustered.
-  base::flat_set<std::string> collections_to_block_from_content_clustering = {
-      "/collection/it_glossary", "/collection/periodicals",
-      "/collection/software", "/collection/tv_networks",
-      "/collection/websites"};
-
-  // Whether to merge similar clusters using pairwise merge.
-  bool use_pairwise_merge = false;
-
-  // The maximum number of iterations to run for the convergence of pairwise
-  // merging of similar clusters.
-  int max_pairwise_merge_iterations = 40;
-
   // The `kHistoryClustersVisitDeduping` feature and child params.
 
   // Use host instead of heavily-stripped URL as URL for deduping.
@@ -314,26 +233,6 @@ struct Config {
 
   // WebUI features and params.
 
-  // Whether new tab groups created by "Open all in new tab group" should be
-  // named after the cluster title. If false, the new tab group is anonymous,
-  // which is the pre-M115 behavior.
-  bool named_new_tab_groups = true;
-
-  // The `kJourneysZeroStateFiltering` feature and child params.
-
-  bool apply_zero_state_filtering = false;
-
-  // The `kNtpChromeCartInHistoryClusterModule` child params.
-
-  // Whether to use the NTP-specific algorithms and signals for determining
-  // intracluster ranking.
-  bool use_ntp_specific_intracluster_ranking = false;
-
-  // Returns the weight to use for the visit duration when ranking visits within
-  // a cluster. Will always be greater than or equal to 0 specifically on the
-  // NTP surface when `use_ntp_specific_intracluster_ranking is true`.
-  float ntp_visit_duration_ranking_weight = 1.0;
-
   // Lonely features without child params.
 
   // Enables debug info in non-user-visible surfaces, like Chrome Inspector.
@@ -344,34 +243,16 @@ struct Config {
   // Does nothing if `kJourneys` is disabled.
   bool user_visible_debug = false;
 
-  // Enables persisting context annotations in the History DB. They are always
-  // calculated anyways. This just enables storing them. This is expected to be
-  // enabled for all users shortly. This just provides a killswitch.
-  // This flag is to enable us to turn on persisting context annotations WITHOUT
-  // exposing the Memories UI in general. If EITHER this flag or `kJourneys` is
-  // enabled, users will have context annotations persisted into their History
-  // DB.
-  bool persist_context_annotations_in_history_db = false;
-
   // Enables the history clusters internals page.
   bool history_clusters_internals_page = false;
 
   // Whether to check if all visits for a host should be in resulting clusters.
   bool should_check_hosts_to_skip_clustering_for = false;
 
-  // True if the task runner should use trait CONTINUE_ON_SHUTDOWN.
-  bool use_continue_on_shutdown = true;
-
   // Whether to show all clusters on prominent UI surfaces unconditionally. This
   // should only be set to true via command line.
   bool should_show_all_clusters_unconditionally_on_prominent_ui_surfaces =
       false;
-
-  // Whether to include synced visits in clusters.
-  bool include_synced_visits = false;
-
-  // Whether keyword caches should be written to and read from prefs.
-  bool persist_caches_to_prefs = false;
 
   // Order consistently with features.h.
 
@@ -379,17 +260,6 @@ struct Config {
   Config(const Config& other);
   ~Config();
 };
-
-// Returns the set of collections that should not be included for content
-// clustering. If the experiment string is empty or malformed, `default_value`
-// will be used.
-base::flat_set<std::string> JourneysCollectionContentClusteringBlocklist(
-    const base::flat_set<std::string>& default_value);
-
-// Returns the set of mids that should be blocked from being used by the
-// clustering backend, particularly for potential keywords used for omnibox
-// triggering.
-base::flat_set<std::string> JourneysMidBlocklist();
 
 // Returns true if |application_locale| is supported by Journeys.
 // This is a costly check: Should be called only if

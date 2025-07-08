@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/guest_os/public/guest_os_wayland_server.h"
+
 #include <memory>
 
 #include "base/memory/weak_ptr.h"
@@ -10,6 +11,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ash/borealis/borealis_features.h"
 #include "chrome/browser/ash/borealis/borealis_service.h"
+#include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/borealis/testing/callback_factory.h"
 #include "chrome/browser/ash/guest_os/guest_os_security_delegate.h"
 #include "chrome/test/base/chrome_ash_test_base.h"
@@ -53,18 +55,18 @@ class GuestOsWaylandServerTest : public ChromeAshTestBase {
 }  // namespace
 
 TEST_F(GuestOsWaylandServerTest, BadSocketCausesFailure) {
-  auto wsc = std::make_unique<exo::WaylandServerController>(nullptr, nullptr,
-                                                            nullptr, nullptr);
+  auto wsc = std::make_unique<exo::WaylandServerController>(
+      nullptr, nullptr, nullptr, nullptr, nullptr);
   GuestOsWaylandServer gows(&profile_);
 
-  base::test::TestFuture<absl::optional<std::string>> result_future;
+  base::test::TestFuture<std::optional<std::string>> result_future;
   gows.Listen({}, vm_tools::apps::UNKNOWN, "test", result_future.GetCallback());
   EXPECT_TRUE(result_future.Get().has_value());
 }
 
 TEST_F(GuestOsWaylandServerTest, NullDelegateCausesFailure) {
-  auto wsc = std::make_unique<exo::WaylandServerController>(nullptr, nullptr,
-                                                            nullptr, nullptr);
+  auto wsc = std::make_unique<exo::WaylandServerController>(
+      nullptr, nullptr, nullptr, nullptr, nullptr);
   GuestOsWaylandServer gows(&profile_);
   exo::wayland::test::WaylandServerTestBase::ScopedTempSocket socket;
 
@@ -72,27 +74,28 @@ TEST_F(GuestOsWaylandServerTest, NullDelegateCausesFailure) {
   // when borealis is disallowed.
   base::test::TestFuture<borealis::BorealisFeatures::AllowStatus>
       allowedness_future;
-  borealis::BorealisService::GetForProfile(&profile_)->Features().IsAllowed(
-      allowedness_future.GetCallback());
+  borealis::BorealisServiceFactory::GetForProfile(&profile_)
+      ->Features()
+      .IsAllowed(allowedness_future.GetCallback());
   ASSERT_NE(allowedness_future.Get(),
             borealis::BorealisFeatures::AllowStatus::kAllowed);
 
-  base::test::TestFuture<absl::optional<std::string>> result_future;
+  base::test::TestFuture<std::optional<std::string>> result_future;
   gows.Listen(socket.TakeFd(), vm_tools::apps::BOREALIS, "borealis",
               result_future.GetCallback());
   EXPECT_TRUE(result_future.Get().has_value());
 }
 
 TEST_F(GuestOsWaylandServerTest, DelegateLifetimeManagedCorrectly) {
-  auto wsc = std::make_unique<exo::WaylandServerController>(nullptr, nullptr,
-                                                            nullptr, nullptr);
+  auto wsc = std::make_unique<exo::WaylandServerController>(
+      nullptr, nullptr, nullptr, nullptr, nullptr);
   GuestOsWaylandServer gows(&profile_);
   exo::wayland::test::WaylandServerTestBase::ScopedTempSocket socket;
 
   // Initially the server doesn't exist.
   EXPECT_EQ(gows.GetDelegate(vm_tools::apps::UNKNOWN, "test"), nullptr);
 
-  base::test::TestFuture<absl::optional<std::string>> listen_future;
+  base::test::TestFuture<std::optional<std::string>> listen_future;
   gows.Listen(socket.TakeFd(), vm_tools::apps::UNKNOWN, "test",
               listen_future.GetCallback());
   EXPECT_FALSE(listen_future.Get().has_value());
@@ -103,7 +106,7 @@ TEST_F(GuestOsWaylandServerTest, DelegateLifetimeManagedCorrectly) {
   EXPECT_TRUE(delegate.MaybeValid());
   EXPECT_NE(delegate.get(), nullptr);
 
-  base::test::TestFuture<absl::optional<std::string>> close_future;
+  base::test::TestFuture<std::optional<std::string>> close_future;
   gows.Close(vm_tools::apps::UNKNOWN, "test", close_future.GetCallback());
   EXPECT_FALSE(close_future.Get().has_value());
 
@@ -114,12 +117,12 @@ TEST_F(GuestOsWaylandServerTest, DelegateLifetimeManagedCorrectly) {
 TEST_F(GuestOsWaylandServerTest, EvictServersOnConciergeCrash) {
   ash::ConciergeClient::InitializeFake();
   auto* concierge_client = ash::FakeConciergeClient::Get();
-  auto wsc = std::make_unique<exo::WaylandServerController>(nullptr, nullptr,
-                                                            nullptr, nullptr);
+  auto wsc = std::make_unique<exo::WaylandServerController>(
+      nullptr, nullptr, nullptr, nullptr, nullptr);
   GuestOsWaylandServer gows(&profile_);
 
   exo::wayland::test::WaylandServerTestBase::ScopedTempSocket socket;
-  base::test::TestFuture<absl::optional<std::string>> listen_future;
+  base::test::TestFuture<std::optional<std::string>> listen_future;
   gows.Listen(socket.TakeFd(), vm_tools::apps::UNKNOWN, "test",
               listen_future.GetCallback());
   ASSERT_FALSE(listen_future.Get().has_value());

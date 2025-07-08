@@ -143,7 +143,8 @@ void MojoWatcher::Persistent::RunReadyCallback(MojoResult result) {
 //                            //
 
 // static
-gin::WrapperInfo MojoWatcher::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo MojoWatcher::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 // static
 v8::Local<v8::Object> MojoWatcher::Create(
@@ -197,16 +198,24 @@ MojoWatcher::~MojoWatcher() {
 }
 
 void MojoWatcher::OnIsolateWillDestroy() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (persistent_wrap_) {
     // May be null if this is during shutdown.
     persistent_wrap_->OnIsolateWillDestroy();
   }
   Cancel(nullptr);
+  // Stop observing the V8 isolate. Cancel() will clear `persistent_wrap_` and
+  // allow garbage collection to clear this instance.
+  StopObserving();
+
+  // Reset the callback not to keep the Isolate in MojoWatchCallback.
+  callback_ = nullptr;
 }
 
 gin::ObjectTemplateBuilder MojoWatcher::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<MojoWatcher>::GetObjectTemplateBuilder(isolate)
+  return gin::DeprecatedWrappable<MojoWatcher>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("cancel", &MojoWatcher::Cancel);
 }
 
@@ -377,7 +386,9 @@ void MojoWatcher::RunReadyCallback(MojoResult result) {
 
 void MojoWatcher::CallCallbackWithResult(MojoResult result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  callback_->Call(result);
+  if (callback_) {
+    callback_->Call(result);
+  }
 }
 
 void MojoWatcher::CallCallbackFromTaskRunner(

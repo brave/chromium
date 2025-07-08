@@ -15,6 +15,7 @@ SystemShadowOnTextureLayer::SystemShadowOnTextureLayer(SystemShadow::Type type)
     : type_(type),
       shadow_values_(gfx::ShadowValue::MakeChromeOSSystemUIShadowValues(
           SystemShadow::GetElevationFromType(type))) {
+  layer_.SetName("SystemShadow");
   layer_.SetFillsBoundsOpaquely(false);
   layer_.set_delegate(this);
   layer_.SetBounds(GetLayerBounds());
@@ -35,7 +36,16 @@ void SystemShadowOnTextureLayer::SetContentBounds(const gfx::Rect& bounds) {
 }
 
 void SystemShadowOnTextureLayer::SetRoundedCornerRadius(int corner_radius) {
-  corner_radius_ = corner_radius;
+  SetRoundedCorners(gfx::RoundedCornersF(corner_radius));
+}
+
+void SystemShadowOnTextureLayer::SetRoundedCorners(
+    const gfx::RoundedCornersF& rounded_corners) {
+  if (rounded_corners_ == rounded_corners) {
+    return;
+  }
+
+  rounded_corners_ = rounded_corners;
   UpdateLayer();
 }
 
@@ -83,8 +93,16 @@ void SystemShadowOnTextureLayer::OnPaintLayer(const ui::PaintContext& context) {
   // Create a rounded rect of content area.
   const gfx::Rect r_rect_bounds =
       content_bounds_ - GetLayerBounds().OffsetFromOrigin();
-  const SkRRect r_rect = SkRRect::MakeRectXY(gfx::RectToSkRect(r_rect_bounds),
-                                             corner_radius_, corner_radius_);
+  SkRRect r_rect;
+  float upper_left = rounded_corners_.upper_left();
+  float upper_right = rounded_corners_.upper_right();
+  float lower_right = rounded_corners_.lower_right();
+  float lower_left = rounded_corners_.lower_left();
+  SkVector radii[4] = {{upper_left, upper_left},
+                       {upper_right, upper_right},
+                       {lower_right, lower_right},
+                       {lower_left, lower_left}};
+  r_rect.setRectRadii(gfx::RectToSkRect(r_rect_bounds), radii);
 
   // Clip out the center.
   ui::PaintRecorder recorder(context, content_bounds_.size());

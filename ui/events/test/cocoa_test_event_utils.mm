@@ -6,15 +6,11 @@
 
 #include <stdint.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
 #include "ui/events/base_event_utils.h"
 #import "ui/events/keycodes/keyboard_code_conversion_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace cocoa_test_event_utils {
 
@@ -76,12 +72,12 @@ NSEvent* MouseEventAtPoint(NSPoint point, NSEventType type,
     // appropriate buttonNumber field. NSEvent provides no way to create a
     // mouse event with a buttonNumber directly.
     CGPoint location = { point.x, point.y };
-    base::ScopedCFTypeRef<CGEventRef> cg_event(CGEventCreateMouseEvent(
+    base::apple::ScopedCFTypeRef<CGEventRef> cg_event(CGEventCreateMouseEvent(
         nullptr, kCGEventOtherMouseUp, location, kCGMouseButtonCenter));
     // Also specify the modifiers for the middle click case. This makes this
     // test resilient to external modifiers being pressed.
-    CGEventSetFlags(cg_event, static_cast<CGEventFlags>(modifiers));
-    NSEvent* event = [NSEvent eventWithCGEvent:cg_event];
+    CGEventSetFlags(cg_event.get(), static_cast<CGEventFlags>(modifiers));
+    NSEvent* event = [NSEvent eventWithCGEvent:cg_event.get()];
     return event;
   }
   return [NSEvent mouseEventWithType:type
@@ -162,19 +158,19 @@ NSEvent* TestScrollEvent(NSPoint window_point,
   int32_t wheel2 = static_cast<int>(delta_x);
   CGScrollEventUnit units =
       has_precise_deltas ? kCGScrollEventUnitPixel : kCGScrollEventUnitLine;
-  base::ScopedCFTypeRef<CGEventRef> scroll(CGEventCreateScrollWheelEvent(
+  base::apple::ScopedCFTypeRef<CGEventRef> scroll(CGEventCreateScrollWheelEvent(
       nullptr, units, wheel_count, wheel1, wheel2));
-  CGEventSetLocation(scroll, ScreenPointFromWindow(window_point, window));
+  CGEventSetLocation(scroll.get(), ScreenPointFromWindow(window_point, window));
 
   // Always set event flags, otherwise +[NSEvent eventWithCGEvent:] populates
   // flags from current keyboard state which can make tests flaky.
-  CGEventSetFlags(scroll, static_cast<CGEventFlags>(0));
+  CGEventSetFlags(scroll.get(), static_cast<CGEventFlags>(0));
 
   if (has_precise_deltas) {
     // kCGScrollWheelEventIsContinuous is -[NSEvent hasPreciseScrollingDeltas].
     // CGEventTypes.h says it should be non-zero for pixel-based scrolling.
     // Verify that CGEventCreateScrollWheelEvent() set it.
-    DCHECK_EQ(1, CGEventGetIntegerValueField(scroll,
+    DCHECK_EQ(1, CGEventGetIntegerValueField(scroll.get(),
                                              kCGScrollWheelEventIsContinuous));
   }
 
@@ -213,12 +209,12 @@ NSEvent* TestScrollEvent(NSPoint window_point,
         // else was provided it should probably never appear on an NSEvent.
         NOTREACHED();
     }
-    CGEventSetIntegerValueField(scroll, kCGScrollWheelEventScrollPhase,
+    CGEventSetIntegerValueField(scroll.get(), kCGScrollWheelEventScrollPhase,
                                 cg_event_phase);
-    CGEventSetIntegerValueField(scroll, kCGScrollWheelEventMomentumPhase,
+    CGEventSetIntegerValueField(scroll.get(), kCGScrollWheelEventMomentumPhase,
                                 cg_momentum_phase);
   }
-  NSEvent* event = AttachWindowToCGEvent(scroll, window);
+  NSEvent* event = AttachWindowToCGEvent(scroll.get(), window);
   DCHECK_EQ(has_precise_deltas, event.hasPreciseScrollingDeltas);
   DCHECK_EQ(event_phase, event.phase);
   DCHECK_EQ(momentum_phase, event.momentumPhase);

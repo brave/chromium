@@ -34,6 +34,7 @@
 #include "chromeos/ash/services/quick_pair/quick_pair_process_manager_impl.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
+#include "device/bluetooth/floss/floss_features.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "device/bluetooth/test/mock_bluetooth_device.h"
 #include "mojo/public/cpp/bindings/shared_remote.h"
@@ -85,8 +86,7 @@ class FakeQuickPairProcessManager
   mojo::PendingRemote<ash::quick_pair::mojom::FastPairDataParser>
       fast_pair_data_parser_;
   std::unique_ptr<ash::quick_pair::FastPairDataParser> data_parser_;
-  raw_ptr<base::test::SingleThreadTaskEnvironment, ExperimentalAsh>
-      task_environment_;
+  raw_ptr<base::test::SingleThreadTaskEnvironment> task_environment_;
   ProcessStoppedCallback on_process_stopped_callback_;
 };
 
@@ -160,7 +160,7 @@ class FastPairDiscoverableScannerImplTest : public testing::Test {
     return device_ptr;
   }
 
-  raw_ptr<FakeQuickPairProcessManager, ExperimentalAsh> fake_process_manager_;
+  raw_ptr<FakeQuickPairProcessManager, DanglingUntriaged> fake_process_manager_;
   base::test::SingleThreadTaskEnvironment task_environment_;
   NetworkStateTestHelper helper_{/*use_default_devices_and_services=*/true};
   scoped_refptr<FakeFastPairScanner> scanner_;
@@ -377,12 +377,45 @@ TEST_F(FastPairDiscoverableScannerImplTest, WrongInteractionType) {
   base::RunLoop().RunUntilIdle();
 }
 
+TEST_F(FastPairDiscoverableScannerImplTest, MouseDisallowedWhenHIDDisabled) {
+  base::test::ScopedFeatureList feature_list;
+  nearby::fastpair::Device metadata;
+  nearby::fastpair::Status* status = metadata.mutable_status();
+  status->set_status_type(nearby::fastpair::StatusType::PUBLISHED);
+  metadata.set_trigger_distance(2);
+  metadata.set_device_type(nearby::fastpair::DeviceType::MOUSE);
+  repository_->SetFakeMetadata(kValidModelId, metadata);
+
+  EXPECT_CALL(found_device_callback_, Run).Times(0);
+  device::BluetoothDevice* device = GetDevice(kValidModelId);
+  scanner_->NotifyDeviceFound(device);
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(FastPairDiscoverableScannerImplTest, MouseAllowedWhenHIDEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{floss::features::kFlossEnabled},
+      /*disabled_features=*/{});
+  nearby::fastpair::Device metadata;
+  nearby::fastpair::Status* status = metadata.mutable_status();
+  status->set_status_type(nearby::fastpair::StatusType::PUBLISHED);
+  metadata.set_trigger_distance(2);
+  metadata.set_device_type(nearby::fastpair::DeviceType::MOUSE);
+  repository_->SetFakeMetadata(kValidModelId, metadata);
+
+  EXPECT_CALL(found_device_callback_, Run).Times(1);
+  device::BluetoothDevice* device = GetDevice(kValidModelId);
+  scanner_->NotifyDeviceFound(device);
+  base::RunLoop().RunUntilIdle();
+}
+
 TEST_F(FastPairDiscoverableScannerImplTest,
-       InputDeviceDisallowedWhenHIDDisabled) {
+       InputDeviceDisallowedWhenKeyboardsDisabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
       /*enabled_features=*/{},
-      /*disabled_features=*/{features::kFastPairHID});
+      /*disabled_features=*/{features::kFastPairKeyboards});
   nearby::fastpair::Device metadata;
   nearby::fastpair::Status* status = metadata.mutable_status();
   status->set_status_type(nearby::fastpair::StatusType::PUBLISHED);
@@ -396,10 +429,12 @@ TEST_F(FastPairDiscoverableScannerImplTest,
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_F(FastPairDiscoverableScannerImplTest, InputDeviceAllowedWhenHIDEnabled) {
+TEST_F(FastPairDiscoverableScannerImplTest,
+       InputDeviceAllowedWhenKeyboardsEnabled) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures(
-      /*enabled_features=*/{features::kFastPairHID},
+      /*enabled_features=*/{features::kFastPairKeyboards,
+                            floss::features::kFlossEnabled},
       /*disabled_features=*/{});
   nearby::fastpair::Device metadata;
   nearby::fastpair::Status* status = metadata.mutable_status();

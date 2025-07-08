@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros/concat.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/stringize_macros.h"
 
@@ -21,65 +22,75 @@
 
 // The version of the ChromeAppModeInfo struct below. If the format of the
 // struct ever changes, be sure to update the APP_SHIM_VERSION_NUMBER here and
-// the corresponding line in //chrome/app/framework.order .
-#define APP_SHIM_VERSION_NUMBER 7
+// the corresponding lines in //chrome/app/framework.order and
+// //chrome/app/framework.exports .
+#define APP_SHIM_VERSION_NUMBER 8
 
 // All the other macro magic to make APP_SHIM_VERSION_NUMBER usable.
-#define APP_MODE_CONCAT(a, b) a##b
-#define APP_MODE_CONCAT2(a, b) APP_MODE_CONCAT(a, b)
 #define APP_SHIM_ENTRY_POINT_NAME \
-  APP_MODE_CONCAT2(ChromeAppModeStart_v, APP_SHIM_VERSION_NUMBER)
+  BASE_CONCAT(ChromeAppModeStart_v, APP_SHIM_VERSION_NUMBER)
 #define APP_SHIM_ENTRY_POINT_NAME_STRING STRINGIZE(APP_SHIM_ENTRY_POINT_NAME)
 
 namespace app_mode {
 
 // Mach message ID used by the shim to connect to Chrome.
-constexpr mach_msg_id_t kBootstrapMsgId = 'apps';
+inline constexpr mach_msg_id_t kBootstrapMsgId = 'apps';
 
 // Name fragment of the Mach server endpoint published in the bootstrap
 // namespace. The full name is "<bundle-id>.apps.<profile_path_hash>".
 // <bundle-id> is the BaseBundleID() and <profile_path_hash> is an MD5 hash
 // of the full profile directory path.
-extern const char kAppShimBootstrapNameFragment[];
+inline constexpr char kAppShimBootstrapNameFragment[] = "apps";
 
 // A symlink used to store the version string of the currently running Chrome,
 // along with any other necessary configuration. The shim will read this to
 // determine which version of the framework to load.
-extern const char kRunningChromeVersionSymlinkName[];
+inline constexpr char kRunningChromeVersionSymlinkName[] =
+    "RunningChromeVersion";
+
+// A file used to store feature and field trial state of the currently or most
+// recently running Chrome. The shim will read this to determine what features
+// to enable if it wasn't launched by Chrome, until it can get the current state
+// from Chrome.
+inline constexpr char kFeatureStateFileName[] = "ChromeFeatureState";
 
 // The process ID of the Chrome process that launched the app shim.
 // The presence of this switch instructs the app shim to send LaunchApp with
 // launch_now = false. This associates the shim without launching the app.
-extern const char kLaunchedByChromeProcessId[];
+inline constexpr char kLaunchedByChromeProcessId[] =
+    "launched-by-chrome-process-id";
 
 // The main bundle path of the Chrome process that launched the app shim.
-extern const char kLaunchedByChromeBundlePath[];
+inline constexpr char kLaunchedByChromeBundlePath[] =
+    "launched-by-chrome-bundle-path";
 
 // The framework bundle path of the Chrome process that launched the app shim.
-extern const char kLaunchedByChromeFrameworkBundlePath[];
+inline constexpr char kLaunchedByChromeFrameworkBundlePath[] =
+    "launched-by-chrome-framework-bundle-path";
 
 // The framework dylib path of the Chrome process that launched the app shim.
-extern const char kLaunchedByChromeFrameworkDylibPath[];
+inline constexpr char kLaunchedByChromeFrameworkDylibPath[] =
+    "launched-by-chrome-framework-dylib-path";
 
 // Indicates to the shim that it was launched for a test, so don't attempt to
 // launch Chrome.
-extern const char kLaunchedForTest[];
+inline constexpr char kLaunchedForTest[] = "launched-for-test";
 
 // Indicates to the shim that this Chrome has rebuilt it once already, i.e. if
 // it fails to launch again, don't trigger another rebuild.
-extern const char kLaunchedAfterRebuild[];
+inline constexpr char kLaunchedAfterRebuild[] = "launched-after-rebuild";
 
 // Indicates to the shim that even if `kLaunchedByChromeProcessId` was also
 // specified, this should still be considered a "normal" launch as opposed to a
 // "register only" launch. This is used by tests to launch a shim as if the user
 // launched it, while still making sure it connects to the correct chrome
 // process.
-extern const char kIsNormalLaunch[];
+inline constexpr char kIsNormalLaunch[] = "is-normal-launch";
 
 // Normally when running tests app shims are not supposed to try to launch
 // Chrome. Pass this flag to specify the executable to launch when the app shim
 // would normally launch Chrome.
-extern const char kLaunchChromeForTest[];
+inline constexpr char kLaunchChromeForTest[] = "launch-chrome-for-test";
 
 #ifdef __OBJC__
 
@@ -150,6 +161,10 @@ extern NSString* const kLastRunAppBundlePathPrefsKey;
 // The key for the major and minor version of an app.
 extern NSString* const kCrAppModeMajorVersionKey;
 extern NSString* const kCrAppModeMinorVersionKey;
+
+// Info.plist key that indicates whether a PWA is ad-hoc signed.
+// Intended for use by `app_mode_loader` prior to checking in with the browser.
+extern NSString* const kCrAppModeIsAdHocSignedKey;
 
 // Placeholders used in the app mode loader bundle' Info.plist:
 extern NSString* const kShortcutIdPlaceholder; // Extension shortcut ID.

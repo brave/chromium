@@ -5,7 +5,8 @@
 #ifndef CHROME_BROWSER_ASH_ARC_INTENT_HELPER_CHROME_ARC_INTENT_HELPER_DELEGATE_H_
 #define CHROME_BROWSER_ASH_ARC_INTENT_HELPER_CHROME_ARC_INTENT_HELPER_DELEGATE_H_
 
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "base/memory/raw_ptr.h"
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
 
 class Profile;
 
@@ -27,6 +28,7 @@ class ChromeArcIntentHelperDelegate : public ArcIntentHelperBridge::Delegate {
 
  private:
   void UpdateLocationSettings(bool is_enabled);
+  void UpdateLocationAccuracySettings(bool is_enabled);
   bool IsInitialLocationSettingsSyncRequired();
 
   raw_ptr<Profile> profile_;

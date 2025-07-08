@@ -6,17 +6,16 @@ package org.chromium.components_browsertests_apk;
 
 import android.os.Bundle;
 
-import org.chromium.base.test.util.UrlUtils;
+import org.chromium.base.PathUtils;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_shell.browsertests.ContentShellBrowserTestActivity;
 
 import java.io.File;
 
-/**
- * Android activity for running components browser tests
- */
+/** Android activity for running components browser tests */
 public class ComponentsBrowserTestsActivity extends ContentShellBrowserTestActivity {
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         appendCommandLineFlags(
                 "--remote-debugging-socket-name components_browsertests_devtools_remote");
@@ -24,9 +23,8 @@ public class ComponentsBrowserTestsActivity extends ContentShellBrowserTestActiv
 
     @Override
     protected File getPrivateDataDirectory() {
-        // TODO(agrieve): We should not be touching the side-loaded test data directory.
-        //     https://crbug.com/617734
-        return new File(UrlUtils.getIsolatedTestRoot(),
+        return new File(
+                PathUtils.getDataDirectory(),
                 ComponentsBrowserTestsApplication.PRIVATE_DATA_DIRECTORY_SUFFIX);
     }
 

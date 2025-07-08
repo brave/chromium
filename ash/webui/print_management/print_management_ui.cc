@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/print_management/print_management_ui.h"
 
 #include <memory>
 #include <utility>
 
-#include "ash/constants/ash_features.h"
 #include "ash/webui/common/trusted_types_util.h"
 #include "ash/webui/grit/ash_print_management_resources.h"
 #include "ash/webui/grit/ash_print_management_resources_map.h"
 #include "ash/webui/print_management/backend/print_management_delegate.h"
 #include "ash/webui/print_management/backend/print_management_handler.h"
 #include "ash/webui/print_management/url_constants.h"
-#include "base/feature_list.h"
 #include "chromeos/components/print_management/mojom/printing_manager.mojom.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "content/public/browser/web_contents.h"
@@ -23,8 +26,8 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/resources/grit/webui_resources.h"
 
 namespace ash {
 namespace printing {
@@ -42,11 +45,6 @@ void SetUpWebUIDataSource(content::WebUIDataSource* source,
   source->AddResourcePath("test_loader.js", IDR_WEBUI_JS_TEST_LOADER_JS);
   source->AddResourcePath("test_loader_util.js",
                           IDR_WEBUI_JS_TEST_LOADER_UTIL_JS);
-  source->AddBoolean("isJellyEnabledForPrintManagement",
-                     ash::features::IsJellyEnabledForPrintManagement());
-  source->AddBoolean("isSetupAssistanceEnabled",
-                     base::FeatureList::IsEnabled(
-                         ash::features::kPrintManagementSetupAssistance));
 }
 
 void AddPrintManagementStrings(content::WebUIDataSource* html_source) {
@@ -60,6 +58,8 @@ void AddPrintManagementStrings(content::WebUIDataSource* html_source) {
       {"dateColumn", IDS_PRINT_MANAGEMENT_DATE_COLUMN},
       {"statusColumn", IDS_PRINT_MANAGEMENT_STATUS_COLUMN},
       {"printJobTitle", IDS_PRINT_MANAGEMENT_TITLE},
+      {"clearAllHistoryDialogTitle",
+       IDS_PRINT_MANAGEMENT_CLEAR_ALL_HISTORY_DIALOG_TITLE},
       {"clearAllHistoryLabel",
        IDS_PRINT_MANAGEMENT_CLEAR_ALL_HISTORY_BUTTON_TEXT},
       {"clearHistoryConfirmationText",
@@ -144,13 +144,10 @@ PrintManagementUI::PrintManagementUI(
           kChromeUIPrintManagementHost);
   html_source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
-      "script-src chrome://resources chrome://test chrome://webui-test "
-      "'self';");
+      "script-src chrome://resources chrome://webui-test 'self';");
   ash::EnableTrustedTypesCSP(html_source);
 
-  const auto resources = base::make_span(kAshPrintManagementResources,
-                                         kAshPrintManagementResourcesSize);
-  SetUpWebUIDataSource(html_source, resources,
+  SetUpWebUIDataSource(html_source, kAshPrintManagementResources,
                        IDR_ASH_PRINT_MANAGEMENT_INDEX_HTML);
 
   html_source->AddResourcePath(

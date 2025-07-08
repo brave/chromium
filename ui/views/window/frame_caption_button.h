@@ -6,10 +6,12 @@
 #define UI_VIEWS_WINDOW_FRAME_CAPTION_BUTTON_H_
 
 #include <memory>
+#include <variant>
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_types.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/controls/button/button.h"
@@ -30,9 +32,10 @@ namespace views {
 
 // Base class for the window caption buttons (minimize, maximize, restore,
 // close).
-class VIEWS_EXPORT FrameCaptionButton : public views::Button {
+class VIEWS_EXPORT FrameCaptionButton : public Button {
+  METADATA_HEADER(FrameCaptionButton, Button)
+
  public:
-  METADATA_HEADER(FrameCaptionButton);
   enum class Animate { kYes, kNo };
 
   FrameCaptionButton(PressedCallback callback,
@@ -131,7 +134,7 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
   // id.
   // TODO(b/292154873): Store the foreground color instead of the background
   // color for the SkColor type.
-  absl::variant<ui::ColorId, SkColor> color_ = gfx::kPlaceholderColor;
+  std::variant<ui::ColorId, SkColor> color_ = gfx::kPlaceholderColor;
 
   // Whether the button should be painted as active.
   bool paint_as_active_ = false;

@@ -12,6 +12,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/mock_callback.h"
 #include "base/test/test_future.h"
+#include "content/browser/media/media_devices_util.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -158,20 +159,21 @@ class AudioOutputAuthorizationHandlerTest : public RenderViewHostTestHarness {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     MediaDevicesManager::BoolDeviceTypes devices_to_enumerate;
     devices_to_enumerate[static_cast<size_t>(
-        MediaDeviceType::MEDIA_AUDIO_OUTPUT)] = true;
+        MediaDeviceType::kMediaAudioOutput)] = true;
 
     media_stream_manager_->media_devices_manager()->EnumerateDevices(
         devices_to_enumerate,
         base::BindOnce(
             [](std::string* out, const MediaDeviceEnumeration& result) {
               // Index 0 is default, so use 1.
-              CHECK(result[static_cast<size_t>(
-                               MediaDeviceType::MEDIA_AUDIO_OUTPUT)]
-                        .size() > 1)
+              CHECK(
+                  result[static_cast<size_t>(MediaDeviceType::kMediaAudioOutput)]
+                      .size() > 1)
                   << "Expected to have a nondefault device.";
-              *out = result[static_cast<size_t>(
-                  MediaDeviceType::MEDIA_AUDIO_OUTPUT)][1]
-                         .device_id;
+              *out =
+                  result[static_cast<size_t>(MediaDeviceType::kMediaAudioOutput)]
+                        [1]
+                            .device_id;
             },
             base::Unretained(out)));
   }
@@ -192,7 +194,8 @@ TEST_F(AudioOutputAuthorizationHandlerTest, AuthorizeDefaultDevice_Ok) {
       .Times(1);
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
 
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
@@ -214,7 +217,8 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
       .Times(1);
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
 
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
@@ -234,14 +238,14 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
   base::test::TestFuture<const MediaDeviceSaltAndOrigin&> future;
   GetMediaDeviceSaltAndOrigin(main_rfh()->GetGlobalId(), future.GetCallback());
   MediaDeviceSaltAndOrigin salt_and_origin = future.Get();
-  std::string hashed_id = MediaStreamManager::GetHMACForMediaDeviceID(
-      salt_and_origin.device_id_salt, salt_and_origin.origin,
-      raw_nondefault_id);
+  std::string hashed_id =
+      GetHMACForRawMediaDeviceID(salt_and_origin, raw_nondefault_id);
 
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -271,13 +275,13 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
   base::test::TestFuture<const MediaDeviceSaltAndOrigin&> future;
   GetMediaDeviceSaltAndOrigin(main_rfh()->GetGlobalId(), future.GetCallback());
   MediaDeviceSaltAndOrigin salt_and_origin = future.Get();
-  std::string hashed_id = MediaStreamManager::GetHMACForMediaDeviceID(
-      salt_and_origin.device_id_salt, salt_and_origin.origin,
-      raw_nondefault_id);
+  std::string hashed_id =
+      GetHMACForRawMediaDeviceID(salt_and_origin, raw_nondefault_id);
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -304,7 +308,8 @@ TEST_F(AudioOutputAuthorizationHandlerTest, AuthorizeInvalidDeviceId_NotFound) {
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
 
   EXPECT_CALL(listener, Run(media::OUTPUT_DEVICE_STATUS_ERROR_NOT_FOUND, _,
                             std::string(), std::string()))
@@ -331,14 +336,16 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
   // Note that other urls may also fail the permissions check, e.g. when a
   // navigation is done during stream creation.
   GURL url("about:blank");
-  url::Origin origin = url::Origin::Create(url);
+  MediaDeviceSaltAndOrigin salt_and_origin(
+      test_browser_client().media_device_id_salt(), url::Origin::Create(url));
   std::string raw_nondefault_id = GetRawNondefaultId();
-  std::string hashed_id = MediaStreamManager::GetHMACForMediaDeviceID(
-      test_browser_client().media_device_id_salt(), origin, raw_nondefault_id);
+  std::string hashed_id =
+      GetHMACForRawMediaDeviceID(salt_and_origin, raw_nondefault_id);
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
   NavigateAndCommit(url);
 
   EXPECT_CALL(listener, Run(media::OUTPUT_DEVICE_STATUS_ERROR_NOT_AUTHORIZED, _,
@@ -363,7 +370,8 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
 
   EXPECT_CALL(listener, Run(media::OUTPUT_DEVICE_STATUS_OK, _, kDefaultDeviceId,
                             std::string()))
@@ -387,13 +395,13 @@ TEST_F(AudioOutputAuthorizationHandlerTest,
   base::test::TestFuture<const MediaDeviceSaltAndOrigin&> future;
   GetMediaDeviceSaltAndOrigin(main_rfh()->GetGlobalId(), future.GetCallback());
   MediaDeviceSaltAndOrigin salt_and_origin = future.Get();
-  std::string hashed_id = MediaStreamManager::GetHMACForMediaDeviceID(
-      salt_and_origin.device_id_salt, salt_and_origin.origin,
-      raw_nondefault_id);
+  std::string hashed_id =
+      GetHMACForRawMediaDeviceID(salt_and_origin, raw_nondefault_id);
   MockAuthorizationCallback listener;
   std::unique_ptr<AudioOutputAuthorizationHandler> handler =
       std::make_unique<AudioOutputAuthorizationHandler>(
-          GetAudioSystem(), GetMediaStreamManager(), process()->GetID());
+          GetAudioSystem(), GetMediaStreamManager(),
+          process()->GetDeprecatedID());
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(

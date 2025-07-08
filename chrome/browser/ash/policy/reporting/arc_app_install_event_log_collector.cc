@@ -6,7 +6,6 @@
 
 #include "base/command_line.h"
 #include "base/time/time.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/network/network_handler.h"
@@ -109,19 +108,6 @@ void ArcAppInstallEventLogCollector::OnConnectionStateChanged(
   delegate_->AddForAllPackages(std::move(event));
 }
 
-void ArcAppInstallEventLogCollector::OnReportForceInstallMainLoopFailed(
-    base::Time time,
-    const std::set<std::string>& package_names) {
-  for (const std::string& package_name : package_names) {
-    auto event = std::make_unique<em::AppInstallReportLogEvent>();
-    event->set_event_type(
-        em::AppInstallReportLogEvent::CLOUDDPC_MAIN_LOOP_FAILED);
-    SetTimestampFromTime(event.get(), time);
-    delegate_->Add(package_name, true /* gather_disk_space_info */,
-                   std::move(event));
-  }
-}
-
 void ArcAppInstallEventLogCollector::OnInstallationStarted(
     const std::string& package_name) {
   if (!pending_packages_.count(package_name)) {
@@ -136,7 +122,8 @@ void ArcAppInstallEventLogCollector::OnInstallationStarted(
 
 void ArcAppInstallEventLogCollector::OnInstallationFinished(
     const std::string& package_name,
-    bool success) {
+    bool success,
+    bool is_launchable_app) {
   if (!pending_packages_.count(package_name)) {
     return;
   }

@@ -42,7 +42,7 @@ bool GbmPixmapWayland::InitializeBuffer(
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    absl::optional<gfx::Size> visible_area_size) {
+    std::optional<gfx::Size> visible_area_size) {
   DCHECK(!visible_area_size ||
          ((visible_area_size.value().width() <= size.width()) &&
           (visible_area_size.value().height() <= size.height())));
@@ -144,7 +144,7 @@ size_t GbmPixmapWayland::GetNumberOfPlanes() const {
 }
 
 bool GbmPixmapWayland::SupportsZeroCopyWebGPUImport() const {
-  // TODO(crbug.com/1258986): Figure out how to import multi-planar pixmap into
+  // TODO(crbug.com/40201271): Figure out how to import multi-planar pixmap into
   // WebGPU without copy.
   return false;
 }
@@ -194,7 +194,7 @@ bool GbmPixmapWayland::ScheduleOverlayPlane(
   return true;
 }
 
-gfx::NativePixmapHandle GbmPixmapWayland::ExportHandle() {
+gfx::NativePixmapHandle GbmPixmapWayland::ExportHandle() const {
   gfx::NativePixmapHandle handle;
 
   const size_t num_planes = gbm_bo_->GetNumPlanes();
@@ -233,7 +233,6 @@ void GbmPixmapWayland::CreateDmabufBasedWlBuffer() {
   base::ScopedFD fd(HANDLE_EINTR(dup(GetDmaBufFd(0))));
   if (!fd.is_valid()) {
     PLOG(FATAL) << "dup";
-    return;
   }
 
   // The wl_buffer must be destroyed once this pixmap is destroyed.

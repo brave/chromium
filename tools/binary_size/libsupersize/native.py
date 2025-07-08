@@ -399,7 +399,9 @@ def _ResolveThinArchivePaths(raw_symbols, thin_archives):
 
 
 def _DeduceObjectPathForSwitchTables(raw_symbols, object_paths_by_name):
-  strip_num_suffix_regexp = re.compile(r'\s+\(\.\d+\)$')
+  # Example: foo (.67.rel)
+  # Example: bar (.67)
+  strip_num_suffix_regexp = re.compile(r'\s+\(\.\d+.*?\)$')
   num_switch_tables = 0
   num_unassigned = 0
   num_deduced = 0
@@ -422,7 +424,8 @@ def _DeduceObjectPathForSwitchTables(raw_symbols, object_paths_by_name):
           if len(object_paths) > 1:
             num_arbitrations += 1
       else:
-        assert object_paths and s.object_path in object_paths
+        assert object_paths, 'Name was: ' + name
+        assert s.object_path in object_paths, s.object_path
   if num_switch_tables > 0:
     logging.info(
         'Found %d switch tables: Deduced %d object paths with ' +
@@ -636,29 +639,20 @@ def _AddUnattributedSectionSymbols(raw_symbols, section_ranges, source_path):
   return ret, other_symbols
 
 
-def _ParseNinjaFiles(output_directory, elf_path=None):
-  linker_elf_path = elf_path
-  if elf_path:
-    # For partitioned libraries, the actual link command outputs __combined.so.
-    partitioned_elf_path = elf_path.replace('.so', '__combined.so')
-    if os.path.exists(partitioned_elf_path):
-      linker_elf_path = partitioned_elf_path
+def ParseNinjaFiles(output_directory, elf_paths_to_find_inputs_for=None):
+  logging.info('Parsing ninja files')
+  ninja_source_mapper = ninja_parser.Parse(output_directory,
+                                           elf_paths_to_find_inputs_for)
+  logging.debug('Parsed %d .ninja files. Linker inputs=%d of %d',
+                ninja_source_mapper.parsed_file_count,
+                ninja_source_mapper.inputs_map_count,
+                len(elf_paths_to_find_inputs_for))
+  if elf_paths_to_find_inputs_for:
+    for path in elf_paths_to_find_inputs_for:
+      assert ninja_source_mapper.GetInputsForBinary(path), (
+          'Failed to find any link commands in ninja files for ' + path)
 
-  logging.info('Parsing ninja files, looking for %s.',
-               (linker_elf_path or 'source mapping only (elf_path=None)'))
-
-  source_mapper, ninja_elf_object_paths = ninja_parser.Parse(
-      output_directory, linker_elf_path)
-
-  logging.debug('Parsed %d .ninja files. Linker inputs=%d',
-                source_mapper.parsed_file_count,
-                len(ninja_elf_object_paths or []))
-  if elf_path:
-    assert ninja_elf_object_paths, (
-        'Failed to find link command in ninja files for ' +
-        os.path.relpath(linker_elf_path, output_directory))
-
-  return source_mapper, ninja_elf_object_paths
+  return ninja_source_mapper
 
 
 def _ElfInfoFromApk(apk_path, apk_so_path):
@@ -670,8 +664,15 @@ def _CountRelocationsFromElf(elf_path):
   args = [path_util.GetReadElfPath(), '-r', elf_path]
   stdout = subprocess.check_output(args).decode('ascii')
   relocations = re.findall(
-      'Relocation section .* at offset .* contains (\d+) entries', stdout)
+      r'Relocation section .* at offset .* contains (\d+) entries', stdout)
   return sum([int(i) for i in relocations])
+
+
+def _FindToolchainSubdirs(output_directory):
+  return [
+      n for n in os.listdir(output_directory)
+      if os.path.exists(os.path.join(output_directory, n, 'toolchain.ninja'))
+  ]
 
 
 def CreateMetadata(*, native_spec, elf_info, shorten_path):
@@ -690,8 +691,8 @@ def CreateMetadata(*, native_spec, elf_info, shorten_path):
   if native_spec.elf_path:
     native_metadata[models.METADATA_ELF_FILENAME] = shorten_path(
         native_spec.elf_path)
-    timestamp_obj = datetime.datetime.utcfromtimestamp(
-        os.path.getmtime(native_spec.elf_path))
+    timestamp_obj = datetime.datetime.fromtimestamp(
+        os.path.getmtime(native_spec.elf_path), datetime.timezone.utc)
     timestamp = calendar.timegm(timestamp_obj.timetuple())
     native_metadata[models.METADATA_ELF_MTIME] = timestamp
 
@@ -705,6 +706,7 @@ def CreateSymbols(*,
                   apk_spec,
                   native_spec,
                   output_directory=None,
+                  ninja_source_mapper=None,
                   pak_id_map=None):
   """Creates native symbols for the given native_spec.
 
@@ -713,6 +715,7 @@ def CreateSymbols(*,
     native_spec: Instance of NativeSpec.
     output_directory: Build output directory. If None, source_paths and symbol
         alias information will not be recorded.
+    ninja_source_mapper: From ninja_parser.Parse()
     pak_id_map: Instance of PakIdMap.
 
   Returns:
@@ -726,15 +729,16 @@ def CreateSymbols(*,
         _ElfInfoFromApk, (apk_spec.apk_path, native_spec.apk_so_path))
 
   raw_symbols = []
-  ninja_source_mapper = None
   dwarf_source_mapper = None
   section_ranges = {}
   ninja_elf_object_paths = None
   metrics_by_file = {}
-  if output_directory and native_spec.map_path:
+  if ninja_source_mapper and native_spec.map_path:
     # Finds all objects passed to the linker and creates a map of .o -> .cc.
-    ninja_source_mapper, ninja_elf_object_paths = _ParseNinjaFiles(
-        output_directory, native_spec.elf_path)
+    elf_path = native_spec.combined_elf_path or native_spec.elf_path
+    if elf_path:
+      ninja_elf_object_paths = ninja_source_mapper.GetInputsForBinary(elf_path)
+      assert ninja_elf_object_paths, 'Failed to find link step for ' + elf_path
   elif native_spec.elf_path:
     logging.info('Parsing source path info via dwarfdump')
     dwarf_source_mapper = dwarfdump.CreateAddressSourceMapper(
@@ -755,19 +759,22 @@ def CreateSymbols(*,
     known_inputs = None
     # When we don't know which elf file is used, just search all paths.
     # TODO(agrieve): Seems to be used only for tests. Remove?
-    if ninja_source_mapper:
+    if ninja_source_mapper and native_spec.map_path:
       thin_archives = set(
           p for p in ninja_source_mapper.IterAllPaths() if p.endswith('.a')
           and ar.IsThinArchive(os.path.join(output_directory, p)))
     else:
       thin_archives = None
 
-  outdir_context = None
   if output_directory:
+    toolchain_subdirs = _FindToolchainSubdirs(output_directory)
     outdir_context = _OutputDirectoryContext(elf_object_paths=elf_object_paths,
                                              known_inputs=known_inputs,
                                              output_directory=output_directory,
                                              thin_archives=thin_archives)
+  else:
+    toolchain_subdirs = None
+    outdir_context = None
 
   object_paths_by_name = None
   if native_spec.elf_path or native_spec.map_path:
@@ -797,7 +804,10 @@ def CreateSymbols(*,
     with tempfile.NamedTemporaryFile(
         suffix=os.path.basename(native_spec.elf_path)) as f:
       strip_path = path_util.GetStripPath()
-      subprocess.run([strip_path, '-o', f.name, native_spec.elf_path],
+      subprocess.run([
+          strip_path, '--strip-debug', '--strip-unneeded', '-o', f.name,
+          native_spec.elf_path
+      ],
                      check=True)
       elf_info = _CreateElfInfo(f.name)
 
@@ -847,7 +857,9 @@ def CreateSymbols(*,
 
   # Path normalization must come before compacting aliases so that
   # ancestor paths do not mix generated and non-generated paths.
-  archive_util.NormalizePaths(raw_symbols, native_spec.gen_dir_regex)
+  archive_util.NormalizePaths(raw_symbols,
+                              gen_dir_regex=native_spec.gen_dir_regex,
+                              toolchain_subdirs=toolchain_subdirs)
 
   if native_spec.elf_path or native_spec.map_path:
     logging.info('Converting excessive aliases into shared-path symbols')

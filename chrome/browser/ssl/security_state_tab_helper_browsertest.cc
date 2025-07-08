@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ssl/security_state_tab_helper.h"
+#include <algorithm>
+#include <optional>
 
 #include "base/base64.h"
 #include "base/base_paths.h"
@@ -15,6 +16,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,13 +26,14 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/interstitials/security_interstitial_page_test_utils.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/policy/policy_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #include "chrome/browser/ssl/cert_verifier_browser_test.h"
+#include "chrome/browser/ssl/chrome_security_state_tab_helper.h"
 #include "chrome/browser/ssl/https_upgrades_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -99,7 +102,6 @@
 #include "net/test/test_data_directory.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/network_service.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
@@ -130,17 +132,6 @@ const char kCreateBlobUrlJavascript[] =
     "URL.createObjectURL(blob);";
 
 enum CertificateStatus { VALID_CERTIFICATE, INVALID_CERTIFICATE };
-
-bool IsShowingInterstitial(content::WebContents* tab) {
-  security_interstitials::SecurityInterstitialTabHelper* helper =
-      security_interstitials::SecurityInterstitialTabHelper::FromWebContents(
-          tab);
-  if (!helper) {
-    return false;
-  }
-  return helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting() !=
-         nullptr;
-}
 
 // Inject a script into every frame in the active page. Used by tests that check
 // for visible password fields to wait for notifications about these fields.
@@ -176,14 +167,14 @@ class SecurityStyleTestObserver : public content::WebContentsObserver {
 
   void WaitForDidChangeVisibleSecurityState() { run_loop_.Run(); }
 
-  absl::optional<security_state::SecurityLevel> latest_security_level() const {
+  std::optional<security_state::SecurityLevel> latest_security_level() const {
     return latest_security_level_;
   }
 
-  void ClearLatestSecurityLevel() { latest_security_level_ = absl::nullopt; }
+  void ClearLatestSecurityLevel() { latest_security_level_ = std::nullopt; }
 
  private:
-  absl::optional<security_state::SecurityLevel> latest_security_level_;
+  std::optional<security_state::SecurityLevel> latest_security_level_;
   base::RunLoop run_loop_;
 };
 
@@ -279,7 +270,7 @@ class SecurityStateTabHelperTest : public CertVerifierBrowserTest {
 
   ~SecurityStateTabHelperTest() override {
     SystemNetworkContextManager::SetEnableCertificateTransparencyForTesting(
-        absl::nullopt);
+        std::nullopt);
   }
 
   void SetUpOnMainThread() override {
@@ -632,7 +623,7 @@ class
 
 // Checks that the proper security state is displayed when the passive mixed
 // content warning feature is enabled.
-// TODO(crbug.com/1026464): Once that launch is finished and other tests run
+// TODO(crbug.com/40108287): Once that launch is finished and other tests run
 // with the feature enabled this test and the class will be redundant and can be
 // removed.
 IN_PROC_BROWSER_TEST_F(
@@ -1076,7 +1067,7 @@ IN_PROC_BROWSER_TEST_F(PKPModelClientTest, PKPBypass) {
   verify_result.verified_cert = cert;
   // Public key hash which does not match the value in the static pin.
   net::HashValue hash(net::HASH_VALUE_SHA256);
-  memset(hash.data(), 1, hash.size());
+  std::ranges::fill(hash.span(), 1);
   verify_result.public_key_hashes.push_back(hash);
 
   mock_cert_verifier()->AddResultForCert(cert, verify_result, net::OK);
@@ -1101,7 +1092,7 @@ IN_PROC_BROWSER_TEST_F(PKPModelClientTest, PKPEnforced) {
   verify_result.verified_cert = cert;
   // Public key hash which does not match the value in the static pin.
   net::HashValue hash(net::HASH_VALUE_SHA256);
-  memset(hash.data(), 1, hash.size());
+  std::ranges::fill(hash.span(), 1);
   verify_result.public_key_hashes.push_back(hash);
 
   mock_cert_verifier()->AddResultForCert(cert, verify_result, net::OK);
@@ -1119,7 +1110,7 @@ class SecurityStateLoadingTest : public SecurityStateTabHelperTest {
   SecurityStateLoadingTest(const SecurityStateLoadingTest&) = delete;
   SecurityStateLoadingTest& operator=(const SecurityStateLoadingTest&) = delete;
 
-  ~SecurityStateLoadingTest() override {}
+  ~SecurityStateLoadingTest() override = default;
 
  protected:
   void SetUpOnMainThread() override {
@@ -1143,9 +1134,11 @@ IN_PROC_BROWSER_TEST_F(SecurityStateLoadingTest, NavigationStateChanges) {
 
   // Navigate to a page that doesn't finish loading. Test that the
   // security state is neutral while the page is loading.
-  browser()->OpenURL(content::OpenURLParams(
-      embedded_test_server()->GetURL("/title1.html"), content::Referrer(),
-      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
+  browser()->OpenURL(
+      content::OpenURLParams(
+          embedded_test_server()->GetURL("/title1.html"), content::Referrer(),
+          WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false),
+      /*navigation_handle_callback=*/{});
   CheckSecurityInfoForNonCommitted(
       browser()->tab_strip_model()->GetActiveWebContents());
 }
@@ -1195,7 +1188,7 @@ IN_PROC_BROWSER_TEST_F(SecurityStateTabHelperTest, AddedTab) {
       content::WebContents::Create(
           content::WebContents::CreateParams(tab->GetBrowserContext()));
   content::NavigationController& controller = new_contents->GetController();
-  SecurityStateTabHelper::CreateForWebContents(new_contents.get());
+  ChromeSecurityStateTabHelper::CreateForWebContents(new_contents.get());
   CheckSecurityInfoForNonCommitted(new_contents.get());
   controller.LoadURL(https_server_.GetURL("/title1.html"), content::Referrer(),
                      ui::PAGE_TRANSITION_TYPED, std::string());
@@ -1267,7 +1260,8 @@ IN_PROC_BROWSER_TEST_F(
 
   // An interstitial should show, and an event for the lock icon on the
   // interstitial should fire.
-  ASSERT_TRUE(IsShowingInterstitial(web_contents));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingInterstitial(web_contents));
   EXPECT_EQ(security_state::SecurityLevel::DANGEROUS,
             observer.latest_security_level());
 
@@ -1281,7 +1275,8 @@ IN_PROC_BROWSER_TEST_F(
   // After going back to the interstitial, an event for a broken lock
   // icon should fire again.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), expired_url));
-  ASSERT_TRUE(IsShowingInterstitial(web_contents));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingInterstitial(web_contents));
   EXPECT_EQ(security_state::SecurityLevel::DANGEROUS,
             observer.latest_security_level());
 
@@ -1332,7 +1327,8 @@ IN_PROC_BROWSER_TEST_F(DidChangeVisibleSecurityStateTest,
   ASSERT_TRUE(
       ui_test_utils::NavigateToURL(browser(), https_url_different_host));
 
-  ASSERT_TRUE(IsShowingInterstitial(web_contents));
+  ASSERT_TRUE(
+      chrome_browser_interstitials::IsShowingInterstitial(web_contents));
   EXPECT_EQ(security_state::SecurityLevel::DANGEROUS,
             observer.latest_security_level());
   ProceedThroughInterstitial(web_contents);
@@ -1493,7 +1489,7 @@ IN_PROC_BROWSER_TEST_F(SignedExchangeSecurityStateTest, SecurityLevelIsSecure) {
       false /* expect_ran_mixed_content */, false /* expect_cert_error */);
 }
 
-// TODO(https://crbug.com/1461939): This test is failing on Mac12 Tests.
+// TODO(crbug.com/40921701): This test is failing on Mac12 Tests.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_SecurityLevelIsSecureAfterPrefetch \
   DISABLED_SecurityLevelIsSecureAfterPrefetch
@@ -1564,7 +1560,7 @@ class SecurityStateTabHelperPrerenderTest : public SecurityStateTabHelperTest {
       const SecurityStateTabHelperPrerenderTest&) = delete;
 
   void SetUp() override {
-    prerender_helper_.SetUp(&https_server_);
+    prerender_helper_.RegisterServerRequestMonitor(&https_server_);
     SecurityStateTabHelperTest::SetUp();
   }
 
@@ -1639,7 +1635,7 @@ IN_PROC_BROWSER_TEST_F(SecurityStateTabHelperPrerenderTest, InvalidPrerender) {
   // Ensure that the prerender has started.
   registry_observer.WaitForTrigger(prerender_url);
   auto prerender_id = prerender_helper_.GetHostForUrl(prerender_url);
-  EXPECT_NE(content::RenderFrameHost::kNoFrameTreeNodeId, prerender_id);
+  EXPECT_TRUE(prerender_id);
   content::test::PrerenderHostObserver host_observer(*web_contents(),
                                                      prerender_id);
 
@@ -1652,8 +1648,7 @@ IN_PROC_BROWSER_TEST_F(SecurityStateTabHelperPrerenderTest, InvalidPrerender) {
   // The prerender should be abandoned since the it commits an interstitial,
   // wait for the PrerenderHost to be destroyed.
   host_observer.WaitForDestroyed();
-  EXPECT_EQ(content::RenderFrameHost::kNoFrameTreeNodeId,
-            prerender_helper_.GetHostForUrl(prerender_url));
+  EXPECT_TRUE(prerender_helper_.GetHostForUrl(prerender_url).is_null());
 
   // Navigate to prerender_url and expect cert error.
   prerender_helper_.NavigatePrimaryPage(prerender_url);
@@ -1691,7 +1686,7 @@ IN_PROC_BROWSER_TEST_F(SecurityStateTabHelperPrerenderTest,
       test_server->GetURL("/ssl/page_displays_insecure_content.html");
   prerender_helper_.AddPrerender(prerender_url);
   auto prerender_id = prerender_helper_.GetHostForUrl(prerender_url);
-  EXPECT_NE(content::RenderFrameHost::kNoFrameTreeNodeId, prerender_id);
+  EXPECT_TRUE(prerender_id);
   content::test::PrerenderHostObserver host_observer(*web_contents(),
                                                      prerender_id);
 

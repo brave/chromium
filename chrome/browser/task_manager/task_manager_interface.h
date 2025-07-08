@@ -65,8 +65,8 @@ class TaskManagerInterface {
   // Returns if the task is killable.
   virtual bool IsTaskKillable(TaskId task_id) = 0;
 
-  // Kills the task with |task_id|.
-  virtual void KillTask(TaskId task_id) = 0;
+  // Kills the task with |task_id|. Returns true if the process terminates.
+  virtual bool KillTask(TaskId task_id) = 0;
 
   // Returns the CPU usage of the process on which |task_id| is running, over
   // the most recent refresh cycle. The value is in the range zero to
@@ -103,11 +103,6 @@ class TaskManagerInterface {
   // cycle. A value of -1 means no valid value is currently available.
   virtual int GetHardFaultsPerSecond(TaskId task_id) const = 0;
 
-  // Returns the NaCl GDB debug stub port. A value of
-  // |nacl::kGdbDebugStubPortUnknown| means no valid value is currently
-  // available. A value of -2 means NaCl is not enabled for this build.
-  virtual int GetNaClDebugStubPort(TaskId task_id) const = 0;
-
   // On Windows, gets the current and peak number of GDI and USER handles in
   // use. A value of -1 means no valid value is currently available.
   virtual void GetGDIHandles(TaskId task_id,
@@ -142,8 +137,14 @@ class TaskManagerInterface {
   virtual const base::ProcessHandle& GetProcessHandle(TaskId task_id) const = 0;
   virtual const base::ProcessId& GetProcessId(TaskId task_id) const = 0;
 
+  // Returns the task id of the process which spawned |task_id|.
+  virtual TaskId GetRootTaskId(TaskId task_id) const = 0;
+
   // Returns the type of the task with |task_id|.
   virtual Task::Type GetType(TaskId task_id) const = 0;
+
+  // Returns the subtype of the task with |task_id|.
+  virtual Task::SubType GetSubType(TaskId task_id) const = 0;
 
   // Gets the unique ID of the tab if the task with |task_id| represents a
   // WebContents of a tab. Returns -1 otherwise.
@@ -233,6 +234,11 @@ class TaskManagerInterface {
   // associated Task.
   virtual TaskId GetTaskIdForWebContents(
       content::WebContents* web_contents) const = 0;
+
+  // Returns whether a task is valid by the implementer. Concept of 'valid' is
+  // delegated to the implementer. An example of validness is
+  // task_manager_impl.cc tracking tasks in task_groups_by_task_ids_.
+  virtual bool IsTaskValid(TaskId task_id) const;
 
   // Returns true if the resource |type| usage calculation is enabled and
   // the implementation should refresh its value (this means that at least one

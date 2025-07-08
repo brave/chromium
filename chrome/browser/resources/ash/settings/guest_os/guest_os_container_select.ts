@@ -6,14 +6,14 @@
  * @fileoverview 'settings-guest-os-container-select' is a component enabling a
  * user to select a target container from a list stored in prefs.
  */
-import 'chrome://resources/cr_elements/md_select.css.js';
+import 'chrome://resources/ash/common/cr_elements/md_select.css.js';
 import '../settings_shared.css.js';
 
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {cast} from '../assert_extras.js';
 
-import {ContainerInfo, GuestId} from './guest_os_browser_proxy.js';
+import type {ContainerInfo, GuestId} from './guest_os_browser_proxy.js';
 import {getTemplate} from './guest_os_container_select.html.js';
 
 export function equalContainerId(first: GuestId, second: GuestId): boolean {
@@ -29,7 +29,7 @@ export function containerLabel(
   return id.vm_name + ':' + id.container_name;
 }
 
-class ContainerSelectElement extends PolymerElement {
+export class ContainerSelectElement extends PolymerElement {
   static get is() {
     return 'settings-guest-os-container-select';
   }

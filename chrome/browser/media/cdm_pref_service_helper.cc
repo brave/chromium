@@ -4,10 +4,12 @@
 
 #include "chrome/browser/media/cdm_pref_service_helper.h"
 
-#include "base/logging.h"
+#include <optional>
 
 #include "base/base64.h"
+#include "base/containers/to_value_list.h"
 #include "base/json/values_util.h"
+#include "base/logging.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -17,7 +19,6 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -33,15 +34,6 @@ bool TimeIsBetween(const base::Time& time,
                    const base::Time& start,
                    const base::Time& end) {
   return time >= start && (end.is_null() || time <= end);
-}
-
-// Converts a std::vector<base::Time> to a base::Value::List
-base::Value::List TimesToList(const std::vector<base::Time>& times) {
-  base::Value::List times_list;
-  for (auto time : times) {
-    times_list.Append(base::TimeToValue(time));
-  }
-  return times_list;
 }
 
 // Converts a base::Value::List of Time to std::vector<base::Time>
@@ -81,7 +73,7 @@ base::Value::Dict ToDictValue(const CdmPrefData& pref_data) {
                base::TimeToValue(pref_data.origin_id_creation_time()));
 
   // Optional Client Token
-  const absl::optional<std::vector<uint8_t>> client_token =
+  const std::optional<std::vector<uint8_t>> client_token =
       pref_data.client_token();
   if (client_token.has_value() && !client_token->empty()) {
     std::string encoded_client_token = base::Base64Encode(client_token.value());
@@ -90,7 +82,8 @@ base::Value::Dict ToDictValue(const CdmPrefData& pref_data) {
              base::TimeToValue(pref_data.client_token_creation_time()));
   }
   dict.Set(prefs::kHardwareSecureDecryptionDisabledTimes,
-           TimesToList(pref_data.hw_secure_decryption_disable_times()));
+           base::ToValueList(pref_data.hw_secure_decryption_disable_times(),
+                             &base::TimeToValue));
   return dict;
 }
 
@@ -106,7 +99,7 @@ std::unique_ptr<CdmPrefData> FromDictValue(
     return nullptr;
   }
 
-  absl::optional<base::UnguessableToken> origin_id =
+  std::optional<base::UnguessableToken> origin_id =
       base::ValueToUnguessableToken(*origin_id_value);
   if (!origin_id) {
     return nullptr;
@@ -117,7 +110,7 @@ std::unique_ptr<CdmPrefData> FromDictValue(
     return nullptr;
   }
 
-  absl::optional<base::Time> origin_id_time = base::ValueToTime(time_value);
+  std::optional<base::Time> origin_id_time = base::ValueToTime(time_value);
   if (!origin_id_time || origin_id_time.value().is_null()) {
     return nullptr;
   }
@@ -157,8 +150,7 @@ std::unique_ptr<CdmPrefData> FromDictValue(
       return nullptr;
     }
 
-    absl::optional<base::Time> client_token_time =
-        base::ValueToTime(time_value);
+    std::optional<base::Time> client_token_time = base::ValueToTime(time_value);
     if (!client_token_time) {
       return nullptr;
     }
@@ -196,7 +188,7 @@ base::Time CdmPrefData::origin_id_creation_time() const {
   return origin_id_creation_time_;
 }
 
-const absl::optional<std::vector<uint8_t>> CdmPrefData::client_token() const {
+const std::optional<std::vector<uint8_t>> CdmPrefData::client_token() const {
   return client_token_;
 }
 
@@ -379,7 +371,7 @@ std::map<std::string, url::Origin> CdmPrefServiceHelper::GetOriginIdMapping(
       continue;
     }
 
-    absl::optional<base::UnguessableToken> origin_id =
+    std::optional<base::UnguessableToken> origin_id =
         base::ValueToUnguessableToken(*origin_id_value);
     if (!origin_id) {
       continue;

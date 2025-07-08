@@ -17,7 +17,7 @@ namespace enterprise_connectors {
 class MockFileTransferAnalysisDelegate : public FileTransferAnalysisDelegate {
  public:
   MockFileTransferAnalysisDelegate(
-      safe_browsing::DeepScanAccessPoint access_point,
+      DeepScanAccessPoint access_point,
       storage::FileSystemURL source_url,
       storage::FileSystemURL destination_url,
       Profile* profile,
@@ -32,6 +32,11 @@ class MockFileTransferAnalysisDelegate : public FileTransferAnalysisDelegate {
               GetAnalysisResultAfterScan,
               (storage::FileSystemURL url),
               (override));
+
+  MOCK_METHOD(std::vector<storage::FileSystemURL>,
+              GetWarnedFiles,
+              (),
+              (const override));
 };
 
 }  // namespace enterprise_connectors

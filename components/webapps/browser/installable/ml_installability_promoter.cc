@@ -11,6 +11,7 @@
 #include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_runner.h"
@@ -28,6 +29,8 @@
 #include "components/webapps/browser/installable/metrics/site_quality_metrics_task.h"
 #include "components/webapps/browser/installable/ml_install_operation_tracker.h"
 #include "components/webapps/browser/installable/ml_install_result_reporter.h"
+#include "components/webapps/browser/webapps_client.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/storage_partition.h"
@@ -106,16 +109,29 @@ void MLInstallabilityPromoter::StartPipeline(const GURL& validated_url) {
     return;
   }
 
+  if (app_banner_manager->TriggeringDisabledForTesting()) {
+    return;
+  }
+
+  // Do not run the pipeline again if there is an operation tracker
+  // already alive and already has an ML data reporter connected to it.
+  if (current_install_ && current_install_->MLReporterAlreadyConnected()) {
+    return;
+  }
+
   app_banner_manager_ = app_banner_manager->GetWeakPtr();
   site_url_ = validated_url;
 
   CHECK(state_ == MLPipelineState::kInactive);
   state_ = MLPipelineState::kRunningMetricTasks;
 
+  WebappsClient* client = WebappsClient::Get();
   site_install_metrics_.is_fully_installed =
-      app_banner_manager_->IsAppFullyInstalledForSiteUrl(site_url_);
+      client->IsAppFullyInstalledForSiteUrl(web_contents()->GetBrowserContext(),
+                                            site_url_);
   site_install_metrics_.is_partially_installed =
-      app_banner_manager_->IsAppPartiallyInstalledForSiteUrl(site_url_);
+      client->IsAppPartiallyInstalledForSiteUrl(
+          web_contents()->GetBrowserContext(), site_url_);
 
   site_quality_metrics_task_ = SiteQualityMetricsTask::CreateAndStart(
       site_url_, *web_contents(), *storage_partition_, *service_worker_context_,
@@ -200,8 +216,7 @@ GURL MLInstallabilityPromoter::GetProjectedManifestIdAfterMetricsCollection() {
   switch (state_) {
     case MLPipelineState::kInactive:
     case MLPipelineState::kRunningMetricTasks:
-      CHECK(false) << "Cannot get manifest id without metrics collected";
-      break;
+      NOTREACHED() << "Cannot get manifest id without metrics collected";
     case MLPipelineState::kUKMCollectionComplete:
     case MLPipelineState::kMLClassificationRequested:
     case MLPipelineState::kWaitingForVisibility:
@@ -212,7 +227,7 @@ GURL MLInstallabilityPromoter::GetProjectedManifestIdAfterMetricsCollection() {
   if (blink::IsEmptyManifest(manifest_)) {
     manifest_id = site_url_.GetWithoutRef();
   } else {
-    manifest_id = blink::GetIdFromManifest(*manifest_);
+    manifest_id = manifest_->id;
     if (!manifest_id.is_valid()) {
       manifest_id = site_url_.GetWithoutRef();
     }
@@ -287,7 +302,7 @@ void MLInstallabilityPromoter::EmitUKMs() {
         .SetHasIconsMaskable(has_manifest_icons_maskable);
 
     // Set Manifest start URL data in UKM.
-    if (manifest_->start_url.is_empty()) {
+    if (!manifest_->has_valid_specified_start_url) {
       manifest_builder.SetHasStartUrl(
           static_cast<int>(ManifestUrlInvalid::kEmpty));
     } else if (manifest_->start_url.is_valid()) {
@@ -310,15 +325,25 @@ void MLInstallabilityPromoter::RequestMlClassification() {
     state_ = MLPipelineState::kComplete;
     return;
   }
+  WebappsClient* client = WebappsClient::Get();
   segmentation_platform::SegmentationPlatformService* segmentation =
-      app_banner_manager_->GetSegmentationPlatformService();
+      client->GetSegmentationPlatformService(
+          web_contents()->GetBrowserContext());
   if (!segmentation || !base::FeatureList::IsEnabled(
                            features::kWebAppsEnableMLModelForPromotion)) {
     state_ = MLPipelineState::kComplete;
     return;
   }
-  if (app_banner_manager_->IsAppFullyInstalledForSiteUrl(site_url_)) {
+  if (client->IsAppFullyInstalledForSiteUrl(web_contents()->GetBrowserContext(),
+                                            site_url_) ||
+      client->IsInAppBrowsingContext(web_contents())) {
     // Finish the pipeline early if an app is installed here.
+    state_ = MLPipelineState::kComplete;
+    return;
+  }
+  if ((!manifest_ || !manifest_->has_valid_specified_start_url) &&
+      WebappsClient::Get()->IsUrlControlledBySeenManifest(
+          web_contents()->GetBrowserContext(), site_url_)) {
     state_ = MLPipelineState::kComplete;
     return;
   }
@@ -348,12 +373,14 @@ void MLInstallabilityPromoter::OnClassificationResult(
   if (result.status != segmentation_platform::PredictionStatus::kSucceeded) {
     return;
   }
-  // TODO(https://crbug.com/1455521) Remove this.
+  // TODO(crbug.com/40272826) Remove this.
   if (!app_banner_manager_) {
     // Exit pipeline early if the AppBannerManager is destroyed.
     return;
   }
-  if (app_banner_manager_->IsAppFullyInstalledForSiteUrl(site_url_)) {
+  WebappsClient* client = WebappsClient::Get();
+  if (client->IsAppFullyInstalledForSiteUrl(web_contents()->GetBrowserContext(),
+                                            site_url_)) {
     // An installation could have occurred while executing the ML logic.
     return;
   }
@@ -361,7 +388,8 @@ void MLInstallabilityPromoter::OnClassificationResult(
   bool has_icons = site_quality_metrics_.non_default_favicons_count > 0 ||
                    !manifest_->icons.empty();
   bool blocked_by_history_guardrails =
-      app_banner_manager_->IsMlPromotionBlockedByHistoryGuardrail(manifest_id);
+      client->IsMlPromotionBlockedByHistoryGuardrail(
+          web_contents()->GetBrowserContext(), manifest_id);
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           kDisableGuardrailsSwitch)) {
     blocked_by_history_guardrails = false;
@@ -373,8 +401,9 @@ void MLInstallabilityPromoter::OnClassificationResult(
   bool is_ml_promotion_blocked_by_guardrails =
       !has_icons || blocked_by_history_guardrails;
   ml_result_reporter_ = std::make_unique<MlInstallResultReporter>(
-      app_banner_manager_, result.request_id, result.ordered_labels[0],
-      manifest_id, is_ml_promotion_blocked_by_guardrails);
+      web_contents()->GetBrowserContext()->GetWeakPtr(), result.request_id,
+      result.ordered_labels[0], manifest_id,
+      is_ml_promotion_blocked_by_guardrails);
 
   if (current_install_) {
     current_install_->OnMlResultForInstallation(
@@ -394,7 +423,7 @@ void MLInstallabilityPromoter::MaybeReportResultToAppBannerManager() {
   if (state_ != MLPipelineState::kComplete || !ml_result_reporter_ ||
       ml_result_reporter_->ml_promotion_blocked_by_guardrail() ||
       !app_banner_manager_) {
-    // TODO(https://crbug.com/1455521) Remove the app_banner_manager check
+    // TODO(crbug.com/40272826) Remove the app_banner_manager check
     return;
   }
   app_banner_manager_->OnMlInstallPrediction(
@@ -471,8 +500,10 @@ void MLInstallabilityPromoter::DidUpdateFaviconURL(
   }
 }
 
-void MLInstallabilityPromoter::OnRegistrationStored(int64_t registration_id,
-                                                    const GURL& scope) {
+void MLInstallabilityPromoter::OnRegistrationStored(
+    int64_t registration_id,
+    const GURL& scope,
+    const content::ServiceWorkerRegistrationInformation& service_worker_info) {
   if (!content::ServiceWorkerContext::ScopeMatches(scope, site_url_)) {
     return;
   }
@@ -506,7 +537,7 @@ void MLInstallabilityPromoter::OnDestruct(
 void MLInstallabilityPromoter::ResetRunningStagesAndTasksMaybeReportResult() {
   state_ = MLPipelineState::kInactive;
   site_url_ = GURL();
-  // TODO(https://crbug.com/1455521) Remove this.
+  // TODO(crbug.com/40272826) Remove this.
   app_banner_manager_.reset();
   site_manifest_metrics_task_.reset();
   site_quality_metrics_task_.reset();

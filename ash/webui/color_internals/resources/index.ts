@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import {COLOR_PROVIDER_CHANGED, ColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
+import {assert} from 'chrome://resources/js/assert.js';
 
 import {getRGBAFromComputedStyle} from './utils.js';
 import {startObservingWallpaperColors} from './wallpaper_colors.js';
@@ -79,8 +80,7 @@ async function requestJSON(): Promise<JSON> {
 
 async function populateTokenTable() {
   function addTokens(table: HTMLTableSectionElement, tokens: Token[]) {
-    Object.values(tokens).forEach(
-        t => appendTokenRowToTable(table, t as Token));
+    Object.values(tokens).forEach(t => appendTokenRowToTable(table, t));
   }
   const json = await requestJSON();
   const tokens = json as unknown as TokenArray;
@@ -98,7 +98,8 @@ function onColorChange() {
     minute: 'numeric',
     second: 'numeric',
   });
-  const span = document.querySelector('#last-updated') as HTMLSpanElement;
+  const span = document.querySelector<HTMLElement>('#last-updated');
+  assert(span);
   span.innerText = formatter.format(new Date());
 }
 

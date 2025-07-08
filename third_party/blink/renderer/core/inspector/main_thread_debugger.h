@@ -32,6 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_MAIN_THREAD_DEBUGGER_H_
 
 #include <memory>
+
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document_lifecycle.h"
 #include "third_party/blink/renderer/core/inspector/thread_debugger_common_impl.h"
@@ -65,7 +66,7 @@ class CORE_EXPORT MainThreadDebugger final : public ThreadDebuggerCommonImpl {
   MainThreadDebugger& operator=(const MainThreadDebugger&) = delete;
   ~MainThreadDebugger() override;
 
-  static MainThreadDebugger* Instance();
+  static MainThreadDebugger* Instance(v8::Isolate*);
 
   bool IsWorker() override { return false; }
   bool IsPaused() const { return paused_; }
@@ -86,7 +87,7 @@ class CORE_EXPORT MainThreadDebugger final : public ThreadDebuggerCommonImpl {
   void ReportConsoleMessage(ExecutionContext*,
                             mojom::ConsoleMessageSource,
                             mojom::ConsoleMessageLevel,
-                            const String& message,
+                            const WTF::String& message,
                             SourceLocation*) override;
   int ContextGroupId(ExecutionContext*) override;
 
@@ -122,7 +123,6 @@ class CORE_EXPORT MainThreadDebugger final : public ThreadDebuggerCommonImpl {
 
   std::unique_ptr<ClientMessageLoop> client_message_loop_;
   bool paused_;
-  static MainThreadDebugger* instance_;
   std::unique_ptr<DocumentLifecycle::PostponeTransitionScope>
       postponed_transition_scope_;
 };

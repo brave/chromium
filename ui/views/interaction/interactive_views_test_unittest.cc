@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
@@ -14,9 +15,11 @@
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/interaction/expect_call_in_scope.h"
+#include "ui/base/interaction/state_observer.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/tabbed_pane/tabbed_pane.h"
+#include "ui/views/interaction/polling_view_observer.h"
 #include "ui/views/layout/flex_layout_view.h"
 #include "ui/views/layout/layout_types.h"
 #include "ui/views/test/widget_test.h"
@@ -56,18 +59,19 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
     // Set up the Views hierarchy to use for the tests.
     auto contents =
         Builder<FlexLayoutView>()
-            .CopyAddressTo(&contents_)
             .SetProperty(kElementIdentifierKey, kContentsId)
             .SetOrientation(LayoutOrientation::kVertical)
             .AddChildren(
                 Builder<TabbedPane>()
                     .CopyAddressTo(&tabs_)
                     .SetProperty(kElementIdentifierKey, kTabbedPaneId)
-                    .AddTab(kTab1Title, std::make_unique<Label>(kTab1Contents))
-                    .AddTab(kTab2Title, std::make_unique<Label>(kTab2Contents))
-                    .AddTab(kTab3Title, std::make_unique<Label>(kTab3Contents)),
+                    .AddTab(kTab1Title, std::make_unique<Label>(kTab1Contents),
+                            nullptr)
+                    .AddTab(kTab2Title, std::make_unique<Label>(kTab2Contents),
+                            nullptr)
+                    .AddTab(kTab3Title, std::make_unique<Label>(kTab3Contents),
+                            nullptr),
                 Builder<FlexLayoutView>()
-                    .CopyAddressTo(&buttons_)
                     .SetProperty(kElementIdentifierKey, kButtonsId)
                     .SetOrientation(LayoutOrientation::kHorizontal)
                     .AddChildren(
@@ -100,7 +104,7 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
                                     .SetPreferredSize(gfx::Size(100, 100)))));
 
     // Create and show the test widget.
-    widget_ = CreateTestWidget();
+    widget_ = CreateTestWidget(Widget::InitParams::CLIENT_OWNS_WIDGET);
     widget_->SetContentsView(std::move(contents).Build());
     WidgetVisibleWaiter waiter(widget_.get());
     widget_->Show();
@@ -113,13 +117,11 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
 
   void TearDown() override {
     SetContextWidget(nullptr);
-    widget_.reset();
-    contents_ = nullptr;
     tabs_ = nullptr;
-    buttons_ = nullptr;
     button1_ = nullptr;
     button2_ = nullptr;
     scroll_ = nullptr;
+    widget_.reset();
     InteractiveViewsTest::TearDown();
   }
 
@@ -139,12 +141,10 @@ class InteractiveViewsTestTest : public InteractiveViewsTest {
       base::MockCallback<Button::PressedCallback::Callback>>;
 
   std::unique_ptr<Widget> widget_;
-  raw_ptr<FlexLayoutView, DanglingUntriaged> contents_;
-  raw_ptr<TabbedPane, DanglingUntriaged> tabs_;
-  raw_ptr<FlexLayoutView, DanglingUntriaged> buttons_;
-  raw_ptr<LabelButton, DanglingUntriaged> button1_;
-  raw_ptr<LabelButton, DanglingUntriaged> button2_;
-  raw_ptr<ScrollView, DanglingUntriaged> scroll_;
+  raw_ptr<TabbedPane> tabs_;
+  raw_ptr<LabelButton> button1_;
+  raw_ptr<LabelButton> button2_;
+  raw_ptr<ScrollView> scroll_;
   ButtonCallbackMock button1_callback_;
   ButtonCallbackMock button2_callback_;
 };
@@ -213,6 +213,28 @@ TEST_F(InteractiveViewsTestTest, WaitForViewProperty_BecomesTrue) {
   RunTestSequence(WaitForViewProperty(kButton1Id, View, Enabled, true));
 }
 
+TEST_F(InteractiveViewsTestTest, PollView) {
+  using Observer = PollingViewObserver<std::u16string, LabelButton>;
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(Observer, kButtonTextState);
+  DoPost(base::BindLambdaForTesting(
+      [this]() { button1_->SetText(kButton2Caption); }));
+  RunTestSequence(PollView(kButtonTextState, kButton1Id,
+                           [](const LabelButton* b) {
+                             return std::u16string(b->GetText());
+                           }),
+                  WaitForState(kButtonTextState, kButton2Caption));
+}
+
+TEST_F(InteractiveViewsTestTest, PollViewProperty) {
+  using Observer = PollingViewPropertyObserver<std::u16string, LabelButton>;
+  DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(Observer, kButtonTextState);
+  DoPost(base::BindLambdaForTesting(
+      [this]() { button1_->SetText(kButton2Caption); }));
+  RunTestSequence(
+      PollViewProperty(kButtonTextState, kButton1Id, &LabelButton::GetText),
+      WaitForState(kButtonTextState, kButton2Caption));
+}
+
 TEST_F(InteractiveViewsTestTest, WaitForViewPropertyFails) {
   UNCALLED_MOCK_CALLBACK(ui::InteractionSequence::AbortedCallback, aborted);
   private_test_impl().set_aborted_callback_for_testing(aborted.Get());
@@ -227,7 +249,7 @@ TEST_F(InteractiveViewsTestTest, WaitForViewPropertyInParallel) {
   button1_->SetEnabled(false);
   tabs_->SetEnabled(false);
   RunTestSequence(InParallel(
-      Steps(
+      RunSubsequence(
           // These have to be inside the subsequences because there's an
           // implicit flush before a subsequence starts; if we queued them
           // all up ahead of time we wouldn't accurately be testing the
@@ -237,11 +259,12 @@ TEST_F(InteractiveViewsTestTest, WaitForViewPropertyInParallel) {
           WaitForViewProperty(kButton1Id, View, Enabled, true),
           Post(base::BindLambdaForTesting([this]() { button1_->SetID(998); })),
           WaitForViewProperty(kButton1Id, View, ID, 998)),
-      Steps(Post(base::BindLambdaForTesting(
-                [this]() { button1_->SetEnabled(true); })),
-            WaitForViewProperty(kTabbedPaneId, View, Enabled, true),
-            Post(base::BindLambdaForTesting([this]() { tabs_->SetID(999); })),
-            WaitForViewProperty(kTabbedPaneId, View, ID, 999))));
+      RunSubsequence(
+          Post(base::BindLambdaForTesting(
+              [this]() { button1_->SetEnabled(true); })),
+          WaitForViewProperty(kTabbedPaneId, View, Enabled, true),
+          Post(base::BindLambdaForTesting([this]() { tabs_->SetID(999); })),
+          WaitForViewProperty(kTabbedPaneId, View, ID, 999))));
 }
 
 TEST_F(InteractiveViewsTestTest, NameViewAbsoluteValue) {
@@ -314,7 +337,7 @@ TEST_F(InteractiveViewsTestTest, NameViewRelative) {
       SelectTab(kTabbedPaneId, 1U, InputType::kTouch),
       NameViewRelative(kTabbedPaneId, kViewName,
                        base::BindRepeating([&](TabbedPane* tabs) {
-                         return tabs->GetTabAt(1U)->contents();
+                         return tabs->GetTabContentsForTesting(1);
                        })),
       WithElement(kViewName,
                   base::BindLambdaForTesting([&](ui::TrackedElement* el) {
@@ -365,8 +388,8 @@ TEST_F(InteractiveViewsTestTest, IfViewTrue) {
 
   EXPECT_CALL(condition, Run(button1_.get())).WillOnce(testing::Return(true));
   EXPECT_CALL(step1, Run);
-  RunTestSequence(
-      IfView(kButton1Id, condition.Get(), Do(step1.Get()), Do(step2.Get())));
+  RunTestSequence(IfView(kButton1Id, condition.Get(), Then(Do(step1.Get())),
+                         Else(Do(step2.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, IfViewFalse) {
@@ -377,8 +400,8 @@ TEST_F(InteractiveViewsTestTest, IfViewFalse) {
 
   EXPECT_CALL(condition, Run(button1_.get())).WillOnce(testing::Return(false));
   EXPECT_CALL(step2, Run);
-  RunTestSequence(
-      IfView(kButton1Id, condition.Get(), Do(step1.Get()), Do(step2.Get())));
+  RunTestSequence(IfView(kButton1Id, condition.Get(), Then(Do(step1.Get())),
+                         Else(Do(step2.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, IfViewMatchesTrue) {
@@ -389,8 +412,8 @@ TEST_F(InteractiveViewsTestTest, IfViewMatchesTrue) {
 
   EXPECT_CALL(condition, Run(button1_.get())).WillOnce(testing::Return(1));
   EXPECT_CALL(step1, Run);
-  RunTestSequence(IfViewMatches(kButton1Id, condition.Get(), 1, Do(step1.Get()),
-                                Do(step2.Get())));
+  RunTestSequence(IfViewMatches(kButton1Id, condition.Get(), 1,
+                                Then(Do(step1.Get())), Else(Do(step2.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, IfViewMatchesFalse) {
@@ -401,8 +424,8 @@ TEST_F(InteractiveViewsTestTest, IfViewMatchesFalse) {
 
   EXPECT_CALL(condition, Run(button1_.get())).WillOnce(testing::Return(2));
   EXPECT_CALL(step2, Run);
-  RunTestSequence(IfViewMatches(kButton1Id, condition.Get(), 1, Do(step1.Get()),
-                                Do(step2.Get())));
+  RunTestSequence(IfViewMatches(kButton1Id, condition.Get(), 1,
+                                Then(Do(step1.Get())), Else(Do(step2.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, IfViewPropertyMatchesTrue) {
@@ -410,9 +433,9 @@ TEST_F(InteractiveViewsTestTest, IfViewPropertyMatchesTrue) {
   UNCALLED_MOCK_CALLBACK(base::OnceClosure, step2);
 
   EXPECT_CALL(step1, Run);
-  RunTestSequence(IfViewPropertyMatches(kButton1Id, &LabelButton::GetText,
-                                        std::u16string(kButton1Caption),
-                                        Do(step1.Get()), Do(step2.Get())));
+  RunTestSequence(IfViewPropertyMatches(
+      kButton1Id, &LabelButton::GetText, std::u16string(kButton1Caption),
+      Then(Do(step1.Get())), Else(Do(step2.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, IfViewPropertyMatchesFalse) {
@@ -420,9 +443,9 @@ TEST_F(InteractiveViewsTestTest, IfViewPropertyMatchesFalse) {
   UNCALLED_MOCK_CALLBACK(base::OnceClosure, step2);
 
   EXPECT_CALL(step2, Run);
-  RunTestSequence(IfViewPropertyMatches(kButton1Id, &LabelButton::GetText,
-                                        testing::Ne(kButton1Caption),
-                                        Do(step1.Get()), Do(step2.Get())));
+  RunTestSequence(IfViewPropertyMatches(
+      kButton1Id, &LabelButton::GetText, testing::Ne(kButton1Caption),
+      Then(Do(step1.Get())), Else(Do(step2.Get()))));
 }
 
 // Test that elements named in the main test sequence are available in
@@ -437,8 +460,8 @@ TEST_F(InteractiveViewsTestTest, InParallelNamedView) {
       NameView(kViewName, button1_.get()), NameView(kViewName2, button2_.get()),
       // Run subsequences, each of which references a different named view from
       // the outer sequence. Both should succeed.
-      InParallel(CheckView(kViewName, is_view(), button1_),
-                 CheckView(kViewName2, is_view(), button2_)));
+      InParallel(RunSubsequence(CheckView(kViewName, is_view(), button1_)),
+                 RunSubsequence(CheckView(kViewName2, is_view(), button2_))));
 }
 
 // Test that various automatic binding methods work with verbs and conditions.
@@ -455,11 +478,11 @@ TEST_F(InteractiveViewsTestTest, BindingMethods) {
       WithView(kViewName, [](TabbedPaneTab* tab) { EXPECT_NE(nullptr, tab); }),
       IfView(
           kViewName, [](const TabbedPaneTab* tab) { return tab != nullptr; },
-          Do(correct.Get()), Do(incorrect.Get())),
+          Then(Do(correct.Get())), Else(Do(incorrect.Get()))),
       IfViewMatches(
           kViewName,
           [this](const TabbedPaneTab* tab) { return tabs_->GetIndexOf(tab); },
-          0U, Do(incorrect.Get()), Do(correct.Get())));
+          0U, Then(Do(incorrect.Get())), Else(Do(correct.Get()))));
 }
 
 TEST_F(InteractiveViewsTestTest, ScrollIntoView) {

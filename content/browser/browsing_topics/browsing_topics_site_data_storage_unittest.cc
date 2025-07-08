@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <string_view>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -55,9 +56,9 @@ class BrowsingTopicsSiteDataStorageTest : public testing::Test {
     return temp_dir_.GetPath().AppendASCII("TestBrowsingTopicsSiteData.db");
   }
 
-  base::FilePath GetSqlFilePath(base::StringPiece sql_filename) {
+  base::FilePath GetSqlFilePath(std::string_view sql_filename) {
     base::FilePath file_path;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &file_path);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &file_path);
     file_path = file_path.AppendASCII("content/test/data/browsing_topics/");
     file_path = file_path.AppendASCII(sql_filename);
     EXPECT_TRUE(base::PathExists(file_path));
@@ -119,7 +120,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest,
 
   EXPECT_TRUE(base::PathExists(DbPath()));
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
 
   // [browsing_topics_api_usages],
@@ -160,7 +161,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, LoadFromFile_CurrentVersion_Success) {
       /*begin_time=*/base::Time(), /*end_time=*/base::Time());
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(3u, sql::test::CountSQLTables(&db));
   EXPECT_EQ(1, VersionFromMetaTable(db));
@@ -169,6 +170,10 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, LoadFromFile_CurrentVersion_Success) {
 
   histograms.ExpectUniqueSample("BrowsingTopics.SiteDataStorage.InitStatus",
                                 true, /*expected_bucket_count=*/1);
+
+  histograms.ExpectTotalCount("BrowsingTopics.SiteDataStorage.FileSize.KB", 1);
+  EXPECT_GT(
+      histograms.GetTotalSum("BrowsingTopics.SiteDataStorage.FileSize.KB"), 0);
 }
 
 TEST_F(BrowsingTopicsSiteDataStorageTest,
@@ -184,7 +189,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest,
       /*begin_time=*/base::Time(), /*end_time=*/base::Time());
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(3u, sql::test::CountSQLTables(&db));
   EXPECT_EQ(1, VersionFromMetaTable(db));
@@ -211,7 +216,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, LoadFromFile_VersionTooOld_Failure) {
 
   // Expect that the initialization was unsuccessful. The original database was
   // unaffected.
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(2u, sql::test::CountSQLTables(&db));
   EXPECT_EQ(0, VersionFromMetaTable(db));
@@ -235,7 +240,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, LoadFromFile_VersionTooNew_Failure) {
 
   // Expect that the initialization was successful. The original database was
   // razed and re-initialized.
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(3u, sql::test::CountSQLTables(&db));
   EXPECT_EQ(1, VersionFromMetaTable(db));
@@ -253,7 +258,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, OnBrowsingTopicsApiUsed_SingleEntry) {
       /*context_domain=*/"456.com", base::Time::Now());
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(1u, CountApiUsagesEntries(db));
   EXPECT_EQ(1u, CountContextDomainsEntries(db));
@@ -316,7 +321,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest,
       /*context_domain=*/"789.com", base::Time::Now());
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(4u, CountApiUsagesEntries(db));
   // 789 should not be a duplicate entry in the context domains table.
@@ -509,7 +514,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, ExpireDataBefore) {
   topics_storage()->ExpireDataBefore(base::Time::Now() - base::Seconds(1));
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(1u, CountApiUsagesEntries(db));
   EXPECT_EQ(1u, CountContextDomainsEntries(db));
@@ -574,7 +579,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest,
   topics_storage()->ExpireDataBefore(base::Time::Now() - base::Seconds(1));
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(2u, CountApiUsagesEntries(db));
   EXPECT_EQ(2u, CountContextDomainsEntries(db));
@@ -656,7 +661,7 @@ TEST_F(BrowsingTopicsSiteDataStorageTest, ClearContextDomain) {
   topics_storage()->ClearContextDomain(browsing_topics::HashedDomain(123));
   CloseDatabase();
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(1u, CountApiUsagesEntries(db));
 
@@ -741,7 +746,7 @@ TEST_F(BrowsingTopicsSiteDataStorageMaxEntriesToLoadTest, MaxEntriesToLoad) {
   EXPECT_EQ(result.api_usage_contexts[0].time,
             base::Time::Now() - base::Seconds(1));
 
-  sql::Database db;
+  sql::Database db(sql::test::kTestTag);
   EXPECT_TRUE(db.Open(DbPath()));
   EXPECT_EQ(2u, CountApiUsagesEntries(db));
   EXPECT_EQ(2u, CountContextDomainsEntries(db));

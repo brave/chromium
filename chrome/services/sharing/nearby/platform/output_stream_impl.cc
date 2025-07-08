@@ -7,8 +7,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/task/sequenced_task_runner.h"
 
-namespace nearby {
-namespace chrome {
+namespace nearby::chrome {
 
 namespace {
 
@@ -32,6 +31,8 @@ void LogWriteResult(connections::mojom::Medium medium, bool success) {
     case connections::mojom::Medium::kWebRtc:
     case connections::mojom::Medium::kBleL2Cap:
     case connections::mojom::Medium::kUsb:
+    case connections::mojom::Medium::kWebRtcNonCellular:
+    case connections::mojom::Medium::kAwdl:
       break;
   }
 }
@@ -62,30 +63,35 @@ OutputStreamImpl::~OutputStreamImpl() {
 }
 
 Exception OutputStreamImpl::Write(const ByteArray& data) {
-  if (IsClosed())
+  if (IsClosed()) {
     return {Exception::kIo};
+  }
 
   DCHECK(!write_success_);
   pending_write_buffer_ = std::make_unique<ByteArray>(data);
   pending_write_buffer_pos_ = 0;
 
-  write_waitable_event_.emplace();
+  // Signal and reset the WaitableEvent in case another thread is already
+  // waiting on a Write().
+  write_waitable_event_.Signal();
+  write_waitable_event_.Reset();
+
   task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&mojo::SimpleWatcher::ArmOrNotify,
                                 base::Unretained(&send_stream_watcher_)));
-  write_waitable_event_->Wait();
+  write_waitable_event_.Wait();
 
   Exception result = {write_success_ ? Exception::kSuccess : Exception::kIo};
 
   write_success_ = false;
   pending_write_buffer_.reset();
   pending_write_buffer_pos_ = 0;
-  write_waitable_event_.reset();
 
   // |send_stream_| might have been reset in Close() while
   // |write_waitable_event_| was waiting.
-  if (IsClosed())
+  if (IsClosed()) {
     return {Exception::kIo};
+  }
 
   // Ignore a null |send_stream_| when logging since it might be an expected
   // state as mentioned above.
@@ -126,22 +132,23 @@ void OutputStreamImpl::SendMore(MojoResult result,
   DCHECK(!IsClosed());
   DCHECK(pending_write_buffer_);
   DCHECK_LT(pending_write_buffer_pos_, pending_write_buffer_->size());
-  DCHECK(write_waitable_event_);
 
   if (state.peer_closed()) {
     write_success_ = false;
-    write_waitable_event_->Signal();
+    write_waitable_event_.Signal();
     return;
   }
 
   if (result == MOJO_RESULT_OK) {
-    uint32_t num_bytes = static_cast<uint32_t>(pending_write_buffer_->size() -
-                                               pending_write_buffer_pos_);
-    result = send_stream_->WriteData(
-        pending_write_buffer_->data() + pending_write_buffer_pos_, &num_bytes,
-        MOJO_WRITE_DATA_FLAG_NONE);
-    if (result == MOJO_RESULT_OK)
-      pending_write_buffer_pos_ += num_bytes;
+    base::span<const uint8_t> buffer =
+        base::as_byte_span(*pending_write_buffer_)
+            .subspan(pending_write_buffer_pos_);
+    size_t bytes_written = 0;
+    result = send_stream_->WriteData(buffer, MOJO_WRITE_DATA_FLAG_NONE,
+                                     bytes_written);
+    if (result == MOJO_RESULT_OK) {
+      pending_write_buffer_pos_ += bytes_written;
+    }
   }
 
   if (result == MOJO_RESULT_SHOULD_WAIT ||
@@ -151,7 +158,7 @@ void OutputStreamImpl::SendMore(MojoResult result,
   }
 
   write_success_ = result == MOJO_RESULT_OK;
-  write_waitable_event_->Signal();
+  write_waitable_event_.Signal();
 }
 
 bool OutputStreamImpl::IsClosed() const {
@@ -172,13 +179,12 @@ void OutputStreamImpl::DoClose(base::WaitableEvent* task_run_waitable_event) {
     // cancel the stream watcher, the Write() call will block forever. We
     // trigger the event manually here, which will cause an IO exception to be
     // returned from Write().
-    if (write_waitable_event_)
-      write_waitable_event_->Signal();
+    write_waitable_event_.Signal();
   }
 
-  if (task_run_waitable_event)
+  if (task_run_waitable_event) {
     task_run_waitable_event->Signal();
+  }
 }
 
-}  // namespace chrome
-}  // namespace nearby
+}  // namespace nearby::chrome

@@ -4,14 +4,12 @@
 
 #include "chrome/test/base/chromeos/crosier/chromeos_integration_test_mixin.h"
 
-#include "build/chromeos_buildflags.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "base/command_line.h"
 #include "base/path_service.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ui/compositor/compositor_switches.h"
+#include "ui/gl/gl_switches.h"
 
 ChromeOSIntegrationTestMixin::ChromeOSIntegrationTestMixin(
     InProcessBrowserTestMixinHost* host)
@@ -19,8 +17,17 @@ ChromeOSIntegrationTestMixin::ChromeOSIntegrationTestMixin(
 
 ChromeOSIntegrationTestMixin::~ChromeOSIntegrationTestMixin() = default;
 
+void ChromeOSIntegrationTestMixin::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  // One of the main reason for using ChromeOS integration test is it can
+  // verify graphics stack code path on DUT. So we want to enable GPU and pixel
+  // outputs by default. This would also be required for pixel testing
+  // and generating screenshots during test failures.
+  command_line->AppendSwitch(switches::kEnablePixelOutputInTests);
+  command_line->AppendSwitch(switches::kUseGpuInTests);
+}
+
 bool ChromeOSIntegrationTestMixin::SetUpUserDataDirectory() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Always have --user-data-dir present in commandline arguments.
   // Without the argument, there are some permission issues. Here the logic
   // is: a temporary dir is created in base framework and set in PathService.
@@ -31,6 +38,5 @@ bool ChromeOSIntegrationTestMixin::SetUpUserDataDirectory() {
   if (!cmdline->HasSwitch(switches::kUserDataDir)) {
     cmdline->AppendSwitchPath(switches::kUserDataDir, user_data_dir);
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
   return InProcessBrowserTestMixin::SetUpUserDataDirectory();
 }

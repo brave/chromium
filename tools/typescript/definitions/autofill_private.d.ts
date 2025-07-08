@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /** @fileoverview Definitions for chrome.autofillPrivate API */
-// TODO(crbug.com/1203307): Auto-generate this file.
+// TODO(crbug.com/40179454): Auto-generate this file.
 
 import {ChromeEvent} from './chrome_event.js';
 
@@ -15,13 +15,15 @@ declare global {
         email: string;
         isSyncEnabledForAutofillProfiles: boolean;
         isEligibleForAddressAccountStorage: boolean;
+        isAutofillSyncToggleEnabled: boolean;
+        isAutofillSyncToggleAvailable: boolean;
       }
 
       /**
        * This enum must be kept in sync with:
        * components/autofill/core/browser/field_types.h.
        */
-      export enum ServerFieldType {
+      export enum FieldType {
         NO_SERVER_DATA,
         UNKNOWN_TYPE,
         EMPTY_TYPE,
@@ -31,6 +33,9 @@ declare global {
         NAME_MIDDLE_INITIAL,
         NAME_FULL,
         NAME_SUFFIX,
+        ALTERNATIVE_FULL_NAME,
+        ALTERNATIVE_GIVEN_NAME,
+        ALTERNATIVE_FAMILY_NAME,
         EMAIL_ADDRESS,
         PHONE_HOME_NUMBER,
         PHONE_HOME_CITY_CODE,
@@ -84,20 +89,15 @@ declare global {
         ADDRESS_HOME_HOUSE_NUMBER,
         ADDRESS_HOME_SUBPREMISE,
         ADDRESS_HOME_OTHER_SUBUNIT,
+        NAME_LAST_PREFIX,
+        NAME_LAST_CORE,
         NAME_LAST_FIRST,
         NAME_LAST_CONJUNCTION,
         NAME_LAST_SECOND,
         NAME_HONORIFIC_PREFIX,
-        ADDRESS_HOME_PREMISE_NAME,
-        ADDRESS_HOME_DEPENDENT_STREET_NAME,
-        ADDRESS_HOME_STREET_AND_DEPENDENT_STREET_NAME,
         ADDRESS_HOME_ADDRESS,
         ADDRESS_HOME_ADDRESS_WITH_NAME,
         ADDRESS_HOME_FLOOR,
-        NAME_FULL_WITH_HONORIFIC_PREFIX,
-        BIRTHDATE_DAY,
-        BIRTHDATE_MONTH,
-        BIRTHDATE_4_DIGIT_YEAR,
         PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX,
         PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX,
         PHONE_HOME_NUMBER_PREFIX,
@@ -106,41 +106,83 @@ declare global {
         CREDIT_CARD_STANDALONE_VERIFICATION_CODE,
         NUMERIC_QUANTITY,
         ONE_TIME_CODE,
+        DELIVERY_INSTRUCTIONS,
+        ADDRESS_HOME_OVERFLOW,
         ADDRESS_HOME_LANDMARK,
-        ADDRESS_HOME_BETWEEN_STREETS,
+        ADDRESS_HOME_OVERFLOW_AND_LANDMARK,
         ADDRESS_HOME_ADMIN_LEVEL2,
+        ADDRESS_HOME_STREET_LOCATION,
+        ADDRESS_HOME_BETWEEN_STREETS,
+        ADDRESS_HOME_BETWEEN_STREETS_OR_LANDMARK,
+        ADDRESS_HOME_BETWEEN_STREETS_1,
+        ADDRESS_HOME_BETWEEN_STREETS_2,
+        SINGLE_USERNAME_FORGOT_PASSWORD,
+        ADDRESS_HOME_APT,
+        ADDRESS_HOME_APT_TYPE,
+        ADDRESS_HOME_HOUSE_NUMBER_AND_APT,
+        SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES,
+        PASSPORT_NAME_TAG,
+        PASSPORT_NUMBER,
+        PASSPORT_ISSUING_COUNTRY,
+        PASSPORT_EXPIRATION_DATE,
+        PASSPORT_ISSUE_DATE,
+        LOYALTY_MEMBERSHIP_PROGRAM,
+        LOYALTY_MEMBERSHIP_PROVIDER,
+        LOYALTY_MEMBERSHIP_ID,
+        VEHICLE_OWNER_TAG,
+        VEHICLE_LICENSE_PLATE,
+        VEHICLE_VIN,
+        VEHICLE_MAKE,
+        VEHICLE_MODEL,
+        DRIVERS_LICENSE_NAME_TAG,
+        DRIVERS_LICENSE_REGION,
+        DRIVERS_LICENSE_NUMBER,
+        DRIVERS_LICENSE_EXPIRATION_DATE,
+        DRIVERS_LICENSE_ISSUE_DATE,
+        VEHICLE_YEAR,
+        VEHICLE_PLATE_STATE,
+        EMAIL_OR_LOYALTY_MEMBERSHIP_ID,
+        NATIONAL_ID_CARD_NUMBER,
+        NATIONAL_ID_CARD_EXPIRATION_DATE,
+        NATIONAL_ID_CARD_ISSUE_DATE,
+        NATIONAL_ID_CARD_ISSUING_COUNTRY,
+        ADDRESS_HOME_ZIP_PREFIX,
+        ADDRESS_HOME_ZIP_SUFFIX,
       }
 
-      export enum AddressSource {
+      export enum AddressRecordType {
         LOCAL_OR_SYNCABLE = 'LOCAL_OR_SYNCABLE',
         ACCOUNT = 'ACCOUNT',
+        ACCOUNT_HOME = 'ACCOUNT_HOME',
+        ACCOUNT_WORK = 'ACCOUNT_WORK'
+      }
+
+      export enum AttributeTypeDataType {
+        COUNTRY = 'COUNTRY',
+        DATE = 'DATE',
+        STRING = 'STRING',
       }
 
       export interface AutofillMetadata {
         summaryLabel: string;
         summarySublabel?: string;
-        source?: AddressSource;
+        recordType?: AddressRecordType;
         isLocal?: boolean;
-        isCached?: boolean;
         isMigratable?: boolean;
         isVirtualCardEnrollmentEligible?: boolean;
         isVirtualCardEnrolled?: boolean;
       }
 
+      export interface AddressField {
+        type: FieldType;
+        value: string|undefined;
+      }
+
       export interface AddressEntry {
         guid?: string;
-        fullName?: string;
-        honorific?: string;
-        companyName?: string;
-        addressLines?: string;
-        addressLevel1?: string;
-        addressLevel2?: string;
-        addressLevel3?: string;
-        postalCode?: string;
-        sortingCode?: string;
-        countryCode?: string;
-        phoneNumber?: string;
-        emailAddress?: string;
+
+        fields: AddressField[];
+
         languageCode?: string;
         metadata?: AutofillMetadata;
       }
@@ -151,7 +193,7 @@ declare global {
       }
 
       export interface AddressComponent {
-        field: ServerFieldType;
+        field: FieldType;
         fieldName: string;
         isLongField: boolean;
         isRequired: boolean;
@@ -169,6 +211,7 @@ declare global {
 
       export interface CreditCardEntry {
         guid?: string;
+        instrumentId?: string;
         name?: string;
         cardNumber?: string;
         expirationMonth?: string;
@@ -176,49 +219,109 @@ declare global {
         nickname?: string;
         network?: string;
         imageSrc?: string;
+        cvc?: string;
+        productTermsUrl?: string;
         metadata?: AutofillMetadata;
       }
 
       export interface IbanEntry {
         guid?: string;
+        instrumentId?: string;
         value?: string;
         nickname?: string;
         metadata?: AutofillMetadata;
       }
 
-      export interface ValidatePhoneParams {
-        phoneNumbers: string[];
-        indexOfNewNumber: number;
-        countryCode: string;
+      export interface AttributeType {
+        typeName: number;
+        typeNameAsString: string;
+        dataType: AttributeTypeDataType;
+      }
+
+      export interface EntityType {
+        typeName: number;
+        typeNameAsString: string;
+        addEntityTypeString: string;
+        editEntityTypeString: string;
+        deleteEntityTypeString: string;
+      }
+
+      export interface DateValue {
+        year: string;
+        month: string;
+        day: string;
+      }
+
+      export interface AttributeInstance {
+        type: AttributeType;
+        value: string|DateValue;
+      }
+
+      export interface EntityInstance {
+        type: EntityType;
+        attributeInstances: AttributeInstance[];
+        guid: string;
+        nickname: string;
+      }
+
+      export interface EntityInstanceWithLabels {
+        guid: string;
+        entityInstanceLabel: string;
+        entityInstanceSubLabel: string;
+      }
+
+      export interface PayOverTimeIssuerEntry {
+        issuerId?: string;
+        instrumentId?: string;
+        displayName?: string;
+        imageSrc?: string;
+        imageSrcDark?: string;
       }
 
       export function getAccountInfo(): Promise<AccountInfo|undefined>;
       export function saveAddress(address: AddressEntry): void;
-      export function getCountryList(): Promise<CountryEntry[]>;
+      export function removeAddress(guid: string): void;
+      export function getCountryList(forAccountStorage: boolean):
+          Promise<CountryEntry[]>;
       export function getAddressComponents(
           countryCode: string): Promise<AddressComponents>;
       export function getAddressList(): Promise<AddressEntry[]>;
       export function saveCreditCard(card: CreditCardEntry): void;
       export function saveIban(iban: IbanEntry): void;
-      export function removeEntry(guid: string): void;
-      export function validatePhoneNumbers(
-          params: ValidatePhoneParams): Promise<string[]>;
+      export function removePaymentsEntity(guid: string): void;
       export function getCreditCardList(): Promise<CreditCardEntry[]>;
       export function getIbanList(): Promise<IbanEntry[]>;
       export function isValidIban(ibanValue: string): Promise<boolean>;
-      export function maskCreditCard(guid: string): void;
-      export function migrateCreditCards(): void;
       export function logServerCardLinkClicked(): void;
-      export function setCreditCardFIDOAuthEnabledState(enabled: boolean): void;
-      export function getUpiIdList(): Promise<string[]>;
+      export function logServerIbanLinkClicked(): void;
       export function addVirtualCard(cardId: string): void;
       export function removeVirtualCard(cardId: string): void;
+      export function getPayOverTimeIssuerList():
+          Promise<PayOverTimeIssuerEntry[]>;
       export function authenticateUserAndFlipMandatoryAuthToggle(): void;
-      export function authenticateUserToEditLocalCard(): Promise<boolean>;
-
+      export function getLocalCard(guid: string): Promise<CreditCardEntry|null>;
+      export function checkIfDeviceAuthAvailable(): Promise<boolean>;
+      export function bulkDeleteAllCvcs(): void;
+      export function setAutofillSyncToggleEnabled(enabled: boolean): void;
+      export function addOrUpdateEntityInstance(entityInstance: EntityInstance):
+          void;
+      export function removeEntityInstance(guid: string): void;
+      export function loadEntityInstances():
+          Promise<EntityInstanceWithLabels[]>;
+      export function getEntityInstanceByGuid(guid: string):
+          Promise<EntityInstance>;
+      export function getAllEntityTypes(): Promise<EntityType[]>;
+      export function getAllAttributeTypesForEntityTypeName(
+          entityTypeName: number): Promise<AttributeType[]>;
+      export function getAutofillAiOptInStatus(): Promise<boolean>;
+      export function setAutofillAiOptInStatus(optedIn: boolean):
+          Promise<boolean>;
       export const onPersonalDataChanged: ChromeEvent<
           (addresses: AddressEntry[], creditCards: CreditCardEntry[],
-           ibans: IbanEntry[], accountInfo?: AccountInfo) => void>;
+           ibans: IbanEntry[], payOverTimeIssuers: PayOverTimeIssuerEntry[],
+           accountInfo?: AccountInfo) => void>;
+      export const onEntityInstancesChanged: ChromeEvent<
+          (entityInstancesWithLabels: EntityInstanceWithLabels[]) => void>;
     }
   }
 }

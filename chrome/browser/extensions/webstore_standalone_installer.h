@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_EXTENSIONS_WEBSTORE_STANDALONE_INSTALLER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -14,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/extensions/active_install_data.h"
+#include "chrome/browser/extensions/cws_item_service.pb.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
 #include "chrome/browser/extensions/webstore_install_helper.h"
@@ -21,11 +23,14 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/common/extensions/webstore_install_result.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "extensions/buildflags/buildflags.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 class Extension;
+struct InstallApproval;
 class ScopedActiveInstall;
 class WebstoreDataFetcher;
 
@@ -45,7 +50,7 @@ class WebstoreStandaloneInstaller
       public ProfileObserver {
  public:
   // A callback for when the install process completes, successfully or not. If
-  // there was a failure, |success| will be false and |error| may contain a
+  // there was a failure, `success` will be false and `error` may contain a
   // developer-readable error message about why it failed.
   using Callback = base::OnceCallback<void(bool success,
                                            const std::string& error,
@@ -105,7 +110,7 @@ class WebstoreStandaloneInstaller
   // by some calls even when no prompt or other UI is shown). A non-dummy
   // WebContents is required if the prompt returned by CreateInstallPromt()
   // contains a navigable link(s). Returned WebContents should correspond
-  // to |profile| passed into the constructor.
+  // to `profile` passed into the constructor.
   virtual content::WebContents* GetWebContents() const = 0;
 
   // Should return an installation prompt with desired properties or NULL if
@@ -125,7 +130,7 @@ class WebstoreStandaloneInstaller
   virtual std::unique_ptr<ExtensionInstallPrompt> CreateInstallUI();
 
   // Create an approval to pass installation parameters to the CrxInstaller.
-  virtual std::unique_ptr<WebstoreInstaller::Approval> CreateApproval() const;
+  virtual std::unique_ptr<InstallApproval> CreateApproval() const;
 
   // Called once the install prompt has finished.
   virtual void OnInstallPromptDone(
@@ -138,6 +143,9 @@ class WebstoreStandaloneInstaller
   }
   double average_rating() const { return average_rating_; }
   int rating_count() const { return rating_count_; }
+  const std::string& localized_rating_count() const {
+    return localized_rating_count_;
+  }
   void set_install_source(WebstoreInstaller::InstallSource source) {
     install_source_ = source;
   }
@@ -155,12 +163,14 @@ class WebstoreStandaloneInstaller
   friend class base::RefCountedThreadSafe<WebstoreStandaloneInstaller>;
 
   // Several delegate/client interface implementations follow. The normal flow
-  // (for successful installs) is:
+  // (for successful installs) with the item snippets API is:
   //
-  // 1. BeginInstall: starts the fetch of data from the webstore
-  // 2. OnURLFetchComplete: starts the parsing of data from the webstore
-  // 3. OnWebstoreResponseParseSuccess: starts the parsing of the manifest and
-  //    fetching of icon data.
+  // 1. BeginInstall: starts the fetch of data from the webstore.
+  // 2. WebstoreDataFetcher::OnFetchItemSnippetResponseReceived: starts the
+  //    parsing of data from the webstore into a FetchItemSnippetResponse
+  //    protobuf.
+  // 3. OnFetchItemSnippetParseSuccess: starts the parsing of the
+  //    manifest and fetching of icon data.
   // 4. OnWebstoreParseSuccess: shows the install UI
   // 5. InstallUIProceed: initiates the .crx download/install
   //
@@ -169,11 +179,9 @@ class WebstoreStandaloneInstaller
 
   // WebstoreDataFetcherDelegate interface implementation.
   void OnWebstoreRequestFailure(const std::string& extension_id) override;
-
-  void OnWebstoreResponseParseSuccess(
+  void OnFetchItemSnippetParseSuccess(
       const std::string& extension_id,
-      const base::Value::Dict& webstore_data) override;
-
+      FetchItemSnippetResponse item_snippet) override;
   void OnWebstoreResponseParseFailure(const std::string& extension_id,
                                       const std::string& error) override;
 
@@ -222,8 +230,9 @@ class WebstoreStandaloneInstaller
   bool show_user_count_{true};
   std::string localized_user_count_;
   double average_rating_{0.0};
+  std::string localized_rating_count_;
   int rating_count_{0};
-  absl::optional<base::Value::Dict> manifest_;
+  std::optional<base::Value::Dict> manifest_;
   SkBitmap icon_;
 
   // Active install registered with the InstallTracker.

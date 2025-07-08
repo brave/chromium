@@ -91,7 +91,7 @@ void RenderFrameMetadataObserverImpl::OnRenderFrameSubmission(
     // leave the browser process with out of date information. It is an
     // optional parameter which we clear here.
     if (!report_all_frame_submissions_for_testing_enabled_)
-      metadata_copy.root_scroll_offset = absl::nullopt;
+      metadata_copy.root_scroll_offset = std::nullopt;
 #endif
 
     last_frame_token_ = compositor_frame_metadata->frame_token;
@@ -192,7 +192,11 @@ bool RenderFrameMetadataObserverImpl::ShouldSendRenderFrameMetadata(
       rfm1.top_controls_shown_ratio != rfm2.top_controls_shown_ratio ||
       rfm1.local_surface_id != rfm2.local_surface_id ||
       rfm2.new_vertical_scroll_direction !=
-          viz::VerticalScrollDirection::kNull) {
+          viz::VerticalScrollDirection::kNull ||
+      (rfm2.primary_main_frame_item_sequence_number !=
+           cc::RenderFrameMetadata::kInvalidItemSequenceNumber &&
+       rfm1.primary_main_frame_item_sequence_number !=
+           rfm2.primary_main_frame_item_sequence_number)) {
     *needs_activation_notification = true;
     return true;
   }

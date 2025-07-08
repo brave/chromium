@@ -11,10 +11,6 @@
 #include "device/bluetooth/bluetooth_low_energy_adapter_apple.h"
 #include "device/bluetooth/bluetooth_low_energy_discovery_manager_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace device {
 
 // This class exists to bridge between the Objective-C CBCentralManagerDelegate
@@ -62,8 +58,13 @@ class BluetoothLowEnergyCentralManagerBridge {
   }
 
  private:
-  raw_ptr<BluetoothLowEnergyDiscoveryManagerMac> discovery_manager_;
-  raw_ptr<BluetoothLowEnergyAdapterApple> adapter_;
+  // TODO(https://crbug.com/330009945): Fix those dangling dangling pointers.
+  // They are dangling on mac_chromium_10.15_rel_ng during
+  // ChromeDriverSecureContextTest.testRemoveAllCredentials test.
+  raw_ptr<BluetoothLowEnergyDiscoveryManagerMac, AcrossTasksDanglingUntriaged>
+      discovery_manager_;
+  raw_ptr<BluetoothLowEnergyAdapterApple, AcrossTasksDanglingUntriaged>
+      adapter_;
 };
 
 }  // namespace device

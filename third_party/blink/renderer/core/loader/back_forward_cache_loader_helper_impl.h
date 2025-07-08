@@ -13,6 +13,8 @@
 
 namespace blink {
 
+class SourceLocation;
+
 class BackForwardCacheLoaderHelperImpl : public BackForwardCacheLoaderHelper {
  public:
   // A delegate to notify the loader states to the back-forward cache.
@@ -21,22 +23,30 @@ class BackForwardCacheLoaderHelperImpl : public BackForwardCacheLoaderHelper {
     virtual ~Delegate() = default;
 
     // Triggers eviction of this delegate by notifying the browser side.
+    // We want to capture the source location only when the eviction reason is
+    // JavaScript execution, and this delegate shouldn't be called for
+    // JavaScript execution. Therefore, nullptr should be passed as
+    // source_location.
     virtual void EvictFromBackForwardCache(
-        mojom::blink::RendererEvictionReason reason) = 0;
+        mojom::blink::RendererEvictionReason reason,
+        SourceLocation* source_location) = 0;
 
     // Called when a network request buffered an additional `num_bytes` while
     // the delegate is in back-forward cache. Updates the total amount of bytes
     // buffered for back-forward cache in the delegate and in the process. Note
     // that `num_bytes` is the amount of additional bytes that are newly
     // buffered, on top of any previously buffered bytes for this delegate.
-    virtual void DidBufferLoadWhileInBackForwardCache(size_t num_bytes) = 0;
+    virtual void DidBufferLoadWhileInBackForwardCache(
+        bool update_process_wide_count,
+        size_t num_bytes) = 0;
   };
 
   explicit BackForwardCacheLoaderHelperImpl(Delegate& delegate);
 
   void EvictFromBackForwardCache(
       mojom::blink::RendererEvictionReason reason) override;
-  void DidBufferLoadWhileInBackForwardCache(size_t num_bytes) override;
+  void DidBufferLoadWhileInBackForwardCache(bool update_process_wide_count,
+                                            size_t num_bytes) override;
   void Detach() override;
   void Trace(Visitor*) const override;
 

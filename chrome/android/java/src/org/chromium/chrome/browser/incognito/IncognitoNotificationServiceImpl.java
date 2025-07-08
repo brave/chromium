@@ -20,9 +20,10 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
-import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabHostUtils;
 import org.chromium.chrome.browser.util.AndroidTaskUtils;
 import org.chromium.components.browser_ui.notifications.PendingIntentProvider;
@@ -31,9 +32,7 @@ import org.chromium.content_public.browser.BrowserStartupController;
 import java.util.HashSet;
 import java.util.Set;
 
-/**
- * Service that handles the action of clicking on the incognito notification.
- */
+/** Service that handles the action of clicking on the incognito notification. */
 public class IncognitoNotificationServiceImpl extends IncognitoNotificationService.Impl {
     private static final String ACTION_CLOSE_ALL_INCOGNITO =
             "com.google.android.apps.chrome.incognito.CLOSE_ALL_INCOGNITO";
@@ -47,7 +46,7 @@ public class IncognitoNotificationServiceImpl extends IncognitoNotificationServi
     }
 
     @Override
-    protected void onHandleIntent(Intent intent) {
+    protected void onHandleIntent(@Nullable Intent intent) {
         PostTask.runSynchronously(
                 TaskTraits.UI_DEFAULT, IncognitoTabHostUtils::closeAllIncognitoTabs);
 
@@ -58,27 +57,31 @@ public class IncognitoNotificationServiceImpl extends IncognitoNotificationServi
         // If we failed clearing all of the incognito tabs, then do not dismiss the notification.
         if (!clearedIncognito) return;
 
-        PostTask.runSynchronously(TaskTraits.UI_DEFAULT, () -> {
-            if (IncognitoTabHostUtils.doIncognitoTabsExist()) {
-                assert false : "Not all incognito tabs closed as expected";
-                return;
-            }
-            IncognitoNotificationManager.dismissIncognitoNotification();
+        PostTask.runSynchronously(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    if (IncognitoTabHostUtils.doIncognitoTabsExist()) {
+                        assert false : "Not all incognito tabs closed as expected";
+                        return;
+                    }
+                    IncognitoNotificationManager.dismissIncognitoNotification();
 
-            if (BrowserStartupController.getInstance().isFullBrowserStarted()) {
-                if (Profile.getLastUsedRegularProfile().hasPrimaryOTRProfile()) {
-                    Profile.getLastUsedRegularProfile()
-                            .getPrimaryOTRProfile(/*createIfNeeded=*/false)
-                            .destroyWhenAppropriate();
-                }
-            }
-        });
+                    if (BrowserStartupController.getInstance().isFullBrowserStarted()) {
+                        if (ProfileManager.getLastUsedRegularProfile().hasPrimaryOtrProfile()) {
+                            ProfileManager.destroyWhenAppropriate(
+                                    ProfileManager.getLastUsedRegularProfile()
+                                            .getPrimaryOtrProfile(/* createIfNeeded= */ false));
+                        }
+                    }
+                });
 
-        PostTask.runSynchronously(TaskTraits.UI_DEFAULT, () -> {
-            // Now ensure that the snapshots in recents are all cleared for Tabbed activities
-            // to remove any trace of incognito mode.
-            removeNonVisibleChromeTabbedRecentEntries();
-        });
+        PostTask.runSynchronously(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    // Now ensure that the snapshots in recents are all cleared for Tabbed
+                    // activities to remove any trace of incognito mode.
+                    removeNonVisibleChromeTabbedRecentEntries();
+                });
     }
 
     private void removeNonVisibleChromeTabbedRecentEntries() {

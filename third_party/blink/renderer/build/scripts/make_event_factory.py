@@ -45,6 +45,10 @@ def create_event_ignore_case_list(name):
             or name.startswith('MouseEvent') or name == 'TouchEvent')
 
 
+# All events that require ScriptState passed to their Create method.
+def needs_script_state(name):
+    return name == 'ErrorEvent'
+
 # All events on the following list are matched case-insensitively in createEvent
 # and are measured using UseCounter.
 #
@@ -58,7 +62,6 @@ def create_event_ignore_case_and_measure_list(name):
             or name == 'DragEvent' or name == 'ErrorEvent'
             or name == 'FocusEvent' or name == 'HashChangeEvent'
             or name == 'IDBVersionChangeEvent' or name == 'KeyboardEvents'
-            or name == 'MutationEvent' or name == 'MutationEvents'
             or name == 'PageTransitionEvent' or name == 'PopStateEvent'
             or name == 'StorageEvent' or name == 'SVGEvents'
             or name == 'TextEvent' or name == 'TrackEvent'
@@ -86,6 +89,7 @@ class EventFactoryWriter(json5_generator.Writer):
         'name': lambda entry: entry['name'].original,
         'create_event_ignore_case_list': create_event_ignore_case_list,
         'measure_name': measure_name,
+        'needs_script_state': needs_script_state,
     }
 
     def __init__(self, json5_file_path, output_dir):

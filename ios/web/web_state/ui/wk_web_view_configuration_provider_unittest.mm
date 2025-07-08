@@ -6,41 +6,70 @@
 
 #import <WebKit/WebKit.h>
 
-#import "base/memory/ptr_util.h"
-#import "ios/web/js_messaging/page_script_util.h"
+#import <vector>
+
+#import "base/strings/sys_string_conversions.h"
+#import "base/test/bind.h"
+#import "base/test/task_environment.h"
+#import "base/test/test_future.h"
+#import "base/uuid.h"
 #import "ios/web/public/js_messaging/content_world.h"
 #import "ios/web/public/js_messaging/java_script_feature.h"
 #import "ios/web/public/test/fakes/fake_browser_state.h"
 #import "ios/web/public/test/fakes/fake_web_client.h"
 #import "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/web_client.h"
-#import "ios/web/test/fakes/fake_wk_configuration_provider_observer.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_provider.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_util.h"
+#import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-namespace {
-
-// Returns the WKUserScript from `user_scripts` which contains `script_string`
-// or null if no such script is found.
-WKUserScript* FindWKUserScriptContaining(NSArray<WKUserScript*>* user_scripts,
-                                         NSString* script_string) {
-  for (WKUserScript* user_script in user_scripts) {
-    if ([user_script.source containsString:script_string]) {
-      return user_script;
-    }
-  }
-  return nil;
-}
-
-}  // namespace
+using base::test::TestFuture;
 
 namespace web {
 namespace {
+
+// Helper to check for a rule list's presence in the store and wait.
+// Returns a gtest AssertionResult for use with EXPECT_TRUE.
+[[nodiscard]] testing::AssertionResult CheckStoreForRuleListSync(
+    const std::string& identifier,
+    bool expect_found = true) {
+  TestFuture<WKContentRuleList*, NSError*> future;
+  void (^completion_block)(WKContentRuleList*, NSError*) =
+      base::CallbackToBlock(future.GetCallback());
+  [WKContentRuleListStore.defaultStore
+      lookUpContentRuleListForIdentifier:base::SysUTF8ToNSString(identifier)
+                       completionHandler:completion_block];
+  auto [rule_list, error] = future.Get();
+
+  const bool was_found = (rule_list != nil);
+
+  // First, handle any unexpected WebKit errors. This is always a failure.
+  if (error && (![error.domain isEqualToString:WKErrorDomain] ||
+                error.code != WKErrorContentRuleListStoreLookUpFailed)) {
+    return testing::AssertionFailure()
+           << "Unexpected error looking up content rule list with identifier '"
+           << identifier << "': " << base::SysNSStringToUTF8(error.description);
+  }
+
+  // Now, check if the outcome matches the expectation.
+  if (was_found == expect_found) {
+    return testing::AssertionSuccess();
+  }
+
+  // The outcome did not match the expectation, return a specific failure.
+  if (expect_found) {
+    return testing::AssertionFailure()
+           << "Expected to find content rule list with identifier '"
+           << identifier << "', but it was not found.";
+  } else {
+    return testing::AssertionFailure()
+           << "Expected content rule list with identifier '" << identifier
+           << "' to be absent, but it was found.";
+  }
+}
 
 class WKWebViewConfigurationProviderTest : public PlatformTest {
  public:
@@ -62,9 +91,9 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
     return static_cast<FakeWebClient*>(web_client_.Get());
   }
 
-  // BrowserState required for WKWebViewConfigurationProvider creation.
   web::ScopedTestingWebClient web_client_;
   FakeBrowserState browser_state_;
+  base::test::TaskEnvironment task_environment_;
 };
 
 // Tests that each WKWebViewConfigurationProvider has own, non-nil
@@ -72,7 +101,7 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
 // have the same process pool.
 TEST_F(WKWebViewConfigurationProviderTest, ConfigurationOwnerhip) {
   // Configuration is not nil.
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   ASSERT_TRUE(provider.GetWebViewConfiguration());
 
   // Same non-nil WKProcessPool for the same provider.
@@ -91,7 +120,7 @@ TEST_F(WKWebViewConfigurationProviderTest, ConfigurationOwnerhip) {
 // Tests Non-OffTheRecord configuration.
 TEST_F(WKWebViewConfigurationProviderTest, NoneOffTheRecordConfiguration) {
   browser_state_.SetOffTheRecord(false);
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   EXPECT_TRUE(provider.GetWebViewConfiguration().websiteDataStore.persistent);
 }
 
@@ -106,7 +135,7 @@ TEST_F(WKWebViewConfigurationProviderTest, OffTheRecordConfiguration) {
 
 // Tests that internal configuration object can not be changed by clients.
 TEST_F(WKWebViewConfigurationProviderTest, ConfigurationProtection) {
-  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+  WKWebViewConfigurationProvider& provider = GetProvider();
   WKWebViewConfiguration* config = provider.GetWebViewConfiguration();
   WKProcessPool* pool = [config processPool];
   WKPreferences* prefs = [config preferences];
@@ -147,133 +176,23 @@ TEST_F(WKWebViewConfigurationProviderTest, Purge) {
   EXPECT_FALSE(config);
 }
 
-// Tests that configuration's userContentController has both all_frames script
-// and a main_frame script with the same content as
-// web::GetDocumentStartScriptForAllFrames() and
-// web::GetDocumentStartScriptForMainFrame() returns respectively.
-TEST_F(WKWebViewConfigurationProviderTest, UserScript) {
-  WKUserContentController* user_content_controller =
-      GetProvider().GetWebViewConfiguration().userContentController;
+// Tests that the static content rule lists are created on initialization.
+TEST_F(WKWebViewConfigurationProviderTest, StaticContentRuleListsAreCreated) {
+  // Creating the provider triggers the registration of static rule lists.
+  WKWebViewConfigurationProvider& config_provider = GetProvider();
+  WKContentRuleListProvider& rule_list_provider =
+      config_provider.GetContentRuleListProvider();
 
-  WKUserScript* early_all_user_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts,
-      GetDocumentStartScriptForAllFrames(&browser_state_));
-  ASSERT_TRUE(early_all_user_script);
-  EXPECT_FALSE(early_all_user_script.isForMainFrameOnly);
+  // Wait for the provider to become idle, ensuring all initial rule list
+  // compilations have completed.
+  TestFuture<void> idle_future;
+  rule_list_provider.SetIdleCallbackForTesting(
+      idle_future.GetRepeatingCallback());
+  EXPECT_TRUE(idle_future.Wait());
 
-  WKUserScript* main_frame_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts,
-      GetDocumentStartScriptForMainFrame(&browser_state_));
-  ASSERT_TRUE(main_frame_script);
-  EXPECT_TRUE(main_frame_script.isForMainFrameOnly);
-
-  EXPECT_NE(early_all_user_script.source, main_frame_script.source);
-  EXPECT_TRUE([early_all_user_script.source containsString:@"all_frames"]);
-  EXPECT_TRUE([main_frame_script.source containsString:@"main_frame"]);
-}
-
-// Tests that configuration's userContentController has different main frame
-// scripts after the main frame scripts are updated. Verifies that all frame
-// scripts were no altered while updating the main frame scripts.
-TEST_F(WKWebViewConfigurationProviderTest, UpdateMainFrameScripts) {
-  FakeWebClient* client = GetWebClient();
-  client->SetEarlyPageScriptForMainFrame(@"var test = 4;");
-
-  WKUserContentController* user_content_controller =
-      GetProvider().GetWebViewConfiguration().userContentController;
-
-  NSString* initial_all_frames_script_source =
-      GetDocumentStartScriptForAllFrames(&browser_state_);
-  WKUserScript* initial_all_frames_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, initial_all_frames_script_source);
-  EXPECT_TRUE(initial_all_frames_script);
-
-  NSString* initial_main_frame_script_source =
-      GetDocumentStartScriptForMainFrame(&browser_state_);
-  WKUserScript* initial_main_frame_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, initial_main_frame_script_source);
-  EXPECT_TRUE(initial_main_frame_script);
-
-  client->SetEarlyPageScriptForMainFrame(@"var test = 3;");
-  GetProvider().UpdateScripts();
-
-  NSString* updated_main_frame_script_source =
-      GetDocumentStartScriptForMainFrame(&browser_state_);
-  WKUserScript* updated_main_frame_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, updated_main_frame_script_source);
-  EXPECT_TRUE(updated_main_frame_script);
-
-  EXPECT_NE(updated_main_frame_script_source, initial_main_frame_script_source);
-  EXPECT_NE(initial_main_frame_script.source, updated_main_frame_script.source);
-  EXPECT_LT(0U, [updated_main_frame_script.source
-                    rangeOfString:updated_main_frame_script_source]
-                    .length);
-  EXPECT_EQ(0U, [initial_main_frame_script.source
-                    rangeOfString:updated_main_frame_script_source]
-                    .length);
-
-  NSString* updated_all_frames_script_source =
-      GetDocumentStartScriptForAllFrames(&browser_state_);
-  WKUserScript* updated_all_frames_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, updated_all_frames_script_source);
-  EXPECT_TRUE(updated_all_frames_script);
-
-  EXPECT_TRUE([updated_all_frames_script_source
-      isEqualToString:initial_all_frames_script_source]);
-  EXPECT_TRUE([initial_all_frames_script.source
-      isEqualToString:updated_all_frames_script.source]);
-}
-
-// Tests that configuration's userContentController has different all frames
-// scripts after the all frames scripts are updated. Verifies that main frame
-// scripts were no altered while updating the all frames scripts.
-TEST_F(WKWebViewConfigurationProviderTest, UpdateAllFramesScripts) {
-  FakeWebClient* client = GetWebClient();
-  client->SetEarlyPageScriptForAllFrames(@"var test = 4;");
-
-  WKUserContentController* user_content_controller =
-      GetProvider().GetWebViewConfiguration().userContentController;
-
-  NSString* initial_main_frame_script_source =
-      GetDocumentStartScriptForMainFrame(&browser_state_);
-  WKUserScript* initial_main_frame_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, initial_main_frame_script_source);
-  EXPECT_TRUE(initial_main_frame_script);
-
-  NSString* initial_all_frames_script_source =
-      GetDocumentStartScriptForAllFrames(&browser_state_);
-  WKUserScript* initial_all_frames_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, initial_all_frames_script_source);
-  EXPECT_TRUE(initial_all_frames_script);
-
-  client->SetEarlyPageScriptForAllFrames(@"var test = 3;");
-  GetProvider().UpdateScripts();
-
-  NSString* updated_all_frames_script_source =
-      GetDocumentStartScriptForAllFrames(&browser_state_);
-  WKUserScript* updated_all_frames_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, updated_all_frames_script_source);
-  EXPECT_TRUE(updated_all_frames_script);
-
-  EXPECT_NE(updated_all_frames_script_source, initial_all_frames_script_source);
-  EXPECT_NE(initial_all_frames_script.source, updated_all_frames_script.source);
-  EXPECT_LT(0U, [updated_all_frames_script.source
-                    rangeOfString:updated_all_frames_script_source]
-                    .length);
-  EXPECT_EQ(0U, [initial_all_frames_script.source
-                    rangeOfString:updated_all_frames_script_source]
-                    .length);
-
-  NSString* updated_main_frame_script_source =
-      GetDocumentStartScriptForMainFrame(&browser_state_);
-  WKUserScript* updated_main_frame_script = FindWKUserScriptContaining(
-      user_content_controller.userScripts, updated_main_frame_script_source);
-  EXPECT_TRUE(updated_main_frame_script);
-
-  EXPECT_TRUE([updated_main_frame_script_source
-      isEqualToString:initial_main_frame_script_source]);
-  EXPECT_TRUE([initial_main_frame_script.source
-      isEqualToString:updated_main_frame_script.source]);
+  // Verify that the static lists now exist in the store.
+  EXPECT_TRUE(CheckStoreForRuleListSync(kBlockLocalResourcesRuleListKey));
+  EXPECT_TRUE(CheckStoreForRuleListSync(kMixedContentUpgradeRuleListKey));
 }
 
 // Tests that configuration's userContentController has additional scripts
@@ -283,10 +202,12 @@ TEST_F(WKWebViewConfigurationProviderTest, JavaScriptFeatureInjection) {
 
   WKUserContentController* user_content_controller =
       GetProvider().GetWebViewConfiguration().userContentController;
+  ASSERT_NE(nil, user_content_controller)
+      << "UserContentController should not be nil initially.";
   unsigned long original_script_count =
       [user_content_controller.userScripts count];
 
-  std::vector<const web::JavaScriptFeature::FeatureScript> feature_scripts = {
+  const std::vector<web::JavaScriptFeature::FeatureScript> feature_scripts = {
       web::JavaScriptFeature::FeatureScript::CreateWithFilename(
           "java_script_feature_test_inject_once",
           web::JavaScriptFeature::FeatureScript::InjectionTime::kDocumentStart,
@@ -299,23 +220,53 @@ TEST_F(WKWebViewConfigurationProviderTest, JavaScriptFeatureInjection) {
   client->SetJavaScriptFeatures({feature.get()});
   GetProvider().UpdateScripts();
 
+  // Re-fetch userContentController to ensure we're checking the updated state.
+  user_content_controller =
+      GetProvider().GetWebViewConfiguration().userContentController;
+  ASSERT_NE(nil, user_content_controller)
+      << "UserContentController should not be nil after update.";
   EXPECT_GT([user_content_controller.userScripts count], original_script_count);
 }
 
 // Tests that observers methods are correctly triggered when observing the
 // WKWebViewConfigurationProvider
 TEST_F(WKWebViewConfigurationProviderTest, Observers) {
+  // Use a separate browser_state for this test to avoid interference if
+  // GetProvider() has side effects
   auto browser_state = std::make_unique<FakeBrowserState>();
   WKWebViewConfigurationProvider* provider = &GetProvider(browser_state.get());
 
-  FakeWKConfigurationProviderObserver observer(provider);
-  EXPECT_FALSE(observer.GetLastCreatedWKConfiguration());
+  // Register a callback to be notified when website data store is
+  // updated and check that it is not invoked as part of the registration.
+  __block WKWebsiteDataStore* recorded_data_store = nil;
+  base::CallbackListSubscription subscription =
+      provider->RegisterWebSiteDataStoreUpdatedCallback(
+          base::BindRepeating(^(WKWebsiteDataStore* new_data_store) {
+            recorded_data_store = new_data_store;
+          }));
+  ASSERT_FALSE(recorded_data_store);
+
+  // Check that accessing the WebViewConfiguration for the first time
+  // creates a new website date store object.
   WKWebViewConfiguration* config = provider->GetWebViewConfiguration();
-  EXPECT_NSEQ(config.preferences,
-              observer.GetLastCreatedWKConfiguration().preferences);
-  observer.ResetLastCreatedWKConfig();
+  EXPECT_NSEQ(config.websiteDataStore, recorded_data_store);
+  // Check that the website data store getter returns the same object with the
+  // newly updated data store.
+  WKWebsiteDataStore* data_store = provider->GetWebsiteDataStore();
+  EXPECT_NSEQ(data_store, recorded_data_store);
+
+  // Check that accessing the WebViewConfiguration again does not create
+  // a new website data store object and thus does not invoked the registered
+  // callback.
+  recorded_data_store = nil;
   config = provider->GetWebViewConfiguration();
-  EXPECT_FALSE(observer.GetLastCreatedWKConfiguration());
+  EXPECT_FALSE(recorded_data_store);
+
+  // Check that accessing the WebsiteDataStore again does not create
+  // a new website data store object and thus does not invoked the registered
+  // callback.
+  data_store = provider->GetWebsiteDataStore();
+  EXPECT_FALSE(recorded_data_store);
 }
 
 // Tests that if -[ResetWithWebViewConfiguration:] copies and applies Chrome's
@@ -324,33 +275,270 @@ TEST_F(WKWebViewConfigurationProviderTest, ResetConfiguration) {
   auto browser_state = std::make_unique<FakeBrowserState>();
   WKWebViewConfigurationProvider* provider = &GetProvider(browser_state.get());
 
-  FakeWKConfigurationProviderObserver observer(provider);
-  ASSERT_FALSE(observer.GetLastCreatedWKConfiguration());
-
   WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
   config.allowsInlineMediaPlayback = NO;
   provider->ResetWithWebViewConfiguration(config);
-  WKWebViewConfiguration* actual = observer.GetLastCreatedWKConfiguration();
-  ASSERT_TRUE(actual);
+
+  WKWebViewConfiguration* recorded_configuration =
+      provider->GetWebViewConfiguration();
+  ASSERT_TRUE(recorded_configuration);
 
   // To check the configuration inside is reset.
-  EXPECT_EQ(config.preferences, actual.preferences);
+  EXPECT_EQ(config.preferences, recorded_configuration.preferences);
 
   // To check Chrome's initialization logic has been applied to `actual`,
   // where the `actual.allowsInlineMediaPlayback` should be overwriten by YES.
   EXPECT_EQ(NO, config.allowsInlineMediaPlayback);
-  EXPECT_EQ(YES, actual.allowsInlineMediaPlayback);
+  EXPECT_EQ(YES, recorded_configuration.allowsInlineMediaPlayback);
 
   // Compares the POINTERS to make sure the `config` has been shallow cloned
   // inside the `provider`.
-  EXPECT_NE(config, actual);
+  EXPECT_NE(config, recorded_configuration);
 }
 
-TEST_F(WKWebViewConfigurationProviderTest, GetContentRuleListProvider) {
-  auto browser_state = std::make_unique<FakeBrowserState>();
-  WKWebViewConfigurationProvider& provider = GetProvider(browser_state.get());
+// Tests that WKWebViewConfiguration has a different data store if browser state
+// returns a different storage ID.
+TEST_F(WKWebViewConfigurationProviderTest, DifferentDataStore) {
+  // Create a configuration with an identifier.
+  auto browser_state1 = std::make_unique<FakeBrowserState>();
+  browser_state1->SetWebKitStorageID(base::Uuid::GenerateRandomV4());
+  WKWebViewConfigurationProvider* provider1 =
+      &GetProvider(browser_state1.get());
+  WKWebViewConfiguration* config1 = provider1->GetWebViewConfiguration();
+  EXPECT_TRUE(config1.websiteDataStore);
+  EXPECT_TRUE(config1.websiteDataStore.persistent);
 
-  EXPECT_NE(nil, provider.GetContentRuleListProvider());
+  // Create another configuration with another identifier.
+  auto browser_state2 = std::make_unique<FakeBrowserState>();
+  browser_state2->SetWebKitStorageID(base::Uuid::GenerateRandomV4());
+  WKWebViewConfigurationProvider* provider2 =
+      &GetProvider(browser_state2.get());
+  WKWebViewConfiguration* config2 = provider2->GetWebViewConfiguration();
+  EXPECT_TRUE(config2.websiteDataStore);
+  EXPECT_TRUE(config2.websiteDataStore.persistent);
+
+  if (@available(iOS 17.0, *)) {
+    // `dataStoreForIdentifier:` is available after iOS 17.
+    // Check if the data store is different.
+    EXPECT_NE(config1.websiteDataStore, config2.websiteDataStore);
+    EXPECT_NE(config1.websiteDataStore.httpCookieStore,
+              config2.websiteDataStore.httpCookieStore);
+  } else {
+    // Otherwise, the default data store should be used.
+    EXPECT_EQ(config1.websiteDataStore, config2.websiteDataStore);
+    EXPECT_EQ(config1.websiteDataStore.httpCookieStore,
+              config2.websiteDataStore.httpCookieStore);
+  }
+}
+
+// Tests that WKWebViewConfiguration has the same data store if browser state
+// returns the same storage ID.
+TEST_F(WKWebViewConfigurationProviderTest, SameDataStoreForSameID) {
+  const base::Uuid uuid = base::Uuid::GenerateRandomV4();
+
+  // Create a configuration with an identifier.
+  auto browser_state1 = std::make_unique<FakeBrowserState>();
+  browser_state1->SetWebKitStorageID(uuid);
+  WKWebViewConfigurationProvider* provider1 =
+      &GetProvider(browser_state1.get());
+  WKWebViewConfiguration* config1 = provider1->GetWebViewConfiguration();
+  EXPECT_TRUE(config1.websiteDataStore);
+  EXPECT_TRUE(config1.websiteDataStore.persistent);
+
+  // Create another configuration with the same identifier.
+  auto browser_state2 = std::make_unique<FakeBrowserState>();
+  browser_state2->SetWebKitStorageID(uuid);
+  WKWebViewConfigurationProvider* provider2 =
+      &GetProvider(browser_state2.get());
+  WKWebViewConfiguration* config2 = provider2->GetWebViewConfiguration();
+  EXPECT_TRUE(config2.websiteDataStore);
+  EXPECT_TRUE(config2.websiteDataStore.persistent);
+
+  // The data store should be the same.
+  EXPECT_EQ(config1.websiteDataStore, config2.websiteDataStore);
+  EXPECT_EQ(config1.websiteDataStore.httpCookieStore,
+            config2.websiteDataStore.httpCookieStore);
+}
+
+// Tests `GetWebSiteDataStore()` for Non-OffTheRecord browser.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_NoneOffTheRecord) {
+  browser_state_.SetOffTheRecord(false);
+  WKWebViewConfigurationProvider& provider = GetProvider();
+  WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
+  EXPECT_TRUE(data_store.isPersistent);
+  // Default data store shares same pointer.
+  EXPECT_NSEQ(WKWebsiteDataStore.defaultDataStore, data_store);
+}
+
+// Tests `GetWebSiteDataStore()` for OffTheRecord browser.
+TEST_F(WKWebViewConfigurationProviderTest, GetWebSiteDataStore_OffTheRecord) {
+  browser_state_.SetOffTheRecord(true);
+  WKWebViewConfigurationProvider& provider = GetProvider();
+  WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
+  ASSERT_TRUE(data_store);
+  EXPECT_FALSE(data_store.isPersistent);
+}
+
+// Tests `GetWebSiteDataStore()` returns different data store if browser state
+// returns a different storage ID.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_DifferentDataStore) {
+  // Create a data store with an identifier.
+  auto browser_state1 = std::make_unique<FakeBrowserState>();
+  browser_state1->SetWebKitStorageID(base::Uuid::GenerateRandomV4());
+  WKWebViewConfigurationProvider* provider1 =
+      &GetProvider(browser_state1.get());
+  WKWebsiteDataStore* data_store1 = provider1->GetWebsiteDataStore();
+  EXPECT_TRUE(data_store1);
+  EXPECT_TRUE(data_store1.isPersistent);
+
+  // Create another data store with another identifier.
+  auto browser_state2 = std::make_unique<FakeBrowserState>();
+  browser_state2->SetWebKitStorageID(base::Uuid::GenerateRandomV4());
+  WKWebViewConfigurationProvider* provider2 =
+      &GetProvider(browser_state2.get());
+  WKWebsiteDataStore* data_store2 = provider2->GetWebsiteDataStore();
+  EXPECT_TRUE(data_store2);
+  EXPECT_TRUE(data_store2.isPersistent);
+
+  if (@available(iOS 17.0, *)) {
+    // `dataStoreForIdentifier:` is available after iOS 17.
+    // Check if the data store is different.
+    EXPECT_NSNE(data_store1, data_store2);
+    EXPECT_NSNE(data_store1.httpCookieStore, data_store2.httpCookieStore);
+  } else {
+    // Otherwise, the default data store should be used.
+    EXPECT_NSEQ(data_store1, data_store2);
+    EXPECT_NSEQ(data_store1.httpCookieStore, data_store2.httpCookieStore);
+  }
+}
+
+// Tests `GetWebSiteDataStore()` returns the same data store if browser state
+// returns the same storage ID.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_SameDataStoreForSameID) {
+  const base::Uuid uuid = base::Uuid::GenerateRandomV4();
+
+  // Create a data store with an identifier.
+  auto browser_state1 = std::make_unique<FakeBrowserState>();
+  browser_state1->SetWebKitStorageID(uuid);
+  WKWebViewConfigurationProvider* provider1 =
+      &GetProvider(browser_state1.get());
+  WKWebsiteDataStore* data_store1 = provider1->GetWebsiteDataStore();
+  EXPECT_TRUE(data_store1);
+  EXPECT_TRUE(data_store1.persistent);
+
+  // Create another data store with the same identifier.
+  auto browser_state2 = std::make_unique<FakeBrowserState>();
+  browser_state2->SetWebKitStorageID(uuid);
+  WKWebViewConfigurationProvider* provider2 =
+      &GetProvider(browser_state2.get());
+  WKWebsiteDataStore* data_store2 = provider2->GetWebsiteDataStore();
+  EXPECT_TRUE(data_store2);
+  EXPECT_TRUE(data_store2.persistent);
+
+  // The data store should be the same.
+  EXPECT_NSEQ(data_store1, data_store2);
+  EXPECT_NSEQ(data_store1.httpCookieStore, data_store2.httpCookieStore);
+}
+
+// Tests `GetWebSiteDataStore()` returns same data store with the data store
+// configuration used.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_SameConfigurationDataStore) {
+  WKWebViewConfigurationProvider& provider = GetProvider();
+
+  WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
+  EXPECT_TRUE(data_store.isPersistent);
+  EXPECT_NSEQ(WKWebsiteDataStore.defaultDataStore, data_store);
+
+  WKWebViewConfiguration* config = provider.GetWebViewConfiguration();
+  WKWebsiteDataStore* config_data_store = config.websiteDataStore;
+  EXPECT_NSEQ(data_store, config_data_store);
+}
+
+// Tests data store is reset correctly when configuration is reset.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_ResetConfiguration) {
+  WKWebViewConfigurationProvider& provider = GetProvider();
+
+  WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
+  EXPECT_TRUE(data_store.isPersistent);
+  EXPECT_NSEQ(WKWebsiteDataStore.defaultDataStore, data_store);
+
+  // Register a callback to be notified when new configuration object are
+  // created and check that it is not invoked as part of the registration.
+  __block WKWebsiteDataStore* recorded_data_store;
+  base::CallbackListSubscription subscription =
+      provider.RegisterWebSiteDataStoreUpdatedCallback(
+          base::BindRepeating(^(WKWebsiteDataStore* new_data_store) {
+            recorded_data_store = new_data_store;
+          }));
+  ASSERT_FALSE(recorded_data_store);
+
+  // Check that the data store is not updated when the configuration is reset
+  // for the same `//ios/web` managed browser.
+  provider.ResetWithWebViewConfiguration(nil);
+  ASSERT_FALSE(recorded_data_store);
+
+  WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
+  WKWebsiteDataStore* config_data_store =
+      WKWebsiteDataStore.nonPersistentDataStore;
+  config.websiteDataStore = config_data_store;
+  provider.ResetWithWebViewConfiguration(config);
+  EXPECT_NSEQ(config_data_store, recorded_data_store);
+  // Ensure data store is reset for the configuration not originated from the
+  // `//ios/web`.
+  EXPECT_NSNE(data_store, recorded_data_store);
+
+  provider.ResetWithWebViewConfiguration(nil);
+  EXPECT_NSEQ(data_store, recorded_data_store);
+  // Ensure data store is reset again for `//ios/web` managed browser.
+  EXPECT_NSNE(config_data_store, recorded_data_store);
+}
+
+// Tests data store is reset correctly when configuration is reset for
+// OffTheRecord browser.
+TEST_F(WKWebViewConfigurationProviderTest,
+       GetWebSiteDataStore_OffTheRecordResetConfiguration) {
+  browser_state_.SetOffTheRecord(true);
+  WKWebViewConfigurationProvider& provider = GetProvider(&browser_state_);
+
+  WKWebsiteDataStore* data_store = provider.GetWebsiteDataStore();
+  EXPECT_FALSE(data_store.isPersistent);
+
+  // Register a callback to be notified when new configuration object are
+  // created and check that it is not invoked as part of the registration.
+  __block WKWebsiteDataStore* recorded_data_store;
+  base::CallbackListSubscription subscription =
+      provider.RegisterWebSiteDataStoreUpdatedCallback(
+          base::BindRepeating(^(WKWebsiteDataStore* new_data_store) {
+            recorded_data_store = new_data_store;
+          }));
+  ASSERT_FALSE(recorded_data_store);
+
+  // Check that the data store is not updated when the configuration is reset
+  // for the same `//ios/web` managed OffTheRecord browser.
+  provider.ResetWithWebViewConfiguration(nil);
+  ASSERT_FALSE(recorded_data_store);
+
+  WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
+  WKWebsiteDataStore* config_data_store =
+      WKWebsiteDataStore.nonPersistentDataStore;
+  config.websiteDataStore = config_data_store;
+  provider.ResetWithWebViewConfiguration(config);
+  EXPECT_NSEQ(config_data_store, recorded_data_store);
+  // Ensure data store is reset for the configuration not originated from the
+  // `//ios/web`.
+  EXPECT_NSNE(data_store, recorded_data_store);
+
+  provider.ResetWithWebViewConfiguration(nil);
+  // `WKWebsiteDataStore.nonPersistentDataStore` will always return a new
+  // instance, so the data store should be different.
+  EXPECT_NSNE(data_store, recorded_data_store);
+  // Ensure data store is reset again for `//ios/web` managed browser.
+  EXPECT_NSNE(config_data_store, recorded_data_store);
 }
 
 }  // namespace

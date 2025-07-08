@@ -9,7 +9,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "services/device/usb/usb_device.h"
 
 namespace device {
@@ -88,7 +88,9 @@ void FakeUsbDeviceHandle::ControlTransfer(
     }
 
     if (direction == UsbTransferDirection::INBOUND) {
-      memcpy(buffer->front(), &data_[position_], bytes_transferred);
+      auto source_data = UNSAFE_TODO(base::span(data_.get(), size_));
+      base::span(buffer->as_vector())
+          .copy_prefix_from(source_data.subspan(position_, bytes_transferred));
       position_ += bytes_transferred;
     }
 

@@ -6,13 +6,9 @@
 
 #include "content/shell/browser/shell_application_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace extensions {
 
-absl::optional<int> ShellMainDelegate::PreBrowserMain() {
+std::optional<int> ShellMainDelegate::PreBrowserMain() {
   // Force the NSApplication subclass to be used.
   [ShellCrApplication sharedApplication];
 
@@ -21,7 +17,7 @@ absl::optional<int> ShellMainDelegate::PreBrowserMain() {
   // This is undesirable and we must enforce that this doesn't happen.
   CHECK([NSApp isKindOfClass:[ShellCrApplication class]]);
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace extensions

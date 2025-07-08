@@ -4,22 +4,28 @@
 
 #include "calculator_provider.h"
 
+#include <algorithm>
 #include <limits>
+#include <vector>
 
 #include "base/check.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
+#include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/autocomplete_provider_listener.h"
-#include "components/omnibox/browser/omnibox_feature_configs.h"
+#include "components/omnibox/browser/provider_state_service.h"
 #include "components/omnibox/browser/search_provider.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 
-CalculatorProvider::CalculatorProvider(AutocompleteProviderListener* listener,
+CalculatorProvider::CalculatorProvider(AutocompleteProviderClient* client,
+                                       AutocompleteProviderListener* listener,
                                        SearchProvider* search_provider)
     : AutocompleteProvider(AutocompleteProvider::TYPE_CALCULATOR),
+      client_(client),
       search_provider_(search_provider) {
   CHECK(search_provider_);
   AddListener(listener);
@@ -58,17 +64,12 @@ void CalculatorProvider::Start(const AutocompleteInput& input,
   }
 }
 
-void CalculatorProvider::Stop(bool clear_cached_results,
-                              bool due_to_user_inactivity) {
-  done_ = true;
-}
-
 void CalculatorProvider::DeleteMatch(const AutocompleteMatch& match) {
-  auto it = base::ranges::find_if(cache_, [&](const auto& cached_match) {
-    return cached_match.destination_url == match.destination_url;
+  auto it = std::ranges::find_if(Cache(), [&](const auto& cached) {
+    return cached.match.destination_url == match.destination_url;
   });
-  if (it != cache_.end()) {
-    cache_.erase(it);
+  if (it != Cache().end()) {
+    Cache().erase(it);
     AddMatches();
   }
 }
@@ -98,36 +99,57 @@ void CalculatorProvider::UpdateFromSearch() {
 }
 
 void CalculatorProvider::AddMatchToCache(AutocompleteMatch match) {
-  match.provider = this;
+  // Set provider to null so the cache doesn't contain dangling pointers if this
+  // provider is deleted (i.e. the window it belongs to is closed).
+  match.provider = nullptr;
   match.deletable = true;
   match.allowed_to_be_default_match = false;
   match.additional_info.clear();
   match.RecordAdditionalInfo("original relevance", match.relevance);
   match.RecordAdditionalInfo("input", input_);
 
-  if (!cache_.empty() && grew_input_) {
-    // As the user types out an input, e.g. '1+22+33', replace the intermediate
-    // matches to avoid showing all of: '1+2=3', '1+22=23', '1+22+3=26', &
-    // '1+22+33=56'.
-    cache_.pop_back();
-  } else if (cache_.size() >
-             omnibox_feature_configs::CalcProvider::Get().max_matches) {
-    cache_.erase(cache_.begin());
+  // As the user types out an input, e.g. '1+22+33', replace the intermediate
+  // matches to avoid showing all of: '1+2=3', '1+22=23', '1+22+3=26', &
+  // '1+22+33=56'.
+  if (!Cache().empty() && grew_input_ && !last_calc_input_.empty())
+    Cache().pop_back();
+
+  // Remove duplicates to avoid a repeated match reducing cache capacity.
+  auto duplicate = std::ranges::find_if(Cache(), [&](const auto& cached) {
+    return cached.match.contents == match.contents;
+  });
+  if (duplicate != Cache().end())
+    Cache().erase(duplicate);
+
+  if (Cache().size() >
+      omnibox_feature_configs::CalcProvider::Get().max_matches) {
+    Cache().erase(Cache().begin());
   }
 
-  cache_.push_back(std::move(match));
+  Cache().push_back({std::move(match), base::TimeTicks::Now()});
   last_calc_input_ = input_;
   since_last_calculator_suggestion_ = 0;
 }
 
 void CalculatorProvider::AddMatches() {
+  // Expire old cached matches.
+  const auto now = base::TimeTicks::Now();
+  std::erase_if(Cache(), [&](const auto& cached) {
+    return now - cached.time > base::Hours(1);
+  });
+
   matches_.clear();
   // Score sequentially so they're ranked sequentially.
   // TODO(manukh) Consider enforcing hard grouping (e.g. search v URL).
   int relevance = omnibox_feature_configs::CalcProvider::Get().score;
-  for (auto& match : cache_)
+  // Use copies instead of references to avoid dangling pointers. This provider
+  // might be deleted before the cache (i.e. the window this provider belongs to
+  // might be closed).
+  for (auto [match, _] : Cache()) {
     match.relevance = relevance++;
-  matches_ = cache_;
+    match.provider = this;
+    matches_.push_back(match);
+  }
 }
 
 bool CalculatorProvider::Show() {
@@ -141,4 +163,9 @@ bool CalculatorProvider::Show() {
   return (grew_input_ || shrunk_input_) &&
          since_last_calculator_suggestion_ <=
              omnibox_feature_configs::CalcProvider::Get().num_non_calc_inputs;
+}
+
+std::vector<ProviderStateService::CachedAutocompleteMatch>&
+CalculatorProvider::Cache() {
+  return client_->GetProviderStateService()->calculator_provider_cache;
 }

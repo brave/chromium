@@ -42,24 +42,14 @@ base::Value::List GetPrefsMetadata(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_controlled");
       metadata.Append("extension_modifiable");
+      break;
 #else
       NOTREACHED();
 #endif
-      break;
-    case PrefValueStore::PrefStoreType::STANDALONE_BROWSER_STORE:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_controlled");
-      metadata.Append("standalone_browser_modifiable");
-#endif
-      metadata.Append("extension_modifiable");
-      break;
     case PrefValueStore::PrefStoreType::COMMAND_LINE_STORE:
       metadata.Append("command_line_controlled");
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_modifiable");
-#endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_modifiable");
 #endif
       break;
     case PrefValueStore::PrefStoreType::USER_STORE:
@@ -68,18 +58,12 @@ base::Value::List GetPrefsMetadata(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_modifiable");
 #endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_modifiable");
-#endif
       break;
     case PrefValueStore::PrefStoreType::RECOMMENDED_STORE:
       metadata.Append("recommended");
       metadata.Append("user_modifiable");
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_modifiable");
-#endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_modifiable");
 #endif
       break;
     case PrefValueStore::PrefStoreType::DEFAULT_STORE:
@@ -88,17 +72,11 @@ base::Value::List GetPrefsMetadata(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_modifiable");
 #endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_modifiable");
-#endif
       break;
     case PrefValueStore::PrefStoreType::INVALID_STORE:
       metadata.Append("user_modifiable");
 #if BUILDFLAG(ENABLE_EXTENSIONS)
       metadata.Append("extension_modifiable");
-#endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      metadata.Append("standalone_browser_modifiable");
 #endif
       break;
   }
@@ -107,7 +85,7 @@ base::Value::List GetPrefsMetadata(
 
 }  // namespace
 
-absl::optional<std::string> GetPrefsAsJson(
+std::optional<std::string> GetPrefsAsJson(
     PrefService* pref_service,
     const std::vector<std::string>& accepted_prefixes) {
   std::vector<PrefService::PreferenceValueAndStore> values =
@@ -132,7 +110,7 @@ absl::optional<std::string> GetPrefsAsJson(
   if (!base::JSONWriter::WriteWithOptions(
           local_state_values, base::JSONWriter::OPTIONS_PRETTY_PRINT,
           &result)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return result;
 }

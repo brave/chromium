@@ -13,10 +13,6 @@
 #import "ios/web/public/web_state_observer_bridge.h"
 #import "ios/web/web_state/ui/crw_html_element_fetch_request.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @interface CRWContextMenuElementFetcher () <CRWWebStateObserver> {
   std::unique_ptr<web::WebStateObserverBridge> _observer;
 }
@@ -45,14 +41,14 @@
     _webState = webState;
     _observer = std::make_unique<web::WebStateObserverBridge>(self);
     webState->AddObserver(_observer.get());
-
   }
   return self;
 }
 
 - (void)dealloc {
-  if (self.webState)
+  if (self.webState) {
     self.webState->RemoveObserver(_observer.get());
+  }
 }
 
 - (void)fetchDOMElementAtPoint:(CGPoint)point
@@ -80,7 +76,7 @@
 
   __weak __typeof(self) weakSelf = self;
   context_menu_feature->GetElementAtPoint(
-      self.webState, requestID, point, self.webView.scrollView.contentSize,
+      self.webState, requestID, point,
       base::BindOnce(^(const std::string& innerRequestID,
                        const web::ContextMenuParams& params) {
         web::ContextMenuParams context_menu_params(params);
@@ -119,8 +115,9 @@
 #pragma mark - CRWWebStateObserver
 
 - (void)webStateDestroyed:(web::WebState*)webState {
-  if (self.webState)
+  if (self.webState) {
     self.webState->RemoveObserver(_observer.get());
+  }
   self.webState = nullptr;
 }
 

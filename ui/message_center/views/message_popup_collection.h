@@ -70,6 +70,9 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   void ConvertGroupedNotificationViewToNotificationView(
       const std::string& grouped_notification_id,
       const std::string& new_single_notification_id) override;
+  void OnChildNotificationViewUpdated(
+      const std::string& parent_notification_id,
+      const std::string& child_notification_id) override;
 
   // MessageCenterObserver:
   void OnNotificationAdded(const std::string& notification_id) override;
@@ -108,12 +111,19 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
  protected:
   // Stores animation related state of a popup.
   struct PopupItem {
+    PopupItem();
+    PopupItem(const PopupItem&) = delete;
+    PopupItem(PopupItem&& other);
+    PopupItem& operator=(const PopupItem&) = delete;
+    PopupItem& operator=(PopupItem&&);
+    ~PopupItem();
+
     // Notification ID.
     std::string id;
 
     // The bounds that the popup starts animating from.
     // If |is_animating| is false, it is ignored. Also the value is only used
-    // when the animation type is FADE_IN or MOVE_DOWN.
+    // when the animation type is kFadeIn or kMoveDown.
     gfx::Rect start_bounds;
 
     // The final bounds of the popup.
@@ -124,6 +134,8 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
 
     // Unowned.
     raw_ptr<MessagePopupView, DanglingUntriaged> popup = nullptr;
+
+    std::unique_ptr<views::Widget> widget;
   };
 
   // Returns the x-origin for the given popup bounds in the current work area.
@@ -163,6 +175,10 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   virtual void NotifyPopupAdded(MessagePopupView* popup) {}
   // Called with |notification_id| when a popup is marked to be removed.
   virtual void NotifyPopupRemoved(const std::string& notification_id) {}
+  // Called when an incoming notification is sent directly to the notification
+  // center (e.g. its priority is too low for a popup to be generated for it).
+  // `notification_id` is the ID of the notification.
+  virtual void NotifySilentNotification(const std::string& notification_id) {}
 
   // Called when the entire popup collection change its height.
   virtual void NotifyPopupCollectionHeightChanged() {}
@@ -179,14 +195,17 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   bool IsNextEdgeOutsideWorkArea(const PopupItem& item) const;
 
   // Called to close a particular popup item.
-  virtual void ClosePopupItem(const PopupItem& item);
+  virtual void ClosePopupItem(PopupItem& item);
 
-  // Marks `is_animating` flag of all popups for `MOVE_DOWN` animation.
+  // Marks `is_animating` flag of all popups for `kMoveDown` animation.
   void MoveDownPopups();
 
   // virtual for testing.
   virtual void RestartPopupTimers();
   virtual void PausePopupTimers();
+
+  // Whether transform can be used for animation instead of bounds change.
+  virtual bool CanUseTransformForBoundsAnimation() const = 0;
 
   // Stops all the animation and closes all the popups immediately.
   void CloseAllPopupsNow();
@@ -196,32 +215,34 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   const std::vector<PopupItem>& popup_items() { return popup_items_; }
 
  private:
+  friend class MessagePopupCollectionTest;
+
   // MessagePopupCollection always runs single animation at one time.
   // State is an enum of which animation is running right now.
-  // If |state_| is IDLE, animation_->is_animating() is always false and vice
+  // If |state_| is kIdle, animation_->is_animating() is always false and vice
   // versa.
   enum class State {
     // No animation is running.
-    IDLE,
+    kIdle,
 
     // Fading in an added notification.
-    FADE_IN,
+    kFadeIn,
 
     // Fading out a removed notification. After the animation, if there are
-    // still remaining notifications, it will transition to MOVE_DOWN.
-    FADE_OUT,
+    // still remaining notifications, it will transition to kMoveDown.
+    kFadeOut,
 
     // Moving down notifications. Notification collapsing and resizing are also
-    // done in MOVE_DOWN.
-    MOVE_DOWN,
+    // done in kMoveDown.
+    kMoveDown,
   };
 
-  // Transition from animation state (FADE_IN, FADE_OUT, and MOVE_DOWN) to
-  // IDLE state or next animation state (MOVE_DOWN).
+  // Transition from animation state (kFadeIn, kFadeOut, and kMoveDown) to
+  // kIdle state or next animation state (kMoveDown).
   void TransitionFromAnimation();
 
-  // Transition from IDLE state to animation state (FADE_IN, FADE_OUT or
-  // MOVE_DOWN).
+  // Transition from kIdle state to animation state (kFadeIn, kFadeOut or
+  // kMoveDown).
   void TransitionToAnimation();
 
   // Pause or restart popup timers depending on |state_|.
@@ -238,12 +259,12 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   // that should not show on this display.
   std::vector<Notification*> GetPopupNotifications() const;
 
-  // Add a new popup to |popup_items_| for FADE_IN animation.
+  // Add a new popup to |popup_items_| for kFadeIn animation.
   // Return true if a popup is actually added. It may still return false when
   // HasAddedPopup() return true by the lack of work area to show popup.
   bool AddPopup();
 
-  // Mark |is_animating| flag of removed popup to true for FADE_OUT animation.
+  // Mark |is_animating| flag of removed popup to true for kFadeOut animation.
   void MarkRemovedPopup();
 
   // Get the y-axis edge of the new popup. In usual bottom-to-top layout, it
@@ -254,6 +275,8 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   bool CloseTransparentPopups();
   void ClosePopupsOutsideWorkArea();
   void RemoveClosedPopupItems();
+  void CloseAndRemovePopupFromPopupItem(MessagePopupView* popup,
+                                        bool remove_only = false);
 
   // Collapse all existing popups. Return true if size of any popup is actually
   // changed.
@@ -272,16 +295,12 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   // Returns the popup which is visually |index_from_top|-th from the top.
   PopupItem* GetPopupItem(size_t index_from_top);
 
-  // Reset |recently_closed_by_user_| to false. Used by
-  // |recently_closed_by_user_timer_|
-  void ResetRecentlyClosedByUser();
-
   // Animation state. See the comment of State.
-  State state_ = State::IDLE;
+  State state_ = State::kIdle;
 
   // Covers all animation performed by MessagePopupCollection. When the
-  // animation is running, it is always one of FADE_IN (sliding in and opacity
-  // change), FADE_OUT (opacity change), and MOVE_DOWN (sliding down).
+  // animation is running, it is always one of kFadeIn (sliding in and opacity
+  // change), kFadeOut (opacity change), and kMoveDown (sliding down).
   // MessagePopupCollection does not use implicit animation. The position and
   // opacity changes are explicitly set from UpdateByAnimation().
   const std::unique_ptr<gfx::LinearAnimation> animation_;
@@ -295,7 +314,7 @@ class MESSAGE_CENTER_EXPORT MessagePopupCollection
   bool is_updating_ = false;
 
   // If true, popup sizes are resized on the next time Update() is called with
-  // IDLE state.
+  // kIdle state.
   bool resize_requested_ = false;
 
   // The bounds of the entire popup collection.

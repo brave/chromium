@@ -9,17 +9,16 @@
 #include "ash/shell.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/ranges.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/users/chrome_user_manager_util.h"
 #include "chrome/browser/ash/login/wizard_context.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
-#include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/ash/login/display_size_screen_handler.h"
+#include "chromeos/ash/components/install_attributes/install_attributes.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
@@ -55,7 +54,7 @@ float GetCurrentZoomFactor(PrefService* prefs) {
 
 std::string RetrieveChoobeSubtitle(PrefService* prefs) {
   int percentage = std::round(GetCurrentZoomFactor(prefs) * 100);
-  return base::NumberToString(percentage) + "%";
+  return base::NumberToString(percentage);
 }
 
 bool ShouldShowChoobeReturnButton(ChoobeFlowController* controller) {
@@ -88,12 +87,14 @@ void ReportScreenCompletedToChoobe(ChoobeFlowController* controller) {
 
 // static
 std::string DisplaySizeScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::kNext:
       return "Next";
     case Result::kNotApplicable:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 void DisplaySizeScreen::MaybeUpdateZoomFactor(Profile* profile) {
@@ -140,30 +141,27 @@ bool DisplaySizeScreen::ShouldBeSkipped(const WizardContext& context) const {
     return true;
   }
 
-  if (chrome_user_manager_util::IsPublicSessionOrEphemeralLogin()) {
+  if (chrome_user_manager_util::IsManagedGuestSessionOrEphemeralLogin()) {
     return true;
   }
 
   if (features::IsOobeChoobeEnabled()) {
     auto* choobe_controller =
         WizardController::default_controller()->choobe_flow_controller();
-    if (choobe_controller) {
-      return choobe_controller->ShouldScreenBeSkipped(
-          DisplaySizeScreenView::kScreenId);
+    if (choobe_controller && choobe_controller->ShouldScreenBeSkipped(
+                                 DisplaySizeScreenView::kScreenId)) {
+      return true;
     }
   }
 
   // Skip the screen if the `recommended` value in `DeviceDisplayResolution`
   // policy is set to false.
-  bool is_device_managed = g_browser_process->platform_part()
-                               ->browser_policy_connector_ash()
-                               ->IsDeviceEnterpriseManaged();
-  if (is_device_managed) {
+  if (ash::InstallAttributes::Get()->IsEnterpriseManaged()) {
     const base::Value::Dict* resolution_pref = nullptr;
     ash::CrosSettings::Get()->GetDictionary(ash::kDeviceDisplayResolution,
                                             &resolution_pref);
     if (resolution_pref && !resolution_pref->empty()) {
-      const absl::optional<bool> recommended_value = resolution_pref->FindBool(
+      const std::optional<bool> recommended_value = resolution_pref->FindBool(
           ash::kDeviceDisplayResolutionKeyRecommended);
       if (!recommended_value.value_or(false)) {
         return true;
@@ -235,9 +233,7 @@ void DisplaySizeScreen::OnUserAction(const base::Value::List& args) {
                           args[1].GetDouble());
     ReportScreenCompletedToChoobe(
         WizardController::default_controller()->choobe_flow_controller());
-    LoginDisplayHost::default_host()
-        ->GetWizardContext()
-        ->return_to_choobe_screen = true;
+    context()->return_to_choobe_screen = true;
     exit_callback_.Run(Result::kNext);
     return;
   }

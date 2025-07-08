@@ -8,7 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/base/win/mf_helpers.h"
@@ -452,6 +452,13 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
         ReportEncryptionType(buffer);
       }
 
+      if (has_clear_lead_ && !switched_clear_to_encrypted_ &&
+          !buffer->end_of_stream() && buffer->is_encrypted()) {
+        MEDIA_LOG(INFO, media_log_)
+            << "Stream switched from clear to encrypted buffers.";
+        switched_clear_to_encrypted_ = true;
+      }
+
       // Push |buffer| to process later if needed. Otherwise, process it
       // immediately.
       if (flushed_ || !post_flush_buffers_.empty()) {
@@ -495,9 +502,8 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
       // Continue to ProcessRequestsIfPossible() to satisfy pending sample
       // request by issuing DemuxerStream::Read() if necessary.
     } else {
-      NOTREACHED_NORETURN()
-          << "Unexpected demuxer stream status. status=" << status
-          << ", this=" << this;
+      NOTREACHED() << "Unexpected demuxer stream status. status=" << status
+                   << ", this=" << this;
     }
   }
 
@@ -638,6 +644,7 @@ void MediaFoundationStreamWrapper::ReportEncryptionType(
     MEDIA_LOG(INFO, media_log_) << "MediaFoundationStreamWrapper: "
                                 << DemuxerStream::GetTypeName(stream_type_)
                                 << " stream is encrypted with clear lead";
+    has_clear_lead_ = true;
   }
 
   // TODO(xhwang): Report `encryption_type` to `PipelineStatistics` so it's

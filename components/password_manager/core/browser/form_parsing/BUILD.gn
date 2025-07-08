@@ -15,15 +15,19 @@ static_library("form_parsing") {
   public_deps = [
     "//base",
     "//components/password_manager/core/browser:password_form",
+    "//services/metrics/public/cpp:metrics_cpp",
   ]
 
   deps = [
     "//components/autofill/core/browser",
-    "//components/autofill/core/common",
+    "//components/autofill/core/common:autofill_regex",
     "//components/password_manager/core/browser/features:password_features",
     "//components/password_manager/core/common",
     "//components/password_manager/core/common:features",
+    "//services/metrics/public/cpp:ukm_builders",
   ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
 source_set("unit_tests") {
@@ -42,8 +46,13 @@ source_set("unit_tests") {
     "//components/password_manager/core/browser/features:password_features",
     "//components/password_manager/core/common",
     "//components/password_manager/core/common:features",
+    "//components/ukm:test_support",
     "//testing/gmock",
     "//testing/gtest",
     "//url",
   ]
+}
+
+group("fuzzers") {
+  deps = [ "//components/password_manager/core/browser/form_parsing/fuzzer" ]
 }

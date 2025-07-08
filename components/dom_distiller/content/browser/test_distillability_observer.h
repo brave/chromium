@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_TEST_DISTILLABILITY_OBSERVER_H_
 #define COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_TEST_DISTILLABILITY_OBSERVER_H_
 
+#include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "components/dom_distiller/content/browser/distillable_page_utils.h"
@@ -38,7 +40,7 @@ class TestDistillabilityObserver : public DistillabilityObserver {
 
   raw_ptr<content::WebContents, DanglingUntriaged> web_contents_;
   std::unique_ptr<base::RunLoop> run_loop_;
-  absl::optional<DistillabilityResult> result_to_wait_for_;
+  std::optional<DistillabilityResult> result_to_wait_for_;
   std::vector<DistillabilityResult> results_;
 };
 

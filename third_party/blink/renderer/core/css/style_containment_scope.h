@@ -16,8 +16,8 @@ namespace blink {
 class StyleContainmentScope final
     : public GarbageCollected<StyleContainmentScope> {
  public:
-  explicit StyleContainmentScope(const Element* element)
-      : element_(element), parent_(nullptr) {}
+  StyleContainmentScope(const Element* element,
+                        StyleContainmentScopeTree* style_containment_tree);
 
   // Handles the self remove.
   void ReattachToParent();
@@ -30,13 +30,18 @@ class StyleContainmentScope final
 
   void AppendChild(StyleContainmentScope*);
   void RemoveChild(StyleContainmentScope*);
+  void Remove();
 
-  const Element* GetElement() { return element_; }
-  StyleContainmentScope* Parent() { return parent_; }
+  const Element* GetElement() const { return element_.Get(); }
+  StyleContainmentScope* Parent() { return parent_.Get(); }
   void SetParent(StyleContainmentScope* parent) { parent_ = parent; }
   const HeapVector<Member<LayoutQuote>>& Quotes() const { return quotes_; }
   const HeapVector<Member<StyleContainmentScope>>& Children() const {
     return children_;
+  }
+
+  StyleContainmentScopeTree* GetStyleContainmentScopeTree() const {
+    return style_containment_tree_.Get();
   }
 
   void Trace(Visitor*) const;
@@ -48,13 +53,15 @@ class StyleContainmentScope final
   int ComputeInitialQuoteDepth() const;
 
   // Element with style containment which is the root of the scope.
-  Member<const Element> element_;
+  WeakMember<const Element> element_;
   // Parent scope.
   Member<StyleContainmentScope> parent_;
   // Vector of quotes.
   HeapVector<Member<LayoutQuote>> quotes_;
   // Vector of children scope.
   HeapVector<Member<StyleContainmentScope>> children_;
+  // Style containment tree.
+  WeakMember<StyleContainmentScopeTree> style_containment_tree_;
 };
 
 }  // namespace blink

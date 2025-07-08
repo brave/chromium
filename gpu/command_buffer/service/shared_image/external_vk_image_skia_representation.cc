@@ -15,11 +15,14 @@
 #include "third_party/skia/include/core/SkColorType.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkSurfaceProps.h"
-#include "third_party/skia/include/gpu/GrBackendSemaphore.h"
-#include "third_party/skia/include/gpu/GrBackendSurfaceMutableState.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/MutableTextureState.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSemaphore.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "third_party/skia/include/gpu/vk/GrVkTypes.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSemaphore.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkTypes.h"
+#include "third_party/skia/include/gpu/vk/VulkanMutableTextureState.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 
 namespace gpu {
@@ -49,7 +52,7 @@ ExternalVkImageSkiaImageRepresentation::BeginWriteAccess(
     const gfx::Rect& update_rect,
     std::vector<GrBackendSemaphore>* begin_semaphores,
     std::vector<GrBackendSemaphore>* end_semaphores,
-    std::unique_ptr<GrBackendSurfaceMutableState>* end_state) {
+    std::unique_ptr<skgpu::MutableTextureState>* end_state) {
   DCHECK_EQ(access_mode_, AccessMode::kNone);
 
   auto* gr_context = context_state_->gr_context();
@@ -75,8 +78,7 @@ ExternalVkImageSkiaImageRepresentation::BeginWriteAccess(
     // reuse the cached SkSurface.
     if (!surface || surface_props != surface->props() ||
         final_msaa_count != surface_msaa_count_) {
-      SkColorType sk_color_type = viz::ToClosestSkColorType(
-          /*gpu_compositing=*/true, format(), plane);
+      SkColorType sk_color_type = viz::ToClosestSkColorType(format(), plane);
       surface = SkSurfaces::WrapBackendTexture(
           gr_context, promise_texture->backendTexture(), surface_origin(),
           final_msaa_count, sk_color_type,
@@ -101,8 +103,9 @@ ExternalVkImageSkiaImageRepresentation::BeginWriteAccess(
     // If Vulkan/GL/Dawn share the same memory backing, we need to set
     // |end_state| VK_QUEUE_FAMILY_EXTERNAL, and then the caller will set the
     // VkImage to VK_QUEUE_FAMILY_EXTERNAL before calling EndAccess().
-    *end_state = std::make_unique<GrBackendSurfaceMutableState>(
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_EXTERNAL);
+    *end_state = std::make_unique<skgpu::MutableTextureState>(
+        skgpu::MutableTextureStates::MakeVulkan(VK_IMAGE_LAYOUT_UNDEFINED,
+                                                VK_QUEUE_FAMILY_EXTERNAL));
   }
 
   write_surfaces_ = surfaces;
@@ -113,7 +116,7 @@ std::vector<sk_sp<GrPromiseImageTexture>>
 ExternalVkImageSkiaImageRepresentation::BeginWriteAccess(
     std::vector<GrBackendSemaphore>* begin_semaphores,
     std::vector<GrBackendSemaphore>* end_semaphores,
-    std::unique_ptr<GrBackendSurfaceMutableState>* end_state) {
+    std::unique_ptr<skgpu::MutableTextureState>* end_state) {
   DCHECK_EQ(access_mode_, AccessMode::kNone);
 
   auto promise_textures =
@@ -129,8 +132,9 @@ ExternalVkImageSkiaImageRepresentation::BeginWriteAccess(
   // |end_state| VK_QUEUE_FAMILY_EXTERNAL, and then the caller will set the
   // VkImage to VK_QUEUE_FAMILY_EXTERNAL before calling EndAccess().
   if (backing_impl()->need_synchronization()) {
-    *end_state = std::make_unique<GrBackendSurfaceMutableState>(
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_EXTERNAL);
+    *end_state = std::make_unique<skgpu::MutableTextureState>(
+        skgpu::MutableTextureStates::MakeVulkan(VK_IMAGE_LAYOUT_UNDEFINED,
+                                                VK_QUEUE_FAMILY_EXTERNAL));
   }
 
   return promise_textures;
@@ -158,7 +162,7 @@ std::vector<sk_sp<GrPromiseImageTexture>>
 ExternalVkImageSkiaImageRepresentation::BeginReadAccess(
     std::vector<GrBackendSemaphore>* begin_semaphores,
     std::vector<GrBackendSemaphore>* end_semaphores,
-    std::unique_ptr<GrBackendSurfaceMutableState>* end_state) {
+    std::unique_ptr<skgpu::MutableTextureState>* end_state) {
   DCHECK_EQ(access_mode_, AccessMode::kNone);
 
   auto promise_textures =
@@ -172,8 +176,9 @@ ExternalVkImageSkiaImageRepresentation::BeginReadAccess(
   // VK_QUEUE_FAMILY_EXTERNAL, and then the caller will set the VkImage to
   // VK_QUEUE_FAMILY_EXTERNAL before calling EndAccess().
   if (backing_impl()->need_synchronization()) {
-    *end_state = std::make_unique<GrBackendSurfaceMutableState>(
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_EXTERNAL);
+    *end_state = std::make_unique<skgpu::MutableTextureState>(
+        skgpu::MutableTextureStates::MakeVulkan(VK_IMAGE_LAYOUT_UNDEFINED,
+                                                VK_QUEUE_FAMILY_EXTERNAL));
   }
 
   access_mode_ = AccessMode::kRead;
@@ -206,8 +211,7 @@ ExternalVkImageSkiaImageRepresentation::BeginAccess(
     VkSemaphore semaphore = external_semaphore.GetVkSemaphore();
     DCHECK(semaphore != VK_NULL_HANDLE);
     // The ownership of semaphore is passed to caller.
-    begin_semaphores->emplace_back();
-    begin_semaphores->back().initVulkan(semaphore);
+    begin_semaphores->emplace_back(GrBackendSemaphores::MakeVk(semaphore));
   }
 
   if (backing_impl()->need_synchronization()) {
@@ -217,8 +221,8 @@ ExternalVkImageSkiaImageRepresentation::BeginAccess(
         backing_impl()->external_semaphore_pool()->GetOrCreateSemaphore();
     if (!end_access_semaphore_)
       return {};
-    end_semaphores->emplace_back();
-    end_semaphores->back().initVulkan(end_access_semaphore_.GetVkSemaphore());
+    end_semaphores->emplace_back(
+        GrBackendSemaphores::MakeVk(end_access_semaphore_.GetVkSemaphore()));
   }
 
   return backing_impl()->GetPromiseTextures();
@@ -228,12 +232,13 @@ void ExternalVkImageSkiaImageRepresentation::EndAccess(bool readonly) {
   DCHECK_NE(access_mode_, AccessMode::kNone);
   DCHECK(backing_impl()->need_synchronization() || !end_access_semaphore_);
 
-  // TODO(crbug.com/1307914): This check is specific to the interop case i.e.
+  // TODO(crbug.com/40218936): This check is specific to the interop case i.e.
   // when need_synchronization() is true, but we can generalize this by making
   // the client TakeEndState() and asserting that the |end_state_| is null here.
 #if DCHECK_IS_ON()
   GrVkImageInfo info;
-  auto result = backing_impl()->backend_texture().getVkImageInfo(&info);
+  auto result = GrBackendTextures::GetVkImageInfo(
+      backing_impl()->backend_texture(), &info);
   DCHECK(result);
   DCHECK(!backing_impl()->need_synchronization() ||
          info.fCurrentQueueFamily == VK_QUEUE_FAMILY_EXTERNAL);

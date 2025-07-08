@@ -8,6 +8,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/language/core/common/language_experiments.h"
+#include "components/language_detection/core/constants.h"
 #include "components/translate/core/browser/translate_client.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_driver.h"
@@ -31,17 +32,17 @@ TranslateUIDelegate::TranslateUIDelegate(
     const base::WeakPtr<TranslateManager>& translate_manager,
     const std::string& source_language,
     const std::string& target_language)
-    : translate_driver_(
-          translate_manager->translate_client()->GetTranslateDriver()),
-      translate_manager_(translate_manager),
-      translate_ui_languages_manager_(
-          std::make_unique<TranslateUILanguagesManager>(translate_manager,
-                                                        source_language,
-                                                        target_language)),
+    : translate_manager_(translate_manager),
       prefs_(translate_manager_->translate_client()->GetTranslatePrefs()) {
-  DCHECK(translate_driver_);
   DCHECK(translate_manager_);
-  DCHECK(translate_ui_languages_manager_);
+
+  std::vector<std::string> language_codes;
+  TranslateDownloadManager::GetSupportedLanguages(
+      prefs_->IsTranslateAllowedByPolicy(), &language_codes);
+
+  translate_ui_languages_manager_ =
+      std::make_unique<TranslateUILanguagesManager>(
+          language_codes, source_language, target_language);
 
   if (base::FeatureList::IsEnabled(
           language::kContentLanguagesInLanguagePicker)) {
@@ -51,7 +52,7 @@ TranslateUIDelegate::TranslateUIDelegate(
             language::kContentLanguagesInLanguagePicker,
             language::kContentLanguagesDisableObserversParam,
             false /* default */)) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       const std::string& pref_name = language::prefs::kPreferredLanguages;
 #else
       const std::string& pref_name = language::prefs::kAcceptLanguages;
@@ -152,7 +153,7 @@ void TranslateUIDelegate::GetContentLanguagesCodes(
 }
 
 void TranslateUIDelegate::Translate() {
-  if (!translate_driver_->IsIncognito()) {
+  if (!IsIncognito()) {
     prefs_->ResetTranslationDeniedCount(
         translate_ui_languages_manager_->GetSourceLanguageCode());
     prefs_->ResetTranslationIgnoredCount(
@@ -177,14 +178,13 @@ void TranslateUIDelegate::Translate() {
 }
 
 void TranslateUIDelegate::RevertTranslation() {
-  if (translate_manager_ &&
-      translate_manager_->GetLanguageState()->IsPageTranslated()) {
+  if (translate_manager_) {
     translate_manager_->RevertTranslation();
   }
 }
 
 void TranslateUIDelegate::TranslationDeclined(bool explicitly_closed) {
-  if (!translate_driver_->IsIncognito()) {
+  if (!IsIncognito()) {
     const std::string& language =
         translate_ui_languages_manager_->GetSourceLanguageCode();
     if (explicitly_closed) {
@@ -295,7 +295,7 @@ void TranslateUIDelegate::SetAlwaysTranslate(bool value) {
     if (IsSiteOnNeverPromptList())
       SetNeverPromptSite(false);
   } else {
-    prefs_->RemoveLanguagePairFromAlwaysTranslateList(source_lang, target_lang);
+    prefs_->RemoveLanguagePairFromAlwaysTranslateList(source_lang);
   }
 
   UIInteraction interaction =
@@ -309,14 +309,14 @@ bool TranslateUIDelegate::ShouldAlwaysTranslateBeCheckedByDefault() const {
 }
 
 bool TranslateUIDelegate::ShouldShowAlwaysTranslateShortcut() const {
-  return !translate_driver_->IsIncognito() &&
+  return !IsIncognito() &&
          prefs_->GetTranslationAcceptedCount(
              translate_ui_languages_manager_->GetSourceLanguageCode()) >=
              kAlwaysTranslateShortcutMinimumAccepts;
 }
 
 bool TranslateUIDelegate::ShouldShowNeverTranslateShortcut() const {
-  return !translate_driver_->IsIncognito() &&
+  return !IsIncognito() &&
          prefs_->GetTranslationDeniedCount(
              translate_ui_languages_manager_->GetSourceLanguageCode()) >=
              kNeverTranslateShortcutMinimumDenials;
@@ -350,11 +350,8 @@ void TranslateUIDelegate::MaybeSetContentLanguages() {
 }
 
 bool TranslateUIDelegate::IsIncognito() const {
-  if (!translate_manager_)
-    return false;
-  TranslateClient* client = translate_manager_->translate_client();
-  TranslateDriver* driver = client->GetTranslateDriver();
-  return driver ? driver->IsIncognito() : false;
+  const TranslateDriver* translate_driver = GetTranslateDriver();
+  return translate_driver && translate_driver->IsIncognito();
 }
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
@@ -367,8 +364,9 @@ bool TranslateUIDelegate::ShouldAutoAlwaysTranslate() {
   const std::string& source_language =
       translate_ui_languages_manager_->GetSourceLanguageCode();
   // Don't trigger for unknown source language.
-  if (source_language == kUnknownLanguageCode)
+  if (source_language == language_detection::kUnknownLanguageCode) {
     return false;
+  }
 
   bool always_translate =
       (prefs_->GetTranslationAcceptedCount(source_language) >=
@@ -421,10 +419,16 @@ bool TranslateUIDelegate::ShouldAutoNeverTranslate() {
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 
 std::string TranslateUIDelegate::GetPageHost() const {
-  if (!translate_driver_->HasCurrentPage()) {
-    return std::string();
-  }
-  return translate_driver_->GetLastCommittedURL().HostNoBrackets();
+  const TranslateDriver* translate_driver = GetTranslateDriver();
+  return translate_driver && translate_driver->HasCurrentPage()
+             ? translate_driver->GetLastCommittedURL().HostNoBrackets()
+             : std::string();
+}
+
+const TranslateDriver* TranslateUIDelegate::GetTranslateDriver() const {
+  return translate_manager_ && translate_manager_->translate_client()
+             ? translate_manager_->translate_client()->GetTranslateDriver()
+             : nullptr;
 }
 
 }  // namespace translate

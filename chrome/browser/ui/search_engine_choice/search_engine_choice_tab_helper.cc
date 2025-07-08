@@ -4,13 +4,19 @@
 
 #include "chrome/browser/ui/search_engine_choice/search_engine_choice_tab_helper.h"
 
-#include "chrome/browser/browser_process.h"
+#include "base/check_deref.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service.h"
+#include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service_factory.h"
+#include "chrome/browser/search_engine_choice/search_engine_choice_service_factory.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/common/webui_url_constants.h"
-#include "components/search_engines/search_engine_choice_utils.h"
-#include "components/signin/public/base/signin_switches.h"
+#include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
+#include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -24,7 +30,17 @@ SearchEngineChoiceTabHelper::SearchEngineChoiceTabHelper(
     content::WebContents* web_contents)
     : WebContentsObserver(web_contents),
       content::WebContentsUserData<SearchEngineChoiceTabHelper>(*web_contents) {
-  CHECK(base::FeatureList::IsEnabled(switches::kSearchEngineChoice));
+}
+
+// static
+bool SearchEngineChoiceTabHelper::IsHelperNeeded() {
+  // TODO(crbug.com/347223092): Replace this with a check of availability of
+  // `SearchEngineChoiceDialogService`. However we need to be mindful of how
+  // this might affect metrics, see https://b/351778022.
+  // We can't get a browser at this point, so checking the eligibility of the
+  // browser itself is not possible now.
+
+  return true;
 }
 
 void SearchEngineChoiceTabHelper::DidFinishNavigation(
@@ -40,35 +56,57 @@ void SearchEngineChoiceTabHelper::DidFinishNavigation(
     return;
   }
 
-  // Don't show the dialog on top of any sub page of the settings page.
-  if (navigation_handle->GetURL().host() == chrome::kChromeUISettingsHost) {
+  MaybeShowDialog();
+}
+
+void SearchEngineChoiceTabHelper::OnVisibilityChanged(
+    content::Visibility visibility) {
+  MaybeShowDialog();
+}
+
+void SearchEngineChoiceTabHelper::MaybeShowDialog() {
+  // Background tabs are not considered.
+  if (web_contents()->GetVisibility() == content::Visibility::HIDDEN) {
     return;
   }
 
-  auto* profile =
-      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  CHECK(profile);
-  bool is_regular_profile = profile->IsRegularProfile();
+  content::NavigationController& navigation_controller =
+      web_contents()->GetController();
 
-#if BUILDFLAG(IS_CHROMEOS)
-  is_regular_profile &= !profiles::IsPublicSession() &&
-                        !chromeos::IsKioskSession() &&
-                        !profiles::IsChromeAppKioskSession();
-#endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  is_regular_profile &= !profiles::IsGuestSession();
-#endif
-
-  if (!search_engines::ShouldShowChoiceScreen(
-          *g_browser_process->policy_service(),
-          /*profile_properties=*/{.is_regular_profile = is_regular_profile})) {
+  // Do not show if the page is still loading.
+  if (navigation_controller.GetPendingEntry() != nullptr) {
     return;
   }
 
-  if (auto* browser = chrome::FindBrowserWithWebContents(
-          navigation_handle->GetWebContents())) {
-    ShowSearchEngineChoiceDialog(*browser);
+  Browser* browser = chrome::FindBrowserWithTab(web_contents());
+  // The browser will be null if the web contents are rendered in devtools or
+  // if the renderer crashes.
+  if (!browser) {
+    return;
   }
+
+  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
+      SearchEngineChoiceDialogServiceFactory::GetForProfile(browser->profile());
+  if (!search_engine_choice_dialog_service ||
+      !search_engine_choice_dialog_service->IsUrlSuitableForDialog(
+          navigation_controller.GetLastCommittedEntry()->GetURL())) {
+    return;
+  }
+
+  search_engines::SearchEngineChoiceScreenConditions conditions =
+      search_engine_choice_dialog_service->ComputeDialogConditions(*browser);
+
+  search_engines::SearchEngineChoiceService* search_engine_choice_service =
+      search_engines::SearchEngineChoiceServiceFactory::GetForProfile(
+          browser->profile());
+  search_engine_choice_service->RecordDynamicEligibility(conditions);
+
+  if (conditions !=
+      search_engines::SearchEngineChoiceScreenConditions::kEligible) {
+    return;
+  }
+
+  SearchEngineChoiceDialog::Show(*browser);
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(SearchEngineChoiceTabHelper);

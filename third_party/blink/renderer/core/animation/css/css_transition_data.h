@@ -24,7 +24,7 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
     kTransitionUnknownProperty,
   };
 
-  enum CSSTransitionAnimationType { kNormal, kDiscrete };
+  enum TransitionBehavior { kNormal, kAllowDiscrete };
 
   // FIXME: We shouldn't allow 'none' to be used alongside other properties.
   struct TransitionProperty {
@@ -55,6 +55,9 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
     AtomicString property_string;
   };
 
+  using TransitionPropertyVector = Vector<TransitionProperty, 1>;
+  using TransitionBehaviorVector = Vector<TransitionBehavior, 1>;
+
   std::unique_ptr<CSSTransitionData> Clone() {
     return base::WrapUnique(new CSSTransitionData(*this));
   }
@@ -69,29 +72,29 @@ class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
 
   Timing ConvertToTiming(size_t index) const;
 
-  const Vector<TransitionProperty>& PropertyList() const {
+  const TransitionPropertyVector& PropertyList() const {
     return property_list_;
   }
-  Vector<TransitionProperty>& PropertyList() { return property_list_; }
+  TransitionPropertyVector& PropertyList() { return property_list_; }
 
-  const Vector<CSSTransitionAnimationType>& ModeList() const {
-    return mode_list_;
+  const TransitionBehaviorVector& BehaviorList() const {
+    return behavior_list_;
   }
-  Vector<CSSTransitionAnimationType>& ModeList() { return mode_list_; }
+  TransitionBehaviorVector& BehaviorList() { return behavior_list_; }
 
-  static absl::optional<double> InitialDuration() { return 0; }
+  static std::optional<double> InitialDuration() { return 0; }
 
   static TransitionProperty InitialProperty() {
     return TransitionProperty(CSSPropertyID::kAll);
   }
 
-  static CSSTransitionAnimationType InitialMode() {
-    return CSSTransitionAnimationType::kNormal;
+  static TransitionBehavior InitialBehavior() {
+    return TransitionBehavior::kNormal;
   }
 
  private:
-  Vector<TransitionProperty> property_list_;
-  Vector<CSSTransitionAnimationType> mode_list_;
+  TransitionPropertyVector property_list_;
+  TransitionBehaviorVector behavior_list_;
 };
 
 }  // namespace blink

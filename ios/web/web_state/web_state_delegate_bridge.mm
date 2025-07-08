@@ -4,11 +4,9 @@
 
 #import "ios/web/public/web_state_delegate_bridge.h"
 
+#import "base/functional/callback.h"
+#import "base/functional/callback_helpers.h"
 #import "ios/web/public/ui/context_menu_params.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 
@@ -21,8 +19,8 @@ WebState* WebStateDelegateBridge::CreateNewWebState(WebState* source,
                                                     const GURL& url,
                                                     const GURL& opener_url,
                                                     bool initiated_by_user) {
-  SEL selector =
-      @selector(webState:createNewWebStateForURL:openerURL:initiatedByUser:);
+  SEL selector = @selector(webState:
+            createNewWebStateForURL:openerURL:initiatedByUser:);
   if ([delegate_ respondsToSelector:selector]) {
     return [delegate_ webState:source
         createNewWebStateForURL:url
@@ -41,13 +39,15 @@ void WebStateDelegateBridge::CloseWebState(WebState* source) {
 WebState* WebStateDelegateBridge::OpenURLFromWebState(
     WebState* source,
     const WebState::OpenURLParams& params) {
-  if ([delegate_ respondsToSelector:@selector(webState:openURLWithParams:)])
+  if ([delegate_ respondsToSelector:@selector(webState:openURLWithParams:)]) {
     return [delegate_ webState:source openURLWithParams:params];
+  }
   return nullptr;
 }
 
 void WebStateDelegateBridge::ShowRepostFormWarningDialog(
     WebState* source,
+    FormWarningType warning_type,
     base::OnceCallback<void(bool)> callback) {
   SEL selector = @selector(webState:runRepostFormDialogWithCompletionHandler:);
   if ([delegate_ respondsToSelector:selector]) {
@@ -55,7 +55,9 @@ void WebStateDelegateBridge::ShowRepostFormWarningDialog(
         runRepostFormDialogWithCompletionHandler:base::CallbackToBlock(
                                                      std::move(callback))];
   } else {
-    std::move(callback).Run(true);
+    bool default_response =
+        warning_type == FormWarningType::kRepost ? true : false;
+    std::move(callback).Run(default_response);
   }
 }
 
@@ -71,7 +73,7 @@ JavaScriptDialogPresenter* WebStateDelegateBridge::GetJavaScriptDialogPresenter(
 void WebStateDelegateBridge::HandlePermissionsDecisionRequest(
     WebState* source,
     NSArray<NSNumber*>* permissions,
-    WebStatePermissionDecisionHandler handler) API_AVAILABLE(ios(15.0)) {
+    WebStatePermissionDecisionHandler handler) {
   if ([delegate_ respondsToSelector:@selector(webState:
                                         handlePermissions:decisionHandler:)]) {
     [delegate_ webState:source
@@ -88,10 +90,10 @@ void WebStateDelegateBridge::OnAuthRequired(
     NSURLCredential* proposed_credential,
     AuthCallback callback) {
   if ([delegate_
-          respondsToSelector:@selector(webState:
-                                 didRequestHTTPAuthForProtectionSpace:
-                                                   proposedCredential:
-                                                    completionHandler:)]) {
+          respondsToSelector:@selector
+          (webState:
+              didRequestHTTPAuthForProtectionSpace:proposedCredential
+                                                  :completionHandler:)]) {
     __block AuthCallback local_callback = std::move(callback);
     [delegate_ webState:source
         didRequestHTTPAuthForProtectionSpace:protection_space
@@ -144,4 +146,10 @@ id<CRWResponderInputView> WebStateDelegateBridge::GetResponderInputView(
   return nil;
 }
 
-}  // web
+void WebStateDelegateBridge::OnNewWebViewCreated(WebState* source) {
+  if ([delegate_ respondsToSelector:@selector(webStateDidCreateWebView:)]) {
+    [delegate_ webStateDidCreateWebView:source];
+  }
+}
+
+}  // namespace web

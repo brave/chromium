@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"
 
@@ -40,7 +39,7 @@ class AccountsMutatorImpl : public AccountsMutator {
 
   // AccountsMutator:
   CoreAccountId AddOrUpdateAccount(
-      const std::string& gaia_id,
+      const GaiaId& gaia_id,
       const std::string& email,
       const std::string& refresh_token,
       bool is_under_advanced_protection,
@@ -67,18 +66,15 @@ class AccountsMutatorImpl : public AccountsMutator {
                    const CoreAccountId& account_id) override;
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  CoreAccountId SeedAccountInfo(const std::string& gaia,
+#if BUILDFLAG(IS_CHROMEOS)
+  CoreAccountId SeedAccountInfo(const GaiaId& gaia,
                                 const std::string& email) override;
 #endif
 
  private:
-  raw_ptr<ProfileOAuth2TokenService, AcrossTasksDanglingUntriaged>
-      token_service_;
-  raw_ptr<AccountTrackerService, AcrossTasksDanglingUntriaged>
-      account_tracker_service_;
-  raw_ptr<PrimaryAccountManager, AcrossTasksDanglingUntriaged>
-      primary_account_manager_;
+  raw_ptr<ProfileOAuth2TokenService> token_service_;
+  raw_ptr<AccountTrackerService> account_tracker_service_;
+  raw_ptr<PrimaryAccountManager> primary_account_manager_;
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   raw_ptr<PrefService> pref_service_;
 #endif

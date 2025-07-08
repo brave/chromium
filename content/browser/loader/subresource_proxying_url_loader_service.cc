@@ -24,7 +24,7 @@
 namespace content {
 
 SubresourceProxyingURLLoaderService::BindContext::BindContext(
-    int frame_tree_node_id,
+    FrameTreeNodeId frame_tree_node_id,
     scoped_refptr<network::SharedURLLoaderFactory> factory,
     base::WeakPtr<RenderFrameHostImpl> render_frame_host,
     scoped_refptr<PrefetchedSignedExchangeCache>
@@ -35,16 +35,6 @@ SubresourceProxyingURLLoaderService::BindContext::BindContext(
       cross_origin_factory(nullptr),
       prefetched_signed_exchange_cache(
           std::move(prefetched_signed_exchange_cache)) {}
-
-SubresourceProxyingURLLoaderService::BindContext::BindContext(
-    const std::unique_ptr<BindContext>& other)
-    : frame_tree_node_id(other->frame_tree_node_id),
-      factory(other->factory),
-      render_frame_host(other->render_frame_host),
-      cross_origin_factory(other->cross_origin_factory),
-      prefetched_signed_exchange_cache(other->prefetched_signed_exchange_cache),
-      prefetch_isolation_infos(other->prefetch_isolation_infos),
-      document(other->document) {}
 
 void SubresourceProxyingURLLoaderService::BindContext::OnDidCommitNavigation(
     WeakDocumentPtr committed_document) {
@@ -65,7 +55,7 @@ SubresourceProxyingURLLoaderService::SubresourceProxyingURLLoaderService(
 base::WeakPtr<SubresourceProxyingURLLoaderService::BindContext>
 SubresourceProxyingURLLoaderService::GetFactory(
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
-    int frame_tree_node_id,
+    FrameTreeNodeId frame_tree_node_id,
     scoped_refptr<network::SharedURLLoaderFactory>
         subresource_proxying_factory_bundle,
     base::WeakPtr<RenderFrameHostImpl> render_frame_host,
@@ -73,7 +63,7 @@ SubresourceProxyingURLLoaderService::GetFactory(
         prefetched_signed_exchange_cache) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  auto bind_context = std::make_unique<BindContext>(
+  auto bind_context = base::MakeRefCounted<BindContext>(
       frame_tree_node_id, subresource_proxying_factory_bundle,
       std::move(render_frame_host),
       std::move(prefetched_signed_exchange_cache));
@@ -119,7 +109,7 @@ void SubresourceProxyingURLLoaderService::CreateLoaderAndStart(
   }
 
   if (resource_request_in.browsing_topics &&
-      !base::FeatureList::IsEnabled(blink::features::kBrowsingTopics)) {
+      !base::FeatureList::IsEnabled(network::features::kBrowsingTopics)) {
     loader_factory_receivers_.ReportBadMessage(
         "Unexpected `resource_request_in` in "
         "SubresourceProxyingURLLoaderService::CreateLoaderAndStart(): "
@@ -128,7 +118,7 @@ void SubresourceProxyingURLLoaderService::CreateLoaderAndStart(
   }
 
   if (resource_request_in.ad_auction_headers &&
-      !base::FeatureList::IsEnabled(blink::features::kInterestGroupStorage)) {
+      !base::FeatureList::IsEnabled(network::features::kInterestGroupStorage)) {
     loader_factory_receivers_.ReportBadMessage(
         "Unexpected `resource_request_in` in "
         "SubresourceProxyingURLLoaderService::CreateLoaderAndStart(): "
@@ -157,8 +147,8 @@ void SubresourceProxyingURLLoaderService::
         const network::ResourceRequest& resource_request_in,
         mojo::PendingRemote<network::mojom::URLLoaderClient> client,
         const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
-  const std::unique_ptr<BindContext>& current_context =
-      loader_factory_receivers_.current_context();
+  BindContext* current_context =
+      loader_factory_receivers_.current_context().get();
 
   auto loader = std::make_unique<SubresourceProxyingURLLoader>(
       current_context->document, request_id, options, resource_request_in,
@@ -176,10 +166,8 @@ SubresourceProxyingURLLoaderService::~SubresourceProxyingURLLoaderService() =
 void SubresourceProxyingURLLoaderService::Clone(
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  loader_factory_receivers_.Add(
-      this, std::move(receiver),
-      std::make_unique<BindContext>(
-          loader_factory_receivers_.current_context()));
+  loader_factory_receivers_.Add(this, std::move(receiver),
+                                loader_factory_receivers_.current_context());
 }
 
 }  // namespace content

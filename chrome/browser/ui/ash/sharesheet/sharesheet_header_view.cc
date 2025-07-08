@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/ash/sharesheet/sharesheet_header_view.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -18,8 +19,11 @@
 #include "ash/style/typography.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/apps/app_service/file_utils.h"
 #include "chrome/browser/profiles/profile.h"
@@ -28,7 +32,6 @@
 #include "chrome/browser/ui/ash/sharesheet/sharesheet_bubble_view.h"
 #include "chrome/browser/ui/ash/sharesheet/sharesheet_constants.h"
 #include "chrome/browser/ui/ash/sharesheet/sharesheet_util.h"
-#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/constants/chromeos_features.h"
@@ -37,8 +40,8 @@
 #include "components/services/app_service/public/cpp/intent_util.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/url_formatter/url_formatter.h"
+#include "components/vector_icons/vector_icons.h"
 #include "storage/browser/file_system/file_system_url.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -52,10 +55,13 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/layout_provider.h"
+#include "ui/views/style/typography.h"
+#include "ui/views/style/typography_provider.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 
@@ -99,8 +105,9 @@ namespace sharesheet {
 // ------------------------------------------------------
 
 class SharesheetHeaderView::SharesheetImagePreview : public views::View {
+  METADATA_HEADER(SharesheetImagePreview, views::View)
+
  public:
-  METADATA_HEADER(SharesheetImagePreview);
   explicit SharesheetImagePreview(size_t file_count) {
     auto* color_provider = AshColorProvider::Get();
     const bool is_dark_mode_enabled =
@@ -165,10 +172,7 @@ class SharesheetHeaderView::SharesheetImagePreview : public views::View {
   SharesheetImagePreview(const SharesheetImagePreview&) = delete;
   SharesheetImagePreview& operator=(const SharesheetImagePreview&) = delete;
 
-  ~SharesheetImagePreview() override {
-    ::sharesheet::SharesheetMetrics::RecordSharesheetImagePreviewPressed(
-        was_pressed_);
-  }
+  ~SharesheetImagePreview() override = default;
 
   RoundedImageView* GetImageViewAt(size_t index) {
     if (index >= image_views_.size()) {
@@ -188,26 +192,13 @@ class SharesheetHeaderView::SharesheetImagePreview : public views::View {
 
  private:
   // views::View:
-  bool OnMousePressed(const ui::MouseEvent& event) override {
-    was_pressed_ = true;
-    return false;
-  }
-
-  void OnGestureEvent(ui::GestureEvent* event) override {
-    if (event->type() == ui::ET_GESTURE_TAP)
-      was_pressed_ = true;
-  }
-
   void OnThemeChanged() override {
     View::OnThemeChanged();
     SetBorder(views::CreateRoundedRectBorder(
         /*thickness=*/1,
         views::LayoutProvider::Get()->GetCornerRadiusMetric(
             views::Emphasis::kMedium),
-        chromeos::features::IsJellyEnabled()
-            ? GetColorProvider()->GetColor(cros_tokens::kCrosSysOutline)
-            : AshColorProvider::Get()->GetContentLayerColor(
-                  AshColorProvider::ContentLayerType::kSeparatorColor)));
+        GetColorProvider()->GetColor(cros_tokens::kCrosSysOutline)));
   }
 
   void AddRowToImageContainerView() {
@@ -246,14 +237,10 @@ class SharesheetHeaderView::SharesheetImagePreview : public views::View {
     AddImageViewTo(parent_view, size);
   }
 
-  std::vector<RoundedImageView*> image_views_;
-
-  // Used for recording UMA to indicate whether or not a user tried to interact
-  // with the image preview.
-  bool was_pressed_ = false;
+  std::vector<raw_ptr<RoundedImageView, VectorExperimental>> image_views_;
 };
 
-BEGIN_METADATA(SharesheetHeaderView, SharesheetImagePreview, views::View)
+BEGIN_METADATA(SharesheetHeaderView, SharesheetImagePreview)
 END_METADATA
 
 // SharesheetHeaderView --------------------------------------------------------
@@ -275,11 +262,9 @@ SharesheetHeaderView::SharesheetHeaderView(apps::IntentPtr intent,
   layout->set_cross_axis_alignment(
       views::BoxLayout::CrossAxisAlignment::kCenter);
   SetFocusBehavior(View::FocusBehavior::ACCESSIBLE_ONLY);
-  SetAccessibilityProperties(ax::mojom::Role::kGenericContainer,
-                             /*name=*/std::u16string(),
-                             /*description=*/absl::nullopt,
-                             /*role_description=*/absl::nullopt,
-                             ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kGenericContainer);
+  GetViewAccessibility().SetName(
+      std::u16string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
 
   const bool has_files = !intent_->files.empty();
   // The image view is initialised first to ensure its left most placement.
@@ -295,17 +280,9 @@ SharesheetHeaderView::SharesheetHeaderView(apps::IntentPtr intent,
       /* inside_border_insets */ gfx::Insets(),
       /* between_child_spacing */ 0, /* collapse_margins_spacing */ true));
   text_view_->AddChildView(
-      chromeos::features::IsJellyEnabled()
-          ? CreateShareLabel(
-                l10n_util::GetStringUTF16(IDS_SHARESHEET_TITLE_LABEL),
-                TypographyToken::kCrosTitle1, cros_tokens::kCrosSysOnSurface,
-                gfx::ALIGN_LEFT)
-          : CreateShareLabel(
-                l10n_util::GetStringUTF16(IDS_SHARESHEET_TITLE_LABEL),
-                CONTEXT_SHARESHEET_BUBBLE_TITLE, kTitleTextLineHeight,
-                AshColorProvider::Get()->GetContentLayerColor(
-                    AshColorProvider::ContentLayerType::kTextColorPrimary),
-                gfx::ALIGN_LEFT));
+      CreateShareLabel(l10n_util::GetStringUTF16(IDS_SHARESHEET_TITLE_LABEL),
+                       TypographyToken::kCrosTitle1,
+                       cros_tokens::kCrosSysOnSurface, gfx::ALIGN_LEFT));
 
   ShowTextPreview();
   if (has_files) {
@@ -350,15 +327,16 @@ void SharesheetHeaderView::ShowTextPreview() {
     }
     auto file_label = CreatePreviewLabel(file_text);
     if (!filenames_tooltip_text.empty()) {
-      file_label->SetTooltipText(filenames_tooltip_text);
-      file_label->SetAccessibleName(
+      file_label->SetCustomTooltipText(filenames_tooltip_text);
+      file_label->GetViewAccessibility().SetName(
           base::StrCat({file_text, u" ", filenames_tooltip_text}));
     }
     preview_labels.push_back(std::move(file_label));
   }
 
-  if (preview_labels.size() == 0)
+  if (preview_labels.size() == 0) {
     return;
+  }
 
   int index = 0;
   int max_lines = std::min(preview_labels.size(), kTextPreviewMaximumLines);
@@ -402,8 +380,8 @@ SharesheetHeaderView::ExtractShareText() {
       // Format URL to be elided correctly to prevent origin spoofing.
       auto elided_url = url_formatter::ElideUrl(
           extracted_text.url,
-          views::style::GetFont(CONTEXT_SHARESHEET_BUBBLE_BODY,
-                                views::style::STYLE_PRIMARY),
+          views::TypographyProvider::Get().GetFont(
+              CONTEXT_SHARESHEET_BUBBLE_BODY, views::style::STYLE_PRIMARY),
           available_width);
       auto url_label = CreatePreviewLabel(elided_url);
 
@@ -423,8 +401,8 @@ SharesheetHeaderView::ExtractShareText() {
           extracted_text.url, format_types, base::UnescapeRule::NORMAL,
           /*new_parsed=*/nullptr,
           /*prefix_end=*/nullptr, /*offset_for_adjustment=*/nullptr);
-      url_label->SetTooltipText(formatted_text);
-      url_label->SetAccessibleName(formatted_text);
+      url_label->SetCustomTooltipText(formatted_text);
+      url_label->GetViewAccessibility().SetName(formatted_text);
       preview_labels.push_back(std::move(url_label));
       text_icon_ = TextPlaceholderIcon::kLink;
     }
@@ -435,15 +413,9 @@ SharesheetHeaderView::ExtractShareText() {
 
 std::unique_ptr<views::Label> SharesheetHeaderView::CreatePreviewLabel(
     const std::u16string& text) {
-  return chromeos::features::IsJellyEnabled()
-             ? CreateShareLabel(text, TypographyToken::kCrosBody2,
-                                cros_tokens::kCrosSysOnSurfaceVariant,
-                                gfx::ALIGN_LEFT)
-             : CreateShareLabel(
-                   text, CONTEXT_SHARESHEET_BUBBLE_BODY, kPrimaryTextLineHeight,
-                   AshColorProvider::Get()->GetContentLayerColor(
-                       AshColorProvider::ContentLayerType::kTextColorPrimary),
-                   gfx::ALIGN_LEFT, views::style::STYLE_PRIMARY);
+  return CreateShareLabel(text, TypographyToken::kCrosBody2,
+                          cros_tokens::kCrosSysOnSurfaceVariant,
+                          gfx::ALIGN_LEFT);
 }
 
 const gfx::VectorIcon& SharesheetHeaderView::GetTextVectorIcon() {
@@ -451,7 +423,7 @@ const gfx::VectorIcon& SharesheetHeaderView::GetTextVectorIcon() {
     case (TextPlaceholderIcon::kGenericText):
       return chromeos::kTextIcon;
     case (TextPlaceholderIcon::kLink):
-      return kLinkIcon;
+      return vector_icons::kLinkIcon;
   }
 }
 
@@ -502,11 +474,11 @@ void SharesheetHeaderView::OnImageLoaded(const gfx::Size& size, size_t index) {
   DCHECK_GT(image_preview_->GetImageViewCount(), index);
   image_preview_->GetImageViewAt(index)->SetImage(images_[index]->GetImageSkia(
       size, DarkLightModeControllerImpl::Get()->IsDarkModeEnabled()));
-  // TODO(crbug.com/1293668): Investigate why this SchedulePaint is needed.
+  // TODO(crbug.com/40213603): Investigate why this SchedulePaint is needed.
   image_preview_->GetImageViewAt(index)->SchedulePaint();
 }
 
-BEGIN_METADATA(SharesheetHeaderView, views::View)
+BEGIN_METADATA(SharesheetHeaderView)
 END_METADATA
 
 }  // namespace sharesheet

@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 #include "chrome/services/sharing/nearby/nearby_presence.h"
+
 #include "base/strings/string_number_conversions.h"
-#include "chrome/browser/nearby_sharing/logging/logging.h"
-#include "chrome/services/sharing/nearby/nearby_presence_conversions.h"
 #include "chrome/services/sharing/nearby/nearby_shared_remotes.h"
+#include "chromeos/ash/components/nearby/presence/conversions/nearby_presence_conversions.h"
+#include "components/cross_device/logging/logging.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
 #include "third_party/nearby/internal/proto/credential.pb.h"
@@ -23,19 +24,10 @@ void PostStartScanCallbackOnSequence(
     ash::nearby::presence::NearbyPresence::StartScanCallback callback,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     mojo::PendingRemote<ash::nearby::presence::mojom::ScanSession> scan_session,
-    ash::nearby::presence::mojom::StatusCode status) {
+    mojo_base::mojom::AbslStatusCode status) {
   task_runner->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback), std::move(scan_session), status));
-}
-
-ash::nearby::presence::mojom::StatusCode CovertStatusToMojomStatus(
-    absl::Status status) {
-  if (status.code() == absl::StatusCode::kOk) {
-    return ash::nearby::presence::mojom::StatusCode::kOk;
-  } else {
-    return ash::nearby::presence::mojom::StatusCode::kFailure;
-  }
 }
 
 }  // namespace
@@ -86,11 +78,11 @@ void NearbyPresence::StartScan(mojom::ScanRequestPtr scan_request,
                              [id_to_session_id_map_[id]])
                    .Run(std::move(session_id_to_scan_session_remote_map_
                                       [id_to_session_id_map_[id]]),
-                        CovertStatusToMojomStatus(status));
+                        ConvertStatusToMojom(status));
              } else {
                std::move(session_id_to_results_callback_map_
                              [id_to_session_id_map_[id]])
-                   .Run(mojo::NullRemote(), CovertStatusToMojomStatus(status));
+                   .Run(mojo::NullRemote(), ConvertStatusToMojom(status));
                session_id_to_scan_session_remote_map_.erase(
                    id_to_session_id_map_[id]);
                id_to_session_id_map_.erase(id);
@@ -115,12 +107,12 @@ void NearbyPresence::StartScan(mojom::ScanRequestPtr scan_request,
   if (session_id_or_status.ok()) {
     session_id = *session_id_or_status;
   } else {
-    // TODO(b/277819923): Change logging to presence specific logs.
-    NS_LOG(ERROR) << __func__ << ": Error starting scan, status was: "
-                  << session_id_or_status.status();
+    CD_LOG(ERROR, Feature::NEARBY_INFRA)
+        << __func__ << ": Error starting scan, status was: "
+        << session_id_or_status.status();
     std::move(callback).Run(
         std::move(mojo::NullRemote()),
-        CovertStatusToMojomStatus(session_id_or_status.status()));
+        ConvertStatusToMojom(session_id_or_status.status()));
     return;
   }
 
@@ -159,11 +151,12 @@ void NearbyPresence::UpdateLocalDeviceMetadata(mojom::MetadataPtr metadata) {
   // to only set metadata, and not to generate credentials. Generating
   // credentials is only called during the first time flow or when device
   // metadata changes (e.g. the user's name).
-  presence_service_->UpdateLocalDeviceMetadata(
-      MetadataFromMojom(metadata.get()), /*regen_credentials=*/false,
+  presence_service_->UpdateDeviceIdentityMetaData(
+      MetadataFromMojom(metadata.get()),
+      /*regen_credentials=*/false,
       /*manager_app_id=*/kChromeOSManagerAppId,
       /*identity_types=*/
-      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE},
+      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       /*credential_life_cycle_days=*/kCredentialLifeCycleDays,
       /*contiguous_copy_of_credentials=*/kNumCredentials,
       /*credentials_generated_cb=*/{});
@@ -172,11 +165,12 @@ void NearbyPresence::UpdateLocalDeviceMetadata(mojom::MetadataPtr metadata) {
 void NearbyPresence::UpdateLocalDeviceMetadataAndGenerateCredentials(
     mojom::MetadataPtr metadata,
     UpdateLocalDeviceMetadataAndGenerateCredentialsCallback callback) {
-  presence_service_->UpdateLocalDeviceMetadata(
-      MetadataFromMojom(metadata.get()), /*regen_credentials=*/true,
+  presence_service_->UpdateDeviceIdentityMetaData(
+      MetadataFromMojom(metadata.get()),
+      /*regen_credentials=*/true,
       /*manager_app_id=*/kChromeOSManagerAppId,
       /*identity_types=*/
-      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE},
+      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       /*credential_life_cycle_days=*/kCredentialLifeCycleDays,
       /*contiguous_copy_of_credentials=*/kNumCredentials,
       {.credentials_generated_cb = [cb = base::BindOnce(std::move(callback)),
@@ -202,13 +196,12 @@ void NearbyPresence::UpdateLocalDeviceMetadataAndGenerateCredentials(
                         UpdateLocalDeviceMetadataAndGenerateCredentialsCallback&>(
                         cb)),
                 /*credentials=*/std::move(mojo_credentials), /*status=*/
-                CovertStatusToMojomStatus(
-                    status_or_shared_credentials.status())));
+                ConvertStatusToMojom(status_or_shared_credentials.status())));
       }});
 }
 
 void NearbyPresence::OnScanSessionDisconnect(uint64_t scan_session_id) {
-  NS_LOG(VERBOSE) << __func__;
+  CD_LOG(VERBOSE, Feature::NEARBY_INFRA) << __func__;
   presence_client_->StopScan(scan_session_id);
   session_id_to_scan_session_map_.erase(scan_session_id);
   session_id_to_results_callback_map_.erase(scan_session_id);
@@ -247,7 +240,7 @@ void NearbyPresence::UpdateRemoteSharedCredentials(
                      std::move(
                          const_cast<UpdateRemoteSharedCredentialsCallback&>(
                              cb)),
-                     CovertStatusToMojomStatus(status)));
+                     ConvertStatusToMojom(status)));
            }});
 }
 
@@ -258,7 +251,7 @@ void NearbyPresence::GetLocalSharedCredentials(
       /*credential_selector=*/{.manager_app_id = kChromeOSManagerAppId,
                                .account_name = account_name,
                                .identity_type = ::nearby::internal::
-                                   IdentityType::IDENTITY_TYPE_PRIVATE},
+                                   IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       {.credentials_fetched_cb =
            [cb = base::BindOnce(std::move(callback)),
             task_runner = base::SequencedTaskRunner::GetCurrentDefault()](
@@ -281,12 +274,12 @@ void NearbyPresence::GetLocalSharedCredentials(
                      std::move(
                          const_cast<GetLocalSharedCredentialsCallback&>(cb)),
                      /*credentials=*/std::move(mojo_credentials), /*status=*/
-                     CovertStatusToMojomStatus(
+                     ConvertStatusToMojom(
                          status_or_shared_credentials.status())));
            }});
 }
 
-NearbyPresence::ScanSessionImpl::ScanSessionImpl() {}
-NearbyPresence::ScanSessionImpl::~ScanSessionImpl() {}
+NearbyPresence::ScanSessionImpl::ScanSessionImpl() = default;
+NearbyPresence::ScanSessionImpl::~ScanSessionImpl() = default;
 
 }  // namespace ash::nearby::presence

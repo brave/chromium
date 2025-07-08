@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_underlying_source.h"
+
 #include <memory>
 
 #include "base/test/mock_callback.h"
@@ -10,11 +11,13 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_tester.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_read_result.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_encoded_audio_frame.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_frame.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/webrtc/api/frame_transformer_interface.h"
 #include "third_party/webrtc/api/test/mock_transformable_audio_frame.h"
@@ -27,10 +30,11 @@ class RTCEncodedAudioUnderlyingSourceTest : public testing::Test {
  public:
   RTCEncodedAudioUnderlyingSource* CreateSource(ScriptState* script_state) {
     return MakeGarbageCollected<RTCEncodedAudioUnderlyingSource>(
-        script_state, WTF::CrossThreadBindOnce(disconnect_callback_.Get()));
+        script_state, CrossThreadBindOnce(disconnect_callback_.Get()));
   }
 
  protected:
+  test::TaskEnvironment task_environment_;
   base::MockOnceClosure disconnect_callback_;
 };
 

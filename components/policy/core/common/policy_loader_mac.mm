@@ -8,13 +8,13 @@
 
 #include <Foundation/Foundation.h>
 
+#include "base/apple/foundation_util.h"
 #include "base/enterprise_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/mac/foundation_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
@@ -29,10 +29,6 @@
 #include "components/policy/core/common/preferences_mac.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_map.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace policy {
 
@@ -51,19 +47,19 @@ bool ShouldHonorPolicies() {
 PolicyLoaderMac::PolicyLoaderMac(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::FilePath& managed_policy_path,
-    MacPreferences* preferences)
+    std::unique_ptr<MacPreferences> preferences)
     : PolicyLoaderMac(task_runner,
                       managed_policy_path,
-                      preferences,
+                      std::move(preferences),
                       kCFPreferencesCurrentApplication) {}
 
 PolicyLoaderMac::PolicyLoaderMac(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::FilePath& managed_policy_path,
-    MacPreferences* preferences,
+    std::unique_ptr<MacPreferences> preferences,
     CFStringRef application_id)
     : AsyncPolicyLoader(task_runner, /*periodic_updates=*/true),
-      preferences_(preferences),
+      preferences_(std::move(preferences)),
       managed_policy_path_(managed_policy_path),
       application_id_(CFStringCreateCopy(kCFAllocatorDefault, application_id)) {
 }
@@ -104,7 +100,7 @@ void PolicyLoaderMac::InitOnBackgroundThread() {
 }
 
 PolicyBundle PolicyLoaderMac::Load() {
-  preferences_->AppSynchronize(application_id_);
+  preferences_->AppSynchronize(application_id_.get());
   PolicyBundle bundle;
 
   // Load Chrome's policy.
@@ -115,22 +111,23 @@ PolicyBundle PolicyLoaderMac::Load() {
       schema_map()->GetSchema(PolicyNamespace(POLICY_DOMAIN_CHROME, ""));
   for (Schema::Iterator it = schema->GetPropertiesIterator(); !it.IsAtEnd();
        it.Advance()) {
-    base::ScopedCFTypeRef<CFStringRef> name(
+    base::apple::ScopedCFTypeRef<CFStringRef> name(
         base::SysUTF8ToCFStringRef(it.key()));
-    base::ScopedCFTypeRef<CFPropertyListRef> value(
-        preferences_->CopyAppValue(name, application_id_));
+    base::apple::ScopedCFTypeRef<CFPropertyListRef> value(
+        preferences_->CopyAppValue(name.get(), application_id_.get()));
     if (!value)
       continue;
-    bool forced = preferences_->AppValueIsForced(name, application_id_);
+    bool forced =
+        preferences_->AppValueIsForced(name.get(), application_id_.get());
     PolicyLevel level =
         forced ? POLICY_LEVEL_MANDATORY : POLICY_LEVEL_RECOMMENDED;
     PolicyScope scope = POLICY_SCOPE_USER;
     if (forced) {
-      scope = preferences_->IsManagedPolicyAvailableForMachineScope(name)
+      scope = preferences_->IsManagedPolicyAvailableForMachineScope(name.get())
                   ? POLICY_SCOPE_MACHINE
                   : POLICY_SCOPE_USER;
     }
-    std::unique_ptr<base::Value> policy = PropertyToValue(value);
+    std::unique_ptr<base::Value> policy = PropertyToValue(value.get());
     if (policy) {
       chrome_policy.Set(it.key(), level, scope, POLICY_SOURCE_PLATFORM,
                         std::move(*policy), nullptr);
@@ -166,8 +163,9 @@ base::FilePath PolicyLoaderMac::GetManagedPolicyPath(CFStringRef bundle_id) {
   // missed the change.
 
   base::FilePath path;
-  if (!base::mac::GetLocalDirectory(NSLibraryDirectory, &path))
+  if (!base::apple::GetLocalDirectory(NSLibraryDirectory, &path)) {
     return base::FilePath();
+  }
   path = path.Append(FILE_PATH_LITERAL("Managed Preferences"));
   char* login = getlogin();
   if (!login)
@@ -181,7 +179,7 @@ base::FilePath PolicyLoaderMac::GetManagedPolicyPath(CFStringRef bundle_id) {
 void PolicyLoaderMac::LoadPolicyForDomain(PolicyDomain domain,
                                           const std::string& domain_name,
                                           PolicyBundle* bundle) {
-  std::string id_prefix(base::SysCFStringRefToUTF8(application_id_));
+  std::string id_prefix(base::SysCFStringRefToUTF8(application_id_.get()));
   id_prefix.append(".").append(domain_name).append(".");
 
   const ComponentMap* components = schema_map()->GetComponents(domain);
@@ -207,28 +205,30 @@ void PolicyLoaderMac::LoadPolicyForComponent(
   if (!schema.valid())
     return;
 
-  base::ScopedCFTypeRef<CFStringRef> bundle_id =
+  base::apple::ScopedCFTypeRef<CFStringRef> bundle_id =
       base::SysUTF8ToCFStringRef(bundle_id_string);
-  preferences_->AppSynchronize(bundle_id);
+  preferences_->AppSynchronize(bundle_id.get());
 
   for (Schema::Iterator it = schema.GetPropertiesIterator(); !it.IsAtEnd();
        it.Advance()) {
-    base::ScopedCFTypeRef<CFStringRef> pref_name =
+    base::apple::ScopedCFTypeRef<CFStringRef> pref_name =
         base::SysUTF8ToCFStringRef(it.key());
-    base::ScopedCFTypeRef<CFPropertyListRef> value(
-        preferences_->CopyAppValue(pref_name, bundle_id));
+    base::apple::ScopedCFTypeRef<CFPropertyListRef> value(
+        preferences_->CopyAppValue(pref_name.get(), bundle_id.get()));
     if (!value)
       continue;
-    bool forced = preferences_->AppValueIsForced(pref_name, bundle_id);
+    bool forced =
+        preferences_->AppValueIsForced(pref_name.get(), bundle_id.get());
     PolicyLevel level =
         forced ? POLICY_LEVEL_MANDATORY : POLICY_LEVEL_RECOMMENDED;
     PolicyScope scope = POLICY_SCOPE_USER;
     if (forced) {
-      scope = preferences_->IsManagedPolicyAvailableForMachineScope(pref_name)
-                  ? POLICY_SCOPE_MACHINE
-                  : POLICY_SCOPE_USER;
+      scope =
+          preferences_->IsManagedPolicyAvailableForMachineScope(pref_name.get())
+              ? POLICY_SCOPE_MACHINE
+              : POLICY_SCOPE_USER;
     }
-    std::unique_ptr<base::Value> policy_value = PropertyToValue(value);
+    std::unique_ptr<base::Value> policy_value = PropertyToValue(value.get());
     if (policy_value) {
       policy->Set(it.key(), level, scope, POLICY_SOURCE_PLATFORM,
                   std::move(*policy_value), nullptr);

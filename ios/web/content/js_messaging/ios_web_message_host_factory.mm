@@ -5,18 +5,14 @@
 #import "ios/web/content/js_messaging/ios_web_message_host_factory.h"
 
 #import <string>
+#import <variant>
 
-#import "base/functional/overloaded.h"
 #import "base/json/json_reader.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/js_injection/browser/js_communication_host.h"
 #import "components/js_injection/browser/web_message.h"
 #import "components/js_injection/browser/web_message_host.h"
-#import "third_party/abseil-cpp/absl/types/variant.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web {
 namespace {
@@ -37,9 +33,9 @@ class IOSWebMessageHost : public js_injection::WebMessageHost {
   // js_injection::WebMessageHost:
   void OnPostMessage(
       std::unique_ptr<js_injection::WebMessage> web_message) override {
-    absl::optional<std::u16string> received_message;
-    absl::visit(
-        base::Overloaded{
+    std::optional<std::u16string> received_message;
+    std::visit(
+        absl::Overload{
             [&received_message](const std::u16string& str) {
               received_message = str;
             },
@@ -52,13 +48,13 @@ class IOSWebMessageHost : public js_injection::WebMessageHost {
       return;
     }
 
-    // TODO(crbug.com/1423527): Move this parsing to the renderer process.
-    absl::optional<base::Value> message_value =
+    // TODO(crbug.com/40260088): Move this parsing to the renderer process.
+    std::optional<base::Value> message_value =
         base::JSONReader::Read(base::UTF16ToUTF8(*received_message));
     if (!message_value) {
       return;
     }
-    // TODO(crbug.com/1423527): Determine whether the user has interacted with
+    // TODO(crbug.com/40260088): Determine whether the user has interacted with
     // the source page.
     bool is_user_interacting = false;
     ScriptMessage script_message(
@@ -88,6 +84,7 @@ IOSWebMessageHostFactory::~IOSWebMessageHostFactory() = default;
 
 std::unique_ptr<js_injection::WebMessageHost>
 IOSWebMessageHostFactory::CreateHost(
+    const std::string& top_level_origin_string,
     const std::string& origin_string,
     bool is_main_frame,
     js_injection::WebMessageReplyProxy* proxy) {

@@ -6,12 +6,13 @@
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_TOOLBAR_UNITTEST_H_
 
 #include "base/memory/raw_ptr.h"
-#include "chrome/browser/extensions/site_permissions_helper.h"
+#include "chrome/browser/extensions/permissions/site_permissions_helper.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_container.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "content/public/test/web_contents_tester.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/common/extension.h"
 
@@ -38,12 +39,20 @@ class ExtensionsToolbarUnitTest : public TestWithBrowserView {
     return extension_service_;
   }
 
+  extensions::ExtensionRegistrar* extension_registrar() {
+    return extensions::ExtensionRegistrar::Get(profile());
+  }
+
   ExtensionsToolbarContainer* extensions_container() {
     return browser_view()->toolbar()->extensions_container();
   }
 
   ExtensionsToolbarButton* extensions_button() {
     return extensions_container()->GetExtensionsButton();
+  }
+
+  ExtensionsRequestAccessButton* request_access_button() {
+    return extensions_container()->GetRequestAccessButton();
   }
 
   ExtensionsMenuCoordinator* menu_coordinator() {
@@ -108,6 +117,18 @@ class ExtensionsToolbarUnitTest : public TestWithBrowserView {
       extensions::PermissionsManager::UserSiteSetting site_setting,
       const GURL& url);
 
+  // Adds a site access request with an optional `filter` for `extension` in
+  // `web_contents`.
+  void AddHostAccessRequest(
+      const extensions::Extension& extension,
+      content::WebContents* web_contents,
+      const std::optional<URLPattern>& filter = std::nullopt);
+
+  // Removes the site access request for `extension` in `web_contents`, if
+  // existent.
+  void RemoveHostAccessRequest(const extensions::Extension& extension,
+                               content::WebContents* web_contents);
+
   // Returns the user's site setting for `url`.
   extensions::PermissionsManager::UserSiteSetting GetUserSiteSetting(
       const GURL& url);
@@ -147,6 +168,7 @@ class ExtensionsToolbarUnitTest : public TestWithBrowserView {
   void TearDown() override;
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   raw_ptr<extensions::ExtensionService, DanglingUntriaged> extension_service_ =
       nullptr;
   raw_ptr<extensions::PermissionsManager, DanglingUntriaged>

@@ -10,9 +10,9 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/types/expected.h"
+#include "components/password_manager/core/browser/import/import_results.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/ui/credential_ui_entry.h"
-#include "components/password_manager/core/browser/ui/import_results.h"
 #include "components/password_manager/services/csv_password/csv_password_parser_service.h"
 #include "components/password_manager/services/csv_password/public/mojom/csv_password_parser.mojom.h"
 
@@ -54,11 +54,6 @@ class SavedPasswordsPresenter;
 // performed using a utility SandBox process.
 class PasswordImporter {
  public:
-  static constexpr size_t MAX_PASSWORDS_PER_IMPORT = 3000;
-  // TODO(crbug/1417650): Use constant from
-  // components/password_manager/core/common/password_manager_constants.h
-  static constexpr size_t MAX_NOTE_LENGTH = 1000;
-
   enum State {
     // The object has just been created, but the import process has not been
     // launched yet. Or the import has finished with some errors and the object
@@ -68,11 +63,11 @@ class PasswordImporter {
     // it. In case of new import requests, the user should receive an
     // IMPORT_ALREADY_ACTIVE error.
     kInProgress = 1,
-    // Conflicts were found in the selected file. PasswordImporter is waiting
-    // for the user to select which passwords to replace or to cancel the
-    // import. In case of new import requests the current state should be
-    // returned.
-    kConflicts = 2,
+    // Either user confirmation was requested or conflicts were found in the
+    // selected file. PasswordImporter is waiting for the user to confirm the
+    // import and/or select which passwords to replace or to cancel the import.
+    // In case of new import requests the current state should be returned.
+    kUserInteractionRequired = 2,
     // Import has successufly finished with no errors. PasswordImporter is
     // waiting for the user to decide if they want to delete the file.
     kFinished = 3,
@@ -89,14 +84,21 @@ class PasswordImporter {
   using DeleteFileCallback =
       base::RepeatingCallback<bool(const base::FilePath&)>;
 
-  explicit PasswordImporter(SavedPasswordsPresenter* presenter);
+  explicit PasswordImporter(SavedPasswordsPresenter* presenter,
+                            bool user_confirmation_required = false);
   PasswordImporter(const PasswordImporter&) = delete;
   PasswordImporter& operator=(const PasswordImporter&) = delete;
   ~PasswordImporter();
 
+  // Imports passwords from the |csv_data| string into the |to_store|.
+  // |results_callback| is used to return import summary back to the user.
+  // The only supported data format is CSV.
+  void Import(std::string csv_data,
+              password_manager::PasswordForm::Store to_store,
+              ImportResultsCallback results_callback);
+
   // Imports passwords from the file at |path| into the |to_store|.
   // |results_callback| is used to return import summary back to the user.
-  // |cleanup_callback] is called when current object can be destroyed.
   // The only supported file format is CSV.
   void Import(const base::FilePath& path,
               password_manager::PasswordForm::Store to_store,
@@ -113,7 +115,7 @@ class PasswordImporter {
 
   // Triggers the deletion of the imported file at `file_path_` when the
   // importer is in the kFinished state.
-  void DeleteFile();
+  void DeleteFile(base::OnceClosure completion = base::DoNothing());
 
   bool IsState(PasswordImporter::State state) const { return state_ == state; }
 
@@ -166,7 +168,8 @@ class PasswordImporter {
   // Path of the imported file.
   base::FilePath file_path_;
 
-  // Used to cache intermediate results of the import during kConflicts state.
+  // Used to cache intermediate results of the import during
+  // kUserInteractionRequired state.
   std::unique_ptr<ConflictsResolutionCache> conflicts_cache_;
 
   // The function which does the actual deleting of a file. It should wrap
@@ -174,6 +177,10 @@ class PasswordImporter {
   DeleteFileCallback delete_function_;
 
   const raw_ptr<SavedPasswordsPresenter> presenter_;
+
+  // Whether the user must confirm before the imported passwords are added to
+  // the store.
+  const bool user_confirmation_required_;
 
   base::WeakPtrFactory<PasswordImporter> weak_ptr_factory_{this};
 };

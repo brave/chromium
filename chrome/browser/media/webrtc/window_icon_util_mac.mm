@@ -6,32 +6,28 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "third_party/libyuv/include/libyuv/convert_argb.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 gfx::ImageSkia GetWindowIcon(content::DesktopMediaID id) {
   DCHECK(id.type == content::DesktopMediaID::TYPE_WINDOW);
 
   CGWindowID ids[1];
   ids[0] = id.id;
-  base::ScopedCFTypeRef<CFArrayRef> window_id_array(CFArrayCreate(
+  base::apple::ScopedCFTypeRef<CFArrayRef> window_id_array(CFArrayCreate(
       nullptr, reinterpret_cast<const void**>(&ids), std::size(ids), nullptr));
-  base::ScopedCFTypeRef<CFArrayRef> window_array(
-      CGWindowListCreateDescriptionFromArray(window_id_array));
-  if (!window_array || 0 == CFArrayGetCount(window_array)) {
+  base::apple::ScopedCFTypeRef<CFArrayRef> window_array(
+      CGWindowListCreateDescriptionFromArray(window_id_array.get()));
+  if (!window_array || 0 == CFArrayGetCount(window_array.get())) {
     return gfx::ImageSkia();
   }
 
-  CFDictionaryRef window = base::mac::CFCastStrict<CFDictionaryRef>(
-      CFArrayGetValueAtIndex(window_array, 0));
-  CFNumberRef pid_ref =
-      base::mac::GetValueFromDictionary<CFNumberRef>(window, kCGWindowOwnerPID);
+  CFDictionaryRef window = base::apple::CFCastStrict<CFDictionaryRef>(
+      CFArrayGetValueAtIndex(window_array.get(), 0));
+  CFNumberRef pid_ref = base::apple::GetValueFromDictionary<CFNumberRef>(
+      window, kCGWindowOwnerPID);
 
   int pid;
   CFNumberGetValue(pid_ref, kCFNumberIntType, &pid);
@@ -63,12 +59,13 @@ gfx::ImageSkia GetWindowIcon(content::DesktopMediaID id) {
   }
 
   CGDataProviderRef provider = CGImageGetDataProvider(cg_icon_image);
-  base::ScopedCFTypeRef<CFDataRef> cf_data(CGDataProviderCopyData(provider));
+  base::apple::ScopedCFTypeRef<CFDataRef> cf_data(
+      CGDataProviderCopyData(provider));
 
   int width = CGImageGetWidth(cg_icon_image);
   int height = CGImageGetHeight(cg_icon_image);
   int src_stride = CGImageGetBytesPerRow(cg_icon_image);
-  const uint8_t* src_data = CFDataGetBytePtr(cf_data);
+  const uint8_t* src_data = CFDataGetBytePtr(cf_data.get());
 
   SkBitmap result;
   result.allocN32Pixels(width, height, false /* no-premultiplied */);

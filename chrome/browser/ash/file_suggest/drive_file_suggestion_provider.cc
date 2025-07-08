@@ -13,9 +13,10 @@
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/file_suggest/file_suggest_util.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/storage_partition.h"
@@ -72,6 +73,7 @@ std::vector<FileSuggestData> FilterSuggestResultsByTime(
 }  // namespace
 
 DriveFileSuggestionProvider::DriveFileSuggestionProvider(
+    const ApplicationLocaleStorage* application_locale_storage,
     Profile* profile,
     base::RepeatingCallback<void(FileSuggestionType)> notify_update_callback)
     : FileSuggestionProvider(notify_update_callback),
@@ -80,7 +82,7 @@ DriveFileSuggestionProvider::DriveFileSuggestionProvider(
           drive::DriveIntegrationServiceFactory::GetInstance()->GetForProfile(
               profile_)),
       item_suggest_cache_(std::make_unique<ItemSuggestCache>(
-          g_browser_process->GetApplicationLocale(),
+          application_locale_storage->Get(),
           profile,
           profile->GetDefaultStoragePartition()
               ->GetURLLoaderFactoryForBrowserProcess())),
@@ -119,15 +121,15 @@ void DriveFileSuggestionProvider::GetSuggestFileData(
   // If there is not any available drive service, return early.
   if (!drive_service_ || !drive_service_->IsMounted()) {
     EndDriveFilePathValidation(DriveSuggestValidationStatus::kDriveFSNotMounted,
-                               /*suggest_results=*/absl::nullopt);
+                               /*suggest_results=*/std::nullopt);
     return;
   } else if (profile_->GetPrefs()->GetBoolean(drive::prefs::kDisableDrive)) {
     EndDriveFilePathValidation(DriveSuggestValidationStatus::kDriveDisabled,
-                               /*suggest_results=*/absl::nullopt);
+                               /*suggest_results=*/std::nullopt);
     return;
   }
 
-  const absl::optional<ItemSuggestCache::Results> results_before_validation =
+  const std::optional<ItemSuggestCache::Results> results_before_validation =
       item_suggest_cache_->GetResults();
 
   // If there is no available data to validate, return early.
@@ -141,7 +143,7 @@ void DriveFileSuggestionProvider::GetSuggestFileData(
     }
 
     EndDriveFilePathValidation(DriveSuggestValidationStatus::kNoResults,
-                               /*suggest_results=*/absl::nullopt);
+                               /*suggest_results=*/std::nullopt);
     return;
   }
 
@@ -164,14 +166,9 @@ void DriveFileSuggestionProvider::MaybeUpdateItemSuggestCache(
   item_suggest_cache_->MaybeUpdateCache();
 }
 
-bool DriveFileSuggestionProvider::HasPendingDriveSuggestionFetchForTest()
-    const {
-  return !on_drive_results_ready_callback_list_.empty();
-}
-
 void DriveFileSuggestionProvider::EndDriveFilePathValidation(
     DriveSuggestValidationStatus validation_status,
-    const absl::optional<std::vector<FileSuggestData>>& suggest_results) {
+    const std::optional<std::vector<FileSuggestData>>& suggest_results) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // If there aren't enough results, use a long delay and vice versa.
@@ -192,14 +189,14 @@ void DriveFileSuggestionProvider::EndDriveFilePathValidation(
 
 void DriveFileSuggestionProvider::OnDriveFilePathsLocated(
     std::vector<ItemSuggestCache::Result> raw_suggest_results,
-    absl::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths) {
+    std::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // If validation fails, return early.
   if (!paths) {
     EndDriveFilePathValidation(
         DriveSuggestValidationStatus::kPathLocationFailed,
-        /*suggest_results=*/absl::nullopt);
+        /*suggest_results=*/std::nullopt);
     return;
   }
 
@@ -214,21 +211,27 @@ void DriveFileSuggestionProvider::OnDriveFilePathsLocated(
       continue;
     }
 
-    absl::optional<std::u16string> reason;
+    std::optional<std::u16string> reason;
     if (raw_suggest_results[index].prediction_reason) {
       reason = base::UTF8ToUTF16(
           raw_suggest_results[index].prediction_reason.value());
     }
     suggest_results.emplace_back(
         FileSuggestionType::kDriveFile,
-        ReparentToDriveMount(path_or_error->get_path(), drive_service_), reason,
-        /*score=*/absl::nullopt);
+        ReparentToDriveMount(path_or_error->get_path(), drive_service_),
+        /*title=*/std::nullopt, reason,
+        /*modified_time=*/std::nullopt,
+        /*viewed_time=*/std::nullopt,
+        /*shared_time=*/std::nullopt,
+        /*score=*/std::nullopt,
+        /*drive_file_id=*/std::nullopt,
+        /*icon_url=*/std::nullopt);
   }
 
   // Validation fails on each file, so return early.
   if (suggest_results.empty()) {
     EndDriveFilePathValidation(DriveSuggestValidationStatus::kAllFilesErrored,
-                               /*suggest_results=*/absl::nullopt);
+                               /*suggest_results=*/std::nullopt);
     return;
   }
 

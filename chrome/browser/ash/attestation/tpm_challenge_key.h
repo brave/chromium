@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_ASH_ATTESTATION_TPM_CHALLENGE_KEY_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/weak_ptr.h"
@@ -15,21 +16,17 @@
 #include "chromeos/ash/components/dbus/attestation/attestation_ca.pb.h"
 #include "chromeos/ash/components/dbus/attestation/keystore.pb.h"
 #include "chromeos/ash/components/dbus/constants/attestation_constants.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class Profile;
 class AttestationFlow;
-
-namespace user_prefs {
-class PrefRegistrySyncable;
-}  // namespace user_prefs
 
 namespace ash {
 namespace attestation {
 
 // Prefix for naming machine keys used for SignedPublicKeyAndChallenge when
 // challenging the EMK with register=true.
-const char kEnterpriseMachineKeyForSpkacPrefix[] = "attest-ent-machine-";
+inline constexpr char kEnterpriseMachineKeyForSpkacPrefix[] =
+    "attest-ent-machine-";
 
 //========================= TpmChallengeKeyFactory =============================
 
@@ -55,8 +52,6 @@ class TpmChallengeKey {
   TpmChallengeKey(const TpmChallengeKey&) = delete;
   TpmChallengeKey& operator=(const TpmChallengeKey&) = delete;
   virtual ~TpmChallengeKey() = default;
-
-  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Should be called only once for every instance. |TpmChallengeKey| object
   // should live as long as response from |BuildResponse| function via
@@ -94,7 +89,7 @@ class TpmChallengeKey {
                              bool register_key,
                              ::attestation::KeyType key_crypto_type,
                              const std::string& key_name,
-                             const absl::optional<std::string>& signals) = 0;
+                             const std::optional<std::string>& signals) = 0;
 
  protected:
   // Use TpmChallengeKeyFactory for creation.
@@ -123,7 +118,7 @@ class TpmChallengeKeyImpl final : public TpmChallengeKey {
                      bool register_key,
                      ::attestation::KeyType key_crypto_type,
                      const std::string& key_name,
-                     const absl::optional<std::string>& signals) override;
+                     const std::optional<std::string>& signals) override;
 
  private:
   void OnPrepareKeyDone(const TpmChallengeKeyResult& prepare_key_result);

@@ -6,10 +6,6 @@
 
 #import <AppKit/AppKit.h>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 
 bool EnableNativeWindowActivation() {
@@ -23,6 +19,26 @@ bool EnableNativeWindowActivation() {
   return [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory]
              ? true
              : false;
+}
+
+void HandleMissingKeyWindow() {
+  if ([NSApp keyWindow]) {
+    return;
+  }
+
+  for (NSWindow* window in [NSApp orderedWindows]) {
+    if (![[window delegate]
+            respondsToSelector:@selector(windowDidBecomeKey:)]) {
+      continue;
+    }
+
+    NSNotification* notification =
+        [NSNotification notificationWithName:NSWindowDidBecomeKeyNotification
+                                      object:window];
+    [[window delegate] windowDidBecomeKey:notification];
+
+    break;
+  }
 }
 
 }  // namespace content

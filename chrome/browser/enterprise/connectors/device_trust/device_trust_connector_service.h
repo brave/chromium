@@ -38,7 +38,7 @@ class DeviceTrustConnectorService : public KeyedService {
     virtual void OnInlinePolicyDisabled(DTCPolicyLevel level) {}
 
    protected:
-    virtual ~PolicyObserver() {}
+    virtual ~PolicyObserver() = default;
   };
 
   explicit DeviceTrustConnectorService(PrefService* profile_prefs);
@@ -86,10 +86,6 @@ class DeviceTrustConnectorService : public KeyedService {
   // value that changed, and `level` is the policy level of the policy that was
   // updated.
   void OnPolicyUpdated(const DTCPolicyLevel& level, const std::string& pref);
-
-  // Called when the DTC policies values change in Prefs for the
-  // ContextAwareAccessSignalsAllowlist policy.
-  void OnOriginalPolicyUpdated();
 
   // Functions used to propagate an update to all observers.
   void OnInlinePolicyEnabled(DTCPolicyLevel level);

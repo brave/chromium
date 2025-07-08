@@ -11,12 +11,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/on_device_head_model.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
 
-// TODO(crbug.com/1372112): clean up this build flag guard later if possible.
+// TODO(crbug.com/40241602): clean up this build flag guard later if possible.
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
 #include "components/omnibox/browser/on_device_tail_model_executor.h"
 #endif
@@ -30,7 +31,7 @@ class AutocompleteProviderListener;
 // greater than 99, such that its matches will not show before any other
 // providers; However the relevance can be changed to any arbitrary value by
 // Finch when the input is not classified as a URL.
-// TODO(crbug.com/1372112): rename this provider to "OnDeviceProvider" since it
+// TODO(crbug.com/40241602): rename this provider to "OnDeviceProvider" since it
 // will serve both head and tail suggestions.
 class OnDeviceHeadProvider : public AutocompleteProvider {
  public:
@@ -38,7 +39,7 @@ class OnDeviceHeadProvider : public AutocompleteProvider {
                                       AutocompleteProviderListener* listener);
 
   void Start(const AutocompleteInput& input, bool minimal_changes) override;
-  void Stop(bool clear_cached_results, bool due_to_user_inactivity) override;
+  void Stop(AutocompleteStopReason stop_reason) override;
   void AddProviderInfo(ProvidersInfo* provider_info) const override;
 
   AutocompleteProviderClient* client() { return client_; }
@@ -88,6 +89,11 @@ class OnDeviceHeadProvider : public AutocompleteProvider {
       const std::string& model_filename,
       const size_t provider_max_matches,
       std::unique_ptr<OnDeviceHeadProviderParams> params);
+
+  // Determines whether should fetch tail suggestions.
+  static bool ShouldFetchTailSuggestions(
+      const OnDeviceHeadProviderParams& params,
+      const std::string& locale);
 
   raw_ptr<AutocompleteProviderClient> client_;
 

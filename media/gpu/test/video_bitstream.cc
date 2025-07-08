@@ -2,7 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/test/video_bitstream.h"
+
+#include <optional>
 
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
@@ -12,7 +19,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media::test {
 
@@ -22,9 +28,9 @@ namespace {
 constexpr const base::FilePath::CharType* kMetadataSuffix =
     FILE_PATH_LITERAL(".json");
 
-// Converts the string to VideoCodecProfile. This returns absl::nullopt if
+// Converts the string to VideoCodecProfile. This returns std::nullopt if
 // it is not supported by video_decode_accelerator(_perf)_tests.
-absl::optional<VideoCodecProfile> ConvertStringtoProfile(
+std::optional<VideoCodecProfile> ConvertStringtoProfile(
     const std::string& profile) {
   if (profile == "H264PROFILE_BASELINE") {
     return H264PROFILE_BASELINE;
@@ -46,7 +52,7 @@ absl::optional<VideoCodecProfile> ConvertStringtoProfile(
     return HEVCPROFILE_MAIN10;
   } else {
     LOG(ERROR) << profile << " is not supported";
-    return absl::nullopt;
+    return std::nullopt;
   }
 }
 
@@ -92,7 +98,7 @@ bool VideoBitstream::LoadMetadata(const base::FilePath& json_file_path,
   CHECK_NE(metadata.codec, VideoCodec::kUnknown);
 
   // Find the video's bit depth. This is optional.
-  absl::optional<int> bit_depth = metadata_dict.FindInt("bit_depth");
+  std::optional<int> bit_depth = metadata_dict.FindInt("bit_depth");
   if (bit_depth.has_value()) {
     metadata.bit_depth = base::checked_cast<uint8_t>(*bit_depth);
   } else {
@@ -104,26 +110,26 @@ bool VideoBitstream::LoadMetadata(const base::FilePath& json_file_path,
     metadata.bit_depth = kDefaultBitDepth;
   }
 
-  absl::optional<int> frame_rate = metadata_dict.FindInt("frame_rate");
+  std::optional<int> frame_rate = metadata_dict.FindInt("frame_rate");
   if (!frame_rate.has_value()) {
     LOG(ERROR) << "Key \"frame_rate\" is not found in " << json_file_path;
     return false;
   }
   metadata.frame_rate = base::checked_cast<uint32_t>(*frame_rate);
 
-  absl::optional<int> num_frames = metadata_dict.FindInt("num_frames");
+  std::optional<int> num_frames = metadata_dict.FindInt("num_frames");
   if (!num_frames.has_value()) {
     LOG(ERROR) << "Key \"num_frames\" is not found in " << json_file_path;
     return false;
   }
   metadata.num_frames = base::checked_cast<size_t>(*num_frames);
 
-  absl::optional<int> width = metadata_dict.FindInt("width");
+  std::optional<int> width = metadata_dict.FindInt("width");
   if (!width.has_value()) {
     LOG(ERROR) << "Key \"width\" is not found in " << json_file_path;
     return false;
   }
-  absl::optional<int> height = metadata_dict.FindInt("height");
+  std::optional<int> height = metadata_dict.FindInt("height");
   if (!height) {
     LOG(ERROR) << "Key \"height\" is not found in " << json_file_path;
     return false;
@@ -181,16 +187,17 @@ std::unique_ptr<VideoBitstream> VideoBitstream::Create(
     return nullptr;
   }
   // We set |has_keyframeless_resolution_change| by looking at the file name.
-  const char* kKeyFrameLessResolutionChangeFiles[] = {
-      "frm_resize",
-      "sub8x8_sf",
+  base::FilePath kKeyFrameLessResolutionChangeFiles[] = {
+      base::FilePath::FromASCII("frm_resize"),
+      base::FilePath::FromASCII("sub8x8_sf"),
   };
-  metadata.has_keyframeless_resolution_change = std::find_if(
-      std::cbegin(kKeyFrameLessResolutionChangeFiles),
-      std::cend(kKeyFrameLessResolutionChangeFiles),
-      [filepath = data_file_path.value()](const char* substr) {
-        return base::Contains(base::ToLowerASCII(filepath), substr);
-      });
+  metadata.has_keyframeless_resolution_change =
+      std::find_if(std::cbegin(kKeyFrameLessResolutionChangeFiles),
+                   std::cend(kKeyFrameLessResolutionChangeFiles),
+                   [filepath = data_file_path.value()](base::FilePath substr) {
+                     return base::Contains(base::ToLowerASCII(filepath),
+                                           base::ToLowerASCII(substr.value()));
+                   });
   return base::WrapUnique(
       new VideoBitstream(std::move(memory_mapped_file), metadata));
 }

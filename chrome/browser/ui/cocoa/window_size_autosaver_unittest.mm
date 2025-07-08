@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <Cocoa/Cocoa.h>
-
 #import "chrome/browser/ui/cocoa/window_size_autosaver.h"
+
+#import <Cocoa/Cocoa.h>
 
 #include "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
@@ -14,10 +14,6 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -105,8 +101,8 @@ TEST_F(WindowSizeAutosaverTest, RestoresAndSavesPos) {
   EXPECT_FALSE(windowPref.FindInt("right").has_value());
   EXPECT_FALSE(windowPref.FindInt("top").has_value());
   EXPECT_FALSE(windowPref.FindInt("bottom").has_value());
-  absl::optional<int> x = windowPref.FindInt("x");
-  absl::optional<int> y = windowPref.FindInt("y");
+  std::optional<int> x = windowPref.FindInt("x");
+  std::optional<int> y = windowPref.FindInt("y");
   ASSERT_TRUE(x.has_value());
   ASSERT_TRUE(y.has_value());
   EXPECT_EQ(300, x.value());
@@ -161,10 +157,10 @@ TEST_F(WindowSizeAutosaverTest, RestoresAndSavesRect) {
   const base::Value::Dict& windowPref = pref->GetDict(kPath);
   EXPECT_FALSE(windowPref.FindInt("x").has_value());
   EXPECT_FALSE(windowPref.FindInt("y").has_value());
-  absl::optional<int> x1 = windowPref.FindInt("left");
-  absl::optional<int> x2 = windowPref.FindInt("right");
-  absl::optional<int> y1 = windowPref.FindInt("top");
-  absl::optional<int> y2 = windowPref.FindInt("bottom");
+  std::optional<int> x1 = windowPref.FindInt("left");
+  std::optional<int> x2 = windowPref.FindInt("right");
+  std::optional<int> y1 = windowPref.FindInt("top");
+  std::optional<int> y2 = windowPref.FindInt("bottom");
   ASSERT_TRUE(x1.has_value());
   ASSERT_TRUE(x2.has_value());
   ASSERT_TRUE(y1.has_value());

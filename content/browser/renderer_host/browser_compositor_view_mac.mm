@@ -19,16 +19,11 @@
 #include "content/browser/compositor/image_transport_factory.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #include "ui/compositor/recyclable_compositor_mac.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace content {
 
@@ -180,7 +175,7 @@ void BrowserCompositorMac::UpdateSurfaceFromChild(
 void BrowserCompositorMac::SetRenderWidgetHostIsHidden(bool hidden) {
   render_widget_host_is_hidden_ = hidden;
   UpdateState();
-  if (state_ == UseParentLayerCompositor) {
+  if (state_ == UseParentLayerCompositor && !hidden) {
     // UpdateState might not call WasShown when showing a frame using the same
     // ParentLayerCompositor, since it returns early on a no-op state
     // transition.
@@ -319,9 +314,11 @@ void BrowserCompositorMac::InvalidateLocalSurfaceIdOnEviction() {
   dfh_local_surface_id_allocator_.Invalidate();
 }
 
-std::vector<viz::SurfaceId>
+viz::FrameEvictorClient::EvictIds
 BrowserCompositorMac::CollectSurfaceIdsForEviction() {
-  return client_->CollectSurfaceIdsForEviction();
+  viz::FrameEvictorClient::EvictIds ids;
+  ids.embedded_ids = client_->CollectSurfaceIdsForEviction();
+  return ids;
 }
 
 bool BrowserCompositorMac::ShouldShowStaleContentOnEviction() {
@@ -335,6 +332,10 @@ void BrowserCompositorMac::DidNavigateMainFramePreCommit() {
 void BrowserCompositorMac::DidEnterBackForwardCache() {
   dfh_local_surface_id_allocator_.GenerateId();
   delegated_frame_host_->DidEnterBackForwardCache();
+}
+
+void BrowserCompositorMac::ActivatedOrEvictedFromBackForwardCache() {
+  delegated_frame_host_->ActivatedOrEvictedFromBackForwardCache();
 }
 
 void BrowserCompositorMac::DidNavigate() {
@@ -411,6 +412,11 @@ ui::Compositor* BrowserCompositorMac::GetCompositor() const {
   if (recyclable_compositor_)
     return recyclable_compositor_->compositor();
   return nullptr;
+}
+
+void BrowserCompositorMac::InvalidateSurfaceAllocationGroup() {
+  dfh_local_surface_id_allocator_.Invalidate(
+      /*also_invalidate_allocation_group=*/true);
 }
 
 cc::DeadlinePolicy BrowserCompositorMac::GetDeadlinePolicy(

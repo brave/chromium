@@ -18,11 +18,12 @@
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_listener.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 
 namespace IPC {
+
+class UrgentMessageObserver;
 
 // Incoming legacy IPCs have always been dispatched to one of two threads: the
 // IO thread (when an installed MessageFilter handles the message), or the
@@ -127,6 +128,8 @@ class COMPONENT_EXPORT(IPC) MojoBootstrap {
   virtual void Flush() = 0;
 
   virtual mojo::AssociatedGroup* GetAssociatedGroup() = 0;
+
+  virtual void SetUrgentMessageObserver(UrgentMessageObserver* observer) = 0;
 };
 
 }  // namespace IPC

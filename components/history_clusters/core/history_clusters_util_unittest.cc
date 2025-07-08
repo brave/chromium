@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/history_clusters/core/history_clusters_util.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "components/history/core/browser/history_types.h"
@@ -127,26 +129,25 @@ TEST(HistoryClustersUtilTest, FilterClustersMatchingQuery) {
           "HiddenVisitLabel",
       }};
 
-  for (size_t i = 0; i < std::size(test_data); ++i) {
-    SCOPED_TRACE(base::StringPrintf("Testing case i=%d, query=%s",
-                                    static_cast<int>(i),
-                                    test_data[i].query.c_str()));
+  int i = 0;
+  for (const auto& test_item : test_data) {
+    SCOPED_TRACE(base::StringPrintf("Testing case i=%d, query=%s", i++,
+                                    test_item.query.c_str()));
 
     auto clusters = all_clusters;
-    ApplySearchQuery(test_data[i].query, clusters);
+    ApplySearchQuery(test_item.query, clusters);
 
-    size_t expected_size =
-        static_cast<size_t>(test_data[i].expect_first_cluster) +
-        static_cast<size_t>(test_data[i].expect_second_cluster);
+    size_t expected_size = static_cast<size_t>(test_item.expect_first_cluster) +
+                           static_cast<size_t>(test_item.expect_second_cluster);
     ASSERT_EQ(clusters.size(), expected_size);
 
-    if (test_data[i].expect_first_cluster) {
+    if (test_item.expect_first_cluster) {
       EXPECT_EQ(clusters[0].cluster_id, 1);
     }
 
-    if (test_data[i].expect_second_cluster) {
+    if (test_item.expect_second_cluster) {
       const auto& cluster =
-          test_data[i].expect_first_cluster ? clusters[1] : clusters[0];
+          test_item.expect_first_cluster ? clusters[1] : clusters[0];
       EXPECT_EQ(cluster.cluster_id, 2);
     }
   }
@@ -261,10 +262,10 @@ TEST(HistoryClustersUtilTest, CullVisitsThatShouldBeHidden) {
   auto add_cluster = [&](int64_t cluster_id, std::vector<float> visit_scores) {
     history::Cluster cluster;
     cluster.cluster_id = cluster_id;
-    base::ranges::transform(visit_scores, std::back_inserter(cluster.visits),
-                            [&](const auto& visit_score) {
-                              return GetHardcodedClusterVisit(1, visit_score);
-                            });
+    std::ranges::transform(visit_scores, std::back_inserter(cluster.visits),
+                           [&](const auto& visit_score) {
+                             return GetHardcodedClusterVisit(1, visit_score);
+                           });
     cluster.keyword_to_data_map = {{u"keyword", history::ClusterKeywordData()}};
     all_clusters.push_back(cluster);
   };
@@ -459,7 +460,7 @@ TEST(HistoryClustersUtilTest, IsShownVisitCandidateZeroScore) {
   history::ClusterVisit cluster_visit = testing::CreateClusterVisit(
       testing::CreateDefaultAnnotatedVisit(2, GURL("https://two.com/"),
                                            base::Time::FromTimeT(10)),
-      absl::nullopt, 0.0);
+      std::nullopt, 0.0);
 
   ASSERT_FALSE(IsShownVisitCandidate(cluster_visit));
 }
@@ -468,7 +469,7 @@ TEST(HistoryClustersUtilTest, IsShownVisitCandidateHidden) {
   history::ClusterVisit cluster_visit = testing::CreateClusterVisit(
       testing::CreateDefaultAnnotatedVisit(2, GURL("https://two.com/"),
                                            base::Time::FromTimeT(10)),
-      absl::nullopt, 1.0);
+      std::nullopt, 1.0);
   cluster_visit.interaction_state =
       history::ClusterVisit::InteractionState::kHidden;
 
@@ -479,7 +480,7 @@ TEST(HistoryClustersUtilTest, IsShownVisitCandidateNoTitle) {
   history::ClusterVisit cluster_visit = testing::CreateClusterVisit(
       testing::CreateDefaultAnnotatedVisit(2, GURL("https://two.com/"),
                                            base::Time::FromTimeT(10)),
-      absl::nullopt, 0.0);
+      std::nullopt, 0.0);
   cluster_visit.annotated_visit.url_row.set_title(u"");
 
   ASSERT_FALSE(IsShownVisitCandidate(cluster_visit));
@@ -489,7 +490,7 @@ TEST(HistoryClustersUtilTest, IsShownVisitCandidate) {
   history::ClusterVisit cluster_visit = testing::CreateClusterVisit(
       testing::CreateDefaultAnnotatedVisit(2, GURL("https://two.com/"),
                                            base::Time::FromTimeT(10)),
-      absl::nullopt, 1.0);
+      std::nullopt, 1.0);
   cluster_visit.annotated_visit.url_row.set_title(u"sometitle");
 
   ASSERT_TRUE(IsShownVisitCandidate(cluster_visit));

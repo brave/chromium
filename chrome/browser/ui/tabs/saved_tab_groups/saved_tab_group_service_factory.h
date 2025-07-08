@@ -11,6 +11,8 @@
 
 class Profile;
 
+namespace tab_groups {
+
 class SavedTabGroupServiceFactory : public ProfileKeyedServiceFactory {
  public:
   SavedTabGroupServiceFactory();
@@ -25,8 +27,10 @@ class SavedTabGroupServiceFactory : public ProfileKeyedServiceFactory {
   friend base::NoDestructor<SavedTabGroupServiceFactory>;
 
   // BrowserContextKeyedServiceFactory overrides.
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
+
+}  // namespace tab_groups
 
 #endif  // CHROME_BROWSER_UI_TABS_SAVED_TAB_GROUPS_SAVED_TAB_GROUP_SERVICE_FACTORY_H_

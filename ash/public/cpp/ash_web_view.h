@@ -5,33 +5,48 @@
 #ifndef ASH_PUBLIC_CPP_ASH_WEB_VIEW_H_
 #define ASH_PUBLIC_CPP_ASH_WEB_VIEW_H_
 
+#include <optional>
+
 #include "ash/public/cpp/ash_public_export.h"
 #include "base/observer_list_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/view.h"
+#include "url/gurl.h"
 
-class GURL;
 enum class WindowOpenDisposition;
 
 namespace ash {
 
+// Id to be used to get the wrapped web view using views::View::GetViewByID.
+inline constexpr int kAshWebViewChildWebViewId = 41;
+
 // A view which wraps a views::WebView (and associated WebContents) to work
 // around dependency restrictions in Ash.
 class ASH_PUBLIC_EXPORT AshWebView : public views::View {
+  METADATA_HEADER(AshWebView, views::View)
+
  public:
   // Initialization parameters which dictate how an instance of AshWebView
   // should behave.
   struct InitParams {
     InitParams();
-    InitParams(const InitParams& copy);
+    InitParams(const InitParams&);
+    InitParams& operator=(const InitParams&);
+    InitParams(InitParams&&);
+    InitParams& operator=(InitParams&&);
     ~InitParams();
 
     // If enabled, AshWebView will automatically resize to the size
     // desired by its embedded WebContents. Note that, if specified, the
     // WebContents will be bounded by |min_size| and |max_size|.
     bool enable_auto_resize = false;
-    absl::optional<gfx::Size> min_size;
-    absl::optional<gfx::Size> max_size;
+    std::optional<gfx::Size> min_size;
+    std::optional<gfx::Size> max_size;
+
+    // If present the corners of the web view will be clipped to the specified
+    // radii.
+    std::optional<gfx::RoundedCornersF> rounded_corners;
 
     // If enabled, AshWebView will suppress navigation attempts of its
     // embedded WebContents. When navigation suppression occurs,
@@ -55,6 +70,14 @@ class ASH_PUBLIC_EXPORT AshWebView : public views::View {
     // Enables AshWebView to hold wake locks, for example, to keep the screen on
     // while playing video. Passed as an param to init WebContents.
     bool enable_wake_locks = true;
+
+    // Used to override the Media Controls source title. Empty strings will
+    // trigger default parent behavior.
+    std::string source_title;
+
+    // URL to open when AshWebView contents are activated but the widget is not
+    // activatable. Empty GURLs will trigger default parent behavior.
+    GURL activation_url;
   };
 
   // An observer which receives AshWebView events.
@@ -103,6 +126,12 @@ class ASH_PUBLIC_EXPORT AshWebView : public views::View {
 
   // See `RenderFrameHost::IsErrorDocument()`.
   virtual bool IsErrorDocument() = 0;
+
+  // Sets the specified `corner_radii` to the native view that hosts the webview.
+  virtual void SetCornerRadii(const gfx::RoundedCornersF& corner_radii) = 0;
+
+  // Get a request id if there is a media session.
+  virtual const base::UnguessableToken& GetMediaSessionRequestId() = 0;
 
  protected:
   AshWebView();

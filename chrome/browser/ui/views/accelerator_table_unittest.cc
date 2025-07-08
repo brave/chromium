@@ -10,20 +10,13 @@
 #include "base/containers/flat_set.h"
 #include "base/containers/span.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event_constants.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/accelerators/accelerator_table.h"
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/accelerators.h"
-#include "base/test/scoped_feature_list.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#include "components/account_id/account_id.h"
-#include "components/user_manager/fake_user_manager.h"
-#include "components/user_manager/scoped_user_manager.h"
 #endif
 
 namespace chrome {
@@ -33,8 +26,9 @@ namespace {
 struct Cmp {
   bool operator()(const AcceleratorMapping& lhs,
                   const AcceleratorMapping& rhs) const {
-    if (lhs.keycode != rhs.keycode)
+    if (lhs.keycode != rhs.keycode) {
       return lhs.keycode < rhs.keycode;
+    }
     return lhs.modifiers < rhs.modifiers;
     // Do not check |command_id|.
   }
@@ -71,20 +65,33 @@ TEST(AcceleratorTableTest, PrintKeySupport) {
 #endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+TEST(AcceleratorTableTest, OpenFeedbackWithSearchBasedAccelerator) {
+  int command_id = -1;
+  for (const auto& entry : GetAcceleratorList()) {
+    if (entry.keycode == ui::VKEY_I &&
+        entry.modifiers == (ui::EF_CONTROL_DOWN | ui::EF_COMMAND_DOWN)) {
+      command_id = entry.command_id;
+    }
+  }
+
+#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  EXPECT_EQ(IDC_FEEDBACK, command_id);
+#else   // !BUILDFLAG(IS_CHROMEOS) || !BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  EXPECT_EQ(-1, command_id);
+#endif  // BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+}
+
+#if BUILDFLAG(IS_CHROMEOS)
 TEST(AcceleratorTableTest, CheckDuplicatedAcceleratorsAsh) {
   base::flat_set<AcceleratorMapping, Cmp> accelerators(GetAcceleratorList());
-  for (size_t i = 0; i < ash::kAcceleratorDataLength; ++i) {
-    const ash::AcceleratorData& ash_entry = ash::kAcceleratorData[i];
-    if (!ash_entry.trigger_on_press)
+  for (const ash::AcceleratorData& ash_entry : ash::kAcceleratorData) {
+    if (!ash_entry.trigger_on_press) {
       continue;  // kAcceleratorMap does not have any release accelerators.
+    }
     // A few shortcuts are defined in the browser as well as in ash so that web
     // contents can consume them. http://crbug.com/309915, 370019, 412435,
     // 321568.
-    if (base::Contains(base::span<const ash::AcceleratorAction>(
-                           ash::kActionsInterceptableByBrowser,
-                           ash::kActionsInterceptableByBrowserLength),
-                       ash_entry.action)) {
+    if (base::Contains(ash::kActionsInterceptableByBrowser, ash_entry.action)) {
       continue;
     }
 
@@ -92,10 +99,7 @@ TEST(AcceleratorTableTest, CheckDuplicatedAcceleratorsAsh) {
     // list to ensure BrowserView can retrieve browser command id from the
     // accelerator without needing to know ash.
     // See http://crbug.com/737307 for details.
-    if (base::Contains(base::span<const ash::AcceleratorAction>(
-                           ash::kActionsDuplicatedWithBrowser,
-                           ash::kActionsDuplicatedWithBrowserLength),
-                       ash_entry.action)) {
+    if (base::Contains(ash::kActionsDuplicatedWithBrowser, ash_entry.action)) {
       AcceleratorMapping entry;
       entry.keycode = ash_entry.keycode;
       entry.modifiers = ash_entry.modifiers;
@@ -155,7 +159,8 @@ TEST(AcceleratorTableTest, DontUseKeysWithUnstablePositions) {
     }
   }
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#else
 
 // A test fixture for testing GetAcceleratorList().
 class GetAcceleratorListTest : public ::testing::Test {
@@ -171,69 +176,6 @@ class GetAcceleratorListTest : public ::testing::Test {
   }
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-
-// Verify that the shortcuts for DevTools are disabled in LacrosOnly by default.
-TEST_F(GetAcceleratorListTest, DevToolsAreDisabledInLacrosOnlyByDefault) {
-  base::test::ScopedFeatureList features;
-  features.InitWithFeatures(
-      {ash::features::kLacrosSupport, ash::features::kLacrosPrimary,
-       ash::features::kLacrosOnly,
-       ash::features::kLacrosProfileMigrationForceOff},
-      {});
-  auto fake_user_manager = std::make_unique<user_manager::FakeUserManager>();
-  auto* primary_user =
-      fake_user_manager->AddUser(AccountId::FromUserEmail("test@test"));
-  fake_user_manager->UserLoggedIn(primary_user->GetAccountId(),
-                                  primary_user->username_hash(),
-                                  /*browser_restart=*/false,
-                                  /*is_child=*/false);
-  auto scoped_user_manager = std::make_unique<user_manager::ScopedUserManager>(
-      std::move(fake_user_manager));
-
-  ASSERT_FALSE(crosapi::browser_util::IsAshDevToolEnabled());
-
-  std::vector<AcceleratorMapping> list = GetAcceleratorList();
-
-  // Verify there is no mapping that is associated to IDC_DEV_TOOLS_TOGGLE.
-  auto iter = std::find_if(list.begin(), list.end(), [](auto mapping) {
-    return mapping.command_id == IDC_DEV_TOOLS_TOGGLE;
-  });
-  EXPECT_EQ(iter, list.end());
-}
-
-// Verify that the shortcuts for DevTools are enabled in LacrosOnly if the flag
-// is enabled.
-TEST_F(GetAcceleratorListTest, DevToolsAreEnebledInLacrosOnlyIfFlagIsEnabled) {
-  base::test::ScopedFeatureList features;
-  features.InitWithFeatures(
-      {ash::features::kLacrosSupport, ash::features::kLacrosPrimary,
-       ash::features::kLacrosOnly,
-       ash::features::kLacrosProfileMigrationForceOff,
-       ash::features::kAllowDevtoolsInSystemUI},
-      {});
-  auto fake_user_manager = std::make_unique<user_manager::FakeUserManager>();
-  auto* primary_user =
-      fake_user_manager->AddUser(AccountId::FromUserEmail("test@test"));
-  fake_user_manager->UserLoggedIn(primary_user->GetAccountId(),
-                                  primary_user->username_hash(),
-                                  /*browser_restart=*/false,
-                                  /*is_child=*/false);
-  auto scoped_user_manager = std::make_unique<user_manager::ScopedUserManager>(
-      std::move(fake_user_manager));
-
-  ASSERT_TRUE(crosapi::browser_util::IsAshDevToolEnabled());
-
-  // Verify there is a mapping that is associated to IDC_DEV_TOOLS_TOGGLE.
-  std::vector<AcceleratorMapping> list = GetAcceleratorList();
-  auto iter = std::find_if(list.begin(), list.end(), [](auto mapping) {
-    return mapping.command_id == IDC_DEV_TOOLS_TOGGLE;
-  });
-  EXPECT_NE(iter, list.end());
-}
-
-#else
-
 // Verify that the shortcuts for DevTools are enabled.
 TEST_F(GetAcceleratorListTest, DevToolsAreEnabled) {
   // Verify there is a mapping that is associated to IDC_DEV_TOOLS_TOGGLE.
@@ -244,6 +186,6 @@ TEST_F(GetAcceleratorListTest, DevToolsAreEnabled) {
   EXPECT_NE(iter, list.end());
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace chrome

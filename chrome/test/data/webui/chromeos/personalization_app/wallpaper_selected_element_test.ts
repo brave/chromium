@@ -5,27 +5,32 @@
 /** @fileoverview Test suite for wallpaper-selected component.  */
 
 import 'chrome://personalization/strings.m.js';
-import 'chrome://webui-test/mojo_webui_test_support.js';
 
-import {CurrentAttribution, CurrentWallpaper, DailyRefreshType, GooglePhotosPhoto, GooglePhotosSharedAlbumDialog, Paths, WallpaperLayout, WallpaperSelected, WallpaperType} from 'chrome://personalization/js/personalization_app.js';
+import type {CurrentAttribution, CurrentWallpaper, GooglePhotosPhoto} from 'chrome://personalization/js/personalization_app.js';
+import {DailyRefreshType, GooglePhotosSharedAlbumDialogElement, Paths, WallpaperLayout, WallpaperSelectedElement, WallpaperType} from 'chrome://personalization/js/personalization_app.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {stringToMojoString16} from 'chrome://resources/js/mojo_type_util.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNotEquals, assertNull, assertStringContains, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 
-import {baseSetup, createSvgDataUrl, initElement, toString16} from './personalization_app_test_utils.js';
-import {TestPersonalizationStore} from './test_personalization_store.js';
-import {TestWallpaperProvider} from './test_wallpaper_interface_provider.js';
+import {baseSetup, createSvgDataUrl, initElement} from './personalization_app_test_utils.js';
+import type {TestPersonalizationStore} from './test_personalization_store.js';
+import type {TestWallpaperProvider} from './test_wallpaper_interface_provider.js';
 
 const descriptionOptionsId = 'descriptionOptions';
 const descriptionDialogId = 'descriptionDialog';
 const dailyRefreshButtonId = 'dailyRefresh';
+const learnMoreContainerId = 'descriptionDialogLearnMore';
+const actionUrl = {
+  url: 'https://example.com/',
+};
 const photos: GooglePhotosPhoto[] = [
   // First row.
   {
     id: '1',
     dedupKey: '1',
     name: '1',
-    date: toString16('First row'),
+    date: stringToMojoString16('First row'),
     url: {url: createSvgDataUrl('1')},
     location: '1',
   },
@@ -34,7 +39,7 @@ const photos: GooglePhotosPhoto[] = [
     id: '2',
     dedupKey: '2',
     name: '2',
-    date: toString16('Second row'),
+    date: stringToMojoString16('Second row'),
     url: {url: createSvgDataUrl('2')},
     location: '2',
   },
@@ -42,7 +47,7 @@ const photos: GooglePhotosPhoto[] = [
     id: '3',
     dedupKey: '3',
     name: '3',
-    date: toString16('Second row'),
+    date: stringToMojoString16('Second row'),
     url: {url: createSvgDataUrl('3')},
     location: '3',
   },
@@ -51,15 +56,15 @@ const photos: GooglePhotosPhoto[] = [
     id: '4',
     dedupKey: '4',
     name: '4',
-    date: toString16('Third row'),
+    date: stringToMojoString16('Third row'),
     url: {url: createSvgDataUrl('4')},
     location: '4',
   },
 ];
 
 
-suite('WallpaperSelectedTest', function() {
-  let wallpaperSelectedElement: WallpaperSelected|null;
+suite('WallpaperSelectedElementTest', function() {
+  let wallpaperSelectedElement: WallpaperSelectedElement|null;
   let wallpaperProvider: TestWallpaperProvider;
   let personalizationStore: TestPersonalizationStore;
 
@@ -72,8 +77,8 @@ suite('WallpaperSelectedTest', function() {
 
   async function clickSharedAlbumsDialogButton(id: string) {
     const dialog = wallpaperSelectedElement!.shadowRoot!
-                       .querySelector<GooglePhotosSharedAlbumDialog>(
-                           GooglePhotosSharedAlbumDialog.is);
+                       .querySelector<GooglePhotosSharedAlbumDialogElement>(
+                           GooglePhotosSharedAlbumDialogElement.is);
     assertNotEquals(null, dialog, 'dialog element must exist to click button');
     const button = dialog!.shadowRoot!.getElementById(id);
     assertNotEquals(null, button, `button with id ${id} must exist`);
@@ -103,7 +108,7 @@ suite('WallpaperSelectedTest', function() {
           selected: {attribution: true, image: true},
           setImage: 0,
         };
-        wallpaperSelectedElement = initElement(WallpaperSelected);
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement);
 
         assertEquals(
             null, wallpaperSelectedElement.shadowRoot!.querySelector('img'));
@@ -144,13 +149,79 @@ suite('WallpaperSelectedTest', function() {
         assertEquals('', placeholder.style.display);
       });
 
+  test(
+      'shows loading placeholder when Sea Pen wallpaper is loading',
+      async () => {
+        personalizationStore.data.wallpaper.seaPen.loading = {
+          ...personalizationStore.data.wallpaper.seaPen.loading,
+          currentSelected: true,
+          setImage: 0,
+        };
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement);
+
+        assertEquals(
+            null, wallpaperSelectedElement.shadowRoot!.querySelector('img'));
+
+        assertEquals(
+            null,
+            wallpaperSelectedElement.shadowRoot!.getElementById(
+                'textContainer'));
+
+        const placeholder = wallpaperSelectedElement.shadowRoot!.getElementById(
+            'imagePlaceholder');
+
+        assertTrue(
+            !!placeholder, 'image is loading, the placeholder should display');
+
+        // Loading placeholder should be hidden.
+        personalizationStore.data.wallpaper.seaPen = {
+          ...personalizationStore.data.wallpaper.seaPen,
+          loading: {
+            ...personalizationStore.data.wallpaper.seaPen.loading,
+            currentSelected: false,
+            setImage: 0,
+          },
+        };
+        personalizationStore.data.wallpaper.currentSelected = {
+          descriptionContent: '',
+          descriptionTitle: '',
+          actionUrl: null,
+          key: '/sea_pen/111.jpg',
+          layout: WallpaperLayout.kCenterCropped,
+          type: WallpaperType.kSeaPen,
+        };
+        personalizationStore.notifyObservers();
+        await waitAfterNextRender(wallpaperSelectedElement);
+
+        assertEquals(
+            'none', placeholder.style.display,
+            'image placeholer should not display');
+
+        // Sent a Sea Pen wallpaper request to update user wallpaper. Loading
+        // placeholder should come back.
+        personalizationStore.data.wallpaper.seaPen = {
+          ...personalizationStore.data.wallpaper.seaPen,
+          loading: {
+            ...personalizationStore.data.wallpaper.seaPen.loading,
+            currentSelected: false,
+            setImage: 1,
+          },
+        };
+        personalizationStore.notifyObservers();
+        await waitAfterNextRender(wallpaperSelectedElement);
+
+        assertEquals(
+            '', placeholder.style.display,
+            'ongoing requests, image placeholder should display');
+      });
+
   test('shows wallpaper image and attribution when loaded', async () => {
     personalizationStore.data.wallpaper.attribution =
         wallpaperProvider.attribution;
     personalizationStore.data.wallpaper.currentSelected =
         wallpaperProvider.currentWallpaper;
 
-    wallpaperSelectedElement = initElement(WallpaperSelected);
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement);
     await waitAfterNextRender(wallpaperSelectedElement);
 
     const img = wallpaperSelectedElement.shadowRoot!.querySelector('img');
@@ -190,7 +261,7 @@ suite('WallpaperSelectedTest', function() {
         wallpaperProvider.currentWallpaper;
     personalizationStore.data.wallpaper.loading.selected.image = false;
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
-    wallpaperSelectedElement = initElement(WallpaperSelected);
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement);
     await waitAfterNextRender(wallpaperSelectedElement);
 
     const title =
@@ -206,13 +277,13 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.image = false;
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
-    wallpaperSelectedElement = initElement(WallpaperSelected);
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement);
     await waitAfterNextRender(wallpaperSelectedElement);
 
-    const img = wallpaperSelectedElement.shadowRoot!.querySelector('img') as
-        HTMLImageElement;
+    const img = wallpaperSelectedElement.shadowRoot!.querySelector('img');
+    assertTrue(!!img);
     assertStringContains(
-        img!.src,
+        img.src,
         `chrome://personalization/wallpaper.jpg?key=${
             wallpaperProvider.currentWallpaper.key}`);
 
@@ -229,7 +300,7 @@ suite('WallpaperSelectedTest', function() {
   });
 
   test('shows placeholders when image fails to load', async () => {
-    wallpaperSelectedElement = initElement(WallpaperSelected);
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement);
     await waitAfterNextRender(wallpaperSelectedElement);
 
     // Still loading.
@@ -262,8 +333,8 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.image = false;
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
-    wallpaperSelectedElement =
-        initElement(WallpaperSelected, {'path': Paths.COLLECTION_IMAGES});
+    wallpaperSelectedElement = initElement(
+        WallpaperSelectedElement, {'path': Paths.COLLECTION_IMAGES});
     await waitAfterNextRender(wallpaperSelectedElement);
 
     const dailyRefreshButton =
@@ -282,7 +353,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.image = false;
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
-    wallpaperSelectedElement = initElement(WallpaperSelected, {
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
       'path': Paths.COLLECTION_IMAGES,
       'collectionId': wallpaperProvider.timeOfDayCollectionId,
     });
@@ -312,7 +383,7 @@ suite('WallpaperSelectedTest', function() {
         };
         const album_id = 'test_album_id';
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           'path': Paths.GOOGLE_PHOTOS_COLLECTION,
           'googlePhotosAlbumId': album_id,
         });
@@ -342,7 +413,7 @@ suite('WallpaperSelectedTest', function() {
           'test_empty_album_id': [],
         };
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           'path': Paths.GOOGLE_PHOTOS_COLLECTION,
           'googlePhotosAlbumId': 'test_empty_album_id',
         });
@@ -374,7 +445,7 @@ suite('WallpaperSelectedTest', function() {
         };
 
         wallpaperSelectedElement = initElement(
-            WallpaperSelected,
+            WallpaperSelectedElement,
             {'path': Paths.COLLECTION_IMAGES, 'collectionId': collection_id});
         personalizationStore.notifyObservers();
 
@@ -401,7 +472,7 @@ suite('WallpaperSelectedTest', function() {
           type: DailyRefreshType.GOOGLE_PHOTOS,
         };
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           'path': Paths.GOOGLE_PHOTOS_COLLECTION,
           'googlePhotosAlbumId': album_id,
         });
@@ -420,29 +491,31 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.currentSelected = {
       descriptionContent: '',
       descriptionTitle: '',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kOnceGooglePhotos,
     };
 
     // Initialize |wallpaperSelectedElement|.
-    wallpaperSelectedElement =
-        initElement(WallpaperSelected, {'path': Paths.COLLECTION_IMAGES});
+    wallpaperSelectedElement = initElement(
+        WallpaperSelectedElement, {'path': Paths.COLLECTION_IMAGES});
     await waitAfterNextRender(wallpaperSelectedElement);
 
     // Verify layout options are *not* shown when not on Google Photos path.
     const selector = '#wallpaperOptions';
-    const shadowRoot = wallpaperSelectedElement.shadowRoot;
-    assertEquals(shadowRoot?.querySelector(selector), null);
+    const shadowRoot = wallpaperSelectedElement.shadowRoot!;
+    assertEquals(shadowRoot.querySelector(selector), null);
 
     // Set Google Photos path and verify layout options *are* shown.
     wallpaperSelectedElement.path = Paths.GOOGLE_PHOTOS_COLLECTION;
     await waitAfterNextRender(wallpaperSelectedElement);
-    assertNotEquals(shadowRoot?.querySelector(selector), null);
+    assertNotEquals(shadowRoot.querySelector(selector), null);
 
     // Verify that clicking layout |button| results in mojo API call.
-    const button = shadowRoot?.querySelector('#center') as HTMLElement | null;
-    button?.click();
+    const button = shadowRoot.querySelector<HTMLElement>('#center');
+    assertTrue(!!button);
+    button.click();
     assertDeepEquals(
         await wallpaperProvider.whenCalled('setCurrentWallpaperLayout'),
         WallpaperLayout.kCenter);
@@ -456,6 +529,7 @@ suite('WallpaperSelectedTest', function() {
     const currentSelected: CurrentWallpaper = {
       descriptionContent: '',
       descriptionTitle: '',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kDefault,
@@ -464,7 +538,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.currentSelected = currentSelected;
 
     wallpaperSelectedElement =
-        initElement(WallpaperSelected, {path: Paths.COLLECTION_IMAGES});
+        initElement(WallpaperSelectedElement, {path: Paths.COLLECTION_IMAGES});
     await waitAfterNextRender(wallpaperSelectedElement);
 
     assertEquals(
@@ -481,6 +555,7 @@ suite('WallpaperSelectedTest', function() {
         const currentSelected: CurrentWallpaper = {
           descriptionContent: '',
           descriptionTitle: '',
+          actionUrl: null,
           key: 'key',
           layout: WallpaperLayout.kStretch,
           type: WallpaperType.kDefault,
@@ -495,7 +570,7 @@ suite('WallpaperSelectedTest', function() {
         };
         const album_id = 'test_album_id';
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           path: Paths.GOOGLE_PHOTOS_COLLECTION,
           googlePhotosAlbumId: album_id,
           isGooglePhotosAlbumShared: true,
@@ -508,7 +583,7 @@ suite('WallpaperSelectedTest', function() {
         assertNotEquals(
             null,
             wallpaperSelectedElement.shadowRoot!.querySelector(
-                GooglePhotosSharedAlbumDialog.is),
+                GooglePhotosSharedAlbumDialogElement.is),
             'dialog element exists');
       });
 
@@ -519,6 +594,7 @@ suite('WallpaperSelectedTest', function() {
         personalizationStore.data.wallpaper.currentSelected = {
           descriptionContent: '',
           descriptionTitle: '',
+          actionUrl: null,
           key: 'key',
           layout: WallpaperLayout.kStretch,
           type: WallpaperType.kDefault,
@@ -532,7 +608,7 @@ suite('WallpaperSelectedTest', function() {
         };
         const album_id = 'test_album_id';
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           path: Paths.GOOGLE_PHOTOS_COLLECTION,
           googlePhotosAlbumId: album_id,
           isGooglePhotosAlbumShared: true,
@@ -547,7 +623,7 @@ suite('WallpaperSelectedTest', function() {
         assertEquals(
             null,
             wallpaperSelectedElement.shadowRoot!.querySelector(
-                GooglePhotosSharedAlbumDialog.is),
+                GooglePhotosSharedAlbumDialogElement.is),
             'cancel button click closes dialog');
         assertEquals(
             0, wallpaperProvider.getCallCount('selectGooglePhotosAlbum'),
@@ -561,6 +637,7 @@ suite('WallpaperSelectedTest', function() {
         personalizationStore.data.wallpaper.currentSelected = {
           descriptionContent: '',
           descriptionTitle: '',
+          actionUrl: null,
           key: 'key',
           layout: WallpaperLayout.kStretch,
           type: WallpaperType.kDefault,
@@ -574,7 +651,7 @@ suite('WallpaperSelectedTest', function() {
         };
         const album_id = 'test_album_id';
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           path: Paths.GOOGLE_PHOTOS_COLLECTION,
           googlePhotosAlbumId: album_id,
           isGooglePhotosAlbumShared: true,
@@ -589,7 +666,7 @@ suite('WallpaperSelectedTest', function() {
         assertEquals(
             null,
             wallpaperSelectedElement.shadowRoot!.querySelector(
-                GooglePhotosSharedAlbumDialog.is),
+                GooglePhotosSharedAlbumDialogElement.is),
             'proceed button closes dialog');
         assertEquals(
             album_id,
@@ -600,6 +677,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.currentSelected = {
       descriptionContent: '',
       descriptionTitle: '',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kDefault,
@@ -618,7 +696,7 @@ suite('WallpaperSelectedTest', function() {
       type: DailyRefreshType.GOOGLE_PHOTOS,
     };
 
-    wallpaperSelectedElement = initElement(WallpaperSelected, {
+    wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
       path: Paths.GOOGLE_PHOTOS_COLLECTION,
       googlePhotosAlbumId: album_id,
       isGooglePhotosAlbumShared: true,
@@ -631,7 +709,7 @@ suite('WallpaperSelectedTest', function() {
     assertEquals(
         null,
         wallpaperSelectedElement.shadowRoot!.querySelector(
-            GooglePhotosSharedAlbumDialog.is),
+            GooglePhotosSharedAlbumDialogElement.is),
         'no dialog for turning off daily refresh');
   });
 
@@ -642,6 +720,7 @@ suite('WallpaperSelectedTest', function() {
         personalizationStore.data.wallpaper.currentSelected = {
           descriptionContent: '',
           descriptionTitle: '',
+          actionUrl: null,
           key: 'key',
           layout: WallpaperLayout.kStretch,
           type: WallpaperType.kDefault,
@@ -655,7 +734,7 @@ suite('WallpaperSelectedTest', function() {
         };
         const album_id = 'test_album_id';
 
-        wallpaperSelectedElement = initElement(WallpaperSelected, {
+        wallpaperSelectedElement = initElement(WallpaperSelectedElement, {
           path: Paths.GOOGLE_PHOTOS_COLLECTION,
           googlePhotosAlbumId: album_id,
           isGooglePhotosAlbumShared: false,
@@ -668,15 +747,15 @@ suite('WallpaperSelectedTest', function() {
         assertEquals(
             null,
             wallpaperSelectedElement.shadowRoot!.querySelector(
-                GooglePhotosSharedAlbumDialog.is),
+                GooglePhotosSharedAlbumDialogElement.is),
             'no dialog because album is not shared');
       });
 
   test('shows description options when wallpaper has description', async () => {
-    loadTimeData.overrideValues({isPersonalizationJellyEnabled: true});
     personalizationStore.data.wallpaper.currentSelected = {
       descriptionContent: '',
       descriptionTitle: '',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kDefault,
@@ -685,7 +764,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
     wallpaperSelectedElement = initElement(
-        WallpaperSelected,
+        WallpaperSelectedElement,
         {
           path: Paths.COLLECTIONS,
         },
@@ -712,10 +791,10 @@ suite('WallpaperSelectedTest', function() {
   });
 
   test('hides description options when viewing Google Photos', async () => {
-    loadTimeData.overrideValues({isPersonalizationJellyEnabled: true});
     personalizationStore.data.wallpaper.currentSelected = {
       descriptionContent: '',
       descriptionTitle: '',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kDefault,
@@ -724,7 +803,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
     wallpaperSelectedElement = initElement(
-        WallpaperSelected,
+        WallpaperSelectedElement,
         {
           path: Paths.GOOGLE_PHOTOS_COLLECTION,
         },
@@ -753,10 +832,10 @@ suite('WallpaperSelectedTest', function() {
   test(
       'hides description options when viewing a different collection',
       async () => {
-        loadTimeData.overrideValues({isPersonalizationJellyEnabled: true});
         personalizationStore.data.wallpaper.currentSelected = {
           descriptionContent: '',
           descriptionTitle: '',
+          actionUrl: null,
           key: 'key',
           layout: WallpaperLayout.kStretch,
           type: WallpaperType.kDefault,
@@ -767,7 +846,7 @@ suite('WallpaperSelectedTest', function() {
             false;
 
         wallpaperSelectedElement = initElement(
-            WallpaperSelected,
+            WallpaperSelectedElement,
             {
               path: Paths.COLLECTION_IMAGES,
             },
@@ -794,10 +873,10 @@ suite('WallpaperSelectedTest', function() {
       });
 
   test('clicking description options opens dialog', async () => {
-    loadTimeData.overrideValues({isPersonalizationJellyEnabled: true});
     personalizationStore.data.wallpaper.currentSelected = {
       descriptionContent: 'content text',
       descriptionTitle: 'title text',
+      actionUrl: null,
       key: 'key',
       layout: WallpaperLayout.kStretch,
       type: WallpaperType.kDefault,
@@ -806,7 +885,7 @@ suite('WallpaperSelectedTest', function() {
     personalizationStore.data.wallpaper.loading.selected.attribution = false;
 
     wallpaperSelectedElement = initElement(
-        WallpaperSelected,
+        WallpaperSelectedElement,
         {
           path: Paths.COLLECTIONS,
         },
@@ -828,11 +907,13 @@ suite('WallpaperSelectedTest', function() {
 
     assertEquals(
         'title text',
-        dialog.querySelector<HTMLHeadingElement>(`h3[slot='title']`)!.innerText,
+        dialog.querySelector<HTMLHeadingElement>(
+                  `h3[slot='title']`)!.innerText.trim(),
         'title text matches');
     assertEquals(
         'content text',
-        dialog.querySelector<HTMLParagraphElement>(`p[slot='body']`)!.innerText,
+        dialog.querySelector<HTMLParagraphElement>(
+                  `p[slot='body']`)!.innerText.trim(),
         'content text matches');
 
     wallpaperSelectedElement.shadowRoot!.getElementById(
@@ -843,5 +924,95 @@ suite('WallpaperSelectedTest', function() {
         wallpaperSelectedElement.shadowRoot!.getElementById(
             descriptionDialogId),
         'no description dialog after close button clicked');
+  });
+
+  test('learn more link present if actionUrl exists', async () => {
+    personalizationStore.data.wallpaper.currentSelected = {
+      descriptionContent: 'content text',
+      descriptionTitle: 'title text',
+      actionUrl: null,
+      key: 'key',
+      layout: WallpaperLayout.kStretch,
+      type: WallpaperType.kDefault,
+    };
+    personalizationStore.data.wallpaper.loading.selected.image = false;
+    personalizationStore.data.wallpaper.loading.selected.attribution = false;
+
+    wallpaperSelectedElement = initElement(
+        WallpaperSelectedElement,
+        {
+          path: Paths.COLLECTIONS,
+        },
+    );
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    wallpaperSelectedElement.shadowRoot!.getElementById(descriptionOptionsId)!
+        .querySelector('cr-button')!.click();
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    let learnMoreContainer =
+        wallpaperSelectedElement?.shadowRoot?.getElementById(
+            learnMoreContainerId);
+    assertFalse(
+        !!learnMoreContainer, 'learn more container should not exist yet');
+
+
+    personalizationStore.data.wallpaper.currentSelected = {
+      ...personalizationStore.data.wallpaper.currentSelected,
+      actionUrl,
+    };
+    personalizationStore.notifyObservers();
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    learnMoreContainer = wallpaperSelectedElement?.shadowRoot?.getElementById(
+        learnMoreContainerId);
+    assertTrue(!!learnMoreContainer, 'learn more container should exist');
+
+    assertEquals(
+        learnMoreContainer.querySelector('a')?.href, actionUrl.url,
+        'url is displayed');
+  });
+
+  test('learn more link sanitizes href', async () => {
+    personalizationStore.data.wallpaper.currentSelected = {
+      descriptionContent: 'content text',
+      descriptionTitle: 'title text',
+      actionUrl,
+      key: 'key',
+      layout: WallpaperLayout.kStretch,
+      type: WallpaperType.kDefault,
+    };
+    personalizationStore.data.wallpaper.loading.selected.image = false;
+    personalizationStore.data.wallpaper.loading.selected.attribution = false;
+
+    wallpaperSelectedElement = initElement(
+        WallpaperSelectedElement,
+        {
+          path: Paths.COLLECTIONS,
+        },
+    );
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    wallpaperSelectedElement.shadowRoot!.getElementById(descriptionOptionsId)!
+        .querySelector('cr-button')!.click();
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    assertTrue(
+        !!wallpaperSelectedElement?.shadowRoot?.getElementById(
+            learnMoreContainerId),
+        'learn more container exists with valid url');
+
+    personalizationStore.data.wallpaper.currentSelected = {
+      ...personalizationStore.data.wallpaper.currentSelected,
+      actionUrl: {url: '<script>bad</script>'},
+    };
+    personalizationStore.notifyObservers();
+    await waitAfterNextRender(wallpaperSelectedElement);
+
+    assertEquals(
+        null,
+        wallpaperSelectedElement?.shadowRoot?.getElementById(
+            learnMoreContainerId),
+        'learn more container is gone due to invalid link');
   });
 });

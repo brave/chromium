@@ -4,17 +4,11 @@
 
 #include "ash/game_dashboard/game_dashboard_controller.h"
 
-#include <vector>
-
-#include "ash/constants/app_types.h"
-#include "ash/constants/ash_features.h"
 #include "ash/game_dashboard/game_dashboard_test_base.h"
 #include "ash/game_dashboard/test_game_dashboard_delegate.h"
-#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/test/ash_test_base.h"
-#include "base/system/sys_info.h"
-#include "base/test/scoped_feature_list.h"
+#include "chromeos/ui/base/app_types.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/wm/window_util.h"
 #include "extensions/common/constants.h"
@@ -31,20 +25,24 @@ class GameDashboardControllerTest : public GameDashboardTestBase {
       delete;
   ~GameDashboardControllerTest() override = default;
 
-  void VerifyIsGameWindowProperty(const char app_id[],
-                                  bool expected_is_game,
-                                  AppType app_type = AppType::NON_APP) {
+  void VerifyIsGameWindowProperty(aura::Window* window, bool expected_is_game) {
+    EXPECT_EQ(expected_is_game, IsControllerObservingWindow(window));
+    EXPECT_EQ(expected_is_game, GameDashboardController::IsGameWindow(window));
+    EXPECT_EQ(
+        expected_is_game,
+        GameDashboardController::Get()->game_window_contexts_.contains(window));
+  }
+
+  void CreateAppWindowAndVerifyIsGameWindowProperty(
+      const char app_id[],
+      bool expected_is_game,
+      chromeos::AppType app_type = chromeos::AppType::NON_APP) {
     auto window = CreateAppWindow(app_id, app_type, gfx::Rect(5, 5, 20, 20));
-    EXPECT_EQ(expected_is_game, IsControllerObservingWindow(window.get()));
-    EXPECT_EQ(expected_is_game,
-              GameDashboardController::IsGameWindow(window.get()));
-    EXPECT_EQ(expected_is_game,
-              GameDashboardController::Get()->game_window_contexts_.contains(
-                  window.get()));
+    VerifyIsGameWindowProperty(window.get(), expected_is_game);
 
     // Verify the window's `GameDashboardContext` is deleted after the game
     // window is closed.
-    aura::Window* old_window = window.get();
+    auto* old_window = window.get();
     window.reset();
     EXPECT_FALSE(GameDashboardController::Get()->game_window_contexts_.contains(
         old_window));
@@ -74,26 +72,49 @@ TEST_F(GameDashboardControllerTest, IsGameWindowProperty_NonNormalWindowType) {
 
 TEST_F(GameDashboardControllerTest, IsGameWindowProperty_GameArcWindow) {
   // Verifies a game ARC window is a game.
-  VerifyIsGameWindowProperty(TestGameDashboardDelegate::kGameAppId,
-                             true /* expected_is_game */, AppType::ARC_APP);
+  CreateAppWindowAndVerifyIsGameWindowProperty(
+      TestGameDashboardDelegate::kGameAppId, /*expected_is_game=*/true,
+      chromeos::AppType::ARC_APP);
+}
+
+TEST_F(GameDashboardControllerTest, IsGameWindowProperty_AllowlistedArcWindow) {
+  // Verifies an allowlisted ARC window is a game.
+  CreateAppWindowAndVerifyIsGameWindowProperty(
+      TestGameDashboardDelegate::kAllowlistedAppId,
+      /*expected_is_game=*/true, chromeos::AppType::ARC_APP);
 }
 
 TEST_F(GameDashboardControllerTest, IsGameWindowProperty_OtherArcWindow) {
   // Verifies a not-game ARC window is not a game.
-  VerifyIsGameWindowProperty(TestGameDashboardDelegate::kOtherAppId,
-                             false /* expected_is_game */, AppType::ARC_APP);
+  CreateAppWindowAndVerifyIsGameWindowProperty(
+      TestGameDashboardDelegate::kOtherAppId, /*expected_is_game=*/false,
+      chromeos::AppType::ARC_APP);
 }
 
 TEST_F(GameDashboardControllerTest, IsGameWindowProperty_GFNWindows) {
   // Verifies a GeForceNow window is a game.
-  VerifyIsGameWindowProperty(extension_misc::kGeForceNowAppId,
-                             true /* expected_is_game */);
+  CreateAppWindowAndVerifyIsGameWindowProperty(extension_misc::kGeForceNowAppId,
+                                               /*expected_is_game=*/true);
 }
 
 TEST_F(GameDashboardControllerTest, IsGameWindowProperty_OtherWindows) {
   // Verifies a non-game non-ARC window is not a game.
-  VerifyIsGameWindowProperty(TestGameDashboardDelegate::kOtherAppId,
-                             false /* expected_is_game */);
+  CreateAppWindowAndVerifyIsGameWindowProperty(
+      TestGameDashboardDelegate::kOtherAppId, /*expected_is_game=*/false);
+}
+
+TEST_F(GameDashboardControllerTest, GameWindowToNonGameWindow) {
+  const auto window =
+      CreateAppWindow(TestGameDashboardDelegate::kGameAppId,
+                      chromeos::AppType::ARC_APP, gfx::Rect(5, 5, 20, 20));
+  VerifyIsGameWindowProperty(window.get(), /*expected_is_game=*/true);
+
+  // Update the window property where the window is no longer considered to be a
+  // game.
+  window->SetProperty(kAppIDKey,
+                      std::string(TestGameDashboardDelegate::kOtherAppId));
+
+  VerifyIsGameWindowProperty(window.get(), /*expected_is_game=*/false);
 }
 
 }  // namespace ash

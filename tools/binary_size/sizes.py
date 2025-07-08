@@ -59,17 +59,16 @@ def get_size(filename):
 
 
 def get_linux_stripped_size(filename):
-  EU_STRIP_NAME = 'eu-strip'
   # Assumes |filename| is in out/Release
-  # build/linux/bin/eu-strip'
   src_dir = os.path.dirname(os.path.dirname(os.path.dirname(filename)))
-  eu_strip_path = os.path.join(src_dir, 'build', 'linux', 'bin', EU_STRIP_NAME)
-  if (platform.architecture()[0] == '64bit'
-      or not os.path.exists(eu_strip_path)):
-    eu_strip_path = EU_STRIP_NAME
+  llvm_strip_path = os.path.join(src_dir, 'third_party', 'llvm-build',
+                                 'Release+Asserts', 'bin', 'llvm-strip')
 
   with tempfile.NamedTemporaryFile() as stripped_file:
-    strip_cmd = [eu_strip_path, '-o', stripped_file.name, filename]
+    strip_cmd = [
+        llvm_strip_path, '--strip-unneeded', '--strip-debug', '-o',
+        stripped_file.name, filename
+    ]
     result = 0
     result, _ = run_process(result, strip_cmd)
     if result != 0:
@@ -369,6 +368,7 @@ def main_win(output_directory, results_collector, size_path):
       'chrome_elf.dll',
       'chrome_proxy.exe',
       'chrome_watcher.dll',
+      'elevated_tracing_service.exe',
       'elevation_service.exe',
       'libEGL.dll',
       'libGLESv2.dll',
@@ -437,6 +437,9 @@ def main():
   parser.add_argument('--isolated-script-test-filter', help=argparse.SUPPRESS)
   parser.add_argument(
       '--isolated-script-test-perf-output', help=argparse.SUPPRESS)
+  parser.add_argument('--isolated-script-test-repeat', help=argparse.SUPPRESS)
+  parser.add_argument('--isolated-script-test-launcher-retry-limit',
+                      help=argparse.SUPPRESS)
 
   parser.add_argument(
       '--isolated-script-test-output',

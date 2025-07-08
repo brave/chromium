@@ -9,10 +9,6 @@
 #import "content/shell/browser/bluetooth/ios/shell_bluetooth_device_list_view_controller.h"
 #import "ui/gfx/native_widget_types.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @implementation ShellBluetoothChooserCoordinator
 - (instancetype)initWithBaseViewController:(UIViewController*)baseViewController
                                      title:(NSString*)title
@@ -24,13 +20,13 @@
 
   _deviceListViewController =
       [[ShellDeviceListViewController alloc] initWithTitle:title];
-  _deviceListViewController.modalPresentationStyle = UIModalPresentationPopover;
-  _deviceListViewController.popoverPresentationController.delegate =
+
+  // Set `modalPresentationStyle` to UIModalPresentationOverFullScreen available
+  // on iOS and tvOS.
+  _deviceListViewController.modalPresentationStyle =
+      UIModalPresentationOverFullScreen;
+  _deviceListViewController.presentationController.delegate =
       _deviceListViewController;
-  _deviceListViewController.popoverPresentationController.sourceView =
-      baseViewController.view;
-  _deviceListViewController.popoverPresentationController.sourceRect =
-      baseViewController.view.bounds;
 
   _bluetoothChooserMediator = [[ShellBluetoothChooserMediator alloc]
       initWithBluetoothChooser:bluetoothChooser];

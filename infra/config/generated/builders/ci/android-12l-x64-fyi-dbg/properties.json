@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/android-12l-x64-fyi-dbg/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -14,14 +17,16 @@
               "builder_group": "chromium.android.fyi",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_android_config": {
-                "config": "x64_builder_mb"
+                "config": "base_config"
               },
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "download_vr_test_apks"
+                  "mb",
+                  "download_xr_test_apks"
                 ],
                 "build_config": "Debug",
-                "config": "android",
+                "config": "main_builder",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "android"
               },
@@ -41,14 +46,21 @@
           "builder": "android-12l-x64-fyi-dbg",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/android-12l-x64-fyi-dbg/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

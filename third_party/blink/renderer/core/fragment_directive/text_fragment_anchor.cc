@@ -56,7 +56,8 @@ bool CheckSecurityRestrictions(LocalFrame& frame) {
     return false;
   }
 
-  if (frame.GetDocument()->contentType() != "text/html") {
+  AtomicString content_type = frame.GetDocument()->contentType();
+  if (content_type != "text/html" && content_type != "text/plain") {
     TRACE_EVENT_INSTANT("blink", "CheckSecurityRestrictions", "Result",
                         "Invalid ContentType");
     return false;
@@ -423,7 +424,7 @@ void TextFragmentAnchor::ApplyEffectsToFirstMatch() {
 
   const RangeInFlatTree& range = first_match_->GetAttachedRange();
 
-  // Apply :target pseudo class.
+  // Apply :target pseudo-class.
   ApplyTargetToCommonAncestor(range.ToEphemeralRange());
   frame_->GetDocument()->UpdateStyleAndLayout(
       DocumentUpdateReason::kFindInPage);
@@ -438,12 +439,6 @@ void TextFragmentAnchor::ApplyEffectsToFirstMatch() {
   }
 
   metrics_->DidInvokeScrollIntoView();
-
-  // Set the sequential focus navigation to the start of selection.
-  // Even if this element isn't focusable, "Tab" press will
-  // start the search to find the next focusable element from this element.
-  frame_->GetDocument()->SetSequentialFocusNavigationStartingPoint(
-      range.StartPosition().NodeAsRangeFirstNode());
 }
 
 bool TextFragmentAnchor::EnsureFirstMatchInViewIfNeeded() {
@@ -460,7 +455,7 @@ bool TextFragmentAnchor::EnsureFirstMatchInViewIfNeeded() {
   // Ensure we don't treat the text fragment ScrollIntoView as a user scroll
   // so reset user_scrolled_ when it's done.
   base::AutoReset<bool> reset_user_scrolled(&user_scrolled_, user_scrolled_);
-  first_match_->ScrollIntoView();
+  first_match_->ScrollIntoView(/*applies_focus=*/false);
 
   return true;
 }
@@ -482,7 +477,7 @@ void TextFragmentAnchor::DidFinishSearch() {
   metrics_->SetSearchEngineSource(HasSearchEngineSource());
   metrics_->ReportMetrics();
 
-  bool did_find_any_matches = first_match_;
+  bool did_find_any_matches = first_match_ != nullptr;
 
   if (!did_find_any_matches) {
     DCHECK(!element_fragment_anchor_);

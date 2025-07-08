@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 package org.chromium.net;
 
+import androidx.annotation.Nullable;
+
 import java.util.Collections;
 import java.util.Date;
 import java.util.Set;
@@ -27,10 +29,14 @@ public abstract class ICronetEngineBuilder {
     public static final int CONNECTION_MIGRATION_OPTIONS = 1;
     public static final int DNS_OPTIONS = 2;
     public static final int QUIC_OPTIONS = 3;
+    public static final int PROXY_OPTIONS = 4;
 
     // Public API methods.
-    public abstract ICronetEngineBuilder addPublicKeyPins(String hostName, Set<byte[]> pinsSha256,
-            boolean includeSubdomains, Date expirationDate);
+    public abstract ICronetEngineBuilder addPublicKeyPins(
+            String hostName,
+            Set<byte[]> pinsSha256,
+            boolean includeSubdomains,
+            Date expirationDate);
 
     public abstract ICronetEngineBuilder addQuicHint(String host, int port, int alternatePort);
 
@@ -61,6 +67,13 @@ public abstract class ICronetEngineBuilder {
     public ICronetEngineBuilder setConnectionMigrationOptions(
             ConnectionMigrationOptions connectionMigrationOptions) {
         return this;
+    }
+
+    public ICronetEngineBuilder setProxyOptions(@Nullable ProxyOptions proxyOptions) {
+        // API layer last resort: prevents calling setProxyOptions on an implementation that does
+        // not know about it.
+        throw new UnsupportedOperationException(
+                "This Cronet implementation does not support ProxyOptions");
     }
 
     public abstract ICronetEngineBuilder setExperimentalOptions(String options);
@@ -99,5 +112,15 @@ public abstract class ICronetEngineBuilder {
 
     public ICronetEngineBuilder setThreadPriority(int priority) {
         return this;
+    }
+
+    /**
+     * Communicates the cronetInitializationRef for use in telemetry/logging, or 0 if the impl does
+     * not support this method.
+     *
+     * <p>Cronet API code with API version level >=31 calls this method shortly after construction.
+     */
+    protected long getLogCronetInitializationRef() {
+        return 0;
     }
 }

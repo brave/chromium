@@ -18,14 +18,10 @@ import android.widget.TextView;
 import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.ViewModelProvider;
 
-import org.chromium.base.ApiCompatibilityUtils;
-
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Activity for managing the Cronet Sample.
- */
+/** Activity for managing the Cronet Sample. */
 public class CronetSampleActivity extends FragmentActivity {
     private static final String TAG = CronetSampleActivity.class.getSimpleName();
 
@@ -41,11 +37,12 @@ public class CronetSampleActivity extends FragmentActivity {
         mFragmentIdMap.put(R.id.navigation_home, FRAGMENT_ID_HOME);
         mFragmentIdMap.put(R.id.navigation_options_ui, FRAGMENT_ID_FLAGS);
         final int childCount = mBottomNav.getChildCount();
-        View.OnClickListener switchFragmentListener = view -> {
-            assert mFragmentIdMap.containsKey(view.getId());
-            int fragmentId = mFragmentIdMap.get(view.getId());
-            switchFragment(fragmentId);
-        };
+        View.OnClickListener switchFragmentListener =
+                view -> {
+                    assert mFragmentIdMap.containsKey(view.getId());
+                    int fragmentId = mFragmentIdMap.get(view.getId());
+                    switchFragment(fragmentId);
+                };
         for (int i = 0; i < childCount; i++) {
             mBottomNav.getChildAt(i).setOnClickListener(switchFragmentListener);
         }
@@ -59,7 +56,8 @@ public class CronetSampleActivity extends FragmentActivity {
         switchFragment(FRAGMENT_ID_HOME);
     }
 
-    private void updateNavigationBarUI(int chosenFragmentId) {
+    @SuppressWarnings("deprecation")
+    private void updateNavigationBarUi(int chosenFragmentId) {
         final int childCount = mBottomNav.getChildCount();
         for (int i = 0; i < childCount; ++i) {
             View view = mBottomNav.getChildAt(i);
@@ -68,11 +66,16 @@ public class CronetSampleActivity extends FragmentActivity {
             TextView textView = (TextView) view;
 
             boolean isSelectedFragment = chosenFragmentId == fragmentId;
-            ApiCompatibilityUtils.setTextAppearance(textView,
-                    isSelectedFragment ? R.style.SelectedNavigationButton
-                                       : R.style.UnselectedNavigationButton);
-            int color = isSelectedFragment ? getResources().getColor(R.color.navigation_selected)
-                                           : getResources().getColor(R.color.navigation_unselected);
+            // TODO: Can remove first parameter and SuppressWarnings once minApiLevel >= 23.
+            textView.setTextAppearance(
+                    textView.getContext(),
+                    isSelectedFragment
+                            ? R.style.SelectedNavigationButton
+                            : R.style.UnselectedNavigationButton);
+            int color =
+                    isSelectedFragment
+                            ? getColor(R.color.navigation_selected)
+                            : getColor(R.color.navigation_unselected);
             for (Drawable drawable : textView.getCompoundDrawables()) {
                 if (drawable != null) {
                     drawable.mutate();
@@ -88,6 +91,6 @@ public class CronetSampleActivity extends FragmentActivity {
                 .beginTransaction()
                 .replace(R.id.fragment_container, mActivityViewModel.getFragment(chosenFragmentId))
                 .commit();
-        updateNavigationBarUI(chosenFragmentId);
+        updateNavigationBarUi(chosenFragmentId);
     }
 }

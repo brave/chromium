@@ -1,4 +1,4 @@
-monorail: {
-  component: "Platform>Apps>SystemWebApps"
+team_email: "lt-web-apps-team@google.com"
+buganizer: {
+  component_id: 1389907
 }
-team_email: "cros-essential-apps-dev@chromium.org"

@@ -6,9 +6,9 @@
 
 #include <memory>
 
-#include "ash/test/ash_test_base.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/arc/accessibility/arc_serialization_delegate.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "components/exo/client_controlled_shell_surface.h"
 #include "components/exo/surface.h"
 #include "components/exo/test/shell_surface_builder.h"
@@ -47,7 +47,8 @@ class TestAccessibilityInfoDataWrapper
   void PopulateAXState(ui::AXNodeData* out_data) const override {}
   std::string ComputeAXName(bool do_recursive) const override { return ""; }
   void GetChildren(
-      std::vector<AccessibilityInfoDataWrapper*>* children) const override {}
+      std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>*
+          children) const override {}
   int32_t GetWindowId() const override { return 1; }
 
   int32_t id_ = 1;
@@ -63,10 +64,10 @@ class TestTreeSource : public ax::android::AXTreeSourceAndroid {
   ax::android::AccessibilityInfoDataWrapper* GetRoot() const override {
     return root_;
   }
-  raw_ptr<ax::android::AccessibilityInfoDataWrapper, ExperimentalAsh> root_;
+  raw_ptr<ax::android::AccessibilityInfoDataWrapper> root_;
 };
 
-class ArcSerializationDelegateTest : public ash::AshTestBase {
+class ArcSerializationDelegateTest : public ChromeAshTestBase {
  public:
   ArcSerializationDelegateTest() = default;
 

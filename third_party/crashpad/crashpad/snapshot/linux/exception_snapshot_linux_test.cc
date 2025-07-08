@@ -445,7 +445,8 @@ class RaiseTest {
 };
 bool RaiseTest::test_complete_ = false;
 
-TEST(ExceptionSnapshotLinux, Raise) {
+// TODO(crbug.com/409657856): Flaky
+TEST(ExceptionSnapshotLinux, DISABLED_Raise) {
   RaiseTest::Run();
 }
 
@@ -521,7 +522,8 @@ class TimerTest {
 };
 TimerTest* TimerTest::test_;
 
-TEST(ExceptionSnapshotLinux, SelfTimer) {
+// TODO(crbug.com/336392563): Flaky.
+TEST(ExceptionSnapshotLinux, DISABLED_SelfTimer) {
   TimerTest test;
   test.Run();
 }

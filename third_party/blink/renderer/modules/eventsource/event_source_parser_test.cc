@@ -4,12 +4,16 @@
 
 #include "third_party/blink/renderer/modules/eventsource/event_source_parser.h"
 
+#include <string.h>
+
+#include <algorithm>
+#include <string_view>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/modules/eventsource/event_source.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
-
-#include <string.h>
 
 namespace blink {
 
@@ -92,13 +96,11 @@ class EventSourceParserTest : public testing::Test {
             MakeGarbageCollected<EventSourceParser>(AtomicString(), client_)) {}
   ~EventSourceParserTest() override = default;
 
-  void Enqueue(const char* data) {
-    parser_->AddBytes(data, static_cast<uint32_t>(strlen(data)));
-  }
-  void EnqueueOneByOne(const char* data) {
-    const char* p = data;
-    while (*p != '\0')
-      parser_->AddBytes(p++, 1);
+  void Enqueue(std::string_view chars) { parser_->AddBytes(chars); }
+  void EnqueueOneByOne(std::string_view chars) {
+    for (char c : chars) {
+      parser_->AddBytes(base::span_from_ref(c));
+    }
   }
 
   const Vector<EventOrReconnectionTimeSetting>& Events() {
@@ -107,6 +109,7 @@ class EventSourceParserTest : public testing::Test {
 
   EventSourceParser* Parser() { return parser_; }
 
+  test::TaskEnvironment task_environment_;
   Persistent<Client> client_;
   Persistent<EventSourceParser> parser_;
 };
@@ -367,19 +370,20 @@ TEST_F(EventSourceParserTest, InvalidUTF8Sequence) {
   ASSERT_EQ(1u, Events().size());
   ASSERT_EQ(Type::kEvent, Events()[0].type);
   EXPECT_EQ("message", Events()[0].event);
-  String expected = String() + kReplacementCharacter + "hello" +
-                    kReplacementCharacter + "\nbye";
+  String expected = String() + uchar::kReplacementCharacter + "hello" +
+                    uchar::kReplacementCharacter + "\nbye";
   EXPECT_EQ(expected, Events()[0].data);
 }
 
 TEST(EventSourceParserStoppingTest, StopWhileParsing) {
+  test::TaskEnvironment task_environment;
   StoppingClient* client = MakeGarbageCollected<StoppingClient>();
   EventSourceParser* parser =
       MakeGarbageCollected<EventSourceParser>(AtomicString(), client);
   client->SetParser(parser);
 
   const char kInput[] = "data:hello\nid:99\n\nid:44\ndata:bye\n\n";
-  parser->AddBytes(kInput, static_cast<uint32_t>(strlen(kInput)));
+  parser->AddBytes(base::span_from_cstring(kInput));
 
   const auto& events = client->Events();
 
@@ -395,7 +399,7 @@ TEST_F(EventSourceParserTest, IgnoreIdHavingNullCharacter) {
       "id:99\ndata:hello\n\nid:4\x0"
       "23\ndata:bye\n\n";
   // We can't use Enqueue because it relies on strlen.
-  parser_->AddBytes(input, sizeof(input) - 1);
+  parser_->AddBytes(base::span_from_cstring(input));
 
   EXPECT_EQ("99", Parser()->LastEventId());
   ASSERT_EQ(2u, Events().size());

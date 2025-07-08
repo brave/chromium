@@ -5,23 +5,25 @@
 package org.chromium.chrome.browser.crash;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.UsedByReflection;
 import org.chromium.components.crash.NativeAndJavaSmartExceptionReporter;
 import org.chromium.components.crash.PureJavaExceptionReporter;
 
 import java.io.File;
 
-/**
- * A custom PureJavaExceptionReporter for Android Chrome's browser.
- */
+/** A custom PureJavaExceptionReporter for Android Chrome's browser. */
 @UsedByReflection("SplitCompatApplication.java")
+@NullMarked
 public class ChromePureJavaExceptionReporter extends PureJavaExceptionReporter {
+    private static final String TAG = "ChromeCrashReporter";
     private static final String CHROME_CRASH_PRODUCT_NAME = "Chrome_Android";
     private static final String FILE_PREFIX = "chromium-browser-minidump-";
 
     @UsedByReflection("SplitCompatApplication.java")
     public ChromePureJavaExceptionReporter() {
-        super(/*attachLogcat=*/true);
+        super(/* attachLogcat= */ true);
     }
 
     @Override
@@ -52,9 +54,38 @@ public class ChromePureJavaExceptionReporter extends PureJavaExceptionReporter {
     /**
      * Asynchronously report and upload the stack trace as if it was a crash.
      *
+     * @param msg The message to report.
+     * @param isWarning Whether the message should be treated as a warning.
+     */
+    public static void reportJavaExceptionFromMsg(String msg, boolean isWarning) {
+        if (isWarning) {
+            msg = "This is not a crash. " + msg;
+        }
+        reportJavaException(new Throwable(msg));
+    }
+
+    /**
+     * Asynchronously report and upload the stack trace as if it was a crash.
+     *
      * @param exception The exception to report.
      */
     public static void reportJavaException(Throwable exception) {
+        reportJavaException(exception, /* withLogWarning= */ true);
+    }
+
+    /**
+     * Asynchronously report and upload the stack trace as if it was a crash. If |withLogging|,
+     * include the exception message as log warning. This can be helpful e.g. to locate the logs
+     * around when the exception is reported.
+     *
+     * @param exception The exception to report.
+     * @param withLogWarning Whether to include the exception message as {@link Log#w}
+     */
+    public static void reportJavaException(Throwable exception, boolean withLogWarning) {
+        if (withLogWarning) {
+            String message = exception.getMessage();
+            Log.w(TAG, message == null ? "" : message);
+        }
         NativeAndJavaSmartExceptionReporter.postUploadReport(
                 exception, ChromePureJavaExceptionReporter::reportPureJavaException);
     }

@@ -4,16 +4,12 @@
 
 #include "content/browser/renderer_host/input/synthetic_gesture_target_mac.h"
 
+#include "components/input/render_widget_host_input_event_router.h"
 #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/cocoa/cocoa_event_utils.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Unlike some event APIs, Apple does not provide a way to programmatically
 // build a zoom event. To work around this, we leverage ObjectiveC's flexible
@@ -109,8 +105,7 @@ void SyntheticGestureTargetMac::DispatchWebGestureEventToPlatform(
                                        locationInWindow:location_in_window
                                               timestamp:timestamp
                                                   phase:NSEventPhaseBegan];
-        [cocoa_view_ handleBeginGestureWithEvent:cocoa_event
-                         isSyntheticallyInjected:YES];
+        [cocoa_view_ magnifyWithEvent:cocoa_event isSyntheticallyInjected:YES];
         return;
       }
       case WebInputEvent::Type::kGesturePinchEnd: {
@@ -119,7 +114,7 @@ void SyntheticGestureTargetMac::DispatchWebGestureEventToPlatform(
                                        locationInWindow:location_in_window
                                               timestamp:timestamp
                                                   phase:NSEventPhaseEnded];
-        [cocoa_view_ handleEndGestureWithEvent:cocoa_event];
+        [cocoa_view_ magnifyWithEvent:cocoa_event isSyntheticallyInjected:YES];
         return;
       }
       case WebInputEvent::Type::kGesturePinchUpdate: {
@@ -128,7 +123,7 @@ void SyntheticGestureTargetMac::DispatchWebGestureEventToPlatform(
                   locationInWindow:location_in_window
                          timestamp:timestamp
                              phase:NSEventPhaseChanged];
-        [cocoa_view_ magnifyWithEvent:cocoa_event];
+        [cocoa_view_ magnifyWithEvent:cocoa_event isSyntheticallyInjected:YES];
         return;
       }
       default:

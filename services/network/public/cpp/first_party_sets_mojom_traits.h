@@ -22,18 +22,6 @@ namespace mojo {
 
 template <>
 struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
-    StructTraits<network::mojom::SiteIndexDataView,
-                 net::FirstPartySetEntry::SiteIndex> {
-  static uint32_t value(const net::FirstPartySetEntry::SiteIndex& i) {
-    return i.value();
-  }
-
-  static bool Read(network::mojom::SiteIndexDataView index,
-                   net::FirstPartySetEntry::SiteIndex* out);
-};
-
-template <>
-struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
     EnumTraits<network::mojom::SiteType, net::SiteType> {
   static network::mojom::SiteType ToMojom(net::SiteType site_type);
 
@@ -52,11 +40,6 @@ struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
     return e.site_type();
   }
 
-  static const absl::optional<net::FirstPartySetEntry::SiteIndex>& site_index(
-      const net::FirstPartySetEntry& e) {
-    return e.site_index();
-  }
-
   static bool Read(network::mojom::FirstPartySetEntryDataView entry,
                    net::FirstPartySetEntry* out);
 };
@@ -65,12 +48,12 @@ template <>
 struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
     StructTraits<network::mojom::FirstPartySetMetadataDataView,
                  net::FirstPartySetMetadata> {
-  static absl::optional<net::FirstPartySetEntry> frame_entry(
+  static std::optional<net::FirstPartySetEntry> frame_entry(
       const net::FirstPartySetMetadata& m) {
     return m.frame_entry();
   }
 
-  static absl::optional<net::FirstPartySetEntry> top_frame_entry(
+  static std::optional<net::FirstPartySetEntry> top_frame_entry(
       const net::FirstPartySetMetadata& m) {
     return m.top_frame_entry();
   }
@@ -111,7 +94,7 @@ template <>
 struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
     StructTraits<network::mojom::FirstPartySetEntryOverrideDataView,
                  net::FirstPartySetEntryOverride> {
-  static const absl::optional<net::FirstPartySetEntry>& entry(
+  static const std::optional<net::FirstPartySetEntry>& entry(
       const net::FirstPartySetEntryOverride& override) {
     return override.entry_;
   }
@@ -129,8 +112,12 @@ struct COMPONENT_EXPORT(FIRST_PARTY_SETS_MOJOM_TRAITS)
   customizations(const net::FirstPartySetsContextConfig& config) {
     return config.customizations_;
   }
+  static const base::flat_map<net::SchemefulSite, net::SchemefulSite>& aliases(
+      const net::FirstPartySetsContextConfig& config) {
+    return config.aliases_;
+  }
 
-  static bool Read(network::mojom::FirstPartySetsContextConfigDataView config,
+  static bool Read(network::mojom::FirstPartySetsContextConfigDataView view,
                    net::FirstPartySetsContextConfig* out_config);
 };
 

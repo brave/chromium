@@ -24,12 +24,10 @@ const char kUrlNotSecure[] =
 }  // namespace
 
 WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::
-    WebrtcDesktopCapturePrivateChooseDesktopMediaFunction() {
-}
+    WebrtcDesktopCapturePrivateChooseDesktopMediaFunction() = default;
 
 WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::
-    ~WebrtcDesktopCapturePrivateChooseDesktopMediaFunction() {
-}
+    ~WebrtcDesktopCapturePrivateChooseDesktopMediaFunction() = default;
 
 ExtensionFunction::ResponseAction
 WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
@@ -43,9 +41,9 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
   DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(source_process_id(),
                                                             request_id_, this);
 
-  mutable_args().erase(args().begin());
+  GetMutableArgs().erase(args().begin());
 
-  absl::optional<Params> params = Params::Create(args());
+  std::optional<Params> params = Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   content::RenderFrameHost* render_frame_host =
@@ -71,7 +69,7 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
   using Sources = std::vector<api::desktop_capture::DesktopCaptureSourceType>;
   Sources* sources = reinterpret_cast<Sources*>(&params->sources);
 
-  // TODO(crbug.com/1329129): Plumb systemAudio, selfBrowserSurface and
+  // TODO(crbug.com/40226648): Plumb systemAudio, selfBrowserSurface and
   // suppressLocalAudioPlaybackIntended here.
   return Execute(*sources, /*exclude_system_audio=*/false,
                  /*exclude_self_browser_surface=*/false,
@@ -80,9 +78,9 @@ WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::Run() {
 }
 
 WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction::
-    WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction() {}
+    WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction() = default;
 
 WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction::
-    ~WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction() {}
+    ~WebrtcDesktopCapturePrivateCancelChooseDesktopMediaFunction() = default;
 
 }  // namespace extensions

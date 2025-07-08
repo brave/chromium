@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/win-asan/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,7 +22,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_win_clang_asan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "win"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -40,14 +44,22 @@
           "builder": "win-asan",
           "group": "tryserver.chromium.win"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/win-asan/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -57,6 +69,9 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

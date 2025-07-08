@@ -2,17 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from '//resources/js/assert_ts.js';
-import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert} from '//resources/js/assert.js';
+import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 
-import {CrLazyRenderElement} from '../cr_lazy_render/cr_lazy_render.js';
+import type {CrLazyRenderLitElement} from '../cr_lazy_render/cr_lazy_render_lit.js';
 
-import {getTemplate} from './cr_view_manager.html.js';
+import {getCss} from './cr_view_manager.css.js';
+import {getHtml} from './cr_view_manager.html.js';
 
 function getEffectiveView<T extends HTMLElement>(
-    element: CrLazyRenderElement<T>|T): HTMLElement {
-  return element.matches('cr-lazy-render') ?
-      (element as CrLazyRenderElement<T>).get() :
+    element: CrLazyRenderLitElement<T>|T): HTMLElement {
+  return element.matches('cr-lazy-render, cr-lazy-render-lit') ?
+      (element as CrLazyRenderLitElement<T>).get() :
       element;
 }
 
@@ -72,13 +73,17 @@ viewAnimations.set('slide-in-fade-in-rtl', element => {
   return animation.finished;
 });
 
-export class CrViewManagerElement extends PolymerElement {
+export class CrViewManagerElement extends CrLitElement {
   static get is() {
     return 'cr-view-manager';
   }
 
-  static get template() {
-    return getTemplate();
+  static override get styles() {
+    return getCss();
+  }
+
+  override render() {
+    return getHtml.bind(this)();
   }
 
   private exit_(element: HTMLElement, animation: string): Promise<void> {
@@ -116,16 +121,31 @@ export class CrViewManagerElement extends PolymerElement {
   switchView(
       newViewId: string, enterAnimation?: string,
       exitAnimation?: string): Promise<void> {
-    const previousView = this.querySelector<HTMLElement>('.active');
-    const newView = this.querySelector<HTMLElement>('#' + newViewId);
-    assert(!!newView);
+    return this.switchViews([newViewId], enterAnimation, exitAnimation);
+  }
+
+  // Each view should have 'position: initial' for being able to show multiple
+  // views at the same time.
+  switchViews(
+      newViewIds: string[], enterAnimation?: string,
+      exitAnimation?: string): Promise<void> {
+    const previousViews = this.querySelectorAll<HTMLElement>('.active');
+    const newViews = newViewIds.length === 0 ?
+        [] :
+        this.querySelectorAll<HTMLElement>(
+            newViewIds.map(id => `#${id}`).join(','));
+    assert(newViews.length === newViewIds.length);
 
     const promises = [];
-    if (previousView) {
-      promises.push(this.exit_(previousView, exitAnimation || 'fade-out'));
-      promises.push(this.enter_(newView, enterAnimation || 'fade-in'));
-    } else {
-      promises.push(this.enter_(newView, 'no-animation'));
+
+    for (const view of previousViews) {
+      promises.push(this.exit_(view, exitAnimation || 'fade-out'));
+    }
+    for (const view of newViews) {
+      promises.push(this.enter_(
+          view,
+          enterAnimation ||
+              (previousViews.length === 0 ? 'no-animation' : 'fade-out')));
     }
 
     return Promise.all(promises).then(() => {});

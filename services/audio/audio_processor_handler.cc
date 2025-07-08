@@ -18,6 +18,7 @@ AudioProcessorHandler::AudioProcessorHandler(
     const media::AudioParameters& output_format,
     LogCallback log_callback,
     DeliverProcessedAudioCallback deliver_processed_audio_callback,
+    ReferenceStreamErrorCallback reference_stream_error_callback,
     mojo::PendingReceiver<media::mojom::AudioProcessorControls>
         controls_receiver,
     media::AecdumpRecordingManager* aecdump_recording_manager)
@@ -32,9 +33,11 @@ AudioProcessorHandler::AudioProcessorHandler(
           output_format)),
       deliver_processed_audio_callback_(
           std::move(deliver_processed_audio_callback)),
+      reference_stream_error_callback_(
+          std::move(reference_stream_error_callback)),
       receiver_(this, std::move(controls_receiver)),
       aecdump_recording_manager_(aecdump_recording_manager) {
-  DCHECK(settings.NeedAudioModification());
+  DCHECK(settings.NeedWebrtcAudioProcessing());
   if (aecdump_recording_manager_) {
     aecdump_recording_manager->RegisterAecdumpSource(this);
   }
@@ -53,14 +56,12 @@ void AudioProcessorHandler::ProcessCapturedAudio(
     const media::AudioBus& audio_source,
     base::TimeTicks audio_capture_time,
     double volume,
-    bool key_pressed,
     const media::AudioGlitchInfo& audio_glitch_info) {
   glitch_info_accumulator_.Add(audio_glitch_info);
   const int num_preferred_channels =
       num_preferred_channels_.load(std::memory_order_acquire);
   audio_processor_->ProcessCapturedAudio(audio_source, audio_capture_time,
-                                         num_preferred_channels, volume,
-                                         key_pressed);
+                                         num_preferred_channels, volume);
 }
 
 void AudioProcessorHandler::OnPlayoutData(const media::AudioBus& audio_bus,
@@ -69,6 +70,11 @@ void AudioProcessorHandler::OnPlayoutData(const media::AudioBus& audio_bus,
   TRACE_EVENT2("audio", "AudioProcessorHandler::OnPlayoutData", " this ",
                static_cast<void*>(this), "delay", delay.InMillisecondsF());
   audio_processor_->OnPlayoutData(audio_bus, sample_rate, delay);
+}
+
+void AudioProcessorHandler::OnReferenceStreamError() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
+  reference_stream_error_callback_.Run();
 }
 
 void AudioProcessorHandler::GetStats(GetStatsCallback callback) {
@@ -104,7 +110,7 @@ void AudioProcessorHandler::StopAecdump() {
 void AudioProcessorHandler::DeliverProcessedAudio(
     const media::AudioBus& audio_bus,
     base::TimeTicks audio_capture_time,
-    absl::optional<double> new_volume) {
+    std::optional<double> new_volume) {
   deliver_processed_audio_callback_.Run(audio_bus, audio_capture_time,
                                         new_volume,
                                         glitch_info_accumulator_.GetAndReset());

@@ -4,6 +4,8 @@
 
 #include "ash/public/cpp/test/test_system_tray_client.h"
 
+#include <string_view>
+
 namespace ash {
 
 TestSystemTrayClient::TestSystemTrayClient() = default;
@@ -26,7 +28,7 @@ void TestSystemTrayClient::ShowBluetoothSettings(const std::string& device_id) {
 }
 
 void TestSystemTrayClient::ShowBluetoothPairingDialog(
-    absl::optional<base::StringPiece> device_address) {
+    std::optional<std::string_view> device_address) {
   show_bluetooth_pairing_dialog_count_++;
 }
 
@@ -56,7 +58,9 @@ void TestSystemTrayClient::ShowWifiSyncSettings() {
   show_wifi_sync_settings_count_++;
 }
 
-void TestSystemTrayClient::ShowAboutChromeOS() {}
+void TestSystemTrayClient::ShowAboutChromeOS() {
+  show_about_chromeos_count_++;
+}
 
 void TestSystemTrayClient::ShowAboutChromeOSDetails() {}
 
@@ -102,8 +106,17 @@ void TestSystemTrayClient::ShowNetworkCreate(const std::string& type) {
 
 void TestSystemTrayClient::ShowSettingsCellularSetup(bool show_psim_flow) {}
 
+void TestSystemTrayClient::ShowMobileDataSubpage() {
+  show_mobile_data_subpage_count_++;
+}
+
 void TestSystemTrayClient::ShowSettingsSimUnlock() {
   ++show_sim_unlock_settings_count_;
+}
+
+void TestSystemTrayClient::ShowApnSubpage(const std::string& network_id) {
+  ++show_apn_subpage_count_;
+  last_apn_subpage_network_id_ = network_id;
 }
 
 void TestSystemTrayClient::ShowThirdPartyVpnCreate(
@@ -143,7 +156,7 @@ void TestSystemTrayClient::ShowAccessCodeCastingDialog(
 }
 
 void TestSystemTrayClient::ShowCalendarEvent(
-    const absl::optional<GURL>& event_url,
+    const std::optional<GURL>& event_url,
     const base::Time& date,
     bool& opened_pwa,
     GURL& final_event_url) {
@@ -175,7 +188,13 @@ void TestSystemTrayClient::ShowEolInfoPage() {
   ++show_eol_info_count_;
 }
 
-void TestSystemTrayClient::RecordEolNoticeShown() {}
+void TestSystemTrayClient::ShowGraphicsTabletSettings() {
+  ++show_graphics_tablet_settings_count_;
+}
+
+void TestSystemTrayClient::ShowMouseSettings() {
+  ++show_mouse_settings_count_;
+}
 
 void TestSystemTrayClient::ShowTouchpadSettings() {
   ++show_touchpad_settings_count_;
@@ -183,6 +202,26 @@ void TestSystemTrayClient::ShowTouchpadSettings() {
 
 void TestSystemTrayClient::ShowRemapKeysSubpage(int device_id) {
   ++show_remap_keys_subpage_count_;
+}
+
+void TestSystemTrayClient::ShowYouTubeMusicPremiumPage() {
+  ++show_youtube_music_premium_page_count_;
+}
+
+void TestSystemTrayClient::ShowChromebookPerksYouTubePage() {
+  ++show_chromebook_perks_youtube_page_count_;
+}
+
+void TestSystemTrayClient::ShowKeyboardSettings() {
+  ++show_keyboard_settings_count_;
+}
+
+void TestSystemTrayClient::ShowPointingStickSettings() {
+  ++show_pointing_stick_settings_count_;
+}
+
+void TestSystemTrayClient::ShowNearbyShareSettings() {
+  ++show_nearby_share_settings_count_;
 }
 
 }  // namespace ash

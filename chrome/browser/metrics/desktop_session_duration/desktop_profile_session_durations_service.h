@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_METRICS_DESKTOP_SESSION_DURATION_DESKTOP_PROFILE_SESSION_DURATIONS_SERVICE_H_
 
 #include "base/scoped_observation.h"
-#include "chrome/browser/download/download_session_durations_metrics_recorder.h"
 #include "chrome/browser/metrics/desktop_session_duration/desktop_session_duration_tracker.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/password_manager/core/browser/password_session_durations_metrics_recorder.h"
@@ -15,6 +14,9 @@
 
 namespace signin {
 class IdentityManager;
+}
+namespace signin_metrics {
+enum class SingleProfileSigninStatus;
 }
 namespace syncer {
 class SyncService;
@@ -43,7 +45,7 @@ class DesktopProfileSessionDurationsService
 
   ~DesktopProfileSessionDurationsService() override;
 
-  bool IsSignedIn() const;
+  signin_metrics::SingleProfileSigninStatus GetSigninStatus() const;
   bool IsSyncing() const;
 
   // DesktopSessionDurationtracker::Observer:
@@ -61,8 +63,6 @@ class DesktopProfileSessionDurationsService
       msbb_metrics_recorder_;
   std::unique_ptr<password_manager::PasswordSessionDurationsMetricsRecorder>
       password_metrics_recorder_;
-  std::unique_ptr<DownloadSessionDurationsMetricsRecorder>
-      download_metrics_recorder_;
 
   base::ScopedObservation<DesktopSessionDurationTracker,
                           DesktopSessionDurationTracker::Observer>

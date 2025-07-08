@@ -6,21 +6,31 @@ package org.chromium.chrome.browser.ui.autofill;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.RadioButton;
+import android.widget.TextView;
 
+import androidx.core.content.res.ResourcesCompat;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.ui.autofill.AuthenticatorOptionsAdapter.AuthenticatorOptionViewHolder;
@@ -34,9 +44,7 @@ import org.chromium.ui.test.util.modaldialog.FakeModalDialogManager;
 
 import java.util.ArrayList;
 
-/**
- * Unit tests for {@link AuthenticatorSelectionDialog}.
- */
+/** Unit tests for {@link AuthenticatorSelectionDialog}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class AuthenticatorSelectionDialogTest {
     // The icon set on the AuthenticatorOption is not important and any icon would do.
@@ -78,16 +86,19 @@ public class AuthenticatorSelectionDialogTest {
 
     private FakeModalDialogManager mModalDialogManager;
     private AuthenticatorSelectionDialog mAuthenticatorSelectionDialog;
-    @Mock
-    private AuthenticatorSelectionDialog.Listener mAuthenticatorSelectedListener;
+    private Resources mResources;
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @Mock private AuthenticatorSelectionDialog.Listener mAuthenticatorSelectedListener;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mModalDialogManager = new FakeModalDialogManager(ModalDialogType.TAB);
+        mResources = ApplicationProvider.getApplicationContext().getResources();
         mAuthenticatorSelectionDialog =
-                new AuthenticatorSelectionDialog(ApplicationProvider.getApplicationContext(),
-                        mAuthenticatorSelectedListener, mModalDialogManager);
+                new AuthenticatorSelectionDialog(
+                        ApplicationProvider.getApplicationContext(),
+                        mAuthenticatorSelectedListener,
+                        mModalDialogManager);
     }
 
     @Test
@@ -103,7 +114,7 @@ public class AuthenticatorSelectionDialogTest {
         forceAuthenticatorOptionsViewLayout(model);
         View customView = model.get(ModalDialogProperties.CUSTOM_VIEW);
         RecyclerView authenticatorOptionsView =
-                (RecyclerView) customView.findViewById(R.id.authenticator_options_view);
+                customView.findViewById(R.id.authenticator_options_view);
         assertThat(authenticatorOptionsView.getAdapter().getItemCount()).isEqualTo(1);
         // Verify that radio button is not shown for a single authenticator option and instead the
         // icon image is shown.
@@ -194,8 +205,8 @@ public class AuthenticatorSelectionDialogTest {
     @Test
     @SmallTest
     public void
-    testMultipleAuthenticatorOption_changeToSmsOtpChallengeOption_clickOnViewToSelectChallengeOption()
-            throws Exception {
+            testMultipleAuthenticatorOption_changeToSmsOtpChallengeOption_clickOnViewToSelectChallengeOption()
+                    throws Exception {
         PropertyModel model = createAndShowModelForChangeSelectedOptionTest();
 
         // Perform click for the view of authenticator option 2.
@@ -265,6 +276,74 @@ public class AuthenticatorSelectionDialogTest {
         verify(mAuthenticatorSelectedListener, times(1)).onOptionSelected(OPTION_4.getIdentifier());
     }
 
+    @Test
+    @SmallTest
+    public void testSingleAuthenticatorOption_titleView() throws Exception {
+        ArrayList<AuthenticatorOption> options = new ArrayList<>();
+        options.add(OPTION_1);
+
+        mAuthenticatorSelectionDialog.show(options);
+
+        PropertyModel model = mModalDialogManager.getShownDialogModel();
+        assertThat(model).isNotNull();
+
+        forceAuthenticatorOptionsViewLayout(model);
+
+        View customView = model.get(ModalDialogProperties.CUSTOM_VIEW);
+
+        // Verify that the title set by custom view is correct.
+        TextView title = customView.findViewById(R.id.title);
+        assertThat(title.getVisibility()).isEqualTo(View.VISIBLE);
+        assertThat(title.getText())
+                .isEqualTo(mResources.getString(R.string.autofill_card_unmask_verification_title));
+
+        // Verify that the title icon set by custom view is correct.
+        ImageView title_icon = customView.findViewById(R.id.title_icon);
+        Drawable expectedDrawable =
+                ResourcesCompat.getDrawable(
+                        mResources,
+                        R.drawable.google_pay,
+                        ApplicationProvider.getApplicationContext().getTheme());
+        assertThat(title_icon.getVisibility()).isEqualTo(View.VISIBLE);
+        assertTrue(getBitmap(expectedDrawable).sameAs(getBitmap(title_icon.getDrawable())));
+    }
+
+    @Test
+    @SmallTest
+    public void testMultipleAuthenticatorOption_titleView() throws Exception {
+        ArrayList<AuthenticatorOption> options = new ArrayList<>();
+        options.add(OPTION_1);
+        options.add(OPTION_2);
+
+        mAuthenticatorSelectionDialog.show(options);
+
+        PropertyModel model = mModalDialogManager.getShownDialogModel();
+        assertThat(model).isNotNull();
+
+        forceAuthenticatorOptionsViewLayout(model);
+
+        View customView = model.get(ModalDialogProperties.CUSTOM_VIEW);
+
+        // Verify that the title set by custom view is correct.
+        TextView title = customView.findViewById(R.id.title);
+        assertThat(title.getVisibility()).isEqualTo(View.VISIBLE);
+        assertThat(title.getText())
+                .isEqualTo(
+                        mResources.getString(
+                                R.string
+                                        .autofill_card_auth_selection_dialog_title_multiple_options));
+
+        // Verify that the title icon set by custom view is correct.
+        ImageView title_icon = customView.findViewById(R.id.title_icon);
+        Drawable expectedDrawable =
+                ResourcesCompat.getDrawable(
+                        mResources,
+                        R.drawable.google_pay,
+                        ApplicationProvider.getApplicationContext().getTheme());
+        assertThat(title_icon.getVisibility()).isEqualTo(View.VISIBLE);
+        assertTrue(getBitmap(expectedDrawable).sameAs(getBitmap(title_icon.getDrawable())));
+    }
+
     private PropertyModel createAndShowModelForChangeSelectedOptionTest() {
         ArrayList<AuthenticatorOption> options = new ArrayList<>();
         options.add(OPTION_1);
@@ -284,7 +363,7 @@ public class AuthenticatorSelectionDialogTest {
             PropertyModel model, int position) {
         View customView = model.get(ModalDialogProperties.CUSTOM_VIEW);
         RecyclerView authenticatorOptionsView =
-                (RecyclerView) customView.findViewById(R.id.authenticator_options_view);
+                customView.findViewById(R.id.authenticator_options_view);
         return (AuthenticatorOptionViewHolder)
                 authenticatorOptionsView.findViewHolderForAdapterPosition(position);
     }
@@ -301,8 +380,21 @@ public class AuthenticatorSelectionDialogTest {
     private void forceAuthenticatorOptionsViewLayout(PropertyModel model) {
         View customView = model.get(ModalDialogProperties.CUSTOM_VIEW);
         RecyclerView authenticatorOptionsView =
-                (RecyclerView) customView.findViewById(R.id.authenticator_options_view);
+                customView.findViewById(R.id.authenticator_options_view);
         authenticatorOptionsView.measure(0, 0);
         authenticatorOptionsView.layout(0, 0, 100, 1000);
+    }
+
+    // Convert a drawable to a Bitmap for comparison.
+    private static Bitmap getBitmap(Drawable drawable) {
+        Bitmap bitmap =
+                Bitmap.createBitmap(
+                        drawable.getIntrinsicWidth(),
+                        drawable.getIntrinsicHeight(),
+                        Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+        drawable.draw(canvas);
+        return bitmap;
     }
 }

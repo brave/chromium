@@ -14,6 +14,9 @@
 #include "chrome/browser/extensions/api/declarative_content/content_predicate_evaluator.h"
 #include "components/url_matcher/url_matcher.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace base {
 class Value;
@@ -144,7 +147,9 @@ class DeclarativeContentPageUrlConditionTracker
   url_matcher::URLMatcher url_matcher_;
 
   // Grouped predicates tracked by this object.
-  std::map<const void*, std::vector<const DeclarativeContentPageUrlPredicate*>>
+  std::map<const void*,
+           std::vector<raw_ptr<const DeclarativeContentPageUrlPredicate,
+                               VectorExperimental>>>
       tracked_predicates_;
 
   // Maps WebContents to the tracker for that WebContents state.

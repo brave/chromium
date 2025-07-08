@@ -8,11 +8,11 @@
 #include <array>
 #include <limits>
 #include <ostream>
+#include <variant>
 
 #include "base/files/file_path.h"
 #include "base/types/id_type.h"
-#include "gpu/gpu_export.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "gpu/ipc/common/gpu_ipc_common_export.h"
 
 namespace gpu {
 
@@ -27,17 +27,19 @@ namespace gpu {
 enum class GpuDiskCacheType {
   kGlShaders,
   kDawnWebGPU,
+  kDawnGraphite,
 };
 
 // Stream operator implemented for GpuDiskCacheType for debugging.
-GPU_EXPORT std::ostream& operator<<(std::ostream& s,
-                                    const GpuDiskCacheType& type);
+GPU_IPC_COMMON_EXPORT std::ostream& operator<<(std::ostream& s,
+                                               const GpuDiskCacheType& type);
 
-static constexpr std::array<GpuDiskCacheType, 2> kGpuDiskCacheTypes = {
+static constexpr std::array<GpuDiskCacheType, 3> kGpuDiskCacheTypes = {
     GpuDiskCacheType::kGlShaders,
     GpuDiskCacheType::kDawnWebGPU,
+    GpuDiskCacheType::kDawnGraphite,
 };
-GPU_EXPORT base::FilePath::StringType GetGpuDiskCacheSubdir(
+GPU_IPC_COMMON_EXPORT base::FilePath::StringType GetGpuDiskCacheSubdir(
     GpuDiskCacheType type);
 
 //
@@ -54,25 +56,36 @@ using GpuDiskCacheGlShaderHandle =
                  std::numeric_limits<int32_t>::min(),
                  1>;
 
-// Dawn cache handles (for the most part, these should be 1:1 per profile).
+// Dawn WebGPU cache handles (for the most part, these should be 1:1 per
+// profile).
 using GpuDiskCacheDawnWebGPUHandle =
     base::IdType<class GpuDiskCacheDawnWebGPU,
                  int32_t,
                  std::numeric_limits<int32_t>::min(),
                  1>;
 
+// Dawn Graphite cache handles (for the most part, these should be 1:1 per
+// profile).
+using GpuDiskCacheDawnGraphiteHandle =
+    base::IdType<class GpuDiskCacheDawnGraphite,
+                 int32_t,
+                 std::numeric_limits<int32_t>::min(),
+                 1>;
 //
 // Variant handle that encompasses all possible handles, and utilities.
 //
-using GpuDiskCacheHandle = absl::variant<absl::monostate,
-                                         GpuDiskCacheGlShaderHandle,
-                                         GpuDiskCacheDawnWebGPUHandle>;
-GPU_EXPORT GpuDiskCacheType GetHandleType(const GpuDiskCacheHandle& handle);
-GPU_EXPORT int32_t GetHandleValue(const GpuDiskCacheHandle& handle);
+using GpuDiskCacheHandle = std::variant<std::monostate,
+                                        GpuDiskCacheGlShaderHandle,
+                                        GpuDiskCacheDawnWebGPUHandle,
+                                        GpuDiskCacheDawnGraphiteHandle>;
+GPU_IPC_COMMON_EXPORT GpuDiskCacheType
+GetHandleType(const GpuDiskCacheHandle& handle);
+GPU_IPC_COMMON_EXPORT int32_t GetHandleValue(const GpuDiskCacheHandle& handle);
 
 // Stream operator implemented for GpuDiskCacheHandle for debugging.
-GPU_EXPORT std::ostream& operator<<(std::ostream& s,
-                                    const GpuDiskCacheHandle& handle);
+GPU_IPC_COMMON_EXPORT std::ostream& operator<<(
+    std::ostream& s,
+    const GpuDiskCacheHandle& handle);
 
 //
 // Reserved cache handles that are specifically used for static caches.
@@ -86,9 +99,10 @@ constexpr GpuDiskCacheGlShaderHandle kGrShaderGpuDiskCacheHandle(-2);
 
 // The handle used by GraphiteDawn running in the GPU process. It is used by
 // RasterDecoder and SkiaRenderer.
-constexpr GpuDiskCacheDawnWebGPUHandle kGraphiteDawnGpuDiskCacheHandle(-3);
+constexpr GpuDiskCacheDawnGraphiteHandle kGraphiteDawnGpuDiskCacheHandle(-3);
 
-GPU_EXPORT bool IsReservedGpuDiskCacheHandle(const GpuDiskCacheHandle& handle);
+GPU_IPC_COMMON_EXPORT bool IsReservedGpuDiskCacheHandle(
+    const GpuDiskCacheHandle& handle);
 
 }  // namespace gpu
 

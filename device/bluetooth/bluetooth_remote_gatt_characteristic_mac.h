@@ -16,10 +16,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace device {
 
 class BluetoothLowEnergyAdapterApple;
@@ -53,12 +49,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicMac
   BluetoothRemoteGattService* GetService() const override;
   bool IsNotifying() const override;
   void ReadRemoteCharacteristic(ValueCallback callback) override;
-  void WriteRemoteCharacteristic(const std::vector<uint8_t>& value,
+  void WriteRemoteCharacteristic(base::span<const uint8_t> value,
                                  WriteType write_type,
                                  base::OnceClosure callback,
                                  ErrorCallback error_callback) override;
   void DeprecatedWriteRemoteCharacteristic(
-      const std::vector<uint8_t>& value,
+      base::span<const uint8_t> value,
       base::OnceClosure callback,
       ErrorCallback error_callback) override;
 

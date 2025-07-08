@@ -4,8 +4,6 @@
 
 #include "chrome/browser/ash/arc/vmm/arc_system_state_observation.h"
 
-#include "ash/components/arc/session/arc_service_manager.h"
-#include "ash/components/arc/test/fake_arc_session.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_test.h"
@@ -16,6 +14,9 @@
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/ash/arc/test/test_arc_session_manager.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
+#include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,22 +34,15 @@ ArcAppListPrefs::AppInfo MakePlayStoreInfo(bool ready) {
       true /* resize_lock_needs_confirmation */,
       ArcAppListPrefs::WindowLayout(), ready /* ready */, false /* suspended */,
       true /* show_in_launcher*/, false /* shortcut */, true /* launchable */,
-      false /* need_fixup */, absl::nullopt /* app_size */,
-      absl::nullopt /* data_size */,
+      false /* need_fixup */, std::nullopt /* app_size */,
+      std::nullopt /* data_size */,
       mojom::AppCategory::kUndefined /* app_category */);
 }
 }  // namespace
 
 class ArcSystemStateObservationTest : public testing::Test {
  public:
-  ArcSystemStateObservationTest() = default;
-  ArcSystemStateObservationTest(const ArcSystemStateObservationTest&) = delete;
-  ArcSystemStateObservationTest& operator=(
-      const ArcSystemStateObservationTest&) = delete;
-
-  ~ArcSystemStateObservationTest() override = default;
-
-  void SetUp() override {
+  ArcSystemStateObservationTest() {
     arc_test().SetUp(&profile_);
 
     observation_ = std::make_unique<ArcSystemStateObservation>(&profile_);
@@ -60,8 +54,14 @@ class ArcSystemStateObservationTest : public testing::Test {
     arc_window_observer_ =
         observation_->GetObserverByName(kArcWindowObserverName);
   }
+  ArcSystemStateObservationTest(const ArcSystemStateObservationTest&) = delete;
+  ArcSystemStateObservationTest& operator=(
+      const ArcSystemStateObservationTest&) = delete;
 
-  void TearDown() override { observation_.reset(); }
+  ~ArcSystemStateObservationTest() override {
+    observation_.reset();
+    arc_test().TearDown();
+  }
 
   ArcSystemStateObservation* observation() { return observation_.get(); }
   ArcAppTest& arc_test() { return arc_test_; }
@@ -75,9 +75,10 @@ class ArcSystemStateObservationTest : public testing::Test {
 
   std::unique_ptr<ArcSystemStateObservation> observation_;
 
-  raw_ptr<ash::ThrottleObserver, ExperimentalAsh> active_window_observer_;
-  raw_ptr<ash::ThrottleObserver, ExperimentalAsh> background_service_observer_;
-  raw_ptr<ash::ThrottleObserver, ExperimentalAsh> arc_window_observer_;
+  raw_ptr<ash::ThrottleObserver, DanglingUntriaged> active_window_observer_;
+  raw_ptr<ash::ThrottleObserver, DanglingUntriaged>
+      background_service_observer_;
+  raw_ptr<ash::ThrottleObserver, DanglingUntriaged> arc_window_observer_;
 };
 
 TEST_F(ArcSystemStateObservationTest, TestConstructDestruct) {}
@@ -96,12 +97,12 @@ TEST_F(ArcSystemStateObservationTest, NotPeaceIfArcNotConnected) {
   observation()->ThrottleInstance(true);
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(absl::nullopt, observation()->GetPeaceDuration());
+  EXPECT_EQ(std::nullopt, observation()->GetPeaceDuration());
 
   observation()->OnAppStatesChanged(kPlayStoreAppId, MakePlayStoreInfo(true));
   observation()->ThrottleInstance(true);
   base::RunLoop().RunUntilIdle();
-  EXPECT_NE(absl::nullopt, observation()->GetPeaceDuration());
+  EXPECT_NE(std::nullopt, observation()->GetPeaceDuration());
 }
 // TODO(sstan): Test the ARC system running state update from mojo.
 

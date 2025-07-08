@@ -19,6 +19,7 @@
 namespace blink {
 
 class Document;
+class AnimationTrigger;
 
 enum class TimelinePhase { kInactive, kActive };
 
@@ -28,7 +29,7 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
  public:
   struct PhaseAndTime {
     TimelinePhase phase;
-    absl::optional<base::TimeDelta> time;
+    std::optional<base::TimeDelta> time;
     bool operator==(const PhaseAndTime& other) const {
       return phase == other.phase && time == other.time;
     }
@@ -45,9 +46,9 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
     return nullptr;
   }
 
-  absl::optional<AnimationTimeDelta> CurrentTime();
-  absl::optional<double> CurrentTimeMilliseconds();
-  absl::optional<double> CurrentTimeSeconds();
+  std::optional<AnimationTimeDelta> CurrentTime();
+  std::optional<double> CurrentTimeMilliseconds();
+  std::optional<double> CurrentTimeSeconds();
 
   virtual V8CSSNumberish* duration();
 
@@ -79,7 +80,7 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
   //
   // Changing scroll-linked animation start_time initialization is under
   // consideration here: https://github.com/w3c/csswg-drafts/issues/2075.
-  virtual absl::optional<base::TimeDelta> InitialStartTimeForAnimations() = 0;
+  virtual std::optional<base::TimeDelta> InitialStartTimeForAnimations() = 0;
 
   AnimationTimeDelta CalculateIntrinsicIterationDuration(
       const Animation* animation,
@@ -90,8 +91,8 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
   }
 
   AnimationTimeDelta CalculateIntrinsicIterationDuration(
-      const absl::optional<TimelineOffset>& range_start,
-      const absl::optional<TimelineOffset>& range_end,
+      const std::optional<TimelineOffset>& range_start,
+      const std::optional<TimelineOffset>& range_end,
       const Timing& timing) {
     return CalculateIntrinsicIterationDuration(GetTimelineRange(), range_start,
                                                range_end, timing);
@@ -100,7 +101,7 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
   // See class TimelineRange.
   virtual TimelineRange GetTimelineRange() const { return TimelineRange(); }
 
-  Document* GetDocument() const { return document_; }
+  Document* GetDocument() const { return document_.Get(); }
   virtual void AnimationAttached(Animation*);
   virtual void AnimationDetached(Animation*);
 
@@ -141,23 +142,27 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
       const PaintArtifactCompositor*);
 
   using ReplaceableAnimationsMap =
-      HeapHashMap<Member<Element>, Member<HeapVector<Member<Animation>>>>;
+      HeapHashMap<Member<Element>, Member<GCedHeapVector<Member<Animation>>>>;
   void getReplaceableAnimations(
       ReplaceableAnimationsMap* replaceable_animation_set);
 
   void Trace(Visitor*) const override;
 
-  virtual absl::optional<AnimationTimeDelta> GetDuration() const {
-    return absl::nullopt;
+  virtual std::optional<AnimationTimeDelta> GetDuration() const {
+    return std::nullopt;
   }
+
+  virtual void AddAnimationTrigger(AnimationTrigger* trigger);
+  virtual void RemoveAnimationTrigger(AnimationTrigger* trigger);
+  void ServiceAnimationTriggers();
 
  protected:
   virtual PhaseAndTime CurrentPhaseAndTime() = 0;
 
   virtual AnimationTimeDelta CalculateIntrinsicIterationDuration(
       const TimelineRange&,
-      const absl::optional<TimelineOffset>& range_start,
-      const absl::optional<TimelineOffset>& range_end,
+      const std::optional<TimelineOffset>& range_start,
+      const std::optional<TimelineOffset>& range_end,
       const Timing&) {
     return AnimationTimeDelta();
   }
@@ -169,10 +174,18 @@ class CORE_EXPORT AnimationTimeline : public ScriptWrappable {
   HeapHashSet<Member<Animation>> animations_needing_update_;
   // All animations attached to this timeline.
   HeapHashSet<WeakMember<Animation>> animations_;
+  // Triggers which depend on this timeline.
+  HeapHashSet<Member<AnimationTrigger>> triggers_;
 
   scoped_refptr<cc::AnimationTimeline> compositor_timeline_;
 
-  absl::optional<PhaseAndTime> last_current_phase_and_time_;
+  std::optional<PhaseAndTime> last_current_phase_and_time_;
+
+  // Whether or not to update the trigger at the next opportunity to do so.
+  // This could because the |last_current_phase_and_time_| changed or because a
+  // new animation which triggers on this timeline has been added since the last
+  // opportunity for an update.
+  bool update_triggers_;
 };
 
 }  // namespace blink

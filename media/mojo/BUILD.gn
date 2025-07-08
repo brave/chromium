@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
-import("//build/config/chromecast_build.gni")
+import("//build/config/cast.gni")
 import("//media/media_options.gni")
 import("//testing/test.gni")
 
@@ -60,20 +60,14 @@ buildflag_header("buildflags") {
 
 source_set("test_support") {
   testonly = true
-  sources = [
-    "clients/mock_mojo_video_encoder_metrics_provider.cc",
-    "clients/mock_mojo_video_encoder_metrics_provider.h",
-  ]
   public_deps = [
     "//media/mojo/clients",
+    "//media/mojo/clients:test_support",
     "//media/mojo/common",
     "//media/mojo/mojom",
     "//media/mojo/mojom:test_interfaces",
+    "//media/mojo/mojom:test_support",
     "//media/mojo/services",
-  ]
-  deps = [
-    "//testing/gmock",
-    "//ui/gfx:test_support",
   ]
 }
 
@@ -84,10 +78,13 @@ source_set("unit_tests") {
     "//media/mojo/clients:unit_tests",
     "//media/mojo/common:unit_tests",
     "//media/mojo/mojom:unit_tests",
-    "//media/mojo/mojom/stable:unit_tests",
     "//media/mojo/services:unit_tests",
     "//media/mojo/test:unit_tests",
   ]
+
+  if (is_linux || is_chromeos) {
+    deps += [ "//media/mojo/mojom/stable:unit_tests" ]
+  }
 }
 
 test("media_mojo_unittests") {

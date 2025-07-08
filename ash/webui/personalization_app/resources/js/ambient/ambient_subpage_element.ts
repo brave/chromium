@@ -7,19 +7,20 @@
  * the ambient mode settings.
  */
 
-import '../../css/common.css.js';
+import 'chrome://resources/ash/common/personalization/common.css.js';
 import './albums_subpage_element.js';
-import './ambient_weather_element.js';
 import './ambient_preview_small_element.js';
-import './animation_theme_list_element.js';
+import './ambient_theme_list_element.js';
+import './ambient_weather_element.js';
 import './toggle_row_element.js';
 import './topic_source_list_element.js';
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {afterNextRender} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {AmbientModeAlbum, AnimationTheme, TemperatureUnit, TopicSource} from '../../personalization_app.mojom-webui.js';
-import {isAmbientModeAllowed, isPersonalizationJellyEnabled, isScreenSaverDurationEnabled} from '../load_time_booleans.js';
+import type {AmbientModeAlbum, AmbientTheme, TemperatureUnit} from '../../personalization_app.mojom-webui.js';
+import {TopicSource} from '../../personalization_app.mojom-webui.js';
+import {isAmbientModeAllowed} from '../load_time_booleans.js';
 import {Paths, ScrollableTarget} from '../personalization_router_element.js';
 import {WithPersonalizationStore} from '../personalization_store.js';
 
@@ -27,9 +28,9 @@ import {dismissTimeOfDayBanner, setAmbientModeEnabled} from './ambient_controlle
 import {getAmbientProvider} from './ambient_interface_provider.js';
 import {AmbientObserver} from './ambient_observer.js';
 import {getTemplate} from './ambient_subpage_element.html.js';
-import {getZerosArray} from './utils.js';
+import {AmbientThemePreviewMap} from './utils.js';
 
-export class AmbientSubpage extends WithPersonalizationStore {
+export class AmbientSubpageElement extends WithPersonalizationStore {
   static get is() {
     return 'ambient-subpage';
   }
@@ -46,7 +47,11 @@ export class AmbientSubpage extends WithPersonalizationStore {
         type: Array,
         value: null,
       },
-      animationTheme_: {
+      ambientTheme_: {
+        type: Object,
+        value: null,
+      },
+      ambientThemePreviews_: {
         type: Object,
         value: null,
       },
@@ -70,21 +75,8 @@ export class AmbientSubpage extends WithPersonalizationStore {
       loading_: {
         type: Boolean,
         computed:
-            'computeLoading_(ambientModeEnabled_, albums_, temperatureUnit_, topicSource_, isOnline_)',
+            'computeLoading_(ambientModeEnabled_, albums_, temperatureUnit_, topicSource_, isOnline_, ambientThemePreviews_)',
         observer: 'onLoadingChanged_',
-      },
-      isPersonalizationJellyEnabled_: {
-        type: Boolean,
-        value() {
-          return isPersonalizationJellyEnabled();
-        },
-      },
-      isScreenSaverDurationEnabled_: {
-        readOnly: true,
-        type: Boolean,
-        value() {
-          return isScreenSaverDurationEnabled();
-        },
       },
       isOnline_: {
         type: Boolean,
@@ -99,12 +91,12 @@ export class AmbientSubpage extends WithPersonalizationStore {
   queryParams: Record<string, string>;
   private albums_: AmbientModeAlbum[]|null;
   private ambientModeEnabled_: boolean|null;
-  private animationTheme_: AnimationTheme|null;
+  private ambientTheme_: AmbientTheme|null;
+  private ambientThemePreviews_: AmbientThemePreviewMap|null;
   private duration_: number|null;
   private temperatureUnit_: TemperatureUnit|null;
   private topicSource_: TopicSource|null;
-  private isScreenSaverDurationEnabled_: boolean;
-  private isPersonalizationJellyEnabled_: boolean;
+  private loading_: boolean;
   private isOnline_: boolean;
 
   // Refetch albums if the user is currently viewing ambient subpage, focuses
@@ -139,17 +131,19 @@ export class AmbientSubpage extends WithPersonalizationStore {
 
     super.connectedCallback();
     AmbientObserver.initAmbientObserverIfNeeded();
-    this.watch<AmbientSubpage['albums_']>(
+    this.watch<AmbientSubpageElement['albums_']>(
         'albums_', state => state.ambient.albums);
-    this.watch<AmbientSubpage['ambientModeEnabled_']>(
+    this.watch<AmbientSubpageElement['ambientModeEnabled_']>(
         'ambientModeEnabled_', state => state.ambient.ambientModeEnabled);
-    this.watch<AmbientSubpage['animationTheme_']>(
-        'animationTheme_', state => state.ambient.animationTheme);
-    this.watch<AmbientSubpage['temperatureUnit_']>(
+    this.watch<AmbientSubpageElement['ambientTheme_']>(
+        'ambientTheme_', state => state.ambient.ambientTheme);
+    this.watch<AmbientSubpageElement['ambientThemePreviews_']>(
+        'ambientThemePreviews_', state => state.ambient.ambientThemePreviews);
+    this.watch<AmbientSubpageElement['temperatureUnit_']>(
         'temperatureUnit_', state => state.ambient.temperatureUnit);
-    this.watch<AmbientSubpage['topicSource_']>(
+    this.watch<AmbientSubpageElement['topicSource_']>(
         'topicSource_', state => state.ambient.topicSource);
-    this.watch<AmbientSubpage['duration_']>(
+    this.watch<AmbientSubpageElement['duration_']>(
         'duration_', state => state.ambient.duration);
     this.updateFromStore();
 
@@ -237,13 +231,13 @@ export class AmbientSubpage extends WithPersonalizationStore {
   private computeLoading_(): boolean {
     return this.ambientModeEnabled_ === null || this.albums_ === null ||
         this.topicSource_ === null || this.temperatureUnit_ === null ||
-        (this.isScreenSaverDurationEnabled_ && this.duration_ === null) ||
-        !this.isOnline_;
+        this.duration_ === null || !this.isOnline_ ||
+        this.ambientThemePreviews_ === null;
   }
 
   private getPlaceholders_(x: number): number[] {
-    return getZerosArray(x);
+    return new Array(x).fill(0);
   }
 }
 
-customElements.define(AmbientSubpage.is, AmbientSubpage);
+customElements.define(AmbientSubpageElement.is, AmbientSubpageElement);

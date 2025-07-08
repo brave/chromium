@@ -4,21 +4,53 @@
 
 #include "chrome/browser/ash/app_list/search/local_image_search/sql_database.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "base/check.h"
+#include "base/check_op.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/sequence_checker.h"
+#include "base/strings/cstring_view.h"
+#include "sql/database.h"
 #include "sql/error_delegate_util.h"
+#include "sql/meta_table.h"
+#include "sql/sqlite_result_code.h"
 #include "sql/statement.h"
+#include "sql/statement_id.h"
 
 namespace app_list {
 namespace {
 
 constexpr int kUninitializedDbVersionNumber = 1;
 
+// These values persist to logs. Entries should not be renumbered and numeric
+// values should never be reused.
+enum class Status {
+  kOk = 0,
+  kFailedToCreatDirectory = 1,
+  kFailedToOpenDb = 2,
+  kFailedToInitializeMetaTable = 3,
+  kFailedToSetVersionNumber = 4,
+  kFailedToMigrateSchema = 5,
+
+  kMaxValue = kFailedToMigrateSchema,
+};
+
+void LogStatusUma(const std::string& name, Status status) {
+  base::UmaHistogramEnumeration(name, status);
+}
+
 }  // namespace
 
 SqlDatabase::SqlDatabase(
     const base::FilePath& path_to_db,
-    const std::string& histogram_tag,
+    sql::Database::Tag histogram_tag,
     int current_version_number,
     base::RepeatingCallback<int(SqlDatabase* db)> create_table_schema,
     base::RepeatingCallback<int(SqlDatabase* db, int current_version_number)>
@@ -26,9 +58,7 @@ SqlDatabase::SqlDatabase(
     : create_table_schema_(std::move(create_table_schema)),
       migrate_table_schema_(std::move(migrate_table_schema)),
       path_to_db_(path_to_db),
-      histogram_tag_(histogram_tag),
-      db_(sql::Database(sql::DatabaseOptions())),
-      meta_table_(sql::MetaTable()),
+      db_(histogram_tag),
       current_version_number_(current_version_number) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
   DCHECK_GT(current_version_number_, 1);
@@ -44,13 +74,19 @@ bool SqlDatabase::Initialize() {
   const base::FilePath dir = path_to_db_.DirName();
   if (!base::PathExists(dir) && !base::CreateDirectory(dir)) {
     LOG(ERROR) << "Could not create a directory to the new database.";
+    LogStatusUma(db_.histogram_tag(), Status::kFailedToCreatDirectory);
     return false;
   }
 
-  db_.set_histogram_tag(histogram_tag_);
+  // base::Unretained is safe because `this` owns (and therefore outlives) the
+  // sql::Database held by `db_`. That is, `db_` calls the error callback and
+  // if `this` destroyed then `db_` is destroyed, as well.
+  db_.set_error_callback(base::BindRepeating(&SqlDatabase::OnErrorCallback,
+                                             base::Unretained(this)));
 
   if (!db_.Open(path_to_db_)) {
-    LOG(ERROR) << "Unable to open " << histogram_tag_ << " DB.";
+    LOG(ERROR) << "Unable to open " << path_to_db_;
+    LogStatusUma(db_.histogram_tag(), Status::kFailedToOpenDb);
     RazeDb();
     return false;
   }
@@ -58,11 +94,13 @@ bool SqlDatabase::Initialize() {
   // Either initializes a new meta table or loads it from the db if exists.
   if (!meta_table_.Init(&db_, kUninitializedDbVersionNumber,
                         kUninitializedDbVersionNumber)) {
+    LogStatusUma(db_.histogram_tag(), Status::kFailedToInitializeMetaTable);
     RazeDb();
     return false;
   }
 
   if (meta_table_.GetVersionNumber() == current_version_number_) {
+    LogStatusUma(db_.histogram_tag(), Status::kOk);
     return true;
   }
 
@@ -70,24 +108,33 @@ bool SqlDatabase::Initialize() {
     const int new_version_number = create_table_schema_.Run(this);
     DCHECK_GT(new_version_number, 1);
 
+    // Sets the version number when db is initialized.
     if (!meta_table_.SetVersionNumber(new_version_number) ||
         !meta_table_.SetCompatibleVersionNumber(new_version_number)) {
+      LogStatusUma(db_.histogram_tag(), Status::kFailedToSetVersionNumber);
       RazeDb();
       return false;
     }
+    LogStatusUma(db_.histogram_tag(), Status::kOk);
     return true;
   }
 
-  if (!MigrateDatabaseSchema()) {
-    LOG(ERROR) << "Unable to migrate the schema for " << histogram_tag_;
+  if (MigrateDatabaseSchema()) {
+    // If the database schema migration succeed, also update the version number.
+    if (!meta_table_.SetVersionNumber(current_version_number_) ||
+        !meta_table_.SetCompatibleVersionNumber(current_version_number_)) {
+      LogStatusUma(db_.histogram_tag(), Status::kFailedToSetVersionNumber);
+      RazeDb();
+      return false;
+    }
+  } else {
+    LOG(ERROR) << "Unable to migrate the schema";
+    LogStatusUma(db_.histogram_tag(), Status::kFailedToMigrateSchema);
     RazeDb();
     return false;
   }
-  // base::Unretained is safe because `this` owns (and therefore outlives) the
-  // sql::Database held by `db_`. That is, `db_` calls the error callback and
-  // if `this` destroyed then `db_` is destroyed, as well.
-  db_.set_error_callback(base::BindRepeating(&SqlDatabase::OnErrorCallback,
-                                             base::Unretained(this)));
+
+  LogStatusUma(db_.histogram_tag(), Status::kOk);
   return true;
 }
 
@@ -95,14 +142,14 @@ bool SqlDatabase::MigrateDatabaseSchema() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // May happen if the code migrated from dev to stable channel.
   if (meta_table_.GetVersionNumber() > current_version_number_) {
-    LOG(ERROR) << histogram_tag_ << " database is too new. Deleting db.";
+    LOG(ERROR) << "Database is too new. Deleting the db.";
     Close();
     return sql::Database::Delete(path_to_db_) && Initialize();
   }
 
   if (migrate_table_schema_.Run(this, meta_table_.GetVersionNumber()) <
       meta_table_.GetVersionNumber()) {
-    LOG(ERROR) << "Failed to migrate the schema. Deleting db.";
+    LOG(ERROR) << "Failed to migrate the schema. Deleting the db.";
     RazeDb();
     return false;
   }
@@ -131,8 +178,8 @@ void SqlDatabase::OnErrorCallback(int error, sql::Statement* stmt) {
 }
 
 std::unique_ptr<sql::Statement> SqlDatabase::GetStatementForQuery(
-    const sql::StatementID& sql_from_here,
-    const char* query) {
+    sql::StatementID sql_from_here,
+    base::cstring_view query) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_.is_open()) {
     return nullptr;
@@ -155,6 +202,10 @@ bool SqlDatabase::RazeDb() {
     }
   }
   return true;
+}
+
+base::FilePath SqlDatabase::GetPathToDb() const {
+  return path_to_db_;
 }
 
 }  // namespace app_list

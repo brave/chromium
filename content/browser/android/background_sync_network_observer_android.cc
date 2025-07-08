@@ -6,9 +6,11 @@
 
 #include "base/functional/bind.h"
 #include "base/trace_event/trace_event.h"
-#include "content/public/android/content_jni_headers/BackgroundSyncNetworkObserver_jni.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/service_worker_context.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "content/public/android/content_jni_headers/BackgroundSyncNetworkObserver_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -44,7 +46,6 @@ BackgroundSyncNetworkObserverAndroid::Observer::~Observer() {
 
 void BackgroundSyncNetworkObserverAndroid::Observer::
     NotifyConnectionTypeChanged(JNIEnv* env,
-                                const JavaParamRef<jobject>& jcaller,
                                 jint new_connection_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   callback_.Run(

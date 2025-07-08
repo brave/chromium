@@ -38,13 +38,15 @@ class PseudoElement;
 // This object is generated thus always anonymous.
 class LayoutQuote final : public LayoutInline {
  public:
-  LayoutQuote(PseudoElement&, const QuoteType);
+  LayoutQuote(LayoutObject& owner, const QuoteType);
   ~LayoutQuote() override;
   void Trace(Visitor*) const override;
 
+  // Will return nullptr, if this doesn't originate from a pseudo-element, but
+  // rather an @page margin box.
   PseudoElement* GetOwningPseudo() const {
     NOT_DESTROYED();
-    return owning_pseudo_;
+    return owning_pseudo_.Get();
   }
   bool IsInScope() const {
     NOT_DESTROYED();
@@ -52,7 +54,7 @@ class LayoutQuote final : public LayoutInline {
   }
   StyleContainmentScope* GetScope() const {
     NOT_DESTROYED();
-    return scope_;
+    return scope_.Get();
   }
   void SetScope(StyleContainmentScope* scope) {
     NOT_DESTROYED();
@@ -83,9 +85,9 @@ class LayoutQuote final : public LayoutInline {
 
  private:
   void WillBeDestroyed() override;
-  bool IsOfType(LayoutObjectType type) const override {
+  bool IsQuote() const final {
     NOT_DESTROYED();
-    return type == kLayoutObjectQuote || LayoutInline::IsOfType(type);
+    return true;
   }
   void StyleDidChange(StyleDifference, const ComputedStyle*) override;
   void WillBeRemovedFromTree() override;

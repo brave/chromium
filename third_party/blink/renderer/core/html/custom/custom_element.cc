@@ -128,8 +128,9 @@ bool CustomElement::ShouldCreateCustomizedBuiltinElement(
 static CustomElementDefinition* DefinitionFor(
     const Document& document,
     const CustomElementDescriptor desc) {
-  if (CustomElementRegistry* registry = CustomElement::Registry(document))
+  if (CustomElementRegistry* registry = CustomElement::Registry(document)) {
     return registry->DefinitionFor(desc);
+  }
   return nullptr;
 }
 
@@ -233,6 +234,16 @@ void CustomElement::EnqueueConnectedCallback(Element& element) {
   auto* definition = DefinitionForElementWithoutCheck(element);
   if (definition->HasConnectedCallback())
     definition->EnqueueConnectedCallback(element);
+}
+
+void CustomElement::EnqueueConnectedMoveCallback(Element& element) {
+  auto* definition = DefinitionForElementWithoutCheck(element);
+  if (definition->HasConnectedMoveCallback()) {
+    definition->EnqueueConnectedMoveCallback(element);
+  } else {
+    EnqueueDisconnectedCallback(element);
+    EnqueueConnectedCallback(element);
+  }
 }
 
 void CustomElement::EnqueueDisconnectedCallback(Element& element) {

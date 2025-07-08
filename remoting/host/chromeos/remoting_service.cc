@@ -5,13 +5,13 @@
 #include "remoting/host/chromeos/remoting_service.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/no_destructor.h"
 #include "base/sequence_checker.h"
 #include "remoting/host/chromeos/file_session_storage.h"
 #include "remoting/host/chromeos/remote_support_host_ash.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace remoting {
 
@@ -62,8 +62,8 @@ void RemotingServiceImpl::GetReconnectableEnterpriseSessionId(
 
   session_storage_.HasSession(  //
       base::BindOnce([](bool has_session) {
-        return has_session ? absl::make_optional(kEnterpriseSessionId)
-                           : absl::nullopt;
+        return has_session ? std::make_optional(kEnterpriseSessionId)
+                           : std::nullopt;
       }).Then(std::move(callback)));
 }
 

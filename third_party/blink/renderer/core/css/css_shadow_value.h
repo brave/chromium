@@ -39,9 +39,9 @@ class CORE_EXPORT CSSShadowValue : public CSSValue {
                  CSSPrimitiveValue* blur,
                  CSSPrimitiveValue* spread,
                  CSSIdentifierValue* style,
-                 CSSValue* color);
+                 const CSSValue* color);
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSShadowValue&) const;
 
@@ -50,7 +50,7 @@ class CORE_EXPORT CSSShadowValue : public CSSValue {
   Member<CSSPrimitiveValue> blur;
   Member<CSSPrimitiveValue> spread;
   Member<CSSIdentifierValue> style;
-  Member<CSSValue> color;
+  Member<const CSSValue> color;
 
   void TraceAfterDispatch(blink::Visitor*) const;
 };

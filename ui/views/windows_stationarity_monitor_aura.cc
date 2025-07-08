@@ -4,25 +4,32 @@
 
 #include "ui/views/windows_stationarity_monitor_aura.h"
 
-#include "base/containers/cxx20_erase.h"
+#include <algorithm>
+#include <vector>
+
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/buildflags.h"
+
+#if BUILDFLAG(ENABLE_DESKTOP_AURA)
+#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
+#endif  // BUILDFLAG(ENABLE_DESKTOP_AURA)
 
 namespace views {
 
 WindowsStationarityMonitorAura::WindowsStationarityMonitorAura() {
   aura::Env::GetInstance()->AddObserver(this);
-  for (auto* window_tree_host : aura::Env::GetInstance()->window_tree_hosts()) {
+  for (aura::WindowTreeHost* window_tree_host :
+       aura::Env::GetInstance()->window_tree_hosts()) {
     OnHostInitialized(window_tree_host);
   }
 }
 
 WindowsStationarityMonitorAura::~WindowsStationarityMonitorAura() {
-  for (auto* window : tracked_windows_) {
+  for (aura::Window* window : tracked_windows_) {
     window->RemoveObserver(this);
   }
   aura::Env::GetInstance()->RemoveObserver(this);
@@ -37,12 +44,26 @@ WindowsStationarityMonitorAura* WindowsStationarityMonitorAura::GetInstance() {
 
 void WindowsStationarityMonitorAura::OnHostInitialized(
     aura::WindowTreeHost* host) {
-  tracked_windows_.push_back(host->window());
-  host->window()->AddObserver(this);
+  auto* window = host->window();
+  CHECK(window);
+
+#if BUILDFLAG(ENABLE_DESKTOP_AURA)
+  auto* native_widget = DesktopNativeWidgetAura::ForWindow(window);
+  // Non client widget, such as tooltip widget, might be destroyed right before
+  // handling mouse events on other windows, which results in those events being
+  // ignored.
+  if (!native_widget ||
+      !Widget::RequiresNonClientView(native_widget->widget_type())) {
+    return;
+  }
+#endif
+
+  tracked_windows_.push_back(window);
+  window->AddObserver(this);
 }
 
 void WindowsStationarityMonitorAura::OnWindowDestroying(aura::Window* window) {
-  base::Erase(tracked_windows_, window);
+  std::erase(tracked_windows_, window);
   NotifyWindowStationaryStateChanged();
 }
 

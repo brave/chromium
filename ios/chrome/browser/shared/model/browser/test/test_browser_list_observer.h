@@ -7,6 +7,7 @@
 
 #include <set>
 
+#import "base/memory/raw_ptr.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_observer.h"
 
 class Browser;
@@ -49,20 +50,16 @@ class TestBrowserListObserver : public BrowserListObserver {
   // BrowserListObserver
   void OnBrowserAdded(const BrowserList* browser_list,
                       Browser* browser) override;
-  void OnIncognitoBrowserAdded(const BrowserList* browser_list,
-                               Browser* browser) override;
   void OnBrowserRemoved(const BrowserList* browser_list,
                         Browser* browser) override;
-  void OnIncognitoBrowserRemoved(const BrowserList* browser_list,
-                                 Browser* browser) override;
   void OnBrowserListShutdown(BrowserList* browser_list) override;
 
  private:
   // Backing vars for the corresponding getter methods.
-  Browser* last_added_browser_ = nullptr;
-  Browser* last_removed_browser_ = nullptr;
-  Browser* last_added_incognito_browser_ = nullptr;
-  Browser* last_removed_incognito_browser_ = nullptr;
+  raw_ptr<Browser> last_added_browser_ = nullptr;
+  raw_ptr<Browser> last_removed_browser_ = nullptr;
+  raw_ptr<Browser> last_added_incognito_browser_ = nullptr;
+  raw_ptr<Browser> last_removed_incognito_browser_ = nullptr;
   std::set<Browser*> last_browsers_;
   std::set<Browser*> last_incognito_browsers_;
 };

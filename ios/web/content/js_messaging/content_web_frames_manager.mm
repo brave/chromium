@@ -7,6 +7,7 @@
 #import <set>
 
 #import "base/no_destructor.h"
+#import "base/strings/string_util.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/unguessable_token.h"
 #import "components/js_injection/browser/js_communication_host.h"
@@ -21,10 +22,6 @@
 #import "ios/web/public/js_messaging/java_script_feature_util.h"
 #import "ios/web/public/js_messaging/script_message.h"
 #import "ios/web/public/web_client.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 
@@ -44,7 +41,7 @@ JavaScriptFeature* GetSendWebKitMessageJavaScriptFeature() {
   // state.
   static base::NoDestructor<JavaScriptFeature> send_webkit_message_feature(
       ContentWorld::kPageContentWorld,
-      std::vector<const JavaScriptFeature::FeatureScript>(
+      std::vector<JavaScriptFeature::FeatureScript>(
           {JavaScriptFeature::FeatureScript::CreateWithFilename(
               kSendWebKitMessageScriptName,
               JavaScriptFeature::FeatureScript::InjectionTime::kDocumentStart,

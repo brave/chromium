@@ -18,7 +18,7 @@
 #include <sys/utsname.h>
 
 #include "base/apple/bridging.h"
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "build/build_config.h"
@@ -27,10 +27,6 @@
 #include "util/misc/implicit_cast.h"
 #include "util/misc/metrics.h"
 #include "util/net/http_body.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // An implementation of NSInputStream that reads from a
 // crashpad::HTTPBodyStream.
@@ -157,12 +153,12 @@ NSString* UserAgentString() {
 
   // Expected to be CFNetwork.
   NSBundle* nsurl_bundle = [NSBundle bundleForClass:[NSURLRequest class]];
-  NSString* bundle_name = base::mac::ObjCCast<NSString>([nsurl_bundle
+  NSString* bundle_name = base::apple::ObjCCast<NSString>([nsurl_bundle
       objectForInfoDictionaryKey:base::apple::CFToNSPtrCast(kCFBundleNameKey)]);
   if (bundle_name) {
     user_agent = AppendEscapedFormat(user_agent, @" %@", bundle_name);
 
-    NSString* bundle_version = base::mac::ObjCCast<NSString>(
+    NSString* bundle_version = base::apple::ObjCCast<NSString>(
         [nsurl_bundle objectForInfoDictionaryKey:base::apple::CFToNSPtrCast(
                                                      kCFBundleVersionKey)]);
     if (bundle_version) {
@@ -272,7 +268,7 @@ bool HTTPTransportMac::ExecuteSynchronously(std::string* response_body) {
       return false;
     }
     NSHTTPURLResponse* http_response =
-        base::mac::ObjCCast<NSHTTPURLResponse>(response);
+        base::apple::ObjCCast<NSHTTPURLResponse>(response);
     if (!http_response) {
       LOG(ERROR) << "no http_response";
       return false;

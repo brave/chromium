@@ -10,26 +10,18 @@
 import 'chrome://resources/cr_elements/cr_expand_button/cr_expand_button.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 import './file_system_site_entry_item.js';
 import '../settings_shared.css.js';
 import '../site_favicon.js';
 
-import {CrExpandButtonElement} from 'chrome://resources/cr_elements/cr_expand_button/cr_expand_button.js';
-import {IronCollapseElement} from 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
+import {routes} from '../route.js';
+import {Router} from '../router.js';
 
 import {getTemplate} from './file_system_site_entry.html.js';
-import {OriginFileSystemGrants} from './file_system_site_list.js';
-
-export interface FileSystemSiteEntryElement {
-  $: {
-    collapseChild: IronCollapseElement,
-    dropdownButton: CrExpandButtonElement,
-  };
-}
+import type {OriginFileSystemGrants} from './file_system_site_list.js';
 
 const FileSystemSiteEntryElementBase = BaseMixin(PolymerElement);
 
@@ -50,10 +42,19 @@ export class FileSystemSiteEntryElement extends FileSystemSiteEntryElementBase {
       grantsPerOrigin: Object,
     };
   }
-  grantsPerOrigin: OriginFileSystemGrants;
+  declare grantsPerOrigin: OriginFileSystemGrants;
 
-  private onOptionsMenuClick_() {
-    this.fire('options-icon-click', this.grantsPerOrigin);
+  private onNavigateToDetailsPageClick_() {
+    /**
+     * Navigates to the details page for a given origin.
+     */
+    Router.getInstance().navigateTo(
+        routes.SITE_SETTINGS_FILE_SYSTEM_WRITE_DETAILS,
+        new URLSearchParams('site=' + this.grantsPerOrigin.origin));
+  }
+
+  private onRemoveGrantsClick_() {
+    this.fire('revoke-grants', this.grantsPerOrigin);
   }
 }
 declare global {

@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 // https://crbug.com/1453291
-// https://github.com/tbondwilkinson/dom-parts
+// https://github.com/WICG/webcomponents/blob/gh-pages/proposals/DOM-Parts.md
 
 [RuntimeEnabled=DOMPartsAPI,Exposed=Window]
 interface Part {
-  [ImplementedAs=rootForBindings] readonly attribute PartRoot root;
+  [ImplementedAs=rootForBindings] readonly attribute PartRoot? root;
   readonly attribute FrozenArray<DOMString> metadata;
   void disconnect();
 };

@@ -19,11 +19,13 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
+                  "chromium_with_telemetry_dependencies",
                   "use_clang_coverage"
                 ],
                 "config": "chromium"
@@ -70,14 +72,11 @@
       ],
       "mirroring_builder_group_and_names": [
         {
-          "builder": "mac-inverse-fieldtrials-fyi-rel",
-          "group": "tryserver.chromium.mac"
-        },
-        {
           "builder": "mac-rel",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Mac Release (Intel)/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -88,6 +87,9 @@
     ]
   },
   "builder_group": "chromium.gpu",
+  "gardener_rotations": [
+    "chromium.gpu"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium.gpu"

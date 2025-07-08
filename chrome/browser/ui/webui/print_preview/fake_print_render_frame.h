@@ -32,7 +32,7 @@ class FakePrintRenderFrame : public mojom::PrintRenderFrame {
   void SetPrintPreviewUI(
       mojo::PendingAssociatedRemote<mojom::PrintPreviewUI> preview) override;
   void InitiatePrintPreview(
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer,
 #endif
       bool has_selection) override;
@@ -43,10 +43,6 @@ class FakePrintRenderFrame : public mojom::PrintRenderFrame {
   void PrintingDone(bool success) override;
   void ConnectToPdfRenderer() override;
   void PrintNodeUnderContextMenu() override;
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
-  void SnapshotForContentAnalysis(
-      SnapshotForContentAnalysisCallback callback) override;
-#endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
   void BindPrintRenderFrameReceiver(mojo::ScopedInterfaceEndpointHandle handle);
 

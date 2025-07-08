@@ -42,7 +42,7 @@ TEST_P(LayoutSVGRootTest, VisualRectMappingWithoutViewportClipWithBorder) {
   EXPECT_EQ(PhysicalRect(90, 90, 100, 100), rect);
 
   auto root_visual_rect =
-      static_cast<const LayoutObject&>(root).LocalVisualRect();
+      LocalVisualRect(static_cast<const LayoutObject&>(root));
   // SVG root's local overflow does not include overflow from descendants.
   EXPECT_EQ(PhysicalRect(0, 0, 220, 120), root_visual_rect);
 
@@ -62,9 +62,8 @@ TEST_P(LayoutSVGRootTest, VisualOverflowExpandsLayer) {
       CcLayersByDOMElementId(GetDocument().View()->RootCcLayer(), "root")[0];
   EXPECT_EQ(gfx::Size(100, 100), layer->bounds());
 
-  GetDocument()
-      .getElementById(AtomicString("rect"))
-      ->setAttribute(svg_names::kHeightAttr, AtomicString("200"));
+  GetElementById("rect")->setAttribute(svg_names::kHeightAttr,
+                                       AtomicString("200"));
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_EQ(gfx::Size(100, 200), layer->bounds());
@@ -86,7 +85,7 @@ TEST_P(LayoutSVGRootTest, VisualRectMappingWithViewportClipAndBorder) {
   EXPECT_EQ(PhysicalRect(90, 90, 100, 20), rect);
 
   auto root_visual_rect =
-      static_cast<const LayoutObject&>(root).LocalVisualRect();
+      LocalVisualRect(static_cast<const LayoutObject&>(root));
   // SVG root with overflow:hidden doesn't include overflow from children, just
   // border box rect.
   EXPECT_EQ(PhysicalRect(0, 0, 220, 120), root_visual_rect);
@@ -104,7 +103,7 @@ TEST_P(LayoutSVGRootTest, RectBasedHitTestPartialOverlap) {
     </svg>
   )HTML");
 
-  const auto& svg = *GetDocument().getElementById(AtomicString("svg"));
+  const auto& svg = *GetElementById("svg");
   const auto& body = *GetDocument().body();
 
   // This is the center of the rect-based hit test below.
@@ -114,7 +113,7 @@ TEST_P(LayoutSVGRootTest, RectBasedHitTestPartialOverlap) {
 
   // The center of this rect does not overlap the SVG element, but the
   // rect itself does.
-  auto results = RectBasedHitTest(PhysicalRect(0, 0, 300, 300));
+  auto& results = RectBasedHitTest(PhysicalRect(0, 0, 300, 300));
   int count = 0;
   EXPECT_EQ(2u, results.size());
   for (auto result : results) {
@@ -138,17 +137,13 @@ TEST_P(LayoutSVGRootTest, PaintLayerType) {
   ASSERT_TRUE(root.Layer());
   EXPECT_FALSE(root.Layer()->IsSelfPaintingLayer());
 
-  GetDocument()
-      .getElementById(AtomicString("rect"))
-      ->setAttribute(svg_names::kStyleAttr,
-                     AtomicString("will-change: transform"));
+  GetElementById("rect")->setAttribute(svg_names::kStyleAttr,
+                                       AtomicString("will-change: transform"));
   UpdateAllLifecyclePhasesForTest();
   ASSERT_TRUE(root.Layer());
   EXPECT_FALSE(root.Layer()->IsSelfPaintingLayer());
 
-  GetDocument()
-      .getElementById(AtomicString("rect"))
-      ->removeAttribute(svg_names::kStyleAttr);
+  GetElementById("rect")->removeAttribute(svg_names::kStyleAttr);
   UpdateAllLifecyclePhasesForTest();
   ASSERT_TRUE(root.Layer());
   EXPECT_FALSE(root.Layer()->IsSelfPaintingLayer());

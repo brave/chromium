@@ -31,8 +31,8 @@ class HeadlessCompositorBrowserTest : public HeadlessProtocolBrowserTest {
         // Animation-only BeginFrames are only supported when updates from the
         // impl-thread are disabled. See
         // https://goo.gle/chrome-headless-rendering.
-        cc::switches::kDisableThreadedAnimation,
-        cc::switches::kDisableCheckerImaging,
+        switches::kDisableThreadedAnimation,
+        switches::kDisableCheckerImaging,
 
         // Ensure that image animations don't resync their animation timestamps
         // when looping back around.
@@ -48,23 +48,16 @@ class HeadlessCompositorBrowserTest : public HeadlessProtocolBrowserTest {
 // BeginFrameControl is not supported on MacOS yet, see: https://cs.chromium.org
 // chromium/src/headless/lib/browser/protocol/target_handler.cc?
 // rcl=5811aa08e60ba5ac7622f029163213cfbdb682f7&l=32
-// TODO(crbug.com/1020046): Suite is flaky on TSan Linux.
+// TODO(crbug.com/40656275): Suite is flaky on TSan Linux.
 #if BUILDFLAG(IS_MAC) || ((BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && \
                           defined(THREAD_SANITIZER))
-#define HEADLESS_COMPOSITOR_TEST(TEST_NAME, SCRIPT_NAME) \
-  IN_PROC_BROWSER_TEST_F(HeadlessCompositorBrowserTest,  \
-                         DISABLED_##TEST_NAME) {         \
-    test_folder_ = "/protocol/";                         \
-    script_name_ = SCRIPT_NAME;                          \
-    RunTest();                                           \
-  }
+#define HEADLESS_COMPOSITOR_TEST(TEST_NAME, SCRIPT_NAME)  \
+  HEADLESS_PROTOCOL_TEST_F(HeadlessCompositorBrowserTest, \
+                           DISABLED_##TEST_NAME, SCRIPT_NAME)
 #else
 #define HEADLESS_COMPOSITOR_TEST(TEST_NAME, SCRIPT_NAME)             \
-  IN_PROC_BROWSER_TEST_F(HeadlessCompositorBrowserTest, TEST_NAME) { \
-    test_folder_ = "/protocol/";                                     \
-    script_name_ = SCRIPT_NAME;                                      \
-    RunTest();                                                       \
-  }
+  HEADLESS_PROTOCOL_TEST_F(HeadlessCompositorBrowserTest, TEST_NAME, \
+                           SCRIPT_NAME)
 #endif
 
 HEADLESS_COMPOSITOR_TEST(CompositorBasicRaf,
@@ -72,7 +65,7 @@ HEADLESS_COMPOSITOR_TEST(CompositorBasicRaf,
 HEADLESS_COMPOSITOR_TEST(CompositorImageAnimation,
                          "emulation/compositor-image-animation-test.js")
 
-// Flaky on all platforms. TODO(crbug.com/986027): Re-enable.
+// Flaky on all platforms. TODO(crbug.com/41471823): Re-enable.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
     BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_CompositorCssAnimation DISABLED_CompositorCssAnimation

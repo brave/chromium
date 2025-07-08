@@ -24,13 +24,16 @@
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_id_helper.h"
 #include "base/unguessable_token.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
 #include "net/base/request_priority.h"
+#include "net/base/task/task_runner.h"
 #include "net/base/tracing.h"
 #include "net/http/http_server_properties.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_util.h"
 #include "net/nqe/effective_connection_type_observer.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/nqe/peer_to_peer_connections_count_observer.h"
@@ -92,12 +95,6 @@ const char* RequestStartTriggerString(RequestStartTrigger trigger) {
   }
 }
 
-uint64_t CalculateTrackId(ResourceScheduler* scheduler) {
-  static uint32_t sNextId = 0;
-  CHECK(scheduler);
-  return (reinterpret_cast<uint64_t>(scheduler) << 32) | sNextId++;
-}
-
 }  // namespace
 
 // The maximum number of requests to allow be in-flight at any point in time per
@@ -145,7 +142,7 @@ base::TimeDelta GetQueuedRequestsDispatchPeriodicity() {
 
 // static
 ResourceScheduler::ClientId ResourceScheduler::ClientId::Create(
-    const absl::optional<base::UnguessableToken>& token) {
+    const std::optional<base::UnguessableToken>& token) {
   static uint64_t next_client_id = 0;
   return ClientId(next_client_id++, token);
 }
@@ -157,14 +154,8 @@ struct ResourceScheduler::RequestPriorityParams {
   RequestPriorityParams(net::RequestPriority priority, int intra_priority)
       : priority(priority), intra_priority(intra_priority) {}
 
-  bool operator==(const RequestPriorityParams& other) const {
-    return (priority == other.priority) &&
-           (intra_priority == other.intra_priority);
-  }
-
-  bool operator!=(const RequestPriorityParams& other) const {
-    return !(*this == other);
-  }
+  friend bool operator==(const RequestPriorityParams&,
+                         const RequestPriorityParams&) = default;
 
   bool GreaterThan(const RequestPriorityParams& other) const {
     if (priority != other.priority)
@@ -239,7 +230,7 @@ class ResourceScheduler::ScheduledResourceRequestImpl
                                bool visible,
                                bool is_async)
       : client_id_(client_id),
-        trace_track_(perfetto::Track(CalculateTrackId(scheduler))),
+        flow_(NetLogWithSourceToFlow(request->net_log())),
         request_(request),
         ready_(false),
         deferred_(false),
@@ -259,11 +250,8 @@ class ResourceScheduler::ScheduledResourceRequestImpl
       priority_.priority = net::RequestPriority::IDLE;
       request_->SetPriority(priority_.priority);
     }
-    base::UmaHistogramBoolean(
-        "Network.VisibilityAwareResourceScheduler.Deprioritized", deprioritize);
-    TRACE_EVENT_BEGIN("network.scheduler", "ScheduledResourceRequest",
-                      trace_track_, "url", request->url(), "priority",
-                      priority_.priority);
+    TRACE_EVENT("network.scheduler", "ScheduledResourceRequest", flow_,
+                "priority", priority_.priority);
 
     DCHECK(!request_->GetUserData(kUserDataKey));
     request_->SetUserData(kUserDataKey, std::make_unique<UnownedPointer>(this));
@@ -274,7 +262,6 @@ class ResourceScheduler::ScheduledResourceRequestImpl
       delete;
 
   ~ScheduledResourceRequestImpl() override {
-    TRACE_EVENT_END("network.scheduler", trace_track_);
     request_->RemoveUserData(kUserDataKey);
     scheduler_->RemoveRequest(this);
   }
@@ -288,8 +275,8 @@ class ResourceScheduler::ScheduledResourceRequestImpl
   // Starts the request. If |start_mode| is START_ASYNC, the request will not
   // be started immediately.
   void Start(StartMode start_mode) {
-    TRACE_EVENT_INSTANT("network.scheduler", "RequestStart", trace_track_,
-                        "mode", start_mode == START_ASYNC ? "async" : "sync");
+    TRACE_EVENT("network.scheduler", "ScheduledResourceRequest::Start", flow_,
+                "mode", start_mode == START_ASYNC ? "async" : "sync");
     DCHECK(!ready_);
 
     // If the request was deferred, need to start it.  Otherwise, will just not
@@ -299,10 +286,12 @@ class ResourceScheduler::ScheduledResourceRequestImpl
       // If can't start the request synchronously, post a task to start the
       // request.
       if (start_mode == START_ASYNC) {
-        scheduler_->task_runner()->PostTask(
-            FROM_HERE,
-            base::BindOnce(&ScheduledResourceRequestImpl::Start,
-                           weak_ptr_factory_.GetWeakPtr(), START_SYNC));
+        net::GetTaskRunner(priority_.priority)
+            ->PostTask(
+                FROM_HERE,
+                base::BindOnce(&ScheduledResourceRequestImpl::Start,
+                               weak_ptr_factory_.GetWeakPtr(), START_SYNC));
+
         return;
       }
       deferred_ = false;
@@ -313,9 +302,9 @@ class ResourceScheduler::ScheduledResourceRequestImpl
   }
 
   void Reprioritize(const RequestPriorityParams& priority) {
-    TRACE_EVENT_INSTANT("network.scheduler", "RequestReprioritize",
-                        trace_track_, "old_priority", priority_.priority,
-                        "new_priority", priority.priority);
+    TRACE_EVENT("network.scheduler", "ScheduledResourceRequest::Reprioritize",
+                flow_, "old_priority", priority_.priority, "new_priority",
+                priority.priority);
     priority_ = priority;
   }
 
@@ -330,7 +319,7 @@ class ResourceScheduler::ScheduledResourceRequestImpl
     return preserved_priority_;
   }
   ClientId client_id() const { return client_id_; }
-  perfetto::Track trace_track() const { return trace_track_; }
+  perfetto::Flow flow() const { return flow_; }
   net::URLRequest* url_request() { return request_; }
   const net::URLRequest* url_request() const { return request_; }
   bool is_async() const { return is_async_; }
@@ -370,12 +359,12 @@ class ResourceScheduler::ScheduledResourceRequestImpl
   // ScheduledResourceRequest implemnetation
   void WillStartRequest(bool* defer) override {
     deferred_ = *defer = !ready_;
-    TRACE_EVENT_INSTANT("network.scheduler", "RequestWillStart", trace_track_,
-                        "defered", deferred_);
+    TRACE_EVENT("network.scheduler", "ScheduledResourceRequest::WillStart",
+                flow_, "defered", deferred_);
   }
 
   const ClientId client_id_;
-  perfetto::Track trace_track_;
+  const perfetto::Flow flow_;
   raw_ptr<net::URLRequest> request_;
   bool ready_;
   bool deferred_;
@@ -417,16 +406,16 @@ bool ResourceScheduler::ScheduledResourceSorter::operator()(
 void ResourceScheduler::RequestQueue::Insert(
     ScheduledResourceRequestImpl* request) {
   DCHECK(!base::Contains(pointers_, request));
-  TRACE_EVENT_INSTANT("network.scheduler", "RequestEnqueue",
-                      request->trace_track());
+  TRACE_EVENT("network.scheduler", "ResourceScheduler::RequestQueue::Insert",
+              request->flow());
   request->set_fifo_ordering(MakeFifoOrderingId());
   pointers_[request] = queue_.insert(request);
 }
 
 void ResourceScheduler::RequestQueue::Erase(
     ScheduledResourceRequestImpl* request) {
-  TRACE_EVENT_INSTANT("network.scheduler", "RequestDequeue",
-                      request->trace_track());
+  TRACE_EVENT("network.scheduler", "ResourceScheduler::RequestQueue::Erase",
+              request->flow());
   PointerMap::iterator it = pointers_.find(request);
   CHECK(it != pointers_.end());
   queue_.erase(it->second);
@@ -489,10 +478,8 @@ class ResourceScheduler::Client
       pending_requests_.Erase(request);
       DCHECK(!base::Contains(in_flight_requests_, request));
     } else {
-      // Record metrics.
       if (!RequestAttributesAreSet(request->attributes(), kAttributeDelayable))
         last_non_delayable_request_end_ = tick_clock_->NowTicks();
-      RecordNetworkContentionMetrics(*request);
       EraseInFlightRequest(request);
 
       // Removing this request may have freed up another to load.
@@ -548,7 +535,8 @@ class ResourceScheduler::Client
     if (new_priority_params.priority > old_priority_params.priority) {
       // Check if this request is now able to load at its new priority.
       ScheduleLoadAnyStartablePendingRequests(
-          RequestStartTrigger::REQUEST_REPRIORITIZED);
+          RequestStartTrigger::REQUEST_REPRIORITIZED,
+          new_priority_params.priority);
     }
   }
 
@@ -693,7 +681,7 @@ class ResourceScheduler::Client
 
     if (p2p_connections_count_ == 0 &&
         p2p_connections_count_active_timestamp_.has_value()) {
-      p2p_connections_count_active_timestamp_ = absl::nullopt;
+      p2p_connections_count_active_timestamp_ = std::nullopt;
     }
 
     LoadAnyStartablePendingRequests(
@@ -835,41 +823,16 @@ class ResourceScheduler::Client
     }
 
     size_t same_host_count = 0;
-    for (const auto* in_flight_request : in_flight_requests_) {
+    for (const ScheduledResourceRequestImpl* in_flight_request :
+         in_flight_requests_) {
       if (active_request_host == in_flight_request->scheme_host_port()) {
         same_host_count++;
-        if (same_host_count >= kMaxNumDelayableRequestsPerHostPerClient)
+        if (same_host_count >= kMaxNumDelayableRequestsPerHostPerClient) {
           return true;
+        }
       }
     }
     return false;
-  }
-
-  void RecordMetricsOnStartRequest(const ScheduledResourceRequestImpl& request,
-                                   base::TimeTicks ticks_now) const {
-    const size_t non_delayable_requests_in_flight_count =
-        in_flight_requests_.size() - in_flight_delayable_count_;
-
-    // Record the number of delayable requests in-flight when a non-delayable
-    // request starts.
-    if (!RequestAttributesAreSet(request.attributes(), kAttributeDelayable)) {
-      if (non_delayable_requests_in_flight_count > 0) {
-        if (last_non_delayable_request_start_) {
-          UMA_HISTOGRAM_MEDIUM_TIMES(
-              "ResourceScheduler.NonDelayableLastStartToNonDelayableStart."
-              "NonDelayableInFlight",
-              ticks_now - last_non_delayable_request_start_.value());
-        }
-      } else {
-        if (last_non_delayable_request_end_) {
-          LOCAL_HISTOGRAM_CUSTOM_TIMES(
-              "ResourceScheduler.NonDelayableLastEndToNonDelayableStart."
-              "NonDelayableNotInFlight",
-              ticks_now - last_non_delayable_request_end_.value(),
-              base::Milliseconds(10), base::Minutes(3), 50);
-        }
-      }
-    }
   }
 
   void StartRequest(ScheduledResourceRequestImpl* request,
@@ -883,8 +846,6 @@ class ResourceScheduler::Client
           net::NetLogEventType::RESOURCE_SCHEDULER_REQUEST_STARTED, "trigger",
           RequestStartTriggerString(trigger));
     }
-    if (request)
-      RecordMetricsOnStartRequest(*request, ticks_now);
 
     DCHECK(!request->url_request()->creation_time().is_null());
     base::TimeDelta queuing_duration =
@@ -952,7 +913,7 @@ class ResourceScheduler::Client
           tick_clock_->NowTicks() -
           p2p_connections_count_active_timestamp_.value();
 
-      absl::optional<base::TimeDelta> max_wait_time_p2p_connections =
+      std::optional<base::TimeDelta> max_wait_time_p2p_connections =
           resource_scheduler_->resource_scheduler_params_manager_
               .max_wait_time_p2p_connections();
 
@@ -1090,7 +1051,7 @@ class ResourceScheduler::Client
 
   // Returns true if a non-delayable request is expected to arrive soon.
   bool IsNonDelayableRequestAnticipated() const {
-    absl::optional<double> http_rtt_multiplier =
+    std::optional<double> http_rtt_multiplier =
         params_for_network_quality_
             .http_rtt_multiplier_for_proactive_throttling;
 
@@ -1106,7 +1067,7 @@ class ResourceScheduler::Client
     if (!last_non_delayable_request_start_.has_value())
       return false;
 
-    absl::optional<base::TimeDelta> http_rtt =
+    std::optional<base::TimeDelta> http_rtt =
         network_quality_estimator_->GetHttpRTT();
     if (!http_rtt.has_value())
       return false;
@@ -1140,11 +1101,14 @@ class ResourceScheduler::Client
   // LoadAnyStartablePendingRequests.
   // TODO(csharrison): Reconsider this if IPC batching becomes an easy to use
   // pattern.
-  void ScheduleLoadAnyStartablePendingRequests(RequestStartTrigger trigger) {
+  void ScheduleLoadAnyStartablePendingRequests(
+      RequestStartTrigger trigger,
+      net::RequestPriority new_priority) {
     if (num_skipped_scans_due_to_scheduled_start_ == 0) {
       TRACE_EVENT0("loading", "ScheduleLoadAnyStartablePendingRequests");
-      resource_scheduler_->task_runner()->PostTask(
-          FROM_HERE, base::BindOnce(&Client::LoadAnyStartablePendingRequests,
+      net::GetTaskRunner(new_priority)
+          ->PostTask(FROM_HERE,
+                     base::BindOnce(&Client::LoadAnyStartablePendingRequests,
                                     weak_ptr_factory_.GetWeakPtr(), trigger));
     }
     num_skipped_scans_due_to_scheduled_start_ += 1;
@@ -1189,41 +1153,6 @@ class ResourceScheduler::Client
     }
   }
 
-  // If |request| was delayable, this method records how long after |request|
-  // started, a non-delayable request also started. This is the duration of time
-  // that |request| should have been queued for so as to avoid any network
-  // contention with all later-arriving non-delayable requests. Must be called
-  // after |request| is finished.
-  void RecordNetworkContentionMetrics(
-      const ScheduledResourceRequestImpl& request) const {
-    if (!RequestAttributesAreSet(request.attributes(), kAttributeDelayable))
-      return;
-
-    base::TimeDelta ideal_duration_to_wait;
-    if (!last_non_delayable_request_start_) {
-      // No non-delayable request has been started in this client so far.
-      // |request| did not have to wait at all to avoid network contention.
-      ideal_duration_to_wait = base::TimeDelta();
-    } else if (request.url_request()->creation_time() >
-               last_non_delayable_request_start_) {
-      // Last non-delayable request in this client started before |request|
-      // was created. |request| did not have to wait at all to avoid network
-      // contention with non-delayable requests.
-      ideal_duration_to_wait = base::TimeDelta();
-    } else {
-      // The latest non-delayable request started at
-      // |last_non_delayable_request_start_| which happened after the
-      // creation of |request|.
-      ideal_duration_to_wait = last_non_delayable_request_start_.value() -
-                               request.url_request()->creation_time();
-    }
-
-    LOCAL_HISTOGRAM_CUSTOM_TIMES(
-        "ResourceScheduler.DelayableRequests."
-        "WaitTimeToAvoidContentionWithNonDelayableRequest",
-        ideal_duration_to_wait, base::Milliseconds(10), base::Minutes(3), 50);
-  }
-
   RequestQueue pending_requests_;
   RequestSet in_flight_requests_;
 
@@ -1254,10 +1183,10 @@ class ResourceScheduler::Client
   raw_ptr<const base::TickClock> tick_clock_;
 
   // Time when the last non-delayble request started in this client.
-  absl::optional<base::TimeTicks> last_non_delayable_request_start_;
+  std::optional<base::TimeTicks> last_non_delayable_request_start_;
 
   // Time when the last non-delayble request ended in this client.
-  absl::optional<base::TimeTicks> last_non_delayable_request_end_;
+  std::optional<base::TimeTicks> last_non_delayable_request_end_;
 
   // Current estimated value of the effective connection type.
   net::EffectiveConnectionType effective_connection_type_ =
@@ -1270,12 +1199,12 @@ class ResourceScheduler::Client
   // connection. Set to current timestamp when |p2p_connections_count_|
   // changes from 0 to a non-zero value. Reset to null when
   // |p2p_connections_count_| becomes 0.
-  absl::optional<base::TimeTicks> p2p_connections_count_active_timestamp_;
+  std::optional<base::TimeTicks> p2p_connections_count_active_timestamp_;
 
   // Earliest timestamp since when the count of active peer to peer
   // connection counts dropped from a non-zero value to zero. Set to current
   // timestamp when |p2p_connections_count_| changes from a non-zero value to 0.
-  absl::optional<base::TimeTicks> p2p_connections_count_end_timestamp_;
+  std::optional<base::TimeTicks> p2p_connections_count_end_timestamp_;
 
   base::OneShotTimer p2p_connections_count_ended_timer_;
 
@@ -1290,8 +1219,7 @@ ResourceScheduler::ResourceScheduler(const base::TickClock* tick_clock)
     : tick_clock_(tick_clock ? tick_clock
                              : base::DefaultTickClock::GetInstance()),
       queued_requests_dispatch_periodicity_(
-          GetQueuedRequestsDispatchPeriodicity()),
-      task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {
+          GetQueuedRequestsDispatchPeriodicity()) {
   DCHECK(tick_clock_);
 
   StartLongQueuedRequestsDispatchTimerIfNeeded();
@@ -1364,12 +1292,12 @@ void ResourceScheduler::OnClientDeleted(ClientId client_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ClientMap::iterator it = client_map_.find(client_id);
-  // TODO(crbug.com/873959): Turns this CHECK to DCHECK once the investigation
+  // TODO(crbug.com/41407881): Turns this CHECK to DCHECK once the investigation
   // is done.
   CHECK(it != client_map_.end());
 
   Client* client = it->second.get();
-  // TODO(crbug.com/873959): Remove this CHECK once the investigation is done.
+  // TODO(crbug.com/41407881): Remove this CHECK once the investigation is done.
   CHECK(client);
   DCHECK(client->HasNoPendingRequests() ||
          IsLongQueuedRequestsDispatchTimerRunning());
@@ -1481,10 +1409,6 @@ void ResourceScheduler::ReprioritizeRequest(net::URLRequest* request,
 bool ResourceScheduler::IsLongQueuedRequestsDispatchTimerRunning() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return long_queued_requests_dispatch_timer_.IsRunning();
-}
-
-base::SequencedTaskRunner* ResourceScheduler::task_runner() {
-  return task_runner_.get();
 }
 
 void ResourceScheduler::SetResourceSchedulerParamsManagerForTests(

@@ -3,15 +3,16 @@
 // found in the LICENSE file.
 #include "chrome/browser/safe_browsing/extension_telemetry/extension_telemetry_file_processor.h"
 
+#include <string_view>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "base/threading/sequence_bound.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "crypto/sha2.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,8 +34,7 @@ constexpr char kExtensionSubDirCSSFile1[] = "folder/css_file_1.css";
 constexpr char kExtensionSubDirCSSFile2[] = "folder/css_file_2.css";
 
 std::string HashContent(const std::string& content) {
-  std::string hash = crypto::SHA256HashString(content);
-  return base::HexEncode(hash.c_str(), hash.size());
+  return base::HexEncode(crypto::SHA256HashString(content));
 }
 
 void WriteExtensionFile(const base::FilePath& path,
@@ -45,23 +45,17 @@ void WriteExtensionFile(const base::FilePath& path,
 
 void WriteEmptyFile(const base::FilePath& path, const std::string& file_name) {
   base::FilePath file_path = path.AppendASCII(file_name);
-  base::WriteFile(file_path, base::StringPiece());
+  base::WriteFile(file_path, std::string_view());
 
-  int64_t file_size;
-  EXPECT_TRUE(base::GetFileSize(file_path, &file_size));
-  ASSERT_EQ(file_size, 0);
+  std::optional<int64_t> file_size = base::GetFileSize(file_path);
+  ASSERT_TRUE(file_size.has_value());
+  ASSERT_EQ(file_size.value(), 0);
 }
 
 class ExtensionTelemetryFileProcessorTest : public ::testing::Test {
  public:
   ExtensionTelemetryFileProcessorTest()
-      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
-    feature_list_.InitWithFeaturesAndParameters(
-        /*enabled_features=*/{{kExtensionTelemetryFileData,
-                               {{"MaxFilesToProcess", "50"},
-                                {"MaxFileSizeBytes", "102400"}}}},
-        /*disabled_features=*/{});
-  }
+      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
   void SetUp() override {
     // Set up temp directory.
@@ -72,7 +66,10 @@ class ExtensionTelemetryFileProcessorTest : public ::testing::Test {
     extension_root_dir_ = temp_dir_.GetPath().AppendASCII(kExtensionId);
     ASSERT_TRUE(base::CreateDirectory(extension_root_dir_));
 
-    InitProcessor();
+    processor_ = base::SequenceBound<ExtensionTelemetryFileProcessor>(
+        base::ThreadPool::CreateSequencedTaskRunner(
+            {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN}));
   }
 
   void SetUpExtensionFiles() {
@@ -98,18 +95,6 @@ class ExtensionTelemetryFileProcessorTest : public ::testing::Test {
     WriteExtensionFile(extension_sub_dir_, kCSSFile2, kCSSFile2);
   }
 
-  void InitProcessor() {
-    processor_ = base::SequenceBound<ExtensionTelemetryFileProcessor>(
-        base::ThreadPool::CreateSequencedTaskRunner(
-            {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
-             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN}));
-    task_environment_.RunUntilIdle();
-  }
-
-  void CallbackHelper(base::Value::Dict data) {
-    extensions_data_ = std::move(data);
-  }
-
   void TearDown() override {
     processor_.SynchronouslyResetForTest();
     testing::Test::TearDown();
@@ -120,24 +105,19 @@ class ExtensionTelemetryFileProcessorTest : public ::testing::Test {
   base::FilePath extension_root_dir_;
   base::FilePath extension_sub_dir_;
 
-  base::test::ScopedFeatureList feature_list_;
   base::SequenceBound<safe_browsing::ExtensionTelemetryFileProcessor>
       processor_;
   content::BrowserTaskEnvironment task_environment_;
-  base::Value::Dict extensions_data_;
   base::WeakPtrFactory<ExtensionTelemetryFileProcessorTest> weak_factory_{this};
 };
 
 TEST_F(ExtensionTelemetryFileProcessorTest, ProcessesExtension) {
   SetUpExtensionFiles();
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
 
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
-  task_environment_.RunUntilIdle();
+      .Then(future.GetCallback());
 
   base::Value::Dict expected_dict;
   expected_dict.Set(kManifestFile, kManifestFile);
@@ -148,7 +128,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest, ProcessesExtension) {
   expected_dict.Set(kExtensionSubDirCSSFile1, HashContent(kCSSFile1));
   expected_dict.Set(kExtensionSubDirCSSFile2, HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest,
@@ -156,46 +136,40 @@ TEST_F(ExtensionTelemetryFileProcessorTest,
   // Empty root path
   base::FilePath empty_root;
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(empty_root)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest,
        IgnoresExtensionWithMissingManifestFile) {
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest,
        IgnoresExtensionWithEmptyManifestFile) {
   WriteEmptyFile(extension_root_dir_, "manifest.json");
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest,
@@ -204,12 +178,10 @@ TEST_F(ExtensionTelemetryFileProcessorTest,
   // Add extension_root_dir/html_file_1.html file
   WriteExtensionFile(extension_root_dir_, kHTMLFile1, kHTMLFile1);
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
@@ -222,7 +194,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest,
   expected_dict.Set(kExtensionSubDirCSSFile1, HashContent(kCSSFile1));
   expected_dict.Set(kExtensionSubDirCSSFile2, HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresEmptyFiles) {
@@ -230,12 +202,10 @@ TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresEmptyFiles) {
   WriteEmptyFile(extension_root_dir_, "empty_file_1.js");
   WriteEmptyFile(extension_root_dir_, "empty_file_2.js");
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
@@ -247,7 +217,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresEmptyFiles) {
   expected_dict.Set(kExtensionSubDirCSSFile1, HashContent(kCSSFile1));
   expected_dict.Set(kExtensionSubDirCSSFile2, HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresUnapplicableFiles) {
@@ -256,12 +226,10 @@ TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresUnapplicableFiles) {
   WriteExtensionFile(extension_root_dir_, "file.json", "file.json");
   WriteExtensionFile(extension_root_dir_, "file", "file");
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
@@ -273,7 +241,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest, IgnoresUnapplicableFiles) {
   expected_dict.Set(kExtensionSubDirCSSFile1, HashContent(kCSSFile1));
   expected_dict.Set(kExtensionSubDirCSSFile2, HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFilesToReadLimit) {
@@ -283,12 +251,10 @@ TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFilesToReadLimit) {
       .AsyncCall(&ExtensionTelemetryFileProcessor::SetMaxFilesToReadForTest)
       .WithArgs(3);
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   // Only 3 files are read.
@@ -297,26 +263,20 @@ TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFilesToReadLimit) {
   expected_dict.Set(kJavaScriptFile1, HashContent(kJavaScriptFile1));
   expected_dict.Set(kJavaScriptFile2, HashContent(kJavaScriptFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxNumFilesLimit) {
   SetUpExtensionFiles();
   // Set max_files_to_process to 4.
-  feature_list_.Reset();
-  feature_list_.InitWithFeaturesAndParameters(
-      /*enabled_features=*/{{kExtensionTelemetryFileData,
-                             {{"MaxFilesToProcess", "4"},
-                              {"MaxFileSizeBytes", "102400"}}}},
-      /*disabled_features=*/{});
-  InitProcessor();
+  processor_
+      .AsyncCall(&ExtensionTelemetryFileProcessor::SetMaxFilesToProcessForTest)
+      .WithArgs(4);
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   // JS/HTML type prioritized.
@@ -327,7 +287,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxNumFilesLimit) {
   expected_dict.Set(kExtensionSubDirHTMLFile1, HashContent(kHTMLFile1));
   expected_dict.Set(kExtensionSubDirHTMLFile2, HashContent(kHTMLFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFileSizeLimit) {
@@ -339,26 +299,23 @@ TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFileSizeLimit) {
 
   // Set max_file_size to 50 bytes.
   int64_t max_file_size = 50;
-  feature_list_.Reset();
-  feature_list_.InitWithFeaturesAndParameters(
-      /*enabled_features=*/{{kExtensionTelemetryFileData,
-                             {{"MaxFilesToProcess", "50"},
-                              {"MaxFileSizeBytes", "50"}}}},
-      /*disabled_features=*/{});
-  InitProcessor();
+  processor_
+      .AsyncCall(&ExtensionTelemetryFileProcessor::SetMaxFilesToProcessForTest)
+      .WithArgs(50);
+  processor_
+      .AsyncCall(&ExtensionTelemetryFileProcessor::SetMaxFileSizeBytesForTest)
+      .WithArgs(max_file_size);
 
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
-  int64_t file_size;
-  EXPECT_TRUE(base::GetFileSize(
-      extension_root_dir_.AppendASCII("over_sized_file.js"), &file_size));
-  ASSERT_GT(file_size, max_file_size);
+  std::optional<int64_t> file_size =
+      base::GetFileSize(extension_root_dir_.AppendASCII("over_sized_file.js"));
+  EXPECT_TRUE(file_size.has_value());
+  ASSERT_GT(file_size.value(), max_file_size);
 
   base::Value::Dict expected_dict;
   expected_dict.Set(kManifestFile, kManifestFile);
@@ -369,7 +326,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest, EnforcesMaxFileSizeLimit) {
   expected_dict.Set(kExtensionSubDirCSSFile1, HashContent(kCSSFile1));
   expected_dict.Set(kExtensionSubDirCSSFile2, HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 TEST_F(ExtensionTelemetryFileProcessorTest,
@@ -377,13 +334,11 @@ TEST_F(ExtensionTelemetryFileProcessorTest,
   WriteExtensionFile(extension_root_dir_, kManifestFile, kManifestFile);
   WriteExtensionFile(extension_root_dir_, "file_1.Js", kJavaScriptFile1);
   WriteExtensionFile(extension_root_dir_, "file_2.cSS", kCSSFile2);
-  auto callback =
-      base::BindOnce(&ExtensionTelemetryFileProcessorTest::CallbackHelper,
-                     weak_factory_.GetWeakPtr());
 
+  base::test::TestFuture<base::Value::Dict> future;
   processor_.AsyncCall(&ExtensionTelemetryFileProcessor::ProcessExtension)
       .WithArgs(extension_root_dir_)
-      .Then(std::move(callback));
+      .Then(future.GetCallback());
   task_environment_.RunUntilIdle();
 
   base::Value::Dict expected_dict;
@@ -391,7 +346,7 @@ TEST_F(ExtensionTelemetryFileProcessorTest,
   expected_dict.Set("file_1.Js", HashContent(kJavaScriptFile1));
   expected_dict.Set("file_2.cSS", HashContent(kCSSFile2));
 
-  EXPECT_EQ(extensions_data_, expected_dict);
+  EXPECT_EQ(future.Get(), expected_dict);
 }
 
 }  // namespace safe_browsing

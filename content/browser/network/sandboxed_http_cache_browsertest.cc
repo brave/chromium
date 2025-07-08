@@ -31,7 +31,6 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/features.h"
-#include "sandbox/features.h"
 #include "sandbox/policy/features.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
@@ -83,7 +82,7 @@ IN_PROC_BROWSER_TEST_F(NonSandboxedNetworkServiceBrowserTest,
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::RunLoop run_loop;
 
-  absl::optional<bool> result;
+  std::optional<bool> result;
   network_service_test().set_disconnect_handler(run_loop.QuitClosure());
   const base::FilePath path =
       temp_dir.GetPath().Append(FILE_PATH_LITERAL("blank.jpg"));
@@ -94,7 +93,7 @@ IN_PROC_BROWSER_TEST_F(NonSandboxedNetworkServiceBrowserTest,
                                    }));
   run_loop.Run();
 
-  EXPECT_EQ(result, absl::make_optional(true));
+  EXPECT_EQ(result, std::make_optional(true));
 }
 
 #endif
@@ -116,7 +115,7 @@ class SandboxedHttpCacheBrowserTest : public ContentBrowserTest {
 
   void SetUp() override {
 #if BUILDFLAG(IS_WIN)
-    if (!sandbox::features::IsAppContainerSandboxSupported()) {
+    if (!sandbox::policy::features::IsNetworkSandboxSupported()) {
       // On *some* Windows, sandboxing cannot be enabled. We skip all the tests
       // on such platforms.
       GTEST_SKIP();
@@ -255,7 +254,7 @@ class SandboxedHttpCacheBrowserTest : public ContentBrowserTest {
 IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest, OpeningFileIsProhibited) {
   base::RunLoop run_loop;
 
-  absl::optional<bool> result;
+  std::optional<bool> result;
   network_service_test().set_disconnect_handler(run_loop.QuitClosure());
   const base::FilePath path =
       GetTestDataFilePath().Append(FILE_PATH_LITERAL("blank.jpg"));
@@ -266,7 +265,7 @@ IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest, OpeningFileIsProhibited) {
                                    }));
   run_loop.Run();
 
-  EXPECT_EQ(result, absl::make_optional(false));
+  EXPECT_EQ(result, std::make_optional(false));
 }
 
 IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest,
@@ -386,7 +385,7 @@ IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest,
   IgnoreNetworkServiceCrashes();
 }
 
-// TODO(crbug.com/1459570): Flaky on at least Mac11.
+// TODO(crbug.com/40919503): Flaky on at least Mac11.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_CreateSimpleCacheWithParentDirectoryTraversal \
   DISABLED_CreateSimpleCacheWithParentDirectoryTraversal
@@ -763,7 +762,7 @@ IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest, DoomEntryWithoutOpening) {
   ASSERT_TRUE(network_service_test().is_connected());
 }
 
-// TODO(crbug.com/1394543): Re-enable this test
+// TODO(crbug.com/40881636): Re-enable this test
 IN_PROC_BROWSER_TEST_F(SandboxedHttpCacheBrowserTest,
                        DISABLED_EnumerateEntries) {
   const std::string kKey1 = "abc";

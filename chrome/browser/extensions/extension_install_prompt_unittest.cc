@@ -24,6 +24,7 @@
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -38,6 +39,8 @@
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/skia_util.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -59,7 +62,7 @@ class ExtensionInstallPromptUnitTest : public testing::Test {
   ExtensionInstallPromptUnitTest& operator=(
       const ExtensionInstallPromptUnitTest&) = delete;
 
-  ~ExtensionInstallPromptUnitTest() override {}
+  ~ExtensionInstallPromptUnitTest() override = default;
 
   // testing::Test:
   void SetUp() override { profile_ = std::make_unique<TestingProfile>(); }
@@ -68,6 +71,10 @@ class ExtensionInstallPromptUnitTest : public testing::Test {
   Profile* profile() { return profile_.get(); }
 
  private:
+  // This test does not create a root window. Because of this,
+  // ScopedDisableRootChecking needs to be used (which disables the root window
+  // check).
+  test::ScopedDisableRootChecking disable_root_checking_;
   content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfile> profile_;
 };
@@ -81,7 +88,7 @@ using ShowDialogTestFuture =
 
 TEST_F(ExtensionInstallPromptUnitTest, PromptShowsPermissionWarnings) {
   APIPermissionSet api_permissions;
-  api_permissions.insert(extensions::mojom::APIPermissionID::kTab);
+  api_permissions.insert(mojom::APIPermissionID::kTab);
   std::unique_ptr<const PermissionSet> permission_set(
       new PermissionSet(std::move(api_permissions), ManifestPermissionSet(),
                         URLPatternSet(), URLPatternSet()));
@@ -109,41 +116,13 @@ TEST_F(ExtensionInstallPromptUnitTest, PromptShowsPermissionWarnings) {
   EXPECT_EQ(1u, install_prompt->GetPermissionCount());
 }
 
-TEST_F(ExtensionInstallPromptUnitTest,
-       DelegatedPromptShowsOptionalPermissions) {
-  scoped_refptr<const Extension> extension =
-      ExtensionBuilder()
-          .SetManifest(base::Value::Dict()
-                           .Set("name", "foo")
-                           .Set("version", "1.0")
-                           .Set("manifest_version", 2)
-                           .Set("description", "Random Ext")
-                           .Set("permissions",
-                                base::Value::List().Append("clipboardRead"))
-                           .Set("optional_permissions",
-                                base::Value::List().Append("tabs")))
-          .Build();
-
-  content::TestWebContentsFactory factory;
-  ExtensionInstallPrompt prompt(factory.CreateWebContents(profile()));
-  ShowDialogTestFuture show_dialog_future;
-
-  std::unique_ptr<ExtensionInstallPrompt::Prompt> sub_prompt(
-      new ExtensionInstallPrompt::Prompt(
-          ExtensionInstallPrompt::DELEGATED_PERMISSIONS_PROMPT));
-  sub_prompt->set_delegated_username("Username");
-  prompt.ShowDialog(ExtensionInstallPrompt::DoneCallback(), extension.get(),
-                    nullptr, std::move(sub_prompt),
-                    show_dialog_future.GetRepeatingCallback());
-
-  auto [params, done_callback, install_prompt] = show_dialog_future.Take();
-  ASSERT_TRUE(install_prompt.get());
-  EXPECT_EQ(2u, install_prompt->GetPermissionCount());
-}
-
 using ExtensionInstallPromptTestWithService = ExtensionServiceTestWithInstall;
 
 TEST_F(ExtensionInstallPromptTestWithService, ExtensionInstallPromptIconsTest) {
+  // This test does not create a root window. Because of this,
+  // ScopedDisableRootChecking needs to be used (which disables the root window
+  // check).
+  test::ScopedDisableRootChecking disable_root_checking;
   InitializeEmptyExtensionService();
 
   const Extension* extension = PackAndInstallCRX(
@@ -154,7 +133,7 @@ TEST_F(ExtensionInstallPromptTestWithService, ExtensionInstallPromptIconsTest) {
       1, ImageLoader::ImageRepresentation(
              IconsInfo::GetIconResource(extension,
                                         extension_misc::EXTENSION_ICON_LARGE,
-                                        ExtensionIconSet::MATCH_BIGGER),
+                                        ExtensionIconSet::Match::kBigger),
              ImageLoader::ImageRepresentation::NEVER_RESIZE, gfx::Size(),
              ui::k100Percent));
   base::test::TestFuture<void> image_future;
@@ -212,7 +191,7 @@ class ExtensionInstallPromptTestWithholdingAllowed
 TEST_F(ExtensionInstallPromptTestWithholdingAllowed,
        PromptShouldShowWithholdingUI) {
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("test").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("test").AddHostPermission("<all_urls>").Build();
   content::TestWebContentsFactory factory;
   ExtensionInstallPrompt prompt(factory.CreateWebContents(profile()));
   ShowDialogTestFuture show_dialog_future;
@@ -227,7 +206,7 @@ TEST_F(ExtensionInstallPromptTestWithholdingAllowed,
 TEST_F(ExtensionInstallPromptTestWithholdingAllowed,
        DoesntShowForNoHostsRequested) {
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("no_host").AddPermission("tabs").Build();
+      ExtensionBuilder("no_host").AddAPIPermission("tabs").Build();
   content::TestWebContentsFactory factory;
   ExtensionInstallPrompt prompt(factory.CreateWebContents(profile()));
   ShowDialogTestFuture show_dialog_future;
@@ -243,7 +222,7 @@ TEST_F(ExtensionInstallPromptTestWithholdingAllowed,
        DoesntShowForWithholdingNotAllowed) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("all_hosts")
-          .AddPermission("<all_urls>")
+          .AddHostPermission("<all_urls>")
           .SetLocation(mojom::ManifestLocation::kExternalPolicy)
           .Build();
   content::TestWebContentsFactory factory;

@@ -7,13 +7,9 @@
 #include "base/observer_list.h"
 
 #import "base/mac/scoped_sending_event.h"
-#import "base/message_loop/message_pump_mac.h"
+#import "base/message_loop/message_pump_apple.h"
 #import "content/public/browser/native_event_processor_mac.h"
 #import "content/public/browser/native_event_processor_observer_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface ExamplesApplication
     : NSApplication <CrAppProtocol, CrAppControlProtocol, NativeEventProcessor>
@@ -57,6 +53,7 @@ namespace webui_examples {
 void MacPreBrowserMain() {
   CHECK_EQ(NSApp, nil);
   [ExamplesApplication sharedApplication];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 }
 
 }  // namespace webui_examples

@@ -11,6 +11,7 @@
 #include "ash/shell.h"
 #include "ash/style/color_palette_controller.h"
 #include "ash/style/dark_light_mode_controller_impl.h"
+#include "ash/style/mojom/color_scheme.mojom-shared.h"
 #include "ash/test/ash_test_base.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -23,10 +24,11 @@
 #include "chrome/test/base/chrome_ash_test_base.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/constants/chromeos_features.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_web_ui.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -36,19 +38,9 @@ namespace ash::personalization_app {
 namespace {
 
 constexpr char kFakeTestEmail[] = "fakeemail@personalization";
-constexpr char kTestGaiaId[] = "1234567890";
+constexpr GaiaId::Literal kTestGaiaId("1234567890");
 AccountId kAccountId =
     AccountId::FromUserEmailGaiaId(kFakeTestEmail, kTestGaiaId);
-
-void AddAndLoginUser() {
-  ash::FakeChromeUserManager* user_manager =
-      static_cast<ash::FakeChromeUserManager*>(
-          user_manager::UserManager::Get());
-
-  user_manager->AddUser(kAccountId);
-  user_manager->LoginUser(kAccountId);
-  user_manager->SwitchActiveUser(kAccountId);
-}
 
 class TestThemeObserver
     : public ash::personalization_app::mojom::ThemeObserver {
@@ -61,7 +53,8 @@ class TestThemeObserver
     color_mode_auto_schedule_enabled_ = enabled;
   }
 
-  void OnColorSchemeChanged(ash::ColorScheme color_scheme) override {
+  void OnColorSchemeChanged(
+      ash::style::mojom::ColorScheme color_scheme) override {
     color_scheme_ = color_scheme;
   }
 
@@ -70,8 +63,20 @@ class TestThemeObserver
     sample_color_schemes_ = sample_color_schemes;
   }
 
-  void OnStaticColorChanged(absl::optional<::SkColor> static_color) override {
+  void OnStaticColorChanged(std::optional<::SkColor> static_color) override {
     static_color_ = static_color;
+  }
+
+  void OnGeolocationPermissionForSystemServicesChanged(
+      bool enabled,
+      bool is_user_modifiable) override {
+    geolocation_for_system_enabled_ = enabled;
+    is_geolocation_user_modifiable_ = is_user_modifiable;
+  }
+
+  void OnDaylightTimeChanged(const std::u16string& sunrise_time,
+                             const std::u16string& sunset_time) override {
+    // no-op
   }
 
   mojo::PendingRemote<ash::personalization_app::mojom::ThemeObserver>
@@ -82,9 +87,9 @@ class TestThemeObserver
     return theme_observer_receiver_.BindNewPipeAndPassRemote();
   }
 
-  absl::optional<bool> is_dark_mode_enabled() {
+  std::optional<bool> is_dark_mode_enabled() {
     if (!theme_observer_receiver_.is_bound()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     theme_observer_receiver_.FlushForTesting();
@@ -98,16 +103,30 @@ class TestThemeObserver
     return color_mode_auto_schedule_enabled_;
   }
 
-  ash::ColorScheme GetColorScheme() {
+  bool is_geolocation_enabled_for_system_services() {
+    if (theme_observer_receiver_.is_bound()) {
+      theme_observer_receiver_.FlushForTesting();
+    }
+    return geolocation_for_system_enabled_;
+  }
+
+  bool is_geolocation_user_modifiable() {
+    if (theme_observer_receiver_.is_bound()) {
+      theme_observer_receiver_.FlushForTesting();
+    }
+    return is_geolocation_user_modifiable_;
+  }
+
+  ash::style::mojom::ColorScheme GetColorScheme() {
     if (theme_observer_receiver_.is_bound()) {
       theme_observer_receiver_.FlushForTesting();
     }
     return color_scheme_;
   }
 
-  absl::optional<SkColor> GetStaticColor() {
+  std::optional<SkColor> GetStaticColor() {
     if (!theme_observer_receiver_.is_bound()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     theme_observer_receiver_.FlushForTesting();
     return static_color_;
@@ -119,8 +138,11 @@ class TestThemeObserver
 
   bool dark_mode_enabled_ = false;
   bool color_mode_auto_schedule_enabled_ = false;
-  ash::ColorScheme color_scheme_ = ash::ColorScheme::kTonalSpot;
-  absl::optional<::SkColor> static_color_ = absl::nullopt;
+  bool geolocation_for_system_enabled_ = false;
+  bool is_geolocation_user_modifiable_ = true;
+  ash::style::mojom::ColorScheme color_scheme_ =
+      ash::style::mojom::ColorScheme::kTonalSpot;
+  std::optional<::SkColor> static_color_ = std::nullopt;
   std::vector<ash::SampleColorScheme> sample_color_schemes_;
 };
 
@@ -178,7 +200,7 @@ class PersonalizationAppThemeProviderImplTest : public ChromeAshTestBase {
         test_theme_observer_.pending_remote());
   }
 
-  absl::optional<bool> is_dark_mode_enabled() {
+  std::optional<bool> is_dark_mode_enabled() {
     if (theme_provider_remote_.is_bound()) {
       theme_provider_remote_.FlushForTesting();
     }
@@ -192,14 +214,50 @@ class PersonalizationAppThemeProviderImplTest : public ChromeAshTestBase {
     return test_theme_observer_.is_color_mode_auto_schedule_enabled();
   }
 
-  ash::ColorScheme GetColorScheme() {
+  // Depending on the `managed` argument, sets the value of the
+  // `kUserGeolocationAccessLevel` pref either in `PrefStoreType::MANAGED_STORE`
+  // or in `PrefStoreType::USER_STORE` PrefStore.
+  void SetGeolocationPref(bool enabled, bool managed) {
+    GeolocationAccessLevel level;
+    if (enabled) {
+      level = GeolocationAccessLevel::kOnlyAllowedForSystem;
+    } else {
+      level = GeolocationAccessLevel::kDisallowed;
+    }
+
+    if (managed) {
+      profile()->GetTestingPrefService()->SetManagedPref(
+          ash::prefs::kUserGeolocationAccessLevel,
+          base::Value(static_cast<int>(level)));
+    } else {
+      profile()->GetTestingPrefService()->SetUserPref(
+          ash::prefs::kUserGeolocationAccessLevel,
+          base::Value(static_cast<int>(level)));
+    }
+  }
+
+  bool is_geolocation_enabled_for_system_services() {
+    if (theme_provider_remote_.is_bound()) {
+      theme_provider_remote_.FlushForTesting();
+    }
+    return test_theme_observer_.is_geolocation_enabled_for_system_services();
+  }
+
+  bool is_geolocation_user_modifiable() {
+    if (theme_provider_remote_.is_bound()) {
+      theme_provider_remote_.FlushForTesting();
+    }
+    return test_theme_observer_.is_geolocation_user_modifiable();
+  }
+
+  ash::style::mojom::ColorScheme GetColorScheme() {
     if (theme_provider_remote_.is_bound()) {
       theme_provider_remote_.FlushForTesting();
     }
     return test_theme_observer_.GetColorScheme();
   }
 
-  absl::optional<SkColor> GetStaticColor() {
+  std::optional<SkColor> GetStaticColor() {
     if (theme_provider_remote_.is_bound()) {
       theme_provider_remote_.FlushForTesting();
     }
@@ -213,7 +271,7 @@ class PersonalizationAppThemeProviderImplTest : public ChromeAshTestBase {
   TestingProfileManager profile_manager_;
   content::TestWebUI web_ui_;
   std::unique_ptr<content::WebContents> web_contents_;
-  raw_ptr<TestingProfile, ExperimentalAsh> profile_;
+  raw_ptr<TestingProfile> profile_;
   mojo::Remote<ash::personalization_app::mojom::ThemeProvider>
       theme_provider_remote_;
   TestThemeObserver test_theme_observer_;
@@ -259,12 +317,36 @@ TEST_F(PersonalizationAppThemeProviderImplTest,
       kPersonalizationThemeColorModeHistogramName, ColorMode::kAuto, 1);
 }
 
+TEST_F(PersonalizationAppThemeProviderImplTest,
+       EnableGeolocationForSystemServices) {
+  SetThemeObserver();
+
+  // Check default geolocation state.
+  EXPECT_TRUE(is_geolocation_enabled_for_system_services());
+  EXPECT_TRUE(is_geolocation_user_modifiable());
+
+  // Check consumer scenarios:
+  SetGeolocationPref(/*enabled=*/false, /*managed=*/false);
+  // theme_provider()->EnableGeolocationForSystemServices();
+  EXPECT_FALSE(is_geolocation_enabled_for_system_services());
+  EXPECT_TRUE(is_geolocation_user_modifiable());
+  SetGeolocationPref(/*enabled=*/true, /*managed=*/false);
+  EXPECT_TRUE(is_geolocation_enabled_for_system_services());
+  EXPECT_TRUE(is_geolocation_user_modifiable());
+
+  // Check managed scenarios:
+  SetGeolocationPref(/*enabled=*/false, /*managed=*/true);
+  EXPECT_FALSE(is_geolocation_enabled_for_system_services());
+  EXPECT_FALSE(is_geolocation_user_modifiable());
+  SetGeolocationPref(/*enabled=*/true, /*managed=*/true);
+  EXPECT_TRUE(is_geolocation_enabled_for_system_services());
+  EXPECT_FALSE(is_geolocation_user_modifiable());
+}
+
 class PersonalizationAppThemeProviderImplJellyTest
     : public PersonalizationAppThemeProviderImplTest {
  public:
-  PersonalizationAppThemeProviderImplJellyTest() {
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kJelly);
-  }
+  PersonalizationAppThemeProviderImplJellyTest() { set_start_session(false); }
 
   PersonalizationAppThemeProviderImplJellyTest(
       const PersonalizationAppThemeProviderImplJellyTest&) = delete;
@@ -273,8 +355,14 @@ class PersonalizationAppThemeProviderImplJellyTest
 
   void SetUp() override {
     PersonalizationAppThemeProviderImplTest::SetUp();
-    AddAndLoginUser();
-    GetSessionControllerClient()->AddUserSession(kAccountId, kFakeTestEmail);
+    ash::FakeChromeUserManager* user_manager =
+        static_cast<ash::FakeChromeUserManager*>(
+            user_manager::UserManager::Get());
+
+    user_manager->AddUser(kAccountId);
+    user_manager->LoginUser(kAccountId);
+    SimulateUserLogin({kFakeTestEmail}, kAccountId);
+    user_manager->SwitchActiveUser(kAccountId);
   }
 
  protected:
@@ -282,9 +370,6 @@ class PersonalizationAppThemeProviderImplJellyTest
     return Shell::Get()->session_controller()->GetUserPrefServiceForUser(
         kAccountId);
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(PersonalizationAppThemeProviderImplJellyTest, SetStaticColor) {
@@ -324,7 +409,7 @@ TEST_F(PersonalizationAppThemeProviderImplJellyTest,
 TEST_F(PersonalizationAppThemeProviderImplJellyTest, SetColorScheme) {
   SetThemeObserver();
   theme_provider_remote()->FlushForTesting();
-  auto color_scheme = ash::ColorScheme::kExpressive;
+  auto color_scheme = ash::style::mojom::ColorScheme::kExpressive;
   EXPECT_NE((int)color_scheme,
             GetUserPrefService()->GetInteger(prefs::kDynamicColorColorScheme));
 
@@ -338,7 +423,7 @@ TEST_F(PersonalizationAppThemeProviderImplJellyTest,
        ObserveColorSchemeChanges) {
   SetThemeObserver();
   theme_provider_remote()->FlushForTesting();
-  auto color_scheme = ash::ColorScheme::kExpressive;
+  auto color_scheme = ash::style::mojom::ColorScheme::kExpressive;
   EXPECT_NE((int)color_scheme,
             GetUserPrefService()->GetInteger(prefs::kDynamicColorColorScheme));
 
@@ -365,10 +450,14 @@ TEST_F(PersonalizationAppThemeProviderImplJellyTest,
 
   // Matcher for the vector in the callback.
   auto matcher = testing::UnorderedElementsAre(
-      testing::Field(&SampleColorScheme::scheme, ColorScheme::kTonalSpot),
-      testing::Field(&SampleColorScheme::scheme, ColorScheme::kNeutral),
-      testing::Field(&SampleColorScheme::scheme, ColorScheme::kVibrant),
-      testing::Field(&SampleColorScheme::scheme, ColorScheme::kExpressive));
+      testing::Field(&SampleColorScheme::scheme,
+                     ash::style::mojom::ColorScheme::kTonalSpot),
+      testing::Field(&SampleColorScheme::scheme,
+                     ash::style::mojom::ColorScheme::kNeutral),
+      testing::Field(&SampleColorScheme::scheme,
+                     ash::style::mojom::ColorScheme::kVibrant),
+      testing::Field(&SampleColorScheme::scheme,
+                     ash::style::mojom::ColorScheme::kExpressive));
 
   base::RunLoop run_loop;
   EXPECT_CALL(generate_sample_color_schemes_callback, Run(matcher))

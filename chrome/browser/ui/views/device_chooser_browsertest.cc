@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
@@ -37,10 +38,11 @@ void ShowChooserModal(
 void ShowChooser(const std::string& test_name,
                  Browser* browser,
                  std::unique_ptr<permissions::ChooserController> controller) {
-  if (base::EndsWith(test_name, "Modal", base::CompareCase::SENSITIVE))
+  if (base::EndsWith(test_name, "Modal", base::CompareCase::SENSITIVE)) {
     ShowChooserModal(browser, std::move(controller));
-  else
+  } else {
     ShowChooserBubble(browser, std::move(controller));
+  }
 }
 
 }  // namespace
@@ -49,7 +51,7 @@ void ShowChooser(const std::string& test_name,
 // extension.
 class UsbChooserBrowserTest : public DialogBrowserTest {
  public:
-  UsbChooserBrowserTest() {}
+  UsbChooserBrowserTest() = default;
 
   UsbChooserBrowserTest(const UsbChooserBrowserTest&) = delete;
   UsbChooserBrowserTest& operator=(const UsbChooserBrowserTest&) = delete;
@@ -87,9 +89,7 @@ IN_PROC_BROWSER_TEST_F(UsbChooserBrowserTest, InvokeUi_WithDevicesModal) {
 // page or extension.
 class BluetoothChooserBrowserTest : public DialogBrowserTest {
  public:
-  BluetoothChooserBrowserTest()
-      : status_(permissions::FakeBluetoothChooserController::BluetoothStatus::
-                    UNAVAILABLE) {}
+  BluetoothChooserBrowserTest() = default;
 
   BluetoothChooserBrowserTest(const BluetoothChooserBrowserTest&) = delete;
   BluetoothChooserBrowserTest& operator=(const BluetoothChooserBrowserTest&) =
@@ -155,7 +155,8 @@ class BluetoothChooserBrowserTest : public DialogBrowserTest {
   }
 
  private:
-  permissions::FakeBluetoothChooserController::BluetoothStatus status_;
+  permissions::FakeBluetoothChooserController::BluetoothStatus status_ =
+      permissions::FakeBluetoothChooserController::BluetoothStatus::UNAVAILABLE;
   std::vector<permissions::FakeBluetoothChooserController::FakeDevice> devices_;
 };
 

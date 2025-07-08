@@ -13,12 +13,14 @@ namespace sharesheet {
 
 class ExampleAction : public ShareAction {
  public:
+  explicit ExampleAction(ShareActionType type) : type_(type) {}
   ExampleAction();
   ~ExampleAction() override;
   ExampleAction(const ExampleAction&) = delete;
   ExampleAction& operator=(const ExampleAction&) = delete;
 
   // ShareAction:
+  ShareActionType GetActionType() const override;
   const std::u16string GetActionName() override;
   const gfx::VectorIcon& GetActionIcon() override;
   void LaunchAction(SharesheetController* controller,
@@ -28,6 +30,7 @@ class ExampleAction : public ShareAction {
   bool HasActionView() override;
 
  private:
+  ShareActionType type_ = ShareActionType::kExample;
   raw_ptr<SharesheetController> controller_ = nullptr;
   std::string name_;
 };

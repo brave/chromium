@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <memory>
+#include <string_view>
 #include <utility>
-#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/strings/string_piece_forward.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -18,17 +23,16 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/web_applications/web_app_id.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "components/services/app_service/public/cpp/intent_util.h"
-#include "components/version_info/channel.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/manifest_handlers/file_handler_info.h"
 #include "extensions/common/manifest_handlers/web_file_handlers_info.h"
+#include "extensions/common/web_file_handler_constants.h"
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_extension_dir.h"
 #include "net/base/filename_util.h"
@@ -44,9 +48,9 @@ namespace {
 
 // Write file to disk.
 base::FilePath WriteFile(const base::FilePath& directory,
-                         const base::StringPiece name,
-                         const base::StringPiece content) {
-  const base::FilePath path = directory.Append(base::StringPiece(name));
+                         std::string_view name,
+                         std::string_view content) {
+  const base::FilePath path = directory.Append(std::string_view(name));
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::WriteFile(path, content);
   return path;
@@ -56,16 +60,42 @@ base::FilePath WriteFile(const base::FilePath& directory,
 
 class ExtensionAppsChromeOsBrowserTest
     : public extensions::ExtensionBrowserTest {
- public:
-  ExtensionAppsChromeOsBrowserTest() {
-    feature_list_.InitAndEnableFeature(
-        extensions_features::kExtensionWebFileHandlers);
+ protected:
+  // Launch the extension from an intent and wait for a result from chrome.test.
+  void LaunchExtensionAndCatchResult(const extensions::Extension& extension) {
+    std::unique_ptr<Intent> intent = SetupLaunchAndGetIntent(extension);
+    ASSERT_TRUE(intent);
+
+    // Prepare to verify launch.
+    extensions::ResultCatcher catcher;
+
+    // Launch app with intent.
+    Profile* const profile = browser()->profile();
+    const int32_t event_flags =
+        apps::GetEventFlags(WindowOpenDisposition::NEW_WINDOW,
+                            /*prefer_container=*/true);
+    apps::AppServiceProxyFactory::GetForProfile(profile)->LaunchAppWithIntent(
+        extension.id(), event_flags, std::move(intent),
+        apps::LaunchSource::kFromFileManager, nullptr, base::DoNothing());
+
+    // Verify launch.
+    ASSERT_TRUE(catcher.GetNextResult());
   }
 
- protected:
-  // Launches the given extension from an intent and waits for a result from the
-  // chrome.test API.
-  void LaunchExtensionAndCatchResult(const extensions::Extension& extension) {
+  // Install extension as a default installed extension. The permission UI isn't
+  // presented in these cases, and as such there is no need to fake clicks.
+  const extensions::Extension* InstallDefaultInstalledExtension(
+      base::FilePath file_path) {
+    return InstallExtensionWithSourceAndFlags(
+        file_path,
+        /*expected_change=*/true,
+        extensions::mojom::ManifestLocation::kInternal,
+        extensions::Extension::WAS_INSTALLED_BY_DEFAULT);
+  }
+
+ private:
+  apps::IntentPtr SetupLaunchAndGetIntent(
+      const extensions::Extension& extension) {
     auto* file_handlers =
         extensions::WebFileHandlers::GetFileHandlers(extension);
     EXPECT_EQ(1u, file_handlers->size());
@@ -73,7 +103,7 @@ class ExtensionAppsChromeOsBrowserTest
     // Create file(s).
     base::ScopedAllowBlockingForTesting allow_blocking;
     base::ScopedTempDir scoped_temp_dir;
-    ASSERT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+    EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
     auto intent = std::make_unique<apps::Intent>(apps_util::kIntentActionView);
     intent->mime_type = "text/csv";
     intent->activity_name = "open-csv.html";
@@ -81,8 +111,7 @@ class ExtensionAppsChromeOsBrowserTest
         WriteFile(scoped_temp_dir.GetPath(), "a.csv", "1,2,3");
 
     // Add file(s) to intent.
-    int64_t file_size = 0;
-    base::GetFileSize(file_path, &file_size);
+    int64_t file_size = base::GetFileSize(file_path).value_or(0);
 
     // Create a virtual file in the file system, as required for AppService.
     scoped_refptr<storage::FileSystemContext> file_system_context =
@@ -98,25 +127,8 @@ class ExtensionAppsChromeOsBrowserTest
     file->file_size = file_size;
     file->mime_type = "text/csv";
     intent->files.push_back(std::move(file));
-
-    // Launch app with intent.
-    extensions::ResultCatcher catcher;
-    Profile* const profile = browser()->profile();
-    const int32_t event_flags =
-        apps::GetEventFlags(WindowOpenDisposition::NEW_WINDOW,
-                            /*prefer_container=*/true);
-    apps::AppServiceProxyFactory::GetForProfile(profile)->LaunchAppWithIntent(
-        extension.id(), event_flags, std::move(intent),
-        apps::LaunchSource::kFromFileManager, nullptr, base::DoNothing());
-
-    // Verify launch.
-    ASSERT_TRUE(catcher.GetNextResult());
+    return intent;
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-  extensions::ScopedCurrentChannel current_channel_{
-      version_info::Channel::BETA};
 };
 
 // Open the extension action url when opening a matching file type.
@@ -140,8 +152,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, LaunchWithFileIntent) {
   extension_dir.WriteFile("open-csv.html",
                           R"(<script src="/open-csv.js"></script>)");
   const extensions::Extension* extension =
-      LoadExtension(extension_dir.UnpackedPath());
+      InstallDefaultInstalledExtension(extension_dir.UnpackedPath());
   ASSERT_TRUE(extension);
+
+  ASSERT_TRUE(extensions::WebFileHandlers::SupportsWebFileHandlers(*extension));
   LaunchExtensionAndCatchResult(*extension);
 }
 
@@ -152,16 +166,18 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, LaunchWithFileIntent) {
 IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, SetConsumerCalled) {
   struct {
     const char* title;
-    const char* manifest_part;
+    const std::string manifest_part;
   } test_cases[] = {
       {"Default", ""},
-      {"QuickOffice", R"(,
-      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC4zyYTii0VTKI7W2U6fDeAvs3YCVZeAt7C62IC64IDCMHvWy7SKMpOPjfg5v1PgYkFm+fGsCsVLN8NaF7fzYMVtjLc5bqhqPAi56Qidrqh1HxPAAYhwFQd5BVGhZmh1fySHXFPE8VI2tIHwRrASOtx67jbSEk4nBAcJz6n+eGq8QIDAQAB")"},
+      {"QuickOffice",
+       base::StringPrintf(R"(, "key": "%s")",
+                          extensions::web_file_handlers::kQuickOfficeKey)},
   };
 
   for (const auto& test_case : test_cases) {
     SCOPED_TRACE(test_case.title);
-    const std::string manifest = base::StringPrintf(R"({
+    const std::string manifest =
+        base::StringPrintf(R"({
       "name": "Test",
       "version": "0.0.1",
       "manifest_version": 3,
@@ -174,7 +190,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, SetConsumerCalled) {
       ]
       %s
     })",
-                                                    test_case.manifest_part);
+                           test_case.manifest_part.c_str());
 
     // Load extension.
     extensions::TestExtensionDir extension_dir;
@@ -189,13 +205,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, SetConsumerCalled) {
                             R"(<script src="/open-csv.js"></script>"
                               "<body>Test</body>)");
     const extensions::Extension* extension =
-        LoadExtension(extension_dir.UnpackedPath());
+        InstallDefaultInstalledExtension(extension_dir.UnpackedPath());
     ASSERT_TRUE(extension);
 
-    // TODO(crbug.com/1179530): setConsumer is called, but launchParams is empty
-    // in the test. However, it is populated when run manually. Find a better
-    // way to automate launchParams testing such that it's populated in the
-    // test, like it is when executed manually.
+    // TODO(crbug.com/40169582): setConsumer is called, but launchParams is
+    // empty in the test. However, it is populated when run manually. Find a
+    // better way to automate launchParams testing such that it's populated in
+    // the test, like it is when executed manually.
     LaunchExtensionAndCatchResult(*extension);
   }
 }
@@ -232,7 +248,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, NavigateExisting) {
                           R"(<script src="/open-csv.js"></script>"
                             "<body>Test</body>)");
   const extensions::Extension* extension =
-      LoadExtension(extension_dir.UnpackedPath());
+      InstallDefaultInstalledExtension(extension_dir.UnpackedPath());
   ASSERT_TRUE(extension);
 
   // Open a file twice by launching the file handler each time.
@@ -242,7 +258,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, NavigateExisting) {
     web_contents[i] = browser()->tab_strip_model()->GetActiveWebContents();
   }
 
-  // SessionID::InvalidValue() is -1 beyond the int of GetWindowIdOfTab.
+  // GetWindowIdOfTab() returns -1 for SessionID::InvalidValue().
   ASSERT_NE(extensions::ExtensionTabUtil::GetWindowIdOfTab(web_contents[0]),
             -1);
 

@@ -4,17 +4,15 @@
 
 #include "base/memory/shared_memory_tracker.h"
 
-#include "base/check.h"
-#include "base/notreached.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/trace_event/base_tracing.h"
-#include "base/tracing_buildflags.h"
+#include <optional>
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/memory_dump_manager.h"  // no-presubmit-check
-#include "base/trace_event/process_memory_dump.h"  // no-presubmit-check
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
+#include "base/check.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
+#include "base/trace_event/trace_event.h"
+#include "base/tracing_buildflags.h"
 
 namespace base {
 
@@ -44,31 +42,30 @@ const trace_event::MemoryAllocatorDump*
 SharedMemoryTracker::GetOrCreateSharedMemoryDump(
     const SharedMemoryMapping& shared_memory,
     trace_event::ProcessMemoryDump* pmd) {
-  return GetOrCreateSharedMemoryDumpInternal(shared_memory.raw_memory_ptr(),
-                                             shared_memory.mapped_size(),
-                                             shared_memory.guid(), pmd);
+  return GetOrCreateSharedMemoryDumpInternal(
+      shared_memory.mapped_memory().data(),
+      shared_memory.mapped_memory().size(), shared_memory.guid(), pmd);
 }
 
 void SharedMemoryTracker::IncrementMemoryUsage(
     const SharedMemoryMapping& mapping) {
   AutoLock hold(usages_lock_);
-  DCHECK(usages_.find(mapping.raw_memory_ptr()) == usages_.end());
-  usages_.emplace(mapping.raw_memory_ptr(),
-                  UsageInfo(mapping.mapped_size(), mapping.guid()));
+  DCHECK(usages_.find(mapping.mapped_memory().data()) == usages_.end());
+  usages_.emplace(mapping.mapped_memory().data(),
+                  UsageInfo(mapping.mapped_memory().size(), mapping.guid()));
 }
 
 void SharedMemoryTracker::DecrementMemoryUsage(
     const SharedMemoryMapping& mapping) {
   AutoLock hold(usages_lock_);
-  DCHECK(usages_.find(mapping.raw_memory_ptr()) != usages_.end());
-  usages_.erase(mapping.raw_memory_ptr());
+  const auto it = usages_.find(mapping.mapped_memory().data());
+  CHECK(it != usages_.end());
+  usages_.erase(it);
 }
 
 SharedMemoryTracker::SharedMemoryTracker() {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "SharedMemoryTracker", nullptr);
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 SharedMemoryTracker::~SharedMemoryTracker() = default;
@@ -92,22 +89,23 @@ SharedMemoryTracker::GetOrCreateSharedMemoryDumpInternal(
     size_t mapped_size,
     const UnguessableToken& mapped_id,
     trace_event::ProcessMemoryDump* pmd) {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   const std::string dump_name = GetDumpNameForTracing(mapped_id);
   trace_event::MemoryAllocatorDump* local_dump =
       pmd->GetAllocatorDump(dump_name);
-  if (local_dump)
+  if (local_dump) {
     return local_dump;
+  }
 
   size_t virtual_size = mapped_size;
   // If resident size is not available, a virtual size is used as fallback.
   size_t size = virtual_size;
 #if defined(COUNT_RESIDENT_BYTES_SUPPORTED)
-  absl::optional<size_t> resident_size =
+  std::optional<size_t> resident_size =
       trace_event::ProcessMemoryDump::CountResidentBytesInSharedMemory(
           mapped_memory, mapped_size);
-  if (resident_size.has_value())
+  if (resident_size.has_value()) {
     size = resident_size.value();
+  }
 #endif
 
   local_dump = pmd->CreateAllocatorDump(dump_name);
@@ -126,10 +124,6 @@ SharedMemoryTracker::GetOrCreateSharedMemoryDumpInternal(
   pmd->AddOverridableOwnershipEdge(local_dump->guid(), global_dump->guid(),
                                    0 /* importance */);
   return local_dump;
-#else   // BUILDFLAG(ENABLE_BASE_TRACING)
-  NOTREACHED();
-  return nullptr;
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
-}  // namespace
+}  // namespace base

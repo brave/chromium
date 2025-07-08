@@ -22,11 +22,14 @@
 #include "components/prefs/json_pref_store.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_handle.h"
+#include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/nqe/effective_connection_type.h"
 #include "net/nqe/effective_connection_type_observer.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/nqe/network_quality_observation_source.h"
 #include "net/nqe/rtt_throughput_estimates_observer.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_tag.h"
 
 class PrefService;
 
@@ -92,6 +95,31 @@ class CronetContext {
     // Callback for StopNetLog() that signals that it is safe to access
     // the NetLog files.
     virtual void OnStopNetLogCompleted() = 0;
+
+    // Called before sending a tunnel establishment request. This is used to
+    // forward //net's ProxyDelegate::OnBeforeTunnelRequest to, the embedder
+    // provided, org.chromium.net.Proxy.Callback#onBeforeTunnelRequest.
+    // `extra_headers` should be modified to add headers that will be sent only
+    // to the proxy, as part of the tunnel establishment request.
+    // Return `true` if the tunnel establishment request is allowed to continue,
+    // `false` if it should be canceled. When canceled, we will attempt to
+    // connect via the next proxy in the list (see org.chromium.net.ProxyOptions
+    // for more info).
+    virtual bool OnBeforeTunnelRequest(
+        int chain_id,
+        net::HttpRequestHeaders* extra_headers) = 0;
+
+    // Called after receiving a response to the tunnel establishment request.
+    // This is used to forward //net's ProxyDelegate::OnTunnelHeadersReceived
+    // to, the embedder provided,
+    // org.chromium.net.Proxy.Callback#onTunnelHeadersReceived.
+    // Return `true` to allow using the tunnel connection to proxy requests,
+    // `false` to cancel the tunnel connection. When canceled, we will attempt
+    // to connect via the next proxy in the list (see
+    // org.chromium.net.ProxyOptions for more info).
+    virtual bool OnTunnelHeadersReceived(
+        int chain_id,
+        const net::HttpResponseHeaders& response_headers) = 0;
   };
 
   // Constructs CronetContext using |context_config|. The |callback|
@@ -153,6 +181,8 @@ class CronetContext {
   // flush any remaining writes to disk.
   void StopNetLog();
 
+  void FlushWritePropertiesForTesting();
+
   // Destroys the URLRequestContext associated to `network` if `network` has
   // disconnected and it has no pending URLRequests. This must be called on
   // the network thread while destroying a CronetURLRequest as that might
@@ -182,8 +212,6 @@ class CronetContext {
     return bidi_stream_detect_broken_connection_;
   }
   base::TimeDelta heartbeat_interval() const { return heartbeat_interval_; }
-
-  bool enable_telemetry() const { return enable_telemetry_; }
 
   // NetworkTasks performs tasks on the network thread and owns objects that
   // live on the network thread.
@@ -278,6 +306,15 @@ class CronetContext {
     // signals that it is safe to access the NetLog files.
     void StopNetLogCompleted();
 
+    // See CronetContext::Callback::OnBeforeTunnelRequest.
+    bool OnBeforeTunnelRequest(int chain_id,
+                               net::HttpRequestHeaders* extra_headers);
+
+    // See CronetContext::Callback::OnTunnelHeadersReceived.
+    bool OnTunnelHeadersReceived(
+        int chain_id,
+        const net::HttpResponseHeaders& response_headers);
+
     // Initializes Network Quality Estimator (NQE) prefs manager on network
     // thread.
     void InitializeNQEPrefs() const;
@@ -308,6 +345,10 @@ class CronetContext {
     // network thread.
     std::unique_ptr<net::URLRequestContext> BuildDefaultURLRequestContext(
         std::unique_ptr<net::ProxyConfigService> proxy_config_service);
+
+    raw_ptr<net::URLRequestContext> getDefaultContext() const {
+      return default_context_;
+    }
 
     std::unique_ptr<net::FileNetLogObserver> net_log_file_observer_;
 
@@ -373,9 +414,6 @@ class CronetContext {
   // If |bidi_stream_detect_broken_connection_| is true, this suggests the
   // period of the heartbeat signal.
   base::TimeDelta heartbeat_interval_;
-
-  // Whether Cronet Telemetry should be enabled or not.
-  bool enable_telemetry_;
 
   const int default_load_flags_;
 

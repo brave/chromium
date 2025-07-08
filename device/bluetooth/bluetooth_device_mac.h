@@ -8,10 +8,6 @@
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_gatt_service.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @class NSError;
 
 namespace device {
@@ -34,7 +30,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceMac : public BluetoothDevice {
       BluetoothGattService::GattErrorCode error_code);
   static BluetoothGattService::GattErrorCode GetGattErrorCodeFromNSError(
       NSError* error);
-  virtual bool IsLowEnergyDevice() = 0;
 
  protected:
   explicit BluetoothDeviceMac(BluetoothAdapter* adapter);

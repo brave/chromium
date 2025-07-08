@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
+
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/time/time.h"
@@ -23,6 +25,7 @@
 #include "cc/test/test_layer_tree_host_base.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/test/test_tile_priorities.h"
+#include "cc/tiles/eviction_tile_priority_queue.h"
 #include "cc/tiles/tile.h"
 #include "cc/tiles/tile_priority.h"
 #include "cc/trees/layer_tree_impl.h"
@@ -77,9 +80,11 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
 
   void RunRasterQueueConstructTest(const std::string& test_name,
                                    int layer_count) {
-    TreePriority priorities[] = {SAME_PRIORITY_FOR_BOTH_TREES,
-                                 SMOOTHNESS_TAKES_PRIORITY,
-                                 NEW_CONTENT_TAKES_PRIORITY};
+    auto priorities = std::to_array<TreePriority>({
+        SAME_PRIORITY_FOR_BOTH_TREES,
+        SMOOTHNESS_TAKES_PRIORITY,
+        NEW_CONTENT_TAKES_PRIORITY,
+    });
     int priority_count = 0;
 
     std::vector<FakePictureLayerImpl*> layers = CreateLayers(layer_count, 10);
@@ -102,9 +107,11 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
   void RunRasterQueueConstructAndIterateTest(const std::string& test_name,
                                              int layer_count,
                                              int tile_count) {
-    TreePriority priorities[] = {SAME_PRIORITY_FOR_BOTH_TREES,
-                                 SMOOTHNESS_TAKES_PRIORITY,
-                                 NEW_CONTENT_TAKES_PRIORITY};
+    auto priorities = std::to_array<TreePriority>({
+        SAME_PRIORITY_FOR_BOTH_TREES,
+        SMOOTHNESS_TAKES_PRIORITY,
+        NEW_CONTENT_TAKES_PRIORITY,
+    });
 
     std::vector<FakePictureLayerImpl*> layers = CreateLayers(layer_count, 100);
     for (auto* layer : layers)
@@ -133,11 +140,6 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
 
   void RunEvictionQueueConstructTest(const std::string& test_name,
                                      int layer_count) {
-    TreePriority priorities[] = {SAME_PRIORITY_FOR_BOTH_TREES,
-                                 SMOOTHNESS_TAKES_PRIORITY,
-                                 NEW_CONTENT_TAKES_PRIORITY};
-    int priority_count = 0;
-
     std::vector<FakePictureLayerImpl*> layers = CreateLayers(layer_count, 10);
     for (auto* layer : layers) {
       layer->UpdateTiles();
@@ -150,8 +152,7 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
     timer_.Reset();
     do {
       std::unique_ptr<EvictionTilePriorityQueue> queue(
-          host_impl()->BuildEvictionQueue(priorities[priority_count]));
-      priority_count = (priority_count + 1) % std::size(priorities);
+          host_impl()->BuildEvictionQueue());
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -163,11 +164,6 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
   void RunEvictionQueueConstructAndIterateTest(const std::string& test_name,
                                                int layer_count,
                                                int tile_count) {
-    TreePriority priorities[] = {SAME_PRIORITY_FOR_BOTH_TREES,
-                                 SMOOTHNESS_TAKES_PRIORITY,
-                                 NEW_CONTENT_TAKES_PRIORITY};
-    int priority_count = 0;
-
     std::vector<FakePictureLayerImpl*> layers =
         CreateLayers(layer_count, tile_count);
     for (auto* layer : layers) {
@@ -182,13 +178,12 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
     do {
       int count = tile_count;
       std::unique_ptr<EvictionTilePriorityQueue> queue(
-          host_impl()->BuildEvictionQueue(priorities[priority_count]));
+          host_impl()->BuildEvictionQueue());
       while (count--) {
         ASSERT_FALSE(queue->IsEmpty());
         ASSERT_TRUE(queue->Top().tile());
         queue->Pop();
       }
-      priority_count = (priority_count + 1) % std::size(priorities);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -206,9 +201,9 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
 
     // Adjust the width and height to account for the fact that tiles
     // are bigger than 1x1.
-    LayerListSettings settings;
-    width *= settings.default_tile_size.width();
-    height *= settings.default_tile_size.height();
+    const gfx::Size tile_size = LayerTreeSettings().default_tile_size;
+    width *= tile_size.width();
+    height *= tile_size.height();
 
     // Ensure that we start with blank trees and no tiles.
     ResetTrees();
@@ -216,8 +211,7 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
     gfx::Size layer_bounds(width, height);
     gfx::Rect viewport(width / 5, height / 5);
     host_impl()->active_tree()->SetDeviceViewportRect(viewport);
-    SetupDefaultTreesWithFixedTileSize(layer_bounds,
-                                       settings.default_tile_size);
+    SetupDefaultTreesWithFixedTileSize(layer_bounds, tile_size);
 
     std::vector<FakePictureLayerImpl*> layers;
 
@@ -247,7 +241,7 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
 
   GlobalStateThatImpactsTilePriority GlobalStateForTest() {
     GlobalStateThatImpactsTilePriority state;
-    gfx::Size tile_size = LayerTreeSettings().default_tile_size;
+    const gfx::Size tile_size = LayerTreeSettings().default_tile_size;
     state.soft_memory_limit_in_bytes =
         10000u * 4u *
         static_cast<size_t>(tile_size.width() * tile_size.height());

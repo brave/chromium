@@ -27,8 +27,8 @@ class FederatedIdentityAutoReauthnPermissionContextFactory
   ~FederatedIdentityAutoReauthnPermissionContextFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
-      content::BrowserContext* profile) const override;
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
+      content::BrowserContext* browser_context) const override;
 };
 
 #endif  // CHROME_BROWSER_WEBID_FEDERATED_IDENTITY_AUTO_REAUTHN_PERMISSION_CONTEXT_FACTORY_H_

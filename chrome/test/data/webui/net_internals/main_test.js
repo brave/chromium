@@ -4,7 +4,7 @@
 
 import {checkTabLinkVisibility} from './test_util.js';
 
-suite('NetInternalsMainTests', function() {
+suite('NetInternalsMainTest', function() {
   test('tab visibility state', function() {
     // Expected visibility state of each tab.
     const tabVisibilityState = {
@@ -14,7 +14,7 @@ suite('NetInternalsMainTests', function() {
       sockets: true,
       hsts: true,
       sharedDictionary: true,
-      // <if expr="chromeos_ash">
+      // <if expr="is_chromeos">
       chromeos: true,
       // </if>
     };

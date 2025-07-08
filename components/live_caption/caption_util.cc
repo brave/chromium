@@ -7,30 +7,24 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
-#include "base/cpu.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/live_caption/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "media/base/media_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/native_theme/native_theme.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_params_proxy.h"
-#endif
-
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
+#endif
+
+#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+#include "components/soda/soda_util.h"
 #endif
 
 namespace {
@@ -38,7 +32,7 @@ namespace {
 // Returns whether the style is default or not. If the user has changed any of
 // the captions settings from the default value, that is an interesting metric
 // to observe.
-bool IsDefaultStyle(absl::optional<ui::CaptionStyle> style) {
+bool IsDefaultStyle(std::optional<ui::CaptionStyle> style) {
   return (style.has_value() && style->text_size.empty() &&
           style->font_family.empty() && style->text_color.empty() &&
           style->background_color.empty() && style->text_shadow.empty());
@@ -53,9 +47,9 @@ std::string AddCSSImportant(std::string css_string) {
 }
 
 // Constructs the CaptionStyle struct from the caption-related preferences.
-absl::optional<ui::CaptionStyle> GetCaptionStyleFromPrefs(PrefService* prefs) {
+std::optional<ui::CaptionStyle> GetCaptionStyleFromPrefs(PrefService* prefs) {
   if (!prefs) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   ui::CaptionStyle style;
@@ -95,11 +89,11 @@ absl::optional<ui::CaptionStyle> GetCaptionStyleFromPrefs(PrefService* prefs) {
 
 namespace captions {
 
-absl::optional<ui::CaptionStyle> GetCaptionStyleFromUserSettings(
+std::optional<ui::CaptionStyle> GetCaptionStyleFromUserSettings(
     PrefService* prefs,
     bool record_metrics) {
   // Apply native CaptionStyle parameters.
-  absl::optional<ui::CaptionStyle> style;
+  std::optional<ui::CaptionStyle> style;
 
   // Apply native CaptionStyle parameters.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -133,56 +127,31 @@ absl::optional<ui::CaptionStyle> GetCaptionStyleFromUserSettings(
 }
 
 bool IsLiveCaptionFeatureSupported() {
-  if (!base::FeatureList::IsEnabled(media::kLiveCaption))
-    return false;
-
-// Some Chrome OS devices do not support on-device speech.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (!base::FeatureList::IsEnabled(ash::features::kOnDeviceSpeechRecognition))
-    return false;
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-  if (!chromeos::BrowserParamsProxy::Get()->IsOndeviceSpeechSupported())
-    return false;
-#endif
-
-#if BUILDFLAG(IS_LINUX)
-  // Check if the CPU has the required instruction set to run the Speech
-  // On-Device API (SODA) library.
-  static bool has_sse41 = base::CPU().has_sse41();
-  if (!has_sse41)
-    return false;
-#endif
-
-#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
-  // The Speech On-Device API (SODA) component does not support Windows on
-  // arm64.
-  return false;
+#if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+  return speech::IsOnDeviceSpeechRecognitionSupported();
 #else
-  return true;
-#endif
+  return false;
+#endif  // !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
+}
+
+bool IsHeadlessCaptionFeatureSupported() {
+  return base::FeatureList::IsEnabled(media::kHeadlessLiveCaption);
 }
 
 std::string GetCaptionSettingsUrl() {
 #if BUILDFLAG(IS_CHROMEOS)
   return "chrome://os-settings/audioAndCaptions";
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
-#if BUILDFLAG(IS_LINUX)
+#elif BUILDFLAG(IS_LINUX)
   return "chrome://settings/captions";
-#endif  // BUILDFLAG(IS_LINUX)
-
-#if BUILDFLAG(IS_WIN)
+#elif BUILDFLAG(IS_WIN)
   return base::win::GetVersion() >= base::win::Version::WIN10
              ? "chrome://settings/accessibility"
              : "chrome://settings/captions";
-#endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_MAC)
   return "chrome://settings/accessibility";
-#endif  // BUILDFLAG(IS_MAC)
-
+#else
   NOTREACHED();
-  return std::string();
+#endif
 }
 
 }  // namespace captions

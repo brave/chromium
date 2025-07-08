@@ -11,8 +11,12 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/threading/sequence_bound.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/media_log.h"
@@ -22,6 +26,7 @@
 #include "media/filters/file_data_source.h"
 #include "media/filters/memory_data_source.h"
 #include "media/media_buildflags.h"
+#include "media/mojo/services/gpu_mojo_media_client_test_util.h"
 #include "media/renderers/audio_renderer_impl.h"
 #include "media/renderers/renderer_impl.h"
 #include "media/test/fake_encrypted_media.h"
@@ -44,6 +49,12 @@
 #include "media/filters/vpx_video_decoder.h"
 #endif
 
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+#include "media/filters/hls_data_source_provider_impl.h"
+#include "media/filters/hls_manifest_demuxer_engine.h"
+#include "media/filters/manifest_demuxer.h"
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
+
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::AtLeast;
@@ -55,6 +66,33 @@ using ::testing::Return;
 using ::testing::SaveArg;
 
 namespace media {
+
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+namespace {
+
+class TestDataSourceFactory
+    : public HlsDataSourceProviderImpl::DataSourceFactory {
+ public:
+  ~TestDataSourceFactory() override = default;
+  void CreateDataSource(GURL uri, bool, DataSourceCb callback) override {
+    auto file_data_source = std::make_unique<FileDataSource>();
+    base::FilePath file_path(
+#if BUILDFLAG(IS_WIN)
+        // Windows file paths can't start with '/' the way unix file paths can,
+        // So we have to strip the leading one which comes from GetContent().
+        base::UTF8ToWide(uri.GetContent().erase(0, 1))
+#else
+        uri.GetContent()
+#endif
+    );
+    CHECK(file_data_source->Initialize(file_path))
+        << "Is " << file_path.value() << " missing?";
+    std::move(callback).Run(std::move(file_data_source));
+  }
+};
+
+}  // namespace
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
 
 static std::vector<std::unique_ptr<VideoDecoder>> CreateVideoDecodersForTest(
     MediaLog* media_log,
@@ -72,7 +110,7 @@ static std::vector<std::unique_ptr<VideoDecoder>> CreateVideoDecodersForTest(
 
 #if BUILDFLAG(ENABLE_DAV1D_DECODER)
   video_decoders.push_back(
-      std::make_unique<OffloadingDav1dVideoDecoder>(media_log));
+      std::make_unique<OffloadingDav1dVideoDecoder>(media_log->Clone()));
 #endif
 
 #if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
@@ -99,18 +137,12 @@ static std::vector<std::unique_ptr<AudioDecoder>> CreateAudioDecodersForTest(
   return audio_decoders;
 }
 
-const char kNullVideoHash[] = "d41d8cd98f00b204e9800998ecf8427e";
+const char kNullVideoHash[] =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const char kNullAudioHash[] = "0.00,0.00,0.00,0.00,0.00,0.00,";
 
 PipelineIntegrationTestBase::PipelineIntegrationTestBase()
-    :
-// Use a UI type message loop on macOS, because it doesn't seem to schedule
-// callbacks with enough precision to drive our fake audio output. See
-// https://crbug.com/1014646 for more details.
-#if BUILDFLAG(IS_MAC)
-      task_environment_(base::test::TaskEnvironment::MainThreadType::UI),
-#endif
-      hashing_enabled_(false),
+    : hashing_enabled_(false),
       clockless_playback_(false),
       webaudio_attached_(false),
       mono_output_(false),
@@ -119,6 +151,9 @@ PipelineIntegrationTestBase::PipelineIntegrationTestBase()
       pipeline_status_(PIPELINE_OK),
       last_video_frame_format_(PIXEL_FORMAT_UNKNOWN),
       current_duration_(kInfiniteDuration) {
+  hash_context_.emplace(crypto::hash::kSha256);
+  AddSupplementalCodecsForTesting();
+
   pipeline_ = std::make_unique<PipelineImpl>(
       task_environment_.GetMainThreadTaskRunner(),
       task_environment_.GetMainThreadTaskRunner(),
@@ -192,8 +227,8 @@ void PipelineIntegrationTestBase::DemuxerMediaTracksUpdatedCB(
   // Verify that track ids are unique.
   std::set<MediaTrack::Id> track_ids;
   for (const auto& track : tracks->tracks()) {
-    EXPECT_EQ(track_ids.end(), track_ids.find(track->id()));
-    track_ids.insert(track->id());
+    EXPECT_EQ(track_ids.end(), track_ids.find(track->track_id()));
+    track_ids.insert(track->track_id());
   }
 }
 
@@ -239,6 +274,43 @@ void PipelineIntegrationTestBase::SetCreateRendererCB(
     CreateRendererCB create_renderer_cb) {
   create_renderer_cb_ = std::move(create_renderer_cb);
 }
+
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+PipelineStatus PipelineIntegrationTestBase::StartPipelineWithHlsManifest(
+    const std::string& filename) {
+  hashing_enabled_ = true;
+
+  auto full_path = GetTestDataFilePath(filename);
+  std::string file_url = "file://" + full_path.MaybeAsASCII();
+  GURL manifest_root{file_url};
+
+  auto multibuffer_factory = std::make_unique<TestDataSourceFactory>();
+  // HlsManifestDemuxerEngine requires a SequenceBound data source provider,
+  // regardless of which sequence it's actually bound to.
+  auto hls_dsp = base::SequenceBound<HlsDataSourceProviderImpl>(
+      task_environment_.GetMainThreadTaskRunner(),
+      std::move(multibuffer_factory));
+
+  auto engine = std::make_unique<HlsManifestDemuxerEngine>(
+      std::move(hls_dsp), task_environment_.GetMainThreadTaskRunner(),
+      base::DoNothing(), base::DoNothing(),
+      /*name=*/false, manifest_root, &media_log_);
+  demuxer_ = std::make_unique<ManifestDemuxer>(
+      task_environment_.GetMainThreadTaskRunner(), base::DoNothing(),
+      std::move(engine), &media_log_);
+  EXPECT_CALL(*this, OnMetadata(_))
+      .Times(AtMost(1))
+      .WillRepeatedly(SaveArg<0>(&metadata_));
+
+  base::RunLoop run_loop;
+  pipeline_->Start(
+      Pipeline::StartType::kNormal, demuxer_.get(), this,
+      base::BindOnce(&PipelineIntegrationTestBase::OnStatusCallback,
+                     base::Unretained(this), run_loop.QuitClosure()));
+  RunUntilQuitOrEndedOrError(&run_loop);
+  return pipeline_status_;
+}
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
 
 PipelineStatus PipelineIntegrationTestBase::StartInternal(
     std::unique_ptr<DataSource> data_source,
@@ -496,7 +568,7 @@ void PipelineIntegrationTestBase::CreateDemuxer(
 }
 
 std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRenderer(
-    absl::optional<RendererType> renderer_type) {
+    std::optional<RendererType> renderer_type) {
   if (create_renderer_cb_)
     return create_renderer_cb_.Run(renderer_type);
 
@@ -504,7 +576,7 @@ std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRenderer(
 }
 
 std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRendererImpl(
-    absl::optional<RendererType> renderer_type) {
+    std::optional<RendererType> renderer_type) {
   if (renderer_type && *renderer_type != RendererType::kRendererImpl) {
     DVLOG(1) << __func__ << ": renderer_type not supported";
     return nullptr;
@@ -527,14 +599,14 @@ std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRendererImpl(
   if (!clockless_playback_) {
     DCHECK(!mono_output_) << " NullAudioSink doesn't specify output parameters";
 
-    audio_sink_ =
-        new NullAudioSink(task_environment_.GetMainThreadTaskRunner());
+    audio_sink_ = base::MakeRefCounted<NullAudioSink>(
+        task_environment_.GetMainThreadTaskRunner());
   } else {
     ChannelLayoutConfig output_layout_config =
         mono_output_ ? ChannelLayoutConfig::Mono()
                      : ChannelLayoutConfig::Stereo();
 
-    clockless_audio_sink_ = new ClocklessAudioSink(
+    clockless_audio_sink_ = base::MakeRefCounted<ClocklessAudioSink>(
         OutputDeviceInfo("", OUTPUT_DEVICE_STATUS_OK,
                          AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                                          output_layout_config, 44100, 512)));
@@ -588,7 +660,7 @@ void PipelineIntegrationTestBase::OnVideoFramePaint(
   if (!hashing_enabled_ || last_frame_ == frame)
     return;
   DVLOG(3) << __func__ << " pts=" << frame->timestamp().InSecondsF();
-  VideoFrame::HashFrameForTesting(&md5_context_, *frame);
+  VideoFrame::UpdateHashWithFrameForTesting(*hash_context_, *frame);
   last_frame_ = std::move(frame);
 }
 
@@ -606,14 +678,14 @@ base::TimeDelta PipelineIntegrationTestBase::GetStartTime() {
 
 void PipelineIntegrationTestBase::ResetVideoHash() {
   DVLOG(1) << __func__;
-  base::MD5Init(&md5_context_);
+  hash_context_.emplace(crypto::hash::kSha256);
 }
 
 std::string PipelineIntegrationTestBase::GetVideoHash() {
   DCHECK(hashing_enabled_);
-  base::MD5Digest digest;
-  base::MD5Final(&digest, &md5_context_);
-  return base::MD5DigestToBase16(digest);
+  std::array<uint8_t, crypto::hash::kSha256Size> digest;
+  hash_context_->Finish(digest);
+  return base::ToLowerASCII(base::HexEncode(digest));
 }
 
 const AudioHash& PipelineIntegrationTestBase::GetAudioHash() const {
@@ -731,7 +803,7 @@ PipelineStatus PipelineIntegrationTestBase::StartPipelineWithMediaSource(
 
   RunUntilQuitOrEndedOrError(&run_loop);
 
-  for (auto* stream : demuxer_->GetAllStreams()) {
+  for (media::DemuxerStream* stream : demuxer_->GetAllStreams()) {
     EXPECT_TRUE(stream->SupportsConfigChanges());
   }
 

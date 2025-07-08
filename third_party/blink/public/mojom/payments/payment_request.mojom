@@ -7,7 +7,7 @@ module payments.mojom;
 
 import "components/payments/mojom/payment_request_data.mojom";
 import "mojo/public/mojom/base/time.mojom";
-import "third_party/blink/public/mojom/payments/payment_credential.mojom";
+import "third_party/blink/public/mojom/payments/secure_payment_confirmation_service.mojom";
 import "url/mojom/origin.mojom";
 import "url/mojom/url.mojom";
 import "third_party/blink/public/mojom/webauthn/authenticator.mojom";
@@ -29,16 +29,8 @@ struct PaymentResponse {
   string? shipping_option;
   PayerDetail payer;
 
-  SecurePaymentConfirmationResponse? secure_payment_confirmation;
-};
-
-// A response for the "secure-payment-confirmation" payment method. A subset of
-// blink.mojom.GetAssertionAuthenticatorResponse.
-struct SecurePaymentConfirmationResponse {
-  blink.mojom.CommonCredentialInfo credential_info;
-  array<uint8> signature;
-  blink.mojom.AuthenticatorAttachment authenticator_attachment;
-  array<uint8>? user_handle;
+  // The assertion for secure payment confirmation.
+  blink.mojom.GetAssertionAuthenticatorResponse? get_assertion_authenticator_response;
 };
 
 struct PayerDetail {
@@ -56,6 +48,7 @@ enum PaymentErrorReason {
   INVALID_DATA_FROM_RENDERER,
   NOT_ALLOWED_ERROR,
   USER_OPT_OUT,
+  USER_ACTIVATION_REQUIRED,
 };
 
 enum CanMakePaymentQueryResult {
@@ -173,10 +166,30 @@ struct SecurePaymentConfirmationRequest {
   // Webauthn extensions to be set on the credential request.
   blink.mojom.AuthenticationExtensionsClientInputs? extensions;
 
+  // Specifies the types of algorithms that may be used for creating the
+  // browser bound keys that the relying party would accept. If empty a default
+  // is used instead.
+  array<blink.mojom.PublicKeyCredentialParameters> browser_bound_pub_key_cred_params;
+
   // Whether or not to render an 'opt out' experience on the browser-hosted UX,
   // which allows the user to indicate to the RP that they wish to remove any
   // RP-stored information.
   bool show_opt_out;
+
+  // A list of logos representing entities that are facilitating the payment
+  // that this SPC call is for.
+  array<PaymentEntityLogo> payment_entities_logos;
+};
+
+struct NetworkOrIssuerInformation {
+  string name;
+  url.mojom.Url icon;
+};
+
+struct PaymentEntityLogo {
+  // Only HTTP(s) or data URLs are permitted.
+  url.mojom.Url url;
+  string label;
 };
 
 struct PaymentMethodData {
@@ -233,10 +246,6 @@ struct PaymentDetails {
   string? id;
 
   string? stringified_payment_method_errors;
-
-  // Whether the execution context of the payment request has the
-  // PaymentHandlerMinimalHeaderUX feature enabled, e.g. via origin trial.
-  bool payment_handler_minimal_header_ux_enabled = false;
 };
 
 enum PaymentShippingType {

@@ -2,19 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * @fileoverview
- * This file is checked via TS, so we suppress Closure checks.
- * @suppress {checkTypes}
- */
-
 import {assertInstanceof} from 'chrome://resources/ash/common/assert.js';
 
-import {util} from '../../../../common/js/util.js';
+import {visitURL} from '../../../../common/js/util.js';
 import {Command} from '../command.js';
 
 import {getTemplate} from './state_banner.html.js';
-import {AllowedVolumeOrType, Banner} from './types.js';
+import {type AllowedVolumeOrType, Banner} from './types.js';
 
 /**
  * State banner is a type of banner that indicates the Files app has reached a
@@ -30,7 +24,7 @@ import {AllowedVolumeOrType, Banner} from './types.js';
  *
  *    class ConcreteStateBanner extends StateBanner {
  *      allowedVolumes() {
- *        return [{type: VolumeManagerCommon.VolumeType.DOWNLOADS}];
+ *        return [{type: VolumeType.DOWNLOADS}];
  *      }
  *    }
  *
@@ -70,7 +64,7 @@ export class StateBanner extends Banner {
   override connectedCallback() {
     // Attach an onclick handler to the extra-button slot. This enables a new
     // element to leverage the href tag on the element to have a URL opened.
-    // TODO(crbug.com/1228128): Add UMA trigger to capture number of extra
+    // TODO(crbug.com/40189485): Add UMA trigger to capture number of extra
     // button clicks.
     const extraButton = this.querySelector('[slot="extra-button"]');
     if (extraButton) {
@@ -101,7 +95,7 @@ export class StateBanner extends Banner {
           e.preventDefault();
           return;
         }
-        util.visitURL(extraButton.getAttribute('href')!);
+        visitURL(extraButton.getAttribute('href')!);
         e.preventDefault();
       });
     }

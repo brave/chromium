@@ -32,22 +32,38 @@ namespace blink {
 LayoutIFrame::LayoutIFrame(HTMLFrameOwnerElement* element)
     : LayoutEmbeddedContent(element) {}
 
-bool LayoutIFrame::ShouldComputeSizeAsReplaced() const {
-  NOT_DESTROYED();
-  return true;
+bool LayoutIFrame::IsResponsivelySized() const {
+  return StyleRef().ContainIntrinsicInlineSize().MatchesElement();
 }
 
-bool LayoutIFrame::IsInlineBlockOrInlineTable() const {
+void LayoutIFrame::UpdateAfterLayout() {
   NOT_DESTROYED();
-  return IsInline();
+  LayoutEmbeddedContent::UpdateAfterLayout();
+  if (!IsResponsivelySized()) {
+    return;
+  }
+  DCHECK(RuntimeEnabledFeatures::ResponsiveIframesEnabled());
+  if (!GetEmbeddedContentView() && GetFrameView()) {
+    GetFrameView()->AddPartToUpdate(*this);
+  }
 }
 
-void LayoutIFrame::UpdateLayout() {
+PhysicalNaturalSizingInfo LayoutIFrame::GetNaturalDimensions() const {
   NOT_DESTROYED();
-  DCHECK(NeedsLayout());
+  if (IsResponsivelySized()) {
+    DCHECK(RuntimeEnabledFeatures::ResponsiveIframesEnabled());
+    if (FrameView* frame_view = ChildFrameView()) {
+      if (std::optional<NaturalSizingInfo> sizing_info =
+              frame_view->GetNaturalDimensions()) {
+        // Scale based on our zoom as the embedded document doesn't have that
+        // info.
+        sizing_info->size.Scale(StyleRef().EffectiveZoom());
+        return PhysicalNaturalSizingInfo::FromSizingInfo(*sizing_info);
+      }
+    }
+  }
 
-  ClearLayoutOverflow();
-  ClearNeedsLayout();
+  return LayoutEmbeddedContent::GetNaturalDimensions();
 }
 
 }  // namespace blink

@@ -31,6 +31,7 @@
 #include "ui/compositor/test/layer_animation_stopped_waiter.h"
 #include "ui/compositor/test/test_utils.h"
 #include "ui/gfx/animation/linear_animation.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 
@@ -83,9 +84,8 @@ class ReturnToAppPanelTest : public AshTestBase {
 
   // AshTestBase:
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(features::kVideoConference);
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kCameraEffectsSupportedByHardware);
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kFeatureManagementVideoConference);
 
     // Instantiates a fake controller (the real one is created in
     // ChromeBrowserMainExtraPartsAsh::PreProfileInit() which is not called in
@@ -180,7 +180,7 @@ TEST_F(ReturnToAppPanelTest, OneApp) {
 
   auto* app_button = static_cast<ReturnToAppButton*>(
       return_to_app_container->children().front());
-  EXPECT_FALSE(app_button->expand_indicator()->GetVisible());
+  EXPECT_FALSE(app_button->expand_indicator_for_testing()->GetVisible());
   VerifyReturnToAppButtonInfo(app_button, is_capturing_camera,
                               is_capturing_microphone, is_capturing_screen,
                               /*display_text=*/title);
@@ -248,7 +248,7 @@ TEST_F(ReturnToAppPanelTest, ExpandCollapse) {
   auto* return_to_app_container = GetReturnToAppContainer(panel.get());
   auto* summary_row = static_cast<ReturnToAppButton*>(
       return_to_app_container->children().front());
-  EXPECT_TRUE(summary_row->expand_indicator()->GetVisible());
+  EXPECT_TRUE(summary_row->expand_indicator_for_testing()->GetVisible());
 
   auto* first_app_row =
       static_cast<ReturnToAppButton*>(return_to_app_container->children()[1]);
@@ -262,7 +262,7 @@ TEST_F(ReturnToAppPanelTest, ExpandCollapse) {
   EXPECT_TRUE(summary_row->icons_container()->GetVisible());
   EXPECT_EQ(l10n_util::GetStringUTF16(
                 IDS_ASH_VIDEO_CONFERENCE_RETURN_TO_APP_SHOW_TOOLTIP),
-            summary_row->expand_indicator()->GetTooltipText());
+            summary_row->expand_indicator_for_testing()->GetTooltipText());
   EXPECT_FALSE(first_app_row->GetVisible());
   EXPECT_FALSE(second_app_row->GetVisible());
 
@@ -276,7 +276,7 @@ TEST_F(ReturnToAppPanelTest, ExpandCollapse) {
   EXPECT_FALSE(summary_row->icons_container()->GetVisible());
   EXPECT_EQ(l10n_util::GetStringUTF16(
                 IDS_ASH_VIDEO_CONFERENCE_RETURN_TO_APP_HIDE_TOOLTIP),
-            summary_row->expand_indicator()->GetTooltipText());
+            summary_row->expand_indicator_for_testing()->GetTooltipText());
   EXPECT_TRUE(first_app_row->GetVisible());
   EXPECT_TRUE(second_app_row->GetVisible());
 
@@ -616,8 +616,6 @@ TEST_F(ReturnToAppPanelTest, ReturnToAppButtonAccessibleName) {
   auto* return_to_app_panel = GetReturnToAppPanel();
   auto* return_to_app_container = GetReturnToAppContainer(return_to_app_panel);
 
-  auto* summary_row = static_cast<ReturnToAppButton*>(
-      return_to_app_container->children().front());
   auto* first_app_row =
       static_cast<ReturnToAppButton*>(return_to_app_container->children()[1]);
   auto* second_app_row =
@@ -636,14 +634,64 @@ TEST_F(ReturnToAppPanelTest, ReturnToAppButtonAccessibleName) {
           VIDEO_CONFERENCE_TOGGLE_BUTTON_TYPE_SCREEN_SHARE));
 
   // Verify accessible name for each row.
-  EXPECT_EQ(expected_camera_text + expected_microphone_text +
-                expected_screen_share_text +
-                l10n_util::GetStringFUTF16Int(
-                    IDS_ASH_VIDEO_CONFERENCE_RETURN_TO_APP_SUMMARY_TEXT, 2),
-            summary_row->GetAccessibleName());
-  EXPECT_EQ(expected_camera_text + u"Meet", first_app_row->GetAccessibleName());
+  EXPECT_EQ(expected_camera_text + u"Meet",
+            first_app_row->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(expected_microphone_text + expected_screen_share_text + u"Zoom",
-            second_app_row->GetAccessibleName());
+            second_app_row->GetViewAccessibility().GetCachedName());
+}
+
+TEST_F(ReturnToAppPanelTest, ReturnToAppButtonSummaryRowAccessibleName) {
+  controller()->ClearMediaApps();
+  controller()->AddMediaApp(CreateFakeMediaApp(
+      /*is_capturing_camera=*/true, /*is_capturing_microphone=*/false,
+      /*is_capturing_screen=*/false, /*title=*/u"Meet",
+      /*url=*/kMeetTestUrl));
+  controller()->AddMediaApp(CreateFakeMediaApp(
+      /*is_capturing_camera=*/false, /*is_capturing_microphone=*/true,
+      /*is_capturing_screen=*/true, /*title=*/u"Zoom",
+      /*url=*/""));
+
+  LeftClickOn(toggle_bubble_button());
+  auto* return_to_app_panel = GetReturnToAppPanel();
+  auto* return_to_app_container = GetReturnToAppContainer(return_to_app_panel);
+
+  auto* summary_row = static_cast<ReturnToAppButton*>(
+      return_to_app_container->children().front());
+
+  auto expected_camera_text = l10n_util::GetStringFUTF16(
+      VIDEO_CONFERENCE_RETURN_TO_APP_PERIPHERALS_ACCESSIBLE_NAME,
+      l10n_util::GetStringUTF16(VIDEO_CONFERENCE_TOGGLE_BUTTON_TYPE_CAMERA));
+  auto expected_microphone_text = l10n_util::GetStringFUTF16(
+      VIDEO_CONFERENCE_RETURN_TO_APP_PERIPHERALS_ACCESSIBLE_NAME,
+      l10n_util::GetStringUTF16(
+          VIDEO_CONFERENCE_TOGGLE_BUTTON_TYPE_MICROPHONE));
+  auto expected_screen_share_text = l10n_util::GetStringFUTF16(
+      VIDEO_CONFERENCE_RETURN_TO_APP_PERIPHERALS_ACCESSIBLE_NAME,
+      l10n_util::GetStringUTF16(
+          VIDEO_CONFERENCE_TOGGLE_BUTTON_TYPE_SCREEN_SHARE));
+  auto expected_button_text =
+      expected_camera_text + expected_microphone_text +
+      expected_screen_share_text +
+      l10n_util::GetStringFUTF16Int(
+          IDS_ASH_VIDEO_CONFERENCE_RETURN_TO_APP_SUMMARY_TEXT, 2);
+
+  EXPECT_EQ(expected_button_text +
+                l10n_util::GetStringUTF16(
+                    VIDEO_CONFERENCE_RETURN_TO_APP_COLLAPSED_ACCESSIBLE_NAME),
+            summary_row->GetViewAccessibility().GetCachedName());
+
+  LeftClickOn(summary_row);
+
+  EXPECT_EQ(expected_button_text +
+                l10n_util::GetStringUTF16(
+                    VIDEO_CONFERENCE_RETURN_TO_APP_EXPANDED_ACCESSIBLE_NAME),
+            summary_row->GetViewAccessibility().GetCachedName());
+
+  LeftClickOn(summary_row);
+  EXPECT_EQ(expected_button_text +
+                l10n_util::GetStringUTF16(
+                    VIDEO_CONFERENCE_RETURN_TO_APP_COLLAPSED_ACCESSIBLE_NAME),
+            summary_row->GetViewAccessibility().GetCachedName());
 }
 
 }  // namespace ash::video_conference

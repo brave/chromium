@@ -82,8 +82,9 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
 AssistantOnboardingMode ToOnboardingMode(const std::string& onboarding_mode) {
   if (onboarding_mode == kAssistantOnboardingModeEducation)
     return AssistantOnboardingMode::kEducation;
-  if (onboarding_mode != kAssistantOnboardingModeDefault)
+  if (onboarding_mode != kAssistantOnboardingModeDefault) {
     NOTREACHED();
+  }
   return AssistantOnboardingMode::kDefault;
 }
 
@@ -95,7 +96,6 @@ std::string ToOnboardingModeString(AssistantOnboardingMode onboarding_mode) {
       return kAssistantOnboardingModeEducation;
   }
   NOTREACHED();
-  return std::string();
 }
 
 }  // namespace ash::assistant::prefs

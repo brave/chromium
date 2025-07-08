@@ -8,7 +8,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
 
 namespace cc {
@@ -72,10 +72,13 @@ class MockCanvas : public SkNoDrawCanvas {
   MOCK_METHOD5(onDrawArc,
                void(const SkRect&, SkScalar, SkScalar, bool, const SkPaint&));
   MOCK_METHOD1(didConcat44, void(const SkM44&));
+  MOCK_METHOD1(didSetM44, void(const SkM44&));
   MOCK_METHOD2(didScale, void(SkScalar, SkScalar));
   MOCK_METHOD2(didTranslate, void(SkScalar, SkScalar));
   MOCK_METHOD2(onDrawOval, void(const SkRect&, const SkPaint&));
   MOCK_METHOD2(onCustomCallback, void(SkCanvas*, uint32_t));
+  MOCK_METHOD2(onDrawGlyphRunList,
+               void(const sktext::GlyphRunList&, const SkPaint&));
 
   sk_sp<GrDirectContext> context_;
 };

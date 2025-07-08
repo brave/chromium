@@ -34,10 +34,10 @@ ScreenDetailed* ScreenDetails::currentScreen() const {
   if (screens_.empty())
     return nullptr;
 
-  auto* it = base::ranges::find(screens_, current_display_id_,
-                                &ScreenDetailed::DisplayId);
-  DCHECK(it != screens_.end());
-  return *it;
+  auto it = std::ranges::find(screens_, current_display_id_,
+                              &ScreenDetailed::DisplayId);
+  CHECK(it != screens_.end());
+  return it->Get();
 }
 
 const AtomicString& ScreenDetails::InterfaceName() const {
@@ -99,7 +99,7 @@ void ScreenDetails::UpdateScreenInfosImpl(LocalDOMWindow* window,
   }
 
   // Sort `screens_` by position; x first and then y.
-  base::ranges::stable_sort(screens_, [](ScreenDetailed* a, ScreenDetailed* b) {
+  std::ranges::stable_sort(screens_, [](ScreenDetailed* a, ScreenDetailed* b) {
     if (a->left() != b->left())
       return a->left() < b->left();
     return a->top() < b->top();
@@ -129,10 +129,6 @@ void ScreenDetails::UpdateScreenInfosImpl(LocalDOMWindow* window,
 
     // Enqueue a change event if screens were added or removed.
     if (added_or_removed) {
-      // Allow fullscreen requests shortly after user-generated screens changes.
-      // TODO(enne): consider doing this only when screens have been added.
-      window->GetFrame()->ActivateTransientAllowFullscreen();
-
       EnqueueEvent(*Event::Create(event_type_names::kScreenschange),
                    TaskType::kMiscPlatformAPI);
     }
@@ -142,16 +138,24 @@ void ScreenDetails::UpdateScreenInfosImpl(LocalDOMWindow* window,
     // find the info that corresponds to it in old_info and new_infos.
     for (Member<ScreenDetailed>& screen : screens_) {
       auto id = screen->DisplayId();
-      auto new_it = base::ranges::find(new_infos.screen_infos, id,
-                                       &display::ScreenInfo::display_id);
-      DCHECK(new_it != new_infos.screen_infos.end());
-      auto old_it = base::ranges::find(prev_screen_infos_.screen_infos, id,
-                                       &display::ScreenInfo::display_id);
-      if (old_it != prev_screen_infos_.screen_infos.end() &&
-          !ScreenDetailed::AreWebExposedScreenDetailedPropertiesEqual(
-              *old_it, *new_it)) {
-        screen->EnqueueEvent(*Event::Create(event_type_names::kChange),
-                             TaskType::kMiscPlatformAPI);
+      auto new_it = std::ranges::find(new_infos.screen_infos, id,
+                                      &display::ScreenInfo::display_id);
+      CHECK(new_it != new_infos.screen_infos.end());
+      auto old_it = std::ranges::find(prev_screen_infos_.screen_infos, id,
+                                      &display::ScreenInfo::display_id);
+      if (old_it != prev_screen_infos_.screen_infos.end()) {
+        if (!ScreenDetailed::AreWebExposedScreenDetailedPropertiesEqual(
+                *old_it, *new_it)) {
+          screen->EnqueueEvent(*Event::Create(event_type_names::kChange),
+                               TaskType::kMiscPlatformAPI);
+        }
+        if (RuntimeEnabledFeatures::ScreenDetailedHdrHeadroomEnabled()) {
+          if (!ScreenDetailed::AreHdrHeadroomEqual(*old_it, *new_it)) {
+            screen->EnqueueEvent(
+                *Event::Create(event_type_names::kHdrheadroomchange),
+                TaskType::kMiscPlatformAPI);
+          }
+        }
       }
     }
   }

@@ -12,10 +12,6 @@
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/views_export.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace views {
 
 class CocoaScrollBarThumb;
@@ -25,10 +21,10 @@ class VIEWS_EXPORT CocoaScrollBar : public ScrollBar,
                                     public ViewsScrollbarBridgeDelegate,
                                     public ui::ImplicitAnimationObserver,
                                     public gfx::AnimationDelegate {
- public:
-  METADATA_HEADER(CocoaScrollBar);
+  METADATA_HEADER(CocoaScrollBar, ScrollBar)
 
-  explicit CocoaScrollBar(bool horizontal);
+ public:
+  explicit CocoaScrollBar(ScrollBar::Orientation orientation);
 
   CocoaScrollBar(const CocoaScrollBar&) = delete;
   CocoaScrollBar& operator=(const CocoaScrollBar&) = delete;
@@ -79,8 +75,9 @@ class VIEWS_EXPORT CocoaScrollBar : public ScrollBar,
   bool OverlapsContent() const override;
 
   // View:
-  void Layout() override;
-  gfx::Size CalculatePreferredSize() const override;
+  void Layout(PassKey) override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:

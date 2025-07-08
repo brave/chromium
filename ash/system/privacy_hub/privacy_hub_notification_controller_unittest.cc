@@ -12,6 +12,7 @@
 #include "ash/public/cpp/test/test_system_tray_client.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/privacy_hub/microphone_privacy_switch_controller.h"
 #include "ash/system/privacy_hub/privacy_hub_controller.h"
 #include "ash/system/privacy_hub/privacy_hub_metrics.h"
 #include "ash/system/privacy_hub/sensor_disabled_notification_delegate.h"
@@ -49,12 +50,7 @@ class PrivacyHubNotificationControllerTest : public AshTestBase {
  public:
   PrivacyHubNotificationControllerTest()
       : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
-    scoped_feature_list_.InitAndEnableFeature(features::kCrosPrivacyHubV2);
-    auto delegate = std::make_unique<MockNewWindowDelegate>();
-    new_window_delegate_ = delegate.get();
-    window_delegate_provider_ =
-        std::make_unique<ash::TestNewWindowDelegateProvider>(
-            std::move(delegate));
+    scoped_feature_list_.InitWithFeatures({features::kCrosPrivacyHub}, {});
   }
 
   ~PrivacyHubNotificationControllerTest() override = default;
@@ -89,11 +85,8 @@ class PrivacyHubNotificationControllerTest : public AshTestBase {
 
   void ShowNotification(Sensor sensor) {
     if (sensor == Sensor::kMicrophone) {
-      Shell::Get()
-          ->privacy_hub_controller()
-          ->microphone_controller()
-          .OnInputMuteChanged(true,
-                              CrasAudioHandler::InputMuteChangeMethod::kOther);
+      MicrophonePrivacySwitchController::Get()->OnInputMuteChanged(
+          true, CrasAudioHandler::InputMuteChangeMethod::kOther);
       FakeCrasAudioClient::Get()->SetActiveInputStreamsWithPermission(
           {{"CRAS_CLIENT_TYPE_CHROME", 1}});
     } else {
@@ -103,11 +96,8 @@ class PrivacyHubNotificationControllerTest : public AshTestBase {
 
   void RemoveNotification(Sensor sensor) {
     if (sensor == Sensor::kMicrophone) {
-      Shell::Get()
-          ->privacy_hub_controller()
-          ->microphone_controller()
-          .OnInputMuteChanged(false,
-                              CrasAudioHandler::InputMuteChangeMethod::kOther);
+      MicrophonePrivacySwitchController::Get()->OnInputMuteChanged(
+          false, CrasAudioHandler::InputMuteChangeMethod::kOther);
       FakeCrasAudioClient::Get()->SetActiveInputStreamsWithPermission(
           {{"CRAS_CLIENT_TYPE_CHROME", 0}});
     } else {
@@ -129,14 +119,14 @@ class PrivacyHubNotificationControllerTest : public AshTestBase {
     return histogram_tester_;
   }
 
-  MockNewWindowDelegate* new_window_delegate() { return new_window_delegate_; }
+  MockNewWindowDelegate& new_window_delegate() { return new_window_delegate_; }
 
  private:
   const message_center::Notification* GetNotification(
       const std::string& id) const {
     const message_center::NotificationList::Notifications& notifications =
         message_center::MessageCenter::Get()->GetVisibleNotifications();
-    for (const auto* notification : notifications) {
+    for (const message_center::Notification* notification : notifications) {
       if (notification->id() == id) {
         return notification;
       }
@@ -147,9 +137,7 @@ class PrivacyHubNotificationControllerTest : public AshTestBase {
   raw_ptr<PrivacyHubNotificationController, DanglingUntriaged> controller_;
   const base::HistogramTester histogram_tester_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  raw_ptr<MockNewWindowDelegate, DanglingUntriaged> new_window_delegate_ =
-      nullptr;
-  std::unique_ptr<ash::TestNewWindowDelegateProvider> window_delegate_provider_;
+  MockNewWindowDelegate new_window_delegate_;
 };
 
 TEST_F(PrivacyHubNotificationControllerTest, CameraNotificationShowAndHide) {
@@ -463,7 +451,7 @@ TEST_F(PrivacyHubNotificationControllerTest, OpenPrivacyHubSupportPage) {
                   lean_more_sensor));
   };
 
-  EXPECT_CALL(*new_window_delegate(), OpenUrl).Times(2);
+  EXPECT_CALL(new_window_delegate(), OpenUrl).Times(2);
 
   test_sensor(Sensor::kMicrophone, PrivacyHubLearnMoreSensor::kMicrophone);
   test_sensor(Sensor::kCamera, PrivacyHubLearnMoreSensor::kCamera);

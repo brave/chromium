@@ -11,10 +11,6 @@
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace bookmarks {
 
 #if defined(TOOLKIT_VIEWS)
@@ -22,7 +18,7 @@ namespace bookmarks {
 // static
 const ui::ClipboardFormatType& BookmarkNodeData::GetBookmarkFormatType() {
   static const base::NoDestructor<ui::ClipboardFormatType> format(
-      ui::ClipboardFormatType::GetType(
+      ui::ClipboardFormatType::CustomPlatformType(
           base::SysNSStringToUTF8(kUTTypeChromiumBookmarkDictionaryList)));
 
   return *format;
@@ -37,10 +33,10 @@ bool BookmarkNodeData::ClipboardContainsBookmarks() {
   return PasteboardContainsBookmarks(pb);
 }
 
-void BookmarkNodeData::WriteToClipboard() {
+void BookmarkNodeData::WriteToClipboard(bool is_off_the_record) {
   NSPasteboard* pb =
       ui::clipboard_util::PasteboardFromBuffer(ui::ClipboardBuffer::kCopyPaste);
-  WriteBookmarksToPasteboard(pb, elements, profile_path_);
+  WriteBookmarksToPasteboard(pb, elements, profile_path_, is_off_the_record);
 }
 
 bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardBuffer buffer) {
@@ -61,7 +57,10 @@ void BookmarkNodeData::Write(const base::FilePath& profile_path,
   ui::OSExchangeDataProviderMac& provider =
       static_cast<ui::OSExchangeDataProviderMac&>(data->provider());
   NSPasteboard* pb = provider.GetPasteboard();
-  WriteBookmarksToPasteboard(pb, elements, profile_path);
+  // TODO(crbug.com/40945200): Add support for off-the-record bookmarks during
+  // drag and drop.
+  WriteBookmarksToPasteboard(pb, elements, profile_path,
+                             /*is_off_the_record=*/false);
 }
 
 bool BookmarkNodeData::Read(const ui::OSExchangeData& data) {

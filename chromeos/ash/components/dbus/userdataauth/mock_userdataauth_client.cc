@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 
 namespace ash {
 
@@ -33,6 +33,26 @@ void MockUserDataAuthClient::AddFingerprintAuthObserver(
 
 void MockUserDataAuthClient::RemoveFingerprintAuthObserver(
     FingerprintAuthObserver* observer) {
+  NOTIMPLEMENTED();
+}
+
+void MockUserDataAuthClient::AddPrepareAuthFactorProgressObserver(
+    PrepareAuthFactorProgressObserver* observer) {
+  NOTIMPLEMENTED();
+}
+
+void MockUserDataAuthClient::RemovePrepareAuthFactorProgressObserver(
+    PrepareAuthFactorProgressObserver* observer) {
+  NOTIMPLEMENTED();
+}
+
+void MockUserDataAuthClient::AddAuthFactorStatusUpdateObserver(
+    AuthFactorStatusUpdateObserver* observer) {
+  NOTIMPLEMENTED();
+}
+
+void MockUserDataAuthClient::RemoveAuthFactorStatusUpdateObserver(
+    AuthFactorStatusUpdateObserver* observer) {
   NOTIMPLEMENTED();
 }
 

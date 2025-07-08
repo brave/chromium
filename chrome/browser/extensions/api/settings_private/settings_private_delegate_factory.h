@@ -8,9 +8,9 @@
 #include "base/no_destructor.h"
 #include "chrome/browser/profiles/profile_keyed_service_factory.h"
 
-namespace context {
+namespace content {
 class BrowserContext;
-}
+}  // namespace content
 
 namespace extensions {
 class SettingsPrivateDelegate;
@@ -35,7 +35,7 @@ class SettingsPrivateDelegateFactory : public ProfileKeyedServiceFactory {
   ~SettingsPrivateDelegateFactory() override;
 
   // BrowserContextKeyedServiceFactory implementation.
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* profile) const override;
 };
 

@@ -18,9 +18,9 @@
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_update.h"
-#include "ui/accessibility/single_ax_tree_manager.h"
 #include "ui/accessibility/test_ax_node_helper.h"
 #include "ui/accessibility/test_ax_tree_update.h"
+#include "ui/accessibility/test_single_ax_tree_manager.h"
 
 namespace ui {
 
@@ -52,7 +52,7 @@ constexpr AXNodeID EMPTY_PARAGRAPH_ID = 19;
 
 class TestAXRangeScreenRectDelegate : public AXRangeRectDelegate {
  public:
-  explicit TestAXRangeScreenRectDelegate(SingleAXTreeManager* tree_manager)
+  explicit TestAXRangeScreenRectDelegate(TestSingleAXTreeManager* tree_manager)
       : tree_manager_(tree_manager) {}
   virtual ~TestAXRangeScreenRectDelegate() = default;
   TestAXRangeScreenRectDelegate(const TestAXRangeScreenRectDelegate& delegate) =
@@ -65,7 +65,7 @@ class TestAXRangeScreenRectDelegate : public AXRangeRectDelegate {
       AXNodeID node_id,
       int start_offset,
       int end_offset,
-      const ui::AXClippingBehavior clipping_behavior,
+      const AXClippingBehavior clipping_behavior,
       AXOffscreenResult* offscreen_result) override {
     if (tree_manager_->GetTreeID() != tree_id)
       return gfx::Rect();
@@ -74,8 +74,7 @@ class TestAXRangeScreenRectDelegate : public AXRangeRectDelegate {
     if (!node)
       return gfx::Rect();
 
-    TestAXNodeHelper* wrapper =
-        TestAXNodeHelper::GetOrCreate(tree_manager_->GetTree(), node);
+    auto wrapper = TestAXNodeHelper::Create(tree_manager_->GetTree(), node);
     return wrapper->GetInnerTextRangeBoundsRect(
         start_offset, end_offset, AXCoordinateSystem::kScreenDIPs,
         clipping_behavior, offscreen_result);
@@ -91,18 +90,17 @@ class TestAXRangeScreenRectDelegate : public AXRangeRectDelegate {
     if (!node)
       return gfx::Rect();
 
-    TestAXNodeHelper* wrapper =
-        TestAXNodeHelper::GetOrCreate(tree_manager_->GetTree(), node);
+    auto wrapper = TestAXNodeHelper::Create(tree_manager_->GetTree(), node);
     return wrapper->GetBoundsRect(AXCoordinateSystem::kScreenDIPs,
                                   AXClippingBehavior::kClipped,
                                   offscreen_result);
   }
 
  private:
-  const raw_ptr<SingleAXTreeManager> tree_manager_;
+  const raw_ptr<TestSingleAXTreeManager> tree_manager_;
 };
 
-class AXRangeTest : public ::testing::Test, public SingleAXTreeManager {
+class AXRangeTest : public ::testing::Test, public TestSingleAXTreeManager {
  public:
   const std::u16string EMPTY = u"";
   const std::u16string NEWLINE = u"\n";
@@ -887,7 +885,7 @@ TEST_F(AXRangeTest, GetTextWithContainersInsideListItems) {
                             .append(part4);
   EXPECT_EQ(text, forward_range.GetText(
                       AXTextConcatenationBehavior::kWithParagraphBreaks,
-                      AXEmbeddedObjectBehavior::kExposeCharacter));
+                      AXEmbeddedObjectBehavior::kExposeCharacterForHypertext));
 }
 
 TEST_F(AXRangeTest, GetTextWithWholeObjects) {
@@ -1160,19 +1158,22 @@ TEST_F(AXRangeTest, GetTextAddingNewlineBetweenParagraphs) {
                                          range_end->Clone());
     TestPositionRange backward_test_range(std::move(range_end),
                                           std::move(range_start));
-    size_t appended_newlines_count = 0;
+    std::vector<size_t> appended_newlines_indices;
     EXPECT_EQ(expected_text,
               forward_test_range.GetText(
                   AXTextConcatenationBehavior::kWithParagraphBreaks,
                   g_ax_embedded_object_behavior, -1, false,
-                  &appended_newlines_count));
-    EXPECT_EQ(expected_appended_newlines_count, appended_newlines_count);
+                  &appended_newlines_indices));
+    EXPECT_EQ(expected_appended_newlines_count,
+              appended_newlines_indices.size());
+    appended_newlines_indices.clear();
     EXPECT_EQ(expected_text,
               backward_test_range.GetText(
                   AXTextConcatenationBehavior::kWithParagraphBreaks,
                   g_ax_embedded_object_behavior, -1, false,
-                  &appended_newlines_count));
-    EXPECT_EQ(expected_appended_newlines_count, appended_newlines_count);
+                  &appended_newlines_indices));
+    EXPECT_EQ(expected_appended_newlines_count,
+              appended_newlines_indices.size());
   };
 
   std::u16string button_start_to_line1_end =

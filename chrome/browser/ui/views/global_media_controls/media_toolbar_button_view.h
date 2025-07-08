@@ -23,8 +23,9 @@ class MediaToolbarButtonContextualMenu;
 // media session.
 class MediaToolbarButtonView : public ToolbarButton,
                                public MediaToolbarButtonControllerDelegate {
+  METADATA_HEADER(MediaToolbarButtonView, ToolbarButton)
+
  public:
-  METADATA_HEADER(MediaToolbarButtonView);
   MediaToolbarButtonView(
       BrowserView* browser_view,
       std::unique_ptr<MediaToolbarButtonContextualMenu> context_menu);
@@ -40,6 +41,7 @@ class MediaToolbarButtonView : public ToolbarButton,
   void Hide() override;
   void Enable() override;
   void Disable() override;
+  void MaybeShowLocalMediaCastingPromo() override;
   void MaybeShowStopCastingPromo() override;
 
   MediaToolbarButtonController* media_toolbar_button_controller() {
@@ -48,9 +50,9 @@ class MediaToolbarButtonView : public ToolbarButton,
 
  private:
   void ButtonPressed();
-  void ClosePromoBubble();
+  void ClosePromoBubble(bool engaged);
 
-  const raw_ptr<const Browser> browser_;
+  const raw_ptr<Browser> browser_;
 
   const raw_ptr<MediaNotificationService> service_;
 

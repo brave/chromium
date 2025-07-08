@@ -9,7 +9,10 @@
 
 #include "chrome/common/extensions/api/notifications.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/message_center/public/cpp/notification_types.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class Profile;
 
@@ -74,7 +77,7 @@ class NotificationsCreateFunction : public NotificationsApiFunction {
   ~NotificationsCreateFunction() override;
 
  private:
-  absl::optional<api::notifications::Create::Params> params_;
+  std::optional<api::notifications::Create::Params> params_;
 
   DECLARE_EXTENSION_FUNCTION("notifications.create", NOTIFICATIONS_CREATE)
 };
@@ -90,7 +93,7 @@ class NotificationsUpdateFunction : public NotificationsApiFunction {
   ~NotificationsUpdateFunction() override;
 
  private:
-  absl::optional<api::notifications::Update::Params> params_;
+  std::optional<api::notifications::Update::Params> params_;
 
   DECLARE_EXTENSION_FUNCTION("notifications.update", NOTIFICATIONS_UPDATE)
 };
@@ -106,7 +109,7 @@ class NotificationsClearFunction : public NotificationsApiFunction {
   ~NotificationsClearFunction() override;
 
  private:
-  absl::optional<api::notifications::Clear::Params> params_;
+  std::optional<api::notifications::Clear::Params> params_;
 
   DECLARE_EXTENSION_FUNCTION("notifications.clear", NOTIFICATIONS_CLEAR)
 };

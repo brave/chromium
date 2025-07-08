@@ -2,16 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+
+import {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chromeos/chai_assert.js';
 
-import {mockUtilVisitURL} from '../common/js/mock_util.js';
 import {waitForElementUpdate} from '../common/js/unittest_util.js';
-import {getEmptyState} from '../state/store.js';
+import {getLastVisitedURL} from '../common/js/util.js';
+import {updateBulkPinProgress} from '../state/ducks/bulk_pinning.js';
+import {getEmptyState, getStore} from '../state/store.js';
 
-import {BulkPinStage, XfBulkPinningDialog} from './xf_bulk_pinning_dialog.js';
+import type {XfBulkPinningDialog} from './xf_bulk_pinning_dialog.js';
+import {BulkPinStage} from './xf_bulk_pinning_dialog.js';
 
 export function setUp() {
-  document.body.innerHTML = '<xf-bulk-pinning-dialog></xf-bulk-pinning-dialog>';
+  document.body.innerHTML = getTrustedHTML`
+    <xf-bulk-pinning-dialog></xf-bulk-pinning-dialog>
+  `;
 }
 
 // Gets the <xf-bulk-pinning-dialog> element.
@@ -26,13 +34,18 @@ async function getDialog(): Promise<XfBulkPinningDialog> {
 
 
 // Gets a footer of the given dialog.
-function getFooter(dialog: XfBulkPinningDialog, id: string): HTMLDivElement {
+function getFooter(dialog: XfBulkPinningDialog, id: string): HTMLElement {
   return dialog.shadowRoot!.querySelector(`#${id}`)!;
 }
 
 // Gets a button of the given dialog.
 function getButton(dialog: XfBulkPinningDialog, id: string): HTMLButtonElement {
   return dialog.shadowRoot!.querySelector(`#${id}`)!;
+}
+
+// Gets the `innerText` of the <span> element of the given dialog.
+function getSpanText(dialog: XfBulkPinningDialog, id: string): string {
+  return dialog.shadowRoot!.querySelector<HTMLSpanElement>(`#${id}`)!.innerText;
 }
 
 // Tests that XfBulkPinningDialog.onStateChanged() correctly reacts to app State
@@ -347,14 +360,10 @@ export async function testLearnMore() {
   const link =
       dialog.shadowRoot!.querySelector<HTMLAnchorElement>('#learn-more-link')!;
   assertNotEquals(null, link);
-  const visit = mockUtilVisitURL();
-  try {
-    link.click();
-    assertEquals(
-        visit.getURL(), 'https://support.google.com/chromebook?p=my_drive_cbx');
-  } finally {
-    visit.restoreVisitURL();
-  }
+  link.click();
+  assertEquals(
+      getLastVisitedURL(),
+      'https://support.google.com/chromebook?p=my_drive_cbx');
 }
 
 
@@ -379,4 +388,37 @@ export async function testViewStorage() {
   };
   link.click();
   assertEquals('storage', gotPage);
+}
+
+// Test when listed files has a count, it appears in the footer dialog.
+export async function testFileCountUpdates() {
+  const store = getStore();
+  store.init(getEmptyState());
+
+  const dialog = await getDialog();
+  assertNotEquals(null, dialog);
+  assertFalse(dialog.is_open);
+
+  // Show the dialog.
+  await dialog.show();
+  assertTrue(dialog.is_open);
+
+  // Dispatch the listing files state with 100 files listed.
+  const bulkPinning: chrome.fileManagerPrivate.BulkPinProgress = {
+    stage: BulkPinStage.LISTING_FILES,
+    freeSpaceBytes: 0,
+    requiredSpaceBytes: 0,
+    bytesToPin: 0,
+    pinnedBytes: 0,
+    filesToPin: 100,
+    remainingSeconds: 0,
+    shouldPin: true,
+    emptiedQueue: false,
+    listedFiles: 100,
+  };
+  store.dispatch(updateBulkPinProgress(bulkPinning));
+  await waitForElementUpdate(dialog);
+  assertEquals(
+      'Checking storage space… 100 items found',
+      getSpanText(dialog, 'listing-files-text'));
 }

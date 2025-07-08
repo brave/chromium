@@ -1,4 +1,4 @@
-# TODO(crbug.com/1413706): remove lines as more tests are supported on the platform.
+# TODO(crbug.com/40255779): remove lines as more tests are supported on the platform.
 
 -AccessibilityActionBrowserTest.ScrollIntoView
 -All/BackForwardCacheMetricsBrowserTest.RestoreNavigationToNextPaint/BFCacheEnabled
@@ -8,44 +8,16 @@
 -All/CompositedScrollingMetricTest.PassiveEventHandlers/1
 -All/CompositedScrollingMetricTest.RecordCorrectScrollingThread/0
 -All/CompositedScrollingMetricTest.RecordCorrectScrollingThread/1
--All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNested/blink0
--All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNested/blink1
--All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNestedCrossProcess/blink0
--All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNestedCrossProcess/blink1
--All/DumpAccessibilityTreeTest.AccessibilityLabelWithSelectedOption/blink0
--All/DumpAccessibilityTreeTest.AccessibilityLabelWithSelectedOption/blink1
--All/DumpAccessibilityTreeTest.AccessibilityLinkTarget/blink0
--All/DumpAccessibilityTreeTest.AccessibilityLinkTarget/blink1
--All/DumpAccessibilityTreeTest.AccessibilityOffscreen/blink0
--All/DumpAccessibilityTreeTest.AccessibilityOffscreen/blink1
--All/DumpAccessibilityTreeTest.AccessibilityOffscreenScroll/blink0
--All/DumpAccessibilityTreeTest.AccessibilityOffscreenScroll/blink1
--All/DumpAccessibilityTreeTest.AccessibilityOffscreenSelect/blink0
--All/DumpAccessibilityTreeTest.AccessibilityOffscreenSelect/blink1
--All/DumpAccessibilityTreeTest.AccessibilityOptgroup/blink0
--All/DumpAccessibilityTreeTest.AccessibilityOptgroup/blink1
--All/DumpAccessibilityTreeTest.AccessibilityPopoverApi/blink0
--All/DumpAccessibilityTreeTest.AccessibilityPopoverApi/blink1
--All/DumpAccessibilityTreeTest.AccessibilitySelect/blink0
--All/DumpAccessibilityTreeTest.AccessibilitySelect/blink1
--All/DumpAccessibilityTreeTest.AccessibilityWindowCropsItems/blink0
--All/DumpAccessibilityTreeTest.AccessibilityWindowCropsItems/blink1
--All/DumpAccessibilityTreeTest.ReusedMapChangeUsemap/blink0
--All/DumpAccessibilityTreeTest.ReusedMapChangeUsemap/blink1
--All/DumpAccessibilityTreeTestWithIgnoredNodes.AccessibilityInputRadioCheckboxLabel/blink0
--All/DumpAccessibilityTreeTestWithIgnoredNodes.AccessibilityInputRadioCheckboxLabel/blink1
--All/InitialEmptyDocNavigationControllerBrowserTest.NavigateNewWindow/RDAllFrames_BrowserInitiated
--All/InitialEmptyDocNavigationControllerBrowserTest.NavigateNewWindow/RDAllFrames_RendererInitiated
--All/InitialEmptyDocNavigationControllerBrowserTest.NavigateNewWindow/RDCrashedFrame_BrowserInitiated
--All/InitialEmptyDocNavigationControllerBrowserTest.NavigateNewWindow/RDCrashedFrame_RendererInitiated
--All/SSLPrerenderBrowserTest.CertificateValidation_Navigation/ClientCertRequested
--All/SSLPrerenderBrowserTest.CertificateValidation_SWMainResource/ClientCertRequested
--All/SSLPrerenderBrowserTest.CertificateValidation_SWSubResource/ClientCertRequested
--All/SSLPrerenderBrowserTest.CertificateValidation_Subresource/ClientCertRequested
--All/ScrollBehaviorBrowserTest.InstantScriptScrollAdjustsSmoothWheelScroll/0
--All/ScrollBehaviorBrowserTest.InstantScriptScrollAdjustsSmoothWheelScroll/1
--All/ScrollBehaviorBrowserTest.SmoothWheelScrollCompletesWithScriptedMirror/0
--All/ScrollBehaviorBrowserTest.SmoothWheelScrollCompletesWithScriptedMirror/1
+-All/CustomizableSelectEnabledDumpAccessibilityTreeTest.AccessibilitySelect/blink
+-All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNested/blink
+-All/DumpAccessibilityTreeTest.AccessibilityIframeTransformNestedCrossProcess/blink
+-All/DumpAccessibilityTreeTest.AccessibilityLabelWithSelectedOption/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOptgroup/blink
+-All/DumpAccessibilityTreeTest.AccessibilityPopoverApi/blink
+-All/DumpAccessibilityTreeTest.AccessibilitySelect/blink
+-All/DumpAccessibilityTreeTest.AccessibilitySelectionContainer/blink
+-All/DumpAccessibilityTreeTest.AccessibilityWindowCropsItems/blink
+-All/DumpAccessibilityTreeTest.ShadowDomFirstChild/blink
 -All/ScrollingIntegrationTest.ScrollAfterCrossOriginNavigation/0
 -All/ScrollingIntegrationTest.ScrollAfterCrossOriginNavigation/1
 -All/SitePerProcessBrowserTest.FrameOwnerPropertiesPropagationScrolling/0
@@ -54,7 +26,6 @@
 -All/SitePerProcessBrowserTest.TextAutosizerPageInfo/1
 -All/SitePerProcessBrowserTest.TwoSubframesCreatePopupMenuWidgetsSimultaneously/0
 -All/SitePerProcessBrowserTest.TwoSubframesCreatePopupMenuWidgetsSimultaneously/1
--All/SyntheticInputTest.SmoothScrollWheel/0
 -All/TouchpadPinchBrowserTest.TouchpadPinchChangesPageScale/0
 -All/TouchpadPinchBrowserTest.TouchpadPinchChangesPageScale/1
 -All/TouchpadPinchBrowserTest.WheelListenerAllowingPinch/0
@@ -63,42 +34,30 @@
 -All/TouchpadPinchBrowserTest.WheelListenerPreventingDoubleTap/1
 -All/TouchpadPinchBrowserTest.WheelListenerPreventingPinch/0
 -All/TouchpadPinchBrowserTest.WheelListenerPreventingPinch/1
--All/WorkerTest.WebSocketSharedWorker/0
--All/WorkerTest.WebSocketSharedWorker/1
--All/WorkerTest.WebSocketSharedWorker/2
--All/WorkerTest.WorkerTlsClientAuthFetch/0
--All/WorkerTest.WorkerTlsClientAuthFetch/1
--All/WorkerTest.WorkerTlsClientAuthFetch/2
--All/WorkerTest.WorkerTlsClientAuthImportScripts/0
--All/WorkerTest.WorkerTlsClientAuthImportScripts/1
--All/WorkerTest.WorkerTlsClientAuthImportScripts/2
+-BackForwardCacheBrowserTest.BlockAndUnblockFromHTMLFile
+-BackForwardCacheBrowserTest.BlockAndUnblockFromJavaScriptFile
 -BackForwardCacheBrowserTest.DoesNotCacheIfRunFileChooserIsInvoked
+-BackForwardCacheBrowserTest.MultipleBlocksFromHTMLFile
+-BackForwardCacheBrowserTest.MultipleBlocksFromJavaScriptFile
+-BackForwardCacheBrowserTest.StickyFeaturesWithDetails
 -BackForwardCacheBrowserTest.WebSocketCachedIfClosed
 -BackForwardCacheBrowserTest.WebSocketNotCached
+-BackForwardCacheBrowserTestDisableCCNS.CCNSAndWebSocketBothRecorded
 -BackgroundTracingManagerBrowserTest.PerfettoSystemBackgroundScenarioDefaultName
 -BackgroundTracingManagerBrowserTest.PerfettoSystemBackgroundScenarioRuleId
 -BrowserGpuChannelHostFactoryTest.GrContextKeepsGpuChannelAlive
--BrowserSideFlingBrowserTest.EarlyTouchpadFlingCancelationOnInertialGSUAckNotConsumed
--BrowserSideFlingBrowserTest.EarlyTouchscreenFlingCancelationOnInertialGSUAckNotConsumed
 -CaptureScreenshotTest.CaptureScreenshotBeyondViewport_InnerScrollbarsAreShown
 -CaptureScreenshotTest.TransparentScreenshotsFull
--ClientCertBrowserTest.InvokeClientCertCancellationCallback
 -ContentBrowserTest.RendererCrashCallStack
 -ContentSecurityPolicyIsolatedAppWebSocketBrowserTest.CheckCsp/Ws
 -ContentSecurityPolicyIsolatedAppWebSocketBrowserTest.CheckCsp/Wss
--CrossPlatformAccessibilityBrowserTest.FlexBoxBoundingBoxUpdatesOnWindowResize
--CrossPlatformAccessibilityBrowserTest.SelectListWithOptgroupActiveDescendant
 -DataDecoderBrowserTest.DecodeImage
 -DataDecoderBrowserTest.DecodeImageIsolated
--Default/MediaTest.VideoBear12DepthVP9/0
--Default/MediaTest.VideoBearHighBitDepthVP9/0
--Default/MediaTest.VideoBearHighBitDepthVP9/1
 -DevToolsProtocolDeviceEmulationPrerenderTest.DeviceSize
 -DevToolsProtocolDeviceEmulationTest.DeviceSize
 -DohHttpsProtocolUpgradeBrowserTest.HttpsProtocolUpgrade
 -DohHttpsProtocolUpgradeBrowserTest.NoProtocolUpgrade
 -FakeSystemTracingDevToolsProtocolTest.TracingWithFakeSystemBackend
--FontPreferencesBrowserTest.GenericFamilies
 -FontUniqueNameBrowserTest.ContentLocalFontsMatching
 -InputEventBrowserTest.MouseDownEventTimeStamp
 -KeyboardLockBrowserTest.CancelInFullscreen
@@ -114,17 +73,11 @@
 -KeyboardLockBrowserTest.LockCalledBeforeFullscreen
 -KeyboardLockBrowserTest.LockRequestBeforeCrossOriginIFrameIsFullscreen
 -KeyboardLockBrowserTest.LockRequestWhileCrossOriginIFrameIsFullscreen
--MSE_ClearKey/EncryptedMediaTest.Playback_VideoOnly_MP4_VP9Profile2/0
--MSE_ClearKey/EncryptedMediaTest.Playback_VideoOnly_WebM_VP9Profile2/0
--MediaColorTest.Yuv420pTheora
--MediaColorTest.Yuv420pVp8
 -MemoryInstrumentationTest.PrivateFootprintComputation
 -MojoSandboxTest.IsProcessSandboxed
 -NetworkResponseProtocolECHTest.SecurityDetailsECH
 -NoCompositingRenderWidgetHostViewBrowserTest.NoFallbackAfterHiddenNavigationFails
--NoCompositingRenderWidgetHostViewBrowserTest.NoFallbackIfSwapFailedBeforeNavigation
 -NoCompositingRenderWidgetHostViewBrowserTest.ValidLocalSurfaceIdAfterHiddenNavigation
--NoCompositingRenderWidgetHostViewBrowserTest.ValidLocalSurfaceIdAfterInitialNavigation
 -NoGPUCaptureScreenshotTest.LargeScreenshot
 -PointerLockBrowserTest.PointerLockRequestUnadjustedMovement
 -PointerLockBrowserTest.PointerLockWheelEventRouting
@@ -137,32 +90,17 @@
 -RenderWidgetHostFoldableCSSTest.FoldablesCSSWithReload
 -RenderWidgetHostSitePerProcessTest.BrowserClosesSelectPopup
 -RenderWidgetHostTouchEmulatorBrowserTest.TouchEmulatorPinchWithGestureFling
--RenderWidgetHostViewChildFrameBrowserTest.VisualPropertiesPropagation_RootWindowSegments
--RenderWidgetHostViewChildFrameBrowserTest.VisualPropertiesPropagation_VisibleViewportSize
--RenderWidgetHostViewPresentationFeedbackBrowserTest.HideWhileCapturing
--RenderWidgetHostViewPresentationFeedbackBrowserTest.Show
--RenderWidgetHostViewPresentationFeedbackBrowserTest.ShowThenHide
--RenderWidgetHostViewPresentationFeedbackBrowserTest.ShowWhileCapturing
--SRC_ClearKey/EncryptedMediaTest.Playback_VideoOnly_WebM_VP9Profile2/0
--ScrollLatencyScrollbarBrowserTest.ScrollbarThumbDragLatency
--ServiceWorkerTlsTest.ClientAuthFetchMainResource
--ServiceWorkerTlsTest.ClientAuthFetchSubResource
+-RenderWidgetHostViewChildFrameBrowserTest.VisualPropertiesPropagation_RootViewportSegments
+-ScrollBehaviorBrowserTest.InstantScriptScrollAdjustsSmoothWheelScroll
+-ScrollBehaviorBrowserTest.SmoothWheelScrollCompletesWithScriptedMirror
 -SignedExchangeSubresourcePrefetchBrowserTest.IntegrityMismatchSendsReport
 -SitePerProcessHighDPIHitTestBrowserTest.CursorUpdateReceivedFromCrossSiteIframe
 -SitePerProcessHitTestBrowserTest.CrossProcessMouseCapture
 -SitePerProcessHitTestBrowserTest.CrossProcessTooltipTest
 -SitePerProcessHitTestBrowserTest.CursorUpdateReceivedFromCrossSiteIframe
--SitePerProcessHitTestBrowserTest.LargeCursorRemovedInOffsetOOPIF
 -SitePerProcessHitTestBrowserTest.PopupMenuTest
--SitePerProcessHitTestBrowserTest.ScrollBubblingTargetWithUnrelatedGesture
 -SitePerProcessHitTestBrowserTest.ScrolledNestedPopupMenuTest
 -SitePerProcessHitTestBrowserTest.TouchpadDoubleTapZoomOverOOPIF
--SubresourceLoadingTest.URLLoaderFactoryInInitialEmptyDoc_NewPopupToAboutBlank
--SubresourceLoadingTest.URLLoaderFactoryInInitialEmptyDoc_NewPopupToEmptyUrl
--TouchInputBrowserTest.MultiPointTouchPress
--TouchInputBrowserTest.TouchNoHandler
--TouchInputBrowserTest.TouchStartConsume
--TouchInputBrowserTest.TouchStartNoConsume
 -UnrestrictedSharedArrayBufferOriginTrialBrowserTest.CrashForBug1201589
 -UnrestrictedSharedArrayBufferOriginTrialBrowserTest.HasSharedArrayBuffer
 -UnrestrictedSharedArrayBufferOriginTrialBrowserTest.HasSharedArrayBufferReuseContext
@@ -172,53 +110,372 @@
 -WebRtcGetUserMediaBrowserTest.TestGetUserMediaAspectRatio1To1
 -WebRtcGetUserMediaBrowserTest.TestGetUserMediaAspectRatio4To3
 
-# TODO(crbug.com/1466880): cannot create shared image.
--Default/MediaTest.LoadManyVideos/0
--Default/MediaTest.VideoBearMp4/1
--Default/MediaTest.VideoBearMp4Hevc10bit/1
--Default/MediaTest.VideoBearMp4Hevc10bit422/1
--Default/MediaTest.VideoBearMp4Hevc10bit444/1
--Default/MediaTest.VideoBearRotated0/1
--Default/MediaTest.VideoBearRotated180/1
--Default/MediaTest.VideoBearRotated270/1
--Default/MediaTest.VideoBearRotated90/1
--Default/MediaTest.VideoBearSilentMp4/1
--MediaColorTest.Yuv420pH264
--MediaColorTest.Yuv420pHighBitDepth
--MediaColorTest.Yuv420pRec709H264
--MediaColorTest.Yuvj420pH264
--MediaSourceTest.Playback_Video_MP4_Audio_WEBM
+# TODO(crbug.com/41482069): these flakily timeout.
+-All/BackForwardCacheNetworkLimitBrowserTest.ImageStillLoading*
 
-# TODO(crbug.com/1466881): hitting unexpected driver errors.
--ProprietaryCodec/WebRtcMediaRecorderTest.RecordWithTransparency/0
--ProprietaryCodec/WebRtcMediaRecorderTest.RecordWithTransparency/1
--ProprietaryCodec/WebRtcMediaRecorderTest.ResumeAndDataAvailable/0
--ProprietaryCodec/WebRtcMediaRecorderTest.ResumeAndDataAvailable/1
--ProprietaryCodec/WebRtcMediaRecorderTest.StartAndDataAvailable/0
--ProprietaryCodec/WebRtcMediaRecorderTest.StartAndDataAvailable/1
--ProprietaryCodec/WebRtcMediaRecorderTest.StartWithTimeSlice/0
--ProprietaryCodec/WebRtcMediaRecorderTest.StartWithTimeSlice/1
-
-# TODO(https://crbug.com/1466906): unexpected `fallback_after_restore` ID.
+# TODO(crbug.com/40276556): unexpected `fallback_after_restore` ID.
 # Resize-while-hidden should give the `DelegatedFrameHost` a new primary ID
 # and fallback ID.
 -BFCachedRenderWidgetHostViewBrowserTest.BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback
 
-# TODO(crbug.com/1466927): unexpected level of support for codec.
--MediaCanPlayTypeTest.CodecSupportTest_mp4
+# TODO(crbug.com/40278487): `WCImpl::GetSize()` should be replaced by
+# `WC::GetRenderWidgetHostView()->GetViewBounds()`; `ui::GrabViewSnapshot` isn't
+# implemented for IOS.
+-RenderFrameHostImplBrowserTestWithBFCacheAndViewTransition.NewContentTimeoutIsSetWhenLeavingBFCacheWithViewTransition
 
-# TODO(crbug.com/1467854): This test is flaky.
+# TODO(crbug.com/40276950): This test is flaky.
 -BackForwardCacheBrowserTest.NavigateToTwoPagesOnSameSiteWithSubframes
+
+# TODO(crbug.com/40281785): These consistently fail.
+-All/DumpAccessibilityTreeTest.AccessibilityInputSubmit/blink
+
+# TODO(crbug.com/325678250): This test is failing due to the line wrapping.
+-All/DumpAccessibilityTreeTest.AccessibilityInputRadioCheckboxLabel/blink
+
+# TODO(crbug.com/40274214): These WebSockets tests seem to depend on the spawned
+# test server, which is not supported on iOS.
+-BackForwardCacheBrowserTestNoTestingConfig.CCNSAndWebSocketBothRecorded
+-BackForwardCacheBrowserTestWithJavaScriptDetails.BlockAndUnblockFromHTMLFile
+-BackForwardCacheBrowserTestWithJavaScriptDetails.BlockAndUnblockFromJavaScriptFile
+-BackForwardCacheBrowserTestWithJavaScriptDetails.MultipleBlocksFromHTMLFile
+-BackForwardCacheBrowserTestWithJavaScriptDetails.MultipleBlocksFromJavaScriptFile
+
+# TODO(crbug.com/40282425): These tests fail by a different width for a frame.
+-All/DumpAccessibilityTreeTest.AccessibilityLinkTarget/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOffscreen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOffscreenScroll/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOffscreenSelect/blink
+-All/DumpAccessibilityTreeTest.ReusedMapChangeUsemap/blink
+
+# TODO(crbug.com/40283968): Audio output unit startup is failing with partition
+# alloc
+-All/WebRtcCaptureFromElementBrowserTest.CaptureFromMediaElement/1
+-All/WebRtcCaptureFromElementBrowserTest.CaptureFromMediaElement/2
+-All/WebRtcCaptureFromElementBrowserTest.CaptureFromMediaElement/3
+-AudioContextManagerTest.AudioContextPlaybackRecorded
+-AudioContextManagerTest.AudioContextPlaybackTimeUkm
+-BackForwardCacheBrowserTest.VideoSuspendAndResume
+-MSE_ClearKey/EncryptedMediaTest.ConfigChangeVideo_ClearToClear/0
+-MSE_ClearKey/EncryptedMediaTest.Playback_Encryption_CENC/0
+-MediaRedirectTest.CanPlayHiddenWebm
+-MediaSuspendTest.ForcedSrcSuspend
+-OpenCodec/WebRtcMediaRecorderTest.PeerConnection/0
+-OpenCodec/WebRtcMediaRecorderTest.PeerConnection/1
+-OpenCodec/WebRtcMediaRecorderTest.PeerConnection/2
+-OpenCodec/WebRtcMediaRecorderTest.PeerConnection/3
+-OpenCodec/WebRtcMediaRecorderTest.PeerConnection/4
+-OpenCodec/WebRtcMediaRecorderTest.TwoChannelAudioRecording/0
+-OpenCodec/WebRtcMediaRecorderTest.TwoChannelAudioRecording/1
+-OpenCodec/WebRtcMediaRecorderTest.TwoChannelAudioRecording/2
+-OpenCodec/WebRtcMediaRecorderTest.TwoChannelAudioRecording/3
+-OpenCodec/WebRtcMediaRecorderTest.TwoChannelAudioRecording/4
+-WebRtcAudioBrowserTest.CanMakeVideoCallAndThenRenegotiateToAudio
+-WebRtcAudioBrowserTest.EnsureLocalVideoMuteDoesntMuteAudio
+-WebRtcAudioBrowserTest.EnsureRemoteVideoMuteDoesntMuteAudio
+-WebRtcAudioBrowserTest.EstablishAudioOnlyCallAndEnsureAudioIsPlaying
+-WebRtcAudioBrowserTest.EstablishAudioOnlyCallAndVerifyGetSynchronizationSourcesWorks
+-WebRtcAudioBrowserTest.EstablishAudioVideoCallAndEnsureAudioIsPlaying
+-WebRtcAudioBrowserTest.EstablishAudioVideoCallAndVerifyLocalMutingWorks
+-WebRtcAudioBrowserTest.EstablishAudioVideoCallAndVerifyRemoteMutingWorks
+-WebRtcAudioBrowserTest.EstablishAudioVideoCallAndVerifyUnmutingWorks
+-WebRtcAudioDebugRecordingsBrowserTest.CallWithAudioDebugRecordings
+-WebRtcMediaRecorderTest.TwoChannelAudioRecording
+
+# TODO(crbug.com/40285557): reports the wrong width/height.
+-RenderWidgetHostFoldableCSSTest.ViewportSegmentsWorksInUAFullscreenCSS
+
+# TODO(crbug.com/40286643): Text area handle has shrunk.
+-FormControlsBrowserTest.Textarea
+
+# TODO(crbug.com/40288171): Flakily fails on the platform.
+-ThirdPartyCookiesContentSecurityPolicyBrowserTest.CSPMediaThirdPartyCookieBlocking
+
+# TODO(crbug.com/40942476): Flakily fails on the platform.
+-TouchInputBrowserTest.TouchStartConsume
+-TouchInputBrowserTest.TouchStartNoConsume
+-TouchInputBrowserTest.MultiPointTouchPress
+
+# TODO(crbug.com/40942136): Consistently fails on the platform.
+-PrerenderBrowserTest.ActivateOnWindowOpen
+
+# TODO(crbug.com/325442902): Consistently fails on the platform.
+-PrerenderBrowserTest.SessionStorage_TargetBlank_WithTargetHintBlank
+
+# TODO(crbug.com/40942477): Consistently fails on the platform.
+-All/PrerenderTargetAgnosticBrowserTest.RenderFrameHostLifecycleState/_blank
+
+# TODO(crbug.com/40943598): Fails due to video capture issues.
+-*.DoesNotCacheIfDisplayMediaAccessGranted*
+-All/BackForwardCacheMediaTest.DoesCacheIfMediaStreamTrackUsingGetDisplayMediaEndedButDoesNotWithoutFlags/0
+-All/BackForwardCacheMediaTest.DoesCacheIfMediaStreamTrackUsingGetDisplayMediaEndedButDoesNotWithoutFlags/1
+
+# TODO(crbug.com/40944655): Fails due to incorrect line wrapping.
+-All/YieldingParserDumpAccessibilityTreeTest.AccessibilityPopoverApi/blink
+-All/DumpAccessibilityTreeTestWithIgnoredNodes.AccessibilityInputRadioCheckboxLabel/blink
+
+# TODO(crbug.com/41483598): These emit an extra inlineTextBox
+-All/DumpAccessibilityTreeTest.ReusedMapChangeMapName/blink
+-All/DumpAccessibilityTreeTest.ReusedMapMoveImage/blink
+-All/YieldingParserDumpAccessibilityTreeTest.ReusedMapChangeMapName/blink
+-All/YieldingParserDumpAccessibilityTreeTest.ReusedMapMoveImage/blink
+
+# TODO(crbug.com/41489733): the following consistently crash.
+-SystemTracingEndToEndBrowserTest.PerformanceMark
+-SystemTracingEndToEndBrowserTest.SimpleTraceEvent
 
 # These tests are flaky.
 -All/CoopRestrictPropertiesReportingBrowserTest.NavigationVirtualBrowsingContextGroup/RDCrashedFrame_BFCacheDisabled
--All/DumpAccessibilityTreeTest.AccessibilityAriaTime/blink
--All/DumpAccessibilityTreeTest.AccessibilitySub/blink
--All/SitePerProcessBrowserTest.ChildFrameCrashMetrics_NeverShown/0
--All/SitePerProcessBrowserTest.ChildFrameCrashMetrics_NeverShown/1
 -All/SitePerProcessBrowserTest.DetachedIframeUnloadHandlerABCB/0
 -All/SitePerProcessBrowserTest.DetachedIframeUnloadHandlerABCB/1
 -BackForwardCacheBrowserTest.DoesNotCacheIfSpeechRecognitionIsStarted
+-IndexedDBBrowserTest.CanDeleteWhenOverQuotaTest
 -NavigationBrowserTest.NavigateToAboutBlankWhileFirstNavigationPending
 -PortalHitTestBrowserTest.InputToOOPIFAfterActivation
+-WebRtcBrowserTest.CallAndVerifyVideoMutingWorks
 -WebRtcGetUserMediaBrowserTest.InvalidSourceIdInIFrameAndCloseInFailureCb
+
+# TODO(crbug.com/40274214): Assertion happens because |spawner_url_base_| is
+# empty.
+-All/WorkerTest.WebSocketSharedWorker/PrivateNetworkAccessForWorkersDisabled
+-All/WorkerTest.WebSocketSharedWorker/PrivateNetworkAccessForWorkersEnabled
+
+# TODO(crbug.com/335331442): A timeout happens after bump the version of SDK up to 17.4.
+-All/AccessibilityHitTestingBrowserTest.HitTestInPopup/ZoomFactor1
+-All/AccessibilityHitTestingBrowserTest.HitTestInPopup/ZoomFactor2
+-All/DumpAccessibilityTreeTest.AccessibilityInputDate/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputDateDisabled/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputDateWithPopupOpenMultiple/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputMonth/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputTime/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputTimeWithPopupOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputWeek/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInteractiveControlsWithLabels/blink
+-All/DumpAccessibilityTreeTest.ReloadSelectionCrash/blink
+-All/YieldingParserDumpAccessibilityTreeTest.AccessibilityInputDateWithPopupOpenMultiple/blink
+-All/YieldingParserDumpAccessibilityTreeTest.AccessibilityInputTimeWithPopupOpen/blink
+-AttributionInternalsWebUiBrowserTest.ClearButton_ClearsSourceTable
+-AttributionInternalsWebUiBrowserTest.WebUIShownWithActiveImpression_ImpressionsDisplayed
+-AttributionInternalsWebUiBrowserTest.WebUIShownWithPendingAggregatableReports_ReportsDisplayed
+-AttributionInternalsWebUiBrowserTest.WebUIShownWithPendingReports_ReportsDisplayed
+-BackForwardCacheBrowserTestWithJavaScriptDetails.StickyFeaturesWithDetails
+-BrowserChildProcessObserverBrowserTest.LaunchAndDisconnect
+-BrowserChildProcessObserverBrowserTest.LaunchAndForceShutdown
+-CorsOriginPatternSetterBrowserTest.BlockDifferentPort
+-CrossPlatformAccessibilityBrowserTest.ControlsIdsForColorPopup
+-CrossPlatformAccessibilityBrowserTest.ControlsIdsForDateTimePopup
+-CrossSiteTransferTest.MaliciousPostWithFileData
+-DataDecoderBrowserTest.NoCallbackAfterDestruction_Gzip
+-DataDecoderBrowserTest.NoCallbackAfterDestruction_Json
+-DataDecoderBrowserTest.NoCallbackAfterDestruction_Xml
+-FencedFrameSecurityExploitBrowserTestWithTrustTokensEnabled.BrowserForbidsTrustTokenParamsOnFencedFrameNav
+-IndexedDBBrowserTest.DoesntHangTest
+-IndexedDBBrowserTest.NegativeDBDataVersion
+-IndexedDBBrowserTest.NegativeDBSchemaVersion
+-IndexedDBBrowserTestWithCorruption.OperationOnCorruptedOpenDatabase/0
+-InterestGroupBiddingAndAuctionServerBrowserTest.ChecksPermissionPolicyWarning
+-InterestGroupBiddingAndAuctionServerBrowserTest.TestEmpty
+-InterestGroupBrowserTest.JoinInterestGroupNonObjectJSONFields
+-LoaderBrowserTest.DynamicTitle1
+-LoaderBrowserTest.DynamicTitle2
+-LocalCompileHintsBrowserTest.LocalCompileHints
+-MediaSessionPictureInPictureContentBrowserTest.ActionAvailableAfterEndOfStreamAndSrcUpdate
+-MediaSessionServiceImplBrowserTest.ResetServiceWhenNavigatingAway
+-NavigationBrowserTest.PostUploadIllegalFilePath
+-NavigationBrowserTest.ProcessShutdownDuringDeferredNavigationThrottle
+-NetworkServiceBrowserTest.WebUIBindingsNoHttp
+-NetworkServiceNetLogBrowserTest.LogCreated
+-PowerMonitorTest.TestRendererProcess
+-PrivateAggregationInternalsWebUiBrowserTest.WebUIClearStorage_ReportsRemoved
+-PrivateAggregationInternalsWebUiBrowserTest.WebUIShownWithReports_ReportsDisplayed
+-PrivateNetworkAccessBrowserTestRespectPreflightResultsForWorkers.FetchSharedWorkerFromSecureTreatAsPublicToLocal
+-RenderFrameDevToolsAgentHostFencedFrameBrowserTest.PageCrashInFencedFrame
+-RenderAccessibilityImplTest.TestHitTestPopupDoesNotCrash
+-RenderFrameDevToolsAgentHostBrowserTest.CancelCrossOriginNavigationAfterReadyToCommit
+-RenderWidgetHostDelegatedInkMetadataTest.FlagGetsSetFromRenderFrameMetadata
+-SandboxedHttpCacheBrowserTest.CreateSimpleCacheOnParentDirectory
+-SandboxedHttpCacheBrowserTest.CreateSimpleCacheWithParentDirectoryTraversal
+-ServiceProcessHostBrowserTest.AllMessagesReceived
+-ServiceProcessHostBrowserTest.IdleTimeout
+-ServiceProcessHostBrowserTest.LocalDisconnectQuits
+-ServiceProcessHostBrowserTest.ObserveCrash
+-ServiceProcessHostBrowserTest.RemoteDisconnectQuits
+-ServiceWorkerInternalsUIBrowserTest.StopStartSWReflectedOnInternalUI
+-ServiceWorkerVersionBrowserTest.RendererCrash
+-ServiceWorkerVersionBrowserTest.UpdateWithScriptLargerThanMojoDataPipeBuffer
+-SignedExchangeRequestHandlerDownloadBrowserTest.DataURLDownload
+-SitePerProcessDevToolsProtocolTest.PageCrashInFrame
+-SitePerProcessHitTestBrowserTest.CancelWheelScrollBubblingOnWheelTargetDeletion
+-SitePerProcessHitTestBrowserTest.LargeCursorRemovedInScrolledOOPIF
+-SnapshotBrowserTest.AsyncMultiWindowTest
+-SnapshotBrowserTest.SyncMultiWindowTest
+-SpareRenderProcessHostManagerTest.SpareRenderProcessHostKilled
+-TrustTokenBrowsertest.SigningRequiresRedemptionRecordInStorage
+-UtilityProcessHostBrowserTest.LaunchProcessAndCrash
+-VideoPictureInPictureContentBrowserTest.PlaybackStateWhenReopenedAfterEndOfStream
+-ViewTransitionBrowserTest.NavigationCancelledBeforeScreenshot
+-ViewTransitionBrowserTest.NavigationCancelledAfterScreenshot
+-ViewTransitionBrowserTest.OwnershipTransferredToNewRenderer
+-WebContentsImplBrowserTest.DeferredWindowOpenNavigationIsResumedWithEarlySwap
+-WebContentsImplBrowserTest.FocusFromJavaScriptEndsFullscreen
+-WebContentsImplBrowserTest.MediaDestroyedOnRendererCrash
+-WebContentsImplBrowserTest.PopupsFromJavaScriptDoNotEndFullscreenWithinTab
+-WebContentsImplBrowserTest.PopupsFromJavaScriptEndFullscreen
+-WebContentsImplBrowserTest.PopupsFromJavaScriptEndFullscreenDownstream
+-WebContentsImplBrowserTest.PopupsOfPopupsFromJavaScriptEndFullscreen
+-WebContentsImplBrowserTest.ReinitializeMainFrameForCrashedTab
+-WebUIImplBrowserTest.NavigateFromCrashedAboutBlank
+
+# TODO(crbug.com/41471694): The below tests related to the touchpad and gesture_detection
+# have been failing since https://crrev.com/c/5468600.
+-SitePerProcessHitTestBrowserTest.TouchAndGestureEventPositionChange
+-TouchpadPinchBrowserTest.TouchpadPinchChangesPageScale
+-TouchpadPinchBrowserTest.WheelListenerAllowingPinch
+-TouchpadPinchBrowserTest.WheelListenerPreventingDoubleTap
+-TouchpadPinchBrowserTest.WheelListenerPreventingPinch
+
+# TODO(crbug.com/341991542): The below tests related to the accessibility
+# have been failing since https://crrev.com/c/5513503.
+-All/DumpAccessibilityTreeTest.SelectExpandManyOptionsCrash/blink
+-CrossPlatformAccessibilityBrowserTest.SelectWithOptgroupActiveDescendant
+-CrossPlatformAccessibilityBrowserTest.SelectSizeChangeWithOpenedPopupDoesNotCrash
+-CrossPlatformAccessibilityBrowserTest.SelectWithOptgroupActiveDescendant
+
+# TODO(crbug.com/342866174): The test has been failing since
+# https://crrev.com/c/5545059.
+-FoldableAPIsOriginTrialBrowserTest.ValidOriginTrialToken
+
+# TODO(crbug.com/343248827): The test has been failing since
+# https://crrev.com/c/5467603. The CL removed
+# AllowBFCacheWhenClosedMediaStreamTrack feature.
+-BackForwardCacheBrowserTest.CacheIfMediaStreamTrackUsingGetDisplayMediaEnded
+
+# TODO(crbug.com/369224662): These tests have been failing since
+# https://crrev.com/c/5831814 and https://crrev.com/c/5840289.
+-All/DumpAccessibilityTreeTest.AccessibilityInputColorWithPopupOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputColorWithPopupOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputDateWithPopupOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputDateWithPopupOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputTypes/blink
+-All/DumpAccessibilityTreeTest.AccessibilityInputTypes/blink
+-All/DumpAccessibilityTreeTest.AccessibilityMultiSelectable/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOptgroupMenulist/blink
+-All/DumpAccessibilityTreeTest.AccessibilityOptgroupMenulist/blink
+-All/DumpAccessibilityTreeTest.AccessibilitySelectOpen/blink
+-All/DumpAccessibilityTreeTest.AccessibilitySelectOpen/blink
+-All/OnScreenModeDumpAccessibilityTreeTest.ContentWith3ViewPortScrollsForOnScreenMode/blink
+
+# TODO(crbug.com/368335261): These tests have been failing since
+# https://crrev.com/c/5464569.
+-SensorBackForwardCacheBrowserTest.AccelerometerPausedWhileCached
+-SensorBackForwardCacheBrowserTest.AccelerometerPausedWhileCached
+-SensorBackForwardCacheBrowserTest.AmbientLightPausedWhileCached
+-SensorBackForwardCacheBrowserTest.AmbientLightPausedWhileCached
+-SensorBackForwardCacheBrowserTest.GravityPausedWhileCached
+-SensorBackForwardCacheBrowserTest.GravityPausedWhileCached
+-SensorBackForwardCacheBrowserTest.GyroscopePausedWhileCached
+-SensorBackForwardCacheBrowserTest.GyroscopePausedWhileCached
+-SensorBackForwardCacheBrowserTest.LinearAccelerationPausedWhileCached
+-SensorBackForwardCacheBrowserTest.LinearAccelerationPausedWhileCached
+
+# TODO(crbug.com/370751355): These tests have been failing since
+# https://crrev.com/c/5642354.
+-All/SitePerProcessWithMainFrameThresholdLocalhostTest.AllowReuseLocalHost/1
+-All/SitePerProcessWithMainFrameThresholdTest.ReuseProcessUpToThreshold/0
+-All/SitePerProcessWithMainFrameThresholdTest.ReuseProcessUpToThreshold/0
+-All/SitePerProcessWithMainFrameThresholdTest.ReuseProcessUpToThreshold/1
+-All/SitePerProcessWithMainFrameThresholdTest.ReuseProcessUpToThreshold/1
+-All/SitePerProcessWithMainFrameThresholdWithTotalLimitTest.ExcessiveAllocation/0
+-All/SitePerProcessWithMainFrameThresholdWithTotalLimitTest.ExcessiveAllocation/0
+-All/SitePerProcessWithMainFrameThresholdWithTotalLimitTest.ExcessiveAllocation/1
+-All/SitePerProcessWithMainFrameThresholdWithTotalLimitTest.ExcessiveAllocation/1
+
+# TODO(crbug.com/372062085): These tests have been failing since
+# https://crrev.com/c/5854463.
+-RenderFrameHostImplPartitionedPopinBrowserTest.CreateNewWindow_FailsWithAboutBlankTargetUrl
+-RenderFrameHostImplPartitionedPopinBrowserTest.CreateNewWindow_FailsWithEmptyTargetUrl
+-RenderFrameHostImplPartitionedPopinBrowserTest.CreateNewWindow_FailsWithHttpTargetUrl
+
+# TODO(crbug.com/373461927): This test has been failing since
+# https://crrev.com/c/5716290.
+-PrerenderBrowserTest.BackgroundedPage_ActivateOnLinkClick_TargetBlank_WithTargetHintBlank
+
+# TODO(crbug.com/380308803): This test has been failing since
+# https://crrev.com/c/6000136.
+-All/AccessibilityHitTestingBrowserTest.HitTestingInStitchedChildTree/ZoomFactor1
+-All/AccessibilityHitTestingBrowserTest.HitTestingInStitchedChildTree/ZoomFactor2
+
+# TODO(crbug.com/381282539): This test has been failing since
+# https://crrev.com/c/6013928.
+-ContentBrowserTest.BrowserCrashCallStack
+-ContentBrowserTest.BrowserCrashCallStack
+-ContentBrowserTest.MANUAL_BrowserCrash
+-ContentBrowserTest.MANUAL_BrowserCrash
+
+# TODO(crbug.com/382303507): This test has been failing since
+# https://crrev.com/c/5980534.
+-IndexedDBBrowserTest.SchedulingPriority
+
+# TODO(crbug.com/382316457): This test has been failing on the bot.
+-FormControlsBrowserTest.Meter
+
+# TODO(crbug.com/385300330): This test has been failing since
+# https://crrev.com/c/5953628.
+-All/CustomizableSelectDisabledDumpAccessibilityTreeTest.AccessibilitySelect/blink
+-All/CustomizableSelectDisabledDumpAccessibilityTreeTest.AccessibilitySelectOpen/blink
+-All/CustomizableSelectEnabledDumpAccessibilityTreeTest.AccessibilitySelectOpen/blink
+-All/CustomizableSelectEnabledDumpAccessibilityTreeTest.ENABLED_AccessibiltySelect/blink
+
+# TODO(crbug.com/384770166): These tests have been failing since
+# https://crrev.com/c/6101118.
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnWindowOpen_NewTab
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnWindowOpen_PopUp
+
+# TODO(crbug.com/393431139): These tests have been failing since
+# https://crrev.com/c/5201204.
+-All/InterestGroupComponentWorkletValidationBrowserTest.ComponentAuctionValidateWorkletParameters/top_level_header_direct_from_seller_signals_component_header_direct_from_seller_signals
+-All/InterestGroupComponentWorkletValidationBrowserTest.ComponentAuctionValidateWorkletParameters/top_level_header_direct_from_seller_signals_component_subresource_bundle_direct_from_seller_signals
+-All/InterestGroupComponentWorkletValidationBrowserTest.ComponentAuctionValidateWorkletParameters/top_level_subresource_bundle_direct_from_seller_signals_component_header_direct_from_seller_signals
+-All/InterestGroupComponentWorkletValidationBrowserTest.ComponentAuctionValidateWorkletParameters/top_level_subresource_bundle_direct_from_seller_signals_component_subresource_bundle_direct_from_seller_signals
+
+# TODO(crbug.com/402810071): These tests have been failing since
+# https://crrev.com/c/6261869. The blink::features::kPrerender2InNewTab feature
+# doesn't work on iOS correctly.
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnLinkClick_TargetBlankWithNoopener_WithTargetHintBlank
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnLinkClick_TargetBlank_WithTargetHintBlank
+-PrerenderTargetHintEnabledBrowserTest.BackgroundedPage_ActivateOnLinkClick_TargetBlank_WithTargetHintBlank
+-PrerenderTargetHintEnabledBrowserTest.SessionStorage_TargetBlank_WithTargetHintBlank
+-PrerenderTargetHintOriginTrialBrowserTest.Prerender2InNewTabOriginTrial
+
+# These tests have been failing since https://crrev.com/c/6459930.
+-Default/MediaTest.HLSSingleWithoutExtension/0
+-Default/MediaTest.HLSSingleWithoutExtension/1
+
+# TODO(crbug.com/418125309): These tests have been failing since
+# https://crrev.com/c/6391357.
+-All/SitePerProcessWithMainFrameThresholdAndSiteRestrictionTest.RestrictedToURLWithContentClient/0
+-All/SitePerProcessWithMainFrameThresholdAndSiteRestrictionTest.RestrictedToURLWithContentClient/1
+-RenderFrameHostImplReuseEmptyAvailableRenderBrowserTest.ReuseEmptyAvailableRenderForMainFrame
+
+# TODO(crbug.com/427329344): These tests have been failing since
+# https://crrev.com/c/6636534.
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnBothTargetHint
+-PrerenderTargetHintEnabledBrowserTest.ActivateOnOneSelfAndTwoBlankTargetHint
+-PrerenderTargetHintEnabledBrowserTest.PrerenderBothTargetHintButRemovesTargetHintSelf
+
+# TODO(crbug.com/428021765): These tests have been failing between build #100[1]
+# and #667[2].
+# [1] https://ci.chromium.org/ui/p/chromium/builders/ci/ios-blink-rel-fyi/667/overview
+# [2] https://ci.chromium.org/ui/p/chromium/builders/ci/ios-blink-rel-fyi/100/overview
+-BackForwardCacheWebHidTest.DoesNotCacheIfGetDevicesWasCalled
+-BackForwardCacheWebHidTest.DoesNotCacheIfRequestDeviceWasCalled
+-HidFencedFramesBrowserTest.BlockFromFencedFrame
+-HidTest.DeviceWithAllProtectedReportsIsExcluded
+-HidTest.DisallowRequestDevice
+-HidTest.GetDevices
+-HidTest.ProtectedReportsAreFiltered
+-HidTest.RequestDevice
+
+# TODO(crbug.com/429032825): The test has been failing since
+# https://crrev.com/c/6656174. The test couldn't get a video element in the
+# document.
+-BlobUrlBrowserTest.NoPartitioningForMediaBlobUrlNavigations

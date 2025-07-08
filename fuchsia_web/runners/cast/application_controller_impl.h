@@ -11,7 +11,9 @@
 #include <lib/fidl/cpp/binding.h>
 #include <lib/fidl/cpp/interface_request.h>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
+#include "base/memory/raw_ptr.h"
 
 class ApplicationControllerImpl final
     : public fidl::Server<chromium_cast::ApplicationController> {
@@ -43,9 +45,9 @@ class ApplicationControllerImpl final
       GetPrivateMemorySizeCompleter::Sync& completer) override;
 
  private:
-  absl::optional<fidl::ServerBinding<chromium_cast::ApplicationController>>
+  std::optional<fidl::ServerBinding<chromium_cast::ApplicationController>>
       binding_;
-  fuchsia::web::Frame* const frame_;
+  const raw_ptr<fuchsia::web::Frame> frame_;
   const uint64_t trace_flow_id_;
 };
 

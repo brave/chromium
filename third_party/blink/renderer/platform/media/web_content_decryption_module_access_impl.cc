@@ -7,10 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/platform/media/web_encrypted_media_client_impl.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -43,19 +43,22 @@ std::unique_ptr<WebContentDecryptionModuleAccessImpl>
 WebContentDecryptionModuleAccessImpl::Create(
     const WebSecurityOrigin& security_origin,
     const WebMediaKeySystemConfiguration& configuration,
+    const WebString& requested_key_system,
     const media::CdmConfig& cdm_config,
     const base::WeakPtr<WebEncryptedMediaClientImpl>& client) {
   return std::make_unique<WebContentDecryptionModuleAccessImpl>(
-      security_origin, configuration, cdm_config, client);
+      security_origin, configuration, requested_key_system, cdm_config, client);
 }
 
 WebContentDecryptionModuleAccessImpl::WebContentDecryptionModuleAccessImpl(
     const WebSecurityOrigin& security_origin,
     const WebMediaKeySystemConfiguration& configuration,
+    const WebString& requested_key_system,
     const media::CdmConfig& cdm_config,
     const base::WeakPtr<WebEncryptedMediaClientImpl>& client)
     : security_origin_(security_origin),
       configuration_(configuration),
+      requested_key_system_(requested_key_system),
       cdm_config_(cdm_config),
       client_(client) {}
 
@@ -63,7 +66,8 @@ WebContentDecryptionModuleAccessImpl::~WebContentDecryptionModuleAccessImpl() =
     default;
 
 WebString WebContentDecryptionModuleAccessImpl::GetKeySystem() {
-  return WebString::FromUTF8(cdm_config_.key_system);
+  // crbug.com/421223928: Returns the originally requested key system
+  return requested_key_system_;
 }
 
 WebMediaKeySystemConfiguration
@@ -78,11 +82,10 @@ void WebContentDecryptionModuleAccessImpl::CreateContentDecryptionModule(
   // As this object's lifetime is controlled by MediaKeySystemAccess on the
   // blink side, copy all values needed by CreateCdm() in case the blink object
   // gets garbage-collected.
-  std::unique_ptr<WebContentDecryptionModuleResult> result_copy(
-      new WebContentDecryptionModuleResult(result));
+  auto result_copy = std::make_unique<WebContentDecryptionModuleResult>(result);
   task_runner->PostTask(FROM_HERE,
-                        base::BindOnce(&CreateCdm, client_, security_origin_,
-                                       cdm_config_, std::move(result_copy)));
+                        WTF::BindOnce(&CreateCdm, client_, security_origin_,
+                                      cdm_config_, std::move(result_copy)));
 }
 
 bool WebContentDecryptionModuleAccessImpl::UseHardwareSecureCodecs() const {

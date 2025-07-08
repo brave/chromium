@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_HEADLESS_TEST_CAPTURE_STD_STREAM_H_
 #define COMPONENTS_HEADLESS_TEST_CAPTURE_STD_STREAM_H_
 
+#include <array>
 #include <cstdio>
 #include <string>
 
@@ -28,7 +29,7 @@ class CaptureStdStream {
   raw_ptr<FILE> stream_;
 
   int fileno_ = -1;
-  int pipes_[2] = {-1, -1};
+  std::array<int, 2> pipes_ = {-1, -1};
   bool capturing_ = false;
 
   // TODO(https://github.com/llvm/llvm-project/issues/61334): Explicit

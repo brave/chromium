@@ -7,15 +7,19 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "base/base64.h"
 #include "base/functional/bind.h"
-#include "base/json/json_string_value_serializer.h"
+#include "base/json/json_writer.h"
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "crypto/hmac.h"
+#include "crypto/sha2.h"
 
 namespace {
 
@@ -26,9 +30,8 @@ std::string GetDigestString(const std::string& key,
   std::vector<uint8_t> digest(hmac.DigestLength());
   if (!hmac.Init(key) || !hmac.Sign(message, &digest[0], digest.size())) {
     NOTREACHED();
-    return std::string();
   }
-  return base::HexEncode(&digest[0], digest.size());
+  return base::HexEncode(digest);
 }
 
 void RemoveEmptyValueDictEntries(base::Value::Dict& dict);
@@ -107,12 +110,7 @@ std::string ValueAsString(const base::Value::Dict* value) {
 
   base::Value::Dict dict = value->Clone();
   RemoveEmptyValueDictEntries(dict);
-
-  std::string value_as_string;
-  JSONStringValueSerializer serializer(&value_as_string);
-  serializer.Serialize(dict);
-
-  return value_as_string;
+  return base::WriteJson(dict).value_or(std::string());
 }
 
 std::string ValueAsString(const base::Value* value) {
@@ -122,11 +120,7 @@ std::string ValueAsString(const base::Value* value) {
   if (value->is_dict())
     return ValueAsString(&value->GetDict());
 
-  std::string value_as_string;
-  JSONStringValueSerializer serializer(&value_as_string);
-  serializer.Serialize(*value);
-
-  return value_as_string;
+  return base::WriteJson(*value).value_or(std::string());
 }
 
 // Concatenates |device_id|, |path|, and |value_as_string| to give the hash
@@ -142,12 +136,19 @@ std::string GetMessage(const std::string& device_id,
   return message;
 }
 
+// Concatenates |seed|, |path|, and |value_as_string| to give the SHA256 input
+// for the encrypted hash scheme.
+std::string GetEncryptedHashMessage(const std::string& seed,
+                                    const std::string& path,
+                                    const std::string& value_as_string) {
+  return base::StrCat({seed, path, value_as_string});
+}
+
 }  // namespace
 
 PrefHashCalculator::PrefHashCalculator(const std::string& seed,
-                                       const std::string& device_id,
-                                       const std::string& legacy_device_id)
-    : seed_(seed), device_id_(device_id), legacy_device_id_(legacy_device_id) {}
+                                       const std::string& device_id)
+    : seed_(seed), device_id_(device_id) {}
 
 PrefHashCalculator::~PrefHashCalculator() {}
 
@@ -185,11 +186,80 @@ PrefHashCalculator::ValidationResult PrefHashCalculator::Validate(
                          digest_string)) {
     return VALID;
   }
-  if (!legacy_device_id_.empty() &&
-      VerifyDigestString(seed_,
-                         GetMessage(legacy_device_id_, path, value_as_string),
-                         digest_string)) {
-    return VALID_SECURE_LEGACY;
-  }
   return INVALID;
+}
+
+std::optional<std::string> PrefHashCalculator::CalculateEncryptedHash(
+    const std::string& path,
+    const base::Value* value,
+    const os_crypt_async::Encryptor* encryptor) const {
+  DCHECK(encryptor);
+
+  std::string value_as_string = ValueAsString(value);
+  std::string message = GetEncryptedHashMessage(seed_, path, value_as_string);
+  std::string sha256_hash = crypto::SHA256HashString(message);
+
+  // EncryptString returns raw bytes
+  std::optional<std::vector<uint8_t>> encrypted_bytes =
+      encryptor->EncryptString(sha256_hash);
+
+  if (!encrypted_bytes) {
+    return std::nullopt;
+  }
+
+  // Use Base64Encode version that returns a string.
+  return base::Base64Encode(*encrypted_bytes);
+}
+
+std::optional<std::string> PrefHashCalculator::CalculateEncryptedHash(
+    const std::string& path,
+    const base::Value::Dict* dict,
+    const os_crypt_async::Encryptor* encryptor) const {
+  DCHECK(encryptor);
+  std::string value_as_string = ValueAsString(dict);
+  std::string message = GetEncryptedHashMessage(seed_, path, value_as_string);
+  std::string sha256_hash = crypto::SHA256HashString(message);
+
+  // EncryptString returns raw bytes
+  std::optional<std::vector<uint8_t>> encrypted_bytes =
+      encryptor->EncryptString(sha256_hash);
+
+  if (!encrypted_bytes) {
+    return std::nullopt;
+  }
+
+  // Use Base64Encode version that returns a string.
+  return base::Base64Encode(*encrypted_bytes);
+}
+
+PrefHashCalculator::ValidationResult PrefHashCalculator::ValidateEncrypted(
+    const std::string& path,
+    const base::Value* value,
+    const std::string& stored_encrypted_hash_base64,
+    const os_crypt_async::Encryptor* encryptor) const {
+  DCHECK(encryptor);
+
+  // Base64 decode the stored string back into raw bytes
+  std::string encrypted_hash_bytes;
+  if (!base::Base64Decode(stored_encrypted_hash_base64,
+                          &encrypted_hash_bytes)) {
+    return INVALID_ENCRYPTED;
+  }
+
+  // Now decrypt the raw bytes
+  std::string decrypted_hash_string;
+  if (!encryptor->DecryptString(encrypted_hash_bytes, &decrypted_hash_string)) {
+    return INVALID_ENCRYPTED;
+  }
+
+  // Decryption succeeded, now compare the result.
+  std::string value_as_string = ValueAsString(value);
+  std::string message = GetEncryptedHashMessage(seed_, path, value_as_string);
+  std::string expected_sha256_hash = crypto::SHA256HashString(message);
+
+  if (decrypted_hash_string == expected_sha256_hash) {
+    return VALID_ENCRYPTED;
+  } else {
+    return INVALID_ENCRYPTED;
+  }
 }

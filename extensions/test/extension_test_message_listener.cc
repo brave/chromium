@@ -9,6 +9,7 @@
 #include "base/strings/string_util.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/test/test_api.h"
+#include "extensions/common/extension_id.h"
 
 ExtensionTestMessageListener::ExtensionTestMessageListener(
     const std::string& expected_message,
@@ -30,11 +31,16 @@ ExtensionTestMessageListener::~ExtensionTestMessageListener() {
 }
 
 bool ExtensionTestMessageListener::WaitUntilSatisfied() {
+  return WaitUntilSatisfied(base::RunLoop::Type::kDefault);
+}
+
+bool ExtensionTestMessageListener::WaitUntilSatisfied(
+    base::RunLoop::Type message_waiter_type) {
   if (satisfied_)
     return !failed_;
-  base::RunLoop run_loop;
-  quit_wait_closure_ = run_loop.QuitWhenIdleClosure();
-  run_loop.Run();
+  base::RunLoop message_waiter(message_waiter_type);
+  quit_wait_closure_ = message_waiter.QuitWhenIdleClosure();
+  message_waiter.Run();
   return !failed_;
 }
 
@@ -72,7 +78,7 @@ bool ExtensionTestMessageListener::OnTestMessage(
     const std::string& message) {
   // Return immediately if we're already satisfied or it's not the right
   // extension.
-  std::string sender_extension_id;
+  extensions::ExtensionId sender_extension_id;
   if (function->extension())
     sender_extension_id = function->extension_id();
 

@@ -21,7 +21,7 @@ class ASH_EXPORT ShelfTooltipBubble : public ShelfBubble {
   ShelfTooltipBubble(views::View* anchor,
                      ShelfAlignment alignment,
                      const std::u16string& text,
-                     absl::optional<views::BubbleBorder::Arrow> arrow_position);
+                     std::optional<views::BubbleBorder::Arrow> arrow_position);
 
   ShelfTooltipBubble(const ShelfTooltipBubble&) = delete;
   ShelfTooltipBubble& operator=(const ShelfTooltipBubble&) = delete;
@@ -32,11 +32,9 @@ class ASH_EXPORT ShelfTooltipBubble : public ShelfBubble {
   bool ShouldCloseOnMouseExit() override;
 
  private:
-  // views::View overrides:
-  void OnThemeChanged() override;
-
   // BubbleDialogDelegateView overrides:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 };
 
 }  // namespace ash

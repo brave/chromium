@@ -3,36 +3,33 @@
 // found in the LICENSE file.
 
 #include "ash/game_dashboard/game_dashboard_test_base.h"
-#include <cstddef>
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/game_dashboard/game_dashboard_controller.h"
 #include "ash/public/cpp/window_properties.h"
-#include "base/system/sys_info.h"
+#include "chromeos/ui/base/app_types.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/wm/window_util.h"
+#include "ui/aura/window.h"
 
 namespace ash {
 
 GameDashboardTestBase::GameDashboardTestBase()
-    : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
-
-void GameDashboardTestBase::SetUp() {
-  base::SysInfo::SetChromeOSVersionInfoForTest(
-      "CHROMEOS_RELEASE_TRACK=testimage-channel",
-      base::SysInfo::GetLsbReleaseTime());
+    : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
   scoped_feature_list_.InitWithFeatures(
-      {features::kGameDashboard,
-       features::kFeatureManagementGameDashboardRecordGame},
-      {});
-  AshTestBase::SetUp();
-  EXPECT_TRUE(features::IsGameDashboardEnabled());
+      {features::kFeatureManagementGameDashboardRecordGame}, {});
 }
 
-void GameDashboardTestBase::TearDown() {
-  AshTestBase::TearDown();
-  base::SysInfo::ResetChromeOSVersionInfoForTest();
+void GameDashboardTestBase::SetUp() {
+  AshTestBase::SetUp();
+  UpdateDisplay(base::StringPrintf("%d+%d-%dx%d", kScreenBounds.x(),
+                                   kScreenBounds.y(), kScreenBounds.width(),
+                                   kScreenBounds.height()));
+}
+
+void GameDashboardTestBase::AdvanceClock(base::TimeDelta delta) {
+  task_environment()->AdvanceClock(delta);
+  task_environment()->RunUntilIdle();
 }
 
 bool GameDashboardTestBase::IsControllerObservingWindow(
@@ -43,7 +40,7 @@ bool GameDashboardTestBase::IsControllerObservingWindow(
 
 std::unique_ptr<aura::Window> GameDashboardTestBase::CreateAppWindow(
     const std::string& app_id,
-    AppType app_type,
+    chromeos::AppType app_type,
     const gfx::Rect& bounds_in_screen) {
   std::unique_ptr<aura::Window> window =
       AshTestBase::CreateAppWindow(bounds_in_screen, app_type);

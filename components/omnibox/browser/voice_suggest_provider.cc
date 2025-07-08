@@ -6,11 +6,11 @@
 
 #include <string>
 
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
-#include "components/omnibox/browser/autocomplete_match_classification.h"
-#include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "third_party/omnibox_proto/navigational_intent.pb.h"
 #include "third_party/omnibox_proto/types.pb.h"
 
 namespace {
@@ -50,10 +50,10 @@ void VoiceSuggestProvider::Start(const AutocompleteInput& input,
             AutocompleteMatchType::VOICE_SUGGEST,
             /*suggest_type=*/omnibox::TYPE_NATIVE_CHROME, /*subtypes=*/{},
             false,
+            /*navigational_intent=*/omnibox::NAV_INTENT_NONE,
             ConfidenceScoreToSuggestionScore(score_and_suggestion_pair.first),
             false, {}),
-        {}, input,
-        client()->GetTemplateURLService()->GetDefaultSearchProvider(),
+        input, client()->GetTemplateURLService()->GetDefaultSearchProvider(),
         client()->GetTemplateURLService()->search_terms_data(), index, false,
         false, &map);
     ++index;
@@ -78,11 +78,9 @@ bool VoiceSuggestProvider::ShouldAppendExtraParams(
 
 void VoiceSuggestProvider::RecordDeletionResult(bool success) {}
 
-void VoiceSuggestProvider::Stop(bool clear_cached_results,
-                                bool due_to_user_inactivity) {
-  AutocompleteProvider::Stop(clear_cached_results, due_to_user_inactivity);
-
-  if (clear_cached_results) {
+void VoiceSuggestProvider::Stop(AutocompleteStopReason stop_reason) {
+  AutocompleteProvider::Stop(stop_reason);
+  if (stop_reason == AutocompleteStopReason::kClobbered) {
     ClearCache();
   }
 }

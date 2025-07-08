@@ -5,9 +5,12 @@ Runtime flags enable Blink to control access to new features. Features that are 
 ## Adding A Runtime Enabled Feature
 Runtime Enabled Features are defined in runtime_enabled_features.json5 in alphabetical order. Add your feature's flag to [runtime_enabled_features.json5] and the rest will be generated for you automatically.
 
+Please add a descriptive comment, including a link to the spec or the chromestatus.com entry if either one is available. This allows readers to easily find more context about the feature.
+
 Example:
 ```js
 {
+  // Amazing new feature! https://chromestatus.com/feature/123
   name: "AmazingNewFeature",
   status: "experimental",
 }
@@ -65,12 +68,12 @@ Any in-development feature can be added with no status, the only requirement is 
 * For a feature to be marked `status: "experimental"`, it should be far enough along to permit testing by early adopter web developers.  Many chromium enthusiasts run with `--enable-experimental-web-platform-features`, and so promoting a feature to experimental status can be a good way to get early warning of any stability or compatibility problems.  If such problems are discovered (e.g. major websites being seriously broken when the feature is enabled), the feature should be demoted back to no status or `status: "test"` to avoid creating undue problems for such users.  It's notoriously difficult to diagnose a bug report from a user who neglects to mention that they have this flag enabled.  Often a feature will be set to experimental status long before it's implementation is complete, and while there is still substantial churn on the API design.  Features in this state are not expected to work completely, just do something of value which developers may want to provide feedback on.
 
    **Note:** features set to "experimental" should **not** be expected to cause significant breakage of existing major sites. The primary use case is new APIs or features that are not expected to cause compat issues. If your feature could be reasonably expected to cause compat issues, please keep it marked no status or `status:"test"` [4], and instead use the Finch system, which is better suited to detect and disable such features in case of problems.
-   
-\[4]: In this case, "no status" is preferred to `status:"test"` unless you can ensure test coverage of the code paths with the feature disabled. See the `status:"test"` section for more details.   
+
+\[4]: In this case, "no status" is preferred to `status:"test"` unless you can ensure test coverage of the code paths with the feature disabled. See the `status:"test"` section for more details.
 
 * For a feature to be marked `status: "stable"`, it must be complete and ready for use by all chrome users. Often this means it has gotten approval via the [blink launch process]. However, for features which are not web observable (e.g. a flag to track a large-scale code refactoring), this approval is not needed. In rare cases a feature may be tested on canary and dev channels by temporarily setting it to `status: "stable"`, with a comment pointing to a bug marked `Release-Block-Beta` tracking setting the feature back to `status: "experimental"` before the branch for beta.
 
-When a feature has shipped and is no longer at risk of needing to be disabled, it's associated RuntimeEnableFeatures entry should be removed entirely.  Permanent features should generally not have flags.
+When a feature has shipped and is no longer at risk of needing to be disabled, its associated RuntimeEnableFeatures entry should be removed entirely.  Permanent features should generally not have flags.
 
 If a feature is not stable and no longer under active development, remove `status: "test"/"experimental"` on it (and consider deleting the code implementing the feature).
 
@@ -83,11 +86,18 @@ specify `base_feature: "none"`, and their relationship is defined in
 [content/child/runtime_features.cc]. See the [initialize blink features] doc
 for more details.
 
+**Note:** `base_feature: "none"` is strongly discouraged if the feature
+doesn't have an associated base feature because the feature would lack a
+killswitch controllable via finch.
+
 **Note:** If a feature is implemented at both Chromium side and blink side, as the blink feature doesn't fully work by itself, we normally don't set the blink feature's status so that the Chromium feature can fully control the blink feature ([example][controlled by chromium feature]).
 
 If you need to update or check a blink feature status from outside of blink,
+with dedicated methods (instead of `WebRuntimeFeatures::EnableFeatureFromString()`),
 you can generate methods of `WebRuntimeFeatures` by adding `public: true,` to
-the feature entry in `runtime_enabled_features.json5`.
+the feature entry in `runtime_enabled_features.json5`. This should be
+rare because `WebRuntimeFeatures::EnableFeaturesFromString()` works in
+most cases.
 
 ### Generate a `base::Feature` instance from a Blink Feature
 
@@ -98,7 +108,9 @@ Finch experiment for the feature, including a kill switch.
 Specify `base_feature: "AnotherFlagName"` if you'd like to generate a
 `base::Feature` with a different name.
 
-Specify `base_feature: "none"` to disable `base::Feature` generation.
+Specify `base_feature: "none"` to disable `base::Feature` generation
+(see the note above about in what situation `base_feature: "none"` is strongly
+discouraged).
 
 The name specified by `base_feature` or `name` is used for the feature
 name which is referred in `--enable-features=` flag and Finch configurations.
@@ -124,6 +136,9 @@ If your feature is adding new CSS Properties you will need to use the runtime_fl
 ## Using A Runtime Enabled Feature
 
 ### C++ Source Code
+
+#### In the Renderer
+
 Add this include:
 ```cpp
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -136,6 +151,35 @@ void RuntimeEnabledFeatures::SetAmazingNewFeatureEnabled(bool enabled);
 **Note:** MethodNames and  FeatureNames are in UpperCamelCase. This is handled automatically in code generators, and works even if the feature's flag name begins with an acronym such as "CSS", "IME", or "HTML".
 For example "CSSMagicFeature" becomes `RuntimeEnabledFeatures::CSSMagicFeatureEnabled()` and `RuntimeEnabledFeatures::SetCSSMagicFeatureEnabled(bool)`.
 
+#### In the Browser Process
+
+If you need to know whether this feature is turned on from the browser process, be sure that your feature sets `browser_process_read_access` or `browser_process_read_write_access` to true.
+Without at least one of these the required code will not be generated.
+
+To read features you want to include:
+```cpp
+#include "content/public/browser/runtime_feature_state/runtime_feature_state_document_data.h"
+#include "third_party/blink/public/common/runtime_feature_state/runtime_feature_state_read_context.h"
+```
+This will let you read features via the render frame host:
+```cpp
+RuntimeFeatureStateDocumentData::GetForCurrentDocument(render_frame_host)
+  ->runtime_feature_state_read_context()
+  IsAmazingNewFeatureEnabled();
+```
+
+To write features you want to include:
+```cpp
+#include "third_party/blink/public/common/runtime_feature_state/runtime_feature_state_context.h"
+```
+This will let you read/write features via the navigation handle (before it commits):
+```cpp
+navigation_handle->GetMutableRuntimeFeatureStateContext().IsAmazingNewFeatureEnabled();
+navigation_handle->GetMutableRuntimeFeatureStateContext().SetAmazingNewFeatureEnabled(true);
+```
+
+**Note:** The browser process will not see origin trial tokens sent via HTTP headers, they must be included in the page HTML.
+Please inform developers who would use this token of that limitation, and see [this bug](crbug.com/1377000) for more.
 
 ### IDL Files
 Use the [Blink extended attribute] `[RuntimeEnabled]` as in `[RuntimeEnabled=AmazingNewFeature]` in your IDL definition.

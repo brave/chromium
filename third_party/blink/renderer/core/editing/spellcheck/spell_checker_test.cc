@@ -42,8 +42,7 @@ void SpellCheckerTest::ForceLayout() {
 TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithEmptyInputNoCrash) {
   SetBodyContent("<input placeholder='placeholder'>abc");
   UpdateAllLifecyclePhasesForTest();
-  Element* input = GetDocument().QuerySelector(AtomicString("input"));
-  input->Focus();
+  QuerySelector("input")->Focus();
   // Do not crash in advanceToNextMisspelling.
   GetSpellChecker().AdvanceToNextMisspelling(false);
 }
@@ -57,7 +56,7 @@ TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithImageInTableNoCrash) {
       "</td></tr></table>"
       "zz zz zz"
       "</div>");
-  GetDocument().QuerySelector(AtomicString("div"))->Focus();
+  QuerySelector("div")->Focus();
   UpdateAllLifecyclePhasesForTest();
 
   // Do not crash in advanceToNextMisspelling.
@@ -68,28 +67,68 @@ TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithImageInTableNoCrash) {
 TEST_F(SpellCheckerTest, AdvancedToNextMisspellingWrapSearchNoCrash) {
   SetBodyContent("<div contenteditable>  zz zz zz  </div>");
 
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   div->Focus();
-  Selection().SetSelectionAndEndTyping(
-      SelectionInDOMTree::Builder()
-          .Collapse(Position::LastPositionInNode(*div))
-          .Build());
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .Collapse(Position::LastPositionInNode(*div))
+                               .Build(),
+                           SetSelectionOptions());
   UpdateAllLifecyclePhasesForTest();
 
   GetSpellChecker().AdvanceToNextMisspelling(false);
 }
 
+// https://issues.chromium.org/issues/398288325
+TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithCrossEditableNoCrash) {
+  SetBodyContent(
+      "<div contenteditable>"
+      "<div contenteditable='false'>"
+      "<div contenteditable id='div'>"
+      "</div></div></div>");
+  Element* div = GetElementById("div");
+  div->Focus();
+  UpdateAllLifecyclePhasesForTest();
+  // Do not crash in AdvanceToNextMisspelling.
+  GetSpellChecker().AdvanceToNextMisspelling(false);
+  // in design mode
+  GetDocument().setDesignMode("on");
+  div->Focus();
+  UpdateAllLifecyclePhasesForTest();
+  // Do not crash in AdvanceToNextMisspelling.
+  GetSpellChecker().AdvanceToNextMisspelling(false);
+}
+
+// https://issues.chromium.org/issues/398431390
+// The test is used to check for the presence of an infinite loop. There are no
+// `EXPECT_*` in this test. If the test does not hang, it is considered to have
+// passed.
+TEST_F(SpellCheckerTest, AdvanceToNextMisspellingNoUnresponsive) {
+  SetBodyContent(
+      "<div contenteditable>"
+      "<div contenteditable='false'>"
+      "<div contenteditable id='div'></div>"
+      "<div style='height: 100px;'></div>"
+      "</div>"
+      "<div>test</div>"
+      "</div>");
+  Element* div = GetElementById("div");
+  div->Focus();
+  UpdateAllLifecyclePhasesForTest();
+  // No unresponsive in AdvanceToNextMisspelling
+  GetSpellChecker().AdvanceToNextMisspelling(false);
+}
+
 TEST_F(SpellCheckerTest, SpellCheckDoesNotCauseUpdateLayout) {
   SetBodyContent("<input>");
-  auto* input =
-      To<HTMLInputElement>(GetDocument().QuerySelector(AtomicString("input")));
+  auto* input = To<HTMLInputElement>(QuerySelector("input"));
   input->Focus();
   input->SetValue("Hello, input field");
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   Position new_position(input->InnerEditorElement()->firstChild(), 3);
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
-      SelectionInDOMTree::Builder().Collapse(new_position).Build());
+  GetDocument().GetFrame()->Selection().SetSelection(
+      SelectionInDOMTree::Builder().Collapse(new_position).Build(),
+      SetSelectionOptions());
   ASSERT_EQ(3u, input->selectionStart());
 
   EXPECT_TRUE(GetSpellChecker().IsSpellCheckingEnabled());
@@ -104,7 +143,7 @@ TEST_F(SpellCheckerTest, MarkAndReplaceForHandlesMultipleReplacements) {
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
   EphemeralRange range_to_check =
       EphemeralRange(Position(text, 0), Position(text, 8));
@@ -134,16 +173,17 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_FirstCharSelected) {
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 0), Position(text, 1))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -161,16 +201,17 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_LastCharSelected) {
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 7), Position(text, 8))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -189,16 +230,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "s"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 1)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 0), Position(text, 1))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -217,16 +259,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "s"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 1)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 0), Position(text, 0))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -245,16 +288,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "s"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 1)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 1), Position(text, 1))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -273,16 +317,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 0), Position(text, 0))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -301,16 +346,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 8), Position(text, 8))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -328,16 +374,17 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_CaretMiddleOfWord) {
       "<div contenteditable>"
       "spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 4), Position(text, 4))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -356,16 +403,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "a spllchck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 2), Position(text, 10)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 1), Position(text, 1))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -380,16 +428,17 @@ TEST_F(SpellCheckerTest,
       "<div contenteditable>"
       "spllchck a"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(text, 9), Position(text, 9))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -403,7 +452,7 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_MultiNodeMisspell) {
       "<div contenteditable>"
       "spl<b>lc</b>hck"
       "</div>");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* first_text = div->firstChild();
   Node* second_text = first_text->nextSibling()->firstChild();
   Node* third_text = div->lastChild();
@@ -411,10 +460,11 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_MultiNodeMisspell) {
   GetDocument().Markers().AddSpellingMarker(
       EphemeralRange(Position(first_text, 0), Position(third_text, 3)));
 
-  GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
+  GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(Position(second_text, 1), Position(second_text, 1))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   DocumentMarkerGroup* result = GetDocument()
                                     .GetFrame()
@@ -441,8 +491,7 @@ TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_MultiNodeMisspell) {
 TEST_F(SpellCheckerTest, PasswordFieldsAreIgnored) {
   // Check that spellchecking is enabled for an input type="text".
   SetBodyContent("<input type=\"text\">");
-  auto* input =
-      To<HTMLInputElement>(GetDocument().QuerySelector(AtomicString("input")));
+  auto* input = To<HTMLInputElement>(QuerySelector("input"));
   input->Focus();
   input->SetValue("spllchck");
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);

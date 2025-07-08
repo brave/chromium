@@ -4,21 +4,26 @@
 
 import './accelerator_edit_view.js';
 import '../css/shortcut_customization_shared.css.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
 
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
-import {DomRepeat, flush, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import type {DomRepeat} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {flush, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {EditDialogCompletedActions, UserAction} from '../mojom-webui/shortcut_customization.mojom-webui.js';
 
 import {getTemplate} from './accelerator_edit_dialog.html.js';
 import {ViewState} from './accelerator_view.js';
 import {getShortcutProvider} from './mojo_interface_provider.js';
-import {AcceleratorConfigResult, AcceleratorInfo, AcceleratorSource, AcceleratorState} from './shortcut_types.js';
+import type {AcceleratorInfo, AcceleratorSource} from './shortcut_types.js';
+import {AcceleratorConfigResult, AcceleratorState, EditAction} from './shortcut_types.js';
 import {compareAcceleratorInfos, getAccelerator, isStandardAcceleratorInfo} from './shortcut_utils.js';
 
 export type DefaultConflictResolvedEvent = CustomEvent<{accelerator: string}>;
@@ -44,7 +49,6 @@ const MAX_NUM_ACCELERATORS = 5;
  * @fileoverview
  * 'accelerator-edit-dialog' is a dialog that displays the accelerators for
  * a given shortcut. Allows users to edit the accelerators.
- * TODO(jimmyxgong): Implement editing accelerators.
  */
 const AcceleratorEditDialogElementBase = I18nMixin(PolymerElement);
 
@@ -68,6 +72,8 @@ export class AcceleratorEditDialogElement extends
       acceleratorInfos: {
         type: Array,
         value: () => [],
+        observer:
+            AcceleratorEditDialogElement.prototype.onAcceleratorInfosChanged,
       },
 
       pendingNewAcceleratorState: {
@@ -97,6 +103,11 @@ export class AcceleratorEditDialogElement extends
         type: Array,
         value: () => [],
       },
+
+      shouldHideRestoreButton: {
+        type: Boolean,
+        value: true,
+      },
     };
   }
 
@@ -105,15 +116,28 @@ export class AcceleratorEditDialogElement extends
   action: number;
   source: AcceleratorSource;
   protected isAcceleratorCapturing: boolean;
+  protected shouldHideRestoreButton: boolean;
   protected observableDefaultAcceleratorsWithConflict: string[];
   private pendingNewAcceleratorState: number;
   private shouldSnapshotConflictDefaults: boolean;
   private defaultAcceleratorsWithConflict: Set<string> = new Set<string>();
   private eventTracker: EventTracker = new EventTracker();
+  // Represents bitwise actions done in the dialog.
+  private completedActions: number = EditDialogCompletedActions.kNoAction;
 
   override connectedCallback(): void {
     super.connectedCallback();
     this.$.editDialog.showModal();
+
+    // Update the aria-label of editDialog, by default, it would include all the
+    // content within the dialog.
+    // 1. Remove 'aria-describedby' to avoid redundant information.
+    // 2. Set a custom aria-label indicating the dialog for certain shortcut is
+    // open.
+    this.$.editDialog.shadowRoot!.querySelector('#dialog')!.removeAttribute(
+        'aria-describedby');
+    this.$.editDialog.setTitleAriaLabel(
+        this.i18n('editDialogAriaLabel', this.description));
 
     this.eventTracker.add(
         window, 'accelerator-capturing-started',
@@ -125,10 +149,13 @@ export class AcceleratorEditDialogElement extends
         this, 'default-conflict-resolved',
         (e: CustomEvent<{stringifiedAccelerator: string}>) =>
             this.onDefaultConflictResolved(e));
+
+    getShortcutProvider().recordUserAction(UserAction.kOpenEditDialog);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.completedActions = 0;
     this.eventTracker.removeAll();
     this.set('acceleratorInfos', []);
     this.shouldSnapshotConflictDefaults = false;
@@ -137,7 +164,7 @@ export class AcceleratorEditDialogElement extends
   }
 
   private getViewList(): DomRepeat {
-    const viewList = this.shadowRoot!.querySelector('#viewList') as DomRepeat;
+    const viewList = this.shadowRoot!.querySelector<DomRepeat>('#viewList');
     assert(viewList);
     return viewList;
   }
@@ -168,6 +195,8 @@ export class AcceleratorEditDialogElement extends
   }
 
   protected onDialogClose(): void {
+    getShortcutProvider().recordEditDialogCompletedActions(
+        this.completedActions as EditDialogCompletedActions);
     this.dispatchEvent(
         new CustomEvent('edit-dialog-closed', {bubbles: true, composed: true}));
   }
@@ -178,6 +207,8 @@ export class AcceleratorEditDialogElement extends
 
   private onAcceleratorCapturingEnded(): void {
     this.isAcceleratorCapturing = false;
+    // Focus on the next logical step after the user is done editing.
+    this.focusAddOrDone();
   }
 
   private onDefaultConflictResolved(
@@ -185,6 +216,17 @@ export class AcceleratorEditDialogElement extends
     assert(this.defaultAcceleratorsWithConflict.delete(
         e.detail.stringifiedAccelerator));
     this.updateObservableAcceleratorsWithConflict();
+  }
+
+  private onEditActionCompleted(e: CustomEvent<{editAction: EditAction}>):
+      void {
+    this.updateCompletedActions(e.detail.editAction);
+  }
+
+  private updateCompletedActions(editAction: EditAction): void {
+    // Announce the completed action.
+    this.announceCompleteActions(editAction);
+    this.completedActions |= editAction;
   }
 
   private focusAcceleratorItemContainer(): void {
@@ -195,7 +237,17 @@ export class AcceleratorEditDialogElement extends
     const container =
         accelItem.shadowRoot!.querySelector<HTMLElement>('#container');
     assert(container);
-    container!.focus();
+    container.focus();
+  }
+
+  private focusAddOrDone(): void {
+    const selector = this.acceleratorLimitNotReached() ?
+        '#addAcceleratorButton' :
+        '#doneButton';
+    const buttonToFocus =
+        this.$.editDialog.querySelector<HTMLButtonElement>(selector);
+    assert(buttonToFocus);
+    buttonToFocus.focus();
   }
 
   protected onAddAcceleratorClicked(): void {
@@ -204,31 +256,55 @@ export class AcceleratorEditDialogElement extends
     // Flush the dom so that the AcceleratorEditView is ready to be focused.
     flush();
     this.focusAcceleratorItemContainer();
+    getShortcutProvider().recordUserAction(UserAction.kStartAddAccelerator);
   }
 
   protected showNewAccelerator(): boolean {
-    // Show new pending accelerators when ViewState is not VIEW.
-    return this.pendingNewAcceleratorState != ViewState.VIEW &&
+    // Show new pending accelerators when ViewState is ADD.
+    return this.pendingNewAcceleratorState === ViewState.ADD &&
         this.acceleratorLimitNotReached();
   }
 
   protected showAddButton(): boolean {
-    // If the state is VIEW, no new pending accelerators are being added.
+    // Show addbutton if the state is not ADD and there is no conflict during
+    // restore default process.
+    return this.pendingNewAcceleratorState !== ViewState.ADD &&
+        this.acceleratorLimitNotReached() &&
+        this.defaultAcceleratorsWithConflict.size === 0;
+  }
+
+  protected isEmptyState(): boolean {
     return this.pendingNewAcceleratorState === ViewState.VIEW &&
-        this.acceleratorLimitNotReached() && !this.shouldHideRestoreDefaults();
+        this.getSortedFilteredAccelerators(this.acceleratorInfos).length === 0;
   }
 
   protected acceleratorLimitNotReached(): boolean {
-    return this.acceleratorInfos.length < MAX_NUM_ACCELERATORS;
+    let originalAcceleratorsCount = 0;
+    for (const acceleratorInfo of this.acceleratorInfos) {
+      if (isStandardAcceleratorInfo(acceleratorInfo)) {
+        // Check if this is an aliased accelerator, if so do not count it since
+        // we only care about the original accelerator that the user or system
+        // originally provided.
+        if (acceleratorInfo.layoutProperties.standardAccelerator
+                    ?.originalAccelerator !== undefined ||
+            acceleratorInfo.state !== AcceleratorState.kEnabled) {
+          continue;
+        }
+        ++originalAcceleratorsCount;
+      }
+    }
+
+    return originalAcceleratorsCount < MAX_NUM_ACCELERATORS;
   }
 
   protected onRestoreDefaultButtonClicked(): void {
     getShortcutProvider()
         .restoreDefault(this.source, this.action)
         .then(({result}) => {
-          // TODO(jimmyxgong): Potentially show partial resets as an error.
+          getShortcutProvider().recordUserAction(UserAction.kResetAction);
           if (result.result === AcceleratorConfigResult.kSuccess) {
             this.requestUpdateAccelerator(this.source, this.action);
+            this.updateCompletedActions(EditAction.RESET);
           } else if (
               result.result ===
               AcceleratorConfigResult.kRestoreSuccessWithConflicts) {
@@ -270,9 +346,51 @@ export class AcceleratorEditDialogElement extends
         Array.from(this.defaultAcceleratorsWithConflict));
   }
 
-  protected shouldHideRestoreDefaults(): boolean {
-    return this.isAcceleratorCapturing ||
-        this.defaultAcceleratorsWithConflict.size !== 0;
+  protected async onAcceleratorInfosChanged(): Promise<void> {
+    // Hide restoreButton when current accelerators in the dialog are the same
+    // as default accelerators.
+    this.shouldHideRestoreButton = await this.areAcceleratorsDefault();
+  }
+
+  // Check if current accelerators match the default accelerators for given
+  // action id.
+  protected async areAcceleratorsDefault(): Promise<boolean> {
+    const currentAccelerators =
+        this.getSortedFilteredAccelerators(this.acceleratorInfos);
+    const defaultAccelerators =
+        await getShortcutProvider().getDefaultAcceleratorsForId(this.action);
+
+    if (currentAccelerators.length != defaultAccelerators.accelerators.length) {
+      return false;
+    }
+    // Check if the current accelerators are strictly matched with the default
+    // accelerators.
+    return currentAccelerators.every(
+        acceleratorInfo => isStandardAcceleratorInfo(acceleratorInfo) &&
+            defaultAccelerators.accelerators.some(
+                defaultAccelerator => JSON.stringify(defaultAccelerator) ===
+                    JSON.stringify(getAccelerator(acceleratorInfo))));
+  }
+
+  private announceCompleteActions(editAction: EditAction): void {
+    let message = '';
+    switch (editAction) {
+      case EditAction.ADD:
+        message = this.i18n('shortcutAdded');
+        break;
+      case EditAction.EDIT:
+        message = this.i18n('shortcutEdited');
+        break;
+      case EditAction.REMOVE:
+        message = this.i18n('shortcutDeleted');
+        break;
+      case EditAction.RESET:
+        message = this.i18n('shortcutRestored');
+        break;
+      default:
+        return;  // No action needed.
+    }
+    getAnnouncerInstance(this.$.editDialog.getNative()).announce(message);
   }
 }
 

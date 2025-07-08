@@ -4,31 +4,17 @@
 
 #include "components/omnibox/browser/omnibox_popup_selection.h"
 
-#include "build/build_config.h"
-#include "components/omnibox/browser/actions/omnibox_action.h"
-#include "components/omnibox/browser/autocomplete_result.h"
-
 #include <algorithm>
 
-const size_t OmniboxPopupSelection::kNoMatch = static_cast<size_t>(-1);
+#include "build/build_config.h"
+#include "components/omnibox/browser/actions/omnibox_action.h"
+#include "components/omnibox/browser/autocomplete_match.h"
+#include "components/omnibox/browser/autocomplete_result.h"
+#include "components/search_engines/template_url_service.h"
 
-bool OmniboxPopupSelection::operator==(const OmniboxPopupSelection& b) const {
-  return line == b.line && state == b.state && action_index == b.action_index;
-}
+constexpr bool kIsDesktop = !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS);
 
-bool OmniboxPopupSelection::operator!=(const OmniboxPopupSelection& b) const {
-  return !operator==(b);
-}
-
-bool OmniboxPopupSelection::operator<(const OmniboxPopupSelection& b) const {
-  if (line == b.line) {
-    if (state == b.state) {
-      return action_index < b.action_index;
-    }
-    return state < b.state;
-  }
-  return line < b.line;
-}
+constexpr size_t OmniboxPopupSelection::kNoMatch = static_cast<size_t>(-1);
 
 bool OmniboxPopupSelection::IsChangeToKeyword(
     OmniboxPopupSelection from) const {
@@ -45,65 +31,43 @@ bool OmniboxPopupSelection::IsAction() const {
 
 bool OmniboxPopupSelection::IsControlPresentOnMatch(
     const AutocompleteResult& result,
-    PrefService* pref_service) const {
+    const PrefService* pref_service) const {
   if (line >= result.size()) {
     return false;
   }
+
   const auto& match = result.match_at(line);
-  // Skip rows that are hidden because their header is collapsed, unless the
-  // user is trying to focus the header itself (which is still shown).
-  if (state != FOCUSED_BUTTON_HEADER && match.suggestion_group_id.has_value() &&
-      pref_service &&
-      result.IsSuggestionGroupHidden(pref_service,
-                                     match.suggestion_group_id.value())) {
-    return false;
-  }
 
   switch (state) {
-    case FOCUSED_BUTTON_HEADER: {
-      // Trivial case where there's no header at all.
-      if (!match.suggestion_group_id.has_value()) {
-        return false;
-      }
-      // Empty string headers are not rendered and should not be traversed.
-      if (result.GetHeaderForSuggestionGroup(match.suggestion_group_id.value())
-              .empty()) {
-        return false;
-      }
-
-      // Now we know there's an existing header. First line header is always
-      // distinct from the previous match (because there is no previous match).
-      if (line == 0) {
-        return true;
-      }
-
-      // Otherwise, we verify that this header is distinct from the previous
-      // match's header.
-      const auto& previous_match = result.match_at(line - 1);
-      return match.suggestion_group_id != previous_match.suggestion_group_id;
-    }
     case NORMAL:
-      return true;
+      // `NULL_RESULT_MESSAGE` cannot be focused.
+      return match.type != AutocompleteMatchType::NULL_RESULT_MESSAGE;
     case KEYWORD_MODE:
       return match.associated_keyword != nullptr;
     case FOCUSED_BUTTON_ACTION: {
       // Actions buttons should not be shown in keyword mode.
       return !match.from_keyword && action_index < match.actions.size();
     }
+    case FOCUSED_BUTTON_THUMBS_UP:
+    case FOCUSED_BUTTON_THUMBS_DOWN:
+      return match.type == AutocompleteMatchType::HISTORY_EMBEDDINGS;
     case FOCUSED_BUTTON_REMOVE_SUGGESTION:
       return match.SupportsDeletion();
+    case FOCUSED_IPH_LINK:
+      return match.IsIphSuggestion() && !match.iph_link_url.is_empty();
     default:
       break;
   }
   NOTREACHED();
-  return false;
 }
 
 OmniboxPopupSelection OmniboxPopupSelection::GetNextSelection(
     const AutocompleteResult& result,
-    PrefService* pref_service,
+    const PrefService* pref_service,
+    TemplateURLService* template_url_service,
     Direction direction,
-    Step step) const {
+    Step step,
+    bool force_hide_row_header) const {
   if (result.empty()) {
     return *this;
   }
@@ -118,7 +82,9 @@ OmniboxPopupSelection OmniboxPopupSelection::GetNextSelection(
   // in practice it's only something like ~10 elements long, and makes the code
   // easy to reason about.
   std::vector<OmniboxPopupSelection> all_available_selections =
-      GetAllAvailableSelectionsSorted(result, pref_service, direction, step);
+      GetAllAvailableSelectionsSorted(result, pref_service,
+                                      template_url_service, direction, step,
+                                      force_hide_row_header);
 
   if (all_available_selections.empty()) {
     return *this;
@@ -163,35 +129,35 @@ OmniboxPopupSelection OmniboxPopupSelection::GetNextSelection(
   }
 
   NOTREACHED();
-  return *this;
 }
 
 // static
 std::vector<OmniboxPopupSelection>
 OmniboxPopupSelection::GetAllAvailableSelectionsSorted(
     const AutocompleteResult& result,
-    PrefService* pref_service,
+    const PrefService* pref_service,
+    TemplateURLService* template_url_service,
     Direction direction,
-    Step step) {
+    Step step,
+    bool force_hide_row_header) {
   // First enumerate all the accessible states based on `direction` and `step`,
   // as well as enabled feature flags. This doesn't mean each match will have
   // all of these states - just that it's possible to get there, if available.
   std::vector<LineState> all_states;
   if (step == kWholeLine || step == kAllLines) {
-    // In the case of whole-line stepping, only the NORMAL state is accessible.
     all_states.push_back(NORMAL);
+    // Whole line stepping can go straight into keyword mode.
+    all_states.push_back(KEYWORD_MODE);
   } else {
-    // Arrow keys should never reach the header controls.
-    if (step == kStateOrLine) {
-      all_states.push_back(FOCUSED_BUTTON_HEADER);
-    }
-
     all_states.push_back(NORMAL);
     all_states.push_back(KEYWORD_MODE);
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     all_states.push_back(FOCUSED_BUTTON_ACTION);
 #endif
+    all_states.push_back(FOCUSED_BUTTON_THUMBS_UP);
+    all_states.push_back(FOCUSED_BUTTON_THUMBS_DOWN);
     all_states.push_back(FOCUSED_BUTTON_REMOVE_SUGGESTION);
+    all_states.push_back(FOCUSED_IPH_LINK);
   }
   DCHECK(std::is_sorted(all_states.begin(), all_states.end()))
       << "This algorithm depends on a sorted list of line states.";
@@ -211,6 +177,24 @@ OmniboxPopupSelection::GetAllAvailableSelectionsSorted(
             // implies that a match takeover action should be last
             // to allow other actions on the match to be included.
             break;
+          }
+        }
+      } else if (line_state == KEYWORD_MODE && kIsDesktop) {
+        OmniboxPopupSelection selection(line_number, line_state);
+        if (selection.IsControlPresentOnMatch(result, pref_service)) {
+          if (result.match_at(line_number)
+                  .HasInstantKeyword(template_url_service)) {
+            if (available_selections.size() > 0 &&
+                available_selections.back().line == line_number &&
+                available_selections.back().state == LineState::NORMAL) {
+              // Remove the preceding normal state selection so that keyword
+              // mode will be entered immediately when the user arrows down
+              // to this keyword line.
+              available_selections.pop_back();
+            }
+            available_selections.push_back(selection);
+          } else if (step == kStateOrLine) {
+            available_selections.push_back(selection);
           }
         }
       } else {

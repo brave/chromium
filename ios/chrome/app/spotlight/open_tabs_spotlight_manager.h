@@ -5,37 +5,27 @@
 #ifndef IOS_CHROME_APP_SPOTLIGHT_OPEN_TABS_SPOTLIGHT_MANAGER_H_
 #define IOS_CHROME_APP_SPOTLIGHT_OPEN_TABS_SPOTLIGHT_MANAGER_H_
 
-#import <Foundation/Foundation.h>
+#import "ios/chrome/app/spotlight/base_spotlight_manager.h"
+
+class BrowserList;
+@class CSSearchableItem;
+class ProfileIOS;
 
 namespace favicon {
 class LargeIconService;
 }
 
-class BrowserList;
-class ChromeBrowserState;
-@class CSSearchableItem;
-@class SpotlightInterface;
-@class SearchableItemFactory;
-
 /// Manages Open Tab items in Spotlight search.
-@interface OpenTabsSpotlightManager : NSObject
-
-- (instancetype)init NS_UNAVAILABLE;
+@interface OpenTabsSpotlightManager : BaseSpotlightManager
 
 /// Model observed by this instance.
 @property(nonatomic, assign, readonly) BrowserList* browserList;
 
-/// Spotlight API endpoint.
-@property(nonatomic, readonly) SpotlightInterface* spotlightInterface;
-
-/// A searchable item factory to create searchable items.
-@property(nonatomic, readonly) SearchableItemFactory* searchableItemFactory;
-
-/// Convenience initializer with browser state.
+/// Convenience initializer with profile.
 /// Returns a new instance of OpenTabsSpotlightManager and retrieves all
-/// dependencies from `browserState`.
-+ (OpenTabsSpotlightManager*)openTabsSpotlightManagerWithBrowserState:
-    (ChromeBrowserState*)browserState;
+/// dependencies from `profile`.
++ (OpenTabsSpotlightManager*)openTabsSpotlightManagerWithProfile:
+    (ProfileIOS*)profile;
 
 - (instancetype)
     initWithLargeIconService:(favicon::LargeIconService*)largeIconService
@@ -44,11 +34,13 @@ class ChromeBrowserState;
        searchableItemFactory:(SearchableItemFactory*)searchableItemFactory
     NS_DESIGNATED_INITIALIZER;
 
+- (instancetype)
+    initWithSpotlightInterface:(SpotlightInterface*)spotlightInterface
+         searchableItemFactory:(SearchableItemFactory*)searchableItemFactory
+    NS_UNAVAILABLE;
+
 /// Immediately clears and reindexes the Open Tab items in Spotlight.
 - (void)clearAndReindexOpenTabs;
-
-// Called before the instance is deallocated.
-- (void)shutdown;
 
 @end
 

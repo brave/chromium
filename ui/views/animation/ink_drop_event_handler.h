@@ -6,10 +6,10 @@
 #define UI_VIEWS_ANIMATION_INK_DROP_EVENT_HANDLER_H_
 
 #include <memory>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
-#include "base/strings/string_piece.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/view.h"
 #include "ui/views/view_observer.h"
@@ -56,11 +56,12 @@ class VIEWS_EXPORT InkDropEventHandler : public ui::EventHandler,
   // ui::EventHandler:
   void OnGestureEvent(ui::GestureEvent* event) override;
   void OnMouseEvent(ui::MouseEvent* event) override;
-  base::StringPiece GetLogContext() const override;
+  std::string_view GetLogContext() const override;
 
   // ViewObserver:
   void OnViewVisibilityChanged(View* observed_view,
-                               View* starting_view) override;
+                               View* starting_view,
+                               bool visible) override;
   void OnViewHierarchyChanged(
       View* observed_view,
       const ViewHierarchyChangedDetails& details) override;

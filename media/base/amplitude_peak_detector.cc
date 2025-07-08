@@ -4,15 +4,55 @@
 
 #include "media/base/amplitude_peak_detector.h"
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/memory/aligned_memory.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/audio_sample_types.h"
 
 namespace media {
 
+namespace {
 constexpr float kLoudnessThreshold = 0.5;  // Corresponds to approximately -6dbs
+
+template <class T>
+bool IsDataLoud(base::span<const T> audio_data,
+                const T min_loudness,
+                const T max_loudness) {
+  return std::ranges::any_of(
+      audio_data, [min_loudness, max_loudness](float sample) {
+        return sample < min_loudness || sample > max_loudness;
+      });
+}
+
+template <class T>
+bool LoudDetector(base::span<const T> data) {
+  constexpr T min_loudness =
+      FixedSampleTypeTraits<T>::FromFloat(-kLoudnessThreshold);
+  constexpr T max_loudness =
+      FixedSampleTypeTraits<T>::FromFloat(kLoudnessThreshold);
+
+  return IsDataLoud<T>(data, min_loudness, max_loudness);
+}
+
+template <>
+bool LoudDetector<float>(base::span<const float> data) {
+  return IsDataLoud<float>(data, -kLoudnessThreshold, kLoudnessThreshold);
+}
+
+template <typename T>
+base::span<const T> ConverterTo(base::span<const uint8_t> data) {
+  // SAFETY: Here we convert the `uint8_t` type to other types because we use
+  // `data.size() / sizeof(T)` when counting. Therefore, our length will not
+  // exceed the length of the `data`, so it is safe.
+  CHECK_EQ(data.size() % sizeof(T), 0u);
+  return UNSAFE_BUFFERS(base::span<const T>(
+      reinterpret_cast<const T*>(data.data()), data.size() / sizeof(T)));
+}
+
+}  // namespace
 
 AmplitudePeakDetector::AmplitudePeakDetector(PeakDetectedCB peak_detected_cb)
     : peak_detected_cb_(std::move(peak_detected_cb)) {
@@ -35,55 +75,38 @@ void AmplitudePeakDetector::SetIsTracingEnabledForTests(
   is_tracing_enabled_ = is_tracing_enabled;
 }
 
-void AmplitudePeakDetector::FindPeak(const void* data,
-                                     int frames,
-                                     int bytes_per_sample) {
-  if (LIKELY(!is_tracing_enabled_)) {
+void AmplitudePeakDetector::FindPeak(base::span<const uint8_t> data,
+                                     size_t bytes_per_sample) {
+  if (!is_tracing_enabled_) [[likely]] {
     return;
   }
 
-  MaybeReportPeak(AreFramesLoud(data, frames, bytes_per_sample));
+  CHECK_EQ(0u, data.size() % bytes_per_sample);
+  CHECK(base::IsAligned(data.data(), bytes_per_sample));
+  switch (bytes_per_sample) {
+    case 1: {
+      MaybeReportPeak(LoudDetector(data));
+      break;
+    }
+    case 2: {
+      MaybeReportPeak(LoudDetector(ConverterTo<int16_t>(data)));
+      break;
+    }
+    case 4: {
+      MaybeReportPeak(LoudDetector(ConverterTo<int32_t>(data)));
+      break;
+    }
+    default:
+      NOTREACHED();
+  };
 }
 
 void AmplitudePeakDetector::FindPeak(const AudioBus* audio_bus) {
-  if (LIKELY(!is_tracing_enabled_)) {
+  if (!is_tracing_enabled_) [[likely]] {
     return;
   }
 
   MaybeReportPeak(AreFramesLoud(audio_bus));
-}
-
-template <class T>
-bool IsDataLoud(const T* audio_data,
-                int frames,
-                const T min_loudness,
-                const T max_loudness) {
-  int n = 0;
-  do {
-    if (audio_data[n] < min_loudness || audio_data[n] > max_loudness) {
-      return true;
-    }
-  } while (++n < frames);
-
-  return false;
-}
-
-template <class T>
-bool LoudDetector(const void* data, int frames) {
-  const T* audio_data = reinterpret_cast<const T*>(data);
-
-  constexpr T min_loudness =
-      FixedSampleTypeTraits<T>::FromFloat(-kLoudnessThreshold);
-  constexpr T max_loudness =
-      FixedSampleTypeTraits<T>::FromFloat(kLoudnessThreshold);
-
-  return IsDataLoud<T>(audio_data, frames, min_loudness, max_loudness);
-}
-
-template <>
-bool LoudDetector<float>(const void* data, int frames) {
-  return IsDataLoud<float>(reinterpret_cast<const float*>(data), frames,
-                           -kLoudnessThreshold, kLoudnessThreshold);
 }
 
 // Returns whether if any of the samples in `audio_bus` surpass
@@ -91,31 +114,12 @@ bool LoudDetector<float>(const void* data, int frames) {
 bool AmplitudePeakDetector::AreFramesLoud(const AudioBus* audio_bus) {
   DCHECK(!audio_bus->is_bitstream_format());
 
-  for (int ch = 0; ch < audio_bus->channels(); ++ch) {
-    if (LoudDetector<float>(audio_bus->channel(ch), audio_bus->frames())) {
+  for (auto channel : audio_bus->AllChannels()) {
+    if (LoudDetector<float>(channel)) {
       return true;
     }
   }
   return false;
-}
-
-// Returns whether if any of the samples in `data` surpass `kLoudnessThreshold`.
-bool AmplitudePeakDetector::AreFramesLoud(const void* data,
-                                          int frames,
-                                          int bytes_per_sample) {
-  switch (bytes_per_sample) {
-    case 1:
-      return LoudDetector<uint8_t>(data, frames);
-
-    case 2:
-      return LoudDetector<int16_t>(data, frames);
-
-    case 4:
-      return LoudDetector<int32_t>(data, frames);
-    default:
-      NOTREACHED();
-      return false;
-  };
 }
 
 void AmplitudePeakDetector::MaybeReportPeak(bool are_frames_loud) {

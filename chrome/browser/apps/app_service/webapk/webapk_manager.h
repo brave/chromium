@@ -8,13 +8,13 @@
 #include <memory>
 #include <vector>
 
-#include "ash/components/arc/mojom/intent_helper.mojom-forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_forward.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/ash/arc/session/arc_session_manager_observer.h"
+#include "chromeos/ash/experiences/arc/mojom/intent_helper.mojom-forward.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 
@@ -68,10 +68,10 @@ class WebApkManager : public AppRegistryCache::Observer,
   // ArcSessionManagerObserver:
   void OnArcPlayStoreEnabledChanged(bool enabled) override;
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;
-  raw_ptr<AppServiceProxy, ExperimentalAsh> proxy_;
-  raw_ptr<ash::ApkWebAppService, ExperimentalAsh> apk_service_;
-  raw_ptr<ArcAppListPrefs, ExperimentalAsh> app_list_prefs_;
+  raw_ptr<Profile> profile_;
+  raw_ptr<AppServiceProxy> proxy_;
+  raw_ptr<ash::ApkWebAppService> apk_service_;
+  raw_ptr<ArcAppListPrefs> app_list_prefs_;
 
   bool initialized_ = false;
 

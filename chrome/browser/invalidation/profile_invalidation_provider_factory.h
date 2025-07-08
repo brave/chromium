@@ -25,6 +25,12 @@ class ProfileInvalidationProvider;
 // for setting up tests that rely on invalidations.
 class ProfileInvalidationProviderFactory : public ProfileKeyedServiceFactory {
  public:
+  // A repeating factory that can be installed globally for all `context`
+  // objects (thus needs to be repeating factory).
+  using GlobalTestingFactory =
+      base::RepeatingCallback<std::unique_ptr<KeyedService>(
+          content::BrowserContext*)>;
+
   // Returns the ProfileInvalidationProvider for the given |profile|, lazily
   // creating one first if required. If |profile| does not support invalidation
   // (Chrome OS login profile, Chrome OS guest), returns NULL instead.
@@ -39,7 +45,7 @@ class ProfileInvalidationProviderFactory : public ProfileKeyedServiceFactory {
 
   // Switches service creation to go through |testing_factory| for all browser
   // contexts.
-  void RegisterTestingFactory(TestingFactory testing_factory);
+  void RegisterTestingFactory(GlobalTestingFactory testing_factory);
 
  private:
   friend class ProfileInvalidationProviderFactoryTestBase;
@@ -50,12 +56,12 @@ class ProfileInvalidationProviderFactory : public ProfileKeyedServiceFactory {
   ~ProfileInvalidationProviderFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
   void RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable* registry) override;
 
-  TestingFactory testing_factory_;
+  GlobalTestingFactory testing_factory_;
 };
 
 }  // namespace invalidation

@@ -2,32 +2,41 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/wallpaper/wallpaper_controller_impl.h"
-
-#include <cmath>
+#include <array>
 #include <cstdlib>
-#include <memory>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
+#include "ash/public/cpp/personalization_app/time_of_day_test_utils.h"
 #include "ash/public/cpp/schedule_enums.h"
 #include "ash/public/cpp/session/session_controller.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/test/in_process_data_decoder.h"
 #include "ash/public/cpp/test/shell_test_api.h"
-#include "ash/public/cpp/test/test_image_decoder.h"
 #include "ash/public/cpp/wallpaper/online_wallpaper_params.h"
 #include "ash/public/cpp/wallpaper/online_wallpaper_variant.h"
+#include "ash/public/cpp/wallpaper/sea_pen_image.h"
 #include "ash/public/cpp/wallpaper/wallpaper_controller_client.h"
 #include "ash/public/cpp/wallpaper/wallpaper_controller_observer.h"
+#include "ash/public/cpp/wallpaper/wallpaper_info.h"
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/style/dark_light_mode_controller_impl.h"
+#include "ash/system/geolocation/geolocation_controller.h"
+#include "ash/system/geolocation/geolocation_controller_test_util.h"
+#include "ash/system/geolocation/test_geolocation_url_loader_factory.h"
+#include "ash/system/time/calendar_unittest_utils.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_util.h"
+#include "ash/wallpaper/sea_pen_wallpaper_manager.h"
+#include "ash/wallpaper/test_sea_pen_wallpaper_manager_session_delegate.h"
 #include "ash/wallpaper/test_wallpaper_controller_client.h"
 #include "ash/wallpaper/test_wallpaper_drivefs_delegate.h"
 #include "ash/wallpaper/test_wallpaper_image_downloader.h"
@@ -35,20 +44,31 @@
 #include "ash/wallpaper/views/wallpaper_widget_controller.h"
 #include "ash/wallpaper/wallpaper_blur_manager.h"
 #include "ash/wallpaper/wallpaper_constants.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
+#include "ash/wallpaper/wallpaper_daily_refresh_scheduler.h"
+#include "ash/wallpaper/wallpaper_metrics_manager.h"
 #include "ash/wallpaper/wallpaper_pref_manager.h"
+#include "ash/wallpaper/wallpaper_time_of_day_scheduler.h"
+#include "ash/wallpaper/wallpaper_utils/sea_pen_metadata_utils.h"
+#include "ash/wallpaper/wallpaper_utils/wallpaper_file_utils.h"
 #include "ash/wallpaper/wallpaper_utils/wallpaper_resizer.h"
+#include "ash/webui/common/mojom/sea_pen.mojom-forward.h"
 #include "ash/webui/personalization_app/proto/backdrop_wallpaper.pb.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/window_cycle/window_cycle_controller.h"
 #include "ash/wm/window_state.h"
 #include "base/command_line.h"
+#include "base/containers/flat_map.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_observer.h"
@@ -56,17 +76,32 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
+#include "base/test/repeating_test_future.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/simple_test_clock.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
+#include "base/test/values_test_util.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/time/time.h"
 #include "base/time/time_override.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
+#include "chromeos/ash/components/geolocation/simple_geolocation_provider.h"
+#include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/system/fake_statistics_provider.h"
+#include "chromeos/ash/components/system/statistics_provider.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "components/account_id/account_id.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
+#include "services/data_decoder/public/mojom/image_decoder.mojom-shared.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/window.h"
@@ -79,7 +114,9 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/color_analysis.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
+#include "ui/gfx/image/image_unittest_util.h"
 #include "ui/views/view_tracker.h"
 #include "ui/views/widget/widget.h"
 
@@ -123,12 +160,14 @@ std::string GetDummyFileName(const AccountId& account_id) {
 }
 
 constexpr char kUser1[] = "user1@test.com";
-const AccountId kAccountId1 = AccountId::FromUserEmailGaiaId(kUser1, kUser1);
+const AccountId kAccountId1 =
+    AccountId::FromUserEmailGaiaId(kUser1, GaiaId("1111"));
 const std::string kWallpaperFilesId1 = GetDummyFileId(kAccountId1);
 const std::string kFileName1 = GetDummyFileName(kAccountId1);
 
 constexpr char kUser2[] = "user2@test.com";
-const AccountId kAccountId2 = AccountId::FromUserEmailGaiaId(kUser2, kUser2);
+const AccountId kAccountId2 =
+    AccountId::FromUserEmailGaiaId(kUser2, GaiaId("2222"));
 const std::string kWallpaperFilesId2 = GetDummyFileId(kAccountId2);
 const std::string kFileName2 = GetDummyFileName(kAccountId2);
 
@@ -149,6 +188,18 @@ const uint64_t kUnitId2 = 2;
 const std::string kFakeGooglePhotosAlbumId = "fake_album";
 const std::string kFakeGooglePhotosPhotoId = "fake_photo";
 
+// For checking that the wallpaper changes at approximately the correct time
+// when the "auto" schedule is enabled. The sunrise/set times specified in
+// `WallpaperControllerAutoScheduleTest` are just approximate and do not occur
+// exactly on the hour specified.
+MATCHER_P(WallpaperChangeTimeNear, hours_elapsed_since_test_start, "") {
+  static constexpr base::TimeDelta kTolerance = base::Minutes(5);
+  base::TimeDelta expected_duration_since_test_start =
+      base::Hours(hours_elapsed_since_test_start);
+  return expected_duration_since_test_start - kTolerance <= arg &&
+         arg <= expected_duration_since_test_start + kTolerance;
+}
+
 // Creates an image of size |size|.
 gfx::ImageSkia CreateImage(int width, int height, SkColor color) {
   SkBitmap bitmap;
@@ -156,11 +207,6 @@ gfx::ImageSkia CreateImage(int width, int height, SkColor color) {
   bitmap.eraseColor(color);
   gfx::ImageSkia image = gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
   return image;
-}
-
-// Returns the bitmap for test image decoder.
-SkBitmap TestImageBitmap() {
-  return *CreateImage(1, 1, SK_ColorBLUE).bitmap();
 }
 
 // Returns number of child windows in a shell window container.
@@ -196,13 +242,14 @@ bool WriteJPEGFile(const base::FilePath& path,
   SkBitmap bitmap;
   bitmap.allocN32Pixels(width, height);
   bitmap.eraseColor(color);
-  std::vector<unsigned char> output;
-  if (!gfx::JPEGCodec::Encode(bitmap, 80 /*quality*/, &output)) {
+  std::optional<std::vector<uint8_t>> output =
+      gfx::JPEGCodec::Encode(bitmap, 80 /*quality*/);
+  if (!output) {
     LOG(ERROR) << "Unable to encode " << width << "x" << height << " bitmap";
     return false;
   }
 
-  if (!base::WriteFile(path, output)) {
+  if (!base::WriteFile(path, output.value())) {
     LOG(ERROR) << "Writing to " << path.value() << " failed.";
     return false;
   }
@@ -227,16 +274,13 @@ void WaitUntilCustomWallpapersDeleted(const AccountId& account_id) {
   const std::string wallpaper_file_id = GetDummyFileId(account_id);
 
   base::FilePath small_wallpaper_dir =
-      WallpaperControllerImpl::GetCustomWallpaperDir(
-          WallpaperControllerImpl::kSmallWallpaperSubDir)
+      WallpaperControllerImpl::GetCustomWallpaperDir(kSmallWallpaperSubDir)
           .Append(wallpaper_file_id);
   base::FilePath large_wallpaper_dir =
-      WallpaperControllerImpl::GetCustomWallpaperDir(
-          WallpaperControllerImpl::kLargeWallpaperSubDir)
+      WallpaperControllerImpl::GetCustomWallpaperDir(kLargeWallpaperSubDir)
           .Append(wallpaper_file_id);
   base::FilePath original_wallpaper_dir =
-      WallpaperControllerImpl::GetCustomWallpaperDir(
-          WallpaperControllerImpl::kOriginalWallpaperSubDir)
+      WallpaperControllerImpl::GetCustomWallpaperDir(kOriginalWallpaperSubDir)
           .Append(wallpaper_file_id);
 
   while (base::PathExists(small_wallpaper_dir) ||
@@ -360,15 +404,25 @@ class TestWallpaperControllerObserver : public WallpaperControllerObserver {
     DCHECK(is_in_wallpaper_preview_);
     is_in_wallpaper_preview_ = false;
   }
+  void OnDailyRefreshCheckpointChanged() override {
+    ++daily_refresh_checkpoint_count_;
+  }
 
   int colors_changed_count() const { return colors_changed_count_; }
   int blur_changed_count() const { return blur_changed_count_; }
   int first_shown_count() const { return first_shown_count_; }
   int wallpaper_changed_count() const { return wallpaper_changed_count_; }
+  int daily_refresh_checkpoint_count() const {
+    return daily_refresh_checkpoint_count_;
+  }
   bool is_in_wallpaper_preview() const { return is_in_wallpaper_preview_; }
 
+  void ClearDailyRefreshCheckpointCount() {
+    daily_refresh_checkpoint_count_ = 0;
+  }
+
  private:
-  raw_ptr<WallpaperController, ExperimentalAsh> controller_;
+  raw_ptr<WallpaperController> controller_;
 
   base::RepeatingClosure resize_callback_;
   base::RepeatingClosure colors_calculated_callback_;
@@ -377,8 +431,61 @@ class TestWallpaperControllerObserver : public WallpaperControllerObserver {
   int blur_changed_count_ = 0;
   int first_shown_count_ = 0;
   int wallpaper_changed_count_ = 0;
+  int daily_refresh_checkpoint_count_ = 0;
   bool is_in_wallpaper_preview_ = false;
 };
+
+// Runs until the next time the wallpaper changes.
+class WallpaperChangedBarrier : public WallpaperControllerObserver {
+ public:
+  WallpaperChangedBarrier(WallpaperController* controller,
+                          base::test::TaskEnvironment* task_environment)
+      : task_environment_(task_environment) {
+    CHECK(task_environment_);
+    controller_observation_.Observe(controller);
+  }
+  WallpaperChangedBarrier(const WallpaperChangedBarrier&) = delete;
+  WallpaperChangedBarrier& operator=(const WallpaperChangedBarrier&) = delete;
+  ~WallpaperChangedBarrier() override = default;
+
+  // WallpaperControllerObserver:
+  void OnWallpaperChanged() override { wallpaper_changed_ = true; }
+
+  bool RunUntilNextWallpaperChange() {
+    wallpaper_changed_ = false;
+    while (!wallpaper_changed_) {
+      RunAllTasksUntilIdle();
+      base::TimeDelta delay_until_next_task =
+          task_environment_->NextMainThreadPendingTaskDelay();
+      if (delay_until_next_task == base::TimeDelta::Max()) {
+        // Technically, a delayed task on a different thread than "main" could
+        // trigger a wallpaper change but that is currently not the case.
+        return false;
+      }
+      task_environment_->FastForwardBy(delay_until_next_task);
+    }
+    return true;
+  }
+
+ private:
+  base::ScopedObservation<WallpaperController, WallpaperControllerObserver>
+      controller_observation_{this};
+  const raw_ptr<base::test::TaskEnvironment> task_environment_;
+  bool wallpaper_changed_ = false;
+};
+
+// Returns the image in `backdrop_image_data` whose `image_url` matches `url`,
+// or nullptr if no match is found.
+const backdrop::Image* GetImageMatchingUrl(
+    const GURL& url,
+    const std::vector<backdrop::Image>& backdrop_image_data) {
+  for (const backdrop::Image& image : backdrop_image_data) {
+    if (image.image_url() == url.spec()) {
+      return &image;
+    }
+  }
+  return nullptr;
+}
 
 // Returns the time of day wallpapers in order of light, morning, late
 // afternoon, and dark.
@@ -390,28 +497,75 @@ std::vector<backdrop::Image> TimeOfDayImageSet() {
       backdrop::Image::IMAGE_TYPE_DARK_MODE};
 
   std::vector<backdrop::Image> images;
-  for (size_t i = 0; i < image_types.size(); ++i) {
-    const uint64_t asset_id = i + 99;
+  uint64_t current_asset_id = 99;
+  for (const auto unit_id :
+       {wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId,
+        wallpaper_constants::kAlternateTimeOfDayWallpaperUnitId}) {
+    for (const auto image_type : image_types) {
+      const uint64_t asset_id = current_asset_id;
+      current_asset_id++;
+      const std::string url = base::StringPrintf(
+          "https://preferred_wallpaper/images/%zu", asset_id);
+      backdrop::Image image;
+      image.set_asset_id(asset_id);
+      image.set_unit_id(unit_id);
+      image.set_image_type(image_type);
+      image.set_image_url(url);
+      images.push_back(image);
+    }
+  }
+  return images;
+}
+
+// Returns a collection of images with randomized asset ids.
+std::vector<backdrop::Image> ImageSet() {
+  const size_t image_size = 10;
+  const auto base_asset_id = rand() % 100;
+  std::vector<backdrop::Image> images;
+  for (size_t i = 0; i < image_size; ++i) {
+    const uint64_t asset_id = i + base_asset_id;
     const std::string url =
         base::StringPrintf("https://preferred_wallpaper/images/%zu", asset_id);
     backdrop::Image image;
     image.set_asset_id(asset_id);
-    image.set_unit_id(wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId);
-    image.set_image_type(image_types[i]);
+    image.set_unit_id(asset_id);
+    image.set_image_type(backdrop::Image::IMAGE_TYPE_UNKNOWN);
     image.set_image_url(url);
     images.push_back(image);
   }
   return images;
 }
 
+// All possible time of day feature combinations that can occur in the real
+// world.
+enum class TimeOfDayFeatureCombination { kDisabled, kTimeOfDay };
+
+void InitTimeOfDayFeatureList(
+    TimeOfDayFeatureCombination time_of_day,
+    base::test::ScopedFeatureList& scoped_feature_list) {
+  std::vector<base::test::FeatureRef> enabled_features;
+  std::vector<base::test::FeatureRef> disabled_features;
+  switch (time_of_day) {
+    case TimeOfDayFeatureCombination::kDisabled:
+      disabled_features = personalization_app::GetTimeOfDayFeatures();
+      break;
+    case TimeOfDayFeatureCombination::kTimeOfDay:
+      enabled_features = personalization_app::GetTimeOfDayFeatures();
+      break;
+  }
+  enabled_features.push_back(features::kFeatureManagementSeaPen);
+  enabled_features.push_back(features::kSeaPenDemoMode);
+  enabled_features.push_back(features::kDemoModeWallpaperUpdate);
+  scoped_feature_list.InitWithFeatures(enabled_features, disabled_features);
+}
+
 }  // namespace
 
-class WallpaperControllerTestBase : public AshTestBase {
+class WallpaperControllerTestBase : public NoSessionAshTestBase {
  public:
   WallpaperControllerTestBase()
-      : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-        decoder_(mock_animation_callback_.Get(),
-                 base::BindRepeating(&TestImageBitmap)) {}
+      : NoSessionAshTestBase(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
   WallpaperControllerTestBase(const WallpaperControllerTestBase&) = delete;
   WallpaperControllerTestBase& operator=(const WallpaperControllerTestBase&) =
@@ -428,15 +582,10 @@ class WallpaperControllerTestBase : public AshTestBase {
     WallpaperControllerImpl::SetWallpaperImageDownloaderForTesting(
         std::make_unique<TestWallpaperImageDownloader>());
 
-    AshTestBase::SetUp();
+    NoSessionAshTestBase::SetUp();
 
-    TestSessionControllerClient* const client = GetSessionControllerClient();
-    client->ProvidePrefServiceForUser(kAccountId1);
-    client->ProvidePrefServiceForUser(kAccountId2);
-    client->ProvidePrefServiceForUser(
-        AccountId::FromUserEmail(user_manager::kGuestUserName));
-    client->ProvidePrefServiceForUser(kChildAccountId);
-
+    SeaPenWallpaperManager::GetInstance()->SetSessionDelegateForTesting(
+        std::make_unique<TestSeaPenWallpaperManagerSessionDelegate>());
     controller_ = Shell::Get()->wallpaper_controller();
     controller_->set_wallpaper_reload_no_delay_for_test();
 
@@ -456,16 +605,6 @@ class WallpaperControllerTestBase : public AshTestBase {
     client_.set_fake_files_id_for_account_id(kAccountId2, kWallpaperFilesId2);
 
     CreateDefaultWallpapers();
-  }
-
-  void TearDown() override {
-    // Although pref services outlive wallpaper controller in the os, in ash
-    // tests, they are destroyed in tear down (See |AshTestHelper|). We don't
-    // want this timer to run a task after tear down, since it relies on a pref
-    // service being around.
-    controller_->GetUpdateWallpaperTimerForTesting().Stop();
-
-    AshTestBase::TearDown();
   }
 
   WallpaperView* wallpaper_view() {
@@ -548,12 +687,10 @@ class WallpaperControllerTestBase : public AshTestBase {
     std::string wallpaper_files_id = GetDummyFileId(account_id);
 
     std::string file_name = GetDummyFileName(account_id);
-    base::FilePath small_wallpaper_path =
-        GetCustomWallpaperPath(WallpaperControllerImpl::kSmallWallpaperSubDir,
-                               wallpaper_files_id, file_name);
-    base::FilePath large_wallpaper_path =
-        GetCustomWallpaperPath(WallpaperControllerImpl::kLargeWallpaperSubDir,
-                               wallpaper_files_id, file_name);
+    base::FilePath small_wallpaper_path = GetCustomWallpaperPath(
+        kSmallWallpaperSubDir, wallpaper_files_id, file_name);
+    base::FilePath large_wallpaper_path = GetCustomWallpaperPath(
+        kLargeWallpaperSubDir, wallpaper_files_id, file_name);
 
     // Saves the small/large resolution wallpapers to small/large custom
     // wallpaper paths.
@@ -664,13 +801,16 @@ class WallpaperControllerTestBase : public AshTestBase {
       bool preview_mode,
       bool from_user,
       uint64_t unit_id,
-      const std::vector<OnlineWallpaperVariant>& variants,
       WallpaperController::SetWallpaperCallback callback) {
+    const OnlineWallpaperVariant variant(asset_id, GURL(url),
+                                         backdrop::Image::IMAGE_TYPE_UNKNOWN);
     const OnlineWallpaperParams params = {
-        account_id, asset_id,     GURL(url), collection_id,
-        layout,     preview_mode, from_user, /*daily_refresh_enabled=*/false,
-        unit_id,    variants};
-    controller_->OnOnlineWallpaperDecoded(params, std::move(callback), image);
+        account_id,   collection_id, layout,
+        preview_mode, from_user,     /*daily_refresh_enabled=*/false,
+        unit_id,      {variant}};
+    controller_->OnOnlineWallpaperDecoded(account_id, preview_mode,
+                                          WallpaperInfo(params, variant),
+                                          std::move(callback), image);
   }
 
   // Returns color of the current wallpaper. Note: this function assumes the
@@ -725,11 +865,12 @@ class WallpaperControllerTestBase : public AshTestBase {
     ClearWallpaperCount();
     controller_->SetOnlineWallpaper(
         OnlineWallpaperParams(
-            kAccountId1, kAssetId, GURL(path),
+            kAccountId1,
             /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
             /*preview_mode=*/false, /*from_user=*/false,
             /*daily_refresh_enabled=*/false, kUnitId,
-            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+            /*variants=*/
+            {{kAssetId, GURL(path), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
         base::DoNothing());
     RunAllTasksUntilIdle();
 
@@ -742,6 +883,34 @@ class WallpaperControllerTestBase : public AshTestBase {
         /*preview_mode=*/false, base::DoNothing(), /*file_path=*/"",
         CreateImage(640, 480, kWallpaperColor));
     RunAllTasksUntilIdle();
+  }
+
+  void SetSeaPenWallpaper(const AccountId& account_id,
+                          SkColor color,
+                          uint32_t id,
+                          bool preview_mode,
+                          gfx::ImageSkia* image) {
+    TestWallpaperControllerObserver observer(controller_);
+    std::string jpg_bytes = CreateEncodedImageForTesting(
+        {1, 1}, color, data_decoder::mojom::ImageCodec::kDefault, image);
+    ASSERT_TRUE(!jpg_bytes.empty());
+
+    base::test::TestFuture<bool> save_sea_pen_image_future;
+    auto* sea_pen_wallpaper_manager = SeaPenWallpaperManager::GetInstance();
+    sea_pen_wallpaper_manager->SaveSeaPenImage(
+        account_id, {std::move(jpg_bytes), id},
+        personalization_app::mojom::SeaPenQuery::NewTextQuery("search_query"),
+        save_sea_pen_image_future.GetCallback());
+    ASSERT_TRUE(save_sea_pen_image_future.Get());
+
+    base::test::TestFuture<bool> set_wallpaper_future;
+    controller_->SetSeaPenWallpaper(account_id, id, preview_mode,
+                                    set_wallpaper_future.GetCallback());
+
+    EXPECT_TRUE(set_wallpaper_future.Take());
+    EXPECT_EQ(1, observer.wallpaper_changed_count());
+    histogram_tester().ExpectUniqueSample("Ash.Wallpaper.SeaPen.Result2",
+                                          SetWallpaperResult::kSuccess, 1);
   }
 
   TestWallpaperImageDownloader* test_wallpaper_image_downloader() {
@@ -762,8 +931,19 @@ class WallpaperControllerTestBase : public AshTestBase {
     run_loop.Run();
   }
 
-  raw_ptr<WallpaperControllerImpl, ExperimentalAsh> controller_;
-  raw_ptr<WallpaperPrefManager, ExperimentalAsh> pref_manager_ =
+  // Returns the last modified time of a file. Returns the old last modified
+  // time if the process fails.
+  base::Time GetLastModifiedTime(const base::FilePath& path) {
+    base::File::Info info;
+    base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
+    if (file.GetInfo(&info)) {
+      return info.last_modified;
+    }
+    return base::Time();
+  }
+
+  raw_ptr<WallpaperControllerImpl, DanglingUntriaged> controller_;
+  raw_ptr<WallpaperPrefManager, DanglingUntriaged> pref_manager_ =
       nullptr;  // owned by controller
 
   base::ScopedTempDir user_data_dir_;
@@ -777,29 +957,21 @@ class WallpaperControllerTestBase : public AshTestBase {
   raw_ptr<TestWallpaperDriveFsDelegate, DanglingUntriaged> drivefs_delegate_;
 
   const AccountId kChildAccountId =
-      AccountId::FromUserEmailGaiaId(kChildEmail, kChildEmail);
+      AccountId::FromUserEmailGaiaId(kChildEmail, GaiaId("child_gaia_id"));
+
+  ScopedStubInstallAttributes scoped_stub_install_attributes_;
 
  private:
-  base::MockRepeatingCallback<
-      std::vector<data_decoder::mojom::AnimationFramePtr>()>
-      mock_animation_callback_;
-  TestImageDecoder decoder_;
+  InProcessDataDecoder decoder_;
+  base::Time mock_clock_origin_;
 };
 
-class WallpaperControllerTest : public WallpaperControllerTestBase,
-                                public testing::WithParamInterface<bool> {
+class WallpaperControllerTest
+    : public WallpaperControllerTestBase,
+      public testing::WithParamInterface<TimeOfDayFeatureCombination> {
  public:
   WallpaperControllerTest() {
-    std::vector<base::test::FeatureRef> enabled_features = {
-        features::kTimeOfDayWallpaper,
-        features::kFeatureManagementTimeOfDayWallpaper};
-    std::vector<base::test::FeatureRef> disabled_features;
-    if (IsJellyEnabled()) {
-      enabled_features.push_back(chromeos::features::kJelly);
-    } else {
-      disabled_features.push_back(chromeos::features::kJelly);
-    }
-    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
+    InitTimeOfDayFeatureList(GetParam(), scoped_feature_list_);
   }
 
   WallpaperControllerTest(const WallpaperControllerTest&) = delete;
@@ -807,13 +979,25 @@ class WallpaperControllerTest : public WallpaperControllerTestBase,
 
   ~WallpaperControllerTest() override = default;
 
-  bool IsJellyEnabled() { return GetParam(); }
+  bool IsTimeOfDayEnabled() const {
+    switch (GetParam()) {
+      case TimeOfDayFeatureCombination::kDisabled:
+        return false;
+      case TimeOfDayFeatureCombination::kTimeOfDay:
+        return true;
+    }
+  }
 
   // Populate meaningful test suffixes instead of /0, /1, etc.
   struct PrintToStringParamName {
     std::string operator()(
         const testing::TestParamInfo<ParamType>& info) const {
-      return info.param ? "JellyOn" : "JellyOff";
+      switch (info.param) {
+        case TimeOfDayFeatureCombination::kDisabled:
+          return "TimeOfDayOff";
+        case TimeOfDayFeatureCombination::kTimeOfDay:
+          return "TimeOfDayOn";
+      }
     }
   };
 
@@ -821,24 +1005,114 @@ class WallpaperControllerTest : public WallpaperControllerTestBase,
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
+// For tests that use the "auto" D/L mode setting and need a definitive
+// geoposition/date with known sunrise/sunset times.
+class WallpaperControllerAutoScheduleTest : public WallpaperControllerTest,
+                                            public ScheduledFeature::Clock {
+ protected:
+  // San Jose. Sunrise is approximately 7:00 AM, and sunset is approximately
+  // 7:00 PM PDT on `kTestDateMidnight`. Test starts at `kTestDateMidnight`
+  // by default.
+  static constexpr SimpleGeoposition kSanJoseGeoposition = {37.335480,
+                                                            -121.893028};
+  static constexpr char kTestDateMidnight[] = "26 Sep 2023 00:00:00 PDT";
+  static constexpr char kPDTTimezone[] = "America/Los_Angeles";
+
+  WallpaperControllerAutoScheduleTest()
+      : task_environment_(task_environment()), timezone_pdt_(kPDTTimezone) {}
+
+  void SetUp() override {
+    ASSERT_TRUE(timezone_pdt_.is_success());
+
+    WallpaperControllerTest::SetUp();
+    task_environment_start_time_ = task_environment()->GetMockClock()->Now();
+    SetSimulatedStartTime(GetTestDateMidnight());
+
+    // Set fixed geoposition for testing.
+    scoped_refptr<TestGeolocationUrlLoaderFactory>
+        geolocation_url_loader_factory =
+            base::MakeRefCounted<TestGeolocationUrlLoaderFactory>();
+    geolocation_url_loader_factory->SetValidPosition(
+        kSanJoseGeoposition.latitude, kSanJoseGeoposition.longitude, Now());
+    SimpleGeolocationProvider::GetInstance()
+        ->SetSharedUrlLoaderFactoryForTesting(
+            std::move(geolocation_url_loader_factory));
+
+    GeopositionResponsesWaiter waiter(Shell::Get()->geolocation_controller());
+    waiter.Wait();
+  }
+
+  // base::Clock:
+  base::Time Now() const override {
+    base::TimeDelta test_time_elapsed =
+        task_environment_->GetMockClock()->Now() - task_environment_start_time_;
+    return simulated_start_time_ + test_time_elapsed;
+  }
+
+  // base::TickClock:
+  base::TimeTicks NowTicks() const override {
+    return task_environment_->NowTicks();
+  }
+
+  base::Time GetTestDateMidnight() {
+    base::Time time;
+    CHECK(base::Time::FromString(kTestDateMidnight, &time));
+    return time;
+  }
+
+  void SetSimulatedStartTime(base::Time simulated_start_time) {
+    // Turn "auto" schedule off first to kill any internal timers within these
+    // objects before passing them a new clock.
+    WallpaperTimeOfDayScheduler& time_of_day_scheduler =
+        *Shell::Get()
+             ->wallpaper_controller()
+             ->time_of_day_scheduler_for_testing();
+    Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(false);
+    time_of_day_scheduler.SetScheduleType(ScheduleType::kNone);
+
+    simulated_start_time_ = simulated_start_time;
+    Shell::Get()->geolocation_controller()->SetClockForTesting(this);
+    Shell::Get()->dark_light_mode_controller()->SetClockForTesting(this);
+    time_of_day_scheduler.SetClockForTesting(this);
+
+    Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(true);
+    time_of_day_scheduler.SetScheduleType(ScheduleType::kSunsetToSunrise);
+  }
+
+  const raw_ptr<base::test::TaskEnvironment> task_environment_;
+  const calendar_test_utils::ScopedLibcTimeZone timezone_pdt_;
+  base::Time simulated_start_time_;
+  base::Time task_environment_start_time_;
+};
+
 INSTANTIATE_TEST_SUITE_P(
     // Empty to simplify gtest output
     ,
     WallpaperControllerTest,
-    testing::Bool(),
+    ::testing::Values(TimeOfDayFeatureCombination::kDisabled,
+                      TimeOfDayFeatureCombination::kTimeOfDay),
+    WallpaperControllerTest::PrintToStringParamName());
+
+INSTANTIATE_TEST_SUITE_P(
+    // Empty to simplify gtest output
+    ,
+    WallpaperControllerAutoScheduleTest,
+    ::testing::Values(TimeOfDayFeatureCombination::kDisabled,
+                      TimeOfDayFeatureCombination::kTimeOfDay),
     WallpaperControllerTest::PrintToStringParamName());
 
 TEST_P(WallpaperControllerTest, Client) {
+  SimulateUserLogin(kAccountId1);
   base::FilePath empty_path;
   controller_->Init(empty_path, empty_path, empty_path, empty_path);
 
   EXPECT_EQ(0u, client_.open_count());
-  EXPECT_TRUE(controller_->CanOpenWallpaperPicker());
   controller_->OpenWallpaperPickerIfAllowed();
   EXPECT_EQ(1u, client_.open_count());
 }
 
-TEST_P(WallpaperControllerTest, BasicReparenting) {
+TEST_P(WallpaperControllerTest, BasicReparentingAndLayerOpacity) {
+  SimulateUserLogin(kAccountId1);
   WallpaperControllerImpl* controller = Shell::Get()->wallpaper_controller();
   controller->CreateEmptyWallpaperForTesting();
 
@@ -846,21 +1120,27 @@ TEST_P(WallpaperControllerTest, BasicReparenting) {
   // the lock screen wallpaper container.
   EXPECT_EQ(1, ChildCountForContainer(kWallpaperId));
   EXPECT_EQ(0, ChildCountForContainer(kLockScreenWallpaperId));
+  EXPECT_TRUE(wallpaper_view()->layer()->fills_bounds_opaquely());
 
   controller->OnSessionStateChanged(session_manager::SessionState::LOCKED);
 
   // One window is moved from desktop to lock container.
   EXPECT_EQ(0, ChildCountForContainer(kWallpaperId));
   EXPECT_EQ(1, ChildCountForContainer(kLockScreenWallpaperId));
+  // The wallpaper's layer should be non opaque in locked state.
+  EXPECT_FALSE(wallpaper_view()->layer()->fills_bounds_opaquely());
 
   controller->OnSessionStateChanged(session_manager::SessionState::ACTIVE);
 
   // One window is moved from lock to desktop container.
   EXPECT_EQ(1, ChildCountForContainer(kWallpaperId));
   EXPECT_EQ(0, ChildCountForContainer(kLockScreenWallpaperId));
+  EXPECT_TRUE(wallpaper_view()->layer()->fills_bounds_opaquely());
 }
 
 TEST_P(WallpaperControllerTest, SwitchWallpapersWhenNewWallpaperAnimationEnds) {
+  SimulateUserLogin(kAccountId1);
+
   // We cannot short-circuit animations for this test.
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -884,6 +1164,8 @@ TEST_P(WallpaperControllerTest, SwitchWallpapersWhenNewWallpaperAnimationEnds) {
 // Test for crbug.com/149043 "Unlock screen, no launcher appears". Ensure we
 // move all wallpaper views if there are more than one.
 TEST_P(WallpaperControllerTest, WallpaperMovementDuringUnlock) {
+  SimulateUserLogin(kAccountId1);
+
   // We cannot short-circuit animations for this test.
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -911,8 +1193,9 @@ TEST_P(WallpaperControllerTest, WallpaperMovementDuringUnlock) {
   EXPECT_TRUE(widget_controller->IsAnimating());
   EXPECT_EQ(0, ChildCountForContainer(kWallpaperId));
   EXPECT_EQ(1, ChildCountForContainer(kLockScreenWallpaperId));
-  // There must be three layers, shield, original and old layers.
-  ASSERT_EQ(3u, wallpaper_view()->layer()->parent()->children().size());
+
+  // There must be four layers: shield, underlay, original and old layers.
+  ASSERT_EQ(4u, wallpaper_view()->layer()->parent()->children().size());
 
   // Before the wallpaper's animation completes, user unlocks the screen, which
   // moves the wallpaper to the back.
@@ -920,22 +1203,26 @@ TEST_P(WallpaperControllerTest, WallpaperMovementDuringUnlock) {
 
   // Ensure that widget has moved.
   EXPECT_EQ(1, ChildCountForContainer(kWallpaperId));
-  // There must be two layers, original and old layers while animating.
-  ASSERT_EQ(2u, wallpaper_view()->layer()->parent()->children().size());
+
+  // The shield layer is gone during an active session.
+  ASSERT_EQ(3u, wallpaper_view()->layer()->parent()->children().size());
   EXPECT_EQ(0, ChildCountForContainer(kLockScreenWallpaperId));
 
   // Finish the new wallpaper animation.
   RunDesktopControllerAnimation();
 
-  // Now there is one wallpaper and layer.
   EXPECT_EQ(1, ChildCountForContainer(kWallpaperId));
-  ASSERT_EQ(1u, wallpaper_view()->layer()->parent()->children().size());
+
+  // Now there is one wallpaper and two layers: underlay and original.
+  ASSERT_EQ(2u, wallpaper_view()->layer()->parent()->children().size());
   EXPECT_EQ(0, ChildCountForContainer(kLockScreenWallpaperId));
 }
 
 // Test for crbug.com/156542. Animating wallpaper should immediately finish
 // animation and replace current wallpaper before next animation starts.
 TEST_P(WallpaperControllerTest, ChangeWallpaperQuick) {
+  SimulateUserLogin(kAccountId1);
+
   // We cannot short-circuit animations for this test.
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -966,6 +1253,8 @@ TEST_P(WallpaperControllerTest, ChangeWallpaperQuick) {
 }
 
 TEST_P(WallpaperControllerTest, ResizeCustomWallpaper) {
+  SimulateUserLogin(kAccountId1);
+
   UpdateDisplay("320x200");
 
   gfx::ImageSkia image = CreateImage(640, 480, kWallpaperColor);
@@ -975,10 +1264,12 @@ TEST_P(WallpaperControllerTest, ResizeCustomWallpaper) {
   controller_->ShowWallpaperImage(
       image, CreateWallpaperInfo(WALLPAPER_LAYOUT_STRETCH),
       /*preview_mode=*/false, /*is_override=*/false);
-  EXPECT_TRUE(image.BackedBySameObjectAs(controller_->GetWallpaper()));
+  EXPECT_TRUE(gfx::test::AreImagesEqual(gfx::Image(controller_->GetWallpaper()),
+                                        gfx::Image(image)));
   RunAllTasksUntilIdle();
   gfx::ImageSkia resized_image = controller_->GetWallpaper();
-  EXPECT_FALSE(image.BackedBySameObjectAs(resized_image));
+  EXPECT_FALSE(gfx::test::AreImagesEqual(
+      gfx::Image(controller_->GetWallpaper()), gfx::Image(image)));
   EXPECT_EQ(gfx::Size(320, 200).ToString(), resized_image.size().ToString());
 
   // Load the original wallpaper again and check that we're still using the
@@ -994,6 +1285,8 @@ TEST_P(WallpaperControllerTest, ResizeCustomWallpaper) {
 // Test that the wallpaper is always fitted to the native display resolution
 // when the layout is WALLPAPER_LAYOUT_CENTER to prevent blurry images.
 TEST_P(WallpaperControllerTest, DontScaleWallpaperWithCenterLayout) {
+  SimulateUserLogin(kAccountId1);
+
   // We cannot short-circuit animations for this test.
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -1175,9 +1468,7 @@ TEST_P(WallpaperControllerTest, ColorsCalculatedForMostRecentWallpaper) {
   load_preview_image_loop.Run();
 }
 
-TEST_P(WallpaperControllerTest, CelebiNotSavedWhenJellyIsDisabled) {
-  base::test::ScopedFeatureList features;
-  features.InitAndDisableFeature(chromeos::features::kJelly);
+TEST_P(WallpaperControllerTest, SaveCelebiColor) {
   TestWallpaperControllerObserver observer(controller_);
 
   const char location[] = "test_wallpaper_here";
@@ -1189,34 +1480,12 @@ TEST_P(WallpaperControllerTest, CelebiNotSavedWhenJellyIsDisabled) {
   controller_->ShowWallpaperImage(kImage, wallpaper_info,
                                   /*preview_mode=*/false,
                                   /*is_override=*/false);
-  SetSessionState(SessionState::ACTIVE);
-
   // Wait for color computation to complete.
   base::RunLoop colors_loop;
   observer.SetOnColorsCalculatedCallback(colors_loop.QuitClosure());
-  colors_loop.Run();
 
-  EXPECT_FALSE(pref_manager_->GetCelebiColor(location));
-}
+  SimulateUserLogin(kAccountId1);
 
-TEST_P(WallpaperControllerTest, SaveCelebiColorWhenJellyActive) {
-  base::test::ScopedFeatureList features(chromeos::features::kJelly);
-  TestWallpaperControllerObserver observer(controller_);
-
-  const char location[] = "test_wallpaper_here";
-
-  // Set the wallpaper with a valid location.
-  WallpaperInfo wallpaper_info = CreateWallpaperInfo(WALLPAPER_LAYOUT_STRETCH);
-  wallpaper_info.location = location;
-  const gfx::ImageSkia kImage = CreateImage(10, 10, kWallpaperColor);
-  controller_->ShowWallpaperImage(kImage, wallpaper_info,
-                                  /*preview_mode=*/false,
-                                  /*is_override=*/false);
-  SetSessionState(SessionState::ACTIVE);
-
-  // Wait for color computation to complete.
-  base::RunLoop colors_loop;
-  observer.SetOnColorsCalculatedCallback(colors_loop.QuitClosure());
   colors_loop.Run();
 
   EXPECT_EQ(kWallpaperColor, pref_manager_->GetCelebiColor(location));
@@ -1224,6 +1493,8 @@ TEST_P(WallpaperControllerTest, SaveCelebiColorWhenJellyActive) {
 
 TEST_P(WallpaperControllerTest,
        GetCachedWallpaperColorForUser_WithCelebiColor) {
+  SimulateUserLogin(kAccountId1);
+
   // Cache some wallpapers and store that in the local prefs. Otherwise, we
   // can't cache colors.
   base::FilePath relative_path = PrecacheWallpapers(kAccountId1);
@@ -1237,24 +1508,15 @@ TEST_P(WallpaperControllerTest,
   // Reset to login screen.
   GetSessionControllerClient()->RequestSignOut();
 
-  if (IsJellyEnabled()) {
-    // User's wallpaper colors are accessible from login screen.
-    EXPECT_EQ(kWallpaperColor, controller_->GetCachedWallpaperColorForUser(
-                                   kAccountId1, /* use_k_means= */ false));
-  } else {
-    // User's celebi color is only retrieved when Jelly is enabled.
-    EXPECT_FALSE(controller_
-                     ->GetCachedWallpaperColorForUser(kAccountId1,
-                                                      /* use_k_means= */ false)
-                     .has_value());
-  }
+  // User's wallpaper colors are accessible from login screen.
+  EXPECT_EQ(kWallpaperColor, controller_->GetCachedWallpaperColorForUser(
+                                 kAccountId1, /* use_k_means= */ false));
 }
 
 TEST_P(WallpaperControllerTest,
        GetCachedWallpaperColorForUser_WithKMeansColor) {
-  if (!IsJellyEnabled()) {
-    return;
-  }
+  SimulateUserLogin(kAccountId1);
+
   // Cache some wallpapers and store that in the local prefs. Otherwise, we
   // can't cache colors.
   base::FilePath relative_path = PrecacheWallpapers(kAccountId1);
@@ -1274,6 +1536,8 @@ TEST_P(WallpaperControllerTest,
 }
 
 TEST_P(WallpaperControllerTest, EnableShelfColoringNotifiesObservers) {
+  SimulateUserLogin(kAccountId1);
+
   TestWallpaperControllerObserver observer(controller_);
   EXPECT_EQ(0, observer.colors_changed_count());
 
@@ -1284,119 +1548,19 @@ TEST_P(WallpaperControllerTest, EnableShelfColoringNotifiesObservers) {
   EXPECT_EQ(1, observer.colors_changed_count());
 }
 
-TEST_P(WallpaperControllerTest, ProminentColor_CachedColorsAvailableAtLogin) {
-  if (IsJellyEnabled()) {
-    // Prominent colors only apply when jelly is disabled.
-    return;
-  }
-  // Cache some wallpapers and store that in the local prefs. Otherwise, we
-  // can't cache colors.
-  base::FilePath relative_path = PrecacheWallpapers(kAccountId1);
-  WallpaperInfo info = InfoWithType(WallpaperType::kCustomized);
-  info.location = relative_path.value();
-  ASSERT_TRUE(pref_manager_->SetLocalWallpaperInfo(kAccountId1, info));
-
-  // Store colors in local prefs simulating cache behavior.
-  const std::vector<SkColor> prominent_colors = {SK_ColorGREEN, SK_ColorRED,
-                                                 SK_ColorBLUE,  SK_ColorWHITE,
-                                                 SK_ColorWHITE, SK_ColorWHITE};
-  pref_manager_->CacheProminentColors(relative_path.value(), prominent_colors);
-  const SkColor k_means_color = SK_ColorLTGRAY;
-  pref_manager_->CacheKMeanColor(relative_path.value(), k_means_color);
-
-  // Reset to login screen.
-  GetSessionControllerClient()->RequestSignOut();
-
-  TestWallpaperControllerObserver observer(controller_);
-  ASSERT_EQ(0, observer.colors_changed_count());
-
-  // Show user wallpaper in login screen. We are *not* logged in yet.
-  controller_->ShowUserWallpaper(kAccountId1,
-                                 user_manager::UserType::USER_TYPE_REGULAR);
-  task_environment()->RunUntilIdle();
-
-  // Showing a user wallpaper should cause the cached colors to be fetched and
-  // reported.
-  EXPECT_EQ(1, observer.colors_changed_count());
-
-  // DARK_VIBRANT happens to be prominent color 0.
-  EXPECT_EQ(SK_ColorGREEN, controller_->GetProminentColor(
-                               {color_utils::LumaRange::DARK,
-                                color_utils::SaturationRange::VIBRANT}));
-  EXPECT_EQ(k_means_color, controller_->GetKMeanColor());
-}
-
-TEST_P(WallpaperControllerTest, ProminentColor_ClearedBetweenUsers) {
-  if (IsJellyEnabled()) {
-    // Prominent colors only apply when jelly is disabled.
-    return;
-  }
-  // Setup prominent colors for account 1.
-  base::FilePath relative_path = PrecacheWallpapers(kAccountId1);
-  WallpaperInfo info = InfoWithType(WallpaperType::kCustomized);
-  info.location = relative_path.value();
-  ASSERT_TRUE(pref_manager_->SetLocalWallpaperInfo(kAccountId1, info));
-
-  const std::vector<SkColor> prominent_colors = {SK_ColorGREEN, SK_ColorRED,
-                                                 SK_ColorBLUE,  SK_ColorWHITE,
-                                                 SK_ColorWHITE, SK_ColorWHITE};
-  pref_manager_->CacheProminentColors(relative_path.value(), prominent_colors);
-  const SkColor k_means_color = SK_ColorLTGRAY;
-  pref_manager_->CacheKMeanColor(relative_path.value(), k_means_color);
-
-  // Set a wallpaper for account 2.
-  WallpaperInfo info2 = InfoWithType(WallpaperType::kDefault);
-  ASSERT_TRUE(pref_manager_->SetLocalWallpaperInfo(kAccountId2, info2));
-
-  // Reset to login screen.
-  GetSessionControllerClient()->RequestSignOut();
-
-  TestWallpaperControllerObserver observer(controller_);
-
-  // No notifications should have occurred yet.
-  EXPECT_EQ(0, observer.colors_changed_count());
-
-  // Show wallpaper for account 1.
-  controller_->ShowUserWallpaper(kAccountId1,
-                                 user_manager::UserType::USER_TYPE_REGULAR);
-  task_environment()->RunUntilIdle();
-
-  // Should have received a notification for the cached colors.
-  EXPECT_EQ(1, observer.colors_changed_count());
-
-  // Verify that we can retrieve the prominent color.
-  EXPECT_EQ(SK_ColorGREEN, controller_->GetProminentColor(
-                               {color_utils::LumaRange::DARK,
-                                color_utils::SaturationRange::VIBRANT}));
-
-  // Show wallpaper for account 2.
-  controller_->ShowUserWallpaper(kAccountId2,
-                                 user_manager::UserType::USER_TYPE_REGULAR);
-  task_environment()->RunUntilIdle();
-  // Since account 2 has not cached colors and wallpaper decoding is disabled,
-  // the prominent color should be invalid.
-  EXPECT_EQ(
-      kInvalidWallpaperColor,
-      controller_->GetProminentColor({color_utils::LumaRange::DARK,
-                                      color_utils::SaturationRange::VIBRANT}));
-  // We got one notification for the first user but nothing after because the
-  // wallpaper color hasn't been computed yet.
-  EXPECT_EQ(1, observer.colors_changed_count());
-}
-
 TEST_P(WallpaperControllerTest,
        OnWallpaperColorsChangedAlwaysCalledOnFirstUpdate) {
+  SimulateUserLogin(kAccountId1);
+
   TestWallpaperControllerObserver observer(controller_);
-  controller_->ShowUserWallpaper(kAccountId1,
-                                 user_manager::UserType::USER_TYPE_REGULAR);
+  controller_->ShowUserWallpaper(kAccountId1, user_manager::UserType::kRegular);
   task_environment()->RunUntilIdle();
 
   // Even though the wallpaper color is invalid, observers should still be
   // notified for the first update.
   EXPECT_EQ(observer.colors_changed_count(), 1);
 
-  controller_->ShowUserWallpaper(kAccountId2,
-                                 user_manager::UserType::USER_TYPE_REGULAR);
+  controller_->ShowUserWallpaper(kAccountId2, user_manager::UserType::kRegular);
   task_environment()->RunUntilIdle();
 
   // Observers should not be notified after the first update if the colors do
@@ -1413,17 +1577,18 @@ TEST_P(WallpaperControllerTest,
   // Set an online wallpaper with image data. Verify that the wallpaper is set
   // successfully.
   const OnlineWallpaperParams& params = OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
+      kAccountId1,
       /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
       /*preview_mode=*/false, /*from_user=*/false,
       /*daily_refresh_enabled=*/false, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>());
+      /*variants=*/
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
   controller_->SetOnlineWallpaper(params, base::DoNothing());
   RunAllTasksUntilIdle();
   // Verify that the user wallpaper info is updated.
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
-  WallpaperInfo expected_wallpaper_info(params);
+  WallpaperInfo expected_wallpaper_info(params, params.variants.front());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_wallpaper_info));
 
   // Log in |kUser2|, and set another online wallpaper for |kUser1|. Verify that
@@ -1432,17 +1597,19 @@ TEST_P(WallpaperControllerTest,
   SimulateUserLogin(kAccountId2);
   ClearWallpaperCount();
   const OnlineWallpaperParams& new_params = OnlineWallpaperParams(
-      kAccountId1, kAssetId2, GURL(kDummyUrl2),
+      kAccountId1,
       /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
       /*preview_mode=*/false, /*from_user=*/false,
       /*daily_refresh_enabled=*/false, kUnitId2,
-      /*variants=*/std::vector<OnlineWallpaperVariant>());
+      /*variants=*/
+      {{kAssetId2, GURL(kDummyUrl2), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
   controller_->SetOnlineWallpaper(new_params, base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_EQ(0, GetWallpaperCount());
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
-  WallpaperInfo expected_wallpaper_info_2(new_params);
+  WallpaperInfo expected_wallpaper_info_2(new_params,
+                                          new_params.variants.front());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_wallpaper_info_2));
 }
 
@@ -1456,11 +1623,11 @@ TEST_P(WallpaperControllerTest, SetOnlineWallpaper) {
   auto run_loop = std::make_unique<base::RunLoop>();
   ClearWallpaperCount();
   const OnlineWallpaperParams& params = OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId, layout,
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId, layout,
       /*preview_mode=*/false, /*from_user=*/true,
       /*daily_refresh_enabled=*/false, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>());
+      /*variants=*/
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
   controller_->SetOnlineWallpaper(
       params, base::BindLambdaForTesting([&run_loop](bool success) {
         EXPECT_TRUE(success);
@@ -1473,7 +1640,7 @@ TEST_P(WallpaperControllerTest, SetOnlineWallpaper) {
   WallpaperInfo wallpaper_info;
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
-  WallpaperInfo expected_wallpaper_info(params);
+  WallpaperInfo expected_wallpaper_info(params, params.variants.front());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_wallpaper_info));
   // Verify that wallpaper & collection metrics are logged.
   histogram_tester().ExpectBucketCount("Ash.Wallpaper.Image", kUnitId, 1);
@@ -1497,7 +1664,59 @@ TEST_P(WallpaperControllerTest, SetOnlineWallpaper) {
       GURL(kDummyUrl).ExtractFileName())));
 }
 
+TEST_P(WallpaperControllerTest,
+       SetOnlineWallpaper_FiresResizedSignalWhenSettingTheSameWallpaper) {
+  TestWallpaperControllerObserver observer(controller_);
+  gfx::ImageSkia image = CreateImage(640, 480, kWallpaperColor);
+  WallpaperLayout layout = WALLPAPER_LAYOUT_CENTER_CROPPED;
+  SimulateUserLogin(kAccountId1);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId, layout,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId,
+      /*variants=*/
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
+  {
+    // Verify that calling |SetOnlineWallpaper| will download the image data if
+    // it does not exist. Verify that the wallpaper is set successfully.
+    base::RunLoop run_loop;
+    ClearWallpaperCount();
+    base::RunLoop resized_loop;
+    observer.SetOnResizeCallback(resized_loop.QuitClosure());
+
+    controller_->SetOnlineWallpaper(
+        params, base::BindLambdaForTesting(
+                    [quit = run_loop.QuitClosure()](bool success) {
+                      EXPECT_TRUE(success);
+                      std::move(quit).Run();
+                    }));
+    run_loop.Run();
+    resized_loop.Run();
+    EXPECT_EQ(1, GetWallpaperCount());
+    EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kOnline);
+  }
+
+  {
+    // Verifies setting the same wallpaper still results in `OnWallpaperResized`
+    // being fired.
+    base::RunLoop run_loop;
+    base::RunLoop resized_loop;
+    observer.SetOnResizeCallback(resized_loop.QuitClosure());
+    controller_->SetOnlineWallpaper(
+        params, base::BindLambdaForTesting(
+                    [quit = run_loop.QuitClosure()](bool success) {
+                      EXPECT_TRUE(success);
+                      std::move(quit).Run();
+                    }));
+    run_loop.Run();
+    resized_loop.Run();
+  }
+}
+
 TEST_P(WallpaperControllerTest, SetTimeOfDayWallpaper) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
   auto images = TimeOfDayImageSet();
   client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
                         images);
@@ -1509,10 +1728,13 @@ TEST_P(WallpaperControllerTest, SetTimeOfDayWallpaper) {
   ClearWallpaperCount();
   controller_->SetTimeOfDayWallpaper(
       kAccountId1,
-      base::BindLambdaForTesting([quit = run_loop.QuitClosure()](bool success) {
-        EXPECT_TRUE(success);
-        std::move(quit).Run();
-      }));
+      base::BindLambdaForTesting(
+          [quit = run_loop.QuitClosure()](uint64_t unit_id, bool success) {
+            EXPECT_EQ(unit_id,
+                      wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId);
+            EXPECT_TRUE(success);
+            std::move(quit).Run();
+          }));
   run_loop.Run();
   EXPECT_EQ(1, GetWallpaperCount());
   EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kOnline);
@@ -1537,6 +1759,75 @@ TEST_P(WallpaperControllerTest, SetTimeOfDayWallpaper) {
 
 TEST_P(WallpaperControllerTest,
        ActiveUserPrefServiceChanged_SetTimeOfDayWallpaper) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
+  auto images = TimeOfDayImageSet();
+  client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+                        images);
+  WallpaperInfo local_info = InfoWithType(WallpaperType::kDefault);
+  ASSERT_TRUE(pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info));
+  SetSessionState(SessionState::OOBE);
+  // Log in and trigger `OnActiveUserPrefServiceChange`.
+  SimulateUserLogin(kAccountId1);
+  RunAllTasksUntilIdle();
+  WallpaperInfo actual_info;
+  EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual_info));
+  EXPECT_EQ(WallpaperType::kOnline, actual_info.type);
+  EXPECT_EQ(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+            actual_info.collection_id);
+  EXPECT_EQ(wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId,
+            actual_info.unit_id.value_or(0));
+  histogram_tester().ExpectUniqueSample(
+      "Ash.Wallpaper.SetTimeOfDayAfterOobe.Default", true, 1);
+}
+
+TEST_P(WallpaperControllerTest,
+       ActiveUserPrefServiceChanged_DemoMode_SetTimeOfDayWallpaper) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
+
+  scoped_stub_install_attributes_.Get()->SetDemoMode();
+  ASSERT_TRUE(demo_mode::IsDeviceInDemoMode());
+
+  auto images = TimeOfDayImageSet();
+  client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+                        images);
+  WallpaperInfo local_info = InfoWithType(WallpaperType::kDefault);
+  ASSERT_TRUE(pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info));
+  // Demo mode skips OOBE state.
+  SetSessionState(SessionState::LOGIN_PRIMARY);
+  SimulateUserLogin(kAccountId1);
+  RunAllTasksUntilIdle();
+
+  WallpaperInfo actual_info;
+  EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual_info));
+  EXPECT_EQ(WallpaperType::kOnline, actual_info.type);
+  EXPECT_EQ(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+            actual_info.collection_id);
+  EXPECT_EQ(wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId,
+            actual_info.unit_id.value_or(0));
+}
+
+TEST_P(WallpaperControllerTest,
+       ActiveUserPrefServiceChanged_SetTimeOfDayWallpaperAlternateUnitId) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
+
+  auto* fake_statistics_provider = static_cast<system::FakeStatisticsProvider*>(
+      system::StatisticsProvider::GetInstance());
+  fake_statistics_provider->ClearAllMachineStatistics();
+  fake_statistics_provider->SetMachineStatistic(
+      system::kCustomizationIdKey,
+      std::string(wallpaper_constants::kAlternateWallpaperCustomizationId));
+
+  base::test::TestFuture<void> on_machine_statistics_loaded_future;
+  fake_statistics_provider->ScheduleOnMachineStatisticsLoaded(
+      on_machine_statistics_loaded_future.GetCallback());
+  ASSERT_TRUE(on_machine_statistics_loaded_future.Wait());
+
   auto images = TimeOfDayImageSet();
   client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
                         images);
@@ -1551,12 +1842,17 @@ TEST_P(WallpaperControllerTest,
   EXPECT_EQ(WallpaperType::kOnline, actual_info.type);
   EXPECT_EQ(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
             actual_info.collection_id);
-  histogram_tester().ExpectTotalCount("Ash.Wallpaper.IsSetToTimeOfDayAfterOobe",
-                                      1);
+  EXPECT_EQ(wallpaper_constants::kAlternateTimeOfDayWallpaperUnitId,
+            actual_info.unit_id.value_or(0));
+  histogram_tester().ExpectUniqueSample(
+      "Ash.Wallpaper.SetTimeOfDayAfterOobe.Alternate", true, 1);
 }
 
 TEST_P(WallpaperControllerTest,
        TimeOfDayWallpaper_ReplacedByUserWallpaper_DuringOobe) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
   auto images = TimeOfDayImageSet();
   client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
                         images);
@@ -1574,21 +1870,29 @@ TEST_P(WallpaperControllerTest,
 
   // Keep OOBE state.
   SetSessionState(SessionState::OOBE);
-  WallpaperInfo synced_info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      std::vector<OnlineWallpaperVariant>()));
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo synced_info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER_CROPPED,
+          /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId, {variant}),
+      variant);
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
   RunAllTasksUntilIdle();
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual_info));
   EXPECT_EQ(TestWallpaperControllerClient::kDummyCollectionId,
             actual_info.collection_id);
+  EXPECT_TRUE(base::PathExists(online_wallpaper_dir_.GetPath().Append(
+      GURL(kDummyUrl).ExtractFileName())));
 }
 
 TEST_P(WallpaperControllerTest,
        ActiveUserPrefServiceChanged_OOBEForSecondUser_SetTimeOfDayWallpaper) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
   auto images = TimeOfDayImageSet();
   client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
                         images);
@@ -1605,12 +1909,47 @@ TEST_P(WallpaperControllerTest,
   EXPECT_EQ(WallpaperType::kOnline, actual_info.type);
   EXPECT_EQ(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
             actual_info.collection_id);
-  histogram_tester().ExpectTotalCount("Ash.Wallpaper.IsSetToTimeOfDayAfterOobe",
-                                      1);
+  histogram_tester().ExpectUniqueSample(
+      "Ash.Wallpaper.SetTimeOfDayAfterOobe.Default", true, 1);
+}
+
+TEST_P(
+    WallpaperControllerTest,
+    ActiveUserPrefServiceChanged_OOBEForSecondUser_SetPolicyWallpaper_TimeOfDayEnabled) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
+  auto images = TimeOfDayImageSet();
+  client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+                        images);
+  WallpaperInfo local_info = InfoWithType(WallpaperType::kDefault);
+  pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
+  SetSessionState(SessionState::LOGIN_PRIMARY);
+  LoginScreen::Get()->GetModel()->NotifyOobeDialogState(
+      OobeDialogState::GAIA_SIGNIN);
+  // Log in and trigger `OnActiveUserPrefServiceChange`.
+  SimulateUserLogin(kAccountId1);
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
+  RunAllTasksUntilIdle();
+  WallpaperInfo actual_info;
+  EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual_info));
+  WallpaperInfo policy_wallpaper_info(base::FilePath(kWallpaperFilesId1)
+                                          .Append("policy-controlled.jpeg")
+                                          .value(),
+                                      WALLPAPER_LAYOUT_CENTER_CROPPED,
+                                      WallpaperType::kPolicy,
+                                      base::Time::Now().LocalMidnight());
+  EXPECT_TRUE(actual_info.MatchesSelection(policy_wallpaper_info));
+  EXPECT_TRUE(controller_->IsWallpaperControlledByPolicy(kAccountId1));
 }
 
 TEST_P(WallpaperControllerTest,
        ActiveUserPrefServiceChanged_NonOOBE_SetTimeOfDayWallpaper) {
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
   auto images = TimeOfDayImageSet();
   client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
                         images);
@@ -1628,7 +1967,6 @@ TEST_P(WallpaperControllerTest,
 
 TEST_P(WallpaperControllerTest, SetAndRemovePolicyWallpaper) {
   // Simulate the login screen.
-  ClearLogin();
 
   // The user starts with no wallpaper info and is not controlled by policy.
   WallpaperInfo wallpaper_info;
@@ -1645,8 +1983,9 @@ TEST_P(WallpaperControllerTest, SetAndRemovePolicyWallpaper) {
   // Set a policy wallpaper. Verify that the user becomes policy controlled and
   // the wallpaper info is updated.
   ClearWallpaperCount();
-  controller_->SetPolicyWallpaper(kAccountId1, user_manager::USER_TYPE_REGULAR,
-                                  "some-image-data");
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
   RunAllTasksUntilIdle();
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
@@ -1672,7 +2011,6 @@ TEST_P(WallpaperControllerTest, SetAndRemovePolicyWallpaper) {
   // shown in the login screen.
   ClearWallpaper();
   ClearLogin();
-  controller_->ClearPrefChangeObserverForTesting();
   controller_->ShowUserWallpaper(kAccountId1);
   RunAllTasksUntilIdle();
   EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kPolicy);
@@ -1706,7 +2044,6 @@ TEST_P(WallpaperControllerTest, SetAndRemovePolicyWallpaper) {
 // original size image is available.
 TEST_P(WallpaperControllerTest, ShowUserWallpaper_OriginalFallback) {
   // Simulate the login screen.
-  ClearLogin();
 
   // Set a wallpaper.
   CreateAndSaveWallpapers(kAccountId1);
@@ -1750,7 +2087,6 @@ TEST_P(WallpaperControllerTest, ShowUserWallpaper_OriginalFallback) {
 // situation, we fallback to the default.
 TEST_P(WallpaperControllerTest, ShowUserWallpaper_MissingFile) {
   // Simulate the login screen.
-  ClearLogin();
 
   // Set a wallpaper.
   CreateAndSaveWallpapers(kAccountId1);
@@ -1871,8 +2207,9 @@ TEST_P(WallpaperControllerTest, SetThirdPartyWallpaper_PolicyWallpaper) {
   gfx::ImageSkia third_party_wallpaper = CreateImage(640, 480, kWallpaperColor);
   // Set a policy wallpaper for |kUser2|. Verify that |kUser2| becomes policy
   // controlled.
-  controller_->SetPolicyWallpaper(kAccountId2, user_manager::USER_TYPE_REGULAR,
-                                  /*data=*/"some-image-data");
+  controller_->SetPolicyWallpaper(
+      kAccountId2, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
   RunAllTasksUntilIdle();
   EXPECT_TRUE(controller_->IsWallpaperControlledByPolicy(kAccountId2));
   EXPECT_TRUE(controller_->IsActiveUserWallpaperControlledByPolicy());
@@ -1898,6 +2235,329 @@ TEST_P(WallpaperControllerTest, SetThirdPartyWallpaper_PolicyWallpaper) {
                                       WallpaperType::kPolicy,
                                       base::Time::Now().LocalMidnight());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(policy_wallpaper_info));
+}
+
+TEST_P(WallpaperControllerTest, SetSeaPenWallpaper) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  gfx::ImageSkia expected_image;
+  SetSeaPenWallpaper(kAccountId1, SK_ColorGREEN, /*id=*/777u,
+                     /*preview_mode=*/false, &expected_image);
+  EXPECT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+  EXPECT_EQ("777", wallpaper_info.location);
+  EXPECT_TRUE(wallpaper_info.user_file_path.empty());
+
+  // Use `AreBitmapsClose` because jpg encoding/decoding can alter the color
+  // channels +- 1.
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+
+  base::FileEnumerator file_enumerator(online_wallpaper_dir_.GetPath(),
+                                       /*recursive=*/true,
+                                       base::FileEnumerator::FileType::FILES);
+
+  std::vector<base::FilePath> wallpaper_files;
+  for (auto path = file_enumerator.Next(); !path.empty();
+       path = file_enumerator.Next()) {
+    wallpaper_files.push_back(path);
+  }
+
+  // One SeaPen image file saved to global wallpaper directory for account.
+  EXPECT_EQ(std::vector<base::FilePath>(
+                {base::FilePath(online_wallpaper_dir_.GetPath())
+                     .Append(wallpaper_constants::kSeaPenWallpaperDirName)
+                     .Append(kAccountId1.GetAccountIdKey())
+                     .Append("777")
+                     .AddExtension(".jpg")}),
+            wallpaper_files);
+}
+
+TEST_P(WallpaperControllerTest,
+       SeaPenWallpaperRemovedAfterSettingAnotherWallpaperType) {
+  const auto global_sea_pen_dir =
+      online_wallpaper_dir_.GetPath().Append("sea_pen").Append(
+          kAccountId1.GetAccountIdKey());
+
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  {
+    // Sets a sea pen wallpaper.
+    gfx::ImageSkia expected_image;
+    SetSeaPenWallpaper(kAccountId1, SK_ColorGREEN, /*id=*/848u,
+                       /*preview_mode=*/false, &expected_image);
+    EXPECT_TRUE(
+        pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+    EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+    EXPECT_EQ("848", wallpaper_info.location);
+    EXPECT_TRUE(wallpaper_info.user_file_path.empty());
+    // Expects the sea pen wallpaper is saved to the global SeaPen directory.
+    ASSERT_TRUE(
+        base::PathExists(global_sea_pen_dir.Append(wallpaper_info.location)
+                             .ReplaceExtension(".jpg")));
+  }
+
+  {
+    // Sets an online wallpaper.
+    base::RunLoop run_loop;
+    const OnlineWallpaperParams& params = OnlineWallpaperParams(
+        kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+        WALLPAPER_LAYOUT_CENTER_CROPPED,
+        /*preview_mode=*/false, /*from_user=*/true,
+        /*daily_refresh_enabled=*/false, kUnitId,
+        /*variants=*/
+        {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
+    controller_->SetOnlineWallpaper(
+        params, base::BindLambdaForTesting(
+                    [quit = run_loop.QuitClosure()](bool success) {
+                      EXPECT_TRUE(success);
+                      std::move(quit).Run();
+                    }));
+    run_loop.Run();
+    EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kOnline);
+  }
+
+  // Waits for clean up tasks to finish.
+  RunAllTasksUntilIdle();
+
+  // Expects the sea pen wallpaper is removed from the global SeaPen directory.
+  ASSERT_FALSE(
+      base::PathExists(global_sea_pen_dir.Append(wallpaper_info.location)
+                           .ReplaceExtension(".jpg")));
+}
+
+TEST_P(WallpaperControllerTest, ShowSeaPenWallpaperOnLogin) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  gfx::ImageSkia expected_image;
+  SetSeaPenWallpaper(kAccountId1, SK_ColorBLUE, 888u, /*preview_mode=*/false,
+                     &expected_image);
+  EXPECT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+  EXPECT_EQ("888", wallpaper_info.location);
+  EXPECT_TRUE(wallpaper_info.user_file_path.empty());
+
+  // Simulates device reboot.
+  controller_->ReloadWallpaperForTesting(/*clear_cache=*/true);
+  ClearWallpaper();
+  ClearLogin();
+  SimulateUserLogin(kAccountId1);
+  const AccountId active_account_id =
+      Shell::Get()->session_controller()->GetActiveAccountId();
+  controller_->ShowUserWallpaper(active_account_id);
+  RunAllTasksUntilIdle();
+
+  WallpaperInfo new_wallpaper_info;
+  EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(active_account_id,
+                                                  &new_wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, new_wallpaper_info.type);
+  EXPECT_TRUE(wallpaper_info.MatchesAsset(new_wallpaper_info));
+
+  // Use `AreBitmapsClose` because jpg encoding/decoding can alter the color
+  // channels +- 1.
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+}
+
+TEST_P(WallpaperControllerTest, LoadsSeaPenWallpaperWithInvalidUserFilePath) {
+  SimulateUserLogin(kAccountId1);
+
+  gfx::ImageSkia expected_image;
+  SetSeaPenWallpaper(kAccountId1, SK_ColorBLUE, 888u, /*preview_mode=*/false,
+                     &expected_image);
+
+  WallpaperInfo wallpaper_info;
+  EXPECT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  // info.user_file_path should be ignored, but older versions may have invalid
+  // strings in it. Write an older WallpaperInfo to prefs.
+  ASSERT_TRUE(pref_manager_->SetUserWallpaperInfo(
+      kAccountId1, WallpaperInfo(wallpaper_info.location, wallpaper_info.layout,
+                                 WallpaperType::kSeaPen, base::Time::Now(),
+                                 "invalid_user_file_path")));
+
+  {
+    // Simulates device reboot.
+    controller_->ReloadWallpaperForTesting(/*clear_cache=*/true);
+    ClearWallpaper();
+    ClearLogin();
+
+    // Log in.
+    SimulateUserLogin(kAccountId1);
+    controller_->ShowUserWallpaper(kAccountId1);
+    RunAllTasksUntilIdle();
+  }
+
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+}
+
+// TODO(crbug.com/41484478): Flaky on linux-chromeos-rel.
+TEST_P(WallpaperControllerTest, DISABLED_SetSeaPenWallpaperFromFile) {
+  SimulateUserLogin(kAccountId1);
+  TestWallpaperControllerObserver observer(controller_);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  gfx::ImageSkia expected_image;
+  std::string jpg_bytes = CreateEncodedImageForTesting(
+      {1, 1}, SK_ColorGREEN, data_decoder::mojom::ImageCodec::kDefault,
+      &expected_image);
+  ASSERT_TRUE(!jpg_bytes.empty());
+
+  base::ScopedTempDir scoped_temp_dir;
+  ASSERT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
+  base::FilePath file_path = scoped_temp_dir.GetPath().Append("111.jpg");
+  ASSERT_TRUE(base::WriteFile(file_path, jpg_bytes));
+  // Updates the last modified time for the file.
+  ASSERT_TRUE(base::TouchFile(file_path, base::Time::Now() - base::Minutes(5),
+                              base::Time::Now() - base::Minutes(5)));
+  base::Time old_last_modified_time = GetLastModifiedTime(file_path);
+
+  base::test::TestFuture<bool> set_wallpaper_future;
+  controller_->SetSeaPenWallpaper(kAccountId1, 111u, /*preview_mode=*/false,
+                                  set_wallpaper_future.GetCallback());
+
+  EXPECT_TRUE(set_wallpaper_future.Take());
+  EXPECT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+  EXPECT_EQ(1, observer.wallpaper_changed_count());
+  histogram_tester().ExpectUniqueSample("Ash.Wallpaper.SeaPen.Result2",
+                                        SetWallpaperResult::kSuccess, 1);
+  // Use `AreBitmapsClose` because jpg encoding/decoding can alter the color
+  // channels +- 1.
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+
+  // Last Modified Time should be updated to current time.
+  EXPECT_TRUE(GetLastModifiedTime(file_path) > old_last_modified_time);
+}
+
+TEST_P(WallpaperControllerTest, CancelSetSeaPenWallpaperInTabletMode) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  gfx::ImageSkia expected_image;
+  TestWallpaperControllerObserver observer(controller_);
+  SetSeaPenWallpaper(kAccountId1, SK_ColorBLUE, /*id=*/777u,
+                     /*preview_mode=*/true, &expected_image);
+  RunAllTasksUntilIdle();
+
+  EXPECT_TRUE(observer.is_in_wallpaper_preview());
+
+  controller_->CancelPreviewWallpaper();
+
+  EXPECT_FALSE(observer.is_in_wallpaper_preview());
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+}
+
+TEST_P(WallpaperControllerTest, ConfirmSetSeaPenWallpaperInTabletMode) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_FALSE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+
+  gfx::ImageSkia expected_image;
+  TestWallpaperControllerObserver observer(controller_);
+  SetSeaPenWallpaper(kAccountId1, SK_ColorGREEN, /*id=*/777u,
+                     /*preview_mode=*/true, &expected_image);
+  RunAllTasksUntilIdle();
+
+  EXPECT_TRUE(observer.is_in_wallpaper_preview());
+
+  controller_->ConfirmPreviewWallpaper();
+
+  EXPECT_FALSE(observer.is_in_wallpaper_preview());
+  EXPECT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+  EXPECT_EQ("777", wallpaper_info.location);
+  EXPECT_TRUE(wallpaper_info.user_file_path.empty());
+
+  // Use `AreBitmapsClose` because jpg encoding/decoding can alter the color
+  // channels +- 1.
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+
+  base::FileEnumerator file_enumerator(online_wallpaper_dir_.GetPath(),
+                                       /*recursive=*/true,
+                                       base::FileEnumerator::FileType::FILES);
+
+  std::vector<base::FilePath> wallpaper_files;
+  for (auto path = file_enumerator.Next(); !path.empty();
+       path = file_enumerator.Next()) {
+    wallpaper_files.push_back(path);
+  }
+
+  // One SeaPen image file saved to global wallpaper directory for account.
+  EXPECT_EQ(std::vector<base::FilePath>(
+                {base::FilePath(online_wallpaper_dir_.GetPath())
+                     .Append(wallpaper_constants::kSeaPenWallpaperDirName)
+                     .Append(kAccountId1.GetAccountIdKey())
+                     .Append("777")
+                     .AddExtension(".jpg")}),
+            wallpaper_files);
+}
+
+TEST_P(WallpaperControllerTest, SetSeaPenWallpaperForPublicAccount) {
+  const auto account_id = SimulateUserLogin(
+      {"public_session", user_manager::UserType::kPublicAccount});
+
+  gfx::ImageSkia expected_image;
+  SetSeaPenWallpaper(account_id, SK_ColorBLUE, 12345u, /*preview_mode=*/false,
+                     &expected_image);
+
+  WallpaperInfo wallpaper_info;
+  ASSERT_TRUE(pref_manager_->GetUserWallpaperInfo(account_id, &wallpaper_info));
+  EXPECT_EQ(WallpaperType::kSeaPen, wallpaper_info.type);
+  EXPECT_EQ("12345", wallpaper_info.location);
+
+  // Use `AreBitmapsClose` because jpg encoding/decoding can alter the color
+  // channels +- 1.
+  EXPECT_TRUE(gfx::test::AreBitmapsClose(
+      *expected_image.bitmap(), *controller_->GetWallpaperImage().bitmap(),
+      /*max_deviation=*/1));
+
+  base::FileEnumerator file_enumerator(online_wallpaper_dir_.GetPath(),
+                                       /*recursive=*/true,
+                                       base::FileEnumerator::FileType::FILES);
+
+  std::vector<base::FilePath> wallpaper_files;
+  for (auto path = file_enumerator.Next(); !path.empty();
+       path = file_enumerator.Next()) {
+    wallpaper_files.push_back(path);
+  }
+
+  // No wallpaper files saved to global wallpaper directory for public account.
+  EXPECT_TRUE(wallpaper_files.empty());
 }
 
 TEST_P(WallpaperControllerTest, SetDefaultWallpaperForRegularAccount) {
@@ -1991,7 +2651,8 @@ TEST_P(WallpaperControllerTest, SetDefaultWallpaperForRegularAccount) {
 }
 
 TEST_P(WallpaperControllerTest, SetDefaultWallpaperForChildAccount) {
-  SimulateUserLogin(kChildAccountId, user_manager::USER_TYPE_CHILD);
+  SimulateUserLogin({.user_type = user_manager::UserType::kChild},
+                    kChildAccountId);
 
   // Verify the large child wallpaper is set successfully with the correct file
   // path.
@@ -2030,7 +2691,6 @@ TEST_P(WallpaperControllerTest, SetDefaultWallpaperForChildAccount) {
 TEST_P(WallpaperControllerTest,
        SetDefaultWallpaperForGuestSessionUnaffectedByWallpaperPolicy) {
   // Simulate the login screen.
-  ClearLogin();
   ClearWallpaperCount();
 
   // First, simulate settings for a guest user which will show the default
@@ -2042,9 +2702,8 @@ TEST_P(WallpaperControllerTest,
   ClearWallpaperCount();
   ClearDecodeFilePaths();
 
-  const AccountId guest_id =
-      AccountId::FromUserEmail(user_manager::kGuestUserName);
-  SimulateUserLogin(guest_id, user_manager::USER_TYPE_GUEST);
+  ClearLogin();
+  const auto guest_id = SimulateGuestLogin();
   controller_->SetDefaultWallpaper(guest_id, /*show_wallpaper=*/true,
                                    base::DoNothing());
   RunAllTasksUntilIdle();
@@ -2066,8 +2725,9 @@ TEST_P(WallpaperControllerTest,
   // Second, set a user policy for which is being set for another
   // user and verifying that the policy has been applied successfully.
   WallpaperInfo policy_wallpaper_info;
-  controller_->SetPolicyWallpaper(kAccountId1, user_manager::USER_TYPE_REGULAR,
-                                  "policy-image-data");
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
   RunAllTasksUntilIdle();
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &policy_wallpaper_info));
@@ -2097,7 +2757,7 @@ TEST_P(WallpaperControllerTest, SetDefaultWallpaperForGuestSessionAndPreview) {
   const AccountId guest_id =
       AccountId::FromUserEmail(user_manager::kGuestUserName);
   controller_->ShowUserWallpaper(guest_id);
-  SimulateUserLogin(guest_id, user_manager::USER_TYPE_GUEST);
+  SimulateUserLogin({.user_type = user_manager::UserType::kGuest}, guest_id);
   WallpaperInfo wallpaper_info;
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(guest_id, &wallpaper_info));
   EXPECT_EQ(wallpaper_info.type, WallpaperType::kDefault);
@@ -2115,9 +2775,8 @@ TEST_P(WallpaperControllerTest, SetDefaultWallpaperForGuestSession) {
       base::Time::Now().LocalMidnight());
   EXPECT_NE(wallpaper_info.type, default_wallpaper_info.type);
 
-  const AccountId guest_id =
-      AccountId::FromUserEmail(user_manager::kGuestUserName);
-  SimulateUserLogin(guest_id, user_manager::USER_TYPE_GUEST);
+  ClearLogin();
+  const AccountId guest_id = SimulateGuestLogin();
 
   // Verify that during a guest session, |SetDefaultWallpaper| removes the user
   // custom wallpaper info, but a guest specific wallpaper should be set,
@@ -2181,7 +2840,7 @@ TEST_P(WallpaperControllerTest, SetDefaultWallpaperCallbackTiming) {
 
 TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestInKioskMode) {
   gfx::ImageSkia image = CreateImage(640, 480, kWallpaperColor);
-  SimulateUserLogin("kiosk", user_manager::USER_TYPE_KIOSK_APP);
+  SimulateUserLogin({"kiosk", user_manager::UserType::kKioskChromeApp});
 
   // Verify that |SetDecodedCustomWallpaper| doesn't set wallpaper in kiosk
   // mode, and |kAccountId1|'s wallpaper info is not updated.
@@ -2200,12 +2859,13 @@ TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestInKioskMode) {
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   ClearWallpaperCount();
   controller_->SetOnlineWallpaper(
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            /*collection_id=*/std::string(),
-                            WALLPAPER_LAYOUT_CENTER,
-                            /*preview_mode=*/false, /*from_user=*/false,
-                            /*daily_refresh_enabled=*/false, kUnitId,
-                            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+      OnlineWallpaperParams(
+          kAccountId1,
+          /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER,
+          /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId,
+          /*variants=*/
+          {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
       base::BindLambdaForTesting([&run_loop](bool success) {
         EXPECT_FALSE(success);
         run_loop->Quit();
@@ -2226,19 +2886,14 @@ TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestInKioskMode) {
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
 }
 
-// Disable the wallpaper setting for public session since it is ephemeral.
-TEST_P(WallpaperControllerTest, NotShowWallpaperSettingInPublicSession) {
-  SimulateUserLogin("public_session", user_manager::USER_TYPE_PUBLIC_ACCOUNT);
-  EXPECT_FALSE(controller_->ShouldShowWallpaperSetting());
-}
-
 TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestWhenPolicyIsEnforced) {
   gfx::ImageSkia image = CreateImage(640, 480, kWallpaperColor);
   SimulateUserLogin(kAccountId1);
 
   // Set a policy wallpaper for the user. Verify the user is policy controlled.
-  controller_->SetPolicyWallpaper(kAccountId1, user_manager::USER_TYPE_REGULAR,
-                                  "policy-image-data");
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
   RunAllTasksUntilIdle();
   EXPECT_TRUE(controller_->IsWallpaperControlledByPolicy(kAccountId1));
 
@@ -2291,11 +2946,12 @@ TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestWhenPolicyIsEnforced) {
     ClearWallpaperCount();
     controller_->SetOnlineWallpaper(
         OnlineWallpaperParams(
-            kAccountId1, kAssetId, GURL(kDummyUrl),
+            kAccountId1,
             /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
             /*preview_mode=*/false, /*from_user=*/false,
             /*daily_refresh_enabled=*/false, kUnitId,
-            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+            /*variants=*/
+            {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
         base::BindLambdaForTesting(
             [quit = run_loop.QuitClosure()](bool success) {
               EXPECT_FALSE(success);
@@ -2315,11 +2971,12 @@ TEST_P(WallpaperControllerTest, IgnoreWallpaperRequestWhenPolicyIsEnforced) {
     ClearWallpaperCount();
     controller_->SetOnlineWallpaper(
         OnlineWallpaperParams(
-            kAccountId1, kAssetId, GURL(kDummyUrl),
+            kAccountId1,
             /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
             /*preview_mode=*/false, /*from_user=*/false,
             /*daily_refresh_enabled=*/false, kUnitId,
-            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+            /*variants=*/
+            {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
         base::BindLambdaForTesting(
             [quit = run_loop.QuitClosure()](bool success) {
               EXPECT_FALSE(success);
@@ -2365,12 +3022,13 @@ TEST_P(WallpaperControllerTest, VerifyWallpaperCache) {
 
   // Verify |SetOnlineWallpaper| updates wallpaper cache for |user1|.
   controller_->SetOnlineWallpaper(
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            /*collection_id=*/std::string(),
-                            WALLPAPER_LAYOUT_CENTER,
-                            /*preview_mode=*/false, /*from_user=*/false,
-                            /*daily_refresh_enabled=*/false, kUnitId,
-                            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+      OnlineWallpaperParams(
+          kAccountId1,
+          /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
+          /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId,
+          /*variants=*/
+          {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
       base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_TRUE(
@@ -2379,8 +3037,8 @@ TEST_P(WallpaperControllerTest, VerifyWallpaperCache) {
 
   // After |kUser2| is logged in, |user1|'s wallpaper cache should still be kept
   // (crbug.com/339576). Note the active user is still |user1|.
-  TestSessionControllerClient* session = GetSessionControllerClient();
-  session->AddUserSession(kUser2);
+  SimulateUserLogin({kUser2});
+  SwitchActiveUser(kAccountId1);
   EXPECT_TRUE(
       controller_->GetWallpaperFromCache(kAccountId1, &cached_wallpaper));
   EXPECT_TRUE(controller_->GetPathFromCache(kAccountId1, &path));
@@ -2411,12 +3069,10 @@ TEST_P(WallpaperControllerTest, VerifyWallpaperCache) {
 // Tests that the appropriate wallpaper (large vs. small) is shown depending
 // on the desktop resolution.
 TEST_P(WallpaperControllerTest, ShowCustomWallpaperWithCorrectResolution) {
-  const base::FilePath small_custom_wallpaper_path =
-      GetCustomWallpaperPath(WallpaperControllerImpl::kSmallWallpaperSubDir,
-                             kWallpaperFilesId1, kFileName1);
-  const base::FilePath large_custom_wallpaper_path =
-      GetCustomWallpaperPath(WallpaperControllerImpl::kLargeWallpaperSubDir,
-                             kWallpaperFilesId1, kFileName1);
+  const base::FilePath small_custom_wallpaper_path = GetCustomWallpaperPath(
+      kSmallWallpaperSubDir, kWallpaperFilesId1, kFileName1);
+  const base::FilePath large_custom_wallpaper_path = GetCustomWallpaperPath(
+      kLargeWallpaperSubDir, kWallpaperFilesId1, kFileName1);
 
   CreateAndSaveWallpapers(kAccountId1);
   ClearWallpaperCount();
@@ -2622,12 +3278,13 @@ TEST_P(WallpaperControllerTest, UpdateCurrentWallpaperLayout) {
   // wallpaper info is updated.
   image = CreateImage(640, 480, kWallpaperColor);
   ClearWallpaperCount();
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            /*collection_id=*/std::string(), layout,
-                            /*preview_mode=*/false, /*from_user=*/false,
-                            /*daily_refresh_enabled=*/false, kUnitId,
-                            /*variants=*/std::vector<OnlineWallpaperVariant>());
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1,
+      /*collection_id=*/std::string(), layout,
+      /*preview_mode=*/false, /*from_user=*/false,
+      /*daily_refresh_enabled=*/false, kUnitId,
+      /*variants=*/
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
   controller_->SetOnlineWallpaper(params, base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetWallpaperCount());
@@ -2635,7 +3292,7 @@ TEST_P(WallpaperControllerTest, UpdateCurrentWallpaperLayout) {
   EXPECT_EQ(controller_->GetWallpaperLayout(), layout);
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
-  WallpaperInfo expected_online_wallpaper_info(params);
+  WallpaperInfo expected_online_wallpaper_info(params, params.variants.front());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_online_wallpaper_info));
 
   // Now change the layout of the online wallpaper. Verify that it's a no-op.
@@ -2656,9 +3313,8 @@ TEST_P(WallpaperControllerTest, UpdateCurrentWallpaperLayout) {
 // The other user's custom wallpaper is not affected.
 TEST_P(WallpaperControllerTest, RemoveUserWithCustomWallpaper) {
   SimulateUserLogin(kAccountId1);
-  base::FilePath small_wallpaper_path_1 =
-      GetCustomWallpaperPath(WallpaperControllerImpl::kSmallWallpaperSubDir,
-                             kWallpaperFilesId1, kFileName1);
+  base::FilePath small_wallpaper_path_1 = GetCustomWallpaperPath(
+      kSmallWallpaperSubDir, kWallpaperFilesId1, kFileName1);
 
   // Set a custom wallpaper for |kUser1| and verify the wallpaper exists.
   CreateAndSaveWallpapers(kAccountId1);
@@ -2666,9 +3322,8 @@ TEST_P(WallpaperControllerTest, RemoveUserWithCustomWallpaper) {
 
   // Now login another user and set a custom wallpaper for the user.
   SimulateUserLogin(kAccountId2);
-  base::FilePath small_wallpaper_path_2 =
-      GetCustomWallpaperPath(WallpaperControllerImpl::kSmallWallpaperSubDir,
-                             kWallpaperFilesId2, GetDummyFileName(kAccountId2));
+  base::FilePath small_wallpaper_path_2 = GetCustomWallpaperPath(
+      kSmallWallpaperSubDir, kWallpaperFilesId2, GetDummyFileName(kAccountId2));
   CreateAndSaveWallpapers(kAccountId2);
   EXPECT_TRUE(base::PathExists(small_wallpaper_path_2));
 
@@ -2687,9 +3342,8 @@ TEST_P(WallpaperControllerTest, RemoveUserWithCustomWallpaper) {
 // the other user's custom wallpaper is not affected.
 TEST_P(WallpaperControllerTest, RemoveUserWithDefaultWallpaper) {
   SimulateUserLogin(kAccountId1);
-  base::FilePath small_wallpaper_path_1 =
-      GetCustomWallpaperPath(WallpaperControllerImpl::kSmallWallpaperSubDir,
-                             kWallpaperFilesId1, kFileName1);
+  base::FilePath small_wallpaper_path_1 = GetCustomWallpaperPath(
+      kSmallWallpaperSubDir, kWallpaperFilesId1, kFileName1);
   // Set a custom wallpaper for |kUser1| and verify the wallpaper exists.
   CreateAndSaveWallpapers(kAccountId1);
   EXPECT_TRUE(base::PathExists(small_wallpaper_path_1));
@@ -2727,15 +3381,15 @@ TEST_P(WallpaperControllerTest, RemoveUserWallpaperOnRemoveCallbackCalled) {
 TEST_P(WallpaperControllerTest, IsActiveUserWallpaperControlledByPolicy) {
   // Simulate the login screen. Verify that it returns false since there's no
   // active user.
-  ClearLogin();
   EXPECT_FALSE(controller_->IsActiveUserWallpaperControlledByPolicy());
 
   SimulateUserLogin(kAccountId1);
   EXPECT_FALSE(controller_->IsActiveUserWallpaperControlledByPolicy());
   // Set a policy wallpaper for the active user. Verify that the active user
   // becomes policy controlled.
-  controller_->SetPolicyWallpaper(kAccountId1, user_manager::USER_TYPE_REGULAR,
-                                  "policy-image-data");
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kRegular,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
   RunAllTasksUntilIdle();
   EXPECT_TRUE(controller_->IsActiveUserWallpaperControlledByPolicy());
 
@@ -2752,15 +3406,15 @@ TEST_P(WallpaperControllerTest,
        IsManagedGuestSessionWallpaperControlledByPolicy) {
   // Simulate the login screen. Verify that it returns false since there's no
   // active user.
-  ClearLogin();
   EXPECT_FALSE(controller_->IsActiveUserWallpaperControlledByPolicy());
 
   // Set a policy wallpaper for the managed guest session. Verify that the
   // managed guest session becomes policy controlled.
-  controller_->SetPolicyWallpaper(kAccountId1,
-                                  user_manager::USER_TYPE_PUBLIC_ACCOUNT,
-                                  "managed-guest-policy-image-data");
-  SimulateUserLogin(kAccountId1, user_manager::USER_TYPE_PUBLIC_ACCOUNT);
+  controller_->SetPolicyWallpaper(
+      kAccountId1, user_manager::UserType::kPublicAccount,
+      CreateEncodedImageForTesting(gfx::Size(10, 10)));
+  SimulateUserLogin({.user_type = user_manager::UserType::kPublicAccount},
+                    kAccountId1);
   RunAllTasksUntilIdle();
   EXPECT_TRUE(controller_->IsWallpaperControlledByPolicy(kAccountId1));
 
@@ -2817,6 +3471,8 @@ TEST_P(WallpaperControllerTest, WallpaperBlur) {
 }
 
 TEST_P(WallpaperControllerTest, WallpaperBlurDuringLockScreenTransition) {
+  SimulateUserLogin(kAccountId1);
+
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
 
@@ -2831,19 +3487,7 @@ TEST_P(WallpaperControllerTest, WallpaperBlurDuringLockScreenTransition) {
       controller_->GetWallpaperType()));
   ASSERT_FALSE(controller_->IsWallpaperBlurredForLockState());
 
-  ASSERT_EQ(2u, wallpaper_view()->layer()->parent()->children().size());
-  EXPECT_EQ(ui::LAYER_TEXTURED,
-            wallpaper_view()->layer()->parent()->children()[0]->type());
-  EXPECT_EQ(ui::LAYER_TEXTURED,
-            wallpaper_view()->layer()->parent()->children()[1]->type());
-
-  // Simulate lock and unlock sequence.
-  controller_->UpdateWallpaperBlurForLockState(true);
-  EXPECT_TRUE(controller_->IsWallpaperBlurredForLockState());
-  EXPECT_EQ(1, observer.blur_changed_count());
-
-  SetSessionState(SessionState::LOCKED);
-  EXPECT_TRUE(controller_->IsWallpaperBlurredForLockState());
+  // There are three layers: underlay, original and old layers.
   ASSERT_EQ(3u, wallpaper_view()->layer()->parent()->children().size());
   EXPECT_EQ(ui::LAYER_SOLID_COLOR,
             wallpaper_view()->layer()->parent()->children()[0]->type());
@@ -2852,19 +3496,43 @@ TEST_P(WallpaperControllerTest, WallpaperBlurDuringLockScreenTransition) {
   EXPECT_EQ(ui::LAYER_TEXTURED,
             wallpaper_view()->layer()->parent()->children()[2]->type());
 
+  // Simulate lock and unlock sequence.
+  controller_->UpdateWallpaperBlurForLockState(true);
+  EXPECT_TRUE(controller_->IsWallpaperBlurredForLockState());
+  EXPECT_EQ(1, observer.blur_changed_count());
+
+  SetSessionState(SessionState::LOCKED);
+  EXPECT_TRUE(controller_->IsWallpaperBlurredForLockState());
+
+  // There are four layers: shield, underlay, original and old layers.
+  ASSERT_EQ(4u, wallpaper_view()->layer()->parent()->children().size());
+  EXPECT_EQ(ui::LAYER_SOLID_COLOR,
+            wallpaper_view()->layer()->parent()->children()[0]->type());
+  EXPECT_EQ(ui::LAYER_SOLID_COLOR,
+            wallpaper_view()->layer()->parent()->children()[1]->type());
+  EXPECT_EQ(ui::LAYER_TEXTURED,
+            wallpaper_view()->layer()->parent()->children()[2]->type());
+  EXPECT_EQ(ui::LAYER_TEXTURED,
+            wallpaper_view()->layer()->parent()->children()[3]->type());
+
   // Change of state to ACTIVE triggers post lock animation and
   // UpdateWallpaperBlur(false)
   SetSessionState(SessionState::ACTIVE);
   EXPECT_FALSE(controller_->IsWallpaperBlurredForLockState());
   EXPECT_EQ(2, observer.blur_changed_count());
-  ASSERT_EQ(2u, wallpaper_view()->layer()->parent()->children().size());
-  EXPECT_EQ(ui::LAYER_TEXTURED,
+
+  // There are three layers: underlay, original and old layers.
+  ASSERT_EQ(3u, wallpaper_view()->layer()->parent()->children().size());
+  EXPECT_EQ(ui::LAYER_SOLID_COLOR,
             wallpaper_view()->layer()->parent()->children()[0]->type());
   EXPECT_EQ(ui::LAYER_TEXTURED,
             wallpaper_view()->layer()->parent()->children()[1]->type());
+  EXPECT_EQ(ui::LAYER_TEXTURED,
+            wallpaper_view()->layer()->parent()->children()[2]->type());
 }
 
 TEST_P(WallpaperControllerTest, LockDuringOverview) {
+  SimulateUserLogin(kAccountId1);
   gfx::ImageSkia image = CreateImage(600, 400, kWallpaperColor);
   controller_->ShowWallpaperImage(
       image, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER),
@@ -2892,6 +3560,7 @@ TEST_P(WallpaperControllerTest, LockDuringOverview) {
 }
 
 TEST_P(WallpaperControllerTest, DontLeakShieldView) {
+  SimulateUserLogin(kAccountId1);
   SetSessionState(SessionState::LOCKED);
   views::View* shield_view = wallpaper_view()->shield_view_for_testing();
   ASSERT_TRUE(shield_view);
@@ -2950,7 +3619,6 @@ TEST_P(WallpaperControllerTest, ShouldShowInitialAnimationAfterBoot) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kFirstExecAfterBoot);
   base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kLoginManager);
-  ClearLogin();
 
   // Show the first wallpaper. Verify that the slower animation should be used.
   ClearWallpaperCount();
@@ -2983,7 +3651,6 @@ TEST_P(WallpaperControllerTest, ShouldNotShowInitialAnimationAfterSignOut) {
   // animation should never be used.
   base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kLoginManager);
   CreateAndSaveWallpapers(kAccountId1);
-  ClearLogin();
 
   // Show the first wallpaper.
   ClearWallpaperCount();
@@ -3061,7 +3728,7 @@ TEST_P(WallpaperControllerTest, ClosePreviewWallpaperOnOverviewStart) {
   EXPECT_NE(kWallpaperColor, GetWallpaperColor());
   EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDefault);
   EXPECT_TRUE(user_wallpaper_info.MatchesSelection(default_wallpaper_info));
-  EXPECT_TRUE(Shell::Get()->overview_controller()->InOverviewSession());
+  EXPECT_TRUE(OverviewController::Get()->InOverviewSession());
 }
 
 TEST_P(WallpaperControllerTest, ClosePreviewWallpaperOnWindowCycleStart) {
@@ -3242,7 +3909,6 @@ TEST_P(WallpaperControllerTest, ConfirmPreviewWallpaper) {
       kAccountId1, kAssetId, gfx::ImageSkia(), kDummyUrl,
       TestWallpaperControllerClient::kDummyCollectionId, layout,
       /*preview_mode=*/true, /*from_user=*/true, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>(),
       base::BindLambdaForTesting([&run_loop](bool success) {
         EXPECT_FALSE(success);
         run_loop->Quit();
@@ -3256,17 +3922,14 @@ TEST_P(WallpaperControllerTest, ConfirmPreviewWallpaper) {
   gfx::ImageSkia online_wallpaper =
       CreateImage(640, 480, online_wallpaper_color);
   EXPECT_NE(online_wallpaper_color, GetWallpaperColor());
+  TestWallpaperControllerObserver observer(controller_);
   run_loop = std::make_unique<base::RunLoop>();
+  observer.SetOnResizeCallback(run_loop->QuitClosure());
   SetOnlineWallpaperFromImage(
       kAccountId1, kAssetId, online_wallpaper, kDummyUrl,
       TestWallpaperControllerClient::kDummyCollectionId, layout,
       /*preview_mode=*/true, /*from_user=*/true, kUnitId,
-      /*variants=*/
-      std::vector<OnlineWallpaperVariant>(),
-      base::BindLambdaForTesting([&run_loop](bool success) {
-        EXPECT_TRUE(success);
-        run_loop->Quit();
-      }));
+      base::BindLambdaForTesting([](bool success) { EXPECT_TRUE(success); }));
   run_loop->Run();
   EXPECT_EQ(1, GetWallpaperCount());
   EXPECT_EQ(online_wallpaper_color, GetWallpaperColor());
@@ -3284,14 +3947,17 @@ TEST_P(WallpaperControllerTest, ConfirmPreviewWallpaper) {
   EXPECT_EQ(online_wallpaper_color, GetWallpaperColor());
   // Verify that the user wallpaper info is now updated to the online wallpaper
   // info.
-  WallpaperInfo online_wallpaper_info(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId, layout,
-      /*preview_mode=*/false,
-      /*from_user=*/true,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      /*variants=*/
-      std::vector<OnlineWallpaperVariant>()));
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo online_wallpaper_info(
+      OnlineWallpaperParams(kAccountId1,
+                            TestWallpaperControllerClient::kDummyCollectionId,
+                            layout,
+                            /*preview_mode=*/false,
+                            /*from_user=*/true,
+                            /*daily_refresh_enabled=*/false, kUnitId,
+                            /*variants=*/{variant}),
+      variant);
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &user_wallpaper_info));
   EXPECT_TRUE(user_wallpaper_info.MatchesSelection(online_wallpaper_info));
@@ -3356,9 +4022,7 @@ TEST_P(WallpaperControllerTest, CancelPreviewWallpaper) {
   SetOnlineWallpaperFromImage(
       kAccountId1, kAssetId, online_wallpaper, kDummyUrl,
       TestWallpaperControllerClient::kDummyCollectionId, layout,
-      /*preview_mode=*/true, /*from_user=*/true, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>(),
-      WallpaperController::SetWallpaperCallback());
+      /*preview_mode=*/true, /*from_user=*/true, kUnitId, base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetWallpaperCount());
   EXPECT_EQ(online_wallpaper_color, GetWallpaperColor());
@@ -3464,9 +4128,7 @@ TEST_P(WallpaperControllerTest, WallpaperSyncedDuringPreview) {
   SetOnlineWallpaperFromImage(
       kAccountId1, kAssetId, online_wallpaper, kDummyUrl,
       TestWallpaperControllerClient::kDummyCollectionId, layout,
-      /*preview_mode=*/true, /*from_user=*/true, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>(),
-      WallpaperController::SetWallpaperCallback());
+      /*preview_mode=*/true, /*from_user=*/true, kUnitId, base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetWallpaperCount());
   EXPECT_EQ(kWallpaperColor, GetWallpaperColor());
@@ -3486,22 +4148,22 @@ TEST_P(WallpaperControllerTest, WallpaperSyncedDuringPreview) {
       kAccountId1, kAssetId, synced_online_wallpaper, kDummyUrl2,
       TestWallpaperControllerClient::kDummyCollectionId, layout,
       /*preview_mode=*/false,
-      /*from_user=*/true, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>(),
-      WallpaperController::SetWallpaperCallback());
+      /*from_user=*/true, kUnitId, base::DoNothing());
   RunAllTasksUntilIdle();
   EXPECT_EQ(0, GetWallpaperCount());
   EXPECT_EQ(kWallpaperColor, GetWallpaperColor());
   // However, the user wallpaper info should already be updated to the new info.
-  WallpaperInfo synced_online_wallpaper_info =
-      WallpaperInfo(OnlineWallpaperParams(
-          kAccountId1, kAssetId, GURL(kDummyUrl2),
-          TestWallpaperControllerClient::kDummyCollectionId, layout,
-          /*preview_mode=*/false,
-          /*from_user=*/true,
-          /*daily_refresh_enabled=*/false, kUnitId,
-          /*variants=*/
-          std::vector<OnlineWallpaperVariant>()));
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl2),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo synced_online_wallpaper_info = WallpaperInfo(
+      OnlineWallpaperParams(kAccountId1,
+                            TestWallpaperControllerClient::kDummyCollectionId,
+                            layout,
+                            /*preview_mode=*/false,
+                            /*from_user=*/true,
+                            /*daily_refresh_enabled=*/false, kUnitId,
+                            /*variants=*/{variant}),
+      variant);
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &user_wallpaper_info));
   EXPECT_TRUE(
@@ -3643,21 +4305,72 @@ TEST_P(WallpaperControllerTest, OnFirstWallpaperShown) {
   EXPECT_EQ(1, observer.first_shown_count());
 }
 
+class WallpaperControllerEphemeralTest
+    : public WallpaperControllerTestBase,
+      public testing::WithParamInterface<
+          std::tuple<TimeOfDayFeatureCombination, user_manager::UserType>> {
+ public:
+  WallpaperControllerEphemeralTest() {
+    InitTimeOfDayFeatureList(std::get<0>(GetParam()), scoped_feature_list_);
+  }
+
+  WallpaperControllerEphemeralTest(const WallpaperControllerTest&) = delete;
+  WallpaperControllerEphemeralTest& operator=(const WallpaperControllerTest&) =
+      delete;
+
+  ~WallpaperControllerEphemeralTest() override = default;
+
+  // Populate meaningful test suffixes instead of /0, /1, etc.
+  struct PrintToStringParamName {
+    std::string operator()(
+        const testing::TestParamInfo<ParamType>& info) const {
+      std::ostringstream ss;
+      switch (std::get<0>(info.param)) {
+        case TimeOfDayFeatureCombination::kDisabled:
+          ss << "TimeOfDayOff_";
+          break;
+        case TimeOfDayFeatureCombination::kTimeOfDay:
+          ss << "TimeOfDayOn_";
+          break;
+      }
+      ss << std::get<1>(info.param);
+      std::string r = ss.str();
+      std::replace(r.begin(), r.end(), '-', '_');
+      return r;
+    }
+  };
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    WallpaperControllerEphemeralTest,
+    ::testing::Values(std::make_tuple(TimeOfDayFeatureCombination::kDisabled,
+                                      user_manager::UserType::kGuest),
+                      std::make_tuple(TimeOfDayFeatureCombination::kTimeOfDay,
+                                      user_manager::UserType::kGuest),
+                      std::make_tuple(TimeOfDayFeatureCombination::kDisabled,
+                                      user_manager::UserType::kPublicAccount),
+                      std::make_tuple(TimeOfDayFeatureCombination::kTimeOfDay,
+                                      user_manager::UserType::kPublicAccount),
+                      std::make_tuple(TimeOfDayFeatureCombination::kDisabled,
+                                      user_manager::UserType::kRegular),
+                      std::make_tuple(TimeOfDayFeatureCombination::kTimeOfDay,
+                                      user_manager::UserType::kRegular)),
+    WallpaperControllerEphemeralTest::PrintToStringParamName());
+
 // Although ephemeral users' custom wallpapers are not saved to disk, they
 // should be kept within the user session. Test for https://crbug.com/825237.
-TEST_P(WallpaperControllerTest, ShowWallpaperForEphemeralUser) {
+TEST_P(WallpaperControllerEphemeralTest, ShowWallpaperForEphemeralUser) {
   // Clear the local pref so we can make sure nothing writes to it.
   local_state()->ClearPref(prefs::kUserWallpaperInfo);
 
-  // Add an ephemeral user session and simulate login, like SimulateUserLogin.
-  UserSession session;
-  session.session_id = 0;
-  session.user_info.account_id = kAccountId1;
-  session.user_info.is_ephemeral = true;
-  Shell::Get()->session_controller()->UpdateUserSession(std::move(session));
-  TestSessionControllerClient* const client = GetSessionControllerClient();
-  client->SwitchActiveUser(kAccountId1);
-  client->SetSessionState(SessionState::ACTIVE);
+  // Add an ephemeral user session and simulate login.
+  auto user_type = std::get<1>(GetParam());
+  SimulateUserLogin({.user_type = user_type, .is_ephemeral = true},
+                    kAccountId1);
 
   // The user doesn't have wallpaper cache in the beginning.
   gfx::ImageSkia cached_wallpaper;
@@ -3701,43 +4414,23 @@ TEST_P(WallpaperControllerTest, ShowWallpaperForEphemeralUser) {
 // which OOBE wallpaper flow should be used
 class WallpaperControllerOobeWallpaperTest
     : public WallpaperControllerTestBase,
-      public testing::WithParamInterface<std::tuple</*OobeSimon*/ bool,
-                                                    /*OobeJelly*/ bool,
-                                                    /*OobeJellyModal*/ bool>> {
+      public testing::WithParamInterface</*BootAnimation*/ bool> {
  public:
   WallpaperControllerOobeWallpaperTest() {
-    const bool oobe_simon = std::get<0>(GetParam());
-    const bool oobe_jelly = std::get<1>(GetParam());
-    const bool oobe_jelly_modal = std::get<2>(GetParam());
-    scoped_feature_list_.InitWithFeatureStates(
-        {{features::kFeatureManagementOobeSimon, oobe_simon},
-         {features::kOobeSimon, oobe_simon},
-         {chromeos::features::kJelly, oobe_jelly},
-         {features::kOobeJelly, oobe_jelly},
-         {features::kOobeJellyModal, oobe_jelly_modal}});
+    const bool boot_animation = GetParam();
+    scoped_feature_list_.InitWithFeatureStates({
+        {features::kFeatureManagementOobeSimon, boot_animation},
+    });
   }
   ~WallpaperControllerOobeWallpaperTest() override = default;
-
-  // Populate meaningful test suffixes instead of /0, /1, etc.
-  struct PrintToStringParamName {
-    std::string operator()(
-        const testing::TestParamInfo<ParamType>& info) const {
-      std::stringstream ss;
-      ss << std::get<0>(info.param) << "_AND_" << std::get<1>(info.param)
-         << "_AND_" << std::get<2>(info.param);
-      return ss.str();
-    }
-  };
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    WallpaperControllerOobeWallpaperTest,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool(), ::testing::Bool()),
-    WallpaperControllerOobeWallpaperTest::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(All,
+                         WallpaperControllerOobeWallpaperTest,
+                         /*BootAnimation*/ testing::Bool());
 
 TEST_P(WallpaperControllerOobeWallpaperTest, ShowOobeWallpaper) {
   controller_->ShowDefaultWallpaperForTesting();
@@ -3794,6 +4487,7 @@ INSTANTIATE_TEST_SUITE_P(All,
                          /*always_on_top=*/testing::Bool());
 
 TEST_P(WallpaperControllerOverrideWallpaperTest, OverrideWallpaper) {
+  SimulateUserLogin(kAccountId1);
   // Show a default wallpaper.
   EXPECT_EQ(0, GetWallpaperCount());
   controller_->ShowSigninWallpaper();
@@ -3850,7 +4544,7 @@ class WallpaperControllerPrefTest : public AshTestBase {
  public:
   WallpaperControllerPrefTest() {
     scoped_feature_list_.InitWithFeatures(
-        {chromeos::features::kJelly, features::kTimeOfDayWallpaper}, {});
+        personalization_app::GetTimeOfDayFeatures(), {});
     base::Value::Dict property;
     property.Set("rotation", static_cast<int>(display::Display::ROTATE_90));
     property.Set("width", 800);
@@ -3888,6 +4582,7 @@ TEST_F(WallpaperControllerPrefTest, InitWithPrefs) {
 TEST_P(WallpaperControllerTest, NoAnimationForNewRootWindowWhenLocked) {
   ui::ScopedAnimationDurationScaleMode test_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+  SimulateUserLogin(kAccountId1);
   SetSessionState(SessionState::LOCKED);
   UpdateDisplay("800x600, 800x600");
   auto* secondary_root_window_controller =
@@ -3946,7 +4641,7 @@ TEST_P(WallpaperControllerTest, SetCustomWallpaper) {
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_wallpaper_info));
 
   // Verify the updated wallpaper is shown after |kUser1| becomes active again.
-  SimulateUserLogin(kAccountId1);
+  SwitchActiveUser(kAccountId1);
   ClearWallpaperCount();
   controller_->ShowUserWallpaper(kAccountId1);
   RunAllTasksUntilIdle();
@@ -3955,21 +4650,21 @@ TEST_P(WallpaperControllerTest, SetCustomWallpaper) {
 }
 
 TEST_P(WallpaperControllerTest, OldOnlineInfoSynced_Discarded) {
+  SimulateUserLogin(kAccountId1);
   // Create a dictionary that looks like the preference from crrev.com/a040384.
   // DO NOT CHANGE as there are preferences like this in production.
   base::Value::Dict wallpaper_info_dict;
   wallpaper_info_dict.Set(
-      WallpaperPrefManager::kNewWallpaperDateNodeName,
+      WallpaperInfo::kNewWallpaperDateNodeName,
       base::NumberToString(
           base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds()));
-  wallpaper_info_dict.Set(WallpaperPrefManager::kNewWallpaperLocationNodeName,
+  wallpaper_info_dict.Set(WallpaperInfo::kNewWallpaperLocationNodeName,
                           "location");
-  wallpaper_info_dict.Set(
-      WallpaperPrefManager::kNewWallpaperUserFilePathNodeName,
-      "user_file_path");
-  wallpaper_info_dict.Set(WallpaperPrefManager::kNewWallpaperLayoutNodeName,
+  wallpaper_info_dict.Set(WallpaperInfo::kNewWallpaperUserFilePathNodeName,
+                          "user_file_path");
+  wallpaper_info_dict.Set(WallpaperInfo::kNewWallpaperLayoutNodeName,
                           WallpaperLayout::WALLPAPER_LAYOUT_CENTER);
-  wallpaper_info_dict.Set(WallpaperPrefManager::kNewWallpaperTypeNodeName,
+  wallpaper_info_dict.Set(WallpaperInfo::kNewWallpaperTypeNodeName,
                           static_cast<int>(WallpaperType::kOnline));
 
   {
@@ -3978,6 +4673,8 @@ TEST_P(WallpaperControllerTest, OldOnlineInfoSynced_Discarded) {
     wallpaper_update->Set(kAccountId1.GetUserEmail(),
                           std::move(wallpaper_info_dict));
   }
+  ClearLogin();
+
   SimulateUserLogin(kAccountId1);
   task_environment()->RunUntilIdle();
 
@@ -3987,8 +4684,11 @@ TEST_P(WallpaperControllerTest, OldOnlineInfoSynced_Discarded) {
 }
 
 TEST_P(WallpaperControllerTest, MigrateWallpaperInfo_Online) {
+  SimulateUserLogin(kAccountId1);
   WallpaperInfo expected_info = InfoWithType(WallpaperType::kOnline);
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, expected_info);
+  ClearLogin();
+
   SimulateUserLogin(kAccountId1);
   WallpaperInfo info;
   ASSERT_TRUE(pref_manager_->GetSyncedWallpaperInfo(kAccountId1, &info));
@@ -3996,8 +4696,11 @@ TEST_P(WallpaperControllerTest, MigrateWallpaperInfo_Online) {
 }
 
 TEST_P(WallpaperControllerTest, MigrateWallpaperInfoCustomized) {
+  SimulateUserLogin(kAccountId1);
   WallpaperInfo expected_info = InfoWithType(WallpaperType::kCustomized);
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, expected_info);
+  ClearLogin();
+
   SimulateUserLogin(kAccountId1);
   WallpaperInfo info;
   ASSERT_TRUE(pref_manager_->GetSyncedWallpaperInfo(kAccountId1, &info));
@@ -4005,13 +4708,18 @@ TEST_P(WallpaperControllerTest, MigrateWallpaperInfoCustomized) {
 }
 
 TEST_P(WallpaperControllerTest, MigrateWallpaperInfoDaily) {
-  WallpaperInfo expected_info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      std::vector<OnlineWallpaperVariant>()));
+  SimulateUserLogin(kAccountId1);
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo expected_info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId, {variant}),
+      variant);
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, expected_info);
+  ClearLogin();
+
   SimulateUserLogin(kAccountId1);
   WallpaperInfo info;
   ASSERT_TRUE(pref_manager_->GetSyncedWallpaperInfo(kAccountId1, &info));
@@ -4020,20 +4728,27 @@ TEST_P(WallpaperControllerTest, MigrateWallpaperInfoDaily) {
 
 TEST_P(WallpaperControllerTest,
        MigrateWallpaperInfoDoesntHappenWhenSyncedInfoAlreadyExists) {
-  WallpaperInfo local_info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      std::vector<OnlineWallpaperVariant>()));
-  WallpaperInfo synced_info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId2, GURL(kDummyUrl2),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      std::vector<OnlineWallpaperVariant>()));
+  SimulateUserLogin(kAccountId1);
+  OnlineWallpaperVariant local_variant(kAssetId, GURL(kDummyUrl),
+                                       backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo local_info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId, {local_variant}),
+      local_variant);
+  OnlineWallpaperVariant synced_variant(kAssetId2, GURL(kDummyUrl2),
+                                        backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo synced_info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId, {synced_variant}),
+      synced_variant);
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
+  ClearLogin();
+
   SimulateUserLogin(kAccountId1);
   WallpaperInfo info;
   ASSERT_TRUE(pref_manager_->GetSyncedWallpaperInfo(kAccountId1, &info));
@@ -4090,6 +4805,8 @@ TEST_P(WallpaperControllerTest, ActiveUserPrefServiceChanged_SyncDisabled) {
 
 TEST_P(WallpaperControllerTest, HandleWallpaperInfoSyncedLocalIsPolicy) {
   CacheOnlineWallpaper(kDummyUrl);
+  ClearLogin();
+
   pref_manager_->SetLocalWallpaperInfo(kAccountId1,
                                        InfoWithType(WallpaperType::kPolicy));
 
@@ -4107,6 +4824,7 @@ TEST_P(WallpaperControllerTest, HandleWallpaperInfoSyncedLocalIsPolicy) {
 TEST_P(WallpaperControllerTest,
        HandleWallpaperInfoSyncedLocalIsCustomizedAndOlder) {
   CacheOnlineWallpaper(kDummyUrl);
+  ClearLogin();
 
   WallpaperInfo local_info = InfoWithType(WallpaperType::kCustomized);
   local_info.date = DayBeforeYesterdayish();
@@ -4149,12 +4867,14 @@ TEST_P(WallpaperControllerTest, HandleWallpaperInfoSyncedOnline) {
   // Attempt to set an online wallpaper without providing the image data. Verify
   // it succeeds this time because |SetOnlineWallpaper| has saved the file.
   ClearWallpaperCount();
-  WallpaperInfo info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
-      /*daily_refresh_enabled=*/false, kUnitId,
-      std::vector<OnlineWallpaperVariant>()));
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER, /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId, {variant}),
+      variant);
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, info);
 
   RunAllTasksUntilIdle();
@@ -4188,20 +4908,22 @@ TEST_P(WallpaperControllerTest, UpdateDailyRefreshWallpaper) {
   info.collection_id = expected;
   pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   EXPECT_EQ(expected, client_.get_fetch_daily_refresh_wallpaper_param());
 }
 
 TEST_P(WallpaperControllerTest, UpdateDailyRefreshWallpaperCalledOnLogin) {
   SimulateUserLogin(kAccountId1);
 
-  WallpaperInfo info = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
-      /*from_user=*/false,
-      /*daily_refresh_enabled=*/true, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>()));
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
+          /*from_user=*/false,
+          /*daily_refresh_enabled=*/true, kUnitId, {variant}),
+      variant);
   info.date = DayBeforeYesterdayish();
   pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
 
@@ -4225,7 +4947,7 @@ TEST_P(WallpaperControllerTest, UpdateDailyRefreshWallpaper_NotEnabled) {
   info.collection_id = "fun_collection";
   pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   EXPECT_EQ(std::string(), client_.get_fetch_daily_refresh_wallpaper_param());
 }
 
@@ -4236,85 +4958,8 @@ TEST_P(WallpaperControllerTest, UpdateDailyRefreshWallpaper_NoCollectionId) {
       WallpaperInfo(std::string(), WALLPAPER_LAYOUT_CENTER,
                     WallpaperType::kDaily, DayBeforeYesterdayish()));
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   EXPECT_EQ(std::string(), client_.get_fetch_daily_refresh_wallpaper_param());
-}
-
-TEST_P(WallpaperControllerTest,
-       UpdateDailyRefreshWallpaper_TimerStartsOnPrefServiceChange) {
-  using base::Time;
-
-  SimulateUserLogin(kAccountId1);
-  WallpaperInfo info = {std::string(), WALLPAPER_LAYOUT_CENTER,
-                        WallpaperType::kDaily,
-                        base::Time::Now().LocalMidnight()};
-  info.collection_id = "fun_collection";
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  controller_->OnActiveUserPrefServiceChanged(
-      GetProfilePrefService(kAccountId1));
-
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delta = run_time.ToDeltaSinceWindowsEpoch();
-
-  base::TimeDelta update_time =
-      Time::Now().LocalMidnight().ToDeltaSinceWindowsEpoch() + base::Days(1);
-
-  ASSERT_GE(delta, update_time - base::Minutes(1));
-  ASSERT_LE(delta, update_time + base::Hours(1) + base::Minutes(1));
-}
-
-TEST_P(WallpaperControllerTest,
-       UpdateDailyRefreshWallpaper_RetryTimerTriggersOnFailedFetchInfo) {
-  using base::Time;
-
-  client_.set_fetch_daily_refresh_info_fails(true);
-
-  SimulateUserLogin(kAccountId1);
-
-  WallpaperInfo info = {std::string(), WALLPAPER_LAYOUT_CENTER,
-                        WallpaperType::kDaily, DayBeforeYesterdayish()};
-  info.collection_id = "fun_collection";
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  controller_->UpdateDailyRefreshWallpaperForTesting();
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-
-  base::TimeDelta one_hour = base::Hours(1);
-  // Lave a little wiggle room.
-  ASSERT_GE(delay, one_hour - base::Minutes(1));
-  ASSERT_LE(delay, one_hour + base::Minutes(1));
-}
-
-TEST_P(WallpaperControllerTest,
-       UpdateDailyRefreshWallpaper_RetryTimerTriggersOnFailedFetchData) {
-  using base::Time;
-
-  SimulateUserLogin(kAccountId1);
-
-  WallpaperInfo info = {std::string(), WALLPAPER_LAYOUT_CENTER,
-                        WallpaperType::kDaily, DayBeforeYesterdayish()};
-  info.collection_id = "fun_collection";
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  test_wallpaper_image_downloader()->set_image_generator(
-      base::BindLambdaForTesting([]() { return gfx::ImageSkia(); }));
-
-  controller_->UpdateDailyRefreshWallpaperForTesting();
-
-  RunAllTasksUntilIdle();
-
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-
-  base::TimeDelta one_hour = base::Hours(1);
-  // Lave a little wiggle room.
-  ASSERT_GE(delay, one_hour - base::Minutes(1));
-  ASSERT_LE(delay, one_hour + base::Minutes(1));
 }
 
 TEST_P(WallpaperControllerTest, MigrateCustomWallpaper) {
@@ -4374,69 +5019,40 @@ TEST_P(WallpaperControllerTest, OnGoogleDriveMounted_AlreadySynced) {
 }
 
 TEST_P(WallpaperControllerTest, OnGoogleDriveMounted_OldLocalInfo) {
-  WallpaperInfo local_info =
-      WallpaperInfo("a_url", WALLPAPER_LAYOUT_CENTER_CROPPED,
-                    WallpaperType::kCustomized, DayBeforeYesterdayish());
+  SimulateUserLogin(kAccountId1);
+  WallpaperInfo local_info = WallpaperInfo(
+      "a_url", WALLPAPER_LAYOUT_CENTER_CROPPED, WallpaperType::kCustomized,
+      DayBeforeYesterdayish(), "/test/a_url");
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
 
   WallpaperInfo synced_info = WallpaperInfo(
       "b_url", WALLPAPER_LAYOUT_CENTER_CROPPED, WallpaperType::kCustomized,
-      base::Time::Now().LocalMidnight());
+      base::Time::Now().LocalMidnight(), "/test/b_url");
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
-  SimulateUserLogin(kAccountId1);
+  ClearLogin();
 
+  SimulateUserLogin(kAccountId1);
   controller_->SyncLocalAndRemotePrefs(kAccountId1);
   EXPECT_FALSE(drivefs_delegate_->get_save_wallpaper_account_id().is_valid());
 }
 
 TEST_P(WallpaperControllerTest, OnGoogleDriveMounted_NewLocalInfo) {
-  WallpaperInfo local_info = WallpaperInfo(
-      "a_url", WALLPAPER_LAYOUT_CENTER_CROPPED, WallpaperType::kCustomized,
-      base::Time::Now().LocalMidnight());
-  pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
-
-  WallpaperInfo synced_info =
-      WallpaperInfo("b_url", WALLPAPER_LAYOUT_CENTER_CROPPED,
-                    WallpaperType::kCustomized, DayBeforeYesterdayish());
-  pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
-
   SimulateUserLogin(kAccountId1);
 
+  WallpaperInfo local_info = WallpaperInfo(
+      "a_url", WALLPAPER_LAYOUT_CENTER_CROPPED, WallpaperType::kCustomized,
+      base::Time::Now().LocalMidnight(), "/test/a_url");
+  pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
+
+  WallpaperInfo synced_info = WallpaperInfo(
+      "b_url", WALLPAPER_LAYOUT_CENTER_CROPPED, WallpaperType::kCustomized,
+      DayBeforeYesterdayish(), "/test/b_url");
+  pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
+  ClearLogin();
+
+  SimulateUserLogin(kAccountId1);
   controller_->SyncLocalAndRemotePrefs(kAccountId1);
   EXPECT_EQ(kAccountId1, drivefs_delegate_->get_save_wallpaper_account_id());
-}
-
-TEST_P(WallpaperControllerTest,
-       SetDailyRefreshCollectionId_UpdatesDailyRefreshTimer) {
-  using base::Time;
-
-  pref_manager_->SetUserWallpaperInfo(
-      kAccountId1,
-      WallpaperInfo(std::string(), WALLPAPER_LAYOUT_CENTER,
-                    WallpaperType::kOnline, DayBeforeYesterdayish()));
-
-  std::string collection_id = "fun_collection";
-  controller_->SetDailyRefreshCollectionId(kAccountId1, collection_id);
-  WallpaperInfo expected = {std::string(), WALLPAPER_LAYOUT_CENTER,
-                            WallpaperType::kDaily, DayBeforeYesterdayish()};
-  expected.collection_id = collection_id;
-
-  WallpaperInfo actual;
-  pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual);
-  // Type should be `WallpaperType::kDaily` now, and collection_id should be
-  // updated.
-  EXPECT_TRUE(actual.MatchesSelection(expected));
-  EXPECT_EQ(collection_id,
-            controller_->GetDailyRefreshCollectionId(kAccountId1));
-
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-  base::TimeDelta one_day = base::Days(1);
-  // Leave a little wiggle room, as well as account for the hour fuzzing that
-  // we do.
-  EXPECT_GE(delay, one_day - base::Minutes(1));
-  EXPECT_LE(delay, one_day + base::Minutes(61));
 }
 
 TEST_P(WallpaperControllerTest, SetDailyRefreshCollectionId_Empty) {
@@ -4492,6 +5108,7 @@ TEST_P(WallpaperControllerTest, UpdateWallpaperOnScheduleCheckpointChanged) {
     const AccountId active_account_id =
         Shell::Get()->session_controller()->GetActiveAccountId();
     // Enable dark mode by default.
+    Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(false);
     Shell::Get()->dark_light_mode_controller()->SetDarkModeEnabledForTest(true);
 
     auto run_loop = std::make_unique<base::RunLoop>();
@@ -4502,8 +5119,7 @@ TEST_P(WallpaperControllerTest, UpdateWallpaperOnScheduleCheckpointChanged) {
     variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                           backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
     const OnlineWallpaperParams& params = OnlineWallpaperParams(
-        active_account_id, kAssetId, GURL(kDummyUrl),
-        TestWallpaperControllerClient::kDummyCollectionId,
+        active_account_id, TestWallpaperControllerClient::kDummyCollectionId,
         WALLPAPER_LAYOUT_CENTER_CROPPED,
         /*preview_mode=*/false, /*from_user=*/true,
         /*daily_refresh_enabled=*/false, kUnitId, variants);
@@ -4516,6 +5132,13 @@ TEST_P(WallpaperControllerTest, UpdateWallpaperOnScheduleCheckpointChanged) {
     run_loop->Run();
     EXPECT_EQ(1, GetWallpaperCount());
     EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kOnline);
+    WallpaperInfo actual;
+    ASSERT_TRUE(
+        pref_manager_->GetUserWallpaperInfo(active_account_id, &actual));
+    EXPECT_EQ(actual.location, kDummyUrl);
+    base::Time original_timestamp = actual.date;
+
+    task_environment()->FastForwardBy(base::Hours(1));
 
     // Switch to light mode and simulate schedule checkpoint change to reflect
     // light mode.
@@ -4524,17 +5147,149 @@ TEST_P(WallpaperControllerTest, UpdateWallpaperOnScheduleCheckpointChanged) {
     Shell::Get()->dark_light_mode_controller()->ToggleColorMode();
     RunAllTasksUntilIdle();
     EXPECT_EQ(2, GetWallpaperCount());
-    WallpaperInfo expected = WallpaperInfo(OnlineWallpaperParams(
-        active_account_id, kAssetId2, GURL(kDummyUrl2),
-        TestWallpaperControllerClient::kDummyCollectionId,
-        WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
-        /*from_user=*/true,
-        /*daily_refresh_enabled=*/false, kUnitId, variants));
-    WallpaperInfo actual;
-    EXPECT_TRUE(
+    ASSERT_TRUE(
         pref_manager_->GetUserWallpaperInfo(active_account_id, &actual));
-    EXPECT_TRUE(actual.MatchesAsset(expected));
+    EXPECT_EQ(actual.location, kDummyUrl2);
+    // The wallpaper in pref should still match what was originally selected.
+    // However, the |date| should not be affected by the dark -> light change.
+    EXPECT_TRUE(
+        actual.MatchesSelection(WallpaperInfo(params, variants.back())));
+    EXPECT_EQ(actual.date, original_timestamp);
   }
+}
+
+TEST_P(WallpaperControllerAutoScheduleTest, UpdateWallpaperOnAutoColorMode) {
+  base::expected<base::Time, GeolocationController::SunRiseSetError>
+      sunrise_time = Shell::Get()->geolocation_controller()->GetSunriseTime();
+  base::expected<base::Time, GeolocationController::SunRiseSetError>
+      sunset_time = Shell::Get()->geolocation_controller()->GetSunsetTime();
+  ASSERT_TRUE(sunrise_time.has_value());
+  ASSERT_TRUE(sunset_time.has_value());
+
+  SetSimulatedStartTime(sunrise_time.value());
+  SimulateUserLogin(kAccountId1);
+
+  ClearWallpaperCount();
+  std::vector<OnlineWallpaperVariant> variants;
+  variants.emplace_back(kAssetId, GURL(kDummyUrl),
+                        backdrop::Image::IMAGE_TYPE_DARK_MODE);
+  variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
+                        backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/true, kUnitId, variants);
+  base::test::TestFuture<bool> future;
+  controller_->SetOnlineWallpaper(params, future.GetCallback());
+  ASSERT_TRUE(future.Get());
+  EXPECT_EQ(1, GetWallpaperCount());
+  EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDaily);
+  WallpaperInfo actual;
+  ASSERT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual));
+  EXPECT_EQ(actual.location, kDummyUrl2);
+  base::Time original_timestamp = actual.date;
+
+  // Forward time to trigger checkpoints.
+  ASSERT_GT(sunset_time.value(), Now());
+  task_environment()->FastForwardBy(sunset_time.value() - Now());
+  RunAllTasksUntilIdle();
+
+  WallpaperInfo expected = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
+          /*from_user=*/true,
+          /*daily_refresh_enabled=*/true, kUnitId, variants),
+      variants.back());
+
+  ASSERT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual));
+  EXPECT_EQ(actual.location, kDummyUrl);
+  // The wallpaper in pref should still match what was originally selected.
+  // However, the |date| should not be affected by the dark -> light change.
+  EXPECT_TRUE(actual.MatchesSelection(expected));
+  EXPECT_EQ(actual.date, original_timestamp);
+}
+
+TEST_P(WallpaperControllerAutoScheduleTest,
+       UpdateTimeOfDayWallpaperWithAutoColorModeOff) {
+  static constexpr gfx::Size kTestImageSize = gfx::Size(100, 100);
+  static constexpr SkColor kSunriseImageColor = SK_ColorRED;
+  static constexpr SkColor kMorningImageColor = SK_ColorGREEN;
+  static constexpr SkColor kLateAfternoonImageColor = SK_ColorBLUE;
+  static constexpr SkColor kSunsetImageColor = SK_ColorYELLOW;
+
+  if (!IsTimeOfDayEnabled()) {
+    return;
+  }
+
+  const auto backdrop_image_data = TimeOfDayImageSet();
+  client_.AddCollection(wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+                        backdrop_image_data);
+  const base::flat_map<backdrop::Image_ImageType, gfx::ImageSkia> test_images =
+      {{backdrop::Image::IMAGE_TYPE_LIGHT_MODE,
+        CreateSolidColorTestImage(kTestImageSize, kSunriseImageColor)},
+       {backdrop::Image::IMAGE_TYPE_MORNING_MODE,
+        CreateSolidColorTestImage(kTestImageSize, kMorningImageColor)},
+       {backdrop::Image::IMAGE_TYPE_LATE_AFTERNOON_MODE,
+        CreateSolidColorTestImage(kTestImageSize, kLateAfternoonImageColor)},
+       {backdrop::Image::IMAGE_TYPE_DARK_MODE,
+        CreateSolidColorTestImage(kTestImageSize, kSunsetImageColor)}};
+  test_wallpaper_image_downloader()->set_image_generator(
+      base::BindLambdaForTesting([backdrop_image_data,
+                                  test_images](const GURL& url) {
+        const backdrop::Image* match_found =
+            GetImageMatchingUrl(url, backdrop_image_data);
+        return match_found
+                   ? test_images.at(match_found->image_type())
+                   : CreateSolidColorTestImage(kTestImageSize, SK_ColorBLACK);
+      }));
+
+  SimulateUserLogin(kAccountId1);
+  Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(false);
+
+  OnlineWallpaperParams params(
+      kAccountId1, wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false,
+      wallpaper_constants::kDefaultTimeOfDayWallpaperUnitId, /*variants=*/{});
+  for (const backdrop::Image& backdrop_image : backdrop_image_data) {
+    params.variants.emplace_back(backdrop_image.asset_id(),
+                                 GURL(backdrop_image.image_url()),
+                                 backdrop_image.image_type());
+  }
+
+  const auto wallpaper_has_color = [this](SkColor color) {
+    return gfx::test::AreImagesClose(
+        gfx::Image(controller_->GetWallpaper()),
+        gfx::Image(CreateSolidColorTestImage(controller_->GetWallpaper().size(),
+                                             color)),
+        /*max_deviation=*/1);
+  };
+  // Midnight
+  base::test::TestFuture<bool> future;
+  controller_->SetOnlineWallpaper(params, future.GetCallback());
+  ASSERT_TRUE(future.Get());
+  EXPECT_TRUE(wallpaper_has_color(kSunsetImageColor));
+
+  WallpaperChangedBarrier barrier(controller_, task_environment());
+  // Sunrise. 7 AM.
+  ASSERT_TRUE(barrier.RunUntilNextWallpaperChange());
+  EXPECT_THAT(Now() - simulated_start_time_, WallpaperChangeTimeNear(7));
+  EXPECT_TRUE(wallpaper_has_color(kSunriseImageColor));
+  // Morning. 11 AM.
+  ASSERT_TRUE(barrier.RunUntilNextWallpaperChange());
+  EXPECT_THAT(Now() - simulated_start_time_, WallpaperChangeTimeNear(11));
+  EXPECT_TRUE(wallpaper_has_color(kMorningImageColor));
+  // Sunrise. 5 PM.
+  ASSERT_TRUE(barrier.RunUntilNextWallpaperChange());
+  EXPECT_THAT(Now() - simulated_start_time_, WallpaperChangeTimeNear(17));
+  EXPECT_TRUE(wallpaper_has_color(kLateAfternoonImageColor));
+  // Sunrise. 7 PM.
+  ASSERT_TRUE(barrier.RunUntilNextWallpaperChange());
+  EXPECT_THAT(Now() - simulated_start_time_, WallpaperChangeTimeNear(19));
+  EXPECT_TRUE(wallpaper_has_color(kSunsetImageColor));
 }
 
 TEST_P(WallpaperControllerTest,
@@ -4542,6 +5297,7 @@ TEST_P(WallpaperControllerTest,
   SimulateUserLogin(kAccountId1);
 
   // Enable dark mode by default.
+  Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(false);
   Shell::Get()->dark_light_mode_controller()->SetDarkModeEnabledForTest(true);
 
   auto run_loop = std::make_unique<base::RunLoop>();
@@ -4551,12 +5307,11 @@ TEST_P(WallpaperControllerTest,
                         backdrop::Image::IMAGE_TYPE_DARK_MODE);
   variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                         backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
   // Use dark mode wallpaper initially.
   controller_->SetOnlineWallpaper(
       params, base::BindLambdaForTesting([&run_loop](bool success) {
@@ -4572,7 +5327,7 @@ TEST_P(WallpaperControllerTest,
   WallpaperInfo local_info;
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &local_info));
   std::vector<OnlineWallpaperVariant> updated_variants;
-  const std::string updated_light_url = "https://new_light_url.jpg";
+  const std::string updated_light_url = "https://light/new_light_url.jpg";
   updated_variants.emplace_back(kAssetId, GURL(kDummyUrl),
                                 backdrop::Image::IMAGE_TYPE_DARK_MODE);
   updated_variants.emplace_back(kAssetId2, GURL(updated_light_url),
@@ -4586,12 +5341,13 @@ TEST_P(WallpaperControllerTest,
   Shell::Get()->dark_light_mode_controller()->ToggleColorMode();
   RunAllTasksUntilIdle();
   EXPECT_EQ(2, GetWallpaperCount());
-  WallpaperInfo expected = WallpaperInfo(OnlineWallpaperParams(
-      kAccountId1, kAssetId2, GURL(updated_light_url),
-      TestWallpaperControllerClient::kDummyCollectionId,
-      WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
-      /*from_user=*/true,
-      /*daily_refresh_enabled=*/false, kUnitId, updated_variants));
+  WallpaperInfo expected = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
+          /*from_user=*/true,
+          /*daily_refresh_enabled=*/false, kUnitId, updated_variants),
+      updated_variants.back());
   WallpaperInfo actual;
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual));
   EXPECT_TRUE(actual.MatchesAsset(expected));
@@ -4605,6 +5361,7 @@ TEST_P(WallpaperControllerTest,
   SimulateUserLogin(kAccountId1);
 
   // Enable dark mode by default.
+  Shell::Get()->dark_light_mode_controller()->SetAutoScheduleEnabled(false);
   Shell::Get()->dark_light_mode_controller()->SetDarkModeEnabledForTest(true);
 
   auto run_loop = std::make_unique<base::RunLoop>();
@@ -4614,12 +5371,11 @@ TEST_P(WallpaperControllerTest,
                         backdrop::Image::IMAGE_TYPE_DARK_MODE);
   variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                         backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
   // Use dark mode wallpaper initially.
   controller_->SetOnlineWallpaper(
       params, base::BindLambdaForTesting([&run_loop](bool success) {
@@ -4636,7 +5392,7 @@ TEST_P(WallpaperControllerTest,
   WallpaperInfo local_info;
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &local_info));
   std::vector<OnlineWallpaperVariant> updated_variants;
-  const std::string updated_light_url = "https://new_light_url.jpg";
+  const std::string updated_light_url = "https://light/new_light_url.jpg";
   updated_variants.emplace_back(kAssetId, GURL(kDummyUrl),
                                 backdrop::Image::IMAGE_TYPE_DARK_MODE);
   updated_variants.emplace_back(kAssetId2, GURL(updated_light_url),
@@ -4645,7 +5401,7 @@ TEST_P(WallpaperControllerTest,
   EXPECT_TRUE(pref_manager_->SetUserWallpaperInfo(kAccountId1, local_info));
   // Simulate a failure in image downloading.
   test_wallpaper_image_downloader()->set_image_generator(
-      base::BindLambdaForTesting([]() { return gfx::ImageSkia(); }));
+      base::BindLambdaForTesting([](const GURL&) { return gfx::ImageSkia(); }));
 
   // Switch to light mode and simulate schedule checkpoint change to reflect
   // light mode.
@@ -4653,7 +5409,7 @@ TEST_P(WallpaperControllerTest,
   Shell::Get()->dark_light_mode_controller()->ToggleColorMode();
   RunAllTasksUntilIdle();
   EXPECT_EQ(0, GetWallpaperCount());
-  WallpaperInfo expected = WallpaperInfo(params);
+  WallpaperInfo expected = WallpaperInfo(params, updated_variants.front());
   WallpaperInfo actual;
   EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual));
   EXPECT_EQ(actual.asset_id, expected.asset_id);
@@ -4671,12 +5427,12 @@ TEST_P(WallpaperControllerTest,
   std::vector<OnlineWallpaperVariant> variants;
   variants.emplace_back(kAssetId, GURL(kDummyUrl),
                         backdrop::Image::IMAGE_TYPE_UNKNOWN);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId,
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
   controller_->SetOnlineWallpaper(
       params, base::BindLambdaForTesting([&run_loop](bool success) {
         EXPECT_TRUE(success);
@@ -4696,76 +5452,23 @@ TEST_P(WallpaperControllerTest,
 }
 
 TEST_P(WallpaperControllerTest,
-       UpdateDailyWallpaperVariantOnColorModeChanged_RefreshTimerDoesntReset) {
-  using base::Time;
-
-  SimulateUserLogin(kAccountId1);
-  // Resets the count as user will start with a default image after login.
-  ClearWallpaperCount();
-
-  std::vector<OnlineWallpaperVariant> variants;
-  variants.emplace_back(kAssetId, GURL(kDummyUrl),
-                        backdrop::Image::IMAGE_TYPE_DARK_MODE);
-  variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
-                        backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/true, kUnitId, variants);
-  const WallpaperInfo info = WallpaperInfo(params);
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  // Set a new daily wallpaper.
-  controller_->UpdateDailyRefreshWallpaperForTesting();
-  RunAllTasksUntilIdle();
-
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-  base::TimeDelta one_day = base::Days(1);
-  // Leave a little wiggle room, as well as account for the hour fuzzing that
-  // we do.
-  EXPECT_GE(delay, one_day - base::Minutes(1));
-  EXPECT_LE(delay, one_day + base::Minutes(61));
-
-  EXPECT_EQ(1, GetWallpaperCount());
-  EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDaily);
-
-  // Attempt a system's color mode change.
-  Shell::Get()->dark_light_mode_controller()->ToggleColorMode();
-  RunAllTasksUntilIdle();
-  EXPECT_EQ(2, GetWallpaperCount());
-  // Expect the refresh timer doesn't reset.
-  EXPECT_EQ(
-      run_time,
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time());
-
-  WallpaperInfo actual;
-  EXPECT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual));
-  EXPECT_TRUE(actual.MatchesSelection(info));
-}
-
-TEST_P(WallpaperControllerTest,
        UpdateWallpaperInfoWithOnlineWallpaperVariants) {
   SimulateUserLogin(kAccountId1);
 
-  // auto run_loop = std::make_unique<base::RunLoop>();
   std::vector<OnlineWallpaperVariant> variants;
   variants.emplace_back(kAssetId, GURL(kDummyUrl),
                         backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
   variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                         backdrop::Image::IMAGE_TYPE_DARK_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
 
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, WallpaperInfo(params));
-  WallpaperInfo expected = WallpaperInfo(params);
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      WallpaperInfo(params, variants.front()));
+  WallpaperInfo expected = WallpaperInfo(params, variants.front());
   WallpaperInfo actual;
   pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual);
   EXPECT_TRUE(actual.MatchesSelection(expected));
@@ -4779,12 +5482,11 @@ TEST_P(WallpaperControllerTest, SetOnlineWallpaperWithoutInternet) {
 
   // Set an online wallpaper with image data. Verify that the wallpaper is set
   // successfully.
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
   ClearWallpaperCount();
   controller_->SetOnlineWallpaper(params, base::DoNothing());
   RunAllTasksUntilIdle();
@@ -4807,7 +5509,7 @@ TEST_P(WallpaperControllerTest, SetOnlineWallpaperWithoutInternet) {
   // still succeeds because the previous call to |SetOnlineWallpaper()| has
   // saved the file.
   test_wallpaper_image_downloader()->set_image_generator(
-      base::BindLambdaForTesting([]() { return gfx::ImageSkia(); }));
+      base::BindLambdaForTesting([](const GURL&) { return gfx::ImageSkia(); }));
   ClearWallpaperCount();
   base::RunLoop run_loop;
   controller_->SetOnlineWallpaper(
@@ -4831,25 +5533,18 @@ TEST_P(WallpaperControllerTest,
                         backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
   variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                         backdrop::Image::IMAGE_TYPE_DARK_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
   // Force local info to not have a unit_id.
-  WallpaperInfo local_info = WallpaperInfo(params);
-  local_info.unit_id = absl::nullopt;
+  WallpaperInfo local_info = WallpaperInfo(params, variants.front());
+  local_info.unit_id = std::nullopt;
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
 
-  const OnlineWallpaperParams& params2 =
-      OnlineWallpaperParams(kAccountId1, kAssetId2, GURL(kDummyUrl2),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
   // synced info tracks dark variant.
-  const WallpaperInfo& synced_info = WallpaperInfo(params2);
+  const WallpaperInfo& synced_info = WallpaperInfo(params, variants.back());
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
   RunAllTasksUntilIdle();
 
@@ -4871,24 +5566,17 @@ TEST_P(WallpaperControllerTest,
                         backdrop::Image::IMAGE_TYPE_LIGHT_MODE);
   variants.emplace_back(kAssetId2, GURL(kDummyUrl2),
                         backdrop::Image::IMAGE_TYPE_DARK_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
   // local info tracks light variant.
-  const WallpaperInfo& local_info = WallpaperInfo(params);
+  const WallpaperInfo& local_info = WallpaperInfo(params, variants.front());
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
 
-  const OnlineWallpaperParams& params2 =
-      OnlineWallpaperParams(kAccountId1, kAssetId2, GURL(kDummyUrl2),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
   // synced info tracks dark variant.
-  const WallpaperInfo& synced_info = WallpaperInfo(params2);
+  const WallpaperInfo& synced_info = WallpaperInfo(params, variants.back());
   pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
   RunAllTasksUntilIdle();
 
@@ -4927,12 +5615,13 @@ TEST_P(WallpaperControllerTest, WallpaperCustomization_UnusedForNonDefault) {
 
   // Set wallpaper to something a user may have chose.
   controller_->SetOnlineWallpaper(
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            /*collection_id=*/std::string(),
-                            WALLPAPER_LAYOUT_CENTER,
-                            /*preview_mode=*/false, /*from_user=*/false,
-                            /*daily_refresh_enabled=*/false, kUnitId,
-                            /*variants=*/std::vector<OnlineWallpaperVariant>()),
+      OnlineWallpaperParams(
+          kAccountId1,
+          /*collection_id=*/std::string(), WALLPAPER_LAYOUT_CENTER_CROPPED,
+          /*preview_mode=*/false, /*from_user=*/false,
+          /*daily_refresh_enabled=*/false, kUnitId,
+          /*variants=*/
+          {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}),
       base::DoNothing());
   // Let the task queue run so that we run `ShowWallpaperImage()`.
   task_environment()->RunUntilIdle();
@@ -4964,13 +5653,12 @@ TEST_P(WallpaperControllerTest, TimeOfDayWallpapers_NotSyncedIn) {
                         backdrop::Image::IMAGE_TYPE_MORNING_MODE);
   variants.emplace_back(kAssetId4, GURL(kDummyUrl4),
                         backdrop::Image::IMAGE_TYPE_LATE_AFTERNOON_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
-  WallpaperInfo local_info = WallpaperInfo(params);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
+  WallpaperInfo local_info = WallpaperInfo(params, variants.front());
   local_info.unit_id = kUnitId;
   local_info.date = DayBeforeYesterdayish();
   pref_manager_->SetLocalWallpaperInfo(kAccountId1, local_info);
@@ -5007,13 +5695,12 @@ TEST_P(WallpaperControllerTest, TimeOfDayWallpapers_NotSyncedOut) {
                         backdrop::Image::IMAGE_TYPE_MORNING_MODE);
   variants.emplace_back(kAssetId4, GURL(kDummyUrl4),
                         backdrop::Image::IMAGE_TYPE_LATE_AFTERNOON_MODE);
-  const OnlineWallpaperParams& params =
-      OnlineWallpaperParams(kAccountId1, kAssetId, GURL(kDummyUrl),
-                            TestWallpaperControllerClient::kDummyCollectionId,
-                            WALLPAPER_LAYOUT_CENTER_CROPPED,
-                            /*preview_mode=*/false, /*from_user=*/true,
-                            /*daily_refresh_enabled=*/false, kUnitId, variants);
-  WallpaperInfo local_info = WallpaperInfo(params);
+  const OnlineWallpaperParams& params = OnlineWallpaperParams(
+      kAccountId1, wallpaper_constants::kTimeOfDayWallpaperCollectionId,
+      WALLPAPER_LAYOUT_CENTER_CROPPED,
+      /*preview_mode=*/false, /*from_user=*/true,
+      /*daily_refresh_enabled=*/false, kUnitId, variants);
+  WallpaperInfo local_info = WallpaperInfo(params, variants.front());
   local_info.unit_id = kUnitId;
   pref_manager_->SetUserWallpaperInfo(kAccountId1, local_info);
   RunAllTasksUntilIdle();
@@ -5031,15 +5718,13 @@ TEST_P(WallpaperControllerTest, SetGooglePhotosWallpaper) {
   base::test::TestFuture<bool> online_future;
   controller_->SetOnlineWallpaper(
       {kAccountId1,
-       kAssetId,
-       GURL(kDummyUrl),
        TestWallpaperControllerClient::kDummyCollectionId,
        WALLPAPER_LAYOUT_CENTER_CROPPED,
        /*preview_mode=*/false,
        /*from_user=*/true,
        /*daily_refresh_enabled=*/false,
        kUnitId,
-       {}},
+       {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}},
       online_future.GetCallback());
   ASSERT_TRUE(online_future.Wait());
   ASSERT_EQ(1, GetWallpaperCount());
@@ -5076,15 +5761,13 @@ TEST_P(WallpaperControllerTest, SetGooglePhotosWallpaperFails) {
   base::test::TestFuture<bool> online_future;
   OnlineWallpaperParams online_params(
       {kAccountId1,
-       kAssetId,
-       GURL(kDummyUrl),
        TestWallpaperControllerClient::kDummyCollectionId,
        WALLPAPER_LAYOUT_CENTER_CROPPED,
        /*preview_mode=*/false,
        /*from_user=*/true,
        /*daily_refresh_enabled=*/false,
        kUnitId,
-       {}});
+       {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}}});
   controller_->SetOnlineWallpaper(online_params, online_future.GetCallback());
   ASSERT_TRUE(online_future.Wait());
   ASSERT_EQ(1, GetWallpaperCount());
@@ -5106,50 +5789,9 @@ TEST_P(WallpaperControllerTest, SetGooglePhotosWallpaperFails) {
   WallpaperInfo wallpaper_info;
   EXPECT_TRUE(
       pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info));
-  WallpaperInfo expected_wallpaper_info(online_params);
+  WallpaperInfo expected_wallpaper_info(online_params,
+                                        online_params.variants.front());
   EXPECT_TRUE(wallpaper_info.MatchesSelection(expected_wallpaper_info));
-}
-
-TEST_P(WallpaperControllerTest,
-       RetryTimerTriggersOnFailedFetchPhotoForStalenessCheck) {
-  using base::Time;
-
-  SimulateUserLogin(kAccountId1);
-
-  GooglePhotosWallpaperParams params(kAccountId1, kFakeGooglePhotosPhotoId,
-                                     /*daily_refresh_enabled=*/false,
-                                     WallpaperLayout::WALLPAPER_LAYOUT_STRETCH,
-                                     /*preview_mode=*/false,
-                                     /*dedup_key=*/absl::nullopt);
-  controller_->SetGooglePhotosWallpaper(params, base::DoNothing());
-  task_environment()->RunUntilIdle();
-
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-
-  base::TimeDelta one_day = base::Days(1);
-  // Leave a little wiggle room, as well as account for the hour fuzzing that
-  // we do.
-  EXPECT_GE(delay, one_day - base::Minutes(1));
-  EXPECT_LE(delay, one_day + base::Minutes(61));
-
-  client_.set_fetch_google_photos_photo_fails(true);
-
-  // Trigger Google Photos wallpaper cache check.
-  controller_->OnActiveUserSessionChanged(kAccountId1);
-
-  run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  delay = run_time - Time::Now();
-
-  base::TimeDelta one_hour = base::Hours(1);
-
-  // The cache check does not happen when the feature is disabled, since the
-  // local `WallpaperInfo` is rejected.
-  // Leave a little wiggle room.
-  EXPECT_GE(delay, one_hour - base::Minutes(1));
-  EXPECT_LE(delay, one_hour + base::Minutes(1));
 }
 
 TEST_P(WallpaperControllerTest, ResetToDefaultForDeletedPhotoOnStalenessCheck) {
@@ -5166,6 +5808,36 @@ TEST_P(WallpaperControllerTest, ResetToDefaultForDeletedPhotoOnStalenessCheck) {
   WaitForWallpaperCount(1);
 
   EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDefault);
+}
+
+TEST_P(WallpaperControllerTest, HandleSyncDeletedGooglePhotosPhoto) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo synced_info = InfoWithType(WallpaperType::kOnceGooglePhotos);
+  WallpaperInfo local_info = InfoWithType(WallpaperType::kOnline);
+  local_info.date -= base::Days(2);
+
+  pref_manager_->SetUserWallpaperInfo(kAccountId1, local_info);
+  pref_manager_->SetSyncedWallpaperInfo(kAccountId1, synced_info);
+
+  // Just started and still loading wallpaper.
+  ASSERT_FALSE(controller_->HasShownAnyWallpaper());
+  ASSERT_THAT(client_.fetch_google_photos_photo_id(), testing::IsEmpty());
+  client_.set_google_photo_has_been_deleted(true);
+  ClearLogin();
+
+  SimulateUserLogin(kAccountId1);
+  EXPECT_EQ(synced_info.location, client_.fetch_google_photos_photo_id());
+  RunAllTasksUntilIdle();
+
+  WallpaperInfo final_local_info;
+  ASSERT_TRUE(
+      pref_manager_->GetLocalWallpaperInfo(kAccountId1, &final_local_info));
+
+  EXPECT_TRUE(final_local_info.MatchesAsset(local_info));
+  histogram_tester().ExpectUniqueSample(
+      "Ash.Wallpaper.OnceGooglePhotos.Result2",
+      SetWallpaperResult::kFileNotFound, 1);
 }
 
 TEST_P(WallpaperControllerTest, GooglePhotosAreCachedOnDisk) {
@@ -5447,11 +6119,11 @@ TEST_P(WallpaperControllerTest, UpdateGooglePhotosDailyRefreshWallpaper) {
   GooglePhotosWallpaperParams params(
       kAccountId1, kFakeGooglePhotosAlbumId,
       /*daily_refresh_enabled=*/true, WALLPAPER_LAYOUT_CENTER_CROPPED,
-      /*preview_mode=*/false, /*dedup_key=*/absl::nullopt);
+      /*preview_mode=*/false, /*dedup_key=*/std::nullopt);
   WallpaperInfo info(params);
   pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   RunAllTasksUntilIdle();
 
   WallpaperInfo expected_info;
@@ -5460,70 +6132,22 @@ TEST_P(WallpaperControllerTest, UpdateGooglePhotosDailyRefreshWallpaper) {
   EXPECT_EQ(kFakeGooglePhotosAlbumId, expected_info.collection_id);
 }
 
-TEST_P(WallpaperControllerTest, DailyRefreshTimerStartsForDailyGooglePhotos) {
-  SimulateUserLogin(kAccountId1);
-
-  GooglePhotosWallpaperParams params(
-      kAccountId1, kFakeGooglePhotosAlbumId,
-      /*daily_refresh_enabled=*/true, WALLPAPER_LAYOUT_CENTER_CROPPED,
-      /*preview_mode=*/false, /*dedup_key=*/absl::nullopt);
-  WallpaperInfo info(params);
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  controller_->UpdateDailyRefreshWallpaperForTesting();
-  RunAllTasksUntilIdle();
-  auto& timer = controller_->GetUpdateWallpaperTimerForTesting();
-  base::TimeDelta run_time =
-      timer.desired_run_time().ToDeltaSinceWindowsEpoch();
-
-  base::TimeDelta update_time =
-      (base::Time::Now() + base::Days(1)).ToDeltaSinceWindowsEpoch();
-
-  EXPECT_GE(run_time, update_time - base::Minutes(1));
-  EXPECT_LE(run_time, update_time + base::Minutes(61));
-}
-
-TEST_P(WallpaperControllerTest, DailyRefreshRetryTimerStartsOnFailedFetch) {
-  SimulateUserLogin(kAccountId1);
-
-  GooglePhotosWallpaperParams params(
-      kAccountId1, kFakeGooglePhotosAlbumId,
-      /*daily_refresh_enabled=*/true, WALLPAPER_LAYOUT_CENTER_CROPPED,
-      /*preview_mode=*/false, /*dedup_key=*/absl::nullopt);
-  WallpaperInfo info(params);
-  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
-
-  client_.set_fetch_google_photos_photo_fails(true);
-  controller_->UpdateDailyRefreshWallpaperForTesting();
-  RunAllTasksUntilIdle();
-
-  base::TimeDelta run_time = controller_->GetUpdateWallpaperTimerForTesting()
-                                 .desired_run_time()
-                                 .ToDeltaSinceWindowsEpoch();
-
-  base::TimeDelta update_time =
-      (base::Time::Now() + base::Hours(1)).ToDeltaSinceWindowsEpoch();
-
-  EXPECT_GE(run_time, update_time - base::Minutes(1));
-  EXPECT_LE(run_time, update_time + base::Minutes(1));
-}
-
 TEST_P(WallpaperControllerTest, EmptyDailyGooglePhotosAlbumsDoNothing) {
   SimulateUserLogin(kAccountId1);
 
   GooglePhotosWallpaperParams daily_google_photos_params(
       kAccountId1, kFakeGooglePhotosAlbumId, /*daily_refresh_enabled=*/true,
       WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
-      /*dedup_key=*/absl::nullopt);
+      /*dedup_key=*/std::nullopt);
   OnlineWallpaperParams online_params(
-      kAccountId1, kAssetId, GURL(kDummyUrl),
-      TestWallpaperControllerClient::kDummyCollectionId,
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
       WALLPAPER_LAYOUT_CENTER_CROPPED,
       /*preview_mode=*/false, /*from_user=*/true,
       /*daily_refresh_enabled=*/false, kUnitId,
-      /*variants=*/std::vector<OnlineWallpaperVariant>());
+      /*variants=*/
+      {{kAssetId, GURL(kDummyUrl), backdrop::Image::IMAGE_TYPE_UNKNOWN}});
 
-  WallpaperInfo online_info(online_params);
+  WallpaperInfo online_info(online_params, online_params.variants.front());
   pref_manager_->SetUserWallpaperInfo(kAccountId1, online_info);
 
   client_.set_fetch_google_photos_photo_fails(true);
@@ -5545,7 +6169,7 @@ TEST_P(WallpaperControllerTest,
   controller_->SetGooglePhotosWallpaper(
       {kAccountId1, kFakeGooglePhotosAlbumId, /*daily_refresh_enabled=*/true,
        WallpaperLayout::WALLPAPER_LAYOUT_CENTER_CROPPED,
-       /*preview_mode=*/false, /*dedup_key=*/absl::nullopt},
+       /*preview_mode=*/false, /*dedup_key=*/std::nullopt},
       google_photos_future.GetCallback());
   EXPECT_TRUE(google_photos_future.Get());
   RunAllTasksUntilIdle();
@@ -5559,7 +6183,7 @@ TEST_P(WallpaperControllerTest,
   // successful call, which is the sign for a deleted or empty album.
   client_.set_google_photo_has_been_deleted(true);
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   RunAllTasksUntilIdle();
 
   pref_manager_->GetUserWallpaperInfo(kAccountId1, &current_info);
@@ -5578,7 +6202,7 @@ TEST_P(WallpaperControllerTest, DailyGooglePhotosAreCached) {
   controller_->SetGooglePhotosWallpaper(
       {kAccountId1, kFakeGooglePhotosAlbumId, /*daily_refresh_enabled=*/true,
        WallpaperLayout::WALLPAPER_LAYOUT_CENTER_CROPPED,
-       /*preview_mode=*/false, /*dedup_key=*/absl::nullopt},
+       /*preview_mode=*/false, /*dedup_key=*/std::nullopt},
       google_photos_future.GetCallback());
   EXPECT_TRUE(google_photos_future.Get());
   RunAllTasksUntilIdle();
@@ -5588,39 +6212,6 @@ TEST_P(WallpaperControllerTest, DailyGooglePhotosAreCached) {
                                        .Append(kAccountId1.GetAccountIdKey())
                                        .Append(expected_photo_id);
   ASSERT_TRUE(base::PathExists(saved_wallpaper));
-}
-
-TEST_P(WallpaperControllerTest,
-       SetGooglePhotosDailyRefreshAlbumId_UpdatesDailyRefreshTimer) {
-  using base::Time;
-
-  pref_manager_->SetUserWallpaperInfo(
-      kAccountId1,
-      WallpaperInfo(std::string(), WALLPAPER_LAYOUT_CENTER,
-                    WallpaperType::kOnline, DayBeforeYesterdayish()));
-
-  std::string album_id = "fun_album";
-  controller_->SetGooglePhotosDailyRefreshAlbumId(kAccountId1, album_id);
-  WallpaperInfo expected = {std::string(), WALLPAPER_LAYOUT_CENTER,
-                            WallpaperType::kDailyGooglePhotos,
-                            DayBeforeYesterdayish()};
-  expected.collection_id = album_id;
-
-  WallpaperInfo actual;
-  pref_manager_->GetUserWallpaperInfo(kAccountId1, &actual);
-  // Type should be `WallpaperType::kDailyGooglePhotos` now, and collection_id
-  // should be updated.
-  EXPECT_TRUE(actual.MatchesSelection(expected));
-  EXPECT_EQ(album_id,
-            controller_->GetGooglePhotosDailyRefreshAlbumId(kAccountId1));
-  Time run_time =
-      controller_->GetUpdateWallpaperTimerForTesting().desired_run_time();
-  base::TimeDelta delay = run_time - Time::Now();
-  base::TimeDelta one_day = base::Days(1);
-  // Leave a little wiggle room, as well as account for the hour fuzzing that
-  // we do.
-  EXPECT_GE(delay, one_day - base::Minutes(1));
-  EXPECT_LE(delay, one_day + base::Minutes(61));
 }
 
 TEST_P(WallpaperControllerTest,
@@ -5651,7 +6242,7 @@ TEST_P(
   controller_->SetGooglePhotosWallpaper(
       {kAccountId1, kFakeGooglePhotosAlbumId, /*daily_refresh_enabled=*/true,
        WallpaperLayout::WALLPAPER_LAYOUT_CENTER_CROPPED,
-       /*preview_mode=*/false, /*dedup_key=*/absl::nullopt},
+       /*preview_mode=*/false, /*dedup_key=*/std::nullopt},
       google_photos_future.GetCallback());
   EXPECT_TRUE(google_photos_future.Get());
   RunAllTasksUntilIdle();
@@ -5668,12 +6259,258 @@ TEST_P(
   client_.set_wallpaper_google_photos_integration_enabled_for_account_id(
       kAccountId1, false);
 
-  controller_->UpdateDailyRefreshWallpaperForTesting();
+  controller_->UpdateDailyRefreshWallpaper();
   RunAllTasksUntilIdle();
 
   pref_manager_->GetUserWallpaperInfo(kAccountId1, &current_info);
 
   EXPECT_EQ(WallpaperType::kDefault, current_info.type);
+}
+
+class WallpaperControllerDailyRefreshSchedulerTest
+    : public WallpaperControllerTest,
+      public ScheduledFeature::Clock {
+ public:
+  WallpaperControllerDailyRefreshSchedulerTest() {
+    base::Time start_time = base::Time::Now();
+    clock_.SetNow(start_time);
+    tick_clock_.SetNowTicks(base::TimeTicks() + (start_time - base::Time()));
+  }
+
+  void SetUp() override {
+    WallpaperControllerTest::SetUp();
+
+    auto daily_refresh_scheduler =
+        controller_->daily_refresh_scheduler_for_testing();
+    // Disable any running timers to set a fake clock.
+    daily_refresh_scheduler->SetScheduleType(ScheduleType::kNone);
+    daily_refresh_scheduler->SetClockForTesting(this);
+    daily_refresh_scheduler->SetScheduleType(ScheduleType::kCustom);
+  }
+
+  void TearDown() override { WallpaperControllerTest::TearDown(); }
+
+  // ScheduledFeature::Clock:
+  base::Time Now() const override { return clock_.Now(); }
+
+  base::TimeTicks NowTicks() const override { return tick_clock_.NowTicks(); }
+
+  // Returns whether the total triggered a checkpoint change. This method only
+  // triggers the checkpoints and does not run any tasks.
+  bool AdvanceClock(base::TimeDelta total) {
+    const auto advance_time = [this](base::TimeDelta advancement) {
+      clock_.Advance(advancement);
+      tick_clock_.Advance(advancement);
+    };
+
+    bool checkpoint_reached = false;
+    auto* timer = Shell::Get()
+                      ->wallpaper_controller()
+                      ->daily_refresh_scheduler_for_testing()
+                      ->timer();
+    while (total.is_positive()) {
+      base::TimeDelta advance_increment;
+      if (timer->IsRunning() &&
+          timer->desired_run_time() <= NowTicks() + total) {
+        // Emulates the internal timer firing at its scheduled time.
+        advance_increment = timer->desired_run_time() - NowTicks();
+        advance_time(advance_increment);
+        timer->FireNow();
+        checkpoint_reached = true;
+      } else {
+        advance_increment = total;
+        advance_time(advance_increment);
+      }
+      CHECK_LE(advance_increment, total);
+      total -= advance_increment;
+    }
+    return checkpoint_reached;
+  }
+
+ private:
+  base::SimpleTestClock clock_;
+  base::SimpleTestTickClock tick_clock_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    // Empty to simplify gtest output
+    ,
+    WallpaperControllerDailyRefreshSchedulerTest,
+    ::testing::Values(TimeOfDayFeatureCombination::kDisabled,
+                      TimeOfDayFeatureCombination::kTimeOfDay),
+    WallpaperControllerTest::PrintToStringParamName());
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       OnCheckpointChanged_WallpaperDailyRefreshScheduler) {
+  SimulateUserLogin(kAccountId1);
+  TestWallpaperControllerObserver observer(controller_);
+  EXPECT_EQ(0, observer.daily_refresh_checkpoint_count());
+  // User's wallpaper info should exist.
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      InfoWithType(WallpaperType::kDefault));
+  ClearLogin();
+
+  SimulateUserLogin(kAccountId1);
+  // Clears signal on login.
+  observer.ClearDailyRefreshCheckpointCount();
+  EXPECT_TRUE(AdvanceClock(base::Days(1)));
+  // Expect that 2 signals are sent every day by WallpaperDailyRefreshScheduler.
+  EXPECT_EQ(2, observer.daily_refresh_checkpoint_count());
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       OnCheckpointChanged_CalledOnLogin) {
+  TestWallpaperControllerObserver observer(controller_);
+  EXPECT_EQ(0, observer.daily_refresh_checkpoint_count());
+  // User's wallpaper info should exist.
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      InfoWithType(WallpaperType::kDaily));
+  SimulateUserLogin(kAccountId1);
+  RunAllTasksUntilIdle();
+  // Expect that at least one signal is sent on login. Other checkpoints may be
+  // due to the randomized start and end check times of the daily refresh
+  // scheduler.
+  EXPECT_GE(observer.daily_refresh_checkpoint_count(), 1);
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       SetDailyRefreshCollectionId_UpdatesCheckTimes) {
+  auto daily_refresh_scheduler =
+      controller_->daily_refresh_scheduler_for_testing();
+  auto first_check_time = daily_refresh_scheduler->GetCustomStartTime();
+  auto second_check_time = daily_refresh_scheduler->GetCustomEndTime();
+  // User's wallpaper info should exist.
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      InfoWithType(WallpaperType::kOnline));
+  SimulateUserLogin(kAccountId1);
+  ClearWallpaperCount();
+  controller_->SetDailyRefreshCollectionId(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId);
+  controller_->UpdateDailyRefreshWallpaper();
+  WaitForWallpaperCount(1);
+  EXPECT_EQ(TestWallpaperControllerClient::kDummyCollectionId,
+            client_.get_fetch_daily_refresh_wallpaper_param());
+
+  WallpaperInfo expected;
+  ASSERT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &expected));
+  EXPECT_EQ(WallpaperType::kDaily, expected.type);
+
+  // Expect that scheduler check times are updated.
+  EXPECT_NE(first_check_time, daily_refresh_scheduler->GetCustomStartTime());
+  EXPECT_NE(second_check_time, daily_refresh_scheduler->GetCustomEndTime());
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       SetGooglePhotosDailyRefreshAlbumId_UpdatesCheckTimes) {
+  auto daily_refresh_scheduler =
+      controller_->daily_refresh_scheduler_for_testing();
+  auto first_check_time = daily_refresh_scheduler->GetCustomStartTime();
+  auto second_check_time = daily_refresh_scheduler->GetCustomEndTime();
+  // User's wallpaper info should exist.
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      InfoWithType(WallpaperType::kOnline));
+  SimulateUserLogin(kAccountId1);
+  ClearWallpaperCount();
+  controller_->SetGooglePhotosDailyRefreshAlbumId(
+      kAccountId1, TestWallpaperControllerClient::kDummyCollectionId);
+  controller_->UpdateDailyRefreshWallpaper();
+  WaitForWallpaperCount(1);
+
+  WallpaperInfo expected;
+  ASSERT_TRUE(pref_manager_->GetUserWallpaperInfo(kAccountId1, &expected));
+  EXPECT_EQ(WallpaperType::kDailyGooglePhotos, expected.type);
+
+  // Expect that scheduler check times are updated.
+  EXPECT_NE(first_check_time, daily_refresh_scheduler->GetCustomStartTime());
+  EXPECT_NE(second_check_time, daily_refresh_scheduler->GetCustomEndTime());
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       UpdateDailyRefreshWallpaper_OnLogin) {
+  SimulateUserLogin(kAccountId1);
+
+  OnlineWallpaperVariant variant(kAssetId, GURL(kDummyUrl),
+                                 backdrop::Image::IMAGE_TYPE_UNKNOWN);
+  WallpaperInfo info = WallpaperInfo(
+      OnlineWallpaperParams(
+          kAccountId1, TestWallpaperControllerClient::kDummyCollectionId,
+          WALLPAPER_LAYOUT_CENTER_CROPPED, /*preview_mode=*/false,
+          /*from_user=*/false,
+          /*daily_refresh_enabled=*/true, kUnitId,
+          /*variants=*/{variant}),
+      variant);
+  info.date = DayBeforeYesterdayish();
+  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
+
+  ClearLogin();
+  SimulateUserLogin(kAccountId1);
+
+  // Info is set as over a day old so we expect one task to run in under an hour
+  // (due to fuzzing) then it will idle.
+  AdvanceClock(base::Hours(1));
+  // Make sure all the tasks such as syncing, setting wallpaper complete.
+  RunAllTasksUntilIdle();
+
+  EXPECT_EQ(TestWallpaperControllerClient::kDummyCollectionId,
+            client_.get_fetch_daily_refresh_wallpaper_param());
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       UpdateDailyRefreshWallpaper_OnCheckpointChanged) {
+  auto images = ImageSet();
+  std::string collection_id{"my_wallpaper_collection"};
+  client_.AddCollection(collection_id, images);
+
+  // User's wallpaper info should exist.
+  pref_manager_->SetUserWallpaperInfo(kAccountId1,
+                                      InfoWithType(WallpaperType::kDaily));
+  SimulateUserLogin(kAccountId1);
+
+  base::RunLoop run_loop;
+  ClearWallpaperCount();
+  controller_->SetDailyRefreshCollectionId(kAccountId1, collection_id);
+  controller_->UpdateDailyRefreshWallpaper(
+      base::BindLambdaForTesting([quit = run_loop.QuitClosure()](bool success) {
+        EXPECT_TRUE(success);
+        std::move(quit).Run();
+      }));
+  run_loop.Run();
+  EXPECT_EQ(1, GetWallpaperCount());
+  EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDaily);
+  WallpaperInfo wallpaper_info_1;
+  ASSERT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info_1));
+  EXPECT_EQ(collection_id, wallpaper_info_1.collection_id);
+  EXPECT_EQ(WallpaperType::kDaily, wallpaper_info_1.type);
+
+  // Forward time to trigger checkpoints.
+  EXPECT_TRUE(AdvanceClock(base::Hours(25)));
+  RunAllTasksUntilIdle();
+
+  WallpaperInfo wallpaper_info_2;
+  ASSERT_TRUE(
+      pref_manager_->GetUserWallpaperInfo(kAccountId1, &wallpaper_info_2));
+  // Expect a new daily wallpaper is set.
+  EXPECT_FALSE(wallpaper_info_1.MatchesSelection(wallpaper_info_2));
+  EXPECT_EQ(collection_id, wallpaper_info_2.collection_id);
+  EXPECT_EQ(WallpaperType::kDaily, wallpaper_info_2.type);
+}
+
+TEST_P(WallpaperControllerDailyRefreshSchedulerTest,
+       CheckGooglePhotosStaleness_OnCheckpointChanged) {
+  SimulateUserLogin(kAccountId1);
+
+  WallpaperInfo info = {kFakeGooglePhotosPhotoId, WALLPAPER_LAYOUT_CENTER,
+                        WallpaperType::kOnceGooglePhotos,
+                        DayBeforeYesterdayish()};
+  pref_manager_->SetUserWallpaperInfo(kAccountId1, info);
+  client_.set_google_photo_has_been_deleted(true);
+
+  // Forward time to trigger checkpoints.
+  EXPECT_TRUE(AdvanceClock(base::Hours(25)));
+  RunAllTasksUntilIdle();
+
+  EXPECT_EQ(controller_->GetWallpaperType(), WallpaperType::kDefault);
 }
 
 }  // namespace ash

@@ -28,23 +28,26 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_REPORT) CohortImpl
   // UseCase:
   void Run(base::OnceCallback<void()> callback) override;
 
+  // Used by ReportController to destruct pending callbacks appropriately.
+  base::WeakPtr<device_metrics::CohortImpl> GetWeakPtr();
+
  protected:
   // UseCase:
   void CheckMembershipOprf() override;
   void OnCheckMembershipOprfComplete(
-      std::unique_ptr<std::string> response_body) override;
+      std::optional<std::string> response_body) override;
   void CheckMembershipQuery(
       const private_membership::rlwe::PrivateMembershipRlweOprfResponse&
           oprf_response) override;
   void OnCheckMembershipQueryComplete(
-      std::unique_ptr<std::string> response_body) override;
+      std::optional<std::string> response_body) override;
   void CheckIn() override;
-  void OnCheckInComplete(std::unique_ptr<std::string> response_body) override;
+  void OnCheckInComplete(std::optional<std::string> response_body) override;
   base::Time GetLastPingTimestamp() override;
   void SetLastPingTimestamp(base::Time ts) override;
   std::vector<private_membership::rlwe::RlwePlaintextId>
   GetPsmIdentifiersToQuery() override;
-  absl::optional<FresnelImportDataRequest> GenerateImportRequestBody() override;
+  std::optional<FresnelImportDataRequest> GenerateImportRequestBody() override;
 
  private:
   // Grant friend access for comprehensive testing of private/protected members.

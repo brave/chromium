@@ -11,15 +11,17 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper;
 
 /**
- * Class responsible for managing registration for invalidations for noisy sync
- * data types such as SESSIONS on Android. It keeps track of how many recent
- * pages tab open and register/unregister for SESSIONS invalidation accordingly.
- * It should be used only from the UI thread.
+ * Class responsible for managing registration for invalidations for noisy sync data types such as
+ * SESSIONS on Android. It keeps track of how many recent pages tab open and register/unregister for
+ * SESSIONS invalidation accordingly. It should be used only from the UI thread.
  */
+@NullMarked
 public class SessionsInvalidationManager implements ApplicationStatus.ApplicationStateListener {
     /**
      * The amount of time after the RecentTabsPage is opened to register for session sync
@@ -30,26 +32,18 @@ public class SessionsInvalidationManager implements ApplicationStatus.Applicatio
     static final int REGISTER_FOR_SESSION_SYNC_INVALIDATIONS_DELAY_MS =
             (int) DateUtils.SECOND_IN_MILLIS * 20;
 
-    /**
-     * Used to schedule tasks to enable and disable session sync invalidations.
-     */
+    /** Used to schedule tasks to enable and disable session sync invalidations. */
     private final ResumableDelayedTaskRunner mEnableSessionInvalidationsRunner;
 
-    /**
-     * Used to call native code that enables and disables session invalidations.
-     */
+    /** Used to call native code that enables and disables session invalidations. */
     private final Profile mProfile;
 
-    private static SessionsInvalidationManager sInstance;
+    private static @MonotonicNonNull SessionsInvalidationManager sInstance;
 
-    /**
-     *  Whether session sync invalidations are enabled.
-     */
+    /** Whether session sync invalidations are enabled. */
     private boolean mIsSessionInvalidationsEnabled;
 
-    /**
-     * The number of open RecentTabsPages
-     */
+    /** The number of open RecentTabsPages */
     private int mNumRecentTabPages;
 
     /**
@@ -73,9 +67,7 @@ public class SessionsInvalidationManager implements ApplicationStatus.Applicatio
         ApplicationStatus.registerApplicationStateListener(this);
     }
 
-    /**
-     * Called when a RecentTabsPage is opened.
-     */
+    /** Called when a RecentTabsPage is opened. */
     public void onRecentTabsPageOpened() {
         ++mNumRecentTabPages;
         if (mNumRecentTabPages == 1) {
@@ -83,9 +75,7 @@ public class SessionsInvalidationManager implements ApplicationStatus.Applicatio
         }
     }
 
-    /**
-     * Called when a RecentTabsPage is closed.
-     */
+    /** Called when a RecentTabsPage is closed. */
     public void onRecentTabsPageClosed() {
         --mNumRecentTabPages;
         if (mNumRecentTabPages == 0) {
@@ -106,12 +96,14 @@ public class SessionsInvalidationManager implements ApplicationStatus.Applicatio
             return;
         }
 
-        mEnableSessionInvalidationsRunner.setRunnable(() -> {
-            mIsSessionInvalidationsEnabled = isEnabled;
-            ForeignSessionHelper foreignSessionHelper = new ForeignSessionHelper(mProfile);
-            foreignSessionHelper.setInvalidationsForSessionsEnabled(isEnabled);
-            foreignSessionHelper.destroy();
-        }, delayMs);
+        mEnableSessionInvalidationsRunner.setRunnable(
+                () -> {
+                    mIsSessionInvalidationsEnabled = isEnabled;
+                    ForeignSessionHelper foreignSessionHelper = new ForeignSessionHelper(mProfile);
+                    foreignSessionHelper.setInvalidationsForSessionsEnabled(isEnabled);
+                    foreignSessionHelper.destroy();
+                },
+                delayMs);
         mEnableSessionInvalidationsRunner.resume();
     }
 

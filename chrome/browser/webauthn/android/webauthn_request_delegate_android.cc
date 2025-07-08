@@ -4,28 +4,33 @@
 
 #include "chrome/browser/webauthn/android/webauthn_request_delegate_android.h"
 
+#include <algorithm>
 #include <iterator>
 #include <memory>
 #include <vector>
 
-#include "base/base64.h"
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/utf_string_conversions.h"
+#include "base/memory/weak_ptr.h"
+#include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_controller.h"
 #include "chrome/browser/password_manager/chrome_webauthn_credentials_delegate.h"
 #include "chrome/browser/password_manager/chrome_webauthn_credentials_delegate_factory.h"
-#include "chrome/browser/touch_to_fill/touch_to_fill_controller.h"
-#include "chrome/browser/touch_to_fill/touch_to_fill_controller_webauthn_delegate.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller.h"
+#include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller_webauthn_delegate.h"
 #include "chrome/browser/webauthn/webauthn_metrics_util.h"
+#include "components/password_manager/content/browser/content_password_manager_driver.h"
 #include "components/password_manager/content/browser/keyboard_replacing_surface_visibility_controller_impl.h"
 #include "components/password_manager/core/browser/origin_credential_store.h"
 #include "components/password_manager/core/browser/passkey_credential.h"
-#include "components/strings/grit/components_strings.h"
+#include "components/webauthn/android/webauthn_cred_man_delegate.h"
+#include "components/webauthn/android/webauthn_cred_man_delegate_factory.h"
 #include "content/public/browser/web_contents.h"
 #include "device/fido/discoverable_credential_metadata.h"
-#include "ui/base/l10n/l10n_util.h"
 
+using password_manager::ContentPasswordManagerDriver;
 using password_manager::PasskeyCredential;
+using webauthn::WebAuthnCredManDelegate;
+using webauthn::WebAuthnCredManDelegateFactory;
 
 // static
 WebAuthnRequestDelegateAndroid*
@@ -63,7 +68,7 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
   hybrid_callback_ = std::move(hybrid_callback);
 
   std::vector<PasskeyCredential> display_credentials;
-  base::ranges::transform(
+  std::ranges::transform(
       credentials, std::back_inserter(display_credentials),
       [](const auto& credential) {
         return PasskeyCredential(
@@ -83,12 +88,13 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
         ChromeWebAuthnCredentialsDelegateFactory::GetFactory(
             content::WebContents::FromRenderFrameHost(frame_host))
             ->GetDelegateForFrame(frame_host);
-    credentials_delegate->SetAndroidHybridAvailable(
-        ChromeWebAuthnCredentialsDelegate::AndroidHybridAvailable(
-            !hybrid_callback_.is_null()));
+    if (!credentials_delegate) {
+      return;
+    }
     credentials_delegate->OnCredentialsReceived(
         std::move(display_credentials),
-        /*offer_passkey_from_another_device=*/true);
+        ChromeWebAuthnCredentialsDelegate::SecurityKeyOrHybridFlowAvailable(
+            !hybrid_callback_.is_null()));
     return;
   }
 
@@ -98,13 +104,19 @@ void WebAuthnRequestDelegateAndroid::OnWebAuthnRequestPending(
   }
   if (!touch_to_fill_controller_) {
     touch_to_fill_controller_ = std::make_unique<TouchToFillController>(
-        visibility_controller_->AsWeakPtr());
+        Profile::FromBrowserContext(frame_host->GetBrowserContext()),
+        visibility_controller_->AsWeakPtr(),
+        /*grouped_credential_sheet_controller=*/nullptr);
   }
-  touch_to_fill_controller_->Show(
+  touch_to_fill_controller_->InitData(
       std::vector<password_manager::UiCredential>(), display_credentials,
+      ContentPasswordManagerDriver::GetForRenderFrameHost(frame_host)
+          ->AsWeakPtrImpl());
+  touch_to_fill_controller_->Show(
       std::make_unique<TouchToFillControllerWebAuthnDelegate>(
           this, !hybrid_callback_.is_null()),
-      frame_host->GetRenderWidgetHost());
+      WebAuthnCredManDelegateFactory::GetFactory(web_contents())
+          ->GetRequestDelegate(frame_host));
 }
 
 void WebAuthnRequestDelegateAndroid::CleanupWebAuthnRequest(
@@ -115,9 +127,10 @@ void WebAuthnRequestDelegateAndroid::CleanupWebAuthnRequest(
         ChromeWebAuthnCredentialsDelegateFactory::GetFactory(
             content::WebContents::FromRenderFrameHost(frame_host))
             ->GetDelegateForFrame(frame_host);
-    credentials_delegate->NotifyWebAuthnRequestAborted();
-    credentials_delegate->SetAndroidHybridAvailable(
-        ChromeWebAuthnCredentialsDelegate::AndroidHybridAvailable(false));
+
+    if (credentials_delegate) {
+      credentials_delegate->NotifyWebAuthnRequestAborted();
+    }
   } else {
     touch_to_fill_controller_->Close();
   }

@@ -5,13 +5,20 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_VIEW_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_VIEW_H_
 
+#include "build/build_config.h"
+
+#if !BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/native_widget_types.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace content {
-struct NativeWebKeyboardEvent;
 class RenderFrameHost;
 class WebContents;
 }
+
+namespace input {
+struct NativeWebKeyboardEvent;
+}  // namespace input
 
 namespace gfx {
 class Size;
@@ -22,10 +29,12 @@ namespace extensions {
 // Base class for platform-specific views used by extensions in the Chrome UI.
 class ExtensionView {
  public:
-  virtual ~ExtensionView() {}
+  virtual ~ExtensionView() = default;
 
+#if !BUILDFLAG(IS_ANDROID)
   // Returns the extension's native view.
   virtual gfx::NativeView GetNativeView() = 0;
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Method for the ExtensionHost to notify us about the correct size for
   // extension contents.
@@ -40,7 +49,7 @@ class ExtensionView {
   // Handles unhandled keyboard messages coming back from the renderer process.
   virtual bool HandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) = 0;
+      const input::NativeWebKeyboardEvent& event) = 0;
 
   // Method for the ExtensionHost to notify that the extension page has loaded.
   virtual void OnLoaded() = 0;

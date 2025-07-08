@@ -4,11 +4,13 @@
 
 #include "third_party/blink/renderer/core/animation/scroll_snapshot_timeline.h"
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_cssnumericvalue_double.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline_util.h"
 #include "third_party/blink/renderer/core/css/cssom/css_unit_values.h"
 #include "third_party/blink/renderer/core/dom/node.h"
+#include "third_party/blink/renderer/core/layout/forms/layout_fieldset.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 
 namespace blink {
@@ -17,21 +19,26 @@ ScrollSnapshotTimeline::ScrollSnapshotTimeline(Document* document)
     : AnimationTimeline(document), ScrollSnapshotClient(document->GetFrame()) {}
 
 bool ScrollSnapshotTimeline::IsResolved() const {
-  return ComputeIsResolved(ResolvedSource());
+  return ScrollContainer();
 }
 
 bool ScrollSnapshotTimeline::IsActive() const {
   return timeline_state_snapshotted_.phase != TimelinePhase::kInactive;
 }
 
-absl::optional<ScrollOffsets> ScrollSnapshotTimeline::GetResolvedScrollOffsets()
+std::optional<ScrollOffsets> ScrollSnapshotTimeline::GetResolvedScrollOffsets()
     const {
   return timeline_state_snapshotted_.scroll_offsets;
 }
 
-absl::optional<ScrollSnapshotTimeline::ViewOffsets>
+std::optional<ScrollSnapshotTimeline::ViewOffsets>
 ScrollSnapshotTimeline::GetResolvedViewOffsets() const {
   return timeline_state_snapshotted_.view_offsets;
+}
+
+std::optional<ScrollOffsets> ScrollSnapshotTimeline::GetResolvedScrollLimits()
+    const {
+  return timeline_state_snapshotted_.scroll_limits;
 }
 
 // TODO(crbug.com/1336260): Since phase can only be kActive or kInactive and
@@ -71,17 +78,17 @@ void ScrollSnapshotTimeline::ResolveTimelineOffsets() const {
 }
 
 // Scroll-linked animations are initialized with the start time of zero.
-absl::optional<base::TimeDelta>
+std::optional<base::TimeDelta>
 ScrollSnapshotTimeline::InitialStartTimeForAnimations() {
   return base::TimeDelta();
 }
 
 AnimationTimeDelta ScrollSnapshotTimeline::CalculateIntrinsicIterationDuration(
     const TimelineRange& timeline_range,
-    const absl::optional<TimelineOffset>& range_start,
-    const absl::optional<TimelineOffset>& range_end,
+    const std::optional<TimelineOffset>& range_start,
+    const std::optional<TimelineOffset>& range_end,
     const Timing& timing) {
-  absl::optional<AnimationTimeDelta> duration = GetDuration();
+  std::optional<AnimationTimeDelta> duration = GetDuration();
 
   // Only run calculation for progress based scroll timelines
   if (duration && timing.iteration_count > 0) {
@@ -113,17 +120,18 @@ AnimationTimeDelta ScrollSnapshotTimeline::CalculateIntrinsicIterationDuration(
 }
 
 TimelineRange ScrollSnapshotTimeline::GetTimelineRange() const {
-  absl::optional<ScrollOffsets> scroll_offsets = GetResolvedScrollOffsets();
+  std::optional<ScrollOffsets> scroll_offsets = GetResolvedScrollOffsets();
+  std::optional<ScrollOffsets> scroll_limits = GetResolvedScrollLimits();
 
-  if (!scroll_offsets.has_value()) {
+  if (!scroll_offsets.has_value() || !scroll_limits.has_value()) {
     return TimelineRange();
   }
 
-  absl::optional<ViewOffsets> view_offsets = GetResolvedViewOffsets();
+  std::optional<ViewOffsets> view_offsets = GetResolvedViewOffsets();
 
-  return TimelineRange(scroll_offsets.value(), view_offsets.has_value()
-                                                   ? view_offsets.value()
-                                                   : ViewOffsets());
+  return TimelineRange(
+      scroll_limits.value(), scroll_offsets.value(),
+      view_offsets.has_value() ? view_offsets.value() : ViewOffsets());
 }
 
 void ScrollSnapshotTimeline::ServiceAnimations(TimingUpdateReason reason) {
@@ -163,16 +171,21 @@ void ScrollSnapshotTimeline::UpdateSnapshot() {
     // Force recalculation of an auto-aligned start time, and invalidate
     // normalized timing.
     for (Animation* animation : GetAnimations()) {
+      // Avoid setting a deferred start time during the update snapshot phase.
+      // Instead wait for the validation phase post layout.
+      if (!animation->CurrentTimeInternal()) {
+        continue;
+      }
       animation->OnValidateSnapshot(layout_changed);
     }
   }
   ResolveTimelineOffsets();
 }
 
-bool ScrollSnapshotTimeline::ComputeIsResolved(Node* resolved_source) {
-  LayoutBox* layout_box =
-      resolved_source ? resolved_source->GetLayoutBox() : nullptr;
-  return layout_box && layout_box->IsScrollContainer();
+LayoutBox* ScrollSnapshotTimeline::ComputeScrollContainer(
+    Node* resolved_source) {
+  auto* container_node = DynamicTo<ContainerNode>(resolved_source);
+  return container_node ? container_node->GetLayoutBoxForScrolling() : nullptr;
 }
 
 void ScrollSnapshotTimeline::Trace(Visitor* visitor) const {
@@ -225,6 +238,18 @@ void ScrollSnapshotTimeline::UpdateCompositorTimeline() {
       ->UpdateScrollerIdAndScrollOffsets(
           scroll_timeline_util::GetCompositorScrollElementId(ResolvedSource()),
           GetResolvedScrollOffsets());
+}
+
+void ScrollSnapshotTimeline::CalculateScrollLimits(
+    PaintLayerScrollableArea* scrollable_area,
+    ScrollOrientation physical_orientation,
+    TimelineState* state) const {
+  ScrollOffset scroll_dimensions = scrollable_area->MaximumScrollOffset() -
+                                   scrollable_area->MinimumScrollOffset();
+  double end_offset = physical_orientation == kHorizontalScroll
+                          ? scroll_dimensions.x()
+                          : scroll_dimensions.y();
+  state->scroll_limits = std::make_optional<ScrollOffsets>(0, end_offset);
 }
 
 }  // namespace blink

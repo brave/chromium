@@ -3,20 +3,22 @@
 // found in the LICENSE file.
 
 import './app_details_item.js';
-import 'chrome://resources/cr_components/app_management/more_permissions_item.js';
+import './more_permissions_item.js';
 import './pin_to_shelf_item.js';
 import './app_management_cros_shared_style.css.js';
 
-import {App, ExtensionAppPermissionMessage} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {App, ExtensionAppPermissionMessage} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
 import {getSelectedApp} from 'chrome://resources/cr_components/app_management/util.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {AppManagementBrowserProxy} from './browser_proxy.js';
+import {AppManagementBrowserProxy} from '../../common/app_management/browser_proxy.js';
+import {AppManagementStoreMixin} from '../../common/app_management/store_mixin.js';
+
 import {getTemplate} from './chrome_app_detail_view.html.js';
-import {AppManagementStoreMixin} from './store_mixin.js';
 
 const AppManagementChromeAppDetailViewElementBase =
-    AppManagementStoreMixin(PolymerElement);
+    AppManagementStoreMixin(I18nMixin(PolymerElement));
 
 export class AppManagementChromeAppDetailViewElement extends
     AppManagementChromeAppDetailViewElementBase {
@@ -49,7 +51,7 @@ export class AppManagementChromeAppDetailViewElement extends
     this.updateFromStore();
   }
 
-  private async onAppChanged_() {
+  private async onAppChanged_(): Promise<void> {
     try {
       const {messages: messages} =
           await AppManagementBrowserProxy.getInstance()

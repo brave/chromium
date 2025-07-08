@@ -20,10 +20,6 @@
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace {
@@ -62,10 +58,10 @@ web::SessionCertificate CreateTestSessionCertificate(
 // Test fixture to test SessionCertificatePolicyCacheImpl class.
 class SessionCertificatePolicyCacheImplTest : public PlatformTest {
  protected:
-  SessionCertificatePolicyCacheImplTest()
-      : task_environment_(web::WebTaskEnvironment::Options::REAL_IO_THREAD) {}
+  SessionCertificatePolicyCacheImplTest() = default;
 
-  web::WebTaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_{
+      web::WebTaskEnvironment::IOThreadType::REAL_THREAD};
   web::FakeBrowserState browser_state_;
 };
 

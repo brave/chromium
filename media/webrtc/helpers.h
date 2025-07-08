@@ -5,18 +5,17 @@
 #ifndef MEDIA_WEBRTC_HELPERS_H_
 #define MEDIA_WEBRTC_HELPERS_H_
 
+#include <optional>
+#include <utility>
+
 #include "base/component_export.h"
 #include "base/files/file.h"
 #include "build/build_config.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_processing.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/webrtc/api/task_queue/task_queue_base.h"
 #include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
-
-namespace rtc {
-class TaskQueue;
-}  // namespace rtc
 
 namespace media {
 
@@ -30,10 +29,15 @@ webrtc::StreamConfig CreateStreamConfig(const AudioParameters& parameters);
 
 // Creates and configures a `webrtc::AudioProcessing` audio processing module
 // (APM), based on the provided parameters and on features and field trials.
-// Returns nullptr if settings.NeedWebrtcAudioProcessing() is false.
+// Returns a pair consisting of:
+// - A configured `webrtc::AudioProcessing` instance (or nullptr if
+//   `settings.NeedWebrtcAudioProcessing()` is false).
+// - A `base::TimeDelta` representing any additional processing delay introduced
+//   by the configuration if loopback AEC is enabled. This delay will be zero
+//   if loopback AEC is not enabled (default).
 COMPONENT_EXPORT(MEDIA_WEBRTC)
-rtc::scoped_refptr<webrtc::AudioProcessing> CreateWebRtcAudioProcessingModule(
-    const AudioProcessingSettings& settings);
+std::pair<webrtc::scoped_refptr<webrtc::AudioProcessing>, base::TimeDelta>
+CreateWebRtcAudioProcessingModule(const AudioProcessingSettings& settings);
 
 // Starts the echo cancellation dump in
 // |audio_processing|. |worker_queue| must be kept alive until either
@@ -42,7 +46,7 @@ rtc::scoped_refptr<webrtc::AudioProcessing> CreateWebRtcAudioProcessingModule(
 COMPONENT_EXPORT(MEDIA_WEBRTC)
 void StartEchoCancellationDump(webrtc::AudioProcessing* audio_processing,
                                base::File aec_dump_file,
-                               rtc::TaskQueue* worker_queue);
+                               webrtc::TaskQueueBase* worker_queue);
 
 // Stops the echo cancellation dump in |audio_processing|.
 // This method has no impact if echo cancellation dump has not been started on

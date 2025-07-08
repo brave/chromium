@@ -21,9 +21,8 @@
 #include "ash/wm/desks/desk_mini_view.h"
 #include "ash/wm/desks/desks_test_api.h"
 #include "ash/wm/desks/desks_test_util.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/float/float_test_api.h"
-#include "ash/wm/float/scoped_window_tucker.h"
 #include "ash/wm/float/tablet_mode_float_window_resizer.h"
 #include "ash/wm/float/tablet_mode_tuck_education.h"
 #include "ash/wm/mru_window_tracker.h"
@@ -31,6 +30,8 @@
 #include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_item.h"
 #include "ash/wm/overview/overview_test_util.h"
+#include "ash/wm/scoped_window_tucker.h"
+#include "ash/wm/splitview/split_view_controller.h"
 #include "ash/wm/splitview/split_view_metrics_controller.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/test/test_non_client_frame_view_ash.h"
@@ -44,14 +45,15 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/clock.h"
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
+#include "chromeos/ui/frame/caption_buttons/snap_controller.h"
 #include "chromeos/ui/frame/header_view.h"
 #include "chromeos/ui/frame/immersive/immersive_fullscreen_controller.h"
 #include "chromeos/ui/wm/constants.h"
-#include "chromeos/ui/wm/features.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window_observer.h"
@@ -141,15 +143,6 @@ class WindowFloatTest : public AshTestBase {
     CHECK(WindowState::Get(floated_window.get())->IsFloated());
     return floated_window;
   }
-
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {chromeos::wm::features::kWindowLayoutMenu}, {});
-    AshTestBase::SetUp();
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Test float/unfloat window.
@@ -408,23 +401,39 @@ TEST_F(WindowFloatTest, FloatOnOtherDisplay) {
 }
 
 // Tests that floated windows that are moved to an external display are still
-// visible. Regression test for b/286864430.
+// visible and the same size. Regression test for http://b/286864430 and
+// http://b/297218727.
 TEST_F(WindowFloatTest, MoveFloatedWindowToOtherDisplay) {
   // On two displays of the same size, this was never an issue. The issue
   // happened if the destination display was narrower than the source display.
   UpdateDisplay("1200x800,1201+0-600x800");
 
   // Create a floated window on the primary display. Upon floating, it will
-  // automatically reposition to the bottom right corner.
-  std::unique_ptr<aura::Window> window = CreateFloatedWindow();
-  ASSERT_EQ(Shell::GetAllRootWindows()[0], window->GetRootWindow());
+  // automatically reposition to the bottom right corner. For this test, we want
+  // to ensure the normal state size is different from the floated size; we do
+  // this by initializing the window with a large size.
+  auto window = CreateAppWindow(gfx::Rect(1100, 700));
+  PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
+  CHECK(WindowState::Get(window.get())->IsFloated());
+  CHECK_NE(gfx::Size(1100, 700), window->bounds().size());
+
+  const gfx::Size primary_display_size = window->bounds().size();
 
   // After moving the window to the secondary display, the bounds of `window`
-  // should be partially visible.
+  // should be partially visible and remain the same size.
   PressAndReleaseKey(ui::VKEY_M, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
   ASSERT_EQ(Shell::GetAllRootWindows()[1], window->GetRootWindow());
   EXPECT_TRUE(Shell::GetAllRootWindows()[1]->GetBoundsInScreen().Intersects(
       window->GetBoundsInScreen()));
+  EXPECT_EQ(primary_display_size, window->bounds().size());
+
+  // After moving the window back to the primary display, the bounds of `window`
+  // should be partially visible and remain the same size.
+  PressAndReleaseKey(ui::VKEY_M, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
+  ASSERT_EQ(Shell::GetAllRootWindows()[0], window->GetRootWindow());
+  EXPECT_TRUE(Shell::GetAllRootWindows()[0]->GetBoundsInScreen().Intersects(
+      window->GetBoundsInScreen()));
+  EXPECT_EQ(primary_display_size, window->bounds().size());
 }
 
 TEST_F(WindowFloatTest, FloatWindowBoundsWithZoomDisplay) {
@@ -551,7 +560,7 @@ TEST_F(WindowFloatTest, FloatWindowWithDeskRemovalUndo) {
   auto* float_controller = Shell::Get()->float_controller();
   ASSERT_EQ(float_controller->FindDeskOfFloatedWindow(window.get()), desk_2);
   EnterOverview();
-  ASSERT_TRUE(Shell::Get()->overview_controller()->InOverviewSession());
+  ASSERT_TRUE(OverviewController::Get()->InOverviewSession());
   RemoveDesk(desk_2, DeskCloseType::kCloseAllWindowsAndWait);
   ASSERT_TRUE(desk_2->is_desk_being_removed());
   // During desk removal, float window should be hidden.
@@ -630,7 +639,7 @@ TEST_F(WindowFloatTest, MoveFloatWindowBetweenDesks) {
   std::unique_ptr<aura::Window> window_2(CreateFloatedWindow());
   // Move back to `desk_1`.
   ActivateDesk(desk_1);
-  auto* overview_controller = Shell::Get()->overview_controller();
+  auto* overview_controller = OverviewController::Get();
   EnterOverview();
   auto* overview_session = overview_controller->overview_session();
   // The window should exist on the grid of the first display.
@@ -638,10 +647,10 @@ TEST_F(WindowFloatTest, MoveFloatWindowBetweenDesks) {
       overview_session->GetOverviewItemForWindow(window_1.get());
   auto* grid =
       overview_session->GetGridWithRootWindow(Shell::GetPrimaryRootWindow());
-  EXPECT_EQ(1u, grid->size());
+  EXPECT_EQ(1u, grid->GetNumWindows());
   // Get position of `desk_2`'s desk mini view on the secondary display.
   const auto* desks_bar_view = grid->desks_bar_view();
-  auto* desk_2_mini_view = desks_bar_view->mini_views()[1];
+  auto* desk_2_mini_view = desks_bar_view->mini_views()[1].get();
   gfx::Point desk_2_mini_view_center =
       desk_2_mini_view->GetBoundsInScreen().CenterPoint();
 
@@ -675,7 +684,7 @@ TEST_F(WindowFloatTest, MoveFloatWindowBetweenDesksOnDifferentDisplay) {
   std::unique_ptr<aura::Window> window_2(CreateFloatedWindow());
   // Move back to `desk_1`.
   ActivateDesk(desk_1);
-  auto* overview_controller = Shell::Get()->overview_controller();
+  auto* overview_controller = OverviewController::Get();
   EnterOverview();
   auto* overview_session = overview_controller->overview_session();
   // Get root for displays.
@@ -688,13 +697,13 @@ TEST_F(WindowFloatTest, MoveFloatWindowBetweenDesksOnDifferentDisplay) {
       overview_session->GetOverviewItemForWindow(window_1.get());
   auto* grid1 = overview_session->GetGridWithRootWindow(primary_root);
   auto* grid2 = overview_session->GetGridWithRootWindow(secondary_root);
-  EXPECT_EQ(1u, grid1->size());
+  EXPECT_EQ(1u, grid1->GetNumWindows());
   EXPECT_EQ(grid1, overview_item->overview_grid());
-  EXPECT_EQ(0u, grid2->size());
+  EXPECT_EQ(0u, grid2->GetNumWindows());
 
   // Get position of `desk_2`'s desk mini view on the secondary display.
   const auto* desks_bar_view = grid2->desks_bar_view();
-  auto* desk_2_mini_view = desks_bar_view->mini_views()[1];
+  auto* desk_2_mini_view = desks_bar_view->mini_views()[1].get();
   gfx::Point desk_2_mini_view_center =
       desk_2_mini_view->GetBoundsInScreen().CenterPoint();
 
@@ -776,7 +785,7 @@ TEST_F(WindowFloatTest, FloatWindowShouldNotBlockKeyboardEvents) {
   // Move to `desk_2`.
   ActivateDesk(desk_2);
   // Going into overview mode from keyboard shortcut.
-  auto* overview_controller = Shell::Get()->overview_controller();
+  auto* overview_controller = OverviewController::Get();
   ASSERT_FALSE(overview_controller->InOverviewSession());
   PressAndReleaseKey(ui::VKEY_MEDIA_LAUNCH_APP1, ui::EF_NONE);
   // Verify we are in overview mode.
@@ -851,11 +860,11 @@ TEST_F(WindowFloatTest, FloatWindowUpdatedOnOverview) {
   NewDesk();
   ASSERT_EQ(desks_controller->desks().size(), 2u);
   EnterOverview();
-  ASSERT_TRUE(Shell::Get()->overview_controller()->InOverviewSession());
+  ASSERT_TRUE(OverviewController::Get()->InOverviewSession());
   RemoveDesk(desk_1, DeskCloseType::kCombineDesks);
   ASSERT_EQ(desks_controller->desks().size(), 1u);
   // Floated window should be appended to overview items.
-  const std::vector<std::unique_ptr<OverviewItem>>& overview_items =
+  const std::vector<std::unique_ptr<OverviewItemBase>>& overview_items =
       GetOverviewItemsForRoot(0);
   ASSERT_EQ(overview_items.size(), 1u);
   EXPECT_EQ(window.get(), overview_items[0]->GetWindow());
@@ -933,6 +942,84 @@ TEST_F(WindowFloatTest, UnresizableFloatPerWindowState) {
   EXPECT_FALSE(window_state->IsFloated());
 }
 
+// Tests that a window sent to all desks can be floated.
+TEST_F(WindowFloatTest, FloatAllDesksWindow) {
+  // Create two new desks (three total).
+  NewDesk();
+  NewDesk();
+  auto* desks_controller = DesksController::Get();
+  ASSERT_EQ(3u, desks_controller->desks().size());
+
+  // Create a floated window and a regular window on the first desk.
+  auto first_floated_window = CreateFloatedWindow();
+  auto all_desks_window = CreateAppWindow();
+
+  // Assign the regular window to all desks.
+  views::Widget::GetWidgetForNativeWindow(all_desks_window.get())
+      ->SetVisibleOnAllWorkspaces(true);
+  ASSERT_TRUE(
+      desks_util::IsWindowVisibleOnAllWorkspaces(all_desks_window.get()));
+  ASSERT_EQ(1u, desks_controller->visible_on_all_desks_windows().size());
+
+  // Switch to the second desk and create another floated window.
+  ActivateDesk(desks_controller->desks()[1].get());
+  ASSERT_TRUE(wm::IsActiveWindow(all_desks_window.get()));
+  auto second_floated_window = CreateFloatedWindow();
+
+  // Switch to the third desk and float the `all_desks_window` using the
+  // accelerator.
+  ActivateDesk(desks_controller->desks()[2].get());
+  ASSERT_TRUE(wm::IsActiveWindow(all_desks_window.get()));
+  PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
+  EXPECT_TRUE(WindowState::Get(all_desks_window.get())->IsFloated());
+
+  // Switch back to the first and second desks. The other floated windows should
+  // no longer be floated, and the `all_desks_window` should still be floated.
+  ActivateDesk(desks_controller->desks()[0].get());
+  EXPECT_FALSE(WindowState::Get(first_floated_window.get())->IsFloated());
+  EXPECT_TRUE(WindowState::Get(all_desks_window.get())->IsFloated());
+  ActivateDesk(desks_controller->desks()[1].get());
+  EXPECT_FALSE(WindowState::Get(second_floated_window.get())->IsFloated());
+  EXPECT_TRUE(WindowState::Get(all_desks_window.get())->IsFloated());
+}
+
+// Tests that a floated window can be sent to all desks.
+TEST_F(WindowFloatTest, SendFloatedWindowToAllDesks) {
+  NewDesk();
+  auto* desks_controller = DesksController::Get();
+  ASSERT_EQ(2u, desks_controller->desks().size());
+
+  // Create a floated window on both desks.
+  auto first_floated_window = CreateFloatedWindow();
+  ActivateDesk(desks_controller->desks()[1].get());
+  auto all_floated_window = CreateFloatedWindow();
+
+  // Assign the second floated window to all desks.
+  views::Widget::GetWidgetForNativeWindow(all_floated_window.get())
+      ->SetVisibleOnAllWorkspaces(true);
+  ASSERT_EQ(1u, desks_controller->visible_on_all_desks_windows().size());
+  ASSERT_TRUE(
+      desks_util::IsWindowVisibleOnAllWorkspaces(all_floated_window.get()));
+  ASSERT_TRUE(desks_util::BelongsToActiveDesk(all_floated_window.get()));
+
+  // Switch back the first desk and verify `all_floated_window` is active
+  // and floated.
+  ActivateDesk(desks_controller->desks()[0].get());
+  ASSERT_TRUE(desks_util::BelongsToActiveDesk(all_floated_window.get()));
+  EXPECT_TRUE(WindowState::Get(all_floated_window.get())->IsFloated());
+  // The first window should no longer be floated.
+  ASSERT_TRUE(desks_util::BelongsToActiveDesk(first_floated_window.get()));
+  EXPECT_FALSE(WindowState::Get(first_floated_window.get())->IsFloated());
+
+  // Send `all_floated_window` to the second desk. It should no longer appear on
+  // the first desk, but it should still be floated on the second desk.
+  desks_controller->SendToDeskAtIndex(all_floated_window.get(), 1);
+  ASSERT_FALSE(desks_util::BelongsToActiveDesk(all_floated_window.get()));
+  ActivateDesk(desks_controller->desks()[1].get());
+  ASSERT_TRUE(desks_util::BelongsToActiveDesk(all_floated_window.get()));
+  EXPECT_TRUE(WindowState::Get(all_floated_window.get())->IsFloated());
+}
+
 // A test class that uses a mock time test environment.
 class WindowFloatMetricsTest : public WindowFloatTest {
  public:
@@ -972,14 +1059,13 @@ TEST_F(WindowFloatMetricsTest, FloatWindowMovedToAnotherDeskCountPerSession) {
   auto* desks_controller = DesksController::Get();
   auto* desk_2 = desks_controller->desks()[1].get();
   EnterOverview();
-  auto* overview_session =
-      Shell::Get()->overview_controller()->overview_session();
+  auto* overview_session = OverviewController::Get()->overview_session();
   // The window should exist on the grid of the first display.
   auto* overview_item =
       overview_session->GetOverviewItemForWindow(window_1.get());
   auto* grid =
       overview_session->GetGridWithRootWindow(Shell::GetPrimaryRootWindow());
-  EXPECT_EQ(1u, grid->size());
+  EXPECT_EQ(1u, grid->GetNumWindows());
   // Get position of `desk_2`'s desk mini view.
   const auto* desks_bar_view = grid->desks_bar_view();
   gfx::Point desk_2_mini_view_center =
@@ -1178,7 +1264,7 @@ class TabletWindowFloatTest : public WindowFloatTest,
   base::RepeatingCallback<void(display::TabletState)>
       on_tablet_state_changed_callback_;
 
-  absl::optional<display::ScopedDisplayObserver> display_observer_;
+  std::optional<display::ScopedDisplayObserver> display_observer_;
 };
 
 // Test class used to keep track of the amount of times the tuck education nudge
@@ -1297,7 +1383,7 @@ TEST_F(TabletWindowFloatTest, MinimumSizeChangeOnTablet) {
   // Create a window in clamshell mode without a minimum size, and larger than
   // its tablet minimum size.
   auto window =
-      CreateAppWindow(gfx::Rect(500, 500), AppType::SYSTEM_APP,
+      CreateAppWindow(gfx::Rect(500, 500), chromeos::AppType::SYSTEM_APP,
                       kShellWindowId_DeskContainerA, new TestWidgetDelegateAsh);
   auto* custom_frame = static_cast<TestNonClientFrameViewAsh*>(
       NonClientFrameViewAsh::Get(window.get()));
@@ -1354,8 +1440,7 @@ TEST_F(TabletWindowFloatTest, CanBrowsersFloat) {
   aura::test::TestWindowDelegate window_delegate;
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
       &window_delegate, /*id=*/-1, gfx::Rect(500, 500)));
-  window->SetProperty(aura::client::kAppType,
-                      static_cast<int>(AppType::BROWSER));
+  window->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::BROWSER);
   wm::ActivateWindow(window.get());
 
   // Browser windows whose minimum size is greater than the maximum allowed
@@ -1393,8 +1478,7 @@ TEST_F(TabletWindowFloatTest, TabletPositioningLandscape) {
   aura::test::TestWindowDelegate window_delegate;
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
       &window_delegate, /*id=*/-1, gfx::Rect(300, 300)));
-  window->SetProperty(aura::client::kAppType,
-                      static_cast<int>(AppType::BROWSER));
+  window->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::BROWSER);
   wm::ActivateWindow(window.get());
 
   Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
@@ -1419,8 +1503,7 @@ TEST_F(TabletWindowFloatTest, FloatWindowUnfloatsEnterTablet) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
       &window_delegate, /*id=*/-1, gfx::Rect(850, 850)));
   window_delegate.set_minimum_size(gfx::Size(500, 500));
-  window->SetProperty(aura::client::kAppType,
-                      static_cast<int>(ash::AppType::BROWSER));
+  window->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::BROWSER);
   wm::ActivateWindow(window.get());
 
   PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
@@ -1439,8 +1522,7 @@ TEST_F(TabletWindowFloatTest, FloatWindowUnfloatsDisplayChange) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
       &window_delegate, /*id=*/-1, gfx::Rect(300, 300)));
   window_delegate.set_minimum_size(gfx::Size(400, 400));
-  window->SetProperty(aura::client::kAppType,
-                      static_cast<int>(ash::AppType::BROWSER));
+  window->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::BROWSER);
   wm::ActivateWindow(window.get());
 
   // Enter tablet mode and float `window`.
@@ -1556,7 +1638,7 @@ TEST_F(TabletWindowFloatTest, Dragging) {
 }
 
 // Tests that there is no crash when maximizing a dragged floated window.
-// Regression test for https://b/254107825.
+// Regression test for http://b/254107825.
 TEST_F(TabletWindowFloatTest, MaximizeWhileDragging) {
   Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
 
@@ -2131,7 +2213,8 @@ TEST_F(TabletWindowFloatSplitviewTest, BothSnappedToFloat) {
 
   auto* split_view_controller =
       SplitViewController::Get(Shell::GetPrimaryRootWindow());
-  ASSERT_TRUE(split_view_controller->BothSnapped());
+  ASSERT_EQ(split_view_controller->state(),
+            SplitViewController::State::kBothSnapped);
 
   // Float the left window. Verify that it is floated, the right window becomes
   // maximized and that we are no longer in splitview.
@@ -2155,14 +2238,14 @@ TEST_F(TabletWindowFloatSplitviewTest, FloatToSnapped) {
   // extended and users can pick a second app from there.
   const WindowSnapWMEvent snap_left(WM_EVENT_SNAP_PRIMARY);
   WindowState::Get(window.get())->OnWMEvent(&snap_left);
-  ASSERT_TRUE(Shell::Get()->overview_controller()->InOverviewSession());
+  ASSERT_TRUE(OverviewController::Get()->InOverviewSession());
   ASSERT_TRUE(split_view_controller->InSplitViewMode());
 
   // Float the window so we can snap it again. Assert that we are no longer in
   // overview or splitview.
   PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
   ASSERT_TRUE(WindowState::Get(window.get())->IsFloated());
-  ASSERT_FALSE(Shell::Get()->overview_controller()->InOverviewSession());
+  ASSERT_FALSE(OverviewController::Get()->InOverviewSession());
   ASSERT_FALSE(split_view_controller->InSplitViewMode());
 
   // Create a second window.
@@ -2172,8 +2255,9 @@ TEST_F(TabletWindowFloatSplitviewTest, FloatToSnapped) {
   // Tests that when we snap `window` now, `other_window` will get snapped to
   // the opposite side.
   WindowState::Get(window.get())->OnWMEvent(&snap_left);
-  EXPECT_FALSE(Shell::Get()->overview_controller()->InOverviewSession());
-  EXPECT_TRUE(split_view_controller->BothSnapped());
+  EXPECT_FALSE(OverviewController::Get()->InOverviewSession());
+  EXPECT_EQ(split_view_controller->state(),
+            SplitViewController::State::kBothSnapped);
   EXPECT_EQ(split_view_controller->primary_window(), window.get());
   EXPECT_EQ(split_view_controller->secondary_window(), other_window.get());
 
@@ -2182,8 +2266,29 @@ TEST_F(TabletWindowFloatSplitviewTest, FloatToSnapped) {
   ToggleOverview();
   wm::ActivateWindow(window.get());
   PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
-  EXPECT_FALSE(Shell::Get()->overview_controller()->InOverviewSession());
+  EXPECT_FALSE(OverviewController::Get()->InOverviewSession());
   EXPECT_FALSE(split_view_controller->InSplitViewMode());
+
+  // Tests that when we partial-snap `other_window` now, activating `window`
+  // will results in `window` snapped on the opposite side while keeping the
+  // partial snap ratio.
+  const WindowSnapWMEvent snap_primary_two_third(WM_EVENT_SNAP_PRIMARY,
+                                                 chromeos::kTwoThirdSnapRatio);
+  WindowState::Get(other_window.get())->OnWMEvent(&snap_primary_two_third);
+  ASSERT_TRUE(WindowState::Get(other_window.get())->IsSnapped());
+
+  wm::ActivateWindow(window.get());
+  EXPECT_TRUE(WindowState::Get(window.get())->IsSnapped());
+  EXPECT_EQ(split_view_controller->state(),
+            SplitViewController::State::kBothSnapped);
+  EXPECT_EQ(split_view_controller->primary_window(), other_window.get());
+  EXPECT_EQ(split_view_controller->secondary_window(), window.get());
+  EXPECT_NEAR(chromeos::kOneThirdSnapRatio,
+              WindowState::Get(window.get())->snap_ratio().value(),
+              /*abs_error=*/0.1);
+  EXPECT_NEAR(chromeos::kTwoThirdSnapRatio,
+              WindowState::Get(other_window.get())->snap_ratio().value(),
+              /*abs_error=*/0.1);
 }
 
 // When reset a floated window that's previously snapped, maximize instead of
@@ -2202,7 +2307,8 @@ TEST_F(TabletWindowFloatSplitviewTest, ResetFloatToMaximize) {
   WindowState::Get(window_1.get())->OnWMEvent(&snap_left);
   const WindowSnapWMEvent snap_right(WM_EVENT_SNAP_SECONDARY);
   WindowState::Get(window_2.get())->OnWMEvent(&snap_right);
-  EXPECT_TRUE(split_view_controller->BothSnapped());
+  EXPECT_EQ(split_view_controller->state(),
+            SplitViewController::State::kBothSnapped);
   EXPECT_EQ(split_view_controller->primary_window(), window_1.get());
   EXPECT_EQ(split_view_controller->secondary_window(), window_2.get());
 
@@ -2218,6 +2324,19 @@ TEST_F(TabletWindowFloatSplitviewTest, ResetFloatToMaximize) {
   PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
   ASSERT_TRUE(WindowState::Get(window_2.get())->IsFloated());
   ASSERT_TRUE(WindowState::Get(window_1.get())->IsMaximized());
+}
+
+// Tests that there is no crash when going from float to always on top in tablet
+// mode. Regression test for http://b/317064996.
+TEST_F(TabletWindowFloatTest, FloatStateToAlwaysOnTop) {
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
+
+  std::unique_ptr<aura::Window> window = CreateFloatedWindow();
+
+  // Make the window always on top. It should exit float state.
+  window->SetProperty(aura::client::kZOrderingKey,
+                      ui::ZOrderLevel::kFloatingWindow);
+  EXPECT_FALSE(WindowState::Get(window.get())->IsFloated());
 }
 
 }  // namespace ash

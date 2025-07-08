@@ -35,9 +35,12 @@
 #include "base/files/file_error_or.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "mojo/public/cpp/base/big_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 
 namespace base {
+template <typename T, typename Deleter>
+class HeapArray;
 template <typename, typename>
 class RefCountedThreadSafe;
 class TimeDelta;
@@ -46,12 +49,12 @@ class Time;
 class UnguessableToken;
 }  // namespace base
 
-namespace WTF {
+namespace blink {
 
 template <typename T>
 struct CrossThreadCopier<scoped_refptr<T>> {
   STATIC_ONLY(CrossThreadCopier);
-  static_assert(IsSubclassOfTemplate<T, base::RefCountedThreadSafe>::value,
+  static_assert(WTF::IsSubclassOfTemplate<T, base::RefCountedThreadSafe>::value,
                 "scoped_refptr<T> can be passed across threads only if T is "
                 "ThreadSafeRefCounted or base::RefCountedThreadSafe.");
   using Type = scoped_refptr<T>;
@@ -95,12 +98,32 @@ struct CrossThreadCopier<base::UnguessableToken>
   STATIC_ONLY(CrossThreadCopier);
 };
 
+template <>
+struct CrossThreadCopier<mojo_base::BigBuffer> {
+  STATIC_ONLY(CrossThreadCopier);
+  using Type = mojo_base::BigBuffer;
+  static Type Copy(Type&& value) { return std::move(value); }
+};
+
 template <typename T>
 struct CrossThreadCopier<base::WeakPtr<T>>
     : public CrossThreadCopierPassThrough<base::WeakPtr<T>> {
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+template <typename T,
+          typename Deleter,
+          wtf_size_t inlineCapacity,
+          typename Allocator>
+struct CrossThreadCopier<
+    Vector<base::HeapArray<T, Deleter>, inlineCapacity, Allocator>> {
+  STATIC_ONLY(CrossThreadCopier);
+  using Type = Vector<base::HeapArray<T, Deleter>, inlineCapacity, Allocator>;
+  static Type Copy(Type pointer) {
+    return pointer;  // This is in fact a move.
+  }
+};
+
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_BASE_H_

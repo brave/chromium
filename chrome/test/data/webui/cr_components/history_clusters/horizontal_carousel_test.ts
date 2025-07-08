@@ -4,7 +4,7 @@
 
 import 'chrome://resources/cr_components/history_clusters/horizontal_carousel.js';
 
-import {HorizontalCarouselElement} from 'chrome://resources/cr_components/history_clusters/horizontal_carousel.js';
+import type {HorizontalCarouselElement} from 'chrome://resources/cr_components/history_clusters/horizontal_carousel.js';
 import {assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 
 let carouselElement : HorizontalCarouselElement;
@@ -17,14 +17,12 @@ suite('HorizontalCarouselTest', () => {
   });
 
   test('CarouselResizeUpdatesButtons', async () => {
-    document.documentElement.setAttribute('chrome-refresh-2023', 'true');
+    const carouselContainer = carouselElement.$.carouselContainer;
+    assertTrue(!!carouselContainer);
+    carouselContainer.style.width = '600px';
 
-    const carousel = carouselElement!.$.carouselContainer;
-    assertTrue(!!carousel);
-    carousel.style.width = '600px';
-
-    const forwardButton = carouselElement!.$.carouselForwardButton;
-    const backButton = carouselElement!.$.carouselBackButton;
+    const forwardButton = carouselElement.$.forwardButton;
+    const backButton = carouselElement.$.backButton;
 
     // Assert forward/back button does not show initially.
     assertTrue(forwardButton.hidden);
@@ -34,17 +32,18 @@ suite('HorizontalCarouselTest', () => {
     smallDiv.style.width = '80px';
     smallDiv.style.height = '50px';
     smallDiv.style.flexShrink = '0';
-    carousel.querySelector('slot')!.appendChild(smallDiv);
+    carouselContainer.querySelector('slot')!.appendChild(smallDiv);
 
     await new Promise<void>((resolve) => {
       const observer = new ResizeObserver(() => {
-        if (carousel.offsetWidth === 60) {
+        /* Includes 2px padding on either side */
+        if (carouselContainer.offsetWidth === 64) {
           resolve();
-          observer.unobserve(carousel);
+          observer.unobserve(carouselContainer);
         }
       });
-      observer.observe(carousel);
-      carousel.style.width = '60px';
+      observer.observe(carouselContainer);
+      carouselContainer.style.width = '60px';
     });
 
     // Assert forward buttons shows when carousel is resized with larger
@@ -59,6 +58,5 @@ suite('HorizontalCarouselTest', () => {
       assertFalse(backButton.hidden);
       assertTrue(forwardButton.hidden);
     }, 1000);
-
   });
 });

@@ -9,7 +9,7 @@
 #include "ash/webui/file_manager/resources/grit/file_manager_swa_resources.h"
 #include "ash/webui/file_manager/url_constants.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ash/file_manager/file_tasks.h"
+#include "chrome/browser/ash/file_manager/office_file_tasks.h"
 #include "chrome/browser/ash/system_web_apps/apps/system_web_app_install_utils.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
@@ -24,6 +24,11 @@
 using ash::file_manager::kChromeUIFileManagerURL;
 
 namespace {
+
+// Devices we use for testing (eve) have default width 1200px. We will set min
+// width to 596px to still allow snapping on those devices in tablet mode.
+const int kFileManagerMinimumWidth = 596;
+const int kFileManagerMinimumHeight = 240;
 
 // Appends a file handler to `info`.
 // The handler action has the format: chrome://file-manager/?${ACTION_NAME}
@@ -51,13 +56,21 @@ void AppendFileHandler(web_app::WebAppInstallInfo& info,
 
 }  // namespace
 
-std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForFileManager() {
-  auto info = std::make_unique<web_app::WebAppInstallInfo>();
-  info->start_url = GURL(kChromeUIFileManagerURL);
+FileManagerSystemAppDelegate::FileManagerSystemAppDelegate(Profile* profile)
+    : ash::SystemWebAppDelegate(ash::SystemWebAppType::FILE_MANAGER,
+                                "File Manager",
+                                GURL(kChromeUIFileManagerURL),
+                                profile) {}
+
+std::unique_ptr<web_app::WebAppInstallInfo>
+FileManagerSystemAppDelegate::GetWebAppInfo() const {
+  GURL start_url(kChromeUIFileManagerURL);
+  auto info =
+      web_app::CreateSystemWebAppInstallInfoWithStartUrlAsIdentity(start_url);
   info->scope = GURL(kChromeUIFileManagerURL);
   info->title = l10n_util::GetStringUTF16(IDS_FILEMANAGER_APP_NAME);
   web_app::CreateIconInfoForSystemWebApp(
-      info->start_url,
+      info->start_url(),
       {
           {"icon16.png", 16, IDR_FILE_MANAGER_ICON_16},
           {"icon32.png", 32, IDR_FILE_MANAGER_ICON_32},
@@ -77,9 +90,6 @@ std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForFileManager() {
   info->dark_mode_background_color = info->dark_mode_theme_color;
   info->display_mode = blink::mojom::DisplayMode::kStandalone;
   info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
-
-  // NOTE: when adding new formats to the extension list below, don't
-  // forget to also update file_manager/manifest.json.
 
   // Add File Handlers. NOTE: Order of handlers matters.
   // Archives:
@@ -113,63 +123,32 @@ std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForFileManager() {
                     });
 
   // Drive & Google Docs:
-  AppendFileHandler(*info, "open-hosted-generic",
-                    {"gdraw", "gtable", "gform", "gmaps", "gsite", "glink"});
+  AppendFileHandler(
+      *info, "open-hosted-generic",
+      {"gdraw", "gtable", "gform", "gmaps", "gsite", "glink", "gmaillayout"});
   AppendFileHandler(*info, "open-hosted-gdoc", {"gdoc"});
   AppendFileHandler(*info, "open-hosted-gsheet", {"gsheet"});
   AppendFileHandler(*info, "open-hosted-gslides", {"gslides"});
-
-  // Office Docs - Web Drive:
-  AppendFileHandler(*info,
-                    ::file_manager::file_tasks::kActionIdWebDriveOfficeWord,
-                    {"doc", "docx"});
-  AppendFileHandler(*info,
-                    ::file_manager::file_tasks::kActionIdWebDriveOfficeExcel,
-                    {"xls", "xlsm", "xlsx"});
-  AppendFileHandler(
-      *info, ::file_manager::file_tasks::kActionIdWebDriveOfficePowerPoint,
-      {"ppt", "pptx"});
-
-  // Office Docs - Microsoft 365: Alongside Web Drive, Files app has Microsoft
-  // 365 as a second file handler for Office files, (action ID:
-  // `::file_manager::file_tasks::kActionIdOpenInOffice`). However, the app
-  // service doesn't handle registering the same app twice to handle the same
-  // files in two different ways. Hence, file_tasks is responsible for adding
-  // this "open-in-office" file handler manually, when relevant.
 
   // View in the browser (with mime-type):
   AppendFileHandler(*info, "view-pdf", {"pdf"}, "application/pdf");
   AppendFileHandler(
       *info, "view-in-browser",
       {"htm", "html", "mht", "mhtml", "shtml", "xht", "xhtml", "svg", "txt"},
-      "text/plain");
+      "text/*");
 
   // Crostini:
   AppendFileHandler(*info, "install-linux-package", {"deb"});
   AppendFileHandler(*info, "import-crostini-image", {"tini"});
 
-  // For File Picker and Save As dialogs:
-  AppendFileHandler(*info, "select", {"*"});
-  AppendFileHandler(*info, "open", {"*"});
   return info;
-}
-
-FileManagerSystemAppDelegate::FileManagerSystemAppDelegate(Profile* profile)
-    : ash::SystemWebAppDelegate(ash::SystemWebAppType::FILE_MANAGER,
-                                "File Manager",
-                                GURL(kChromeUIFileManagerURL),
-                                profile) {}
-
-std::unique_ptr<web_app::WebAppInstallInfo>
-FileManagerSystemAppDelegate::GetWebAppInfo() const {
-  return CreateWebAppInfoForFileManager();
 }
 
 bool FileManagerSystemAppDelegate::ShouldCaptureNavigations() const {
   return true;
 }
 
-Browser* FileManagerSystemAppDelegate::GetWindowForLaunch(
+ash::BrowserDelegate* FileManagerSystemAppDelegate::GetWindowForLaunch(
     Profile* profile,
     const GURL& url) const {
   return nullptr;
@@ -186,4 +165,8 @@ bool FileManagerSystemAppDelegate::ShouldShowNewWindowMenuOption() const {
 std::vector<std::string>
 FileManagerSystemAppDelegate::GetAppIdsToUninstallAndReplace() const {
   return {extension_misc::kFilesManagerAppId};
+}
+
+gfx::Size FileManagerSystemAppDelegate::GetMinimumWindowSize() const {
+  return {kFileManagerMinimumWidth, kFileManagerMinimumHeight};
 }

@@ -5,6 +5,7 @@
 #include "content/browser/browsing_topics/browsing_topics_site_data_storage.h"
 
 #include "base/files/file_util.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "sql/database.h"
 #include "sql/recovery.h"
@@ -236,9 +237,9 @@ bool BrowsingTopicsSiteDataStorage::LazyInit() {
   if (db_init_status_ != InitStatus::kUnattempted)
     return db_init_status_ == InitStatus::kSuccess;
 
-  db_ = std::make_unique<sql::Database>(sql::DatabaseOptions{
-      .exclusive_locking = true, .page_size = 4096, .cache_size = 32});
-  db_->set_histogram_tag("BrowsingTopics");
+  db_ =
+      std::make_unique<sql::Database>(sql::DatabaseOptions().set_cache_size(32),
+                                      sql::Database::Tag("BrowsingTopics"));
 
   // base::Unretained is safe here because this BrowsingTopicsSiteDataStorage
   // owns the sql::Database instance that stores and uses the callback. So,
@@ -252,12 +253,16 @@ bool BrowsingTopicsSiteDataStorage::LazyInit() {
     return false;
   }
 
-  // TODO(yaoxia): measure metrics for the DB file size to have some idea if it
-  // gets too big.
-
   if (!InitializeTables()) {
     HandleInitializationFailure();
     return false;
+  }
+
+  std::optional<int64_t> file_size = base::GetFileSize(path_to_database_);
+  if (file_size.has_value()) {
+    int64_t file_size_kb = file_size.value() / 1024;
+    base::UmaHistogramCounts1M("BrowsingTopics.SiteDataStorage.FileSize.KB",
+                               file_size_kb);
   }
 
   db_init_status_ = InitStatus::kSuccess;
@@ -342,20 +347,14 @@ void BrowsingTopicsSiteDataStorage::DatabaseErrorCallback(
     int extended_error,
     sql::Statement* stmt) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Attempt to recover a corrupt database.
-  if (sql::Recovery::ShouldRecover(extended_error)) {
-    // Prevent reentrant calls.
-    db_->reset_error_callback();
+  // Attempt to recover a corrupt database, if it is eligible to be recovered.
+  if (sql::Recovery::RecoverIfPossible(
+          db_.get(), extended_error,
+          sql::Recovery::Strategy::kRecoverWithMetaVersionOrRaze)) {
+    // Recovery was attempted. The database handle has been poisoned and the
+    // error callback has been reset.
 
-    // After this call, the |db_| handle is poisoned so that future calls will
-    // return errors until the handle is re-opened.
-    sql::Recovery::RecoverDatabaseWithMetaVersion(db_.get(), path_to_database_);
-
-    // The DLOG(FATAL) below is intended to draw immediate attention to errors
-    // in newly-written code. Database corruption is generally a result of OS or
-    // hardware issues, not coding errors at the client level, so displaying the
-    // error would probably lead to confusion. The ignored call signals the
-    // test-expectation framework that the error was handled.
+    // Signal the test-expectation framework that the error was handled.
     std::ignore = sql::Database::IsExpectedSqliteError(extended_error);
     return;
   }

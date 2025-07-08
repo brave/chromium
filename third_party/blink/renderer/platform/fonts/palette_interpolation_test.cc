@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/testing/font_test_base.h"
 #include "third_party/blink/renderer/platform/testing/font_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -25,14 +24,14 @@ namespace {
 
 constexpr double kMaxAlphaDifference = 0.01;
 
-String pathToColorPalettesTestFont() {
+blink::String pathToColorPalettesTestFont() {
   base::FilePath wpt_palette_font_path(
       blink::StringToFilePath(blink::test::BlinkWebTestsDir()));
   wpt_palette_font_path = wpt_palette_font_path.Append(FILE_PATH_LITERAL(
       "external/wpt/css/css-fonts/resources/COLR-palettes-test-font.ttf"));
   return blink::FilePathToString(wpt_palette_font_path);
 }
-String pathToNonColorTestFont() {
+blink::String pathToNonColorTestFont() {
   return blink::test::BlinkWebTestsFontsTestDataPath("Ahem.ttf");
 }
 
@@ -45,15 +44,15 @@ class PaletteInterpolationTest : public FontTestBase {
   void SetUp() override {
     FontDescription::VariantLigatures ligatures;
 
-    Font color_palette_font = blink::test::CreateTestFont(
+    Font* color_palette_font = blink::test::CreateTestFont(
         AtomicString("Ahem"), pathToColorPalettesTestFont(), 16, &ligatures);
     color_palette_typeface_ =
-        sk_ref_sp(color_palette_font.PrimaryFont()->PlatformData().Typeface());
+        sk_ref_sp(color_palette_font->PrimaryFont()->PlatformData().Typeface());
 
-    Font non_color_font = blink::test::CreateTestFont(
+    Font* non_color_font = blink::test::CreateTestFont(
         AtomicString("Ahem"), pathToNonColorTestFont(), 16, &ligatures);
     non_color_ahem_typeface_ =
-        sk_ref_sp(non_color_font.PrimaryFont()->PlatformData().Typeface());
+        sk_ref_sp(non_color_font->PrimaryFont()->PlatformData().Typeface());
   }
 
   void ExpectColorsEqualInSRGB(
@@ -80,7 +79,7 @@ TEST_F(PaletteInterpolationTest, RetrievePaletteIndexFromColorFont) {
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette =
       FontPalette::Create(FontPalette::kDarkPalette);
-  absl::optional<uint16_t> index =
+  std::optional<uint16_t> index =
       palette_interpolation.RetrievePaletteIndex(palette.get());
   EXPECT_TRUE(index.has_value());
   EXPECT_EQ(*index, 3);
@@ -90,13 +89,12 @@ TEST_F(PaletteInterpolationTest, RetrievePaletteIndexFromNonColorFont) {
   PaletteInterpolation palette_interpolation(non_color_ahem_typeface_);
   scoped_refptr<FontPalette> palette =
       FontPalette::Create(FontPalette::kLightPalette);
-  absl::optional<uint16_t> index =
+  std::optional<uint16_t> index =
       palette_interpolation.RetrievePaletteIndex(palette.get());
   EXPECT_FALSE(index.has_value());
 }
 
 TEST_F(PaletteInterpolationTest, MixCustomPalettesAtHalfTime) {
-  ScopedFontPaletteAnimationForTest scoped_feature(true);
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette_start =
       FontPalette::Create(AtomicString("palette1"));
@@ -126,7 +124,7 @@ TEST_F(PaletteInterpolationTest, MixCustomPalettesAtHalfTime) {
 
   scoped_refptr<FontPalette> palette =
       FontPalette::Mix(palette_start, palette_end, 50, 50, 0.5, 1.0,
-                       Color::ColorSpace::kOklab, absl::nullopt);
+                       Color::ColorSpace::kOklab, std::nullopt);
   Vector<FontPalette::FontPaletteOverride> actual_color_records =
       palette_interpolation.ComputeInterpolableFontPalette(palette.get());
   // We expect each color to be half-way between palette_start and palette_end
@@ -146,7 +144,6 @@ TEST_F(PaletteInterpolationTest, MixCustomPalettesAtHalfTime) {
 }
 
 TEST_F(PaletteInterpolationTest, MixCustomAndNonExistingPalettes) {
-  ScopedFontPaletteAnimationForTest scoped_feature(true);
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette_start =
       FontPalette::Create(AtomicString("palette1"));
@@ -177,7 +174,7 @@ TEST_F(PaletteInterpolationTest, MixCustomAndNonExistingPalettes) {
 
   scoped_refptr<FontPalette> palette =
       FontPalette::Mix(palette_start, palette_end, 50, 50, 0.5, 1.0,
-                       Color::ColorSpace::kOklab, absl::nullopt);
+                       Color::ColorSpace::kOklab, std::nullopt);
   Vector<FontPalette::FontPaletteOverride> actual_color_records =
       palette_interpolation.ComputeInterpolableFontPalette(palette.get());
   // We expect each color to be half-way between palette_start and normal
@@ -197,7 +194,6 @@ TEST_F(PaletteInterpolationTest, MixCustomAndNonExistingPalettes) {
 }
 
 TEST_F(PaletteInterpolationTest, MixNonExistingPalettes) {
-  ScopedFontPaletteAnimationForTest scoped_feature(true);
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette_start =
       FontPalette::Create(AtomicString("palette1"));
@@ -211,7 +207,7 @@ TEST_F(PaletteInterpolationTest, MixNonExistingPalettes) {
 
   scoped_refptr<FontPalette> palette =
       FontPalette::Mix(palette_start, palette_end, 50, 50, 0.5, 1.0,
-                       Color::ColorSpace::kOklab, absl::nullopt);
+                       Color::ColorSpace::kOklab, std::nullopt);
   Vector<FontPalette::FontPaletteOverride> actual_color_records =
       palette_interpolation.ComputeInterpolableFontPalette(palette.get());
   // Since both of the endpoints are equal and have color records from normal
@@ -230,7 +226,6 @@ TEST_F(PaletteInterpolationTest, MixNonExistingPalettes) {
 }
 
 TEST_F(PaletteInterpolationTest, MixCustomPalettesInOklab) {
-  ScopedFontPaletteAnimationForTest scoped_feature(true);
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette_start =
       FontPalette::Create(AtomicString("palette1"));
@@ -260,7 +255,7 @@ TEST_F(PaletteInterpolationTest, MixCustomPalettesInOklab) {
 
   scoped_refptr<FontPalette> palette =
       FontPalette::Mix(palette_start, palette_end, 70, 30, 0.3, 1.0,
-                       Color::ColorSpace::kOklab, absl::nullopt);
+                       Color::ColorSpace::kOklab, std::nullopt);
   Vector<FontPalette::FontPaletteOverride> actual_color_records =
       palette_interpolation.ComputeInterpolableFontPalette(palette.get());
   // We expect each color to be equal palette_start * 0.7 + palette_end * 0.3
@@ -279,7 +274,6 @@ TEST_F(PaletteInterpolationTest, MixCustomPalettesInOklab) {
 }
 
 TEST_F(PaletteInterpolationTest, MixCustomPalettesInSRGB) {
-  ScopedFontPaletteAnimationForTest scoped_feature(true);
   PaletteInterpolation palette_interpolation(color_palette_typeface_);
   scoped_refptr<FontPalette> palette_start =
       FontPalette::Create(AtomicString("palette1"));
@@ -309,7 +303,7 @@ TEST_F(PaletteInterpolationTest, MixCustomPalettesInSRGB) {
 
   scoped_refptr<FontPalette> palette =
       FontPalette::Mix(palette_start, palette_end, 70, 30, 0.3, 1.0,
-                       Color::ColorSpace::kSRGB, absl::nullopt);
+                       Color::ColorSpace::kSRGB, std::nullopt);
   Vector<FontPalette::FontPaletteOverride> actual_color_records =
       palette_interpolation.ComputeInterpolableFontPalette(palette.get());
   // We expect each color to be equal palette_start * 0.7 + palette_end * 0.3

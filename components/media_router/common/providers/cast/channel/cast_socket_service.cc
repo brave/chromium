@@ -4,9 +4,11 @@
 
 #include "components/media_router/common/providers/cast/channel/cast_socket_service.h"
 
+#include <algorithm>
+
 #include "base/memory/ptr_util.h"
+#include "base/numerics/checked_math.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "components/media_router/common/providers/cast/channel/cast_socket.h"
 #include "components/media_router/common/providers/cast/channel/logger.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -43,11 +45,13 @@ CastSocket* CastSocketServiceImpl::AddSocket(
     std::unique_ptr<CastSocket> socket) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(socket);
-  int id = ++last_channel_id_;
-  socket->set_id(id);
+  CHECK(base::CheckAdd(last_channel_id_, 1).AssignIfValid(&last_channel_id_))
+      << "Overflow in channel_id!";
+  socket->set_id(last_channel_id_);
 
   auto* socket_ptr = socket.get();
-  sockets_.insert(std::make_pair(id, std::move(socket)));
+  CHECK(sockets_.insert(std::make_pair(last_channel_id_, std::move(socket)))
+            .second);
   return socket_ptr;
 }
 
@@ -84,15 +88,15 @@ CastSocket* CastSocketServiceImpl::GetSocket(int channel_id) const {
 CastSocket* CastSocketServiceImpl::GetSocket(
     const net::IPEndPoint& ip_endpoint) const {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  auto it = base::ranges::find(sockets_, ip_endpoint,
-                               [](const Sockets::value_type& pair) {
-                                 return pair.second->ip_endpoint();
-                               });
+  auto it = std::ranges::find(sockets_, ip_endpoint,
+                              [](const Sockets::value_type& pair) {
+                                return pair.second->ip_endpoint();
+                              });
   return it == sockets_.end() ? nullptr : it->second.get();
 }
 
 void CastSocketServiceImpl::OpenSocket(
-    NetworkContextGetter network_context_getter,
+    network::NetworkContextGetter network_context_getter,
     const CastSocketOpenParams& open_params,
     CastSocket::OnOpenCallback open_cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -109,8 +113,9 @@ void CastSocketServiceImpl::OpenSocket(
     }
   }
 
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     socket->AddObserver(&observer);
+  }
 
   socket->Connect(std::move(open_cb));
 }
@@ -118,20 +123,23 @@ void CastSocketServiceImpl::OpenSocket(
 void CastSocketServiceImpl::AddObserver(CastSocket::Observer* observer) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(observer);
-  if (observers_.HasObserver(observer))
+  if (observers_.HasObserver(observer)) {
     return;
+  }
 
   observers_.AddObserver(observer);
-  for (auto& socket_it : sockets_)
+  for (auto& socket_it : sockets_) {
     socket_it.second->AddObserver(observer);
+  }
 }
 
 void CastSocketServiceImpl::RemoveObserver(CastSocket::Observer* observer) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(observer);
 
-  for (auto& socket_it : sockets_)
+  for (auto& socket_it : sockets_) {
     socket_it.second->RemoveObserver(observer);
+  }
   observers_.RemoveObserver(observer);
 }
 

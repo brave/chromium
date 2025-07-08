@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "net/test/embedded_test_server/embedded_test_server.h"
+
 namespace base {
 class FilePath;
 }  // namespace base
@@ -17,11 +19,31 @@ class TestServer {
  public:
   // Starts the server serving files from default test data directory.
   // Returns true if started, false if server is already running.
+  // This will run the server in default mode (HTTP/1 with no SSL)
   static bool Start();
+
   // Starts the server serving files from |test_files_root| directory.
-  // Returns true if started, false if server is already running.
+  // Returns true if started, false if server is already prepared.
+  // The provided server will support either HTTP/1 or HTTPS/1 depending
+  // on the |type| provided.
   static bool StartServeFilesFromDirectory(
-      const base::FilePath& test_files_root);
+      const base::FilePath& test_files_root,
+      net::EmbeddedTestServer::Type type,
+      net::EmbeddedTestServer::ServerCertificate cert) {
+    if (!PrepareServeFilesFromDirectory(test_files_root, type, cert)) {
+      return false;
+    }
+    StartPrepared();
+    return true;
+  }
+
+  static bool PrepareServeFilesFromDirectory(
+      const base::FilePath& test_files_root,
+      net::EmbeddedTestServer::Type type,
+      net::EmbeddedTestServer::ServerCertificate cert);
+
+  static void StartPrepared();
+
   // Shuts down the server.
   static void Shutdown();
 
@@ -77,6 +99,10 @@ class TestServer {
 
   // Returns URL which responds with status code 404 - page not found..
   static std::string GetNotFoundURL() { return GetFileURL("/notfound.html"); }
+
+  // See net::test_server::EmbeddedTestServer::RegisterRequestHandler()
+  static void RegisterRequestHandler(
+      net::test_server::EmbeddedTestServer::HandleRequestCallback callback);
 };
 
 }  // namespace cronet

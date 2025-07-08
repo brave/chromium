@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_ui.h"
 
+#include "ash/webui/common/trusted_types_util.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/upload_office_to_cloud/upload_office_to_cloud.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_dialog.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/cloud_upload_resources.h"
 #include "chrome/grit/cloud_upload_resources_map.h"
@@ -20,6 +20,7 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash::cloud_upload {
 
@@ -105,14 +106,12 @@ CloudUploadUI::CloudUploadUI(content::WebUI* web_ui)
       {"googleDrive", IDS_OFFICE_CLOUD_PROVIDER_GOOGLE_DRIVE},
   };
   source->AddLocalizedStrings(kStrings);
-  source->AddBoolean("isJellyEnabled", chromeos::features::IsJellyEnabled());
-  webui::SetupWebUIDataSource(
-      source, base::make_span(kCloudUploadResources, kCloudUploadResourcesSize),
-      IDR_CLOUD_UPLOAD_MAIN_HTML);
-  // Required for lottie animations.
+  webui::SetupWebUIDataSource(source, kCloudUploadResources,
+                              IDR_CLOUD_UPLOAD_MAIN_HTML);
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::WorkerSrc,
       "worker-src blob: chrome://resources 'self';");
+  ash::EnableTrustedTypesCSP(source);
 }
 
 CloudUploadUI::~CloudUploadUI() = default;
@@ -153,6 +152,12 @@ void CloudUploadUI::RespondWithUserActionAndCloseDialog(
   switch (action) {
     case mojom::UserAction::kCancel:
       args.Append(kUserActionCancel);
+      break;
+    case mojom::UserAction::kCancelGoogleDrive:
+      args.Append(kUserActionCancelGoogleDrive);
+      break;
+    case mojom::UserAction::kCancelOneDrive:
+      args.Append(kUserActionCancelOneDrive);
       break;
     case mojom::UserAction::kSetUpOneDrive:
       args.Append(kUserActionSetUpOneDrive);

@@ -4,7 +4,8 @@
 
 import 'chrome://password-manager/password_manager.js';
 
-import {EditPasskeyDialogElement, PasswordManagerImpl} from 'chrome://password-manager/password_manager.js';
+import type {EditPasskeyDialogElement} from 'chrome://password-manager/password_manager.js';
+import {PasswordManagerImpl} from 'chrome://password-manager/password_manager.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals, assertFalse} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
@@ -36,7 +37,7 @@ suite('EditPasskeyDialogTest', function() {
     await flushTasks();
   });
 
-  test('passkey displayed correctly', async function() {
+  test('passkey displayed correctly', function() {
     assertEquals(dialog.$.usernameInput.value, passkey.username);
     assertEquals(
         dialog.$.usernameInput.placeholder,
@@ -50,12 +51,16 @@ suite('EditPasskeyDialogTest', function() {
         dialog.shadowRoot!.querySelectorAll<HTMLAnchorElement>('a.site-link');
     assertEquals(listItemElements.length, 1);
     assertEquals(listItemElements[0]!.textContent!.trim(), 'test.com');
-    assertEquals(listItemElements[0]!.href, passkey.affiliatedDomains![0]!.url);
+    assertEquals(listItemElements[0]!.href, passkey.affiliatedDomains[0]!.url);
   });
 
   test('passkey is updated', async function() {
     dialog.$.usernameInput.value = 'teko';
     dialog.$.displayNameInput.value = 'Futaba Ooki';
+    await Promise.all([
+      dialog.$.usernameInput.updateComplete,
+      dialog.$.displayNameInput.updateComplete,
+    ]);
 
     assertFalse(dialog.$.saveButton.disabled);
     dialog.$.saveButton.click();

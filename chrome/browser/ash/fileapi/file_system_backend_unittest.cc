@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/fileapi/file_system_backend.h"
 
 #include <stddef.h>
@@ -14,6 +19,7 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "storage/browser/file_system/external_mount_points.h"
+#include "storage/browser/file_system/file_system_operation.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -133,30 +139,39 @@ TEST(ChromeOSFileSystemBackendTest, AccessPermissions) {
       "removable", storage::kFileSystemTypeLocal,
       storage::FileSystemMountOption(),
       base::FilePath(FPL("/media/removable"))));
-  ASSERT_TRUE(mount_points->RegisterFileSystem(
-      "oem", storage::kFileSystemTypeRestrictedLocal,
-      storage::FileSystemMountOption(), base::FilePath(FPL("/usr/share/oem"))));
 
   // Backend specific mount point access.
   EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "removable/foo", mount_points.get())));
 
   backend.GrantFileAccessToOrigin(origin, base::FilePath(FPL("removable/foo")));
   EXPECT_TRUE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "removable/foo", mount_points.get())));
   EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "removable/foo1", mount_points.get())));
 
   // System mount point access.
   EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "system/foo", system_mount_points.get())));
 
   backend.GrantFileAccessToOrigin(origin, base::FilePath(FPL("system/foo")));
   EXPECT_TRUE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "system/foo", system_mount_points.get())));
-  EXPECT_FALSE(backend.IsAccessAllowed(
-      CreateFileSystemURL(extension, "system/foo1",
-                          system_mount_points.get())));
+  EXPECT_FALSE(
+      backend.IsAccessAllowed(ash::BackendFunction::kCreateFileSystemOperation,
+                              storage::OperationType::kCopy,
+                              CreateFileSystemURL(extension, "system/foo1",
+                                                  system_mount_points.get())));
 
   // The extension cannot access new mount points.
   // TODO(tbarzic): This should probably be changed.
@@ -164,11 +179,34 @@ TEST(ChromeOSFileSystemBackendTest, AccessPermissions) {
       "test", storage::kFileSystemTypeLocal, storage::FileSystemMountOption(),
       base::FilePath(FPL("/foo/test"))));
   EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "test_/foo", mount_points.get())));
 
   backend.RevokeAccessForOrigin(origin);
   EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
       CreateFileSystemURL(extension, "removable/foo", mount_points.get())));
+
+  // ImageLoader has access to all files GetMetadata(), GetFileStreamReader().
+  std::string image_loader("pmfjbimdmchhbnneeidfognadeopoehp");
+  EXPECT_TRUE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kGetMetadata,
+      CreateFileSystemURL(image_loader, "removable/foo", mount_points.get())));
+  EXPECT_TRUE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileStreamReader,
+      storage::OperationType::kNone,
+      CreateFileSystemURL(image_loader, "removable/foo", mount_points.get())));
+  EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileSystemOperation,
+      storage::OperationType::kCopy,
+      CreateFileSystemURL(image_loader, "removable/foo", mount_points.get())));
+  EXPECT_FALSE(backend.IsAccessAllowed(
+      ash::BackendFunction::kCreateFileStreamWriter,
+      storage::OperationType::kNone,
+      CreateFileSystemURL(image_loader, "removable/foo", mount_points.get())));
 }
 
 TEST(ChromeOSFileSystemBackendTest, GetVirtualPathConflictWithSystemPoints) {

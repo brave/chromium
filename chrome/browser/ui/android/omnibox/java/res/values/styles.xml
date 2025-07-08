@@ -6,8 +6,10 @@ found in the LICENSE file.
 -->
 
 <resources xmlns:tools="http://schemas.android.com/tools">
-
-    <style name="Base.Theme.Chromium.TabbedMode" parent="Theme.Chromium.WithWindowAnimation" />
+    <style name="Base.Theme.Chromium.TabbedMode" parent="Theme.Chromium.WithWindowAnimation">
+        <item name="android:statusBarColor">@macro/default_bg_color</item>
+        <item name="android:windowLightStatusBar">@bool/window_light_status_bar</item>
+    </style>
     <style name="Theme.Chromium.TabbedMode" parent="Base.Theme.Chromium.TabbedMode" />
 
     <!-- Omnibox -->
@@ -16,13 +18,11 @@ found in the LICENSE file.
     </style>
 
     <!-- Omnibox suggestions -->
-    <style name="TextAppearance.OmniboxAnswerDescriptionNegativeSmall">
-        <item name="android:textSize">@dimen/text_size_small</item>
+    <style name="TextAppearance.OmniboxAnswerDescriptionNegative">
         <item name="android:textColor">@color/answers_description_text_negative</item>
     </style>
 
-    <style name="TextAppearance.OmniboxAnswerDescriptionPositiveSmall">
-        <item name="android:textSize">@dimen/text_size_small</item>
+    <style name="TextAppearance.OmniboxAnswerDescriptionPositive">
         <item name="android:textColor">@color/answers_description_text_positive</item>
     </style>
 

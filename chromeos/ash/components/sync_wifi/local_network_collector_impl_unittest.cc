@@ -2,20 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <memory>
+#include "chromeos/ash/components/sync_wifi/local_network_collector_impl.h"
 
+#include <memory>
+#include <optional>
+
+#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/network_config_service.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chromeos/ash/components/dbus/shill/fake_shill_simulated_result.h"
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_metadata_store.h"
 #include "chromeos/ash/components/network/network_profile_handler.h"
 #include "chromeos/ash/components/sync_wifi/local_network_collector.h"
-#include "chromeos/ash/components/sync_wifi/local_network_collector_impl.h"
 #include "chromeos/ash/components/sync_wifi/network_identifier.h"
 #include "chromeos/ash/components/sync_wifi/network_test_helper.h"
 #include "chromeos/ash/components/sync_wifi/network_type_conversions.h"
@@ -26,7 +30,6 @@
 #include "chromeos/ash/services/network_config/public/cpp/cros_network_config_test_helper.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash::sync_wifi {
 
@@ -82,12 +85,14 @@ class LocalNetworkCollectorImplTest : public testing::Test {
 
   void OnGetSyncableNetwork(
       std::string expected_ssid,
-      absl::optional<sync_pb::WifiConfigurationSpecifics> result) {
+      bool has_proxy,
+      std::optional<sync_pb::WifiConfigurationSpecifics> result) {
     if (expected_ssid.empty()) {
-      ASSERT_EQ(absl::nullopt, result);
+      ASSERT_EQ(std::nullopt, result);
       return;
     }
     EXPECT_EQ(expected_ssid, DecodeHexString(result->hex_ssid()));
+    EXPECT_EQ(has_proxy, result->has_proxy_configuration());
   }
 
   void OnGetManagedPropertiesResult(
@@ -103,11 +108,12 @@ class LocalNetworkCollectorImplTest : public testing::Test {
   }
 
   void TestGetSyncableNetwork(const std::string& guid,
-                              const std::string& expected_ssid) {
+                              const std::string& expected_ssid,
+                              bool has_proxy = false) {
     local_network_collector()->GetSyncableNetwork(
         guid,
         base::BindOnce(&LocalNetworkCollectorImplTest::OnGetSyncableNetwork,
-                       base::Unretained(this), expected_ssid));
+                       base::Unretained(this), expected_ssid, has_proxy));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -268,6 +274,27 @@ TEST_F(LocalNetworkCollectorImplTest, TestGetSyncableNetwork) {
       kFredSsid, /*is_secured=*/true, helper()->primary_user(),
       /*has_connected=*/true);
   TestGetSyncableNetwork(guid, kFredSsid);
+}
+
+TEST_F(LocalNetworkCollectorImplTest,
+       TestGetSyncableNetwork_HasProxy_UploadProxies) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kWifiSyncUploadProxyConfigs);
+
+  std::string guid = helper()->ConfigureWiFiNetwork(
+      kFredSsid, /*is_secured=*/true, helper()->primary_user(),
+      /*has_connected=*/true, /*has_proxy=*/true);
+
+  TestGetSyncableNetwork(guid, kFredSsid, /*has_proxy*/ true);
+}
+
+TEST_F(LocalNetworkCollectorImplTest,
+       TestGetSyncableNetwork_HasProxy_DoesntUploadProxies) {
+  std::string guid = helper()->ConfigureWiFiNetwork(
+      kFredSsid, /*is_secured=*/true, helper()->primary_user(),
+      /*has_connected=*/true, /*has_proxy=*/true);
+
+  TestGetSyncableNetwork(guid, kFredSsid, /*has_proxy*/ false);
 }
 
 TEST_F(LocalNetworkCollectorImplTest,

@@ -10,12 +10,12 @@ import android.view.LayoutInflater;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.widget.RoundedCornerImageView;
 
-/**
- * Provides helper methods for Android Infobars.
- */
+/** Provides helper methods for Android Infobars. */
+@NullMarked
 class PasswordInfoBarUtils {
     private PasswordInfoBarUtils() {}
 
@@ -31,15 +31,15 @@ class PasswordInfoBarUtils {
             Context context, Bitmap accountImage, String email) {
         int smallIconSize =
                 context.getResources().getDimensionPixelSize(R.dimen.infobar_small_icon_size);
-        int padding = context.getResources().getDimensionPixelOffset(R.dimen.infobar_padding);
-        LinearLayout footer = (LinearLayout) LayoutInflater.from(context).inflate(
-                R.layout.infobar_footer, null, false);
+        LinearLayout footer =
+                (LinearLayout)
+                        LayoutInflater.from(context).inflate(R.layout.infobar_footer, null, false);
 
-        TextView emailView = (TextView) footer.findViewById(R.id.infobar_footer_email);
+        TextView emailView = footer.findViewById(R.id.infobar_footer_email);
         emailView.setText(email);
 
         RoundedCornerImageView profilePicView =
-                (RoundedCornerImageView) footer.findViewById(R.id.infobar_footer_profile_pic);
+                footer.findViewById(R.id.infobar_footer_profile_pic);
         Bitmap resizedProfilePic =
                 Bitmap.createScaledBitmap(accountImage, smallIconSize, smallIconSize, false);
         profilePicView.setRoundedCorners(

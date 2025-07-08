@@ -80,9 +80,12 @@ TEST_F(AssistantButtonTest, IconColor) {
   params.icon_size_in_dip = kIconSizeInDip;
   params.accessible_name_id = IDS_ASH_ASSISTANT_DIALOG_PLATE_KEYBOARD_ACCNAME;
 
-  std::unique_ptr<AssistantButton> button = AssistantButton::Create(
-      nullptr, vector_icons::kKeyboardIcon,
-      AssistantButtonId::kKeyboardInputToggle, std::move(params));
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  AssistantButton* button =
+      widget->GetContentsView()->AddChildView(AssistantButton::Create(
+          nullptr, vector_icons::kKeyboardIcon,
+          AssistantButtonId::kKeyboardInputToggle, std::move(params)));
   EXPECT_TRUE(gfx::test::AreBitmapsEqual(
       *gfx::CreateVectorIcon(vector_icons::kKeyboardIcon, kIconSizeInDip,
           gfx::kGoogleBlue900).bitmap(),
@@ -103,7 +106,8 @@ TEST_F(AssistantButtonTest, IconColorType) {
   params.accessible_name_id = IDS_ASH_ASSISTANT_DIALOG_PLATE_KEYBOARD_ACCNAME;
   params.icon_color_type = cros_tokens::kColorPrimary;
 
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   AssistantButton* button =
       widget->GetContentsView()->AddChildView(AssistantButton::Create(
           nullptr, vector_icons::kKeyboardIcon,
@@ -150,7 +154,8 @@ TEST_F(AssistantButtonTest, FocusAndHoverColorDarkLightMode) {
   params.accessible_name_id = IDS_ASH_ASSISTANT_DIALOG_PLATE_KEYBOARD_ACCNAME;
   params.icon_color_type = cros_tokens::kColorPrimary;
 
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   AssistantButton* button =
       widget->GetContentsView()->AddChildView(AssistantButton::Create(
           nullptr, vector_icons::kKeyboardIcon,

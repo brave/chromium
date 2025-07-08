@@ -11,10 +11,11 @@
 // plugins are disabled and the PDF fails to load.
 // TODO(amberwon): Flesh out the class more to download an embedded PDF when the
 // PDF plugin is disabled or unavailable.
-class PDFPluginPlaceholder final : public plugins::PluginPlaceholderBase,
-                                   public gin::Wrappable<PDFPluginPlaceholder> {
+class PDFPluginPlaceholder final
+    : public plugins::PluginPlaceholderBase,
+      public gin::DeprecatedWrappable<PDFPluginPlaceholder> {
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   // Returned placeholder is owned by the associated plugin, which can be
   // retrieved with PluginPlaceholderBase::plugin().
@@ -24,8 +25,7 @@ class PDFPluginPlaceholder final : public plugins::PluginPlaceholderBase,
 
  private:
   PDFPluginPlaceholder(content::RenderFrame* render_frame,
-                       const blink::WebPluginParams& params,
-                       const std::string& html_data);
+                       const blink::WebPluginParams& params);
   ~PDFPluginPlaceholder() final;
 
   // WebViewPlugin::Delegate methods:

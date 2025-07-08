@@ -102,8 +102,8 @@ struct Transform {
   Transform() = default;
   Transform(double hue_rotation,
             double chroma,
-            absl::optional<base::flat_map<double, double>> hues_to_rotations =
-                absl::nullopt)
+            std::optional<base::flat_map<double, double>> hues_to_rotations =
+                std::nullopt)
       : hue_rotation(hue_rotation),
         chroma(chroma),
         hues_to_rotations(hues_to_rotations) {}
@@ -112,9 +112,9 @@ struct Transform {
 
   double hue_rotation = 0.0;
   double chroma = 0.0;
-  absl::optional<base::flat_map<double, double>> hues_to_rotations =
-      absl::nullopt;
-  absl::optional<base::flat_map<double, double>> hues_to_chroma = absl::nullopt;
+  std::optional<base::flat_map<double, double>> hues_to_rotations =
+      std::nullopt;
+  std::optional<base::flat_map<double, double>> hues_to_chroma = std::nullopt;
 };
 
 Transform Chroma(double chroma) {
@@ -205,8 +205,7 @@ std::unique_ptr<Palette> GeneratePalette(SkColor seed_color,
     case SchemeVariant::kNeutral: {
       const auto hues = std::to_array<double>({0, 260, 315, 360});
       const auto chromas = std::to_array<double>({12.0, 12.0, 20.0, 12.0});
-      const base::flat_map<double, double> chroma_transforms =
-          Zip(hues, chromas);
+      base::flat_map<double, double> chroma_transforms = Zip(hues, chromas);
       config = {Transform(std::move(chroma_transforms)), Chroma(8.0),
                 Chroma(16.0), Chroma(2.0), Chroma(2.0)};
       break;

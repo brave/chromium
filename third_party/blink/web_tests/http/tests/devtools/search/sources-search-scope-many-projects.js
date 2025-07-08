@@ -6,15 +6,19 @@ import {TestRunner} from 'test_runner';
 import {BindingsTestRunner} from 'bindings_test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+import * as SourcesModule from 'devtools/panels/sources/sources.js';
+import * as Persistence from 'devtools/models/persistence/persistence.js';
+
 (async function() {
   TestRunner.addResult(`Tests that ScriptSearchScope sorts network and dirty results correctly.\n`);
-  await TestRunner.loadLegacyModule('sources');
-  await TestRunner.loadLegacyModule('search');
   await TestRunner.showPanel('sources');
+
+  const workspace = Workspace.Workspace.WorkspaceImpl.instance();
 
   function fileSystemUISourceCodes() {
     var uiSourceCodes = [];
-    var fileSystemProjects = Workspace.workspace.projectsForType(Workspace.projectTypes.FileSystem);
+    var fileSystemProjects = workspace.projectsForType(Workspace.Workspace.projectTypes.FileSystem);
     for (var project of fileSystemProjects) {
       for (const uiSourceCode of project.uiSourceCodes()) {
         uiSourceCodes.push(uiSourceCode);
@@ -23,7 +27,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
     return uiSourceCodes;
   }
 
-  var scope = new Sources.SourcesSearchScope();
+  var scope = new SourcesModule.SourcesSearchScope.SourcesSearchScope();
   var fs = new BindingsTestRunner.TestFileSystem('/var/www');
   var names = ['search.html', 'search.js', 'search.css'];
   var resources = {};
@@ -56,7 +60,6 @@ import {SourcesTestRunner} from 'sources_test_runner';
       }
     }
 
-    await SourcesTestRunner.addScriptUISourceCode('http://localhost/search.html', resources['search.html']);
     jsNetworkUISourceCode =
         await SourcesTestRunner.addScriptUISourceCode('http://localhost/search.js', resources['search.js']);
     TestRunner.runTestSuite(testSuite);
@@ -76,7 +79,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
       var paths = [];
       for (var i = 0; i < names.length; ++i)
         paths.push('/var/www/' + names[i]);
-      Persistence.isolatedFileSystemManager.onSearchCompleted(
+      Persistence.IsolatedFileSystemManager.IsolatedFileSystemManager.instance().onSearchCompleted(
           {data: {requestId: requestId, fileSystemPath: path, files: paths}});
     }
   };
@@ -85,7 +88,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
     function testSearch(next) {
       var query = 'searchTest' +
           'UniqueString';
-      var searchConfig = new Search.SearchConfig(query, true, false);
+      var searchConfig = new Workspace.SearchConfig.SearchConfig(query, true, false);
       SourcesTestRunner.runSearchAndDumpResults(scope, searchConfig, next);
     },
 
@@ -103,7 +106,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
       var query = 'searchTest' +
           'UniqueString';
-      var searchConfig = new Search.SearchConfig(query, true, false);
+      var searchConfig = new Workspace.SearchConfig.SearchConfig(query, true, false);
       SourcesTestRunner.runSearchAndDumpResults(scope, searchConfig, next);
     }
   ];

@@ -23,7 +23,6 @@ class GURL;
 namespace extensions {
 class Extension;
 class ExtensionHost;
-class ProcessManager;
 class OffscreenDocumentHost;
 class OffscreenDocumentLifetimeEnforcer;
 
@@ -77,7 +76,7 @@ class OffscreenDocumentManager : public KeyedService,
     // support creating a document with multiple reasons.
     std::vector<std::unique_ptr<OffscreenDocumentLifetimeEnforcer>> enforcers;
 
-    // TODO(https://crbug.com/1339382): This will need more fields to include
+    // TODO(crbug.com/40849649): This will need more fields to include
     // attributes like the associated reason and justification for the
     // document.
   };
@@ -106,9 +105,6 @@ class OffscreenDocumentManager : public KeyedService,
 
   // The associated browser context.
   raw_ptr<content::BrowserContext> browser_context_;
-
-  // The process manager for the `browser_context_`.
-  raw_ptr<ProcessManager> process_manager_;
 
   // Observe ExtensionRegistry for extensions being unloaded.
   base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>

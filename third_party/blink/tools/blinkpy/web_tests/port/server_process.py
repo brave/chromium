@@ -121,13 +121,7 @@ class ServerProcess(object):
                 self._proc.stderr = None
 
         self._proc = None
-        # TODO(crbug/1197331): Keeping output in PY2 as str() for now as
-        # diffing modules(unified_diff.py and html_diff.py) need to be looked
-        # into for PY3.
-        if six.PY2:
-            self._output = str()
-        else:
-            self._output = bytearray()
+        self._output = bytearray()
         self._error = bytearray()
         self._crashed = False
         self.timed_out = False
@@ -399,7 +393,7 @@ class ServerProcess(object):
         if not self._proc:
             self._start()
 
-    def stop(self, timeout_secs=0.0, kill_tree=True):
+    def stop(self, timeout_secs=0.0, kill_tree=True, send_sigterm=False):
         if not self._proc:
             return (None, None)
 
@@ -410,11 +404,12 @@ class ServerProcess(object):
             try:
                 # When we get here because of an IOError, close()
                 # may throw BrokenPipeError sometimes.
-                # Occasionally seen on mac11.
                 self._proc.stdin.close()
             except BrokenPipeError:
                 pass
             self._proc.stdin = None
+        if send_sigterm:
+            self._host.executive.terminate(self._proc.pid)
         killed = False
         if timeout_secs:
             deadline = now + timeout_secs

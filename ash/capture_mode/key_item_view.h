@@ -20,9 +20,9 @@ namespace ash {
 // A view that displays a modifier or a key as a rounded corner UI component,
 // which can contain a text label or an icon.
 class KeyItemView : public views::View {
- public:
-  METADATA_HEADER(KeyItemView);
+  METADATA_HEADER(KeyItemView, views::View)
 
+ public:
   explicit KeyItemView(ui::KeyboardCode key_code);
   KeyItemView(const KeyItemView&) = delete;
   KeyItemView& operator=(const KeyItemView&) = delete;
@@ -32,8 +32,9 @@ class KeyItemView : public views::View {
   void AddedToWidget() override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void OnThemeChanged() override;
-  void Layout() override;
-  gfx::Size CalculatePreferredSize() const override;
+  void Layout(PassKey) override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
   void SetIcon(const gfx::VectorIcon& icon);
   void SetText(const std::u16string& text);
@@ -43,8 +44,8 @@ class KeyItemView : public views::View {
 
  private:
   const ui::KeyboardCode key_code_;
-  raw_ptr<views::ImageView, ExperimentalAsh> icon_ = nullptr;
-  raw_ptr<views::Label, ExperimentalAsh> label_ = nullptr;
+  raw_ptr<views::ImageView> icon_ = nullptr;
+  raw_ptr<views::Label> label_ = nullptr;
 
   // The shadow around each key item UI component in the combo. The shadow
   // should be `SystemShadowOnTextureLayer` as the corners are perfectly

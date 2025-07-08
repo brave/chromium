@@ -5,24 +5,26 @@
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/functional/bind.h"
+#import "base/mac/mac_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "third_party/blink/public/platform/web_text_input_type.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface TextInputFlagChangeWaiter : NSObject
 @end
@@ -82,8 +84,8 @@ class TextCallbackWaiter {
 
   const std::u16string& text() const { return text_; }
 
-  void GetText(const std::u16string& text) {
-    text_ = text;
+  void GetText(std::u16string_view text) {
+    text_ = std::u16string(text);
     run_loop_.Quit();
   }
 
@@ -112,7 +114,16 @@ class TextSelectionWaiter : public TextInputManager::Observer {
 
 }  // namespace
 
-class RenderWidgetHostViewMacTest : public ContentBrowserTest {};
+class RenderWidgetHostViewMacTest : public ContentBrowserTest {
+ public:
+  RenderWidgetHostViewMacTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kSonomaAccessibilityActivationRefinements);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
 
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewMacTest, GetPageTextForSpeech) {
   GURL url(
@@ -188,8 +199,16 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewMacTest, UpdateInputFlags) {
               blink::kWebTextInputFlagAutocorrectOff);
 }
 
+// TODO(crbug.com/421820726): Enable the test.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_InputTextPreventedSyncsCursorLocation \
+  DISABLED_InputTextPreventedSyncsCursorLocation
+#else
+#define MAYBE_InputTextPreventedSyncsCursorLocation \
+  InputTextPreventedSyncsCursorLocation
+#endif
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewMacTest,
-                       InputTextPreventedSyncsCursorLocation) {
+                       MAYBE_InputTextPreventedSyncsCursorLocation) {
   class InputMethodObserver {};
 
   GURL url("data:text/html,<!doctype html><textarea id=ta></textarea>");
@@ -223,6 +242,43 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewMacTest,
 
   // The synced selection updates the selected position back to 0.
   EXPECT_EQ(0lu, [rwhv_cocoa selectedRange].location);
+}
+
+// Tests that accessibility role requests sent to the web contents enable
+// basic (native + web contents) accessibility support.
+IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewMacTest,
+                       RespondToAccessibilityRoleRequestsOnWebContent) {
+  if (base::mac::MacOSVersion() < 14'00'00) {
+    GTEST_SKIP();
+  }
+
+  // Load some content.
+  GURL url("data:text/html,<!doctype html><textarea id=ta></textarea>");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  content::BrowserAccessibilityState* accessibility_state =
+      content::BrowserAccessibilityState::GetInstance();
+
+  // No accessibility support enabled at this time.
+  EXPECT_EQ(accessibility_state->GetAccessibilityMode(), ui::AXMode());
+
+  // Enable platform activation since that is what is begin tested here.
+  BrowserAccessibilityState::GetInstance()->SetActivationFromPlatformEnabled(
+      /*enabled=*/true);
+
+  // An AT descending the AX tree calls -accessibilityRole on the nodes as it
+  // goes. Simulate an AT calling -accessibilityRole on the web contents.
+  RenderWidgetHostView* rwhv =
+      shell()->web_contents()->GetPrimaryMainFrame()->GetView();
+  RenderWidgetHostViewMac* rwhv_mac =
+      static_cast<RenderWidgetHostViewMac*>(rwhv);
+  RenderWidgetHostViewCocoa* rwhv_cocoa = rwhv_mac->GetInProcessNSView();
+
+  [rwhv_cocoa accessibilityRole];
+
+  // Calling -accessibilityRole on the RenderWidgetHostViewCocoa should have
+  // activated basic accessibility support.
+  EXPECT_EQ(accessibility_state->GetAccessibilityMode(), ui::kAXModeBasic);
 }
 
 }  // namespace content

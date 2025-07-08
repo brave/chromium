@@ -23,7 +23,6 @@
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
-#include "chrome/test/base/mojo_web_ui_browser_test.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/media_router/browser/media_router.h"
 #include "components/media_router/browser/test/mock_media_router.h"
@@ -39,6 +38,12 @@
 #include "services/network/test/test_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace content {
+
+struct EvalJsResult;
+
+}  // namespace content
 
 namespace media_router {
 
@@ -85,7 +90,7 @@ class AccessCodeCastIntegrationBrowserTest
   int WaitForAddSinkErrorCode(content::WebContents* dialog_contents);
 
   bool HasSinkInDevicesDict(const MediaSink::Id& sink_id);
-  absl::optional<base::Time> GetDeviceAddedTimeFromDict(
+  std::optional<base::Time> GetDeviceAddedTimeFromDict(
       const MediaSink::Id& sink_id);
 
   void SetUpOnMainThread() override;
@@ -163,7 +168,6 @@ class AccessCodeCastIntegrationBrowserTest
 
   void UpdateDeviceAddedTime(const MediaSink::Id& sink_id);
   void SetAccessCodeCastSinkServiceTaskRunner();
-  bool IsAccessCodeCastLacrosSyncEnabled();
 
  private:
   base::test::ScopedFeatureList feature_list_;
@@ -176,8 +180,10 @@ class AccessCodeCastIntegrationBrowserTest
  protected:
   raw_ptr<media_router::MockMediaRouter, DanglingUntriaged> media_router_ =
       nullptr;
-  std::vector<MediaSinksObserver*> media_sinks_observers_;
-  std::vector<media_router::MediaRoutesObserver*> media_routes_observers_;
+  std::vector<raw_ptr<MediaSinksObserver, VectorExperimental>>
+      media_sinks_observers_;
+  std::vector<raw_ptr<media_router::MediaRoutesObserver, VectorExperimental>>
+      media_routes_observers_;
 
   content::WebContents* web_contents() {
     return chrome_test_utils::GetActiveWebContents(this);
@@ -197,7 +203,7 @@ class AccessCodeCastIntegrationBrowserTest
       mock_cast_socket_service_;
   raw_ptr<MockCastMediaSinkServiceImpl> impl_ = nullptr;
 
-  std::unique_ptr<TestMediaSinkService> mock_dual_media_sink_service_;
+  std::unique_ptr<DialMediaSinkServiceImpl> dial_media_sink_service_;
 
   net::Error error_;
   net::HttpStatusCode response_code_;

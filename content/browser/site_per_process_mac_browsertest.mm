@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/site_per_process_browsertest.h"
-
 #include <Cocoa/Cocoa.h>
 
 #include "base/functional/bind.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
+#include "content/browser/site_per_process_browsertest.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_test.h"
@@ -21,10 +20,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace content {
 
@@ -261,7 +256,7 @@ id MockGestureEvent(NSEventType type,
 void SendMacTouchpadPinchSequenceWithExpectedTarget(
     RenderWidgetHostViewBase* root_view,
     const gfx::Point& gesture_point,
-    RenderWidgetHostViewBase*& router_touchpad_gesture_target,
+    raw_ptr<input::RenderWidgetHostViewInput>& router_touchpad_gesture_target,
     RenderWidgetHostViewBase* expected_target) {
   auto* root_view_mac = static_cast<RenderWidgetHostViewMac*>(root_view);
   RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->GetInProcessNSView();
@@ -269,20 +264,14 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
   NSEvent* pinchBeginEvent =
       MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
                        gesture_point.y(), NSEventPhaseBegan);
-  // We don't simply use magnifyWithEvent for the begin event because we need
-  // to ignore the pinch threshold by indicating this is a synthetic gesture.
-  [cocoa_view handleBeginGestureWithEvent:pinchBeginEvent
-                  isSyntheticallyInjected:YES];
-  // We don't check the gesture target yet, since on mac the GesturePinchBegin
-  // isn't sent until the first PinchUpdate.
+  // Ignore the pinch threshold by indicating this is a synthetic gesture.
+  [cocoa_view magnifyWithEvent:pinchBeginEvent isSyntheticallyInjected:YES];
+  EXPECT_EQ(expected_target, router_touchpad_gesture_target);
 
-  InputEventAckWaiter waiter(expected_target->GetRenderWidgetHost(),
-                             blink::WebInputEvent::Type::kGesturePinchBegin);
   NSEvent* pinchUpdateEvent =
       MockGestureEvent(NSEventTypeMagnify, 0.25, gesture_point.x(),
                        gesture_point.y(), NSEventPhaseChanged);
   [cocoa_view magnifyWithEvent:pinchUpdateEvent];
-  waiter.Wait();
   EXPECT_EQ(expected_target, router_touchpad_gesture_target);
 
   NSEvent* pinchEndEvent =
@@ -320,20 +309,21 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessMacBrowserTest,
   auto* rwhv_parent = static_cast<RenderWidgetHostViewBase*>(
       contents->GetRenderWidgetHostView());
 
-  RenderWidgetHostInputEventRouter* router = contents->GetInputEventRouter();
+  input::RenderWidgetHostInputEventRouter* router =
+      contents->GetInputEventRouter();
   EXPECT_EQ(nullptr, router->touchpad_gesture_target_);
 
   gfx::Point main_frame_point(25, 575);
   gfx::Point child_center(150, 450);
 
-  // TODO(848050): If we send multiple touchpad pinch sequences to separate
-  // views and the timing of the acks are such that the begin ack of the second
-  // sequence arrives in the root before the end ack of the first sequence, we
-  // would produce an invalid gesture event sequence. For now, we wait for the
-  // root to receive the end ack before sending a pinch sequence to a different
-  // view. The root view should preserve validity of input event sequences
-  // when processing acks from multiple views, so that waiting here is not
-  // necessary.
+  // TODO(crbug.com/40578618): If we send multiple touchpad pinch sequences to
+  // separate views and the timing of the acks are such that the begin ack of
+  // the second sequence arrives in the root before the end ack of the first
+  // sequence, we would produce an invalid gesture event sequence. For now, we
+  // wait for the root to receive the end ack before sending a pinch sequence to
+  // a different view. The root view should preserve validity of input event
+  // sequences when processing acks from multiple views, so that waiting here is
+  // not necessary.
   InputEventAckWaiter pinch_end_observer(
       rwhv_parent->GetRenderWidgetHost(),
       base::BindRepeating([](blink::mojom::InputEventResultSource,

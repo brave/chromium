@@ -4,14 +4,16 @@
 
 #include "components/exo/wayland/zaura_output_manager.h"
 
-#include <aura-shell-server-protocol.h>
 #include <wayland-server-core.h>
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "components/exo/wayland/output_metrics.h"
 #include "components/exo/wayland/server_util.h"
+#include "components/exo/wayland/wayland_display_observer.h"
 #include "ui/display/display.h"
+#include "ui/display/display_observer.h"
 #include "ui/display/screen.h"
 
 namespace exo::wayland {
@@ -22,26 +24,70 @@ AuraOutputManager::AuraOutputManager(wl_resource* manager_resource)
 
 // static.
 AuraOutputManager* AuraOutputManager::Get(wl_client* client) {
-  AuraOutputManager* metrics_manager = nullptr;
+  // Avoid querying client resources if it has already begun destruction.
+  if (IsClientDestroyed(client)) {
+    return nullptr;
+  }
+
+  AuraOutputManager* output_manager = nullptr;
   wl_client_for_each_resource(
       client,
       [](wl_resource* resource, void* user_data) {
         constexpr char kAuraOutputManagerClass[] = "zaura_output_manager";
         const char* class_name = wl_resource_get_class(resource);
-        if (std::strcmp(kAuraOutputManagerClass, class_name) != 0) {
+        if (UNSAFE_TODO(std::strcmp(kAuraOutputManagerClass, class_name)) !=
+            0) {
           return WL_ITERATOR_CONTINUE;
         }
 
         DCHECK_NE(nullptr, user_data);
-        AuraOutputManager** metrics_manager_ref =
+        AuraOutputManager** output_manager_ref =
             static_cast<AuraOutputManager**>(user_data);
 
-        DCHECK_EQ(nullptr, *metrics_manager_ref);
-        *metrics_manager_ref = GetUserDataAs<AuraOutputManager>(resource);
+        DCHECK_EQ(nullptr, *output_manager_ref);
+        *output_manager_ref = GetUserDataAs<AuraOutputManager>(resource);
         return WL_ITERATOR_STOP;
       },
-      &metrics_manager);
-  return metrics_manager;
+      &output_manager);
+  return output_manager;
+}
+
+// static
+int64_t AuraOutputManager::GetDisplayIdForOutput(wl_resource* output_resource) {
+  if (!output_resource) {
+    return display::kInvalidDisplayId;
+  }
+
+  struct UserData {
+    raw_ptr<wl_resource> output_resource = nullptr;
+    int64_t display_id = display::kInvalidDisplayId;
+  };
+
+  auto user_data_iterator = [](wl_resource* resource, void* user_data) {
+    constexpr char kWlOutputClass[] = "wl_output";
+    const char* class_name = wl_resource_get_class(resource);
+    if (UNSAFE_TODO(std::strcmp(kWlOutputClass, class_name)) != 0) {
+      return WL_ITERATOR_CONTINUE;
+    }
+
+    UserData* data_ref = static_cast<UserData*>(user_data);
+    auto* display_handler_tmp = GetUserDataAs<WaylandDisplayHandler>(resource);
+
+    if (display_handler_tmp->output_resource() != data_ref->output_resource) {
+      return WL_ITERATOR_CONTINUE;
+    }
+
+    data_ref->display_id = display_handler_tmp->id();
+    return WL_ITERATOR_STOP;
+  };
+  auto* client = wl_resource_get_client(output_resource);
+  CHECK(client);
+  CHECK(!IsClientDestroyed(client));
+
+  UserData data{.output_resource = output_resource};
+  wl_client_for_each_resource(client, user_data_iterator, &data);
+
+  return data.display_id;
 }
 
 bool AuraOutputManager::SendOutputMetrics(wl_resource* output_resource,

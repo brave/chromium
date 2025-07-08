@@ -28,9 +28,12 @@ LoadingPredictorFactory::LoadingPredictorFactory()
           "LoadingPredictor",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(HistoryServiceFactory::GetInstance());
   DependsOn(PredictorDatabaseFactory::GetInstance());
@@ -38,14 +41,15 @@ LoadingPredictorFactory::LoadingPredictorFactory()
 
 LoadingPredictorFactory::~LoadingPredictorFactory() = default;
 
-KeyedService* LoadingPredictorFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+LoadingPredictorFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
 
   if (!IsLoadingPredictorEnabled(profile))
     return nullptr;
 
-  return new LoadingPredictor(LoadingPredictorConfig(), profile);
+  return std::make_unique<LoadingPredictor>(LoadingPredictorConfig(), profile);
 }
 
 }  // namespace predictors

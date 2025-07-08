@@ -12,20 +12,14 @@
 #import "base/functional/callback_helpers.h"
 #import "base/no_destructor.h"
 #import "components/keyed_service/ios/browser_state_dependency_manager.h"
-#import "components/password_manager/core/browser/affiliation/affiliations_prefetcher.h"
-#import "components/password_manager/core/browser/features/password_features.h"
-#import "components/password_manager/core/browser/login_database.h"
 #import "components/password_manager/core/browser/password_manager_constants.h"
 #import "components/password_manager/core/browser/password_manager_util.h"
-#import "components/password_manager/core/browser/password_store_built_in_backend.h"
+#import "components/password_manager/core/browser/password_store/login_database.h"
+#import "components/password_manager/core/browser/password_store/password_store.h"
+#import "components/password_manager/core/browser/password_store/password_store_built_in_backend.h"
 #import "components/password_manager/core/browser/password_store_factory_util.h"
 #import "components/prefs/pref_service.h"
-#import "ios/web_view/internal/passwords/web_view_affiliation_service_factory.h"
-#import "ios/web_view/internal/passwords/web_view_affiliations_prefetcher_factory.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/web_view/internal/app/application_context.h"
 
 namespace ios_web_view {
 
@@ -34,9 +28,6 @@ scoped_refptr<password_manager::PasswordStoreInterface>
 WebViewAccountPasswordStoreFactory::GetForBrowserState(
     WebViewBrowserState* browser_state,
     ServiceAccessType access_type) {
-  CHECK(base::FeatureList::IsEnabled(
-      password_manager::features::kEnablePasswordsAccountStorage));
-
   // |browser_state| always gets redirected to a the recording version in
   // |GetBrowserStateToUse|.
   if (access_type == ServiceAccessType::IMPLICIT_ACCESS &&
@@ -59,42 +50,29 @@ WebViewAccountPasswordStoreFactory::GetInstance() {
 WebViewAccountPasswordStoreFactory::WebViewAccountPasswordStoreFactory()
     : RefcountedBrowserStateKeyedServiceFactory(
           "AccountPasswordStore",
-          BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(WebViewAffiliationServiceFactory::GetInstance());
-  DependsOn(WebViewAffiliationsPrefetcherFactory::GetInstance());
-}
+          BrowserStateDependencyManager::GetInstance()) {}
 
 WebViewAccountPasswordStoreFactory::~WebViewAccountPasswordStoreFactory() {}
 
 scoped_refptr<RefcountedKeyedService>
 WebViewAccountPasswordStoreFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  DCHECK(base::FeatureList::IsEnabled(
-      password_manager::features::kEnablePasswordsAccountStorage));
-
   WebViewBrowserState* browser_state =
       WebViewBrowserState::FromBrowserState(context);
 
   std::unique_ptr<password_manager::LoginDatabase> login_db(
       password_manager::CreateLoginDatabaseForAccountStorage(
-          browser_state->GetStatePath()));
+          browser_state->GetStatePath(), browser_state->GetPrefs()));
 
   scoped_refptr<password_manager::PasswordStore> ps =
       new password_manager::PasswordStore(
           std::make_unique<password_manager::PasswordStoreBuiltInBackend>(
-              std::move(login_db)));
+              std::move(login_db),
+              syncer::WipeModelUponSyncDisabledBehavior::kAlways,
+              browser_state->GetPrefs(),
+              ApplicationContext::GetInstance()->GetOSCryptAsync()));
 
-  password_manager::AffiliationService* affiliation_service =
-      WebViewAffiliationServiceFactory::GetForBrowserState(context);
-  std::unique_ptr<password_manager::AffiliatedMatchHelper>
-      affiliated_match_helper =
-          std::make_unique<password_manager::AffiliatedMatchHelper>(
-              affiliation_service);
-
-  ps->Init(browser_state->GetPrefs(), std::move(affiliated_match_helper));
-
-  WebViewAffiliationsPrefetcherFactory::GetForBrowserState(context)
-      ->RegisterPasswordStore(ps.get());
+  ps->Init(browser_state->GetPrefs(), /*affiliated_match_helper=*/nullptr);
 
   return ps;
 }

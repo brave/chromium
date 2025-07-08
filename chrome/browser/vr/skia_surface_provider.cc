@@ -7,10 +7,12 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
-#include "third_party/skia/include/gpu/GrRecordingContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrRecordingContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace vr {
@@ -20,7 +22,7 @@ GLint GetTextureIDFromSurface(SkSurface* surface) {
       surface, SkSurfaces::BackendHandleAccess::kFlushRead);
   DCHECK(backend_texture.isValid());
   GrGLTextureInfo info;
-  bool result = backend_texture.getGLTextureInfo(&info);
+  bool result = GrBackendTextures::GetGLTextureInfo(backend_texture, &info);
   DCHECK(result);
   DCHECK_NE(info.fID, 0u);
   return info.fID;
@@ -44,7 +46,7 @@ SkiaSurfaceProvider::CreateTextureWithSkiaImpl(
       kTopLeft_GrSurfaceOrigin, nullptr);
 
   paint(surface->getCanvas());
-  gr_context->flush(surface);
+  gr_context->flush(surface.get());
 
   return std::make_unique<Texture>(std::move(surface));
 }

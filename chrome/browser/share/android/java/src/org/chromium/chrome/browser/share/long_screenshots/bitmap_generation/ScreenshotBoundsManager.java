@@ -4,28 +4,33 @@
 
 package org.chromium.chrome.browser.share.long_screenshots.bitmap_generation;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.util.Size;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.RenderCoordinates;
 import org.chromium.ui.display.DisplayAndroid;
 
 /**
- * Responsible for calculating and tracking the bounds of the capture and composited
- * LongScreenshot Entries.
+ * Responsible for calculating and tracking the bounds of the capture and composited LongScreenshot
+ * Entries.
  */
+@NullMarked
 public class ScreenshotBoundsManager {
     private static final int NUM_VIEWPORTS_CAPTURE = 10;
     private static final int NUM_VIEWPORTS_CAPTURE_ABOVE_FOR_FULL_CAPTURE = 2;
     private static final int NUM_VIEWPORTS_CAPTURE_BELOW_FOR_FULL_CAPTURE = 4;
 
-    private Tab mTab;
+    private final Tab mTab;
     private Rect mCaptureRect;
-    private Size mContentSize;
-    private Point mScrollOffset;
+    private @Nullable Size mContentSize;
+    private @Nullable Point mScrollOffset;
     private int mClipHeightScaled;
 
     /**
@@ -38,10 +43,8 @@ public class ScreenshotBoundsManager {
         calculateCaptureBounds();
     }
 
-    /**
-     * For testing only.
-     */
-    private ScreenshotBoundsManager(Context context, Tab tab, int clipHeight) {
+    /** For testing only. */
+    private ScreenshotBoundsManager(Tab tab, int clipHeight) {
         mTab = tab;
         mClipHeightScaled = clipHeight;
         calculateCaptureBounds();
@@ -50,32 +53,31 @@ public class ScreenshotBoundsManager {
     /**
      * To only be used for testing purposes.
      *
-     * @param context An instance of current Android {@link Context}.
      * @param tab Tab to generate the bitmap for.
      * @param clipHeight The height of the device.
      * @return an instance of ScreenshotBoundsManager.
      */
-    public static ScreenshotBoundsManager createForTests(Context context, Tab tab, int clipHeight) {
-        return new ScreenshotBoundsManager(context, tab, clipHeight);
+    public static ScreenshotBoundsManager createForTests(
+            Context unused_context, Tab tab, int clipHeight) {
+        return new ScreenshotBoundsManager(tab, clipHeight);
     }
 
-    /**
-     * Calculates the height of the phone used to determine the height of the bitmaps.
-     */
+    /** Calculates the height of the phone used to determine the height of the bitmaps. */
     private void calculateClipHeightScaled(Context context) {
         DisplayAndroid displayAndroid = DisplayAndroid.getNonMultiDisplay(context);
-        RenderCoordinates coords = RenderCoordinates.fromWebContents(mTab.getWebContents());
+        RenderCoordinates coords =
+                RenderCoordinates.fromWebContents(assumeNonNull(mTab.getWebContents()));
         // mClipHeight should be in renderer physical coordinates as this is the coordinate system
         // in which the capture takes place. We want mClipHeight to represent the height of one
         // viewport in the physical coordinate system so we need to divide the display height by the
         // minimum page scale factor in order to get into the physical coordinate space.
-        mClipHeightScaled = (int) Math.floor(
-                displayAndroid.getDisplayHeight() / coords.getMinPageScaleFactor());
+        mClipHeightScaled =
+                (int)
+                        Math.floor(
+                                displayAndroid.getDisplayHeight() / coords.getMinPageScaleFactor());
     }
 
-    /**
-     * Defines the bounds of the capture.
-     */
+    /** Defines the bounds of the capture. */
     private void calculateCaptureBounds() {
         // Rect top == -1 will default the capture to be centered about the scroll offset.
         // This will capture 1/2 NUM_VIEWPORTS_CAPTURE above and below the scroll offset if
@@ -93,17 +95,13 @@ public class ScreenshotBoundsManager {
         return mCaptureRect;
     }
 
-    /**
-     * Sets the composited rect.
-     */
-    public void setCompositedSize(Size size) {
+    /** Sets the composited rect. */
+    public void setCompositedSize(@Nullable Size size) {
         mContentSize = size;
     }
 
-    /**
-     * Set the composited scroll offset.
-     */
-    public void setCompositedScrollOffset(Point offset) {
+    /** Set the composited scroll offset. */
+    public void setCompositedScrollOffset(@Nullable Point offset) {
         mScrollOffset = offset;
     }
 
@@ -113,7 +111,7 @@ public class ScreenshotBoundsManager {
      *
      * @param yAxisRef Where on the scrolled page the capture and compositing should start.
      */
-    public Rect calculateClipBoundsAbove(int yAxisRef) {
+    public @Nullable Rect calculateClipBoundsAbove(int yAxisRef) {
         if (yAxisRef <= 0) {
             // Already at the top of the capture
             return null;
@@ -129,7 +127,7 @@ public class ScreenshotBoundsManager {
      *
      * @param yAxisRef Where on the scrolled page the capture and compositing should start.
      */
-    public Rect calculateClipBoundsBelow(int yAxisRef) {
+    public @Nullable Rect calculateClipBoundsBelow(int yAxisRef) {
         assert mContentSize != null;
         if (yAxisRef >= mContentSize.getHeight()) {
             // Already at the bottom of the capture
@@ -147,9 +145,11 @@ public class ScreenshotBoundsManager {
     public Rect getFullEntryBounds() {
         assert mContentSize != null;
         assert mScrollOffset != null;
-        final int totalHeight = mClipHeightScaled
-                * (NUM_VIEWPORTS_CAPTURE_ABOVE_FOR_FULL_CAPTURE
-                        + NUM_VIEWPORTS_CAPTURE_BELOW_FOR_FULL_CAPTURE + 1);
+        final int totalHeight =
+                mClipHeightScaled
+                        * (NUM_VIEWPORTS_CAPTURE_ABOVE_FOR_FULL_CAPTURE
+                                + NUM_VIEWPORTS_CAPTURE_BELOW_FOR_FULL_CAPTURE
+                                + 1);
 
         int endYAxis = 0;
         int startYAxis =
@@ -159,8 +159,10 @@ public class ScreenshotBoundsManager {
             // If there isn't enough space above, give any extra to the space to below.
             endYAxis = Math.min(totalHeight, mContentSize.getHeight());
         } else {
-            endYAxis = mScrollOffset.y
-                    + mClipHeightScaled * (NUM_VIEWPORTS_CAPTURE_BELOW_FOR_FULL_CAPTURE + 1);
+            endYAxis =
+                    mScrollOffset.y
+                            + mClipHeightScaled
+                                    * (NUM_VIEWPORTS_CAPTURE_BELOW_FOR_FULL_CAPTURE + 1);
             endYAxis = Math.min(endYAxis, mContentSize.getHeight());
             if (endYAxis == mContentSize.getHeight()) {
                 // If there isn't enough space below, give any extra space to above.
@@ -171,12 +173,13 @@ public class ScreenshotBoundsManager {
     }
 
     /**
-     * Calculates the scale factor to be used for bitmaps based on the composited width of the
-     * frame at default scale.
+     * Calculates the scale factor to be used for bitmaps based on the composited width of the frame
+     * at default scale.
+     *
      * @return the scale factor to be used for generating bitmaps.
      */
     public float getBitmapScaleFactor() {
-        if (mTab.getWebContents() == null || mContentSize.getWidth() == 0) {
+        if (mTab.getWebContents() == null || mContentSize == null || mContentSize.getWidth() == 0) {
             // If the web contents crashes/vanished during capture then assume 1f.
             return 1f;
         }

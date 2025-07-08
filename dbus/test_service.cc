@@ -29,8 +29,8 @@
 namespace dbus {
 
 // Echo, SlowEcho, AsyncEcho, BrokenMethod, GetAll, Get, Set, PerformAction,
-// GetManagedObjects
-const int TestService::kNumMethodsToExport = 9;
+// GetManagedObjects.
+constexpr int TestService::kNumMethodsToExport = 9;
 
 TestService::Options::Options()
     : request_ownership_options(Bus::REQUIRE_PRIMARY) {
@@ -79,6 +79,10 @@ void TestService::ShutdownAndBlock() {
 
 bool TestService::HasDBusThread() {
   return bus_->HasDBusThread();
+}
+
+std::string TestService::GetConnectionName() {
+  return bus_->GetConnectionName();
 }
 
 void TestService::ShutdownAndBlockInternal() {
@@ -394,7 +398,7 @@ void TestService::GetProperty(MethodCall* method_call,
 
     writer.OpenVariant("ay", &variant_writer);
     const uint8_t bytes[] = {0x54, 0x65, 0x73, 0x74};
-    variant_writer.AppendArrayOfBytes(bytes, sizeof(bytes));
+    variant_writer.AppendArrayOfBytes(bytes);
     writer.CloseContainer(&variant_writer);
 
     std::move(response_sender).Run(std::move(response));
@@ -486,14 +490,12 @@ void TestService::OwnershipReleased(
                                   std::move(response_sender)));
 }
 
-
 void TestService::OwnershipRegained(
     MethodCall* method_call,
     ExportedObject::ResponseSender response_sender,
     bool success) {
   PerformActionResponse(method_call, std::move(response_sender));
 }
-
 
 void TestService::GetManagedObjects(
     MethodCall* method_call,
@@ -596,7 +598,7 @@ void TestService::AddPropertiesToWriter(MessageWriter* writer) {
   dict_entry_writer.AppendString("Bytes");
   dict_entry_writer.OpenVariant("ay", &variant_writer);
   const uint8_t bytes[] = {0x54, 0x65, 0x73, 0x74};
-  variant_writer.AppendArrayOfBytes(bytes, sizeof(bytes));
+  variant_writer.AppendArrayOfBytes(bytes);
   dict_entry_writer.CloseContainer(&variant_writer);
   array_writer.CloseContainer(&dict_entry_writer);
 

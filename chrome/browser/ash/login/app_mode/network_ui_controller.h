@@ -5,25 +5,30 @@
 #ifndef CHROME_BROWSER_ASH_LOGIN_APP_MODE_NETWORK_UI_CONTROLLER_H_
 #define CHROME_BROWSER_ASH_LOGIN_APP_MODE_NETWORK_UI_CONTROLLER_H_
 
-#include "base/memory/scoped_refptr.h"
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "base/auto_reset.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launcher.h"
-#include "chrome/browser/ui/webui/ash/login/app_launch_splash_screen_handler.h"
+#include "chrome/browser/ash/login/screens/app_launch_splash_screen.h"
+#include "chrome/browser/ash/login/screens/network_error.h"
 #include "chrome/browser/ui/webui/ash/login/network_state_informer.h"
 
 class Profile;
-
-namespace {
-class NetworkMonitor;
-}
 
 namespace ash {
 
 class LoginDisplayHost;
 
 class NetworkUiController
-    : public AppLaunchSplashScreenView::Delegate,
+    : public AppLaunchSplashScreen::Delegate,
       public KioskAppLauncher::NetworkDelegate,
       public NetworkStateInformer::NetworkStateInformerObserver {
  public:
@@ -65,7 +70,7 @@ class NetworkUiController
 
   NetworkUiController(Observer& observer,
                       LoginDisplayHost* host,
-                      AppLaunchSplashScreenView* splash_screen,
+                      AppLaunchSplashScreen& splash_screen,
                       std::unique_ptr<NetworkMonitor> network_monitor);
   NetworkUiController(const NetworkUiController&) = delete;
   NetworkUiController& operator=(const NetworkUiController&) = delete;
@@ -78,7 +83,6 @@ class NetworkUiController
   void OnNetworkLostDuringInstallation();
 
   // `AppLaunchSplashScreenView::Delegate`
-  void OnConfigureNetwork() override;
   void OnNetworkConfigFinished() override;
 
   // `KioskAppLauncher::NetworkDelegate`
@@ -92,13 +96,16 @@ class NetworkUiController
     return network_ui_state_;
   }
 
-  static void SetCanConfigureNetworkCallbackForTesting(
-      base::RepeatingCallback<bool()>* callback);
+  // Scoped overrides used during testing. The original behavior is restored
+  // when the returned objects are destroyed.
+  [[nodiscard]] static base::AutoReset<std::optional<bool>>
+  SetCanConfigureNetworkForTesting(bool can_configure_network);
+  [[nodiscard]] static base::AutoReset<base::TimeDelta>
+      SetNetworkWaitTimeoutForTesting(base::TimeDelta);
 
  private:
   void OnNetworkStateChanged(bool online);
   void MaybeShowNetworkConfigureUI();
-  void MaybeShowNetworkConfigureUIForConsumerKiosk();
   void ShowNetworkConfigureUI();
   void CloseNetworkConfigureUI();
 
@@ -110,7 +117,7 @@ class NetworkUiController
 
   const raw_ref<Observer> observer_;
   const raw_ptr<LoginDisplayHost> host_;
-  const raw_ptr<AppLaunchSplashScreenView> splash_screen_view_;
+  const raw_ref<AppLaunchSplashScreen> splash_screen_;
   raw_ptr<Profile> profile_ = nullptr;
   std::unique_ptr<NetworkMonitor> network_monitor_;
 

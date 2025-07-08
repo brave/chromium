@@ -4,8 +4,8 @@
 
 package org.chromium.chrome.browser.quick_delete;
 
-import androidx.annotation.NonNull;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -14,31 +14,36 @@ import org.chromium.ui.modelutil.PropertyModel;
  * The mediator responsible for listening to back-end changes affecting the quick delete {@link
  * View}.
  */
-class QuickDeleteMediator implements QuickDeleteDialogDelegate.TimePeriodChangeObserver,
-                                     QuickDeleteBridge.DomainVisitsCallback {
-    private final @NonNull PropertyModel mPropertyModel;
-    private final @NonNull Profile mProfile;
-    private final @NonNull QuickDeleteBridge mQuickDeleteBridge;
-    private final @NonNull QuickDeleteTabsFilter mQuickDeleteTabsFilter;
+@NullMarked
+class QuickDeleteMediator
+        implements QuickDeleteDialogDelegate.TimePeriodChangeObserver,
+                QuickDeleteBridge.DomainVisitsCallback {
+    private final PropertyModel mPropertyModel;
+    private final Profile mProfile;
+    private final QuickDeleteBridge mQuickDeleteBridge;
+    private final QuickDeleteTabsFilter mQuickDeleteRegularTabsFilter;
+    // Null when declutter is disabled.
+    private final @Nullable QuickDeleteTabsFilter mQuickDeleteArchivedTabsFilter;
 
     /**
      * @param propertyModel {@link PropertyModel} associated with the quick delete {@link View}.
      * @param profile {@link Profile} to check if the user is signed-in or syncing.
      * @param quickDeleteBridge {@link QuickDeleteBridge} used to fetch the recent visited domain
-     *         and site data.
+     *     and site data.
      * @param quickDeleteTabsFilter {@link QuickDeleteTabsFilter} used to fetch the tabs to be
-     *         closed data.
+     *     closed data.
      */
-    QuickDeleteMediator(@NonNull PropertyModel propertyModel, @NonNull Profile profile,
-            @NonNull QuickDeleteBridge quickDeleteBridge,
-            @NonNull QuickDeleteTabsFilter quickDeleteTabsFilter) {
+    QuickDeleteMediator(
+            PropertyModel propertyModel,
+            Profile profile,
+            QuickDeleteBridge quickDeleteBridge,
+            QuickDeleteTabsFilter quickDeleteRegularTabsFilter,
+            @Nullable QuickDeleteTabsFilter quickDeleteArchivedTabsFilter) {
         mPropertyModel = propertyModel;
         mProfile = profile;
         mQuickDeleteBridge = quickDeleteBridge;
-        mQuickDeleteTabsFilter = quickDeleteTabsFilter;
-
-        // Initial trigger.
-        onTimePeriodChanged(TimePeriod.LAST_15_MINUTES);
+        mQuickDeleteRegularTabsFilter = quickDeleteRegularTabsFilter;
+        mQuickDeleteArchivedTabsFilter = quickDeleteArchivedTabsFilter;
     }
 
     /**
@@ -48,31 +53,55 @@ class QuickDeleteMediator implements QuickDeleteDialogDelegate.TimePeriodChangeO
      */
     @Override
     public void onTimePeriodChanged(@TimePeriod int timePeriod) {
+        mQuickDeleteRegularTabsFilter.prepareListOfTabsToBeClosed(timePeriod);
+        if (mQuickDeleteArchivedTabsFilter != null) {
+            mQuickDeleteArchivedTabsFilter.prepareListOfTabsToBeClosed(timePeriod);
+        }
+
         mPropertyModel.set(
                 QuickDeleteProperties.IS_SIGNED_IN, QuickDeleteDelegate.isSignedIn(mProfile));
-        mPropertyModel.set(QuickDeleteProperties.IS_SYNCING_HISTORY,
-                QuickDeleteDelegate.isSyncingHistory(mProfile));
-        mPropertyModel.set(QuickDeleteProperties.CLOSED_TABS_COUNT,
-                mQuickDeleteTabsFilter.getListOfTabsToBeClosed(timePeriod).size());
 
+        // Disable tabs if the user is in multi-window mode.
+        // TODO(b/333036591): Remove this check once tab closure works properly across
+        // multi-instances.
+        if (!mPropertyModel.get(QuickDeleteProperties.HAS_MULTI_WINDOWS)) {
+            mPropertyModel.set(
+                    QuickDeleteProperties.CLOSED_TABS_COUNT, getCountOfTabsToBeDeleted());
+        }
+
+        mPropertyModel.set(QuickDeleteProperties.TIME_PERIOD, timePeriod);
+
+        mPropertyModel.set(QuickDeleteProperties.IS_SYNCING_HISTORY, false);
+        mPropertyModel.set(QuickDeleteProperties.IS_DOMAIN_VISITED_DATA_PENDING, true);
         // This is an async call which would update the browsing history row.
-        // TODO(crbug.com/1412087): For big time range and more data the wait can be a janky UX
-        // experience. Add a placeholder "Calculating..." string instead.
         mQuickDeleteBridge.getLastVisitedDomainAndUniqueDomainCount(timePeriod, this);
     }
 
     /**
      * Called when the domain count and last visited domain are fetched from local history.
      *
-     * @param lastVisitedDomain The synced last visited domain on all devices in the last 15
-     *                          minutes.
-     * @param domainCount The number of synced unique domains visited on all devices in the
-     *                    last 15 minutes.
+     * @param lastVisitedDomain The synced last visited domain on all devices within the selected
+     *     time period.
+     * @param domainCount The number of synced unique domains visited on all devices within the
+     *     selected time period.
      */
     @Override
     public void onLastVisitedDomainAndUniqueDomainCountReady(
             String lastVisitedDomain, int domainCount) {
-        mPropertyModel.set(QuickDeleteProperties.DOMAIN_VISITED_DATA,
+        mPropertyModel.set(QuickDeleteProperties.IS_DOMAIN_VISITED_DATA_PENDING, false);
+        mPropertyModel.set(
+                QuickDeleteProperties.IS_SYNCING_HISTORY,
+                QuickDeleteDelegate.isSyncingHistory(mProfile));
+        mPropertyModel.set(
+                QuickDeleteProperties.DOMAIN_VISITED_DATA,
                 new QuickDeleteDelegate.DomainVisitsData(lastVisitedDomain, domainCount));
+    }
+
+    private int getCountOfTabsToBeDeleted() {
+        int count = mQuickDeleteRegularTabsFilter.getListOfTabsFilteredToBeClosed().size();
+        if (mQuickDeleteArchivedTabsFilter != null) {
+            count += mQuickDeleteArchivedTabsFilter.getListOfTabsFilteredToBeClosed().size();
+        }
+        return count;
     }
 }

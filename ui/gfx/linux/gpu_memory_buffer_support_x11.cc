@@ -50,11 +50,6 @@ std::unique_ptr<ui::GbmDevice> CreateX11GbmDevice() {
     return nullptr;
   }
 
-  // Let the X11 server know the DRI3 client version. This is required to use
-  // the DRI3 extension. We don't care about the returned server version because
-  // we only use features from the original DRI3 interface.
-  dri3.QueryVersion({x11::Dri3::major_version, x11::Dri3::minor_version});
-
   // Obtain an authenticated DRM fd.
   auto reply = dri3.Open({connection->default_root(), 0}).Sync();
   if (!reply)
@@ -148,8 +143,8 @@ std::unique_ptr<GbmBuffer> GpuMemoryBufferSupportX11::CreateBuffer(
   std::string buffer_usage_and_format = gfx::BufferFormatToString(format) +
                                         std::string(",") +
                                         gfx::BufferUsageToString(usage);
-  base::debug::ScopedCrashKeyString scoped_crash_key(
-      crash_key_string, buffer_usage_and_format.c_str());
+  base::debug::ScopedCrashKeyString scoped_crash_key(crash_key_string,
+                                                     buffer_usage_and_format);
 
   return device_->CreateBuffer(GetFourCCFormatFromBufferFormat(format), size,
                                BufferUsageToGbmFlags(usage));
@@ -174,8 +169,8 @@ std::unique_ptr<GbmBuffer> GpuMemoryBufferSupportX11::CreateBufferFromHandle(
       base::debug::AllocateCrashKeyString("buffer_from_handle_format",
                                           base::debug::CrashKeySize::Size64);
   std::string buffer_from_handle_format = gfx::BufferFormatToString(format);
-  base::debug::ScopedCrashKeyString scoped_crash_key(
-      crash_key_string, buffer_from_handle_format.c_str());
+  base::debug::ScopedCrashKeyString scoped_crash_key(crash_key_string,
+                                                     buffer_from_handle_format);
 
   return device_->CreateBufferFromHandle(
       GetFourCCFormatFromBufferFormat(format), size, std::move(handle));

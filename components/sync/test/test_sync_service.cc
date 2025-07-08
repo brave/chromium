@@ -10,10 +10,14 @@
 #include "base/containers/contains.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/sync/base/progress_marker_map.h"
 #include "components/sync/engine/cycle/model_neutral_state.h"
 #include "components/sync/model/type_entities_count.h"
+#include "components/sync/protocol/sync_enums.pb.h"
 #include "components/sync/service/sync_token_status.h"
+#include "google_apis/gaia/gaia_id.h"
+#include "google_apis/gaia/google_service_auth_error.h"
 
 namespace syncer {
 
@@ -22,7 +26,7 @@ namespace {
 SyncCycleSnapshot MakeDefaultCycleSnapshot() {
   return SyncCycleSnapshot(
       /*birthday=*/"", /*bag_of_chips=*/"", ModelNeutralState(),
-      ProgressMarkerMap(), /*is_silenced-*/ false,
+      ProgressMarkerMap(), /*is_silenced=*/false,
       /*num_server_conflicts=*/7, /*notifications_enabled=*/false,
       /*sync_start_time=*/base::Time::Now(),
       /*poll_finish_time=*/base::Time::Now(),
@@ -31,57 +35,89 @@ SyncCycleSnapshot MakeDefaultCycleSnapshot() {
       /*has_remaining_local_changes=*/false);
 }
 
+CoreAccountInfo GetDefaultAccountInfo() {
+  CoreAccountInfo account;
+  account.email = "foo@bar.com";
+  account.gaia = GaiaId("foo-gaia-id");
+  account.account_id = CoreAccountId::FromGaiaId(account.gaia);
+  return account;
+}
+
 }  // namespace
 
 TestSyncService::TestSyncService()
-    : user_settings_(this), last_cycle_snapshot_(MakeDefaultCycleSnapshot()) {}
+    : user_settings_(this), last_cycle_snapshot_(MakeDefaultCycleSnapshot()) {
+  SetSignedIn(signin::ConsentLevel::kSync);
+}
 
 TestSyncService::~TestSyncService() = default;
 
-void TestSyncService::SetDisableReasons(DisableReasonSet disable_reasons) {
-  disable_reasons_ = disable_reasons;
-  if (!disable_reasons_.Empty()) {
-    transport_state_ = TransportState::DISABLED;
-  } else if (transport_state_ == TransportState::DISABLED) {
-    transport_state_ = TransportState::ACTIVE;
+void TestSyncService::SetSignedIn(signin::ConsentLevel consent_level) {
+  SetSignedIn(consent_level, GetDefaultAccountInfo());
+}
+
+void TestSyncService::SetSignedIn(signin::ConsentLevel consent_level,
+                                  const CoreAccountInfo& account_info) {
+  disable_reasons_.Remove(DISABLE_REASON_NOT_SIGNED_IN);
+  account_info_ = account_info;
+  if (consent_level == signin::ConsentLevel::kSync) {
+    has_sync_consent_ = true;
+    user_settings_.SetInitialSyncFeatureSetupComplete();
+  } else {
+    has_sync_consent_ = false;
+    user_settings_.ClearInitialSyncFeatureSetupComplete();
   }
 }
 
-void TestSyncService::SetTransportState(TransportState transport_state) {
-  transport_state_ = transport_state;
+void TestSyncService::SetSignedOut() {
+  has_sync_consent_ = false;
+  user_settings_.ClearInitialSyncFeatureSetupComplete();
+  account_info_ = CoreAccountInfo();
+  has_persistent_auth_error_ = false;
+  disable_reasons_.Put(DISABLE_REASON_NOT_SIGNED_IN);
+  CHECK_EQ(GetTransportState(), TransportState::DISABLED);
+}
+
+void TestSyncService::MimicDashboardClear() {
+#if BUILDFLAG(IS_CHROMEOS)
+  // Clearing sync from the dashboard results in
+  // IsSyncFeatureDisabledViaDashboard() returning true.
+  user_settings_.SetSyncFeatureDisabledViaDashboard();
+#else
+  SetSignedIn(signin::ConsentLevel::kSignin);
+#endif  // BUILDFLAG(IS_CHROMEOS)
+}
+
+void TestSyncService::SetAllowedByEnterprisePolicy(bool allowed) {
+  disable_reasons_.PutOrRemove(DISABLE_REASON_ENTERPRISE_POLICY, !allowed);
+}
+
+void TestSyncService::SetHasUnrecoverableError(bool has_error) {
+  disable_reasons_.PutOrRemove(DISABLE_REASON_UNRECOVERABLE_ERROR, has_error);
+}
+
+void TestSyncService::SetMaxTransportState(TransportState max_transport_state) {
+  CHECK_NE(max_transport_state, TransportState::DISABLED)
+      << "DISABLED should be set via one of SetSignedOut(), "
+         "SetAllowedByEnterprisePolicy(false) or "
+         "SetHasUnrecoverableError(true)";
+  CHECK_NE(max_transport_state, TransportState::PAUSED)
+      << "PAUSED should be set via SetPersistentAuthError()";
+  max_transport_state_ = max_transport_state;
 }
 
 void TestSyncService::SetLocalSyncEnabled(bool local_sync_enabled) {
   local_sync_enabled_ = local_sync_enabled;
 }
 
-void TestSyncService::SetAccountInfo(const CoreAccountInfo& account_info) {
-  account_info_ = account_info;
-}
-
-void TestSyncService::SetSetupInProgress(bool in_progress) {
-  setup_in_progress_ = in_progress;
-}
-
-void TestSyncService::SetHasSyncConsent(bool has_sync_consent) {
-  has_sync_consent_ = has_sync_consent;
-}
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-void TestSyncService::SetSyncFeatureDisabledViaDashboard(
-    bool disabled_via_dashboard) {
-  sync_feature_disabled_via_dashboard_ = disabled_via_dashboard;
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
 void TestSyncService::SetPersistentAuthError() {
-  transport_state_ = TransportState::PAUSED;
+  CHECK(!account_info_.IsEmpty()) << "Attempting to set persistent auth error "
+                                     "when there is no signed-in account";
+  has_persistent_auth_error_ = true;
 }
 
 void TestSyncService::ClearAuthError() {
-  if (transport_state_ == TransportState::PAUSED) {
-    transport_state_ = TransportState::ACTIVE;
-  }
+  has_persistent_auth_error_ = false;
 }
 
 void TestSyncService::SetInitialSyncFeatureSetupComplete(
@@ -93,7 +129,7 @@ void TestSyncService::SetInitialSyncFeatureSetupComplete(
   }
 }
 
-void TestSyncService::SetFailedDataTypes(const ModelTypeSet& types) {
+void TestSyncService::SetFailedDataTypes(const DataTypeSet& types) {
   failed_data_types_ = types;
 }
 
@@ -115,22 +151,12 @@ void TestSyncService::SetDetailedSyncStatus(bool engine_available,
   detailed_sync_status_ = status;
 }
 
-void TestSyncService::SetPassphraseRequired(bool required) {
-  user_settings_.SetPassphraseRequired(required);
-}
-
-void TestSyncService::SetPassphraseRequiredForPreferredDataTypes(
-    bool required) {
-  user_settings_.SetPassphraseRequiredForPreferredDataTypes(required);
+void TestSyncService::SetPassphraseRequired() {
+  user_settings_.SetPassphraseRequired();
 }
 
 void TestSyncService::SetTrustedVaultKeyRequired(bool required) {
   user_settings_.SetTrustedVaultKeyRequired(required);
-}
-
-void TestSyncService::SetTrustedVaultKeyRequiredForPreferredDataTypes(
-    bool required) {
-  user_settings_.SetTrustedVaultKeyRequiredForPreferredDataTypes(required);
 }
 
 void TestSyncService::SetTrustedVaultRecoverabilityDegraded(bool degraded) {
@@ -142,22 +168,20 @@ void TestSyncService::SetIsUsingExplicitPassphrase(bool enabled) {
 }
 
 void TestSyncService::SetDownloadStatusFor(
-    const ModelTypeSet& types,
-    ModelTypeDownloadStatus download_status) {
+    const DataTypeSet& types,
+    DataTypeDownloadStatus download_status) {
   for (const auto type : types) {
     download_statuses_[type] = download_status;
   }
 }
 
+void TestSyncService::SetSetupInProgress() {
+  outstanding_setup_in_progress_handles_++;
+}
+
 void TestSyncService::FireStateChanged() {
   for (SyncServiceObserver& observer : observers_) {
     observer.OnStateChanged(this);
-  }
-}
-
-void TestSyncService::FirePaymentsIntegrationEnabledChanged() {
-  for (SyncServiceObserver& observer : observers_) {
-    observer.OnSyncPaymentsIntegrationEnabledChanged(this);
   }
 }
 
@@ -173,12 +197,6 @@ base::android::ScopedJavaLocalRef<jobject> TestSyncService::GetJavaObject() {
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
-void TestSyncService::SetSyncFeatureRequested() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  sync_feature_disabled_via_dashboard_ = false;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
-
 TestSyncUserSettings* TestSyncService::GetUserSettings() {
   return &user_settings_;
 }
@@ -192,12 +210,22 @@ SyncService::DisableReasonSet TestSyncService::GetDisableReasons() const {
 }
 
 SyncService::TransportState TestSyncService::GetTransportState() const {
-  return transport_state_;
+  if (!disable_reasons_.empty()) {
+    return TransportState::DISABLED;
+  }
+
+  if (has_persistent_auth_error_) {
+    CHECK(!account_info_.IsEmpty())
+        << "Detected persistent auth error when there is no signed-in account";
+    return TransportState::PAUSED;
+  }
+
+  return max_transport_state_;
 }
 
 SyncService::UserActionableError TestSyncService::GetUserActionableError()
     const {
-  if (transport_state_ == TransportState::PAUSED) {
+  if (GetTransportState() == TransportState::PAUSED) {
     return UserActionableError::kSignInNeedsUpdate;
   }
   if (user_settings_.IsPassphraseRequiredForPreferredDataTypes()) {
@@ -219,7 +247,15 @@ bool TestSyncService::HasSyncConsent() const {
 }
 
 GoogleServiceAuthError TestSyncService::GetAuthError() const {
-  return GoogleServiceAuthError();
+  return has_persistent_auth_error_
+             ? GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+                   GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                       CREDENTIALS_REJECTED_BY_SERVER)
+             : GoogleServiceAuthError::AuthErrorNone();
+}
+
+bool TestSyncService::HasCachedPersistentAuthErrorForMetrics() const {
+  return GetTransportState() == TransportState::PAUSED;
 }
 
 base::Time TestSyncService::GetAuthErrorTime() const {
@@ -231,54 +267,63 @@ bool TestSyncService::RequiresClientUpgrade() const {
          syncer::UPGRADE_CLIENT;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-bool TestSyncService::IsSyncFeatureDisabledViaDashboard() const {
-  return sync_feature_disabled_via_dashboard_;
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
 std::unique_ptr<SyncSetupInProgressHandle>
 TestSyncService::GetSetupInProgressHandle() {
-  return nullptr;
+  outstanding_setup_in_progress_handles_++;
+  return std::make_unique<SyncSetupInProgressHandle>(
+      base::BindRepeating(&TestSyncService::OnSetupInProgressHandleDestroyed,
+                          weak_factory_.GetWeakPtr()));
 }
 
 bool TestSyncService::IsSetupInProgress() const {
-  return setup_in_progress_;
+  return outstanding_setup_in_progress_handles_ > 0;
 }
 
-ModelTypeSet TestSyncService::GetPreferredDataTypes() const {
+DataTypeSet TestSyncService::GetPreferredDataTypes() const {
   return user_settings_.GetPreferredDataTypes();
 }
 
-ModelTypeSet TestSyncService::GetActiveDataTypes() const {
-  if (transport_state_ != TransportState::ACTIVE) {
-    return ModelTypeSet();
-  }
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (sync_feature_disabled_via_dashboard_) {
-    return ModelTypeSet();
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-  return Difference(GetPreferredDataTypes(), failed_data_types_);
+DataTypeSet TestSyncService::GetDataTypesForTransportOnlyMode() const {
+  return DataTypeSet::All();
 }
 
-ModelTypeSet TestSyncService::GetTypesWithPendingDownloadForInitialSync()
-    const {
-  DCHECK_NE(transport_state_, TransportState::INITIALIZING)
+DataTypeSet TestSyncService::GetActiveDataTypes() const {
+  if (GetTransportState() != TransportState::ACTIVE) {
+    return DataTypeSet();
+  }
+#if BUILDFLAG(IS_CHROMEOS)
+  if (user_settings_.IsSyncFeatureDisabledViaDashboard()) {
+    return DataTypeSet();
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  DataTypeSet types_with_encryption_error =
+      (user_settings_.IsPassphraseRequired() ||
+       user_settings_.IsTrustedVaultKeyRequired())
+          ? user_settings_.GetAllEncryptedDataTypes()
+          : DataTypeSet();
+  return Difference(GetPreferredDataTypes(),
+                    Union(failed_data_types_, types_with_encryption_error));
+}
+
+DataTypeSet TestSyncService::GetTypesWithPendingDownloadForInitialSync() const {
+  DCHECK_NE(GetTransportState(), TransportState::INITIALIZING)
       << "Realistic behavior not implemented for INITIALIZING";
-  if (transport_state_ != TransportState::CONFIGURING) {
-    return ModelTypeSet();
+  if (GetTransportState() != TransportState::CONFIGURING) {
+    return DataTypeSet();
   }
   return Difference(GetPreferredDataTypes(), failed_data_types_);
 }
 
-void TestSyncService::StopAndClear() {}
+void TestSyncService::OnDataTypeRequestsSyncStartup(DataType type) {}
 
-void TestSyncService::OnDataTypeRequestsSyncStartup(ModelType type) {}
+void TestSyncService::TriggerRefresh(const DataTypeSet& types) {
+  if (trigger_refresh_cb_) {
+    trigger_refresh_cb_.Run(types);
+  }
+}
 
-void TestSyncService::TriggerRefresh(const ModelTypeSet& types) {}
-
-void TestSyncService::DataTypePreconditionChanged(ModelType type) {}
+void TestSyncService::DataTypePreconditionChanged(DataType type) {}
 
 void TestSyncService::AddObserver(SyncServiceObserver* observer) {
   observers_.AddObserver(observer);
@@ -310,15 +355,13 @@ SyncCycleSnapshot TestSyncService::GetLastCycleSnapshotForDebugging() const {
   return last_cycle_snapshot_;
 }
 
-base::Value::List TestSyncService::GetTypeStatusMapForDebugging() const {
-  return base::Value::List();
+TypeStatusMapForDebugging TestSyncService::GetTypeStatusMapForDebugging()
+    const {
+  return TypeStatusMapForDebugging();
 }
 
 void TestSyncService::GetEntityCountsForDebugging(
-    base::OnceCallback<void(const std::vector<TypeEntitiesCount>&)> callback)
-    const {
-  std::move(callback).Run({});
-}
+    base::RepeatingCallback<void(const TypeEntitiesCount&)> callback) const {}
 
 const GURL& TestSyncService::GetSyncServiceUrlForDebugging() const {
   return sync_service_url_;
@@ -342,32 +385,84 @@ void TestSyncService::RemoveProtocolEventObserver(
 void TestSyncService::GetAllNodesForDebugging(
     base::OnceCallback<void(base::Value::List)> callback) {}
 
-SyncService::ModelTypeDownloadStatus TestSyncService::GetDownloadStatusFor(
-    ModelType type) const {
-  if (base::Contains(download_statuses_, type)) {
+SyncService::DataTypeDownloadStatus TestSyncService::GetDownloadStatusFor(
+    DataType type) const {
+  if (download_statuses_.contains(type)) {
     return download_statuses_.at(type);
   }
-  return ModelTypeDownloadStatus::kUpToDate;
+  return DataTypeDownloadStatus::kUpToDate;
 }
 
 void TestSyncService::SetInvalidationsForSessionsEnabled(bool enabled) {}
 
-bool TestSyncService::IsSyncFeatureConsideredRequested() const {
-  return HasSyncConsent();
+void TestSyncService::SendExplicitPassphraseToPlatformClient() {
+  if (send_passphrase_to_platform_client_cb_) {
+    send_passphrase_to_platform_client_cb_.Run();
+  }
 }
 
 void TestSyncService::Shutdown() {
-  for (SyncServiceObserver& observer : observers_)
+  for (SyncServiceObserver& observer : observers_) {
     observer.OnSyncShutdown(this);
+  }
 }
 
-void TestSyncService::SetTypesWithUnsyncedData(const ModelTypeSet& types) {
+void TestSyncService::SetTypesWithUnsyncedData(const DataTypeSet& types) {
   unsynced_types_ = types;
 }
 
 void TestSyncService::GetTypesWithUnsyncedData(
-    base::OnceCallback<void(ModelTypeSet)> cb) const {
-  std::move(cb).Run(unsynced_types_);
+    DataTypeSet requested_types,
+    base::OnceCallback<void(absl::flat_hash_map<DataType, size_t>)> cb) const {
+  absl::flat_hash_map<DataType, size_t> unsynced_data_counts;
+  for (auto type : base::Intersection(requested_types, unsynced_types_)) {
+    unsynced_data_counts[type] = 1;
+  }
+  std::move(cb).Run(std::move(unsynced_data_counts));
+}
+
+void TestSyncService::SetLocalDataDescriptions(
+    const std::map<DataType, LocalDataDescription>& local_data_descriptions) {
+  local_data_descriptions_ = local_data_descriptions;
+}
+
+void TestSyncService::SetPassphrasePlatformClientCallback(
+    const base::RepeatingClosure& send_passphrase_to_platform_client_cb) {
+  send_passphrase_to_platform_client_cb_ =
+      send_passphrase_to_platform_client_cb;
+}
+
+void TestSyncService::GetLocalDataDescriptions(
+    DataTypeSet types,
+    base::OnceCallback<void(std::map<DataType, LocalDataDescription>)>
+        callback) {
+  std::map<DataType, LocalDataDescription> result;
+  for (DataType type : types) {
+    if (auto it = local_data_descriptions_.find(type);
+        it != local_data_descriptions_.end()) {
+      result.insert(*it);
+    }
+  }
+  std::move(callback).Run(std::move(result));
+}
+
+void TestSyncService::TriggerLocalDataMigration(DataTypeSet types) {}
+
+void TestSyncService::TriggerLocalDataMigrationForItems(
+    std::map<DataType, std::vector<LocalDataItemModel::DataId>> items) {}
+
+void TestSyncService::SelectTypeAndMigrateLocalDataItemsWhenActive(
+    DataType data_type,
+    std::vector<LocalDataItemModel::DataId> items) {}
+
+void TestSyncService::SetTriggerRefreshCallback(
+    const base::RepeatingCallback<void(syncer::DataTypeSet)>&
+        trigger_refresh_cb) {
+  trigger_refresh_cb_ = trigger_refresh_cb;
+}
+
+void TestSyncService::OnSetupInProgressHandleDestroyed() {
+  outstanding_setup_in_progress_handles_--;
 }
 
 }  // namespace syncer

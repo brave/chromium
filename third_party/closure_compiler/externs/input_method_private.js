@@ -27,7 +27,8 @@ chrome.inputMethodPrivate.MenuItemStyle = {
 };
 
 /**
- * A menu item used by an input method to interact with the user from the language menu.
+ * A menu item used by an input method to interact with the user from the
+ * language menu.
  * @typedef {{
  *   id: string,
  *   label: (string|undefined),
@@ -95,6 +96,27 @@ chrome.inputMethodPrivate.AutoCapitalizeType = {
   WORDS: 'words',
   SENTENCES: 'sentences',
 };
+
+/**
+ * @enum {string}
+ */
+chrome.inputMethodPrivate.LanguagePackStatus = {
+  UNKNOWN: 'unknown',
+  NOT_INSTALLED: 'notInstalled',
+  IN_PROGRESS: 'inProgress',
+  INSTALLED: 'installed',
+  ERROR_OTHER: 'errorOther',
+  ERROR_NEEDS_REBOOT: 'errorNeedsReboot',
+};
+
+/**
+ * Object returned by callbacks when the status of language packs change.
+ * @typedef {{
+ *   engineIds: !Array<string>,
+ *   status: !chrome.inputMethodPrivate.LanguagePackStatus
+ * }}
+ */
+chrome.inputMethodPrivate.LanguagePackStatusChange;
 
 /**
  * Describes an input Context
@@ -341,25 +363,18 @@ chrome.inputMethodPrivate.reset = function() {};
 chrome.inputMethodPrivate.onAutocorrect = function(parameters) {};
 
 /**
- * Get the bounds of the current text field
- * @param {{
- *   contextID: number
- * }} parameters
- * @param {function({
- *   x: number,
- *   y: number,
- *   width: number,
- *   height: number
- * }): void} callback Called with screen coordinates of the text field when the
- *     operation completes. On failure, $(ref:runtime.lastError) is set.
- */
-chrome.inputMethodPrivate.getTextFieldBounds = function(parameters, callback) {};
-
-/**
  * Notifies Chrome that the current input method is ready to accept key events
  * from Tast.
  */
 chrome.inputMethodPrivate.notifyInputMethodReadyForTesting = function() {};
+
+/**
+ * Gets the aggregate status of all language packs for a given input method.
+ * @param {string} inputMethodId Fully qualified ID of the input method
+ * @param {function(!chrome.inputMethodPrivate.LanguagePackStatus): void}
+ *     callback Called with a LanguagePackStatus when the operation completes.
+ */
+chrome.inputMethodPrivate.getLanguagePackStatus = function(inputMethodId, callback) {};
 
 /**
  * Fired when the caret bounds change.
@@ -413,13 +428,6 @@ chrome.inputMethodPrivate.onImeMenuItemsChanged;
 chrome.inputMethodPrivate.onFocus;
 
 /**
- * This event is sent when a touch occurs in a text field. Should only happen
- * after onFocus()
- * @type {!ChromeEvent}
- */
-chrome.inputMethodPrivate.onTouch;
-
-/**
  * This event is sent when the settings for any input method changed. It is sent
  * to all extensions that are listening to this event, and enabled by the user.
  * @type {!ChromeEvent}
@@ -444,3 +452,9 @@ chrome.inputMethodPrivate.onSuggestionsChanged;
  * @type {!ChromeEvent}
  */
 chrome.inputMethodPrivate.onInputMethodOptionsChanged;
+
+/**
+ * This event is sent when any IME's language pack status is changed.
+ * @type {!ChromeEvent}
+ */
+chrome.inputMethodPrivate.onLanguagePackStatusChanged;

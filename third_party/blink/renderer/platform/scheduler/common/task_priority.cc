@@ -57,9 +57,7 @@ CreatePrioritySettings() {
   using base::sequence_manager::TaskQueue;
   base::sequence_manager::SequenceManager::PrioritySettings settings(
       TaskPriority::kPriorityCount, TaskPriority::kDefaultPriority);
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   settings.SetProtoPriorityConverter(&TaskPriorityToProto);
-#endif
   return settings;
 }
 
@@ -89,7 +87,6 @@ const char* TaskPriorityToString(TaskPriority priority) {
       return "best_effort";
     case TaskPriority::kPriorityCount:
       NOTREACHED();
-      return nullptr;
   }
 }
 

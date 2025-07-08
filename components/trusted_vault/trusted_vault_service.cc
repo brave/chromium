@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/notreached.h"
 #include "components/trusted_vault/trusted_vault_client.h"
 
 namespace trusted_vault {
@@ -20,9 +21,15 @@ TrustedVaultService::TrustedVaultService(
 
 TrustedVaultService::~TrustedVaultService() = default;
 
-trusted_vault::TrustedVaultClient*
-TrustedVaultService::GetTrustedVaultClient() {
-  return chrome_sync_security_domain_client_.get();
+trusted_vault::TrustedVaultClient* TrustedVaultService::GetTrustedVaultClient(
+    SecurityDomainId security_domain) {
+  switch (security_domain) {
+    case SecurityDomainId::kChromeSync:
+      return chrome_sync_security_domain_client_.get();
+    case SecurityDomainId::kPasskeys:
+      return nullptr;
+  }
+  NOTREACHED();
 }
 
 }  // namespace trusted_vault

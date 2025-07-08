@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/notreached.h"
 #include "base/threading/platform_thread.h"
 
 #include <errno.h>
@@ -17,16 +16,17 @@
 #include <memory>
 #include <tuple>
 
-#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/threading/platform_thread_internal_posix.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_id_name_manager.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
+#include "partition_alloc/buildflags.h"
 
 #if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_NACL)
 #include "base/posix/can_lower_nice_to.h"
@@ -34,18 +34,20 @@
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include <sys/syscall.h>
+
 #include <atomic>
 #endif
 
 #if BUILDFLAG(IS_FUCHSIA)
-#include <zircon/process.h>
+#include <lib/zx/thread.h>
+
+#include "base/fuchsia/koid.h"
 #else
 #include <sys/resource.h>
 #endif
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-#include "base/allocator/partition_allocator/starscan/pcscan.h"
-#include "base/allocator/partition_allocator/starscan/stack/stack.h"
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "partition_alloc/stack/stack.h"  // nogncheck
 #endif
 
 namespace base {
@@ -73,12 +75,12 @@ void* ThreadFunc(void* params) {
         static_cast<ThreadParams*>(params));
 
     delegate = thread_params->delegate;
-    if (!thread_params->joinable)
+    if (!thread_params->joinable) {
       base::DisallowSingleton();
+    }
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-    partition_alloc::internal::PCScan::NotifyThreadCreated(
-        partition_alloc::internal::GetStackPointer());
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+    partition_alloc::internal::StackTopRegistry::Get().NotifyThreadCreated();
 #endif
 
 #if !BUILDFLAG(IS_NACL)
@@ -104,8 +106,8 @@ void* ThreadFunc(void* params) {
       PlatformThread::CurrentHandle().platform_handle(),
       PlatformThread::CurrentId());
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-  partition_alloc::internal::PCScan::NotifyThreadDestroyed();
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  partition_alloc::internal::StackTopRegistry::Get().NotifyThreadDestroyed();
 #endif
 
   base::TerminateOnThread();
@@ -126,15 +128,18 @@ bool CreateThread(size_t stack_size,
 
   // Pthreads are joinable by default, so only specify the detached
   // attribute if the thread should be non-joinable.
-  if (!joinable)
+  if (!joinable) {
     pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+  }
 
   // Get a better default if available.
-  if (stack_size == 0)
+  if (stack_size == 0) {
     stack_size = base::GetDefaultThreadStackSize(attributes);
+  }
 
-  if (stack_size > 0)
+  if (stack_size > 0) {
     pthread_attr_setstacksize(&attributes, stack_size);
+  }
 
   std::unique_ptr<ThreadParams> params(new ThreadParams);
   params->delegate = delegate;
@@ -213,7 +218,9 @@ PlatformThreadId PlatformThreadBase::CurrentId() {
   // Pthreads doesn't have the concept of a thread ID, so we have to reach down
   // into the kernel.
 #if BUILDFLAG(IS_APPLE)
-  return pthread_mach_thread_np(pthread_self());
+  uint64_t tid;
+  CHECK_EQ(pthread_threadid_np(nullptr, &tid), 0);
+  return PlatformThreadId(tid);
 #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // Workaround false-positive MSAN use-of-uninitialized-value on
   // thread_local storage for loaded libraries:
@@ -244,27 +251,29 @@ PlatformThreadId PlatformThreadBase::CurrentId() {
     }
 #endif
   }
-  return g_thread_id;
+  return PlatformThreadId(g_thread_id);
 #elif BUILDFLAG(IS_ANDROID)
   // Note: do not cache the return value inside a thread_local variable on
   // Android (as above). The reasons are:
   // - thread_local is slow on Android (goes through emutls)
   // - gettid() is fast, since its return value is cached in pthread (in the
   //   thread control block of pthread). See gettid.c in bionic.
-  return gettid();
+  return PlatformThreadId(gettid());
 #elif BUILDFLAG(IS_FUCHSIA)
-  return zx_thread_self();
+  thread_local static zx_koid_t id =
+      GetKoid(*zx::thread::self()).value_or(ZX_KOID_INVALID);
+  return PlatformThreadId(id);
 #elif BUILDFLAG(IS_SOLARIS) || BUILDFLAG(IS_QNX)
-  return pthread_self();
+  return PlatformThreadId(pthread_self());
 #elif BUILDFLAG(IS_NACL) && defined(__GLIBC__)
-  return pthread_self();
+  return PlatformThreadId(pthread_self());
 #elif BUILDFLAG(IS_NACL) && !defined(__GLIBC__)
   // Pointers are 32-bits in NaCl.
-  return reinterpret_cast<int32_t>(pthread_self());
+  return PlatformThreadId(reinterpret_cast<int32_t>(pthread_self()));
 #elif BUILDFLAG(IS_POSIX) && BUILDFLAG(IS_AIX)
-  return pthread_self();
+  return PlatformThreadId(pthread_self());
 #elif BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_AIX)
-  return reinterpret_cast<int64_t>(pthread_self());
+  return PlatformThreadId(reinterpret_cast<int64_t>(pthread_self()));
 #endif
 }
 
@@ -296,8 +305,9 @@ void PlatformThreadBase::Sleep(TimeDelta duration) {
   duration -= Seconds(sleep_time.tv_sec);
   sleep_time.tv_nsec = static_cast<long>(duration.InMicroseconds() * 1000);
 
-  while (nanosleep(&sleep_time, &remaining) == -1 && errno == EINTR)
+  while (nanosleep(&sleep_time, &remaining) == -1 && errno == EINTR) {
     sleep_time = remaining;
+  }
 }
 
 // static
@@ -307,24 +317,26 @@ const char* PlatformThreadBase::GetName() {
 
 // static
 bool PlatformThreadBase::CreateWithType(size_t stack_size,
-                                    Delegate* delegate,
-                                    PlatformThreadHandle* thread_handle,
-                                    ThreadType thread_type,
-                                    MessagePumpType pump_type_hint) {
+                                        Delegate* delegate,
+                                        PlatformThreadHandle* thread_handle,
+                                        ThreadType thread_type,
+                                        MessagePumpType pump_type_hint) {
   return CreateThread(stack_size, true /* joinable thread */, delegate,
                       thread_handle, thread_type, pump_type_hint);
 }
 
 // static
-bool PlatformThreadBase::CreateNonJoinable(size_t stack_size, Delegate* delegate) {
+bool PlatformThreadBase::CreateNonJoinable(size_t stack_size,
+                                           Delegate* delegate) {
   return CreateNonJoinableWithType(stack_size, delegate, ThreadType::kDefault);
 }
 
 // static
-bool PlatformThreadBase::CreateNonJoinableWithType(size_t stack_size,
-                                               Delegate* delegate,
-                                               ThreadType thread_type,
-                                               MessagePumpType pump_type_hint) {
+bool PlatformThreadBase::CreateNonJoinableWithType(
+    size_t stack_size,
+    Delegate* delegate,
+    ThreadType thread_type,
+    MessagePumpType pump_type_hint) {
   PlatformThreadHandle unused;
 
   bool result = CreateThread(stack_size, false /* non-joinable thread */,
@@ -375,8 +387,9 @@ void SetCurrentThreadTypeImpl(ThreadType thread_type,
 #if BUILDFLAG(IS_NACL)
   NOTIMPLEMENTED();
 #else
-  if (internal::SetCurrentThreadTypeForPlatform(thread_type, pump_type_hint))
+  if (internal::SetCurrentThreadTypeForPlatform(thread_type, pump_type_hint)) {
     return;
+  }
 
   // setpriority(2) should change the whole thread group's (i.e. process)
   // priority. However, as stated in the bugs section of
@@ -403,8 +416,9 @@ ThreadPriorityForTest PlatformThreadBase::GetCurrentThreadPriorityForTest() {
   // Mirrors SetCurrentThreadPriority()'s implementation.
   auto platform_specific_priority =
       internal::GetCurrentThreadPriorityForPlatformForTest();  // IN-TEST
-  if (platform_specific_priority)
+  if (platform_specific_priority) {
     return platform_specific_priority.value();
+  }
 
   int nice_value = internal::GetCurrentThreadNiceValue();
 

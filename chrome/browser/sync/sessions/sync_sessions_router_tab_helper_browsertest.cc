@@ -37,6 +37,8 @@ class TestLocalSessionEventHandler
     }
   }
 
+  void OnLocalTabClosed() override { OnLocalTabModified(nullptr); }
+
   bool local_tab_updated() { return local_tab_updated_; }
   void reset_local_tab_updated() { local_tab_updated_ = false; }
 
@@ -87,7 +89,7 @@ class SyncSessionsRouterTabHelperBrowserTest : public InProcessBrowserTest {
   ~SyncSessionsRouterTabHelperBrowserTest() override = default;
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     InProcessBrowserTest::SetUp();
   }
 
@@ -108,7 +110,7 @@ class SyncSessionsRouterTabHelperBrowserTest : public InProcessBrowserTest {
   }
 
   void RemoveLanguageDetectionObserver() {
-    observer_.SetInterestedURL(GURL::EmptyGURL());
+    observer_.SetInterestedURL(GURL());
     ChromeTranslateClient* chrome_translate_client =
         ChromeTranslateClient::FromWebContents(web_contents());
     if (!chrome_translate_client) {
@@ -163,7 +165,8 @@ IN_PROC_BROWSER_TEST_F(SyncSessionsRouterTabHelperBrowserTest,
   // it, SyncSessionsRouterTabHelper doesn't trigger OnLocalTabModified() on
   // prerendering.
   GURL prerender_url = embedded_test_server()->GetURL("/title1.html");
-  int prerender_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId prerender_id =
+      prerender_helper()->AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*web_contents(),
                                                      prerender_id);
   // Make sure that OnLocalTabModified() is not called.

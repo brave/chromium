@@ -16,9 +16,9 @@
 namespace extensions {
 namespace pref_names {
 
-// If the given |scope| is persisted, return true and populate |result| with the
+// If the given `scope` is persisted, return true and populate `result` with the
 // appropriate property (i.e. one of kPref*) within a kExtensions dictionary. If
-// |scope| is not persisted, return false, and leave |result| unchanged.
+// `scope` is not persisted, return false, and leave `result` unchanged.
 bool ScopeToPrefName(extensions::api::types::ChromeSettingScope scope,
                      std::string* result);
 
@@ -89,6 +89,10 @@ inline constexpr char kInstallDenyList[] = "extensions.install.denylist";
 // accessed through extensions::ExternalPolicyProvider.
 inline constexpr char kInstallForceList[] = "extensions.install.forcelist";
 
+// A dictionary containing, for each extension id, additional
+// OAuth redirect URLs that will be allowed in chrome.identity API.
+inline constexpr char kOAuthRedirectUrls[] = "extensions.oauth_redirect_urls";
+
 // String pref for what version chrome was last time the extension prefs were
 // loaded.
 inline constexpr char kLastChromeVersion[] = "extensions.last_chrome_version";
@@ -112,16 +116,9 @@ inline constexpr char kManifestV2Availability[] = "extensions.manifest_v2";
 // object stored in the Preferences file. The extensions are stored by ID.
 inline constexpr char kPinnedExtensions[] = "extensions.pinned_extensions";
 
-// Indicates on-disk data might have skeletal data that needs to be cleaned
-// on the next start of the browser.
-// TODO(crbug.com/1463825): Delete ExtensionsPref::kStorageGarbageCollect.
-inline constexpr char kStorageGarbageCollect[] =
-    "extensions.storage.garbagecollect";
-
-// A preference for an enterprise policy which is a temporary workaround for
-// behaviour changes to <webview>.
-inline constexpr char kChromeAppsWebViewPermissiveBehaviorAllowed[] =
-    "extensions.webview_permissive_behavior";
+// Pref for policy to enable/disable loading extension from command line
+inline constexpr char kExtensionInstallTypeBlocklist[] =
+    "extensions.extension_install_type_blocklist";
 
 // Properties in kExtensions dictionaries --------------------------------------
 
@@ -139,6 +136,11 @@ extern const char kPrefContentSettings[];
 
 // Extension-set incognito content settings.
 extern const char kPrefIncognitoContentSettings[];
+
+// Per-profile UUID to distinguish global shortcut sessions for
+// org.freedesktop.portal.GlobalShortcuts.
+inline constexpr char kGlobalShortcutsUuid[] =
+    "extensions.global_shortcuts.uuid";
 
 }  // namespace pref_names
 }  // namespace extensions

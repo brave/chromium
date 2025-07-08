@@ -7,10 +7,10 @@ import {NetworkTestRunner} from 'network_test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+
 (async function() {
   TestRunner.addResult(`Tests long script content is correctly shown in source panel after page reload.\n`);
-  await TestRunner.loadLegacyModule('sources');
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('sources');
   await TestRunner.showPanel('network');
   await TestRunner.navigatePromise('resources/long-script-page.html');
@@ -34,7 +34,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
   }
 
   function step5(uiSourceCode) {
-    uiSourceCode.requestContent().then(step6);
+    uiSourceCode.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent).then(step6);
   }
 
   function step6({ content, error, isEncoded }) {

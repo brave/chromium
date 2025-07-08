@@ -14,7 +14,7 @@
 namespace ash {
 
 // Interface of network screen. Owned by NetworkScreen.
-class NetworkScreenView : public base::SupportsWeakPtr<NetworkScreenView> {
+class NetworkScreenView {
  public:
   inline constexpr static StaticOobeScreenId kScreenId{"network-selection",
                                                        "NetworkScreen"};
@@ -22,7 +22,7 @@ class NetworkScreenView : public base::SupportsWeakPtr<NetworkScreenView> {
   virtual ~NetworkScreenView() = default;
 
   // Shows the contents of the screen.
-  virtual void Show() = 0;
+  virtual void ShowScreenWithData(base::Value::Dict data) = 0;
 
   // Shows error message in a bubble.
   virtual void ShowError(const std::u16string& message) = 0;
@@ -30,13 +30,16 @@ class NetworkScreenView : public base::SupportsWeakPtr<NetworkScreenView> {
   // Hides error messages showing no error state.
   virtual void ClearErrors() = 0;
 
-  virtual void SetQuickStartEnabled() = 0;
+  virtual void SetQuickStartEntryPointVisibility(bool visible) = 0;
+
+  // Gets a WeakPtr to the instance.
+  virtual base::WeakPtr<NetworkScreenView> AsWeakPtr() = 0;
 };
 
 // WebUI implementation of NetworkScreenView. It is used to interact with
 // the OOBE network selection screen.
-class NetworkScreenHandler : public NetworkScreenView,
-                             public BaseScreenHandler {
+class NetworkScreenHandler final : public NetworkScreenView,
+                                   public BaseScreenHandler {
  public:
   using TView = NetworkScreenView;
 
@@ -47,18 +50,21 @@ class NetworkScreenHandler : public NetworkScreenView,
 
   ~NetworkScreenHandler() override;
 
-  void SetQuickStartEnabled() override;
-
  private:
   // NetworkScreenView:
-  void Show() override;
+  void ShowScreenWithData(base::Value::Dict data) override;
   void ShowError(const std::u16string& message) override;
   void ClearErrors() override;
+  void SetQuickStartEntryPointVisibility(bool visible) override;
+  base::WeakPtr<NetworkScreenView> AsWeakPtr() override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
   void GetAdditionalParameters(base::Value::Dict* dict) override;
+
+ private:
+  base::WeakPtrFactory<NetworkScreenView> weak_ptr_factory_{this};
 };
 
 }  // namespace ash

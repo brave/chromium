@@ -149,7 +149,6 @@ int DeprecationNotificationController::GetSixPackKeyDeprecationMessageId(
       return IDS_ASH_SHORTCUT_DEPRECATION_ALT_BASED_PAGE_DOWN;
     default:
       NOTREACHED();
-      return -1;
   }
 }
 

@@ -11,6 +11,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/task/thread_pool.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "content/browser/network_sandbox_grant_result.h"
 #include "content/public/browser/browser_thread.h"
@@ -24,7 +25,8 @@
 
 #include "base/win/security_util.h"
 #include "base/win/sid.h"
-#include "sandbox/features.h"
+#include "content/common/features.h"
+#include "sandbox/policy/features.h"
 #endif  // BUILDFLAG(IS_WIN)
 
 namespace content {
@@ -57,7 +59,7 @@ struct SandboxParameters {
 // not be deleted.
 SandboxGrantResult MaybeDeleteOldData(
     const base::FilePath& old_path,
-    const absl::optional<base::FilePath>& filename,
+    const std::optional<base::FilePath>& filename,
     bool is_sql) {
   // The path to the specific data file might not have been specified in the
   // network context params. In that case, nothing to delete.
@@ -107,7 +109,7 @@ SandboxGrantResult MaybeDeleteOldData(
 // Returns SandboxGrantResult::kFailedToCopyData if a file could not be copied.
 SandboxGrantResult MaybeCopyData(const base::FilePath& old_path,
                                  const base::FilePath& new_path,
-                                 const absl::optional<base::FilePath>& filename,
+                                 const std::optional<base::FilePath>& filename,
                                  bool is_sql) {
   // The path to the specific data file might not have been specified in the
   // network context params. In that case, no files need to be moved.
@@ -220,18 +222,32 @@ bool MaybeGrantAccessToDataPath(const SandboxParameters& sandbox_params,
 
 #if BUILDFLAG(IS_WIN)
   // On platforms that don't support the LPAC sandbox, do nothing.
-  if (!sandbox::features::IsAppContainerSandboxSupported())
+  if (!sandbox::policy::features::IsNetworkSandboxSupported()) {
     return true;
+  }
   DCHECK(!sandbox_params.lpac_capability_name.empty());
   auto ac_sids = base::win::Sid::FromNamedCapabilityVector(
       {sandbox_params.lpac_capability_name});
 
+  static constexpr DWORD kAccessMask =
+      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE;
+  static constexpr DWORD kInheritance =
+      CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
+
+  if (base::FeatureList::IsEnabled(
+          features::kSkipGrantAccessToDataPathIfAlreadySet)) {
+    // If LPAC capability already has access to the directory then avoid
+    // granting access again. This is a performance optimization.
+    if (HasAccessToPath(directory->path(), ac_sids, kAccessMask,
+                        kInheritance)) {
+      return true;
+    }
+  }
+
   // Grant recursive access to directory. This also means new files in the
   // directory will inherit the ACE.
-  return base::win::GrantAccessToPath(
-      directory->path(), ac_sids,
-      GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE,
-      CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE, /*recursive=*/true);
+  return base::win::GrantAccessToPath(directory->path(), ac_sids, kAccessMask,
+                                      kInheritance, /*recursive=*/true);
 #else
   if (directory->IsOpenForTransferRequired()) {
     directory->OpenForTransfer();
@@ -296,6 +312,7 @@ SandboxGrantResult MaybeGrantSandboxAccessToNetworkContextData(
       // later, it ensures that any new files created by the cache subsystem
       // get the inherited ACE rather than having to set them manually later.
       SCOPED_UMA_HISTOGRAM_TIMER("NetworkService.TimeToGrantCacheAccess");
+      TRACE_EVENT("startup", "NetworkSandbox.MaybeGrantAccessToDataPath");
       if (!MaybeGrantAccessToDataPath(
               sandbox_params, &*params->file_paths->http_cache_directory)) {
         PLOG(ERROR) << "Failed to grant sandbox access to cache directory "

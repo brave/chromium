@@ -67,6 +67,22 @@ class CONTENT_EXPORT WebUsbServiceImpl : public blink::mojom::WebUsbService,
       mojo::PendingAssociatedRemote<device::mojom::UsbDeviceManagerClient>
           client) override;
 
+  // UsbDelegate::Observer implementation:
+  void OnDeviceAdded(const device::mojom::UsbDeviceInfo& device_info) override;
+  void OnDeviceRemoved(
+      const device::mojom::UsbDeviceInfo& device_info) override;
+  void OnDeviceManagerConnectionError() override;
+  void OnPermissionRevoked(const url::Origin& origin) override;
+
+  const mojo::AssociatedRemoteSet<device::mojom::UsbDeviceManagerClient>&
+  clients() const {
+    return clients_;
+  }
+
+  base::WeakPtr<content::ServiceWorkerVersion> service_worker_version() {
+    return service_worker_version_;
+  }
+
  private:
   class UsbDeviceClient;
 
@@ -79,13 +95,6 @@ class CONTENT_EXPORT WebUsbServiceImpl : public blink::mojom::WebUsbService,
   void OnGetDevices(
       GetDevicesCallback callback,
       std::vector<device::mojom::UsbDeviceInfoPtr> device_info_list);
-
-  // UsbDelegate::Observer implementation:
-  void OnDeviceAdded(const device::mojom::UsbDeviceInfo& device_info) override;
-  void OnDeviceRemoved(
-      const device::mojom::UsbDeviceInfo& device_info) override;
-  void OnDeviceManagerConnectionError() override;
-  void OnPermissionRevoked(const url::Origin& origin) override;
 
   void IncrementConnectionCount();
   void DecrementConnectionCount();
@@ -101,7 +110,7 @@ class CONTENT_EXPORT WebUsbServiceImpl : public blink::mojom::WebUsbService,
   const base::WeakPtr<ServiceWorkerVersion> service_worker_version_;
 
   // The request uuid for keeping service worker alive.
-  absl::optional<base::Uuid> service_worker_activity_request_uuid_;
+  std::optional<base::Uuid> service_worker_activity_request_uuid_;
 
   const url::Origin origin_;
 
@@ -111,8 +120,8 @@ class CONTENT_EXPORT WebUsbServiceImpl : public blink::mojom::WebUsbService,
   mojo::AssociatedRemoteSet<device::mojom::UsbDeviceManagerClient> clients_;
 
   // A UsbDeviceClient tracks a UsbDevice pipe that has been passed to Blink.
-  std::vector<std::unique_ptr<UsbDeviceClient>> device_clients_;
   int connection_count_ = 0;
+  std::vector<std::unique_ptr<UsbDeviceClient>> device_clients_;
 
   base::WeakPtrFactory<WebUsbServiceImpl> weak_factory_{this};
 };

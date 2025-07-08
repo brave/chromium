@@ -7,15 +7,16 @@ package org.chromium.components.bookmarks;
 import android.text.TextUtils;
 import android.util.Log;
 
-import org.chromium.base.annotations.CalledByNative;
+import org.jni_zero.CalledByNative;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 /** Simple object representing the bookmark id. */
+@NullMarked
 public class BookmarkId {
     public static final int INVALID_FOLDER_ID = -2;
     public static final int INVALID_ID = -1;
-    public static final int SHOPPING_FILTER_ID = -3;
-    public static final BookmarkId SHOPPING_FOLDER =
-            new BookmarkId(SHOPPING_FILTER_ID, BookmarkType.NORMAL);
 
     private static final String LOG_TAG = "BookmarkId";
     private static final char TYPE_PARTNER = 'p';
@@ -56,13 +57,12 @@ public class BookmarkId {
 
     /**
      * @param s The bookmark id string (Eg: p1 for partner bookmark id 1).
-     * @return the Bookmark id from the string which is a concatenation of
-     *         bookmark type and the bookmark id.
+     * @return the Bookmark id from the string which is a concatenation of bookmark type and the
+     *     bookmark id.
      */
-    public static BookmarkId getBookmarkIdFromString(String s) {
+    public static BookmarkId getBookmarkIdFromString(@Nullable String s) {
         long id = ROOT_FOLDER_ID;
-        @BookmarkType
-        int type = BookmarkType.NORMAL;
+        @BookmarkType int type = BookmarkType.NORMAL;
         if (TextUtils.isEmpty(s)) return new BookmarkId(id, type);
         char folderTypeChar = s.charAt(0);
         if (isValidBookmarkTypeFromChar(folderTypeChar)) {
@@ -77,17 +77,13 @@ public class BookmarkId {
         return new BookmarkId(id, type);
     }
 
-    /**
-     * @return The id of the bookmark.
-     */
+    /** @return The id of the bookmark. */
     @CalledByNative
     public long getId() {
         return mId;
     }
 
-    /**
-     * Returns the bookmark type: {@link BookmarkType#NORMAL} or {@link BookmarkType#PARTNER}.
-     */
+    /** Returns the bookmark type: {@link BookmarkType#NORMAL} or {@link BookmarkType#PARTNER}. */
     @CalledByNative
     public @BookmarkType int getType() {
         return mType;
@@ -121,7 +117,7 @@ public class BookmarkId {
     }
 
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
         if (!(o instanceof BookmarkId)) return false;
         BookmarkId item = (BookmarkId) o;
         return (item.mId == mId && item.mType == mType);

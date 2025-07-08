@@ -8,15 +8,12 @@
 
 #import "base/power_monitor/power_monitor_features.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace base {
 
-bool PowerMonitorDeviceSource::IsOnBatteryPower() {
-#if TARGET_IPHONE_SIMULATOR
-  return false;
+PowerStateObserver::BatteryPowerStatus
+PowerMonitorDeviceSource::GetBatteryPowerStatus() const {
+#if TARGET_OS_SIMULATOR
+  return PowerStateObserver::BatteryPowerStatus::kExternalPower;
 #else
   UIDevice* currentDevice = [UIDevice currentDevice];
   BOOL isCurrentAppMonitoringBattery = currentDevice.isBatteryMonitoringEnabled;
@@ -24,7 +21,9 @@ bool PowerMonitorDeviceSource::IsOnBatteryPower() {
   UIDeviceBatteryState batteryState = [UIDevice currentDevice].batteryState;
   currentDevice.batteryMonitoringEnabled = isCurrentAppMonitoringBattery;
   DCHECK(batteryState != UIDeviceBatteryStateUnknown);
-  return batteryState == UIDeviceBatteryStateUnplugged;
+  return batteryState == UIDeviceBatteryStateUnplugged
+             ? PowerStateObserver::BatteryPowerStatus::kBatteryPower
+             : PowerStateObserver::BatteryPowerStatus::kExternalPower;
 #endif
 }
 
@@ -39,14 +38,14 @@ void PowerMonitorDeviceSource::PlatformInit() {
                       object:nil
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
-                      ProcessPowerEvent(RESUME_EVENT);
+                    ProcessPowerEvent(RESUME_EVENT);
                   }];
   id background =
       [nc addObserverForName:UIApplicationDidEnterBackgroundNotification
                       object:nil
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
-                      ProcessPowerEvent(SUSPEND_EVENT);
+                    ProcessPowerEvent(SUSPEND_EVENT);
                   }];
   notification_observers_.push_back(foreground);
   notification_observers_.push_back(background);

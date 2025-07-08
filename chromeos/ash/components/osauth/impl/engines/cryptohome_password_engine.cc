@@ -3,13 +3,21 @@
 // found in the LICENSE file.
 
 #include "chromeos/ash/components/osauth/impl/engines/cryptohome_password_engine.h"
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 
-#include "base/functional/bind.h"
+#include "base/check.h"
+#include "base/logging.h"
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
-#include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
 #include "chromeos/ash/components/login/auth/auth_performer.h"
-#include "chromeos/ash/components/login/auth/public/auth_factors_configuration.h"
+#include "chromeos/ash/components/login/auth/public/authentication_error.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
+#include "chromeos/ash/components/osauth/impl/engines/cryptohome_based_engine.h"
+#include "chromeos/ash/components/osauth/public/auth_factor_engine.h"
+#include "chromeos/ash/components/osauth/public/common_types.h"
+#include "chromeos/ash/components/osauth/public/cryptohome_core.h"
 
 namespace ash {
 
@@ -18,12 +26,13 @@ CryptohomePasswordEngine::CryptohomePasswordEngine(CryptohomeCore& core)
 
 CryptohomePasswordEngine::~CryptohomePasswordEngine() = default;
 
-absl::optional<cryptohome::AuthFactorRef>
-CryptohomePasswordEngine::LookUpFactor(UserContext& context) {
+std::optional<cryptohome::AuthFactorRef> CryptohomePasswordEngine::LookUpFactor(
+    UserContext& context) {
   const cryptohome::AuthFactor* password_factor =
-      context.GetAuthFactorsData().FindOnlinePasswordFactor();
+      context.GetAuthFactorsData().FindAnyPasswordFactor();
+
   if (!password_factor) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return password_factor->ref();
 }
@@ -51,18 +60,26 @@ void CryptohomePasswordEngine::PerformPasswordAttempt(
   }
   CHECK(get_ref().has_value());
   get_observer()->OnFactorAttempt(GetFactor());
-  get_core()->GetAuthPerformer()->AuthenticateWithPassword(
-      get_ref()->label().value(), raw_password, get_core()->BorrowContext(),
-      base::BindOnce(&CryptohomePasswordEngine::OnAuthAttempt,
-                     weak_factory_.GetWeakPtr()));
+  get_core()->BorrowContext(
+      base::BindOnce(&CryptohomePasswordEngine::PerformAuthenticationAttempt,
+                     weak_factory_.GetWeakPtr(), raw_password));
 }
 
 void CryptohomePasswordEngine::OnAuthAttempt(
     std::unique_ptr<UserContext> context,
-    absl::optional<AuthenticationError> error) {
+    std::optional<AuthenticationError> error) {
   get_core()->ReturnContext(std::move(context));
   get_observer()->OnFactorAttemptResult(GetFactor(),
                                         /* success= */ !error.has_value());
+}
+
+void CryptohomePasswordEngine::PerformAuthenticationAttempt(
+    const std::string& raw_password,
+    std::unique_ptr<UserContext> context) {
+  get_core()->GetAuthPerformer()->AuthenticateWithPassword(
+      get_ref()->label().value(), raw_password, std::move(context),
+      base::BindOnce(&CryptohomePasswordEngine::OnAuthAttempt,
+                     weak_factory_.GetWeakPtr()));
 }
 
 CryptohomePasswordEngineFactory::CryptohomePasswordEngineFactory() = default;

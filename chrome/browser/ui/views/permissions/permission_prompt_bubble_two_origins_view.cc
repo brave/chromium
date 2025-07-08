@@ -4,20 +4,22 @@
 
 #include "chrome/browser/ui/views/permissions/permission_prompt_bubble_two_origins_view.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/favicon_callback.h"
+#include "components/permissions/permission_request.h"
 #include "components/permissions/permission_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/views/controls/image_view.h"
-#include "ui/views/layout/flex_layout.h"
-#include "ui/views/vector_icons.h"
+#include "ui/views/layout/layout_provider.h"
 
 namespace {
 
@@ -26,19 +28,33 @@ constexpr int kDesiredFaviconSizeInPixel = 28;
 // so we can adjust this delay accordingly.
 constexpr int kMaxShowDelayMs = 200;
 
-std::u16string GetWindowTitleTwoOrigin(
+std::optional<std::u16string> GetExtraTextTwoOrigin(
     permissions::PermissionPrompt::Delegate& delegate) {
   CHECK_GT(delegate.Requests().size(), 0u);
   switch (delegate.Requests()[0]->request_type()) {
-    case permissions::RequestType::kStorageAccess:
+    case permissions::RequestType::kStorageAccess: {
+      auto patterns = HostContentSettingsMap::GetPatternsForContentSettingsType(
+          delegate.GetRequestingOrigin(), delegate.GetEmbeddingOrigin(),
+          ContentSettingsType::STORAGE_ACCESS);
+
       return l10n_util::GetStringFUTF16(
-          IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_PROMPT_TITLE,
+          IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_EXPLANATION,
           url_formatter::FormatUrlForSecurityDisplay(
-              delegate.GetRequestingOrigin(),
+              patterns.first.ToRepresentativeUrl(),
+              url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC),
+          url_formatter::FormatUrlForSecurityDisplay(
+              patterns.second.ToRepresentativeUrl(),
               url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
+    }
     default:
-      NOTREACHED_NORETURN();
+      return std::nullopt;
   }
+}
+
+bool HasExtraText(permissions::PermissionPrompt::Delegate& delegate) {
+  CHECK_GT(delegate.Requests().size(), 0u);
+  return delegate.Requests()[0]->request_type() ==
+         permissions::RequestType::kStorageAccess;
 }
 
 }  // namespace
@@ -46,15 +62,20 @@ std::u16string GetWindowTitleTwoOrigin(
 PermissionPromptBubbleTwoOriginsView::PermissionPromptBubbleTwoOriginsView(
     Browser* browser,
     base::WeakPtr<permissions::PermissionPrompt::Delegate> delegate,
-    base::TimeTicks permission_requested_time,
     PermissionPromptStyle prompt_style)
     : PermissionPromptBubbleBaseView(browser,
                                      delegate,
-                                     permission_requested_time,
-                                     prompt_style,
-                                     GetWindowTitleTwoOrigin(*delegate),
-                                     GetWindowTitleTwoOrigin(*delegate),
-                                     /*extra_text=*/absl::nullopt) {
+                                     prompt_style) {
+  SetTitle(CreateWindowTitle());
+
+  auto extra_text = GetExtraTextTwoOrigin(*delegate);
+  if (extra_text.has_value()) {
+    CreateExtraTextLabel(extra_text.value());
+  }
+
+  const auto& requests = delegate->Requests();
+  CreatePermissionButtons(GetAllowAlwaysText(requests), GetBlockText(requests));
+
   // Only requests for Storage Access should use this prompt.
   CHECK(delegate);
   CHECK_GT(delegate->Requests().size(), 0u);
@@ -65,7 +86,7 @@ PermissionPromptBubbleTwoOriginsView::PermissionPromptBubbleTwoOriginsView(
       views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
 
   CreateFaviconRow();
-  MaybeAddDescription();
+  MaybeAddLink();
 
   CHECK(browser);
 
@@ -96,10 +117,18 @@ PermissionPromptBubbleTwoOriginsView::PermissionPromptBubbleTwoOriginsView(
       favicon_tracker_.get());
 }
 
-PermissionPromptBubbleTwoOriginsView::~PermissionPromptBubbleTwoOriginsView() =
-    default;
+PermissionPromptBubbleTwoOriginsView::~PermissionPromptBubbleTwoOriginsView() {
+  if (favicon_left_) {
+    favicon_left_->RemoveObserver(this);
+  }
+  if (favicon_right_) {
+    favicon_right_->RemoveObserver(this);
+  }
+}
 
 void PermissionPromptBubbleTwoOriginsView::AddedToWidget() {
+  StartTrackingPictureInPictureOcclusion();
+
   if (GetUrlIdentityObject().type != UrlIdentity::Type::kDefault) {
     return;
   }
@@ -109,8 +138,8 @@ void PermissionPromptBubbleTwoOriginsView::AddedToWidget() {
 
   title_container->AddChildView(std::move(favicon_container_));
 
-  // TODO(crbug/1433644): There might be a risk of URL spoofing from origins
-  // that are too large to fit in the bubble.
+  // TODO(crbug.com/40064079): There might be a risk of URL spoofing from
+  // origins that are too large to fit in the bubble.
   auto label = std::make_unique<views::Label>(
       GetWindowTitle(), views::style::CONTEXT_DIALOG_TITLE);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -140,6 +169,34 @@ void PermissionPromptBubbleTwoOriginsView::Show() {
                                    base::Unretained(this)));
 }
 
+std::u16string PermissionPromptBubbleTwoOriginsView::CreateWindowTitle() {
+  CHECK_GT(delegate()->Requests().size(), 0u);
+
+  switch (delegate()->Requests()[0]->request_type()) {
+    case permissions::RequestType::kStorageAccess: {
+      content_settings::PatternPair patterns =
+          HostContentSettingsMap::GetPatternsForContentSettingsType(
+              delegate()->GetRequestingOrigin(),
+              delegate()->GetEmbeddingOrigin(),
+              ContentSettingsType::STORAGE_ACCESS);
+
+      size_t title_offset;
+      std::u16string title_string = l10n_util::GetStringFUTF16(
+          IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_PROMPT_TITLE,
+          url_formatter::FormatUrlForSecurityDisplay(
+              patterns.first.ToRepresentativeUrl(),
+              url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC),
+          &title_offset);
+      SetTitleBoldedRanges(
+          {{title_offset,
+            title_offset + GetUrlIdentityObject().name.length()}});
+      return title_string;
+    }
+    default:
+      NOTREACHED();
+  }
+}
+
 void PermissionPromptBubbleTwoOriginsView::CreateFaviconRow() {
   // Getting default favicon.
   ui::ImageModel default_favicon_ = ui::ImageModel::FromVectorIcon(
@@ -160,6 +217,7 @@ void PermissionPromptBubbleTwoOriginsView::CreateFaviconRow() {
   favicon_left_->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
   favicon_left_->SetProperty(views::kMarginsKey,
                              gfx::Insets().set_right(favicon_margin));
+  favicon_left_->AddObserver(this);
 
   // Right favicon for embedding origin.
   favicon_right_ = favicon_container_->AddChildView(
@@ -167,16 +225,18 @@ void PermissionPromptBubbleTwoOriginsView::CreateFaviconRow() {
   favicon_right_->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
   favicon_right_->SetProperty(views::kMarginsKey,
                               gfx::Insets().set_left(favicon_margin));
+  favicon_right_->AddObserver(this);
 }
 
 void PermissionPromptBubbleTwoOriginsView::OnEmbeddingOriginFaviconLoaded(
     const favicon_base::FaviconRawBitmapResult& favicon_result) {
   favicon_right_received_ = true;
+  base::UmaHistogramBoolean("Permissions.Prompt.HasEmbeddingFavicon",
+                            favicon_result.is_valid());
 
   if (favicon_result.is_valid()) {
     favicon_right_->SetImage(ui::ImageModel::FromImage(
-        gfx::Image::CreateFrom1xPNGBytes(favicon_result.bitmap_data->front(),
-                                         favicon_result.bitmap_data->size())));
+        gfx::Image::CreateFrom1xPNGBytes(favicon_result.bitmap_data)));
   }
   MaybeShow();
 }
@@ -184,81 +244,64 @@ void PermissionPromptBubbleTwoOriginsView::OnEmbeddingOriginFaviconLoaded(
 void PermissionPromptBubbleTwoOriginsView::OnRequestingOriginFaviconLoaded(
     const favicon_base::FaviconRawBitmapResult& favicon_result) {
   favicon_left_received_ = true;
+  base::UmaHistogramBoolean("Permissions.Prompt.HasRequestingFavicon",
+                            favicon_result.is_valid());
 
   if (favicon_result.is_valid()) {
     favicon_left_->SetImage(ui::ImageModel::FromImage(
-        gfx::Image::CreateFrom1xPNGBytes(favicon_result.bitmap_data->front(),
-                                         favicon_result.bitmap_data->size())));
+        gfx::Image::CreateFrom1xPNGBytes(favicon_result.bitmap_data)));
   }
   MaybeShow();
 }
 
-void PermissionPromptBubbleTwoOriginsView::MaybeAddDescription() {
+void PermissionPromptBubbleTwoOriginsView::MaybeAddLink() {
   gfx::Range link_range;
   views::StyledLabel::RangeStyleInfo link_style;
-  absl::optional<std::u16string> description =
-      GetDescription(link_range, link_style);
-
-  if (description.has_value()) {
-    auto* description_label =
-        AddChildViewAt(std::make_unique<views::StyledLabel>(), /*index=*/0);
-    description_label->SetText(description.value());
-    description_label->SetID(
-        permissions::PermissionPromptViewID::
-            VIEW_ID_PERMISSION_PROMPT_DESCRIPTION_WITH_LINK);
+  std::optional<std::u16string> link = GetLink(link_range, link_style);
+  if (link.has_value()) {
+    size_t index = HasExtraText(*delegate()) ? 1 : 0;
+    auto* link_label =
+        AddChildViewAt(std::make_unique<views::StyledLabel>(), index);
+    link_label->SetText(link.value());
+    link_label->SetID(
+        permissions::PermissionPromptViewID::VIEW_ID_PERMISSION_PROMPT_LINK);
     if (!link_range.is_empty()) {
-      description_label->AddStyleRange(link_range, link_style);
+      link_label->AddStyleRange(link_range, link_style);
     }
   }
 }
 
-absl::optional<std::u16string>
-PermissionPromptBubbleTwoOriginsView::GetDescription(
+std::optional<std::u16string> PermissionPromptBubbleTwoOriginsView::GetLink(
     gfx::Range& link_range,
     views::StyledLabel::RangeStyleInfo& link_style) {
-  auto delegate = GetDelegate();
-  CHECK_GT(delegate->Requests().size(), 0u);
-  switch (delegate->Requests()[0]->request_type()) {
+  CHECK_GT(delegate()->Requests().size(), 0u);
+  switch (delegate()->Requests()[0]->request_type()) {
     case permissions::RequestType::kStorageAccess:
-      return GetDescriptionStorageAccess(link_range, link_style);
+      return GetLinkStorageAccess(link_range, link_style);
     default:
-      return absl::nullopt;
+      return std::nullopt;
   }
 }
 
-std::u16string
-PermissionPromptBubbleTwoOriginsView::GetDescriptionStorageAccess(
+std::u16string PermissionPromptBubbleTwoOriginsView::GetLinkStorageAccess(
     gfx::Range& link_range,
     views::StyledLabel::RangeStyleInfo& link_style) {
-  std::vector<size_t> offsets;
   auto settings_text_for_link =
       l10n_util::GetStringUTF16(IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_LINK);
 
-  auto description_text = l10n_util::GetStringFUTF16(
-      IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_EXPLANATION,
-      {url_formatter::FormatUrlForSecurityDisplay(
-           GetDelegate()->GetRequestingOrigin(),
-           url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC),
-       url_formatter::FormatUrlForSecurityDisplay(
-           GetDelegate()->GetEmbeddingOrigin(),
-           url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC),
-       settings_text_for_link},
-      &offsets);
-
-  link_range = gfx::Range(offsets.at(2),
-                          offsets.at(2) + settings_text_for_link.length());
+  link_range = gfx::Range(0, settings_text_for_link.length());
   link_style =
       views::StyledLabel::RangeStyleInfo::CreateForLink(base::BindRepeating(
           &PermissionPromptBubbleTwoOriginsView::HelpCenterLinkClicked,
           base::Unretained(this)));
 
-  return description_text;
+  return settings_text_for_link;
 }
 
 void PermissionPromptBubbleTwoOriginsView::HelpCenterLinkClicked(
     const ui::Event& event) {
-  if (auto delegate = GetDelegate()) {
-    delegate->OpenHelpCenterLink(event);
+  if (delegate()) {
+    delegate()->OpenHelpCenterLink(event);
   }
 }
 
@@ -266,5 +309,17 @@ void PermissionPromptBubbleTwoOriginsView::MaybeShow() {
   if (favicon_left_received_ && favicon_right_received_ &&
       show_timer_.IsRunning()) {
     show_timer_.FireNow();
+  }
+}
+
+void PermissionPromptBubbleTwoOriginsView::OnViewIsDeleting(views::View* view) {
+  // This is necessary to avoid dangling pointers since the favicon views are
+  // owned by the custom title which is destroyed before this view.
+  view->RemoveObserver(this);
+  if (view == favicon_left_.get()) {
+    favicon_left_ = nullptr;
+  }
+  if (view == favicon_right_.get()) {
+    favicon_right_ = nullptr;
   }
 }

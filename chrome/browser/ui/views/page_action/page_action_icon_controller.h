@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_view_observer.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/zoom/zoom_event_manager.h"
 #include "components/zoom/zoom_event_manager_observer.h"
 #include "content/public/browser/navigation_handle.h"
@@ -45,10 +46,6 @@ class PageActionIconController : public PageActionIconViewObserver,
 
   bool IsAnyIconVisible() const;
 
-  // Activates the first visible but inactive icon for accessibility. Returns
-  // whether any icons were activated.
-  bool ActivateFirstInactiveBubbleForAccessibility();
-
   // Update the icons' color.
   void SetIconColor(SkColor icon_color);
 
@@ -70,7 +67,9 @@ class PageActionIconController : public PageActionIconViewObserver,
       const;
 
  private:
-  using IconViews = base::flat_map<PageActionIconType, PageActionIconView*>;
+  using IconViews =
+      base::flat_map<PageActionIconType,
+                     raw_ptr<PageActionIconView, CtnExperimental>>;
 
   // PageActionIconViewObserver:
   void OnPageActionIconViewShown(PageActionIconView* view) override;
@@ -109,7 +108,9 @@ class PageActionIconController : public PageActionIconViewObserver,
 
   IconViews page_action_icon_views_;
 
-  std::map<GURL, std::vector<PageActionIconView*>>
+  PrefChangeRegistrar pref_change_registrar_;
+
+  std::map<GURL, std::vector<raw_ptr<PageActionIconView, VectorExperimental>>>
       page_actions_excluded_from_logging_;
 
   base::ScopedObservation<zoom::ZoomEventManager,

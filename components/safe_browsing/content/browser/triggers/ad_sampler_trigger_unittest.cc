@@ -4,6 +4,8 @@
 
 #include "components/safe_browsing/content/browser/triggers/ad_sampler_trigger.h"
 
+#include "base/memory/scoped_refptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
@@ -37,8 +39,8 @@ const char kNonAdName[] = "foo";
 
 class AdSamplerTriggerTest : public content::RenderViewHostTestHarness {
  public:
-  AdSamplerTriggerTest() : task_runner_(new base::TestSimpleTaskRunner) {}
-  ~AdSamplerTriggerTest() override {}
+  AdSamplerTriggerTest() = default;
+  ~AdSamplerTriggerTest() override = default;
 
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
@@ -97,7 +99,8 @@ class AdSamplerTriggerTest : public content::RenderViewHostTestHarness {
   TestingPrefServiceSimple prefs_;
   MockTriggerManager trigger_manager_;
   base::HistogramTester histograms_;
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
+  scoped_refptr<base::TestSimpleTaskRunner> task_runner_ =
+      base::MakeRefCounted<base::TestSimpleTaskRunner>();
 };
 
 TEST_F(AdSamplerTriggerTest, TriggerDisabledBySamplingFrequency) {
@@ -108,7 +111,7 @@ TEST_F(AdSamplerTriggerTest, TriggerDisabledBySamplingFrequency) {
               StartCollectingThreatDetails(_, _, _, _, _, _, _))
       .Times(0);
   EXPECT_CALL(*get_trigger_manager(),
-              FinishCollectingThreatDetails(_, _, _, _, _, _))
+              FinishCollectingThreatDetails(_, _, _, _, _, _, _, _))
       .Times(0);
 
   // This page contains two ads - one identifiable by its URL, the other by the
@@ -135,7 +138,7 @@ TEST_F(AdSamplerTriggerTest, PageWithNoAds) {
               StartCollectingThreatDetails(_, _, _, _, _, _, _))
       .Times(0);
   EXPECT_CALL(*get_trigger_manager(),
-              FinishCollectingThreatDetails(_, _, _, _, _, _))
+              FinishCollectingThreatDetails(_, _, _, _, _, _, _, _))
       .Times(0);
 
   RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
@@ -159,9 +162,11 @@ TEST_F(AdSamplerTriggerTest, PageWithMultipleAds) {
       .Times(2)
       .WillRepeatedly(Return(true));
   EXPECT_CALL(*get_trigger_manager(),
-              FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents_key(), _, _, _, _))
-      .Times(2);
+              FinishCollectingThreatDetails(
+                  TriggerType::AD_SAMPLE, web_contents_key(), _, _, _, _, _, _))
+      .Times(2)
+      .WillRepeatedly(Return(
+          MockTriggerManager::FinishCollectingThreatDetailsResult(true, true)));
 
   // This page contains two ads - one identifiable by its URL, the other by the
   // name of the frame.
@@ -192,8 +197,8 @@ TEST_F(AdSamplerTriggerTest, ReportRejectedByTriggerManager) {
       .Times(1)
       .WillOnce(Return(false));
   EXPECT_CALL(*get_trigger_manager(),
-              FinishCollectingThreatDetails(TriggerType::AD_SAMPLE,
-                                            web_contents_key(), _, _, _, _))
+              FinishCollectingThreatDetails(
+                  TriggerType::AD_SAMPLE, web_contents_key(), _, _, _, _, _, _))
       .Times(0);
 
   // One ad on the page, identified by its URL.
@@ -218,12 +223,8 @@ TEST(AdSamplerTriggerTestFinch, FrequencyDenominatorFeature) {
   // Make sure that setting the frequency denominator via Finch params works as
   // expected, and that the default frequency is used when no Finch config is
   // given.
-  content::BrowserTaskEnvironment task_environment;
-  AdSamplerTrigger trigger_default(nullptr, nullptr, nullptr, nullptr, nullptr,
-                                   nullptr);
-
   EXPECT_EQ(kAdSamplerDefaultFrequency,
-            trigger_default.sampler_frequency_denominator_);
+            AdSamplerTrigger::GetSamplerFrequencyDenominatorForTest());
 
   const size_t kDenominatorInt = 12345;
 
@@ -235,8 +236,7 @@ TEST(AdSamplerTriggerTestFinch, FrequencyDenominatorFeature) {
   scoped_feature_list.InitAndEnableFeatureWithParameters(
       safe_browsing::kAdSamplerTriggerFeature, feature_params);
 
-  AdSamplerTrigger trigger_finch(nullptr, nullptr, nullptr, nullptr, nullptr,
-                                 nullptr);
-  EXPECT_EQ(kDenominatorInt, trigger_finch.sampler_frequency_denominator_);
+  EXPECT_EQ(kDenominatorInt,
+            AdSamplerTrigger::GetSamplerFrequencyDenominatorForTest());
 }
 }  // namespace safe_browsing

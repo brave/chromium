@@ -6,14 +6,17 @@
 
 #include <memory>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/platform_shared_memory_region.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
 #include "media/capture/video/video_capture_buffer_pool_util.h"
 #include "media/capture/video/video_capture_buffer_tracker.h"
 #include "media/capture/video/video_capture_buffer_tracker_factory_impl.h"
+#include "media/capture/video/video_capture_device_client.h"
 #include "ui/gfx/buffer_format_util.h"
 
 namespace media {
@@ -52,21 +55,8 @@ VideoCaptureBufferPoolImpl::DuplicateAsUnsafeRegion(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return {};
   }
   return tracker->DuplicateAsUnsafeRegion();
-}
-
-mojo::ScopedSharedBufferHandle
-VideoCaptureBufferPoolImpl::DuplicateAsMojoBuffer(int buffer_id) {
-  base::AutoLock lock(lock_);
-
-  VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
-  if (!tracker) {
-    NOTREACHED() << "Invalid buffer_id.";
-    return mojo::ScopedSharedBufferHandle();
-  }
-  return tracker->DuplicateAsMojoBuffer();
 }
 
 std::unique_ptr<VideoCaptureBufferHandle>
@@ -76,7 +66,6 @@ VideoCaptureBufferPoolImpl::GetHandleForInProcessAccess(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return nullptr;
   }
 
   return tracker->GetMemoryMappedAccess();
@@ -88,10 +77,21 @@ gfx::GpuMemoryBufferHandle VideoCaptureBufferPoolImpl::GetGpuMemoryBufferHandle(
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return gfx::GpuMemoryBufferHandle();
   }
 
   return tracker->GetGpuMemoryBufferHandle();
+}
+
+VideoCaptureBufferType VideoCaptureBufferPoolImpl::GetBufferType(
+    int buffer_id) {
+  base::AutoLock lock(lock_);
+
+  VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
+  if (!tracker) {
+    NOTREACHED() << "Unrecognized buffer id, buffer_id=" << buffer_id;
+  }
+
+  return tracker->GetBufferType();
 }
 
 VideoCaptureDevice::Client::ReserveResult
@@ -113,7 +113,6 @@ void VideoCaptureBufferPoolImpl::RelinquishProducerReservation(int buffer_id) {
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->SetHeldByProducer(false);
 }
@@ -192,7 +191,6 @@ void VideoCaptureBufferPoolImpl::HoldForConsumers(int buffer_id,
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->AddConsumerHolds(num_clients);
   // Note: The buffer will stay held by the producer until
@@ -206,7 +204,6 @@ void VideoCaptureBufferPoolImpl::RelinquishConsumerHold(int buffer_id,
   VideoCaptureBufferTracker* tracker = GetTracker(buffer_id);
   if (!tracker) {
     NOTREACHED() << "Invalid buffer_id.";
-    return;
   }
   tracker->RemoveConsumerHolds(num_clients);
 }
@@ -270,11 +267,16 @@ VideoCaptureBufferPoolImpl::ReserveForProducerInternal(
 
   // Create the new tracker.
   VideoCaptureBufferType buffer_type = buffer_type_;
-#if BUILDFLAG(IS_WIN)
-  // If the MediaFoundationD3D11VideoCapture path fails, a shared memory buffer
-  // is sent instead.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  // If MediaFoundationD3D11VideoCapture or VideoCaptureDeviceAVFoundation fails
+  // to produce NV12 as is expected on these platforms when the target buffer
+  // type is `kGpuMemoryBuffer`, a shared memory buffer may be sent instead.
   if (buffer_type == VideoCaptureBufferType::kGpuMemoryBuffer &&
-      pixel_format != PIXEL_FORMAT_NV12) {
+      pixel_format != PIXEL_FORMAT_NV12
+#if BUILDFLAG(IS_MAC)
+      && base::FeatureList::IsEnabled(kFallbackToSharedMemoryIfNotNv12OnMac)
+#endif
+  ) {
     buffer_type = VideoCaptureBufferType::kSharedMemory;
   }
 #endif

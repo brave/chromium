@@ -8,19 +8,15 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 #include <stdint.h>
 
+#include <optional>
 #include <set>
+#include <string_view>
 
 #include "build/build_config.h"
-#include "crypto/sha2.h"
 #include "device/bluetooth/bluetooth_device_mac.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if !BUILDFLAG(IS_IOS)
 #import <IOBluetooth/IOBluetooth.h>
-#endif
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
 #endif
 
 @class BluetoothLowEnergyPeripheralDelegate;
@@ -56,7 +52,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   uint16_t GetProductID() const override;
   uint16_t GetDeviceID() const override;
   uint16_t GetAppearance() const override;
-  absl::optional<std::string> GetName() const override;
+  std::optional<std::string> GetName() const override;
   bool IsPaired() const override;
   bool IsConnected() const override;
   bool IsGattConnected() const override;
@@ -92,7 +88,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
  protected:
   // BluetoothDevice override.
   void CreateGattConnectionImpl(
-      absl::optional<BluetoothUUID> service_uuid) override;
+      std::optional<BluetoothUUID> service_uuid) override;
   void DisconnectGatt() override;
 
   // Methods used by BluetoothLowEnergyPeripheralBridge.
@@ -115,7 +111,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLowEnergyDeviceMac
   // http://crbug.com/507824
   static std::string GetPeripheralHashAddress(CBPeripheral* peripheral);
   static std::string GetPeripheralHashAddress(
-      base::StringPiece device_identifier);
+      std::string_view device_identifier);
 
  private:
   friend class BluetoothLowEnergyAdapterApple;

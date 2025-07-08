@@ -64,8 +64,8 @@ android_resources("chrome_tabs_client_example_apk_resources") {
     "src/res/layout/remote_view.xml",
     "src/res/raw/amazing_grace.mp3",
     "src/res/values/strings.xml",
+    "src/res/values/themes.xml",
   ]
-  android_manifest = "src/AndroidManifest.xml"
   deps = [ "//third_party/android_deps:material_design_java" ]
 }
 
@@ -73,6 +73,7 @@ android_apk("custom_tabs_client_example_apk") {
   sources = [
     "src/java/org/chromium/customtabsclient/BottomBarManager.java",
     "src/java/org/chromium/customtabsclient/BrowserActionsReceiver.java",
+    "src/java/org/chromium/customtabsclient/ContextualMenuItemReceiver.java",
     "src/java/org/chromium/customtabsclient/CustomTabsPackageHelper.java",
     "src/java/org/chromium/customtabsclient/MainActivity.java",
     "src/java/org/chromium/customtabsclient/SessionHelper.java",
@@ -83,14 +84,15 @@ android_apk("custom_tabs_client_example_apk") {
   ]
 
   android_manifest = "src/AndroidManifest.xml"
-  target_sdk_version = android_sdk_version
   apk_name = "CustomTabsClientExample"
 
   deps = [
     ":chrome_tabs_client_example_apk_resources",
     "//third_party/android_deps:material_design_java",
+    "//third_party/androidx:androidx_activity_activity_java",
     "//third_party/androidx:androidx_annotation_annotation_java",
     "//third_party/androidx:androidx_appcompat_appcompat_java",
     "//third_party/androidx:androidx_browser_browser_java",
+    "//ui/android:ui_java",
   ]
 }

@@ -12,14 +12,22 @@
 #include <string>
 
 #include "base/allocator/dispatcher/dispatcher.h"
+#include "base/allocator/dispatcher/testing/tools.h"
 #include "base/debug/stack_trace.h"
+#include "partition_alloc/partition_alloc_allocation_data.h"
+#include "partition_alloc/partition_alloc_config.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::allocator::dispatcher::AllocationNotificationData;
 using base::allocator::dispatcher::AllocationSubsystem;
+using base::allocator::dispatcher::FreeNotificationData;
+using base::allocator::dispatcher::MTEMode;
+using testing::Combine;
 using testing::ContainerEq;
 using testing::Message;
 using testing::Test;
+using testing::Values;
 
 namespace base::debug::tracer {
 namespace {
@@ -54,18 +62,40 @@ void AreEqual(const base::debug::tracer::OperationRecord& expected,
 
 }  // namespace
 
-struct AllocationTraceRecorderTest : public Test {
+class AllocationTraceRecorderTest : public Test {
+ protected:
   AllocationTraceRecorder& GetSubjectUnderTest() const {
     return *subject_under_test_;
   }
-
- protected:
   // During test, Buffer will hold a binary copy of the AllocationTraceRecorder
   // under test.
   struct Buffer {
-    alignas(
-        AllocationTraceRecorder) uint8_t data[sizeof(AllocationTraceRecorder)];
+    alignas(AllocationTraceRecorder)
+        std::array<uint8_t, sizeof(AllocationTraceRecorder)> data;
   };
+
+ protected:
+  AllocationNotificationData CreateAllocationData(
+      void* address,
+      size_t size,
+      MTEMode mte_mode = MTEMode::kUndefined) {
+    return AllocationNotificationData(address, size, nullptr,
+                                      AllocationSubsystem::kPartitionAllocator)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
+        .SetMteReportingMode(mte_mode)
+#endif
+        ;
+  }
+
+  FreeNotificationData CreateFreeData(void* address,
+                                      MTEMode mte_mode = MTEMode::kUndefined) {
+    return FreeNotificationData(address,
+                                AllocationSubsystem::kPartitionAllocator)
+#if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
+        .SetMteReportingMode(mte_mode)
+#endif
+        ;
+  }
 
  private:
   // The recorder under test. Depending on number and size of traces, it
@@ -83,11 +113,10 @@ TEST_F(AllocationTraceRecorderTest, VerifyBinaryCopy) {
 
   for (size_t index = 0; index < number_of_records; ++index) {
     if (index & 0x1) {
-      subject_under_test.OnAllocation(this, sizeof(*this),
-                                      AllocationSubsystem::kPartitionAllocator,
-                                      nullptr);
+      subject_under_test.OnAllocation(
+          CreateAllocationData(this, sizeof(*this)));
     } else {
-      subject_under_test.OnFree(this);
+      subject_under_test.OnFree(CreateFreeData(this));
     }
   }
 
@@ -98,11 +127,13 @@ TEST_F(AllocationTraceRecorderTest, VerifyBinaryCopy) {
 
   ASSERT_TRUE(buffer);
 
-  auto* const buffered_recorder =
-      reinterpret_cast<AllocationTraceRecorder*>(&(buffer->data[0]));
+  AllocationTraceRecorder* const buffered_recorder =
+      new (buffer->data.data()) AllocationTraceRecorder();
 
-  memcpy(buffered_recorder, &subject_under_test,
-         sizeof(AllocationTraceRecorder));
+  static_assert(std::is_trivially_copyable_v<AllocationTraceRecorder>);
+  base::byte_span_from_ref(base::allow_nonunique_obj, *buffered_recorder)
+      .copy_from(base::byte_span_from_ref(base::allow_nonunique_obj,
+                                          subject_under_test));
 
   // Verify that the original recorder and the buffered recorder are equal.
   ASSERT_EQ(subject_under_test.size(), buffered_recorder->size());
@@ -111,14 +142,15 @@ TEST_F(AllocationTraceRecorderTest, VerifyBinaryCopy) {
     SCOPED_TRACE(Message("difference detected at index ") << index);
     AreEqual(subject_under_test[index], (*buffered_recorder)[index]);
   }
+
+  buffered_recorder->~AllocationTraceRecorder();
 }
 
 TEST_F(AllocationTraceRecorderTest, VerifySingleAllocation) {
   AllocationTraceRecorder& subject_under_test = GetSubjectUnderTest();
 
   subject_under_test.OnAllocation(
-      &subject_under_test, sizeof(subject_under_test),
-      AllocationSubsystem::kPartitionAllocator, nullptr);
+      CreateAllocationData(&subject_under_test, sizeof(subject_under_test)));
 
   EXPECT_EQ(1ul, subject_under_test.size());
 
@@ -134,7 +166,7 @@ TEST_F(AllocationTraceRecorderTest, VerifySingleAllocation) {
 TEST_F(AllocationTraceRecorderTest, VerifySingleFree) {
   AllocationTraceRecorder& subject_under_test = GetSubjectUnderTest();
 
-  subject_under_test.OnFree(&subject_under_test);
+  subject_under_test.OnFree(CreateFreeData(&subject_under_test));
 
   EXPECT_EQ(1ul, subject_under_test.size());
 
@@ -150,20 +182,26 @@ TEST_F(AllocationTraceRecorderTest, VerifySingleFree) {
 TEST_F(AllocationTraceRecorderTest, VerifyMultipleOperations) {
   AllocationTraceRecorder& subject_under_test = GetSubjectUnderTest();
 
-  // We perform a number of operations.
-  subject_under_test.OnAllocation(this, 1 * sizeof(*this),
-                                  AllocationSubsystem::kPartitionAllocator,
-                                  nullptr);
+  // Some (valid) pointers to use in the allocation operations.
+  std::vector<uint8_t> addrs_buf(sizeof(*this) * 7u);
+  uint8_t* addr0 = &addrs_buf[0u * sizeof(*this)];
+  // uint8_t* addr1 = &addrs_buf[1u * sizeof(*this)];
+  uint8_t* addr2 = &addrs_buf[2u * sizeof(*this)];
+  uint8_t* addr3 = &addrs_buf[3u * sizeof(*this)];
+  uint8_t* addr4 = &addrs_buf[4u * sizeof(*this)];
+  uint8_t* addr5 = &addrs_buf[5u * sizeof(*this)];
+  uint8_t* addr6 = &addrs_buf[6u * sizeof(*this)];
 
-  subject_under_test.OnFree(this + 2);
-  subject_under_test.OnAllocation(this + 3, 3 * sizeof(*this),
-                                  AllocationSubsystem::kPartitionAllocator,
-                                  nullptr);
-  subject_under_test.OnAllocation(this + 4, 4 * sizeof(*this),
-                                  AllocationSubsystem::kPartitionAllocator,
-                                  nullptr);
-  subject_under_test.OnFree(this + 5);
-  subject_under_test.OnFree(this + 6);
+  // We perform a number of operations.
+  subject_under_test.OnAllocation(
+      CreateAllocationData(addr0, 1 * sizeof(*this)));
+  subject_under_test.OnFree(CreateFreeData(addr2));
+  subject_under_test.OnAllocation(
+      CreateAllocationData(addr3, 3 * sizeof(*this)));
+  subject_under_test.OnAllocation(
+      CreateAllocationData(addr4, 4 * sizeof(*this)));
+  subject_under_test.OnFree(CreateFreeData(addr5));
+  subject_under_test.OnFree(CreateFreeData(addr6));
 
   ASSERT_EQ(subject_under_test.size(), 6ul);
 
@@ -171,42 +209,42 @@ TEST_F(AllocationTraceRecorderTest, VerifyMultipleOperations) {
   {
     const auto& entry = subject_under_test[0];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kAllocation);
-    ASSERT_EQ(entry.GetAddress(), this);
+    ASSERT_EQ(entry.GetAddress(), addr0);
     ASSERT_EQ(entry.GetSize(), 1 * sizeof(*this));
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
   {
     const auto& entry = subject_under_test[1];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kFree);
-    ASSERT_EQ(entry.GetAddress(), (this + 2));
+    ASSERT_EQ(entry.GetAddress(), addr2);
     ASSERT_EQ(entry.GetSize(), 0ul);
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
   {
     const auto& entry = subject_under_test[2];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kAllocation);
-    ASSERT_EQ(entry.GetAddress(), (this + 3));
+    ASSERT_EQ(entry.GetAddress(), addr3);
     ASSERT_EQ(entry.GetSize(), 3 * sizeof(*this));
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
   {
     const auto& entry = subject_under_test[3];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kAllocation);
-    ASSERT_EQ(entry.GetAddress(), (this + 4));
+    ASSERT_EQ(entry.GetAddress(), addr4);
     ASSERT_EQ(entry.GetSize(), 4 * sizeof(*this));
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
   {
     const auto& entry = subject_under_test[4];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kFree);
-    ASSERT_EQ(entry.GetAddress(), (this + 5));
+    ASSERT_EQ(entry.GetAddress(), addr5);
     ASSERT_EQ(entry.GetSize(), 0ul);
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
   {
     const auto& entry = subject_under_test[5];
     ASSERT_EQ(entry.GetOperationType(), OperationType::kFree);
-    ASSERT_EQ(entry.GetAddress(), (this + 6));
+    ASSERT_EQ(entry.GetAddress(), addr6);
     ASSERT_EQ(entry.GetSize(), 0ul);
     ASSERT_NE(entry.GetStackTrace()[0], nullptr);
   }
@@ -215,17 +253,22 @@ TEST_F(AllocationTraceRecorderTest, VerifyMultipleOperations) {
 TEST_F(AllocationTraceRecorderTest, VerifyOverflowOfOperations) {
   AllocationTraceRecorder& subject_under_test = GetSubjectUnderTest();
 
-  decltype(subject_under_test.GetMaximumNumberOfTraces()) idx;
+  auto num_traces = subject_under_test.GetMaximumNumberOfTraces();
+
+  // Some (valid) pointers to use in the allocation operations.
+  std::vector<uint8_t> addrs_buf(sizeof(*this) * (num_traces + 1));
+  auto addr = [&](auto idx) { return &addrs_buf[idx * sizeof(*this)]; };
+
+  decltype(num_traces) idx;
   for (idx = 0; idx < subject_under_test.GetMaximumNumberOfTraces(); ++idx) {
     ASSERT_EQ(subject_under_test.size(), idx);
     const bool is_allocation = !(idx & 0x1);
 
     // Record an allocation or free.
     if (is_allocation) {
-      subject_under_test.OnAllocation(
-          this + idx, idx, AllocationSubsystem::kPartitionAllocator, nullptr);
+      subject_under_test.OnAllocation(CreateAllocationData(addr(idx), idx));
     } else {
-      subject_under_test.OnFree(this + idx);
+      subject_under_test.OnFree(CreateFreeData(addr(idx)));
     }
 
     // Some verifications.
@@ -235,7 +278,7 @@ TEST_F(AllocationTraceRecorderTest, VerifyOverflowOfOperations) {
       // Some verification on the added entry.
       {
         const auto& last_entry = subject_under_test[idx];
-        ASSERT_EQ(last_entry.GetAddress(), (this + idx));
+        ASSERT_EQ(last_entry.GetAddress(), addr(idx));
         // No full verification intended, just a check that something has been
         // written.
         ASSERT_NE(last_entry.GetStackTrace()[0], nullptr);
@@ -252,7 +295,7 @@ TEST_F(AllocationTraceRecorderTest, VerifyOverflowOfOperations) {
       {
         const auto& first_entry = subject_under_test[0];
         ASSERT_EQ(first_entry.GetOperationType(), OperationType::kAllocation);
-        ASSERT_EQ(first_entry.GetAddress(), this);
+        ASSERT_EQ(first_entry.GetAddress(), addr(0));
         ASSERT_EQ(first_entry.GetSize(), 0ul);
       }
     }
@@ -263,14 +306,13 @@ TEST_F(AllocationTraceRecorderTest, VerifyOverflowOfOperations) {
   {
     const auto& old_second_entry = subject_under_test[1];
 
-    subject_under_test.OnAllocation(
-        this + idx, idx, AllocationSubsystem::kPartitionAllocator, nullptr);
+    subject_under_test.OnAllocation(CreateAllocationData(addr(idx), idx));
     ASSERT_EQ(subject_under_test.size(),
               subject_under_test.GetMaximumNumberOfTraces());
     const auto& last_entry =
         subject_under_test[subject_under_test.GetMaximumNumberOfTraces() - 1];
     ASSERT_EQ(last_entry.GetOperationType(), OperationType::kAllocation);
-    ASSERT_EQ(last_entry.GetAddress(), (this + idx));
+    ASSERT_EQ(last_entry.GetAddress(), addr(idx));
 
     // Check that the previous first entry (an allocation) is gone. Accessing
     // the first record now yields what was previously the second record (a free
@@ -279,7 +321,7 @@ TEST_F(AllocationTraceRecorderTest, VerifyOverflowOfOperations) {
 
     ASSERT_EQ(&old_second_entry, &first_entry);
     ASSERT_EQ(first_entry.GetOperationType(), OperationType::kFree);
-    ASSERT_EQ(first_entry.GetAddress(), (this + 1));
+    ASSERT_EQ(first_entry.GetAddress(), addr(1));
   }
 }
 
@@ -307,14 +349,12 @@ class OperationRecordTest : public Test {
   using ReferenceStackTrace = std::vector<const void*>;
 
   ReferenceStackTrace GetReferenceTrace() {
-    constexpr size_t max_trace_size = 128;
-    const void* frame_pointers[max_trace_size]{nullptr};
-    const auto num_frames = base::debug::TraceStackFramePointers(
-        &frame_pointers[0], max_trace_size, 0);
-    ReferenceStackTrace trace;
-    std::copy_n(std::begin(frame_pointers), num_frames,
-                std::back_inserter(trace));
-    return trace;
+    ReferenceStackTrace frame_pointers(128);
+    const auto num_frames =
+        base::debug::TraceStackFramePointers(frame_pointers, 0);
+    frame_pointers.resize(num_frames);
+    frame_pointers.shrink_to_fit();
+    return frame_pointers;
   }
 
   void VerifyStackTrace(
@@ -328,12 +368,12 @@ class OperationRecordTest : public Test {
     // to inline, depending i.e. on the optimization level. Therefore, we search
     // for the first common frame in both stack-traces. From there on, both must
     // be equal for the remaining number of frames.
-    auto* const* const it_stack_trace_begin = std::begin(stack_trace);
-    auto* const* const it_stack_trace_end =
+    auto const it_stack_trace_begin = std::begin(stack_trace);
+    auto const it_stack_trace_end =
         std::find(it_stack_trace_begin, std::end(stack_trace), nullptr);
     auto const it_reference_stack_trace_end = std::end(reference_stack_trace);
 
-    auto* const* it_stack_trace = std::find_first_of(
+    auto const it_stack_trace = std::find_first_of(
         it_stack_trace_begin, it_stack_trace_end,
         std::begin(reference_stack_trace), it_reference_stack_trace_end);
 

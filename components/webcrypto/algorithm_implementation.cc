@@ -8,6 +8,7 @@
 #include "components/webcrypto/algorithms/asymmetric_key_util.h"
 #include "components/webcrypto/blink_key_handle.h"
 #include "components/webcrypto/status.h"
+#include "crypto/evp.h"
 
 namespace webcrypto {
 
@@ -64,14 +65,14 @@ Status AlgorithmImplementation::GenerateKey(
 Status AlgorithmImplementation::DeriveBits(
     const blink::WebCryptoAlgorithm& algorithm,
     const blink::WebCryptoKey& base_key,
-    absl::optional<unsigned int> length_bits,
+    std::optional<unsigned int> length_bits,
     std::vector<uint8_t>* derived_bytes) const {
   return Status::ErrorUnsupported();
 }
 
 Status AlgorithmImplementation::GetKeyLength(
     const blink::WebCryptoAlgorithm& key_length_algorithm,
-    absl::optional<unsigned int>* length_bits) const {
+    std::optional<unsigned int>* length_bits) const {
   return Status::ErrorUnsupported();
 }
 
@@ -93,32 +94,23 @@ Status AlgorithmImplementation::ExportKey(blink::WebCryptoKeyFormat format,
 
 Status AlgorithmImplementation::SerializeKeyForClone(
     const blink::WebCryptoKey& key,
-    blink::WebVector<uint8_t>* key_data) const {
+    std::vector<uint8_t>* key_data) const {
   switch (key.GetType()) {
     case blink::kWebCryptoKeyTypeSecret:
       *key_data = GetSymmetricKeyData(key);
       return Status::Success();
 
     case blink::kWebCryptoKeyTypePublic: {
-      std::vector<uint8_t> vec;
-      Status status = ExportPKeySpki(GetEVP_PKEY(key), &vec);
-      if (status.IsSuccess()) {
-        *key_data = vec;
-      }
-      return status;
+      *key_data = crypto::evp::PublicKeyToBytes(GetEVP_PKEY(key));
+      return Status::Success();
     }
 
     case blink::kWebCryptoKeyTypePrivate: {
-      std::vector<uint8_t> vec;
-      Status status = ExportPKeyPkcs8(GetEVP_PKEY(key), &vec);
-      if (status.IsSuccess()) {
-        *key_data = vec;
-      }
-      return status;
+      *key_data = crypto::evp::PrivateKeyToBytes(GetEVP_PKEY(key));
+      return Status::Success();
     }
   }
   NOTREACHED();
-  return Status::ErrorUnexpected();
 }
 
 Status AlgorithmImplementation::DeserializeKeyForClone(

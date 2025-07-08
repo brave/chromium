@@ -20,17 +20,20 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalToIgnoringCase;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.AllOf.allOf;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Pair;
 import android.view.View;
 
 import androidx.recyclerview.widget.RecyclerView.ViewHolder;
+import androidx.test.espresso.Espresso;
 import androidx.test.espresso.action.ViewActions;
 import androidx.test.espresso.contrib.RecyclerViewActions;
 import androidx.test.espresso.matcher.BoundedMatcher;
@@ -39,38 +42,41 @@ import androidx.test.filters.MediumTest;
 import org.hamcrest.Description;
 import org.hamcrest.Matcher;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Mockito;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
 import org.chromium.base.DiscardableReferencePool;
-import org.chromium.base.FeatureList;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.HistogramWatcher;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
-import org.chromium.chrome.browser.back_press.BackPressManager;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma.SecondaryActivity;
 import org.chromium.chrome.browser.download.home.list.ListUtils;
 import org.chromium.chrome.browser.download.home.list.holder.ListItemViewHolder;
 import org.chromium.chrome.browser.download.home.rename.RenameUtils;
 import org.chromium.chrome.browser.download.home.toolbar.DownloadHomeToolbar;
 import org.chromium.chrome.browser.download.internal.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
+import org.chromium.components.browser_ui.modaldialog.ModalDialogView;
 import org.chromium.components.browser_ui.util.date.StringUtils;
+import org.chromium.components.download.DownloadDangerType;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.offline_items_collection.ContentId;
@@ -81,34 +87,37 @@ import org.chromium.components.offline_items_collection.RenameResult;
 import org.chromium.components.url_formatter.SchemeDisplay;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.components.url_formatter.UrlFormatterJni;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.modaldialog.ModalDialogManager;
-import org.chromium.ui.test.util.BlankUiTestActivityTestCase;
+import org.chromium.ui.test.util.BlankUiTestActivity;
+import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /** Tests the download home V2. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
-public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
-    @Mock
-    private Tracker mTracker;
-    @Mock
-    private SnackbarManager mSnackbarManager;
+public class DownloadActivityV2Test {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
+    @ClassRule
+    public static BaseActivityTestRule<BlankUiTestActivity> sActivityTestRule =
+            new BaseActivityTestRule<>(BlankUiTestActivity.class);
+
+    private static BlankUiTestActivity sActivity;
+
+    @Mock private Tracker mTracker;
+    @Mock private SnackbarManager mSnackbarManager;
+    @Mock private UrlFormatter.Natives mUrlFormatterJniMock;
+    @Mock private DownloadHelpPageLauncher mHelpPageLauncher;
+
     @Rule
-    public JniMocker mJniMocker = new JniMocker();
-    @Mock
-    private UrlFormatter.Natives mUrlFormatterJniMock;
-    @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mOverrideContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
 
     private ModalDialogManager.Presenter mAppModalPresenter;
 
@@ -122,10 +131,11 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
 
     /**
      * Returns a Matcher to find a particular {@link ViewHolder} that contains certain text.
+     *
      * @param text The text that the view holder has in its view hierarchy.
      */
     private static Matcher<ViewHolder> hasTextInViewHolder(String text) {
-        return new BoundedMatcher<ViewHolder, ListItemViewHolder>(ListItemViewHolder.class) {
+        return new BoundedMatcher<>(ListItemViewHolder.class) {
             @Override
             public void describeTo(Description description) {
                 description.appendText("has text: " + text);
@@ -141,28 +151,32 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
         };
     }
 
-    @Override
-    public void setUpTest() throws Exception {
-        super.setUpTest();
-        MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(UrlFormatterJni.TEST_HOOKS, mUrlFormatterJniMock);
-        when(mUrlFormatterJniMock.formatStringUrlForSecurityDisplay(
-                     anyString(), eq(SchemeDisplay.OMIT_HTTP_AND_HTTPS)))
-                .then(inv -> inv.getArgument(0));
+    @BeforeClass
+    public static void setupSuite() {
+        sActivity = sActivityTestRule.launchActivity(null);
+    }
 
-        Map<String, Boolean> features = new HashMap<>();
-        features.put(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER, false);
-        features.put(ChromeFeatureList.EMPTY_STATES, false);
+    @Before
+    public void setUp() throws Exception {
+        ModalDialogView.disableButtonTapProtectionForTesting();
 
-        FeatureList.setTestFeatures(features);
+        UrlFormatterJni.setInstanceForTesting(mUrlFormatterJniMock);
+        when(mUrlFormatterJniMock.formatUrlForSecurityDisplay(
+                        any(), eq(SchemeDisplay.OMIT_HTTP_AND_HTTPS)))
+                .then(
+                        inv -> {
+                            GURL url = inv.getArgument(0);
+                            return url.getSpec();
+                        });
 
-        mStubbedOfflineContentProvider = new StubbedOfflineContentProvider() {
-            @Override
-            public void renameItem(ContentId id, String name, Callback<Integer> callback) {
-                new Handler(Looper.getMainLooper())
-                        .post(() -> callback.onResult(handleRename(name)));
-            }
-        };
+        mStubbedOfflineContentProvider =
+                new StubbedOfflineContentProvider() {
+                    @Override
+                    public void renameItem(ContentId id, String name, Callback<Integer> callback) {
+                        new Handler(Looper.getMainLooper())
+                                .post(() -> callback.onResult(handleRename(name)));
+                    }
+                };
 
         OfflineItem item0 =
                 StubbedProvider.createOfflineItem(0, "20151019 07:26", OfflineItemFilter.PAGE);
@@ -182,41 +196,88 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     }
 
     private void setUpUi() {
-        DownloadManagerUiConfig config = DownloadManagerUiConfigHelper.fromFlags()
-                                                 .setOTRProfileID(null)
-                                                 .setIsSeparateActivity(true)
-                                                 .build();
+        setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ false);
+    }
 
-        mAppModalPresenter = new AppModalPresenter(getActivity());
+    private void setUpUi(boolean showDangerousItems, boolean autoFocusSearchBox) {
+        DownloadManagerUiConfig config =
+                DownloadManagerUiConfigHelper.fromFlags(sActivity)
+                        .setOtrProfileId(null)
+                        .setIsSeparateActivity(true)
+                        .setShowDangerousItems(showDangerousItems)
+                        .setAutoFocusSearchBox(autoFocusSearchBox)
+                        .build();
+
+        mAppModalPresenter = new AppModalPresenter(sActivity);
 
         mModalDialogManager =
                 new ModalDialogManager(mAppModalPresenter, ModalDialogManager.ModalDialogType.APP);
 
-        FaviconProvider faviconProvider = (url, faviconSizePx, callback) -> {};
-        Callback<Context> settingsLauncher = context -> {};
+        FaviconProvider faviconProvider =
+                new FaviconProvider() {
+                    @Override
+                    public void destroy() {}
+
+                    @Override
+                    public void getFavicon(
+                            final String url, int faviconSizePx, Callback<Bitmap> callback) {}
+                };
+        Callback<Context> settingsNavigation = context -> {};
         ObservableSupplierImpl<Boolean> isPrefetchEnabledSupplier = new ObservableSupplierImpl<>();
         isPrefetchEnabledSupplier.set(true);
 
         mDownloadCoordinator =
-                new DownloadManagerCoordinatorImpl(getActivity(), config, isPrefetchEnabledSupplier,
-                        settingsLauncher, mSnackbarManager, mModalDialogManager, mTracker,
-                        faviconProvider, mStubbedOfflineContentProvider, mDiscardableReferencePool);
-        getActivity().setContentView(mDownloadCoordinator.getView());
-        if (BackPressManager.isSecondaryActivityEnabled()) {
-            BackPressHelper.create(getActivity(), getActivity().getOnBackPressedDispatcher(),
-                    mDownloadCoordinator.getBackPressHandlers(), SecondaryActivity.DOWNLOAD);
-        } else {
-            BackPressHelper.create(getActivity(), getActivity().getOnBackPressedDispatcher(),
-                    mDownloadCoordinator::onBackPressed, SecondaryActivity.DOWNLOAD);
-        }
+                new DownloadManagerCoordinatorImpl(
+                        sActivity,
+                        config,
+                        isPrefetchEnabledSupplier,
+                        settingsNavigation,
+                        mSnackbarManager,
+                        mModalDialogManager,
+                        mHelpPageLauncher,
+                        mTracker,
+                        faviconProvider,
+                        mStubbedOfflineContentProvider,
+                        mDiscardableReferencePool);
+        sActivity.setContentView(mDownloadCoordinator.getView());
+        BackPressHelper.create(
+                sActivity,
+                sActivity.getOnBackPressedDispatcher(),
+                mDownloadCoordinator.getBackPressHandlers());
 
         mDownloadCoordinator.updateForUrl(UrlConstants.DOWNLOADS_URL);
     }
 
+    // Adds a dangerous item in Download Home. Returns ID of the item.
+    private ContentId setUpDangerousItem() {
+        OfflineItem dangerousItem =
+                StubbedProvider.createOfflineItem(
+                        "offline_guid_5",
+                        JUnitTestGURLs.URL_2,
+                        OfflineItemState.COMPLETE,
+                        1024,
+                        "dangerous",
+                        "/data/fake_path/Downloads/file_5",
+                        System.currentTimeMillis(),
+                        100000,
+                        OfflineItemFilter.OTHER);
+        dangerousItem.dangerType = DownloadDangerType.DANGEROUS_CONTENT;
+        dangerousItem.isDangerous = true;
+        dangerousItem.canRename = false;
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mStubbedOfflineContentProvider.addItem(dangerousItem));
+        return dangerousItem.id;
+    }
+
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/372835715")
     public void testLaunchingActivity() {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         // Shows activity title.
         onView(withText("Downloads")).check(matches(isDisplayed()));
@@ -236,7 +297,10 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testTabsAreShown() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
         checkItemsDisplayed(true, true, true, true);
 
         Matcher filesTabMatcher = withText(equalToIgnoringCase("My Files"));
@@ -256,17 +320,26 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testChipsAreShown() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         // Two PAGES and two OTHER files. Should show All, Pages, and Other chips.
         checkItemsDisplayed(true, true, true, true);
 
-        Matcher allChipMatcher = allOf(withText(equalToIgnoringCase("All")),
-                isDescendantOfA(withId(R.id.content_container)));
-        Matcher pagesChipMatcher = allOf(withText(equalToIgnoringCase("Pages")),
-                isDescendantOfA(withId(R.id.content_container)));
-        Matcher otherChipMatcher = allOf(withText(equalToIgnoringCase("Other")),
-                isDescendantOfA(withId(R.id.content_container)));
+        Matcher allChipMatcher =
+                allOf(
+                        withText(equalToIgnoringCase("All")),
+                        isDescendantOfA(withId(R.id.content_container)));
+        Matcher pagesChipMatcher =
+                allOf(
+                        withText(equalToIgnoringCase("Pages")),
+                        isDescendantOfA(withId(R.id.content_container)));
+        Matcher otherChipMatcher =
+                allOf(
+                        withText(equalToIgnoringCase("Other")),
+                        isDescendantOfA(withId(R.id.content_container)));
 
         onView(allChipMatcher).check(matches(isDisplayed()));
         onView(pagesChipMatcher).check(matches(isDisplayed()));
@@ -288,34 +361,10 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testPrefetchTabEmptyText() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
-
-        onView(withId(R.id.empty)).check(matches(not(isDisplayed())));
-
-        // Go to Prefetch tab. It should be empty.
-        onView(withText(equalToIgnoringCase("Explore Offline")))
-                .check(matches(isDisplayed()))
-                .perform(ViewActions.click());
-        onView(withText(containsString("Articles appear here"))).check(matches(isDisplayed()));
-        onView(withId(R.id.empty)).check(matches(isDisplayed()));
-
-        // Go back to files tab. It shouldn't be empty.
-        onView(withText(equalToIgnoringCase("My Files")))
-                .check(matches(isDisplayed()))
-                .perform(ViewActions.click());
-        onView(withId(R.id.empty)).check(matches(not(isDisplayed())));
-    }
-
-    @Test
-    @MediumTest
-    public void testPrefetchTabEmptyText_EmptyState() throws Exception {
-        // Enable Empty State FF.
-        Map<String, Boolean> features = new HashMap<>();
-        features.put(ChromeFeatureList.EMPTY_STATES, true);
-        features.put(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER, false);
-        FeatureList.setTestFeatures(features);
-
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         onView(withId(R.id.empty_state_icon)).check(matches(not(isDisplayed())));
 
@@ -336,23 +385,33 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testAddRemoveItems() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         String storageHeaderText = "Using 1.10 KB of";
         onView(withText(containsString(storageHeaderText))).check(matches(isDisplayed()));
 
         // Add an item. The new item should be visible and the storage text should be updated.
-        OfflineItem item5 = StubbedProvider.createOfflineItem("offline_guid_5",
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_2), OfflineItemState.COMPLETE, 1024,
-                "page 5", "/data/fake_path/Downloads/file_5", System.currentTimeMillis(), 100000,
-                OfflineItemFilter.OTHER);
+        OfflineItem item5 =
+                StubbedProvider.createOfflineItem(
+                        "offline_guid_5",
+                        JUnitTestGURLs.URL_2,
+                        OfflineItemState.COMPLETE,
+                        1024,
+                        "page 5",
+                        "/data/fake_path/Downloads/file_5",
+                        System.currentTimeMillis(),
+                        100000,
+                        OfflineItemFilter.OTHER);
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> mStubbedOfflineContentProvider.addItem(item5));
+        ThreadUtils.runOnUiThreadBlocking(() -> mStubbedOfflineContentProvider.addItem(item5));
         onView(withText("page 5")).check(matches(isDisplayed()));
         onView(withText(containsString("Using 2.10 KB of"))).check(matches(isDisplayed()));
 
         // Delete an item. The item should be gone and the storage text should be updated.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> mStubbedOfflineContentProvider.removeItem(item5.id));
         onView(withText("page 5")).check(doesNotExist());
         onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
@@ -360,8 +419,196 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
 
     @Test
     @MediumTest
+    public void testAddRemoveDangerousItem() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        String storageHeaderText = "Using 1.10 KB of";
+        onView(withText(containsString(storageHeaderText))).check(matches(isDisplayed()));
+
+        // Add a dangerous item. The new item should be visible and the storage text should not
+        // include the size of the dangerous item.
+        ContentId dangerousItemId = setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        onView(withText(containsString("Dangerous download blocked")))
+                .check(matches(isDisplayed()));
+
+        // Open menu for a dangerous download, it should not have share, rename options.
+        onView(allOf(withId(R.id.more), hasSibling(withText("dangerous"))))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        onView(withText("Delete from history")).check(matches(isDisplayed()));
+        onView(withText("Download")).check(matches(isDisplayed()));
+        onView(withText("Rename")).check(doesNotExist());
+        onView(withText("Share")).check(doesNotExist());
+
+        // Delete the item. The item should be gone and the storage text should be unchanged.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mStubbedOfflineContentProvider.removeItem(dangerousItemId));
+        onView(withText("dangerous")).check(doesNotExist());
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
+    }
+
+    @Test
+    @MediumTest
+    public void testDangerousItemNotShownDueToConfig() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ false);
+                });
+
+        String storageHeaderText = "Using 1.10 KB of";
+        onView(withText(containsString(storageHeaderText))).check(matches(isDisplayed()));
+
+        // Attempt to add a dangerous item. The new item should not be visible because the config
+        // does not specify showDangerousItems.
+        ContentId dangerousItemId = setUpDangerousItem();
+        onView(withText("dangerous")).check(doesNotExist());
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
+
+        // Delete the item. Nothing should change because it was never displayed.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mStubbedOfflineContentProvider.removeItem(dangerousItemId));
+        onView(withText("dangerous")).check(doesNotExist());
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        onView(withText(containsString("Dangerous download blocked"))).check(doesNotExist());
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/427410747")
+    public void testDeleteDangerousUsingMenu() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+
+        // Delete a dangerous item using three dot menu. The item should be removed from the list.
+        onView(allOf(withId(R.id.more), hasSibling(withText("dangerous"))))
+                .perform(ViewActions.click());
+        onView(withText("Delete from history"))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText("dangerous")).check(doesNotExist());
+                });
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/427410747")
+    public void testDeleteDangerousUsingSelection() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        // Long-press the dangerous item to select it.
+        onView(withText("dangerous"))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.longClick());
+
+        // Delete using the icon on the toolbar.
+        PostTask.runOrPostTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    DownloadHomeToolbar toolbar = sActivity.findViewById(R.id.download_toolbar);
+                    toolbar.getMenu()
+                            .performIdentifierAction(R.id.selection_mode_delete_menu_id, 0);
+                });
+
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText("dangerous")).check(doesNotExist());
+                });
+    }
+
+    @Test
+    @MediumTest
+    public void testBypassDangerousWarning() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        String storageHeaderText = "Using 1.10 KB of";
+        onView(withText(containsString(storageHeaderText))).check(matches(isDisplayed()));
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+        onView(withText(containsString("Using 1.10 KB of"))).check(matches(isDisplayed()));
+        // Open bypass dialog by clicking on the item.
+        onView(withText(containsString("Dangerous download blocked")))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Click the bypass button.
+        onView(allOf(withId(R.id.negative_button), withText("Download anyway")))
+                .inRoot(isDialog())
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Wait for the download to be validated.
+        mStubbedOfflineContentProvider.getValidateDangerousDownloadHelper().waitForOnly();
+
+        // The UI has updated that the download is no longer dangerous, and now counts towards the
+        // storage total.
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    onView(withText(containsString("Dangerous download blocked")))
+                            .check(doesNotExist());
+                });
+        onView(withText(containsString("Using 2.10 KB of"))).check(matches(isDisplayed()));
+    }
+
+    @Test
+    @MediumTest
+    @DisabledTest(message = "crbug.com/423066352")
+    public void testWarningBypassDialogLearnMore() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ true, /* autoFocusSearchBox= */ false);
+                });
+
+        // Add a dangerous item.
+        setUpDangerousItem();
+        onView(withText("dangerous")).check(matches(isDisplayed()));
+        // Open bypass dialog by clicking on the item.
+        onView(withText(containsString("Dangerous download blocked")))
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        // Click the Learn more button.
+        onView(allOf(withId(R.id.positive_button), withText("Learn more")))
+                .inRoot(isDialog())
+                .check(matches(isDisplayed()))
+                .perform(ViewActions.click());
+
+        Mockito.verify(mHelpPageLauncher).openUrl(eq(sActivity), anyString());
+    }
+
+    @Test
+    @MediumTest
     public void testShowListItemMenuWithRename() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
         onView(withText("page 3")).check(matches(isDisplayed()));
 
         // Open menu for a download, it should have share, delete, and rename options.
@@ -371,13 +618,20 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
 
         onView(withText("Rename")).check(matches(isDisplayed()));
         onView(withText("Delete")).check(matches(isDisplayed()));
-        onView(withText("Share")).check(matches(isDisplayed()));
+        if (BuildInfo.getInstance().isAutomotive) {
+            onView(withText("Share")).check(doesNotExist());
+        } else {
+            onView(withText("Share")).check(matches(isDisplayed()));
+        }
     }
 
     @Test
     @MediumTest
     public void testShowListItemMenuWithoutRename() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         // The last item may be outside the view port, that recycler view won't create the view
         // holder, so scroll to that view holder first.
@@ -391,13 +645,20 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
 
         onView(withText("Rename")).check(doesNotExist());
         onView(withText("Delete")).check(matches(isDisplayed()));
-        onView(withText("Share")).check(matches(isDisplayed()));
+        if (BuildInfo.getInstance().isAutomotive) {
+            onView(withText("Share")).check(doesNotExist());
+        } else {
+            onView(withText("Share")).check(matches(isDisplayed()));
+        }
     }
 
     @Test
     @MediumTest
     public void testShowToolbarMenu() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         // In non-selection state settings, search and close menu should be showing, the selection
         // toolbar should not exist.
@@ -421,58 +682,12 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
         onView(withId(R.id.search_menu_id)).check(doesNotExist());
         onView(withId(R.id.close_menu_id)).check(doesNotExist());
         onView(withId(R.id.selection_mode_number)).check(matches(isDisplayed()));
-        onView(withId(R.id.selection_mode_share_menu_id)).check(matches(isDisplayed()));
+        if (BuildInfo.getInstance().isAutomotive) {
+            onView(withId(R.id.selection_mode_share_menu_id)).check(matches(not(isDisplayed())));
+        } else {
+            onView(withId(R.id.selection_mode_share_menu_id)).check(matches(isDisplayed()));
+        }
         onView(withId(R.id.selection_mode_delete_menu_id)).check(matches(isDisplayed()));
-
-        // The last item may be outside the view port, that recycler view won't create the view
-        // holder, so scroll to that view holder first.
-        onView(withId(R.id.download_home_recycler_view))
-                .perform(RecyclerViewActions.scrollToHolder(hasTextInViewHolder("page 1")));
-
-        // Deselect the same item.
-        onView(withText("page 1")).perform(ViewActions.longClick());
-
-        // The toolbar should flip back to non-selection state.
-        onView(withId(R.id.settings_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.search_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.close_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.selection_mode_number)).check(matches(not(isDisplayed())));
-        onView(withId(R.id.selection_mode_share_menu_id)).check(doesNotExist());
-        onView(withId(R.id.selection_mode_delete_menu_id)).check(doesNotExist());
-    }
-
-    @Test
-    @MediumTest
-    public void testShowToolbarMenu_noShareOnAutomotive() throws Exception {
-        mAutomotiveContextWrapperTestRule.setIsAutomotive(true);
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
-
-        // In non-selection state settings, search and close menu should be showing, the selection
-        // toolbar should not exist.
-        onView(withId(R.id.settings_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.search_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.close_menu_id)).check(matches(isDisplayed()));
-        onView(withId(R.id.selection_mode_number)).check(matches(not(isDisplayed())));
-        onView(withId(R.id.selection_mode_share_menu_id)).check(doesNotExist());
-        onView(withId(R.id.selection_mode_delete_menu_id)).check(doesNotExist());
-
-        // The last item may be outside the view port, that recycler view won't create the view
-        // holder, so scroll to that view holder first.
-        onView(withId(R.id.download_home_recycler_view))
-                .perform(RecyclerViewActions.scrollToHolder(hasTextInViewHolder("page 1")));
-
-        // Select an item.
-        onView(withText("page 1")).perform(ViewActions.longClick());
-
-        // Selection toolbar should be showing. Settings, search, and close menu should be gone.
-        onView(withId(R.id.settings_menu_id)).check(doesNotExist());
-        onView(withId(R.id.search_menu_id)).check(doesNotExist());
-        onView(withId(R.id.close_menu_id)).check(doesNotExist());
-        onView(withId(R.id.selection_mode_number)).check(matches(isDisplayed()));
-        onView(withId(R.id.selection_mode_delete_menu_id)).check(matches(isDisplayed()));
-        // Sharing downloads is currently disabled on Automotive, so the share menu should never
-        // be displayed.
-        onView(withId(R.id.selection_mode_share_menu_id)).check(matches(not(isDisplayed())));
 
         // The last item may be outside the view port, that recycler view won't create the view
         // holder, so scroll to that view holder first.
@@ -494,7 +709,10 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testDeleteItem() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
         SnackbarManager.setDurationForTesting(1);
 
         // The last item may be outside the view port, that recycler view won't create the view
@@ -515,49 +733,13 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
         onView(withText("page 3")).check(matches(isDisplayed())).perform(ViewActions.longClick());
         onView(withText("page 4")).check(matches(isDisplayed())).perform(ViewActions.longClick());
 
-        PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, () -> {
-            DownloadHomeToolbar toolbar = getActivity().findViewById(R.id.download_toolbar);
-            toolbar.getMenu().performIdentifierAction(R.id.selection_mode_delete_menu_id, 0);
-        });
-
-        // The files tab should show empty view now.
-        onView(withId(R.id.empty)).check(matches(isDisplayed()));
-    }
-
-    @Test
-    @MediumTest
-    public void testDeleteItem_EmptyState() throws Exception {
-        // Enable Empty State FF.
-        Map<String, Boolean> features = new HashMap<>();
-        features.put(ChromeFeatureList.EMPTY_STATES, true);
-        features.put(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER, false);
-        FeatureList.setTestFeatures(features);
-
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
-        SnackbarManager.setDurationForTesting(1);
-
-        // The last item may be outside the view port, that recycler view won't create the view
-        // holder, so scroll to that view holder first.
-        onView(withId(R.id.download_home_recycler_view))
-                .perform(RecyclerViewActions.scrollToHolder(hasTextInViewHolder("page 1")));
-
-        onView(withText("page 1")).check(matches(isDisplayed()));
-
-        // Delete an item using three dot menu. The item should be removed from the list.
-        onView(allOf(withId(R.id.more), hasSibling(withText("page 1"))))
-                .perform(ViewActions.click());
-        onView(withText("Delete")).check(matches(isDisplayed())).perform(ViewActions.click());
-        onView(withText("page 1")).check(doesNotExist());
-
-        // Delete the remaining items using long press and multi-delete from toolbar menu.
-        onView(withText("page 2")).check(matches(isDisplayed())).perform(ViewActions.longClick());
-        onView(withText("page 3")).check(matches(isDisplayed())).perform(ViewActions.longClick());
-        onView(withText("page 4")).check(matches(isDisplayed())).perform(ViewActions.longClick());
-
-        PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, () -> {
-            DownloadHomeToolbar toolbar = getActivity().findViewById(R.id.download_toolbar);
-            toolbar.getMenu().performIdentifierAction(R.id.selection_mode_delete_menu_id, 0);
-        });
+        PostTask.runOrPostTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    DownloadHomeToolbar toolbar = sActivity.findViewById(R.id.download_toolbar);
+                    toolbar.getMenu()
+                            .performIdentifierAction(R.id.selection_mode_delete_menu_id, 0);
+                });
 
         // The files tab should show empty view now.
         onView(withId(R.id.empty_state_icon)).check(matches(isDisplayed()));
@@ -567,7 +749,10 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @MediumTest
     @DisabledTest(message = "https://crbug.com/1338140")
     public void testRenameItem() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         RenameUtils.disableNativeForTesting();
 
@@ -597,41 +782,38 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     @Test
     @MediumTest
     public void testShareItem() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
         // Open menu for a list item, it should have the share option.
         onView(allOf(withId(R.id.more), hasSibling(withText("page 4"))))
                 .perform(ViewActions.click());
 
         // Share an item. The share via android dialog should popup.
-        onView(withText("Share")).check(matches(isDisplayed()));
+        if (BuildInfo.getInstance().isAutomotive) {
+            onView(withText("Share")).check(doesNotExist());
+        } else {
+            onView(withText("Share")).check(matches(isDisplayed()));
+        }
 
         // TODO(shaktisahu): Perform a click, capture the Intent and check its contents.
     }
 
     @Test
     @MediumTest
-    public void testShareItem_noSharingOptionOnAutomotive() throws Exception {
-        mAutomotiveContextWrapperTestRule.setIsAutomotive(true);
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
-
-        // Open menu for a list item.
-        onView(allOf(withId(R.id.more), hasSibling(withText("page 4"))))
-                .perform(ViewActions.click());
-
-        // There should not be an option to share.
-        onView(withText("Share")).check(doesNotExist());
-    }
-
-    @Test
-    @MediumTest
+    @DisabledTest(message = "crbug.com/372835715")
     public void testSearchView() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
-        final DownloadHomeToolbar toolbar = getActivity().findViewById(R.id.download_toolbar);
+        final DownloadHomeToolbar toolbar = sActivity.findViewById(R.id.download_toolbar);
         onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 (Runnable) () -> toolbar.getMenu().performIdentifierAction(R.id.search_menu_id, 0));
 
         // The selection should be cleared when a search is started.
@@ -652,14 +834,17 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
 
     @Test
     @MediumTest
-    @Features.DisableFeatures({ChromeFeatureList.BACK_GESTURE_REFACTOR_ACTIVITY})
+    @DisabledTest(message = "https://crbug.com/372252512")
     public void testDismissSearchViewByBackPress() {
-        TestThreadUtils.runOnUiThreadBlocking(() -> { setUpUi(); });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi();
+                });
 
-        final DownloadHomeToolbar toolbar = getActivity().findViewById(R.id.download_toolbar);
+        final DownloadHomeToolbar toolbar = sActivity.findViewById(R.id.download_toolbar);
         onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 (Runnable) () -> toolbar.getMenu().performIdentifierAction(R.id.search_menu_id, 0));
 
         // The selection should be cleared when a search is started.
@@ -670,32 +855,39 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
         onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
 
         // Clear the selection by back press and assert that the search view is showing again.
-        var backPressRecorder = HistogramWatcher.newSingleRecordWatcher(
-                "Android.BackPress.SecondaryActivity", SecondaryActivity.DOWNLOAD);
-        TestThreadUtils.runOnUiThreadBlocking(
-                getActivity().getOnBackPressedDispatcher()::onBackPressed);
-        backPressRecorder.assertExpected();
+        ThreadUtils.runOnUiThreadBlocking(sActivity.getOnBackPressedDispatcher()::onBackPressed);
         onView(withId(R.id.search_text)).check(matches(isDisplayed()));
 
         // Close the search view, by performing a back press.
-        var backPressRecorder2 = HistogramWatcher.newSingleRecordWatcher(
-                "Android.BackPress.SecondaryActivity", SecondaryActivity.DOWNLOAD);
-        TestThreadUtils.runOnUiThreadBlocking(
-                getActivity().getOnBackPressedDispatcher()::onBackPressed);
-        backPressRecorder2.assertExpected();
+        ThreadUtils.runOnUiThreadBlocking(sActivity.getOnBackPressedDispatcher()::onBackPressed);
         CriteriaHelper.pollInstrumentationThread(
-                () -> { onView(withId(R.id.search_text)).check(matches(not(isDisplayed()))); });
+                () -> {
+                    onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
+                });
     }
 
     @Test
     @MediumTest
-    @Features.EnableFeatures({ChromeFeatureList.BACK_GESTURE_REFACTOR_ACTIVITY})
-    public void testDismissSearchViewByBackPress_BackPressRefactor() {
-        testDismissSearchViewByBackPress();
+    public void testDownloadsFocus() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    setUpUi(/* showDangerousItems= */ false, /* autoFocusSearchBox= */ true);
+                });
+
+        onView(withText("Download")).check(doesNotExist());
+        // Check the search field is displayed
+        onView(withId(R.id.search_text)).check(matches(isDisplayed()));
+        // Check we can type in search query
+        onView(withId(R.id.search_text)).perform(ViewActions.typeText("Google"));
+        // Close keyboard first then press back to Download Page.
+        Espresso.closeSoftKeyboard();
+        Espresso.pressBack();
+        // After back to download pagem user should see the search field
+        onView(withId(R.id.search_text)).check(matches(not(isDisplayed())));
     }
 
     /**
-     * @param items        The list (unsorted) of OfflineItems that could be displayed.
+     * @param items The list (unsorted) of OfflineItems that could be displayed.
      * @param expectations Whether or not each item (1:1 with {@code items}) is visible.
      */
     private void checkItemsDisplayed(ArrayList<OfflineItem> items, List<Boolean> expectations) {
@@ -723,10 +915,14 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
                 if (previous == null || ListUtils.compareItemByDate(previous, item) != 0) {
                     onView(withId(R.id.download_home_recycler_view))
                             .perform(RecyclerViewActions.scrollToPosition(currentIndex++));
-                    onView(withText(StringUtils
-                                            .dateToHeaderString(
-                                                    new Date(sorted.get(i).first.creationTimeMs))
-                                            .toString()))
+                    onView(
+                                    withText(
+                                            StringUtils.dateToHeaderString(
+                                                            new Date(
+                                                                    sorted.get(i)
+                                                                            .first
+                                                                            .creationTimeMs))
+                                                    .toString()))
                             .check(matches(isDisplayed()));
                 }
 
@@ -756,7 +952,8 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
     }
 
     private void checkItemsDisplayed(boolean item0, boolean item1, boolean item2, boolean item3) {
-        checkItemsDisplayed(mStubbedOfflineContentProvider.getItemsSynchronously(),
+        checkItemsDisplayed(
+                mStubbedOfflineContentProvider.getItemsSynchronously(),
                 Arrays.asList(item0, item1, item2, item3));
     }
 
@@ -770,7 +967,7 @@ public class DownloadActivityV2Test extends BlankUiTestActivityTestCase {
                 .perform(ViewActions.click());
 
         if (expectErrorMsgId != -1) {
-            onView(withText(getActivity().getResources().getString(expectErrorMsgId)))
+            onView(withText(sActivity.getResources().getString(expectErrorMsgId)))
                     .check(matches(isDisplayed()));
         }
     }

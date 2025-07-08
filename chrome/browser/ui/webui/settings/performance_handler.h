@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,7 +39,8 @@ class PerformanceHandler : public SettingsPageUIHandler,
   void OnDeviceHasBatteryChanged(bool device_has_battery) override;
 
   /**
-   * Returns a list of currently opened tabs' urls in order of most recently used.
+   * Returns a list of currently opened tabs' urls in order of most recently
+   * used.
    */
   base::Value GetCurrentOpenSites();
   void HandleGetCurrentOpenSites(const base::Value::List& args);
@@ -50,9 +51,7 @@ class PerformanceHandler : public SettingsPageUIHandler,
    * that it is ready to receive updates for future battery status changes.
    */
   void HandleGetDeviceHasBattery(const base::Value::List& args);
-  void HandleOpenBatterySaverFeedbackDialog(const base::Value::List& args);
-  void HandleOpenHighEfficiencyFeedbackDialog(const base::Value::List& args);
-  void HandleOpenFeedbackDialog(const std::string category_tag);
+  void HandleOpenFeedbackDialog(const base::Value::List& args);
   void HandleValidateTabDiscardExceptionRule(const base::Value::List& args);
 };
 

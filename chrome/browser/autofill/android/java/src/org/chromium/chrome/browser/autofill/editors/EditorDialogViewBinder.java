@@ -18,29 +18,31 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.Drop
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.EDITOR_FIELDS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.EDITOR_TITLE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FOOTER_MESSAGE;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FORM_VALID;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.ERROR_MESSAGE;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.FOCUSED;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.IS_REQUIRED;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.LABEL;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALIDATOR;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALUE;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.SHOW_REQUIRED_INDICATOR;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FIELD_TYPE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FORMATTER;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_SUGGESTIONS;
+import static org.chromium.chrome.browser.autofill.editors.EditorProperties.VALIDATE_ON_SHOW;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.VISIBLE;
 
-import org.chromium.chrome.browser.autofill.editors.EditorProperties.DropdownKeyValue;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.components.autofill.DropdownKeyValue;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * Provides functions that map {@link EditorProperties} changes in a {@link PropertyModel} to
- * the suitable method in {@link EditorDialogView}.
+ * Provides functions that map {@link EditorProperties} changes in a {@link PropertyModel} to the
+ * suitable method in {@link EditorDialogView}.
  */
+@NullMarked
 public class EditorDialogViewBinder {
     /**
      * Called whenever a property in the given model changes. It updates the given view accordingly.
@@ -60,10 +62,8 @@ public class EditorDialogViewBinder {
             view.setDeleteConfirmationTitle(model.get(DELETE_CONFIRMATION_TITLE));
         } else if (propertyKey == DELETE_CONFIRMATION_TEXT) {
             view.setDeleteConfirmationText(model.get(DELETE_CONFIRMATION_TEXT));
-        } else if (propertyKey == SHOW_REQUIRED_INDICATOR) {
-            view.setShowRequiredIndicator(model.get(SHOW_REQUIRED_INDICATOR));
         } else if (propertyKey == EDITOR_FIELDS) {
-            view.setEditorFields(model.get(EDITOR_FIELDS), model.get(SHOW_REQUIRED_INDICATOR));
+            view.setEditorFields(model.get(EDITOR_FIELDS));
         } else if (propertyKey == DONE_RUNNABLE) {
             view.setDoneRunnable(model.get(DONE_RUNNABLE));
         } else if (propertyKey == CANCEL_RUNNABLE) {
@@ -72,12 +72,10 @@ public class EditorDialogViewBinder {
             view.setAllowDelete(model.get(ALLOW_DELETE));
         } else if (propertyKey == DELETE_RUNNABLE) {
             view.setDeleteRunnable(model.get(DELETE_RUNNABLE));
+        } else if (propertyKey == VALIDATE_ON_SHOW) {
+            view.setValidateOnShow(model.get(VALIDATE_ON_SHOW));
         } else if (propertyKey == VISIBLE) {
             view.setVisible(model.get(VISIBLE));
-        } else if (propertyKey == FORM_VALID) {
-            if (!model.get(FORM_VALID)) {
-                view.findAndScrollToInvalidField();
-            }
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }
@@ -90,6 +88,10 @@ public class EditorDialogViewBinder {
             view.setValidator(model.get(VALIDATOR));
         } else if (key == ERROR_MESSAGE) {
             view.setErrorMessage(model.get(ERROR_MESSAGE));
+        } else if (key == FOCUSED) {
+            if (model.get(FOCUSED)) {
+                view.scrollToAndFocus();
+            }
         } else if (key == VALUE) {
             view.setValue(model.get(VALUE));
         } else if (key == TEXT_FIELD_TYPE) {
@@ -115,13 +117,17 @@ public class EditorDialogViewBinder {
             view.setValidator(model.get(VALIDATOR));
         } else if (key == ERROR_MESSAGE) {
             view.setErrorMessage(model.get(ERROR_MESSAGE));
+        } else if (key == FOCUSED) {
+            if (model.get(FOCUSED)) {
+                view.scrollToAndFocus();
+            }
         } else if (key == VALUE) {
             view.setValue(model.get(VALUE));
         } else if (key == DROPDOWN_KEY_VALUE_LIST || key == DROPDOWN_HINT) {
-            List<String> values = model.get(DROPDOWN_KEY_VALUE_LIST)
-                                          .stream()
-                                          .map(DropdownKeyValue::getValue)
-                                          .collect(Collectors.toList());
+            List<String> values = new ArrayList<>();
+            for (DropdownKeyValue keyValue : model.get(DROPDOWN_KEY_VALUE_LIST)) {
+                values.add(keyValue.getValue());
+            }
             view.setDropdownValues(values, model.get(DROPDOWN_HINT));
             view.setValue(model.get(VALUE));
             view.setErrorMessage(model.get(ERROR_MESSAGE));

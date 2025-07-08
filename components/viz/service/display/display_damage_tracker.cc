@@ -4,7 +4,6 @@
 
 #include "components/viz/service/display/display_damage_tracker.h"
 
-#include "base/feature_list.h"
 #include "base/observer_list.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/service/display/surface_aggregator.h"
@@ -14,11 +13,17 @@
 namespace viz {
 namespace {
 
-// Kill switch for optimization to skip updating pending surfaces on begin
-// frames from other displays.
-BASE_FEATURE(kSkipBeginFramesFromOtherDisplays,
-             "SkipBeginFramesFromOtherDisplays",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+bool ShouldAccumulateInteraction(
+    SurfaceObserver::HandleInteraction handle_interaction) {
+  switch (handle_interaction) {
+    case SurfaceObserver::HandleInteraction::kYes:
+      return true;
+    case SurfaceObserver::HandleInteraction::kNo:
+      return false;
+    case SurfaceObserver::HandleInteraction::kNoChange:
+      return false;
+  }
+}
 
 }  // namespace
 
@@ -36,9 +41,7 @@ DisplayDamageTracker::~DisplayDamageTracker() {
 
 void DisplayDamageTracker::SetDisplayBeginFrameSourceId(
     uint64_t begin_frame_source_id) {
-  if (base::FeatureList::IsEnabled(kSkipBeginFramesFromOtherDisplays)) {
-    begin_frame_source_id_ = begin_frame_source_id;
-  }
+  begin_frame_source_id_ = begin_frame_source_id;
 }
 
 void DisplayDamageTracker::SetDelegate(Delegate* delegate) {
@@ -65,7 +68,10 @@ void DisplayDamageTracker::SetNewRootSurface(const SurfaceId& root_surface_id) {
 void DisplayDamageTracker::SetRootSurfaceDamaged() {
   BeginFrameAck ack;
   ack.has_damage = true;
-  ProcessSurfaceDamage(root_surface_id_, ack, true, false);
+  // Since we're damaging to redraw the last activated frame, there shouldn't be
+  // any change in interaction state.
+  ProcessSurfaceDamage(root_surface_id_, ack, true,
+                       HandleInteraction::kNoChange);
 }
 
 bool DisplayDamageTracker::IsRootSurfaceValid() const {
@@ -79,14 +85,17 @@ void DisplayDamageTracker::DisplayResized() {
   NotifyDisplayDamaged(root_surface_id_);
 }
 
-void DisplayDamageTracker::ProcessSurfaceDamage(const SurfaceId& surface_id,
-                                                const BeginFrameAck& ack,
-                                                bool display_damaged,
-                                                bool is_actively_scrolling) {
-  TRACE_EVENT1("viz", "DisplayDamageTracker::SurfaceDamaged", "surface_id",
+void DisplayDamageTracker::ProcessSurfaceDamage(
+    const SurfaceId& surface_id,
+    const BeginFrameAck& ack,
+    bool display_damaged,
+    HandleInteraction handle_interaction) {
+  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("viz.surface_lifetime"),
+               "DisplayDamageTracker::SurfaceDamaged", "surface_id",
                surface_id.ToString());
 
-  has_surface_damage_due_to_scroll_ |= is_actively_scrolling;
+  has_surface_damage_due_to_interaction_ |=
+      ShouldAccumulateInteraction(handle_interaction);
 
   if (surface_id == root_surface_id_)
     expecting_root_surface_damage_because_of_resize_ = false;
@@ -160,14 +169,14 @@ bool DisplayDamageTracker::HasPendingSurfaces(
   return false;
 }
 
-bool DisplayDamageTracker::HasDamageDueToActiveScroller() {
-  return has_surface_damage_due_to_scroll_;
+bool DisplayDamageTracker::HasDamageDueToInteraction() {
+  return has_surface_damage_due_to_interaction_;
 }
 
-void DisplayDamageTracker::DidDrawAndSwap() {
+void DisplayDamageTracker::DidFinishFrame() {
   // We need to unset this bit otherwise we will continue to draw immediately
   // even when we have no new damage from an active scroller.
-  has_surface_damage_due_to_scroll_ = false;
+  has_surface_damage_due_to_interaction_ = false;
 }
 
 void DisplayDamageTracker::OnSurfaceMarkedForDestruction(
@@ -180,13 +189,20 @@ void DisplayDamageTracker::OnSurfaceMarkedForDestruction(
   NotifyPendingSurfacesChanged();
 }
 
-bool DisplayDamageTracker::OnSurfaceDamaged(const SurfaceId& surface_id,
-                                            const BeginFrameAck& ack,
-                                            bool is_actively_scrolling) {
+bool DisplayDamageTracker::CheckForDisplayDamage(const SurfaceId& surface_id) {
+  return aggregator_->CheckForDisplayDamage(surface_id);
+}
+
+bool DisplayDamageTracker::OnSurfaceDamaged(
+    const SurfaceId& surface_id,
+    const BeginFrameAck& ack,
+    HandleInteraction handle_interaction) {
   bool display_damaged = false;
   if (ack.has_damage) {
-    display_damaged =
-        aggregator_->NotifySurfaceDamageAndCheckForDisplayDamage(surface_id);
+    // Display is damaged if we purged some resources or if this surface
+    // contributes to this display.
+    display_damaged = aggregator_->ForceReleaseResourcesIfNeeded(surface_id) ||
+                      CheckForDisplayDamage(surface_id);
 
     if (surface_id == root_surface_id_)
       display_damaged = true;
@@ -197,7 +213,7 @@ bool DisplayDamageTracker::OnSurfaceDamaged(const SurfaceId& surface_id,
   if (surface_id == root_surface_id_)
     UpdateRootFrameMissing();
 
-  ProcessSurfaceDamage(surface_id, ack, display_damaged, is_actively_scrolling);
+  ProcessSurfaceDamage(surface_id, ack, display_damaged, handle_interaction);
 
   return display_damaged;
 }
@@ -209,8 +225,9 @@ bool DisplayDamageTracker::CheckBeginFrameSourceId(uint64_t source_id) {
 
 void DisplayDamageTracker::OnSurfaceDamageExpected(const SurfaceId& surface_id,
                                                    const BeginFrameArgs& args) {
-  TRACE_EVENT1("viz", "DisplayDamageTracker::SurfaceDamageExpected",
-               "surface_id", surface_id.ToString());
+  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("viz.surface_lifetime"),
+               "DisplayDamageTracker::SurfaceDamageExpected", "surface_id",
+               surface_id.ToString());
 
   // Insert a new state for the surface if we don't know of it yet. We don't
   // use OnSurfaceCreated() for this, because it may not be called if a

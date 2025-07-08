@@ -11,7 +11,7 @@
 #include "base/strings/strcat.h"
 #include "base/win/registry.h"
 #include "base/win/windows_types.h"
-#include "chrome/updater/test_scope.h"
+#include "chrome/updater/test/test_scope.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/user_info.h"
@@ -70,7 +70,7 @@ ReadActiveBitRetval ReadActiveBitAsString(base::win::RegKey& key) {
 ReadActiveBitRetval ReadActiveBitAsDword(base::win::RegKey& key) {
   DWORD did_run = 0;
   const DWORD result = key.ReadValueDW(kDidRun, &did_run);
-  return ReadActiveBitRetval(result, !!did_run);
+  return ReadActiveBitRetval(result, did_run);
 }
 
 }  // namespace
@@ -96,8 +96,6 @@ class ActivityWinTest : public ::testing::TestWithParam<
     base::win::RegKey(HKEY_CURRENT_USER, L"", Wow6432(DELETE))
         .DeleteKey(low_integrity_key_path_.c_str());
   }
-
-  UpdaterScope GetScope() const { return GetTestScope(); }
 
   bool SetUserValue() const { return std::get<0>(GetParam()); }
 
@@ -169,18 +167,18 @@ class ActivityWinTest : public ::testing::TestWithParam<
 
 TEST_P(ActivityWinTest, GetActiveBit) {
   ASSERT_EQ(SetUserValue() || SetLowUserValue(),
-            GetActiveBit(GetScope(), kAppId));
+            GetActiveBit(GetUpdaterScopeForTesting(), kAppId));
 
   CheckUserActiveBit(SetUserValue(), ReadActiveBitFn());
   CheckLowIntegrityUserActiveBit(SetLowUserValue(), ReadActiveBitFn());
 }
 
 TEST_P(ActivityWinTest, ClearActiveBit) {
-  ClearActiveBit(GetScope(), kAppId);
+  ClearActiveBit(GetUpdaterScopeForTesting(), kAppId);
 
   CheckUserActiveBit(false, &ReadActiveBitAsString);
   CheckLowIntegrityUserActiveBit(false, &ReadActiveBitAsString);
-  ASSERT_FALSE(GetActiveBit(GetScope(), kAppId));
+  ASSERT_FALSE(GetActiveBit(GetUpdaterScopeForTesting(), kAppId));
 }
 
 INSTANTIATE_TEST_SUITE_P(

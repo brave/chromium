@@ -41,7 +41,7 @@ bool IsRootDomNode(Node*);
 
 // @return the 'string-value' of the given node as specified by
 // http://www.w3.org/TR/xpath
-String StringValue(Node*);
+WTF::String StringValue(Node*);
 
 // @return whether the given node is a valid context node
 bool IsValidContextNode(Node*);

@@ -5,13 +5,11 @@
 #ifndef BASE_TEST_SCOPED_LOGGING_SETTINGS_H_
 #define BASE_TEST_SCOPED_LOGGING_SETTINGS_H_
 
-#include <memory>
-
 #include "base/base_export.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 
 namespace logging {
 
@@ -45,7 +43,7 @@ class BASE_EXPORT ScopedLoggingSettings {
   const LogFormat log_format_;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  std::unique_ptr<base::FilePath::StringType> log_file_name_;
+  base::FilePath::StringType log_file_name_;
 
   const bool enable_process_id_;
   const bool enable_thread_id_;
@@ -75,19 +73,17 @@ class BASE_EXPORT ScopedLoggingSettings {
 // must be destroyed in reverse creation order.
 class BASE_EXPORT ScopedVmoduleSwitches {
  public:
-  explicit ScopedVmoduleSwitches();
+  ScopedVmoduleSwitches();
   // Specify which modules and levels to enable. This uses the same syntax as
   // the commandline flag, e.g. "file=1,dir/other_file=2".
   void InitWithSwitches(const std::string& vmodule_switch);
   ~ScopedVmoduleSwitches();
 
  private:
-#if BUILDFLAG(USE_RUNTIME_VLOG)
   // Creates a new instance of |VlogInfo| adding |vmodule_switch|.
   VlogInfo* CreateVlogInfoWithSwitches(const std::string& vmodule_switch);
   raw_ptr<VlogInfo> scoped_vlog_info_ = nullptr;
   raw_ptr<VlogInfo> previous_vlog_info_ = nullptr;
-#endif  // BUILDFLAG(USE_RUNTIME_VLOG)
 };
 }  // namespace logging
 

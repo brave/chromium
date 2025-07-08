@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -17,16 +18,15 @@ namespace blink {
 // TODO(crbug.com/1371806: Convert this to a WPT test when MathML has an IDL
 // for that. See https://github.com/w3c/mathml-core/issues/166
 TEST(MathMLTableCellElementTest, colSpan_parsing) {
+  test::TaskEnvironment task_environment;
   ScopedNullExecutionContext execution_context;
   auto* document =
       Document::CreateForTest(execution_context.GetExecutionContext());
   auto* cell = MakeGarbageCollected<MathMLTableCellElement>(*document);
 
   for (unsigned colSpan : {1, 2, 16, 256, 999, 1000}) {
-    StringBuilder attributeValue;
-    attributeValue.AppendNumber(colSpan);
-    cell->setAttribute(mathml_names::kColumnspanAttr, attributeValue.ToString(),
-                       ASSERT_NO_EXCEPTION);
+    cell->setAttribute(mathml_names::kColumnspanAttr,
+                       AtomicString::Number(colSpan));
     EXPECT_EQ(colSpan, cell->colSpan())
         << "valid columnspan value '" << colSpan << "' is properly parsed";
   }
@@ -50,16 +50,15 @@ TEST(MathMLTableCellElementTest, colSpan_parsing) {
 // TODO(crbug.com/1371806: Convert this to a WPT test when MathML has an IDL
 // for that. See https://github.com/w3c/mathml-core/issues/166
 TEST(MathMLTableCellElementTest, rowspan_parsing) {
+  test::TaskEnvironment task_environment;
   ScopedNullExecutionContext execution_context;
   auto* document =
       Document::CreateForTest(execution_context.GetExecutionContext());
   auto* cell = MakeGarbageCollected<MathMLTableCellElement>(*document);
 
   for (unsigned rowspan : {0, 1, 16, 256, 4096, 65533, 65534}) {
-    StringBuilder attributeValue;
-    attributeValue.AppendNumber(rowspan);
-    cell->setAttribute(mathml_names::kRowspanAttr, attributeValue.ToString(),
-                       ASSERT_NO_EXCEPTION);
+    cell->setAttribute(mathml_names::kRowspanAttr,
+                       AtomicString::Number(rowspan));
     EXPECT_EQ(rowspan, cell->rowSpan())
         << "valid rowspan value '" << rowspan << "' is properly parsed";
   }

@@ -6,15 +6,11 @@
 
 #include "base/i18n/rtl.h"
 #include "base/strings/sys_string_conversions.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -81,15 +77,6 @@ void CenterVertically(NSView* view) {
 @implementation FirstRunDialogViewController {
   NSButton* __strong _defaultBrowserCheckbox;
   NSButton* __strong _statsCheckbox;
-
-  BOOL _statsCheckboxInitiallyChecked;
-}
-
-- (instancetype)initWithStatsCheckboxInitiallyChecked:(BOOL)checked {
-  if ((self = [super init])) {
-    _statsCheckboxInitiallyChecked = checked;
-  }
-  return self;
 }
 
 - (void)loadView {
@@ -126,8 +113,7 @@ void CenterVertically(NSView* view) {
                  target:nil
                  action:nil];
   [_statsCheckbox setFrame:NSMakeRect(45, 82, kDialogWidth - 2 * 45, 19)];
-  if (_statsCheckboxInitiallyChecked)
-    [_statsCheckbox setState:NSControlStateValueOn];
+  [_statsCheckbox setState:NSControlStateValueOn];
 
   NSButton* startChromeButton =
       [NSButton buttonWithTitle:NSStringWithProductName(
@@ -189,8 +175,9 @@ void CenterVertically(NSView* view) {
   [startChromeButton sizeToFit];
   NSRect frame = [startChromeButton frame];
   frame.origin.x += oldWidth - NSWidth([startChromeButton frame]);
-  if (base::i18n::IsRTL())
+  if (base::i18n::IsRTL()) {
     frame.origin.x = kDialogWidth - NSMaxX(frame);
+  }
   [startChromeButton setFrame:frame];
 }
 

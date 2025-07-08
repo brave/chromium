@@ -13,7 +13,7 @@ namespace ash {
 
 // Interface for dependency injection between ErrorScreen and its actual
 // representation. Owned by ErrorScreen.
-class ErrorScreenView : public base::SupportsWeakPtr<ErrorScreenView> {
+class ErrorScreenView {
  public:
   inline constexpr static StaticOobeScreenId kScreenId{"error-message",
                                                        "ErrorMessageScreen"};
@@ -21,7 +21,7 @@ class ErrorScreenView : public base::SupportsWeakPtr<ErrorScreenView> {
   virtual ~ErrorScreenView() = default;
 
   // Shows the contents of the screen.
-  virtual void Show() = 0;
+  virtual void ShowScreenWithParam(bool is_closeable) = 0;
 
   // Switches to `screen`.
   virtual void ShowOobeScreen(OobeScreenId screen) = 0;
@@ -41,15 +41,16 @@ class ErrorScreenView : public base::SupportsWeakPtr<ErrorScreenView> {
   // Updates visibility of the label indicating we're reconnecting.
   virtual void SetShowConnectingIndicator(bool value) = 0;
 
-  // Makes error persistent (e.g. non-closable).
-  virtual void SetIsPersistentError(bool is_persistent) = 0;
-
   // Sets current UI state of the screen.
   virtual void SetUIState(NetworkError::UIState ui_state) = 0;
+
+  // Gets a WeakPtr to the instance.
+  virtual base::WeakPtr<ErrorScreenView> AsWeakPtr() = 0;
 };
 
 // A class that handles the WebUI hooks in error screen.
-class ErrorScreenHandler : public BaseScreenHandler, public ErrorScreenView {
+class ErrorScreenHandler final : public BaseScreenHandler,
+                                 public ErrorScreenView {
  public:
   using TView = ErrorScreenView;
 
@@ -62,15 +63,15 @@ class ErrorScreenHandler : public BaseScreenHandler, public ErrorScreenView {
 
  private:
   // ErrorScreenView:
-  void Show() override;
+  void ShowScreenWithParam(bool is_closeable) override;
   void ShowOobeScreen(OobeScreenId screen) override;
   void SetErrorStateCode(NetworkError::ErrorState error_state) override;
   void SetErrorStateNetwork(const std::string& network_name) override;
   void SetGuestSigninAllowed(bool value) override;
   void SetOfflineSigninAllowed(bool value) override;
   void SetShowConnectingIndicator(bool value) override;
-  void SetIsPersistentError(bool is_persistent) override;
   void SetUIState(NetworkError::UIState ui_state) override;
+  base::WeakPtr<ErrorScreenView> AsWeakPtr() override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(

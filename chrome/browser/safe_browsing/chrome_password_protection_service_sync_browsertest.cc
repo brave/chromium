@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
-
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
@@ -30,6 +28,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/safe_browsing/content/browser/password_protection/password_protection_request_content.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+#include "components/security_state/content/security_state_tab_helper.h"
 #include "components/security_state/core/security_state.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -71,25 +70,6 @@ class ChromePasswordProtectionServiceSyncBrowserTest : public SyncTest {
     SyncTest::SetUpOnMainThread();
 
     ASSERT_TRUE(embedded_test_server()->Start());
-
-    ASSERT_TRUE(SetupClients());
-
-    // Sign the profile in.
-    ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-
-    CoreAccountInfo current_info =
-        IdentityManagerFactory::GetForProfile(GetProfile(0))
-            ->GetPrimaryAccountInfo(signin::ConsentLevel::kSync);
-    // Need to update hosted domain since it is not populated.
-    AccountInfo account_info;
-    account_info.account_id = current_info.account_id;
-    account_info.gaia = current_info.gaia;
-    account_info.email = current_info.email;
-    account_info.hosted_domain = "domain.com";
-    signin::UpdateAccountInfoForAccount(
-        IdentityManagerFactory::GetForProfile(GetProfile(0)), account_info);
-
-    ASSERT_TRUE(GetClient(0)->SetupSync());
   }
 
   safe_browsing::ChromePasswordProtectionService* GetService(
@@ -112,6 +92,8 @@ class ChromePasswordProtectionServiceSyncBrowserTest : public SyncTest {
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceSyncBrowserTest,
                        GSuitePasswordAlertMode) {
+  ASSERT_TRUE(SetupSync(SyncTestAccount::kEnterpriseAccount1));
+
   ConfigureEnterprisePasswordProtection(
       PasswordProtectionTrigger::PASSWORD_REUSE);
   ChromePasswordProtectionService* service = GetService(/*is_incognito=*/false);

@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -130,7 +131,7 @@ std::string PreloadedStateGenerator::Generate(
     const std::string& preload_template,
     const TransportSecurityStateEntries& entries,
     const Pinsets& pinsets,
-    const base::Time& timestamp) {
+    base::Time timestamp) {
   std::string output = preload_template;
 
   ProcessSPKIHashes(pinsets, &output);
@@ -202,7 +203,7 @@ void PreloadedStateGenerator::ProcessSPKIHashes(const Pinsets& pinset,
       output.append("\"");
 
       for (size_t j = i * 16; j < ((i + 1) * 16); ++j) {
-        base::StringAppendF(&output, "\\x%02x", hash.data()[j]);
+        base::StringAppendF(&output, "\\x%02x", UNSAFE_TODO(hash.data()[j]));
       }
 
       output.append("\"");

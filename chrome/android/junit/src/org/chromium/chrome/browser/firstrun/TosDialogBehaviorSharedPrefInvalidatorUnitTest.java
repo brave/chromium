@@ -28,20 +28,19 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.policy.PolicyServiceFactory;
+import org.chromium.components.policy.AbstractAppRestrictionsProvider;
 import org.chromium.components.policy.PolicyService;
+import org.chromium.components.policy.test.PolicyData;
+
+import java.util.List;
 
 /** Unit test for {@link TosDialogBehaviorSharedPrefInvalidator}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
-    @Rule
-    public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Mock
-    public FirstRunAppRestrictionInfo mMockAppRestrictionInfo;
-    @Mock
-    public PolicyService mMockPolicyService;
-    @Mock
-    public SkipTosDialogPolicyListener mMockPolicyListener;
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @Mock public PolicyService mMockPolicyService;
+    @Mock public SkipTosDialogPolicyListener mMockPolicyListener;
 
     private Callback<Boolean> mOnPolicyAvailableCallback;
 
@@ -53,7 +52,6 @@ public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
         Mockito.doReturn(null).when(mMockPolicyListener).get();
 
         FirstRunStatus.setFirstRunSkippedByPolicy(false);
-        FirstRunAppRestrictionInfo.setInitializedInstanceForTest(mMockAppRestrictionInfo);
         PolicyServiceFactory.setPolicyServiceForTest(mMockPolicyService);
     }
 
@@ -68,7 +66,6 @@ public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
         TosDialogBehaviorSharedPrefInvalidator.refreshSharedPreferenceIfTosSkipped();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
 
-        Mockito.verify(mMockAppRestrictionInfo, Mockito.never()).getHasAppRestriction(any());
         Mockito.verify(mMockPolicyService, Mockito.never()).addObserver(any());
     }
 
@@ -76,10 +73,12 @@ public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
     @SmallTest
     public void testSkipTriggered() {
         FirstRunStatus.setFirstRunSkippedByPolicy(true);
+        AbstractAppRestrictionsProvider.setTestRestrictions(
+                PolicyData.asBundle(List.of(new PolicyData.Str("TosDialogBehavior", "2"))));
+
         TosDialogBehaviorSharedPrefInvalidator.refreshSharedPreferenceIfTosSkipped();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
 
-        Mockito.verify(mMockAppRestrictionInfo).getHasAppRestriction(any());
         Mockito.verify(mMockPolicyService).addObserver(any());
     }
 
@@ -92,10 +91,10 @@ public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
         // Assuming SkipTosDialogPolicyListener supplied with "False".
         mOnPolicyAvailableCallback.onResult(false);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
-        Assert.assertFalse("Value for #isFirstRunSkippedByPolicy should be set to false.",
+        Assert.assertFalse(
+                "Value for #isFirstRunSkippedByPolicy should be set to false.",
                 FirstRunStatus.isFirstRunSkippedByPolicy());
         Mockito.verify(mMockPolicyListener).destroy();
-        Mockito.verify(mMockAppRestrictionInfo).destroy();
     }
 
     /**
@@ -115,15 +114,16 @@ public class TosDialogBehaviorSharedPrefInvalidatorUnitTest {
         // Assuming SkipTosDialogPolicyListener supplied with "True".
         mOnPolicyAvailableCallback.onResult(true);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
-        Assert.assertTrue("Value for #isFirstRunSkippedByPolicy should stay true.",
+        Assert.assertTrue(
+                "Value for #isFirstRunSkippedByPolicy should stay true.",
                 FirstRunStatus.isFirstRunSkippedByPolicy());
         Mockito.verify(mMockPolicyListener).destroy();
-        Mockito.verify(mMockAppRestrictionInfo).destroy();
     }
 
     private void launchSharedPrefInvalidator() {
-        new TosDialogBehaviorSharedPrefInvalidator(mMockPolicyListener, mMockAppRestrictionInfo);
-        Assert.assertNotNull("Callback should registered for SkipTosDialogPolicyListener.",
+        new TosDialogBehaviorSharedPrefInvalidator(mMockPolicyListener);
+        Assert.assertNotNull(
+                "Callback should registered for SkipTosDialogPolicyListener.",
                 mOnPolicyAvailableCallback);
     }
 }

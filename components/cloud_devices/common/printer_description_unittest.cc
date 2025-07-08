@@ -13,7 +13,6 @@
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -80,19 +79,16 @@ const char kCdd[] = R"(
         "margins": {
           "option": [ {
             "is_default": true,
-            "type": "BORDERLESS",
             "top_microns": 0,
             "right_microns": 0,
             "bottom_microns": 0,
             "left_microns": 0
           }, {
-             "type": "STANDARD",
              "top_microns": 100,
              "right_microns": 200,
              "bottom_microns": 300,
              "left_microns": 400
           }, {
-             "type": "CUSTOM",
              "top_microns": 1,
              "right_microns": 2,
              "bottom_microns": 3,
@@ -112,15 +108,15 @@ const char kCdd[] = R"(
         "fit_to_page": {
           "option": [ {
             "is_default": true,
-            "type": "NO_FITTING"
+            "type": "AUTO"
           }, {
-            "type": "FIT_TO_PAGE"
+            "type": "AUTO_FIT"
           }, {
-            "type": "GROW_TO_PAGE"
+            "type": "FILL"
           }, {
-            "type": "SHRINK_TO_PAGE"
+            "type": "FIT"
           }, {
-            "type": "FILL_PAGE"
+            "type": "NONE"
           } ]
         },
         "page_range": {
@@ -142,7 +138,8 @@ const char kCdd[] = R"(
             "imageable_area_top_microns": 5555,
             "name": "ISO_A6",
             "width_microns": 4444,
-            "height_microns": 5555
+            "height_microns": 5555,
+            "has_borderless_variant": true
           }, {
             "imageable_area_bottom_microns": 0,
             "imageable_area_left_microns": 0,
@@ -158,6 +155,18 @@ const char kCdd[] = R"(
             "is_continuous_feed": true,
             "custom_display_name": "Feed",
             "vendor_id": "FEED"
+          } ]
+        },
+        "media_type": {
+          "option": [ {
+            "custom_display_name": "Plain Paper",
+            "vendor_id": "stationery",
+            "is_default": true
+          }, {
+            "custom_display_name": "Photo Paper",
+            "vendor_id": "photographic"
+          }, {
+            "vendor_id": "stationery-lightweight"
           } ]
         },
         "collate": {
@@ -634,7 +643,6 @@ const char kCjt[] = R"(
           "copies": 123
         },
         "margins": {
-           "type": "CUSTOM",
            "top_microns": 7,
            "right_microns": 6,
            "bottom_microns": 3,
@@ -645,7 +653,7 @@ const char kCjt[] = R"(
           "vertical_dpi": 125
         },
         "fit_to_page": {
-          "type": "SHRINK_TO_PAGE"
+          "type": "FIT"
         },
         "page_range": {
           "interval": [ {
@@ -731,6 +739,7 @@ TEST(PrinterDescriptionTest, CddInit) {
   DpiCapability dpi;
   FitToPageCapability fit_to_page;
   MediaCapability media;
+  MediaTypeCapability media_type;
   CopiesCapability copies;
   PageRangeCapability page_range;
   CollateCapability collate;
@@ -747,6 +756,7 @@ TEST(PrinterDescriptionTest, CddInit) {
   EXPECT_FALSE(fit_to_page.LoadFrom(description));
   EXPECT_FALSE(page_range.LoadFrom(description));
   EXPECT_FALSE(media.LoadFrom(description));
+  EXPECT_FALSE(media_type.LoadFrom(description));
   EXPECT_FALSE(collate.LoadFrom(description));
   EXPECT_FALSE(reverse.LoadFrom(description));
   EXPECT_FALSE(media.LoadFrom(description));
@@ -774,6 +784,7 @@ TEST(PrinterDescriptionTest, CddSetAll) {
   DpiCapability dpi;
   FitToPageCapability fit_to_page;
   MediaCapability media;
+  MediaTypeCapability media_type;
   CopiesCapability copies;
   PageRangeCapability page_range;
   CollateCapability collate;
@@ -803,18 +814,18 @@ TEST(PrinterDescriptionTest, CddSetAll) {
   orientation.AddOption(OrientationType::LANDSCAPE);
   orientation.AddDefaultOption(OrientationType::AUTO_ORIENTATION, true);
 
-  margins.AddDefaultOption(Margins(MarginsType::NO_MARGINS, 0, 0, 0, 0), true);
-  margins.AddOption(Margins(MarginsType::STANDARD_MARGINS, 100, 200, 300, 400));
-  margins.AddOption(Margins(MarginsType::CUSTOM_MARGINS, 1, 2, 3, 4));
+  margins.AddDefaultOption(Margins(0, 0, 0, 0), true);
+  margins.AddOption(Margins(100, 200, 300, 400));
+  margins.AddOption(Margins(1, 2, 3, 4));
 
   dpi.AddOption(Dpi(150, 250));
   dpi.AddDefaultOption(Dpi(600, 1600), true);
 
-  fit_to_page.AddDefaultOption(FitToPageType::NO_FITTING, true);
-  fit_to_page.AddOption(FitToPageType::FIT_TO_PAGE);
-  fit_to_page.AddOption(FitToPageType::GROW_TO_PAGE);
-  fit_to_page.AddOption(FitToPageType::SHRINK_TO_PAGE);
-  fit_to_page.AddOption(FitToPageType::FILL_PAGE);
+  fit_to_page.AddDefaultOption(FitToPageType::AUTO, true);
+  fit_to_page.AddOption(FitToPageType::AUTO_FIT);
+  fit_to_page.AddOption(FitToPageType::FILL);
+  fit_to_page.AddOption(FitToPageType::FIT);
+  fit_to_page.AddOption(FitToPageType::NONE);
 
   media.AddDefaultOption(MediaBuilder()
                              .WithStandardName(MediaSize::NA_LETTER)
@@ -824,6 +835,7 @@ TEST(PrinterDescriptionTest, CddSetAll) {
   media.AddOption(MediaBuilder()
                       .WithStandardName(MediaSize::ISO_A6)
                       .WithSizeAndDefaultPrintableArea({4444, 5555})
+                      .WithBorderlessVariant(true)
                       .Build());
   media.AddOption(MediaBuilder()
                       .WithStandardName(MediaSize::JPN_YOU4)
@@ -833,7 +845,12 @@ TEST(PrinterDescriptionTest, CddSetAll) {
                       .WithCustomName("Feed", "FEED")
                       .WithSizeAndDefaultPrintableArea({1111, 2222})
                       .WithMaxHeight(9999)
+                      .WithBorderlessVariant(false)
                       .Build());
+
+  media_type.AddDefaultOption(MediaType("stationery", "Plain Paper"), true);
+  media_type.AddOption(MediaType("photographic", "Photo Paper"));
+  media_type.AddOption(MediaType("stationery-lightweight", ""));
 
   collate.set_default_value(false);
   reverse.set_default_value(true);
@@ -848,6 +865,7 @@ TEST(PrinterDescriptionTest, CddSetAll) {
   fit_to_page.SaveTo(&description);
   page_range.SaveTo(&description);
   media.SaveTo(&description);
+  media_type.SaveTo(&description);
   collate.SaveTo(&description);
   reverse.SaveTo(&description);
   pwg_raster_config.SaveTo(&description);
@@ -1275,6 +1293,7 @@ TEST(PrinterDescriptionTest, CddGetAll) {
   DpiCapability dpi;
   FitToPageCapability fit_to_page;
   MediaCapability media;
+  MediaTypeCapability media_type;
   CopiesCapability copies;
   PageRangeCapability page_range;
   CollateCapability collate;
@@ -1290,6 +1309,7 @@ TEST(PrinterDescriptionTest, CddGetAll) {
   EXPECT_TRUE(fit_to_page.LoadFrom(description));
   EXPECT_TRUE(page_range.LoadFrom(description));
   EXPECT_TRUE(media.LoadFrom(description));
+  EXPECT_TRUE(media_type.LoadFrom(description));
   EXPECT_TRUE(collate.LoadFrom(description));
   EXPECT_TRUE(reverse.LoadFrom(description));
   EXPECT_TRUE(pwg_raster_config.LoadFrom(description));
@@ -1321,23 +1341,21 @@ TEST(PrinterDescriptionTest, CddGetAll) {
   EXPECT_TRUE(orientation.Contains(OrientationType::AUTO_ORIENTATION));
   EXPECT_EQ(OrientationType::AUTO_ORIENTATION, orientation.GetDefault());
 
-  EXPECT_TRUE(margins.Contains(Margins(MarginsType::NO_MARGINS, 0, 0, 0, 0)));
-  EXPECT_TRUE(margins.Contains(
-      Margins(MarginsType::STANDARD_MARGINS, 100, 200, 300, 400)));
-  EXPECT_TRUE(
-      margins.Contains(Margins(MarginsType::CUSTOM_MARGINS, 1, 2, 3, 4)));
-  EXPECT_EQ(Margins(MarginsType::NO_MARGINS, 0, 0, 0, 0), margins.GetDefault());
+  EXPECT_TRUE(margins.Contains(Margins(0, 0, 0, 0)));
+  EXPECT_TRUE(margins.Contains(Margins(100, 200, 300, 400)));
+  EXPECT_TRUE(margins.Contains(Margins(1, 2, 3, 4)));
+  EXPECT_EQ(Margins(0, 0, 0, 0), margins.GetDefault());
 
   EXPECT_TRUE(dpi.Contains(Dpi(150, 250)));
   EXPECT_TRUE(dpi.Contains(Dpi(600, 1600)));
   EXPECT_EQ(Dpi(600, 1600), dpi.GetDefault());
 
-  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::NO_FITTING));
-  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::FIT_TO_PAGE));
-  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::GROW_TO_PAGE));
-  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::SHRINK_TO_PAGE));
-  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::FILL_PAGE));
-  EXPECT_EQ(FitToPageType::NO_FITTING, fit_to_page.GetDefault());
+  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::AUTO));
+  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::AUTO_FIT));
+  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::FILL));
+  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::FIT));
+  EXPECT_TRUE(fit_to_page.Contains(FitToPageType::NONE));
+  EXPECT_EQ(FitToPageType::AUTO, fit_to_page.GetDefault());
 
   Media default_media = MediaBuilder()
                             .WithStandardName(MediaSize::NA_LETTER)
@@ -1358,6 +1376,9 @@ TEST(PrinterDescriptionTest, CddGetAll) {
                                  .WithMaxHeight(9999)
                                  .Build()));
   EXPECT_EQ(default_media, media.GetDefault());
+
+  EXPECT_TRUE(media_type.Contains(MediaType("stationery", "Plain Paper")));
+  EXPECT_TRUE(media_type.Contains(MediaType("photographic", "Photo Paper")));
 
   EXPECT_FALSE(collate.default_value());
   EXPECT_TRUE(reverse.default_value());
@@ -1434,9 +1455,9 @@ TEST(PrinterDescriptionTest, CjtSetAll) {
   duplex.set_value(DuplexType::NO_DUPLEX);
   orientation.set_value(OrientationType::LANDSCAPE);
   copies.set_value(123);
-  margins.set_value(Margins(MarginsType::CUSTOM_MARGINS, 7, 6, 3, 1));
+  margins.set_value(Margins(7, 6, 3, 1));
   dpi.set_value(Dpi(562, 125));
-  fit_to_page.set_value(FitToPageType::SHRINK_TO_PAGE);
+  fit_to_page.set_value(FitToPageType::FIT);
   PageRange page_ranges;
   page_ranges.push_back(Interval(1, 99));
   page_ranges.push_back(Interval(150));
@@ -1511,9 +1532,9 @@ TEST(PrinterDescriptionTest, CjtGetAll) {
   EXPECT_EQ(duplex.value(), DuplexType::NO_DUPLEX);
   EXPECT_EQ(orientation.value(), OrientationType::LANDSCAPE);
   EXPECT_EQ(copies.value(), 123);
-  EXPECT_EQ(margins.value(), Margins(MarginsType::CUSTOM_MARGINS, 7, 6, 3, 1));
+  EXPECT_EQ(margins.value(), Margins(7, 6, 3, 1));
   EXPECT_EQ(dpi.value(), Dpi(562, 125));
-  EXPECT_EQ(fit_to_page.value(), FitToPageType::SHRINK_TO_PAGE);
+  EXPECT_EQ(fit_to_page.value(), FitToPageType::FIT);
   PageRange page_ranges;
   page_ranges.push_back(Interval(1, 99));
   page_ranges.push_back(Interval(150));

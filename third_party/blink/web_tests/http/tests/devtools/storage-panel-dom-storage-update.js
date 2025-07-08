@@ -5,10 +5,11 @@
 import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 
+import * as Application from 'devtools/panels/application/application.js';
+
 (async function() {
   TestRunner.addResult(
       `Test that storage panel is present and that it contains correct data whenever localStorage is updated.\n`);
-  await TestRunner.loadLegacyModule('console');
     // Note: every test that uses a storage API must manually clean-up state from previous tests.
   await ApplicationTestRunner.resetState();
 
@@ -38,12 +39,13 @@ import {ApplicationTestRunner} from 'application_test_runner';
   var view = null;
 
   function dumpDataGrid(rootNode) {
-    var nodes = rootNode.children;
+    var nodes = rootNode.querySelectorAll('tr');
     var rows = [];
     for (var i = 0; i < nodes.length; ++i) {
-      var node = nodes[i];
-      if (typeof node.data.key === 'string')
-        rows.push(node.data.key + ' = ' + node.data.value);
+      var cells = nodes[i].querySelectorAll('td');
+      if (cells.length) {
+        rows.push(cells[0].textContent.trim() + ' = ' + cells[1].textContent.trim());
+      }
     }
     rows.sort();
     TestRunner.addResult('Table rows: [' + rows.join(', ') + ']');
@@ -71,16 +73,16 @@ import {ApplicationTestRunner} from 'application_test_runner';
 
       TestRunner.assertTrue(!!storage, 'Local storage not found.');
 
-      UI.panels.resources.showDOMStorage(storage);
-      view = UI.panels.resources.domStorageView;
-      TestRunner.addSniffer(view, 'showDOMStorageItems', viewUpdated);
+      Application.ResourcesPanel.ResourcesPanel.instance().showDOMStorage(storage);
+      view = Application.ResourcesPanel.ResourcesPanel.instance().domStorageView;
+      TestRunner.addSniffer(view, 'showItems', viewUpdated);
     },
 
     function addItemTest(next) {
       var indicesToAdd = [1, 2, 3, 4, 5, 6];
 
       function itemAdded() {
-        dumpDataGrid(view.dataGrid.rootNode());
+        dumpDataGrid(view.contentElement.querySelector('devtools-data-grid'));
         addItem();
       }
 
@@ -104,7 +106,7 @@ import {ApplicationTestRunner} from 'application_test_runner';
       var indicesToRemove = [1, 3, 5];
 
       function itemRemoved() {
-        dumpDataGrid(view.dataGrid.rootNode());
+        dumpDataGrid(view.contentElement.querySelector('devtools-data-grid'));
         removeItem();
       }
 
@@ -132,14 +134,14 @@ import {ApplicationTestRunner} from 'application_test_runner';
       TestRunner.evaluateInPage(command);
 
       function itemUpdated() {
-        dumpDataGrid(view.dataGrid.rootNode());
+        dumpDataGrid(view.contentElement.querySelector('devtools-data-grid'));
         next();
       }
     },
 
     function clearTest(next) {
       function itemsCleared() {
-        dumpDataGrid(view.dataGrid.rootNode());
+        dumpDataGrid(view.contentElement.querySelector('devtools-data-grid'));
         next();
       }
 

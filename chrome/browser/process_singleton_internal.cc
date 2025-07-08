@@ -6,7 +6,7 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/build_config.h"
 
@@ -41,8 +41,6 @@ ToProtoEnum(ProcessSingleton::RemoteProcessInteractionResult result) {
     CASE(USER_REFUSED_TERMINATION);
     case ProcessSingleton::REMOTE_PROCESS_INTERACTION_RESULT_COUNT:
       NOTREACHED();
-      return perfetto::protos::pbzero::ProcessSingleton::
-          INTERACTION_RESULT_UNSPECIFIED;
   }
 }
 
@@ -59,8 +57,6 @@ ToProtoEnum(ProcessSingleton::RemoteHungProcessTerminateReason reason) {
 #endif
     case ProcessSingleton::REMOTE_HUNG_PROCESS_TERMINATE_REASON_COUNT:
       NOTREACHED();
-      return perfetto::protos::pbzero::ProcessSingleton::
-          TERMINATE_REASON_UNSPECIFIED;
   }
 }
 

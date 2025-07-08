@@ -13,6 +13,10 @@ on top of the content.
 For a detailed explanation, please see the
 [explainer](https://github.com/WICG/view-transitions/blob/main/README.md)
 
+The specification governing this feature is located in the following places:
+* [Level 1](https://drafts.csswg.org/css-view-transitions-1/)
+* [Level 2](https://drafts.csswg.org/css-view-transitions-2/)
+
 ## Code Structure
 
 A new method is exposed on window.document, called startViewTransition(). This is
@@ -39,8 +43,8 @@ rendered using the following steps :
   transition elements" (or just "transition elements" when the context is clear)
   which should be animated independently during a transition.
 
-- A tree of pseudo elements is generated to render the transition elements using
-  this state. The pseudo element tree is styled after a style recalc pass is
+- A tree of pseudo-elements is generated to render the transition elements using
+  this state. The pseudo-element tree is styled after a style recalc pass is
   executed on the author DOM during a Document lifecycle update.
 
 ``` text
@@ -57,11 +61,11 @@ html
    |     |_ ::view-transition-new(bar)
 ```
 
-The ::view-transition pseudo element is the root of this pseudo element tree. This
-provides a shared stacking context for painting pseudo elements corresponding to
+The ::view-transition pseudo-element is the root of this pseudo-element tree. This
+provides a shared stacking context for painting pseudo-elements corresponding to
 a transition element.
 
-Each transition element is rendered using the following new pseudo elements :
+Each transition element is rendered using the following new pseudo-elements :
 
 - ::view-transition-group generates a box which maps to the transition element's
 quad in author DOM.
@@ -75,8 +79,34 @@ transition element's live content from the new DOM.
 
 Each transition element is tagged with a developer provided string which can be
 used as a custom ident to uniquely identify and target the corresponding
-generated pseudo elements in UA and developer stylesheets. This string is
+generated pseudo-elements in UA and developer stylesheets. This string is
 tracked on the PseudoElement class.
+
+### Pseudo-element traversal
+
+Pseudo-elements are not considered part of tree structure of the ordinary DOM
+tree and thus have no sibling or child pointers like ordinary nodes. However, an
+ordering is defined via special "PseudoAware" methods for child and sibling
+operations.
+
+Within the ::view-transition subtree, view-transition-group siblings are ordered
+based on ordering of the view-transition-name, which is sorted by the paint
+order of the elements they represent, see
+[ViewTransitionStyleTracker::AddTransitionElementsFromCSSRecursive](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/core/view_transition/view_transition_style_tracker.cc;l=559;drc=7172fffc3c545134d5c88af8ab07b04fcb1d628e).
+::view-transition-old always precedes ::view-transition-new.
+
+In terms of ordering, only ::view-transition is relevant in relation to non-VT
+elements and pseudos, since VT-pseudos can only appear within ::view-transition and
+no other elements can. ::view-transition is placed after ::after:
+
+```
+  Element
+    ::marker
+    ::before
+    Ordinary Elements
+    ::after
+    ::view-transition
+```
 
 ## ViewTransitionElementResourceId
 ViewTransitionElementResourceId is an identifier used to tag the rendered output (called
@@ -98,14 +128,14 @@ in the old and new DOM as follows :
 old_snapshot_id tags elements in the old DOM. This ID refers to a live snapshot
 and the Viz process executes an async operation to save a cached version keyed
 using the same ID. This ID provides the content for ::view-transition-old
-pseudo elements.
+pseudo-elements.
 
 * Once the cached version has been saved, the developer can update the DOM to
 the new state called the start phase. At this point new_snapshot_id is created
 to tag elements in the new DOM. This ID always refers to a live snapshot and
-provides the content for ::view-transition-new pseudo elements. The
+provides the content for ::view-transition-new pseudo-elements. The
 old_snapshot_id now refers to the cached version displayed by
-::view-transition-old pseudo elements.
+::view-transition-old pseudo-elements.
 
 ## Viewport Sizes
 
@@ -158,11 +188,3 @@ than the current fixed viewport. Painting is offset within the snapshot so that
 page content is rendered at the correct location (i.e. the snapshot will paint
 the background color in the region overlaid by the URL bar).
 
-
-## Additional Notes
-
-Note that this project is in early stages of design and implementation. To
-follow the design evolution, please see [our github
-repo](https://github.com/WICG/view-transitions/). Furthermore, this
-README's Code Structure section will be updated as we make progress with our
-implementation.

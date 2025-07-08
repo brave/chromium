@@ -9,6 +9,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
@@ -27,11 +28,11 @@
 #include "media/mojo/mojom/media_player.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "ui/android/view_android.h"
@@ -89,13 +90,16 @@ class CONTENT_EXPORT MediaWebContentsObserver
   bool IsPictureInPictureAllowedForFullscreenVideo() const;
 
   // Gets the MediaPlayerId of the fullscreen video if it exists.
-  const absl::optional<MediaPlayerId>& GetFullscreenVideoMediaPlayerId() const;
+  const std::optional<MediaPlayerId>& GetFullscreenVideoMediaPlayerId() const;
 
   // WebContentsObserver implementation.
   void WebContentsDestroyed() override;
   void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
   void MediaPictureInPictureChanged(bool is_picture_in_picture) override;
   void DidUpdateAudioMutingState(bool muted) override;
+  void DidStartNavigation(NavigationHandle* navigation_handle) override;
+  void RenderFrameHostChanged(RenderFrameHost* old_host,
+                              RenderFrameHost* new_host) override;
 
   // MediaPlayerObserverClient implementation.
   void GetHasPlayedBefore(GetHasPlayedBeforeCallback callback) override;
@@ -109,6 +113,9 @@ class CONTENT_EXPORT MediaWebContentsObserver
   // merging the logic of effectively fullscreen, hiding media controls and
   // fullscreening video element to the same place.
   void RequestPersistentVideo(bool value);
+
+  // Returns the number of active players with video content.
+  int GetCurrentlyPlayingVideoCount() const;
 
   // Returns whether or not the given player id is active.
   bool IsPlayerActive(const MediaPlayerId& player_id) const;
@@ -215,6 +222,7 @@ class CONTENT_EXPORT MediaWebContentsObserver
     void OnRemotePlaybackMetadataChange(
         media_session::mojom::RemotePlaybackMetadataPtr
             remote_playback_metadata) override;
+    void OnVideoVisibilityChanged(bool meets_visibility_threshold) override;
 
    private:
     PlayerInfo* GetPlayerInfo();
@@ -224,7 +232,7 @@ class CONTENT_EXPORT MediaWebContentsObserver
         const std::string& hashed_device_id,
         const content::MediaDeviceSaltAndOrigin& salt_and_origin);
     void OnReceivedTranslatedDeviceId(
-        const absl::optional<std::string>& translated_id);
+        const std::optional<std::string>& translated_id);
 
     const MediaPlayerId media_player_id_;
     const raw_ptr<MediaWebContentsObserver> media_web_contents_observer_;
@@ -314,8 +322,8 @@ class CONTENT_EXPORT MediaWebContentsObserver
   // Tracking variables and associated wake locks for media playback.
   PlayerInfoMap player_info_map_;
   mojo::Remote<device::mojom::WakeLock> audio_wake_lock_;
-  absl::optional<MediaPlayerId> fullscreen_player_;
-  absl::optional<bool> picture_in_picture_allowed_in_fullscreen_;
+  std::optional<MediaPlayerId> fullscreen_player_;
+  std::optional<bool> picture_in_picture_allowed_in_fullscreen_;
   bool has_audio_wake_lock_for_testing_ = false;
 
   std::unique_ptr<MediaSessionControllersManager> session_controllers_manager_;

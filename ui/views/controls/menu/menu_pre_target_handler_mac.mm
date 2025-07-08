@@ -12,10 +12,6 @@
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/widget.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace views {
 
 MenuPreTargetHandlerMac::MenuPreTargetHandlerMac(MenuController* controller,
@@ -33,10 +29,12 @@ MenuPreTargetHandlerMac::~MenuPreTargetHandlerMac() = default;
 void MenuPreTargetHandlerMac::NativeWidgetMacEventMonitorOnEvent(
     ui::Event* ui_event,
     bool* was_handled) {
-  if (*was_handled)
+  if (*was_handled) {
     return;
-  if (!ui_event->IsKeyEvent())
+  }
+  if (!ui_event->IsKeyEvent()) {
     return;
+  }
   *was_handled = controller_->OnWillDispatchKeyEvent(ui_event->AsKeyEvent()) !=
                  ui::POST_DISPATCH_PERFORM_DEFAULT;
 }

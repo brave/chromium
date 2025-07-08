@@ -2,32 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
-import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/cr_elements/policy/cr_tooltip_icon.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/policy/cr_tooltip_icon.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
 import './setup_fingerprint_dialog.js';
 import '../settings_shared.css.js';
 
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {focusWithoutInk} from 'chrome://resources/ash/common/focus_without_ink_js.js';
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {DomRepeatEvent, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {castExists} from '../assert_extras.js';
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {assertExists, castExists} from '../assert_extras.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {recordSettingChange} from '../metrics_recorder.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
-import {FingerprintBrowserProxy, FingerprintBrowserProxyImpl, FingerprintInfo} from './fingerprint_browser_proxy.js';
+import type {FingerprintBrowserProxy, FingerprintInfo} from './fingerprint_browser_proxy.js';
+import {FingerprintBrowserProxyImpl} from './fingerprint_browser_proxy.js';
 import {getTemplate} from './fingerprint_list_subpage.html.js';
 
 const SettingsFingerprintListSubpageElementBase = RouteObserverMixin(
@@ -50,7 +53,7 @@ export class SettingsFingerprintListSubpageElement extends
        */
       authToken: {
         type: String,
-        value: '',
+        notify: true,
         observer: 'onAuthTokenChanged_',
       },
 
@@ -67,21 +70,17 @@ export class SettingsFingerprintListSubpageElement extends
         type: Boolean,
         value: true,
       },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kAddFingerprintV2,
-          Setting.kRemoveFingerprintV2,
-        ]),
-      },
     };
   }
 
-  authToken: string;
+  authToken: string|undefined;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kAddFingerprintV2,
+    Setting.kRemoveFingerprintV2,
+  ]);
+
   private fingerprints_: string[];
   private showSetupFingerprintDialog_: boolean;
   private allowAddAnotherFinger_: boolean;
@@ -114,7 +113,7 @@ export class SettingsFingerprintListSubpageElement extends
     return false;
   }
 
-  override currentRouteChanged(newRoute: Route) {
+  override currentRouteChanged(newRoute: Route): void {
     if (newRoute !== routes.FINGERPRINT) {
       this.showSetupFingerprintDialog_ = false;
       return;
@@ -141,10 +140,11 @@ export class SettingsFingerprintListSubpageElement extends
   }
 
   private onFingerprintDeleteTapped_(e: DomRepeatEvent<number>): void {
+    assertExists(this.authToken);
     this.browserProxy_.removeEnrollment(e.model.index, this.authToken)
         .then(success => {
           if (success) {
-            recordSettingChange();
+            recordSettingChange(Setting.kRemoveFingerprintV2);
             this.updateFingerprintsList_();
           }
         });

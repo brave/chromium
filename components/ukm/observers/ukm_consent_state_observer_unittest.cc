@@ -7,6 +7,7 @@
 #include "base/observer_list.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
+#include "components/sync/protocol/sync_enums.pb.h"
 #include "components/sync/service/sync_token_status.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -16,6 +17,9 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/components/kiosk/kiosk_test_utils.h"  // nogncheck
+#include "chromeos/components/mgs/managed_guest_session_test_utils.h"
+#include "components/user_manager/fake_user_manager.h"
+#include "components/user_manager/scoped_user_manager.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace ukm {
@@ -25,10 +29,10 @@ namespace {
 class MockSyncService : public syncer::TestSyncService {
  public:
   MockSyncService() {
-    SetTransportState(TransportState::INITIALIZING);
+    SetMaxTransportState(TransportState::INITIALIZING);
     SetLastCycleSnapshot(syncer::SyncCycleSnapshot());
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     SetAppSync(false);
 #endif
   }
@@ -39,8 +43,8 @@ class MockSyncService : public syncer::TestSyncService {
   ~MockSyncService() override { Shutdown(); }
 
   void SetStatus(bool has_passphrase, bool history_enabled, bool active) {
-    SetTransportState(active ? TransportState::ACTIVE
-                             : TransportState::INITIALIZING);
+    SetMaxTransportState(active ? TransportState::ACTIVE
+                                : TransportState::INITIALIZING);
     SetIsUsingExplicitPassphrase(has_passphrase);
 
     GetUserSettings()->SetSelectedTypes(
@@ -68,19 +72,15 @@ class MockSyncService : public syncer::TestSyncService {
 
 #if BUILDFLAG(IS_CHROMEOS)
   void SetAppSync(bool enabled) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
     auto selected_os_types = GetUserSettings()->GetSelectedOsTypes();
 
-    if (enabled)
+    if (enabled) {
       selected_os_types.Put(syncer::UserSelectableOsType::kOsApps);
-    else
+    } else {
       selected_os_types.Remove(syncer::UserSelectableOsType::kOsApps);
+    }
 
     GetUserSettings()->SetSelectedOsTypes(false, selected_os_types);
-#else
-    GetUserSettings()->SetAppsSyncEnabledByOs(enabled);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
     NotifyObserversOfStateChanged();
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -106,7 +106,8 @@ class MockSyncService : public syncer::TestSyncService {
 
 class TestUkmConsentStateObserver : public UkmConsentStateObserver {
  public:
-  TestUkmConsentStateObserver() = default;
+  // Inherits UkmConsentStateObserver constructors.
+  using UkmConsentStateObserver::UkmConsentStateObserver;
 
   TestUkmConsentStateObserver(const TestUkmConsentStateObserver&) = delete;
   TestUkmConsentStateObserver& operator=(const TestUkmConsentStateObserver&) =
@@ -160,11 +161,23 @@ class UkmConsentStateObserverTest : public testing::TestWithParam<bool> {
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
+void ExpectDwaAllowedForAllProfiles(TestUkmConsentStateObserver& observer,
+                                    bool expected_allowed) {
+  // App sync is turned off by default in CHROMEOS. This results in DWA not
+  // being allowed for that particular test setup, however can be enabled for
+  // other platforms.
+  // DWA and ChromeOS are tested further below.
+#if !BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(expected_allowed, observer.IsDwaAllowedForAllProfiles());
+#endif
+}
+
 }  // namespace
 
 TEST_F(UkmConsentStateObserverTest, NoProfiles) {
   TestUkmConsentStateObserver observer;
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -177,6 +190,7 @@ TEST_F(UkmConsentStateObserverTest, NotActive) {
   TestUkmConsentStateObserver observer;
   observer.StartObserving(&sync, &prefs);
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -189,6 +203,7 @@ TEST_F(UkmConsentStateObserverTest, OneEnabled) {
   TestUkmConsentStateObserver observer;
   observer.StartObserving(&sync, &prefs);
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, true);
   EXPECT_TRUE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -207,6 +222,7 @@ TEST_F(UkmConsentStateObserverTest, MixedProfiles) {
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs2, true);
   observer.StartObserving(&sync2, &prefs2);
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -216,7 +232,6 @@ TEST_F(UkmConsentStateObserverTest, TwoEnabled) {
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs1);
   sync_preferences::TestingPrefServiceSyncable prefs2;
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs2);
-
   TestUkmConsentStateObserver observer;
   MockSyncService sync1;
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs1, true);
@@ -226,6 +241,7 @@ TEST_F(UkmConsentStateObserverTest, TwoEnabled) {
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs2, true);
   observer.StartObserving(&sync2, &prefs2);
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, true);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -235,16 +251,20 @@ TEST_F(UkmConsentStateObserverTest, OneAddRemove) {
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs);
   TestUkmConsentStateObserver observer;
   MockSyncService sync;
+
   observer.StartObserving(&sync, &prefs);
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs, true);
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, true);
   EXPECT_TRUE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
   sync.Shutdown();
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_TRUE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
@@ -257,30 +277,37 @@ TEST_F(UkmConsentStateObserverTest, PurgeOnDisable) {
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs, true);
   observer.StartObserving(&sync, &prefs);
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, true);
   EXPECT_TRUE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
   SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs, false);
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_TRUE(observer.ResetNotified());
   EXPECT_TRUE(observer.ResetPurged());
   sync.Shutdown();
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
   EXPECT_FALSE(observer.ResetNotified());
   EXPECT_FALSE(observer.ResetPurged());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// Tests for when AppSync is not dependent on MSBB.
-class MsbbAppOptInUkmConsentStateObserverTest
-    : public UkmConsentStateObserverTest {
- public:
-  MsbbAppOptInUkmConsentStateObserverTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        ukm::kAppMetricsOnlyRelyOnAppSync);
-  }
-};
+TEST_F(UkmConsentStateObserverTest, NoInitialUkmConsentState) {
+  MockSyncService sync;
+  sync.SetStatus(false, true, false);
+  sync_preferences::TestingPrefServiceSyncable prefs;
+  RegisterUrlKeyedAnonymizedDataCollectionPref(prefs);
+  TestUkmConsentStateObserver observer(NoInitialUkmConsentState);
+  observer.StartObserving(&sync, &prefs);
+  EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  ExpectDwaAllowedForAllProfiles(observer, false);
+  EXPECT_TRUE(observer.ResetNotified());
+  EXPECT_FALSE(observer.ResetPurged());
+  sync.Shutdown();
+}
 
-TEST_F(MsbbAppOptInUkmConsentStateObserverTest, VerifyConsentStates) {
+#if BUILDFLAG(IS_CHROMEOS)
+TEST_F(UkmConsentStateObserverTest, VerifyConsentStates) {
   sync_preferences::TestingPrefServiceSyncable prefs;
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs);
   TestUkmConsentStateObserver observer;
@@ -295,6 +322,7 @@ TEST_F(MsbbAppOptInUkmConsentStateObserverTest, VerifyConsentStates) {
   UkmConsentState state = observer.GetUkmConsentState();
 
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  EXPECT_FALSE(observer.IsDwaAllowedForAllProfiles());
   // MSBB and Extensions are enabled while App Sync is disabled.
   EXPECT_TRUE(state.Has(MSBB));
   EXPECT_TRUE(state.Has(EXTENSIONS));
@@ -309,8 +337,10 @@ TEST_F(MsbbAppOptInUkmConsentStateObserverTest, VerifyConsentStates) {
   sync.SetAppSync(true);
   state = observer.GetUkmConsentState();
 
-  // Verify that the these values remain unchanged with App-sync enablement.
+  // Verify that DWA is now enablead the rest of the these values remain
+  // unchanged with App-sync enablement.
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  EXPECT_TRUE(observer.IsDwaAllowedForAllProfiles());
   EXPECT_TRUE(state.Has(MSBB));
   EXPECT_TRUE(state.Has(EXTENSIONS));
   EXPECT_TRUE(observer.ResetNotified());
@@ -326,6 +356,8 @@ TEST_F(MsbbAppOptInUkmConsentStateObserverTest, VerifyConsentStates) {
 
   // UKM will remain allowed.
   EXPECT_TRUE(observer.IsUkmAllowedForAllProfiles());
+  // DWA should be off as it requires both MSBB and APPS to be on.
+  EXPECT_FALSE(observer.IsDwaAllowedForAllProfiles());
   // MSBB should be off.
   EXPECT_FALSE(state.Has(MSBB));
   // Extensions should be off, implicitly.
@@ -350,8 +382,7 @@ TEST_F(MsbbAppOptInUkmConsentStateObserverTest, VerifyConsentStates) {
   EXPECT_TRUE(observer.ResetPurged());
 }
 
-TEST_F(MsbbAppOptInUkmConsentStateObserverTest,
-       VerifyConflictingProfilesRevokesConsent) {
+TEST_F(UkmConsentStateObserverTest, VerifyConflictingProfilesRevokesConsent) {
   sync_preferences::TestingPrefServiceSyncable prefs1;
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs1);
   sync_preferences::TestingPrefServiceSyncable prefs2;
@@ -382,32 +413,37 @@ TEST_F(MsbbAppOptInUkmConsentStateObserverTest,
   // APP sync is off because Profile 2 consents but Profile 1 doesn't.
   UkmConsentState state = observer.GetUkmConsentState();
   EXPECT_FALSE(observer.IsUkmAllowedForAllProfiles());
+  EXPECT_FALSE(observer.IsDwaAllowedForAllProfiles());
   EXPECT_FALSE(state.Has(MSBB));
   EXPECT_FALSE(state.Has(EXTENSIONS));
   EXPECT_FALSE(state.Has(APPS));
   EXPECT_FALSE(observer.ResetPurged());
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS)
-
 // Test consent state for kiosk.
 class KioskUkmConsentStateObserverTest : public UkmConsentStateObserverTest {
  public:
   bool is_ukm_collection_enabled() const { return GetParam(); }
-
-  void SetUp() override { chromeos::SetUpFakeKioskSession(); }
-
-  void TearDown() override { chromeos::TearDownFakeKioskSession(); }
 };
 
 TEST_P(KioskUkmConsentStateObserverTest, VerifyDefaultConsent) {
+  // Enter Kiosk session.
+  TestingPrefServiceSimple local_state;
+  user_manager::UserManager::RegisterPrefs(local_state.registry());
+  user_manager::ScopedUserManager user_manager(
+      std::make_unique<user_manager::FakeUserManager>(&local_state));
+  chromeos::SetUpFakeKioskSession();
+
   sync_preferences::TestingPrefServiceSyncable prefs;
   RegisterUrlKeyedAnonymizedDataCollectionPref(prefs);
   TestUkmConsentStateObserver observer;
   MockSyncService sync;
   // Disable app sync consent.
+  // In Kiosk mode, UKM consent is meant to ignore Apps Sync as it's not
+  // relevant - there's no user-facing app list. Instead it's based on MSBB
+  // consent.
+  // For further context, see:
+  // https://chromium-review.googlesource.com/c/chromium/src/+/4414724/22/components/ukm/observers/ukm_consent_state_observer.cc#35
   sync.SetAppSync(false);
 
   // Enable MSBB consent.
@@ -418,6 +454,9 @@ TEST_P(KioskUkmConsentStateObserverTest, VerifyDefaultConsent) {
   UkmConsentState state = observer.GetUkmConsentState();
 
   EXPECT_EQ(is_ukm_collection_enabled(), observer.IsUkmAllowedForAllProfiles());
+  // In Kiosk mode, APPS consent does not depend on App Sync, but on MSBB.
+  // Therefore, DWA is allowed when MSBB is on, regardless of App Sync state.
+  EXPECT_EQ(is_ukm_collection_enabled(), observer.IsDwaAllowedForAllProfiles());
   // MSBB and Extensions are enabled while App Sync is disabled.
   EXPECT_EQ(is_ukm_collection_enabled(), state.Has(MSBB));
   EXPECT_EQ(is_ukm_collection_enabled(), state.Has(APPS));
@@ -425,6 +464,38 @@ TEST_P(KioskUkmConsentStateObserverTest, VerifyDefaultConsent) {
 
 INSTANTIATE_TEST_SUITE_P(KioskUkmConsentStateObserverTest,
                          KioskUkmConsentStateObserverTest,
+                         ::testing::Bool());
+
+// Test consent state for managed guest session (MGS).
+class MgsUkmConsentStateObserverTest : public UkmConsentStateObserverTest {
+ public:
+  bool is_ukm_collection_enabled() const { return GetParam(); }
+
+ private:
+  chromeos::FakeManagedGuestSession managed_guest_session;
+};
+
+TEST_P(MgsUkmConsentStateObserverTest, VerifyAppsOnlyConsent) {
+  sync_preferences::TestingPrefServiceSyncable prefs;
+  RegisterUrlKeyedAnonymizedDataCollectionPref(prefs);
+  TestUkmConsentStateObserver observer;
+  MockSyncService sync;
+  // Disable app sync consent.
+  sync.SetAppSync(false);
+
+  SetUrlKeyedAnonymizedDataCollectionEnabled(&prefs,
+                                             is_ukm_collection_enabled());
+  observer.StartObserving(&sync, &prefs);
+
+  UkmConsentState state = observer.GetUkmConsentState();
+
+  // MGS should report AppKM if policy is enabled.
+  EXPECT_EQ(is_ukm_collection_enabled(), state.Has(APPS));
+  EXPECT_EQ(false, state.Has(MSBB));
+}
+
+INSTANTIATE_TEST_SUITE_P(MgsUkmConsentStateObserverTest,
+                         MgsUkmConsentStateObserverTest,
                          ::testing::Bool());
 
 #endif  // BUILDFLAG(IS_CHROMEOS)

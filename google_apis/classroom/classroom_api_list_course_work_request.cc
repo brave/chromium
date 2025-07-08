@@ -30,8 +30,10 @@ constexpr char kListCourseWorkUrlTemplate[] = "/v1/courses/$1/courseWork";
 
 constexpr char kFieldsParameterName[] = "fields";
 constexpr char kRequestedFields[] =
-    "courseWork(id,title,state,alternateLink,updateTime,"
-    "dueDate(year,month,day),dueTime(hours,minutes,seconds,nanos)),"
+    "courseWork(id,title,state,alternateLink,creationTime,updateTime,"
+    "dueDate(year,month,day),dueTime(hours,minutes,seconds,nanos),workType,"
+    "materials(youtubeVideo(title),link(title),form(title),"
+    "driveFile(driveFile(title)))),"
     "nextPageToken";
 
 constexpr char kPageTokenParameterName[] = "pageToken";

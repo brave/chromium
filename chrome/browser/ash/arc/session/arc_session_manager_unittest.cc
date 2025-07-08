@@ -5,17 +5,12 @@
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/arc_util.h"
-#include "ash/components/arc/session/arc_service_manager.h"
-#include "ash/components/arc/session/arc_session_runner.h"
-#include "ash/components/arc/test/arc_util_test_support.h"
-#include "ash/components/arc/test/fake_arc_session.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "base/check_op.h"
@@ -45,25 +40,38 @@
 #include "chrome/browser/ash/arc/test/test_arc_session_manager.h"
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
 #include "chrome/browser/ash/login/oobe_screen.h"
-#include "chrome/browser/ash/login/ui/fake_login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/arc/fake_android_management_client.h"
-#include "chrome/browser/ash/settings/device_settings_cache.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/ash/login/fake_login_display_host.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
 #include "chromeos/ash/components/dbus/arc/arcvm_data_migrator_client.h"
 #include "chromeos/ash/components/dbus/arc/fake_arcvm_data_migrator_client.h"
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
+#include "chromeos/ash/components/dbus/resourced/fake_resourced_client.h"
+#include "chromeos/ash/components/dbus/resourced/resourced_client.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/dbus/upstart/upstart_client.h"
 #include "chromeos/ash/components/login/auth/auth_events_recorder.h"
+#include "chromeos/ash/components/memory/swap_configuration.h"
+#include "chromeos/ash/components/settings/device_settings_cache.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
+#include "chromeos/ash/experiences/arc/session/arc_session_runner.h"
+#include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
+#include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
@@ -80,10 +88,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_task_environment.h"
 #include "google_apis/gaia/gaia_constants.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // TODO(b/254819616): Replace base::RunLoop().RunUntilIdle() with
 // task_environment_.RunUntilIdle() or Run() & Quit() to make the tests less
@@ -116,7 +124,7 @@ class ArcInitialStartHandler : public ArcSessionManagerObserver {
  private:
   bool was_called_ = false;
 
-  const raw_ptr<ArcSessionManager, ExperimentalAsh> session_manager_;
+  const raw_ptr<ArcSessionManager> session_manager_;
 };
 
 class FileExpansionObserver : public ArcSessionManagerObserver {
@@ -126,7 +134,7 @@ class FileExpansionObserver : public ArcSessionManagerObserver {
   FileExpansionObserver(const FileExpansionObserver&) = delete;
   FileExpansionObserver& operator=(const FileExpansionObserver&) = delete;
 
-  const absl::optional<bool>& property_files_expansion_result() const {
+  const std::optional<bool>& property_files_expansion_result() const {
     return property_files_expansion_result_;
   }
 
@@ -136,7 +144,7 @@ class FileExpansionObserver : public ArcSessionManagerObserver {
   }
 
  private:
-  absl::optional<bool> property_files_expansion_result_;
+  std::optional<bool> property_files_expansion_result_;
 };
 
 class ShowErrorObserver : public ArcSessionManagerObserver {
@@ -151,7 +159,7 @@ class ShowErrorObserver : public ArcSessionManagerObserver {
 
   ~ShowErrorObserver() override { session_manager_->RemoveObserver(this); }
 
-  const absl::optional<ArcSupportHost::ErrorInfo> error_info() const {
+  const std::optional<ArcSupportHost::ErrorInfo> error_info() const {
     return error_info_;
   }
 
@@ -160,14 +168,14 @@ class ShowErrorObserver : public ArcSessionManagerObserver {
   }
 
  private:
-  absl::optional<ArcSupportHost::ErrorInfo> error_info_;
-  const raw_ptr<ArcSessionManager, ExperimentalAsh> session_manager_;
+  std::optional<ArcSupportHost::ErrorInfo> error_info_;
+  const raw_ptr<ArcSessionManager> session_manager_;
 };
 
 class ArcSessionManagerInLoginScreenTest : public testing::Test {
  public:
   ArcSessionManagerInLoginScreenTest()
-      : user_manager_enabler_(std::make_unique<ash::FakeChromeUserManager>()) {
+      : fake_user_manager_(std::make_unique<ash::FakeChromeUserManager>()) {
     ash::ConciergeClient::InitializeFake(/*fake_cicerone_client=*/nullptr);
     ash::SessionManagerClient::InitializeFakeInMemory();
 
@@ -208,7 +216,8 @@ class ArcSessionManagerInLoginScreenTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<ArcServiceManager> arc_service_manager_;
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
-  user_manager::ScopedUserManager user_manager_enabler_;
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_;
 };
 
 // We expect mini instance starts to run if EmitLoginPromptVisible signal is
@@ -269,13 +278,7 @@ class ArcSessionManagerTestBase : public testing::Test {
   ArcSessionManagerTestBase()
       : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP,
                           base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-        user_manager_enabler_(std::make_unique<ash::FakeChromeUserManager>()) {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&test_local_state_);
-    arc::prefs::RegisterLocalStatePrefs(test_local_state_.registry());
-    ash::DemoSetupController::RegisterLocalStatePrefs(
-        test_local_state_.registry());
-    ash::device_settings_cache::RegisterPrefs(test_local_state_.registry());
-    user_manager::KnownUser::RegisterPrefs(test_local_state_.registry());
+        fake_user_manager_(std::make_unique<ash::FakeChromeUserManager>()) {
     auth_events_recorder_ = ash::AuthEventsRecorder::CreateForTesting();
   }
 
@@ -283,9 +286,7 @@ class ArcSessionManagerTestBase : public testing::Test {
   ArcSessionManagerTestBase& operator=(const ArcSessionManagerTestBase&) =
       delete;
 
-  ~ArcSessionManagerTestBase() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-  }
+  ~ArcSessionManagerTestBase() override = default;
 
   void SetUp() override {
     ash::ArcVmDataMigratorClient::InitializeFake();
@@ -328,8 +329,7 @@ class ArcSessionManagerTestBase : public testing::Test {
   }
 
   ash::FakeChromeUserManager* GetFakeUserManager() const {
-    return static_cast<ash::FakeChromeUserManager*>(
-        user_manager::UserManager::Get());
+    return fake_user_manager_.Get();
   }
 
  protected:
@@ -367,12 +367,15 @@ class ArcSessionManagerTestBase : public testing::Test {
   }
 
   content::BrowserTaskEnvironment task_environment_;
+  ScopedTestingLocalState scoped_testing_local_state_{
+      TestingBrowserProcess::GetGlobal()};
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_;
+  session_manager::SessionManager session_manager_;
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<ArcServiceManager> arc_service_manager_;
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
-  user_manager::ScopedUserManager user_manager_enabler_;
   base::ScopedTempDir temp_dir_;
-  TestingPrefServiceSimple test_local_state_;
   std::unique_ptr<ash::AuthEventsRecorder> auth_events_recorder_;
 };
 
@@ -387,15 +390,23 @@ class ArcSessionManagerTest : public ArcSessionManagerTestBase {
     ArcSessionManagerTestBase::SetUp();
 
     const AccountId account_id(AccountId::FromUserEmailGaiaId(
-        profile()->GetProfileUserName(), "1234567890"));
+        profile()->GetProfileUserName(), GaiaId("1234567890")));
     GetFakeUserManager()->AddUser(account_id);
     GetFakeUserManager()->LoginUser(account_id);
+    resourced_client_ = ash::ResourcedClient::InitializeFake();
 
     ASSERT_EQ(ArcSessionManager::State::NOT_INITIALIZED,
               arc_session_manager()->state());
   }
 
-  void TearDown() override { ArcSessionManagerTestBase::TearDown(); }
+  void TearDown() override {
+    resourced_client_ = nullptr;
+    ash::ResourcedClient::Shutdown();
+    ArcSessionManagerTestBase::TearDown();
+  }
+ protected:
+  ash::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
+  raw_ptr<ash::FakeResourcedClient> resourced_client_ = nullptr;
 };
 
 TEST_F(ArcSessionManagerTest, BaseWorkflow) {
@@ -443,6 +454,9 @@ TEST_F(ArcSessionManagerTest, BaseWorkflow) {
 }
 
 TEST_F(ArcSessionManagerTest, SignedInWorkflow) {
+  session_manager::SessionManager::Get()
+      ->HandleUserSessionStartUpTaskCompleted();
+
   PrefService* const prefs = profile()->GetPrefs();
   prefs->SetBoolean(prefs::kArcTermsAccepted, true);
   prefs->SetBoolean(prefs::kArcSignedIn, true);
@@ -459,12 +473,7 @@ TEST_F(ArcSessionManagerTest, SignedInWorkflow) {
 }
 
 TEST_F(ArcSessionManagerTest, SignedInWorkflowWithArcOnDemand) {
-  base::HistogramTester histogram_tester;
-
-  // Enable ARC on Demand feature.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(kArcOnDemandFeature);
-  // ARC on Demand is enabled only for managed users.
+  // ARC on Demand is enabled by default for managed users.
   profile()->GetProfilePolicyConnector()->OverrideIsManagedForTesting(true);
   // ARC on Demand is enabled only on ARCVM.
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
@@ -485,18 +494,199 @@ TEST_F(ArcSessionManagerTest, SignedInWorkflowWithArcOnDemand) {
   // When signed-in, enabling ARC results in the READY state.
   arc_session_manager()->RequestEnable();
   ASSERT_EQ(ArcSessionManager::State::READY, arc_session_manager()->state());
-  histogram_tester.ExpectUniqueSample(
-      "Arc.DelayedActivation.ActivationIsDelayed", true, 1);
   ASSERT_TRUE(arc_session_manager()->IsActivationDelayed());
 
-  constexpr auto kDelay = base::Minutes(10);
-  task_environment().FastForwardBy(kDelay);
-
   // ARC starts after calling AllowActivation().
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kUserLaunchAction);
   ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
-  histogram_tester.ExpectUniqueTimeSample("Arc.DelayedActivation.Delay", kDelay,
-                                          1);
+}
+
+TEST_F(ArcSessionManagerTest, SignedInWorkflowWithDeferringArcActivation) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      kDeferArcActivationUntilUserSessionStartUpTaskCompletion);
+
+  PrefService* const prefs = profile()->GetPrefs();
+  prefs->SetBoolean(prefs::kArcTermsAccepted, true);
+  prefs->SetBoolean(prefs::kArcSignedIn, true);
+
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  base::HistogramTester histogram_tester;
+
+  // By default ARC is not enabled.
+  EXPECT_EQ(ArcSessionManager::State::STOPPED, arc_session_manager()->state());
+  ASSERT_FALSE(arc_session_manager()->IsActivationDelayed());
+
+  // Enabling ARC, does not yet activate ARC.
+  arc_session_manager()->RequestEnable();
+  ASSERT_EQ(ArcSessionManager::State::READY, arc_session_manager()->state());
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Category", 0, 1);
+
+  // No history is updated yet.
+  ASSERT_TRUE(
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory)
+          .empty());
+
+  // Emulate session start up task completion.
+  arc_session_manager()->OnUserSessionStartUpTaskCompleted();
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Result", 0, 1);
+  histogram_tester.ExpectTotalCount(
+      "Arc.DeferActivation.Deferred.Success.ElapsedTime", 1);
+
+  // Making sure activation is recorded.
+  auto& history =
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory);
+  ASSERT_EQ(1u, history.size());
+  EXPECT_EQ(history.front(), base::Value(false));
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Result", 0, 1);
+  histogram_tester.ExpectTotalCount(
+      "Arc.DeferActivation.Deferred.Success.ElapsedTime", 1);
+}
+
+TEST_F(ArcSessionManagerTest,
+       SignedInWorkflowWithDeferringArcActivationActivatedSoon) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      kDeferArcActivationUntilUserSessionStartUpTaskCompletion);
+
+  PrefService* const prefs = profile()->GetPrefs();
+  prefs->SetBoolean(prefs::kArcTermsAccepted, true);
+  prefs->SetBoolean(prefs::kArcSignedIn, true);
+
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  base::HistogramTester histogram_tester;
+
+  // By default ARC is not enabled.
+  EXPECT_EQ(ArcSessionManager::State::STOPPED, arc_session_manager()->state());
+  ASSERT_FALSE(arc_session_manager()->IsActivationDelayed());
+
+  // Enabling ARC, does not yet activate ARC.
+  arc_session_manager()->RequestEnable();
+  ASSERT_EQ(ArcSessionManager::State::READY, arc_session_manager()->state());
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Category", 0, 1);
+
+  // No history is updated yet.
+  ASSERT_TRUE(
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory)
+          .empty());
+
+  // Activate by some external event.
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kUserLaunchAction);
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Result", 1, 1);
+  histogram_tester.ExpectUniqueSample(
+      "Arc.DeferActivation.Deferred.Failure.Reason", 4, 1);
+  histogram_tester.ExpectTotalCount(
+      "Arc.DeferActivation.Deferred.Failure.ElapsedTime", 1);
+
+  // Making sure activation is recorded.
+  auto& history =
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory);
+  ASSERT_EQ(1u, history.size());
+  EXPECT_EQ(history.front(), base::Value(true));
+
+  // Emulate session start up task completion.
+  arc_session_manager()->OnUserSessionStartUpTaskCompleted();
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+
+  // No more history is recorded, since it is one for each user session.
+  EXPECT_EQ(1u, history.size());
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Result", 1, 1);
+  histogram_tester.ExpectTotalCount(
+      "Arc.DeferActivation.Deferred.Failure.ElapsedTime", 1);
+}
+
+TEST_F(ArcSessionManagerTest,
+       SignedInWorkflowWithDeferringArcActivationForUsersAggressivelyUsingArc) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      kDeferArcActivationUntilUserSessionStartUpTaskCompletion);
+  // TODO(b/326065955): Remove the magic number.
+  constexpr size_t kHistoryThreshold = 3;
+
+  PrefService* const prefs = profile()->GetPrefs();
+  prefs->SetBoolean(prefs::kArcTermsAccepted, true);
+  prefs->SetBoolean(prefs::kArcSignedIn, true);
+  {
+    // Emulate the situation that ARC is activated during user session start up
+    // in recent three sessions, which exceeds the threshold.
+    base::Value::List history;
+    for (size_t i = 0; i < kHistoryThreshold; ++i) {
+      history.Append(base::Value(true));
+    }
+    prefs->SetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory,
+                   std::move(history));
+  }
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  base::HistogramTester histogram_tester;
+
+  // By default ARC is not enabled.
+  EXPECT_EQ(ArcSessionManager::State::STOPPED, arc_session_manager()->state());
+  ASSERT_FALSE(arc_session_manager()->IsActivationDelayed());
+
+  // Enabling ARC immediately activates.
+  arc_session_manager()->RequestEnable();
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Category", 1, 1);
+
+  // No history is updated yet, even if the activation is done immediately.
+  ASSERT_EQ(
+      kHistoryThreshold,
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory)
+          .size());
+
+  // Emulate session start up task completion.
+  arc_session_manager()->OnUserSessionStartUpTaskCompleted();
+
+  // Making sure activation is recorded.
+  auto& history =
+      prefs->GetList(prefs::kArcFirstActivationDuringUserSessionStartUpHistory);
+  ASSERT_EQ(kHistoryThreshold + 1u, history.size());
+  EXPECT_EQ(history.back(), base::Value(false));
+
+  histogram_tester.ExpectUniqueSample("Arc.DeferActivation.Result", 3, 1);
+  histogram_tester.ExpectTotalCount(
+      "Arc.DeferActivation.NotDeferred.Failure.ElapsedTime", 1);
+}
+
+TEST_F(ArcSessionManagerTest,
+       SignedInWorkflowWithDeferringArcActivationAlreadyActivated) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      kDeferArcActivationUntilUserSessionStartUpTaskCompletion);
+
+  PrefService* const prefs = profile()->GetPrefs();
+  prefs->SetBoolean(prefs::kArcTermsAccepted, true);
+  prefs->SetBoolean(prefs::kArcSignedIn, true);
+
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kUserLaunchAction);
+
+  // By default ARC is not enabled.
+  EXPECT_EQ(ArcSessionManager::State::STOPPED, arc_session_manager()->state());
+  ASSERT_FALSE(arc_session_manager()->IsActivationDelayed());
+
+  // Enabling ARC immediately activates it.
+  arc_session_manager()->RequestEnable();
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
 }
 
 TEST_F(ArcSessionManagerTest, SignedInWorkflow_ActivationIsAlreadyAllowed) {
@@ -512,7 +702,8 @@ TEST_F(ArcSessionManagerTest, SignedInWorkflow_ActivationIsAlreadyAllowed) {
 
   // When signed-in, enabling ARC results in the ACTIVE state if
   // AllowActivation() is called beforehand.
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager()->RequestEnable();
   ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
 }
@@ -714,6 +905,106 @@ TEST_F(ArcSessionManagerTest, Provisioning_Success) {
   EXPECT_TRUE(arc_session_manager()->IsPlaystoreLaunchRequestedForTesting());
 }
 
+TEST_F(ArcSessionManagerTest, Provisioning_SigninErrorMetric) {
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  arc_session_manager()->EmulateRequirementCheckCompletionForTesting();
+
+  base::HistogramTester histogram_tester;
+
+  arc::mojom::ArcSignInResultPtr result = arc::mojom::ArcSignInResult::NewError(
+      arc::mojom::ArcSignInError::NewSignInError(
+          arc::mojom::GMSSignInError::GMS_SIGN_IN_NETWORK_ERROR));
+  arc_session_manager()->OnProvisioningFinished(
+      ArcProvisioningResult(std::move(result)));
+
+  histogram_tester.ExpectUniqueSample("Arc.Provisioning.SigninResult.Unmanaged",
+                                      2 /*kNetworkError*/, 1);
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, Provisioning_DpcErrorMetric) {
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  arc_session_manager()->EmulateRequirementCheckCompletionForTesting();
+
+  base::HistogramTester histogram_tester;
+
+  arc::mojom::ArcSignInResultPtr result = arc::mojom::ArcSignInResult::NewError(
+      arc::mojom::ArcSignInError::NewCloudProvisionFlowError(
+          arc::mojom::CloudProvisionFlowError::ERROR_ADD_ACCOUNT_FAILED));
+  arc_session_manager()->OnProvisioningFinished(
+      ArcProvisioningResult(std::move(result)));
+
+  histogram_tester.ExpectUniqueSample("Arc.Provisioning.DpcResult.Unmanaged",
+                                      3 /*kAccountAddFail*/, 1);
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, Provisioning_CheckinErrorMetric) {
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  arc_session_manager()->EmulateRequirementCheckCompletionForTesting();
+
+  base::HistogramTester histogram_tester;
+
+  arc::mojom::ArcSignInResultPtr result = arc::mojom::ArcSignInResult::NewError(
+      arc::mojom::ArcSignInError::NewCheckInError(
+          arc::mojom::GMSCheckInError::GMS_CHECK_IN_TIMEOUT));
+  arc_session_manager()->OnProvisioningFinished(
+      ArcProvisioningResult(std::move(result)));
+
+  histogram_tester.ExpectUniqueSample(
+      "Arc.Provisioning.CheckinResult.Unmanaged", 2 /*kTimeout*/, 1);
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, Provisioning_SuccessMetric_Unmanaged) {
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  arc_session_manager()->EmulateRequirementCheckCompletionForTesting();
+
+  base::HistogramTester histogram_tester;
+
+  arc::mojom::ArcSignInResultPtr result =
+      arc::mojom::ArcSignInResult::NewSuccess(
+          arc::mojom::ArcSignInSuccess::SUCCESS);
+  arc_session_manager()->OnProvisioningFinished(
+      ArcProvisioningResult(std::move(result)));
+
+  histogram_tester.ExpectUniqueSample("Arc.Provisioning.SigninResult.Unmanaged",
+                                      0, 1);
+  histogram_tester.ExpectUniqueSample(
+      "Arc.Provisioning.CheckinResult.Unmanaged", 0, 1);
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, Provisioning_SuccessMetric_Managed) {
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  arc_session_manager()->EmulateRequirementCheckCompletionForTesting();
+  profile()->GetProfilePolicyConnector()->OverrideIsManagedForTesting(true);
+
+  base::HistogramTester histogram_tester;
+
+  arc::mojom::ArcSignInResultPtr result =
+      arc::mojom::ArcSignInResult::NewSuccess(
+          arc::mojom::ArcSignInSuccess::SUCCESS);
+  arc_session_manager()->OnProvisioningFinished(
+      ArcProvisioningResult(std::move(result)));
+
+  histogram_tester.ExpectUniqueSample("Arc.Provisioning.DpcResult.Managed", 0,
+                                      1);
+  histogram_tester.ExpectUniqueSample("Arc.Provisioning.CheckinResult.Managed",
+                                      0, 1);
+  arc_session_manager()->Shutdown();
+}
+
 // Verifies that Play Store shown is suppressed on restart when required.
 TEST_F(ArcSessionManagerTest, PlayStoreSuppressed) {
   // Set up the situation that terms were accepted in the previous session.
@@ -777,7 +1068,8 @@ TEST_F(ArcSessionManagerTest, Provisioning_Restart) {
 
   arc_session_manager()->SetProfile(profile());
   arc_session_manager()->Initialize();
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager()->RequestEnable();
 
   // Second start, no fetching code is expected.
@@ -1002,7 +1294,7 @@ TEST_F(ArcSessionManagerTest, ArcVmDataMigrationNecessityChecker_Undetermined) {
   SetArcVmDataMigrationStatus(profile()->GetPrefs(),
                               ArcVmDataMigrationStatus::kUnnotified);
   ash::FakeArcVmDataMigratorClient::Get()->set_has_data_to_migrate(
-      absl::nullopt);
+      std::nullopt);
 
   arc_session_manager()->SetProfile(profile());
   arc_session_manager()->Initialize();
@@ -1037,6 +1329,58 @@ TEST_F(ArcSessionManagerTest, RegularToChildTransition) {
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager()->state());
 
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, SetArcSignedIn) {
+  session_manager::SessionManager::Get()
+      ->HandleUserSessionStartUpTaskCompleted();
+
+  PrefService* const prefs = profile()->GetPrefs();
+  ASSERT_TRUE(prefs);
+  prefs->SetBoolean(prefs::kArcTermsAccepted, true);
+  prefs->SetBoolean(prefs::kArcSignedIn, true);
+
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  // By default ARC is not enabled.
+  EXPECT_EQ(ArcSessionManager::State::STOPPED, arc_session_manager()->state());
+
+  // When signed-in, enabling ARC results in the ACTIVE state.
+  arc_session_manager()->RequestEnable();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+
+  EXPECT_TRUE(prefs->GetBoolean(prefs::kArcSignedIn));
+  EXPECT_TRUE(
+      arc_session_manager()->GetArcSessionRunnerForTesting()->arc_signed_in());
+  EXPECT_TRUE(arc_session_manager()->skipped_terms_of_service_negotiation());
+
+  // Correctly stop service.
+  arc_session_manager()->Shutdown();
+}
+
+TEST_F(ArcSessionManagerTest, ClearArcSignedIn) {
+  // Start ARC.
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
+            arc_session_manager()->state());
+
+  // Disable ARC.
+  arc_session_manager()->RequestDisable();
+
+  PrefService* const prefs = profile()->GetPrefs();
+  ASSERT_TRUE(prefs);
+  EXPECT_FALSE(prefs->GetBoolean(prefs::kArcSignedIn));
+  EXPECT_FALSE(
+      arc_session_manager()->GetArcSessionRunnerForTesting()->arc_signed_in());
+  EXPECT_FALSE(arc_session_manager()->skipped_terms_of_service_negotiation());
+
+  // Correctly stop service.
   arc_session_manager()->Shutdown();
 }
 
@@ -1169,7 +1513,8 @@ TEST_F(ArcSessionManagerTest, SkippedTermsOfServiceNegotiationTrue) {
   arc_session_manager()->SetProfile(profile());
   arc_session_manager()->Initialize();
   EXPECT_FALSE(arc_session_manager()->skipped_terms_of_service_negotiation());
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager()->RequestEnable();
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(arc_session_manager()->skipped_terms_of_service_negotiation());
@@ -1186,7 +1531,8 @@ TEST_F(ArcSessionManagerTest,
        SkippedTermsOfServiceNegotiationOnInternalRestart) {
   arc_session_manager()->SetProfile(profile());
   arc_session_manager()->Initialize();
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager()->RequestEnable();
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
@@ -1215,6 +1561,9 @@ TEST_F(ArcSessionManagerTest,
 // In case of the next start ArcSessionManager should go through remove data
 // folder phase before negotiating terms of service.
 TEST_F(ArcSessionManagerTest, DataCleanUpOnFirstStart) {
+  session_manager::SessionManager::Get()
+      ->HandleUserSessionStartUpTaskCompleted();
+
   base::test::ScopedCommandLine command_line;
   command_line.GetProcessCommandLine()->AppendSwitch(
       ash::switches::kArcDataCleanupOnStart);
@@ -1246,6 +1595,9 @@ TEST_F(ArcSessionManagerTest, DataCleanUpOnFirstStart) {
 // In case of the next start ArcSessionManager should go through remove data
 // folder phase before activating.
 TEST_F(ArcSessionManagerTest, DataCleanUpOnNextStart) {
+  session_manager::SessionManager::Get()
+      ->HandleUserSessionStartUpTaskCompleted();
+
   base::test::ScopedCommandLine command_line;
   command_line.GetProcessCommandLine()->AppendSwitch(
       ash::switches::kArcDataCleanupOnStart);
@@ -1266,6 +1618,7 @@ TEST_F(ArcSessionManagerTest, DataCleanUpOnNextStart) {
             arc_session_manager()->state());
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
+  EXPECT_TRUE(arc_session_manager()->skipped_terms_of_service_negotiation());
 
   arc_session_manager()->Shutdown();
 }
@@ -1310,68 +1663,6 @@ TEST_F(ArcSessionManagerTest, RequestDisableWithArcDataRemoval) {
   arc_session_manager()->Shutdown();
 }
 
-// Tests that |vm_info| is initialized with absl::nullopt.
-TEST_F(ArcSessionManagerTest, GetVmInfo_InitialValue) {
-  const auto& vm_info = arc_session_manager()->GetVmInfo();
-  EXPECT_EQ(absl::nullopt, vm_info);
-}
-
-// Tests that |vm_info| is updated with that from VmStartedSignal.
-TEST_F(ArcSessionManagerTest, GetVmInfo_WithVmStarted) {
-  // Profile needs to be set in order to register ArcMountProvider.
-  arc_session_manager()->SetProfile(profile());
-  arc_session_manager()->Initialize();
-
-  vm_tools::concierge::VmStartedSignal vm_signal;
-  vm_signal.set_name(kArcVmName);
-  vm_signal.mutable_vm_info()->set_seneschal_server_handle(1000UL);
-  arc_session_manager()->OnVmStarted(vm_signal);
-
-  const auto& vm_info = arc_session_manager()->GetVmInfo();
-  ASSERT_NE(absl::nullopt, vm_info);
-  EXPECT_EQ(1000UL, vm_info->seneschal_server_handle());
-}
-
-// Tests that |vm_info| remains as absl::nullopt after VM stops.
-TEST_F(ArcSessionManagerTest, GetVmInfo_WithVmStopped) {
-  vm_tools::concierge::VmStoppedSignal vm_signal;
-  vm_signal.set_name(kArcVmName);
-  arc_session_manager()->OnVmStopped(vm_signal);
-
-  const auto& vm_info = arc_session_manager()->GetVmInfo();
-  EXPECT_EQ(absl::nullopt, vm_info);
-}
-
-// Tests that |vm_info| is reset to absl::nullopt after VM starts and stops.
-TEST_F(ArcSessionManagerTest, GetVmInfo_WithVmStarted_ThenStopped) {
-  // Profile needs to be set in order to register ArcMountProvider.
-  arc_session_manager()->SetProfile(profile());
-  arc_session_manager()->Initialize();
-
-  vm_tools::concierge::VmStartedSignal start_signal;
-  start_signal.set_name(kArcVmName);
-  start_signal.mutable_vm_info()->set_seneschal_server_handle(1000UL);
-  arc_session_manager()->OnVmStarted(start_signal);
-
-  vm_tools::concierge::VmStoppedSignal stop_signal;
-  stop_signal.set_name(kArcVmName);
-  arc_session_manager()->OnVmStopped(stop_signal);
-
-  const auto& vm_info = arc_session_manager()->GetVmInfo();
-  EXPECT_EQ(absl::nullopt, vm_info);
-}
-
-// Tests that |vm_info| is not updated with non-ARCVM VmStartedSignal.
-TEST_F(ArcSessionManagerTest, GetVmInfo_WithNonVmStarted) {
-  vm_tools::concierge::VmStartedSignal non_vm_signal;
-  non_vm_signal.set_name("non-ARCVM");
-  non_vm_signal.mutable_vm_info()->set_seneschal_server_handle(1000UL);
-  arc_session_manager()->OnVmStarted(non_vm_signal);
-
-  const auto& vm_info = arc_session_manager()->GetVmInfo();
-  EXPECT_EQ(absl::nullopt, vm_info);
-}
-
 class ArcSessionManagerArcAlwaysStartTest : public ArcSessionManagerTest {
  public:
   ArcSessionManagerArcAlwaysStartTest() = default;
@@ -1388,38 +1679,38 @@ class ArcSessionManagerArcAlwaysStartTest : public ArcSessionManagerTest {
 };
 
 ArcProvisioningResult CreateProvisioningResult(
-    const absl::variant<arc::mojom::GeneralSignInError,
-                        arc::mojom::GMSSignInError,
-                        arc::mojom::GMSCheckInError,
-                        arc::mojom::CloudProvisionFlowError,
-                        ArcStopReason,
-                        ChromeProvisioningTimeout>& error) {
-  if (absl::holds_alternative<arc::mojom::GeneralSignInError>(error)) {
+    const std::variant<arc::mojom::GeneralSignInError,
+                       arc::mojom::GMSSignInError,
+                       arc::mojom::GMSCheckInError,
+                       arc::mojom::CloudProvisionFlowError,
+                       ArcStopReason,
+                       ChromeProvisioningTimeout>& error) {
+  if (std::holds_alternative<arc::mojom::GeneralSignInError>(error)) {
     return ArcProvisioningResult(arc::mojom::ArcSignInResult::NewError(
         arc::mojom::ArcSignInError::NewGeneralError(
-            absl::get<arc::mojom::GeneralSignInError>(error))));
+            std::get<arc::mojom::GeneralSignInError>(error))));
   }
 
-  if (absl::holds_alternative<arc::mojom::GMSSignInError>(error)) {
+  if (std::holds_alternative<arc::mojom::GMSSignInError>(error)) {
     return ArcProvisioningResult(arc::mojom::ArcSignInResult::NewError(
         arc::mojom::ArcSignInError::NewSignInError(
-            absl::get<arc::mojom::GMSSignInError>(error))));
+            std::get<arc::mojom::GMSSignInError>(error))));
   }
 
-  if (absl::holds_alternative<arc::mojom::GMSCheckInError>(error)) {
+  if (std::holds_alternative<arc::mojom::GMSCheckInError>(error)) {
     return ArcProvisioningResult(arc::mojom::ArcSignInResult::NewError(
         arc::mojom::ArcSignInError::NewCheckInError(
-            absl::get<arc::mojom::GMSCheckInError>(error))));
+            std::get<arc::mojom::GMSCheckInError>(error))));
   }
 
-  if (absl::holds_alternative<arc::mojom::CloudProvisionFlowError>(error)) {
+  if (std::holds_alternative<arc::mojom::CloudProvisionFlowError>(error)) {
     return ArcProvisioningResult(arc::mojom::ArcSignInResult::NewError(
         arc::mojom::ArcSignInError::NewCloudProvisionFlowError(
-            absl::get<arc::mojom::CloudProvisionFlowError>(error))));
+            std::get<arc::mojom::CloudProvisionFlowError>(error))));
   }
 
-  if (absl::holds_alternative<ArcStopReason>(error)) {
-    return ArcProvisioningResult(absl::get<ArcStopReason>(error));
+  if (std::holds_alternative<ArcStopReason>(error)) {
+    return ArcProvisioningResult(std::get<ArcStopReason>(error));
   }
 
   return ArcProvisioningResult(ChromeProvisioningTimeout{});
@@ -1427,19 +1718,19 @@ ArcProvisioningResult CreateProvisioningResult(
 
 struct ProvisioningErrorDisplayTestParam {
   // The reason for arc instance stopping.
-  absl::variant<arc::mojom::GeneralSignInError,
-                arc::mojom::GMSSignInError,
-                arc::mojom::GMSCheckInError,
-                arc::mojom::CloudProvisionFlowError,
-                ArcStopReason,
-                ChromeProvisioningTimeout>
+  std::variant<arc::mojom::GeneralSignInError,
+               arc::mojom::GMSSignInError,
+               arc::mojom::GMSCheckInError,
+               arc::mojom::CloudProvisionFlowError,
+               ArcStopReason,
+               ChromeProvisioningTimeout>
       error;
 
   // The error sent to arc support host.
   ArcSupportHost::Error message;
 
   // The error code sent to arc support host.
-  absl::optional<int> arg;
+  std::optional<int> arg;
 };
 
 constexpr ProvisioningErrorDisplayTestParam
@@ -1525,7 +1816,7 @@ class ArcSessionManagerPolicyTest
     ArcSessionManagerTestBase::SetUp();
     AccountId account_id;
     account_id = AccountId(AccountId::FromUserEmailGaiaId(
-        profile()->GetProfileUserName(), "1234567890"));
+        profile()->GetProfileUserName(), GaiaId("1234567890")));
     GetFakeUserManager()->AddUser(account_id);
     GetFakeUserManager()->LoginUser(account_id);
     // Mocks OOBE environment so that IsArcOobeOptInActive() returns true.
@@ -1537,7 +1828,6 @@ class ArcSessionManagerPolicyTest
   void TearDown() override {
     if (is_oobe_optin()) {
       fake_login_display_host_.reset();
-      TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     }
     ArcSessionManagerTestBase::TearDown();
   }
@@ -1556,7 +1846,6 @@ class ArcSessionManagerPolicyTest
         return base::Value(true);
     }
     NOTREACHED();
-    return base::Value();
   }
 
   base::Value location_service_pref_value() const {
@@ -1569,7 +1858,6 @@ class ArcSessionManagerPolicyTest
         return base::Value(true);
     }
     NOTREACHED();
-    return base::Value();
   }
 
  private:
@@ -1681,46 +1969,6 @@ INSTANTIATE_TEST_SUITE_P(
                                      1,     // base::Value(false)
                                      2)));  // base::Value(true)
 
-class ArcSessionManagerKioskTest : public ArcSessionManagerTestBase {
- public:
-  ArcSessionManagerKioskTest() = default;
-
-  ArcSessionManagerKioskTest(const ArcSessionManagerKioskTest&) = delete;
-  ArcSessionManagerKioskTest& operator=(const ArcSessionManagerKioskTest&) =
-      delete;
-
-  void SetUp() override {
-    ArcSessionManagerTestBase::SetUp();
-    const AccountId account_id(
-        AccountId::FromUserEmail(profile()->GetProfileUserName()));
-    GetFakeUserManager()->AddArcKioskAppUser(account_id);
-    GetFakeUserManager()->LoginUser(account_id);
-  }
-};
-
-TEST_F(ArcSessionManagerKioskTest, AuthFailure) {
-  arc_session_manager()->SetProfile(profile());
-  arc_session_manager()->Initialize();
-  arc_session_manager()->RequestEnable();
-  EXPECT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
-
-  // Replace chrome::AttemptUserExit() for testing.
-  // At the end of test, leave the dangling pointer |terminated|,
-  // assuming the callback is invoked exactly once in OnProvisioningFinished()
-  // and not invoked then, including TearDown().
-  bool terminated = false;
-  arc_session_manager()->SetAttemptUserExitCallbackForTesting(
-      base::BindRepeating([](bool* terminated) { *terminated = true; },
-                          &terminated));
-
-  arc::mojom::ArcSignInResultPtr result = arc::mojom::ArcSignInResult::NewError(
-      arc::mojom::ArcSignInError::NewGeneralError(
-          arc::mojom::GeneralSignInError::CHROME_SERVER_COMMUNICATION_ERROR));
-  arc_session_manager()->OnProvisioningFinished(
-      ArcProvisioningResult(std::move(result)));
-  EXPECT_TRUE(terminated);
-}
-
 class ArcSessionManagerPublicSessionTest : public ArcSessionManagerTestBase {
  public:
   ArcSessionManagerPublicSessionTest() = default;
@@ -1816,7 +2064,6 @@ class ArcSessionOobeOptInNegotiatorTest
 
     ArcSessionManager::SetArcTermsOfServiceOobeNegotiatorEnabledForTesting(
         false);
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
 
     ArcSessionManagerTest::TearDown();
   }
@@ -1911,12 +2158,12 @@ struct ArcSessionRetryTestParam {
   // Whether data is removed on error.
   bool data_removed;
 
-  absl::variant<arc::mojom::GeneralSignInError,
-                arc::mojom::GMSSignInError,
-                arc::mojom::GMSCheckInError,
-                arc::mojom::CloudProvisionFlowError,
-                ArcStopReason,
-                ChromeProvisioningTimeout>
+  std::variant<arc::mojom::GeneralSignInError,
+               arc::mojom::GMSSignInError,
+               arc::mojom::GMSCheckInError,
+               arc::mojom::CloudProvisionFlowError,
+               ArcStopReason,
+               ChromeProvisioningTimeout>
       error;
 };
 
@@ -2069,6 +2316,7 @@ TEST_F(ArcSessionManagerTest, FileExpansion_AlreadyDone) {
   arc_session_manager()->AddObserver(&observer);
   ASSERT_TRUE(observer.property_files_expansion_result().has_value());
   EXPECT_TRUE(observer.property_files_expansion_result().value());
+  arc_session_manager()->RemoveObserver(&observer);
 }
 
 // Tests that OnPropertyFilesExpanded() is called with true when the files are
@@ -2081,6 +2329,7 @@ TEST_F(ArcSessionManagerTest, FileExpansion) {
   arc_session_manager()->OnExpandPropertyFilesAndReadSaltForTesting(true);
   ASSERT_TRUE(observer.property_files_expansion_result().has_value());
   EXPECT_TRUE(observer.property_files_expansion_result().value());
+  arc_session_manager()->RemoveObserver(&observer);
 }
 
 // Tests that OnPropertyFilesExpanded() is called with false when the expansion
@@ -2093,6 +2342,7 @@ TEST_F(ArcSessionManagerTest, FileExpansion_Fail) {
   arc_session_manager()->OnExpandPropertyFilesAndReadSaltForTesting(false);
   ASSERT_TRUE(observer.property_files_expansion_result().has_value());
   EXPECT_FALSE(observer.property_files_expansion_result().value());
+  arc_session_manager()->RemoveObserver(&observer);
 }
 
 // Tests that TrimVmMemory doesn't crash.
@@ -2107,9 +2357,38 @@ TEST_F(ArcSessionManagerTest, TrimVmMemory) {
   EXPECT_TRUE(callback_called);
 }
 
+TEST_F(ArcSessionManagerTest, RequestArcEnableMemoryMargin) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures({ash::kCrOSMemoryPressureSignalStudyArc,
+                                 ash::kCrOSMemoryPressureSignalStudyNonArc},
+                                {});
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+
+  arc_session_manager()->RequestEnable();
+
+  EXPECT_EQ(resourced_client_->get_critical_margin_bps(), 800u);
+  EXPECT_EQ(resourced_client_->get_moderate_margin_bps(), 4000u);
+}
+
+TEST_F(ArcSessionManagerTest, RequestArcDisableMemoryMargin) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures({ash::kCrOSMemoryPressureSignalStudyArc,
+                                 ash::kCrOSMemoryPressureSignalStudyNonArc},
+                                {});
+  arc_session_manager()->SetProfile(profile());
+  arc_session_manager()->Initialize();
+  arc_session_manager()->RequestEnable();
+
+  arc_session_manager()->RequestDisable();
+
+  EXPECT_EQ(resourced_client_->get_critical_margin_bps(), 1500u);
+  EXPECT_EQ(resourced_client_->get_moderate_margin_bps(), 4000u);
+}
+
 class ArcTransitionToManagedTest
     : public ArcSessionManagerTest,
-      public testing::WithParamInterface<std::tuple<bool, bool>> {
+      public testing::WithParamInterface<bool> {
  public:
   ArcTransitionToManagedTest() = default;
   ~ArcTransitionToManagedTest() override = default;
@@ -2142,12 +2421,10 @@ class ArcTransitionToManagedTest
         }));
   }
 
-  bool transition_feature_enabled() const { return std::get<0>(GetParam()); }
-
-  bool user_become_managed() const { return std::get<1>(GetParam()); }
+  bool user_become_managed() const { return GetParam(); }
 
   bool ShouldArcTransitionToManaged() const {
-    return transition_feature_enabled() && user_become_managed();
+    return user_become_managed();
   }
 
  protected:
@@ -2155,10 +2432,6 @@ class ArcTransitionToManagedTest
 };
 
 TEST_P(ArcTransitionToManagedTest, TransitionFlow) {
-  // Initialize feature state.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatureState(kEnableUnmanagedToManagedTransitionFeature,
-                                    transition_feature_enabled());
   // Set up the situation that provisioning is successfully done in the
   // previous session.
   profile()->GetPrefs()->SetBoolean(prefs::kArcEnabled, true);
@@ -2168,7 +2441,8 @@ TEST_P(ArcTransitionToManagedTest, TransitionFlow) {
   // Initialize ARC.
   arc_session_manager()->SetProfile(profile());
   arc_session_manager()->Initialize();
-  arc_session_manager()->AllowActivation();
+  arc_session_manager()->AllowActivation(
+      ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager()->RequestEnable();
   ASSERT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager()->state());
 
@@ -2189,8 +2463,7 @@ TEST_P(ArcTransitionToManagedTest, TransitionFlow) {
 INSTANTIATE_TEST_SUITE_P(
     All,
     ArcTransitionToManagedTest,
-    testing::Combine(testing::Bool() /* transition_feature_enabled */,
-                     testing::Bool() /* user_become_managed */));
+    testing::Bool());
 
 }  // namespace
 }  // namespace arc

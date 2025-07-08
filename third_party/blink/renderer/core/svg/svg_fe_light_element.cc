@@ -105,7 +105,7 @@ gfx::Point3F SVGFELightElement::PointsAt() const {
                       pointsAtZ()->CurrentValue()->Value());
 }
 
-absl::optional<bool> SVGFELightElement::SetLightSourceAttribute(
+std::optional<bool> SVGFELightElement::SetLightSourceAttribute(
     FELighting* lighting_effect,
     const QualifiedName& attr_name) const {
   LightSource* light_source = lighting_effect->GetLightSource();
@@ -132,7 +132,7 @@ absl::optional<bool> SVGFELightElement::SetLightSourceAttribute(
     return light_source->SetLimitingConeAngle(
         limitingConeAngle()->CurrentValue()->Value());
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void SVGFELightElement::SvgAttributeChanged(
@@ -155,7 +155,6 @@ void SVGFELightElement::SvgAttributeChanged(
     if (!layout_object || !layout_object->IsSVGFilterPrimitive())
       return;
 
-    SVGElement::InvalidationGuard invalidation_guard(this);
     if (auto* diffuse = DynamicTo<SVGFEDiffuseLightingElement>(*parent))
       diffuse->LightElementAttributeChanged(this, attr_name);
     else if (auto* specular = DynamicTo<SVGFESpecularLightingElement>(*parent))

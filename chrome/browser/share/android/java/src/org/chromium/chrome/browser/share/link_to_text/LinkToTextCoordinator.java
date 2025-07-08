@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.share.link_to_text;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.text.TextUtils;
 
 import androidx.annotation.IntDef;
@@ -12,8 +14,11 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.blink.mojom.TextFragmentReceiver;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.share.ChromeShareExtras;
 import org.chromium.chrome.browser.share.share_sheet.ChromeOptionShareCallback;
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleCoordinator.LinkToggleState;
@@ -23,9 +28,8 @@ import org.chromium.chrome.browser.tab.TabHidingType;
 import org.chromium.components.browser_ui.share.ShareParams;
 import org.chromium.url.GURL;
 
-/**
- * Handles the Link To Text action in the Sharing Hub.
- */
+/** Handles the Link To Text action in the Sharing Hub. */
+@NullMarked
 public class LinkToTextCoordinator extends EmptyTabObserver {
     @IntDef({LinkGeneration.TEXT, LinkGeneration.LINK, LinkGeneration.FAILURE, LinkGeneration.MAX})
     public @interface LinkGeneration {
@@ -35,8 +39,12 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
         int MAX = 3;
     }
 
-    @IntDef({RemoteRequestStatus.NONE, RemoteRequestStatus.REQUESTED, RemoteRequestStatus.COMPLETED,
-            RemoteRequestStatus.CANCELLED})
+    @IntDef({
+        RemoteRequestStatus.NONE,
+        RemoteRequestStatus.REQUESTED,
+        RemoteRequestStatus.COMPLETED,
+        RemoteRequestStatus.CANCELLED
+    })
     public @interface RemoteRequestStatus {
         int NONE = 0;
         int REQUESTED = 1;
@@ -57,27 +65,44 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
     private long mShareStartTime;
 
     private String mShareUrl;
-    private TextFragmentReceiver mProducer;
+    private @Nullable TextFragmentReceiver mProducer;
     private String mSelectedText;
-    private ShareParams mShareLinkParams;
-    private ShareParams mShareTextParams;
+    private @Nullable ShareParams mShareLinkParams;
+    private @MonotonicNonNull ShareParams mShareTextParams;
     private boolean mIncludeOriginInTitle;
     public @RemoteRequestStatus int mRemoteRequestStatus;
 
     @VisibleForTesting
     LinkToTextCoordinator() {}
 
-    public LinkToTextCoordinator(Tab tab, ChromeOptionShareCallback chromeOptionShareCallback,
-            ChromeShareExtras chromeShareExtras, long shareStartTime, String visibleUrl,
-            String selectedText, boolean includeOriginInTitle) {
-        initLinkToTextCoordinator(tab, chromeOptionShareCallback, chromeShareExtras, shareStartTime,
-                visibleUrl, selectedText, includeOriginInTitle);
+    public LinkToTextCoordinator(
+            Tab tab,
+            ChromeOptionShareCallback chromeOptionShareCallback,
+            ChromeShareExtras chromeShareExtras,
+            long shareStartTime,
+            String visibleUrl,
+            String selectedText,
+            boolean includeOriginInTitle) {
+        initLinkToTextCoordinator(
+                tab,
+                chromeOptionShareCallback,
+                chromeShareExtras,
+                shareStartTime,
+                visibleUrl,
+                selectedText,
+                includeOriginInTitle);
     }
 
+    @Initializer
     @VisibleForTesting
-    void initLinkToTextCoordinator(Tab tab, ChromeOptionShareCallback chromeOptionShareCallback,
-            ChromeShareExtras chromeShareExtras, long shareStartTime, String visibleUrl,
-            String selectedText, boolean includeOriginInTitle) {
+    void initLinkToTextCoordinator(
+            Tab tab,
+            ChromeOptionShareCallback chromeOptionShareCallback,
+            ChromeShareExtras chromeShareExtras,
+            long shareStartTime,
+            String visibleUrl,
+            String selectedText,
+            boolean includeOriginInTitle) {
         mTab = tab;
         mChromeOptionShareCallback = chromeOptionShareCallback;
         mChromeShareExtras = chromeShareExtras;
@@ -94,7 +119,7 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
         if (linkToggleState == LinkToggleState.LINK && mShareLinkParams != null) {
             return mShareLinkParams;
         }
-        return mShareTextParams;
+        return assumeNonNull(mShareTextParams);
     }
 
     public void shareLinkToText() {
@@ -108,23 +133,29 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
     @VisibleForTesting
     public void onSelectorReady(String selector) {
         boolean isSelectorEmpty = TextUtils.isEmpty(selector);
-        mShareLinkParams = isSelectorEmpty
-                ? null
-                : new ShareParams
-                          .Builder(mTab.getWindowAndroid(), getTitle(),
-                                  LinkToTextHelper.getUrlToShare(mShareUrl, selector))
-                          .setText(mSelectedText, SHARE_TEXT_TEMPLATE)
-                          .setPreviewText(getPreviewText(), SHARE_TEXT_TEMPLATE)
-                          .setLinkToTextSuccessful(true)
-                          .build();
+        mShareLinkParams =
+                isSelectorEmpty
+                        ? null
+                        : new ShareParams.Builder(
+                                        assumeNonNull(mTab.getWindowAndroid()),
+                                        getTitle(),
+                                        LinkToTextHelper.getUrlToShare(mShareUrl, selector))
+                                .setText(mSelectedText, SHARE_TEXT_TEMPLATE)
+                                .setPreviewText(getPreviewText(), SHARE_TEXT_TEMPLATE)
+                                .setLinkToTextSuccessful(true)
+                                .build();
         mShareTextParams =
-                new ShareParams.Builder(mTab.getWindowAndroid(), mTab.getTitle(), /*url=*/"")
+                new ShareParams.Builder(
+                                assumeNonNull(mTab.getWindowAndroid()),
+                                mTab.getTitle(),
+                                /* url= */ "")
                         .setText(mSelectedText)
                         .setLinkToTextSuccessful(!isSelectorEmpty)
                         .build();
         mChromeOptionShareCallback.showShareSheet(
                 getShareParams(isSelectorEmpty ? LinkToggleState.NO_LINK : LinkToggleState.LINK),
-                mChromeShareExtras, mShareStartTime);
+                mChromeShareExtras,
+                mShareStartTime);
     }
 
     @VisibleForTesting
@@ -142,14 +173,15 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
             return;
         }
 
-        if (mTab.getWebContents().getMainFrame() != mTab.getWebContents().getFocusedFrame()) {
+        if (assumeNonNull(mTab.getWebContents()).getMainFrame()
+                != mTab.getWebContents().getFocusedFrame()) {
             if (!LinkToTextBridge.supportsLinkGenerationInIframe(new GURL(mShareUrl))) {
                 completeRequestWithFailure(LinkGenerationError.I_FRAME);
                 return;
             }
         }
 
-        PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, () -> timeout(), getTimeout());
+        PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, () -> timeout(), TIMEOUT_MS);
         requestSelector();
     }
 
@@ -161,13 +193,15 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
             return;
         }
 
-        PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, () -> timeout(), getTimeout());
+        PostTask.postDelayedTask(TaskTraits.UI_DEFAULT, () -> timeout(), TIMEOUT_MS);
         mRemoteRequestStatus = RemoteRequestStatus.REQUESTED;
-        LinkToTextHelper.extractTextFragmentsMatches(mProducer, (matches) -> {
-            mSelectedText = String.join(",", matches);
-            LinkToTextHelper.getExistingSelectorsAllFrames(
-                    mTab, this::onReshareSelectorsRemoteRequestCompleted);
-        });
+        LinkToTextHelper.extractTextFragmentsMatches(
+                mProducer,
+                (matches) -> {
+                    mSelectedText = String.join(",", matches);
+                    LinkToTextHelper.getExistingSelectorsAllFrames(
+                            mTab, this::onReshareSelectorsRemoteRequestCompleted);
+                });
     }
 
     @VisibleForTesting
@@ -178,12 +212,14 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
             return;
         }
 
-        LinkToTextHelper.requestCanonicalUrl(mTab, (canonicalUrl) -> {
-            if (!canonicalUrl.isEmpty()) {
-                mShareUrl = canonicalUrl;
-            }
-            reshareRequestCompleted(selectors);
-        });
+        LinkToTextHelper.requestCanonicalUrl(
+                mTab,
+                (canonicalUrl) -> {
+                    if (!canonicalUrl.isEmpty()) {
+                        mShareUrl = canonicalUrl;
+                    }
+                    reshareRequestCompleted(selectors);
+                });
     }
 
     @VisibleForTesting
@@ -236,12 +272,14 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
             assert error == LinkGenerationError.NONE;
 
             // Request canonical url when we have a successful generation.
-            LinkToTextHelper.requestCanonicalUrl(mTab, (canonicalUrl) -> {
-                if (!canonicalUrl.isEmpty()) {
-                    mShareUrl = canonicalUrl;
-                }
-                completeRemoteRequestWithSuccess(selector);
-            });
+            LinkToTextHelper.requestCanonicalUrl(
+                    mTab,
+                    (canonicalUrl) -> {
+                        if (!canonicalUrl.isEmpty()) {
+                            mShareUrl = canonicalUrl;
+                        }
+                        completeRemoteRequestWithSuccess(selector);
+                    });
         } else {
             assert error != LinkGenerationError.NONE;
             completeRequestWithFailure(error.intValue());
@@ -273,14 +311,18 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
     private void setTextFragmentReceiver() {
         if (mChromeShareExtras.getRenderFrameHost() != null
                 && mChromeShareExtras.getRenderFrameHost().isRenderFrameLive()) {
-            mProducer = mChromeShareExtras.getRenderFrameHost().getInterfaceToRendererFrame(
-                    TextFragmentReceiver.MANAGER);
+            mProducer =
+                    mChromeShareExtras
+                            .getRenderFrameHost()
+                            .getInterfaceToRendererFrame(TextFragmentReceiver.MANAGER);
             return;
         }
 
         if (mTab.getWebContents() != null && mTab.getWebContents().getMainFrame() != null) {
-            mProducer = mTab.getWebContents().getMainFrame().getInterfaceToRendererFrame(
-                    TextFragmentReceiver.MANAGER);
+            mProducer =
+                    mTab.getWebContents()
+                            .getMainFrame()
+                            .getInterfaceToRendererFrame(TextFragmentReceiver.MANAGER);
         }
     }
 
@@ -358,12 +400,6 @@ public class LinkToTextCoordinator extends EmptyTabObserver {
         }
         cancel();
         cleanup();
-    }
-
-    private int getTimeout() {
-        return ChromeFeatureList.getFieldTrialParamByFeatureAsInt(
-                ChromeFeatureList.PREEMPTIVE_LINK_TO_TEXT_GENERATION, "TimeoutLengthMs",
-                TIMEOUT_MS);
     }
 
     @VisibleForTesting

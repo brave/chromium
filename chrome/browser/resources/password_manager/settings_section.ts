@@ -3,36 +3,46 @@
 // found in the LICENSE file.
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/cr_elements/cr_spinner_style.css.js';
 import './shared_style.css.js';
 import './prefs/pref_toggle_button.js';
 import './user_utils_mixin.js';
 import '/shared/settings/controls/extension_controlled_indicator.js';
+import './dialogs/disconnect_cloud_authenticator_dialog.js';
 
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
-import {DomRepeatEvent, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
+import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 // <if expr="is_win or is_macosx">
 import {PasskeysBrowserProxyImpl} from './passkeys_browser_proxy.js';
 // </if>
-import {BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener, PasswordManagerImpl} from './password_manager_proxy.js';
-import {PrefToggleButtonElement} from './prefs/pref_toggle_button.js';
-import {Route, RouteObserverMixin, Router, UrlParam} from './router.js';
+import type {BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener, ShouldShowAccountStorageToggleChangedListener} from './password_manager_proxy.js';
+import {PasswordManagerImpl} from './password_manager_proxy.js';
+import type {PrefToggleButtonElement} from './prefs/pref_toggle_button.js';
+import type {Route} from './router.js';
+import {RouteObserverMixin, Router, UrlParam} from './router.js';
 import {getTemplate} from './settings_section.html.js';
-import {SyncBrowserProxyImpl, TrustedVaultBannerState} from './sync_browser_proxy.js';
+import {BatchUploadPasswordsEntryPoint, SyncBrowserProxyImpl, TrustedVaultBannerState} from './sync_browser_proxy.js';
 import {UserUtilMixin} from './user_utils_mixin.js';
 
 export interface SettingsSectionElement {
   $: {
+    accountStorageToggle: PrefToggleButtonElement,
     autosigninToggle: PrefToggleButtonElement,
     blockedSitesList: HTMLElement,
+    passkeyUpgradeToggle: PrefToggleButtonElement,
     passwordToggle: PrefToggleButtonElement,
+    toast: CrToastElement,
     trustedVaultBanner: CrLinkRowElement,
   };
 }
@@ -41,6 +51,8 @@ const PASSWORD_MANAGER_ADD_SHORTCUT_ELEMENT_ID =
     'PasswordManagerUI::kAddShortcutElementId';
 const PASSWORD_MANAGER_ADD_SHORTCUT_CUSTOM_EVENT_ID =
     'PasswordManagerUI::kAddShortcutCustomEventId';
+export const PASSWORD_MANAGER_ACCOUNT_STORE_TOGGLE_ELEMENT_ID =
+    'PasswordManagerUI::kAccountStoreToggleElementId';
 
 const SettingsSectionElementBase = HelpBubbleMixin(RouteObserverMixin(
     PrefsMixin(UserUtilMixin(WebUiListenerMixin(I18nMixin(PolymerElement))))));
@@ -62,7 +74,7 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         value: () => [],
       },
 
-      // <if expr="is_win or is_macosx">
+      // <if expr="is_win or is_macosx or is_chromeos">
       isBiometricAuthenticationForFillingToggleVisible_: {
         type: Boolean,
         value() {
@@ -71,6 +83,13 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         },
       },
       // </if>
+
+      isPasskeyUpgradeSettingsToggleVisible_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('passkeyUpgradeSettingsToggleVisible');
+        },
+      },
 
       hasPasswordsToExport_: {
         type: Boolean,
@@ -95,25 +114,91 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         value: TrustedVaultBannerState.NOT_SHOWN,
       },
 
+      movePasswordsLabel_: {
+        type: String,
+        value: '',
+      },
+
       canAddShortcut_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('canAddShortcut');
         },
       },
+
+      isPasswordManagerPinAvailable_: {
+        type: Boolean,
+        value: false,
+      },
+
+      isConnectedToCloudAuthenticator_: {
+        type: Boolean,
+        value: false,
+      },
+
+      isDisconnectCloudAuthenticatorInProgress_: {
+        type: Boolean,
+        value: false,
+      },
+
+      toastMessage_: {
+        type: String,
+        value: '',
+      },
+
+      showDisconnectCloudAuthenticatorDialog_: {
+        type: Boolean,
+        value: false,
+      },
+
+      localPasswordCount_: {
+        type: Number,
+        value: 0,
+      },
+
+      shouldShowAccountStorageSettingToggle_: {
+        type: Boolean,
+        value: false,
+      },
     };
   }
 
-  private blockedSites_: BlockedSite[];
-  private hasPasskeys_: boolean;
-  private hasPasswordsToExport_: boolean;
-  private showPasswordsImporter_: boolean;
-  private trustedVaultBannerState_: TrustedVaultBannerState;
+  static get observers() {
+    return [
+      'updateIsPasswordManagerPinAvailable_(' +
+          'isSyncingPasswords, isAccountStoreUser)',
+      'updateIsCloudAuthenticatorConnected_(' +
+          'isSyncingPasswords, isAccountStoreUser)',
+    ];
+  }
+
+  declare private blockedSites_: BlockedSite[];
+  // <if expr="is_win or is_macosx or is_chromeos">
+  declare private isBiometricAuthenticationForFillingToggleVisible_: boolean;
+  // </if>
+  declare private hasPasskeys_: boolean;
+  declare private passwordManagerDisabled_: boolean;
+  declare private hasPasswordsToExport_: boolean;
+  declare private isPasskeyUpgradeSettingsToggleVisible_: boolean;
+  declare private canAddShortcut_: boolean;
+  declare private trustedVaultBannerState_: TrustedVaultBannerState;
+  declare private movePasswordsLabel_: string;
+  declare private isPasswordManagerPinAvailable_: boolean;
+  declare private isConnectedToCloudAuthenticator_: boolean;
+  declare private isDisconnectCloudAuthenticatorInProgress_: boolean;
+  declare private toastMessage_: string;
+  declare private showDisconnectCloudAuthenticatorDialog_: boolean;
+  // This variable depend on the sync service API, which the Batch Upload Dialog
+  // uses.
+  declare private localPasswordCount_: number;
+  declare private shouldShowAccountStorageSettingToggle_: boolean;
 
   private setBlockedSitesListListener_: BlockedSitesListChangedListener|null =
       null;
   private setCredentialsChangedListener_: CredentialsChangedListener|null =
       null;
+  private shouldShowAccountStorageSettingToggleListener_:
+      ShouldShowAccountStorageToggleChangedListener|null = null;
 
   override ready() {
     super.ready();
@@ -125,6 +210,13 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
 
   override connectedCallback() {
     super.connectedCallback();
+
+    const updateLocalPasswordCount = (localPasswordCount: number) => {
+      this.updateLocalPasswordCount_(localPasswordCount);
+    };
+    const syncBrowserProxy = SyncBrowserProxyImpl.getInstance();
+    syncBrowserProxy.getLocalPasswordCount().then(updateLocalPasswordCount);
+
     this.setBlockedSitesListListener_ = blockedSites => {
       this.blockedSites_ = blockedSites;
     };
@@ -133,29 +225,59 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     PasswordManagerImpl.getInstance().addBlockedSitesListChangedListener(
         this.setBlockedSitesListListener_);
 
+    this.addWebUiListener(
+        'sync-service-local-password-count', updateLocalPasswordCount);
+
     this.setCredentialsChangedListener_ =
         (passwords: chrome.passwordsPrivate.PasswordUiEntry[]) => {
           this.hasPasswordsToExport_ = passwords.length > 0;
+          // Update the local password count based on the SyncService API
+          // whenever the password list was modified.
+          syncBrowserProxy.getLocalPasswordCount().then(
+              (localPasswordCount: number) => {
+                this.updateLocalPasswordCount_(localPasswordCount);
+              });
         };
     PasswordManagerImpl.getInstance().getSavedPasswordList().then(
         this.setCredentialsChangedListener_);
     PasswordManagerImpl.getInstance().addSavedPasswordListChangedListener(
         this.setCredentialsChangedListener_);
 
+    this.shouldShowAccountStorageSettingToggleListener_ = show => {
+      this.shouldShowAccountStorageSettingToggle_ = show;
+    };
+    PasswordManagerImpl.getInstance()
+        .shouldShowAccountStorageSettingToggle()
+        .then(this.shouldShowAccountStorageSettingToggleListener_);
+    PasswordManagerImpl.getInstance()
+        .addShouldShowAccountStorageSettingToggleListener(
+            this.shouldShowAccountStorageSettingToggleListener_);
+
     const trustedVaultStateChanged = (state: TrustedVaultBannerState) => {
       this.trustedVaultBannerState_ = state;
     };
-    const syncBrowserProxy = SyncBrowserProxyImpl.getInstance();
     syncBrowserProxy.getTrustedVaultBannerState().then(
         trustedVaultStateChanged);
     this.addWebUiListener(
         'trusted-vault-banner-state-changed', trustedVaultStateChanged);
+    // TODO(crbug.com/331611435): add listener for enclave availability and
+    // trigger `updateIsPasswordManagerPinAvailable_`.
+    this.updateIsPasswordManagerPinAvailable_();
+    // Checks if the Chrome client is connected to / registered with the
+    // Cloud Authenticator. If the client is connected, then a button to
+    // disconnect the client is displayed.
+    this.updateIsCloudAuthenticatorConnected_();
 
     // <if expr="is_win or is_macosx">
     PasskeysBrowserProxyImpl.getInstance().hasPasskeys().then(hasPasskeys => {
       this.hasPasskeys_ = hasPasskeys;
     });
     // </if>
+
+    const accountStorageToggleRoot = this.$.accountStorageToggle.shadowRoot;
+    this.registerHelpBubble(
+        PASSWORD_MANAGER_ACCOUNT_STORE_TOGGLE_ELEMENT_ID,
+        accountStorageToggleRoot!.querySelector('#control')!);
   }
 
   override disconnectedCallback() {
@@ -169,11 +291,20 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     PasswordManagerImpl.getInstance().removeSavedPasswordListChangedListener(
         this.setCredentialsChangedListener_);
     this.setCredentialsChangedListener_ = null;
+
+    assert(this.shouldShowAccountStorageSettingToggleListener_);
+    PasswordManagerImpl.getInstance()
+        .removeShouldShowAccountStorageSettingToggleListener(
+            this.shouldShowAccountStorageSettingToggleListener_);
+    this.shouldShowAccountStorageSettingToggleListener_ = null;
+
+    this.$.toast.hide();
   }
 
   override currentRouteChanged(route: Route): void {
-    const param = route.queryParameters.get(UrlParam.START_IMPORT) || '';
-    if (param === 'true') {
+    const triggerImportParam =
+        route.queryParameters.get(UrlParam.START_IMPORT) || '';
+    if (triggerImportParam === 'true') {
       const importer = this.shadowRoot!.querySelector('passwords-importer');
       assert(importer);
       importer.launchImport();
@@ -195,8 +326,8 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         PASSWORD_MANAGER_ADD_SHORTCUT_ELEMENT_ID,
         PASSWORD_MANAGER_ADD_SHORTCUT_CUSTOM_EVENT_ID,
     );
-    // TODO(crbug.com/1358448): Record metrics on all entry points usage.
-    // TODO(crbug.com/1358448): Hide the button for users after the shortcut is
+    // TODO(crbug.com/40236982): Record metrics on all entry points usage.
+    // TODO(crbug.com/40236982): Hide the button for users after the shortcut is
     // installed.
     PasswordManagerImpl.getInstance().showAddShortcutDialog();
   }
@@ -209,10 +340,10 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     PasswordManagerImpl.getInstance().removeBlockedSite(event.model.item.id);
   }
 
-  // <if expr="is_win or is_macosx">
+  // <if expr="is_win or is_macosx or is_chromeos">
   private switchBiometricAuthBeforeFillingState_(e: Event) {
     const biometricAuthenticationForFillingToggle =
-        e!.target as PrefToggleButtonElement;
+        e.target as PrefToggleButtonElement;
     assert(biometricAuthenticationForFillingToggle);
     PasswordManagerImpl.getInstance().switchBiometricAuthBeforeFillingState();
   }
@@ -269,12 +400,16 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     return this.i18n('removeBlockedAriaDescription', blockedSite.urls.shown);
   }
 
-  private changeAccountStorageOptIn_() {
-    if (this.isOptedInForAccountStorage) {
-      this.optOutFromAccountStorage();
+  private changeAccountStorageEnabled_() {
+    if (this.isAccountStoreUser) {
+      this.disableAccountStorage();
     } else {
-      this.optInForAccountStorage();
+      this.enableAccountStorage();
     }
+  }
+
+  private getAccountStorageSubLabel_(accountEmail: string): string {
+    return this.i18n('accountStorageToggleSubLabel', accountEmail);
   }
 
   // <if expr="is_win or is_macosx">
@@ -285,8 +420,102 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
 
   private computePasswordManagerDisabled_(): boolean {
     const pref = this.getPref('credentials_enable_service');
-    return pref.enforcement === chrome.settingsPrivate.Enforcement.ENFORCED &&
-        !pref.value;
+
+    const isPolicyEnforced =
+        pref.enforcement === chrome.settingsPrivate.Enforcement.ENFORCED;
+
+    const isPolicyControlledByExtension =
+        pref.controlledBy === chrome.settingsPrivate.ControlledBy.EXTENSION;
+
+    if (isPolicyControlledByExtension) {
+      return false;
+    }
+
+    return !pref.value && isPolicyEnforced;
+  }
+
+  private onMovePasswordsClicked_(e: Event) {
+    e.preventDefault();
+    SyncBrowserProxyImpl.getInstance().openBatchUpload(
+        BatchUploadPasswordsEntryPoint.PASSWORD_MANAGER);
+  }
+
+  private shouldShowMovePasswordsEntry_(): boolean {
+    // Only show the move password entry if there are passwords returned from
+    // the sync service API. This is needed to be consistent with the
+    // availability of data in the dialog which uses the same API.
+    return this.localPasswordCount_ > 0;
+  }
+
+  private getAriaLabelMovePasswordsButton_(): string {
+    return [
+      this.movePasswordsLabel_,
+      this.i18n('movePasswordsInSettingsSubLabel'),
+      this.i18n('moveSinglePasswordButton'),
+    ].join('. ');
+  }
+
+  // This updates the local password count coming from the Sync Service API.
+  private async updateLocalPasswordCount_(localPasswordCount: number) {
+    this.localPasswordCount_ = localPasswordCount;
+
+    this.movePasswordsLabel_ =
+        await PluralStringProxyImpl.getInstance().getPluralString(
+            'deviceOnlyPasswordsIconTooltip', this.localPasswordCount_);
+  }
+
+  private updateIsPasswordManagerPinAvailable_() {
+    PasswordManagerImpl.getInstance().isPasswordManagerPinAvailable().then(
+        available => this.isPasswordManagerPinAvailable_ =
+            available && (this.isSyncingPasswords || this.isAccountStoreUser));
+  }
+
+  private onChangePasswordManagerPinRowClick_() {
+    PasswordManagerImpl.getInstance().changePasswordManagerPin().then(
+        this.showToastForPasswordChange_.bind(this));
+  }
+
+  private updateIsCloudAuthenticatorConnected_() {
+    PasswordManagerImpl.getInstance().isConnectedToCloudAuthenticator().then(
+        connected => this.isConnectedToCloudAuthenticator_ =
+            connected && (this.isSyncingPasswords || this.isAccountStoreUser));
+  }
+
+  private onDisconnectCloudAuthenticatorClick_() {
+    this.showDisconnectCloudAuthenticatorDialog_ = true;
+  }
+
+  private onCloseDisconnectCloudAuthenticatorDialog_(): void {
+    this.showDisconnectCloudAuthenticatorDialog_ = false;
+  }
+
+  private onDisconnectCloudAuthenticator_(e: CustomEvent): void {
+    this.isDisconnectCloudAuthenticatorInProgress_ = false;
+    this.updateIsCloudAuthenticatorConnected_();
+    this.updateIsPasswordManagerPinAvailable_();
+    if (e.detail.success) {
+      this.showToastForCloudAuthenticatorDisconnected_();
+    }
+  }
+
+  private showToastForCloudAuthenticatorDisconnected_(): void {
+    this.toastMessage_ = this.i18n('disconnectCloudAuthenticatorToastMessage');
+    this.$.toast.show();
+  }
+
+  private getAriaLabelForCloudAuthenticatorButton_(): string {
+    return [
+      this.i18n('disconnectCloudAuthenticatorTitle'),
+      this.i18n('disconnectCloudAuthenticatorDescription'),
+    ].join('. ');
+  }
+
+  private showToastForPasswordChange_(success: boolean): void {
+    if (!success) {
+      return;
+    }
+    this.toastMessage_ = this.i18n('passwordManagerPinChanged');
+    this.$.toast.show();
   }
 }
 

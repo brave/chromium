@@ -2,27 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/events/event_utils.h"
-
 #import <UIKit/UIKit.h>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/vector2d.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
 EventType EventTypeFromNative(const PlatformEvent& native_event) {
   NOTIMPLEMENTED();
-  return ET_UNKNOWN;
+  return EventType::kUnknown;
 }
 
 int EventFlagsFromNative(const PlatformEvent& native_event) {

@@ -4,24 +4,23 @@
 
 #include "remoting/host/setup/daemon_controller_delegate_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 #include <launch.h>
 #include <sys/types.h>
+
+#include <optional>
 #include <utility>
 
 #include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/osstatus_logging.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/authorization_util.h"
-#include "base/mac/foundation_util.h"
 #include "base/mac/launchd.h"
-#include "base/mac/mac_logging.h"
 #include "base/mac/scoped_authorizationref.h"
 #include "base/mac/scoped_launch_data.h"
 #include "base/memory/ptr_util.h"
@@ -36,7 +35,6 @@
 #include "remoting/host/mac/permission_checker.h"
 #include "remoting/host/mac/permission_wizard.h"
 #include "remoting/host/resources.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -52,7 +50,7 @@ constexpr char kIoThreadName[] = "DaemonControllerDelegateMac IO thread";
 // deleter function.
 class ScopedWaitpid {
  public:
-  // -1 is treated as an invalid PID and waitpit() will not be called in this
+  // -1 is treated as an invalid PID and waitpid() will not be called in this
   // case. Note that -1 is the value returned from
   // base::mac::ExecuteWithPrivilegesAndGetPID() when the child PID could not be
   // determined.
@@ -136,8 +134,8 @@ bool RunHelperAsRoot(const std::string& command,
   }
 
   if (!input_data.empty()) {
-    size_t bytes_written =
-        fwrite(input_data.data(), sizeof(char), input_data.size(), pipe);
+    size_t bytes_written = UNSAFE_TODO(
+        fwrite(input_data.data(), sizeof(char), input_data.size(), pipe));
     // According to the fwrite manpage, a partial count is returned only if a
     // write error has occurred.
     if (bytes_written != input_data.size()) {
@@ -240,12 +238,11 @@ DaemonController::State DaemonControllerDelegateMac::GetState() {
   }
 }
 
-absl::optional<base::Value::Dict> DaemonControllerDelegateMac::GetConfig() {
+std::optional<base::Value::Dict> DaemonControllerDelegateMac::GetConfig() {
   base::FilePath config_path(kHostConfigFilePath);
-  absl::optional<base::Value::Dict> host_config(
-      HostConfigFromJsonFile(config_path));
+  auto host_config = HostConfigFromJsonFile(config_path);
   if (!host_config.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   base::Value::Dict config;
@@ -254,9 +251,11 @@ absl::optional<base::Value::Dict> DaemonControllerDelegateMac::GetConfig() {
     config.Set(kHostIdConfigPath, *value);
   }
 
-  value = host_config->FindString(kXmppLoginConfigPath);
+  value = host_config->FindString(kServiceAccountConfigPath);
   if (value) {
-    config.Set(kXmppLoginConfigPath, *value);
+    // Set both keys for compatibility purposes.
+    config.Set(kServiceAccountConfigPath, *value);
+    config.Set(kDeprecatedXmppLoginConfigPath, *value);
   }
 
   return config;
@@ -285,7 +284,7 @@ void DaemonControllerDelegateMac::UpdateConfig(
     base::Value::Dict config,
     DaemonController::CompletionCallback done) {
   base::FilePath config_file_path(kHostConfigFilePath);
-  absl::optional<base::Value::Dict> host_config(
+  std::optional<base::Value::Dict> host_config(
       HostConfigFromJsonFile(config_file_path));
   if (!host_config.has_value()) {
     std::move(done).Run(DaemonController::RESULT_FAILED);
@@ -293,7 +292,7 @@ void DaemonControllerDelegateMac::UpdateConfig(
   }
 
   host_config->Merge(std::move(config));
-  ElevateAndSetConfig(std::move(host_config.value()), std::move(done));
+  ElevateAndSetConfig(std::move(*host_config), std::move(done));
 }
 
 void DaemonControllerDelegateMac::Stop(
@@ -310,13 +309,13 @@ DaemonControllerDelegateMac::GetUsageStatsConsent() {
   consent.set_by_policy = false;
 
   base::FilePath config_file_path(kHostConfigFilePath);
-  absl::optional<base::Value::Dict> host_config(
+  std::optional<base::Value::Dict> host_config(
       HostConfigFromJsonFile(config_file_path));
   if (host_config.has_value()) {
-    absl::optional<bool> host_config_value =
+    std::optional<bool> host_config_value =
         host_config->FindBool(kUsageStatsConsentConfigPath);
     if (host_config_value.has_value()) {
-      consent.allowed = host_config_value.value();
+      consent.allowed = *host_config_value;
     }
   }
 

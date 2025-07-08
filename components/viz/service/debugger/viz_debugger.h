@@ -13,7 +13,9 @@
 #include <vector>
 
 #include "base/debug/debugging_buildflags.h"
+#include "base/macros/concat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -21,11 +23,11 @@
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "components/viz/common/buildflags.h"
+#include "components/viz/service/debugger/mojom/viz_debugger.mojom.h"
 #include "components/viz/service/debugger/rwlock.h"
 #include "components/viz/service/viz_service_export.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "services/viz/privileged/mojom/viz_main.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -88,6 +90,7 @@ class VIZ_SERVICE_EXPORT VizDebugger {
 
   static VizDebugger* GetInstance();
 
+  VizDebugger();
   ~VizDebugger();
 
   struct VIZ_SERVICE_EXPORT BufferInfo {
@@ -125,7 +128,6 @@ class VIZ_SERVICE_EXPORT VizDebugger {
  private:
   friend class VizDebuggerInternal;
   static std::atomic<bool> enabled_;
-  VizDebugger();
   base::Value FrameAsJson(const uint64_t counter,
                           const gfx::Size& window_pix,
                           base::TimeTicks time_ticks);
@@ -148,7 +150,10 @@ class VIZ_SERVICE_EXPORT VizDebugger {
 
   struct CallSubmitCommon {
     CallSubmitCommon() = default;
-    CallSubmitCommon(int index, int source, int thread, DrawOption draw_option)
+    CallSubmitCommon(int index,
+                     int source,
+                     int64_t thread,
+                     DrawOption draw_option)
         : draw_index(index),
           source_index(source),
           thread_id(thread),
@@ -156,7 +161,7 @@ class VIZ_SERVICE_EXPORT VizDebugger {
     base::Value::Dict GetDictionaryValue() const;
     int draw_index;
     int source_index;
-    int thread_id;
+    int64_t thread_id;
     VizDebugger::DrawOption option;
   };
 
@@ -164,7 +169,7 @@ class VIZ_SERVICE_EXPORT VizDebugger {
     DrawCall() = default;
     DrawCall(int index,
              int source,
-             int thread,
+             int64_t thread,
              DrawOption draw_option,
              gfx::SizeF size,
              gfx::Vector2dF position,
@@ -188,7 +193,7 @@ class VIZ_SERVICE_EXPORT VizDebugger {
     LogCall() = default;
     LogCall(int index,
             int source,
-            int thread,
+            int64_t thread,
             DrawOption draw_option,
             std::string str)
         : CallSubmitCommon(index, source, thread, draw_option),
@@ -284,7 +289,7 @@ class VIZ_SERVICE_EXPORT VizDebugger {
                                                 __func__);                \
       if (dcs.IsActive()) {                                               \
         viz::VizDebugger::GetInstance()->AddLogMessage(                   \
-            base::StringPrintf(format, __VA_ARGS__), &dcs, option);       \
+            base::StringPrintf(format, ##__VA_ARGS__), &dcs, option);     \
       }                                                                   \
     }                                                                     \
   } while (0)
@@ -366,34 +371,11 @@ DrawRectToTraceValue(const gfx::Vector2dF& pos,
 
 #define DBG_DEFAULT_UV 0
 
-#define DBG_CAT(a, b) DBG_PRIMITIVE_CAT(a, b)
-#define DBG_PRIMITIVE_CAT(a, b) a##b
-
-// We are using the function macro DBG_USE_VIZ_DEBUGGER_TRACE() to determine if
-// we should actually produce trace statements at the callsite. In order to do
-// this we need to stamp out different implementations dependent on the value of
-// this controlling trace macro function.
-// How this works is that we concatenate the evaluated
-// DBG_USE_VIZ_DEBUGGER_TRACE() together with a prefix. We then use this
-// concatenation as the implementation function. The real trick here is if this
-// DBG_USE_VIZ_DEBUGGER_TRACE() is not defined it will in fact simply evaluate
-// to itself as a string.
 #define DBG_VIZ_DEBUGGER_TRACE_IMPL(anno, pos, size, text)            \
-  DBG_CAT(DBG_VIZ_DEBUGGER_TRACE_IMPL_, DBG_USE_VIZ_DEBUGGER_TRACE()) \
-  (anno, pos, size, text)
-
-#define DBG_VIZ_DEBUGGER_TRACE_IMPL_DBG_USE_VIZ_DEBUGGER_TRACE() \
-  DBG_VIZ_DEBUGGER_TRACE_IMPL_0
-
-#define DBG_VIZ_DEBUGGER_TRACE_IMPL_0(anno, pos, size, text) \
-  std::ignore = anno;                                        \
-  std::ignore = pos;                                         \
-  std::ignore = size;                                        \
-  std::ignore = text;
-
-#define DBG_VIZ_DEBUGGER_TRACE_IMPL_1(anno, pos, size, text)                   \
-  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT(VIZ_DEBUGGER_TRACING_CATEGORY), anno, \
-               "args", viz::DrawRectToTraceValue(pos, size, text))
+  TRACE_EVENT_INSTANT1(                                               \
+      TRACE_DISABLED_BY_DEFAULT(VIZ_DEBUGGER_TRACING_CATEGORY), anno, \
+      TRACE_EVENT_FLAG_NONE, "args",                                  \
+      viz::DrawRectToTraceValue(pos, size, text))
 
 #define DBG_DRAW_RECTANGLE_OPT_BUFF_UV_TEXT(anno, option, pos, size, id, uv, \
                                             text)                            \
@@ -411,23 +393,9 @@ DrawRectToTraceValue(const gfx::Vector2dF& pos,
   std::ignore = option;                        \
   std::ignore = format;
 
-#define DBG_VIZ_CATEGORY_ENABLE_IMPL(enabled)                          \
-  DBG_CAT(DBG_VIZ_CATEGORY_ENABLE_IMPL_, DBG_USE_VIZ_DEBUGGER_TRACE()) \
-  (enabled)
-
-#define DBG_VIZ_CATEGORY_ENABLE_IMPL_DBG_USE_VIZ_DEBUGGER_TRACE() \
-  DBG_VIZ_CATEGORY_ENABLE_IMPL_0
-
-#define DBG_VIZ_CATEGORY_ENABLE_IMPL_0(enabled) \
-  do {                                          \
-    enabled = false;                            \
-  } while (0)
-
-#define DBG_VIZ_CATEGORY_ENABLE_IMPL_1(enabled) \
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED(           \
+#define DBG_CONNECTED_OR_TRACING(enabled)                             \
+  TRACE_EVENT_CATEGORY_GROUP_ENABLED(      \
       TRACE_DISABLED_BY_DEFAULT(VIZ_DEBUGGER_TRACING_CATEGORY), (&enabled))
-
-#define DBG_CONNECTED_OR_TRACING(enabled) DBG_VIZ_CATEGORY_ENABLE_IMPL(enabled)
 
 #define DBG_FLAG_FBOOL(anno, fun_name) \
   namespace {                          \
@@ -475,7 +443,7 @@ DrawRectToTraceValue(const gfx::Vector2dF& pos,
   DBG_DRAW_TEXT_OPT(anno, DBG_OPT_BLACK, pos, text)
 
 #define DBG_LOG(anno, format, ...) \
-  DBG_LOG_OPT(anno, DBG_OPT_BLACK, format, __VA_ARGS__)
+  DBG_LOG_OPT(anno, DBG_OPT_BLACK, format, ##__VA_ARGS__)
 
 #define DBG_DRAW_RECT_OPT_BUFF_UV(anno, option, rect, id, uv)             \
   DBG_DRAW_RECTANGLE_OPT_BUFF_UV(                                         \

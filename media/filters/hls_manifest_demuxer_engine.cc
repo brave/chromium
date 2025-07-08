@@ -2,29 +2,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/hls_manifest_demuxer_engine.h"
 
+#include <optional>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
+#include "crypto/aes_cbc.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/media_log.h"
 #include "media/base/media_track.h"
+#include "media/base/media_util.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/supported_types.h"
+#include "media/base/video_codec_string_parsers.h"
 #include "media/base/video_codecs.h"
+#include "media/filters/hls_network_access_impl.h"
 #include "media/filters/manifest_demuxer.h"
-#include "media/formats/hls/audio_rendition.h"
 #include "media/formats/hls/media_playlist.h"
 #include "media/formats/hls/multivariant_playlist.h"
 #include "media/formats/hls/parse_status.h"
 #include "media/formats/hls/types.h"
 #include "media/formats/hls/variant_stream.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "media/formats/mp4/box_reader.h"
 
 namespace media {
 
@@ -40,46 +51,46 @@ bool ParseAudioCodec(const std::string& codec, AudioType* audio_type) {
   return audio_type->codec != AudioCodec::kUnknown;
 }
 
-bool AreAllAudioCodecsSupported(std::vector<AudioType> audio_types) {
+// These functions are intended to test that there are {audio/video} codecs
+// present in the types, and that each codec present is supported. An empty
+// list of audioo codecs should not be considered "supported audio" for example.
+bool AreAllAudioCodecsSupported(const std::vector<AudioType>& audio_types) {
   if (audio_types.empty()) {
     return false;
   }
   for (const auto& type : audio_types) {
-    if (!IsSupportedAudioType(type)) {
+    if (!IsDecoderSupportedAudioType(type)) {
       return false;
     }
   }
   return true;
 }
 
-bool AreAllVideoCodecsSupported(std::vector<VideoType> video_types) {
+bool AreAllVideoCodecsSupported(const std::vector<VideoType>& video_types) {
   if (video_types.empty()) {
     return false;
   }
   for (const auto& type : video_types) {
-    if (!IsSupportedVideoType(type)) {
+    if (!IsDecoderSupportedVideoType(type)) {
       return false;
     }
   }
   return true;
 }
 
-hls::RenditionSelector::CodecSupportType GetSupportedTypes(
-    base::StringPiece container,
+hls::RenditionManager::CodecSupportType GetSupportedTypes(
+    std::string_view container,
     base::span<const std::string> codecs) {
   std::vector<VideoType> video_formats;
   std::vector<AudioType> audio_formats;
   for (const std::string& codec : codecs) {
     // Try parsing it as a video codec first, which will set `video.codec`
     // to unknown if it fails.
-    VideoType video;
-    uint8_t video_level;
-    video.hdr_metadata_type = gfx::HdrMetadataType::kNone;
-    ParseCodec(codec, video.codec, video.profile, video_level,
-               video.color_space);
-    if (video.codec != VideoCodec::kUnknown) {
-      video.level = video_level;
-      video_formats.push_back(video);
+    if (auto result = ParseCodec(codec)) {
+      video_formats.push_back({result->codec, result->profile, result->level,
+                               result->color_space,
+                               gfx::HdrMetadataType::kNone});
+
       continue;
     }
 
@@ -89,19 +100,67 @@ hls::RenditionSelector::CodecSupportType GetSupportedTypes(
     }
   }
 
-  bool audio_support = AreAllAudioCodecsSupported(std::move(audio_formats));
-  bool video_support = AreAllVideoCodecsSupported(std::move(video_formats));
+  const bool audio_support = AreAllAudioCodecsSupported(audio_formats);
+  const bool video_support = AreAllVideoCodecsSupported(video_formats);
 
   if (audio_support && video_support) {
-    return hls::RenditionSelector::CodecSupportType::kSupportedAudioVideo;
+    return hls::RenditionManager::CodecSupportType::kSupportedAudioVideo;
   }
-  if (audio_support) {
-    return hls::RenditionSelector::CodecSupportType::kSupportedAudioOnly;
+  if (audio_support && video_formats.empty()) {
+    return hls::RenditionManager::CodecSupportType::kSupportedAudioOnly;
   }
-  if (video_support) {
-    return hls::RenditionSelector::CodecSupportType::kSupportedVideoOnly;
+  if (video_support && audio_formats.empty()) {
+    return hls::RenditionManager::CodecSupportType::kSupportedVideoOnly;
   }
-  return hls::RenditionSelector::CodecSupportType::kUnsupported;
+  return hls::RenditionManager::CodecSupportType::kUnsupported;
+}
+
+HlsDemuxerStatus::Or<RelaxedParserSupportedType> CheckMP4Bytes(
+    const uint8_t* data,
+    size_t size) {
+  NullMediaLog null;
+  std::unique_ptr<mp4::BoxReader> reader;
+  auto result = mp4::BoxReader::ReadTopLevelBox(data, size, &null, &reader);
+  if (result == mp4::ParseResult::kOk) {
+    return RelaxedParserSupportedType::kMP4;
+  }
+  return HlsDemuxerStatus::Codes::kUnsupportedContainer;
+}
+
+HlsDemuxerStatus::Or<RelaxedParserSupportedType>
+CheckBitstreamForContainerMagic(const uint8_t* data, size_t size) {
+  CHECK_GT(size, 0lu);
+
+  constexpr uint8_t kMP4FirstByte = 0x66;
+  constexpr uint8_t kMPEGTSFirstByte = 0x47;
+  constexpr uint8_t kFMP4FirstByte = 0x00;
+  constexpr uint8_t kAACFirstByte = 0xFF;
+  constexpr uint8_t kID3FirstByte = 0x49;
+
+  switch (data[0]) {
+    case kMP4FirstByte:
+    case kFMP4FirstByte: {
+      return CheckMP4Bytes(data, size);
+    }
+    case kID3FirstByte:
+    case kAACFirstByte: {
+      // TODO(crbug.com/40253609): Check further bytes in the header.
+      return RelaxedParserSupportedType::kAAC;
+    }
+    case kMPEGTSFirstByte: {
+      return RelaxedParserSupportedType::kMP2T;
+    }
+    default: {
+      return HlsDemuxerStatus::Codes::kUnsupportedContainer;
+    }
+  }
+}
+
+PipelineStatus ConvertToPiplineStatus(HlsDemuxerStatus&& status) {
+  if (status.is_ok()) {
+    return OkStatus();
+  }
+  return {DEMUXER_ERROR_COULD_NOT_PARSE, std::move(status)};
 }
 
 }  // namespace
@@ -111,12 +170,42 @@ HlsManifestDemuxerEngine::~HlsManifestDemuxerEngine() = default;
 HlsManifestDemuxerEngine::HlsManifestDemuxerEngine(
     base::SequenceBound<HlsDataSourceProvider> dsp,
     scoped_refptr<base::SequencedTaskRunner> media_task_runner,
+    base::RepeatingCallback<void(const MediaTrack&)> add_track,
+    base::RepeatingCallback<void(const MediaTrack&)> remove_track,
+    bool was_already_tainted,
     GURL root_playlist_uri,
     MediaLog* media_log)
-    : data_source_provider_(std::move(dsp)),
-      media_task_runner_(std::move(media_task_runner)),
+    : media_task_runner_(std::move(media_task_runner)),
+      add_track_(std::move(add_track)),
+      remove_track_(std::move(remove_track)),
       root_playlist_uri_(std::move(root_playlist_uri)),
-      media_log_(media_log->Clone()) {}
+      media_log_(media_log->Clone()),
+      network_access_(std::make_unique<HlsNetworkAccessImpl>(std::move(dsp))),
+      origin_tainted_(was_already_tainted) {
+  // This is always created on the main sequence, but used on the media sequence
+  DETACH_FROM_SEQUENCE(media_sequence_checker_);
+}
+
+void HlsManifestDemuxerEngine::ProcessActionQueue() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+
+  if (action_in_progress_ || pending_action_queue_.empty()) {
+    return;
+  }
+
+  action_in_progress_ = true;
+  auto action = std::move(pending_action_queue_.front());
+  pending_action_queue_.pop();
+  std::move(action).Run(base::BindOnce(
+      &HlsManifestDemuxerEngine::OnActionComplete, weak_factory_.GetWeakPtr()));
+}
+
+void HlsManifestDemuxerEngine::OnActionComplete() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(action_in_progress_);
+  action_in_progress_ = false;
+  ProcessActionQueue();
+}
 
 HlsManifestDemuxerEngine::PlaylistParseInfo::PlaylistParseInfo(
     GURL uri,
@@ -133,232 +222,470 @@ HlsManifestDemuxerEngine::PlaylistParseInfo::~PlaylistParseInfo() {}
 HlsManifestDemuxerEngine::PlaylistParseInfo::PlaylistParseInfo(
     const PlaylistParseInfo& copy) = default;
 
+int64_t HlsManifestDemuxerEngine::GetMemoryUsage() {
+  return total_stream_memory_;
+}
+
+bool HlsManifestDemuxerEngine::WouldTaintOrigin() {
+  return origin_tainted_;
+}
+
+bool HlsManifestDemuxerEngine::IsStreaming() {
+  return !is_seekable_;
+}
+
 std::string HlsManifestDemuxerEngine::GetName() const {
   return "HlsManifestDemuxer";
 }
 
-void HlsManifestDemuxerEngine::Initialize(ManifestDemuxerEngineHost* host,
-                                          PipelineStatusCallback status_cb) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-
-  // Initialize the codec detector on the media thread.
-  codec_detector_ = std::make_unique<HlsCodecDetector>(media_log_.get());
-  host_ = host;
-  PlaylistParseInfo parse_info(root_playlist_uri_, {}, kPrimary,
-                               /*allow_multivariant_playlist=*/true);
-  ReadFromUrl(root_playlist_uri_, false, absl::nullopt,
-              base::BindOnce(&HlsManifestDemuxerEngine::ParsePlaylist,
-                             weak_factory_.GetWeakPtr(), std::move(status_cb),
-                             std::move(parse_info)));
-}
-
-void HlsManifestDemuxerEngine::OnTimeUpdate(base::TimeDelta time,
-                                            double playback_rate,
-                                            ManifestDemuxer::DelayCallback cb) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  if (renditions_.empty()) {
-    std::move(cb).Run(kNoTimestamp);
-    return;
-  }
-
-  CheckStateAtIndex(time, playback_rate, std::move(cb), 0, absl::nullopt);
-}
-
-void HlsManifestDemuxerEngine::CheckStateAtIndex(
-    base::TimeDelta media_time,
-    double playback_rate,
-    ManifestDemuxer::DelayCallback cb,
-    size_t rendition_index,
-    absl::optional<base::TimeDelta> response_time) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  if (rendition_index >= renditions_.size()) {
-    // The response time collected at this point _must_ be valid.
-    std::move(cb).Run(response_time.value());
-    return;
-  }
-
-  auto recurse = base::BindOnce(
-      &HlsManifestDemuxerEngine::CheckStateAtIndex, weak_factory_.GetWeakPtr(),
-      media_time, playback_rate, std::move(cb), rendition_index + 1);
-
-  auto on_reply = base::BindOnce(
-      &HlsManifestDemuxerEngine::OnStateChecked, weak_factory_.GetWeakPtr(),
-      base::TimeTicks::Now(), response_time, std::move(recurse));
-
-  renditions_[rendition_index]->CheckState(media_time, playback_rate,
-                                           std::move(on_reply));
-}
-
-void HlsManifestDemuxerEngine::OnStateChecked(
-    base::TimeTicks call_start,
-    absl::optional<base::TimeDelta> prior_delay,
-    base::OnceCallback<void(absl::optional<base::TimeDelta>)> cb,
-    base::TimeDelta delay_time) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  if (prior_delay.value_or(kNoTimestamp) == kNoTimestamp) {
-    std::move(cb).Run(delay_time);
-    return;
-  }
-
-  base::TimeDelta spent_duration = base::TimeTicks::Now() - call_start;
-  if (spent_duration > prior_delay.value()) {
-    // Some previous rendition requested a delay that we've already spent while
-    // calculating the delay for the current rendition. Going forward then,
-    // we want to have no delay.
-    std::move(cb).Run(base::Seconds(0));
-    return;
-  }
-
-  auto adjusted_prior_delay = prior_delay.value() - spent_duration;
-  if (delay_time == kNoTimestamp) {
-    std::move(cb).Run(adjusted_prior_delay);
-    return;
-  }
-
-  std::move(cb).Run(adjusted_prior_delay > delay_time ? delay_time
-                                                      : adjusted_prior_delay);
-}
-
-bool HlsManifestDemuxerEngine::Seek(base::TimeDelta time) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  bool needs_more_data = false;
-  for (auto& rendition : renditions_) {
-    needs_more_data |= rendition->Seek(time);
-  }
-  return needs_more_data;
-}
-
 void HlsManifestDemuxerEngine::StartWaitingForSeek() {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  for (auto& rendition : renditions_) {
-    rendition->CancelPendingNetworkRequests();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  for (auto& [_, rendition] : renditions_) {
+    rendition->StartWaitingForSeek();
   }
 }
 
-void HlsManifestDemuxerEngine::AbortPendingReads() {}
+void HlsManifestDemuxerEngine::AbortPendingReads(base::OnceClosure cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+}
 
-bool HlsManifestDemuxerEngine::IsSeekable() {
-  // TODO(crbug/1266991): Check that all renditions are either live or non, and
-  // determine how to surface an error in the case where they report liveness
-  // differently.
-  for (auto& rendition : renditions_) {
-    if (!rendition->GetDuration().has_value()) {
-      return false;
-    }
-  }
-  return true;
+bool HlsManifestDemuxerEngine::IsSeekable() const {
+  // `IsSeekable()` is only called after the pipeline has completed successfully
+  // or the initialization step fails. If init fails, we should report that the
+  // player is seekable to keep consistent behavior with other players.
+  return is_seekable_.value_or(true);
 }
 
 int64_t HlsManifestDemuxerEngine::GetMemoryUsage() const {
-  // TODO(crbug/1266991): Sum the memory of the renditions and data source
+  // TODO(crbug.com/40057824): Sum the memory of the renditions and data source
   // providers.
   return 0;
 }
 
 void HlsManifestDemuxerEngine::Stop() {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  // Note, this drops all data sources, it does not clear the
-  // `data_source_provider_` pointer.
-  data_source_provider_.Reset();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  pending_action_queue_ = {};
+
+  for (auto& [_, rendition] : renditions_) {
+    rendition->Stop();
+  }
+
+  network_access_.reset();
+  weak_factory_.InvalidateWeakPtrs();
 
   multivariant_root_.reset();
-  rendition_selector_.reset();
+  rendition_manager_.reset();
   renditions_.clear();
+  host_ = nullptr;
 }
 
-void HlsManifestDemuxerEngine::Abort(HlsDemuxerStatus status) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  host_->OnError({PipelineStatus::Codes::DEMUXER_ERROR_COULD_NOT_PARSE,
-                  std::move(status)});
+void HlsManifestDemuxerEngine::SelectVideoVariant(const MediaTrack::Id&) {
+  // TODO(crbug.com/361853710): Implement behavior here once `add_track_` and
+  // `remove_track_` are called.
 }
 
-void HlsManifestDemuxerEngine::Abort(hls::ParseStatus status) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  host_->OnError({PipelineStatus::Codes::DEMUXER_ERROR_COULD_NOT_PARSE,
-                  std::move(status)});
+void HlsManifestDemuxerEngine::SelectAudioRendition(const MediaTrack::Id&) {
+  // TODO(crbug.com/361853710): Implement behavior here once `add_track_` and
+  // `remove_track_` are called.
 }
 
-void HlsManifestDemuxerEngine::Abort(HlsDataSource::ReadStatus status) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  host_->OnError(
-      {PipelineStatus::Codes::DEMUXER_ERROR_COULD_NOT_OPEN, std::move(status)});
-}
-
-void HlsManifestDemuxerEngine::ReadDataSource(
-    bool read_chunked,
-    HlsDataSourceStream::ReadCb cb,
-    std::unique_ptr<HlsDataSource> source) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  if (!source) {
-    Abort(HlsDemuxerStatus::Codes::kPlaylistUrlInvalid);
+void HlsManifestDemuxerEngine::Seek(base::TimeDelta time,
+                                    ManifestDemuxer::SeekCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!network_access_) {
+    // The pipeline can call Seek just after an error was surfaced. The error
+    // handler resets |network_access_|, so we should just reply with
+    // another error here.
+    std::move(cb).Run(PIPELINE_ERROR_ABORT);
     return;
   }
 
-  auto stream = HlsDataSourceStream(std::move(source));
-  if (read_chunked) {
-    std::move(stream).ReadChunk(
-        base::BindPostTask(media_task_runner_, std::move(cb)));
-  } else {
-    std::move(stream).ReadAll(
-        base::BindPostTask(media_task_runner_, std::move(cb)));
+  ProcessAsyncAction<ManifestDemuxer::SeekResponse>(
+      std::move(cb), base::BindOnce(&HlsManifestDemuxerEngine::SeekAction,
+                                    weak_factory_.GetWeakPtr(), time));
+}
+
+void HlsManifestDemuxerEngine::SeekAction(base::TimeDelta time,
+                                          ManifestDemuxer::SeekCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->AbortPendingReads(base::BindPostTaskToCurrentDefault(
+      base::BindOnce(&HlsManifestDemuxerEngine::ContinueSeekInternal,
+                     weak_factory_.GetWeakPtr(), time, std::move(cb))));
+}
+
+void HlsManifestDemuxerEngine::ContinueSeekInternal(
+    base::TimeDelta time,
+    ManifestDemuxer::SeekCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  bool buffers_needed = false;
+  for (auto& [_, rendition] : renditions_) {
+    auto response = rendition->Seek(time);
+    if (!response.has_value()) {
+      std::move(cb).Run(std::move(response).error().AddHere());
+      return;
+    }
+    buffers_needed |=
+        (ManifestDemuxer::SeekState::kNeedsData == std::move(response).value());
+  }
+  std::move(cb).Run(buffers_needed ? ManifestDemuxer::SeekState::kNeedsData
+                                   : ManifestDemuxer::SeekState::kIsReady);
+}
+
+void HlsManifestDemuxerEngine::Initialize(ManifestDemuxerEngineHost* host,
+                                          PipelineStatusCallback status_cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+
+  host_ = host;
+  ProcessAsyncAction<PipelineStatus>(
+      std::move(status_cb),
+      base::BindOnce(&HlsManifestDemuxerEngine::InitAction,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void HlsManifestDemuxerEngine::InitAction(PipelineStatusCallback status_cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  PlaylistParseInfo parse_info(root_playlist_uri_, {}, kPrimary,
+                               /*allow_multivariant_playlist=*/true);
+  LoadPlaylist(
+      parse_info,
+      base::BindOnce(&HlsManifestDemuxerEngine::FinishInitialization,
+                     weak_factory_.GetWeakPtr(), std::move(status_cb)));
+}
+
+void HlsManifestDemuxerEngine::FinishInitialization(PipelineStatusCallback cb,
+                                                    HlsDemuxerStatus status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!status.is_ok()) {
+    base::UmaHistogramEnumeration("Media.HLS.InitializationError",
+                                  status.code());
+  }
+  std::move(cb).Run(ConvertToPiplineStatus(std::move(status)));
+}
+
+void HlsManifestDemuxerEngine::RecordMidStreamError(HlsDemuxerStatus::Codes c) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  base::UmaHistogramEnumeration("Media.HLS.PlaybackError", c);
+}
+
+void HlsManifestDemuxerEngine::RecordParserFailure(hls::ParseStatus::Codes c) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  base::UmaHistogramSparse("Media.HLS.ParserError", static_cast<int>(c));
+}
+
+void HlsManifestDemuxerEngine::ForwardErrorToHost(PipelineStatus status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(!status.is_ok());
+  if (host_) {
+    host_->OnError(std::move(status).AddHere());
   }
 }
 
-void HlsManifestDemuxerEngine::ReadFromUrl(
+void HlsManifestDemuxerEngine::Quit(HlsDemuxerStatus status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(!status.is_ok());
+  RecordMidStreamError(status.code());
+  ForwardErrorToHost(ConvertToPiplineStatus(std::move(status)));
+}
+
+void HlsManifestDemuxerEngine::CheckActionState(HlsDemuxerStatus status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!status.is_ok()) {
+    Quit(std::move(status));
+  }
+}
+
+void HlsManifestDemuxerEngine::OnTimeUpdate(base::TimeDelta time,
+                                            double playback_rate,
+                                            ManifestDemuxer::DelayCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK_LE(renditions_.size(), 3lu);
+  ProcessAsyncAction<base::TimeDelta>(
+      std::move(cb),
+      base::BindOnce(&HlsManifestDemuxerEngine::OnTimeUpdateAction,
+                     weak_factory_.GetWeakPtr(), time, playback_rate));
+}
+
+void HlsManifestDemuxerEngine::OnTimeUpdateAction(
+    base::TimeDelta time,
+    double playback_rate,
+    ManifestDemuxer::DelayCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("media", "HLS::OnTimeUpdate", this);
+  cb = base::BindOnce(&HlsManifestDemuxerEngine::FinishTimeUpdate,
+                      weak_factory_.GetWeakPtr(), std::move(cb));
+  for (const auto& [role, _] : renditions_) {
+    cb = base::BindOnce(&HlsManifestDemuxerEngine::CheckState,
+                        weak_factory_.GetWeakPtr(), time, playback_rate, role,
+                        std::move(cb));
+  }
+  std::move(cb).Run(kNoTimestamp);
+}
+
+void HlsManifestDemuxerEngine::FinishTimeUpdate(
+    ManifestDemuxer::DelayCallback cb,
+    base::TimeDelta delay_time) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::OnTimeUpdate", this);
+  std::move(cb).Run(std::move(delay_time));
+}
+
+void HlsManifestDemuxerEngine::CheckState(base::TimeDelta time,
+                                          double playback_rate,
+                                          std::string role,
+                                          ManifestDemuxer::DelayCallback cb,
+                                          base::TimeDelta delay_time) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  DCHECK(renditions_.contains(role));
+  renditions_[role]->CheckState(
+      time, playback_rate,
+      base::BindOnce(&HlsManifestDemuxerEngine::OnStateChecked,
+                     weak_factory_.GetWeakPtr(), base::TimeTicks::Now(),
+                     delay_time, std::move(cb)));
+}
+
+void HlsManifestDemuxerEngine::OnStateChecked(base::TimeTicks start_time,
+                                              base::TimeDelta prior_delay,
+                                              ManifestDemuxer::DelayCallback cb,
+                                              base::TimeDelta new_delay) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (prior_delay == kNoTimestamp) {
+    std::move(cb).Run(new_delay);
+    return;
+  }
+
+  if (new_delay == kNoTimestamp) {
+    std::move(cb).Run(prior_delay);
+    return;
+  }
+
+  base::TimeDelta spent_duration = base::TimeTicks::Now() - start_time;
+  if (prior_delay <= spent_duration) {
+    std::move(cb).Run(base::Seconds(0));
+    return;
+  }
+
+  prior_delay -= spent_duration;
+  if (prior_delay < new_delay) {
+    std::move(cb).Run(prior_delay);
+    return;
+  }
+
+  std::move(cb).Run(new_delay);
+}
+
+void HlsManifestDemuxerEngine::UpdateRenditionManifestUri(
+    std::string role,
     GURL uri,
+    HlsDemuxerStatusCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::UpdateRenditionManifest",
+                                    this, "uri", uri);
+  GURL uri_copy = uri;
+  ReadManifest(
+      std::move(uri_copy),
+      base::BindOnce(&HlsManifestDemuxerEngine::UpdateMediaPlaylistForRole,
+                     weak_factory_.GetWeakPtr(), std::move(role),
+                     std::move(uri), std::move(cb)));
+}
+
+void HlsManifestDemuxerEngine::UpdateMediaPlaylistForRole(
+    std::string role,
+    GURL uri,
+    HlsDemuxerStatusCallback cb,
+    HlsDataSourceProvider::ReadResult maybe_stream) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!maybe_stream.has_value()) {
+    std::move(cb).Run(HlsDemuxerStatusTraits::FromReadStatus(
+        std::move(maybe_stream).error()));
+    return;
+  }
+  auto stream = std::move(maybe_stream).value();
+
+  auto maybe_info = hls::Playlist::IdentifyPlaylist(stream->AsString());
+  if (!maybe_info.has_value()) {
+    auto error = std::move(maybe_info).error();
+    RecordParserFailure(error.code());
+    std::move(cb).Run({HlsDemuxerStatus::Codes::kInvalidManifest,
+                       std::move(error).AddHere()});
+    return;
+  }
+
+  if ((*maybe_info).kind != hls::Playlist::Kind::kMediaPlaylist) {
+    std::move(cb).Run(HlsDemuxerStatus::Codes::kUpdateRequiresMediaPlaylist);
+    return;
+  }
+
+  auto maybe_playlist = ParseMediaPlaylistFromStringSource(
+      stream->AsString(), std::move(uri), (*maybe_info).version);
+  if (!maybe_playlist.has_value()) {
+    auto error = std::move(maybe_playlist).error();
+    RecordParserFailure(error.code());
+    std::move(cb).Run({HlsDemuxerStatus::Codes::kInvalidManifest,
+                       std::move(error).AddHere()});
+    return;
+  }
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::UpdateRenditionManifest",
+                                  this);
+
+  renditions_[role]->UpdatePlaylist(std::move(maybe_playlist).value());
+  std::move(cb).Run(OkStatus());
+}
+
+void HlsManifestDemuxerEngine::OnRenditionsReselected(
+    hls::AdaptationReason reason,
+    const hls::VariantStream* variant,
+    std::optional<hls::RenditionGroup::RenditionTrack> primary,
+    std::optional<hls::RenditionGroup::RenditionTrack> extra) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  stats_reporter_.OnAdaptation(reason);
+  ProcessAsyncAction<HlsDemuxerStatus>(
+      base::BindOnce(&HlsManifestDemuxerEngine::CheckActionState,
+                     weak_factory_.GetWeakPtr()),
+      base::BindOnce(&HlsManifestDemuxerEngine::AdaptationAction,
+                     weak_factory_.GetWeakPtr(), variant, std::move(primary),
+                     std::move(extra)));
+}
+
+void HlsManifestDemuxerEngine::AdaptationAction(
+    const hls::VariantStream* variant,
+    std::optional<hls::RenditionGroup::RenditionTrack> primary,
+    std::optional<hls::RenditionGroup::RenditionTrack> extra,
+    HlsDemuxerStatusCallback cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::SelectRenditions", this,
+                                    "reselect", true);
+
+  OnRenditionsSelected(std::move(cb), variant, std::move(primary),
+                       std::move(extra));
+}
+
+void HlsManifestDemuxerEngine::UpdateHlsDataSourceStats(
+    HlsDataSourceProvider::ReadCb cb,
+    HlsDataSourceProvider::ReadStatus::Or<std::unique_ptr<HlsDataSourceStream>>
+        result) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!result.has_value()) {
+    std::move(cb).Run(std::move(result).error().AddHere());
+    return;
+  }
+  auto stream = std::move(result).value();
+  origin_tainted_ |= stream->would_taint_origin();
+  stats_reporter_.SetWouldTaintOrigin(origin_tainted_);
+  total_stream_memory_ = stream->memory_usage();
+  std::move(cb).Run(std::move(stream));
+}
+
+void HlsManifestDemuxerEngine::ReadKey(
+    const hls::MediaSegment::EncryptionData& data,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->ReadKey(std::move(data), BindStatsUpdate(std::move(cb)));
+}
+
+HlsDataSourceProvider::ReadCb HlsManifestDemuxerEngine::BindStatsUpdate(
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  return base::BindOnce(&HlsManifestDemuxerEngine::UpdateHlsDataSourceStats,
+                        weak_factory_.GetWeakPtr(), std::move(cb));
+}
+
+void HlsManifestDemuxerEngine::ReadManifest(const GURL& uri,
+                                            HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->ReadManifest(std::move(uri), BindStatsUpdate(std::move(cb)));
+}
+
+void HlsManifestDemuxerEngine::ReadMediaSegment(
+    const hls::MediaSegment& segment,
     bool read_chunked,
-    absl::optional<hls::types::ByteRange> range,
-    HlsDataSourceStream::ReadCb cb) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  data_source_provider_.AsyncCall(&HlsDataSourceProvider::RequestDataSource)
-      .WithArgs(std::move(uri), range,
-                base::BindPostTask(
-                    media_task_runner_,
-                    base::BindOnce(&HlsManifestDemuxerEngine::ReadDataSource,
-                                   weak_factory_.GetWeakPtr(), read_chunked,
-                                   std::move(cb))));
+    bool include_init,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->ReadMediaSegment(segment, read_chunked, include_init,
+                                    BindStatsUpdate(std::move(cb)));
+}
+
+void HlsManifestDemuxerEngine::ReadStream(
+    std::unique_ptr<HlsDataSourceStream> stream,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->ReadStream(std::move(stream),
+                              BindStatsUpdate(std::move(cb)));
+}
+
+void HlsManifestDemuxerEngine::UpdateNetworkSpeed(uint64_t bps) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (rendition_manager_) {
+    rendition_manager_->UpdateNetworkSpeed(bps);
+  }
 }
 
 void HlsManifestDemuxerEngine::ParsePlaylist(
-    PipelineStatusCallback parse_complete_cb,
+    HlsDemuxerStatusCallback parse_complete_cb,
     PlaylistParseInfo parse_info,
-    HlsDataSourceStream::ReadResult m_stream) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
+    HlsDataSourceProvider::ReadResult m_stream) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   if (!m_stream.has_value()) {
-    return Abort(std::move(m_stream).error().AddHere());
+    std::move(parse_complete_cb)
+        .Run(HlsDemuxerStatusTraits::FromReadStatus(
+            std::move(m_stream).error().AddHere()));
+    return;
   }
   auto stream = std::move(m_stream).value();
-  DCHECK(!stream.CanReadMore());
 
   // A four hour movie manifest is ~100Kb.
-  if (stream.BytesInBuffer() > 102400) {
+  if (stream->buffer_size() > 102400) {
     MEDIA_LOG(WARNING, media_log_)
-        << "Large Manifest detected: " << stream.BytesInBuffer();
+        << "Large Manifest detected: " << stream->buffer_size();
   }
 
-  auto m_info = hls::Playlist::IdentifyPlaylist(stream.AsStringPiece());
+  auto m_info = hls::Playlist::IdentifyPlaylist(stream->AsString());
   if (!m_info.has_value()) {
-    return Abort(std::move(m_info).error().AddHere());
+    auto error = std::move(m_info).error();
+    RecordParserFailure(error.code());
+    std::move(parse_complete_cb)
+        .Run({HlsDemuxerStatus::Codes::kInvalidManifest,
+              std::move(error).AddHere()});
+    return;
   }
 
   switch ((*m_info).kind) {
     case hls::Playlist::Kind::kMultivariantPlaylist: {
       if (!parse_info.allow_multivariant_playlist) {
-        return Abort(HlsDemuxerStatus::Codes::kRecursiveMultivariantPlaylists);
+        std::move(parse_complete_cb)
+            .Run(HlsDemuxerStatus::Codes::kRecursiveMultivariantPlaylists);
+        return;
       }
+      stats_reporter_.SetIsMultivariantPlaylist(true);
       auto playlist = hls::MultivariantPlaylist::Parse(
-          stream.AsStringPiece(), parse_info.uri, (*m_info).version);
+          stream->AsString(), parse_info.uri, (*m_info).version);
       if (!playlist.has_value()) {
-        return Abort(std::move(playlist).error().AddHere());
+        auto error = std::move(playlist).error();
+        RecordParserFailure(error.code());
+        std::move(parse_complete_cb)
+            .Run({HlsDemuxerStatus::Codes::kInvalidManifest,
+                  std::move(error).AddHere()});
+        return;
       }
       return OnMultivariantPlaylist(std::move(parse_complete_cb),
                                     std::move(playlist).value());
     }
     case hls::Playlist::Kind::kMediaPlaylist: {
-      auto playlist = ParseMediaPlaylistFromStream(
-          std::move(stream), parse_info.uri, (*m_info).version);
+      if (parse_info.allow_multivariant_playlist) {
+        // Only a root playlist is allowed to be multivariant, so if the root
+        // is only a media playlist, then this entire playback is not
+        // multivariant.
+        stats_reporter_.SetIsMultivariantPlaylist(false);
+      }
+      auto playlist = ParseMediaPlaylistFromStringSource(
+          stream->AsString(), parse_info.uri, (*m_info).version);
       if (!playlist.has_value()) {
-        return Abort(std::move(playlist).error().AddHere());
+        auto error = std::move(playlist).error();
+        RecordParserFailure(error.code());
+        std::move(parse_complete_cb)
+            .Run({HlsDemuxerStatus::Codes::kInvalidManifest,
+                  std::move(error).AddHere()});
+        return;
       }
       return OnMediaPlaylist(std::move(parse_complete_cb),
                              std::move(parse_info),
@@ -368,167 +695,176 @@ void HlsManifestDemuxerEngine::ParsePlaylist(
 }
 
 hls::ParseStatus::Or<scoped_refptr<hls::MediaPlaylist>>
-HlsManifestDemuxerEngine::ParseMediaPlaylistFromStream(
-    HlsDataSourceStream stream,
+HlsManifestDemuxerEngine::ParseMediaPlaylistFromStringSource(
+    std::string_view source,
     GURL uri,
     hls::types::DecimalInteger version) {
-  return hls::MediaPlaylist::Parse(stream.AsStringPiece(), uri, version,
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  return hls::MediaPlaylist::Parse(source, uri, version,
                                    multivariant_root_.get());
 }
 
+void HlsManifestDemuxerEngine::SetEndOfStream(bool ended) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  // If we receive a notice that the stream is no longer ended, assert that
+  // the ended stream count is at least greater than zero for sanity checking.
+  CHECK(ended || ended_stream_count_);
+  if (ended && (++ended_stream_count_ == renditions_.size())) {
+    host_->SetEndOfStream();
+  }
+  if (!ended && (--ended_stream_count_ == renditions_.size() - 1)) {
+    host_->UnsetEndOfStream();
+  }
+}
+
 void HlsManifestDemuxerEngine::AddRenditionForTesting(
+    std::string role,
     std::unique_ptr<HlsRendition> test_rendition) {
-  renditions_.push_back(std::move(test_rendition));
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  bool is_seekable = test_rendition->GetDuration().has_value();
+  CHECK_EQ(is_seekable_.value_or(is_seekable), is_seekable);
+  is_seekable_ = is_seekable;
+  renditions_[role] = std::move(test_rendition);
 }
 
 void HlsManifestDemuxerEngine::OnMultivariantPlaylist(
-    PipelineStatusCallback parse_complete_cb,
+    HlsDemuxerStatusCallback parse_complete_cb,
     scoped_refptr<hls::MultivariantPlaylist> playlist) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  CHECK(!rendition_selector_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(!rendition_manager_);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("media", "HLS::SelectRenditions", this);
   multivariant_root_ = std::move(playlist);
-  rendition_selector_ = std::make_unique<hls::RenditionSelector>(
-      multivariant_root_, base::BindRepeating(&GetSupportedTypes));
+  rendition_manager_ = std::make_unique<hls::RenditionManager>(
+      multivariant_root_,
+      base::BindRepeating(&HlsManifestDemuxerEngine::OnRenditionsReselected,
+                          weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&GetSupportedTypes));
 
-  hls::RenditionSelector::PreferredVariants streams =
-      rendition_selector_->GetPreferredVariants(video_preferences_,
-                                                audio_preferences_);
-
-  // Possible outcomes of the rendition selector:
-  // | AOVariant | SelVariant | AORend  | primary=? | secondary=? |
-  // |-----------|------------|---------|-----------|-------------|
-  // | null      | null       | null    | X         | X           |
-  // |-----------|------------|---------|-----------|-------------|
-  // | null      | present    | null    | SV        | X           |
-  // |-----------|------------|---------|-----------|-------------|
-  // | present   | null       | present | AOV       | X           |
-  // |-----------|------------|---------|-----------|-------------|
-  // | present   | present    | null    | SV        | X           |
-  // |-----------|------------|---------|-----------|-------------|
-  // | present   | present    | present | SV        | AOV         |
-  // |-----------|------------|---------|-----------|-------------|
-  absl::optional<GURL> audio_override_uri;
-  const GURL& primary_uri = streams.selected_variant->GetPrimaryRenditionUri();
-  if (streams.audio_override_rendition) {
-    CHECK_NE(streams.audio_override_variant, nullptr);
-    audio_override_uri = streams.audio_override_rendition->GetUri().value_or(
-        streams.audio_override_variant->GetPrimaryRenditionUri());
-  }
-
-  std::vector<PlaylistParseInfo> renditions_to_parse;
-  std::vector<std::string> no_codecs;
-
-  if (streams.selected_variant) {
-    renditions_to_parse.emplace_back(
-        streams.selected_variant->GetPrimaryRenditionUri(),
-        streams.selected_variant->GetCodecs().value_or(no_codecs), kPrimary);
-
-    if (streams.audio_override_rendition &&
-        primary_uri != audio_override_uri.value_or(primary_uri)) {
-      CHECK_NE(streams.audio_override_variant, nullptr);
-      renditions_to_parse.emplace_back(
-          *audio_override_uri,
-          streams.audio_override_variant->GetCodecs().value_or(no_codecs),
-          kAudioOverride);
-    }
-  } else if (streams.audio_override_rendition &&
-             primary_uri != audio_override_uri.value_or(primary_uri)) {
-    renditions_to_parse.emplace_back(
-        *audio_override_uri,
-        streams.audio_override_variant->GetCodecs().value_or(no_codecs),
-        kPrimary);
-  } else {
-    Abort(HlsDemuxerStatus::Codes::kNoRenditions);
+  if (!rendition_manager_->HasSelectableVariants()) {
+    // This will abort the pending init, and `parse_complete_cb` will not need
+    // to be called.
+    std::move(parse_complete_cb).Run(HlsDemuxerStatus::Codes::kNoRenditions);
     return;
   }
 
-  SetStreams(std::move(renditions_to_parse), std::move(parse_complete_cb),
-             PIPELINE_OK);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::LoadPlaylist", this);
+  rendition_manager_->Reselect(
+      base::BindOnce(&HlsManifestDemuxerEngine::OnRenditionsSelected,
+                     weak_factory_.GetWeakPtr(), std::move(parse_complete_cb)));
 }
 
-void HlsManifestDemuxerEngine::SetStreams(
-    std::vector<PlaylistParseInfo> playlists,
-    PipelineStatusCallback cb,
-    PipelineStatus exit_on_error) {
-  if (!exit_on_error.is_ok() || playlists.empty()) {
-    // We've either hit the end of the list with a success, or have errored out
-    // early. Either way, the status should be forwarded to the cb.
-    std::move(cb).Run(std::move(exit_on_error));
+HlsDemuxerStatusCallback HlsManifestDemuxerEngine::BindPlaylistLoader(
+    hls::RenditionGroup::RenditionTrack rendition,
+    std::string rendition_role,
+    HlsDemuxerStatusCallback do_next) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  const GURL& rendition_uri = std::get<1>(rendition)->GetUri().value();
+  auto existing = renditions_.find(rendition_role);
+  if (existing != renditions_.end() &&
+      existing->second->MediaPlaylistUri() == rendition_uri) {
+    return do_next;
+  }
+
+  PlaylistParseInfo parse_info = {rendition_uri, selected_variant_codecs_,
+                                  rendition_role};
+  return HlsDemuxerStatus::BindOkContinuation(
+      std::move(do_next),
+      base::BindOnce(&HlsManifestDemuxerEngine::LoadPlaylist,
+                     weak_factory_.GetWeakPtr(), std::move(parse_info)));
+}
+
+void HlsManifestDemuxerEngine::OnRenditionsSelected(
+    HlsDemuxerStatusCallback on_complete,
+    const hls::VariantStream* variant,
+    std::optional<hls::RenditionGroup::RenditionTrack> primary,
+    std::optional<hls::RenditionGroup::RenditionTrack> extra) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  if (!variant || !(primary.has_value() || extra.has_value())) {
+    DCHECK(!variant && !primary.has_value() && !extra.has_value());
+    std::move(on_complete).Run(HlsDemuxerStatus::Codes::kNoRenditions);
     return;
   }
 
-  const PlaylistParseInfo playlist = playlists.back();
-  playlists.pop_back();
-  PipelineStatusCallback on_parsed = base::BindOnce(
-      &HlsManifestDemuxerEngine::SetStreams, weak_factory_.GetWeakPtr(),
-      std::move(playlists), std::move(cb));
+  // Update the codecs list
+  std::vector<std::string> no_codecs;
+  selected_variant_codecs_ = variant->GetCodecs().value_or(no_codecs);
 
-  GURL uri = playlist.uri;
-  ReadFromUrl(uri, false, absl::nullopt,
-              base::BindOnce(&HlsManifestDemuxerEngine::ParsePlaylist,
-                             weak_factory_.GetWeakPtr(), std::move(on_parsed),
-                             std::move(playlist)));
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::SelectRenditions", this);
+
+  if (extra.has_value()) {
+    on_complete = BindPlaylistLoader(extra.value(), kAudioOverride,
+                                     std::move(on_complete));
+  }
+  if (primary.has_value()) {
+    on_complete =
+        BindPlaylistLoader(primary.value(), kPrimary, std::move(on_complete));
+  }
+  std::move(on_complete).Run(OkStatus());
+}
+
+void HlsManifestDemuxerEngine::LoadPlaylist(
+    PlaylistParseInfo parse_info,
+    HlsDemuxerStatusCallback on_complete) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  auto uri = parse_info.uri;
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::LoadPlaylist", this, "uri",
+                                    uri);
+  ReadManifest(std::move(uri),
+               base::BindOnce(&HlsManifestDemuxerEngine::ParsePlaylist,
+                              weak_factory_.GetWeakPtr(),
+                              std::move(on_complete), std::move(parse_info)));
 }
 
 void HlsManifestDemuxerEngine::OnMediaPlaylist(
-    PipelineStatusCallback parse_complete_cb,
+    HlsDemuxerStatusCallback parse_complete_cb,
     PlaylistParseInfo parse_info,
     scoped_refptr<hls::MediaPlaylist> playlist) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+
+  // TODO(crbug.com/40057824) On stream adaptation, if the codecs are not the
+  // same, we'll have to re-create the chunk demuxer role. For now, just
+  // assume the codecs are the same.
+  auto maybe_exists = renditions_.find(parse_info.role);
+  if (maybe_exists != renditions_.end()) {
+    maybe_exists->second->UpdatePlaylistURI(parse_info.uri);
+    maybe_exists->second->UpdatePlaylist(std::move(playlist));
+    TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::LoadPlaylist", this);
+    std::move(parse_complete_cb).Run(OkStatus());
+    return;
+  }
+
   hls::MediaPlaylist* playlist_ptr = playlist.get();
-  DetermineStreamContainerAndCodecs(
-      playlist_ptr, parse_info,
-      base::BindOnce(&HlsManifestDemuxerEngine::OnPlaylistContainerDetermined,
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+      "media", "HLS::DetermineStreamContainerAndCodecs", this);
+  DetermineStreamContainer(
+      playlist_ptr,
+      base::BindOnce(&HlsManifestDemuxerEngine::OnStreamContainerDetermined,
                      weak_factory_.GetWeakPtr(), std::move(parse_complete_cb),
                      std::move(parse_info), std::move(playlist)));
 }
 
-void HlsManifestDemuxerEngine::OnPlaylistContainerDetermined(
-    PipelineStatusCallback parse_complete_cb,
+void HlsManifestDemuxerEngine::OnStreamContainerDetermined(
+    HlsDemuxerStatusCallback parse_complete_cb,
     PlaylistParseInfo parse_info,
     scoped_refptr<hls::MediaPlaylist> playlist,
-    HlsDemuxerStatus::Or<HlsCodecDetector::ContainerAndCodecs> maybe_info) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
-  if (!maybe_info.has_value()) {
-    std::move(parse_complete_cb)
-        .Run({DEMUXER_ERROR_COULD_NOT_OPEN, std::move(maybe_info).error()});
+    HlsDemuxerStatus::Or<RelaxedParserSupportedType> maybe_mime) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  CHECK(!renditions_.contains(parse_info.role));
+  if (!maybe_mime.has_value()) {
+    std::move(parse_complete_cb).Run(std::move(maybe_mime).error().AddHere());
     return;
   }
 
-  auto container_and_codecs = std::move(maybe_info).value();
-  std::string container = std::move(container_and_codecs.container);
-  std::string codecs = std::move(container_and_codecs.codecs);
-
-  if (parse_info.codecs.size()) {
-    // Codecs came from a multivariant playlist rather than from detection. We
-    // want to join whatever came from the playlist and use that instead.
-    std::stringstream codecstream;
-    std::copy(parse_info.codecs.begin(), parse_info.codecs.end(),
-              std::ostream_iterator<std::string>(codecstream, ", "));
-    codecs = codecstream.str();
-
-    // codecs ends with a trailing ", " now, so we need to drop that
-    codecs = codecs.substr(0, codecs.length() - 2);
-  }
-
-  if (!host_->AddRole(parse_info.role, container, codecs)) {
-    std::move(parse_complete_cb).Run(DEMUXER_ERROR_COULD_NOT_OPEN);
+  if (!host_->AddRole(parse_info.role, std::move(maybe_mime).value())) {
+    std::move(parse_complete_cb).Run(HlsDemuxerStatus::Codes::kInvalidMimeType);
     return;
   }
 
   host_->SetSequenceMode(parse_info.role, true);
 
-  auto m_rendition = HlsRendition::CreateRendition(
-      host_, this, parse_info.role, std::move(playlist), parse_info.uri);
-
-  if (!m_rendition.has_value()) {
-    std::move(parse_complete_cb)
-        .Run({DEMUXER_ERROR_COULD_NOT_PARSE,
-              std::move(m_rendition).error().AddHere()});
-    return;
-  }
-
-  auto rendition = std::move(m_rendition).value();
+  auto rendition = HlsRendition::CreateRendition(
+      host_, this, parse_info.role, std::move(playlist), parse_info.uri,
+      media_log_.get());
 
   if (parse_info.role == kPrimary) {
     auto duration_or_live = rendition->GetDuration();
@@ -537,48 +873,141 @@ void HlsManifestDemuxerEngine::OnPlaylistContainerDetermined(
     }
   }
 
-  renditions_.push_back(std::move(rendition));
+  bool seekable = rendition->GetDuration().has_value();
+  if (is_seekable_.value_or(seekable) != seekable) {
+    std::move(parse_complete_cb)
+        .Run(HlsDemuxerStatus::Codes::kMixedVodLiveRenditions);
+    return;
+  }
+
+  is_seekable_ = seekable;
+  stats_reporter_.SetIsLiveContent(!seekable);
+  renditions_[parse_info.role] = std::move(rendition);
+  TRACE_EVENT_NESTABLE_ASYNC_END0(
+      "media", "HLS::DetermineStreamContainerAndCodecs", this);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::LoadPlaylist", this);
   std::move(parse_complete_cb).Run(OkStatus());
 }
 
-void HlsManifestDemuxerEngine::DetermineStreamContainerAndCodecs(
+void HlsManifestDemuxerEngine::DetermineStreamContainer(
     hls::MediaPlaylist* playlist,
-    PlaylistParseInfo parse_info,
-    HlsDemuxerStatusCb<HlsCodecDetector::ContainerAndCodecs> container_cb) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
+    HlsDemuxerStatusCb<RelaxedParserSupportedType> container_cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   const auto& segments = playlist->GetSegments();
   if (segments.empty()) {
     std::move(container_cb).Run(HlsDemuxerStatus::Codes::kUnsupportedContainer);
     return;
   }
 
-  const auto& first_segment_uri = segments[0]->GetUri();
-  data_source_provider_.AsyncCall(&HlsDataSourceProvider::RequestDataSource)
-      .WithArgs(std::move(first_segment_uri), segments[0]->GetByteRange(),
-                base::BindPostTask(
-                    media_task_runner_,
-                    base::BindOnce(&HlsManifestDemuxerEngine::PeekFirstSegment,
-                                   weak_factory_.GetWeakPtr(), parse_info,
-                                   std::move(container_cb))));
+  // In the best case, we can just assert the mime type based on extension,
+  // but if it's unrecognized, we have to fetch and parse it.
+  const auto first_segment_path = segments[0]->GetUri().path_piece();
+
+  std::optional<RelaxedParserSupportedType> mime = std::nullopt;
+  if (first_segment_path.ends_with(".ts")) {
+    mime = RelaxedParserSupportedType::kMP2T;
+  } else if (first_segment_path.ends_with(".mp4")) {
+    mime = RelaxedParserSupportedType::kMP4;
+  } else if (first_segment_path.ends_with(".m4v")) {
+    mime = RelaxedParserSupportedType::kMP4;
+  } else if (first_segment_path.ends_with(".m4s")) {
+    mime = RelaxedParserSupportedType::kMP4;
+  } else if (first_segment_path.ends_with(".m4a")) {
+    mime = RelaxedParserSupportedType::kMP4;
+  } else if (first_segment_path.ends_with(".aac")) {
+    mime = RelaxedParserSupportedType::kAAC;
+  }
+
+  if (mime.has_value()) {
+    std::move(container_cb).Run(mime.value());
+  } else {
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::PeekSegmentChunk", this,
+                                      "uri", segments[0]->GetUri());
+    bool read_chunked = true;
+    if (auto enc_data = segments[0]->GetEncryptionData()) {
+      switch (enc_data->GetMethod()) {
+        case hls::XKeyTagMethod::kAES128:
+        case hls::XKeyTagMethod::kAES256: {
+          read_chunked = false;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    ReadMediaSegment(
+        *segments[0], read_chunked, /*include_init=*/true,
+        base::BindOnce(&HlsManifestDemuxerEngine::DetermineBitstreamContainer,
+                       weak_factory_.GetWeakPtr(), segments[0],
+                       std::move(container_cb)));
+  }
 }
 
-void HlsManifestDemuxerEngine::PeekFirstSegment(
-    PlaylistParseInfo parse_info,
-    HlsDemuxerStatusCb<HlsCodecDetector::ContainerAndCodecs> cb,
-    std::unique_ptr<HlsDataSource> data_source) {
-  if (!data_source) {
-    std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidSegmentUri);
+void HlsManifestDemuxerEngine::DetermineBitstreamContainer(
+    scoped_refptr<hls::MediaSegment> segment,
+    HlsDemuxerStatusCb<RelaxedParserSupportedType> cb,
+    HlsDataSourceProvider::ReadResult maybe_stream) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("media", "HLS::PeekSegmentChunk", this);
+
+  if (!maybe_stream.has_value()) {
+    std::move(cb).Run(HlsDemuxerStatusTraits::FromReadStatus(
+        std::move(maybe_stream).error()));
     return;
   }
 
-  auto stream = HlsDataSourceStream(std::move(data_source));
-  codec_detector_->DetermineContainerAndCodec(std::move(stream), std::move(cb));
+  auto stream = std::move(maybe_stream).value();
+  if (!stream->buffer_size()) {
+    std::move(cb).Run(HlsDemuxerStatus::Codes::kNoSegmentData);
+    return;
+  }
+
+  if (auto enc_data = segment->GetEncryptionData()) {
+    switch (enc_data->GetMethod()) {
+      case hls::XKeyTagMethod::kNone: {
+        // Fall back to plaintext.
+        break;
+      }
+      case hls::XKeyTagMethod::kAES128:
+      case hls::XKeyTagMethod::kAES256: {
+        auto maybe_iv = enc_data->GetIVStr(segment->GetMediaSequenceNumber());
+        base::span<const uint8_t> stream_data =
+            base::span(stream->raw_data(), stream->buffer_size());
+        if (!maybe_iv.has_value() ||
+            maybe_iv->size() != crypto::aes_cbc::kBlockSize) {
+          std::move(cb).Run(
+              HlsDemuxerStatus::Codes::kInsufficientCryptoMetadata);
+          return;
+        }
+
+        auto iv =
+            base::as_byte_span(*maybe_iv).first<crypto::aes_cbc::kBlockSize>();
+        auto maybe_plaintext =
+            crypto::aes_cbc::Decrypt(enc_data->GetKey(), iv, stream_data);
+        if (!maybe_plaintext) {
+          std::move(cb).Run(HlsDemuxerStatus::Codes::kFailedToDecryptSegment);
+          return;
+        }
+        std::move(cb).Run(CheckBitstreamForContainerMagic(
+            maybe_plaintext->data(), maybe_plaintext->size()));
+        return;
+      }
+      default: {
+        std::move(cb).Run(HlsDemuxerStatus::Codes::kUnsupportedCryptoMethod);
+        return;
+      }
+    }
+  }
+
+  std::move(cb).Run(CheckBitstreamForContainerMagic(stream->raw_data(),
+                                                    stream->buffer_size()));
 }
 
 void HlsManifestDemuxerEngine::OnChunkDemuxerParseWarning(
     std::string role,
     SourceBufferParseWarning warning) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   MEDIA_LOG(WARNING, media_log_)
       << "ParseWarning (" << role << "): " << static_cast<int>(warning);
 }
@@ -586,7 +1015,7 @@ void HlsManifestDemuxerEngine::OnChunkDemuxerParseWarning(
 void HlsManifestDemuxerEngine::OnChunkDemuxerTracksChanged(
     std::string role,
     std::unique_ptr<MediaTracks> tracks) {
-  DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   MEDIA_LOG(WARNING, media_log_) << "TracksChanged for role: " << role;
 }
 

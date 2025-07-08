@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_CONFLICTS_CONFLICTS_DATA_FETCHER_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/functional/callback.h"
 #include "base/sequence_checker.h"
@@ -14,11 +15,6 @@
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/win/conflicts/module_database_observer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chrome/browser/win/conflicts/third_party_conflicts_manager.h"
-#endif
 
 // This class is responsible for gathering the list of modules for the
 // chrome://conflicts page and the state of the third-party features on the
@@ -48,12 +44,6 @@ class ConflictsDataFetcher : public ModuleDatabaseObserver {
 
   void InitializeOnModuleDatabaseTaskRunner();
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  // Invoked when the ThirdPartyConflictsManager initialization state is
-  // available.
-  void OnManagerInitializationComplete(ThirdPartyConflictsManager::State state);
-#endif
-
   // Registers this instance to the ModuleDatabase to retrieve the list of
   // modules via the ModuleDatabaseObserver API.
   void GetListOfModules();
@@ -67,16 +57,9 @@ class ConflictsDataFetcher : public ModuleDatabaseObserver {
 
   // Temporarily holds the module list while the modules are being
   // enumerated.
-  absl::optional<base::Value::List> module_list_;
+  std::optional<base::Value::List> module_list_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  absl::optional<ThirdPartyConflictsManager::State>
-      third_party_conflicts_manager_state_;
-
-  base::WeakPtrFactory<ConflictsDataFetcher> weak_ptr_factory_;
-#endif
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_CONFLICTS_CONFLICTS_DATA_FETCHER_H_

@@ -72,7 +72,7 @@ struct IdentityManagerBuildParams {
   std::unique_ptr<ProfileOAuth2TokenService> token_service;
   std::unique_ptr<AccountTrackerService> account_tracker_service;
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
   bool delete_signin_cookies_on_exit = false;
 #endif
 
@@ -93,6 +93,8 @@ struct IdentityManagerBuildParams {
 #if BUILDFLAG(IS_IOS)
   std::unique_ptr<DeviceAccountsProvider> device_accounts_provider;
 #endif
+
+  bool require_sync_consent_for_scope_verification = true;
 
 #if BUILDFLAG(IS_WIN)
   base::RepeatingCallback<bool()> reauth_callback;

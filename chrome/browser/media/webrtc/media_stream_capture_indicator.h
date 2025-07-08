@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/functional/callback_forward.h"
+#include "base/functional/function_ref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
@@ -47,7 +48,7 @@ class MediaStreamUI {
 
   // Called when Region Capture starts/stops, or when the cropped area changes.
   virtual void OnRegionCaptureRectChanged(
-      const absl::optional<gfx::Rect>& region_capture_rect) {}
+      const std::optional<gfx::Rect>& region_capture_rect) {}
 };
 
 // Keeps track of which WebContents are capturing media streams. Used to display
@@ -77,6 +78,8 @@ class MediaStreamCaptureIndicator
                                            bool is_capturing_audio) {}
     virtual void OnIsBeingMirroredChanged(content::WebContents* web_contents,
                                           bool is_being_mirrored) {}
+    virtual void OnIsCapturingTabChanged(content::WebContents* web_contents,
+                                         bool is_capturing_tab) {}
     virtual void OnIsCapturingWindowChanged(content::WebContents* web_contents,
                                             bool is_capturing_window) {}
     virtual void OnIsCapturingDisplayChanged(content::WebContents* web_contents,
@@ -117,6 +120,9 @@ class MediaStreamCaptureIndicator
   // Returns true if |web_contents| itself is being mirrored (e.g., a source of
   // media for remote broadcast).
   bool IsBeingMirrored(content::WebContents* web_contents) const;
+
+  // Returns true if |web_contents| is capturing a a tab.
+  bool IsCapturingTab(content::WebContents* web_contents) const;
 
   // Returns true if |web_contents| is capturing a desktop window or audio.
   bool IsCapturingWindow(content::WebContents* web_contents) const;
@@ -163,16 +169,16 @@ class MediaStreamCaptureIndicator
                              gfx::ImageSkia* image,
                              std::u16string* tool_tip);
 
-  // Checks if |web_contents| or any portal WebContents in its tree is using
+  // Checks if |web_contents| or any inner WebContents in its tree is using
   // a device for capture. The type of capture is specified using |pred|.
   using WebContentsDeviceUsagePredicate =
-      base::RepeatingCallback<bool(const WebContentsDeviceUsage*)>;
+      base::FunctionRef<bool(const WebContentsDeviceUsage*)>;
   bool CheckUsage(content::WebContents* web_contents,
                   const WebContentsDeviceUsagePredicate& pred) const;
 
   // Reference to our status icon - owned by the StatusTray. If null,
   // the platform doesn't support status icons.
-  raw_ptr<StatusIcon, DanglingUntriaged> status_icon_ = nullptr;
+  raw_ptr<StatusIcon> status_icon_ = nullptr;
 
   // A map that contains the usage counts of the opened capture devices for each
   // WebContents instance.
@@ -188,7 +194,8 @@ class MediaStreamCaptureIndicator
   // A vector which maps command IDs to their associated WebContents
   // instance. This is rebuilt each time the status tray icon context menu is
   // updated.
-  typedef std::vector<content::WebContents*> CommandTargets;
+  typedef std::vector<raw_ptr<content::WebContents, VectorExperimental>>
+      CommandTargets;
   CommandTargets command_targets_;
 
   base::ObserverList<Observer, /* check_empty =*/true> observers_;

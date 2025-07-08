@@ -19,13 +19,17 @@ FakeTileManagerClient::BuildRasterQueue(TreePriority tree_priority,
 }
 
 std::unique_ptr<EvictionTilePriorityQueue>
-FakeTileManagerClient::BuildEvictionQueue(TreePriority tree_priority) {
+FakeTileManagerClient::BuildEvictionQueue() {
   return nullptr;
 }
 
 std::unique_ptr<TilesWithResourceIterator>
 FakeTileManagerClient::CreateTilesWithResourceIterator() {
   return nullptr;
+}
+
+viz::SharedImageFormat FakeTileManagerClient::GetTileFormat() const {
+  return viz::SinglePlaneFormat::kRGBA_8888;
 }
 
 TargetColorParams FakeTileManagerClient::GetTargetColorParams(
@@ -44,7 +48,7 @@ size_t FakeTileManagerClient::GetFrameIndexForImage(
 }
 
 int FakeTileManagerClient::GetMSAASampleCountForRaster(
-    const scoped_refptr<DisplayItemList>& display_list) {
+    const DisplayItemList& display_list) const {
   return 0;
 }
 

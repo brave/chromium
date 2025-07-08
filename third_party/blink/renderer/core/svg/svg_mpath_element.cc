@@ -91,7 +91,6 @@ void SVGMPathElement::RemovedFrom(ContainerNode& root_parent) {
 void SVGMPathElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   if (SVGURIReference::IsKnownAttribute(params.name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     BuildPendingResource();
     return;
   }
@@ -109,8 +108,9 @@ void SVGMPathElement::TargetPathChanged() {
 }
 
 void SVGMPathElement::NotifyParentOfPathChange(ContainerNode* parent) {
-  if (auto* motion = DynamicTo<SVGAnimateMotionElement>(parent))
-    motion->UpdateAnimationPath();
+  if (auto* motion = DynamicTo<SVGAnimateMotionElement>(parent)) {
+    motion->ChildMPathChanged();
+  }
 }
 
 }  // namespace blink

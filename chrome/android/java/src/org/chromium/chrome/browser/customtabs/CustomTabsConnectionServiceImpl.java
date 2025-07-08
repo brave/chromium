@@ -10,9 +10,11 @@ import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.browser.auth.AuthTabSessionToken;
 import androidx.browser.customtabs.CustomTabsService;
 import androidx.browser.customtabs.CustomTabsSessionToken;
 import androidx.browser.customtabs.EngagementSignalsCallback;
+import androidx.browser.customtabs.PrefetchOptions;
 
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.init.ProcessInitializationHandler;
@@ -20,9 +22,7 @@ import org.chromium.components.embedder_support.util.Origin;
 
 import java.util.List;
 
-/**
- * Custom tabs connection service, used by the embedded Chrome activities.
- */
+/** Custom tabs connection service, used by the embedded Chrome activities. */
 public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService.Impl {
     private CustomTabsConnection mConnection;
     private Intent mBindIntent;
@@ -52,7 +52,7 @@ public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService
     @Override
     protected boolean warmup(long flags) {
         if (!isFirstRunDone()) return false;
-        return mConnection.warmup(flags);
+        return mConnection.warmup();
     }
 
     @Override
@@ -61,10 +61,21 @@ public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService
     }
 
     @Override
-    protected boolean mayLaunchUrl(CustomTabsSessionToken sessionToken, Uri url, Bundle extras,
+    protected boolean mayLaunchUrl(
+            CustomTabsSessionToken sessionToken,
+            Uri url,
+            Bundle extras,
             List<Bundle> otherLikelyBundles) {
         if (!isFirstRunDone()) return false;
         return mConnection.mayLaunchUrl(sessionToken, url, extras, otherLikelyBundles);
+    }
+
+    @Override
+    @androidx.browser.customtabs.ExperimentalPrefetch
+    protected void prefetch(
+            CustomTabsSessionToken sessionToken, List<Uri> urls, PrefetchOptions options) {
+        if (!isFirstRunDone()) return;
+        mConnection.prefetch(sessionToken, urls, options);
     }
 
     @Override
@@ -79,8 +90,10 @@ public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService
     }
 
     @Override
-    protected boolean requestPostMessageChannel(CustomTabsSessionToken sessionToken,
-            Uri postMessageSourceOrigin, @Nullable Uri postMessageTargetOrigin) {
+    protected boolean requestPostMessageChannel(
+            CustomTabsSessionToken sessionToken,
+            Uri postMessageSourceOrigin,
+            @Nullable Uri postMessageTargetOrigin) {
         Origin sourceOrigin = Origin.create(postMessageSourceOrigin);
         if (sourceOrigin == null) return false;
         return mConnection.requestPostMessageChannel(
@@ -107,8 +120,11 @@ public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService
     }
 
     @Override
-    protected boolean receiveFile(@NonNull CustomTabsSessionToken sessionToken, @NonNull Uri uri,
-            int purpose, @Nullable Bundle extras) {
+    protected boolean receiveFile(
+            @NonNull CustomTabsSessionToken sessionToken,
+            @NonNull Uri uri,
+            int purpose,
+            @Nullable Bundle extras) {
         return mConnection.receiveFile(sessionToken, uri, purpose, extras);
     }
 
@@ -119,9 +135,21 @@ public class CustomTabsConnectionServiceImpl extends CustomTabsConnectionService
     }
 
     @Override
-    protected boolean setEngagementSignalsCallback(CustomTabsSessionToken sessionToken,
-            EngagementSignalsCallback callback, Bundle extras) {
+    protected boolean setEngagementSignalsCallback(
+            CustomTabsSessionToken sessionToken,
+            EngagementSignalsCallback callback,
+            Bundle extras) {
         return mConnection.setEngagementSignalsCallback(sessionToken, callback, extras);
+    }
+
+    @Override
+    protected void cleanUpSession(@NonNull AuthTabSessionToken sessionToken) {
+        mConnection.cleanUpSession(sessionToken);
+    }
+
+    @Override
+    protected boolean newAuthTabSession(@NonNull AuthTabSessionToken sessionToken) {
+        return mConnection.newAuthTabSession(sessionToken);
     }
 
     private boolean isFirstRunDone() {

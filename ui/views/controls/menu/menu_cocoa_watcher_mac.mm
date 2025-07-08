@@ -13,10 +13,6 @@
 namespace views {
 namespace {
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 // Returns the global notification filter.
 MacNotificationFilter& NotificationFilterInternal() {
   static MacNotificationFilter filter =
@@ -81,8 +77,9 @@ MenuCocoaWatcherMac::MenuCocoaWatcherMac(base::OnceClosure callback)
                       object:nil
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
-                    if (ShouldIgnoreNotification(notification))
+                    if (ShouldIgnoreNotification(notification)) {
                       return;
+                    }
 
                     // Only destroy menus if the browser is losing focus, not if
                     // it's gaining focus. This is to ensure that we can invoke

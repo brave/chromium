@@ -8,10 +8,6 @@
 #include "crypto/mock_apple_keychain.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 using crypto::MockAppleKeychain;
@@ -52,7 +48,6 @@ TEST(KeychainPasswordTest, FindPasswordSuccess) {
   KeychainPasswordEnvironment environment(noErr);
   EXPECT_FALSE(environment.GetPassword().empty());
   EXPECT_FALSE(environment.keychain().called_add_generic());
-  EXPECT_EQ(0, environment.keychain().password_data_count());
 }
 
 // Test that if we do not have an existing password in the Keychain then it
@@ -61,7 +56,6 @@ TEST(KeychainPasswordTest, FindPasswordNotFound) {
   KeychainPasswordEnvironment environment(errSecItemNotFound);
   EXPECT_EQ(24U, environment.GetPassword().length());
   EXPECT_TRUE(environment.keychain().called_add_generic());
-  EXPECT_EQ(0, environment.keychain().password_data_count());
 }
 
 // Test that if get denied access by the user then we return an empty password.
@@ -70,7 +64,6 @@ TEST(KeychainPasswordTest, FindPasswordNotAuthorized) {
   KeychainPasswordEnvironment environment(errSecAuthFailed);
   EXPECT_TRUE(environment.GetPassword().empty());
   EXPECT_FALSE(environment.keychain().called_add_generic());
-  EXPECT_EQ(0, environment.keychain().password_data_count());
 }
 
 // Test that if some random other error happens then we return an empty
@@ -79,7 +72,6 @@ TEST(KeychainPasswordTest, FindPasswordOtherError) {
   KeychainPasswordEnvironment environment(errSecNotAvailable);
   EXPECT_TRUE(environment.GetPassword().empty());
   EXPECT_FALSE(environment.keychain().called_add_generic());
-  EXPECT_EQ(0, environment.keychain().password_data_count());
 }
 
 // Test that subsequent additions to the keychain give different passwords.
@@ -88,13 +80,11 @@ TEST(KeychainPasswordTest, PasswordsDiffer) {
   std::string password1 = environment1.GetPassword();
   EXPECT_FALSE(password1.empty());
   EXPECT_TRUE(environment1.keychain().called_add_generic());
-  EXPECT_EQ(0, environment1.keychain().password_data_count());
 
   KeychainPasswordEnvironment environment2(errSecItemNotFound);
   std::string password2 = environment2.GetPassword();
   EXPECT_FALSE(password2.empty());
   EXPECT_TRUE(environment2.keychain().called_add_generic());
-  EXPECT_EQ(0, environment2.keychain().password_data_count());
 
   // And finally check that the passwords are different.
   EXPECT_NE(password1, password2);

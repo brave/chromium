@@ -5,14 +5,18 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_IDENTITY_WEB_AUTH_FLOW_H_
 #define CHROME_BROWSER_EXTENSIONS_API_IDENTITY_WEB_AUTH_FLOW_H_
 
+#include <optional>
 #include <string>
 
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_observer.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
 class Profile;
@@ -28,7 +32,7 @@ class WebAuthFlowInfoBarDelegate;
 
 // Controller class for web based auth flows. The WebAuthFlow creates
 // a browser popup window (or a new tab based on the feature setting)
-// with a webview that will navigate to the |provider_url| passed to the
+// with a webview that will navigate to the `provider_url` passed to the
 // WebAuthFlow constructor.
 //
 // The WebAuthFlow monitors the WebContents of the webview, and
@@ -43,7 +47,8 @@ class WebAuthFlowInfoBarDelegate;
 //
 // A WebAuthFlow can be started in Mode::SILENT, which never displays
 // a window. If a window would be required, the flow fails.
-class WebAuthFlow : public content::WebContentsObserver {
+class WebAuthFlow : public content::WebContentsObserver,
+                    public ProfileObserver {
  public:
   enum Mode {
     INTERACTIVE,  // Show UI to the user if necessary.
@@ -55,7 +60,7 @@ class WebAuthFlow : public content::WebContentsObserver {
     INTERACTION_REQUIRED,  // Non-redirect page load in silent mode.
     LOAD_FAILED,
     TIMED_OUT,
-    CANNOT_CREATE_WINDOW  // Couldn't create a browser window.
+    CANNOT_CREATE_WINDOW,  // Couldn't create a browser window.
   };
 
   enum class AbortOnLoad {
@@ -83,19 +88,20 @@ class WebAuthFlow : public content::WebContentsObserver {
         content::NavigationHandle* navigation_handle) {}
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
   // Creates an instance with the given parameters.
   // Caller owns `delegate`.
-  WebAuthFlow(Delegate* delegate,
-              Profile* profile,
-              const GURL& provider_url,
-              Mode mode,
-              bool user_gesture,
-              AbortOnLoad abort_on_load_for_non_interactive = AbortOnLoad::kYes,
-              absl::optional<base::TimeDelta> timeout_for_non_interactive =
-                  absl::nullopt);
+  WebAuthFlow(
+      Delegate* delegate,
+      Profile* profile,
+      const GURL& provider_url,
+      Mode mode,
+      bool user_gesture,
+      AbortOnLoad abort_on_load_for_non_interactive = AbortOnLoad::kYes,
+      std::optional<base::TimeDelta> timeout_for_non_interactive = std::nullopt,
+      std::optional<gfx::Rect> popup_bounds = std::nullopt);
 
   WebAuthFlow(const WebAuthFlow&) = delete;
   WebAuthFlow& operator=(const WebAuthFlow&) = delete;
@@ -131,6 +137,9 @@ class WebAuthFlow : public content::WebContentsObserver {
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
+  // ProfileObserver
+  void OnProfileWillBeDestroyed(Profile* profile) override;
+
   void BeforeUrlLoaded(const GURL& url);
   void AfterUrlLoaded();
 
@@ -143,7 +152,7 @@ class WebAuthFlow : public content::WebContentsObserver {
   void CloseInfoBar();
 
   raw_ptr<Delegate> delegate_ = nullptr;
-  const raw_ptr<Profile> profile_;
+  raw_ptr<Profile> profile_;
   const GURL provider_url_;
   const Mode mode_;
   const bool user_gesture_;
@@ -168,11 +177,13 @@ class WebAuthFlow : public content::WebContentsObserver {
   base::WeakPtr<WebAuthFlowInfoBarDelegate> info_bar_delegate_ = nullptr;
 
   const AbortOnLoad abort_on_load_for_non_interactive_;
-  const absl::optional<base::TimeDelta> timeout_for_non_interactive_;
+  const std::optional<base::TimeDelta> timeout_for_non_interactive_;
   std::unique_ptr<base::OneShotTimer> non_interactive_timeout_timer_;
+  const std::optional<gfx::Rect> popup_bounds_;
   // Flag indicating that the initial URL was successfully loaded. Influences
   // the error code when the flow times out.
   bool initial_url_loaded_ = false;
+  base::ScopedObservation<Profile, ProfileObserver> profile_observation_{this};
 };
 
 }  // namespace extensions

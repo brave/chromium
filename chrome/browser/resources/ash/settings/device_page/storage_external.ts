@@ -8,16 +8,17 @@
  * settings.
  */
 
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_components/settings_prefs/prefs.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 import './storage_external_entry.js';
 import '../settings_shared.css.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DevicePageBrowserProxy, DevicePageBrowserProxyImpl, ExternalStorage} from './device_page_browser_proxy.js';
+import type {PrefsState} from '../common/types.js';
+
+import {type DevicePageBrowserProxy, DevicePageBrowserProxyImpl, type ExternalStorage} from './device_page_browser_proxy.js';
 import {getTemplate} from './storage_external.html.js';
 
 const SettingsStorageExternalElementBase =
@@ -52,6 +53,7 @@ class SettingsStorageExternalElement extends
     };
   }
 
+  prefs: PrefsState;
   private browserProxy_: DevicePageBrowserProxy;
   private externalStorages_: ExternalStorage[];
 
@@ -61,7 +63,7 @@ class SettingsStorageExternalElement extends
     this.browserProxy_ = DevicePageBrowserProxyImpl.getInstance();
   }
 
-  override connectedCallback() {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     this.browserProxy_.setExternalStoragesUpdatedCallback(

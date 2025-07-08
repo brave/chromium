@@ -16,9 +16,9 @@
 #include "chrome/browser/ash/login/test/js_checker.h"
 #include "chrome/browser/ash/login/test/oobe_base_test.h"
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
-#include "chrome/browser/ash/login/ui/webui_login_view.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/webui_login_view.h"
 #include "chrome/browser/ui/webui/ash/login/enable_debugging_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/oobe_ui.h"
 #include "chrome/common/chrome_constants.h"
@@ -217,7 +217,9 @@ class EnableDebuggingTestBase : public OobeBaseTest {
     WaitForOobeUI();
     test::OobeJS().ExpectHidden(kDebuggingScreenId);
     InvokeEnableDebuggingScreen();
-    test::OobeJS().ExpectVisiblePath(kRemoveProtectionDialog);
+    test::OobeJS()
+        .CreateVisibilityWaiter(true, kRemoveProtectionDialog)
+        ->Wait();
     test::OobeJS().ExpectVisiblePath(kRemoveProtectionButton);
     test::OobeJS().ExpectVisiblePath(kHelpLink);
     debug_daemon_client_->WaitUntilCalled();
@@ -230,7 +232,7 @@ class EnableDebuggingTestBase : public OobeBaseTest {
     WaitForOobeUI();
     test::OobeJS().ExpectHidden(kDebuggingScreenId);
     InvokeEnableDebuggingScreen();
-    test::OobeJS().ExpectVisiblePath(kSetupDialog);
+    test::OobeJS().CreateVisibilityWaiter(true, kSetupDialog)->Wait();
     debug_daemon_client_->WaitUntilCalled();
     base::RunLoop().RunUntilIdle();
 
@@ -346,7 +348,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingDevTest, ShowOnTestImages) {
   WaitForOobeUI();
   test::OobeJS().ExpectHidden(kDebuggingScreenId);
   InvokeEnableDebuggingScreen();
-  test::OobeJS().ExpectVisiblePath(kRemoveProtectionDialog);
+  test::OobeJS().CreateVisibilityWaiter(true, kRemoveProtectionDialog)->Wait();
   debug_daemon_client_->WaitUntilCalled();
   base::RunLoop().RunUntilIdle();
 
@@ -387,7 +389,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, NoShowInNonDevMode) {
 
 class EnableDebuggingRequestedTest : public EnableDebuggingDevTest {
  public:
-  EnableDebuggingRequestedTest() {}
+  EnableDebuggingRequestedTest() = default;
 
   // EnableDebuggingDevTest overrides:
   bool SetUpUserDataDirectory() override {

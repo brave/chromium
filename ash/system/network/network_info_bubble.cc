@@ -6,16 +6,16 @@
 
 #include <memory>
 
-#include "ash/constants/ash_features.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/typography.h"
 #include "ash/system/model/system_tray_model.h"
 #include "ash/system/network/tray_network_state_model.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/compositor/layer.h"
@@ -64,7 +64,7 @@ NetworkInfoBubble::NetworkInfoBubble(base::WeakPtr<Delegate> delegate,
                                      views::View* anchor)
     : views::BubbleDialogDelegateView(anchor, views::BubbleBorder::TOP_RIGHT),
       delegate_(delegate) {
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_margins(gfx::Insets(kBubbleMargin));
   SetArrow(views::BubbleBorder::NONE);
   set_shadow(views::BubbleBorder::NO_SHADOW);
@@ -72,36 +72,31 @@ NetworkInfoBubble::NetworkInfoBubble(base::WeakPtr<Delegate> delegate,
   SetLayoutManager(std::make_unique<views::FillLayout>());
 
   std::u16string info_text;
-  if (features::IsQsRevampEnabled()) {
-    label_container_ = AddChildView(
-        views::Builder<views::BoxLayoutView>()
-            .SetOrientation(views::BoxLayout::Orientation::kVertical)
-            .Build());
+  label_container_ =
+      AddChildView(views::Builder<views::BoxLayoutView>()
+                       .SetOrientation(views::BoxLayout::Orientation::kVertical)
+                       .Build());
 
-    info_text = ComputeInfoText();
-    // If the `ComputeInfoText()` is not the no networks info label, it means
-    // labels are added and no need to add the no network label.
-    if (info_text.compare(
-            l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_NO_NETWORKS)) != 0) {
-      label_container_->SetBorder(
-          views::CreateEmptyBorder(gfx::Insets::VH(0, 8)));
-      label_container_->SetID(kNetworkInfoBubbleLabelViewId);
-      return;
-    }
+  info_text = ComputeInfoText();
+  // If the `ComputeInfoText()` is not the no networks info label, it means
+  // labels are added and no need to add the no network label.
+  if (info_text.compare(
+          l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_NO_NETWORKS)) != 0) {
+    label_container_->SetBorder(
+        views::CreateEmptyBorder(gfx::Insets::VH(0, 8)));
+    label_container_->SetID(kNetworkInfoBubbleLabelViewId);
+    return;
   }
   std::unique_ptr<views::Label> label = std::make_unique<views::Label>(
       info_text.empty() ? ComputeInfoText() : info_text);
-  if (chromeos::features::IsJellyEnabled()) {
-    label->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
-    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
-                                          *label);
-  }
+  label->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
+  TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2, *label);
   label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
   label->SetID(kNetworkInfoBubbleLabelViewId);
   label->SetMultiLine(true);
   label->SetSelectable(true);
 
-  AddChildView(label.release());
+  AddChildViewRaw(label.release());
 }
 
 NetworkInfoBubble::~NetworkInfoBubble() {
@@ -110,13 +105,16 @@ NetworkInfoBubble::~NetworkInfoBubble() {
   }
 }
 
-gfx::Size NetworkInfoBubble::CalculatePreferredSize() const {
+gfx::Size NetworkInfoBubble::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   // This bubble should be inset by kBubbleMargin on the left and right relative
   // to the parent bubble.
   const gfx::Size anchor_size = GetAnchorView()->size();
   int contents_width =
       anchor_size.width() - 2 * kBubbleMargin - margins().width();
-  return gfx::Size(contents_width, GetHeightForWidth(contents_width));
+  return gfx::Size(
+      contents_width,
+      GetLayoutManager()->GetPreferredHeightForWidth(this, contents_width));
 }
 
 void NetworkInfoBubble::OnMouseExited(const ui::MouseEvent& event) {
@@ -146,33 +144,28 @@ std::u16string NetworkInfoBubble::ComputeInfoText() {
     }
     info_text +=
         l10n_util::GetStringFUTF16(text_id, base::UTF8ToUTF16(address));
-    if (features::IsQsRevampEnabled()) {
-      auto container =
-          views::Builder<views::BoxLayoutView>()
-              .SetOrientation(views::BoxLayout::Orientation::kHorizontal)
-              .Build();
-      std::unique_ptr<views::Label> title_label =
-          std::make_unique<views::Label>(
-              l10n_util::GetStringFUTF16(text_id, u""));
-      title_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
-      title_label->SetSelectable(true);
-      std::unique_ptr<views::Label> address_label =
-          std::make_unique<views::Label>(base::UTF8ToUTF16(address));
-      address_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
-      address_label->SetSelectable(true);
+    auto container =
+        views::Builder<views::BoxLayoutView>()
+            .SetOrientation(views::BoxLayout::Orientation::kHorizontal)
+            .Build();
+    std::unique_ptr<views::Label> title_label = std::make_unique<views::Label>(
+        l10n_util::GetStringFUTF16(text_id, u""));
+    title_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
+    title_label->SetSelectable(true);
+    std::unique_ptr<views::Label> address_label =
+        std::make_unique<views::Label>(base::UTF8ToUTF16(address));
+    address_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
+    address_label->SetSelectable(true);
 
-      if (chromeos::features::IsJellyEnabled()) {
-        title_label->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
-        TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
-                                              *title_label);
-        address_label->SetEnabledColorId(cros_tokens::kCrosSysOnSurfaceVariant);
-        TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
-                                              *address_label);
-      }
-      container->AddChildView(title_label.release());
-      container->AddChildView(address_label.release());
-      label_container->AddChildView(container.release());
-    }
+    title_label->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
+    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
+                                          *title_label);
+    address_label->SetEnabledColor(cros_tokens::kCrosSysOnSurfaceVariant);
+    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
+                                          *address_label);
+    container->AddChildViewRaw(title_label.release());
+    container->AddChildViewRaw(address_label.release());
+    label_container->AddChildViewRaw(container.release());
   };
 
   const NetworkStateProperties* default_network = Shell::Get()
@@ -214,5 +207,8 @@ std::u16string NetworkInfoBubble::ComputeInfoText() {
 
   return info_text;
 }
+
+BEGIN_METADATA(NetworkInfoBubble)
+END_METADATA
 
 }  // namespace ash

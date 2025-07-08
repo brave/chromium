@@ -41,6 +41,7 @@
 #include "third_party/blink/renderer/core/inspector/inspector_history.h"
 #include "third_party/blink/renderer/core/inspector/protocol/protocol.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -252,7 +253,7 @@ class DOMEditor::SetOuterHTMLAction final : public InspectorHistory::Action {
     return history_->Redo(exception_state);
   }
 
-  Node* NewNode() { return new_node_; }
+  Node* NewNode() { return new_node_.Get(); }
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(node_);
@@ -411,14 +412,15 @@ bool DOMEditor::SetNodeValue(Node* node,
       MakeGarbageCollected<SetNodeValueAction>(node, value), exception_state);
 }
 
-static protocol::Response ToResponse(ExceptionState& exception_state) {
+static protocol::Response ToResponse(
+    DummyExceptionStateForTesting& exception_state) {
   if (exception_state.HadException()) {
-    String name_prefix = IsDOMExceptionCode(exception_state.Code())
-                             ? DOMException::GetErrorName(
-                                   exception_state.CodeAs<DOMExceptionCode>()) +
-                                   " "
-                             : g_empty_string;
-    String msg = name_prefix + exception_state.Message();
+    String msg = exception_state.Message();
+    if (IsDOMExceptionCode(exception_state.Code())) {
+      msg = StrCat({DOMException::GetErrorName(
+                        exception_state.CodeAs<DOMExceptionCode>()),
+                    " ", msg});
+    }
     return protocol::Response::ServerError(msg.Utf8());
   }
   return protocol::Response::Success();

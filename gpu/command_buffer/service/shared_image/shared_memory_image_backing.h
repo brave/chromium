@@ -7,15 +7,14 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
-#include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
-#include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/shared_memory_region_wrapper.h"
 #include "gpu/gpu_gles2_export.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 
@@ -29,9 +28,11 @@ class GPU_GLES2_EXPORT SharedMemoryImageBacking : public SharedImageBacking {
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      SharedImageUsageSet usage,
+      std::string debug_label,
       SharedMemoryRegionWrapper wrapper,
-      gfx::GpuMemoryBufferHandle handle = gfx::GpuMemoryBufferHandle());
+      gfx::GpuMemoryBufferHandle handle = gfx::GpuMemoryBufferHandle(),
+      std::optional<gfx::BufferUsage> buffer_usage = std::nullopt);
 
   ~SharedMemoryImageBacking() override;
 
@@ -40,6 +41,7 @@ class GPU_GLES2_EXPORT SharedMemoryImageBacking : public SharedImageBacking {
   SharedImageBackingType GetType() const override;
   gfx::Rect ClearedRect() const override;
   void SetClearedRect(const gfx::Rect& cleared_rect) override;
+  gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle() override;
 
   const SharedMemoryRegionWrapper& shared_memory_wrapper();
   const std::vector<SkPixmap>& pixmaps();
@@ -50,7 +52,8 @@ class GPU_GLES2_EXPORT SharedMemoryImageBacking : public SharedImageBacking {
       MemoryTypeTracker* tracker,
       const wgpu::Device& device,
       wgpu::BackendType backend_type,
-      std::vector<wgpu::TextureFormat> view_formats) override;
+      std::vector<wgpu::TextureFormat> view_formats,
+      scoped_refptr<SharedContextState> context_state) override;
   std::unique_ptr<GLTextureImageRepresentation> ProduceGLTexture(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker) override;
@@ -64,10 +67,6 @@ class GPU_GLES2_EXPORT SharedMemoryImageBacking : public SharedImageBacking {
   std::unique_ptr<OverlayImageRepresentation> ProduceOverlay(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker) override;
-  std::unique_ptr<VaapiImageRepresentation> ProduceVASurface(
-      SharedImageManager* manager,
-      MemoryTypeTracker* tracker,
-      VaapiDependenciesFactory* dep_factory) override;
   std::unique_ptr<MemoryImageRepresentation> ProduceMemory(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker) override;
@@ -86,7 +85,7 @@ class GPU_GLES2_EXPORT SharedMemoryImageBacking : public SharedImageBacking {
   gfx::GpuMemoryBufferHandle handle_;
 
   // SkPixmap(s) for accessing memory.
-  std::vector<SkPixmap> pixmaps_;
+  const std::vector<SkPixmap> pixmaps_;
 };
 
 }  // namespace gpu

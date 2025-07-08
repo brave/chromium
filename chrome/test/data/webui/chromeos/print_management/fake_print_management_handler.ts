@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {LaunchSource, PrintManagementHandlerInterface} from 'chrome://print-management/printing_manager.mojom-webui.js';
+import type {LaunchSource, PrintManagementHandlerInterface} from 'chrome://print-management/printing_manager.mojom-webui.js';
 
 export class FakePrintManagementHandler implements
     PrintManagementHandlerInterface {
@@ -17,6 +17,8 @@ export class FakePrintManagementHandler implements
     ++this.launchPrinterSettingsCount;
     this.lastLaunchSource = source;
   }
+
+  recordGetPrintJobsRequestDuration(): void {}
 
   getLaunchPrinterSettingsCount(): number {
     return this.launchPrinterSettingsCount;

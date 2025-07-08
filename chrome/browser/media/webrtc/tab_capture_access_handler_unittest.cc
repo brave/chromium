@@ -25,7 +25,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/dlp/dlp_content_manager.h"
-#include "chrome/browser/chromeos/policy/dlp/mock_dlp_content_manager.h"
+#include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_content_manager.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
@@ -50,16 +50,17 @@ class TabCaptureAccessHandlerTest : public ChromeRenderViewHostTestHarness {
       blink::mojom::StreamDevices* devices_result,
       bool expect_result = true) {
     content::MediaStreamRequest request(
-        web_contents()->GetPrimaryMainFrame()->GetProcess()->GetID(),
+        web_contents()->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID(),
         web_contents()->GetPrimaryMainFrame()->GetRoutingID(),
-        /*page_request_id=*/0, GURL(kOrigin), /*user_gesture=*/false,
-        blink::MEDIA_GENERATE_STREAM,
-        /*requested_audio_device_id=*/std::string(),
-        /*requested_video_device_id=*/std::string(),
+        /*page_request_id=*/0, url::Origin::Create(GURL(kOrigin)),
+        /*user_gesture=*/false, blink::MEDIA_GENERATE_STREAM,
+        /*requested_audio_device_ids=*/{},
+        /*requested_video_device_ids=*/{},
         blink::mojom::MediaStreamType::NO_SERVICE,
         blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE,
         /*disable_local_echo=*/false,
-        /*request_pan_tilt_zoom_permission=*/false);
+        /*request_pan_tilt_zoom_permission=*/false,
+        /*captured_surface_control_active=*/false);
 
     base::RunLoop wait_loop;
     content::MediaResponseCallback callback = base::BindOnce(
@@ -100,7 +101,7 @@ class TabCaptureAccessHandlerTest : public ChromeRenderViewHostTestHarness {
     return web_contents()->GetPrimaryMainFrame();
   }
   int main_frame_id() { return main_frame()->GetRoutingID(); }
-  int process_id() { return main_frame()->GetProcess()->GetID(); }
+  int process_id() { return main_frame()->GetProcess()->GetDeprecatedID(); }
 
  protected:
   std::unique_ptr<TabCaptureAccessHandler> access_handler_;
@@ -111,7 +112,10 @@ TEST_F(TabCaptureAccessHandlerTest, PermissionGiven) {
       content::DesktopMediaID::TYPE_WEB_CONTENTS,
       content::DesktopMediaID::kNullId,
       content::WebContentsMediaCaptureId(
-          web_contents()->GetPrimaryMainFrame()->GetProcess()->GetID(),
+          web_contents()
+              ->GetPrimaryMainFrame()
+              ->GetProcess()
+              ->GetDeprecatedID(),
           web_contents()->GetPrimaryMainFrame()->GetRoutingID()));
 
   extensions::TabCaptureRegistry::Get(profile())->AddRequest(
@@ -135,7 +139,10 @@ TEST_F(TabCaptureAccessHandlerTest, DlpRestricted) {
       content::DesktopMediaID::TYPE_WEB_CONTENTS,
       content::DesktopMediaID::kNullId,
       content::WebContentsMediaCaptureId(
-          web_contents()->GetPrimaryMainFrame()->GetProcess()->GetID(),
+          web_contents()
+              ->GetPrimaryMainFrame()
+              ->GetProcess()
+              ->GetDeprecatedID(),
           web_contents()->GetPrimaryMainFrame()->GetRoutingID()));
 
   // Setup Data Leak Prevention restriction.
@@ -167,7 +174,10 @@ TEST_F(TabCaptureAccessHandlerTest, DlpNotRestricted) {
       content::DesktopMediaID::TYPE_WEB_CONTENTS,
       content::DesktopMediaID::kNullId,
       content::WebContentsMediaCaptureId(
-          web_contents()->GetPrimaryMainFrame()->GetProcess()->GetID(),
+          web_contents()
+              ->GetPrimaryMainFrame()
+              ->GetProcess()
+              ->GetDeprecatedID(),
           web_contents()->GetPrimaryMainFrame()->GetRoutingID()));
 
   // Setup Data Leak Prevention restriction.
@@ -199,7 +209,10 @@ TEST_F(TabCaptureAccessHandlerTest, DlpWebContentsDestroyed) {
       content::DesktopMediaID::TYPE_WEB_CONTENTS,
       content::DesktopMediaID::kNullId,
       content::WebContentsMediaCaptureId(
-          web_contents()->GetPrimaryMainFrame()->GetProcess()->GetID(),
+          web_contents()
+              ->GetPrimaryMainFrame()
+              ->GetProcess()
+              ->GetDeprecatedID(),
           web_contents()->GetPrimaryMainFrame()->GetRoutingID()));
 
   // Setup Data Leak Prevention restriction.

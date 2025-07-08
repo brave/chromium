@@ -4,18 +4,16 @@
 
 #include "ash/clipboard/clipboard_history_resource_manager.h"
 
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "ash/clipboard/clipboard_history_item.h"
-#include "ash/clipboard/clipboard_history_url_title_fetcher.h"
-#include "ash/constants/ash_features.h"
 #include "ash/display/display_util.h"
 #include "ash/public/cpp/clipboard_image_model_factory.h"
 #include "ash/public/cpp/window_tree_host_lookup.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_util.h"
 #include "chromeos/crosapi/mojom/clipboard_history.mojom.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/clipboard/clipboard_data.h"
@@ -60,46 +58,12 @@ ClipboardHistoryResourceManager::ImageModelRequest::operator=(
 ClipboardHistoryResourceManager::ImageModelRequest::~ImageModelRequest() =
     default;
 
-void ClipboardHistoryResourceManager::MaybeQueryUrlTitle(
-    const ClipboardHistoryItem& item) {
-  GURL url(item.display_text());
-
-  // `url_title_fetcher` may be null in tests.
-  if (auto* const url_title_fetcher = ClipboardHistoryUrlTitleFetcher::Get();
-      url_title_fetcher && url.is_valid()) {
-    url_title_fetcher->QueryHistory(
-        url,
-        base::BindOnce(&ClipboardHistoryResourceManager::OnHistoryQueryComplete,
-                       weak_factory_.GetWeakPtr(), item.id()));
-  }
-}
-
-void ClipboardHistoryResourceManager::OnHistoryQueryComplete(
-    const base::UnguessableToken& item_id,
-    absl::optional<std::u16string> maybe_title) {
-  auto& items = clipboard_history_->GetItems();
-  auto item = base::ranges::find(items, item_id, &ClipboardHistoryItem::id);
-  if (item == items.end()) {
-    return;
-  }
-
-  if (maybe_title) {
-    base::TrimWhitespace(*maybe_title, base::TRIM_ALL, &(*maybe_title));
-    if (maybe_title->empty()) {
-      // If the retrieved title was empty or consisted of only whitespace, the
-      // item has nothing to display as secondary text.
-      maybe_title.reset();
-    }
-  }
-  item->set_secondary_display_text(maybe_title);
-}
-
 void ClipboardHistoryResourceManager::SetOrRequestHtmlPreview(
     const ClipboardHistoryItem& item) {
   auto& items = clipboard_history_->GetItems();
 
   // See if we have an `existing` item that will render the same as `item`.
-  auto it = base::ranges::find_if(items, [&](const auto& existing) {
+  auto it = std::ranges::find_if(items, [&](const auto& existing) {
     return &existing != &item &&
            existing.display_format() ==
                crosapi::mojom::ClipboardHistoryDisplayFormat::kHtml &&
@@ -151,7 +115,7 @@ void ClipboardHistoryResourceManager::SetOrRequestHtmlPreview(
   } else {
     // If rendering has finished, set `item` to have the same preview.
     auto mutable_item =
-        base::ranges::find(items, item.id(), &ClipboardHistoryItem::id);
+        std::ranges::find(items, item.id(), &ClipboardHistoryItem::id);
     DCHECK(mutable_item != items.end());
 
     const auto& existing_preview = it->display_image();
@@ -164,7 +128,7 @@ void ClipboardHistoryResourceManager::SetOrRequestHtmlPreview(
 void ClipboardHistoryResourceManager::OnImageModelRendered(
     const base::UnguessableToken& id,
     ui::ImageModel image_model) {
-  auto image_model_request = base::ranges::find(
+  auto image_model_request = std::ranges::find(
       image_model_requests_, id,
       &ClipboardHistoryResourceManager::ImageModelRequest::id);
   if (image_model_request == image_model_requests_.end()) {
@@ -201,7 +165,7 @@ void ClipboardHistoryResourceManager::CancelUnfinishedRequests() {
 std::vector<ClipboardHistoryResourceManager::ImageModelRequest>::iterator
 ClipboardHistoryResourceManager::GetImageModelRequestForItem(
     const ClipboardHistoryItem& item) {
-  return base::ranges::find_if(
+  return std::ranges::find_if(
       image_model_requests_, [&](const auto& image_model_request) {
         return base::Contains(image_model_request.clipboard_history_item_ids,
                               item.id());
@@ -212,14 +176,8 @@ void ClipboardHistoryResourceManager::OnClipboardHistoryItemAdded(
     const ClipboardHistoryItem& item,
     bool is_duplicate) {
   if (item.display_format() ==
-          crosapi::mojom::ClipboardHistoryDisplayFormat::kText &&
-      features::IsClipboardHistoryUrlTitlesEnabled()) {
-    // An item being re-copied might need its URL title changed based on updates
-    // to the user's browsing history.
-    MaybeQueryUrlTitle(item);
-  } else if (item.display_format() ==
-                 crosapi::mojom::ClipboardHistoryDisplayFormat::kHtml &&
-             !is_duplicate) {
+          crosapi::mojom::ClipboardHistoryDisplayFormat::kHtml &&
+      !is_duplicate) {
     // If an item is being copied for the first time, we begin rendering its
     // HTML preview as soon as possible.
     SetOrRequestHtmlPreview(item);
@@ -243,7 +201,7 @@ void ClipboardHistoryResourceManager::OnClipboardHistoryItemRemoved(
 
   // If `item` was attached to a pending request, make sure it is not updated
   // when rendering finishes.
-  base::Erase(image_model_request->clipboard_history_item_ids, item.id());
+  std::erase(image_model_request->clipboard_history_item_ids, item.id());
 
   if (image_model_request->clipboard_history_item_ids.empty()) {
     // If no more items are waiting on the image model, cancel the request.

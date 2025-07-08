@@ -18,13 +18,13 @@
 using sync_pb::PasswordSharingRecipientsResponse;
 
 namespace password_manager {
-
 namespace {
 
-bool hasServerRequestCompletedWithSuccess(
+bool HasServerRequestCompletedWithSuccess(
     const PasswordSharingRecipientsDownloader& request) {
-  return (request.GetHttpError() == net::HTTP_OK &&
-          request.GetNetError() == net::OK);
+  return request.GetAuthError().state() == GoogleServiceAuthError::NONE &&
+         request.GetHttpError() == net::HTTP_OK &&
+         request.GetNetError() == net::OK;
 }
 
 RecipientInfo ToRecipientInfo(const sync_pb::UserInfo& user_info) {
@@ -34,13 +34,12 @@ RecipientInfo ToRecipientInfo(const sync_pb::UserInfo& user_info) {
   recipient_info.email = user_info.user_display_info().email();
   recipient_info.profile_image_url =
       user_info.user_display_info().profile_image_url();
-
-  // TODO(crbug.com/1456309) Add the Encryption Key once a decision has been
-  // made which type to use.
+  recipient_info.public_key =
+      PublicKey::FromProto(user_info.cross_user_sharing_public_key());
   return recipient_info;
 }
 
-}  // Namespace
+}  // namespace
 
 RecipientsFetcherImpl::RecipientsFetcherImpl(
     version_info::Channel channel,
@@ -70,13 +69,16 @@ void RecipientsFetcherImpl::FetchFamilyMembers(
 }
 
 void RecipientsFetcherImpl::ServerRequestCallback() {
-  if (!hasServerRequestCompletedWithSuccess(*pending_request_)) {
+  if (!HasServerRequestCompletedWithSuccess(*pending_request_)) {
+    // Destroy the request object after the response was fetched otherwise no
+    // further call can be made.
+    pending_request_.reset();
     std::move(callback_).Run(std::vector<RecipientInfo>(),
                              FetchFamilyMembersRequestStatus::kNetworkError);
     return;
   }
 
-  absl::optional<sync_pb::PasswordSharingRecipientsResponse> server_response =
+  std::optional<sync_pb::PasswordSharingRecipientsResponse> server_response =
       pending_request_->TakeResponse();
   // Destroy the request object after the response was fetched otherwise no
   // further call can be made.
@@ -90,9 +92,11 @@ void RecipientsFetcherImpl::ServerRequestCallback() {
       for (const auto& recipient : server_response->recipients()) {
         recipients.push_back(ToRecipientInfo(recipient));
       }
-
-      std::move(callback_).Run(std::move(recipients),
-                               FetchFamilyMembersRequestStatus::kSuccess);
+      FetchFamilyMembersRequestStatus status =
+          recipients.empty()
+              ? FetchFamilyMembersRequestStatus::kNoOtherFamilyMembers
+              : FetchFamilyMembersRequestStatus::kSuccess;
+      std::move(callback_).Run(std::move(recipients), status);
       return;
     }
     case PasswordSharingRecipientsResponse::NOT_FAMILY_MEMBER: {

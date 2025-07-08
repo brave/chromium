@@ -19,10 +19,10 @@ namespace security_interstitials {
 // when committed interstitials are on. It is bound to the JavaScript
 // window.certificateErrorPageController object.
 class SecurityInterstitialPageController
-    : public gin::Wrappable<SecurityInterstitialPageController>,
+    : public gin::DeprecatedWrappable<SecurityInterstitialPageController>,
       public content::RenderFrameObserver {
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   SecurityInterstitialPageController(
       const SecurityInterstitialPageController&) = delete;
@@ -52,6 +52,9 @@ class SecurityInterstitialPageController
   void OpenWhitepaper();
   void ReportPhishingError();
   void OpenEnhancedProtectionSettings();
+#if BUILDFLAG(IS_ANDROID)
+  void OpenAdvancedProtectionSettings();
+#endif  // BUILDFLAG(IS_ANDROID)
 
   void SendCommand(security_interstitials::SecurityInterstitialCommand command);
 

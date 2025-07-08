@@ -4,15 +4,19 @@
 
 package org.chromium.chrome.browser.toolbar.top;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.cc.input.OffsetTag;
 import org.chromium.components.browser_ui.widget.ClipDrawableProgressBar.DrawingInfo;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.ReadableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableLongPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** Properties associated with the top toolbar's composited layer. */
+@NullMarked
 public class TopToolbarOverlayProperties {
     /** Whether the URL should be hidden when rendered. */
     public static final WritableBooleanPropertyKey ANONYMIZE = new WritableBooleanPropertyKey();
@@ -44,10 +48,27 @@ public class TopToolbarOverlayProperties {
     public static final WritableFloatPropertyKey X_OFFSET = new WritableFloatPropertyKey();
 
     /** The current y offset of the top toolbar. */
-    public static final WritableFloatPropertyKey Y_OFFSET = new WritableFloatPropertyKey();
+    public static final WritableFloatPropertyKey CONTENT_OFFSET = new WritableFloatPropertyKey();
+
+    /** The OffsetTag indicating that this layer should be moved by viz. */
+    public static final WritableObjectPropertyKey<OffsetTag> TOOLBAR_OFFSET_TAG =
+            new WritableObjectPropertyKey<>();
+
+    public static final WritableLongPropertyKey CAPTURE_RESOURCE_ID = new WritableLongPropertyKey();
 
     public static final PropertyKey[] ALL_KEYS =
-            new PropertyKey[] {ANONYMIZE, PROGRESS_BAR_INFO, RESOURCE_ID, SHOW_SHADOW,
-                    TOOLBAR_BACKGROUND_COLOR, URL_BAR_COLOR, URL_BAR_RESOURCE_ID, VISIBLE,
-                    X_OFFSET, Y_OFFSET};
+            new PropertyKey[] {
+                ANONYMIZE,
+                PROGRESS_BAR_INFO,
+                RESOURCE_ID,
+                SHOW_SHADOW,
+                TOOLBAR_BACKGROUND_COLOR,
+                URL_BAR_COLOR,
+                URL_BAR_RESOURCE_ID,
+                VISIBLE,
+                X_OFFSET,
+                CONTENT_OFFSET,
+                TOOLBAR_OFFSET_TAG,
+                CAPTURE_RESOURCE_ID
+            };
 }

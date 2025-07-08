@@ -5,11 +5,11 @@
 #ifndef ASH_GLANCEABLES_CLASSROOM_GLANCEABLES_CLASSROOM_TYPES_H_
 #define ASH_GLANCEABLES_CLASSROOM_GLANCEABLES_CLASSROOM_TYPES_H_
 
+#include <optional>
 #include <string>
 
 #include "ash/ash_export.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace ash {
@@ -38,23 +38,26 @@ struct ASH_EXPORT GlanceablesClassroomCourse {
 // Student submissions state aggregated from a list of student submissions,
 // usually associated with a course work item.
 struct ASH_EXPORT GlanceablesClassroomAggregatedSubmissionsState {
+  GlanceablesClassroomAggregatedSubmissionsState() = default;
   GlanceablesClassroomAggregatedSubmissionsState(int total_count,
                                                  int number_turned_in,
                                                  int number_graded);
   GlanceablesClassroomAggregatedSubmissionsState(
       const GlanceablesClassroomAggregatedSubmissionsState&) = default;
   GlanceablesClassroomAggregatedSubmissionsState& operator=(
-      const GlanceablesClassroomAggregatedSubmissionsState&) = delete;
+      const GlanceablesClassroomAggregatedSubmissionsState&) = default;
   ~GlanceablesClassroomAggregatedSubmissionsState() = default;
 
+  void Reset();
+
   // The total number of students that have this assigned to them.
-  const int total_count;
+  int total_count = 0;
 
   // The number of this assignment that has been turned in students.
-  const int number_turned_in;
+  int number_turned_in = 0;
 
   // The number of this assignment that has already been graded.
-  const int number_graded;
+  int number_graded = 0;
 };
 
 // Represents a single classroom assignment.  This data is aggregated from all
@@ -65,9 +68,9 @@ struct ASH_EXPORT GlanceablesClassroomAssignment {
       const std::string& course_title,
       const std::string& course_work_title,
       const GURL& link,
-      const absl::optional<base::Time>& due,
+      const std::optional<base::Time>& due,
       const base::Time& last_update,
-      absl::optional<GlanceablesClassroomAggregatedSubmissionsState>
+      std::optional<GlanceablesClassroomAggregatedSubmissionsState>
           submissions_state);
   GlanceablesClassroomAssignment(const GlanceablesClassroomAssignment&) =
       delete;
@@ -88,13 +91,13 @@ struct ASH_EXPORT GlanceablesClassroomAssignment {
   const GURL link;
 
   // Due date and time in UTC of this course work item.
-  const absl::optional<base::Time> due;
+  const std::optional<base::Time> due;
 
   // The timestamp of the last course work item update.
   const base::Time last_update;
 
   // Stats about overall student submissions state of the assignment.
-  const absl::optional<GlanceablesClassroomAggregatedSubmissionsState>
+  const std::optional<GlanceablesClassroomAggregatedSubmissionsState>
       submissions_state;
 };
 

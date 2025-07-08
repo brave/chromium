@@ -6,25 +6,23 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/osstatus_logging.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/mac_logging.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
-#include "net/base/mac/url_conversions.h"
+#include "net/base/apple/url_conversions.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/mac/coordinate_conversion.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace platform_util {
 
@@ -42,21 +40,22 @@ bool WorkspacePathRevealDisabledForTest() {
 
 void ShowItemInFolder(Profile* profile, const base::FilePath& full_path) {
   DCHECK([NSThread isMainThread]);
-  NSURL* url = base::mac::FilePathToNSURL(full_path);
 
   // The Finder creates a new window on each `full_path` reveal. Skip
   // revealing the path during testing to avoid an avalanche of new
   // Finder windows.
-  if (WorkspacePathRevealDisabledForTest()) {
+  if (WorkspacePathRevealDisabledForTest() ||
+      !internal::AreShellOperationsAllowed()) {
     return;
   }
 
+  NSURL* url = base::apple::FilePathToNSURL(full_path);
   [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ url ]];
 }
 
 void OpenFileOnMainThread(const base::FilePath& full_path) {
   DCHECK([NSThread isMainThread]);
-  NSURL* url = base::mac::FilePathToNSURL(full_path);
+  NSURL* url = base::apple::FilePathToNSURL(full_path);
   if (!url)
     return;
 
@@ -75,7 +74,7 @@ void PlatformOpenVerifiedItem(const base::FilePath& path, OpenItemType type) {
           FROM_HERE, base::BindOnce(&OpenFileOnMainThread, path));
       return;
     case OPEN_FOLDER:
-      NSURL* url = base::mac::FilePathToNSURL(path);
+      NSURL* url = base::apple::FilePathToNSURL(path);
       if (!url)
         return;
 
@@ -92,8 +91,10 @@ void PlatformOpenVerifiedItem(const base::FilePath& path, OpenItemType type) {
 void OpenExternal(const GURL& url) {
   DCHECK([NSThread isMainThread]);
   NSURL* ns_url = net::NSURLWithGURL(url);
-  if (!ns_url || ![[NSWorkspace sharedWorkspace] openURL:ns_url])
+
+  if (!ns_url || ![[NSWorkspace sharedWorkspace] openURL:ns_url]) {
     LOG(WARNING) << "NSWorkspace failed to open URL " << url;
+  }
 }
 
 gfx::NativeWindow GetTopLevel(gfx::NativeView view) {
@@ -151,8 +152,12 @@ bool IsSwipeTrackingFromScrollEventsEnabled() {
   return NSEvent.swipeTrackingFromScrollEventsEnabled;
 }
 
-NSWindow* GetActiveWindow() {
-  return [NSApp keyWindow];
+gfx::NativeWindow GetActiveWindow() {
+  return gfx::NativeWindow(NSApp.keyWindow);
+}
+
+gfx::Rect GetWindowScreenBounds(gfx::NativeWindow window) {
+  return gfx::ScreenRectFromNSRect([window.GetNativeNSWindow() frame]);
 }
 
 }  // namespace platform_util

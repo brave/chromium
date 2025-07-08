@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "base/auto_reset.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -22,7 +24,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -154,7 +158,7 @@ class TestHttpClient {
   bool IsCompleteResponse(const std::string& response) {
     // Check end of headers first.
     size_t end_of_headers =
-        HttpUtil::LocateEndOfHeaders(response.data(), response.size());
+        HttpUtil::LocateEndOfHeaders(base::as_byte_span(response));
     if (end_of_headers == std::string::npos) {
       return false;
     }
@@ -164,7 +168,7 @@ class TestHttpClient {
     DCHECK_LE(0, body_size);
     auto headers =
         base::MakeRefCounted<HttpResponseHeaders>(HttpUtil::AssembleRawHeaders(
-            base::StringPiece(response.data(), end_of_headers)));
+            std::string_view(response.data(), end_of_headers)));
     return body_size >= headers->GetContentLength();
   }
 
@@ -327,16 +331,18 @@ std::string EncodeFrame(std::string message,
   header.final = finish;
   header.masked = mask;
   header.payload_length = message.size();
-  const int header_size = GetWebSocketFrameHeaderSize(header);
+  const size_t header_size = GetWebSocketFrameHeaderSize(header);
   std::string frame_header;
   frame_header.resize(header_size);
   if (mask) {
     WebSocketMaskingKey masking_key = GenerateWebSocketMaskingKey();
-    WriteWebSocketFrameHeader(header, &masking_key, &frame_header[0],
-                              header_size);
-    MaskWebSocketFramePayload(masking_key, 0, &message[0], message.size());
+    WriteWebSocketFrameHeader(header, &masking_key,
+                              base::as_writable_byte_span(frame_header));
+    MaskWebSocketFramePayload(masking_key, 0,
+                              base::as_writable_byte_span(message));
   } else {
-    WriteWebSocketFrameHeader(header, nullptr, &frame_header[0], header_size);
+    WriteWebSocketFrameHeader(header, nullptr,
+                              base::as_writable_byte_span(frame_header));
   }
   return frame_header + message;
 }
@@ -350,8 +356,7 @@ TEST_F(HttpServerTest, Request) {
   ASSERT_EQ("/test", request.info.path);
   ASSERT_EQ("", request.info.data);
   ASSERT_EQ(0u, request.info.headers.size());
-  ASSERT_TRUE(base::StartsWith(request.info.peer.ToString(), "127.0.0.1",
-                               base::CompareCase::SENSITIVE));
+  ASSERT_TRUE(request.info.peer.ToString().starts_with("127.0.0.1"));
 }
 
 TEST_F(HttpServerTest, RequestBrokenTermination) {
@@ -899,10 +904,8 @@ TEST_F(HttpServerTest, Send200) {
 
   std::string response;
   ASSERT_TRUE(client.ReadResponse(&response));
-  ASSERT_TRUE(base::StartsWith(response, "HTTP/1.1 200 OK",
-                               base::CompareCase::SENSITIVE));
-  ASSERT_TRUE(
-      base::EndsWith(response, "Response!", base::CompareCase::SENSITIVE));
+  ASSERT_TRUE(response.starts_with("HTTP/1.1 200 OK"));
+  ASSERT_TRUE(response.ends_with("Response!"));
 }
 
 TEST_F(HttpServerTest, SendRaw) {
@@ -947,6 +950,40 @@ TEST_F(HttpServerTest, WrongProtocolRequest) {
   }
 }
 
+// A null byte in the headers should cause the request to be rejected.
+TEST_F(HttpServerTest, NullByteInHeaders) {
+  constexpr char kNullByteInHeader[] =
+      "GET / HTTP/1.1\r\n"
+      "User-Agent: Mozilla\0/\r\n"
+      "\r\n";
+  TestHttpClient client;
+  CreateConnection(&client);
+
+  client.Send(std::string(kNullByteInHeader, std::size(kNullByteInHeader) - 1));
+  client.ExpectUsedThenDisconnectedWithNoData();
+
+  ASSERT_EQ(1u, connection_map().size());
+  ASSERT_FALSE(connection_map().begin()->second);
+  EXPECT_FALSE(HasRequest());
+}
+
+// A null byte in the body should be accepted.
+TEST_F(HttpServerTest, NullByteInBody) {
+  // We use the trailing null byte added by the compiler as the "body" of the
+  // request.
+  constexpr char kNullByteInBody[] =
+      "POST /body HTTP/1.1\r\n"
+      "User-Agent: Mozilla\r\n"
+      "Content-Length: 1\r\n"
+      "\r\n";
+  TestHttpClient client;
+  CreateConnection(&client);
+
+  client.Send(std::string(kNullByteInBody, std::size(kNullByteInBody)));
+  auto request = WaitForRequest();
+  EXPECT_EQ(request.info.data, std::string_view("\0", 1));
+}
+
 class MockStreamSocket : public StreamSocket {
  public:
   MockStreamSocket() = default;
@@ -978,8 +1015,9 @@ class MockStreamSocket : public StreamSocket {
   }
   const NetLogWithSource& NetLog() const override { return net_log_; }
   bool WasEverUsed() const override { return true; }
-  bool WasAlpnNegotiated() const override { return false; }
-  NextProto GetNegotiatedProtocol() const override { return kProtoUnknown; }
+  NextProto GetNegotiatedProtocol() const override {
+    return NextProto::kProtoUnknown;
+  }
   bool GetSSLInfo(SSLInfo* ssl_info) override { return false; }
   int64_t GetTotalReceivedBytes() const override {
     NOTIMPLEMENTED();
@@ -1001,9 +1039,10 @@ class MockStreamSocket : public StreamSocket {
       return ERR_IO_PENDING;
     }
     DCHECK_GT(buf_len, 0);
-    int read_len =
-        std::min(static_cast<int>(pending_read_data_.size()), buf_len);
-    memcpy(buf->data(), pending_read_data_.data(), read_len);
+    size_t read_len =
+        std::min(pending_read_data_.size(), static_cast<size_t>(buf_len));
+    buf->span().copy_prefix_from(
+        base::as_byte_span(pending_read_data_).first(read_len));
     pending_read_data_.erase(0, read_len);
     return read_len;
   }
@@ -1019,17 +1058,20 @@ class MockStreamSocket : public StreamSocket {
   }
   int SetSendBufferSize(int32_t size) override { return ERR_NOT_IMPLEMENTED; }
 
-  void DidRead(const char* data, int data_len) {
+  void DidRead(base::span<const char> data) {
     if (!read_buf_.get()) {
-      pending_read_data_.append(data, data_len);
+      pending_read_data_.append(data.begin(), data.end());
       return;
     }
-    int read_len = std::min(data_len, read_buf_len_);
-    memcpy(read_buf_->data(), data, read_len);
-    pending_read_data_.assign(data + read_len, data_len - read_len);
+    size_t read_len =
+        std::min(data.size(), base::checked_cast<size_t>(read_buf_len_));
+    base::span<const uint8_t> callback_portion =
+        base::as_bytes(data.take_first(read_len));
+    read_buf_->span().copy_prefix_from(callback_portion);
+    pending_read_data_.assign(data.begin(), data.end());
     read_buf_ = nullptr;
     read_buf_len_ = 0;
-    std::move(read_callback_).Run(read_len);
+    std::move(read_callback_).Run(base::checked_cast<int>(read_len));
   }
 
  private:
@@ -1051,9 +1093,12 @@ TEST_F(HttpServerTest, RequestWithBodySplitAcrossPackets) {
       "SomeHeader: 1\r\n"
       "Content-Length: %" PRIuS "\r\n\r\n%s",
       body.length(), body.c_str());
-  socket_ptr->DidRead(request_text.c_str(), request_text.length() - 2);
+  base::span<const char> request_span(request_text);
+  auto [before_blankline, blankline] =
+      request_span.split_at(request_span.size() - 2);
+  socket_ptr->DidRead(before_blankline);
   ASSERT_FALSE(HasRequest());
-  socket_ptr->DidRead(request_text.c_str() + request_text.length() - 2, 2);
+  socket_ptr->DidRead(blankline);
   ASSERT_TRUE(HasRequest());
   ASSERT_EQ(body, WaitForRequest().info.data);
 }
@@ -1076,10 +1121,8 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
                    TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response1;
   ASSERT_TRUE(client.ReadResponse(&response1));
-  ASSERT_TRUE(base::StartsWith(response1, "HTTP/1.1 200 OK",
-                               base::CompareCase::SENSITIVE));
-  ASSERT_TRUE(base::EndsWith(response1, "Content for /test",
-                             base::CompareCase::SENSITIVE));
+  ASSERT_TRUE(response1.starts_with("HTTP/1.1 200 OK"));
+  ASSERT_TRUE(response1.ends_with("Content for /test"));
 
   client.Send("GET /test2 HTTP/1.1\r\n\r\n");
   auto second_request = WaitForRequest();
@@ -1089,8 +1132,7 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
   server_->Send404(client_connection_id, TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response2;
   ASSERT_TRUE(client.ReadResponse(&response2));
-  ASSERT_TRUE(base::StartsWith(response2, "HTTP/1.1 404 Not Found",
-                               base::CompareCase::SENSITIVE));
+  ASSERT_TRUE(response2.starts_with("HTTP/1.1 404 Not Found"));
 
   client.Send("GET /test3 HTTP/1.1\r\n\r\n");
   auto third_request = WaitForRequest();
@@ -1101,10 +1143,8 @@ TEST_F(HttpServerTest, MultipleRequestsOnSameConnection) {
                    TRAFFIC_ANNOTATION_FOR_TESTS);
   std::string response3;
   ASSERT_TRUE(client.ReadResponse(&response3));
-  ASSERT_TRUE(base::StartsWith(response3, "HTTP/1.1 200 OK",
-                               base::CompareCase::SENSITIVE));
-  ASSERT_TRUE(base::EndsWith(response3, "Content for /test3",
-                             base::CompareCase::SENSITIVE));
+  ASSERT_TRUE(response3.starts_with("HTTP/1.1 200 OK"));
+  ASSERT_TRUE(response3.ends_with("Content for /test3"));
 }
 
 class CloseOnConnectHttpServerTest : public HttpServerTest {

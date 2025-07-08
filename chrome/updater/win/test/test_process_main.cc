@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <shlobj.h>
 #include <windows.h>
+
+#include <shlobj.h>
 
 #include <string>
 
@@ -43,12 +44,12 @@ int DoMain(const base::CommandLine* command_line) {
 
   if (command_line->HasSwitch(updater::kTestName)) {
     VLOG(1) << "Running for test: "
-            << command_line->GetSwitchValueASCII(updater::kTestName);
+            << command_line->GetSwitchValueUTF8(updater::kTestName);
   }
 
   if (command_line->HasSwitch(updater::kTestSleepSecondsSwitch)) {
     std::string value =
-        command_line->GetSwitchValueASCII(updater::kTestSleepSecondsSwitch);
+        command_line->GetSwitchValueUTF8(updater::kTestSleepSecondsSwitch);
     int sleep_seconds = 0;
     if (!base::StringToInt(value, &sleep_seconds) || sleep_seconds <= 0) {
       LOG(ERROR) << "Invalid sleep delay value " << value;
@@ -81,7 +82,7 @@ int DoMain(const base::CommandLine* command_line) {
   if (command_line->HasSwitch(updater::kTestExitCode)) {
     int exit_code = 0;
     CHECK(base::StringToInt(
-        command_line->GetSwitchValueASCII(updater::kTestExitCode), &exit_code));
+        command_line->GetSwitchValueUTF8(updater::kTestExitCode), &exit_code));
     VLOG(1) << "Process ending with exit code: " << exit_code;
     return exit_code;
   }

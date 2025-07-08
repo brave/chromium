@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,22 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
-#include "chrome/browser/ash/drive/drivefs_test_support.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
+#include "chrome/browser/ash/drive/file_system_util.h"
+#include "chrome/browser/ash/file_manager/file_manager_test_util.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/io_task.h"
 #include "chrome/browser/ash/file_manager/io_task_controller.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
@@ -28,7 +33,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/network_connection_change_simulator.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "services/network/public/mojom/network_change_manager.mojom.h"
+#include "net/base/network_change_notifier.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -39,6 +44,9 @@ namespace ash::cloud_upload {
 
 using ::base::test::RunClosure;
 using ::base::test::RunOnceCallback;
+using drive::DriveIntegrationService;
+using drive::util::ConnectionStatus;
+using drive::util::SetDriveConnectionStatusForTesting;
 using testing::_;
 
 namespace {
@@ -47,7 +55,7 @@ namespace {
 base::FilePath GetTestFilePath(const std::string& file_name) {
   // Get the path to file manager's test data directory.
   base::FilePath source_dir;
-  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &source_dir));
+  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_dir));
   base::FilePath test_data_dir = source_dir.AppendASCII("chrome")
                                      .AppendASCII("test")
                                      .AppendASCII("data")
@@ -72,6 +80,8 @@ class DriveUploadHandlerTest
     drive_root_dir_ = drive_mount_point_.AppendASCII("root");
     my_files_dir_ = temp_dir_.GetPath().Append("myfiles");
     read_only_dir_ = temp_dir_.GetPath().Append("readonly");
+
+    net::NetworkChangeNotifier::SetTestNotificationsOnly(true);
   }
 
   DriveUploadHandlerTest(const DriveUploadHandlerTest&) = delete;
@@ -88,8 +98,7 @@ class DriveUploadHandlerTest
   }
 
   void SetUpOnMainThread() override {
-    content::NetworkConnectionChangeSimulator().SetConnectionType(
-        network::mojom::ConnectionType::CONNECTION_ETHERNET);
+    SetDriveConnectionStatusForTesting(ConnectionStatus::kConnected);
     InProcessBrowserTest::SetUpOnMainThread();
   }
 
@@ -103,18 +112,17 @@ class DriveUploadHandlerTest
     InProcessBrowserTest::TearDownOnMainThread();
   }
 
-  drive::DriveIntegrationService* CreateDriveIntegrationService(
-      Profile* profile) {
+  DriveIntegrationService* CreateDriveIntegrationService(Profile* profile) {
     base::ScopedAllowBlockingForTesting allow_blocking;
     fake_drivefs_helpers_[profile] =
-        std::make_unique<drive::FakeDriveFsHelper>(profile, drive_mount_point_);
-    auto* integration_service = new drive::DriveIntegrationService(
-        profile, "", drive_mount_point_,
+        std::make_unique<file_manager::test::FakeSimpleDriveFsHelper>(
+            profile, drive_mount_point_);
+    return new DriveIntegrationService(
+        g_browser_process->local_state(), profile, "", drive_mount_point_,
         fake_drivefs_helpers_[profile]->CreateFakeDriveFsListenerFactory());
-    return integration_service;
   }
 
-  // Creates mount point for My files and registers local filesystem.
+  // Creates mount point for MyFiles and registers local filesystem.
   void SetUpMyFiles() {
     {
       base::ScopedAllowBlockingForTesting allow_blocking;
@@ -244,12 +252,15 @@ class DriveUploadHandlerTest
   }
 
   // `Wait` will not complete until this is called.
-  void OnUploadDone(const GURL& url, int64_t size) {
+  void OnUploadDone(OfficeTaskResult task_result,
+                    std::optional<GURL> url,
+                    int64_t size) {
     if (fail_sync_) {
-      ASSERT_TRUE(url.is_empty());
+      ASSERT_FALSE(url);
     } else {
-      ASSERT_FALSE(url.is_empty());
+      ASSERT_TRUE(url);
     }
+    observed_task_result_ = task_result;
     EndWait();
   }
 
@@ -261,7 +272,7 @@ class DriveUploadHandlerTest
     return fake_drivefs().delegate();
   }
 
-  drive::DriveIntegrationService* drive_integration_service() {
+  DriveIntegrationService* drive_integration_service() {
     return drive::DriveIntegrationServiceFactory::FindForProfile(profile());
   }
 
@@ -274,7 +285,7 @@ class DriveUploadHandlerTest
   }
 
  protected:
-  drivefs::FakeDriveFs& fake_drivefs() {
+  file_manager::test::FakeSimpleDriveFs& fake_drivefs() {
     return fake_drivefs_helpers_[profile()]->fake_drivefs();
   }
 
@@ -286,6 +297,15 @@ class DriveUploadHandlerTest
   bool fail_sync_ = false;
   // Overrides `fail_sync_`
   base::RepeatingClosure on_transfer_complete_callback_;
+
+  std::unique_ptr<ash::cloud_upload::CloudOpenMetrics> cloud_open_metrics_ =
+      std::make_unique<CloudOpenMetrics>(CloudProvider::kGoogleDrive,
+                                         /*file_count=*/1);
+  base::SafeRef<CloudOpenMetrics> cloud_open_metrics_ref_ =
+      cloud_open_metrics_->GetSafeRef();
+
+  OfficeTaskResult observed_task_result_;
+  base::HistogramTester histogram_;
 
  private:
   // IOTaskController::Observer:
@@ -326,7 +346,7 @@ class DriveUploadHandlerTest
     drivefs::mojom::SyncingStatusPtr status =
         drivefs::mojom::SyncingStatus::New();
     status->item_events.emplace_back(
-        absl::in_place, 12, 34, observed_relative_drive_path().value(),
+        std::in_place, 12, 34, observed_relative_drive_path().value(),
         drivefs::mojom::ItemEvent::State::kQueued, 123, 456,
         drivefs::mojom::ItemEventReason::kTransfer);
     drivefs_delegate()->OnSyncingStatusUpdate(status.Clone());
@@ -334,7 +354,7 @@ class DriveUploadHandlerTest
 
     status = drivefs::mojom::SyncingStatus::New();
     status->item_events.emplace_back(
-        absl::in_place, 12, 34, observed_relative_drive_path().value(),
+        std::in_place, 12, 34, observed_relative_drive_path().value(),
         drivefs::mojom::ItemEvent::State::kCompleted, 123, 456,
         drivefs::mojom::ItemEventReason::kTransfer);
     drivefs_delegate()->OnSyncingStatusUpdate(status.Clone());
@@ -346,7 +366,7 @@ class DriveUploadHandlerTest
     drivefs::mojom::SyncingStatusPtr status =
         drivefs::mojom::SyncingStatus::New();
     status->item_events.emplace_back(
-        absl::in_place, 12, 34, observed_relative_drive_path().value(),
+        std::in_place, 12, 34, observed_relative_drive_path().value(),
         drivefs::mojom::ItemEvent::State::kQueued, 123, 456,
         drivefs::mojom::ItemEventReason::kTransfer);
     drivefs_delegate()->OnSyncingStatusUpdate(status.Clone());
@@ -355,7 +375,7 @@ class DriveUploadHandlerTest
     drivefs::mojom::SyncingStatusPtr fail_status =
         drivefs::mojom::SyncingStatus::New();
     fail_status->item_events.emplace_back(
-        absl::in_place, 12, 34, observed_relative_drive_path().value(),
+        std::in_place, 12, 34, observed_relative_drive_path().value(),
         drivefs::mojom::ItemEvent::State::kFailed, 123, 456,
         drivefs::mojom::ItemEventReason::kTransfer);
     drivefs_delegate()->OnSyncingStatusUpdate(fail_status->Clone());
@@ -370,7 +390,8 @@ class DriveUploadHandlerTest
       create_drive_integration_service_;
   std::unique_ptr<drive::DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
-  std::map<Profile*, std::unique_ptr<drive::FakeDriveFsHelper>>
+  std::map<Profile*,
+           std::unique_ptr<file_manager::test::FakeSimpleDriveFsHelper>>
       fake_drivefs_helpers_;
 
   // Used to track the upload progress during the tests.
@@ -382,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFiles) {
   SetUpObservers();
   SetUpMyFiles();
   SetUpDrive();
-  // Define the source file as a test docx file within My files.
+  // Define the source file as a test docx file within MyFiles.
   const std::string test_file_name = "text.docx";
   FileSystemURL source_file_url =
       SetUpSourceFile(test_file_name, my_files_dir_);
@@ -390,10 +411,12 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFiles) {
   EXPECT_CALL(fake_drivefs(), ImmediatelyUpload(_, _))
       .WillOnce(RunOnceCallback<1>(drive::FileError::FILE_ERROR_OK));
 
-  DriveUploadHandler::Upload(
-      profile(), source_file_url,
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove,
       base::BindOnce(&DriveUploadHandlerTest::OnUploadDone,
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      cloud_open_metrics_ref_);
+  drive_upload_handler->Run();
   Wait();
 
   // Check that the source file has been moved to Drive.
@@ -402,13 +425,17 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFiles) {
     EXPECT_FALSE(base::PathExists(my_files_dir_.AppendASCII(test_file_name)));
     CheckPathExistsOnDrive(observed_relative_drive_path());
   }
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kSuccess, 1);
+  ASSERT_EQ(observed_task_result_, OfficeTaskResult::kMoved);
 }
 
 IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromReadOnlyFileSystem) {
   SetUpObservers();
   SetUpReadOnlyLocation();
   SetUpDrive();
-  // Define the source file as a test docx file within My files.
+  // Define the source file as a test docx file within MyFiles.
   const std::string test_file_name = "text.docx";
   FileSystemURL source_file_url =
       SetUpSourceFile(test_file_name, read_only_dir_);
@@ -416,10 +443,12 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromReadOnlyFileSystem) {
   EXPECT_CALL(fake_drivefs(), ImmediatelyUpload(_, _))
       .WillOnce(RunOnceCallback<1>(drive::FileError::FILE_ERROR_OK));
 
-  DriveUploadHandler::Upload(
-      profile(), source_file_url,
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kCopy,
       base::BindOnce(&DriveUploadHandlerTest::OnUploadDone,
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      cloud_open_metrics_ref_);
+  drive_upload_handler->Run();
   Wait();
 
   // Check that the source file has been copied to Drive.
@@ -428,6 +457,10 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromReadOnlyFileSystem) {
     EXPECT_TRUE(base::PathExists(read_only_dir_.AppendASCII(test_file_name)));
     CheckPathExistsOnDrive(observed_relative_drive_path());
   }
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kSuccess, 1);
+  ASSERT_EQ(observed_task_result_, OfficeTaskResult::kCopied);
 }
 
 // Test that when the sync to Drive fails, the file is not moved to Drive.
@@ -436,7 +469,7 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFails) {
   SetUpObservers();
   SetUpMyFiles();
   SetUpDrive();
-  // Define the source file as a test docx file within My files.
+  // Define the source file as a test docx file within MyFiles.
   const std::string test_file_name = "text.docx";
   FileSystemURL source_file_url =
       SetUpSourceFile(test_file_name, my_files_dir_);
@@ -444,10 +477,12 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFails) {
   EXPECT_CALL(fake_drivefs(), ImmediatelyUpload(_, _))
       .WillOnce(RunOnceCallback<1>(drive::FileError::FILE_ERROR_FAILED));
 
-  DriveUploadHandler::Upload(
-      profile(), source_file_url,
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove,
       base::BindOnce(&DriveUploadHandlerTest::OnUploadDone,
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      cloud_open_metrics_ref_);
+  drive_upload_handler->Run();
   Wait();
 
   // Check that the source file has not been moved to Drive.
@@ -456,16 +491,19 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFails) {
     EXPECT_TRUE(base::PathExists(my_files_dir_.AppendASCII(test_file_name)));
     CheckPathNotFoundOnDrive(observed_relative_drive_path());
   }
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kSyncError, 1);
+  ASSERT_EQ(observed_task_result_, OfficeTaskResult::kFailedToUpload);
 }
 
 IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFilesNoConnection) {
   SetUpObservers();
   SetUpMyFiles();
   SetUpDrive();
-  content::NetworkConnectionChangeSimulator().SetConnectionType(
-      network::mojom::ConnectionType::CONNECTION_NONE);
+  SetDriveConnectionStatusForTesting(ConnectionStatus::kNoNetwork);
 
-  // Define the source file as a test docx file within My files.
+  // Define the source file as a test docx file within MyFiles.
   const std::string test_file_name = "text.docx";
   FileSystemURL source_file_url =
       SetUpSourceFile(test_file_name, my_files_dir_);
@@ -474,9 +512,13 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFilesNoConnection) {
 
   base::RunLoop run_loop;
   base::MockCallback<DriveUploadHandler::UploadCallback> upload_callback;
-  EXPECT_CALL(upload_callback, Run(GURL(), _))
+  EXPECT_CALL(upload_callback, Run(OfficeTaskResult::kFailedToUpload,
+                                   std::optional<GURL>(std::nullopt), _))
       .WillOnce(RunClosure(run_loop.QuitClosure()));
-  DriveUploadHandler::Upload(profile(), source_file_url, upload_callback.Get());
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, upload_callback.Get(),
+      cloud_open_metrics_ref_);
+  drive_upload_handler->Run();
   run_loop.Run();
 
   // Check that the source file has not been moved to Drive.
@@ -485,6 +527,9 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest, UploadFromMyFilesNoConnection) {
     EXPECT_TRUE(base::PathExists(my_files_dir_.AppendASCII(test_file_name)));
     CheckPathNotFoundOnDrive(observed_relative_drive_path());
   }
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kNoConnection, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
@@ -493,22 +538,144 @@ IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
   SetUpMyFiles();
   SetUpDrive();
 
-  // Define the source file as a test docx file within My files.
+  // Define the source file as a test docx file within MyFiles.
   const std::string test_file_name = "text.docx";
   FileSystemURL source_file_url =
       SetUpSourceFile(test_file_name, my_files_dir_);
 
-  on_transfer_complete_callback_ = base::BindRepeating([] {
-    content::NetworkConnectionChangeSimulator().SetConnectionType(
-        network::mojom::ConnectionType::CONNECTION_NONE);
+  on_transfer_complete_callback_ = base::BindLambdaForTesting([this] {
+    SetDriveConnectionStatusForTesting(ConnectionStatus::kNoNetwork);
+    drive_integration_service()->OnNetworkChanged();
   });
 
   base::RunLoop run_loop;
   base::MockCallback<DriveUploadHandler::UploadCallback> upload_callback;
-  EXPECT_CALL(upload_callback, Run(GURL(), _))
+  EXPECT_CALL(upload_callback, Run(OfficeTaskResult::kFailedToUpload,
+                                   std::optional<GURL>(std::nullopt), _))
       .WillOnce(RunClosure(run_loop.QuitClosure()));
-  DriveUploadHandler::Upload(profile(), source_file_url, upload_callback.Get());
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, upload_callback.Get(),
+      cloud_open_metrics_ref_);
+  drive_upload_handler->Run();
   run_loop.Run();
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kNoConnection, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
+                       OnGetDriveMetadata_WhenNoMetadata) {
+  // Set up a source file just to construct a DriveUploadHandler.
+  SetUpMyFiles();
+  const std::string test_file_name = "text.docx";
+  FileSystemURL source_file_url =
+      SetUpSourceFile(test_file_name, my_files_dir_);
+
+  drivefs::mojom::FileMetadataPtr metadata;
+
+  // Provide a FILE_ERROR_FAILED response.
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, base::DoNothing(),
+      cloud_open_metrics_ref_);
+  // This should call the OnFailedUpload() immediately since no "upload"
+  // actually occurred so there is no need to do any clean up.
+  drive_upload_handler->OnGetDriveMetadata(
+      /*timed_out=*/true, /*error=*/drive::FILE_ERROR_FAILED,
+      std::move(metadata));
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kCloudMetadataError,
+                                1);
+}
+
+IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
+                       OnGetDriveMetadata_WhenInvalidAlternateUrl) {
+  // Set up a source file just to construct a DriveUploadHandler.
+  SetUpMyFiles();
+  const std::string test_file_name = "text.docx";
+  FileSystemURL source_file_url =
+      SetUpSourceFile(test_file_name, my_files_dir_);
+
+  // Provide an invalid alternate url.
+  drivefs::mojom::FileMetadataPtr metadata =
+      drivefs::mojom::FileMetadata::New();
+  metadata->content_mime_type =
+      "application/"
+      "vnd.openxmlformats-officedocument.wordprocessingml.document";
+  metadata->alternate_url = "invalid";
+
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, base::DoNothing(),
+      cloud_open_metrics_ref_);
+  // This should call the OnFailedUpload() immediately since no "upload"
+  // actually occurred so there is no need to do any clean up.
+  drive_upload_handler->OnGetDriveMetadata(
+      /*timed_out=*/true, /*error=*/drive::FILE_ERROR_OK, std::move(metadata));
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kInvalidAlternateUrl,
+                                1);
+}
+
+IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
+                       OnGetDriveMetadata_WhenHostIsUnexpected) {
+  // Set up a source file just to construct a DriveUploadHandler.
+  SetUpMyFiles();
+  const std::string test_file_name = "text.docx";
+  FileSystemURL source_file_url =
+      SetUpSourceFile(test_file_name, my_files_dir_);
+
+  // Provide an unexpected alternate url host.
+  drivefs::mojom::FileMetadataPtr metadata =
+      drivefs::mojom::FileMetadata::New();
+  metadata->content_mime_type =
+      "application/"
+      "vnd.openxmlformats-officedocument.wordprocessingml.document";
+  metadata->alternate_url =
+      "https://unexpected.com/document/d/smalldocxid?rtpof=true&usp=drive_fs";
+
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, base::DoNothing(),
+      cloud_open_metrics_ref_);
+  // This should call the OnFailedUpload() immediately since no "upload"
+  // actually occurred so there is no need to do any clean up.
+  drive_upload_handler->OnGetDriveMetadata(
+      /*timed_out=*/true, /*error=*/drive::FILE_ERROR_OK, std::move(metadata));
+
+  histogram_.ExpectUniqueSample(
+      kGoogleDriveUploadResultMetricName,
+      OfficeFilesUploadResult::kUnexpectedAlternateUrlHost, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(DriveUploadHandlerTest,
+                       OnGetDriveMetadata_WhenFileNotAnOfficeFile) {
+  // Set up a source file just to construct a DriveUploadHandler.
+  SetUpMyFiles();
+  const std::string test_file_name = "text.docx";
+  FileSystemURL source_file_url =
+      SetUpSourceFile(test_file_name, my_files_dir_);
+
+  drivefs::mojom::FileMetadataPtr metadata =
+      drivefs::mojom::FileMetadata::New();
+  // Set the mime type to be not an Office file mime type.
+  metadata->content_mime_type = "video/mp4";
+  // Set the host to be drive.google.com instead of docs.google.com. This occurs
+  // when a file with an Office extension is uploaded but it is actually not an
+  // Office file.
+  metadata->alternate_url =
+      "https://drive.google.com/document/d/smalldocxid?rtpof=true&usp=drive_fs";
+
+  auto drive_upload_handler = std::make_unique<DriveUploadHandler>(
+      profile(), source_file_url, UploadType::kMove, base::DoNothing(),
+      cloud_open_metrics_ref_);
+  // This should call the OnFailedUpload() immediately since no "upload"
+  // actually occurred so there is no need to do any clean up.
+  drive_upload_handler->OnGetDriveMetadata(
+      /*timed_out=*/true, /*error=*/drive::FILE_ERROR_OK, std::move(metadata));
+
+  histogram_.ExpectUniqueSample(kGoogleDriveUploadResultMetricName,
+                                OfficeFilesUploadResult::kFileNotAnOfficeFile,
+                                1);
 }
 
 }  // namespace ash::cloud_upload

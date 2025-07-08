@@ -10,18 +10,12 @@ found in the LICENSE file.
   several parts: content area; and buttons containers at the top for back
   navigation and for other buttons at the bottom.
 
-  When shown (i.e. when outside container calls .show()):
-    1. If this dialog has tags in class "focus-on-show", the first one will be
-  focused.
-    2. 'show-dialog' is fired.
-
   Please include oobe-dialog-host-styles shared style if you use oobe-content-dialog.
 
   Example:
     <style include="oobe-dialog-host-styles"></style>
-    <oobe-content-dialog on-show-dialog="onTestDialogShown_">
+    <oobe-content-dialog>
       <div slot="content">
-        <div class="focus-on-show">...</div>
         ...
       </div>
       <div slot="back-navigation">
@@ -57,12 +51,20 @@ found in the LICENSE file.
         2 * var(--oobe-adaptive-dialog-content-padding));
   }
 
-  :host-context([orientation=vertical]) {
-    --oobe-adaptive-dialog-item-alignment: center;
+  :host([isGaia]) {
+    --gaia-horizontal-padding-offset: 20px;
   }
 
-  :host-context([orientation=horizontal]) {
-    --oobe-adaptive-dialog-item-alignment: unset;
+  @media (orientation: portrait) {
+    :host {
+      --oobe-adaptive-dialog-item-alignment: center;
+    }
+  }
+
+  @media (orientation: landscape) {
+    :host {
+      --oobe-adaptive-dialog-item-alignment: unset;
+    }
   }
 
   #mainContainer {
@@ -71,13 +73,27 @@ found in the LICENSE file.
     margin-inline-end: var(--oobe-adaptive-dialog-content-padding);
     margin-inline-start: var(--oobe-adaptive-dialog-content-padding);
   }
+
+  :host([isGaia]) #mainContainer {
+    --oobe-content-dialog-content-padding: calc(
+      var(--oobe-adaptive-dialog-content-padding)
+       - var(--gaia-horizontal-padding-offset));
+    margin-inline-end: var(--oobe-content-dialog-content-padding);
+    margin-inline-start: var(--oobe-content-dialog-content-padding);
+  }
+
   :host-context(.jelly-enabled) #mainContainer {
     border-radius: var(--oobe-container-border-radius);
     overflow: hidden;
   }
 
+  :host([fullscreen]) #mainContainer {
+    margin-inline-end: 0;
+    margin-inline-start: 0;
+    overflow: visible;
+  }
+
   #scrollContainer {
-    border: transparent;
     overflow-y: auto;
     padding-bottom: 0;
     padding-top: 0;
@@ -85,6 +101,15 @@ found in the LICENSE file.
 
   #contentContainer {
     width: var(--oobe-adaptive-dialog-content-width);
+  }
+
+  :host([isGaia]) #contentContainer {
+    width: calc(var(--oobe-adaptive-dialog-content-width)
+                + 2 * var(--gaia-horizontal-padding-offset));
+  }
+
+  :host([fullscreen]) #contentContainer {
+    width: 100%;
   }
 
   .vertical-mode-centering {
@@ -102,16 +127,6 @@ found in the LICENSE file.
 
   :host([no-buttons]) .buttons-common {
     display: none;
-  }
-
-  :host([fullscreen]) #mainContainer {
-    margin-inline-end: 0;
-    margin-inline-start: 0;
-    overflow: visible;
-  }
-
-  :host([fullscreen]) #contentContainer {
-    width: 100%;
   }
 
   .bottom-buttons-container {
@@ -146,8 +161,7 @@ found in the LICENSE file.
       <slot name="back-navigation"></slot>
     </div>
     <div id="mainContainer" class="layout vertical flex">
-      <div id="scrollContainer" class="layout vertical flex scrollable"
-          on-scroll="applyScrollClassTags_">
+      <div id="scrollContainer" class="layout vertical flex scrollable">
         <div id="contentContainer" class="layout vertical flex">
           <slot name="content"></slot>
         </div>

@@ -52,7 +52,7 @@ public final class DummyRoutePublisher implements RoutePublisher {
         filter.addDataScheme("https");
         filter.addDataScheme("file");
 
-        ArrayList<IntentFilter> controlFilters = new ArrayList<IntentFilter>();
+        ArrayList<IntentFilter> controlFilters = new ArrayList<>();
         controlFilters.add(filter);
 
         MediaRouteDescriptor testRouteDescriptor1 =
@@ -66,10 +66,11 @@ public final class DummyRoutePublisher implements RoutePublisher {
                         .addControlFilters(controlFilters)
                         .build();
 
-        MediaRouteProviderDescriptor providerDescriptor = new MediaRouteProviderDescriptor.Builder()
-                                                                  .addRoute(testRouteDescriptor1)
-                                                                  .addRoute(testRouteDescriptor2)
-                                                                  .build();
+        MediaRouteProviderDescriptor providerDescriptor =
+                new MediaRouteProviderDescriptor.Builder()
+                        .addRoute(testRouteDescriptor1)
+                        .addRoute(testRouteDescriptor2)
+                        .build();
         mProvider.setDescriptor(providerDescriptor);
     }
 

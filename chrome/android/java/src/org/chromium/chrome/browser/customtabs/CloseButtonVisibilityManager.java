@@ -9,24 +9,21 @@ import android.graphics.drawable.Drawable;
 import androidx.annotation.Nullable;
 
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.dependency_injection.ActivityScope;
+import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbarButtonsCoordinator;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.toolbar.ToolbarManager;
 
-import javax.inject.Inject;
-
-/**
- * Manages the visibility of the close button.
- */
-@ActivityScope
+/** Manages the visibility of the close button. */
 public class CloseButtonVisibilityManager {
     private final Drawable mCloseButtonDrawable;
 
     private @Nullable ToolbarManager mToolbarManager;
-    private boolean mIsVisible = true;
+    private @Nullable CustomTabToolbarButtonsCoordinator mToolbarButtonsCoordinator;
+    private boolean mIsVisible;
 
-    @Inject
     public CloseButtonVisibilityManager(BrowserServicesIntentDataProvider intentDataProvider) {
         mCloseButtonDrawable = intentDataProvider.getCloseButtonDrawable();
+        mIsVisible = intentDataProvider.isCloseButtonEnabled();
     }
 
     public void setVisibility(boolean isVisible) {
@@ -36,12 +33,23 @@ public class CloseButtonVisibilityManager {
         updateCloseButtonVisibility();
     }
 
-    public void onToolbarInitialized(ToolbarManager toolbarManager) {
+    public void onToolbarInitialized(
+            ToolbarManager toolbarManager,
+            CustomTabToolbarButtonsCoordinator toolbarButtonsCoordinator) {
         mToolbarManager = toolbarManager;
+        mToolbarButtonsCoordinator = toolbarButtonsCoordinator;
         updateCloseButtonVisibility();
     }
 
     private void updateCloseButtonVisibility() {
+        if (ChromeFeatureList.sCctToolbarRefactor.isEnabled()) {
+            if (mToolbarButtonsCoordinator == null) return;
+
+            mToolbarButtonsCoordinator.setCloseButtonVisible(mIsVisible);
+
+            return;
+        }
+
         if (mToolbarManager == null) return;
 
         mToolbarManager.setCloseButtonDrawable(mIsVisible ? mCloseButtonDrawable : null);

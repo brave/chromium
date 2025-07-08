@@ -24,11 +24,11 @@ class ApplyBlockElementCommandTest : public EditingTestBase {};
 
 // This is a regression test for https://crbug.com/639534
 TEST_F(ApplyBlockElementCommandTest, selectionCrossingOverBody) {
-  GetDocument().head()->insertAdjacentHTML(
+  GetDocument().head()->InsertAdjacentHTMLWithoutTrustedTypes(
       "afterbegin",
       "<style> .CLASS13 { -webkit-user-modify: read-write; }</style></head>",
       ASSERT_NO_EXCEPTION);
-  GetDocument().body()->insertAdjacentHTML(
+  GetDocument().body()->InsertAdjacentHTMLWithoutTrustedTypes(
       "afterbegin",
       "\n<pre><var id='va' class='CLASS13'>\nC\n</var></pre><input />",
       ASSERT_NO_EXCEPTION);
@@ -58,24 +58,22 @@ TEST_F(ApplyBlockElementCommandTest, selectionCrossingOverBody) {
       "</head>foo"
       "<body contenteditable=\"false\">\n"
       "<pre><var id=\"va\" class=\"CLASS13\">\nC\n</var></pre><input></body>",
-      GetDocument().documentElement()->innerHTML());
+      GetDocument().documentElement()->GetInnerHTMLString());
 }
 
 // This is a regression test for https://crbug.com/660801
 TEST_F(ApplyBlockElementCommandTest, visibilityChangeDuringCommand) {
-  GetDocument().head()->insertAdjacentHTML(
+  GetDocument().head()->InsertAdjacentHTMLWithoutTrustedTypes(
       "afterbegin", "<style>li:first-child { visibility:visible; }</style>",
       ASSERT_NO_EXCEPTION);
   SetBodyContent("<ul style='visibility:hidden'><li>xyz</li></ul>");
   GetDocument().setDesignMode("on");
 
   UpdateAllLifecyclePhasesForTest();
-  Selection().SetSelection(
-      SelectionInDOMTree::Builder()
-          .Collapse(
-              Position(GetDocument().QuerySelector(AtomicString("li")), 0))
-          .Build(),
-      SetSelectionOptions());
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .Collapse(Position(QuerySelector("li"), 0))
+                               .Build(),
+                           SetSelectionOptions());
 
   auto* command = MakeGarbageCollected<IndentOutdentCommand>(
       GetDocument(), IndentOutdentCommand::kIndent);
@@ -84,7 +82,7 @@ TEST_F(ApplyBlockElementCommandTest, visibilityChangeDuringCommand) {
   EXPECT_EQ(
       "<head><style>li:first-child { visibility:visible; }</style></head>"
       "<body><ul style=\"visibility:hidden\"><ul></ul><li>xyz</li></ul></body>",
-      GetDocument().documentElement()->innerHTML());
+      GetDocument().documentElement()->GetInnerHTMLString());
 }
 
 // This is a regression test for https://crbug.com/712510
@@ -94,8 +92,8 @@ TEST_F(ApplyBlockElementCommandTest, IndentHeadingIntoBlockquote) {
       "<h6><button><table></table></button></h6>"
       "<object></object>"
       "</div>");
-  Element* button = GetDocument().QuerySelector(AtomicString("button"));
-  Element* object = GetDocument().QuerySelector(AtomicString("object"));
+  Element* button = QuerySelector("button");
+  Element* object = QuerySelector("object");
   Selection().SetSelection(SelectionInDOMTree::Builder()
                                .Collapse(Position(button, 0))
                                .Extend(Position(object, 0))
@@ -116,7 +114,7 @@ TEST_F(ApplyBlockElementCommandTest, IndentHeadingIntoBlockquote) {
       "<br>"
       "<object></object>"
       "</div>",
-      GetDocument().body()->innerHTML());
+      GetDocument().body()->GetInnerHTMLString());
 }
 
 // This is a regression test for https://crbug.com/806525
@@ -165,11 +163,10 @@ TEST_F(ApplyBlockElementCommandTest,
       SetSelectionOptions());
   auto* command = MakeGarbageCollected<FormatBlockCommand>(GetDocument(),
                                                            html_names::kPreTag);
-  // Shouldn't crash here.
-  EXPECT_FALSE(command->Apply());
+  EXPECT_TRUE(command->Apply());
   EXPECT_EQ(
-      "<table>^</table>"
-      "<kbd style=\"-webkit-user-modify:read-only\"><button>|</button></kbd>",
+      "<pre><table>|</table></pre>"
+      "<kbd style=\"-webkit-user-modify:read-only\"><button></button></kbd>",
       GetSelectionTextFromBody());
 }
 
@@ -178,7 +175,7 @@ TEST_F(ApplyBlockElementCommandTest, FormatBlockWithDirectChildrenOfRoot) {
   GetDocument().setDesignMode("on");
   DocumentFragment* fragment = DocumentFragment::Create(GetDocument());
   Element* root = GetDocument().documentElement();
-  fragment->ParseXML("a<div>b</div>c", root);
+  fragment->ParseXML("a<div>b</div>c", root, ASSERT_NO_EXCEPTION);
   root->setTextContent("");
   root->appendChild(fragment);
   UpdateAllLifecyclePhasesForTest();
@@ -302,12 +299,9 @@ TEST_F(ApplyBlockElementCommandTest, IndentOutdentLinesCrash) {
       GetDocument(), IndentOutdentCommand::kOutdent);
 
   // Shouldn't crash, and the empty line between b and c should be preserved.
-  // TODO(editing-dev): Get rid of the empty blockquote.
   EXPECT_TRUE(outdent->Apply());
   EXPECT_EQ(
       "<div contenteditable>"
-      "<blockquote style=\"margin: 0 0 0 40px; border: none; padding: "
-      "0px;\"></blockquote>"
       "^a<br>"
       "b|<br><br>"
       "c"
@@ -347,11 +341,9 @@ TEST_F(ApplyBlockElementCommandTest, IndentOutdentLinesWithJunkCrash) {
   EXPECT_TRUE(outdent->Apply());
 
   // TODO(editing-dev): The result is wrong. We should preserve the empty line
-  // between b and c, and get rid of the empty blockquote.
+  // between b and c.
   EXPECT_EQ(
       "<div contenteditable>"
-      "<blockquote style=\"margin: 0 0 0 40px; border: none; padding: "
-      "0px;\"></blockquote>"
       "^a<br>"
       "b|"
       "<!----><br>"

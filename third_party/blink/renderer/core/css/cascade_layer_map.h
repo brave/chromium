@@ -17,19 +17,20 @@ namespace blink {
 // layers in each sheet to the sorted layer order number.
 class CORE_EXPORT CascadeLayerMap : public GarbageCollected<CascadeLayerMap> {
  public:
-  static constexpr unsigned kImplicitOuterLayerOrder =
-      std::numeric_limits<unsigned>::max();
+  static constexpr uint16_t kImplicitOuterLayerOrder =
+      std::numeric_limits<uint16_t>::max();
 
-  CascadeLayerMap(const ActiveStyleSheetVector& sheets,
-                  const LayerMap& super_rule_set_mapping);
+  CascadeLayerMap(const ActiveStyleSheetVector& sheets);
 
-  unsigned GetLayerOrder(const CascadeLayer& layer) const {
-    const auto mapped_layer = super_rule_set_mapping_.find(&layer);
-    if (mapped_layer != super_rule_set_mapping_.end()) {
-      return layer_order_map_.at(mapped_layer->value);
-    } else {
-      return layer_order_map_.at(&layer);
+  uint16_t GetLayerOrder(const CascadeLayer& layer) const {
+    auto it = layer_order_map_.find(&layer);
+    if (it != layer_order_map_.end()) {
+      return it->value;
     }
+    // We should not be doing lookup of layers that don't exist here,
+    // but apparently that's possible (crbug.com/428664521).
+    DCHECK(false);
+    return kImplicitOuterLayerOrder;
   }
 
   // Compare the layer orders of two CascadeLayer objects, possibly from
@@ -43,8 +44,7 @@ class CORE_EXPORT CascadeLayerMap : public GarbageCollected<CascadeLayerMap> {
 
  private:
   Member<const CascadeLayer> canonical_root_layer_;
-  HeapHashMap<Member<const CascadeLayer>, unsigned> layer_order_map_;
-  LayerMap super_rule_set_mapping_;
+  HeapHashMap<Member<const CascadeLayer>, uint16_t> layer_order_map_;
 };
 
 }  // namespace blink

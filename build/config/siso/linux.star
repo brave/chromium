@@ -1,118 +1,130 @@
 # -*- bazel-starlark -*-
-# Copyright 2023 The Chromium Authors. All rights reserved.
+# Copyright 2023 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Siso configuration for linux."""
 
 load("@builtin//struct.star", "module")
+load("./android.star", "android")
 load("./clang_linux.star", "clang")
 load("./config.star", "config")
-load("./mojo.star", "mojo")
-load("./nacl_linux.star", "nacl")
+load("./cros.star", "cros")
+load("./devtools_frontend.star", "devtools_frontend")
 load("./nasm_linux.star", "nasm")
 load("./proto_linux.star", "proto")
 load("./reproxy.star", "reproxy")
-load("./android.star", "android")
+load("./typescript_unix.star", "typescript")
+load("./v8.star", "v8")
 
-__filegroups = {}
-__filegroups.update(android.filegroups)
-__filegroups.update(clang.filegroups)
-__filegroups.update(mojo.filegroups)
-__filegroups.update(nacl.filegroups)
-__filegroups.update(nasm.filegroups)
-__filegroups.update(proto.filegroups)
+def __filegroups(ctx):
+    fg = {}
+    fg.update(android.filegroups(ctx))
+    fg.update(clang.filegroups(ctx))
+    fg.update(cros.filegroups(ctx))
+    fg.update(devtools_frontend.filegroups(ctx))
+    fg.update(nasm.filegroups(ctx))
+    fg.update(proto.filegroups(ctx))
+    fg.update(typescript.filegroups(ctx))
+    fg["third_party/perfetto/python:python"] = {
+        "type": "glob",
+        "includes": ["*.py"],
+    }
+    fg["third_party/perfetto/src/trace_processor:trace_processor"] = {
+        "type": "glob",
+        "includes": ["*.py"],
+    }
+    return fg
 
 __handlers = {}
 __handlers.update(android.handlers)
 __handlers.update(clang.handlers)
-__handlers.update(mojo.handlers)
-__handlers.update(nacl.handlers)
+__handlers.update(cros.handlers)
+__handlers.update(devtools_frontend.handlers)
 __handlers.update(nasm.handlers)
 __handlers.update(proto.handlers)
-__handlers.update(reproxy.handlers)
-
-def __disable_remote_b281663988(step_config):
-    step_config["rules"].insert(0, {
-        # TODO(b/281663988): missing headers.
-        "name": "b281663988/missing-headers",
-        "action_outs": [
-            "./obj/ui/qt/qt5_shim/qt_shim.o",
-            "./obj/ui/qt/qt6_shim/qt_shim.o",
-            "./obj/ui/qt/qt5_shim/qt5_shim_moc.o",
-            "./obj/ui/qt/qt6_shim/qt6_shim_moc.o",
-            "./obj/ui/qt/qt_interface/qt_interface.o",
-        ],
-        "remote": False,
-        # This rule is used only with use_remoteexec.
-        # TODO(b/292838933): Move this rule into reproxy.star?
-        "handler": "strip_rewrapper",
-    })
-    return step_config
-
-def __disable_remote_b289968566(ctx, step_config):
-    rule = {
-        # TODO(b/289968566): they often faile with exit=137 (OOM?).
-        # We should migrate default machine type to n2-standard-2.
-        "name": "b289968566/exit-137",
-        "action_outs": [
-            "./android_clang_arm/obj/third_party/distributed_point_functions/distributed_point_functions/evaluate_prg_hwy.o",
-            "./clang_x64_v8_arm64/obj/v8/torque_generated_initializers/js-to-wasm-tq-csa.o",
-            "./clang_x64_v8_arm64/obj/v8/torque_generated_initializers/wasm-to-js-tq-csa.o",
-            "./clang_x86_v8_arm/obj/v8/torque_generated_initializers/js-to-wasm-tq-csa.o",
-            "./clang_x86_v8_arm/obj/v8/torque_generated_initializers/wasm-to-js-tq-csa.o",
-            "./obj/chrome/browser/ash/ash/autotest_private_api.o",
-            "./obj/chrome/browser/ash/ash/chrome_browser_main_parts_ash.o",
-            "./obj/chrome/browser/browser/browser_prefs.o",
-            "./obj/chrome/browser/browser/chrome_browser_interface_binders.o",
-            "./obj/chrome/browser/ui/ash/holding_space/browser_tests/holding_space_ui_browsertest.o",
-            "./obj/chrome/test/browser_tests/browser_non_client_frame_view_chromeos_browsertest.o",
-            "./obj/chrome/test/browser_tests/chrome_shelf_controller_browsertest.o",
-            "./obj/chrome/test/browser_tests/device_local_account_browsertest.o",
-            "./obj/chrome/test/browser_tests/file_manager_browsertest_base.o",
-            "./obj/chrome/test/browser_tests/remote_apps_manager_browsertest.o",
-            "./obj/v8/torque_generated_initializers/js-to-wasm-tq-csa.o",
-            "./obj/v8/torque_generated_initializers/wasm-to-js-tq-csa.o",
-        ],
-        "remote": False,
-    }
-    if reproxy.enabled(ctx):
-        rule["handler"] = "strip_rewrapper"
-    step_config["rules"].insert(0, rule)
-    return step_config
+__handlers.update(typescript.handlers)
 
 def __step_config(ctx, step_config):
     config.check(ctx)
-    step_config["platforms"] = {
-        "default": {
-            "OSFamily": "Linux",
-            "container-image": "docker://gcr.io/chops-public-images-prod/rbe/siso-chromium/linux@sha256:912808c295e578ccde53b0685bcd0d56c15d7a03e819dcce70694bfe3fdab35e",
-            "label:action_default": "1",
-        },
-        "large": {
-            "OSFamily": "Linux",
-            "container-image": "docker://gcr.io/chops-public-images-prod/rbe/siso-chromium/linux@sha256:912808c295e578ccde53b0685bcd0d56c15d7a03e819dcce70694bfe3fdab35e",
-            # As of Jul 2023, the action_large pool uses n2-highmem-8 with 200GB of pd-ssd.
-            # The pool is intended for the following actions.
-            #  - slow actions that can benefit from multi-cores and/or faster disk I/O. e.g. link, mojo, generate bindings etc.
-            #  - actions that fail for OOM.
-            "label:action_large": "1",
-        },
-    }
-
-    step_config = __disable_remote_b289968566(ctx, step_config)
 
     if android.enabled(ctx):
         step_config = android.step_config(ctx, step_config)
 
-    step_config = nacl.step_config(ctx, step_config)
+    # cros rules are necessary only for the Siso's builtin RBE client mode.
+    if not reproxy.enabled(ctx):
+        step_config = cros.step_config(ctx, step_config)
+
+    step_config = clang.step_config(ctx, step_config)
+    step_config = devtools_frontend.step_config(ctx, step_config)
     step_config = nasm.step_config(ctx, step_config)
     step_config = proto.step_config(ctx, step_config)
-    step_config = mojo.step_config(ctx, step_config)
-    step_config = clang.step_config(ctx, step_config)
+    step_config = typescript.step_config(ctx, step_config)
+    step_config = v8.step_config(ctx, step_config)
 
-    if reproxy.enabled(ctx):
-        step_config = __disable_remote_b281663988(step_config)
-        step_config = reproxy.step_config(ctx, step_config)
+    step_config["rules"].extend([
+        {
+            "name": "write_buildflag_header",
+            "command_prefix": "python3 ../../build/write_buildflag_header.py",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "write_build_date_header",
+            "command_prefix": "python3 ../../base/write_build_date_header.py",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "version_py",
+            "command_prefix": "python3 ../../build/util/version.py",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "perfetto/touch_file",
+            "command_prefix": "python3 ../../third_party/perfetto/tools/touch_file.py",
+            "remote": config.get(ctx, "cog"),
+            "replace": True,
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "perfetto/write_buildflag_header",
+            "command_prefix": "python3 ../../third_party/perfetto/gn/write_buildflag_header.py",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "perfetto/gen_tp_table_headers",
+            "command_prefix": "python3 ../../third_party/perfetto/tools/gen_tp_table_headers.py",
+            "inputs": [
+                "third_party/perfetto/python:python",
+                "third_party/perfetto/src/trace_processor:trace_processor",
+            ],
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            "name": "perfetto/gen_cc_proto_descriptor",
+            "command_prefix": "python3 ../../third_party/perfetto/tools/gen_cc_proto_descriptor.py",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+        {
+            # b/331716896: local fails due to link(2) error.
+            "name": "generate_fontconfig_cache",
+            "command_prefix": "python3 ../../build/gn_run_binary.py generate_fontconfig_caches",
+            "remote": config.get(ctx, "cog"),
+            "canonicalize_dir": True,
+            "timeout": "2m",
+        },
+    ])
 
     return step_config
 

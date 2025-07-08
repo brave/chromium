@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_NEARBY_SHARING_SHARESHEET_NEARBY_SHARE_ACTION_H_
 #define CHROME_BROWSER_NEARBY_SHARING_SHARESHEET_NEARBY_SHARE_ACTION_H_
 
+#include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/sharesheet/share_action/share_action.h"
 #include "chrome/browser/ui/webui/nearby_share/nearby_share_dialog_ui.h"
@@ -22,6 +24,7 @@ class NearbyShareAction : public sharesheet::ShareAction {
   NearbyShareAction& operator=(const NearbyShareAction&) = delete;
 
   // sharesheet::ShareAction:
+  sharesheet::ShareActionType GetActionType() const override;
   const std::u16string GetActionName() override;
   const gfx::VectorIcon& GetActionIcon() override;
   void LaunchAction(sharesheet::SharesheetController* controller,
@@ -46,9 +49,9 @@ class NearbyShareAction : public sharesheet::ShareAction {
  private:
   bool IsNearbyShareDisabledByPolicy();
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;
-  absl::optional<bool> nearby_share_disabled_by_policy_for_testing_ =
-      absl::nullopt;
+  raw_ptr<Profile> profile_;
+  std::optional<bool> nearby_share_disabled_by_policy_for_testing_ =
+      std::nullopt;
 };
 
 #endif  // CHROME_BROWSER_NEARBY_SHARING_SHARESHEET_NEARBY_SHARE_ACTION_H_

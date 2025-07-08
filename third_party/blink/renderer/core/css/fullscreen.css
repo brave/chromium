@@ -16,8 +16,11 @@
   user-select: text;
 }
 
-:fullscreen {
+/* Reducing specificity to ensure [inert] UA rule overrides this one for the
+   interactivity declaration. */
+:where(:fullscreen) {
   overlay: auto !important;
+  interactivity: auto;
 }
 
 iframe:fullscreen {
@@ -31,6 +34,20 @@ iframe:fullscreen {
   position: fixed;
   inset: 0;
   background: black;
+}
+
+@media (vertical-viewport-segments: 2) {
+  :not(:root):fullscreen {
+    height: env(viewport-segment-bottom 0 0, 100%) !important;
+    width: 100% !important;
+  }
+}
+
+@media (horizontal-viewport-segments: 2) {
+  :not(:root):fullscreen {
+    height: 100% !important;
+    width: env(viewport-segment-right 0 0, 100%) !important;
+  }
 }
 
 /* Anything below are extensions over what the Fullscreen API (29 May 2018) mandates. */

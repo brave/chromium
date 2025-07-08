@@ -6,12 +6,14 @@ import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 import {BindingsTestRunner} from 'bindings_test_runner';
 
+import * as Sources from 'devtools/panels/sources/sources.js';
+import * as Breakpoints from 'devtools/models/breakpoints/breakpoints.js';
+import * as RenderCoordinator from 'devtools/ui/components/render_coordinator/render_coordinator.js';
+
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+
 (async function() {
-  // This test is testing the old breakpoint sidebar pane. Make sure to
-  // turn off the new breakpoint pane experiment.
-  Root.Runtime.experiments.setEnabled('breakpointView', false);
   TestRunner.addResult(`Verify that breakpoints are moved appropriately in case of page reload.\n`);
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.evaluateInPagePromise(`
       function addFooJS() {
@@ -37,33 +39,43 @@ import {BindingsTestRunner} from 'bindings_test_runner';
     },
 
     function setBreakpointInFileSystemUISourceCode(next) {
-      TestRunner.waitForUISourceCode('foo.js', Workspace.projectTypes.FileSystem)
+      TestRunner.waitForUISourceCode('foo.js', Workspace.Workspace.projectTypes.FileSystem)
           .then(sourceCode => SourcesTestRunner.showUISourceCodePromise(sourceCode))
           .then(onSourceFrame);
 
       async function onSourceFrame(sourceFrame) {
         await SourcesTestRunner.setBreakpoint(sourceFrame, 0, '', true);
-        SourcesTestRunner.waitBreakpointSidebarPane(true).then(dumpBreakpointSidebarPane).then(next);
+        // Explicitly request an update to reflect the up-to-date breakpoint list.
+        await Sources.BreakpointsView.BreakpointsSidebarController.instance().update();
+        await RenderCoordinator.done();
+        await dumpBreakpointSidebarPane();
+        next();
       }
     },
 
     async function reloadPageAndDumpBreakpoints(next) {
+      const onBreakpointSet = async () => {
+        // Explicitly request an update to reflect the up-to-date breakpoint list.
+        await Sources.BreakpointsView.BreakpointsSidebarController.instance().update();
+        await RenderCoordinator.done();
+        await dumpBreakpointSidebarPane();
+        next();
+      }
+      // Wait until the move from network => filesystem happens via
+      // `setBreakpoint`, before dumping the breakpoint sidebar pane.
+      TestRunner.addSniffer(Breakpoints.BreakpointManager.BreakpointManager.prototype, 'setBreakpoint', onBreakpointSet, true);
       await testMapping.removeBinding('foo.js');
-      await Promise.all([SourcesTestRunner.waitBreakpointSidebarPane(), TestRunner.reloadPagePromise()]);
+      await TestRunner.reloadPagePromise();
+      await TestRunner.waitForUISourceCode('foo.js', Workspace.Workspace.projectTypes.FileSystem);
       testMapping.addBinding('foo.js');
-      dumpBreakpointSidebarPane();
-      next();
-    },
+    }
   ]);
 
-  function dumpBreakpointSidebarPane() {
-    var pane = Sources.JavaScriptBreakpointsSidebarPane.instance();
-    if (!pane._emptyElement.classList.contains('hidden'))
-      return TestRunner.textContentWithLineBreaks(pane._emptyElement);
-    var entries = Array.from(pane.contentElement.querySelectorAll('.breakpoint-entry'));
-    for (var entry of entries) {
-      var uiLocation = Sources.JavaScriptBreakpointsSidebarPane.retrieveLocationForElement(entry)
-      TestRunner.addResult('    ' + uiLocation.uiSourceCode.url() + ':' + uiLocation.lineNumber);
-    }
+  async function dumpBreakpointSidebarPane() {
+    var pane = Sources.BreakpointsView.BreakpointsView.instance();
+    await pane.updateComplete;
+    const location = pane.contentElement.querySelector('.breakpoint-item .location')?.textContent;
+    const groupHeader = pane.contentElement.querySelector('.group-header-title');
+    TestRunner.addResult(`${groupHeader?.title}:${location}`);
   }
 })();

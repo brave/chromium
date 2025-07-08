@@ -8,48 +8,16 @@
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
-#include "gpu/gpu_export.h"
 #include "gpu/ipc/common/gpu_channel.mojom-shared.h"
+#include "gpu/ipc/common/gpu_ipc_common_export.h"
 #include "mojo/public/cpp/bindings/enum_traits.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 
 namespace mojo {
 
 template <>
-struct GPU_EXPORT EnumTraits<gpu::mojom::ContextColorSpace, gpu::ColorSpace> {
-  static gpu::mojom::ContextColorSpace ToMojom(gpu::ColorSpace color_space) {
-    switch (color_space) {
-      case gpu::COLOR_SPACE_UNSPECIFIED:
-        return gpu::mojom::ContextColorSpace::kUnspecified;
-      case gpu::COLOR_SPACE_SRGB:
-        return gpu::mojom::ContextColorSpace::kSRGB;
-      case gpu::COLOR_SPACE_DISPLAY_P3:
-        return gpu::mojom::ContextColorSpace::kDisplayP3;
-      default:
-        NOTREACHED();
-    }
-  }
-
-  static bool FromMojom(gpu::mojom::ContextColorSpace color_space,
-                        gpu::ColorSpace* out) {
-    switch (color_space) {
-      case gpu::mojom::ContextColorSpace::kUnspecified:
-        *out = gpu::COLOR_SPACE_UNSPECIFIED;
-        return true;
-      case gpu::mojom::ContextColorSpace::kSRGB:
-        *out = gpu::COLOR_SPACE_SRGB;
-        return true;
-      case gpu::mojom::ContextColorSpace::kDisplayP3:
-        *out = gpu::COLOR_SPACE_DISPLAY_P3;
-        return true;
-      default:
-        return false;
-    }
-  }
-};
-
-template <>
-struct GPU_EXPORT EnumTraits<gpu::mojom::ContextType, gpu::ContextType> {
+struct GPU_IPC_COMMON_EXPORT EnumTraits<gpu::mojom::ContextType,
+                                        gpu::ContextType> {
   static gpu::mojom::ContextType ToMojom(gpu::ContextType type) {
     switch (type) {
       case gpu::CONTEXT_TYPE_WEBGL1:
@@ -96,30 +64,13 @@ struct GPU_EXPORT EnumTraits<gpu::mojom::ContextType, gpu::ContextType> {
 };
 
 template <>
-struct GPU_EXPORT StructTraits<gpu::mojom::ContextCreationAttribsDataView,
-                               gpu::ContextCreationAttribs> {
+struct GPU_IPC_COMMON_EXPORT StructTraits<
+    gpu::mojom::ContextCreationAttribsDataView,
+    gpu::ContextCreationAttribs> {
   static gl::GpuPreference gpu_preference(
       const gpu::ContextCreationAttribs& attribs) {
     return attribs.gpu_preference;
   }
-
-#if BUILDFLAG(IS_ANDROID)
-  static int32_t alpha_size(const gpu::ContextCreationAttribs& attribs) {
-    return attribs.alpha_size;
-  }
-
-  static int32_t blue_size(const gpu::ContextCreationAttribs& attribs) {
-    return attribs.blue_size;
-  }
-
-  static int32_t green_size(const gpu::ContextCreationAttribs& attribs) {
-    return attribs.green_size;
-  }
-
-  static int32_t red_size(const gpu::ContextCreationAttribs& attribs) {
-    return attribs.red_size;
-  }
-#endif
 
   static bool bind_generates_resource(
       const gpu::ContextCreationAttribs& attribs) {
@@ -150,24 +101,14 @@ struct GPU_EXPORT StructTraits<gpu::mojom::ContextCreationAttribsDataView,
     return attribs.enable_raster_interface;
   }
 
-  static bool enable_oop_rasterization(
+  static bool enable_gpu_rasterization(
       const gpu::ContextCreationAttribs& attribs) {
-    return attribs.enable_oop_rasterization;
-  }
-
-  static bool enable_swap_timestamps_if_supported(
-      const gpu::ContextCreationAttribs& attribs) {
-    return attribs.enable_swap_timestamps_if_supported;
+    return attribs.enable_gpu_rasterization;
   }
 
   static gpu::ContextType context_type(
       const gpu::ContextCreationAttribs& attribs) {
     return attribs.context_type;
-  }
-
-  static gpu::ColorSpace color_space(
-      const gpu::ContextCreationAttribs& attribs) {
-    return attribs.color_space;
   }
 
   static bool Read(gpu::mojom::ContextCreationAttribsDataView data,

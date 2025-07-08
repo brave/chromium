@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/mac-updater-builder-arm64-dbg/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -29,7 +32,7 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "mac11-arm64-updater-tester-dbg",
+              "builder": "mac13-arm64-updater-tester-dbg",
               "project": "chromium"
             },
             "builder_spec": {
@@ -57,7 +60,35 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "mac13-arm64-updater-tester-dbg",
+              "builder": "mac14-arm64-updater-tester-dbg",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "builder_group": "chromium.updater",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Debug",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "mac"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "mac-updater-builder-arm64-dbg",
+                "project": "chromium"
+              }
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
+              "builder": "mac15-arm64-updater-tester-dbg",
               "project": "chromium"
             },
             "builder_spec": {
@@ -94,22 +125,40 @@
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
-          "builder": "mac11-arm64-updater-tester-dbg",
+          "builder": "mac13-arm64-updater-tester-dbg",
           "project": "chromium"
         },
         {
           "bucket": "ci",
-          "builder": "mac13-arm64-updater-tester-dbg",
+          "builder": "mac14-arm64-updater-tester-dbg",
+          "project": "chromium"
+        },
+        {
+          "bucket": "ci",
+          "builder": "mac15-arm64-updater-tester-dbg",
           "project": "chromium"
         }
-      ]
+      ],
+      "mirroring_builder_group_and_names": [
+        {
+          "builder": "mac-updater-try-builder-dbg",
+          "group": "tryserver.chromium.updater"
+        }
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/mac-updater-builder-arm64-dbg/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

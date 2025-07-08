@@ -42,7 +42,8 @@ WebAuthFlow::WebAuthFlow(
     Mode mode,
     bool user_gesture,
     AbortOnLoad abort_on_load_for_non_interactive,
-    absl::optional<base::TimeDelta> timeout_for_non_interactive)
+    std::optional<base::TimeDelta> timeout_for_non_interactive,
+    std::optional<gfx::Rect> popup_bounds)
     : delegate_(delegate),
       profile_(profile),
       provider_url_(provider_url),
@@ -50,11 +51,17 @@ WebAuthFlow::WebAuthFlow(
       user_gesture_(user_gesture),
       abort_on_load_for_non_interactive_(abort_on_load_for_non_interactive),
       timeout_for_non_interactive_(timeout_for_non_interactive),
-      non_interactive_timeout_timer_(std::make_unique<base::OneShotTimer>()) {
+      non_interactive_timeout_timer_(std::make_unique<base::OneShotTimer>()),
+      popup_bounds_(popup_bounds) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("identity", "WebAuthFlow", this);
   if (timeout_for_non_interactive_) {
     DCHECK_GE(*timeout_for_non_interactive_, base::TimeDelta());
     DCHECK_LE(*timeout_for_non_interactive_, base::Minutes(1));
+  }
+
+  // profile_ can be null in unit tests.
+  if (profile_ != nullptr) {
+    profile_observation_.Observe(profile_);
   }
 }
 
@@ -98,6 +105,23 @@ void WebAuthFlow::Start() {
 
 void WebAuthFlow::DetachDelegateAndDelete() {
   delegate_ = nullptr;
+
+  // WebAuthFlow must be destroyed asynchronously to avoid reentrancy issues.
+  //
+  // WebAuthFlow observes WebContents and notifies its delegate from within
+  // WebContentsObserver callbacks. The delegate may call
+  // DetachDelegateAndDelete() in response.
+  //
+  // If WebAuthFlow is destroyed synchronously during such a callback, it would
+  // synchronously destroy its owned WebContents. However, WebContents cannot be
+  // destroyed while it's in the middle of notifying observers — doing so
+  // triggers a CHECK().
+  //
+  // Therefore, destruction of WebAuthFlow must be deferred to avoid violating
+  // this constraint. If the Profile is destroyed before the async destruction
+  // runs, WebAuthFlow will be notified via OnProfileWillBeDestroyed, and the
+  // WebContents will be explicitly destroyed at that point, ensuring they do
+  // not outlive the Profile.
   base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
                                                                 this);
 }
@@ -125,6 +149,9 @@ bool WebAuthFlow::DisplayAuthPageInPopupWindow() {
                                        user_gesture_);
   browser_params.omit_from_session_restore = true;
   browser_params.should_trigger_session_restore = false;
+  if (popup_bounds_.has_value()) {
+    browser_params.initial_bounds = popup_bounds_.value();
+  }
 
   Browser* browser = Browser::Create(browser_params);
   browser->tab_strip_model()->AddWebContents(
@@ -282,6 +309,26 @@ void WebAuthFlow::DidFinishNavigation(
   if (failed && delegate_) {
     delegate_->OnAuthFlowFailure(LOAD_FAILED);
   }
+}
+
+void WebAuthFlow::OnProfileWillBeDestroyed(Profile* profile) {
+  CHECK_EQ(profile, profile_);
+  profile_observation_.Reset();
+
+  // Null out the delegate early so that we do not call into it while
+  // WebContents are being destroyed. It would be cleaner to send a "profile
+  // destroyed" notification to the delegate, but all the current delegates
+  // already observe Profile destruction, so we can just be silent here.
+  delegate_ = nullptr;
+
+  // Destroy the WebContents so that they don't outlive the profile.
+  if (web_contents()) {
+    web_contents()->Close();
+  }
+
+  WebContentsObserver::Observe(nullptr);
+  web_contents_.reset();
+  profile_ = nullptr;
 }
 
 void WebAuthFlow::SetShouldShowInfoBar(

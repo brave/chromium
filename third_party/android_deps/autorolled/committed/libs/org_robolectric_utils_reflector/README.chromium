@@ -1,0 +1,16 @@
+Name: reflector
+Short Name: utils-reflector
+URL: https://robolectric.org
+Version: 4.15.1
+Update Mechanism: Autoroll
+License: Apache-2.0, MIT
+License File: LICENSE
+CPEPrefix: unknown
+Security Critical: no
+Shipped: no
+
+Description:
+An alternative Android testing framework.
+
+Local Modifications:
+No modifications.

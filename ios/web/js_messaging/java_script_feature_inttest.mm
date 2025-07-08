@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "base/test/ios/wait_util.h"
-
 #import "base/functional/bind.h"
 #import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
@@ -18,10 +16,6 @@
 #import "ios/web/public/test/web_view_content_test_util.h"
 #import "ios/web/test/fakes/fake_java_script_feature.h"
 #import "ios/web/web_state/ui/wk_web_view_configuration_provider.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using base::test::ios::kWaitForJSCompletionTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
@@ -122,34 +116,6 @@ TEST_F(JavaScriptFeaturePageContentWorldTest,
   auto parameters =
       base::Value::List().Append(kFakeJavaScriptFeaturePostMessageReplyValue);
   feature()->ReplyWithPostMessage(GetMainFrame(), parameters);
-
-  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
-    return feature()->last_received_web_state();
-  }));
-
-  EXPECT_EQ(web_state(), feature()->last_received_web_state());
-
-  ASSERT_TRUE(feature()->last_received_message()->body());
-  const std::string* reply =
-      feature()->last_received_message()->body()->GetIfString();
-  ASSERT_TRUE(reply);
-  EXPECT_STREQ(kFakeJavaScriptFeaturePostMessageReplyValue, reply->c_str());
-}
-
-// Tests that a page which overrides the window.webkit object does not break the
-// JavaScriptFeature JS->native messaging system when the feature script is
-// using `__gCrWeb.common.sendWebKitMessage`
-TEST_F(JavaScriptFeaturePageContentWorldTest,
-       MessagingWithOverriddenWebkitObjectCommonJS) {
-  LoadHtml(kPageHTML);
-  ExecuteJavaScript(@"webkit = undefined;");
-
-  ASSERT_FALSE(feature()->last_received_web_state());
-  ASSERT_FALSE(feature()->last_received_message());
-
-  auto parameters =
-      base::Value::List().Append(kFakeJavaScriptFeaturePostMessageReplyValue);
-  feature()->ReplyWithPostMessageCommonJS(GetMainFrame(), parameters);
 
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
     return feature()->last_received_web_state();

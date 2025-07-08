@@ -6,25 +6,38 @@
 
 #include <cmath>
 
-#include "base/debug/stack_trace.h"
+#include "base/notreached.h"
 #include "cc/paint/paint_flags.h"
+#include "chrome/browser/ash/arc/input_overlay/actions/action.h"
+#include "chrome/browser/ash/arc/input_overlay/constants.h"
+#include "chrome/browser/ash/arc/input_overlay/db/proto/app_data.pb.h"
 #include "chrome/browser/ash/arc/input_overlay/ui/action_view.h"
+#include "chrome/browser/ash/arc/input_overlay/ui/ui_utils.h"
+#include "chrome/browser/ash/arc/input_overlay/util.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/gfx/geometry/point.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
 
 namespace arc::input_overlay {
 
 namespace {
+
+// `TouchPoint` consists of outside stroke, inside stroke and center.
+constexpr size_t kTouchPointComponentSize = 3u;
 
 constexpr int kDotCenterDiameter = 14;
 constexpr int kDotInsideStrokeThickness = 1;
@@ -41,28 +54,11 @@ constexpr float kHaloInset = -6;
 // Thickness of focus ring.
 constexpr float kHaloThickness = 3;
 
-constexpr SkColor kOutsideStrokeColor =
-    SkColorSetA(SK_ColorWHITE, 0xCC /*80%*/);
-constexpr SkColor kOutsideStrokeColorHover =
-    SkColorSetA(SK_ColorWHITE, 0xCC /*80%*/);
-constexpr SkColor kOutsideStrokeColorDrag = gfx::kGoogleBlue200;
-
-constexpr SkColor kInsideStrokeColor = SkColorSetA(SK_ColorBLACK, 0x33 /*20%*/);
-constexpr SkColor kInsideStrokeColorHover =
-    SkColorSetA(SK_ColorBLACK, 0x33 /*20%*/);
-constexpr SkColor kInsideStrokeColorDrag =
-    SkColorSetA(SK_ColorBLACK, 0x66 /*40%*/);
-constexpr SkColor kCenterColor = SkColorSetRGB(0x12, 0x6D, 0xFF);
-constexpr SkColor kCenterColorHover20White =
-    SkColorSetA(SK_ColorWHITE, 0x33 /*20%*/);
-constexpr SkColor kCenterColorDrag30White =
-    SkColorSetA(SK_ColorWHITE, 0x4D /*30%*/);
-
 // Draw the cross shape path with round corner. It starts from bottom to up on
 // line #0 and draws clock-wisely.
-// |overall_length| is the total length of one side excluding the stroke
-// thickness. |mid_length| is the length of the middle part which is close to
-// the one third of |overall_length|.
+// `overall_length` is the total length of one side excluding the stroke
+// thickness. `mid_length` is the length of the middle part which is close to
+// the one third of `overall_length`.
 //      __
 //   _0^  |__
 //  |__    __|
@@ -71,11 +67,11 @@ constexpr SkColor kCenterColorDrag30White =
 SkPath DrawCrossPath(SkScalar overall_length,
                      SkScalar mid_length,
                      SkScalar corner_radius,
-                     SkScalar out_stroke_thickness) {
+                     SkScalar out_stroke_thickness,
+                     SkPoint center) {
   SkPath path;
   SkScalar short_length = (overall_length - mid_length) / 2;
-  path.moveTo(short_length + out_stroke_thickness,
-              short_length + out_stroke_thickness);
+  path.moveTo(center.x() - mid_length / 2, center.y() - mid_length / 2);
   // #0
   path.rLineTo(0, -(short_length - corner_radius));
   path.rArcTo(corner_radius, corner_radius, 0, SkPath::kSmall_ArcSize,
@@ -119,24 +115,76 @@ SkPath DrawCrossPath(SkScalar overall_length,
   return path;
 }
 
-SkPath DrawCrossCenter() {
+SkPath DrawCrossCenter(const gfx::Point& center) {
   return DrawCrossPath(
       /*overall_length=*/SkIntToScalar(kCrossCenterLength),
       /*mid_length=*/SkIntToScalar(kCrossCenterMiddleLength),
       /*corner_radius=*/SkIntToScalar(kCrossCornerRadius),
       /*out_stroke_thickness=*/
-      SkIntToScalar(kCrossOutsideStrokeThickness +
-                    kCrossInsideStrokeThickness));
+      SkIntToScalar(kCrossOutsideStrokeThickness + kCrossInsideStrokeThickness),
+      /*center=*/SkPoint::Make(center.x(), center.y()));
 }
 
-SkPath DrawCrossOutsideStroke() {
+SkPath DrawCrossOutsideStroke(const gfx::Point& center) {
   return DrawCrossPath(
       /*overall_length=*/SkIntToScalar(kCrossCenterLength +
                                        2 * kCrossInsideStrokeThickness),
       /*mid_length=*/
       SkIntToScalar(kCrossCenterMiddleLength + 2 * kCrossInsideStrokeThickness),
       /*corner_radius=*/SkIntToScalar(kCrossCornerRadius),
-      /*out_stroke_thickness=*/SkIntToScalar(kCrossOutsideStrokeThickness));
+      /*out_stroke_thickness=*/SkIntToScalar(kCrossOutsideStrokeThickness),
+      /*center=*/SkPoint::Make(center.x(), center.y()));
+}
+
+SkColor GetOutsideStrokeColor(const ui::ColorProvider* color_provider,
+                              UIState ui_state) {
+  switch (ui_state) {
+    case UIState::kDefault:
+    case UIState::kHover:
+      return SkColorSetA(SK_ColorWHITE, GetAlpha(/*percent=*/0.8f));
+    case UIState::kDrag:
+      return color_provider->GetColor(
+          cros_tokens::kCrosSysGamingControlButtonBorderHover);
+    default:
+      NOTREACHED();
+  }
+}
+
+SkColor GetInsideStrokeColor(const ui::ColorProvider* color_provider,
+                             UIState ui_state) {
+  switch (ui_state) {
+    case UIState::kDefault:
+      return SkColorSetA(SK_ColorBLACK, GetAlpha(/*percent=*/0.2f));
+    case UIState::kHover:
+      return SkColorSetA(SK_ColorBLACK, GetAlpha(/*percent=*/0.2f));
+    case UIState::kDrag:
+      return SkColorSetA(SK_ColorBLACK, GetAlpha(/*percent=*/0.4f));
+    default:
+      NOTREACHED();
+  }
+}
+
+SkColor GetCenterColor(const ui::ColorProvider* color_provider,
+                       UIState ui_state) {
+  switch (ui_state) {
+    case UIState::kDefault:
+      return color_provider->GetColor(
+          cros_tokens::kCrosSysGamingControlButtonDefault);
+    case UIState::kHover:
+    case UIState::kDrag:
+      return color_provider->GetColor(
+          cros_tokens::kCrosSysGamingControlButtonHover);
+    default:
+      NOTREACHED();
+  }
+}
+
+std::array<SkColor, kTouchPointComponentSize> GetColors(
+    const ui::ColorProvider* color_provider,
+    UIState ui_state) {
+  return {GetOutsideStrokeColor(color_provider, ui_state),
+          GetInsideStrokeColor(color_provider, ui_state),
+          GetCenterColor(color_provider, ui_state)};
 }
 
 class CrossTouchPoint : public TouchPoint {
@@ -147,39 +195,21 @@ class CrossTouchPoint : public TouchPoint {
 
   // TouchPoint:
   void Init() override {
-    SetAccessibilityProperties(
-        ax::mojom::Role::kGroup,
-        l10n_util::GetStringUTF16(
-            IDS_INPUT_OVERLAY_KEYMAPPING_TOUCH_POINT_CROSS));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
+        IDS_INPUT_OVERLAY_KEYMAPPING_TOUCH_POINT_CROSS));
 
     TouchPoint::Init();
   }
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override {
-    int size = kCrossCenterLength + 2 * kCrossInsideStrokeThickness +
-               2 * kCrossOutsideStrokeThickness;
-    return gfx::Size(size, size);
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
+    return GetSize(ActionType::MOVE);
   }
 
   void OnPaintBackground(gfx::Canvas* canvas) override {
-    cc::PaintFlags flags;
-    flags.setAntiAlias(true);
-
-    // Draw outside stroke.
-    flags.setStyle(cc::PaintFlags::kStroke_Style);
-    flags.setStrokeWidth(kCrossOutsideStrokeThickness);
-    flags.setColor(GetOutsideStrokeColor());
-    canvas->DrawPath(DrawCrossOutsideStroke(), flags);
-    // Draw center.
-    flags.setStyle(cc::PaintFlags::kFill_Style);
-    flags.setColor(GetCenterColor());
-    canvas->DrawPath(DrawCrossCenter(), flags);
-    // Draw inside stroke.
-    flags.setStyle(cc::PaintFlags::kStroke_Style);
-    flags.setStrokeWidth(kCrossInsideStrokeThickness);
-    flags.setColor(GetInsideStrokeColor());
-    canvas->DrawPath(DrawCrossCenter(), flags);
+    PaintBackground(canvas, ActionType::MOVE);
   }
 };
 
@@ -191,43 +221,21 @@ class DotTouchPoint : public TouchPoint {
 
   // TouchPoint:
   void Init() override {
-    SetAccessibilityProperties(
-        ax::mojom::Role::kGroup,
-        l10n_util::GetStringUTF16(
-            IDS_INPUT_OVERLAY_KEYMAPPING_TOUCH_POINT_DOT));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
+        IDS_INPUT_OVERLAY_KEYMAPPING_TOUCH_POINT_DOT));
 
     TouchPoint::Init();
   }
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override {
-    int size = kDotCenterDiameter + 2 * kDotInsideStrokeThickness +
-               2 * kDotOutsideStrokeThickness;
-    return gfx::Size(size, size);
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
+    return GetSize(ActionType::TAP);
   }
 
   void OnPaintBackground(gfx::Canvas* canvas) override {
-    cc::PaintFlags flags;
-    flags.setAntiAlias(true);
-    int radius = kDotCenterDiameter / 2;
-    int center =
-        radius + kDotInsideStrokeThickness + kDotOutsideStrokeThickness;
-
-    // Draw outside stroke.
-    flags.setStyle(cc::PaintFlags::kStroke_Style);
-    flags.setStrokeWidth(kDotOutsideStrokeThickness);
-    flags.setColor(GetOutsideStrokeColor());
-    canvas->DrawCircle(gfx::Point(center, center),
-                       radius + kDotInsideStrokeThickness, flags);
-    // Draw center.
-    flags.setStyle(cc::PaintFlags::kFill_Style);
-    flags.setColor(GetCenterColor());
-    canvas->DrawCircle(gfx::Point(center, center), radius, flags);
-    // Draw inside stroke.
-    flags.setStyle(cc::PaintFlags::kStroke_Style);
-    flags.setStrokeWidth(kDotInsideStrokeThickness);
-    flags.setColor(GetInsideStrokeColor());
-    canvas->DrawCircle(gfx::Point(center, center), radius, flags);
+    PaintBackground(canvas, ActionType::TAP);
   }
 };
 
@@ -255,21 +263,88 @@ TouchPoint* TouchPoint::Show(views::View* parent,
   return touch_point_ptr;
 }
 
-gfx::Size TouchPoint::GetSize(ActionType action_type) {
-  int size = 0;
+// static
+int TouchPoint::GetEdgeLength(ActionType action_type) {
+  int length = 0;
   switch (action_type) {
     case ActionType::TAP:
-      size = kDotCenterDiameter + kDotInsideStrokeThickness * 2 +
-             kDotOutsideStrokeThickness * 2;
+      length = kDotCenterDiameter + kDotInsideStrokeThickness * 2 +
+               kDotOutsideStrokeThickness * 2;
       break;
     case ActionType::MOVE:
-      size = kCrossCenterLength + kCrossInsideStrokeThickness * 2 +
-             kCrossOutsideStrokeThickness * 2;
+      length = kCrossCenterLength + kCrossInsideStrokeThickness * 2 +
+               kCrossOutsideStrokeThickness * 2;
       break;
     default:
       NOTREACHED();
   }
-  return gfx::Size(size, size);
+  return length;
+}
+
+// static
+gfx::Size TouchPoint::GetSize(ActionType action_type) {
+  const int edge_length = GetEdgeLength(action_type);
+  return gfx::Size(edge_length, edge_length);
+}
+
+// static
+void TouchPoint::DrawTouchPoint(gfx::Canvas* canvas,
+                                const ui::ColorProvider* color_provider,
+                                ActionType action_type,
+                                UIState ui_state,
+                                const gfx::Point& center) {
+  DCHECK(canvas);
+  DCHECK(color_provider);
+
+  cc::PaintFlags flags;
+  flags.setAntiAlias(true);
+
+  const auto colors = GetColors(color_provider, ui_state);
+  DCHECK_EQ(colors.size(), kTouchPointComponentSize);
+
+  switch (action_type) {
+    case ActionType::TAP: {
+      const int radius = kDotCenterDiameter / 2;
+      const int center_x = center.x();
+      const int center_y = center.y();
+
+      // Draw outside stroke.
+      flags.setStyle(cc::PaintFlags::kStroke_Style);
+      flags.setStrokeWidth(kDotOutsideStrokeThickness);
+      flags.setColor(colors[0]);
+      canvas->DrawCircle(gfx::Point(center_x, center_y),
+                         radius + kDotInsideStrokeThickness, flags);
+      // Draw center.
+      flags.setStyle(cc::PaintFlags::kFill_Style);
+      flags.setColor(colors[2]);
+      canvas->DrawCircle(gfx::Point(center_x, center_y), radius, flags);
+      // Draw inside stroke.
+      flags.setStyle(cc::PaintFlags::kStroke_Style);
+      flags.setStrokeWidth(kDotInsideStrokeThickness);
+      flags.setColor(colors[1]);
+      canvas->DrawCircle(gfx::Point(center_x, center_y), radius, flags);
+    } break;
+
+    case ActionType::MOVE:
+      // Draw outside stroke.
+      flags.setStyle(cc::PaintFlags::kStroke_Style);
+      flags.setStrokeWidth(kCrossOutsideStrokeThickness);
+      flags.setColor(colors[0]);
+      canvas->DrawPath(DrawCrossOutsideStroke(center), flags);
+      // Draw center.
+      flags.setStyle(cc::PaintFlags::kFill_Style);
+      flags.setColor(colors[2]);
+      canvas->DrawPath(DrawCrossCenter(center), flags);
+      // Draw inside stroke.
+      flags.setStyle(cc::PaintFlags::kStroke_Style);
+      flags.setStrokeWidth(kCrossInsideStrokeThickness);
+      flags.setColor(colors[1]);
+      canvas->DrawPath(DrawCrossCenter(center), flags);
+      break;
+
+    default:
+      NOTREACHED();
+  }
 }
 
 TouchPoint::TouchPoint(const gfx::Point& center_pos)
@@ -309,39 +384,41 @@ void TouchPoint::OnMouseExited(const ui::MouseEvent& event) {
 }
 
 bool TouchPoint::OnMousePressed(const ui::MouseEvent& event) {
-  static_cast<ActionView*>(parent())->ApplyMousePressed(event);
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    parent_view->ApplyMousePressed(event);
+  }
   return true;
 }
 
 bool TouchPoint::OnMouseDragged(const ui::MouseEvent& event) {
-  auto* widget = GetWidget();
   // widget is null for test.
-  if (widget) {
+  if (auto* widget = GetWidget()) {
     widget->SetCursor(ui::mojom::CursorType::kGrabbing);
   }
   SetToDrag();
-  static_cast<ActionView*>(parent())->ApplyMouseDragged(event);
+  views::AsViewClass<ActionView>(parent())->ApplyMouseDragged(event);
   return true;
 }
 
 void TouchPoint::OnMouseReleased(const ui::MouseEvent& event) {
-  auto* widget = GetWidget();
   // widget is null for test.
-  if (widget) {
+  if (auto* widget = GetWidget()) {
     widget->SetCursor(ui::mojom::CursorType::kGrab);
   }
   SetToHover();
-  static_cast<ActionView*>(parent())->ApplyMouseReleased(event);
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    parent_view->ApplyMouseReleased(event);
+  }
 }
 
 void TouchPoint::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
-    case ui::ET_GESTURE_SCROLL_BEGIN:
+    case ui::EventType::kGestureScrollBegin:
       SetToDrag();
       event->SetHandled();
       break;
-    case ui::ET_GESTURE_SCROLL_END:
-    case ui::ET_SCROLL_FLING_START:
+    case ui::EventType::kGestureScrollEnd:
+    case ui::EventType::kScrollFlingStart:
       SetToDefault();
       event->SetHandled();
       break;
@@ -349,67 +426,38 @@ void TouchPoint::OnGestureEvent(ui::GestureEvent* event) {
       break;
   }
 
-  static_cast<ActionView*>(parent())->ApplyGestureEvent(event);
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    parent_view->ApplyGestureEvent(event);
+  }
 }
 
 bool TouchPoint::OnKeyPressed(const ui::KeyEvent& event) {
-  return static_cast<ActionView*>(parent())->ApplyKeyPressed(event);
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    return parent_view->ApplyKeyPressed(event);
+  }
+  return false;
 }
 
 bool TouchPoint::OnKeyReleased(const ui::KeyEvent& event) {
-  return static_cast<ActionView*>(parent())->ApplyKeyReleased(event);
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    return parent_view->ApplyKeyReleased(event);
+  }
+  return false;
 }
 
 void TouchPoint::OnFocus() {
-  static_cast<ActionView*>(parent())->ShowFocusInfoMsg(
-      l10n_util::GetStringUTF8(
-          IDS_INPUT_OVERLAY_EDIT_INSTRUCTIONS_TOUCH_POINT_FOCUS),
-      this);
-}
-
-void TouchPoint::OnBlur() {
-  static_cast<ActionView*>(parent())->RemoveMessage();
-}
-
-SkColor TouchPoint::GetCenterColor() {
-  switch (ui_state_) {
-    case UIState::kDefault:
-      return kCenterColor;
-    case UIState::kHover:
-      return color_utils::GetResultingPaintColor(kCenterColorHover20White,
-                                                 kCenterColor);
-    case UIState::kDrag:
-      return color_utils::GetResultingPaintColor(kCenterColorDrag30White,
-                                                 kCenterColor);
-    default:
-      NOTREACHED();
+  if (auto* parent_view = views::AsViewClass<ActionView>(parent())) {
+    parent_view->ShowFocusInfoMsg(
+        l10n_util::GetStringUTF8(
+            IDS_INPUT_OVERLAY_EDIT_INSTRUCTIONS_TOUCH_POINT_FOCUS),
+        this);
   }
 }
 
-SkColor TouchPoint::GetInsideStrokeColor() {
-  switch (ui_state_) {
-    case UIState::kDefault:
-      return kInsideStrokeColor;
-    case UIState::kHover:
-      return kInsideStrokeColorHover;
-    case UIState::kDrag:
-      return kInsideStrokeColorDrag;
-    default:
-      NOTREACHED();
-  }
-}
-
-SkColor TouchPoint::GetOutsideStrokeColor() {
-  switch (ui_state_) {
-    case UIState::kDefault:
-      return kOutsideStrokeColor;
-    case UIState::kHover:
-      return kOutsideStrokeColorHover;
-    case UIState::kDrag:
-      return kOutsideStrokeColorDrag;
-    default:
-      NOTREACHED();
-  }
+void TouchPoint::PaintBackground(gfx::Canvas* canvas, ActionType action_type) {
+  const auto size = GetSize(action_type);
+  DrawTouchPoint(canvas, GetColorProvider(), action_type, ui_state_,
+                 /*center=*/gfx::Point(size.width() / 2, size.height() / 2));
 }
 
 void TouchPoint::SetToDefault() {
@@ -436,7 +484,7 @@ void TouchPoint::SetToDrag() {
   SchedulePaint();
 }
 
-BEGIN_METADATA(TouchPoint, views::View)
+BEGIN_METADATA(TouchPoint)
 END_METADATA
 
 }  // namespace arc::input_overlay

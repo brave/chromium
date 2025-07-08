@@ -11,13 +11,10 @@ using blink::WebFrame;
 namespace content {
 
 RenderFrameObserver::RenderFrameObserver(RenderFrame* render_frame)
-    : render_frame_(render_frame),
-      routing_id_(MSG_ROUTING_NONE) {
+    : render_frame_(render_frame) {
   // |render_frame| can be NULL on unit testing.
   if (render_frame) {
     RenderFrameImpl* impl = static_cast<RenderFrameImpl*>(render_frame);
-    routing_id_ = impl->GetRoutingID();
-    DCHECK_NE(routing_id_, MSG_ROUTING_NONE);
     impl->AddObserver(this);
   }
 }
@@ -35,18 +32,6 @@ bool RenderFrameObserver::OnAssociatedInterfaceRequestForFrame(
   return false;
 }
 
-bool RenderFrameObserver::OnMessageReceived(const IPC::Message& message) {
-  return false;
-}
-
-bool RenderFrameObserver::Send(IPC::Message* message) {
-  if (render_frame_)
-    return render_frame_->Send(message);
-
-  delete message;
-  return false;
-}
-
 RenderFrame* RenderFrameObserver::render_frame() const {
   return render_frame_;
 }
@@ -55,8 +40,8 @@ void RenderFrameObserver::RenderFrameGone() {
   render_frame_ = nullptr;
 }
 
-bool RenderFrameObserver::SetUpSmoothnessReporting(
-    base::ReadOnlySharedMemoryRegion& shared_memory) {
+bool RenderFrameObserver::SetUpDroppedFramesReporting(
+    base::ReadOnlySharedMemoryRegion& shared_memory_dropped_frames) {
   return false;
 }
 

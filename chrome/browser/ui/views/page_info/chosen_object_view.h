@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_UI_VIEWS_PAGE_INFO_CHOSEN_OBJECT_VIEW_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "components/page_info/page_info_ui.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
 
@@ -24,8 +26,9 @@ class RichControlsContainerView;
 // object (e.g. a Bluetooth device, a USB device) that the current site has
 // access to.
 class ChosenObjectView : public views::View {
+  METADATA_HEADER(ChosenObjectView, views::View)
+
  public:
-  METADATA_HEADER(ChosenObjectView);
   explicit ChosenObjectView(std::unique_ptr<PageInfoUI::ChosenObjectInfo> info,
                             std::u16string display_name);
   ChosenObjectView(const ChosenObjectView&) = delete;
@@ -37,6 +40,9 @@ class ChosenObjectView : public views::View {
 
   // views::View:
   void OnThemeChanged() override;
+
+  std::u16string_view GetObjectNameForTesting() const;
+  views::ImageButton* GetDeleteButtonForTesting() const;
 
  private:
   void UpdateIconImage(bool is_deleted) const;

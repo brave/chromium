@@ -14,7 +14,7 @@
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chromeos/ash/components/mojo_service_manager/connection.h"
-#include "chromeos/ash/services/cros_healthd/public/cpp/fake_routine_controller.h"
+#include "chromeos/ash/services/cros_healthd/public/cpp/fake_routine_control.h"
 #include "chromeos/ash/services/cros_healthd/public/cpp/service_connection.h"
 #include "chromeos/ash/services/cros_healthd/public/mojom/cros_healthd_events.mojom.h"
 #include "chromeos/ash/services/cros_healthd/public/mojom/cros_healthd_routines.mojom.h"
@@ -142,7 +142,16 @@ void FakeCrosHealthd::SetIsEventSupportedResponseForTesting(
   is_event_supported_response_.Swap(&result);
 }
 
-FakeRoutineController* FakeCrosHealthd::GetRoutineControllerForArgumentTag(
+void FakeCrosHealthd::SetIsRoutineArgumentSupportedResponseForTesting(
+    mojom::SupportStatusPtr& result) {
+  is_routine_argument_supported_response_.Swap(&result);
+}
+
+void FakeCrosHealthd::FlushRoutineServiceForTesting() {
+  routines_provider_.FlushForTesting();
+}
+
+FakeRoutineControl* FakeCrosHealthd::GetRoutineControlForArgumentTag(
     mojom::RoutineArgument::Tag tag) {
   auto it = routine_controllers_.find(tag);
   if (it == routine_controllers_.end()) {
@@ -227,12 +236,12 @@ void FakeCrosHealthd::EmitSignalStrengthChangedEventForTesting(
   }
 }
 
-absl::optional<mojom::DiagnosticRoutineEnum>
-FakeCrosHealthd::GetLastRunRoutine() const {
+std::optional<mojom::DiagnosticRoutineEnum> FakeCrosHealthd::GetLastRunRoutine()
+    const {
   return last_run_routine_;
 }
 
-absl::optional<FakeCrosHealthd::RoutineUpdateParams>
+std::optional<FakeCrosHealthd::RoutineUpdateParams>
 FakeCrosHealthd::GetRoutineUpdateParams() const {
   return routine_update_params_;
 }
@@ -330,7 +339,7 @@ void FakeCrosHealthd::RunSmartctlCheckRoutine(
 
 void FakeCrosHealthd::RunAcPowerRoutine(
     mojom::AcPowerStatusEnum expected_status,
-    const absl::optional<std::string>& expected_power_type,
+    const std::optional<std::string>& expected_power_type,
     RunAcPowerRoutineCallback callback) {
   actual_passed_parameters_.clear();
   actual_passed_parameters_.Set("expected_status",
@@ -395,26 +404,16 @@ void FakeCrosHealthd::RunFloatingPointAccuracyRoutine(
       callback_delay_);
 }
 
-void FakeCrosHealthd::DEPRECATED_RunNvmeWearLevelRoutine(
+void FakeCrosHealthd::DEPRECATED_RunNvmeWearLevelRoutineWithThreshold(
     uint32_t wear_level_threshold,
-    RunNvmeWearLevelRoutineCallback callback) {
+    DEPRECATED_RunNvmeWearLevelRoutineWithThresholdCallback callback) {
   NOTREACHED();
 }
 
-void FakeCrosHealthd::RunNvmeWearLevelRoutine(
+void FakeCrosHealthd::DEPRECATED_RunNvmeWearLevelRoutine(
     mojom::NullableUint32Ptr wear_level_threshold,
-    RunNvmeWearLevelRoutineCallback callback) {
-  actual_passed_parameters_.clear();
-  if (!wear_level_threshold.is_null()) {
-    actual_passed_parameters_.Set(
-        "wear_level_threshold", static_cast<int>(wear_level_threshold->value));
-  }
-
-  last_run_routine_ = mojom::DiagnosticRoutineEnum::kNvmeWearLevel;
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(std::move(callback), run_routine_response_.Clone()),
-      callback_delay_);
+    DEPRECATED_RunNvmeWearLevelRoutineCallback callback) {
+  NOTREACHED();
 }
 
 void FakeCrosHealthd::RunNvmeSelfTestRoutine(
@@ -501,7 +500,7 @@ void FakeCrosHealthd::RunBatteryChargeRoutine(
 }
 
 void FakeCrosHealthd::RunMemoryRoutine(
-    absl::optional<uint32_t> max_testing_mem_kib,
+    std::optional<uint32_t> max_testing_mem_kib,
     RunMemoryRoutineCallback callback) {
   actual_passed_parameters_.clear();
   last_run_routine_ = mojom::DiagnosticRoutineEnum::kMemory;
@@ -589,7 +588,7 @@ void FakeCrosHealthd::RunHttpsLatencyRoutine(
 }
 
 void FakeCrosHealthd::RunVideoConferencingRoutine(
-    const absl::optional<std::string>& stun_server_hostname,
+    const std::optional<std::string>& stun_server_hostname,
     RunVideoConferencingRoutineCallback callback) {
   actual_passed_parameters_.clear();
   if (stun_server_hostname.has_value()) {
@@ -661,7 +660,7 @@ void FakeCrosHealthd::DEPRECATED_RunLedLitUpRoutine(
   actual_passed_parameters_.Set("name", static_cast<int32_t>(name));
   actual_passed_parameters_.Set("color", static_cast<int32_t>(color));
 
-  last_run_routine_ = mojom::DiagnosticRoutineEnum::kLedLitUp;
+  last_run_routine_ = mojom::DiagnosticRoutineEnum::DEPRECATED_kLedLitUp;
   std::move(callback).Run(run_routine_response_.Clone());
 }
 
@@ -672,32 +671,20 @@ void FakeCrosHealthd::RunEmmcLifetimeRoutine(
   std::move(callback).Run(run_routine_response_.Clone());
 }
 
-void FakeCrosHealthd::RunAudioSetVolumeRoutine(
+void FakeCrosHealthd::DEPRECATED_RunAudioSetVolumeRoutine(
     uint64_t node_id,
     uint8_t volume,
     bool mute_on,
-    RunAudioSetVolumeRoutineCallback callback) {
-  actual_passed_parameters_.clear();
-  actual_passed_parameters_.Set("node_id", static_cast<int>(node_id));
-  actual_passed_parameters_.Set("volume", static_cast<int>(volume));
-  actual_passed_parameters_.Set("mute_on", mute_on);
-
-  last_run_routine_ = mojom::DiagnosticRoutineEnum::kAudioSetVolume;
-  std::move(callback).Run(run_routine_response_.Clone());
+    DEPRECATED_RunAudioSetVolumeRoutineCallback callback) {
+  NOTREACHED();
 }
 
-void FakeCrosHealthd::RunAudioSetGainRoutine(
+void FakeCrosHealthd::DEPRECATED_RunAudioSetGainRoutine(
     uint64_t node_id,
     uint8_t gain,
-    bool mute_on,
-    RunAudioSetGainRoutineCallback callback) {
-  actual_passed_parameters_.clear();
-  actual_passed_parameters_.Set("node_id", static_cast<int>(node_id));
-  actual_passed_parameters_.Set("gain", static_cast<int>(gain));
-  actual_passed_parameters_.Set("mute_on", mute_on);
-
-  last_run_routine_ = mojom::DiagnosticRoutineEnum::kAudioSetGain;
-  std::move(callback).Run(run_routine_response_.Clone());
+    bool deprecated_mute_on,
+    DEPRECATED_RunAudioSetGainRoutineCallback callback) {
+  NOTREACHED();
 }
 
 void FakeCrosHealthd::RunBluetoothPowerRoutine(
@@ -743,6 +730,11 @@ void FakeCrosHealthd::RunAudioDriverRoutine(
 void FakeCrosHealthd::RunUfsLifetimeRoutine(
     RunUfsLifetimeRoutineCallback callback) {
   last_run_routine_ = mojom::DiagnosticRoutineEnum::kUfsLifetime;
+  std::move(callback).Run(run_routine_response_.Clone());
+}
+
+void FakeCrosHealthd::RunFanRoutine(RunFanRoutineCallback callback) {
+  last_run_routine_ = mojom::DiagnosticRoutineEnum::kFan;
   std::move(callback).Run(run_routine_response_.Clone());
 }
 
@@ -818,7 +810,7 @@ void FakeCrosHealthd::ProbeProcessInfo(const uint32_t process_id,
 }
 
 void FakeCrosHealthd::ProbeMultipleProcessInfo(
-    const absl::optional<std::vector<uint32_t>>& process_ids,
+    const std::optional<std::vector<uint32_t>>& process_ids,
     bool ignore_single_process_error,
     ProbeMultipleProcessInfoCallback callback) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -834,6 +826,12 @@ void FakeCrosHealthd::CreateRoutine(
   routine_controllers_.emplace(
       std::piecewise_construct, std::forward_as_tuple(argument->which()),
       std::forward_as_tuple(std::move(pending_receiver), std::move(observer)));
+}
+
+void FakeCrosHealthd::IsRoutineArgumentSupported(
+    mojom::RoutineArgumentPtr arg,
+    IsRoutineArgumentSupportedCallback callback) {
+  std::move(callback).Run(is_routine_argument_supported_response_->Clone());
 }
 
 }  // namespace ash::cros_healthd

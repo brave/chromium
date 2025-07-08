@@ -3,12 +3,15 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/mediarecorder/key_frame_request_processor.h"
+
+#include <variant>
+
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/time/time.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 namespace {
@@ -25,32 +28,35 @@ class KeyFrameRequestProcessorClockTest : public ::testing::Test {
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   base::TimeTicks now_;
 };
 
 TEST(KeyFrameRequestProcessorTest, DefaultConfigurationIsUnconfigured) {
+  test::TaskEnvironment task_environment;
   KeyFrameRequestProcessor::Configuration config;
-  ASSERT_TRUE(
-      absl::get_if<KeyFrameRequestProcessor::NotConfiguredTag>(&config));
+  ASSERT_TRUE(std::get_if<KeyFrameRequestProcessor::NotConfiguredTag>(&config));
 }
 
 TEST_F(KeyFrameRequestProcessorClockTest,
-       DefaultProcessorNeverSuggestsKeyframes) {
-  // At least not during the first 1000 frames or during 24 hours of runtime.
+       DefaultProcessorRequestKeyFrameEvery100Frames) {
   KeyFrameRequestProcessor processor;
   OnKeyFrame(processor);
   ASSERT_FALSE(OnFrameAndShouldRequestKeyFrame(processor));
-  for (int i = 0; i != 1000; i++) {
+  for (int i = 0; i != 99; i++) {
     Advance(base::Seconds(1));
     ASSERT_FALSE(OnFrameAndShouldRequestKeyFrame(processor));
   }
+  // 101-th frame.
+  ASSERT_TRUE(OnFrameAndShouldRequestKeyFrame(processor));
+  // No keyframe during 24 hours of runtime.
   Advance(base::Hours(24));
   ASSERT_FALSE(OnFrameAndShouldRequestKeyFrame(processor));
 }
 
 TEST_F(KeyFrameRequestProcessorClockTest,
        CountIntervalSuggestsKeyframesPeriodically) {
-  KeyFrameRequestProcessor processor(2);
+  KeyFrameRequestProcessor processor(2u);
   OnKeyFrame(processor);
   ASSERT_FALSE(OnFrameAndShouldRequestKeyFrame(processor));
   ASSERT_FALSE(OnFrameAndShouldRequestKeyFrame(processor));

@@ -6,11 +6,13 @@
 #define ASH_SYSTEM_TRAY_TRAY_ITEM_VIEW_H_
 
 #include <memory>
+#include <optional>
 
 #include "ash/ash_export.h"
+#include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/compositor/throughput_tracker.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/compositor/compositor_metrics_tracker.h"
 #include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/view.h"
@@ -30,21 +32,31 @@ class Shelf;
 // IME icons like "US" (US keyboard) or "あ(Google Japanese Input)" are
 // rendered as a label, but reading such text literally will not always be
 // understandable.
-class IconizedLabel : public views::Label {
+class ASH_EXPORT IconizedLabel : public views::Label {
+  METADATA_HEADER(IconizedLabel, views::Label)
+
  public:
-  void SetCustomAccessibleName(const std::u16string& name) {
-    custom_accessible_name_ = name;
-  }
+  void SetCustomAccessibleName(const std::u16string& name);
 
   std::u16string GetAccessibleNameString() const {
     return custom_accessible_name_;
   }
 
-  // views::Label:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  // views::View:
+  void AdjustAccessibleName(std::u16string& new_name,
+                            ax::mojom::NameFrom& name_from) override;
 
  private:
+  // The accessible role depends on the `custom_accessible_name_` when it is
+  // non-empty.
+  void UpdateAccessibleRole();
+
   std::u16string custom_accessible_name_;
+
+  base::CallbackListSubscription text_context_changed_callback_ =
+      AddTextContextChangedCallback(
+          base::BindRepeating(&IconizedLabel::UpdateAccessibleRole,
+                              base::Unretained(this)));
 };
 
 // Base-class for items in the tray. It makes sure the widget is updated
@@ -63,6 +75,8 @@ class IconizedLabel : public views::Label {
 // animated (for instance, when the `NotificationCenterTray` is hidden).
 class ASH_EXPORT TrayItemView : public views::View,
                                 public views::AnimationDelegateViews {
+  METADATA_HEADER(TrayItemView, views::View)
+
  public:
   class Observer : public base::CheckedObserver {
    public:
@@ -70,6 +84,11 @@ class ASH_EXPORT TrayItemView : public views::View,
     // yet changed. `target_visibility` is the visibility the tray item is going
     // to have.
     virtual void OnTrayItemVisibilityAboutToChange(bool target_visibility) = 0;
+
+    // Update observers that have dependencies on the presence of the
+    // `image_view_` or the `label_`. Since the TrayItem can only have an image
+    // view or a label, combine this into one function.
+    virtual void OnTrayItemChildViewChanged() = 0;
   };
 
   explicit TrayItemView(Shelf* shelf);
@@ -135,9 +154,8 @@ class ASH_EXPORT TrayItemView : public views::View,
 
   // views::View.
   void SetVisible(bool visible) override;
-  gfx::Size CalculatePreferredSize() const override;
-  int GetHeightForWidth(int width) const override;
-  const char* GetClassName() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
   void set_use_scale_in_animation(bool use_scale_in_animation) {
     use_scale_in_animation_ = use_scale_in_animation;
@@ -185,7 +203,7 @@ class ASH_EXPORT TrayItemView : public views::View,
   double GetItemScaleProgressFromAnimationProgress(
       double animation_value) const;
 
-  const raw_ptr<Shelf, ExperimentalAsh> shelf_;
+  const raw_ptr<Shelf, DanglingUntriaged> shelf_;
 
   // When showing the item in tray, the animation is executed with 2 stages:
   // 1. Resize: The size reserved for tray item view gradually increases.
@@ -203,17 +221,19 @@ class ASH_EXPORT TrayItemView : public views::View,
   // Use scale in animating in the item to the tray.
   bool use_scale_in_animation_ = true;
 
-  // For Material Next: if this view is active or not in `UnifiedSystemTray`.
+  // If this view is active or not in `UnifiedSystemTray`.
   // This is used for coloring and is set in `UpdateLabelOrImageViewColor()`.
-  // Note: the value is only accurate when the Jelly flag is set.
   bool is_active_ = false;
 
   // Only one of |label_| and |image_view_| should be non-null.
-  raw_ptr<IconizedLabel, ExperimentalAsh> label_ = nullptr;
-  raw_ptr<views::ImageView, ExperimentalAsh> image_view_ = nullptr;
+  raw_ptr<IconizedLabel, DanglingUntriaged> label_ = nullptr;
+  raw_ptr<views::ImageView, DanglingUntriaged> image_view_ = nullptr;
 
-  // Measure animation smoothness metrics for `animation_`.
-  absl::optional<ui::ThroughputTracker> throughput_tracker_;
+  // Measures animation smoothness metrics for "show" animation.
+  std::optional<ui::ThroughputTracker> show_throughput_tracker_;
+
+  // Measures animation smoothness metrics for "hide" animation.
+  std::optional<ui::ThroughputTracker> hide_throughput_tracker_;
 
   // Number of active requests to disable animation.
   size_t disable_animation_count_ = 0u;

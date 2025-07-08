@@ -127,7 +127,7 @@ class UserAddedRemovedReporterTest : public ::testing::Test {
         AccountId::FromUserEmail(std::string(user_email));
     TestingProfile::Builder profile_builder;
     auto profile = profile_builder.Build();
-    auto* const user = user_manager_->AddKioskAppUser(account_id);
+    auto* const user = user_manager_->AddKioskChromeAppUser(account_id);
     user_manager_->LoginUser(account_id, true);
     ash::ProfileHelper::Get()->SetUserToProfileMappingForTesting(user,
                                                                  profile.get());
@@ -135,13 +135,13 @@ class UserAddedRemovedReporterTest : public ::testing::Test {
     return profile;
   }
 
-  raw_ptr<::reporting::MockReportQueueStrict, ExperimentalAsh> mock_queue_;
+  raw_ptr<::reporting::MockReportQueueStrict, DanglingUntriaged> mock_queue_;
 
   std::unique_ptr<base::WeakPtrFactory<::reporting::MockReportQueueStrict>>
       weak_mock_queue_factory_;
 
  private:
-  raw_ptr<ash::FakeChromeUserManager, ExperimentalAsh> user_manager_;
+  raw_ptr<ash::FakeChromeUserManager, DanglingUntriaged> user_manager_;
 
   std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 

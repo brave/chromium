@@ -1,3 +1,5 @@
+# Tokens used by the fuzzers.
+
 # symbols
 " "
 "\""
@@ -627,6 +629,8 @@
 "fullscreen"
 "standalone"
 "minimal-ui"
+"borderless"
+"window-controls-overlay"
 "browser"
 "sticky"
 "coarse"
@@ -717,7 +721,7 @@
 "hsl"
 "hsla"
 "hwb"
-"-internal-light-dark"
+"light-dark"
 "matrix"
 "matrix3d"
 "perspective"
@@ -742,8 +746,6 @@
 "path"
 "ray"
 "sides"
-"calc"
-"-webkit-calc"
 "x"
 "y"
 "mandatory"
@@ -937,6 +939,20 @@
 "color-contrast"
 "accentcolor"
 "accentcolortext"
+"-internal-auto-base-select"
+"-internal-partial-interest-content"
+
+# Math functions (TODO: We're missing a lot of them)
+"calc"
+"-webkit-calc"
+"sibling-index"
+"sibling-count"
+
+# display-state
+# normal
+# fullscreen
+"minimized"
+"maximized"
 
 # at-rules
 "@charset"
@@ -947,7 +963,6 @@
 "@page"
 "@font-face"
 "@keyframes"
-"@viewport"
 
 # HTML elements
 "display"
@@ -1428,7 +1443,7 @@
 "z-index"
 "zoom"
 
-# pseudo elements and classes
+# pseudo-elements and classes
 ":hover"
 ":visited"
 ":before"

@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -23,8 +24,8 @@
 #include "components/permissions/permissions_client.h"
 #include "components/webapps/browser/banners/app_banner_manager.h"
 #include "components/webapps/browser/banners/app_banner_metrics.h"
+#include "components/webapps/browser/banners/install_banner_config.h"
 #include "components/webapps/browser/features.h"
-#include "components/webapps/common/switches.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
@@ -33,27 +34,28 @@ namespace webapps {
 
 namespace {
 
+// Default number of days that dismissing or ignoring the banner will prevent it
+// being seen again for.
+constexpr unsigned int kMinimumBannerBlockedToBannerShown = 90;
+constexpr unsigned int kMinimumDaysBetweenBannerShows = 7;
+
 // Max number of apps (including ServiceWorker based web apps) that a particular
 // site may show a banner for.
 const size_t kMaxAppsPerSite = 3;
 
 // Dictionary keys to use for the events. Must be kept in sync with
 // AppBannerEvent.
-constexpr const char* kBannerEventKeys[] = {
+constexpr auto kBannerEventKeys = std::to_array<const char*>({
     // clang-format off
     "couldShowBannerEvents",
     "didShowBannerEvent",
     "didBlockBannerEvent",
     "couldShowAmbientBadgeEvent",
     // clang-format on
-};
+});
 
-// Total engagement score required before a banner will actually be triggered.
-double gTotalEngagementToTrigger = features::kDefaultTotalEngagementToTrigger;
-
-unsigned int gDaysAfterDismissedToShow =
-    features::kMinimumBannerBlockedToBannerShown;
-unsigned int gDaysAfterIgnoredToShow = features::kMinimumDaysBetweenBannerShows;
+unsigned int gDaysAfterDismissedToShow = kMinimumBannerBlockedToBannerShown;
+unsigned int gDaysAfterIgnoredToShow = kMinimumDaysBetweenBannerShows;
 
 base::Value::Dict GetOriginAppBannerData(HostContentSettingsMap* settings,
                                          const GURL& origin_url) {
@@ -112,40 +114,22 @@ class AppPrefs {
   raw_ptr<base::Value::Dict> dict_ = nullptr;
 };
 
-// Queries variations for the number of days which dismissing and ignoring the
-// banner should prevent a banner from showing.
-void UpdateDaysBetweenShowing() {
-  AppBannerSettingsHelper::SetDaysAfterDismissAndIgnoreToTrigger(
-      features::kBannerParamsDaysAfterBannerDismissedKey.Get(),
-      features::kBannerParamsDaysAfterBannerIgnoredKey.Get());
-}
-
-// Queries variations for the maximum site engagement score required to trigger
-// the banner showing.
-void UpdateSiteEngagementToTrigger() {
-  double total_engagement = features::kBannerParamsEngagementTotalKey.Get();
-
-  if (total_engagement >= 0) {
-    AppBannerSettingsHelper::SetTotalEngagementToTrigger(total_engagement);
-  }
-}
-
 // Reports whether |event| was recorded within the |period| up until |now|.
 // If we get nullopt, we cannot store any more values for |origin_url|.
 // Conservatively assume we did block a banner in this case.
-absl::optional<bool> WasEventWithinPeriod(
+std::optional<bool> WasEventWithinPeriod(
     AppBannerSettingsHelper::AppBannerEvent event,
     base::TimeDelta period,
     content::WebContents* web_contents,
     const GURL& origin_url,
     const std::string& package_name_or_start_url,
     base::Time now) {
-  absl::optional<base::Time> event_time =
+  std::optional<base::Time> event_time =
       AppBannerSettingsHelper::GetSingleBannerEvent(
           web_contents, origin_url, package_name_or_start_url, event);
 
   if (!event_time)
-    return absl::nullopt;
+    return std::nullopt;
 
   // Null times are in the distant past, so the delta between real times and
   // null events will always be greater than the limits.
@@ -163,7 +147,7 @@ struct NextInstallTextAnimation {
   base::Time last_shown;
   base::TimeDelta delay;
 
-  static absl::optional<NextInstallTextAnimation> Get(
+  static std::optional<NextInstallTextAnimation> Get(
       content::WebContents* web_contents,
       const GURL& scope);
 
@@ -173,7 +157,7 @@ struct NextInstallTextAnimation {
                      const GURL& scope) const;
 };
 
-absl::optional<NextInstallTextAnimation> NextInstallTextAnimation::Get(
+std::optional<NextInstallTextAnimation> NextInstallTextAnimation::Get(
     content::WebContents* web_contents,
     const GURL& scope) {
   AppPrefs app_prefs(web_contents, scope, scope.spec());
@@ -183,17 +167,17 @@ absl::optional<NextInstallTextAnimation> NextInstallTextAnimation::Get(
   const base::Value::Dict* next_dict =
       app_prefs.dict()->FindDict(kNextInstallTextAnimation);
   if (!next_dict)
-    return absl::nullopt;
+    return std::nullopt;
 
-  absl::optional<base::Time> last_shown =
+  std::optional<base::Time> last_shown =
       base::ValueToTime(next_dict->Find(kLastShownKey));
   if (!last_shown)
-    return absl::nullopt;
+    return std::nullopt;
 
-  absl::optional<base::TimeDelta> delay =
+  std::optional<base::TimeDelta> delay =
       base::ValueToTimeDelta(next_dict->Find(kDelayKey));
   if (!delay)
-    return absl::nullopt;
+    return std::nullopt;
 
   return NextInstallTextAnimation{*last_shown, *delay};
 }
@@ -252,6 +236,8 @@ void AppBannerSettingsHelper::RecordBannerEvent(
     const std::string& package_name_or_start_url,
     AppBannerEvent event,
     base::Time time) {
+  CHECK(!package_name_or_start_url.empty());
+
   AppPrefs app_prefs(web_contents, origin_url, package_name_or_start_url);
   if (!app_prefs.dict())
     return;
@@ -271,6 +257,15 @@ void AppBannerSettingsHelper::RecordBannerEvent(
   app_prefs.Save();
 }
 
+void AppBannerSettingsHelper::RecordBannerEvent(
+    content::WebContents* web_contents,
+    const InstallBannerConfig& install_config,
+    AppBannerEvent event,
+    base::Time time) {
+  RecordBannerEvent(web_contents, install_config.validated_url,
+                    install_config.GetWebOrNativeAppIdentifier(), event, time);
+}
+
 bool AppBannerSettingsHelper::WasBannerRecentlyBlocked(
     content::WebContents* web_contents,
     const GURL& origin_url,
@@ -278,7 +273,7 @@ bool AppBannerSettingsHelper::WasBannerRecentlyBlocked(
     base::Time now) {
   DCHECK(!package_name_or_start_url.empty());
 
-  absl::optional<bool> in_period = WasEventWithinPeriod(
+  std::optional<bool> in_period = WasEventWithinPeriod(
       APP_BANNER_EVENT_DID_BLOCK, base::Days(gDaysAfterDismissedToShow),
       web_contents, origin_url, package_name_or_start_url, now);
   return in_period.value_or(true);
@@ -291,14 +286,14 @@ bool AppBannerSettingsHelper::WasBannerRecentlyIgnored(
     base::Time now) {
   DCHECK(!package_name_or_start_url.empty());
 
-  absl::optional<bool> in_period = WasEventWithinPeriod(
+  std::optional<bool> in_period = WasEventWithinPeriod(
       APP_BANNER_EVENT_DID_SHOW, base::Days(gDaysAfterIgnoredToShow),
       web_contents, origin_url, package_name_or_start_url, now);
 
   return in_period.value_or(true);
 }
 
-absl::optional<base::Time> AppBannerSettingsHelper::GetSingleBannerEvent(
+std::optional<base::Time> AppBannerSettingsHelper::GetSingleBannerEvent(
     content::WebContents* web_contents,
     const GURL& origin_url,
     const std::string& package_name_or_start_url,
@@ -307,18 +302,12 @@ absl::optional<base::Time> AppBannerSettingsHelper::GetSingleBannerEvent(
 
   AppPrefs app_prefs(web_contents, origin_url, package_name_or_start_url);
   if (!app_prefs.dict())
-    return absl::nullopt;
+    return std::nullopt;
 
-  absl::optional<double> internal_time =
+  std::optional<double> internal_time =
       app_prefs.dict()->FindDouble(kBannerEventKeys[event]);
   return internal_time ? base::Time::FromInternalValue(internal_time.value())
                        : base::Time();
-}
-
-bool AppBannerSettingsHelper::HasSufficientEngagement(double total_engagement) {
-  return (base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kBypassAppBannerEngagementChecks)) ||
-         (total_engagement >= gTotalEngagementToTrigger);
 }
 
 void AppBannerSettingsHelper::SetDaysAfterDismissAndIgnoreToTrigger(
@@ -328,27 +317,10 @@ void AppBannerSettingsHelper::SetDaysAfterDismissAndIgnoreToTrigger(
   gDaysAfterIgnoredToShow = ignore_days;
 }
 
-void AppBannerSettingsHelper::SetTotalEngagementToTrigger(
-    double total_engagement) {
-  gTotalEngagementToTrigger = total_engagement;
-}
-
-base::AutoReset<double> AppBannerSettingsHelper::ScopeTotalEngagementForTesting(
-    double total_engagement) {
-  return base::AutoReset<double>(&gTotalEngagementToTrigger, total_engagement);
-}
-
-void AppBannerSettingsHelper::UpdateFromFieldTrial() {
-  // If we are using the site engagement score, only extract the total
-  // engagement to trigger from the params variations.
-  UpdateDaysBetweenShowing();
-  UpdateSiteEngagementToTrigger();
-}
-
 bool AppBannerSettingsHelper::CanShowInstallTextAnimation(
     content::WebContents* web_contents,
     const GURL& scope) {
-  absl::optional<NextInstallTextAnimation> next_prompt =
+  std::optional<NextInstallTextAnimation> next_prompt =
       NextInstallTextAnimation::Get(web_contents, scope);
 
   if (!next_prompt)
@@ -369,7 +341,7 @@ void AppBannerSettingsHelper::RecordInstallTextAnimationShown(
   NextInstallTextAnimation next_prompt = {AppBannerManager::GetCurrentTime(),
                                           kInitialAnimationSuppressionPeriod};
 
-  absl::optional<NextInstallTextAnimation> last_prompt =
+  std::optional<NextInstallTextAnimation> last_prompt =
       NextInstallTextAnimation::Get(web_contents, scope);
   if (last_prompt) {
     next_prompt.delay =

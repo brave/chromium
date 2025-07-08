@@ -4,6 +4,7 @@
 
 #include "ui/accessibility/ax_tree_manager.h"
 
+#include "base/debug/crash_logging.h"
 #include "base/lazy_instance.h"
 #include "base/no_destructor.h"
 #include "ui/accessibility/ax_common.h"
@@ -14,6 +15,9 @@
 #include "ui/accessibility/ax_tree_observer.h"
 
 namespace ui {
+
+// A flag to ensure that accessibility fatal errors crash immediately.
+bool AXTreeManager::is_fail_fast_mode_ = false;
 
 // static
 AXTreeManagerMap& AXTreeManager::GetMap() {
@@ -64,19 +68,23 @@ AXTreeManager::AXTreeManager()
       ax_tree_(nullptr),
       event_generator_(ax_tree()) {}
 
-AXTreeManager::AXTreeManager(std::unique_ptr<AXTree> tree)
-    : connected_to_parent_tree_node_(false),
+AXTreeManager::AXTreeManager(std::unique_ptr<AXTree> tree,
+                             bool is_platform_tree_manager)
+    : is_platform_tree_manager_(is_platform_tree_manager),
+      connected_to_parent_tree_node_(false),
       ax_tree_(std::move(tree)),
       event_generator_(ax_tree()) {
-  DCHECK(ax_tree_);
-
   // Do not register the tree in the map if it has no ID. It will be registered
   // later in OnTreeDataChanged().
   if (HasValidTreeID()) {
     GetMap().AddTreeManager(GetTreeID(), this);
   }
 
-  tree_observation_.Observe(ax_tree());
+  // This is temporary until the ViewAXTreeManager is not needed anymore. After
+  // that, we could instead have a DCHECK(ax_tree()). See crbug.com/1468416.
+  if (ax_tree()) {
+    tree_observation_.Observe(ax_tree());
+  }
 }
 
 void AXTreeManager::FireFocusEvent(AXNode* node) {
@@ -118,20 +126,19 @@ bool AXTreeManager::CanFireEvents() const {
   return true;
 }
 
-AXNode* AXTreeManager::GetNodeFromTree(const AXTreeID& tree_id,
-                                       const AXNodeID node_id) const {
-  auto* manager = AXTreeManager::FromID(tree_id);
-  return manager ? manager->GetNode(node_id) : nullptr;
+bool AXTreeManager::IsView() const {
+  return false;
 }
 
-void AXTreeManager::Initialize(const ui::AXTreeUpdate& initial_tree) {
+void AXTreeManager::Initialize(const AXTreeUpdate& initial_tree) {
   if (!ax_tree()->Unserialize(initial_tree)) {
     LOG(FATAL) << "No recovery is possible if the initial tree is broken: "
-               << ax_tree()->error();
+               << ax_tree()->error() << ", AXTreeUpdate info: "
+               << initial_tree.ToString().substr(0, 500);
   }
 }
 
-AXNode* AXTreeManager::GetNode(const AXNodeID node_id) const {
+AXNode* AXTreeManager::GetNode(AXNodeID node_id) const {
   return ax_tree_ ? ax_tree_->GetFromId(node_id) : nullptr;
 }
 
@@ -141,10 +148,6 @@ const AXTreeData& AXTreeManager::GetTreeData() const {
 
 AXTreeID AXTreeManager::GetParentTreeID() const {
   return ax_tree_ ? ax_tree_->data().parent_tree_id : AXTreeIDUnknown();
-}
-
-bool AXTreeManager::IsPlatformTreeManager() const {
-  return false;
 }
 
 AXNode* AXTreeManager::GetRoot() const {
@@ -158,14 +161,14 @@ void AXTreeManager::WillBeRemovedFromMap() {
 }
 
 // static
-absl::optional<AXNodeID> AXTreeManager::last_focused_node_id_ = {};
+std::optional<AXNodeID> AXTreeManager::last_focused_node_id_ = {};
 
 // static
-absl::optional<AXTreeID> AXTreeManager::last_focused_node_tree_id_ = {};
+std::optional<AXTreeID> AXTreeManager::last_focused_node_tree_id_ = {};
 
 // static
 void AXTreeManager::SetLastFocusedNode(AXNode* node) {
-#if defined(AX_FAIL_FAST_BUILD)
+#if AX_FAIL_FAST_BUILD()
   static auto* const ax_crash_key_focus = base::debug::AllocateCrashKeyString(
       "ax_focus", base::debug::CrashKeySize::Size256);
 #endif
@@ -180,7 +183,7 @@ void AXTreeManager::SetLastFocusedNode(AXNode* node) {
 
     // Only set specific focused node info in fail fast builds, in order to
     // avoid extra processing for every focus move.
-#if defined(AX_FAIL_FAST_BUILD)
+#if AX_FAIL_FAST_BUILD()
     node_info_focus << node;
     base::debug::SetCrashKeyString(ax_crash_key_focus, node_info_focus.str());
 #endif
@@ -206,7 +209,7 @@ void AXTreeManager::SetLastFocusedNode(AXNode* node) {
     DCHECK(last_focused_node_tree_id_);
     DCHECK(last_focused_node_tree_id_ != AXTreeIDUnknown());
   } else {
-#if defined(AX_FAIL_FAST_BUILD)
+#if AX_FAIL_FAST_BUILD()
     base::debug::ClearCrashKeyString(ax_crash_key_focus);
 #endif
     base::debug::ClearCrashKeyString(ax_crash_key_focus_top_frame);
@@ -231,15 +234,14 @@ AXNode* AXTreeManager::GetLastFocusedNode() {
 
 AXTreeManager::~AXTreeManager() {
   AXNode* parent = nullptr;
-  if (connected_to_parent_tree_node_)
+  if (connected_to_parent_tree_node_) {
     parent = GetParentNodeFromParentTree();
+  }
 
   // Fire any events that need to be fired when tree nodes get deleted. For
   // example, events that fire every time "OnSubtreeWillBeDeleted" is called.
   if (ax_tree_)
     ax_tree_->Destroy();
-
-  CleanUp();
 
   // Stop observing so we don't get a callback for every node being deleted.
   event_generator_.ReleaseTree();
@@ -252,6 +254,31 @@ AXTreeManager::~AXTreeManager() {
   }
 
   ParentConnectionChanged(parent);
+}
+
+std::unique_ptr<AXTree> AXTreeManager::SetTree(std::unique_ptr<AXTree> tree) {
+  if (!tree) {
+    NOTREACHED()
+        << "Attempting to set a new tree, but no tree has been provided.";
+  }
+
+  if (tree->GetAXTreeID().type() == ax::mojom::AXTreeIDType::kUnknown) {
+    NOTREACHED() << "Invalid tree ID.\n" << tree->ToString();
+  }
+
+  if (ax_tree_) {
+    ax_tree_->NotifyTreeManagerWillBeRemoved(GetTreeID());
+    GetMap().RemoveTreeManager(GetTreeID());
+  }
+
+  std::swap(ax_tree_, tree);
+  GetMap().AddTreeManager(GetTreeID(), this);
+  return tree;
+}
+
+std::unique_ptr<AXTree> AXTreeManager::SetTree(
+    const AXTreeUpdate& initial_state) {
+  return SetTree(std::make_unique<AXTree>(initial_state));
 }
 
 void AXTreeManager::OnTreeDataChanged(AXTree* tree,
@@ -378,8 +405,8 @@ void AXTreeManager::ParentConnectionChanged(AXNode* parent) {
       parent, RetargetEventType::RetargetEventTypeGenerated);
   DCHECK(parent) << "RetargetForEvents shouldn't return a "
                     "null pointer when |parent| is not null.";
-  parent_manager->FireGeneratedEvent(
-      ui::AXEventGenerator::Event::CHILDREN_CHANGED, parent);
+  parent_manager->FireGeneratedEvent(AXEventGenerator::Event::CHILDREN_CHANGED,
+                                     parent);
 }
 
 void AXTreeManager::EnsureParentConnectionIfNotRootManager() {

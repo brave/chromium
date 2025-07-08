@@ -113,6 +113,7 @@ cc_library(
         ":status",
         "//mediapipe/framework/deps:file_helpers",
         "//mediapipe/framework/deps:file_path",
+        "//mediapipe/framework/deps:mmapped_file",
     ],
 )
 
@@ -124,6 +125,7 @@ cc_library(
             "//mediapipe/framework/deps:image_resizer",
             "//mediapipe/framework/port:opencv_core",
         ],
+        "//mediapipe:emscripten": ["//mediapipe/framework/deps:image_resizer"],
     }),
 )
 
@@ -134,10 +136,11 @@ cc_library(
 
 cc_library(
     name = "benchmark",
-    testonly = 1,
+    testonly = True,
     hdrs = ["benchmark.h"],
     deps = [
         "@com_google_benchmark//:benchmark",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -153,7 +156,7 @@ cc_library(
 
 cc_library(
     name = "gtest",
-    testonly = 1,
+    testonly = True,
     hdrs = [
         "gmock.h",
         "gtest.h",
@@ -169,7 +172,24 @@ cc_library(
 
 cc_library(
     name = "gtest_main",
-    testonly = 1,
+    testonly = True,
+    hdrs = [
+        "gmock.h",
+        "gtest.h",
+        "gtest-spi.h",
+        "status_matchers.h",
+    ],
+    deps = [
+        ":status_matchers",
+        "//mediapipe/framework/deps:message_matchers",
+        "//mediapipe/framework/deps:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "gtest_main_no_heapcheck",
+    testonly = True,
     hdrs = [
         "gmock.h",
         "gtest.h",
@@ -192,6 +212,7 @@ cc_library(
     deps = [
         "//mediapipe/framework:port",
         "//third_party:glog",
+        "@com_google_absl//absl/strings:has_ostream_operator",
         "@com_google_absl//absl/time",
     ],
 )
@@ -326,6 +347,7 @@ cc_library(
         ":core_proto",
         ":logging",
         "//mediapipe/framework:port",
+        "@com_google_absl//absl/log:absl_check",
     ],
 )
 
@@ -362,7 +384,9 @@ cc_library(
 cc_library(
     name = "singleton",
     hdrs = ["singleton.h"],
-    deps = ["//mediapipe/framework/deps:singleton"],
+    deps = [
+        "//mediapipe/framework/deps:singleton",
+    ],
 )
 
 cc_library(
@@ -406,7 +430,7 @@ cc_library(
 
 cc_library(
     name = "status_matchers",
-    testonly = 1,
+    testonly = True,
     hdrs = ["status_matchers.h"],
     deps = [
         ":status",
@@ -421,6 +445,7 @@ cc_library(
         "//conditions:default": [":threadpool_impl_default_to_google"],
         "//mediapipe:android": [":threadpool_impl_default_to_mediapipe"],
         "//mediapipe:apple": [":threadpool_impl_default_to_mediapipe"],
+        "//mediapipe:emscripten": [":threadpool_impl_default_to_mediapipe"],
     }),
 )
 

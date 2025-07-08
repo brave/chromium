@@ -23,8 +23,9 @@ class ClipboardHistoryItem;
 
 // The base class for menu items of the clipboard history menu.
 class ASH_EXPORT ClipboardHistoryItemView : public views::View {
+  METADATA_HEADER(ClipboardHistoryItemView, views::View)
+
  public:
-  METADATA_HEADER(ClipboardHistoryItemView);
   static std::unique_ptr<ClipboardHistoryItemView>
   CreateFromClipboardHistoryItem(const base::UnguessableToken& item_id,
                                  const ClipboardHistory* clipboard_history,
@@ -74,8 +75,9 @@ class ASH_EXPORT ClipboardHistoryItemView : public views::View {
   // clipboard history refresh is enabled, a `ContentsView` observes its sibling
   // `ClipboardHistoryDeleteButton` so that it knows when to clip its contents.
   class ContentsView : public views::View, public views::ViewObserver {
+    METADATA_HEADER(ContentsView, views::View)
+
    public:
-    METADATA_HEADER(ContentsView);
     ContentsView();
     ContentsView(const ContentsView& rhs) = delete;
     ContentsView& operator=(const ContentsView& rhs) = delete;
@@ -90,7 +92,8 @@ class ASH_EXPORT ClipboardHistoryItemView : public views::View {
    private:
     // views::ViewObserver:
     void OnViewVisibilityChanged(views::View* observed_view,
-                                 views::View* starting_view) override;
+                                 views::View* starting_view,
+                                 bool visible) override;
 
     // Determines whether the contents need to be clipped to avoid overlapping
     // with the delete button.
@@ -129,8 +132,8 @@ class ASH_EXPORT ClipboardHistoryItemView : public views::View {
   class DisplayView;
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
-  void GetAccessibleNodeData(ui::AXNodeData* data) override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
   // Initializes the menu item after its construction.
   void Init();
@@ -153,18 +156,22 @@ class ASH_EXPORT ClipboardHistoryItemView : public views::View {
   // Updates `pseudo_focus_` and children visibility.
   void SetPseudoFocus(PseudoFocus new_pseudo_focus);
 
+  // Updates the `kSelected` attribute for the current view based on current
+  // selection update.
+  void UpdateAccessiblitySelectionAttribute();
+
   // Unique identifier for the `ClipboardHistoryItem` this view represents.
   const base::UnguessableToken item_id_;
 
   // Owned by `ClipboardHistoryControllerImpl`.
   const raw_ptr<const ClipboardHistory> clipboard_history_;
 
-  const raw_ptr<views::MenuItemView, ExperimentalAsh> container_;
+  const raw_ptr<views::MenuItemView> container_;
 
   // Owned by the view hierarchy.
-  raw_ptr<views::View, ExperimentalAsh> main_button_ = nullptr;
-  raw_ptr<views::View, ExperimentalAsh> ctrl_v_label_ = nullptr;
-  raw_ptr<views::View, ExperimentalAsh> delete_button_ = nullptr;
+  raw_ptr<views::View> main_button_ = nullptr;
+  raw_ptr<views::View> ctrl_v_label_ = nullptr;
+  raw_ptr<views::View> delete_button_ = nullptr;
 
   PseudoFocus pseudo_focus_ = PseudoFocus::kEmpty;
 

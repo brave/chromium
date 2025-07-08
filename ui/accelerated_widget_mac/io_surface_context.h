@@ -7,7 +7,7 @@
 
 #include <OpenGL/OpenGL.h>
 
-#include "base/mac/scoped_typeref.h"
+#include "base/apple/scoped_typeref.h"
 #include "base/memory/ref_counted.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac_export.h"
 #include "ui/gl/gpu_switching_observer.h"
@@ -39,7 +39,7 @@ class IOSurfaceContext
   void PoisonContextAndSharegroup();
   bool HasBeenPoisoned() const { return poisoned_; }
 
-  CGLContextObj cgl_context() const { return cgl_context_; }
+  CGLContextObj cgl_context() const { return cgl_context_.get(); }
 
   // ui::GpuSwitchingObserver implementation.
   void OnGpuSwitched(gl::GpuPreference active_gpu_heuristic) override;
@@ -49,11 +49,11 @@ class IOSurfaceContext
 
   IOSurfaceContext(
       Type type,
-      base::ScopedTypeRef<CGLContextObj> clg_context_strong);
+      base::apple::ScopedTypeRef<CGLContextObj> clg_context_strong);
   ~IOSurfaceContext() override;
 
   Type type_;
-  base::ScopedTypeRef<CGLContextObj> cgl_context_;
+  base::apple::ScopedTypeRef<CGLContextObj> cgl_context_;
 
   bool poisoned_ = false;
 };

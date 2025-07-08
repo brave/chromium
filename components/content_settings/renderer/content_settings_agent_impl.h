@@ -20,9 +20,7 @@
 #include "content/public/renderer/render_frame_observer_tracker.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
-#include "url/gurl.h"
 #include "url/origin.h"
 
 namespace blink {
@@ -46,21 +44,20 @@ class ContentSettingsAgentImpl
    public:
     virtual ~Delegate();
 
+    // Return true if this frame should be allowlisted for accessing storage.
+    virtual bool IsFrameAllowlistedForStorageAccess(
+        blink::WebFrame* frame) const;
+
     // Return true if this scheme should be allowlisted for content settings.
     virtual bool IsSchemeAllowlisted(const std::string& scheme);
 
     // Allows the delegate to override logic for various
-    // blink::WebContentSettingsClient methods. If an optional value is
-    // returned, return absl::nullopt to use the default logic.
-    virtual absl::optional<bool> AllowReadFromClipboard();
-    virtual absl::optional<bool> AllowWriteToClipboard();
-    virtual absl::optional<bool> AllowMutationEvents();
+    // blink::WebContentSettingsClient methods.
+    virtual bool AllowReadFromClipboard();
+    virtual bool AllowWriteToClipboard();
   };
 
-  // Set `should_allowlist` to true if `render_frame()` contains content that
-  // should be allowlisted for content settings.
   ContentSettingsAgentImpl(content::RenderFrame* render_frame,
-                           bool should_allowlist,
                            std::unique_ptr<Delegate> delegate);
 
   ContentSettingsAgentImpl(const ContentSettingsAgentImpl&) = delete;
@@ -79,19 +76,12 @@ class ContentSettingsAgentImpl
   void AllowStorageAccess(StorageType storage_type,
                           base::OnceCallback<void(bool)> callback) override;
   bool AllowStorageAccessSync(StorageType type) override;
-  bool AllowImage(bool enabled_per_settings,
-                  const blink::WebURL& image_url) override;
-  bool AllowScript(bool enabled_per_settings) override;
-  bool AllowScriptFromSource(bool enabled_per_settings,
-                             const blink::WebURL& script_url) override;
-  bool AllowAutoDarkWebContent(bool enabled_per_settings) override;
-  bool AllowReadFromClipboard(bool default_value) override;
-  bool AllowWriteToClipboard(bool default_value) override;
-  bool AllowMutationEvents(bool default_value) override;
+  bool AllowReadFromClipboard() override;
+  bool AllowWriteToClipboard() override;
+  void DidNotAllowImage() override;
   void DidNotAllowScript() override;
   bool AllowRunningInsecureContent(bool allowed_per_settings,
                                    const blink::WebURL& url) override;
-  bool AllowPopupsAndRedirects(bool default_value) override;
   bool ShouldAutoupgradeMixedContent() override;
 
   bool allow_running_insecure_content() const {
@@ -124,7 +114,6 @@ class ContentSettingsAgentImpl
 
   // mojom::ContentSettingsAgent:
   void SetAllowRunningInsecureContent() override;
-  void SetDisabledMixedContentUpgrades() override;
   void SendRendererContentSettingRules(
       const RendererContentSettingRules& renderer_settings) override;
 
@@ -133,11 +122,6 @@ class ContentSettingsAgentImpl
 
   // Resets the `content_blocked_` array.
   void ClearBlockedContentSettings();
-
-  // Helpers.
-  // True if `render_frame()` contains content that is allowlisted for content
-  // settings.
-  bool IsAllowlistedForContentSettings() const;
 
   // A getter for `content_settings_manager_` that ensures it is bound.
   mojom::ContentSettingsManager& GetContentSettingsManager();
@@ -155,14 +139,6 @@ class ContentSettingsAgentImpl
   // Caches the result of AllowStorageAccess.
   using StoragePermissionsKey = std::pair<url::Origin, StorageType>;
   base::flat_map<StoragePermissionsKey, bool> cached_storage_permissions_;
-
-  // Caches the result of AllowScript.
-  base::flat_map<blink::WebFrame*, bool> cached_script_permissions_;
-
-  bool mixed_content_autoupgrades_disabled_ = false;
-
-  // If true, IsAllowlistedForContentSettings will always return true.
-  const bool should_allowlist_;
 
   std::unique_ptr<Delegate> delegate_;
 

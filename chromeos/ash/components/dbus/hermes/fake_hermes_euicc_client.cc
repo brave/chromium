@@ -4,12 +4,12 @@
 
 #include "chromeos/ash/components/dbus/hermes/fake_hermes_euicc_client.h"
 
-#include "ash/constants/ash_features.h"
+#include <algorithm>
+
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/containers/flat_map.h"
 #include "base/logging.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -18,9 +18,9 @@
 #include "chromeos/ash/components/dbus/hermes/hermes_manager_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_profile_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_response_status.h"
+#include "chromeos/ash/components/dbus/shill/fake_shill_service_client.h"
 #include "chromeos/ash/components/dbus/shill/shill_device_client.h"
 #include "chromeos/ash/components/dbus/shill/shill_profile_client.h"
-#include "chromeos/ash/components/dbus/shill/shill_service_client.h"
 #include "chromeos/dbus/constants/dbus_switches.h"
 #include "dbus/object_path.h"
 #include "third_party/cros_system_api/dbus/hermes/dbus-constants.h"
@@ -31,7 +31,7 @@ namespace ash {
 namespace {
 
 const char* kDefaultMccMnc = "310999";
-const char* kFakeActivationCodePrefix = "1$SMDP.GSMA.COM$00000-00000-00000-000";
+const char* kFakeActivationCodePrefix = "LPA:1$SMDP.GSMA.COM$";
 const char* kActivationCodeToTriggerDBusError = "no_memory";
 const char* kFakeProfilePathPrefix = "/org/chromium/Hermes/Profile/";
 const char* kFakeIccidPrefix = "10000000000000000";
@@ -40,25 +40,10 @@ const char* kFakeProfileNicknamePrefix = "FakeCellularNetworkNickname_";
 const char* kFakeServiceProvider = "Fake Wireless";
 const char* kFakeNetworkServicePathPrefix = "/service/cellular1";
 
-dbus::Property<std::vector<dbus::ObjectPath>>& GetPendingProfiles(
-    HermesEuiccClient::Properties* properties) {
-  return features::IsSmdsDbusMigrationEnabled()
-             ? properties->profiles()
-             : properties->pending_carrier_profiles();
-}
-
-dbus::Property<std::vector<dbus::ObjectPath>>& GetInstalledProfiles(
-    HermesEuiccClient::Properties* properties) {
-  return features::IsSmdsDbusMigrationEnabled()
-             ? properties->profiles()
-             : properties->installed_carrier_profiles();
-}
-
 bool PopPendingProfile(HermesEuiccClient::Properties* properties,
                        dbus::ObjectPath carrier_profile_path) {
-  std::vector<dbus::ObjectPath> profiles =
-      GetPendingProfiles(properties).value();
-  auto it = base::ranges::find(profiles, carrier_profile_path);
+  std::vector<dbus::ObjectPath> profiles = properties->profiles().value();
+  auto it = std::ranges::find(profiles, carrier_profile_path);
   if (it == profiles.end()) {
     return false;
   }
@@ -70,22 +55,21 @@ bool PopPendingProfile(HermesEuiccClient::Properties* properties,
   }
 
   profiles.erase(it);
-  GetPendingProfiles(properties).ReplaceValue(profiles);
+  properties->profiles().ReplaceValue(profiles);
   return true;
 }
 
 dbus::ObjectPath PopPendingProfileWithActivationCode(
     HermesEuiccClient::Properties* euicc_properties,
     const std::string& activation_code) {
-  std::vector<dbus::ObjectPath> profiles =
-      GetPendingProfiles(euicc_properties).value();
+  std::vector<dbus::ObjectPath> profiles = euicc_properties->profiles().value();
   for (auto it = profiles.begin(); it != profiles.end(); it++) {
     dbus::ObjectPath carrier_profile_path = *it;
     HermesProfileClient::Properties* profile_properties =
         HermesProfileClient::Get()->GetProperties(carrier_profile_path);
     if (profile_properties->activation_code().value() == activation_code) {
       profiles.erase(it);
-      GetPendingProfiles(euicc_properties).ReplaceValue(profiles);
+      euicc_properties->profiles().ReplaceValue(profiles);
       return carrier_profile_path;
     }
   }
@@ -110,6 +94,12 @@ base::Value::List ExtractPSimSlotInfo(const base::Value* sim_slot_info_list) {
     }
   }
   return psim_slot_info_list;
+}
+
+// The `index` is used when formatting the activation code and is intended to
+// ensure that all fake activation codes are unique.
+std::string GenerateFakeActivationCodeWithIndex(int index) {
+  return base::StringPrintf("%s%010d", kFakeActivationCodePrefix, index);
 }
 
 }  // namespace
@@ -147,18 +137,11 @@ void FakeHermesEuiccClient::ClearEuicc(const dbus::ObjectPath& euicc_path) {
     return;
   auto* profile_test = HermesProfileClient::Get()->GetTestInterface();
   HermesEuiccClient::Properties* properties = it->second.get();
-  if (features::IsSmdsDbusMigrationEnabled()) {
-    for (const auto& path : properties->profiles().value()) {
-      profile_test->ClearProfile(path);
-    }
-  } else {
-    for (const auto& path : properties->installed_carrier_profiles().value()) {
-      profile_test->ClearProfile(path);
-    }
-    for (const auto& path : properties->pending_carrier_profiles().value()) {
-      profile_test->ClearProfile(path);
-    }
+
+  for (const auto& path : properties->profiles().value()) {
+    profile_test->ClearProfile(path);
   }
+
   properties_map_.erase(it);
 }
 
@@ -181,9 +164,8 @@ dbus::ObjectPath FakeHermesEuiccClient::AddFakeCarrierProfile(
       base::StringPrintf("%s%02d", kFakeProfileNicknamePrefix, index),
       base::StringPrintf("%s%02d", kFakeProfileNamePrefix, index),
       kFakeServiceProvider,
-      activation_code.empty()
-          ? base::StringPrintf("%s%02d", kFakeActivationCodePrefix, index)
-          : activation_code,
+      activation_code.empty() ? GenerateFakeActivationCodeWithIndex(index)
+                              : activation_code,
       base::StringPrintf("%s%02d", kFakeNetworkServicePathPrefix, index), state,
       hermes::profile::ProfileClass::kOperational,
       add_carrier_profile_behavior);
@@ -219,9 +201,9 @@ void FakeHermesEuiccClient::AddCarrierProfile(
   Properties* euicc_properties = GetProperties(euicc_path);
   if (state == hermes::profile::State::kPending) {
     std::vector<dbus::ObjectPath> profiles =
-        GetPendingProfiles(euicc_properties).value();
+        euicc_properties->profiles().value();
     profiles.push_back(path);
-    GetPendingProfiles(euicc_properties).ReplaceValue(profiles);
+    euicc_properties->profiles().ReplaceValue(profiles);
     return;
   }
 
@@ -243,10 +225,9 @@ void FakeHermesEuiccClient::AddCarrierProfile(
     return;
   }
 
-  std::vector<dbus::ObjectPath> profiles =
-      GetInstalledProfiles(euicc_properties).value();
+  std::vector<dbus::ObjectPath> profiles = euicc_properties->profiles().value();
   profiles.push_back(path);
-  GetInstalledProfiles(euicc_properties).ReplaceValue(profiles);
+  euicc_properties->profiles().ReplaceValue(profiles);
 }
 
 bool FakeHermesEuiccClient::RemoveCarrierProfile(
@@ -262,15 +243,14 @@ bool FakeHermesEuiccClient::RemoveCarrierProfile(
 
   // Remove profile from Euicc properties.
   Properties* euicc_properties = GetProperties(euicc_path);
-  std::vector<dbus::ObjectPath> profiles =
-      GetInstalledProfiles(euicc_properties).value();
-  auto profiles_iter = base::ranges::find(profiles, carrier_profile_path);
+  std::vector<dbus::ObjectPath> profiles = euicc_properties->profiles().value();
+  auto profiles_iter = std::ranges::find(profiles, carrier_profile_path);
   if (profiles_iter == profiles.end()) {
     return false;
   }
 
   profiles.erase(profiles_iter);
-  GetInstalledProfiles(euicc_properties).ReplaceValue(profiles);
+  euicc_properties->profiles().ReplaceValue(profiles);
 
   // Remove profile dbus object.
   HermesProfileClient::Get()->GetTestInterface()->ClearProfile(
@@ -312,8 +292,7 @@ void FakeHermesEuiccClient::UpdateShillDeviceSimSlotInfo() {
 
   for (auto [physical_slot, euicc_properties] : physical_slot_to_properties) {
     std::string iccid;
-    for (const auto& profile_path :
-         GetInstalledProfiles(euicc_properties).value()) {
+    for (const auto& profile_path : euicc_properties->profiles().value()) {
       HermesProfileClient::Properties* profile_properties =
           profile_client->GetProperties(profile_path);
       DCHECK(profile_properties);
@@ -360,8 +339,7 @@ void FakeHermesEuiccClient::SetInteractiveDelay(base::TimeDelta delay) {
 }
 
 std::string FakeHermesEuiccClient::GenerateFakeActivationCode() {
-  return base::StringPrintf("%s-%04d", kFakeActivationCodePrefix,
-                            fake_profile_counter_++);
+  return GenerateFakeActivationCodeWithIndex(fake_profile_counter_++);
 }
 
 std::string FakeHermesEuiccClient::GetDBusErrorActivationCode() {
@@ -381,7 +359,7 @@ void FakeHermesEuiccClient::InstallProfileFromActivationCode(
     std::move(callback).Run(next_install_profile_result_.value(),
                             dbus::DBusResult::kSuccess,
                             /*carrier_profile_path=*/nullptr);
-    next_install_profile_result_ = absl::nullopt;
+    next_install_profile_result_ = std::nullopt;
     return;
   }
 
@@ -425,7 +403,6 @@ void FakeHermesEuiccClient::RefreshSmdxProfiles(
     const std::string& activation_code,
     bool restore_slot,
     RefreshSmdxProfilesCallback callback) {
-  DCHECK(ash::features::IsSmdsDbusMigrationEnabled());
   last_restore_slot_arg_ = restore_slot;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
@@ -512,6 +489,8 @@ void FakeHermesEuiccClient::DoInstallProfileFromActivationCode(
 
   if (!base::StartsWith(activation_code, kFakeActivationCodePrefix,
                         base::CompareCase::SENSITIVE)) {
+    DVLOG(1) << "Unexpected activation code prefix. Fake activation codes "
+             << "should begin with '" << kFakeActivationCodePrefix << "'";
     std::move(callback).Run(HermesResponseStatus::kErrorInvalidActivationCode,
                             dbus::DBusResult::kSuccess, nullptr);
     return;
@@ -528,9 +507,9 @@ void FakeHermesEuiccClient::DoInstallProfileFromActivationCode(
     profile_properties->state().ReplaceValue(hermes::profile::State::kInactive);
 
     std::vector<dbus::ObjectPath> profiles =
-        GetInstalledProfiles(euicc_properties).value();
+        euicc_properties->profiles().value();
     profiles.push_back(profile_path);
-    GetInstalledProfiles(euicc_properties).ReplaceValue(profiles);
+    euicc_properties->profiles().ReplaceValue(profiles);
   } else {
     // Create a new installed profile with given activation code.
     profile_path = AddFakeCarrierProfile(
@@ -567,10 +546,9 @@ void FakeHermesEuiccClient::DoInstallPendingProfile(
       HermesProfileClient::Get()->GetProperties(carrier_profile_path);
   profile_properties->state().ReplaceValue(hermes::profile::State::kInactive);
 
-  std::vector<dbus::ObjectPath> profiles =
-      GetInstalledProfiles(euicc_properties).value();
+  std::vector<dbus::ObjectPath> profiles = euicc_properties->profiles().value();
   profiles.push_back(carrier_profile_path);
-  GetInstalledProfiles(euicc_properties).ReplaceValue(profiles);
+  euicc_properties->profiles().ReplaceValue(profiles);
 
   CreateCellularService(euicc_path, carrier_profile_path);
 
@@ -592,12 +570,12 @@ void FakeHermesEuiccClient::DoRequestInstalledProfiles(
     InstalledProfileQueue* installed_profile_queue = iter->second.get();
     Properties* euicc_properties = GetProperties(euicc_path);
     std::vector<dbus::ObjectPath> profiles =
-        GetInstalledProfiles(euicc_properties).value();
+        euicc_properties->profiles().value();
     while (!installed_profile_queue->empty()) {
       profiles.push_back(installed_profile_queue->front());
       installed_profile_queue->pop();
     }
-    GetInstalledProfiles(euicc_properties).ReplaceValue(profiles);
+    euicc_properties->profiles().ReplaceValue(profiles);
   }
   std::move(callback).Run(HermesResponseStatus::kSuccess);
 }
@@ -606,9 +584,6 @@ void FakeHermesEuiccClient::DoRefreshSmdxProfiles(
     const dbus::ObjectPath& euicc_path,
     const std::string& activation_code,
     RefreshSmdxProfilesCallback callback) {
-  // Use CHECK() here since the only caller has a DCHECK().
-  CHECK(ash::features::IsSmdsDbusMigrationEnabled());
-
   DVLOG(1) << "Refresh SM-DX Profiles Requested";
 
   HermesResponseStatus status = HermesResponseStatus::kSuccess;
@@ -619,14 +594,14 @@ void FakeHermesEuiccClient::DoRefreshSmdxProfiles(
 
   if (next_refresh_smdx_profiles_result_.has_value()) {
     std::move(callback).Run(status, next_refresh_smdx_profiles_result_.value());
-    next_refresh_smdx_profiles_result_ = absl::nullopt;
+    next_refresh_smdx_profiles_result_ = std::nullopt;
     return;
   }
 
   std::vector<dbus::ObjectPath> profile_paths;
 
   if (status != HermesResponseStatus::kSuccess) {
-    std::move(callback).Run(error_status_queue_.front(), profile_paths);
+    std::move(callback).Run(status, profile_paths);
     return;
   }
 
@@ -635,8 +610,7 @@ void FakeHermesEuiccClient::DoRefreshSmdxProfiles(
 
   // Collect all of the existing, pending profiles that have an activation code
   // that matches |activation_code| to be returned.
-  for (const auto& profile_path :
-       GetPendingProfiles(euicc_properties).value()) {
+  for (const auto& profile_path : euicc_properties->profiles().value()) {
     HermesProfileClient::Properties* properties =
         HermesProfileClient::Get()->GetProperties(profile_path);
     if (properties &&
@@ -684,7 +658,8 @@ void FakeHermesEuiccClient::DoUninstallProfile(
     return;
   }
 
-  // TODO(azeemarshad): Remove Shill service after removing carrier profile.
+  // TODO(crbug.com/390258073): Remove Shill service after removing carrier
+  // profile.
   bool remove_success = RemoveCarrierProfile(euicc_path, carrier_profile_path);
   std::move(callback).Run(remove_success
                               ? HermesResponseStatus::kSuccess
@@ -698,7 +673,7 @@ void FakeHermesEuiccClient::DoResetMemory(
   HermesEuiccClient::Properties* properties = GetProperties(euicc_path);
   while (true) {
     const dbus::Property<std::vector<dbus::ObjectPath>>& profiles =
-        GetInstalledProfiles(properties);
+        properties->profiles();
     if (profiles.value().empty()) {
       break;
     }
@@ -742,15 +717,42 @@ void FakeHermesEuiccClient::CreateCellularService(
   service_test->SetServiceProperty(
       service_path, shill::kActivationStateProperty,
       base::Value(shill::kActivationStateActivated));
+  service_test->SetServiceProperty(service_path, shill::kAutoConnectProperty,
+                                   base::Value(true));
   service_test->SetServiceProperty(service_path, shill::kConnectableProperty,
                                    base::Value(false));
   service_test->SetServiceProperty(service_path, shill::kVisibleProperty,
                                    base::Value(true));
+  CreateDefaultModbApn(service_path);
 
   ShillProfileClient::TestInterface* profile_test =
       ShillProfileClient::Get()->GetTestInterface();
   profile_test->AddService(ShillProfileClient::GetSharedProfilePath(),
                            service_path);
+}
+
+void FakeHermesEuiccClient::CreateDefaultModbApn(
+    const std::string& service_path) {
+  ShillServiceClient::TestInterface* service_test =
+      ShillServiceClient::Get()->GetTestInterface();
+  service_test->SetServiceProperty(
+      service_path, shill::kCellularLastGoodApnProperty,
+      base::Value(service_test->GetFakeDefaultModbApnDict()));
+  service_test->SetServiceProperty(
+      service_path, shill::kCellularApnProperty,
+      base::Value(service_test->GetFakeDefaultModbApnDict()));
+  base::Value::List apn_list;
+  apn_list.Append(service_test->GetFakeDefaultModbApnDict());
+  ShillDeviceClient::TestInterface* device_test =
+      ShillDeviceClient::Get()->GetTestInterface();
+  DCHECK(device_test);
+
+  std::string device_path =
+      device_test->GetDevicePathForType(shill::kTypeCellular);
+  CHECK(!device_path.empty());
+  device_test->SetDeviceProperty(device_path, shill::kCellularApnListProperty,
+                                 base::Value(std::move(apn_list)),
+                                 /*notify_change=*/false);
 }
 
 void FakeHermesEuiccClient::CallNotifyPropertyChanged(

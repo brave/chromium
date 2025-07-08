@@ -14,6 +14,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -40,6 +41,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "url/gurl.h"
 
@@ -80,7 +82,8 @@ class ThrottleContentBrowserClient : public ChromeContentBrowserClient {
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
       content::NavigationUIData* navigation_ui_data,
-      int frame_tree_node_id) override {
+      content::FrameTreeNodeId frame_tree_node_id,
+      std::optional<int64_t> navigation_id) override {
     std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
     if (request.url == watch_url_)
       throttles.push_back(std::make_unique<HeaderModifyingThrottle>());
@@ -95,7 +98,7 @@ class ThrottleContentBrowserClient : public ChromeContentBrowserClient {
 class MirrorBrowserTest : public InProcessBrowserTest {
  protected:
   MirrorBrowserTest() {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitAndDisableFeature(features::kHttpsUpgrades);
   }

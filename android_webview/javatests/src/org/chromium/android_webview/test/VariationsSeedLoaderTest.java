@@ -4,9 +4,10 @@
 
 package org.chromium.android_webview.test;
 
-import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.SINGLE_PROCESS;
+import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.EITHER_PROCESS;
 
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -19,6 +20,8 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.variations.VariationsServiceMetricsHelper;
@@ -29,6 +32,7 @@ import org.chromium.android_webview.variations.VariationsSeedLoader;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.HistogramWatcher;
 
 import java.io.File;
@@ -36,19 +40,17 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Test VariationsSeedLoader.
- */
-@RunWith(AwJUnit4ClassRunner.class)
-@OnlyRunIn(SINGLE_PROCESS)
-public class VariationsSeedLoaderTest {
+/** Test VariationsSeedLoader. */
+@RunWith(Parameterized.class)
+@UseParametersRunnerFactory(AwJUnit4ClassRunnerWithParameters.Factory.class)
+@OnlyRunIn(EITHER_PROCESS) // These tests don't use the renderer process
+public class VariationsSeedLoaderTest extends AwParameterizedTest {
     private static final long CURRENT_TIME_MILLIS = 1234567890;
     private static final long EXPIRED_TIMESTAMP = 0;
     private static final long TIMEOUT_MILLIS = 10000;
 
     // Needed for tests that test histograms, which rely on native code.
-    @Rule
-    public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
+    @Rule public AwActivityTestRule mActivityTestRule;
 
     /**
      * Helper class to interact with {@link TestLoader}. This can be used to retrieve whether
@@ -92,7 +94,7 @@ public class VariationsSeedLoaderTest {
      * service Intent to match the test environment.
      */
     public static class TestLoader extends VariationsSeedLoader {
-        private TestLoaderResult mResult;
+        private final TestLoaderResult mResult;
 
         public TestLoader(TestLoaderResult result) {
             mResult = result;
@@ -130,23 +132,29 @@ public class VariationsSeedLoaderTest {
 
     private Handler mMainHandler;
 
+    public VariationsSeedLoaderTest(AwSettingsMutation param) {
+        this.mActivityTestRule = new AwActivityTestRule(param.getMutation());
+    }
+
     // Create a TestLoader, run it on the UI thread, and block until it's finished. The return value
     // indicates whether the loader decided to request a new seed.
     private boolean runTestLoaderBlocking() throws TimeoutException {
         final TestLoaderResult result = new TestLoaderResult();
-        Runnable run = () -> {
-            TestLoader loader = new TestLoader(result);
-            loader.startVariationsInit();
-            loader.finishVariationsInit();
-            result.onForegroundWorkFinished();
-        };
+        Runnable run =
+                () -> {
+                    TestLoader loader = new TestLoader(result);
+                    loader.startVariationsInit();
+                    loader.finishVariationsInit();
+                    result.onForegroundWorkFinished();
+                };
 
         CallbackHelper onRequestReceived = MockVariationsSeedServer.getRequestHelper();
         int requestsReceived = onRequestReceived.getCallCount();
         Assert.assertTrue("Failed to post seed loader Runnable", mMainHandler.post(run));
         result.waitForCallback("Timed out waiting for loader to finish.", 0);
         if (result.wasSeedRequested()) {
-            onRequestReceived.waitForCallback("Seed requested, but timed out waiting for request"
+            onRequestReceived.waitForCallback(
+                    "Seed requested, but timed out waiting for request"
                             + " to arrive in MockVariationsSeedServer",
                     requestsReceived);
             return true;
@@ -163,6 +171,31 @@ public class VariationsSeedLoaderTest {
     @After
     public void tearDown() throws IOException {
         VariationsTestUtils.deleteSeeds();
+    }
+
+    // Test that Seed and AppSeed Freshness diff is correct and recorded
+    @Test
+    @MediumTest
+    public void testRecordSeedDiff() throws Exception {
+        // The first line is needed to set the seed freshness to zero
+        // in order to calculate the diff correctly
+        VariationsSeedLoader.cacheSeedFreshness(0);
+        long seedFreshnessInMinutes = 100;
+        long appSeedFreshnessInMinutes = 40;
+        long diff = seedFreshnessInMinutes - appSeedFreshnessInMinutes;
+        var histogramWatcherOne =
+                HistogramWatcher.newSingleRecordWatcher(
+                        VariationsSeedLoader.SEED_FRESHNESS_DIFF_HISTOGRAM_NAME, (int) diff);
+        VariationsSeedLoader.cacheAppSeedFreshness(appSeedFreshnessInMinutes);
+        VariationsSeedLoader.cacheSeedFreshness(seedFreshnessInMinutes);
+        histogramWatcherOne.assertExpected();
+
+        var histogramWatcherTwo =
+                HistogramWatcher.newSingleRecordWatcher(
+                        VariationsSeedLoader.SEED_FRESHNESS_DIFF_HISTOGRAM_NAME, (int) diff);
+        VariationsSeedLoader.cacheSeedFreshness(seedFreshnessInMinutes);
+        VariationsSeedLoader.cacheAppSeedFreshness(appSeedFreshnessInMinutes);
+        histogramWatcherTwo.assertExpected();
     }
 
     // Test the case that:
@@ -195,8 +228,8 @@ public class VariationsSeedLoaderTest {
             boolean seedRequested = runTestLoaderBlocking();
 
             // Since there was a fresh seed, we should not request another seed.
-            Assert.assertFalse("New seed was requested when it should not have been",
-                    seedRequested);
+            Assert.assertFalse(
+                    "New seed was requested when it should not have been", seedRequested);
         } finally {
             VariationsTestUtils.deleteSeeds();
         }
@@ -242,8 +275,8 @@ public class VariationsSeedLoaderTest {
             Assert.assertFalse("New seed still exists", newFile.exists());
 
             // Since the "new" seed was fresh, we should not request another seed.
-            Assert.assertFalse("New seed was requested when it should not have been",
-                    seedRequested);
+            Assert.assertFalse(
+                    "New seed was requested when it should not have been", seedRequested);
         } finally {
             VariationsTestUtils.deleteSeeds();
         }
@@ -336,8 +369,8 @@ public class VariationsSeedLoaderTest {
 
     // Test loading twice. The first load should trigger a request, but the second should not,
     // because requests should be rate-limited.
-    // VariationsUtils.getSeedFile() - doesn't exist
-    // VariationsUtils.getNewSeedFile() - doesn't exist
+    // VariationsUtils.getSeedFile() - doesn't exist VariationsUtils.getNewSeedFile() - doesn't
+    // exist
     @Test
     @MediumTest
     public void testDoubleLoad() throws Exception {
@@ -346,8 +379,8 @@ public class VariationsSeedLoaderTest {
             Assert.assertTrue("No seed requested", seedRequested);
 
             seedRequested = runTestLoaderBlocking();
-            Assert.assertFalse("New seed was requested when it should not have been",
-                    seedRequested);
+            Assert.assertFalse(
+                    "New seed was requested when it should not have been", seedRequested);
         } finally {
             VariationsTestUtils.deleteSeeds();
         }
@@ -357,6 +390,9 @@ public class VariationsSeedLoaderTest {
     @Test
     @MediumTest
     @CommandLineFlags.Add(AwSwitches.FINCH_SEED_EXPIRATION_AGE + "=0")
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.TIRAMISU,
+            message = "crbug.com/351017155")
     public void testFinchSeedExpirationAgeFlag() throws Exception {
         try {
             // Create a new seed file with a recent timestamp.
@@ -403,13 +439,15 @@ public class VariationsSeedLoaderTest {
                     HistogramWatcher.newBuilder()
                             .expectIntRecordTimes(
                                     VariationsSeedLoader.DOWNLOAD_JOB_INTERVAL_HISTOGRAM_NAME,
-                                    (int) TimeUnit.MILLISECONDS.toMinutes(threeWeeksMs), 1)
+                                    (int) TimeUnit.MILLISECONDS.toMinutes(threeWeeksMs),
+                                    1)
                             .build();
             HistogramWatcher histogramExpectationQueueTime =
                     HistogramWatcher.newBuilder()
                             .expectIntRecordTimes(
                                     VariationsSeedLoader.DOWNLOAD_JOB_QUEUE_TIME_HISTOGRAM_NAME,
-                                    (int) TimeUnit.MILLISECONDS.toMinutes(twoWeeksMs), 1)
+                                    (int) TimeUnit.MILLISECONDS.toMinutes(twoWeeksMs),
+                                    1)
                             .build();
 
             VariationsServiceMetricsHelper metrics =

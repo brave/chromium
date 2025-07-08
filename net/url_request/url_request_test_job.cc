@@ -9,10 +9,10 @@
 #include <memory>
 
 #include "base/compiler_specific.h"
-#include "base/containers/cxx20_erase_list.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -143,7 +143,7 @@ URLRequestTestJob::URLRequestTestJob(URLRequest* request,
       response_headers_length_(response_headers.size()) {}
 
 URLRequestTestJob::~URLRequestTestJob() {
-  base::Erase(g_pending_jobs.Get(), this);
+  std::erase(g_pending_jobs.Get(), this);
 }
 
 bool URLRequestTestJob::GetMimeType(std::string* mime_type) const {
@@ -213,7 +213,10 @@ int URLRequestTestJob::CopyDataForRead(IOBuffer* buf, int buf_size) {
     if (bytes_read + offset_ > static_cast<int>(response_data_.length()))
       bytes_read = static_cast<int>(response_data_.length()) - offset_;
 
-    memcpy(buf->data(), &response_data_.c_str()[offset_], bytes_read);
+    buf->span().copy_prefix_from(
+        base::as_byte_span(response_data_)
+            .subspan(base::checked_cast<size_t>(offset_),
+                     base::checked_cast<size_t>(bytes_read)));
     offset_ += bytes_read;
   }
   return bytes_read;
@@ -275,7 +278,7 @@ void URLRequestTestJob::Kill() {
   stage_ = DONE;
   URLRequestJob::Kill();
   weak_factory_.InvalidateWeakPtrs();
-  base::Erase(g_pending_jobs.Get(), this);
+  std::erase(g_pending_jobs.Get(), this);
 }
 
 void URLRequestTestJob::ProcessNextOperation() {
@@ -288,8 +291,9 @@ void URLRequestTestJob::ProcessNextOperation() {
       // OK if ReadRawData wasn't called yet.
       if (async_buf_) {
         int result = CopyDataForRead(async_buf_.get(), async_buf_size_);
-        if (result < 0)
+        if (result < 0) {
           NOTREACHED() << "Reads should not fail in DATA_AVAILABLE.";
+        }
         if (NextReadAsync()) {
           // Make all future reads return io pending until the next
           // ProcessNextOperation().
@@ -309,7 +313,6 @@ void URLRequestTestJob::ProcessNextOperation() {
       return;
     default:
       NOTREACHED() << "Invalid stage";
-      return;
   }
 }
 

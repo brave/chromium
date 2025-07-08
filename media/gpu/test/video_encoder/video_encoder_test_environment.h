@@ -7,6 +7,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/files/file_path.h"
@@ -14,7 +15,6 @@
 #include "media/base/video_codecs.h"
 #include "media/gpu/test/video_test_environment.h"
 #include "media/video/video_encode_accelerator.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace gpu {
 class GpuMemoryBufferFactory;
@@ -41,10 +41,6 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
     // Measure the speed performance.
     // video_encode_accelerator_perf_tests --speed
     kSpeedPerformance,
-    // TODO(b/282878066): Remove this once video_encode_accelerator_perf_tests
-    // forces a user to specify --quality or --speed.
-    // video_encode_accelerator_perf_tests
-    kGeneralPerformance,
   };
 
   // |read_all_frames_in_video| is weather we read all the frames in
@@ -56,8 +52,9 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
       const base::FilePath& output_folder,
       const std::string& codec,
       const std::string& svc_mode,
+      VideoEncodeAccelerator::Config::ContentType content_type,
       bool save_output_bitstream,
-      absl::optional<uint32_t> output_bitrate,
+      std::optional<uint32_t> output_bitrate,
       Bitrate::Mode bitrate_mode,
       bool reverse,
       const FrameOutputConfig& frame_output_config = FrameOutputConfig(),
@@ -80,6 +77,7 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
   const std::vector<VideoEncodeAccelerator::Config::SpatialLayer>&
   SpatialLayers() const;
   SVCInterLayerPredMode InterLayerPredMode() const;
+  VideoEncodeAccelerator::Config::ContentType ContentType() const;
   // Get the target bitrate (bits/second).
   const VideoBitrateAllocation& BitrateAllocation() const;
   // Whether the encoded bitstream is saved to disk.
@@ -92,7 +90,7 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
   // True if the video should play backwards at reaching the end of video.
   // Otherwise the video loops. See the comment in AlignedDataHelper for detail.
   bool Reverse() const;
-  absl::optional<base::FilePath> OutputBitstreamFilePath() const;
+  std::optional<base::FilePath> OutputBitstreamFilePath() const;
   // Gets the frame output configuration.
   const FrameOutputConfig& ImageOutputConfig() const;
 
@@ -103,7 +101,7 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
   gpu::GpuMemoryBufferFactory* GetGpuMemoryBufferFactory() const;
 
  private:
-  // TODO(crbug.com/1335251): merge |use_vbr| and |bitrate| into a single
+  // TODO(crbug.com/40228467): merge |use_vbr| and |bitrate| into a single
   // Bitrate-typed field.
   VideoEncoderTestEnvironment(
       TestType test_type,
@@ -114,6 +112,7 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
       SVCInterLayerPredMode inter_layer_pred_mode,
       size_t num_temporal_layers,
       size_t num_spatial_layers,
+      VideoEncodeAccelerator::Config::ContentType content_type,
       const media::VideoBitrateAllocation& bitrate,
       bool save_output_bitstream,
       bool reverse,
@@ -139,6 +138,8 @@ class VideoEncoderTestEnvironment : public VideoTestEnvironment {
   // The spatial layers of the stream which aligned with |num_spatial_layers_|
   // and |num_temporal_layers_|. This is only for vp9 stream.
   std::vector<VideoEncodeAccelerator::Config::SpatialLayer> spatial_layers_;
+  // A type of content to be encoded.
+  VideoEncodeAccelerator::Config::ContentType content_type_;
   // Whether the bitstream produced by VideoEncoder is saved to disk.
   const bool save_output_bitstream_;
   // True if the video should play backwards at reaching the end of video.

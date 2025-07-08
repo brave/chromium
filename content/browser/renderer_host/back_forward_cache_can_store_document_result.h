@@ -7,6 +7,7 @@
 
 #include <bitset>
 #include <cstdint>
+#include <optional>
 #include <set>
 
 #include "base/containers/enum_set.h"
@@ -17,10 +18,10 @@
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/render_frame_host.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/scheduler/web_scheduler_tracked_feature.h"
+#include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
 #include "third_party/blink/public/mojom/frame/back_forward_cache_controller.mojom.h"
-#include "ui/accessibility/ax_event.h"
+#include "third_party/blink/public/mojom/script_source_location.mojom.h"
 
 namespace content {
 
@@ -48,7 +49,7 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
   // source ID is set, then it will be reported to UKM metrics; if it's not set,
   // then the source id from the navigation itself will be used.
   using DisabledReasonsMap = std::map<BackForwardCache::DisabledReason,
-                                      std::set<absl::optional<ukm::SourceId>>>;
+                                      std::set<std::optional<ukm::SourceId>>>;
 
   BackForwardCacheCanStoreDocumentResult();
   BackForwardCacheCanStoreDocumentResult(
@@ -66,21 +67,21 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
 
   void No(BackForwardCacheMetrics::NotRestoredReason reason);
 
+  using NotRestoredReasonToSourceMap =
+      std::map<std::string, std::vector<blink::mojom::ScriptSourceLocationPtr>>;
   using BlockingDetailsMap =
       std::map<blink::scheduler::WebSchedulerTrackedFeature,
                std::vector<blink::mojom::BlockingDetailsPtr>>;
   void NoDueToFeatures(BlockingDetailsMap map);
 
   void NoDueToRelatedActiveContents(
-      absl::optional<ShouldSwapBrowsingInstance> browsing_instance_swap_result);
+      std::optional<ShouldSwapBrowsingInstance> browsing_instance_swap_result);
 
   // TODO(hajimehoshi): Replace the arbitrary strings with base::Location /
   // FROM_HERE for privacy reasons.
   void NoDueToDisableForRenderFrameHostCalled(
       const DisabledReasonsMap& reasons);
   void NoDueToDisallowActivation(uint64_t reason);
-  // TODO(crbug.com/1341507): Remove this function.
-  void NoDueToAXEvents(const std::vector<ui::AXEvent>& events);
 
   // The conditions for storing and restoring the pages are different in that
   // pages with cache-control:no-store can enter back/forward cache depending on
@@ -94,6 +95,10 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
     return not_restored_reasons_;
   }
 
+  const NotRestoredReasonToSourceMap& reason_to_source_map() const {
+    return reason_to_source_map_;
+  }
+
   const BlockingDetailsMap& blocking_details_map() const {
     return blocking_details_map_;
   }
@@ -102,7 +107,7 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
     return disabled_reasons_;
   }
 
-  const absl::optional<ShouldSwapBrowsingInstance>
+  const std::optional<ShouldSwapBrowsingInstance>
   browsing_instance_swap_result() const {
     return browsing_instance_swap_result_;
   }
@@ -111,10 +116,7 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
     return disallow_activation_reasons_;
   }
 
-  const std::set<ax::mojom::Event>& ax_events() const { return ax_events_; }
-
   std::string ToString() const;
-  std::vector<std::string> GetStringReasons() const;
 
   void WriteIntoTrace(
       perfetto::TracedProto<
@@ -131,12 +133,14 @@ class CONTENT_EXPORT BackForwardCacheCanStoreDocumentResult {
       BackForwardCacheMetrics::NotRestoredReason reason) const;
 
   NotRestoredReasons not_restored_reasons_;
+  // This is a map that saves not restored reasons in a format ready for NRR API
+  // reporting. If the reason does not have source location, its value must
+  // be an empty vector.
+  NotRestoredReasonToSourceMap reason_to_source_map_;
   BlockingDetailsMap blocking_details_map_;
   DisabledReasonsMap disabled_reasons_;
-  absl::optional<ShouldSwapBrowsingInstance> browsing_instance_swap_result_;
+  std::optional<ShouldSwapBrowsingInstance> browsing_instance_swap_result_;
   std::set<uint64_t> disallow_activation_reasons_;
-  // The list of the accessibility events that made the page bfcache ineligible.
-  std::set<ax::mojom::Event> ax_events_;
 };
 
 }  // namespace content

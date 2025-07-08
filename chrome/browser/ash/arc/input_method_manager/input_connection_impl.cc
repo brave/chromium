@@ -5,10 +5,10 @@
 #include "chrome/browser/ash/arc/input_method_manager/input_connection_impl.h"
 
 #include <tuple>
+#include <utility>
 
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
-#include "third_party/abseil-cpp/absl/utility/utility.h"
 #include "ui/base/ime/ash/ime_bridge.h"
 #include "ui/base/ime/ash/ime_keymap.h"
 #include "ui/events/base_event_utils.h"
@@ -99,11 +99,11 @@ mojom::TextInputStatePtr InputConnectionImpl::GetTextInputState(
   ui::TextInputClient* client = GetTextInputClient();
   gfx::Range text_range = gfx::Range();
   gfx::Range selection_range = gfx::Range();
-  absl::optional<gfx::Range> composition_text_range = gfx::Range();
+  std::optional<gfx::Range> composition_text_range = gfx::Range();
   std::u16string text;
 
   if (!client) {
-    return mojom::TextInputStatePtr(absl::in_place, 0, text, text_range,
+    return mojom::TextInputStatePtr(std::in_place, 0, text, text_range,
                                     selection_range, ui::TEXT_INPUT_TYPE_NONE,
                                     false, 0, is_input_state_update_requested,
                                     composition_text_range);
@@ -116,8 +116,8 @@ mojom::TextInputStatePtr InputConnectionImpl::GetTextInputState(
   client->GetTextFromRange(text_range, &text);
 
   return mojom::TextInputStatePtr(
-      absl::in_place, selection_range.start(), text, text_range,
-      selection_range, client->GetTextInputType(), client->ShouldDoLearning(),
+      std::in_place, selection_range.start(), text, text_range, selection_range,
+      client->GetTextInputType(), client->ShouldDoLearning(),
       client->GetTextInputFlags(), is_input_state_update_requested,
       composition_text_range);
 }
@@ -199,7 +199,7 @@ void InputConnectionImpl::FinishComposingText() {
 void InputConnectionImpl::SetComposingText(
     const std::u16string& text,
     int new_cursor_pos,
-    const absl::optional<gfx::Range>& new_selection_range) {
+    const std::optional<gfx::Range>& new_selection_range) {
   // It's relative to the last character of the composing text,
   // so 0 means the cursor should be just before the last character of the text.
   new_cursor_pos += text.length() - 1;
@@ -327,11 +327,13 @@ void InputConnectionImpl::SendControlKeyEvent(const std::u16string& text) {
 
   for (const auto& t : kControlCharToKeyEvent) {
     if (std::get<0>(t) == str[0]) {
-      ui::KeyEvent press = CreateKeyEvent(ui::ET_KEY_PRESSED, std::get<1>(t),
-                                          std::get<2>(t), std::get<3>(t));
+      ui::KeyEvent press =
+          CreateKeyEvent(ui::EventType::kKeyPressed, std::get<1>(t),
+                         std::get<2>(t), std::get<3>(t));
 
-      ui::KeyEvent release = CreateKeyEvent(ui::ET_KEY_RELEASED, std::get<1>(t),
-                                            std::get<2>(t), std::get<3>(t));
+      ui::KeyEvent release =
+          CreateKeyEvent(ui::EventType::kKeyReleased, std::get<1>(t),
+                         std::get<2>(t), std::get<3>(t));
 
       std::string error;
       if (!ime_engine_->SendKeyEvents(input_context_id_, {press, release},

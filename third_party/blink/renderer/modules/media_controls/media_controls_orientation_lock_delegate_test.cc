@@ -239,6 +239,7 @@ class MediaControlsOrientationLockDelegateTest
   void TearDown() override {
     testing::Mock::VerifyAndClear(&ScreenOrientationClient());
     ScreenOrientationClient().Close();
+    PageTestBase::TearDown();
   }
 
   static bool HasDelegate(const MediaControls& media_controls) {
@@ -390,7 +391,6 @@ class MediaControlsOrientationLockAndRotateToFullscreenDelegateTest
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
   void RotateDeviceTo(double beta, double gamma) {

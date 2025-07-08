@@ -6,16 +6,17 @@
 #define CHROME_BROWSER_CHROMEOS_EXTENSIONS_TELEMETRY_API_EVENTS_EVENTS_API_CONVERTERS_H_
 
 #include <cstdint>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
 #include "chrome/common/chromeos/extensions/api/events.h"
 #include "chromeos/crosapi/mojom/nullable_primitives.mojom.h"
+#include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_event_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_keyboard_event.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace chromeos::converters {
+namespace chromeos::converters::events {
 
 namespace unchecked {
 
@@ -37,6 +38,9 @@ api::os_events::UsbEventInfo UncheckedConvertPtr(
 api::os_events::ExternalDisplayEventInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryExternalDisplayEventInfoPtr ptr);
 
+api::os_events::ExternalDisplayInfo UncheckedConvertPtr(
+    crosapi::mojom::ProbeExternalDisplayInfoPtr input);
+
 api::os_events::SdCardEventInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetrySdCardEventInfoPtr ptr);
 
@@ -46,8 +50,7 @@ api::os_events::PowerEventInfo UncheckedConvertPtr(
 api::os_events::StylusGarageEventInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryStylusGarageEventInfoPtr ptr);
 
-absl::optional<uint32_t> UncheckedConvertPtr(
-    crosapi::mojom::UInt32ValuePtr ptr);
+std::optional<uint32_t> UncheckedConvertPtr(crosapi::mojom::UInt32ValuePtr ptr);
 
 api::os_events::TouchpadButtonEventInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryTouchpadButtonEventInfoPtr ptr);
@@ -57,6 +60,12 @@ api::os_events::TouchpadTouchEventInfo UncheckedConvertPtr(
 
 api::os_events::TouchpadConnectedEventInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryTouchpadConnectedEventInfoPtr ptr);
+
+api::os_events::TouchscreenTouchEventInfo UncheckedConvertPtr(
+    crosapi::mojom::TelemetryTouchscreenTouchEventInfoPtr ptr);
+
+api::os_events::TouchscreenConnectedEventInfo UncheckedConvertPtr(
+    crosapi::mojom::TelemetryTouchscreenConnectedEventInfoPtr ptr);
 
 api::os_events::TouchPointInfo UncheckedConvertPtr(
     crosapi::mojom::TelemetryTouchPointInfoPtr ptr);
@@ -120,15 +129,17 @@ api::os_events::InputTouchButton Convert(
 api::os_events::InputTouchButtonState Convert(
     crosapi::mojom::TelemetryTouchpadButtonEventInfo::State state);
 
+api::os_events::DisplayInputType Convert(
+    crosapi::mojom::ProbeDisplayInputType input);
+
 crosapi::mojom::TelemetryEventCategoryEnum Convert(
     api::os_events::EventCategory input);
 
 int Convert(uint32_t input);
 
 template <class InputT,
-          class OutputT = decltype(Convert(std::declval<InputT>())),
-          class = std::enable_if_t<std::is_enum_v<InputT> ||
-                                   std::is_integral_v<InputT>>>
+          class OutputT = decltype(Convert(std::declval<InputT>()))>
+  requires(std::is_enum_v<InputT> || std::is_integral_v<InputT>)
 std::vector<OutputT> ConvertVector(std::vector<InputT> input) {
   std::vector<OutputT> output;
   for (auto elem : input) {
@@ -139,8 +150,8 @@ std::vector<OutputT> ConvertVector(std::vector<InputT> input) {
 
 template <class InputT,
           class OutputT =
-              decltype(unchecked::UncheckedConvertPtr(std::declval<InputT>())),
-          class = std::enable_if_t<std::is_default_constructible_v<OutputT>>>
+              decltype(unchecked::UncheckedConvertPtr(std::declval<InputT>()))>
+  requires(std::is_default_constructible_v<OutputT>)
 OutputT ConvertStructPtr(InputT input) {
   return (!input.is_null()) ? unchecked::UncheckedConvertPtr(std::move(input))
                             : OutputT();
@@ -156,6 +167,6 @@ std::vector<OutputT> ConvertStructPtrVector(std::vector<InputT> input) {
   return output;
 }
 
-}  // namespace chromeos::converters
+}  // namespace chromeos::converters::events
 
 #endif  // CHROME_BROWSER_CHROMEOS_EXTENSIONS_TELEMETRY_API_EVENTS_EVENTS_API_CONVERTERS_H_

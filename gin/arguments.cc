@@ -36,8 +36,8 @@ v8::Local<v8::Value> Arguments::PeekNext() const {
   return (*info_for_function_)[next_];
 }
 
-std::vector<v8::Local<v8::Value>> Arguments::GetAll() const {
-  std::vector<v8::Local<v8::Value>> result;
+v8::LocalVector<v8::Value> Arguments::GetAll() const {
+  v8::LocalVector<v8::Value> result(isolate_);
   if (is_for_property_)
     return result;
 
@@ -54,9 +54,9 @@ std::vector<v8::Local<v8::Value>> Arguments::GetAll() const {
 
 v8::Local<v8::Context> Arguments::GetHolderCreationContext() const {
   v8::Local<v8::Object> holder = is_for_property_
-                                     ? info_for_property_->Holder()
-                                     : info_for_function_->Holder();
-  return holder->GetCreationContextChecked();
+                                     ? info_for_property_->HolderV2()
+                                     : info_for_function_->This();
+  return holder->GetCreationContextChecked(isolate_);
 }
 
 std::string V8TypeAsString(v8::Isolate* isolate, v8::Local<v8::Value> value) {

@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/events/event_utils.h"
@@ -19,7 +19,7 @@ namespace ui {
 
 EventType EventTypeFromNative(const PlatformEvent& native_event) {
   NOTIMPLEMENTED();
-  return ET_UNKNOWN;
+  return EventType::kUnknown;
 }
 
 int EventFlagsFromNative(const PlatformEvent& native_event) {

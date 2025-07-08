@@ -34,13 +34,15 @@ class CORE_EXPORT ClassicPendingScript final
   //
   // For a script from an external file, calls ScriptResource::Fetch() and
   // creates ClassicPendingScript. Returns nullptr if Fetch() returns nullptr.
-  static ClassicPendingScript* Fetch(const KURL&,
-                                     Document&,
-                                     const ScriptFetchOptions&,
-                                     CrossOriginAttributeValue,
-                                     const WTF::TextEncoding&,
-                                     ScriptElementBase*,
-                                     FetchParameters::DeferOption);
+  static ClassicPendingScript* Fetch(
+      const KURL&,
+      Document&,
+      const ScriptFetchOptions&,
+      CrossOriginAttributeValue,
+      const TextEncoding&,
+      ScriptElementBase*,
+      FetchParameters::DeferOption,
+      scheduler::TaskAttributionInfo* task_state);
 
   // For an inline script.
   static ClassicPendingScript* CreateInline(ScriptElementBase*,
@@ -49,7 +51,8 @@ class CORE_EXPORT ClassicPendingScript final
                                             const KURL& base_url,
                                             const String& source_text,
                                             ScriptSourceLocationType,
-                                            const ScriptFetchOptions&);
+                                            const ScriptFetchOptions&,
+                                            scheduler::TaskAttributionInfo*);
 
   ClassicPendingScript(ScriptElementBase*,
                        const TextPosition&,
@@ -58,7 +61,8 @@ class CORE_EXPORT ClassicPendingScript final
                        const String& source_text_for_inline_script,
                        ScriptSourceLocationType,
                        const ScriptFetchOptions&,
-                       bool is_external);
+                       bool is_external,
+                       scheduler::TaskAttributionInfo* task_state);
   ~ClassicPendingScript() override;
 
   void Trace(Visitor*) const override;

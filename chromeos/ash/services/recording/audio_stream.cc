@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string_view>
 
 #include "base/check.h"
 #include "base/time/time.h"
@@ -17,7 +18,7 @@
 
 namespace recording {
 
-AudioStream::AudioStream(base::StringPiece name) : name_(name) {}
+AudioStream::AudioStream(std::string_view name) : name_(name) {}
 
 AudioStream::~AudioStream() = default;
 
@@ -76,7 +77,6 @@ void AudioStream::ConsumeAndAccumulateTo(media::AudioBus* destination,
     const int consumed = std::min(front->frames(), remaining_frames_to_consume);
     audio_capture_util::AccumulateBusTo(
         /*source=*/*front, /*destination=*/destination,
-        /*source_start_frame=*/0,
         /*destination_start_frame=*/destination_start_frame,
         /*length=*/consumed);
     remaining_frames_to_consume -= consumed;

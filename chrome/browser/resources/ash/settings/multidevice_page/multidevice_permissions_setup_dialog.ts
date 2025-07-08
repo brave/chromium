@@ -9,24 +9,25 @@
  * phone notifications and apps to be mirrored on their Chromebook.
  */
 
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import '../os_settings_icons.html.js';
 import '../settings_shared.css.js';
 import './multidevice_screen_lock_subpage.js';
 
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {LockStateMixin} from '../lock_state_mixin.js';
 
-import {MultiDeviceBrowserProxy, MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
+import type {MultiDeviceBrowserProxy} from './multidevice_browser_proxy.js';
+import {MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
 import {MultiDeviceFeature, PhoneHubPermissionsSetupAction, PhoneHubPermissionsSetupFeatureCombination, PhoneHubPermissionsSetupFlowScreens} from './multidevice_constants.js';
 import {getTemplate} from './multidevice_permissions_setup_dialog.html.js';
 import {SettingsMultideviceScreenLockSubpageElement} from './multidevice_screen_lock_subpage.js';
@@ -634,6 +635,12 @@ export class SettingsMultidevicePermissionsSetupDialogElement extends
     this.browserProxy_.logPhoneHubPermissionSetUpScreenAction(
         this.getCurrentScreen_(),
         PhoneHubPermissionsSetupAction.NEXT_OR_TRY_AGAIN);
+
+    // Undefined behavior can happen when the current page has focus on the
+    // "next" button, however the next page hides the button. This prevents
+    // undefined behavior by focusing on the dialog before changing screens.
+    this.$.dialog.focus();
+
     switch (this.flowState_) {
       // TODO(b/266455078) Avoid Fallthrough case in switch
       // @ts-expect-error Fallthrough case in switch
@@ -782,7 +789,6 @@ export class SettingsMultidevicePermissionsSetupDialogElement extends
       case Status.CONNECTING:
         return this.i18n('multideviceNotificationAccessSetupConnectingTitle');
       case Status.SENT_MESSAGE_TO_PHONE_AND_WAITING_FOR_RESPONSE:
-        return this.i18n('multidevicePermissionsSetupAwaitingResponseTitle');
       case Status.COMPLETED_SUCCESSFULLY:
       case Status.COMPLETED_USER_REJECTED:
       case Status.FAILED_OR_CANCELLED:
@@ -845,6 +851,26 @@ export class SettingsMultidevicePermissionsSetupDialogElement extends
       default:
         return '';
     }
+  }
+
+  private getLiveStatus_(): string {
+    // Because the title is dynamically changed on the single dialog, there
+    // are cases when the "Connecting" screen is visually skipped in the
+    // multidevice permissions dialog because the phone is already
+    // connected, however, the Chromevox gets "stuck" on the Connecting
+    // screen and reads it. This work around adds attributes to get the
+    // "Finish setting up on your phone" title and description to fire in
+    // Chromevox.
+    //
+    // TODO(b/293308787): Investigate potential solutions to improve this,
+    // such as - if the phone is already connected, skip the "Connecting"
+    // screen all together to prevent this issue.
+    if (this.setupState_ ===
+        PermissionsSetupStatus.SENT_MESSAGE_TO_PHONE_AND_WAITING_FOR_RESPONSE) {
+      return 'polite';
+    }
+
+    return 'off';
   }
 
   private computeShouldShowLearnMoreButton_(): boolean {

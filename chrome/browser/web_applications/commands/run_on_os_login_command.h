@@ -8,18 +8,15 @@
 #include <memory>
 #include <string>
 
-#include "base/functional/callback_forward.h"
+#include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
+#include "chrome/browser/web_applications/locks/app_lock.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
-#include "chrome/browser/web_applications/web_app_id.h"
+#include "components/webapps/common/web_app_id.h"
 
 namespace web_app {
-
-class AppLock;
-class AppLockDescription;
-class LockDescription;
 
 enum class RunOnOsLoginAction {
   kSetModeInDBAndOS = 0,
@@ -27,39 +24,46 @@ enum class RunOnOsLoginAction {
   kMaxValue = kSyncModeFromDBToOS
 };
 
+// The completion state of a `RunOnOsLoginCommand`.
 enum class RunOnOsLoginCommandCompletionState {
+  // The command completed successfully.
   kSuccessfulCompletion = 0,
+  // The command was shut down before it could complete.
   kCommandSystemShutDown = 1,
+  // The user is not allowed to change the run on OS login mode for this app.
   kNotAllowedByPolicy = 2,
+  // The run on OS login mode was already set to the desired value.
   kRunOnOsLoginModeAlreadyMatched = 3,
+  // The app is not locally installed, so run on OS login is not applicable.
   kAppNotLocallyInstalled = 4,
-  kOSHooksNotProperlySet = 5,
-  kMaxValue = kOSHooksNotProperlySet
+  // kOSHooksNotProperlySet = 5,
+  kMaxValue = kAppNotLocallyInstalled
 };
 
 // This command persists run on os login data to the web_app DB
 // and/or syncs the run on os login data with the OS integration hooks
 // asynchronously.
-class RunOnOsLoginCommand : public WebAppCommandTemplate<AppLock> {
+class RunOnOsLoginCommand : public WebAppCommand<AppLock> {
  public:
   static std::unique_ptr<RunOnOsLoginCommand> CreateForSetLoginMode(
-      const AppId& app_id,
+      const webapps::AppId& app_id,
       RunOnOsLoginMode login_mode,
       base::OnceClosure callback);
   static std::unique_ptr<RunOnOsLoginCommand> CreateForSyncLoginMode(
-      const AppId& app_id,
+      const webapps::AppId& app_id,
       base::OnceClosure callback);
   ~RunOnOsLoginCommand() override;
 
-  // WebAppCommandTemplate<AppLock>:
-  const LockDescription& lock_description() const override;
+  // WebAppCommand:
+  void OnShutdown(base::PassKey<WebAppCommandManager>) const override;
+
+ protected:
+  // WebAppCommand:
   void StartWithLock(std::unique_ptr<AppLock> lock) override;
-  void OnShutdown() override;
-  base::Value ToDebugValue() const override;
 
  private:
-  RunOnOsLoginCommand(AppId app_id,
-                      absl::optional<RunOnOsLoginMode> login_mode,
+  RunOnOsLoginCommand(webapps::AppId app_id,
+                      std::optional<RunOnOsLoginMode> login_mode,
                       RunOnOsLoginAction set_or_sync_mode,
                       base::OnceClosure callback_);
   void Abort(RunOnOsLoginCommandCompletionState aborted_state);
@@ -72,20 +76,16 @@ class RunOnOsLoginCommand : public WebAppCommandTemplate<AppLock> {
   // Note that this tries to avoid extra work by no-oping if the current
   // OS state matches what is calculated to be the desired stated.
   void SyncRunOnOsLoginMode();
-  void UpdateRunOnOsLoginModeWithOsIntegration(
-      base::RepeatingCallback<void(OsHooksErrors)> os_hooks_callback);
-  void OnOsHooksSet(OsHooksErrors errors);
+  void OnOsIntegrationSynchronized();
   void RecordCompletionState(
       RunOnOsLoginCommandCompletionState completion_state);
 
-  std::unique_ptr<AppLockDescription> lock_description_;
   std::unique_ptr<AppLock> lock_;
 
-  AppId app_id_;
-  absl::optional<RunOnOsLoginMode> login_mode_;
+  webapps::AppId app_id_;
+  std::optional<RunOnOsLoginMode> login_mode_;
   RunOnOsLoginAction set_or_sync_mode_;
   std::string stop_reason_;
-  base::OnceClosure callback_ = base::DoNothing();
   bool completion_state_set_ = false;
 
   base::WeakPtrFactory<RunOnOsLoginCommand> weak_factory_{this};

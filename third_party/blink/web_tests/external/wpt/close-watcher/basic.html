@@ -6,7 +6,7 @@
 <script src="/resources/testdriver-actions.js"></script>
 <script src="resources/helpers.js"></script>
 
-<div id='d' style='height: 100px; width: 100px'></div>
+<body>
 <script>
 test(t => {
   let events = [];
@@ -14,8 +14,8 @@ test(t => {
 
   watcher.requestClose();
 
-  assert_array_equals(events, ["close"]);
-}, "requestClose() with no user activation only fires close");
+  assert_array_equals(events, ["cancel[cancelable=true]", "close"]);
+}, "requestClose() with no user activation");
 
 test(t => {
   let events = [];
@@ -25,7 +25,7 @@ test(t => {
   watcher.requestClose();
 
   assert_array_equals(events, []);
-}, "destroy() then requestClose() fires no events");
+}, "destroy() then requestClose()");
 
 test(t => {
   let events = [];
@@ -36,18 +36,18 @@ test(t => {
 
   watcher.requestClose();
   assert_array_equals(events, ["close"]);
-}, "close() then requestClose() fires only one close event");
+}, "close() then requestClose()");
 
 test(t => {
   let events = [];
   let watcher = createRecordingCloseWatcher(t, events);
 
   watcher.requestClose();
-  assert_array_equals(events, ["close"]);
+  assert_array_equals(events, ["cancel[cancelable=true]", "close"]);
 
   watcher.destroy();
-  assert_array_equals(events, ["close"]);
-}, "requestClose() then destroy() fires only one close event");
+  assert_array_equals(events, ["cancel[cancelable=true]", "close"]);
+}, "requestClose() then destroy()");
 
 test(t => {
   let events = [];
@@ -58,25 +58,25 @@ test(t => {
 
   watcher.destroy();
   assert_array_equals(events, ["close"]);
-}, "close() then destroy() fires only one close event");
+}, "close() then destroy()");
 
 promise_test(async t => {
   let events = [];
   let watcher = createRecordingCloseWatcher(t, events);
 
   watcher.destroy();
-  await sendCloseSignal();
+  await sendCloseRequest();
 
   assert_array_equals(events, []);
-}, "destroy() then close signal fires no events");
+}, "destroy() then close request");
 
 promise_test(async t => {
   let events = [];
   let watcher = createRecordingCloseWatcher(t, events);
 
-  await sendCloseSignal();
+  await sendCloseRequest();
   watcher.destroy();
 
-  assert_array_equals(events, ["close"]);
-}, "Close signal then destroy() fires only one close event");
+  assert_array_equals(events, ["cancel[cancelable=false]", "close"]);
+}, "Close request then destroy()");
 </script>

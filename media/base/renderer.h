@@ -5,13 +5,14 @@
 #ifndef MEDIA_BASE_RENDERER_H_
 #define MEDIA_BASE_RENDERER_H_
 
+#include <optional>
+
 #include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "media/base/buffering_state.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -24,9 +25,9 @@ class RendererClient;
 // renumbered and numeric values should not be reused. When adding new entries,
 // also update media::mojom::RendererType & tools/metrics/histograms/enums.xml.
 enum class RendererType {
-  kRendererImpl = 0,     // RendererImplFactory
-  kMojo = 1,             // MojoRendererFactory
-  kMediaPlayer = 2,      // MediaPlayerRendererClientFactory
+  kRendererImpl = 0,  // RendererImplFactory
+  kMojo = 1,          // MojoRendererFactory
+  // kMediaPlayer = 2,   // Deprecated
   kCourier = 3,          // CourierRendererFactory
   kFlinging = 4,         // FlingingRendererClientFactory
   kCast = 5,             // CastRendererClientFactory
@@ -74,16 +75,20 @@ class MEDIA_EXPORT Renderer {
   // of decoded data is buffered. A nullopt hint indicates the user is clearing
   // their preference and the renderer should restore its default buffering
   // thresholds.
-  virtual void SetLatencyHint(absl::optional<base::TimeDelta> latency_hint) = 0;
+  virtual void SetLatencyHint(std::optional<base::TimeDelta> latency_hint) = 0;
 
   // Sets whether pitch adjustment should be applied when the playback rate is
   // different than 1.0.
   virtual void SetPreservesPitch(bool preserves_pitch);
 
+  // Sets a flag indicating whether to render muted audio to the active sink or
+  // switch to a null sink.
+  virtual void SetRenderMutedAudio(bool render_muted_audio);
+
   // Sets a flag indicating whether the audio stream was played with user
   // activation.
-  virtual void SetWasPlayedWithUserActivation(
-      bool was_played_with_user_activation);
+  virtual void SetWasPlayedWithUserActivationAndHighMediaEngagement(
+      bool was_played_with_user_activation_and_high_media_engagement);
 
   // The following functions must be called after Initialize().
 
@@ -104,17 +109,12 @@ class MEDIA_EXPORT Renderer {
   // This method must be safe to call from any thread.
   virtual base::TimeDelta GetMediaTime() = 0;
 
-  // Provides a list of DemuxerStreams correlating to the tracks which should
-  // be played. An empty list would mean that any playing track of the same
-  // type should be flushed and disabled. Any provided Streams should be played
-  // by whatever mechanism the subclass of Renderer choses for managing it's AV
-  // playback.
-  virtual void OnSelectedVideoTracksChanged(
-      const std::vector<DemuxerStream*>& enabled_tracks,
-      base::OnceClosure change_completed_cb);
-  virtual void OnEnabledAudioTracksChanged(
-      const std::vector<DemuxerStream*>& enabled_tracks,
-      base::OnceClosure change_completed_cb);
+  // If `enabled_track` is not nullptr, then it is played by the renderer
+  // subclass associated with `track_type`. If it is nullptr, then tracks are
+  // flushed and disabled for the provided type.
+  virtual void OnTracksChanged(DemuxerStream::Type track_type,
+                               DemuxerStream* enabled_track,
+                               base::OnceClosure change_completed_cb);
 
   // Signal to the renderer that there has been a client request to access a
   // VideoFrame. This signal may be used by the renderer to ensure it is

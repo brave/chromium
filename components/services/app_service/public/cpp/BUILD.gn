@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
-
 # Component for the core data structures and types used by App Service. Large
 # parts of the codebase are dependent on this target (via
 # //chromeos/crosapi/mojom), so this must have minimal deps to avoid circular
@@ -11,6 +9,8 @@ import("//build/config/chromeos/ui_mode.gni")
 component("app_types") {
   output_name = "APP_TYPES"
   sources = [
+    "app.cc",
+    "app.h",
     "app_launch_util.cc",
     "app_launch_util.h",
     "app_types.cc",
@@ -19,18 +19,23 @@ component("app_types") {
     "capability_access.h",
     "features.cc",
     "features.h",
+    "icon_effects.h",
     "icon_types.cc",
     "icon_types.h",
     "intent_filter.cc",
     "intent_filter.h",
     "menu.cc",
     "menu.h",
+    "package_id.cc",
+    "package_id.h",
     "permission.cc",
     "permission.h",
     "preferred_app.cc",
     "preferred_app.h",
     "run_on_os_login_types.cc",
     "run_on_os_login_types.h",
+    "types_util.cc",
+    "types_util.h",
   ]
 
   defines = [ "IS_APP_TYPES_IMPL" ]
@@ -42,6 +47,7 @@ component("app_types") {
 
   deps = [
     ":macros",
+    "//third_party/abseil-cpp:absl",
     "//ui/gfx",
     "//url",
   ]
@@ -57,7 +63,7 @@ component("app_types") {
 
 # This target is separate from //components/services/app_service because not all
 # clients of App Service are allowed to have a dependency on //content.
-if (is_chromeos_ash) {
+if (is_chromeos) {
   source_set("instance_update") {
     sources = [
       "instance.cc",
@@ -96,6 +102,19 @@ source_set("test_support") {
     "//third_party/abseil-cpp:absl",
     "//ui/gfx",
   ]
+
+  public_deps = []
+
+  if (is_chromeos) {
+    sources += [
+      "app_instance_waiter.cc",
+      "app_instance_waiter.h",
+    ]
+    public_deps += [
+      ":instance_update",
+      "//base",
+    ]
+  }
 }
 
 # The following targets are used for internal code organization, and are not
@@ -152,6 +171,7 @@ source_set("app_share_target") {
 
 source_set("macros") {
   sources = [ "macros.h" ]
+  public_deps = [ "//base" ]
 
   # Not exported through //components/services/app_service, and only exposed to
   # App Service code.
@@ -172,6 +192,10 @@ component("app_update") {
     "app_registry_cache.h",
     "app_registry_cache_wrapper.cc",
     "app_registry_cache_wrapper.h",
+    "app_storage/app_storage.cc",
+    "app_storage/app_storage.h",
+    "app_storage/app_storage_file_handler.cc",
+    "app_storage/app_storage_file_handler.h",
     "app_update.cc",
     "app_update.h",
     "capability_access_update.cc",
@@ -188,17 +212,6 @@ component("app_update") {
     ":macros",
     "//ui/gfx",
   ]
-
-  visibility = [ "//components/services/app_service/*" ]
-}
-
-source_set("app_url_handling") {
-  sources = [
-    "url_handler_info.cc",
-    "url_handler_info.h",
-  ]
-
-  deps = [ "//url" ]
 
   visibility = [ "//components/services/app_service/*" ]
 }
@@ -274,15 +287,17 @@ source_set("preferred_apps") {
   visibility = [ "//components/services/app_service/*" ]
 }
 
-source_set("types") {
+source_set("app_shortcut_image") {
   sources = [
-    "types_util.cc",
-    "types_util.h",
+    "app_shortcut_image.cc",
+    "app_shortcut_image.h",
   ]
 
   deps = [
-    ":app_types",
-    "//third_party/abseil-cpp:absl",
+    "//base",
+    "//cc/paint",
+    "//skia",
+    "//ui/gfx",
   ]
 
   visibility = [ "//components/services/app_service/*" ]
@@ -302,12 +317,14 @@ source_set("unit_tests") {
     "app_capability_access_cache_wrapper_unittest.cc",
     "app_registry_cache_unittest.cc",
     "app_registry_cache_wrapper_unittest.cc",
+    "app_unittest.cc",
     "app_update_unittest.cc",
     "capability_access_update_unittest.cc",
     "icon_cache_unittest.cc",
     "icon_coalescer_unittest.cc",
     "intent_filter_util_unittest.cc",
     "intent_util_unittest.cc",
+    "package_id_unittest.cc",
     "preferred_apps_converter_unittest.cc",
     "preferred_apps_list_unittest.cc",
   ]
@@ -319,26 +336,26 @@ source_set("unit_tests") {
     ":intents",
     ":preferred_apps",
     ":test_support",
-    ":types",
     "//content/test:test_support",
     "//testing/gtest",
   ]
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [
+      "app_storage/app_storage_file_handler_unittest.cc",
+      "app_storage/app_storage_unittest.cc",
+      "icon_types_unittest.cc",
       "instance_registry_unittest.cc",
       "instance_unittest.cc",
       "instance_update_unittest.cc",
+      "permission_unittest.cc",
+      "run_on_os_login_types_unittest.cc",
     ]
 
     deps += [
       ":instance_update",
       "//chrome/test:test_support",
+      "//components/services/app_service/public/cpp/shortcut:unit_tests",
     ]
-  }
-
-  if (is_chromeos) {
-    deps +=
-        [ "//components/services/app_service/public/cpp/shortcut:unit_tests" ]
   }
 }

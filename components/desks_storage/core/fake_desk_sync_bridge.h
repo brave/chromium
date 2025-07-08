@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_DESKS_STORAGE_CORE_FAKE_DESK_SYNC_BRIDGE_H_
 #define COMPONENTS_DESKS_STORAGE_CORE_FAKE_DESK_SYNC_BRIDGE_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/desks_storage/core/desk_model.h"
 
 namespace ash {
@@ -34,13 +35,15 @@ class FakeDeskSyncBridge : public DeskModel {
   size_t GetEntryCount() const override;
   size_t GetSaveAndRecallDeskEntryCount() const override;
   size_t GetDeskTemplateEntryCount() const override;
+  size_t GetCoralEntryCount() const override;
   size_t GetMaxSaveAndRecallDeskEntryCount() const override;
   size_t GetMaxDeskTemplateEntryCount() const override;
+  size_t GetMaxCoralEntryCount() const override;
   std::set<base::Uuid> GetAllEntryUuids() const override;
   bool IsReady() const override;
   // Whether this sync bridge is syncing local data to sync. This sync bridge
   // still allows user to save desk templates locally when users disable syncing
-  // for Workspace Desk model type.
+  // for Workspace Desk data type.
   bool IsSyncing() const override;
 
   ash::DeskTemplate* FindOtherEntryWithName(
@@ -58,7 +61,8 @@ class FakeDeskSyncBridge : public DeskModel {
   // Notify all observers of any `new_entries` when they are added/updated via
   // sync.
   void NotifyRemoteDeskTemplateAddedOrUpdated(
-      const std::vector<const ash::DeskTemplate*>& new_entries);
+      const std::vector<raw_ptr<const ash::DeskTemplate, VectorExperimental>>&
+          new_entries);
 
   const ash::DeskTemplate* GetUserEntryByUUID(const base::Uuid& uuid) const;
 

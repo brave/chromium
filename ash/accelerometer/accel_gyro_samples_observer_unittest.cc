@@ -4,6 +4,7 @@
 
 #include "ash/accelerometer/accel_gyro_samples_observer.h"
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -23,11 +24,11 @@ constexpr int kFakeAccelerometerId = 1;
 
 constexpr int kFakeGyroscopeId = 2;
 
-constexpr int64_t kFakeSampleData[] = {1, 2, 3};
+constexpr std::array<int64_t, 3> kFakeSampleData = {1, 2, 3};
 
 constexpr double kFakeScaleValue = 10.0;
 
-class AccelGryoSamplesObserverTest : public ::testing::Test {
+class AccelGyroSamplesObserverTest : public ::testing::Test {
  protected:
   void SetAccelerometerChannels(uint32_t num_of_axes) {
     CHECK_LE(num_of_axes, kNumberOfAxes);
@@ -57,18 +58,20 @@ class AccelGryoSamplesObserverTest : public ::testing::Test {
 
   void SetAccelerometerObserver(
       mojo::Remote<chromeos::sensors::mojom::SensorDevice> accelerometer) {
-    observer_ = std::make_unique<AccelGryoSamplesObserver>(
+    observer_ = std::make_unique<AccelGyroSamplesObserver>(
         kFakeAccelerometerId, std::move(accelerometer), kFakeScaleValue,
-        base::BindRepeating(&AccelGryoSamplesObserverTest::OnSampleUpdatedCallback,
-                            base::Unretained(this)));
+        base::BindRepeating(
+            &AccelGyroSamplesObserverTest::OnSampleUpdatedCallback,
+            base::Unretained(this)));
   }
 
   void SetGyroscopeObserver(
       mojo::Remote<chromeos::sensors::mojom::SensorDevice> gyroscope) {
-    observer_ = std::make_unique<AccelGryoSamplesObserver>(
+    observer_ = std::make_unique<AccelGyroSamplesObserver>(
         kFakeGyroscopeId, std::move(gyroscope), kFakeScaleValue,
-        base::BindRepeating(&AccelGryoSamplesObserverTest::OnSampleUpdatedCallback,
-                            base::Unretained(this)),
+        base::BindRepeating(
+            &AccelGyroSamplesObserverTest::OnSampleUpdatedCallback,
+            base::Unretained(this)),
         chromeos::sensors::mojom::DeviceType::ANGLVEL);
   }
 
@@ -86,14 +89,14 @@ class AccelGryoSamplesObserverTest : public ::testing::Test {
   }
 
   std::unique_ptr<chromeos::sensors::FakeSensorDevice> sensor_device_;
-  std::unique_ptr<AccelGryoSamplesObserver> observer_;
+  std::unique_ptr<AccelGyroSamplesObserver> observer_;
 
   int num_samples_ = 0;
 
   base::test::SingleThreadTaskEnvironment task_environment;
 };
 
-TEST_F(AccelGryoSamplesObserverTest, MissingChannels) {
+TEST_F(AccelGyroSamplesObserverTest, MissingChannels) {
   SetAccelerometerChannels(kNumberOfAxes - 1);
 
   mojo::Remote<chromeos::sensors::mojom::SensorDevice> accelerometer;
@@ -106,7 +109,7 @@ TEST_F(AccelGryoSamplesObserverTest, MissingChannels) {
   EXPECT_FALSE(sensor_device_->HasReceivers());
 }
 
-TEST_F(AccelGryoSamplesObserverTest, StartReadingTwiceError) {
+TEST_F(AccelGyroSamplesObserverTest, StartReadingTwiceError) {
   SetAccelerometerChannels(kNumberOfAxes);
 
   mojo::Remote<chromeos::sensors::mojom::SensorDevice> accelerometer;
@@ -125,7 +128,7 @@ TEST_F(AccelGryoSamplesObserverTest, StartReadingTwiceError) {
   EXPECT_FALSE(sensor_device_->HasReceivers());
 }
 
-TEST_F(AccelGryoSamplesObserverTest, GetAcceleratorSamples) {
+TEST_F(AccelGyroSamplesObserverTest, GetAcceleratorSamples) {
   SetAccelerometerChannels(kNumberOfAxes);
 
   mojo::Remote<chromeos::sensors::mojom::SensorDevice> accelerometer;
@@ -161,7 +164,7 @@ TEST_F(AccelGryoSamplesObserverTest, GetAcceleratorSamples) {
   EXPECT_TRUE(sensor_device_->HasReceivers());
 }
 
-TEST_F(AccelGryoSamplesObserverTest, GetGyroscopeSamples) {
+TEST_F(AccelGyroSamplesObserverTest, GetGyroscopeSamples) {
   SetGyroscopeChannels(kNumberOfAxes);
 
   mojo::Remote<chromeos::sensors::mojom::SensorDevice> gyroscope;

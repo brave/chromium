@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_ASH_FILE_SUGGEST_DRIVE_FILE_SUGGESTION_PROVIDER_H_
 #define CHROME_BROWSER_ASH_FILE_SUGGEST_DRIVE_FILE_SUGGESTION_PROVIDER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/ash/file_suggest/file_suggestion_provider.h"
 #include "chrome/browser/ash/file_suggest/item_suggest_cache.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
+
+class ApplicationLocaleStorage;
 
 namespace drive {
 class DriveIntegrationService;
@@ -21,7 +24,9 @@ class FileSuggestKeyedService;
 // A suggestion provider that handles the drive file suggestions.
 class DriveFileSuggestionProvider : public FileSuggestionProvider {
  public:
+  // `application_locale_storage` must be non-null and must outlive `this`.
   DriveFileSuggestionProvider(
+      const ApplicationLocaleStorage* application_locale_storage,
       Profile* profile,
       base::RepeatingCallback<void(FileSuggestionType)> notify_update_callback);
   DriveFileSuggestionProvider(const DriveFileSuggestionProvider&) = delete;
@@ -31,18 +36,8 @@ class DriveFileSuggestionProvider : public FileSuggestionProvider {
 
   // FileSuggestionProvider:
   void GetSuggestFileData(GetSuggestFileDataCallback callback) override;
-
-  // Requests to update the data in `item_suggest_cache_`. Only used by the file
-  // suggest keyed service.
-  // TODO(https://crbug.com/1356347): Now the app list relies on this service to
-  // fetch the drive suggestion data. Meanwhile, this service relies on the app
-  // list to trigger the item cache update. This cyclic dependency could be
-  // confusing. The service should update the data cache by its own without
-  // depending on the app list code.
-  void MaybeUpdateItemSuggestCache(base::PassKey<FileSuggestKeyedService>);
-
-  // Returns true if there is pending fetch on file suggestions.
-  bool HasPendingDriveSuggestionFetchForTest() const;
+  void MaybeUpdateItemSuggestCache(
+      base::PassKey<FileSuggestKeyedService>) override;
 
   ItemSuggestCache* item_suggest_cache_for_test() {
     return item_suggest_cache_.get();
@@ -54,13 +49,13 @@ class DriveFileSuggestionProvider : public FileSuggestionProvider {
   // file suggestion data before validation.
   void OnDriveFilePathsLocated(
       std::vector<ItemSuggestCache::Result> raw_suggest_results,
-      absl::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths);
+      std::optional<std::vector<drivefs::mojom::FilePathOrErrorPtr>> paths);
 
   // Ends the validation on drive suggestion file paths and publishes the
   // result.
   void EndDriveFilePathValidation(
       DriveSuggestValidationStatus validation_status,
-      const absl::optional<std::vector<FileSuggestData>>& suggest_results);
+      const std::optional<std::vector<FileSuggestData>>& suggest_results);
 
   const raw_ptr<Profile> profile_;
 

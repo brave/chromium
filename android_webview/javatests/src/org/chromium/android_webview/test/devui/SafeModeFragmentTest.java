@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 package org.chromium.android_webview.test.devui;
+
 import static androidx.test.espresso.Espresso.onData;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
-import static androidx.test.espresso.matcher.ViewMatchers.isRoot;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
@@ -62,9 +62,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
-/**
- * UI tests for {@link SafeModeFragment}.
- */
+/** UI tests for {@link SafeModeFragment}. */
 @RunWith(AwJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
 public class SafeModeFragmentTest {
@@ -82,24 +80,28 @@ public class SafeModeFragmentTest {
         onView(withId(R.id.safe_mode_actions_list)).check(matches(withCount(actionIds.size())));
         List<String> actionsDisplayed = new ArrayList<>();
         for (int i = 0; i < actionIds.size(); i++) {
-            onData(anything()).atPosition(i).perform(new ViewAction() {
-                @Override
-                public Matcher<View> getConstraints() {
-                    return isAssignableFrom(TextView.class);
-                }
+            onData(anything())
+                    .atPosition(i)
+                    .perform(
+                            new ViewAction() {
+                                @Override
+                                public Matcher<View> getConstraints() {
+                                    return isAssignableFrom(TextView.class);
+                                }
 
-                @Override
-                public String getDescription() {
-                    return "Get text of a TextView";
-                }
+                                @Override
+                                public String getDescription() {
+                                    return "Get text of a TextView";
+                                }
 
-                @Override
-                public void perform(UiController uiController, View view) {
-                    TextView textView =
-                            (TextView) view; // Save, because of check in getConstraints()
-                    actionsDisplayed.add(textView.getText().toString());
-                }
-            });
+                                @Override
+                                public void perform(UiController uiController, View view) {
+                                    TextView textView =
+                                            (TextView) view; // Save, because of check in
+                                    // getConstraints()
+                                    actionsDisplayed.add(textView.getText().toString());
+                                }
+                            });
         }
         // we don't require a specific order of the displayed safemode actions.
         Collections.sort(actionIds);
@@ -135,8 +137,11 @@ public class SafeModeFragmentTest {
         final Context context = ContextUtils.getApplicationContext();
         ComponentName safeModeComponent =
                 new ComponentName(context, SafeModeController.SAFE_MODE_STATE_COMPONENT);
-        context.getPackageManager().setComponentEnabledSetting(safeModeComponent,
-                PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP);
+        context.getPackageManager()
+                .setComponentEnabledSetting(
+                        safeModeComponent,
+                        PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+                        PackageManager.DONT_KILL_APP);
 
         SafeModeService.clearSharedPrefsForTesting();
         SafeModeController.getInstance().unregisterActionsForTesting();
@@ -170,8 +175,8 @@ public class SafeModeFragmentTest {
 
         launchSafeModeFragment();
 
-        onView(isRoot()).check(ViewUtils.waitForView(
-                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled")))));
+        ViewUtils.waitForVisibleView(
+                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled"))));
         onView(withId(R.id.safe_mode_state))
                 .check(matches(withText("Enabled on " + new Date(initialStartTimeMs).toString())));
         onView(withId(R.id.safe_mode_actions_list)).check(matches(withCount(1)));
@@ -189,8 +194,8 @@ public class SafeModeFragmentTest {
 
         launchSafeModeFragment();
 
-        onView(isRoot()).check(ViewUtils.waitForView(
-                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled")))));
+        ViewUtils.waitForVisibleView(
+                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled"))));
         onView(withId(R.id.safe_mode_state))
                 .check(matches(withText("Enabled on " + new Date(initialStartTimeMs).toString())));
         checkActionsDisplayed(actionIds);
@@ -208,8 +213,8 @@ public class SafeModeFragmentTest {
         SafeModeService.setClockForTesting(() -> initialStartTimeMs);
         setSafeMode(Arrays.asList(actionId));
         mRule.recreateActivity();
-        onView(isRoot()).check(ViewUtils.waitForView(
-                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled")))));
+        ViewUtils.waitForVisibleView(
+                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled"))));
         onView(withId(R.id.safe_mode_state))
                 .check(matches(withText("Enabled on " + new Date(initialStartTimeMs).toString())));
     }
@@ -223,8 +228,8 @@ public class SafeModeFragmentTest {
         SafeModeService.setClockForTesting(() -> initialStartTimeMs);
         setSafeMode(Arrays.asList(actionId));
         launchSafeModeFragment();
-        onView(isRoot()).check(ViewUtils.waitForView(
-                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled")))));
+        ViewUtils.waitForVisibleView(
+                allOf(withId(R.id.safe_mode_state), not(withText("")), not(withText("Enabled"))));
         onView(withId(R.id.safe_mode_state))
                 .check(matches(withText("Enabled on " + new Date(initialStartTimeMs).toString())));
 
@@ -234,13 +239,14 @@ public class SafeModeFragmentTest {
     }
 
     private void setSafeMode(List<String> actions) throws RemoteException {
-        SafeModeAction[] safeModeActions = actions.stream()
-                                                   .map(SafeModeFragmentTest::getNoopAction)
-                                                   .toArray(SafeModeAction[] ::new);
+        SafeModeAction[] safeModeActions =
+                actions.stream()
+                        .map(SafeModeFragmentTest::getNoopAction)
+                        .toArray(SafeModeAction[]::new);
         SafeModeController.getInstance().registerActions(safeModeActions);
         Intent intent = new Intent(ContextUtils.getApplicationContext(), SafeModeService.class);
         try (ServiceConnectionHelper helper =
-                        new ServiceConnectionHelper(intent, Context.BIND_AUTO_CREATE)) {
+                new ServiceConnectionHelper(intent, Context.BIND_AUTO_CREATE)) {
             ISafeModeService service = ISafeModeService.Stub.asInterface(helper.getBinder());
             service.setSafeMode(actions);
         }

@@ -26,10 +26,6 @@
 #import "net/url_request/url_request_context.h"
 #import "net/url_request/url_request_context_builder.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace web {
 
 ShellURLRequestContextGetter::ShellURLRequestContextGetter(
@@ -39,8 +35,11 @@ ShellURLRequestContextGetter::ShellURLRequestContextGetter(
     : base_path_(base_path),
       network_task_runner_(network_task_runner),
       proxy_config_service_(
-          new net::ProxyConfigServiceIOS(NO_TRAFFIC_ANNOTATION_YET)),
-      system_cookie_store_(web::CreateSystemCookieStore(browser_state)) {}
+          new net::ProxyConfigServiceIOS(NO_TRAFFIC_ANNOTATION_YET)) {
+  auto pair = web::CreateSystemCookieStore(browser_state);
+  system_cookie_store_ = std::move(pair.first);
+  cookie_store_handle_ = std::move(pair.second);
+}
 
 ShellURLRequestContextGetter::~ShellURLRequestContextGetter() {}
 

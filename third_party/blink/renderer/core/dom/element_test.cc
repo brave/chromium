@@ -8,15 +8,19 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/web/web_plugin.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_scroll_container.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_scroll_into_view_options.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
+#include "third_party/blink/renderer/core/dom/column_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
 #include "third_party/blink/renderer/core/html/html_plugin_element.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
@@ -33,12 +37,12 @@ class ElementTest : public EditingTestBase {
   ScopedFocusgroupForTest focusgroup_enabled{true};
 };
 
-TEST_F(ElementTest, SupportsFocus) {
+TEST_F(ElementTest, FocusableDesignMode) {
   Document& document = GetDocument();
   DCHECK(IsA<HTMLHtmlElement>(document.documentElement()));
   document.setDesignMode("on");
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(document.documentElement()->SupportsFocus())
+  EXPECT_TRUE(document.documentElement()->IsFocusable())
       << "<html> with designMode=on should be focusable.";
 }
 
@@ -62,23 +66,24 @@ TEST_F(ElementTest,
   ASSERT_TRUE(writer);
   ASSERT_TRUE(sticky);
 
-  scroller->scrollTo(50.0, 200.0);
+  scroller->scrollToForTesting(50.0, 200.0);
 
   // The sticky element should remain at (0, 25) relative to the viewport due to
   // the constraints.
-  DOMRect* bounding_client_rect = sticky->getBoundingClientRect();
+  DOMRect* bounding_client_rect = sticky->GetBoundingClientRect();
   EXPECT_EQ(0, bounding_client_rect->top());
   EXPECT_EQ(25, bounding_client_rect->left());
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
+  writer->SetInnerHTMLWithoutTrustedTypes(
+      "<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
   // Requesting the bounding client rect should cause both layout and
   // compositing inputs clean to be run, and the sticky result shouldn't change.
-  bounding_client_rect = sticky->getBoundingClientRect();
+  bounding_client_rect = sticky->GetBoundingClientRect();
   EXPECT_EQ(DocumentLifecycle::kLayoutClean, document.Lifecycle().GetState());
   EXPECT_EQ(0, bounding_client_rect->top());
   EXPECT_EQ(25, bounding_client_rect->left());
@@ -103,7 +108,7 @@ TEST_F(ElementTest, OffsetTopAndLeftCorrectForStickyElementsAfterInsertion) {
   ASSERT_TRUE(writer);
   ASSERT_TRUE(sticky);
 
-  scroller->scrollTo(50.0, 200.0);
+  scroller->scrollToForTesting(50.0, 200.0);
 
   // The sticky element should be offset to stay at (0, 25) relative to the
   // viewport due to the constraints.
@@ -112,7 +117,8 @@ TEST_F(ElementTest, OffsetTopAndLeftCorrectForStickyElementsAfterInsertion) {
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
+  writer->SetInnerHTMLWithoutTrustedTypes(
+      "<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -122,7 +128,8 @@ TEST_F(ElementTest, OffsetTopAndLeftCorrectForStickyElementsAfterInsertion) {
   EXPECT_EQ(DocumentLifecycle::kLayoutClean, document.Lifecycle().GetState());
 
   // Dirty layout again, since |OffsetTop| will have cleaned it.
-  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
+  writer->SetInnerHTMLWithoutTrustedTypes(
+      "<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -150,7 +157,7 @@ TEST_F(ElementTest, BoundsInWidgetCorrectForStickyElementsAfterInsertion) {
   ASSERT_TRUE(writer);
   ASSERT_TRUE(sticky);
 
-  scroller->scrollTo(50.0, 200.0);
+  scroller->scrollToForTesting(50.0, 200.0);
 
   // The sticky element should remain at (0, 25) relative to the viewport due to
   // the constraints.
@@ -160,7 +167,8 @@ TEST_F(ElementTest, BoundsInWidgetCorrectForStickyElementsAfterInsertion) {
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
+  writer->SetInnerHTMLWithoutTrustedTypes(
+      "<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -244,11 +252,11 @@ TEST_F(ElementTest, StickySubtreesAreTrackedCorrectly) {
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ(DocumentLifecycle::kPaintClean, document.Lifecycle().GetState());
 
-  EXPECT_EQ(RubyPosition::kBefore, outer_sticky->StyleRef().GetRubyPosition());
-  EXPECT_EQ(RubyPosition::kAfter, child->StyleRef().GetRubyPosition());
-  EXPECT_EQ(RubyPosition::kAfter, grandchild->StyleRef().GetRubyPosition());
-  EXPECT_EQ(RubyPosition::kAfter, inner_sticky->StyleRef().GetRubyPosition());
-  EXPECT_EQ(RubyPosition::kAfter,
+  EXPECT_EQ(RubyPosition::kOver, outer_sticky->StyleRef().GetRubyPosition());
+  EXPECT_EQ(RubyPosition::kUnder, child->StyleRef().GetRubyPosition());
+  EXPECT_EQ(RubyPosition::kUnder, grandchild->StyleRef().GetRubyPosition());
+  EXPECT_EQ(RubyPosition::kUnder, inner_sticky->StyleRef().GetRubyPosition());
+  EXPECT_EQ(RubyPosition::kUnder,
             great_grandchild->StyleRef().GetRubyPosition());
 
   // Setting -webkit-ruby value shouldn't have affected the sticky subtree bit.
@@ -305,7 +313,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   )HTML");
 
   Element* rect = document.getElementById(AtomicString("rect"));
-  DOMRect* rect_bounding_client_rect = rect->getBoundingClientRect();
+  DOMRect* rect_bounding_client_rect = rect->GetBoundingClientRect();
   EXPECT_EQ(10, rect_bounding_client_rect->left());
   EXPECT_EQ(100, rect_bounding_client_rect->top());
   EXPECT_EQ(100, rect_bounding_client_rect->width());
@@ -315,7 +323,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   // TODO(pdr): Should we should be excluding the stroke (here, and below)?
   // See: https://github.com/w3c/svgwg/issues/339 and Element::ClientQuads.
   Element* stroke = document.getElementById(AtomicString("stroke"));
-  DOMRect* stroke_bounding_client_rect = stroke->getBoundingClientRect();
+  DOMRect* stroke_bounding_client_rect = stroke->GetBoundingClientRect();
   EXPECT_EQ(10, stroke_bounding_client_rect->left());
   EXPECT_EQ(100, stroke_bounding_client_rect->top());
   EXPECT_EQ(100, stroke_bounding_client_rect->width());
@@ -327,7 +335,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   Element* stroke_transformed =
       document.getElementById(AtomicString("stroke_transformed"));
   DOMRect* stroke_transformedbounding_client_rect =
-      stroke_transformed->getBoundingClientRect();
+      stroke_transformed->GetBoundingClientRect();
   EXPECT_EQ(13, stroke_transformedbounding_client_rect->left());
   EXPECT_EQ(105, stroke_transformedbounding_client_rect->top());
   EXPECT_EQ(100, stroke_transformedbounding_client_rect->width());
@@ -337,7 +345,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   EXPECT_EQ(gfx::Rect(13, 105, 100, 71), stroke_transformed->BoundsInWidget());
 
   Element* foreign = document.getElementById(AtomicString("foreign"));
-  DOMRect* foreign_bounding_client_rect = foreign->getBoundingClientRect();
+  DOMRect* foreign_bounding_client_rect = foreign->GetBoundingClientRect();
   EXPECT_EQ(10, foreign_bounding_client_rect->left());
   EXPECT_EQ(100, foreign_bounding_client_rect->top());
   EXPECT_EQ(100, foreign_bounding_client_rect->width());
@@ -347,7 +355,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   Element* foreign_transformed =
       document.getElementById(AtomicString("foreign_transformed"));
   DOMRect* foreign_transformed_bounding_client_rect =
-      foreign_transformed->getBoundingClientRect();
+      foreign_transformed->GetBoundingClientRect();
   EXPECT_EQ(13, foreign_transformed_bounding_client_rect->left());
   EXPECT_EQ(105, foreign_transformed_bounding_client_rect->top());
   EXPECT_EQ(100, foreign_transformed_bounding_client_rect->width());
@@ -355,7 +363,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
   EXPECT_EQ(gfx::Rect(13, 105, 100, 71), foreign_transformed->BoundsInWidget());
 
   Element* svg = document.getElementById(AtomicString("svg"));
-  DOMRect* svg_bounding_client_rect = svg->getBoundingClientRect();
+  DOMRect* svg_bounding_client_rect = svg->GetBoundingClientRect();
   EXPECT_EQ(10, svg_bounding_client_rect->left());
   EXPECT_EQ(100, svg_bounding_client_rect->top());
   EXPECT_EQ(100, svg_bounding_client_rect->width());
@@ -364,7 +372,7 @@ TEST_F(ElementTest, GetBoundingClientRectForSVG) {
 
   Element* svg_stroke = document.getElementById(AtomicString("svg_stroke"));
   DOMRect* svg_stroke_bounding_client_rect =
-      svg_stroke->getBoundingClientRect();
+      svg_stroke->GetBoundingClientRect();
   EXPECT_EQ(10, svg_stroke_bounding_client_rect->left());
   EXPECT_EQ(100, svg_stroke_bounding_client_rect->top());
   EXPECT_EQ(100, svg_stroke_bounding_client_rect->width());
@@ -447,9 +455,9 @@ TEST_F(ElementTest, ExportpartsAttribute) {
     const NamesMap* part_names_map = has_one_mapping->PartNamesMap();
     ASSERT_TRUE(part_names_map);
     ASSERT_EQ(1UL, part_names_map->size());
-    ASSERT_EQ("partname2", part_names_map->Get(AtomicString("partname1"))
-                               .value()
-                               .SerializeToString());
+    ASSERT_EQ(
+        "partname2",
+        part_names_map->Get(AtomicString("partname1"))->SerializeToString());
   }
 
   {
@@ -457,12 +465,12 @@ TEST_F(ElementTest, ExportpartsAttribute) {
     const NamesMap* part_names_map = has_two_mappings->PartNamesMap();
     ASSERT_TRUE(part_names_map);
     ASSERT_EQ(2UL, part_names_map->size());
-    ASSERT_EQ("partname2", part_names_map->Get(AtomicString("partname1"))
-                               .value()
-                               .SerializeToString());
-    ASSERT_EQ("partname4", part_names_map->Get(AtomicString("partname3"))
-                               .value()
-                               .SerializeToString());
+    ASSERT_EQ(
+        "partname2",
+        part_names_map->Get(AtomicString("partname1"))->SerializeToString());
+    ASSERT_EQ(
+        "partname4",
+        part_names_map->Get(AtomicString("partname3"))->SerializeToString());
   }
 
   {
@@ -475,9 +483,9 @@ TEST_F(ElementTest, ExportpartsAttribute) {
     const NamesMap* part_names_map = has_no_mapping->PartNamesMap();
     ASSERT_TRUE(part_names_map);
     ASSERT_EQ(1UL, part_names_map->size());
-    ASSERT_EQ("partname2", part_names_map->Get(AtomicString("partname1"))
-                               .value()
-                               .SerializeToString());
+    ASSERT_EQ(
+        "partname2",
+        part_names_map->Get(AtomicString("partname1"))->SerializeToString());
   }
 }
 
@@ -529,7 +537,7 @@ class ScriptOnDestroyPlugin : public GarbageCollected<ScriptOnDestroyPlugin>,
     return {};
   }
   void DidReceiveResponse(const WebURLResponse&) override {}
-  void DidReceiveData(const char* data, size_t data_length) override {}
+  void DidReceiveData(base::span<const char> data) override {}
   void DidFinishLoading() override {}
   void DidFailLoading(const WebURLError&) override {}
 
@@ -617,80 +625,80 @@ TEST_F(ElementTest, ParseFocusgroupAttrDefaultValuesWhenEmptyValue) {
   FocusgroupFlags fg_flags = fg->GetFocusgroupFlags();
   ASSERT_NE(fg_flags, FocusgroupFlags::kNone);
 
-  ASSERT_TRUE(fg_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_TRUE(fg_flags & FocusgroupFlags::kVertical);
+  ASSERT_TRUE(fg_flags & FocusgroupFlags::kInline);
+  ASSERT_TRUE(fg_flags & FocusgroupFlags::kBlock);
   ASSERT_FALSE(fg_flags & FocusgroupFlags::kExtend);
-  ASSERT_FALSE(fg_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg_flags & FocusgroupFlags::kWrapBlock);
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrSupportedAxesAreValid) {
   Document& document = GetDocument();
   SetBodyContent(R"HTML(
-    <div id=fg1 focusgroup=horizontal></div>
-    <div id=fg2 focusgroup=vertical></div>
+    <div id=fg1 focusgroup=inline></div>
+    <div id=fg2 focusgroup=block></div>
     <div id=fg3 focusgroup>
-      <div id=fg3_a focusgroup="extend horizontal"></div>
-      <div id=fg3_b focusgroup="extend vertical">
+      <div id=fg3_a focusgroup="extend inline"></div>
+      <div id=fg3_b focusgroup="extend block">
         <div id=fg3_b_1 focusgroup=extend></div>
       </div>
     </div>
   )HTML");
 
-  // 1. Only horizontal should be supported.
+  // 1. Only inline should be supported.
   auto* fg1 = document.getElementById(AtomicString("fg1"));
   ASSERT_TRUE(fg1);
 
   FocusgroupFlags fg1_flags = fg1->GetFocusgroupFlags();
-  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kVertical);
+  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kInline);
+  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kBlock);
 
-  // 2. Only vertical should be supported.
+  // 2. Only block should be supported.
   auto* fg2 = document.getElementById(AtomicString("fg2"));
   ASSERT_TRUE(fg2);
 
   FocusgroupFlags fg2_flags = fg2->GetFocusgroupFlags();
-  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kVertical);
+  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kInline);
+  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kBlock);
 
   // 3. No axis specified so both should be supported
   auto* fg3 = document.getElementById(AtomicString("fg3"));
   ASSERT_TRUE(fg3);
 
   FocusgroupFlags fg3_flags = fg3->GetFocusgroupFlags();
-  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kVertical);
+  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kInline);
+  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kBlock);
 
-  // 4. Only support horizontal because it's specified, regardless of the
+  // 4. Only support inline because it's specified, regardless of the
   // extend.
   auto* fg3_a = document.getElementById(AtomicString("fg3_a"));
   ASSERT_TRUE(fg3_a);
 
   FocusgroupFlags fg3_a_flags = fg3_a->GetFocusgroupFlags();
-  ASSERT_TRUE(fg3_a_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_FALSE(fg3_a_flags & FocusgroupFlags::kVertical);
+  ASSERT_TRUE(fg3_a_flags & FocusgroupFlags::kInline);
+  ASSERT_FALSE(fg3_a_flags & FocusgroupFlags::kBlock);
 
-  // 5. Only support vertical because it's specified, regardless of the extend.
+  // 5. Only support block because it's specified, regardless of the extend.
   auto* fg3_b = document.getElementById(AtomicString("fg3_b"));
   ASSERT_TRUE(fg3_b);
 
   FocusgroupFlags fg3_b_flags = fg3_b->GetFocusgroupFlags();
-  ASSERT_FALSE(fg3_b_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_TRUE(fg3_b_flags & FocusgroupFlags::kVertical);
+  ASSERT_FALSE(fg3_b_flags & FocusgroupFlags::kInline);
+  ASSERT_TRUE(fg3_b_flags & FocusgroupFlags::kBlock);
 
-  // 6. Extends a focusgroup that only supports vertical axis, but should
+  // 6. Extends a focusgroup that only supports block axis, but should
   // support both axes regardless.
   auto* fg3_b_1 = document.getElementById(AtomicString("fg3_b_1"));
   ASSERT_TRUE(fg3_b_1);
 
   FocusgroupFlags fg3_b_1_flags = fg3_b_1->GetFocusgroupFlags();
-  ASSERT_TRUE(fg3_b_1_flags & FocusgroupFlags::kHorizontal);
-  ASSERT_TRUE(fg3_b_1_flags & FocusgroupFlags::kVertical);
+  ASSERT_TRUE(fg3_b_1_flags & FocusgroupFlags::kInline);
+  ASSERT_TRUE(fg3_b_1_flags & FocusgroupFlags::kBlock);
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrExtendCorrectly) {
   Document& document = GetDocument();
-  document.body()->setInnerHTMLWithDeclarativeShadowDOMForTesting(R"HTML(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id=fg1 focusgroup>
       <div id=fg2 focusgroup=extend>
         <div>
@@ -699,7 +707,7 @@ TEST_F(ElementTest, ParseFocusgroupAttrExtendCorrectly) {
           </div>
         </div>
         <div id=fg4-container>
-          <template shadowroot=open>
+          <template shadowrootmode=open>
             <div id=fg4 focusgroup=extend></div>
           </template>
         </div>
@@ -770,9 +778,9 @@ TEST_F(ElementTest, ParseFocusgroupAttrWrapCorrectly) {
   SetBodyContent(R"HTML(
     <div id=fg1 focusgroup=wrap>
       <div id=fg2 focusgroup=extend>
-        <div id=fg3 focusgroup="extend horizontal"></div>
-        <div id=fg4 focusgroup="extend vertical">
-          <div id=fg5 focusgroup="extend horizontal"></div>
+        <div id=fg3 focusgroup="extend inline"></div>
+        <div id=fg4 focusgroup="extend block">
+          <div id=fg5 focusgroup="extend inline"></div>
         </div>
       </div>
     </div>
@@ -785,8 +793,8 @@ TEST_F(ElementTest, ParseFocusgroupAttrWrapCorrectly) {
 
   FocusgroupFlags fg1_flags = fg1->GetFocusgroupFlags();
   ASSERT_NE(fg1_flags, FocusgroupFlags::kNone);
-  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg1_flags & FocusgroupFlags::kWrapBlock);
 
   // 2. When a focusgroup extends another one, it should inherit its wrap
   // properties in all supported axes.
@@ -795,28 +803,28 @@ TEST_F(ElementTest, ParseFocusgroupAttrWrapCorrectly) {
 
   FocusgroupFlags fg2_flags = fg2->GetFocusgroupFlags();
   ASSERT_NE(fg2_flags, FocusgroupFlags::kNone);
-  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapBlock);
 
   // 3. The ancestor focusgroup's wrap properties should only be inherited in
-  // the horizontal axis.
+  // the inline axis.
   auto* fg3 = document.getElementById(AtomicString("fg3"));
   ASSERT_TRUE(fg3);
 
   FocusgroupFlags fg3_flags = fg3->GetFocusgroupFlags();
   ASSERT_NE(fg3_flags, FocusgroupFlags::kNone);
-  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapBlock);
 
   // 4. The ancestor focusgroup's wrap properties should only be inherited in
-  // the vertical axis.
+  // the block axis.
   auto* fg4 = document.getElementById(AtomicString("fg4"));
   ASSERT_TRUE(fg4);
 
   FocusgroupFlags fg4_flags = fg4->GetFocusgroupFlags();
   ASSERT_NE(fg4_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg4_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg4_flags & FocusgroupFlags::kWrapBlock);
 
   // 5. The ancestor focusgroup's wrap properties shouldn't be inherited since
   // the two focusgroups have no axis in common.
@@ -825,26 +833,26 @@ TEST_F(ElementTest, ParseFocusgroupAttrWrapCorrectly) {
 
   FocusgroupFlags fg5_flags = fg5->GetFocusgroupFlags();
   ASSERT_NE(fg5_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapBlock);
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrDoesntWrapInExtendingFocusgroupOnly) {
   Document& document = GetDocument();
   SetBodyContent(R"HTML(
     <div id=fg1 focusgroup>
-      <div id=fg2 focusgroup="extend horizontal wrap"></div>
-      <div id=fg3 focusgroup="extend vertical wrap"></div>
+      <div id=fg2 focusgroup="extend inline wrap"></div>
+      <div id=fg3 focusgroup="extend block wrap"></div>
       <div id=fg4 focusgroup="extend wrap"></div>
     </div>
-    <div id=fg5 focusgroup=horizontal>
-      <div id=fg6 focusgroup="extend horizontal wrap"></div>
-      <div id=fg7 focusgroup="extend vertical wrap"></div>
+    <div id=fg5 focusgroup=inline>
+      <div id=fg6 focusgroup="extend inline wrap"></div>
+      <div id=fg7 focusgroup="extend block wrap"></div>
       <div id=fg8 focusgroup="extend wrap"></div>
     </div>
-    <div id=fg9 focusgroup=vertical>
-      <div id=fg10 focusgroup="extend horizontal wrap"></div>
-      <div id=fg11 focusgroup="extend vertical wrap"></div>
+    <div id=fg9 focusgroup=block>
+      <div id=fg10 focusgroup="extend inline wrap"></div>
+      <div id=fg11 focusgroup="extend block wrap"></div>
       <div id=fg12 focusgroup="extend wrap"></div>
     </div>
   )HTML");
@@ -876,63 +884,63 @@ TEST_F(ElementTest, ParseFocusgroupAttrDoesntWrapInExtendingFocusgroupOnly) {
 
   FocusgroupFlags fg1_flags = fg1->GetFocusgroupFlags();
   ASSERT_NE(fg1_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg1_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg2_flags = fg2->GetFocusgroupFlags();
   ASSERT_NE(fg2_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg3_flags = fg3->GetFocusgroupFlags();
   ASSERT_NE(fg3_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg4_flags = fg4->GetFocusgroupFlags();
   ASSERT_NE(fg4_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg4_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg5_flags = fg5->GetFocusgroupFlags();
   ASSERT_NE(fg5_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg5_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg6_flags = fg6->GetFocusgroupFlags();
   ASSERT_NE(fg6_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg6_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg6_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg6_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg6_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg7_flags = fg7->GetFocusgroupFlags();
   ASSERT_NE(fg7_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg7_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg7_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg7_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg7_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg8_flags = fg8->GetFocusgroupFlags();
   ASSERT_NE(fg8_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg8_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg8_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg8_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg8_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg9_flags = fg9->GetFocusgroupFlags();
   ASSERT_NE(fg9_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg9_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg9_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg9_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg9_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg10_flags = fg10->GetFocusgroupFlags();
   ASSERT_NE(fg10_flags, FocusgroupFlags::kNone);
-  ASSERT_TRUE(fg10_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg10_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg10_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg10_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg11_flags = fg11->GetFocusgroupFlags();
   ASSERT_NE(fg11_flags, FocusgroupFlags::kNone);
-  ASSERT_FALSE(fg11_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg11_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg11_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg11_flags & FocusgroupFlags::kWrapBlock);
 
   FocusgroupFlags fg12_flags = fg12->GetFocusgroupFlags();
   ASSERT_NE(fg12_flags, FocusgroupFlags::kNone);
-  ASSERT_TRUE(fg12_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg12_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg12_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg12_flags & FocusgroupFlags::kWrapBlock);
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrGrid) {
@@ -1011,35 +1019,26 @@ TEST_F(ElementTest, ParseFocusgroupAttrGrid) {
 
   ASSERT_EQ(e1_flags, FocusgroupFlags::kGrid);
   ASSERT_EQ(e2_flags, FocusgroupFlags::kGrid);
-  ASSERT_EQ(e3_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapHorizontally |
-             FocusgroupFlags::kWrapVertically));
-  ASSERT_EQ(e4_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapHorizontally));
-  ASSERT_EQ(e5_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapVertically));
-  ASSERT_EQ(e6_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapHorizontally |
-             FocusgroupFlags::kWrapVertically));
+  ASSERT_EQ(e3_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapInline |
+                       FocusgroupFlags::kWrapBlock));
+  ASSERT_EQ(e4_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapInline));
+  ASSERT_EQ(e5_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapBlock));
+  ASSERT_EQ(e6_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapInline |
+                       FocusgroupFlags::kWrapBlock));
   ASSERT_EQ(e7_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kRowFlow |
                        FocusgroupFlags::kColFlow));
   ASSERT_EQ(e8_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kRowFlow));
   ASSERT_EQ(e9_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kColFlow));
   ASSERT_EQ(e10_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kRowFlow |
                         FocusgroupFlags::kColFlow));
-  ASSERT_EQ(e11_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapHorizontally));
-  ASSERT_EQ(e12_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapHorizontally |
-             FocusgroupFlags::kColFlow));
-  ASSERT_EQ(e13_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapVertically));
-  ASSERT_EQ(e14_flags,
-            (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapVertically |
-             FocusgroupFlags::kRowFlow));
+  ASSERT_EQ(e11_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapInline));
+  ASSERT_EQ(e12_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapInline |
+                        FocusgroupFlags::kColFlow));
+  ASSERT_EQ(e13_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapBlock));
+  ASSERT_EQ(e14_flags, (FocusgroupFlags::kGrid | FocusgroupFlags::kWrapBlock |
+                        FocusgroupFlags::kRowFlow));
   ASSERT_EQ(e15_flags, FocusgroupFlags::kNone);
-  ASSERT_EQ(e16_flags,
-            (FocusgroupFlags::kHorizontal | FocusgroupFlags::kVertical));
+  ASSERT_EQ(e16_flags, (FocusgroupFlags::kInline | FocusgroupFlags::kBlock));
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrValueRecomputedAfterDOMStructureChange) {
@@ -1063,8 +1062,8 @@ TEST_F(ElementTest, ParseFocusgroupAttrValueRecomputedAfterDOMStructureChange) {
   FocusgroupFlags fg2_flags = fg2->GetFocusgroupFlags();
   ASSERT_NE(fg2_flags, FocusgroupFlags::kNone);
   ASSERT_TRUE(fg2_flags & FocusgroupFlags::kExtend);
-  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg2_flags & FocusgroupFlags::kWrapBlock);
 
   auto* fg3 = document.getElementById(AtomicString("fg3"));
   ASSERT_TRUE(fg3);
@@ -1072,8 +1071,8 @@ TEST_F(ElementTest, ParseFocusgroupAttrValueRecomputedAfterDOMStructureChange) {
   FocusgroupFlags fg3_flags = fg3->GetFocusgroupFlags();
   ASSERT_NE(fg3_flags, FocusgroupFlags::kNone);
   ASSERT_TRUE(fg3_flags & FocusgroupFlags::kExtend);
-  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_TRUE(fg3_flags & FocusgroupFlags::kWrapBlock);
 
   // 2. Move |fg2| from |fg1| to |not-fg|.
   auto* not_fg = document.getElementById(AtomicString("not-fg"));
@@ -1086,14 +1085,14 @@ TEST_F(ElementTest, ParseFocusgroupAttrValueRecomputedAfterDOMStructureChange) {
   fg2_flags = fg2->GetFocusgroupFlags();
   ASSERT_NE(fg2_flags, FocusgroupFlags::kNone);
   ASSERT_FALSE(fg2_flags & FocusgroupFlags::kExtend);
-  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg2_flags & FocusgroupFlags::kWrapBlock);
 
   fg3_flags = fg3->GetFocusgroupFlags();
   ASSERT_NE(fg3_flags, FocusgroupFlags::kNone);
   ASSERT_TRUE(fg3_flags & FocusgroupFlags::kExtend);
-  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapHorizontally);
-  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapVertically);
+  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapInline);
+  ASSERT_FALSE(fg3_flags & FocusgroupFlags::kWrapBlock);
 }
 
 TEST_F(ElementTest, ParseFocusgroupAttrValueClearedAfterNodeRemoved) {
@@ -1152,7 +1151,7 @@ TEST_F(ElementTest, MixStyleAttributeAndCSSOMChanges) {
 }
 
 TEST_F(ElementTest, GetPseudoElement) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
     #before::before { content:"a"; }
     #after::after { content:"a"; }
@@ -1187,6 +1186,232 @@ TEST_F(ElementTest, GetPseudoElement) {
     EXPECT_EQ(e.has_after, !!element->GetPseudoElement(kPseudoIdAfter));
     EXPECT_EQ(e.has_marker, !!element->GetPseudoElement(kPseudoIdMarker));
   }
+}
+
+TEST_F(ElementTest, ColumnPseudoElements) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style id="test-style">
+    #test::column { content: "*"; opacity: 0.5; }
+    #test::column::scroll-marker { content: "+"; opacity: 0.3; }
+    </style>
+    <div id="test"></div>
+    )HTML");
+  // GetPseudoElement() relies on style recalc.
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  Element* element = GetElementById("test");
+
+  PhysicalRect dummy_column_rect;
+  PseudoElement* first_column_pseudo_element =
+      element->GetOrCreateColumnPseudoElementIfNeeded(0u, dummy_column_rect);
+  ASSERT_TRUE(first_column_pseudo_element);
+  EXPECT_EQ(first_column_pseudo_element->GetComputedStyle()->Opacity(), 0.5f);
+  ASSERT_TRUE(
+      first_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker));
+  EXPECT_EQ(first_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker)
+                ->GetComputedStyle()
+                ->Opacity(),
+            0.3f);
+
+  PseudoElement* second_column_pseudo_element =
+      element->GetOrCreateColumnPseudoElementIfNeeded(1u, dummy_column_rect);
+  ASSERT_TRUE(second_column_pseudo_element);
+  EXPECT_EQ(second_column_pseudo_element->GetComputedStyle()->Opacity(), 0.5f);
+  ASSERT_TRUE(
+      second_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker));
+  EXPECT_EQ(
+      second_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker)
+          ->GetComputedStyle()
+          ->Opacity(),
+      0.3f);
+
+  PseudoElement* third_column_pseudo_element =
+      element->GetOrCreateColumnPseudoElementIfNeeded(2u, dummy_column_rect);
+  ASSERT_TRUE(third_column_pseudo_element);
+  EXPECT_EQ(third_column_pseudo_element->GetComputedStyle()->Opacity(), 0.5f);
+  ASSERT_TRUE(
+      third_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker));
+  EXPECT_EQ(third_column_pseudo_element->GetPseudoElement(kPseudoIdScrollMarker)
+                ->GetComputedStyle()
+                ->Opacity(),
+            0.3f);
+
+  ASSERT_TRUE(element->GetColumnPseudoElements());
+  EXPECT_EQ(element->GetColumnPseudoElements()->size(), 3u);
+
+  Element* style = GetElementById("test-style");
+  style->SetInnerHTMLWithoutTrustedTypes("");
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  EXPECT_EQ(element->GetColumnPseudoElements()->size(), 0u);
+}
+
+TEST_F(ElementTest, TheCheckMarkPseudoElement) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+      .checked::checkmark {
+        content: "*";
+      }
+
+      .base-button {
+        appearance: base-select;
+      }
+
+      .base-picker::picker(select) {
+        appearance: base-select;
+      }
+    </style>
+
+    <div class="checked" id="a-div"></div>
+
+    <select class="checked">
+      <option id="not-base-option" value="the only option"></option>
+    </select>
+
+    <select class="checked base-button">
+      <option id="base-button-option" value="the only option"></option>
+    </select>
+
+    <select class="checked base-picker">
+      <option id="base-picker-option" value="the only option"></option>
+    </select>
+
+    <select class="checked base-picker base-button" id="target">
+      <option id="target-option" value="the only option"></option>
+    </select>
+    )HTML");
+
+  // GetPseudoElement() relies on style recalc.
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  auto checkmark_pseudo_for = [this](const char* id) -> PseudoElement* {
+    Element* e = GetElementById(id);
+    return e->GetPseudoElement(kPseudoIdCheckMark);
+  };
+
+  // The `::checkmark` pseudo-element should only be created for option
+  // elements in an appearance:base-select.
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("a-div"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("not-base-option"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("base-button-option"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("base-picker-option"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("target"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("target-option"));
+
+  LocalFrame::NotifyUserActivation(
+      GetDocument().GetFrame(), mojom::UserActivationNotificationType::kTest);
+  To<HTMLSelectElement>(GetElementById("target"))
+      ->showPicker(ASSERT_NO_EXCEPTION);
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("target"));
+  EXPECT_NE(nullptr, checkmark_pseudo_for("target-option"));
+}
+
+TEST_F(ElementTest, ThePickerIconPseudoElement) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+      #a-div::picker-icon {
+        content: "*";
+      }
+
+      #target::picker-icon {
+        content: "*";
+      }
+    </style>
+
+    <div id="a-div"></div>
+
+    <select id="target">
+      <option id="target-option" value="the only option"></option>
+    </select>
+    )HTML");
+
+  // GetPseudoElement() relies on style recalc.
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  Element* div = GetElementById("a-div");
+  EXPECT_EQ(nullptr, div->GetPseudoElement(kPseudoIdPickerIcon));
+
+  // The `::picker-icon` pseudo-element should only be created for select
+  // elements.
+  Element* target = GetElementById("target");
+  EXPECT_NE(nullptr, target->GetPseudoElement(kPseudoIdPickerIcon));
+
+  Element* target_option = GetElementById("target-option");
+  EXPECT_EQ(nullptr, target_option->GetPseudoElement(kPseudoIdPickerIcon));
+}
+
+TEST_F(ElementTest, GenerateScrollMarkerGroup) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style id="test-style">
+      #scroller {
+        scroll-marker-group: before;
+        overflow: scroll;
+      }
+      #non-scroller {
+        scroll-marker-group: before;
+      }
+    </style>
+    <div id="scroller"></div>
+    <div id="non-scroller"></div>
+  )HTML");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* scroller = GetElementById("scroller");
+  Element* non_scroller = GetElementById("non-scroller");
+
+  EXPECT_TRUE(scroller->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore));
+  EXPECT_FALSE(
+      non_scroller->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore));
+}
+
+TEST_F(ElementTest, NestedMarkerInheritsFromPseudoParent) {
+  ScopedCSSNestedPseudoElementsForTest feature(false);
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+    li {
+      list-style-type: none;
+    }
+
+    li::before {
+      content: '';
+      list-style-type: disc;
+      list-style-position: inside;
+      float: left;
+      display: list-item;
+    }
+    </style>
+    <ul>
+      <li id="target">Item 1</li>
+    </ul>
+  )HTML");
+
+  UpdateAllLifecyclePhasesForTest();
+
+  Element* target = GetElementById("target");
+  Element* before = target->GetPseudoElement(kPseudoIdBefore);
+  Element* marker = before->GetPseudoElement(kPseudoIdMarker);
+
+  EXPECT_EQ(marker->GetComputedStyle()->ListStyleType()->GetCounterStyleName(),
+            AtomicString("disc"));
+}
+
+TEST_F(ElementTest, ScrollIntoViewNearestUseCounted) {
+  // Set via setAttribute
+  SetBodyInnerHTML(R"HTML(
+    <body>
+      <div id=target></div>
+    </body>
+  )HTML");
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kScrollIntoViewContainerNearest));
+  ScrollIntoViewOptions* options = ScrollIntoViewOptions::Create();
+  options->setContainer(V8ScrollContainer::Enum::kNearest);
+  GetElementById("target")->scrollIntoViewWithOptions(options);
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kScrollIntoViewContainerNearest));
 }
 
 }  // namespace blink

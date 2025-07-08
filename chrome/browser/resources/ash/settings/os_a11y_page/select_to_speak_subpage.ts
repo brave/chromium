@@ -8,26 +8,29 @@
  * Select-to-speak settings.
  */
 
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 
-import {DropdownMenuOptionList} from '/shared/settings/controls/settings_dropdown_menu.js';
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteOriginMixin} from '../common/route_origin_mixin.js';
+import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {LanguagesBrowserProxy, LanguagesBrowserProxyImpl} from '../os_languages_page/languages_browser_proxy.js';
-import {RouteOriginMixin} from '../route_origin_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {LanguagesBrowserProxy} from '../os_languages_page/languages_browser_proxy.js';
+import {LanguagesBrowserProxyImpl} from '../os_languages_page/languages_browser_proxy.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './select_to_speak_subpage.html.js';
-import {SelectToSpeakSubpageBrowserProxy, SelectToSpeakSubpageBrowserProxyImpl} from './select_to_speak_subpage_browser_proxy.js';
+import type {SelectToSpeakSubpageBrowserProxy} from './select_to_speak_subpage_browser_proxy.js';
+import {SelectToSpeakSubpageBrowserProxyImpl} from './select_to_speak_subpage_browser_proxy.js';
 
 /**
  * Constant used as the value for a menu option representing the current device
@@ -64,7 +67,7 @@ enum EventType {
   CANCELLED = 'cancelled',
 }
 
-interface HandlerVoice {
+export interface HandlerVoice {
   eventTypes: EventType[];
   extensionId: string;
   lang: string;
@@ -75,7 +78,7 @@ interface HandlerVoice {
   languageCode?: string;
 }
 
-interface SettingsSelectToSpeakSubpageElement {
+export interface SettingsSelectToSpeakSubpageElement {
   $: {
     enhancedNetworkVoicesToggle: SettingsToggleButtonElement,
   };
@@ -85,7 +88,7 @@ const SettingsSelectToSpeakSubpageElementBase =
     DeepLinkingMixin(RouteOriginMixin(
         PrefsMixin(WebUiListenerMixin(I18nMixin(PolymerElement)))));
 
-class SettingsSelectToSpeakSubpageElement extends
+export class SettingsSelectToSpeakSubpageElement extends
     SettingsSelectToSpeakSubpageElementBase {
   static get is() {
     return 'settings-select-to-speak-subpage';
@@ -204,16 +207,13 @@ class SettingsSelectToSpeakSubpageElement extends
         },
       },
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kSelectToSpeakWordHighlight,
-          Setting.kSelectToSpeakBackgroundShading,
-          Setting.kSelectToSpeakNavigationControls,
-        ]),
+      selectToSpeakLearnMoreUrl_: {
+        type: String,
+        value() {
+          return loadTimeData.getBoolean('isKioskModeActive') ?
+              '' :
+              loadTimeData.getString('selectToSpeakLearnMoreUrl');
+        },
       },
     };
   }
@@ -230,15 +230,24 @@ class SettingsSelectToSpeakSubpageElement extends
     ];
   }
 
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kSelectToSpeakWordHighlight,
+    Setting.kSelectToSpeakBackgroundShading,
+    Setting.kSelectToSpeakNavigationControls,
+  ]);
+
   private langBrowserProxy_: LanguagesBrowserProxy;
   private enhancedNetworkVoicesVirtualPref_:
       chrome.settingsPrivate.PrefObject<boolean>;
+  private readonly highlightColorOptions_: DropdownMenuOptionList;
   private isPreviewing_: boolean;
   private languageFilterVirtualPref_: chrome.settingsPrivate.PrefObject<string>;
   private languagesMenuOptions_: DropdownMenuOptionList;
   private localVoicesMenuOptions_: DropdownMenuOptionList;
   private networkVoicesMenuOptions_: DropdownMenuOptionList;
   private voicePreviewText_: string;
+  private selectToSpeakLearnMoreUrl_: string;
   private enhancedNetworkVoicePreviewText_: string;
   private appLocale_ = '';
   private selectToSpeakBrowserProxy_: SelectToSpeakSubpageBrowserProxy;
@@ -255,7 +264,7 @@ class SettingsSelectToSpeakSubpageElement extends
     this.route = routes.A11Y_SELECT_TO_SPEAK;
   }
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
     // Populate the voice and enhanced network voice preview text inputs with a
@@ -280,7 +289,7 @@ class SettingsSelectToSpeakSubpageElement extends
   /**
    * Note: Overrides RouteOriginMixin implementation.
    */
-  override currentRouteChanged(newRoute: Route, prevRoute?: Route) {
+  override currentRouteChanged(newRoute: Route, prevRoute?: Route): void {
     super.currentRouteChanged(newRoute, prevRoute);
 
     // Does not apply to this page.
@@ -310,7 +319,7 @@ class SettingsSelectToSpeakSubpageElement extends
         this.$.enhancedNetworkVoicesToggle.checked);
   }
 
-  private onHighlightColorChanged_(color: string) {
+  private onHighlightColorChanged_(color: string): void {
     this.shadowRoot!.getElementById('lightHighlight')!.style.background = color;
     this.shadowRoot!.getElementById('darkHighlight')!.style.background = color;
   }
@@ -382,7 +391,7 @@ class SettingsSelectToSpeakSubpageElement extends
         JSON.stringify(this.getEnhancedNetworkVoiceNameAndExtension_()));
   }
 
-  private languageChanged_() {
+  private languageChanged_(): void {
     this.populateVoicesAndLanguages_();
   }
 
@@ -408,7 +417,7 @@ class SettingsSelectToSpeakSubpageElement extends
    * language with a list of languages covered by the available voices.
    * @private
    */
-  private populateVoicesAndLanguages_() {
+  private populateVoicesAndLanguages_(): void {
     let lang = this.languageFilterVirtualPref_.value || USE_DEVICE_LANGUAGE;
     if (lang === USE_DEVICE_LANGUAGE) {
       lang = this.getLanguageShortCode_(this.appLocale_);
@@ -448,7 +457,7 @@ class SettingsSelectToSpeakSubpageElement extends
       voices: HandlerVoice[], preferredLang: string,
       languageOptions: DropdownMenuOptionList,
       localOptions: DropdownMenuOptionList,
-      networkOptions: DropdownMenuOptionList) {
+      networkOptions: DropdownMenuOptionList): void {
     // Group voices by language.
     const languageDisplayNames = new Map();
     const localVoices = new Map();
@@ -502,7 +511,7 @@ class SettingsSelectToSpeakSubpageElement extends
    */
   private populateLanguages_(
       languageDisplayNames: Map<string, string>,
-      languageOptions: DropdownMenuOptionList) {
+      languageOptions: DropdownMenuOptionList): void {
     const supportedLanguagesList = Array.from(languageDisplayNames.keys());
     supportedLanguagesList.sort(
         (lang1, lang2) => languageDisplayNames.get(lang1)!.localeCompare(
@@ -543,7 +552,7 @@ class SettingsSelectToSpeakSubpageElement extends
    * more than one voice per display name, adds a numerical index to them (e.g.
    * English (Australia) 1) for disambiguation.
    */
-  private addIndexToVoiceDisplayNames_(voiceList: HandlerVoice[]) {
+  private addIndexToVoiceDisplayNames_(voiceList: HandlerVoice[]): void {
     const displayNameCounts = new Map<string, HandlerVoice[]>();
     voiceList.forEach(voice => {
       if (!displayNameCounts.has(voice.displayName!)) {
@@ -576,7 +585,7 @@ class SettingsSelectToSpeakSubpageElement extends
    */
   private appendVoicesToOptions_(
       options: DropdownMenuOptionList, voiceList: HandlerVoice[],
-      numberVoices: boolean) {
+      numberVoices: boolean): void {
     if (!voiceList) {
       return;
     }
@@ -596,7 +605,8 @@ class SettingsSelectToSpeakSubpageElement extends
    * Adds a voice to the map entry corresponding to the given language.
    */
   private addVoiceToMapForLanguage_(
-      voice: HandlerVoice, map: Map<string, HandlerVoice[]>, lang: string) {
+      voice: HandlerVoice, map: Map<string, HandlerVoice[]>,
+      lang: string): void {
     voice.languageCode = lang;
     if (map.has(lang)) {
       map.get(lang)!.push(voice);

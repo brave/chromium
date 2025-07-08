@@ -11,10 +11,9 @@ import org.json.JSONObject;
 import org.chromium.base.Log;
 import org.chromium.net.CronetTestUtil;
 import org.chromium.net.ExperimentalCronetEngine;
+import org.chromium.net.impl.CronetLibraryLoader;
 
-/**
- * Provides support for tests that depend on QUIC and HTTP2 servers.
- */
+/** Provides support for tests that depend on QUIC and HTTP2 servers. */
 class ChromiumNativeTestSupport extends ChromiumPlatformOnlyTestSupport {
     private static final String TAG = ChromiumNativeTestSupport.class.getSimpleName();
 
@@ -50,7 +49,8 @@ class ChromiumNativeTestSupport extends ChromiumPlatformOnlyTestSupport {
 
     @Override
     public void loadTestNativeLibrary() {
-        System.loadLibrary("cronet_tests");
+        CronetLibraryLoader.switchToTestLibrary();
+        CronetLibraryLoader.loadLibrary();
     }
 
     private static class QuicTestServer implements TestServer {

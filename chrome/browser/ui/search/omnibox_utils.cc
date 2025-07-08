@@ -14,19 +14,21 @@
 namespace search {
 
 OmniboxView* GetOmniboxView(content::WebContents* web_contents) {
-  return GetOmniboxView(chrome::FindBrowserWithWebContents(web_contents));
+  return GetOmniboxView(chrome::FindBrowserWithTab(web_contents));
 }
 
 OmniboxView* GetOmniboxView(Browser* browser) {
-  if (!browser)
+  if (!browser) {
     return nullptr;
+  }
   return browser->window()->GetLocationBar()->GetOmniboxView();
 }
 
 void FocusOmnibox(bool focus, content::WebContents* web_contents) {
   OmniboxView* omnibox_view = GetOmniboxView(web_contents);
-  if (!omnibox_view)
+  if (!omnibox_view) {
     return;
+  }
 
   if (focus) {
     // This is an invisible focus to support "fakebox" implementations on NTPs

@@ -4,15 +4,19 @@
 
 package org.chromium.chrome.browser.password_manager.settings;
 
+
+import org.chromium.build.annotations.NullMarked;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * An implementation of {@link CallbackDelayer} for tests. It runs callbacks after a manual signal.
  */
+@NullMarked
 public final class ManualCallbackDelayer implements CallbackDelayer {
     /** The callbacks to be run within {@link runCallbacksSynchronously}.*/
-    private List<Runnable> mCallbacks = new ArrayList<>();
+    private final List<Runnable> mCallbacks = new ArrayList<>();
 
     @Override
     public void delay(Runnable callback) {

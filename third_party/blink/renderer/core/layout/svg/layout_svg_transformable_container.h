@@ -34,10 +34,9 @@ class LayoutSVGTransformableContainer final : public LayoutSVGContainer {
 
   bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
 
-  bool IsOfType(LayoutObjectType type) const override {
+  bool IsSVGTransformableContainer() const final {
     NOT_DESTROYED();
-    return type == kLayoutObjectSVGTransformableContainer ||
-           LayoutSVGContainer::IsOfType(type);
+    return true;
   }
   const gfx::Vector2dF& AdditionalTranslation() const {
     NOT_DESTROYED();
@@ -46,6 +45,7 @@ class LayoutSVGTransformableContainer final : public LayoutSVGContainer {
 
  private:
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  void WillBeDestroyed() override;
   SVGTransformChange UpdateLocalTransform(
       const gfx::RectF& reference_box) override;
   AffineTransform LocalSVGTransform() const override {

@@ -22,7 +22,7 @@ class CORE_EXPORT CSSInitialColorValue : public CSSValue {
   explicit CSSInitialColorValue(base::PassKey<CSSValuePool>)
       : CSSValue(kInitialColorValueClass) {}
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSInitialColorValue&) const { return true; }
 

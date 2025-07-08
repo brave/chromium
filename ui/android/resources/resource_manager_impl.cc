@@ -12,6 +12,7 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -25,10 +26,12 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "ui/android/resources/ui_resource_provider.h"
-#include "ui/android/ui_android_jni_headers/ResourceManager_jni.h"
 #include "ui/android/window_android.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/geometry/rect.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "ui/android/ui_android_jni_headers/ResourceManager_jni.h"
 
 using base::android::JavaArrayOfIntArrayToIntVector;
 using base::android::JavaParamRef;
@@ -199,8 +202,7 @@ Resource* ResourceManagerImpl::GetStaticResourceWithTint(
   return (*resource_map)[res_id].get();
 }
 
-void ResourceManagerImpl::ClearTintedResourceCache(JNIEnv* env,
-    const JavaRef<jobject>& jobj) {
+void ResourceManagerImpl::ClearTintedResourceCache(JNIEnv* env) {
   tinted_resources_.clear();
 }
 
@@ -217,7 +219,6 @@ void ResourceManagerImpl::PreloadResource(AndroidResourceType res_type,
 }
 
 void ResourceManagerImpl::OnResourceReady(JNIEnv* env,
-                                          const JavaRef<jobject>& jobj,
                                           jint res_type,
                                           jint res_id,
                                           const JavaRef<jobject>& bitmap,
@@ -245,10 +246,18 @@ void ResourceManagerImpl::OnResourceReady(JNIEnv* env,
 
 void ResourceManagerImpl::RemoveResource(
     JNIEnv* env,
-    const base::android::JavaRef<jobject>& jobj,
     jint res_type,
     jint res_id) {
   resources_[res_type].erase(res_id);
+}
+
+void ResourceManagerImpl::DumpIfNoResource(
+    JNIEnv* env,
+    jint res_type,
+    jint res_id) {
+  if (resources_[res_type].find(res_id) == resources_[res_type].end()) {
+    base::debug::DumpWithoutCrashing();  // Investigating crbug.com/388600389.
+  }
 }
 
 bool ResourceManagerImpl::OnMemoryDump(

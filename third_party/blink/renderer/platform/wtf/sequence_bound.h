@@ -31,8 +31,8 @@ struct SequenceBoundBindTraits {
 
   template <typename Functor, typename... Args>
   static inline auto BindOnce(Functor&& functor, Args&&... args) {
-    return CrossThreadBindOnce(std::forward<Functor>(functor),
-                               std::forward<Args>(args)...);
+    return blink::CrossThreadBindOnce(std::forward<Functor>(functor),
+                                      std::forward<Args>(args)...);
   }
 
   template <typename T>
@@ -70,8 +70,8 @@ struct SequenceBoundBindTraits {
   }
 
   template <template <typename> class CallbackType>
-  using EnableIfIsCrossThreadTask =
-      std::enable_if_t<IsCrossThreadOnceFunction<CallbackType<void()>>::value>;
+  static constexpr bool IsCrossThreadTask =
+      IsCrossThreadOnceFunction<CallbackType<void()>>::value;
 };
 
 }  // namespace internal

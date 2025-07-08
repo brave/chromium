@@ -17,7 +17,7 @@
 namespace gfx {
 
 // This class converts a gfx::NativePixmapHandle to a gfx::NativePixmap.
-class GFX_EXPORT NativePixmapDmaBuf : public gfx::NativePixmap {
+class COMPONENT_EXPORT(GFX) NativePixmapDmaBuf : public gfx::NativePixmap {
  public:
   NativePixmapDmaBuf(const gfx::Size& size,
                      gfx::BufferFormat format,
@@ -42,7 +42,7 @@ class GFX_EXPORT NativePixmapDmaBuf : public gfx::NativePixmap {
                             const gfx::OverlayPlaneData& overlay_plane_data,
                             std::vector<gfx::GpuFence> acquire_fences,
                             std::vector<gfx::GpuFence> release_fences) override;
-  gfx::NativePixmapHandle ExportHandle() override;
+  gfx::NativePixmapHandle ExportHandle() const override;
 
  protected:
   ~NativePixmapDmaBuf() override;

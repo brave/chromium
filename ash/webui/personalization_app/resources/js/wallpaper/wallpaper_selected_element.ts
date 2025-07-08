@@ -7,32 +7,34 @@
  * wallpaper.
  */
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/personalization/cros_button_style.css.js';
+import 'chrome://resources/ash/common/personalization/personalization_shared_icons.html.js';
+import 'chrome://resources/ash/common/personalization/wallpaper.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import 'chrome://resources/polymer/v3_0/iron-iconset-svg/iron-iconset-svg.js';
 import '../../common/icons.html.js';
-import '../../css/wallpaper.css.js';
-import '../../css/cros_button_style.css.js';
-import './info_svg_element.js';
 import './google_photos_shared_album_dialog_element.js';
+import './info_svg_element.js';
 
-import {loadTimeData} from 'chrome://resources/ash/common/load_time_data.m.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {isNonEmptyArray} from 'chrome://resources/ash/common/sea_pen/sea_pen_utils.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
 
-import {CurrentAttribution, CurrentWallpaper, GooglePhotosPhoto, WallpaperCollection, WallpaperImage, WallpaperLayout, WallpaperType} from '../../personalization_app.mojom-webui.js';
-import {isGooglePhotosSharedAlbumsEnabled, isPersonalizationJellyEnabled} from '../load_time_booleans.js';
+import type {CurrentAttribution, CurrentWallpaper, GooglePhotosPhoto, WallpaperCollection, WallpaperImage} from '../../personalization_app.mojom-webui.js';
+import {WallpaperLayout, WallpaperType} from '../../personalization_app.mojom-webui.js';
+import {isGooglePhotosSharedAlbumsEnabled} from '../load_time_booleans.js';
 import {Paths} from '../personalization_router_element.js';
 import {WithPersonalizationStore} from '../personalization_store.js';
-import {getCheckmarkIcon, isNonEmptyArray} from '../utils.js';
 
 import {getLocalStorageAttribution, getWallpaperAriaLabel, getWallpaperLayoutEnum, getWallpaperSrc} from './utils.js';
 import {getDailyRefreshState, selectGooglePhotosAlbum, setCurrentWallpaperLayout, setDailyRefreshCollectionId, updateDailyRefreshWallpaper} from './wallpaper_controller.js';
 import {getWallpaperProvider} from './wallpaper_interface_provider.js';
-import {WallpaperObserver} from './wallpaper_observer.js';
 import {getTemplate} from './wallpaper_selected_element.html.js';
-import {DailyRefreshState} from './wallpaper_state.js';
+import type {DailyRefreshState} from './wallpaper_state.js';
 
-export class WallpaperSelected extends WithPersonalizationStore {
+export class WallpaperSelectedElement extends WithPersonalizationStore {
   static get is() {
     return 'wallpaper-selected';
   }
@@ -69,6 +71,11 @@ export class WallpaperSelected extends WithPersonalizationStore {
       imagesByCollectionId_: Object,
 
       photosByAlbumId_: Object,
+
+      actionUrl_: {
+        type: String,
+        computed: 'computeActionUrl_(image_)',
+      },
 
       attribution_: {
         type: Object,
@@ -173,6 +180,7 @@ export class WallpaperSelected extends WithPersonalizationStore {
   isGooglePhotosAlbumShared: boolean;
   googlePhotosAlbumId: string|undefined;
   path: string;
+  private actionUrl_: string|null;
   private attribution_: CurrentAttribution|null;
   private image_: CurrentWallpaper|null;
   private imageTitle_: string;
@@ -200,7 +208,6 @@ export class WallpaperSelected extends WithPersonalizationStore {
 
   override connectedCallback() {
     super.connectedCallback();
-    WallpaperObserver.initWallpaperObserverIfNeeded();
     this.watch('error_', state => state.error);
     this.watch('attribution_', state => state.wallpaper.attribution);
     this.watch('image_', state => state.wallpaper.currentSelected);
@@ -209,7 +216,9 @@ export class WallpaperSelected extends WithPersonalizationStore {
         state => state.wallpaper.loading.setImage > 0 ||
             state.wallpaper.loading.selected.image ||
             state.wallpaper.loading.selected.attribution ||
-            state.wallpaper.loading.refreshWallpaper);
+            state.wallpaper.loading.refreshWallpaper ||
+            state.wallpaper.seaPen.loading.currentSelected ||
+            state.wallpaper.seaPen.loading.setImage > 0);
     this.watch('dailyRefreshState_', state => state.wallpaper.dailyRefresh);
     this.watch(
         'imagesByCollectionId_', state => state.wallpaper.backdrop.images);
@@ -284,14 +293,13 @@ export class WallpaperSelected extends WithPersonalizationStore {
       imagesByCollectionId:
           Record<WallpaperCollection['id'], WallpaperImage[]|null>) {
     // Only show the description dialog if title and content exist.
-    if (!isPersonalizationJellyEnabled() || !image?.descriptionContent ||
-        !image?.descriptionTitle) {
+    if (!image?.descriptionContent || !image?.descriptionTitle) {
       return false;
     }
     switch (path) {
       // Hide button when viewing a different collection.
       case Paths.COLLECTION_IMAGES:
-        if (!imagesByCollectionId![collectionId!]) {
+        if (!imagesByCollectionId[collectionId]) {
           return false;
         }
         const imageIsInCollection = imagesByCollectionId[collectionId]?.find(
@@ -299,6 +307,9 @@ export class WallpaperSelected extends WithPersonalizationStore {
         return !!imageIsInCollection;
       // Hide button when viewing Google Photos.
       case Paths.GOOGLE_PHOTOS_COLLECTION:
+        return false;
+      // Hide button when viewing local images.
+      case Paths.LOCAL_COLLECTION:
         return false;
       default:
         return true;
@@ -355,14 +366,14 @@ export class WallpaperSelected extends WithPersonalizationStore {
 
   private computeFillIcon_(image: CurrentWallpaper): string {
     if (!!image && image.layout === WallpaperLayout.kCenterCropped) {
-      return getCheckmarkIcon();
+      return 'personalization-shared:circle-checkmark';
     }
     return 'personalization:layout_fill';
   }
 
   private computeCenterIcon_(image: CurrentWallpaper): string {
     if (!!image && image.layout === WallpaperLayout.kCenter) {
-      return getCheckmarkIcon();
+      return 'personalization-shared:circle-checkmark';
     }
     return 'personalization:layout_center';
   }
@@ -378,7 +389,7 @@ export class WallpaperSelected extends WithPersonalizationStore {
       dailyRefreshState: DailyRefreshState|null): string {
     if (this.isDailyRefreshId_(
             collectionId || googlePhotosAlbumId, dailyRefreshState)) {
-      return getCheckmarkIcon();
+      return 'personalization-shared:circle-checkmark';
     }
     return 'personalization:change-daily';
   }
@@ -447,9 +458,6 @@ export class WallpaperSelected extends WithPersonalizationStore {
 
   private onClickShowDescription_() {
     assert(
-        isPersonalizationJellyEnabled(),
-        'description dialog only available if personalization jelly enabled');
-    assert(
         this.showDescriptionButton_,
         'description dialog can only be opened if button is visible');
     this.showDescriptionDialog_ = true;
@@ -501,7 +509,7 @@ export class WallpaperSelected extends WithPersonalizationStore {
    * Cache the attribution in local storage when attribution is updated
    * Populate the attribution map in local storage when attribution is updated
    */
-  private async onAttributionChanged_(
+  private onAttributionChanged_(
       newAttribution: CurrentAttribution|null,
       oldAttribution: CurrentAttribution|null) {
     const attributionMap =
@@ -525,6 +533,19 @@ export class WallpaperSelected extends WithPersonalizationStore {
   private getContainerClass_(isLoading: boolean, showImage: boolean): string {
     return this.showPlaceholders_(isLoading, showImage) ? 'loading' : '';
   }
+
+  private computeActionUrl_(image: CurrentWallpaper|null): string|null {
+    if (!image?.actionUrl?.url) {
+      return null;
+    }
+
+    try {
+      return sanitizeInnerHtml(image.actionUrl.url).toString();
+    } catch (e) {
+      console.warn('cannot display learn more link', e);
+      return null;
+    }
+  }
 }
 
-customElements.define(WallpaperSelected.is, WallpaperSelected);
+customElements.define(WallpaperSelectedElement.is, WallpaperSelectedElement);

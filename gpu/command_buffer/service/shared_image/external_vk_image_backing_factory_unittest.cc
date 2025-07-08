@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/shared_image/external_vk_image_backing_factory.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
+#include "cc/test/pixel_test_utils.h"
 #include "components/viz/common/gpu/vulkan_in_process_context_provider.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/service/service_utils.h"
@@ -28,7 +34,7 @@
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/gpu/GrBackendSemaphore.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSemaphore.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "ui/gl/buildflags.h"
@@ -45,13 +51,9 @@ namespace {
 class ExternalVkImageBackingFactoryTest : public SharedImageTestBase {
  protected:
   void SetUp() override {
-#if BUILDFLAG(IS_CHROMEOS)
-    GTEST_SKIP() << "Chrome OS Vulkan initialization fails";
-#else
     ASSERT_NO_FATAL_FAILURE(InitializeContext(GrContextType::kVulkan));
     backing_factory_ =
         std::make_unique<ExternalVkImageBackingFactory>(context_state_);
-#endif
   }
 };
 
@@ -69,31 +71,25 @@ class ExternalVkImageBackingFactoryDawnTest
 
     ExternalVkImageBackingFactoryTest::SetUp();
 
-    // Create a Dawn Vulkan device
-    dawn_instance_.DiscoverDefaultPhysicalDevices();
+    dawnProcSetProcs(&dawn::native::GetProcs());
 
-    std::vector<dawn::native::Adapter> adapters = dawn_instance_.GetAdapters();
-    auto adapter_it = base::ranges::find(adapters, wgpu::BackendType::Vulkan,
-                                         [](dawn::native::Adapter adapter) {
-                                           wgpu::AdapterProperties properties;
-                                           adapter.GetProperties(&properties);
-                                           return properties.backendType;
-                                         });
-    ASSERT_NE(adapter_it, adapters.end());
-
-    DawnProcTable procs = dawn::native::GetProcs();
-    dawnProcSetProcs(&procs);
+    // Find a Dawn Vulkan adapter
+    wgpu::RequestAdapterOptions adapter_options;
+    adapter_options.backendType = wgpu::BackendType::Vulkan;
+    std::vector<dawn::native::Adapter> adapters =
+        dawn_instance_.EnumerateAdapters(&adapter_options);
+    ASSERT_GT(adapters.size(), 0u);
 
     // We need to request internal usage to be able to do operations with
     // internal methods that would need specific usages.
     wgpu::FeatureName dawn_internal_usage =
         wgpu::FeatureName::DawnInternalUsages;
     wgpu::DeviceDescriptor device_descriptor;
-    device_descriptor.requiredFeaturesCount = 1;
+    device_descriptor.requiredFeatureCount = 1;
     device_descriptor.requiredFeatures = &dawn_internal_usage;
 
     dawn_device_ =
-        wgpu::Device::Acquire(adapter_it->CreateDevice(&device_descriptor));
+        wgpu::Device::Acquire(adapters[0].CreateDevice(&device_descriptor));
     DCHECK(dawn_device_) << "Failed to create Dawn device";
   }
 
@@ -103,18 +99,33 @@ class ExternalVkImageBackingFactoryDawnTest
   }
 
  protected:
-  dawn::native::Instance dawn_instance_;
+#ifdef WGPU_BREAKING_CHANGE_INSTANCE_FEATURES_LIMITS
+  static constexpr auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
+  static constexpr wgpu::InstanceDescriptor dawn_instance_desc_ = {
+      .requiredFeatureCount = 1,
+      .requiredFeatures = &kTimedWaitAny,
+  };
+#else
+  static constexpr wgpu::InstanceDescriptor dawn_instance_desc_ = {
+      .capabilities =
+          {
+              .timedWaitAnyEnable = true,
+          },
+  };
+#endif
+  dawn::native::Instance dawn_instance_ =
+      dawn::native::Instance(&dawn_instance_desc_);
   wgpu::Device dawn_device_;
 };
 
 TEST_F(ExternalVkImageBackingFactoryDawnTest, DawnWrite_SkiaVulkanRead) {
   // Create a backing using mailbox.
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(4, 4);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage =
-      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU;
+  const gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU_WRITE;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = backing_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -128,7 +139,7 @@ TEST_F(ExternalVkImageBackingFactoryDawnTest, DawnWrite_SkiaVulkanRead) {
   {
     // Create a Dawn representation to clear the texture contents to a green.
     auto dawn_representation = shared_image_representation_factory_.ProduceDawn(
-        mailbox, dawn_device_, wgpu::BackendType::Vulkan, {});
+        mailbox, dawn_device_, wgpu::BackendType::Vulkan, {}, context_state_);
     ASSERT_TRUE(dawn_representation);
 
     auto dawn_scoped_access = dawn_representation->BeginScopedAccess(
@@ -222,12 +233,12 @@ TEST_F(ExternalVkImageBackingFactoryDawnTest, DawnWrite_SkiaVulkanRead) {
 
 TEST_F(ExternalVkImageBackingFactoryDawnTest, SkiaVulkanWrite_DawnRead) {
   // Create a backing using mailbox.
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   const auto format = viz::SinglePlaneFormat::kRGBA_8888;
   const gfx::Size size(4, 4);
   const auto color_space = gfx::ColorSpace::CreateSRGB();
-  const uint32_t usage =
-      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_WEBGPU;
+  const gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_RASTER_WRITE | SHARED_IMAGE_USAGE_WEBGPU_READ;
   const gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   auto backing = backing_factory_->CreateSharedImage(
       mailbox, format, surface_handle, size, color_space,
@@ -280,7 +291,7 @@ TEST_F(ExternalVkImageBackingFactoryDawnTest, SkiaVulkanWrite_DawnRead) {
   {
     // Create a Dawn representation
     auto dawn_representation = shared_image_representation_factory_.ProduceDawn(
-        mailbox, dawn_device_, wgpu::BackendType::Vulkan, {});
+        mailbox, dawn_device_, wgpu::BackendType::Vulkan, {}, context_state_);
     ASSERT_TRUE(dawn_representation);
 
     // Begin access to copy the data out. Skia should have initialized the
@@ -302,11 +313,11 @@ TEST_F(ExternalVkImageBackingFactoryDawnTest, SkiaVulkanWrite_DawnRead) {
     // Encode the buffer copy
     wgpu::CommandEncoder encoder = dawn_device_.CreateCommandEncoder();
     {
-      wgpu::ImageCopyTexture src_copy_view = {};
+      wgpu::TexelCopyTextureInfo src_copy_view = {};
       src_copy_view.origin = {0, 0, 0};
       src_copy_view.texture = src_texture;
 
-      wgpu::ImageCopyBuffer dst_copy_view = {};
+      wgpu::TexelCopyBufferInfo dst_copy_view = {};
       dst_copy_view.buffer = dst_buffer;
       dst_copy_view.layout.bytesPerRow = 256;
       dst_copy_view.layout.offset = 0;
@@ -322,19 +333,17 @@ TEST_F(ExternalVkImageBackingFactoryDawnTest, SkiaVulkanWrite_DawnRead) {
     queue.Submit(1, &commands);
 
     // Map the buffer to read back data
-    bool done = false;
-    dst_buffer.MapAsync(
-        wgpu::MapMode::Read, 0, 256 * size.height(),
-        [](WGPUBufferMapAsyncStatus status, void* userdata) {
-          EXPECT_EQ(status, WGPUBufferMapAsyncStatus_Success);
-          *static_cast<bool*>(userdata) = true;
-        },
-        &done);
+    wgpu::FutureWaitInfo wait_info{
+        dst_buffer.MapAsync(wgpu::MapMode::Read, 0, 256 * size.height(),
+                            wgpu::CallbackMode::WaitAnyOnly,
+                            [](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                              ASSERT_EQ(status, wgpu::MapAsyncStatus::Success);
+                            })};
 
-    while (!done) {
-      base::PlatformThread::Sleep(base::Microseconds(100));
-      dawn_device_.Tick();
-    }
+    wgpu::WaitStatus status =
+        wgpu::Instance(dawn_instance_.Get())
+            .WaitAny(1, &wait_info, std::numeric_limits<uint64_t>::max());
+    DCHECK(status == wgpu::WaitStatus::Success);
 
     // Check the pixel data
     const uint8_t* pixel_data =
@@ -369,12 +378,14 @@ class ExternalVkImageBackingFactoryWithFormatTest
 
 TEST_P(ExternalVkImageBackingFactoryWithFormatTest, Basic) {
   viz::SharedImageFormat format = get_format();
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   gfx::Size size(256, 256);
   auto color_space = gfx::ColorSpace::CreateSRGB();
   GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
   SkAlphaType alpha_type = kPremul_SkAlphaType;
-  uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_GLES2;
+  gpu::SharedImageUsageSet usage = SHARED_IMAGE_USAGE_DISPLAY_READ |
+                                   SHARED_IMAGE_USAGE_GLES2_READ |
+                                   SHARED_IMAGE_USAGE_GLES2_WRITE;
 
   bool supported = backing_factory_->CanCreateSharedImage(
       usage, format, size, /*thread_safe=*/false, gfx::EMPTY_BUFFER,
@@ -501,13 +512,13 @@ TEST_P(ExternalVkImageBackingFactoryWithFormatTest, Basic) {
 // Verify that pixel upload works as expected.
 TEST_P(ExternalVkImageBackingFactoryWithFormatTest, Upload) {
   viz::SharedImageFormat format = get_format();
-  auto mailbox = Mailbox::GenerateForSharedImage();
+  auto mailbox = Mailbox::Generate();
   gfx::Size size(30, 30);
   auto color_space = gfx::ColorSpace::CreateSRGB();
   GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
   SkAlphaType alpha_type = kPremul_SkAlphaType;
-  uint32_t usage = SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_RASTER |
-                   SHARED_IMAGE_USAGE_CPU_UPLOAD;
+  gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_CPU_UPLOAD;
 
   // Verify backing can be created.
   auto backing = backing_factory_->CreateSharedImage(
@@ -526,6 +537,54 @@ TEST_P(ExternalVkImageBackingFactoryWithFormatTest, Upload) {
   ASSERT_TRUE(shared_image_ref);
 
   VerifyPixelsWithReadbackGanesh(mailbox, bitmaps);
+}
+
+TEST_P(ExternalVkImageBackingFactoryWithFormatTest, ReadbackToMemory) {
+  viz::SharedImageFormat format = get_format();
+
+  auto mailbox = Mailbox::Generate();
+  gfx::Size size(9, 9);
+  auto color_space = gfx::ColorSpace::CreateSRGB();
+  GrSurfaceOrigin surface_origin = kTopLeft_GrSurfaceOrigin;
+  SkAlphaType alpha_type = kPremul_SkAlphaType;
+  gpu::SharedImageUsageSet usage =
+      SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_CPU_UPLOAD;
+  gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
+
+  bool supported = backing_factory_->CanCreateSharedImage(
+      usage, format, size, /*thread_safe=*/false, gfx::EMPTY_BUFFER,
+      GrContextType::kVulkan, {});
+  ASSERT_TRUE(supported);
+
+  auto backing = backing_factory_->CreateSharedImage(
+      mailbox, format, surface_handle, size, color_space, surface_origin,
+      alpha_type, usage, "TestLabel", /*is_thread_safe=*/false);
+  ASSERT_TRUE(backing);
+
+  std::vector<SkBitmap> src_bitmaps =
+      AllocateRedBitmaps(format, size, /*added_stride=*/0);
+
+  // Upload from bitmap with expected stride.
+  ASSERT_TRUE(backing->UploadFromMemory(GetSkPixmaps(src_bitmaps)));
+
+  const int num_planes = format.NumberOfPlanes();
+  // Do readback into bitmap with same stride and validate pixels match what
+  // was uploaded.
+  std::vector<SkBitmap> readback_bitmaps(num_planes);
+  for (int plane = 0; plane < num_planes; ++plane) {
+    auto& info = src_bitmaps[plane].info();
+    size_t stride = info.minRowBytes();
+    readback_bitmaps[plane].allocPixels(info, stride);
+  }
+
+  std::vector<SkPixmap> pixmaps = GetSkPixmaps(readback_bitmaps);
+  ASSERT_TRUE(backing->ReadbackToMemory(pixmaps));
+
+  for (int plane = 0; plane < num_planes; ++plane) {
+    EXPECT_TRUE(cc::MatchesBitmap(readback_bitmaps[plane], src_bitmaps[plane],
+                                  cc::ExactPixelComparator()))
+        << "plane_index=" << plane;
+  }
 }
 
 std::string TestParamToString(

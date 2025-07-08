@@ -6,20 +6,26 @@
 #define CHROME_BROWSER_DOWNLOAD_BUBBLE_DOWNLOAD_BUBBLE_UPDATE_SERVICE_H_
 
 #include <map>
+#include <optional>
 #include <vector>
 
 #include "base/dcheck_is_on.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "base/types/optional_ref.h"
+#include "chrome/browser/download/bubble/download_bubble_accessible_alerts_map.h"
+#include "chrome/browser/download/bubble/download_bubble_display_info.h"
 #include "chrome/browser/download/bubble/download_display_controller.h"
+#include "chrome/browser/download/download_history.h"
 #include "chrome/browser/download/download_ui_model.h"
-#include "chrome/browser/web_applications/web_app_id.h"
+#include "chrome/browser/ui/download/download_display.h"
 #include "components/download/content/public/all_download_item_notifier.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_items_collection/core/offline_item.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/webapps/common/web_app_id.h"
 
 class Profile;
 
@@ -37,7 +43,8 @@ class DownloadItem;
 class DownloadBubbleUpdateService
     : public KeyedService,
       public download::AllDownloadItemNotifier::Observer,
-      public offline_items_collection::OfflineContentProvider::Observer {
+      public offline_items_collection::OfflineContentProvider::Observer,
+      public DownloadHistory::Observer {
  public:
   // Defines sort priority for items.
   struct ItemSortKey {
@@ -47,10 +54,12 @@ class DownloadBubbleUpdateService
       kNotInProgress = 2,
     };
 
+    friend bool operator==(const ItemSortKey&, const ItemSortKey&) = default;
     bool operator<(const ItemSortKey& other) const;
-    bool operator==(const ItemSortKey& other) const;
-    bool operator!=(const ItemSortKey& other) const;
     bool operator>(const ItemSortKey& other) const;
+
+    // Returns a key that sorts before any other.
+    static ItemSortKey Min();
 
     // Active in-progress items come before paused items, which come before
     // not-in-progress items.
@@ -81,7 +90,7 @@ class DownloadBubbleUpdateService
   // testing.
   virtual bool GetAllModelsToDisplay(
       std::vector<DownloadUIModel::DownloadUIModelPtr>& models,
-      const web_app::AppId* web_app_id,
+      const webapps::AppId* web_app_id,
       bool force_backfill_download_items = false);
 
   // Returns information relevant to the display state of the download button.
@@ -90,8 +99,8 @@ class DownloadBubbleUpdateService
   // initiated by normal Chrome windows. Does not prune the cache or backfill
   // missing items. May be slightly inaccurate in edge cases. Virtual for
   // testing.
-  virtual const DownloadDisplayController::AllDownloadUIModelsInfo&
-  GetAllModelsInfo(const web_app::AppId* web_app_id);
+  virtual const DownloadBubbleDisplayInfo& GetDisplayInfo(
+      const webapps::AppId* web_app_id);
 
   // Computes progress info based on in-progress downloads. If |web_app_id| is
   // non-null, the results are limited to downloads initiated by the specified
@@ -100,11 +109,23 @@ class DownloadBubbleUpdateService
   // returned progress info may be slightly inaccurate in edge cases. This is
   // ok, as it is only for the purpose of showing a progress ring around the
   // icon, which is not precise anyway. Virtual for testing.
-  virtual DownloadDisplayController::ProgressInfo GetProgressInfo(
-      const web_app::AppId* web_app_id) const;
+  virtual DownloadDisplay::ProgressInfo GetProgressInfo(
+      const webapps::AppId* web_app_id) const;
+
+  // Gets a list of accessible alerts that have built up since the last time
+  // they were taken. May return an empty vector. Removes those alerts from
+  // `accessible_alerts_`. If |web_app_id| is non-null, the results are limited
+  // to downloads initiated by the specified web app, otherwise the results are
+  // limited to downloads initiated by normal Chrome windows. Virtual for
+  // testing.
+  virtual std::vector<std::u16string> TakeAccessibleAlertsForAnnouncement(
+      const webapps::AppId* web_app_id);
 
   // Notifies the appropriate browser windows that a download item was added.
   void NotifyWindowsOfDownloadItemAdded(download::DownloadItem* item);
+
+  // Sets up the download history observation.
+  void ObserveDownloadHistory();
 
   // Initializes AllDownloadItemNotifier for the current profile, and
   // initializes caches. This is called when the manager is ready, to signal
@@ -143,11 +164,14 @@ class DownloadBubbleUpdateService
       const offline_items_collection::OfflineContentProvider::OfflineItemList&
           items) override;
   void OnItemRemoved(const offline_items_collection::ContentId& id) override;
-  void OnItemUpdated(
-      const offline_items_collection::OfflineItem& item,
-      const absl::optional<offline_items_collection::UpdateDelta>& update_delta)
-      override;
+  void OnItemUpdated(const offline_items_collection::OfflineItem& item,
+                     const std::optional<offline_items_collection::UpdateDelta>&
+                         update_delta) override;
   void OnContentProviderGoingDown() override;
+
+  // DownloadHistory::Observer:
+  void OnHistoryQueryComplete() override;
+  void OnDownloadHistoryDestroyed() override;
 
   OfflineItemModelManager* GetOfflineManager() const;
 
@@ -197,6 +221,8 @@ class DownloadBubbleUpdateService
     return *original_download_item_notifier_;
   }
 
+  bool download_history_loaded() const { return download_history_loaded_; }
+
   base::WeakPtr<DownloadBubbleUpdateService> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
@@ -204,9 +230,9 @@ class DownloadBubbleUpdateService
  private:
   // Encapsulates the caching functionality of DownloadBubbleUpdateService.
   // Holds two caches, one for DownloadItems and one for OfflineItems, and their
-  // associated indexes and aggregate info (AllDownloadUIModelsInfo). Represents
-  // one "namespace" of items for the download bubble, corresponding to either a
-  // single web app or all the regular (non-app) Chrome browsers.
+  // associated indexes and aggregate info (DownloadBubbleDisplayInfo).
+  // Represents one "namespace" of items for the download bubble, corresponding
+  // to either a single web app or all the regular (non-app) Chrome browsers.
   class CacheManager {
    public:
     template <typename Item>
@@ -231,14 +257,34 @@ class DownloadBubbleUpdateService
     bool IsDownloadItemCacheAtMax() const;
     bool IsOfflineItemCacheAtMax() const;
 
-    // See comments on the public DownloadBubbleUpdateService methods of the
+    // See comments on the public DownloadBubbleUpdateService method of the
     // same name.
     bool GetAllModelsToDisplay(
         std::vector<DownloadUIModel::DownloadUIModelPtr>& models,
         bool force_backfill_download_items = false);
-    const DownloadDisplayController::AllDownloadUIModelsInfo& GetAllModelsInfo()
-        const;
-    DownloadDisplayController::ProgressInfo GetProgressInfo() const;
+    // Implements the above.
+    void GetDownloadItemModelToDisplayOrPrune(
+        base::Time cutoff_time,
+        std::vector<DownloadUIModel::DownloadUIModelPtr>& models,
+        bool& download_item_pruned,
+        SortedDownloadItems::iterator& download_item_it);
+    void GetOfflineItemModelToDisplayOrPrune(
+        base::Time cutoff_time,
+        std::vector<DownloadUIModel::DownloadUIModelPtr>& models,
+        bool& offline_item_pruned,
+        SortedOfflineItems::iterator& offline_item_it);
+
+    // See comments on the public DownloadBubbleUpdateService method of the
+    // same name.
+    const DownloadBubbleDisplayInfo& GetDisplayInfo() const;
+
+    // See comments on the public DownloadBubbleUpdateService method of the
+    // same name.
+    DownloadDisplay::ProgressInfo GetProgressInfo() const;
+
+    // See comments on the public DownloadBubbleUpdateService method of the
+    // same name.
+    std::vector<std::u16string> TakeAccessibleAlertsForAnnouncement();
 
     // Adds an item to the cache if it is recent enough and meets other criteria
     // for showing in the bubble. If adding an item makes the map size exceed
@@ -246,11 +292,15 @@ class DownloadBubbleUpdateService
     // whether the item was stored as the last item in the map. If |item| was
     // already in the cache, this does nothing. |is_new| is whether the item is
     // a newly added item (as opposed to an updated one). May mark the item
-    // model as not-actioned-on if the item is new.
-    bool MaybeAddDownloadItemToCache(download::DownloadItem* item, bool is_new);
+    // model as not-actioned-on if the item is new. May add an accessible alert
+    // if `maybe_add_alert` is true.
+    bool MaybeAddDownloadItemToCache(download::DownloadItem* item,
+                                     bool is_new,
+                                     bool maybe_add_alert);
     bool MaybeAddOfflineItemToCache(
         const offline_items_collection::OfflineItem& item,
-        bool is_new);
+        bool is_new,
+        bool maybe_add_alert);
 
     // Updates an item by removing it and reinserting it in the cache. May
     // kick off backfilling of the cache.
@@ -271,9 +321,26 @@ class DownloadBubbleUpdateService
     bool RemoveOfflineItemFromCache(
         const offline_items_collection::ContentId& id);
 
-    // Updates |all_models_info_| based on the current contents of the cache.
+    // Updates |display_info_| based on the current contents of the cache.
     // This is kept updated as items are added or removed from the cache.
-    void UpdateAllModelsInfo();
+    // `updating_for_item` is the id of the item (download or offline item)
+    // whose update triggered calling this function.
+    void UpdateDisplayInfo(const std::string& updating_for_item);
+    void UpdateDisplayInfo(
+        const offline_items_collection::ContentId& updating_for_item);
+    // Implements the above.
+    void UpdateDisplayInfoForDownloadItem(
+        base::optional_ref<const std::string> updating_for_item,
+        base::Time cutoff_time,
+        DownloadBubbleDisplayInfo& info,
+        SortedDownloadItems::iterator& download_item_it);
+    void UpdateDisplayInfoForOfflineItem(
+        base::optional_ref<const offline_items_collection::ContentId>
+            updating_for_item,
+        base::Time cutoff_time,
+        DownloadBubbleDisplayInfo& info,
+        SortedOfflineItems::iterator& offline_item_it);
+    bool ShouldStopUpdatingDisplayInfo(const DownloadBubbleDisplayInfo& info);
 
     // Clears the cache.
     void DropAllDownloadItems();
@@ -283,6 +350,18 @@ class DownloadBubbleUpdateService
     // Forwards to |update_service_|.
     size_t GetMaxNumItemsToShow() const;
     size_t GetNumItemsToCache() const;
+
+    // Implements the loop that iterates over the download item and offline item
+    // caches and merges them, running `download_item_action` if we take a
+    // download item and running `offline_item_action` if we take an offline
+    // action (these should also advance the corresponding iterator). Iterates
+    // until `should_stop` returns true or all items have been processed.
+    void IterateOverMergedCaches(
+        base::RepeatingCallback<void(SortedDownloadItems::iterator&)>
+            download_item_action,
+        base::RepeatingCallback<void(SortedOfflineItems::iterator&)>
+            offline_item_action,
+        base::RepeatingCallback<bool()> should_stop);
 
     template <typename Id, typename Item>
     bool AddItemToCacheImpl(Item item,
@@ -352,7 +431,10 @@ class DownloadBubbleUpdateService
 
     // Holds the latest info about all models, relevant to the display state of
     // the download toolbar icon.
-    DownloadDisplayController::AllDownloadUIModelsInfo all_models_info_;
+    DownloadBubbleDisplayInfo display_info_;
+
+    // Holds the latest batch of accessible alerts since the last update.
+    DownloadBubbleAccessibleAlertsMap accessible_alerts_;
   };
 
  public:
@@ -378,11 +460,12 @@ class DownloadBubbleUpdateService
  private:
   // Finds the appropriate CacheManager for a web app, creating one if it
   // doesn't exist.
-  CacheManager& GetCacheForWebApp(const web_app::AppId& app_id);
+  CacheManager& GetCacheForWebApp(const webapps::AppId& app_id);
   // As above, but does not create one if it doesn't exist (in which case it
   // returns nullptr).
   const CacheManager* GetExistingCacheForWebApp(
-      const web_app::AppId& app_id) const;
+      const webapps::AppId& app_id) const;
+  CacheManager* GetExistingCacheForWebApp(const webapps::AppId& app_id);
 
   // Finds the appropriate CacheManager for a download item, creating one if it
   // doesn't exist.
@@ -400,7 +483,8 @@ class DownloadBubbleUpdateService
       const std::vector<offline_items_collection::OfflineItem>& all_items);
 
   // Gets download items from profile and original profile.
-  std::vector<download::DownloadItem*> GetAllDownloadItems();
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>>
+  GetAllDownloadItems();
 
   // Called when a crx download has waited out its 2 second delay. Adds the
   // item to the cache if it's not already done, and notifies window-level
@@ -413,9 +497,9 @@ class DownloadBubbleUpdateService
   const raw_ptr<Profile> original_profile_ = nullptr;
 
   // Override for the number of combined items to return.
-  absl::optional<size_t> max_num_items_to_show_for_testing_;
+  std::optional<size_t> max_num_items_to_show_for_testing_;
   // Override for the number of extra items to cache.
-  absl::optional<size_t> extra_items_to_cache_for_testing_;
+  std::optional<size_t> extra_items_to_cache_for_testing_;
 
   // Notifier for the current profile's DownloadManager. Null until initialized
   // in Initialize().
@@ -445,7 +529,18 @@ class DownloadBubbleUpdateService
   CacheManager main_cache_;
 
   // A separate cache for each web app.
-  std::map<web_app::AppId, CacheManager> web_app_caches_;
+  std::map<webapps::AppId, CacheManager> web_app_caches_;
+
+  // Observes download history so we can keep track of when updates from history
+  // occur, to ignore them for the purposes of adding accessible alerts.
+  // Note: Incognito profiles do not have download histories. For incognito
+  // profiles, this observation corresponds to the original profile, because
+  // downloads for the original profile show up in the incognito window download
+  // bubble. For normal profiles, it is for the profile itself.
+  // Note: No such observer exists for OfflineItems.
+  bool download_history_loaded_ = false;
+  base::ScopedObservation<DownloadHistory, DownloadHistory::Observer>
+      download_history_observation_{this};
 
   // Observes the offline content provider.
   base::ScopedObservation<

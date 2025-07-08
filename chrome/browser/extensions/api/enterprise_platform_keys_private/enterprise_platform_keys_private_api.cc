@@ -9,7 +9,7 @@
 #include "base/values.h"
 #include "chrome/browser/ash/attestation/tpm_challenge_key.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/extensions/api/enterprise_platform_keys/enterprise_platform_keys_api.h"
+#include "chrome/browser/extensions/api/platform_keys_core/platform_keys_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/enterprise_platform_keys_private.h"
 #include "chrome/common/pref_names.h"
@@ -63,7 +63,7 @@ void EPKPChallengeKey::Run(::attestation::VerifiedAccessFlow type,
   impl_ = ash::attestation::TpmChallengeKeyFactory::Create();
   impl_->BuildResponse(type, profile, std::move(callback), challenge,
                        register_key, attestation::KEY_TYPE_RSA,
-                       key_name_for_spkac, /*signals=*/absl::nullopt);
+                       key_name_for_spkac, /*signals=*/std::nullopt);
 }
 
 EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::
@@ -74,7 +74,7 @@ EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::
 
 ExtensionFunction::ResponseAction
 EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::Run() {
-  absl::optional<api_epkp::ChallengeMachineKey::Params> params =
+  std::optional<api_epkp::ChallengeMachineKey::Params> params =
       api_epkp::ChallengeMachineKey::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   ash::attestation::TpmChallengeKeyCallback callback =
@@ -103,10 +103,8 @@ EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::Run() {
 void EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::OnChallengedKey(
     const ash::attestation::TpmChallengeKeyResult& result) {
   if (result.IsSuccess()) {
-    std::string encoded_response;
-    base::Base64Encode(result.challenge_response, &encoded_response);
-    Respond(ArgumentList(
-        api_epkp::ChallengeMachineKey::Results::Create(encoded_response)));
+    Respond(ArgumentList(api_epkp::ChallengeMachineKey::Results::Create(
+        base::Base64Encode(result.challenge_response))));
   } else {
     Respond(Error(result.GetErrorMessage()));
   }
@@ -120,7 +118,7 @@ EnterprisePlatformKeysPrivateChallengeUserKeyFunction::
 
 ExtensionFunction::ResponseAction
 EnterprisePlatformKeysPrivateChallengeUserKeyFunction::Run() {
-  absl::optional<api_epkp::ChallengeUserKey::Params> params =
+  std::optional<api_epkp::ChallengeUserKey::Params> params =
       api_epkp::ChallengeUserKey::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   ash::attestation::TpmChallengeKeyCallback callback = base::BindOnce(
@@ -147,10 +145,8 @@ EnterprisePlatformKeysPrivateChallengeUserKeyFunction::Run() {
 void EnterprisePlatformKeysPrivateChallengeUserKeyFunction::OnChallengedKey(
     const ash::attestation::TpmChallengeKeyResult& result) {
   if (result.IsSuccess()) {
-    std::string encoded_response;
-    base::Base64Encode(result.challenge_response, &encoded_response);
-    Respond(ArgumentList(
-        api_epkp::ChallengeUserKey::Results::Create(encoded_response)));
+    Respond(ArgumentList(api_epkp::ChallengeUserKey::Results::Create(
+        base::Base64Encode(result.challenge_response))));
   } else {
     Respond(Error(result.GetErrorMessage()));
   }

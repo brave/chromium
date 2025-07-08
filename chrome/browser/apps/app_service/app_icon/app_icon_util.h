@@ -8,7 +8,9 @@
 #include <map>
 #include <vector>
 
+#include "ash/public/cpp/shelf_types.h"
 #include "base/files/file_path.h"
+#include "components/services/app_service/public/cpp/icon_effects.h"
 #include "components/services/app_service/public/cpp/icon_types.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "ui/base/resource/resource_scale_factor.h"
@@ -85,9 +87,9 @@ std::map<ui::ResourceScaleFactor, IconValuePtr> ReadIconFilesOnBackgroundThread(
     const std::string& app_id,
     int32_t size_in_dip);
 
-// Schedules deletion of the icon folders for `app_ids`, then call `callback`.
+// Schedules deletion of the icon folders for `ids`, then call `callback`.
 void ScheduleIconFoldersDeletion(const base::FilePath& base_path,
-                                 const std::vector<std::string>& app_ids,
+                                 const std::vector<std::string>& ids,
                                  base::OnceCallback<void()> callback);
 
 }  // namespace apps

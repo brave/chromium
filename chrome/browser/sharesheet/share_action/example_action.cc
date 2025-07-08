@@ -12,11 +12,13 @@
 
 namespace sharesheet {
 
-ExampleAction::ExampleAction() {
-  name_ = "example";
-}
+ExampleAction::ExampleAction() = default;
 
 ExampleAction::~ExampleAction() = default;
+
+ShareActionType ExampleAction::GetActionType() const {
+  return type_;
+}
 
 const std::u16string ExampleAction::GetActionName() {
   return base::ASCIIToUTF16(name_);

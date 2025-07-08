@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {addWebUiListener} from 'chrome://resources/js/cr.js';
+import {addWebUiListener, sendWithPromise} from 'chrome://resources/js/cr.js';
+
 
 /**
  * Enumeration for device state about remaining space.
@@ -81,22 +82,10 @@ export interface PowerManagementSettings {
   batterySaverFeatureEnabled: boolean;
 }
 
-/**
- * A note app's availability for running as note handler app from lock screen.
- * Mirrors `ash::LockScreenAppSupport`.
- */
-export enum NoteAppLockScreenSupport {
-  NOT_SUPPORTED = 0,
-  NOT_ALLOWED_BY_POLICY = 1,
-  SUPPORTED = 2,
-  ENABLED = 3,
-}
-
 export interface NoteAppInfo {
   name: string;
   value: string;
   preferred: boolean;
-  lockScreenSupport: NoteAppLockScreenSupport;
 }
 
 export interface ExternalStorage {
@@ -117,8 +106,8 @@ export interface DevicePageBrowserProxy {
   /** Initializes the keyboard update watcher. */
   initializeKeyboardWatcher(): void;
 
-  /** Shows the Ash keyboard shortcut viewer. */
-  showKeyboardShortcutViewer(): void;
+  /** Shows the Ash shortcut customization app. */
+  showShortcutCustomizationApp(): void;
 
   /** Requests an ARC status update. */
   updateAndroidEnabled(): void;
@@ -177,12 +166,6 @@ export interface DevicePageBrowserProxy {
    */
   setPreferredNoteTakingApp(appId: string): void;
 
-  /**
-   * Sets whether the preferred note taking app should be enabled to run as a
-   * lock screen note action handler.
-   */
-  setPreferredNoteTakingAppEnabledOnLockScreen(enabled: boolean): void;
-
   /** Requests an external storage list update. */
   updateExternalStorages(): void;
 
@@ -207,6 +190,8 @@ export interface DevicePageBrowserProxy {
   dragDisplayDelta(displayId: string, deltaX: number, deltaY: number): void;
 
   updateStorageInfo(): void;
+
+  getStorageEncryptionInfo(): Promise<string>;
 
   openMyFiles(): void;
 
@@ -236,8 +221,8 @@ export class DevicePageBrowserProxyImpl implements DevicePageBrowserProxy {
     chrome.send('initializeKeyboardSettings');
   }
 
-  showKeyboardShortcutViewer(): void {
-    chrome.send('showKeyboardShortcutViewer');
+  showShortcutCustomizationApp(): void {
+    chrome.send('showShortcutCustomizationApp');
   }
 
   initializeKeyboardWatcher(): void {
@@ -290,10 +275,6 @@ export class DevicePageBrowserProxyImpl implements DevicePageBrowserProxy {
     chrome.send('setPreferredNoteTakingApp', [appId]);
   }
 
-  setPreferredNoteTakingAppEnabledOnLockScreen(enabled: boolean): void {
-    chrome.send('setPreferredNoteTakingAppEnabledOnLockScreen', [enabled]);
-  }
-
   updateExternalStorages(): void {
     chrome.send('updateExternalStorages');
   }
@@ -313,6 +294,10 @@ export class DevicePageBrowserProxyImpl implements DevicePageBrowserProxy {
 
   updateStorageInfo(): void {
     chrome.send('updateStorageInfo');
+  }
+
+  getStorageEncryptionInfo(): Promise<string> {
+    return sendWithPromise('getStorageEncryptionInfo');
   }
 
   openMyFiles(): void {

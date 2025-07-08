@@ -20,7 +20,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_asan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -44,7 +45,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_asan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -70,7 +72,9 @@
           "builder": "linux_chromium_asan_rel_ng",
           "group": "tryserver.chromium.linux"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Linux ASan LSan Tests (1)/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -81,6 +85,9 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

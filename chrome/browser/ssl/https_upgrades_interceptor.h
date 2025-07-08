@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_SSL_HTTPS_UPGRADES_INTERCEPTOR_H_
 
 #include <memory>
+#include <optional>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-// #include "chrome/browser/ssl/https_first_mode_settings_tracker.h"
 #include "chrome/browser/ssl/https_only_mode_tab_helper.h"
 #include "components/security_interstitials/core/https_only_mode_metrics.h"
 #include "content/public/browser/url_loader_request_interceptor.h"
@@ -21,7 +22,6 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -48,10 +48,10 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
                                  public network::mojom::URLLoader {
  public:
   static std::unique_ptr<HttpsUpgradesInterceptor> MaybeCreateInterceptor(
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       content::NavigationUIData* navigation_ui_data_);
 
-  HttpsUpgradesInterceptor(int frame_tree_node_id,
+  HttpsUpgradesInterceptor(content::FrameTreeNodeId frame_tree_node_id,
                            bool http_interstitial_enabled,
                            content::NavigationUIData* navigation_ui_data_);
   ~HttpsUpgradesInterceptor() override;
@@ -71,18 +71,13 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
       mojo::ScopedDataPipeConsumerHandle* response_body,
       mojo::PendingRemote<network::mojom::URLLoader>* loader,
       mojo::PendingReceiver<network::mojom::URLLoaderClient>* client_receiver,
-      blink::ThrottlingURLLoader* url_loader,
-      bool* skip_other_interceptors,
-      bool* will_return_unsafe_redirect) override;
+      blink::ThrottlingURLLoader* url_loader) override;
 
   // Continuation of MaybeCreateLoader() after querying the network service for
   // the HSTS status for the hostname in the request.
   void MaybeCreateLoaderOnHstsQueryCompleted(
       const network::ResourceRequest& tentative_resource_request,
       content::URLLoaderRequestInterceptor::LoaderCallback callback,
-      Profile* profile,
-      content::WebContents* web_contents,
-      HttpsOnlyModeTabHelper* tab_helper,
       bool is_hsts_active_for_host);
 
   // Sets the ports used by the EmbeddedTestServer (which uses random ports)
@@ -98,11 +93,9 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
       const std::vector<std::string>& removed_headers,
       const net::HttpRequestHeaders& modified_headers,
       const net::HttpRequestHeaders& modified_cors_exempt_headers,
-      const absl::optional<GURL>& new_url) override {}
+      const std::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override {}
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   // Returns a RequestHandler callback that can be passed to the underlying
   // LoaderCallback to serve an artificial redirect to `new_url`.
@@ -122,7 +115,7 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
   void OnConnectionClosed();
 
   // Used to access the WebContents for the navigation.
-  int frame_tree_node_id_;
+  content::FrameTreeNodeId frame_tree_node_id_;
 
   // Controls whether we are upgrading and falling back with an interstitial
   // before proceeding with the HTTP navigation. This reflects the general
@@ -152,4 +145,4 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
   base::WeakPtrFactory<HttpsUpgradesInterceptor> weak_factory_{this};
 };
 
-#endif  // CHROME_BROWSER_SSL_HTTPS_ONLY_MODE_UPGRADE_INTERCEPTOR_H_
+#endif  // CHROME_BROWSER_SSL_HTTPS_UPGRADES_INTERCEPTOR_H_

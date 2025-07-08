@@ -6,6 +6,7 @@ package org.chromium.base.test;
 
 import androidx.test.core.app.ApplicationProvider;
 
+import org.jni_zero.JniTestInstancesSnapshot;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
@@ -13,19 +14,22 @@ import org.junit.runners.model.Statement;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.BundleUtils;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Flag;
-import org.chromium.base.LifetimeAssert;
+import org.chromium.base.FeatureList;
 import org.chromium.base.PathUtils;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
+import org.chromium.base.lifetime.LifetimeAssert;
 import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner.HelperTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.build.NativeLibraries;
 
 import java.lang.reflect.Method;
+import java.util.Locale;
+import java.util.TimeZone;
 
 /**
  * The default Rule used by BaseRobolectricTestRunner. Include this directly when using
@@ -33,6 +37,9 @@ import java.lang.reflect.Method;
  * Use @Rule(order=-2) to ensure it runs before other rules.
  */
 public class BaseRobolectricTestRule implements TestRule {
+    private static final Locale ORIG_LOCALE = Locale.getDefault();
+    private static final TimeZone ORIG_TIMEZONE = TimeZone.getDefault();
+
     // Removes the API Level suffix. E.g. "testSomething[28]" -> "testSomething".
     private static String stripBrackets(String methodName) {
         int idx = methodName.indexOf('[');
@@ -47,32 +54,46 @@ public class BaseRobolectricTestRule implements TestRule {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                setUp(description.getTestClass().getMethod(
-                        stripBrackets(description.getMethodName())));
+                setUp(
+                        description
+                                .getTestClass()
+                                .getMethod(stripBrackets(description.getMethodName())));
                 boolean testFailed = true;
                 try {
                     base.evaluate();
                     testFailed = false;
                 } finally {
                     tearDown(testFailed);
-                    // We cannot guarantee that this Rule will be evaluated first, so never
-                    // call setMethodMode(), and reset class resetters after each method.
-                    ResettersForTesting.onAfterClass();
                 }
             }
         };
     }
 
     static void setUp(Method method) {
+        // Some of this logic seems like it would be more appropriate in @BeforeClass, but
+        // Robolectric doesn't really support @BeforeClass (maybe because @Config can be applied to
+        // individual methods). It does run the annotated methods, but does does so before
+        // configuring the Application instance, and it does so from within methodBlock rather than
+        // classBlock().
+        ResettersForTesting.beforeHooksWillExecute();
+        JniTestInstancesSnapshot.clearAllForTesting();
+        FeatureList.setDisableNativeForTesting(true);
+        CommandLineFlags.ensureInitialized();
         UmaRecorderHolder.setUpNativeUmaRecorder(false);
-        LibraryLoader.getInstance().setLibraryProcessType(LibraryProcessType.PROCESS_BROWSER);
-        ContextUtils.initApplicationContextForTests(ApplicationProvider.getApplicationContext());
-        ApplicationStatus.initialize(ApplicationProvider.getApplicationContext());
         UmaRecorderHolder.resetForTesting();
-        CommandLineFlags.setUpClass(method.getDeclaringClass());
-        CommandLineFlags.setUpMethod(method);
+        ContextUtils.initApplicationContextForTests(ApplicationProvider.getApplicationContext());
+        LibraryLoader.getInstance().setLibraryProcessType(LibraryProcessType.PROCESS_BROWSER);
+        ApplicationStatus.initialize(ApplicationProvider.getApplicationContext());
+
+        Class<?> testClass = method.getDeclaringClass();
+        CommandLineFlags.reset(testClass.getAnnotations(), method.getAnnotations());
+
         BundleUtils.resetForTesting();
-        Flag.resetAllInMemoryCachedValuesForTesting();
+        // Whether or not native is loaded is a global one-way switch, so do it automatically so
+        // that it is always in the same state.
+        if (NativeLibraries.LIBRARIES.length > 0) {
+            LibraryLoader.getInstance().ensureMainDexInitialized();
+        }
     }
 
     static void tearDown(boolean testFailed) {
@@ -83,13 +104,12 @@ public class BaseRobolectricTestRule implements TestRule {
             HelperTestRunner.sTestFailed = true;
             throw new RuntimeException(e);
         } finally {
-            CommandLineFlags.tearDownMethod();
-            CommandLineFlags.tearDownClass();
-            ResettersForTesting.onAfterMethod();
             ApplicationStatus.destroyForJUnitTests();
-            ContextUtils.clearApplicationContextForTests();
             PathUtils.resetForTesting();
             ThreadUtils.clearUiThreadForTesting();
+            Locale.setDefault(ORIG_LOCALE);
+            TimeZone.setDefault(ORIG_TIMEZONE);
+            ResettersForTesting.afterHooksDidExecute();
             // Run assertions only when the test has not already failed so as to not mask
             // failures. https://crbug.com/1466313
             if (testFailed) {

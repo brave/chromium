@@ -12,12 +12,13 @@
 #include "ash/capture_mode/capture_mode_types.h"
 #include "ash/capture_mode/recording_type_menu_view.h"
 #include "ash/capture_mode/test_capture_mode_delegate.h"
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/capture_mode/capture_mode_test_api.h"
+#include "ash/shell.h"
 #include "ash/style/icon_button.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_util.h"
+#include "base/test/gtest_tags.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -29,7 +30,7 @@ namespace ash {
 
 class GifRecordingTest : public AshTestBase {
  public:
-  GifRecordingTest() : scoped_feature_list_(features::kGifRecording) {}
+  GifRecordingTest() = default;
   GifRecordingTest(const GifRecordingTest&) = delete;
   GifRecordingTest& operator=(const GifRecordingTest&) = delete;
   ~GifRecordingTest() override = default;
@@ -85,9 +86,6 @@ class GifRecordingTest : public AshTestBase {
 
  protected:
   base::HistogramTester histogram_tester_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(GifRecordingTest, DropDownButtonVisibility) {
@@ -260,6 +258,9 @@ TEST_F(GifRecordingTest, FutureCaptureSessionsAffected) {
 }
 
 TEST_F(GifRecordingTest, TabNavigation) {
+  base::AddFeatureIdTagToTestResult(
+      "screenplay-759f3130-3839-408a-8342-a373654e8927");
+
   auto* controller = StartRegionVideoCapture();
 
   // Tab 15 times until we reach the capture button.
@@ -526,6 +527,58 @@ TEST_F(GifRecordingTest, RegionToScreenRatioHistogram) {
     controller->EndVideoRecording(EndRecordingReason::kStopRecordingButton);
     WaitForCaptureFileToBeSaved();
   }
+}
+
+// Regression test for b/293340894. When the region is selected in a such a way
+// that will cause the default bounds of the recording type menu to go outside
+// the display bounds, the bounds should be adjusted such that it remains within
+// the target display.
+TEST_F(GifRecordingTest, RecordingMenuOutsideOfBounds) {
+  UpdateDisplay("800x700,801+0-800x700");
+  auto* controller = CaptureModeController::Get();
+  controller->SetUserCaptureRegion(gfx::Rect(1550, 650, 50, 50),
+                                   /*by_user=*/true);
+  controller->SetRecordingType(RecordingType::kGif);
+
+  auto* event_generator = GetEventGenerator();
+  // Move cursor to the second display so capture mode is created there when it
+  // starts.
+  event_generator->MoveMouseTo(gfx::Point(1000, 500));
+  StartRegionVideoCapture();
+  ClickOnDropDownButton();
+
+  // The menu should be created without any crashes and should be contained
+  // within the bounds of the external display.
+  auto* recording_type_menu_widget = GetRecordingTypeMenuWidget();
+  ASSERT_TRUE(recording_type_menu_widget);
+  const gfx::Rect display_bounds{801, 0, 800, 700};
+  EXPECT_TRUE(display_bounds.Contains(
+      recording_type_menu_widget->GetWindowBoundsInScreen()));
+}
+
+// Regression test for b/319551191.
+TEST_F(GifRecordingTest, RecordingMenuAtTheLeftOrRightEdge) {
+  // Set a region touching the left edge of the screen.
+  const gfx::Size region_size(177, 165);
+  auto* controller = CaptureModeController::Get();
+  controller->SetUserCaptureRegion(gfx::Rect(gfx::Point(0, 0), region_size),
+                                   /*by_user=*/true);
+
+  // There should be no crashes when we open the recording type menu.
+  StartRegionVideoCapture();
+  ClickOnDropDownButton();
+
+  // Restart the session with a region touching the right edge of the screen.
+  controller->Stop();
+  const auto root_bounds = Shell::GetPrimaryRootWindow()->bounds();
+  controller->SetUserCaptureRegion(
+      gfx::Rect(gfx::Point(root_bounds.right() - region_size.width(), 0),
+                region_size),
+      /*by_user=*/true);
+
+  // Similarly, there should be no crashes.
+  StartRegionVideoCapture();
+  ClickOnDropDownButton();
 }
 
 // -----------------------------------------------------------------------------

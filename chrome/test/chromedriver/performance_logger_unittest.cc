@@ -14,7 +14,9 @@
 #include "base/format_macros.h"
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/time/time.h"
+#include "base/types/expected_macros.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/devtools_client_impl.h"
 #include "chrome/test/chromedriver/chrome/log.h"
@@ -38,7 +40,9 @@ struct DevToolsCommand {
 
 class FakeDevToolsClient : public StubDevToolsClient {
  public:
-  explicit FakeDevToolsClient(const std::string& id) : id_(id) {}
+  explicit FakeDevToolsClient(const std::string& id, bool is_tab) : id_(id) {
+    is_tab_ = is_tab;
+  }
   ~FakeDevToolsClient() override = default;
 
   bool PopSentCommand(DevToolsCommand** out_command) {
@@ -48,6 +52,8 @@ class FakeDevToolsClient : public StubDevToolsClient {
     }
     return false;
   }
+
+  int GetSentCommandsCount() { return sent_commands_.size(); }
 
   Status TriggerEvent(const std::string& method,
                       const base::Value::Dict& params) {
@@ -132,13 +138,13 @@ bool FakeLog::Emptied() const {
 
 base::expected<base::Value::Dict, std::string> ParseDictionary(
     const std::string& json) {
-  auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(json);
-  if (!parsed_json.has_value()) {
-    return base::unexpected("Couldn't parse " + json +
-                            ", got: " + parsed_json.error().message);
-  }
+  ASSIGN_OR_RETURN(
+      auto parsed_json, base::JSONReader::ReadAndReturnValueWithError(json),
+      [&](base::JSONReader::Error error) {
+        return "Couldn't parse " + json + ", got: " + std::move(error).message;
+      });
 
-  base::Value::Dict* dict = parsed_json->GetIfDict();
+  base::Value::Dict* dict = parsed_json.GetIfDict();
   if (!dict) {
     return base::unexpected("JSON object is not a dictionary");
   }
@@ -153,17 +159,16 @@ void ValidateLogEntry(const LogEntry* entry,
   EXPECT_EQ(Log::kInfo, entry->level);
   EXPECT_LT(0, entry->timestamp.ToTimeT());
 
-  base::expected<base::Value::Dict, std::string> message =
-      ParseDictionary(entry->message);
-  ASSERT_TRUE(message.has_value()) << message.error();
-  const std::string* webview = message->FindString("webview");
+  ASSERT_OK_AND_ASSIGN(base::Value::Dict message,
+                       ParseDictionary(entry->message));
+  const std::string* webview = message.FindString("webview");
   ASSERT_TRUE(webview);
   EXPECT_EQ(expected_webview, *webview);
-  const std::string* method = message->FindStringByDottedPath("message.method");
+  const std::string* method = message.FindStringByDottedPath("message.method");
   ASSERT_TRUE(method);
   EXPECT_EQ(expected_method, *method);
 
-  base::Value::Dict* params = message->FindDictByDottedPath("message.params");
+  base::Value::Dict* params = message.FindDictByDottedPath("message.params");
   ASSERT_TRUE(params);
   EXPECT_EQ(expected_params, *params);
 }
@@ -184,13 +189,12 @@ void ExpectCommand(FakeDevToolsClient* client, const std::string& method) {
 
 void ExpectEnableDomains(FakeDevToolsClient* client) {
   ExpectCommand(client, "Network.enable");
-  ExpectCommand(client, "Page.enable");
 }
 
 }  // namespace
 
 TEST(PerformanceLogger, OneWebView) {
-  FakeDevToolsClient client("webview-1");
+  FakeDevToolsClient client("webview-1", /*is_tab=*/false);
   FakeLog log;
   Session session("test");
   PerformanceLogger logger(&log, &session);
@@ -209,9 +213,23 @@ TEST(PerformanceLogger, OneWebView) {
   client.RemoveListener(&logger);
 }
 
+TEST(PerformanceLogger, TabViewGetsNoEnable) {
+  FakeDevToolsClient client("webview-1", /*is_tab=*/true);
+  FakeLog log;
+  Session session("test");
+  PerformanceLogger logger(&log, &session);
+
+  client.AddListener(&logger);
+
+  // Tab targets dont support most domains.
+  logger.OnConnected(&client);
+  ASSERT_EQ(0, client.GetSentCommandsCount());
+  client.RemoveListener(&logger);
+}
+
 TEST(PerformanceLogger, TwoWebViews) {
-  FakeDevToolsClient client1("webview-1");
-  FakeDevToolsClient client2("webview-2");
+  FakeDevToolsClient client1("webview-1", /*is_tab=*/false);
+  FakeDevToolsClient client2("webview-2", /*is_tab=*/false);
   FakeLog log;
   Session session("test");
   PerformanceLogger logger(&log, &session);
@@ -239,7 +257,7 @@ TEST(PerformanceLogger, TwoWebViews) {
 }
 
 TEST(PerformanceLogger, PerfLoggingPrefs) {
-  FakeDevToolsClient client("webview-1");
+  FakeDevToolsClient client("webview-1", /*is_tab=*/false);
   FakeLog log;
   Session session("test");
   PerfLoggingPrefs prefs;
@@ -251,7 +269,6 @@ TEST(PerformanceLogger, PerfLoggingPrefs) {
 
   client.AddListener(&logger);
   logger.OnConnected(&client);
-  ExpectCommand(&client, "Page.enable");
 
   DevToolsCommand* cmd;
   ASSERT_FALSE(client.PopSentCommand(&cmd));
@@ -263,7 +280,8 @@ namespace {
 class FakeBrowserwideClient : public FakeDevToolsClient {
  public:
   FakeBrowserwideClient()
-      : FakeDevToolsClient(DevToolsClientImpl::kBrowserwideDevToolsClientId) {}
+      : FakeDevToolsClient(DevToolsClientImpl::kBrowserwideDevToolsClientId,
+                           /*is_tab=*/false) {}
   ~FakeBrowserwideClient() override = default;
 
   bool events_handled() const {
@@ -391,17 +409,16 @@ TEST(PerformanceLogger, WarnWhenTraceBufferFull) {
   LogEntry* entry = log.GetEntries()[0].get();
   EXPECT_EQ(Log::kWarning, entry->level);
   EXPECT_LT(0, entry->timestamp.ToTimeT());
-  base::expected<base::Value::Dict, std::string> message =
-      ParseDictionary(entry->message);
-  ASSERT_TRUE(message.has_value()) << message.error();
-  const std::string* webview = message->FindString("webview");
+  ASSERT_OK_AND_ASSIGN(base::Value::Dict message,
+                       ParseDictionary(entry->message));
+  const std::string* webview = message.FindString("webview");
   ASSERT_TRUE(webview);
   EXPECT_EQ(DevToolsClientImpl::kBrowserwideDevToolsClientId, *webview);
-  const std::string* method = message->FindStringByDottedPath("message.method");
+  const std::string* method = message.FindStringByDottedPath("message.method");
   ASSERT_TRUE(method);
   EXPECT_EQ("Tracing.bufferUsage", *method);
   const base::Value::Dict* actual_params =
-      message->FindDictByDottedPath("message.params");
+      message.FindDictByDottedPath("message.params");
   ASSERT_TRUE(actual_params);
   EXPECT_TRUE(actual_params->contains("error"));
   client.RemoveListener(&logger);

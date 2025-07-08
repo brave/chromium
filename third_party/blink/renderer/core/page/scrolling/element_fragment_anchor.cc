@@ -44,14 +44,15 @@ ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
 
   // If our URL has no ref, then we have no place we need to jump to.
   // OTOH If CSS target was set previously, we want to set it to 0, recalc
-  // and possibly paint invalidation because :target pseudo class may have been
+  // and possibly paint invalidation because :target pseudo-class may have been
   // set (see bug 11321).
   // Similarly for svg, if we had a previous svgView() then we need to reset
   // the initial view if we don't have a fragment.
   if (!url.HasFragmentIdentifier() && !doc.CssTarget() && !doc.IsSVGDocument())
     return nullptr;
 
-  String fragment = RemoveFragmentDirectives(url.FragmentIdentifier());
+  String fragment =
+      RemoveFragmentDirectives(url.FragmentIdentifier().ToString());
   Node* anchor_node = doc.FindAnchor(fragment);
 
   // Setting to null will clear the current target.
@@ -61,7 +62,7 @@ ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
   if (doc.IsSVGDocument()) {
     if (auto* svg = DynamicTo<SVGSVGElement>(doc.documentElement())) {
       String decoded = DecodeURLEscapeSequences(fragment, DecodeURLMode::kUTF8);
-      svg->SetupInitialView(decoded, target);
+      svg->SetViewSpec(svg->ParseViewSpec(decoded, target));
     }
   }
 
@@ -81,11 +82,7 @@ ElementFragmentAnchor* ElementFragmentAnchor::TryCreate(const KURL& url,
     return nullptr;
 
   HTMLDetailsElement::ExpandDetailsAncestors(*anchor_node);
-
-  if (RuntimeEnabledFeatures::BeforeMatchEventEnabled(
-          frame.GetDocument()->GetExecutionContext())) {
-    DisplayLockUtilities::RevealHiddenUntilFoundAncestors(*anchor_node);
-  }
+  DisplayLockUtilities::RevealHiddenUntilFoundAncestors(*anchor_node);
 
   return MakeGarbageCollected<ElementFragmentAnchor>(*anchor_node, frame);
 }
@@ -210,7 +207,7 @@ void ElementFragmentAnchor::ApplyFocusIfNeeded() {
   // clear focus, which matches the behavior of other browsers.
   auto* element = DynamicTo<Element>(anchor_node_.Get());
   if (element && element->IsFocusable()) {
-    element->Focus(FocusParams(/*gate_on_user_activation=*/true));
+    element->Focus();
   } else {
     frame_->GetDocument()->SetSequentialFocusNavigationStartingPoint(
         anchor_node_);

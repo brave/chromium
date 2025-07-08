@@ -7,16 +7,15 @@
 #include <list>
 #include <vector>
 
+#include "ash/public/cpp/autotest_desks_api.h"
 #include "base/command_line.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/string_number_conversions.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ash/crostini/crostini_util.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/ash/system_web_apps/test_support/system_web_app_browsertest_base.h"
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_installation.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
@@ -30,28 +29,19 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_launcher_utils.h"
+#include "chromeos/ui/wm/desks/desks_helper.h"
 #include "components/prefs/pref_service.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/wm/core/wm_core_switches.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/public/cpp/autotest_desks_api.h"
-#include "chromeos/ui/wm/desks/desks_helper.h"
-#endif
-
-#if defined(USE_AURA)
-#include "ui/aura/client/aura_constants.h"
-#endif
 
 namespace {
 const char* test_app_name1 = "TestApp1";
 const char* test_app_name2 = "TestApp2";
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 // Activates the desk at |index| and waits for its async operations to complete.
 void SwitchToDesk(int index) {
   base::RunLoop run_loop;
@@ -73,7 +63,6 @@ void RemoveInactiveDesks() {
   // This should not be reached.
   ADD_FAILURE();
 }
-#endif
 
 }  // namespace
 
@@ -82,19 +71,16 @@ class SessionRestoreTestChromeOS : public InProcessBrowserTest {
   SessionRestoreTestChromeOS()
       : faster_animations_(
             ui::ScopedAnimationDurationScaleMode::ZERO_DURATION) {}
-  ~SessionRestoreTestChromeOS() override {}
+  ~SessionRestoreTestChromeOS() override = default;
 
  protected:
   void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
-    base::CommandLine default_command_line(base::CommandLine::NO_PROGRAM);
-    InProcessBrowserTest::SetUpDefaultCommandLine(&default_command_line);
+    InProcessBrowserTest::SetUpDefaultCommandLine(command_line);
 
     // Animations have caused crashes in session restore in the past but are
     // usually disabled in tests. Remove --wm-window-animations-disabled to
     // re-enable animations.
-    test_launcher_utils::RemoveCommandLineSwitch(
-        default_command_line, wm::switches::kWindowAnimationsDisabled,
-        command_line);
+    command_line->RemoveSwitch(wm::switches::kWindowAnimationsDisabled);
   }
 
   Browser* CreateBrowserWithParams(Browser::CreateParams params) {
@@ -145,7 +131,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreBrowserWindows) {
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreBrowserWindows) {
   size_t total_count = 0;
   size_t incognito_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->profile()->IsOffTheRecord())
       ++incognito_count;
@@ -153,8 +139,6 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreBrowserWindows) {
   EXPECT_EQ(2u, total_count);
   EXPECT_EQ(0u, incognito_count);
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 
 // Assigns three browser windows to three different desks.
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS,
@@ -278,7 +262,6 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS,
 
   RemoveInactiveDesks();
 }
-#endif
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreAppsV1) {
   // Create a trusted app.
@@ -296,7 +279,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreAppsV1) {
   size_t total_count = 0;
   size_t app1_count = 0;
   size_t app2_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->app_name() == test_app_name1)
       ++app1_count;
@@ -324,7 +307,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreAppsPopup) {
   size_t total_count = 0;
   size_t app1_count = 0;
   size_t app2_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->app_name() == test_app_name1)
       ++app1_count;
@@ -346,7 +329,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreNoDevtools) {
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreNoDevtools) {
   size_t total_count = 0;
   size_t devtools_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->is_type_devtools())
       ++devtools_count;
@@ -393,7 +376,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, DISABLED_RestoreMaximized) {
   size_t app1_maximized_count = 0;
   size_t app2_maximized_count = 0;
   size_t total_maximized_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->window()->IsMaximized()) {
       ++total_maximized_count;
@@ -429,7 +412,7 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreMinimized) {
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, DISABLED_RestoreMinimized) {
   size_t total_count = 0;
   size_t minimized_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
+  for (Browser* browser : *BrowserList::GetInstance()) {
     ++total_count;
     if (browser->window()->IsMinimized())
       ++minimized_count;

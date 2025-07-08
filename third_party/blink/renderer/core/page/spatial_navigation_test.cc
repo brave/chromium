@@ -17,7 +17,6 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 
@@ -27,6 +26,11 @@ class SpatialNavigationTest : public RenderingTest {
  public:
   SpatialNavigationTest()
       : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()) {}
+
+  void SetUp() override {
+    RenderingTest::SetUp();
+    GetDocument().GetSettings()->SetSpatialNavigationEnabled(true);
+  }
 
   PhysicalRect TopOfVisualViewport() {
     PhysicalRect visual_viewport = RootViewport(&GetFrame());
@@ -199,12 +203,7 @@ TEST_F(SpatialNavigationTest,
   Element* container = GetDocument().getElementById(AtomicString("container"));
   Node* enclosing_container = ScrollableAreaOrDocumentOf(content);
 
-  // TODO(crbug.com/889840):
-  // VisibleBoundsInLocalRoot does not (yet) take div-clipping into
-  // account. The node is off screen, but nevertheless VBIVV returns a non-
-  // empty rect. If you fix VisibleBoundsInLocalRoot, change to
-  // EXPECT_TRUE here and stop using LayoutObject in IsOffscreen().
-  EXPECT_FALSE(content->VisibleBoundsInLocalRoot().IsEmpty());  // EXPECT_TRUE.
+  EXPECT_TRUE(content->VisibleBoundsInLocalRoot().IsEmpty());
 
   EXPECT_TRUE(IsOffscreen(content));
   EXPECT_FALSE(IsOffscreen(container));
@@ -213,7 +212,7 @@ TEST_F(SpatialNavigationTest,
   EXPECT_TRUE(IsScrollableAreaOrDocument(enclosing_container));
 }
 
-TEST_F(SpatialNavigationTest, ZooomPutsElementOffScreen) {
+TEST_F(SpatialNavigationTest, ZoomPutsElementOffScreen) {
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<button id='a'>hello</button><br>"
@@ -368,12 +367,7 @@ TEST_F(SpatialNavigationTest, StartAtContainersEdge) {
       GetDocument().getElementById(AtomicString("container"));
   const PhysicalRect container_box = NodeRectInRootFrame(container);
 
-  // TODO(crbug.com/889840):
-  // VisibleBoundsInLocalRoot does not (yet) take div-clipping into
-  // account. The node is off screen, but nevertheless VBIVV returns a non-
-  // empty rect. If you fix VisibleBoundsInLocalRoot, change to
-  // EXPECT_TRUE here and stop using LayoutObject in IsOffscreen().
-  EXPECT_FALSE(b->VisibleBoundsInLocalRoot().IsEmpty());  // EXPECT_TRUE.
+  EXPECT_TRUE(b->VisibleBoundsInLocalRoot().IsEmpty());
   EXPECT_TRUE(IsOffscreen(b));
 
   // Go down.
@@ -566,12 +560,7 @@ TEST_F(SpatialNavigationTest, DivsCanClipIframes) {
   Element* link = ChildDocument().QuerySelector(AtomicString("a"));
   EXPECT_FALSE(IsOffscreen(div));
 
-  // TODO(crbug.com/889840):
-  // VisibleBoundsInLocalRoot does not (yet) take div-clipping into
-  // account. The node is off screen, but nevertheless VBIVV returns a non-
-  // empty rect. If you fix VisibleBoundsInLocalRoot, change to
-  // EXPECT_TRUE here and stop using LayoutObject in IsOffscreen().
-  EXPECT_FALSE(iframe->VisibleBoundsInLocalRoot().IsEmpty());  // EXPECT_TRUE.
+  EXPECT_TRUE(iframe->VisibleBoundsInLocalRoot().IsEmpty());
 
   // The <iframe> is not displayed in the visual viewport because it is clipped
   // by the div. In other words, it is being offscreen. And so is also its
@@ -1137,26 +1126,7 @@ TEST_F(SpatialNavigationTest, HasRemoteFrame) {
   EXPECT_TRUE(HasRemoteFrame(iframe));
 }
 
-class SpatialNavigationWithFocuslessModeTest
-    : public SpatialNavigationTest,
-      public ::testing::WithParamInterface<bool> {
- public:
-  SpatialNavigationWithFocuslessModeTest() : use_focusless_mode_(GetParam()) {}
-
-  void SetUp() override {
-    SpatialNavigationTest::SetUp();
-    GetDocument().GetSettings()->SetSpatialNavigationEnabled(true);
-  }
-
- private:
-  ScopedFocuslessSpatialNavigationForTest use_focusless_mode_;
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         SpatialNavigationWithFocuslessModeTest,
-                         ::testing::Bool());
-
-TEST_P(SpatialNavigationWithFocuslessModeTest, PressEnterKeyActiveElement) {
+TEST_F(SpatialNavigationTest, PressEnterKeyActiveElement) {
   SetBodyInnerHTML("<button id='b'>hello</button>");
 
   Element* b = GetDocument().getElementById(AtomicString("b"));
@@ -1185,77 +1155,6 @@ TEST_P(SpatialNavigationWithFocuslessModeTest, PressEnterKeyActiveElement) {
   enter.SetType(WebInputEvent::Type::kKeyUp);
   GetDocument().GetFrame()->GetEventHandler().KeyEvent(enter);
   EXPECT_FALSE(b->IsActive());
-}
-
-class FocuslessSpatialNavigationSimTest : public SimTest {
- public:
-  FocuslessSpatialNavigationSimTest() : use_focusless_mode_(true) {}
-
-  void SetUp() override {
-    SimTest::SetUp();
-    WebView().GetPage()->GetSettings().SetSpatialNavigationEnabled(true);
-  }
-
-  void SimulateKeyPress(int dom_key) {
-    WebKeyboardEvent event{WebInputEvent::Type::kRawKeyDown,
-                           WebInputEvent::kNoModifiers,
-                           WebInputEvent::GetStaticTimeStampForTests()};
-    event.dom_key = dom_key;
-    WebView().MainFrameWidget()->HandleInputEvent(
-        WebCoalescedInputEvent(event, ui::LatencyInfo()));
-
-    if (dom_key == ui::DomKey::ENTER) {
-      event.SetType(WebInputEvent::Type::kChar);
-      WebView().MainFrameWidget()->HandleInputEvent(
-          WebCoalescedInputEvent(event, ui::LatencyInfo()));
-    }
-
-    event.SetType(WebInputEvent::Type::kKeyUp);
-    WebView().MainFrameWidget()->HandleInputEvent(
-        WebCoalescedInputEvent(event, ui::LatencyInfo()));
-  }
-
-  ScopedFocuslessSpatialNavigationForTest use_focusless_mode_;
-};
-
-// Tests that opening a <select> popup works by pressing enter from
-// "interested" mode, without being focused.
-TEST_F(FocuslessSpatialNavigationSimTest, OpenSelectPopup) {
-  // This test requires PagePopup since we're testing opening the <select> drop
-  // down so skip this test on platforms (i.e. Android) that don't use this.
-  if (!RuntimeEnabledFeatures::PagePopupEnabled())
-    return;
-
-  WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
-  WebView().MainFrameWidget()->SetFocus(true);
-  WebView().SetIsActive(true);
-
-  SimRequest request("https://example.com/test.html", "text/html");
-  LoadURL("https://example.com/test.html");
-  request.Complete(R"HTML(
-          <!DOCTYPE html>
-          <select id="target">
-            <option>A</option>
-            <option>B</option>
-            <option>C</option>
-          </select>
-      )HTML");
-  Compositor().BeginFrame();
-
-  auto* select = To<HTMLSelectElement>(
-      GetDocument().getElementById(AtomicString("target")));
-  SimulateKeyPress(ui::DomKey::ARROW_DOWN);
-
-  SpatialNavigationController& spat_nav_controller =
-      GetDocument().GetPage()->GetSpatialNavigationController();
-
-  ASSERT_EQ(select, spat_nav_controller.GetInterestedElement());
-  ASSERT_NE(select, GetDocument().ActiveElement());
-  ASSERT_FALSE(select->PopupIsVisible());
-
-  // The enter key should cause the popup to open.
-  SimulateKeyPress(ui::DomKey::ENTER);
-  EXPECT_TRUE(select->PopupIsVisible());
 }
 
 }  // namespace blink

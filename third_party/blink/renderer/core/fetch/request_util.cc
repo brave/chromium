@@ -19,6 +19,7 @@ network::mojom::RequestMode V8RequestModeToMojom(const V8RequestMode& mode) {
     case blink::V8RequestMode::Enum::kNavigate:
       return network::mojom::RequestMode::kNavigate;
   }
+  NOTREACHED();
 }
 
 network::mojom::RequestDestination V8RequestDestinationToMojom(
@@ -42,6 +43,8 @@ network::mojom::RequestDestination V8RequestDestinationToMojom(
       return network::mojom::RequestDestination::kIframe;
     case blink::V8RequestDestination::Enum::kImage:
       return network::mojom::RequestDestination::kImage;
+    case blink::V8RequestDestination::Enum::kJson:
+      return network::mojom::RequestDestination::kJson;
     case blink::V8RequestDestination::Enum::kManifest:
       return network::mojom::RequestDestination::kManifest;
     case blink::V8RequestDestination::Enum::kObject:
@@ -64,7 +67,22 @@ network::mojom::RequestDestination V8RequestDestinationToMojom(
       return network::mojom::RequestDestination::kWorker;
     case blink::V8RequestDestination::Enum::kXslt:
       return network::mojom::RequestDestination::kXslt;
+    case blink::V8RequestDestination::Enum::kFencedframe:
+      return network::mojom::RequestDestination::kFencedframe;
+    case blink::V8RequestDestination::Enum::kDictionary:
+      return network::mojom::RequestDestination::kDictionary;
+    case blink::V8RequestDestination::Enum::kSpeculationrules:
+      return network::mojom::RequestDestination::kSpeculationRules;
+    case blink::V8RequestDestination::Enum::kSharedstorageworklet:
+      return network::mojom::RequestDestination::kSharedStorageWorklet;
+    case blink::V8RequestDestination::Enum::kWebidentity:
+      return network::mojom::RequestDestination::kWebIdentity;
+    case blink::V8RequestDestination::Enum::kWebbundle:
+      return network::mojom::RequestDestination::kWebBundle;
+    case blink::V8RequestDestination::Enum::kServiceworker:
+      return network::mojom::RequestDestination::kServiceWorker;
   }
+  NOTREACHED();
 }
 
 }  // namespace blink

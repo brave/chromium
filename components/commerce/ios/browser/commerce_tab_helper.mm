@@ -6,13 +6,41 @@
 
 #include "base/memory/ptr_util.h"
 #include "ios/web/public/navigation/navigation_context.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
 #include "ios/web/public/web_state.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "net/http/http_response_headers.h"
 
 namespace commerce {
+
+namespace {
+bool ShouldUpdateRecentlyViewedURL(web::WebState* web_state,
+                                   web::NavigationContext* navigation_context) {
+  if (navigation_context->GetError()) {
+    return false;
+  }
+
+  if (navigation_context->GetResponseHeaders() &&
+      navigation_context->GetResponseHeaders()->response_code() == 404) {
+    return false;
+  }
+
+  if (!navigation_context->HasCommitted() ||
+      !web_state->GetNavigationManager()->GetLastCommittedItem()) {
+    // Navigation was replaced or aborted.
+    return false;
+  }
+
+  web::NavigationItem* last_committed_item =
+      web_state->GetNavigationManager()->GetLastCommittedItem();
+  const GURL& url = last_committed_item->GetURL();
+  if (url.SchemeIs(url::kDataScheme)) {
+    return false;
+  }
+
+  return true;
+}
+}  // namespace
 
 CommerceTabHelper::CommerceTabHelper(web::WebState* state,
                                      bool is_off_the_record,
@@ -48,6 +76,11 @@ void CommerceTabHelper::DidFinishNavigation(
   }
 
   shopping_service_->DidNavigatePrimaryMainFrame(web_wrapper_.get());
+
+  if (web_state->IsVisible() &&
+      ShouldUpdateRecentlyViewedURL(web_state, navigation_context)) {
+    shopping_service_->OnWebWrapperViewed(web_wrapper_.get());
+  }
 }
 
 void CommerceTabHelper::DidStopLoading(web::WebState* web_state) {
@@ -70,6 +103,14 @@ void CommerceTabHelper::PageLoaded(
   shopping_service_->DidFinishLoad(web_wrapper_.get());
 }
 
+void CommerceTabHelper::WasShown(web::WebState* web_state) {
+  if (!shopping_service_) {
+    return;
+  }
+
+  shopping_service_->OnWebWrapperSwitched(web_wrapper_.get());
+}
+
 void CommerceTabHelper::WebStateDestroyed(web::WebState* web_state) {
   if (shopping_service_)
     shopping_service_->WebWrapperDestroyed(web_wrapper_.get());
@@ -80,7 +121,5 @@ void CommerceTabHelper::WebStateDestroyed(web::WebState* web_state) {
   // to prevent a CHECK failure for observer count.
   scoped_observation_.Reset();
 }
-
-WEB_STATE_USER_DATA_KEY_IMPL(CommerceTabHelper)
 
 }  // namespace commerce

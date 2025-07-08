@@ -75,14 +75,22 @@ void PopupTestBase::SetUpCommandLine(base::CommandLine* command_line) {
 }
 
 // static
-Browser* PopupTestBase::OpenPopup(Browser* browser, const std::string& script) {
-  return OpenPopup(browser->tab_strip_model()->GetActiveWebContents(), script);
+Browser* PopupTestBase::OpenPopup(Browser* browser,
+                                  const std::string& script,
+                                  bool user_gesture) {
+  return OpenPopup(browser->tab_strip_model()->GetActiveWebContents(), script,
+                   user_gesture);
 }
 
 // static
 Browser* PopupTestBase::OpenPopup(const content::ToRenderFrameHost& adapter,
-                                  const std::string& script) {
-  content::ExecuteScriptAsync(adapter, script);
+                                  const std::string& script,
+                                  bool user_gesture) {
+  if (user_gesture) {
+    content::ExecuteScriptAsync(adapter, script);
+  } else {
+    content::ExecuteScriptAsyncWithoutUserGesture(adapter, script);
+  }
   Browser* popup = ui_test_utils::WaitForBrowserToOpen();
   content::WebContents* popup_contents =
       popup->tab_strip_model()->GetActiveWebContents();
@@ -137,18 +145,16 @@ display::Display PopupTestBase::GetDisplayNearestBrowser(
 }
 
 // static
-void PopupTestBase::WaitForHTMLFullscreen(content::WebContents* web_contents) {
-  content::WaitForLoadStop(web_contents);
-  ASSERT_TRUE(EvalJs(web_contents, R"JS(
-        (new Promise((resolve, reject) => {
-          if (!!document.fullscreenElement) {
-            resolve();
-          } else {
-            document.addEventListener(`fullscreenchange`,
-              () => { if (!!document.fullscreenElement) resolve(); }
-            );
-            document.addEventListener(`fullscreenerror`, e => { reject(e); });
-          }
-        })))JS")
-                  .error.empty());
+void PopupTestBase::WaitForUserActivationExpiry(Browser* browser) {
+  const std::string await_activation_expiry_script = R"(
+    (async () => {
+      while (navigator.userActivation.isActive)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      return navigator.userActivation.isActive;
+    })();
+  )";
+  auto* tab = browser->tab_strip_model()->GetActiveWebContents();
+  EXPECT_EQ(false, EvalJs(tab, await_activation_expiry_script,
+                          content::EXECUTE_SCRIPT_NO_USER_GESTURE));
+  EXPECT_FALSE(tab->HasRecentInteraction());
 }

@@ -4,36 +4,67 @@
 
 #include "chrome/browser/ui/views/autofill/popup/popup_cell_utils.h"
 
+#include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
-#include "base/feature_list.h"
+#include "base/check.h"
+#include "base/check_op.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
+#include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "build/branding_buildflags.h"
+#include "cc/paint/skia_paint_canvas.h"
 #include "chrome/app/vector_icons/vector_icons.h"
-#include "chrome/browser/autofill/autofill_popup_controller_utils.h"
-#include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
+#include "chrome/browser/ui/views/autofill/payments/payments_view_util.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_base_view.h"
-#include "chrome/browser/ui/views/autofill/popup/popup_cell_view.h"
+#include "chrome/browser/ui/views/autofill/popup/popup_row_content_view.h"
+#include "chrome/browser/ui/views/autofill/popup/popup_row_view.h"
+#include "chrome/browser/ui/views/autofill/popup/popup_view_utils.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/chrome_typography.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
-#include "components/autofill/core/common/autofill_features.h"
-#include "components/autofill/core/common/autofill_payments_features.h"
+#include "chrome/browser/ui/webid/identity_ui_utils.h"
+#include "chrome/grit/platform_locale_settings.h"
+#include "components/autofill/core/browser/filling/filling_product.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
+#include "components/autofill/core/browser/ui/autofill_resource_utils.h"
 #include "components/omnibox/browser/vector_icons.h"
+#include "components/password_manager/core/common/password_manager_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/models/image_model.h"
+#include "ui/base/models/image_model_utils.h"
+#include "ui/base/resource/resource_bundle.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider_manager.h"
+#include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/monogram_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_config.h"
+#include "ui/views/controls/throbber.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/flex_layout.h"
+#include "ui/views/layout/layout_types.h"
+#include "ui/views/layout/table_layout.h"
 #include "ui/views/layout/table_layout_view.h"
 #include "ui/views/view.h"
+#include "ui/views/view_class_properties.h"
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+#include "components/plus_addresses/resources/vector_icons.h"
+#endif
 
 namespace autofill::popup_cell_utils {
 
@@ -41,20 +72,21 @@ namespace {
 
 // The default icon size used in the suggestion drop down.
 constexpr int kIconSize = 16;
-
-// Max width for the username and masked password.
-constexpr int kAutofillPopupUsernameMaxWidth = 272;
-
-// Max width for address profile suggestion text.
-constexpr int kAutofillPopupAddressProfileMaxWidth = 192;
-// Max width for address credit card suggestion text.
-constexpr int kAutofillPopupCreditCardMaxWidth = 192;
+constexpr int kRecoveryPasswordIconSize = 20;
+constexpr int kChromeRefreshIconSize = 20;
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+constexpr int kGooglePayLogoWidth = 40;
+// The icon size used in the suggestion dropdown for displaying the Google
+// Wallet icon in the "Manage loyalty cards" entry and in all loyalty cards
+// submenu entries.
+constexpr int kGoogleWalletIconSize = 20;
+#endif
 
 // The additional height of the row in case it has two lines of text.
-constexpr int kAutofillPopupAdditionalDoubleRowHeight = 22;
+constexpr int kAutofillPopupAdditionalDoubleRowHeight = 16;
 
 // The additional padding of the row in case it has three lines of text.
-constexpr int kAutofillPopupAdditionalPadding = 16;
+constexpr int kAutofillPopupAdditionalVerticalPadding = 16;
 
 // Vertical spacing between labels in one row.
 constexpr int kAdjacentLabelsVerticalSpacing = 2;
@@ -63,151 +95,346 @@ constexpr int kAdjacentLabelsVerticalSpacing = 2;
 // Password Manager icon in the Manager Passwords entry.
 constexpr int kGooglePasswordManagerIconSize = 20;
 
+// Metric to measure the duration of getting the image for the Autofill pop-up.
+constexpr char kHistogramGetImageViewByName[] =
+    "Autofill.PopupGetImageViewTime";
+
+// The monochrome icon size used when rendering letter monochrome icons.
+constexpr int kMonochromeIconSize = 24;
+
+// The background color of the letter monochrome icons.
+constexpr SkColor kMonochromeIconBgColor = SkColorSetARGB(255, 237, 242, 250);
+
+// The text color of the letter monochrome icons.
+constexpr SkColor kMonochromeIconTextColor = SkColorSetARGB(255, 71, 71, 71);
+
+constexpr auto kSuggestionTypesWithDoubleHeight =
+    DenseSet<SuggestionType>({SuggestionType::kBackupPasswordEntry,
+                              SuggestionType::kTroubleSigningInEntry});
+
 // Returns the name of the network for payment method icons, empty string
 // otherwise.
-std::u16string GetIconAccessibleName(const std::string& icon_text) {
+std::u16string GetIconAccessibleName(Suggestion::Icon icon) {
   // Networks for which icons are currently shown.
-  if (icon_text == autofill::kAmericanExpressCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_AMEX);
+  switch (icon) {
+    case Suggestion::Icon::kCardAmericanExpress:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_AMEX);
+    case Suggestion::Icon::kCardDiners:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_DINERS);
+    case Suggestion::Icon::kCardDiscover:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_DISCOVER);
+    case Suggestion::Icon::kCardElo:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_ELO);
+    case Suggestion::Icon::kCardJCB:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_JCB);
+    case Suggestion::Icon::kCardMasterCard:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_MASTERCARD);
+    case Suggestion::Icon::kCardMir:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_MIR);
+    case Suggestion::Icon::kCardTroy:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_TROY);
+    case Suggestion::Icon::kCardUnionPay:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_UNION_PAY);
+    case Suggestion::Icon::kCardVerve:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_VERVE);
+    case Suggestion::Icon::kCardVisa:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_VISA);
+    // Other networks.
+    case Suggestion::Icon::kCardGeneric:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_GENERIC);
+    case Suggestion::Icon::kIban:
+      return l10n_util::GetStringUTF16(IDS_AUTOFILL_IBAN_GENERIC);
+    case Suggestion::Icon::kAccount:
+    case Suggestion::Icon::kBnpl:
+    case Suggestion::Icon::kClear:
+    case Suggestion::Icon::kCode:
+    case Suggestion::Icon::kCreate:
+    case Suggestion::Icon::kDelete:
+    case Suggestion::Icon::kDevice:
+    case Suggestion::Icon::kVehicle:
+    case Suggestion::Icon::kEdit:
+    case Suggestion::Icon::kEmail:
+    case Suggestion::Icon::kError:
+    case Suggestion::Icon::kGlobe:
+    case Suggestion::Icon::kGoogle:
+    case Suggestion::Icon::kGoogleMonochrome:
+    case Suggestion::Icon::kGooglePasswordManager:
+    case Suggestion::Icon::kGooglePay:
+    case Suggestion::Icon::kGoogleWallet:
+    case Suggestion::Icon::kGoogleWalletMonochrome:
+    case Suggestion::Icon::kHome:
+    case Suggestion::Icon::kHttpsInvalid:
+    case Suggestion::Icon::kHttpWarning:
+    case Suggestion::Icon::kIdCard:
+    case Suggestion::Icon::kKey:
+    case Suggestion::Icon::kLocation:
+    case Suggestion::Icon::kLoyalty:
+    case Suggestion::Icon::kMagic:
+    case Suggestion::Icon::kNoIcon:
+    case Suggestion::Icon::kOfferTag:
+    case Suggestion::Icon::kPenSpark:
+    case Suggestion::Icon::kPlusAddress:
+    case Suggestion::Icon::kQuestionMark:
+    case Suggestion::Icon::kRecoveryPassword:
+    case Suggestion::Icon::kSaveAndFill:
+    case Suggestion::Icon::kScanCreditCard:
+    case Suggestion::Icon::kSettings:
+    case Suggestion::Icon::kSettingsAndroid:
+    case Suggestion::Icon::kUndo:
+    case Suggestion::Icon::kWork:
+      return std::u16string();
   }
-  if (icon_text == autofill::kDinersCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_DINERS);
-  }
-  if (icon_text == autofill::kDiscoverCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_DISCOVER);
-  }
-  if (icon_text == autofill::kEloCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_ELO);
-  }
-  if (icon_text == autofill::kJCBCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_JCB);
-  }
-  if (icon_text == autofill::kMasterCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_MASTERCARD);
-  }
-  if (icon_text == autofill::kMirCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_MIR);
-  }
-  if (icon_text == autofill::kTroyCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_TROY);
-  }
-  if (icon_text == autofill::kUnionPay) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_UNION_PAY);
-  }
-  if (icon_text == autofill::kVisaCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_VISA);
-  }
-  // Other networks.
-  if (icon_text == autofill::kGenericCard) {
-    return l10n_util::GetStringUTF16(IDS_AUTOFILL_CC_GENERIC);
-  }
-  return std::u16string();
+  NOTREACHED();
 }
 
-std::unique_ptr<views::ImageView> ImageViewFromVectorIcon(
-    const gfx::VectorIcon& vector_icon,
-    int icon_size = kIconSize) {
-  return std::make_unique<views::ImageView>(
-      ui::ImageModel::FromVectorIcon(vector_icon, ui::kColorIcon, icon_size));
-}
-
-std::unique_ptr<views::ImageView> ImageViewFromImageSkia(
+std::optional<ui::ImageModel> ImageModelFromImageSkia(
     const gfx::ImageSkia& image_skia) {
   if (image_skia.isNull()) {
-    return nullptr;
+    return std::nullopt;
   }
-  auto image_view = std::make_unique<views::ImageView>();
-  image_view->SetImage(image_skia);
-  return image_view;
+  auto image_model = ui::ImageModel::FromImageSkia(image_skia);
+  return image_model;
 }
 
-std::unique_ptr<views::ImageView> GetIconImageViewByName(
-    const std::string& icon_str) {
-  if (icon_str.empty()) {
+// Converts the `image_model` to an `ImageView`. If `apply_deactivated_style` is
+// true, the image will be converted to a disabled image.
+std::unique_ptr<views::ImageView> ConvertModelToImageView(
+    std::optional<ui::ImageModel> image_model,
+    bool apply_deactivated_style) {
+  if (!image_model) {
     return nullptr;
   }
+  if (apply_deactivated_style) {
+    image_model = ui::GetDefaultDisabledIconFromImageModel(
+        image_model.value(),
+        ui::ColorProviderManager::Get().GetColorProviderFor(
+            ui::NativeTheme::GetInstanceForNativeUi()->GetColorProviderKey(
+                nullptr)));
+  }
+  return std::make_unique<views::ImageView>(image_model.value());
+}
 
-  // For http warning message, get icon images from VectorIcon, which is the
-  // same as security indicator icons in location bar.
-  if (icon_str == "httpWarning") {
-    return ImageViewFromVectorIcon(omnibox::kHttpIcon, kIconSize);
+// Creates the table in which all the Autofill suggestion content apart from
+// leading and trailing icons is contained.
+std::unique_ptr<views::TableLayoutView> CreateSuggestionContentTable(
+    std::unique_ptr<views::Label> main_text_label,
+    std::vector<std::unique_ptr<views::View>> minor_text_labels,
+    std::unique_ptr<views::Label> description_label,
+    std::vector<std::unique_ptr<views::View>> subtext_views,
+    bool align_description_label_to_right) {
+  const bool has_two_columns = !!description_label;
+  auto table =
+      views::Builder<views::TableLayoutView>()
+          .AddColumn(views::LayoutAlignment::kStart,
+                     views::LayoutAlignment::kStretch,
+                     views::TableLayout::kFixedSize,
+                     views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
+          .Build();
+  if (has_two_columns) {
+    const views::LayoutAlignment kHorizontalAlignment =
+        align_description_label_to_right ? views::LayoutAlignment::kEnd
+                                         : views::LayoutAlignment::kStart;
+    const float kHorizontalResize = align_description_label_to_right
+                                        ? 1.0f
+                                        : views::TableLayout::kFixedSize;
+    const int kDividerSpacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
+        DISTANCE_RELATED_LABEL_HORIZONTAL_LIST);
+    table->AddPaddingColumn(views::TableLayout::kFixedSize, kDividerSpacing);
+    table->AddColumn(kHorizontalAlignment, views::LayoutAlignment::kStretch,
+                     kHorizontalResize,
+                     views::TableLayout::ColumnSize::kUsePreferred, 0, 0);
   }
 
-  if (icon_str == "httpsInvalid") {
-    return std::make_unique<views::ImageView>(
-        ui::ImageModel::FromVectorIcon(vector_icons::kNotSecureWarningIcon,
-                                       ui::kColorAlertHighSeverity, kIconSize));
+  // Major and minor text go into the first row, first column.
+  table->AddRows(1, 0);
+  if (!minor_text_labels.empty()) {
+    auto first_line_container = std::make_unique<views::View>();
+    first_line_container
+        ->SetLayoutManager(std::make_unique<views::FlexLayout>())
+        ->SetOrientation(views::LayoutOrientation::kHorizontal)
+        .SetMainAxisAlignment(views::LayoutAlignment::kStart)
+        .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
+        .SetIgnoreDefaultMainAxisMargins(true)
+        .SetCollapseMargins(true)
+        .SetDefault(
+            views::kMarginsKey,
+            gfx::Insets::VH(0, ChromeLayoutProvider::Get()->GetDistanceMetric(
+                                   DISTANCE_RELATED_LABEL_HORIZONTAL_LIST)));
+
+    first_line_container->AddChildView(std::move(main_text_label));
+    for (auto& minor_text : minor_text_labels) {
+      first_line_container->AddChildView(std::move(minor_text));
+    }
+    table->AddChildView(std::move(first_line_container));
+  } else {
+    table->AddChildView(std::move(main_text_label));
   }
 
-  if (icon_str == "keyIcon") {
-    return ImageViewFromVectorIcon(kKeyIcon, kIconSize);
+  // The description goes into the first row, second column.
+  if (has_two_columns) {
+    table->AddChildView(std::move(description_label));
   }
 
-  if (icon_str == "deleteIcon") {
-    return ImageViewFromVectorIcon(kTrashCanLightIcon, kIconSize);
+  // Every subtext label goes into an additional row.
+  for (std::unique_ptr<views::View>& subtext_view : subtext_views) {
+    table->AddPaddingRow(0, kAdjacentLabelsVerticalSpacing).AddRows(1, 0);
+    table->AddChildView(std::move(subtext_view));
+    if (has_two_columns) {
+      table->AddChildView(std::make_unique<views::View>());
+    }
   }
-
-  if (icon_str == "clearIcon") {
-    return ImageViewFromVectorIcon(kBackspaceIcon, kIconSize);
-  }
-
-  if (icon_str == "undoIcon") {
-    return ImageViewFromVectorIcon(vector_icons::kUndoIcon, kIconSize);
-  }
-
-  if (icon_str == "globeIcon") {
-    return ImageViewFromVectorIcon(kGlobeIcon, kIconSize);
-  }
-
-  // TODO(crbug.com/1459990): Use proper icon. The magic_button icon does not
-  // exist yet, I will introduce it in a follow up cl.
-  if (icon_str == "magicIcon") {
-    return ImageViewFromVectorIcon(kGlobeIcon, kIconSize);
-  }
-
-  if (icon_str == "accountIcon") {
-    return ImageViewFromVectorIcon(kAccountCircleIcon, kIconSize);
-  }
-
-  if (icon_str == "settingsIcon") {
-    return ImageViewFromVectorIcon(omnibox::kProductIcon, kIconSize);
-  }
-
-  if (icon_str == "empty") {
-    return ImageViewFromVectorIcon(omnibox::kHttpIcon, kIconSize);
-  }
-
-  if (icon_str == "device") {
-    return ImageViewFromVectorIcon(kDevicesIcon, kIconSize);
-  }
-
-  if (icon_str == "google") {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-    return ImageViewFromImageSkia(gfx::CreateVectorIcon(
-        vector_icons::kGoogleGLogoIcon, kIconSize, gfx::kPlaceholderColor));
-#else
-    return nullptr;
-#endif
-  }
-
-  if (icon_str == "googlePasswordManager") {
-    return ImageViewFromVectorIcon(GooglePasswordManagerVectorIcon(),
-                                   kGooglePasswordManagerIconSize);
-  }
-
-#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  if (icon_str == "googlePay" || icon_str == "googlePayDark") {
-    return nullptr;
-  }
-#endif
-  // For other suggestion entries, get icon from PNG files.
-  int icon_id = GetIconResourceID(icon_str);
-  DCHECK_NE(icon_id, 0);
-  return ImageViewFromImageSkia(
-      *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(icon_id));
+  return table;
 }
 
 }  // namespace
+
+std::optional<ui::ImageModel> GetIconImageModelFromIcon(Suggestion::Icon icon) {
+  switch (icon) {
+    case Suggestion::Icon::kNoIcon:
+      return std::nullopt;
+    case Suggestion::Icon::kHome:
+      return ImageModelFromVectorIcon(vector_icons::kHomeIcon, kIconSize);
+    case Suggestion::Icon::kWork:
+      return ImageModelFromVectorIcon(vector_icons::kWorkIcon, kIconSize);
+    case Suggestion::Icon::kAccount:
+      return ImageModelFromVectorIcon(kAccountCircleIcon, kIconSize);
+    case Suggestion::Icon::kClear:
+      return ImageModelFromVectorIcon(kBackspaceIcon, kIconSize);
+    case Suggestion::Icon::kCode:
+      return ImageModelFromVectorIcon(vector_icons::kCodeIcon, kIconSize);
+    case Suggestion::Icon::kDelete:
+      return ImageModelFromVectorIcon(kTrashCanRefreshIcon,
+                                      kChromeRefreshIconSize);
+    case Suggestion::Icon::kDevice:
+      return ImageModelFromVectorIcon(kDevicesIcon, kIconSize);
+    case Suggestion::Icon::kVehicle:
+      return ImageModelFromVectorIcon(vector_icons::kDirectionsCarIcon,
+                                      kChromeRefreshIconSize);
+    case Suggestion::Icon::kEdit:
+      return ImageModelFromVectorIcon(vector_icons::kEditChromeRefreshIcon,
+                                      kChromeRefreshIconSize);
+    case Suggestion::Icon::kEmail:
+      return ImageModelFromVectorIcon(vector_icons::kEmailOutlineIcon,
+                                      kIconSize);
+    case Suggestion::Icon::kError:
+      return ui::ImageModel::FromVectorIcon(vector_icons::kErrorIcon,
+                                            ui::kColorSysError, kIconSize);
+    case Suggestion::Icon::kGlobe:
+      return ImageModelFromVectorIcon(kGlobeIcon, kIconSize);
+    case Suggestion::Icon::kGoogle:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromImageSkia(gfx::CreateVectorIcon(
+          vector_icons::kGoogleGLogoIcon, kIconSize, gfx::kPlaceholderColor));
+#else
+      return std::nullopt;
+#endif
+    case Suggestion::Icon::kGoogleMonochrome:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromVectorIcon(vector_icons::kGoogleGLogoMonochromeIcon,
+                                      kIconSize);
+#else
+      return ImageModelFromVectorIcon(vector_icons::kEmailIcon, kIconSize);
+#endif
+    case Suggestion::Icon::kHttpWarning:
+      // For the http warning message, get the icon images from VectorIcon,
+      // which is the same as the security indicator icons in the location bar.
+      return ImageModelFromVectorIcon(omnibox::kHttpIcon, kIconSize);
+    case Suggestion::Icon::kHttpsInvalid:
+      return ui::ImageModel::FromVectorIcon(vector_icons::kNotSecureWarningIcon,
+                                            ui::kColorAlertHighSeverity,
+                                            kIconSize);
+    case Suggestion::Icon::kIdCard:
+      return ImageModelFromVectorIcon(vector_icons::kIdCardIcon,
+                                      kChromeRefreshIconSize);
+    case Suggestion::Icon::kKey:
+      return ImageModelFromVectorIcon(kKeyIcon, kIconSize);
+    case Suggestion::Icon::kLocation:
+      return ImageModelFromVectorIcon(
+          vector_icons::kLocationOnChromeRefreshIcon, kChromeRefreshIconSize);
+    case Suggestion::Icon::kLoyalty:
+      return ImageModelFromVectorIcon(vector_icons::kLoyaltyIcon,
+                                      kChromeRefreshIconSize);
+    case Suggestion::Icon::kMagic:
+      return ImageModelFromVectorIcon(vector_icons::kMagicButtonIcon,
+                                      kIconSize);
+    case Suggestion::Icon::kPenSpark:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromVectorIcon(vector_icons::kPenSparkIcon, kIconSize);
+#else
+      return ImageModelFromVectorIcon(vector_icons::kEditIcon, kIconSize);
+#endif
+    case Suggestion::Icon::kPlusAddress:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromVectorIcon(plus_addresses::kPlusAddressLogoSmallIcon,
+                                      kIconSize);
+#else
+      return ImageModelFromVectorIcon(vector_icons::kEmailIcon, kIconSize);
+#endif
+    case Suggestion::Icon::kQuestionMark:
+      return ImageModelFromVectorIcon(vector_icons::kHelpOutlineIcon,
+                                      kRecoveryPasswordIconSize);
+    case Suggestion::Icon::kRecoveryPassword:
+      return ImageModelFromVectorIcon(vector_icons::kHistoryChromeRefreshIcon,
+                                      kRecoveryPasswordIconSize);
+    case Suggestion::Icon::kSaveAndFill:
+      return ImageModelFromVectorIcon(kCreditCardIcon, kIconSize);
+    case Suggestion::Icon::kSettings:
+      return ImageModelFromVectorIcon(omnibox::kProductIcon, kIconSize);
+    case Suggestion::Icon::kUndo:
+      return ImageModelFromVectorIcon(vector_icons::kUndoIcon, kIconSize);
+    case Suggestion::Icon::kGooglePasswordManager:
+      return ImageModelFromVectorIcon(GooglePasswordManagerVectorIcon(),
+                                      kGooglePasswordManagerIconSize);
+    case Suggestion::Icon::kGooglePay:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ui::ImageModel::FromImageGenerator(
+          base::BindRepeating(&CreateTiledGooglePayLogo, kGooglePayLogoWidth,
+                              kIconSize),
+          gfx::Size(kGooglePayLogoWidth, kIconSize));
+#else
+      return ImageModelFromVectorIcon(kCreditCardIcon, kIconSize);
+#endif
+    case Suggestion::Icon::kGoogleWallet:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromVectorIcon(vector_icons::kGoogleWalletIcon,
+                                      kGoogleWalletIconSize);
+#else
+      return std::nullopt;
+#endif
+    case Suggestion::Icon::kGoogleWalletMonochrome:
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      return ImageModelFromVectorIcon(vector_icons::kGoogleWalletMonochromeIcon,
+                                      kGoogleWalletIconSize);
+#else
+      return std::nullopt;
+#endif
+    case Suggestion::Icon::kIban:
+    case Suggestion::Icon::kCreate:
+    case Suggestion::Icon::kOfferTag:
+    case Suggestion::Icon::kScanCreditCard:
+    case Suggestion::Icon::kSettingsAndroid:
+    case Suggestion::Icon::kCardGeneric:
+    case Suggestion::Icon::kCardAmericanExpress:
+    case Suggestion::Icon::kCardDiners:
+    case Suggestion::Icon::kCardDiscover:
+    case Suggestion::Icon::kCardElo:
+    case Suggestion::Icon::kCardJCB:
+    case Suggestion::Icon::kCardMasterCard:
+    case Suggestion::Icon::kCardMir:
+    case Suggestion::Icon::kCardTroy:
+    case Suggestion::Icon::kCardUnionPay:
+    case Suggestion::Icon::kCardVerve:
+    case Suggestion::Icon::kCardVisa:
+    case Suggestion::Icon::kBnpl: {
+      // For other suggestion entries, get the icon from PNG files.
+      int icon_id = GetIconResourceID(icon);
+      DCHECK_NE(icon_id, 0);
+      return ImageModelFromImageSkia(
+          *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(icon_id));
+    }
+  }
+  NOTREACHED();
+}
 
 std::u16string GetVoiceOverStringFromSuggestion(const Suggestion& suggestion) {
   if (suggestion.voice_over) {
@@ -223,7 +450,14 @@ std::u16string GetVoiceOverStringFromSuggestion(const Suggestion& suggestion) {
 
   add_if_not_empty(GetIconAccessibleName(suggestion.icon));
   text.push_back(suggestion.main_text.value);
-  add_if_not_empty(suggestion.minor_text.value);
+  if (!suggestion.minor_texts.empty()) {
+    std::vector<std::u16string> text_values;
+    for (const auto& minor_text : suggestion.minor_texts) {
+      text_values.push_back(minor_text.value);
+    }
+    std::u16string sublabel = base::JoinString(text_values, u" ");
+    add_if_not_empty(sublabel);
+  }
 
   for (const std::vector<Suggestion::Text>& row : suggestion.labels) {
     for (const Suggestion::Text& label : row) {
@@ -238,318 +472,162 @@ std::u16string GetVoiceOverStringFromSuggestion(const Suggestion& suggestion) {
   return base::JoinString(text, u" ");
 }
 
-gfx::Insets GetMarginsForContentCell(bool has_control_element) {
-  int left_margin = PopupBaseView::GetHorizontalMargin();
-  int right_margin = left_margin;
-
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillShowAutocompleteDeleteButton)) {
-    // If the feature is enabled, then the row already adds some extra
-    // horizontal margin on the left - deduct that.
-    left_margin = std::max(
-        0, left_margin - ChromeLayoutProvider::Get()->GetDistanceMetric(
-                             DISTANCE_CONTENT_LIST_VERTICAL_SINGLE));
-
-    // If there is no control element, then this is the only cell and the same
-    // correction needs to be made on the right side, too.
-    if (!has_control_element) {
-      right_margin = left_margin;
-    }
-  }
-  return gfx::Insets::TLBR(0, left_margin, 0, right_margin);
-}
-
 std::unique_ptr<views::ImageView> GetIconImageView(
     const Suggestion& suggestion) {
-  if (!suggestion.custom_icon.IsEmpty()) {
-    return ImageViewFromImageSkia(suggestion.custom_icon.AsImageSkia());
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  // Check that icon and custom_icon are not set at the same time.
+  CHECK(!(suggestion.icon != Suggestion::Icon::kNoIcon &&
+          suggestion.custom_icon.index() != 0));
+  if (auto* monochrome_icon = std::get_if<Suggestion::LetterMonochromeIcon>(
+          &suggestion.custom_icon)) {
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(kMonochromeIconSize, kMonochromeIconSize, false);
+    cc::SkiaPaintCanvas paint_canvas(bitmap);
+    gfx::Canvas canvas(&paint_canvas, 1.f);
+    const std::vector<std::string> font_names = {
+        l10n_util::GetStringUTF8(IDS_NTP_FONT_FAMILY)};
+    gfx::DrawMonogramInCanvas(&canvas, kMonochromeIconSize, kMonochromeIconSize,
+                              monochrome_icon->monogram_text, font_names,
+                              kMonochromeIconTextColor, kMonochromeIconBgColor);
+    return ConvertModelToImageView(
+        ImageModelFromImageSkia(
+            gfx::Image::CreateFrom1xBitmap(bitmap).AsImageSkia()),
+        suggestion.HasDeactivatedStyle());
+  }
+  if (auto* image = std::get_if<gfx::Image>(&suggestion.custom_icon);
+      image && !image->IsEmpty()) {
+    gfx::ImageSkia image_skia = image->AsImageSkia();
+    if (std::holds_alternative<Suggestion::IdentityCredentialPayload>(
+            suggestion.payload)) {
+      image_skia = webid::CreateCircleCroppedImage(
+          image_skia, webid::kDesiredAvatarSizeInAutofillDropdown);
+    }
+    return ConvertModelToImageView(ImageModelFromImageSkia(image_skia),
+                                   suggestion.HasDeactivatedStyle());
+  }
+  std::unique_ptr<views::ImageView> icon_image_view =
+      ConvertModelToImageView(GetIconImageModelFromIcon(suggestion.icon),
+                              suggestion.HasDeactivatedStyle());
+  base::UmaHistogramTimes(kHistogramGetImageViewByName,
+                          base::TimeTicks::Now() - start_time);
+
+  if (icon_image_view) {
+    // It is possible to have icons of different sizes (kChromeRefreshIconSize
+    // and kIconSize) on the same popup. Setting the icon view width to
+    // the largest value ensures that the icon occupies consistent horizontal
+    // space and makes icons (and the text after them) aligned. It expands
+    // the area of kIconSize icons only and doesn't change those that are bigger
+    // by design (e.g. payment card icons) and have no alignment issues.
+    gfx::Size size = icon_image_view->GetPreferredSize();
+    size.set_width(std::max(kChromeRefreshIconSize, size.width()));
+    icon_image_view->SetPreferredSize(size);
   }
 
-  return GetIconImageViewByName(suggestion.icon);
+  return icon_image_view;
 }
 
 std::unique_ptr<views::ImageView> GetTrailingIconImageView(
     const Suggestion& suggestion) {
-  return GetIconImageViewByName(suggestion.trailing_icon);
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  std::optional<ui::ImageModel> image_model =
+      GetIconImageModelFromIcon(suggestion.trailing_icon);
+  std::unique_ptr<views::ImageView> icon_image_view =
+      ConvertModelToImageView(image_model, suggestion.HasDeactivatedStyle());
+  base::UmaHistogramTimes(kHistogramGetImageViewByName,
+                          base::TimeTicks::Now() - start_time);
+
+  return icon_image_view;
 }
 
-// Adds a spacer with `spacer_width` to `view`. `layout` must be the
-// LayoutManager of `view`.
-void AddSpacerWithSize(views::View& view,
-                       views::BoxLayout& layout,
+void AddSpacerWithSize(views::BoxLayoutView& view,
                        int spacer_width,
                        bool resize) {
   auto spacer = views::Builder<views::View>()
                     .SetPreferredSize(gfx::Size(spacer_width, 1))
                     .Build();
-  layout.SetFlexForView(view.AddChildView(std::move(spacer)),
-                        /*flex=*/resize ? 1 : 0,
-                        /*use_min_size=*/true);
+  view.SetFlexForView(view.AddChildView(std::move(spacer)),
+                      /*flex=*/resize ? 1 : 0,
+                      /*use_min_size=*/true);
 }
 
-// Creates the table in which all  the Autofill suggestion content apart from
-// leading and trailing icons is contained and adds it to `content_view`.
-// It registers `main_text_label`, `minor_text_label`, and `description_label`
-// with `content_view` for tracking, but assumes that the labels inside of of
-// `subtext_views` have already been registered for tracking with
-// `content_view`.
-void AddSuggestionContentTableToView(
-    std::unique_ptr<views::Label> main_text_label,
-    std::unique_ptr<views::Label> minor_text_label,
-    std::unique_ptr<views::Label> description_label,
-    std::vector<std::unique_ptr<views::View>> subtext_views,
-    PopupCellView& content_view) {
-  const int kDividerSpacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
-      DISTANCE_RELATED_LABEL_HORIZONTAL_LIST);
-  auto content_table =
-      views::Builder<views::TableLayoutView>()
-          .AddColumn(views::LayoutAlignment::kStart,
-                     views::LayoutAlignment::kStretch,
-                     views::TableLayout::kFixedSize,
-                     views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
-          .AddPaddingColumn(views::TableLayout::kFixedSize, kDividerSpacing)
-          .AddColumn(views::LayoutAlignment::kStart,
-                     views::LayoutAlignment::kStretch,
-                     views::TableLayout::kFixedSize,
-                     views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
-          .Build();
-
-  // Major and minor text go into the first row, first column.
-  content_table->AddRows(1, 0);
-  if (minor_text_label) {
-    auto first_line_container = std::make_unique<views::View>();
-    first_line_container
-        ->SetLayoutManager(std::make_unique<views::FlexLayout>())
-        ->SetOrientation(views::LayoutOrientation::kHorizontal)
-        .SetMainAxisAlignment(views::LayoutAlignment::kStart)
-        .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
-        .SetIgnoreDefaultMainAxisMargins(true)
-        .SetCollapseMargins(true)
-        .SetDefault(
-            views::kMarginsKey,
-            gfx::Insets::VH(0, ChromeLayoutProvider::Get()->GetDistanceMetric(
-                                   DISTANCE_RELATED_LABEL_HORIZONTAL_LIST)));
-
-    content_view.TrackLabel(
-        first_line_container->AddChildView(std::move(main_text_label)));
-    content_view.TrackLabel(
-        first_line_container->AddChildView(std::move(minor_text_label)));
-    content_table->AddChildView(std::move(first_line_container));
-  } else {
-    content_view.TrackLabel(
-        content_table->AddChildView(std::move(main_text_label)));
-  }
-
-  // The description goes into the first row, second column.
-  if (description_label) {
-    content_view.TrackLabel(
-        content_table->AddChildView(std::move(description_label)));
-  } else {
-    content_table->AddChildView(std::make_unique<views::View>());
-  }
-
-  // Every subtext label goes into an additional row.
-  for (std::unique_ptr<views::View>& subtext_view : subtext_views) {
-    content_table->AddPaddingRow(0, kAdjacentLabelsVerticalSpacing)
-        .AddRows(1, 0);
-    content_table->AddChildView(std::move(subtext_view));
-    content_table->AddChildView(std::make_unique<views::View>());
-  }
-  content_view.AddChildView(std::move(content_table));
-}
-
-// Creates the content structure shared by autocomplete, address, credit card,
-// and password suggestions.
-// - `minor_text_label`, `description_label`, and `subtext_labels` may all be
-// null or empty.
-// - `content_view` is the (assumed to be empty) view to which the content
-// structure for the `suggestion` is added.
 void AddSuggestionContentToView(
     const Suggestion& suggestion,
     std::unique_ptr<views::Label> main_text_label,
-    std::unique_ptr<views::Label> minor_text_label,
+    std::vector<std::unique_ptr<views::View>> minor_text_labels,
     std::unique_ptr<views::Label> description_label,
     std::vector<std::unique_ptr<views::View>> subtext_views,
-    PopupCellView& content_view) {
-  views::BoxLayout& layout =
-      *content_view.SetLayoutManager(std::make_unique<views::BoxLayout>(
-          views::BoxLayout::Orientation::kHorizontal,
-          GetMarginsForContentCell(/*has_control_element=*/false)));
-
-  layout.set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::kCenter);
-
-  // Adjust the cell height based on the number of subtexts.
-  const int kStandardRowHeight =
-      views::MenuConfig::instance().touchable_menu_height;
-  const int kActualHeight =
-      kStandardRowHeight +
-      (subtext_views.empty() ? 0 : kAutofillPopupAdditionalDoubleRowHeight);
-  layout.set_minimum_cross_axis_size(kActualHeight);
+    std::unique_ptr<views::View> icon,
+    PopupRowContentView& content_view) {
+  // Adjust the row height based on the number of subtexts (lines of text).
+  int row_height = views::MenuConfig::instance().touchable_menu_height;
+  if (!subtext_views.empty() ||
+      kSuggestionTypesWithDoubleHeight.contains(suggestion.type)) {
+    row_height += kAutofillPopupAdditionalDoubleRowHeight;
+  }
+  content_view.SetMinimumCrossAxisSize(row_height);
 
   // If there are three rows in total, add extra padding to avoid cramming.
   DCHECK_LE(subtext_views.size(), 2u);
   if (subtext_views.size() == 2u) {
-    layout.set_inside_border_insets(gfx::Insets::VH(
-        kAutofillPopupAdditionalPadding, PopupBaseView::GetHorizontalMargin()));
+    content_view.SetInsideBorderInsets(
+        gfx::Insets(content_view.GetInsideBorderInsets())
+            .set_top_bottom(kAutofillPopupAdditionalVerticalPadding,
+                            kAutofillPopupAdditionalVerticalPadding));
   }
 
   // The leading icon.
-  if (std::unique_ptr<views::ImageView> icon = GetIconImageView(suggestion)) {
+  if (suggestion.is_loading) {
+    views::Throbber* throbber =
+        content_view.AddChildView(std::make_unique<views::Throbber>());
+    if (icon) {
+      // Prevent that the layout is shifted when transitioning from throbber to
+      // icon and vice versa when there is a width difference.
+      const int size_delta =
+          icon->GetMinimumSize().width() - throbber->GetMinimumSize().width();
+      throbber->SetProperty(views::kMarginsKey,
+                            gfx::Insets::VH(0, std::max(size_delta, 0) / 2));
+    }
+    throbber->Start();
+    AddSpacerWithSize(content_view, PopupBaseView::ArrowHorizontalMargin(),
+                      /*resize=*/false);
+    content_view.SetEnabled(false);
+  } else if (icon) {
     content_view.AddChildView(std::move(icon));
-    AddSpacerWithSize(content_view, layout,
-                      PopupBaseView::GetHorizontalPadding(),
+    AddSpacerWithSize(content_view, PopupBaseView::ArrowHorizontalMargin(),
                       /*resize=*/false);
   }
 
   // The actual content table.
-  AddSuggestionContentTableToView(
-      std::move(main_text_label), std::move(minor_text_label),
-      std::move(description_label), std::move(subtext_views), content_view);
+  content_view.SetFlexForView(
+      content_view.AddChildView(CreateSuggestionContentTable(
+          std::move(main_text_label), std::move(minor_text_labels),
+          std::move(description_label), std::move(subtext_views),
+          suggestion.additional_label_alignment_right)),
+      1);
 
   // The trailing icon.
   if (std::unique_ptr<views::ImageView> trailing_icon =
           GetTrailingIconImageView(suggestion)) {
-    AddSpacerWithSize(content_view, layout,
-                      PopupBaseView::GetHorizontalPadding(),
+    AddSpacerWithSize(content_view, PopupBaseView::ArrowHorizontalMargin(),
                       /*resize=*/true);
     content_view.AddChildView(std::move(trailing_icon));
   }
 
   // Force a refresh to ensure all the labels'styles are correct.
-  content_view.RefreshStyle();
+  content_view.UpdateStyle(/*selected=*/false);
 }
 
-void FormatLabel(views::Label& label,
-                 const Suggestion::Text& text,
-                 base::WeakPtr<const AutofillPopupController> controller) {
-  DCHECK(controller);
-  if (controller->GetPopupType() == PopupType::kAddresses) {
-    label.SetMaximumWidthSingleLine(kAutofillPopupAddressProfileMaxWidth);
-  } else if (controller->GetPopupType() == PopupType::kCreditCards &&
-             text.should_truncate.value()) {
-    // should_truncate should only be set to true iff the experiments are
-    // enabled.
-    DCHECK(base::FeatureList::IsEnabled(
-        autofill::features::kAutofillEnableVirtualCardMetadata));
-    DCHECK(base::FeatureList::IsEnabled(
-        autofill::features::kAutofillEnableCardProductName));
-    label.SetMaximumWidthSingleLine(kAutofillPopupCreditCardMaxWidth);
-  }
+ui::ImageModel ImageModelFromVectorIcon(const gfx::VectorIcon& vector_icon,
+                                        int icon_size = kIconSize) {
+  return ui::ImageModel::FromVectorIcon(vector_icon, ui::kColorIcon, icon_size);
 }
 
-// Creates a label for the suggestion's main text.
-std::unique_ptr<views::Label> CreateMainTextLabel(
-    const Suggestion::Text& main_text,
-    int text_style) {
-  return std::make_unique<views::Label>(
-      main_text.value, views::style::CONTEXT_DIALOG_BODY_TEXT,
-      !main_text.is_primary ? views::style::STYLE_PRIMARY : text_style);
-}
-
-// Creates a label for the suggestion's minor text.
-std::unique_ptr<views::Label> CreateMinorTextLabel(
-    const Suggestion::Text& minor_text) {
-  return minor_text.value.empty()
-             ? nullptr
-             : std::make_unique<views::Label>(
-                   minor_text.value, views::style::CONTEXT_DIALOG_BODY_TEXT,
-                   views::style::STYLE_SECONDARY);
-}
-
-std::unique_ptr<views::Label> CreateDescriptionLabel(
-    PopupCellView& content_view,
-    base::WeakPtr<AutofillPopupController> controller,
-    int line_number) {
-  const Suggestion& kSuggestion = controller->GetSuggestionAt(line_number);
-  if (kSuggestion.labels.empty()) {
-    return nullptr;
-  }
-
-  DCHECK_EQ(kSuggestion.labels.size(), 1u);
-  DCHECK_EQ(kSuggestion.labels[0].size(), 1u);
-
-  auto label = std::make_unique<views::Label>(
-      kSuggestion.labels[0][0].value, views::style::CONTEXT_DIALOG_BODY_TEXT,
-      views::style::STYLE_SECONDARY);
-  label->SetElideBehavior(gfx::ELIDE_HEAD);
-  label->SetMaximumWidthSingleLine(kAutofillPopupUsernameMaxWidth);
-  return label;
-}
-
-std::vector<std::unique_ptr<views::View>> CreateAndTrackSubtextViews(
-    PopupCellView& content_view,
-    base::WeakPtr<AutofillPopupController> controller,
-    int line_number) {
-  std::vector<std::unique_ptr<views::View>> result;
-  const int kHorizontalSpacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
-      DISTANCE_RELATED_LABEL_HORIZONTAL_LIST);
-
-  for (const std::vector<Suggestion::Text>& label_row :
-       controller->GetSuggestionAt(line_number).labels) {
-    DCHECK_LE(label_row.size(), 2u);
-    DCHECK(!label_row.empty());
-    if (base::ranges::all_of(label_row, &std::u16string::empty,
-                             &Suggestion::Text::value)) {
-      // If a row is empty, do not include any further rows.
-      return result;
-    }
-
-    auto label_row_container_view =
-        views::Builder<views::BoxLayoutView>()
-            .SetOrientation(views::BoxLayout::Orientation::kHorizontal)
-            .SetBetweenChildSpacing(kHorizontalSpacing)
-            .Build();
-    for (const Suggestion::Text& label_text : label_row) {
-      // If a column is empty, do not include any further columns.
-      if (label_text.value.empty()) {
-        break;
-      }
-      auto* label =
-          label_row_container_view->AddChildView(std::make_unique<views::Label>(
-              label_text.value,
-              ChromeTextContext::CONTEXT_DIALOG_BODY_TEXT_SMALL,
-              views::style::STYLE_SECONDARY));
-      content_view.TrackLabel(label);
-      FormatLabel(*label, label_text, controller);
-    }
-    result.push_back(std::move(label_row_container_view));
-  }
-
-  return result;
-}
-
-// Adds the callbacks for the content area to `content_view`.
-void AddCallbacksToContentView(
-    base::WeakPtr<AutofillPopupController> controller,
-    int line_number,
-    PopupCellView& content_view) {
-  content_view.SetOnSelectedCallback(base::BindRepeating(
-      &AutofillPopupController::SelectSuggestion, controller, line_number));
-  content_view.SetOnUnselectedCallback(base::BindRepeating(
-      &AutofillPopupController::SelectSuggestion, controller, absl::nullopt));
-  content_view.SetOnAcceptedCallback(base::BindRepeating(
-      &AutofillPopupController::AcceptSuggestion, controller, line_number));
-}
-
-void AddSuggestionStrategyContentCellChildren(
-    PopupCellView* view,
-    base::WeakPtr<AutofillPopupController> controller,
-    int line_number) {
-  DCHECK(controller);
-  const Suggestion& kSuggestion = controller->GetSuggestionAt(line_number);
-  // Add the label views.
-  std::unique_ptr<views::Label> main_text_label = CreateMainTextLabel(
-      kSuggestion.main_text, views::style::TextStyle::STYLE_PRIMARY);
-  FormatLabel(*main_text_label, kSuggestion.main_text, controller);
-  AddSuggestionContentToView(
-      kSuggestion, std::move(main_text_label),
-      CreateMinorTextLabel(kSuggestion.minor_text),
-      /*description_label=*/nullptr,
-      CreateAndTrackSubtextViews(*view, controller, line_number), *view);
-
-  // Prepare the callbacks to the controller.
-  AddCallbacksToContentView(controller, line_number, *view);
+const gfx::VectorIcon& GetExpandableMenuIcon(SuggestionType type) {
+  CHECK(IsExpandableSuggestionType(type));
+  // Only compose suggestions have a different expandable icon.
+  return GetFillingProductFromSuggestionType(type) == FillingProduct::kCompose
+             ? kBrowserToolsChromeRefreshIcon
+             : vector_icons::kSubmenuArrowChromeRefreshIcon;
 }
 
 }  // namespace autofill::popup_cell_utils

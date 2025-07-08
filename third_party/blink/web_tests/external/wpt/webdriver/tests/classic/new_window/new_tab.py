@@ -1,4 +1,5 @@
 from tests.support.asserts import assert_success
+from tests.support.sync import Poll
 
 from . import opener, window_name
 
@@ -63,7 +64,7 @@ def test_sets_no_opener(session):
     assert opener(session) is None
 
 
-def test_focus_content(session, inline):
+def test_initial_selection_for_contenteditable(session, inline):
     response = new_window(session, type_hint="tab")
     value = assert_success(response)
     assert value["type"] == "tab"
@@ -71,19 +72,27 @@ def test_focus_content(session, inline):
     session.window_handle = value["handle"]
 
     session.url = inline("""
-        <span contenteditable="true"> abc </span>
+        <div contenteditable>abc</div>
         <script>
-            const selection = getSelection();
-            window.onload = async() => {
-                const initial = document.querySelector("span");
-                initial.focus();
+            const initial = document.querySelector("div");
+
+            document.onselectionchange = () => {
+                const selection = document.getSelection();
                 initial.setAttribute(
                     "_focused",
                     selection.anchorNode == initial.firstChild
                 );
-            }
+            };
+
+            initial.focus();
         </script>
     """)
 
-    elem = session.find.css("span", all=False)
-    assert elem.attribute("_focused") == "true"
+    elem = session.find.css("div", all=False)
+
+    def assert_initial_selection(s):
+        assert elem.attribute(
+            "_focused") == "true", "Initial selection for contenteditable not set"
+
+    wait = Poll(session, timeout=5)
+    wait.until(assert_initial_selection)

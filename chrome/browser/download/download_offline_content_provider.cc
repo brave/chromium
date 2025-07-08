@@ -11,6 +11,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -20,8 +21,10 @@
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/thumbnail/generator/image_thumbnail_request.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_features.h"
 #include "components/download/public/common/download_item.h"
+#include "components/safe_browsing/buildflags.h"
 #include "content/public/browser/browser_context.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/display/display.h"
@@ -29,10 +32,24 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
+#include "chrome/browser/download/android/download_controller.h"
 #include "chrome/browser/download/android/download_manager_bridge.h"
 #include "chrome/browser/download/android/download_manager_service.h"
 #include "chrome/browser/download/android/download_utils.h"
-#endif
+#include "chrome/browser/download/android/open_download_dialog_bridge_delegate.h"
+#include "chrome/browser/download/download_prefs.h"
+#include "chrome/browser/flags/android/chrome_feature_list.h"
+#include "components/pdf/common/constants.h"
+#include "content/public/browser/download_item_utils.h"
+#include "content/public/browser/download_manager_delegate.h"
+#include "content/public/common/content_features.h"
+#include "ui/base/device_form_factor.h"
+
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+#include "chrome/browser/download/download_ui_safe_browsing_util.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
+#endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+#endif  // BUILDFLAG(IS_ANDROID)
 
 using OfflineItemFilter = offline_items_collection::OfflineItemFilter;
 using OfflineItemState = offline_items_collection::OfflineItemState;
@@ -55,10 +72,11 @@ const base::TimeDelta kCheckExternallyRemovedDownloadsDelay =
 #if BUILDFLAG(IS_ANDROID)
 // Invalid system download Id.
 const int kInvalidSystemDownloadId = -1;
+
 #endif
 
 bool ShouldShowDownloadItem(const DownloadItem* item) {
-  return !item->IsTemporary() && !item->IsTransient() && !item->IsDangerous() &&
+  return !item->IsTemporary() && !item->IsTransient() &&
          !item->GetTargetFilePath().empty();
 }
 
@@ -106,7 +124,7 @@ AllDownloadObserver::AllDownloadObserver(
     DownloadOfflineContentProvider* provider)
     : provider_(provider) {}
 
-AllDownloadObserver::~AllDownloadObserver() {}
+AllDownloadObserver::~AllDownloadObserver() = default;
 
 void AllDownloadObserver::OnDownloadUpdated(
     SimpleDownloadManagerCoordinator* manager,
@@ -258,18 +276,38 @@ void DownloadOfflineContentProvider::PauseDownload(const ContentId& id) {
     item->Pause();
 }
 
-void DownloadOfflineContentProvider::ResumeDownload(const ContentId& id,
-                                                    bool has_user_gesture) {
+void DownloadOfflineContentProvider::ResumeDownload(const ContentId& id) {
   if (state_ == State::UNINITIALIZED) {
     pending_actions_for_reduced_mode_.push_back(
         base::BindOnce(&DownloadOfflineContentProvider::ResumeDownload,
-                       weak_ptr_factory_.GetWeakPtr(), id, has_user_gesture));
+                       weak_ptr_factory_.GetWeakPtr(), id));
     return;
   }
 
   DownloadItem* item = GetDownload(id.id);
   if (item)
-    item->Resume(has_user_gesture);
+    item->Resume(true /* user_resume */);
+}
+
+void DownloadOfflineContentProvider::ValidateDangerousDownload(
+    const ContentId& id) {
+  if (state_ == State::UNINITIALIZED) {
+    pending_actions_for_reduced_mode_.push_back(base::BindOnce(
+        &DownloadOfflineContentProvider::ValidateDangerousDownload,
+        weak_ptr_factory_.GetWeakPtr(), id));
+    return;
+  }
+
+  DownloadItem* item = GetDownload(id.id);
+  if (item && !item->IsDone() && item->IsDangerous()) {
+    item->ValidateDangerousDownload();
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION) && BUILDFLAG(IS_ANDROID)
+    SendSafeBrowsingDownloadReport(
+        safe_browsing::ClientSafeBrowsingReportRequest::
+            DANGEROUS_DOWNLOAD_WARNING_ANDROID,
+        /*did_proceed=*/true, item);
+#endif
+  }
 }
 
 void DownloadOfflineContentProvider::GetItemById(
@@ -309,7 +347,7 @@ void DownloadOfflineContentProvider::GetVisualsForItem(
     const ContentId& id,
     GetVisualsOptions options,
     VisualsCallback callback) {
-  // TODO(crbug.com/855330) Supply thumbnail if item is visible.
+  // TODO(crbug.com/40581903) Supply thumbnail if item is visible.
   DownloadItem* item = GetDownload(id.id);
   display::Screen* screen = display::Screen::GetScreen();
   if (!item || !options.get_icon || !screen) {
@@ -409,10 +447,10 @@ void DownloadOfflineContentProvider::OnRenameDownloadCallbackDone(
 
 void DownloadOfflineContentProvider::OnManagerGoingDown(
     SimpleDownloadManagerCoordinator* manager) {
-  std::vector<DownloadItem*> all_items;
+  std::vector<raw_ptr<DownloadItem, VectorExperimental>> all_items;
   GetAllDownloads(&all_items);
 
-  for (auto* item : all_items) {
+  for (download::DownloadItem* item : all_items) {
     if (!ShouldShowDownloadItem(item))
       continue;
     NotifyItemRemoved(ContentId(name_space_, item->GetGuid()));
@@ -422,10 +460,6 @@ void DownloadOfflineContentProvider::OnManagerGoingDown(
 }
 
 void DownloadOfflineContentProvider::OnDownloadStarted(DownloadItem* item) {
-  if (!base::FeatureList::IsEnabled(
-          download::features::kUseDownloadOfflineContentProvider)) {
-    return;
-  }
   item->RemoveObserver(this);
   item->AddObserver(this);
 
@@ -433,27 +467,44 @@ void DownloadOfflineContentProvider::OnDownloadStarted(DownloadItem* item) {
 }
 
 void DownloadOfflineContentProvider::OnDownloadUpdated(DownloadItem* item) {
+  // Notify user if this download is blocked.
+  bool should_notify =
+      item->GetState() == DownloadItem::INTERRUPTED &&
+      item->GetLastReason() ==
+          download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED &&
+      item->GetInsecureDownloadStatus() !=
+          download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK;
   // Wait until the target path is determined or the download is canceled.
-  if (item->GetTargetFilePath().empty() &&
+  if (!should_notify && item->GetTargetFilePath().empty() &&
       item->GetState() != DownloadItem::CANCELLED) {
     return;
   }
 
-  if (!ShouldShowDownloadItem(item))
+  if (!should_notify && !ShouldShowDownloadItem(item)) {
     return;
+  }
 
   UpdateDelta update_delta;
   auto offline_item = OfflineItemUtils::CreateOfflineItem(name_space_, item);
   if (offline_item.state == OfflineItemState::COMPLETE ||
       offline_item.state == OfflineItemState::FAILED ||
       offline_item.state == OfflineItemState::CANCELLED) {
-    // TODO(crbug.com/938152): May be move this to DownloadItem.
+    // TODO(crbug.com/40616574): May be move this to DownloadItem.
     // Never call this for completed downloads from history.
     item->RemoveObserver(this);
 
     update_delta.state_changed = true;
     if (item->GetState() == DownloadItem::COMPLETE)
       AddCompletedDownload(item);
+  }
+
+  // If the download was newly marked dangerous or validated, then visuals may
+  // change (e.g. new icon to denote dangerous status).
+  if (offline_item.state != OfflineItemState::CANCELLED &&
+      (item->IsDangerous() ||
+       item->GetDangerType() ==
+           download::DOWNLOAD_DANGER_TYPE_USER_VALIDATED)) {
+    update_delta.visuals_changed = true;
   }
 
   UpdateObservers(offline_item, update_delta);
@@ -503,8 +554,24 @@ void DownloadOfflineContentProvider::AddCompletedDownloadDone(
     return;
   }
 
-  if (DownloadUtils::ShouldAutoOpenDownload(item))
+  if (profile_ && profile_->GetDownloadManagerDelegate() &&
+      profile_->GetDownloadManagerDelegate()->ShouldOpenPdfInline() &&
+      item->GetMimeType() == pdf::kPDFMimeType) {
+    return;
+  }
+
+  if (DownloadUtils::ShouldAutoOpenDownload(item)) {
     item->OpenDownload();
+  } else if (item->IsFromExternalApp()) {
+    if (item->GetMimeType() == pdf::kPDFMimeType) {
+      if (profile_ &&
+          DownloadPrefs::FromBrowserContext(profile_)->IsAutoOpenPdfEnabled()) {
+        item->OpenDownload();
+      } else {
+        open_download_dialog_delegate_.CreateDialog(item);
+      }
+    }
+  }
 #endif
 }
 
@@ -514,14 +581,14 @@ DownloadItem* DownloadOfflineContentProvider::GetDownload(
 }
 
 void DownloadOfflineContentProvider::GetAllDownloads(
-    std::vector<DownloadItem*>* all_items) {
+    std::vector<raw_ptr<DownloadItem, VectorExperimental>>* all_items) {
   if (manager_)
     manager_->GetAllDownloads(all_items);
 }
 
 void DownloadOfflineContentProvider::UpdateObservers(
     const OfflineItem& item,
-    const absl::optional<UpdateDelta>& update_delta) {
+    const std::optional<UpdateDelta>& update_delta) {
   NotifyItemUpdated(item, update_delta);
 }
 
@@ -543,11 +610,11 @@ void DownloadOfflineContentProvider::EnsureDownloadCoreServiceStarted() {
 
 void DownloadOfflineContentProvider::RunGetAllItemsCallback(
     OfflineContentProvider::MultipleItemCallback callback) {
-  std::vector<DownloadItem*> all_items;
+  std::vector<raw_ptr<DownloadItem, VectorExperimental>> all_items;
   GetAllDownloads(&all_items);
 
   std::vector<OfflineItem> items;
-  for (auto* item : all_items) {
+  for (download::DownloadItem* item : all_items) {
     if (!ShouldShowDownloadItem(item))
       continue;
     items.push_back(OfflineItemUtils::CreateOfflineItem(name_space_, item));
@@ -561,9 +628,9 @@ void DownloadOfflineContentProvider::RunGetItemByIdCallback(
   DownloadItem* item = GetDownload(id.id);
   auto offline_item =
       item && ShouldShowDownloadItem(item)
-          ? absl::make_optional(
+          ? std::make_optional(
                 OfflineItemUtils::CreateOfflineItem(name_space_, item))
-          : absl::nullopt;
+          : std::nullopt;
 
   std::move(callback).Run(offline_item);
 }

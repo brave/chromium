@@ -11,7 +11,7 @@
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router_factory.h"
 #include "chrome/browser/password_manager/account_password_store_factory.h"
 #include "chrome/browser/password_manager/bulk_leak_check_service_factory.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "components/password_manager/core/common/password_manager_features.h"
@@ -79,12 +79,13 @@ PasswordsPrivateDelegateFactory::PasswordsPrivateDelegateFactory()
           "PasswordsPrivateDelegate",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(BulkLeakCheckServiceFactory::GetInstance());
-  DependsOn(PasswordStoreFactory::GetInstance());
+  DependsOn(ProfilePasswordStoreFactory::GetInstance());
   DependsOn(AccountPasswordStoreFactory::GetInstance());
   DependsOn(SyncServiceFactory::GetInstance());
   DependsOn(PasswordsPrivateEventRouterFactory::GetInstance());
@@ -92,9 +93,10 @@ PasswordsPrivateDelegateFactory::PasswordsPrivateDelegateFactory()
 
 PasswordsPrivateDelegateFactory::~PasswordsPrivateDelegateFactory() = default;
 
-KeyedService* PasswordsPrivateDelegateFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+PasswordsPrivateDelegateFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* profile) const {
-  return new PasswordsPrivateDelegateProxy(profile);
+  return std::make_unique<PasswordsPrivateDelegateProxy>(profile);
 }
 
 }  // namespace extensions

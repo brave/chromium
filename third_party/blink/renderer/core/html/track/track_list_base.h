@@ -48,12 +48,12 @@ class TrackListBase : public EventTarget {
   }
 
   void Add(T* track) {
-    track->SetMediaElement(media_element_);
+    track->SetMediaElement(media_element_.Get());
     tracks_.push_back(track);
     ScheduleEvent(TrackEvent::Create(event_type_names::kAddtrack, track));
   }
 
-  void Remove(WebMediaPlayer::TrackId track_id) {
+  void Remove(const String& track_id) {
     for (unsigned i = 0; i < tracks_.size(); ++i) {
       if (tracks_[i]->id() != track_id)
         continue;

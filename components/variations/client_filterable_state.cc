@@ -4,12 +4,10 @@
 
 #include "components/variations/client_filterable_state.h"
 
-#include "base/build_time.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/pref_names.h"
 
@@ -49,10 +47,8 @@ Study::Platform ClientFilterableState::GetCurrentPlatform() {
   return Study::PLATFORM_IOS;
 #elif BUILDFLAG(IS_MAC)
   return Study::PLATFORM_MAC;
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
+#elif BUILDFLAG(IS_CHROMEOS)
   return Study::PLATFORM_CHROMEOS;
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-  return Study::PLATFORM_CHROMEOS_LACROS;
 #elif BUILDFLAG(IS_ANDROID)
   return Study::PLATFORM_ANDROID;
 #elif BUILDFLAG(IS_FUCHSIA)
@@ -66,10 +62,6 @@ Study::Platform ClientFilterableState::GetCurrentPlatform() {
 #endif
 }
 
-// TODO(b/957197): Improve how we handle OS versions.
-// Add os_version.h and os_version_<platform>.cc that handle retrieving and
-// parsing OS versions. Then get rid of all the platform-dependent code here.
-//
 // static
 base::Version ClientFilterableState::GetOSVersion() {
   base::Version ret;
@@ -90,20 +82,13 @@ base::Version ClientFilterableState::GetOSVersion() {
   return ret;
 }
 
-base::Time ClientFilterableState::GetTimeForStudyDateChecks(
-    bool is_safe_seed,
-    PrefService* local_state) {
-  const base::Time seed_date =
-      is_safe_seed ? local_state->GetTime(prefs::kVariationsSafeSeedDate)
-                   : local_state->GetTime(prefs::kVariationsSeedDate);
-  const base::Time build_time = base::GetBuildTime();
-
-  // Use the build time for date checks if either the seed date is unknown or
-  // the build time is newer than the seed date.
-  if (seed_date.is_null() || seed_date < build_time) {
-    return build_time;
-  }
-  return seed_date;
+std::string ClientFilterableState::GetHardwareClass() {
+  // TODO(crbug.com/40708998): Expand to other platforms.
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+  return base::SysInfo::HardwareModelName();
+#else
+  return "";
+#endif
 }
 
 }  // namespace variations

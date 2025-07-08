@@ -5,13 +5,13 @@
 #ifndef ASH_TEST_PIXEL_ASH_PIXEL_DIFFER_H_
 #define ASH_TEST_PIXEL_ASH_PIXEL_DIFFER_H_
 
+#include <algorithm>
 #include <iterator>
+#include <optional>
 
 #include "ash/shell.h"
 #include "ash/test/pixel/ash_pixel_diff_util.h"
 #include "base/check_op.h"
-#include "base/ranges/algorithm.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/test/skia_gold_matching_algorithm.h"
 #include "ui/display/screen.h"
 #include "ui/display/test/display_manager_test_api.h"
@@ -28,7 +28,7 @@ class AshPixelDiffer {
   // Gold. Read the comment of `SKiaGoldPixelDiff::GetSession()` for more
   // details.
   explicit AshPixelDiffer(const std::string& screenshot_prefix,
-                          const absl::optional<std::string>& corpus = {});
+                          const std::optional<std::string>& corpus = {});
   AshPixelDiffer(const AshPixelDiffer&) = delete;
   AshPixelDiffer& operator=(const AshPixelDiffer&) = delete;
   ~AshPixelDiffer();
@@ -92,7 +92,7 @@ class AshPixelDiffer {
     // specified root window.
     std::vector<gfx::Rect> adjusted_rects_in_screen;
     const gfx::Rect root_window_bounds = root_window->GetBoundsInScreen();
-    base::ranges::transform(
+    std::ranges::transform(
         rects_in_screen, std::back_inserter(adjusted_rects_in_screen),
         [&root_window_bounds](const gfx::Rect& rect) {
           gfx::Rect adjusted_rect(rect);

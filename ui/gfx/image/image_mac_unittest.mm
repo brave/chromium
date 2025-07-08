@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <Cocoa/Cocoa.h>
 #include <stddef.h>
 
@@ -15,10 +20,6 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/image/image_unittest_util.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 

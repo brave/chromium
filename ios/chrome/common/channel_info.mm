@@ -13,10 +13,6 @@
 #import "components/version_info/version_info.h"
 #import "components/version_info/version_string.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -64,8 +60,9 @@ version_info::Channel GetChannel() {
     NSBundle* bundle = base::apple::OuterBundle();
 
     // Only Keystone-enabled build can have a channel.
-    if (![bundle objectForInfoDictionaryKey:@"KSProductID"])
+    if (![bundle objectForInfoDictionaryKey:@"KSProductID"]) {
       return;
+    }
 
     NSString* channel = [bundle objectForInfoDictionaryKey:@"KSChannelID"];
     if (!channel) {

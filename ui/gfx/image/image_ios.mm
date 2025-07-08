@@ -19,31 +19,27 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_util_ios.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // Returns a 16x16 red UIImage to visually show when a UIImage cannot be
 // created from PNG data. Logs error as well.
 UIImage* CreateErrorUIImage(float scale) {
   LOG(ERROR) << "Unable to decode PNG into UIImage.";
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
       CGColorSpaceCreateDeviceRGB());
-  base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
+  base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
       nullptr,  // Allow CG to allocate memory.
       16,       // width
       16,       // height
       8,        // bitsPerComponent
       0,        // CG will calculate by default.
-      color_space,
+      color_space.get(),
       kCGImageAlphaPremultipliedFirst |
           static_cast<CGImageAlphaInfo>(kCGBitmapByteOrder32Host)));
-  CGContextSetRGBFillColor(context, 1.0, 0.0, 0.0, 1.0);
-  CGContextFillRect(context, CGRectMake(0.0, 0.0, 16, 16));
-  base::ScopedCFTypeRef<CGImageRef> cg_image(
-      CGBitmapContextCreateImage(context));
+  CGContextSetRGBFillColor(context.get(), 1.0, 0.0, 0.0, 1.0);
+  CGContextFillRect(context.get(), CGRectMake(0.0, 0.0, 16, 16));
+  base::apple::ScopedCFTypeRef<CGImageRef> cg_image(
+      CGBitmapContextCreateImage(context.get()));
   return [UIImage imageWithCGImage:cg_image.get()
                              scale:scale
                        orientation:UIImageOrientationUp];
@@ -113,8 +109,8 @@ scoped_refptr<base::RefCountedMemory> Get1xPNGBytesFromUIImage(
 
   scoped_refptr<base::RefCountedBytes> png_bytes(
       new base::RefCountedBytes());
-  png_bytes->data().resize(data.length);
-  [data getBytes:&png_bytes->data().at(0) length:data.length];
+  png_bytes->as_vector().resize(data.length);
+  [data getBytes:&png_bytes->as_vector().at(0) length:data.length];
   return png_bytes;
 }
 

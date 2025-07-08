@@ -7,12 +7,14 @@
 #include <errno.h>
 #include <signal.h>
 
+#include <optional>
+#include <string>
+
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_browser_window_handler.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_metrics_service.h"
@@ -35,7 +37,6 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "ppapi/buildflags/buildflags.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "chrome/browser/chromeos/app_mode/kiosk_session_plugin_handler.h"
@@ -49,15 +50,6 @@ using extensions::AppWindowRegistry;
 namespace chromeos {
 
 namespace {
-
-#if BUILDFLAG(ENABLE_PLUGINS)
-bool IsPepperPlugin(const base::FilePath& plugin_path) {
-  content::WebPluginInfo plugin_info;
-  return content::PluginService::GetInstance()->GetPluginInfoByPath(
-             plugin_path, &plugin_info) &&
-         plugin_info.is_pepper_plugin();
-}
-#endif
 
 void RebootDevice() {
   chromeos::PowerManagerClient::Get()->RequestRestart(
@@ -105,7 +97,7 @@ class KioskBrowserSession::AppWindowHandler
       : kiosk_browser_session_(session) {}
   AppWindowHandler(const AppWindowHandler&) = delete;
   AppWindowHandler& operator=(const AppWindowHandler&) = delete;
-  ~AppWindowHandler() override {}
+  ~AppWindowHandler() override = default;
 
   void Init(Profile* profile, const std::string& app_id) {
     DCHECK(!window_registry_);
@@ -133,6 +125,7 @@ class KioskBrowserSession::AppWindowHandler
       return;
     }
 
+    LOG(WARNING) << "Last app window removed, ending kiosk session.";
     kiosk_browser_session_->Shutdown();
     window_registry_->RemoveObserver(this);
   }
@@ -158,7 +151,7 @@ class KioskBrowserSession::PluginHandlerDelegateImpl
   bool ShouldHandlePlugin(const base::FilePath& plugin_path) const override {
     // Note that BrowserChildProcessHostIterator in DumpPluginProcess also needs
     // to be updated when adding more plugin types here.
-    return IsPepperPlugin(plugin_path);
+    return false;
   }
   void OnPluginCrashed(const base::FilePath& plugin_path) override {
     if (owner_->is_shutting_down()) {
@@ -183,7 +176,7 @@ class KioskBrowserSession::PluginHandlerDelegateImpl
   }
 
  private:
-  const raw_ptr<KioskBrowserSession, ExperimentalAsh> owner_;
+  const raw_ptr<KioskBrowserSession> owner_;
 };
 #endif
 
@@ -226,12 +219,18 @@ void KioskBrowserSession::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kNewWindowsInKioskAllowed, false);
   registry->RegisterBooleanPref(prefs::kKioskTroubleshootingToolsEnabled,
                                 false);
+  registry->RegisterListPref(prefs::kKioskBrowserPermissionsAllowedForOrigins,
+                             PrefRegistrySimple::NO_REGISTRATION_FLAGS);
+  registry->RegisterBooleanPref(prefs::kKioskWebAppOfflineEnabled, true);
+  registry->RegisterBooleanPref(prefs::kKioskChromeAppsForceAllowed, false);
+  registry->RegisterBooleanPref(prefs::kKioskApplicationLogCollectionEnabled,
+                                false);
 }
 
 void KioskBrowserSession::InitForChromeAppKiosk(const std::string& app_id) {
   app_window_handler_ = std::make_unique<AppWindowHandler>(this);
   app_window_handler_->Init(profile(), app_id);
-  CreateBrowserWindowHandler(absl::nullopt);
+  CreateBrowserWindowHandler(std::nullopt);
 #if BUILDFLAG(ENABLE_PLUGINS)
   plugin_handler_ = std::make_unique<KioskSessionPluginHandler>(
       plugin_handler_delegate_.get());
@@ -240,14 +239,15 @@ void KioskBrowserSession::InitForChromeAppKiosk(const std::string& app_id) {
 }
 
 void KioskBrowserSession::InitForWebKiosk(
-    const absl::optional<std::string>& web_app_name) {
+    const std::optional<std::string>& web_app_name) {
   CreateBrowserWindowHandler(web_app_name);
   metrics_service_->RecordKioskSessionWebStarted();
 }
 
-void KioskBrowserSession::SetAttemptUserExitForTesting(
-    base::OnceClosure closure) {
-  attempt_user_exit_ = std::move(closure);
+void KioskBrowserSession::InitForIwaKiosk(
+    const std::optional<std::string>& app_name) {
+  CreateBrowserWindowHandler(app_name);
+  metrics_service_->RecordKioskSessionIwaStarted();
 }
 
 void KioskBrowserSession::SetOnHandleBrowserCallbackForTesting(
@@ -274,7 +274,7 @@ KioskBrowserSession::KioskBrowserSession(
 }
 
 void KioskBrowserSession::CreateBrowserWindowHandler(
-    const absl::optional<std::string>& web_app_name) {
+    const std::optional<std::string>& web_app_name) {
   browser_window_handler_ = std::make_unique<KioskBrowserWindowHandler>(
       profile(), web_app_name,
       base::BindRepeating(&KioskBrowserSession::OnHandledNewBrowserWindow,
@@ -312,7 +312,10 @@ void KioskBrowserSession::OnGuestAdded(
   }
 
 #if BUILDFLAG(ENABLE_PLUGINS)
-  plugin_handler_->Observe(guest_web_contents);
+  // Plugin handler is initialized only for Chrome app Kiosks.
+  if (plugin_handler_) {
+    plugin_handler_->Observe(guest_web_contents);
+  }
 #endif
 }
 

@@ -9,16 +9,12 @@
 
 #include "base/check.h"
 #include "base/functional/callback.h"
+#include "components/signin/public/identity_manager/primary_account_change_event.h"
 #include "components/version_info/channel.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/test/test_cookie_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "components/account_manager_core/account.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#endif
 
 TestWaitForNetworkCallbackHelper::TestWaitForNetworkCallbackHelper() = default;
 TestWaitForNetworkCallbackHelper::~TestWaitForNetworkCallbackHelper() = default;
@@ -57,7 +53,7 @@ TestSigninClient::TestSigninClient(
       pref_service_(pref_service),
       are_signin_cookies_allowed_(true) {}
 
-TestSigninClient::~TestSigninClient() {}
+TestSigninClient::~TestSigninClient() = default;
 
 void TestSigninClient::DoFinalInit() {}
 
@@ -71,14 +67,23 @@ TestSigninClient::GetURLLoaderFactory() {
 }
 
 network::mojom::CookieManager* TestSigninClient::GetCookieManager() {
-  if (!cookie_manager_)
+  if (!cookie_manager_) {
     cookie_manager_ = std::make_unique<network::TestCookieManager>();
+  }
   return cookie_manager_.get();
 }
 
+network::mojom::NetworkContext* TestSigninClient::GetNetworkContext() {
+  if (!network_context_) {
+    network_context_ = std::make_unique<network::TestNetworkContext>();
+  }
+  return network_context_.get();
+}
+
 network::TestURLLoaderFactory* TestSigninClient::GetTestURLLoaderFactory() {
-  if (test_url_loader_factory_)
+  if (test_url_loader_factory_) {
     return test_url_loader_factory_;
+  }
 
   if (!default_test_url_loader_factory_) {
     default_test_url_loader_factory_ =
@@ -104,7 +109,7 @@ bool TestSigninClient::AreSigninCookiesAllowed() {
 }
 
 bool TestSigninClient::AreSigninCookiesDeletedOnExit() {
-  return false;
+  return are_signin_cookies_deleted_on_exit_;
 }
 
 void TestSigninClient::AddContentSettingsObserver(
@@ -132,25 +137,18 @@ version_info::Channel TestSigninClient::GetClientChannel() {
   return version_info::Channel::UNKNOWN;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-absl::optional<account_manager::Account>
-TestSigninClient::GetInitialPrimaryAccount() {
-  return initial_primary_account_;
+void TestSigninClient::OnPrimaryAccountChanged(
+    signin::PrimaryAccountChangeEvent event_details) {}
+
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+std::unique_ptr<signin::BoundSessionOAuthMultiLoginDelegate>
+TestSigninClient::CreateBoundSessionOAuthMultiloginDelegate() const {
+  return bound_session_delegate_factory_ ? bound_session_delegate_factory_.Run()
+                                         : nullptr;
 }
 
-absl::optional<bool> TestSigninClient::IsInitialPrimaryAccountChild() const {
-  return is_initial_primary_account_child_;
+void TestSigninClient::SetBoundSessionOauthMultiloginDelegateFactory(
+    BoundSessionOauthMultiloginDelegateFactory factory) {
+  bound_session_delegate_factory_ = std::move(factory);
 }
-
-void TestSigninClient::SetInitialPrimaryAccountForTests(
-    const account_manager::Account& account,
-    const absl::optional<bool>& is_child) {
-  initial_primary_account_ = absl::make_optional(account);
-  is_initial_primary_account_child_ = is_child;
-}
-
-void TestSigninClient::RemoveAccount(
-    const account_manager::AccountKey& account_key) {}
-void TestSigninClient::RemoveAllAccounts() {}
-
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+#endif

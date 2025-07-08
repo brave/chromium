@@ -29,11 +29,12 @@
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/layout/inline/fragment_items.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_items.h"
 #include "third_party/blink/renderer/core/paint/object_paint_invalidator.h"
 
 namespace blink {
@@ -64,8 +65,8 @@ void InvalidateInlineItems(LayoutObject* object) {
   // be prohibited when moved to different parent as if it were destroyed.
   if (object->FirstInlineFragmentItemIndex()) {
     if (auto* text = DynamicTo<LayoutText>(object))
-      text->DetachAbstractInlineTextBoxesIfNeeded();
-    NGFragmentItems::LayoutObjectWillBeMoved(*object);
+      text->DetachAxHooksIfNeeded();
+    FragmentItems::LayoutObjectWillBeMoved(*object);
   }
   object->SetIsInLayoutNGInlineFormattingContext(false);
 }
@@ -110,7 +111,6 @@ LayoutObject* LayoutObjectChildList::RemoveChildNode(
     InvalidatePaintOnRemoval(*old_child);
 
     if (notify_layout_object) {
-      LayoutCounter::LayoutObjectSubtreeWillBeDetached(old_child);
       old_child->WillBeRemovedFromTree();
     }
 
@@ -143,9 +143,6 @@ LayoutObject* LayoutObjectChildList::RemoveChildNode(
   old_child->RegisterSubtreeChangeListenerOnDescendants(
       old_child->ConsumesSubtreeChangeNotification());
 
-  if (AXObjectCache* cache = owner->GetDocument().ExistingAXObjectCache())
-    cache->ChildrenChanged(owner);
-
   return old_child;
 }
 
@@ -169,7 +166,6 @@ void LayoutObjectChildList::InsertChildNode(LayoutObject* owner,
   // child->nextSibling()->parent() is not owner.
   if (before_child && before_child->Parent() != owner) {
     NOTREACHED();
-    return;
   }
 
   if (!owner->DocumentBeingDestroyed() &&
@@ -206,7 +202,6 @@ void LayoutObjectChildList::InsertChildNode(LayoutObject* owner,
 
     if (notify_layout_object) {
       new_child->InsertedIntoTree();
-      LayoutCounter::LayoutObjectSubtreeAttached(new_child);
     }
 
     if (owner->IsInLayoutNGInlineFormattingContext() ||
@@ -234,7 +229,7 @@ void LayoutObjectChildList::InsertChildNode(LayoutObject* owner,
       SubtreePaintPropertyUpdateReason::kContainerChainMayChange);
   new_child->SetNeedsOverflowRecalc();
 
-  if (!owner->NormalChildNeedsLayout()) {
+  if (!owner->ChildNeedsFullLayout()) {
     owner->SetChildNeedsLayout();  // We may supply the static position for an
                                    // absolute positioned child.
   }

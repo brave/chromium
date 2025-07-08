@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "components/account_manager_core/chromeos/account_manager_ui.h"
 #include "components/account_manager_core/chromeos/fake_account_manager_ui.h"
 #include "components/prefs/testing_pref_service.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_access_token_fetcher.h"
@@ -31,13 +33,12 @@
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace crosapi {
 
 namespace {
 
-const char kFakeGaiaId[] = "fake-gaia-id";
+const GaiaId::Literal kFakeGaiaId("fake-gaia-id");
 const char kFakeEmail[] = "fake_email@example.com";
 const char kFakeToken[] = "fake-token";
 const char kFakeOAuthConsumerName[] = "fake-oauth-consumer-name";
@@ -51,9 +52,7 @@ constexpr char kAccessTokenResponse[] = R"(
       "id_token": "id_token"
     })";
 const account_manager::Account kFakeAccount = account_manager::Account{
-    account_manager::AccountKey{kFakeGaiaId,
-                                account_manager::AccountType::kGaia},
-    kFakeEmail};
+    account_manager::AccountKey::FromGaiaId(kFakeGaiaId), kFakeEmail};
 
 }  // namespace
 
@@ -130,10 +129,10 @@ class TestAccountManagerObserver
   int num_account_removed_calls_ = 0;
   int num_auth_errors_ = 0;
   int num_signin_dialog_closed_notifications_ = 0;
-  absl::optional<account_manager::Account> last_upserted_account_;
-  absl::optional<account_manager::Account> last_removed_account_;
-  absl::optional<account_manager::AccountKey> last_err_account_;
-  absl::optional<GoogleServiceAuthError> last_error_;
+  std::optional<account_manager::Account> last_upserted_account_;
+  std::optional<account_manager::Account> last_removed_account_;
+  std::optional<account_manager::AccountKey> last_err_account_;
+  std::optional<GoogleServiceAuthError> last_error_;
   mojo::Receiver<mojom::AccountManagerObserver> receiver_;
 };
 
@@ -165,7 +164,7 @@ class AccountManagerSpy : public account_manager::AccountManager {
  private:
   // Mutated by const CreateAccessTokenFetcher.
   mutable int num_access_token_fetches_ = 0;
-  mutable absl::optional<account_manager::AccountKey>
+  mutable std::optional<account_manager::AccountKey>
       last_access_token_account_key_;
 };
 
@@ -338,8 +337,8 @@ TEST_F(AccountManagerMojoServiceTest,
 
 TEST_F(AccountManagerMojoServiceTest,
        LacrosObserversAreNotifiedOnAccountUpdates) {
-  const account_manager::AccountKey kTestAccountKey{
-      kFakeGaiaId, account_manager::AccountType::kGaia};
+  const account_manager::AccountKey kTestAccountKey =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   ASSERT_TRUE(InitializeAccountManager());
   TestAccountManagerObserver observer;
   observer.Observe(account_manager_async_waiter());
@@ -355,8 +354,8 @@ TEST_F(AccountManagerMojoServiceTest,
 
 TEST_F(AccountManagerMojoServiceTest,
        LacrosObserversAreNotifiedOnAccountRemovals) {
-  const account_manager::AccountKey kTestAccountKey{
-      kFakeGaiaId, account_manager::AccountType::kGaia};
+  const account_manager::AccountKey kTestAccountKey =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   ASSERT_TRUE(InitializeAccountManager());
   TestAccountManagerObserver observer;
   observer.Observe(account_manager_async_waiter());
@@ -380,14 +379,14 @@ TEST_F(AccountManagerMojoServiceTest, GetAccounts) {
     EXPECT_TRUE(accounts.empty());
   }
 
-  const account_manager::AccountKey kTestAccountKey{
-      kFakeGaiaId, account_manager::AccountType::kGaia};
+  const account_manager::AccountKey kTestAccountKey =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   account_manager()->UpsertAccount(kTestAccountKey, kFakeEmail, kFakeToken);
   std::vector<mojom::AccountPtr> accounts;
   account_manager_async_waiter()->GetAccounts(&accounts);
   EXPECT_EQ(1UL, accounts.size());
   EXPECT_EQ(kFakeEmail, accounts[0]->raw_email);
-  EXPECT_EQ(kFakeGaiaId, accounts[0]->key->id);
+  EXPECT_EQ(kFakeGaiaId.ToString(), accounts[0]->key->id);
   EXPECT_EQ(mojom::AccountType::kGaia, accounts[0]->key->account_type);
 }
 
@@ -462,7 +461,7 @@ TEST_F(AccountManagerMojoServiceTest,
   // Check status.
   EXPECT_EQ(mojom::AccountUpsertionResult::Status::kSuccess, result->status);
   // Check account.
-  absl::optional<account_manager::Account> account =
+  std::optional<account_manager::Account> account =
       account_manager::FromMojoAccount(result->account);
   EXPECT_TRUE(account.has_value());
   EXPECT_EQ(kFakeAccount.key, account.value().key);
@@ -490,7 +489,7 @@ TEST_F(AccountManagerMojoServiceTest,
   // Check status.
   EXPECT_EQ(mojom::AccountUpsertionResult::Status::kSuccess, result->status);
   // Check account.
-  absl::optional<account_manager::Account> account =
+  std::optional<account_manager::Account> account =
       account_manager::FromMojoAccount(result->account);
   EXPECT_TRUE(account.has_value());
   EXPECT_EQ(kFakeAccount.key, account.value().key);
@@ -527,7 +526,7 @@ TEST_F(AccountManagerMojoServiceTest,
 
   EXPECT_EQ(mojom::AccountUpsertionResult::Status::kSuccess, result->status);
   // Check account.
-  absl::optional<account_manager::Account> account =
+  std::optional<account_manager::Account> account =
       account_manager::FromMojoAccount(result->account);
   EXPECT_TRUE(account.has_value());
   EXPECT_EQ(kFakeAccount.key, account.value().key);
@@ -552,7 +551,7 @@ TEST_F(AccountManagerMojoServiceTest,
   auto result = future.Take();
   EXPECT_EQ(mojom::AccountUpsertionResult::Status::kSuccess, result->status);
   // Check account.
-  absl::optional<account_manager::Account> account =
+  std::optional<account_manager::Account> account =
       account_manager::FromMojoAccount(result->account);
   EXPECT_TRUE(account.has_value());
   EXPECT_EQ(kFakeAccount.key, account.value().key);
@@ -569,7 +568,7 @@ TEST_F(AccountManagerMojoServiceTest,
   auto result_2 = future_2.Take();
   EXPECT_EQ(mojom::AccountUpsertionResult::Status::kSuccess, result_2->status);
   // Check account.
-  absl::optional<account_manager::Account> account_2 =
+  std::optional<account_manager::Account> account_2 =
       account_manager::FromMojoAccount(result_2->account);
   EXPECT_TRUE(account_2.has_value());
   EXPECT_EQ(kFakeAccount.key, account_2.value().key);
@@ -628,28 +627,11 @@ TEST_F(AccountManagerMojoServiceTest, ShowManageAccountSettingsTest) {
 }
 
 TEST_F(AccountManagerMojoServiceTest,
-       FetchingAccessTokenResultsInErrorForActiveDirectoryAccounts) {
-  ASSERT_TRUE(InitializeAccountManager());
-  EXPECT_EQ(0, GetNumPendingAccessTokenRequests());
-  account_manager::AccountKey account_key{
-      kFakeGaiaId, account_manager::AccountType::kActiveDirectory};
-  mojom::AccessTokenResultPtr result = FetchAccessToken(account_key);
-
-  ASSERT_TRUE(result->is_error());
-  EXPECT_EQ(mojom::GoogleServiceAuthError::State::kUserNotSignedUp,
-            result->get_error()->state);
-
-  // Check that requests are not leaking.
-  RunAllPendingTasks();
-  EXPECT_EQ(0, GetNumPendingAccessTokenRequests());
-}
-
-TEST_F(AccountManagerMojoServiceTest,
        FetchingAccessTokenResultsInErrorForUnknownAccountKey) {
   ASSERT_TRUE(InitializeAccountManager());
   EXPECT_EQ(0, GetNumPendingAccessTokenRequests());
-  account_manager::AccountKey account_key{kFakeGaiaId,
-                                          account_manager::AccountType::kGaia};
+  const account_manager::AccountKey account_key =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   mojom::AccessTokenResultPtr result = FetchAccessToken(account_key);
 
   ASSERT_TRUE(result->is_error());
@@ -664,8 +646,8 @@ TEST_F(AccountManagerMojoServiceTest,
 TEST_F(AccountManagerMojoServiceTest, FetchAccessTokenRequestsCanBeCancelled) {
   // Setup.
   ASSERT_TRUE(InitializeAccountManager());
-  account_manager::AccountKey account_key{kFakeGaiaId,
-                                          account_manager::AccountType::kGaia};
+  const account_manager::AccountKey account_key =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   account_manager()->UpsertAccount(account_key, kFakeEmail, kFakeToken);
   mojo::PendingRemote<mojom::AccessTokenFetcher> pending_remote;
   EXPECT_EQ(0, GetNumPendingAccessTokenRequests());
@@ -698,8 +680,8 @@ TEST_F(AccountManagerMojoServiceTest, FetchAccessTokenRequestsCanBeCancelled) {
 TEST_F(AccountManagerMojoServiceTest, FetchAccessToken) {
   constexpr char kFakeScope[] = "fake-scope";
   ASSERT_TRUE(InitializeAccountManager());
-  account_manager::AccountKey account_key{kFakeGaiaId,
-                                          account_manager::AccountType::kGaia};
+  const account_manager::AccountKey account_key =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   account_manager()->UpsertAccount(account_key, kFakeEmail, kFakeToken);
   AddFakeAccessTokenResponse();
   EXPECT_EQ(0, GetNumPendingAccessTokenRequests());
@@ -719,8 +701,8 @@ TEST_F(AccountManagerMojoServiceTest, FetchAccessToken) {
 TEST_F(AccountManagerMojoServiceTest,
        ObserversAreNotifiedOnAccountErrorUpdates) {
   // Set up observer.
-  const account_manager::AccountKey kTestAccountKey{
-      kFakeGaiaId, account_manager::AccountType::kGaia};
+  const account_manager::AccountKey kTestAccountKey =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   ASSERT_TRUE(InitializeAccountManager());
   TestAccountManagerObserver observer;
   observer.Observe(account_manager_async_waiter());
@@ -748,8 +730,8 @@ TEST_F(AccountManagerMojoServiceTest,
 TEST_F(AccountManagerMojoServiceTest,
        ObserversAreNotNotifiedOnTransientAccountErrorUpdates) {
   // Set up observer.
-  const account_manager::AccountKey kTestAccountKey{
-      kFakeGaiaId, account_manager::AccountType::kGaia};
+  const account_manager::AccountKey kTestAccountKey =
+      account_manager::AccountKey::FromGaiaId(kFakeGaiaId);
   ASSERT_TRUE(InitializeAccountManager());
   TestAccountManagerObserver observer;
   observer.Observe(account_manager_async_waiter());

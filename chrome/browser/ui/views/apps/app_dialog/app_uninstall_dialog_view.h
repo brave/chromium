@@ -9,11 +9,11 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/uninstall_dialog.h"
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/ui/views/apps/app_dialog/app_dialog_view.h"
 #include "components/services/app_service/public/cpp/app_types.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 class Profile;
@@ -35,9 +35,7 @@ struct SubApp;
 class AppUninstallDialogView : public ProfileObserver,
                                public apps::UninstallDialog::UiBase,
                                public AppDialogView {
-  using GetSubAppsCallback = base::OnceCallback<void(std::vector<SubApp>)>;
-  using UninstallDialogReadyCallback =
-      base::OnceCallback<void(AppUninstallDialogView*)>;
+  METADATA_HEADER(AppUninstallDialogView, AppDialogView)
 
  public:
   AppUninstallDialogView(Profile* profile,
@@ -45,8 +43,7 @@ class AppUninstallDialogView : public ProfileObserver,
                          const std::string& app_id,
                          const std::string& app_name,
                          gfx::ImageSkia image,
-                         apps::UninstallDialog* uninstall_dialog,
-                         UninstallDialogReadyCallback callback);
+                         apps::UninstallDialog* uninstall_dialog);
 
   AppUninstallDialogView(const AppUninstallDialogView&) = delete;
   AppUninstallDialogView& operator=(const AppUninstallDialogView&) = delete;
@@ -60,6 +57,7 @@ class AppUninstallDialogView : public ProfileObserver,
   enum class DialogViewID : int {
     VIEW_ID_NONE = 0,
     SUB_APP_LABEL,
+    SUB_APP_ICON
   };
 
  private:
@@ -68,25 +66,22 @@ class AppUninstallDialogView : public ProfileObserver,
 
   void InitializeView(Profile* profile,
                       apps::AppType app_type,
-                      const std::string& app_id);
+                      const std::string& app_id,
+                      const std::string& app_name);
 
   void InitializeCheckbox(const GURL& app_start_url);
   void InitializeSubAppList(const std::string& short_app_name,
                             const std::vector<SubApp>& sub_apps);
 
   void InitializeViewForExtension(Profile* profile, const std::string& app_id);
-  void InitializeViewForWebApp(const std::string& app_id,
-                               std::vector<SubApp> sub_apps);
+  void InitializeViewForWebApp(const std::string& app_id);
+
+  void LoadSubAppIds(const std::string& short_app_name,
+                     const std::string& parent_app_id);
+  void GetSubAppsInfo(const std::string& short_app_name,
+                      const std::vector<std::string>& sub_app_ids);
 
 #if BUILDFLAG(IS_CHROMEOS)
-  void LoadSubAppIds(const std::string& parent_app_id,
-                     GetSubAppsCallback callback);
-  void GetSubAppsInfo(GetSubAppsCallback callback,
-                      const std::vector<std::string>& sub_app_ids);
-  void CheckForSubAppsThenInitializeViewForWebApp(const std::string& app_id);
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   void InitializeViewForArcApp(Profile* profile, const std::string& app_id);
   void InitializeViewWithMessage(const std::u16string& message);
 #endif
@@ -96,14 +91,13 @@ class AppUninstallDialogView : public ProfileObserver,
 
   void OnWidgetInitialized() override;
 
-  bool async_ = false;
-
-  UninstallDialogReadyCallback uninstall_dialog_ready_callback_;
-
   raw_ptr<Profile> profile_;
 
   raw_ptr<views::Checkbox> report_abuse_checkbox_ = nullptr;
   raw_ptr<views::Checkbox> clear_site_data_checkbox_ = nullptr;
+  raw_ptr<views::Label> sub_apps_description_ = nullptr;
+  raw_ptr<views::Label> title_label_ = nullptr;
+  raw_ptr<views::ScrollView> sub_apps_scroll_view_ = nullptr;
 
   base::ScopedObservation<Profile, ProfileObserver> profile_observation_{this};
 

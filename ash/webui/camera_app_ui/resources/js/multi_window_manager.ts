@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /**
- * @file
+ * @fileoverview
  *
  * This is used to handle multiple windows of CCA.
  * An example is when using the following windows at the same time:
@@ -28,8 +28,8 @@
  *    window owner.
  */
 
-import {assertNotReached} from './assert.js';
-import * as Comlink from './lib/comlink.js';
+import {assert, assertNotReached} from './assert.js';
+import * as comlink from './lib/comlink.js';
 
 // This is needed since we currently have the same tsconfig for files running
 // in SharedWorker and in CCA.
@@ -66,18 +66,24 @@ class MultiWindowManager {
   private currentOwnerId: number|null = null;
 
   /**
-   * The ID of the window which the camera ownership will be transferred to
-   * after suspension. We only keep one ID so if multiple windows request camera
-   * usage while suspending, only the last one will be recorded as the next
-   * owner.
+   * The pending transition, null if no pending transition.
+   * If non-null, contains the ID of the window which the camera ownership will
+   * be transferred to after suspension, or {id: null} if the current ownership
+   * should be suspended.
+   * We only keep one ID so if multiple windows request camera usage while
+   * suspending, only the last one will be recorded as the next owner.
    */
-  private nextOwnerId: number|null = null;
+  private pendingTransition: {id: number|null}|null = null;
 
   /**
    * The state to indicate the transition of the camera ownership. When
    * transition cycle starts, it will switch between SUSPENDING/RESUMING until
    * the next owner is empty. Once the transition is finished, the state should
    * go back to IDLE.
+   *
+   * All the suspend/resume callbacks are chained on the calls when the
+   * `transitionState` is IDLE, and all calls should only change the
+   * `pendingTransition` when `transitionState` is not IDLE.
    */
   private transitionState: OwnershipTransitionState =
       OwnershipTransitionState.IDLE;
@@ -96,33 +102,29 @@ class MultiWindowManager {
 
   async notifyWindowClosed(id: number): Promise<void> {
     this.windowCallbacksMap.delete(id);
-    if (this.nextOwnerId === id) {
-      this.nextOwnerId = null;
-    }
-    if (this.currentOwnerId === id) {
-      await this.resumeNextOrIdle();
-    }
+    await this.notifyWindowMinimized(id);
   }
 
   async notifyWindowRestored(id: number): Promise<void> {
     switch (this.transitionState) {
       case OwnershipTransitionState.IDLE:
+        assert(this.pendingTransition === null);
         if (this.currentOwnerId === null) {
           this.currentOwnerId = id;
           await this.resumeWindow();
         } else if (this.currentOwnerId !== id) {
-          this.nextOwnerId = id;
+          this.pendingTransition = {id};
           await this.suspendWindow();
         }
         break;
       case OwnershipTransitionState.SUSPENDING:
-        this.nextOwnerId = id;
+        this.pendingTransition = {id};
         break;
       case OwnershipTransitionState.RESUMING:
         if (this.currentOwnerId === id) {
-          this.nextOwnerId = null;
+          this.pendingTransition = null;
         } else {
-          this.nextOwnerId = id;
+          this.pendingTransition = {id};
         }
         break;
       default:
@@ -132,10 +134,11 @@ class MultiWindowManager {
   }
 
   async notifyWindowMinimized(id: number) {
-    if (id === this.nextOwnerId) {
-      // It is when a window is activated while it is suspending. Therefore, we
-      // cannot return here.
-      this.nextOwnerId = null;
+    if (id === this.pendingTransition?.id) {
+      // We don't return here since if a window is activated and then minimized
+      // while it is suspending, this.pendingTransition.id ===
+      // this.currentOwnerId, and we still need to handle the transition.
+      this.pendingTransition = null;
     }
 
     if (id !== this.currentOwnerId) {
@@ -149,7 +152,7 @@ class MultiWindowManager {
       case OwnershipTransitionState.SUSPENDING:
         break;
       case OwnershipTransitionState.RESUMING:
-        this.nextOwnerId = null;
+        this.pendingTransition = {id: null};
         break;
       default:
         assertNotReached(
@@ -181,7 +184,7 @@ class MultiWindowManager {
     }
     this.transitionState = OwnershipTransitionState.RESUMING;
     await callbacks.resumeCallback();
-    if (this.nextOwnerId !== null) {
+    if (this.pendingTransition !== null) {
       await this.suspendWindow();
     } else {
       this.transitionState = OwnershipTransitionState.IDLE;
@@ -189,8 +192,8 @@ class MultiWindowManager {
   }
 
   async resumeNextOrIdle(): Promise<void> {
-    this.currentOwnerId = this.nextOwnerId;
-    this.nextOwnerId = null;
+    this.currentOwnerId = this.pendingTransition?.id ?? null;
+    this.pendingTransition = null;
 
     if (this.currentOwnerId !== null) {
       await this.resumeWindow();
@@ -234,6 +237,6 @@ export type WindowInstance = WindowInstanceImpl;
  */
 sharedWorkerScope.onconnect = (event: MessageEvent) => {
   const port = event.ports[0];
-  Comlink.expose(windowManager.createWindowInstance(), port);
+  comlink.expose(windowManager.createWindowInstance(), port);
   port.start();
 };

@@ -131,7 +131,7 @@ TEST_F(EditorTest, RedoWithDisconnectedEditable) {
   target.Focus();
   GetDocument().execCommand("insertHtml", false, "<b>xyz</b>",
                             ASSERT_NO_EXCEPTION);
-  ASSERT_EQ("<b>xyz</b>", target.innerHTML());
+  ASSERT_EQ("<b>xyz</b>", target.GetInnerHTMLString());
   ASSERT_EQ(0, SizeOfRedoStack());
   ASSERT_EQ(1, SizeOfUndoStack());
 
@@ -172,7 +172,7 @@ TEST_F(EditorTest, UndoWithDisconnectedEditable) {
   target.Focus();
   GetDocument().execCommand("insertHtml", false, "<b>xyz</b>",
                             ASSERT_NO_EXCEPTION);
-  ASSERT_EQ("<b>xyz</b>", target.innerHTML());
+  ASSERT_EQ("<b>xyz</b>", target.GetInnerHTMLString());
   ASSERT_EQ(0, SizeOfRedoStack());
   ASSERT_EQ(1, SizeOfUndoStack());
 
@@ -204,7 +204,7 @@ TEST_F(EditorTest, UndoWithInvalidSelection) {
   const SelectionInDOMTree selection = SetSelectionTextToBody(
       "<div contenteditable><div></div><b>^abc|</b></div>");
   Selection().SetSelection(selection, SetSelectionOptions());
-  auto& abc = To<Text>(*selection.Base().ComputeContainerNode());
+  auto& abc = To<Text>(*selection.Anchor().ComputeContainerNode());
   // Push Text node "abc" into undo stack
   GetDocument().execCommand("italic", false, "", ASSERT_NO_EXCEPTION);
   // Change Text node "abc" in undo stack

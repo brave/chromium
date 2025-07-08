@@ -6,43 +6,65 @@
 
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/avatar_menu.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/sync_ui_util.h"
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/profiles/profile_colors_util.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/profiles/avatar_toolbar_button_delegate.h"
+#include "chrome/browser/ui/views/profiles/avatar_toolbar_button_state_manager.h"
+#include "chrome/browser/ui/views/profiles/profile_menu_coordinator.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/password_manager/content/common/web_ui_constants.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_prefs.h"
+#include "components/signin/public/base/signin_switches.h"
+#include "components/signin/public/identity_manager/tribool.h"
+#include "components/sync/base/features.h"
 #include "components/user_education/common/user_education_class_properties.h"
 #include "content/public/common/url_utils.h"
+#include "google_apis/gaia/gaia_id.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/models/image_model_utils.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/theme_provider.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
@@ -54,10 +76,42 @@
 
 namespace {
 
-// Note that the non-touchable icon size is larger than the default to make the
-// avatar icon easier to read.
-constexpr int kIconSizeForNonTouchUi = 22;
 constexpr int kChromeRefreshImageLabelPadding = 6;
+
+// Value used to enlarge the AvatarIcon to accommodate for DIP scaling.
+constexpr int kAvatarIconEnlargement = 1;
+
+void UpdateProfileThemeColors(Browser* browser,
+                              const ui::ColorProvider* color_provider) {
+  if (!color_provider) {
+    return;
+  }
+  CHECK(browser);
+  Profile* profile = browser->profile();
+  CHECK(profile);
+  if (profile->IsOffTheRecord() || profile->IsGuestSession()) {
+    return;
+  }
+  if (web_app::AppBrowserController::IsWebApp(browser)) {
+    return;
+  }
+  ProfileAttributesEntry* entry =
+      g_browser_process->profile_manager()
+          ->GetProfileAttributesStorage()
+          .GetProfileAttributesWithPath(profile->GetPath());
+  if (!entry) {
+    return;
+  }
+  ThemeService* service = ThemeServiceFactory::GetForProfile(profile);
+  if (!service) {
+    return;
+  }
+  // Use default profile colors only for extension and system themes.
+  entry->SetProfileThemeColors(
+      ShouldUseDefaultProfileColors(*service)
+          ? GetDefaultProfileThemeColors(color_provider)
+          : GetCurrentProfileThemeColors(*color_provider, *service));
+}
 
 }  // namespace
 
@@ -67,10 +121,25 @@ base::TimeDelta AvatarToolbarButton::g_iph_min_delay_after_creation =
 
 AvatarToolbarButton::AvatarToolbarButton(BrowserView* browser_view)
     : ToolbarButton(base::BindRepeating(&AvatarToolbarButton::ButtonPressed,
-                                        base::Unretained(this))),
+                                        base::Unretained(this),
+                                        /*is_source_accelerator=*/false)),
       browser_(browser_view->browser()),
       creation_time_(base::TimeTicks::Now()) {
-  delegate_ = std::make_unique<AvatarToolbarButtonDelegate>(this, browser_);
+  CHECK(browser_);
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(browser_->profile());
+  if (identity_manager) {
+    identity_manager_observation_.Observe(identity_manager);
+  }
+#if BUILDFLAG(IS_CHROMEOS)
+  // On CrOS this button should only show as badging for Incognito, Guest and
+  // captivie portal signin. It's only enabled for non captive portal Incognito
+  // where a menu is available for closing all Incognito windows.
+  Profile* profile = browser_->profile();
+  CHECK(profile);
+  SetEnabled(profile->IsOffTheRecord() && !profile->IsGuestSession() &&
+             !profile->GetOTRProfileID().IsCaptivePortal());
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Activate on press for left-mouse-button only to mimic other MenuButtons
   // without drag-drop actions (specifically the adjacent browser menu).
@@ -79,48 +148,82 @@ AvatarToolbarButton::AvatarToolbarButton(BrowserView* browser_view)
   SetTriggerableEventFlags(ui::EF_LEFT_MOUSE_BUTTON);
 
   SetID(VIEW_ID_AVATAR_BUTTON);
-  SetProperty(views::kElementIdentifierKey, kAvatarButtonElementId);
+  SetProperty(views::kElementIdentifierKey, kToolbarAvatarButtonElementId);
 
   // The avatar should not flip with RTL UI. This does not affect text rendering
   // and LabelButton image/label placement is still flipped like usual.
   SetFlipCanvasOnPaintForRTLUI(false);
 
-  GetViewAccessibility().OverrideHasPopup(ax::mojom::HasPopup::kMenu);
+  GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);
 
   // For consistency with identity representation, we need to have the avatar on
   // the left and the (potential) user name on the right.
   SetHorizontalAlignment(gfx::ALIGN_LEFT);
 
-  if (features::IsChromeRefresh2023()) {
-    SetImageLabelSpacing(kChromeRefreshImageLabelPadding);
-    label()->SetPaintToLayer();
-    label()->SetSkipSubpixelRenderingOpacityCheck(true);
-    label()->layer()->SetFillsBoundsOpaquely(false);
-  }
+  SetImageLabelSpacing(kChromeRefreshImageLabelPadding);
+  label()->SetPaintToLayer();
+  label()->SetSkipSubpixelRenderingOpacityCheck(true);
+  label()->layer()->SetFillsBoundsOpaquely(false);
+  label()->SetSubpixelRenderingEnabled(false);
 }
 
 AvatarToolbarButton::~AvatarToolbarButton() = default;
 
 void AvatarToolbarButton::UpdateIcon() {
-  // If widget isn't set, the button doesn't have access to the theme provider
-  // to set colors. Defer updating until AddedToWidget(). This may get called as
-  // a result of OnUserIdentityChanged() called from the constructor when the
-  // button is not yet added to the ToolbarView's hierarchy.
-  if (!GetWidget())
+  // If the state manager isn't initialized, that means the widget is not set
+  // yet and the button doesn't have access to the theme provider to set colors.
+  // Defer updating until AddedToWidget(). This may get called as a result of
+  // OnUserIdentityChanged() called from the constructor when the button is not
+  // yet added to the ToolbarView's hierarchy.
+  if (!state_manager_) {
     return;
+  }
 
-  gfx::Image gaia_account_image = delegate_->GetGaiaAccountImage();
-  for (auto state : kButtonStates)
-    SetImageModel(state, GetAvatarIcon(state, gaia_account_image));
-  delegate_->MaybeShowIdentityAnimation(gaia_account_image);
+  const int icon_size = GetIconSize();
+  const ui::ColorProvider* const color_provider = GetColorProvider();
+  CHECK(color_provider);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  ui::ImageModel icon = state_provider->GetAvatarIcon(
+      icon_size, GetForegroundColor(ButtonState::STATE_NORMAL),
+      *color_provider);
 
-  SetInsets();
+  SetImageModel(ButtonState::STATE_NORMAL, icon);
+  SetImageModel(ButtonState::STATE_DISABLED,
+                ui::GetDefaultDisabledIconFromImageModel(icon));
+
+  observer_list_.Notify(&Observer::OnIconUpdated);
 }
 
-void AvatarToolbarButton::Layout() {
-  ToolbarButton::Layout();
+void AvatarToolbarButton::AddedToWidget() {
+  // `AddedToWidget()` can potentially be called more than once. E.g: on Mac
+  // when entering/exiting fullscreen.
+  if (!state_manager_) {
+    state_manager_ =
+        std::make_unique<AvatarToolbarButtonStateManager>(*this, browser_);
+    state_manager_->InitializeStates();
+  }
 
-  // TODO(crbug.com/1094566): this is a hack to avoid mismatch between avatar
+  ToolbarButton::AddedToWidget();
+
+  // A call to `OnThemeChanged()` occurred before adding the widget, and could
+  // not be processed since the state manager was not initialized yet.
+  // This will also end up calling `UpdateIcon()`.
+  OnThemeChanged();
+}
+
+void AvatarToolbarButton::OnBoundsChanged(const gfx::Rect& previous_bounds) {
+  ToolbarButton::OnBoundsChanged(previous_bounds);
+  // This is needed to update the layout insets when the button is resized.
+  // `ToolbarButton::SetHighlight` may NOT clear the text immediately when the
+  // text is empty (clearing is delayed until the bounds are changed).
+  UpdateLayoutInsets();
+}
+
+void AvatarToolbarButton::Layout(PassKey) {
+  LayoutSuperclass<ToolbarButton>(this);
+
+  // TODO(crbug.com/40707582): this is a hack to avoid mismatch between avatar
   // bitmap scaling and DIP->canvas pixel scaling in fractional DIP scaling
   // modes (125%, 133%, etc.) that can cause the right-hand or bottom pixel row
   // of the avatar image to be sliced off at certain specific browser sizes and
@@ -130,88 +233,37 @@ void AvatarToolbarButton::Layout() {
   // after layout, so the rest of the layout is before. Since the profile image
   // uses transparency, visually this does not cause any change in cases where
   // the bug doesn't manifest.
-  image()->SetHorizontalAlignment(views::ImageView::Alignment::kLeading);
-  image()->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
-  gfx::Size image_size = image()->GetImage().size();
-  image_size.Enlarge(1, 1);
-  image()->SetSize(image_size);
+  auto* image = views::AsViewClass<views::ImageView>(image_container_view());
+  CHECK(image);
+  image->SetHorizontalAlignment(views::ImageView::Alignment::kLeading);
+  image->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
+  gfx::Size image_size = image->GetImage().size();
+  image_size.Enlarge(kAvatarIconEnlargement, kAvatarIconEnlargement);
+  image->SetSize(image_size);
 }
 
 void AvatarToolbarButton::UpdateText() {
-  absl::optional<SkColor> color;
-  std::u16string text;
-
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
   const auto* const color_provider = GetColorProvider();
   CHECK(color_provider);
 
-  if (features::IsChromeRefresh2023()) {
-    color = color_provider->GetColor(kColorAvatarButtonHighlightDefault);
-  }
-  switch (delegate_->GetState()) {
-    case State::kIncognitoProfile: {
-      const int incognito_window_count = delegate_->GetWindowCount();
-      SetAccessibleName(l10n_util::GetPluralStringFUTF16(
-          IDS_INCOGNITO_BUBBLE_ACCESSIBLE_TITLE, incognito_window_count));
-      text = l10n_util::GetPluralStringFUTF16(IDS_AVATAR_BUTTON_INCOGNITO,
-                                              incognito_window_count);
-      // TODO(shibalik): Remove this condition to make it generic by refactoring
-      // `ToolbarButton::HighlightColorAnimation`.
-      if (features::IsChromeRefresh2023()) {
-        color = color_provider->GetColor(kColorAvatarButtonHighlightIncognito);
-      }
-      break;
-    }
-    case State::kAnimatedUserIdentity: {
-      text = delegate_->GetShortProfileName();
-      break;
-    }
-    case State::kSyncError:
-      color = color_provider->GetColor(kColorAvatarButtonHighlightSyncError);
-      text = l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_SYNC_ERROR);
-      break;
-    case State::kSyncPaused:
-      color = color_provider->GetColor(kColorAvatarButtonHighlightSyncPaused);
-      text = l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_SYNC_PAUSED);
-      break;
-    case State::kGuestSession: {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      // On ChromeOS all windows are either Guest or not Guest and the Guest
-      // avatar button is not actionable. Showing the number of open windows is
-      // not as helpful as on other desktop platforms. Please see
-      // crbug.com/1178520.
-      const int guest_window_count = 1;
-#else
-      const int guest_window_count = delegate_->GetWindowCount();
-#endif
-      SetAccessibleName(l10n_util::GetPluralStringFUTF16(
-          IDS_GUEST_BUBBLE_ACCESSIBLE_TITLE, guest_window_count));
-      text = l10n_util::GetPluralStringFUTF16(IDS_AVATAR_BUTTON_GUEST,
-                                              guest_window_count);
-      break;
-    }
-    case State::kNormal:
-      if (delegate_->IsHighlightAnimationVisible()) {
-        color = color_provider->GetColor(kColorAvatarButtonHighlightNormal);
-      }
-      break;
-  }
-
-  SetInsets();
-  SetTooltipText(GetAvatarTooltipText());
-  SetHighlight(text, color);
+  SetTooltipText(state_provider->GetAvatarTooltipText());
+  SetHighlight(state_provider->GetText(),
+               state_provider->GetHighlightColor(*color_provider));
+  UpdateAccessibilityLabel();
   // Update the layout insets after `SetHighlight()` since
   // text might be updated by setting the highlight.
   UpdateLayoutInsets();
 
-  if (features::IsChromeRefresh2023()) {
-    UpdateInkdrop();
-    // Outset focus ring should be present for the chip but not when only
-    // the icon is visible.
-    views::FocusRing::Get(this)->SetOutsetFocusRingDisabled(
-        IsLabelPresentAndVisible() ? false : true);
-  }
+  UpdateInkdrop();
+  // Outset focus ring should be present for the chip but not when only
+  // the icon is visible, when there is no text.
+  views::FocusRing::Get(this)->SetOutsetFocusRingDisabled(
+      !IsLabelPresentAndVisible());
 
-  // TODO(crbug.com/1078221): this is a hack because toolbar buttons don't
+  // TODO(crbug.com/40689215): this is a hack because toolbar buttons don't
   // correctly calculate their preferred size until they've been laid out once
   // or twice, because they modify their own borders and insets in response to
   // their size and have their own preferred size caching mechanic. These should
@@ -224,140 +276,107 @@ void AvatarToolbarButton::UpdateText() {
   InvalidateLayout();
 }
 
-absl::optional<SkColor> AvatarToolbarButton::GetHighlightTextColor() const {
-  if (features::IsChromeRefresh2023()) {
-    absl::optional<SkColor> color;
-    const auto* const color_provider = GetColorProvider();
-    CHECK(color_provider);
+void AvatarToolbarButton::UpdateAccessibilityLabel() {
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  std::optional<std::u16string> accessibility_label =
+      state_provider->GetAccessibilityLabel();
 
-    switch (delegate_->GetState()) {
-      case State::kIncognitoProfile:
-        color = color_provider->GetColor(
-            kColorAvatarButtonHighlightIncognitoForeground);
-        break;
-      case State::kSyncError:
-        color = color_provider->GetColor(
-            kColorAvatarButtonHighlightSyncErrorForeground);
-        break;
-      case State::kSyncPaused:
-        color = color_provider->GetColor(
-            kColorAvatarButtonHighlightNormalForeground);
-        break;
-      case State::kGuestSession:
-        color = color_provider->GetColor(
-            kColorAvatarButtonHighlightDefaultForeground);
-        break;
-      case State::kAnimatedUserIdentity:
-        color = color_provider->GetColor(
-            kColorAvatarButtonHighlightDefaultForeground);
-        break;
-      case State::kNormal:
-        if (delegate_->IsHighlightAnimationVisible()) {
-          color = color_provider->GetColor(
-              kColorAvatarButtonHighlightNormalForeground);
-        } else {
-          color = color_provider->GetColor(
-              kColorAvatarButtonHighlightDefaultForeground);
-        }
-        break;
-      default:
-        // All the states should be defined in this switch statement.
-        NOTREACHED_NORETURN();
+  std::u16string name;
+  std::u16string description;
+
+  // The button content text as well as the button action are modified
+  // dynamically with very different contexts. The accessibility label is not
+  // always present, but when it is, it is either used as the main text (through
+  // name) or as the secondary text (through description) if the button content
+  // exists. Adapt the description to match it's default when it is not the
+  // accessibility label: the tooltip or no text if the button content has no
+  // text initially. All the values needs to be overridden every time in order
+  // clear the previous state effect.
+  std::u16string button_content(GetText());
+  if (accessibility_label.has_value()) {
+    if (button_content.empty()) {
+      name = accessibility_label.value();
+      description = state_provider->GetAvatarTooltipText();
+    } else {
+      name = button_content;
+      description = accessibility_label.value();
     }
-
-    return color;
+  } else {
+    if (button_content.empty()) {
+      name = state_provider->GetAvatarTooltipText();
+      description = std::u16string();
+    } else {
+      name = button_content;
+      description = state_provider->GetAvatarTooltipText();
+    }
   }
 
-  return absl::nullopt;
+  GetViewAccessibility().SetName(name);
+  GetViewAccessibility().SetDescription(description);
 }
 
-absl::optional<SkColor> AvatarToolbarButton::GetHighlightBorderColor() const {
-  if (features::IsChromeRefresh2023()) {
-    const auto* const color_provider = GetColorProvider();
-    CHECK(color_provider);
-    return color_provider->GetColor(kColorToolbarButtonBorder);
-  }
+std::optional<SkColor> AvatarToolbarButton::GetHighlightTextColor() const {
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  const auto* const color_provider = GetColorProvider();
+  CHECK(color_provider);
+  return state_provider->GetHighlightTextColor(*color_provider);
+}
 
-  return absl::nullopt;
+std::optional<SkColor> AvatarToolbarButton::GetHighlightBorderColor() const {
+  const auto* const color_provider = GetColorProvider();
+  CHECK(color_provider);
+  return color_provider->GetColor(kColorToolbarButtonBorder);
 }
 
 void AvatarToolbarButton::UpdateInkdrop() {
-  CHECK(features::IsChromeRefresh2023());
-  ChromeColorIds hover_color_id = kColorToolbarInkDropHover;
-  ChromeColorIds ripple_color_id = kColorToolbarInkDropRipple;
-
-  if (IsLabelPresentAndVisible()) {
-    switch (delegate_->GetState()) {
-      case State::kIncognitoProfile:
-        hover_color_id = kColorAvatarButtonIncognitoHover;
-        ripple_color_id = kColorToolbarInkDropRipple;
-        break;
-      case State::kSyncError:
-        hover_color_id = kColorToolbarInkDropHover;
-        ripple_color_id = kColorToolbarInkDropRipple;
-        break;
-      case State::kSyncPaused:
-        hover_color_id = kColorToolbarInkDropHover;
-        ripple_color_id = kColorAvatarButtonNormalRipple;
-        break;
-      case State::kGuestSession:
-        hover_color_id = kColorToolbarInkDropHover;
-        ripple_color_id = kColorToolbarInkDropRipple;
-        break;
-      case State::kAnimatedUserIdentity:
-        hover_color_id = kColorToolbarInkDropHover;
-        ripple_color_id = kColorToolbarInkDropRipple;
-        break;
-      case State::kNormal:
-        hover_color_id = kColorToolbarInkDropHover;
-
-        if (delegate_->IsHighlightAnimationVisible()) {
-          ripple_color_id = kColorAvatarButtonNormalRipple;
-        } else {
-          ripple_color_id = kColorToolbarInkDropRipple;
-        }
-        break;
-      default:
-        // All the states should be defined in this switch statement.
-        NOTREACHED_NORETURN();
-    }
-  }
-
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  auto [hover_color_id, ripple_color_id] = state_provider->GetInkdropColors();
   ConfigureToolbarInkdropForRefresh2023(this, hover_color_id, ripple_color_id);
 }
 
 bool AvatarToolbarButton::ShouldPaintBorder() const {
-  AvatarToolbarButton::State state = delegate_->GetState();
-  return (!features::IsChromeRefresh2023()) ||
-         (IsLabelPresentAndVisible() &&
-          (state == State::kGuestSession ||
-           state == State::kAnimatedUserIdentity ||
-           (state == State::kNormal &&
-            !delegate_->IsHighlightAnimationVisible())));
+  if (!IsLabelPresentAndVisible()) {
+    return false;
+  }
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  return state_provider->ShouldPaintBorder();
 }
 
 bool AvatarToolbarButton::ShouldBlendHighlightColor() const {
-  bool has_custom_theme =
-      this->GetWidget() && this->GetWidget()->GetCustomTheme();
-
-  return !features::IsChromeRefresh2023() || has_custom_theme;
+  if (base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    return false;
+  }
+  return GetWidget() && GetWidget()->GetCustomTheme();
 }
 
-void AvatarToolbarButton::ShowAvatarHighlightAnimation() {
-  delegate_->ShowHighlightAnimation();
+base::ScopedClosureRunner AvatarToolbarButton::SetExplicitButtonState(
+    const std::u16string& text,
+    std::optional<std::u16string> accessibility_label,
+    std::optional<base::RepeatingCallback<void(bool)>> explicit_action) {
+  CHECK(state_manager_);
+  return state_manager_->SetExplicitState(text, std::move(accessibility_label),
+                                          std::move(explicit_action));
 }
 
-void AvatarToolbarButton::AddObserver(Observer* observer) {
-  observer_list_.AddObserver(observer);
+bool AvatarToolbarButton::HasExplicitButtonState() const {
+  return state_manager_->HasExplicitButtonState();
 }
 
-void AvatarToolbarButton::RemoveObserver(Observer* observer) {
-  observer_list_.RemoveObserver(observer);
+void AvatarToolbarButton::SetButtonActionDisabled(bool disabled) {
+  button_action_disabled_ = disabled;
 }
 
-void AvatarToolbarButton::NotifyHighlightAnimationFinished() {
-  for (AvatarToolbarButton::Observer& observer : observer_list_)
-    observer.OnAvatarHighlightAnimationFinished();
+bool AvatarToolbarButton::IsButtonActionDisabled() const {
+  return button_action_disabled_;
 }
 
 void AvatarToolbarButton::MaybeShowProfileSwitchIPH() {
@@ -375,7 +394,7 @@ void AvatarToolbarButton::MaybeShowProfileSwitchIPH() {
 
   // This will show the promo only after the IPH system is properly initialized.
   if (!web_app::AppBrowserController::IsWebApp(browser_)) {
-    browser_->window()->MaybeShowStartupFeaturePromo(
+    BrowserUserEducationInterface::From(browser_)->MaybeShowStartupFeaturePromo(
         feature_engagement::kIPHProfileSwitchFeature);
   } else {
     // Installable PasswordManager WebUI is the only web app that has an avatar
@@ -383,121 +402,239 @@ void AvatarToolbarButton::MaybeShowProfileSwitchIPH() {
     auto app_url = browser_->app_controller()->GetAppStartUrl();
     CHECK(content::HasWebUIScheme(app_url) &&
           (app_url.host() == password_manager::kChromeUIPasswordManagerHost));
-    browser_->window()->MaybeShowStartupFeaturePromo(
+    BrowserUserEducationInterface::From(browser_)->MaybeShowStartupFeaturePromo(
         feature_engagement::kIPHPasswordsWebAppProfileSwitchFeature);
   }
 }
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+void AvatarToolbarButton::MaybeShowSupervisedUserSignInIPH() {
+  if (!base::FeatureList::IsEnabled(
+          feature_engagement::kIPHSupervisedUserProfileSigninFeature)) {
+    return;
+  }
+  signin::IdentityManager* const identity_manager =
+      IdentityManagerFactory::GetForProfile(browser_->profile());
+  CHECK(identity_manager);
+  if (!identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
+    return;
+  }
+
+  auto account_info = identity_manager->FindExtendedAccountInfoByAccountId(
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin));
+  if (account_info.capabilities.is_subject_to_parental_controls() !=
+      signin::Tribool::kTrue) {
+    return;
+  }
+  if (account_info.IsEmpty()) {
+    return;
+  }
+
+  // Prevent showing the promo right when the browser was created.
+  // This is not just used for smoother animation, but it gives the anchor
+  // element enough time to become visible and display the IPH.
+  // TODO(crbug.com/372689164): investigate alternative rescheduling,
+  // using `CanShowFeaturePromo`.
+  base::TimeDelta time_since_creation = base::TimeTicks::Now() - creation_time_;
+  if (time_since_creation < g_iph_min_delay_after_creation) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&AvatarToolbarButton::MaybeShowSupervisedUserSignInIPH,
+                       weak_ptr_factory_.GetWeakPtr()),
+        g_iph_min_delay_after_creation - time_since_creation);
+    return;
+  }
+
+  user_education::FeaturePromoParams params(
+      feature_engagement::kIPHSupervisedUserProfileSigninFeature);
+  params.title_params = base::UTF8ToUTF16(account_info.given_name);
+  BrowserUserEducationInterface::From(browser_)->MaybeShowFeaturePromo(
+      std::move(params));
+}
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+void AvatarToolbarButton::MaybeShowExplicitBrowserSigninPreferenceRememberedIPH(
+    const AccountInfo& account_info) {
+  user_education::FeaturePromoParams params(
+      feature_engagement::kIPHExplicitBrowserSigninPreferenceRememberedFeature,
+      account_info.gaia.ToString());
+  params.title_params = base::UTF8ToUTF16(account_info.given_name);
+  BrowserUserEducationInterface::From(browser_)->MaybeShowFeaturePromo(
+      std::move(params));
+}
+
+void AvatarToolbarButton::MaybeShowWebSignoutIPH(const GaiaId& gaia_id) {
+  BrowserUserEducationInterface::From(browser_)->MaybeShowFeaturePromo(
+      user_education::FeaturePromoParams(
+          feature_engagement::kIPHSignoutWebInterceptFeature,
+          gaia_id.ToString()));
+}
+
 void AvatarToolbarButton::OnMouseExited(const ui::MouseEvent& event) {
-  delegate_->OnMouseExited();
+  observer_list_.Notify(&Observer::OnMouseExited);
   ToolbarButton::OnMouseExited(event);
 }
 
 void AvatarToolbarButton::OnBlur() {
-  delegate_->OnBlur();
+  observer_list_.Notify(&Observer::OnBlur);
   ToolbarButton::OnBlur();
 }
 
 void AvatarToolbarButton::OnThemeChanged() {
   ToolbarButton::OnThemeChanged();
-  UpdateText();
-  if (features::IsChromeRefresh2023()) {
-    UpdateInkdrop();
+  if (!state_manager_) {
+    return;
   }
+
+  UpdateProfileThemeColors(browser_, GetColorProvider());
+  UpdateText();
+  UpdateInkdrop();
 }
 
 // static
-void AvatarToolbarButton::SetIPHMinDelayAfterCreationForTesting(
+base::AutoReset<base::TimeDelta>
+AvatarToolbarButton::SetScopedIPHMinDelayAfterCreationForTesting(
     base::TimeDelta delay) {
-  g_iph_min_delay_after_creation = delay;
+  return base::AutoReset<base::TimeDelta>(&g_iph_min_delay_after_creation,
+                                          delay);
 }
 
-void AvatarToolbarButton::ButtonPressed() {
-  browser_->window()->ShowAvatarBubbleFromAvatarButton(
-      /*is_source_accelerator=*/false);
+void AvatarToolbarButton::ButtonPressed(bool is_source_accelerator) {
+  if (button_action_disabled_) {
+    return;
+  }
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  if (BrowserUserEducationInterface::From(browser_)->IsFeaturePromoActive(
+          feature_engagement::kIPHPasswordsSavePrimingPromoFeature)) {
+    BrowserUserEducationInterface::From(browser_)
+        ->NotifyFeaturePromoFeatureUsed(
+            feature_engagement::kIPHPasswordsSavePrimingPromoFeature,
+            FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+  }
+#endif
+  CHECK(state_manager_);
+  StateProvider* active_state_provider =
+      state_manager_->GetActiveStateProvider();
+  CHECK(active_state_provider);
+  std::optional<base::RepeatingCallback<void(bool)>> action_override =
+      active_state_provider->GetButtonActionOverride();
+  if (action_override.has_value()) {
+    action_override->Run(is_source_accelerator);
+    return;
+  }
+
+  // By default, show the profile menu.
+  browser_->GetFeatures().profile_menu_coordinator()->Show(
+      is_source_accelerator);
+}
+
+void AvatarToolbarButton::OnPrimaryAccountChanged(
+    const signin::PrimaryAccountChangeEvent& event_details) {
+  // Try showing the IPH for signin preference remembered.
+  if (event_details.GetEventTypeFor(signin::ConsentLevel::kSignin) !=
+          signin::PrimaryAccountChangeEvent::Type::kSet ||
+      event_details.GetSetPrimaryAccountAccessPoint() !=
+          signin_metrics::AccessPoint::kSigninChoiceRemembered) {
+    return;
+  }
+
+  GaiaId gaia_id = event_details.GetCurrentState().primary_account.gaia;
+  Profile* profile = browser_->profile();
+  CHECK(profile);
+  PrefService* prefs = profile->GetPrefs();
+  CHECK(prefs);
+  const SigninPrefs signin_prefs(*prefs);
+  std::optional<base::Time> last_signout_time =
+      signin_prefs.GetChromeLastSignoutTime(gaia_id);
+  if (last_signout_time &&
+      base::Time::Now() - last_signout_time.value() < base::Days(14)) {
+    // Less than two weeks since the last sign out event.
+    return;
+  }
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  CHECK(identity_manager);
+
+  AccountInfo account_info = identity_manager->FindExtendedAccountInfo(
+      event_details.GetCurrentState().primary_account);
+  if (!account_info.given_name.empty()) {
+    MaybeShowExplicitBrowserSigninPreferenceRememberedIPH(account_info);
+  } else {
+    gaia_id_for_signin_choice_remembered_ = account_info.gaia;
+  }
+}
+
+void AvatarToolbarButton::OnExtendedAccountInfoUpdated(
+    const AccountInfo& info) {
+  if (info.gaia == gaia_id_for_signin_choice_remembered_ &&
+      !info.given_name.empty()) {
+    gaia_id_for_signin_choice_remembered_ = GaiaId();
+    MaybeShowExplicitBrowserSigninPreferenceRememberedIPH(info);
+  }
+}
+
+void AvatarToolbarButton::OnErrorStateOfRefreshTokenUpdatedForAccount(
+    const CoreAccountInfo& account_info,
+    const GoogleServiceAuthError& error,
+    signin_metrics::SourceForRefreshTokenOperation token_operation_source) {
+  Profile* profile = browser_->profile();
+  CHECK(profile);
+  PrefService* prefs = profile->GetPrefs();
+  CHECK(prefs);
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+  CHECK(identity_manager);
+  if (base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos) &&
+      prefs->GetBoolean(prefs::kExplicitBrowserSignin) &&
+      account_info == identity_manager->GetPrimaryAccountInfo(
+                          signin::ConsentLevel::kSignin) &&
+      !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync) &&
+      error.state() ==
+          GoogleServiceAuthError::State::INVALID_GAIA_CREDENTIALS &&
+      token_operation_source == signin_metrics::SourceForRefreshTokenOperation::
+                                    kDiceResponseHandler_Signout) {
+    MaybeShowWebSignoutIPH(account_info.gaia);
+  }
 }
 
 void AvatarToolbarButton::AfterPropertyChange(const void* key,
                                               int64_t old_value) {
-  if (key == user_education::kHasInProductHelpPromoKey)
-    delegate_->SetHasInProductHelpPromo(
+  if (key == user_education::kHasInProductHelpPromoKey) {
+    observer_list_.Notify(
+        &Observer::OnIPHPromoChanged,
         GetProperty(user_education::kHasInProductHelpPromoKey));
+  }
   ToolbarButton::AfterPropertyChange(key, old_value);
 }
 
-std::u16string AvatarToolbarButton::GetAvatarTooltipText() const {
-  switch (delegate_->GetState()) {
-    case State::kIncognitoProfile:
-      return l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_INCOGNITO_TOOLTIP);
-    case State::kGuestSession:
-      return l10n_util::GetStringUTF16(IDS_AVATAR_BUTTON_GUEST_TOOLTIP);
-    case State::kAnimatedUserIdentity:
-      return delegate_->GetShortProfileName();
-    // kSyncPaused is just a type of sync error with different color, but should
-    // still use GetAvatarSyncErrorDescription() as tooltip.
-    case State::kSyncError:
-    case State::kSyncPaused: {
-      absl::optional<AvatarSyncErrorType> error =
-          delegate_->GetAvatarSyncErrorType();
-      DCHECK(error);
-      return l10n_util::GetStringFUTF16(
-          IDS_AVATAR_BUTTON_SYNC_ERROR_TOOLTIP,
-          delegate_->GetShortProfileName(),
-          GetAvatarSyncErrorDescription(*error,
-                                        delegate_->IsSyncFeatureEnabled()));
-    }
-    case State::kNormal:
-      return delegate_->GetProfileName();
-  }
-  NOTREACHED_NORETURN();
-}
-
 SkColor AvatarToolbarButton::GetForegroundColor(ButtonState state) const {
-  bool has_custom_theme =
-      this->GetWidget() && this->GetWidget()->GetCustomTheme();
+  if (base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    if (IsLabelPresentAndVisible()) {
+      return GetHighlightTextColor().value_or(GetColorProvider()->GetColor(
+          kColorAvatarButtonHighlightDefaultForeground));
+    }
+  } else {
+    const bool has_custom_theme =
+        this->GetWidget() && this->GetWidget()->GetCustomTheme();
 
-  // If there is a custom theme use the `ToolbarButton` version of
-  // `GetForegroundColor()` This is to avoid creating new colorIds for icons for
-  // all the different states. With chrome refresh and without any custom theme,
-  // the color would be same as the label color.
-  if (features::IsChromeRefresh2023() && !has_custom_theme &&
-      IsLabelPresentAndVisible()) {
-    const absl::optional<SkColor> foreground_color = GetHighlightTextColor();
-    const auto* const color_provider = GetColorProvider();
-    return foreground_color.has_value()
-               ? foreground_color.value()
-               : color_provider->GetColor(
-                     kColorAvatarButtonHighlightDefaultForeground);
+    // If there is a custom theme use the `ToolbarButton` version of
+    // `GetForegroundColor()` This is to avoid creating new colorIds for icons
+    // for all the different states. With chrome refresh and without any custom
+    // theme, the color would be same as the label color.
+    if (!has_custom_theme && IsLabelPresentAndVisible()) {
+      const std::optional<SkColor> foreground_color = GetHighlightTextColor();
+      const auto* const color_provider = GetColorProvider();
+      return foreground_color.has_value()
+                 ? foreground_color.value()
+                 : color_provider->GetColor(
+                       kColorAvatarButtonHighlightDefaultForeground);
+    }
   }
 
   return ToolbarButton::GetForegroundColor(state);
-}
-
-ui::ImageModel AvatarToolbarButton::GetAvatarIcon(
-    ButtonState state,
-    const gfx::Image& gaia_account_image) const {
-  const int icon_size = GetIconSize();
-  SkColor icon_color = GetForegroundColor(state);
-
-  switch (delegate_->GetState()) {
-    case State::kIncognitoProfile:
-      return ui::ImageModel::FromVectorIcon(features::IsChromeRefresh2023()
-                                                ? kIncognitoRefreshMenuIcon
-                                                : kIncognitoIcon,
-                                            icon_color, icon_size);
-    case State::kGuestSession:
-      return profiles::GetGuestAvatar(icon_size);
-    case State::kAnimatedUserIdentity:
-    case State::kSyncError:
-    // TODO(crbug.com/1191411): If sync-the-feature is disabled, the icon should
-    // be different.
-    case State::kSyncPaused:
-    case State::kNormal:
-      return ui::ImageModel::FromImage(profiles::GetSizedAvatarIcon(
-          delegate_->GetProfileAvatarImage(gaia_account_image, icon_size),
-          icon_size, icon_size, profiles::SHAPE_CIRCLE));
-  }
-  NOTREACHED_NORETURN();
 }
 
 bool AvatarToolbarButton::IsLabelPresentAndVisible() const {
@@ -507,37 +644,48 @@ bool AvatarToolbarButton::IsLabelPresentAndVisible() const {
   return label()->GetVisible() && !label()->GetText().empty();
 }
 
-void AvatarToolbarButton::SetInsets() {
-  // In non-touch mode we use a larger-than-normal icon size for avatars so we
-  // need to compensate it by smaller insets.
-  const bool touch_ui = ui::TouchUiController::Get()->touch_ui();
-  gfx::Insets layout_insets((touch_ui || features::IsChromeRefresh2023())
-                                ? 0
-                                : (kDefaultIconSize - kIconSizeForNonTouchUi) /
-                                      2);
-  SetLayoutInsetDelta(layout_insets);
-}
-
 void AvatarToolbarButton::UpdateLayoutInsets() {
-  if (!features::IsChromeRefresh2023()) {
-    return;
-  }
-
-  if (IsLabelPresentAndVisible()) {
-    SetLayoutInsets(::GetLayoutInsets(AVATAR_CHIP_PADDING));
-  } else {
-    SetLayoutInsets(::GetLayoutInsets(TOOLBAR_BUTTON));
-  }
+  SetLayoutInsets(::GetLayoutInsets(
+      IsLabelPresentAndVisible() ? AVATAR_CHIP_PADDING : TOOLBAR_BUTTON));
 }
 
 int AvatarToolbarButton::GetIconSize() const {
-  if (ui::TouchUiController::Get()->touch_ui()) {
-    return kDefaultTouchableIconSize;
-  }
-
-  return features::IsChromeRefresh2023() ? kDefaultIconSizeChromeRefresh
-                                         : kIconSizeForNonTouchUi;
+  return ui::TouchUiController::Get()->touch_ui()
+             ? kDefaultTouchableIconSize
+             : kDefaultIconSizeChromeRefresh;
 }
 
-BEGIN_METADATA(AvatarToolbarButton, ToolbarButton)
+void AvatarToolbarButton::AddObserver(Observer* observer) {
+  observer_list_.AddObserver(observer);
+}
+
+void AvatarToolbarButton::RemoveObserver(Observer* observer) {
+  observer_list_.RemoveObserver(observer);
+}
+
+// static
+base::AutoReset<std::optional<base::TimeDelta>>
+AvatarToolbarButton::CreateScopedInfiniteDelayOverrideForTesting(
+    AvatarDelayType delay_type) {
+  return AvatarToolbarButtonStateManager::
+      CreateScopedInfiniteDelayOverrideForTesting(delay_type);
+}
+
+void AvatarToolbarButton::ClearActiveStateForTesting() {
+  CHECK(state_manager_);
+  StateProvider* state_provider = state_manager_->GetActiveStateProvider();
+  CHECK(state_provider);
+  state_provider->ClearForTesting();
+}
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// static
+base::AutoReset<std::optional<base::TimeDelta>> AvatarToolbarButton::
+    CreateScopedZeroDelayOverrideSigninPendingTextForTesting() {
+  return AvatarToolbarButtonStateManager::
+      CreateScopedZeroDelayOverrideSigninPendingTextForTesting();
+}
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
+BEGIN_METADATA(AvatarToolbarButton)
 END_METADATA

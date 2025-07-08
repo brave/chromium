@@ -20,9 +20,9 @@ namespace views {
 // multiple lines. Connected `LinkFragment`s adjust their style if any single
 // one of them is hovered over of focused.
 class VIEWS_EXPORT LinkFragment : public Link {
- public:
-  METADATA_HEADER(LinkFragment);
+  METADATA_HEADER(LinkFragment, Link)
 
+ public:
   explicit LinkFragment(const std::u16string& title = std::u16string(),
                         int text_context = style::CONTEXT_LABEL,
                         int text_style = style::STYLE_LINK,
@@ -35,10 +35,10 @@ class VIEWS_EXPORT LinkFragment : public Link {
  private:
   // Returns the short-circuiting logical-"or" of invoking `f` on all linked
   // fragments, beginning with `initial_fragment`.
-  template <
-      typename F,
-      typename Fragment,  // Templated to allow const or non-const LinkFragments
-      typename = std::enable_if_t<std::is_invocable_r_v<bool, F, Fragment*>>>
+  template <typename F,
+            typename Fragment>  // Templated to allow const or non-const
+                                // LinkFragments
+    requires(std::is_invocable_r_v<bool, F, Fragment*>)
   static bool InvokeOnFragments(F&& f, Fragment* initial_fragment) {
     Fragment* fragment = initial_fragment;
     bool result = false;

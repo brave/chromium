@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_flow_thread.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 
 namespace blink {
 
@@ -37,7 +38,9 @@ LayoutMultiColumnSpannerPlaceholder::CreateAnonymous(
 LayoutMultiColumnSpannerPlaceholder::LayoutMultiColumnSpannerPlaceholder(
     LayoutBox* layout_object_in_flow_thread)
     : LayoutBox(nullptr),
-      layout_object_in_flow_thread_(layout_object_in_flow_thread) {}
+      layout_object_in_flow_thread_(layout_object_in_flow_thread) {
+  DCHECK(!RuntimeEnabledFeatures::FlowThreadLessEnabled());
+}
 
 void LayoutMultiColumnSpannerPlaceholder::Trace(Visitor* visitor) const {
   visitor->Trace(layout_object_in_flow_thread_);
@@ -102,65 +105,15 @@ void LayoutMultiColumnSpannerPlaceholder::WillBeRemovedFromTree() {
   LayoutBox::WillBeRemovedFromTree();
 }
 
-void LayoutMultiColumnSpannerPlaceholder::RecalcVisualOverflow() {
+DeprecatedLayoutPoint
+LayoutMultiColumnSpannerPlaceholder::DeprecatedLocationInternal() const {
   NOT_DESTROYED();
-  LayoutBox::RecalcVisualOverflow();
-  ClearVisualOverflow();
-  AddContentsVisualOverflow(
-      layout_object_in_flow_thread_->VisualOverflowRect());
-}
-
-MinMaxSizes LayoutMultiColumnSpannerPlaceholder::PreferredLogicalWidths()
-    const {
-  NOT_DESTROYED();
-  NOTREACHED_NORETURN();
-}
-
-void LayoutMultiColumnSpannerPlaceholder::UpdateLayout() {
-  NOT_DESTROYED();
-  NOTREACHED_NORETURN();
-}
-
-void LayoutMultiColumnSpannerPlaceholder::ComputeLogicalHeight(
-    LayoutUnit,
-    LayoutUnit logical_top,
-    LogicalExtentComputedValues& computed_values) const {
-  NOT_DESTROYED();
-  NOTREACHED_NORETURN();
-}
-
-void LayoutMultiColumnSpannerPlaceholder::Paint(
-    const PaintInfo& paint_info) const {
-  NOT_DESTROYED();
-  if (!layout_object_in_flow_thread_->HasSelfPaintingLayer())
-    layout_object_in_flow_thread_->Paint(paint_info);
-}
-
-bool LayoutMultiColumnSpannerPlaceholder::NodeAtPoint(
-    HitTestResult& result,
-    const HitTestLocation& hit_test_location,
-    const PhysicalOffset& accumulated_offset,
-    HitTestPhase phase) {
-  NOT_DESTROYED();
-  return !layout_object_in_flow_thread_->HasSelfPaintingLayer() &&
-         layout_object_in_flow_thread_->NodeAtPoint(result, hit_test_location,
-                                                    accumulated_offset, phase);
-}
-
-LayoutPoint LayoutMultiColumnSpannerPlaceholder::LocationInternal() const {
-  NOT_DESTROYED();
-  if (RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled()) {
-    return layout_object_in_flow_thread_->LocationInternal();
-  }
-  return LayoutBox::LocationInternal();
+  return layout_object_in_flow_thread_->DeprecatedLocationInternal();
 }
 
 PhysicalSize LayoutMultiColumnSpannerPlaceholder::Size() const {
   NOT_DESTROYED();
-  if (RuntimeEnabledFeatures::LayoutNGNoCopyBackEnabled()) {
-    return layout_object_in_flow_thread_->Size();
-  }
-  return LayoutBox::Size();
+  return layout_object_in_flow_thread_->Size();
 }
 
 }  // namespace blink

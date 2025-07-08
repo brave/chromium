@@ -33,12 +33,6 @@ class CONTENT_EXPORT DocumentPictureInPictureWindowControllerImpl
       public WebContentsUserData<DocumentPictureInPictureWindowControllerImpl>,
       public WebContentsObserver {
  public:
-  // Gets a reference to the controller associated with |web_contents| and
-  // creates one if it does not exist. The returned pointer is guaranteed to be
-  // non-null.
-  static DocumentPictureInPictureWindowControllerImpl*
-  GetOrCreateForWebContents(WebContents* web_contents);
-
   DocumentPictureInPictureWindowControllerImpl(
       const DocumentPictureInPictureWindowControllerImpl&) = delete;
   DocumentPictureInPictureWindowControllerImpl& operator=(
@@ -53,8 +47,9 @@ class CONTENT_EXPORT DocumentPictureInPictureWindowControllerImpl
   void CloseAndFocusInitiator() override;
   void OnWindowDestroyed(bool should_pause_video) override;
   WebContents* GetWebContents() override;
-  absl::optional<gfx::Rect> GetWindowBounds() override;
+  std::optional<gfx::Rect> GetWindowBounds() override;
   WebContents* GetChildWebContents() override;
+  std::optional<url::Origin> GetOrigin() override;
 
   // DocumentPictureInPictureWindowController:
   void SetChildWebContents(WebContents* child_contents) override;

@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_button.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_chip_button.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/controls/button/menu_button_controller.h"
 #include "ui/views/widget/widget_observer.h"
@@ -19,11 +19,11 @@ class ExtensionsMenuCoordinator;
 
 // Button in the toolbar that provides access to the corresponding extensions
 // menu.
-class ExtensionsToolbarButton : public ToolbarButton,
+class ExtensionsToolbarButton : public ToolbarChipButton,
                                 public views::WidgetObserver {
- public:
-  METADATA_HEADER(ExtensionsToolbarButton);
+  METADATA_HEADER(ExtensionsToolbarButton, ToolbarChipButton)
 
+ public:
   enum class State {
     // All extensions have blocked access to the current site.
     kAllExtensionsBlocked,
@@ -50,12 +50,13 @@ class ExtensionsToolbarButton : public ToolbarButton,
   State state() { return state_; }
 
   // ToolbarButton:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
-  std::u16string GetTooltipText(const gfx::Point& p) const override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  void UpdateIcon() override;
   bool ShouldShowInkdropAfterIphInteraction() override;
+
+  void UpdateCachedTooltipText();
 
   // views::WidgetObserver:
   void OnWidgetDestroying(views::Widget* widget) override;
@@ -71,7 +72,8 @@ class ExtensionsToolbarButton : public ToolbarButton,
   const raw_ptr<ExtensionsToolbarContainer> extensions_container_;
   // This can be nullptr before `kExtensionsMenuAccessControl` feature is fully
   // rolled out.
-  // TODO(crbug.com/1279986): Remove this disclaimer once feature is rolled out.
+  // TODO(crbug.com/40811196): Remove this disclaimer once feature is rolled
+  // out.
   const raw_ptr<ExtensionsMenuCoordinator> extensions_menu_coordinator_;
 
   // The type for the button icon.

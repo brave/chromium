@@ -3,15 +3,23 @@
 // found in the LICENSE file.
 
 #include "ui/ozone/platform/wayland/test/wayland_ozone_ui_controls_test_helper.h"
+
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
-
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
+
+namespace ui {
+
+OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperWayland() {
+  return new wl::WaylandOzoneUIControlsTestHelper();
+}
+
+}  // namespace ui
 
 namespace wl {
 
@@ -35,27 +43,22 @@ WaylandOzoneUIControlsTestHelper::WaylandOzoneUIControlsTestHelper() {
 WaylandOzoneUIControlsTestHelper::~WaylandOzoneUIControlsTestHelper() = default;
 
 void WaylandOzoneUIControlsTestHelper::Reset() {
-  // There's nothing to do here, as the both Exo and Weston automatically reset
-  // the state when we close the connection.
-  // TODO(crbug.com/1353089): do we still need this method after the switch to
+  // There's nothing to do here, as Weston automatically resets the state when
+  // we close the connection.
+  // TODO(crbug.com/40235082): do we still need this method after the switch to
   // ui-controls instead of weston-test is complete?
 }
 
 bool WaylandOzoneUIControlsTestHelper::SupportsScreenCoordinates() const {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return true;
-#else
   return false;
-#endif
 }
 
 unsigned WaylandOzoneUIControlsTestHelper::ButtonDownMask() const {
-  // This code only runs on Lacros and desktop Linux Wayland, where we always
+  // This code only runs on desktop Linux Wayland, where we always
   // use SendMouseMotionNotifyEvent instead of calling MoveCursorTo via
   // aura::Window, regardless of what the button down mask is.
 
   NOTREACHED();
-  return 0;
 }
 
 void WaylandOzoneUIControlsTestHelper::SendKeyEvents(
@@ -101,20 +104,6 @@ void WaylandOzoneUIControlsTestHelper::SendMouseEvent(
                                        request_id);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-void WaylandOzoneUIControlsTestHelper::SendTouchEvent(
-    gfx::AcceleratedWidget widget,
-    int action,
-    int id,
-    const gfx::Point& touch_loc,
-    base::OnceClosure closure) {
-  uint32_t request_id = GetNextRequestId();
-
-  pending_closures_.insert_or_assign(request_id, std::move(closure));
-  input_emulate_->EmulateTouch(action, touch_loc, id, request_id);
-}
-#endif
-
 void WaylandOzoneUIControlsTestHelper::RunClosureAfterAllPendingUIEvents(
     base::OnceClosure closure) {
   NOTREACHED();
@@ -124,7 +113,17 @@ bool WaylandOzoneUIControlsTestHelper::MustUseUiControlsForMoveCursorTo() {
   return true;
 }
 
+void WaylandOzoneUIControlsTestHelper::ForceUseScreenCoordinatesOnce() {
+  input_emulate_->ForceUseScreenCoordinatesOnce();
+}
+
 void WaylandOzoneUIControlsTestHelper::RequestProcessed(uint32_t request_id) {
+  // The Wayland base protocol does not map cleanly onto ui_controls semantics.
+  // We need to wait for a Wayland round-trip to ensure that all side-effects
+  // have been processed. See https://crbug.com/1336706#c11 and
+  // https://crbug.com/1443374#c3 for details.
+  wl::WaylandProxy::GetInstance()->RoundTripQueue();
+
   if (base::Contains(pending_closures_, request_id)) {
     if (!pending_closures_[request_id].is_null()) {
       // PostTask to avoid re-entrancy.

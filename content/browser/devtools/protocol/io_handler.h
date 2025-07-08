@@ -33,11 +33,10 @@ class IOHandler : public DevToolsDomainHandler,
                    RenderFrameHostImpl* frame_host) override;
 
   // Protocol methods.
-  void Read(
-      const std::string& handle,
-      Maybe<int> offset,
-      Maybe<int> max_size,
-      std::unique_ptr<ReadCallback> callback) override;
+  void Read(const std::string& handle,
+            std::optional<int> offset,
+            std::optional<int> max_size,
+            std::unique_ptr<ReadCallback> callback) override;
   Response Close(const std::string& handle) override;
 
  private:
@@ -47,9 +46,9 @@ class IOHandler : public DevToolsDomainHandler,
                     int status);
 
   std::unique_ptr<IO::Frontend> frontend_;
-  DevToolsIOContext* io_context_;
+  raw_ptr<DevToolsIOContext> io_context_;
   raw_ptr<BrowserContext> browser_context_;
-  StoragePartition* storage_partition_;
+  raw_ptr<StoragePartition> storage_partition_;
   base::WeakPtrFactory<IOHandler> weak_factory_{this};
 };
 

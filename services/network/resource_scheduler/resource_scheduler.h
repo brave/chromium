@@ -10,6 +10,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -29,10 +30,8 @@
 #include "net/nqe/effective_connection_type.h"
 #include "services/network/is_browser_initiated.h"
 #include "services/network/resource_scheduler/resource_scheduler_params_manager.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
-class SequencedTaskRunner;
 class TickClock;
 }  // namespace base
 
@@ -76,7 +75,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
     // Creates a new client id. Optional `token` is used to identify the client
     // associated to the created id.
     static ClientId Create(
-        const absl::optional<base::UnguessableToken>& token = absl::nullopt);
+        const std::optional<base::UnguessableToken>& token = std::nullopt);
 
     ClientId(const ClientId& that) = default;
     ClientId& operator=(const ClientId& that) = default;
@@ -95,7 +94,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
    private:
     explicit ClientId(
         uint64_t id,
-        const absl::optional<base::UnguessableToken>& token = absl::nullopt)
+        const std::optional<base::UnguessableToken>& token = std::nullopt)
         : id_(id), token_(token.value_or(base::UnguessableToken::Create())) {}
     uint64_t id_;
     base::UnguessableToken token_;
@@ -143,9 +142,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
   void OnClientDeleted(ClientId client_id);
 
   // Called when a client has changed its visibility.
-  virtual void OnClientVisibilityChanged(
-      const base::UnguessableToken& client_token,
-      bool visible);
+  void OnClientVisibilityChanged(const base::UnguessableToken& client_token,
+                                 bool visible);
 
   // Client functions:
 
@@ -159,14 +157,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
 
   // Returns true if the timer that dispatches long queued requests is running.
   bool IsLongQueuedRequestsDispatchTimerRunning() const;
-
-  base::SequencedTaskRunner* task_runner();
-
-  // Testing setters
-  void SetTaskRunnerForTesting(
-      scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner) {
-    task_runner_ = std::move(sequenced_task_runner);
-  }
 
   void SetResourceSchedulerParamsManagerForTests(
       const ResourceSchedulerParamsManager& resource_scheduler_params_manager);
@@ -185,7 +175,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
   };
 
   using ClientMap = std::map<ClientId, std::unique_ptr<Client>>;
-  using RequestSet = std::set<ScheduledResourceRequestImpl*>;
+  using RequestSet =
+      std::set<raw_ptr<ScheduledResourceRequestImpl, SetExperimental>>;
 
   // Called when a ScheduledResourceRequest is destroyed.
   void RemoveRequest(ScheduledResourceRequestImpl* request);
@@ -213,9 +204,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ResourceScheduler final {
   const base::TimeDelta queued_requests_dispatch_periodicity_;
 
   ResourceSchedulerParamsManager resource_scheduler_params_manager_;
-
-  // The TaskRunner to post tasks on. Can be overridden for tests.
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

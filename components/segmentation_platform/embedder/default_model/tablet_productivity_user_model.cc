@@ -91,6 +91,7 @@ std::unique_ptr<Config> TabletProductivityUserModel::GetConfig() {
   config->segmentation_uma_name = kTabletProductivityUserUmaName;
   config->AddSegmentId(kTabletProductivityUserSegmentId,
                        std::make_unique<TabletProductivityUserModel>());
+  config->auto_execute_and_cache = true;
   config->is_boolean_segment = true;
   return config;
 }
@@ -148,7 +149,7 @@ void TabletProductivityUserModel::ExecuteModelWithInput(
   if (inputs.size() !=
       kTabletProductivityUserUMAFeatures.size() + 3 /*custom_inputs*/) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
+        FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
     return;
   }
 

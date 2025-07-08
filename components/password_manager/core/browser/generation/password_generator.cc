@@ -4,6 +4,7 @@
 
 #include "components/password_manager/core/browser/generation/password_generator.h"
 
+#include <algorithm>
 #include <limits>
 #include <map>
 #include <utility>
@@ -11,10 +12,9 @@
 
 #include "base/check.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/proto/password_requirements.pb.h"
-#include "components/password_manager/core/common/password_manager_features.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 
 namespace autofill {
 
@@ -24,8 +24,8 @@ namespace autofill {
 // prediction is smaller than the default.)
 const uint32_t kDefaultPasswordLength = 15;
 
-// The minimum length to chunk password in kChunkPassword variation of
-// password_manager::features::PasswordGenerationExperiment.
+// The minimum length to chunk password with
+// `password_manager::features::PasswordGenerationChunking` feature.
 const uint32_t kMinLengthToChunkPassword = 9;
 
 namespace {
@@ -85,16 +85,15 @@ PasswordRequirementsSpec BuildDefaultSpec() {
 // sequences of '-' or '_' that are joined into long strokes on the screen
 // in many fonts.
 bool IsDifficultToRead(const std::u16string& password) {
-  return base::ranges::adjacent_find(password, [](auto a, auto b) {
+  return std::ranges::adjacent_find(password, [](auto a, auto b) {
            return a == b && (a == '-' || a == '_');
          }) != password.end();
 }
 
-bool ChunkingPasswordExperimentEnabled() {
+bool ChunkingPasswordEnabled() {
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)  // Desktop
-  return password_manager::features::kPasswordGenerationExperimentVariationParam
-             .Get() == password_manager::features::PasswordGenerationVariation::
-                           kChunkPassword;
+  return base::FeatureList::IsEnabled(
+      password_manager::features::kPasswordGenerationChunking);
 #else
   return false;
 #endif
@@ -110,10 +109,12 @@ std::u16string GenerateMaxEntropyPassword(PasswordRequirementsSpec spec) {
 
   // Determine target length.
   uint32_t target_length = kDefaultPasswordLength;
-  if (spec.has_min_length())
+  if (spec.has_min_length()) {
     target_length = std::max(target_length, spec.min_length());
-  if (spec.has_max_length())
+  }
+  if (spec.has_max_length()) {
     target_length = std::min(target_length, spec.max_length());
+  }
   // Avoid excessively long passwords.
   target_length = std::min(target_length, 200u);
 
@@ -146,12 +147,14 @@ std::u16string GenerateMaxEntropyPassword(PasswordRequirementsSpec spec) {
     DCHECK(character_class->has_max());
 
     // If the character set is empty, we cannot generate characters from it.
-    if (character_class->character_set().empty())
+    if (character_class->character_set().empty()) {
       character_class->set_max(0);
+    }
 
     // The the maximum is smaller than the minimum, limit the minimum.
-    if (character_class->max() < character_class->min())
+    if (character_class->max() < character_class->min()) {
       character_class->set_min(character_class->max());
+    }
 
     if (character_class->max() > 0) {
       classes.push_back(character_class);
@@ -186,8 +189,9 @@ std::u16string GenerateMaxEntropyPassword(PasswordRequirementsSpec spec) {
             characters_of_class[character_class].length();
       }
     }
-    if (number_of_possible_chars == 0)
+    if (number_of_possible_chars == 0) {
       break;
+    }
     uint64_t choice = base::RandGenerator(number_of_possible_chars);
     // Now figure out which character was chosen and append it.
     for (CharacterClass* character_class : classes) {
@@ -206,8 +210,8 @@ std::u16string GenerateMaxEntropyPassword(PasswordRequirementsSpec spec) {
 
   // So far the password contains the minimally required characters at the
   // the beginning. Therefore, we create a random permutation.
-  // TODO(crbug.com/847200): Once the unittests allow controlling the generated
-  // string, test that '--' and '__' are eliminated.
+  // TODO(crbug.com/41391422): Once the unittests allow controlling the
+  // generated string, test that '--' and '__' are eliminated.
   int remaining_attempts = 5;
   do {
     base::RandomShuffle(password.begin(), password.end());
@@ -254,8 +258,9 @@ std::u16string GenerateMaxEntropyChunkedPassword(
 
 void ConditionallyAddNumericDigitsToAlphabet(PasswordRequirementsSpec* spec) {
   DCHECK(spec);
-  if (spec->lower_case().max() == 0 && spec->upper_case().max() == 0)
+  if (spec->lower_case().max() == 0 && spec->upper_case().max() == 0) {
     spec->mutable_numeric()->mutable_character_set()->append("01");
+  }
 }
 
 std::u16string GeneratePassword(const PasswordRequirementsSpec& spec) {
@@ -268,21 +273,28 @@ std::u16string GeneratePassword(const PasswordRequirementsSpec& spec) {
   // For passwords without letters, add the '0' and '1' to the numeric alphabet.
   ConditionallyAddNumericDigitsToAlphabet(&actual_spec);
 
+  std::u16string password;
+
   // For specs that allow dash symbol and can be longer than 8 chars generate a
-  // chunked password when `kChunkPassword` variaton of
-  // kPasswordGenerationExperiment is enabled.
+  // chunked password with `PasswordGenerationChunking` feature enabled.
   if (actual_spec.symbols().character_set().find('-') != std::string::npos &&
       actual_spec.max_length() >= kMinLengthToChunkPassword &&
-      ChunkingPasswordExperimentEnabled()) {
-    return GenerateMaxEntropyChunkedPassword(std::move(actual_spec));
+      ChunkingPasswordEnabled()) {
+    password = GenerateMaxEntropyChunkedPassword(std::move(actual_spec));
+    CHECK_LE(4u, password.size());
+    return password;
   }
 
-  std::u16string password = GenerateMaxEntropyPassword(std::move(actual_spec));
+  password = GenerateMaxEntropyPassword(std::move(actual_spec));
 
   // Catch cases where supplied spec is infeasible.
-  if (password.empty())
+  // TODO(b/40065733): we should never generate specs for small generated
+  // passwords
+  if (password.size() < 4) {
     password = GenerateMaxEntropyPassword(BuildDefaultSpec());
+  }
 
+  CHECK_LE(4u, password.size());
   return password;
 }
 

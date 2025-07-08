@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/style/shape_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/shape_offset_path_operation.h"
 
@@ -42,29 +43,29 @@ const StylePath* GetPath(const CSSProperty& property,
     }
     default:
       NOTREACHED();
-      return nullptr;
   }
 }
 
 // Set the property to the given path() value.
 void SetPath(const CSSProperty& property,
              ComputedStyleBuilder& builder,
-             scoped_refptr<blink::StylePath> path) {
+             blink::StylePath* path) {
   switch (property.PropertyID()) {
     case CSSPropertyID::kD:
-      builder.SetD(std::move(path));
+      builder.SetD(path);
       return;
     case CSSPropertyID::kOffsetPath:
       // TODO(sakhapov): handle coord box.
-      builder.SetOffsetPath(ShapeOffsetPathOperation::Create(
-          std::move(path), CoordBox::kBorderBox));
+      builder.SetOffsetPath(MakeGarbageCollected<ShapeOffsetPathOperation>(
+          path, CoordBox::kBorderBox));
       return;
     case CSSPropertyID::kClipPath:
-      builder.SetClipPath(ShapeClipPathOperation::Create(std::move(path)));
+      // TODO(pdr): Handle geometry box.
+      builder.SetClipPath(MakeGarbageCollected<ShapeClipPathOperation>(
+          path, GeometryBox::kBorderBox));
       return;
     default:
       NOTREACHED();
-      return;
   }
 }
 
@@ -85,7 +86,7 @@ void CSSPathInterpolationType::Composite(
     const InterpolationValue& value,
     double interpolation_fraction) const {
   PathInterpolationFunctions::Composite(underlying_value_owner,
-                                        underlying_fraction, *this, value);
+                                        underlying_fraction, this, value);
 }
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertNeutral(
@@ -104,18 +105,22 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInitial(
 
 class InheritedPathChecker : public CSSInterpolationType::CSSConversionChecker {
  public:
-  InheritedPathChecker(const CSSProperty& property,
-                       scoped_refptr<const StylePath> style_path)
-      : property_(property), style_path_(std::move(style_path)) {}
+  InheritedPathChecker(const CSSProperty& property, const StylePath* style_path)
+      : property_(property), style_path_(style_path) {}
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(style_path_);
+    CSSInterpolationType::CSSConversionChecker::Trace(visitor);
+  }
 
  private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return GetPath(property_, *state.ParentStyle()) == style_path_.get();
+    return GetPath(property_, *state.ParentStyle()) == style_path_.Get();
   }
 
   const CSSProperty& property_;
-  const scoped_refptr<const StylePath> style_path_;
+  const Member<const StylePath> style_path_;
 };
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
@@ -124,7 +129,7 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
   if (!state.ParentStyle())
     return nullptr;
 
-  conversion_checkers.push_back(std::make_unique<InheritedPathChecker>(
+  conversion_checkers.push_back(MakeGarbageCollected<InheritedPathChecker>(
       CssProperty(), GetPath(CssProperty(), *state.ParentStyle())));
   return PathInterpolationFunctions::ConvertValue(
       GetPath(CssProperty(), *state.ParentStyle()),
@@ -133,7 +138,7 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState*,
+    const StyleResolverState&,
     ConversionCheckers&) const {
   const cssvalue::CSSPathValue* path_value = nullptr;
   if (const auto* list = DynamicTo<CSSValueList>(value)) {

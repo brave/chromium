@@ -34,10 +34,6 @@ found in the LICENSE file.
   .content-footer {
     padding-top: 16px;
   }
-
-  .subtitle-illustration {
-    max-height: 250px;
-  }
 </style>
   <oobe-adaptive-dialog role="dialog"
       aria-label$="[[i18nDynamic(locale,
@@ -46,12 +42,12 @@ found in the LICENSE file.
     <h1 slot="title">
       [[i18nDynamic(locale, 'smartPrivacyProtectionScreenTitle')]]
     </h1>
-    <iron-icon slot="subtitle" class="illustration-jelly"
+    <iron-icon slot="subtitle-illustration" class="illustration-jelly"
         icon="oobe-illos:kids-turn-illo" >
     </iron-icon>
     <div slot="content" class="landscape-header-aligned">
       <div id="quickDimSection" class="overview-list-item layout horizontal"
-          hidden="[[!isQuickDimEnabled_]]">
+          hidden="[[!isQuickDimEnabled]]">
         <iron-icon class="overview-list-item-icon" icon="oobe-24:lock">
         </iron-icon>
         <div class="flex layout vertical center-justified">
@@ -70,15 +66,15 @@ found in the LICENSE file.
     </div>
     <div slot="bottom-buttons">
       <oobe-text-button id="noThanksButton"
-          on-click="onNoThanksButtonClicked_"
+          on-click="onNoThanksButtonClicked"
           label-for-aria="[[i18nDynamic(locale,
               'smartPrivacyProtectionTurnOffButton')]]">
         <div slot="text">
           [[i18nDynamic(locale, 'smartPrivacyProtectionTurnOffButton')]]
         </div>
       </oobe-text-button>
-      <oobe-text-button id="turnOnButton" inverse="[[!isMinorMode_]]"
-          class="focus-on-show" on-click="onTurnOnButtonClicked_"
+      <oobe-text-button id="turnOnButton" inverse="[[!isMinorMode]]"
+          class="focus-on-show" on-click="onTurnOnButtonClicked"
           label-for-aria="[[i18nDynamic(locale,
               'smartPrivacyProtectionTurnOnButton')]]">
         <div slot="text">

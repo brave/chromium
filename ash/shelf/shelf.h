@@ -69,7 +69,6 @@ T SelectValueByShelfAlignment(ShelfAlignment alignment,
       return right;
   }
   NOTREACHED();
-  return bottom;
 }
 
 bool IsHorizontalAlignment(ShelfAlignment alignment);
@@ -104,7 +103,7 @@ class ASH_EXPORT Shelf : public ShelfLayoutManagerObserver {
     }
 
    private:
-    raw_ptr<Shelf, ExperimentalAsh> shelf_;
+    raw_ptr<Shelf> shelf_;
   };
 
   // Used to disable auto-hide shelf behavior while in scope. Note that
@@ -332,7 +331,7 @@ class ASH_EXPORT Shelf : public ShelfLayoutManagerObserver {
 
   // Layout manager for the shelf container window. Instances are constructed by
   // ShelfWidget and lifetimes are managed by the container windows themselves.
-  raw_ptr<ShelfLayoutManager, ExperimentalAsh> shelf_layout_manager_ = nullptr;
+  raw_ptr<ShelfLayoutManager> shelf_layout_manager_ = nullptr;
 
   // Pointers to shelf components.
   std::unique_ptr<ShelfNavigationWidget> navigation_widget_;

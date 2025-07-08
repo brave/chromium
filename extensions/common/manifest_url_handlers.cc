@@ -34,11 +34,9 @@ const GURL& ManifestURL::Get(const Extension* extension,
 }
 
 // static
-const GURL ManifestURL::GetHomepageURL(const Extension* extension) {
+GURL ManifestURL::GetHomepageURL(const Extension* extension) {
   const GURL& homepage_url = Get(extension, keys::kHomepageURL);
-  if (homepage_url.is_valid())
-    return homepage_url;
-  return GetWebStoreURL(extension);
+  return homepage_url.is_valid() ? homepage_url : GetWebStoreURL(extension);
 }
 
 // static
@@ -47,19 +45,19 @@ bool ManifestURL::SpecifiedHomepageURL(const Extension* extension) {
 }
 
 // static
-const GURL ManifestURL::GetManifestHomePageURL(const Extension* extension) {
+const GURL& ManifestURL::GetManifestHomePageURL(const Extension* extension) {
   const GURL& homepage_url = Get(extension, keys::kHomepageURL);
   return homepage_url.is_valid() ? homepage_url : GURL::EmptyGURL();
 }
 
 // static
-const GURL ManifestURL::GetWebStoreURL(const Extension* extension) {
+GURL ManifestURL::GetWebStoreURL(const Extension* extension) {
   bool use_webstore_url = UpdatesFromGallery(extension) &&
                           !SharedModuleInfo::IsSharedModule(extension);
   return use_webstore_url
              ? GURL(extension_urls::GetWebstoreItemDetailURLPrefix() +
                     extension->id())
-             : GURL::EmptyGURL();
+             : GURL();
 }
 
 // static
@@ -78,10 +76,11 @@ const GURL& ManifestURL::GetAboutPage(const Extension* extension) {
 }
 
 // static
-const GURL ManifestURL::GetDetailsURL(const Extension* extension) {
-  return extension->from_webstore() ?
-      GURL(extension_urls::GetWebstoreItemDetailURLPrefix() + extension->id()) :
-      GURL::EmptyGURL();
+GURL ManifestURL::GetDetailsURL(const Extension* extension) {
+  return extension->from_webstore()
+             ? GURL(extension_urls::GetWebstoreItemDetailURLPrefix() +
+                    extension->id())
+             : GURL();
 }
 
 HomepageURLHandler::HomepageURLHandler() {
@@ -178,16 +177,15 @@ bool AboutPageHandler::Parse(Extension* extension, std::u16string* error) {
   return true;
 }
 
-bool AboutPageHandler::Validate(const Extension* extension,
+bool AboutPageHandler::Validate(const Extension& extension,
                                 std::string* error,
                                 std::vector<InstallWarning>* warnings) const {
   // Validate path to the options page.
-  if (!extensions::ManifestURL::GetAboutPage(extension).is_empty()) {
+  if (!extensions::ManifestURL::GetAboutPage(&extension).is_empty()) {
     const base::FilePath about_path =
         extensions::file_util::ExtensionURLToRelativeFilePath(
-            extensions::ManifestURL::GetAboutPage(extension));
-    const base::FilePath path =
-        extension->GetResource(about_path).GetFilePath();
+            extensions::ManifestURL::GetAboutPage(&extension));
+    const base::FilePath path = extension.GetResource(about_path).GetFilePath();
     if (path.empty() || !base::PathExists(path)) {
       *error = l10n_util::GetStringFUTF8(IDS_EXTENSION_LOAD_ABOUT_PAGE_FAILED,
                                          about_path.LossyDisplayName());

@@ -12,6 +12,7 @@
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_tree_owner.h"
 #include "ui/gfx/geometry/transform.h"
@@ -22,8 +23,9 @@ namespace ash {
 namespace {
 
 void EnsureAllChildrenAreVisible(ui::Layer* layer) {
-  for (auto* child : layer->children())
+  for (ui::Layer* child : layer->children()) {
     EnsureAllChildrenAreVisible(child);
+  }
 
   layer->SetVisible(true);
   layer->SetOpacity(1);
@@ -64,12 +66,13 @@ void WindowMirrorView::OnWindowDestroying(aura::Window* window) {
   }
 }
 
-gfx::Size WindowMirrorView::CalculatePreferredSize() const {
+gfx::Size WindowMirrorView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   return show_non_client_view_ ? source_->bounds().size()
                                : GetClientAreaBounds().size();
 }
 
-void WindowMirrorView::Layout() {
+void WindowMirrorView::Layout(PassKey) {
   // If |layer_owner_| hasn't been initialized (|this| isn't on screen), no-op.
   if (!layer_owner_ || !source_)
     return;
@@ -147,7 +150,7 @@ void WindowMirrorView::InitLayerOwner() {
     EnsureAllChildrenAreVisible(mirror_layer);
   }
 
-  Layout();
+  DeprecatedLayoutImmediately();
 }
 
 ui::Layer* WindowMirrorView::GetMirrorLayer() {
@@ -170,5 +173,8 @@ gfx::Rect WindowMirrorView::GetClientAreaBounds() const {
   views::View* client_view = widget->client_view();
   return client_view->ConvertRectToWidget(client_view->GetLocalBounds());
 }
+
+BEGIN_METADATA(WindowMirrorView)
+END_METADATA
 
 }  // namespace ash

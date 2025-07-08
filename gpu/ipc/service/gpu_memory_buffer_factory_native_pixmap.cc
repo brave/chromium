@@ -4,16 +4,15 @@
 
 #include "gpu/ipc/service/gpu_memory_buffer_factory_native_pixmap.h"
 
+#include "base/logging.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/vulkan_context_provider.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_usage_util.h"
 #include "ui/gfx/client_native_pixmap.h"
 #include "ui/gfx/linux/native_pixmap_dmabuf.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/ozone/buildflags.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 
@@ -51,24 +50,6 @@ GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBuffer(
                                                client_id, std::move(pixmap));
 }
 
-void GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBufferAsync(
-    gfx::GpuMemoryBufferId id,
-    const gfx::Size& size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    int client_id,
-    SurfaceHandle surface_handle,
-    CreateGpuMemoryBufferAsyncCallback callback) {
-  ui::OzonePlatform::GetInstance()
-      ->GetSurfaceFactoryOzone()
-      ->CreateNativePixmapAsync(
-          surface_handle, GetVulkanDeviceQueue(), size, format, usage,
-          base::BindOnce(
-              &GpuMemoryBufferFactoryNativePixmap::OnNativePixmapCreated, id,
-              size, format, usage, client_id, std::move(callback),
-              weak_factory_.GetWeakPtr()));
-}
-
 void GpuMemoryBufferFactoryNativePixmap::DestroyGpuMemoryBuffer(
     gfx::GpuMemoryBufferId id,
     int client_id) {
@@ -93,24 +74,6 @@ VulkanDeviceQueue* GpuMemoryBufferFactoryNativePixmap::GetVulkanDeviceQueue() {
   return nullptr;
 }
 
-// static
-void GpuMemoryBufferFactoryNativePixmap::OnNativePixmapCreated(
-    gfx::GpuMemoryBufferId id,
-    const gfx::Size& size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    int client_id,
-    CreateGpuMemoryBufferAsyncCallback callback,
-    base::WeakPtr<GpuMemoryBufferFactoryNativePixmap> weak_ptr,
-    scoped_refptr<gfx::NativePixmap> pixmap) {
-  if (weak_ptr) {
-    std::move(callback).Run(weak_ptr->CreateGpuMemoryBufferFromNativePixmap(
-        id, size, format, usage, client_id, pixmap));
-  } else {
-    std::move(callback).Run(gfx::GpuMemoryBufferHandle());
-  }
-}
-
 gfx::GpuMemoryBufferHandle
 GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBufferFromNativePixmap(
     gfx::GpuMemoryBufferId id,
@@ -126,13 +89,12 @@ GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBufferFromNativePixmap(
     return gfx::GpuMemoryBufferHandle();
   }
 
-  gfx::GpuMemoryBufferHandle new_handle;
-  new_handle.type = gfx::NATIVE_PIXMAP;
-  new_handle.id = id;
-  new_handle.native_pixmap_handle = pixmap->ExportHandle();
-
-  if (new_handle.native_pixmap_handle.planes.empty())
+  gfx::NativePixmapHandle native_pixmap_handle = pixmap->ExportHandle();
+  if (native_pixmap_handle.planes.empty()) {
     return gfx::GpuMemoryBufferHandle();
+  }
+
+  gfx::GpuMemoryBufferHandle new_handle(std::move(native_pixmap_handle));
 
   // TODO(reveman): Remove this once crbug.com/628334 has been fixed.
   {

@@ -14,10 +14,6 @@
 #include "base/strings/sys_string_conversions.h"
 #include "ui/base/clipboard/clipboard_constants.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ui {
 
 struct ClipboardFormatType::ObjCStorage {
@@ -63,7 +59,7 @@ NSString* ClipboardFormatType::ToNSString() const {
 
 // static
 ClipboardFormatType ClipboardFormatType::Deserialize(
-    const std::string& serialization) {
+    std::string_view serialization) {
   return ClipboardFormatType(base::SysUTF8ToNSString(serialization));
 }
 
@@ -90,18 +86,12 @@ const ClipboardFormatType& ClipboardFormatType::WebCustomFormatMap() {
 
 // static
 ClipboardFormatType ClipboardFormatType::CustomPlatformType(
-    const std::string& format_string) {
-  DCHECK(base::IsStringASCII(format_string));
+    std::string_view format_string) {
+  CHECK(base::IsStringASCII(format_string));
   return ClipboardFormatType::Deserialize(format_string);
 }
 
 // Various predefined ClipboardFormatTypes.
-
-// static
-ClipboardFormatType ClipboardFormatType::GetType(
-    const std::string& format_string) {
-  return ClipboardFormatType::Deserialize(format_string);
-}
 
 // static
 const ClipboardFormatType& ClipboardFormatType::FilenamesType() {
@@ -159,9 +149,9 @@ const ClipboardFormatType& ClipboardFormatType::WebKitSmartPasteType() {
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::WebCustomDataType() {
+const ClipboardFormatType& ClipboardFormatType::DataTransferCustomType() {
   static base::NoDestructor<ClipboardFormatType> type(
-      kUTTypeChromiumWebCustomData);
+      kUTTypeChromiumDataTransferCustomData);
   return *type;
 }
 

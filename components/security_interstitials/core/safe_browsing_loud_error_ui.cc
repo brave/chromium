@@ -10,6 +10,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/feature_engagement/public/feature_list.h"
 #include "components/google/core/common/google_util.h"
 #include "components/grit/components_resources.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -41,7 +42,6 @@ void RecordExtendedReportingPrefChanged(bool report) {
 
 SafeBrowsingLoudErrorUI::SafeBrowsingLoudErrorUI(
     const GURL& request_url,
-    const GURL& main_frame_url,
     SBInterstitialReason reason,
     const SBErrorDisplayOptions& display_options,
     const std::string& app_locale,
@@ -49,7 +49,6 @@ SafeBrowsingLoudErrorUI::SafeBrowsingLoudErrorUI(
     ControllerClient* controller,
     bool created_prior_to_navigation)
     : BaseSafeBrowsingErrorUI(request_url,
-                              main_frame_url,
                               reason,
                               display_options,
                               app_locale,
@@ -121,19 +120,13 @@ void SafeBrowsingLoudErrorUI::PopulateStringsForHtml(
       break;
   }
 
-  // Not used by this interstitial.
-  load_time_data.Set("recurrentErrorParagraph", "");
-  load_time_data.Set("show_recurrent_error_paragraph", false);
-
   PopulateExtendedReportingOption(load_time_data);
   PopulateEnhancedProtectionMessage(load_time_data);
 }
 
 void SafeBrowsingLoudErrorUI::HandleCommand(
     SecurityInterstitialCommand command) {
-  if (base::FeatureList::IsEnabled(safe_browsing::kAntiPhishingTelemetry)) {
-    UpdateInterstitialInteractionData(command);
-  }
+  UpdateInterstitialInteractionData(command);
 
   switch (command) {
     case CMD_PROCEED: {
@@ -153,8 +146,8 @@ void SafeBrowsingLoudErrorUI::HandleCommand(
       user_made_decision_ = true;
       // Don't record the user action here because there are other ways of
       // triggering DontProceed, like clicking the back button.
-      if (is_main_frame_load_blocked()) {
-        // If the load is blocked, we want to close the interstitial and discard
+      if (is_main_frame_load_pending()) {
+        // If the load is pending, we want to close the interstitial and discard
         // the pending entry.
         controller()->GoBack();
       } else {
@@ -251,6 +244,7 @@ void SafeBrowsingLoudErrorUI::HandleCommand(
     case CMD_TEXT_NOT_FOUND:
     case CMD_CLOSE_INTERSTITIAL_WITHOUT_UI:
     case CMD_REQUEST_SITE_ACCESS_PERMISSION:
+    case CMD_OPEN_ANDROID_ADVANCED_PROTECTION_SETTINGS:
       break;
   }
 }
@@ -259,22 +253,12 @@ void SafeBrowsingLoudErrorUI::PopulateMalwareLoadTimeData(
     base::Value::Dict& load_time_data) {
   load_time_data.Set("phishing", false);
   load_time_data.Set("heading",
-                     l10n_util::GetStringUTF16(IDS_MALWARE_V3_HEADING));
-  load_time_data.Set(
-      "primaryParagraph",
-      l10n_util::GetStringFUTF16(
-          IDS_MALWARE_V3_PRIMARY_PARAGRAPH,
-          common_string_util::GetFormattedHostName(request_url())));
+                     l10n_util::GetStringUTF16(IDS_SAFEBROWSING_HEADING));
+  load_time_data.Set("primaryParagraph", l10n_util::GetStringUTF16(
+                                             IDS_MALWARE_V3_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      is_main_frame_load_blocked()
-          ? l10n_util::GetStringFUTF16(
-                IDS_MALWARE_V3_EXPLANATION_PARAGRAPH,
-                common_string_util::GetFormattedHostName(request_url()))
-          : l10n_util::GetStringFUTF16(
-                IDS_MALWARE_V3_EXPLANATION_PARAGRAPH_SUBRESOURCE,
-                base::UTF8ToUTF16(main_frame_url().host()),
-                common_string_util::GetFormattedHostName(request_url())));
+      l10n_util::GetStringUTF16(IDS_MALWARE_V3_EXPLANATION_PARAGRAPH));
   load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
                                            IDS_MALWARE_V3_PROCEED_PARAGRAPH));
 }
@@ -283,17 +267,12 @@ void SafeBrowsingLoudErrorUI::PopulateHarmfulLoadTimeData(
     base::Value::Dict& load_time_data) {
   load_time_data.Set("phishing", false);
   load_time_data.Set("heading",
-                     l10n_util::GetStringUTF16(IDS_HARMFUL_V3_HEADING));
-  load_time_data.Set(
-      "primaryParagraph",
-      l10n_util::GetStringFUTF16(
-          IDS_HARMFUL_V3_PRIMARY_PARAGRAPH,
-          common_string_util::GetFormattedHostName(request_url())));
+                     l10n_util::GetStringUTF16(IDS_SAFEBROWSING_HEADING));
+  load_time_data.Set("primaryParagraph", l10n_util::GetStringUTF16(
+                                             IDS_HARMFUL_V3_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      l10n_util::GetStringFUTF16(
-          IDS_HARMFUL_V3_EXPLANATION_PARAGRAPH,
-          common_string_util::GetFormattedHostName(request_url())));
+      l10n_util::GetStringUTF16(IDS_HARMFUL_V3_EXPLANATION_PARAGRAPH));
   load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
                                            IDS_HARMFUL_V3_PROCEED_PARAGRAPH));
 }
@@ -302,20 +281,15 @@ void SafeBrowsingLoudErrorUI::PopulatePhishingLoadTimeData(
     base::Value::Dict& load_time_data) {
   load_time_data.Set("phishing", true);
   load_time_data.Set("heading",
-                     l10n_util::GetStringUTF16(IDS_PHISHING_V4_HEADING));
+                     l10n_util::GetStringUTF16(IDS_SAFEBROWSING_HEADING));
   load_time_data.Set(
       "primaryParagraph",
-      l10n_util::GetStringFUTF16(
-          IDS_PHISHING_V4_PRIMARY_PARAGRAPH,
-          common_string_util::GetFormattedHostName(request_url())));
+      l10n_util::GetStringUTF16(IDS_PHISHING_V4_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      l10n_util::GetStringFUTF16(
-          IDS_PHISHING_V4_EXPLANATION_PARAGRAPH,
-          common_string_util::GetFormattedHostName(request_url())));
-  load_time_data.Set(
-      "finalParagraph",
-      l10n_util::GetStringUTF16(IDS_PHISHING_V4_PROCEED_AND_REPORT_PARAGRAPH));
+      l10n_util::GetStringUTF16(IDS_PHISHING_V4_EXPLANATION_PARAGRAPH));
+  load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
+                                           IDS_PHISHING_V4_PROCEED_PARAGRAPH));
 }
 
 void SafeBrowsingLoudErrorUI::PopulateExtendedReportingOption(
@@ -370,8 +344,9 @@ void SafeBrowsingLoudErrorUI::PopulateBillingLoadTimeData(
 void SafeBrowsingLoudErrorUI::UpdateInterstitialInteractionData(
     SecurityInterstitialCommand command) {
   int new_occurrence_count = 1;
-  int64_t new_first_timestamp = base::Time::Now().ToJavaTime();
-  int64_t new_last_timestamp = base::Time::Now().ToJavaTime();
+  int64_t new_first_timestamp =
+      base::Time::Now().InMillisecondsSinceUnixEpoch();
+  int64_t new_last_timestamp = base::Time::Now().InMillisecondsSinceUnixEpoch();
   // If this is not the first occurrence, use data in the map for correct
   // occurrence and first timestamp values.
   if (auto interaction_data = interstitial_interaction_data_->find(command);
@@ -386,6 +361,9 @@ void SafeBrowsingLoudErrorUI::UpdateInterstitialInteractionData(
 }
 
 int SafeBrowsingLoudErrorUI::GetHTMLTemplateId() const {
+  if (base::FeatureList::IsEnabled(safe_browsing::kEnhancedSafeBrowsingPromo)) {
+    return IDR_SECURITY_INTERSTITIAL_WITHOUT_PROMO_HTML;
+  }
   return IDR_SECURITY_INTERSTITIAL_HTML;
 }
 

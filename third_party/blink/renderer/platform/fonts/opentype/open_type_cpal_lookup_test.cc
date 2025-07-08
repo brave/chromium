@@ -19,14 +19,14 @@
 #include <vector>
 
 namespace {
-String pathToColrPalettesTestFont() {
+blink::String pathToColrPalettesTestFont() {
   base::FilePath wpt_palette_font_path(
       blink::StringToFilePath(blink::test::BlinkWebTestsDir()));
   wpt_palette_font_path = wpt_palette_font_path.Append(FILE_PATH_LITERAL(
       "external/wpt/css/css-fonts/resources/COLR-palettes-test-font.ttf"));
   return blink::FilePathToString(wpt_palette_font_path);
 }
-String pathToNonColrTestFont() {
+blink::String pathToNonColrTestFont() {
   return blink::test::BlinkWebTestsFontsTestDataPath("Ahem.ttf");
 }
 }  // namespace
@@ -38,15 +38,15 @@ class OpenTypeCpalLookupTest : public FontTestBase {
   void SetUp() override {
     FontDescription::VariantLigatures ligatures;
 
-    Font colr_palette_font = blink::test::CreateTestFont(
+    Font* colr_palette_font = blink::test::CreateTestFont(
         AtomicString("Ahem"), pathToColrPalettesTestFont(), 16, &ligatures);
     colr_palette_typeface_ =
-        sk_ref_sp(colr_palette_font.PrimaryFont()->PlatformData().Typeface());
+        sk_ref_sp(colr_palette_font->PrimaryFont()->PlatformData().Typeface());
 
-    Font non_colr_font = blink::test::CreateTestFont(
+    Font* non_colr_font = blink::test::CreateTestFont(
         AtomicString("Ahem"), pathToNonColrTestFont(), 16, &ligatures);
     non_colr_ahem_typeface_ =
-        sk_ref_sp(non_colr_font.PrimaryFont()->PlatformData().Typeface());
+        sk_ref_sp(non_colr_font->PrimaryFont()->PlatformData().Typeface());
   }
 
   sk_sp<SkTypeface> colr_palette_typeface_;
@@ -56,7 +56,7 @@ class OpenTypeCpalLookupTest : public FontTestBase {
 TEST_F(OpenTypeCpalLookupTest, NoResultForNonColr) {
   for (auto& palette_use : {OpenTypeCpalLookup::kUsableWithLightBackground,
                             OpenTypeCpalLookup::kUsableWithDarkBackground}) {
-    absl::optional<uint16_t> palette_result =
+    std::optional<uint16_t> palette_result =
         OpenTypeCpalLookup::FirstThemedPalette(non_colr_ahem_typeface_,
                                                palette_use);
     EXPECT_FALSE(palette_result.has_value());
@@ -73,7 +73,7 @@ TEST_F(OpenTypeCpalLookupTest, DarkLightPalettes) {
       {OpenTypeCpalLookup::kUsableWithLightBackground, 2},
       {OpenTypeCpalLookup::kUsableWithDarkBackground, 3}};
   for (auto& expectation : expectations) {
-    absl::optional<uint16_t> palette_result =
+    std::optional<uint16_t> palette_result =
         OpenTypeCpalLookup::FirstThemedPalette(colr_palette_typeface_,
                                                expectation.first);
     EXPECT_TRUE(palette_result.has_value());

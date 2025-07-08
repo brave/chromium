@@ -7,9 +7,14 @@
 #include <algorithm>
 
 #include "ash/constants/ash_features.h"
+#include "ash/public/cpp/window_properties.h"
 #include "base/notreached.h"
 #include "chrome/browser/ash/arc/input_overlay/actions/action.h"
 #include "chrome/browser/ash/arc/input_overlay/actions/input_element.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#include "ui/aura/window.h"
+#include "ui/events/event.h"
+#include "ui/events/event_constants.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
 
@@ -67,9 +72,6 @@ InputElement* GetInputBindingByBindingOption(Action* action,
     case BindingOption::kOriginal:
       input_binding = action->original_input();
       break;
-    case BindingOption::kPending:
-      input_binding = action->pending_input();
-      break;
     default:
       NOTREACHED();
   }
@@ -77,16 +79,14 @@ InputElement* GetInputBindingByBindingOption(Action* action,
 }
 
 std::string GetCurrentSystemVersion() {
-  return kSystemVersionAlphaV2;
+  return kSystemVersionAlphaV2Plus;
 }
 
 void ResetFocusTo(views::View* view) {
   DCHECK(view);
-  auto* focus_manager = view->GetFocusManager();
-  if (!focus_manager) {
-    return;
+  if (auto* focus_manager = view->GetFocusManager()) {
+    focus_manager->SetFocusedView(view);
   }
-  focus_manager->SetFocusedView(view);
 }
 
 // For the keys that are caught by display overlay, check if they are reserved
@@ -109,12 +109,22 @@ bool IsReservedDomCode(ui::DomCode code) {
   }
 }
 
-bool IsBeta() {
-  return ash::features::IsArcInputOverlayBetaEnabled();
+bool ContainShortcutEventFlags(const ui::KeyEvent* key_event) {
+  return key_event &&
+         (key_event->flags() & (ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN |
+                                ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN));
 }
 
-bool IsGameDashboardFlagOn() {
-  return ash::features::IsGameDashboardEnabled();
+void UpdateFlagAndProperty(aura::Window* window,
+                           ash::ArcGameControlsFlag flag,
+                           bool turn_on) {
+  const ash::ArcGameControlsFlag flags =
+      window->GetProperty(ash::kArcGameControlsFlagsKey);
+
+  if (IsFlagSet(flags, flag) != turn_on) {
+    window->SetProperty(ash::kArcGameControlsFlagsKey,
+                        UpdateFlag(flags, flag, turn_on));
+  }
 }
 
 }  // namespace arc::input_overlay

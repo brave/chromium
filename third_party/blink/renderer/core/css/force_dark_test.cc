@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 
@@ -51,7 +51,7 @@ TEST_F(ForceDarkTest, ForcedColorScheme) {
     EXPECT_EQ(test_case.expected_forced, style->ColorSchemeForced())
         << "Element #" << test_case.id;
 
-    const auto* child_style = element->firstChild()->GetComputedStyle();
+    const auto* child_style = element->firstElementChild()->GetComputedStyle();
     ASSERT_TRUE(child_style);
     EXPECT_EQ(test_case.expected_dark, child_style->DarkColorScheme())
         << "Element #" << test_case.id << " > span";

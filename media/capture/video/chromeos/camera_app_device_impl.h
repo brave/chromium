@@ -6,17 +6,16 @@
 #define MEDIA_CAPTURE_VIDEO_CHROMEOS_CAMERA_APP_DEVICE_IMPL_H_
 
 #include <map>
-#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/webui/camera_app_ui/document_scanner_service_client.h"
 #include "base/containers/queue.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/threading/sequence_bound.h"
 #include "base/timer/elapsed_timer.h"
 #include "media/base/video_transformation.h"
 #include "media/capture/capture_export.h"
@@ -29,12 +28,6 @@
 #include "mojo/public/cpp/bindings/remote_set.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/range/range.h"
-
-namespace gpu {
-
-class GpuMemoryBufferImpl;
-
-}  // namespace gpu
 
 namespace media {
 
@@ -57,7 +50,9 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
   static int GetPortraitSegResultCode(
       const cros::mojom::CameraMetadataPtr* metadata);
 
-  explicit CameraAppDeviceImpl(const std::string& device_id);
+  CameraAppDeviceImpl(
+      const std::string& device_id,
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
 
   CameraAppDeviceImpl(const CameraAppDeviceImpl&) = delete;
   CameraAppDeviceImpl& operator=(const CameraAppDeviceImpl&) = delete;
@@ -80,7 +75,7 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
                               bool should_disable_new_ptrs);
 
   // Retrieves the fps range if it is specified by the app.
-  absl::optional<gfx::Range> GetFpsRange();
+  std::optional<gfx::Range> GetFpsRange();
 
   // Retrieves the corresponding capture resolution which is specified by the
   // app.
@@ -104,10 +99,11 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
   // opened camera.  Used to configure and query camera frame rotation.
   void SetCameraDeviceContext(CameraDeviceContext* device_context);
 
-  // Detect document corners on the frame given by its gpu memory buffer if it
-  // is supported.
-  void MaybeDetectDocumentCorners(std::unique_ptr<gpu::GpuMemoryBufferImpl> gmb,
-                                  VideoRotation rotation);
+  // Detect document corners on the frame given by its mappable shared image if
+  // it is supported.
+  void MaybeDetectDocumentCorners(
+      scoped_refptr<gpu::ClientSharedImage> shared_image,
+      VideoRotation rotation);
 
   bool IsMultipleStreamsEnabled();
 
@@ -142,15 +138,21 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
   void RegisterCameraInfoObserver(
       mojo::PendingRemote<cros::mojom::CameraInfoObserver> observer,
       RegisterCameraInfoObserverCallback callback) override;
-  absl::optional<PortraitModeCallbacks> ConsumePortraitModeCallbacks();
+  std::optional<PortraitModeCallbacks> ConsumePortraitModeCallbacks();
+  void SetCropRegion(const gfx::Rect& crop_region,
+                     SetCropRegionCallback callback) override;
+  void ResetCropRegion(ResetCropRegionCallback callback) override;
+  std::optional<std::vector<int32_t>> GetCropRegion();
 
  private:
+  class DocumentScanner;
+
   void OnMojoConnectionError();
 
   bool IsCloseToPreviousDetectionRequest();
 
   void DetectDocumentCornersOnMojoThread(
-      std::unique_ptr<gpu::GpuMemoryBufferImpl> image,
+      scoped_refptr<gpu::ClientSharedImage> shared_image,
       VideoRotation rotation);
 
   void OnDetectedDocumentCornersOnMojoThread(
@@ -184,12 +186,12 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
   mojo::Remote<cros::mojom::StillCaptureResultObserver>
       portrait_mode_observers_;
   base::Lock portrait_mode_callbacks_lock_;
-  absl::optional<PortraitModeCallbacks> take_portrait_photo_callbacks_
+  std::optional<PortraitModeCallbacks> take_portrait_photo_callbacks_
       GUARDED_BY(portrait_mode_callbacks_lock_);
 
   // It will be inserted and read from different threads.
   base::Lock fps_ranges_lock_;
-  absl::optional<gfx::Range> specified_fps_range_ GUARDED_BY(fps_ranges_lock_);
+  std::optional<gfx::Range> specified_fps_range_ GUARDED_BY(fps_ranges_lock_);
 
   // It will be inserted and read from different threads.
   base::Lock still_capture_resolution_lock_;
@@ -208,7 +210,7 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
   mojo::RemoteSet<cros::mojom::CameraEventObserver> camera_event_observers_;
 
   base::Lock camera_device_context_lock_;
-  raw_ptr<CameraDeviceContext, ExperimentalAsh> camera_device_context_
+  raw_ptr<CameraDeviceContext> camera_device_context_
       GUARDED_BY(camera_device_context_lock_);
 
   base::Lock document_corners_observers_lock_;
@@ -219,12 +221,15 @@ class CAPTURE_EXPORT CameraAppDeviceImpl : public cros::mojom::CameraAppDevice {
 
   mojo::RemoteSet<cros::mojom::CameraInfoObserver> camera_info_observers_;
 
-  // Client to connect to document detection service. It should only be
-  // used/destructed on the Mojo thread.
-  std::unique_ptr<ash::DocumentScannerServiceClient> document_scanner_service_;
+  // Client to connect to the CrosDocumentScanner service.
+  base::SequenceBound<DocumentScanner> document_scanner_;
 
   base::Lock multi_stream_lock_;
   bool multi_stream_enabled_ GUARDED_BY(multi_stream_lock_) = false;
+
+  base::Lock crop_region_lock_;
+  std::optional<std::vector<int32_t>> crop_region_
+      GUARDED_BY(crop_region_lock_);
 
   // The weak pointers should be dereferenced and invalidated on camera device
   // ipc thread.

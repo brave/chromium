@@ -4,14 +4,15 @@
 
 package org.chromium.chrome.browser.share.send_tab_to_self;
 
-import androidx.annotation.Nullable;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
 
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.WebContents;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,9 +22,10 @@ import java.util.Optional;
  * bridge is created and destroyed within the same method call.
  */
 @JNINamespace("send_tab_to_self")
+@NullMarked
 public class SendTabToSelfAndroidBridge {
-    // TODO(https://crbug.com/942549): Add logic back in to track whether model is loaded.
-    private boolean mIsNativeSendTabToSelfModelLoaded;
+    // TODO(crbug.com/40618597): Add logic back in to track whether model is loaded.
+    // private boolean mIsNativeSendTabToSelfModelLoaded;
 
     /**
      * Creates a new entry to be persisted to the sync backend.
@@ -35,10 +37,10 @@ public class SendTabToSelfAndroidBridge {
      */
     public static boolean addEntry(
             Profile profile, String url, String title, String targetDeviceSyncCacheGuid) {
-        // TODO(https://crbug.com/942549): Add this assertion back in once the code to load is in
+        // TODO(crbug.com/40618597): Add this assertion back in once the code to load is in
         // place. assert mIsNativeSendTabToSelfModelLoaded;
-        return SendTabToSelfAndroidBridgeJni.get().addEntry(
-                profile, url, title, targetDeviceSyncCacheGuid);
+        return SendTabToSelfAndroidBridgeJni.get()
+                .addEntry(profile, url, title, targetDeviceSyncCacheGuid);
     }
 
     /**
@@ -66,14 +68,14 @@ public class SendTabToSelfAndroidBridge {
      * @return All {@link TargetDeviceInfo} for the user, or an empty list if the model isn't ready.
      */
     public static List<TargetDeviceInfo> getAllTargetDeviceInfos(Profile profile) {
-        // TODO(https://crbug.com/942549): Add this assertion back in once the
-        // code to load is in place. assert mIsNativeSendTabToSelfModelLoaded;
-        return Arrays.asList(SendTabToSelfAndroidBridgeJni.get().getAllTargetDeviceInfos(profile));
+        // TODO(crbug.com/40618597): Add this assertion back in once the
+        // code to load is in place.
+        // assert mIsNativeSendTabToSelfModelLoaded;
+        return SendTabToSelfAndroidBridgeJni.get().getAllTargetDeviceInfos(profile);
     }
 
     /**
      * @param webContents WebContents where a navigation was just completed.
-     * @param profile Profile to which |webContents| belongs.
      */
     public static void updateActiveWebContents(WebContents webContents) {
         SendTabToSelfAndroidBridgeJni.get().updateActiveWebContents(webContents);
@@ -81,7 +83,6 @@ public class SendTabToSelfAndroidBridge {
 
     public static Optional</*@EntryPointDisplayReason*/ Integer> getEntryPointDisplayReason(
             Profile profile, String url) {
-        @Nullable
         Integer reason =
                 SendTabToSelfAndroidBridgeJni.get().getEntryPointDisplayReason(profile, url);
         return reason == null ? Optional.empty() : Optional.of(reason.intValue());
@@ -90,17 +91,21 @@ public class SendTabToSelfAndroidBridge {
     @NativeMethods
     public interface Natives {
         boolean addEntry(
-                Profile profile, String url, String title, String targetDeviceSyncCacheGuid);
+                @JniType("Profile*") Profile profile,
+                String url,
+                String title,
+                String targetDeviceSyncCacheGuid);
 
-        void deleteEntry(Profile profile, String guid);
+        void deleteEntry(@JniType("Profile*") Profile profile, String guid);
 
-        void dismissEntry(Profile profile, String guid);
+        void dismissEntry(@JniType("Profile*") Profile profile, String guid);
 
-        TargetDeviceInfo[] getAllTargetDeviceInfos(Profile profile);
+        @JniType("std::vector")
+        List<TargetDeviceInfo> getAllTargetDeviceInfos(@JniType("Profile*") Profile profile);
 
         void updateActiveWebContents(WebContents webContents);
 
-        @Nullable
-        Integer getEntryPointDisplayReason(Profile profile, String url);
+        @Nullable Integer getEntryPointDisplayReason(
+                @JniType("Profile*") Profile profile, String url);
     }
 }

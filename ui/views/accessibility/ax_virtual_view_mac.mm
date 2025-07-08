@@ -7,25 +7,24 @@
 #include "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/widget/widget.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace views {
 
 gfx::NativeViewAccessible AXVirtualView::GetNSWindow() {
   View* owner = GetOwnerView();
-  if (!owner)
-    return nil;
+  if (!owner) {
+    return gfx::NativeViewAccessible();
+  }
 
   Widget* widget = owner->GetWidget();
-  if (!widget)
-    return nil;
+  if (!widget) {
+    return gfx::NativeViewAccessible();
+  }
 
   auto* window_host = NativeWidgetMacNSWindowHost::GetFromNativeWindow(
       widget->GetNativeWindow());
-  if (!window_host)
-    return nil;
+  if (!window_host) {
+    return gfx::NativeViewAccessible();
+  }
 
   return window_host->GetNativeViewAccessibleForNSWindow();
 }

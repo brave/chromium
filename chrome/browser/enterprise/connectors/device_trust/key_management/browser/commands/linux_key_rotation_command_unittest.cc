@@ -5,6 +5,7 @@
 #include "chrome/browser/enterprise/connectors/device_trust/key_management/browser/commands/linux_key_rotation_command.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -114,8 +115,8 @@ class LinuxKeyRotationCommandTest : public testing::Test {
   }
 
   void CreateManagementServiceBinary() {
-    ASSERT_TRUE(base::WriteFile(GetBinaryFilePath(),
-                                base::StringPiece("test_content")));
+    ASSERT_TRUE(
+        base::WriteFile(GetBinaryFilePath(), std::string_view("test_content")));
   }
 
   void ExpectCommandErrorHistogram(KeyRotationCommandError error) {
@@ -158,11 +159,8 @@ MULTIPROCESS_TEST_MAIN(MojoInvitation) {
     return 6;
 
   // Validate command line arguments.
-  std::string token_base64;
-  base::Base64Encode(kFakeDMToken, &token_base64);
-  std::string nonce_base64;
-  base::Base64Encode(kFakeDMToken, &token_base64);
-  base::Base64Encode(kNonce, &nonce_base64);
+  std::string token_base64 = base::Base64Encode(kFakeDMToken);
+  std::string nonce_base64 = base::Base64Encode(kNonce);
 
   EXPECT_EQ(token_base64,
             command_line.GetSwitchValueNative(switches::kRotateDTKey));

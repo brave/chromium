@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "ash/components/arc/mojom/app.mojom.h"
 #include "ash/constants/ash_switches.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
@@ -16,10 +15,12 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/dbus/shill/shill_service_client.h"
 #include "chromeos/ash/components/network/network_handler_test_helper.h"
+#include "chromeos/ash/experiences/arc/mojom/app.mojom.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_service.h"
@@ -141,9 +142,6 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
   ~ArcAppInstallEventLogCollectorTest() override = default;
 
   void SetUp() override {
-    RegisterLocalState(pref_service_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
-
     chromeos::PowerManagerClient::InitializeFake();
     profile_ = std::make_unique<TestingProfile>();
     arc_app_test_.SetUp(profile_.get());
@@ -165,7 +163,6 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
 
     profile_.reset();
     chromeos::PowerManagerClient::Shutdown();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
   }
 
   void SetNetworkState(
@@ -204,10 +201,11 @@ class ArcAppInstallEventLogCollectorTest : public testing::Test {
 
  private:
   content::BrowserTaskEnvironment task_environment_;
+  ScopedTestingLocalState scoped_testing_local_state_{
+      TestingBrowserProcess::GetGlobal()};
   std::unique_ptr<ash::NetworkHandlerTestHelper> network_handler_test_helper_;
   std::unique_ptr<TestingProfile> profile_;
   FakeAppInstallEventLogCollectorDelegate delegate_;
-  TestingPrefServiceSimple pref_service_;
   ArcAppTest arc_app_test_;
 };
 
@@ -411,16 +409,6 @@ TEST_F(ArcAppInstallEventLogCollectorTest, InstallPackages) {
             delegate()->last_event().event_type());
   EXPECT_EQ(kPackageName2, delegate()->last_request().package_name);
   EXPECT_TRUE(delegate()->last_request().add_disk_space_info);
-
-  base::Time time = base::Time::Now();
-  collector->OnReportForceInstallMainLoopFailed(time, {kPackageName2});
-  EXPECT_EQ(5, delegate()->add_count());
-  EXPECT_EQ(em::AppInstallReportLogEvent::CLOUDDPC_MAIN_LOOP_FAILED,
-            delegate()->last_event().event_type());
-  EXPECT_EQ(kPackageName2, delegate()->last_request().package_name);
-  EXPECT_TRUE(delegate()->last_request().add_disk_space_info);
-
-  EXPECT_EQ(0, delegate()->add_for_all_count());
 }
 
 TEST_F(ArcAppInstallEventLogCollectorTest, OnPlayStoreLocalPolicySet) {
@@ -442,7 +430,8 @@ TEST_F(ArcAppInstallEventLogCollectorTest,
   std::unique_ptr<ArcAppInstallEventLogCollector> collector =
       std::make_unique<ArcAppInstallEventLogCollector>(delegate(), profile(),
                                                        packages_);
-  collector->OnInstallationFinished(kPackageName, /* success */ true);
+  collector->OnInstallationFinished(kPackageName, /*success=*/true,
+                                    /*is_launchable_app=*/true);
 
   int second_to_last_request_index = delegate()->requests().size() - 2;
   EXPECT_EQ(1, delegate()->update_policy_success_rate_count());
@@ -457,7 +446,8 @@ TEST_F(ArcAppInstallEventLogCollectorTest,
   std::unique_ptr<ArcAppInstallEventLogCollector> collector =
       std::make_unique<ArcAppInstallEventLogCollector>(delegate(), profile(),
                                                        packages_);
-  collector->OnInstallationFinished(kPackageName, /* success */ false);
+  collector->OnInstallationFinished(kPackageName, /*success=*/false,
+                                    /*is_launchable_app=*/false);
 
   int second_to_last_request_index = delegate()->requests().size() - 2;
   EXPECT_EQ(1, delegate()->update_policy_success_rate_count());

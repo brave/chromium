@@ -37,8 +37,8 @@ const std::vector<std::string>& GetWellFormedDnsServers() {
 class DnsResolverPresentRoutineTest : public NetworkDiagnosticsTestHelper {
  public:
   DnsResolverPresentRoutineTest() {
-    dns_resolver_present_routine_ =
-        std::make_unique<DnsResolverPresentRoutine>();
+    dns_resolver_present_routine_ = std::make_unique<DnsResolverPresentRoutine>(
+        mojom::RoutineCallSource::kDiagnosticsUI);
   }
   DnsResolverPresentRoutineTest(const DnsResolverPresentRoutineTest&) = delete;
   DnsResolverPresentRoutineTest& operator=(
@@ -169,7 +169,7 @@ TEST_F(DnsResolverPresentRoutineTest, TestValidAndMalformedNameServers) {
 }
 
 TEST_F(DnsResolverPresentRoutineTest, TestNoActiveNetwork) {
-  SetUpWiFi(shill::kStateDisconnect);
+  SetUpWiFi(shill::kStateDisconnecting);
   SetUpNameServers(GetWellFormedDnsServers());
   RunRoutine(mojom::RoutineVerdict::kNotRun, {});
 }

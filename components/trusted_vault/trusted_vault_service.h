@@ -9,6 +9,7 @@
 
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/trusted_vault/trusted_vault_client.h"
+#include "components/trusted_vault/trusted_vault_server_constants.h"
 
 namespace trusted_vault {
 
@@ -22,9 +23,7 @@ class TrustedVaultService : public KeyedService {
 
   ~TrustedVaultService() override;
 
-  // TODO(crbug.com/1434661): bind TrustedVaultClient interface to the specific
-  // security domain and allow passing a security domain here.
-  TrustedVaultClient* GetTrustedVaultClient();
+  TrustedVaultClient* GetTrustedVaultClient(SecurityDomainId security_domain);
 
  private:
   std::unique_ptr<TrustedVaultClient> chrome_sync_security_domain_client_;

@@ -2,11 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/updater/ipc/update_service_dialer.h"
 
 #include <sys/socket.h>
 #include <sys/un.h>
+
 #include <cstdio>
+#include <optional>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -16,7 +23,6 @@
 #include "chrome/updater/linux/ipc_constants.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/util/util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace updater {
 
@@ -49,17 +55,15 @@ bool DialUpdateService(UpdaterScope scope) {
 }
 
 bool DialUpdateInternalService(UpdaterScope scope) {
-  absl::optional<base::FilePath> updater = GetUpdaterExecutablePath(scope);
+  std::optional<base::FilePath> updater = GetUpdaterExecutablePath(scope);
   if (updater) {
     base::CommandLine command(*updater);
     command.AppendSwitch(kServerSwitch);
-    command.AppendSwitchASCII(kServerServiceSwitch,
-                              kServerUpdateServiceInternalSwitchValue);
+    command.AppendSwitchUTF8(kServerServiceSwitch,
+                             kServerUpdateServiceInternalSwitchValue);
     if (scope == UpdaterScope::kSystem) {
       command.AppendSwitch(kSystemSwitch);
     }
-    command.AppendSwitch(kEnableLoggingSwitch);
-    command.AppendSwitchASCII(kLoggingModuleSwitch, kLoggingModuleSwitchValue);
     base::LaunchProcess(command, {});
   }
   return true;

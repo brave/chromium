@@ -8,10 +8,6 @@
 #import "base/path_service.h"
 #import "ios/web/public/test/http_server/http_server.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @implementation WebHttpServerChromeTestCase
 
 - (void)setUp {
@@ -25,7 +21,7 @@
   server.StartOrDie(base::PathService::CheckedGet(base::DIR_ASSETS));
 }
 
-- (void)tearDown {
+- (void)tearDownHelper {
   web::test::HttpServer& server = web::test::HttpServer::GetSharedInstance();
   if (!server.IsRunning()) {
     return;
@@ -33,7 +29,7 @@
 
   server.Stop();
 
-  [super tearDown];
+  [super tearDownHelper];
 }
 
 @end

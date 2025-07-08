@@ -6,7 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace WTF {
+namespace blink {
 
 TEST(WeakResultTest, BasicOperations) {
   AtomicStringTable::WeakResult null;
@@ -29,4 +29,54 @@ TEST(WeakResultTest, BasicOperations) {
   EXPECT_TRUE(s2 == not_null);
 }
 
-}  // namespace WTF
+TEST(WeakResultTest, UTF8) {
+  AtomicString foo = AtomicString::FromUTF8("foo");
+  AtomicString foo_latin1 = AtomicString::FromUTF8("foó");
+  AtomicString foo_unicode = AtomicString::FromUTF8("foo😀");
+
+  EXPECT_EQ(foo.length(), 3u);
+  EXPECT_EQ(foo_latin1.length(), 3u);
+  EXPECT_EQ(foo_unicode.length(), 5u);
+
+  EXPECT_TRUE(foo.Is8Bit());
+  EXPECT_TRUE(foo_latin1.Is8Bit());
+  EXPECT_FALSE(foo_unicode.Is8Bit());
+
+  EXPECT_EQ(foo.Utf8(), "foo");
+  EXPECT_EQ(foo_latin1.Utf8(), "foó");
+  EXPECT_EQ(foo_unicode.Utf8(), "foo😀");
+
+  AtomicStringTable::WeakResult result =
+      AtomicStringTable::Instance().WeakFindLowercase(AtomicString("FOO"));
+  EXPECT_FALSE(result.IsNull());
+
+  // This is a particularly icky case; a 16-bit AtomicString that contains
+  // only 8-bit data. It can generally only happen if a StringImpl is
+  // added directly to the AtomicStringTable.
+  String too_wide_string("Foo");
+  too_wide_string.Ensure16Bit();
+  result = AtomicStringTable::Instance().WeakFindLowercase(
+      AtomicString(too_wide_string.Impl()));
+  EXPECT_FALSE(result.IsNull());
+
+  AtomicStringTable::WeakResult result_latin1 =
+      AtomicStringTable::Instance().WeakFindLowercase(
+          AtomicString::FromUTF8("Foó"));
+  EXPECT_FALSE(result_latin1.IsNull());
+
+  // Only ASCII is lowercased.
+  result_latin1 = AtomicStringTable::Instance().WeakFindLowercase(
+      AtomicString::FromUTF8("FoÓ"));
+  EXPECT_TRUE(result_latin1.IsNull());
+
+  AtomicStringTable::WeakResult result_unicode =
+      AtomicStringTable::Instance().WeakFindLowercase(
+          AtomicString::FromUTF8("foO😀"));
+  EXPECT_FALSE(result_unicode.IsNull());
+
+  result_unicode = AtomicStringTable::Instance().WeakFindLowercase(
+      AtomicString::FromUTF8("Goo😀"));
+  EXPECT_TRUE(result_unicode.IsNull());
+}
+
+}  // namespace blink

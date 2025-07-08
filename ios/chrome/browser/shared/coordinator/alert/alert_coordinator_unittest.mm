@@ -6,11 +6,11 @@
 
 #import <UIKit/UIKit.h>
 
-#import "base/mac/foundation_util.h"
-#import "base/test/task_environment.h"
+#import "base/apple/foundation_util.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/test/scoped_key_window.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -18,18 +18,14 @@
 #import "ui/base/l10n/l10n_util.h"
 #import "ui/strings/grit/ui_strings.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 #pragma mark - Fixture.
 
 // Fixture to test AlertCoordinator.
 class AlertCoordinatorTest : public PlatformTest {
  protected:
   AlertCoordinatorTest() {
-    browser_state_ = TestChromeBrowserState::Builder().Build();
-    browser_ = std::make_unique<TestBrowser>(browser_state_.get());
+    profile_ = TestProfileIOS::Builder().Build();
+    browser_ = std::make_unique<TestBrowser>(profile_.get());
     view_controller_ = [[UIViewController alloc] init];
     [scoped_key_window_.Get() setRootViewController:view_controller_];
   }
@@ -59,8 +55,8 @@ class AlertCoordinatorTest : public PlatformTest {
   }
 
  private:
-  base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  web::WebTaskEnvironment task_environment_;
+  std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TestBrowser> browser_;
   AlertCoordinator* alert_coordinator_;
   ScopedKeyWindow scoped_key_window_;
@@ -87,7 +83,7 @@ TEST_F(AlertCoordinatorTest, ValidateIsVisible) {
   ASSERT_TRUE([view_controller.presentedViewController
       isKindOfClass:[UIAlertController class]]);
   UIAlertController* alert_controller =
-      base::mac::ObjCCastStrict<UIAlertController>(
+      base::apple::ObjCCastStrict<UIAlertController>(
           view_controller.presentedViewController);
   EXPECT_EQ(1LU, alert_controller.actions.count);
 }
@@ -128,7 +124,7 @@ TEST_F(AlertCoordinatorTest, TitleAndMessage) {
   ASSERT_TRUE([view_controller.presentedViewController
       isKindOfClass:[UIAlertController class]]);
   UIAlertController* alert_controller =
-      base::mac::ObjCCastStrict<UIAlertController>(
+      base::apple::ObjCCastStrict<UIAlertController>(
           view_controller.presentedViewController);
 
   // Test the results.
@@ -193,7 +189,7 @@ TEST_F(AlertCoordinatorTest, ValidateActions) {
   ASSERT_TRUE([view_controller.presentedViewController
       isKindOfClass:[UIAlertController class]]);
   UIAlertController* alert_controller =
-      base::mac::ObjCCastStrict<UIAlertController>(
+      base::apple::ObjCCastStrict<UIAlertController>(
           view_controller.presentedViewController);
 
   // Test the results.
@@ -301,7 +297,7 @@ TEST_F(AlertCoordinatorTest, AlertHasPreferredAction) {
   ASSERT_TRUE([view_controller.presentedViewController
       isKindOfClass:[UIAlertController class]]);
   UIAlertController* alert_controller =
-      base::mac::ObjCCastStrict<UIAlertController>(
+      base::apple::ObjCCastStrict<UIAlertController>(
           view_controller.presentedViewController);
 
   // Test the results.

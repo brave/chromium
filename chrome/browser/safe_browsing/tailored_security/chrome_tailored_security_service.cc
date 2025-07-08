@@ -5,9 +5,11 @@
 #include "chrome/browser/safe_browsing/tailored_security/chrome_tailored_security_service.h"
 
 #include "base/metrics/histogram_functions.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/browser/tailored_security_service/tailored_security_notification_result.h"
@@ -63,9 +65,28 @@ content::WebContents* GetWebContentsForProfile(Profile* profile) {
 
 ChromeTailoredSecurityService::ChromeTailoredSecurityService(Profile* profile)
     : TailoredSecurityService(IdentityManagerFactory::GetForProfile(profile),
+                              SyncServiceFactory::GetForProfile(profile),
                               profile->GetPrefs()),
-      profile_(profile) {
+      profile_(profile),
+      retry_handler_(std::make_unique<MessageRetryHandler>(
+          profile_,
+          prefs::kTailoredSecuritySyncFlowRetryState,
+          prefs::kTailoredSecurityNextSyncFlowTimestamp,
+          kRetryAttemptStartupDelay,
+          kRetryNextAttemptDelay,
+          kWaitingPeriodInterval,
+          base::BindOnce(&ChromeTailoredSecurityService::
+                             TailoredSecurityTimestampUpdateCallback,
+                         base::Unretained(this)),
+          "SafeBrowsing.TailoredSecurity.ShouldRetryOutcome",
+          prefs::kAccountTailoredSecurityUpdateTimestamp,
+          prefs::kEnhancedProtectionEnabledViaTailoredSecurity)) {
   AddObserver(this);
+  if (HistorySyncEnabledForUser() &&
+      !SafeBrowsingPolicyHandler::IsSafeBrowsingProtectionLevelSetByPolicy(
+          prefs())) {
+    retry_handler_->StartRetryTimer();
+  }
 }
 
 ChromeTailoredSecurityService::~ChromeTailoredSecurityService() {
@@ -81,37 +102,26 @@ void ChromeTailoredSecurityService::OnSyncNotificationMessageRequest(
 #if BUILDFLAG(IS_ANDROID)
   content::WebContents* web_contents = GetWebContentsForProfile(profile_);
   if (!web_contents) {
-    if (base::FeatureList::IsEnabled(
-            safe_browsing::kTailoredSecurityObserverRetries)) {
-      RegisterObserver();
-      base::UmaHistogramBoolean(
-          "SafeBrowsing.TailoredSecurity.IsRecoveryTriggered",
-          kRetryMechanismTriggered);
-      return;
-    }
-    if (is_enabled) {
-      RecordEnabledNotificationResult(
-          TailoredSecurityNotificationResult::kNoWebContentsAvailable);
-    }
-    return;
-  }
-  if (base::FeatureList::IsEnabled(
-          safe_browsing::kTailoredSecurityObserverRetries)) {
+    RegisterObserver();
     base::UmaHistogramBoolean(
         "SafeBrowsing.TailoredSecurity.IsRecoveryTriggered",
-        kRetryMechanismNotTriggered);
+        kRetryMechanismTriggered);
+    return;
   }
+  base::UmaHistogramBoolean("SafeBrowsing.TailoredSecurity.IsRecoveryTriggered",
+                            kRetryMechanismNotTriggered);
 
   // Since the Android UX is a notice, we simply set Safe Browsing state.
   SetSafeBrowsingState(profile_->GetPrefs(),
                        is_enabled ? SafeBrowsingState::ENHANCED_PROTECTION
                                   : SafeBrowsingState::STANDARD_PROTECTION,
-                       /*is_esb_enabled_in_sync=*/is_enabled);
+                       /*is_esb_enabled_by_account_integration=*/is_enabled);
   message_ = std::make_unique<TailoredSecurityConsentedModalAndroid>(
       web_contents, is_enabled,
       base::BindOnce(&ChromeTailoredSecurityService::MessageDismissed,
                      // Unretained is safe because |this| owns |message_|.
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      /*is_requested_by_synced_esb=*/false);
 #else
   Browser* browser = chrome::FindBrowserWithProfile(profile_);
   if (!browser) {
@@ -126,13 +136,17 @@ void ChromeTailoredSecurityService::OnSyncNotificationMessageRequest(
       RecordEnabledNotificationResult(
           TailoredSecurityNotificationResult::kNoBrowserWindowAvailable);
     }
+    return;
   }
   SetSafeBrowsingState(profile_->GetPrefs(),
                        is_enabled ? SafeBrowsingState::ENHANCED_PROTECTION
                                   : SafeBrowsingState::STANDARD_PROTECTION,
-                       /*is_esb_enabled_in_sync=*/is_enabled);
+                       /*is_esb_enabled_by_account_integration=*/is_enabled);
   DisplayDesktopDialog(browser, is_enabled);
 #endif
+  retry_handler_->SaveRetryState(
+      MessageRetryHandler::RetryState::NO_RETRY_NEEDED);
+
   if (is_enabled) {
     RecordEnabledNotificationResult(TailoredSecurityNotificationResult::kShown);
   }
@@ -148,7 +162,7 @@ void ChromeTailoredSecurityService::DidAddTab(TabAndroid* tab,
   TailoredSecurityTimestampUpdateCallback();
 }
 
-void ChromeTailoredSecurityService::OnTabModelAdded() {
+void ChromeTailoredSecurityService::OnTabModelAdded(TabModel* tab_model) {
   if (observed_tab_model_) {
     return;
   }
@@ -156,7 +170,7 @@ void ChromeTailoredSecurityService::OnTabModelAdded() {
   AddTabModelObserver();
 }
 
-void ChromeTailoredSecurityService::OnTabModelRemoved() {
+void ChromeTailoredSecurityService::OnTabModelRemoved(TabModel* tab_model) {
   if (!observed_tab_model_) {
     return;
   }

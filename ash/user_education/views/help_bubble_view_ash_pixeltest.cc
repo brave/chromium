@@ -2,20 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/user_education/views/help_bubble_view_ash.h"
-
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "ash/test/pixel/ash_pixel_differ.h"
 #include "ash/test/pixel/ash_pixel_test_init_params.h"
 #include "ash/user_education/user_education_types.h"
+#include "ash/user_education/views/help_bubble_view_ash.h"
 #include "ash/user_education/views/help_bubble_view_ash_test_base.h"
-#include "base/test/scoped_feature_list.h"
-#include "chromeos/constants/chromeos_features.h"
-#include "components/user_education/common/help_bubble_params.h"
+#include "base/strings/string_util.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -43,22 +41,14 @@ void EmplaceBackIf(std::vector<std::string>& container,
 // Base class for pixel tests of `HelpBubbleViewAsh`.
 class HelpBubbleViewAshPixelTestBase : public HelpBubbleViewAshTestBase {
  public:
-  HelpBubbleViewAshPixelTestBase() {
-    // Features using help bubble views are not launching until post-Jelly, so
-    // ensure that benchmark images are taken with the Jelly flag enabled.
-    scoped_feature_list_.InitAndEnableFeature(chromeos::features::kJelly);
-  }
+  HelpBubbleViewAshPixelTestBase() = default;
 
  private:
   // HelpBubbleViewAshTestBase:
-  absl::optional<pixel_test::InitParams> CreatePixelTestInitParams()
+  std::optional<pixel_test::InitParams> CreatePixelTestInitParams()
       const override {
     return pixel_test::InitParams();
   }
-
-  // Used to enable the Jelly flag so that benchmark images accurately reflect
-  // the state of the world when features using help bubble views launch.
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // HelpBubbleViewPixelTest -----------------------------------------------------
@@ -109,7 +99,7 @@ TEST_P(HelpBubbleViewAshPixelTest, Appearance) {
                            with_body_icon(), with_buttons(), with_progress());
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      "appearance", /*revision_number=*/4u, help_bubble_view,
+      "appearance", /*revision_number=*/9, help_bubble_view,
       help_bubble_view->anchor_widget()));
 }
 
@@ -175,7 +165,7 @@ TEST_P(HelpBubbleViewAshArrowPixelTest, Placement) {
       /*with_buttons=*/true, /*with_progress=*/true);
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
-      "placement", /*revision_number=*/4u, help_bubble_view,
+      "placement", /*revision_number=*/9, help_bubble_view,
       help_bubble_view->anchor_widget()));
 }
 

@@ -6,11 +6,33 @@
 
 #include "base/logging.h"
 #include "base/strings/string_split.h"
+#include "base/types/expected.h"
+#include "chromeos/components/quick_answers/public/cpp/quick_answers_prefs.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace quick_answers {
+
+namespace {
+
+bool ShouldDownloadDictionaries() {
+  if (QuickAnswersState::IsEnabled()) {
+    return true;
+  }
+
+  // Spell checker dictionaries are required to show a consent UI by Quick
+  // Answers code. Note that `IsEligibleAs` always returns false if current
+  // feature type does not match specified feature type, e.g., this
+  // `IsEligibleAs` always returns false for `kHmr` case.
+  return QuickAnswersState::IsEligibleAs(
+             QuickAnswersState::FeatureType::kQuickAnswers) &&
+         QuickAnswersState::GetConsentStatusAs(
+             QuickAnswersState::FeatureType::kQuickAnswers) ==
+             quick_answers::prefs::ConsentStatus::kUnknown;
+}
+
+}  // namespace
 
 SpellChecker::SpellChecker(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
@@ -65,16 +87,14 @@ void SpellChecker::OnPrefsInitialized() {
 void SpellChecker::CheckEligibilityAndUpdateLanguages(
     bool should_recreate_languages_list) {
   // Still waiting for all of the states to be ready.
+  // TODO(b/340628526): remove this once all `QuickAnswersState` field become
+  // able to handle uinitialized cases. Callers should not need to care
+  // `QuickAnswersState` instance level initialization state.
   if (!QuickAnswersState::Get()->prefs_initialized()) {
     return;
   }
 
-  bool should_enable_to_show_consent =
-      QuickAnswersState::Get()->consent_status() ==
-      prefs::ConsentStatus::kUnknown;
-  if (!QuickAnswersState::Get()->is_eligible() ||
-      (!QuickAnswersState::Get()->settings_enabled() &&
-       !should_enable_to_show_consent)) {
+  if (!ShouldDownloadDictionaries()) {
     spellcheck_languages_.clear();
     languages_list_version_++;
     return;
@@ -87,8 +107,8 @@ void SpellChecker::CheckEligibilityAndUpdateLanguages(
 
   // Add application language.
   std::set<std::string> languages;
-  languages.insert(
-      l10n_util::GetLanguage(QuickAnswersState::Get()->application_locale()));
+  languages.insert(std::string(
+      l10n_util::GetLanguage(QuickAnswersState::Get()->application_locale())));
 
   // Add preferred languages if supported.
   auto preferred_languages_list =
@@ -97,7 +117,7 @@ void SpellChecker::CheckEligibilityAndUpdateLanguages(
   for (const std::string& locale : preferred_languages_list) {
     auto language = l10n_util::GetLanguage(locale);
     if (QuickAnswersState::Get()->IsSupportedLanguage(language))
-      languages.insert(language);
+      languages.insert(std::string(language));
   }
 
   spellcheck_languages_.clear();

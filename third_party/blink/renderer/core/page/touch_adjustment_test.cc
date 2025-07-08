@@ -47,7 +47,7 @@ class TouchAdjustmentTest : public RenderingTest {
     page_scale_factor_ = page_scale_factor;
 
     GetChromeClient().SetDeviceScaleFactor(device_scale_factor);
-    GetFrame().SetPageZoomFactor(device_scale_factor * browser_zoom_factor);
+    GetFrame().SetLayoutZoomFactor(device_scale_factor * browser_zoom_factor);
     GetPage().SetPageScaleFactor(page_scale_factor);
   }
 
@@ -96,6 +96,11 @@ TEST_F(TouchAdjustmentTest, AdjustmentRangeUpperboundScale) {
   SetZoomAndScale(0.5 /* dsf */, 1 /* browser_zoom */, 1 /* page_scale */);
   result = GetHitTestRectForAdjustment(GetFrame(), touch_area);
   EXPECT_EQ(result, max_touch_area_dip_unscaled * 0.5f);
+
+  SetZoomAndScale(2 /* dsf */, 1 /* browser_zoom */, 1 /* page_scale */);
+  GetPage().SetInspectorDeviceScaleFactorOverride(0.5);
+  result = GetHitTestRectForAdjustment(GetFrame(), touch_area);
+  EXPECT_EQ(result, max_touch_area_dip_unscaled);
 }
 
 TEST_F(TouchAdjustmentTest, AdjustmentRangeLowerboundScale) {

@@ -4,12 +4,8 @@
 
 #import "ios/chrome/test/app/password_test_util.h"
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #import "ios/chrome/test/app/mock_reauthentication_module.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace chrome_test_util {
 
@@ -29,4 +25,12 @@ SetUpAndReturnMockReauthenticationModuleForPasswordSuggestionBottomSheet() {
       MakeAndArmForTesting(mock_reauthentication_module);
 }
 
-}  // namespace
+std::unique_ptr<ScopedFormInputAccessoryReauthModuleOverride>
+SetUpAndReturnMockReauthenticationModuleForFormInputAccessory() {
+  MockReauthenticationModule* mock_reauthentication_module =
+      [[MockReauthenticationModule alloc] init];
+  return ScopedFormInputAccessoryReauthModuleOverride::MakeAndArmForTesting(
+      mock_reauthentication_module);
+}
+
+}  // namespace chrome_test_util

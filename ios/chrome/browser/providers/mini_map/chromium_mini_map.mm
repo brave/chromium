@@ -6,18 +6,16 @@
 
 #import "ios/public/provider/chrome/browser/mini_map/mini_map_api.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ios {
 namespace provider {
 
-id<MiniMapController> CreateMiniMapController(
-    NSString* address,
-    MiniMapControllerCompletion completion) {
+id<MiniMapController> CreateMiniMapController() {
   // Mini map is not supported in Chromium.
   return nil;
+}
+
+BOOL MiniMapCanHandleURL(NSURL* url) {
+  return NO;
 }
 
 }  // namespace provider

@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/accessibility/platform/inspect/ax_transform_mac.h"
 
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/accessibility/ax_range.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
@@ -14,10 +19,6 @@
 #include "ui/accessibility/platform/ax_utils_mac.h"
 #include "ui/accessibility/platform/inspect/ax_element_wrapper_mac.h"
 #include "ui/accessibility/platform/inspect/ax_inspect_utils.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
@@ -35,30 +36,28 @@ base::Value AXNSObjectToBaseValue(id value, const AXTreeIndexerMac* indexer) {
   }
 
   // NSArray
-  if (NSArray* array = base::mac::ObjCCast<NSArray>(value)) {
+  if (base::apple::ObjCCast<NSArray>(value)) {
     return base::Value(AXNSArrayToBaseValue(value, indexer));
   }
 
   // AXCustomContent
-  if (@available(macOS 11.0, *)) {
-    if (AXCustomContent* custom_content =
-            base::mac::ObjCCast<AXCustomContent>(value)) {
-      return base::Value(AXCustomContentToBaseValue(custom_content));
-    }
+  if (AXCustomContent* custom_content =
+          base::apple::ObjCCast<AXCustomContent>(value)) {
+    return base::Value(AXCustomContentToBaseValue(custom_content));
   }
 
   // NSDictionary
-  if (NSDictionary* dictionary = base::mac::ObjCCast<NSDictionary>(value)) {
+  if (NSDictionary* dictionary = base::apple::ObjCCast<NSDictionary>(value)) {
     return base::Value(AXNSDictionaryToBaseValue(dictionary, indexer));
   }
 
   // NSNumber
-  if (NSNumber* number = base::mac::ObjCCast<NSNumber>(value)) {
+  if (NSNumber* number = base::apple::ObjCCast<NSNumber>(value)) {
     return base::Value(number.intValue);
   }
 
   // NSRange, NSSize
-  if (NSValue* ns_value = base::mac::ObjCCast<NSValue>(value)) {
+  if (NSValue* ns_value = base::apple::ObjCCast<NSValue>(value)) {
     if (0 == strcmp(ns_value.objCType, @encode(NSRange))) {
       return base::Value(AXNSRangeToBaseValue(ns_value.rangeValue));
     }
@@ -69,7 +68,7 @@ base::Value AXNSObjectToBaseValue(id value, const AXTreeIndexerMac* indexer) {
 
   // NSAttributedString
   if (NSAttributedString* attr_string =
-          base::mac::ObjCCast<NSAttributedString>(value)) {
+          base::apple::ObjCCast<NSAttributedString>(value)) {
     return NSAttributedStringToBaseValue(attr_string, indexer);
   }
 
@@ -133,7 +132,8 @@ base::Value AXNSObjectToBaseValue(id value, const AXTreeIndexerMac* indexer) {
 }
 
 base::Value AXElementToBaseValue(id node, const AXTreeIndexerMac* indexer) {
-  return base::Value(AXMakeConst(indexer->IndexBy(node)));
+  return base::Value(
+      AXMakeConst(indexer->IndexBy(gfx::NativeViewAccessible(node))));
 }
 
 base::Value AXPositionToBaseValue(
@@ -155,8 +155,9 @@ base::Value AXPositionToBaseValue(
     return AXNilToBaseValue();
   }
 
-  AXPlatformNodeCocoa* cocoa_anchor = static_cast<AXPlatformNodeCocoa*>(
-      platform_node_anchor->GetNativeViewAccessible());
+  AXPlatformNodeCocoa* cocoa_anchor =
+      base::apple::ObjCCast<AXPlatformNodeCocoa>(
+          platform_node_anchor->GetNativeViewAccessible().Get());
   if (!cocoa_anchor) {
     return AXNilToBaseValue();
   }

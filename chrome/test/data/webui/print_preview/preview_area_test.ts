@@ -2,44 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {Destination, DestinationOrigin, Error, Margins, MeasurementSystem, MeasurementSystemUnitType, NativeLayerImpl, PluginProxyImpl, PreviewAreaState, PrintPreviewPreviewAreaElement, Size, State} from 'chrome://print/print_preview.js';
-// <if expr="is_chromeos">
-// clang-format off
-import {PrinterSetupInfoMessageType, PrintPreviewPrinterSetupInfoCrosElement} from 'chrome://print/print_preview.js';
-// clang-format on
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-// </if>
+import 'chrome://print/print_preview.js';
+
+import type {PrintPreviewPreviewAreaElement} from 'chrome://print/print_preview.js';
+import {Destination, DestinationOrigin, Error, Margins, MarginsType, MeasurementSystem, MeasurementSystemUnitType, NativeLayerImpl, PluginProxyImpl, PreviewAreaState, Size, State} from 'chrome://print/print_preview.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {fakeDataBind} from 'chrome://webui-test/polymer_test_util.js';
-// <if expr="is_chromeos">
-import {isChildVisible} from 'chrome://webui-test/test_util.js';
-// </if>
+import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {NativeLayerStub} from './native_layer_stub.js';
 import {getCddTemplate} from './print_preview_test_utils.js';
 import {TestPluginProxy} from './test_plugin_proxy.js';
 
-const preview_area_test = {
-  suiteName: 'PreviewAreaTest',
-  TestNames: {
-    StateChanges: 'state changes',
-    // <if expr="is_chromeos">
-    StateChangesPrinterSetupCros:
-        'state changes with printer setup flag enabled',
-    ManagePrinterMetricsCros:
-        'manage printer metrics triggered with printer setup flag enabled',
-    // </if>
-    ViewportSizeChanges: 'viewport size changes',
-  },
-};
-
-Object.assign(window, {preview_area_test: preview_area_test});
-
-suite(preview_area_test.suiteName, function() {
+suite('PreviewAreaTest', function() {
   let previewArea: PrintPreviewPreviewAreaElement;
-
   let nativeLayer: NativeLayerStub;
-
   let pluginProxy: TestPluginProxy;
 
   setup(function() {
@@ -48,7 +24,6 @@ suite(preview_area_test.suiteName, function() {
     nativeLayer.setPageCount(3);
     pluginProxy = new TestPluginProxy();
     PluginProxyImpl.setInstance(pluginProxy);
-
     setupPreviewElement();
   });
 
@@ -60,8 +35,6 @@ suite(preview_area_test.suiteName, function() {
     model.setSetting('pages', [1, 2, 3]);
     previewArea = document.createElement('print-preview-preview-area');
     document.body.appendChild(previewArea);
-    previewArea.settings = model.settings;
-    fakeDataBind(model, previewArea, 'settings');
     previewArea.destination =
         new Destination('FooDevice', DestinationOrigin.LOCAL, 'FooName');
     previewArea.destination.capabilities =
@@ -77,186 +50,113 @@ suite(preview_area_test.suiteName, function() {
   }
 
   /** Validate some preview area state transitions work as expected. */
-  test(preview_area_test.TestNames.StateChanges, function() {
-    // <if expr="is_chromeos">
-    // TODO(b/289091283): Update to only run test for "not is_chromeos" as part
-    // of flag clean up. For ChromeOS, the error state change on
-    // `INVALID_PRINTER` event will display the preview-area-message when the
-    // printer setup assistance flag is off.
-    previewArea.remove();
-    loadTimeData.overrideValues({
-      isPrintPreviewSetupAssistanceEnabled: false,
-    });
-    setupPreviewElement();
-    // </if>
-
+  test('StateChanges', async function() {
     // Simulate starting the preview.
     const whenPreviewStarted = nativeLayer.whenCalled('getPreview');
     previewArea.state = State.READY;
     assertEquals(PreviewAreaState.LOADING, previewArea.previewState);
     assertFalse(
-        previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
+        previewArea.shadowRoot.querySelector('.preview-area-overlay-layer')!
             .classList.contains('invisible'));
     const message =
-        previewArea.shadowRoot!.querySelector('.preview-area-message')!
+        previewArea.shadowRoot.querySelector('.preview-area-message')!
             .querySelector('span')!;
     assertEquals('Loading preview', message.textContent!.trim());
 
     previewArea.startPreview(false);
 
-    return whenPreviewStarted.then(() => {
-      assertEquals(PreviewAreaState.DISPLAY_PREVIEW, previewArea.previewState);
-      assertEquals(3, pluginProxy.getCallCount('loadPreviewPage'));
-      assertTrue(
-          previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
-              .classList.contains('invisible'));
+    await whenPreviewStarted;
+    await microtasksFinished();
 
-      // If destination capabilities fetch fails, the invalid printer error
-      // will be set by the destination settings.
-      previewArea.destination = new Destination(
-          'InvalidDevice', DestinationOrigin.LOCAL, 'InvalidName');
-      previewArea.state = State.ERROR;
-      previewArea.error = Error.INVALID_PRINTER;
-      assertEquals(PreviewAreaState.ERROR, previewArea.previewState);
-      assertFalse(
-          previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
-              .classList.contains('invisible'));
-      assertEquals(
-          'The selected printer is not available or not installed ' +
-              'correctly.  Check your printer or try selecting another ' +
-              'printer.',
-          message.textContent!.trim());
-    });
-  });
+    assertEquals(PreviewAreaState.DISPLAY_PREVIEW, previewArea.previewState);
+    assertEquals(3, pluginProxy.getCallCount('loadPreviewPage'));
+    assertTrue(
+        previewArea.shadowRoot.querySelector('.preview-area-overlay-layer')!
+            .classList.contains('invisible'));
 
-  // <if expr="is_chromeos">
-  /**
-   * Validate some preview area state transitions work as expected on CrOS with
-   * Printer Setup Assistance flag enabled.
-   */
-  test(preview_area_test.TestNames.StateChangesPrinterSetupCros, function() {
-    previewArea.remove();
-    loadTimeData.overrideValues({
-      isPrintPreviewSetupAssistanceEnabled: true,
-    });
-    setupPreviewElement();
+    // If destination capabilities fetch fails, the invalid printer error
+    // will be set by the destination settings.
+    previewArea.destination = new Destination(
+        'InvalidDevice', DestinationOrigin.LOCAL, 'InvalidName');
+    previewArea.state = State.ERROR;
+    previewArea.error = Error.INVALID_PRINTER;
+    await microtasksFinished();
 
-    // Simulate starting the preview.
-    const whenPreviewStarted = nativeLayer.whenCalled('getPreview');
-    previewArea.state = State.READY;
-    assertEquals(PreviewAreaState.LOADING, previewArea.previewState);
+    assertEquals(PreviewAreaState.ERROR, previewArea.previewState);
     assertFalse(
-        previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
+        previewArea.shadowRoot.querySelector('.preview-area-overlay-layer')!
             .classList.contains('invisible'));
-    const message =
-        previewArea.shadowRoot!.querySelector('.preview-area-message')!
-            .querySelector('span')!;
-    assertEquals('Loading preview', message.textContent!.trim());
-
-    previewArea.startPreview(false);
-
-    return whenPreviewStarted.then(() => {
-      assertEquals(PreviewAreaState.DISPLAY_PREVIEW, previewArea.previewState);
-      assertEquals(3, pluginProxy.getCallCount('loadPreviewPage'));
-      assertTrue(
-          previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
-              .classList.contains('invisible'));
-
-      // If destination capabilities fetch fails, the invalid printer error
-      // will be set by the destination settings.
-      previewArea.destination = new Destination(
-          'InvalidDevice', DestinationOrigin.LOCAL, 'InvalidName');
-      previewArea.state = State.ERROR;
-      previewArea.error = Error.INVALID_PRINTER;
-      assertEquals(PreviewAreaState.ERROR, previewArea.previewState);
-      assertFalse(
-          previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
-              .classList.contains('invisible'));
-      assertFalse(isChildVisible(previewArea, '.preview-area-message > span'));
-      assertTrue(isChildVisible(
-          previewArea, PrintPreviewPrinterSetupInfoCrosElement.is));
-      assertEquals(
-          PrinterSetupInfoMessageType.PRINTER_OFFLINE,
-          previewArea.shadowRoot!
-              .querySelector(
-                  PrintPreviewPrinterSetupInfoCrosElement.is)!.messageType);
-    });
+    assertEquals(
+        'The selected printer is not available or not installed ' +
+            'correctly.  Check your printer or try selecting another ' +
+            'printer.',
+        message.textContent!.trim());
   });
-
-  // Verify correct metric is triggered when launch printer settings button
-  // is pressed from preview-area error state.
-  test(preview_area_test.TestNames.ManagePrinterMetricsCros, function() {
-    previewArea.remove();
-    loadTimeData.overrideValues({
-      isPrintPreviewSetupAssistanceEnabled: true,
-    });
-    setupPreviewElement();
-
-    // Simulate starting the preview.
-    const whenPreviewStarted = nativeLayer.whenCalled('getPreview');
-    previewArea.state = State.READY;
-    previewArea.startPreview(false);
-
-    return whenPreviewStarted.then(() => {
-      // If destination capabilities fetch fails, the invalid printer error
-      // will be set by the destination settings.
-      previewArea.destination = new Destination(
-          'InvalidDevice', DestinationOrigin.LOCAL, 'InvalidName');
-      previewArea.state = State.ERROR;
-      previewArea.error = Error.INVALID_PRINTER;
-      const managePrintersFunction = 'managePrinters';
-      const recordMetricFunction = 'recordInHistogram';
-      assertEquals(0, nativeLayer.getCallCount(managePrintersFunction));
-      assertEquals(0, nativeLayer.getCallCount(recordMetricFunction));
-
-      // Click button to launch settings.
-      const setupInfoElement = previewArea.shadowRoot!.querySelector(
-          PrintPreviewPrinterSetupInfoCrosElement.is)!;
-      const managePrintersButton =
-          setupInfoElement.shadowRoot!.querySelector('cr-button')!;
-      managePrintersButton.click();
-
-      // Verify manage printers button clicked and triggers recording histogram.
-      assertEquals(1, nativeLayer.getCallCount(managePrintersFunction));
-      assertEquals(1, nativeLayer.getCallCount(recordMetricFunction));
-      const call = nativeLayer.getArgs(recordMetricFunction)[0];
-      assertEquals('PrintPreview.PrinterSettingsLaunchSource', call[0]);
-      // Call should use bucket `PREVIEW_AREA_CONNECTION_ERROR`.
-      assertEquals(0, call[1]);
-    });
-  });
-  // </if>
 
   /** Validate preview area sets tabindex correctly based on viewport size. */
-  test(preview_area_test.TestNames.ViewportSizeChanges, function() {
+  test('ViewportSizeChanges', async function() {
     // Simulate starting the preview.
     const whenPreviewStarted = nativeLayer.whenCalled('getPreview');
     previewArea.state = State.READY;
     previewArea.startPreview(false);
 
-    return whenPreviewStarted.then(() => {
-      assertEquals(PreviewAreaState.DISPLAY_PREVIEW, previewArea.previewState);
-      assertTrue(
-          previewArea.shadowRoot!.querySelector('.preview-area-overlay-layer')!
-              .classList.contains('invisible'));
-      const plugin =
-          previewArea.shadowRoot!.querySelector('.preview-area-plugin')!;
-      assertEquals(null, plugin.getAttribute('tabindex'));
+    await whenPreviewStarted;
+    await microtasksFinished();
 
-      // This can be triggered at any time by a resizing of the viewport or
-      // change to the PDF viewer zoom.
-      // Plugin is too narrow to show zoom toolbar.
-      pluginProxy.triggerVisualStateChange(0, 0, 150, 150, 500);
-      assertEquals('-1', plugin.getAttribute('tabindex'));
-      // Plugin is large enough for zoom toolbar.
-      pluginProxy.triggerVisualStateChange(0, 0, 250, 400, 500);
-      assertEquals('0', plugin.getAttribute('tabindex'));
-      // Plugin is too short for zoom toolbar.
-      pluginProxy.triggerVisualStateChange(0, 0, 250, 400, 100);
-      assertEquals('-1', plugin.getAttribute('tabindex'));
-      // Plugin is large enough for zoom toolbar.
-      pluginProxy.triggerVisualStateChange(0, 0, 500, 800, 1000);
-      assertEquals('0', plugin.getAttribute('tabindex'));
-    });
+    assertEquals(PreviewAreaState.DISPLAY_PREVIEW, previewArea.previewState);
+    assertTrue(
+        previewArea.shadowRoot.querySelector('.preview-area-overlay-layer')!
+            .classList.contains('invisible'));
+    const plugin =
+        previewArea.shadowRoot.querySelector('.preview-area-plugin')!;
+    assertEquals(null, plugin.getAttribute('tabindex'));
+
+    // This can be triggered at any time by a resizing of the viewport or
+    // change to the PDF viewer zoom.
+    // Plugin is too narrow to show zoom toolbar.
+    pluginProxy.triggerVisualStateChange(0, 0, 150, 150, 500);
+    assertEquals('-1', plugin.getAttribute('tabindex'));
+    // Plugin is large enough for zoom toolbar.
+    pluginProxy.triggerVisualStateChange(0, 0, 250, 400, 500);
+    assertEquals('0', plugin.getAttribute('tabindex'));
+    // Plugin is too short for zoom toolbar.
+    pluginProxy.triggerVisualStateChange(0, 0, 250, 400, 100);
+    assertEquals('-1', plugin.getAttribute('tabindex'));
+    // Plugin is large enough for zoom toolbar.
+    pluginProxy.triggerVisualStateChange(0, 0, 500, 800, 1000);
+    assertEquals('0', plugin.getAttribute('tabindex'));
+  });
+
+  test('PointerEvents', async function() {
+    const whenPreviewStarted = nativeLayer.whenCalled('getPreview');
+    previewArea.state = State.READY;
+    previewArea.startPreview(false);
+    await whenPreviewStarted;
+    await microtasksFinished();
+
+    const marginControls =
+        previewArea.$.marginControlContainer.shadowRoot.querySelectorAll(
+            'print-preview-margin-control');
+    assertEquals(4, marginControls.length);
+
+    function assertVisible(visible: boolean) {
+      for (const control of marginControls) {
+        assertEquals(visible, !control.invisible);
+      }
+    }
+
+    assertVisible(false);
+
+    previewArea.setSetting('margins', MarginsType.CUSTOM);
+    await microtasksFinished();
+    assertVisible(true);
+
+    previewArea.dispatchEvent(new PointerEvent('pointerout', {pointerId: 1}));
+    await microtasksFinished();
+    assertVisible(false);
+
+    previewArea.dispatchEvent(new PointerEvent('pointerover', {pointerId: 1}));
+    await microtasksFinished();
+    assertVisible(true);
   });
 });

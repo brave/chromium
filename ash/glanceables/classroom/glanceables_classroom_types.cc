@@ -4,11 +4,12 @@
 
 #include "ash/glanceables/classroom/glanceables_classroom_types.h"
 
+#include <optional>
 #include <sstream>
 #include <string>
 
+#include "base/i18n/time_formatting.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace ash {
@@ -36,6 +37,12 @@ GlanceablesClassroomAggregatedSubmissionsState::
       number_turned_in(number_turned_in),
       number_graded(number_graded) {}
 
+void GlanceablesClassroomAggregatedSubmissionsState::Reset() {
+  total_count = 0;
+  number_turned_in = 0;
+  number_graded = 0;
+}
+
 // ----------------------------------------------------------------------------
 // GlanceablesClassroomAssignment
 
@@ -43,9 +50,9 @@ GlanceablesClassroomAssignment::GlanceablesClassroomAssignment(
     const std::string& course_title,
     const std::string& course_work_title,
     const GURL& link,
-    const absl::optional<base::Time>& due,
+    const std::optional<base::Time>& due,
     const base::Time& last_update,
-    absl::optional<GlanceablesClassroomAggregatedSubmissionsState>
+    std::optional<GlanceablesClassroomAggregatedSubmissionsState>
         submissions_state)
     : course_title(course_title),
       course_work_title(course_work_title),

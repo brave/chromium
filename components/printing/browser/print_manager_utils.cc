@@ -30,7 +30,7 @@ bool IsOopifEnabled() {
 
 void CreateCompositeClientIfNeeded(content::WebContents* web_contents,
                                    const std::string& user_agent) {
-  // TODO(crbug.com/1022917): Once ShouldPdfCompositorBeEnabledForOopifs()
+  // TODO(crbug.com/40657857): Once ShouldPdfCompositorBeEnabledForOopifs()
   // always returns true, just remove the check altogether.
   if (site_isolation::SiteIsolationPolicy::
           ShouldPdfCompositorBeEnabledForOopifs()) {
@@ -56,7 +56,6 @@ void RenderParamsFromPrintSettings(const PrintSettings& settings,
   // Always use an invalid cookie.
   params->document_cookie = PrintSettings::NewInvalidCookie();
   params->selection_only = settings.selection_only();
-  params->supports_alpha_blend = settings.supports_alpha_blend();
   params->should_print_backgrounds = settings.should_print_backgrounds();
   params->display_header_footer = settings.display_header_footer();
   params->title = settings.title();

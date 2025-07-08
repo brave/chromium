@@ -8,18 +8,16 @@
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/submenu_view.h"
 
-template<ui::KeyboardCode KEYCODE, int EXPECTED_COMMAND>
+template <ui::KeyboardCode KEYCODE, int EXPECTED_COMMAND>
 class MenuControllerMnemonicTest : public MenuTestBase {
  public:
-  MenuControllerMnemonicTest() {
-  }
+  MenuControllerMnemonicTest() = default;
 
   MenuControllerMnemonicTest(const MenuControllerMnemonicTest&) = delete;
   MenuControllerMnemonicTest& operator=(const MenuControllerMnemonicTest&) =
       delete;
 
-  ~MenuControllerMnemonicTest() override {
-  }
+  ~MenuControllerMnemonicTest() override = default;
 
   // MenuTestBase overrides:
   void BuildMenu(views::MenuItemView* menu) override {
@@ -53,7 +51,7 @@ class MenuControllerMnemonicTest : public MenuTestBase {
 
 // Pressing the mnemonic for a menu item should execute the command for that
 // menu item.
-typedef MenuControllerMnemonicTest<ui::VKEY_DIVIDE,1>
+typedef MenuControllerMnemonicTest<ui::VKEY_DIVIDE, 1>
     MenuControllerMnemonicTestMnemonicMatch;
 
 #if BUILDFLAG(IS_MAC)
@@ -69,19 +67,13 @@ VIEW_TEST(MenuControllerMnemonicTestMnemonicMatch, MAYBE_MnemonicMatch)
 
 // Pressing a key which matches the first letter of the menu item's title
 // should execute the command for that menu item.
-typedef MenuControllerMnemonicTest<ui::VKEY_T,2>
+typedef MenuControllerMnemonicTest<ui::VKEY_T, 2>
     MenuControllerMnemonicTestTitleMatch;
 
 VIEW_TEST(MenuControllerMnemonicTestTitleMatch, MAYBE_TitleMatch)
 
 // Pressing an arbitrary key should not execute any commands.
-typedef MenuControllerMnemonicTest<ui::VKEY_A,0>
+typedef MenuControllerMnemonicTest<ui::VKEY_A, 0>
     MenuControllerMnemonicTestNoMatch;
 
-// TODO(https://crbug.com/1444104): Re-enable the test once fixed.
-#if BUILDFLAG(IS_CHROMEOS_LACROS) && defined(ADDRESS_SANITIZER)
-#define MAYBE_NoMatch DISABLED_NoMatch
-#else
-#define MAYBE_NoMatch NoMatch
-#endif
-VIEW_TEST(MenuControllerMnemonicTestNoMatch, MAYBE_NoMatch)
+VIEW_TEST(MenuControllerMnemonicTestNoMatch, NoMatch)

@@ -45,20 +45,41 @@ PermissionPromptDisposition MockPermissionPrompt::GetPromptDisposition() const {
 #endif
 }
 
-absl::optional<gfx::Rect> MockPermissionPrompt::GetViewBoundsInScreen() const {
-  return absl::make_optional<gfx::Rect>(100, 100, 100, 100);
+std::optional<gfx::Rect> MockPermissionPrompt::GetViewBoundsInScreen() const {
+  return std::make_optional<gfx::Rect>(100, 100, 100, 100);
+}
+
+bool MockPermissionPrompt::ShouldFinalizeRequestAfterDecided() const {
+  return true;
+}
+
+std::vector<permissions::ElementAnchoredBubbleVariant>
+MockPermissionPrompt::GetPromptVariants() const {
+  return {};
+}
+
+std::optional<feature_params::PermissionElementPromptPosition>
+MockPermissionPrompt::GetPromptPosition() const {
+  return std::nullopt;
+}
+
+bool MockPermissionPrompt::IsAskPrompt() const {
+  return true;
 }
 
 MockPermissionPrompt::MockPermissionPrompt(MockPermissionPromptFactory* factory,
                                            Delegate* delegate)
     : factory_(factory), delegate_(delegate) {
-  for (const PermissionRequest* request : delegate_->Requests()) {
+  for (const auto& request : delegate_->Requests()) {
     RequestType request_type = request->request_type();
     // The actual prompt will call these, so test they're sane.
 #if BUILDFLAG(IS_ANDROID)
     // For kStorageAccess, the prompt itself calculates the message text.
     if (request_type != permissions::RequestType::kStorageAccess) {
-      EXPECT_FALSE(request->GetDialogMessageText().empty());
+      EXPECT_FALSE(
+          request
+              ->GetDialogAnnotatedMessageText(delegate_->GetRequestingOrigin())
+              .text.empty());
     }
     EXPECT_NE(0, permissions::GetIconId(request_type));
 #else
@@ -66,9 +87,7 @@ MockPermissionPrompt::MockPermissionPrompt(MockPermissionPromptFactory* factory,
     EXPECT_FALSE(permissions::GetIconId(request_type).is_empty());
 #endif
     EXPECT_EQ(request->ShouldUseTwoOriginPrompt(),
-              request_type == permissions::RequestType::kStorageAccess &&
-                  base::FeatureList::IsEnabled(
-                      permissions::features::kPermissionStorageAccessAPI));
+              request_type == permissions::RequestType::kStorageAccess);
   }
 }
 

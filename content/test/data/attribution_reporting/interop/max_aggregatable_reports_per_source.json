@@ -1,793 +1,320 @@
 {
-  "description": "1 navigation source and 21 trigger produce 1 report",
+  "description": "max aggregatable reports per source",
+  "api_config": {
+    "max_aggregatable_reports_per_source": "3"
+  },
   "input": {
-    "sources": [
+    "registrations": [
       {
-        "timestamp": "1643235573000",
+        "timestamp": "0",
         "registration_request": {
-          "source_origin": "https://source.test",
-          "attribution_src_url": "https://reporter.test/register-source",
-          "source_type": "navigation"
+          "context_origin": "https://source.test",
+          "Attribution-Reporting-Eligible": "navigation-source"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-source",
-          "response": {
-            "Attribution-Reporting-Register-Source": {
-              "destination": "https://destination.test",
-              "source_event_id": "123",
-              "aggregation_keys": {
-                "a": "0x159"
-              }
-            }
-          }
-        }]
-      }
-    ],
-    "triggers": [
-      {
-        "timestamp": "1643235574000",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
+        "responses": [
+          {
+            "url": "https://reporter.test/register-source",
+            "debug_permission": true,
+            "response": {
+              "Attribution-Reporting-Register-Source": {
+                "destination": "https://destination.test",
+                "source_event_id": "123",
+                "aggregation_keys": {
+                  "a": "0x159"
                 }
-              ],
-              "aggregatable_values": {
-                "a": 1
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574001",
+        "timestamp": "1000",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "response": {
+              "Attribution-Reporting-Register-Trigger": {
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 1
                 }
-              ],
-              "aggregatable_values": {
-                "a": 2
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574002",
+        "timestamp": "1001",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "response": {
+              "Attribution-Reporting-Register-Trigger": {
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 2
                 }
-              ],
-              "aggregatable_values": {
-                "a": 3
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574003",
+        "timestamp": "1002",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 4
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "debug_permission": true,
+            "response": {
+              "Attribution-Reporting-Register-Trigger": {
+                "debug_reporting": true,
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 3
+                },
+                // Reports originating with trigger context ID do not contribute
+                // to the report count.
+                "trigger_context_id": ""
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574004",
+        "timestamp": "1003",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "debug_permission": true,
+            "response": {
+              // Should be allowed because the previous trigger should not have
+              // contributed to the report count.
+              "Attribution-Reporting-Register-Trigger": {
+                "debug_reporting": true,
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 4
                 }
-              ],
-              "aggregatable_values": {
-                "a": 5
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574005",
+        "timestamp": "1004",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "debug_permission": true,
+            "response": {
+              // Should be rejected because the previous trigger did not have
+              // a trigger context ID, and therefore its associated report
+              // should have contributed to the report count.
+              "Attribution-Reporting-Register-Trigger": {
+                "debug_reporting": true,
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 5
                 }
-              ],
-              "aggregatable_values": {
-                "a": 6
               }
             }
           }
-        }]
+        ]
       },
       {
-        "timestamp": "1643235574006",
+        "timestamp": "1005",
         "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
+          "context_origin": "https://destination.test"
         },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 7
+        "responses": [
+          {
+            "url": "https://reporter.test/register-trigger",
+            "debug_permission": true,
+            "response": {
+              "Attribution-Reporting-Register-Trigger": {
+                "debug_reporting": true,
+                "aggregatable_trigger_data": [
+                  {
+                    "source_keys": ["a"],
+                    "key_piece": "0x400"
+                  }
+                ],
+                "aggregatable_values": {
+                  "a": 6
+                },
+                // Trigger context ID causes report to be ignored with respect
+                // to maximum count.
+                "trigger_context_id": ""
               }
             }
           }
-        }]
-      },
-      {
-        "timestamp": "1643235574007",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 8
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574008",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 9
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574009",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 10
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574010",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 11
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574011",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 12
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574012",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 13
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574013",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 14
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574014",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 15
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574015",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 16
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574016",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 17
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574017",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 18
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574018",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 19
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574019",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 20
-              }
-            }
-          }
-        }]
-      },
-      {
-        "timestamp": "1643235574020",
-        "registration_request": {
-          "attribution_src_url": "https://reporter.test/register-trigger",
-          "destination_origin": "https://destination.test"
-        },
-        "responses": [{
-          "url": "https://reporter.test/register-trigger",
-          "debug_permission": true,
-          "response": {
-            "Attribution-Reporting-Register-Trigger": {
-              "debug_reporting": true,
-              "aggregatable_trigger_data": [
-                {
-                  "source_keys": ["a"],
-                  "key_piece": "0x400"
-                }
-              ],
-              "aggregatable_values": {
-                "a": 21
-              }
-            }
-          }
-        }]
+        ]
       }
     ]
   },
   "output": {
-    "event_level_results": [],
-    "aggregatable_results": [
+    "reports": [
       {
         "payload": {
-          "attribution_destination": "https://destination.test",
+           "aggregation_coordinator_origin": "https://coordinator.test",
+           "histograms": [
+             {
+               "id": "0",
+               "key": "0x559",
+               "value": 3
+             }
+           ],
+           "shared_info": {
+              "api": "attribution-reporting",
+              "attribution_destination": "https://destination.test",
+              "reporting_origin": "https://reporter.test",
+              "scheduled_report_time": "1",
+              "version": "1.0"
+           },
+           "trigger_context_id": ""
+        },
+        "report_time": "1002",
+        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution"
+      },
+      {
+        "payload": [
+          {
+            "body": {
+              "attribution_destination": "https://destination.test",
+              "limit": "3",
+              "source_event_id": "123",
+              "source_site": "https://source.test"
+            },
+            "type": "trigger-aggregate-excessive-reports"
+          }
+        ],
+        "report_time": "1004",
+        "report_url": "https://reporter.test/.well-known/attribution-reporting/debug/verbose"
+      },
+      {
+        "payload": {
+           "aggregation_coordinator_origin": "https://coordinator.test",
+           "histograms": [
+             {
+               "id": "0",
+               "key": "0x559",
+               "value": 6
+             }
+           ],
+           "shared_info": {
+              "api": "attribution-reporting",
+              "attribution_destination": "https://destination.test",
+              "reporting_origin": "https://reporter.test",
+              "scheduled_report_time": "1",
+              "version": "1.0"
+           },
+           "trigger_context_id": ""
+        },
+        "report_time": "1005",
+        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution"
+      },
+      {
+        "payload": {
+          "aggregation_coordinator_origin": "https://coordinator.test",
           "histograms": [
             {
+              "id": "0",
               "key": "0x559",
               "value": 1
             }
-          ]
+          ],
+          "shared_info": {
+            "api": "attribution-reporting",
+            "attribution_destination": "https://destination.test",
+            "reporting_origin": "https://reporter.test",
+            "scheduled_report_time": "3601",
+            "version": "1.0"
+          }
         },
         "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174000"
+        "report_time": "3601000"
       },
       {
         "payload": {
-          "attribution_destination": "https://destination.test",
+          "aggregation_coordinator_origin": "https://coordinator.test",
           "histograms": [
             {
+              "id": "0",
               "key": "0x559",
               "value": 2
             }
-          ]
+          ],
+          "shared_info": {
+            "api": "attribution-reporting",
+            "attribution_destination": "https://destination.test",
+            "reporting_origin": "https://reporter.test",
+            "scheduled_report_time": "3601",
+            "version": "1.0"
+          }
         },
         "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174001"
+        "report_time": "3601001"
       },
       {
         "payload": {
-          "attribution_destination": "https://destination.test",
+          "aggregation_coordinator_origin": "https://coordinator.test",
           "histograms": [
             {
-              "key": "0x559",
-              "value": 3
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174002"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
+              "id": "0",
               "key": "0x559",
               "value": 4
             }
-          ]
+          ],
+          "shared_info": {
+            "api": "attribution-reporting",
+            "attribution_destination": "https://destination.test",
+            "reporting_origin": "https://reporter.test",
+            "scheduled_report_time": "3601",
+            "version": "1.0"
+          }
         },
         "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174003"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 5
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174004"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 6
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174005"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 7
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174006"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 8
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174007"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 9
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174008"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 10
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174009"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 11
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174010"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 12
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174011"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 13
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174012"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 14
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174013"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 15
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174014"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 16
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174015"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 17
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174016"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 18
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174017"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 19
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174018"
-      },
-      {
-        "payload": {
-          "attribution_destination": "https://destination.test",
-          "histograms": [
-            {
-              "key": "0x559",
-              "value": 20
-            }
-          ]
-        },
-        "report_url": "https://reporter.test/.well-known/attribution-reporting/report-aggregate-attribution",
-        "report_time": "1643239174019"
-      }
-    ],
-    "verbose_debug_reports": [
-      {
-        "payload": [ {
-          "body": {
-	     "attribution_destination": "https://destination.test",
-             "limit": "20",
-             "source_event_id": "123",
-             "source_site": "https://source.test"
-          },
-          "type": "trigger-aggregate-excessive-reports"
-       } ],
-       "report_time": "1643235574020",
-       "report_url": "https://reporter.test/.well-known/attribution-reporting/debug/verbose"
+        "report_time": "3601003"
       }
     ]
   }

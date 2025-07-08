@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/accelerated_widget_mac/ca_renderer_layer_tree.h"
 
 #import <AVFoundation/AVFoundation.h>
@@ -12,10 +17,10 @@
 
 #include <utility>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -29,10 +34,6 @@
 #include "ui/gfx/hdr_metadata_mac.h"
 #include "ui/gl/ca_renderer_layer_params.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ui {
 
 // Transitioning between AVSampleBufferDisplayLayer and CALayer with IOSurface
@@ -41,10 +42,6 @@ namespace ui {
 BASE_FEATURE(kFullscreenLowPowerBackdropMac,
              "FullscreenLowPowerBackdropMac",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kCALayerTreeOptimization,
-             "CALayerTreeOptimization",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_MAC)
 // Show borders around RenderPassDrawQuad CALayers. which is the output of a
@@ -63,42 +60,12 @@ class ComparatorSkColor4f {
   }
 };
 
-void RecordIOSurfaceHistograms(
-    int changed_io_surfaces_during_commit,
-    int unchanged_io_surfaces_during_commit,
-    int total_updated_io_surface_size_during_commit) {
-  // UMA for updated IOSurfaces.
-  int total_io_surfaces =
-      changed_io_surfaces_during_commit + unchanged_io_surfaces_during_commit;
-  if (total_io_surfaces > 0) {
-    // Total changed IOSurface size per frame. Use 100M as a max for this
-    // histogram. IOSurface size = w x h x bpp x planes. A 32 bpp HD surface
-    // takes ~8M bytes.
-    base::UmaHistogramCustomCounts(
-        "Compositing.Renderer.CALayer.ChangedIOSurfacesSizePerFrame",
-        total_updated_io_surface_size_during_commit, /*min=*/1,
-        /*exclusive_max=*/100000000, /*buckets=*/50);
-
-    // The number of changed IOSurfaces per frame.
-    base::UmaHistogramCustomCounts(
-        "Compositing.Renderer.CALayer.ChangedIOSurfacesPerFrame",
-        changed_io_surfaces_during_commit, /*min=*/1, /*exclusive_max=*/300,
-        /*buckets=*/50);
-
-    int changed_io_surface_percentage =
-        changed_io_surfaces_during_commit * 100 / total_io_surfaces;
-    base::UmaHistogramPercentage(
-        "Compositing.Renderer.CALayer.ChangedIOSurfacesPercentagePerFrame",
-        changed_io_surface_percentage);
-  }
-}
-
 // This will enqueue |io_surface| to be drawn by |av_layer|. This will
 // retain |cv_pixel_buffer| until it is no longer being displayed.
 bool AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
     AVSampleBufferDisplayLayer* av_layer,
     CVPixelBufferRef cv_pixel_buffer) {
-  base::ScopedCFTypeRef<CMVideoFormatDescriptionRef> video_info;
+  base::apple::ScopedCFTypeRef<CMVideoFormatDescriptionRef> video_info;
   OSStatus os_status = CMVideoFormatDescriptionCreateForImageBuffer(
       nullptr, cv_pixel_buffer, video_info.InitializeInto());
   if (os_status != noErr) {
@@ -112,10 +79,10 @@ bool AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
   CMTime frame_time = CMTimeMake(0, 1);
   CMSampleTimingInfo timing_info = {frame_time, frame_time, kCMTimeInvalid};
 
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample_buffer;
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample_buffer;
   os_status = CMSampleBufferCreateForImageBuffer(
-      nullptr, cv_pixel_buffer, YES, nullptr, nullptr, video_info, &timing_info,
-      sample_buffer.InitializeInto());
+      nullptr, cv_pixel_buffer, YES, nullptr, nullptr, video_info.get(),
+      &timing_info, sample_buffer.InitializeInto());
   if (os_status != noErr) {
     LOG(ERROR) << "CMSampleBufferCreateForImageBuffer failed with "
                << os_status;
@@ -124,7 +91,7 @@ bool AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
 
   // Specify to display immediately via the sample buffer attachments.
   CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(
-      sample_buffer, /*createIfNecessary=*/YES);
+      sample_buffer.get(), /*createIfNecessary=*/YES);
   if (!attachments) {
     LOG(ERROR) << "CMSampleBufferGetSampleAttachmentsArray failed";
     return false;
@@ -144,7 +111,7 @@ bool AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
                        kCMSampleAttachmentKey_DisplayImmediately,
                        kCFBooleanTrue);
 
-  [av_layer enqueueSampleBuffer:sample_buffer];
+  [av_layer enqueueSampleBuffer:sample_buffer.get()];
 
   switch (av_layer.status) {
     case AVQueuedSampleBufferRenderingStatusUnknown:
@@ -169,10 +136,10 @@ bool AVSampleBufferDisplayLayerEnqueueIOSurface(
     AVSampleBufferDisplayLayer* av_layer,
     IOSurfaceRef io_surface,
     const gfx::ColorSpace& io_surface_color_space,
-    absl::optional<gfx::HDRMetadata> hdr_metadata) {
+    std::optional<gfx::HDRMetadata> hdr_metadata) {
   CVReturn cv_return = kCVReturnSuccess;
 
-  base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
+  base::apple::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
   cv_return = CVPixelBufferCreateWithIOSurface(
       nullptr, io_surface, /*pixelBufferAttributes=*/nullptr,
       cv_pixel_buffer.InitializeInto());
@@ -181,52 +148,56 @@ bool AVSampleBufferDisplayLayerEnqueueIOSurface(
     return false;
   }
 
-  if (__builtin_available(macos 11.0, *)) {
-    if (io_surface_color_space ==
-            gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
-                            gfx::ColorSpace::TransferID::PQ,
-                            gfx::ColorSpace::MatrixID::BT2020_NCL,
-                            gfx::ColorSpace::RangeID::LIMITED) ||
-        io_surface_color_space ==
-            gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
-                            gfx::ColorSpace::TransferID::HLG,
-                            gfx::ColorSpace::MatrixID::BT2020_NCL,
-                            gfx::ColorSpace::RangeID::LIMITED)) {
-      CVBufferSetAttachment(cv_pixel_buffer, kCVImageBufferColorPrimariesKey,
-                            kCVImageBufferColorPrimaries_ITU_R_2020,
-                            kCVAttachmentMode_ShouldPropagate);
-      CVBufferSetAttachment(cv_pixel_buffer, kCVImageBufferYCbCrMatrixKey,
-                            kCVImageBufferYCbCrMatrix_ITU_R_2020,
-                            kCVAttachmentMode_ShouldPropagate);
-      switch (io_surface_color_space.GetTransferID()) {
-        case gfx::ColorSpace::TransferID::HLG:
-          CVBufferSetAttachment(cv_pixel_buffer,
-                                kCVImageBufferTransferFunctionKey,
-                                kCVImageBufferTransferFunction_ITU_R_2100_HLG,
-                                kCVAttachmentMode_ShouldPropagate);
-          break;
-        case gfx::ColorSpace::TransferID::PQ:
-          CVBufferSetAttachment(cv_pixel_buffer,
-                                kCVImageBufferTransferFunctionKey,
-                                kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
-                                kCVAttachmentMode_ShouldPropagate);
-          CVBufferSetAttachment(
-              cv_pixel_buffer, kCVImageBufferMasteringDisplayColorVolumeKey,
-              gfx::GenerateMasteringDisplayColorVolume(hdr_metadata),
-              kCVAttachmentMode_ShouldPropagate);
-          CVBufferSetAttachment(
-              cv_pixel_buffer, kCVImageBufferContentLightLevelInfoKey,
-              gfx::GenerateContentLightLevelInfo(hdr_metadata),
-              kCVAttachmentMode_ShouldPropagate);
-          break;
-        default:
-          break;
-      }
+  if (io_surface_color_space ==
+          gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
+                          gfx::ColorSpace::TransferID::PQ,
+                          gfx::ColorSpace::MatrixID::BT2020_NCL,
+                          gfx::ColorSpace::RangeID::LIMITED) ||
+      io_surface_color_space ==
+          gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
+                          gfx::ColorSpace::TransferID::HLG,
+                          gfx::ColorSpace::MatrixID::BT2020_NCL,
+                          gfx::ColorSpace::RangeID::LIMITED)) {
+    CVBufferSetAttachment(cv_pixel_buffer.get(),
+                          kCVImageBufferColorPrimariesKey,
+                          kCVImageBufferColorPrimaries_ITU_R_2020,
+                          kCVAttachmentMode_ShouldPropagate);
+    CVBufferSetAttachment(cv_pixel_buffer.get(), kCVImageBufferYCbCrMatrixKey,
+                          kCVImageBufferYCbCrMatrix_ITU_R_2020,
+                          kCVAttachmentMode_ShouldPropagate);
+
+    switch (io_surface_color_space.GetTransferID()) {
+      case gfx::ColorSpace::TransferID::HLG:
+        CVBufferSetAttachment(cv_pixel_buffer.get(),
+                              kCVImageBufferTransferFunctionKey,
+                              kCVImageBufferTransferFunction_ITU_R_2100_HLG,
+                              kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(cv_pixel_buffer.get(),
+                              kCVImageBufferAmbientViewingEnvironmentKey,
+                              gfx::GenerateAmbientViewingEnvironment().get(),
+                              kCVAttachmentMode_ShouldPropagate);
+        break;
+      case gfx::ColorSpace::TransferID::PQ:
+        CVBufferSetAttachment(cv_pixel_buffer.get(),
+                              kCVImageBufferTransferFunctionKey,
+                              kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ,
+                              kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(
+            cv_pixel_buffer.get(), kCVImageBufferMasteringDisplayColorVolumeKey,
+            gfx::GenerateMasteringDisplayColorVolume(hdr_metadata).get(),
+            kCVAttachmentMode_ShouldPropagate);
+        CVBufferSetAttachment(
+            cv_pixel_buffer.get(), kCVImageBufferContentLightLevelInfoKey,
+            gfx::GenerateContentLightLevelInfo(hdr_metadata).get(),
+            kCVAttachmentMode_ShouldPropagate);
+        break;
+      default:
+        break;
     }
   }
 
   return AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(av_layer,
-                                                        cv_pixel_buffer);
+                                                        cv_pixel_buffer.get());
 }
 
 CATransform3D ToCATransform3D(const gfx::Transform& t) {
@@ -253,7 +224,7 @@ class CARendererLayerTree::SolidColorContents
   friend class base::RefCounted<SolidColorContents>;
 
   SolidColorContents(SkColor4f color,
-                     base::ScopedCFTypeRef<IOSurfaceRef> io_surface);
+                     base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface);
   ~SolidColorContents();
 
   using Map = std::map<SkColor4f,
@@ -262,7 +233,7 @@ class CARendererLayerTree::SolidColorContents
   static Map* GetMap();
 
   const SkColor4f color_;
-  base::ScopedCFTypeRef<IOSurfaceRef> io_surface_;
+  base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface_;
 };
 
 // static
@@ -287,25 +258,26 @@ CARendererLayerTree::SolidColorContents::Get(SkColor4f color) {
     color_space = gfx::ColorSpace::CreateDisplayP3D65();
   }
 
-  base::ScopedCFTypeRef<IOSurfaceRef> io_surface =
+  base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface =
       CreateIOSurface(size, buffer_format);
   if (!io_surface)
     return nullptr;
-  IOSurfaceSetColorSpace(io_surface, color_space);
+  IOSurfaceSetColorSpace(io_surface.get(), color_space);
 
   {
     size_t bytes_per_row =
-        IOSurfaceGetBytesPerRowOfPlane(io_surface, /*planeIndex=*/0);
-    IOSurfaceLock(io_surface, /*options=*/0, /*seed=*/nullptr);
+        IOSurfaceGetBytesPerRowOfPlane(io_surface.get(), /*planeIndex=*/0);
+    IOSurfaceLock(io_surface.get(), /*options=*/0, /*seed=*/nullptr);
     char* base_address =
-        reinterpret_cast<char*>(IOSurfaceGetBaseAddress(io_surface));
-    SkImageInfo info = SkImageInfo::Make(size.width(), size.height(),
-                                         color_type, kPremul_SkAlphaType);
+        reinterpret_cast<char*>(IOSurfaceGetBaseAddress(io_surface.get()));
+    SkImageInfo info =
+        SkImageInfo::Make(size.width(), size.height(), color_type,
+                          kPremul_SkAlphaType, color_space.ToSkColorSpace());
     auto canvas = SkCanvas::MakeRasterDirect(info, base_address, bytes_per_row);
     DCHECK(canvas);
     canvas->clear(color);
 
-    IOSurfaceUnlock(io_surface, /*options=*/0, /*seed=*/nullptr);
+    IOSurfaceUnlock(io_surface.get(), /*options=*/0, /*seed=*/nullptr);
   }
   return new SolidColorContents(color, io_surface);
 }
@@ -320,7 +292,7 @@ IOSurfaceRef CARendererLayerTree::SolidColorContents::GetIOSurfaceRef() const {
 
 CARendererLayerTree::SolidColorContents::SolidColorContents(
     SkColor4f color,
-    base::ScopedCFTypeRef<IOSurfaceRef> io_surface)
+    base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface)
     : color_(color), io_surface_(std::move(io_surface)) {
   auto* map = GetMap();
   DCHECK(map->find(color_) == map->end());
@@ -344,12 +316,12 @@ CARendererLayerTree::SolidColorContents::GetMap() {
 
 CARendererLayerTree::CARendererLayerTree(
     bool allow_av_sample_buffer_display_layer,
-    bool allow_solid_color_layers)
+    bool allow_solid_color_layers,
+    id<MTLDevice> metal_device)
     : allow_av_sample_buffer_display_layer_(
           allow_av_sample_buffer_display_layer),
       allow_solid_color_layers_(allow_solid_color_layers),
-      ca_layer_tree_optimization_(
-          base::FeatureList::IsEnabled(kCALayerTreeOptimization)) {}
+      metal_device_(metal_device) {}
 CARendererLayerTree::~CARendererLayerTree() = default;
 
 bool CARendererLayerTree::ScheduleCALayer(const CARendererLayerParams& params) {
@@ -368,37 +340,14 @@ void CARendererLayerTree::CommitScheduledCALayers(
   TRACE_EVENT0("gpu", "CARendererLayerTree::CommitScheduledCALayers");
   scale_factor_ = scale_factor;
 
-  if (ca_layer_tree_optimization_)
-    MatchLayersToOldTree(old_tree.get());
-  else
-    MatchLayersToOldTreeDefault(old_tree.get());
+  // The CALayerTree optimization reuses the matched CALayer from the previous.
+  MatchLayersToOldTree(old_tree.get());
 
   root_layer_.CommitToCA(superlayer, pixel_size);
   // If there are any extra CALayers in |old_tree| that were not stolen by this
   // tree, they will be removed from the CALayer tree in this deallocation.
   old_tree.reset();
   has_committed_ = true;
-
-  // UMA
-  RecordIOSurfaceHistograms(changed_io_surfaces_during_commit_,
-                            unchanged_io_surfaces_during_commit_,
-                            total_updated_io_surface_size_during_commit_);
-}
-
-void CARendererLayerTree::MatchLayersToOldTreeDefault(
-    CARendererLayerTree* old_tree) {
-  if (!old_tree)
-    return;
-  DCHECK(old_tree->has_committed_);
-
-  // Match the root layer.
-  if (old_tree->scale_factor_ != scale_factor_)
-    return;
-
-  root_layer_.old_layer_ =
-      old_tree->root_layer_.weak_factory_for_new_layer_.GetWeakPtr();
-
-  root_layer_.CALayerFallBack();
 }
 
 void CARendererLayerTree::MatchLayersToOldTree(CARendererLayerTree* old_tree) {
@@ -457,8 +406,8 @@ void CARendererLayerTree::ContentLayer::UpdateMapAndMatchOldLayers(
   if (matched_content_layer->ca_layer_used_)
     return;
 
-  auto matched_transform_layer = matched_content_layer->parent_layer_;
-  auto matched_clip_layer = matched_transform_layer->parent_layer_;
+  auto* matched_transform_layer = matched_content_layer->parent_layer_;
+  auto* matched_clip_layer = matched_transform_layer->parent_layer_;
 
   // If the parent is different, the superlayer must have changed. It should be
   // removed from its superlayer and inserted back to the new superlayer in
@@ -488,12 +437,11 @@ void CARendererLayerTree::ContentLayer::UpdateMapAndMatchOldLayers(
     }
   }
 
-  if (matched_clip_layer.get() !=
-      parent_layer_->parent_layer_->old_layer_.get()) {
+  if (matched_clip_layer != parent_layer_->parent_layer_->old_layer_.get()) {
     [matched_transform_layer->ca_layer_ removeFromSuperlayer];
   }
 
-  if (matched_transform_layer.get() != parent_layer_->old_layer_.get()) {
+  if (matched_transform_layer != parent_layer_->old_layer_.get()) {
     [matched_content_layer->ca_layer_ removeFromSuperlayer];
   } else if (matched_content_layer->layer_order_ < last_old_layer_order) {
     // For the content layers with the same superlayer, if the order changes.
@@ -750,8 +698,8 @@ CARendererLayerTree::TransformLayer::~TransformLayer() {
 
 CARendererLayerTree::ContentLayer::ContentLayer(
     TransformLayer* parent_layer,
-    base::ScopedCFTypeRef<IOSurfaceRef> io_surface,
-    base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer,
+    base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface,
+    base::apple::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer,
     const gfx::RectF& contents_rect,
     const gfx::Rect& rect,
     SkColor4f background_color,
@@ -815,20 +763,24 @@ CARendererLayerTree::ContentLayer::ContentLayer(
   }
 
   // Determine which type of CALayer subclass we should use.
-  if (metal::ShouldUseHDRCopier(io_surface, hdr_metadata_,
+  if (metal::ShouldUseHDRCopier(io_surface.get(), hdr_metadata_,
                                 io_surface_color_space)) {
     type_ = CALayerType::kHDRCopier;
   } else if (io_surface) {
-    // Only allow 4:2:0 frames which fill the layer's contents or protected
+    // Only allow YUV frames which fill the layer's contents or protected
     // video to be promoted to AV layers.
     if (tree()->allow_av_sample_buffer_display_layer_) {
       if (contents_rect == gfx::RectF(0, 0, 1, 1)) {
-        switch (IOSurfaceGetPixelFormat(io_surface)) {
+        switch (IOSurfaceGetPixelFormat(io_surface.get())) {
           case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+          case kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange:
             type_ = CALayerType::kVideo;
             video_type_can_downgrade_ = !io_surface_color_space.IsHDR();
             break;
           case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+          case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
             type_ = CALayerType::kVideo;
             video_type_can_downgrade_ = false;
             break;
@@ -838,10 +790,8 @@ CARendererLayerTree::ContentLayer::ContentLayer(
       }
 
       if (protected_video_type_ != gfx::ProtectedVideoType::kClear) {
-        if (@available(macOS 11, *)) {
-          type_ = CALayerType::kVideo;
-          video_type_can_downgrade_ = false;
-        }
+        type_ = CALayerType::kVideo;
+        video_type_can_downgrade_ = false;
       }
     }
   }
@@ -852,11 +802,12 @@ CARendererLayerTree::ContentLayer::ContentLayer(
     // mismatch probably resulted from rounding the dimensions to integers. This
     // works around a macOS bug which breaks detached fullscreen playback of
     // slightly distorted videos (https://crbug.com/792632).
-    const auto av_rect(cv_pixel_buffer
-                           ? gfx::RectF(CVPixelBufferGetWidth(cv_pixel_buffer),
-                                        CVPixelBufferGetHeight(cv_pixel_buffer))
-                           : gfx::RectF(IOSurfaceGetWidth(io_surface),
-                                        IOSurfaceGetHeight(io_surface)));
+    const auto av_rect(
+        cv_pixel_buffer
+            ? gfx::RectF(CVPixelBufferGetWidth(cv_pixel_buffer.get()),
+                         CVPixelBufferGetHeight(cv_pixel_buffer.get()))
+            : gfx::RectF(IOSurfaceGetWidth(io_surface.get()),
+                         IOSurfaceGetHeight(io_surface.get())));
     const CGFloat av_ratio = av_rect.width() / av_rect.height();
     const CGFloat layer_ratio = rect_.width() / rect_.height();
     const CGFloat ratio_error = av_ratio / layer_ratio;
@@ -939,7 +890,7 @@ void CARendererLayerTree::ClipAndSortingLayer::AddContentLayer(
 void CARendererLayerTree::TransformLayer::AddContentLayer(
     const CARendererLayerParams& params) {
   content_layers_.emplace_back(
-      this, params.io_surface, base::ScopedCFTypeRef<CVPixelBufferRef>(),
+      this, params.io_surface, base::apple::ScopedCFTypeRef<CVPixelBufferRef>(),
       params.contents_rect, params.rect, params.background_color,
       params.io_surface_color_space, params.edge_aa_mask, params.opacity,
       params.nearest_neighbor_filter, params.hdr_metadata,
@@ -1157,6 +1108,13 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         old_layer_->cv_pixel_buffer_ != cv_pixel_buffer_ ||
         old_layer_->solid_color_contents_ != solid_color_contents_ ||
         old_layer_->hdr_metadata_ != hdr_metadata_;
+    // If the HDR headroom has changed then the HDRCopierLayer's tone mapping
+    // may change, so re-draw this layer.
+    if (old_layer_->type_ == CALayerType::kHDRCopier &&
+        old_layer_->tree()->display_hdr_headroom_ !=
+            tree()->display_hdr_headroom_) {
+      update_contents = true;
+    }
     update_contents_rect = old_layer_->contents_rect_ != contents_rect_;
     update_rect = old_layer_->rect_ != rect_;
     update_background_color =
@@ -1171,12 +1129,17 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         break;
       case CALayerType::kVideo:
         av_layer_ = [[AVSampleBufferDisplayLayer alloc] init];
+        // Workaround for https://crbug.com/398425794. The documentation for
+        // geometryFlipped specifies that "The value of this property does not
+        // affect the rendering of the layer’s content." If this is not
+        // specified, then AVSampleBufferDisplayLayer, when rendering HDR
+        // content that is transformed (by, e.g, a 90 degree rotation), will
+        // be flipped vertically.
+        av_layer_.geometryFlipped = YES;
         ca_layer_ = av_layer_;
         av_layer_.videoGravity = AVLayerVideoGravityResize;
         if (protected_video_type_ != gfx::ProtectedVideoType::kClear) {
-          if (@available(macOS 11, *)) {
-            av_layer_.preventsCapture = true;
-          }
+          av_layer_.preventsCapture = true;
         }
         break;
       case CALayerType::kDefault:
@@ -1207,8 +1170,9 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
   switch (type_) {
     case CALayerType::kHDRCopier:
       if (update_contents) {
-        metal::UpdateHDRCopierLayer(ca_layer_, io_surface_,
+        metal::UpdateHDRCopierLayer(ca_layer_, io_surface_.get(),
                                     tree()->metal_device_,
+                                    tree()->display_hdr_headroom_,
                                     io_surface_color_space_, hdr_metadata_);
       }
       break;
@@ -1217,14 +1181,15 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         bool result = false;
         if (cv_pixel_buffer_) {
           result = AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
-              av_layer_, cv_pixel_buffer_);
+              av_layer_, cv_pixel_buffer_.get());
           if (!result) {
             LOG(ERROR)
                 << "AVSampleBufferDisplayLayerEnqueueCVPixelBuffer failed";
           }
         } else {
           result = AVSampleBufferDisplayLayerEnqueueIOSurface(
-              av_layer_, io_surface_, io_surface_color_space_, hdr_metadata_);
+              av_layer_, io_surface_.get(), io_surface_color_space_,
+              hdr_metadata_);
           if (!result) {
             LOG(ERROR) << "AVSampleBufferDisplayLayerEnqueueIOSurface failed";
           }
@@ -1239,20 +1204,12 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
       if (update_contents) {
         if (io_surface_) {
           ca_layer_.contents = (__bridge id)io_surface_.get();
-          // Used for UMA
-          tree()->changed_io_surfaces_during_commit_++;
-          tree()->total_updated_io_surface_size_during_commit_ +=
-              IOSurfaceGetAllocSize(io_surface_);
         } else if (solid_color_contents_) {
           ca_layer_.contents = solid_color_contents_->GetContents();
         } else {
           ca_layer_.contents = nil;
         }
         ca_layer_.contentsScale = tree()->scale_factor_;
-      } else {
-        // Used for UMA
-        if (io_surface_)
-          tree()->unchanged_io_surfaces_during_commit_++;
       }
       break;
   }
@@ -1274,11 +1231,11 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         background_color_.fB,
         background_color_.fA,
     };
-    base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+    base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
         CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB));
-    base::ScopedCFTypeRef<CGColorRef> srgb_background_color(
+    base::apple::ScopedCFTypeRef<CGColorRef> srgb_background_color(
         CGColorCreate(color_space.get(), rgba_color_components));
-    ca_layer_.backgroundColor = srgb_background_color;
+    ca_layer_.backgroundColor = srgb_background_color.get();
   }
   if (update_ca_edge_aa_mask) {
     ca_layer_.edgeAntialiasingMask = ca_edge_aa_mask_;
@@ -1302,7 +1259,7 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
   if (show_overlay_borders || fill_layers ||
       (show_rpdq_borders && is_render_pass_draw_quad_)) {
     uint32_t pixel_format =
-        io_surface_ ? IOSurfaceGetPixelFormat(io_surface_) : 0;
+        io_surface_ ? IOSurfaceGetPixelFormat(io_surface_.get()) : 0;
     float red = 0;
     float green = 0;
     float blue = 0;
@@ -1314,26 +1271,33 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
       case CALayerType::kVideo:
         switch (pixel_format) {
           case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
-            // Yellow is NV12 AVSampleBufferDisplayLayer
+          case kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange:
+            // Yellow is NV12/NV16/NV24 AVSampleBufferDisplayLayer
             red = green = 1;
             break;
           case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-            // Cyan is P010 AVSampleBufferDisplayLayer
+          case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
+            // Cyan is P010/P210/P410 AVSampleBufferDisplayLayer
             green = blue = 1;
             break;
           default:
             NOTREACHED();
-            break;
         }
         break;
       case CALayerType::kDefault:
         switch (pixel_format) {
           case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
-            // Green is NV12 AVSampleBufferDisplayLayer
+          case kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange:
+            // Green is NV12/NV16/NV24 AVSampleBufferDisplayLayer
             green = 1;
             break;
           case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-            // Red is P010 AVSampleBufferDisplayLayer
+          case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+          case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
+            // Red is P010/P210/P410 AVSampleBufferDisplayLayer
             red = 1;
             break;
           case 0:
@@ -1356,9 +1320,9 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
         is_render_pass_draw_quad_ ? 6 : (update_anything ? 2 : 1);
 
     // Set the layer color based on usage.
-    base::ScopedCFTypeRef<CGColorRef> color(
+    base::apple::ScopedCFTypeRef<CGColorRef> color(
         CGColorCreateGenericRGB(red, green, blue, alpha));
-    ca_layer_.borderColor = color;
+    ca_layer_.borderColor = color.get();
 
     // Flash indication of updates.
     if (fill_layers) {
@@ -1366,7 +1330,7 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
       if (!update_indicator_layer_)
         update_indicator_layer_ = [[CALayer alloc] init];
       if (update_anything) {
-        update_indicator_layer_.backgroundColor = color;
+        update_indicator_layer_.backgroundColor = color.get();
         update_indicator_layer_.opacity = 0.25;
         [ca_layer_ addSublayer:update_indicator_layer_];
         update_indicator_layer_.frame =

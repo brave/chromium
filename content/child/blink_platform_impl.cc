@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "base/command_line.h"
@@ -20,7 +21,6 @@
 #include "base/run_loop.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -157,16 +157,25 @@ void BlinkPlatformImpl::RecordAction(const blink::UserMetricsAction& name) {
     child_thread->RecordComputedAction(name.Action());
 }
 
+bool BlinkPlatformImpl::HasDataResource(int resource_id) const {
+  return GetContentClient()->HasDataResource(resource_id);
+}
+
 WebData BlinkPlatformImpl::GetDataResource(
     int resource_id,
     ui::ResourceScaleFactor scale_factor) {
-  base::StringPiece resource =
+  std::string_view resource =
       GetContentClient()->GetDataResource(resource_id, scale_factor);
-  return WebData(resource.data(), resource.size());
+  return WebData(base::as_byte_span(resource));
 }
 
 std::string BlinkPlatformImpl::GetDataResourceString(int resource_id) {
   return GetContentClient()->GetDataResourceString(resource_id);
+}
+
+base::RefCountedMemory* BlinkPlatformImpl::GetDataResourceBytes(
+    int resource_id) {
+  return GetContentClient()->GetDataResourceBytes(resource_id);
 }
 
 WebString BlinkPlatformImpl::QueryLocalizedString(int resource_id) {

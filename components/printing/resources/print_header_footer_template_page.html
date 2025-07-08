@@ -17,12 +17,12 @@
 
   #header {
     align-items: flex-start;
-    padding-top: 0.5cm;
+    padding-top: 15pt;
   }
 
   #footer {
     align-items: flex-end;
-    padding-bottom: 0.5cm;
+    padding-bottom: 15pt;
   }
 
   #content {
@@ -31,22 +31,22 @@
 
   .left {
     flex: none;
-    padding-left: 0.9cm; /* csschecker-disable-line left-right */
-    padding-right: 0.2cm; /* csschecker-disable-line left-right */
+    padding-left: 24pt; /* csschecker-disable-line left-right */
+    padding-right: 6pt; /* csschecker-disable-line left-right */
   }
 
   .center {
     flex: auto;
-    padding-left: 0.9cm; /* csschecker-disable-line left-right */
-    padding-right: 0.9cm; /* csschecker-disable-line left-right */
+    padding-left: 24pt; /* csschecker-disable-line left-right */
+    padding-right: 24pt; /* csschecker-disable-line left-right */
     text-align: center;
   }
 
   .right {
     flex: none;
     /* historically does not account for RTL */
-    padding-left: 0.2cm; /* csschecker-disable-line left-right */
-    padding-right: 0.9cm; /* csschecker-disable-line left-right */
+    padding-left: 6pt; /* csschecker-disable-line left-right */
+    padding-right: 24pt; /* csschecker-disable-line left-right */
   }
 
   .grow {
@@ -96,18 +96,18 @@ function setupHeaderFooterTemplate(options) {
   const rightMargin = options.width - options.rightMargin;
 
   header.innerHTML = options['headerTemplate'] || `
-    <div class='date text left'></div>
-    <div class='title text center'></div>`;
+    <div id=-internal-print-header class='date text left'></div>
+    <div id=-internal-print-header class='title text center'></div>`;
   footer.innerHTML = options['footerTemplate'] || `
-    <div class='url text left grow'></div>
-    <div class='text right'>
-      <span class='pageNumber'></span>/<span class='totalPages'></span>
+    <div id=-internal-print-footer class='url text left grow'></div>
+    <div id=-internal-print-page-number class='text right'>
+      <span class='pageNumber' id=-internal-print-page-number></span>/<span class='totalPages' id=-internal-print-page-number></span>
     </div>`;
 
   const date = new Date(options.date);
   const formatter =
       new Intl.DateTimeFormat(
-          navigator.languages[0],
+          navigator.languages[0].split('@')[0],
           { dateStyle: 'short', timeStyle: 'short' });
   options.date = formatter.format(date);
   for (const cssClass of ['date', 'title', 'url', 'pageNumber', 'totalPages']) {

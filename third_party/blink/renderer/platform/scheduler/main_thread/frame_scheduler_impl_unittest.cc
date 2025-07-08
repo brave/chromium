@@ -13,6 +13,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/run_loop.h"
@@ -29,7 +30,6 @@
 #include "base/unguessable_token.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
@@ -46,7 +46,6 @@
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_queue_type.h"
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_task_queue.h"
 #include "third_party/blink/renderer/platform/scheduler/test/web_scheduling_test_helper.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 using base::sequence_manager::TaskQueue;
 using testing::UnorderedElementsAre;
@@ -106,7 +105,7 @@ class TestObject {
   ~TestObject() { ++(*counter_); }
 
  private:
-  int* counter_;
+  raw_ptr<int> counter_;
 };
 
 }  // namespace
@@ -121,7 +120,7 @@ constexpr TaskType kAllFrameTaskTypes[] = {
     TaskType::kInternalLoading,
     TaskType::kNetworking,
     TaskType::kNetworkingUnfreezable,
-    TaskType::kNetworkingUnfreezableImageLoading,
+    TaskType::kNetworkingUnfreezableRenderBlockingLoading,
     TaskType::kNetworkingControl,
     TaskType::kLowPriorityScriptExecution,
     TaskType::kDOMManipulation,
@@ -168,12 +167,16 @@ constexpr TaskType kAllFrameTaskTypes[] = {
     TaskType::kInternalInputBlocking,
     TaskType::kWakeLock,
     TaskType::kStorage,
+    TaskType::kClipboard,
+    TaskType::kMachineLearning,
     TaskType::kWebGPU,
     TaskType::kInternalPostMessageForwarding,
-    TaskType::kInternalNavigationCancellation};
+    TaskType::kInternalNavigationCancellation,
+    TaskType::kInternalAutofill,
+    TaskType::kBackForwardCachePostedMessage};
 
 static_assert(
-    static_cast<int>(TaskType::kMaxValue) == 84,
+    static_cast<int>(TaskType::kMaxValue) == 89,
     "When adding a TaskType, make sure that kAllFrameTaskTypes is updated.");
 
 void AppendToVectorTestTask(Vector<String>* vector, String value) {
@@ -186,34 +189,33 @@ class FrameSchedulerDelegateForTesting : public FrameScheduler::Delegate {
 
   ~FrameSchedulerDelegateForTesting() override = default;
 
-  ukm::UkmRecorder* GetUkmRecorder() override { return nullptr; }
-
-  ukm::SourceId GetUkmSourceId() override { return ukm::kInvalidSourceId; }
-
-  void UpdateTaskTime(base::TimeDelta task_time) override {
-    update_task_time_calls_++;
+  void UpdateTaskTime(base::TimeDelta unreported_task_time) override {
+    update_unreported_task_time_calls_++;
   }
 
   void OnTaskCompleted(base::TimeTicks,
-                       base::TimeTicks,
                        base::TimeTicks) override {}
   const base::UnguessableToken& GetAgentClusterId() const override {
     return base::UnguessableToken::Null();
   }
   MOCK_METHOD(void, UpdateBackForwardCacheDisablingFeatures, (BlockingDetails));
 
-  int update_task_time_calls_ = 0;
+  DocumentResourceCoordinator* GetDocumentResourceCoordinator() override {
+    return nullptr;
+  }
+
+  int update_unreported_task_time_calls_ = 0;
 };
 
 MATCHER(BlockingDetailsHasCCNS, "Blocking details has CCNS.") {
   bool vector_empty =
-      arg.non_sticky_features_and_js_locations.details_list.empty();
+      arg.non_sticky_features_and_js_locations->details_list.empty();
   bool vector_has_ccns =
-      arg.sticky_features_and_js_locations.details_list.Contains(
+      arg.sticky_features_and_js_locations->details_list.Contains(
           FeatureAndJSLocationBlockingBFCache(
               SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore,
               nullptr)) &&
-      arg.sticky_features_and_js_locations.details_list.Contains(
+      arg.sticky_features_and_js_locations->details_list.Contains(
           FeatureAndJSLocationBlockingBFCache(
               SchedulingPolicy::Feature::kMainResourceHasCacheControlNoCache,
               nullptr));
@@ -227,15 +229,16 @@ MATCHER_P(BlockingDetailsHasWebSocket,
       (handle->GetFeatureAndJSLocationBlockingBFCache() ==
        FeatureAndJSLocationBlockingBFCache(
            SchedulingPolicy::Feature::kWebSocket, nullptr));
-  bool vector_empty = arg.sticky_features_and_js_locations.details_list.empty();
+  bool vector_empty =
+      arg.sticky_features_and_js_locations->details_list.empty();
   return handle_has_web_socket && vector_empty;
 }
 
 MATCHER(BlockingDetailsIsEmpty, "BlockingDetails is empty.") {
   bool non_sticky_vector_empty =
-      arg.non_sticky_features_and_js_locations.details_list.empty();
+      arg.non_sticky_features_and_js_locations->details_list.empty();
   bool sticky_vector_empty =
-      arg.sticky_features_and_js_locations.details_list.empty();
+      arg.sticky_features_and_js_locations->details_list.empty();
   return non_sticky_vector_empty && sticky_vector_empty;
 }
 class FrameSchedulerImplTest : public testing::Test {
@@ -298,8 +301,9 @@ class FrameSchedulerImplTest : public testing::Test {
 
   void StorePageInBackForwardCache() {
     page_scheduler_->SetPageVisible(false);
-    page_scheduler_->SetPageFrozen(true);
+    // Set BFCache state first to avoid a duplicate policy update.
     page_scheduler_->SetPageBackForwardCached(true);
+    page_scheduler_->SetPageFrozen(true);
   }
 
   void RestorePageFromBackForwardCache() {
@@ -411,14 +415,16 @@ class FrameSchedulerImplTest : public testing::Test {
     frame_scheduler->ResetForNavigation();
   }
 
-  base::TimeDelta GetTaskTime() { return frame_scheduler_->task_time_; }
+  base::TimeDelta GetUnreportedTaskTime() {
+    return frame_scheduler_->unreported_task_time_;
+  }
 
   int GetTotalUpdateTaskTimeCalls() {
-    return frame_scheduler_delegate_->update_task_time_calls_;
+    return frame_scheduler_delegate_->update_unreported_task_time_calls_;
   }
 
   void ResetTotalUpdateTaskTimeCalls() {
-    frame_scheduler_delegate_->update_task_time_calls_ = 0;
+    frame_scheduler_delegate_->update_unreported_task_time_calls_ = 0;
   }
 
   // Fast-forwards to the next time aligned on |interval|.
@@ -428,6 +434,66 @@ class FrameSchedulerImplTest : public testing::Test {
         now.SnappedToNextTick(base::TimeTicks(), interval);
     if (aligned != now)
       task_environment_.FastForwardBy(aligned - now);
+  }
+
+  // Post and run tasks with delays of 0ms, 50ms, 100ms, 150ms and 200ms. Stores
+  // run times in `run_times`.
+  void PostAndRunTasks50MsInterval(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      std::vector<base::TimeTicks>* run_times) {
+    for (int i = 0; i < 5; i++) {
+      task_runner->PostDelayedTask(FROM_HERE,
+                                   base::BindOnce(&RecordRunTime, run_times),
+                                   base::Milliseconds(50) * i);
+    }
+    task_environment_.FastForwardBy(base::Seconds(5));
+  }
+
+  // Post and run tasks. Expect no alignment.
+  void PostTasks_ExpectNoAlignment(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    FastForwardToAlignedTime(base::Seconds(1));
+    const base::TimeTicks start = base::TimeTicks::Now();
+
+    std::vector<base::TimeTicks> run_times;
+    PostAndRunTasks50MsInterval(task_runner, &run_times);
+
+    EXPECT_THAT(run_times,
+                testing::ElementsAre(start, start + base::Milliseconds(50),
+                                     start + base::Milliseconds(100),
+                                     start + base::Milliseconds(150),
+                                     start + base::Milliseconds(200)));
+  }
+
+  // Post and run tasks. Expect 32ms alignment.
+  void PostTasks_Expect32msAlignment(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    FastForwardToAlignedTime(base::Milliseconds(32));
+    const base::TimeTicks start = base::TimeTicks::Now();
+
+    std::vector<base::TimeTicks> run_times;
+    PostAndRunTasks50MsInterval(task_runner, &run_times);
+
+    EXPECT_THAT(run_times,
+                testing::ElementsAre(start, start + base::Milliseconds(64),
+                                     start + base::Milliseconds(128),
+                                     start + base::Milliseconds(160),
+                                     start + base::Milliseconds(224)));
+  }
+
+  // Post and run tasks. Expect 1 second alignment.
+  void PostTasks_Expect1sAlignment(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    FastForwardToAlignedTime(base::Seconds(1));
+    const base::TimeTicks start = base::TimeTicks::Now();
+
+    std::vector<base::TimeTicks> run_times;
+    PostAndRunTasks50MsInterval(task_runner, &run_times);
+
+    EXPECT_THAT(run_times, testing::ElementsAre(start, start + base::Seconds(1),
+                                                start + base::Seconds(1),
+                                                start + base::Seconds(1),
+                                                start + base::Seconds(1)));
   }
 
  protected:
@@ -454,55 +520,62 @@ class FrameSchedulerImplTest : public testing::Test {
   scoped_refptr<MainThreadTaskQueue>
   JavaScriptTimerNormalThrottleableTaskQueue() {
     return GetTaskQueue(
-        FrameSchedulerImpl::ThrottleableTaskQueueTraits().SetPrioritisationType(
-            PrioritisationType::kJavaScriptTimer));
+        FrameSchedulerImpl::ThrottleableTaskQueueTraits()
+            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue>
   JavaScriptTimerIntensivelyThrottleableTaskQueue() {
     return GetTaskQueue(
         FrameSchedulerImpl::ThrottleableTaskQueueTraits()
-            .SetPrioritisationType(PrioritisationType::kJavaScriptTimer)
-            .SetCanBeIntensivelyThrottled(true));
+            .SetCanBeIntensivelyThrottled(true)
+            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> JavaScriptTimerNonThrottleableTaskQueue() {
     return GetTaskQueue(
-        FrameSchedulerImpl::DeferrableTaskQueueTraits().SetPrioritisationType(
-            PrioritisationType::kJavaScriptTimer));
+        FrameSchedulerImpl::DeferrableTaskQueueTraits()
+            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> LoadingTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::LoadingTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::LoadingTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> LoadingControlTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::LoadingControlTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::LoadingControlTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> UnfreezableLoadingTaskQueue() {
-    return GetTaskQueue(
-        FrameSchedulerImpl::UnfreezableLoadingTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::UnfreezableLoadingTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> DeferrableTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::DeferrableTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::DeferrableTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> PausableTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::PausableTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::PausableTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> UnpausableTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::UnpausableTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::UnpausableTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> ForegroundOnlyTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::ForegroundOnlyTaskQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::ForegroundOnlyTaskQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> InputBlockingTaskQueue() {
-    return GetTaskQueue(FrameSchedulerImpl::InputBlockingQueueTraits());
+    return GetTaskQueue(FrameSchedulerImpl::InputBlockingQueueTraits()
+                            .SetCanBeDeferredForRendering(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> GetTaskQueue(TaskType type) {
@@ -527,10 +600,9 @@ class FrameSchedulerImplTest : public testing::Test {
   void DidCommitProvisionalLoad(
       FrameScheduler::NavigationType navigation_type) {
     frame_scheduler_->DidCommitProvisionalLoad(
-        /*is_web_history_inert_commit=*/false, navigation_type);
+        /*is_web_history_inert_commit=*/false, navigation_type,
+        {GetUnreportedTaskTime()});
   }
-
-  base::test::ScopedFeatureList& scoped_feature_list() { return feature_list_; }
 
   base::test::ScopedFeatureList feature_list_;
   base::test::TaskEnvironment task_environment_;
@@ -829,30 +901,6 @@ TEST_F(FrameSchedulerImplTest, PauseAndResume) {
   EXPECT_EQ(5, counter);
 }
 
-TEST_F(FrameSchedulerImplTest, PauseAndResumeForCooperativeScheduling) {
-  EXPECT_TRUE(LoadingTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(ThrottleableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(DeferrableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(PausableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(UnpausableTaskQueue()->IsQueueEnabled());
-
-  frame_scheduler_->SetPreemptedForCooperativeScheduling(
-      FrameOrWorkerScheduler::Preempted(true));
-  EXPECT_FALSE(LoadingTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(ThrottleableTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(DeferrableTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(PausableTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(UnpausableTaskQueue()->IsQueueEnabled());
-
-  frame_scheduler_->SetPreemptedForCooperativeScheduling(
-      FrameOrWorkerScheduler::Preempted(false));
-  EXPECT_TRUE(LoadingTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(ThrottleableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(DeferrableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(PausableTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(UnpausableTaskQueue()->IsQueueEnabled());
-}
-
 namespace {
 
 // A task that re-posts itself with a delay in order until it has run
@@ -937,7 +985,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(TaskType::kJavascriptTimerDelayedLowNesting,
                     TaskType::kJavascriptTimerDelayedHighNesting),
     [](const testing::TestParamInfo<TaskType>& info) {
-      return TaskTypeNames::TaskTypeToString(info.param);
+      return TaskTypeNames::TaskTypeToString(info.param).value;
     });
 
 TEST_F(FrameSchedulerImplTest, FreezeForegroundOnlyTasks) {
@@ -1018,19 +1066,19 @@ TEST_F(FrameSchedulerImplTest, PageFreezeAndPageVisible) {
 }
 
 TEST_F(FrameSchedulerImplTest, PagePostsCpuTasks) {
-  EXPECT_TRUE(GetTaskTime().is_zero());
+  EXPECT_TRUE(GetUnreportedTaskTime().is_zero());
   EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
   UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
                                 base::Milliseconds(10)));
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(GetTaskTime().is_zero());
+  EXPECT_FALSE(GetUnreportedTaskTime().is_zero());
   EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
   UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
                                 base::Milliseconds(100)));
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(GetTaskTime().is_zero());
+  EXPECT_TRUE(GetUnreportedTaskTime().is_zero());
   EXPECT_EQ(1, GetTotalUpdateTaskTimeCalls());
 }
 
@@ -1039,7 +1087,7 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
     bool embedded_frame_tree;
     FrameScheduler::FrameType frame_type;
     FrameScheduler::NavigationType navigation_type;
-    bool expect_task_time_zero;
+    bool expect_unreported_task_time_zero;
     int expected_total_calls;
   } kTestCases[] = {{false, FrameScheduler::FrameType::kMainFrame,
                      FrameScheduler::NavigationType::kOther, false, 0},
@@ -1064,9 +1112,10 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
         "FrameType: %d, NavigationType: %d : TaskTime.is_zero %d, CallCount %d",
         static_cast<int>(test_case.frame_type),
         static_cast<int>(test_case.navigation_type),
-        test_case.expect_task_time_zero, test_case.expected_total_calls));
+        test_case.expect_unreported_task_time_zero,
+        test_case.expected_total_calls));
     ResetFrameScheduler(test_case.embedded_frame_tree, test_case.frame_type);
-    EXPECT_TRUE(GetTaskTime().is_zero());
+    EXPECT_TRUE(GetUnreportedTaskTime().is_zero());
     EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
 
     // Check the rest of the values after different types of commit.
@@ -1074,7 +1123,7 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
         FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
                                   base::Milliseconds(60)));
     base::RunLoop().RunUntilIdle();
-    EXPECT_FALSE(GetTaskTime().is_zero());
+    EXPECT_FALSE(GetUnreportedTaskTime().is_zero());
     EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
 
     DidCommitProvisionalLoad(test_case.navigation_type);
@@ -1083,9 +1132,62 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
         FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
                                   base::Milliseconds(60)));
     base::RunLoop().RunUntilIdle();
-    EXPECT_EQ(test_case.expect_task_time_zero, GetTaskTime().is_zero());
+    EXPECT_EQ(test_case.expect_unreported_task_time_zero,
+              GetUnreportedTaskTime().is_zero());
     EXPECT_EQ(test_case.expected_total_calls, GetTotalUpdateTaskTimeCalls());
   }
+}
+
+class FrameSchedulerImplTestWithBFCacheWithSharedWorker
+    : public FrameSchedulerImplTest {
+ public:
+  FrameSchedulerImplTestWithBFCacheWithSharedWorker()
+      : FrameSchedulerImplTest({features::kBFCacheWithSharedWorker}, {}) {}
+};
+
+TEST_F(FrameSchedulerImplTestWithBFCacheWithSharedWorker,
+       CanRunInBFCache_RunsWhenInBFCache) {
+  int counter = 0;
+  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
+      ->GetTaskRunnerWithDefaultTaskType()
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
+      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+
+  StorePageInBackForwardCache();
+
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(1, counter);
+
+  RestorePageFromBackForwardCache();
+  task_environment_.FastForwardUntilNoTasksRemain();
+
+  EXPECT_EQ(2, counter);
+}
+
+TEST_F(FrameSchedulerImplTestWithBFCacheWithSharedWorker,
+       CanRunInBFCache_IsFrozenWhenNotInBFCache) {
+  int counter = 0;
+  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
+      ->GetTaskRunnerWithDefaultTaskType()
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
+      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+
+  page_scheduler_->SetPageVisible(false);
+  page_scheduler_->SetPageFrozen(true);
+
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(0, counter);
+
+  page_scheduler_->SetPageFrozen(false);
+  task_environment_.FastForwardUntilNoTasksRemain();
+
+  EXPECT_EQ(2, counter);
 }
 
 class FrameSchedulerImplTestWithUnfreezableLoading
@@ -1447,9 +1549,9 @@ TEST_F(FrameSchedulerImplTest, HighestPriorityInputBlockingTaskQueue) {
             TaskPriority::kHighestPriority);
 }
 
-TEST_F(FrameSchedulerImplTest, RenderBlockingImageLoading) {
+TEST_F(FrameSchedulerImplTest, RenderBlockingRenderBlockingLoading) {
   auto render_blocking_task_queue =
-      GetTaskQueue(TaskType::kNetworkingUnfreezableImageLoading);
+      GetTaskQueue(TaskType::kNetworkingUnfreezableRenderBlockingLoading);
   page_scheduler_->SetPageVisible(false);
   EXPECT_EQ(render_blocking_task_queue->GetQueuePriority(),
             TaskPriority::kNormalPriority);
@@ -1489,12 +1591,13 @@ TEST_F(FrameSchedulerImplTest, ThrottledTaskTypes) {
   for (TaskType task_type : kAllFrameTaskTypes) {
     SCOPED_TRACE(testing::Message()
                  << "TaskType is "
-                 << TaskTypeNames::TaskTypeToString(task_type));
+                 << TaskTypeNames::TaskTypeToString(task_type).value);
     switch (task_type) {
+      case TaskType::kIdleTask:
       case TaskType::kInternalContentCapture:
+      case TaskType::kInternalTranslation:
       case TaskType::kJavascriptTimerDelayedLowNesting:
       case TaskType::kJavascriptTimerDelayedHighNesting:
-      case TaskType::kInternalTranslation:
         EXPECT_TRUE(IsTaskTypeThrottled(task_type));
         break;
       default:
@@ -1565,11 +1668,10 @@ TEST_F(FrameSchedulerImplTest, ComputePriorityForDetachedFrame) {
   frame_scheduler_->ComputePriority(task_queue.get());
 }
 
-TEST_F(FrameSchedulerImplTest,
-       LowPriorityScriptExecutionHasBestEffortPriority) {
-  auto task_queue = GetTaskQueue(TaskType::kLowPriorityScriptExecution);
-
-  EXPECT_EQ(TaskPriority::kBestEffortPriority, task_queue->GetQueuePriority());
+TEST_F(FrameSchedulerImplTest, LowPriorityScriptExecutionHasLowPriority) {
+  EXPECT_EQ(
+      TaskPriority::kLowPriority,
+      GetTaskQueue(TaskType::kLowPriorityScriptExecution)->GetQueuePriority());
 }
 
 TEST_F(FrameSchedulerImplTest, BackForwardCacheOptOut) {
@@ -1601,53 +1703,6 @@ TEST_F(FrameSchedulerImplTest, BackForwardCacheOptOut) {
       testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebRTC));
 
   feature_handle2.reset();
-
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre());
-}
-
-TEST_F(FrameSchedulerImplTest, BackForwardCacheOptOut_FrameNavigated) {
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre());
-
-  auto feature_handle = frame_scheduler_->RegisterFeature(
-      SchedulingPolicy::Feature::kWebSocket,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebSocket));
-
-  frame_scheduler_->RegisterStickyFeature(
-      SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore,
-      {SchedulingPolicy::DisableBackForwardCache()});
-
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre(
-          SchedulingPolicy::Feature::kWebSocket,
-          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
-
-  // Same document navigations don't affect anything.
-  frame_scheduler_->DidCommitProvisionalLoad(
-      false, FrameScheduler::NavigationType::kSameDocument);
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre(
-          SchedulingPolicy::Feature::kWebSocket,
-          SchedulingPolicy::Feature::kMainResourceHasCacheControlNoStore));
-
-  // Regular navigations reset all features.
-  frame_scheduler_->DidCommitProvisionalLoad(
-      false, FrameScheduler::NavigationType::kOther);
-  EXPECT_THAT(
-      frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
-      testing::UnorderedElementsAre());
-
-  // Resetting a feature handle after navigation shouldn't do anything.
-  feature_handle.reset();
 
   EXPECT_THAT(
       frame_scheduler_->GetActiveFeaturesTrackedForBackForwardCacheMetrics(),
@@ -1971,8 +2026,7 @@ TEST_F(WebSchedulingTaskQueueTest, DynamicPriorityContinuations) {
 TEST_F(WebSchedulingTaskQueueTest, WebScheduingAndNonWebScheduingTasks) {
   Vector<String> run_order;
   Vector<TestTaskSpecEntry> test_spec = {
-      {.descriptor = "Idle",
-       .type_info = TaskType::kLowPriorityScriptExecution},
+      {.descriptor = "Idle", .type_info = TaskType::kInternalContentCapture},
       {.descriptor = "BG",
        .type_info = WebSchedulingParams(
            {.queue_type = WebSchedulingQueueType::kTaskQueue,
@@ -2116,7 +2170,7 @@ TEST_F(FrameSchedulerImplTest, ReportFMPAndFCPForMainFrames) {
 
   EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(2);
 
-  main_frame_scheduler->OnFirstMeaningfulPaint();
+  main_frame_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
   main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
 
   main_frame_scheduler = nullptr;
@@ -2141,7 +2195,7 @@ TEST_F(FrameSchedulerImplTest, DontReportFMPAndFCPForSubframes) {
 
     EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(0);
 
-    subframe_scheduler->OnFirstMeaningfulPaint();
+    subframe_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
   }
 
   // Now test for embedded main frames.
@@ -2153,7 +2207,7 @@ TEST_F(FrameSchedulerImplTest, DontReportFMPAndFCPForSubframes) {
 
     EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(0);
 
-    subframe_scheduler->OnFirstMeaningfulPaint();
+    subframe_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
   }
 
   page_scheduler = nullptr;
@@ -2872,10 +2926,13 @@ INSTANTIATE_TEST_SUITE_P(
             /* task_type=*/TaskType::kJavascriptTimerDelayedHighNesting,
             /* is_intensive_throttling_expected=*/true},
         IntensiveWakeUpThrottlingTestParam{
+            /* task_type=*/TaskType::kIdleTask,
+            /* is_intensive_throttling_expected=*/true},
+        IntensiveWakeUpThrottlingTestParam{
             /* task_type=*/TaskType::kWebSchedulingPostedTask,
             /* is_intensive_throttling_expected=*/true}),
     [](const testing::TestParamInfo<IntensiveWakeUpThrottlingTestParam>& info) {
-      return TaskTypeNames::TaskTypeToString(info.param.task_type);
+      return TaskTypeNames::TaskTypeToString(info.param.task_type).value;
     });
 
 TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
@@ -2895,24 +2952,13 @@ TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
   EXPECT_FALSE(IsIntensiveWakeUpThrottlingEnabled());
 }
 
-class FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled
-    : public FrameSchedulerImplTest {
- public:
-  FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled()
-      : FrameSchedulerImplTest(
-            {features::kQuickIntensiveWakeUpThrottlingAfterLoading},
-            {}) {}
-};
-
-TEST_F(FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled,
-       LoadingPageGracePeriod) {
+TEST_F(FrameSchedulerImplTest, LoadingPageGracePeriod) {
   EXPECT_EQ(
       base::Seconds(kIntensiveWakeUpThrottling_GracePeriodSeconds_Default),
       GetIntensiveWakeUpThrottlingGracePeriod(true));
 }
 
-TEST_F(FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled,
-       LoadedPageGracePeriod) {
+TEST_F(FrameSchedulerImplTest, LoadedPageGracePeriod) {
   EXPECT_EQ(base::Seconds(
                 kIntensiveWakeUpThrottling_GracePeriodSecondsLoaded_Default),
             GetIntensiveWakeUpThrottlingGracePeriod(false));
@@ -2948,190 +2994,513 @@ TEST_F(FrameSchedulerImplTest, ImmediateWebSchedulingTasksAreNotThrottled) {
   EXPECT_THAT(run_times, testing::ElementsAre(start));
 }
 
-class FrameSchedulerImplThrottleForegroundTimersEnabledTest
-    : public FrameSchedulerImplTest {
- public:
-  FrameSchedulerImplThrottleForegroundTimersEnabledTest()
-      : FrameSchedulerImplTest({features::kThrottleForegroundTimers}, {}) {}
-};
-
-TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
-       ForegroundPageTimerThrottling) {
-  page_scheduler_->SetPageVisible(true);
-
-  // Snap the time to a multiple of 32ms.
-  FastForwardToAlignedTime(base::Milliseconds(32));
-  const base::TimeTicks start = base::TimeTicks::Now();
-
-  std::vector<base::TimeTicks> run_times;
-  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(
-          TaskType::kJavascriptTimerDelayedLowNesting);
-
-  for (int i = 0; i < 5; i++) {
-    task_runner->PostDelayedTask(FROM_HERE,
-                                 base::BindOnce(&RecordRunTime, &run_times),
-                                 base::Milliseconds(50) * i);
-  }
-
-  // Make posted tasks run.
-  task_environment_.FastForwardBy(base::Seconds(5));
-
-  EXPECT_THAT(run_times,
-              testing::ElementsAre(start, start + base::Milliseconds(64),
-                                   start + base::Milliseconds(128),
-                                   start + base::Milliseconds(160),
-                                   start + base::Milliseconds(224)));
-}
-
-// Make sure the normal throttling (1 wake up per second) is applied when the
-// page becomes non-visible
-TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
-       BackgroundPageTimerThrottling) {
-  page_scheduler_->SetPageVisible(false);
-
-  // Snap the time to a multiple of 1 second.
-  FastForwardToAlignedTime(base::Seconds(1));
-  const base::TimeTicks start = base::TimeTicks::Now();
-
-  std::vector<base::TimeTicks> run_times;
-  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(
-          TaskType::kJavascriptTimerDelayedLowNesting);
-
-  for (int i = 0; i < 5; i++) {
-    task_runner->PostDelayedTask(FROM_HERE,
-                                 base::BindOnce(&RecordRunTime, &run_times),
-                                 base::Milliseconds(50) * i);
-  }
-
-  // Make posted tasks run.
-  task_environment_.FastForwardBy(base::Seconds(5));
-
-  EXPECT_THAT(run_times,
-              testing::ElementsAre(start, start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000)));
-}
-
-TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
-       HiddenAudiblePageTimerThrottling) {
-  page_scheduler_->SetPageVisible(false);
-  page_scheduler_->AudioStateChanged(/*is_audio_playing=*/true);
-
-  // Snap the time to a multiple of 32ms.
-  FastForwardToAlignedTime(base::Milliseconds(32));
-  const base::TimeTicks start = base::TimeTicks::Now();
-
-  std::vector<base::TimeTicks> run_times;
-  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(
-          TaskType::kJavascriptTimerDelayedLowNesting);
-
-  for (int i = 0; i < 5; i++) {
-    task_runner->PostDelayedTask(FROM_HERE,
-                                 base::BindOnce(&RecordRunTime, &run_times),
-                                 base::Milliseconds(50) * i);
-  }
-
-  // Make posted tasks run.
-  task_environment_.FastForwardBy(base::Seconds(5));
-
-  EXPECT_THAT(run_times,
-              testing::ElementsAre(start, start + base::Milliseconds(64),
-                                   start + base::Milliseconds(128),
-                                   start + base::Milliseconds(160),
-                                   start + base::Milliseconds(224)));
-}
-
-TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
-       VisibleCrossOriginFrameThrottling) {
-  std::unique_ptr<FrameSchedulerImpl> cross_origin_frame_scheduler =
-      CreateFrameScheduler(page_scheduler_.get(),
-                           frame_scheduler_delegate_.get(),
-                           /*is_in_embedded_frame_tree=*/false,
-                           FrameScheduler::FrameType::kSubframe);
-  page_scheduler_->SetPageVisible(true);
-  cross_origin_frame_scheduler->SetCrossOriginToNearestMainFrame(true);
-  const scoped_refptr<base::SingleThreadTaskRunner> cross_origin_task_runner =
-      cross_origin_frame_scheduler->GetTaskRunner(
-          TaskType::kJavascriptTimerDelayedLowNesting);
-
-  cross_origin_frame_scheduler->SetFrameVisible(true);
-  // Snap the time to a multiple of 32ms.
-  FastForwardToAlignedTime(base::Milliseconds(32));
-  const base::TimeTicks start = base::TimeTicks::Now();
-
-  std::vector<base::TimeTicks> run_times;
-  for (int i = 0; i < 5; i++) {
-    cross_origin_task_runner->PostDelayedTask(
-        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
-        base::Milliseconds(50) * i);
-  }
-
-  // Make posted tasks run.
-  task_environment_.FastForwardBy(base::Seconds(5));
-
-  EXPECT_THAT(run_times,
-              testing::ElementsAre(start, start + base::Milliseconds(64),
-                                   start + base::Milliseconds(128),
-                                   start + base::Milliseconds(160),
-                                   start + base::Milliseconds(224)));
-}
-
-TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
-       HiddenCrossOriginFrameThrottling) {
-  std::unique_ptr<FrameSchedulerImpl> cross_origin_frame_scheduler =
-      CreateFrameScheduler(page_scheduler_.get(),
-                           frame_scheduler_delegate_.get(),
-                           /*is_in_embedded_frame_tree=*/false,
-                           FrameScheduler::FrameType::kSubframe);
-  page_scheduler_->SetPageVisible(true);
-  cross_origin_frame_scheduler->SetCrossOriginToNearestMainFrame(true);
-  const scoped_refptr<base::SingleThreadTaskRunner> cross_origin_task_runner =
-      cross_origin_frame_scheduler->GetTaskRunner(
-          TaskType::kJavascriptTimerDelayedLowNesting);
-
-  cross_origin_frame_scheduler->SetFrameVisible(false);
-  // Snap the time to a multiple of 1 second.
-  FastForwardToAlignedTime(base::Seconds(1));
-  const base::TimeTicks start = base::TimeTicks::Now();
-
-  std::vector<base::TimeTicks> run_times;
-  for (int i = 0; i < 5; i++) {
-    cross_origin_task_runner->PostDelayedTask(
-        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
-        base::Milliseconds(50) * i);
-  }
-
-  // Make posted tasks run.
-  task_environment_.FastForwardBy(base::Seconds(5));
-
-  EXPECT_THAT(run_times,
-              testing::ElementsAre(start, start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000),
-                                   start + base::Milliseconds(1000)));
-}
-
 TEST_F(FrameSchedulerImplTest, PostMessageForwardingHasVeryHighPriority) {
   auto task_queue = GetTaskQueue(TaskType::kInternalPostMessageForwarding);
 
   EXPECT_EQ(TaskPriority::kVeryHighPriority, task_queue->GetQueuePriority());
 }
 
-class FrameSchedulerImplDeleterTaskRunnerEnabledTest
+class FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest
     : public FrameSchedulerImplTest {
  public:
-  FrameSchedulerImplDeleterTaskRunnerEnabledTest()
-      : FrameSchedulerImplTest(
-            {blink::features::kUseBlinkSchedulerTaskRunnerWithCustomDeleter},
-            {}) {}
+  FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest()
+      : FrameSchedulerImplTest({features::kThrottleUnimportantFrameTimers},
+                               {}) {}
 };
 
-TEST_F(FrameSchedulerImplDeleterTaskRunnerEnabledTest,
-       DeleteSoonUsesBackupTaskRunner) {
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       VisibleSizeChange_CrossOrigin_ExplicitInit) {
+  LazyInitThrottleableTaskQueue();
+  EXPECT_FALSE(IsThrottled());
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(true);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  EXPECT_FALSE(IsThrottled());
+  frame_scheduler_->SetVisibleAreaLarge(false);
+  EXPECT_TRUE(IsThrottled());
+  frame_scheduler_->SetVisibleAreaLarge(true);
+  EXPECT_FALSE(IsThrottled());
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       UserActivationChange_CrossOrigin_ExplicitInit) {
+  LazyInitThrottleableTaskQueue();
+  EXPECT_FALSE(IsThrottled());
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(false);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  frame_scheduler_->SetHadUserActivation(false);
+  EXPECT_TRUE(IsThrottled());
+  frame_scheduler_->SetHadUserActivation(true);
+  EXPECT_FALSE(IsThrottled());
+  frame_scheduler_->SetHadUserActivation(false);
+  EXPECT_TRUE(IsThrottled());
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       UnimportantFrameThrottling) {
+  page_scheduler_->SetPageVisible(true);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(false);
+  frame_scheduler_->SetHadUserActivation(false);
+
+  PostTasks_Expect32msAlignment(task_runner);
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       HiddenCrossOriginFrameThrottling) {
+  page_scheduler_->SetPageVisible(true);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+  frame_scheduler_->SetFrameVisible(false);
+  frame_scheduler_->SetVisibleAreaLarge(false);
+  frame_scheduler_->SetHadUserActivation(false);
+
+  PostTasks_Expect1sAlignment(task_runner);
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       BackgroundPageTimerThrottling) {
+  page_scheduler_->SetPageVisible(false);
+
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(false);
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(true);
+  frame_scheduler_->SetHadUserActivation(false);
+
+  PostTasks_Expect1sAlignment(task_runner);
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       LargeCrossOriginFrameNoThrottling) {
+  page_scheduler_->SetPageVisible(true);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(true);
+  frame_scheduler_->SetHadUserActivation(false);
+
+  PostTasks_ExpectNoAlignment(task_runner);
+}
+
+TEST_F(FrameSchedulerImplThrottleUnimportantFrameTimersEnabledTest,
+       UserActivatedCrossOriginFrameNoThrottling) {
+  page_scheduler_->SetPageVisible(true);
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+  frame_scheduler_->SetFrameVisible(true);
+  frame_scheduler_->SetVisibleAreaLarge(false);
+  frame_scheduler_->SetHadUserActivation(true);
+
+  PostTasks_ExpectNoAlignment(task_runner);
+}
+
+class FrameSchedulerImplNoThrottlingVisibleAgentTest
+    : public FrameSchedulerImplTest,
+      // True iff the other frame belongs to a different page.
+      public testing::WithParamInterface<bool> {
+ public:
+  FrameSchedulerImplNoThrottlingVisibleAgentTest()
+      : FrameSchedulerImplTest({features::kNoThrottlingVisibleAgent}, {}) {}
+
+  void SetUp() override {
+    FrameSchedulerImplTest::SetUp();
+
+    if (IsOtherFrameOnDifferentPage()) {
+      other_page_scheduler_ = CreatePageScheduler(nullptr, scheduler_.get(),
+                                                  *agent_group_scheduler_);
+      EXPECT_TRUE(other_page_scheduler_->IsPageVisible());
+    }
+
+    task_runner_ = frame_scheduler_->GetTaskRunner(
+        TaskType::kJavascriptTimerDelayedLowNesting);
+
+    // Initial state: `frame_scheduler_` is a visible frame cross-origin to its
+    // main frame. Its parent page scheduler is visible. It is not throttled.
+    LazyInitThrottleableTaskQueue();
+    EXPECT_TRUE(page_scheduler_->IsPageVisible());
+    EXPECT_TRUE(frame_scheduler_->IsFrameVisible());
+    EXPECT_FALSE(IsThrottled());
+    frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
+    EXPECT_FALSE(IsThrottled());
+    frame_scheduler_->SetAgentClusterId(kAgent1);
+    EXPECT_FALSE(IsThrottled());
+  }
+
+  void TearDown() override {
+    other_page_scheduler_.reset();
+    FrameSchedulerImplTest::TearDown();
+  }
+
+  static const char* GetSuffix(const testing::TestParamInfo<bool>& info) {
+    if (info.param) {
+      return "OtherPage";
+    }
+    return "SamePage";
+  }
+
+  bool IsOtherFrameOnDifferentPage() { return GetParam(); }
+
+  PageSchedulerImpl* GetOtherFramePageScheduler() {
+    if (IsOtherFrameOnDifferentPage()) {
+      return other_page_scheduler_.get();
+    }
+    return page_scheduler_.get();
+  }
+
+  std::unique_ptr<FrameSchedulerImpl> CreateOtherFrameScheduler() {
+    return CreateFrameScheduler(GetOtherFramePageScheduler(),
+                                frame_scheduler_delegate_.get(),
+                                /*is_in_embedded_frame_tree=*/false,
+                                FrameScheduler::FrameType::kSubframe);
+  }
+
+  const base::UnguessableToken kAgent1 = base::UnguessableToken::Create();
+  const base::UnguessableToken kAgent2 = base::UnguessableToken::Create();
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  std::unique_ptr<PageSchedulerImpl> other_page_scheduler_;
+};
+
+class FrameSchedulerImplNoThrottlingVisibleAgentAndThrottleUnimportantTest
+    : public FrameSchedulerImplNoThrottlingVisibleAgentTest {
+ public:
+  FrameSchedulerImplNoThrottlingVisibleAgentAndThrottleUnimportantTest() {
+    nested_scoped_feature_list_.InitAndEnableFeature(
+        features::kThrottleUnimportantFrameTimers);
+  }
+
+ private:
+  base::test::ScopedFeatureList nested_scoped_feature_list_;
+};
+
+// Verify the throttled state on frame visibility changes.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest, FrameVisibilityChange) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Same-agent frame hidden: expect 1s throttling because there is no visible
+  // same-agent frame.
+  other_frame_scheduler->SetFrameVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Same-agent frame visible: expect no throttling because there is a visible
+  // same-agent frame.
+  other_frame_scheduler->SetFrameVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Same-agent frame hidden: expect 1s throttling because there is no visible
+  // same-agent frame.
+  other_frame_scheduler->SetFrameVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Frame visible: expect no throttling for a visible frame.
+  frame_scheduler_->SetFrameVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+}
+
+// Verify the throttled state when page visibility changes and there is a
+// visible same-agent frame.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest, PageVisibilityChange) {
+  // This test is only relevant when the other frame is on a different page.
+  if (!IsOtherFrameOnDifferentPage()) {
+    return;
+  }
+
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Visible frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Hidden page: expect no throttling, because there is a visible same-agent
+  // frame.
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Visible page: still no throttling.
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+}
+
+// Verify the throttled state when the page visibility of a same-agent frame
+// changes.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest,
+       SameAgentFramePageVisibilityChange) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Page of the same-agent frame hidden: expect 1s throttling because there is
+  // no visible same-agent frame.
+  GetOtherFramePageScheduler()->SetPageVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Page of the same-agent frame visible: expect no throttling because there is
+  // a visible same-agent frame.
+  GetOtherFramePageScheduler()->SetPageVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Repeat the 2 steps above, but with the same-agent frame is hidden: expect
+  // 1s throttling because there is no visible same-agent frame.
+  other_frame_scheduler->SetFrameVisible(false);
+
+  GetOtherFramePageScheduler()->SetPageVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  GetOtherFramePageScheduler()->SetPageVisible(true);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+// Verify the throttled state when a same-agent visible frame is deleted.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest, VisibleFrameDeletion) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Visible same-agent frame deleted: expect 1s throttling because there is no
+  // visible same-agent frame.
+  other_frame_scheduler.reset();
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+// Verify the throttled state when a same-agent visible frame on a hidden page
+// is deleted. This test exists to confirm that ~FrameSchedulerImpl checks
+// `AreFrameAndPageVisible()`, not just `frame_visible_`, before invoking
+// `DecrementVisibleFramesForAgent()`.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest,
+       VisibleFrameOnHiddenPageDeletion) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Hide the other frame's page: expect 1s throttling because there is no
+  // visible same-agent frame.
+  GetOtherFramePageScheduler()->SetPageVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Visible same-agent frame on a hidden page deleted: no change.
+  other_frame_scheduler.reset();
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+// Verify the throttled state when the page scheduler of a same-agent frame is
+// deleted.
+//
+// Note: Ideally, we would enforce that a page scheduler is deleted after its
+// frame schedulers. But until this enforcement is in place, it is important
+// that throttling deletion of a page scheduler that still has frame schedulers
+// correctly.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest,
+       PageSchedulerWithSameAgentFrameDeleted) {
+  // This test is only relevant when the other frame is on a different page.
+  if (!IsOtherFrameOnDifferentPage()) {
+    return;
+  }
+
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Delete the `other_frame_scheduler_`'s page scheduler: expect 1s throttling
+  // because there is no visible same-agent frame (a frame scheduler with no
+  // parent page scheduler doesn't count).
+  other_page_scheduler_.reset();
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+// Verify the throttled state when frame agent changes.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest, AgentChange) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Other frame associated with `kAgent2`: expect 1s throttling because there
+  // is no visible same-agent frame (other-frame-switches-to-different-agent).
+  other_frame_scheduler->SetAgentClusterId(kAgent2);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Frame associated with `kAgent2`: expect no throttling because there is a
+  // visible same-agent frame (frame-switches-to-same-agent).
+  frame_scheduler_->SetAgentClusterId(kAgent2);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Frame associated with `kAgent1`:  expect 1s throttling because there
+  // is no visible same-agent frame (frame-switches-to-different-agent).
+  frame_scheduler_->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Other frame associated with `kAgent1`: expect no throttling because there
+  // is a visible same-agent frame (other-frame-switches-to-same-agent).
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Hide the other frame's page scheduler: frame should remain throttled to 1s
+  // on agent change.
+  GetOtherFramePageScheduler()->SetPageVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  other_frame_scheduler->SetAgentClusterId(kAgent2);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  frame_scheduler_->SetAgentClusterId(kAgent2);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  frame_scheduler_->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+// Verify the throttled state for a frame that is same-origin with the nearest
+// main frame.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentTest,
+       SameOriginWithNearestMainFrame) {
+  // Hidden frame with a visible same-agent frame: expect no throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Same-agent frame hidden: expect 1s throttling because there
+  // is no visible same-agent frame.
+  other_frame_scheduler->SetFrameVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+
+  // Frame is same-origin with nearest main frame: never throttled.
+  frame_scheduler_->SetCrossOriginToNearestMainFrame(false);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  other_frame_scheduler->SetAgentClusterId(kAgent2);
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  other_frame_scheduler->SetFrameVisible(false);
+  other_frame_scheduler->SetFrameVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  GetOtherFramePageScheduler()->SetPageVisible(false);
+  GetOtherFramePageScheduler()->SetPageVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+}
+
+// Verify that tasks are throttled to 32ms (not 1 second) in a frame that is
+// hidden but same-agent with a visible frame, when the
+// "ThrottleUnimportantFrameTimers" feature is enabled.
+TEST_P(FrameSchedulerImplNoThrottlingVisibleAgentAndThrottleUnimportantTest,
+       SameAgentWithVisibleFrameIs32msThrottled) {
+  // Hidden frame with a visible same-agent frame: expect 32ms throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  auto other_frame_scheduler = CreateOtherFrameScheduler();
+  other_frame_scheduler->SetAgentClusterId(kAgent1);
+  EXPECT_TRUE(other_frame_scheduler->IsFrameVisible());
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect32msAlignment(task_runner_);
+
+  // Frame visible: expect no throttling.
+  frame_scheduler_->SetFrameVisible(true);
+  EXPECT_FALSE(IsThrottled());
+  PostTasks_ExpectNoAlignment(task_runner_);
+
+  // Frame hidden again: expect 32ms throttling.
+  frame_scheduler_->SetFrameVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect32msAlignment(task_runner_);
+
+  // Same-agent frame hidden: expect 1s throttling.
+  other_frame_scheduler->SetFrameVisible(false);
+  EXPECT_TRUE(IsThrottled());
+  PostTasks_Expect1sAlignment(task_runner_);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    FrameSchedulerImplNoThrottlingVisibleAgentTest,
+    ::testing::Bool(),
+    &FrameSchedulerImplNoThrottlingVisibleAgentTest::GetSuffix);
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    FrameSchedulerImplNoThrottlingVisibleAgentAndThrottleUnimportantTest,
+    ::testing::Bool(),
+    &FrameSchedulerImplNoThrottlingVisibleAgentTest::GetSuffix);
+
+TEST_F(FrameSchedulerImplTest, DeleteSoonUsesBackupTaskRunner) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       frame_scheduler_->GetTaskRunner(TaskType::kInternalTest);
   int counter = 0;
@@ -3153,26 +3522,7 @@ TEST_F(FrameSchedulerImplDeleterTaskRunnerEnabledTest,
   EXPECT_EQ(2, counter);
 }
 
-enum class DeleterTaskRunnerEnabled { kEnabled, kDisabled };
-
-class FrameSchedulerImplTaskRunnerWithCustomDeleterTest
-    : public FrameSchedulerImplTest,
-      public ::testing::WithParamInterface<DeleterTaskRunnerEnabled> {
- public:
-  FrameSchedulerImplTaskRunnerWithCustomDeleterTest() {
-    feature_list_.Reset();
-    if (GetParam() == DeleterTaskRunnerEnabled::kEnabled) {
-      feature_list_.InitWithFeatures(
-          {blink::features::kUseBlinkSchedulerTaskRunnerWithCustomDeleter}, {});
-    } else {
-      feature_list_.InitWithFeatures(
-          {}, {blink::features::kUseBlinkSchedulerTaskRunnerWithCustomDeleter});
-    }
-  }
-};
-
-TEST_P(FrameSchedulerImplTaskRunnerWithCustomDeleterTest,
-       DeleteSoonAfterShutdown) {
+TEST_F(FrameSchedulerImplTest, DeleteSoonAfterShutdown) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       frame_scheduler_->GetTaskRunner(TaskType::kInternalTest);
   int counter = 0;
@@ -3198,33 +3548,11 @@ TEST_P(FrameSchedulerImplTaskRunnerWithCustomDeleterTest,
 
   std::unique_ptr<TestObject> test_object2 =
       std::make_unique<TestObject>(&counter);
-  TestObject* unowned_test_object2 = test_object2.get();
   task_runner->DeleteSoon(FROM_HERE, std::move(test_object2));
   EXPECT_EQ(counter, 2);
   base::RunLoop().RunUntilIdle();
-
-  // Without the custom task runner, this leaks.
-  if (GetParam() == DeleterTaskRunnerEnabled::kDisabled) {
-    EXPECT_EQ(counter, 2);
-    delete (unowned_test_object2);
-  } else {
-    EXPECT_EQ(counter, 3);
-  }
+  EXPECT_EQ(counter, 3);
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    ,
-    FrameSchedulerImplTaskRunnerWithCustomDeleterTest,
-    testing::Values(DeleterTaskRunnerEnabled::kEnabled,
-                    DeleterTaskRunnerEnabled::kDisabled),
-    [](const testing::TestParamInfo<DeleterTaskRunnerEnabled>& info) {
-      switch (info.param) {
-        case DeleterTaskRunnerEnabled::kEnabled:
-          return "Enabled";
-        case DeleterTaskRunnerEnabled::kDisabled:
-          return "Disabled";
-      }
-    });
 
 }  // namespace frame_scheduler_impl_unittest
 }  // namespace scheduler

@@ -5,6 +5,8 @@
 package org.chromium.chrome.test.util.browser.suggestions.mostvisited;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSites;
 import org.chromium.chrome.browser.suggestions.tile.Tile;
@@ -21,22 +23,55 @@ import java.util.List;
 /**
  * A fake implementation of MostVisitedSites that returns a fixed list of most visited sites.
  *
- * Once the observer is set (through {@link #setObserver(Observer, int)}), updates to the data must
- * be made on the UI thread, as they can result in UI manipulations.
+ * <p>Once the observer is set (through {@link #setObserver(Observer, int)}), updates to the data
+ * must be made on the UI thread, as they can result in UI manipulations.
  */
+@NullMarked
 public class FakeMostVisitedSites implements MostVisitedSites {
     private final List<GURL> mBlocklistedUrls = new ArrayList<>();
 
     private List<SiteSuggestion> mSites = new ArrayList<>();
-    private Observer mObserver;
+    private @Nullable Observer mObserver;
 
+    // CustomLinkOperations -> MostVisitedSites implementation.
+    @Override
+    public boolean addCustomLink(String name, @Nullable GURL url, @Nullable Integer pos) {
+        // TODO (crbug.com/397421764): Implement when needed by tests.
+        return false;
+    }
+
+    @Override
+    public boolean assignCustomLink(GURL keyUrl, String name, @Nullable GURL url) {
+        // TODO (crbug.com/397421764): Implement when needed by tests.
+        return false;
+    }
+
+    @Override
+    public boolean deleteCustomLink(GURL keyUrl) {
+        // TODO (crbug.com/397421764): Implement when needed by tests.
+        return false;
+    }
+
+    @Override
+    public boolean hasCustomLink(GURL keyUrl) {
+        // TODO (crbug.com/397421764): Implement when needed by tests.
+        return false;
+    }
+
+    @Override
+    public boolean reorderCustomLink(GURL keyUrl, int newPos) {
+        // TODO (crbug.com/397421764): Implement when needed by tests.
+        return false;
+    }
+
+    // MostVisitedSites implementation.
     @Override
     public void destroy() {}
 
     @Override
     public void setObserver(Observer observer, int numResults) {
         mObserver = observer;
-        notifyTileSuggestionsAvailable();
+        notifyTileSuggestionsAvailable(/* isUserTriggered= */ false);
     }
 
     @Override
@@ -64,34 +99,51 @@ public class FakeMostVisitedSites implements MostVisitedSites {
         //  Metrics are stubbed out.
     }
 
-    /** @return Whether {@link #addBlocklistedUrl} has been called on the given URL. */
+    @Override
+    public double getSuggestionScore(GURL url) {
+        return INVALID_SUGGESTION_SCORE;
+    }
+
+    /** Returns whether {@link #addBlocklistedUrl} has been called on the given URL. */
     public boolean isUrlBlocklisted(GURL url) {
         return mBlocklistedUrls.contains(url);
     }
 
     /**
-     * Sets new tile suggestion data.
+     * Sets new tile suggestion data, assuming triggered by user action.
      *
-     * If there is an observer it will be notified and the call has to be made on the UI thread.
+     * <p>If there is an observer it will be notified and the call has to be made on the UI thread.
      */
     public void setTileSuggestions(List<SiteSuggestion> suggestions) {
         mSites = new ArrayList<>(suggestions);
-        notifyTileSuggestionsAvailable();
+        notifyTileSuggestionsAvailable(/* isUserTriggered= */ true);
+    }
+
+    /** Same as above, but assumes no direct user involvement. */
+    public void setTileSuggestionsPassive(List<SiteSuggestion> suggestions) {
+        mSites = new ArrayList<>(suggestions);
+        notifyTileSuggestionsAvailable(/* isUserTriggered= */ false);
     }
 
     /**
-     * Sets new tile suggestion data.
+     * Sets new tile suggestion data, assuming triggered by user action.
      *
-     * If there is an observer it will be notified and the call has to be made on the UI thread.
+     * <p>If there is an observer it will be notified and the call has to be made on the UI thread.
      */
     public void setTileSuggestions(SiteSuggestion... suggestions) {
         setTileSuggestions(Arrays.asList(suggestions));
     }
 
+    /** Same as above, but assumes no direct user involvement. */
+    public void setTileSuggestionsPassive(SiteSuggestion... suggestions) {
+        setTileSuggestionsPassive(Arrays.asList(suggestions));
+    }
+
     /**
-     * Sets new tile suggestion data, generating dummy data for the missing properties.
+     * Sets new tile suggestion data, generating fake data for the missing properties, assuming
+     * triggered by user action.
      *
-     * If there is an observer it will be notified and the call has to be made on the UI thread.
+     * <p>If there is an observer it will be notified and the call has to be made on the UI thread.
      *
      * @param urls The URLs of the site suggestions.
      * @see #setTileSuggestions(SiteSuggestion[])
@@ -100,7 +152,14 @@ public class FakeMostVisitedSites implements MostVisitedSites {
         setTileSuggestions(createSiteSuggestions(urls));
     }
 
-    /** @return An unmodifiable view of the current list of sites. */
+    /** Same as above, but assumes no direct user involvement. */
+    public void setTileSuggestionsPassive(String... urls) {
+        setTileSuggestionsPassive(createSiteSuggestions(urls));
+    }
+
+    /**
+     * @return An unmodifiable view of the current list of sites.
+     */
     public List<SiteSuggestion> getCurrentSites() {
         return Collections.unmodifiableList(mSites);
     }
@@ -116,11 +175,15 @@ public class FakeMostVisitedSites implements MostVisitedSites {
     }
 
     public static SiteSuggestion createSiteSuggestion(String title, String url) {
-        return new SiteSuggestion(title, new GURL(url), TileTitleSource.TITLE_TAG,
-                TileSource.TOP_SITES, TileSectionType.PERSONALIZED);
+        return new SiteSuggestion(
+                title,
+                new GURL(url),
+                TileTitleSource.TITLE_TAG,
+                TileSource.TOP_SITES,
+                TileSectionType.PERSONALIZED);
     }
 
-    private void notifyTileSuggestionsAvailable() {
+    private void notifyTileSuggestionsAvailable(boolean isUserTriggered) {
         if (mObserver == null) return;
 
         // Notifying the observer usually results in view modifications, so this call should always
@@ -130,6 +193,6 @@ public class FakeMostVisitedSites implements MostVisitedSites {
         // a signal that the test started and this is not the setup anymore.
         ThreadUtils.assertOnUiThread();
 
-        mObserver.onSiteSuggestionsAvailable(mSites);
+        mObserver.onSiteSuggestionsAvailable(isUserTriggered, mSites);
     }
 }

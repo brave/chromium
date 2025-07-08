@@ -2,23 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_lottie/cr_lottie.js';
-import 'chrome://resources/cr_elements/cr_fingerprint/cr_fingerprint_progress_arc.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
+import 'chrome://resources/ash/common/quick_unlock/fingerprint_progress.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
 import 'chrome://resources/polymer/v3_0/iron-media-query/iron-media-query.js';
 import '../settings_shared.css.js';
 
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {CrFingerprintProgressArcElement} from 'chrome://resources/cr_elements/cr_fingerprint/cr_fingerprint_progress_arc.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
+import type {FingerprintProgressElement} from 'chrome://resources/ash/common/quick_unlock/fingerprint_progress.js';
+import {assertNotReached} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {recordSettingChange} from '../metrics_recorder.js';
+import {Setting} from '../mojom-webui/setting.mojom-webui.js';
 
-import {FingerprintBrowserProxy, FingerprintBrowserProxyImpl, FingerprintResultType, FingerprintScan} from './fingerprint_browser_proxy.js';
+import type {FingerprintBrowserProxy, FingerprintScan} from './fingerprint_browser_proxy.js';
+import {FingerprintBrowserProxyImpl, FingerprintResultType} from './fingerprint_browser_proxy.js';
 import {getTemplate} from './setup_fingerprint_dialog.html.js';
 
 
@@ -35,20 +37,7 @@ export enum FingerprintSetupStep {
  * The amount of milliseconds after a successful but not completed scan before
  * a message shows up telling the user to scan their finger again.
  */
-const SHOW_TAP_SENSOR_MESSAGE_DELAY_MS: number = 2000;
-
-/**
- * The onboarding animation asset for dark mode.
- */
-const ONBOARDING_ANIMATION_DARK: string =
-    'fingerprint_scanner_animation_dark.json';
-
-/**
- * The onboarding animation asset for light mode.
- */
-const ONBOARDING_ANIMATION_LIGHT: string =
-    'fingerprint_scanner_animation_light.json';
-
+const SHOW_TAP_SENSOR_MESSAGE_DELAY_MS = 2000;
 
 const SettingsSetupFingerprintDialogElementBase =
     I18nMixin(WebUiListenerMixin(PolymerElement));
@@ -56,7 +45,7 @@ const SettingsSetupFingerprintDialogElementBase =
 export interface SettingsSetupFingerprintDialogElement {
   $: {
     dialog: CrDialogElement,
-    arc: CrFingerprintProgressArcElement,
+    arc: FingerprintProgressElement,
   };
 }
 
@@ -112,21 +101,12 @@ export class SettingsSetupFingerprintDialogElement extends
         value: 0,
         observer: 'onProgressChanged_',
       },
-
-      /**
-       * Whether the dialog is being rendered in dark mode.
-       */
-      isDarkModeActive_: {
-        type: Boolean,
-        value: false,
-      },
     };
   }
 
   allowAddAnotherFinger: boolean;
   authToken: string;
   private browserProxy_: FingerprintBrowserProxy;
-  private isDarkModeActive_: boolean;
   private percentComplete_: number;
   private problemMessage_: string;
   private step_: FingerprintSetupStep;
@@ -151,6 +131,8 @@ export class SettingsSetupFingerprintDialogElement extends
     this.addWebUiListener(
         'on-fingerprint-scan-received', this.onScanReceived_.bind(this));
     this.addWebUiListener('on-screen-locked', this.onScreenLocked_.bind(this));
+    window.addEventListener('beforeunload', () => this.cancelCurrentEnroll());
+
     this.$.arc.reset();
     this.browserProxy_.startEnroll(this.authToken);
     this.$.dialog.showModal();
@@ -158,6 +140,7 @@ export class SettingsSetupFingerprintDialogElement extends
 
   override disconnectedCallback(): void {
     this.cancelCurrentEnroll();
+    this.closeDialog();
   }
 
   private cancelCurrentEnroll(): void {
@@ -330,7 +313,7 @@ export class SettingsSetupFingerprintDialogElement extends
     this.$.arc.reset();
     this.step_ = FingerprintSetupStep.MOVE_FINGER;
     this.browserProxy_.startEnroll(this.authToken);
-    recordSettingChange();
+    recordSettingChange(Setting.kAddFingerprintV2);
   }
 
   /**
@@ -359,15 +342,6 @@ export class SettingsSetupFingerprintDialogElement extends
     }
 
     this.$.arc.setProgress(oldValue, newValue, newValue === 100);
-  }
-
-  /**
-   * Returns the URL for the asset that defines the onboarding animation for the
-   * current fingerprint sensor location.
-   */
-  private getAnimationUrl_(): string {
-    return this.isDarkModeActive_ ? ONBOARDING_ANIMATION_DARK :
-                                    ONBOARDING_ANIMATION_LIGHT;
   }
 }
 

@@ -5,36 +5,53 @@
 #ifndef CHROME_BROWSER_SIGNIN_BOUND_SESSION_CREDENTIALS_FAKE_BOUND_SESSION_REFRESH_COOKIE_FETCHER_H_
 #define CHROME_BROWSER_SIGNIN_BOUND_SESSION_CREDENTIALS_FAKE_BOUND_SESSION_REFRESH_COOKIE_FETCHER_H_
 
-#include "chrome/browser/signin/bound_session_credentials/bound_session_refresh_cookie_fetcher.h"
+#include <optional>
+#include <string>
 
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
+#include "chrome/browser/signin/bound_session_credentials/bound_session_refresh_cookie_fetcher.h"
 #include "net/cookies/canonical_cookie.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-class SigninClient;
+namespace network::mojom {
+class CookieManager;
+}
 
 class FakeBoundSessionRefreshCookieFetcher
     : public BoundSessionRefreshCookieFetcher {
  public:
   FakeBoundSessionRefreshCookieFetcher(
-      SigninClient* client,
+      network::mojom::CookieManager* cookie_manager,
       const GURL& url,
       base::flat_set<std::string> cookie_names,
-      absl::optional<base::TimeDelta> unlock_automatically_in = absl::nullopt);
+      Trigger trigger,
+      std::optional<base::TimeDelta> unlock_automatically_in = std::nullopt);
   ~FakeBoundSessionRefreshCookieFetcher() override;
 
   // BoundSessionRefreshCookieFetcher:
-  void Start(RefreshCookieCompleteCallback callback) override;
+  void Start(
+      RefreshCookieCompleteCallback callback,
+      std::optional<std::string> sec_session_challenge_response) override;
+  bool IsChallengeReceived() const override;
+  std::optional<std::string> TakeSecSessionChallengeResponseIfAny() override;
+  base::flat_set<std::string> GetNonRefreshedCookieNames() override;
+  Trigger GetTrigger() const override;
+
+  const std::optional<std::string>& sec_session_challenge_response() {
+    return sec_session_challenge_response_;
+  }
+
+  void set_sec_session_challenge_response(
+      std::string sec_session_challenge_response);
 
   // `cookie_expiration` is set only if `result` is
   // `BoundSessionRefreshCookieFetcher::Result::kSuccess`.
   void SimulateCompleteRefreshRequest(
       BoundSessionRefreshCookieFetcher::Result result,
-      absl::optional<base::Time> cookie_expiration);
+      std::optional<base::Time> cookie_expiration);
 
  protected:
   std::unique_ptr<net::CanonicalCookie> CreateFakeCookie(
@@ -46,19 +63,22 @@ class FakeBoundSessionRefreshCookieFetcher
   void OnCookieSet(net::CookieAccessResult access_result);
   void ResetCallbackCounter();
 
-  const raw_ptr<SigninClient> client_;
+  const raw_ptr<network::mojom::CookieManager> cookie_manager_;
   const GURL url_;
   const base::flat_set<std::string> cookie_names_;
+  const Trigger trigger_;
+  base::flat_set<std::string> non_refreshed_cookie_names_;
   RefreshCookieCompleteCallback callback_;
   size_t callback_counter_ = 0;
+  std::optional<std::string> sec_session_challenge_response_;
 
   // `this` might be used temporarily for local development until the server
   // endpoint is fully developed and is stable. In production,
   // `unlock_automatically_in_` is set to simulate a fake delay, upon completion
   // the request is completed. If `unlock_automatically_in_` is not set,
-  // `SimulateCompleteRefreshRequest()` must be called manually to complete
-  // the refresh request.
-  absl::optional<base::TimeDelta> unlock_automatically_in_;
+  // `SimulateCompleteRefreshRequest()` must be called manually to complete the
+  // refresh request.
+  std::optional<base::TimeDelta> unlock_automatically_in_;
   base::WeakPtrFactory<FakeBoundSessionRefreshCookieFetcher> weak_ptr_factory_{
       this};
 };

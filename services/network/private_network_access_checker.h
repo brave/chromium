@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <optional>
+
 #include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
 #include "net/base/ip_address.h"
@@ -15,7 +17,6 @@
 #include "services/network/public/mojom/client_security_state.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom-forward.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
 class GURL;
@@ -43,12 +44,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
  public:
   // `resource_request` and `url_load_options` correspond to `URLLoader`
   // constructor arguments.
-  // `factory_client_security_state` should point to the client security
-  // state object coming from the factory that built the owner `URLLoader`. It
+  //
+  // `client_security_state` should point to the client security to use for the
+  // request, and must outlive the PrivateNetworkAccessChecker, if non-null. It
   // can be nullptr when the factory doesn't use a client security state.
+  // `resource_request's` ClientSecurityState, if it has one, is ignored.
   PrivateNetworkAccessChecker(
       const ResourceRequest& resource_request,
-      const mojom::ClientSecurityState* factory_client_security_state,
+      const mojom::ClientSecurityState* client_security_state,
       int32_t url_load_options);
 
   // Instances of this class are neither copyable nor movable.
@@ -70,7 +73,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   //
   // Spec:
   // https://wicg.github.io/private-network-access/#response-ip-address-space
-  absl::optional<mojom::IPAddressSpace> ResponseAddressSpace() const {
+  std::optional<mojom::IPAddressSpace> ResponseAddressSpace() const {
     return response_address_space_;
   }
 
@@ -80,6 +83,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // https://wicg.github.io/private-network-access/#request-target-ip-address-space
   mojom::IPAddressSpace TargetAddressSpace() const {
     return target_address_space_;
+  }
+
+  mojom::IPAddressSpace RequiredAddressSpace() const {
+    return required_address_space_;
   }
 
   // Clears state from all checks this instance has performed, and sets the
@@ -116,6 +123,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // Returns `kUnknown` if `client_security_state()` is nullptr.
   mojom::IPAddressSpace ClientAddressSpace() const;
 
+  static bool NeedPermission(const GURL& url,
+                             bool is_web_secure_context,
+                             mojom::IPAddressSpace target_address_space);
+
  private:
   // Returns whether this instance has a client security state containing a
   // policy set to `kPreflightWarn`.
@@ -127,13 +138,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
 
   // Sets the current request URL (it may change after redirects).
   void SetRequestUrl(const GURL& url);
-
-  // The client security state copied from the request's trusted params.
-  // May be nullptr.
-  //
-  // Should not be used directly. Use `client_security_state_` instead, which
-  // points to the same struct iff this client security state should be used.
-  const mojom::ClientSecurityStatePtr request_client_security_state_;
 
   // The security state of the client of the fetch. May be nullptr.
   const raw_ptr<const mojom::ClientSecurityState> client_security_state_;
@@ -156,7 +160,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // - request url = `http://localhost`     -> nullptr
   //
   // Used to compute metrics for https://crbug.com/1381471.
-  absl::optional<net::IPAddress> request_url_private_ip_;
+  std::optional<net::IPAddress> request_url_private_ip_;
 
   // The target IP address space set on the request. Ignored if `kUnknown`.
   //
@@ -172,13 +176,16 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // the last call to `Check()`.
   //
   // Set by `Check()`, reset by `ResetForRedirect()`.
-  absl::optional<mojom::IPAddressSpace> response_address_space_;
+  std::optional<mojom::IPAddressSpace> response_address_space_;
 
   // The request initiator origin.
-  absl::optional<url::Origin> request_initiator_;
+  std::optional<url::Origin> request_initiator_;
 
   // The request is from/to a potentially trustworthy and same origin.
   bool is_potentially_trustworthy_same_origin_;
+
+  // IP address space required for permission prompt.
+  mojom::IPAddressSpace required_address_space_;
 };
 
 }  // namespace network

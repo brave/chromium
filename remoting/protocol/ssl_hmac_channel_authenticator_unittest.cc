@@ -15,7 +15,6 @@
 #include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/timer/timer.h"
-#include "crypto/rsa_private_key.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_util.h"
 #include "net/test/cert_test_util.h"
@@ -44,11 +43,11 @@ class MockChannelDoneCallback {
   MOCK_METHOD2(OnDone, void(int error, P2PStreamSocket* socket));
 };
 
-ACTION_P(QuitThreadOnCounter, counter) {
+ACTION_P2(QuitThreadOnCounter, quit_closure, counter) {
   --(*counter);
   EXPECT_GE(*counter, 0);
   if (*counter == 0) {
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    std::move(quit_closure).Run();
   }
 }
 
@@ -75,8 +74,7 @@ class SslHmacChannelAuthenticatorTest : public testing::Test {
     base::FilePath key_path = certs_dir.AppendASCII("unittest.key.bin");
     std::string key_string;
     ASSERT_TRUE(base::ReadFileToString(key_path, &key_string));
-    std::string key_base64;
-    base::Base64Encode(key_string, &key_base64);
+    std::string key_base64 = base::Base64Encode(key_string);
     key_pair_ = RsaKeyPair::FromString(key_base64);
     ASSERT_TRUE(key_pair_.get());
   }
@@ -100,29 +98,33 @@ class SslHmacChannelAuthenticatorTest : public testing::Test {
     // Expect two callbacks to be called - the client callback and the host
     // callback.
     int callback_counter = 2;
-
+    base::RunLoop run_loop;
     if (expected_client_error != net::OK) {
       EXPECT_CALL(client_callback_, OnDone(expected_client_error, nullptr))
-          .WillOnce(QuitThreadOnCounter(&callback_counter));
+          .WillOnce(QuitThreadOnCounter(run_loop.QuitWhenIdleClosure(),
+                                        &callback_counter));
     } else {
       EXPECT_CALL(client_callback_, OnDone(net::OK, NotNull()))
-          .WillOnce(QuitThreadOnCounter(&callback_counter));
+          .WillOnce(QuitThreadOnCounter(run_loop.QuitWhenIdleClosure(),
+                                        &callback_counter));
     }
 
     if (expected_host_error != net::OK) {
       EXPECT_CALL(host_callback_, OnDone(expected_host_error, nullptr))
-          .WillOnce(QuitThreadOnCounter(&callback_counter));
+          .WillOnce(QuitThreadOnCounter(run_loop.QuitWhenIdleClosure(),
+                                        &callback_counter));
     } else {
       EXPECT_CALL(host_callback_, OnDone(net::OK, NotNull()))
-          .WillOnce(QuitThreadOnCounter(&callback_counter));
+          .WillOnce(QuitThreadOnCounter(run_loop.QuitWhenIdleClosure(),
+                                        &callback_counter));
     }
 
     // Ensure that .Run() does not run unbounded if the callbacks are never
     // called.
     base::OneShotTimer shutdown_timer;
     shutdown_timer.Start(FROM_HERE, TestTimeouts::action_timeout(),
-                         base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
-    base::RunLoop().Run();
+                         run_loop.QuitWhenIdleClosure());
+    run_loop.Run();
   }
 
   void OnHostConnected(const std::string& ref_argument,
@@ -203,7 +205,7 @@ TEST_F(SslHmacChannelAuthenticatorTest, InvalidCertificate) {
   host_auth_ = SslHmacChannelAuthenticator::CreateForHost(host_cert_, key_pair_,
                                                           kTestSharedSecret);
 
-  // TODO(https://crbug.com/912383): The server sees
+  // TODO(crbug.com/41430308): The server sees
   // ERR_BAD_SSL_CLIENT_AUTH_CERT because its peer (the client) alerts it with
   // bad_certificate. The alert-mapping code assumes it is running on a client,
   // so it translates bad_certificate to ERR_BAD_SSL_CLIENT_AUTH_CERT, which

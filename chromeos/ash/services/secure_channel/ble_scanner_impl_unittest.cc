@@ -4,15 +4,16 @@
 
 #include "chromeos/ash/services/secure_channel/ble_scanner_impl.h"
 
+#include <algorithm>
 #include <iterator>
 #include <memory>
 #include <utility>
 
+#include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "chromeos/ash/components/multidevice/remote_device_test_util.h"
@@ -46,9 +47,9 @@ class FakeBluetoothDevice : public device::MockBluetoothDevice {
                                     false /* paired */,
                                     false /* connected */) {
     // Convert |service_data| from a std::string to a std::vector<uint8_t>.
-    base::ranges::transform(
-        service_data, std::back_inserter(service_data_vector_),
-        [](char character) { return static_cast<uint8_t>(character); });
+    service_data_vector_ = base::ToVector(service_data, [](char character) {
+      return static_cast<uint8_t>(character);
+    });
   }
 
   FakeBluetoothDevice(const FakeBluetoothDevice&) = delete;
@@ -187,9 +188,9 @@ class SecureChannelBleScannerImplTest : public testing::Test {
       const std::string& service_data,
       multidevice::RemoteDeviceRef expected_remote_device,
       bool is_background_advertisement,
-      const absl::optional<
+      const std::optional<
           std::vector<std::pair<ConnectionMedium, ConnectionRole>>>&
-          expected_scan_results = absl::nullopt) {
+          expected_scan_results = std::nullopt) {
     std::vector<std::pair<ConnectionMedium, ConnectionRole>>
         new_expected_results =
             expected_scan_results.has_value()
@@ -260,7 +261,7 @@ class SecureChannelBleScannerImplTest : public testing::Test {
 
     if (success) {
       le_scan_delegate_->OnSessionStarted(scan_session_ptr_,
-                                          /*error_code=*/absl::nullopt);
+                                          /*error_code=*/std::nullopt);
     } else {
       le_scan_delegate_->OnSessionStarted(
           scan_session_ptr_,
@@ -347,11 +348,10 @@ class SecureChannelBleScannerImplTest : public testing::Test {
   scoped_refptr<testing::NiceMock<device::MockBluetoothAdapter>> mock_adapter_;
 
   std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
-  raw_ptr<FakeServiceDataProvider, ExperimentalAsh>
+  raw_ptr<FakeServiceDataProvider, DanglingUntriaged>
       fake_service_data_provider_ = nullptr;
   base::WeakPtr<device::BluetoothDiscoverySession> discovery_session_weak_ptr_;
-  raw_ptr<device::BluetoothLowEnergyScanSession, ExperimentalAsh>
-      scan_session_ptr_ = nullptr;
+  raw_ptr<device::BluetoothLowEnergyScanSession> scan_session_ptr_ = nullptr;
   base::WeakPtr<device::BluetoothLowEnergyScanSession::Delegate>
       le_scan_delegate_;
 

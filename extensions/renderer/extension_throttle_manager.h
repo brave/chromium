@@ -16,12 +16,15 @@
 
 namespace blink {
 class URLLoaderThrottle;
-class WebURLRequest;
 }  // namespace blink
 
 namespace net {
 struct RedirectInfo;
 }  // namespace net
+
+namespace network {
+struct ResourceRequest;
+}  // namespace network
 
 namespace extensions {
 
@@ -46,22 +49,22 @@ class ExtensionThrottleManager {
   // Creates a throttle which uses this class to prevent extensions from
   // requesting a URL too often, if such a throttle is needed.
   std::unique_ptr<blink::URLLoaderThrottle> MaybeCreateURLLoaderThrottle(
-      const blink::WebURLRequest& request);
+      const network::ResourceRequest& request);
 
-  // Determine if a request to |request_url| should be rejected.
+  // Determine if a request to `request_url` should be rejected.
   bool ShouldRejectRequest(const GURL& request_url);
 
-  // Determine if a redirect from the original |request_url| should be allowed
-  // to be redirected as specified by |redirect_info|.
+  // Determine if a redirect from the original `request_url` should be allowed
+  // to be redirected as specified by `redirect_info`.
   bool ShouldRejectRedirect(const GURL& request_url,
                             const net::RedirectInfo& redirect_info);
 
-  // Must be called when the |response_head| for a request has been received.
+  // Must be called when the `response_head` for a request has been received.
   void WillProcessResponse(
       const GURL& response_url,
       const network::mojom::URLResponseHead& response_head);
 
-  // Set the network status online state as specified in |is_online|.
+  // Set the network status online state as specified in `is_online`.
   void SetOnline(bool is_online);
 
   void SetBackoffPolicyForTests(

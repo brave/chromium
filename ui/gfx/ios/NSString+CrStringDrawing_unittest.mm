@@ -11,10 +11,6 @@
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 typedef PlatformTest NSStringCrStringDrawing;
@@ -152,26 +148,6 @@ TEST_F(NSStringCrStringDrawing, PixelAlignedSizeWithFont) {
                       size_with_pixel_aligned.height * scale) << test_tag;
     }
   }
-}
-
-TEST_F(NSStringCrStringDrawing, CutString) {
-  EXPECT_NSEQ(@"foo", [@"foo" cr_stringByCuttingToIndex:4]);
-  EXPECT_NSEQ(@"bar", [@"bar" cr_stringByCuttingToIndex:3]);
-  EXPECT_NSEQ(@"f…", [@"foo" cr_stringByCuttingToIndex:2]);
-  EXPECT_NSEQ(@"…", [@"bar" cr_stringByCuttingToIndex:1]);
-  EXPECT_NSEQ(@"", [@"foo" cr_stringByCuttingToIndex:0]);
-}
-
-TEST_F(NSStringCrStringDrawing, ElideStringToFitInRect) {
-  NSString* result =
-      [@"lorem ipsum dolores" cr_stringByElidingToFitSize:CGSizeZero];
-  EXPECT_NSEQ(@"", result);
-  result = [@"lorem ipsum dolores"
-      cr_stringByElidingToFitSize:CGSizeMake(1000, 1000)];
-  EXPECT_NSEQ(@"lorem ipsum dolores", result);
-  result =
-      [@"lorem ipsum dolores" cr_stringByElidingToFitSize:CGSizeMake(30, 50)];
-  EXPECT_TRUE([@"lorem ipsum dolores" length] > [result length]);
 }
 
 }  // namespace

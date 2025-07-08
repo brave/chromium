@@ -2,32 +2,36 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
 #include <tuple>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "content/browser/renderer_host/input/synthetic_gesture.h"
-#include "content/browser/renderer_host/input/synthetic_gesture_controller.h"
-#include "content/browser/renderer_host/input/synthetic_gesture_target.h"
-#include "content/browser/renderer_host/input/synthetic_pointer_action.h"
-#include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/input/actions_parser.h"
+#include "content/common/input/synthetic_gesture.h"
+#include "content/common/input/synthetic_gesture_controller.h"
 #include "content/common/input/synthetic_gesture_params.h"
+#include "content/common/input/synthetic_gesture_target.h"
+#include "content/common/input/synthetic_pointer_action.h"
 #include "content/common/input/synthetic_pointer_action_list_params.h"
+#include "content/common/input/synthetic_smooth_scroll_gesture.h"
 #include "content/common/input/synthetic_smooth_scroll_gesture_params.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -48,7 +52,7 @@ using blink::WebInputEvent;
 
 namespace {
 
-const char kTouchActionDataURL[] =
+constexpr char kTouchActionDataURL[] =
     "data:text/html;charset=utf-8,"
     "<!DOCTYPE html>"
     "<meta name='viewport' content='width=device-width'/>"
@@ -84,7 +88,7 @@ const char kTouchActionDataURL[] =
     "  document.title='ready';"
     "</script>";
 
-const char kTouchActionURLWithOverlapArea[] =
+constexpr char kTouchActionURLWithOverlapArea[] =
     "data:text/html;charset=utf-8,"
     "<!DOCTYPE html>"
     "<meta name='viewport' content='width=device-width'/>"
@@ -167,8 +171,8 @@ class TouchActionBrowserTest : public ContentBrowserTest {
   }
 
  protected:
-  void LoadURL(const char* touch_action_url) {
-    const GURL data_url(touch_action_url);
+  void LoadURL(std::string_view touch_action_url) {
+    const GURL data_url(std::move(touch_action_url));
     EXPECT_TRUE(NavigateToURL(shell(), data_url));
 
     RenderWidgetHostImpl* host = GetWidgetHost();
@@ -202,7 +206,7 @@ class TouchActionBrowserTest : public ContentBrowserTest {
 
   void JankMainThread(base::TimeDelta delta) {
     std::string script = "var end = performance.now() + ";
-    script.append(std::to_string(delta.InMilliseconds()));
+    script.append(base::NumberToString(delta.InMilliseconds()));
     script.append("; while (performance.now() < end) ; ");
     EXPECT_TRUE(ExecJs(shell(), script));
   }
@@ -353,10 +357,10 @@ class TouchActionBrowserTest : public ContentBrowserTest {
                 { "name": "pointerUp"}]}]
         )HTML";
 
-    auto parsed_json =
-        base::JSONReader::ReadAndReturnValueWithError(pointer_actions_json);
-    ASSERT_TRUE(parsed_json.has_value()) << parsed_json.error().message;
-    ActionsParser actions_parser(std::move(*parsed_json));
+    ASSERT_OK_AND_ASSIGN(
+        auto parsed_json,
+        base::JSONReader::ReadAndReturnValueWithError(pointer_actions_json));
+    ActionsParser actions_parser(std::move(parsed_json));
 
     ASSERT_TRUE(actions_parser.Parse());
 
@@ -392,10 +396,10 @@ class TouchActionBrowserTest : public ContentBrowserTest {
         }]
         )HTML";
 
-    auto parsed_json =
-        base::JSONReader::ReadAndReturnValueWithError(pointer_actions_json);
-    ASSERT_TRUE(parsed_json.has_value()) << parsed_json.error().message;
-    ActionsParser actions_parser(std::move(*parsed_json));
+    UNSAFE_BUFFERS(ASSERT_OK_AND_ASSIGN(
+        auto parsed_json,
+        base::JSONReader::ReadAndReturnValueWithError(pointer_actions_json)));
+    ActionsParser actions_parser(std::move(parsed_json));
 
     ASSERT_TRUE(actions_parser.Parse());
 
@@ -461,7 +465,7 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     // It seems that even if the compositor frame has scrolled half of the
     // expected scroll offset, the Blink side scroll offset may not yet be
     // updated, so here we expect it to at least have scrolled.
-    // TODO(crbug.com/902446): this can be resolved by fixing this bug.
+    // TODO(crbug.com/40601223): this can be resolved by fixing this bug.
     if (expected_scroll_position_after_scroll.y() > 0)
       EXPECT_GT(scroll_top, 0);
     if (expected_scroll_position_after_scroll.x() > 0)
@@ -473,7 +477,7 @@ class TouchActionBrowserTest : public ContentBrowserTest {
   std::unique_ptr<base::RunLoop> run_loop_;
 };
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -521,7 +525,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, MAYBE_TouchActionNone) {
   EXPECT_EQ(0, EvalJs(shell(), "eventCounts.touchcancel"));
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -538,7 +542,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, MAYBE_PanYMainThreadJanky) {
                                     gfx::Vector2d(0, 45), kShortJankTime);
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -585,7 +589,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest,
   DoTwoFingerTouchScroll(true, gfx::Vector2d(20, 0));
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -602,7 +606,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, MAYBE_PanXYMainThreadJanky) {
                                     gfx::Vector2d(45, 45), kShortJankTime);
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -619,7 +623,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest,
                                     kShortJankTime);
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -636,7 +640,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest,
                                     kShortJankTime);
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -655,7 +659,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest,
                                     kShortJankTime);
 }
 
-// TODO(crbug.com/1357167): Fix Mac failures.
+// TODO(crbug.com/40236573): Fix Mac failures.
 #if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) ||       \
     defined(MEMORY_SANITIZER) || defined(LEAK_SANITIZER) || \
     defined(THREAD_SANITIZER) || BUILDFLAG(IS_MAC)
@@ -674,7 +678,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest,
                                     kShortJankTime);
 }
 
-// TODO(crbug.com/899005): Make this test work on Android.
+// TODO(crbug.com/41422733): Make this test work on Android.
 #if BUILDFLAG(IS_ANDROID)
 #define MAYBE_TwoFingerPanYDisallowed DISABLED_TwoFingerPanYDisallowed
 #else
@@ -723,7 +727,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, BlockDoubleTapDragZoom) {
 
 namespace {
 
-const std::string kContentEditableDataURL = R"HTML(
+constexpr char kContentEditableDataURL[] = R"HTML(
     data:text/html,<!DOCTYPE html>
     <meta name='viewport' content='width=device-width'/>
     <style>
@@ -743,7 +747,7 @@ const std::string kContentEditableDataURL = R"HTML(
       document.title='ready';
     </script>)HTML";
 
-const std::string kContentEditableHorizontalScrollableDataURL = R"HTML(
+constexpr char kContentEditableHorizontalScrollableDataURL[] = R"HTML(
     data:text/html,<!DOCTYPE html>
     <meta name='viewport' content='width=device-width'/>
     <style>
@@ -776,7 +780,7 @@ const std::string kContentEditableHorizontalScrollableDataURL = R"HTML(
       document.title='ready';
     </script>)HTML";
 
-const std::string kContentEditableNonPassiveHandlerDataURL = R"HTML(
+constexpr char kContentEditableNonPassiveHandlerDataURL[] = R"HTML(
     data:text/html,<!DOCTYPE html>
     <meta name='viewport' content='width=device-width'/>
     <style>
@@ -799,7 +803,7 @@ const std::string kContentEditableNonPassiveHandlerDataURL = R"HTML(
       document.title='ready';
     </script>)HTML";
 
-const std::string kInputTagCursorControl = R"HTML(
+constexpr char kInputTagCursorControl[] = R"HTML(
     data:text/html,<!DOCTYPE html>
     <meta name='viewport' content='width=device-width'/>
     <style>
@@ -843,7 +847,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTestEnableCursorControl,
                        BasicCursorControl) {
   if (!::features::IsSwipeToMoveCursorEnabled())
     return;
-  LoadURL(kContentEditableDataURL.c_str());
+  LoadURL(kContentEditableDataURL);
 
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().anchorOffset"));
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().focusOffset"));
@@ -868,7 +872,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTestEnableCursorControl,
                        NoCursorControlForHorizontalScrollable) {
   if (!::features::IsSwipeToMoveCursorEnabled())
     return;
-  LoadURL(kContentEditableHorizontalScrollableDataURL.c_str());
+  LoadURL(kContentEditableHorizontalScrollableDataURL);
 
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().anchorOffset"));
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().focusOffset"));
@@ -894,7 +898,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTestEnableCursorControl,
                        NoCursorControlForNonPassiveLisenter) {
   if (!::features::IsSwipeToMoveCursorEnabled())
     return;
-  LoadURL(kContentEditableNonPassiveHandlerDataURL.c_str());
+  LoadURL(kContentEditableNonPassiveHandlerDataURL);
 
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().anchorOffset"));
   EXPECT_EQ(32, EvalJs(shell(), "window.getSelection().focusOffset"));
@@ -919,7 +923,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTestEnableCursorControl,
   if (!::features::IsSwipeToMoveCursorEnabled())
     return;
   // input size larger than the text size, not horizontally scrollable.
-  LoadURL(base::StringPrintf(kInputTagCursorControl.c_str(), 40).c_str());
+  LoadURL(base::StringPrintf(kInputTagCursorControl, 40).c_str());
 
   EXPECT_EQ(32, EvalJs(shell(), "container.selectionStart"));
   EXPECT_EQ(32, EvalJs(shell(), "container.selectionEnd"));
@@ -943,7 +947,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTestEnableCursorControl,
     return;
   // Make the input size smaller than the text size, so it horizontally
   // scrollable.
-  LoadURL(base::StringPrintf(kInputTagCursorControl.c_str(), 20).c_str());
+  LoadURL(base::StringPrintf(kInputTagCursorControl, 20).c_str());
 
   EXPECT_EQ(32, EvalJs(shell(), "container.selectionStart"));
   EXPECT_EQ(32, EvalJs(shell(), "container.selectionEnd"));

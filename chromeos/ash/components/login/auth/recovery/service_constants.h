@@ -5,14 +5,18 @@
 #ifndef CHROMEOS_ASH_COMPONENTS_LOGIN_AUTH_RECOVERY_SERVICE_CONSTANTS_H_
 #define CHROMEOS_ASH_COMPONENTS_LOGIN_AUTH_RECOVERY_SERVICE_CONSTANTS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
+
 #include "base/component_export.h"
 
 class GURL;
 
 namespace ash {
 
+COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_LOGIN_AUTH)
 std::string GetRecoveryHsmPublicKey();
 
 std::string GetRecoveryLedgerName();

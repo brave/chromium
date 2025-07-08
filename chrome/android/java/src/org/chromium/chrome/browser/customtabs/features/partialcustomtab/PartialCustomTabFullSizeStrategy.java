@@ -6,7 +6,7 @@ package org.chromium.chrome.browser.customtabs.features.partialcustomtab;
 
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 
-import static org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.ACTIVITY_LAYOUT_STATE_FULL_SCREEN;
+import static androidx.browser.customtabs.CustomTabsCallback.ACTIVITY_LAYOUT_STATE_FULL_SCREEN;
 
 import android.animation.ValueAnimator.AnimatorUpdateListener;
 import android.app.Activity;
@@ -18,10 +18,13 @@ import android.view.WindowManager;
 
 import androidx.annotation.Px;
 import androidx.annotation.StringRes;
+import androidx.browser.customtabs.CustomTabsCallback;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.ActivityLayoutState;
+import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
+import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbarButtonsCoordinator;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 
 /**
@@ -29,13 +32,22 @@ import org.chromium.chrome.browser.fullscreen.FullscreenManager;
  * class should be owned by the CustomTabActivity.
  */
 public class PartialCustomTabFullSizeStrategy extends PartialCustomTabBaseStrategy {
-    public PartialCustomTabFullSizeStrategy(Activity activity,
+    public PartialCustomTabFullSizeStrategy(
+            Activity activity,
+            BrowserServicesIntentDataProvider intentData,
             CustomTabHeightStrategy.OnResizedCallback onResizedCallback,
             CustomTabHeightStrategy.OnActivityLayoutCallback onActivityLayoutCallback,
-            FullscreenManager fullscreenManager, boolean isTablet, boolean interactWithBackground,
+            FullscreenManager fullscreenManager,
+            boolean isTablet,
             PartialCustomTabHandleStrategyFactory handleStrategyFactory) {
-        super(activity, onResizedCallback, onActivityLayoutCallback, fullscreenManager, isTablet,
-                interactWithBackground, handleStrategyFactory);
+        super(
+                activity,
+                intentData,
+                onResizedCallback,
+                onActivityLayoutCallback,
+                fullscreenManager,
+                isTablet,
+                handleStrategyFactory);
 
         mPositionUpdater = this::updatePosition;
 
@@ -54,14 +66,18 @@ public class PartialCustomTabFullSizeStrategy extends PartialCustomTabBaseStrate
 
     @Override
     public void onToolbarInitialized(
-            View coordinatorView, CustomTabToolbar toolbar, @Px int toolbarCornerRadius) {
-        super.onToolbarInitialized(coordinatorView, toolbar, toolbarCornerRadius);
-
-        CustomTabToolbar.HandleStrategy handleStrategy =
-                mHandleStrategyFactory.create(getStrategyType(), mActivity, this::isFullHeight,
-                        () -> 0, null, this::handleCloseAnimation);
-        toolbar.setHandleStrategy(handleStrategy);
-        updateDragBarVisibility(/*dragHandlebarVisibility*/ View.GONE);
+            View coordinatorView,
+            CustomTabToolbar toolbar,
+            @Px int toolbarCornerRadius,
+            CustomTabToolbarButtonsCoordinator toolbarButtonsCoordinator) {
+        super.onToolbarInitialized(
+                coordinatorView, toolbar, toolbarCornerRadius, toolbarButtonsCoordinator);
+        if (ChromeFeatureList.sCctToolbarRefactor.isEnabled()) {
+            toolbarButtonsCoordinator.setMinimizeButtonEnabled(true);
+        } else {
+            toolbar.setMinimizeButtonEnabled(true);
+        }
+        updateDragBarVisibility(/* dragHandlebarVisibility= */ View.GONE);
     }
 
     @Override
@@ -81,7 +97,7 @@ public class PartialCustomTabFullSizeStrategy extends PartialCustomTabBaseStrate
         positionOnWindow();
         setCoordinatorLayoutHeight(MATCH_PARENT);
 
-        updateDragBarVisibility(/*dragHandlebarVisibility*/ View.GONE);
+        updateDragBarVisibility(/* dragHandlebarVisibility= */ View.GONE);
     }
 
     @Override
@@ -111,7 +127,7 @@ public class PartialCustomTabFullSizeStrategy extends PartialCustomTabBaseStrate
     }
 
     @Override
-    protected @ActivityLayoutState int getActivityLayoutState() {
+    protected @CustomTabsCallback.ActivityLayoutState int getActivityLayoutState() {
         return ACTIVITY_LAYOUT_STATE_FULL_SCREEN;
     }
 
@@ -129,6 +145,11 @@ public class PartialCustomTabFullSizeStrategy extends PartialCustomTabBaseStrate
         ViewGroup.MarginLayoutParams mlp =
                 (ViewGroup.MarginLayoutParams) mToolbarCoordinator.getLayoutParams();
         mlp.setMargins(0, 0, 0, 0);
+    }
+
+    @Override
+    protected int getCustomTabsElevation() {
+        return 0;
     }
 
     @Override

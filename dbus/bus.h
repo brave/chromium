@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -266,13 +267,13 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // |object_path| looks like "/org/freedesktop/NetworkManager/Devices/0".
   //
   // Must be called in the origin thread.
-  virtual ObjectProxy* GetObjectProxy(const std::string& service_name,
+  virtual ObjectProxy* GetObjectProxy(std::string_view service_name,
                                       const ObjectPath& object_path);
 
   // Same as above, but also takes a bitfield of ObjectProxy::Options.
   // See object_proxy.h for available options.
   virtual ObjectProxy* GetObjectProxyWithOptions(
-      const std::string& service_name,
+      std::string_view service_name,
       const ObjectPath& object_path,
       int options);
 
@@ -300,13 +301,13 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // never called. The |callback| argument must not be null.
   //
   // Must be called in the origin thread.
-  virtual bool RemoveObjectProxy(const std::string& service_name,
+  virtual bool RemoveObjectProxy(std::string_view service_name,
                                  const ObjectPath& object_path,
                                  base::OnceClosure callback);
 
   // Same as above, but also takes a bitfield of ObjectProxy::Options.
   // See object_proxy.h for available options.
-  virtual bool RemoveObjectProxyWithOptions(const std::string& service_name,
+  virtual bool RemoveObjectProxyWithOptions(std::string_view service_name,
                                             const ObjectPath& object_path,
                                             int options,
                                             base::OnceClosure callback);
@@ -497,7 +498,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // as many times as it was added.
   //
   // The |error| must not be nullptr.
-  // TODO(crbug.com/1459945): 1) Use base::expected<void, Error> to return
+  // TODO(crbug.com/40274495): 1) Use base::expected<void, Error> to return
   // error, and 2) handle error in safer manner.
   //
   // The match rule looks like:
@@ -515,7 +516,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // removed. Otherwise, returns true and sets |error| accordingly.
   //
   // The |error| must not be nullptr.
-  // TODO(crbug.com/1459945): 1) Use base::expected<void, Error> to return
+  // TODO(crbug.com/40274495): 1) Use base::expected<void, Error> to return
   // error, and 2) handle error in safer manner.
   //
   // BLOCKING CALL.
@@ -530,7 +531,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // The same object path must not be added more than once.
   //
   // The |error| must not be nullptr.
-  // TODO(crbug.com/1459945): Use base::expected<void, Error> to return error.
+  // TODO(crbug.com/40274495): Use base::expected<void, Error> to return error.
   //
   // See also documentation of |dbus_connection_try_register_object_path| at
   // http://dbus.freedesktop.org/doc/api/html/group__DBusConnection.html
@@ -619,7 +620,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
 
   // Return the unique name of the bus connection if it is connected to
   // D-BUS. Otherwise, return an empty string.
-  std::string GetConnectionName();
+  virtual std::string GetConnectionName();
 
   // Returns true if the bus is connected to D-Bus.
   virtual bool IsConnected();

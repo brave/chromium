@@ -9,12 +9,9 @@
 
 #include <stdint.h>
 
-#include <vector>
-
 #include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
-#include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/shader_translator.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -57,12 +54,6 @@ class MockGLES2Decoder : public GLES2Decoder {
   MOCK_METHOD1(Destroy, void(bool have_context));
   MOCK_METHOD1(SetSurface, void(const scoped_refptr<gl::GLSurface>& surface));
   MOCK_METHOD0(ReleaseSurface, void());
-  MOCK_METHOD5(SetDefaultFramebufferSharedImage,
-               void(const Mailbox& mailbox,
-                    int samples,
-                    bool preserve,
-                    bool needs_depth,
-                    bool needs_stencil));
   MOCK_METHOD1(ResizeOffscreenFramebuffer, bool(const gfx::Size& size));
   MOCK_METHOD0(MakeCurrent, bool());
   MOCK_METHOD1(GetServiceIdForTesting, uint32_t(uint32_t client_id));
@@ -75,6 +66,7 @@ class MockGLES2Decoder : public GLES2Decoder {
   MOCK_METHOD1(GetTranslator,
                scoped_refptr<ShaderTranslatorInterface>(unsigned int type));
   MOCK_METHOD0(GetCapabilities, Capabilities());
+  MOCK_METHOD0(GetGLCapabilities, GLCapabilities());
   MOCK_CONST_METHOD0(HasPendingQueries, bool());
   MOCK_METHOD1(ProcessPendingQueries, void(bool));
   MOCK_CONST_METHOD0(HasMoreIdleWork, bool());
@@ -155,18 +147,6 @@ class MockGLES2Decoder : public GLES2Decoder {
                     int height,
                     int depth));
   MOCK_METHOD0(GetErrorState, ErrorState *());
-#if !BUILDFLAG(IS_ANDROID)
-  MOCK_METHOD8(CreateAbstractTexture,
-               std::unique_ptr<gpu::gles2::AbstractTexture>(
-                   unsigned /* GLenum */ target,
-                   unsigned /* GLenum */ internal_format,
-                   int /* GLsizei */ width,
-                   int /* GLsizei */ height,
-                   int /* GLsizei */ depth,
-                   int /* GLint */ border,
-                   unsigned /* GLenum */ format,
-                   unsigned /* GLenum */ type));
-#endif
 
   MOCK_METHOD0(GetLogger, Logger*());
 

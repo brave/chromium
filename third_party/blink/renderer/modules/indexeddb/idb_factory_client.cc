@@ -35,25 +35,21 @@
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
-#include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/modules/indexed_db_names.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_metadata.h"
-#include "third_party/blink/renderer/modules/indexeddb/idb_request.h"
-#include "third_party/blink/renderer/modules/indexeddb/idb_request_queue_item.h"
+#include "third_party/blink/renderer/modules/indexeddb/idb_open_db_request.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_value.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_cursor.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_database.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
 
-IDBFactoryClient::IDBFactoryClient(IDBRequest* request) : request_(request) {
+IDBFactoryClient::IDBFactoryClient(IDBOpenDBRequest* request)
+    : request_(request) {
   task_runner_ =
       request_->GetExecutionContext()->GetTaskRunner(TaskType::kDatabaseAccess);
-  async_task_context_.Schedule(request_->GetExecutionContext(),
-                               indexed_db_names::kIndexedDB);
 }
 
 IDBFactoryClient::~IDBFactoryClient() {
@@ -67,11 +63,7 @@ void IDBFactoryClient::Detach() {
 
 void IDBFactoryClient::DetachFromRequest() {
   if (request_) {
-    async_task_context_.Cancel();
-#if DCHECK_IS_ON()
-    DCHECK_EQ(this, request_->FactoryClient());
-#endif  // DCHECK_IS_ON()
-    request_->FactoryClientDestroyed();
+    request_->FactoryClientDestroyed(this);
   }
 }
 
@@ -94,46 +86,45 @@ void IDBFactoryClient::Error(mojom::blink::IDBException code,
     return;
   }
 
-  probe::AsyncTask async_task(request_->GetExecutionContext(),
-                              &async_task_context_, "error");
-  IDBRequest* request = request_.Get();
+  IDBOpenDBRequest* request = request_.Get();
   Detach();
-  request->HandleResponse(MakeGarbageCollected<DOMException>(
-      static_cast<DOMExceptionCode>(code), message));
+  DOMException* dom_exception;
+  if (code == mojom::blink::IDBException::kQuotaError &&
+      RuntimeEnabledFeatures::QuotaExceededErrorUpdateEnabled()) {
+    dom_exception = MakeGarbageCollected<QuotaExceededError>(message);
+  } else {
+    dom_exception = MakeGarbageCollected<DOMException>(
+        static_cast<DOMExceptionCode>(code), message);
+  }
+  request->OnDBFactoryError(dom_exception);
 }
 
-void IDBFactoryClient::SuccessDatabase(
+void IDBFactoryClient::OpenSuccess(
     mojo::PendingAssociatedRemote<mojom::blink::IDBDatabase> pending_database,
     const IDBDatabaseMetadata& metadata) {
-  std::unique_ptr<WebIDBDatabase> db;
-  if (pending_database.is_valid()) {
-    db = std::make_unique<WebIDBDatabase>(std::move(pending_database),
-                                          task_runner_);
-  }
-  if (request_) {
-    probe::AsyncTask async_task(request_->GetExecutionContext(),
-                                &async_task_context_, "success");
-#if DCHECK_IS_ON()
-    DCHECK(!request_->TransactionHasQueuedResults());
-#endif  // DCHECK_IS_ON()
-    IDBRequest* request = request_.Get();
-    Detach();
-    request->EnqueueResponse(std::move(db), IDBDatabaseMetadata(metadata));
-  } else if (db) {
-    db->Close();
-  }
-}
-
-void IDBFactoryClient::SuccessInteger(int64_t value) {
   if (!request_) {
     return;
   }
 
-  probe::AsyncTask async_task(request_->GetExecutionContext(),
-                              &async_task_context_, "success");
-  IDBRequest* request = request_.Get();
+#if DCHECK_IS_ON()
+    DCHECK(!request_->TransactionHasQueuedResults());
+#endif  // DCHECK_IS_ON()
+    IDBOpenDBRequest* request = request_.Get();
+    Detach();
+    request->OnOpenDBSuccess(std::move(pending_database), task_runner_,
+                             metadata);
+    // `this` may be deleted because event dispatch can run a nested loop.
+}
+
+void IDBFactoryClient::DeleteSuccess(int64_t old_version) {
+  if (!request_) {
+    return;
+  }
+
+  IDBOpenDBRequest* request = request_.Get();
   Detach();
-  request->HandleResponse(value);
+  request->OnDeleteDBSuccess(old_version);
+  // `this` may be deleted because event dispatch can run a nested loop.
 }
 
 void IDBFactoryClient::Blocked(int64_t old_version) {
@@ -141,14 +132,13 @@ void IDBFactoryClient::Blocked(int64_t old_version) {
     return;
   }
 
-  probe::AsyncTask async_task(request_->GetExecutionContext(),
-                              &async_task_context_, "blocked");
 #if DCHECK_IS_ON()
   DCHECK(!request_->TransactionHasQueuedResults());
 #endif  // DCHECK_IS_ON()
-  request_->EnqueueBlocked(old_version);
+  request_->OnBlocked(old_version);
+  // `this` may be deleted because event dispatch can run a nested loop.
   // Not resetting |request_|.  In this instance we will have to forward at
-  // least one other call in the set UpgradeNeeded() / Success() /
+  // least one other call in the set UpgradeNeeded() / OpenSuccess() /
   // Error().
 }
 
@@ -158,26 +148,20 @@ void IDBFactoryClient::UpgradeNeeded(
     mojom::blink::IDBDataLoss data_loss,
     const String& data_loss_message,
     const IDBDatabaseMetadata& metadata) {
-  std::unique_ptr<WebIDBDatabase> db;
-  if (pending_database.is_valid()) {
-    db = std::make_unique<WebIDBDatabase>(std::move(pending_database),
-                                          task_runner_);
+  if (!request_) {
+    return;
   }
-  if (request_) {
-    probe::AsyncTask async_task(request_->GetExecutionContext(),
-                                &async_task_context_, "upgradeNeeded");
+
 #if DCHECK_IS_ON()
     DCHECK(!request_->TransactionHasQueuedResults());
 #endif  // DCHECK_IS_ON()
-    request_->EnqueueUpgradeNeeded(old_version, std::move(db),
-                                   IDBDatabaseMetadata(metadata), data_loss,
-                                   data_loss_message);
+    request_->OnUpgradeNeeded(old_version, std::move(pending_database),
+                              task_runner_, IDBDatabaseMetadata(metadata),
+                              data_loss, data_loss_message);
+    // `this` may be deleted because event dispatch can run a nested loop.
     // Not resetting |request_|.  In this instance we will have to forward at
-    // least one other call in the set UpgradeNeeded() / Success() /
+    // least one other call in the set UpgradeNeeded() / OpenSuccess() /
     // Error().
-  } else if (db) {
-    db->Close();
-  }
 }
 
 }  // namespace blink

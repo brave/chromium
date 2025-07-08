@@ -13,6 +13,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "content/browser/aggregation_service/aggregation_service_test_utils.h"
@@ -42,8 +43,7 @@ class TestAggregationServiceImplTest : public testing::Test {
 };
 
 TEST_F(TestAggregationServiceImplTest, SetPublicKeys) {
-  aggregation_service::TestHpkeKey generated_key =
-      aggregation_service::GenerateKey("abcd");
+  aggregation_service::TestHpkeKey generated_key{/*key_id=*/"abcd"};
 
   std::string json_string = base::ReplaceStringPlaceholders(
       R"({
@@ -55,7 +55,7 @@ TEST_F(TestAggregationServiceImplTest, SetPublicKeys) {
                 }
             ]
          })",
-      {generated_key.base64_encoded_public_key}, /*offsets=*/nullptr);
+      {generated_key.GetPublicKeyBase64()}, /*offsets=*/nullptr);
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
@@ -75,7 +75,7 @@ TEST_F(TestAggregationServiceImplTest, SetPublicKeys) {
   service_impl_->GetPublicKeys(
       url, base::BindLambdaForTesting([&](std::vector<PublicKey> keys) {
         EXPECT_TRUE(content::aggregation_service::PublicKeysEqual(
-            {generated_key.public_key}, keys));
+            {generated_key.GetPublicKey()}, keys));
         run_loop.Quit();
       }));
   run_loop.Run();

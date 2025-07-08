@@ -4,40 +4,34 @@
 
 package org.chromium.chrome.browser.ui.signin;
 
-import android.accounts.Account;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
+import android.content.res.Configuration;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.view.View;
 
 import org.chromium.base.IntentUtils;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 
-/**
- * Helper functions for sign-in and accounts.
- */
+/** Helper functions for sign-in and accounts. */
+@NullMarked
 public final class SigninUtils {
-    private static final String ACCOUNT_SETTINGS_ACTION = "android.settings.ACCOUNT_SYNC_SETTINGS";
-    private static final String ACCOUNT_SETTINGS_ACCOUNT_KEY = "account";
+    private static final int DUAL_PANES_HORIZONTAL_LAYOUT_MIN_WIDTH = 600;
 
     private SigninUtils() {}
 
     /**
      * Opens a Settings page to configure settings for a single account.
+     *
      * @param activity Activity to use when starting the Activity.
-     * @param account The account for which the Settings page should be opened.
+     * @param accountEmail The account email for which the Settings page should be opened.
      * @return Whether or not Android accepted the Intent.
      */
-    public static boolean openSettingsForAccount(Activity activity, Account account) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // ACCOUNT_SETTINGS_ACTION no longer works on Android O+, always open all accounts page.
-            return openSettingsForAllAccounts(activity);
-        }
-        Intent intent = new Intent(ACCOUNT_SETTINGS_ACTION);
-        intent.putExtra(ACCOUNT_SETTINGS_ACCOUNT_KEY, account);
-        return IntentUtils.safeStartActivity(activity, intent);
+    public static boolean openSettingsForAccount(Activity activity, String accountEmail) {
+        return openSettingsForAllAccounts(activity);
     }
 
     /**
@@ -71,5 +65,67 @@ public final class SigninUtils {
             return context.getString(R.string.sync_promo_continue);
         }
         return context.getString(R.string.sync_promo_continue_as, profileData.getAccountEmail());
+    }
+
+    /** Returns the accessibility label for the the account picker. */
+    public static String getChooseAccountLabel(
+            final Context context,
+            DisplayableProfileData profileData,
+            boolean isCurrentlySelected) {
+        if (!isCurrentlySelected) {
+            return getAccountLabelForNonSelectedAccount(profileData, context);
+        }
+
+        if (profileData.hasDisplayableEmailAddress()) {
+            if (TextUtils.isEmpty(profileData.getFullName())) {
+                return context.getString(
+                        R.string.signin_account_picker_description_with_email,
+                        profileData.getAccountEmail());
+            }
+            return context.getString(
+                    R.string.signin_account_picker_description_with_name_and_email,
+                    profileData.getFullName(),
+                    profileData.getAccountEmail());
+        }
+
+        if (TextUtils.isEmpty(profileData.getFullName())) {
+            return context.getString(
+                    R.string.signin_account_picker_description_without_name_or_email);
+        }
+        return context.getString(
+                R.string.signin_account_picker_description_with_name, profileData.getFullName());
+    }
+
+    private static String getAccountLabelForNonSelectedAccount(
+            DisplayableProfileData profileData, Context context) {
+        String fullName = profileData.getFullName();
+        if (!profileData.hasDisplayableEmailAddress()) {
+            return TextUtils.isEmpty(fullName) ? "" : fullName;
+        }
+        if (TextUtils.isEmpty(fullName)) {
+            return profileData.getAccountEmail();
+        }
+        return context.getString(
+                R.string.signin_account_label_for_non_selected_account,
+                fullName,
+                profileData.getAccountEmail());
+    }
+
+    public static View wrapInDialogWhenLargeLayout(View promoContentView) {
+        return DialogWhenLargeContentLayout.wrapInDialogWhenLargeLayout(promoContentView);
+    }
+
+    /**
+     * Returns whether dual panes horizontal layout can be used on full screen views (e.g. FRE or
+     * Upgrade promo sub-views) given the configuration.
+     */
+    public static boolean shouldShowDualPanesHorizontalLayout(Context context) {
+        Configuration configuration = context.getResources().getConfiguration();
+
+        // Since the landscape view has two panes the minimum screenWidth to show it is set to
+        // 600dp for phones.
+        return configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                && configuration.screenWidthDp >= DUAL_PANES_HORIZONTAL_LAYOUT_MIN_WIDTH
+                && !DialogWhenLargeContentLayout.shouldShowAsDialog(context);
     }
 }

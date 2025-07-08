@@ -102,8 +102,7 @@ class Generator(CppGenerator):
       if (mojom.IsIntegralKind(kind) or mojom.IsStringKind(kind)
           or mojom.IsDoubleKind(kind) or mojom.IsFloatKind(kind)
           or mojom.IsAnyHandleKind(kind) or mojom.IsInterfaceKind(kind)
-          or mojom.IsInterfaceRequestKind(kind) or mojom.IsAssociatedKind(kind)
-          or mojom.IsPendingRemoteKind(kind)
+          or mojom.IsAssociatedKind(kind) or mojom.IsPendingRemoteKind(kind)
           or mojom.IsPendingReceiverKind(kind)):
         pass
       elif mojom.IsArrayKind(kind):
@@ -158,11 +157,7 @@ class Generator(CppGenerator):
         seen_types.add(name)
         if kind.module in all_imports:
           seen_imports.add(kind.module)
-      elif (mojom.IsInterfaceRequestKind(kind)
-            or mojom.IsAssociatedInterfaceKind(kind)
-            or mojom.IsAssociatedInterfaceRequestKind(kind)
-            or mojom.IsPendingRemoteKind(kind)
-            or mojom.IsPendingReceiverKind(kind)
+      elif (mojom.IsPendingRemoteKind(kind) or mojom.IsPendingReceiverKind(kind)
             or mojom.IsPendingAssociatedRemoteKind(kind)
             or mojom.IsPendingAssociatedReceiverKind(kind)):
         AddKind(kind.kind)
@@ -252,7 +247,6 @@ class Generator(CppGenerator):
         mojom.IsPendingAssociatedRemoteKind,
         "is_pending_remote_kind": mojom.IsPendingRemoteKind,
         "is_platform_handle_kind": mojom.IsPlatformHandleKind,
-        "is_associated_interface_kind": mojom.IsAssociatedInterfaceKind,
         "is_native_only_kind": IsNativeOnlyKind,
         "is_any_handle_kind": mojom.IsAnyHandleKind,
         "is_any_interface_kind": mojom.IsAnyInterfaceKind,
@@ -262,6 +256,7 @@ class Generator(CppGenerator):
         "is_hashable": self._IsHashableKind,
         "is_map_kind": mojom.IsMapKind,
         "is_move_only_kind": self._IsMoveOnlyKind,
+        "is_non_const_ref_kind": self._IsNonConstRefKind,
         "is_nullable_kind": mojom.IsNullableKind,
         "is_object_kind": mojom.IsObjectKind,
         "is_reference_kind": mojom.IsReferenceKind,
@@ -366,6 +361,11 @@ class Generator(CppGenerator):
               or self._IsMoveOnlyKind(kind.key_kind))
     if mojom.IsAnyHandleOrInterfaceKind(kind):
       return True
+    return False
+
+  def _IsNonConstRefKind(self, kind):
+    if self._IsTypemappedKind(kind):
+      return self.typemap[self._GetFullMojomNameForKind(kind)]["non_const_ref"]
     return False
 
   def _GetCppWrapperProtoType(self, kind, add_same_module_namespaces=False):

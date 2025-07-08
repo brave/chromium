@@ -60,14 +60,15 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
 
   // Create a thumbnail URL containing the correct render frame ID and an
   // arbitrary instant restricted ID.
-  GURL thumbnail_url(base::StringPrintf("chrome-search:/thumb/%i/1",
-                                        render_frame->GetRoutingID()));
+  GURL thumbnail_url(base::StringPrintf(
+      "chrome-search:/thumb/%s/1",
+      render_frame->GetWebFrame()->GetLocalFrameToken().ToString().c_str()));
 
   GURL result;
   // Make sure the SearchBox rewrites a thumbnail request from the main frame.
   client->WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
-                          blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result);
+                          /*upstream_url=*/GURL(), blink::WebURL(thumbnail_url),
+                          net::SiteForCookies(), nullptr, &result);
   EXPECT_NE(result, thumbnail_url);
 
   // Make sure the SearchBox rewrites a thumbnail request from the iframe.
@@ -77,8 +78,8 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
   blink::WebLocalFrame* local_child =
       static_cast<blink::WebLocalFrame*>(child_frame);
   client->WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
-                          blink::WebURL(thumbnail_url), net::SiteForCookies(),
-                          nullptr, &result);
+                          /*upstream_url=*/GURL(), blink::WebURL(thumbnail_url),
+                          net::SiteForCookies(), nullptr, &result);
   EXPECT_NE(result, thumbnail_url);
 }
 
@@ -209,7 +210,7 @@ IN_PROC_BROWSER_TEST_F(ChromeContentRendererClientBrowserTest,
   {
     const auto& map =
         extensions_client->GetFeatureDelegatedAvailabilityCheckMap();
-    EXPECT_EQ(5u, map.size());
+    EXPECT_TRUE(!map.empty());
     for (const auto* feature :
          extension_test_util::GetExpectedDelegatedFeaturesForTest()) {
       EXPECT_EQ(1u, map.count(feature));

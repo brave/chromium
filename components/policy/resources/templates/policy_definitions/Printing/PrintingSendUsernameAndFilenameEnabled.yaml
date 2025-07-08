@@ -3,6 +3,7 @@ desc: |-
   Send username and filename to native printers server with every print job. The default is not to send.
 
         Setting this policy to true also disables printers that use protocols other than IPPS, USB, or IPP-over-USB since username and filename shouldn't be sent over the network openly.
+default: false
 example_value: true
 features:
   can_be_recommended: false
@@ -14,7 +15,8 @@ items:
 - caption: Disable sending username and filename to native printers
   value: false
 owners:
-- srad@google.com
+- ust@google.com
+- chromeos-commercial-printing@google.com
 - pawliczek@chromium.org
 schema:
   type: boolean

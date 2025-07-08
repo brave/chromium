@@ -8,12 +8,17 @@
 #include "ash/ash_export.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/wm_metrics.h"
-#include "base/time/time.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
 #include "chromeos/ui/frame/multitask_menu/float_controller_base.h"
-#include "ui/display/display.h"
 #include "ui/display/display_observer.h"
-#include "ui/gfx/geometry/rect.h"
+
+namespace base {
+class TimeDelta;
+}  // namespace base
+
+namespace gfx {
+class Rect;
+}  // namespace gfx
 
 namespace ash {
 
@@ -80,9 +85,6 @@ enum WMEventType {
   // See description of WM_EVENT_CYCLE_SNAP_PRIMARY.
   WM_EVENT_CYCLE_SNAP_SECONDARY,
 
-  // A user requested to center a window.
-  WM_EVENT_CENTER,
-
   // TODO(oshima): Investigate if this can be removed from ash.
   // Widget requested to show in inactive state.
   WM_EVENT_SHOW_INACTIVE,
@@ -94,12 +96,9 @@ enum WMEventType {
   // display disconnection or dragging.
   WM_EVENT_ADDED_TO_WORKSPACE,
 
-  // Bounds of the display has changed.
-  WM_EVENT_DISPLAY_BOUNDS_CHANGED,
-
-  // Bounds of the work area has changed. This will not occur when the work
-  // area has changed as a result of DISPLAY_BOUNDS_CHANGED.
-  WM_EVENT_WORKAREA_BOUNDS_CHANGED,
+  // A display metric has changed. See DisplayObserver::DisplayMetric for
+  // display related metrics.
+  WM_EVENT_DISPLAY_METRICS_CHANGED,
 
   // A user requested to pin a window.
   WM_EVENT_PIN,
@@ -111,16 +110,11 @@ enum WMEventType {
   // WM_EVENT_PIN but does not allow user to exit the mode by shortcut key.
   WM_EVENT_TRUSTED_PIN,
 
-  // A system ui area has changed. Currently, this includes the virtual
-  // keyboard and the message center. A change can be a change in visibility
-  // or bounds.
-  // TODO(oshima): Consider consolidating this into
-  // WM_EVENT_WORKAREA_BOUNDS_CHANGED
-  WM_EVENT_SYSTEM_UI_AREA_CHANGED,
-
   // A user requested to float a window.
   WM_EVENT_FLOAT,
 };
+
+ASH_EXPORT std::ostream& operator<<(std::ostream& out, WMEventType type);
 
 class SetBoundsWMEvent;
 class DisplayMetricsChangedWMEvent;
@@ -174,24 +168,24 @@ class ASH_EXPORT WMEvent {
   WMEventType type_;
 };
 
-// An WMEvent to request new bounds for the window.
+// A WMEvent to request new bounds for the window in parent coordinates.
 class ASH_EXPORT SetBoundsWMEvent : public WMEvent {
  public:
-  SetBoundsWMEvent(
-      const gfx::Rect& requested_bounds,
+  explicit SetBoundsWMEvent(
+      const gfx::Rect& requested_bounds_in_parent,
       bool animate = false,
       base::TimeDelta duration = WindowState::kBoundsChangeSlideDuration);
-  SetBoundsWMEvent(const gfx::Rect& requested_bounds, int64_t display_id);
+  SetBoundsWMEvent(const gfx::Rect& requested_bounds_in_parent,
+                   int64_t display_id);
 
   SetBoundsWMEvent(const SetBoundsWMEvent&) = delete;
   SetBoundsWMEvent& operator=(const SetBoundsWMEvent&) = delete;
 
   ~SetBoundsWMEvent() override;
 
-  // WMevent:
-  const SetBoundsWMEvent* AsSetBoundsWMEvent() const override;
-
-  const gfx::Rect& requested_bounds() const { return requested_bounds_; }
+  const gfx::Rect& requested_bounds_in_parent() const {
+    return requested_bounds_in_parent_;
+  }
 
   bool animate() const { return animate_; }
 
@@ -199,15 +193,17 @@ class ASH_EXPORT SetBoundsWMEvent : public WMEvent {
 
   int64_t display_id() const { return display_id_; }
 
+  // WMevent:
+  const SetBoundsWMEvent* AsSetBoundsWMEvent() const override;
+
  private:
-  const gfx::Rect requested_bounds_;
+  const gfx::Rect requested_bounds_in_parent_;
   const int64_t display_id_ = display::kInvalidDisplayId;
   const bool animate_;
   const base::TimeDelta duration_;
 };
 
 // A WMEvent sent when display metrics have changed.
-// TODO(oshima): Consolidate with WM_EVENT_WORKAREA_BOUNDS_CHANGED.
 class ASH_EXPORT DisplayMetricsChangedWMEvent : public WMEvent {
  public:
   explicit DisplayMetricsChangedWMEvent(int display_metrics);
@@ -218,8 +214,17 @@ class ASH_EXPORT DisplayMetricsChangedWMEvent : public WMEvent {
 
   ~DisplayMetricsChangedWMEvent() override;
 
+  bool display_bounds_changed() const {
+    return changed_metrics_ & display::DisplayObserver::DISPLAY_METRIC_BOUNDS;
+  }
+
   bool primary_changed() const {
     return changed_metrics_ & display::DisplayObserver::DISPLAY_METRIC_PRIMARY;
+  }
+
+  bool work_area_changed() const {
+    return changed_metrics_ &
+           display::DisplayObserver::DISPLAY_METRIC_WORK_AREA;
   }
 
  private:
@@ -235,12 +240,12 @@ class ASH_EXPORT WindowFloatWMEvent : public WMEvent {
   WindowFloatWMEvent& operator=(const WindowFloatWMEvent&) = delete;
   ~WindowFloatWMEvent() override;
 
-  // WMEvent:
-  const WindowFloatWMEvent* AsFloatEvent() const override;
-
   chromeos::FloatStartLocation float_start_location() const {
     return float_start_location_;
   }
+
+  // WMEvent:
+  const WindowFloatWMEvent* AsFloatEvent() const override;
 
  private:
   const chromeos::FloatStartLocation float_start_location_;
@@ -262,13 +267,13 @@ class ASH_EXPORT WindowSnapWMEvent : public WMEvent {
 
   ~WindowSnapWMEvent() override;
 
-  // WMEvent:
-  const WindowSnapWMEvent* AsSnapEvent() const override;
-
   float snap_ratio() const { return snap_ratio_; }
   WindowSnapActionSource snap_action_source() const {
     return snap_action_source_;
   }
+
+  // WMEvent:
+  const WindowSnapWMEvent* AsSnapEvent() const override;
 
  private:
   float snap_ratio_ = chromeos::kDefaultSnapRatio;

@@ -4,7 +4,6 @@
 
 import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
-import("//build/config/nacl/config.gni")
 import("//ipc/features.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//testing/test.gni")
@@ -21,6 +20,7 @@ component("ipc") {
   sources = [
     # These are the param_traits sources needed by all platforms,
     # including ios. The rest are added in a conditional block below.
+    "ipc_channel.cc",
     "ipc_message_utils.cc",
     "ipc_message_utils.h",
     "ipc_mojo_param_traits.cc",
@@ -30,6 +30,8 @@ component("ipc") {
     "param_traits_read_macros.h",
     "param_traits_write_macros.h",
     "struct_constructor_macros.h",
+    "tracing_helpers.h",
+    "tracing_helpers_internal.h",
   ]
 
   if (use_blink) {
@@ -72,16 +74,8 @@ component("ipc") {
       "message_router.h",
       "trace_ipc_message.cc",
       "trace_ipc_message.h",
+      "urgent_message_observer.h",
     ]
-  }
-
-  if (is_nacl) {
-    sources += [
-      "ipc_channel_nacl.cc",
-      "ipc_channel_nacl.h",
-    ]
-  } else {
-    sources += [ "ipc_channel.cc" ]
   }
 
   defines = [ "IS_IPC_IMPL" ]
@@ -184,6 +178,12 @@ source_set("native_handle_type_converters") {
   ]
 }
 
+mojom("test_mojom") {
+  testonly = true
+  sources = [ "ipc_channel_mojo_unittest.test-mojom" ]
+  public_deps = [ "//mojo/public/mojom/base" ]
+}
+
 mojom_component("mojom") {
   output_prefix = "ipc_mojom"
   macro_prefix = "IPC_MOJOM"
@@ -223,8 +223,7 @@ mojom("mojom_constants") {
 
 mojom("test_interfaces") {
   testonly = true
-  sources = [ "ipc_test.mojom" ]
-  support_lazy_serialization = true
+  sources = [ "ipc_test.test-mojom" ]
 }
 
 # This is provided as a separate target so other targets can provide param
@@ -293,6 +292,7 @@ if (use_blink) {
       "ipc_sync_message_unittest.cc",
       "ipc_sync_message_unittest.h",
       "sync_socket_unittest.cc",
+      "tracing_helpers_unittest.cc",
     ]
 
     if (is_posix || is_fuchsia) {
@@ -302,11 +302,16 @@ if (use_blink) {
       }
     }
 
+    if (is_win) {
+      sources += [ "ipc_handle_unittest.cc" ]
+    }
+
     deps = [
       ":ipc",
       ":protobuf_support",
       ":run_all_unittests",
       ":test_interfaces",
+      ":test_mojom",
       ":test_proto",
       ":test_support",
       "//base",

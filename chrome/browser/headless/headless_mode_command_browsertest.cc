@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/headless/headless_mode_browsertest.h"
-
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "base/command_line.h"
@@ -23,6 +23,8 @@
 #include "base/threading/platform_thread.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/browser/headless/headless_mode_browsertest.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/headless/command_handler/headless_command_handler.h"
 #include "components/headless/command_handler/headless_command_switches.h"
 #include "components/headless/test/bitmap_utils.h"
@@ -32,27 +34,13 @@
 #include "pdf/pdf.h"
 #include "printing/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/display/display_switches.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "url/gurl.h"
 
 namespace headless {
-
-namespace {
-
-void RemoveSpaces(std::string& str) {
-  str.erase(remove_if(str.begin(), str.end(), isspace), str.end());
-}
-
-bool DecodePNG(const std::string& png_data, SkBitmap* bitmap) {
-  return gfx::PNGCodec::Decode(
-      reinterpret_cast<const unsigned char*>(png_data.data()), png_data.size(),
-      bitmap);
-}
-
-}  // namespace
 
 class HeadlessModeCommandBrowserTest : public HeadlessModeBrowserTest {
  public:
@@ -68,11 +56,14 @@ class HeadlessModeCommandBrowserTest : public HeadlessModeBrowserTest {
   }
 
  protected:
+  // Override this to provide the test specific target page.
+  virtual std::string GetTargetPage() { return "/hello.html"; }
+
   GURL GetTargetUrl(const std::string& url) {
     return embedded_test_server()->GetURL(url);
   }
 
-  absl::optional<HeadlessCommandHandler::Result> ProcessCommands() {
+  std::optional<HeadlessCommandHandler::Result> ProcessCommands() {
     if (!test_complete_) {
       run_loop_ = std::make_unique<base::RunLoop>();
       run_loop_->Run();
@@ -93,8 +84,19 @@ class HeadlessModeCommandBrowserTest : public HeadlessModeBrowserTest {
 
   std::unique_ptr<base::RunLoop> run_loop_;
   bool test_complete_ = false;
-  absl::optional<HeadlessCommandHandler::Result> result_;
+  std::optional<HeadlessCommandHandler::Result> result_;
 };
+
+#define HEADLESS_MODE_COMMAND_BROWSER_TEST_WITH_TARGET_URL(                \
+    test_fixture, test_name, target_url)                                   \
+  class HeadlessModeCommandBrowserTest_##test_name : public test_fixture { \
+   public:                                                                 \
+    HeadlessModeCommandBrowserTest_##test_name() = default;                \
+    std::string GetTargetPage() override {                                 \
+      return target_url;                                                   \
+    }                                                                      \
+  };                                                                       \
+  IN_PROC_BROWSER_TEST_F(HeadlessModeCommandBrowserTest_##test_name, test_name)
 
 class HeadlessModeCommandBrowserTestWithTempDir
     : public HeadlessModeCommandBrowserTest {
@@ -122,10 +124,10 @@ class HeadlessModeCommandBrowserTestWithTempDir
 
 // DumpDom command tests ----------------------------------------------
 
-class HeadlessModeDumpDomCommandBrowserTest
+class HeadlessModeDumpDomCommandBrowserTestBase
     : public HeadlessModeCommandBrowserTest {
  public:
-  HeadlessModeDumpDomCommandBrowserTest() = default;
+  HeadlessModeDumpDomCommandBrowserTestBase() = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     HeadlessModeCommandBrowserTest::SetUpCommandLine(command_line);
@@ -135,19 +137,31 @@ class HeadlessModeDumpDomCommandBrowserTest
     capture_stdout_.StartCapture();
   }
 
-  virtual std::string GetTargetPage() { return "/hello.html"; }
-
  protected:
   CaptureStdOut capture_stdout_;
 };
 
-// TODO(crbug.com/1440917): Reenable once deflaked.
+class HeadlessModeDumpDomCommandBrowserTest
+    : public HeadlessModeDumpDomCommandBrowserTestBase,
+      public testing::WithParamInterface<bool> {
+ public:
+  HeadlessModeDumpDomCommandBrowserTest() = default;
+
+ private:
+  bool IsIncognito() override { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         HeadlessModeDumpDomCommandBrowserTest,
+                         ::testing::Bool());
+
+// TODO(crbug.com/40266323): Reenable once deflaked.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_HeadlessDumpDom DISABLED_HeadlessDumpDom
 #else
 #define MAYBE_HeadlessDumpDom HeadlessDumpDom
 #endif
-IN_PROC_BROWSER_TEST_F(HeadlessModeDumpDomCommandBrowserTest,
+IN_PROC_BROWSER_TEST_P(HeadlessModeDumpDomCommandBrowserTest,
                        MAYBE_HeadlessDumpDom) {
   ASSERT_THAT(ProcessCommands(),
               testing::Eq(HeadlessCommandHandler::Result::kSuccess));
@@ -163,12 +177,12 @@ IN_PROC_BROWSER_TEST_F(HeadlessModeDumpDomCommandBrowserTest,
 }
 
 class HeadlessModeDumpDomCommandBrowserTestWithTimeoutBase
-    : public HeadlessModeDumpDomCommandBrowserTest {
+    : public HeadlessModeDumpDomCommandBrowserTestBase {
  public:
   HeadlessModeDumpDomCommandBrowserTestWithTimeoutBase() = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    HeadlessModeDumpDomCommandBrowserTest::SetUpCommandLine(command_line);
+    HeadlessModeDumpDomCommandBrowserTestBase::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(switches::kTimeout,
                                     base::ToString(timeout().InMilliseconds()));
   }
@@ -216,7 +230,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessModeDumpDomCommandBrowserTestWithTimeout,
 
   capture_stdout_.StopCapture();
   std::string captured_stdout = capture_stdout_.TakeCapturedData();
-  RemoveSpaces(captured_stdout);
+  std::erase_if(captured_stdout, isspace);
 
   // Expect about:blank page DOM.
   EXPECT_THAT(captured_stdout,
@@ -289,11 +303,11 @@ INSTANTIATE_TEST_SUITE_P(
 IN_PROC_BROWSER_TEST_P(
     HeadlessModeDumpDomCommandBrowserTestWithSubResourceTimeout,
     HeadlessDumpDomWithSubResourceTimeout) {
-  absl::optional<HeadlessCommandHandler::Result> result = ProcessCommands();
+  std::optional<HeadlessCommandHandler::Result> result = ProcessCommands();
 
   capture_stdout_.StopCapture();
   std::string captured_stdout = capture_stdout_.TakeCapturedData();
-  RemoveSpaces(captured_stdout);
+  std::erase_if(captured_stdout, isspace);
 
   if (delay_response()) {
     EXPECT_THAT(result,
@@ -311,12 +325,34 @@ IN_PROC_BROWSER_TEST_P(
   }
 }
 
+HEADLESS_MODE_COMMAND_BROWSER_TEST_WITH_TARGET_URL(
+    HeadlessModeDumpDomCommandBrowserTestBase,
+    DumpDomWithBeforeUnloadPreventDefault,
+    "/before_unload_prevent_default.html") {
+  // Make sure that 'beforeunload' that prevents default action does not stall
+  // the command processing. The "Leave site" popup should not appear because
+  // command target was not user activated.
+  EXPECT_THAT(ProcessCommands(),
+              testing::Eq(HeadlessCommandHandler::Result::kSuccess));
+}
+
 // Screenshot command tests -------------------------------------------
 
 class HeadlessModeScreenshotCommandBrowserTest
     : public HeadlessModeCommandBrowserTestWithTempDir {
  public:
   HeadlessModeScreenshotCommandBrowserTest() = default;
+
+#if BUILDFLAG(IS_WIN)
+  void SetUp() override {
+    // Use software compositing instead of GL which causes blank screenshots on
+    // Windows, especially under ASAN. See https://crbug.com/1442606 and
+    // https://crbug.com/328195816.
+    UseSoftwareCompositing();
+
+    HeadlessModeCommandBrowserTestWithTempDir::SetUp();
+  }
+#endif
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     HeadlessModeCommandBrowserTestWithTempDir::SetUpCommandLine(command_line);
@@ -331,29 +367,87 @@ class HeadlessModeScreenshotCommandBrowserTest
   base::FilePath screenshot_filename_;
 };
 
-// TODO(crbug.com/1442606): Disabled due to flakiness on Windows ASAN.
-#if BUILDFLAG(IS_WIN)
-#define MAYBE_HeadlessScreenshot DISABLED_HeadlessScreenshot
-#else
-#define MAYBE_HeadlessScreenshot HeadlessScreenshot
-#endif
 IN_PROC_BROWSER_TEST_F(HeadlessModeScreenshotCommandBrowserTest,
-                       MAYBE_HeadlessScreenshot) {
+                       HeadlessScreenshot) {
   ASSERT_THAT(ProcessCommands(),
               testing::Eq(HeadlessCommandHandler::Result::kSuccess));
 
   base::ScopedAllowBlockingForTesting allow_blocking;
 
-  std::string png_data;
-  ASSERT_TRUE(base::ReadFileToString(screenshot_filename_, &png_data))
-      << screenshot_filename_;
+  std::optional<std::vector<uint8_t>> png_data =
+      base::ReadFileToBytes(screenshot_filename_);
 
-  SkBitmap bitmap;
-  ASSERT_TRUE(DecodePNG(png_data, &bitmap));
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data.value());
+  ASSERT_FALSE(bitmap.isNull());
 
   // Expect a centered blue rectangle on white background.
   EXPECT_TRUE(CheckColoredRect(bitmap, SkColorSetRGB(0x00, 0x00, 0xff),
                                SkColorSetRGB(0xff, 0xff, 0xff)));
+}
+
+class HeadlessModeScreenshotCommandWithWindowSizeBrowserTest
+    : public HeadlessModeScreenshotCommandBrowserTest {
+ public:
+  HeadlessModeScreenshotCommandWithWindowSizeBrowserTest() = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    HeadlessModeScreenshotCommandBrowserTest::SetUpCommandLine(command_line);
+
+    command_line->AppendSwitchASCII(::switches::kWindowSize, "2345,1234");
+    command_line->AppendSwitchASCII(::switches::kForceDeviceScaleFactor, "1");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(HeadlessModeScreenshotCommandWithWindowSizeBrowserTest,
+                       HeadlessScreenshotWithWindowSize) {
+  ASSERT_THAT(ProcessCommands(),
+              testing::Eq(HeadlessCommandHandler::Result::kSuccess));
+
+  base::ScopedAllowBlockingForTesting allow_blocking;
+
+  std::optional<std::vector<uint8_t>> png_data =
+      base::ReadFileToBytes(screenshot_filename_);
+
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data.value());
+  ASSERT_FALSE(bitmap.isNull());
+
+  EXPECT_EQ(bitmap.width(), 2345);
+  EXPECT_EQ(bitmap.height(), 1234);
+
+  // Expect a centered blue rectangle on white background.
+  EXPECT_TRUE(CheckColoredRect(bitmap, SkColorSetRGB(0x00, 0x00, 0xff),
+                               SkColorSetRGB(0xff, 0xff, 0xff)));
+}
+
+class HeadlessModeScreenshotCommandWithBackgroundBrowserTest
+    : public HeadlessModeScreenshotCommandBrowserTest {
+ public:
+  HeadlessModeScreenshotCommandWithBackgroundBrowserTest() = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    HeadlessModeScreenshotCommandBrowserTest::SetUpCommandLine(command_line);
+
+    command_line->AppendSwitchASCII(switches::kDefaultBackgroundColor,
+                                    "ff0000");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(HeadlessModeScreenshotCommandWithBackgroundBrowserTest,
+                       HeadlessScreenshotWithBackground) {
+  ASSERT_THAT(ProcessCommands(),
+              testing::Eq(HeadlessCommandHandler::Result::kSuccess));
+
+  base::ScopedAllowBlockingForTesting allow_blocking;
+
+  std::optional<std::vector<uint8_t>> png_data =
+      base::ReadFileToBytes(screenshot_filename_);
+
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data.value());
+  ASSERT_FALSE(bitmap.isNull());
+
+  // Expect a centered blue rectangle on red background.
+  EXPECT_TRUE(CheckColoredRect(bitmap, SkColorSetRGB(0x00, 0x00, 0xff),
+                               SkColorSetRGB(0xff, 0x00, 0x00)));
 }
 
 // PrintToPDF command tests -------------------------------------------
@@ -371,6 +465,8 @@ class HeadlessModePrintToPdfCommandBrowserTestBase
     command_line->AppendSwitchPath(switches::kPrintToPDF,
                                    print_to_pdf_filename_);
     command_line->AppendSwitch(switches::kNoPDFHeaderFooter);
+
+    command_line->AppendArg(GetTargetUrl(GetTargetPage()).spec());
   }
 
  protected:
@@ -382,15 +478,10 @@ class HeadlessModePrintToPdfCommandBrowserTest
  public:
   HeadlessModePrintToPdfCommandBrowserTest() = default;
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    HeadlessModePrintToPdfCommandBrowserTestBase::SetUpCommandLine(
-        command_line);
-
-    command_line->AppendArg(GetTargetUrl("/centered_blue_box.html").spec());
-  }
+  std::string GetTargetPage() override { return "/centered_blue_box.html"; }
 };
 
-// TODO(crbug.com/1440917): Reenable once deflaked.
+// TODO(crbug.com/40266323): Reenable once deflaked.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_HeadlessPrintToPdf DISABLED_HeadlessPrintToPdf
 #else
@@ -403,60 +494,55 @@ IN_PROC_BROWSER_TEST_F(HeadlessModePrintToPdfCommandBrowserTest,
 
   base::ScopedAllowBlockingForTesting allow_blocking;
 
-  std::string pdf_data;
-  ASSERT_TRUE(base::ReadFileToString(print_to_pdf_filename_, &pdf_data))
-      << print_to_pdf_filename_;
+  std::optional<std::vector<uint8_t>> pdf_data =
+      base::ReadFileToBytes(print_to_pdf_filename_);
+  ASSERT_TRUE(pdf_data.has_value()) << print_to_pdf_filename_;
 
   PDFPageBitmap page_bitmap;
-  ASSERT_TRUE(page_bitmap.Render(pdf_data, /*page_index=*/0));
+  ASSERT_TRUE(page_bitmap.Render(pdf_data.value(), /*page_index=*/0));
 
   // Expect blue rectangle on white background.
   EXPECT_TRUE(page_bitmap.CheckColoredRect(SkColorSetRGB(0x00, 0x00, 0xff),
                                            SkColorSetRGB(0xff, 0xff, 0xff)));
 }
 
-class HeadlessModeLazyLoadingPrintToPdfCommandBrowserTest
-    : public HeadlessModePrintToPdfCommandBrowserTestBase {
- public:
-  HeadlessModeLazyLoadingPrintToPdfCommandBrowserTest() = default;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    HeadlessModePrintToPdfCommandBrowserTestBase::SetUpCommandLine(
-        command_line);
-    command_line->AppendArg(GetTargetUrl("/page_with_lazy_image.html").spec());
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(HeadlessModeLazyLoadingPrintToPdfCommandBrowserTest,
-                       HeadlessLazyLoadingPrintToPdf) {
+HEADLESS_MODE_COMMAND_BROWSER_TEST_WITH_TARGET_URL(
+    HeadlessModePrintToPdfCommandBrowserTestBase,
+    PrintToPdfWithLazyLoading,
+    "/page_with_lazy_image.html") {
   ASSERT_THAT(ProcessCommands(),
               testing::Eq(HeadlessCommandHandler::Result::kSuccess));
 
   base::ScopedAllowBlockingForTesting allow_blocking;
 
-  std::string pdf_data;
-  ASSERT_TRUE(base::ReadFileToString(print_to_pdf_filename_, &pdf_data))
-      << print_to_pdf_filename_;
+  std::optional<std::vector<uint8_t>> pdf_data =
+      base::ReadFileToBytes(print_to_pdf_filename_);
+  ASSERT_TRUE(pdf_data.has_value()) << print_to_pdf_filename_;
 
   PDFPageBitmap page_bitmap;
-  ASSERT_TRUE(page_bitmap.Render(pdf_data, /*page_index=*/4));
+  ASSERT_TRUE(page_bitmap.Render(pdf_data.value(), /*page_index=*/4));
 
   // Expect green rectangle on white background.
   EXPECT_TRUE(page_bitmap.CheckColoredRect(SkColorSetRGB(0x00, 0x64, 0x00),
                                            SkColorSetRGB(0xff, 0xff, 0xff)));
 }
 
-#if BUILDFLAG(ENABLE_TAGGED_PDF)
-
 class HeadlessModeTaggedPrintToPdfCommandBrowserTest
-    : public HeadlessModePrintToPdfCommandBrowserTestBase {
+    : public HeadlessModePrintToPdfCommandBrowserTestBase,
+      public ::testing::WithParamInterface<bool> {
  public:
   HeadlessModeTaggedPrintToPdfCommandBrowserTest() = default;
+
+  bool generate_tagged_pdf() { return GetParam(); }
+
+  std::string GetTargetPage() override { return "/hello.html"; }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     HeadlessModePrintToPdfCommandBrowserTestBase::SetUpCommandLine(
         command_line);
-    command_line->AppendArg(GetTargetUrl("/hello.html").spec());
+    if (!generate_tagged_pdf()) {
+      command_line->AppendSwitch(switches::kDisablePDFTagging);
+    }
   }
 };
 
@@ -472,18 +558,22 @@ const char kExpectedStructTreeJSON[] = R"({
 }
 )";
 
-IN_PROC_BROWSER_TEST_F(HeadlessModeTaggedPrintToPdfCommandBrowserTest,
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         HeadlessModeTaggedPrintToPdfCommandBrowserTest,
+                         ::testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(HeadlessModeTaggedPrintToPdfCommandBrowserTest,
                        HeadlessTaggedPrintToPdf) {
   ASSERT_THAT(ProcessCommands(),
               testing::Eq(HeadlessCommandHandler::Result::kSuccess));
 
   base::ScopedAllowBlockingForTesting allow_blocking;
 
-  std::string pdf_data;
-  ASSERT_TRUE(base::ReadFileToString(print_to_pdf_filename_, &pdf_data))
-      << print_to_pdf_filename_;
+  std::optional<std::vector<uint8_t>> pdf_data =
+      base::ReadFileToBytes(print_to_pdf_filename_);
+  ASSERT_TRUE(pdf_data.has_value()) << print_to_pdf_filename_;
 
-  auto pdf_span = base::as_bytes(base::make_span(pdf_data));
+  auto pdf_span = base::as_byte_span(pdf_data.value());
 
   int num_pages;
   ASSERT_TRUE(chrome_pdf::GetPDFDocInfo(pdf_span, &num_pages,
@@ -491,14 +581,14 @@ IN_PROC_BROWSER_TEST_F(HeadlessModeTaggedPrintToPdfCommandBrowserTest,
 
   EXPECT_THAT(num_pages, testing::Eq(1));
 
-  EXPECT_THAT(chrome_pdf::IsPDFDocTagged(pdf_span), testing::Optional(true));
+  ASSERT_THAT(chrome_pdf::IsPDFDocTagged(pdf_span),
+              testing::Optional(generate_tagged_pdf()));
 
-  base::Value struct_tree =
-      chrome_pdf::GetPDFStructTreeForPage(pdf_span, /*page_index=*/0);
-
-  EXPECT_THAT(kExpectedStructTreeJSON, base::test::IsJson((struct_tree)));
+  if (generate_tagged_pdf()) {
+    base::Value struct_tree =
+        chrome_pdf::GetPDFStructTreeForPage(pdf_span, /*page_index=*/0);
+    EXPECT_THAT(kExpectedStructTreeJSON, base::test::IsJson((struct_tree)));
+  }
 }
-
-#endif  // BUILDFLAG(ENABLE_TAGGED_PDF)
 
 }  // namespace headless

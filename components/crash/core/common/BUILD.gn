@@ -27,30 +27,24 @@ group("common") {
   }
 }
 
-use_crashpad_annotation = (is_mac || is_ios || is_win || is_android ||
-                           (is_linux && !is_castos)) && !use_crash_key_stubs
+use_crashpad_annotation =
+    (is_mac || is_ios || is_win || is_android || is_chromeos ||
+     (is_linux && !is_castos)) && !use_crash_key_stubs
 
-# Causes both Crashpad and Breakpad crash keys to be used. Both key
-# implementations will be instantiated and set, doubling the storage
-# used for keys. This is intended to be used temporarily to test Crashpad
-# integrations without disabling Breakpad.
-use_combined_annotations = is_chromeos && !use_crash_key_stubs
+# Make sure that breakpad use is limited to is_castos here so that there's no
+# unknown unenumerated target.
+assert(use_crash_key_stubs || use_crashpad_annotation || is_castos)
 
 buildflag_header("crash_buildflags") {
   header = "crash_buildflags.h"
   flags = [
     "USE_CRASHPAD_ANNOTATION=$use_crashpad_annotation",
-    "USE_COMBINED_ANNOTATIONS=$use_combined_annotations",
     "USE_CRASH_KEY_STUBS=$use_crash_key_stubs",
   ]
 }
 
 group("crash_key") {
   public_deps = [ ":crash_key_lib" ]
-
-  if (use_combined_annotations) {
-    public_deps += [ "//third_party/crashpad/crashpad/client" ]
-  }
 }
 
 # Crashpad's annotation system can store data on a per-module basis (i.e.,
@@ -108,9 +102,6 @@ target(crash_key_target_type, "crash_key_lib") {
     ]
 
     deps += [ "//third_party/breakpad:client" ]
-    if (use_combined_annotations) {
-      public_deps += [ "//third_party/crashpad/crashpad/client" ]
-    }
   }
 }
 
@@ -141,7 +132,7 @@ if (is_apple) {
 
     # Do not compile with ARC because ARC would prevent intercepting and
     # interfering with low-level object destruction.
-    configs -= [ "//build/config/compiler:enable_arc2" ]
+    configs -= [ "//build/config/compiler:enable_arc" ]
 
     deps = [
       ":crash_key",
@@ -184,15 +175,15 @@ source_set("unit_tests") {
 
     # Do not compile with ARC because ARC would prevent intercepting and
     # interfering with low-level object destruction.
-    configs -= [ "//build/config/compiler:enable_arc2" ]
+    configs -= [ "//build/config/compiler:enable_arc" ]
   }
 
-  if (is_castos || is_chromeos) {
+  if (is_castos) {
     include_dirs = [ "//third_party/breakpad/breakpad/src/" ]
     sources += [ "crash_key_breakpad_unittest.cc" ]
   }
 
-  # TODO(crbug.com/1186718): Enable when crash keys are supported on Fuchsia.
+  # TODO(crbug.com/40172607): Enable when crash keys are supported on Fuchsia.
   if (is_fuchsia) {
     sources -= [
       "crash_key_unittest.cc",

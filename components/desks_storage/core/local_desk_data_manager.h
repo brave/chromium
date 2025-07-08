@@ -105,8 +105,10 @@ class LocalDeskDataManager : public DeskModel, public AdminTemplateModel {
   size_t GetEntryCount() const override;
   size_t GetSaveAndRecallDeskEntryCount() const override;
   size_t GetDeskTemplateEntryCount() const override;
+  size_t GetCoralEntryCount() const override;
   size_t GetMaxSaveAndRecallDeskEntryCount() const override;
   size_t GetMaxDeskTemplateEntryCount() const override;
+  size_t GetMaxCoralEntryCount() const override;
   std::set<base::Uuid> GetAllEntryUuids() const override;
   bool IsReady() const override;
   bool IsSyncing() const override;
@@ -119,6 +121,9 @@ class LocalDeskDataManager : public DeskModel, public AdminTemplateModel {
   // AdminTemplateModel:
   void UpdateEntry(std::unique_ptr<ash::DeskTemplate> entry) override;
 
+  // This must be called after the class has been initialized and ready in the
+  // test.
+  void SetupFloatingWorkspaceForTest();
   static void SetDisableMaxTemplateLimitForTesting(bool disabled);
 
  private:

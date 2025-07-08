@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/file_system_provider/fileapi/buffering_file_stream_writer.h"
 
 #include <algorithm>
@@ -11,16 +16,15 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 
-namespace ash {
-namespace file_system_provider {
+namespace ash::file_system_provider {
 
 BufferingFileStreamWriter::BufferingFileStreamWriter(
     std::unique_ptr<storage::FileStreamWriter> file_stream_writer,
     int intermediate_buffer_length)
     : file_stream_writer_(std::move(file_stream_writer)),
       intermediate_buffer_length_(intermediate_buffer_length),
-      intermediate_buffer_(
-          base::MakeRefCounted<net::IOBuffer>(intermediate_buffer_length_)),
+      intermediate_buffer_(base::MakeRefCounted<net::IOBufferWithSize>(
+          intermediate_buffer_length_)),
       buffered_bytes_(0) {}
 
 BufferingFileStreamWriter::~BufferingFileStreamWriter() {
@@ -54,7 +58,7 @@ int BufferingFileStreamWriter::Write(net::IOBuffer* buffer,
   const int buffer_bytes =
       std::min(intermediate_buffer_length_ - buffered_bytes_, buffer_length);
 
-  CopyToIntermediateBuffer(base::WrapRefCounted(buffer), 0 /* buffer_offset */,
+  CopyToIntermediateBuffer(base::WrapRefCounted(buffer), /*buffer_offset=*/0,
                            buffer_bytes);
   const int bytes_left = buffer_length - buffer_bytes;
 
@@ -178,5 +182,4 @@ void BufferingFileStreamWriter::OnFlushIntermediateBufferForFlushCompleted(
   DCHECK_EQ(net::ERR_IO_PENDING, flush_result);
 }
 
-}  // namespace file_system_provider
-}  // namespace ash
+}  // namespace ash::file_system_provider

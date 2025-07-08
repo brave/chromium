@@ -9,6 +9,7 @@
 
 #include "base/containers/fixed_flat_map.h"
 #include "skia/ext/skcolorspace_trfn.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/display_color_spaces.h"
 
@@ -111,6 +112,9 @@ constexpr auto kEotfMap = base::MakeFixedFlatMap<
                      kDefaultSinceVersion)},
     {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB,
      TransferVersion(gfx::ColorSpace::TransferID::SRGB, kDefaultSinceVersion)},
+    {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB_HDR,
+     TransferVersion(gfx::ColorSpace::TransferID::SRGB_HDR,
+                     ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB_HDR_SINCE_VERSION)},
     {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_BT709,
      TransferVersion(gfx::ColorSpace::TransferID::BT709,
                      ZCR_COLOR_MANAGER_V1_EOTF_NAMES_BT709_SINCE_VERSION)},
@@ -176,16 +180,15 @@ constexpr auto kTransferMap =
         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_LINEAR,
          TransferFnVersion(SkNamedTransferFn::kLinear, kDefaultSinceVersion)},
         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB,
-         TransferFnVersion(SkNamedTransferFnExt::kSRGB, kDefaultSinceVersion)},
+         TransferFnVersion(SkNamedTransferFn::kSRGB, kDefaultSinceVersion)},
         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_BT709,
          TransferFnVersion(
-             SkNamedTransferFnExt::kRec709,
+             SkNamedTransferFn::kRec709,
              ZCR_COLOR_MANAGER_V1_EOTF_NAMES_BT709_SINCE_VERSION)},
         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_BT2087,
          TransferFnVersion(gamma24, kDefaultSinceVersion)},
         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_ADOBERGB,
-         TransferFnVersion(SkNamedTransferFnExt::kA98RGB,
-                           kDefaultSinceVersion)},
+         TransferFnVersion(SkNamedTransferFn::kA98RGB, kDefaultSinceVersion)},
     });
 
 // A map from the HDR zcr_color_manager_v1 eotf_names enum values
@@ -195,8 +198,10 @@ constexpr auto kHDRTransferMap =
     base::MakeFixedFlatMap<zcr_color_manager_v1_eotf_names, TransferFnVersion>(
         {{ZCR_COLOR_MANAGER_V1_EOTF_NAMES_LINEAR,
           TransferFnVersion(SkNamedTransferFn::kLinear, kDefaultSinceVersion)},
-         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB,
-          TransferFnVersion(SkNamedTransferFnExt::kSRGB, kDefaultSinceVersion)},
+         {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB_HDR,
+          TransferFnVersion(
+              SkNamedTransferFn::kSRGB,
+              ZCR_COLOR_MANAGER_V1_EOTF_NAMES_SRGB_HDR_SINCE_VERSION)},
          {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_PQ,
           TransferFnVersion(SkNamedTransferFn::kPQ, kDefaultSinceVersion)},
          {ZCR_COLOR_MANAGER_V1_EOTF_NAMES_HLG,
@@ -222,9 +227,6 @@ constexpr auto kMatrixMap =
               ZCR_COLOR_MANAGER_V1_MATRIX_NAMES_BT470BG_SINCE_VERSION)},
          {ZCR_COLOR_MANAGER_V1_MATRIX_NAMES_BT2020_NCL,
           MatrixVersion(gfx::ColorSpace::MatrixID::BT2020_NCL,
-                        kDefaultSinceVersion)},
-         {ZCR_COLOR_MANAGER_V1_MATRIX_NAMES_BT2020_CL,
-          MatrixVersion(gfx::ColorSpace::MatrixID::BT2020_CL,
                         kDefaultSinceVersion)},
          {ZCR_COLOR_MANAGER_V1_MATRIX_NAMES_FCC,
           MatrixVersion(gfx::ColorSpace::MatrixID::FCC, kDefaultSinceVersion)},

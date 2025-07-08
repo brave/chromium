@@ -11,28 +11,32 @@ import '../settings_shared.css.js';
 import './os_paired_bluetooth_list.js';
 import './settings_fast_pair_toggle.js';
 
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {BluetoothUiSurface, recordBluetoothUiSurfaceMetrics} from 'chrome://resources/ash/common/bluetooth/bluetooth_metrics_utils.js';
-import {getBluetoothConfig} from 'chrome://resources/ash/common/bluetooth/cros_bluetooth_config.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {getHidPreservingController} from 'chrome://resources/ash/common/bluetooth/hid_preserving_bluetooth_state_controller.js';
+import {HidWarningDialogSource} from 'chrome://resources/ash/common/bluetooth/hid_preserving_bluetooth_state_controller.mojom-webui.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {BluetoothSystemProperties, BluetoothSystemState, DeviceConnectionState, PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import type {BluetoothSystemProperties, PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import {BluetoothSystemState, DeviceConnectionState} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './os_bluetooth_devices_subpage.html.js';
-import {OsBluetoothDevicesSubpageBrowserProxy, OsBluetoothDevicesSubpageBrowserProxyImpl} from './os_bluetooth_devices_subpage_browser_proxy.js';
+import type {OsBluetoothDevicesSubpageBrowserProxy} from './os_bluetooth_devices_subpage_browser_proxy.js';
+import {OsBluetoothDevicesSubpageBrowserProxyImpl} from './os_bluetooth_devices_subpage_browser_proxy.js';
 
 const SettingsBluetoothDevicesSubpageElementBase = DeepLinkingMixin(PrefsMixin(
     RouteObserverMixin(WebUiListenerMixin(I18nMixin(PolymerElement)))));
 
-class SettingsBluetoothDevicesSubpageElement extends
+export class SettingsBluetoothDevicesSubpageElement extends
     SettingsBluetoothDevicesSubpageElementBase {
   static get is() {
     return 'os-settings-bluetooth-devices-subpage' as const;
@@ -50,22 +54,13 @@ class SettingsBluetoothDevicesSubpageElement extends
       },
 
       /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () =>
-            new Set<Setting>([Setting.kBluetoothOnOff, Setting.kFastPairOnOff]),
-      },
-
-      /**
        * Reflects the current state of the toggle button. This will be set when
        * the |systemProperties| state changes or when the user presses the
        * toggle.
        */
       isBluetoothToggleOn_: {
         type: Boolean,
-        observer: 'onBluetoothToggleChanged_',
+        observer: 'onIsBluetoothToggleOnChanged_',
       },
 
       /**
@@ -92,8 +87,15 @@ class SettingsBluetoothDevicesSubpageElement extends
         type: Array,
         value: [],
       },
+
     };
   }
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kBluetoothOnOff,
+    Setting.kFastPairOnOff,
+  ]);
 
   systemProperties: BluetoothSystemProperties;
   private browserProxy_: OsBluetoothDevicesSubpageBrowserProxy;
@@ -131,7 +133,7 @@ class SettingsBluetoothDevicesSubpageElement extends
   /**
    * RouteObserverMixin override
    */
-  override currentRouteChanged(route: Route, oldRoute?: Route) {
+  override currentRouteChanged(route: Route, oldRoute?: Route): void {
     // If we're navigating to a device's detail page, save the id of the device.
     if (route === routes.BLUETOOTH_DEVICE_DETAIL &&
         oldRoute === routes.BLUETOOTH_DEVICES) {
@@ -178,7 +180,7 @@ class SettingsBluetoothDevicesSubpageElement extends
   }
 
   private focusLastSelectedDeviceItem_(): void {
-    const focusItem = (deviceListSelector: string, index: number) => {
+    const focusItem = (deviceListSelector: string, index: number): void => {
       const deviceList =
           this.shadowRoot!.querySelector<HTMLElement>(deviceListSelector);
       const items = deviceList!.shadowRoot!.querySelectorAll(
@@ -211,16 +213,12 @@ class SettingsBluetoothDevicesSubpageElement extends
    * Observer for isBluetoothToggleOn_ that returns early until the previous
    * value was not undefined to avoid wrongly toggling the Bluetooth state.
    */
-  private onBluetoothToggleChanged_(_newValue: boolean, oldValue?: boolean) {
+  private onIsBluetoothToggleOnChanged_(_newValue: boolean, oldValue?: boolean):
+      void {
     if (oldValue === undefined) {
       return;
     }
-    // If the toggle value changed but the toggle is disabled, the change came
-    // from CrosBluetoothConfig, not the user. Don't attempt to update the
-    // enabled state.
-    if (!this.isToggleDisabled_()) {
-      getBluetoothConfig().setBluetoothEnabledState(this.isBluetoothToggleOn_);
-    }
+
     this.announceBluetoothStateChange_();
   }
 
@@ -257,6 +255,24 @@ class SettingsBluetoothDevicesSubpageElement extends
         loadTimeData.getBoolean('enableFastPairFlag');
   }
 
+  private onBluetoothToggleChange_(event: CustomEvent): void {
+    event.stopPropagation();
+
+    // If the toggle value changed but the toggle is disabled, the change came
+    // from CrosBluetoothConfig, not the user. Don't attempt to update the
+    // enabled state.
+    if (this.isToggleDisabled_()) {
+      return;
+    }
+
+    const enabled = event.detail;
+      // Reset Bluetooth toggle state to previous state. Toggle should only be
+      // updated when System properties changes.
+      this.isBluetoothToggleOn_ = !enabled;
+      getHidPreservingController().tryToSetBluetoothEnabledState(
+          enabled, HidWarningDialogSource.kOsSettings);
+  }
+
   /**
    * Determines if we allow access to the Saved Devices page. Unlike the Fast
    * Pair toggle, the device does not need to support Fast Pair because a device
@@ -267,7 +283,8 @@ class SettingsBluetoothDevicesSubpageElement extends
   private isFastPairSavedDevicesRowVisible_(): boolean {
     return loadTimeData.getBoolean('enableFastPairFlag') &&
         loadTimeData.getBoolean('enableSavedDevicesFlag') &&
-        !loadTimeData.getBoolean('isGuest');
+        !loadTimeData.getBoolean('isGuest') &&
+        loadTimeData.getBoolean('isCrossDeviceFeatureSuiteEnabled');
   }
 
   private onClicked_(event: Event): void {

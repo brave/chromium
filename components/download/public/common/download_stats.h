@@ -22,7 +22,6 @@
 #include "components/download/public/common/download_source.h"
 #include "mojo/public/c/system/types.h"
 #include "net/base/network_change_notifier.h"
-#include "net/http/http_response_info.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -201,11 +200,13 @@ DownloadContentFromMimeType(const std::string& mime_type_string,
 
 // Records the mime type of the download.
 COMPONENTS_DOWNLOAD_EXPORT void RecordDownloadMimeType(
-    const std::string& mime_type);
+    const std::string& mime_type,
+    bool is_transient);
 
 // Records the mime type of the download for normal profile.
 COMPONENTS_DOWNLOAD_EXPORT void RecordDownloadMimeTypeForNormalProfile(
-    const std::string& mime_type);
+    const std::string& mime_type,
+    bool is_transient);
 
 // Record overall bandwidth stats at the file end.
 // Does not count in any hash computation or file open/close time.
@@ -294,8 +295,13 @@ COMPONENTS_DOWNLOAD_EXPORT void RecordDownloadHttpResponseCode(
 COMPONENTS_DOWNLOAD_EXPORT void RecordResumptionStrongValidators(
     DownloadInterruptReason reason);
 
+// TODO(crbug.com/40283525): This is only used for the purposes of tests
+// and should be refactored.
 COMPONENTS_DOWNLOAD_EXPORT void RecordParallelRequestCreationFailure(
     DownloadInterruptReason reason);
+
+COMPONENTS_DOWNLOAD_EXPORT int
+GetParallelRequestCreationFailureCountForTesting();
 
 // Records the input stream read error type.
 COMPONENTS_DOWNLOAD_EXPORT void RecordInputStreamReadError(
@@ -315,12 +321,11 @@ enum class BackgroudTargetDeterminationResultTypes {
   kMaxValue = kPathReservationFailed
 };
 
+COMPONENTS_DOWNLOAD_EXPORT void RecordDuplicatePdfDownloadTriggered(
+    bool open_inline);
+
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_WIN)
-// Records the OS error code when moving a file on Windows.
-COMPONENTS_DOWNLOAD_EXPORT void RecordWinFileMoveError(int os_error);
-#endif  // BUILDFLAG(IS_WIN)
 }  // namespace download
 
 #endif  // COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_STATS_H_

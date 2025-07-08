@@ -5,9 +5,9 @@
 #ifndef UI_DISPLAY_SCREEN_INFO_H_
 #define UI_DISPLAY_SCREEN_INFO_H_
 
+#include <optional>
 #include <string>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display_export.h"
 #include "ui/display/mojom/screen_orientation.mojom-shared.h"
 #include "ui/display/types/display_constants.h"
@@ -36,10 +36,6 @@ struct DISPLAY_EXPORT ScreenInfo {
   // This can be true for black and white printers
   bool is_monochrome = false;
 
-  // The display frequency in Hz of the monitor. Set to 0 if it fails in the
-  // monitor frequency query.
-  int display_frequency = 0;
-
   // This is set from the rcMonitor member of MONITORINFOEX, to whit:
   //   "A RECT structure that specifies the display monitor rectangle,
   //   expressed in virtual-screen coordinates. Note that if the monitor
@@ -65,7 +61,7 @@ struct DISPLAY_EXPORT ScreenInfo {
 
   // This is the orientation angle of the displayed content in degrees.
   // It is the opposite of the physical rotation.
-  // TODO(crbug.com/840189): we should use an enum rather than a number here.
+  // TODO(crbug.com/41387359): we should use an enum rather than a number here.
   uint16_t orientation_angle = 0;
 
   // Whether this Screen is part of a multi-screen extended visual workspace.
@@ -92,8 +88,8 @@ struct DISPLAY_EXPORT ScreenInfo {
   ScreenInfo(const ScreenInfo& other);
   ~ScreenInfo();
   ScreenInfo& operator=(const ScreenInfo& other);
-  bool operator==(const ScreenInfo& other) const;
-  bool operator!=(const ScreenInfo& other) const;
+
+  friend bool operator==(const ScreenInfo&, const ScreenInfo&) = default;
 
   // Returns a string representation of the screen.
   std::string ToString() const;

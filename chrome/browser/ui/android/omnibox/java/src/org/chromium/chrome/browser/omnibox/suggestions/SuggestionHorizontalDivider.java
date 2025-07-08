@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.omnibox.suggestions;
 
 import android.content.Context;
 import android.graphics.Canvas;
-import android.graphics.Rect;
 import android.graphics.Region.Op;
 import android.view.View;
 
@@ -16,17 +15,18 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.ItemDecoration;
 import androidx.recyclerview.widget.RecyclerView.State;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter.ViewHolder;
 
 /**
- * Horizontal divider item decoration that clips the bottom of items with a rect of height  1dp.
- * Only clips for items with an associated property model with DropdownCommonProperties.SHOW_DIVIDER
- * == true.
+ * Horizontal divider item decoration that clips the bottom of items with a rect of height 1dp. Only
+ * clips for items with an associated property model with DropdownCommonProperties.SHOW_DIVIDER ==
+ * true.
  */
+@NullMarked
 public class SuggestionHorizontalDivider extends ItemDecoration {
-    private final Rect mBounds = new Rect();
     private final int mHeight;
 
     public SuggestionHorizontalDivider(@NonNull Context context) {
@@ -40,9 +40,14 @@ public class SuggestionHorizontalDivider extends ItemDecoration {
         for (int i = 0; i < childCount; ++i) {
             View child = parent.getChildAt(i);
             if (!shouldDrawDivider(child, parent)) continue;
-            parent.getDecoratedBoundsWithMargins(child, mBounds);
-            canvas.clipRect(mBounds.left, mBounds.bottom - mHeight, mBounds.right, mBounds.bottom,
-                    Op.DIFFERENCE);
+            float bottom = child.getY() + child.getHeight();
+            float left = child.getX();
+            // Erase a (child.getWidth() x mHeight) strip from the bottom of the child view being
+            // drawn. This creates a "divider" in the form of a mHeight tall line matching the
+            // background of the enclosing recycler view. Op.DIFFERENCE means "subtract the op
+            // region from the first region" i.e. erase it; see
+            // https://skia-doc.commondatastorage.googleapis.com/doxygen/doxygen/html/classSkRegion.html#a2ced93c36095d876b020e20cf39f5b54
+            canvas.clipRect(left, bottom - mHeight, left + child.getWidth(), bottom, Op.DIFFERENCE);
         }
     }
 
@@ -54,6 +59,7 @@ public class SuggestionHorizontalDivider extends ItemDecoration {
         }
         SimpleRecyclerViewAdapter.ViewHolder simpleRecyclerViewHolder =
                 (ViewHolder) parent.getChildViewHolder(view);
-        return simpleRecyclerViewHolder.model.get(DropdownCommonProperties.SHOW_DIVIDER);
+        var model = simpleRecyclerViewHolder.model;
+        return model != null && model.get(DropdownCommonProperties.SHOW_DIVIDER);
     }
 }

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.metrics;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.browserservices.metrics.WebApkUmaRecorder;
 import org.chromium.chrome.browser.browserservices.ui.splashscreen.SplashscreenObserver;
 
@@ -11,6 +12,7 @@ import org.chromium.chrome.browser.browserservices.ui.splashscreen.SplashscreenO
  * This class records cold start WebApk splashscreen metrics starting from the launch of the WebAPK
  * shell.
  */
+@NullMarked
 public class WebApkSplashscreenMetrics implements SplashscreenObserver {
     private final long mShellApkLaunchTimestamp;
     private final long mNewStyleSplashShownTimestamp;
@@ -26,7 +28,8 @@ public class WebApkSplashscreenMetrics implements SplashscreenObserver {
 
     @Override
     public void onSplashscreenHidden(long startTimestamp, long endTimestamp) {
-        if (!UmaUtils.hasComeToForegroundWithNative() || UmaUtils.hasComeToBackgroundWithNative()
+        if (!UmaUtils.hasComeToForegroundWithNative()
+                || UmaUtils.hasComeToBackgroundWithNative()
                 || mShellApkLaunchTimestamp == -1) {
             return;
         }

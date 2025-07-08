@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor_winrt.h"
 
 #include <utility>
@@ -9,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notimplemented.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/win/post_async_results.h"
@@ -143,7 +149,7 @@ void BluetoothRemoteGattDescriptorWinrt::ReadRemoteDescriptor(
 }
 
 void BluetoothRemoteGattDescriptorWinrt::WriteRemoteDescriptor(
-    const std::vector<uint8_t>& value,
+    base::span<const uint8_t> value,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
   if (pending_read_callback_ || pending_write_callbacks_) {
@@ -307,7 +313,7 @@ void BluetoothRemoteGattDescriptorWinrt::OnReadValue(
   }
 
   value_.assign(data, data + length);
-  std::move(pending_read_callback).Run(/*error_code=*/absl::nullopt, value_);
+  std::move(pending_read_callback).Run(/*error_code=*/std::nullopt, value_);
 }
 
 void BluetoothRemoteGattDescriptorWinrt::OnWriteValueWithResult(

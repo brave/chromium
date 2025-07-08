@@ -57,7 +57,6 @@ const char* ServiceWorkerStatusToString(ServiceWorkerStatusCode status) {
       return "Storage data corrupted";
   }
   NOTREACHED();
-  return "";
 }
 
 }  // namespace blink

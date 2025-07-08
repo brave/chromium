@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,6 @@
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/proto/device_management_backend.pb.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash::cert_provisioning {
 
@@ -48,8 +48,8 @@ std::string CertScopeToString(CertScope cert_scope) {
 bool CheckCommonClientCertProvisioningResponse(
     const em::ClientCertificateProvisioningResponse& response,
     policy::DeviceManagementStatus status,
-    absl::optional<CertProvisioningResponseErrorType>& out_response_error,
-    absl::optional<int64_t>& out_try_later) {
+    std::optional<CertProvisioningResponseErrorType>& out_response_error,
+    std::optional<int64_t>& out_try_later) {
   if (status != policy::DM_STATUS_SUCCESS) {
     return false;
   }
@@ -71,7 +71,7 @@ bool CheckCommonClientCertProvisioningResponse(
 // Detects error-like cases that are common to all requests.
 // Returns an `Error` struct if any error-like case has been detected,
 // or `nullopt` otherwise.
-absl::optional<CertProvisioningClient::Error> HandleCommonErrorCases(
+std::optional<CertProvisioningClient::Error> HandleCommonErrorCases(
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response,
     ResponseCase expected_response_case) {
@@ -90,7 +90,7 @@ absl::optional<CertProvisioningClient::Error> HandleCommonErrorCases(
         policy::DM_STATUS_RESPONSE_DECODING_ERROR, em::CertProvBackendError()};
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 std::vector<uint8_t> StrToBytes(const std::string& val) {
@@ -100,11 +100,13 @@ std::vector<uint8_t> StrToBytes(const std::string& val) {
 }  // namespace
 
 CertProvisioningClient::ProvisioningProcess::ProvisioningProcess(
+    std::string process_id,
     CertScope cert_scope,
     std::string cert_profile_id,
     std::string policy_version,
     std::vector<uint8_t> public_key)
-    : cert_scope(cert_scope),
+    : process_id(process_id),
+      cert_scope(cert_scope),
       cert_profile_id(std::move(cert_profile_id)),
       policy_version(std::move(policy_version)),
       public_key(std::move(public_key)) {}
@@ -119,8 +121,8 @@ CertProvisioningClient::ProvisioningProcess::operator=(
 
 bool CertProvisioningClient::ProvisioningProcess::operator==(
     const ProvisioningProcess& other) const {
-  static_assert(kFieldCount == 4, "Check/update operator==.");
-  return cert_scope == other.cert_scope &&
+  static_assert(kFieldCount == 5, "Check/update operator==.");
+  return process_id == other.process_id && cert_scope == other.cert_scope &&
          cert_profile_id == other.cert_profile_id &&
          policy_version == other.policy_version &&
          public_key == other.public_key;
@@ -248,6 +250,10 @@ void CertProvisioningClientImpl::DownloadCert(
 void CertProvisioningClientImpl::FillCommonRequestData(
     ProvisioningProcess provisioning_process,
     em::ClientCertificateProvisioningRequest& out_request) {
+  static_assert(ProvisioningProcess::kFieldCount == 5,
+                "Check/update this method.");
+  out_request.set_certificate_provisioning_process_id(
+      std::move(provisioning_process.process_id));
   out_request.set_certificate_scope(
       CertScopeToString(provisioning_process.cert_scope));
   out_request.set_cert_profile_id(
@@ -262,7 +268,7 @@ void CertProvisioningClientImpl::OnAuthorizeResponse(
     AuthorizeCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  if (absl::optional<Error> error = HandleCommonErrorCases(
+  if (std::optional<Error> error = HandleCommonErrorCases(
           status, response,
           /*expected_response_case=*/ResponseCase::kAuthorizeResponse)) {
     return std::move(callback).Run(base::unexpected(std::move(error).value()));
@@ -276,7 +282,7 @@ void CertProvisioningClientImpl::OnUploadProofOfPossessionResponse(
     UploadProofOfPossessionCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  if (absl::optional<Error> error = HandleCommonErrorCases(
+  if (std::optional<Error> error = HandleCommonErrorCases(
           status, response, /*expected_response_case=*/
           ResponseCase::kUploadProofOfPossessionResponse)) {
     return std::move(callback).Run(base::unexpected(std::move(error).value()));
@@ -290,7 +296,7 @@ void CertProvisioningClientImpl::OnStartResponse(
     StartCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  if (absl::optional<Error> error = HandleCommonErrorCases(
+  if (std::optional<Error> error = HandleCommonErrorCases(
           status, response,
           /*expected_response_case=*/ResponseCase::kStartResponse)) {
     return std::move(callback).Run(base::unexpected(std::move(error).value()));
@@ -304,7 +310,7 @@ void CertProvisioningClientImpl::OnGetNextInstructionResponse(
     NextInstructionCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  if (absl::optional<Error> error =
+  if (std::optional<Error> error =
           HandleCommonErrorCases(status, response, /*expected_response_case=*/
                                  ResponseCase::kGetNextInstructionResponse)) {
     return std::move(callback).Run(base::unexpected(std::move(error).value()));
@@ -326,8 +332,8 @@ void CertProvisioningClientImpl::OnStartCsrResponse(
     StartCsrCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  absl::optional<CertProvisioningResponseErrorType> response_error;
-  absl::optional<int64_t> try_later;
+  std::optional<CertProvisioningResponseErrorType> response_error;
+  std::optional<int64_t> try_later;
 
   // Single step loop for convenience.
   do {
@@ -387,8 +393,8 @@ void CertProvisioningClientImpl::OnFinishCsrResponse(
     FinishCsrCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  absl::optional<CertProvisioningResponseErrorType> response_error;
-  absl::optional<int64_t> try_later;
+  std::optional<CertProvisioningResponseErrorType> response_error;
+  std::optional<int64_t> try_later;
 
   // Single step loop for convenience.
   do {
@@ -410,8 +416,8 @@ void CertProvisioningClientImpl::OnDownloadCertResponse(
     DownloadCertCallback callback,
     policy::DeviceManagementStatus status,
     const em::ClientCertificateProvisioningResponse& response) {
-  absl::optional<CertProvisioningResponseErrorType> response_error;
-  absl::optional<int64_t> try_later;
+  std::optional<CertProvisioningResponseErrorType> response_error;
+  std::optional<int64_t> try_later;
 
   // Single step loop for convenience.
   do {

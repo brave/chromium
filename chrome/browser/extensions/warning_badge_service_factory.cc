@@ -31,18 +31,22 @@ WarningBadgeServiceFactory::WarningBadgeServiceFactory()
           "WarningBadgeService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
+              // TODO(crbug.com/40257657): Audit whether these should be
+              // redirected or should have their own instance.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(WarningServiceFactory::GetInstance());
 }
 
 WarningBadgeServiceFactory::~WarningBadgeServiceFactory() = default;
 
-KeyedService* WarningBadgeServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+WarningBadgeServiceFactory::BuildServiceInstanceForBrowserContext(
     BrowserContext* context) const {
-  return new WarningBadgeService(static_cast<Profile*>(context));
+  return std::make_unique<WarningBadgeService>(static_cast<Profile*>(context));
 }
 
 bool WarningBadgeServiceFactory::ServiceIsCreatedWithBrowserContext() const {

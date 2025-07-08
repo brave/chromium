@@ -12,7 +12,6 @@
 #include "ash/capture_mode/capture_mode_session_focus_cycler.h"
 #include "ash/capture_mode/capture_mode_types.h"
 #include "ash/capture_mode/capture_mode_util.h"
-#include "ash/constants/ash_features.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_id.h"
@@ -62,7 +61,7 @@ constexpr gfx::Insets kFocusRingPathInsets(
 // selected.
 struct CaptureButtonState {
   const int label_id;
-  const raw_ref<const gfx::VectorIcon, ExperimentalAsh> vector_icon;
+  const raw_ref<const gfx::VectorIcon> vector_icon;
 };
 
 // Based on the current state of capture mode, returns the state with which the
@@ -71,19 +70,18 @@ CaptureButtonState GetCaptureButtonState() {
   const auto* const controller = CaptureModeController::Get();
   if (controller->type() == CaptureModeType::kImage) {
     return CaptureButtonState{IDS_ASH_SCREEN_CAPTURE_LABEL_IMAGE_CAPTURE,
-                              ToRawRef<ExperimentalAsh>(kCaptureModeImageIcon)};
+                              ToRawRef(kCaptureModeImageIcon)};
   }
 
   if (controller->recording_type() == RecordingType::kWebM) {
     return CaptureButtonState{IDS_ASH_SCREEN_CAPTURE_LABEL_VIDEO_RECORD,
-                              ToRawRef<ExperimentalAsh>(kCaptureModeVideoIcon)};
+                              ToRawRef(kCaptureModeVideoIcon)};
   }
 
-  DCHECK(features::IsGifRecordingEnabled());
   DCHECK_EQ(controller->recording_type(), RecordingType::kGif);
 
   return CaptureButtonState{IDS_ASH_SCREEN_CAPTURE_LABEL_GIF_RECORD,
-                            ToRawRef<ExperimentalAsh>(kCaptureGifIcon)};
+                            ToRawRef(kCaptureGifIcon)};
 }
 
 }  // namespace
@@ -241,7 +239,7 @@ CaptureButtonView::CreateFocusRingPath(views::View* view,
       insets, kDropDownButtonRoundedCorners);
 }
 
-BEGIN_METADATA(CaptureButtonView, views::View)
+BEGIN_METADATA(CaptureButtonView)
 END_METADATA
 
 }  // namespace ash

@@ -6,31 +6,10 @@
 #define COMPONENTS_CONTENT_SETTINGS_CORE_COMMON_CONTENT_SETTINGS_CONSTRAINTS_H_
 
 #include "base/time/time.h"
+#include "base/values.h"
+#include "components/content_settings/core/common/content_settings_enums.mojom.h"
 
 namespace content_settings {
-
-// Options to restrict the scope of a content setting. These specify the
-// lifetime model of a given setting and how it may become invalidated or
-// expired.
-// Durable:     Settings persist forever and are bounded only by an expiry date,
-//              if set.
-// UserSession: Settings will persist no longer than the user session
-//              regardless of expiry date, if set.
-// NonRestorableUserSession: Same as UserSession, except this session-based
-//              setting will be reset when the user session ends regardless
-//              the restore setting. These settings will not be restored e.g.
-//              when the user selected "continue where you left off" or after
-//              a crash or update related restart.
-// OneTime:     Settings will persist for the current "tab session", meaning
-//              until the last tab from the origin is closed.
-enum class SessionModel {
-  Durable = 0,
-  UserSession = 1,
-  NonRestorableUserSession = 2,
-  OneTime = 3,
-  kMaxValue = OneTime,
-};
-
 // Constraints to be applied when setting a content setting.
 class ContentSettingConstraints {
  public:
@@ -43,14 +22,17 @@ class ContentSettingConstraints {
   explicit ContentSettingConstraints(base::Time now);
 
   ContentSettingConstraints(ContentSettingConstraints&& other);
-  ContentSettingConstraints(const ContentSettingConstraints& other);
+  ContentSettingConstraints(const ContentSettingConstraints& other) = delete;
   ContentSettingConstraints& operator=(ContentSettingConstraints&& other);
-  ContentSettingConstraints& operator=(const ContentSettingConstraints& other);
+  ContentSettingConstraints& operator=(const ContentSettingConstraints& other) =
+      delete;
 
   ~ContentSettingConstraints();
 
-  bool operator==(const ContentSettingConstraints& other) const;
-  bool operator!=(const ContentSettingConstraints& other) const;
+  friend bool operator==(const ContentSettingConstraints&,
+                         const ContentSettingConstraints&) = default;
+
+  ContentSettingConstraints Clone() const;
 
   base::Time expiration() const {
     if (lifetime_.is_zero()) {
@@ -67,8 +49,8 @@ class ContentSettingConstraints {
     lifetime_ = lifetime;
   }
 
-  SessionModel session_model() const { return session_model_; }
-  void set_session_model(SessionModel model) { session_model_ = model; }
+  mojom::SessionModel session_model() const { return session_model_; }
+  void set_session_model(mojom::SessionModel model) { session_model_ = model; }
 
   bool track_last_visit_for_autoexpiration() const {
     return track_last_visit_for_autoexpiration_;
@@ -76,6 +58,18 @@ class ContentSettingConstraints {
   void set_track_last_visit_for_autoexpiration(bool track) {
     track_last_visit_for_autoexpiration_ = track;
   }
+
+  bool decided_by_related_website_sets() const {
+    return decided_by_related_website_sets_;
+  }
+  void set_decided_by_related_website_sets(
+      bool granted_by_related_website_sets) {
+    decided_by_related_website_sets_ = granted_by_related_website_sets;
+  }
+
+  void set_options(base::Value options) { options_ = std::move(options); }
+
+  const base::Value& options() const { return options_; }
 
  private:
   // Tracks the base::Time that this instance was constructed. Copies and moves
@@ -87,19 +81,24 @@ class ContentSettingConstraints {
   //
   // If the lifetime is zero, then the setting does not expire.
   //
-  // TODO(https://crbug.com/1450356): created_at_ and lifetime_ need to be
+  // TODO(crbug.com/40270137): created_at_ and lifetime_ need to be
   // persisted (likely in/by content_settings::RuleMetaData) and recreated in
   // order be useful. Otherwise, everything still operates in terms of
   // expirations.
-  base::TimeDelta lifetime_ = base::TimeDelta();
+  base::TimeDelta lifetime_;
 
   // Used to specify the lifetime model that should be used.
-  SessionModel session_model_ = SessionModel::Durable;
+  mojom::SessionModel session_model_ = mojom::SessionModel::DURABLE;
   // Set to true to keep track of the last visit to the origin of this
   // permission.
   // This is used for the Safety check permission module and unrelated to the
   // "lifetime" keyword above.
   bool track_last_visit_for_autoexpiration_ = false;
+
+  // Set to true if the storage access was decided by a Related Website Set.
+  bool decided_by_related_website_sets_ = false;
+
+  base::Value options_;
 };
 
 }  // namespace content_settings

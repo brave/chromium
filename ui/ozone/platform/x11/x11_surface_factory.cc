@@ -11,7 +11,6 @@
 #include "ui/gfx/linux/gbm_buffer.h"
 #include "ui/gfx/linux/gpu_memory_buffer_support_x11.h"
 #include "ui/gfx/linux/native_pixmap_dmabuf.h"
-#include "ui/gfx/x/connection.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_surface_egl_x11_gles2.h"
@@ -69,8 +68,21 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
     return GLOzoneEGL::InitializeStaticGLBindings(implementation);
   }
 
-  bool CanImportNativePixmap() override {
-    return GetNativePixmapSupportType() != NativePixmapSupportType::kNone;
+  bool CanImportNativePixmap(gfx::BufferFormat format) override {
+    if (GetNativePixmapSupportType() == NativePixmapSupportType::kNone) {
+      return false;
+    }
+
+    switch (GetNativePixmapSupportType()) {
+      case NativePixmapSupportType::kDMABuf: {
+        return NativePixmapEGLBinding::IsBufferFormatSupported(format);
+      }
+      case NativePixmapSupportType::kX11Pixmap: {
+        return NativePixmapEGLX11Binding::IsBufferFormatSupported(format);
+      }
+      default:
+        return false;
+    }
   }
 
   std::unique_ptr<NativePixmapGLBinding> ImportNativePixmap(
@@ -117,7 +129,6 @@ class GLOzoneEGLX11 : public GLOzoneEGL {
               static_cast<x11::Window>(window)));
         default:
           NOTREACHED();
-          return nullptr;
       }
     }
   }
@@ -164,14 +175,12 @@ std::vector<gl::GLImplementationParts>
 X11SurfaceFactory::GetAllowedGLImplementations() {
   return std::vector<gl::GLImplementationParts>{
       gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
-      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
   };
 }
 
 GLOzone* X11SurfaceFactory::GetGLOzone(
     const gl::GLImplementationParts& implementation) {
   switch (implementation.gl) {
-    case gl::kGLImplementationEGLGLES2:
     case gl::kGLImplementationEGLANGLE:
       return egl_implementation_.get();
     default:
@@ -206,7 +215,7 @@ scoped_refptr<gfx::NativePixmap> X11SurfaceFactory::CreateNativePixmap(
     gfx::Size size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    absl::optional<gfx::Size> framebuffer_size) {
+    std::optional<gfx::Size> framebuffer_size) {
   scoped_refptr<gfx::NativePixmapDmaBuf> pixmap;
   auto buffer = ui::GpuMemoryBufferSupportX11::GetInstance()->CreateBuffer(
       format, size, usage);
@@ -262,6 +271,19 @@ X11SurfaceFactory::CreateNativePixmapFromHandle(
         size, format, std::move(buffer_handle));
   }
   return pixmap;
+}
+
+std::vector<gfx::BufferFormat>
+X11SurfaceFactory::GetSupportedFormatsForTexturing() const {
+  std::vector<gfx::BufferFormat> supported_buffer_formats;
+  for (int j = 0; j <= static_cast<int>(gfx::BufferFormat::LAST); ++j) {
+    const gfx::BufferFormat buffer_format = static_cast<gfx::BufferFormat>(j);
+    if (ui::GpuMemoryBufferSupportX11::GetInstance()
+            ->CanCreateNativePixmapForFormat(buffer_format)) {
+      supported_buffer_formats.push_back(buffer_format);
+    }
+  }
+  return supported_buffer_formats;
 }
 
 }  // namespace ui

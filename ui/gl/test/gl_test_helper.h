@@ -10,6 +10,8 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_context.h"
+#include "ui/gl/gl_surface.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -28,21 +30,8 @@ class GLTestHelper {
   // Returns framebuffer, 0 on failure.
   static GLuint SetupFramebuffer(int width, int height);
 
-  // Checks an area of pixels for a color.
-  static bool CheckPixels(GLint x,
-                          GLint y,
-                          GLsizei width,
-                          GLsizei height,
-                          const uint8_t expected_color[4]);
-
-  // Checks an area of pixels for a color, given an admissible per component
-  // error.
-  static bool CheckPixelsWithError(GLint x,
-                                   GLint y,
-                                   GLsizei width,
-                                   GLsizei height,
-                                   int error,
-                                   const uint8_t expected_color[4]);
+  static std::pair<scoped_refptr<GLSurface>, scoped_refptr<GLContext>>
+  CreateOffscreenGLSurfaceAndContext();
 
 #if BUILDFLAG(IS_WIN)
   // Check that |location| is inside the bounds of |bitmap| and return the color

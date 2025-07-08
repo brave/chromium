@@ -2,21 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/gfx/image/image.h"
 
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #include <stddef.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/image/image_skia.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -26,22 +27,22 @@ UIImage* UIImageWithSizeAndScale(CGFloat width, CGFloat height, CGFloat scale) {
 
   // Create a UIImage directly from a CGImage in order to control the exact
   // pixel size of the underlying image.
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
       CGColorSpaceCreateDeviceRGB());
-  base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
+  base::apple::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
       NULL, target_size.width, target_size.height, 8, target_size.width * 4,
-      color_space,
+      color_space.get(),
       kCGImageAlphaPremultipliedFirst |
           static_cast<CGImageAlphaInfo>(kCGBitmapByteOrder32Host)));
 
   CGRect target_rect = CGRectMake(0, 0,
                                   target_size.width, target_size.height);
-  CGContextSetFillColorWithColor(context, [[UIColor redColor] CGColor]);
-  CGContextFillRect(context, target_rect);
+  CGContextSetFillColorWithColor(context.get(), [[UIColor redColor] CGColor]);
+  CGContextFillRect(context.get(), target_rect);
 
-  base::ScopedCFTypeRef<CGImageRef> cg_image(
-      CGBitmapContextCreateImage(context));
-  return [UIImage imageWithCGImage:cg_image
+  base::apple::ScopedCFTypeRef<CGImageRef> cg_image(
+      CGBitmapContextCreateImage(context.get()));
+  return [UIImage imageWithCGImage:cg_image.get()
                              scale:scale
                        orientation:UIImageOrientationUp];
 }

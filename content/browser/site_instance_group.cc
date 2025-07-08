@@ -4,6 +4,7 @@
 
 #include "content/browser/site_instance_group.h"
 
+#include "base/auto_reset.h"
 #include "base/observer_list.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/site_instance_impl.h"
@@ -41,6 +42,10 @@ base::SafeRef<SiteInstanceGroup> SiteInstanceGroup::GetSafeRef() {
   return weak_ptr_factory_.GetSafeRef();
 }
 
+base::WeakPtr<SiteInstanceGroup> SiteInstanceGroup::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 base::WeakPtr<SiteInstanceGroup>
 SiteInstanceGroup::GetWeakPtrToAllowDangling() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -74,8 +79,30 @@ void SiteInstanceGroup::IncrementActiveFrameCount() {
 void SiteInstanceGroup::DecrementActiveFrameCount() {
   if (--active_frame_count_ == 0) {
     base::AutoReset<bool> scope(&is_notifying_observers_, true);
-    for (auto& observer : observers_)
+    for (auto& observer : observers_) {
       observer.ActiveFrameCountIsZero(this);
+    }
+  }
+}
+
+void SiteInstanceGroup::IncrementKeepAliveCount() {
+  keep_alive_count_++;
+  auto* rphi = static_cast<RenderProcessHostImpl*>(process());
+  if (!rphi->AreRefCountsDisabled()) {
+    rphi->IncrementNavigationStateKeepAliveCount();
+  }
+}
+
+void SiteInstanceGroup::DecrementKeepAliveCount() {
+  if (--keep_alive_count_ == 0) {
+    base::AutoReset<bool> scope(&is_notifying_observers_, true);
+    for (auto& observer : observers_) {
+      observer.KeepAliveCountIsZero(this);
+    }
+  }
+  auto* rphi = static_cast<RenderProcessHostImpl*>(process());
+  if (!rphi->AreRefCountsDisabled()) {
+    rphi->DecrementNavigationStateKeepAliveCount();
   }
 }
 
@@ -83,13 +110,8 @@ bool SiteInstanceGroup::IsRelatedSiteInstanceGroup(SiteInstanceGroup* group) {
   return browsing_instance_id() == group->browsing_instance_id();
 }
 
-bool SiteInstanceGroup::IsCoopRelatedSiteInstanceGroup(
-    SiteInstanceGroup* group) {
-  return coop_related_group_token() == group->coop_related_group_token();
-}
-
 void SiteInstanceGroup::RenderProcessHostDestroyed(RenderProcessHost* host) {
-  DCHECK_EQ(process_->GetID(), host->GetID());
+  DCHECK_EQ(process_->GetDeprecatedID(), host->GetDeprecatedID());
   process_->RemoveObserver(this);
 
   // Remove references to `this` from all SiteInstances in this group. That will
@@ -103,8 +125,18 @@ void SiteInstanceGroup::RenderProcessHostDestroyed(RenderProcessHost* host) {
 void SiteInstanceGroup::RenderProcessExited(
     RenderProcessHost* host,
     const ChildProcessTerminationInfo& info) {
+  // Increment the refcount of `this` to keep it alive while iterating over the
+  // observer list. That will prevent `this` from getting deleted during
+  // iteration.
+  scoped_refptr<SiteInstanceGroup> self_refcount = base::WrapRefCounted(this);
+  base::AutoReset<bool> scope(&is_notifying_observers_, true);
   for (auto& observer : observers_)
     observer.RenderProcessGone(this, info);
+}
+
+const StoragePartitionConfig& SiteInstanceGroup::GetStoragePartitionConfig()
+    const {
+  return process()->GetStoragePartition()->GetConfig();
 }
 
 // static
@@ -115,8 +147,8 @@ SiteInstanceGroup* SiteInstanceGroup::CreateForTesting(
       new BrowsingInstance(browser_context,
                            WebExposedIsolationInfo::CreateNonIsolated(),
                            /*is_guest=*/false,
-                           /*is_fenced=*/false, /*coop_related_group=*/nullptr,
-                           /*common_coop_origin=*/absl::nullopt),
+                           /*is_fenced=*/false,
+                           /*is_fixed_storage_partition=*/false),
       process);
 }
 

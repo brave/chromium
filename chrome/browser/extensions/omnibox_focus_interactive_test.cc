@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+#include <string_view>
+
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/extensions/settings_api_bubble_helpers.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -31,7 +35,7 @@ class OmniboxFocusInteractiveTest : public ExtensionBrowserTest {
 
  protected:
   void WriteExtensionFile(const base::FilePath::StringType& filename,
-                          base::StringPiece contents) {
+                          std::string_view contents) {
     test_dir_.WriteFile(filename, contents);
   }
 
@@ -47,8 +51,9 @@ class OmniboxFocusInteractiveTest : public ExtensionBrowserTest {
         } )";
     test_dir_.WriteManifest(kManifest);
     const Extension* extension = LoadExtension(test_dir_.UnpackedPath());
-    if (!extension)
+    if (!extension) {
       return nullptr;
+    }
 
     // Prevent a focus-stealing focus bubble that warns the user that "An
     // extension has changed what page is shown when you open a new tab."
@@ -259,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest,
                               "history.pushState({}, '', '/push-state')");
   nav_observer.Wait();
   EXPECT_EQ(2, web_contents->GetController().GetEntryCount());
-  EXPECT_EQ(extension->GetResourceURL("/push-state"),
+  EXPECT_EQ(extension->GetResourceURL("push-state"),
             web_contents->GetController().GetLastCommittedEntry()->GetURL());
 
   // Verify that pushState didn't make the focus move away from the omnibox.
@@ -401,7 +406,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest, TabFocusStealingFromOopif) {
                                                subframe_url)));
   const auto frames =
       CollectAllRenderFrameHosts(web_contents->GetPrimaryPage());
-  const auto it = base::ranges::find(
+  const auto it = std::ranges::find(
       frames, subframe_url, &content::RenderFrameHost::GetLastCommittedURL);
   ASSERT_NE(it, frames.cend());
   content::RenderFrameHost* subframe = *it;
@@ -413,7 +418,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest, TabFocusStealingFromOopif) {
   content::RenderFrameHost* main_frame = web_contents->GetPrimaryMainFrame();
   EXPECT_NE(subframe->GetLastCommittedURL().scheme(),
             main_frame->GetLastCommittedURL().scheme());
-  EXPECT_NE(subframe->GetProcess()->GetID(), main_frame->GetProcess()->GetID());
+  EXPECT_NE(subframe->GetProcess()->GetDeprecatedID(),
+            main_frame->GetProcess()->GetDeprecatedID());
 
   // Trigger a subframe-initiated navigation of the main frame.
   const char kLinkClickingScriptTemplate[] = R"(
@@ -544,7 +550,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveFencedFrameTest,
   EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_TAB_CONTAINER));
 
   // FencedFrameTestHelper uses eval() function that is blocked by the
-  // document's CSP on this page. So need to maually create a fenced frame for
+  // document's CSP on this page. So need to manually create a fenced frame for
   // avoiding the CSP policy.
   constexpr char kAddFencedFrameScript[] = R"({
       const fenced_frame = document.createElement('fencedframe');

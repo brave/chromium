@@ -5,7 +5,10 @@
 #ifndef COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_EXECUTION_MODEL_MANAGER_H_
 #define COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_EXECUTION_MODEL_MANAGER_H_
 
+#include <optional>
+
 #include "base/functional/callback_forward.h"
+#include "components/segmentation_platform/public/proto/model_metadata.pb.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 
 namespace segmentation_platform {
@@ -28,10 +31,17 @@ class ModelManager {
   // Invoked whenever there are changes to the state of a segmentation model.
   // Will not be invoked unless the proto::SegmentInfo is valid.
   using SegmentationModelUpdatedCallback =
-      base::RepeatingCallback<void(proto::SegmentInfo)>;
+      base::RepeatingCallback<void(proto::SegmentInfo,
+                                   /*old_version*/ std::optional<int64_t>)>;
+
+  virtual void Initialize() = 0;
 
   virtual ModelProvider* GetModelProvider(proto::SegmentId segment_id,
                                           proto::ModelSource model_source) = 0;
+
+  // For tests:
+  virtual void SetSegmentationModelUpdatedCallbackForTesting(
+      SegmentationModelUpdatedCallback model_updated_callback) = 0;
 
  protected:
   ModelManager() = default;

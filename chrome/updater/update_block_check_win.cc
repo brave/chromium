@@ -21,28 +21,30 @@ namespace {
 // Returns true in situations where we allow background updates on metered
 // networks.
 bool AllowBackgroundUpdatesOnMeteredNetwork() {
-  // TODO(crbug.com/1254481): Modify this function to enable background updates
+  // TODO(crbug.com/40199605): Modify this function to enable background updates
   // on metered networks when a toggle is set in the browser.
   return true;
 }
 
 bool IsConnectionedMetered() {
-  // No NLM before Win 8.1. Connections will be considered non-metered. Also,
-  // because NLM could deadlock in Win10 versions pre-RS5, don't run the code
+  // Because NLM could deadlock in Win10 versions pre-RS5, don't run the code
   // for those versions (see crbug.com/1254492).
-  if (base::win::GetVersion() < base::win::Version::WIN10_RS5)
+  if (base::win::GetVersion() < base::win::Version::WIN10_RS5) {
     return false;
+  }
 
   Microsoft::WRL::ComPtr<INetworkCostManager> network_cost_manager;
   HRESULT hr = ::CoCreateInstance(CLSID_NetworkListManager, nullptr, CLSCTX_ALL,
                                   IID_PPV_ARGS(&network_cost_manager));
-  if (FAILED(hr))
+  if (FAILED(hr)) {
     return false;
+  }
 
   DWORD cost = NLM_CONNECTION_COST_UNKNOWN;
   hr = network_cost_manager->GetCost(&cost, nullptr);
-  if (FAILED(hr))
+  if (FAILED(hr)) {
     return false;
+  }
 
   return cost != NLM_CONNECTION_COST_UNKNOWN &&
          (cost & NLM_CONNECTION_COST_UNRESTRICTED) == 0;

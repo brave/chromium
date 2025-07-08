@@ -8,13 +8,13 @@
 #include <vector>
 
 #include "chrome/browser/media/webrtc/desktop_media_list.h"
+#include "content/public/common/buildflags.h"
 
 class GURL;
 class PrefRegistrySimple;
 class PrefService;
 
 namespace content {
-class BrowserContext;
 class WebContents;
 }  // namespace content
 
@@ -33,7 +33,13 @@ enum class AllowedScreenCaptureLevel {
 
 namespace capture_policy {
 
-extern const char kManagedAccessToGetAllScreensMediaAllowedForUrls[];
+#if BUILDFLAG(IS_CHROMEOS)
+// This pref connects to the MultiScreenCaptureAllowedForUrls policy and will
+// replace the deprecated GetDisplayMediaSetSelectAllScreensAllowedForUrls
+// policy once the pivot to IWAs is complete.
+inline static constexpr char kManagedMultiScreenCaptureAllowedForUrls[] =
+    "profile.managed_multi_screen_capture_allowed_for_urls";
+#endif
 
 // Gets the highest capture level that the requesting origin is allowed to
 // request based on any configured enterprise policies. This is a convenience
@@ -66,16 +72,14 @@ void ShowCaptureTerminatedDialog(content::WebContents* contents);
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
-// TODO(crbug.com/1342069): Use Origin instead of GURL.
-bool IsGetAllScreensMediaAllowed(content::BrowserContext* context,
-                                 const GURL& url);
+// TODO(crbug.com/40230867): Use Origin instead of GURL.
+// Passing `std::nullopt` to `url` means "for any origin".
+bool IsMultiScreenCaptureAllowed(const std::optional<GURL>& url);
 
-bool IsGetAllScreensMediaAllowedForAnySite(content::BrowserContext* context);
-
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_SCREEN_CAPTURE)
 bool IsTransientActivationRequiredForGetDisplayMedia(
     content::WebContents* contents);
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_SCREEN_CAPTURE)
 
 }  // namespace capture_policy
 

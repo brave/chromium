@@ -5,17 +5,18 @@
 #include "third_party/blink/renderer/modules/payments/payments_validators.h"
 
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_regexp.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_address_errors.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payer_errors.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_validation_errors.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_regexp.h"
 #include "third_party/blink/renderer/platform/bindings/string_resource.h"
 #include "third_party/blink/renderer/platform/bindings/to_blink_string.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -26,58 +27,64 @@ namespace blink {
 static constexpr size_t kMaximumStringLength = 2 * 1024;
 
 bool PaymentsValidators::IsValidCurrencyCodeFormat(
+    v8::Isolate* isolate,
     const String& code,
     String* optional_error_message) {
-  auto* regexp = MakeGarbageCollected<ScriptRegexp>(
-      "^[A-Z]{3}$", kTextCaseUnicodeInsensitive);
+  auto* regexp = MakeGarbageCollected<ScriptRegexp>(isolate, "^[A-Z]{3}$",
+                                                    kTextCaseASCIIInsensitive);
   if (regexp->Match(code) == 0)
     return true;
 
   if (optional_error_message) {
-    *optional_error_message = "'" + code +
-                              "' is not a valid ISO 4217 currency code, should "
-                              "be well-formed 3-letter alphabetic code.";
+    *optional_error_message =
+        StrCat({"'", code,
+                "' is not a valid ISO 4217 currency code, should be "
+                "well-formed 3-letter alphabetic code."});
   }
 
   return false;
 }
 
-bool PaymentsValidators::IsValidAmountFormat(const String& amount,
+bool PaymentsValidators::IsValidAmountFormat(v8::Isolate* isolate,
+                                             const String& amount,
                                              const String& item_name,
                                              String* optional_error_message) {
-  auto* regexp = MakeGarbageCollected<ScriptRegexp>("^-?[0-9]+(\\.[0-9]+)?$",
-                                                    kTextCaseSensitive);
+  auto* regexp = MakeGarbageCollected<ScriptRegexp>(
+      isolate, "^-?[0-9]+(\\.[0-9]+)?$", kTextCaseSensitive);
   if (regexp->Match(amount) == 0)
     return true;
 
   if (optional_error_message) {
     *optional_error_message =
-        "'" + amount + "' is not a valid amount format for " + item_name;
+        StrCat({"'", amount, "' is not a valid amount format for ", item_name});
   }
 
   return false;
 }
 
 bool PaymentsValidators::IsValidCountryCodeFormat(
+    v8::Isolate* isolate,
     const String& code,
     String* optional_error_message) {
-  auto* regexp =
-      MakeGarbageCollected<ScriptRegexp>("^[A-Z]{2}$", kTextCaseSensitive);
+  auto* regexp = MakeGarbageCollected<ScriptRegexp>(isolate, "^[A-Z]{2}$",
+                                                    kTextCaseSensitive);
   if (regexp->Match(code) == 0)
     return true;
 
-  if (optional_error_message)
-    *optional_error_message = "'" + code +
-                              "' is not a valid CLDR country code, should be 2 "
-                              "upper case letters [A-Z]";
-
+  if (optional_error_message) {
+    *optional_error_message = StrCat({"'", code,
+                                      "' is not a valid CLDR country code, "
+                                      "should be 2 upper case letters [A-Z]"});
+  }
   return false;
 }
 
 bool PaymentsValidators::IsValidShippingAddress(
+    v8::Isolate* isolate,
     const payments::mojom::blink::PaymentAddressPtr& address,
     String* optional_error_message) {
-  return IsValidCountryCodeFormat(address->country, optional_error_message);
+  return IsValidCountryCodeFormat(isolate, address->country,
+                                  optional_error_message);
 }
 
 bool PaymentsValidators::IsValidErrorMsgFormat(const String& error,
@@ -149,13 +156,14 @@ bool PaymentsValidators::IsValidPaymentValidationErrorsFormat(
                                      optional_error_message));
 }
 
-bool PaymentsValidators::IsValidMethodFormat(const String& identifier) {
+bool PaymentsValidators::IsValidMethodFormat(v8::Isolate* isolate,
+                                             const String& identifier) {
   KURL url(NullURL(), identifier);
   if (!url.IsValid()) {
     // Syntax for a valid standardized PMI:
     // https://www.w3.org/TR/payment-method-id/#dfn-syntax-of-a-standardized-payment-method-identifier
     auto* regexp = MakeGarbageCollected<ScriptRegexp>(
-        "^[a-z]+[0-9a-z]*(-[a-z]+[0-9a-z]*)*$", kTextCaseSensitive);
+        isolate, "^[a-z]+[0-9a-z]*(-[a-z]+[0-9a-z]*)*$", kTextCaseSensitive);
     return regexp->Match(identifier) == 0;
   }
 
@@ -184,7 +192,7 @@ void PaymentsValidators::ValidateAndStringifyObject(
     return;
   }
 
-  output = ToBlinkString<String>(value, kDoNotExternalize);
+  output = ToBlinkString<String>(isolate, value, kDoNotExternalize);
 
   // Implementation defined constant controlling the allowed JSON length.
   static constexpr size_t kMaxJSONStringLength = 1024 * 1024;

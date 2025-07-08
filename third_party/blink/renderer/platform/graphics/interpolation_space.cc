@@ -56,7 +56,6 @@ sk_sp<cc::ColorFilter> GetConversionFilter(
   }
 
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace

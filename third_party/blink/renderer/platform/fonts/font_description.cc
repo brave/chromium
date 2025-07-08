@@ -28,9 +28,14 @@
  */
 
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
-#include "build/build_config.h"
 
+#include <set>
+
+#include "base/compiler_specific.h"
 #include "base/memory/values_equivalent.h"
+#include "base/notreached.h"
+#include "base/strings/to_string.h"
+#include "build/build_config.h"
 #include "third_party/blink/public/platform/web_font_description.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
@@ -53,28 +58,28 @@ struct SameSizeAsFontDescription {
   scoped_refptr<FontPalette> palette_;
   scoped_refptr<FontVariantAlternates> font_variant_alternates_;
   AtomicString locale;
-  float sizes[5];
+  float sizes[4];
+  Length letter_spacing;
   FontSizeAdjust size_adjust_;
+  ResolvedFontFeatures resolved_font_features_;
   FontSelectionRequest selection_request_;
   FieldsAsUnsignedType bitfields;
 };
 
 ASSERT_SIZE(FontDescription, SameSizeAsFontDescription);
 
-TypesettingFeatures FontDescription::default_typesetting_features_ = 0;
-
 bool FontDescription::use_subpixel_text_positioning_ = false;
 
 // static
 FontDescription FontDescription::CreateHashTableEmptyValue() {
   FontDescription result;
-  memset(&result, 0, sizeof(FontDescription));
+  UNSAFE_TODO(memset(&result, 0, sizeof(FontDescription)));
   DCHECK(result.IsHashTableEmptyValue());
   return result;
 }
 
 FontDescription::FontDescription(WTF::HashTableDeletedValueType) {
-  memset(this, 0, sizeof(FontDescription));
+  UNSAFE_TODO(memset(this, 0, sizeof(FontDescription)));
   fields_.hash_category_ = kHashDeletedValue;
 }
 
@@ -82,13 +87,11 @@ FontDescription::FontDescription()
     : specified_size_(0),
       computed_size_(0),
       adjusted_size_(0),
-      letter_spacing_(0),
+      letter_spacing_(Length(0, Length::kFixed)),
       word_spacing_(0),
-      font_selection_request_(NormalWeightValue(),
-                              NormalWidthValue(),
-                              NormalSlopeValue()) {
-  fields_as_unsigned_.parts[0] = 0;
-  fields_as_unsigned_.parts[1] = 0;
+      font_selection_request_(kNormalWeightValue,
+                              kNormalWidthValue,
+                              kNormalSlopeValue) {
   fields_.orientation_ = static_cast<unsigned>(FontOrientation::kHorizontal);
   fields_.width_variant_ = kRegularWidth;
   fields_.variant_caps_ = kCapsNormal;
@@ -104,16 +107,21 @@ FontDescription::FontDescription()
   fields_.text_rendering_ = kAutoTextRendering;
   fields_.synthetic_bold_ = false;
   fields_.synthetic_italic_ = false;
+  fields_.synthetic_oblique_ = false;
   fields_.subpixel_text_position_ = use_subpixel_text_positioning_;
-  fields_.typesetting_features_ = default_typesetting_features_;
+  fields_.typesetting_features_ = 0;
   fields_.variant_numeric_ = FontVariantNumeric().fields_as_unsigned_;
+  fields_.variant_east_asian_ = 0;
   fields_.subpixel_ascent_descent_ = false;
   fields_.font_optical_sizing_ = OpticalSizing::kAutoOpticalSizing;
+  fields_.has_size_adjust_descriptor_ = false;
   fields_.hash_category_ = kHashRegularValue;
   fields_.font_synthesis_weight_ = kAutoFontSynthesisWeight;
   fields_.font_synthesis_style_ = kAutoFontSynthesisStyle;
   fields_.font_synthesis_small_caps_ = kAutoFontSynthesisSmallCaps;
   fields_.variant_position_ = kNormalVariantPosition;
+  fields_.variant_emoji_ = kNormalVariantEmoji;
+  fields_.text_spacing_trim_ = static_cast<unsigned>(TextSpacingTrim::kInitial);
 }
 
 FontDescription::FontDescription(const FontDescription&) = default;
@@ -186,6 +194,20 @@ FontDescription::Size FontDescription::SmallerSize(const Size& size) {
 
 FontSelectionRequest FontDescription::GetFontSelectionRequest() const {
   return font_selection_request_;
+}
+
+float FontDescription::LetterSpacing() const {
+  switch (letter_spacing_.GetType()) {
+    case Length::kFixed:
+      return letter_spacing_.Pixels();
+    case Length::kPercent:
+      return letter_spacing_.Percent() / 100 * computed_size_;
+    case Length::kCalculated:
+      return letter_spacing_.NonNanCalculatedValue(LayoutUnit(computed_size_),
+                                                   {});
+    default:
+      NOTREACHED();
+  }
 }
 
 FontDescription::VariantLigatures FontDescription::GetVariantLigatures() const {
@@ -267,12 +289,15 @@ FontCacheKey FontDescription::CacheKey(
     const FontFaceCreationParams& creation_params,
     bool is_unique_match) const {
   unsigned options =
-      static_cast<unsigned>(fields_.font_optical_sizing_) << 7 |  // bit 8
-      static_cast<unsigned>(fields_.synthetic_italic_) << 6 |     // bit 7
-      static_cast<unsigned>(fields_.synthetic_bold_) << 5 |       // bit 6
-      static_cast<unsigned>(fields_.text_rendering_) << 3 |       // bits 4-5
-      static_cast<unsigned>(fields_.orientation_) << 1 |          // bit 2-3
-      static_cast<unsigned>(fields_.subpixel_text_position_);     // bit 1
+      static_cast<unsigned>(fields_.variant_emoji_) << 10 |         // bit 11-12
+      static_cast<unsigned>(fields_.font_synthesis_style_) << 9 |   // bit 10
+      static_cast<unsigned>(fields_.font_synthesis_weight_) << 8 |  // bit 9
+      static_cast<unsigned>(fields_.font_optical_sizing_) << 7 |    // bit 8
+      static_cast<unsigned>(fields_.synthetic_italic_) << 6 |       // bit 7
+      static_cast<unsigned>(fields_.synthetic_bold_) << 5 |         // bit 6
+      static_cast<unsigned>(fields_.text_rendering_) << 3 |         // bits 4-5
+      static_cast<unsigned>(fields_.orientation_) << 1 |            // bit 2-3
+      static_cast<unsigned>(fields_.subpixel_text_position_);       // bit 1
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   float device_scale_factor_for_key = FontCache::DeviceScaleFactor();
@@ -280,7 +305,7 @@ FontCacheKey FontDescription::CacheKey(
   float device_scale_factor_for_key = 1.0f;
 #endif
   FontCacheKey cache_key(creation_params, EffectiveFontSize(),
-                         options | font_selection_request_.GetHash() << 9,
+                         options | font_selection_request_.GetHash() << 13,
                          device_scale_factor_for_key, size_adjust_,
                          variation_settings_, font_palette_,
                          font_variant_alternates_, is_unique_match);
@@ -293,17 +318,8 @@ FontCacheKey FontDescription::CacheKey(
   return cache_key;
 }
 
-void FontDescription::SetDefaultTypesettingFeatures(
-    TypesettingFeatures typesetting_features) {
-  default_typesetting_features_ = typesetting_features;
-}
-
-TypesettingFeatures FontDescription::DefaultTypesettingFeatures() {
-  return default_typesetting_features_;
-}
-
 void FontDescription::UpdateTypesettingFeatures() {
-  fields_.typesetting_features_ = default_typesetting_features_;
+  fields_.typesetting_features_ = 0;
 
   switch (TextRendering()) {
     case kAutoTextRendering:
@@ -332,7 +348,7 @@ void FontDescription::UpdateTypesettingFeatures() {
   // When the effective letter-spacing between two characters is not zero (due
   // to either justification or non-zero computed letter-spacing), user agents
   // should not apply optional ligatures.
-  if (letter_spacing_ == 0) {
+  if (letter_spacing_.IsZero()) {
     switch (CommonLigaturesState()) {
       case FontDescription::kDisabledLigaturesState:
         fields_.typesetting_features_ &= ~blink::kLigatures;
@@ -356,21 +372,8 @@ void FontDescription::UpdateTypesettingFeatures() {
     fields_.typesetting_features_ |= blink::kCaps;
 }
 
-namespace {
-
-// This converts -0.0 to 0.0, so that they have the same hash value. This
-// ensures that equal FontDescription have the same hash value.
-float NormalizeSign(float number) {
-  if (UNLIKELY(number == 0.0))
-    return 0.0;
-  return number;
-}
-
-}  // namespace
-
 unsigned FontDescription::StyleHashWithoutFamilyList() const {
   unsigned hash = 0;
-  StringHasher string_hasher;
   const FontFeatureSettings* settings = FeatureSettings();
   if (settings) {
     unsigned num_features = settings->size();
@@ -390,16 +393,14 @@ unsigned FontDescription::StyleHashWithoutFamilyList() const {
 
   if (locale_) {
     const AtomicString& locale = locale_->LocaleString();
-    for (unsigned i = 0; i < locale.length(); i++)
-      string_hasher.AddCharacter(locale[i]);
+    WTF::AddIntToHash(hash, locale.Hash());
   }
-  WTF::AddIntToHash(hash, string_hasher.GetHash());
 
-  WTF::AddFloatToHash(hash, NormalizeSign(specified_size_));
-  WTF::AddFloatToHash(hash, NormalizeSign(computed_size_));
-  WTF::AddFloatToHash(hash, NormalizeSign(adjusted_size_));
-  WTF::AddFloatToHash(hash, NormalizeSign(letter_spacing_));
-  WTF::AddFloatToHash(hash, NormalizeSign(word_spacing_));
+  WTF::AddFloatToHash(hash, specified_size_);
+  WTF::AddFloatToHash(hash, computed_size_);
+  WTF::AddFloatToHash(hash, adjusted_size_);
+  WTF::AddIntToHash(hash, letter_spacing_.GetHash());
+  WTF::AddFloatToHash(hash, word_spacing_);
   WTF::AddIntToHash(hash, fields_as_unsigned_.parts[0]);
   WTF::AddIntToHash(hash, fields_as_unsigned_.parts[1]);
   WTF::AddIntToHash(hash, font_selection_request_.GetHash());
@@ -442,41 +443,51 @@ void FontDescription::UpdateSyntheticOblique() {
   fields_.synthetic_oblique_ =
       IsVerticalAnyUpright() && original_slope < FontSelectionValue(0);
   font_selection_request_.slope =
-      fields_.synthetic_oblique_ ? NormalSlopeValue() : original_slope;
+      fields_.synthetic_oblique_ ? kNormalSlopeValue : original_slope;
 }
 
 SkFontStyle FontDescription::SkiaFontStyle() const {
   // FIXME(drott): This is a lossy conversion, compare
   // https://bugs.chromium.org/p/skia/issues/detail?id=6844
   int skia_width = SkFontStyle::kNormal_Width;
-  if (Stretch() <= UltraCondensedWidthValue())
+  if (Stretch() <= kUltraCondensedWidthValue) {
     skia_width = SkFontStyle::kUltraCondensed_Width;
-  if (Stretch() <= ExtraCondensedWidthValue())
+  }
+  if (Stretch() <= kExtraCondensedWidthValue) {
     skia_width = SkFontStyle::kExtraCondensed_Width;
-  if (Stretch() <= CondensedWidthValue())
+  }
+  if (Stretch() <= kCondensedWidthValue) {
     skia_width = SkFontStyle::kCondensed_Width;
-  if (Stretch() <= SemiCondensedWidthValue())
+  }
+  if (Stretch() <= kSemiCondensedWidthValue) {
     skia_width = SkFontStyle::kSemiCondensed_Width;
-  if (Stretch() >= SemiExpandedWidthValue())
+  }
+  if (Stretch() >= kSemiExpandedWidthValue) {
     skia_width = SkFontStyle::kSemiExpanded_Width;
-  if (Stretch() >= ExpandedWidthValue())
+  }
+  if (Stretch() >= kExpandedWidthValue) {
     skia_width = SkFontStyle::kExpanded_Width;
-  if (Stretch() >= ExtraExpandedWidthValue())
+  }
+  if (Stretch() >= kExtraExpandedWidthValue) {
     skia_width = SkFontStyle::kExtraExpanded_Width;
-  if (Stretch() >= UltraExpandedWidthValue())
+  }
+  if (Stretch() >= kUltraExpandedWidthValue) {
     skia_width = SkFontStyle::kUltraExpanded_Width;
+  }
 
   SkFontStyle::Slant slant = SkFontStyle::kUpright_Slant;
   FontSelectionValue style = Style();
-  if (style > NormalSlopeValue() && style <= ItalicThreshold())
+  if (style > kNormalSlopeValue && style <= kItalicThreshold) {
     slant = SkFontStyle::kItalic_Slant;
-  if (style > ItalicThreshold()) {
+  }
+  if (style > kItalicThreshold) {
     slant = SkFontStyle::kOblique_Slant;
   }
 
   int skia_weight = SkFontStyle::kNormal_Weight;
-  if (Weight() >= MinWeightValue() && Weight() <= MaxWeightValue())
+  if (Weight() >= kMinWeightValue && Weight() <= kMaxWeightValue) {
     skia_weight = static_cast<int>(Weight());
+  }
 
   return SkFontStyle(skia_weight, skia_width, slant);
 }
@@ -486,35 +497,35 @@ void FontDescription::UpdateFromSkiaFontStyle(const SkFontStyle& font_style) {
 
   switch (font_style.width()) {
     case (SkFontStyle::kUltraCondensed_Width):
-      SetStretch(UltraCondensedWidthValue());
+      SetStretch(kUltraCondensedWidthValue);
       break;
     case (SkFontStyle::kExtraCondensed_Width):
-      SetStretch(ExtraCondensedWidthValue());
+      SetStretch(kExtraCondensedWidthValue);
       break;
     case (SkFontStyle::kCondensed_Width):
-      SetStretch(CondensedWidthValue());
+      SetStretch(kCondensedWidthValue);
       break;
     case (SkFontStyle::kSemiCondensed_Width):
-      SetStretch(SemiCondensedWidthValue());
+      SetStretch(kSemiCondensedWidthValue);
       break;
     case (SkFontStyle::kSemiExpanded_Width):
-      SetStretch(SemiExpandedWidthValue());
+      SetStretch(kSemiExpandedWidthValue);
       break;
     case (SkFontStyle::kExpanded_Width):
-      SetStretch(ExpandedWidthValue());
+      SetStretch(kExpandedWidthValue);
       break;
     case (SkFontStyle::kExtraExpanded_Width):
-      SetStretch(ExtraExpandedWidthValue());
+      SetStretch(kExtraExpandedWidthValue);
       break;
     case (SkFontStyle::kUltraExpanded_Width):
-      SetStretch(UltraExpandedWidthValue());
+      SetStretch(kUltraExpandedWidthValue);
       break;
   }
 
   if (font_style.slant() == SkFontStyle::kOblique_Slant)
-    SetStyle(ItalicSlopeValue());
+    SetStyle(kItalicSlopeValue);
   else
-    SetStyle(NormalSlopeValue());
+    SetStyle(kNormalSlopeValue);
 }
 
 int FontDescription::MinimumPrefixWidthToHyphenate() const {
@@ -526,6 +537,54 @@ int FontDescription::MinimumPrefixWidthToHyphenate() const {
   const int kMinimumPrefixWidthDenominator = 4;
   return ComputedPixelSize() * kMinimumPrefixWidthNumerator /
          kMinimumPrefixWidthDenominator;
+}
+
+ResolvedFontFeatures FontDescription::ResolveFontFeatures() const {
+  if (const auto* alternates = GetFontVariantAlternates()) {
+    ResolvedFontFeatures features_with_description =
+        alternates->GetResolvedFontFeatures();
+    features_with_description.AppendVector(resolved_font_features_);
+    return features_with_description;
+  }
+  return resolved_font_features_;
+}
+
+void FontDescription::MergeFontFeatureSettingsWithDescriptor(
+    const FontFeatureSettings* feature_settings_descriptor) {
+  ResolvedFontFeatures resolved_font_features =
+      ResolveFontFeatureSettingsDescriptor(FeatureSettings(),
+                                           feature_settings_descriptor);
+  SetResolvedFontFeatures(std::move(resolved_font_features));
+}
+
+void FontDescription::MergeFontVariationSettingsWithDescriptor(
+    const FontVariationSettings* variation_settings_descriptor) {
+  scoped_refptr<FontVariationSettings> font_variation_settings =
+      FontVariationSettings::Create();
+
+  if ((!variation_settings_ || variation_settings_->size() == 0) &&
+      (!variation_settings_descriptor ||
+       variation_settings_descriptor->size() == 0)) {
+    SetVariationSettings(font_variation_settings);
+    return;
+  }
+
+  std::set<uint32_t> existing_tags;
+  // Store the existing axis settings
+  if (variation_settings_) {
+    for (const FontVariationAxis& axis : *variation_settings_) {
+      existing_tags.insert(axis.Tag());
+      font_variation_settings->Append(axis);
+    }
+  }
+  for (const FontVariationAxis& axis : *variation_settings_descriptor) {
+    if (existing_tags.find(axis.Tag()) == existing_tags.end()) {
+      font_variation_settings->Append(
+          FontVariationAxis(axis.Tag(), axis.Value()));
+    }
+  }
+  std::sort(font_variation_settings->begin(), font_variation_settings->end());
+  SetVariationSettings(font_variation_settings);
 }
 
 String FontDescription::ToString(GenericFamilyType familyType) {
@@ -575,24 +634,25 @@ String FontDescription::ToString(Kerning kerning) {
 }
 
 String FontDescription::ToString(FontSelectionValue selection_value) {
-  if (selection_value == UltraCondensedWidthValue())
+  if (selection_value == kUltraCondensedWidthValue) {
     return "Ultra-Condensed";
-  else if (selection_value == ExtraCondensedWidthValue())
+  } else if (selection_value == kExtraCondensedWidthValue) {
     return "Extra-Condensed";
-  else if (selection_value == CondensedWidthValue())
+  } else if (selection_value == kCondensedWidthValue) {
     return "Condensed";
-  else if (selection_value == SemiCondensedWidthValue())
+  } else if (selection_value == kSemiCondensedWidthValue) {
     return "Semi-Condensed";
-  else if (selection_value == NormalWidthValue())
+  } else if (selection_value == kNormalWidthValue) {
     return "Normal";
-  else if (selection_value == SemiExpandedWidthValue())
+  } else if (selection_value == kSemiExpandedWidthValue) {
     return "Semi-Expanded";
-  else if (selection_value == ExpandedWidthValue())
+  } else if (selection_value == kExpandedWidthValue) {
     return "Expanded";
-  else if (selection_value == ExtraExpandedWidthValue())
+  } else if (selection_value == kExtraExpandedWidthValue) {
     return "Extra-Expanded";
-  else if (selection_value == UltraExpandedWidthValue())
+  } else if (selection_value == kUltraExpandedWidthValue) {
     return "Ultra-Expanded";
+  }
 
   return "Unknown";
 }
@@ -688,7 +748,7 @@ String FontDescription::VariantLigatures::ToString() const {
 String FontDescription::Size::ToString() const {
   return String::Format(
       "keyword_size=%u, specified_size=%f, is_absolute_size=%s", keyword, value,
-      is_absolute ? "true" : "false");
+      base::ToString(is_absolute).c_str());
 }
 
 String FontDescription::FamilyDescription::ToString() const {
@@ -710,16 +770,12 @@ String FontDescription::ToString(FontVariantPosition variant_position) {
   return "Unknown";
 }
 
-static const char* ToBooleanString(bool value) {
-  return value ? "true" : "false";
-}
-
 String FontDescription::ToString() const {
   return String::Format(
       "family_list=[%s], feature_settings=[%s], variation_settings=[%s], "
       "locale=%s, "
       "specified_size=%f, computed_size=%f, adjusted_size=%f, "
-      "size_adjust=%f, letter_spacing=%f, word_spacing=%f, "
+      "size_adjust=%s, letter_spacing=%f, word_spacing=%f, "
       "font_selection_request=[%s], "
       "typesetting_features=[%s], "
       "orientation=%s, width_variant=%s, variant_caps=%s, "
@@ -730,7 +786,8 @@ String FontDescription::ToString() const {
       "subpixel_ascent_descent=%s, variant_numeric=[%s], "
       "variant_east_asian=[%s], font_optical_sizing=%s, "
       "font_synthesis_weight=%s, font_synthesis_style=%s, "
-      "font_synthesis_small_caps=%s, font_variant_position=%s",
+      "font_synthesis_small_caps=%s, font_variant_position=%s, "
+      "font_variant_emoji=%s",
       family_list_.ToString().Ascii().c_str(),
       (feature_settings_ ? feature_settings_->ToString().Ascii().c_str() : ""),
       (variation_settings_ ? variation_settings_->ToString().Ascii().c_str()
@@ -739,8 +796,9 @@ String FontDescription::ToString() const {
       // hyphenation and script. Consider adding a more detailed
       // string method.
       (locale_ ? locale_->LocaleString().Ascii().c_str() : ""), specified_size_,
-      computed_size_, adjusted_size_, size_adjust_.Value(), letter_spacing_,
-      word_spacing_, font_selection_request_.ToString().Ascii().c_str(),
+      computed_size_, adjusted_size_, size_adjust_.ToString().Ascii().c_str(),
+      LetterSpacing(), word_spacing_,
+      font_selection_request_.ToString().Ascii().c_str(),
       blink::ToString(
           static_cast<TypesettingFeatures>(fields_.typesetting_features_))
           .Ascii()
@@ -748,22 +806,24 @@ String FontDescription::ToString() const {
       blink::ToString(Orientation()).Ascii().c_str(),
       blink::ToString(WidthVariant()).Ascii().c_str(),
       FontDescription::ToString(VariantCaps()).Ascii().c_str(),
-      ToBooleanString(IsAbsoluteSize()),
+      base::ToString(IsAbsoluteSize()).c_str(),
       FontDescription::ToString(GenericFamily()).Ascii().c_str(),
       FontDescription::ToString(Kerning()).Ascii().c_str(),
       GetVariantLigatures().ToString().Ascii().c_str(), KeywordSize(),
       blink::ToString(FontSmoothing()).Ascii().c_str(),
       blink::ToString(TextRendering()).Ascii().c_str(),
-      ToBooleanString(IsSyntheticBold()), ToBooleanString(IsSyntheticItalic()),
-      ToBooleanString(UseSubpixelPositioning()),
-      ToBooleanString(SubpixelAscentDescent()),
+      base::ToString(IsSyntheticBold()).c_str(),
+      base::ToString(IsSyntheticItalic()).c_str(),
+      base::ToString(UseSubpixelPositioning()).c_str(),
+      base::ToString(SubpixelAscentDescent()).c_str(),
       VariantNumeric().ToString().Ascii().c_str(),
       VariantEastAsian().ToString().Ascii().c_str(),
       blink::ToString(FontOpticalSizing()).Ascii().c_str(),
       FontDescription::ToString(GetFontSynthesisWeight()).Ascii().c_str(),
       FontDescription::ToString(GetFontSynthesisStyle()).Ascii().c_str(),
       FontDescription::ToString(GetFontSynthesisSmallCaps()).Ascii().c_str(),
-      FontDescription::ToString(VariantPosition()).Ascii().c_str());
+      FontDescription::ToString(VariantPosition()).Ascii().c_str(),
+      blink::ToString(VariantEmoji()).Ascii().c_str());
 }
 
 }  // namespace blink

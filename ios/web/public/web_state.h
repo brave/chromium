@@ -6,24 +6,27 @@
 #define IOS_WEB_PUBLIC_WEB_STATE_H_
 
 #import <UIKit/UIKit.h>
-
 #include <stdint.h>
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
+#include "base/observer_list.h"
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
 #include "build/blink_buildflags.h"
 #include "components/sessions/core/session_id.h"
 #include "ios/web/public/js_messaging/content_world.h"
 #include "ios/web/public/navigation/referrer.h"
+#include "ios/web/public/web_state_id.h"
 #include "mojo/public/cpp/bindings/generic_pending_receiver.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/base/page_transition_types.h"
@@ -41,11 +44,6 @@ class GURL;
 typedef id<CRWWebViewProxy> CRWWebViewProxyType;
 @class UIView;
 typedef UIView<CRWScrollableContent> CRWContentView;
-
-namespace gfx {
-class Image;
-class RectF;
-}
 
 namespace web {
 namespace proto {
@@ -73,10 +71,17 @@ void IgnoreOverRealizationCheck();
 // Core interface for interaction with the web.
 class WebState : public base::SupportsUserData {
  public:
+  // Policy for realization.
+  enum class RealizationPolicy {
+    kRelaxed,
+    kEnforceNoAttachedData,
+    kDefault = kRelaxed,
+  };
+
   // Callback used to load the full information for the WebState when
   // it will become realized.
   using WebStateStorageLoader =
-      base::OnceCallback<void(proto::WebStateStorage&)>;
+      base::OnceCallback<std::optional<proto::WebStateStorage>()>;
 
   // Callback used to fetch the native session for the WebState.
   using NativeSessionFetcher = base::OnceCallback<NSData*()>;
@@ -87,7 +92,7 @@ class WebState : public base::SupportsUserData {
     ~CreateParams();
 
     // The corresponding BrowserState for the new WebState.
-    web::BrowserState* browser_state;
+    raw_ptr<web::BrowserState> browser_state;
 
     // Whether the WebState is created as the result of a window.open or by
     // clicking a link with a blank target.  Used to determine whether the
@@ -96,7 +101,7 @@ class WebState : public base::SupportsUserData {
 
 #if BUILDFLAG(USE_BLINK)
     // If `created_with_opener`, a pointer to the opener WebState.
-    WebState* opener_web_state;
+    raw_ptr<WebState> opener_web_state = nullptr;
 #endif
 
     // Value used to set the last time the WebState was made active; this
@@ -104,7 +109,7 @@ class WebState : public base::SupportsUserData {
     // is left default initialized, then the value will not be passed on
     // to the WebState and GetLastActiveTime() will return the WebState's
     // creation time.
-    base::Time last_active_time;
+    std::optional<base::Time> last_active_time;
   };
 
   // Parameters for the OpenURL() method.
@@ -165,10 +170,10 @@ class WebState : public base::SupportsUserData {
     // GenericPendingReceiver.
     using Callback =
         base::RepeatingCallback<void(mojo::GenericPendingReceiver*)>;
-    void AddInterface(base::StringPiece interface_name, Callback callback);
+    void AddInterface(std::string_view interface_name, Callback callback);
 
     // Removes a callback added by AddInterface.
-    void RemoveInterface(base::StringPiece interface_name);
+    void RemoveInterface(std::string_view interface_name);
 
     // Attempts to bind `receiver` by matching its interface name against the
     // callbacks registered on this InterfaceBinder.
@@ -180,11 +185,12 @@ class WebState : public base::SupportsUserData {
         base::RepeatingCallback<void(mojo::PendingReceiver<Interface>)>
             callback,
         mojo::GenericPendingReceiver* receiver) {
-      if (auto typed_receiver = receiver->As<Interface>())
+      if (auto typed_receiver = receiver->As<Interface>()) {
         callback.Run(std::move(typed_receiver));
+      }
     }
 
-    WebState* const web_state_;
+    const raw_ptr<WebState> web_state_;
     std::map<std::string, Callback> callbacks_;
   };
 
@@ -193,18 +199,19 @@ class WebState : public base::SupportsUserData {
 
   // Creates a new WebState from a serialized representation of the session.
   // `session_storage` must not be nil.
-  // TODO(crbug.com/1383087): remove when the optimised serialisation feature
+  // TODO(crbug.com/40245950): remove when the optimised serialisation feature
   // has been fully launched.
   static std::unique_ptr<WebState> CreateWithStorageSession(
       const CreateParams& params,
-      CRWSessionStorage* session_storage);
+      CRWSessionStorage* session_storage,
+      NativeSessionFetcher session_fetcher);
 
   // Creates a new WebState from a serialized representation of the session.
   // The callbacks are used to load the complete serialized data from disk
   // when the WebState transition to the realized state.
   static std::unique_ptr<WebState> CreateWithStorage(
       BrowserState* browser_state,
-      SessionID unique_identifier,
+      WebStateID unique_identifier,
       proto::WebStateMetadataStorage metadata,
       WebStateStorageLoader storage_loader,
       NativeSessionFetcher session_fetcher);
@@ -217,6 +224,11 @@ class WebState : public base::SupportsUserData {
   // Serializes the object to `storage`. It is an error to call this method
   // on a WebState that is not realized.
   virtual void SerializeToProto(proto::WebStateStorage& storage) const = 0;
+
+  // Serializes the object metadata to `storage`. It is valid to call this
+  // method on an unrealized WebState.
+  virtual void SerializeMetadataToProto(
+      proto::WebStateMetadataStorage& storage) const = 0;
 
   // Gets/Sets the delegate.
   virtual WebStateDelegate* GetDelegate() = 0;
@@ -255,11 +267,15 @@ class WebState : public base::SupportsUserData {
   // to call it as the WebState will lazily switch to "realized" state when
   // needed.
   //
+  // The parameter `policy` can be used to enforce that there are no objects
+  // attached to the WebState when it is realized. If the WebState is realized
+  // the `policy` is ignored.
+  //
   // Returns `this` so that the method can be chained such as:
   //
   //    WebState* web_state = ...;
-  //    web_state->ForceRealized()->SetDelegate(this);
-  virtual WebState* ForceRealized() = 0;
+  //    web_state->ForceRealizedWithPolicy(policy)->SetDelegate(this);
+  virtual WebState* ForceRealizedWithPolicy(RealizationPolicy policy) = 0;
 
   // Whether or not a web view is allowed to exist in this WebState. Defaults
   // to false; this should be enabled before attempting to access the view.
@@ -307,22 +323,22 @@ class WebState : public base::SupportsUserData {
   // Loads the web content from the HTML you provide as if the HTML were the
   // response to the request.
   virtual void LoadSimulatedRequest(const GURL& url,
-                                    NSString* response_html_string)
-      API_AVAILABLE(ios(15.0)) = 0;
+                                    NSString* response_html_string) = 0;
 
   // Loads the web content from the data you provide as if the data were the
   // response to the request.
   virtual void LoadSimulatedRequest(const GURL& url,
                                     NSData* response_data,
-                                    NSString* mime_type)
-      API_AVAILABLE(ios(15.0)) = 0;
+                                    NSString* mime_type) = 0;
 
   // Stops any pending navigation.
   virtual void Stop() = 0;
 
-  // Gets the NavigationManager associated with this WebState. Can never return
-  // null.
+  // Gets the NavigationManager associated with this WebState. Will return null
+  // iff the WebState is unrealized. It doesn't force the realization.
   virtual const NavigationManager* GetNavigationManager() const = 0;
+  // Gets the NavigationManager associated with this WebState. Can never return
+  // null. It forces the realization if needed.
   virtual NavigationManager* GetNavigationManager() = 0;
 
   // Gets the WebFramesManager associated with this WebState. Can never return
@@ -366,7 +382,7 @@ class WebState : public base::SupportsUserData {
   // It is local to the device and not synchronized (but may be used by
   // the sync code to uniquely identify a session on the current device).
   // It can be used as a key to identify this WebState.
-  virtual SessionID GetUniqueIdentifier() const = 0;
+  virtual WebStateID GetUniqueIdentifier() const = 0;
 
   // Gets the contents MIME type.
   virtual const std::string& GetContentsMimeType() const = 0;
@@ -396,7 +412,7 @@ class WebState : public base::SupportsUserData {
   // Returns true if the web process backing this WebState is believed to
   // currently be crashed or was evicted (by calling SetWebUsageEnabled
   // with false).
-  // TODO(crbug.com/619971): Remove once all code has been ported to use
+  // TODO(crbug.com/41258826): Remove once all code has been ported to use
   // IsCrashed() instead of IsEvicted().
   virtual bool IsEvicted() const = 0;
 
@@ -412,7 +428,7 @@ class WebState : public base::SupportsUserData {
 
   // Returns the number of items in the NavigationManager, excluding
   // pending entries.
-  // TODO(crbug.com/533848): Update to return size_t.
+  // TODO(crbug.com/40436539): Update to return size_t.
   virtual int GetNavigationItemCount() const = 0;
 
   // Gets the URL currently being displayed in the URL bar, if there is one.
@@ -427,8 +443,8 @@ class WebState : public base::SupportsUserData {
   virtual const GURL& GetLastCommittedURL() const = 0;
 
   // Returns the last committed URL if the correctness of this URL's origin is
-  // trusted, and absl::nullopt otherwise.
-  virtual absl::optional<GURL> GetLastCommittedURLIfTrusted() const = 0;
+  // trusted, and std::nullopt otherwise.
+  virtual std::optional<GURL> GetLastCommittedURLIfTrusted() const = 0;
 
   // Returns the current CRWWebViewProxy object.
   virtual CRWWebViewProxyType GetWebViewProxy() const = 0;
@@ -450,7 +466,7 @@ class WebState : public base::SupportsUserData {
   virtual void SetHasOpener(bool has_opener) = 0;
 
   // Callback used to handle snapshots. The parameter is the snapshot image.
-  typedef base::RepeatingCallback<void(const gfx::Image&)> SnapshotCallback;
+  typedef base::RepeatingCallback<void(UIImage*)> SnapshotCallback;
 
   // Returns whether TakeSnapshot() can be executed.  The API may be disabled if
   // the WKWebView IPC mechanism is blocked due to an outstanding JavaScript
@@ -461,8 +477,7 @@ class WebState : public base::SupportsUserData {
   // in the coordinate system of the view returned by GetView(). `callback` is
   // asynchronously invoked after performing the snapshot. Prior to iOS 11, the
   // callback is invoked with a nil snapshot.
-  virtual void TakeSnapshot(const gfx::RectF& rect,
-                            SnapshotCallback callback) = 0;
+  virtual void TakeSnapshot(const CGRect rect, SnapshotCallback callback) = 0;
 
   // Creates PDF representation of the web page and invokes the `callback` with
   // the NSData of the PDF or nil if a PDF couldn't be generated.
@@ -490,26 +505,24 @@ class WebState : public base::SupportsUserData {
 
   // Gets or sets the web state's permission for a specific type, for example
   // camera or microphone, on the device.
-  virtual PermissionState GetStateForPermission(Permission permission) const
-      API_AVAILABLE(ios(15.0)) = 0;
+  virtual PermissionState GetStateForPermission(
+      Permission permission) const = 0;
   virtual void SetStateForPermission(PermissionState state,
-                                     Permission permission)
-      API_AVAILABLE(ios(15.0)) = 0;
+                                     Permission permission) = 0;
 
   // Gets a mapping of all available permissions and their states.
   // Note that both key and value are in NSNumber format, and should be
   // translated to NSUInteger and casted to web::Permission or
   // web::PermissionState before use.
-  virtual NSDictionary<NSNumber*, NSNumber*>* GetStatesForAllPermissions() const
-      API_AVAILABLE(ios(15.0)) = 0;
+  virtual NSDictionary<NSNumber*, NSNumber*>* GetStatesForAllPermissions()
+      const = 0;
 
   // Downloads the displayed webview at `destination_file`. `handler`
   // is used to retrieve the CRWWebViewDownload, so the caller can manage the
   // launched download.
   virtual void DownloadCurrentPage(NSString* destination_file,
                                    id<CRWWebViewDownloadDelegate> delegate,
-                                   void (^handler)(id<CRWWebViewDownload>))
-      API_AVAILABLE(ios(14.5)) = 0;
+                                   void (^handler)(id<CRWWebViewDownload>)) = 0;
 
   // Whether the Find interaction is supported and can be enabled.
   virtual bool IsFindInteractionSupported() = 0;
@@ -534,8 +547,23 @@ class WebState : public base::SupportsUserData {
   // Returns the page theme color.
   virtual UIColor* GetThemeColor() = 0;
 
+  // Returns the under page background color.
+  virtual UIColor* GetUnderPageBackgroundColor() = 0;
+
+  // Helper that calls ForceRealizedWithPolicy() with default policy.
+  WebState* ForceRealized();
+
  protected:
   friend class WebStatePolicyDecider;
+
+  // A list of WebStateObservers.
+  using WebStateObserverList = base::ObserverList<WebStateObserver, true>;
+
+  // Helper function that call WebStateRealized(this) for pre-registered
+  // observers but not for any observers that are added while iterating.
+  // Those observers will already have observed the current WebState in
+  // the realized state and could be confused by the notification.
+  void NotifyWebStateRealized(WebStateObserverList& observers);
 
   // Adds and removes policy deciders for navigation actions. The order in which
   // deciders are called is undefined, and will stop on the first decider that

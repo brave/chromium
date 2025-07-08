@@ -8,6 +8,7 @@
 #include "ash/ash_export.h"
 #include "ui/color/color_provider_source_observer.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/shadow_value.h"
 
 namespace aura {
@@ -37,6 +38,10 @@ class ASH_EXPORT SystemShadow : public ui::ColorProviderSourceObserver {
     kElevation24,  // corresponds to cros.sys.system-elevation5.
   };
 
+  using LayerRecreatedCallback =
+      base::RepeatingCallback<void(ui::Layer* /*old_layer*/,
+                                   ui::Layer* /*new_layer*/)>;
+
   ~SystemShadow() override;
 
   // Create a system shadow based on `ui::Shadow` which paints shadow on a nine
@@ -46,7 +51,8 @@ class ASH_EXPORT SystemShadow : public ui::ColorProviderSourceObserver {
   // shadow's layer at the bottom of the view's parent layer. The layer's
   // content bounds should be manually updated.
   static std::unique_ptr<SystemShadow> CreateShadowOnNinePatchLayer(
-      Type shadow_type);
+      Type shadow_type,
+      const LayerRecreatedCallback& layer_recreated_callback);
 
   // Create a system shadow based on `ash::ViewShadow`. This shadow is used for
   // views. The shadow's layer is added to the `layers_beneath_` of the view and
@@ -87,7 +93,16 @@ class ASH_EXPORT SystemShadow : public ui::ColorProviderSourceObserver {
 
   virtual void SetContentBounds(const gfx::Rect& bounds) = 0;
 
+  // TODO(http://b/307326019): Deprecate this method when all shadow
+  // implementations use `gfx::RoundedCornersF`.
   virtual void SetRoundedCornerRadius(int corner_radius) = 0;
+
+  // TODO(http://b/307326019): This is only used for
+  // `SystemShadowOnTextureLayer` for now. Should be applied to
+  // `SystemShadowOnNinePatchLayer` when `ui::Shadow` is able to use
+  // `gfx::RoundedCornersF`.
+  virtual void SetRoundedCorners(
+      const gfx::RoundedCornersF& rounded_corners) = 0;
 
   virtual const gfx::Rect& GetContentBounds() = 0;
 

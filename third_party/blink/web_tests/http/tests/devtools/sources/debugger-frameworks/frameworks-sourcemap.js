@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+
 (async function() {
   TestRunner.addResult(`Tests framework blackboxing feature with sourcemaps.\n`);
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.addScriptTag('../debugger/resources/framework-with-sourcemap.js');
   await TestRunner.evaluateInPagePromise(`
@@ -25,7 +26,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
   TestRunner.addSniffer(Bindings.BlackboxManager.prototype, '_patternChangeFinishedForTests', step1);
   var frameworkRegexString = '/framework\\.js$';
-  Common.settingForTest('skipStackFramesPattern').set(frameworkRegexString);
+  Common.Settings.settingForTest('skip-stack-frames-pattern').set(frameworkRegexString);
 
   function step1() {
     SourcesTestRunner.startDebuggerTest(step2, true);

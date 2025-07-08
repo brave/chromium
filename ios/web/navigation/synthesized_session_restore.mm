@@ -17,10 +17,6 @@
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // Session history entry data keys.
@@ -46,11 +42,6 @@ NSData* SynthesizedSessionRestore(
     int last_committed_item_index,
     const std::vector<std::unique_ptr<NavigationItem>>& items,
     bool off_the_record) {
-  if (!base::FeatureList::IsEnabled(
-          web::features::kSynthesizedRestoreSession)) {
-    return nil;
-  }
-
   DCHECK(last_committed_item_index >= 0 &&
          last_committed_item_index < static_cast<int>(items.size()));
   NSNumber* const external_url_policy = off_the_record ? @0 : @1;

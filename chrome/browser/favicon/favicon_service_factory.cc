@@ -12,18 +12,11 @@
 #include "chrome/browser/favicon/chrome_favicon_client.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/favicon/content/large_favicon_provider_getter.h"
 #include "components/favicon/core/favicon_service_impl.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/prefs/pref_service.h"
 
 namespace {
-
-favicon::LargeFaviconProvider* GetLargeFaviconProvider(
-    content::BrowserContext* context) {
-  return FaviconServiceFactory::GetInstance()->GetForProfile(
-      Profile::FromBrowserContext(context), ServiceAccessType::EXPLICIT_ACCESS);
-}
 
 std::unique_ptr<KeyedService> BuildFaviconService(
     content::BrowserContext* context) {
@@ -59,7 +52,6 @@ favicon::FaviconService* FaviconServiceFactory::GetForProfile(
 
   // Profile is OffTheRecord without access.
   NOTREACHED() << "This profile is OffTheRecord";
-  return nullptr;
 }
 
 // static
@@ -79,20 +71,22 @@ FaviconServiceFactory::FaviconServiceFactory()
           "FaviconService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(HistoryServiceFactory::GetInstance());
-  favicon::SetLargeFaviconProviderGetter(
-      base::BindRepeating(&GetLargeFaviconProvider));
 }
 
 FaviconServiceFactory::~FaviconServiceFactory() = default;
 
-KeyedService* FaviconServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+FaviconServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return BuildFaviconService(context).release();
+  return BuildFaviconService(context);
 }
 
 bool FaviconServiceFactory::ServiceIsNULLWhileTesting() const {

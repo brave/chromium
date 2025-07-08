@@ -26,6 +26,7 @@ class CopyToClipboardShareAction : public ::sharesheet::ShareAction {
       delete;
 
   // ShareAction:
+  ::sharesheet::ShareActionType GetActionType() const override;
   const std::u16string GetActionName() override;
   const gfx::VectorIcon& GetActionIcon() override;
   void LaunchAction(::sharesheet::SharesheetController* controller,
@@ -37,7 +38,7 @@ class CopyToClipboardShareAction : public ::sharesheet::ShareAction {
   // Virtual so that it can be overridden in testing.
   virtual void ShowToast(ash::ToastData toast_data);
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;
+  raw_ptr<Profile, DanglingUntriaged> profile_;
 };
 
 }  // namespace sharesheet

@@ -10,15 +10,13 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
-#include "base/strings/string_piece.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/common/plugin.mojom.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/buildflags/buildflags.h"
 #include "media/media_buildflags.h"

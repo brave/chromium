@@ -4,13 +4,16 @@
 
 #include <fidl/fuchsia.accessibility.semantics/cpp/fidl.h>
 #include <fidl/fuchsia.ui.views/cpp/hlcpp_conversion.h>
-#include <lib/ui/scenic/cpp/view_ref_pair.h>
+#include <lib/zx/eventpair.h>
 
+#include <optional>
+
+#include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
+#include "ui/accessibility/platform/ax_unique_id.h"
 #include "ui/accessibility/platform/fuchsia/accessibility_bridge_fuchsia_impl.h"
 #include "ui/accessibility/platform/fuchsia/ax_platform_node_fuchsia.h"
 #include "ui/accessibility/platform/fuchsia/semantic_provider.h"
@@ -44,22 +47,22 @@ class FakeSemanticProvider : public AXFuchsiaSemanticProvider {
 
   void SetPixelScale(float pixel_scale) override { pixel_scale_ = pixel_scale; }
 
-  const absl::optional<fuchsia_accessibility_semantics::Node>& last_update()
+  const std::optional<fuchsia_accessibility_semantics::Node>& last_update()
       const {
     return last_update_;
   }
-  const absl::optional<uint32_t>& last_deletion() const {
+  const std::optional<uint32_t>& last_deletion() const {
     return last_deletion_;
   }
-  const absl::optional<fuchsia_accessibility_semantics::SemanticEvent>&
+  const std::optional<fuchsia_accessibility_semantics::SemanticEvent>&
   last_event() const {
     return last_event_;
   }
 
  private:
-  absl::optional<fuchsia_accessibility_semantics::Node> last_update_;
-  absl::optional<uint32_t> last_deletion_;
-  absl::optional<fuchsia_accessibility_semantics::SemanticEvent> last_event_;
+  std::optional<fuchsia_accessibility_semantics::Node> last_update_;
+  std::optional<uint32_t> last_deletion_;
+  std::optional<fuchsia_accessibility_semantics::SemanticEvent> last_event_;
   float pixel_scale_ = 1.f;
 };
 
@@ -73,19 +76,19 @@ class FakeAXPlatformNodeDelegate : public AXPlatformNodeDelegate {
     return true;
   }
 
-  const AXUniqueId& GetUniqueId() const override { return unique_id_; }
+  AXPlatformNodeId GetUniqueId() const override { return unique_id_; }
 
-  const absl::optional<AXActionData>& last_action_data() {
+  const std::optional<AXActionData>& last_action_data() {
     return last_action_data_;
   }
 
-  const ui::AXNodeData& GetData() const override { return ax_node_data_; }
-  void SetData(ui::AXNodeData ax_node_data) { ax_node_data_ = ax_node_data; }
+  const AXNodeData& GetData() const override { return ax_node_data_; }
+  void SetData(AXNodeData ax_node_data) { ax_node_data_ = ax_node_data; }
 
  private:
-  absl::optional<AXActionData> last_action_data_;
-  ui::AXUniqueId unique_id_;
-  ui::AXNodeData ax_node_data_ = {};
+  std::optional<AXActionData> last_action_data_;
+  const AXUniqueId unique_id_{AXUniqueId::Create()};
+  AXNodeData ax_node_data_ = {};
 };
 
 class AccessibilityBridgeFuchsiaTest : public ::testing::Test {
@@ -98,10 +101,16 @@ class AccessibilityBridgeFuchsiaTest : public ::testing::Test {
         std::make_unique<FakeAXPlatformNodeDelegate>();
     auto mock_semantic_provider = std::make_unique<FakeSemanticProvider>();
     mock_semantic_provider_ = mock_semantic_provider.get();
-    auto view_ref_pair = scenic::ViewRefPair::New();
+
+    fuchsia::ui::views::ViewRefControl view_ref_control;
+    fuchsia::ui::views::ViewRef view_ref;
+    auto status = zx::eventpair::create(
+        /*options*/ 0u, &view_ref_control.reference, &view_ref.reference);
+    CHECK_EQ(ZX_OK, status);
+    view_ref.reference.replace(ZX_RIGHTS_BASIC, &view_ref.reference);
+
     accessibility_bridge_ = std::make_unique<AccessibilityBridgeFuchsiaImpl>(
-        /*root_window=*/nullptr,
-        fidl::HLCPPToNatural(std::move(view_ref_pair.view_ref)),
+        /*root_window=*/nullptr, fidl::HLCPPToNatural(std::move(view_ref)),
         base::RepeatingCallback<void(bool)>(),
         base::RepeatingCallback<bool(zx_status_t)>(), inspect::Node());
     accessibility_bridge_->set_semantic_provider_for_test(
@@ -109,12 +118,12 @@ class AccessibilityBridgeFuchsiaTest : public ::testing::Test {
   }
 
  protected:
-  // Required for scenic::ViewRefPair::New().
+  // Required for zx::eventpair::create.
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
 
   std::unique_ptr<FakeAXPlatformNodeDelegate> mock_ax_platform_node_delegate_;
-  FakeSemanticProvider* mock_semantic_provider_;
+  raw_ptr<FakeSemanticProvider> mock_semantic_provider_;
   std::unique_ptr<AccessibilityBridgeFuchsiaImpl> accessibility_bridge_;
 };
 
@@ -126,7 +135,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, UpdateNode) {
       }},
   }});
 
-  const absl::optional<fuchsia_accessibility_semantics::Node>& last_update =
+  const std::optional<fuchsia_accessibility_semantics::Node>& last_update =
       mock_semantic_provider_->last_update();
 
   ASSERT_TRUE(last_update.has_value());
@@ -144,7 +153,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, UpdateNodeReplaceNodeID) {
 
   accessibility_bridge_->UpdateNode(std::move(node));
 
-  const absl::optional<fuchsia_accessibility_semantics::Node>& last_update =
+  const std::optional<fuchsia_accessibility_semantics::Node>& last_update =
       mock_semantic_provider_->last_update();
   ASSERT_TRUE(last_update.has_value());
   EXPECT_EQ(last_update->node_id(),
@@ -160,7 +169,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, UpdateNodeReplaceOffsetContainerID) {
 
   accessibility_bridge_->UpdateNode(std::move(node));
 
-  const absl::optional<fuchsia_accessibility_semantics::Node>& last_update =
+  const std::optional<fuchsia_accessibility_semantics::Node>& last_update =
       mock_semantic_provider_->last_update();
   ASSERT_TRUE(last_update.has_value());
   ASSERT_TRUE(last_update->container_id().has_value());
@@ -172,7 +181,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, SetRootIDDeletesOldRoot) {
   accessibility_bridge_->SetRootID(1u);
   accessibility_bridge_->SetRootID(2u);
 
-  const absl::optional<uint32_t>& last_deletion =
+  const std::optional<uint32_t>& last_deletion =
       mock_semantic_provider_->last_deletion();
   ASSERT_TRUE(last_deletion.has_value());
   EXPECT_EQ(*last_deletion, AXFuchsiaSemanticProvider::kFuchsiaRootNodeId);
@@ -184,7 +193,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, DeleteNode) {
   // Delete a non-root node.
   accessibility_bridge_->DeleteNode(2u);
 
-  const absl::optional<uint32_t>& last_deletion =
+  const std::optional<uint32_t>& last_deletion =
       mock_semantic_provider_->last_deletion();
   ASSERT_TRUE(last_deletion.has_value());
   EXPECT_EQ(*last_deletion, 2u);
@@ -197,7 +206,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, DeleteRoot) {
   accessibility_bridge_->DeleteNode(1u);
 
   {
-    const absl::optional<uint32_t>& last_deletion =
+    const std::optional<uint32_t>& last_deletion =
         mock_semantic_provider_->last_deletion();
     ASSERT_TRUE(last_deletion.has_value());
     EXPECT_EQ(*last_deletion, AXFuchsiaSemanticProvider::kFuchsiaRootNodeId);
@@ -208,7 +217,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, DeleteRoot) {
   accessibility_bridge_->DeleteNode(1u);
 
   {
-    const absl::optional<uint32_t>& last_deletion =
+    const std::optional<uint32_t>& last_deletion =
         mock_semantic_provider_->last_deletion();
     ASSERT_TRUE(last_deletion.has_value());
     EXPECT_EQ(*last_deletion, 1u);
@@ -217,12 +226,12 @@ TEST_F(AccessibilityBridgeFuchsiaTest, DeleteRoot) {
 
 TEST_F(AccessibilityBridgeFuchsiaTest, HitTest) {
   auto root_delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  AXPlatformNode* root_platform_node =
-      AXPlatformNode::Create(root_delegate.get());
+  AXPlatformNode::Pointer root_platform_node =
+      AXPlatformNode::Create(*root_delegate);
 
   auto child_delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  AXPlatformNode* child_platform_node =
-      AXPlatformNode::Create(child_delegate.get());
+  AXPlatformNode::Pointer child_platform_node =
+      AXPlatformNode::Create(*child_delegate);
 
   // Set the platform node as the root, so that the accessibility bridge
   // dispatches the hit test request to it.
@@ -251,7 +260,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTest) {
           }));
 
   // Verify that the platform node's delegate received the hit test request.
-  const absl::optional<ui::AXActionData>& action_data =
+  const std::optional<AXActionData>& action_data =
       root_delegate->last_action_data();
   ASSERT_TRUE(action_data.has_value());
 
@@ -266,15 +275,15 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTest) {
   uint32_t child_node_id =
       static_cast<uint32_t>(child_platform_node->GetUniqueId());
   accessibility_bridge_->OnAccessibilityHitTestResult(
-      action_data->request_id, absl::optional<uint32_t>(child_node_id));
+      action_data->request_id, std::optional<uint32_t>(child_node_id));
 
   EXPECT_EQ(hit_test_result, static_cast<uint32_t>(child_node_id));
 }
 
 TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsRoot) {
   auto root_delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  AXPlatformNode* root_platform_node =
-      AXPlatformNode::Create(root_delegate.get());
+  AXPlatformNode::Pointer root_platform_node =
+      AXPlatformNode::Create(*root_delegate);
 
   // Set the platform node as the root, so that the accessibility bridge
   // dispatches the hit test request to it.
@@ -302,7 +311,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsRoot) {
             hit_test_result = response.result().node_id().value();
           }));
 
-  const absl::optional<ui::AXActionData>& action_data =
+  const std::optional<AXActionData>& action_data =
       root_delegate->last_action_data();
   ASSERT_TRUE(action_data.has_value());
 
@@ -310,15 +319,15 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsRoot) {
   uint32_t root_node_id =
       static_cast<uint32_t>(root_platform_node->GetUniqueId());
   accessibility_bridge_->OnAccessibilityHitTestResult(
-      action_data->request_id, absl::optional<uint32_t>(root_node_id));
+      action_data->request_id, std::optional<uint32_t>(root_node_id));
 
   EXPECT_EQ(hit_test_result, AXFuchsiaSemanticProvider::kFuchsiaRootNodeId);
 }
 
 TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsEmptyResult) {
   auto root_delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  AXPlatformNode* root_platform_node =
-      AXPlatformNode::Create(root_delegate.get());
+  AXPlatformNode::Pointer root_platform_node =
+      AXPlatformNode::Create(*root_delegate);
 
   // Set the platform node as the root, so that the accessibility bridge
   // dispatches the hit test request to it.
@@ -343,7 +352,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsEmptyResult) {
             ASSERT_FALSE(response.result().node_id().has_value());
           }));
 
-  const absl::optional<ui::AXActionData>& action_data =
+  const std::optional<AXActionData>& action_data =
       root_delegate->last_action_data();
   ASSERT_TRUE(action_data.has_value());
 
@@ -358,8 +367,8 @@ TEST_F(AccessibilityBridgeFuchsiaTest, HitTestReturnsEmptyResult) {
 
 TEST_F(AccessibilityBridgeFuchsiaTest, PerformActionOnRoot) {
   auto root_delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  AXPlatformNode* root_platform_node =
-      AXPlatformNode::Create(root_delegate.get());
+  AXPlatformNode::Pointer root_platform_node =
+      AXPlatformNode::Create(*root_delegate);
 
   // Set the platform node as the root, so that the accessibility bridge
   // dispatches the hit test request to it.
@@ -370,7 +379,7 @@ TEST_F(AccessibilityBridgeFuchsiaTest, PerformActionOnRoot) {
       AXFuchsiaSemanticProvider::kFuchsiaRootNodeId,
       fuchsia_accessibility_semantics::Action::kDefault);
 
-  const absl::optional<ui::AXActionData>& action_data =
+  const std::optional<AXActionData>& action_data =
       root_delegate->last_action_data();
   ASSERT_TRUE(action_data.has_value());
   EXPECT_EQ(action_data->action, ax::mojom::Action::kDoDefault);
@@ -378,20 +387,19 @@ TEST_F(AccessibilityBridgeFuchsiaTest, PerformActionOnRoot) {
 
 TEST_F(AccessibilityBridgeFuchsiaTest, ScrollToMakeVisible) {
   auto delegate = std::make_unique<FakeAXPlatformNodeDelegate>();
-  ui::AXNodeData data;
+  AXNodeData data;
   data.relative_bounds.bounds = gfx::RectF(
       /*x_min=*/1.f, /*y_min=*/2.f, /*width=*/3.f, /*height=*/4.f);
   delegate->SetData(data);
-  AXPlatformNode* platform_node = AXPlatformNode::Create(delegate.get());
-  ASSERT_TRUE(static_cast<AXPlatformNodeFuchsia*>(platform_node));
+  AXPlatformNode::Pointer platform_node = AXPlatformNode::Create(*delegate);
+  ASSERT_TRUE(platform_node);
 
   // Request a SHOW_ON_SCREEN action.
   accessibility_bridge_->OnAccessibilityAction(
       delegate->GetUniqueId(),
       fuchsia_accessibility_semantics::Action::kShowOnScreen);
 
-  const absl::optional<ui::AXActionData>& action_data =
-      delegate->last_action_data();
+  const std::optional<AXActionData>& action_data = delegate->last_action_data();
   ASSERT_TRUE(action_data.has_value());
   EXPECT_EQ(action_data->action, ax::mojom::Action::kScrollToMakeVisible);
 

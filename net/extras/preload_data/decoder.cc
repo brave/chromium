@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "net/extras/preload_data/decoder.h"
+
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/notreached.h"
 
 namespace net::extras {
@@ -83,7 +85,6 @@ bool PreloadDecoder::BitReader::DecodeSize(size_t* out) {
     case 0b001:
       // This should have been handled in the if (bits == 0) check.
       NOTREACHED();
-      return false;
     case 0b010:
       // A specialization of the 0b01 prefix for unary-like even numbers.
       *out = 4;
@@ -108,7 +109,6 @@ bool PreloadDecoder::BitReader::DecodeSize(size_t* out) {
     default:
       // All cases should be covered above.
       NOTREACHED();
-      return false;
   }
   size_t bit_length = 3;
   while (true) {
@@ -156,7 +156,7 @@ bool PreloadDecoder::HuffmanDecoder::Decode(PreloadDecoder::BitReader* reader,
       return false;
     }
 
-    uint8_t b = current[bit];
+    uint8_t b = UNSAFE_TODO(current[bit]);
     if (b & 0x80) {
       *out = static_cast<char>(b & 0x7f);
       return true;

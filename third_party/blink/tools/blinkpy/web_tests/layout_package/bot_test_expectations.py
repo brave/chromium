@@ -32,8 +32,7 @@ corresponding to the give port.
 import json
 import logging
 import os.path
-
-from six.moves import urllib
+import urllib
 
 from blinkpy.web_tests.models.typ_types import Expectation, ResultType
 
@@ -228,7 +227,7 @@ class BotTestExpectations(object):
 
     # TODO(ojan): Remove this once crbug.com/514378 is fixed.
     # The JSON can contain results for expectations, not just actual result types.
-    NON_RESULT_TYPES = ['S', 'X']  # SLOW, SKIP
+    NON_RESULT_TYPES = ['X']  # SKIP
 
     # specifiers arg is used in unittests to avoid the static dependency on builders.
     def __init__(self, results_json, builders, specifiers=None, results_filter=None):

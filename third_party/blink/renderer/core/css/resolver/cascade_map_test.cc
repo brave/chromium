@@ -13,14 +13,31 @@ namespace blink {
 
 namespace {
 CascadePriority UaPriority(wtf_size_t position) {
-  return CascadePriority(CascadeOrigin::kUserAgent, false, 0, false, 0,
-                         position);
+  return CascadePriority(CascadeOrigin::kUserAgent,
+                         /* important */ false,
+                         /* tree_order */ 0,
+                         /* is_inline_style */ false,
+                         /* is_try_style */ false,
+                         /* is_try_tactics_style */ false,
+                         /* layer_order */ 0, position);
 }
 CascadePriority UserPriority(wtf_size_t position) {
-  return CascadePriority(CascadeOrigin::kUser, false, 0, false, 0, position);
+  return CascadePriority(CascadeOrigin::kUser,
+                         /* important */ false,
+                         /* tree_order */ 0,
+                         /* is_inline_style */ false,
+                         /* is_try_style */ false,
+                         /* is_try_tactics_style */ false,
+                         /* layer_order */ 0, position);
 }
 CascadePriority AuthorPriority(wtf_size_t position) {
-  return CascadePriority(CascadeOrigin::kAuthor, false, 0, false, 0, position);
+  return CascadePriority(CascadeOrigin::kAuthor,
+                         /* important */ false,
+                         /* tree_order */ 0,
+                         /* is_inline_style */ false,
+                         /* is_try_style */ false,
+                         /* is_try_tactics_style */ false,
+                         /* layer_order */ 0, position);
 }
 
 bool AddTo(CascadeMap& map,
@@ -169,12 +186,12 @@ TEST(CascadeMapTest, HighPriorityBits) {
 
   EXPECT_FALSE(map.HighPriorityBits());
 
-  map.Add(CSSPropertyID::kFontSize, CascadeOrigin::kAuthor);
+  map.Add(CSSPropertyID::kFontSize, CascadePriority(CascadeOrigin::kAuthor));
   EXPECT_EQ(map.HighPriorityBits(),
             1ull << static_cast<uint64_t>(CSSPropertyID::kFontSize));
 
-  map.Add(CSSPropertyID::kColor, CascadeOrigin::kAuthor);
-  map.Add(CSSPropertyID::kFontSize, CascadeOrigin::kAuthor);
+  map.Add(CSSPropertyID::kColor, CascadePriority(CascadeOrigin::kAuthor));
+  map.Add(CSSPropertyID::kFontSize, CascadePriority(CascadeOrigin::kAuthor));
   EXPECT_EQ(map.HighPriorityBits(),
             (1ull << static_cast<uint64_t>(CSSPropertyID::kFontSize)) |
                 (1ull << static_cast<uint64_t>(CSSPropertyID::kColor)));
@@ -191,7 +208,7 @@ TEST(CascadeMapTest, AllHighPriorityBits) {
       if (CSSProperty::Get(id).IsSurrogate()) {
         continue;
       }
-      map.Add(id, CascadeOrigin::kAuthor);
+      map.Add(id, CascadePriority(CascadeOrigin::kAuthor));
       expected |= (1ull << static_cast<uint64_t>(id));
     }
   }
@@ -206,7 +223,7 @@ TEST(CascadeMapTest, LastHighPrio) {
 
   CSSPropertyID last = kLastHighPriorityCSSProperty;
 
-  map.Add(last, CascadeOrigin::kAuthor);
+  map.Add(last, CascadePriority(CascadeOrigin::kAuthor));
   EXPECT_EQ(map.HighPriorityBits(), 1ull << static_cast<uint64_t>(last));
 }
 

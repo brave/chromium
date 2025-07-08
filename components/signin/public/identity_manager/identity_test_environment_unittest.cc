@@ -6,8 +6,12 @@
 
 #include "base/functional/bind.h"
 #include "base/test/task_environment.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
+#include "components/signin/public/identity_manager/test_identity_manager_observer.h"
 #include "google_apis/gaia/gaia_constants.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace signin {
@@ -56,7 +60,7 @@ TEST_F(IdentityTestEnvironmentTest,
   fetcher.reset();
 }
 
-// TODO(https://crbug.com/1462552): Delete this test once `ConsentLevel::kSync`
+// TODO(https://crbug.com/40066949): Delete this test once `ConsentLevel::kSync`
 // is deleted.
 TEST_F(IdentityTestEnvironmentTest,
        IdentityTestEnvironmentSetPrimaryAccountWithSyncConsent) {
@@ -90,12 +94,12 @@ TEST_F(IdentityTestEnvironmentTest,
                                                ConsentLevel::kSignin);
   EXPECT_TRUE(identity_manager->HasPrimaryAccount(ConsentLevel::kSignin));
 
-  // TODO(https://crbug.com/1462552): Remove once `ConsentLevel::kSync` is
+  // TODO(https://crbug.com/40066949): Remove once `ConsentLevel::kSync` is
   // deleted.
   EXPECT_FALSE(identity_manager->HasPrimaryAccount(ConsentLevel::kSync));
 }
 
-// TODO(https://crbug.com/1462552): Delete this test once `ConsentLevel::kSync`
+// TODO(https://crbug.com/40066949): Delete this test once `ConsentLevel::kSync`
 // is deleted.
 TEST_F(IdentityTestEnvironmentTest,
        IdentityTestEnvironmentMakePrimaryAccountAvailableWithSyncConsent) {
@@ -125,9 +129,60 @@ TEST_F(IdentityTestEnvironmentTest,
                                                          ConsentLevel::kSignin);
   EXPECT_TRUE(identity_manager->HasPrimaryAccount(ConsentLevel::kSignin));
 
-  // TODO(https://crbug.com/1462552): Remove once `ConsentLevel::kSync` is
+  // TODO(https://crbug.com/40066949): Remove once `ConsentLevel::kSync` is
   // deleted.
   EXPECT_FALSE(identity_manager->HasPrimaryAccount(ConsentLevel::kSync));
+}
+
+TEST_F(IdentityTestEnvironmentTest, TriggerListAccount) {
+  std::unique_ptr<IdentityTestEnvironment> identity_test_environment =
+      std::make_unique<IdentityTestEnvironment>();
+
+  const std::string kPrimaryEmail = "primary@gmail.com";
+  identity_test_environment->MakeAccountAvailable(
+      kPrimaryEmail, {.primary_account_consent_level = ConsentLevel::kSignin,
+                      .set_cookie = true});
+  ASSERT_EQ(identity_test_environment->identity_manager()
+                ->GetAccountsInCookieJar()
+                .GetPotentiallyInvalidSignedInAccounts()
+                .size(),
+            1u);
+
+  {
+    TestIdentityManagerObserver observer(
+        identity_test_environment->identity_manager());
+
+    // Changes should be reflected when triggering list account.
+    identity_test_environment->TriggerListAccount();
+
+    const AccountsInCookieJarInfo& observed_cookie_jar =
+        observer.AccountsInfoFromAccountsInCookieUpdatedCallback();
+    auto signed_in_accounts =
+        observed_cookie_jar.GetPotentiallyInvalidSignedInAccounts();
+    ASSERT_EQ(signed_in_accounts.size(), 1u);
+    EXPECT_EQ(signed_in_accounts[0].email, kPrimaryEmail);
+  }
+
+  // Add a secondary account
+  const std::string secondary_email = "secondary@gmail.com";
+  identity_test_environment->MakeAccountAvailable(secondary_email,
+                                                  {.set_cookie = true});
+
+  {
+    TestIdentityManagerObserver observer(
+        identity_test_environment->identity_manager());
+
+    // Changes should be reflected when triggering list account.
+    identity_test_environment->TriggerListAccount();
+
+    const AccountsInCookieJarInfo& observed_cookie_jar =
+        observer.AccountsInfoFromAccountsInCookieUpdatedCallback();
+    auto signed_in_accounts =
+        observed_cookie_jar.GetPotentiallyInvalidSignedInAccounts();
+    ASSERT_EQ(signed_in_accounts.size(), 2u);
+    EXPECT_EQ(signed_in_accounts[0].email, kPrimaryEmail);
+    EXPECT_EQ(signed_in_accounts[1].email, secondary_email);
+  }
 }
 
 }  // namespace signin

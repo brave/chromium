@@ -5,11 +5,13 @@
 #include <initializer_list>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/public/cpp/login_screen_test_api.h"
+#include "ash/shell.h"
 #include "base/check_deref.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -24,15 +26,21 @@
 #include "base/synchronization/lock.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/repeating_test_future.h"
+#include "base/test/run_until.h"
+#include "base/test/test_future.h"
+#include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/helper.h"
 #include "chrome/browser/ash/login/lock/screen_locker_tester.h"
+#include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/fake_target_device_connection_broker.h"
 #include "chrome/browser/ash/login/saml/lockscreen_reauth_dialog_test_helper.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/signin/token_handle_util.h"
 #include "chrome/browser/ash/login/signin_partition_manager.h"
+#include "chrome/browser/ash/login/test/auth_ui_utils.h"
 #include "chrome/browser/ash/login/test/cryptohome_mixin.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/fake_recovery_service_mixin.h"
@@ -43,36 +51,39 @@
 #include "chrome/browser/ash/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/ash/login/test/oobe_screens_utils.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
+#include "chrome/browser/ash/login/test/user_auth_config.h"
 #include "chrome/browser/ash/login/test/user_policy_mixin.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
+#include "chrome/browser/ash/policy/core/device_policy_cros_test_helper.h"
 #include "chrome/browser/ash/policy/test_support/embedded_policy_test_server_mixin.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/ash/scoped_test_system_nss_key_slot_mixin.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ssl/ssl_client_certificate_selector.h"
 #include "chrome/browser/sync/sync_service_factory.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/webui/ash/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/marketing_opt_in_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/quick_start_screen_handler.h"
+#include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/ash/scoped_test_system_nss_key_slot_mixin.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
+#include "chromeos/ash/components/http_auth_dialog/http_auth_dialog.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
+#include "chromeos/ash/components/network/network_state_test_helper.h"
+#include "chromeos/ash/components/osauth/public/auth_session_storage.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/tpm/tpm_token_loader.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
@@ -99,7 +110,6 @@
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -107,10 +117,12 @@
 #include "crypto/nss_util.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_test_system_nss_key_slot.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/net_errors.h"
+#include "net/cert/cert_database.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
@@ -121,13 +133,25 @@
 #include "net/ssl/ssl_info.h"
 #include "net/ssl/ssl_server_config.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 #include "net/test/test_data_directory.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
+#include "ui/base/idle/idle_polling_service.h"
+#include "ui/base/idle/idle_time_provider.h"
+#include "ui/base/test/idle_test_utils.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/events/test/event_generator.h"
+
+using testing::NiceMock;
+using ui::test::ScopedIdleProviderForTest;
 
 namespace ash {
 
@@ -135,30 +159,37 @@ namespace {
 
 namespace em = ::enterprise_management;
 
+constexpr char kCancelButton[] = "cancelButton";
 constexpr char kClientCert1Name[] = "client_1";
 constexpr char kClientCert2Name[] = "client_2";
-constexpr char kSigninWebview[] = "$('gaia-signin').getSigninFrame_()";
+constexpr char kLoadingDialog[] = "loadingDialog";
+constexpr char kSigninWebview[] = "$('gaia-signin').getSigninFrame()";
 constexpr char kSigninWebviewOnLockScreen[] =
-    "$('main-element').getSigninFrame_()";
+    "$('main-element').getSigninFrame()";
 constexpr char kTestCookieHost[] = "host1.com";
 constexpr char kTestCookieName[] = "TestCookie";
 constexpr char kTestCookieValue[] = "present";
 constexpr char kTestGuid[] = "cccccccc-cccc-4ccc-0ccc-ccccccccccc1";
 constexpr char kTestTokenHandle[] = "test_token_handle";
+constexpr char kWifiServicePath[] = "/service/wifi1";
 
 constexpr test::UIPath kBackButton = {"gaia-signin", "signin-frame-dialog",
                                       "signin-back-button"};
+constexpr test::UIPath kCancelButtonLoadingDialog = {
+    QuickStartView::kScreenId.name, kLoadingDialog, kCancelButton};
 constexpr test::UIPath kPrimaryButton = {"gaia-signin", "signin-frame-dialog",
                                          "primary-action-button"};
 constexpr test::UIPath kSecondaryButton = {"gaia-signin", "signin-frame-dialog",
                                            "secondary-action-button"};
 constexpr test::UIPath kQuickStartButton = {
-    "gaia-signin", "signin-frame-dialog", "quick-start-button"};
+    "gaia-signin", "signin-frame-dialog", "quick-start-signin-button"};
 
 // UMA names for better test reading.
 const char kLoginRequests[] = "OOBE.GaiaScreen.LoginRequests";
 const char kPasswordIgnoredChars[] = "OOBE.GaiaScreen.PasswordIgnoredChars";
 const char kSuccessLoginRequests[] = "OOBE.GaiaScreen.SuccessLoginRequests";
+const char kPasswordlessLoginRequests[] =
+    "OOBE.GaiaScreen.PasswordlessLoginRequests";
 
 void InjectCookieDoneCallback(base::OnceClosure done_closure,
                               net::CookieAccessResult result) {
@@ -178,8 +209,7 @@ void InjectCookie(content::StoragePartition* storage_partition) {
           kTestCookieName, kTestCookieValue, kTestCookieHost, "/", base::Time(),
           base::Time(), base::Time(), base::Time(), /*secure=*/true,
           /*httponly=*/false, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_MEDIUM,
-          /*same_party=*/false);
+          net::COOKIE_PRIORITY_MEDIUM);
   base::RunLoop run_loop;
   cookie_manager->SetCanonicalCookie(
       *cookie, net::cookie_util::SimulatedCookieSource(*cookie, "https"),
@@ -224,8 +254,9 @@ class ErrorScreenWatcher : public OobeUI::Observer {
     OobeUI* oobe_ui = LoginDisplayHost::default_host()->GetOobeUI();
     oobe_ui_observation_.Observe(oobe_ui);
 
-    if (oobe_ui->current_screen() == ErrorScreenView::kScreenId)
+    if (oobe_ui->current_screen() == ErrorScreenView::kScreenId) {
       has_error_screen_been_shown_ = true;
+    }
   }
 
   ErrorScreenWatcher(const ErrorScreenWatcher& other) = delete;
@@ -240,8 +271,9 @@ class ErrorScreenWatcher : public OobeUI::Observer {
   // OobeUI::Observer:
   void OnCurrentScreenChanged(OobeScreenId current_screen,
                               OobeScreenId new_screen) override {
-    if (new_screen == ErrorScreenView::kScreenId)
+    if (new_screen == ErrorScreenView::kScreenId) {
       has_error_screen_been_shown_ = true;
+    }
   }
 
   // OobeUI::Observer:
@@ -338,15 +370,27 @@ class WebviewLoginTest : public OobeBaseTest {
 
   void WaitForServicesSet() {
     test::OobeJS()
-        .CreateWaiter("$('gaia-signin').authenticator_.services_")
+        .CreateWaiter("$('gaia-signin').authenticator.services_")
         ->Wait();
   }
 
+  void WaitForDeviceIdSet() {
+    SigninFrameJS().CreateWaiter("gaia.chromeOSLogin.receivedDeviceId")->Wait();
+  }
+
  protected:
-  ScopedTestingCrosSettings scoped_testing_cros_settings_;
   FakeGaiaMixin fake_gaia_{&mixin_host_};
   base::test::ScopedFeatureList scoped_feature_list_;
 };
+
+IN_PROC_BROWSER_TEST_F(WebviewLoginTest, BackButtonOobeFlow) {
+  WaitForGaiaPageLoadAndPropertyUpdate();
+  ExpectIdentifierPage();
+
+  // Click back to reload (unreachable) identifier page.
+  test::OobeJS().ClickOnPath(kBackButton);
+  OobeScreenWaiter(UserCreationView::kScreenId).Wait();
+}
 
 IN_PROC_BROWSER_TEST_F(WebviewLoginTest, ErrorScreenOnGaiaError) {
   WaitForGaiaPageLoadAndPropertyUpdate();
@@ -357,9 +401,21 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, ErrorScreenOnGaiaError) {
       GaiaUrls::GetInstance()->embedded_setup_chromeos_url(),
       net::HTTP_NOT_FOUND);
 
-  // Click back to reload (unreachable) identifier page.
-  test::OobeJS().ClickOnPath(kBackButton);
+  // Click ESC key to reload (unreachable) identifier page.
+  ui::test::EventGenerator generator(Shell::Get()->GetPrimaryRootWindow());
+  generator.PressAndReleaseKey(ui::VKEY_ESCAPE, ui::EF_NONE);
   OobeScreenWaiter(ErrorScreenView::kScreenId).Wait();
+}
+
+IN_PROC_BROWSER_TEST_F(WebviewLoginTest, GetDeviceId) {
+  WaitForGaiaPageLoadAndPropertyUpdate();
+  ExpectIdentifierPage();
+
+  SigninFrameJS().ExecuteAsync("gaia.chromeOSLogin.sendGetDeviceId()");
+  WaitForDeviceIdSet();
+  std::string received_device_id =
+      SigninFrameJS().GetString("gaia.chromeOSLogin.receivedDeviceId");
+  EXPECT_TRUE(!received_device_id.empty());
 }
 
 IN_PROC_BROWSER_TEST_F(WebviewLoginTest,
@@ -390,7 +446,7 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest,
   fake_gaia_.fake_gaia()->SetFixedResponse(
       GaiaUrls::GetInstance()->embedded_setup_chromeos_url(), net::HTTP_OK,
       "<body>no-op gaia</body>");
-  test::OobeJS().ExecuteAsync("$('gaia-signin').authenticator_.reload()");
+  test::OobeJS().ExecuteAsync("$('gaia-signin').authenticator.reload()");
 
   // Wait for both buttons to become disabled due to reload.
   test::OobeJS().CreateEnabledWaiter(false, kPrimaryButton)->Wait();
@@ -446,9 +502,11 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, StoragePartitionHandling) {
   // later if it has been cleared.
   InjectCookie(signin_frame_partition_1);
 
-  // Press the back button at a sign-in screen without pre-existing users to
+  // Press ESC key at a sign-in screen without pre-existing users to
   // start a new sign-in attempt.
-  test::OobeJS().ClickOnPath(kBackButton);
+  ui::test::EventGenerator generator(Shell::Get()->GetPrimaryRootWindow());
+  generator.PressAndReleaseKey(ui::VKEY_ESCAPE, ui::EF_NONE);
+
   WaitForGaiaPageBackButtonUpdate();
   // Expect that we got back to the identifier page, as there are no known users
   // so the sign-in screen will not display user pods.
@@ -501,12 +559,12 @@ class WebviewCloseViewLoginTest : public WebviewLoginTest,
   void EmulateGaiaDoneTimeout() {
     // Wait for user info timer to be set.
     test::OobeJS()
-        .CreateWaiter("$('gaia-signin').authenticator_.gaiaDoneTimer_")
+        .CreateWaiter("$('gaia-signin').authenticator.gaiaDoneTimer_")
         ->Wait();
 
     // Emulate timeout fire.
     test::OobeJS().ExecuteAsync(
-        "$('gaia-signin').authenticator_.onGaiaDoneTimeout_()");
+        "$('gaia-signin').authenticator.onGaiaDoneTimeout_()");
   }
 };
 
@@ -852,56 +910,395 @@ class WebviewDeviceOwnedLoginTest : public WebviewLoginTest {
 IN_PROC_BROWSER_TEST_F(WebviewDeviceOwnedLoginTest, AllowNewUser) {
   WaitForGaiaPageLoad();
 
-  std::string frame_url = "$('gaia-signin').authenticator_.reloadUrl_";
+  std::string frame_url = "$('gaia-signin').authenticator.reloadUrl_";
   // New users are allowed.
   test::OobeJS().ExpectTrue(frame_url + ".search('flow=nosignup') == -1");
 
   // Disallow new users - we also need to set an allowlist due to weird logic.
-  scoped_testing_cros_settings_.device_settings()->Set(
-      kAccountsPrefUsers, base::Value(base::Value::List()));
-  scoped_testing_cros_settings_.device_settings()->Set(
-      kAccountsPrefAllowNewUser, base::Value(false));
+  ::policy::DevicePolicyCrosTestHelper test_helper;
+  test_helper.device_policy()
+      ->payload()
+      .mutable_user_allowlist()
+      ->clear_user_allowlist();
+  test_helper.device_policy()
+      ->payload()
+      .mutable_allow_new_users()
+      ->set_allow_new_users(false);
+  test_helper.RefreshDevicePolicy();
+
   WaitForGaiaPageReload();
 
   // flow=nosignup indicates that user creation is not allowed.
   test::OobeJS().ExpectTrue(frame_url + ".search('flow=nosignup') != -1");
 }
 
+class MockIdleTimeProvider : public ui::IdleTimeProvider {
+ public:
+  MockIdleTimeProvider() = default;
+
+  MockIdleTimeProvider(const MockIdleTimeProvider&) = delete;
+  MockIdleTimeProvider& operator=(const MockIdleTimeProvider&) = delete;
+
+  ~MockIdleTimeProvider() override = default;
+
+  MOCK_METHOD(base::TimeDelta, CalculateIdleTime, (), (override));
+  MOCK_METHOD(bool, CheckIdleStateIsLocked, (), (override));
+};
+
+// TODO(b/360829605) Add browser tests for case where proxy auth is required.
+// Class for testing `DeviceAuthenticationFlowAutoReloadInterval` policy cases.
+class AutoReloadWebviewLoginTest : public WebviewLoginTest {
+ public:
+  AutoReloadWebviewLoginTest() = default;
+  AutoReloadWebviewLoginTest(const AutoReloadWebviewLoginTest&) = delete;
+  AutoReloadWebviewLoginTest& operator=(const AutoReloadWebviewLoginTest&) =
+      delete;
+
+  // Sets up the `DeviceAuthenticationFlowAutoReloadInterval` policy.
+  void SetAutoReloadInterval(const int& reload_interval) {
+    em::ChromeDeviceSettingsProto& proto(device_policy_builder_.payload());
+    proto.mutable_deviceauthenticationflowautoreloadinterval()->set_value(
+        reload_interval);
+
+    device_policy_builder_.Build();
+
+    FakeSessionManagerClient::Get()->set_device_policy(
+        device_policy_builder_.GetBlob());
+
+    PrefChangeRegistrar registrar;
+    base::test::TestFuture<const char*> pref_changed_future;
+    registrar.Init(g_browser_process->local_state());
+    registrar.Add(
+        prefs::kAuthenticationFlowAutoReloadInterval,
+        base::BindRepeating(pref_changed_future.GetRepeatingCallback(),
+                            prefs::kAuthenticationFlowAutoReloadInterval));
+
+    FakeSessionManagerClient::Get()->OnPropertyChangeComplete(true);
+
+    EXPECT_EQ(prefs::kAuthenticationFlowAutoReloadInterval,
+              pref_changed_future.Take());
+  }
+
+  void EnterUsernameAndGoToPasswordPage() {
+    WaitForGaiaPageLoadAndPropertyUpdate();
+    ExpectIdentifierPage();
+    SigninFrameJS().TypeIntoPath(FakeGaiaMixin::kFakeUserEmail,
+                                 FakeGaiaMixin::kEmailPath);
+    test::OobeJS().ClickOnPath(kPrimaryButton);
+    WaitForGaiaPageBackButtonUpdate();
+    ExpectPasswordPage();
+  }
+
+  void AdvanceTime(base::TimeDelta time_change) {
+    // TODO(b/353919505): Introduce a function for testing to advance time and
+    // reschedule the timer in one call.
+    task_runner()->FastForwardBy(time_change);
+    base::WallClockTimer* auto_reload_timer =
+        LoginDisplayHost::default_host()
+            ->GetOobeUI()
+            ->GetHandler<GaiaScreenHandler>()
+            ->GetAutoReloadManagerForTesting()
+            .GetTimerForTesting();
+    if (auto_reload_timer && auto_reload_timer->IsRunning()) {
+      auto_reload_timer->OnResume();
+    }
+  }
+
+  void SetUpOnMainThread() override {
+    // Set up fake networks.
+    network_state_test_helper_ = std::make_unique<NetworkStateTestHelper>(
+        /*use_default_devices_and_services=*/true);
+    network_state_test_helper_->manager_test()->SetupDefaultEnvironment();
+
+    WebviewLoginTest::SetUpOnMainThread();
+  }
+
+  void SetUpInProcessBrowserTestFixture() override {
+    task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
+
+    polling_service().SetTaskRunnerForTest(task_runner_);
+    // The default 15s polling interval causes tests to time out.
+    polling_service().SetPollIntervalForTest(base::Seconds(1));
+
+    AuthenticationFlowAutoReloadManager::SetClockForTesting(
+        task_runner_->GetMockClock(), task_runner_->GetMockTickClock());
+
+    WebviewLoginTest::SetUpInProcessBrowserTestFixture();
+  }
+
+  void TearDownOnMainThread() override {
+    network_state_test_helper_.reset();
+
+    WebviewLoginTest::TearDownOnMainThread();
+  }
+
+  ui::IdlePollingService& polling_service() {
+    return *ui::IdlePollingService::GetInstance();
+  }
+
+  base::TestMockTimeTaskRunner* task_runner() { return task_runner_.get(); }
+
+  NetworkStateTestHelper* network_state_test_helper() {
+    return network_state_test_helper_.get();
+  }
+
+ protected:
+  bool IsAutoReloadActive() {
+    return LoginDisplayHost::default_host()
+        ->GetOobeUI()
+        ->GetHandler<GaiaScreenHandler>()
+        ->GetAutoReloadManagerForTesting()
+        .IsAutoReloadActive();
+  }
+
+  void ExpectAutoReloadDisabled() {
+    // Check policy not set
+    PrefService* local_state = g_browser_process->local_state();
+    int pref_reload_interval = local_state->GetInteger(
+        ash::prefs::kAuthenticationFlowAutoReloadInterval);
+    EXPECT_EQ(pref_reload_interval, 0);
+
+    EXPECT_FALSE(IsAutoReloadActive());
+  }
+
+ private:
+  policy::DevicePolicyBuilder device_policy_builder_;
+
+  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
+
+  std::unique_ptr<NetworkStateTestHelper> network_state_test_helper_;
+
+  DeviceStateMixin device_state_{
+      &mixin_host_, DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
+};
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest,
+                       NewUserWithAutoReloadDisabled) {
+  WaitForGaiaPageLoad();
+
+  ExpectAutoReloadDisabled();
+
+  std::string frame_url = "$('gaia-signin').authenticator.reloadUrl_";
+  test::OobeJS().ExpectEQ(frame_url + ".search('auto_reload_attempts')", -1);
+}
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest, NewUserWithAutoReloadSet) {
+  SetAutoReloadInterval(10);  // 10 minutes
+
+  WaitForGaiaPageLoad();
+
+  AdvanceTime(base::Minutes(10));
+
+  WaitForGaiaPageReload();
+
+  std::string frame_url = "$('gaia-signin').authenticator.reloadUrl_";
+  test::OobeJS().ExpectNE(frame_url + ".search('auto_reload_attempts=1')", -1);
+
+  AdvanceTime(base::Minutes(10));
+
+  WaitForGaiaPageReload();
+
+  test::OobeJS().ExpectNE(frame_url + ".search('auto_reload_attempts=2')", -1);
+}
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest,
+                       AutoReloadEnabledThenDisabled) {
+  SetAutoReloadInterval(10);  // 10 minutes
+
+  WaitForGaiaPageLoad();
+
+  AdvanceTime(base::Minutes(10));
+
+  // Wait for page to be reloaded and properties updated.
+  EnterUsernameAndGoToPasswordPage();
+
+  AdvanceTime(base::Minutes(5));
+
+  SetAutoReloadInterval(0);  // 0 minutes
+
+  EXPECT_FALSE(IsAutoReloadActive());
+}
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest,
+                       AutoreloadOnErrorScreenShown) {
+  SetAutoReloadInterval(10);  // 10 minutes
+
+  WaitForGaiaPageLoad();
+
+  AdvanceTime(base::Minutes(5));
+  EXPECT_TRUE(IsAutoReloadActive());
+
+  // Disconnect from all networks in order to trigger the network screen.
+  network_state_test_helper()->service_test()->ClearServices();
+  base::RunLoop().RunUntilIdle();
+
+  OobeScreenWaiter(ErrorScreenView::kScreenId).Wait();
+
+  EXPECT_FALSE(IsAutoReloadActive());
+
+  // Reconnect network.
+  network_state_test_helper()->service_test()->AddService(
+      /*service_path=*/kWifiServicePath, /*guid=*/kWifiServicePath,
+      /*name=*/kWifiServicePath, /*type=*/shill::kTypeWifi,
+      /*state=*/shill::kStateOnline, /*visible=*/true);
+  base::RunLoop().RunUntilIdle();
+
+  WaitForGaiaPageReload();
+
+  EXPECT_TRUE(IsAutoReloadActive());
+}
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest,
+                       PostponeAutoreloadOnUserActive) {
+  const int auto_reload_value = 10;  // 10 minutes
+  SetAutoReloadInterval(auto_reload_value);
+
+  EnterUsernameAndGoToPasswordPage();
+
+  AdvanceTime(base::Minutes(auto_reload_value) - base::Seconds(5));
+  EXPECT_TRUE(IsAutoReloadActive());
+
+  // Simulate user action by force returning the value for `CalculateIdleTime()`
+  // which will be used by `OnIdleStateChange()` in
+  // AuthenticationFlowAutoReloadManager.
+  auto mock_time_provider = std::make_unique<NiceMock<MockIdleTimeProvider>>();
+
+  EXPECT_CALL(*mock_time_provider, CalculateIdleTime())
+      // Simulates a user going back to active.
+      .WillRepeatedly(testing::Return(base::Seconds(0)));
+
+  ui::test::ScopedIdleProviderForTest scoped_idle_provider(
+      std::move(mock_time_provider));
+
+  // Advance time to be just past the original `auto_reload_value` reload
+  // interval. Here, the time passed would now be `auto_reload_value minutes` +
+  // 5 seconds.
+  AdvanceTime(base::Seconds(10));
+
+  // No autoreload should have fired yet.
+  std::string frame_url = "$('gaia-signin').authenticator.reloadUrl_";
+  test::OobeJS().ExpectEQ(frame_url + ".search('auto_reload_attempts=1')", -1);
+
+  // Advance time to pass the postponed time interval.
+  const base::TimeDelta postpone_interval =
+      LoginDisplayHost::default_host()
+          ->GetOobeUI()
+          ->GetHandler<GaiaScreenHandler>()
+          ->GetAutoReloadManagerForTesting()
+          .kPostponeInterval;
+  AdvanceTime(postpone_interval - base::Seconds(5));
+  EXPECT_TRUE(IsAutoReloadActive());
+
+  // A reload should take place after kPostponeInterval has passed.
+  WaitForGaiaPageReload();
+  test::OobeJS().ExpectNE(frame_url + ".search('auto_reload_attempts=1')", -1);
+}
+
+IN_PROC_BROWSER_TEST_F(AutoReloadWebviewLoginTest,
+                       AutoreloadDisabledThenEnabled) {
+  WaitForGaiaPageLoad();
+
+  ExpectAutoReloadDisabled();
+
+  SetAutoReloadInterval(10);  // 10 minutes
+  WaitForGaiaPageReload();
+  EXPECT_TRUE(IsAutoReloadActive());
+
+  AdvanceTime(base::Minutes(10));
+  WaitForGaiaPageReload();
+}
+
 class ReauthWebviewLoginTest : public WebviewLoginTest {
  protected:
-  LoginManagerMixin::TestUserInfo reauth_user_{
-      AccountId::FromUserEmailGaiaId(FakeGaiaMixin::kFakeUserEmail,
-                                     FakeGaiaMixin::kFakeUserGaiaId),
-      user_manager::USER_TYPE_REGULAR,
-      /* invalid token status to force online signin */
-      user_manager::User::OAUTH2_TOKEN_STATUS_INVALID};
-  LoginManagerMixin login_manager_mixin_{&mixin_host_, {reauth_user_}};
+  LoginManagerMixin::TestUserInfo user_with_gaia_pw_{
+      LoginManagerMixin::CreateConsumerAccountId(1),
+      test::UserAuthConfig::Create({AshAuthFactor::kGaiaPassword})
+          .RequireReauth()};
+  LoginManagerMixin::TestUserInfo user_with_local_pw_{
+      LoginManagerMixin::CreateConsumerAccountId(2),
+      test::UserAuthConfig::Create({AshAuthFactor::kLocalPassword})
+          .RequireReauth()};
+  CryptohomeMixin cryptohome_{&mixin_host_};
+  LoginManagerMixin login_manager_mixin_{
+      &mixin_host_,
+      {user_with_gaia_pw_, user_with_local_pw_},
+      &fake_gaia_,
+      &cryptohome_};
+
+  void TriggerOnlineSignin(const LoginManagerMixin::TestUserInfo& test_user) {
+    test::OnLoginScreen()->SelectUserPod(test_user.account_id);
+    EXPECT_TRUE(LoginScreenTestApi::IsForcedOnlineSignin(test_user.account_id));
+    // Focus triggers online signin.
+    EXPECT_TRUE(LoginScreenTestApi::FocusUser(test_user.account_id));
+    WaitForGaiaPageLoadAndPropertyUpdate();
+    EXPECT_TRUE(LoginScreenTestApi::IsOobeDialogVisible());
+  }
 };
 
 IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, EmailPrefill) {
-  EXPECT_TRUE(
-      LoginScreenTestApi::IsForcedOnlineSignin(reauth_user_.account_id));
-  // Focus triggers online signin.
-  EXPECT_TRUE(LoginScreenTestApi::FocusUser(reauth_user_.account_id));
-  WaitForGaiaPageLoad();
-  EXPECT_TRUE(LoginScreenTestApi::IsOobeDialogVisible());
+  TriggerOnlineSignin(user_with_gaia_pw_);
   EXPECT_EQ(fake_gaia_.fake_gaia()->prefilled_email(),
-            reauth_user_.account_id.GetUserEmail());
+            user_with_gaia_pw_.account_id.GetUserEmail());
+}
+
+IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, GaiaPasswordFactor) {
+  TriggerOnlineSignin(user_with_gaia_pw_);
+  // Passwordless login is disallowed when Gaia password factor is
+  // configured.
+  EXPECT_TRUE(fake_gaia_.fake_gaia()->passwordless_support_level().empty());
+
+  test::OobeJS().ClickOnPath(kPrimaryButton);
+  SigninFrameJS().TypeIntoPath(FakeGaiaMixin::kFakeUserPassword,
+                               FakeGaiaMixin::kPasswordPath);
+  test::OobeJS().ClickOnPath(kPrimaryButton);
+  OobeScreenExitWaiter(GaiaView::kScreenId).Wait();
+
+  // Passwordless login is not allowed, hence the metric is not updated.
+  histogram_tester_.ExpectUniqueSample(kPasswordlessLoginRequests,
+                                       0 /* password login */, 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, LocalPasswordFactor) {
+  TriggerOnlineSignin(user_with_local_pw_);
+  // Passwordless login is allowed when only local password factor is
+  // configured.
+  EXPECT_EQ(fake_gaia_.fake_gaia()->passwordless_support_level(),
+            base::ToString(GaiaView::PasswordlessSupportLevel::kConsumersOnly));
+
+  test::OobeJS().ClickOnPath(kPrimaryButton);
+  SigninFrameJS().TypeIntoPath(FakeGaiaMixin::kFakeUserPassword,
+                               FakeGaiaMixin::kPasswordPath);
+  test::OobeJS().ClickOnPath(kPrimaryButton);
+  OobeScreenExitWaiter(GaiaView::kScreenId).Wait();
+
+  histogram_tester_.ExpectUniqueSample(kPasswordlessLoginRequests,
+                                       0 /* passwordless login */, 1);
 }
 
 class ReauthTokenWebviewLoginTest : public ReauthWebviewLoginTest {
  public:
   ReauthTokenWebviewLoginTest() {
-    scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeature(features::kCryptohomeRecovery);
     login_manager_mixin_.AppendRegularUsers(1);
     user_with_invalid_token_ = login_manager_mixin_.users().back().account_id;
     cryptohome_mixin_.MarkUserAsExisting(user_with_invalid_token_);
+    UserDataAuthClient::InitializeFake();
+  }
+
+  void SetUpOnMainThread() override {
+    ReauthWebviewLoginTest::SetUpOnMainThread();
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
+    token_handle_store_->SetInvalidTokenForTesting(kTestTokenHandle);
+  }
+
+  void TearDownOnMainThread() override {
+    token_handle_store_->SetInvalidTokenForTesting(nullptr);
+    token_handle_store_ = nullptr;
+    ReauthWebviewLoginTest::TearDownOnMainThread();
   }
 
   void ShowReauthDialog() {
-    TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_,
-                                      kTestTokenHandle);
+    token_handle_store_->StoreTokenHandle(user_with_invalid_token_,
+                                          kTestTokenHandle);
     // Force to remain in OOBE after login instead of start session, so we could
     // verify the value in UserContext.
     user_manager::KnownUser(g_browser_process->local_state())
@@ -920,20 +1317,11 @@ class ReauthTokenWebviewLoginTest : public ReauthWebviewLoginTest {
   }
 
  protected:
-  void SetUpInProcessBrowserTestFixture() override {
-    ReauthWebviewLoginTest::SetUpInProcessBrowserTestFixture();
-    TokenHandleUtil::SetInvalidTokenForTesting(kTestTokenHandle);
-  }
-
-  void TearDownInProcessBrowserTestFixture() override {
-    TokenHandleUtil::SetInvalidTokenForTesting(nullptr);
-    ReauthWebviewLoginTest::TearDownInProcessBrowserTestFixture();
-  }
-
   AccountId user_with_invalid_token_;
   CryptohomeMixin cryptohome_mixin_{&mixin_host_};
   FakeRecoveryServiceMixin fake_recovery_service_{&mixin_host_,
                                                   embedded_test_server()};
+  raw_ptr<TokenHandleStore> token_handle_store_;
 };
 
 IN_PROC_BROWSER_TEST_F(ReauthTokenWebviewLoginTest, FetchSuccess) {
@@ -951,9 +1339,16 @@ IN_PROC_BROWSER_TEST_F(ReauthTokenWebviewLoginTest, FetchSuccess) {
   test::OobeJS().ClickOnPath(kPrimaryButton);
   OobeScreenExitWaiter(GaiaView::kScreenId).Wait();
 
-  UserContext* user_context = LoginDisplayHost::default_host()
-                                  ->GetWizardContext()
-                                  ->extra_factors_auth_session.get();
+  CHECK(LoginDisplayHost::default_host()
+            ->GetWizardContext()
+            ->extra_factors_token.has_value());
+  auto* storage = ash::AuthSessionStorage::Get();
+  auto& token = LoginDisplayHost::default_host()
+                    ->GetWizardContext()
+                    ->extra_factors_token.value();
+  CHECK(storage->IsValid(token));
+  const UserContext* user_context = storage->Peek(token);
+
   EXPECT_EQ(user_context->GetReauthProofToken(), "fake-reauth-proof-token");
 }
 
@@ -972,15 +1367,23 @@ IN_PROC_BROWSER_TEST_F(ReauthTokenWebviewLoginTest, FetchFailure) {
                                FakeGaiaMixin::kPasswordPath);
   test::OobeJS().ClickOnPath(kPrimaryButton);
   OobeScreenExitWaiter(GaiaView::kScreenId).Wait();
-  UserContext* user_context = LoginDisplayHost::default_host()
-                                  ->GetWizardContext()
-                                  ->extra_factors_auth_session.get();
+
+  CHECK(LoginDisplayHost::default_host()
+            ->GetWizardContext()
+            ->extra_factors_token.has_value());
+  auto* storage = ash::AuthSessionStorage::Get();
+  auto& token = LoginDisplayHost::default_host()
+                    ->GetWizardContext()
+                    ->extra_factors_token.value();
+  CHECK(storage->IsValid(token));
+  const UserContext* user_context = storage->Peek(token);
   EXPECT_TRUE(user_context->GetReauthProofToken().empty());
 }
 
 IN_PROC_BROWSER_TEST_F(ReauthTokenWebviewLoginTest,
                        SkipFetchTokenWhenRecoveryNotSetUp) {
-  TokenHandleUtil::StoreTokenHandle(user_with_invalid_token_, kTestTokenHandle);
+  token_handle_store_->StoreTokenHandle(user_with_invalid_token_,
+                                        kTestTokenHandle);
   ShowReauthDialog();
   EXPECT_EQ(fake_gaia_.fake_gaia()->prefilled_email(),
             user_with_invalid_token_.GetUserEmail());
@@ -989,21 +1392,14 @@ IN_PROC_BROWSER_TEST_F(ReauthTokenWebviewLoginTest,
 
 class ReauthEndpointWebviewLoginTest : public WebviewLoginTest {
  protected:
-  ReauthEndpointWebviewLoginTest() {
-    // TODO(https://crbug.com/1153912) Makes tests work with
-    // kParentAccessCodeForOnlineLogin enabled.
-    scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndDisableFeature(
-        ::features::kParentAccessCodeForOnlineLogin);
-  }
+  ReauthEndpointWebviewLoginTest() = default;
   ~ReauthEndpointWebviewLoginTest() override = default;
 
   LoginManagerMixin::TestUserInfo reauth_user_{
       AccountId::FromUserEmailGaiaId(FakeGaiaMixin::kFakeUserEmail,
                                      FakeGaiaMixin::kFakeUserGaiaId),
-      user_manager::USER_TYPE_CHILD,
-      /* invalid token status to force online signin */
-      user_manager::User::OAUTH2_TOKEN_STATUS_INVALID};
+      test::UserAuthConfig::Create(test::kDefaultAuthSetup).RequireReauth(),
+      user_manager::UserType::kChild};
   LoginManagerMixin login_manager_mixin_{&mixin_host_, {reauth_user_}};
 };
 
@@ -1018,6 +1414,26 @@ IN_PROC_BROWSER_TEST_F(ReauthEndpointWebviewLoginTest, SupervisedUser) {
             reauth_user_.account_id.GetUserEmail());
   EXPECT_EQ(fake_gaia_.fake_gaia()->is_supervised(), "1");
   EXPECT_TRUE(fake_gaia_.fake_gaia()->is_device_owner().empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ReauthEndpointWebviewLoginTest, GetDeviceId) {
+  const std::string fake_device_id = "fake-device-id-123";
+  EXPECT_TRUE(
+      LoginScreenTestApi::IsForcedOnlineSignin(reauth_user_.account_id));
+  // Focus triggers online signin.
+  EXPECT_TRUE(LoginScreenTestApi::FocusUser(reauth_user_.account_id));
+  WaitForGaiaPageLoadAndPropertyUpdate();
+  EXPECT_TRUE(LoginScreenTestApi::IsOobeDialogVisible());
+  EXPECT_EQ(fake_gaia_.fake_gaia()->prefilled_email(),
+            reauth_user_.account_id.GetUserEmail());
+  user_manager::KnownUser known_user{g_browser_process->local_state()};
+  known_user.SetDeviceId(reauth_user_.account_id, fake_device_id);
+
+  SigninFrameJS().ExecuteAsync("gaia.chromeOSLogin.sendGetDeviceId()");
+  WaitForDeviceIdSet();
+  std::string received_device_id =
+      SigninFrameJS().GetString("gaia.chromeOSLogin.receivedDeviceId");
+  EXPECT_EQ(received_device_id, fake_device_id);
 }
 
 class ReauthEndpointWebviewLoginOwnerTest
@@ -1193,22 +1609,23 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
     em::ChromeDeviceSettingsProto& proto(device_policy_builder_.payload());
     auto* field =
         proto.mutable_device_login_screen_auto_select_certificate_for_urls();
-    for (const std::string& autoselect_pattern : autoselect_patterns)
+    for (const std::string& autoselect_pattern : autoselect_patterns) {
       field->add_login_screen_auto_select_certificate_rules(autoselect_pattern);
+    }
 
     device_policy_builder_.Build();
 
     FakeSessionManagerClient::Get()->set_device_policy(
         device_policy_builder_.GetBlob());
     PrefChangeRegistrar registrar;
-    base::test::RepeatingTestFuture<const char*> pref_changed_future;
+    base::test::TestFuture<const char*> pref_changed_future;
     registrar.Init(ProfileHelper::GetSigninProfile()->GetPrefs());
     registrar.Add(
-        prefs::kManagedAutoSelectCertificateForUrls,
-        base::BindRepeating(pref_changed_future.GetCallback(),
-                            prefs::kManagedAutoSelectCertificateForUrls));
+        ::prefs::kManagedAutoSelectCertificateForUrls,
+        base::BindRepeating(pref_changed_future.GetRepeatingCallback(),
+                            ::prefs::kManagedAutoSelectCertificateForUrls));
     FakeSessionManagerClient::Get()->OnPropertyChangeComplete(true);
-    EXPECT_EQ(prefs::kManagedAutoSelectCertificateForUrls,
+    EXPECT_EQ(::prefs::kManagedAutoSelectCertificateForUrls,
               pref_changed_future.Take());
   }
 
@@ -1234,11 +1651,11 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
     FakeSessionManagerClient::Get()->set_device_policy(
         device_policy_builder_.GetBlob());
     PrefChangeRegistrar registrar;
-    base::test::RepeatingTestFuture<const char*> pref_changed_future;
+    base::test::TestFuture<const char*> pref_changed_future;
     registrar.Init(g_browser_process->local_state());
     registrar.Add(
         onc::prefs::kDeviceOpenNetworkConfiguration,
-        base::BindRepeating(pref_changed_future.GetCallback(),
+        base::BindRepeating(pref_changed_future.GetRepeatingCallback(),
                             onc::prefs::kDeviceOpenNetworkConfiguration));
     FakeSessionManagerClient::Get()->OnPropertyChangeComplete(true);
     EXPECT_EQ(onc::prefs::kDeviceOpenNetworkConfiguration,
@@ -1257,14 +1674,14 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
     FakeSessionManagerClient::Get()->set_device_policy(
         device_policy_builder_.GetBlob());
     PrefChangeRegistrar registrar;
-    base::test::RepeatingTestFuture<const char*> pref_changed_future;
+    base::test::TestFuture<const char*> pref_changed_future;
     registrar.Init(ProfileHelper::GetSigninProfile()->GetPrefs());
     registrar.Add(
-        prefs::kPromptOnMultipleMatchingCertificates,
-        base::BindRepeating(pref_changed_future.GetCallback(),
-                            prefs::kPromptOnMultipleMatchingCertificates));
+        ::prefs::kPromptOnMultipleMatchingCertificates,
+        base::BindRepeating(pref_changed_future.GetRepeatingCallback(),
+                            ::prefs::kPromptOnMultipleMatchingCertificates));
     FakeSessionManagerClient::Get()->OnPropertyChangeComplete(true);
-    EXPECT_EQ(prefs::kPromptOnMultipleMatchingCertificates,
+    EXPECT_EQ(::prefs::kPromptOnMultipleMatchingCertificates,
               pref_changed_future.Take());
   }
 
@@ -1293,8 +1710,8 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
 
   // Requests `http_server_`'s client-cert test page in the webview specified by
   // the given `webview_path`. Returns the `net::SSLInfo` as observed by the
-  // server, or `absl::nullopt` if the server did not report any such value.
-  absl::optional<net::SSLInfo> RequestClientCertTestPageInFrame(
+  // server, or `std::nullopt` if the server did not report any such value.
+  std::optional<net::SSLInfo> RequestClientCertTestPageInFrame(
       test::JSChecker js_checker,
       const std::string& webview_path) {
     const GURL url = https_server_->GetURL("/client-cert");
@@ -1307,8 +1724,8 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
     navigation_observer.Wait();
 
     base::AutoLock lock(server_ssl_info_lock_);
-    absl::optional<net::SSLInfo> server_ssl_info = std::move(server_ssl_info_);
-    server_ssl_info_ = absl::nullopt;
+    std::optional<net::SSLInfo> server_ssl_info = std::move(server_ssl_info_);
+    server_ssl_info_ = std::nullopt;
     return server_ssl_info;
   }
 
@@ -1338,8 +1755,9 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
           net::ImportClientCertAndKeyFromFile(
               net::GetTestCertsDirectory(), pem_file_name.MaybeAsASCII(),
               pk8_file_name.MaybeAsASCII(), system_slot);
-      if (!client_cert)
+      if (!client_cert) {
         ADD_FAILURE() << "Failed to import cert from " << client_cert_name;
+      }
     }
   }
 
@@ -1371,7 +1789,7 @@ class WebviewClientCertsLoginTestBase : public WebviewLoginTest {
   // `net::EmbeddedTestServer`'s callbacks run on a background thread, so this
   // field must be protected with a lock.
   base::Lock server_ssl_info_lock_;
-  absl::optional<net::SSLInfo> server_ssl_info_
+  std::optional<net::SSLInfo> server_ssl_info_
       GUARDED_BY(server_ssl_info_lock_);
 
   DeviceStateMixin device_state_{
@@ -1393,13 +1811,15 @@ class WebviewClientCertsLoginTest : public WebviewClientCertsLoginTestBase {
       const std::vector<std::string>& client_cert_names) {
     ImportSystemSlotClientCerts(client_cert_names,
                                 system_nss_key_slot_mixin_.slot());
+    // The main important observer for these tests is Kcer.
+    net::CertDatabase::GetInstance()->NotifyObserversClientCertStoreChanged();
   }
 
  protected:
   LoginManagerMixin::TestUserInfo test_user_{
       AccountId::FromUserEmailGaiaId(FakeGaiaMixin::kFakeUserEmail,
                                      FakeGaiaMixin::kFakeUserGaiaId),
-      user_manager::USER_TYPE_REGULAR};
+      test::kDefaultAuthSetup, user_manager::UserType::kRegular};
   LoginManagerMixin login_manager_mixin_{&mixin_host_, {test_user_}};
 
  private:
@@ -1423,7 +1843,7 @@ IN_PROC_BROWSER_TEST_F(WebviewClientCertsLoginTest,
   SetAutoSelectCertificatePatterns(autoselect_patterns);
 
   // Use `watch_new_webcontents` because the EULA webview has not navigated yet.
-  absl::optional<net::SSLInfo> ssl_info =
+  std::optional<net::SSLInfo> ssl_info =
       RequestClientCertTestPageInFrame(test::OobeJS(), "$('cros-eula-frame')");
   ASSERT_TRUE(ssl_info);
   EXPECT_FALSE(ssl_info->cert);
@@ -1441,23 +1861,23 @@ struct SigninCertParam {
   // If non-null, arrange the test to configure this intermediate CA (specified
   // by name, e.g., "client_1_ca") as known to the client via device policy -
   // see `SetIntermediateAuthorityInDeviceOncPolicy()`.
-  absl::optional<std::string> intermediate_cert;
+  std::optional<std::string> intermediate_cert;
   // Arrange the test to configure these certificate auto-selection patterns in
   // device policy - see `SetAutoSelectCertificatePatterns()`.
   std::vector<std::string> autoselect_patterns;
   // If non-null, arrange the test to configure the device policy for prompting
   // when multiple certificates are auto-selected - see
   // `SetPromptOnMultipleMatchingCertificatesPolicy()`.
-  absl::optional<bool> prompt_on_multiple_matches;
+  std::optional<bool> prompt_on_multiple_matches;
   // Make the web server include the specified CA certificates in its client
   // certificate request. Entries should be DER-encoded X.509 names.
   std::vector<std::string> ca_certs;
   // If non-null, simulate a user gesture to select the given client certificate
   // (specified by name, e.g., "client1") in the cert selector dialog.
-  absl::optional<std::string> manually_select_cert;
+  std::optional<std::string> manually_select_cert;
   // Assert that the selected certificate is the one specified here. When null,
   // asserts that no certificate is selected.
-  absl::optional<std::string> assert_cert;
+  std::optional<std::string> assert_cert;
 };
 
 }  // namespace
@@ -1472,7 +1892,7 @@ class SigninFrameWebviewClientCertsLoginTest
   // selector dialog once it's opened.
   void SimulateUserWillSelectClientCert(
       const std::string& cert_name_to_select) {
-    chrome::SetShowSSLClientCertificateSelectorHookForTest(base::BindRepeating(
+    SetShowSSLClientCertificateSelectorHookForTest(base::BindRepeating(
         &SigninFrameWebviewClientCertsLoginTest::OnClientCertSelectorRequested,
         cert_name_to_select));
   }
@@ -1530,14 +1950,15 @@ IN_PROC_BROWSER_TEST_P(SigninFrameWebviewClientCertsLoginTest,
   ASSERT_NO_FATAL_FAILURE(StartHttpsServer(server_config));
   // Prepare the certificate selector hook for simulating the user gesture in
   // the "act" part of the test.
-  if (GetParam().manually_select_cert)
+  if (GetParam().manually_select_cert) {
     SimulateUserWillSelectClientCert(*GetParam().manually_select_cert);
+  }
 
   EXPECT_TRUE(LoginScreenTestApi::ClickAddUserButton());
   WaitForGaiaPageLoadAndPropertyUpdate();
 
   // Act: navigate to the page hosted by the test server.
-  absl::optional<net::SSLInfo> ssl_info =
+  std::optional<net::SSLInfo> ssl_info =
       RequestClientCertTestPageInFrame(test::OobeJS(), kSigninWebview);
   ASSERT_TRUE(ssl_info);
 
@@ -1576,25 +1997,23 @@ IN_PROC_BROWSER_TEST_P(SigninFrameWebviewClientCertsLoginTest, LockscreenTest) {
   ASSERT_NO_FATAL_FAILURE(StartHttpsServer(server_config));
   // Prepare the certificate selector hook for simulating the user gesture in
   // the "act" part of the test.
-  if (GetParam().manually_select_cert)
+  if (GetParam().manually_select_cert) {
     SimulateUserWillSelectClientCert(*GetParam().manually_select_cert);
+  }
 
   // Log in a user and lock the screen, then trigger the lock screen SAML reauth
   // dialog.
   login_manager_mixin_.LoginWithDefaultContext(test_user_);
   ScreenLockerTester().Lock();
 
-  absl::optional<LockScreenReauthDialogTestHelper> lock_screen_reauth_dialog =
+  std::optional<LockScreenReauthDialogTestHelper> lock_screen_reauth_dialog =
       LockScreenReauthDialogTestHelper::ShowDialogAndWait();
   ASSERT_TRUE(lock_screen_reauth_dialog);
-  lock_screen_reauth_dialog->ForceSamlRedirect();
-  lock_screen_reauth_dialog->ExpectVerifyAccountScreenVisible();
-  lock_screen_reauth_dialog->ClickVerifyButton();
-  lock_screen_reauth_dialog->WaitForSamlScreen();
+  lock_screen_reauth_dialog->WaitForSigninWebview();
 
   // Act: navigate to the page hosted by the test server in the sign-in frame of
   // the lock screen SAML reauth dialog.
-  absl::optional<net::SSLInfo> ssl_info = RequestClientCertTestPageInFrame(
+  std::optional<net::SSLInfo> ssl_info = RequestClientCertTestPageInFrame(
       lock_screen_reauth_dialog->DialogJS(), kSigninWebviewOnLockScreen);
   ASSERT_TRUE(ssl_info);
 
@@ -1615,12 +2034,12 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{
         /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-        /*intermediate_cert=*/absl::nullopt,
+        /*intermediate_cert=*/std::nullopt,
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/{},
-        /*manually_select_cert=*/absl::nullopt,
+        /*manually_select_cert=*/std::nullopt,
         /*assert_cert=*/kClientCert1Name}));
 
 // Test that client certificate autoselect selects the right certificate even
@@ -1630,13 +2049,13 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{
         /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-        /*intermediate_cert=*/absl::nullopt,
+        /*intermediate_cert=*/std::nullopt,
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})",
          R"({"pattern": "*", "filter": {"ISSUER": {"CN": "foo bar"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/{},
-        /*manually_select_cert=*/absl::nullopt,
+        /*manually_select_cert=*/std::nullopt,
         /*assert_cert=*/kClientCert1Name}));
 
 // Test that client certificate authentication using certificates from the
@@ -1647,15 +2066,15 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{
         /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-        /*intermediate_cert=*/absl::nullopt,
+        /*intermediate_cert=*/std::nullopt,
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/
         {// client_1_ca ("B CA")
          {0x30, 0x0f, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x03, 0x55, 0x04, 0x03,
           0x0c, 0x04, 0x42, 0x20, 0x43, 0x41}},
-        /*manually_select_cert=*/absl::nullopt,
+        /*manually_select_cert=*/std::nullopt,
         /*assert_cert=*/kClientCert1Name}));
 
 // Test that client certificate will be discovered if the server requests
@@ -1670,12 +2089,12 @@ INSTANTIATE_TEST_SUITE_P(
         /*intermediate_cert=*/"client_1_ca",
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/
         {// client_root_ca ("C Root CA")
          {0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
           0x0c, 0x09, 0x43, 0x20, 0x52, 0x6f, 0x6f, 0x74, 0x20, 0x43, 0x41}},
-        /*manually_select_cert=*/absl::nullopt,
+        /*manually_select_cert=*/std::nullopt,
         /*assert_cert=*/kClientCert1Name}));
 
 // Test that if no client certificate is auto-selected using policy on the
@@ -1684,16 +2103,16 @@ INSTANTIATE_TEST_SUITE_P(ErrorNoAutoSelect,
                          SigninFrameWebviewClientCertsLoginTest,
                          testing::Values(SigninCertParam{
                              /*client_certs=*/{kClientCert1Name},
-                             /*intermediate_cert=*/absl::nullopt,
+                             /*intermediate_cert=*/std::nullopt,
                              /*autoselect_patterns=*/{},
-                             /*prompt_on_multiple_matches=*/absl::nullopt,
+                             /*prompt_on_multiple_matches=*/std::nullopt,
                              /*ca_certs=*/
                              {// client_1_ca ("B CA")
                               {0x30, 0x0f, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x03,
                                0x55, 0x04, 0x03, 0x0c, 0x04, 0x42, 0x20, 0x43,
                                0x41}},
-                             /*manually_select_cert=*/absl::nullopt,
-                             /*assert_cert=*/absl::nullopt}));
+                             /*manually_select_cert=*/std::nullopt,
+                             /*assert_cert=*/std::nullopt}));
 
 // Test that client certificate authentication using certificates from the
 // system slot is enabled in the sign-in frame. The server requests
@@ -1704,16 +2123,16 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{
         /*client_certs=*/{kClientCert1Name},
-        /*intermediate_cert=*/absl::nullopt,
+        /*intermediate_cert=*/std::nullopt,
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/
         {// client_2_ca ("E CA")
          {0x30, 0x0f, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x03, 0x55, 0x04, 0x03,
           0x0c, 0x04, 0x45, 0x20, 0x43, 0x41}},
-        /*manually_select_cert=*/absl::nullopt,
-        /*assert_cert=*/absl::nullopt}));
+        /*manually_select_cert=*/std::nullopt,
+        /*assert_cert=*/std::nullopt}));
 
 // Test that client certificate will not be discovered if the server requests
 // certificates signed by a root authority, the installed certificate has been
@@ -1725,16 +2144,16 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{
         /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-        /*intermediate_cert=*/absl::nullopt,
+        /*intermediate_cert=*/std::nullopt,
         /*autoselect_patterns=*/
         {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
-        /*prompt_on_multiple_matches=*/absl::nullopt,
+        /*prompt_on_multiple_matches=*/std::nullopt,
         /*ca_certs=*/
         {// client_root_ca ("C Root CA")
          {0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
           0x0c, 0x09, 0x43, 0x20, 0x52, 0x6f, 0x6f, 0x74, 0x20, 0x43, 0x41}},
-        /*manually_select_cert=*/absl::nullopt,
-        /*assert_cert=*/absl::nullopt}));
+        /*manually_select_cert=*/std::nullopt,
+        /*assert_cert=*/std::nullopt}));
 
 // Test that the DeviceLoginScreenPromptOnMultipleMatchingCertificates policy
 // doesn't prevent the client cert from being auto-selected via policy.
@@ -1744,21 +2163,21 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         SigninCertParam{
             /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-            /*intermediate_cert=*/absl::nullopt,
+            /*intermediate_cert=*/std::nullopt,
             /*autoselect_patterns=*/
             {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
             /*prompt_on_multiple_matches=*/false,
             /*ca_certs=*/{},
-            /*manually_select_cert=*/absl::nullopt,
+            /*manually_select_cert=*/std::nullopt,
             /*assert_cert=*/kClientCert1Name},
         SigninCertParam{
             /*client_certs=*/{kClientCert1Name, kClientCert2Name},
-            /*intermediate_cert=*/absl::nullopt,
+            /*intermediate_cert=*/std::nullopt,
             /*autoselect_patterns=*/
             {R"({"pattern": "*", "filter": {"ISSUER": {"CN": "B CA"}}})"},
             /*prompt_on_multiple_matches=*/true,
             /*ca_certs=*/{},
-            /*manually_select_cert=*/absl::nullopt,
+            /*manually_select_cert=*/std::nullopt,
             /*assert_cert=*/kClientCert1Name}));
 // Test that the DeviceLoginScreenPromptOnMultipleMatchingCertificates policy
 // doesn't affect the failure to select a client cert when no auto-selection is
@@ -1767,19 +2186,19 @@ INSTANTIATE_TEST_SUITE_P(
     ErrorNoPatternRegardlessOfPromptPolicy,
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(SigninCertParam{/*client_certs=*/{kClientCert1Name},
-                                    /*intermediate_cert=*/absl::nullopt,
+                                    /*intermediate_cert=*/std::nullopt,
                                     /*autoselect_patterns=*/{},
                                     /*prompt_on_multiple_matches=*/false,
                                     /*ca_certs=*/{},
-                                    /*manually_select_cert=*/absl::nullopt,
-                                    /*assert_cert=*/absl::nullopt},
+                                    /*manually_select_cert=*/std::nullopt,
+                                    /*assert_cert=*/std::nullopt},
                     SigninCertParam{/*client_certs=*/{kClientCert1Name},
-                                    /*intermediate_cert=*/absl::nullopt,
+                                    /*intermediate_cert=*/std::nullopt,
                                     /*autoselect_patterns=*/{},
                                     /*prompt_on_multiple_matches=*/true,
                                     /*ca_certs=*/{},
-                                    /*manually_select_cert=*/absl::nullopt,
-                                    /*assert_cert=*/absl::nullopt}));
+                                    /*manually_select_cert=*/std::nullopt,
+                                    /*assert_cert=*/std::nullopt}));
 // Test that the certificate can be manually selected in case the auto-selection
 // matches multiple certificates and the
 // DeviceLoginScreenPromptOnMultipleMatchingCertificates policy is set to true.
@@ -1788,7 +2207,7 @@ INSTANTIATE_TEST_SUITE_P(
     SigninFrameWebviewClientCertsLoginTest,
     testing::Values(
         SigninCertParam{/*client_certs=*/{kClientCert1Name, kClientCert2Name},
-                        /*intermediate_cert=*/absl::nullopt,
+                        /*intermediate_cert=*/std::nullopt,
                         /*autoselect_patterns=*/
                         {R"({"pattern": "*", "filter": {}})"},
                         /*prompt_on_multiple_matches=*/true,
@@ -1796,7 +2215,7 @@ INSTANTIATE_TEST_SUITE_P(
                         /*manually_select_cert=*/kClientCert1Name,
                         /*assert_cert=*/kClientCert1Name},
         SigninCertParam{/*client_certs=*/{kClientCert1Name, kClientCert2Name},
-                        /*intermediate_cert=*/absl::nullopt,
+                        /*intermediate_cert=*/std::nullopt,
                         /*autoselect_patterns=*/
                         {R"({"pattern": "*", "filter": {}})"},
                         /*prompt_on_multiple_matches=*/true,
@@ -1978,7 +2397,7 @@ IN_PROC_BROWSER_TEST_F(WebviewClientCertsTokenLoadingLoginTest,
       ->GetTestInterface()
       ->EmitOwnershipTakenSignal();
 
-  absl::optional<net::SSLInfo> ssl_info =
+  std::optional<net::SSLInfo> ssl_info =
       RequestClientCertTestPageInFrame(test::OobeJS(), kSigninWebview);
   ASSERT_TRUE(ssl_info);
   ASSERT_TRUE(ssl_info->cert);
@@ -2008,10 +2427,7 @@ IN_PROC_BROWSER_TEST_F(WebviewClientCertsTokenLoadingLoginTest,
 
 class WebviewProxyAuthLoginTest : public WebviewLoginTest {
  public:
-  WebviewProxyAuthLoginTest()
-      : auth_proxy_server_(std::make_unique<net::SpawnedTestServer>(
-            net::SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-            base::FilePath())) {}
+  WebviewProxyAuthLoginTest() = default;
 
   WebviewProxyAuthLoginTest(const WebviewProxyAuthLoginTest&) = delete;
   WebviewProxyAuthLoginTest& operator=(const WebviewProxyAuthLoginTest&) =
@@ -2019,9 +2435,13 @@ class WebviewProxyAuthLoginTest : public WebviewLoginTest {
 
  protected:
   void SetUp() override {
-    // Start proxy server
-    auth_proxy_server_->set_redirect_connect_to_localhost(true);
-    ASSERT_TRUE(auth_proxy_server_->Start());
+    net::test_server::RegisterProxyBasicAuthHandler(auth_proxy_server_, "user",
+                                                    "pass");
+    // Can't actually start accepting connections until after the Gaia server
+    // has started, which happens during the nested FakeGaiaMixin calls, but
+    // still need to open the listen socket here to get a port for the
+    // SetUpCommandLine() call.
+    ASSERT_TRUE(auth_proxy_server_.InitializeAndListen());
 
     WebviewLoginTest::SetUp();
   }
@@ -2029,11 +2449,19 @@ class WebviewProxyAuthLoginTest : public WebviewLoginTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitchASCII(
         ::switches::kProxyServer,
-        auth_proxy_server_->host_port_pair().ToString());
+        auth_proxy_server_.host_port_pair().ToString());
     WebviewLoginTest::SetUpCommandLine(command_line);
   }
 
   void SetUpInProcessBrowserTestFixture() override {
+    // Finish setting up the proxy, now that the Gaia server has started. This
+    // test needs the proxy to handle "accounts.google.com" on the fake Gaia
+    // server, so set that up.
+    CHECK(fake_gaia_.gaia_server()->Started());
+    auth_proxy_server_.EnableConnectProxy({net::HostPortPair::FromURL(
+        fake_gaia_.gaia_server()->GetURL("accounts.google.com", "/"))});
+    auth_proxy_server_.StartAcceptingConnections();
+
     WebviewLoginTest::SetUpInProcessBrowserTestFixture();
 
     // Prepare device policy which will be used for two purposes:
@@ -2054,51 +2482,15 @@ class WebviewProxyAuthLoginTest : public WebviewLoginTest {
     FakeSessionManagerClient::Get()->set_server_backed_state_keys(state_keys);
   }
 
-  void SetUpOnMainThread() override {
-    // Setup the observer reacting on NOTIFICATION_AUTH_NEEDED before the test
-    // runs because there is no action we actively trigger to request proxy
-    // authentication. Instead, the sign-in screen automatically shows the gaia
-    // webview, which will request the gaia URL, which leads to a login prompt.
-    auth_needed_wait_loop_ = std::make_unique<base::RunLoop>();
-    auth_needed_observer_ =
-        std::make_unique<content::WindowedNotificationObserver>(
-            chrome::NOTIFICATION_AUTH_NEEDED,
-            base::BindRepeating(&WebviewProxyAuthLoginTest::OnAuthRequested,
-                                base::Unretained(this)));
-
-    WebviewLoginTest::SetUpOnMainThread();
-  }
-
-  void TearDownOnMainThread() override {
-    WebviewLoginTest::TearDownOnMainThread();
-
-    auth_needed_observer_.reset();
-    auth_needed_wait_loop_.reset();
-  }
-
-  bool OnAuthRequested(const content::NotificationSource& source,
-                       const content::NotificationDetails& details) {
-    // Only care for notifications originating from the frame which is
-    // displaying gaia.
-    content::WebContents* main_web_contents = GetLoginUI()->GetWebContents();
-    content::RenderFrameHost* gaia_rfh =
-        signin::GetAuthFrame(main_web_contents, gaia_frame_parent_);
-    LoginHandler* login_handler =
-        content::Details<LoginNotificationDetails>(details)->handler();
-    if (login_handler->web_contents() !=
-        content::WebContents::FromRenderFrameHost(gaia_rfh))
-      return false;
-
-    gaia_frame_login_handler_ = login_handler;
-    auth_needed_wait_loop_->Quit();
-    return true;
-  }
-
   // Waits until proxy authentication has been requested by the frame displaying
-  // gaia. Returns the LoginHandler handling this authentication request.
-  LoginHandler* WaitForAuthRequested() {
-    auth_needed_wait_loop_->Run();
-    return gaia_frame_login_handler_;
+  // gaia. Returns the HttpAuthDialog handling this authentication request.
+  HttpAuthDialog* WaitForAuthRequested() {
+    bool success = base::test::RunUntil(
+        []() { return HttpAuthDialog::GetAllDialogsForTest().size() == 1; });
+    if (!success) {
+      return nullptr;
+    }
+    return HttpAuthDialog::GetAllDialogsForTest().front();
   }
 
   void UpdateServedPolicyFromDevicePolicyTestHelper() {
@@ -2110,19 +2502,12 @@ class WebviewProxyAuthLoginTest : public WebviewLoginTest {
     return &device_policy_builder_;
   }
 
-  content::WindowedNotificationObserver* auth_needed_observer() {
-    return auth_needed_observer_.get();
-  }
-
  private:
-  std::unique_ptr<content::WindowedNotificationObserver> auth_needed_observer_;
-  std::unique_ptr<base::RunLoop> auth_needed_wait_loop_;
-  // Unowned pointer - set to the LoginHandler of the frame displaying gaia.
-  raw_ptr<LoginHandler, ExperimentalAsh> gaia_frame_login_handler_ = nullptr;
-
   // A proxy server which requires authentication using the 'Basic'
   // authentication method.
-  std::unique_ptr<net::SpawnedTestServer> auth_proxy_server_;
+  net::test_server::EmbeddedTestServer auth_proxy_server_{
+      net::test_server::EmbeddedTestServer::Type::TYPE_HTTP};
+
   EmbeddedPolicyTestServerMixin policy_test_server_mixin_{&mixin_host_};
   policy::DevicePolicyBuilder device_policy_builder_;
 
@@ -2130,18 +2515,22 @@ class WebviewProxyAuthLoginTest : public WebviewLoginTest {
       &mixin_host_, DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
 };
 
-// TODO(crbug.com/1377241): Test is flaky.
-IN_PROC_BROWSER_TEST_F(WebviewProxyAuthLoginTest, DISABLED_ProxyAuthTransfer) {
+// This tests that proxy authentication details supplied on the sign-in screen
+// when attempting to load gaia are used for the gaia page load, for device
+// policy fetches and for subsequent gaia page loads.
+IN_PROC_BROWSER_TEST_F(WebviewProxyAuthLoginTest, ProxyAuthTransfer) {
   WaitForSigninScreen();
 
-  LoginHandler* login_handler = WaitForAuthRequested();
+  HttpAuthDialog* auth_dialog = WaitForAuthRequested();
+  ASSERT_TRUE(auth_dialog);
 
   // Before entering auth data, make `policy_test_server_` serve a policy that
   // we can use to detect if policies have been fetched.
   em::ChromeDeviceSettingsProto& device_policy =
       device_policy_builder()->payload();
   device_policy.mutable_device_login_screen_auto_select_certificate_for_urls()
-      ->add_login_screen_auto_select_certificate_rules("test_pattern");
+      ->add_login_screen_auto_select_certificate_rules(
+          "{\"pattern\": \"https://www.example.com\", \"filter\": {}}");
   UpdateServedPolicyFromDevicePolicyTestHelper();
 
   policy::PolicyChangeRegistrar policy_change_registrar(
@@ -2151,20 +2540,27 @@ IN_PROC_BROWSER_TEST_F(WebviewProxyAuthLoginTest, DISABLED_ProxyAuthTransfer) {
       policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME,
                               std::string() /* component_id */));
 
-  // Now enter auth data
-  login_handler->SetAuth(u"foo", u"bar");
-  WaitForGaiaPageLoad();
-
+  // Setup waiting for the policy to change.
   base::RunLoop run_loop;
   policy_change_registrar.Observe(
       policy::key::kDeviceLoginScreenAutoSelectCertificateForUrls,
       base::BindRepeating(&PolicyChangedCallback, run_loop.QuitClosure()));
+
+  // Now enter auth data, which should trigger a gaia page which should now be
+  // successful.
+  auth_dialog->SupplyCredentialsForTest(u"user", u"pass");
+  WaitForGaiaPageLoad();
+
+  // Wait for the policy-mapped pref to change, because the supplied proxy auth
+  // credentials above should be propagated to the "system network context"
+  // which can now be used for a successful device policy fetch.
   run_loop.Run();
 
   // Press the back button at a sign-in screen without pre-existing users to
   // start a new sign-in attempt.
   // This will re-load gaia, rotating the StoragePartition. The new
-  // StoragePartition must also have the proxy auth details.
+  // StoragePartition must also have the proxy auth details, so authentication
+  // credentials don't have to be re-entered.
   test::OobeJS().ClickOnPath(kBackButton);
   WaitForGaiaPageLoadAndPropertyUpdate();
   // Expect that we got back to the identifier page, as there are no known users
@@ -2213,7 +2609,7 @@ IN_PROC_BROWSER_TEST_F(WebviewChildLoginTest, UserInfoSentBeforeAuthFinished) {
   WaitForServicesSet();
 
   // Timer should not be set.
-  test::OobeJS().ExpectFalse("$('gaia-signin').authenticator_.gaiaDoneTimer_");
+  test::OobeJS().ExpectFalse("$('gaia-signin').authenticator.gaiaDoneTimer_");
 
   test::WaitForPrimaryUserSessionStart();
 
@@ -2237,7 +2633,7 @@ IN_PROC_BROWSER_TEST_F(WebviewChildLoginTest, UserInfoSentAfterTimerSet) {
 
   // Wait for user info timer to be set.
   test::OobeJS()
-      .CreateWaiter("$('gaia-signin').authenticator_.gaiaDoneTimer_")
+      .CreateWaiter("$('gaia-signin').authenticator.gaiaDoneTimer_")
       ->Wait();
 
   // Send user info after that.
@@ -2264,8 +2660,9 @@ IN_PROC_BROWSER_TEST_P(WebviewCloseViewLoginTest, UserInfoNeverSent) {
                                FakeGaiaMixin::kPasswordPath);
   test::OobeJS().ClickOnPath(kPrimaryButton);
 
-  if (GetParam())
+  if (GetParam()) {
     SigninFrameJS().ExecuteAsync("gaia.chromeOSLogin.sendCloseView()");
+  }
 
   EmulateGaiaDoneTimeout();
 
@@ -2320,7 +2717,6 @@ class WebviewLoginQuickStartTest : public WebviewLoginTest {
  public:
   WebviewLoginQuickStartTest() {
     scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeature(features::kOobeQuickStart);
     connection_broker_factory_.set_initial_feature_support_status(
         quick_start::TargetDeviceConnectionBroker::FeatureSupportStatus::
             kUndetermined);
@@ -2338,41 +2734,48 @@ class WebviewLoginQuickStartTest : public WebviewLoginTest {
     OobeBaseTest::TearDownInProcessBrowserTestFixture();
   }
 
+  void EnterQuickStartFlowFromSigninScreen() {
+    WaitForSigninScreen();
+    test::WaitForOobeJSReady();
+
+    test::OobeJS().ExpectHiddenPath(kQuickStartButton);
+
+    // Enable Quick Start
+    connection_broker_factory_.instances().front()->set_feature_support_status(
+        quick_start::TargetDeviceConnectionBroker::FeatureSupportStatus::
+            kSupported);
+
+    // Check that QuickStart button is visible since QuickStart feature is
+    // enabled
+    test::OobeJS()
+        .CreateVisibilityWaiter(/*visibility=*/true, kQuickStartButton)
+        ->Wait();
+
+    test::OobeJS().ClickOnPath(kQuickStartButton);
+
+    // Wait for Quick Start screen to show
+    OobeScreenWaiter(QuickStartView::kScreenId).Wait();
+  }
+
   quick_start::FakeTargetDeviceConnectionBroker::Factory
       connection_broker_factory_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebviewLoginQuickStartTest,
-                       QuickStartButtonNotShownWhenFeatureSupportUndetermined) {
-  WaitForSigninScreen();
-  test::WaitForOobeJSReady();
-
-  // Check that QuickStart button is hidden since QuickStart feature is not
-  // enabled
-  test::OobeJS().ExpectHiddenPath(kQuickStartButton);
+                       QuickStartButtonFunctionalWhenFeatureEnabled) {
+  EnterQuickStartFlowFromSigninScreen();
 }
 
 IN_PROC_BROWSER_TEST_F(WebviewLoginQuickStartTest,
-                       QuickStartButtonFunctionalWhenFeatureEnabled) {
-  WaitForSigninScreen();
-  test::WaitForOobeJSReady();
+                       ClickingCancelReturnsToSigninScreen) {
+  EnterQuickStartFlowFromSigninScreen();
 
-  test::OobeJS().ExpectHiddenPath(kQuickStartButton);
-
-  // Enable Quick Start
-  connection_broker_factory_.instances().front()->set_feature_support_status(
-      quick_start::TargetDeviceConnectionBroker::FeatureSupportStatus::
-          kSupported);
-
-  // Check that QuickStart button is visible since QuickStart feature is enabled
+  // Cancel button must be present.
   test::OobeJS()
-      .CreateVisibilityWaiter(/*visibility=*/true, kQuickStartButton)
+      .CreateVisibilityWaiter(/*visibility=*/true, kCancelButtonLoadingDialog)
       ->Wait();
-
-  test::OobeJS().ClickOnPath(kQuickStartButton);
-
-  // Wait for Quick Start screen to show
-  OobeScreenWaiter(QuickStartView::kScreenId).Wait();
+  test::OobeJS().ClickOnPath(kCancelButtonLoadingDialog);
+  OobeScreenWaiter(GaiaView::kScreenId).Wait();
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

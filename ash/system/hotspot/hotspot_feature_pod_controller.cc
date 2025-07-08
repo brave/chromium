@@ -4,6 +4,7 @@
 
 #include "ash/system/hotspot/hotspot_feature_pod_controller.h"
 
+#include "ash/ash_element_identifiers.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/hotspot_config_service.h"
 #include "ash/resources/vector_icons/vector_icons.h"
@@ -14,7 +15,10 @@
 #include "ash/system/hotspot/hotspot_info_cache.h"
 #include "ash/system/unified/feature_tile.h"
 #include "ash/system/unified/unified_system_tray_controller.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/views/controls/image_view.h"
+#include "ui/views/view_class_properties.h"
 
 namespace ash {
 
@@ -28,8 +32,6 @@ HotspotFeaturePodController::HotspotFeaturePodController(
     UnifiedSystemTrayController* tray_controller)
     : hotspot_info_(Shell::Get()->hotspot_info_cache()->GetHotspotInfo()),
       tray_controller_(tray_controller) {
-  DCHECK(features::IsQsRevampEnabled());
-  DCHECK(features::IsHotspotEnabled());
   GetHotspotConfigService(
       remote_cros_hotspot_config_.BindNewPipeAndPassReceiver());
   remote_cros_hotspot_config_->AddObserver(
@@ -40,10 +42,6 @@ HotspotFeaturePodController::~HotspotFeaturePodController() {
   Shell::Get()->hotspot_icon_animation()->RemoveObserver(this);
 }
 
-FeaturePodButton* HotspotFeaturePodController::CreateButton() {
-  NOTREACHED();
-  return nullptr;
-}
 
 std::unique_ptr<FeatureTile> HotspotFeaturePodController::CreateTile(
     bool compact) {
@@ -57,6 +55,8 @@ std::unique_ptr<FeatureTile> HotspotFeaturePodController::CreateTile(
                           weak_ptr_factory_.GetWeakPtr()));
   tile_->SetLabel(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_HOTSPOT));
   tile_->CreateDecorativeDrillInArrow();
+  tile_->drill_in_arrow()->SetProperty(
+      views::kElementIdentifierKey, kHotspotFeatureTileDrillInArrowElementId);
 
   // Default the visibility to false and update it in `UpdateTileState()` since
   // it should only be shown if user has used the Hotspot from Settings before.
@@ -89,7 +89,8 @@ void HotspotFeaturePodController::OnLabelPressed() {
     return;
   }
 
-  EnableHotspotIfAllowedAndDiveIn();
+  TrackDiveInUMA();
+  tray_controller_->ShowHotspotDetailedView();
 }
 
 void HotspotFeaturePodController::OnHotspotInfoChanged() {

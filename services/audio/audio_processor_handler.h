@@ -6,6 +6,7 @@
 #define SERVICES_AUDIO_AUDIO_PROCESSOR_HANDLER_H_
 
 #include <atomic>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
@@ -45,10 +46,11 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
   using DeliverProcessedAudioCallback = base::RepeatingCallback<void(
       const media::AudioBus& audio_bus,
       base::TimeTicks audio_capture_time,
-      absl::optional<double> new_volume,
+      std::optional<double> new_volume,
       const media::AudioGlitchInfo& audio_glitch_info)>;
 
-  using LogCallback = base::RepeatingCallback<void(base::StringPiece)>;
+  using LogCallback = base::RepeatingCallback<void(std::string_view)>;
+  using ReferenceStreamErrorCallback = base::RepeatingCallback<void()>;
 
   // |settings| specifies which audio processing effects to apply. Some effect
   // must be required, i.e. the AudioProcessorHandler may only be created if
@@ -68,6 +70,8 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
       const media::AudioParameters& output_format,
       LogCallback log_callback,
       DeliverProcessedAudioCallback deliver_processed_audio_callback,
+      // reference_stream_error_callback will be called on the main thread.
+      ReferenceStreamErrorCallback reference_stream_error_callback,
       mojo::PendingReceiver<media::mojom::AudioProcessorControls>
           controls_receiver,
       media::AecdumpRecordingManager* aecdump_recording_manager);
@@ -82,7 +86,6 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
   void ProcessCapturedAudio(const media::AudioBus& audio_source,
                             base::TimeTicks audio_capture_time,
                             double volume,
-                            bool key_pressed,
                             const media::AudioGlitchInfo& audio_glitch_info);
 
   // The format of audio input to the processor; constant throughout its
@@ -107,6 +110,8 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
   void OnPlayoutData(const media::AudioBus& audio_bus,
                      int sample_rate,
                      base::TimeDelta delay) final;
+  // Called on `owning_sequence_`.
+  void OnReferenceStreamError() final;
 
   // mojom::AudioProcessorControls implementation.
   void GetStats(GetStatsCallback callback) final;
@@ -118,7 +123,7 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
 
   void DeliverProcessedAudio(const media::AudioBus& audio_bus,
                              base::TimeTicks audio_capture_time,
-                             absl::optional<double> new_volume);
+                             std::optional<double> new_volume);
 
   SEQUENCE_CHECKER(owning_sequence_);
 
@@ -128,6 +133,9 @@ class AudioProcessorHandler final : public ReferenceOutput::Listener,
   const std::unique_ptr<media::AudioProcessor> audio_processor_;
 
   const DeliverProcessedAudioCallback deliver_processed_audio_callback_;
+
+  const ReferenceStreamErrorCallback reference_stream_error_callback_
+      GUARDED_BY_CONTEXT(owning_sequence_);
 
   mojo::Receiver<media::mojom::AudioProcessorControls> receiver_
       GUARDED_BY_CONTEXT(owning_sequence_);

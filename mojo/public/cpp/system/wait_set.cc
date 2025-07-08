@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/public/cpp/system/wait_set.h"
 
 #include <algorithm>
@@ -12,6 +17,7 @@
 
 #include "base/check_op.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
@@ -169,7 +175,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
           for (size_t i = 0; i < num_blocking_events; ++i) {
             const auto& event = blocking_events[i];
             auto it = contexts_.find(event.trigger_context);
-            DCHECK(it != contexts_.end());
+            CHECK(it != contexts_.end());
             ready_handles_[it->second->handle()] = {event.result,
                                                     event.signals_state};
           }
@@ -197,7 +203,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
 
     size_t dest_index = waitable_index_shift_++;
     events[dest_index] = &handle_event_;
-    for (auto* e : user_events_) {
+    for (base::WaitableEvent* e : user_events_) {
       dest_index = (dest_index + 1) % events.size();
       events[dest_index] = e;
     }
@@ -321,7 +327,7 @@ class WaitSet::State : public base::RefCountedThreadSafe<State> {
   std::map<Handle, scoped_refptr<Context>> handle_to_context_;
   std::map<Handle, ReadyState> ready_handles_;
   std::vector<scoped_refptr<Context>> cancelled_contexts_;
-  std::set<base::WaitableEvent*> user_events_;
+  std::set<raw_ptr<base::WaitableEvent, SetExperimental>> user_events_;
 
   // Event signaled any time a handle notification is received.
   base::WaitableEvent handle_event_;

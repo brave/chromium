@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_AMBIENT_PROVIDER_IMPL_H_
 #define CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_PERSONALIZATION_APP_PERSONALIZATION_APP_AMBIENT_PROVIDER_IMPL_H_
 
+#include <optional>
+
 #include "ash/ambient/ambient_ui_settings.h"
-#include "ash/constants/ambient_theme.h"
 #include "ash/public/cpp/ambient/ambient_ui_model.h"
 #include "ash/public/cpp/ambient/common/ambient_settings.h"
 #include "ash/webui/personalization_app/mojom/personalization_app.mojom.h"
@@ -20,7 +21,6 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/backoff_entry.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 class Profile;
@@ -53,13 +53,13 @@ class PersonalizationAppAmbientProviderImpl
       mojo::PendingRemote<ash::personalization_app::mojom::AmbientObserver>
           observer) override;
   void SetAmbientModeEnabled(bool enabled) override;
-  void SetAnimationTheme(ash::AmbientTheme animation_theme) override;
+  void SetAmbientTheme(mojom::AmbientTheme ambient_theme) override;
   void SetScreenSaverDuration(int minutes) override;
-  void SetTopicSource(ash::AmbientModeTopicSource topic_source) override;
+  void SetTopicSource(mojom::TopicSource topic_source) override;
   void SetTemperatureUnit(
       ash::AmbientModeTemperatureUnit temperature_unit) override;
   void SetAlbumSelected(const std::string& id,
-                        ash::AmbientModeTopicSource topic_source,
+                        mojom::TopicSource topic_source,
                         bool selected) override;
   void SetPageViewed() override;
   void FetchSettingsAndAlbums() override;
@@ -67,6 +67,11 @@ class PersonalizationAppAmbientProviderImpl
   void ShouldShowTimeOfDayBanner(
       ShouldShowTimeOfDayBannerCallback callback) override;
   void HandleTimeOfDayBannerDismissed() override;
+  void IsGeolocationEnabledForSystemServices(
+      IsGeolocationEnabledForSystemServicesCallback callback) override;
+  void IsGeolocationUserModifiable(
+      IsGeolocationUserModifiableCallback callback) override;
+  void EnableGeolocationForSystemServices() override;
 
   // Notify WebUI the latest values.
   void OnAmbientModeEnabledChanged();
@@ -82,6 +87,12 @@ class PersonalizationAppAmbientProviderImpl
 
   bool IsAmbientModeEnabled();
 
+  bool IsGeolocationEnabledForSystemServices();
+  bool IsGeolocationUserModifiable();
+
+  // Notify webUI the current state of system geolocation permission.
+  void NotifyGeolocationPermissionChanged();
+
   AmbientUiSettings GetCurrentUiSettings() const;
 
   // Update the local `settings_` to server.
@@ -89,17 +100,10 @@ class PersonalizationAppAmbientProviderImpl
 
   // Called when the settings is updated.
   // `success` is true when update successfully.
-  void OnUpdateSettings(bool success);
-
-  // Return true if a new update needed.
-  // `success` is true when update successfully.
-  bool MaybeScheduleNewUpdateSettings(bool success);
-
-  // `success` is true when update successfully.
-  void UpdateUIWithCachedSettings(bool success);
+  void OnUpdateSettings(bool success, const AmbientSettings& settings);
 
   void OnSettingsAndAlbumsFetched(
-      const absl::optional<ash::AmbientSettings>& settings,
+      const std::optional<ash::AmbientSettings>& settings,
       ash::PersonalAlbums personal_albums);
 
   // The `settings_` could be stale when the albums in Google Photos changes.
@@ -108,10 +112,14 @@ class PersonalizationAppAmbientProviderImpl
   void SyncSettingsAndAlbums();
 
   // Update topic source if needed.
-  void MaybeUpdateTopicSource(ash::AmbientModeTopicSource topic_source);
+  void MaybeUpdateTopicSource(mojom::TopicSource topic_source);
 
   void FetchPreviewImages();
   void OnPreviewsFetched(const std::vector<GURL>& preview_urls);
+
+  // Notify webUI the current state of ambient theme preview images.
+  void NotifyAmbientThemePreviewImagesChanged();
+  void OnMachineStatisticsReady();
 
   ash::PersonalAlbum* FindPersonalAlbumById(const std::string& album_id);
 
@@ -126,7 +134,7 @@ class PersonalizationAppAmbientProviderImpl
   // leave `settings_` untouched while the video theme is active so that the
   // user's exact `AmbientSettings` can be restored when switching back to a
   // non-video theme (ex: slideshow).
-  AmbientModeTopicSource GetCurrentTopicSource() const;
+  mojom::TopicSource GetCurrentTopicSource() const;
 
   void BroadcastAmbientModeEnabledStatus(bool enabled);
 
@@ -148,27 +156,18 @@ class PersonalizationAppAmbientProviderImpl
 
   // Local settings which may contain changes from WebUI but have not sent to
   // server. Only one `UpdateSettings()` at a time.
-  absl::optional<ash::AmbientSettings> settings_;
+  std::optional<ash::AmbientSettings> settings_;
 
   // The cached settings from the server. Should be the same as the server side.
   // This value will be updated when `RequestSettingsAndAlbums()` and
   // `UpdateSettings()` return successfully.
   // If `UpdateSettings()` fails, will restore to this value.
-  absl::optional<ash::AmbientSettings> cached_settings_;
-
-  // A temporary settings sent to the server in `UpdateSettings()`.
-  absl::optional<ash::AmbientSettings> settings_sent_for_update_;
+  std::optional<ash::AmbientSettings> cached_settings_;
 
   ash::PersonalAlbums personal_albums_;
 
-  // Whether to update UI when `UpdateSettings()` returns successfully.
-  bool has_pending_fetch_request_ = false;
-
   // Whether the Settings updating is ongoing.
   bool is_updating_backend_ = false;
-
-  // Whether there are pending updates.
-  bool has_pending_updates_for_backend_ = false;
 
   // Whether to update previews when `UpdateSettings()` returns successfully.
   bool needs_update_previews_ = false;
@@ -185,6 +184,8 @@ class PersonalizationAppAmbientProviderImpl
       read_weak_factory_{this};
   base::WeakPtrFactory<PersonalizationAppAmbientProviderImpl>
       previews_weak_factory_{this};
+  base::WeakPtrFactory<PersonalizationAppAmbientProviderImpl>
+      ambient_theme_previews_weak_factory_{this};
 };
 
 }  // namespace ash::personalization_app

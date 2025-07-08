@@ -8,28 +8,24 @@
  * reject the request
  */
 
-import 'chrome://resources/cr_elements/cr_lottie/cr_lottie.js';
-import 'chrome://resources/polymer/v3_0/iron-media-query/iron-media-query.js';
+import 'chrome://resources/ash/common/cr_elements/cr_lottie/cr_lottie.js';
+import 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
 import '/shared/nearby_page_template.js';
 import '/shared/nearby_device.js';
 import '/shared/nearby_preview.js';
 import '/shared/nearby_progress.js';
 
-import {ShareTarget, TransferStatus} from '/shared/nearby_share.mojom-webui.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {ShareTarget} from '/shared/nearby_share.mojom-webui.js';
+import {TransferStatus} from '/shared/nearby_share.mojom-webui.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './nearby_share_confirm_page.html.js';
 
 /**
- * The progress bar asset URL for light mode.
+ * The progress bar asset URL.
  */
-const PROGRESS_BAR_URL_LIGHT: string = 'nearby_share_progress_bar_light.json';
-
-/**
- * The progress bar asset URL for dark mode.
- */
-const PROGRESS_BAR_URL_DARK: string = 'nearby_share_progress_bar_dark.json';
+const PROGRESS_BAR_URL = 'nearby_share_progress_bar.json';
 
 const NearbyShareConfirmPageElementBase = I18nMixin(PolymerElement);
 
@@ -78,14 +74,6 @@ export class NearbyShareConfirmPageElement extends
         type: String,
         value: null,
       },
-
-      /**
-       * Whether the confirm page is being rendered in dark mode.
-       */
-      isDarkModeActive_: {
-        type: Boolean,
-        value: false,
-      },
     };
   }
 
@@ -94,7 +82,6 @@ export class NearbyShareConfirmPageElement extends
   transferStatus: TransferStatus|null;
   private errorDescription_: string|null;
   private errorTitle_: string|null;
-  private isDarkModeActive_: boolean;
 
   /**
    * Update the |errorTitle_| and the |errorDescription_| when the transfer
@@ -155,8 +142,7 @@ export class NearbyShareConfirmPageElement extends
    * progress bar.
    */
   private getAnimationUrl_(): string {
-    return this.isDarkModeActive_ ? PROGRESS_BAR_URL_DARK :
-                                    PROGRESS_BAR_URL_LIGHT;
+    return PROGRESS_BAR_URL;
   }
 }
 

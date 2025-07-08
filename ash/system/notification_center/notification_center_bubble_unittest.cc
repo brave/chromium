@@ -11,58 +11,65 @@
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
-#include "ash/system/message_center/ash_notification_view.h"
+#include "ash/system/notification_center/message_center_utils.h"
 #include "ash/system/notification_center/notification_center_bubble.h"
 #include "ash/system/notification_center/notification_center_test_api.h"
-#include "ash/system/notification_center/notification_center_view.h"
-#include "ash/system/notification_center/notification_list_view.h"
+#include "ash/system/notification_center/views/ash_notification_view.h"
+#include "ash/system/notification_center/views/notification_center_view.h"
+#include "ash/system/notification_center/views/notification_list_view.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/system/status_area_widget_test_helper.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/views/message_popup_view.h"
 #include "ui/message_center/views/message_view.h"
 
 namespace ash {
 
-class NotificationCenterBubbleTest : public AshTestBase {
+class NotificationCenterBubbleTestBase : public AshTestBase {
  public:
-  NotificationCenterBubbleTest()
-      : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
-  NotificationCenterBubbleTest(const NotificationCenterBubbleTest&) = delete;
-  NotificationCenterBubbleTest& operator=(const NotificationCenterBubbleTest&) =
-      delete;
-  ~NotificationCenterBubbleTest() override = default;
+  NotificationCenterBubbleTestBase(bool enable_ongoing_processes)
+      : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
+        enable_ongoing_processes_(enable_ongoing_processes) {
+    scoped_feature_list_.InitWithFeatureState(features::kOngoingProcesses,
+                                              AreOngoingProcessesEnabled());
+  }
 
   void SetUp() override {
-    // Enable quick settings revamp feature.
-    scoped_feature_list_.InitAndEnableFeature(features::kQsRevamp);
-
     AshTestBase::SetUp();
-
-    test_api_ = std::make_unique<NotificationCenterTestApi>(
-        StatusAreaWidgetTestHelper::GetStatusAreaWidget()
-            ->notification_center_tray());
+    test_api_ = std::make_unique<NotificationCenterTestApi>();
   }
 
   NotificationCenterTestApi* test_api() { return test_api_.get(); }
 
+  bool AreOngoingProcessesEnabled() const { return enable_ongoing_processes_; }
+
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
-
   std::unique_ptr<NotificationCenterTestApi> test_api_;
+  bool enable_ongoing_processes_ = false;
 };
+
+class NotificationCenterBubbleTest : public NotificationCenterBubbleTestBase,
+                                     public testing::WithParamInterface<
+                                         /*enable_ongoing_processes=*/bool> {
+ public:
+  NotificationCenterBubbleTest()
+      : NotificationCenterBubbleTestBase(
+            /*enable_ongoing_processes=*/GetParam()) {}
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         NotificationCenterBubbleTest,
+                         /*enable_ongoing_processes=*/testing::Bool());
 
 // Tests that the notification bubble does not get cut off by the top of the
 // screen on the launcher homescreen in tablet mode; see b/278471988.
-TEST_F(NotificationCenterBubbleTest,
+TEST_P(NotificationCenterBubbleTest,
        TopOfBubbleConstrainedByTopOfDisplayInTabletModeHomescreen) {
   // Set the display to some known size.
   UpdateDisplay("1200x800");
@@ -88,7 +95,7 @@ TEST_F(NotificationCenterBubbleTest,
       0);
 }
 
-TEST_F(NotificationCenterBubbleTest, BubbleHeightConstrainedByDisplay) {
+TEST_P(NotificationCenterBubbleTest, BubbleHeightConstrainedByDisplay) {
   const int display_height = 800;
   UpdateDisplay("1200x" + base::NumberToString(display_height));
 
@@ -107,7 +114,7 @@ TEST_F(NotificationCenterBubbleTest, BubbleHeightConstrainedByDisplay) {
             display_height);
 }
 
-TEST_F(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplaySizeChange) {
+TEST_P(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplaySizeChange) {
   UpdateDisplay("800x600");
 
   // Add a large number of notifications to overflow the scroll view in the
@@ -131,7 +138,7 @@ TEST_F(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplaySizeChange) {
   EXPECT_EQ(current_bounds.width(), previous_bounds.width());
 }
 
-TEST_F(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplayRotation) {
+TEST_P(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplayRotation) {
   const int display_width = 1000;
   const int display_height = 600;
   UpdateDisplay(base::NumberToString(display_width) + "x" +
@@ -169,7 +176,7 @@ TEST_F(NotificationCenterBubbleTest, BubbleHeightUpdatedByDisplayRotation) {
 
 // Tests that notifications from a single notifier id are grouped in a single
 // parent notification view.
-TEST_F(NotificationCenterBubbleTest, NotificationsGroupingBasic) {
+TEST_P(NotificationCenterBubbleTest, NotificationsGroupingBasic) {
   const std::string source_url = "http://test-url.com";
 
   std::string id0, id1;
@@ -192,7 +199,7 @@ TEST_F(NotificationCenterBubbleTest, NotificationsGroupingBasic) {
   EXPECT_TRUE(parent_notification_view->FindGroupNotificationView(id1));
 }
 
-TEST_F(NotificationCenterBubbleTest,
+TEST_P(NotificationCenterBubbleTest,
        NotificationCollapseStatePreservedFromPopup) {
   std::string id0 = test_api()->AddNotification();
 
@@ -207,7 +214,7 @@ TEST_F(NotificationCenterBubbleTest,
   EXPECT_FALSE(test_api()->GetNotificationViewForId(id0)->IsExpanded());
 }
 
-TEST_F(NotificationCenterBubbleTest,
+TEST_P(NotificationCenterBubbleTest,
        NotificationExpandStatePreservedAcrossDisplays) {
   UpdateDisplay("600x500,600x500");
 
@@ -248,7 +255,7 @@ TEST_F(NotificationCenterBubbleTest,
                   ->IsExpanded());
 }
 
-TEST_F(NotificationCenterBubbleTest, LockScreenNotificationVisibility) {
+TEST_P(NotificationCenterBubbleTest, LockScreenNotificationVisibility) {
   std::string system_id, id;
   system_id = test_api()->AddSystemNotification();
   id = test_api()->AddNotification();
@@ -262,9 +269,46 @@ TEST_F(NotificationCenterBubbleTest, LockScreenNotificationVisibility) {
   EXPECT_TRUE(test_api()->GetNotificationViewForId(system_id)->GetVisible());
 }
 
+TEST_P(NotificationCenterBubbleTest, BubbleActivationWithGestureTap) {
+  test_api()->AddNotification();
+
+  test_api()->ToggleBubble();
+  auto* widget = test_api()->GetWidget();
+  EXPECT_FALSE(widget->IsActive());
+
+  GestureTapOn(test_api()->GetNotificationCenterView());
+  EXPECT_TRUE(widget->IsActive());
+}
+
+TEST_P(NotificationCenterBubbleTest, BubbleActivationWithTouchPress) {
+  test_api()->AddNotification();
+
+  test_api()->ToggleBubble();
+  auto* widget = test_api()->GetWidget();
+  EXPECT_FALSE(widget->IsActive());
+
+  GetEventGenerator()->PressTouch(test_api()
+                                      ->GetNotificationCenterView()
+                                      ->GetBoundsInScreen()
+                                      .CenterPoint());
+  EXPECT_TRUE(widget->IsActive());
+}
+
+TEST_P(NotificationCenterBubbleTest, BubbleActivationWithMouseClick) {
+  test_api()->AddNotification();
+
+  test_api()->ToggleBubble();
+  auto* widget = test_api()->GetWidget();
+  EXPECT_FALSE(widget->IsActive());
+
+  LeftClickOn(test_api()->GetNotificationCenterView());
+  EXPECT_TRUE(widget->IsActive());
+}
+
 // Tests that unlocking the device automatically closes the notification bubble.
 // See b/287622547.
-TEST_F(NotificationCenterBubbleTest, UnlockClosesBubble) {
+// TODO(b/347817687): Re-enable test by fixing dangling ptr check.
+TEST_P(NotificationCenterBubbleTest, DISABLED_UnlockClosesBubble) {
   // Add a notification so that the notification tray will be visible on the
   // lock screen.
   test_api()->AddNotification();
@@ -285,7 +329,7 @@ TEST_F(NotificationCenterBubbleTest, UnlockClosesBubble) {
   EXPECT_FALSE(test_api()->IsBubbleShown());
 }
 
-TEST_F(NotificationCenterBubbleTest, LargeNotificationExpand) {
+TEST_P(NotificationCenterBubbleTest, LargeNotificationExpand) {
   const std::string url = "http://test-url.com/";
   std::string id0 = test_api()->AddNotificationWithSourceUrl(url);
 
@@ -298,7 +342,10 @@ TEST_F(NotificationCenterBubbleTest, LargeNotificationExpand) {
   test_api()->ToggleBubble();
 
   std::string parent_id =
-      id0 + message_center::kIdSuffixForGroupContainerNotification;
+      id0 + message_center_utils::GenerateGroupParentNotificationIdSuffix(
+                message_center::MessageCenter::Get()
+                    ->FindNotificationById(id0)
+                    ->notifier_id());
 
   auto* parent_notification_view = static_cast<AshNotificationView*>(
       test_api()->GetNotificationViewForId(parent_id));
@@ -320,17 +367,15 @@ TEST_F(NotificationCenterBubbleTest, LargeNotificationExpand) {
 }
 
 class NotificationCenterBubbleMultiDisplayTest
-    : public NotificationCenterBubbleTest,
+    : public NotificationCenterBubbleTestBase,
       public testing::WithParamInterface<
           std::tuple</* Primary display height */ int,
-                     /* Secondary display height */ int>> {
+                     /* Secondary display height */ int,
+                     /* enable_ongoing_processes */ bool>> {
  public:
-  NotificationCenterBubbleMultiDisplayTest() = default;
-  NotificationCenterBubbleMultiDisplayTest(
-      const NotificationCenterBubbleMultiDisplayTest&) = delete;
-  NotificationCenterBubbleMultiDisplayTest& operator=(
-      const NotificationCenterBubbleMultiDisplayTest&) = delete;
-  ~NotificationCenterBubbleMultiDisplayTest() override = default;
+  NotificationCenterBubbleMultiDisplayTest()
+      : NotificationCenterBubbleTestBase(
+            /*enable_ongoing_processes=*/std::get<2>(GetParam())) {}
 
  protected:
   int GetPrimaryDisplayHeight() { return std::get<0>(GetParam()); }
@@ -341,11 +386,14 @@ INSTANTIATE_TEST_SUITE_P(DisplayHeight,
                          NotificationCenterBubbleMultiDisplayTest,
                          testing::Values(
                              // Short primary display, tall secondary display
-                             std::make_tuple(600, 1600),
+                             std::make_tuple(600, 1600, false),
+                             std::make_tuple(600, 1600, true),
                              // Tall primary display, short secondary display
-                             std::make_tuple(1600, 600),
+                             std::make_tuple(1600, 600, false),
+                             std::make_tuple(1600, 600, true),
                              // Same primary and secondary display heights
-                             std::make_tuple(600, 600)));
+                             std::make_tuple(600, 600, false),
+                             std::make_tuple(600, 600, true)));
 
 // Tests that the height of the bubble is constrained according to the
 // parameters of the display it is being shown on.

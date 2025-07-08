@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/webui/ash/login/error_screen_handler.h"
 
 #include "base/values.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 #include "ui/chromeos/devicetype_utils.h"
@@ -17,12 +17,8 @@ ErrorScreenHandler::ErrorScreenHandler() : BaseScreenHandler(kScreenId) {}
 
 ErrorScreenHandler::~ErrorScreenHandler() = default;
 
-void ErrorScreenHandler::Show() {
-  base::Value::Dict data;
-  if (LoginDisplayHost::default_host()) {
-    data.Set("hasUserPods", LoginDisplayHost::default_host()->HasUserPods());
-  }
-  ShowInWebUI(std::move(data));
+void ErrorScreenHandler::ShowScreenWithParam(bool is_closeable) {
+  ShowInWebUI(base::Value::Dict().Set("isCloseable", is_closeable));
 }
 
 void ErrorScreenHandler::ShowOobeScreen(OobeScreenId screen) {
@@ -51,12 +47,12 @@ void ErrorScreenHandler::SetShowConnectingIndicator(bool value) {
   CallExternalAPI("showConnectingIndicator", value);
 }
 
-void ErrorScreenHandler::SetIsPersistentError(bool is_persistent) {
-  CallExternalAPI("setIsPersistentError", is_persistent);
+void ErrorScreenHandler::SetUIState(NetworkError::UIState ui_state) {
+  CallExternalAPI("setUiState", static_cast<int>(ui_state));
 }
 
-void ErrorScreenHandler::SetUIState(NetworkError::UIState ui_state) {
-  CallExternalAPI("setUIState", static_cast<int>(ui_state));
+base::WeakPtr<ErrorScreenView> ErrorScreenHandler::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 void ErrorScreenHandler::DeclareLocalizedValues(
@@ -89,7 +85,8 @@ void ErrorScreenHandler::DeclareLocalizedValues(
   builder->Add("proxySettingsMenuName",
                IDS_NETWORK_PROXY_SETTINGS_LIST_ITEM_NAME);
   builder->Add("addWiFiNetworkMenuName", IDS_NETWORK_ADD_WI_FI_LIST_ITEM_NAME);
-  builder->Add("autoEnrollmentErrorMessageTitle", IDS_LOGIN_AUTO_ENROLLMENT_OFFLINE_TITLE);
+  builder->Add("autoEnrollmentErrorMessageTitle",
+               IDS_LOGIN_AUTO_ENROLLMENT_OFFLINE_TITLE);
   ui::network_element::AddLocalizedValuesToBuilder(builder);
 
   builder->Add("offlineLogin", IDS_OFFLINE_LOGIN_HTML);

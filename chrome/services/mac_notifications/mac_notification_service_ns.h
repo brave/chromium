@@ -10,9 +10,11 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+// This class implements the Chromium interface to a deprecated API. It is in
+// the process of being replaced, and warnings about its deprecation are not
+// helpful. https://crbug.com/1127306
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 @class AlertNSNotificationCenterDelegate;
 @class NSUserNotificationCenter;
@@ -35,11 +37,13 @@ class MacNotificationServiceNS : public mojom::MacNotificationService {
   void DisplayNotification(mojom::NotificationPtr notification) override;
   void GetDisplayedNotifications(
       mojom::ProfileIdentifierPtr profile,
+      const std::optional<GURL>& origin,
       GetDisplayedNotificationsCallback callback) override;
   void CloseNotification(mojom::NotificationIdentifierPtr identifier) override;
   void CloseNotificationsForProfile(
       mojom::ProfileIdentifierPtr profile) override;
   void CloseAllNotifications() override;
+  void OkayToTerminateService(OkayToTerminateServiceCallback callback) override;
 
  private:
   mojo::Receiver<mojom::MacNotificationService> binding_;
@@ -48,5 +52,7 @@ class MacNotificationServiceNS : public mojom::MacNotificationService {
 };
 
 }  // namespace mac_notifications
+
+#pragma clang diagnostic pop
 
 #endif  // CHROME_SERVICES_MAC_NOTIFICATIONS_MAC_NOTIFICATION_SERVICE_NS_H_

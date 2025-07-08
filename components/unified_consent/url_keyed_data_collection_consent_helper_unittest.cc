@@ -17,31 +17,6 @@
 namespace unified_consent {
 namespace {
 
-class TestSyncService : public syncer::TestSyncService {
- public:
-  TestSyncService() {
-    GetUserSettings()->SetSelectedTypes(
-        /*sync_everything=*/false,
-        /*types=*/syncer::UserSelectableTypeSet());
-  }
-
-  void FireOnStateChangeOnAllObservers() {
-    for (auto& observer : observers_)
-      observer.OnStateChanged(this);
-  }
-
-  // syncer::TestSyncService:
-  void AddObserver(syncer::SyncServiceObserver* observer) override {
-    observers_.AddObserver(observer);
-  }
-  void RemoveObserver(syncer::SyncServiceObserver* observer) override {
-    observers_.RemoveObserver(observer);
-  }
-
- private:
-  base::ObserverList<syncer::SyncServiceObserver>::Unchecked observers_;
-};
-
 class UrlKeyedDataCollectionConsentHelperTest
     : public testing::Test,
       public UrlKeyedDataCollectionConsentHelper::Observer {
@@ -49,6 +24,9 @@ class UrlKeyedDataCollectionConsentHelperTest
   // testing::Test:
   void SetUp() override {
     UnifiedConsentService::RegisterPrefs(pref_service_.registry());
+    sync_service_.GetUserSettings()->SetSelectedTypes(
+        /*sync_everything=*/false,
+        /*types=*/syncer::UserSelectableTypeSet());
   }
 
   void OnUrlKeyedDataCollectionConsentStateChanged(
@@ -59,7 +37,7 @@ class UrlKeyedDataCollectionConsentHelperTest
  protected:
   sync_preferences::TestingPrefServiceSyncable pref_service_;
   std::vector<bool> state_changed_notifications_;
-  TestSyncService sync_service_;
+  syncer::TestSyncService sync_service_;
 };
 
 TEST_F(UrlKeyedDataCollectionConsentHelperTest, AnonymizedDataCollection) {
@@ -101,13 +79,13 @@ TEST_F(UrlKeyedDataCollectionConsentHelperTest, PersonalizedDataCollection) {
   EXPECT_FALSE(helper->IsEnabled());
   EXPECT_TRUE(state_changed_notifications_.empty());
 
-  sync_service_.SetTransportState(
+  sync_service_.SetMaxTransportState(
       syncer::SyncService::TransportState::INITIALIZING);
   sync_service_.GetUserSettings()->SetSelectedTypes(
       /*sync_everything=*/false,
       /*types=*/{syncer::UserSelectableType::kHistory});
 
-  sync_service_.FireOnStateChangeOnAllObservers();
+  sync_service_.FireStateChanged();
   EXPECT_EQ(helper->GetConsentState(),
             UrlKeyedDataCollectionConsentHelper::State::kInitializing);
   EXPECT_FALSE(helper->IsEnabled());
@@ -115,8 +93,9 @@ TEST_F(UrlKeyedDataCollectionConsentHelperTest, PersonalizedDataCollection) {
       << "No state change notifications fired, because it's still not enabled, "
          "it's just initializing.";
 
-  sync_service_.SetTransportState(syncer::SyncService::TransportState::ACTIVE);
-  sync_service_.FireOnStateChangeOnAllObservers();
+  sync_service_.SetMaxTransportState(
+      syncer::SyncService::TransportState::ACTIVE);
+  sync_service_.FireStateChanged();
   EXPECT_EQ(helper->GetConsentState(),
             UrlKeyedDataCollectionConsentHelper::State::kEnabled);
   EXPECT_TRUE(helper->IsEnabled());
@@ -135,30 +114,59 @@ TEST_F(UrlKeyedDataCollectionConsentHelperTest,
 
 TEST_F(UrlKeyedDataCollectionConsentHelperTest,
        PersonalizedBookmarksDataCollection) {
-    std::unique_ptr<UrlKeyedDataCollectionConsentHelper> helper =
-        UrlKeyedDataCollectionConsentHelper::
-            NewPersonalizedBookmarksDataCollectionConsentHelper(&sync_service_);
-    helper->AddObserver(this);
-    EXPECT_FALSE(helper->IsEnabled());
-    EXPECT_TRUE(state_changed_notifications_.empty());
+  std::unique_ptr<UrlKeyedDataCollectionConsentHelper> helper =
+      UrlKeyedDataCollectionConsentHelper::
+          NewPersonalizedBookmarksDataCollectionConsentHelper(
+              &sync_service_,
+              /*require_sync_feature_enabled=*/true);
+  helper->AddObserver(this);
+  EXPECT_FALSE(helper->IsEnabled());
+  EXPECT_TRUE(state_changed_notifications_.empty());
 
-    sync_service_.GetUserSettings()->SetSelectedTypes(
-        /*sync_everything=*/false,
-        /*types=*/{syncer::UserSelectableType::kBookmarks});
+  sync_service_.GetUserSettings()->SetSelectedTypes(
+      /*sync_everything=*/false,
+      /*types=*/{syncer::UserSelectableType::kBookmarks});
 
-    sync_service_.FireOnStateChangeOnAllObservers();
-    EXPECT_TRUE(helper->IsEnabled());
-    EXPECT_EQ(1U, state_changed_notifications_.size());
-    helper->RemoveObserver(this);
+  sync_service_.FireStateChanged();
+  EXPECT_TRUE(helper->IsEnabled());
+  EXPECT_EQ(1U, state_changed_notifications_.size());
+  helper->RemoveObserver(this);
+}
+
+TEST_F(UrlKeyedDataCollectionConsentHelperTest,
+       PersonalizedBookmarksDataCollection_IsSyncFeatureEnabled) {
+  std::unique_ptr<UrlKeyedDataCollectionConsentHelper> helper =
+      UrlKeyedDataCollectionConsentHelper::
+          NewPersonalizedBookmarksDataCollectionConsentHelper(
+              &sync_service_,
+              /*require_sync_feature_enabled=*/true);
+  sync_service_.GetUserSettings()->SetSelectedTypes(
+      /*sync_everything=*/false,
+      /*types=*/{syncer::UserSelectableType::kBookmarks});
+  sync_service_.FireStateChanged();
+  EXPECT_TRUE(sync_service_.IsSyncFeatureEnabled());
+  EXPECT_TRUE(helper->IsEnabled());
+
+  helper->AddObserver(this);
+  sync_service_.SetSignedIn(signin::ConsentLevel::kSignin);
+  EXPECT_FALSE(sync_service_.IsSyncFeatureEnabled());
+  EXPECT_TRUE(helper->IsEnabled());
+  EXPECT_EQ(0U, state_changed_notifications_.size());
+
+  sync_service_.FireStateChanged();
+  EXPECT_FALSE(helper->IsEnabled());
+  EXPECT_EQ(1U, state_changed_notifications_.size());
+  helper->RemoveObserver(this);
 }
 
 TEST_F(UrlKeyedDataCollectionConsentHelperTest,
        PersonalizedBookmarksDataCollection_NullSyncService) {
-    std::unique_ptr<UrlKeyedDataCollectionConsentHelper> helper =
-        UrlKeyedDataCollectionConsentHelper::
-            NewPersonalizedBookmarksDataCollectionConsentHelper(
-                nullptr /* sync_service */);
-    EXPECT_FALSE(helper->IsEnabled());
+  std::unique_ptr<UrlKeyedDataCollectionConsentHelper> helper =
+      UrlKeyedDataCollectionConsentHelper::
+          NewPersonalizedBookmarksDataCollectionConsentHelper(
+              /*sync_service=*/nullptr,
+              /*require_sync_feature_enabled=*/true);
+  EXPECT_FALSE(helper->IsEnabled());
 }
 
 }  // namespace

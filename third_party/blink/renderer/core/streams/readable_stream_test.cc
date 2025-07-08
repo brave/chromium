@@ -4,9 +4,12 @@
 
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 
+#include <optional>
+
+#include "base/containers/span.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -16,7 +19,9 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_byob_reader_read_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_get_reader_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_read_result.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_readablestreambyobreader_readablestreamdefaultreader.h"
 #include "third_party/blink/renderer/core/messaging/message_channel.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_byob_reader.h"
@@ -31,6 +36,8 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/string_resource.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -48,19 +55,18 @@ class ReadableStreamTest : public testing::Test {
  public:
   ReadableStreamTest() = default;
 
-  absl::optional<String> ReadAll(V8TestingScope& scope,
-                                 ReadableStream* stream) {
+  std::optional<String> ReadAll(V8TestingScope& scope, ReadableStream* stream) {
     ScriptState* script_state = scope.GetScriptState();
     v8::Isolate* isolate = script_state->GetIsolate();
     v8::Local<v8::Context> context = script_state->GetContext();
     v8::Local<v8::Value> v8_stream =
-        ToV8Traits<ReadableStream>::ToV8(script_state, stream).ToLocalChecked();
+        ToV8Traits<ReadableStream>::ToV8(script_state, stream);
     v8::Local<v8::Object> global = context->Global();
     bool set_result = false;
     if (!global->Set(context, V8String(isolate, "stream"), v8_stream)
              .To(&set_result)) {
       ADD_FAILURE();
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     const char script[] =
@@ -83,18 +89,18 @@ readAll(stream);
 
     if (EvalWithPrintingError(&scope, script).IsEmpty()) {
       ADD_FAILURE();
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     while (true) {
       v8::Local<v8::Value> result;
       if (!global->Get(context, V8String(isolate, "result")).ToLocal(&result)) {
         ADD_FAILURE();
-        return absl::nullopt;
+        return std::nullopt;
       }
       if (!result->IsUndefined()) {
         DCHECK(result->IsString());
-        return ToCoreString(result.As<v8::String>());
+        return ToCoreString(isolate, result.As<v8::String>());
       }
 
       // Need to run the event loop for the Serialize test to pass messages
@@ -105,7 +111,53 @@ readAll(stream);
       scope.PerformMicrotaskCheckpoint();
     }
     NOTREACHED();
-    return absl::nullopt;
+  }
+  test::TaskEnvironment task_environment_;
+
+  static void ExpectBYOBReadByteLengthAndContents(
+      ScriptState* script_state,
+      v8::Isolate* isolate,
+      ReadableStreamBYOBReader* reader,
+      NotShared<DOMArrayBufferView> original_view,
+      ReadableStreamBYOBReaderReadOptions* options,
+      const std::vector<uint8_t>& expected_bytes) {
+    ScriptPromiseTester tester(
+        script_state, reader->read(script_state, original_view, options,
+                                   ASSERT_NO_EXCEPTION));
+    tester.WaitUntilSettled();
+    EXPECT_TRUE(tester.IsFulfilled());
+
+    v8::Local<v8::Object> result;
+    ASSERT_TRUE(tester.Value()
+                    .V8Value()
+                    ->ToObject(script_state->GetContext())
+                    .ToLocal(&result));
+
+    // Extract the "value" property (a Uint8Array).
+    v8::Local<v8::Value> value_prop;
+    ASSERT_TRUE(
+        result->Get(script_state->GetContext(), V8String(isolate, "value"))
+            .ToLocal(&value_prop));
+
+    v8::Local<v8::Object> value_obj;
+    ASSERT_TRUE(
+        value_prop->ToObject(script_state->GetContext()).ToLocal(&value_obj));
+
+    // Get the DOMUint8Array from the JS object.
+    auto* array_view = ToScriptWrappable<DOMUint8Array>(isolate, value_obj);
+    ASSERT_TRUE(array_view);
+
+    // Validate length.
+    const size_t expected_length = expected_bytes.size();
+    EXPECT_EQ(array_view->byteLength(), expected_length);
+
+    base::span<const uint8_t> actual_bytes = array_view->AsSpan();
+    ASSERT_EQ(actual_bytes.size(), expected_length);
+
+    // Validate contents
+    for (size_t i = 0; i < expected_length; ++i) {
+      EXPECT_EQ(actual_bytes, base::span(expected_bytes));
+    }
   }
 };
 
@@ -129,11 +181,11 @@ class TestTransferringOptimizer final
     explicit Source(ScriptState* script_state)
         : UnderlyingSourceBase(script_state) {}
 
-    ScriptPromise Start(ScriptState* script_state) override {
-      Controller()->Enqueue("foo");
-      Controller()->Enqueue(", bar");
+    ScriptPromise<IDLUndefined> Start(ScriptState* script_state) override {
+      Controller()->Enqueue(V8String(script_state->GetIsolate(), "foo"));
+      Controller()->Enqueue(V8String(script_state->GetIsolate(), ", bar"));
       Controller()->Close();
-      return ScriptPromise::CastUndefined(script_state);
+      return ToResolvedUndefinedPromise(script_state);
     }
   };
 };
@@ -149,17 +201,13 @@ TEST_F(ReadableStreamTest, CreateWithoutArguments) {
 
 TEST_F(ReadableStreamTest, CreateWithUnderlyingSourceOnly) {
   V8TestingScope scope;
+  ScriptState* script_state = scope.GetScriptState();
   auto* underlying_source =
-      MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
-  ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
-                              scope.GetScriptState(), underlying_source)
-                              .ToLocalChecked());
-
+      MakeGarbageCollected<TestUnderlyingSource>(script_state);
   EXPECT_FALSE(underlying_source->IsStartCalled());
 
-  ReadableStream* stream = ReadableStream::Create(
-      scope.GetScriptState(), js_underlying_source, scope.GetExceptionState());
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
 
   ASSERT_TRUE(stream);
   ASSERT_FALSE(scope.GetExceptionState().HadException());
@@ -168,17 +216,13 @@ TEST_F(ReadableStreamTest, CreateWithUnderlyingSourceOnly) {
 
 TEST_F(ReadableStreamTest, CreateWithFullArguments) {
   V8TestingScope scope;
+  ScriptState* script_state = scope.GetScriptState();
   auto* underlying_source =
-      MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
-  ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
-                              scope.GetScriptState(), underlying_source)
-                              .ToLocalChecked());
+      MakeGarbageCollected<TestUnderlyingSource>(script_state);
   ScriptValue js_empty_strategy = EvalWithPrintingError(&scope, "{}");
   ASSERT_FALSE(js_empty_strategy.IsEmpty());
-  ReadableStream* stream =
-      ReadableStream::Create(scope.GetScriptState(), js_underlying_source,
-                             js_empty_strategy, scope.GetExceptionState());
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
   ASSERT_TRUE(stream);
   ASSERT_FALSE(scope.GetExceptionState().HadException());
   EXPECT_TRUE(underlying_source->IsStartCalled());
@@ -186,38 +230,27 @@ TEST_F(ReadableStreamTest, CreateWithFullArguments) {
 
 TEST_F(ReadableStreamTest, CreateWithPathologicalStrategy) {
   V8TestingScope scope;
-  auto* underlying_source =
-      MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
-  ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
-                              scope.GetScriptState(), underlying_source)
-                              .ToLocalChecked());
+  v8::Isolate* isolate = scope.GetIsolate();
   ScriptValue js_pathological_strategy =
       EvalWithPrintingError(&scope, "({get size() { throw Error('e'); }})");
   ASSERT_FALSE(js_pathological_strategy.IsEmpty());
 
   ReadableStream* stream = ReadableStream::Create(
-      scope.GetScriptState(), js_underlying_source, js_pathological_strategy,
-      scope.GetExceptionState());
+      scope.GetScriptState(), ScriptValue(isolate, v8::Undefined(isolate)),
+      js_pathological_strategy, scope.GetExceptionState());
   ASSERT_FALSE(stream);
   ASSERT_TRUE(scope.GetExceptionState().HadException());
-  EXPECT_FALSE(underlying_source->IsStartCalled());
 }
 
 // Testing getReader, locked, IsLocked and IsDisturbed.
 TEST_F(ReadableStreamTest, GetReader) {
   V8TestingScope scope;
   ScriptState* script_state = scope.GetScriptState();
-  v8::Isolate* isolate = scope.GetIsolate();
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source =
-      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
-                               scope.GetScriptState(), underlying_source)
-                               .ToLocalChecked());
-  ReadableStream* stream = ReadableStream::Create(
-      script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
   ASSERT_TRUE(stream);
 
   EXPECT_FALSE(stream->locked());
@@ -276,24 +309,120 @@ TEST_F(ReadableStreamTest, GetBYOBReader) {
 
   NotShared<DOMArrayBufferView> view =
       NotShared<DOMUint8Array>(DOMUint8Array::Create(1));
-  reader->read(script_state, view, ASSERT_NO_EXCEPTION);
+
+  auto* read_options = ReadableStreamBYOBReaderReadOptions::Create();
+  reader->read(script_state, view, read_options, ASSERT_NO_EXCEPTION);
 
   EXPECT_TRUE(stream->IsDisturbed());
+}
+
+// Tests that `ReadableStreamBYOBReader.read()` correctly fulfills a read
+// request when a minimum number of bytes (`min`) is specified.
+TEST_F(ReadableStreamTest, BYOBReaderWithMinOption) {
+  V8TestingScope scope;
+  ScriptState* script_state = scope.GetScriptState();
+  v8::Isolate* isolate = scope.GetIsolate();
+
+  ScriptValue byte_stream = EvalWithPrintingError(&scope,
+                                                  R"(
+        new ReadableStream({
+            type: 'bytes',
+            pull(controller) {
+                controller.enqueue(new Uint8Array([1,2,3,4,5,6,7]));
+            }
+        })
+           )");
+  ReadableStream* stream =
+      V8ReadableStream::ToWrappable(isolate, byte_stream.V8Value());
+  ASSERT_TRUE(stream);
+
+  auto* options = ReadableStreamGetReaderOptions::Create();
+  options->setMode("byob");
+
+  ReadableStreamBYOBReader* reader = nullptr;
+  if (const auto* result =
+          stream->getReader(script_state, options, ASSERT_NO_EXCEPTION)) {
+    reader = result->GetAsReadableStreamBYOBReader();
+  }
+  ASSERT_TRUE(reader);
+
+  NotShared<DOMArrayBufferView> view_1 =
+      NotShared<DOMUint8Array>(DOMUint8Array::Create(4));
+
+  // Set a min value smaller than or equal to `view.byteLength`.
+  constexpr uint64_t min = 4;
+  auto* read_options =
+      MakeGarbageCollected<ReadableStreamBYOBReaderReadOptions>();
+  read_options->setMin(min);
+  ExpectBYOBReadByteLengthAndContents(script_state, isolate, reader, view_1,
+                                      read_options, {1, 2, 3, 4});
+
+  // Request another read of 4 bytes from the stream. Since only 3 bytes remain
+  // and `min` is set to 4, the read should fulfill with at least the minimum
+  // number of bytes.
+  NotShared<DOMArrayBufferView> view_2 =
+      NotShared<DOMUint8Array>(DOMUint8Array::Create(4));
+  ExpectBYOBReadByteLengthAndContents(script_state, isolate, reader, view_2,
+                                      read_options, {5, 6, 7, 1});
+}
+
+// Verifies that `ReadableStreamBYOBReader.read()` ignores the `min` option when
+// the feature is disabled.
+TEST_F(ReadableStreamTest, BYOBReadMinOptionIgnoredWhenFeatureDisabled) {
+  ScopedReadableStreamBYOBReaderReadMinOptionForTest byob_min_option(false);
+
+  V8TestingScope scope;
+  ScriptState* script_state = scope.GetScriptState();
+  v8::Isolate* isolate = scope.GetIsolate();
+
+  // Stream with 5 bytes.
+  ScriptValue stream_val = EvalWithPrintingError(&scope,
+                                                 R"(
+        new ReadableStream({
+            type: 'bytes',
+            pull(controller) {
+                controller.enqueue(new Uint8Array([1,2,3,4,5]));
+            }
+        })
+           )");
+  ReadableStream* stream =
+      V8ReadableStream::ToWrappable(isolate, stream_val.V8Value());
+  ASSERT_TRUE(stream);
+
+  auto* options = ReadableStreamGetReaderOptions::Create();
+  options->setMode("byob");
+
+  ReadableStreamBYOBReader* reader = nullptr;
+  if (const auto* result =
+          stream->getReader(script_state, options, ASSERT_NO_EXCEPTION)) {
+    reader = result->GetAsReadableStreamBYOBReader();
+  }
+  ASSERT_TRUE(reader);
+
+  // First read with `view` of 3, `min` should be ignored.
+  NotShared<DOMArrayBufferView> view_1 =
+      NotShared<DOMUint8Array>(DOMUint8Array::Create(3));
+  auto* read_options =
+      MakeGarbageCollected<ReadableStreamBYOBReaderReadOptions>();
+  read_options->setMin(3);
+  ExpectBYOBReadByteLengthAndContents(script_state, isolate, reader, view_1,
+                                      read_options, {1, 2, 3});
+
+  // Second read to get the last remaining 2 bytes.
+  NotShared<DOMArrayBufferView> view_2 =
+      NotShared<DOMUint8Array>(DOMUint8Array::Create(3));
+  ExpectBYOBReadByteLengthAndContents(script_state, isolate, reader, view_2,
+                                      read_options, {4, 5});
 }
 
 TEST_F(ReadableStreamTest, Cancel) {
   V8TestingScope scope;
   ScriptState* script_state = scope.GetScriptState();
-  v8::Isolate* isolate = scope.GetIsolate();
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source =
-      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
-                               scope.GetScriptState(), underlying_source)
-                               .ToLocalChecked());
-  ReadableStream* stream = ReadableStream::Create(
-      script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
   ASSERT_TRUE(stream);
 
   EXPECT_FALSE(underlying_source->IsCancelled());
@@ -314,12 +443,8 @@ TEST_F(ReadableStreamTest, CancelWithNull) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source =
-      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
-                               scope.GetScriptState(), underlying_source)
-                               .ToLocalChecked());
-  ReadableStream* stream = ReadableStream::Create(
-      script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
   ASSERT_TRUE(stream);
 
   EXPECT_FALSE(underlying_source->IsCancelled());
@@ -343,12 +468,8 @@ TEST_F(ReadableStreamTest, Tee) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source =
-      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
-                               scope.GetScriptState(), underlying_source)
-                               .ToLocalChecked());
-  ReadableStream* stream = ReadableStream::Create(
-      script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
+  ReadableStream* stream = ReadableStream::CreateWithCountQueueingStrategy(
+      script_state, underlying_source, 0);
   ASSERT_TRUE(stream);
 
   underlying_source->Enqueue(ScriptValue(isolate, V8String(isolate, "hello")));
@@ -495,7 +616,7 @@ TEST_F(ReadableStreamTest, Serialize) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            absl::make_optional<String>("hello, bye"));
+            std::make_optional<String>("hello, bye"));
 }
 
 TEST_F(ReadableStreamTest, DeserializeWithNullOptimizer) {
@@ -526,7 +647,7 @@ TEST_F(ReadableStreamTest, DeserializeWithNullOptimizer) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            absl::make_optional<String>("hello, bye"));
+            std::make_optional<String>("hello, bye"));
 }
 
 TEST_F(ReadableStreamTest, DeserializeWithTestOptimizer) {
@@ -557,7 +678,7 @@ TEST_F(ReadableStreamTest, DeserializeWithTestOptimizer) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            absl::make_optional<String>("hello, byefoo, bar"));
+            std::make_optional<String>("hello, byefoo, bar"));
 }
 
 TEST_F(ReadableStreamTest, GarbageCollectJavaScriptUnderlyingSource) {
@@ -628,15 +749,15 @@ class ReadableByteStreamTest : public testing::Test {
     auto* script_state = scope.GetScriptState();
     ReadableStream* stream = Stream();
     v8::Local<v8::Object> global = script_state->GetContext()->Global();
-    EXPECT_TRUE(global
-                    ->Set(scope.GetContext(),
-                          V8String(scope.GetIsolate(), "stream"),
-                          ToV8Traits<ReadableStream>::ToV8(script_state, stream)
-                              .ToLocalChecked())
-                    .IsJust());
+    EXPECT_TRUE(
+        global
+            ->Set(scope.GetContext(), V8String(scope.GetIsolate(), "stream"),
+                  ToV8Traits<ReadableStream>::ToV8(script_state, stream))
+            .IsJust());
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   Persistent<ReadableStream> stream_;
 };
 
@@ -651,25 +772,24 @@ class TestUnderlyingByteSource : public UnderlyingByteSourceBase {
 
   virtual void PullVoid(ReadableByteStreamController*, ExceptionState&) {}
 
-  ScriptPromise Pull(ReadableByteStreamController* controller,
-                     ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Pull(ReadableByteStreamController* controller,
+                                   ExceptionState& exception_state) override {
     PullVoid(controller, exception_state);
-    return ScriptPromise::CastUndefined(script_state_);
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
-  virtual void CancelVoid(v8::Local<v8::Value>, ExceptionState&) {}
+  virtual void CancelVoid() {}
 
-  ScriptPromise Cancel(ExceptionState& exception_state) override {
-    return Cancel(v8::Undefined(script_state_->GetIsolate()), exception_state);
+  ScriptPromise<IDLUndefined> Cancel() override {
+    return Cancel(v8::Undefined(script_state_->GetIsolate()));
   }
 
-  ScriptPromise Cancel(v8::Local<v8::Value> reason,
-                       ExceptionState& exception_state) override {
-    CancelVoid(reason, exception_state);
-    return ScriptPromise::CastUndefined(script_state_);
+  ScriptPromise<IDLUndefined> Cancel(v8::Local<v8::Value>) override {
+    CancelVoid();
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
-  ScriptState* GetScriptState() override { return script_state_; }
+  ScriptState* GetScriptState() override { return script_state_.Get(); }
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(script_state_);
@@ -686,12 +806,13 @@ class MockUnderlyingByteSource : public UnderlyingByteSourceBase {
       : script_state_(script_state) {}
 
   MOCK_METHOD2(Pull,
-               ScriptPromise(ReadableByteStreamController*, ExceptionState&));
-  MOCK_METHOD1(Cancel, ScriptPromise(ExceptionState&));
-  MOCK_METHOD2(Cancel,
-               ScriptPromise(v8::Local<v8::Value> reason, ExceptionState&));
+               ScriptPromise<IDLUndefined>(ReadableByteStreamController*,
+                                           ExceptionState&));
+  MOCK_METHOD0(Cancel, ScriptPromise<IDLUndefined>());
+  MOCK_METHOD1(Cancel,
+               ScriptPromise<IDLUndefined>(v8::Local<v8::Value> reason));
 
-  ScriptState* GetScriptState() override { return script_state_; }
+  ScriptState* GetScriptState() override { return script_state_.Get(); }
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(script_state_);
@@ -720,7 +841,7 @@ TEST_F(ReadableByteStreamTest, PullIsCalled) {
 
   EXPECT_CALL(*mock, Pull(_, _))
       .WillOnce(
-          Return(ByMove(ScriptPromise::CastUndefined(scope.GetScriptState()))));
+          Return(ByMove(ToResolvedUndefinedPromise(scope.GetScriptState()))));
 
   EvalWithPrintingError(
       &scope, "stream.getReader({ mode: 'byob' }).read(new Uint8Array(1));\n");
@@ -738,9 +859,9 @@ TEST_F(ReadableByteStreamTest, CancelIsCalled) {
   scope.PerformMicrotaskCheckpoint();
   CopyStreamToGlobal(scope);
 
-  EXPECT_CALL(*mock, Cancel(_, _))
+  EXPECT_CALL(*mock, Cancel(_))
       .WillOnce(
-          Return(ByMove(ScriptPromise::CastUndefined(scope.GetScriptState()))));
+          Return(ByMove(ToResolvedUndefinedPromise(scope.GetScriptState()))));
 
   EvalWithPrintingError(&scope,
                         "const reader = stream.getReader({ mode: 'byob' });\n"
@@ -767,7 +888,8 @@ bool IsTypeError(ScriptState* script_state,
                ->Get(script_state->GetContext(),
                      V8AtomicString(script_state->GetIsolate(), key))
                .ToLocal(&actual) &&
-           ToCoreStringWithUndefinedOrNullCheck(actual) == value;
+           ToCoreStringWithUndefinedOrNullCheck(script_state->GetIsolate(),
+                                                actual) == value;
   };
 
   return Has("name", "TypeError") && Has("message", message);
@@ -796,8 +918,10 @@ TEST_F(ReadableByteStreamTest, ThrowFromPull) {
       Stream()->GetBYOBReaderForTesting(script_state, ASSERT_NO_EXCEPTION);
   NotShared<DOMArrayBufferView> view =
       NotShared<DOMUint8Array>(DOMUint8Array::Create(1));
+  auto* options = ReadableStreamBYOBReaderReadOptions::Create();
   ScriptPromiseTester read_tester(
-      script_state, reader->read(script_state, view, ASSERT_NO_EXCEPTION));
+      script_state,
+      reader->read(script_state, view, options, ASSERT_NO_EXCEPTION));
   read_tester.WaitUntilSettled();
   EXPECT_TRUE(read_tester.IsRejected());
   EXPECT_TRUE(IsTypeError(script_state, read_tester.Value(), kMessage));
@@ -811,9 +935,9 @@ TEST_F(ReadableByteStreamTest, ThrowFromCancel) {
     explicit ThrowFromCancelUnderlyingByteSource(ScriptState* script_state)
         : TestUnderlyingByteSource(script_state) {}
 
-    void CancelVoid(v8::Local<v8::Value>,
-                    ExceptionState& exception_state) override {
-      exception_state.ThrowTypeError(kMessage);
+    void CancelVoid() override {
+      V8ThrowException::ThrowTypeError(GetScriptState()->GetIsolate(),
+                                       kMessage);
     }
   };
 
@@ -842,8 +966,10 @@ TEST_F(ReadableByteStreamTest, CloseStream) {
       Stream()->GetBYOBReaderForTesting(script_state, ASSERT_NO_EXCEPTION);
   NotShared<DOMArrayBufferView> view =
       NotShared<DOMUint8Array>(DOMUint8Array::Create(1));
+  auto* options = ReadableStreamBYOBReaderReadOptions::Create();
   ScriptPromiseTester read_tester(
-      script_state, reader->read(script_state, view, ASSERT_NO_EXCEPTION));
+      script_state,
+      reader->read(script_state, view, options, ASSERT_NO_EXCEPTION));
   // Close a byte stream with pending pull intos should fulfill read requests
   // with bytes filled is 0 and done is true.
   Stream()->CloseStream(scope.GetScriptState(), ASSERT_NO_EXCEPTION);

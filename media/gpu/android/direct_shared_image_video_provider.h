@@ -14,14 +14,13 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/texture_owner.h"
-#include "gpu/ipc/common/vulkan_ycbcr_info.h"
 #include "gpu/ipc/service/command_buffer_stub.h"
+#include "gpu/vulkan/vulkan_ycbcr_info.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/android/codec_image.h"
 #include "media/gpu/android/maybe_render_early_manager.h"
 #include "media/gpu/android/shared_image_video_provider.h"
 #include "media/gpu/android/video_frame_factory.h"
-#include "media/gpu/gles2_decoder_helper.h"
 #include "media/gpu/media_gpu_export.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -56,8 +55,8 @@ class MEDIA_GPU_EXPORT DirectSharedImageVideoProvider
   scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner_;
 };
 
-// GpuSharedImageVideoFactory creates SharedImageVideo objects.  It must be run
-// on the gpu main thread.
+// GpuSharedImageVideoFactory creates AndroidVideoImageBacking objects.  It must
+// be run on the gpu main thread.
 //
 // GpuSharedImageVideoFactory is an implementation detail of
 // DirectSharedImageVideoProvider.  It's here since we'll likely re-use it for

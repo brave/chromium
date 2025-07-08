@@ -51,7 +51,8 @@ class OmniboxSuggestionButtonRowBrowserTest : public DialogBrowserTest {
     // Populate suggestions for the omnibox popup.
     AutocompleteController* autocomplete_controller =
         omnibox_view->controller()->autocomplete_controller();
-    AutocompleteResult& results = autocomplete_controller->result_;
+    autocomplete_controller->Start({});
+    AutocompleteResult& results = autocomplete_controller->internal_result_;
     ACMatches matches;
     TermMatches termMatches = {{0, 0, 0}};
 
@@ -81,7 +82,7 @@ class OmniboxSuggestionButtonRowBrowserTest : public DialogBrowserTest {
 
     AutocompleteMatch action_match(nullptr, 500, false,
                                    AutocompleteMatchType::SEARCH_SUGGEST);
-    action_match.contents = u"clear data";
+    action_match.contents = u"delete data";
     action_match.description = u"Search";
     action_match.description_class = ClassifyTermMatches(
         termMatches, action_match.description.size(),
@@ -142,7 +143,7 @@ class OmniboxSuggestionButtonRowBrowserTest : public DialogBrowserTest {
 
     model->SetPopupSelection(
         OmniboxPopupSelection(2, OmniboxPopupSelection::FOCUSED_BUTTON_ACTION));
-    if (!VerifyActiveButtonText(popup_view, 2, u"Clear")) {
+    if (!VerifyActiveButtonText(popup_view, 2, u"Delete")) {
       return false;
     }
 

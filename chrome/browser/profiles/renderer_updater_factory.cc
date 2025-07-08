@@ -18,9 +18,12 @@ RendererUpdaterFactory::RendererUpdaterFactory()
           "RendererUpdater",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(HostContentSettingsMapFactory::GetInstance());
@@ -43,9 +46,10 @@ RendererUpdater* RendererUpdaterFactory::GetForProfile(Profile* profile) {
       GetInstance()->GetServiceForBrowserContext(profile, true));
 }
 
-KeyedService* RendererUpdaterFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+RendererUpdaterFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new RendererUpdater(static_cast<Profile*>(context));
+  return std::make_unique<RendererUpdater>(static_cast<Profile*>(context));
 }
 
 bool RendererUpdaterFactory::ServiceIsCreatedWithBrowserContext() const {

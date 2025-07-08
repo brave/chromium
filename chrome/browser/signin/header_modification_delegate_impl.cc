@@ -4,8 +4,8 @@
 
 #include "chrome/browser/signin/header_modification_delegate_impl.h"
 
+#include "base/notreached.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
@@ -24,11 +24,14 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
+#include "google_apis/gaia/gaia_auth_util.h"
+#include "net/base/schemeful_site.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS)
 #include "components/account_manager_core/pref_names.h"
 #endif
 
@@ -40,6 +43,19 @@
 #endif
 
 namespace signin {
+
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+namespace {
+bool IsFirstPartyRequest(ResponseAdapter* response_adapter) {
+  const url::Origin* top_frame_origin =
+      response_adapter->GetRequestTopFrameOrigin();
+  return top_frame_origin &&
+         net::SchemefulSite::IsSameSite(
+             *top_frame_origin,
+             url::Origin::Create(response_adapter->GetUrl()));
+}
+}  // namespace
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 
 #if BUILDFLAG(IS_ANDROID)
 HeaderModificationDelegateImpl::HeaderModificationDelegateImpl(
@@ -60,7 +76,7 @@ bool HeaderModificationDelegateImpl::ShouldInterceptNavigation(
     content::WebContents* contents) {
   if (profile_->IsOffTheRecord()) {
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-    if (!switches::IsBoundSessionCredentialsEnabled()) {
+    if (!BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_)) {
       return false;
     }
 #else
@@ -82,14 +98,14 @@ void HeaderModificationDelegateImpl::ProcessRequest(
     const GURL& redirect_url) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (profile_->IsOffTheRecord()) {
-    // We expect seeing traffic from OTR profiles only if the feature is
-    // enabled.
+    // We expect seeing traffic from OTR profiles only if
+    // `BoundSessionCookieRefreshService` exists.
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-    CHECK(switches::IsBoundSessionCredentialsEnabled());
-#else
-    CHECK(false);
-#endif
+    CHECK(BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_));
     return;
+#else
+    NOTREACHED();
+#endif
   }
 
   const PrefService* prefs = profile_->GetPrefs();
@@ -98,7 +114,7 @@ void HeaderModificationDelegateImpl::ProcessRequest(
       SyncServiceFactory::GetForProfile(profile_);
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   bool is_secondary_account_addition_allowed = true;
   if (!prefs->GetBoolean(
           ::account_manager::prefs::kSecondaryGoogleAccountSigninAllowed)) {
@@ -133,7 +149,7 @@ void HeaderModificationDelegateImpl::ProcessRequest(
       incognito_mode_availability,
       AccountConsistencyModeManager::GetMethodForProfile(profile_),
       account.gaia, is_child_account,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       is_secondary_account_addition_allowed,
 #endif
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -149,29 +165,35 @@ void HeaderModificationDelegateImpl::ProcessResponse(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  if (switches::IsBoundSessionCredentialsEnabled()) {
+  if (gaia::HasGaiaSchemeHostPort(response_adapter->GetUrl()) &&
+      IsFirstPartyRequest(response_adapter)) {
     BoundSessionCookieRefreshService* bound_session_cookie_refresh_service =
         BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_);
     if (bound_session_cookie_refresh_service) {
-      auto params = BoundSessionRegistrationFetcherParam::MaybeCreateInstance(
+      // Terminate the session if session termination header is set.
+      bound_session_cookie_refresh_service->MaybeTerminateSession(
           response_adapter->GetUrl(), response_adapter->GetHeaders());
-      if (params.has_value()) {
+      for (auto& param :
+           BoundSessionRegistrationFetcherParam::CreateFromHeaders(
+               response_adapter->GetUrl(), response_adapter->GetHeaders())) {
+        // TODO(b/274774185): modify `CreateRegistrationRequest()` to accept a
+        // vector of params.
         bound_session_cookie_refresh_service->CreateRegistrationRequest(
-            std::move(params).value());
+            std::move(param));
       }
     }
   }
 #endif
 
   if (profile_->IsOffTheRecord()) {
-    // We expect seeing traffic from OTR profiles only if the feature is
-    // enabled.
+    // We expect seeing traffic from OTR profiles only if
+    // `BoundSessionCookieRefreshService` exists.
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-    CHECK(switches::IsBoundSessionCredentialsEnabled());
-#else
-    CHECK(false);
-#endif
+    CHECK(BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_));
     return;
+#else
+    NOTREACHED();
+#endif
   }
 
   ProcessAccountConsistencyResponseHeaders(response_adapter, redirect_url,
@@ -187,7 +209,7 @@ bool HeaderModificationDelegateImpl::ShouldIgnoreGuestWebViewRequest(
   }
 
   if (extensions::WebViewRendererState::GetInstance()->IsGuest(
-          contents->GetPrimaryMainFrame()->GetProcess()->GetID())) {
+          contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID())) {
     CHECK(contents->GetSiteInstance()->IsGuest());
     return true;
   }

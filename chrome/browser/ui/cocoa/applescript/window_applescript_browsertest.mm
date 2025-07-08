@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "chrome/browser/ui/cocoa/applescript/window_applescript.h"
+
 #import <Foundation/Foundation.h>
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/app_controller_mac.h"
 #import "chrome/browser/chrome_browser_application_mac.h"
@@ -12,17 +14,12 @@
 #import "chrome/browser/ui/cocoa/applescript/constants_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/error_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/tab_applescript.h"
-#import "chrome/browser/ui/cocoa/applescript/window_applescript.h"
 #include "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using WindowAppleScriptTest = InProcessBrowserTest;
 

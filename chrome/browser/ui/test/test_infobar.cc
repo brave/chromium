@@ -7,8 +7,7 @@
 #include <algorithm>
 #include <iterator>
 
-#include "base/ranges/algorithm.h"
-#include "chrome/browser/infobars/infobar_observer.h"
+#include "chrome/browser/infobars/test_support/infobar_observer.h"
 #include "chrome/browser/ui/browser.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/infobars/core/infobar.h"
@@ -22,15 +21,13 @@ void TestInfoBar::PreShow() {
 }
 
 bool TestInfoBar::VerifyUi() {
-  absl::optional<InfoBars> infobars = GetNewInfoBars();
+  auto infobars = GetNewInfoBars();
   if (!infobars || infobars->empty()) {
     return false;
   }
 
-  return base::ranges::equal(*infobars, expected_identifiers_, {},
-                             [](infobars::InfoBar* infobar) {
-                               return infobar->delegate()->GetIdentifier();
-                             });
+  return std::ranges::equal(*infobars, expected_identifiers_, {},
+                            &infobars::InfoBar::GetIdentifier);
 }
 
 void TestInfoBar::WaitForUserDismissal() {
@@ -67,15 +64,16 @@ const infobars::ContentInfoBarManager* TestInfoBar::GetInfoBarManager() const {
              : nullptr;
 }
 
-absl::optional<TestInfoBar::InfoBars> TestInfoBar::GetNewInfoBars() const {
+std::optional<TestInfoBar::InfoBars> TestInfoBar::GetNewInfoBars() const {
   const infobars::ContentInfoBarManager* infobar_manager = GetInfoBarManager();
-  if (!infobar_manager)
-    return absl::nullopt;
-  const InfoBars& infobars = infobar_manager->infobars_;
+  if (!infobar_manager) {
+    return std::nullopt;
+  }
+  const auto& infobars = infobar_manager->infobars();
   if ((infobars.size() < starting_infobars_.size()) ||
       !std::equal(starting_infobars_.begin(), starting_infobars_.end(),
                   infobars.begin())) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return InfoBars(std::next(infobars.begin(), starting_infobars_.size()),
                   infobars.end());

@@ -2,19 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/ios/ios_util.h"
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #include <stddef.h>
 
-#import "base/ios/device_util.h"
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "base/system/sys_info.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -23,26 +23,6 @@ std::string* g_icudtl_path_override = nullptr;
 }  // namespace
 
 namespace base::ios {
-
-bool IsRunningOnIOS12OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(12, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS13OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(13, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS14OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(14, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS15OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(15, 0, 0);
-  return is_running_on_or_later;
-}
 
 bool IsRunningOnIOS16OrLater() {
   static const bool is_running_on_or_later = IsRunningOnOrLater(16, 0, 0);
@@ -64,8 +44,9 @@ bool IsRunningOnOrLater(int32_t major, int32_t minor, int32_t bug_fix) {
 
     bool IsRunningOnOrLater(int32_t version[3]) const {
       for (size_t i = 0; i < std::size(current_version_); ++i) {
-        if (current_version_[i] != version[i])
+        if (current_version_[i] != version[i]) {
           return current_version_[i] > version[i];
+        }
       }
       return true;
     }
@@ -95,22 +76,17 @@ FilePath FilePathOfEmbeddedICU() {
   return FilePath();
 }
 
+#if !BUILDFLAG(IS_IOS_APP_EXTENSION)
 bool IsMultipleScenesSupported() {
   if (@available(iOS 13, *)) {
     return UIApplication.sharedApplication.supportsMultipleScenes;
   }
   return false;
 }
+#endif
 
 bool IsApplicationPreWarmed() {
   return [NSProcessInfo.processInfo.environment objectForKey:@"ActivePrewarm"];
-}
-
-bool HasDynamicIsland() {
-  std::string hardware_model = ::ios::device_util::GetPlatform();
-  static bool is_dynamic_island_model =
-      (hardware_model == "iPhone15,2" || hardware_model == "iPhone15,3");
-  return is_dynamic_island_model;
 }
 
 }  // namespace base::ios

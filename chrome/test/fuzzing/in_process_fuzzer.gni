@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//mojo/public/tools/fuzzers/mojolpm.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//third_party/protobuf/proto_library.gni")
 
@@ -11,9 +12,19 @@ import("//third_party/protobuf/proto_library.gni")
 #
 # It accepts all the same arguments as //testing/libfuzzer/fuzzer_test.gni's
 # fuzzer_test template.
+#
+# This template also accepts the argument `target_type`. This defaults to
+# `fuzzer_test`.
 template("in_process_fuzzer") {
   if (fuzzing_engine_supports_custom_main) {
-    fuzzer_test(target_name) {
+    if (defined(invoker.target_type)) {
+      target_type = invoker.target_type
+    } else {
+      target_type = "fuzzer_test"
+    }
+    target(target_type, target_name) {
+      # Those tests are big, they need a lot of resources.
+      high_end_job_required = true
       deps = [ "//chrome/test/fuzzing:in_process_fuzzer_runner" ]
       if (defined(invoker.deps)) {
         deps += invoker.deps
@@ -24,25 +35,89 @@ template("in_process_fuzzer") {
                                "deps",
                                "exclude_main",
                                "asan_options",
+                               "libfuzzer_options",
+                               "centipede_options",
                              ])
 
       # As these are full browser tests, we have crashpad running,
       # and we can't intercept signals that crashpad needs.
-      asan_options = [
-        "handle_sigtrap=0",
-        "handle_abort=0",
-        "handle_segv=0",
-        "handle_sigbus=0",
-        "handle_sigfpe=0",
-        "handle_sigill=0",
-        "handle_sigtrap=0",
+      sanitizer_options = [
+        "allow_user_segv_handler=1",
+        "handle_sigtrap=1",
+        "handle_abort=1",
+        "handle_segv=1",
+        "handle_sigbus=1",
+        "handle_sigfpe=1",
+        "handle_sigill=1",
+        "handle_sigtrap=1",
+      ]
 
+      asan_options = [
         # Browser tests store arbitrary data in globals; leak
         # detection will come up with lots of false positives.
         "detect_leaks=0",
       ]
+
+      asan_options += sanitizer_options
+
+      ubsan_options = sanitizer_options
+
+      msan_options = sanitizer_options
+
+      # Again, these are full browser tests, so it needs a fairly high memory
+      # limit so that it runs correctly.
+      libfuzzer_options = [
+        "rss_limit_mb=8192",
+
+        # We can't allow libfuzzer to fork because these fuzzers may have
+        # pre-existing threads. See crbug.com/325928325
+        "fork=0",
+      ]
+
+      centipede_options = [
+        # As for now, CF machines only have 8GB. Centipede allocates two
+        # buffers of `shmem_size_mb`, one for the input test cases, one for the
+        # output (features, cmps, stats). Because those fuzzers are big, this
+        # means we are very likely to fill-up the output buffers, and thus
+        # running out of memory if `shmem_size_mb` value is too big.
+        # Note that 1024 is currently the default value in Centipede.
+        "shmem_size_mb=1024",
+
+        # Since `shmem_size_mb` is fairly low, we want not to lose features
+        # that would overflow Centipede's output buffer. For this reason, we
+        # are lowering `batch_size`. This number has been chosen after some
+        # experiments. This might not be 100% accurate.
+        "batch_size=400",
+
+        # Browser tests are big
+        "address_space_limit_mb=0",
+
+        # For testing. Those fuzzers are extremely slow on ClusterFuzz, and
+        # using this option doesn't help.
+        "fork_server=0",
+
+        "rss_limit_mb=8192",
+
+        # This value is the one used by CF for Centipede fuzzers.
+        # Default computed timeout per batch is ridiculously low (1127, which
+        # means ~1.1 sec per input average) for those fuzzers.
+        "timeout_per_batch=8400",
+
+        # Those big fuzzers are likely to be flaky on test case sequence
+        # execution, but unlikely to crash while executing inputs one-by-one.
+        # Since those are super slow, let's not waste time re-running the whole
+        # batches.
+        "batch_triage_suspect_only=1",
+      ]
+
       if (defined(invoker.asan_options)) {
         asan_options += invoker.asan_options
+      }
+      if (defined(invoker.libfuzzer_options)) {
+        libfuzzer_options += invoker.libfuzzer_options
+      }
+      if (defined(invoker.centipede_options)) {
+        centipede_options += invoker.centipede_options
       }
       exclude_main = true
     }
@@ -126,10 +201,10 @@ template("in_process_proto_fuzzer") {
         args = [
           "--encode=${invoker.testcase_proto_kind}",
           "-I",
-          rebase_path(root_gen_dir),
+          rebase_path(root_gen_dir, root_build_dir),
           "-I",
-          rebase_path("//"),
-          rebase_path(inputs[0]),
+          rebase_path("//", root_build_dir),
+          rebase_path(inputs[0], root_build_dir),
         ]
 
         deps = []
@@ -142,11 +217,11 @@ template("in_process_proto_fuzzer") {
       }
     }
 
-    fuzzer_test(target_name) {
+    in_process_fuzzer(target_name) {
       sources = invoker.sources
       deps = [
         ":${proto_target_name}",
-        "//chrome/test/fuzzing:in_process_fuzzer_runner",
+        "//chrome/test/fuzzing:in_process_proto_fuzzer_runner",
         "//third_party/libprotobuf-mutator",
       ]
 
@@ -158,7 +233,12 @@ template("in_process_proto_fuzzer") {
         seed_corpus = seed_corpus_path
         seed_corpus_deps = [ ":${protoc_convert_target_name}" ]
       }
-      exclude_main = true
+
+      forward_variables_from(invoker,
+                             [
+                               "libfuzzer_options",
+                               "centipede_options",
+                             ])
     }
   } else {
     # noop if the fuzzer harness always provides its own main
@@ -166,5 +246,40 @@ template("in_process_proto_fuzzer") {
 
     group(target_name) {
     }
+  }
+}
+
+# This template aims at mirroring what `mojolpm_fuzzer_test` does, except that
+# it embeds InProcessFuzzer internals in order to function correctly.
+#
+# Parameters:
+#  see parameters for //mojo/public/tools/fuzzers/mojolpm.gni:mojolpm_fuzzer_test
+template("in_process_mojolpm_fuzzer") {
+  in_process_fuzzer(target_name) {
+    target_type = "mojolpm_fuzzer_test"
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "testonly",
+                             "visibility",
+                           ])
+  }
+}
+
+# This template aims at mirroring what `mojolpm_generated_fuzzer` does, except
+# that it embeds InProcessFuzzer internals in order to function correctly.
+#
+# Parameters:
+#  see parameters for //mojo/public/tools/fuzzers/mojolpm.gni:mojolpm_generated_fuzzer
+template("in_process_mojolpm_generated_fuzzer") {
+  in_process_fuzzer(target_name) {
+    target_type = "mojolpm_generated_fuzzer"
+    ensure_remote = true
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "testonly",
+                             "visibility",
+                           ])
   }
 }

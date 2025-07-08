@@ -44,7 +44,7 @@ class POLICY_EXPORT CloudPolicyManager
   CloudPolicyManager(
       const std::string& policy_type,
       const std::string& settings_entity_id,
-      CloudPolicyStore* cloud_policy_store,
+      std::unique_ptr<CloudPolicyStore> cloud_policy_store,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       network::NetworkConnectionTrackerGetter
           network_connection_tracker_getter);
@@ -74,7 +74,7 @@ class POLICY_EXPORT CloudPolicyManager
   void Shutdown() override;
   bool IsInitializationComplete(PolicyDomain domain) const override;
   bool IsFirstPolicyLoadComplete(PolicyDomain domain) const override;
-  void RefreshPolicies() override;
+  void RefreshPolicies(PolicyFetchReason reason) override;
 
   // CloudPolicyStore::Observer:
   void OnStoreLoaded(CloudPolicyStore* cloud_policy_store) override;
@@ -84,6 +84,9 @@ class POLICY_EXPORT CloudPolicyManager
   void OnComponentCloudPolicyUpdated() override;
 
  protected:
+  // Returns true if policy can be published now.
+  bool CanPublishPolicy() const;
+
   // Check whether fully initialized and if so, publish policy by calling
   // ConfigurationPolicyStore::UpdatePolicy().
   void CheckAndPublishPolicy();
@@ -104,8 +107,8 @@ class POLICY_EXPORT CloudPolicyManager
   // Convenience accessors to core() components.
   CloudPolicyClient* client() { return core_.client(); }
   const CloudPolicyClient* client() const { return core_.client(); }
-  CloudPolicyStore* store() { return core_.store(); }
-  const CloudPolicyStore* store() const { return core_.store(); }
+  CloudPolicyStore* store() { return store_.get(); }
+  const CloudPolicyStore* store() const { return store_.get(); }
   CloudPolicyService* service() { return core_.service(); }
   const CloudPolicyService* service() const { return core_.service(); }
 
@@ -113,8 +116,16 @@ class POLICY_EXPORT CloudPolicyManager
   // Completion handler for policy refresh operations.
   void OnRefreshComplete(bool success);
 
+  std::unique_ptr<CloudPolicyStore> store_;
   CloudPolicyCore core_;
   std::unique_ptr<ComponentCloudPolicyService> component_policy_service_;
+
+  // Has component policy ever been published.
+  //
+  // Note that this flag is put here instead of ComponentCloudPolicyService
+  // because it's policy provider's duty to publish latest policy values. Hence
+  // lower level class doesn't need to know or maintain such state.
+  bool is_component_policy_published_ = false;
 
   // Whether there's a policy refresh operation pending, in which case all
   // policy update notifications are deferred until after it completes.

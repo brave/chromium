@@ -10,10 +10,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "content/public/browser/web_contents.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using content::WebContents;
 
 WebDragBookmarkHandlerMac::WebDragBookmarkHandlerMac()
@@ -23,8 +19,9 @@ WebDragBookmarkHandlerMac::~WebDragBookmarkHandlerMac() {}
 
 void WebDragBookmarkHandlerMac::DragInitialize(WebContents* contents) {
   web_contents_ = contents;
-  if (!bookmark_tab_helper_)
+  if (!bookmark_tab_helper_) {
     bookmark_tab_helper_ = BookmarkTabHelper::FromWebContents(contents);
+  }
 
   bookmark_drag_data_.ReadFromClipboard(ui::ClipboardBuffer::kDrag);
 }
@@ -53,9 +50,10 @@ void WebDragBookmarkHandlerMac::OnDrop() {
     }
 
     // Focus the target browser.
-    Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
-    if (browser)
+    Browser* browser = chrome::FindBrowserWithTab(web_contents_);
+    if (browser) {
       browser->window()->Show();
+    }
   }
 }
 

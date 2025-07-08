@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.media.ui;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Service;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -14,12 +16,13 @@ import android.os.IBinder;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.util.SparseArray;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.mediarouter.media.MediaRouter;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.base.SplitCompatService;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
@@ -34,8 +37,9 @@ import org.chromium.components.browser_ui.notifications.NotificationWrapper;
 import org.chromium.components.browser_ui.notifications.NotificationWrapperBuilder;
 
 /** A class that provides Chrome-specific behavior to {@link MediaNotificationController}. */
+@NullMarked
 class ChromeMediaNotificationControllerDelegate implements MediaNotificationController.Delegate {
-    private int mNotificationId;
+    private final int mNotificationId;
 
     @VisibleForTesting
     static class NotificationOptions {
@@ -50,21 +54,23 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
 
     // Maps the notification ids to their corresponding choices of the service, button receiver and
     // group name.
-    @VisibleForTesting
-    static SparseArray<NotificationOptions> sMapNotificationIdToOptions;
+    @VisibleForTesting static SparseArray<NotificationOptions> sMapNotificationIdToOptions;
 
     static {
-        sMapNotificationIdToOptions = new SparseArray<NotificationOptions>();
+        sMapNotificationIdToOptions = new SparseArray<>();
 
-        sMapNotificationIdToOptions.put(PlaybackListenerServiceImpl.NOTIFICATION_ID,
+        sMapNotificationIdToOptions.put(
+                PlaybackListenerServiceImpl.NOTIFICATION_ID,
                 new NotificationOptions(
                         ChromeMediaNotificationControllerServices.PlaybackListenerService.class,
                         NotificationConstants.GROUP_MEDIA_PLAYBACK));
-        sMapNotificationIdToOptions.put(PresentationListenerServiceImpl.NOTIFICATION_ID,
+        sMapNotificationIdToOptions.put(
+                PresentationListenerServiceImpl.NOTIFICATION_ID,
                 new NotificationOptions(
                         ChromeMediaNotificationControllerServices.PresentationListenerService.class,
                         NotificationConstants.GROUP_MEDIA_PRESENTATION));
-        sMapNotificationIdToOptions.put(CastListenerServiceImpl.NOTIFICATION_ID,
+        sMapNotificationIdToOptions.put(
+                CastListenerServiceImpl.NOTIFICATION_ID,
                 new NotificationOptions(
                         ChromeMediaNotificationControllerServices.CastListenerService.class,
                         NotificationConstants.GROUP_MEDIA_REMOTE));
@@ -77,14 +83,14 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
      */
     @VisibleForTesting
     abstract static class ListenerServiceImpl extends SplitCompatService.Impl {
-        private int mNotificationId;
+        private final int mNotificationId;
 
         ListenerServiceImpl(int notificationId) {
             mNotificationId = notificationId;
         }
 
         @Override
-        public IBinder onBind(Intent intent) {
+        public @Nullable IBinder onBind(Intent intent) {
             return null;
         }
 
@@ -97,12 +103,13 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
         }
 
         @Override
-        public int onStartCommand(Intent intent, int flags, int startId) {
+        public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
             if (!processIntent(intent)) {
                 // The service has been started with startForegroundService() but the
                 // notification hasn't been shown. On O it will lead to the app crash.
                 // So show an empty notification before stopping the service.
-                MediaNotificationController.finishStartingForegroundServiceOnO(getService(),
+                MediaNotificationController.finishStartingForegroundServiceOnO(
+                        getService(),
                         createNotificationWrapperBuilder(mNotificationId)
                                 .buildNotificationWrapper());
                 stopListenerService();
@@ -113,13 +120,13 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
         @VisibleForTesting
         void stopListenerService() {
             // Call stopForeground to guarantee Android unset the foreground bit.
-            ForegroundServiceUtils.getInstance().stopForeground(
-                    getService(), Service.STOP_FOREGROUND_REMOVE);
+            ForegroundServiceUtils.getInstance()
+                    .stopForeground(getService(), Service.STOP_FOREGROUND_REMOVE);
             getService().stopSelf();
         }
 
         @VisibleForTesting
-        boolean processIntent(Intent intent) {
+        boolean processIntent(@Nullable Intent intent) {
             MediaNotificationController controller = getController();
             if (controller == null) return false;
 
@@ -156,31 +163,40 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
             super.onDestroy();
         }
 
-        private BroadcastReceiver mAudioBecomingNoisyReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (!AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
-                    return;
-                }
+        private final BroadcastReceiver mAudioBecomingNoisyReceiver =
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        if (!AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
+                            return;
+                        }
 
-                Intent i = new Intent(getContext(),
-                        ChromeMediaNotificationControllerServices.PlaybackListenerService.class);
-                i.setAction(intent.getAction());
-                boolean succeeded = true;
-                try {
-                    getContext().startService(i);
-                } catch (RuntimeException e) {
-                    // This happens occasionally with "cannot start foreground service".  It's not
-                    // at all clear what causes it; no combination of multi-window / background
-                    // unplugging headphones has managed to repro it locally.  While it might be
-                    // possible to trampoline this through an activity like we do elsewhere for
-                    // notifications, that's a fairly invasive change without a local repro.  So,
-                    // for now, just log that this happened and move on. https://crbug.com/1245017
-                    succeeded = false;
-                }
-                RecordHistogram.recordBooleanHistogram("Media.Android.BecomingNoisy", succeeded);
-            }
-        };
+                        Intent i =
+                                new Intent(
+                                        getContext(),
+                                        ChromeMediaNotificationControllerServices
+                                                .PlaybackListenerService.class);
+                        i.setAction(intent.getAction());
+                        boolean succeeded = true;
+                        try {
+                            getContext().startService(i);
+                        } catch (RuntimeException e) {
+                            // This happens occasionally with "cannot start foreground service".
+                            // It's not at all clear what causes it; no combination of
+                            // multi-window / background
+                            // unplugging headphones has managed to repro it locally.  While it
+                            // might be possible to trampoline this through an activity like we do
+                            // elsewhere for notifications, that's a fairly invasive change
+                            // without a local repro.
+                            //  So,
+                            // for now, just log that this happened and move on.
+                            // https://crbug.com/1245017
+                            succeeded = false;
+                        }
+                        RecordHistogram.recordBooleanHistogram(
+                                "Media.Android.BecomingNoisy", succeeded);
+                    }
+                };
     }
 
     /**
@@ -212,8 +228,9 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
     }
 
     @Override
-    public Intent createServiceIntent() {
-        Class<?> serviceClass = sMapNotificationIdToOptions.get(mNotificationId).serviceClass;
+    public @Nullable Intent createServiceIntent() {
+        Class<?> serviceClass =
+                assumeNonNull(sMapNotificationIdToOptions.get(mNotificationId)).serviceClass;
         return (serviceClass != null) ? new Intent(getContext(), serviceClass) : null;
     }
 
@@ -224,7 +241,8 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
 
     @Override
     public String getNotificationGroupName() {
-        String groupName = sMapNotificationIdToOptions.get(mNotificationId).groupName;
+        String groupName =
+                assumeNonNull(sMapNotificationIdToOptions.get(mNotificationId)).groupName;
 
         assert groupName != null;
         return groupName;
@@ -244,15 +262,18 @@ class ChromeMediaNotificationControllerDelegate implements MediaNotificationCont
 
     @Override
     public void logNotificationShown(NotificationWrapper notification) {
-        NotificationUmaTracker.getInstance().onNotificationShown(
-                NotificationUmaTracker.SystemNotificationType.MEDIA,
-                notification.getNotification());
+        NotificationUmaTracker.getInstance()
+                .onNotificationShown(
+                        NotificationUmaTracker.SystemNotificationType.MEDIA,
+                        notification.getNotification());
     }
 
     private static NotificationWrapperBuilder createNotificationWrapperBuilder(int notificationId) {
         NotificationMetadata metadata =
-                new NotificationMetadata(NotificationUmaTracker.SystemNotificationType.MEDIA,
-                        null /* notificationTag */, notificationId);
+                new NotificationMetadata(
+                        NotificationUmaTracker.SystemNotificationType.MEDIA,
+                        /* notificationTag= */ null,
+                        notificationId);
         return NotificationWrapperBuilderFactory.createNotificationWrapperBuilder(
                 ChromeChannelDefinitions.ChannelId.MEDIA_PLAYBACK, metadata);
     }

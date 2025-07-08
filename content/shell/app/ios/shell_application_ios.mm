@@ -4,10 +4,6 @@
 
 #import "content/shell/app/ios/shell_application_ios.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 #include "base/command_line.h"
 #include "content/public/app/content_main.h"
 #include "content/public/app/content_main_runner.h"
@@ -96,7 +92,7 @@ static std::unique_ptr<content::ShellMainDelegate> g_main_delegate;
 
 - (BOOL)application:(UIApplication*)application
     shouldRestoreSecureApplicationState:(NSCoder*)coder {
-  // TODO(crbug.com/710329): Make this value configurable in the settings.
+  // TODO(crbug.com/41312374): Make this value configurable in the settings.
   return YES;
 }
 

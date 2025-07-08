@@ -13,6 +13,10 @@
 
 #include <stddef.h>
 
+#include <string_view>
+
+#include "base/callback_list.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
@@ -26,7 +30,7 @@ struct AXNodeData;
 class OmniboxPopupView {
  public:
   explicit OmniboxPopupView(OmniboxController* controller);
-  virtual ~OmniboxPopupView() = default;
+  virtual ~OmniboxPopupView();
 
   virtual OmniboxEditModel* model();
   virtual const OmniboxEditModel* model() const;
@@ -63,22 +67,30 @@ class OmniboxPopupView {
   virtual void OnDragCanceled() = 0;
 
   // Popup equivalent of GetAccessibleNodeData, used only by a unit test.
-  virtual void GetPopupAccessibleNodeData(ui::AXNodeData* node_data) = 0;
-
-  // Called by owning view to get accessibility data.
-  virtual void AddPopupAccessibleNodeData(ui::AXNodeData* node_data) = 0;
+  virtual void GetPopupAccessibleNodeData(ui::AXNodeData* node_data) const = 0;
 
   // Returns result view button text. This is currently only needed by a single
   // unit test and it would be better to eliminate it than to increase usage.
-  virtual std::u16string GetAccessibleButtonTextForResult(size_t line) = 0;
+  virtual std::u16string_view GetAccessibleButtonTextForResult(
+      size_t line) const;
 
   // Updates the result and header views based on the visibility of their group.
   virtual void SetSuggestionGroupVisibility(size_t match_index,
                                             bool suggestion_group_hidden) {}
 
+  // Adds a callback that will be called when the popup window becomes visible.
+  base::CallbackListSubscription AddOpenListener(
+      base::RepeatingClosure callback);
+
+ protected:
+  // Call when the popup will appear to notify listeners.
+  void NotifyOpenListeners();
+
  private:
+  base::RepeatingClosureList on_popup_callbacks_;
+
   // Owned by OmniboxView which owns this.
-  raw_ptr<OmniboxController> controller_;
+  const raw_ptr<OmniboxController> controller_;
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_POPUP_VIEW_H_

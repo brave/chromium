@@ -6,6 +6,7 @@ The notarization module manages uploading artifacts for notarization, polling
 for results, and stapling Apple Notary notarization tickets.
 """
 
+import asyncio
 import collections
 import enum
 import os
@@ -17,7 +18,9 @@ from signing import commands, invoker, logger, model
 
 _LOG_FILE_URL = 'LogFileURL'
 
-_NOTARY_SERVICE_MAX_RETRIES = 3
+_NOTARY_SERVICE_DEFAULT_MAX_TRIES = 3
+_NOTARY_SERVICE_RETRY_DELAY = 30
+_NOTARY_SERVICE_MAX_RETRY_DELAY = 120
 
 
 class NotarizationError(Exception):
@@ -38,29 +41,15 @@ class Invoker(invoker.Base):
             'notarization tool and are intended to specify authentication '
             'parameters.')
 
-        # Legacy arguments that will be removed in the future.
-        legacy_help = ('This argument is deprecated. '
-                       'Please use --notary-arg instead.')
-        parser.add_argument('--notary-user', help=legacy_help)
-        parser.add_argument('--notary-password', help=legacy_help)
-        parser.add_argument('--notary-team-id', help=legacy_help)
-
     def __init__(self, args, config):
         self._notary_args = args.notary_arg
-
-        if any([
-                getattr(args, arg, None)
-                for arg in ('notary_user', 'notary_password', 'notary_team_id')
-        ]):
-            logger.warning(
-                'Explicit notarization authentication arguments are deprecated. Use --notary-arg instead.'
-            )
 
     @property
     def notary_args(self):
         return self._notary_args
 
-    def submit(self, path, config):
+    async def submit(self, path, config):
+        # Submit the notarization.
         command = [
             'xcrun',
             'notarytool',
@@ -70,20 +59,38 @@ class Invoker(invoker.Base):
             '--output-format',
             'plist',
         ] + self.notary_args
-
-        # TODO(rsesek): As the reliability of notarytool is determined,
-        # potentially run the command through _notary_service_retry().
-
-        output = commands.run_command_output(command)
+        output = await commands.run_command_output_async(command)
         try:
-            plist = plistlib.loads(output)
-            return plist['id']
+            uuid = plistlib.loads(output)['id']
         except:
             raise NotarizationError(
                 'xcrun notarytool returned output that could not be parsed: {}'
                 .format(output))
+        logger.info('Submitted %s for notarization, request UUID: %s.', path,
+                    uuid)
 
-    def get_result(self, uuid, config):
+        # Wait for notarization to complete.
+        while True:
+            result = await self.get_result(uuid, config)
+            if result.status == Status.IN_PROGRESS:
+                await asyncio.sleep(5)
+                continue
+            elif result.status == Status.SUCCESS:
+                logger.info('Successfully notarized request %s. Log file: %s',
+                            uuid, result.log_file)
+                return
+            else:
+                logger.error(
+                    'Failed to notarize request %s.\n'
+                    'Output:\n%s\n'
+                    'Log file:\n%s', uuid, result.output, result.log_file)
+                raise NotarizationError(
+                    'Notarization request {} failed with status: "{}".'.format(
+                        uuid,
+                        result.status_string,
+                    ))
+
+    async def get_result(self, uuid, config):
         command = [
             'xcrun',
             'notarytool',
@@ -92,7 +99,7 @@ class Invoker(invoker.Base):
             '--output-format',
             'plist',
         ] + self.notary_args
-        output = commands.run_command_output(command)
+        output = await commands.run_command_output_async(command)
 
         plist = plistlib.loads(output)
         status = plist['status']
@@ -103,30 +110,25 @@ class Invoker(invoker.Base):
         # notarytool does not provide log file URLs, so instead try to fetch
         # the log on failure.
         try:
-            log = self._get_log(uuid, config).decode('utf8')
+            log = (await self._get_log(uuid, config)).decode('utf8')
         except Exception as e:
             logger.error('Failed to get the notarization log data', e)
             log = None
         return NotarizationResult(Status.ERROR, status, output, log)
 
-    def _get_log(self, uuid, config):
+    async def _get_log(self, uuid, config):
         command = ['xcrun', 'notarytool', 'log', uuid] + self.notary_args
-        return commands.run_command_output(command)
+        return await commands.run_command_output_async(command)
 
 
-def submit(path, config):
-    """Submits an artifact to Apple for notarization.
+async def submit(path, config):
+    """Submits an artifact to Apple for notarization and awaits its success.
 
     Args:
         path: The path to the artifact that will be uploaded for notarization.
         config: The |config.CodeSignConfig| for the artifact.
-
-    Returns:
-        A UUID from the notary service that represents the request.
     """
-    uuid = config.invoker.notarizer.submit(path, config)
-    logger.info('Submitted %s for notarization, request UUID: %s.', path, uuid)
-    return uuid
+    await config.invoker.notarizer.submit(path, config)
 
 
 class Status(enum.Enum):
@@ -141,66 +143,6 @@ notarization request.
 """
 NotarizationResult = collections.namedtuple(
     'NotarizationResult', ['status', 'status_string', 'output', 'log_file'])
-
-
-def wait_for_results(uuids, config):
-    """Waits for results from the notarization service. This iterates the list
-    of UUIDs and checks the status of each one. For each successful result, the
-    function yields to the caller. If a request failed, this raises a
-    NotarizationError. If no requests are ready, this operation blocks and
-    retries until a result is ready. After a certain amount of time, the
-    operation will time out with a NotarizationError if no results are
-    produced.
-
-    Args:
-        uuids: List of UUIDs to check for results. The list must not be empty.
-        config: The |config.CodeSignConfig| object.
-
-    Yields:
-        The UUID of a successful notarization request.
-    """
-    assert len(uuids)
-
-    wait_set = set(uuids)
-
-    sleep_time_seconds = 5
-    total_sleep_time_seconds = 0
-
-    while len(wait_set) > 0:
-        for uuid in list(wait_set):
-            result = config.invoker.notarizer.get_result(uuid, config)
-            if result.status == Status.IN_PROGRESS:
-                continue
-            elif result.status == Status.SUCCESS:
-                logger.info('Successfully notarized request %s. Log file: %s',
-                            uuid, result.log_file)
-                wait_set.remove(uuid)
-                yield uuid
-            else:
-                logger.error(
-                    'Failed to notarize request %s.\n'
-                    'Output:\n%s\n'
-                    'Log file:\n%s', uuid, result.output, result.log_file)
-                raise NotarizationError(
-                    'Notarization request {} failed with status: "{}".'.format(
-                        uuid,
-                        result.status_string,
-                    ))
-
-        if len(wait_set) > 0:
-            # Do not wait more than 60 minutes for all the operations to
-            # complete.
-            if total_sleep_time_seconds < 60 * 60:
-                # No results were available, so wait and try again in some
-                # number of seconds. Do not wait more than 1 minute for any
-                # iteration.
-                time.sleep(sleep_time_seconds)
-                total_sleep_time_seconds += sleep_time_seconds
-                sleep_time_seconds = min(sleep_time_seconds * 2, 60)
-            else:
-                raise NotarizationError(
-                    'Timed out waiting for notarization requests: {}'.format(
-                        wait_set))
 
 
 def staple_bundled_parts(parts, paths):
@@ -233,48 +175,84 @@ def staple(path):
             notarization and is now ready for stapling.
     """
 
-    def staple_command():
-        commands.run_command(['xcrun', 'stapler', 'staple', '--verbose', path])
-
-    # Known bad codes:
-    # 65 - CloudKit query failed due to "(null)"
-    # 68 - A server with the specified hostname could not be found.
-    _notary_service_retry(
-        staple_command, (65, 68), 'staple', sleep_before_retry=True)
-
-
-def _notary_service_retry(func,
-                          known_bad_returncodes,
-                          short_command_name,
-                          sleep_before_retry=False):
-    """Calls the function |func| that runs a subprocess command, retrying it if
-    the command exits uncleanly and the returncode is known to be bad (e.g.
-    flaky).
-
-    Args:
-        func: The function to call within try block that wil catch
-            CalledProcessError.
-        known_bad_returncodes: An iterable of the returncodes that should be
-            ignored and |func| retried.
-        short_command_name: A short descriptive string of |func| that will be
-            logged when |func| is retried.
-        sleep_before_retry: If True, will wait before re-trying when a known
-            failure occurs.
-
-    Returns:
-        The result of |func|.
-    """
-    attempt = 0
-    while True:
+    retry = Retry('staple', sleep_before_retry=True)
+    while retry.keep_going():
         try:
-            return func()
+            commands.run_command(
+                ['xcrun', 'stapler', 'staple', '--verbose', path])
+            return
         except subprocess.CalledProcessError as e:
-            attempt += 1
-            if (attempt < _NOTARY_SERVICE_MAX_RETRIES and
-                    e.returncode in known_bad_returncodes):
-                logger.warning('Retrying %s, exited %d, output: %s',
-                               short_command_name, e.returncode, e.output)
-                if sleep_before_retry:
-                    time.sleep(30)
-            else:
+            # Known bad codes:
+            bad_codes = (
+                65,  # CloudKit query failed due to "(null)"
+                68,  # A server with the specified hostname could not be found.
+            )
+            if e.returncode in bad_codes and retry.failed_should_retry(
+                    f'Output: {e.output}'):
+                continue
+            raise e
+
+
+class Retry(object):
+    """Retry is a helper class that manages retrying notarization operations
+    that may fail due to transient issues. Usage:
+
+        retry = Retry('staple')
+        while retry.keep_going():
+            try:
+                return operation()
+            except Exception as e:
+                if is_transient(e) and retry.failed_should_retry():
+                    continue
                 raise e
+    """
+
+    def __init__(self,
+                 desc,
+                 sleep_before_retry=False,
+                 max_tries=_NOTARY_SERVICE_DEFAULT_MAX_TRIES):
+        """Creates a retry state object.
+
+        Args:
+            desc: A short description of the operation to retry.
+            sleep_before_retry: If True, will sleep before proceeding with
+                a retry.
+            max_tries: Max number of attempts.
+        """
+        self._attempt = 0
+        self._desc = desc
+        self._sleep_before_retry = sleep_before_retry
+        self._max_tries = max_tries
+
+    def keep_going(self):
+        """Used as the condition for a retry loop."""
+        if self._attempt < self._max_tries:
+            return True
+        raise RuntimeError(
+            'Loop should have terminated at failed_should_retry()')
+
+    def failed_should_retry(self, msg=''):
+        """If the operation failed and the caller wants to retry it, this
+        method increments the attempt count and determines if another
+        attempt should be made.
+
+        Args:
+            msg: An optional message to describe the failure.
+
+        Returns:
+            True if the retry loop should continue, and False if the loop
+            should terminate with an error.
+        """
+        should_retry = self._attempt < self._max_tries - 1
+        if should_retry:
+            delay = min((2**(self._attempt)) * _NOTARY_SERVICE_RETRY_DELAY,
+                        _NOTARY_SERVICE_MAX_RETRY_DELAY)
+            retry_when_message = (
+                f'after {delay} second{"s" if delay != 1 else ""}'
+                if self._sleep_before_retry else 'immediately')
+            logger.warning(f'Error during notarization command {self._desc}. ' +
+                           f'Retrying {retry_when_message}. {msg}')
+            if self._sleep_before_retry:
+                time.sleep(delay)
+        self._attempt += 1
+        return should_retry

@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/mac_optional_gpu_tests_rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,12 +22,11 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_arch": "intel",
+                "target_bits": 64,
+                "target_platform": "mac"
               },
               "legacy_gclient_config": {
-                "apply_configs": [
-                  "angle_internal"
-                ],
                 "config": "chromium"
               }
             }
@@ -37,13 +39,24 @@
           "builder": "mac_optional_gpu_tests_rel",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/mac_optional_gpu_tests_rel/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
+  "$build/flakiness": {
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-untrusted"
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

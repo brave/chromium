@@ -7,8 +7,11 @@
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/raw_ptr.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
+
+class Profile;
 
 // This class is a wrapper for BrowsingDataCounter (C++ backend) to be used by
 // ClearBrowsingDataFragment (Java UI).
@@ -18,8 +21,9 @@ class BrowsingDataCounterBridge {
   // The |data_type| is a value of the enum BrowsingDataType.
   BrowsingDataCounterBridge(JNIEnv* env,
                             const base::android::JavaParamRef<jobject>& obj,
-                            jint data_type,
-                            jint clear_browsing_data_tab);
+                            Profile* profile,
+                            jint selected_time_period,
+                            jint data_type);
 
   BrowsingDataCounterBridge(const BrowsingDataCounterBridge&) = delete;
   BrowsingDataCounterBridge& operator=(const BrowsingDataCounterBridge&) =
@@ -27,7 +31,12 @@ class BrowsingDataCounterBridge {
 
   ~BrowsingDataCounterBridge();
 
-  // Called by the Java counterpart when it is getting garbage collected.
+  void SetSelectedTimePeriod(JNIEnv* env,
+                             const base::android::JavaParamRef<jobject>& obj,
+                             jint selected_time_period);
+
+  // Destroys the BrowsingDataCounterBridge object. This needs to be called
+  // on the java side when the object is not in use anymore.
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
  private:
@@ -35,8 +44,8 @@ class BrowsingDataCounterBridge {
       std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result);
 
   base::android::ScopedJavaGlobalRef<jobject> jobject_;
+  raw_ptr<Profile> profile_;
   std::unique_ptr<browsing_data::BrowsingDataCounter> counter_;
-  browsing_data::ClearBrowsingDataTab clear_browsing_data_tab_;
 };
 
-#endif // CHROME_BROWSER_ANDROID_BROWSING_DATA_BROWSING_DATA_COUNTER_BRIDGE_H_
+#endif  // CHROME_BROWSER_ANDROID_BROWSING_DATA_BROWSING_DATA_COUNTER_BRIDGE_H_

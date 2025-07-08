@@ -5,23 +5,27 @@
 package org.chromium.chrome.browser.omnibox.suggestions.carousel;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.view.KeyEvent;
 
+import androidx.annotation.VisibleForTesting;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.chromium.build.annotations.MockedInTests;
-import org.chromium.chrome.browser.omnibox.R;
-import org.chromium.chrome.browser.omnibox.styles.OmniboxResourceProvider;
+import org.chromium.build.annotations.CheckDiscard;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.omnibox.suggestions.RecyclerViewSelectionController;
+import org.chromium.chrome.browser.omnibox.suggestions.SelectionController;
+import org.chromium.chrome.browser.omnibox.suggestions.base.SpacingRecyclerViewItemDecoration;
 import org.chromium.chrome.browser.util.KeyNavigationUtil;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 
-/**
- * View for Carousel Suggestions.
- */
-@MockedInTests
+/** View for Carousel Suggestions. */
+@NullMarked
 public class BaseCarouselSuggestionView extends RecyclerView {
-    private final BaseCarouselSuggestionSelectionManager mSelectionManager;
+    private RecyclerViewSelectionController mSelectionController;
+    private @Nullable SpacingRecyclerViewItemDecoration mDecoration;
 
     /**
      * Constructs a new carousel suggestion view.
@@ -35,40 +39,79 @@ public class BaseCarouselSuggestionView extends RecyclerView {
         setFocusable(true);
         setFocusableInTouchMode(true);
         setItemAnimator(null);
-        setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false));
+        LayoutManager layoutManager =
+                new LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false);
+        setLayoutManager(layoutManager);
 
-        int topPadding = OmniboxResourceProvider.getCarouselTopPadding(context);
-        int bottomPadding = OmniboxResourceProvider.getCarouselBottomPadding(context);
-        getResources().getDimensionPixelSize(R.dimen.omnibox_carousel_suggestion_padding);
-        setPaddingRelative(0, topPadding, getPaddingEnd(), bottomPadding);
-
-        mSelectionManager = new BaseCarouselSuggestionSelectionManager(getLayoutManager());
-        addOnChildAttachStateChangeListener(mSelectionManager);
+        mSelectionController =
+                new RecyclerViewSelectionController(
+                        layoutManager, SelectionController.Mode.SATURATING_WITH_SENTINEL);
+        addOnChildAttachStateChangeListener(mSelectionController);
 
         setAdapter(adapter);
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        boolean isRtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
-        if ((!isRtl && KeyNavigationUtil.isGoRight(event))
-                || (isRtl && KeyNavigationUtil.isGoLeft(event))) {
-            mSelectionManager.selectNextItem();
-            return true;
-        } else if ((isRtl && KeyNavigationUtil.isGoRight(event))
-                || (!isRtl && KeyNavigationUtil.isGoLeft(event))) {
-            mSelectionManager.selectPreviousItem();
-            return true;
+        if (keyCode == KeyEvent.KEYCODE_TAB && event.isShiftPressed()) {
+            return mSelectionController.selectPreviousItem();
+        } else if (keyCode == KeyEvent.KEYCODE_TAB) {
+            return mSelectionController.selectNextItem();
+        } else if (KeyNavigationUtil.isEnter(event)) {
+            var tile = mSelectionController.getSelectedView();
+            if (tile != null) return tile.performClick();
         }
+        return superOnKeyDown(keyCode, event);
+    }
+
+    /**
+     * Proxy calls to super.onKeyDown; call exposed for testing purposes. There is no way to detect
+     * calls to super using robolectric.
+     */
+    @CheckDiscard("Should be inlined except for testing")
+    @VisibleForTesting
+    public boolean superOnKeyDown(int keyCode, KeyEvent event) {
         return super.onKeyDown(keyCode, event);
+    }
+
+    void resetSelection() {
+        mSelectionController.reset();
     }
 
     @Override
     public void setSelected(boolean isSelected) {
-        if (isSelected) {
-            mSelectionManager.setSelectedItem(0, true);
-        } else {
-            mSelectionManager.setSelectedItem(RecyclerView.NO_POSITION, false);
+        resetSelection();
+        if (isSelected) mSelectionController.selectNextItem();
+    }
+
+    @Override
+    @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
+    public void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        if (mDecoration != null
+                && mDecoration.notifyViewSizeChanged(
+                        getResources().getConfiguration().orientation
+                                == Configuration.ORIENTATION_PORTRAIT,
+                        getMeasuredWidth(),
+                        getMeasuredHeight())) {
+            invalidateItemDecorations();
+        }
+    }
+
+    /* package */ void setSelectionControllerForTesting(
+            RecyclerViewSelectionController controller) {
+        removeOnChildAttachStateChangeListener(mSelectionController);
+        mSelectionController = controller;
+        addOnChildAttachStateChangeListener(mSelectionController);
+    }
+
+    /* package */ void setItemDecoration(SpacingRecyclerViewItemDecoration decoration) {
+        if (mDecoration != null) {
+            removeItemDecoration(mDecoration);
+        }
+        mDecoration = decoration;
+        if (mDecoration != null) {
+            addItemDecoration(mDecoration);
         }
     }
 }

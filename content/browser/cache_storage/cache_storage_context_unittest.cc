@@ -7,6 +7,7 @@
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "components/services/storage/public/cpp/buckets/bucket_info.h"
@@ -62,8 +63,10 @@ class CacheStorageContextTest : public testing::Test {
       mojo::PendingReceiver<blink::mojom::CacheStorage> cache_storage_receiver,
       const blink::StorageKey& storage_key) {
     network::CrossOriginEmbedderPolicy cross_origin_embedder_policy;
+    network::DocumentIsolationPolicy document_isolation_policy;
     cache_storage_context_->AddReceiver(
         cross_origin_embedder_policy, mojo::NullRemote(),
+        document_isolation_policy, mojo::NullRemote(),
         storage::BucketLocator::ForDefaultBucket(storage_key),
         storage::mojom::CacheStorageOwner::kCacheAPI,
         std::move(cache_storage_receiver));
@@ -106,35 +109,35 @@ TEST_F(CacheStorageContextTest, DefaultBucketCreatedOnAddReceiver) {
   storage::QuotaManagerProxySync quota_manager_proxy_sync(
       quota_manager_proxy());
 
-  // Call method on CacheStorageContext to ensure that AddReceiver task has
-  // completed.
+  // Call method on remote to ensure that AddReceiver task has completed.
   base::RunLoop loop;
-  cache_storage_context_->GetAllStorageKeysInfo(base::BindLambdaForTesting(
-      [&](std::vector<storage::mojom::StorageUsageInfoPtr> inner) {
-        loop.Quit();
-      }));
+  google_remote->Keys(
+      /*trace_id=*/0,
+      base::BindLambdaForTesting(
+          [&](const std::vector<std::u16string>& keys) { loop.Quit(); }));
   loop.Run();
 
   // Check default bucket exists for https://example.com.
-  storage::QuotaErrorOr<storage::BucketInfo> result =
+  ASSERT_OK_AND_ASSIGN(
+      storage::BucketInfo result,
       quota_manager_proxy_sync.GetBucket(
           blink::StorageKey::CreateFromStringForTesting(kExampleStorageKey),
-          storage::kDefaultBucketName, blink::mojom::StorageType::kTemporary);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->name, storage::kDefaultBucketName);
-  EXPECT_EQ(result->storage_key,
+          storage::kDefaultBucketName));
+  EXPECT_EQ(result.name, storage::kDefaultBucketName);
+  EXPECT_EQ(result.storage_key,
             blink::StorageKey::CreateFromStringForTesting(kExampleStorageKey));
-  EXPECT_GT(result->id.value(), 0);
+  EXPECT_GT(result.id.value(), 0);
 
   // Check default bucket exists for https://google.com.
-  result = quota_manager_proxy_sync.GetBucket(
-      blink::StorageKey::CreateFromStringForTesting(kGoogleStorageKey),
-      storage::kDefaultBucketName, blink::mojom::StorageType::kTemporary);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->name, storage::kDefaultBucketName);
-  EXPECT_EQ(result->storage_key,
+  ASSERT_OK_AND_ASSIGN(
+      result,
+      quota_manager_proxy_sync.GetBucket(
+          blink::StorageKey::CreateFromStringForTesting(kGoogleStorageKey),
+          storage::kDefaultBucketName));
+  EXPECT_EQ(result.name, storage::kDefaultBucketName);
+  EXPECT_EQ(result.storage_key,
             blink::StorageKey::CreateFromStringForTesting(kGoogleStorageKey));
-  EXPECT_GT(result->id.value(), 0);
+  EXPECT_GT(result.id.value(), 0);
 }
 
 TEST_F(CacheStorageContextTest, GetDefaultBucketError) {
@@ -189,22 +192,26 @@ TEST_F(CacheStorageContextTest, GetDefaultBucketError) {
       blink::mojom::FetchAPIRequest::New(), std::move(options),
       /*in_related_fetch_event=*/false, /*in_range_fetch_event=*/false,
       /*trace_id=*/0,
-      base::BindLambdaForTesting([&](blink::mojom::MatchResultPtr result) {
-        EXPECT_EQ(result->get_status(),
-                  blink::mojom::CacheStorageError::kErrorStorage);
-        loop_4.Quit();
-      }));
+      base::BindLambdaForTesting(
+          [&](blink::mojom::CacheStorage::MatchResult result) {
+            EXPECT_FALSE(result.has_value());
+            EXPECT_EQ(result.error(),
+                      blink::mojom::CacheStorageError::kErrorStorage);
+            loop_4.Quit();
+          }));
   loop_4.Run();
 
   // CacheStorage::Open
   base::RunLoop loop_5;
   example_remote->Open(
       u"cache_name", /*trace_id=*/0,
-      base::BindLambdaForTesting([&](blink::mojom::OpenResultPtr result) {
-        EXPECT_EQ(result->get_status(),
-                  blink::mojom::CacheStorageError::kErrorStorage);
-        loop_5.Quit();
-      }));
+      base::BindLambdaForTesting(
+          [&](blink::mojom::CacheStorage::OpenResult result) {
+            EXPECT_FALSE(result.has_value());
+            EXPECT_EQ(result.error(),
+                      blink::mojom::CacheStorageError::kErrorStorage);
+            loop_5.Quit();
+          }));
   loop_5.Run();
 }
 

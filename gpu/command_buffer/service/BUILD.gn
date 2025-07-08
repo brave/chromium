@@ -9,12 +9,13 @@ import("//third_party/dawn/scripts/dawn_features.gni")
 import("//third_party/protobuf/proto_library.gni")
 import("//ui/gl/features.gni")
 
-group("service") {
-  if (is_component_build) {
-    public_deps = [ "//gpu" ]
-  } else {
-    public_deps = [ ":service_sources" ]
-  }
+config("implementation") {
+  defines = [ "GPU_COMMAND_BUFFER_SERVICE_IMPLEMENTATION" ]
+  configs = [ "//build/config/compiler:wexit_time_destructors" ]
+}
+
+component("service") {
+  public_deps = [ ":service_sources" ]
 }
 
 group("gles2") {
@@ -30,13 +31,15 @@ if (is_component_build) {
 } else {
   link_target_type = "static_library"
 }
-target(link_target_type, "service_sources") {
+source_set("service_sources") {
   # External code should depend on this via //gpu/command_buffer/service above
   # rather than depending on this directly or the component build will break.
-  visibility = [ "//gpu/*" ]
+  visibility = [ ":service" ]
 
   sources = [
     "async_api_interface.h",
+    "blocking_sequence_runner.cc",
+    "blocking_sequence_runner.h",
     "command_buffer_direct.cc",
     "command_buffer_direct.h",
     "command_buffer_service.cc",
@@ -44,20 +47,22 @@ target(link_target_type, "service_sources") {
     "common_decoder.cc",
     "common_decoder.h",
     "decoder_client.h",
+    "gpu_command_buffer_service_export.h",
     "gpu_switches.cc",
     "gpu_switches.h",
-    "mailbox_manager.h",
     "memory_tracking.cc",
     "memory_tracking.h",
+    "retaining_one_shot_timer_holder.cc",
+    "retaining_one_shot_timer_holder.h",
     "scheduler.cc",
     "scheduler.h",
-    "scheduler_dfs.cc",
-    "scheduler_dfs.h",
     "scheduler_task_runner.cc",
     "scheduler_task_runner.h",
     "sequence_id.h",
     "sync_point_manager.cc",
     "sync_point_manager.h",
+    "task_graph.cc",
+    "task_graph.h",
     "texture_base.cc",
     "texture_base.h",
     "transfer_buffer_manager.cc",
@@ -66,22 +71,20 @@ target(link_target_type, "service_sources") {
 
   configs += [
     "//build/config:precompiled_headers",
-    "//gpu:gpu_implementation",
+    ":implementation",
     "//third_party/khronos:khronos_headers",
   ]
 
   public_deps = [
     "//base",
-    "//gpu/command_buffer/common:common_sources",
+    "//gpu/command_buffer/common",
     "//url:url",
   ]
   deps = [
     "//base",
-    "//base/third_party/dynamic_annotations",
-    "//gpu/command_buffer/client:client_sources",
-    "//gpu/config:config_sources",
-    "//gpu/ipc/common:ipc_common_sources",
-    "//gpu/ipc/common:surface_handle_type",
+    "//gpu/command_buffer/client",
+    "//gpu/config",
+    "//gpu/ipc/common",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gfx/ipc/color",
@@ -95,6 +98,17 @@ target(link_target_type, "service_sources") {
   }
 }
 
+if (is_win) {
+  config("service_win_linker_flags") {
+    # This is in a separate config so the flags can be applied to dependents.
+    # ldflags in GN aren't automatically inherited.
+    ldflags = [
+      # Linking with OneCore.lib causes the following dlls to load.
+      "/DELAYLOAD:api-ms-win-core-handle-l1-1-0.dll",
+    ]
+  }
+}
+
 target(link_target_type, "gles2_sources") {
   # External code should depend on this via //gpu/command_buffer/service:gles2
   # above rather than depending on this directly or the component build will
@@ -102,6 +116,7 @@ target(link_target_type, "gles2_sources") {
   visibility = [ "//gpu/*" ]
 
   deps = []
+  defines = []
   sources = [
     "buffer_manager.cc",
     "buffer_manager.h",
@@ -149,18 +164,12 @@ target(link_target_type, "gles2_sources") {
     "gles2_cmd_decoder_passthrough_doers.cc",
     "gles2_cmd_decoder_passthrough_handlers.cc",
     "gles2_cmd_decoder_passthrough_handlers_autogen.cc",
-    "gles2_cmd_srgb_converter.cc",
-    "gles2_cmd_srgb_converter.h",
     "gles2_cmd_validation.cc",
     "gles2_cmd_validation.h",
     "gles2_cmd_validation_autogen.h",
     "gles2_cmd_validation_implementation_autogen.h",
-    "gles2_external_framebuffer.cc",
-    "gles2_external_framebuffer.h",
     "gles2_query_manager.cc",
     "gles2_query_manager.h",
-    "gpu_command_buffer_memory_tracker.cc",
-    "gpu_command_buffer_memory_tracker.h",
     "gpu_fence_manager.cc",
     "gpu_fence_manager.h",
     "gpu_state_tracer.cc",
@@ -173,8 +182,16 @@ target(link_target_type, "gles2_sources") {
     "gr_cache_controller.h",
     "gr_shader_cache.cc",
     "gr_shader_cache.h",
+    "graphite_cache_controller.cc",
+    "graphite_cache_controller.h",
     "graphite_image_provider.cc",
     "graphite_image_provider.h",
+    "graphite_precompile.cc",
+    "graphite_precompile.h",
+    "graphite_shared_context.cc",
+    "graphite_shared_context.h",
+    "graphite_utils.cc",
+    "graphite_utils.h",
     "id_manager.cc",
     "id_manager.h",
     "indexed_buffer_binding_host.cc",
@@ -182,12 +199,6 @@ target(link_target_type, "gles2_sources") {
     "isolation_key_provider.h",
     "logger.cc",
     "logger.h",
-    "mailbox_manager_dummy.cc",
-    "mailbox_manager_dummy.h",
-    "mailbox_manager_factory.cc",
-    "mailbox_manager_factory.h",
-    "mailbox_manager_impl.cc",
-    "mailbox_manager_impl.h",
     "memory_program_cache.cc",
     "memory_program_cache.h",
     "multi_draw_manager.cc",
@@ -232,6 +243,12 @@ target(link_target_type, "gles2_sources") {
     "shared_context_state.h",
     "shared_image/compound_image_backing.cc",
     "shared_image/compound_image_backing.h",
+    "shared_image/copy_image_plane.cc",
+    "shared_image/copy_image_plane.h",
+    "shared_image/egl_image_backing.cc",
+    "shared_image/egl_image_backing.h",
+    "shared_image/egl_image_backing_factory.cc",
+    "shared_image/egl_image_backing_factory.h",
     "shared_image/gl_common_image_backing_factory.cc",
     "shared_image/gl_common_image_backing_factory.h",
     "shared_image/gl_repack_utils.cc",
@@ -242,8 +259,8 @@ target(link_target_type, "gles2_sources") {
     "shared_image/gl_texture_image_backing.h",
     "shared_image/gl_texture_image_backing_factory.cc",
     "shared_image/gl_texture_image_backing_factory.h",
-    "shared_image/gl_texture_image_backing_helper.cc",
-    "shared_image/gl_texture_image_backing_helper.h",
+    "shared_image/gl_texture_passthrough_fallback_image_representation.cc",
+    "shared_image/gl_texture_passthrough_fallback_image_representation.h",
     "shared_image/raw_draw_image_backing.cc",
     "shared_image/raw_draw_image_backing.h",
     "shared_image/raw_draw_image_backing_factory.cc",
@@ -256,8 +273,12 @@ target(link_target_type, "gles2_sources") {
     "shared_image/shared_image_factory.h",
     "shared_image/shared_image_format_service_utils.cc",
     "shared_image/shared_image_format_service_utils.h",
+    "shared_image/shared_image_gl_utils.cc",
+    "shared_image/shared_image_gl_utils.h",
     "shared_image/shared_image_manager.cc",
     "shared_image/shared_image_manager.h",
+    "shared_image/shared_image_pool_service.cc",
+    "shared_image/shared_image_pool_service.h",
     "shared_image/shared_image_representation.cc",
     "shared_image/shared_image_representation.h",
     "shared_image/shared_memory_image_backing.cc",
@@ -268,6 +289,8 @@ target(link_target_type, "gles2_sources") {
     "shared_image/skia_gl_image_representation.h",
     "shared_image/wrapped_graphite_texture_backing.cc",
     "shared_image/wrapped_graphite_texture_backing.h",
+    "shared_image/wrapped_graphite_texture_holder.cc",
+    "shared_image/wrapped_graphite_texture_holder.h",
     "shared_image/wrapped_sk_image_backing.cc",
     "shared_image/wrapped_sk_image_backing.h",
     "shared_image/wrapped_sk_image_backing_factory.cc",
@@ -296,27 +319,10 @@ target(link_target_type, "gles2_sources") {
     "webgpu_decoder.h",
   ]
 
-  if (!is_android) {
-    sources += [
-      "abstract_texture.h",
-      "passthrough_abstract_texture_impl.cc",
-      "passthrough_abstract_texture_impl.h",
-      "validating_abstract_texture_impl.cc",
-      "validating_abstract_texture_impl.h",
-    ]
-  } else {
+  if (is_android) {
     sources += [
       "abstract_texture_android.cc",
       "abstract_texture_android.h",
-    ]
-  }
-
-  if (use_egl) {
-    sources += [
-      "shared_image/egl_image_backing.cc",
-      "shared_image/egl_image_backing.h",
-      "shared_image/egl_image_backing_factory.cc",
-      "shared_image/egl_image_backing_factory.h",
     ]
   }
 
@@ -333,6 +339,8 @@ target(link_target_type, "gles2_sources") {
       "dawn_service_memory_transfer_service.h",
       "dawn_service_serializer.cc",
       "dawn_service_serializer.h",
+      "shared_image/dawn_fallback_image_representation.cc",
+      "shared_image/dawn_fallback_image_representation.h",
       "webgpu_decoder_impl.cc",
       "webgpu_decoder_impl.h",
     ]
@@ -345,9 +353,6 @@ target(link_target_type, "gles2_sources") {
     "//gpu:webgpu_implementation",
     "//third_party/khronos:khronos_headers",
   ]
-
-  # Prefer mesa GL headers to system headers, which cause problems on Win.
-  include_dirs = [ "//third_party/mesa_headers" ]
 
   public_deps = [
     "//base",
@@ -364,9 +369,7 @@ target(link_target_type, "gles2_sources") {
     ":disk_cache_proto",
     ":service",
     "//base",
-    "//base/third_party/dynamic_annotations",
     "//build:chromecast_buildflags",
-    "//build:chromeos_buildflags",
     "//components/crash/core/common",
     "//components/viz/common:shared_image_format",
     "//gpu/command_buffer/client",
@@ -377,26 +380,23 @@ target(link_target_type, "gles2_sources") {
     "//skia:buildflags",
     "//third_party/angle:angle_image_util",
     "//third_party/angle:angle_version_info",
-    "//third_party/dawn/src/dawn:cpp",
+    "//third_party/dawn/include/dawn:cpp_headers",
     "//third_party/dawn/src/dawn:proc",
     "//third_party/libyuv",
     "//third_party/protobuf:protobuf_lite",
     "//third_party/re2",
     "//third_party/zlib",
     "//ui/base:features",
+    "//ui/base:ozone_buildflags",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gl",
     "//ui/gl:buildflags",
+    "//ui/gl:gl_headers",
     "//ui/gl/init",
   ]
 
-  # If statically linked against ANGLE, link against angle:translator which is already included with ANGLE.
-  if (use_static_angle) {
-    deps += [ "//third_party/angle:translator" ]
-  } else {
-    deps += [ "//third_party/angle:translator_gl_d3d_only" ]
-  }
+  deps += [ "//third_party/angle:translator" ]
 
   if (use_ozone) {
     sources += [
@@ -406,6 +406,8 @@ target(link_target_type, "gles2_sources") {
       "shared_image/ozone_image_backing.h",
       "shared_image/ozone_image_backing_factory.cc",
       "shared_image/ozone_image_backing_factory.h",
+      "shared_image/ozone_image_gl_textures_holder.cc",
+      "shared_image/ozone_image_gl_textures_holder.h",
     ]
     deps += [
       "//ui/base:features",
@@ -428,8 +430,7 @@ target(link_target_type, "gles2_sources") {
       "shared_image/texture_holder_vk.h",
     ]
 
-    if (is_linux || is_chromeos || is_fuchsia || is_android || is_win ||
-        is_apple) {
+    if (is_linux || is_fuchsia || is_win) {
       sources += [
         "external_semaphore.cc",
         "external_semaphore.h",
@@ -452,10 +453,12 @@ target(link_target_type, "gles2_sources") {
       sources += [
         "shared_image/skia_vk_ozone_image_representation.cc",
         "shared_image/skia_vk_ozone_image_representation.h",
+        "shared_image/vulkan_ozone_image_representation.cc",
+        "shared_image/vulkan_ozone_image_representation.h",
       ]
     }
 
-    if ((is_linux || is_chromeos) && use_dawn) {
+    if (is_linux && use_dawn) {
       sources += [
         "shared_image/external_vk_image_dawn_representation.cc",
         "shared_image/external_vk_image_dawn_representation.h",
@@ -474,6 +477,8 @@ target(link_target_type, "gles2_sources") {
       sources += [
         "shared_image/dawn_egl_image_representation.cc",
         "shared_image/dawn_egl_image_representation.h",
+        "shared_image/dawn_gl_texture_representation.cc",
+        "shared_image/dawn_gl_texture_representation.h",
       ]
     }
     if (use_ozone) {
@@ -495,7 +500,7 @@ target(link_target_type, "gles2_sources") {
 
     # Do not compile with ARC because Dawn is not (yet) compatible with being
     # called from code compiled with ARC.
-    configs -= [ "//build/config/compiler:enable_arc2" ]
+    configs -= [ "//build/config/compiler:enable_arc" ]
 
     if (skia_use_metal) {
       deps += [ "//components/viz/common:metal_context_provider" ]
@@ -503,6 +508,7 @@ target(link_target_type, "gles2_sources") {
 
     # Required by gles2_cmd_decoder.cc on Apple.
     frameworks = [
+      "CoreVideo.framework",
       "IOSurface.framework",
       "Metal.framework",
     ]
@@ -518,10 +524,20 @@ target(link_target_type, "gles2_sources") {
     sources += [
       "dawn_context_provider.cc",
       "dawn_context_provider.h",
+      "shared_image/dawn_shared_texture_cache.cc",
+      "shared_image/dawn_shared_texture_cache.h",
       "shared_image/skia_graphite_dawn_image_representation.cc",
       "shared_image/skia_graphite_dawn_image_representation.h",
     ]
     deps += [ "//third_party/dawn/src/dawn:cpp" ]
+
+    if (is_chromeos) {
+      sources += [
+        "drm_modifiers_filter_dawn.cc",
+        "drm_modifiers_filter_dawn.h",
+      ]
+      deps += [ "//ui/gfx/linux:drm" ]
+    }
   }
 
   if (is_android) {
@@ -560,6 +576,9 @@ target(link_target_type, "gles2_sources") {
       "texture_owner.h",
     ]
 
+    # For AImageReader.
+    libs = [ "mediandk" ]
+
     if (use_dawn) {
       sources += [
         "shared_image/dawn_ahardwarebuffer_image_representation.cc",
@@ -567,13 +586,16 @@ target(link_target_type, "gles2_sources") {
       ]
     }
 
-    deps += [ "//base" ]
+    deps += [
+      "//base",
+      "//third_party/jni_zero",
+    ]
 
     # TODO(cblume): http://crbug.com/911313
     # Abstract out the platform specific defines. Right now we need the android
     # platform specific define here to be able to include android specific
     # functions.
-    defines = [ "VK_USE_PLATFORM_ANDROID_KHR" ]
+    defines += [ "VK_USE_PLATFORM_ANDROID_KHR" ]
     deps += [ "//third_party/libsync" ]
     if (enable_vulkan) {
       deps += [ "//gpu/vulkan" ]
@@ -590,8 +612,8 @@ target(link_target_type, "gles2_sources") {
       "shared_image/d3d_image_backing_factory.h",
       "shared_image/d3d_image_representation.cc",
       "shared_image/d3d_image_representation.h",
-      "shared_image/d3d_shared_fence.cc",
-      "shared_image/d3d_shared_fence.h",
+      "shared_image/d3d_image_utils.cc",
+      "shared_image/d3d_image_utils.h",
       "shared_image/dcomp_image_backing_factory.cc",
       "shared_image/dcomp_image_backing_factory.h",
       "shared_image/dcomp_surface_image_backing.cc",
@@ -603,7 +625,12 @@ target(link_target_type, "gles2_sources") {
       "shared_image/dxgi_swap_chain_image_representation.cc",
       "shared_image/dxgi_swap_chain_image_representation.h",
     ]
-    libs = [ "dxguid.lib" ]
+    libs = [
+      "d3d12.lib",
+      "dxguid.lib",
+      "onecore.lib",
+    ]
+    all_dependent_configs = [ ":service_win_linker_flags" ]
   }
 }
 
@@ -640,6 +667,9 @@ if (is_android) {
       "surface_texture_gl_owner_unittest.cc",
       "surface_texture_transform_unittest.cc",
     ]
+
+    # For AImageReader_getFormat()
+    libs = [ "mediandk" ]
 
     deps = [
       ":android_texture_owner_test_support",

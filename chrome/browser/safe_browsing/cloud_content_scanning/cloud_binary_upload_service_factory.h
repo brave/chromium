@@ -39,10 +39,10 @@ class CloudBinaryUploadServiceFactory : public ProfileKeyedServiceFactory {
   ~CloudBinaryUploadServiceFactory() override = default;
 
   // CloudBrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 
 }  // namespace safe_browsing
 
-#endif  // CHROME_BROWSER_SAFE_BROWSING_CLOUD_CONTENT_SCANNING_BINARY_CLOUD_UPLOAD_SERVICE_FACTORY_H_
+#endif  // CHROME_BROWSER_SAFE_BROWSING_CLOUD_CONTENT_SCANNING_CLOUD_BINARY_UPLOAD_SERVICE_FACTORY_H_

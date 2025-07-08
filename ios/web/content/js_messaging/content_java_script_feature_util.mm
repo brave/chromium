@@ -11,12 +11,7 @@
 #import "ios/web/js_features/error_page/error_page_java_script_feature.h"
 #import "ios/web/public/js_messaging/java_script_feature.h"
 #import "ios/web/public/js_messaging/java_script_feature_util.h"
-#import "ios/web/text_fragments/text_fragments_java_script_feature.h"
 #import "ios/web/webui/web_ui_messaging_java_script_feature.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 namespace java_script_features {
@@ -30,13 +25,8 @@ std::vector<JavaScriptFeature*> GetBuiltInJavaScriptFeaturesForContent(
       ContextMenuJavaScriptFeature::FromBrowserState(browser_state),
       ErrorPageJavaScriptFeature::GetInstance(),
       FindInPageJavaScriptFeature::GetInstance(),
-      TextFragmentsJavaScriptFeature::GetInstance(),
-      WebUIMessagingJavaScriptFeature::GetInstance()};
-
-  if (web::WebPageAnnotationsEnabled()) {
-    features.push_back(AnnotationsJavaScriptFeature::GetInstance());
-  }
-
+      WebUIMessagingJavaScriptFeature::GetInstance(),
+      AnnotationsJavaScriptFeature::GetInstance()};
   return features;
 }
 

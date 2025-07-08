@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/app_restore/arc_ghost_window_delegate.h"
 
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "chrome/browser/ash/app_restore/arc_ghost_window_shell_surface.h"
 #include "chrome/browser/ash/app_restore/arc_window_utils.h"
@@ -76,7 +77,7 @@ void ArcGhostWindowDelegate::OnStateChanged(
       break;
     case chromeos::WindowStateType::kFullscreen:
       // TODO(sstan): Adjust bounds like maximized state.
-      shell_surface_->SetFullscreen(true);
+      shell_surface_->SetFullscreen(true, display::kInvalidDisplayId);
       break;
     default:
       NOTIMPLEMENTED();
@@ -92,7 +93,8 @@ void ArcGhostWindowDelegate::OnBoundsChanged(
     int64_t display_id,
     const gfx::Rect& bounds_in_screen,
     bool is_resize,
-    int bounds_change) {
+    int bounds_change,
+    bool is_adjusted_bounds) {
   auto* window_state =
       WindowState::Get(shell_surface_->GetWidget()->GetNativeWindow());
 
@@ -175,7 +177,7 @@ void ArcGhostWindowDelegate::OnAppStatesUpdate(const std::string& app_id,
 }
 
 bool ArcGhostWindowDelegate::SetDisplayId(int64_t display_id) {
-  absl::optional<double> scale_factor = GetDisplayScaleFactor(display_id);
+  std::optional<double> scale_factor = GetDisplayScaleFactor(display_id);
   if (!scale_factor.has_value()) {
     LOG(ERROR) << "Invalid display id for ARC Ghost Window";
     scale_factor_ = 1.;

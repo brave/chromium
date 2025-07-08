@@ -11,9 +11,13 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
+
+import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.After;
 import org.junit.Before;
@@ -24,34 +28,31 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
-import org.robolectric.shadows.ShadowApplication;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.chrome.browser.omnibox.suggestions.base.HistoryClustersProcessor.OpenHistoryClustersDelegate;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.components.browser_ui.settings.SettingsLauncher;
-import org.chromium.components.browser_ui.settings.SettingsLauncher.SettingsFragment;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
+import org.chromium.components.browser_ui.settings.SettingsNavigation.SettingsFragment;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.TestActivity;
 
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
-/**
- * Tests for {@link OmniboxActionDelegateImpl}.
- */
+/** Tests for {@link OmniboxActionDelegateImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class OmniboxActionDelegateImplUnitTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
     private @Mock Consumer<String> mMockOpenUrl;
-    private @Mock OpenHistoryClustersDelegate mMockOpenHistoryClustersUi;
     private @Mock Runnable mMockOpenIncognitoPage;
     private @Mock Runnable mMockOpenPasswordSettings;
-    private @Mock SettingsLauncher mMockSettingsLauncher;
+    private @Mock SettingsNavigation mMockSettingsNavigation;
     private @Mock Tab mTab;
-    private AtomicReference<Tab> mTabReference = new AtomicReference<>();
+    private @Mock Runnable mMockOpenQuickDeleteDialog;
+    private final AtomicReference<Tab> mTabReference = new AtomicReference<>();
     private Context mContext;
     private OmniboxActionDelegateImpl mDelegate;
 
@@ -59,25 +60,23 @@ public class OmniboxActionDelegateImplUnitTest {
     public void setUp() {
         mContext = ContextUtils.getApplicationContext();
         mTabReference.set(mTab);
-        mDelegate = new OmniboxActionDelegateImpl(mContext,
-                ()
-                        -> mTabReference.get(),
-                mMockSettingsLauncher, mMockOpenUrl, mMockOpenIncognitoPage,
-                mMockOpenPasswordSettings, mMockOpenHistoryClustersUi);
+        mDelegate =
+                new OmniboxActionDelegateImpl(
+                        mContext,
+                        () -> mTabReference.get(),
+                        mMockOpenUrl,
+                        mMockOpenIncognitoPage,
+                        mMockOpenPasswordSettings,
+                        mMockOpenQuickDeleteDialog);
+        SettingsNavigationFactory.setInstanceForTesting(mMockSettingsNavigation);
     }
 
     @After
     public void cleanUp() {
         verifyNoMoreInteractions(mMockOpenIncognitoPage);
         verifyNoMoreInteractions(mMockOpenPasswordSettings);
-        verifyNoMoreInteractions(mMockOpenHistoryClustersUi);
         verifyNoMoreInteractions(mMockOpenUrl);
-    }
-
-    @Test
-    public void openHistoryClustersPage() {
-        mDelegate.openHistoryClustersPage("query");
-        verify(mMockOpenHistoryClustersUi, times(1)).openHistoryClustersUi("query");
+        verifyNoMoreInteractions(mMockOpenQuickDeleteDialog);
     }
 
     @Test
@@ -95,8 +94,8 @@ public class OmniboxActionDelegateImplUnitTest {
     @Test
     public void openSettingsPage() {
         mDelegate.openSettingsPage(SettingsFragment.ACCESSIBILITY);
-        verify(mMockSettingsLauncher, times(1))
-                .launchSettingsActivity(mContext, SettingsFragment.ACCESSIBILITY);
+        verify(mMockSettingsNavigation, times(1))
+                .startSettings(mContext, SettingsFragment.ACCESSIBILITY);
     }
 
     @Test
@@ -142,12 +141,18 @@ public class OmniboxActionDelegateImplUnitTest {
     }
 
     @Test
+    public void openQuickDeleteDialog() {
+        mDelegate.handleClearBrowsingData();
+        verify(mMockOpenQuickDeleteDialog).run();
+    }
+
+    @Test
     public void startActivity_targetSelf() {
-        ShadowApplication.getInstance().checkActivities(true);
+        shadowOf((Application) ApplicationProvider.getApplicationContext()).checkActivities(true);
         Intent i = new Intent();
         i.setClass(mContext, TestActivity.class);
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        assertTrue(IntentUtils.intentTargetsSelf(mContext, i));
+        assertTrue(IntentUtils.intentTargetsSelf(i));
         assertTrue(mDelegate.startActivity(i));
         // Added during intent invocation.
         assertTrue(i.hasExtra(IntentUtils.TRUSTED_APPLICATION_CODE_EXTRA));
@@ -156,10 +161,10 @@ public class OmniboxActionDelegateImplUnitTest {
     @Test
     public void startActivity_targetOther() {
         // Do not arm the package resolution.
-        ShadowApplication.getInstance().checkActivities(false);
+        shadowOf((Application) ApplicationProvider.getApplicationContext()).checkActivities(false);
         Intent i = new Intent("some magic here");
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        assertFalse(IntentUtils.intentTargetsSelf(mContext, i));
+        assertFalse(IntentUtils.intentTargetsSelf(i));
         assertTrue(mDelegate.startActivity(i));
         // Might be added during intent invocation.
         assertFalse(i.hasExtra(IntentUtils.TRUSTED_APPLICATION_CODE_EXTRA));
@@ -167,7 +172,7 @@ public class OmniboxActionDelegateImplUnitTest {
 
     @Test
     public void startActivity_failure() {
-        ShadowApplication.getInstance().checkActivities(true);
+        shadowOf((Application) ApplicationProvider.getApplicationContext()).checkActivities(true);
         Intent i = new Intent("some magic here");
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         assertFalse(mDelegate.startActivity(i));

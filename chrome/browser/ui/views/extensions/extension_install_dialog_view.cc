@@ -12,12 +12,14 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
@@ -27,7 +29,6 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
-#include "components/supervised_user/core/common/buildflags.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/page_navigator.h"
 #include "extensions/common/constants.h"
@@ -39,8 +40,11 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/checkbox.h"
@@ -63,11 +67,6 @@ namespace {
 // Time delay before the install button is enabled after initial display.
 int g_install_delay_in_ms = 500;
 
-// The name of the histogram that records decision made by user on the cloud
-// extension request dialog.
-constexpr char kCloudExtensionRequestMetricsName[] =
-    "Enterprise.CloudExtensionRequestDialogAction";
-
 // These values are logged to UMA. Entries should not be renumbered and numeric
 // values should never be reused. Please keep in sync with "BooleanSent" in
 // src/tools/metrics/histograms/enums.xml.
@@ -84,20 +83,23 @@ enum class CloudExtensionRequestMetricEvent {
 // With screen readers, this will handle conveying the information properly
 // (i.e., "Rated 4.2 stars by 379 reviews" rather than "image image...379").
 class RatingsView : public views::View {
+  METADATA_HEADER(RatingsView, views::View)
+
  public:
-  METADATA_HEADER(RatingsView);
   RatingsView(double rating, int rating_count)
       : rating_(rating), rating_count_(rating_count) {
     SetID(ExtensionInstallDialogView::kRatingsViewId);
     SetLayoutManager(std::make_unique<views::BoxLayout>(
         views::BoxLayout::Orientation::kHorizontal));
+
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    UpdateAccessibleName();
   }
   RatingsView(const RatingsView&) = delete;
   RatingsView& operator=(const RatingsView&) = delete;
   ~RatingsView() override = default;
 
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    node_data->role = ax::mojom::Role::kStaticText;
+  void UpdateAccessibleName() {
     std::u16string accessible_text;
     if (rating_count_ == 0) {
       accessible_text = l10n_util::GetStringUTF16(
@@ -108,7 +110,7 @@ class RatingsView : public views::View {
               IDS_EXTENSION_PROMPT_RATING_ACCESSIBLE_TEXT),
           rating_, rating_count_);
     }
-    node_data->SetNameChecked(accessible_text);
+    GetViewAccessibility().SetName(accessible_text);
   }
 
  private:
@@ -116,51 +118,85 @@ class RatingsView : public views::View {
   int rating_count_;
 };
 
-BEGIN_METADATA(RatingsView, views::View)
+BEGIN_METADATA(RatingsView)
 END_METADATA
 
 // A custom view for the ratings star image that will be ignored by screen
 // readers (since the RatingsView handles the context).
 class RatingStar : public views::ImageView {
+  METADATA_HEADER(RatingStar, views::ImageView)
+
  public:
-  METADATA_HEADER(RatingStar);
-  explicit RatingStar(const gfx::ImageSkia& image) { SetImage(image); }
+  explicit RatingStar(const ui::ImageModel& image) {
+    SetImage(image);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kNone);
+  }
   RatingStar(const RatingStar&) = delete;
   RatingStar& operator=(const RatingStar&) = delete;
   ~RatingStar() override = default;
-
-  // views::ImageView:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    node_data->role = ax::mojom::Role::kNone;
-  }
 };
 
-BEGIN_METADATA(RatingStar, views::ImageView)
+BEGIN_METADATA(RatingStar)
 END_METADATA
 
 // A custom view for the ratings label that will be ignored by screen readers
 // (since the RatingsView handles the context).
 class RatingLabel : public views::Label {
+  METADATA_HEADER(RatingLabel, views::Label)
+
  public:
-  METADATA_HEADER(RatingLabel);
   RatingLabel(const std::u16string& text, int text_context)
-      : views::Label(text, text_context, views::style::STYLE_PRIMARY) {}
+      : views::Label(text, text_context, views::style::STYLE_PRIMARY) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kNone);
+    GetViewAccessibility().SetName(
+        std::string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  }
+
   RatingLabel(const RatingLabel&) = delete;
   RatingLabel& operator=(const RatingLabel&) = delete;
   ~RatingLabel() override = default;
 
-  // views::Label:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    node_data->role = ax::mojom::Role::kNone;
+  void AdjustAccessibleName(std::u16string& new_name,
+                            ax::mojom::NameFrom& name_from) override {
+    // Override and do nothing so that the name set from
+    // Label::AdjustAccessibleName isn't used.
   }
 };
 
-BEGIN_METADATA(RatingLabel, views::Label)
+BEGIN_METADATA(RatingLabel)
+END_METADATA
+
+// TODO(crbug.com/355018927): Remove this when we implement in views::Label.
+class TitleLabelWrapper : public views::View {
+  METADATA_HEADER(TitleLabelWrapper, views::View)
+
+ public:
+  explicit TitleLabelWrapper(std::unique_ptr<views::View> title) {
+    SetUseDefaultFillLayout(true);
+    title_ = AddChildView(std::move(title));
+  }
+
+ private:
+  // View:
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
+    gfx::Size preferred_size = title_->GetPreferredSize(available_size);
+    if (!available_size.width().is_bounded()) {
+      preferred_size.set_width(title_->GetMinimumSize().width());
+    }
+    return preferred_size;
+  }
+
+  raw_ptr<views::View> title_ = nullptr;
+};
+
+BEGIN_METADATA(TitleLabelWrapper)
 END_METADATA
 
 void AddResourceIcon(const gfx::ImageSkia* skia_image, void* data) {
   views::View* parent = static_cast<views::View*>(data);
-  parent->AddChildView(new RatingStar(*skia_image));
+  parent->AddChildViewRaw(
+      new RatingStar(ui::ImageModel::FromImageSkia(*skia_image)));
 }
 
 void ShowExtensionInstallDialogImpl(
@@ -168,6 +204,18 @@ void ShowExtensionInstallDialogImpl(
     ExtensionInstallPrompt::DoneCallback done_callback,
     std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // If the dialog has to be parented to WebContents, force activate the
+  // contents. See crbug.com/40059470.
+  content::WebContents* web_contents = show_params->GetParentWebContents();
+  Browser* browser =
+      web_contents ? chrome::FindBrowserWithTab(web_contents) : nullptr;
+
+  if (browser &&
+      browser->tab_strip_model()->GetActiveWebContents() != web_contents) {
+    browser->ActivateContents(web_contents);
+  }
+
   gfx::NativeWindow parent_window = show_params->GetParentWindow();
   ExtensionInstallDialogView* dialog = new ExtensionInstallDialogView(
       std::move(show_params), std::move(done_callback), std::move(prompt));
@@ -177,8 +225,9 @@ void ShowExtensionInstallDialogImpl(
 
 // A custom scrollable view implementation for the dialog.
 class CustomScrollableView : public views::View {
+  METADATA_HEADER(CustomScrollableView, views::View)
+
  public:
-  METADATA_HEADER(CustomScrollableView);
   explicit CustomScrollableView(ExtensionInstallDialogView* parent)
       : parent_(parent) {}
   CustomScrollableView(const CustomScrollableView&) = delete;
@@ -197,7 +246,7 @@ class CustomScrollableView : public views::View {
   raw_ptr<ExtensionInstallDialogView> parent_;
 };
 
-BEGIN_METADATA(CustomScrollableView, views::View)
+BEGIN_METADATA(CustomScrollableView)
 END_METADATA
 
 // Represents one section in the scrollable info area, which could be a block of
@@ -209,12 +258,10 @@ struct ExtensionInfoSection {
 
 // Adds a section to |sections| for permissions of |perm_type| if there are any.
 void AddPermissions(ExtensionInstallPrompt::Prompt* prompt,
-                    std::vector<ExtensionInfoSection>& sections,
-                    int available_width) {
+                    std::vector<ExtensionInfoSection>& sections) {
   DCHECK_GT(prompt->GetPermissionCount(), 0u);
 
-  auto permissions_view =
-      std::make_unique<ExtensionPermissionsView>(available_width);
+  auto permissions_view = std::make_unique<ExtensionPermissionsView>();
 
   for (size_t i = 0; i < prompt->GetPermissionCount(); ++i) {
     permissions_view->AddItem(prompt->GetPermission(i),
@@ -232,6 +279,8 @@ void AddPermissions(ExtensionInstallPrompt::Prompt* prompt,
 // requesting an extension.
 class ExtensionInstallDialogView::ExtensionJustificationView
     : public views::View {
+  METADATA_HEADER(ExtensionJustificationView, views::View)
+
  public:
   explicit ExtensionJustificationView(TextfieldController* controller) {
     SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -265,7 +314,7 @@ class ExtensionInstallDialogView::ExtensionJustificationView
   ~ExtensionJustificationView() override = default;
 
   // Get the text currently present in the justification text field.
-  std::u16string GetJustificationText() {
+  std::u16string_view GetJustificationText() {
     DCHECK(justification_field_);
     return justification_field_->GetText();
   }
@@ -276,7 +325,7 @@ class ExtensionInstallDialogView::ExtensionJustificationView
     // below does not append to the already entered text. Does not trigger
     // UpdateAfterChange().
     justification_field_->SetText(std::u16string());
-    // Triggers UpdateAfterChange() to update the state of DIALOG_BUTTON_OK.
+    // Triggers UpdateAfterChange() to update the state of DialogButton::OK.
     justification_field_->InsertOrReplaceText(new_text);
   }
 
@@ -291,14 +340,17 @@ class ExtensionInstallDialogView::ExtensionJustificationView
         base::NumberToString16(justification_field_->GetText().length()),
         base::NumberToString16(kMaxJustificationTextLength)));
 
-    justification_text_length_->SetEnabledColor(
-        IsJustificationLengthWithinLimit()
-            // The original color is not stored because the theme may change
-            // while the dialog is visible. To get around this, another label
-            // (justification_field_label_) is used as the color reference.
-            ? justification_field_label_->GetEnabledColor()
-            : justification_text_length_->GetColorProvider()->GetColor(
-                  ui::kColorAlertHighSeverity));
+    // The original color is not stored because the theme may change
+    // while the dialog is visible. To get around this, another label
+    // (justification_field_label_) is used as the color reference.
+    if (IsJustificationLengthWithinLimit()) {
+      if (auto enabled_color =
+              justification_field_label_->GetRequestedEnabledColor()) {
+        justification_text_length_->SetEnabledColor(*enabled_color);
+      }
+    } else {
+      justification_text_length_->SetEnabledColor(ui::kColorAlertHighSeverity);
+    }
   }
 
   void ChildPreferredSizeChanged(views::View* child) override {
@@ -312,6 +364,9 @@ class ExtensionInstallDialogView::ExtensionJustificationView
   raw_ptr<views::Textfield> justification_field_;
   raw_ptr<views::Label> justification_text_length_;
 };
+
+BEGIN_METADATA(ExtensionInstallDialogView, ExtensionJustificationView)
+END_METADATA
 
 ExtensionInstallDialogView::ExtensionInstallDialogView(
     std::unique_ptr<ExtensionInstallPromptShowParams> show_params,
@@ -332,24 +387,24 @@ ExtensionInstallDialogView::ExtensionInstallDialogView(
   extension_registry_observation_.Observe(extension_registry);
 
   int buttons = prompt_->GetDialogButtons();
-  DCHECK(buttons & ui::DIALOG_BUTTON_CANCEL);
+  DCHECK(buttons & static_cast<int>(ui::mojom::DialogButton::kCancel));
 
-  int default_button = ui::DIALOG_BUTTON_CANCEL;
+  int default_button = static_cast<int>(ui::mojom::DialogButton::kCancel);
 
   // If the prompt is related to requesting an extension, set the default button
   // to OK.
   if (prompt_->type() ==
-      ExtensionInstallPrompt::PromptType::EXTENSION_REQUEST_PROMPT)
-    default_button = ui::DIALOG_BUTTON_OK;
+      ExtensionInstallPrompt::PromptType::EXTENSION_REQUEST_PROMPT) {
+    default_button = static_cast<int>(ui::mojom::DialogButton::kOk);
+  }
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // When we require parent permission next, we
   // set the default button to OK.
-  if (prompt_->requires_parent_permission())
-    default_button = ui::DIALOG_BUTTON_OK;
-#endif
+  if (prompt_->requires_parent_permission()) {
+    default_button = static_cast<int>(ui::mojom::DialogButton::kOk);
+  }
 
-  SetModalType(ui::MODAL_TYPE_WINDOW);
+  SetModalType(ui::mojom::ModalType::kWindow);
   set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
       views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
 
@@ -372,19 +427,18 @@ ExtensionInstallDialogView::ExtensionInstallDialogView(
             IDS_EXTENSION_PROMPT_GRANT_PERMISSIONS_CHECKBOX)));
   }
 
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, prompt_->GetAcceptButtonLabel());
-  SetButtonLabel(ui::DIALOG_BUTTON_CANCEL, prompt_->GetAbortButtonLabel());
+  SetButtonLabel(ui::mojom::DialogButton::kOk, prompt_->GetAcceptButtonLabel());
+  SetButtonLabel(ui::mojom::DialogButton::kCancel,
+                 prompt_->GetAbortButtonLabel());
   set_close_on_deactivate(false);
   SetShowCloseButton(false);
   CreateContents();
-
-  UMA_HISTOGRAM_ENUMERATION("Extensions.InstallPrompt.Type2", prompt_->type(),
-                            ExtensionInstallPrompt::NUM_PROMPT_TYPES);
 }
 
 ExtensionInstallDialogView::~ExtensionInstallDialogView() {
-  if (done_callback_)
+  if (done_callback_) {
     OnDialogCanceled();
+  }
 }
 
 ExtensionInstallPromptShowParams*
@@ -463,16 +517,13 @@ void ExtensionInstallDialogView::AddedToWidget() {
   gfx::Size size(image->width(), image->height());
   size.SetToMin(gfx::Size(icon_size, icon_size));
   icon->SetImageSize(size);
-  icon->SetImage(*image);
+  icon->SetImage(ui::ImageModel::FromImageSkia(*image));
 
   layout->AddRows(1, views::TableLayout::kFixedSize);
   title_container->AddChildView(std::move(icon));
 
-  std::unique_ptr<views::Label> title_label =
-      views::BubbleFrameView::CreateDefaultTitleLabel(title_);
-  // Setting the title's preferred size to 0 ensures it won't influence the
-  // overall size of the dialog. It will be expanded by TableLayout.
-  title_label->SetPreferredSize(gfx::Size(0, 0));
+  auto title_label = std::make_unique<TitleLabelWrapper>(
+      views::BubbleFrameView::CreateDefaultTitleLabel(title_));
   if (prompt_->has_webstore_data()) {
     auto webstore_data_container = std::make_unique<views::View>();
     webstore_data_container->SetLayoutManager(
@@ -481,7 +532,7 @@ void ExtensionInstallDialogView::AddedToWidget() {
             provider->GetDistanceMetric(
                 DISTANCE_RELATED_CONTROL_VERTICAL_SMALL)));
 
-    webstore_data_container->AddChildView(title_label.release());
+    webstore_data_container->AddChildView(std::move(title_label));
 
     auto rating_container = std::make_unique<views::View>();
     rating_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -520,8 +571,6 @@ void ExtensionInstallDialogView::OnDialogCanceled() {
   // being uninstalled).
   extension_registry_observation_.Reset();
 
-  UpdateInstallResultHistogram(false);
-  UpdateEnterpriseCloudExtensionRequestDialogActionHistogram(false);
   prompt_->OnDialogCanceled();
   std::move(done_callback_)
       .Run(ExtensionInstallPrompt::DoneCallbackPayload(
@@ -541,8 +590,6 @@ void ExtensionInstallDialogView::OnDialogAccepted() {
       ExtensionInstallPrompt::PromptType::EXTENSION_REQUEST_PROMPT;
   DCHECK(expect_justification == !!justification_view_);
 
-  UpdateInstallResultHistogram(true);
-  UpdateEnterpriseCloudExtensionRequestDialogActionHistogram(true);
   prompt_->OnDialogAccepted();
 
   // Permissions are withheld at installation when the prompt specifies it and
@@ -563,9 +610,10 @@ void ExtensionInstallDialogView::OnDialogAccepted() {
 }
 
 bool ExtensionInstallDialogView::IsDialogButtonEnabled(
-    ui::DialogButton button) const {
-  if (button == ui::DIALOG_BUTTON_OK)
+    ui::mojom::DialogButton button) const {
+  if (button == ui::mojom::DialogButton::kOk) {
     return install_button_enabled_ && request_button_enabled_;
+  }
   return true;
 }
 
@@ -587,8 +635,9 @@ void ExtensionInstallDialogView::OnExtensionUninstalled(
   CHECK(prompt_);
   CHECK(prompt_->extension());
   // Close the dialog if the extension is uninstalled.
-  if (extension->id() != prompt_->extension()->id())
+  if (extension->id() != prompt_->extension()->id()) {
     return;
+  }
   CloseDialog();
 }
 
@@ -611,10 +660,11 @@ void ExtensionInstallDialogView::LinkClicked() {
 
   DCHECK(show_params_);
   if (show_params_->GetParentWebContents()) {
-    show_params_->GetParentWebContents()->OpenURL(params);
+    show_params_->GetParentWebContents()->OpenURL(
+        params, /*navigation_handle_callback=*/{});
   } else {
     chrome::ScopedTabbedBrowserDisplayer displayer(profile_);
-    displayer.browser()->OpenURL(params);
+    displayer.browser()->OpenURL(params, /*navigation_handle_callback=*/{});
   }
   CloseDialog();
 }
@@ -635,9 +685,6 @@ void ExtensionInstallDialogView::CreateContents() {
           views::BoxLayout::Orientation::kVertical, gfx::Insets(),
           provider->GetDistanceMetric(
               views::DISTANCE_UNRELATED_CONTROL_VERTICAL)));
-  const int content_width =
-      GetPreferredSize().width() -
-      extension_info_and_justification_container->GetInsets().width();
   auto* extension_info_container =
       extension_info_and_justification_container->AddChildView(
           std::make_unique<views::View>());
@@ -647,7 +694,7 @@ void ExtensionInstallDialogView::CreateContents() {
 
   std::vector<ExtensionInfoSection> sections;
   if (prompt_->GetPermissionCount() > 0) {
-    AddPermissions(prompt_.get(), sections, content_width);
+    AddPermissions(prompt_.get(), sections);
   }
 
   if (sections.empty() &&
@@ -670,11 +717,12 @@ void ExtensionInstallDialogView::CreateContents() {
         section.header, views::style::CONTEXT_DIALOG_BODY_TEXT);
     header_label->SetMultiLine(true);
     header_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    header_label->SizeToFit(content_width);
-    extension_info_container->AddChildView(header_label);
+    extension_info_container->AddChildViewRaw(header_label);
 
-    if (section.contents_view)
-      extension_info_container->AddChildView(section.contents_view.release());
+    if (section.contents_view) {
+      extension_info_container->AddChildViewRaw(
+          section.contents_view.release());
+    }
   }
 
   // Add separate section for user justification. This section isn't added to
@@ -695,7 +743,7 @@ void ExtensionInstallDialogView::CreateContents() {
   scroll_view_->ClipHeightTo(
       0, provider->GetDistanceMetric(
              views::DISTANCE_DIALOG_SCROLLABLE_AREA_MAX_HEIGHT));
-  AddChildView(scroll_view_.get());
+  AddChildViewRaw(scroll_view_.get());
 }
 
 void ExtensionInstallDialogView::ContentsChanged(
@@ -721,37 +769,7 @@ void ExtensionInstallDialogView::EnableInstallButton() {
   DialogModelChanged();
 }
 
-void ExtensionInstallDialogView::UpdateInstallResultHistogram(bool accepted)
-    const {
-  // Only update histograms if |install_result_timer_| was initialized in
-  // |VisibilityChanged|.
-  if (prompt_->type() == ExtensionInstallPrompt::INSTALL_PROMPT &&
-      install_result_timer_) {
-    if (accepted) {
-      UmaHistogramMediumTimes("Extensions.InstallPrompt.TimeToInstall",
-                              install_result_timer_->Elapsed());
-    } else {
-      UmaHistogramMediumTimes("Extensions.InstallPrompt.TimeToCancel",
-                              install_result_timer_->Elapsed());
-    }
-  }
-}
-
-void ExtensionInstallDialogView::
-    UpdateEnterpriseCloudExtensionRequestDialogActionHistogram(
-        bool accepted) const {
-  if (prompt_->type() == ExtensionInstallPrompt::EXTENSION_REQUEST_PROMPT) {
-    if (accepted) {
-      base::UmaHistogramEnumeration(kCloudExtensionRequestMetricsName,
-                                    CloudExtensionRequestMetricEvent::kSent);
-    } else {
-      base::UmaHistogramEnumeration(kCloudExtensionRequestMetricsName,
-                                    CloudExtensionRequestMetricEvent::kNotSent);
-    }
-  }
-}
-
-BEGIN_METADATA(ExtensionInstallDialogView, views::BubbleDialogDelegateView)
+BEGIN_METADATA(ExtensionInstallDialogView)
 END_METADATA
 
 // static

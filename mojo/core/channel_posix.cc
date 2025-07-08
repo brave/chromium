@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/core/channel_posix.h"
 
 #include <errno.h>
@@ -22,6 +27,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_runner.h"
 #include "base/time/time.h"
+#include "base/types/fixed_array.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/platform/socket_utils_posix.h"
 
@@ -35,8 +41,11 @@
 
 #endif  // !BUILDFLAG(IS_NACL)
 
-namespace mojo {
-namespace core {
+#if BUILDFLAG(IS_ANDROID)
+#include "mojo/core/channel_binder.h"
+#endif
+
+namespace mojo::core {
 
 namespace {
 #if !BUILDFLAG(IS_NACL)
@@ -66,7 +75,7 @@ class MessageView {
   MessageView& operator=(const MessageView&) = delete;
 
   ~MessageView() {
-    if (message_) {
+    if (message_ && base::ShouldRecordSubsampledMetric(0.001)) {
       UMA_HISTOGRAM_TIMES("Mojo.Channel.WriteMessageLatency",
                           base::TimeTicks::Now() - start_time_);
     }
@@ -146,11 +155,7 @@ void ChannelPosix::ShutDownImpl() {
 }
 
 void ChannelPosix::Write(MessagePtr message) {
-  if (ShouldRecordSubsampledHistograms()) {
-    UMA_HISTOGRAM_COUNTS_100000("Mojo.Channel.WriteMessageSize",
-                                message->data_num_bytes());
-    LogHistogramForIPCMetrics(MessageType::kSent);
-  }
+  RecordSentMessageMetrics(message->data_num_bytes());
 
   bool write_error = false;
   {
@@ -158,8 +163,9 @@ void ChannelPosix::Write(MessagePtr message) {
     if (reject_writes_)
       return;
     if (outgoing_messages_.empty()) {
-      if (!WriteNoLock(MessageView(std::move(message), 0)))
+      if (!WriteNoLock(MessageView(std::move(message), 0))) {
         reject_writes_ = write_error = true;
+      }
     } else {
       outgoing_messages_.emplace_back(std::move(message), 0);
     }
@@ -208,17 +214,14 @@ bool ChannelPosix::GetReadPlatformHandlesForIpcz(
 }
 
 void ChannelPosix::StartOnIOThread() {
-  DCHECK(!read_watcher_);
-  DCHECK(!write_watcher_);
-  read_watcher_ =
-      std::make_unique<base::MessagePumpForIO::FdWatchController>(FROM_HERE);
   base::CurrentThread::Get()->AddDestructionObserver(this);
-  write_watcher_ =
-      std::make_unique<base::MessagePumpForIO::FdWatchController>(FROM_HERE);
-  base::CurrentIOThread::Get()->WatchFileDescriptor(
-      socket_.get(), true /* persistent */, base::MessagePumpForIO::WATCH_READ,
-      read_watcher_.get(), this);
   base::AutoLock lock(write_lock_);
+  DCHECK(!read_watcher_);
+  DCHECK(base::IOWatcher::Get());
+  read_watcher_ = base::IOWatcher::Get()->WatchFileDescriptor(
+      socket_.get(), base::IOWatcher::FdWatchDuration::kPersistent,
+      base::IOWatcher::FdWatchMode::kRead, *this);
+  DCHECK(!write_watcher_);
   FlushOutgoingMessagesNoLock();
 }
 
@@ -228,15 +231,21 @@ void ChannelPosix::WaitForWriteOnIOThread() {
 }
 
 void ChannelPosix::WaitForWriteOnIOThreadNoLock() {
-  if (pending_write_)
+  if (pending_write_ || reject_writes_) {
     return;
-  if (!write_watcher_)
-    return;
-  if (io_task_runner_->RunsTasksInCurrentSequence()) {
+  }
+
+  // This may be called from a `RunOrPostTask()` callback running in sequence
+  // with the IO thread, but on a different thread. In that case,
+  // `RunsTaskInCurrentSequence()` would return true, so use
+  // `BelongsToCurrentThread()` to detect that we aren't on the designated IO
+  // thread for this channel (otherwise, `base::IOWatcher::Get()` could fail or
+  // be inconsistent).
+  if (io_task_runner_->BelongsToCurrentThread()) {
     pending_write_ = true;
-    base::CurrentIOThread::Get()->WatchFileDescriptor(
-        socket_.get(), false /* persistent */,
-        base::MessagePumpForIO::WATCH_WRITE, write_watcher_.get(), this);
+    write_watcher_ = base::IOWatcher::Get()->WatchFileDescriptor(
+        socket_.get(), base::IOWatcher::FdWatchDuration::kOneShot,
+        base::IOWatcher::FdWatchMode::kWrite, *this);
   } else {
     io_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&ChannelPosix::WaitForWriteOnIOThread, this));
@@ -246,16 +255,21 @@ void ChannelPosix::WaitForWriteOnIOThreadNoLock() {
 void ChannelPosix::ShutDownOnIOThread() {
   base::CurrentThread::Get()->RemoveDestructionObserver(this);
 
-  read_watcher_.reset();
-  write_watcher_.reset();
-  if (leak_handle_) {
-    std::ignore = socket_.release();
-  } else {
-    socket_.reset();
-  }
+  {
+    base::AutoLock lock(write_lock_);
+    reject_writes_ = true;
+    read_watcher_.reset();
+    write_watcher_.reset();
+    if (leak_handle_) {
+      std::ignore = socket_.release();
+    } else {
+      socket_.reset();
+    }
 #if BUILDFLAG(IS_IOS)
-  fds_to_close_.clear();
+    base::AutoLock fd_lock(fds_to_close_lock_);
+    fds_to_close_.clear();
 #endif
+  }
 
   // May destroy the |this| if it was the last reference.
   self_ = nullptr;
@@ -267,7 +281,7 @@ void ChannelPosix::WillDestroyCurrentMessageLoop() {
     ShutDownOnIOThread();
 }
 
-void ChannelPosix::OnFileCanReadWithoutBlocking(int fd) {
+void ChannelPosix::OnFdReadable(int fd) {
   CHECK_EQ(fd, socket_.get());
 
   bool validation_error = false;
@@ -308,7 +322,10 @@ void ChannelPosix::OnFileCanReadWithoutBlocking(int fd) {
            total_bytes_read < kMaxBatchReadCapacity && next_read_size > 0);
   if (read_error) {
     // Stop receiving read notifications.
-    read_watcher_.reset();
+    {
+      base::AutoLock lock(write_lock_);
+      read_watcher_.reset();
+    }
     if (validation_error)
       OnError(Error::kReceivedMalformedData);
     else
@@ -316,7 +333,7 @@ void ChannelPosix::OnFileCanReadWithoutBlocking(int fd) {
   }
 }
 
-void ChannelPosix::OnFileCanWriteWithoutBlocking(int fd) {
+void ChannelPosix::OnFdWritable(int fd) {
   bool write_error = false;
   {
     base::AutoLock lock(write_lock_);
@@ -470,9 +487,13 @@ void ChannelPosix::AcceptUpgradeOffer() {
 
 void ChannelPosix::OnWriteError(Error error) {
   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
-  DCHECK(reject_writes_);
+  DCHECK([&]() {
+    base::AutoLock lock(write_lock_);
+    return reject_writes_;
+  }());
 
   if (error == Error::kDisconnected) {
+    base::AutoLock lock(write_lock_);
     // If we can't write because the pipe is disconnected then continue
     // reading to fetch any in-flight messages, relying on end-of-stream to
     // signal the actual disconnection.
@@ -494,8 +515,7 @@ bool ChannelPosix::WriteOutgoingMessagesWithWritev() {
   // outgoing_messages_.size() but never more than the kernel allows.
   size_t num_messages_to_send =
       std::min<size_t>(IOV_MAX, outgoing_messages_.size());
-  iovec iov[num_messages_to_send];
-  memset(&iov[0], 0, sizeof(iov));
+  base::FixedArray<iovec> iov(num_messages_to_send);
 
   // Populate the iov.
   size_t num_iovs_set = 0;
@@ -637,7 +657,7 @@ bool ChannelPosix::CloseHandles(const int* fds, size_t num_fds) {
   if (!num_fds)
     return false;
 
-  auto start = base::ranges::find(fds_to_close_, fds[0], &base::ScopedFD::get);
+  auto start = std::ranges::find(fds_to_close_, fds[0], &base::ScopedFD::get);
   if (start == fds_to_close_.end())
     return false;
 
@@ -675,6 +695,13 @@ scoped_refptr<Channel> Channel::Create(
     ConnectionParams connection_params,
     HandlePolicy handle_policy,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner) {
+#if BUILDFLAG(IS_ANDROID)
+  if (connection_params.endpoint().platform_handle().is_valid_binder()) {
+    return base::MakeRefCounted<ChannelBinder>(
+        delegate, std::move(connection_params), handle_policy,
+        std::move(io_task_runner));
+  }
+#endif
 #if !BUILDFLAG(IS_NACL) && \
     (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
   return new ChannelLinux(delegate, std::move(connection_params), handle_policy,
@@ -703,5 +730,4 @@ void Channel::OfferChannelUpgrade() {
         // BUILDFLAG(IS_ANDROID)
 #endif  // !BUILDFLAG(IS_NACL)
 
-}  // namespace core
-}  // namespace mojo
+}  // namespace mojo::core

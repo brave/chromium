@@ -10,14 +10,15 @@
 #include "components/segmentation_platform/internal/data_collection/training_data_cache.h"
 #include "components/segmentation_platform/internal/database/cached_result_provider.h"
 #include "components/segmentation_platform/internal/database/storage_service.h"
-#include "components/segmentation_platform/internal/execution/default_model_manager.h"
 #include "components/segmentation_platform/internal/signals/histogram_signal_handler.h"
 #include "components/segmentation_platform/internal/signals/user_action_signal_handler.h"
 #include "components/segmentation_platform/public/input_context.h"
+#include "components/segmentation_platform/public/model_provider.h"
 #include "components/segmentation_platform/public/proto/model_metadata.pb.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "components/segmentation_platform/public/segmentation_platform_service.h"
 #include "components/segmentation_platform/public/trigger.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
 class PrefService;
 
@@ -62,6 +63,9 @@ class TrainingDataCollector {
     // TODO(haileywang): Make this a vector and append all the values to the
     // output.
     float output_value;
+
+    // Optional source ID to record UKM with.
+    ukm::SourceId ukm_source_id;
   };
 
   // Called when model metadata is updated. May result in training data
@@ -79,16 +83,21 @@ class TrainingDataCollector {
 
   // Called to collect and store training input data. The data will only be
   // uploaded once |OnObservationTrigger| is triggered. |TrainingRequestId| can
-  // be used to trigger observation for a specific set of training data.
+  // be used to trigger observation for a specific set of training data. If
+  // `decision_result_update_trigger` is true, then collect data only when
+  // exact_prediction_time is set for the config.
   virtual TrainingRequestId OnDecisionTime(
       proto::SegmentId id,
       scoped_refptr<InputContext> input_context,
-      DecisionType type) = 0;
+      DecisionType type,
+      std::optional<ModelProvider::Request> inputs,
+      bool decision_result_update_trigger = false) = 0;
 
   // Called by Segmentation Platform when manually triggering data collection on
   // the client.
   virtual void CollectTrainingData(SegmentId segment_id,
                                    TrainingRequestId request_id,
+                                   ukm::SourceId ukm_source_id,
                                    const TrainingLabels& param,
                                    SuccessCallback callback) = 0;
 
@@ -104,4 +113,4 @@ class TrainingDataCollector {
 
 }  // namespace segmentation_platform
 
-#endif  // COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_DATABASE_DATABASE_MAINTENANCE_IMPL_H_
+#endif  // COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_DATA_COLLECTION_TRAINING_DATA_COLLECTOR_H_

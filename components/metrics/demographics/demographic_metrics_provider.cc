@@ -4,13 +4,12 @@
 
 #include "components/metrics/demographics/demographic_metrics_provider.h"
 
+#include <optional>
+
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
-#include "build/chromeos_buildflags.h"
-#include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_service_utils.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
 
 namespace metrics {
@@ -27,37 +26,16 @@ bool IsValidUploadState(syncer::UploadState upload_state) {
     case syncer::UploadState::ACTIVE:
       return true;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool CanUploadDemographicsToGoogle(syncer::SyncService* sync_service) {
   CHECK(sync_service);
-
   // PRIORITY_PREFERENCES is the sync datatype used to propagate demographics
   // information to the client. In its absence, demographics info is unavailable
   // thus cannot be uploaded.
-  if (!IsValidUploadState(syncer::GetUploadToGoogleState(
-          sync_service, syncer::PRIORITY_PREFERENCES))) {
-    return false;
-  }
-
-  // Even if GetUploadToGoogleState() reports to be active, the user may be in
-  // transport mode or full-sync (aka sync-the-feature enabled) mode. For the
-  // latter, IsSyncFeatureEnabled() returns true and no further conditions need
-  // to be checked.
-  // TODO(crbug.com/1462552): Simplify once IsSyncFeatureEnabled() is deleted
-  // from the codebase.
-  if (sync_service->IsSyncFeatureEnabled()) {
-    return true;
-  }
-
-  // For users in transport mode (signed in but without having turned on
-  // sync-the-feature), as extra precaution, allow uploading demographics only
-  // if HISTORY is also on.
-  // TODO(crbug.com/1462286): Reconsider whether HISTORY should be required, as
-  // the coupling is arbitrary.
-  return IsValidUploadState(
-      syncer::GetUploadToGoogleState(sync_service, syncer::HISTORY));
+  return IsValidUploadState(syncer::GetUploadToGoogleState(
+             sync_service, syncer::PRIORITY_PREFERENCES));
 }
 
 }  // namespace
@@ -75,15 +53,15 @@ DemographicMetricsProvider::DemographicMetricsProvider(
   DCHECK(profile_client_);
 }
 
-DemographicMetricsProvider::~DemographicMetricsProvider() {}
+DemographicMetricsProvider::~DemographicMetricsProvider() = default;
 
-absl::optional<UserDemographics>
+std::optional<UserDemographics>
 DemographicMetricsProvider::ProvideSyncedUserNoisedBirthYearAndGender() {
   // Skip if feature disabled.
   if (!base::FeatureList::IsEnabled(kDemographicMetricsReporting))
-    return absl::nullopt;
+    return std::nullopt;
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Skip if not exactly one Profile on disk. Having more than one Profile that
   // is using the browser can make demographics less relevant. This approach
   // cannot determine if there is more than 1 distinct user using the Profile.
@@ -91,28 +69,25 @@ DemographicMetricsProvider::ProvideSyncedUserNoisedBirthYearAndGender() {
   // ChromeOS almost always has more than one profile on disk, so this check
   // doesn't work. We have a profile selection strategy for ChromeOS, so skip
   // this check for ChromeOS.
-  // TODO(crbug/1145655): LaCros will behave similarly to desktop Chrome and
-  // reduce the number of profiles on disk to one, so remove these #if guards
-  // after LaCros release.
   if (profile_client_->GetNumberOfProfilesOnDisk() != 1) {
     LogUserDemographicsStatusInHistogram(
         UserDemographicsStatus::kMoreThanOneProfile);
-    return absl::nullopt;
+    return std::nullopt;
   }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   syncer::SyncService* sync_service = profile_client_->GetSyncService();
   // Skip if no sync service.
   if (!sync_service) {
     LogUserDemographicsStatusInHistogram(
         UserDemographicsStatus::kNoSyncService);
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (!CanUploadDemographicsToGoogle(sync_service)) {
     LogUserDemographicsStatusInHistogram(
         UserDemographicsStatus::kSyncNotEnabled);
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   UserDemographicsResult demographics_result =
@@ -124,7 +99,7 @@ DemographicMetricsProvider::ProvideSyncedUserNoisedBirthYearAndGender() {
   if (demographics_result.IsSuccess())
     return demographics_result.value();
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void DemographicMetricsProvider::ProvideCurrentSessionData(
@@ -149,10 +124,13 @@ void DemographicMetricsProvider::LogUserDemographicsStatusInHistogram(
                                 status == UserDemographicsStatus::kSuccess);
       return;
     case MetricsLogUploader::MetricServiceType::UKM:
-      base::UmaHistogramEnumeration("UKM.UserDemographics.Status", status);
+      // UKM Metrics doesn't have demographic metrics.
       return;
     case MetricsLogUploader::MetricServiceType::STRUCTURED_METRICS:
       // Structured Metrics doesn't have demographic metrics.
+      return;
+    case MetricsLogUploader::MetricServiceType::DWA:
+      // DWA doesn't have demographic metrics.
       return;
   }
   NOTREACHED();

@@ -22,10 +22,8 @@ const GetAccessibilityFocusNative =
     nativeAutomationInternal.GetAccessibilityFocus;
 const SetDesktopID = nativeAutomationInternal.SetDesktopID;
 
-/**
- * A namespace to export utility functions to other files in automation.
- */
-window.automationUtil = function() {};
+// A namespace to export utility functions to other files in automation.
+const automationUtil = function() {};
 
 // TODO(aboxhall): Look into using WeakMap
 let idToCallback = {};
@@ -121,7 +119,7 @@ apiBridge.registerCustomHook(function(bindingsAPI) {
 
   function removeTreeChangeObserver(observer) {
     for (const id in automationUtil.treeChangeObserverMap) {
-      if (automationUtil.treeChangeObserverMap[id] == observer) {
+      if (automationUtil.treeChangeObserverMap[id] === observer) {
         RemoveTreeChangeObserver(id);
         delete automationUtil.treeChangeObserverMap[id];
         return;
@@ -153,12 +151,17 @@ apiBridge.registerCustomHook(function(bindingsAPI) {
       throw new Error('Use AutomationNode.setSelection to set the selection ' +
           'in the desktop tree.');
     }
-    automationInternal.performAction({ treeID: anchorNodeImpl.treeID,
-                                       automationNodeID: anchorNodeImpl.id,
-                                       actionType: 'setSelection'},
-                                     { focusNodeID: focusNodeImpl.id,
-                                       anchorOffset: params.anchorOffset,
-                                       focusOffset: params.focusOffset });
+    automationInternal.performAction(
+        {
+          treeID: anchorNodeImpl.treeID,
+          automationNodeID: anchorNodeImpl.id,
+          actionType: 'setSelection',
+        },
+        {
+          focusNodeID: focusNodeImpl.id,
+          anchorOffset: params.anchorOffset,
+          focusOffset: params.focusOffset,
+        });
   });
 });
 
@@ -243,15 +246,15 @@ automationInternal.onAllAutomationEventListenersRemoved.addListener(() => {
 automationInternal.onAccessibilityEvent.addListener(function(eventParams) {
   const id = eventParams.treeID;
   const targetTree = AutomationRootNode.getOrCreate(id);
-  if (eventParams.eventType == 'mediaStartedPlaying' ||
-      eventParams.eventType == 'mediaStoppedPlaying') {
+  if (eventParams.eventType === 'mediaStartedPlaying' ||
+      eventParams.eventType === 'mediaStoppedPlaying') {
     // These events are global to the tree.
     eventParams.targetID = privates(targetTree).impl.id;
   }
 
   privates(targetTree).impl.onAccessibilityEvent(eventParams);
 
-  // If we're not waiting on a callback to getTree(), we can early out here.
+  // If we're not waiting on a callback, we can early out here.
   if (!(id in idToCallback)) {
     return;
   }
@@ -260,13 +263,12 @@ automationInternal.onAccessibilityEvent.addListener(function(eventParams) {
   // attribute or child nodes. If we've got that, wait for the full tree before
   // calling the callback.
   // TODO(dmazzoni): Don't send down placeholder (crbug.com/397553)
-  if (id != desktopId && !targetTree.url && targetTree.children.length == 0) {
+  if (id !== desktopId && !targetTree.url && targetTree.children.length === 0) {
     return;
   }
 
-  // If the tree wasn't available when getTree() was called, the callback will
-  // have been cached in idToCallback, so call and delete it now that we
-  // have the complete tree.
+  // If the tree wasn't available, the callback will have been cached in
+  // idToCallback, so call and delete it now that we have the complete tree.
   for (let i = 0; i < idToCallback[id].length; i++) {
     const callback = idToCallback[id][i];
     callback(targetTree);

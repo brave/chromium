@@ -41,7 +41,7 @@ class InputMethodControllerTest : public EditingTestBase {
   // TODO(editing-dev): We should use |CompositionEphemeralRange()| instead
   // of having |GetCompositionRange()| and marking |InputMethodControllerTest|
   // as friend class.
-  Range* GetCompositionRange() { return Controller().composition_range_; }
+  Range* GetCompositionRange() { return Controller().composition_range_.Get(); }
 
   Element* InsertHTMLElement(const char* element_code, const char* element_id);
   void CreateHTMLWithCompositionInputEventListeners();
@@ -62,7 +62,7 @@ void InputMethodControllerTest::CreateHTMLWithCompositionInputEventListeners() {
   Element* editable =
       InsertHTMLElement("<div id='sample' contenteditable></div>", "sample");
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('beforeinput', "
       "event => {"
       "  document.title = `beforeinput.data:${event.data};`;"
@@ -90,14 +90,14 @@ void InputMethodControllerTest::CreateHTMLWithCompositionEndEventListener(
 
   switch (type) {
     case kNoSelection:
-      script->setInnerHTML(
+      script->SetInnerHTMLWithoutTrustedTypes(
           // If the caret position is set before firing 'compositonend' event
           // (and it should), the final caret position will be reset to null.
           "document.getElementById('sample').addEventListener('compositionend',"
           "  event => getSelection().removeAllRanges());");
       break;
     case kCaretSelection:
-      script->setInnerHTML(
+      script->SetInnerHTMLWithoutTrustedTypes(
           // If the caret position is set before firing 'compositonend' event
           // (and it should), the final caret position will be reset to [3,3].
           "document.getElementById('sample').addEventListener('compositionend',"
@@ -107,7 +107,7 @@ void InputMethodControllerTest::CreateHTMLWithCompositionEndEventListener(
           "});");
       break;
     case kRangeSelection:
-      script->setInnerHTML(
+      script->SetInnerHTMLWithoutTrustedTypes(
           // If the caret position is set before firing 'compositonend' event
           // (and it should), the final caret position will be reset to [2,4].
           "document.getElementById('sample').addEventListener('compositionend',"
@@ -219,7 +219,7 @@ TEST_F(InputMethodControllerTest, AddImeTextSpansToExistingText) {
 TEST_F(InputMethodControllerTest, AddGrammarCheckSpans) {
   InsertHTMLElement("<div id='sample' contenteditable>hello world</div>",
                     "sample");
-  Element* div = GetDocument().QuerySelector(AtomicString("div"));
+  Element* div = QuerySelector("div");
   Node* text = div->firstChild();
 
   GetDocument().Markers().AddSpellingMarker(
@@ -274,7 +274,7 @@ TEST_F(InputMethodControllerTest, GetImeTextSpans) {
                                              10);
   Controller().SetEditableSelectionOffsets(PlainTextRange(1, 1));
 
-  const WebVector<ui::ImeTextSpan>& ime_text_spans =
+  const std::vector<ui::ImeTextSpan>& ime_text_spans =
       Controller().TextInputInfo().ime_text_spans;
 
   EXPECT_EQ(2u, ime_text_spans.size());
@@ -306,12 +306,12 @@ TEST_F(InputMethodControllerTest, SetCompositionAfterEmoji) {
   EXPECT_EQ(2, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
   EXPECT_EQ(2, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Extent()
+                   .Focus()
                    .ComputeOffsetInContainerNode());
 
   Controller().SetComposition(String("a"), ime_text_spans, 1, 1);
@@ -399,19 +399,22 @@ TEST_F(InputMethodControllerTest, SetCompositionKeepingStyle) {
 
   // Subtract a character.
   Controller().SetComposition(String("12345789"), ime_text_spans, 8, 8);
-  EXPECT_EQ("abc1<b>2</b>3457<b>8</b>9d<b>e</b>f", div->innerHTML().Utf8());
+  EXPECT_EQ("abc1<b>2</b>3457<b>8</b>9d<b>e</b>f",
+            div->GetInnerHTMLString().Utf8());
   EXPECT_EQ(11u, Controller().GetSelectionOffsets().Start());
   EXPECT_EQ(11u, Controller().GetSelectionOffsets().End());
 
   // Append a character.
   Controller().SetComposition(String("123456789"), ime_text_spans, 9, 9);
-  EXPECT_EQ("abc1<b>2</b>34567<b>8</b>9d<b>e</b>f", div->innerHTML().Utf8());
+  EXPECT_EQ("abc1<b>2</b>34567<b>8</b>9d<b>e</b>f",
+            div->GetInnerHTMLString().Utf8());
   EXPECT_EQ(12u, Controller().GetSelectionOffsets().Start());
   EXPECT_EQ(12u, Controller().GetSelectionOffsets().End());
 
   // Subtract and append characters.
   Controller().SetComposition(String("123hello789"), ime_text_spans, 11, 11);
-  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9d<b>e</b>f", div->innerHTML().Utf8());
+  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9d<b>e</b>f",
+            div->GetInnerHTMLString().Utf8());
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionWithEmojiKeepingStyle) {
@@ -431,11 +434,11 @@ TEST_F(InputMethodControllerTest, SetCompositionWithEmojiKeepingStyle) {
   // surrogate pair to the previous one.
   Controller().SetComposition(String::FromUTF8("\xF0\x9F\x8F\xAB"),
                               ime_text_spans, 2, 2);
-  EXPECT_EQ("<b>\xF0\x9F\x8F\xAB</b>", div->innerHTML().Utf8());
+  EXPECT_EQ("<b>\xF0\x9F\x8F\xAB</b>", div->GetInnerHTMLString().Utf8());
 
   Controller().SetComposition(String::FromUTF8("\xF0\x9F\x8F\xA0"),
                               ime_text_spans, 2, 2);
-  EXPECT_EQ("<b>\xF0\x9F\x8F\xA0</b>", div->innerHTML().Utf8());
+  EXPECT_EQ("<b>\xF0\x9F\x8F\xA0</b>", div->GetInnerHTMLString().Utf8());
 }
 
 TEST_F(InputMethodControllerTest,
@@ -457,11 +460,11 @@ TEST_F(InputMethodControllerTest,
   // 1 grapheme cluster.
   Controller().SetComposition(String::FromUTF8("\xE0\xB0\x83\xE0\xB0\x83"),
                               ime_text_spans, 2, 2);
-  EXPECT_EQ("<b>\xE0\xB0\x83\xE0\xB0\x83</b>", div->innerHTML().Utf8());
+  EXPECT_EQ("<b>\xE0\xB0\x83\xE0\xB0\x83</b>", div->GetInnerHTMLString().Utf8());
 
   Controller().SetComposition(String::FromUTF8("\xE0\xB0\x83"), ime_text_spans,
                               1, 1);
-  EXPECT_EQ("<b>\xE0\xB0\x83</b>", div->innerHTML().Utf8());
+  EXPECT_EQ("<b>\xE0\xB0\x83</b>", div->GetInnerHTMLString().Utf8());
 }
 
 TEST_F(InputMethodControllerTest, FinishComposingTextKeepingStyle) {
@@ -478,15 +481,16 @@ TEST_F(InputMethodControllerTest, FinishComposingTextKeepingStyle) {
   Controller().SetCompositionFromExistingText(ime_text_spans, 3, 12);
 
   Controller().SetComposition(String("123hello789"), ime_text_spans, 11, 11);
-  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9", div->innerHTML());
+  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9", div->GetInnerHTMLString());
 
   Controller().FinishComposingText(InputMethodController::kKeepSelection);
-  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9", div->innerHTML());
+  EXPECT_EQ("abc1<b>2</b>3hello7<b>8</b>9", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, FinishComposingTextKeepingBackwardSelection) {
-  GetFrame().Selection().SetSelectionAndEndTyping(
-      SetSelectionTextToBody("<div contenteditable>|abc^</div>"));
+  GetFrame().Selection().SetSelection(
+      SetSelectionTextToBody("<div contenteditable>|abc^</div>"),
+      SetSelectionOptions());
 
   Controller().FinishComposingText(InputMethodController::kKeepSelection);
 
@@ -507,7 +511,7 @@ TEST_F(InputMethodControllerTest, CommitTextKeepingStyle) {
   Controller().SetCompositionFromExistingText(ime_text_spans, 3, 12);
 
   Controller().CommitText(String("123789"), ime_text_spans, 0);
-  EXPECT_EQ("abc1<b>2</b>37<b>8</b>9", div->innerHTML());
+  EXPECT_EQ("abc1<b>2</b>37<b>8</b>9", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, InsertTextWithNewLine) {
@@ -520,7 +524,7 @@ TEST_F(InputMethodControllerTest, InsertTextWithNewLine) {
       Color::kTransparent, Color::kTransparent));
 
   Controller().CommitText(String("hello\nworld"), ime_text_spans, 0);
-  EXPECT_EQ("hello<div>world</div>", div->innerHTML());
+  EXPECT_EQ("hello<div>world</div>", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, InsertTextWithNewLineIncrementally) {
@@ -530,10 +534,10 @@ TEST_F(InputMethodControllerTest, InsertTextWithNewLineIncrementally) {
   Vector<ImeTextSpan> ime_text_spans;
   Controller().CommitText("a", ime_text_spans, 0);
   Controller().SetComposition("bcd", ime_text_spans, 0, 2);
-  EXPECT_EQ("abcd", div->innerHTML());
+  EXPECT_EQ("abcd", div->GetInnerHTMLString());
 
   Controller().CommitText(String("bcd\nefgh\nijkl"), ime_text_spans, 0);
-  EXPECT_EQ("abcd<div>efgh</div><div>ijkl</div>", div->innerHTML());
+  EXPECT_EQ("abcd<div>efgh</div><div>ijkl</div>", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, SelectionOnConfirmExistingText) {
@@ -551,12 +555,12 @@ TEST_F(InputMethodControllerTest, SelectionOnConfirmExistingText) {
   EXPECT_EQ(0, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
   EXPECT_EQ(0, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Extent()
+                   .Focus()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -1427,7 +1431,7 @@ TEST_F(InputMethodControllerTest, CompositionInputEventIsComposing) {
   Element* editable =
       InsertHTMLElement("<div id='sample' contenteditable></div>", "sample");
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('beforeinput', "
       "  event => document.title = "
       "  `beforeinput.isComposing:${event.isComposing};`);"
@@ -1625,7 +1629,7 @@ TEST_F(InputMethodControllerTest, FinishCompositionRemovedRange) {
   EXPECT_EQ(kWebTextInputTypeText, Controller().TextInputType());
 
   // Remove element 'a'.
-  input_a->setOuterHTML("", ASSERT_NO_EXCEPTION);
+  input_a->SetOuterHTMLWithoutTrustedTypes("");
   EXPECT_EQ(kWebTextInputTypeNone, Controller().TextInputType());
 
   GetDocument().getElementById(AtomicString("b"))->Focus();
@@ -1789,7 +1793,7 @@ TEST_F(InputMethodControllerTest, SelectionWhenFocusChangeFinishesComposition) {
   EXPECT_EQ(3, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 
   // Insert 'test'.
@@ -1800,7 +1804,7 @@ TEST_F(InputMethodControllerTest, SelectionWhenFocusChangeFinishesComposition) {
   EXPECT_EQ(7, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 
   // Focus change finishes composition.
@@ -1812,7 +1816,7 @@ TEST_F(InputMethodControllerTest, SelectionWhenFocusChangeFinishesComposition) {
   EXPECT_EQ(7, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -1847,14 +1851,14 @@ TEST_F(InputMethodControllerTest, WhitespaceFixup) {
 
   // The space at the beginning of the string should have been converted to an
   // nbsp
-  EXPECT_EQ("&nbsp;text blah", div->innerHTML());
+  EXPECT_EQ("&nbsp;text blah", div->GetInnerHTMLString());
 
   // Delete "blah"
   Controller().SetCompositionFromExistingText(empty_ime_text_spans, 6, 10);
   Controller().CommitText(String(""), empty_ime_text_spans, 0);
 
   // The space at the end of the string should have been converted to an nbsp
-  EXPECT_EQ("&nbsp;text&nbsp;", div->innerHTML());
+  EXPECT_EQ("&nbsp;text&nbsp;", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, CommitEmptyTextDeletesSelection) {
@@ -2137,7 +2141,7 @@ TEST_F(InputMethodControllerTest,
   Controller().SetCompositionFromExistingText(empty_ime_text_spans, 13, 25);
   Controller().CommitText(String("content"), empty_ime_text_spans, 0);
 
-  EXPECT_EQ("This is some content", div->innerHTML());
+  EXPECT_EQ("This is some content", div->GetInnerHTMLString());
 
   // Verify marker was removed
   EXPECT_EQ(0u, GetDocument().Markers().Markers().size());
@@ -2160,7 +2164,7 @@ TEST_F(InputMethodControllerTest,
   Controller().SetCompositionFromExistingText(empty_ime_text_spans, 13, 25);
   Controller().CommitText(String("content"), empty_ime_text_spans, 0);
 
-  EXPECT_EQ("This is some content", div->innerHTML());
+  EXPECT_EQ("This is some content", div->GetInnerHTMLString());
 
   // Verify marker is under "some "
   EXPECT_EQ(1u, GetDocument().Markers().Markers().size());
@@ -2721,10 +2725,11 @@ TEST_F(InputMethodControllerTest, TextInputTypeAtBeforeEditable) {
   GetDocument().body()->Focus();
 
   // Set selection before BODY(editable).
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .Collapse(Position(GetDocument().documentElement(), 0))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   EXPECT_EQ(kWebTextInputTypeContentEditable, Controller().TextInputType());
 }
@@ -2787,10 +2792,11 @@ TEST_F(InputMethodControllerTest, SetCompositionDeletesMarkupBeforeText) {
   Element* div = InsertHTMLElement(
       "<div id='div' contenteditable='true'><img />test</div>", "div");
   // Select the contents of the div element.
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(EphemeralRange::RangeOfContents(*div))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   Controller().SetComposition("t", Vector<ImeTextSpan>(), 0, 1);
 
@@ -2803,10 +2809,11 @@ TEST_F(InputMethodControllerTest, SetCompositionDeletesMarkupAfterText) {
   Element* div = InsertHTMLElement(
       "<div id='div' contenteditable='true'>test<img /></div>", "div");
   // Select the contents of the div element.
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(EphemeralRange::RangeOfContents(*div))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   Controller().SetComposition("t", Vector<ImeTextSpan>(), 0, 1);
 
@@ -2820,10 +2827,11 @@ TEST_F(InputMethodControllerTest,
   Element* div = InsertHTMLElement(
       "<div id='div' contenteditable='true'><img />test<img /></div>", "div");
   // Select the contents of the div element.
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(EphemeralRange::RangeOfContents(*div))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   Controller().SetComposition("t", Vector<ImeTextSpan>(), 0, 1);
 
@@ -2900,7 +2908,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -2924,7 +2932,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(11, GetFrame()
                     .Selection()
                     .GetSelectionInDOMTree()
-                    .Base()
+                    .Anchor()
                     .ComputeOffsetInContainerNode());
 }
 
@@ -2935,7 +2943,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -2947,11 +2955,12 @@ TEST_F(InputMethodControllerTest,
   UpdateAllLifecyclePhasesForTest();
 
   // Select "hello".
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(EphemeralRange(Position(div->firstChild(), 0),
                                            Position(div->firstChild(), 5)))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   // Commit text, leaving the cursor at the end of the newly-inserted text.
   // JavaScript will move the cursor back to the beginning of the
@@ -2961,7 +2970,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(0, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -2973,7 +2982,7 @@ TEST_F(
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -2995,7 +3004,7 @@ TEST_F(
   EXPECT_EQ(2, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3006,7 +3015,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3029,7 +3038,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(2, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3040,7 +3049,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3063,7 +3072,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3074,7 +3083,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3096,7 +3105,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3107,7 +3116,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3119,11 +3128,12 @@ TEST_F(InputMethodControllerTest,
   UpdateAllLifecyclePhasesForTest();
 
   // Select "world".
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(EphemeralRange(Position(div->firstChild(), 6),
                                            Position(div->firstChild(), 11)))
-          .Build());
+          .Build(),
+      SetSelectionOptions());
 
   // Call SetComposition() passing the empty string to delete the selection
   // (so we end up with "hello ") and move the cursor to before "hello".
@@ -3134,8 +3144,38 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
+}
+
+TEST_F(InputMethodControllerTest,
+       DeleteSelectionAndBeforeInputEventHandlerChangingStyle) {
+  Element* div = InsertHTMLElement(
+      "<div id='sample' contenteditable>hello world</div>", "sample");
+
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+  Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
+  script->SetInnerHTMLWithoutTrustedTypes(
+      "document.getElementById('sample').addEventListener('beforeinput', "
+      "  event => {"
+      "    event.currentTarget.style.transform = 'rotate(7deg)';"
+      "});");
+  GetDocument().body()->AppendChild(script);
+  UpdateAllLifecyclePhasesForTest();
+
+  // Select "world".
+  GetFrame().Selection().SetSelection(
+      SelectionInDOMTree::Builder()
+          .SetBaseAndExtent(EphemeralRange(Position(div->firstChild(), 6),
+                                           Position(div->firstChild(), 11)))
+          .Build(),
+      SetSelectionOptions());
+
+  // Call DeleteSelection() will fire beforeinput event before deleting
+  // selection. The beforeinput event handler dirties the layout. We should
+  // update layout again before calling |TypingCommand::DeleteSelection()| to
+  // avoid crash.
+  EXPECT_EQ(true, Controller().DeleteSelection());
 }
 
 TEST_F(InputMethodControllerTest,
@@ -3144,7 +3184,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3168,7 +3208,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(11, GetFrame()
                     .Selection()
                     .GetSelectionInDOMTree()
-                    .Base()
+                    .Anchor()
                     .ComputeOffsetInContainerNode());
 }
 
@@ -3180,7 +3220,7 @@ TEST_F(
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3202,7 +3242,7 @@ TEST_F(
   EXPECT_EQ(2, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3214,7 +3254,7 @@ TEST_F(
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3236,7 +3276,7 @@ TEST_F(
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3247,7 +3287,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3268,7 +3308,7 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
 }
 
@@ -3279,7 +3319,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3300,8 +3340,30 @@ TEST_F(InputMethodControllerTest,
   EXPECT_EQ(5, GetFrame()
                    .Selection()
                    .GetSelectionInDOMTree()
-                   .Base()
+                   .Anchor()
                    .ComputeOffsetInContainerNode());
+}
+
+TEST_F(
+    InputMethodControllerTest,
+    SetCompositionFromExistingTextAndCompositionStartEventHandlerChangingStyle) {
+  InsertHTMLElement("<div id='sample' contenteditable>hello world</div>",
+                    "sample");
+
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+  Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
+  script->SetInnerHTMLWithoutTrustedTypes(
+      "document.getElementById('sample').addEventListener('compositionstart', "
+      "  event => {"
+      "    event.currentTarget.style.transform = 'rotate(7deg)';"
+      "});");
+  GetDocument().body()->AppendChild(script);
+  UpdateAllLifecyclePhasesForTest();
+
+  // Call SetCompositionFromExistingText() will fire compositionstart event. The
+  // compositionstart event handler dirties the layout. We should update layout
+  // again before getting visible selection to avoid crash.
+  Controller().SetCompositionFromExistingText(Vector<ImeTextSpan>(), 6, 11);
 }
 
 TEST_F(InputMethodControllerTest,
@@ -3311,7 +3373,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3341,7 +3403,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('input', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3371,7 +3433,7 @@ TEST_F(InputMethodControllerTest,
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3403,7 +3465,7 @@ TEST_F(
 
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.getElementById('sample').addEventListener('compositionend', "
       "  event => {"
       "    const node = event.currentTarget;"
@@ -3564,13 +3626,14 @@ TEST_F(InputMethodControllerTest, ExecCommandDuringComposition) {
                               Vector<ImeTextSpan>(), 10, 10);
 
   // "world" should be bold.
-  EXPECT_EQ("hello<b>world</b>", div->innerHTML());
+  EXPECT_EQ("hello<b>world</b>", div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionAfterNonEditableElement) {
-  GetFrame().Selection().SetSelectionAndEndTyping(
+  GetFrame().Selection().SetSelection(
       SetSelectionTextToBody("<div id='sample' contenteditable='true'>"
-                             "<span contenteditable='false'>a</span>|b</div>"));
+                             "<span contenteditable='false'>a</span>|b</div>"),
+      SetSelectionOptions());
   Element* const div = GetDocument().getElementById(AtomicString("sample"));
   div->Focus();
 
@@ -3617,28 +3680,30 @@ TEST_F(InputMethodControllerTest, SetCompositionInMyanmar) {
   Element* div =
       InsertHTMLElement("<div id='sample' contenteditable></div>", "sample");
 
-  // Add character U+200C: 'kZeroWidthNonJoinerCharacter' and Myanmar vowel
+  // Add character U+200C: 'kZeroWidthNonJoiner' and Myanmar vowel
   Controller().SetComposition(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
                               Vector<ImeTextSpan>(), 0, 0);
 
   EXPECT_EQ(1u, div->CountChildren());
-  EXPECT_EQ(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"), div->innerHTML());
+  EXPECT_EQ(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
+            div->GetInnerHTMLString());
 
   Range* range = GetCompositionRange();
   EXPECT_EQ(0u, range->startOffset());
   EXPECT_EQ(2u, range->endOffset());
   Controller().CommitText(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
                           Vector<ImeTextSpan>(), 1);
-  EXPECT_EQ(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"), div->innerHTML());
+  EXPECT_EQ(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
+            div->GetInnerHTMLString());
 
-  // Add character U+200C: 'kZeroWidthNonJoinerCharacter' and Myanmar vowel
+  // Add character U+200C: 'kZeroWidthNonJoiner' and Myanmar vowel
   Controller().SetComposition(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
                               Vector<ImeTextSpan>(), 2, 2);
   Controller().CommitText(String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1"),
                           Vector<ImeTextSpan>(), 1);
   EXPECT_EQ(
       String::FromUTF8("\xE2\x80\x8C\xE1\x80\xB1\xE2\x80\x8C\xE1\x80\xB1"),
-      div->innerHTML());
+      div->GetInnerHTMLString());
 }
 
 TEST_F(InputMethodControllerTest, VirtualKeyboardPolicyOfFocusedElement) {
@@ -3651,8 +3716,9 @@ TEST_F(InputMethodControllerTest, VirtualKeyboardPolicyOfFocusedElement) {
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionInTibetan) {
-  GetFrame().Selection().SetSelectionAndEndTyping(
-      SetSelectionTextToBody("<div id='sample' contenteditable>|</div>"));
+  GetFrame().Selection().SetSelection(
+      SetSelectionTextToBody("<div id='sample' contenteditable>|</div>"),
+      SetSelectionOptions());
   Element* const div = GetDocument().getElementById(AtomicString("sample"));
   div->Focus();
 
@@ -3683,8 +3749,9 @@ TEST_F(InputMethodControllerTest, SetCompositionInTibetan) {
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionInDevanagari) {
-  GetFrame().Selection().SetSelectionAndEndTyping(
-      SetSelectionTextToBody("<div id='sample' contenteditable>\u0958|</div>"));
+  GetFrame().Selection().SetSelection(
+      SetSelectionTextToBody("<div id='sample' contenteditable>\u0958|</div>"),
+      SetSelectionOptions());
   Element* const div = GetDocument().getElementById(AtomicString("sample"));
   div->Focus();
 
@@ -3701,8 +3768,9 @@ TEST_F(InputMethodControllerTest, SetCompositionInDevanagari) {
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionTamil) {
-  GetFrame().Selection().SetSelectionAndEndTyping(
-      SetSelectionTextToBody("<div id='sample' contenteditable>|</div>"));
+  GetFrame().Selection().SetSelection(
+      SetSelectionTextToBody("<div id='sample' contenteditable>|</div>"),
+      SetSelectionOptions());
   Element* const div = GetDocument().getElementById(AtomicString("sample"));
   div->Focus();
 
@@ -3719,4 +3787,23 @@ TEST_F(InputMethodControllerTest, SetCompositionTamil) {
             GetSelectionTextFromBody());
 }
 
+TEST_F(InputMethodControllerTest, EditContextCanvasHasEditableType) {
+  GetDocument().GetSettings()->SetScriptEnabled(true);
+  Element* noneditable_canvas = InsertHTMLElement(
+      "<canvas id='noneditable-canvas'></canvas>", "noneditable-canvas");
+  Element* editable_canvas = InsertHTMLElement(
+      "<canvas id='editable-canvas'></canvas>", "editable-canvas");
+  Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
+  script->SetInnerHTMLWithoutTrustedTypes(
+      "document.getElementById('editable-canvas').editContext = new "
+      "EditContext()");
+  GetDocument().body()->AppendChild(script);
+  UpdateAllLifecyclePhasesForTest();
+
+  noneditable_canvas->Focus();
+  EXPECT_EQ(kWebTextInputTypeNone, Controller().TextInputType());
+
+  editable_canvas->Focus();
+  EXPECT_EQ(kWebTextInputTypeContentEditable, Controller().TextInputType());
+}
 }  // namespace blink

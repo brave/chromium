@@ -4,17 +4,14 @@
 
 package org.chromium.chrome.browser.messages;
 
-/**
- * An interface for notifications about the state of the message container
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** An interface for notifications about the state of the message container */
+@NullMarked
 public interface MessageContainerObserver {
-    /**
-     * A notification that the message container has been shown
-     */
+    /** A notification that the message container has been shown */
     void onShowMessageContainer();
 
-    /**
-     * A notification that the message container has been hidden
-     */
+    /** A notification that the message container has been hidden */
     void onHideMessageContainer();
 }

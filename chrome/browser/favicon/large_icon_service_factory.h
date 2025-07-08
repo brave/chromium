@@ -32,8 +32,7 @@ class LargeIconServiceFactory : public ProfileKeyedServiceFactory {
   LargeIconServiceFactory(const LargeIconServiceFactory&) = delete;
   LargeIconServiceFactory& operator=(const LargeIconServiceFactory&) = delete;
 
-  // Returns the icon size requested from server. The returned value takes into
-  // account the state of `features::kLargeFaviconFromGoogle`.
+  // Returns the icon size requested from server.
   static int desired_size_in_dip_for_server_requests();
 
  private:
@@ -43,7 +42,7 @@ class LargeIconServiceFactory : public ProfileKeyedServiceFactory {
   ~LargeIconServiceFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
   bool ServiceIsNULLWhileTesting() const override;
 };

@@ -88,7 +88,7 @@ class GrpcServerStreamingCall : public GrpcCall<TGrpcStub, TRequest> {
 
     void Start() override {
       ReactorBase::Start();
-      (async_interface_.get()->*AsyncMethodPtr)(context(), request(), this);
+      (async_interface_->*AsyncMethodPtr)(context(), request(), this);
       grpc::ClientReadReactor<Response>::StartRead(&response_);
       grpc::ClientReadReactor<Response>::StartCall();
     }
@@ -114,7 +114,7 @@ class GrpcServerStreamingCall : public GrpcCall<TGrpcStub, TRequest> {
       } else {
         response_callback_.Run(status, true);
       }
-      delete this;
+      ReactorBase::DeleteThis();
     }
 
     using AsyncStubCall =
@@ -122,7 +122,7 @@ class GrpcServerStreamingCall : public GrpcCall<TGrpcStub, TRequest> {
                                 const Request*,
                                 grpc::ClientReadReactor<Response>*)>;
 
-    base::raw_ptr<AsyncInterface> async_interface_;
+    raw_ptr<AsyncInterface> async_interface_;
     ResponseCallback response_callback_;
     Response response_;
   };

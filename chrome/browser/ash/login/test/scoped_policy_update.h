@@ -7,7 +7,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "components/policy/core/common/cloud/test/policy_builder.h"
 
 namespace ash {
@@ -39,7 +39,7 @@ class ScopedUserPolicyUpdate {
   }
 
  private:
-  const raw_ptr<policy::UserPolicyBuilder, ExperimentalAsh> policy_builder_;
+  const raw_ptr<policy::UserPolicyBuilder> policy_builder_;
   base::OnceClosure callback_;
 };
 
@@ -69,7 +69,7 @@ class ScopedDevicePolicyUpdate {
   }
 
  private:
-  const raw_ptr<policy::DevicePolicyBuilder, ExperimentalAsh> policy_builder_;
+  const raw_ptr<policy::DevicePolicyBuilder> policy_builder_;
   base::OnceClosure callback_;
 };
 

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.infobar;
 
+
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.view.ViewGroup;
@@ -17,11 +18,11 @@ import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.Batch;
@@ -29,48 +30,46 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.prefetch.settings.PreloadPagesSettingsBridge;
 import org.chromium.chrome.browser.prefetch.settings.PreloadPagesState;
+import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.ui.messages.infobar.SimpleConfirmInfoBarBuilder;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.InfoBarTestAnimationListener;
 import org.chromium.chrome.test.util.InfoBarUtil;
-import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.components.infobars.InfoBar;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Tests for the InfoBarContainer.
- */
+/** Tests for the InfoBarContainer. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
 public class InfoBarContainerTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, true);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.autoResetCtaActivityRule();
 
     // URL takes longer to load for batch tests where the activity is reused across rests
     private static final long EXTENDED_LOAD_TIMEOUT = 10L;
     private static final String MESSAGE_TEXT = "Ding dong. Woof. Translate french? Bears!";
-    private static EmbeddedTestServer sTestServer = sActivityTestRule.getTestServer();
+    private EmbeddedTestServer mTestServer;
+    private WebPageStation mPage;
 
     private static final class TestListener implements SimpleConfirmInfoBarBuilder.Listener {
         public final CallbackHelper dismissedCallback = new CallbackHelper();
@@ -102,37 +101,51 @@ public class InfoBarContainerTest {
 
     @Before
     public void setUp() throws Exception {
+        mPage = mActivityTestRule.startOnBlankPage();
+
+        mTestServer = mActivityTestRule.getTestServer();
+
         // Register for animation notifications
-        InfoBarContainer container = sActivityTestRule.getInfoBarContainer();
+        InfoBarContainer container = mActivityTestRule.getInfoBarContainer();
         mListener = new InfoBarTestAnimationListener();
-        TestThreadUtils.runOnUiThreadBlocking(() -> container.addAnimationListener(mListener));
+        ThreadUtils.runOnUiThreadBlocking(() -> container.addAnimationListener(mListener));
     }
 
     @After
     public void tearDown() {
         // Unregister animation notifications
-        InfoBarContainer container = sActivityTestRule.getInfoBarContainer();
+        InfoBarContainer container = mActivityTestRule.getInfoBarContainer();
         if (container != null) {
-            TestThreadUtils.runOnUiThreadBlocking(() -> {
-                container.removeAnimationListener(mListener);
-                InfoBarContainer.removeInfoBarContainerForTesting(
-                        sActivityTestRule.getActivity().getActivityTab());
-            });
+            ThreadUtils.runOnUiThreadBlocking(
+                    () -> {
+                        container.removeAnimationListener(mListener);
+                        InfoBarContainer.removeInfoBarContainerForTesting(
+                                mActivityTestRule.getActivity().getActivityTab());
+                    });
         }
     }
 
     // Adds an infobar to the currrent tab. Blocks until the infobar has been added.
     private TestListener addInfoBarToCurrentTab(final boolean expires) throws TimeoutException {
-        List<InfoBar> infoBars = sActivityTestRule.getInfoBars();
+        List<InfoBar> infoBars = mActivityTestRule.getInfoBars();
         int previousCount = infoBars.size();
 
         final TestListener testListener = new TestListener();
-        PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, () -> {
-            SimpleConfirmInfoBarBuilder.create(
-                    sActivityTestRule.getActivity().getActivityTab().getWebContents(), testListener,
-                    InfoBarIdentifier.TEST_INFOBAR, null, 0, MESSAGE_TEXT, null, null, null,
-                    expires);
-        });
+        PostTask.runOrPostTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    SimpleConfirmInfoBarBuilder.create(
+                            mActivityTestRule.getActivity().getActivityTab().getWebContents(),
+                            testListener,
+                            InfoBarIdentifier.TEST_INFOBAR,
+                            null,
+                            0,
+                            MESSAGE_TEXT,
+                            null,
+                            null,
+                            null,
+                            expires);
+                });
         mListener.addInfoBarAnimationFinished("InfoBar not added.");
 
         // Verify it's really there.
@@ -145,18 +158,19 @@ public class InfoBarContainerTest {
     }
 
     /**
-     * Dismisses the infobar by directly telling the infobar its close button was clicked.
-     * Blocks until it's been removed.
+     * Dismisses the infobar by directly telling the infobar its close button was clicked. Blocks
+     * until it's been removed.
      */
-    private void dismissInfoBar(final InfoBar infoBar, TestListener listener)
-            throws Exception {
+    private void dismissInfoBar(final InfoBar infoBar, TestListener listener) throws Exception {
         Assert.assertEquals(0, listener.dismissedCallback.getCallCount());
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                infoBar.onCloseButtonClicked();
-            }
-        });
+        InstrumentationRegistry.getInstrumentation()
+                .runOnMainSync(
+                        new Runnable() {
+                            @Override
+                            public void run() {
+                                infoBar.onCloseButtonClicked();
+                            }
+                        });
         mListener.removeInfoBarAnimationFinished("InfoBar not removed.");
         listener.dismissedCallback.waitForCallback(0, 1);
         Assert.assertEquals(0, listener.primaryButtonCallback.getCallCount());
@@ -164,9 +178,7 @@ public class InfoBarContainerTest {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
-    /**
-     * Verifies that infobars added from Java expire or not as expected.
-     */
+    /** Verifies that infobars added from Java expire or not as expected. */
     @Test
     @MediumTest
     @Feature({"Browser"})
@@ -175,10 +187,10 @@ public class InfoBarContainerTest {
         TestListener infobarListener = addInfoBarToCurrentTab(true);
 
         // Now navigate, it should expire.
-        sActivityTestRule.loadUrl(
-                sTestServer.getURL("/chrome/test/data/android/google.html"), EXTENDED_LOAD_TIMEOUT);
+        mActivityTestRule.loadUrl(
+                mTestServer.getURL("/chrome/test/data/android/google.html"), EXTENDED_LOAD_TIMEOUT);
         mListener.removeInfoBarAnimationFinished("InfoBar not removed.");
-        Assert.assertTrue(sActivityTestRule.getInfoBars().isEmpty());
+        Assert.assertTrue(mActivityTestRule.getInfoBars().isEmpty());
         Assert.assertEquals(0, infobarListener.dismissedCallback.getCallCount());
         Assert.assertEquals(0, infobarListener.primaryButtonCallback.getCallCount());
         Assert.assertEquals(0, infobarListener.secondaryButtonCallback.getCallCount());
@@ -187,11 +199,10 @@ public class InfoBarContainerTest {
         TestListener persistentListener = addInfoBarToCurrentTab(false);
 
         // Navigate, it should still be there.
-        sActivityTestRule.loadUrl(sTestServer.getURL("/chrome/test/data/android/about.html"));
-        List<InfoBar> infoBars = sActivityTestRule.getInfoBars();
+        mActivityTestRule.loadUrl(mTestServer.getURL("/chrome/test/data/android/about.html"));
+        List<InfoBar> infoBars = mActivityTestRule.getInfoBars();
         Assert.assertEquals(1, infoBars.size());
-        TextView message =
-                (TextView) infoBars.get(0).getView().findViewById(R.id.infobar_message);
+        TextView message = (TextView) infoBars.get(0).getView().findViewById(R.id.infobar_message);
         Assert.assertEquals(MESSAGE_TEXT, message.getText().toString());
 
         // Close the infobar.
@@ -200,22 +211,22 @@ public class InfoBarContainerTest {
 
     // Define function to pass parameter to Runnable to be used in testInfoBarExpirationNoPrerender.
     private Runnable setNetworkPredictionOptions(final boolean networkPredictionEnabled) {
-        return new Runnable() {
-            @Override
-            public void run() {
-                if (networkPredictionEnabled) {
-                    PreloadPagesSettingsBridge.setState(PreloadPagesState.STANDARD_PRELOADING);
-                } else {
-                    PreloadPagesSettingsBridge.setState(PreloadPagesState.NO_PRELOADING);
-                }
+        return () -> {
+            if (networkPredictionEnabled) {
+                PreloadPagesSettingsBridge.setState(
+                        ProfileManager.getLastUsedRegularProfile(),
+                        PreloadPagesState.STANDARD_PRELOADING);
+            } else {
+                PreloadPagesSettingsBridge.setState(
+                        ProfileManager.getLastUsedRegularProfile(),
+                        PreloadPagesState.NO_PRELOADING);
             }
         };
     }
 
     /**
-     * Same as testInfoBarExpiration but with prerender turned-off.
-     * The behavior when prerender is on/off is different as in the prerender case the infobars are
-     * added when we swap tabs.
+     * Same as testInfoBarExpiration but with prerender turned-off. The behavior when prerender is
+     * on/off is different as in the prerender case the infobars are added when we swap tabs.
      */
     @Test
     @MediumTest
@@ -223,19 +234,17 @@ public class InfoBarContainerTest {
     public void testInfoBarExpirationNoPrerender() throws Exception {
         // Save prediction preference.
         boolean networkPredictionEnabled =
-                TestThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
-                    @Override
-                    public Boolean call() {
-                        return PreloadPagesSettingsBridge.getState()
-                                != PreloadPagesState.NO_PRELOADING;
-                    }
-                });
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                PreloadPagesSettingsBridge.getState(
+                                                ProfileManager.getLastUsedRegularProfile())
+                                        != PreloadPagesState.NO_PRELOADING);
         try {
-            TestThreadUtils.runOnUiThreadBlocking(setNetworkPredictionOptions(false));
+            ThreadUtils.runOnUiThreadBlocking(setNetworkPredictionOptions(false));
             testInfoBarExpiration();
         } finally {
             // Make sure we restore prediction preference.
-            TestThreadUtils.runOnUiThreadBlocking(
+            ThreadUtils.runOnUiThreadBlocking(
                     setNetworkPredictionOptions(networkPredictionEnabled));
         }
     }
@@ -247,12 +256,13 @@ public class InfoBarContainerTest {
     @Test
     @MediumTest
     @Feature({"Browser"})
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // crbug.com/387250786
     public void testQuickAddOneAndDismiss() throws Exception {
         final TestListener infobarListener = addInfoBarToCurrentTab(false);
-        Assert.assertEquals(1, sActivityTestRule.getInfoBars().size());
-        final InfoBar infoBar = sActivityTestRule.getInfoBars().get(0);
+        Assert.assertEquals(1, mActivityTestRule.getInfoBars().size());
+        final InfoBar infoBar = mActivityTestRule.getInfoBars().get(0);
         dismissInfoBar(infoBar, infobarListener);
-        Assert.assertTrue(sActivityTestRule.getInfoBars().isEmpty());
+        Assert.assertTrue(mActivityTestRule.getInfoBars().isEmpty());
     }
 
     /**
@@ -263,18 +273,29 @@ public class InfoBarContainerTest {
     @MediumTest
     @Feature({"Browser"})
     public void testCloseTabOnAdd() throws Exception {
-        sActivityTestRule.loadUrl(sTestServer.getURL("/chrome/test/data/android/google.html"));
+        mActivityTestRule.loadUrl(mTestServer.getURL("/chrome/test/data/android/google.html"));
 
         final TestListener infobarListener = addInfoBarToCurrentTab(false);
-        Assert.assertEquals(1, sActivityTestRule.getInfoBars().size());
-        final InfoBar infoBar = sActivityTestRule.getInfoBars().get(0);
+        Assert.assertEquals(1, mActivityTestRule.getInfoBars().size());
+        final InfoBar infoBar = mActivityTestRule.getInfoBars().get(0);
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            Assert.assertEquals(0, infobarListener.dismissedCallback.getCallCount());
-            infoBar.onCloseButtonClicked();
-            sActivityTestRule.getActivity().getTabModelSelector().closeTab(
-                    sActivityTestRule.getActivity().getActivityTab());
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Assert.assertEquals(0, infobarListener.dismissedCallback.getCallCount());
+                    infoBar.onCloseButtonClicked();
+                    mActivityTestRule
+                            .getActivity()
+                            .getCurrentTabModel()
+                            .getTabRemover()
+                            .closeTabs(
+                                    TabClosureParams.closeTab(
+                                                    mActivityTestRule
+                                                            .getActivity()
+                                                            .getActivityTab())
+                                            .allowUndo(false)
+                                            .build(),
+                                    /* allowDialog= */ false);
+                });
 
         infobarListener.dismissedCallback.waitForCallback(0, 1);
         Assert.assertEquals(0, infobarListener.primaryButtonCallback.getCallCount());
@@ -288,24 +309,27 @@ public class InfoBarContainerTest {
     @Test
     @MediumTest
     @Feature({"Browser"})
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/40300011
     public void testCloseButton() throws Exception {
-        sActivityTestRule.loadUrl(
-                sTestServer.getURL("/chrome/test/data/android/click_listener.html"));
+        mActivityTestRule.loadUrl(
+                mTestServer.getURL("/chrome/test/data/android/click_listener.html"));
         TestListener infobarListener = addInfoBarToCurrentTab(false);
 
         // Now press the close button.
         Assert.assertEquals(0, infobarListener.dismissedCallback.getCallCount());
-        Assert.assertTrue("Close button wasn't found",
-                InfoBarUtil.clickCloseButton(sActivityTestRule.getInfoBars().get(0)));
+        Assert.assertTrue(
+                "Close button wasn't found",
+                InfoBarUtil.clickCloseButton(mActivityTestRule.getInfoBars().get(0)));
         mListener.removeInfoBarAnimationFinished("Infobar not removed.");
         infobarListener.dismissedCallback.waitForCallback(0, 1);
         Assert.assertEquals(0, infobarListener.primaryButtonCallback.getCallCount());
         Assert.assertEquals(0, infobarListener.secondaryButtonCallback.getCallCount());
 
         // The page should not have received the click.
-        Assert.assertTrue("The page recieved the click.",
+        Assert.assertTrue(
+                "The page recieved the click.",
                 !Boolean.parseBoolean(
-                        sActivityTestRule.runJavaScriptCodeInCurrentTab("wasClicked")));
+                        mActivityTestRule.runJavaScriptCodeInCurrentTab("wasClicked")));
     }
 
     /**
@@ -316,10 +340,11 @@ public class InfoBarContainerTest {
     @MediumTest
     @Feature({"Browser"})
     @RequiresRestart("crbug.com/1242720")
+    @DisableFeatures(ChromeFeatureList.FLOATING_SNACKBAR)
     public void testAddAndDismissSurfaceFlingerOverlays() throws Exception {
         final ViewGroup decorView =
-                (ViewGroup) sActivityTestRule.getActivity().getWindow().getDecorView();
-        final InfoBarContainer infoBarContainer = sActivityTestRule.getInfoBarContainer();
+                (ViewGroup) mActivityTestRule.getActivity().getWindow().getDecorView();
+        final InfoBarContainer infoBarContainer = mActivityTestRule.getInfoBarContainer();
         final InfoBarContainerView infoBarContainerView =
                 infoBarContainer.getContainerViewForTesting();
 
@@ -327,23 +352,27 @@ public class InfoBarContainerTest {
 
         // Detect layouts. Note this doesn't actually need to be atomic (just final).
         final AtomicInteger layoutCount = new AtomicInteger();
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                decorView.getViewTreeObserver().addOnGlobalLayoutListener(
-                        new ViewTreeObserver.OnGlobalLayoutListener() {
+        InstrumentationRegistry.getInstrumentation()
+                .runOnMainSync(
+                        new Runnable() {
                             @Override
-                            public void onGlobalLayout() {
-                                layoutCount.incrementAndGet();
+                            public void run() {
+                                decorView
+                                        .getViewTreeObserver()
+                                        .addOnGlobalLayoutListener(
+                                                new ViewTreeObserver.OnGlobalLayoutListener() {
+                                                    @Override
+                                                    public void onGlobalLayout() {
+                                                        layoutCount.incrementAndGet();
+                                                    }
+                                                });
                             }
                         });
-            }
-        });
 
         // First add an infobar.
         TestListener infobarListener = addInfoBarToCurrentTab(false);
-        Assert.assertEquals(1, sActivityTestRule.getInfoBars().size());
-        final InfoBar infoBar = sActivityTestRule.getInfoBars().get(0);
+        Assert.assertEquals(1, mActivityTestRule.getInfoBars().size());
+        final InfoBar infoBar = mActivityTestRule.getInfoBars().get(0);
 
         // A layout must occur to recalculate the transparent region.
         CriteriaHelper.pollUiThread(
@@ -353,73 +382,89 @@ public class InfoBarContainerTest {
         final Rect fullDisplayFrameMinusContainer = new Rect();
         final Rect containerDisplayFrame = new Rect();
 
-        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                decorView.getWindowVisibleDisplayFrame(fullDisplayFrame);
-                decorView.getWindowVisibleDisplayFrame(fullDisplayFrameMinusContainer);
-                fullDisplayFrameMinusContainer.bottom -= infoBarContainerView.getHeight();
-                int windowLocation[] = new int[2];
-                infoBarContainerView.getLocationInWindow(windowLocation);
-                containerDisplayFrame.set(windowLocation[0], windowLocation[1],
-                        windowLocation[0] + infoBarContainerView.getWidth(),
-                        windowLocation[1] + infoBarContainerView.getHeight());
+        InstrumentationRegistry.getInstrumentation()
+                .runOnMainSync(
+                        new Runnable() {
+                            @Override
+                            public void run() {
+                                decorView.getWindowVisibleDisplayFrame(fullDisplayFrame);
+                                decorView.getWindowVisibleDisplayFrame(
+                                        fullDisplayFrameMinusContainer);
+                                fullDisplayFrameMinusContainer.bottom -=
+                                        infoBarContainerView.getHeight();
+                                int[] windowLocation = new int[2];
+                                infoBarContainerView.getLocationInWindow(windowLocation);
+                                containerDisplayFrame.set(
+                                        windowLocation[0],
+                                        windowLocation[1],
+                                        windowLocation[0] + infoBarContainerView.getWidth(),
+                                        windowLocation[1] + infoBarContainerView.getHeight());
 
-                // The InfoBarContainer subtracts itself from the transparent region.
-                Region transparentRegion = new Region(fullDisplayFrame);
-                infoBarContainerView.gatherTransparentRegion(transparentRegion);
-                Assert.assertEquals(
-                        "Values did not match. Expected: " + transparentRegion.getBounds()
-                                + ", actual: " + fullDisplayFrameMinusContainer,
-                        transparentRegion.getBounds(), fullDisplayFrameMinusContainer);
-            }
-        });
+                                // The InfoBarContainer subtracts itself from the transparent
+                                // region.
+                                Region transparentRegion = new Region(fullDisplayFrame);
+                                infoBarContainerView.gatherTransparentRegion(transparentRegion);
+                                Assert.assertEquals(
+                                        "Values did not match. Expected: "
+                                                + transparentRegion.getBounds()
+                                                + ", actual: "
+                                                + fullDisplayFrameMinusContainer,
+                                        transparentRegion.getBounds(),
+                                        fullDisplayFrameMinusContainer);
+                            }
+                        });
 
         // Now remove the infobar.
         layoutCount.set(0);
         dismissInfoBar(infoBar, infobarListener);
 
         // A layout must occur to recalculate the transparent region.
-        CriteriaHelper.pollUiThread(() -> {
-            Criteria.checkThat(layoutCount.get(), Matchers.greaterThan(0));
-            // The InfoBarContainer should no longer be subtracted from the transparent region.
-            // We really want assertTrue(transparentRegion.contains(containerDisplayFrame)),
-            // but region doesn't have 'contains(Rect)', so we invert the test. So, the old
-            // container rect can't touch the bounding rect of the non-transparent region).
-            Region transparentRegion = new Region();
-            decorView.gatherTransparentRegion(transparentRegion);
-            Region opaqueRegion = new Region(fullDisplayFrame);
-            opaqueRegion.op(transparentRegion, Region.Op.DIFFERENCE);
-            Criteria.checkThat("Opaque region " + opaqueRegion.getBounds()
-                            + " should not intersect " + containerDisplayFrame,
-                    opaqueRegion.getBounds().intersect(containerDisplayFrame), Matchers.is(false));
-
-        });
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    Criteria.checkThat(layoutCount.get(), Matchers.greaterThan(0));
+                    // The InfoBarContainer should no longer be subtracted from the transparent
+                    // region.
+                    // We really want assertTrue(transparentRegion.contains(containerDisplayFrame)),
+                    // but region doesn't have 'contains(Rect)', so we invert the test. So, the old
+                    // container rect can't touch the bounding rect of the non-transparent region).
+                    Region transparentRegion = new Region();
+                    decorView.gatherTransparentRegion(transparentRegion);
+                    Region opaqueRegion = new Region(fullDisplayFrame);
+                    opaqueRegion.op(transparentRegion, Region.Op.DIFFERENCE);
+                    Criteria.checkThat(
+                            "Opaque region "
+                                    + opaqueRegion.getBounds()
+                                    + " should not intersect "
+                                    + containerDisplayFrame,
+                            opaqueRegion.getBounds().intersect(containerDisplayFrame),
+                            Matchers.is(false));
+                });
 
         // Additional manual test that this is working:
         // - adb shell dumpsys SurfaceFlinger
         // - Observe that Clank's overlay size changes (or disappears if URLbar is also gone).
     }
 
-    /**
-     * Tests that infobar container view hides when browser control is offset.
-     */
+    /** Tests that infobar container view hides when browser control is offset. */
     @Test
     @MediumTest
     @Feature({"Browser"})
-    @EnableFeatures({ChromeFeatureList.INFOBAR_SCROLL_OPTIMIZATION})
     public void testSyncWithBrowserControl() throws Exception {
-        final TestListener infobarListener = addInfoBarToCurrentTab(false);
-        Assert.assertEquals(1, sActivityTestRule.getInfoBars().size());
-        final InfoBar infoBar = sActivityTestRule.getInfoBars().get(0);
-        Assert.assertEquals(0, infoBar.getView().getTranslationY(), /*delta=*/0.1);
+        addInfoBarToCurrentTab(false);
+        Assert.assertEquals(1, mActivityTestRule.getInfoBars().size());
+        final InfoBar infoBar = mActivityTestRule.getInfoBars().get(0);
+        Assert.assertEquals(0, infoBar.getView().getTranslationY(), /* delta= */ 0.1);
 
-        InfoBarContainer infoBarContainer = sActivityTestRule.getInfoBarContainer();
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            infoBarContainer.getContainerViewForTesting().onControlsOffsetChanged(
-                    -100, 100, 0, 0, false);
-        });
+        InfoBarContainer infoBarContainer = mActivityTestRule.getInfoBarContainer();
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    infoBarContainer
+                            .getContainerViewForTesting()
+                            .onControlsOffsetChanged(-100, 100, false, 0, 0, false, false, false);
+                });
         Assert.assertNotEquals(
-                0, infoBarContainer.getContainerViewForTesting().getTranslationY(), /*delta=*/0.1);
+                0,
+                infoBarContainer.getContainerViewForTesting().getTranslationY(),
+                /* delta= */ 0.1);
     }
 }

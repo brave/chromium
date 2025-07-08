@@ -2,29 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "content/browser/sandbox_support_mac_impl.h"
-
 #include "base/functional/bind.h"
+#import "content/browser/sandbox_support_impl.h"
 #import "content/browser/theme_helper_mac.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 
-SandboxSupportMacImpl::SandboxSupportMacImpl() = default;
+SandboxSupportImpl::SandboxSupportImpl() = default;
 
-SandboxSupportMacImpl::~SandboxSupportMacImpl() = default;
+SandboxSupportImpl::~SandboxSupportImpl() = default;
 
-void SandboxSupportMacImpl::BindReceiver(
-    mojo::PendingReceiver<mojom::SandboxSupportMac> receiver) {
+void SandboxSupportImpl::BindReceiver(
+    mojo::PendingReceiver<mojom::SandboxSupport> receiver) {
   receivers_.Add(this, std::move(receiver));
 }
 
-void SandboxSupportMacImpl::GetSystemColors(GetSystemColorsCallback callback) {
+void SandboxSupportImpl::GetSystemColors(GetSystemColorsCallback callback) {
   auto task_runner = GetUIThreadTaskRunner({});
   task_runner->PostTaskAndReplyWithResult(
       FROM_HERE,

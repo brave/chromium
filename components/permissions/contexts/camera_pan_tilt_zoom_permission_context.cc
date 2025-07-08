@@ -4,6 +4,9 @@
 
 #include "components/permissions/contexts/camera_pan_tilt_zoom_permission_context.h"
 
+#include <memory>
+
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permission_util.h"
@@ -12,35 +15,22 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 
 namespace permissions {
-
-// TODO(crbug.com/1271543): This method is a temporary solution because of
-// inconsistency between the new permissions API that is migrated to
-// `blink::mojom::PermissionStatus` and its callsites that still use
-// `ContentSetting`.
-void CallbackWrapper(base::OnceCallback<void(ContentSetting)> callback,
-                     blink::mojom::PermissionStatus status) {
-  ContentSetting result = CONTENT_SETTING_ASK;
-  if (status == blink::mojom::PermissionStatus::GRANTED) {
-    result = CONTENT_SETTING_ALLOW;
-  } else if (status == blink::mojom::PermissionStatus::DENIED) {
-    result = CONTENT_SETTING_BLOCK;
-  }
-  std::move(callback).Run(result);
-}
 
 CameraPanTiltZoomPermissionContext::CameraPanTiltZoomPermissionContext(
     content::BrowserContext* browser_context,
     std::unique_ptr<Delegate> delegate,
     const webrtc::MediaStreamDeviceEnumerator* device_enumerator)
-    : PermissionContextBase(browser_context,
-                            ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
-                            blink::mojom::PermissionsPolicyFeature::kNotFound),
+    : ContentSettingPermissionContextBase(
+          browser_context,
+          ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+          network::mojom::PermissionsPolicyFeature::kNotFound),
       delegate_(std::move(delegate)),
       device_enumerator_(device_enumerator) {
   DCHECK(device_enumerator_);
@@ -55,36 +45,41 @@ CameraPanTiltZoomPermissionContext::~CameraPanTiltZoomPermissionContext() {
 }
 
 void CameraPanTiltZoomPermissionContext::RequestPermission(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_frame_origin,
-    bool user_gesture,
+    std::unique_ptr<PermissionRequestData> request_data,
     permissions::BrowserPermissionCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (HasAvailableCameraPtzDevices()) {
-    PermissionContextBase::RequestPermission(id, requesting_frame_origin,
-                                             user_gesture, std::move(callback));
+    ContentSettingPermissionContextBase::RequestPermission(
+        std::move(request_data), std::move(callback));
     return;
   }
 
   // If there is no camera with PTZ capabilities, let's request a "regular"
   // camera permission instead.
   content::RenderFrameHost* render_frame_host =
-      content::RenderFrameHost::FromID(id.global_render_frame_host_id());
+      content::RenderFrameHost::FromID(
+          request_data->id.global_render_frame_host_id());
 
-  if (requesting_frame_origin !=
+  if (request_data->requesting_origin !=
       render_frame_host->GetLastCommittedOrigin().GetURL()) {
-    std::move(callback).Run(CONTENT_SETTING_BLOCK);
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
     return;
   }
   render_frame_host->GetBrowserContext()
       ->GetPermissionController()
       ->RequestPermissionFromCurrentDocument(
-          blink::PermissionType::VIDEO_CAPTURE, render_frame_host, user_gesture,
-          base::BindOnce(&CallbackWrapper, std::move(callback)));
+          render_frame_host,
+          content::PermissionRequestDescription(
+              content::PermissionDescriptorUtil::
+                  CreatePermissionDescriptorForPermissionType(
+                      blink::PermissionType::VIDEO_CAPTURE),
+              request_data->user_gesture),
+          std::move(callback));
 }
 
-ContentSetting CameraPanTiltZoomPermissionContext::GetPermissionStatusInternal(
+ContentSetting
+CameraPanTiltZoomPermissionContext::GetContentSettingStatusInternal(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     const GURL& embedding_origin) const {
@@ -93,7 +88,7 @@ ContentSetting CameraPanTiltZoomPermissionContext::GetPermissionStatusInternal(
                                              embedding_origin, &result)) {
     return result;
   }
-  return PermissionContextBase::GetPermissionStatusInternal(
+  return ContentSettingPermissionContextBase::GetContentSettingStatusInternal(
       render_frame_host, requesting_origin, embedding_origin);
 }
 
@@ -101,7 +96,7 @@ void CameraPanTiltZoomPermissionContext::OnContentSettingChanged(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsTypeSet content_type_set) {
-  PermissionContextBase::OnContentSettingChanged(
+  ContentSettingPermissionContextBase::OnContentSettingChanged(
       primary_pattern, secondary_pattern, content_type_set);
 
   if (!content_type_set.Contains(ContentSettingsType::MEDIASTREAM_CAMERA) &&
@@ -125,7 +120,7 @@ void CameraPanTiltZoomPermissionContext::OnContentSettingChanged(
     return;
   }
 
-  // TODO(crbug.com/1078272): We should not need to deduce the url from the
+  // TODO(crbug.com/40129438): We should not need to deduce the url from the
   // primary pattern here. Modify the infrastructure to facilitate this
   // particular use case better.
   const GURL url(primary_pattern.ToString());

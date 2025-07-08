@@ -8,7 +8,8 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/test/repeating_test_future.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "base/values.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -23,6 +24,7 @@
 #include "components/reporting/proto/synced/metric_data.pb.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/services/app_service/public/cpp/app_types.h"
+#include "components/services/app_service/public/cpp/features.h"
 #include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/protos/app_types.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -38,8 +40,6 @@ namespace {
 
 constexpr char kTestAppId[] = "TestApp";
 constexpr char kTestAppPublisherId[] = "com.google.test";
-constexpr char kAppInstallTrackerDiskConsumptionMetric[] =
-    "Browser.ERP.AppInstallTrackerDiskConsumption";
 
 // Fake `AppPublisher` used by the test to simulate app launches.
 class FakePublisher : public ::apps::AppPublisher {
@@ -87,15 +87,15 @@ class MockAppPlatformMetricsRetriever : public AppPlatformMetricsRetriever {
               (override));
 };
 
-class AppEventsObserverTest : public ::apps::AppPlatformMetricsServiceTestBase {
+class AppEventsObserverTest : public ::apps::AppPlatformMetricsServiceTestBase,
+                              public testing::WithParamInterface<bool> {
  protected:
   void SetUp() override {
     ::apps::AppPlatformMetricsServiceTestBase::SetUp();
 
     // Disable sync so we disable UKM reporting and eliminate noise for testing
     // purposes.
-    sync_service()->SetDisableReasons(
-        {syncer::SyncService::DISABLE_REASON_ENTERPRISE_POLICY});
+    sync_service()->SetAllowedByEnterprisePolicy(false);
 
     // Set up `AppEventsObserver` with relevant test params.
     auto mock_app_platform_metrics_retriever =
@@ -110,13 +110,13 @@ class AppEventsObserverTest : public ::apps::AppPlatformMetricsServiceTestBase {
         profile(), std::move(mock_app_platform_metrics_retriever),
         &reporting_settings_);
 
+    InitAppType(::apps::AppType::kArc);
+
     // Pre-install app so it can be used by tests. Initialized after the event
     // observer to simplify testing. Scenarios that test app installs across
     // sessions are covered by browser tests.
     InstallOneApp(kTestAppId, ::apps::AppType::kArc, kTestAppPublisherId,
                   ::apps::Readiness::kReady, ::apps::InstallSource::kPlayStore);
-    histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                        1);
   }
 
   void TearDown() override {
@@ -137,18 +137,26 @@ class AppEventsObserverTest : public ::apps::AppPlatformMetricsServiceTestBase {
     app_events_observer_->SetReportingEnabled(is_app_reporting_enabled);
   }
 
+  void InitAppType(::apps::AppType app_type) {
+    ::apps::AppServiceProxyFactory::GetForProfile(profile())->OnApps(
+        std::vector<::apps::AppPtr>{}, app_type,
+        /*should_notify_initialized=*/true);
+  }
+
   test::FakeReportingSettings reporting_settings_;
   std::unique_ptr<AppEventsObserver> app_events_observer_;
 };
 
 TEST_F(AppEventsObserverTest, OnAppInstalled) {
-  SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryBrowser});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  InitAppType(::apps::AppType::kWeb);
+  SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryPWA});
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Install new app.
   static constexpr char kAppId[] = "TestNewApp";
-  InstallOneApp(kAppId, ::apps::AppType::kStandaloneBrowser,
+  InstallOneApp(kAppId, ::apps::AppType::kWeb,
                 /*publisher_id=*/"", ::apps::Readiness::kReady,
                 ::apps::InstallSource::kBrowser);
 
@@ -164,7 +172,7 @@ TEST_F(AppEventsObserverTest, OnAppInstalled) {
       result.telemetry_data().app_telemetry().app_install_data();
   EXPECT_THAT(app_install_data.app_id(), StrEq(kAppId));
   EXPECT_THAT(app_install_data.app_type(),
-              Eq(::apps::ApplicationType::APPLICATION_TYPE_STANDALONE_BROWSER));
+              Eq(::apps::ApplicationType::APPLICATION_TYPE_WEB));
   EXPECT_THAT(
       app_install_data.app_install_reason(),
       Eq(::apps::ApplicationInstallReason::APPLICATION_INSTALL_REASON_USER));
@@ -173,58 +181,61 @@ TEST_F(AppEventsObserverTest, OnAppInstalled) {
       Eq(::apps::ApplicationInstallSource::APPLICATION_INSTALL_SOURCE_BROWSER));
   EXPECT_THAT(
       app_install_data.app_install_time(),
-      Eq(::apps::ApplicationInstallTime::APPLICATION_INSTALL_TIME_INIT));
+      Eq(::apps::ApplicationInstallTime::APPLICATION_INSTALL_TIME_RUNNING));
 
   // Also verify that the app install is being tracked.
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kAppId).Times(1));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppInstalled_UnsetPolicy) {
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  InitAppType(::apps::AppType::kWeb);
+
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Install new app.
   static constexpr char kAppId[] = "TestNewApp";
-  InstallOneApp(kAppId, ::apps::AppType::kStandaloneBrowser,
+  InstallOneApp(kAppId, ::apps::AppType::kWeb,
                 /*publisher_id=*/"", ::apps::Readiness::kReady,
                 ::apps::InstallSource::kBrowser);
 
   // Verify no data is being reported and the app install is being tracked.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kAppId).Times(1));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppInstalled_DisallowedAppType) {
+  InitAppType(::apps::AppType::kWeb);
+
   // Set policy to enable reporting for a different app type than the one being
   // tested.
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryAndroidApps});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Install new app.
   static constexpr char kAppId[] = "TestNewApp";
-  InstallOneApp(kAppId, ::apps::AppType::kStandaloneBrowser,
+  InstallOneApp(kAppId, ::apps::AppType::kWeb,
                 /*publisher_id=*/"", ::apps::Readiness::kReady,
                 ::apps::InstallSource::kBrowser);
 
   // Verify no data is being reported and the app install is being tracked.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kAppId).Times(1));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppInstalledWithPublisherId) {
+  InitAppType(::apps::AppType::kWeb);
+
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryAndroidApps});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Install new app.
   static constexpr char kNewAppId[] = "TestNewApp";
@@ -253,50 +264,46 @@ TEST_F(AppEventsObserverTest, OnAppInstalledWithPublisherId) {
       Eq(::apps::ApplicationInstallSource::APPLICATION_INSTALL_SOURCE_BROWSER));
   EXPECT_THAT(
       app_install_data.app_install_time(),
-      Eq(::apps::ApplicationInstallTime::APPLICATION_INSTALL_TIME_INIT));
+      Eq(::apps::ApplicationInstallTime::APPLICATION_INSTALL_TIME_RUNNING));
 
   // Also verify the app install is being tracked.
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kNewAppId).Times(1));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppInstalled_PreinstalledApp) {
-  SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryBrowser});
   static constexpr char kAppId[] = "TestNewApp";
+  SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryBrowser});
 
-  // Directly track new app install in pref store. We cannot use the app service
-  // to simulate app install here because observers are only notified of new
-  // app installs only based on update deltas tracked by the app registry cache.
-  {
-    ScopedListPrefUpdate apps_installed_pref(profile()->GetPrefs(),
-                                             ::ash::reporting::kAppsInstalled);
-    apps_installed_pref->Append(kAppId);
-  }
+    // Directly track new app install in pref store. We cannot use the app
+    // service to simulate app install here because observers are only notified
+    // of new app installs only based on update deltas tracked by the app
+    // registry cache.
+    {
+      ScopedListPrefUpdate apps_installed_pref(
+          profile()->GetPrefs(), ::ash::reporting::kAppsInstalled);
+      apps_installed_pref->Append(kAppId);
+    }
 
   // Attempt to install the app being tracked above.
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
-  InstallOneApp(kAppId, ::apps::AppType::kStandaloneBrowser,
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
+  InstallOneApp(kAppId, ::apps::AppType::kWeb,
                 /*publisher_id=*/"", ::apps::Readiness::kReady,
                 ::apps::InstallSource::kBrowser);
 
   // Verify that no data is being reported.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kAppId).Times(1));
-
-  // Since the app is already being tracked, there will be no additional UMA
-  // reports from the tracker.
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      1);
 }
 
 TEST_F(AppEventsObserverTest, OnAppLaunched) {
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryAndroidApps});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app launch for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -324,8 +331,9 @@ TEST_F(AppEventsObserverTest, OnAppLaunched) {
 }
 
 TEST_F(AppEventsObserverTest, OnAppLaunched_UnsetPolicy) {
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app launch for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -335,15 +343,16 @@ TEST_F(AppEventsObserverTest, OnAppLaunched_UnsetPolicy) {
                 nullptr);
 
   // Verify no data is being reported.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
 }
 
 TEST_F(AppEventsObserverTest, OnAppLaunched_DisallowedAppType) {
   // Set policy to enable reporting for a different app type than the one being
   // tested.
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryGames});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app launch for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -353,16 +362,18 @@ TEST_F(AppEventsObserverTest, OnAppLaunched_DisallowedAppType) {
                 nullptr);
 
   // Verify no data is being reported.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
 }
 
 TEST_F(AppEventsObserverTest, OnAppUninstalled) {
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryAndroidApps});
-  ASSERT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
-              Contains(kTestAppId).Times(1));
+    ASSERT_THAT(
+        profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
+        Contains(kTestAppId).Times(1));
 
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app uninstall for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -390,8 +401,6 @@ TEST_F(AppEventsObserverTest, OnAppUninstalled) {
   // Also verify the app is no longer being tracked.
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kTestAppId).Times(0));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppUninstalled_UnsetPolicy) {
@@ -400,8 +409,9 @@ TEST_F(AppEventsObserverTest, OnAppUninstalled_UnsetPolicy) {
   ASSERT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kTestAppId).Times(1));
 
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app uninstall for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -410,11 +420,9 @@ TEST_F(AppEventsObserverTest, OnAppUninstalled_UnsetPolicy) {
   proxy->UninstallSilently(kTestAppId, ::apps::UninstallSource::kAppList);
 
   // Verify no data is being reported and the app is no longer being tracked.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kTestAppId).Times(0));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppUninstalled_DisallowedAppType) {
@@ -424,8 +432,9 @@ TEST_F(AppEventsObserverTest, OnAppUninstalled_DisallowedAppType) {
   ASSERT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kTestAppId).Times(1));
 
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Simulate app uninstall for pre-installed app.
   auto* const proxy = ::apps::AppServiceProxyFactory::GetForProfile(profile());
@@ -434,17 +443,16 @@ TEST_F(AppEventsObserverTest, OnAppUninstalled_DisallowedAppType) {
   proxy->UninstallSilently(kTestAppId, ::apps::UninstallSource::kAppList);
 
   // Verify no data is being reported and the app is no longer being tracked.
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
   EXPECT_THAT(profile()->GetPrefs()->GetList(::ash::reporting::kAppsInstalled),
               Contains(kTestAppId).Times(0));
-  histogram_tester().ExpectTotalCount(kAppInstallTrackerDiskConsumptionMetric,
-                                      2);
 }
 
 TEST_F(AppEventsObserverTest, OnAppPlatformMetricsDestroyed) {
   SetAllowedAppReportingTypes({::ash::reporting::kAppCategoryBrowser});
-  base::test::RepeatingTestFuture<MetricData> test_future;
-  app_events_observer_->SetOnEventObservedCallback(test_future.GetCallback());
+  base::test::TestFuture<MetricData> test_future;
+  app_events_observer_->SetOnEventObservedCallback(
+      test_future.GetRepeatingCallback());
 
   // Reset `AppPlatformMetricsService` to destroy the `AppPlatformMetrics`
   // component.
@@ -453,10 +461,10 @@ TEST_F(AppEventsObserverTest, OnAppPlatformMetricsDestroyed) {
   // Verify observer is unregistered by attempting to install an app and no
   // metric data being reported.
   static constexpr char app_id[] = "TestNewApp";
-  InstallOneApp(app_id, ::apps::AppType::kStandaloneBrowser,
+  InstallOneApp(app_id, ::apps::AppType::kWeb,
                 /*publisher_id=*/"", ::apps::Readiness::kReady,
                 ::apps::InstallSource::kBrowser);
-  ASSERT_TRUE(test_future.IsEmpty());
+  ASSERT_FALSE(test_future.IsReady());
 }
 
 }  // namespace

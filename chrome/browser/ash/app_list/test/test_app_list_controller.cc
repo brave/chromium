@@ -5,6 +5,7 @@
 #include "chrome/browser/ash/app_list/test/test_app_list_controller.h"
 
 #include "ash/public/cpp/app_list/app_list_controller_observer.h"
+#include "base/notimplemented.h"
 #include "chrome/browser/ash/app_list/app_list_client_impl.h"
 #include "chrome/browser/ash/app_list/app_list_model_updater.h"
 
@@ -49,7 +50,7 @@ void TestAppListController::DismissAppList() {
 }
 
 bool TestAppListController::IsVisible(
-    const absl::optional<int64_t>& display_id) {
+    const std::optional<int64_t>& display_id) {
   return visible_;
 }
 
@@ -58,7 +59,7 @@ bool TestAppListController::IsVisible() {
 }
 
 void TestAppListController::UpdateAppListWithNewTemporarySortOrder(
-    const absl::optional<ash::AppListSortOrder>& new_order,
+    const std::optional<ash::AppListSortOrder>& new_order,
     bool animate,
     base::OnceClosure update_position_closure) {
   if (!update_position_closure) {

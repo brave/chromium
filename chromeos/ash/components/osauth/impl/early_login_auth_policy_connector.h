@@ -6,10 +6,11 @@
 #define CHROMEOS_ASH_COMPONENTS_OSAUTH_IMPL_EARLY_LOGIN_AUTH_POLICY_CONNECTOR_H_
 
 #include <memory>
+#include <optional>
 
+#include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
 #include "chromeos/ash/components/early_prefs/early_prefs_reader.h"
-#include "chromeos/ash/components/osauth/impl/login_screen_auth_policy_connector.h"
 #include "chromeos/ash/components/osauth/public/auth_policy_connector.h"
 #include "chromeos/ash/components/osauth/public/common_types.h"
 #include "components/account_id/account_id.h"
@@ -29,11 +30,11 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_OSAUTH)
   void SetLoginScreenAuthPolicyConnector(
       AuthPolicyConnector* connector) override;
 
-  absl::optional<bool> GetRecoveryInitialState(
+  std::optional<bool> GetRecoveryInitialState(
       const AccountId& account) override;
-  absl::optional<bool> GetRecoveryDefaultState(
+  std::optional<bool> GetRecoveryDefaultState(
       const AccountId& account) override;
-  absl::optional<bool> GetRecoveryMandatoryState(
+  std::optional<bool> GetRecoveryMandatoryState(
       const AccountId& account) override;
 
   bool IsAuthFactorManaged(const AccountId& account,

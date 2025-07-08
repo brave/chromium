@@ -10,6 +10,7 @@
 
 #include "base/scoped_environment_variable_override.h"
 #include "chrome/browser/signin/signin_browser_test_base.h"
+#include "components/signin/public/identity_manager/tribool.h"
 
 namespace base {
 class CommandLine;
@@ -33,9 +34,16 @@ struct PixelTestParam {
   std::string test_suffix = "";
   bool use_dark_theme = false;
   bool use_right_to_left_language = false;
-  bool use_small_window = false;
-  bool use_fre_style = false;
-  bool use_chrome_refresh_2023_style = false;
+
+  // Predefined sizes:
+  //
+  // Small windows: both width and height.
+  static constexpr gfx::Size kSmallWindowSize{750, 590};
+  // Portrait mode: longer height than width compared to the default ratio./
+  // Height of 750px is the maximum height a pixel test can reach.
+  static constexpr gfx::Size kPortraitModeWindowSize{700, 750};
+  // Leaving `window_size` unset means using the default size of the view.
+  std::optional<gfx::Size> window_size;
 };
 
 enum class AccountManagementStatus {
@@ -43,11 +51,25 @@ enum class AccountManagementStatus {
   kNonManaged,
 };
 
-// Used to create a dummy account and sign it it as a primary account.
-AccountInfo SignInWithPrimaryAccount(
+// Returns an AccountInfo with all fields filled in, such that
+// AccountInfo::IsValid() is true.
+AccountInfo FillAccountInfo(
+    const CoreAccountInfo& core_info,
+    AccountManagementStatus management_status,
+    signin::Tribool
+        can_show_history_sync_opt_ins_without_minor_mode_restrictions);
+
+// Used to create a dummy account and sign it in, by default as a primary
+// account.
+AccountInfo SignInWithAccount(
     signin::IdentityTestEnvironment& identity_test_env,
     AccountManagementStatus management_status =
-        AccountManagementStatus::kNonManaged);
+        AccountManagementStatus::kNonManaged,
+    std::optional<signin::ConsentLevel> consent_level =
+        signin::ConsentLevel::kSignin,
+    signin::Tribool
+        can_show_history_sync_opt_ins_without_minor_mode_restrictions =
+            signin::Tribool::kTrue);
 
 // Sets up the parameters that are passed to the command line. For example,
 // to enable dark mode, we need to pass `kForceDarkMode` to the command line.
@@ -69,11 +91,8 @@ void InitPixelTestFeatures(const PixelTestParam& params,
 // - applying the configuration from `PixelTestParam` passed via the
 //   constructor, removing the need to call `SetUpPixelTestCommandLine()` and
 //   `InitPixelTestFeatures()`.
-// - providing helpers to set up the primary account, see
-//   `SignInWithPrimaryAccount()`.
-template <typename T,
-          typename =
-              std::enable_if_t<std::is_base_of_v<InProcessBrowserTest, T>>>
+// - providing helpers to set up the account, see `SignInWithAccount()`.
+template <typename T>
 class ProfilesPixelTestBaseT : public SigninBrowserTestBaseT<T> {
  public:
   template <typename... Args>
@@ -85,12 +104,19 @@ class ProfilesPixelTestBaseT : public SigninBrowserTestBaseT<T> {
 
   ~ProfilesPixelTestBaseT() override = default;
 
-  // Used to create a dummy account and sign it it as a primary account.
-  AccountInfo SignInWithPrimaryAccount(
+  // Used to create a dummy account and sign it in, by default as a primary
+  // account.
+  AccountInfo SignInWithAccount(
       AccountManagementStatus management_status =
-          AccountManagementStatus::kNonManaged) {
-    return ::SignInWithPrimaryAccount(*this->identity_test_env(),
-                                      management_status);
+          AccountManagementStatus::kNonManaged,
+      std::optional<signin::ConsentLevel> consent_level =
+          signin::ConsentLevel::kSignin,
+      signin::Tribool
+          can_show_history_sync_opt_ins_without_minor_mode_restrictions =
+              signin::Tribool::kTrue) {
+    return ::SignInWithAccount(
+        *this->identity_test_env(), management_status, consent_level,
+        can_show_history_sync_opt_ins_without_minor_mode_restrictions);
   }
 
   // SigninBrowserTestBaseT overrides:

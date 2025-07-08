@@ -7,19 +7,16 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if defined(__OBJC__)
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class ASWebAuthenticationSessionRequest;
 
@@ -39,11 +36,11 @@ class AuthSessionRequest
   static void CancelAuthSession(ASWebAuthenticationSessionRequest* request);
 
   // Canonicalizes a scheme string. Returns nullopt if it is invalid.
-  static absl::optional<std::string> CanonicalizeScheme(std::string scheme);
+  static std::optional<std::string> CanonicalizeScheme(std::string scheme);
 
   // Create a throttle for the ongoing authentication session.
-  std::unique_ptr<content::NavigationThrottle> CreateThrottle(
-      content::NavigationHandle* handle);
+  void CreateAndAddNavigationThrottle(
+      content::NavigationThrottleRegistry& registry);
 
  private:
   friend class content::WebContentsUserData<AuthSessionRequest>;
@@ -95,13 +92,15 @@ class AuthSessionRequest
   std::string scheme_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
+
+  base::WeakPtrFactory<AuthSessionRequest> weak_factory_{this};
 };
 
 #endif  // __OBJC__
 
 // If there is an authentication session in progress for the given navigation
 // handle, install a throttle.
-std::unique_ptr<content::NavigationThrottle> MaybeCreateAuthSessionThrottleFor(
-    content::NavigationHandle* handle);
+void MaybeCreateAndAddAuthSessionNavigationThrottle(
+    content::NavigationThrottleRegistry& registry);
 
 #endif  // CHROME_BROWSER_MAC_AUTH_SESSION_REQUEST_H_

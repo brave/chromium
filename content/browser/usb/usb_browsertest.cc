@@ -14,6 +14,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/usb_chooser.h"
 #include "content/public/browser/usb_delegate.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -67,6 +68,7 @@ class WebUsbTest : public ContentBrowserTest {
     // All origins can request device permissions.
     EXPECT_CALL(delegate(), CanRequestDevicePermission)
         .WillRepeatedly(Return(true));
+    EXPECT_CALL(delegate(), PageMayUseUsb).WillRepeatedly(Return(true));
 
     // Route calls to the FakeUsbDeviceManager.
     EXPECT_CALL(delegate(), GetDeviceInfo)

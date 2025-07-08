@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ash/child_accounts/parent_access_code/parent_access_service.h"
+
 #include <map>
 #include <memory>
 #include <string>
@@ -11,45 +13,21 @@
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "chrome/browser/ash/child_accounts/parent_access_code/config_source.h"
-#include "chrome/browser/ash/child_accounts/parent_access_code/parent_access_service.h"
 #include "chrome/browser/ash/child_accounts/parent_access_code/parent_access_test_utils.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
-#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/policy/core/user_policy_test_helper.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "components/account_id/account_id.h"
+#include "components/account_id/account_id_literal.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace ash {
-namespace parent_access {
-
-namespace {
-
-// Dictionary keys for ParentAccessCodeConfig policy.
-constexpr char kFutureConfigDictKey[] = "future_config";
-constexpr char kCurrentConfigDictKey[] = "current_config";
-constexpr char kOldConfigsDictKey[] = "old_configs";
-
-base::Value PolicyFromConfigs(
-    const AccessCodeConfig& future_config,
-    const AccessCodeConfig& current_config,
-    const std::vector<AccessCodeConfig>& old_configs) {
-  base::Value::Dict dict;
-  dict.Set(kFutureConfigDictKey, future_config.ToDictionary());
-  dict.Set(kCurrentConfigDictKey, current_config.ToDictionary());
-  base::Value::List old_configs_value;
-  for (const auto& config : old_configs)
-    old_configs_value.Append(config.ToDictionary());
-  dict.Set(kOldConfigsDictKey, std::move(old_configs_value));
-  return base::Value(std::move(dict));
-}
-
-}  // namespace
+namespace ash::parent_access {
 
 // Stores information about results of the access code validation.
 struct CodeValidationResults {
@@ -59,6 +37,10 @@ struct CodeValidationResults {
   // Number of attempts when access code validation failed.
   int failure_count = 0;
 };
+
+constexpr auto kRegularUserAccountId =
+    AccountId::Literal::FromUserEmailGaiaId("regular@gmail.com",
+                                            GaiaId::Literal("test-gaia"));
 
 // ParentAccessServiceObserver implementation used for tests.
 class TestParentAccessServiceObserver : public ParentAccessService::Observer {
@@ -74,7 +56,7 @@ class TestParentAccessServiceObserver : public ParentAccessService::Observer {
   ~TestParentAccessServiceObserver() override = default;
 
   void OnAccessCodeValidation(ParentCodeValidationResult result,
-                              absl::optional<AccountId> account_id) override {
+                              std::optional<AccountId> account_id) override {
     ASSERT_TRUE(account_id);
     EXPECT_EQ(account_id_, account_id.value());
     result == ParentCodeValidationResult::kValid
@@ -98,6 +80,12 @@ class ParentAccessServiceTest : public MixinBasedInProcessBrowserTest {
   ParentAccessServiceTest& operator=(const ParentAccessServiceTest&) = delete;
 
   ~ParentAccessServiceTest() override = default;
+
+  void SetUpLocalStatePrefService(PrefService* local_state) override {
+    MixinBasedInProcessBrowserTest::SetUpLocalStatePrefService(local_state);
+    user_manager::TestHelper::RegisterPersistedUser(*local_state,
+                                                    kRegularUserAccountId);
+  }
 
   void SetUpOnMainThread() override {
     ASSERT_NO_FATAL_FAILURE(GetTestAccessCodeValues(&test_values_));
@@ -150,13 +138,9 @@ class ParentAccessServiceTest : public MixinBasedInProcessBrowserTest {
   }
 
   AccessCodeValues test_values_;
-  LoggedInUserMixin logged_in_user_mixin_{&mixin_host_,
-                                          LoggedInUserMixin::LogInType::kChild,
+  LoggedInUserMixin logged_in_user_mixin_{&mixin_host_, /*test_base=*/this,
                                           embedded_test_server(),
-                                          this,
-                                          true /*should_launch_browser*/,
-                                          absl::nullopt /*account_id*/,
-                                          true /*include_initial_user*/};
+                                          LoggedInUserMixin::LogInType::kChild};
   std::unique_ptr<TestParentAccessServiceObserver> test_observer_;
 };
 
@@ -289,16 +273,13 @@ IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest, InvalidAccountId) {
 
 IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
                        ChildDeviceOwner_IsApprovalRequired) {
-  auto* const user_manager =
-      static_cast<FakeChromeUserManager*>(user_manager::UserManager::Get());
-  user_manager->SetOwnerId(logged_in_user_mixin_.GetAccountId());
+  user_manager::UserManager::Get()->SetOwnerId(
+      logged_in_user_mixin_.GetAccountId());
 
   // No configuration available - reauth does not require PAC.
   // Login screen.
   EXPECT_TRUE(
       ParentAccessService::IsApprovalRequired(SupervisedAction::kAddUser));
-  EXPECT_FALSE(
-      ParentAccessService::IsApprovalRequired(SupervisedAction::kReauth));
   // In session, because child user is logged in the test fixture.
   EXPECT_TRUE(ParentAccessService::IsApprovalRequired(
       SupervisedAction::kUnlockTimeLimits));
@@ -313,8 +294,6 @@ IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
   // Login screen.
   EXPECT_TRUE(
       ParentAccessService::IsApprovalRequired(SupervisedAction::kAddUser));
-  EXPECT_TRUE(
-      ParentAccessService::IsApprovalRequired(SupervisedAction::kReauth));
   // In session, because child user is logged in the test fixture.
   EXPECT_TRUE(ParentAccessService::IsApprovalRequired(
       SupervisedAction::kUnlockTimeLimits));
@@ -326,18 +305,12 @@ IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
 
 IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
                        RegularDeviceOwner_IsApprovalRequired) {
-  auto* const user_manager =
-      static_cast<FakeChromeUserManager*>(user_manager::UserManager::Get());
-  const AccountId regular_user = AccountId::FromUserEmail("regular@gmail.com");
-  user_manager->AddUser(regular_user);
-  user_manager->SetOwnerId(regular_user);
+  user_manager::UserManager::Get()->SetOwnerId(kRegularUserAccountId);
 
   // No configuration available - reauth does not require PAC.
   // Login screen.
   EXPECT_FALSE(
       ParentAccessService::IsApprovalRequired(SupervisedAction::kAddUser));
-  EXPECT_FALSE(
-      ParentAccessService::IsApprovalRequired(SupervisedAction::kReauth));
   // In session. Child user is logged in the test fixture.
   EXPECT_TRUE(ParentAccessService::IsApprovalRequired(
       SupervisedAction::kUnlockTimeLimits));
@@ -352,8 +325,6 @@ IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
   // Login screen.
   EXPECT_FALSE(
       ParentAccessService::IsApprovalRequired(SupervisedAction::kAddUser));
-  EXPECT_FALSE(
-      ParentAccessService::IsApprovalRequired(SupervisedAction::kReauth));
   // In session, because child user is logged in the test fixture.
   EXPECT_TRUE(ParentAccessService::IsApprovalRequired(
       SupervisedAction::kUnlockTimeLimits));
@@ -363,5 +334,4 @@ IN_PROC_BROWSER_TEST_F(ParentAccessServiceTest,
       SupervisedAction::kUpdateTimezone));
 }
 
-}  // namespace parent_access
-}  // namespace ash
+}  // namespace ash::parent_access

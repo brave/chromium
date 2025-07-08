@@ -38,15 +38,17 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
       const device::CompositorDelegateProvider& compositor_delegate_provider,
       device::SurfaceReadyCallback ready_callback,
       device::SurfaceTouchCallback touch_callback,
-      device::SurfaceDestroyedCallback destroyed_callback) override;
+      device::JavaShutdownCallback destroyed_callback) override;
   void RequestVrSession(
       int render_process_id,
       int render_frame_id,
       const device::CompositorDelegateProvider& compositor_delegate_provider,
       device::SurfaceReadyCallback ready_callback,
       device::SurfaceTouchCallback touch_callback,
-      device::SurfaceDestroyedCallback destroyed_callback) override;
+      device::JavaShutdownCallback destroyed_callback,
+      device::XrSessionButtonTouchedCallback button_touched_callback) override;
   void EndSession() override;
+  void EndSession(device::JavaShutdownCallback destroyed_callback) override;
   bool EnsureARCoreLoaded() override;
   base::android::ScopedJavaLocalRef<jobject> GetCurrentActivityContext()
       override;
@@ -54,30 +56,30 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
       int render_process_id,
       int render_frame_id) override;
 
-  void RequestXrSession(ActivityReadyCallback ready_callback);
+  void RequestXrSession(int render_process_id,
+                        int render_frame_id,
+                        bool needs_separate_activity,
+                        ActivityReadyCallback ready_callback,
+                        device::JavaShutdownCallback shutdown_callback);
 
   // Methods called from the Java side.
   void OnDrawingSurfaceReady(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& surface,
       const base::android::JavaParamRef<jobject>& root_window,
       int rotation,
       int width,
       int height);
   void OnDrawingSurfaceTouch(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
                              bool primary,
                              bool touching,
                              int32_t pointer_id,
                              float x,
                              float y);
-  void OnDrawingSurfaceDestroyed(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  void OnJavaShutdown(JNIEnv* env);
+  void OnXrSessionButtonTouched(JNIEnv* env);
   void OnXrHostActivityReady(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& activity);
 
  private:
@@ -85,7 +87,8 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
 
   device::SurfaceReadyCallback surface_ready_callback_;
   device::SurfaceTouchCallback surface_touch_callback_;
-  device::SurfaceDestroyedCallback surface_destroyed_callback_;
+  device::JavaShutdownCallback java_shutdown_callback_;
+  device::XrSessionButtonTouchedCallback xr_button_touched_callback_;
   ActivityReadyCallback activity_ready_callback_;
 };
 

@@ -8,14 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/mac/scoped_nsautorelease_pool.h"
+#include "base/apple/scoped_nsautorelease_pool.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "content/browser/compositor/test/test_image_transport_factory.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/frame_token_message_queue.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
+#include "content/browser/renderer_host/render_widget_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/visible_time_request_trigger.h"
 #include "content/browser/site_instance_group.h"
@@ -23,6 +23,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_image_transport_factory.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -30,10 +31,6 @@
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/display/screen.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using content::RenderWidgetHostViewMac;
 
@@ -92,9 +89,8 @@ class RenderWidgetHostDelegateEditCommandCounter
   unsigned int edit_command_message_count_ = 0;
 
  private:
-  void ExecuteEditCommand(
-      const std::string& command,
-      const absl::optional<std::u16string>& value) override {
+  void ExecuteEditCommand(const std::string& command,
+                          const std::optional<std::u16string>& value) override {
     edit_command_message_count_++;
   }
   void Undo() override {}
@@ -153,20 +149,18 @@ TEST_F(RenderWidgetHostViewMacEditCommandHelperWithTaskEnvTest,
       process_host_factory.CreateRenderProcessHost(&browser_context, nullptr);
   scoped_refptr<SiteInstanceGroup> site_instance_group = base::WrapRefCounted(
       SiteInstanceGroup::CreateForTesting(&browser_context, process_host));
-  // Populates |g_supported_scale_factors|.
-  std::vector<ui::ResourceScaleFactor> supported_factors;
-  supported_factors.push_back(ui::k100Percent);
   ui::test::ScopedSetSupportedResourceScaleFactors scoped_supported(
-      supported_factors);
+      {ui::k100Percent});
 
   @autoreleasepool {
     int32_t routing_id = process_host->GetNextRoutingID();
     std::unique_ptr<RenderWidgetHostImpl> render_widget =
-        RenderWidgetHostImpl::Create(
+        RenderWidgetHostFactory::Create(
             /*frame_tree=*/nullptr, &delegate,
+            RenderWidgetHostImpl::DefaultFrameSinkId(*site_instance_group,
+                                                     routing_id),
             site_instance_group->GetSafeRef(), routing_id,
-            /*hidden=*/false, /*renderer_initiated_creation=*/false,
-            std::make_unique<FrameTokenMessageQueue>());
+            /*hidden=*/false, /*renderer_initiated_creation=*/false);
 
     ui::WindowResizeHelperMac::Get()->Init(
         base::SingleThreadTaskRunner::GetCurrentDefault());
@@ -177,8 +171,8 @@ TEST_F(RenderWidgetHostViewMacEditCommandHelperWithTaskEnvTest,
     // ARC conversion note: the previous version of this code held this view
     // strongly throughout with a scoped_nsobject. The precise lifetime
     // attribute replicates that but it's not clear if it's necessary.
-    [[maybe_unused]] RenderWidgetHostViewCocoa* __attribute__((
-        objc_precise_lifetime)) rwhv_cocoa = rwhv_mac->GetInProcessNSView();
+    [[maybe_unused]] NS_VALID_UNTIL_END_OF_SCOPE RenderWidgetHostViewCocoa*
+        rwhv_cocoa = rwhv_mac->GetInProcessNSView();
 
     NSArray* edit_command_strings = RenderWidgetHostViewMacEditCommandHelper::
         GetEditSelectorNamesForTesting();

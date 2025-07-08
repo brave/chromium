@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#import "base/memory/raw_ptr.h"
 #include "components/signin/public/base/signin_client.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -38,6 +39,7 @@ class IOSWebViewSigninClient : public SigninClient {
   PrefService* GetPrefs() override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   network::mojom::CookieManager* GetCookieManager() override;
+  network::mojom::NetworkContext* GetNetworkContext() override;
   void DoFinalInit() override;
   bool AreSigninCookiesAllowed() override;
   bool AreSigninCookiesDeletedOnExit() override;
@@ -55,12 +57,14 @@ class IOSWebViewSigninClient : public SigninClient {
       GaiaAuthConsumer* consumer,
       gaia::GaiaSource source) override;
   version_info::Channel GetClientChannel() override;
+  void OnPrimaryAccountChanged(
+      signin::PrimaryAccountChangeEvent event_details) override;
 
  private:
   // Helper to delay callbacks until connection becomes online again.
   std::unique_ptr<WaitForNetworkCallbackHelperIOS> network_callback_helper_;
   // The PrefService associated with this service.
-  PrefService* pref_service_;
+  raw_ptr<PrefService> pref_service_;
   // The browser_state_ associated with this service.
   ios_web_view::WebViewBrowserState* browser_state_;
 };

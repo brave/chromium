@@ -8,12 +8,16 @@
 #include "base/android/jni_string.h"
 #include "base/android/unguessable_token_android.h"
 #include "base/unguessable_token.h"
-#include "components/embedder_support/android/context_menu_jni_headers/ContextMenuParams_jni.h"
 #include "content/public/browser/android/additional_navigation_params_android.h"
 #include "content/public/browser/android/impression_android.h"
 #include "content/public/browser/context_menu_params.h"
 #include "third_party/blink/public/common/context_menu_data/context_menu_data.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom-shared.h"
+#include "ui/menus/android/menu_model_bridge.h"
 #include "url/android/gurl_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/embedder_support/android/context_menu_jni_headers/ContextMenuParams_jni.h"
 
 using base::android::ConvertUTF16ToJavaString;
 
@@ -21,8 +25,9 @@ namespace context_menu {
 
 base::android::ScopedJavaGlobalRef<jobject> BuildJavaContextMenuParams(
     const content::ContextMenuParams& params,
+    ui::MenuModel* menu_model,
     int initiator_process_id,
-    absl::optional<base::UnguessableToken> initiator_frame_token) {
+    std::optional<base::UnguessableToken> initiator_frame_token) {
   GURL sanitizedReferrer =
       (params.frame_url.is_empty() ? params.page_url : params.frame_url)
           .GetAsReferrer();
@@ -32,11 +37,9 @@ base::android::ScopedJavaGlobalRef<jobject> BuildJavaContextMenuParams(
   std::u16string title_text =
       (params.title_text.empty() ? params.alt_text : params.title_text);
 
-  absl::optional<base::UnguessableToken> attribution_src_token;
-  absl::optional<network::AttributionReportingRuntimeFeatures> runtime_features;
+  std::optional<base::UnguessableToken> attribution_src_token;
   if (initiator_frame_token && params.impression) {
     attribution_src_token = params.impression->attribution_src_token.value();
-    runtime_features = params.impression->runtime_features;
   }
 
   base::android::ScopedJavaLocalRef<jobject> additional_navigation_params;
@@ -44,12 +47,18 @@ base::android::ScopedJavaGlobalRef<jobject> BuildJavaContextMenuParams(
     additional_navigation_params =
         content::CreateJavaAdditionalNavigationParams(
             env, initiator_frame_token.value(), initiator_process_id,
-            attribution_src_token, runtime_features);
+            attribution_src_token);
+  }
+
+  ui::MenuModelBridge* menu_model_bridge = new ui::MenuModelBridge();
+  if (menu_model != nullptr) {
+    menu_model_bridge->AddExtensionItems(menu_model);
   }
 
   return base::android::ScopedJavaGlobalRef<jobject>(
       Java_ContextMenuParams_create(
           env, reinterpret_cast<intptr_t>(&params),
+          menu_model_bridge->GetJavaObject(),
           static_cast<int>(params.media_type),
           url::GURLAndroid::FromNativeGURL(env, params.page_url),
           url::GURLAndroid::FromNativeGURL(env, params.link_url),
@@ -59,7 +68,10 @@ base::android::ScopedJavaGlobalRef<jobject> BuildJavaContextMenuParams(
           ConvertUTF16ToJavaString(env, title_text),
           url::GURLAndroid::FromNativeGURL(env, sanitizedReferrer),
           static_cast<int>(params.referrer_policy), can_save, params.x,
-          params.y, params.source_type, params.opened_from_highlight,
+          params.y, static_cast<int>(params.source_type),
+          params.annotation_type ==
+              blink::mojom::AnnotationType::kSharedHighlight,
+          params.opened_from_interest_for, params.interest_for_node_id,
           additional_navigation_params));
 }
 

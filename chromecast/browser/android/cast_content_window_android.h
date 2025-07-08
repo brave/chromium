@@ -33,8 +33,6 @@ class CastContentWindowAndroid : public CastContentWindow,
   void RevokeScreenAccess() override;
   void EnableTouchInput(bool enabled) override;
   void RequestVisibility(VisibilityPriority visibility_priority) override;
-  void SetActivityContext(base::Value activity_context) override;
-  void SetHostContext(base::Value host_context) override;
 
   // content::WebContentsObserver implementation
   void MediaStartedPlaying(
@@ -46,10 +44,8 @@ class CastContentWindowAndroid : public CastContentWindow,
       content::WebContentsObserver::MediaStoppedReason reason) override;
 
   // Called through JNI.
-  void OnActivityStopped(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& jcaller);
+  void OnActivityStopped(JNIEnv* env);
   void OnVisibilityChange(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& jcaller,
                           int visibility_type);
 
  private:

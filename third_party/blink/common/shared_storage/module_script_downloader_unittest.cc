@@ -4,6 +4,7 @@
 
 #include "third_party/blink/public/common/shared_storage/module_script_downloader.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,7 +19,6 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -37,8 +37,8 @@ const char kJsonMimeType[] = "application/json";
 
 void AddResponse(network::TestURLLoaderFactory* url_loader_factory,
                  const GURL& url,
-                 absl::optional<std::string> mime_type,
-                 absl::optional<std::string> charset,
+                 std::optional<std::string> mime_type,
+                 std::optional<std::string> charset,
                  const std::string content,
                  net::HttpStatusCode http_status = net::HTTP_OK,
                  network::TestURLLoaderFactory::Redirects redirects =
@@ -72,7 +72,7 @@ class ModuleScriptDownloaderTest : public testing::Test {
   ModuleScriptDownloaderTest() = default;
   ~ModuleScriptDownloaderTest() override = default;
 
-  std::unique_ptr<std::string> RunRequest() {
+  std::optional<std::string> RunRequest() {
     DCHECK(!run_loop_);
 
     ModuleScriptDownloader downloader(
@@ -85,16 +85,21 @@ class ModuleScriptDownloaderTest : public testing::Test {
     run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
     run_loop_.reset();
-    return std::move(body_);
+    auto body = std::move(body_);
+    body_ = std::nullopt;  // a moved from optional is still engaged.
+    return body;
   }
 
  protected:
-  void DownloadCompleteCallback(std::unique_ptr<std::string> body,
-                                std::string error) {
+  void DownloadCompleteCallback(
+      std::optional<std::string> body,
+      std::string error,
+      network::mojom::URLResponseHeadPtr response_head) {
     DCHECK(!body_);
     DCHECK(run_loop_);
     body_ = std::move(body);
     error_ = std::move(error);
+    response_head_ = std::move(response_head);
     EXPECT_EQ(error_.empty(), !!body_);
     run_loop_->Quit();
   }
@@ -104,8 +109,9 @@ class ModuleScriptDownloaderTest : public testing::Test {
   const GURL url_ = GURL("https://url.test/script.js");
 
   std::unique_ptr<base::RunLoop> run_loop_;
-  std::unique_ptr<std::string> body_;
+  std::optional<std::string> body_;
   std::string error_;
+  network::mojom::URLResponseHeadPtr response_head_;
 
   network::TestURLLoaderFactory url_loader_factory_;
 };
@@ -113,12 +119,13 @@ class ModuleScriptDownloaderTest : public testing::Test {
 TEST_F(ModuleScriptDownloaderTest, NetworkError) {
   network::URLLoaderCompletionStatus status;
   status.error_code = net::ERR_FAILED;
-  url_loader_factory_.AddResponse(url_, nullptr /* head */, kAsciiResponseBody,
+  url_loader_factory_.AddResponse(url_, /*head=*/nullptr, kAsciiResponseBody,
                                   status);
   EXPECT_FALSE(RunRequest());
   EXPECT_EQ(
       "Failed to load https://url.test/script.js error = net::ERR_FAILED.",
       error_);
+  EXPECT_FALSE(response_head_);
 }
 
 // HTTP 404 responses are treated as failures.
@@ -131,6 +138,8 @@ TEST_F(ModuleScriptDownloaderTest, HttpError) {
   EXPECT_EQ(
       "Failed to load https://url.test/script.js HTTP status = 404 Not Found.",
       error_);
+  EXPECT_TRUE(response_head_);
+  EXPECT_EQ(response_head_->mime_type, kJavascriptMimeType);
 }
 
 // Redirect responses are treated as failures.
@@ -149,12 +158,13 @@ TEST_F(ModuleScriptDownloaderTest, Redirect) {
               kAsciiResponseBody, net::HTTP_OK, std::move(redirects));
   EXPECT_FALSE(RunRequest());
   EXPECT_EQ("Unexpected redirect on https://url.test/script.js.", error_);
+  EXPECT_FALSE(response_head_);
 }
 
 TEST_F(ModuleScriptDownloaderTest, Success) {
   AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, kUtf8Charset,
               kAsciiResponseBody);
-  std::unique_ptr<std::string> body = RunRequest();
+  std::optional<std::string> body = RunRequest();
   ASSERT_TRUE(body);
   EXPECT_EQ(kAsciiResponseBody, *body);
 }
@@ -171,7 +181,7 @@ TEST_F(ModuleScriptDownloaderTest, UnexpectedMimeType) {
       error_);
 
   // Javascript request, no response type.
-  AddResponse(&url_loader_factory_, url_, absl::nullopt, kUtf8Charset,
+  AddResponse(&url_loader_factory_, url_, std::nullopt, kUtf8Charset,
               kAsciiResponseBody);
   EXPECT_FALSE(RunRequest());
   EXPECT_EQ(
@@ -224,7 +234,7 @@ TEST_F(ModuleScriptDownloaderTest, JavscriptMimeTypeVariants) {
   for (const char* javascript_type : kJavascriptMimeTypes) {
     AddResponse(&url_loader_factory_, url_, javascript_type, kUtf8Charset,
                 kAsciiResponseBody);
-    std::unique_ptr<std::string> body = RunRequest();
+    std::optional<std::string> body = RunRequest();
     ASSERT_TRUE(body);
     EXPECT_EQ(kAsciiResponseBody, *body);
   }
@@ -234,7 +244,7 @@ TEST_F(ModuleScriptDownloaderTest, Charset) {
   // ASCII charset should restrict response bodies to ASCII characters.
   AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, kAsciiCharset,
               kAsciiResponseBody);
-  std::unique_ptr<std::string> body = RunRequest();
+  std::optional<std::string> body = RunRequest();
   ASSERT_TRUE(body);
   EXPECT_EQ(kAsciiResponseBody, *body);
   AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, kAsciiCharset,
@@ -269,17 +279,17 @@ TEST_F(ModuleScriptDownloaderTest, Charset) {
       error_);
 
   // Null charset should act like UTF-8.
-  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, absl::nullopt,
+  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, std::nullopt,
               kAsciiResponseBody);
   body = RunRequest();
   ASSERT_TRUE(body);
   EXPECT_EQ(kAsciiResponseBody, *body);
-  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, absl::nullopt,
+  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, std::nullopt,
               kUtf8ResponseBody);
   body = RunRequest();
   ASSERT_TRUE(body);
   EXPECT_EQ(kUtf8ResponseBody, *body);
-  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, absl::nullopt,
+  AddResponse(&url_loader_factory_, url_, kJavascriptMimeType, std::nullopt,
               kNonUtf8ResponseBody);
   EXPECT_FALSE(RunRequest());
   EXPECT_EQ(

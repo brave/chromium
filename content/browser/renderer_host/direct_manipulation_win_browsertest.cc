@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/location.h"
 #include "content/browser/renderer_host/direct_manipulation_helper_win.h"
-
 #include "content/browser/renderer_host/direct_manipulation_test_helper_win.h"
 #include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
@@ -46,28 +46,51 @@ class DirectManipulationBrowserTestBase : public ContentBrowserTest {
   }
 
   void SetDirectManipulationInteraction(
-      DIRECTMANIPULATION_INTERACTION_TYPE type) {
+      DIRECTMANIPULATION_INTERACTION_TYPE type,
+      const base::Location& location = base::Location::Current()) {
+    SCOPED_TRACE(location.ToString());
     LegacyRenderWidgetHostHWND* lrwhh = GetLegacyRenderWidgetHostHWND();
-
+    ASSERT_TRUE(lrwhh);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_->event_handler_);
     lrwhh->direct_manipulation_helper_->event_handler_->OnInteraction(nullptr,
                                                                       type);
   }
 
-  bool HasAnimationObserver(LegacyRenderWidgetHostHWND* lrwhh) {
-    return lrwhh->direct_manipulation_helper_->compositor_
-        ->HasAnimationObserver(lrwhh->direct_manipulation_helper_.get());
+  void ExpectAnimationObserver(
+      bool expect_observer,
+      const base::Location& location = base::Location::Current()) {
+    SCOPED_TRACE(location.ToString());
+    LegacyRenderWidgetHostHWND* lrwhh = GetLegacyRenderWidgetHostHWND();
+    ASSERT_TRUE(lrwhh);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_->compositor());
+    EXPECT_EQ(
+        lrwhh->direct_manipulation_helper_->compositor()->HasAnimationObserver(
+            lrwhh->direct_manipulation_helper_.get()),
+        expect_observer);
   }
 
-  void StartNewSequence() {
+  void StartNewSequence(
+      const base::Location& location = base::Location::Current()) {
+    SCOPED_TRACE(location.ToString());
     LegacyRenderWidgetHostHWND* lrwhh = GetLegacyRenderWidgetHostHWND();
-
+    ASSERT_TRUE(lrwhh);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_->event_handler_);
     lrwhh->direct_manipulation_helper_->event_handler_->OnViewportStatusChanged(
         lrwhh->direct_manipulation_helper_->viewport_.Get(),
         DIRECTMANIPULATION_READY, DIRECTMANIPULATION_RUNNING);
   }
 
-  void UpdateContents(MockDirectManipulationContent* content) {
+  void UpdateContents(
+      MockDirectManipulationContent* content,
+      const base::Location& location = base::Location::Current()) {
+    SCOPED_TRACE(location.ToString());
     LegacyRenderWidgetHostHWND* lrwhh = GetLegacyRenderWidgetHostHWND();
+    ASSERT_TRUE(lrwhh);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_);
+    ASSERT_TRUE(lrwhh->direct_manipulation_helper_->event_handler_);
     lrwhh->direct_manipulation_helper_->event_handler_->OnContentUpdated(
         lrwhh->direct_manipulation_helper_->viewport_.Get(), content);
   }
@@ -88,23 +111,20 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest,
                        ObserverDuringInteraction) {
   EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
 
-  LegacyRenderWidgetHostHWND* lrwhh = GetLegacyRenderWidgetHostHWND();
-  ASSERT_TRUE(lrwhh);
-
   // The observer should not be created before it is needed.
-  EXPECT_FALSE(HasAnimationObserver(lrwhh));
+  ExpectAnimationObserver(false);
 
   // Begin direct manipulation interaction.
   SetDirectManipulationInteraction(DIRECTMANIPULATION_INTERACTION_BEGIN);
   // AnimationObserver should be added after direct manipulation interaction
   // begin.
-  EXPECT_TRUE(HasAnimationObserver(lrwhh));
+  ExpectAnimationObserver(true);
 
   // End direct manipulation interaction.
   SetDirectManipulationInteraction(DIRECTMANIPULATION_INTERACTION_END);
 
   // The animation observer should be removed.
-  EXPECT_FALSE(HasAnimationObserver(lrwhh));
+  ExpectAnimationObserver(false);
 }
 
 // EventLogger is to observe the events sent from WindowEventTarget (the root
@@ -157,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
     ASSERT_TRUE(event);
 
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(1, scroll_event->x_offset());
     EXPECT_EQ(2, scroll_event->y_offset());
@@ -171,7 +191,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
     ASSERT_TRUE(event);
 
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(1, scroll_event->x_offset());
     EXPECT_EQ(2, scroll_event->y_offset());
@@ -185,7 +205,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
 
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(1, scroll_event->x_offset());
     EXPECT_EQ(2, scroll_event->y_offset());
@@ -198,7 +218,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
 
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(0, scroll_event->x_offset());
     EXPECT_EQ(0, scroll_event->y_offset());
@@ -211,7 +231,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
 
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(0, scroll_event->x_offset());
     EXPECT_EQ(0, scroll_event->y_offset());
@@ -224,7 +244,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
 
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_SCROLL, event->type());
+    EXPECT_EQ(ui::EventType::kScroll, event->type());
     ui::ScrollEvent* scroll_event = event->AsScrollEvent();
     EXPECT_EQ(0, scroll_event->x_offset());
     EXPECT_EQ(0, scroll_event->y_offset());
@@ -236,7 +256,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     target->ApplyPinchZoomBegin();
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_GESTURE_PINCH_BEGIN, event->type());
+    EXPECT_EQ(ui::EventType::kGesturePinchBegin, event->type());
     ui::GestureEvent* gesture_event = event->AsGestureEvent();
     EXPECT_EQ(ui::GestureDeviceType::DEVICE_TOUCHPAD,
               gesture_event->details().device_type());
@@ -246,7 +266,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     target->ApplyPinchZoomScale(1.1f);
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_GESTURE_PINCH_UPDATE, event->type());
+    EXPECT_EQ(ui::EventType::kGesturePinchUpdate, event->type());
     ui::GestureEvent* gesture_event = event->AsGestureEvent();
     EXPECT_EQ(ui::GestureDeviceType::DEVICE_TOUCHPAD,
               gesture_event->details().device_type());
@@ -257,7 +277,7 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest, EventConvert) {
     target->ApplyPinchZoomEnd();
     std::unique_ptr<ui::Event> event = event_logger.ReleaseLastEvent();
     ASSERT_TRUE(event);
-    EXPECT_EQ(ui::ET_GESTURE_PINCH_END, event->type());
+    EXPECT_EQ(ui::EventType::kGesturePinchEnd, event->type());
     ui::GestureEvent* gesture_event = event->AsGestureEvent();
     EXPECT_EQ(ui::GestureDeviceType::DEVICE_TOUCHPAD,
               gesture_event->details().device_type());

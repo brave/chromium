@@ -11,6 +11,7 @@
 
 #include "base/dcheck_is_on.h"
 #include "base/debug/crash_logging.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
@@ -43,8 +44,10 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/renderer_startup_helper.h"
+#include "extensions/browser/service_worker/service_worker_keepalive.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_api.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/mojom/renderer.mojom.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-forward.h"
@@ -86,7 +89,7 @@ class ExtensionFunctionMemoryDumpProvider
     DCHECK(thread_checker_.CalledOnValidThread());
     DCHECK(function_name);
     auto it = function_map_.find(function_name);
-    DCHECK(it != function_map_.end());
+    CHECK(it != function_map_.end());
     DCHECK_GE(it->second, static_cast<uint64_t>(1));
     if (it->second == 1) {
       function_map_.erase(it);
@@ -280,7 +283,7 @@ class BrowserContextShutdownNotifierFactory
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override {
     return extensions::ExtensionsBrowserClient::Get()->GetContextOwnInstance(
-        context, /*force_guest_profile=*/true);
+        context);
   }
 };
 
@@ -420,8 +423,8 @@ ExtensionFunction::~ExtensionFunction() {
   if (!response_callback_.is_null()) {
     constexpr char kShouldCallMojoCallback[] = "Ignored did_respond()";
     std::move(response_callback_)
-        .Run(ResponseType::FAILED, base::Value::List(), kShouldCallMojoCallback,
-             nullptr);
+        .Run(ResponseType::kFailed, base::Value::List(),
+             kShouldCallMojoCallback, nullptr);
   }
 #endif  // DCHECK_IS_ON()
 }
@@ -458,14 +461,14 @@ void ExtensionFunction::RespondWithError(std::string error) {
 }
 
 bool ExtensionFunction::PreRunValidation(std::string* error) {
-  // TODO(crbug.com/625646) This is a partial fix to avoid crashes when certain
-  // extension functions run during shutdown. Browser or Notification creation
-  // for example create a ScopedKeepAlive, which hit a CHECK if the browser is
-  // shutting down. This fixes the current problem as the known issues happen
-  // through synchronous calls from Run(), but posted tasks will not be covered.
-  // A possible fix would involve refactoring ExtensionFunction: unrefcount
-  // here and use weakptrs for the tasks, then have it owned by something that
-  // will be destroyed naturally in the course of shut down.
+  // TODO(crbug.com/40475418) This is a partial fix to avoid crashes when
+  // certain extension functions run during shutdown. Browser or Notification
+  // creation for example create a ScopedKeepAlive, which hit a CHECK if the
+  // browser is shutting down. This fixes the current problem as the known
+  // issues happen through synchronous calls from Run(), but posted tasks will
+  // not be covered. A possible fix would involve refactoring ExtensionFunction:
+  // unrefcount here and use weakptrs for the tasks, then have it owned by
+  // something that will be destroyed naturally in the course of shut down.
   if (extensions::ExtensionsBrowserClient::Get()->IsShuttingDown()) {
     *error = "The browser is shutting down.";
     return false;
@@ -535,6 +538,10 @@ bool ExtensionFunction::user_gesture() const {
   return user_gesture_ || UserGestureForTests::GetInstance()->HaveGesture();
 }
 
+void ExtensionFunction::ResetServiceWorkerKeepalive() {
+  service_worker_keepalive_.reset();
+}
+
 void ExtensionFunction::SetBrowserContextForTesting(
     content::BrowserContext* context) {
   browser_context_for_testing_ = context;
@@ -602,6 +609,22 @@ bool ExtensionFunction::ShouldKeepWorkerAliveIndefinitely() {
   return false;
 }
 
+const base::Value::List& ExtensionFunction::GetOriginalArgs() const {
+  CHECK(base::FeatureList::IsEnabled(
+      extensions_features::kAvoidCloneArgsOnExtensionFunctionDispatch));
+
+  if (original_args_.has_value()) {
+    // Return `original_args_`, which were copied from `args_` on the first call
+    // to GetMutableArgs().
+    return *original_args_;
+  }
+
+  // Return `args_`, which haven't been modified since they were set by
+  // SetArgs(), since GetMutableArgs() was never called.
+  DCHECK(args_.has_value());
+  return *args_;
+}
+
 void ExtensionFunction::OnResponseAck() {
   // Derived classes must override this if they require and implement an
   // ACK from the renderer.
@@ -621,7 +644,7 @@ ExtensionFunction::ResponseValue ExtensionFunction::Error(std::string error) {
   return CreateErrorResponseValue(std::move(error));
 }
 
-ExtensionFunction::ResponseValue ExtensionFunction::ErrorWithArguments(
+ExtensionFunction::ResponseValue ExtensionFunction::ErrorWithArgumentsDoNotUse(
     base::Value::List args,
     const std::string& error) {
   return CreateErrorWithArgumentsResponse(std::move(args), error);
@@ -669,7 +692,7 @@ bool ExtensionFunction::HasOptionalArgument(size_t index) {
 
 void ExtensionFunction::WriteToConsole(blink::mojom::ConsoleMessageLevel level,
                                        const std::string& message) {
-  // TODO(crbug.com/1096166): Service Worker-based extensions don't have a
+  // TODO(crbug.com/40700591): Service Worker-based extensions don't have a
   // RenderFrameHost.
   if (!render_frame_host_) {
     return;
@@ -679,7 +702,7 @@ void ExtensionFunction::WriteToConsole(blink::mojom::ConsoleMessageLevel level,
 
 void ExtensionFunction::ReportInspectorIssue(
     blink::mojom::InspectorIssueInfoPtr info) {
-  // TODO(crbug.com/1096166): Service Worker-based extensions don't have a
+  // TODO(crbug.com/40700591): Service Worker-based extensions don't have a
   // RenderFrameHost.
   if (!render_frame_host_) {
     return;
@@ -693,14 +716,27 @@ void ExtensionFunction::SetTransferredBlobs(
   transferred_blobs_ = std::move(blobs);
 }
 
+base::Value::List& ExtensionFunction::GetMutableArgs() {
+  DCHECK(args_);
+  if (!original_args_.has_value() &&
+      base::FeatureList::IsEnabled(
+          extensions_features::kAvoidCloneArgsOnExtensionFunctionDispatch)) {
+    // Preserve original args before allowing modification of `args_`. Not
+    // needed when `kAvoidCloneArgsOnExtensionFunctionDispatch` is disabled
+    // since GetOriginalArgs() is disallowed in that configuration.
+    original_args_ = args_->Clone();
+  }
+  return *args_;
+}
+
 void ExtensionFunction::SendResponseImpl(bool success) {
   DCHECK(!response_callback_.is_null());
-  DCHECK(!did_respond_) << name_;
-  did_respond_ = true;
+  DCHECK(!did_respond()) << name_;
 
-  ResponseType response = success ? SUCCEEDED : FAILED;
+  ResponseType response =
+      success ? ResponseType::kSucceeded : ResponseType::kFailed;
   if (bad_message_) {
-    response = BAD_MESSAGE;
+    response = ResponseType::kBadMessage;
     LOG(ERROR) << "Bad extension message " << name_;
   }
   response_type_ = std::make_unique<ResponseType>(response);

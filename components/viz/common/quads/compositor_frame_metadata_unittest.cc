@@ -13,7 +13,6 @@
 #include "components/viz/common/surfaces/surface_range.h"
 #include "components/viz/common/viz_common_export.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/delegated_ink_metadata.h"
 #include "ui/gfx/display_color_spaces.h"
@@ -33,7 +32,6 @@ bool AreBeginFrameAcksEqual(const BeginFrameAck& a, const BeginFrameAck& b) {
 bool AreLatencyInfosEqual(const ui::LatencyInfo& a, const ui::LatencyInfo& b) {
   return a.began() == b.began() && a.terminated() == b.terminated() &&
          a.coalesced() == b.coalesced() && a.trace_id() == b.trace_id() &&
-         a.ukm_source_id() == b.ukm_source_id() &&
          a.gesture_scroll_id() == b.gesture_scroll_id();
 }
 
@@ -62,10 +60,10 @@ TEST(CompositorFrameMetadata, Clone) {
   metadata.scrollable_viewport_size = gfx::SizeF(89.0f, 12.3f);
   metadata.content_color_usage = gfx::ContentColorUsage::kHDR;
   metadata.may_contain_video = true;
-  metadata.is_resourceless_software_draw_with_scroll_or_animation = true;
-  metadata.is_actively_scrolling = true;
+  metadata.is_handling_interaction = true;
+  metadata.is_handling_animation = true;
   metadata.root_background_color = SkColors::kBlue;
-  metadata.latency_info.emplace_back(ui::SourceEventType::KEY_PRESS);
+  metadata.latency_info.emplace_back();
   metadata.referenced_surfaces.emplace_back(
       SurfaceId(frame_sink_id, local_id1), SurfaceId(frame_sink_id, local_id2));
   metadata.activation_dependencies.emplace_back(
@@ -77,14 +75,14 @@ TEST(CompositorFrameMetadata, Clone) {
   metadata.send_frame_token_to_embedder = true;
   metadata.min_page_scale_factor = 123.3f;
   metadata.top_controls_visible_height.emplace(0.5);
-  metadata.preferred_frame_interval.emplace(base::Milliseconds(11));
   metadata.display_transform_hint = gfx::OVERLAY_TRANSFORM_FLIP_VERTICAL;
   metadata.delegated_ink_metadata = std::make_unique<gfx::DelegatedInkMetadata>(
       gfx::PointF(88.8, 44.4), 1.f, SK_ColorRED,
       base::TimeTicks() + base::Seconds(125), gfx::RectF(1, 2, 3, 4), true);
   metadata.transition_directives.emplace_back(
-      CompositorFrameTransitionDirective::CreateSave(NavigationID::Create(), 4u,
-                                                     {}));
+      CompositorFrameTransitionDirective::CreateSave(
+          blink::ViewTransitionToken(), /*maybe_cross_frame_sink=*/false, 4u,
+          {}, {}));
 
   CompositorFrameMetadata clone = metadata.Clone();
   EXPECT_FLOAT_EQ(clone.device_scale_factor, metadata.device_scale_factor);
@@ -93,9 +91,8 @@ TEST(CompositorFrameMetadata, Clone) {
   EXPECT_EQ(clone.scrollable_viewport_size, metadata.scrollable_viewport_size);
   EXPECT_EQ(clone.content_color_usage, metadata.content_color_usage);
   EXPECT_EQ(clone.may_contain_video, metadata.may_contain_video);
-  EXPECT_EQ(clone.is_resourceless_software_draw_with_scroll_or_animation,
-            metadata.is_resourceless_software_draw_with_scroll_or_animation);
-  EXPECT_EQ(clone.is_actively_scrolling, metadata.is_actively_scrolling);
+  EXPECT_EQ(clone.is_handling_interaction, metadata.is_handling_interaction);
+  EXPECT_EQ(clone.is_handling_animation, metadata.is_handling_animation);
   EXPECT_EQ(clone.root_background_color, metadata.root_background_color);
 
   EXPECT_EQ(clone.latency_info.size(), metadata.latency_info.size());
@@ -117,9 +114,6 @@ TEST(CompositorFrameMetadata, Clone) {
             metadata.top_controls_visible_height);
   EXPECT_FLOAT_EQ(*clone.top_controls_visible_height,
                   *metadata.top_controls_visible_height);
-  EXPECT_EQ(clone.preferred_frame_interval, metadata.preferred_frame_interval);
-  EXPECT_EQ(*clone.preferred_frame_interval,
-            *metadata.preferred_frame_interval);
   EXPECT_EQ(clone.display_transform_hint, metadata.display_transform_hint);
 
   EXPECT_EQ(!!clone.delegated_ink_metadata, !!metadata.delegated_ink_metadata);

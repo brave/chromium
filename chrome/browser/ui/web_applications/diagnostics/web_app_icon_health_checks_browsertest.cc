@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,31 +9,24 @@
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/apps/app_service/app_registry_cache_waiter.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
-#include "chrome/browser/ui/web_applications/web_app_controller_browsertest.h"
+#include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/ui/web_applications/web_app_metrics.h"
+#include "chrome/browser/web_applications/commands/web_app_icon_diagnostic_command.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
-#include "chrome/browser/web_applications/test/app_registry_cache_waiter.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
-#include "chrome/browser/web_applications/web_app_id.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/webapps/common/web_app_id.h"
 #include "content/public/test/browser_test.h"
 
 namespace web_app {
 
-// TODO(https://crbug.com/1353659): Enable tests on Lacros.
-// This feature depends on
-// https://chromium-review.googlesource.com/c/chromium/src/+/3867152 landing
-// to be able to work in Lacros. Currently Lacros doesn't know when the web app
-// publisher has been initialised.
-
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
-
-class WebAppIconHealthChecksBrowserTest : public WebAppControllerBrowserTest {
+class WebAppIconHealthChecksBrowserTest : public WebAppBrowserTestBase {
  public:
   WebAppIconHealthChecksBrowserTest() {
     WebAppMetrics::DisableAutomaticIconHealthChecksForTesting();
@@ -42,7 +35,7 @@ class WebAppIconHealthChecksBrowserTest : public WebAppControllerBrowserTest {
   ~WebAppIconHealthChecksBrowserTest() override = default;
 
   void SetUpOnMainThread() override {
-    WebAppControllerBrowserTest::SetUpOnMainThread();
+    WebAppBrowserTestBase::SetUpOnMainThread();
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
@@ -55,7 +48,7 @@ class WebAppIconHealthChecksBrowserTest : public WebAppControllerBrowserTest {
   }
 
   void RunIconChecksWithMetricExpectations(
-      WebAppIconDiagnostic::Result expected_result) {
+      WebAppIconDiagnosticResult expected_result) {
     base::HistogramTester histogram_tester;
 
     base::RunLoop run_loop;
@@ -82,10 +75,11 @@ class WebAppIconHealthChecksBrowserTest : public WebAppControllerBrowserTest {
                     expected_result.has_missing_icon_file);
   }
 
-  AppId InstallWebAppAndAwaitAppService(const char* path) {
-    AppId app_id =
+  webapps::AppId InstallWebAppAndAwaitAppService(const char* path) {
+    webapps::AppId app_id =
         InstallWebAppFromPage(browser(), embedded_test_server()->GetURL(path));
-    AppReadinessWaiter(profile(), app_id, apps::Readiness::kReady).Await();
+    apps::AppReadinessWaiter(profile(), app_id, apps::Readiness::kReady)
+        .Await();
     return app_id;
   }
 };
@@ -96,7 +90,8 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, HealthyIcons) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, EmptyAppName) {
-  AppId app_id = InstallWebAppAndAwaitAppService("/web_apps/basic.html");
+  webapps::AppId app_id =
+      InstallWebAppAndAwaitAppService("/web_apps/basic.html");
 
   // Delete the app name (some users may have corrupt web app databases with
   // missing app names).
@@ -115,7 +110,8 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, EmptyAppName) {
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest,
                        MissingDownloadedIconSizes) {
-  AppId app_id = InstallWebAppAndAwaitAppService("/web_apps/basic.html");
+  webapps::AppId app_id =
+      InstallWebAppAndAwaitAppService("/web_apps/basic.html");
   CreateUpdateScope()->UpdateApp(app_id)->SetDownloadedIconSizes(
       IconPurpose::ANY, {});
   RunIconChecksWithMetricExpectations(
@@ -130,7 +126,7 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, GeneratedIcon) {
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest,
                        GeneratedIconFlagFalseNegative) {
-  AppId app_id = InstallWebAppAndAwaitAppService(
+  webapps::AppId app_id = InstallWebAppAndAwaitAppService(
       "/web_apps/get_manifest.html?no_icons.json");
   // In https://crbug.com/1317922 manifest update erroneously set
   // is_generated_icon to false.
@@ -142,7 +138,8 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest,
                        PRE_DeletedIconFiles) {
-  AppId app_id = InstallWebAppAndAwaitAppService("/web_apps/basic.html");
+  webapps::AppId app_id =
+      InstallWebAppAndAwaitAppService("/web_apps/basic.html");
   RunIconChecksWithMetricExpectations({});
 
   // Delete the icons.
@@ -160,7 +157,8 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, DeletedIconFiles) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, PRE_EmptyIconFile) {
-  AppId app_id = InstallWebAppAndAwaitAppService("/web_apps/basic.html");
+  webapps::AppId app_id =
+      InstallWebAppAndAwaitAppService("/web_apps/basic.html");
   RunIconChecksWithMetricExpectations({});
 
   // Empty the contents of one of the icon files.
@@ -186,7 +184,8 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, EmptyIconFile) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, PRE_CorruptIconFile) {
-  AppId app_id = InstallWebAppAndAwaitAppService("/web_apps/basic.html");
+  webapps::AppId app_id =
+      InstallWebAppAndAwaitAppService("/web_apps/basic.html");
   RunIconChecksWithMetricExpectations({});
 
   // Corrupt the contents of one of the icon files.
@@ -210,7 +209,5 @@ IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, PRE_CorruptIconFile) {
 IN_PROC_BROWSER_TEST_F(WebAppIconHealthChecksBrowserTest, CorruptIconFile) {
   RunIconChecksWithMetricExpectations({.has_empty_icon_bitmap = true});
 }
-
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 }  // namespace web_app

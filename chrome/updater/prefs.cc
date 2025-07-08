@@ -7,18 +7,21 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/functional/function_ref.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "chrome/updater/constants.h"
+#include "chrome/updater/lock.h"
 #include "chrome/updater/persisted_data.h"
 #include "chrome/updater/prefs_impl.h"
 #include "chrome/updater/updater_branding.h"
@@ -29,7 +32,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
 #include "components/update_client/update_client.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "persisted_data.h"
 
 namespace updater {
 
@@ -52,7 +55,7 @@ constexpr base::TimeDelta kCreatePrefsWait(base::Minutes(2));
 std::unique_ptr<PrefService> CreatePrefService(
     const base::FilePath& prefs_dir,
     scoped_refptr<PrefRegistrySimple> pref_registry,
-    const base::TimeDelta& wait_period) {
+    base::TimeDelta wait_period) {
   const auto deadline(base::TimeTicks::Now() + wait_period);
   do {
     PrefServiceFactory pref_service_factory;
@@ -78,6 +81,51 @@ std::unique_ptr<PrefService> CreatePrefService(
     base::PlatformThread::Sleep(base::Milliseconds(10));
   } while (base::TimeTicks::Now() < deadline);
   return nullptr;
+}
+
+scoped_refptr<GlobalPrefs> CreateGlobalPrefsInternal(
+    UpdaterScope scope,
+    base::FunctionRef<bool(UpdaterScope)> check_wrong_user = &WrongUser) {
+  VLOG(2) << __func__;
+  if (check_wrong_user(scope)) {
+    VLOG(0) << "Current user is incompatible with scope " << scope
+            << "; GlobalPrefs will not be created.";
+    return nullptr;
+  }
+
+  const auto deadline(base::TimeTicks::Now() + kCreatePrefsWait);
+  std::unique_ptr<ScopedLock> lock =
+      CreateScopedLock(kPrefsAccessMutex, scope, kCreatePrefsWait);
+  if (!lock) {
+    LOG(ERROR) << "Failed to acquire GlobalPrefs";
+    return nullptr;
+  }
+
+  const std::optional<base::FilePath> global_prefs_dir =
+      GetInstallDirectory(scope);
+  if (!global_prefs_dir || !base::CreateDirectory(*global_prefs_dir)) {
+    return nullptr;
+  }
+
+  auto pref_registry = base::MakeRefCounted<PrefRegistrySimple>();
+  update_client::RegisterPrefs(pref_registry.get());
+  pref_registry->RegisterBooleanPref(kPrefSwapping, false);
+  pref_registry->RegisterBooleanPref(kPrefMigratedLegacyUpdaters, false);
+  pref_registry->RegisterStringPref(kPrefActiveVersion, "0");
+  pref_registry->RegisterIntegerPref(kPrefServerStarts, 0);
+  RegisterPersistedDataPrefs(pref_registry);
+
+  std::unique_ptr<PrefService> pref_service(CreatePrefService(
+      *global_prefs_dir, pref_registry,
+      std::max(deadline - base::TimeTicks::Now(), base::Seconds(0))));
+  if (!pref_service) {
+    return nullptr;
+  }
+
+  MigrateObsoletePersistedDataPrefs(pref_service.get());
+
+  return base::MakeRefCounted<UpdaterPrefsImpl>(
+      *global_prefs_dir, std::move(lock), std::move(pref_service));
 }
 
 }  // namespace
@@ -132,55 +180,28 @@ void UpdaterPrefsImpl::SetMigratedLegacyUpdaters() {
 
 int UpdaterPrefsImpl::CountServerStarts() {
   int starts = prefs_->GetInteger(kPrefServerStarts);
-  if (starts <= kMaxServerStartsBeforeFirstReg)
+  if (starts <= kMaxServerStartsBeforeFirstReg) {
     prefs_->SetInteger(kPrefServerStarts, ++starts);
+  }
   return starts;
 }
 
 scoped_refptr<GlobalPrefs> CreateGlobalPrefs(UpdaterScope scope) {
-  VLOG(2) << __func__;
-  if (WrongUser(scope)) {
-    VLOG(0) << "Current user is incompatible with scope " << scope
-            << "; GlobalPrefs will not be created.";
-    return nullptr;
-  }
+  return CreateGlobalPrefsInternal(scope, &WrongUser);
+}
 
-  const auto deadline(base::TimeTicks::Now() + kCreatePrefsWait);
-  std::unique_ptr<ScopedLock> lock =
-      ScopedLock::Create(kPrefsAccessMutex, scope, kCreatePrefsWait);
-  if (!lock) {
-    LOG(ERROR) << "Failed to acquire GlobalPrefs";
-    return nullptr;
-  }
-
-  const absl::optional<base::FilePath> global_prefs_dir =
-      GetInstallDirectory(scope);
-  if (!global_prefs_dir || !base::CreateDirectory(*global_prefs_dir)) {
-    return nullptr;
-  }
-
-  auto pref_registry = base::MakeRefCounted<PrefRegistrySimple>();
-  update_client::RegisterPrefs(pref_registry.get());
-  pref_registry->RegisterBooleanPref(kPrefSwapping, false);
-  pref_registry->RegisterBooleanPref(kPrefMigratedLegacyUpdaters, false);
-  pref_registry->RegisterStringPref(kPrefActiveVersion, "0");
-  pref_registry->RegisterIntegerPref(kPrefServerStarts, 0);
-  RegisterPersistedDataPrefs(pref_registry);
-
-  std::unique_ptr<PrefService> pref_service(CreatePrefService(
-      *global_prefs_dir, pref_registry,
-      std::max(deadline - base::TimeTicks::Now(), base::Seconds(0))));
-  if (!pref_service) {
-    return nullptr;
-  }
-
-  return base::MakeRefCounted<UpdaterPrefsImpl>(
-      *global_prefs_dir, std::move(lock), std::move(pref_service));
+// Overrides `check_wrong_user` to always return `false` when calling
+// `CreateGlobalPrefsInternal`. This allows the test driver to allow creating
+// the global prefs even if running at high integrity, such as in the
+// `IntegrationTestUserInSystem.ElevatedInstallOfUserUpdaterAndApp` test.
+scoped_refptr<GlobalPrefs> CreateGlobalPrefsForTesting(UpdaterScope scope) {
+  return CreateGlobalPrefsInternal(
+      scope, /*check_wrong_user=*/[](UpdaterScope /*scope*/) { return false; });
 }
 
 scoped_refptr<LocalPrefs> CreateLocalPrefs(UpdaterScope scope) {
   VLOG(2) << __func__;
-  const absl::optional<base::FilePath> local_prefs_dir =
+  const std::optional<base::FilePath> local_prefs_dir =
       GetVersionedInstallDirectory(scope);
   if (!local_prefs_dir || !base::CreateDirectory(*local_prefs_dir)) {
     return nullptr;

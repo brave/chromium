@@ -4,8 +4,7 @@
 
 #include "device/gamepad/test_support/fake_winrt_wgi_environment.h"
 
-#include "base/notreached.h"
-#include "base/strings/string_piece.h"
+#include "base/notimplemented.h"
 #include "base/test/bind.h"
 #include "base/win/scoped_hstring.h"
 #include "device/gamepad/test_support/fake_igamepad_statics.h"

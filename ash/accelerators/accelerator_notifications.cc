@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "ash/accelerators/accelerator_lookup.h"
+#include "ash/accelerators/ash_accelerator_configuration.h"
+#include "ash/constants/ash_pref_names.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/public/cpp/notification_utils.h"
@@ -18,9 +21,13 @@
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/model/enterprise_domain_model.h"
 #include "ash/system/model/system_tray_model.h"
+#include "base/containers/contains.h"
+#include "base/json/values_util.h"
 #include "base/strings/string_split.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chromeos/ui/vector_icons/vector_icons.h"
-#include "ui/accessibility/accessibility_features.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 
@@ -38,6 +45,8 @@ using message_center::RichNotificationData;
 using message_center::SystemNotificationWarningLevel;
 
 namespace {
+
+using AcceleratorDetails = AcceleratorLookup::AcceleratorDetails;
 
 constexpr char kNotifierAccelerator[] = "ash.accelerator-controller";
 constexpr char kSpokenFeedbackToggleAccelNotificationId[] =
@@ -145,19 +154,14 @@ void NotifyAccessibilityFeatureDisabledByAdmin(
 void ShowAccessibilityNotification(
     int title_id,
     int message_id,
+    const std::u16string& accelerator,
     const std::string& notification_id,
     const NotificationCatalogName& catalog_name) {
-  if (::features::IsAccessibilityAcceleratorNotificationsTimeoutEnabled()) {
-    // Show a notification that times out.
-    CreateAndShowNotification(
-        notification_id, catalog_name, l10n_util::GetStringUTF16(title_id),
-        l10n_util::GetStringUTF16(message_id), kNotificationAccessibilityIcon);
-  } else {
-    // Show a notification that does not time out.
-    CreateAndShowStickyNotification(
-        notification_id, catalog_name, l10n_util::GetStringUTF16(title_id),
-        l10n_util::GetStringUTF16(message_id), kNotificationAccessibilityIcon);
-  }
+  // Show a notification that times out.
+  CreateAndShowNotification(notification_id, catalog_name,
+                            l10n_util::GetStringUTF16(title_id),
+                            l10n_util::GetStringFUTF16(message_id, accelerator),
+                            kNotificationAccessibilityIcon);
 }
 
 void RemoveNotification(const std::string& notification_id) {
@@ -179,9 +183,68 @@ const char kFullscreenMagnifierToggleAccelNotificationId[] =
 const char kHighContrastToggleAccelNotificationId[] =
     "chrome://settings/accessibility/highcontrast";
 
-void ShowDeprecatedAcceleratorNotification(const char* notification_id,
-                                           int message_id,
-                                           int new_shortcut_id) {
+// A nudge/tutorial will not be shown if it already been shown 3 times, or if 24
+// hours have not yet passed since it was last shown.
+constexpr int kNudgeMaxShownCount = 3;
+constexpr base::TimeDelta kNudgeTimeBetweenShown = base::Hours(24);
+
+// We only display notifications for active user sessions (signed-in/guest with
+// desktop ready). Also do not show notifications in signin or lock screen.
+bool IsActiveUserSession() {
+  const auto* session_controller = Shell::Get()->session_controller();
+  return !session_controller->IsUserSessionBlocked();
+}
+
+void MaybeShowDeprecatedAcceleratorNotification(const char* notification_id,
+                                                int message_id,
+                                                int new_shortcut_id,
+                                                ui::Accelerator replacement,
+                                                AcceleratorAction action_id,
+                                                const char* pref_name) {
+  const std::vector<AcceleratorDetails> available_accelerators =
+      Shell::Get()->accelerator_lookup()->GetAvailableAcceleratorsForAction(
+          action_id);
+
+  if (!base::Contains(available_accelerators, replacement,
+                      &AcceleratorDetails::accelerator)) {
+    // No current accelerators for the action or the replacement accelerator
+    // is not available.
+    return;
+  }
+
+  if (!IsActiveUserSession()) {
+    return;
+  }
+
+  CHECK(ash::Shell::HasInstance() && Shell::Get()->session_controller());
+  PrefService* prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  CHECK(prefs);
+
+  const int shown_count =
+      prefs->GetDict(prefs::kDeprecatedAcceleratorNotificationsShownCounts)
+          .FindInt(pref_name)
+          .value_or(0);
+  std::optional<base::Time> last_shown_time = base::ValueToTime(
+      prefs->GetDict(prefs::kDeprecatedAcceleratorNotificationsLastShown)
+          .Find(pref_name));
+
+  // Do not show the nudge more than three times, or if it has already been
+  // shown in the past 24 hours.
+  const base::Time now = base::Time::Now();
+  if ((shown_count >= kNudgeMaxShownCount) ||
+      (last_shown_time.has_value() &&
+       (now - last_shown_time.value()) < kNudgeTimeBetweenShown)) {
+    return;
+  }
+
+  ScopedDictPrefUpdate count_update(
+      prefs, prefs::kDeprecatedAcceleratorNotificationsShownCounts);
+  ScopedDictPrefUpdate time_update(
+      prefs, prefs::kDeprecatedAcceleratorNotificationsLastShown);
+  count_update->Set(pref_name, shown_count + 1);
+  time_update->Set(pref_name, base::TimeToValue(now));
+
   const std::u16string title =
       l10n_util::GetStringUTF16(IDS_DEPRECATED_SHORTCUT_TITLE);
   const std::u16string message =
@@ -198,9 +261,17 @@ void ShowDeprecatedAcceleratorNotification(const char* notification_id,
 }
 
 void ShowDockedMagnifierNotification() {
+  std::vector<AcceleratorLookup::AcceleratorDetails> details =
+      Shell::Get()->accelerator_lookup()->GetAvailableAcceleratorsForAction(
+          AcceleratorAction::kToggleDockedMagnifier);
+  // This dialog is only shown when docked magnification was enabled from the
+  // accelerator.
+  CHECK(!details.empty());
+  std::u16string accelerator =
+      AcceleratorLookup::GetAcceleratorDetailsText(details[0]);
   ShowAccessibilityNotification(
       IDS_DOCKED_MAGNIFIER_ACCEL_TITLE, IDS_DOCKED_MAGNIFIER_ACCEL_MSG,
-      kDockedMagnifierToggleAccelNotificationId,
+      accelerator, kDockedMagnifierToggleAccelNotificationId,
       NotificationCatalogName::kDockedMagnifierEnabled);
 }
 
@@ -215,9 +286,17 @@ void RemoveDockedMagnifierNotification() {
 }
 
 void ShowFullscreenMagnifierNotification() {
+  std::vector<AcceleratorLookup::AcceleratorDetails> details =
+      Shell::Get()->accelerator_lookup()->GetAvailableAcceleratorsForAction(
+          AcceleratorAction::kToggleFullscreenMagnifier);
+  // This dialog is only shown when fullscreen magnification was enabled from
+  // the accelerator.
+  CHECK(!details.empty());
+  std::u16string accelerator =
+      AcceleratorLookup::GetAcceleratorDetailsText(details[0]);
   ShowAccessibilityNotification(
       IDS_FULLSCREEN_MAGNIFIER_ACCEL_TITLE, IDS_FULLSCREEN_MAGNIFIER_ACCEL_MSG,
-      kFullscreenMagnifierToggleAccelNotificationId,
+      accelerator, kFullscreenMagnifierToggleAccelNotificationId,
       NotificationCatalogName::kFullScreenMagnifierEnabled);
 }
 
@@ -232,8 +311,16 @@ void RemoveFullscreenMagnifierNotification() {
 }
 
 void ShowHighContrastNotification() {
+  std::vector<AcceleratorLookup::AcceleratorDetails> details =
+      Shell::Get()->accelerator_lookup()->GetAvailableAcceleratorsForAction(
+          AcceleratorAction::kToggleHighContrast);
+  // This dialog is only shown when high conrast was enabled from the
+  // accelerator.
+  CHECK(!details.empty());
+  std::u16string accelerator =
+      AcceleratorLookup::GetAcceleratorDetailsText(details[0]);
   ShowAccessibilityNotification(IDS_HIGH_CONTRAST_ACCEL_TITLE,
-                                IDS_HIGH_CONTRAST_ACCEL_MSG,
+                                IDS_HIGH_CONTRAST_ACCEL_MSG, accelerator,
                                 kHighContrastToggleAccelNotificationId,
                                 NotificationCatalogName::kHighContrastEnabled);
 }

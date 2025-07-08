@@ -6,28 +6,18 @@
 
 #include <memory>
 
+#import "base/apple/foundation_util.h"
+#import "base/apple/scoped_objc_class_swizzler.h"
 #include "base/auto_reset.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
-#import "base/mac/foundation_util.h"
-#import "base/mac/scoped_objc_class_swizzler.h"
+#include "base/mac/mac_util.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
-#include "base/system/sys_info.h"
+#include "content/common/features.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/content_features.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-using features::kMacWebContentsOcclusion;
-
-// Experiment features.
-const base::FeatureParam<bool> kEnhancedWindowOcclusionDetection{
-    &kMacWebContentsOcclusion, "EnhancedWindowOcclusionDetection", false};
 
 namespace {
 
@@ -48,7 +38,7 @@ bool IsBrowserProcess() {
 // Returns a pointer to the shared instance that can be cleared during tests.
 + (WebContentsOcclusionCheckerMac* __strong*)sharedOcclusionChecker;
 
-- (base::mac::ScopedObjCClassSwizzler*)windowClassSwizzler;
+- (base::apple::ScopedObjCClassSwizzler*)windowClassSwizzler;
 
 @end
 
@@ -58,7 +48,7 @@ bool IsBrowserProcess() {
   BOOL _displaysAreAsleep;
   BOOL _occlusionStateUpdatesAreScheduled;
   BOOL _updatingOcclusionStates;
-  std::unique_ptr<base::mac::ScopedObjCClassSwizzler> _windowClassSwizzler;
+  std::unique_ptr<base::apple::ScopedObjCClassSwizzler> _windowClassSwizzler;
 }
 
 + (WebContentsOcclusionCheckerMac* __strong*)sharedOcclusionChecker {
@@ -69,34 +59,30 @@ bool IsBrowserProcess() {
 + (instancetype)sharedInstance {
   WebContentsOcclusionCheckerMac* __strong* sharedInstance =
       [self sharedOcclusionChecker];
-  if (*sharedInstance == nil) {
-    *sharedInstance = [[self alloc] init];
 
-    // Checking if occlusion tracking is the cause of crashes in utility
-    // processes (and how that's possible). See https://crbug.com/1276322 .
-    if (!IsBrowserProcess())
-      base::debug::DumpWithoutCrashing();
+  // It seems a utility process can trigger a call to
+  // +[WebContentsViewCocoa initialize] (from a non-main thread!), which calls
+  // out to here to create the occlusion tracker. To guard against that, and
+  // any other other potential callers, only create the tracker if we're
+  // running inside the browser process. https://crbug.com/349984532 .
+  if (*sharedInstance == nil && IsBrowserProcess()) {
+    *sharedInstance = [[self alloc] init];
   }
+
   return *sharedInstance;
 }
 
-+ (BOOL)manualOcclusionDetectionSupportedForVersion:(int32_t)major
-                                                   :(int32_t)minor {
-  if (major != 13) {
-    return YES;
++ (BOOL)manualOcclusionDetectionSupportedForPackedVersion:(int)version {
+  if (version >= 13'00'00 && version < 13'03'00) {
+    return NO;
   }
 
-  return minor >= 3;
+  return YES;
 }
 
 + (BOOL)manualOcclusionDetectionSupportedForCurrentMacOSVersion {
-  int32_t major_version;
-  int32_t minor_version;
-  int32_t bugfix_version;
-  base::SysInfo::OperatingSystemVersionNumbers(&major_version, &minor_version,
-                                               &bugfix_version);
-  return [self manualOcclusionDetectionSupportedForVersion:
-                                             major_version:minor_version];
+  return [self manualOcclusionDetectionSupportedForPackedVersion:
+                   base::mac::MacOSVersion()];
 }
 
 + (void)resetSharedInstanceForTesting {
@@ -106,7 +92,6 @@ bool IsBrowserProcess() {
 - (instancetype)init {
   self = [super init];
 
-  DCHECK(base::FeatureList::IsEnabled(kMacWebContentsOcclusion));
   DCHECK(IsBrowserProcess());
   if (!IsBrowserProcess()) {
     static auto* const crash_key = base::debug::AllocateCrashKeyString(
@@ -119,7 +104,7 @@ bool IsBrowserProcess() {
   // There's no notification for NSWindows changing their order in the window
   // list. Swizzle -orderWindow:relativeTo:, allowing the checker to initiate
   // occlusion checks on window ordering changes.
-  _windowClassSwizzler = std::make_unique<base::mac::ScopedObjCClassSwizzler>(
+  _windowClassSwizzler = std::make_unique<base::apple::ScopedObjCClassSwizzler>(
       [NSWindow class], [WebContentsOcclusionCheckerMac class],
       @selector(orderWindow:relativeTo:));
 
@@ -136,14 +121,13 @@ bool IsBrowserProcess() {
   _windowClassSwizzler.reset();
 }
 
-- (base::mac::ScopedObjCClassSwizzler*)windowClassSwizzler {
+- (base::apple::ScopedObjCClassSwizzler*)windowClassSwizzler {
   return _windowClassSwizzler.get();
 }
 
 - (BOOL)isManualOcclusionDetectionEnabled {
   return [WebContentsOcclusionCheckerMac
-             manualOcclusionDetectionSupportedForCurrentMacOSVersion] &&
-         kEnhancedWindowOcclusionDetection.Get();
+      manualOcclusionDetectionSupportedForCurrentMacOSVersion];
 }
 
 // Alternative implementation of orderWindow:relativeTo:. Replaces
@@ -196,6 +180,24 @@ bool IsBrowserProcess() {
         addObserver:self
            selector:@selector(windowDidChangePositionInWindowList:)
                name:kWindowDidChangePositionInWindowList
+             object:nil];
+
+    // orderWindow:relativeTo: was the override point that caught all window
+    // list ordering changes up until Sonoma. With Sonoma, it appears that
+    // window cycling (Cmd+`) goes directly to -[NSWindow makeKeyWindow]. Add
+    // these window main notifications to catch the changes. Unfortunately,
+    // there doesn't appear to be a way to trigger any of the the window
+    // cycling machinery, so automated testing is impossible.
+    [notificationCenter
+        addObserver:self
+           selector:@selector(windowDidChangePositionInWindowList:)
+               name:NSWindowDidBecomeMainNotification
+             object:nil];
+
+    [notificationCenter
+        addObserver:self
+           selector:@selector(windowDidChangePositionInWindowList:)
+               name:NSWindowDidResignMainNotification
              object:nil];
 
     [[[NSWorkspace sharedWorkspace] notificationCenter]
@@ -381,8 +383,14 @@ bool IsBrowserProcess() {
 - (void)performOcclusionStateUpdates {
   _occlusionStateUpdatesAreScheduled = NO;
 
-  if (content::GetContentClient()->browser()->IsShuttingDown())
+  auto* content_client = content::GetContentClient();
+  if (!content_client) {
     return;
+  }
+  auto* browser = content_client->browser();
+  if (browser && browser->IsShuttingDown()) {
+    return;
+  }
 
   DCHECK(!_updatingOcclusionStates);
 

@@ -9,7 +9,6 @@
 
 #include <map>
 #include <memory>
-#include <unordered_set>
 #include <vector>
 
 #include "base/base_export.h"
@@ -148,6 +147,11 @@ class BASE_EXPORT MemoryDumpManager {
   // When set to true, calling |RegisterMemoryDumpProvider| is a no-op.
   void set_dumper_registrations_ignored_for_testing(bool ignored) {
     dumper_registrations_ignored_for_testing_ = ignored;
+  }
+
+  bool IsInitialized() {
+    AutoLock lock(lock_);
+    return can_request_global_dumps();
   }
 
   scoped_refptr<SequencedTaskRunner> GetDumpThreadTaskRunner();

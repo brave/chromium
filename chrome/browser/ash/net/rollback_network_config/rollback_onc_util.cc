@@ -52,7 +52,6 @@ const base::Value::Dict* OncGetEap(const base::Value::Dict& network) {
     return eap;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 base::Value::Dict* OncGetEap(base::Value::Dict* network) {
@@ -82,7 +81,7 @@ std::string GetStringValue(const base::Value::Dict& network,
 }
 
 bool GetBoolValue(const base::Value::Dict& network, const std::string& key) {
-  absl::optional<bool> value = network.FindBool(key);
+  std::optional<bool> value = network.FindBool(key);
   DCHECK(value);
   return *value;
 }

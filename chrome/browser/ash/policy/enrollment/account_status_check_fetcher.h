@@ -11,12 +11,23 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 
 namespace policy {
 
 struct DMServerJobResult;
+
+// This enum is tied directly to the UMA `EnrollmentNudgePolicyFetchResult` enum
+// defined in //tools/metrics/histograms/enums.xml, and should always reflect it
+// (do not change one without changing the other). Entries should be never
+// modified or deleted. Only additions possible.
+enum class EnrollmentNudgePolicyFetchResult {
+  kUnknown = 0,
+  kNoPolicyInResponse = 1,
+  kEnrollmentRequired = 2,
+  kAllowConsumerSignIn = 3,
+  kMaxValue = kAllowConsumerSignIn
+};
 
 struct AccountStatus {
   // This enum is tied directly to a UMA enum `EnterpriseAccountStatus` defined
@@ -32,12 +43,13 @@ struct AccountStatus {
     kDasher = 5,
     kMaxValue = kDasher
   };
+
+  friend constexpr bool operator==(const AccountStatus&,
+                                   const AccountStatus&) = default;
+
   Type type = Type::kUnknown;
   bool enrollment_required = false;
 };
-
-bool operator==(const AccountStatus&, const AccountStatus&);
-bool operator!=(const AccountStatus&, const AccountStatus&);
 
 // This class handles sending request to check account to DM server,
 // waits for the response and retrieves the account status from it.
@@ -61,7 +73,7 @@ class AccountStatusCheckFetcher {
 
   // Sends request to the DM server, gets and checks the response and
   // calls the callback.
-  void Fetch(FetchCallback callback, bool fetch_entollment_nudge_policy);
+  void Fetch(FetchCallback callback, bool fetch_enrollment_nudge_policy);
 
  private:
   // Response from DM server.
@@ -73,7 +85,7 @@ class AccountStatusCheckFetcher {
   // Job that sends request to the DM server.
   std::unique_ptr<DeviceManagementService::Job> fetch_request_job_;
 
-  raw_ptr<DeviceManagementService, ExperimentalAsh> service_ = nullptr;
+  raw_ptr<DeviceManagementService, DanglingUntriaged> service_ = nullptr;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Randomly generated device id for the request to make sure request won't

@@ -18,6 +18,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/pointer/touch_ui_controller.h"
+#include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/insets.h"
@@ -25,6 +26,7 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/highlight_path_generator.h"
@@ -46,7 +48,7 @@ TabCloseButton::TabCloseButton(PressedCallback pressed_callback,
     : views::LabelButton(std::move(pressed_callback)),
       mouse_event_callback_(std::move(mouse_event_callback)) {
   SetEventTargeter(std::make_unique<views::ViewTargeter>(this));
-  SetAccessibleName(l10n_util::GetStringUTF16(IDS_ACCNAME_CLOSE));
+  GetViewAccessibility().SetName(l10n_util::GetStringUTF16(IDS_ACCNAME_CLOSE));
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 
   views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::ON);
@@ -60,6 +62,8 @@ TabCloseButton::TabCloseButton(PressedCallback pressed_callback,
   SetAnimationDuration(base::TimeDelta());
   views::InkDrop::Get(this)->GetInkDrop()->SetHoverHighlightFadeDuration(
       base::TimeDelta());
+
+  image_container_view()->DestroyLayer();
 
   // The ink drop highlight path is the same as the focus ring highlight path,
   // but needs to be explicitly mirrored for RTL.
@@ -90,8 +94,9 @@ TabStyle::TabColors TabCloseButton::GetColors() const {
 }
 
 void TabCloseButton::SetColors(TabStyle::TabColors colors) {
-  if (colors == colors_)
+  if (colors == colors_) {
     return;
+  }
   colors_ = std::move(colors);
   views::InkDrop::Get(this)->SetBaseColor(
       color_utils::GetColorWithMaxContrast(colors_.background_color));
@@ -108,8 +113,9 @@ views::View* TabCloseButton::GetTooltipHandlerForPoint(
   // Tab close button has no children, so tooltip handler should be the same
   // as the event handler. In addition, a hit test has to be performed for the
   // point (as GetTooltipHandlerForPoint() is responsible for it).
-  if (!HitTestPoint(point))
+  if (!HitTestPoint(point)) {
     return nullptr;
+  }
   return GetEventHandlerForPoint(point);
 }
 
@@ -139,7 +145,22 @@ void TabCloseButton::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-gfx::Size TabCloseButton::CalculatePreferredSize() const {
+void TabCloseButton::AddLayerToRegion(ui::Layer* new_layer,
+                                      views::LayerRegion region) {
+  image_container_view()->SetPaintToLayer();
+  image_container_view()->layer()->SetFillsBoundsOpaquely(false);
+  ink_drop_container()->SetVisible(true);
+  ink_drop_container()->AddLayerToRegion(new_layer, region);
+}
+
+void TabCloseButton::RemoveLayerFromRegions(ui::Layer* old_layer) {
+  ink_drop_container()->RemoveLayerFromRegions(old_layer);
+  ink_drop_container()->SetVisible(false);
+  image_container_view()->DestroyLayer();
+}
+
+gfx::Size TabCloseButton::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   return kButtonSize;
 }
 
@@ -147,8 +168,9 @@ views::View* TabCloseButton::TargetForRect(views::View* root,
                                            const gfx::Rect& rect) {
   CHECK_EQ(root, this);
 
-  if (!views::UsePointBasedTargeting(rect))
+  if (!views::UsePointBasedTargeting(rect)) {
     return ViewTargeterDelegate::TargetForRect(root, rect);
+  }
 
   // Ignore the padding set on the button.
   gfx::Rect contents_bounds = GetMirroredRect(GetContentsBounds());
@@ -161,10 +183,11 @@ views::View* TabCloseButton::TargetForRect(views::View* root,
   // touch happens to be occurring.  In such a case, maybe we don't want this
   // code to run?  It's possible this block should be removed, or maybe this
   // whole function deleted.  Note that in these cases, we should probably
-  // also remove the padding on the close button bounds (see Tab::Layout()),
-  // as it will be pointless.
-  if (aura::Env::GetInstance()->is_touch_down())
+  // also remove the padding on the close button bounds (see Tab::Layout()), as
+  // it will be pointless.
+  if (aura::Env::GetInstance()->is_touch_down()) {
     contents_bounds = GetLocalBounds();
+  }
 #endif
 
   return contents_bounds.Intersects(rect) ? this : parent();
@@ -189,6 +212,6 @@ void TabCloseButton::UpdateIcon() {
                                                kIconSize));
 }
 
-BEGIN_METADATA(TabCloseButton, views::LabelButton)
+BEGIN_METADATA(TabCloseButton)
 ADD_PROPERTY_METADATA(TabStyle::TabColors, Colors)
 END_METADATA

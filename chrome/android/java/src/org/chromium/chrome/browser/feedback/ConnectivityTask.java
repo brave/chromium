@@ -7,13 +7,14 @@ package org.chromium.chrome.browser.feedback;
 import android.os.SystemClock;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.net.ConnectionType;
 import org.chromium.net.NetworkChangeNotifier;
@@ -25,9 +26,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * A utility class for checking if the device is currently connected to the Internet by using
- * both available network stacks, and checking over both HTTP and HTTPS.
+ * A utility class for checking if the device is currently connected to the Internet by using both
+ * available network stacks, and checking over both HTTP and HTTPS.
  */
+@NullMarked
 public class ConnectivityTask {
     private static final String TAG = "feedback";
 
@@ -43,8 +45,7 @@ public class ConnectivityTask {
      * The key for the data describing the current connection type.
      * This string is user visible.
      */
-    @VisibleForTesting
-    static final String CONNECTION_TYPE_KEY = "Connection type";
+    @VisibleForTesting static final String CONNECTION_TYPE_KEY = "Connection type";
 
     /**
      * The key for the data describing whether Chrome was able to successfully connect to the
@@ -135,26 +136,23 @@ public class ConnectivityTask {
         }
     }
 
-    /**
-     * ConnectivityResult is the callback for when the result of a connectivity check is ready.
-     */
+    /** ConnectivityResult is the callback for when the result of a connectivity check is ready. */
     interface ConnectivityResult {
-        /**
-         * Called when the FeedbackData is ready.
-         */
+        /** Called when the FeedbackData is ready. */
         void onResult(FeedbackData feedbackData);
     }
 
-    /**
-     * FeedbackData contains the set of information that is to be included in a feedback report.
-     */
+    /** FeedbackData contains the set of information that is to be included in a feedback report. */
     static final class FeedbackData {
         private final Map<Integer, Integer> mConnections;
         private final int mTimeoutMs;
         private final long mElapsedTimeMs;
         private final int mConnectionType;
 
-        FeedbackData(Map<Integer, Integer> connections, int timeoutMs, long elapsedTimeMs,
+        FeedbackData(
+                Map<Integer, Integer> connections,
+                int timeoutMs,
+                long elapsedTimeMs,
                 int connectionType) {
             mConnections = connections;
             mTimeoutMs = timeoutMs;
@@ -193,7 +191,8 @@ public class ConnectivityTask {
         Map<String, String> toMap() {
             Map<String, String> map = new HashMap<>();
             for (Map.Entry<Integer, Integer> entry : mConnections.entrySet()) {
-                map.put(getHumanReadableType(entry.getKey()),
+                map.put(
+                        getHumanReadableType(entry.getKey()),
                         getHumanReadableResult(entry.getValue()));
             }
             map.put(CONNECTION_CHECK_ELAPSED_KEY, String.valueOf(mElapsedTimeMs));
@@ -202,9 +201,7 @@ public class ConnectivityTask {
         }
     }
 
-    /**
-     * The type of network stack and connectivity check this result is about.
-     */
+    /** The type of network stack and connectivity check this result is about. */
     @IntDef({Type.CHROME_HTTP, Type.CHROME_HTTPS, Type.SYSTEM_HTTP, Type.SYSTEM_HTTPS})
     @Retention(RetentionPolicy.SOURCE)
     public @interface Type {
@@ -252,7 +249,11 @@ public class ConnectivityTask {
         @Override
         public void onResult(int result) {
             ThreadUtils.assertOnUiThread();
-            Log.v(TAG, "Got result for " + getHumanReadableType(mType) + ": result = "
+            Log.v(
+                    TAG,
+                    "Got result for "
+                            + getHumanReadableType(mType)
+                            + ": result = "
                             + getHumanReadableResult(result));
             mResult.put(mType, result);
             if (isDone()) postCallbackResult();
@@ -260,22 +261,24 @@ public class ConnectivityTask {
 
         private void postCallbackResult() {
             if (mCallback == null) return;
-            PostTask.postTask(TaskTraits.UI_DEFAULT, new Runnable() {
-                @Override
-                public void run() {
-                    mCallback.onResult(get());
-                }
-            });
+            PostTask.postTask(
+                    TaskTraits.UI_DEFAULT,
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            mCallback.onResult(get());
+                        }
+                    });
         }
     }
 
     private final Map<Integer, Integer> mResult = new HashMap<>();
     private final int mTimeoutMs;
-    private final ConnectivityResult mCallback;
+    private final @Nullable ConnectivityResult mCallback;
     private final long mStartCheckTimeMs;
 
     @VisibleForTesting
-    ConnectivityTask(Profile profile, int timeoutMs, ConnectivityResult callback) {
+    ConnectivityTask(Profile profile, int timeoutMs, @Nullable ConnectivityResult callback) {
         mTimeoutMs = timeoutMs;
         mCallback = callback;
         mStartCheckTimeMs = SystemClock.elapsedRealtime();

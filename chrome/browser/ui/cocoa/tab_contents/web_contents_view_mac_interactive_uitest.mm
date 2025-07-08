@@ -13,17 +13,13 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
-#include "content/public/browser/native_web_keyboard_event.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #import "testing/gtest_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using WebContentsViewMacInteractiveTest = InProcessBrowserTest;
 
@@ -46,8 +42,9 @@ class TabRemovedWaiter : public TabStripModelObserver {
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override {
-    if (change.type() == TabStripModelChange::kRemoved)
+    if (change.type() == TabStripModelChange::kRemoved) {
       run_loop_.Quit();
+    }
   }
 
  private:
@@ -58,7 +55,7 @@ class TabRemovedWaiter : public TabStripModelObserver {
 
 // Integration test for a <select> popup run by the Mac-specific
 // content::PopupMenuHelper, owned by a WebContentsViewMac.
-// TODO(crbug.com/1193978): this test is flaking on the bots. Re-enable it when
+// TODO(crbug.com/40758190): this test is flaking on the bots. Re-enable it when
 // it's fixed.
 IN_PROC_BROWSER_TEST_F(WebContentsViewMacInteractiveTest,
                        DISABLED_SelectMenuLifetime) {

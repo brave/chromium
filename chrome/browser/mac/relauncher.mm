@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/mac/relauncher.h"
 
 #import <AppKit/AppKit.h>
@@ -19,12 +24,12 @@
 #include <vector>
 
 #include "base/apple/bundle_locations.h"
+#include "base/apple/osstatus_logging.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/mac/launch_application.h"
-#include "base/mac/mac_logging.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
@@ -35,10 +40,6 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace mac_relauncher {
 
@@ -94,15 +95,18 @@ bool RelaunchApp(const std::vector<std::string>& args) {
   }
 
   std::vector<std::string> relauncher_args;
-  return RelaunchAppWithHelper(child_path.value(), relauncher_args, args);
+  return RelaunchAppAtPathWithHelper(child_path, base::apple::OuterBundlePath(),
+                                     relauncher_args, args);
 }
 
-bool RelaunchAppWithHelper(const std::string& helper,
-                           const std::vector<std::string>& relauncher_args,
-                           const std::vector<std::string>& args) {
+bool RelaunchAppAtPathWithHelper(
+    const base::FilePath& helper,
+    const base::FilePath& app_bundle,
+    const std::vector<std::string>& relauncher_args,
+    const std::vector<std::string>& args) {
   std::vector<std::string> relaunch_args;
   relaunch_args.reserve(relauncher_args.size() + args.size() + 4);
-  relaunch_args.push_back(helper);
+  relaunch_args.push_back(helper.value());
   relaunch_args.push_back(RelauncherTypeArg());
 
   // If this application isn't in the foreground, the relaunched one shouldn't
@@ -116,10 +120,10 @@ bool RelaunchAppWithHelper(const std::string& helper,
 
   relaunch_args.push_back(kRelauncherArgSeparator);
 
-  // The first item of `args` is the path to the executable, but launch APIs
-  // require the path to the bundle. Rather than try to derive the bundle path
-  // from the executable path, substitute in the bundle path.
-  relaunch_args.push_back(base::apple::OuterBundlePath().value());
+  // The relauncher uses base::mac::LaunchApplication, which requires a URL to
+  // the bundle. Therefore, substitute in the bundle path as the first
+  // "argument"; RelauncherMain is expecting it and will handle it specifically.
+  relaunch_args.push_back(app_bundle.value());
   for (size_t i = 1; i < args.size(); ++i) {
     // Strip any PSN arguments, as they apply to a specific process.
     if (args[i].compare(0, strlen(kPSNArg), kPSNArg) != 0 &&
@@ -266,14 +270,12 @@ int RelauncherMain(content::MainFunctionParams main_parameters) {
     const int* argcp = _NSGetArgc();
     if (!argcp) {
       NOTREACHED();
-      return 1;
     }
     int argc = *argcp;
 
     const char* const* const* argvp = _NSGetArgv();
     if (!argvp) {
       NOTREACHED();
-      return 1;
     }
     const char* const* argv = *argvp;
 

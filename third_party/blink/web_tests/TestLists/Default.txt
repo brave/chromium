@@ -12,8 +12,6 @@ animations/animation-shorthand-overriding.html
 animations/stability/empty-keyframes.html
 animations/interpolation/border-image-slice-interpolation-stability.html
 animations/responsive/interpolation/offset-rotate-responsive.html
-animations/svg-attribute-composition/svg-bias-composition.html
-animations/svg-attribute-interpolation/svg-numOctaves-interpolation.html
 compositing/animation/animated-composited-inside-hidden.html
 compositing/animation/animation-compositing.html
 compositing/animation/computed-style-during-delay.html
@@ -77,8 +75,6 @@ dom/document_type/previous-element-sibling.html
 dom/document_type/remove.html
 dom/domparsing/domparser-assign-variable.html
 dom/domparsing/xhtml-serialize.html
-dom/legacy_dom_conformance/svg/level3/xpath/XPathResult_booleanValue_false.svg
-dom/legacy_dom_conformance/xhtml/level1/core/hc_elementgettagname.xhtml
 dom/node/normalize-with-cdata.html
 dom/parent_node/append.html
 dom/text/normalize-crash-in-spell-checker.html
@@ -265,7 +261,6 @@ external/wpt/mediasession/playbackstate.html
 external/wpt/mediasession/setactionhandler.html
 external/wpt/navigation-timing/nav2_test_instance_accessible_from_the_start.html
 external/wpt/navigation-timing/test_navigation_redirectCount_none.html
-external/wpt/orientation-event/motion/add-listener-from-callback.https.html
 external/wpt/orientation-event/orientation/create-event.https.html
 external/wpt/orientation-event/motion/optional-event-properties.https.html
 external/wpt/pointerevents/pointerevent_touch-action-illegal.html
@@ -370,7 +365,6 @@ fast/autoresize/basic.html
 fast/autoresize/turn-off-autoresize.html
 fast/backgrounds/background-clip-text.html
 fast/backgrounds/background-fill-zero-area-crash.html
-fast/backgrounds/background-shorthand-after-set-backgroundSize.html
 fast/backgrounds/size/parsing-background-size-values.html
 fast/beacon/beacon-basic.html
 fast/block/basic/018.html
@@ -829,9 +823,7 @@ paint/invalidation/svg/invalid-clip-path-crash.html
 paint/roundedrects/degenerate-radius-assert.html
 paint/selection/selection-drag-image-in-iframe.html
 payments/payment-request-in-iframe-allowed.html
-permissionclient/script-permissions.html
 permissionclient/storage-permission.html
-plugins/instance-available-before-stylesheets-loaded.html
 pointer-lock/lock-already-locked.html
 pointer-lock/mouse-event-api.html
 pointer-lock/pointerlockelement-null-when-pending.html
@@ -874,7 +866,6 @@ svg/custom/svg-use-style-float-crash.svg
 svg/custom/use-invalid-font-face.svg
 svg/dispatch-event-crash-on-destruct.html
 svg/dom/smil-methods.svg
-svg/dom/SVGScriptElement/script-async-attr.svg
 svg/dom/SVGStyleElement/disable-svg-style-element.html
 svg/dom/SVGStyleElement/style-langspace.html
 svg/filters/feComponentTransfer-style-crash.xhtml
@@ -953,7 +944,6 @@ virtual/stable/http/tests/navigation/location-assign-adds-history-item.html
 virtual/stable/http/tests/navigation/replacestate-base-legal.html
 virtual/stable/http/tests/navigation/useragent.php
 virtual/stable/webexposed/internal-properties-should-not-be-exposed.html
-virtual/threaded-no-composited-antialiasing/animations/stability/pseudo-element-animation-with-marker-crash.html
 virtual/threaded/printing/page-and-element-geometry-match.html
 webaudio/AudioParam/audioparam-setValueCurve-duration.html
 webaudio/codec-tests/flac/flac-decode.html

@@ -8,6 +8,7 @@
 #include <wrl/module.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -24,9 +25,9 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
-#include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/types/expected_macros.h"
 #include "base/win/atl.h"
 #include "base/win/registry.h"
 #include "base/win/windows_types.h"
@@ -45,13 +46,12 @@
 #include "chrome/updater/win/setup/uninstall.h"
 #include "chrome/updater/win/task_scheduler.h"
 #include "chrome/updater/win/win_constants.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace updater {
 namespace {
 
 std::wstring GetCOMGroup(const std::wstring& prefix, UpdaterScope scope) {
-  return base::StrCat({prefix, base::ASCIIToWide(UpdaterScopeToString(scope))});
+  return base::StrCat({prefix, base::UTF8ToWide(UpdaterScopeToString(scope))});
 }
 
 std::wstring COMGroup(UpdaterScope scope) {
@@ -120,18 +120,33 @@ bool CreateClientStateMedium() {
 // Google\Update. And add a "pv" registry value under the
 // UPDATER_KEY\Clients\{GoogleUpdateAppId}.
 // Finally, update the registry value for the "UninstallCmdLine".
-bool SwapGoogleUpdate(UpdaterScope scope,
-                      const base::FilePath& updater_path,
-                      const base::FilePath& temp_path,
-                      HKEY root,
-                      WorkItemList* list) {
+bool AddSwapGoogleUpdateWorkItems(UpdaterScope scope,
+                                  const base::FilePath& updater_path,
+                                  const base::FilePath& temp_path,
+                                  HKEY root,
+                                  WorkItemList* list) {
   CHECK(list);
 
-  const absl::optional<base::FilePath> target_path =
+  const std::optional<base::FilePath> target_path =
       GetGoogleUpdateExePath(scope);
   if (!target_path || !base::CreateDirectory(target_path->DirName())) {
     return false;
   }
+
+  WorkItem* stop_google_update_processes = list->AddCallbackWorkItem(
+      base::BindOnce(
+          [](UpdaterScope scope, const base::FilePath& target_path,
+             const CallbackWorkItem& /*work_item*/) {
+            const base::ScopedClosureRunner reset_shutdown_event(
+                SignalShutdownEvent(scope));
+            StopProcessesUnderPath(target_path.DirName(), base::Seconds(45));
+            return true;
+          },
+          scope, *target_path),
+      base::DoNothing());
+  stop_google_update_processes->set_best_effort(true);
+  stop_google_update_processes->set_rollback_enabled(false);
+
   list->AddCopyTreeWorkItem(updater_path, *target_path, temp_path,
                             WorkItem::ALWAYS);
 
@@ -140,23 +155,26 @@ bool SwapGoogleUpdate(UpdaterScope scope,
   list->AddCreateRegKeyWorkItem(root, COMPANY_KEY, KEY_WOW64_32KEY);
   list->AddCreateRegKeyWorkItem(root, UPDATER_KEY, KEY_WOW64_32KEY);
   list->AddCreateRegKeyWorkItem(root, CLIENTS_KEY, KEY_WOW64_32KEY);
+  list->AddCreateRegKeyWorkItem(root, CLIENT_STATE_KEY, KEY_WOW64_32KEY);
   list->AddCreateRegKeyWorkItem(root, google_update_appid_key, KEY_WOW64_32KEY);
+  list->AddCreateRegKeyWorkItem(
+      root, GetAppClientStateKey(kLegacyGoogleUpdateAppID), KEY_WOW64_32KEY);
   list->AddSetRegValueWorkItem(root, google_update_appid_key, KEY_WOW64_32KEY,
                                kRegValuePV, kUpdaterVersionUtf16, true);
   list->AddSetRegValueWorkItem(
-      root, google_update_appid_key, KEY_WOW64_32KEY, kRegValueName,
-      base::ASCIIToWide(PRODUCT_FULLNAME_STRING), true);
+      root, GetAppClientStateKey(kLegacyGoogleUpdateAppID), KEY_WOW64_32KEY,
+      kRegValuePV, kUpdaterVersionUtf16, true);
+  list->AddSetRegValueWorkItem(root, google_update_appid_key, KEY_WOW64_32KEY,
+                               kRegValueName,
+                               base::UTF8ToWide(PRODUCT_FULLNAME_STRING), true);
   list->AddSetRegValueWorkItem(
       root, UPDATER_KEY, KEY_WOW64_32KEY, kRegValueUninstallCmdLine,
-      [scope, &updater_path]() {
+      [scope, &updater_path] {
         base::CommandLine uninstall_if_unused_command(updater_path);
         uninstall_if_unused_command.AppendSwitch(kWakeSwitch);
         if (IsSystemInstall(scope)) {
           uninstall_if_unused_command.AppendSwitch(kSystemSwitch);
         }
-        uninstall_if_unused_command.AppendSwitch(kEnableLoggingSwitch);
-        uninstall_if_unused_command.AppendSwitchASCII(
-            kLoggingModuleSwitch, kLoggingModuleSwitchValue);
         return uninstall_if_unused_command.GetCommandLineString();
       }(),
       true);
@@ -208,34 +226,7 @@ bool UninstallGoogleUpdate(UpdaterScope scope) {
   return DeleteExcept(GetGoogleUpdateExePath(scope));
 }
 
-absl::optional<int> DaynumFromDWORD(DWORD value) {
-  const int daynum = static_cast<int>(value);
-
-  // When daynum is positive, it is the number of days since January 1, 2007.
-  // It's reasonable to only accept value between 3000 (maps to Mar 20, 2015)
-  // and 50000 (maps to Nov 24, 2143).
-  // -1 is special value for first install.
-  return daynum == -1 || (daynum >= 3000 && daynum <= 50000)
-             ? absl::make_optional(daynum)
-             : absl::nullopt;
-}
-
 }  // namespace
-
-HRESULT IsCOMCallerAllowed() {
-  if (!IsSystemInstall()) {
-    return S_OK;
-  }
-
-  const HResultOr<bool> result = IsCOMCallerAdmin();
-  if (!result.has_value()) {
-    HRESULT hr = result.error();
-    LOG(ERROR) << "IsCOMCallerAdmin failed: " << std::hex << hr;
-    return hr;
-  }
-
-  return result.value() ? S_OK : E_ACCESSDENIED;
-}
 
 scoped_refptr<App> MakeAppServer() {
   return GetAppServerWinInstance();
@@ -253,6 +244,10 @@ AppServerWin::~AppServerWin() {
   NOTREACHED();  // The instance of this class is a leaky singleton.
 }
 
+void AppServerWin::PostRpcTask(base::OnceClosure task) {
+  GetAppServerWinInstance()->PostRpcTaskOnMainSequence(std::move(task));
+}
+
 void AppServerWin::Stop() {
   VLOG(2) << __func__ << ": COM server is shutting down.";
   UnregisterClassObjects();
@@ -263,6 +258,10 @@ void AppServerWin::Stop() {
                                 this_server->update_service_internal_ = nullptr;
                                 this_server->Shutdown(0);
                               }));
+}
+
+void AppServerWin::PostRpcTaskOnMainSequence(base::OnceClosure task) {
+  main_task_runner_->PostTask(FROM_HERE, std::move(task));
 }
 
 HRESULT AppServerWin::RegisterClassObjects() {
@@ -345,9 +344,11 @@ void AppServerWin::UninstallSelf() {
 }
 
 bool AppServerWin::SwapInNewVersion() {
-  std::unique_ptr<WorkItemList> list(WorkItem::CreateWorkItemList());
+  if (IsSystemInstall(updater_scope()) && !CreateClientStateMedium()) {
+    return false;
+  }
 
-  const absl::optional<base::FilePath> versioned_directory =
+  const std::optional<base::FilePath> versioned_directory =
       GetVersionedInstallDirectory(updater_scope());
   if (!versioned_directory) {
     return false;
@@ -356,135 +357,46 @@ bool AppServerWin::SwapInNewVersion() {
   const base::FilePath updater_path =
       versioned_directory->Append(GetExecutableRelativePath());
 
-  if (IsSystemInstall(updater_scope()) && !CreateClientStateMedium()) {
-    return false;
-  }
-
-  absl::optional<base::ScopedTempDir> temp_dir = CreateSecureTempDir();
-  if (!temp_dir) {
-    return false;
-  }
-
-  if (!SwapGoogleUpdate(updater_scope(), updater_path, temp_dir->GetPath(),
-                        UpdaterScopeToHKeyRoot(updater_scope()), list.get())) {
-    return false;
-  }
-
+  std::unique_ptr<WorkItemList> list(WorkItem::CreateWorkItemList());
   if (IsSystemInstall(updater_scope())) {
     AddComServiceWorkItems(updater_path, false, list.get());
   } else {
     AddComServerWorkItems(updater_path, false, list.get());
   }
 
-  const base::ScopedClosureRunner reset_shutdown_event(
-      SignalShutdownEvent(updater_scope()));
+  std::optional<base::ScopedTempDir> temp_dir = CreateSecureTempDir();
+  if (!temp_dir) {
+    return false;
+  }
 
-  absl::optional<base::FilePath> target =
-      GetGoogleUpdateExePath(updater_scope());
-  if (target) {
-    StopProcessesUnderPath(target->DirName(), base::Seconds(45));
+  if (!AddSwapGoogleUpdateWorkItems(
+          updater_scope(), updater_path, temp_dir->GetPath(),
+          UpdaterScopeToHKeyRoot(updater_scope()), list.get())) {
+    return false;
   }
 
   if (!list->Do()) {
     return false;
   }
 
-  VLOG_IF(1, !UninstallGoogleUpdate(updater_scope()))
-      << "UninstallGoogleUpdate() failed.";
+  if (!UninstallGoogleUpdate(updater_scope())) {
+    VLOG(1) << "UninstallGoogleUpdate() failed.";
+  }
+
   if (!IsSystemInstall(updater_scope())) {
-    VLOG_IF(1, !DeleteLegacyEntriesPerUser())
-        << "DeleteLegacyEntriesPerUser() failed.";
+    if (!DeleteLegacyEntriesPerUser()) {
+      VLOG(1) << "DeleteLegacyEntriesPerUser() failed.";
+    }
   }
 
   return true;
 }
 
-bool AppServerWin::MigrateLegacyUpdaters(
-    base::RepeatingCallback<void(const RegistrationRequest&)>
-        register_callback) {
-  const HKEY root = UpdaterScopeToHKeyRoot(updater_scope());
-  for (base::win::RegistryKeyIterator it(root, CLIENTS_KEY, KEY_WOW64_32KEY);
-       it.Valid(); ++it) {
-    const std::wstring app_id = it.Name();
-
-    // Skip importing legacy updater.
-    if (base::EqualsCaseInsensitiveASCII(app_id, kLegacyGoogleUpdateAppID)) {
-      continue;
-    }
-
-    base::win::RegKey key;
-    if (key.Open(root, GetAppClientsKey(app_id).c_str(), Wow6432(KEY_READ)) !=
-        ERROR_SUCCESS) {
-      continue;
-    }
-
-    RegistrationRequest registration;
-    registration.app_id = base::SysWideToUTF8(app_id);
-    std::wstring pv;
-    if (key.ReadValue(kRegValuePV, &pv) != ERROR_SUCCESS) {
-      continue;
-    }
-
-    registration.version = base::Version(base::SysWideToUTF8(pv));
-    if (!registration.version.IsValid()) {
-      continue;
-    }
-
-    base::win::RegKey client_state_key;
-    if (client_state_key.Open(root, GetAppClientStateKey(app_id).c_str(),
-                              Wow6432(KEY_READ)) == ERROR_SUCCESS) {
-      std::wstring brand_code;
-      if (client_state_key.ReadValue(kRegValueBrandCode, &brand_code) ==
-          ERROR_SUCCESS) {
-        registration.brand_code = base::SysWideToUTF8(brand_code);
-      }
-
-      std::wstring ap;
-      if (client_state_key.ReadValue(kRegValueAP, &ap) == ERROR_SUCCESS) {
-        registration.ap = base::SysWideToUTF8(ap);
-      }
-
-      DWORD date_last_activity = 0;
-      if (client_state_key.ReadValueDW(kRegValueDateOfLastActivity,
-                                       &date_last_activity) == ERROR_SUCCESS) {
-        registration.dla = DaynumFromDWORD(date_last_activity);
-      }
-
-      DWORD date_last_rollcall = 0;
-      if (client_state_key.ReadValueDW(kRegValueDateOfLastRollcall,
-                                       &date_last_rollcall) == ERROR_SUCCESS) {
-        registration.dlrc = DaynumFromDWORD(date_last_rollcall);
-      }
-
-      base::win::RegKey cohort_key;
-      if (cohort_key.Open(root, GetAppCohortKey(app_id).c_str(),
-                          Wow6432(KEY_READ)) == ERROR_SUCCESS) {
-        std::wstring cohort;
-        if (cohort_key.ReadValue(nullptr, &cohort) == ERROR_SUCCESS) {
-          registration.cohort = base::SysWideToUTF8(cohort);
-
-          std::wstring cohort_name;
-          if (cohort_key.ReadValue(kRegValueCohortName, &cohort_name) ==
-              ERROR_SUCCESS) {
-            registration.cohort_name = base::SysWideToUTF8(cohort_name);
-          }
-
-          std::wstring cohort_hint;
-          if (cohort_key.ReadValue(kRegValueCohortHint, &cohort_hint) ==
-              ERROR_SUCCESS) {
-            registration.cohort_hint = base::SysWideToUTF8(cohort_hint);
-          }
-          VLOG(2) << "Cohort values: " << registration.cohort << ", "
-                  << registration.cohort_name << ", "
-                  << registration.cohort_hint;
-        }
-      }
-    }
-
-    register_callback.Run(registration);
+void AppServerWin::RepairUpdater(UpdaterScope scope, bool is_internal) {
+  if (AreComInterfacesPresent(scope, is_internal)) {
+    return;
   }
-
-  return true;
+  InstallComInterfaces(scope, is_internal);
 }
 
 }  // namespace updater

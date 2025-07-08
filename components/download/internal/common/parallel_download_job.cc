@@ -109,7 +109,7 @@ void ParallelDownloadJob::CancelRequestWithOffset(int64_t offset) {
   }
 
   auto it = workers_.find(offset);
-  DCHECK(it != workers_.end());
+  CHECK(it != workers_.end());
   it->second->Cancel(false);
 }
 

@@ -22,6 +22,7 @@ import android.widget.TextView;
 
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.recent_tabs.R;
 import org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.DetailItemType;
 import org.chromium.chrome.browser.recent_tabs.ui.RestoreTabsDetailScreenCoordinator.Delegate;
@@ -33,9 +34,9 @@ import org.chromium.ui.widget.ButtonCompat;
 
 /**
  * This class is responsible for pushing updates to the Restore Tabs detail screen view. These
- * updates are pulled from the RestoreTabsProperties when a notification of an update is
- * received.
+ * updates are pulled from the RestoreTabsProperties when a notification of an update is received.
  */
+@NullMarked
 public class RestoreTabsDetailScreenViewBinder {
     static class ViewHolder {
         final View mContentView;
@@ -98,7 +99,9 @@ public class RestoreTabsDetailScreenViewBinder {
 
             SimpleRecyclerViewAdapter adapter =
                     new SimpleRecyclerViewAdapter(model.get(DETAIL_SCREEN_MODEL_LIST));
-            adapter.registerType(DetailItemType.DEVICE, ForeignSessionItemViewBinder::create,
+            adapter.registerType(
+                    DetailItemType.DEVICE,
+                    ForeignSessionItemViewBinder::create,
                     ForeignSessionItemViewBinder::bind);
             view.setAdapter(adapter, view);
         } else if (propertyKey == REVIEW_TABS_SCREEN_DELEGATE) {
@@ -119,7 +122,9 @@ public class RestoreTabsDetailScreenViewBinder {
 
             SimpleRecyclerViewAdapter adapter =
                     new SimpleRecyclerViewAdapter(model.get(DETAIL_SCREEN_MODEL_LIST));
-            adapter.registerType(DetailItemType.TAB, TabItemViewBinder::create,
+            adapter.registerType(
+                    DetailItemType.TAB,
+                    TabItemViewBinder::create,
                     (tabModel, tabView, tabPropertyKey) -> {
                         TabItemViewBinder.bind(
                                 tabModel, tabView, tabPropertyKey, view.mBindContext);
@@ -129,43 +134,47 @@ public class RestoreTabsDetailScreenViewBinder {
             getChangeAllTabsSelectionStateButton(view).setVisibility(View.VISIBLE);
             getOpenSelectedTabsButton(view).setVisibility(View.VISIBLE);
         } else if (propertyKey == NUM_TABS_DESELECTED) {
-            getChangeAllTabsSelectionStateButton(view).setOnClickListener((v) -> {
-                getChangeAllTabsSelectionStateButton(view).announceForAccessibility(
-                        view.mContentView.getContext().getResources().getString(
-                                R.string.restore_tabs_review_tabs_screen_change_all_tabs_selection_button_clicked_description));
-                delegate.onChangeSelectionStateForAllTabs();
-            });
-            getOpenSelectedTabsButton(view).setOnClickListener((v) -> {
-                getOpenSelectedTabsButton(view).announceForAccessibility(
-                        view.mContentView.getContext().getResources().getString(
-                                R.string.restore_tabs_open_tabs_button_clicked_description));
-                delegate.onSelectedTabsChosen();
-            });
+            getChangeAllTabsSelectionStateButton(view)
+                    .setOnClickListener(
+                            (v) -> {
+                                delegate.onChangeSelectionStateForAllTabs();
+                            });
+            getOpenSelectedTabsButton(view)
+                    .setOnClickListener(
+                            (v) -> {
+                                delegate.onSelectedTabsChosen();
+                            });
 
             int numSelectedTabs =
                     model.get(REVIEW_TABS_MODEL_LIST).size() - model.get(NUM_TABS_DESELECTED);
             getOpenSelectedTabsButton(view).setEnabled(numSelectedTabs != 0);
-            getOpenSelectedTabsButton(view).setText(
-                    view.mContentView.getContext().getResources().getQuantityString(
-                            R.plurals.restore_tabs_open_tabs, numSelectedTabs, numSelectedTabs));
+            getOpenSelectedTabsButton(view)
+                    .setText(
+                            view.mContentView
+                                    .getContext()
+                                    .getResources()
+                                    .getQuantityString(
+                                            R.plurals.restore_tabs_open_tabs,
+                                            numSelectedTabs,
+                                            numSelectedTabs));
 
-            int allTabsSelectionString = (model.get(NUM_TABS_DESELECTED) == 0)
-                    ? R.string.restore_tabs_review_tabs_screen_deselect_all
-                    : R.string.restore_tabs_review_tabs_screen_select_all;
-            getChangeAllTabsSelectionStateButton(view).setText(
-                    view.mContentView.getContext().getResources().getString(
-                            allTabsSelectionString));
+            int allTabsSelectionString =
+                    (model.get(NUM_TABS_DESELECTED) == 0)
+                            ? R.string.restore_tabs_review_tabs_screen_deselect_all
+                            : R.string.restore_tabs_review_tabs_screen_select_all;
+            getChangeAllTabsSelectionStateButton(view)
+                    .setText(view.mContentView.getContext().getString(allTabsSelectionString));
         }
     }
 
     private static void bindCommonProperties(
             PropertyModel model, ViewHolder view, PropertyKey propertyKey) {
         if (propertyKey == DETAIL_SCREEN_BACK_CLICK_HANDLER) {
-            getToolbarBackImageButton(view).setOnClickListener(
-                    (v) -> model.get(DETAIL_SCREEN_BACK_CLICK_HANDLER).run());
+            getToolbarBackImageButton(view)
+                    .setOnClickListener((v) -> model.get(DETAIL_SCREEN_BACK_CLICK_HANDLER).run());
         } else if (propertyKey == DETAIL_SCREEN_TITLE) {
-            String titleText = view.mContentView.getContext().getResources().getString(
-                    model.get(DETAIL_SCREEN_TITLE));
+            String titleText =
+                    view.mContentView.getContext().getString(model.get(DETAIL_SCREEN_TITLE));
             getToolbarTitleTextView(view).setText(titleText);
         }
     }

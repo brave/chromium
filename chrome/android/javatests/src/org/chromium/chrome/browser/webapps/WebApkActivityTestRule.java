@@ -10,8 +10,6 @@ import androidx.test.core.app.ApplicationProvider;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.hamcrest.Matchers;
-import org.junit.runner.Description;
-import org.junit.runners.model.Statement;
 
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
@@ -32,15 +30,9 @@ public class WebApkActivityTestRule extends ChromeActivityTestRule<WebappActivit
     }
 
     @Override
-    public Statement apply(final Statement base, Description description) {
-        Statement webApkUpdateManagerStatement = new Statement() {
-            @Override
-            public void evaluate() throws Throwable {
-                WebApkUpdateManager.setUpdatesDisabledForTesting(true);
-                base.evaluate();
-            }
-        };
-        return super.apply(webApkUpdateManagerStatement, description);
+    protected void before() throws Throwable {
+        WebApkUpdateManager.setUpdatesDisabledForTesting(true);
+        super.before();
     }
 
     /**
@@ -72,14 +64,17 @@ public class WebApkActivityTestRule extends ChromeActivityTestRule<WebappActivit
 
     private WebappActivity startWebApkActivity(final Intent intent, final String startUrl) {
         final WebappActivity webApkActivity =
-                (WebappActivity) InstrumentationRegistry.getInstrumentation().startActivitySync(
-                        intent);
+                (WebappActivity)
+                        InstrumentationRegistry.getInstrumentation().startActivitySync(intent);
         setActivity(webApkActivity);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
-        CriteriaHelper.pollInstrumentationThread(() -> {
-            Criteria.checkThat(webApkActivity.getActivityTab(), Matchers.notNullValue());
-        }, STARTUP_TIMEOUT, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    Criteria.checkThat(webApkActivity.getActivityTab(), Matchers.notNullValue());
+                },
+                STARTUP_TIMEOUT,
+                CriteriaHelper.DEFAULT_POLLING_INTERVAL);
 
         ChromeTabUtils.waitForTabPageLoaded(webApkActivity.getActivityTab(), startUrl);
         WebappActivityTestRule.waitUntilSplashHides(webApkActivity);

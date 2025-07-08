@@ -17,6 +17,26 @@
 
 namespace file_manager::io_task {
 
+std::ostream& operator<<(std::ostream& out, const State state) {
+  switch (state) {
+#define PRINT(s)    \
+  case State::k##s: \
+    return out << #s;
+    PRINT(Queued)
+    PRINT(Scanning)
+    PRINT(InProgress)
+    PRINT(Paused)
+    PRINT(Success)
+    PRINT(Error)
+    PRINT(NeedPassword)
+    PRINT(Cancelled)
+#undef PRINT
+  }
+
+  return out << "State(" << static_cast<std::underlying_type_t<State>>(state)
+             << ")";
+}
+
 std::ostream& operator<<(std::ostream& out, OperationType op) {
   switch (op) {
 #define PRINT(s)            \
@@ -45,8 +65,6 @@ void IOTask::Resume(ResumeParams) {}
 void IOTask::CompleteWithError(PolicyError policy_error) {}
 
 bool PolicyError::operator==(const PolicyError& other) const = default;
-
-bool PolicyError::operator!=(const PolicyError& other) const = default;
 
 bool ConflictPauseParams::operator==(const ConflictPauseParams& other) const =
     default;
@@ -84,8 +102,8 @@ ResumeParams& ResumeParams::operator=(ResumeParams&& other) = default;
 ResumeParams::~ResumeParams() = default;
 
 EntryStatus::EntryStatus(storage::FileSystemURL file_url,
-                         absl::optional<base::File::Error> file_error,
-                         absl::optional<storage::FileSystemURL> source_url)
+                         std::optional<base::File::Error> file_error,
+                         std::optional<storage::FileSystemURL> source_url)
     : url(file_url), error(file_error), source_url(source_url) {}
 
 EntryStatus::~EntryStatus() = default;
@@ -100,8 +118,7 @@ ProgressStatus::ProgressStatus(ProgressStatus&& other) = default;
 ProgressStatus& ProgressStatus::operator=(ProgressStatus&& other) = default;
 
 bool ProgressStatus::IsPaused() const {
-  // Return true if paused for any reason other than policy warning.
-  return state == State::kPaused && !pause_params.policy_params.has_value();
+  return state == State::kPaused;
 }
 
 bool ProgressStatus::IsCompleted() const {
@@ -111,7 +128,7 @@ bool ProgressStatus::IsCompleted() const {
 
 bool ProgressStatus::HasWarning() const {
   // We should show a warning if the task is paused because of policy.
-  return state == State::kPaused && pause_params.policy_params.has_value();
+  return IsPaused() && pause_params.policy_params.has_value();
 }
 
 bool ProgressStatus::HasPolicyError() const {
@@ -154,8 +171,9 @@ void ProgressStatus::SetDestinationFolder(storage::FileSystemURL folder,
 DummyIOTask::DummyIOTask(std::vector<storage::FileSystemURL> source_urls,
                          storage::FileSystemURL destination_folder,
                          OperationType type,
-                         bool show_notifications)
-    : IOTask(show_notifications) {
+                         bool show_notifications,
+                         bool progress_succeeds)
+    : IOTask(show_notifications), progress_succeeds_(progress_succeeds) {
   progress_.state = State::kQueued;
   progress_.type = type;
   progress_.SetDestinationFolder(std::move(destination_folder));
@@ -163,7 +181,7 @@ DummyIOTask::DummyIOTask(std::vector<storage::FileSystemURL> source_urls,
   progress_.total_bytes = 2;
 
   for (auto& url : source_urls) {
-    progress_.sources.emplace_back(url, absl::nullopt);
+    progress_.sources.emplace_back(url, std::nullopt);
   }
 }
 
@@ -197,7 +215,7 @@ void DummyIOTask::Cancel() {
 
 void DummyIOTask::CompleteWithError(PolicyError policy_error) {
   progress_.state = State::kError;
-  progress_.policy_error = policy_error;
+  progress_.policy_error.emplace(std::move(policy_error));
 }
 
 void DummyIOTask::DoProgress() {
@@ -208,9 +226,11 @@ void DummyIOTask::DoProgress() {
   progress_.bytes_transferred = 1;
   progress_callback_.Run(progress_);
 
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&DummyIOTask::DoComplete, weak_ptr_factory_.GetWeakPtr()));
+  if (progress_succeeds_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&DummyIOTask::DoComplete,
+                                  weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 void DummyIOTask::DoComplete() {

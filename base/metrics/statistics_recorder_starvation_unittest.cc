@@ -2,25 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/metrics/statistics_recorder.h"
-
 #include <atomic>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/metrics/persistent_histogram_allocator.h"
+#include "base/metrics/statistics_recorder.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
 
 namespace {
 
-static constexpr TimeDelta kTestRunningTime = Seconds(5);
+constexpr TimeDelta kTestRunningTime = Seconds(5);
+constexpr char kHistogramNamePrefix[] = "SRStarvationTest.";
 
 class BaseThread : public SimpleThread {
  public:
@@ -32,7 +36,7 @@ class BaseThread : public SimpleThread {
 
   ~BaseThread() override = default;
 
-  const std::string& thread_name() { return thread_name_; }
+  const std::string& thread_name() const LIFETIME_BOUND { return thread_name_; }
   void SetStartTime() { start_time_ = Time::Now(); }
   bool ShouldStop() { return stop_.load(std::memory_order_relaxed); }
   void Stop() {
@@ -61,14 +65,15 @@ class ReadThread : public BaseThread {
   void Run() override {
     SetStartTime();
 
+    const std::string histogram_name =
+        StrCat({kHistogramNamePrefix, "ReadThreadHistogram"});
     while (!ShouldStop()) {
       // Continuously emit to the same histogram. Because this histogram should
       // already exist within the StatisticsRecorder's internal map (except the
       // first time this is called), it should not cause any modifications to
       // it, only a lookup. In other words, it will call
       // StatisticsRecorder::FindHistogram().
-      static constexpr char kReadThreadHistogramName[] = "ReadThreadHistogram";
-      UmaHistogramBoolean(kReadThreadHistogramName, false);
+      UmaHistogramBoolean(histogram_name, false);
       IncrementIterCount();
     }
   }
@@ -83,7 +88,8 @@ class WriteThread : public BaseThread {
   void Run() override {
     SetStartTime();
 
-    const std::string base_name = StrCat({thread_name(), ".Iteration"});
+    const std::string base_name =
+        StrCat({kHistogramNamePrefix, thread_name(), ".Iteration"});
     while (!ShouldStop()) {
       // Continuously emit to a new histogram. Because this histogram should not
       // exist within the StatisticsRecorder's internal map, it will cause an
@@ -134,7 +140,22 @@ class StatisticsRecorderStarvationTest
     // and RegisterOrDeleteDuplicate()) during the test don't complete (pretty
     // much) instantly.
     for (size_t i = 0; i < 10000; ++i) {
-      UmaHistogramBoolean(StrCat({"Dummy", NumberToString(i)}), false);
+      UmaHistogramBoolean(
+          StrCat({kHistogramNamePrefix, "Dummy", NumberToString(i)}), false);
+    }
+  }
+
+  void TearDown() override {
+    // Clean up histograms that were allocated during this test. Note that the
+    // histogram objects are deleted after releasing the temporary `sr_`.
+    // Otherwise, for a brief moment, the temporary `sr_` would be holding
+    // dangling pointers.
+    auto histograms = sr_->GetHistograms();
+    sr_.reset();
+    for (auto* histogram : histograms) {
+      if (StartsWith(histogram->histogram_name(), kHistogramNamePrefix)) {
+        delete histogram;
+      }
     }
   }
 
@@ -216,7 +237,15 @@ class StatisticsRecorderStarvationTest
 // StatisticsRecorder. When switching to a Read/Write lock (see crbug/1123627),
 // we encountered such a starvation issue, where a thread trying to write to the
 // internal map was starved out for 10+ seconds by readers on iOS.
+// TODO(crbug.com/41489801): StatisticsRecorderNoStarvation continuously emits a
+// new histogram which can cause the app memory footprint to grow unbounded and
+// watchdog kill the unit test on iOS devices.
 TEST_P(StatisticsRecorderStarvationTest, StatisticsRecorderNoStarvation) {
+  // Make sure there is no GlobalHistogramAllocator so that histograms emitted
+  // during this test are all allocated on the heap, which makes it a lot easier
+  // to clean them up at the end.
+  ASSERT_FALSE(GlobalHistogramAllocator::Get());
+
   // Start reader and writer threads.
   StartThreads();
 

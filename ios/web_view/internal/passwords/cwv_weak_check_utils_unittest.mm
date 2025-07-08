@@ -2,25 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "base/test/task_environment.h"
-#import "ios/web_view/internal/passwords/cwv_password_internal.h"
-
 #import "base/strings/sys_string_conversions.h"
+#import "base/test/task_environment.h"
 #import "components/password_manager/core/browser/password_ui_utils.h"
-
+#import "ios/web_view/internal/passwords/cwv_password_internal.h"
 #import "ios/web_view/internal/passwords/cwv_weak_check_utils_internal.h"
-
 #import "services/network/test/test_shared_url_loader_factory.h"
-
 #import "testing/gtest/include/gtest/gtest.h"
-
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ios_web_view {
 

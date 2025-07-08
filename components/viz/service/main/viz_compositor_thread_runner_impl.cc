@@ -19,11 +19,10 @@
 #include "build/build_config.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/switches.h"
-#include "components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.h"
 #include "components/viz/service/display_embedder/output_surface_provider_impl.h"
-#include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.h"
+#include "components/viz/service/frame_sinks/shared_image_interface_provider.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
 #include "components/viz/service/performance_hint/hint_session.h"
 #include "gpu/command_buffer/service/scheduler_sequence.h"
@@ -42,11 +41,16 @@ namespace {
 const char kThreadName[] = "VizCompositorThread";
 
 std::unique_ptr<VizCompositorThreadType> CreateAndStartCompositorThread() {
-  const base::ThreadType thread_type = base::ThreadType::kCompositing;
+  const base::ThreadType thread_type = base::ThreadType::kDisplayCritical;
 #if BUILDFLAG(IS_ANDROID)
   auto thread = std::make_unique<base::android::JavaHandlerThread>(kThreadName,
                                                                    thread_type);
   thread->Start();
+  thread->task_runner()->PostTask(
+      FROM_HERE, base::BindOnce([]() {
+        mojo::InterfaceEndpointClient::SetThreadNameSuffixForMetrics(
+            "VizCompositor");
+      }));
   return thread;
 #else  // !BUILDFLAG(IS_ANDROID)
 
@@ -64,31 +68,33 @@ std::unique_ptr<VizCompositorThreadType> CreateAndStartCompositorThread() {
 #if BUILDFLAG(IS_FUCHSIA)
   // An IO message pump is needed to use FIDL.
   thread_options.message_pump_type = base::MessagePumpType::IO;
+#elif BUILDFLAG(IS_MAC)
+  // The feature kCADisplayLink needs the thread type NS_RUNLOOP to run on the
+  // current thread' runloop.
+  // See [ca_display_link addToRunLoop:NSRunLoop.currentRunLoop].
+  thread_options.message_pump_type = base::MessagePumpType::NS_RUNLOOP;
 #endif
 
-#if BUILDFLAG(IS_APPLE)
-  // Increase the thread priority to get more reliable values in performance
-  // test of macOS.
-  thread_options.thread_type =
-      (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kUseHighGPUThreadPriorityForPerfTests))
-          ? base::ThreadType::kRealtimeAudio
-          : thread_type;
-#else
   thread_options.thread_type = thread_type;
-#endif  // !BUILDFLAG(IS_APPLE)
 
   CHECK(thread->StartWithOptions(std::move(thread_options)));
+
+  thread->task_runner()->PostTask(
+      FROM_HERE, base::BindOnce([]() {
+        mojo::InterfaceEndpointClient::SetThreadNameSuffixForMetrics(
+            "VizCompositor");
+      }));
 
   return thread;
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
-
 }  // namespace
 
 VizCompositorThreadRunnerImpl::VizCompositorThreadRunnerImpl()
     : thread_(CreateAndStartCompositorThread()),
-      task_runner_(thread_->task_runner()) {}
+      task_runner_(thread_->task_runner()) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+}
 
 VizCompositorThreadRunnerImpl::~VizCompositorThreadRunnerImpl() {
   task_runner_->PostTask(
@@ -143,6 +149,9 @@ base::SingleThreadTaskRunner* VizCompositorThreadRunnerImpl::task_runner() {
 void VizCompositorThreadRunnerImpl::CreateFrameSinkManager(
     mojom::FrameSinkManagerParamsPtr params,
     GpuServiceImpl* gpu_service) {
+  shared_image_interface_provider_ =
+      std::make_unique<SharedImageInterfaceProvider>(gpu_service);
+
   // All of the unretained objects are owned on the GPU thread and destroyed
   // after VizCompositorThread has been shutdown.
   task_runner_->PostTask(
@@ -159,11 +168,6 @@ void VizCompositorThreadRunnerImpl::CreateFrameSinkManagerOnCompositorThread(
   DCHECK(!frame_sink_manager_);
   gpu::SchedulerSequence::DefaultDisallowScheduleTaskOnCurrentThread();
 
-  server_shared_bitmap_manager_ = std::make_unique<ServerSharedBitmapManager>();
-  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-      server_shared_bitmap_manager_.get(), "ServerSharedBitmapManager",
-      task_runner_);
-
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   const bool headless = command_line->HasSwitch(switches::kHeadless);
   const bool run_all_compositor_stages_before_draw =
@@ -171,10 +175,6 @@ void VizCompositorThreadRunnerImpl::CreateFrameSinkManagerOnCompositorThread(
 
   if (gpu_service) {
     // Create OutputSurfaceProvider usable for GPU + software compositing.
-    gpu_memory_buffer_manager_ =
-        std::make_unique<InProcessGpuMemoryBufferManager>(
-            gpu_service->gpu_memory_buffer_factory(),
-            gpu_service->sync_point_manager());
     output_surface_provider_ =
         std::make_unique<OutputSurfaceProviderImpl>(gpu_service, headless);
 
@@ -182,7 +182,7 @@ void VizCompositorThreadRunnerImpl::CreateFrameSinkManagerOnCompositorThread(
     // manager to create GMB-backed video frames.
     gmb_video_frame_pool_context_provider_ =
         std::make_unique<GmbVideoFramePoolContextProviderImpl>(
-            gpu_service, gpu_memory_buffer_manager_.get());
+            gpu_service, gpu_service->gpu_memory_buffer_factory());
   } else {
     // Create OutputSurfaceProvider usable for software compositing only.
     output_surface_provider_ =
@@ -191,14 +191,15 @@ void VizCompositorThreadRunnerImpl::CreateFrameSinkManagerOnCompositorThread(
 
   // Create FrameSinkManagerImpl.
   FrameSinkManagerImpl::InitParams init_params;
-  init_params.shared_bitmap_manager = server_shared_bitmap_manager_.get();
+
   // Set default activation deadline to infinite if client doesn't provide one.
-  init_params.activation_deadline_in_frames = absl::nullopt;
+  init_params.activation_deadline_in_frames = std::nullopt;
   if (params->use_activation_deadline) {
     init_params.activation_deadline_in_frames =
         params->activation_deadline_in_frames;
   }
   init_params.output_surface_provider = output_surface_provider_.get();
+  init_params.gpu_service = gpu_service;
   init_params.gmb_context_provider =
       gmb_video_frame_pool_context_provider_.get();
   init_params.restart_id = params->restart_id;
@@ -207,14 +208,31 @@ void VizCompositorThreadRunnerImpl::CreateFrameSinkManagerOnCompositorThread(
   init_params.log_capture_pipeline_in_webrtc =
       features::ShouldWebRtcLogCapturePipeline();
   init_params.debug_renderer_settings = params->debug_renderer_settings;
-  if (gpu_service)
+  if (gpu_service) {
     init_params.host_process_id = gpu_service->host_process_id();
+  }
   init_params.hint_session_factory = hint_session_factory_.get();
 
   frame_sink_manager_ = std::make_unique<FrameSinkManagerImpl>(init_params);
   frame_sink_manager_->BindAndSetClient(
       std::move(params->frame_sink_manager), nullptr,
-      std::move(params->frame_sink_manager_client));
+      std::move(params->frame_sink_manager_client),
+      shared_image_interface_provider_.get());
+}
+
+void VizCompositorThreadRunnerImpl::RequestBeginFrameForGpuService(
+    bool toggle) {
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&VizCompositorThreadRunnerImpl::
+                         RequestBeginFrameForGpuServiceOnCompositorThread,
+                     base::Unretained(this), toggle));
+}
+
+void VizCompositorThreadRunnerImpl::
+    RequestBeginFrameForGpuServiceOnCompositorThread(bool toggle) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  frame_sink_manager_->RequestBeginFrameForGpuService(toggle);
 }
 
 void VizCompositorThreadRunnerImpl::TearDownOnCompositorThread() {
@@ -222,17 +240,10 @@ void VizCompositorThreadRunnerImpl::TearDownOnCompositorThread() {
 
   weak_factory_.InvalidateWeakPtrs();
 
-  if (server_shared_bitmap_manager_) {
-    base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
-        server_shared_bitmap_manager_.get());
-  }
-
   frame_sink_manager_.reset();
   hint_session_factory_.reset();
   output_surface_provider_.reset();
   gmb_video_frame_pool_context_provider_.reset();
-  gpu_memory_buffer_manager_.reset();
-  server_shared_bitmap_manager_.reset();
 }
 
 }  // namespace viz

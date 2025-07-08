@@ -7,11 +7,16 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
-#include "ash/components/arc/arc_util.h"
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
+#include "ash/public/cpp/login/login_utils.h"
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/login_screen_model.h"
+#include "ash/public/cpp/token_handle_store.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -21,9 +26,8 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
-#include "chrome/browser/ash/login/easy_unlock/easy_unlock_service.h"
 #include "chrome/browser/ash/login/helper.h"
 #include "chrome/browser/ash/login/lock/screen_locker.h"
 #include "chrome/browser/ash/login/lock_screen_utils.h"
@@ -32,32 +36,37 @@
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_storage.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/browser/ash/login/reauth_stats.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
-#include "chrome/browser/ash/login/ui/views/user_board_view.h"
-#include "chrome/browser/ash/login/users/chrome_user_manager.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
+#include "chrome/browser/ash/login/smart_lock/smart_lock_service.h"
 #include "chrome/browser/ash/login/users/default_user_image/default_user_images.h"
-#include "chrome/browser/ash/login/users/multi_profile_user_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system/system_clock.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/ui/ash/login_screen_client_impl.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/login_screen_client_impl.h"
 #include "chrome/browser/ui/webui/ash/login/l10n_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
+#include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/proximity_auth/screenlock_bridge.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager.pb.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/multi_user/multi_user_sign_in_policy.h"
+#include "components/user_manager/multi_user/multi_user_sign_in_policy_controller.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
 #include "content/public/browser/device_service.h"
@@ -65,10 +74,7 @@
 #include "services/device/public/mojom/wake_lock.mojom.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
-#include "ui/chromeos/resources/grit/ui_chromeos_resources.h"
 
 // Enable VLOG level 1.
 #undef ENABLED_VLOG_LEVEL
@@ -116,9 +122,10 @@ base::Value::List GetPublicSessionLocales(
 
   // Construct the list of available locales. This list consists of the
   // recommended locales, followed by all others.
-  auto available_locales =
-      GetUILanguageList(&recommended_locales, std::string(),
-                        input_method::InputMethodManager::Get());
+  // TODO(crbug.com/404133029): Remove g_browser_process usage.
+  auto available_locales = GetUILanguageList(
+      g_browser_process->GetApplicationLocale(), &recommended_locales,
+      std::string(), input_method::InputMethodManager::Get());
 
   // Select the the first recommended locale that is actually available or the
   // current UI locale if none of them are available.
@@ -152,12 +159,6 @@ AccountId GetOwnerAccountId() {
   return owner;
 }
 
-bool IsDeviceEnterpriseManaged() {
-  policy::BrowserPolicyConnectorAsh* connector =
-      g_browser_process->platform_part()->browser_policy_connector_ash();
-  return connector->IsDeviceEnterpriseManaged();
-}
-
 bool IsSigninToAdd() {
   return LoginDisplayHost::default_host() &&
          user_manager::UserManager::Get()->IsUserLoggedIn();
@@ -165,12 +166,12 @@ bool IsSigninToAdd() {
 
 bool CanRemoveUser(const user_manager::User* user) {
   const bool is_single_user =
-      user_manager::UserManager::Get()->GetUsers().size() == 1;
+      user_manager::UserManager::Get()->GetPersistedUsers().size() == 1;
 
   // Single user check here is necessary because owner info might not be
   // available when running into login screen on first boot.
   // See http://crosbug.com/12723
-  if (is_single_user && !IsDeviceEnterpriseManaged()) {
+  if (is_single_user && !ash::InstallAttributes::Get()->IsEnterpriseManaged()) {
     return false;
   }
   if (!user->GetAccountId().is_valid()) {
@@ -179,7 +180,7 @@ bool CanRemoveUser(const user_manager::User* user) {
   if (user->GetAccountId() == GetOwnerAccountId()) {
     return false;
   }
-  if (user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT ||
+  if (user->GetType() == user_manager::UserType::kPublicAccount ||
       user->is_logged_in() || IsSigninToAdd()) {
     return false;
   }
@@ -187,17 +188,18 @@ bool CanRemoveUser(const user_manager::User* user) {
   return true;
 }
 
-void GetMultiUserSignInPolicy(const user_manager::User* user,
-                              bool* out_is_allowed,
-                              user_manager::MultiUserSignInPolicy* out_policy) {
+// Returns a pair of 1) whether it is allowed to be part of the current
+// multi user sign-in session, and 2) that policy for the user.
+std::tuple<bool, user_manager::MultiUserSignInPolicy> GetMultiUserSignInPolicy(
+    const user_manager::User* user) {
   const std::string& user_id = user->GetAccountId().GetUserEmail();
-  MultiProfileUserController* multi_profile_user_controller =
-      ChromeUserManager::Get()->GetMultiProfileUserController();
-  *out_is_allowed =
-      multi_profile_user_controller->IsUserAllowedInSession(user_id, nullptr);
-
-  *out_policy = MultiProfileUserController::UserBehaviorStringToEnum(
-      multi_profile_user_controller->GetCachedValue(user_id));
+  user_manager::MultiUserSignInPolicyController* controller =
+      g_browser_process->platform_part()
+          ->multi_user_sign_in_policy_controller();
+  return {
+      controller->IsUserAllowedInSession(user_id),
+      controller->GetCachedValue(user_id),
+  };
 }
 
 // Determines if user auth status requires online sign in.
@@ -220,7 +222,7 @@ proximity_auth::mojom::AuthType GetInitialUserAuthType(
   const user_manager::User::OAuthTokenStatus token_status =
       user->oauth_token_status();
   const bool is_public_session =
-      user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT;
+      user->GetType() == user_manager::UserType::kPublicAccount;
   const bool has_gaia_account = user->HasGaiaAccount();
 
   if (is_public_session) {
@@ -250,7 +252,7 @@ proximity_auth::mojom::AuthType GetInitialUserAuthType(
   }
 
   user_manager::KnownUser known_user(g_browser_process->local_state());
-  const absl::optional<base::TimeDelta> offline_signin_time_limit =
+  const std::optional<base::TimeDelta> offline_signin_time_limit =
       known_user.GetOfflineSigninLimit(user->GetAccountId());
   if (!offline_signin_time_limit) {
     return proximity_auth::mojom::AuthType::OFFLINE_PASSWORD;
@@ -293,9 +295,8 @@ class UserSelectionScreen::DircryptoMigrationChecker {
     // If the user may be enterprise-managed, don't display the banner, because
     // migration may be blocked by user policy (and user policy is not available
     // at this time yet).
-    if (signin::AccountManagedStatusFinder::IsEnterpriseUserBasedOnEmail(
-            account_id.GetUserEmail()) ==
-        signin::AccountManagedStatusFinder::EmailEnterpriseStatus::kUnknown) {
+    if (signin::AccountManagedStatusFinder::MayBeEnterpriseUserBasedOnEmail(
+            account_id.GetUserEmail())) {
       UpdateUI(account_id, false);
       return;
     }
@@ -338,7 +339,7 @@ class UserSelectionScreen::DircryptoMigrationChecker {
   // Callback invoked when NeedsDircryptoMigration call is finished.
   void OnCryptohomeNeedsDircryptoMigrationCallback(
       const AccountId& account_id,
-      absl::optional<user_data_auth::NeedsDircryptoMigrationReply> reply) {
+      std::optional<user_data_auth::NeedsDircryptoMigrationReply> reply) {
     if (!reply.has_value()) {
       LOG(ERROR) << "Failed to call cryptohome NeedsDircryptoMigration.";
       // Hide the banner to avoid confusion in http://crbug.com/721948.
@@ -367,7 +368,7 @@ class UserSelectionScreen::DircryptoMigrationChecker {
         needs_migration);
   }
 
-  const raw_ptr<UserSelectionScreen, ExperimentalAsh> owner_;
+  const raw_ptr<UserSelectionScreen> owner_;
   AccountId focused_user_ = EmptyAccountId();
 
   // Cached result of NeedsDircryptoMigration cryptohome check. Key is the
@@ -468,7 +469,7 @@ class UserSelectionScreen::TpmLockedChecker {
     wake_lock_->RequestWakeLock();
   }
 
-  const raw_ptr<UserSelectionScreen, ExperimentalAsh> owner_;
+  const raw_ptr<UserSelectionScreen> owner_;
 
   base::TimeTicks check_finised_;
   base::TimeDelta dictionary_attack_lockout_time_remaining_;
@@ -508,38 +509,9 @@ void UserSelectionScreen::InitEasyUnlock() {
 void UserSelectionScreen::SetTpmLockedState(bool is_locked,
                                             base::TimeDelta time_left) {
   for (user_manager::User* user : users_) {
-    view_->SetTpmLockedState(user->GetAccountId(), is_locked, time_left);
+    LoginScreen::Get()->GetModel()->SetTpmLockedState(user->GetAccountId(),
+                                                      is_locked, time_left);
   }
-}
-
-// static
-UserAvatar UserSelectionScreen::BuildAshUserAvatarForUser(
-    const user_manager::User& user) {
-  UserAvatar avatar;
-  avatar.image = user.GetImage();
-  if (avatar.image.isNull()) {
-    avatar.image = *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_LOGIN_DEFAULT_USER);
-  }
-
-  // TODO(jdufault): Unify image handling between this code and
-  // user_image_source::GetUserImageInternal.
-  auto load_image_from_resource = [&avatar](int resource_id) {
-    auto& rb = ui::ResourceBundle::GetSharedInstance();
-    base::StringPiece avatar_data = rb.GetRawDataResourceForScale(
-        resource_id, rb.GetMaxResourceScaleFactor());
-    avatar.bytes.assign(avatar_data.begin(), avatar_data.end());
-  };
-
-  if (user.has_image_bytes()) {
-    avatar.bytes.assign(
-        user.image_bytes()->front(),
-        user.image_bytes()->front() + user.image_bytes()->size());
-  } else if (user.image_is_stub()) {
-    load_image_from_resource(IDR_LOGIN_DEFAULT_USER);
-  }
-
-  return avatar;
 }
 
 void UserSelectionScreen::SetView(UserBoardView* view) {
@@ -590,7 +562,7 @@ const user_manager::UserList UserSelectionScreen::PrepareUserListForSending(
   for (user_manager::User* user : users) {
     bool is_owner = user->GetAccountId() == owner;
     bool is_public_account =
-        user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT;
+        user->GetType() == user_manager::UserType::kPublicAccount;
 
     if ((is_public_account && !is_signin_to_add) || is_owner ||
         (!is_public_account && non_owner_count < max_non_owner_users)) {
@@ -617,12 +589,12 @@ void UserSelectionScreen::CheckUserStatus(const AccountId& account_id) {
     return;
   }
 
-  if (!token_handle_util_.get()) {
-    token_handle_util_ = std::make_unique<TokenHandleUtil>();
+  if (!token_handle_store_.get()) {
+    token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }
 
-  if (token_handle_util_->HasToken(account_id)) {
-    token_handle_util_->CheckToken(
+  if (token_handle_store_->HasToken(account_id)) {
+    token_handle_store_->IsReauthRequired(
         account_id,
         ProfileHelper::Get()->GetSigninProfile()->GetURLLoaderFactory(),
         base::BindOnce(&UserSelectionScreen::OnUserStatusChecked,
@@ -661,7 +633,7 @@ void UserSelectionScreen::HandleFocusPod(const AccountId& account_id) {
   lock_screen_utils::SetKeyboardSettings(account_id);
 
   user_manager::KnownUser known_user(g_browser_process->local_state());
-  absl::optional<bool> use_24hour_clock =
+  std::optional<bool> use_24hour_clock =
       known_user.FindBoolPath(account_id, ::prefs::kUse24HourClock);
   if (!use_24hour_clock.has_value()) {
     focused_user_clock_type_.reset();
@@ -703,10 +675,10 @@ void UserSelectionScreen::OnBeforeShow() {
   input_method::InputMethodManager::Get()->SetState(ime_state_);
 }
 
-void UserSelectionScreen::OnUserStatusChecked(
-    const AccountId& account_id,
-    TokenHandleUtil::TokenHandleStatus status) {
-  if (status == TokenHandleUtil::INVALID) {
+void UserSelectionScreen::OnUserStatusChecked(const AccountId& account_id,
+                                              const std::string& token,
+                                              bool reauth_required) {
+  if (reauth_required) {
     RecordReauthReason(account_id, ReauthReason::kInvalidTokenHandle);
     SetAuthType(account_id, proximity_auth::mojom::AuthType::ONLINE_SIGN_IN,
                 std::u16string());
@@ -727,7 +699,13 @@ void UserSelectionScreen::SetAuthType(const AccountId& account_id,
              proximity_auth::mojom::AuthType::FORCE_OFFLINE_PASSWORD ||
          auth_type == proximity_auth::mojom::AuthType::FORCE_OFFLINE_PASSWORD);
   user_auth_type_map_[account_id] = auth_type;
-  view_->SetAuthType(account_id, auth_type, initial_value);
+
+  LoginScreen::Get()->GetModel()->SetTapToUnlockEnabledForUser(
+      account_id, auth_type == proximity_auth::mojom::AuthType::USER_CLICK);
+
+  if (auth_type == proximity_auth::mojom::AuthType::ONLINE_SIGN_IN) {
+    LoginScreen::Get()->GetModel()->ForceOnlineSignInForUser(account_id);
+  }
 }
 
 proximity_auth::mojom::AuthType UserSelectionScreen::GetAuthType(
@@ -748,28 +726,28 @@ UserSelectionScreen::GetScreenType() const {
   }
 }
 
+// As of M69, ShowBannerMessage is used only for showing ext4 migration
+// warning banner message.
+// TODO(fukino): Remove ShowWarningMessage and related implementation along
+// with the migration screen once the transition to ext4 is compilete.
 void UserSelectionScreen::ShowBannerMessage(const std::u16string& message,
                                             bool is_warning) {
-  view_->ShowBannerMessage(message, is_warning);
+  LoginScreen::Get()->GetModel()->UpdateWarningMessage(message);
 }
 
 void UserSelectionScreen::SetSmartLockState(const AccountId& account_id,
                                             SmartLockState state) {
-  view_->SetSmartLockState(account_id, state);
+  LoginScreen::Get()->GetModel()->SetSmartLockState(account_id, state);
 }
 
 void UserSelectionScreen::NotifySmartLockAuthResult(const AccountId& account_id,
                                                     bool success) {
-  view_->NotifySmartLockAuthResult(account_id, success);
+  LoginScreen::Get()->GetModel()->NotifySmartLockAuthResult(account_id,
+                                                            success);
 }
 
 void UserSelectionScreen::EnableInput() {
-  // If Easy Unlock fails to unlock the screen, re-enable the password input.
-  // This is only necessary on the lock screen, because the error handling for
-  // the sign-in screen uses a different code path.
-  if (ScreenLocker::default_screen_locker()) {
-    ScreenLocker::default_screen_locker()->EnableInput();
-  }
+  // TODO(b/271261286): Remove this.
 }
 
 void UserSelectionScreen::Unlock(const AccountId& account_id) {
@@ -778,6 +756,7 @@ void UserSelectionScreen::Unlock(const AccountId& account_id) {
 }
 
 void UserSelectionScreen::OnSessionStateChanged() {
+  TRACE_EVENT0("login", "UserSelectionScreen::OnSessionStateChanged");
   if (!pending_focused_account_id_.has_value()) {
     return;
   }
@@ -801,7 +780,7 @@ void UserSelectionScreen::OnOnlineSigninEnforced(const AccountId& account_id) {
 }
 
 void UserSelectionScreen::AttemptEasyUnlock(const AccountId& account_id) {
-  EasyUnlockService* service = GetEasyUnlockServiceForUser(account_id);
+  SmartLockService* service = GetSmartLockServiceForUser(account_id);
   if (!service) {
     return;
   }
@@ -822,7 +801,7 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
     const AccountId& account_id = user->GetAccountId();
     bool is_owner = owner == account_id;
     const bool is_public_account =
-        user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT;
+        user->GetType() == user_manager::UserType::kPublicAccount;
     const proximity_auth::mojom::AuthType initial_auth_type =
         is_public_account
             ? proximity_auth::mojom::AuthType::EXPAND_THEN_USER_CLICK
@@ -842,7 +821,7 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
     user_info.basic_user_info.display_name =
         base::UTF16ToUTF8(user->GetDisplayName());
     user_info.basic_user_info.display_email = user->display_email();
-    user_info.basic_user_info.avatar = BuildAshUserAvatarForUser(*user);
+    user_info.basic_user_info.avatar = ash::BuildAshUserAvatarForUser(*user);
     user_info.auth_type = initial_auth_type;
     user_info.is_signed_in = user->is_logged_in();
     user_info.is_device_owner = is_owner;
@@ -850,15 +829,15 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
     user_info.fingerprint_state = quick_unlock::GetFingerprintStateForUser(
         user, quick_unlock::Purpose::kUnlock);
 
-    auto* easy_unlock_service = GetEasyUnlockServiceForUser(account_id);
-    if (easy_unlock_service) {
+    auto* smart_lock_service = GetSmartLockServiceForUser(account_id);
+    if (smart_lock_service) {
       user_info.smart_lock_state =
-          easy_unlock_service->GetInitialSmartLockState();
+          smart_lock_service->GetInitialSmartLockState();
     }
 
     user_info.show_pin_pad_for_password = false;
     if (known_user.GetIsEnterpriseManaged(user->GetAccountId()) &&
-        user->GetType() != user_manager::USER_TYPE_PUBLIC_ACCOUNT) {
+        user->GetType() != user_manager::UserType::kPublicAccount) {
       if (const std::string* account_manager =
               known_user.GetAccountManager(user->GetAccountId())) {
         user_info.user_account_manager = *account_manager;
@@ -869,7 +848,7 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
     }
     CrosSettings::Get()->GetBoolean(kDeviceShowNumericKeyboardForPassword,
                                     &user_info.show_pin_pad_for_password);
-    if (absl::optional<bool> show_display_password_button =
+    if (std::optional<bool> show_display_password_button =
             known_user.FindBoolPath(
                 user->GetAccountId(),
                 prefs::kLoginDisplayPasswordButtonEnabled)) {
@@ -881,12 +860,13 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
     if (!is_signin_to_add) {
       user_info.is_multi_user_sign_in_allowed = true;
     } else {
-      GetMultiUserSignInPolicy(user, &user_info.is_multi_user_sign_in_allowed,
-                               &user_info.multi_user_sign_in_policy);
+      std::tie(user_info.is_multi_user_sign_in_allowed,
+               user_info.multi_user_sign_in_policy) =
+          ash::GetMultiUserSignInPolicy(user);
     }
 
     // Fill public session data.
-    if (user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT) {
+    if (user->GetType() == user_manager::UserType::kPublicAccount) {
       std::string manager;
       user_info.public_account_info.emplace();
       if (GetDeviceManager(&manager)) {
@@ -912,7 +892,7 @@ UserSelectionScreen::UpdateAndReturnUserListForAsh() {
       user_info.public_account_info->show_advanced_view = has_multiple_locales;
       // Do not show expanded view when in demo mode.
       user_info.public_account_info->show_expanded_view =
-          !DemoSession::IsDeviceInDemoMode();
+          !ash::demo_mode::IsDeviceInDemoMode();
     }
 
     user_info.can_remove = CanRemoveUser(user);
@@ -933,7 +913,7 @@ void UserSelectionScreen::SetUsersLoaded(bool loaded) {
   users_loaded_ = loaded;
 }
 
-EasyUnlockService* UserSelectionScreen::GetEasyUnlockServiceForUser(
+SmartLockService* UserSelectionScreen::GetSmartLockServiceForUser(
     const AccountId& account_id) const {
   if (GetScreenType() == OTHER_SCREEN) {
     return nullptr;
@@ -965,7 +945,7 @@ EasyUnlockService* UserSelectionScreen::GetEasyUnlockServiceForUser(
     profile = profile_helper->GetSigninProfile();
   }
 
-  return EasyUnlockService::Get(profile);
+  return SmartLockService::Get(profile);
 }
 
 }  // namespace ash

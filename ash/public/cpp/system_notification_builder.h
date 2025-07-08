@@ -6,12 +6,14 @@
 #define ASH_PUBLIC_CPP_SYSTEM_NOTIFICATION_BUILDER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/public/cpp/ash_public_export.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
@@ -231,7 +233,7 @@ class ASH_PUBLIC_EXPORT SystemNotificationBuilder {
       scoped_refptr<message_center::NotificationDelegate> delegate);
 
   // Set the small image shown in the notification.
-  // Default: kNoneIcon
+  // Default: VectorIcon::EmptyIcon()
   SystemNotificationBuilder& SetSmallImage(const gfx::VectorIcon& small_image);
 
   // Set additional optional fields.
@@ -262,7 +264,7 @@ class ASH_PUBLIC_EXPORT SystemNotificationBuilder {
   std::unique_ptr<message_center::Notification> BuildPtr(bool keep_timestamp);
 
   // Get a NotifierId by combining `catalog_name_` and `id_` if `notifier_id_`
-  // is `absl::nullopt`, otherwise returns the value of `notifier_id_`.
+  // is `std::nullopt`, otherwise returns the value of `notifier_id_`.
   // The `notifier_id_` should never be read directly but only through this
   // method.
   message_center::NotifierId GetNotifierId() const;
@@ -275,11 +277,10 @@ class ASH_PUBLIC_EXPORT SystemNotificationBuilder {
   std::u16string message_;
   std::u16string display_source_;
   GURL origin_url_;
-  absl::optional<message_center::NotifierId> notifier_id_;
+  std::optional<message_center::NotifierId> notifier_id_;
   NotificationCatalogName catalog_name_ = NotificationCatalogName::kNone;
   scoped_refptr<message_center::NotificationDelegate> delegate_ = nullptr;
-  raw_ptr<const gfx::VectorIcon, ExperimentalAsh> small_image_ =
-      &gfx::kNoneIcon;
+  raw_ptr<const gfx::VectorIcon> small_image_ = &gfx::VectorIcon::EmptyIcon();
   message_center::RichNotificationData optional_fields_;
   message_center::SystemNotificationWarningLevel warning_level_ =
       message_center::SystemNotificationWarningLevel::NORMAL;

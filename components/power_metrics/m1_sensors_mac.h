@@ -11,9 +11,9 @@
 #include <IOKit/hidsystem/IOHIDEventSystemClient.h>
 
 #include <memory>
+#include <optional>
 
-#include "base/mac/scoped_cftyperef.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/apple/scoped_cftyperef.h"
 
 namespace power_metrics {
 
@@ -24,8 +24,8 @@ class M1SensorsReader {
     TemperaturesCelsius(const TemperaturesCelsius&) noexcept;
     ~TemperaturesCelsius();
 
-    absl::optional<double> p_cores;
-    absl::optional<double> e_cores;
+    std::optional<double> p_cores;
+    std::optional<double> e_cores;
   };
 
   virtual ~M1SensorsReader();
@@ -38,10 +38,10 @@ class M1SensorsReader {
 
  protected:
   explicit M1SensorsReader(
-      base::ScopedCFTypeRef<IOHIDEventSystemClientRef> system);
+      base::apple::ScopedCFTypeRef<IOHIDEventSystemClientRef> system);
 
  private:
-  base::ScopedCFTypeRef<IOHIDEventSystemClientRef> system_;
+  base::apple::ScopedCFTypeRef<IOHIDEventSystemClientRef> system_;
 };
 
 }  // namespace power_metrics

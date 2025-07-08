@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_THEMES_CUSTOM_THEME_SUPPLIER_H_
 #define CHROME_BROWSER_THEMES_CUSTOM_THEME_SUPPLIER_H_
 
+#include <string_view>
+
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_piece.h"
+#include "extensions/common/extension_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/color/color_provider_key.h"
@@ -26,7 +28,7 @@ class Image;
 namespace ui {
 class ColorProvider;
 class NativeTheme;
-}
+}  // namespace ui
 
 // A representation of a theme. All theme properties can be accessed through the
 // public methods. Subclasses are expected to override all methods which should
@@ -87,7 +89,7 @@ class CustomThemeSupplier
  protected:
   ~CustomThemeSupplier() override;
 
-  void set_extension_id(base::StringPiece id) {
+  void set_extension_id(std::string_view id) {
     DCHECK_EQ(get_theme_type(), ThemeType::kExtension);
     extension_id_ = id;
   }
@@ -95,7 +97,7 @@ class CustomThemeSupplier
  private:
   friend class base::RefCountedThreadSafe<CustomThemeSupplier>;
 
-  std::string extension_id_;
+  extensions::ExtensionId extension_id_;
 };
 
 #endif  // CHROME_BROWSER_THEMES_CUSTOM_THEME_SUPPLIER_H_

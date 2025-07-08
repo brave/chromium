@@ -4,25 +4,33 @@
 
 #include "chrome/browser/ui/webui/settings/settings_security_key_handler.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "base/test/gmock_callback_support.h"
+#include "base/containers/to_vector.h"
+#include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/webauthn/local_credential_management.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/test/test_web_ui.h"
-#include "device/fido/fake_fido_discovery.h"
 #include "device/fido/fido_constants.h"
-#include "device/fido/fido_discovery_factory.h"
 #include "device/fido/fido_types.h"
 #include "device/fido/public_key_credential_rp_entity.h"
 #include "device/fido/public_key_credential_user_entity.h"
-#include "device/fido/test_callback_receiver.h"
+#include "device/fido/virtual_ctap2_device.h"
 #include "device/fido/virtual_fido_device_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "base/test/gmock_callback_support.h"
+#include "chrome/browser/webauthn/local_credential_management.h"
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
 namespace settings {
 
@@ -30,12 +38,14 @@ namespace {
 
 constexpr size_t kBioEnrollCapacity = 3;
 constexpr char kTestPIN[] = "1234";
-constexpr uint8_t kCredentialID[] = {0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa,
-                                     0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa};
+constexpr auto kCredentialID =
+    std::to_array<uint8_t>({0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa,
+                            0xa, 0xa, 0xa, 0xa, 0xa, 0xa});
 constexpr char kRPID[] = "example.com";
 constexpr char kRPName[] = "Example Corp";
-constexpr uint8_t kUserID[] = {0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1,
-                               0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1};
+constexpr auto kUserID =
+    std::to_array<uint8_t>({0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1, 0x1,
+                            0x1, 0x1, 0x1, 0x1, 0x1, 0x1});
 constexpr char kUserName[] = "alice@example.com";
 constexpr char kUserDisplayName[] = "Alice Example <alice@example.com>";
 
@@ -176,13 +186,11 @@ TEST_F(SecurityKeysCredentialHandlerTest, TestUpdateUserInformation) {
   config.ctap2_versions = {device::Ctap2Version::kCtap2_1};
   handler_->GetDiscoveryFactory()->SetCtap2Config(config);
 
-  std::vector<uint8_t> credential_id =
-      device::fido_parsing_utils::Materialize(kCredentialID);
+  const auto credential_id = base::ToVector(kCredentialID);
 
   device::PublicKeyCredentialRpEntity rp(kRPID, kRPName);
-  device::PublicKeyCredentialUserEntity user(
-      device::fido_parsing_utils::Materialize(kUserID), kUserName,
-      kUserDisplayName);
+  device::PublicKeyCredentialUserEntity user(base::ToVector(kUserID), kUserName,
+                                             kUserDisplayName);
 
   ASSERT_TRUE(
       handler_->GetDiscoveryFactory()->mutable_state()->InjectResidentKey(
@@ -218,8 +226,7 @@ TEST_F(SecurityKeysCredentialHandlerTest, TestUpdateUserInformation) {
   base::RunLoop().RunUntilIdle();
 
   device::PublicKeyCredentialUserEntity updated_user(
-      device::fido_parsing_utils::Materialize(kUserID), new_username,
-      new_displayname);
+      base::ToVector(kUserID), new_username, new_displayname);
 
   EXPECT_EQ(handler_->GetDiscoveryFactory()
                 ->mutable_state()
@@ -339,7 +346,7 @@ class MockLocalCredentialManagement : public LocalCredentialManagement {
       void,
       Enumerate,
       (base::OnceCallback<void(
-           absl::optional<std::vector<device::DiscoverableCredentialMetadata>>)>
+           std::optional<std::vector<device::DiscoverableCredentialMetadata>>)>
            callback));
   MOCK_METHOD(void,
               Delete,
@@ -407,10 +414,7 @@ class PasskeysHandlerTest : public ChromeRenderViewHostTestHarness {
 };
 
 TEST_F(PasskeysHandlerTest, TestHandleEdit) {
-  device::test::TestCallbackReceiver<bool> callback;
-  std::vector<uint8_t> credential_id =
-      device::fido_parsing_utils::Materialize(kCredentialID);
-  std::string credential_id_hex = base::HexEncode(credential_id);
+  std::string credential_id_hex = base::HexEncode(kCredentialID);
   EXPECT_CALL(
       *weak_local_cred_man_,
       Edit(testing::ElementsAreArray(kCredentialID),
@@ -423,7 +427,7 @@ TEST_F(PasskeysHandlerTest, TestHandleEdit) {
       });
   EXPECT_CALL(*weak_local_cred_man_, Enumerate)
       .WillOnce([](base::OnceCallback<
-                    void(absl::optional<
+                    void(std::optional<
                          std::vector<device::DiscoverableCredentialMetadata>>)>
                        callback) {
         std::vector<device::DiscoverableCredentialMetadata> credential_metadata{
@@ -434,7 +438,8 @@ TEST_F(PasskeysHandlerTest, TestHandleEdit) {
                 device::PublicKeyCredentialUserEntity(
                     {0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa,
                      0xa, 0xa, 0xa, 0xa},
-                    "new-username", "new-username")}};
+                    "new-username", "new-username"),
+                /*provider_name=*/std::nullopt}};
         std::move(callback).Run(std::move(credential_metadata));
         base::RunLoop().RunUntilIdle();
       });
@@ -447,9 +452,7 @@ TEST_F(PasskeysHandlerTest, TestHandleEdit) {
 }
 
 TEST_F(PasskeysHandlerTest, TestRecordPasskeyDelete) {
-  device::test::TestCallbackReceiver<bool> callback;
-  std::vector<uint8_t> credential_id =
-      device::fido_parsing_utils::Materialize(kCredentialID);
+  const auto credential_id = base::ToVector(kCredentialID);
   std::string credential_id_hex = base::HexEncode(credential_id);
   EXPECT_CALL(*weak_local_cred_man_,
               Delete(testing::ElementsAreArray(kCredentialID),
@@ -462,7 +465,7 @@ TEST_F(PasskeysHandlerTest, TestRecordPasskeyDelete) {
   EXPECT_CALL(*weak_local_cred_man_, Enumerate)
       .WillOnce(
           [](base::OnceCallback<void(
-                 absl::optional<std::vector<
+                 std::optional<std::vector<
                      device::DiscoverableCredentialMetadata>>)> callback) {
             std::move(callback).Run(/*credential_metadata=*/{});
             base::RunLoop().RunUntilIdle();

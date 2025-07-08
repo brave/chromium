@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_loading_panel_element.h"
 
-#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
@@ -18,6 +17,7 @@
 #include "third_party/blink/renderer/modules/media_controls/media_controls_resource_loader.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
+#include "ui/strings/grit/ax_strings.h"
 
 namespace {
 
@@ -38,9 +38,10 @@ MediaControlLoadingPanelElement::MediaControlLoadingPanelElement(
     MediaControlsImpl& media_controls)
     : MediaControlDivElement(media_controls) {
   SetShadowPseudoId(AtomicString("-internal-media-controls-loading-panel"));
+  setAttribute(html_names::kRoleAttr, AtomicString("group"));
   setAttribute(
       html_names::kAriaLabelAttr,
-      WTF::AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_LOADING_PANEL)));
+      AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_LOADING_PANEL)));
   setAttribute(html_names::kAriaLiveAttr, AtomicString("polite"));
   CreateUserAgentShadowRoot();
 
@@ -65,8 +66,7 @@ void MediaControlLoadingPanelElement::PopulateShadowDOM() {
   // This stylesheet element and will contain rules that are specific to the
   // loading panel. The shadow DOM protects these rules and rules from the
   // parent DOM from bleeding across the shadow DOM boundary.
-  auto* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
-                                                       CreateElementFlags());
+  auto* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument());
   style->setTextContent(
       MediaControlsResourceLoader::GetShadowLoadingStyleSheet());
   shadow_root->ParserAppendChild(style);

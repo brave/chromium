@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/gpu/mac/video_toolbox_h264_accelerator.h"
+
 #include <memory>
 
 #include "base/containers/span.h"
 #include "media/base/media_util.h"
 #include "media/gpu/codec_picture.h"
-#include "media/gpu/mac/video_toolbox_h264_accelerator.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -44,8 +45,9 @@ class VideoToolboxH264AcceleratorTest : public testing::Test {
   ~VideoToolboxH264AcceleratorTest() override = default;
 
  protected:
-  MOCK_METHOD2(OnDecode,
-               void(base::ScopedCFTypeRef<CMSampleBufferRef>,
+  MOCK_METHOD3(OnDecode,
+               void(base::apple::ScopedCFTypeRef<CMSampleBufferRef>,
+                    VideoToolboxDecompressionSessionMetadata,
                     scoped_refptr<CodecPicture>));
   MOCK_METHOD1(OnOutput, void(scoped_refptr<CodecPicture>));
 
@@ -70,20 +72,20 @@ TEST_F(VideoToolboxH264AcceleratorTest, DecodeOne) {
   std::vector<SubsampleEntry> subsamples;
 
   // Decode frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample));
   accelerator_->SubmitDecode(pic);
 
   // Verify sample.
-  CMBlockBufferRef buf = CMSampleBufferGetDataBuffer(sample);
+  CMBlockBufferRef buf = CMSampleBufferGetDataBuffer(sample.get());
   std::vector<uint8_t> data(CMBlockBufferGetDataLength(buf));
   CMBlockBufferCopyDataBytes(buf, 0, CMBlockBufferGetDataLength(buf),
                              data.data());
@@ -107,34 +109,34 @@ TEST_F(VideoToolboxH264AcceleratorTest, DecodeTwo) {
   std::vector<SubsampleEntry> subsamples;
 
   // First frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic0);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic0,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample0;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample0));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample0;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample0));
   accelerator_->SubmitDecode(pic0);
 
   // Second frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic1);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic1,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample1;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample1));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample1;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample1));
   accelerator_->SubmitDecode(pic1);
 
   // The two samples should have the same configuration.
-  EXPECT_EQ(CMSampleBufferGetFormatDescription(sample0),
-            CMSampleBufferGetFormatDescription(sample1));
+  EXPECT_EQ(CMSampleBufferGetFormatDescription(sample0.get()),
+            CMSampleBufferGetFormatDescription(sample1.get()));
 }
 
 TEST_F(VideoToolboxH264AcceleratorTest, DecodeTwo_Reset) {
@@ -148,37 +150,37 @@ TEST_F(VideoToolboxH264AcceleratorTest, DecodeTwo_Reset) {
   std::vector<SubsampleEntry> subsamples;
 
   // First frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic0);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic0,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample0;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample0));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample0;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample0));
   accelerator_->SubmitDecode(pic0);
 
   // Reset.
   accelerator_->Reset();
 
   // Second frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic1);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic1,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample1;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample1));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample1;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample1));
   accelerator_->SubmitDecode(pic1);
 
   // The two samples should have different configurations.
-  EXPECT_NE(CMSampleBufferGetFormatDescription(sample0),
-            CMSampleBufferGetFormatDescription(sample1));
+  EXPECT_NE(CMSampleBufferGetFormatDescription(sample0.get()),
+            CMSampleBufferGetFormatDescription(sample1.get()));
 }
 
 TEST_F(VideoToolboxH264AcceleratorTest, DecodeTwo_ConfigChange) {
@@ -192,34 +194,34 @@ TEST_F(VideoToolboxH264AcceleratorTest, DecodeTwo_ConfigChange) {
   std::vector<SubsampleEntry> subsamples;
 
   // First frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS0));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS0));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS0));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS0));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic0);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic0,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample0;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample0));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample0;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample0));
   accelerator_->SubmitDecode(pic0);
 
   // Second frame.
-  accelerator_->ProcessSPS(&sps, base::make_span(kSPS1));
-  accelerator_->ProcessPPS(&pps, base::make_span(kPPS1));
+  accelerator_->ProcessSPS(&sps, base::span(kSPS1));
+  accelerator_->ProcessPPS(&pps, base::span(kPPS1));
   accelerator_->SubmitFrameMetadata(&sps, &pps, dpb, ref_pic_list, ref_pic_list,
                                     ref_pic_list, pic1);
   accelerator_->SubmitSlice(&pps, &slice_hdr, ref_pic_list, ref_pic_list, pic1,
                             kSliceData, sizeof(kSliceData), subsamples);
 
   // Save the resulting sample.
-  base::ScopedCFTypeRef<CMSampleBufferRef> sample1;
-  EXPECT_CALL(*this, OnDecode(_, _)).WillOnce(SaveArg<0>(&sample1));
+  base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample1;
+  EXPECT_CALL(*this, OnDecode(_, _, _)).WillOnce(SaveArg<0>(&sample1));
   accelerator_->SubmitDecode(pic1);
 
   // The two samples should have different configurations.
-  EXPECT_NE(CMSampleBufferGetFormatDescription(sample0),
-            CMSampleBufferGetFormatDescription(sample1));
+  EXPECT_NE(CMSampleBufferGetFormatDescription(sample0.get()),
+            CMSampleBufferGetFormatDescription(sample1.get()));
 }
 
 }  // namespace media

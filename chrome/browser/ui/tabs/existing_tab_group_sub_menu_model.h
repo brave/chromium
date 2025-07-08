@@ -6,8 +6,10 @@
 #define CHROME_BROWSER_UI_TABS_EXISTING_TAB_GROUP_SUB_MENU_MODEL_H_
 
 #include <stddef.h>
+
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/tabs/existing_base_sub_menu_model.h"
 
 class TabStripModel;

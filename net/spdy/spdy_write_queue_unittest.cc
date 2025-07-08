@@ -4,15 +4,19 @@
 
 #include "net/spdy/spdy_write_queue.h"
 
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <string>
 #include <utility>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "net/base/request_priority.h"
 #include "net/log/net_log_with_source.h"
 #include "net/spdy/spdy_buffer_producer.h"
@@ -34,9 +38,11 @@ class SpdyWriteQueueTest : public ::testing::Test {};
 // given string.
 std::unique_ptr<SpdyBufferProducer> StringToProducer(const std::string& s) {
   auto data = std::make_unique<char[]>(s.size());
-  std::memcpy(data.get(), s.data(), s.size());
-  auto frame = std::make_unique<spdy::SpdySerializedFrame>(data.release(),
-                                                           s.size(), true);
+  // SAFETY: `data` is alloc'd to be of size `s.size()`; `s` has that size;
+  // and the type is due to interfacing to Quiche.
+  UNSAFE_BUFFERS(std::memcpy(data.get(), s.data(), s.size()));
+  auto frame =
+      std::make_unique<spdy::SpdySerializedFrame>(std::move(data), s.size());
   auto buffer = std::make_unique<SpdyBuffer>(std::move(frame));
   return std::make_unique<SimpleBufferProducer>(std::move(buffer));
 }
@@ -52,7 +58,8 @@ std::unique_ptr<SpdyBufferProducer> IntToProducer(int i) {
 class RequeingBufferProducer : public SpdyBufferProducer {
  public:
   explicit RequeingBufferProducer(SpdyWriteQueue* queue) {
-    buffer_ = std::make_unique<SpdyBuffer>(kOriginal, std::size(kOriginal));
+    buffer_ = std::make_unique<SpdyBuffer>(
+        base::byte_span_with_nul_from_cstring(kOriginal));
     buffer_->AddConsumeCallback(
         base::BindRepeating(RequeingBufferProducer::ConsumeCallback, queue));
   }
@@ -64,7 +71,8 @@ class RequeingBufferProducer : public SpdyBufferProducer {
   static void ConsumeCallback(SpdyWriteQueue* queue,
                               size_t size,
                               SpdyBuffer::ConsumeSource source) {
-    auto buffer = std::make_unique<SpdyBuffer>(kRequeued, std::size(kRequeued));
+    auto buffer = std::make_unique<SpdyBuffer>(
+        base::byte_span_with_nul_from_cstring(kRequeued));
     auto buffer_producer =
         std::make_unique<SimpleBufferProducer>(std::move(buffer));
 
@@ -81,7 +89,7 @@ class RequeingBufferProducer : public SpdyBufferProducer {
 // data as a string.
 std::string ProducerToString(std::unique_ptr<SpdyBufferProducer> producer) {
   std::unique_ptr<SpdyBuffer> buffer = producer->ProduceBuffer();
-  return std::string(buffer->GetRemainingData(), buffer->GetRemainingSize());
+  return std::string(base::as_string_view(buffer->GetRemaining()));
 }
 
 // Produces a frame with the given producer and returns a copy of its
@@ -257,10 +265,12 @@ TEST_F(SpdyWriteQueueTest, RemovePendingWritesForStreamsAfter) {
   stream3->set_stream_id(5);
   // No stream id assigned.
   std::unique_ptr<SpdyStream> stream4 = MakeTestStream(DEFAULT_PRIORITY);
-  base::WeakPtr<SpdyStream> streams[] = {
-    stream1->GetWeakPtr(), stream2->GetWeakPtr(),
-    stream3->GetWeakPtr(), stream4->GetWeakPtr()
-  };
+  auto streams = std::to_array<base::WeakPtr<SpdyStream>>({
+      stream1->GetWeakPtr(),
+      stream2->GetWeakPtr(),
+      stream3->GetWeakPtr(),
+      stream4->GetWeakPtr(),
+  });
 
   for (int i = 0; i < 100; ++i) {
     write_queue.Enqueue(DEFAULT_PRIORITY, spdy::SpdyFrameType::HEADERS,
@@ -329,8 +339,8 @@ TEST_F(SpdyWriteQueueTest, RequeingProducerWithoutReentrance) {
     EXPECT_TRUE(
         queue.Dequeue(&frame_type, &producer, &stream, &traffic_annotation));
     EXPECT_TRUE(queue.IsEmpty());
-    EXPECT_EQ(std::string(kOriginal),
-              producer->ProduceBuffer()->GetRemainingData());
+    EXPECT_EQ(base::byte_span_with_nul_from_cstring(kOriginal),
+              producer->ProduceBuffer()->GetRemaining());
   }
   // |producer| was destroyed, and a buffer is re-queued.
   EXPECT_FALSE(queue.IsEmpty());
@@ -342,8 +352,8 @@ TEST_F(SpdyWriteQueueTest, RequeingProducerWithoutReentrance) {
 
   EXPECT_TRUE(
       queue.Dequeue(&frame_type, &producer, &stream, &traffic_annotation));
-  EXPECT_EQ(std::string(kRequeued),
-            producer->ProduceBuffer()->GetRemainingData());
+  EXPECT_EQ(base::byte_span_with_nul_from_cstring(kRequeued),
+            producer->ProduceBuffer()->GetRemaining());
 }
 
 TEST_F(SpdyWriteQueueTest, ReentranceOnClear) {
@@ -362,8 +372,8 @@ TEST_F(SpdyWriteQueueTest, ReentranceOnClear) {
 
   EXPECT_TRUE(
       queue.Dequeue(&frame_type, &producer, &stream, &traffic_annotation));
-  EXPECT_EQ(std::string(kRequeued),
-            producer->ProduceBuffer()->GetRemainingData());
+  EXPECT_EQ(base::byte_span_with_nul_from_cstring(kRequeued),
+            producer->ProduceBuffer()->GetRemaining());
 }
 
 TEST_F(SpdyWriteQueueTest, ReentranceOnRemovePendingWritesAfter) {
@@ -385,8 +395,8 @@ TEST_F(SpdyWriteQueueTest, ReentranceOnRemovePendingWritesAfter) {
 
   EXPECT_TRUE(
       queue.Dequeue(&frame_type, &producer, &weak_stream, &traffic_annotation));
-  EXPECT_EQ(std::string(kRequeued),
-            producer->ProduceBuffer()->GetRemainingData());
+  EXPECT_EQ(base::byte_span_with_nul_from_cstring(kRequeued),
+            producer->ProduceBuffer()->GetRemaining());
 }
 
 TEST_F(SpdyWriteQueueTest, ReentranceOnRemovePendingWritesForStream) {
@@ -408,8 +418,8 @@ TEST_F(SpdyWriteQueueTest, ReentranceOnRemovePendingWritesForStream) {
 
   EXPECT_TRUE(
       queue.Dequeue(&frame_type, &producer, &weak_stream, &traffic_annotation));
-  EXPECT_EQ(std::string(kRequeued),
-            producer->ProduceBuffer()->GetRemainingData());
+  EXPECT_EQ(base::byte_span_with_nul_from_cstring(kRequeued),
+            producer->ProduceBuffer()->GetRemaining());
 }
 
 TEST_F(SpdyWriteQueueTest, ChangePriority) {

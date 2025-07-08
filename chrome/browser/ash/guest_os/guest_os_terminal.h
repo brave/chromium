@@ -10,7 +10,6 @@
 #include "base/containers/fixed_flat_map.h"
 #include "base/functional/callback.h"
 #include "base/values.h"
-#include "chrome/browser/ash/guest_os/guest_id.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/display/types/display_constants.h"
@@ -24,7 +23,9 @@ class Profile;
 
 namespace guest_os {
 
-// web_app::GenerateAppId(/*manifest_id=*/absl::nullopt,
+struct GuestId;
+
+// web_app::GenerateAppId(/*manifest_id=*/std::nullopt,
 //     GURL("chrome-untrusted://terminal/html/terminal.html"))
 extern const char kTerminalSystemAppId[];
 
@@ -163,7 +164,7 @@ void RecordTerminalSettingsChangesUMAs(Profile* profile);
 std::string GetTerminalSettingBackgroundColor(
     Profile* profile,
     GURL url,
-    absl::optional<SkColor> opener_background_color);
+    std::optional<SkColor> opener_background_color);
 
 // Returns terminal setting 'pass-ctrl-w'.
 bool GetTerminalSettingPassCtrlW(Profile* profile);

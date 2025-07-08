@@ -42,6 +42,7 @@ class OperationRequestManager;
 // default.
 extern const base::FilePath::CharType kFakeFilePath[];
 extern const char kFakeFileText[];
+extern const char kFakeFileVersionTag[];
 
 // Represents a file or a directory on a fake file system.
 struct FakeEntry {
@@ -57,7 +58,7 @@ struct FakeEntry {
   std::unique_ptr<EntryMetadata> metadata;
   std::string contents;
   // Used when the file is open for writing.
-  absl::optional<std::string> write_buffer;
+  std::optional<std::string> write_buffer;
 };
 
 // Fake provided file system implementation. Does not communicate with target
@@ -79,6 +80,7 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
                 int64_t size,
                 base::Time modification_time,
                 std::string mime_type,
+                std::unique_ptr<CloudFileInfo> cloud_file_info,
                 std::string contents);
 
   // Fetches a pointer to a fake entry registered in the fake file system. If
@@ -179,8 +181,13 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
   base::WeakPtr<ProvidedFileSystemInterface> GetWeakPtr() override;
   std::unique_ptr<ScopedUserInteraction> StartUserInteraction() override;
 
+  base::WeakPtr<FakeProvidedFileSystem> GetFakeWeakPtr();
+
  private:
   using Entries = std::map<base::FilePath, std::unique_ptr<FakeEntry>>;
+
+  base::File::Error DoDeleteEntry(const base::FilePath& entry_path,
+                                  bool recursive);
 
   // Utility function for posting a task which can be aborted by calling the
   // returned callback.

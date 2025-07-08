@@ -20,11 +20,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
+import org.chromium.base.test.util.DoNotBatch;
+import org.chromium.build.BuildConfig;
+import org.chromium.net.CronetTestRule.CronetImplementation;
+import org.chromium.net.CronetTestRule.IgnoreFor;
 import org.chromium.net.CronetTestRule.RequiresMinApi;
 import org.chromium.net.MetricsTestUtil.TestExecutor;
 import org.chromium.net.impl.CronetMetrics;
-import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -33,16 +35,17 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Test RequestFinishedInfo.Listener and the metrics information it provides.
- */
+/** Test RequestFinishedInfo.Listener and the metrics information it provides. */
+@DoNotBatch(reason = "crbug/1459563")
 @RunWith(AndroidJUnit4.class)
+@IgnoreFor(
+        implementations = {CronetImplementation.FALLBACK},
+        reason = "Fallback implementation does not support RequestFinishedListener.")
 public class RequestFinishedInfoTest {
-    @Rule
-    public final CronetTestRule mTestRule = CronetTestRule.withAutomaticEngineStartup();
+    @Rule public final CronetTestRule mTestRule = CronetTestRule.withAutomaticEngineStartup();
 
-    private EmbeddedTestServer mTestServer;
     private String mUrl;
+    private CronetImplementation mImplementationUnderTest;
 
     // A subclass of TestRequestFinishedListener to additionally assert that UrlRequest.Callback's
     // terminal callbacks have been invoked at the time of onRequestFinished().
@@ -50,6 +53,7 @@ public class RequestFinishedInfoTest {
     private static class AssertCallbackDoneRequestFinishedListener
             extends TestRequestFinishedListener {
         private final TestUrlRequestCallback mCallback;
+
         public AssertCallbackDoneRequestFinishedListener(TestUrlRequestCallback callback) {
             // Use same executor as request callback to verify stable call order.
             super(callback.getExecutor());
@@ -61,22 +65,22 @@ public class RequestFinishedInfoTest {
             assertThat(mCallback.isDone()).isTrue();
             super.onRequestFinished(requestInfo);
         }
-    };
+    }
 
     @Before
     public void setUp() throws Exception {
-        mTestServer =
-                EmbeddedTestServer.createAndStartServer(mTestRule.getTestFramework().getContext());
-        mUrl = mTestServer.getURL("/echo?status=200");
+        NativeTestServer.startNativeTestServer(mTestRule.getTestFramework().getContext());
+        mUrl = NativeTestServer.getFileURL("/echo?status=200");
+        mImplementationUnderTest = mTestRule.implementationUnderTest();
     }
 
     @After
     public void tearDown() throws Exception {
-        mTestServer.stopAndDestroyServer();
+        NativeTestServer.shutdownNativeTestServer();
     }
 
     static class DirectExecutor implements Executor {
-        private ConditionVariable mBlock = new ConditionVariable();
+        private final ConditionVariable mBlock = new ConditionVariable();
 
         @Override
         public void execute(Runnable task) {
@@ -90,7 +94,7 @@ public class RequestFinishedInfoTest {
     }
 
     static class ThreadExecutor implements Executor {
-        private List<Thread> mThreads = new ArrayList<Thread>();
+        private final List<Thread> mThreads = new ArrayList<>();
 
         @Override
         public void execute(Runnable task) {
@@ -108,19 +112,23 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testRequestFinishedListener() throws Exception {
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                (ExperimentalUrlRequest.Builder) mTestRule.getTestFramework()
-                        .getEngine()
-                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
+                (ExperimentalUrlRequest.Builder)
+                        mTestRule
+                                .getTestFramework()
+                                .getEngine()
+                                .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -129,29 +137,35 @@ public class RequestFinishedInfoTest {
         Date endTime = new Date();
 
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
         assertThat(requestInfo.getAnnotations()).containsExactly("request annotation", this);
     }
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testRequestFinishedListenerDirectExecutor() throws Exception {
         DirectExecutor testExecutor = new DirectExecutor();
         TestRequestFinishedListener requestFinishedListener =
                 new TestRequestFinishedListener(testExecutor);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                (ExperimentalUrlRequest.Builder) mTestRule.getTestFramework()
-                        .getEngine()
-                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
+                (ExperimentalUrlRequest.Builder)
+                        mTestRule
+                                .getTestFramework()
+                                .getEngine()
+                                .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -162,15 +176,16 @@ public class RequestFinishedInfoTest {
         Date endTime = new Date();
 
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
         assertThat(requestInfo.getAnnotations()).containsExactly("request annotation", this);
     }
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testRequestFinishedListenerDifferentThreads() throws Exception {
         TestRequestFinishedListener firstListener = new TestRequestFinishedListener();
@@ -179,11 +194,14 @@ public class RequestFinishedInfoTest {
         mTestRule.getTestFramework().getEngine().addRequestFinishedListener(secondListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                (ExperimentalUrlRequest.Builder) mTestRule.getTestFramework()
-                        .getEngine()
-                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
+                (ExperimentalUrlRequest.Builder)
+                        mTestRule
+                                .getTestFramework()
+                                .getEngine()
+                                .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -195,15 +213,21 @@ public class RequestFinishedInfoTest {
         RequestFinishedInfo firstRequestInfo = firstListener.getRequestInfo();
         RequestFinishedInfo secondRequestInfo = secondListener.getRequestInfo();
 
-        MetricsTestUtil.checkRequestFinishedInfo(firstRequestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, firstRequestInfo, mUrl, startTime, endTime);
         assertThat(firstRequestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
         MetricsTestUtil.checkHasConnectTiming(
-                firstRequestInfo.getMetrics(), startTime, endTime, false);
+                mImplementationUnderTest, firstRequestInfo.getMetrics(), startTime, endTime, false);
 
-        MetricsTestUtil.checkRequestFinishedInfo(secondRequestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, secondRequestInfo, mUrl, startTime, endTime);
         assertThat(secondRequestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
         MetricsTestUtil.checkHasConnectTiming(
-                secondRequestInfo.getMetrics(), startTime, endTime, false);
+                mImplementationUnderTest,
+                secondRequestInfo.getMetrics(),
+                startTime,
+                endTime,
+                false);
 
         assertThat(firstRequestInfo.getAnnotations()).containsExactly("request annotation", this);
         assertThat(secondRequestInfo.getAnnotations()).containsExactly("request annotation", this);
@@ -211,17 +235,21 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testRequestFinishedListenerFailedRequest() throws Exception {
         String connectionRefusedUrl = "http://127.0.0.1:3";
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         UrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        connectionRefusedUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(
+                                connectionRefusedUrl, callback, callback.getExecutor());
         Date startTime = new Date();
         urlRequestBuilder.build().start();
         callback.blockForDone();
@@ -243,35 +271,44 @@ public class RequestFinishedInfoTest {
         assertWithMessage("RequestFinishedInfo.getMetrics() must not be null")
                 .that(metrics)
                 .isNotNull();
-        // The failure is occasionally fast enough that time reported is 0, so just check for null
-        assertThat(metrics.getTotalTimeMs()).isNotNull();
-        assertThat(metrics.getTtfbMs()).isNull();
 
-        // Check the timing metrics
-        assertThat(metrics.getRequestStart()).isNotNull();
-        MetricsTestUtil.assertAfter(metrics.getRequestStart(), startTime);
-        MetricsTestUtil.checkNoConnectTiming(metrics);
-        assertThat(metrics.getSendingStart()).isNull();
-        assertThat(metrics.getSendingEnd()).isNull();
-        assertThat(metrics.getResponseStart()).isNull();
-        assertThat(metrics.getRequestEnd()).isNotNull();
-        MetricsTestUtil.assertAfter(endTime, metrics.getRequestEnd());
-        MetricsTestUtil.assertAfter(metrics.getRequestEnd(), metrics.getRequestStart());
-        assertThat(metrics.getSentByteCount()).isEqualTo(0);
-        assertThat(metrics.getReceivedByteCount()).isEqualTo(0);
+        // RequestFinishedInfoListener HttpEngineWrapper implementation has placeholder ie null
+        // metrics. Don't bother checking timing metrics for AOSP whether it passes or not.
+        if (mImplementationUnderTest != CronetImplementation.AOSP_PLATFORM) {
+            // The failure is occasionally fast enough that time reported is 0, so just check for
+            // null
+            assertThat(metrics.getTotalTimeMs()).isNotNull();
+            assertThat(metrics.getTtfbMs()).isNull();
+
+            // Check the timing metrics
+            assertThat(metrics.getRequestStart()).isNotNull();
+            MetricsTestUtil.assertAfter(metrics.getRequestStart(), startTime);
+            MetricsTestUtil.checkNoConnectTiming(mImplementationUnderTest, metrics);
+            assertThat(metrics.getSendingStart()).isNull();
+            assertThat(metrics.getSendingEnd()).isNull();
+            assertThat(metrics.getResponseStart()).isNull();
+            assertThat(metrics.getRequestEnd()).isNotNull();
+            MetricsTestUtil.assertAfter(endTime, metrics.getRequestEnd());
+            MetricsTestUtil.assertAfter(metrics.getRequestEnd(), metrics.getRequestStart());
+            assertThat(metrics.getSentByteCount()).isEqualTo(0);
+            assertThat(metrics.getReceivedByteCount()).isEqualTo(0);
+        }
     }
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testRequestFinishedListenerThrowInTerminalCallback() throws Exception {
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
-        callback.setFailure(TestUrlRequestCallback.FailureType.THROW_SYNC,
+        callback.setFailure(
+                TestUrlRequestCallback.FailureType.THROW_SYNC,
                 TestUrlRequestCallback.ResponseStep.ON_SUCCEEDED);
-        mTestRule.getTestFramework()
+        mTestRule
+                .getTestFramework()
                 .getEngine()
                 .newUrlRequestBuilder(mUrl, callback, callback.getExecutor())
                 .build()
@@ -282,12 +319,12 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testRequestFinishedListenerThrowInListener() throws Exception {
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
         requestFinishedListener.makeListenerThrow();
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
-        mTestRule.getTestFramework()
+        mTestRule
+                .getTestFramework()
                 .getEngine()
                 .newUrlRequestBuilder(mUrl, callback, callback.getExecutor())
                 .setRequestFinishedListener(requestFinishedListener)
@@ -300,14 +337,16 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testRequestFinishedListenerThrowInEngineListener() throws Exception {
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
         requestFinishedListener.makeListenerThrow();
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
-        mTestRule.getTestFramework()
+        mTestRule
+                .getTestFramework()
                 .getEngine()
                 .newUrlRequestBuilder(mUrl, callback, callback.getExecutor())
                 .build()
@@ -319,21 +358,26 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testRequestFinishedListenerRemoved() throws Exception {
         TestExecutor testExecutor = new TestExecutor();
         TestRequestFinishedListener requestFinishedListener =
                 new TestRequestFinishedListener(testExecutor);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         UrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        mUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         UrlRequest request = urlRequestBuilder.build();
-        mTestRule.getTestFramework().getEngine().removeRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .removeRequestFinishedListener(requestFinishedListener);
         request.start();
         callback.blockForDone();
         testExecutor.runAllTasks();
@@ -345,23 +389,28 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testRequestFinishedListenerCanceledRequest() throws Exception {
         TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
-        TestUrlRequestCallback callback = new TestUrlRequestCallback() {
-            @Override
-            public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
-                super.onResponseStarted(request, info);
-                request.cancel();
-            }
-        };
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
+        TestUrlRequestCallback callback =
+                new TestUrlRequestCallback() {
+                    @Override
+                    public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
+                        super.onResponseStarted(request, info);
+                        request.cancel();
+                    }
+                };
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        mUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -370,9 +419,11 @@ public class RequestFinishedInfoTest {
         Date endTime = new Date();
 
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.CANCELED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
 
         assertThat(requestInfo.getAnnotations()).containsExactly("request annotation", this);
     }
@@ -388,22 +439,34 @@ public class RequestFinishedInfoTest {
     // collection is enabled and the URLRequest hasn't been created. See http://crbug.com/675629.
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testExceptionInRequestStart() throws Exception {
         // The listener in this test shouldn't get any tasks.
         Executor executor = new RejectAllTasksExecutor();
         TestRequestFinishedListener requestFinishedListener =
                 new TestRequestFinishedListener(executor);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        mUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         // Empty headers are invalid and will cause start() to throw an exception.
         UrlRequest request = urlRequestBuilder.addHeader("", "").build();
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, request::start);
-        assertThat(e).hasMessageThat().isEqualTo("Invalid header =");
+        var oldMessage = "Invalid header =";
+        var newMessage = "Invalid header with headername: ";
+        if (mTestRule.implementationUnderTest() == CronetImplementation.AOSP_PLATFORM
+                && !BuildConfig.CRONET_FOR_AOSP_BUILD) {
+            // We may be running against an HttpEngine backed by an old version of Cronet, so accept
+            // both the old and new variants of the message.
+            assertThat(e).hasMessageThat().isAnyOf(oldMessage, newMessage);
+        } else {
+            assertThat(e).hasMessageThat().isEqualTo(newMessage);
+        }
     }
 
     @Test
@@ -426,9 +489,24 @@ public class RequestFinishedInfoTest {
         long sentByteCount = 14;
         long receivedByteCount = 15;
         // Make sure nothing gets reordered inside the Metrics class
-        RequestFinishedInfo.Metrics metrics = new CronetMetrics(requestStart, dnsStart, dnsEnd,
-                connectStart, connectEnd, sslStart, sslEnd, sendingStart, sendingEnd, pushStart,
-                pushEnd, responseStart, requestEnd, socketReused, sentByteCount, receivedByteCount);
+        RequestFinishedInfo.Metrics metrics =
+                new CronetMetrics(
+                        requestStart,
+                        dnsStart,
+                        dnsEnd,
+                        connectStart,
+                        connectEnd,
+                        sslStart,
+                        sslEnd,
+                        sendingStart,
+                        sendingEnd,
+                        pushStart,
+                        pushEnd,
+                        responseStart,
+                        requestEnd,
+                        socketReused,
+                        sentByteCount,
+                        receivedByteCount);
         assertThat(metrics.getRequestStart()).isEqualTo(new Date(requestStart));
         // -1 timestamp should translate to null
         assertThat(metrics.getDnsEnd()).isNull();
@@ -442,26 +520,30 @@ public class RequestFinishedInfoTest {
         assertThat(metrics.getResponseStart()).isEqualTo(new Date(responseStart));
         assertThat(metrics.getRequestEnd()).isEqualTo(new Date(requestEnd));
         assertThat(metrics.getSocketReused()).isEqualTo(socketReused);
-        assertThat((long) metrics.getSentByteCount()).isEqualTo(sentByteCount);
-        assertThat((long) metrics.getReceivedByteCount()).isEqualTo(receivedByteCount);
+        assertThat(metrics.getSentByteCount()).isEqualTo(sentByteCount);
+        assertThat(metrics.getReceivedByteCount()).isEqualTo(receivedByteCount);
     }
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @SuppressWarnings("deprecation")
     public void testOrderSuccessfulRequest() throws Exception {
         final TestUrlRequestCallback callback = new TestUrlRequestCallback();
         TestRequestFinishedListener requestFinishedListener =
                 new AssertCallbackDoneRequestFinishedListener(callback);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                (ExperimentalUrlRequest.Builder) mTestRule.getTestFramework()
-                        .getEngine()
-                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
+                (ExperimentalUrlRequest.Builder)
+                        mTestRule
+                                .getTestFramework()
+                                .getEngine()
+                                .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -470,35 +552,40 @@ public class RequestFinishedInfoTest {
         Date endTime = new Date();
 
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
         assertThat(requestInfo.getAnnotations()).containsExactly("request annotation", this);
     }
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     @RequiresMinApi(11)
     public void testUpdateAnnotationOnSucceeded() throws Exception {
         // The annotation that is updated in onSucceeded() callback.
         AtomicBoolean requestAnnotation = new AtomicBoolean(false);
-        final TestUrlRequestCallback callback = new TestUrlRequestCallback() {
-            @Override
-            public void onSucceeded(UrlRequest request, UrlResponseInfo info) {
-                // Add processing information to request annotation.
-                requestAnnotation.set(true);
-                super.onSucceeded(request, info);
-            }
-        };
+        final TestUrlRequestCallback callback =
+                new TestUrlRequestCallback() {
+                    @Override
+                    public void onSucceeded(UrlRequest request, UrlResponseInfo info) {
+                        // Add processing information to request annotation.
+                        requestAnnotation.set(true);
+                        super.onSucceeded(request, info);
+                    }
+                };
         TestRequestFinishedListener requestFinishedListener =
                 new AssertCallbackDoneRequestFinishedListener(callback);
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                (ExperimentalUrlRequest.Builder) mTestRule.getTestFramework()
-                        .getEngine()
-                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
+                (ExperimentalUrlRequest.Builder)
+                        mTestRule
+                                .getTestFramework()
+                                .getEngine()
+                                .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation(requestAnnotation)
+        urlRequestBuilder
+                .addRequestAnnotation(requestAnnotation)
                 .setRequestFinishedListener(requestFinishedListener)
                 .build()
                 .start();
@@ -506,9 +593,11 @@ public class RequestFinishedInfoTest {
         requestFinishedListener.blockUntilDone();
         Date endTime = new Date();
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.SUCCEEDED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
         // Check that annotation got updated in onSucceeded() callback.
         assertThat(requestInfo.getAnnotations()).containsExactly(requestAnnotation);
         assertThat(requestAnnotation.get()).isTrue();
@@ -516,22 +605,26 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     // Tests a failed request where the error originates from Java.
     public void testOrderFailedRequestJava() throws Exception {
-        final TestUrlRequestCallback callback = new TestUrlRequestCallback() {
-            @Override
-            public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
-                throw new RuntimeException("make this request fail");
-            }
-        };
+        final TestUrlRequestCallback callback =
+                new TestUrlRequestCallback() {
+                    @Override
+                    public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
+                        throw new RuntimeException("make this request fail");
+                    }
+                };
         TestRequestFinishedListener requestFinishedListener =
                 new AssertCallbackDoneRequestFinishedListener(callback);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         UrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        mUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         urlRequestBuilder.build().start();
         callback.blockForDone();
         assertThat(callback.mOnErrorCalled).isTrue();
@@ -554,18 +647,22 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     // Tests a failed request where the error originates from native code.
     public void testOrderFailedRequestNative() throws Exception {
         String connectionRefusedUrl = "http://127.0.0.1:3";
         final TestUrlRequestCallback callback = new TestUrlRequestCallback();
         TestRequestFinishedListener requestFinishedListener =
                 new AssertCallbackDoneRequestFinishedListener(callback);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         UrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        connectionRefusedUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(
+                                connectionRefusedUrl, callback, callback.getExecutor());
         urlRequestBuilder.build().start();
         callback.blockForDone();
         assertThat(callback.mOnErrorCalled).isTrue();
@@ -588,25 +685,30 @@ public class RequestFinishedInfoTest {
 
     @Test
     @SmallTest
-    @OnlyRunNativeCronet
     public void testOrderCanceledRequest() throws Exception {
-        final TestUrlRequestCallback callback = new TestUrlRequestCallback() {
-            @Override
-            public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
-                super.onResponseStarted(request, info);
-                request.cancel();
-            }
-        };
+        final TestUrlRequestCallback callback =
+                new TestUrlRequestCallback() {
+                    @Override
+                    public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
+                        super.onResponseStarted(request, info);
+                        request.cancel();
+                    }
+                };
 
         TestRequestFinishedListener requestFinishedListener =
                 new AssertCallbackDoneRequestFinishedListener(callback);
-        mTestRule.getTestFramework().getEngine().addRequestFinishedListener(
-                requestFinishedListener);
+        mTestRule
+                .getTestFramework()
+                .getEngine()
+                .addRequestFinishedListener(requestFinishedListener);
         ExperimentalUrlRequest.Builder urlRequestBuilder =
-                mTestRule.getTestFramework().getEngine().newUrlRequestBuilder(
-                        mUrl, callback, callback.getExecutor());
+                mTestRule
+                        .getTestFramework()
+                        .getEngine()
+                        .newUrlRequestBuilder(mUrl, callback, callback.getExecutor());
         Date startTime = new Date();
-        urlRequestBuilder.addRequestAnnotation("request annotation")
+        urlRequestBuilder
+                .addRequestAnnotation("request annotation")
                 .addRequestAnnotation(this)
                 .build()
                 .start();
@@ -615,9 +717,11 @@ public class RequestFinishedInfoTest {
         Date endTime = new Date();
 
         RequestFinishedInfo requestInfo = requestFinishedListener.getRequestInfo();
-        MetricsTestUtil.checkRequestFinishedInfo(requestInfo, mUrl, startTime, endTime);
+        MetricsTestUtil.checkRequestFinishedInfo(
+                mImplementationUnderTest, requestInfo, mUrl, startTime, endTime);
         assertThat(requestInfo.getFinishedReason()).isEqualTo(RequestFinishedInfo.CANCELED);
-        MetricsTestUtil.checkHasConnectTiming(requestInfo.getMetrics(), startTime, endTime, false);
+        MetricsTestUtil.checkHasConnectTiming(
+                mImplementationUnderTest, requestInfo.getMetrics(), startTime, endTime, false);
 
         assertThat(requestInfo.getAnnotations()).containsExactly("request annotation", this);
     }

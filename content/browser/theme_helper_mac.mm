@@ -14,21 +14,13 @@
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/renderer.mojom.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
-#include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using content::RenderProcessHost;
 using content::RenderProcessHostImpl;
@@ -240,14 +232,9 @@ SkColor NSColorToSkColor(NSColor* color) {
         std::move(params));
   }
 
-  std::unique_ptr<content::RenderWidgetHostIterator> all_widgets(
-      content::RenderWidgetHostImpl::GetAllRenderWidgetHosts());
-  while (content::RenderWidgetHost* widget = all_widgets->GetNextHost()) {
-    content::RenderViewHost* rvh = content::RenderViewHost::From(widget);
-    if (!rvh)
-      continue;
-
-    content::WebContents::FromRenderViewHost(rvh)->OnWebPreferencesChanged();
+  for (content::WebContentsImpl* web_contents :
+       content::WebContentsImpl::GetAllWebContents()) {
+    web_contents->OnWebPreferencesChanged();
   }
 }
 
@@ -328,7 +315,6 @@ void ThemeHelperMac::LoadSystemColorsForCurrentAppearance(
         break;
       case blink::MacSystemColorID::kCount:
         NOTREACHED();
-        break;
     }
   }
 }
@@ -339,31 +325,17 @@ void ThemeHelperMac::LoadSystemColors() {
   base::span<SkColor> values = writable_color_map_.GetMemoryAsSpan<SkColor>(
       blink::kMacSystemColorIDCount * blink::kMacSystemColorSchemeCount);
 
-  if (@available(macOS 11, *)) {
-    [[NSAppearance appearanceNamed:NSAppearanceNameAqua]
-        performAsCurrentDrawingAppearance:^{
-          LoadSystemColorsForCurrentAppearance(values.subspan(
-              0, static_cast<size_t>(blink::MacSystemColorID::kCount)));
-        }];
-    [[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]
-        performAsCurrentDrawingAppearance:^{
-          LoadSystemColorsForCurrentAppearance(values.subspan(
-              static_cast<size_t>(blink::MacSystemColorID::kCount),
-              static_cast<size_t>(blink::MacSystemColorID::kCount)));
-        }];
-  } else {
-    NSAppearance* saved_appearance = NSAppearance.currentAppearance;
-    NSAppearance.currentAppearance =
-        [NSAppearance appearanceNamed:NSAppearanceNameAqua];
-    LoadSystemColorsForCurrentAppearance(values.subspan(
-        0, static_cast<size_t>(blink::MacSystemColorID::kCount)));
-    NSAppearance.currentAppearance =
-        [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    LoadSystemColorsForCurrentAppearance(
-        values.subspan(static_cast<size_t>(blink::MacSystemColorID::kCount),
-                       static_cast<size_t>(blink::MacSystemColorID::kCount)));
-    NSAppearance.currentAppearance = saved_appearance;
-  }
+  [[NSAppearance appearanceNamed:NSAppearanceNameAqua]
+      performAsCurrentDrawingAppearance:^{
+        LoadSystemColorsForCurrentAppearance(
+            values.first<blink::kMacSystemColorIDCount>());
+      }];
+  [[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]
+      performAsCurrentDrawingAppearance:^{
+        LoadSystemColorsForCurrentAppearance(
+            values.subspan<blink::kMacSystemColorIDCount,
+                           blink::kMacSystemColorIDCount>());
+      }];
 }
 
 void ThemeHelperMac::OnRenderProcessHostCreated(
@@ -380,6 +352,13 @@ void ThemeHelperMac::OnRenderProcessHostCreated(
   content::mojom::Renderer* renderer = process_host->GetRendererInterface();
   renderer->UpdateScrollbarTheme(std::move(params));
   SendSystemColorsChangedMessage(renderer);
+}
+
+void ThemeHelperMac::SetAccentColorForTesting(SkColor accent_color) {
+  auto values = writable_color_map_.GetMemoryAsSpan<SkColor>(
+      blink::kMacSystemColorIDCount * blink::kMacSystemColorSchemeCount);
+  values[static_cast<size_t>(blink::MacSystemColorID::kControlAccentColor)] =
+      accent_color;
 }
 
 }  // namespace content

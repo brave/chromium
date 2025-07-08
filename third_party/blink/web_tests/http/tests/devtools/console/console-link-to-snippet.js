@@ -6,21 +6,25 @@ import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as SourcesModule from 'devtools/panels/sources/sources.js';
+import * as Persistence from 'devtools/models/persistence/persistence.js';
+import * as Console from 'devtools/panels/console/console.js';
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+
 (async function() {
   TestRunner.addResult(`Test that link to snippet works.\n`);
 
-  await TestRunner.loadLegacyModule('sources');
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('console');
 
   TestRunner.addSniffer(
-      Workspace.UISourceCode.prototype, 'addMessage', dumpLineMessage, true);
+      Workspace.UISourceCode.UISourceCode.prototype, 'addMessage', dumpLineMessage, true);
 
   TestRunner.runTestSuite([
     function testConsoleLogAndReturnMessageLocation(next) {
       ConsoleTestRunner.waitUntilNthMessageReceivedPromise(2)
         .then(() => ConsoleTestRunner.dumpConsoleMessages())
-        .then(() => Console.ConsoleView.clearConsole())
+        .then(() => Console.ConsoleView.ConsoleView.clearConsole())
         .then(() => next());
 
       createSnippetPromise('console.log(239);42')
@@ -32,7 +36,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
     function testSnippetSyntaxError(next) {
       ConsoleTestRunner.waitUntilNthMessageReceivedPromise(1)
         .then(() => ConsoleTestRunner.dumpConsoleMessages())
-        .then(() => Console.ConsoleView.clearConsole())
+        .then(() => Console.ConsoleView.ConsoleView.clearConsole())
         .then(() => next());
 
       createSnippetPromise('\n }')
@@ -44,7 +48,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
     function testConsoleErrorHighlight(next) {
       ConsoleTestRunner.waitUntilNthMessageReceivedPromise(4)
         .then(() => ConsoleTestRunner.dumpConsoleMessages())
-        .then(() => Console.ConsoleView.clearConsole())
+        .then(() => Console.ConsoleView.ConsoleView.clearConsole())
         .then(() => next());
 
       createSnippetPromise(`
@@ -59,8 +63,8 @@ console.error(null)`)
   ]);
 
   async function createSnippetPromise(content) {
-    const projects = Workspace.workspace.projectsForType(Workspace.projectTypes.FileSystem);
-    const snippetsProject = projects.find(project => Persistence.FileSystemWorkspaceBinding.fileSystemType(project) === 'snippets');
+    const projects = Workspace.Workspace.WorkspaceImpl.instance().projectsForType(Workspace.Workspace.projectTypes.FileSystem);
+    const snippetsProject = projects.find(project => Persistence.FileSystemWorkspaceBinding.FileSystemWorkspaceBinding.fileSystemType(project) === 'snippets');
     const uiSourceCode = await snippetsProject.createFile('');
     uiSourceCode.setContent(content);
     return uiSourceCode;
@@ -84,6 +88,6 @@ console.error(null)`)
   }
 
   function runSelectedSnippet() {
-    Sources.SourcesPanel.instance().runSnippet();
+    SourcesModule.SourcesPanel.SourcesPanel.instance().runSnippet();
   }
 })();

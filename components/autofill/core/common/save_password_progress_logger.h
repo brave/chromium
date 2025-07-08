@@ -104,6 +104,7 @@ class SavePasswordProgressLogger {
     STRING_SHOW_LOGIN_PROMPT_METHOD,
     STRING_NEW_UI_STATE,
     STRING_FORM_SIGNATURE,
+    STRING_ALTERNATIVE_FORM_SIGNATURE,
     STRING_FORM_FETCHER_STATE,
     STRING_UNOWNED_INPUTS_VISIBLE,
     STRING_ON_FILL_PASSWORD_FORM_METHOD,
@@ -119,6 +120,8 @@ class SavePasswordProgressLogger {
     STRING_PASSWORD_FORM_VOTE,
     STRING_REUSE_FOUND,
     STRING_GENERATION_DISABLED_SAVING_DISABLED,
+    STRING_GENERATION_DISABLED_CHROME_DOES_NOT_SYNC_PASSWORDS,
+    STRING_GENERATION_DISABLED_NOT_ABLE_TO_SAVE_PASSWORDS,
     STRING_GENERATION_DISABLED_NO_SYNC,
     STRING_GENERATION_RENDERER_AUTOMATIC_GENERATION_AVAILABLE,
     STRING_GENERATION_RENDERER_SHOW_GENERATION_POPUP,
@@ -145,6 +148,7 @@ class SavePasswordProgressLogger {
     STRING_LEAK_DETECTION_TOKEN_REQUEST_ERROR,
     STRING_LEAK_DETECTION_NETWORK_ERROR,
     STRING_LEAK_DETECTION_QUOTA_LIMIT,
+    STRING_LEAK_DETECTION_URL_BLOCKED,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_LETTER,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_SPECIAL_SYMBOL,
     STRING_PASSWORD_REQUIREMENTS_VOTE_FOR_SPECIFIC_SPECIAL_SYMBOL,
@@ -152,10 +156,25 @@ class SavePasswordProgressLogger {
     STRING_SAVE_PASSWORD_HASH,
     STRING_DID_NAVIGATE_MAIN_FRAME,
     STRING_NAVIGATION_NTP,
-    STRING_SERVER_PREDICTIONS,
     STRING_USERNAME_FIRST_FLOW_VOTE,
     STRING_POSSIBLE_USERNAME_USED,
     STRING_POSSIBLE_USERNAME_NOT_USED,
+    STRING_SAVING_BLOCKLISTED_EXPLICITLY,
+    STRING_SAVING_BLOCKLISTED_BY_SMART_BUBBLE,
+    STRING_PASSWORD_CHANGE_STARTED,
+    STRING_PASSWORD_CHANGE_FINISHED,
+    STRING_PASSWORD_CHANGE_STATE_CHANGED,
+    STRING_RESOURCE_FAILED_LOADING_NO_SUBMITTED_MANAGER,
+    STRING_RESOURCE_FAILED_LOADING_FOR_WRONG_FRAME,
+    STRING_RESOURCE_FAILED_LOADING_FOR_WRONG_ORIGIN,
+    STRING_RESOURCE_FAILED_LOADING_LOGIN_FAILED,
+    STRING_PASSWORD_CHANGE_FORM_FILLING_RESULT,
+    STRING_PASSWORD_CHANGE_SUBMIT_WITH_ENTER_RESULT,
+    STRING_PASSWORD_CHANGE_SUBMIT_WITH_MODEL_RESULT,
+    STRING_PASSWORD_POTENTIALLY_FAILED_LOGIN,
+    STRING_PASSWORD_CHANGE_INITIAL_FORM_WAITING_RESULT,
+    STRING_PASSWORD_CHANGE_MODEL_PAGE_PREDICTION_TYPE,
+    STRING_PASSWORD_CHANGE_SUBSEQUENT_FORM_WAITING_RESULT,
     STRING_INVALID,  // Represents a string returned in a case of an error.
     STRING_MAX = STRING_INVALID
   };
@@ -180,16 +199,12 @@ class SavePasswordProgressLogger {
   void LogNumber(StringID label, size_t unsigned_number);
   void LogMessage(StringID message);
 
-  // Removes privacy sensitive parts of |url| (currently all but host and
+  // Returns a log string representing `field`.
+  static std::string GetFormFieldDataLogString(const FormFieldData& field);
+
+  // Removes privacy sensitive parts of `url` (currently all but host and
   // scheme).
   static std::string ScrubURL(const GURL& url);
-
- protected:
-  // Sends |log| immediately for display.
-  virtual void SendLog(const std::string& log) = 0;
-
-  // Converts |log| and its |label| to a string and calls SendLog on the result.
-  void LogValue(StringID label, const base::Value& log);
 
   // Replaces all characters satisfying IsUnwantedInElementID with a ' '.
   // This damages some valid HTML element IDs or names, but it is likely that it
@@ -203,6 +218,13 @@ class SavePasswordProgressLogger {
 
   // Translates the StringID values into the corresponding strings.
   static std::string GetStringFromID(SavePasswordProgressLogger::StringID id);
+
+ protected:
+  // Sends `log` immediately for display.
+  virtual void SendLog(const std::string& log) = 0;
+
+  // Converts `log` and its `label` to a string and calls SendLog on the result.
+  void LogValue(StringID label, const base::Value& log);
 };
 
 }  // namespace autofill

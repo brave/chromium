@@ -6,7 +6,7 @@ package org.chromium.chrome.browser.search_resumption;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.endsWith;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -21,29 +21,24 @@ import androidx.test.filters.SmallTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
-import org.robolectric.annotation.Implementation;
-import org.robolectric.annotation.Implements;
 
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteController;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteController.OnSuggestionsReceivedListener;
-import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteControllerProvider;
-import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteControllerJni;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.search_resumption.SearchResumptionModuleUtils.ModuleNotShownReason;
@@ -53,7 +48,6 @@ import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteResult;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
@@ -63,76 +57,34 @@ import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-/**
- * Unit tests for {@link SearchResumptionModuleMediator}.
- */
+/** Unit tests for {@link SearchResumptionModuleMediator}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE,
-        shadows = {SearchResumptionModuleMediatorUnitTest.ShadowChromeFeatureList.class})
+@Config(manifest = Config.NONE)
 @SuppressWarnings("DoNotMock") // Mocking GURL
+@Features.DisableFeatures(ChromeFeatureList.SEARCH_RESUMPTION_MODULE_ANDROID)
 public class SearchResumptionModuleMediatorUnitTest {
-    @Implements(ChromeFeatureList.class)
-    static class ShadowChromeFeatureList {
-        static final Map<String, Boolean> sParamValues = new HashMap<>();
-        static boolean sEnableSearchResumptionModule;
 
-        @Implementation
-        public static boolean isEnabled(String featureName) {
-            return featureName.equals(ChromeFeatureList.SEARCH_RESUMPTION_MODULE_ANDROID)
-                    && sEnableSearchResumptionModule;
-        }
+    @Mock private Tab mTabToTrack;
+    @Mock private Tab mTab;
+    @Mock private ViewStub mParent;
+    @Mock private SearchResumptionModuleView mModuleLayoutView;
+    @Mock private SearchResumptionTileContainerView mSuggestionTilesContainerView;
+    @Mock private AutocompleteController mAutocompleteController;
+    @Mock private AutocompleteController.Natives mControllerJniMock;
+    @Mock SearchResumptionTileBuilder mTileBuilder;
+    @Mock private Profile mProfile;
+    @Mock private TemplateUrlService mTemplateUrlService;
+    @Captor private ArgumentCaptor<OnSuggestionsReceivedListener> mListener;
 
-        @Implementation
-        public static boolean getFieldTrialParamByFeatureAsBoolean(
-                String featureName, String paramName, boolean defaultValue) {
-            return sParamValues.containsKey(paramName) ? sParamValues.get(paramName) : defaultValue;
-        }
-    }
-
-    @Rule
-    public TestRule mProcessor = new Features.JUnitProcessor();
-
-    @Mock
-    private Tab mTabToTrack;
-    @Mock
-    private Tab mTab;
-    @Mock
-    private ViewStub mParent;
-    @Mock
-    private SearchResumptionModuleView mModuleLayoutView;
-    @Mock
-    private SearchResumptionTileContainerView mSuggestionTilesContainerView;
-    @Mock
-    private AutocompleteControllerProvider mAutocompleteProvider;
-    @Mock
-    private AutocompleteController mAutocompleteController;
-    @Mock
-    SearchResumptionTileBuilder mTileBuilder;
-    @Mock
-    private Profile mProfile;
-    @Mock
-    private TemplateUrlService mTemplateUrlService;
-    @Captor
-    private ArgumentCaptor<OnSuggestionsReceivedListener> mListener;
-
-    @Mock
-    private AutocompleteMatch mSearchSuggest1;
-    @Mock
-    private AutocompleteMatch mSearchSuggest2;
-    @Mock
-    private AutocompleteMatch mNonSearchSuggest1;
-    @Mock
-    private AutocompleteResult mAutocompleteResult;
-    @Mock
-    private IdentityServicesProvider mIdentityServicesProvider;
-    @Mock
-    private SigninManager mSignInManager;
-    @Mock
-    private SyncService mSyncServiceMock;
+    @Mock private AutocompleteMatch mSearchSuggest1;
+    @Mock private AutocompleteMatch mSearchSuggest2;
+    @Mock private AutocompleteMatch mNonSearchSuggest1;
+    @Mock private AutocompleteResult mAutocompleteResult;
+    @Mock private IdentityServicesProvider mIdentityServicesProvider;
+    @Mock private SigninManager mSignInManager;
+    @Mock private SyncService mSyncServiceMock;
 
     private GURL mUrlToTrack;
     private String[] mSuggestionTexts;
@@ -145,10 +97,11 @@ public class SearchResumptionModuleMediatorUnitTest {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mUserDataHost = new UserDataHost();
-        doReturn(mAutocompleteController).when(mAutocompleteProvider).get(any());
-        mUrlToTrack = JUnitTestGURLs.getGURL(JUnitTestGURLs.EXAMPLE_URL);
+        AutocompleteControllerJni.setInstanceForTesting(mControllerJniMock);
+        doReturn(mAutocompleteController).when(mControllerJniMock).getForProfile(any());
+        mUrlToTrack = JUnitTestGURLs.EXAMPLE_URL;
         doReturn(mUrlToTrack).when(mTabToTrack).getUrl();
-        GURL currentUrl = JUnitTestGURLs.getGURL(JUnitTestGURLs.NTP_URL);
+        GURL currentUrl = JUnitTestGURLs.NTP_URL;
         doReturn(currentUrl).when(mTab).getUrl();
         doReturn(false).when(mTab).canGoForward();
         doReturn(mUserDataHost).when(mTab).getUserDataHost();
@@ -177,29 +130,24 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @After
     public void tearDown() {
-        ShadowChromeFeatureList.sEnableSearchResumptionModule = false;
-        ShadowChromeFeatureList.sParamValues.clear();
         mActionTester.tearDown();
-        mSuggestionTexts = null;
-        mSuggestionUrls = null;
-        SharedPreferencesManager.getInstance().removeKey(
-                ChromePreferenceKeys.SEARCH_RESUMPTION_MODULE_COLLAPSE_ON_NTP);
     }
 
     @Test
     @MediumTest
-    @DisabledTest(message = "https://crbug.com/1462860")
     public void testDoNotBuildModuleWithoutEnoughSuggestions() {
-        createMediator(null, false /* useNewServiceEnabled */);
+        createMediator(null, /* useNewServiceEnabled= */ false);
         List<AutocompleteMatch> list = Arrays.asList(mNonSearchSuggest1, mNonSearchSuggest1);
         doReturn(list).when(mAutocompleteResult).getSuggestionsList();
 
-        mMediator.onSuggestionsReceived(mAutocompleteResult, "", true);
+        mMediator.onSuggestionsReceived(mAutocompleteResult, true);
         verify(mParent, times(0)).inflate();
-        Assert.assertEquals(0,
+        Assert.assertEquals(
+                0,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW, ModuleShowStatus.EXPANDED));
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_NOT_SHOW,
                         ModuleNotShownReason.NOT_ENOUGH_RESULT));
@@ -207,33 +155,33 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "https://crbug.com/1462863")
     public void testShowModuleWithEnoughResults() {
-        createMediator(null, false /* useNewServiceEnabled */);
+        createMediator(null, /* useNewServiceEnabled= */ false);
         List<AutocompleteMatch> list =
                 Arrays.asList(mNonSearchSuggest1, mSearchSuggest1, mSearchSuggest2);
         doReturn(list).when(mAutocompleteResult).getSuggestionsList();
 
-        mMediator.onSuggestionsReceived(mAutocompleteResult, "", true);
+        mMediator.onSuggestionsReceived(mAutocompleteResult, true);
         verify(mParent, times(1)).inflate();
         Assert.assertEquals(View.VISIBLE, mSuggestionTilesContainerView.getVisibility());
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW, ModuleShowStatus.EXPANDED));
     }
 
     @Test
     @SmallTest
-    @DisabledTest(message = "https://crbug.com/1462884")
     public void testShowModuleWithCachedResults() {
         List<AutocompleteMatch> list =
                 Arrays.asList(mNonSearchSuggest1, mSearchSuggest1, mSearchSuggest2);
         SuggestionResult suggestionResult = new SuggestionResult(mUrlToTrack, list);
 
-        createMediator(suggestionResult, false /* useNewServiceEnabled */);
+        createMediator(suggestionResult, /* useNewServiceEnabled= */ false);
         verify(mParent, times(1)).inflate();
         Assert.assertEquals(View.VISIBLE, mSuggestionTilesContainerView.getVisibility());
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW_CACHED,
                         ModuleShowStatus.EXPANDED));
@@ -241,18 +189,19 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "https://crbug.com/1462890")
     public void testDoNotBuildModuleWithoutEnoughSuggestions_newServiceAPI() {
         String[] texts = {"suggestion 1"};
-        GURL[] gUrls = {JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1)};
+        GURL[] gUrls = {JUnitTestGURLs.URL_1};
 
-        createMediator(null, true /* useNewServiceEnabled */);
+        createMediator(null, /* useNewServiceEnabled= */ true);
         mMediator.onSuggestionsAvailable(texts, gUrls);
         verify(mParent, times(0)).inflate();
-        Assert.assertEquals(0,
+        Assert.assertEquals(
+                0,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW, ModuleShowStatus.EXPANDED));
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_NOT_SHOW,
                         ModuleNotShownReason.NOT_ENOUGH_RESULT));
@@ -260,38 +209,38 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "https://crbug.com/1462869")
     public void testShowModuleWithEnoughResults_newServiceAPI() {
         initSuggestions();
 
-        createMediator(null, true /* useNewServiceEnabled */);
+        createMediator(null, /* useNewServiceEnabled= */ true);
         mMediator.onSuggestionsAvailable(mSuggestionTexts, mSuggestionUrls);
         verify(mParent, times(1)).inflate();
         Assert.assertEquals(View.VISIBLE, mSuggestionTilesContainerView.getVisibility());
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW, ModuleShowStatus.EXPANDED));
 
-        mMediator.onExpandedOrCollapsed(true /* expand */);
+        mMediator.onExpandedOrCollapsed(/* expanded= */ true);
         Assert.assertTrue(
                 mActionTester.getActions().contains(SearchResumptionModuleUtils.ACTION_EXPAND));
 
-        mMediator.onExpandedOrCollapsed(false /* expand */);
+        mMediator.onExpandedOrCollapsed(/* expanded= */ false);
         Assert.assertTrue(
                 mActionTester.getActions().contains(SearchResumptionModuleUtils.ACTION_COLLAPSE));
     }
 
     @Test
     @SmallTest
-    @DisabledTest(message = "https://crbug.com/1462873")
     public void testShowModuleWithCachedResults_newServiceAPI() {
         initSuggestions();
         SuggestionResult suggestionResult = createCachedSuggestions();
 
-        createMediator(suggestionResult, true /* useNewServiceEnabled */);
+        createMediator(suggestionResult, /* useNewServiceEnabled= */ true);
         verify(mParent, times(1)).inflate();
         Assert.assertEquals(View.VISIBLE, mSuggestionTilesContainerView.getVisibility());
-        Assert.assertEquals(1,
+        Assert.assertEquals(
+                1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         SearchResumptionModuleUtils.UMA_MODULE_SHOW_CACHED,
                         ModuleShowStatus.EXPANDED));
@@ -299,7 +248,6 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "https://crbug.com/1462882")
     public void testModuleVisibility() {
         testShowModuleWithEnoughResults();
         mMediator.onSignedOut();
@@ -327,7 +275,6 @@ public class SearchResumptionModuleMediatorUnitTest {
 
     @Test
     @SmallTest
-    @DisabledTest(message = "https://crbug.com/1462867")
     public void testDestroy() {
         testShowModuleWithEnoughResults();
         mMediator.destroy();
@@ -336,27 +283,29 @@ public class SearchResumptionModuleMediatorUnitTest {
     }
 
     private void createMediator(SuggestionResult cachedSuggestions, boolean useNewServiceEnabled) {
-        mMediator = new SearchResumptionModuleMediator(mParent, mAutocompleteProvider, mTabToTrack,
-                mTab, mProfile, mTileBuilder, cachedSuggestions);
+        mMediator =
+                new SearchResumptionModuleMediator(
+                        mParent,
+                        mTabToTrack,
+                        mTab,
+                        mProfile,
+                        mTileBuilder,
+                        cachedSuggestions);
         if (!useNewServiceEnabled && cachedSuggestions == null) {
             verify(mAutocompleteController).addOnSuggestionsReceivedListener(mListener.capture());
             verify(mAutocompleteController, times(1))
-                    .startZeroSuggest(any(), endsWith(mUrlToTrack.getSpec()), anyInt(), any());
+                    .startZeroSuggest(any(), eq(mUrlToTrack), anyInt(), any());
         }
 
-        ShadowChromeFeatureList.sEnableSearchResumptionModule = true;
-        ShadowChromeFeatureList.sParamValues.put(
-                SearchResumptionModuleUtils.USE_NEW_SERVICE_PARAM, useNewServiceEnabled);
-        Assert.assertEquals(useNewServiceEnabled,
-                ShadowChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                        ChromeFeatureList.SEARCH_RESUMPTION_MODULE_ANDROID,
-                        SearchResumptionModuleUtils.USE_NEW_SERVICE_PARAM, false));
+        FeatureOverrides.newBuilder()
+                .enable(ChromeFeatureList.SEARCH_RESUMPTION_MODULE_ANDROID)
+                .param(SearchResumptionModuleUtils.USE_NEW_SERVICE_PARAM, useNewServiceEnabled)
+                .apply();
     }
 
     private void initSuggestions() {
         mSuggestionTexts = new String[] {"suggestion 1", "suggestion2"};
-        mSuggestionUrls = new GURL[] {JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1),
-                JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_2)};
+        mSuggestionUrls = new GURL[] {JUnitTestGURLs.URL_1, JUnitTestGURLs.URL_2};
     }
 
     private SuggestionResult createCachedSuggestions() {

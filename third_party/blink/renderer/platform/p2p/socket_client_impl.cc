@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/p2p/socket_client_impl.h"
 
 #include "base/location.h"
@@ -40,7 +45,7 @@ P2PSocketClientImpl::P2PSocketClientImpl(bool batch_packets)
       state_(kStateUninitialized),
       random_socket_id_(0),
       next_packet_id_(0) {
-  crypto::RandBytes(&random_socket_id_, sizeof(random_socket_id_));
+  crypto::RandBytes(base::byte_span_from_ref(random_socket_id_));
 }
 
 P2PSocketClientImpl::~P2PSocketClientImpl() {
@@ -59,9 +64,10 @@ void P2PSocketClientImpl::Init(blink::P2PSocketClientDelegate* delegate) {
       &P2PSocketClientImpl::OnConnectionError, WTF::Unretained(this)));
 }
 
-uint64_t P2PSocketClientImpl::Send(const net::IPEndPoint& address,
-                                   base::span<const uint8_t> data,
-                                   const rtc::PacketOptions& options) {
+uint64_t P2PSocketClientImpl::Send(
+    const net::IPEndPoint& address,
+    base::span<const uint8_t> data,
+    const webrtc::AsyncSocketPacketOptions& options) {
   uint64_t unique_id = GetUniqueId(random_socket_id_, ++next_packet_id_);
 
   // Can send data only when the socket is open.
@@ -89,10 +95,11 @@ void P2PSocketClientImpl::DoSendBatch() {
   }
 }
 
-void P2PSocketClientImpl::SendWithPacketId(const net::IPEndPoint& address,
-                                           base::span<const uint8_t> data,
-                                           const rtc::PacketOptions& options,
-                                           uint64_t packet_id) {
+void P2PSocketClientImpl::SendWithPacketId(
+    const net::IPEndPoint& address,
+    base::span<const uint8_t> data,
+    const webrtc::AsyncSocketPacketOptions& options,
+    uint64_t packet_id) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("p2p", "Send", packet_id);
 
   // Conditionally start or continue temporarily storing the packets of a batch.
@@ -182,7 +189,7 @@ void P2PSocketClientImpl::DataReceived(
   if (delegate_) {
     for (auto& packet : packets) {
       delegate_->OnDataReceived(packet->socket_address, packet->data,
-                                packet->timestamp);
+                                packet->timestamp, packet->ecn);
     }
   }
 }

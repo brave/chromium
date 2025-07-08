@@ -5,6 +5,7 @@
 #include "chrome/browser/ash/arc/input_overlay/ui/reposition_controller.h"
 
 #include "ash/app_list/app_list_util.h"
+#include "chrome/browser/ash/arc/input_overlay/ui/ui_utils.h"
 #include "chrome/browser/ash/arc/input_overlay/util.h"
 #include "ui/views/view.h"
 
@@ -12,28 +13,8 @@ namespace arc::input_overlay {
 
 namespace {
 
-// Update |position| according to |key| if |key| is arrow key.
-bool UpdatePositionByArrowKey(ui::KeyboardCode key, gfx::Point& position) {
-  switch (key) {
-    case ui::VKEY_LEFT:
-      position.set_x(position.x() - kArrowKeyMoveDistance);
-      return true;
-    case ui::VKEY_RIGHT:
-      position.set_x(position.x() + kArrowKeyMoveDistance);
-      return true;
-    case ui::VKEY_UP:
-      position.set_y(position.y() - kArrowKeyMoveDistance);
-      return true;
-    case ui::VKEY_DOWN:
-      position.set_y(position.y() + kArrowKeyMoveDistance);
-      return true;
-    default:
-      return false;
-  }
-}
-
-// Clamp position |position| inside of the |parent_size| with padding of
-// |parent_padding|
+// Clamp position `position` inside of the `parent_size` with padding of
+// `parent_padding`
 void ClampPosition(gfx::Point& position,
                    const gfx::Size& ui_size,
                    const gfx::Size& parent_size,
@@ -41,7 +22,7 @@ void ClampPosition(gfx::Point& position,
   int lo = parent_padding;
   int hi = parent_size.width() - ui_size.width() - parent_padding;
   if (lo >= hi) {
-    // Ignore |parent_padding| if there is not enough space.
+    // Ignore `parent_padding` if there is not enough space.
     lo = 0;
     hi += parent_padding;
   }
@@ -50,7 +31,7 @@ void ClampPosition(gfx::Point& position,
   lo = parent_padding;
   hi = parent_size.height() - ui_size.height() - parent_padding;
   if (lo >= hi) {
-    // Ignore |parent_padding| if there is not enough space.
+    // Ignore `parent_padding` if there is not enough space.
     lo = 0;
     hi += parent_padding;
   }
@@ -83,16 +64,16 @@ bool RepositionController::OnMouseReleased(const ui::MouseEvent& event) {
 
 bool RepositionController::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
-    case ui::ET_GESTURE_SCROLL_BEGIN:
+    case ui::EventType::kGestureScrollBegin:
       OnDragStart(*event);
       event->SetHandled();
       break;
-    case ui::ET_GESTURE_SCROLL_UPDATE:
+    case ui::EventType::kGestureScrollUpdate:
       OnDragUpdate(*event);
       event->SetHandled();
       break;
-    case ui::ET_GESTURE_SCROLL_END:
-    case ui::ET_SCROLL_FLING_START:
+    case ui::EventType::kGestureScrollEnd:
+    case ui::EventType::kScrollFlingStart:
       if (!is_dragging_) {
         return false;
       }
@@ -106,9 +87,8 @@ bool RepositionController::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 bool RepositionController::OnKeyPressed(const ui::KeyEvent& event) {
-  auto target_position = host_view_->origin();
-
-  if (UpdatePositionByArrowKey(event.key_code(), target_position)) {
+  if (auto target_position = host_view_->origin();
+      OffsetPositionByArrowKey(event.key_code(), target_position)) {
     ClampPosition(target_position, host_view_->size(),
                   host_view_->parent()->size(), parent_padding_);
     host_view_->SetPosition(target_position);

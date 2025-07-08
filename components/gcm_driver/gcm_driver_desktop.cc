@@ -12,13 +12,14 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "base/trace_event/trace_event.h"
 #include "components/gcm_driver/gcm_account_mapper.h"
 #include "components/gcm_driver/gcm_app_handler.h"
 #include "components/gcm_driver/gcm_client_factory.h"
@@ -81,7 +82,8 @@ class GCMDriverDesktop::IOWorker : public GCMClient::Delegate {
       network::NetworkConnectionTracker* network_connection_tracker,
       const scoped_refptr<base::SequencedTaskRunner> blocking_task_runner);
   void Start(GCMClient::StartMode start_mode,
-             const base::WeakPtr<GCMDriverDesktop>& service);
+             const base::WeakPtr<GCMDriverDesktop>& service,
+             base::TimeTicks time_task_posted);
   void Stop();
   void Register(const std::string& app_id,
                 const std::vector<std::string>& sender_ids);
@@ -306,8 +308,14 @@ void GCMDriverDesktop::IOWorker::OnStoreReset() {
 
 void GCMDriverDesktop::IOWorker::Start(
     GCMClient::StartMode start_mode,
-    const base::WeakPtr<GCMDriverDesktop>& service) {
+    const base::WeakPtr<GCMDriverDesktop>& service,
+    base::TimeTicks time_task_posted) {
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
+
+  // Record for how long current task has been delayed. This is important during
+  // the browser startup when some best effort tasks are postponed.
+  base::UmaHistogramMediumTimes("GCM.ClientStartDelay",
+                                base::TimeTicks::Now() - time_task_posted);
 
   service_ = service;
   gcm_client_->Start(start_mode);
@@ -505,7 +513,6 @@ GCMDriverDesktop::GCMDriverDesktop(
     const scoped_refptr<base::SequencedTaskRunner>& io_thread,
     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner)
     : GCMDriver(store_path, blocking_task_runner),
-      signed_in_(false),
       gcm_started_(false),
       connected_(false),
       account_mapper_(new GCMAccountMapper(this)),
@@ -589,14 +596,6 @@ void GCMDriverDesktop::Shutdown() {
   GCMDriver::Shutdown();
 
   io_thread_->DeleteSoon(FROM_HERE, io_worker_.release());
-}
-
-void GCMDriverDesktop::OnSignedIn() {
-  signed_in_ = true;
-}
-
-void GCMDriverDesktop::OnSignedOut() {
-  signed_in_ = false;
 }
 
 void GCMDriverDesktop::AddAppHandler(const std::string& app_id,
@@ -1020,11 +1019,11 @@ void GCMDriverDesktop::GetInstanceIDData(const std::string& app_id,
   DCHECK(ui_thread_->RunsTasksInCurrentSequence());
 
   GCMClient::Result result = EnsureStarted(GCMClient::IMMEDIATE_START);
-  // TODO(crbug/1028761): This method is only used by InstanceIDImpl to get the
-  // current instance ID from the store. As this method doesn't support error
-  // codes, the instance ID will assume no current ID and generate a new one
-  // if the gcm client is not ready and we pass an empty string to the callback
-  // below. We should fix this!
+  // TODO(crbug.com/40109289): This method is only used by InstanceIDImpl to get
+  // the current instance ID from the store. As this method doesn't support
+  // error codes, the instance ID will assume no current ID and generate a new
+  // one if the gcm client is not ready and we pass an empty string to the
+  // callback below. We should fix this!
   if (result != GCMClient::SUCCESS) {
     DLOG(ERROR)
         << "Unable to get the InstanceID data: cannot start the GCM Client";
@@ -1059,7 +1058,7 @@ void GCMDriverDesktop::GetInstanceIDDataFinished(
     const std::string& instance_id,
     const std::string& extra_data) {
   auto iter = get_instance_id_data_callbacks_.find(app_id);
-  DCHECK(iter != get_instance_id_data_callbacks_.end());
+  CHECK(iter != get_instance_id_data_callbacks_.end());
 
   base::queue<GetInstanceIDDataCallback>& callbacks = iter->second;
   std::move(callbacks.front()).Run(instance_id, extra_data);
@@ -1075,6 +1074,7 @@ void GCMDriverDesktop::GetTokenFinished(const std::string& app_id,
                                         const std::string& scope,
                                         const std::string& token,
                                         GCMClient::Result result) {
+  TRACE_EVENT0("identity", "GCMDriverDesktop::GetTokenFinished");
   TokenTuple tuple_key(app_id, authorized_entity, scope);
   auto callback_iter = get_token_callbacks_.find(tuple_key);
   if (callback_iter == get_token_callbacks_.end()) {
@@ -1177,7 +1177,8 @@ GCMClient::Result GCMDriverDesktop::EnsureStarted(
   io_thread_->PostTask(
       FROM_HERE, base::BindOnce(&GCMDriverDesktop::IOWorker::Start,
                                 base::Unretained(io_worker_.get()), start_mode,
-                                weak_ptr_factory_.GetWeakPtr()));
+                                weak_ptr_factory_.GetWeakPtr(),
+                                /*time_task_posted=*/base::TimeTicks::Now()));
 
   return GCMClient::SUCCESS;
 }
@@ -1247,8 +1248,6 @@ void GCMDriverDesktop::GCMClientReady(
     const std::vector<AccountMapping>& account_mappings,
     const base::Time& last_token_fetch_time) {
   DCHECK(ui_thread_->RunsTasksInCurrentSequence());
-
-  UMA_HISTOGRAM_BOOLEAN("GCM.UserSignedIn", signed_in_);
 
   gcm_started_ = true;
 

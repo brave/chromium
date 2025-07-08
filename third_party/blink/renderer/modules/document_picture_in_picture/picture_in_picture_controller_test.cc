@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.h"
-
 #include <memory>
+#include <utility>
 
+#include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "media/mojo/mojom/media_player.mojom-blink.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -13,7 +14,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -30,24 +31,26 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/wait_for_event.h"
 #include "third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture.h"
+#include "third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
 #include "third_party/blink/renderer/platform/testing/empty_web_media_player.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(TARGET_OS_IS_ANDROID)
 #include "third_party/blink/renderer/bindings/modules/v8/v8_document_picture_in_picture_options.h"
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(TARGET_OS_IS_ANDROID)
 
 using ::testing::_;
 
 namespace blink {
 
 namespace {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(TARGET_OS_IS_ANDROID)
 KURL GetOpenerURL() {
   return KURL("https://example.com/");
 }
@@ -62,6 +65,9 @@ LocalDOMWindow* OpenDocumentPictureInPictureWindow(
   // Enable the DocumentPictureInPictureAPI flag.
   ScopedDocumentPictureInPictureAPIForTest scoped_feature(true);
 
+  // Make sure that the document URL is set, since it's required.
+  document.SetURL(opener_url);
+
   // Get past the LocalDOMWindow::isSecureContext() check.
   document.domWindow()->GetSecurityContext().SetSecurityOriginForTesting(
       nullptr);
@@ -73,10 +79,8 @@ LocalDOMWindow* OpenDocumentPictureInPictureWindow(
   ScriptState::Scope entered_context_scope(script_state);
 
   // Create the DocumentPictureInPictureOptions.
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionState::kExecutionContext,
-                                 "DocumentPictureInPicture", "requestWindow");
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<DOMWindow>>(script_state);
 
   v8::Local<v8::Object> v8_object = v8::Object::New(v8_scope.GetIsolate());
   v8_object
@@ -88,19 +92,19 @@ LocalDOMWindow* OpenDocumentPictureInPictureWindow(
             v8::Number::New(v8_scope.GetIsolate(), 320))
       .Check();
   DocumentPictureInPictureOptions* options =
-      DocumentPictureInPictureOptions::Create(resolver->Promise().GetIsolate(),
-                                              v8_object, exception_state);
+      DocumentPictureInPictureOptions::Create(script_state->GetIsolate(),
+                                              v8_object, ASSERT_NO_EXCEPTION);
 
   // Set a base URL for the opener window.
   document.SetBaseURLOverride(opener_url);
   EXPECT_EQ(opener_url.GetString(), document.BaseURL().GetString());
 
   controller.CreateDocumentPictureInPictureWindow(
-      script_state, *document.domWindow(), options, resolver, exception_state);
+      script_state, *document.domWindow(), options, resolver);
 
   return controller.documentPictureInPictureWindow();
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(TARGET_OS_IS_ANDROID)
 
 }  // namespace
 
@@ -134,6 +138,9 @@ class MockPictureInPictureSession
                const viz::SurfaceId&,
                const gfx::Size&,
                bool));
+  MOCK_METHOD(void,
+              UpdateMediaPosition,
+              (media_session::mojom::blink::MediaPositionPtr));
 
  private:
   mojo::Receiver<mojom::blink::PictureInPictureSession> receiver_;
@@ -240,13 +247,13 @@ class PictureInPictureControllerPlayer final : public EmptyWebMediaPlayer {
   ReadyState GetReadyState() const override { return kReadyStateHaveMetadata; }
   bool HasVideo() const override { return true; }
   void OnRequestPictureInPicture() override { surface_id_ = TestSurfaceId(); }
-  absl::optional<viz::SurfaceId> GetSurfaceId() override { return surface_id_; }
+  std::optional<viz::SurfaceId> GetSurfaceId() override { return surface_id_; }
 
   void set_infinity_duration(bool value) { infinity_duration_ = value; }
 
  private:
   bool infinity_duration_ = false;
-  absl::optional<viz::SurfaceId> surface_id_;
+  std::optional<viz::SurfaceId> surface_id_;
 };
 
 class PictureInPictureTestWebFrameClient
@@ -256,7 +263,7 @@ class PictureInPictureTestWebFrameClient
       std::unique_ptr<WebMediaPlayer> web_media_player)
       : web_media_player_(std::move(web_media_player)) {}
 
-  WebMediaPlayer* CreateMediaPlayer(
+  std::unique_ptr<WebMediaPlayer> CreateMediaPlayer(
       const WebMediaPlayerSource&,
       WebMediaPlayerClient*,
       blink::MediaInspectorContext*,
@@ -265,7 +272,7 @@ class PictureInPictureTestWebFrameClient
       const WebString& sink_id,
       const cc::LayerTreeSettings* settings,
       scoped_refptr<base::TaskRunner> compositor_worker_task_runner) override {
-    return web_media_player_.release();
+    return std::move(web_media_player_);
   }
 
  private:
@@ -298,7 +305,7 @@ class PictureInPictureControllerTestWithWidget : public RenderingTest {
 
     std::string test_name =
         testing::UnitTest::GetInstance()->current_test_info()->name();
-    if (test_name.find("MediaSource") != std::string::npos) {
+    if (base::Contains(test_name, "MediaSource")) {
       MediaStreamComponentVector dummy_tracks;
       auto* descriptor = MakeGarbageCollected<MediaStreamDescriptor>(
           dummy_tracks, dummy_tracks);
@@ -331,7 +338,7 @@ class PictureInPictureControllerTestWithWidget : public RenderingTest {
   WebViewImpl* GetWebView() const { return helper_.GetWebView(); }
 
   void ResetMediaPlayerAndMediaSource() {
-    DynamicTo<HTMLMediaElement>(Video())->ResetMediaPlayerAndMediaSource();
+    Video()->ResetMediaPlayerAndMediaSource();
   }
 
  private:
@@ -348,9 +355,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
                          .PictureInPictureElement());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -388,9 +394,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
                          .PictureInPictureElement());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -400,14 +405,23 @@ TEST_F(PictureInPictureControllerTestWithWidget,
   MakeGarbageCollected<WaitForEvent>(Video(),
                                      event_type_names::kEnterpictureinpicture);
 
+  EXPECT_NE(nullptr, PictureInPictureControllerImpl::From(GetDocument())
+                         .PictureInPictureElement());
+  EXPECT_NE(nullptr, PictureInPictureControllerImpl::From(GetDocument())
+                         .pictureInPictureWindow());
+
   PictureInPictureControllerImpl::From(GetDocument())
       .ExitPictureInPicture(Video(), nullptr);
 
   MakeGarbageCollected<WaitForEvent>(Video(),
                                      event_type_names::kLeavepictureinpicture);
 
+  // Make sure the state has been cleaned up.
+  // https://crbug.com/1496926
   EXPECT_EQ(nullptr, PictureInPictureControllerImpl::From(GetDocument())
                          .PictureInPictureElement());
+  EXPECT_EQ(nullptr, PictureInPictureControllerImpl::From(GetDocument())
+                         .pictureInPictureWindow());
 }
 
 TEST_F(PictureInPictureControllerTestWithWidget, StartObserving) {
@@ -415,9 +429,8 @@ TEST_F(PictureInPictureControllerTestWithWidget, StartObserving) {
                    .IsSessionObserverReceiverBoundForTesting());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -434,9 +447,8 @@ TEST_F(PictureInPictureControllerTestWithWidget, StopObserving) {
                    .IsSessionObserverReceiverBoundForTesting());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -463,9 +475,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
   Video()->DurationChanged(std::numeric_limits<double>::infinity(), false);
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), false, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), false, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -482,9 +493,8 @@ TEST_F(PictureInPictureControllerTestWithWidget, PlayPauseButton_MediaSource) {
   // the test name.
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), false, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), false, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -523,7 +533,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
   EXPECT_EQ(nullptr, Video()->GetWebMediaPlayer());
 
   auto* resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
+      MakeGarbageCollected<ScriptPromiseResolver<PictureInPictureWindow>>(
+          scope.GetScriptState());
   auto promise = resolver->Promise();
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), resolver);
@@ -531,7 +542,7 @@ TEST_F(PictureInPictureControllerTestWithWidget,
   // Verify rejected with DOMExceptionCode::kInvalidStateError.
   EXPECT_EQ(v8::Promise::kRejected, promise.V8Promise()->State());
   DOMException* dom_exception = V8DOMException::ToWrappable(
-      promise.GetIsolate(), promise.V8Promise()->Result());
+      scope.GetIsolate(), promise.V8Promise()->Result());
   ASSERT_NE(dom_exception, nullptr);
   EXPECT_EQ(static_cast<int>(DOMExceptionCode::kInvalidStateError),
             dom_exception->code());
@@ -543,9 +554,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
                          .PictureInPictureElement());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -596,9 +606,8 @@ TEST_F(PictureInPictureControllerTestWithWidget,
                          .PictureInPictureElement());
 
   WebMediaPlayer* player = Video()->GetWebMediaPlayer();
-  EXPECT_CALL(Service(),
-              StartSession(player->GetDelegateId(), _, TestSurfaceId(),
-                           player->NaturalSize(), true, _, _, _));
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
 
   PictureInPictureControllerImpl::From(GetDocument())
       .EnterPictureInPicture(Video(), /*promise=*/nullptr);
@@ -625,7 +634,7 @@ TEST_F(PictureInPictureControllerTestWithWidget, VideoIsNotAllowedIfAutoPip) {
                 .IsElementAllowed(*Video(), /*report_failure=*/false));
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(TARGET_OS_IS_ANDROID)
 TEST_F(PictureInPictureControllerTestWithWidget,
        DocumentPiPDoesNotAllowVizThrottling) {
   EXPECT_TRUE(GetWidget()->GetMayThrottleIfUndrawnFramesForTesting());
@@ -644,13 +653,68 @@ TEST_F(PictureInPictureControllerTestWithWidget,
   // window is closed.
 }
 
+TEST_F(PictureInPictureControllerTestWithWidget,
+       DocumentPiPDoesOpenWithFileUrl) {
+  V8TestingScope v8_scope;
+  ScriptState* script_state =
+      ToScriptStateForMainWorld(GetDocument().GetFrame());
+  ScriptState::Scope entered_context_scope(script_state);
+  LocalFrame::NotifyUserActivation(
+      &GetFrame(), mojom::UserActivationNotificationType::kTest);
+  auto* pip = OpenDocumentPictureInPictureWindow(v8_scope, GetDocument(),
+                                                 KURL("file://my/file.html"));
+  EXPECT_TRUE(pip);
+}
+
+TEST_F(PictureInPictureControllerTestWithWidget,
+       EnterPictureInPicture_DisplayTypeVideoPipSetCorrectly) {
+  EXPECT_EQ(nullptr, PictureInPictureControllerImpl::From(GetDocument())
+                         .PictureInPictureElement());
+
+  WebMediaPlayer* player = Video()->GetWebMediaPlayer();
+  EXPECT_CALL(Service(), StartSession(player->GetPlayerId(), _, TestSurfaceId(),
+                                      player->NaturalSize(), true, _, _, _));
+
+  PictureInPictureControllerImpl::From(GetDocument())
+      .EnterPictureInPicture(Video(), /*promise=*/nullptr);
+
+  MakeGarbageCollected<WaitForEvent>(Video(),
+                                     event_type_names::kEnterpictureinpicture);
+
+  EXPECT_NE(nullptr, PictureInPictureControllerImpl::From(GetDocument())
+                         .PictureInPictureElement());
+  EXPECT_EQ(WebMediaPlayer::DisplayType::kVideoPictureInPicture,
+            Video()->GetDisplayType());
+}
+
+TEST_F(PictureInPictureControllerTestWithWidget,
+       EnterPictureInPicture_DisplayTypeDocumentPipSetCorrectly) {
+  V8TestingScope v8_scope;
+  ScriptState* script_state =
+      ToScriptStateForMainWorld(GetDocument().GetFrame());
+  ScriptState::Scope entered_context_scope(script_state);
+  LocalFrame::NotifyUserActivation(
+      &GetFrame(), mojom::UserActivationNotificationType::kTest);
+  auto* pip = OpenDocumentPictureInPictureWindow(v8_scope, GetDocument(),
+                                                 KURL("file://my/file.html"));
+  EXPECT_TRUE(pip);
+  EXPECT_EQ(WebMediaPlayer::DisplayType::kInline, Video()->GetDisplayType());
+
+  pip->document()->body()->AppendChild(Video());
+  EXPECT_EQ(WebMediaPlayer::DisplayType::kDocumentPictureInPicture,
+            Video()->GetDisplayType());
+}
+
 class PictureInPictureControllerChromeClient
     : public RenderingTestChromeClient {
  public:
-  explicit PictureInPictureControllerChromeClient(
-      DummyPageHolder* dummy_page_holder)
-      : dummy_page_holder_(dummy_page_holder) {}
+  PictureInPictureControllerChromeClient() = default;
 
+  void set_dummy_page_holder(DummyPageHolder* dummy_page_holder) {
+    dummy_page_holder_ = dummy_page_holder;
+  }
+
+  // RenderingTestChromeClient:
   Page* CreateWindowDelegate(LocalFrame*,
                              const FrameLoadRequest&,
                              const AtomicString&,
@@ -658,12 +722,13 @@ class PictureInPictureControllerChromeClient
                              network::mojom::blink::WebSandboxFlags,
                              const SessionStorageNamespaceId&,
                              bool& consumed_user_gesture) override {
+    CHECK(dummy_page_holder_);
     return &dummy_page_holder_->GetPage();
   }
   MOCK_METHOD(void, SetWindowRect, (const gfx::Rect&, LocalFrame&));
 
  private:
-  DummyPageHolder* dummy_page_holder_;
+  raw_ptr<DummyPageHolder, DanglingUntriaged> dummy_page_holder_ = nullptr;
 };
 
 // Tests for Picture in Picture with a mockable chrome client.  This makes it
@@ -674,8 +739,10 @@ class PictureInPictureControllerTestWithChromeClient : public RenderingTest {
  public:
   void SetUp() override {
     chrome_client_ =
-        MakeGarbageCollected<PictureInPictureControllerChromeClient>(
-            &dummy_page_holder_);
+        MakeGarbageCollected<PictureInPictureControllerChromeClient>();
+    dummy_page_holder_ =
+        std::make_unique<DummyPageHolder>(gfx::Size(), chrome_client_);
+    chrome_client_->set_dummy_page_holder(dummy_page_holder_.get());
     RenderingTest::SetUp();
   }
 
@@ -697,7 +764,7 @@ class PictureInPictureControllerTestWithChromeClient : public RenderingTest {
   // ownership of it here so that it outlives the GC'd objects.  The client
   // cannot own it because it also has a GC root to the client; everything would
   // leak if we did so.
-  DummyPageHolder dummy_page_holder_;
+  std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
 TEST_F(PictureInPictureControllerTestWithChromeClient,
@@ -716,12 +783,33 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
   // The Picture in Picture window's base URL should match the opener.
   EXPECT_EQ(GetOpenerURL().GetString(), document->BaseURL().GetString());
 
-  // Verify that move* and resize* don't call through to the chrome client.
+  // Verify that move* doesn't call through to the chrome client.
   EXPECT_CALL(GetPipChromeClient(), SetWindowRect(_, _)).Times(0);
   document->domWindow()->moveTo(10, 10);
   document->domWindow()->moveBy(10, 10);
-  document->domWindow()->resizeTo(10, 10);
-  document->domWindow()->resizeBy(10, 10);
+  testing::Mock::VerifyAndClearExpectations(&GetPipChromeClient());
+
+  {
+    // Verify that resizeTo consumes a user gesture, and so only one of the
+    // following calls will succeed.
+    EXPECT_CALL(GetPipChromeClient(), SetWindowRect(_, _));
+    LocalFrame::NotifyUserActivation(
+        document->GetFrame(), mojom::UserActivationNotificationType::kTest);
+    document->domWindow()->resizeTo(10, 10, IGNORE_EXCEPTION);
+    document->domWindow()->resizeTo(20, 20, IGNORE_EXCEPTION);
+    testing::Mock::VerifyAndClearExpectations(&GetPipChromeClient());
+  }
+
+  {
+    // Verify that resizeBy consumes a user gesture, and so only one of the
+    // following calls will succeed.
+    EXPECT_CALL(GetPipChromeClient(), SetWindowRect(_, _));
+    LocalFrame::NotifyUserActivation(
+        document->GetFrame(), mojom::UserActivationNotificationType::kTest);
+    document->domWindow()->resizeBy(10, 10, IGNORE_EXCEPTION);
+    document->domWindow()->resizeBy(20, 20, IGNORE_EXCEPTION);
+    testing::Mock::VerifyAndClearExpectations(&GetPipChromeClient());
+  }
 
   // Make sure that the `document` is not the same as the opener.
   EXPECT_NE(document, &GetDocument());
@@ -767,24 +855,22 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
   ScriptState::Scope entered_context_scope(script_state);
 
   // Create the DocumentPictureInPictureOptions.
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionState::kExecutionContext,
-                                 "DocumentPictureInPicture", "requestWindow");
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<DOMWindow>>(script_state);
 
   v8::Local<v8::Object> v8_object = v8::Object::New(v8_scope.GetIsolate());
   const auto promise = resolver->Promise();
   DocumentPictureInPictureOptions* options =
-      DocumentPictureInPictureOptions::Create(promise.GetIsolate(), v8_object,
-                                              exception_state);
+      DocumentPictureInPictureOptions::Create(script_state->GetIsolate(),
+                                              v8_object, ASSERT_NO_EXCEPTION);
 
-  // Set a base URL for the opener window.
-  document.SetBaseURLOverride(opener_url);
+  // Set a URL for the opener window.
+  document.SetURL(opener_url);
   EXPECT_EQ(opener_url.GetString(), document.BaseURL().GetString());
 
   // Create document picture in picture window.
   controller.CreateDocumentPictureInPictureWindow(
-      script_state, *document.domWindow(), options, resolver, exception_state);
+      script_state, *document.domWindow(), options, resolver);
 
   // Verify the document picture in picture window was not created.
   auto* pictureInPictureWindow = controller.documentPictureInPictureWindow();
@@ -793,7 +879,7 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
   // Verify rejected with DOMExceptionCode::kInvalidStateError.
   EXPECT_EQ(promise.V8Promise()->State(), v8::Promise::kRejected);
   DOMException* dom_exception = V8DOMException::ToWrappable(
-      promise.GetIsolate(), promise.V8Promise()->Result());
+      script_state->GetIsolate(), promise.V8Promise()->Result());
   ASSERT_NE(dom_exception, nullptr);
   EXPECT_EQ(dom_exception->code(),
             static_cast<int>(DOMExceptionCode::kInvalidStateError));
@@ -822,6 +908,51 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
   EXPECT_NE(nullptr, pictureInPictureWindow1);
   EXPECT_NE(nullptr, pictureInPictureWindow2);
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
+
+TEST_F(PictureInPictureControllerTestWithChromeClient, CopiesAutoplayFlags) {
+  V8TestingScope v8_scope;
+  LocalFrame::NotifyUserActivation(
+      &GetFrame(), mojom::UserActivationNotificationType::kTest);
+
+  // Set the autoplay flags to something recognizable.
+  auto* page = GetDocument().GetPage();
+  page->ClearAutoplayFlags();
+  const int flags = 0x1234;  // Spoiler alert: this is made up.
+  page->AddAutoplayFlags(flags);
+
+  auto* pictureInPictureWindow =
+      OpenDocumentPictureInPictureWindow(v8_scope, GetDocument());
+  EXPECT_EQ(pictureInPictureWindow->document()->GetPage()->AutoplayFlags(),
+            flags);
+}
+
+TEST_F(PictureInPictureControllerTestWithChromeClient,
+       CopiesCompatibilityMode_Quirks) {
+  V8TestingScope v8_scope;
+  LocalFrame::NotifyUserActivation(
+      &GetFrame(), mojom::UserActivationNotificationType::kTest);
+
+  GetDocument().SetCompatibilityMode(Document::kQuirksMode);
+
+  auto* pictureInPictureWindow =
+      OpenDocumentPictureInPictureWindow(v8_scope, GetDocument());
+  EXPECT_EQ(pictureInPictureWindow->document()->GetCompatibilityMode(),
+            Document::kQuirksMode);
+}
+
+TEST_F(PictureInPictureControllerTestWithChromeClient,
+       CopiesCompatibilityMode_NoQuirks) {
+  V8TestingScope v8_scope;
+  LocalFrame::NotifyUserActivation(
+      &GetFrame(), mojom::UserActivationNotificationType::kTest);
+
+  GetDocument().SetCompatibilityMode(Document::kNoQuirksMode);
+
+  auto* pictureInPictureWindow =
+      OpenDocumentPictureInPictureWindow(v8_scope, GetDocument());
+  EXPECT_EQ(pictureInPictureWindow->document()->GetCompatibilityMode(),
+            Document::kNoQuirksMode);
+}
+#endif  // !BUILDFLAG(TARGET_OS_IS_ANDROID)
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-<style include="settings-shared">
+<style include="settings-shared cr-icons">
   :host {
     --cr-section-indent-width: 60px;
   }
@@ -11,8 +11,24 @@
     padding-inline-start: 0;
   }
 
+  #details {
+    align-items: center;
+    display: flex;
+    flex: auto;
+  }
+
   .start-padding {
     padding-inline-start: var(--cr-section-padding);
+  }
+
+  .mouse-keys-icon {
+    --iron-icon-fill-color: var(--cros-sys-primary);
+    padding-inline-end: var(--cr-icon-button-margin-start);
+  }
+
+  #mouseKeysSettingsRow:hover {
+    background-color: var(--cr-hover-background-color);
+    cursor: pointer;
   }
 
   settings-toggle-button,
@@ -64,6 +80,57 @@
       label="$i18n{autoclickRevertToLeftClick}">
   </settings-toggle-button>
 </div>
+<template is="dom-if" if="[[isAccessibilityMouseKeysEnabled_]]">
+  <div class="settings-box no-padding">
+    <div id="mouseKeysSettingsRow"
+        class="flex layout horizontal center link-wrapper"
+        on-click="onMouseKeysRowClicked_">
+      <iron-icon icon="os-settings:mouse-keys"
+          class="mouse-keys-icon">
+      </iron-icon>
+      <div id="details" aria-hidden="true">
+        <div class="flex settings-box-text">
+          <div id="mouseKeysTitleText">
+            $i18n{mouseKeysLabel}
+          </div>
+          <div id="mouseKeysSublabel" class="cr-secondary-text sub-label">
+            <span class="sub-label-text">$i18n{mouseKeysDescription}</span>
+          </div>
+        </div>
+      </div>
+      <cr-icon-button id="mouseKeysRowArrowIcon"
+          class="subpage-arrow"
+          aria-labelledby="mouseKeysTitleText"
+          aria-describedby="mouseKeysSublabel"
+          aria-roledescription="$i18n{subpageArrowRoleDescription}"
+          on-click="onMouseKeysRowClicked_">
+      </cr-icon-button>
+    </div>
+    <div class="separator"></div>
+    <cr-toggle id="mouseKeysToggle"
+        class="margin-matches-padding"
+        aria-label="$i18n{mouseKeysLabel}"
+        aria-describedby="mouseKeysSublabel"
+        checked="[[prefs.settings.a11y.mouse_keys.enabled.value]]"
+        on-change="onMouseKeysToggleClicked_">
+    </cr-toggle>
+  </div>
+</template>
+<template is="dom-if" if="[[showFaceGazeRow_]]" restamp>
+  <cr-link-row
+      id="faceGazePageRow"
+      class="hr"
+      start-icon="os-settings:face-gaze"
+      label="$i18n{accessibilityFaceGazeLabel}"
+      on-click="onFaceGazeSettingsClick_"
+      role-description="$i18n{subpageArrowRoleDescription}">
+    <localized-link id="faceGazeSubLabel"
+        slot="sub-label"
+        localized-string="$i18n{accessibilityFaceGazeDescription}"
+        link-url="$i18n{faceGazeLearnMoreUrl}">
+    </localized-link>
+  </cr-link-row>
+</template>
 <settings-toggle-button
     id="largeCursorEnabledControl"
     class="hr"
@@ -80,7 +147,7 @@
     <settings-slider
         id="largeCursorSizeSlider"
         pref="{{prefs.settings.a11y.large_cursor_dip_size}}"
-        min="25" max="64"
+        min="25" max="128"
         label-aria="$i18n{largeMouseCursorSizeLabel}"
         label-min="$i18n{largeMouseCursorSizeDefaultLabel}"
         label-max="$i18n{largeMouseCursorSizeLargeLabel}">
@@ -92,7 +159,7 @@
     $i18n{cursorColorOptionsLabel}
   </div>
   <settings-dropdown-menu id="cursorColorDropdown"
-      aria-labeledby="cursorColorOptionsLabel"
+      aria-labelledby="cursorColorOptionsLabel"
       pref="{{prefs.settings.a11y.cursor_color}}"
       menu-options="[[cursorColorOptions_]]"
       on-settings-control-change="onA11yCursorColorChange_"
@@ -105,6 +172,35 @@
     label="$i18n{cursorHighlightLabel}"
     deep-link-focus-id$="[[Setting.kHighlightCursorWhileMoving]]">
 </settings-toggle-button>
+<settings-toggle-button id="overscrollToggle"
+    class="hr"
+    pref="{{prefs.settings.a11y.overscroll_history_navigation}}"
+    label="$i18n{overscrollHistoryNavigationTitle}"
+    deep-link-focus-id$="[[Setting.kOverscrollEnabled]]">
+</settings-toggle-button>
+<template is="dom-if" if="[[isAccessibilityDisableTouchpadEnabled_]]">
+  <div class="settings-box start-padding">
+    <div class="flex start settings-box-text">
+      <div id="disableInternalTouchpadLabel">
+          $i18n{disableTouchpadLabel}
+      </div>
+      <template is="dom-if" if="[[showTouchpadEnableMessage_(
+            prefs.settings.a11y.disable_trackpad_mode.value
+          )]]">
+        <div class="cr-secondary-text sub-label" id="reEnableTouchpadLabel" >
+           <span class="sub-label-text">$i18n{reEnableTouchpadLabel}</span>
+        </div>
+      </template>
+    </div>
+    <settings-dropdown-menu id="disableInternalTouchpadDropdown"
+          aria-labelledby="disableInternalTouchpadLabel"
+          pref="{{prefs.settings.a11y.disable_trackpad_mode}}"
+          menu-options="[[disableTouchpadOptions_]]"
+          deep-link-focus-id$="[[Setting.kDisableTouchpad]]"
+          >
+    </settings-dropdown-menu>
+  </div>
+</template>
 <template is="dom-if" if="[[showShelfNavigationButtonsSettings_]]" restamp>
   <!-- If shelf navigation buttons are implicitly enabled by other a11y
       settings (e.g. by spoken feedback), the toggle control should be
@@ -128,6 +224,6 @@
   </settings-toggle-button>
 </template>
 <cr-link-row id="pointerSubpageButton" class="hr"
-    label="$i18n{mouseSettingsTitle}" on-click="onMouseClick_"
+    label="$i18n{mouseSettingsTitle}" on-click="onNavigateToSubpageClick"
     role-description="$i18n{subpageArrowRoleDescription}" embedded>
 </cr-link-row>

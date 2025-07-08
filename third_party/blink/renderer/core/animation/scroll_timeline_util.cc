@@ -22,7 +22,7 @@ scoped_refptr<CompositorScrollTimeline> ToCompositorScrollTimeline(
 
   auto* scroll_snapshot_timeline = To<ScrollSnapshotTimeline>(timeline);
   Node* scroll_source = scroll_snapshot_timeline->ResolvedSource();
-  absl::optional<CompositorElementId> element_id =
+  std::optional<CompositorElementId> element_id =
       GetCompositorScrollElementId(scroll_source);
 
   LayoutBox* box = scroll_snapshot_timeline->IsActive()
@@ -37,11 +37,11 @@ scoped_refptr<CompositorScrollTimeline> ToCompositorScrollTimeline(
       scroll_snapshot_timeline->GetResolvedScrollOffsets());
 }
 
-absl::optional<CompositorElementId> GetCompositorScrollElementId(
+std::optional<CompositorElementId> GetCompositorScrollElementId(
     const Node* node) {
   if (!node || !node->GetLayoutObject() ||
       !node->GetLayoutObject()->FirstFragment().PaintProperties()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return CompositorElementIdFromUniqueObjectId(
       node->GetLayoutObject()->UniqueId(),
@@ -62,42 +62,18 @@ CompositorScrollTimeline::ScrollDirection ConvertOrientation(
     return CompositorScrollTimeline::ScrollDown;
   }
 
-  // Harder cases; first work out which axis is which, and then for each check
-  // which edge we start at.
-
-  // writing-mode: horizontal-tb
-  bool is_horizontal_writing_mode =
-      style ? style->IsHorizontalWritingMode() : true;
-  // writing-mode: vertical-lr
-  bool is_flipped_lines_writing_mode =
-      style ? style->IsFlippedLinesWritingMode() : false;
-  // direction: ltr;
-  bool is_ltr_direction = style ? style->IsLeftToRightDirection() : true;
-
+  PhysicalToLogical<CompositorScrollTimeline::ScrollDirection> converter(
+      style ? style->GetWritingDirection()
+            : WritingDirectionMode(WritingMode::kHorizontalTb,
+                                   TextDirection::kLtr),
+      CompositorScrollTimeline::ScrollUp, CompositorScrollTimeline::ScrollRight,
+      CompositorScrollTimeline::ScrollDown,
+      CompositorScrollTimeline::ScrollLeft);
   if (axis == ScrollAxis::kBlock) {
-    if (is_horizontal_writing_mode) {
-      // For horizontal writing mode, block is vertical. The starting edge is
-      // always the top.
-      return CompositorScrollTimeline::ScrollDown;
-    }
-    // For vertical writing mode, the block axis is horizontal. The starting
-    // edge depends on if we are lr or rl.
-    return is_flipped_lines_writing_mode ? CompositorScrollTimeline::ScrollRight
-                                         : CompositorScrollTimeline::ScrollLeft;
+    return converter.BlockEnd();
   }
-
   DCHECK_EQ(axis, ScrollAxis::kInline);
-  if (is_horizontal_writing_mode) {
-    // For horizontal writing mode, inline is horizontal. The starting edge
-    // depends on the directionality.
-    return is_ltr_direction ? CompositorScrollTimeline::ScrollRight
-                            : CompositorScrollTimeline::ScrollLeft;
-  }
-  // For vertical writing mode, inline is vertical. The starting edge still
-  // depends on the directionality; whether it is vertical-lr or vertical-rl
-  // does not matter.
-  return is_ltr_direction ? CompositorScrollTimeline::ScrollDown
-                          : CompositorScrollTimeline::ScrollUp;
+  return converter.InlineEnd();
 }
 
 }  // namespace scroll_timeline_util

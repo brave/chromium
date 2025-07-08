@@ -5,22 +5,18 @@
 #ifndef UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 #define UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 
+#include "base/component_export.h"
 #include "base/no_destructor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/native_theme/native_theme_aura.h"
 #include "ui/native_theme/native_theme_base.h"
-#include "ui/native_theme/native_theme_export.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class NativeThemeEffectiveAppearanceObserver;
 
 namespace ui {
 
 // Mac implementation of native theme support.
-class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
+class COMPONENT_EXPORT(NATIVE_THEME) NativeThemeMac : public NativeThemeBase {
  public:
   static const int kButtonCornerRadius = 3;
 
@@ -50,7 +46,8 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
              const gfx::Rect& rect,
              const ExtraParams& extra,
              ColorScheme color_scheme,
-             const absl::optional<SkColor>& accent_color) const override;
+             bool in_forced_colors,
+             const std::optional<SkColor>& accent_color) const override;
   void PaintMenuPopupBackground(
       cc::PaintCanvas* canvas,
       const ColorProvider* color_provider,
@@ -92,7 +89,12 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
   // Returns the minimum size for the thumb. We will not inset the thumb if it
   // will be smaller than this size. The scale parameter should be the device
   // scale factor.
-  gfx::Size GetThumbMinSize(bool vertical, float scale) const;
+  static gfx::Size GetThumbMinSize(bool vertical, float scale);
+
+  // This is used in tests to simulate enabling a non-blinking cursor.
+  void SetPrefersNonBlinkingCursorForTesting(bool enabled) {
+    prefers_non_blinking_cursor_for_testing_ = enabled;
+  }
 
  protected:
   friend class NativeTheme;
@@ -102,7 +104,13 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
   NativeThemeMac(bool configure_web_instance, bool should_only_use_dark_colors);
   ~NativeThemeMac() override;
 
+  // NativeTheme:
+  std::optional<base::TimeDelta> GetPlatformCaretBlinkInterval() const override;
+
  private:
+  // Returns true if the user prefers a non blinking cursor.
+  bool PrefersNonBlinkingCursor() const;
+
   // Paint the selected menu item background, and a border for emphasis when in
   // high contrast.
   void PaintSelectedMenuItem(cc::PaintCanvas* canvas,
@@ -137,7 +145,7 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
     kTrackOuterBorder,
   };
 
-  absl::optional<SkColor> GetScrollbarColor(
+  std::optional<SkColor> GetScrollbarColor(
       ScrollbarPart part,
       ColorScheme color_scheme,
       const ScrollbarExtraParams& extra_params) const;
@@ -155,6 +163,8 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
 
   NativeThemeEffectiveAppearanceObserver* __strong appearance_observer_;
   id __strong display_accessibility_notification_token_;
+  id __strong non_blinking_cursor_token_;
+  bool prefers_non_blinking_cursor_for_testing_ = false;
 
   // Used to notify the web native theme of changes to dark mode and high
   // contrast.

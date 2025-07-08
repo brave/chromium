@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/views/extensions/extensions_menu_main_page_view.h"
+#include "chrome/browser/ui/views/extensions/extensions_menu_site_permissions_page_view.h"
 
 #include "base/feature_list.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
-#include "chrome/browser/extensions/scripting_permissions_modifier.h"
-#include "chrome/browser/extensions/site_permissions_helper.h"
+#include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
+#include "chrome/browser/extensions/permissions/site_permissions_helper.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
-#include "chrome/browser/ui/views/extensions/extensions_menu_site_permissions_page_view.h"
+#include "chrome/browser/ui/views/extensions/extensions_menu_main_page_view.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_view_controller.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_button.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_button.h"
@@ -21,7 +21,9 @@
 #include "extensions/test/permissions_manager_waiter.h"
 #include "extensions/test/test_extension_dir.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/button/toggle_button.h"
+#include "ui/views/test/views_test_utils.h"
 
 namespace {
 
@@ -101,8 +103,7 @@ bool ExtensionsSitePermissionsPageViewUnitTest::IsSitePermissionsPageOpened(
 std::vector<extensions::ExtensionId>
 ExtensionsSitePermissionsPageViewUnitTest::GetExtensionsShowingRequests() {
   return extensions_container()
-      ->GetExtensionsToolbarControls()
-      ->request_access_button()
+      ->GetRequestAccessButton()
       ->GetExtensionIdsForTesting();
 }
 
@@ -167,6 +168,23 @@ TEST_F(ExtensionsSitePermissionsPageViewUnitTest,
   UninstallExtension(extensionA->id());
   EXPECT_FALSE(IsSitePermissionsPageOpened(extensionA->id()));
   EXPECT_TRUE(IsMainPageOpened());
+}
+
+// Tests that the extension name is elided if it is too long.
+TEST_F(ExtensionsSitePermissionsPageViewUnitTest, LongExtensionNameIsElided) {
+  std::string long_name =
+      "A very very very very very very very very long extension name";
+  auto extension =
+      InstallExtensionWithHostPermissions(long_name, {"<all_urls>"});
+
+  NavigateAndCommit("http://www.url.com");
+  ShowSitePermissionsPage(extension->id());
+  EXPECT_TRUE(IsSitePermissionsPageOpened(extension->id()));
+
+  views::Label* extension_name_label =
+      site_permissions_page()->GetExtensionNameForTesting();
+  ASSERT_TRUE(extension_name_label);
+  EXPECT_EQ(extension_name_label->GetElideBehavior(), gfx::ELIDE_TAIL);
 }
 
 // Tests that menu navigates back to the main page when an extension, whose site
@@ -234,9 +252,21 @@ TEST_F(ExtensionsSitePermissionsPageViewUnitTest, ShowRequestsTogglePressed) {
   ShowSitePermissionsPage(extensionA->id());
   EXPECT_TRUE(IsSitePermissionsPageOpened(extensionA->id()));
 
+  // RunScheduledLayout() is needed due to widget auto-resize.
+  views::test::RunScheduledLayout(site_permissions_page());
+
   // By default, extensions are allowed to show request access in the toolbar.
+  // However, request is only shown if extension adds a request for the site.
   EXPECT_TRUE(
       site_permissions_page()->GetShowRequestsToggleForTesting()->GetIsOn());
+  EXPECT_THAT(GetExtensionsShowingRequests(), testing::IsEmpty());
+
+  // Add site access requests for both extensions.
+  auto* web_contents = browser()->tab_strip_model()->GetActiveWebContents();
+  AddHostAccessRequest(*extensionA, web_contents);
+  AddHostAccessRequest(*extensionB, web_contents);
+
+  // Both extensions should have a visible request in the toolbar.
   EXPECT_THAT(GetExtensionsShowingRequests(),
               testing::ElementsAre(extensionA->id(), extensionB->id()));
 
@@ -267,6 +297,10 @@ TEST_F(ExtensionsSitePermissionsPageViewUnitTest,
   ShowSitePermissionsPage(extension->id());
   EXPECT_TRUE(IsSitePermissionsPageOpened(extension->id()));
 
+  // Add site access request for extension.
+  AddHostAccessRequest(*extension,
+                       browser()->tab_strip_model()->GetActiveWebContents());
+
   // By default, extensions are allowed to show request access in the toolbar.
   EXPECT_TRUE(
       site_permissions_page()->GetShowRequestsToggleForTesting()->GetIsOn());
@@ -293,6 +327,9 @@ TEST_F(ExtensionsSitePermissionsPageViewUnitTest, SiteAccessUpdated) {
 
   ShowSitePermissionsPage(extension->id());
   EXPECT_TRUE(IsSitePermissionsPageOpened(extension->id()));
+
+  // RunScheduledLayout() is needed due to widget auto-resize.
+  views::test::RunScheduledLayout(site_permissions_page());
 
   auto* on_click_button =
       site_permissions_page()->GetSiteAccessButtonForTesting(

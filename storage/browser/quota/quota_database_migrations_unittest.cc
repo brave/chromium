@@ -7,6 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "components/services/storage/public/cpp/constants.h"
 #include "sql/database.h"
@@ -53,7 +54,7 @@ class QuotaDatabaseMigrationsTest : public testing::Test {
   // otherwise.
   std::string GetDatabaseData(const char* file) {
     base::FilePath source_path;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &source_path);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_path);
     source_path = source_path.AppendASCII("storage/test/data/quota_database");
     source_path = source_path.AppendASCII(file);
     EXPECT_TRUE(base::PathExists(source_path));
@@ -68,9 +69,9 @@ class QuotaDatabaseMigrationsTest : public testing::Test {
     if (contents.empty())
       return false;
 
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     if (!base::CreateDirectory(db_path.DirName()) || !db.Open(db_path) ||
-        !db.Execute(contents.data())) {
+        !db.ExecuteScriptForTesting(contents)) {
       return false;
     }
 
@@ -89,7 +90,7 @@ class QuotaDatabaseMigrationsTest : public testing::Test {
     base::FilePath current_version_path =
         temp_directory_.GetPath().AppendASCII("current_version.db");
     EXPECT_TRUE(LoadDatabase("version_10.sql", current_version_path));
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     EXPECT_TRUE(db.Open(current_version_path));
     return db.GetSchema();
   }
@@ -120,7 +121,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV7) {
   ASSERT_TRUE(LoadDatabase("version_7.sql", DbPath()));
 
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));
@@ -153,7 +154,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV7) {
 
   // Verify upgraded schema.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));
@@ -174,7 +175,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV7) {
         "2|http://b/|b|0|bucket_b|111|13250042735631065|13260999511438890|"
         "0|1000|0|0,"
         "3|chrome-extension://abc/||2|_default|321|13261163582572088|"
-        "13261079941303629|0|10000|0|1",
+        "13261079941303629|0|10000|0|0",
         sql::test::ExecuteWithResults(
             &db, "SELECT * FROM buckets ORDER BY id ASC", "|", ","));
 
@@ -194,7 +195,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV8) {
   ASSERT_TRUE(LoadDatabase("version_8.sql", DbPath()));
 
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));
@@ -230,7 +231,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV8) {
 
   // Verify upgraded schema.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));
@@ -254,7 +255,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV8) {
         "0|1000|0|0,"
         "3|chrome-extension://abc/|chrome-extension://abc/"
         "|2|_default|321|13261163582572088|"
-        "13261079941303629|0|10000|0|1",
+        "13261079941303629|0|10000|0|0",
         sql::test::ExecuteWithResults(
             &db, "SELECT * FROM buckets ORDER BY id ASC", "|", ","));
 
@@ -272,7 +273,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV9) {
   ASSERT_TRUE(LoadDatabase("version_9.sql", DbPath()));
 
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));
@@ -308,7 +309,7 @@ TEST_F(QuotaDatabaseMigrationsTest, UpgradeSchemaFromV9) {
 
   // Verify upgraded schema.
   {
-    sql::Database db;
+    sql::Database db(sql::test::kTestTag);
     ASSERT_TRUE(db.Open(DbPath()));
 
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&db));

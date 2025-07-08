@@ -25,7 +25,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_MARKUP_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_MARKUP_H_
 
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 // Helper functions for converting from CSSValues to text.
 

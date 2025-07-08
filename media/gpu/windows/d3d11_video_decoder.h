@@ -5,7 +5,6 @@
 #ifndef MEDIA_GPU_WINDOWS_D3D11_VIDEO_DECODER_H_
 #define MEDIA_GPU_WINDOWS_D3D11_VIDEO_DECODER_H_
 
-#include <d3d11.h>
 #include <list>
 #include <vector>
 
@@ -18,6 +17,7 @@
 #include "base/threading/sequence_bound.h"
 #include "base/time/time.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
+#include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/base/callback_registry.h"
 #include "media/base/status.h"
@@ -26,7 +26,6 @@
 #include "media/base/video_types.h"
 #include "media/gpu/command_buffer_helper.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/gpu/windows/d3d11_com_defs.h"
 #include "media/gpu/windows/d3d11_decoder_configurator.h"
 #include "media/gpu/windows/d3d11_h264_accelerator.h"
 #include "media/gpu/windows/d3d11_status.h"
@@ -35,6 +34,7 @@
 #include "media/gpu/windows/d3d11_video_decoder_wrapper.h"
 #include "media/gpu/windows/d3d11_video_frame_mailbox_release_helper.h"
 #include "media/gpu/windows/d3d11_vp9_accelerator.h"
+#include "media/gpu/windows/d3d_com_defs.h"
 
 namespace gpu {
 class CommandBufferStub;
@@ -52,8 +52,10 @@ class MediaLog;
 class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
                                            public D3D11VideoDecoderClient {
  public:
-  // Callback to get a D3D11 device.
-  using GetD3D11DeviceCB = base::RepeatingCallback<ComD3D11Device()>;
+  enum class D3DVersion { kD3D11, kD3D12 };
+
+  // Callback to get a D3D11/12 device.
+  using GetD3DDeviceCB = base::RepeatingCallback<ComUnknown(D3DVersion)>;
 
   // List of configs that we'll check against when initializing.  This is only
   // needed since GpuMojoMediaClient merges our supported configs with the VDA
@@ -67,9 +69,8 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
       const gpu::GpuPreferences& gpu_preferences,
       const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
       base::RepeatingCallback<gpu::CommandBufferStub*()> get_stub_cb,
-      GetD3D11DeviceCB get_d3d11_device_cb,
-      SupportedConfigs supported_configs,
-      bool system_hdr_enabled);
+      GetD3DDeviceCB get_d3d_device_cb,
+      SupportedConfigs supported_configs);
 
   D3D11VideoDecoder(const D3D11VideoDecoder&) = delete;
   D3D11VideoDecoder& operator=(const D3D11VideoDecoder&) = delete;
@@ -93,7 +94,9 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   void UpdateTimestamp(D3D11PictureBuffer* picture_buffer) override;
   bool OutputResult(const CodecPicture* picture,
                     D3D11PictureBuffer* picture_buffer) override;
-  void SetDecoderWrapperCB(const SetAcceleratorDecoderWrapperCB&) override;
+  D3DVideoDecoderWrapper* GetWrapper() override;
+
+  bool ResetD3DVideoDecoder();
 
   static bool GetD3D11FeatureLevel(
       ComD3D11Device dev,
@@ -105,7 +108,7 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   GetSupportedVideoDecoderConfigs(
       const gpu::GpuPreferences& gpu_preferences,
       const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
-      GetD3D11DeviceCB get_d3d11_device_cb);
+      GetD3DDeviceCB get_d3d_device_cb);
 
  protected:
   // Owners should call Destroy(). This is automatic via
@@ -123,9 +126,8 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
       const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
       base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()>
           get_helper_cb,
-      GetD3D11DeviceCB get_d3d11_device_cb,
-      SupportedConfigs supported_configs,
-      bool system_hdr_enabled);
+      GetD3DDeviceCB get_d3d_device_cb,
+      SupportedConfigs supported_configs);
 
   // Receive |buffer|, that is now unused by the client.
   void ReceivePictureBufferFromClient(scoped_refptr<D3D11PictureBuffer> buffer);
@@ -144,12 +146,7 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
 
   // Instantiate |accelerated_video_decoder_| based on the video profile.
   // Returns false if the codec is unsupported.
-  bool InitializeAcceleratedDecoder(
-      const VideoDecoderConfig& config,
-      std::unique_ptr<D3DVideoDecoderWrapper> video_decoder_wrapper);
-
-  // Query the video device for a specific decoder ID.
-  bool DeviceHasDecoderID(GUID decoder_guid);
+  bool InitializeAcceleratedDecoder(const VideoDecoderConfig& config);
 
   // Create new PictureBuffers.  Currently, this completes synchronously, but
   // really should have an async interface since it must do some work on the
@@ -168,11 +165,10 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   // Log the LUID of the adapter used for decoding.
   void LogDecoderAdapterLUID();
 
-  // Create a D3D11VideoDecoder, if possible, based on the current config.
-  D3D11Status::Or<ComD3D11VideoDecoder> CreateD3D11Decoder();
-
-  std::unique_ptr<D3D11VideoDecoderWrapper> CreateD3D11VideoDecoderWrapper(
-      ComD3D11VideoDecoder video_decoder);
+  // Create the D3DVideoDecoderWrapper according to the version level.
+  std::unique_ptr<D3DVideoDecoderWrapper> CreateD3DVideoDecoderWrapper(
+      D3D11DecoderConfigurator* decoder_configurator,
+      uint8_t bit_depth);
 
   std::unique_ptr<MediaLog> media_log_;
 
@@ -226,7 +222,7 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   // Right now, this is used both for the video decoder and for display.  In
   // the future, this should only be for the video decoder.  We should use
   // the ANGLE device for display (plus texture sharing, if needed).
-  GetD3D11DeviceCB get_d3d11_device_cb_;
+  GetD3DDeviceCB get_d3d_device_cb_;
 
   // These may be accessed from |decoder_task_runner_|, since the angle device
   // is in multi-threaded mode.  Just be sure not to set any global state.
@@ -271,9 +267,6 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
 
   SupportedConfigs supported_configs_;
 
-  // Should we assume that we're outputting to an HDR display?
-  bool system_hdr_enabled_ = false;
-
   // Should we use shared handles for WebGPU interop or if using Graphite.
   bool use_shared_handle_ = false;
 
@@ -281,13 +274,15 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   // texture with multiple array slices (false)?
   bool use_single_video_decoder_texture_ = false;
 
-  // Word-salad callback to set / update D3D11 Video callback to the
-  // accelerator.  Needed for config changes.
-  SetAcceleratorDecoderWrapperCB set_accelerator_decoder_wrapper_cb_;
+  std::unique_ptr<D3DVideoDecoderWrapper> d3d_video_decoder_wrapper_;
 
   // The currently configured bit depth for the decoder. When this changes we
   // need to recreate the decoder.
   uint8_t bit_depth_ = 8u;
+
+  // The currently configured color space for the decoder. When this changes we
+  // need to recreate the decoder.
+  VideoColorSpace color_space_;
 
   // The currently configured chroma sampling format on the accelerator. When
   // this changes we need to recreate the decoder.
@@ -296,7 +291,7 @@ class MEDIA_GPU_EXPORT D3D11VideoDecoder : public VideoDecoder,
   // If set, this is the minimum number of picture buffers that we've seen
   // since the last time it was logged to UMA that are unused by both the
   // client and the decoder.  If unset, then no measurement has been made.
-  absl::optional<int> min_unused_buffers_;
+  std::optional<int> min_unused_buffers_;
 
   // Picture buffer usage is measured periodically after some number of decodes.
   // This tracks how many until the next measurement.  It's used strictly to

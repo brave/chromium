@@ -4,11 +4,8 @@
 
 #import "components/password_manager/ios/ios_password_manager_driver_factory.h"
 
-#include "components/password_manager/core/browser/password_manager.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "components/password_manager/core/browser/password_manager.h"
+#import "third_party/abseil-cpp/absl/memory/memory.h"
 
 // static
 IOSPasswordManagerDriver*
@@ -51,8 +48,6 @@ IOSPasswordManagerDriverFactory::GetRetainableDriver(web::WebState* web_state,
   return IOSPasswordManagerWebFrameDriverHelper::FromWebFrame(web_frame)
       ->RetainableDriver();
 }
-
-WEB_STATE_USER_DATA_KEY_IMPL(IOSPasswordManagerDriverFactory)
 
 // static
 void IOSPasswordManagerWebFrameDriverHelper::CreateForWebFrame(

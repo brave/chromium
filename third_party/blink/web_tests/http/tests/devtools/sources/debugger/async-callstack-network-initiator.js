@@ -6,10 +6,10 @@ import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests asynchronous call stacks printed in console for a Network.Initiator.\n`);
-  await TestRunner.loadLegacyModule('sources');
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('sources');
   await TestRunner.evaluateInPagePromise(`
       function testFunction()
@@ -62,8 +62,12 @@ import {ConsoleTestRunner} from 'console_test_runner';
     });
   }
 
+  function textContentWithoutStylesAndWithLineBreaksTrimmed(node) {
+    return TestRunner.textContentWithoutStyles(node).replace(/\s{3,}/g, ' ');
+  }
+
   async function dumpConsoleMessages() {
-    await ConsoleTestRunner.dumpConsoleMessages(false, false, TestRunner.textContentWithLineBreaksTrimmed);
+    await ConsoleTestRunner.dumpConsoleMessages(false, false, textContentWithoutStylesAndWithLineBreaksTrimmed);
     SourcesTestRunner.completeDebuggerTest();
   }
 })();

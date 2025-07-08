@@ -28,6 +28,7 @@
 #include "content/public/browser/web_contents.h"
 #include "media/cdm/win/media_foundation_cdm.h"
 #include "media/mojo/mojom/cdm_document_service.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -270,6 +271,41 @@ TEST_F(CdmDocumentServiceImplTest, ClearCdmPreferenceData) {
 
   base::UnguessableToken new_origin_id = GetMediaFoundationCdmData()->origin_id;
   ASSERT_NE(origin_id, new_origin_id);
+  ASSERT_FALSE(base::PathExists(cdm_data_file_path));
+}
+
+TEST_F(CdmDocumentServiceImplTest, ClearCdmPreferenceDataAfterCorruption) {
+  const auto kOrigin = url::Origin::Create(GURL(kTestOrigin));
+
+  NavigateToUrlAndCreateCdmDocumentService(GURL(kTestOrigin));
+  auto cdm_data = GetMediaFoundationCdmData();
+  base::UnguessableToken origin_id = cdm_data->origin_id;
+
+  base::FilePath cdm_data_file_path = CreateDummyCdmDataFile(
+      cdm_data->cdm_store_path_root, cdm_data->origin_id);
+
+  CorruptCdmPreference();
+
+  base::UnguessableToken new_origin_id = GetMediaFoundationCdmData()->origin_id;
+  ASSERT_NE(origin_id, new_origin_id);
+
+  // Path should still exist even though prefs were corrupted.
+  ASSERT_TRUE(base::PathExists(cdm_data_file_path));
+
+  base::Time start = base::Time::Now() - base::Hours(1);
+  base::Time end;  // null time
+
+  base::RunLoop loop1;
+
+  // With the filter returning true, the path should no longer exist.
+  CdmDocumentServiceImpl::ClearCdmData(
+      profile(), start, end,
+      base::BindRepeating([](const GURL& url) { return true; }),
+      loop1.QuitClosure());
+
+  loop1.Run();
+
+  // Path should no longer exist
   ASSERT_FALSE(base::PathExists(cdm_data_file_path));
 }
 

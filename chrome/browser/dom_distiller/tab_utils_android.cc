@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/dom_distiller/tab_utils.h"
+
 #include <string>
 
+#include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
-#include "chrome/android/chrome_jni_headers/DomDistillerTabUtils_jni.h"
-#include "chrome/browser/dom_distiller/tab_utils.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/function_ref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
@@ -15,6 +19,9 @@
 #include "content/public/common/content_constants.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/DomDistillerTabUtils_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -48,11 +55,10 @@ void JNI_DomDistillerTabUtils_DistillAndView(
   ::DistillAndView(source_web_contents, destination_web_contents);
 }
 
-ScopedJavaLocalRef<jstring>
-JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
+std::u16string JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_url) {
-  auto url = *url::GURLAndroid::ToNativeGURL(env, j_url);
+  GURL url = url::GURLAndroid::ToNativeGURL(env, j_url);
 
   if (url.spec().length() > content::kMaxURLDisplayChars)
     url = url.IsStandard() ? url.DeprecatedGetOriginAsURL()
@@ -61,10 +67,9 @@ JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
   // Note that we can't unescape spaces here, because if the user copies this
   // and pastes it into another program, that program may think the URL ends at
   // the space.
-  return base::android::ConvertUTF16ToJavaString(
-      env, url_formatter::FormatUrl(url, url_formatter::kFormatUrlOmitDefaults,
-                                    base::UnescapeRule::NORMAL, nullptr,
-                                    nullptr, nullptr));
+  return url_formatter::FormatUrl(url, url_formatter::kFormatUrlOmitDefaults,
+                                  base::UnescapeRule::NORMAL, nullptr, nullptr,
+                                  nullptr);
 }
 
 jint JNI_DomDistillerTabUtils_GetDistillerHeuristics(JNIEnv* env) {
@@ -82,6 +87,18 @@ void JNI_DomDistillerTabUtils_SetInterceptNavigationDelegate(
       web_contents,
       std::make_unique<navigation_interception::InterceptNavigationDelegate>(
           env, delegate));
+}
+
+void JNI_DomDistillerTabUtils_RunReadabilityHeuristicsOnWebContents(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_web_contents,
+    const JavaParamRef<jobject>& j_callback) {
+  base::OnceCallback<void(bool)> callback =
+      base::BindOnce(&base::android::RunBooleanCallbackAndroid,
+                     base::android::ScopedJavaGlobalRef<jobject>(j_callback));
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(j_web_contents);
+  ::RunReadabilityHeuristicsOnWebContents(web_contents, std::move(callback));
 }
 
 }  // namespace android

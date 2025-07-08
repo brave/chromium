@@ -6,13 +6,11 @@
 
 #import <Foundation/Foundation.h>
 
+#import <string_view>
+
 #import "ios/web/common/features.h"
 #import "ios/web/public/init/web_main_parts.h"
 #import "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 
@@ -49,14 +47,18 @@ std::string WebClient::GetUserAgent(UserAgentType type) const {
   return std::string();
 }
 
+std::string WebClient::GetMainThreadName() const {
+  return std::string();
+}
+
 std::u16string WebClient::GetLocalizedString(int message_id) const {
   return std::u16string();
 }
 
-base::StringPiece WebClient::GetDataResource(
+std::string_view WebClient::GetDataResource(
     int resource_id,
     ui::ResourceScaleFactor scale_factor) const {
-  return base::StringPiece();
+  return std::string_view();
 }
 
 base::RefCountedMemory* WebClient::GetDataResourceBytes(int resource_id) const {
@@ -68,22 +70,12 @@ std::vector<JavaScriptFeature*> WebClient::GetJavaScriptFeatures(
   return std::vector<JavaScriptFeature*>();
 }
 
-NSString* WebClient::GetDocumentStartScriptForAllFrames(
-    BrowserState* browser_state) const {
-  return @"";
-}
-
-NSString* WebClient::GetDocumentStartScriptForMainFrame(
-    BrowserState* browser_state) const {
-  return @"";
-}
-
 void WebClient::PrepareErrorPage(WebState* web_state,
                                  const GURL& url,
                                  NSError* error,
                                  bool is_post,
                                  bool is_off_the_record,
-                                 const absl::optional<net::SSLInfo>& info,
+                                 const std::optional<net::SSLInfo>& info,
                                  int64_t navigation_id,
                                  base::OnceCallback<void(NSString*)> callback) {
   DCHECK(error);
@@ -94,16 +86,16 @@ UIView* WebClient::GetWindowedContainer() {
   return nullptr;
 }
 
+bool WebClient::EnableFullscreenAPI() const {
+  return false;
+}
+
 bool WebClient::EnableLongPressUIContextMenu() const {
   return false;
 }
 
 bool WebClient::EnableWebInspector(BrowserState* browser_state) const {
   return false;
-}
-
-NSData* WebClient::FetchSessionFromCache(web::WebState* web_state) const {
-  return nil;
 }
 
 void WebClient::CleanupNativeRestoreURLs(web::WebState* web_state) const {}
@@ -124,16 +116,18 @@ bool WebClient::IsPointingToSameDocument(const GURL& url1,
   return url1 == url2;
 }
 
-bool WebClient::IsMixedContentAutoupgradeEnabled(
+bool WebClient::IsBrowserLockdownModeEnabled() {
+  return false;
+}
+
+void WebClient::SetOSLockdownModeEnabled(bool enabled) {}
+
+bool WebClient::IsInsecureFormWarningEnabled(
     web::BrowserState* browser_state) const {
   return true;
 }
 
-bool WebClient::IsBrowserLockdownModeEnabled(web::BrowserState* browser_state) {
-  return false;
-}
-
-void WebClient::SetOSLockdownModeEnabled(web::BrowserState* browser_state,
-                                         bool enabled) {}
+void WebClient::BuildEditMenu(web::WebState* web_state,
+                              id<UIMenuBuilder>) const {}
 
 }  // namespace web

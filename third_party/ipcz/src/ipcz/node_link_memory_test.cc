@@ -9,6 +9,7 @@
 
 #include "ipcz/driver_memory.h"
 #include "ipcz/driver_transport.h"
+#include "ipcz/features.h"
 #include "ipcz/ipcz.h"
 #include "ipcz/link_side.h"
 #include "ipcz/node.h"
@@ -46,12 +47,14 @@ class NodeLinkMemoryTest : public testing::Test {
         NodeLinkMemory::AllocateMemory(kTestDriver);
     links.first = NodeLink::CreateInactive(
         broker, LinkSide::kA, broker->GetAssignedName(), non_broker_name,
-        Node::Type::kNormal, 0, transports.first,
-        NodeLinkMemory::Create(broker, std::move(buffer.mapping)));
+        Node::Type::kNormal, 0, Features{}, transports.first,
+        NodeLinkMemory::Create(broker, LinkSide::kA, Features{},
+                               std::move(buffer.mapping)));
     links.second = NodeLink::CreateInactive(
         non_broker, LinkSide::kB, non_broker_name, broker->GetAssignedName(),
-        Node::Type::kBroker, 0, transports.second,
-        NodeLinkMemory::Create(non_broker, buffer.memory.Map()));
+        Node::Type::kBroker, 0, Features{}, transports.second,
+        NodeLinkMemory::Create(non_broker, LinkSide::kB, Features{},
+                               buffer.memory.Map()));
     broker->AddConnection(non_broker_name, {.link = links.first});
     non_broker->AddConnection(broker->GetAssignedName(),
                               {.link = links.second, .broker = links.first});
@@ -282,25 +285,74 @@ TEST_F(NodeLinkMemoryTest, ParcelDataAllocation) {
   // going to expand its capacity at all, it would do so synchronously within
   // AllocateData.
   constexpr size_t kParcelSize = 32;
-  std::vector<Parcel> parcels;
+  std::vector<std::unique_ptr<Parcel>> parcels;
   for (;;) {
-    Parcel parcel;
-    parcel.AllocateData(kParcelSize, /*allow_partial=*/false,
-                        &links.second->memory());
-    if (!parcel.has_data_fragment()) {
+    auto parcel = std::make_unique<Parcel>();
+    parcel->AllocateData(kParcelSize, /*allow_partial=*/false,
+                         &links.second->memory());
+    if (!parcel->has_data_fragment()) {
       break;
     }
 
     // Every fragment allocated must be of sufficient size and must be in the
     // link memory's primary buffer ONLY.
-    EXPECT_GE(parcel.data_fragment().size(), kParcelSize);
+    EXPECT_GE(parcel->data_fragment().size(), kParcelSize);
     EXPECT_EQ(NodeLinkMemory::kPrimaryBufferId,
-              parcel.data_fragment().buffer_id());
+              parcel->data_fragment().buffer_id());
     parcels.push_back(std::move(parcel));
   }
 
   EXPECT_FALSE(parcels.empty());
   node_c->Close();
+}
+
+struct TestObject : public RefCountedFragment {
+ public:
+  int x;
+  int y;
+};
+
+TEST_F(NodeLinkMemoryTest, AdoptFragmentRefIfValid) {
+  auto object = memory_a().AdoptFragmentRef<TestObject>(
+      memory_a().AllocateFragment(sizeof(TestObject)));
+  object->x = 5;
+  object->y = 42;
+
+  const FragmentDescriptor valid_descriptor(object.fragment().buffer_id(),
+                                            object.fragment().offset(),
+                                            sizeof(TestObject));
+
+  const FragmentDescriptor null_descriptor(
+      kInvalidBufferId, valid_descriptor.offset(), valid_descriptor.size());
+  EXPECT_TRUE(memory_a()
+                  .AdoptFragmentRefIfValid<TestObject>(null_descriptor)
+                  .is_null());
+
+  const FragmentDescriptor empty_descriptor(
+      valid_descriptor.buffer_id(), valid_descriptor.offset(), /*size=*/0);
+  EXPECT_TRUE(memory_a()
+                  .AdoptFragmentRefIfValid<TestObject>(empty_descriptor)
+                  .is_null());
+
+  const FragmentDescriptor short_descriptor(valid_descriptor.buffer_id(),
+                                            valid_descriptor.offset(),
+                                            sizeof(TestObject) - 4);
+  EXPECT_TRUE(memory_a()
+                  .AdoptFragmentRefIfValid<TestObject>(short_descriptor)
+                  .is_null());
+
+  const FragmentDescriptor unaligned_descriptor(valid_descriptor.buffer_id(),
+                                                valid_descriptor.offset() + 2,
+                                                valid_descriptor.size() - 2);
+  EXPECT_TRUE(memory_a()
+                  .AdoptFragmentRefIfValid<TestObject>(unaligned_descriptor)
+                  .is_null());
+
+  const auto adopted_object =
+      memory_a().AdoptFragmentRefIfValid<TestObject>(valid_descriptor);
+  ASSERT_TRUE(adopted_object.is_addressable());
+  EXPECT_EQ(5, adopted_object->x);
+  EXPECT_EQ(42, adopted_object->y);
 }
 
 }  // namespace

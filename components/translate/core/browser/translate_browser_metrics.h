@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-#include "base/strings/string_piece.h"
+#include <string_view>
 
 namespace translate::TranslateBrowserMetrics {
 
@@ -62,17 +62,15 @@ void ReportMenuTranslationUnavailableReason(
 // Called when language detection details are complete.
 void ReportLanguageDetectionContentLength(size_t length);
 
-void ReportUnsupportedLanguageAtInitiation(base::StringPiece language);
-
 // Called when a request is sent to the translate server to report the source
-// language of the translated page. Buckets are labelled with LocaleCodeISO639
+// language of the translated page. Buckets are labelled with LocaleCodeBCP47
 // values.
-void ReportTranslateSourceLanguage(base::StringPiece language);
+void ReportTranslateSourceLanguage(std::string_view language);
 
 // Called when a request is sent to the translate server to report the target
-// language for the translated page. Buckets are labelled with LocaleCodeISO639
+// language for the translated page. Buckets are labelled with LocaleCodeBCP47
 // values.
-void ReportTranslateTargetLanguage(base::StringPiece language);
+void ReportTranslateTargetLanguage(std::string_view language);
 
 // Called when Chrome Translate is initiated, the navigation is from Google, and
 // a href translate target is present.

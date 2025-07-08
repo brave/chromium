@@ -61,6 +61,7 @@ GURL GetFaviconURL(const char* path) {
   return GURL(chrome::kChromeUIFaviconURL).ReplaceComponents(replace_path);
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 bool CheckSocketPermission(scoped_refptr<Extension> extension,
                            SocketPermissionRequest::OperationType type,
                            const char* host,
@@ -69,6 +70,7 @@ bool CheckSocketPermission(scoped_refptr<Extension> extension,
   return extension->permissions_data()->CheckAPIPermissionWithParam(
       APIPermissionID::kSocket, &param);
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Creates and returns an extension with the given |id|, |host_permissions|, and
 // manifest |location|.
@@ -104,6 +106,9 @@ void CheckRestrictedUrls(const Extension* extension,
   const GURL self_url("chrome-extension://" + extension->id() + "/foo.html");
   const GURL invalid_url("chrome-debugger://foo/bar.html");
   const GURL chrome_untrusted_url(kChromeUntrustedURL);
+  const GURL blob_url("blob:https://example.com");
+  const GURL blob_opaque_origin_url =
+      url::Origin::Create(GURL("blob:null/uuid")).GetURL();
 
   std::string error;
   EXPECT_EQ(block_chrome_urls, extension->permissions_data()->IsRestrictedUrl(
@@ -157,6 +162,19 @@ void CheckRestrictedUrls(const Extension* extension,
   } else {
     EXPECT_TRUE(error.empty());
   }
+
+  // Blob URLs with a non-opaque origin should be restricted.
+  error.clear();
+  EXPECT_EQ(!allow_on_other_schemes,
+            extension->permissions_data()->IsRestrictedUrl(blob_url, &error))
+      << name;
+
+  // Blob URLs with opaque origin should be restricted.
+  error.clear();
+  EXPECT_EQ(!allow_on_other_schemes,
+            extension->permissions_data()->IsRestrictedUrl(
+                blob_opaque_origin_url, &error))
+      << name;
 }
 
 }  // namespace
@@ -174,33 +192,43 @@ TEST(PermissionsDataTest, EffectiveHostPermissions) {
                     .patterns()
                     .size());
   EXPECT_FALSE(hosts.MatchesURL(GURL("http://www.google.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions", "one_host.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.google.com")));
   EXPECT_FALSE(hosts.MatchesURL(GURL("https://www.google.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions",
                            "one_host_wildcard.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://google.com")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://foo.google.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions", "two_hosts.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.google.com")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.reddit.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions",
                            "https_not_considered.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://google.com")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("https://google.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions",
                            "two_content_scripts.json");
@@ -215,27 +243,35 @@ TEST(PermissionsDataTest, EffectiveHostPermissions) {
       extension->permissions_data()
           ->active_permissions()
           .HasEffectiveAccessToURL(GURL("http://news.ycombinator.com")));
-  EXPECT_FALSE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_FALSE(extension->permissions_data()
+                   ->active_permissions()
+                   .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions", "all_hosts.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://test/")));
   EXPECT_FALSE(hosts.MatchesURL(GURL("https://test/")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.google.com")));
-  EXPECT_TRUE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_TRUE(extension->permissions_data()
+                  ->active_permissions()
+                  .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions", "all_hosts2.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://test/")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.google.com")));
-  EXPECT_TRUE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_TRUE(extension->permissions_data()
+                  ->active_permissions()
+                  .HasEffectiveAccessToAllHosts());
 
   extension = LoadManifest("effective_host_permissions", "all_hosts3.json");
   hosts = extension->permissions_data()->GetEffectiveHostPermissions();
   EXPECT_FALSE(hosts.MatchesURL(GURL("http://test/")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("https://test/")));
   EXPECT_TRUE(hosts.MatchesURL(GURL("http://www.google.com")));
-  EXPECT_TRUE(extension->permissions_data()->HasEffectiveAccessToAllHosts());
+  EXPECT_TRUE(extension->permissions_data()
+                  ->active_permissions()
+                  .HasEffectiveAccessToAllHosts());
 
   // Tab-specific permissions should always be included.
   GURL tab_url("http://www.example.com/");
@@ -260,6 +296,8 @@ TEST(PermissionsDataTest, EffectiveHostPermissions) {
           tab_url));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// Desktop Android does not support the sockets API nor its permission.
 TEST(PermissionsDataTest, SocketPermissions) {
   std::string error;
 
@@ -292,6 +330,7 @@ TEST(PermissionsDataTest, SocketPermissions) {
                                     SocketPermissionRequest::UDP_SEND_TO,
                                     "239.255.255.250", 1900));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 TEST(PermissionsDataTest, IsRestrictedUrl) {
   scoped_refptr<const Extension> extension = GetExtensionWithHostPermission(
@@ -825,12 +864,12 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, TabSpecific) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(all_urls.get(), settings_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(active_tab.get(), settings_url, kTabId));
   {
@@ -853,12 +892,12 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeURLs) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeUntrustedURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(all_urls.get(), chrome_untrusted_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(active_tab.get(), chrome_untrusted_url, kTabId));
 
@@ -884,13 +923,13 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeUntrustedURLs) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureFileURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   // Currently, the extension has not been granted file access, so it should
   // not have access to a file:// URL.
   EXPECT_EQ(DISALLOWED, GetExtensionAccess(all_urls.get(), file_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED, GetExtensionAccess(active_tab.get(), file_url, kTabId));
   {
     APIPermissionSet tab_api_permissions;
@@ -952,7 +991,7 @@ TEST(PermissionsDataTest, ChromeWebstoreUrl) {
 
       // Unintuitively, the script blocking also applies to deeper subdomains
       // and other paths on chrome.google.com.
-      // TODO(crbug.com/1355623): We probably want to adjust the logic so these
+      // TODO(crbug.com/40235977): We probably want to adjust the logic so these
       // are not the case, but it's better to have the current behavior
       // explicitly documented in tests for now.
       GURL("https://foo.chrome.google.com/webstore"),
@@ -1429,36 +1468,46 @@ class CaptureVisiblePageTest : public testing::Test {
 
   const Extension& active_tab() { return *active_tab_; }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   const Extension& page_capture() { return *page_capture_; }
+#endif
 
   static constexpr int kTabId = 42;
 
  private:
   void SetUp() override {
     all_urls_ = ExtensionBuilder("all urls")
-                    .AddPermission("<all_urls>")
+                    .AddHostPermission("<all_urls>")
                     .SetID(std::string(32, 'a'))
                     .Build();
     active_tab_ = ExtensionBuilder("active tab")
-                      .AddPermission("activeTab")
+                      .AddAPIPermission("activeTab")
                       .SetID(std::string(32, 'b'))
                       .Build();
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    // TODO(crbug.com/427298257): Desktop Android does not yet support page
+    // capture nor its permission.
     page_capture_ = ExtensionBuilder("page capture")
-                        .AddPermission("pageCapture")
-                        .AddPermission("activeTab")
+                        .AddAPIPermission("pageCapture")
+                        .AddAPIPermission("activeTab")
                         .SetID(std::string(32, 'd'))
                         .Build();
+#endif
   }
 
   void TearDown() override {
     all_urls_ = nullptr;
     active_tab_ = nullptr;
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     page_capture_ = nullptr;
+#endif
   }
 
   scoped_refptr<const Extension> all_urls_;
   scoped_refptr<const Extension> active_tab_;
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<const Extension> page_capture_;
+#endif
 };
 
 TEST_F(CaptureVisiblePageTest, URLsCapturableWithEitherActiveTabOrAllURLs) {
@@ -1470,12 +1519,12 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableWithEitherActiveTabOrAllURLs) {
       GURL("http://[2607:f8b0:4005:805::200e]"),
 
       // filesystem: urls with web origins should behave like normal web pages.
-      // TODO(https://crbug.com/853392): filesystem: URLs don't work with
+      // TODO(crbug.com/40581025): filesystem: URLs don't work with
       // activeTab.
       // GURL("filesystem:http://example.com/foo"),
 
       // blob: urls with web origins should behave like normal web pages.
-      // TODO(https://crbug.com/853392): blob: URLs don't work with activeTab.
+      // TODO(crbug.com/40581025): blob: URLs don't work with activeTab.
       // GURL("blob:http://example.com/bar"),
   };
 
@@ -1496,11 +1545,13 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableWithEitherActiveTabOrAllURLs) {
         CanCapture(active_tab(), url,
                    extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     EXPECT_TRUE(CanCapture(page_capture(), url,
                            extensions::CaptureRequirement::kPageCapture));
     GrantActiveTab(page_capture(), url);
     EXPECT_TRUE(CanCapture(page_capture(), url,
                            extensions::CaptureRequirement::kPageCapture));
+#endif
   }
 }
 
@@ -1554,6 +1605,7 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableOnlyWithActiveTab) {
         CanCapture(active_tab(), url,
                    extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     EXPECT_FALSE(CanCapture(page_capture(), url,
                             extensions::CaptureRequirement::kPageCapture));
     GrantActiveTab(page_capture(), url);
@@ -1562,10 +1614,11 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableOnlyWithActiveTab) {
     ClearActiveTab(page_capture());
     EXPECT_FALSE(CanCapture(page_capture(), url,
                             extensions::CaptureRequirement::kPageCapture));
+#endif
   }
 }
 
-// TODO(crbug.com/1041309): Add support for capturing chrome-untrusted://.
+// TODO(crbug.com/40667841): Add support for capturing chrome-untrusted://.
 TEST_F(CaptureVisiblePageTest, ChromeUntrustedSchemeNotCaptured) {
   const GURL chrome_untrusted_url(kChromeUntrustedURL);
 
@@ -1582,6 +1635,7 @@ TEST_F(CaptureVisiblePageTest, ChromeUntrustedSchemeNotCaptured) {
   EXPECT_FALSE(CanCapture(active_tab(), chrome_untrusted_url,
                           extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   EXPECT_FALSE(CanCapture(page_capture(), chrome_untrusted_url,
                           extensions::CaptureRequirement::kPageCapture));
   GrantActiveTab(page_capture(), chrome_untrusted_url);
@@ -1590,6 +1644,7 @@ TEST_F(CaptureVisiblePageTest, ChromeUntrustedSchemeNotCaptured) {
   ClearActiveTab(page_capture());
   EXPECT_FALSE(CanCapture(page_capture(), chrome_untrusted_url,
                           extensions::CaptureRequirement::kPageCapture));
+#endif
 }
 
 TEST_F(CaptureVisiblePageTest, SelfExtensionURLs) {
@@ -1617,6 +1672,7 @@ TEST_F(CaptureVisiblePageTest, SelfExtensionURLs) {
     EXPECT_TRUE(
         CanCapture(all_urls(), get_blob_url_for_extension(all_urls()),
                    extensions::CaptureRequirement::kActiveTabOrAllUrls));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     EXPECT_TRUE(CanCapture(page_capture(),
                            page_capture().GetResourceURL("foo.html"),
                            extensions::CaptureRequirement::kPageCapture));
@@ -1626,6 +1682,7 @@ TEST_F(CaptureVisiblePageTest, SelfExtensionURLs) {
     EXPECT_TRUE(CanCapture(page_capture(),
                            get_blob_url_for_extension(page_capture()),
                            extensions::CaptureRequirement::kPageCapture));
+#endif
   }
 
   const GURL active_tab_extension_urls[] = {
@@ -1651,6 +1708,7 @@ TEST_F(CaptureVisiblePageTest, SelfExtensionURLs) {
         CanCapture(active_tab(), url,
                    extensions::CaptureRequirement::kActiveTabOrAllUrls));
   }
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   const GURL page_capture_extension_urls[] = {
       page_capture().GetResourceURL("foo.html"),
   };
@@ -1661,6 +1719,7 @@ TEST_F(CaptureVisiblePageTest, SelfExtensionURLs) {
     EXPECT_TRUE(CanCapture(page_capture(), url,
                            extensions::CaptureRequirement::kPageCapture));
   }
+#endif
 }
 
 TEST_F(CaptureVisiblePageTest, NoPermissions) {
@@ -1688,8 +1747,10 @@ TEST_F(CaptureVisiblePageTest, PolicyBlockedURLs) {
         context_id, blocked_patterns, URLPatternSet());
     active_tab().permissions_data()->SetContextId(context_id);
     active_tab().permissions_data()->SetUsesDefaultHostRestrictions();
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     page_capture().permissions_data()->SetContextId(context_id);
     page_capture().permissions_data()->SetUsesDefaultHostRestrictions();
+#endif
   }
 
   const GURL test_urls[] = {
@@ -1713,6 +1774,7 @@ TEST_F(CaptureVisiblePageTest, PolicyBlockedURLs) {
         CanCapture(active_tab(), url,
                    extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     EXPECT_FALSE(CanCapture(page_capture(), url,
                             extensions::CaptureRequirement::kPageCapture));
     GrantActiveTab(page_capture(), url);
@@ -1721,6 +1783,7 @@ TEST_F(CaptureVisiblePageTest, PolicyBlockedURLs) {
     ClearActiveTab(page_capture());
     EXPECT_FALSE(CanCapture(page_capture(), url,
                             extensions::CaptureRequirement::kPageCapture));
+#endif
   }
 }
 

@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/Win x64 Builder/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -24,6 +27,7 @@
               },
               "legacy_gclient_config": {
                 "apply_configs": [
+                  "chromium_with_telemetry_dependencies",
                   "use_clang_coverage"
                 ],
                 "config": "chromium"
@@ -93,33 +97,6 @@
                 "project": "chromium"
               }
             }
-          },
-          {
-            "builder_id": {
-              "bucket": "ci",
-              "builder": "win-network-sandbox-tester",
-              "project": "chromium"
-            },
-            "builder_spec": {
-              "builder_group": "chromium.fyi",
-              "execution_mode": "TEST",
-              "legacy_chromium_config": {
-                "apply_configs": [
-                  "mb"
-                ],
-                "build_config": "Release",
-                "config": "chromium",
-                "target_bits": 64
-              },
-              "legacy_gclient_config": {
-                "config": "chromium"
-              },
-              "parent": {
-                "bucket": "ci",
-                "builder": "Win x64 Builder",
-                "project": "chromium"
-              }
-            }
           }
         ]
       },
@@ -140,11 +117,6 @@
           "bucket": "ci",
           "builder": "Win11 Tests x64",
           "project": "chromium"
-        },
-        {
-          "bucket": "ci",
-          "builder": "win-network-sandbox-tester",
-          "project": "chromium"
         }
       ],
       "mirroring_builder_group_and_names": [
@@ -153,25 +125,29 @@
           "group": "tryserver.chromium.win"
         },
         {
-          "builder": "win10_chromium_inverse_fieldtrials_x64_fyi_rel_ng",
-          "group": "tryserver.chromium.win"
-        },
-        {
-          "builder": "win11-x64-fyi-rel",
+          "builder": "win11-rel",
           "group": "tryserver.chromium.win"
         },
         {
           "builder": "win_chromium_x64_rel_ng",
           "group": "tryserver.chromium.win"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Win x64 Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -181,6 +157,9 @@
     ]
   },
   "builder_group": "chromium.win",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

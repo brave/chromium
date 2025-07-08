@@ -13,14 +13,12 @@
 #include "base/observer_list.h"
 #include "base/scoped_multi_source_observation.h"
 #include "base/uuid.h"
-#include "content/public/browser/ax_event_notification_details.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/api/automation_internal/automation_event_router_interface.h"
 #include "extensions/common/api/automation_internal.h"
 #include "extensions/common/extension_id.h"
-#include "extensions/common/extension_messages.h"
 #include "extensions/common/mojom/automation_registry.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver_set.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
@@ -29,7 +27,9 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
 #include "services/accessibility/public/mojom/automation.mojom.h"
+#include "ui/accessibility/ax_location_and_scroll_updates.h"
 #include "ui/accessibility/ax_tree_id.h"
+#include "ui/accessibility/ax_updates_and_events.h"
 
 namespace content {
 class BrowserContext;
@@ -95,12 +95,17 @@ class AutomationEventRouter
   bool HasObserver(AutomationEventRouterObserver* observer);
 
   // AutomationEventRouterInterface:
-  void DispatchAccessibilityEvents(const ui::AXTreeID& tree_id,
-                                   std::vector<ui::AXTreeUpdate> updates,
-                                   const gfx::Point& mouse_location,
-                                   std::vector<ui::AXEvent> events) override;
+  void DispatchAccessibilityEvents(
+      const ui::AXTreeID& tree_id,
+      const std::vector<ui::AXTreeUpdate>& updates,
+      const gfx::Point& mouse_location,
+      const std::vector<ui::AXEvent>& events) override;
   void DispatchAccessibilityLocationChange(
-      const content::AXLocationChangeNotificationDetails& details) override;
+      const ui::AXTreeID& tree_id,
+      const ui::AXLocationChange& details) override;
+  void DispatchAccessibilityScrollChange(
+      const ui::AXTreeID& tree_id,
+      const ui::AXScrollChange& details) override;
   void DispatchTreeDestroyedEvent(ui::AXTreeID tree_id) override;
   void DispatchActionResult(
       const ui::AXActionData& data,
@@ -108,7 +113,7 @@ class AutomationEventRouter
       content::BrowserContext* browser_context = nullptr) override;
   void DispatchGetTextLocationDataResult(
       const ui::AXActionData& data,
-      const absl::optional<gfx::Rect>& rect) override;
+      const std::optional<gfx::Rect>& rect) override;
 
   // If a remote router is registered, then all events are directly forwarded to
   // it. The caller of this method is responsible for calling it again with
@@ -136,7 +141,6 @@ class AutomationEventRouter
     RenderProcessHostId render_process_host_id;
     bool desktop;
     std::set<ui::AXTreeID> tree_ids;
-    bool is_active_context;
   };
 
   AutomationEventRouter();
@@ -163,18 +167,6 @@ class AutomationEventRouter
 
   void RemoveAutomationListener(content::RenderProcessHost* host);
 
-  // Called when the user switches profiles or when a listener is added
-  // or removed. The purpose is to ensure that multiple instances of the
-  // same extension running in different profiles don't interfere with one
-  // another, so in that case only the one associated with the active profile
-  // is marked as active.
-  //
-  // This is needed on Chrome OS because ChromeVox loads into the login profile
-  // in addition to the active profile.  If a similar fix is needed on other
-  // platforms, we'd need an equivalent of SessionStateObserver that works
-  // everywhere.
-  void UpdateActiveProfile();
-
   // Returns the listener for the provided ID, or `nullptr` if none is found.
   AutomationListener* GetListenerByRenderProcessID(
       const RenderProcessHostId& listener_rph_id) const;
@@ -183,12 +175,9 @@ class AutomationEventRouter
   void BindAutomation(
       mojo::PendingAssociatedRemote<ax::mojom::Automation> automation) override;
 
-  content::NotificationRegistrar registrar_;
   std::vector<std::unique_ptr<AutomationListener>> listeners_;
 
   std::map<WorkerId, base::Uuid> keepalive_request_uuid_for_worker_;
-
-  raw_ptr<content::BrowserContext, LeakedDanglingUntriaged> active_context_;
 
   // The caller of RegisterRemoteRouter is responsible for ensuring that this
   // pointer is valid. The remote router must be unregistered with

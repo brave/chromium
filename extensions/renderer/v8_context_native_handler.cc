@@ -38,7 +38,7 @@ void V8ContextNativeHandler::GetAvailability(
 
   v8::Local<v8::Context> context = context_->v8_context();
   v8::Local<v8::Object> ret = v8::Object::New(isolate);
-  v8::Maybe<bool> maybe = ret->SetPrototype(context, v8::Null(isolate));
+  v8::Maybe<bool> maybe = ret->SetPrototypeV2(context, v8::Null(isolate));
   CHECK(maybe.IsJust() && maybe.FromJust());
   ret->Set(context,
            v8::String::NewFromUtf8(isolate, "is_available",
@@ -69,8 +69,10 @@ void V8ContextNativeHandler::GetModuleSystem(
   CHECK(args[0]->IsObject());
   ScriptContext* context = ScriptContextSet::GetContextByObject(
       v8::Local<v8::Object>::Cast(args[0]));
-  if (context && blink::WebFrame::ScriptCanAccess(context->web_frame()))
+  if (context && blink::WebFrame::ScriptCanAccess(args.GetIsolate(),
+                                                  context->web_frame())) {
     args.GetReturnValue().Set(context->module_system()->NewInstance());
+  }
 }
 
 }  // namespace extensions

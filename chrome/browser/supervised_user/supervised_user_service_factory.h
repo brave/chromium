@@ -18,6 +18,8 @@ namespace supervised_user {
 class SupervisedUserService;
 }  // namespace supervised_user
 
+// Factory creating SupervisedUserService for regular profiles.
+// SupervisedUserService is not created for incognito and guest profile.
 class SupervisedUserServiceFactory : public ProfileKeyedServiceFactory {
  public:
   static supervised_user::SupervisedUserService* GetForProfile(
@@ -32,7 +34,7 @@ class SupervisedUserServiceFactory : public ProfileKeyedServiceFactory {
   static SupervisedUserServiceFactory* GetInstance();
 
   // Used to create instances for testing.
-  static KeyedService* BuildInstanceFor(Profile* profile);
+  static std::unique_ptr<KeyedService> BuildInstanceFor(Profile* profile);
 
  private:
   friend base::NoDestructor<SupervisedUserServiceFactory>;
@@ -41,7 +43,7 @@ class SupervisedUserServiceFactory : public ProfileKeyedServiceFactory {
   ~SupervisedUserServiceFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* profile) const override;
 };
 

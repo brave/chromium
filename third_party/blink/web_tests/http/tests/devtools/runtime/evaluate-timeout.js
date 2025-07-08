@@ -5,21 +5,18 @@
 import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as UIModule from 'devtools/ui/legacy/legacy.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
-  await TestRunner.loadLegacyModule('sources');
   TestRunner.addResult("Test frontend's timeout support.\n");
 
-  const executionContext = UI.context.flavor(SDK.ExecutionContext);
+  const executionContext = UIModule.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
   const regularExpression = '1 + 1';
   const infiniteExpression = 'while (1){}';
 
   await runtimeTestCase(infiniteExpression, 0);
   await runtimeTestCase(regularExpression);
-
-  let supports = executionContext.runtimeModel.hasSideEffectSupport();
-  TestRunner.addResult(`\nDoes the runtime also support side effect checks? ${supports}`);
-  TestRunner.addResult(`\nClearing cached side effect support`);
-  executionContext.runtimeModel.hasSideEffectSupportInternal = null;
 
   // Debugger evaluateOnCallFrame test.
   await TestRunner.evaluateInPagePromise(`
@@ -35,9 +32,6 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
   await debuggerTestCase(infiniteExpression, 0);
   await debuggerTestCase(regularExpression);
-
-  supports = executionContext.runtimeModel.hasSideEffectSupport();
-  TestRunner.addResult(`Does the runtime also support side effect checks? ${supports}`);
 
   SourcesTestRunner.completeDebuggerTest();
 

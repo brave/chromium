@@ -6,6 +6,8 @@
 
 #import <stddef.h>
 
+#import <string_view>
+
 #import "base/json/json_writer.h"
 #import "base/logging.h"
 #import "base/strings/string_util.h"
@@ -18,23 +20,20 @@
 #import "ios/web/public/webui/web_ui_ios_controller_factory.h"
 #import "ios/web/public/webui/web_ui_ios_message_handler.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using web::WebUIIOSController;
 
 namespace web {
 
 // static
 std::u16string WebUIIOS::GetJavascriptCall(
-    base::StringPiece function_name,
+    std::string_view function_name,
     base::span<const base::ValueView> arg_list) {
   std::u16string parameters;
   std::string json;
   for (size_t i = 0; i < arg_list.size(); ++i) {
-    if (i > 0)
+    if (i > 0) {
       parameters += u',';
+    }
 
     base::JSONWriter::Write(arg_list[i], &json);
     parameters += base::UTF8ToUTF16(json);
@@ -65,7 +64,7 @@ void WebUIIOSImpl::SetController(
 }
 
 void WebUIIOSImpl::CallJavascriptFunction(
-    base::StringPiece function_name,
+    std::string_view function_name,
     base::span<const base::ValueView> args) {
   DCHECK(base::IsStringASCII(function_name));
   ExecuteJavascript(GetJavascriptCall(function_name, args));
@@ -92,16 +91,17 @@ void WebUIIOSImpl::FireWebUIListenerSpan(
   ExecuteJavascript(GetJavascriptCall("cr.webUIListenerCallback", values));
 }
 
-void WebUIIOSImpl::RegisterMessageCallback(base::StringPiece message,
+void WebUIIOSImpl::RegisterMessageCallback(std::string_view message,
                                            MessageCallback callback) {
   message_callbacks_.emplace(message, std::move(callback));
 }
 
 void WebUIIOSImpl::ProcessWebUIIOSMessage(const GURL& source_url,
-                                          base::StringPiece message,
+                                          std::string_view message,
                                           const base::Value::List& args) {
-  if (controller_->OverrideHandleWebUIIOSMessage(source_url, message))
+  if (controller_->OverrideHandleWebUIIOSMessage(source_url, message)) {
     return;
+  }
 
   // Look up the callback for this message.
   auto message_callback_it = message_callbacks_.find(message);

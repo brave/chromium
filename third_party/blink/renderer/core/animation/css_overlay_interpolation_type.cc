@@ -7,7 +7,9 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/renderer/core/css/css_primitive_value_mappings.h"
+#include "third_party/blink/renderer/core/animation/underlying_value_owner.h"
+#include "third_party/blink/renderer/core/css/css_identifier_value_mappings.h"
+#include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -16,12 +18,9 @@ namespace blink {
 
 class CSSOverlayNonInterpolableValue final : public NonInterpolableValue {
  public:
+  CSSOverlayNonInterpolableValue(EOverlay start, EOverlay end)
+      : start_(start), end_(end) {}
   ~CSSOverlayNonInterpolableValue() final = default;
-
-  static scoped_refptr<CSSOverlayNonInterpolableValue> Create(EOverlay start,
-                                                              EOverlay end) {
-    return base::AdoptRef(new CSSOverlayNonInterpolableValue(start, end));
-  }
 
   EOverlay Overlay() const {
     DCHECK_EQ(start_, end_);
@@ -44,9 +43,6 @@ class CSSOverlayNonInterpolableValue final : public NonInterpolableValue {
   DECLARE_NON_INTERPOLABLE_VALUE_TYPE();
 
  private:
-  CSSOverlayNonInterpolableValue(EOverlay start, EOverlay end)
-      : start_(start), end_(end) {}
-
   const EOverlay start_;
   const EOverlay end_;
 };
@@ -70,10 +66,11 @@ class UnderlyingOverlayChecker final
   ~UnderlyingOverlayChecker() final = default;
 
  private:
-  bool IsValid(const StyleResolverState&,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     double underlying_fraction =
-        To<InterpolableNumber>(*underlying.interpolable_value).Value();
+        To<InterpolableNumber>(*underlying.interpolable_value)
+            .Value(state.CssToLengthConversionData());
     EOverlay underlying_overlay =
         To<CSSOverlayNonInterpolableValue>(*underlying.non_interpolable_value)
             .Overlay(underlying_fraction);
@@ -100,20 +97,24 @@ class InheritedOverlayChecker
 InterpolationValue CSSOverlayInterpolationType::CreateOverlayValue(
     EOverlay overlay) const {
   return InterpolationValue(
-      std::make_unique<InterpolableNumber>(0),
-      CSSOverlayNonInterpolableValue::Create(overlay, overlay));
+      MakeGarbageCollected<InterpolableNumber>(0),
+      MakeGarbageCollected<CSSOverlayNonInterpolableValue>(overlay, overlay));
 }
 
 InterpolationValue CSSOverlayInterpolationType::MaybeConvertNeutral(
     const InterpolationValue& underlying,
     ConversionCheckers& conversion_checkers) const {
+  // Note: using default CSSToLengthConversionData here as it's
+  // guaranteed to be a double.
+  // TODO(crbug.com/325821290): Avoid InterpolableNumber here.
   double underlying_fraction =
-      To<InterpolableNumber>(*underlying.interpolable_value).Value();
+      To<InterpolableNumber>(*underlying.interpolable_value)
+          .Value(CSSToLengthConversionData(/*element=*/nullptr));
   EOverlay underlying_overlay =
       To<CSSOverlayNonInterpolableValue>(*underlying.non_interpolable_value)
           .Overlay(underlying_fraction);
   conversion_checkers.push_back(
-      std::make_unique<UnderlyingOverlayChecker>(underlying_overlay));
+      MakeGarbageCollected<UnderlyingOverlayChecker>(underlying_overlay));
   return CreateOverlayValue(underlying_overlay);
 }
 
@@ -132,13 +133,13 @@ InterpolationValue CSSOverlayInterpolationType::MaybeConvertInherit(
   }
   EOverlay inherited_overlay = state.ParentStyle()->Overlay();
   conversion_checkers.push_back(
-      std::make_unique<InheritedOverlayChecker>(inherited_overlay));
+      MakeGarbageCollected<InheritedOverlayChecker>(inherited_overlay));
   return CreateOverlayValue(inherited_overlay);
 }
 
 InterpolationValue CSSOverlayInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState*,
+    const StyleResolverState&,
     ConversionCheckers& conversion_checkers) const {
   const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
   if (!identifier_value) {
@@ -171,9 +172,10 @@ PairwiseInterpolationValue CSSOverlayInterpolationType::MaybeMergeSingles(
   EOverlay end_overlay =
       To<CSSOverlayNonInterpolableValue>(*end.non_interpolable_value).Overlay();
   return PairwiseInterpolationValue(
-      std::make_unique<InterpolableNumber>(0),
-      std::make_unique<InterpolableNumber>(1),
-      CSSOverlayNonInterpolableValue::Create(start_overlay, end_overlay));
+      MakeGarbageCollected<InterpolableNumber>(0),
+      MakeGarbageCollected<InterpolableNumber>(1),
+      MakeGarbageCollected<CSSOverlayNonInterpolableValue>(start_overlay,
+                                                           end_overlay));
 }
 
 void CSSOverlayInterpolationType::Composite(
@@ -181,7 +183,7 @@ void CSSOverlayInterpolationType::Composite(
     double underlying_fraction,
     const InterpolationValue& value,
     double interpolation_fraction) const {
-  underlying_value_owner.Set(*this, value);
+  underlying_value_owner.Set(this, value);
 }
 
 void CSSOverlayInterpolationType::ApplyStandardPropertyValue(
@@ -190,7 +192,8 @@ void CSSOverlayInterpolationType::ApplyStandardPropertyValue(
     StyleResolverState& state) const {
   // Overlay interpolation has been deferred to application time here due to
   // its non-linear behaviour.
-  double fraction = To<InterpolableNumber>(interpolable_value).Value();
+  double fraction = To<InterpolableNumber>(interpolable_value)
+                        .Value(state.CssToLengthConversionData());
   EOverlay overlay = To<CSSOverlayNonInterpolableValue>(non_interpolable_value)
                          ->Overlay(fraction);
   state.StyleBuilder().SetOverlay(overlay);

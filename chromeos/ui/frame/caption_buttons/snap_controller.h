@@ -29,7 +29,7 @@ enum class SnapDirection {
                // primary position, translated into left for landscape display
                // (or right for secondary display layout) and top (or bottom)
                // for portrait display. For more details, see
-               // description for `SplitViewController::IsLayoutHorizontal()`.
+               // description for `IsLayoutHorizontal()`.
   kSecondary,  // The phantom window controller is previewing a snap to the
                // secondary position, the opposite position of the primary. For
                // example, in primary portrait display, primary position is the
@@ -48,7 +48,6 @@ class COMPONENT_EXPORT(CHROMEOS_UI_FRAME) SnapController {
   enum class SnapRequestSource {
     kSnapButton,
     kWindowLayoutMenu,
-    kFromLacrosSnapButtonOrWindowLayoutMenu,
   };
 
   virtual ~SnapController();

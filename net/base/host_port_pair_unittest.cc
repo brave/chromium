@@ -4,11 +4,12 @@
 
 #include "net/base/host_port_pair.h"
 
+#include <optional>
+
 #include "base/values.h"
 #include "net/test/gtest_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
@@ -38,7 +39,7 @@ TEST(HostPortPairTest, Parsing) {
   string foo_str = foo.ToString();
   EXPECT_EQ("foo.com:10", foo_str);
   HostPortPair bar = HostPortPair::FromString(foo_str);
-  EXPECT_TRUE(foo.Equals(bar));
+  EXPECT_EQ(foo, bar);
 }
 
 TEST(HostPortPairTest, ParsingIpv6) {
@@ -46,7 +47,7 @@ TEST(HostPortPairTest, ParsingIpv6) {
   string foo_str = foo.ToString();
   EXPECT_EQ("[2001:db8::42]:100", foo_str);
   HostPortPair bar = HostPortPair::FromString(foo_str);
-  EXPECT_TRUE(foo.Equals(bar));
+  EXPECT_EQ(foo, bar);
 }
 
 TEST(HostPortPairTest, BadString) {
@@ -123,10 +124,10 @@ TEST(HostPortPairTest, Equals) {
 
   HostPortPair new_a_10("a.com", 10);
 
-  EXPECT_TRUE(new_a_10.Equals(a_10));
-  EXPECT_FALSE(new_a_10.Equals(a_11));
-  EXPECT_FALSE(new_a_10.Equals(b_10));
-  EXPECT_FALSE(new_a_10.Equals(b_11));
+  EXPECT_EQ(new_a_10, a_10);
+  EXPECT_NE(new_a_10, a_11);
+  EXPECT_NE(new_a_10, b_10);
+  EXPECT_NE(new_a_10, b_11);
 }
 
 TEST(HostPortPairTest, ParsesFromUrl) {

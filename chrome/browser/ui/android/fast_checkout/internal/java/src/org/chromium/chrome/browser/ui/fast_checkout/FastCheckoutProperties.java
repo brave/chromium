@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.ui.fast_checkout;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.ui.fast_checkout.data.FastCheckoutAutofillProfile;
 import org.chromium.chrome.browser.ui.fast_checkout.data.FastCheckoutCreditCard;
 import org.chromium.chrome.browser.ui.fast_checkout.home_screen.HomeScreenCoordinator;
@@ -19,15 +20,15 @@ import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-/**
- * State for the Fast Checkout UI.
- */
+/** State for the Fast Checkout UI. */
+@NullMarked
 public class FastCheckoutProperties {
-    /**
-     * The different screens that can be shown on the sheet.
-     */
-    @IntDef({ScreenType.HOME_SCREEN, ScreenType.AUTOFILL_PROFILE_SCREEN,
-            ScreenType.CREDIT_CARD_SCREEN})
+    /** The different screens that can be shown on the sheet. */
+    @IntDef({
+        ScreenType.HOME_SCREEN,
+        ScreenType.AUTOFILL_PROFILE_SCREEN,
+        ScreenType.CREDIT_CARD_SCREEN
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ScreenType {
         int HOME_SCREEN = 0;
@@ -35,9 +36,7 @@ public class FastCheckoutProperties {
         int CREDIT_CARD_SCREEN = 2;
     }
 
-    /**
-     * The different item types in the RecyclerView on the Autofill profile sheet.
-     */
+    /** The different item types in the RecyclerView on the Autofill profile sheet. */
     @IntDef({DetailItemType.PROFILE, DetailItemType.CREDIT_CARD, DetailItemType.FOOTER})
     @Retention(RetentionPolicy.SOURCE)
     public @interface DetailItemType {
@@ -119,9 +118,20 @@ public class FastCheckoutProperties {
     }
 
     /** All keys used for the fast checkout bottom sheet. */
-    static final PropertyKey[] ALL_KEYS = new PropertyKey[] {VISIBLE, CURRENT_SCREEN,
-            SELECTED_PROFILE, PROFILE_MODEL_LIST, SELECTED_CREDIT_CARD, CREDIT_CARD_MODEL_LIST,
-            HOME_SCREEN_DELEGATE, DETAIL_SCREEN_TITLE, DETAIL_SCREEN_TITLE_DESCRIPTION,
-            DETAIL_SCREEN_SETTINGS_MENU_TITLE, DETAIL_SCREEN_BACK_CLICK_HANDLER,
-            DETAIL_SCREEN_SETTINGS_CLICK_HANDLER, DETAIL_SCREEN_MODEL_LIST};
+    static final PropertyKey[] ALL_KEYS =
+            new PropertyKey[] {
+                VISIBLE,
+                CURRENT_SCREEN,
+                SELECTED_PROFILE,
+                PROFILE_MODEL_LIST,
+                SELECTED_CREDIT_CARD,
+                CREDIT_CARD_MODEL_LIST,
+                HOME_SCREEN_DELEGATE,
+                DETAIL_SCREEN_TITLE,
+                DETAIL_SCREEN_TITLE_DESCRIPTION,
+                DETAIL_SCREEN_SETTINGS_MENU_TITLE,
+                DETAIL_SCREEN_BACK_CLICK_HANDLER,
+                DETAIL_SCREEN_SETTINGS_CLICK_HANDLER,
+                DETAIL_SCREEN_MODEL_LIST
+            };
 }

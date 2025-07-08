@@ -4,13 +4,6 @@
 
 'use strict';
 
-// Use 16x16 aligned resolution since some platforms require that.
-// See https://crbug.com/1084702.
-// Also, some platforms require a resolution that isn't tiny (e.g. 160) to
-// use hardware acceleration.
-const FRAME_WIDTH = 640;
-const FRAME_HEIGHT = 480;
-
 function isRec709(colorSpace) {
   return colorSpace.primaries === 'bt709' && colorSpace.transfer === 'bt709' &&
       colorSpace.matrix === 'bt709' && colorSpace.fullRange === false;
@@ -35,6 +28,14 @@ function makePixelArray(byteLength) {
     data[i] = i;
   }
   return data;
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const binString = Array.from(bytes, (byte) =>
+    String.fromCharCode(byte),
+  ).join("");
+  return window.btoa(binString);
 }
 
 function makeFrame(type, timestamp) {
@@ -105,7 +106,6 @@ async function main(arg) {
 
   for (let frame of inputFrames) {
     encoder.encode(frame);
-    await waitForNextFrame();
   }
   await encoder.flush();
   encoder.close();
@@ -142,11 +142,7 @@ async function main(arg) {
   TEST.assert_eq(inputFrames[2].format, 'RGBA', 'inputs[2] is RGBA');
   TEST.assert(isSRGB(inputFrames[2].colorSpace), 'inputs[2] is sRGB');
 
-  // TODO(https://crbug.com/1241448): Uncomment the line below once android
-  // reliably produces a key frame at the appropriate time. For now this
-  // is covered by a DCHECK (excluding android) in video_encoder.cc.
-  // TEST.assert(outputChunks[2].type == 'key', 'outputs[2] is key');
-
+  TEST.assert(outputChunks[2].type == 'key', 'outputs[2] is key');
   TEST.assert(
       'decoderConfig' in outputMetadata[2], 'metadata[2] has decoderConfig');
   TEST.assert(
@@ -172,8 +168,10 @@ async function main(arg) {
   // space information in the bitstream.
 
   // VP8 doesn't have embedded color space information in the bitstream.
-  if (arg.codec == 'vp8')
+  if (arg.codec == 'vp8') {
+    TEST.reportSuccess();
     return;
+  }
 
   let decodedFrames = [];
   const decoderInit = {
@@ -196,10 +194,27 @@ async function main(arg) {
       config.colorSpace = {};
 
       config.hardwareAcceleration = arg.acceleration;
+      let support = await VideoDecoder.isConfigSupported(config);
+      if (!support.supported) {
+        config.hardwareAcceleration = 'no-preference';
+      }
+
       decoder.configure(config);
     }
-    decoder.decode(outputChunks[i]);
-    await waitForNextFrame();
+    let chunk = outputChunks[i];
+    let buffer = new ArrayBuffer(chunk.byteLength);
+    chunk.copyTo(buffer);
+    try {
+      decoder.decode(chunk);
+    } catch (e) {
+      TEST.reportFailure(e);
+      TEST.log(`Chunk index: ${i}`);
+      if (outputMetadata[i].decoderConfig) {
+        TEST.log('Config: ' + JSON.stringify(outputMetadata[i].decoderConfig));
+      }
+      TEST.log('Data: ' + arrayBufferToBase64(buffer));
+      return;
+    }
   }
   await decoder.flush();
   decoder.close();
@@ -241,8 +256,10 @@ async function main(arg) {
       if (decodedFrames[i].colorSpace.transfer != colorSpace.transfer) {
         // Allow functionally equivalent matches.
         TEST.assert(
-            colorSpace.transfer == 'smpte170m' &&
-                decodedFrames[i].colorSpace.transfer == 'bt709',
+            (colorSpace.transfer == 'smpte170m' &&
+             decodedFrames[i].colorSpace.transfer == 'bt709') ||
+                (colorSpace.transfer == 'bt709' &&
+                 decodedFrames[i].colorSpace.transfer == 'smpte170m'),
             `Frame ${i} color transfer mismatch`)
       } else {
         TEST.assert_eq(
@@ -258,5 +275,5 @@ async function main(arg) {
     }
     decodedFrames[i].close();
   }
-  TEST.log('Test completed');
+  TEST.reportSuccess();
 }

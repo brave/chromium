@@ -6,10 +6,12 @@ import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+
 (async function() {
   TestRunner.addResult(`Tests static content provider search.\n`);
-  await TestRunner.loadLegacyModule('console');
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
 
   await TestRunner.addIframe('resources/search.html');
@@ -19,12 +21,12 @@ import {SourcesTestRunner} from 'sources_test_runner';
   var staticContentProvider;
 
   function step2() {
-    resource = Bindings.resourceForURL('http://127.0.0.1:8000/devtools/search/resources/search.js');
-    resource.requestContent().then(step3);
+    resource = SDK.ResourceTreeModel.ResourceTreeModel.resourceForURL('http://127.0.0.1:8000/devtools/search/resources/search.js');
+    resource.requestContentData().then(step3);
   }
 
   async function step3() {
-    staticContentProvider = TextUtils.StaticContentProvider.fromString('', Common.resourceTypes.Script, resource.content);
+    staticContentProvider = TextUtils.StaticContentProvider.StaticContentProvider.fromString('', Common.ResourceType.resourceTypes.Script, resource.content);
     TestRunner.addResult(resource.url);
 
     var text = 'searchTestUniqueString';

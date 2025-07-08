@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
 
 import {calculateBulkPinRequiredSpace} from '../common/js/api.js';
-import {str, strf, util} from '../common/js/util.js';
-import {State as AppState} from '../externs/ts/state.js';
+import {RateLimiter} from '../common/js/async_util.js';
+import {bytesToString, getCurrentLocaleOrDefault, str, strf} from '../common/js/translations.js';
+import {visitURL} from '../common/js/util.js';
+import type {State as AppState} from '../state/state.js';
 import {getStore} from '../state/store.js';
 
 import {css, customElement, html, query, XfBase} from './xf_base.js';
@@ -53,11 +55,29 @@ export class XfBulkPinningDialog extends XfBase {
   @query('#not-enough-space-footer')
   private $notEnoughSpaceFooter_!: HTMLElement;
   @query('#ready-footer') private $readyFooter_!: HTMLElement;
+  @query('#listing-files-text') private $listingFilesText_!: HTMLElement;
 
   private store_ = getStore();
   private stage_ = '';
   private requiredBytes_ = 0;
   private freeBytes_ = 0;
+  private listedFiles_ = 0;
+
+  private updateListedFilesDebounced_ =
+      new RateLimiter(() => this.updateListedFiles_(), 5000);
+
+  private updateListedFiles_() {
+    if (this.listedFiles_ === 0) {
+      this.$listingFilesText_.innerText = str('BULK_PINNING_LISTING');
+    } else if (this.listedFiles_ === 1) {
+      this.$listingFilesText_.innerText =
+          str('BULK_PINNING_LISTING_WITH_SINGLE_ITEM');
+    } else {
+      this.$listingFilesText_.innerText = strf(
+          'BULK_PINNING_LISTING_WITH_MULTIPLE_ITEMS',
+          this.listedFiles_.toLocaleString(getCurrentLocaleOrDefault()));
+    }
+  }
 
   // Called when the app has changed state.
   onStateChanged(state: AppState) {
@@ -79,8 +99,14 @@ export class XfBulkPinningDialog extends XfBase {
       this.freeBytes_ = bpp.freeSpaceBytes;
       this.requiredBytes_ = bpp.requiredSpaceBytes;
       this.$readyFooter_.innerText = strf(
-          'BULK_PINNING_SPACE', util.bytesToString(this.requiredBytes_),
-          util.bytesToString(this.freeBytes_));
+          'BULK_PINNING_SPACE', bytesToString(this.requiredBytes_),
+          bytesToString(this.freeBytes_));
+    }
+
+    if (bpp.stage === BulkPinStage.LISTING_FILES && bpp.listedFiles > 0 &&
+        bpp.listedFiles !== this.listedFiles_) {
+      this.listedFiles_ = bpp.listedFiles;
+      this.updateListedFilesDebounced_.run();
     }
 
     if (bpp.stage === this.stage_) {
@@ -163,6 +189,8 @@ export class XfBulkPinningDialog extends XfBase {
 
   private onClose(_: Event) {
     this.state = DialogState.CLOSED;
+    this.listedFiles_ = 0;
+    this.updateListedFilesDebounced_.runImmediately();
     this.store_.unsubscribe(this);
   }
 
@@ -182,7 +210,7 @@ export class XfBulkPinningDialog extends XfBase {
   // Called when the "Learn more" link is clicked.
   private onLearnMore(e: UIEvent) {
     e.preventDefault();
-    util.visitURL('https://support.google.com/chromebook?p=my_drive_cbx');
+    visitURL('https://support.google.com/chromebook?p=my_drive_cbx');
   }
 
   // Called when the "View storage" link is clicked.
@@ -221,7 +249,9 @@ export class XfBulkPinningDialog extends XfBase {
           </div>
           <div id="listing-footer" class="normal-footer">
             <files-spinner></files-spinner>
-            ${str('BULK_PINNING_LISTING')}
+            <span id="listing-files-text">
+              ${str('BULK_PINNING_LISTING')}
+            </span>
           </div>
           <div id="error-footer" class="error-footer">
             ${str('BULK_PINNING_ERROR')}

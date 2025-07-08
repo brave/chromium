@@ -7,10 +7,12 @@
 #include <iterator>
 #include <string>
 
+#include "base/containers/flat_set.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "net/base/does_url_match_filter.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
@@ -38,7 +40,6 @@ enum class CacheMetric {
 };
 
 base::Value::Dict NetLogCacheStatusParams(const CacheMetric metric) {
-  base::Value::Dict dict;
   std::string cache_status;
   switch (metric) {
     case CacheMetric::kHitAndPass:
@@ -54,8 +55,8 @@ base::Value::Dict NetLogCacheStatusParams(const CacheMetric metric) {
       cache_status = "stale";
       break;
   }
-  dict.Set("status", cache_status);
-  return dict;
+
+  return base::Value::Dict().Set("status", cache_status);
 }
 
 void RecordCacheMetricNetLog(CacheMetric metric,
@@ -165,16 +166,18 @@ void PreflightCache::ClearCache(mojom::ClearDataFilterPtr url_filter) {
         return;
     }
   }
-  std::set<url::Origin> origins(url_filter->origins.begin(),
-                                url_filter->origins.end());
-  std::set<std::string> domains(url_filter->domains.begin(),
-                                url_filter->domains.end());
+  const net::UrlFilterType url_filter_type =
+      ConvertClearDataFilterType(url_filter->type);
+  const base::flat_set<url::Origin> origins(url_filter->origins.begin(),
+                                            url_filter->origins.end());
+  const base::flat_set<std::string> domains(url_filter->domains.begin(),
+                                            url_filter->domains.end());
 
   for (auto it = cache_.begin(); it != cache_.end();) {
     auto next_it = std::next(it);
     auto cached_url = std::get<0>(it->first).GetURL();
-    if (network::DoesUrlMatchFilter(url_filter->type, origins, domains,
-                                    cached_url)) {
+    if (net::DoesUrlMatchFilter(url_filter_type, origins, domains,
+                                cached_url)) {
       cache_.erase(it);
     }
     it = next_it;

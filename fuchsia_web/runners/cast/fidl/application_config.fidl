@@ -4,7 +4,7 @@
 
 library chromium.cast;
 
-using fuchsia.diagnostics;
+using fuchsia.diagnostics.types;
 using fuchsia.media;
 using fuchsia.ui.gfx;
 using fuchsia.web;
@@ -22,7 +22,8 @@ type ApplicationConfig = resource table {
     /// implementation.
     3: web_url string;
 
-    4: reserved;
+    // Removed in https://crrev.com/c/1793791.
+    // 4: bool touch_enabled_policy;
 
     // If true, enable remote debugging for this application.
     // if false or unset, remote debugging is disabled for this application.
@@ -44,8 +45,8 @@ type ApplicationConfig = resource table {
     /// The initial minimum severity of `console` logs that will be logged to the
     /// [`fuchsia.logger/LogSink`] configured for this application. If not set, no
     /// messages will be logged.
-    // TODO(crbug.com/1088094): Deprecate once there is another mechanism.
-    10: initial_min_console_log_severity fuchsia.diagnostics.Severity;
+    // TODO(crbug.com/42050112): Deprecate once there is another mechanism.
+    10: initial_min_console_log_severity fuchsia.diagnostics.types.Severity;
 
     /// The usage for [`fuchsia.media/AudioRenderer`] created by the app. If not
     /// specified, then audio will be played through
@@ -62,9 +63,9 @@ type ApplicationConfig = resource table {
 
 /// Service interface for working with application configurations.
 @discoverable
-protocol ApplicationConfigManager {
+closed protocol ApplicationConfigManager {
     /// Returns the ApplicationConfig for the specified application Id.
-    GetConfig(struct {
+    strict GetConfig(struct {
         id string;
     }) -> (resource struct {
         config ApplicationConfig;

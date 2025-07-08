@@ -20,15 +20,9 @@ extern const char kLocationSettingsBackoffLevelDSE[];
 extern const char kLocationSettingsBackoffLevelDefault[];
 extern const char kLocationSettingsNextShowDSE[];
 extern const char kLocationSettingsNextShowDefault[];
-#else
-extern const char kOneTimePermissionPromptsDecidedCount[];
 #endif
 
-// The pref is used only when kSafetyHub flag is on.
-// Currently Safety Hub is available only on desktop.
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-extern const char kUnusedSitePermissionsRevocationEnabled[];
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+extern const char kOneTimePermissionPromptsDecidedCount[];
 
 }  // namespace prefs
 

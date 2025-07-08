@@ -10,13 +10,16 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/extensions/api/declarative_content/content_predicate_evaluator.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace base {
 class Value;
@@ -136,23 +139,18 @@ class DeclarativeContentIsBookmarkedConditionTracker
 
   // bookmarks::BookmarkModelObserver implementation.
   void BookmarkModelChanged() override;
-  void BookmarkNodeAdded(bookmarks::BookmarkModel* model,
-                         const bookmarks::BookmarkNode* parent,
+  void BookmarkNodeAdded(const bookmarks::BookmarkNode* parent,
                          size_t index,
                          bool added_by_user) override;
-  void BookmarkNodeRemoved(bookmarks::BookmarkModel* model,
-                           const bookmarks::BookmarkNode* parent,
+  void BookmarkNodeRemoved(const bookmarks::BookmarkNode* parent,
                            size_t old_index,
                            const bookmarks::BookmarkNode* node,
-                           const std::set<GURL>& no_longer_bookmarked) override;
-  void ExtensiveBookmarkChangesBeginning(
-      bookmarks::BookmarkModel* model) override;
-  void ExtensiveBookmarkChangesEnded(
-      bookmarks::BookmarkModel* model) override;
-  void GroupedBookmarkChangesBeginning(
-      bookmarks::BookmarkModel* model) override;
-  void GroupedBookmarkChangesEnded(
-      bookmarks::BookmarkModel* model) override;
+                           const std::set<GURL>& no_longer_bookmarked,
+                           const base::Location& location) override;
+  void ExtensiveBookmarkChangesBeginning() override;
+  void ExtensiveBookmarkChangesEnded() override;
+  void GroupedBookmarkChangesBeginning() override;
+  void GroupedBookmarkChangesEnded() override;
 
   // Called by PerWebContentsTracker on web contents destruction.
   void DeletePerWebContentsTracker(content::WebContents* tracker);

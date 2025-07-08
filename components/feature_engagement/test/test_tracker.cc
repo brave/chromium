@@ -14,6 +14,7 @@
 #include "components/feature_engagement/internal/init_aware_event_model.h"
 #include "components/feature_engagement/internal/never_availability_model.h"
 #include "components/feature_engagement/internal/noop_display_lock_controller.h"
+#include "components/feature_engagement/internal/single_event_model_provider.h"
 #include "components/feature_engagement/internal/system_time_provider.h"
 #include "components/feature_engagement/internal/tracker_impl.h"
 #include "components/feature_engagement/public/feature_list.h"
@@ -23,12 +24,20 @@ namespace feature_engagement {
 
 // static
 std::unique_ptr<Tracker> CreateTestTracker() {
+  return CreateTestTracker(nullptr);
+}
+
+// static
+std::unique_ptr<Tracker> CreateTestTracker(
+    std::unique_ptr<TrackerEventExporter> event_exporter) {
   auto configuration = std::make_unique<ChromeVariationsConfiguration>();
-  configuration->ParseConfigs(GetAllFeatures(), GetAllGroups());
+  configuration->LoadConfigs(Tracker::GetDefaultConfigurationProviders(),
+                             GetAllFeatures(), GetAllGroups());
 
   auto storage_validator =
       std::make_unique<FeatureConfigEventStorageValidator>();
-  storage_validator->InitializeFeatures(GetAllFeatures(), *configuration);
+  storage_validator->InitializeFeatures(GetAllFeatures(), GetAllGroups(),
+                                        *configuration);
 
   auto raw_event_model = std::make_unique<EventModelImpl>(
       std::make_unique<InMemoryEventStore>(), std::move(storage_validator));
@@ -36,11 +45,16 @@ std::unique_ptr<Tracker> CreateTestTracker() {
   auto event_model =
       std::make_unique<InitAwareEventModel>(std::move(raw_event_model));
 
+  auto event_model_provider =
+      std::make_unique<SingleEventModelProvider>(std::move(event_model));
+
   return std::make_unique<TrackerImpl>(
-      std::move(event_model), std::make_unique<NeverAvailabilityModel>(),
-      std::move(configuration), std::make_unique<NoopDisplayLockController>(),
+      std::move(event_model_provider),
+      std::make_unique<NeverAvailabilityModel>(), std::move(configuration),
+      std::make_unique<NoopDisplayLockController>(),
       std::make_unique<FeatureConfigConditionValidator>(),
-      std::make_unique<SystemTimeProvider>(), nullptr);
+      std::make_unique<SystemTimeProvider>(), std::move(event_exporter),
+      nullptr, nullptr, nullptr);
 }
 
 }  // namespace feature_engagement

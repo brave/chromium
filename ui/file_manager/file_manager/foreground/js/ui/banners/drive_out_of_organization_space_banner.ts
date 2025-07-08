@@ -2,14 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * @fileoverview
- * This file is checked via TS, so we suppress Closure checks.
- * @suppress {checkTypes}
- */
-
-import {str, strf} from '../../../../common/js/util.js';
-import {VolumeManagerCommon} from '../../../../common/js/volume_manager_types.js';
+import {str, strf} from '../../../../common/js/translations.js';
+import {RootType, VolumeType} from '../../../../common/js/volume_manager_types.js';
 
 import {getTemplate} from './drive_out_of_organization_space_banner.html.js';
 import {WarningBanner} from './warning_banner.js';
@@ -43,8 +37,8 @@ export class DriveOutOfOrganizationSpaceBanner extends WarningBanner {
    */
   override allowedVolumes() {
     return [{
-      type: VolumeManagerCommon.VolumeType.DRIVE,
-      root: VolumeManagerCommon.RootType.DRIVE,
+      type: VolumeType.DRIVE,
+      root: RootType.DRIVE,
     }];
   }
 
@@ -62,11 +56,20 @@ export class DriveOutOfOrganizationSpaceBanner extends WarningBanner {
     const message =
         strf('DRIVE_ORGANIZATION_QUOTA_OVER', context.organizationName);
     const warning = str('DRIVE_WARNING_QUOTA_OVER');
-    this.shadowRoot!.querySelector<HTMLSpanElement>(
-                        'span[slot="text"]')!.outerHTML = `
-<span slot="text" aria-label="${warning}: ${message}">
-  <span aria-hidden="true">${message}</span>
-</span>`;
+
+    const originalSpan =
+        this.shadowRoot!.querySelector<HTMLSpanElement>('span[slot="text"]')!;
+
+    const replacementSpan = document.createElement('span');
+    replacementSpan.setAttribute('slot', 'text');
+    replacementSpan.setAttribute('aria-label', `${warning}: ${message}`);
+
+    const replacementSpanInner = document.createElement('span');
+    replacementSpanInner.setAttribute('aria-hidden', 'true');
+    replacementSpanInner.textContent = message;
+
+    replacementSpan.appendChild(replacementSpanInner);
+    originalSpan.replaceWith(replacementSpan);
   }
 }
 

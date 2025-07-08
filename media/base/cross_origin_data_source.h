@@ -15,15 +15,11 @@ namespace media {
 // from an already-allocated block of data, and can't be cross origin at all.
 class MEDIA_EXPORT CrossOriginDataSource : public DataSource {
  public:
-  // https://html.spec.whatwg.org/#cors-cross-origin
-  // This must be called after the response arrives.
-  virtual bool IsCorsCrossOrigin() const = 0;
-
-  // Returns true if the response includes an Access-Control-Allow-Origin
-  // header (that is not "null").
-  virtual bool HasAccessControl() const = 0;
-
   virtual const std::string& GetMimeType() const = 0;
+
+  // Allows the data source to perform any additional initialization steps.
+  // This should always be called after constructing, and before other use.
+  virtual void Initialize(base::OnceCallback<void(bool)> init_cb) = 0;
 };
 
 }  // namespace media

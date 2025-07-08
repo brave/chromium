@@ -5,8 +5,8 @@
 #include "chrome/browser/ash/crostini/crostini_util.h"
 
 #include <utility>
+#include <variant>
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
@@ -27,7 +27,9 @@
 #include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
 #include "chrome/browser/ash/guest_os/guest_os_registry_service_factory.h"
 #include "chrome/browser/ash/guest_os/guest_os_session_tracker.h"
+#include "chrome/browser/ash/guest_os/guest_os_session_tracker_factory.h"
 #include "chrome/browser/ash/guest_os/guest_os_share_path.h"
+#include "chrome/browser/ash/guest_os/guest_os_share_path_factory.h"
 #include "chrome/browser/ash/guest_os/guest_os_terminal.h"
 #include "chrome/browser/ash/guest_os/public/types.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
@@ -41,6 +43,8 @@
 #include "chrome/browser/ui/webui/ash/crostini_upgrader/crostini_upgrader_dialog.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "ui/aura/client/aura_constants.h"
@@ -48,24 +52,9 @@
 #include "ui/base/l10n/time_format.h"
 
 namespace crostini {
-
-const char kCrostiniImageAliasPattern[] = "debian/%s";
-const char kCrostiniContainerDefaultVersion[] = "bullseye";
-const char kCrostiniContainerFlag[] = "crostini-container-install-version";
-
-const guest_os::VmType kCrostiniDefaultVmType = guest_os::VmType::TERMINA;
-const char kCrostiniDefaultVmName[] = "termina";
-const char kCrostiniDefaultContainerName[] = "penguin";
-const char kCrostiniDefaultUsername[] = "emperor";
-const char kCrostiniDefaultImageServerUrl[] =
-    "https://storage.googleapis.com/cros-containers/%d";
-const char kCrostiniDlcName[] = "termina-dlc";
-
-const base::FilePath::CharType kHomeDirectory[] =
-    FILE_PATH_LITERAL("/home/chronos/user");
-
 namespace {
 
+// Keep 'penguin' terminal label for backwards-consistent appearance.
 constexpr char kCrostiniAppLaunchHistogram[] = "Crostini.AppLaunch";
 constexpr char kCrostiniAppLaunchResultHistogram[] = "Crostini.AppLaunchResult";
 constexpr char kCrostiniAppLaunchResultHistogramTerminal[] =
@@ -117,23 +106,8 @@ void OnSharePathForLaunchApplication(
         CrostiniResult::SHARE_PATHS_FAILED);
   }
 
-  if (registration.Terminal()) {
-    // TODO(crbug.com/853560): This could be improved by using garcon
-    // DesktopFile::GenerateArgvWithFiles().
-    std::vector<std::string> terminal_args = {
-        registration.ExecutableFileName()};
-    terminal_args.insert(terminal_args.end(), args.begin(), args.end());
-    guest_os::LaunchTerminal(profile, display_id, container_id,
-                             /*cwd=*/std::string(), terminal_args);
-    OnApplicationLaunched(app_id, std::move(callback),
-                          crostini::CrostiniResult::SUCCESS, true,
-                          std::string());
-    return;
-  }
-
   guest_os::launcher::LaunchApplication(
-      profile, container_id, registration.DesktopFileId(), args,
-      registration.IsScaled(),
+      profile, container_id, std::move(registration), display_id, args,
       base::BindOnce(OnApplicationLaunched, app_id, std::move(callback),
                      crostini::CrostiniResult::UNKNOWN_ERROR));
 }
@@ -163,7 +137,7 @@ void LaunchApplication(
   // Get vm_info because we need seneschal_server_handle.
   const std::string& vm_name = registration.VmName();
   auto vm_info =
-      guest_os::GuestOsSessionTracker::GetForProfile(profile)->GetVmInfo(
+      guest_os::GuestOsSessionTrackerFactory::GetForProfile(profile)->GetVmInfo(
           vm_name);
   if (!vm_info) {
     return OnLaunchFailed(app_id, std::move(callback),
@@ -173,18 +147,18 @@ void LaunchApplication(
 
   // Share any paths not in crostini.  The user will see the spinner while this
   // is happening.
-  auto* share_path = guest_os::GuestOsSharePath::GetForProfile(profile);
+  auto* share_path = guest_os::GuestOsSharePathFactory::GetForProfile(profile);
   auto paths_or_error = share_path->ConvertArgsToPathsToShare(
       registration, args, crostini::ContainerChromeOSBaseDirectory(),
       /*map_crostini_home=*/true);
-  if (absl::holds_alternative<std::string>(paths_or_error)) {
+  if (std::holds_alternative<std::string>(paths_or_error)) {
     OnLaunchFailed(app_id, std::move(callback),
-                   absl::get<std::string>(paths_or_error),
+                   std::get<std::string>(paths_or_error),
                    CrostiniResult::SHARE_PATHS_FAILED);
     return;
   }
   const auto& paths =
-      absl::get<guest_os::GuestOsSharePath::PathsToShare>(paths_or_error);
+      std::get<guest_os::GuestOsSharePath::PathsToShare>(paths_or_error);
   share_path->SharePaths(
       vm_name, vm_info->seneschal_server_handle(),
       std::move(paths.paths_to_share),
@@ -201,7 +175,7 @@ bool IsUninstallable(Profile* profile, const std::string& app_id) {
   }
   auto* registry_service =
       guest_os::GuestOsRegistryServiceFactory::GetForProfile(profile);
-  absl::optional<guest_os::GuestOsRegistryService::Registration> registration =
+  std::optional<guest_os::GuestOsRegistryService::Registration> registration =
       registry_service->GetRegistration(app_id);
   if (registration) {
     return registration->CanUninstall();
@@ -219,9 +193,7 @@ bool ShouldConfigureDefaultContainer(Profile* profile) {
       profile->GetPrefs()->GetFilePath(prefs::kCrostiniAnsiblePlaybookFilePath);
   bool default_container_configured = profile->GetPrefs()->GetBoolean(
       prefs::kCrostiniDefaultContainerConfigured);
-  return base::FeatureList::IsEnabled(
-             features::kCrostiniAnsibleInfrastructure) &&
-         !default_container_configured && !ansible_playbook_file_path.empty();
+  return !default_container_configured && !ansible_playbook_file_path.empty();
 }
 
 bool ShouldAllowContainerUpgrade(Profile* profile) {
@@ -267,7 +239,7 @@ void LaunchCrostiniAppImpl(
           [](Profile* profile, const std::string& app_id,
              guest_os::GuestOsRegistryService::Registration registration,
              const guest_os::GuestId& container_id, int64_t display_id,
-             const std::vector<guest_os::LaunchArg> args,
+             std::vector<guest_os::LaunchArg> args,
              crostini::CrostiniSuccessCallback callback,
              crostini::CrostiniResult result) {
             if (result != crostini::CrostiniResult::SUCCESS) {
@@ -308,7 +280,7 @@ void LaunchCrostiniAppWithIntent(Profile* profile,
   auto* crostini_manager = crostini::CrostiniManager::GetForProfile(profile);
   auto* registry_service =
       guest_os::GuestOsRegistryServiceFactory::GetForProfile(profile);
-  absl::optional<guest_os::GuestOsRegistryService::Registration> registration =
+  std::optional<guest_os::GuestOsRegistryService::Registration> registration =
       registry_service->GetRegistration(app_id);
 
   if (!registration) {
@@ -354,18 +326,20 @@ void LaunchCrostiniApp(Profile* profile,
 
 std::vector<vm_tools::cicerone::ContainerFeature> GetContainerFeatures() {
   std::vector<vm_tools::cicerone::ContainerFeature> result;
-  if (base::FeatureList::IsEnabled(ash::features::kCrostiniImeSupport)) {
+
+  // TODO: b/303743348 - Update garcon to set this env var by default and
+  // deprecate this feature.
+  result.push_back(
+      vm_tools::cicerone::ContainerFeature::ENABLE_GTK3_IME_SUPPORT);
+
+  if (base::FeatureList::IsEnabled(ash::features::kCrostiniQtImeSupport)) {
     result.push_back(
-        vm_tools::cicerone::ContainerFeature::ENABLE_GTK3_IME_SUPPORT);
-    if (base::FeatureList::IsEnabled(ash::features::kCrostiniQtImeSupport)) {
-      result.push_back(
-          vm_tools::cicerone::ContainerFeature::ENABLE_QT_IME_SUPPORT);
-    }
-    if (base::FeatureList::IsEnabled(
-            ash::features::kCrostiniVirtualKeyboardSupport)) {
-      result.push_back(vm_tools::cicerone::ContainerFeature::
-                           ENABLE_VIRTUAL_KEYBOARD_SUPPORT);
-    }
+        vm_tools::cicerone::ContainerFeature::ENABLE_QT_IME_SUPPORT);
+  }
+  if (base::FeatureList::IsEnabled(
+          ash::features::kCrostiniVirtualKeyboardSupport)) {
+    result.push_back(
+        vm_tools::cicerone::ContainerFeature::ENABLE_VIRTUAL_KEYBOARD_SUPPORT);
   }
   return result;
 }
@@ -479,14 +453,21 @@ const guest_os::GuestId& DefaultContainerId() {
   return *container_id;
 }
 
+const guest_os::GuestId& DefaultBaguetteContainerId() {
+  static const base::NoDestructor<guest_os::GuestId> container_id(
+      kBaguetteDefaultVmType, kCrostiniDefaultVmName,
+      kCrostiniDefaultContainerName);
+  return *container_id;
+}
+
 bool IsCrostiniWindow(const aura::Window* window) {
   // TODO(crbug/1158644): Non-Crostini apps (borealis, ...) have also been
   // identifying as Crostini. For now they're less common, and as they become
   // more productionised they get their own app type (e.g. lacros), but at some
   // point we'll want to untangle these different types to e.g. avoid double
   // counting in usage metrics.
-  return window->GetProperty(aura::client::kAppType) ==
-         static_cast<int>(ash::AppType::CROSTINI_APP);
+  return window->GetProperty(chromeos::kAppTypeKey) ==
+         chromeos::AppType::CROSTINI_APP;
 }
 
 void RecordAppLaunchHistogram(CrostiniAppLaunchAppType app_type) {
@@ -520,8 +501,8 @@ bool ShouldStopVm(Profile* profile, const guest_os::GuestId& container_id) {
        guest_os::GetContainers(profile, kCrostiniDefaultVmType)) {
     if (container.container_name != container_id.container_name &&
         container.vm_name == container_id.vm_name) {
-      if (guest_os::GuestOsSessionTracker::GetForProfile(profile)->IsRunning(
-              container)) {
+      if (guest_os::GuestOsSessionTrackerFactory::GetForProfile(profile)
+              ->IsRunning(container)) {
         return false;
       }
     }

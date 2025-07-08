@@ -11,10 +11,12 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/types/expected.h"
 #include "chrome/browser/media/webrtc/desktop_media_list.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/base/ui_base_types.h"
 
 class DesktopMediaList;
@@ -24,8 +26,8 @@ class DesktopMediaPickerFactory;
 // user to select a desktop or an application window whose content will be made
 // available as a video stream.
 //
-// TODO(crbug.com/987001): Rename this class.  Consider merging with
-// DesktopMediaPickerViews and naming the merged class just DesktopMediaPicker.
+// TODO(crbug.com/40637301): Rename this class.  Consider merging with
+// DesktopMediaPickerImpl and naming the merged class just DesktopMediaPicker.
 class DesktopMediaPickerController : private content::WebContentsObserver {
  public:
   using Params = DesktopMediaPicker::Params;
@@ -47,6 +49,10 @@ class DesktopMediaPickerController : private content::WebContentsObserver {
   DesktopMediaPickerController& operator=(const DesktopMediaPickerController&) =
       delete;
   ~DesktopMediaPickerController() override;
+
+  // Checks if system audio capture is supported on the current platform.
+  static bool IsSystemAudioCaptureSupported(
+      Params::RequestSource request_source);
 
   // Show the desktop picker dialog using the parameters specified by |params|,
   // with the possible selections restricted to those included in |sources|.  If
@@ -85,8 +91,10 @@ class DesktopMediaPickerController : private content::WebContentsObserver {
   // This function is responsible to call |done_callback_| and after running the
   // callback |this| might be destroyed. Do **not** access fields after calling
   // this function.
-  void OnPickerDialogResults(const std::string& err,
-                             content::DesktopMediaID source);
+  void OnPickerDialogResults(
+      const std::string& err,
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult> result);
 
   Params params_;
   DoneCallback done_callback_;

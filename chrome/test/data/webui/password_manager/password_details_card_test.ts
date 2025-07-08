@@ -4,7 +4,8 @@
 
 import 'chrome://password-manager/password_manager.js';
 
-import {EditPasswordDialogElement, Page, PasswordDetailsCardElement, PasswordManagerImpl, PasswordViewPageInteractions, Router, SyncBrowserProxyImpl} from 'chrome://password-manager/password_manager.js';
+import type {EditPasswordDialogElement, PasswordDetailsCardElement} from 'chrome://password-manager/password_manager.js';
+import {Page, PasswordManagerImpl, PasswordViewPageInteractions, Router, SyncBrowserProxyImpl} from 'chrome://password-manager/password_manager.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
@@ -12,7 +13,7 @@ import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
 
 import {TestPasswordManagerProxy} from './test_password_manager_proxy.js';
 import {TestSyncBrowserProxy} from './test_sync_browser_proxy.js';
-import {createAffiliatedDomain, createPasswordEntry} from './test_util.js';
+import {createAffiliatedDomain, createPasswordEntry, makePasswordManagerPrefs} from './test_util.js';
 
 async function createCardElement(
     password: chrome.passwordsPrivate.PasswordUiEntry|null =
@@ -24,6 +25,10 @@ async function createCardElement(
 
   const card = document.createElement('password-details-card');
   card.password = password;
+  if (password.backupPassword) {
+    card.isBackup = true;
+  }
+  card.prefs = makePasswordManagerPrefs();
   document.body.appendChild(card);
   await flushTasks();
   return card;
@@ -80,6 +85,22 @@ suite('PasswordDetailsCardTest', function() {
     assertTrue(isVisible(card.$.deleteButton));
   });
 
+  test('Content displayed properly for backup credential', async function() {
+    const password = createPasswordEntry(
+        {url: 'test.com', username: 'vik', backupPassword: 'backup'});
+
+    const card = await createCardElement(password);
+
+    assertEquals(password.username, card.$.usernameValue.value);
+    assertEquals(password.backupPassword, card.$.passwordValue.value);
+    assertEquals('password', card.$.passwordValue.type);
+    assertTrue(isVisible(card.$.noteValue));
+    assertTrue(isVisible(card.$.showPasswordButton));
+    assertTrue(isVisible(card.$.copyPasswordButton));
+    assertTrue(isVisible(card.$.editButton));
+    assertTrue(isVisible(card.$.deleteButton));
+  });
+
   test('Copy password', async function() {
     const password = createPasswordEntry(
         {id: 1, url: 'test.com', username: 'vik', password: 'password69'});
@@ -87,9 +108,9 @@ suite('PasswordDetailsCardTest', function() {
     const card = await createCardElement(password);
 
     assertTrue(isVisible(card.$.copyPasswordButton));
-    assertFalse(card.$.toast.open);
 
     card.$.copyPasswordButton.click();
+    await eventToPromise('value-copied', card);
     await passwordManager.whenCalled('extendAuthValidity');
     const {id, reason} =
         await passwordManager.whenCalled('requestPlaintextPassword');
@@ -100,10 +121,6 @@ suite('PasswordDetailsCardTest', function() {
         await passwordManager.whenCalled('recordPasswordViewInteraction'));
 
     await flushTasks();
-    assertTrue(card.$.toast.open);
-    assertEquals(
-        loadTimeData.getString('passwordCopiedToClipboard'),
-        card.$.toast.textContent!.trim());
   });
 
   test('Links properly displayed', async function() {
@@ -239,10 +256,12 @@ suite('PasswordDetailsCardTest', function() {
 
                 if (store === chrome.passwordsPrivate.PasswordStoreSet.DEVICE) {
                   deleteDialog.$.removeFromAccountCheckbox.click();
+                  await deleteDialog.$.removeFromAccountCheckbox.updateComplete;
                 } else if (
                     store ===
                     chrome.passwordsPrivate.PasswordStoreSet.ACCOUNT) {
                   deleteDialog.$.removeFromDeviceCheckbox.click();
+                  await deleteDialog.$.removeFromDeviceCheckbox.updateComplete;
                 }
                 deleteDialog.$.removeButton.click();
 
@@ -280,7 +299,9 @@ suite('PasswordDetailsCardTest', function() {
     assertTrue(!!deleteDialog);
     assertTrue(deleteDialog.$.dialog.open);
     deleteDialog.$.removeFromAccountCheckbox.click();
+    await deleteDialog.$.removeFromAccountCheckbox.updateComplete;
     deleteDialog.$.removeFromDeviceCheckbox.click();
+    await deleteDialog.$.removeFromDeviceCheckbox.updateComplete;
 
     assertFalse(deleteDialog.$.removeFromAccountCheckbox.checked);
     assertFalse(deleteDialog.$.removeFromDeviceCheckbox.checked);
@@ -347,26 +368,21 @@ suite('PasswordDetailsCardTest', function() {
         loadTimeData.getString('sitesAndAppsLabel'));
   });
 
+  // <if expr="_google_chrome">
   test('share button available when sync enabled', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
     const card = await createCardElement();
 
-    const shareButton =
-        card.shadowRoot!.querySelector<HTMLElement>('#shareButton');
-    assertTrue(!!shareButton);
-    assertTrue(isVisible(shareButton));
-    assertEquals(shareButton.textContent!.trim(), card.i18n('share'));
+    assertTrue(isVisible(card.$.shareButton));
+    assertEquals(card.$.shareButton.textContent!.trim(), card.i18n('share'));
 
     assertFalse(!!card.shadowRoot!.querySelector('share-password-flow'));
 
     // Share flow should become available after the button click.
-    shareButton.click();
+    card.$.shareButton.click();
     await passwordManager.whenCalled('fetchFamilyMembers');
     await flushTasks();
 
@@ -374,19 +390,48 @@ suite('PasswordDetailsCardTest', function() {
     assertTrue(!!shareFlow);
   });
 
-  test('sharing unavailable without enableSendPasswords', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: false});
-
+  test('share button available for account store users', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
-      isSyncingPasswords: true,
+      isSyncingPasswords: false,
     };
+
+    passwordManager.data.isAccountStorageEnabled = true;
 
     const card = await createCardElement();
 
-    const shareButton =
-        card.shadowRoot!.querySelector<HTMLElement>('#shareButton');
-    assertFalse(!!shareButton);
+    assertFalse(card.$.shareButton.hidden);
+    assertTrue(isVisible(card.$.shareButton));
+    assertFalse(card.$.shareButton.disabled);
+    assertEquals(card.$.shareButton.textContent!.trim(), card.i18n('share'));
+  });
+
+  test('sharing disabled by policy', async function() {
+    syncProxy.syncInfo = {
+      isSyncingPasswords: true,
+    };
+
+    const card = document.createElement('password-details-card');
+    card.password = createPasswordEntry();
+    card.prefs = makePasswordManagerPrefs();
+    card.prefs.password_manager.password_sharing_enabled.value = false;
+    card.prefs.password_manager.password_sharing_enabled.enforcement =
+        chrome.settingsPrivate.Enforcement.ENFORCED;
+    document.body.appendChild(card);
+    await flushTasks();
+
+    assertTrue(isVisible(card.$.shareButton));
+    assertTrue(card.$.shareButton.disabled);
+  });
+
+  test('sharing unavailable for federated credentials', async function() {
+    syncProxy.syncInfo = {
+      isSyncingPasswords: true,
+    };
+
+    const card =
+        await createCardElement(createPasswordEntry({federationText: 'text'}));
+
+    assertFalse(isVisible(card.$.shareButton));
 
     const sharePasswordFlow =
         card.shadowRoot!.querySelector('share-password-flow');
@@ -394,21 +439,60 @@ suite('PasswordDetailsCardTest', function() {
   });
 
   test('share button unavailable when sync disabled', async function() {
-    loadTimeData.overrideValues({enableSendPasswords: true});
-
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: false,
     };
 
     const card = await createCardElement();
 
-    const shareButton =
-        card.shadowRoot!.querySelector<HTMLElement>('#shareButton');
-    assertFalse(!!shareButton);
+    assertFalse(isVisible(card.$.shareButton));
 
     const sharePasswordFlow =
         card.shadowRoot!.querySelector('share-password-flow');
     assertFalse(!!sharePasswordFlow);
+  });
+  // </if>
+
+  test(
+      'clicking save password in account opens move password dialog',
+      async function() {
+        passwordManager.data.isAccountStorageEnabled = true;
+        syncProxy.syncInfo = {
+          isSyncingPasswords: false,
+        };
+
+        const card = await createCardElement();
+        card.isUsingAccountStore = true;
+        await flushTasks();
+
+        const movePasswordLabel = card.shadowRoot!.querySelector<HTMLElement>(
+            '.move-password-container div');
+        assertTrue(!!movePasswordLabel);
+        assertTrue(isVisible(movePasswordLabel));
+
+        movePasswordLabel.click();
+        await flushTasks();
+
+        const moveDialog =
+            card.shadowRoot!.querySelector('move-single-password-dialog');
+        assertTrue(!!moveDialog);
+        const dialog = moveDialog.shadowRoot!.querySelector('#dialog');
+        assertTrue(!!dialog);
+      });
+
+  test('Password value is hidden if object was changed', async function() {
+    const password1 = createPasswordEntry(
+        {id: 1, url: 'test.com', username: 'vik', password: 'password69'});
+    password1.affiliatedDomains = [createAffiliatedDomain('test.com')];
+
+    const password2 = createPasswordEntry(
+        {id: 1, url: 'test.com', username: 'viktor', password: 'password69'});
+    password2.affiliatedDomains = [createAffiliatedDomain('test.com')];
+
+    const card = await createCardElement(password1);
+    card.isPasswordVisible = true;
+
+    card.password = password2;
+    assertFalse(card.isPasswordVisible);
   });
 });

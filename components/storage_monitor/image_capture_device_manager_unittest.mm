@@ -4,12 +4,13 @@
 
 #import <Foundation/Foundation.h>
 #import <ImageCaptureCore/ImageCaptureCore.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/mac/foundation_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/storage_monitor/image_capture_device.h"
@@ -18,10 +19,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -95,7 +92,7 @@ const char kTestFileContents[] = "test";
         didDownloadSelector:(SEL)selector
                 contextInfo:(void*)contextInfo {
   base::FilePath saveDir =
-      base::mac::NSURLToFilePath(options[ICDownloadsDirectoryURL]);
+      base::apple::NSURLToFilePath(options[ICDownloadsDirectoryURL]);
   std::string saveAsFilename =
       base::SysNSStringToUTF8(options[ICSaveAsFilename]);
   // It appears that the ImageCapture library adds an extension to the requested
@@ -180,7 +177,7 @@ const char kTestFileContents[] = "test";
 }
 
 - (NSString*)UTI {
-  return base::apple::CFToNSPtrCast(kUTTypeImage);
+  return UTTypeImage.identifier;
 }
 
 - (NSDate*)modificationDate {
@@ -199,9 +196,7 @@ const char kTestFileContents[] = "test";
 
 namespace storage_monitor {
 
-class TestCameraListener
-    : public ImageCaptureDeviceListener,
-      public base::SupportsWeakPtr<TestCameraListener> {
+class TestCameraListener final : public ImageCaptureDeviceListener {
  public:
   TestCameraListener() = default;
   ~TestCameraListener() override = default;
@@ -229,12 +224,17 @@ class TestCameraListener
   bool removed() const { return removed_; }
   base::File::Error last_error() const { return last_error_; }
 
+  base::WeakPtr<ImageCaptureDeviceListener> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   std::vector<std::string> items_;
   std::vector<std::string> downloads_;
   bool completed_ = false;
   bool removed_ = false;
   base::File::Error last_error_ = base::File::FILE_ERROR_INVALID_URL;
+  base::WeakPtrFactory<ImageCaptureDeviceListener> weak_ptr_factory_{this};
 };
 
 class ImageCaptureDeviceManagerTest : public testing::Test {

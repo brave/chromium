@@ -6,9 +6,11 @@
 
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "net/base/net_errors.h"
 #include "services/network/cors/cors_url_loader_test_util.h"
 #include "services/network/public/cpp/cors/cors_error_status.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/cors.mojom.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -28,15 +30,6 @@ using ::testing::IsEmpty;
 using ::testing::IsSupersetOf;
 using ::testing::Optional;
 using ::testing::Pair;
-
-constexpr char kPreflightErrorHistogramName[] = "Net.Cors.PreflightCheckError2";
-constexpr char kPreflightWarningHistogramName[] =
-    "Net.Cors.PreflightCheckWarning";
-
-base::Bucket MakeBucket(mojom::CorsError error,
-                        base::HistogramBase::Count count) {
-  return base::Bucket(static_cast<base::HistogramBase::Sample>(error), count);
-}
 
 std::vector<std::pair<std::string, std::string>> MakeHeaderPairs(
     const net::HttpRequestHeaders& headers) {
@@ -247,7 +240,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, MissingResponseHeaderSimple) {
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -282,7 +276,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, MissingResponseHeaderPreflight) {
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -317,7 +312,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, InvalidResponseHeaderSimple) {
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -354,7 +350,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, InvalidResponseHeaderPreflight) {
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -768,14 +765,14 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, CachesPreflightResult) {
   RunUntilComplete();
 
   // Send the same request again. This time the initial connection observes a
-  // private network access to a different IP address space: `kLocal`.
+  // private network access to a different IP address space: `kLoopback`.
   // A preflight request should be sent with its `target_ip_address_space` set
-  // to `kLocal`.  CreateLoaderAndStart(request);
+  // to `kLoopback`.  CreateLoaderAndStart(request);
   CreateLoaderAndStart(request);
   RunUntilCreateLoaderAndStartCalled();
   NotifyLoaderClientOnComplete(CorsErrorStatus(
       mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-      mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal));
+      mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback));
 
   RunUntilCreateLoaderAndStartCalled();
 
@@ -844,7 +841,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, DoesNotShareCache) {
 // Network Access. The `*PolicyWarnPreflight*` variants test what happens when
 // a preflight was attempted before noticing the private network access.
 //
-// TODO(https://crbug.com/1268378): Remove these tests once the policy is never
+// TODO(crbug.com/40204695): Remove these tests once the policy is never
 // set to `kPreflightWarn` anymore.
 
 // This test verifies that when:
@@ -878,6 +875,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSimpleNetError) {
                   .Build())
           .WithDevToolsObserver(devtools_observer.Bind())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -902,90 +900,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSimpleNetError) {
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(mojom::CorsError::kInvalidResponse, 1)));
-
-  devtools_observer.WaitUntilCorsError();
-
-  const MockDevToolsObserver::OnCorsErrorParams& error_params =
-      *devtools_observer.cors_error_params();
-  EXPECT_EQ(error_params.status,
-            CorsErrorStatus(mojom::CorsError::kInvalidResponse,
-                            mojom::IPAddressSpace::kPrivate,
-                            mojom::IPAddressSpace::kPrivate));
-  EXPECT_TRUE(error_params.is_warning);
-  ASSERT_TRUE(error_params.client_security_state);
-  EXPECT_TRUE(error_params.client_security_state->is_web_secure_context);
-  EXPECT_EQ(error_params.client_security_state->private_network_request_policy,
-            mojom::PrivateNetworkRequestPolicy::kPreflightWarn);
-  EXPECT_EQ(error_params.client_security_state->ip_address_space,
-            mojom::IPAddressSpace::kPublic);
-}
-
-// This test verifies that when:
-//
-//  - the private network request policy is set to `kPreflightWarn`
-//  - a simple request detects a private network request
-//  - the following PNA preflight response takes forever to arrive
-//
-// ... a short timeout is applied, the error ignored and the request proceeds.
-TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSimpleTimeout) {
-  auto initiator_origin = url::Origin::Create(GURL("https://example.com"));
-
-  ResetFactoryParams factory_params;
-  factory_params.is_trusted = true;
-  ResetFactory(initiator_origin, kRendererProcessId, factory_params);
-
-  MockDevToolsObserver devtools_observer;
-  ResourceRequest request;
-  request.method = "GET";
-  request.mode = mojom::RequestMode::kCors;
-  request.url = GURL("https://example.com/");
-  request.request_initiator = initiator_origin;
-  request.trusted_params =
-      RequestTrustedParamsBuilder()
-          .WithClientSecurityState(
-              ClientSecurityStateBuilder()
-                  .WithPrivateNetworkRequestPolicy(
-                      mojom::PrivateNetworkRequestPolicy::kPreflightWarn)
-                  .WithIsSecureContext(true)
-                  .WithIPAddressSpace(mojom::IPAddressSpace::kPublic)
-                  .Build())
-          .WithDevToolsObserver(devtools_observer.Bind())
-          .Build();
-
-  base::HistogramTester histogram_tester;
-
-  CreateLoaderAndStart(request);
-  RunUntilCreateLoaderAndStartCalled();
-  NotifyLoaderClientOnComplete(CorsErrorStatus(
-      mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-      mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kPrivate));
-
-  RunUntilCreateLoaderAndStartCalled();
-  // Here we intentionally wait for PreflightLoader to be timed out instead
-  // of calling OnComplete.
-
-  RunUntilCreateLoaderAndStartCalled();
-  NotifyLoaderClientOnReceiveResponse();
-  NotifyLoaderClientOnComplete(net::OK);
-  RunUntilComplete();
-
-  EXPECT_EQ(client().response_head()->private_network_access_preflight_result,
-            mojom::PrivateNetworkAccessPreflightResult::kWarning);
-
-  EXPECT_EQ(client().completion_status().error_code, net::OK);
-  EXPECT_EQ(
-      client().completion_status().private_network_access_preflight_result,
-      mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(mojom::CorsError::kInvalidResponse, 1)));
 
   devtools_observer.WaitUntilCorsError();
 
@@ -1075,9 +989,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnPreflightNoTimeout) {
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 }
 
 // This test verifies that when:
@@ -1109,6 +1020,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockPreflightNoTimeout) {
                   .WithIPAddressSpace(mojom::IPAddressSpace::kPublic)
                   .Build())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -1149,9 +1061,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockPreflightNoTimeout) {
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 }
 
 // This test verifies that when:
@@ -1202,12 +1111,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSimpleCorsError) {
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowOriginHeader, 1)));
 }
 
 // This test verifies that when:
@@ -1263,12 +1166,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowPrivateNetwork, 1)));
 }
 
 // This test verifies that when:
@@ -1325,12 +1222,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightInvalidAllowPrivateNetwork, 1)));
 }
 
 // This test verifies that when:
@@ -1370,19 +1261,11 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnPreflightNetError) {
   NotifyLoaderClientOnComplete(net::ERR_INVALID_ARGUMENT);
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_INVALID_ARGUMENT);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
-
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-      ElementsAre(
-          MakeBucket(mojom::CorsError::kInvalidResponse, 1),
-          // TODO(https://crbug.com/1290390): This should not be logged.
-          MakeBucket(mojom::CorsError::kUnexpectedPrivateNetworkAccess, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 }
 
 // This test verifies that when:
@@ -1417,6 +1300,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnPreflightCorsError) {
                   .Build())
           .WithDevToolsObserver(devtools_observer.Bind())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -1430,7 +1314,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnPreflightCorsError) {
   NotifyLoaderClientOnReceiveResponse();
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -1440,16 +1325,9 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnPreflightCorsError) {
                   network::mojom::IPAddressSpace::kPrivate,
                   network::mojom::IPAddressSpace::kUnknown)));
 
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-      ElementsAre(
-          MakeBucket(mojom::CorsError::kPreflightMissingAllowOriginHeader, 1),
-          // TODO(https://crbug.com/1290390): This should not be logged.
-          MakeBucket(mojom::CorsError::kUnexpectedPrivateNetworkAccess, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
   const network::URLLoaderCompletionStatus& preflight_status =
       *devtools_observer.preflight_status();
+
   EXPECT_EQ(preflight_status.cors_error_status,
             CorsErrorStatus(mojom::CorsError::kUnexpectedPrivateNetworkAccess,
                             mojom::IPAddressSpace::kUnknown,
@@ -1537,12 +1415,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowPrivateNetwork, 1)));
 
   devtools_observer.WaitUntilCorsError();
 
@@ -1635,15 +1507,10 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSameOriginNetError) {
             mojom::PrivateNetworkAccessPreflightResult::kWarning);
 
   EXPECT_EQ(client().completion_status().error_code, net::OK);
-  EXPECT_EQ(client().completion_status().cors_error_status, absl::nullopt);
+  EXPECT_EQ(client().completion_status().cors_error_status, std::nullopt);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(mojom::CorsError::kInvalidResponse, 1)));
 
   devtools_observer.WaitUntilCorsError();
 
@@ -1704,16 +1571,10 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyWarnSameOriginCorsError) {
             mojom::PrivateNetworkAccessPreflightResult::kWarning);
 
   EXPECT_EQ(client().completion_status().error_code, net::OK);
-  EXPECT_EQ(client().completion_status().cors_error_status, absl::nullopt);
+  EXPECT_EQ(client().completion_status().cors_error_status, std::nullopt);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowOriginHeader, 1)));
 
   devtools_observer.WaitUntilCorsError();
 
@@ -1784,12 +1645,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kNone);
 
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              IsEmpty());
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowPrivateNetwork, 1)));
-
   devtools_observer.WaitUntilCorsError();
 
   CorsErrorStatus expected_status(
@@ -1850,15 +1705,11 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockNetError) {
   NotifyLoaderClientOnComplete(net::ERR_INVALID_ARGUMENT);
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_INVALID_ARGUMENT);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              ElementsAre(MakeBucket(mojom::CorsError::kInvalidResponse, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 }
 
 // This test verifies that when:
@@ -1893,6 +1744,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockCorsError) {
                   .Build())
           .WithDevToolsObserver(devtools_observer.Bind())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -1906,7 +1758,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockCorsError) {
   NotifyLoaderClientOnReceiveResponse();
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_THAT(client().completion_status().cors_error_status,
               Optional(CorsErrorStatus(
                   mojom::CorsError::kPreflightMissingAllowOriginHeader,
@@ -1915,12 +1768,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyBlockCorsError) {
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowOriginHeader, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 
   devtools_observer.WaitUntilCorsError();
 
@@ -1973,6 +1820,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
                   .Build())
           .WithDevToolsObserver(devtools_observer.Bind())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -1990,7 +1838,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -2000,12 +1849,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   expected_status.target_address_space = mojom::IPAddressSpace::kPrivate;
   EXPECT_THAT(client().completion_status().cors_error_status,
               Optional(expected_status));
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightMissingAllowPrivateNetwork, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 
   devtools_observer.WaitUntilCorsError();
 
@@ -2054,6 +1897,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
                   .Build())
           .WithDevToolsObserver(devtools_observer.Bind())
           .Build();
+  request.devtools_request_id = "devtools";
 
   base::HistogramTester histogram_tester;
 
@@ -2072,7 +1916,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   });
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_FAILED);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
   EXPECT_EQ(
       client().completion_status().private_network_access_preflight_result,
       mojom::PrivateNetworkAccessPreflightResult::kError);
@@ -2082,12 +1927,6 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
   expected_status.target_address_space = mojom::IPAddressSpace::kPrivate;
   EXPECT_THAT(client().completion_status().cors_error_status,
               Optional(expected_status));
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightErrorHistogramName),
-              ElementsAre(MakeBucket(
-                  mojom::CorsError::kPreflightInvalidAllowPrivateNetwork, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(kPreflightWarningHistogramName),
-              IsEmpty());
 
   devtools_observer.WaitUntilCorsError();
 
@@ -2141,7 +1980,8 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnRequestOnly) {
   NotifyLoaderClientOnComplete(net::ERR_INVALID_ARGUMENT);
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_INVALID_ARGUMENT);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
 }
 
 // This test verifies that when the loader factory params carry a client
@@ -2177,16 +2017,17 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnFactoryOnly) {
   NotifyLoaderClientOnComplete(net::ERR_INVALID_ARGUMENT);
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_INVALID_ARGUMENT);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
 }
 
 // This test verifies that when both the `ResourceRequest`  and the loader
 // factory params carry a client security state, the private network request
-// policy is taken from the factory.
+// policy is taken from the `ResourceRequest`.
 //
-// This is achieved by setting the factory policy to `kPreflightBlock`,
-// the request policy to `kPreflightWarn, and checking that preflight results
-// are respected.
+// This is achieved by setting the factory policy to `kPreflightWarn`,
+// the request policy to `kPreflightBlock`, and checking that the latter takes
+// precedence.
 TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnFactoryAndRequest) {
   auto initiator_origin = url::Origin::Create(GURL("https://example.com"));
 
@@ -2195,7 +2036,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnFactoryAndRequest) {
   factory_params.client_security_state =
       ClientSecurityStateBuilder()
           .WithPrivateNetworkRequestPolicy(
-              mojom::PrivateNetworkRequestPolicy::kPreflightBlock)
+              mojom::PrivateNetworkRequestPolicy::kPreflightWarn)
           .Build();
   ResetFactory(initiator_origin, kRendererProcessId, factory_params);
 
@@ -2207,7 +2048,7 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnFactoryAndRequest) {
   request.trusted_params =
       RequestTrustedParamsBuilder()
           .WithPrivateNetworkRequestPolicy(
-              mojom::PrivateNetworkRequestPolicy::kPreflightWarn)
+              mojom::PrivateNetworkRequestPolicy::kPreflightBlock)
           .Build();
 
   CreateLoaderAndStart(request);
@@ -2220,7 +2061,46 @@ TEST_F(CorsURLLoaderPrivateNetworkAccessTest, PolicyOnFactoryAndRequest) {
   NotifyLoaderClientOnComplete(net::ERR_INVALID_ARGUMENT);
   RunUntilComplete();
 
-  EXPECT_EQ(client().completion_status().error_code, net::ERR_INVALID_ARGUMENT);
+  EXPECT_EQ(client().completion_status().error_code,
+            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS);
+}
+
+TEST_F(CorsURLLoaderPrivateNetworkAccessTest,
+       NoPermissionPromptForNonPnaPreflights) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kPrivateNetworkAccessPermissionPrompt);
+
+  auto initiator = url::Origin::Create(GURL("https://foo.example"));
+  ResetFactoryParams factory_params;
+  factory_params.is_trusted = true;
+  factory_params.client_security_state = mojom::ClientSecurityState::New();
+  factory_params.client_security_state->is_web_secure_context = true;
+  factory_params.url_loader_network_observer =
+      TestURLLoaderNetworkObserver().Bind();
+  ResetFactory(initiator, kRendererProcessId, factory_params);
+
+  ResourceRequest request;
+  request.mode = mojom::RequestMode::kCorsWithForcedPreflight;
+  request.required_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kUnknown;
+  request.url = GURL("http://example.com/");
+  request.request_initiator = initiator;
+  request.trusted_params =
+      RequestTrustedParamsBuilder()
+          .WithClientSecurityState(
+              ClientSecurityStateBuilder()
+                  .WithPrivateNetworkRequestPolicy(
+                      mojom::PrivateNetworkRequestPolicy::kPreflightBlock)
+                  .WithIsSecureContext(false)
+                  .WithIPAddressSpace(mojom::IPAddressSpace::kUnknown)
+                  .Build())
+          .Build();
+
+  CreateLoaderAndStart(request);
+  RunUntilCreateLoaderAndStartCalled();
+
+  EXPECT_EQ(client().completion_status().error_code, net::OK);
 }
 
 }  // namespace

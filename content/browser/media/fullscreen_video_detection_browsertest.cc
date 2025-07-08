@@ -11,6 +11,7 @@
 #include "content/browser/media/media_web_contents_observer.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
@@ -250,7 +251,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenDetectionTest, DetachAttachDuringFullscreen) {
 
 // The test changes visibility of the <video> and observes
 // how it gets and loses effectively-fullscreen status.
-// TODO(crbug.com/1352246): Re-enable this test
+// TODO(crbug.com/40857652): Re-enable this test
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID)
 #define MAYBE_HideVideoTag DISABLED_HideVideoTag
 #else

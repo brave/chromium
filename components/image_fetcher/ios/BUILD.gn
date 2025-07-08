@@ -12,10 +12,8 @@ source_set("ios") {
   deps = [
     "//base",
     "//components/image_fetcher/core",
-    "//ios/web",
+    "//ios/web/public/thread",
     "//net",
-    "//third_party/libwebp:libwebp_dec",
-    "//third_party/libwebp:libwebp_webp",
     "//ui/gfx",
   ]
 }

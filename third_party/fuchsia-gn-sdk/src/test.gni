@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("component.gni")
-import("config/config.gni")
+import("gn_configs.gni")
 import("package.gni")
 
 # Define a test executable (and a package and component to hold it).
@@ -14,7 +14,7 @@ import("package.gni")
 #   deps
 #     Optional: Dependencies for this component. These dependencies are external
 #       to the component, such as other components that are used via FIDL. The deps
-#       are added to the executable as well as a the component.
+#       are added to the executable as well as the component.
 #
 #   data_deps
 #     Required: Dependencies examined for metadata. These dependencies define

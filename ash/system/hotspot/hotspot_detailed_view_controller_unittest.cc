@@ -4,7 +4,6 @@
 
 #include "ash/system/hotspot/hotspot_detailed_view_controller.h"
 
-#include "ash/constants/ash_features.h"
 #include "ash/style/switch.h"
 #include "ash/system/hotspot/hotspot_detailed_view.h"
 #include "ash/system/tray/hover_highlight_view.h"
@@ -12,8 +11,8 @@
 #include "ash/system/unified/unified_system_tray_bubble.h"
 #include "ash/system/unified/unified_system_tray_controller.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_helper.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_feature_list.h"
 #include "chromeos/ash/services/hotspot_config/public/cpp/cros_hotspot_config_test_helper.h"
 #include "chromeos/ash/services/hotspot_config/public/mojom/cros_hotspot_config.mojom.h"
 #include "ui/views/view.h"
@@ -32,11 +31,6 @@ class HotspotDetailedViewControllerTest : public AshTestBase {
   ~HotspotDetailedViewControllerTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kHotspot, features::kQsRevamp}, {});
-    cros_hotspot_config_test_helper_ =
-        std::make_unique<hotspot_config::CrosHotspotConfigTestHelper>(
-            /*use_fake_implementation=*/true);
     AshTestBase::SetUp();
 
     GetPrimaryUnifiedSystemTray()->ShowBubble();
@@ -55,11 +49,6 @@ class HotspotDetailedViewControllerTest : public AshTestBase {
     base::RunLoop().RunUntilIdle();
   }
 
-  void TearDown() override {
-    AshTestBase::TearDown();
-    cros_hotspot_config_test_helper_.reset();
-  }
-
   void UpdateHotspotInfo(HotspotState state,
                          HotspotAllowStatus allow_status,
                          int client_count = 0,
@@ -69,7 +58,7 @@ class HotspotDetailedViewControllerTest : public AshTestBase {
     hotspot_info->allow_status = allow_status;
     hotspot_info->client_count = client_count;
     hotspot_info->config = std::move(config);
-    cros_hotspot_config_test_helper_->SetFakeHotspotInfo(
+    ash_test_helper()->cros_hotspot_config_test_helper()->SetFakeHotspotInfo(
         std::move(hotspot_info));
     // Spin the runloop to observe the hotspot info change.
     base::RunLoop().RunUntilIdle();
@@ -102,11 +91,8 @@ class HotspotDetailedViewControllerTest : public AshTestBase {
   }
 
  protected:
-  base::test::ScopedFeatureList scoped_feature_list_;
-  raw_ptr<HotspotDetailedViewController, ExperimentalAsh>
+  raw_ptr<HotspotDetailedViewController, DanglingUntriaged>
       hotspot_detailed_view_controller_;
-  std::unique_ptr<hotspot_config::CrosHotspotConfigTestHelper>
-      cros_hotspot_config_test_helper_;
 };
 
 TEST_F(HotspotDetailedViewControllerTest, ToggleClicked) {
@@ -142,7 +128,7 @@ TEST_F(HotspotDetailedViewControllerTest, NotifiesWhenHotspotInfoChanges) {
 
   UpdateHotspotInfo(HotspotState::kEnabled, HotspotAllowStatus::kAllowed);
   EXPECT_TRUE(toggle->GetIsOn());
-  AssertSubtextLabel(u"On, no devices connected");
+  AssertSubtextLabel(u"No devices connected");
 
   UpdateHotspotInfo(HotspotState::kEnabled, HotspotAllowStatus::kAllowed,
                     /*client_count=*/1);

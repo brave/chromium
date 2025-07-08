@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 
 #include <memory>
@@ -19,8 +24,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
@@ -42,7 +46,6 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/download/public/common/download_item.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
@@ -56,6 +59,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/http/http_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/network/public/cpp/features.h"
@@ -63,39 +67,35 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_init_params.h"
+#include "components/user_manager/user_manager_pref_names.h"
 #endif
 
 namespace {
 
-enum {
-  DUMMY_ACCOUNT_INDEX = 0,
-  PRIMARY_ACCOUNT_INDEX = 1,
-  SECONDARY_ACCOUNT_INDEX_START = 2,
-};
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Structure to describe an account info.
 struct TestAccountInfo {
   const char* const email;
-  const char* const gaia_id;
+  const GaiaId::Literal gaia_id;
   const char* const hash;
   const char* const display_name;
 };
 
 // Accounts for multi profile test.
 static const TestAccountInfo kTestAccounts[] = {
-    {"__dummy__@invalid.domain", "10000", "hashdummy", "Dummy Account"},
-    {"alice@invalid.domain", "10001", "hashalice", "Alice"},
-    {"bob@invalid.domain", "10002", "hashbobbo", "Bob"},
-    {"charlie@invalid.domain", "10003", "hashcharl", "Charlie"},
+    {"__dummy__@invalid.domain", GaiaId::Literal("10000"), "hashdummy",
+     "Dummy Account"},
+    {"alice@invalid.domain", GaiaId::Literal("10001"), "hashalice", "Alice"},
+    {"bob@invalid.domain", GaiaId::Literal("10002"), "hashbobbo", "Bob"},
+    {"charlie@invalid.domain", GaiaId::Literal("10003"), "hashcharl",
+     "Charlie"},
 };
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class TestChromeDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
  public:
@@ -245,14 +245,14 @@ class SlowDownloadInterceptor {
         mojo::CreateDataPipe(data.size(), producer_handle, consumer_handle),
         MOJO_RESULT_OK);
 
-    uint32_t write_size = data.size();
-    MojoResult result = producer_handle->WriteData(data.c_str(), &write_size,
-                                                   MOJO_WRITE_DATA_FLAG_NONE);
+    size_t bytes_written = 0;
+    MojoResult result = producer_handle->WriteData(
+        base::as_byte_span(data), MOJO_WRITE_DATA_FLAG_NONE, bytes_written);
     ASSERT_EQ(MOJO_RESULT_OK, result);
-    ASSERT_EQ(data.size(), write_size);
+    ASSERT_EQ(data.size(), bytes_written);
     ASSERT_TRUE(consumer_handle.is_valid());
-    params->client->OnReceiveResponse(
-        std::move(head), std::move(consumer_handle), absl::nullopt);
+    params->client->OnReceiveResponse(std::move(head),
+                                      std::move(consumer_handle), std::nullopt);
   }
 
   const std::map<std::string, Handler> handlers_;
@@ -263,18 +263,18 @@ class SlowDownloadInterceptor {
 };
 
 const char SlowDownloadInterceptor::kUnknownSizeUrl[] =
-    "http://url.handled.by.slow.download/download-unknown-size";
+    "https://url.handled.by.slow.download/download-unknown-size";
 const char SlowDownloadInterceptor::kKnownSizeUrl[] =
-    "http://url.handled.by.slow.download/download-known-size";
+    "https://url.handled.by.slow.download/download-known-size";
 const char SlowDownloadInterceptor::kFinishDownloadUrl[] =
-    "http://url.handled.by.slow.download/download-finish";
+    "https://url.handled.by.slow.download/download-finish";
 const char SlowDownloadInterceptor::kErrorDownloadUrl[] =
-    "http://url.handled.by.slow.download/download-error";
+    "https://url.handled.by.slow.download/download-error";
 
 // Utility method to retrieve a notification object by id. Warning: this will
 // check the last display service that was created. If there's a normal and an
 // incognito one, you may want to be explicit.
-absl::optional<message_center::Notification> GetNotification(
+std::optional<message_center::Notification> GetNotification(
     const std::string& id) {
   return NotificationDisplayServiceTester::Get()->GetNotification(id);
 }
@@ -294,10 +294,7 @@ void WaitForDownloadNotificationForDisplayService(
 // Base class for tests of download notifications.
 class DownloadNotificationTestBase : public InProcessBrowserTest {
  public:
-  DownloadNotificationTestBase() {
-    scoped_feature_list_.InitWithFeatures(
-        {}, {safe_browsing::kDownloadBubble, safe_browsing::kDownloadBubbleV2});
-  }
+  DownloadNotificationTestBase() = default;
 
   void SetUpOnMainThread() override {
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -332,8 +329,6 @@ class DownloadNotificationTestBase : public InProcessBrowserTest {
   std::unique_ptr<NotificationDisplayServiceTester> display_service_;
   std::unique_ptr<NotificationDisplayServiceTester> incognito_display_service_;
   std::unique_ptr<SlowDownloadInterceptor> interceptor_;
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 //////////////////////////////////////////////////
@@ -420,10 +415,10 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
     download_in_progress_observer.WaitForFinished();
 
     // Confirms that a download is started.
-    std::vector<download::DownloadItem*> downloads;
+    std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
     GetDownloadManager(browser)->GetAllDownloads(&downloads);
     EXPECT_EQ(1u, downloads.size());
-    download_item_ = downloads[0];
+    download_item_ = downloads[0].get();
     ASSERT_TRUE(download_item_);
 
     // Confirms that a notification is created.
@@ -453,7 +448,7 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
   }
 
   void VerifyDownloadState(download::DownloadItem::DownloadState state) {
-    std::vector<download::DownloadItem*> downloads;
+    std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
     GetDownloadManager(browser())->GetAllDownloads(&downloads);
     ASSERT_EQ(1u, downloads.size());
     EXPECT_EQ(state, downloads[0]->GetState());
@@ -479,7 +474,7 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
 
   download::DownloadItem* download_item() const { return download_item_; }
   std::string notification_id() const { return notification_id_; }
-  absl::optional<message_center::Notification> notification() const {
+  std::optional<message_center::Notification> notification() const {
     return GetNotification(notification_id_);
   }
   Browser* incognito_browser() const { return incognito_browser_; }
@@ -527,8 +522,8 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadFile) {
   // Try to open the downloaded item by clicking the notification.
   EXPECT_FALSE(GetDownloadManagerDelegate()->opened());
   display_service_->SimulateClick(NotificationHandler::Type::TRANSIENT,
-                                  notification_id(), absl::nullopt,
-                                  absl::nullopt);
+                                  notification_id(), std::nullopt,
+                                  std::nullopt);
   EXPECT_TRUE(GetDownloadManagerDelegate()->opened());
 
   EXPECT_FALSE(GetNotification(notification_id()));
@@ -556,7 +551,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   // Clicks the "keep" button.
   display_service_->SimulateClick(NotificationHandler::Type::TRANSIENT,
                                   notification_id(), 1,  // 2nd button: "Keep"
-                                  absl::nullopt);
+                                  std::nullopt);
 
   // The notification is closed and re-shown.
   EXPECT_TRUE(notification());
@@ -603,7 +598,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   display_service_->SimulateClick(NotificationHandler::Type::TRANSIENT,
                                   notification_id(),
                                   0,  // 1st button: "Discard"
-                                  absl::nullopt);
+                                  std::nullopt);
 
   EXPECT_FALSE(notification());
 
@@ -613,7 +608,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   // Checks there is neither any download nor any notification.
   EXPECT_FALSE(notification());
   EXPECT_EQ(0u, GetDownloadNotifications().size());
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   EXPECT_EQ(0u, downloads.size());
 
@@ -691,7 +686,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   CloseNotification();
 
   // Confirms that a download is still in progress.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   content::DownloadManager* download_manager = GetDownloadManager(browser());
   download_manager->GetAllDownloads(&downloads);
   EXPECT_EQ(1u, downloads.size());
@@ -718,7 +713,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadRemoved) {
   EXPECT_FALSE(notification());
 
   // Confirms that the download item is removed.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   EXPECT_EQ(0u, downloads.size());
 }
@@ -739,7 +734,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   EXPECT_FALSE(notification_id1.empty());
 
   // Confirms that there is a download.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   ASSERT_EQ(1u, downloads.size());
   download::DownloadItem* download1 = downloads[0];
@@ -754,12 +749,13 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   ASSERT_EQ(2u, downloads.size());
   download::DownloadItem* download2;
-  if (download1 == downloads[0])
+  if (download1 == downloads[0]) {
     download2 = downloads[1];
-  else if (download1 == downloads[1])
+  } else if (download1 == downloads[1]) {
     download2 = downloads[0];
-  else
+  } else {
     NOTREACHED();
+  }
   EXPECT_NE(download1, download2);
 
   notifications = GetDownloadNotifications();
@@ -848,7 +844,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   ASSERT_TRUE(GetNotification(second_notification_id));
 
   // Confirms that the second download is also started.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   EXPECT_EQ(2u, downloads.size());
   EXPECT_TRUE(first_download_item == downloads[0] ||
@@ -870,12 +866,12 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, CancelDownload) {
 
   // Cancels the notification by clicking the "cancel" button.
   display_service_->SimulateClick(NotificationHandler::Type::TRANSIENT,
-                                  notification_id(), 1, absl::nullopt);
+                                  notification_id(), 1, std::nullopt);
   EXPECT_FALSE(notification());
   EXPECT_EQ(0u, GetDownloadNotifications().size());
 
   // Confirms that the download is cancelled.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   ASSERT_EQ(1u, downloads.size());
   EXPECT_EQ(download::DownloadItem::CANCELLED, downloads[0]->GetState());
@@ -891,13 +887,13 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   EXPECT_EQ(0u, GetDownloadNotifications().size());
 
   // Confirms that the download is cancelled.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   EXPECT_EQ(1u, downloads.size());
   EXPECT_EQ(download::DownloadItem::CANCELLED, downloads[0]->GetState());
 }
 
-// TODO(crbug.com/938672): Reenable this.
+// TODO(crbug.com/41445173): Reenable this.
 IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
                        DISABLED_IncognitoDownloadFile) {
   PrepareIncognitoBrowser();
@@ -932,8 +928,8 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   EXPECT_TRUE(incognito_display_service_->GetNotification(notification_id()));
   EXPECT_FALSE(GetIncognitoDownloadManagerDelegate()->opened());
   incognito_display_service_->SimulateClick(
-      NotificationHandler::Type::TRANSIENT, notification_id(), absl::nullopt,
-      absl::nullopt);
+      NotificationHandler::Type::TRANSIENT, notification_id(), std::nullopt,
+      std::nullopt);
   EXPECT_TRUE(GetIncognitoDownloadManagerDelegate()->opened());
   EXPECT_FALSE(GetDownloadManagerDelegate()->opened());
 
@@ -941,7 +937,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   chrome::CloseWindow(incognito_browser());
 }
 
-// TODO(crbug.com/938672): Reenable this.
+// TODO(crbug.com/41445173): Reenable this.
 IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
                        DISABLED_SimultaneousIncognitoAndNormalDownloads) {
   PrepareIncognitoBrowser();
@@ -960,7 +956,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   EXPECT_FALSE(notification_id1.empty());
 
   // Confirms that there is a download.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser())->GetAllDownloads(&downloads);
   EXPECT_EQ(0u, downloads.size());
   downloads.clear();
@@ -1022,9 +1018,8 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   chrome::CloseWindow(incognito_browser());
 }
 
-// These tests have ash dependency so they are only available for ash.
-// TODO(crbug.com/1266950): Enable these tests for Lacros.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+// These tests depend on ChromeOS.
+#if BUILDFLAG(IS_CHROMEOS)
 
 //////////////////////////////////////////////////
 // Test with multi profiles
@@ -1047,9 +1042,9 @@ class MultiProfileDownloadNotificationTest
 
     // Logs in to a dummy profile.
     command_line->AppendSwitchASCII(ash::switches::kLoginUser,
-                                    kTestAccounts[DUMMY_ACCOUNT_INDEX].email);
+                                    kTestAccounts[0].email);
     command_line->AppendSwitchASCII(ash::switches::kLoginProfile,
-                                    kTestAccounts[DUMMY_ACCOUNT_INDEX].hash);
+                                    kTestAccounts[0].hash);
     // Don't require policy for our sessions - this is required because
     // this test creates a secondary profile synchronously, so we need to
     // let the policy code know not to expect cached policy.
@@ -1057,24 +1052,24 @@ class MultiProfileDownloadNotificationTest
                                     "false");
   }
 
-  // Logs in to the primary profile.
-  void SetUpOnMainThread() override {
-    const TestAccountInfo& info = kTestAccounts[PRIMARY_ACCOUNT_INDEX];
+  void SetUpLocalStatePrefService(PrefService* local_state) override {
+    InProcessBrowserTest::SetUpLocalStatePrefService(local_state);
 
-    AddUser(info, true);
-    DownloadNotificationTestBase::SetUpOnMainThread();
+    // Register a persisted user.
+    ScopedListPrefUpdate prefs_user_update(
+        local_state, user_manager::prefs::kRegularUsersPref);
+    for (const auto& test_account : kTestAccounts) {
+      prefs_user_update->Append(test_account.email);
+    }
   }
 
-  // Loads all users to the current session and sets up necessary fields.
-  // This is used for preparing all accounts in PRE_ test setup, and for testing
-  // actual login behavior.
-  void AddAllUsers() {
-    for (size_t i = 0; i < std::size(kTestAccounts); ++i) {
-      // The primary account was already set up in SetUpOnMainThread, so skip it
-      // here.
-      if (i == PRIMARY_ACCOUNT_INDEX)
-        continue;
-      AddUser(kTestAccounts[i], i >= SECONDARY_ACCOUNT_INDEX_START);
+  // Logs in to the primary profile.
+  void SetUpOnMainThread() override {
+    DownloadNotificationTestBase::SetUpOnMainThread();
+
+    // Add all users, except the first one, which is already logged in.
+    for (size_t i = 1; i < std::size(kTestAccounts); ++i) {
+      AddUser(kTestAccounts[i]);
     }
   }
 
@@ -1085,12 +1080,13 @@ class MultiProfileDownloadNotificationTest
   }
 
   // Adds a new user for testing to the current session.
-  void AddUser(const TestAccountInfo& info, bool log_in) {
-    if (log_in) {
-      session_manager::SessionManager::Get()->CreateSession(
-          AccountId::FromUserEmailGaiaId(info.email, info.gaia_id), info.hash,
-          false);
-    }
+  void AddUser(const TestAccountInfo& info) {
+    session_manager::SessionManager::Get()->CreateSession(
+        AccountId::FromUserEmailGaiaId(info.email, GaiaId(info.gaia_id)),
+        info.hash,
+        /*new_user=*/false,
+        /*has_active_session=*/false);
+
     user_manager::UserManager::Get()->SaveUserDisplayName(
         AccountId::FromUserEmailGaiaId(info.email, info.gaia_id),
         base::UTF8ToUTF16(info.display_name));
@@ -1110,14 +1106,7 @@ class MultiProfileDownloadNotificationTest
 };
 
 IN_PROC_BROWSER_TEST_F(MultiProfileDownloadNotificationTest,
-                       PRE_DownloadMultipleFiles) {
-  AddAllUsers();
-}
-
-IN_PROC_BROWSER_TEST_F(MultiProfileDownloadNotificationTest,
                        DownloadMultipleFiles) {
-  AddAllUsers();
-
   GURL url(SlowDownloadInterceptor::kUnknownSizeUrl);
 
   Profile* profile1 = GetProfileByIndex(1);
@@ -1137,7 +1126,7 @@ IN_PROC_BROWSER_TEST_F(MultiProfileDownloadNotificationTest,
   WaitForDownloadNotificationForDisplayService(display_service1_.get());
 
   // Confirms that the download is started.
-  std::vector<download::DownloadItem*> downloads;
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
   GetDownloadManager(browser1)->GetAllDownloads(&downloads);
   EXPECT_EQ(1u, downloads.size());
   download::DownloadItem* download1 = downloads[0];
@@ -1228,4 +1217,4 @@ IN_PROC_BROWSER_TEST_F(MultiProfileDownloadNotificationTest,
     EXPECT_EQ(message_center::NOTIFICATION_TYPE_SIMPLE, notification.type());
   }
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)

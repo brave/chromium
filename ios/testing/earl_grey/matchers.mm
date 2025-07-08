@@ -6,15 +6,18 @@
 
 #import "ios/testing/earl_grey/earl_grey_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace testing {
 
 id<GREYMatcher> ButtonWithAccessibilityLabel(NSString* label) {
   return grey_allOf(grey_accessibilityLabel(label),
                     grey_accessibilityTrait(UIAccessibilityTraitButton), nil);
+}
+
+id<GREYMatcher> AlertItemWithAccessibilityLabel(NSString* label) {
+  return grey_allOf(ButtonWithAccessibilityLabel(label),
+                    grey_ancestor(grey_kindOfClassName(
+                        @"_UIInterfaceActionCustomViewRepresentationView")),
+                    grey_minimumVisiblePercent(0.5), nil);
 }
 
 id<GREYMatcher> ElementToDismissAlert(NSString* cancel_text) {
@@ -25,7 +28,7 @@ id<GREYMatcher> ElementToDismissAlert(NSString* cancel_text) {
     return grey_accessibilityID(@"PopoverDismissRegion");
   } else {
     // On iPhone the context menu is dismissed by tapping on the "Cancel" item.
-    return ButtonWithAccessibilityLabel(cancel_text);
+    return AlertItemWithAccessibilityLabel(cancel_text);
   }
 }
 
@@ -49,7 +52,8 @@ id<GREYMatcher> ElementWithAccessibilityLabelSubstring(NSString* substring) {
 }
 
 id<GREYMatcher> NavigationBarBackButton() {
-  return grey_accessibilityID(@"BackButton");
+  return grey_allOf(grey_accessibilityID(@"BackButton"),
+                    grey_kindOfClassName(@"_UIButtonBarButton"), nil);
 }
 
 }  // namespace testing

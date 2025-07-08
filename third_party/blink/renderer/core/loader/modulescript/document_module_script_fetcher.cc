@@ -8,6 +8,8 @@
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/script/script_type.mojom-shared.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_streamer.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_common.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
 #include "third_party/blink/renderer/core/script/pending_script.h"
@@ -19,27 +21,39 @@
 namespace blink {
 
 DocumentModuleScriptFetcher::DocumentModuleScriptFetcher(
+    ExecutionContext* execution_context,
     base::PassKey<ModuleScriptLoader> pass_key)
-    : ModuleScriptFetcher(pass_key) {}
+    : ModuleScriptFetcher(pass_key),
+      ExecutionContextClient(execution_context) {}
 
 void DocumentModuleScriptFetcher::Fetch(
     FetchParameters& fetch_params,
     ModuleType expected_module_type,
     ResourceFetcher* fetch_client_settings_object_fetcher,
     ModuleGraphLevel level,
-    ModuleScriptFetcher::Client* client) {
+    ModuleScriptFetcher::Client* client,
+    ModuleImportPhase import_phase) {
   DCHECK_EQ(fetch_params.GetScriptType(), mojom::blink::ScriptType::kModule);
   DCHECK(fetch_client_settings_object_fetcher);
   DCHECK(!client_);
   client_ = client;
   expected_module_type_ = expected_module_type;
+  import_phase_ = import_phase;
   // Streaming can currently only be triggered from the main thread. This
   // currently happens only for dynamic imports in worker modules.
   ScriptResource::StreamingAllowed streaming_allowed =
                         IsMainThread() ? ScriptResource::kAllowStreaming
                                        : ScriptResource::kNoStreaming;
-  ScriptResource::Fetch(fetch_params, fetch_client_settings_object_fetcher,
-                        this, streaming_allowed);
+  // TODO(chromium:1406506): Compile hints for modules.
+  constexpr v8_compile_hints::V8CrowdsourcedCompileHintsProducer*
+      kNoCompileHintsProducer = nullptr;
+  constexpr v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
+      kNoCompileHintsConsumer = nullptr;
+  ScriptResource::Fetch(
+      fetch_params, fetch_client_settings_object_fetcher, this,
+      GetExecutionContext()->GetIsolate(), streaming_allowed,
+      kNoCompileHintsProducer, kNoCompileHintsConsumer,
+      v8_compile_hints::GetMagicCommentMode(GetExecutionContext()));
 }
 
 void DocumentModuleScriptFetcher::NotifyFinished(Resource* resource) {
@@ -47,10 +61,12 @@ void DocumentModuleScriptFetcher::NotifyFinished(Resource* resource) {
 
   auto* script_resource = To<ScriptResource>(resource);
 
+  std::optional<ResolvedModuleType> resolved_module_type;
   {
     HeapVector<Member<ConsoleMessage>> error_messages;
-    if (!WasModuleLoadSuccessful(script_resource, expected_module_type_,
-                                 &error_messages)) {
+    resolved_module_type = WasModuleLoadSuccessful(
+        script_resource, expected_module_type_, &error_messages);
+    if (!resolved_module_type) {
       client_->NotifyFetchFinishedError(error_messages);
       return;
     }
@@ -58,7 +74,7 @@ void DocumentModuleScriptFetcher::NotifyFinished(Resource* resource) {
   // Check if we can use the script streamer.
   ScriptStreamer* streamer;
   ScriptStreamer::NotStreamingReason not_streamed_reason;
-  std::tie(streamer, not_streamed_reason) = ResourceScriptStreamer::TakeFrom(
+  std::tie(streamer, not_streamed_reason) = ScriptStreamer::TakeFrom(
       script_resource, mojom::blink::ScriptType::kModule);
 
   ScriptStreamer::RecordStreamingHistogram(ScriptSchedulingType::kAsync,
@@ -89,15 +105,18 @@ void DocumentModuleScriptFetcher::NotifyFinished(Resource* resource) {
 
   client_->NotifyFetchFinishedSuccess(ModuleScriptCreationParams(
       /*source_url=*/url, /*base_url=*/url,
-      ScriptSourceLocationType::kExternalFile, expected_module_type_,
-      script_resource->SourceText(), script_resource->CacheHandler(),
-      response_referrer_policy, streamer, not_streamed_reason));
+      ScriptSourceLocationType::kExternalFile, resolved_module_type.value(),
+      script_resource->GetSourceTextOrWasmSource(resolved_module_type.value()),
+      script_resource->CacheHandler(), response_referrer_policy,
+      script_resource->GetResponse().HttpHeaderField(http_names::kSourceMap),
+      streamer, not_streamed_reason, import_phase_));
 }
 
 void DocumentModuleScriptFetcher::Trace(Visitor* visitor) const {
   ModuleScriptFetcher::Trace(visitor);
   visitor->Trace(client_);
   ResourceClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

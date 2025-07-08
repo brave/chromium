@@ -4,6 +4,7 @@
 
 #include "chrome/renderer/media/media_feeds.h"
 
+#include "base/strings/string_util.h"
 #include "content/public/renderer/render_frame.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -20,18 +21,18 @@ using blink::WebElement;
 using blink::WebNode;
 using blink::WebString;
 
-absl::optional<GURL> MediaFeeds::GetMediaFeedURL(content::RenderFrame* frame) {
+std::optional<GURL> MediaFeeds::GetMediaFeedURL(content::RenderFrame* frame) {
   // Media Feeds are only discovered on the main frame.
   if (!frame->IsMainFrame())
-    return absl::nullopt;
+    return std::nullopt;
 
   WebDocument document = frame->GetWebFrame()->GetDocument();
   if (document.IsNull())
-    return absl::nullopt;
+    return std::nullopt;
 
   WebElement head = document.Head();
   if (head.IsNull())
-    return absl::nullopt;
+    return std::nullopt;
 
   url::Origin document_origin = document.GetSecurityOrigin();
 
@@ -60,7 +61,7 @@ absl::optional<GURL> MediaFeeds::GetMediaFeedURL(content::RenderFrame* frame) {
       frame->AddMessageToConsole(blink::mojom::ConsoleMessageLevel::kWarning,
                                  "The Media Feed URL is not a valid URL.");
 
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     // If the URL is not the same origin as the document then we should throw
@@ -70,11 +71,11 @@ absl::optional<GURL> MediaFeeds::GetMediaFeedURL(content::RenderFrame* frame) {
                                  "The Media Feed URL needs to be the same "
                                  "origin as the document URL.");
 
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     return url;
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }

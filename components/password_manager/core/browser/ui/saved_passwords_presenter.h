@@ -13,13 +13,17 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
-#include "base/strings/string_piece_forward.h"
-#include "components/password_manager/core/browser/import/csv_password.h"
-#include "components/password_manager/core/browser/password_store.h"
-#include "components/password_manager/core/browser/password_store_consumer.h"
+#include "components/password_manager/core/browser/password_store/password_store_consumer.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/ui/affiliated_group.h"
 #include "components/password_manager/core/browser/ui/credential_ui_entry.h"
+#include "components/password_manager/core/browser/ui/passwords_provider.h"
 #include "components/webauthn/core/browser/passkey_model.h"
+#include "components/webauthn/core/browser/passkey_model_change.h"
+
+namespace affiliations {
+class AffiliationService;
+}  // namespace affiliations
 
 namespace password_manager {
 
@@ -27,7 +31,6 @@ namespace metrics_util {
 enum class MoveToAccountStoreTrigger;
 }
 
-class AffiliationService;
 class PasswordUndoHelper;
 class PasswordsGrouper;
 
@@ -44,7 +47,8 @@ class PasswordsGrouper;
 // Chrome) should not trigger a check.
 class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
                                 public webauthn::PasskeyModel::Observer,
-                                public PasswordStoreConsumer {
+                                public PasswordStoreConsumer,
+                                public PasswordsProvider {
  public:
   // Observer interface. Clients can implement this to get notified about
   // changes to the list of saved passwords or if a given password was edited
@@ -106,7 +110,7 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
   using AddCredentialsCallback = base::OnceClosure;
   using DuplicatePasswordsMap = std::multimap<std::string, PasswordForm>;
 
-  SavedPasswordsPresenter(AffiliationService* affiliation_service,
+  SavedPasswordsPresenter(affiliations::AffiliationService* affiliation_service,
                           scoped_refptr<PasswordStoreInterface> profile_store,
                           scoped_refptr<PasswordStoreInterface> account_store,
                           webauthn::PasskeyModel* passkey_store = nullptr);
@@ -117,7 +121,7 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
 
   // Initializes the presenter and makes it issue the first request for all
   // saved passwords.
-  void Init();
+  void Init(base::OnceClosure completion_callback = base::DoNothing());
 
   // Returns whether there are ongoing fetch requests to credential stores.
   bool IsWaitingForPasswordStore() const;
@@ -132,9 +136,11 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
   // was added, false if |credential|'s data is not valid (invalid url/empty
   // password), or an entry with such signon_realm and username already exists
   // in any (profile or account) store.
+  // "completion" is called regardless of the operation result.
   bool AddCredential(const CredentialUIEntry& credential,
                      password_manager::PasswordForm::Type type =
-                         password_manager::PasswordForm::Type::kManuallyAdded);
+                         password_manager::PasswordForm::Type::kManuallyAdded,
+                     base::OnceClosure completion = base::DoNothing());
 
   // Adds |credentials| to the specified store.
   // Credentials are expected to be valid according to `GetExpectedAddResult`
@@ -147,6 +153,9 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
   void AddCredentials(const std::vector<CredentialUIEntry>& credentials,
                       password_manager::PasswordForm::Type type,
                       AddCredentialsCallback completion);
+
+  // Deletes all saved credentials: passwords, passkeys, blocked entries.
+  void DeleteAllData(base::OnceCallback<void(bool)> success_callback);
 
   // Updates all matching password forms in |password_forms|.
   // |completion| will be run after the forms are updated.
@@ -175,7 +184,7 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
   // single entity. Uniqueness is determined using site name, username,
   // password. For Android credentials package name is also taken into account
   // and for Federated credentials federation origin.
-  std::vector<CredentialUIEntry> GetSavedCredentials() const;
+  std::vector<CredentialUIEntry> GetSavedCredentials() const override;
 
   // Returns a list of affiliated groups for the Password Manager.
   std::vector<AffiliatedGroup> GetAffiliatedGroups();
@@ -204,7 +213,10 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
       const std::vector<PasswordForm>& retained_passwords) override;
 
   // PasskeyModel::Observer:
-  void OnPasskeysChanged() override;
+  void OnPasskeysChanged(
+      const std::vector<webauthn::PasskeyModelChange>& changes) override;
+  void OnPasskeyModelShuttingDown() override;
+  void OnPasskeyModelIsReady(bool is_ready) override;
 
   // PasswordStoreConsumer:
   void OnGetPasswordStoreResults(
@@ -267,6 +279,8 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
   DuplicatePasswordsMap sort_key_to_password_forms_;
 
   base::ObserverList<Observer, /*check_empty=*/true> observers_;
+
+  base::OnceClosure init_completion_callback_;
 
   base::ScopedObservation<PasswordStoreInterface,
                           PasswordStoreInterface::Observer>

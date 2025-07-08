@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_IDLE_IDLE_DETECTION_PERMISSION_CONTEXT_H_
 
 #include "base/memory/weak_ptr.h"
-#include "components/permissions/permission_context_base.h"
+#include "components/permissions/content_setting_permission_context_base.h"
 
 class IdleDetectionPermissionContext
-    : public permissions::PermissionContextBase {
+    : public permissions::ContentSettingPermissionContextBase {
  public:
   explicit IdleDetectionPermissionContext(
       content::BrowserContext* browser_context);
@@ -27,10 +27,7 @@ class IdleDetectionPermissionContext
                         const GURL& requesting_frame,
                         bool allowed) override;
   void DecidePermission(
-      const permissions::PermissionRequestID& id,
-      const GURL& requesting_origin,
-      const GURL& embedding_origin,
-      bool user_gesture,
+      std::unique_ptr<permissions::PermissionRequestData> request_data,
       permissions::BrowserPermissionCallback callback) override;
 
   base::WeakPtrFactory<IdleDetectionPermissionContext> weak_factory_{this};

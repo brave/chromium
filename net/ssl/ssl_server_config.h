@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -16,7 +17,6 @@
 #include "net/base/net_export.h"
 #include "net/socket/next_proto.h"
 #include "net/ssl/ssl_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 
 namespace net {
@@ -63,12 +63,12 @@ struct NET_EXPORT SSLServerConfig {
   // cipher_suite_for_testing, if set, causes the server to only support the
   // specified cipher suite in TLS 1.2 and below. This should only be used in
   // unit tests.
-  absl::optional<uint16_t> cipher_suite_for_testing;
+  std::optional<uint16_t> cipher_suite_for_testing;
 
   // signature_algorithm_for_testing, if set, causes the server to only support
   // the specified signature algorithm in TLS 1.2 and below. This should only be
   // used in unit tests.
-  absl::optional<uint16_t> signature_algorithm_for_testing;
+  std::optional<uint16_t> signature_algorithm_for_testing;
 
   // curves_for_testing, if not empty, specifies the list of NID values (e.g.
   // NID_X25519) to configure as supported curves for the TLS connection.
@@ -88,7 +88,11 @@ struct NET_EXPORT SSLServerConfig {
   // and must outlive any sockets spawned from this SSLServerContext.
   // This field is meaningful only if client certificates are requested.
   // If a verifier is not provided then all certificates are accepted.
-  raw_ptr<ClientCertVerifier, DanglingUntriaged> client_cert_verifier = nullptr;
+  raw_ptr<ClientCertVerifier> client_cert_verifier = nullptr;
+
+  // If set, causes the server to support the specified client certificate
+  // signature algorithms.
+  std::vector<uint16_t> client_cert_signature_algorithms;
 
   // The list of application level protocols supported with ALPN (Application
   // Layer Protocol Negotiation), in decreasing order of preference.  Protocols
@@ -114,7 +118,7 @@ struct NET_EXPORT SSLServerConfig {
 
   // If specified, causes the specified alert to be sent immediately after the
   // handshake.
-  absl::optional<uint8_t> alert_after_handshake_for_testing;
+  std::optional<uint8_t> alert_after_handshake_for_testing;
 
   // This is a workaround for BoringSSL's scopers not being copyable. See
   // https://crbug.com/boringssl/431.
@@ -141,6 +145,18 @@ struct NET_EXPORT SSLServerConfig {
 
   // If not nullptr, an ECH configuration to use on the server.
   ECHKeysContainer ech_keys;
+
+  // If non-empty, the intermediate certificate will be elided when possible
+  // via TLS Trust Anchor Identifiers. That is, the server will be configured
+  // to serve not just the full chain with which it is configured, but also a
+  // shorter version of that chain formed by eliding the intermediate
+  // certificate. If the client signals that it trusts this intermediate via
+  // the TLS Trust Anchor IDs extension, then the server will serve the
+  // corresponding elided chain instead of the full chain.
+  //
+  // It is an error if this is non-empty when the server certificate chain does
+  // not have exactly one intermediate.
+  std::vector<uint8_t> intermediate_trust_anchor_id;
 };
 
 }  // namespace net

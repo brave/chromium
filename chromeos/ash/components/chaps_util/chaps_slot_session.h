@@ -9,10 +9,12 @@
 
 #include <memory>
 
+#include "base/component_export.h"
+
 namespace chromeos {
 
 // A PKCS#11 session for a slot provided by the chaps daemon.
-// This class provides a subset of PKCS#11 operations relevant for Chrome OS.
+// This class provides a subset of PKCS#11 operations relevant for ChromeOS.
 // When a ChapsSlotSession is destructed, the PKCS#11 session is closed.
 // Operations on a ChapsSlotSession are blocking and expensive, so they may only
 // be performed on a worker thread.
@@ -67,7 +69,8 @@ class ChapsSlotSessionFactory {
 
 // This is the default implementation of the ChapsSlotSessionFactory.
 // Creates ChapsSlotSession instances which call functions in libchaps.so.
-class ChapsSlotSessionFactoryImpl : public ChapsSlotSessionFactory {
+class COMPONENT_EXPORT(CHAPS_UTIL) ChapsSlotSessionFactoryImpl
+    : public ChapsSlotSessionFactory {
  public:
   ChapsSlotSessionFactoryImpl() = default;
   ~ChapsSlotSessionFactoryImpl() override = default;

@@ -6,7 +6,11 @@
 #define COMPONENTS_SUPERVISED_USER_CORE_BROWSER_SUPERVISED_USER_SERVICE_H_
 
 #include <stddef.h>
+
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
@@ -17,16 +21,20 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/supervised_user/core/browser/remote_web_approvals_manager.h"
+#include "components/supervised_user/core/browser/supervised_user_preferences.h"
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"
+#include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/supervised_user/core/common/supervised_users.h"
+#include "google_apis/gaia/gaia_id.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "components/supervised_user/core/browser/android/content_filters_observer_bridge.h"
+#endif
 
 class PrefService;
 class SupervisedUserServiceObserver;
 class SupervisedUserServiceFactory;
-
-namespace base {
-class Version;
-}  // namespace base
 
 namespace signin {
 class IdentityManager;
@@ -36,24 +44,66 @@ namespace syncer {
 class SyncService;
 }  // namespace syncer
 
-namespace user_prefs {
-class PrefRegistrySyncable;
-}  // namespace user_prefs
-
 namespace supervised_user {
 class SupervisedUserSettingsService;
 
-// This class handles all the information related to a given supervised profile
-// (e.g. the default URL filtering behavior, or manual allowlist/denylist
-// overrides).
-class SupervisedUserService : public KeyedService,
-                              public SupervisedUserURLFilter::Observer {
+// Represents custodian data - who is responsible for managing the supervised
+// user's settings.
+class Custodian {
  public:
-  class Delegate {
+  Custodian();
+  Custodian(std::string_view name,
+            std::string_view email_address,
+            std::string_view profile_image_url);
+  Custodian(std::string_view name,
+            std::string_view email_address,
+            GaiaId obfuscated_gaia_id,
+            std::string_view profile_image_url);
+  Custodian(const Custodian& other);
+  ~Custodian();
+
+  std::string GetName() const { return name_; }
+  std::string GetEmailAddress() const { return email_address_; }
+  GaiaId GetObfuscatedGaiaId() const { return obfuscated_gaia_id_; }
+  std::string GetProfileImageUrl() const { return profile_image_url_; }
+
+ private:
+  std::string name_;
+  std::string email_address_;
+  GaiaId obfuscated_gaia_id_;
+  std::string profile_image_url_;
+};
+
+// Orchestrates cooperation between components of user supervision. Manages the
+// lifecycle of url filtering, remote approval workflows, custodian data and
+// incognito mode availability.
+// The state of features is driven by changes to the following preferences:
+// * `profile.managed_user_id` for url filtering, remove approvals and custodian
+//    data,
+// * `incognito.mode_availability` for incognito mode.
+class SupervisedUserService : public KeyedService {
+ public:
+  // Delegate encapsulating platform-specific logic that is invoked from this
+  // service.
+  class PlatformDelegate {
    public:
-    virtual ~Delegate() {}
-    // Allows the delegate to handle the (de)activation in a custom way.
-    virtual void SetActive(bool active) = 0;
+    virtual ~PlatformDelegate() = default;
+
+    // Returns the country code stored for this client.
+    // Country code is in the format of lowercase ISO 3166-1 alpha-2. Example:
+    // us, br, in.
+    virtual std::string GetCountryCode() const = 0;
+
+    // Returns the channel for the installation.
+    virtual version_info::Channel GetChannel() const = 0;
+
+    // Decides if incognito tabs should be closed. Tested when the supervision
+    // features are enabled.
+    virtual bool ShouldCloseIncognitoTabs() const = 0;
+
+    // Close all incognito tabs for this service. Called when the supervision
+    // features are enabled and require disabling of incognito mode.
+    virtual void CloseIncognitoTabs() = 0;
   };
 
   SupervisedUserService(const SupervisedUserService&) = delete;
@@ -61,67 +111,37 @@ class SupervisedUserService : public KeyedService,
 
   ~SupervisedUserService() override;
 
-  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
-
-  supervised_user::RemoteWebApprovalsManager& remote_web_approvals_manager() {
+  RemoteWebApprovalsManager& remote_web_approvals_manager() {
     return remote_web_approvals_manager_;
   }
-
-  // Initializes this object.
-  void Init();
-
-  void SetDelegate(Delegate* delegate);
 
   // Returns the URL filter for filtering navigations and classifying sites in
   // the history view. Both this method and the returned filter may only be used
   // on the UI thread.
-  supervised_user::SupervisedUserURLFilter* GetURLFilter();
+  SupervisedUserURLFilter* GetURLFilter() const;
 
-  // Get the string used to identify an extension install or update request.
-  // Public for testing.
-  static std::string GetExtensionRequestId(const std::string& extension_id,
-                                           const base::Version& version);
+  // Returns true if the user is supervised locally (e.g. on the device).
+  // Currently, local supervision is only supported on Android.
+  bool IsSupervisedLocally() const;
+  // Returns true if the user is supervised locally (e.g. on the device) and
+  // requested browser content to be filtered.
+  bool IsLocalBrowserFilteringEnabled() const;
+  // Returns true if the user is supervised locally (e.g. on the device) and
+  // requested search content to be filtered.
+  bool IsLocalSearchFilteringEnabled() const;
 
-  // Returns the email address of the custodian.
-  std::string GetCustodianEmailAddress() const;
+  std::optional<Custodian> GetCustodian() const;
+  std::optional<Custodian> GetSecondCustodian() const;
 
-  // Returns the obfuscated GAIA id of the custodian.
-  std::string GetCustodianObfuscatedGaiaId() const;
-
-  // Returns the name of the custodian, or the email address if the name is
-  // empty.
-  std::string GetCustodianName() const;
-
-  // Returns the email address of the second custodian, or the empty string
-  // if there is no second custodian.
-  std::string GetSecondCustodianEmailAddress() const;
-
-  // Returns the obfuscated GAIA id of the second custodian or the empty
-  // string if there is no second custodian.
-  std::string GetSecondCustodianObfuscatedGaiaId() const;
-
-  // Returns the name of the second custodian, or the email address if the name
-  // is empty, or the empty string if there is no second custodian.
-  std::string GetSecondCustodianName() const;
-
-  // Returns true if the extensions permissions parental control is enabled.
-  bool AreExtensionsPermissionsEnabled() const;
-
-  // Returns true if the URL filtering parental control is enabled.
-  bool IsURLFilteringEnabled() const;
-
-  // Returns true if there is a custodian for the child.  A child can have
-  // up to 2 custodians, and this returns true if they have at least 1.
-  bool HasACustodian() const;
+  // Returns true if the url is blocked due to supervision restrictions on the
+  // primary account user.
+  bool IsBlockedURL(const GURL& url) const;
 
   void AddObserver(SupervisedUserServiceObserver* observer);
   void RemoveObserver(SupervisedUserServiceObserver* observer);
 
   // ProfileKeyedService override:
   void Shutdown() override;
-
-  // SupervisedUserURLFilter::Observer implementation:
-  void OnSiteListUpdated() override;
 
 #if BUILDFLAG(IS_CHROMEOS)
   bool signout_required_after_supervision_enabled() {
@@ -132,102 +152,118 @@ class SupervisedUserService : public KeyedService,
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  // TODO(https://crbug.com/1288986): Enable web filter metrics reporting in
-  // LaCrOS.
-  // Reports FamilyUser.WebFilterType and FamilyUser.ManagedSiteList
-  // metrics. Ignores reporting when AreWebFilterPrefsDefault() is true.
-  void ReportNonDefaultWebFilterValue() const;
-
-  // Returns true if both: the user is a type of Family Link supervised account
-  // and the platform supports Family Link supervision features.
-  // This method should be prefered on gating child-specific features if there
-  // is no dedicated method for the feature (e.g IsURLFilteringEnabled).
-  virtual bool IsSubjectToParentalControls() const;
-
-  // Updates the kFirstTimeInterstitialBannerState pref to indicate that the
-  // user has been shown the interstitial banner. This will only update users
-  // who haven't yet seen the banner.
-  void MarkFirstTimeInterstitialBannerShown() const;
-
-  // Returns true if the interstitial banner needs to be shown to user.
-  bool ShouldShowFirstTimeInterstitialBanner() const;
-
-  // Some Google-affiliated domains are not allowed to delete cookies for
-  // supervised users.
-  bool IsCookieDeletionDisabled(const GURL& origin) const;
-
   // Use |SupervisedUserServiceFactory::GetForProfile(..)| to get
   // an instance of this service.
   // Public to allow visibility to iOS factory.
   SupervisedUserService(
       signin::IdentityManager* identity_manager,
-      KidsChromeManagementClient* kids_chrome_management_client,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       PrefService& user_prefs,
-      supervised_user::SupervisedUserSettingsService& settings_service,
-      syncer::SyncService& sync_service,
-      ValidateURLSupportCallback check_webstore_url_callback,
-      std::unique_ptr<supervised_user::SupervisedUserURLFilter::Delegate>
-          url_filter_delegate,
-      bool can_show_first_time_interstitial_banner);
+      SupervisedUserSettingsService& settings_service,
+      syncer::SyncService* sync_service,
+      std::unique_ptr<SupervisedUserURLFilter> url_filter,
+      std::unique_ptr<SupervisedUserService::PlatformDelegate> platform_delegate
+#if BUILDFLAG(IS_ANDROID)
+      ,
+      ContentFiltersObserverBridge::Factory
+          content_filters_observer_bridge_factory
+#endif
+  );
+
+ protected:
+#if BUILDFLAG(IS_ANDROID)
+  ContentFiltersObserverBridge* browser_content_filters_observer();
+  ContentFiltersObserverBridge* search_content_filters_observer();
+#endif  // BUILDFLAG(IS_ANDROID)
 
  private:
-  friend class SupervisedUserServiceExtensionTestBase;
-  friend class ::SupervisedUserServiceFactory;
-  FRIEND_TEST_ALL_PREFIXES(
-      SupervisedUserServiceExtensionTest,
-      ExtensionManagementPolicyProviderWithoutSUInitiatedInstalls);
-  FRIEND_TEST_ALL_PREFIXES(
-      SupervisedUserServiceExtensionTest,
-      ExtensionManagementPolicyProviderWithSUInitiatedInstalls);
-
-  void SetActive(bool active);
+  // Activates the service which controls managed settings of url filtering and
+  // incognito mode.
+  void SetSettingsServiceActive(bool active);
+  // Activates the settings that manually control url filtering.
+  void SetUserSettingsActive(bool active);
 
   void OnCustodianInfoChanged();
 
-  void OnSupervisedUserIdChanged();
+  // Handles the change of supervision status driven by Family Link parental
+  // controls.
+  void OnFamilyLinkParentalControlsEnabled();
+  // Handles the change of supervision status self-set by user.
+  void OnLocalParentalControlsEnabled();
+  // Common handler when supervision is disabled. Intentionally idempotent.
+  void OnParentalControlsDisabled();
 
-  void OnDefaultFilteringBehaviorChanged();
+  void OnIncognitoModeAvailabilityChanged();
 
-  bool IsSafeSitesEnabled() const;
+  // Single handler for all url filter changes.
+  // If present, `pref_name` indicates the actual pref that changed and might
+  // dispatch additional work to the URL filter (eg. to update its internal data
+  // structures). When `pref_name` is absent, the filter will refresh the data
+  // structures unconditionally.
+  void UpdateURLFilter(std::optional<std::string> pref_name = std::nullopt);
 
-  void OnSafeSitesSettingChanged();
+  // Interface for the above suitable for pref change registrar.
+  void OnURLFilterChanged(const std::string& pref_name);
 
-  void UpdateAsyncUrlChecker();
+  // Adds url filtering change handlers, originating from Family Link.
+  void AddURLFilterPrefChangeHandlers();
+  // Adds sentinel handlers that prevent unintended changes to url filtering.
+  void AddURLFilterPrefChangeSentinels();
+  // Removes all url filtering change handlers. Intentionally idempotent.
+  void RemoveURLFilterPrefChangeHandlers();
+  // Add or remove all pref handlers related to custodians. The removal method
+  // is intentionally idempotent.
+  void AddCustodianPrefChangeHandlers();
+  void RemoveCustodianPrefChangeHandlers();
 
-  // Updates the manual overrides for hosts in the URL filters when the
-  // corresponding preference is changed.
-  void UpdateManualHosts();
-
-  // Updates the manual overrides for URLs in the URL filters when the
-  // corresponding preference is changed.
-  void UpdateManualURLs();
+#if BUILDFLAG(IS_ANDROID)
+  // Enables content filters and then notifies observers.
+  void EnableSearchContentFilters();
+  void DisableSearchContentFilters();
+  void EnableBrowserContentFilters();
+  void DisableBrowserContentFilters();
+#endif  // BUILDFLAG(IS_ANDROID)
 
   const raw_ref<PrefService> user_prefs_;
 
-  const raw_ref<supervised_user::SupervisedUserSettingsService>
-      settings_service_;
+  const raw_ref<SupervisedUserSettingsService> settings_service_;
 
-  const raw_ref<syncer::SyncService> sync_service_;
+  const raw_ptr<syncer::SyncService> sync_service_;
 
   raw_ptr<signin::IdentityManager> identity_manager_;
 
-  raw_ptr<KidsChromeManagementClient> kids_chrome_management_client_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
-  bool active_ = false;
+  std::unique_ptr<SupervisedUserURLFilter> url_filter_;
 
-  raw_ptr<Delegate> delegate_;
+  // Manages the status of parental controls and notifies this instance when the
+  // state changes.
+  SupervisedControlsState controls_state_;
 
-  PrefChangeRegistrar pref_change_registrar_;
+  std::unique_ptr<PlatformDelegate> platform_delegate_;
 
-  // True only when |Init()| method has been called.
-  bool did_init_ = false;
+  // Registrar for core prefs that drive this service.
+  PrefChangeRegistrar main_pref_change_registrar_;
+  // Registrar for preferences that drive URL filtering. All prefs except for
+  // the safe sites mode are observed only when the profile is subject to
+  // parental controls. The safe sites pref is observed at all times, with
+  // varying handlers for enabled or disabled parental controls.
+  PrefChangeRegistrar url_filter_pref_change_registrar_;
+  // Registrar for preferences that control custodian data. They're observed
+  // only when the profile is subject to parental controls.
+  PrefChangeRegistrar custodian_pref_change_registrar_;
+
+#if BUILDFLAG(IS_ANDROID)
+  // Observers for the content filters
+  std::unique_ptr<ContentFiltersObserverBridge>
+      browser_content_filters_observer_;
+  std::unique_ptr<ContentFiltersObserverBridge>
+      search_content_filters_observer_;
+
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // True only when |Shutdown()| method has been called.
   bool did_shutdown_ = false;
-
-  SupervisedUserURLFilter url_filter_;
-
-  const bool can_show_first_time_interstitial_banner_;
 
   // Manages remote web approvals.
   RemoteWebApprovalsManager remote_web_approvals_manager_;
@@ -237,18 +273,6 @@ class SupervisedUserService : public KeyedService,
 #if BUILDFLAG(IS_CHROMEOS)
   bool signout_required_after_supervision_enabled_ = false;
 #endif
-
-  // TODO(https://crbug.com/1288986): Enable web filter metrics reporting in
-  // LaCrOS.
-  // When there is change between WebFilterType::kTryToBlockMatureSites and
-  // WebFilterType::kCertainSites, both
-  // prefs::kDefaultSupervisedUserFilteringBehavior and
-  // prefs::kSupervisedUserSafeSites change. Uses this member to avoid duplicate
-  // reports. Initialized in the SetActive().
-  SupervisedUserURLFilter::WebFilterType current_web_filter_type_ =
-      SupervisedUserURLFilter::WebFilterType::kMaxValue;
-
-  base::WeakPtrFactory<SupervisedUserService> weak_ptr_factory_{this};
 };
 
 }  // namespace supervised_user

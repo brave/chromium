@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/touch_to_fill/password_manager/password_generation/android/touch_to_fill_password_generation_controller.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-forward.h"
 #include "components/autofill/core/common/password_generation_util.h"
 #include "content/public/browser/web_contents.h"
@@ -16,8 +17,6 @@
 namespace password_manager {
 class ContentPasswordManagerDriver;
 }  // namespace password_manager
-class TouchToFillPasswordGenerationController;
-class TouchToFillPasswordGenerationBridge;
 
 // Interface for the controller responsible for overseeing the UI flow for
 // password generation.
@@ -59,11 +58,12 @@ class PasswordGenerationController {
   virtual base::WeakPtr<password_manager::ContentPasswordManagerDriver>
   GetActiveFrameDriver() const = 0;
 
-  // This signals that the focus has moved. |focused_field_type| tells
-  // the generation controller whether the focus moved to a fillable password
-  // field. This event sets/unsets the active frame for generation.
+  // This signals that the focus has moved.
+  // `is_field_eligible_for_generation` tells the generation controller
+  // whether the focus moved to a field safe for filling a generated password.
+  // This event sets/unsets the active frame for generation.
   virtual void FocusedInputChanged(
-      autofill::mojom::FocusedFieldType focused_field_type,
+      bool is_field_eligible_for_generation,
       base::WeakPtr<password_manager::ContentPasswordManagerDriver> driver) = 0;
 
   // Notifies the UI that automatic password generation is available.
@@ -72,6 +72,7 @@ class PasswordGenerationController {
       base::WeakPtr<password_manager::ContentPasswordManagerDriver>
           target_frame_driver,
       const autofill::password_generation::PasswordGenerationUIData& ui_data,
+      bool has_saved_credentials,
       gfx::RectF element_bounds_in_screen_space) = 0;
 
   // This is called after the user requested manual generation and the
@@ -114,7 +115,11 @@ class PasswordGenerationController {
 
   virtual std::unique_ptr<TouchToFillPasswordGenerationController>
   CreateTouchToFillGenerationControllerForTesting(
-      std::unique_ptr<TouchToFillPasswordGenerationBridge> bridge) = 0;
+      std::unique_ptr<TouchToFillPasswordGenerationBridge> bridge,
+      base::WeakPtr<ManualFillingController> manual_filling_controller) = 0;
+
+  virtual TouchToFillPasswordGenerationController*
+  GetTouchToFillGenerationControllerForTesting() = 0;
 
   // -----------------
   // Member accessors:

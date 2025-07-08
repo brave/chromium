@@ -103,7 +103,8 @@ std::unique_ptr<APISignature> BuildAddRulesSignature(
 
 }  // namespace
 
-gin::WrapperInfo DeclarativeEvent::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo DeclarativeEvent::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 DeclarativeEvent::DeclarativeEvent(
     const std::string& name,
@@ -141,7 +142,8 @@ DeclarativeEvent::~DeclarativeEvent() = default;
 
 gin::ObjectTemplateBuilder DeclarativeEvent::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return Wrappable<DeclarativeEvent>::GetObjectTemplateBuilder(isolate)
+  return DeprecatedWrappable<DeclarativeEvent>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("addRules", &DeclarativeEvent::AddRules)
       .SetMethod("removeRules", &DeclarativeEvent::RemoveRules)
       .SetMethod("getRules", &DeclarativeEvent::GetRules);
@@ -179,7 +181,7 @@ void DeclarativeEvent::HandleFunction(const std::string& signature_name,
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = arguments->GetHolderCreationContext();
 
-  std::vector<v8::Local<v8::Value>> argument_list = arguments->GetAll();
+  v8::LocalVector<v8::Value> argument_list = arguments->GetAll();
 
   // The events API has two undocumented parameters for each function: the name
   // of the event, and the "webViewInstanceId". Currently, stub 0 for webview

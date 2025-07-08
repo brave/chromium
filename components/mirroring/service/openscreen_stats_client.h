@@ -5,23 +5,21 @@
 #ifndef COMPONENTS_MIRRORING_SERVICE_OPENSCREEN_STATS_CLIENT_H_
 #define COMPONENTS_MIRRORING_SERVICE_OPENSCREEN_STATS_CLIENT_H_
 
+#include "base/component_export.h"
 #include "base/values.h"
-#include "components/mirroring/service/session_logger.h"
-#include "third_party/openscreen/src/cast/streaming/sender_session.h"
-#include "third_party/openscreen/src/cast/streaming/statistics.h"
+#include "third_party/openscreen/src/cast/streaming/public/sender_session.h"
+#include "third_party/openscreen/src/cast/streaming/public/statistics.h"
 
 namespace mirroring {
 
 // Handles statistics of an Openscreen mirroring session.
 class COMPONENT_EXPORT(MIRRORING_SERVICE) OpenscreenStatsClient
-    : public openscreen::cast::SenderStatsClient,
-      public MirroringStatsProvider {
+    : public openscreen::cast::SenderStatsClient {
  public:
   OpenscreenStatsClient();
   ~OpenscreenStatsClient() override;
 
-  // MirroringStatsProvider::GetStats() override;
-  base::Value::Dict GetStats() const override;
+  base::Value::Dict GetStats() const;
 
   // openscreen::cast::SenderStatsClient::OnStatisticsUpdated() override;
   void OnStatisticsUpdated(

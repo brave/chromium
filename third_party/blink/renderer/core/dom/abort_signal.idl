@@ -5,8 +5,7 @@
 // https://dom.spec.whatwg.org/#interface-AbortSignal
 
 [
-    Exposed=(Window,Worker),
-    ActiveScriptWrappable
+    Exposed=(Window,Worker,ShadowRealm) // TODO(crbug.com/41480387): This should be Exposed=*
 ] interface AbortSignal : EventTarget {
     [
         CallWith=ScriptState,
@@ -14,6 +13,7 @@
         NewObject
     ] static AbortSignal abort(optional any reason);
     [
+        Exposed=(Window,Worker),
         CallWith=ScriptState,
         MeasureAs=AbortSignalTimeout,
         NewObject
@@ -21,13 +21,15 @@
     [
         CallWith=ScriptState,
         MeasureAs=AbortSignalAny,
-        NewObject,
-        RuntimeEnabled=AbortSignalAny
+        NewObject
     ] static AbortSignal _any(sequence<AbortSignal> signals);
 
     readonly attribute boolean aborted;
     [CallWith=ScriptState] readonly attribute any reason;
-    [CallWith=ScriptState, MeasureAs=AbortSignalThrowIfAborted, RaisesException] void throwIfAborted();
+    [
+        CallWith=Isolate,
+        MeasureAs=AbortSignalThrowIfAborted
+    ] void throwIfAborted();
 
     attribute EventHandler onabort;
 };

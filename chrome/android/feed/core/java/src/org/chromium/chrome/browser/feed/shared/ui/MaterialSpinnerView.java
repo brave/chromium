@@ -8,14 +8,16 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 
-import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatImageView;
 import androidx.swiperefreshlayout.widget.CircularProgressDrawable;
 
 import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 
 /** View that shows a Material themed spinner. */
+@NullMarked
 public class MaterialSpinnerView extends AppCompatImageView {
     private final CircularProgressDrawable mSpinner;
 
@@ -50,14 +52,14 @@ public class MaterialSpinnerView extends AppCompatImageView {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        updateAnimationState(/*isAttached=*/true);
+        updateAnimationState(/* isAttached= */ true);
     }
 
     @Override
     protected void onDetachedFromWindow() {
         // isAttachedToWindow() doesn't turn false during onDetachedFromWindow(), so we pass the new
         // attachment state into updateAnimationState() here explicitly.
-        updateAnimationState(/*isAttached=*/false);
+        updateAnimationState(/* isAttached= */ false);
         super.onDetachedFromWindow();
     }
 

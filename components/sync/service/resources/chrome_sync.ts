@@ -78,33 +78,33 @@ export function requestStart() {
 }
 
 /**
- * Stops the SyncService and clears the sync data.
- */
-export function requestStopClearData() {
-  chrome.send('requestStopClearData');
-}
-
-/**
  * Triggers a GetUpdates call for all enabled datatypes.
  */
 export function triggerRefresh() {
   chrome.send('triggerRefresh');
 }
 
+interface ServerSpecifics {
+  autofill: any;
+}
+
+type Specifics = ServerSpecifics;
+
 export interface SyncNode {
   BASE_VERSION: string;
-  BASE_VERSION_STRING: string;
   ID: string;
   IS_DIR: boolean;
+  LOCAL_EXTERNAL_ID: number;
   METAHANDLE: number;
+  MTIME: string;
   NON_UNIQUE_NAME: string;
   PARENT_ID: string;
-  UNIQUE_SERVER_TAG: string;
+  SERVER_SPECIFICS: ServerSpecifics;
   SERVER_VERSION: string;
   SERVER_VERSION_TIME: string;
-  SERVER_SPECIFICS: string;
-  SPECIFICS: string;
-  modelType: string;
+  SPECIFICS: Specifics;
+  UNIQUE_SERVER_TAG: string;
+  dataType: string;
   positionIndex?: number;
 }
 
@@ -126,8 +126,6 @@ export function getAllNodes(callback: (p: SyncNodeMap) => void) {
   sendWithPromise('getAllNodes').then(callback);
 }
 
-function setAllNodesForTest(nodes: SyncNodeMap) {
+export function setAllNodesForTest(nodes: SyncNodeMap) {
   nodesForTest = nodes;
 }
-
-Object.assign(window, {setAllNodesForTest});

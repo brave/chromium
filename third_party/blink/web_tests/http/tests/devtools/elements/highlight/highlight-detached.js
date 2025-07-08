@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that highlighting a detached node does not crash. crbug.com/958958\n`);
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('elements');
 
   const remoteObject = await TestRunner.evaluateInPageRemoteObject(`
@@ -17,7 +18,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
       styleElement.id = 'inspected';
       styleElement;
   `);
-  const domModel = remoteObject.runtimeModel().target().model(SDK.DOMModel);
+  const domModel = remoteObject.runtimeModel().target().model(SDK.DOMModel.DOMModel);
   const node = await domModel.pushObjectAsNodeToFrontend(remoteObject);
   node.highlight();
 

@@ -6,12 +6,13 @@
 #define COMPONENTS_SUPERVISED_USER_CORE_BROWSER_SUPERVISED_USER_PREF_STORE_H_
 
 #include <memory>
+#include <string_view>
 
 #include "base/callback_list.h"
 #include "base/observer_list.h"
-#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "components/prefs/pref_store.h"
+#include "components/prefs/pref_value_map.h"
 #include "components/supervised_user/core/common/supervised_users.h"
 
 namespace base {
@@ -22,6 +23,13 @@ class PrefValueMap;
 
 namespace supervised_user {
 class SupervisedUserSettingsService;
+
+// Writes default values to `pref_values` as used within the
+// SupervisedUserPrefStore. In this context "default" doesn't indicate the
+// bottom pref store in hierarchy which yields fallback values for the
+// PrefService, but rather preset values within a single PrefStore.
+void SetSupervisedUserPrefStoreDefaults(PrefValueMap& pref_values);
+
 }  // namespace supervised_user
 
 // A PrefStore that gets its values from supervised user settings via the
@@ -43,8 +51,7 @@ class SupervisedUserPrefStore : public PrefStore {
                 supervised_user_settings_service);
 
   // PrefStore overrides:
-  bool GetValue(base::StringPiece key,
-                const base::Value** value) const override;
+  bool GetValue(std::string_view key, const base::Value** value) const override;
   base::Value::Dict GetValues() const override;
   void AddObserver(PrefStore::Observer* observer) override;
   void RemoveObserver(PrefStore::Observer* observer) override;
@@ -63,7 +70,7 @@ class SupervisedUserPrefStore : public PrefStore {
 
   std::unique_ptr<PrefValueMap> prefs_;
 
-  base::ObserverList<PrefStore::Observer, true>::Unchecked observers_;
+  base::ObserverList<PrefStore::Observer, true> observers_;
 };
 
 #endif  // COMPONENTS_SUPERVISED_USER_CORE_BROWSER_SUPERVISED_USER_PREF_STORE_H_

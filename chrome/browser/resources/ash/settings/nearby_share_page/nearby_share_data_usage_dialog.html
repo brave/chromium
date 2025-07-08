@@ -10,14 +10,6 @@
     padding-block-start: 24px;
   }
 
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) .title {
-    font-family: 'Google Sans';
-    font-size: 16px;
-    font-weight: normal;
-    line-height: 24px;
-  }
-
   cr-radio-group {
     margin-block-end: 12px;
     margin-inline-start: 2px;
@@ -34,22 +26,6 @@
     padding-bottom: 2px;
     width: 16px;
   }
-
-  #dataUsageDataTooltip {
-    --paper-tooltip-background: var(--cros-tooltip-background-color);
-    --paper-tooltip-opacity: 1;
-    --paper-tooltip-text-color: var(--cros-tooltip-label-color);
-  }
-
-  #dataUsageDataTooltip::part(tooltip) {
-    margin-inline-end: 6px;
-  }
-
-  #dataUsageDataTooltipText {
-    font-size: 12px;
-    font-weight: normal;
-    line-height: 18px;
-  }
 </style>
 <cr-dialog id="dialog">
   <div slot="title" class="title">$i18n{nearbyShareDataUsageDialogTitle}</div>
@@ -57,7 +33,7 @@
     <cr-radio-group selected="[[selectedDataUsage_(
         settings.dataUsage)]]">
       <cr-radio-button id="dataUsageDataButton"
-          name="[[NearbyShareDataUsage.ONLINE]]"
+          name="[[NearbyShareDataUsageEnum_.ONLINE]]"
           aria-labelledby="dataUsageDataLabel"
           aria-describedby="dataUsageDataDescription
               dataUsageDataTooltipText">
@@ -72,7 +48,7 @@
           <paper-tooltip id="dataUsageDataTooltip"
               for="dataUsageDataIcon"
               offset="8"
-              position="right"
+              position="bottom"
               fit-to-visible-bounds>
             <span id="dataUsageDataTooltipText">
               $i18n{nearbyShareDataUsageDataTooltip}
@@ -84,7 +60,7 @@
         </div>
       </cr-radio-button>
       <cr-radio-button id="dataUsageWifiOnlyButton"
-          name="[[NearbyShareDataUsage.WIFI_ONLY]]"
+          name="[[NearbyShareDataUsageEnum_.WIFI_ONLY]]"
           aria-labelledby="dataUsageWifiOnlyLabel"
           aria-describedby="dataUsageWifiOnlyDescription">
         <div id="dataUsageWifiOnlyLabel" class="data-usage-name"
@@ -96,7 +72,7 @@
         </div>
       </cr-radio-button>
       <cr-radio-button id="dataUsageOfflineButton"
-          name="[[NearbyShareDataUsage.OFFLINE]]"
+          name="[[NearbyShareDataUsageEnum_.OFFLINE]]"
           aria-labelledby="dataUsageOfflineLabel"
           aria-describedby="dataUsageOfflineDescription">
         <div id="dataUsageOfflineLabel" class="data-usage-name"

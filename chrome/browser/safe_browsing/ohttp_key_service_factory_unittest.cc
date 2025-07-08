@@ -8,8 +8,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/safe_browsing/core/browser/hashprefix_realtime/hash_realtime_utils.h"
 #include "components/safe_browsing/core/common/features.h"
+#include "components/safe_browsing/core/common/hashprefix_realtime/hash_realtime_utils.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -21,8 +21,7 @@ class OhttpKeyServiceFactoryTest : public testing::Test {
   ~OhttpKeyServiceFactoryTest() override = default;
   void SetUp() override {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{kHashRealTimeOverOhttp,
-                              kHashPrefixRealTimeLookups},
+        /*enabled_features=*/{kHashPrefixRealTimeLookups},
         /*disabled_features=*/{});
     profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
@@ -48,6 +47,7 @@ class OhttpKeyServiceFactoryTest : public testing::Test {
  private:
   scoped_refptr<safe_browsing::SafeBrowsingService> sb_service_;
   hash_realtime_utils::GoogleChromeBrandingPretenderForTesting apply_branding_;
+  OhttpKeyServiceAllowerForTesting allow_ohttp_key_service_;
 };
 
 #if BUILDFLAG(IS_ANDROID)
@@ -61,33 +61,18 @@ TEST_F(OhttpKeyServiceFactoryTest, EnabledForRegularProfiles) {
   EXPECT_NE(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
 }
 
-TEST_F(OhttpKeyServiceFactoryTest, EnabledIfOnlyHashRealTimeOverOhttpDisabled) {
-  feature_list_.Reset();
-  feature_list_.InitWithFeatures(
-      /*enabled_features=*/{kHashPrefixRealTimeLookups},
-      /*disabled_features=*/{kHashRealTimeOverOhttp});
-  TestingProfile* profile = profile_manager_->CreateTestingProfile("profile");
-  EXPECT_NE(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
-}
-
+// Regression test requested in crbug.com/355577214.
 TEST_F(OhttpKeyServiceFactoryTest,
-       EnabledIfOnlyHashPrefixRealTimeLookupsDisabled) {
+       EnabledForRegularProfiles_HashRealTimeLookupsDisabled) {
   feature_list_.Reset();
   feature_list_.InitWithFeatures(
-      /*enabled_features=*/{kHashRealTimeOverOhttp},
+      /*enabled_features=*/{},
       /*disabled_features=*/{kHashPrefixRealTimeLookups});
   TestingProfile* profile = profile_manager_->CreateTestingProfile("profile");
+  // The service should still be created even though HPRT lookups are disabled.
+  // Instead, the OHTTP key service disables itself if HPRT lookups are
+  // disabled.
   EXPECT_NE(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
-}
-
-TEST_F(OhttpKeyServiceFactoryTest,
-       DisabledForRegularProfiles_HashRealTimeLookupsAndOverOhttpBothDisabled) {
-  feature_list_.Reset();
-  feature_list_.InitWithFeatures(
-      /*enabled_features=*/{}, /*disabled_features=*/{
-          kHashRealTimeOverOhttp, kHashPrefixRealTimeLookups});
-  TestingProfile* profile = profile_manager_->CreateTestingProfile("profile");
-  EXPECT_EQ(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
 }
 
 TEST_F(OhttpKeyServiceFactoryTest, DisabledForIncognitoMode) {

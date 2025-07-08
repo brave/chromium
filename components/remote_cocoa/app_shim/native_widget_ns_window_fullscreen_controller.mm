@@ -10,10 +10,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "ui/base/cocoa/nswindow_test_util.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace remote_cocoa {
 
 namespace {
@@ -29,7 +25,7 @@ NativeWidgetNSWindowFullscreenController::
     : client_(client) {}
 
 NativeWidgetNSWindowFullscreenController::
-    ~NativeWidgetNSWindowFullscreenController() {}
+    ~NativeWidgetNSWindowFullscreenController() = default;
 
 void NativeWidgetNSWindowFullscreenController::EnterFullscreen(
     int64_t target_display_id) {

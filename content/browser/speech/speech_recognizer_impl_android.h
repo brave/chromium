@@ -12,8 +12,8 @@
 #include "base/android/scoped_java_ref.h"
 #include "content/browser/speech/speech_recognizer.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/mojom/speech/speech_recognition_error.mojom.h"
-#include "third_party/blink/public/mojom/speech/speech_recognition_result.mojom.h"
+#include "media/mojo/mojom/speech_recognition_error.mojom.h"
+#include "media/mojo/mojom/speech_recognition_result.mojom.h"
 
 namespace content {
 
@@ -30,29 +30,27 @@ class CONTENT_EXPORT SpeechRecognizerImplAndroid : public SpeechRecognizer {
 
   // SpeechRecognizer methods.
   void StartRecognition(const std::string& device_id) override;
+  void UpdateRecognitionContext(
+      const media::SpeechRecognitionRecognitionContext& recognition_context)
+      override;
   void AbortRecognition() override;
   void StopAudioCapture() override;
   bool IsActive() const override;
   bool IsCapturingAudio() const override;
 
   // Called from Java methods via JNI.
-  void OnAudioStart(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& obj);
-  void OnSoundStart(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& obj);
-  void OnSoundEnd(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
-  void OnAudioEnd(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void OnAudioStart(JNIEnv* env);
+  void OnSoundStart(JNIEnv* env);
+  void OnSoundEnd(JNIEnv* env);
+  void OnAudioEnd(JNIEnv* env);
   void OnRecognitionResults(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobjectArray>& strings,
       const base::android::JavaParamRef<jfloatArray>& floats,
       jboolean interim);
   void OnRecognitionError(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj,
                           jint error);
-  void OnRecognitionEnd(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj);
+  void OnRecognitionEnd(JNIEnv* env);
 
  private:
   enum State {
@@ -65,7 +63,7 @@ class CONTENT_EXPORT SpeechRecognizerImplAndroid : public SpeechRecognizer {
                                   bool continuous,
                                   bool interim_results);
   void OnRecognitionResultsOnIOThread(
-      std::vector<blink::mojom::SpeechRecognitionResultPtr> results);
+      std::vector<media::mojom::WebSpeechRecognitionResultPtr> results);
 
   ~SpeechRecognizerImplAndroid() override;
 

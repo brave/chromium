@@ -11,14 +11,14 @@
 #include "chrome/browser/profiles/profile_keyed_service_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
 
-namespace context {
+namespace content {
 class BrowserContext;
-}
+}  // namespace content
 
 namespace extensions {
 class PasswordsPrivateDelegate;
 
-// Wrapper class around PasswordsPrivateDelegate to control it's lifespan. If
+// Wrapper class around PasswordsPrivateDelegate to control its lifespan. If
 // the new PasswordManagerUI is enabled callers have to hold scoped_refptr of
 // PasswordsPrivateDelegate so the object can be released when no longer needed.
 // If the feature is disabled this class always holds a
@@ -47,7 +47,7 @@ class PasswordsPrivateDelegateProxy : public KeyedService {
 };
 
 // Factory for creating PasswordPrivateDelegates.
-// TODO(crbug.com/1412348): Replace with KeyedServiceFactory.
+// TODO(crbug.com/40255236): Replace with KeyedServiceFactory.
 class PasswordsPrivateDelegateFactory : public ProfileKeyedServiceFactory {
  public:
   static scoped_refptr<PasswordsPrivateDelegate> GetForBrowserContext(
@@ -62,7 +62,7 @@ class PasswordsPrivateDelegateFactory : public ProfileKeyedServiceFactory {
   ~PasswordsPrivateDelegateFactory() override;
 
   // BrowserContextKeyedServiceFactory implementation.
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* profile) const override;
 };
 

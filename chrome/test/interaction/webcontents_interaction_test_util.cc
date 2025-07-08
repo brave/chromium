@@ -4,7 +4,10 @@
 
 #include "chrome/test/interaction/webcontents_interaction_test_util.h"
 
+#include <algorithm>
 #include <initializer_list>
+#include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -14,17 +17,18 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_auto_reset.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notreached.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -39,8 +43,8 @@
 #include "chrome/test/interaction/tracked_element_webcontents.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/test/browser_test_utils.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/interaction/framework_specific_implementation.h"
@@ -59,22 +63,125 @@ class RenderFrameHost;
 namespace {
 
 content::WebContents* GetWebContents(Browser* browser,
-                                     absl::optional<int> tab_index) {
+                                     std::optional<int> tab_index) {
   auto* const model = browser->tab_strip_model();
   return model->GetWebContentsAt(tab_index.value_or(model->active_index()));
 }
 
-// Provides a template function for "does this element exist" queries.
-// Will return on_missing_selector if 'err?.selector' is valid.
-// Will return on_found if el is valid.
-std::string GetExistsQuery(const char* on_missing_selector,
-                           const char* on_found) {
+// Provides a JavaScript skeleton for "does this element exist" queries.
+//
+// Will evaluate and return `on_not_found` if 'err?.selector' is valid.
+// Will evaluate and return `on_found` if 'el' is valid.
+std::string GetExistsQuery(const char* on_not_found, const char* on_found) {
   return base::StringPrintf(R"((el, err) => {
         if (err?.selector) return %s;
         if (err) throw err;
         return %s;
       })",
-                            on_missing_selector, on_found);
+                            on_not_found, on_found);
+}
+
+// Does `StateChange` validation, including inferring the actual type for
+// `Type::kAuto`, and returns the (potentially updated) StateChange.
+WebContentsInteractionTestUtil::StateChange ValidateAndInferStateChange(
+    const WebContentsInteractionTestUtil::StateChange& state_change) {
+  WebContentsInteractionTestUtil::StateChange configuration = state_change;
+
+  CHECK(configuration.event) << "StateChange missing event - " << configuration;
+  CHECK(configuration.timeout.has_value() || !configuration.timeout_event)
+      << "StateChange cannot specify timeout event without timeout - "
+      << configuration;
+
+  const bool has_function = !configuration.test_function.empty();
+  const bool has_where = !configuration.where.empty();
+  using Type = WebContentsInteractionTestUtil::StateChange::Type;
+  switch (configuration.type) {
+    case Type::kAuto:
+      if (has_function) {
+        configuration.type =
+            has_where ? Type::kExistsAndConditionTrue : Type::kConditionTrue;
+      } else if (has_where) {
+        configuration.type = Type::kExists;
+      } else {
+        NOTREACHED() << "Unable to infer StateChange type - " << configuration;
+      }
+      break;
+    case Type::kExists:
+      CHECK(has_where) << "Expected where to be non-empty - " << configuration;
+      CHECK(!has_function) << "Expected test function to be empty - "
+                           << configuration;
+      break;
+    case Type::kDoesNotExist:
+      CHECK(has_where) << "Expected where to be non-empty - " << configuration;
+      CHECK(!has_function) << "Expected test function to be empty - "
+                           << configuration;
+      break;
+    case Type::kConditionTrue:
+      CHECK(!has_where) << "Expected where to be empty - " << configuration;
+      CHECK(has_function) << "Expected test function to be non-empty - "
+                          << configuration;
+      break;
+    case Type::kExistsAndConditionTrue:
+      CHECK(has_where && has_function)
+          << "Expected where and function to be non-empty - " << configuration;
+  }
+  if (!configuration.check_callback.is_null()) {
+    CHECK(has_function)
+        << "Cannot specify check callback without test function - "
+        << configuration;
+  }
+  return configuration;
+}
+
+// Detects the presence of a javascript `function` that takes (el, err) as
+// parameters, for backwards-compatibility with older tests that require this.
+//
+// Expectation is one of:
+//  ... x, y ... => ...
+//  ... x, y ... { ...
+//
+// Functions not in this format will not be recognized as taking an error param.
+bool HasErrorParameter(const std::string& function) {
+  size_t body1 = function.find("=>");
+  size_t body2 = function.find('{');
+  const size_t body =
+      (body1 == std::string::npos)
+          ? body2
+          : (body2 == std::string::npos ? body1 : std::min(body1, body2));
+  if (body == std::string::npos) {
+    return false;
+  }
+  const size_t comma = function.find(',');
+  return comma != std::string::npos && comma < body;
+}
+
+// Returns the JS query that must be sent to check a particular state change.
+std::string GetStateChangeQuery(
+    const WebContentsInteractionTestUtil::StateChange& configuration) {
+  // For `kConditionTrue`, `configuration.test_function` can be used directly
+  // directly, but for the other options it must be modified.
+  using Type = WebContentsInteractionTestUtil::StateChange::Type;
+  switch (configuration.type) {
+    case Type::kAuto:
+      NOTREACHED() << "Auto type should already have been inferred.";
+    case Type::kExists:
+      return GetExistsQuery(
+          /* on_not_found = */ "false",
+          /* on_found = */ "true");
+    case Type::kDoesNotExist:
+      return GetExistsQuery(
+          /* on_not_found = */ "true",
+          /* on_found = */ "false");
+    case Type::kConditionTrue:
+      return configuration.test_function;
+    case Type::kExistsAndConditionTrue:
+      if (HasErrorParameter(configuration.test_function)) {
+        return configuration.test_function;
+      }
+      const std::string on_found = "(" + configuration.test_function + ")(el)";
+      return GetExistsQuery(
+          /* on_not_found = */ "null", on_found.c_str());
+  }
 }
 
 // Common execution code for `EvalJsLocal()` and `ExecuteJsLocal()`.
@@ -84,9 +191,12 @@ void ExecuteScript(content::RenderFrameHost* host, const std::string& script) {
   if (host->GetLifecycleState() !=
       content::RenderFrameHost::LifecycleState::kPrerendering) {
     host->ExecuteJavaScriptWithUserGestureForTests(
-        script16, base::NullCallback());  // IN-TEST
+        script16, base::NullCallback(),
+        content::ISOLATED_WORLD_ID_GLOBAL);  // IN-TEST
   } else {
-    host->ExecuteJavaScriptForTests(script16, base::NullCallback());  // IN-TEST
+    host->ExecuteJavaScriptForTests(
+        script16, base::NullCallback(),
+        content::ISOLATED_WORLD_ID_GLOBAL);  // IN-TEST
   }
 }
 
@@ -106,17 +216,26 @@ content::EvalJsResult EvalJsLocal(
   std::string token =
       "EvalJsLocal-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
   std::string runner_script = base::StringPrintf(
-      R"(Promise.resolve(%s)
-         .then(func => [func()])
-         .then((result) => Promise.all(result))
-         .then((result) => [result[0], ''],
-               (error) => [undefined,
-                           error && error.stack ?
-                               '\n' + error.stack :
-                               'Error: "' + error + '"'])
-         .then((reply) => window.domAutomationController.send(['%s', reply]));
-      //# sourceURL=EvalJs-runner.js)",
-      function.c_str(), token.c_str());
+      R"(
+        (() => {
+          const replyFunc =
+              (reply) => window.domAutomationController.send(['%s', reply]);
+          const errorReply =
+              (error) => [undefined,
+                        error && error.stack ?
+                            '\n' + error.stack :
+                            'Error: "' + error + '"'];
+          try {
+            Promise.resolve((%s)())
+              .then((result) => [result, ''],
+                    (error) => errorReply(error))
+              .then((result) => replyFunc(result));
+          } catch (err) {
+            replyFunc(errorReply(err));
+          }
+        })(); //# sourceURL=EvalJs-runner.js
+      )",
+      token.c_str(), function.c_str());
 
   if (!host->IsRenderFrameLive())
     return content::EvalJsResult(base::Value(), "Error: frame has crashed.");
@@ -160,17 +279,80 @@ void ExecuteJsLocal(const content::ToRenderFrameHost& execution_target,
   ExecuteScript(host, runner_script);
 }
 
+std::string DeepQueryToJSON(
+    const WebContentsInteractionTestUtil::DeepQuery& where) {
+  // Safely convert the selector list in `where` to a JSON/JS list.
+  base::Value::List selector_list;
+  for (const auto& selector : where) {
+    selector_list.Append(selector);
+  }
+  std::string selectors;
+  CHECK(base::JSONWriter::Write(selector_list, &selectors));
+  return selectors;
+}
+
+// Computes the bounds of the element at `where` relative to the top-level
+// render window. This takes into account nested shadow DOMs and iframes.
+// Result is a function that when executed returns a JSON object with
+// {x, y, w, h}.
+std::string GetElementBounds(
+    const WebContentsInteractionTestUtil::DeepQuery& where) {
+  const std::string selectors = DeepQueryToJSON(where);
+  return base::StringPrintf(
+      R"(function() {
+         const selectors = (%s);
+         let cur = document;
+         let offsetX = 0;
+         let offsetY = 0;
+         for (let selector of selectors) {
+           if (cur.shadowRoot) {
+             // Handle shadow DOM case.
+             cur = cur.shadowRoot;
+           } else if (cur.contentDocument) {
+             // Handle iframe case. Iframe bounds are not included in bounds
+             // calculations for elements that reside inside of them, so these
+             // need to be handled explicitly.
+
+             // Grab the bounds - these will contain the border and padding.
+             const bounds = cur.getBoundingClientRect();
+             offsetX += bounds.x;
+             offsetY += bounds.y;
+
+             // Add the internal padding.
+             const style = getComputedStyle(cur);
+             offsetX += parseInt(style.borderLeftWidth) +
+                        parseInt(style.paddingLeft);
+             offsetY += parseInt(style.borderTopWidth) +
+                        parseInt(style.paddingTop);
+
+             // Move inside the iframe.
+             cur = cur.contentDocument;
+           }
+           cur = cur.querySelector(selector);
+           if (!cur) {
+             const err = new Error('Selector not found: ' + selector);
+             err.selector = selector;
+             throw err;
+           }
+         }
+
+         const rect = cur.getBoundingClientRect();
+         return {
+           "x": rect.x + offsetX,
+           "y": rect.y + offsetY,
+           "w": rect.width,
+           "h": rect.height
+         };
+       })",
+      selectors.c_str());
+}
+
 std::string CreateDeepQuery(
     const WebContentsInteractionTestUtil::DeepQuery& where,
     const std::string& function) {
   DCHECK(!function.empty());
 
-  // Safely convert the selector list in `where` to a JSON/JS list.
-  base::Value::List selector_list;
-  for (const auto& selector : where)
-    selector_list.Append(selector);
-  std::string selectors;
-  CHECK(base::JSONWriter::Write(selector_list, &selectors));
+  const std::string selectors = DeepQueryToJSON(where);
 
   return base::StringPrintf(
       R"(function() {
@@ -178,7 +360,11 @@ std::string CreateDeepQuery(
            let cur = document;
            for (let selector of selectors) {
              if (cur.shadowRoot) {
+               // Handle shadow DOM case.
                cur = cur.shadowRoot;
+             } else if (cur.contentDocument) {
+               // Handle iframe case.
+               cur = cur.contentDocument;
              }
              cur = cur.querySelector(selector);
              if (!cur) {
@@ -208,6 +394,95 @@ std::string CreateDeepQuery(
 
 }  // namespace
 
+// Subclass used to handle WebContents in tabs.
+class TabWebContentsInteractionTestUtil : public WebContentsInteractionTestUtil,
+                                          public TabStripModelObserver {
+ public:
+  TabWebContentsInteractionTestUtil(content::WebContents* web_contents,
+                                    ui::ElementIdentifier page_identifier);
+  TabWebContentsInteractionTestUtil(Browser* to_watch,
+                                    ui::ElementIdentifier page_identifier);
+  ~TabWebContentsInteractionTestUtil() override;
+
+  // WebContentsInteractionTestUtil:
+  void LoadPageInNewTab(const GURL& url, bool activate_tab) override;
+  views::WebView* GetWebView() const override;
+
+ protected:
+  // TabStripModelObserver:
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
+  ui::ElementContext GetElementContext() const override;
+
+ private:
+  void StartWatchingWebContents(content::WebContents* web_contents);
+
+  // Optional object that watches for a new tab to be created, either in a
+  // specific browser or in any browser.
+  class NewTabWatcher;
+  std::unique_ptr<NewTabWatcher> new_tab_watcher_;
+};
+
+// Subclass used to handle WebContents in a WebView.
+class WebViewWebContentsInteractionTestUtil
+    : public WebContentsInteractionTestUtil {
+ public:
+  WebViewWebContentsInteractionTestUtil(views::WebView* web_view,
+                                        ui::ElementIdentifier page_identifier);
+  ~WebViewWebContentsInteractionTestUtil() override;
+
+  views::WebView* GetWebView() const override;
+
+ protected:
+  // TabStripModelObserver:
+  bool ForceNavigateWithController() const override { return true; }
+  ui::ElementContext GetElementContext() const override;
+
+ private:
+  class WebViewData;
+
+  // Tracks the WebView that hosts a non-tab WebContents; null otherwise.
+  std::unique_ptr<WebViewData> web_view_data_;
+};
+
+// Tracks an inner WebContents at a particular index in an outer instrumented
+// WebContents. Valid only when the inner contents and outer contents are both
+// valid and visible.
+class InnerWebContentsInteractionTestUtil
+    : public WebContentsInteractionTestUtil {
+ public:
+  InnerWebContentsInteractionTestUtil(
+      ui::ElementIdentifier outer_webcontents_id,
+      size_t inner_contents_index,
+      ui::ElementIdentifier inner_page_identifier);
+  ~InnerWebContentsInteractionTestUtil() override;
+
+ public:
+  views::WebView* GetWebView() const override;
+  gfx::Rect GetElementBoundsInScreen(const DeepQuery& where) const override;
+  ui::ElementContext GetElementContext() const override;
+
+ private:
+  class ParentWebContentsObserver;
+
+  const WebContentsInteractionTestUtil* parent_util() const {
+    return parent_element_ ? parent_element_->owner() : nullptr;
+  }
+
+  void MaybeObserveChild();
+
+  void OnParentShown(ui::TrackedElement* parent);
+  void OnParentHidden(ui::TrackedElement* parent);
+
+  raw_ptr<const TrackedElementWebContents> parent_element_ = nullptr;
+  const size_t inner_contents_index_;
+  std::unique_ptr<ParentWebContentsObserver> parent_observer_;
+  base::CallbackListSubscription parent_shown_subscription_;
+  base::CallbackListSubscription parent_hidden_subscription_;
+};
+
 WebContentsInteractionTestUtil::DeepQuery::DeepQuery() = default;
 WebContentsInteractionTestUtil::DeepQuery::DeepQuery(
     std::initializer_list<std::string> segments)
@@ -223,6 +498,13 @@ WebContentsInteractionTestUtil::DeepQuery::operator=(
   segments_ = segments;
   return *this;
 }
+WebContentsInteractionTestUtil::DeepQuery
+WebContentsInteractionTestUtil::DeepQuery::operator+(
+    const std::string& segment) const {
+  DeepQuery result(*this);
+  result.segments_.emplace_back(segment);
+  return result;
+}
 WebContentsInteractionTestUtil::DeepQuery::~DeepQuery() = default;
 
 WebContentsInteractionTestUtil::StateChange::StateChange() = default;
@@ -233,18 +515,487 @@ WebContentsInteractionTestUtil::StateChange::operator=(
     const WebContentsInteractionTestUtil::StateChange& other) = default;
 WebContentsInteractionTestUtil::StateChange::~StateChange() = default;
 
-class WebContentsInteractionTestUtil::NewTabWatcher
+class WebContentsInteractionTestUtil::Poller {
+ public:
+  Poller(WebContentsInteractionTestUtil* const owner, StateChange state_change)
+      : state_change_(std::move(state_change)),
+        js_query_(GetStateChangeQuery(state_change_)),
+        owner_(owner) {}
+
+  ~Poller() = default;
+
+  void StartPolling() {
+    CHECK(!timer_.IsRunning());
+    timer_.Start(FROM_HERE, state_change_.polling_interval,
+                 base::BindRepeating(&Poller::Poll, base::Unretained(this)));
+  }
+
+  const StateChange& state_change() const { return state_change_; }
+
+ private:
+  void Poll() {
+    // Callback can get called again if Evaluate() below stalls. We don't want
+    // to stack callbacks because of issues with message passing to/from web
+    // contents.
+    if (is_polling_)
+      return;
+
+    // If there is no page loaded, then there is nothing to poll.
+    if (!owner_->is_page_loaded()) {
+      CHECK(state_change_.continue_across_navigation)
+          << "Page discarded waiting for StateChange event "
+          << state_change_.event;
+      return;
+    }
+
+    auto weak_ptr = weak_factory_.GetWeakPtr();
+    base::WeakAutoReset is_polling_auto_reset(weak_ptr, &Poller::is_polling_,
+                                              true);
+
+    const base::Value result =
+        state_change_.where.empty()
+            ? owner_->Evaluate(js_query_)
+            : owner_->EvaluateAt(state_change_.where, js_query_);
+
+    // At this point, weak_ptr might be invalid since we could have been deleted
+    // while we were waiting for Evaluate[At]() to complete.
+    if (weak_ptr) {
+      if (CheckResult(result)) {
+        owner_->OnPollEvent(this, state_change_.event);
+      } else if (state_change_.timeout.has_value() &&
+                 elapsed_.Elapsed() > state_change_.timeout.value()) {
+        owner_->OnPollEvent(this, state_change_.timeout_event);
+      }
+    }
+  }
+
+  // Determines if the result of calling the method passes the check.
+  //
+  // If no explicit check is specified, `value` will be evaluated for
+  // truthiness.
+  bool CheckResult(const base::Value& value) {
+    if (state_change_.check_callback.is_null()) {
+      return IsTruthy(value);
+    }
+    return state_change_.check_callback.Run(value);
+  }
+
+  const base::ElapsedTimer elapsed_;
+  const StateChange state_change_;
+  const std::string js_query_;
+  const raw_ptr<WebContentsInteractionTestUtil> owner_;
+  base::RepeatingTimer timer_;
+  bool is_polling_ = false;
+  base::WeakPtrFactory<Poller> weak_factory_{this};
+};
+
+// static
+constexpr base::TimeDelta
+    WebContentsInteractionTestUtil::kDefaultPollingInterval;
+
+WebContentsInteractionTestUtil::~WebContentsInteractionTestUtil() {
+  Observe(nullptr);
+  pollers_.clear();
+}
+
+// static
+bool WebContentsInteractionTestUtil::IsTruthy(const base::Value& value) {
+  using Type = base::Value::Type;
+  switch (value.type()) {
+    case Type::BOOLEAN:
+      return value.GetBool();
+    case Type::INTEGER:
+      return value.GetInt() != 0;
+    case Type::DOUBLE:
+      // Note: this should probably also include handling of NaN, but
+      // base::Value itself cannot handle NaN values because JSON cannot.
+      return value.GetDouble() != 0.0;
+    case Type::BINARY:
+      return true;
+    case Type::DICT:
+      return true;
+    case Type::LIST:
+      return true;
+    case Type::STRING:
+      return !value.GetString().empty();
+    case Type::NONE:
+      return false;
+  }
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForExistingTabInContext(
+    ui::ElementContext context,
+    ui::ElementIdentifier page_identifier,
+    std::optional<int> tab_index) {
+  return ForExistingTabInBrowser(
+      InteractionTestUtilBrowser::GetBrowserFromContext(context),
+      page_identifier, tab_index);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForExistingTabInBrowser(
+    Browser* browser,
+    ui::ElementIdentifier page_identifier,
+    std::optional<int> tab_index) {
+  return ForTabWebContents(GetWebContents(browser, tab_index), page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForTabWebContents(
+    content::WebContents* web_contents,
+    ui::ElementIdentifier page_identifier) {
+  return std::make_unique<TabWebContentsInteractionTestUtil>(web_contents,
+                                                             page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForNonTabWebView(
+    views::WebView* web_view,
+    ui::ElementIdentifier page_identifier) {
+  return std::make_unique<WebViewWebContentsInteractionTestUtil>(
+      web_view, page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForNextTabInContext(
+    ui::ElementContext context,
+    ui::ElementIdentifier page_identifier) {
+  Browser* const browser =
+      InteractionTestUtilBrowser::GetBrowserFromContext(context);
+  return ForNextTabInBrowser(browser, page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForNextTabInBrowser(
+    Browser* browser,
+    ui::ElementIdentifier page_identifier) {
+  CHECK(browser);
+  return std::make_unique<TabWebContentsInteractionTestUtil>(browser,
+                                                             page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForNextTabInAnyBrowser(
+    ui::ElementIdentifier page_identifier) {
+  return std::make_unique<TabWebContentsInteractionTestUtil>(
+      static_cast<Browser*>(nullptr), page_identifier);
+}
+
+// static
+std::unique_ptr<WebContentsInteractionTestUtil>
+WebContentsInteractionTestUtil::ForInnerWebContents(
+    ui::ElementIdentifier outer_page_identifier,
+    size_t inner_contents_index,
+    ui::ElementIdentifier inner_page_identifier) {
+  return base::WrapUnique(new InnerWebContentsInteractionTestUtil(
+      outer_page_identifier, inner_contents_index, inner_page_identifier));
+}
+
+bool WebContentsInteractionTestUtil::HasPageBeenPainted() const {
+  return is_page_loaded() &&
+         web_contents()->CompletedFirstVisuallyNonEmptyPaint();
+}
+
+void WebContentsInteractionTestUtil::LoadPage(const GURL& url) {
+  CHECK(web_contents());
+  if (!web_contents()->GetURL().EqualsIgnoringRef(url)) {
+    navigating_away_from_ = web_contents()->GetURL();
+    DiscardCurrentElement();
+  }
+  if (url.SchemeIs("chrome") || ForceNavigateWithController()) {
+    // Secure pages and non-tab WebViews must be navigated via the controller.
+    content::NavigationController::LoadURLParams params(url);
+    CHECK(web_contents()->GetController().LoadURLWithParams(params));
+  } else {
+    // Regular web pages can be navigated directly.
+    //
+    // In an ideal world, this should use `BeginNavigateToURLFromRenderer()`,
+    // which verifies that the navigation successfully starts. However,
+    // `BeginNavigateToURLFromRenderer()` itself uses a RunLoop to listen for
+    // the navigation starting.
+    //
+    // For reasons that are not well understood, this is problematic when used
+    // in conjunction with the interaction sequence test utils, which often
+    // run the entire test inside a top-level RunLoop; the now nested RunLoop
+    // inside `BeginNavigateToURLFromRenderer()` never receives the
+    // `DidStartNavigation()` callback, and the test just ends up hanging.
+    //
+    // Use Execute() as a workaround this hang. Note that unlike the
+    // similarly-named `content::ExecJs()`, this helper does not actually
+    // validate or wait for the script to execute; hopefully, errors from
+    // navigation failures will be obvious enough in subsequent steps.
+    ExecuteJsLocal(web_contents(),
+                   content::JsReplace("() => location = $1", url));
+  }
+}
+
+void WebContentsInteractionTestUtil::LoadPageInNewTab(const GURL& url,
+                                                      bool activate_tab) {
+  NOTREACHED() << "Should only be called for tab WebContents.";
+}
+
+base::Value WebContentsInteractionTestUtil::Evaluate(
+    const std::string& function,
+    std::string* error_message) {
+  CHECK(is_page_loaded());
+  auto result = EvalJsLocal(web_contents(), function);
+  if (!result.error.empty()) {
+    if (error_message) {
+      *error_message = result.error;
+      return base::Value();
+    } else {
+      NOTREACHED() << "Uncaught JS exception: " << result.error;
+    }
+  }
+
+  // Despite the fact that EvalJsResult::value is const, base::Value in general
+  // is moveable and nothing special is done on EvalJsResult destructor, which
+  // means it's safe to const-cast and move the value out of the struct.
+  auto& value = const_cast<base::Value&>(result.value);
+
+  return std::move(value);
+}
+
+void WebContentsInteractionTestUtil::Execute(const std::string& function) {
+  CHECK(is_page_loaded());
+  ExecuteJsLocal(web_contents(), function);
+}
+
+void WebContentsInteractionTestUtil::SendEventOnStateChange(
+    const StateChange& configuration) {
+  CHECK(current_element_);
+
+  auto actual_config = ValidateAndInferStateChange(configuration);
+  const auto& poller = pollers_.emplace_back(
+      std::make_unique<Poller>(this, std::move(actual_config)));
+  poller->StartPolling();
+}
+
+bool WebContentsInteractionTestUtil::Exists(const DeepQuery& query,
+                                            std::string* not_found) {
+  const std::string full_query =
+      CreateDeepQuery(query, GetExistsQuery("err.selector", "''"));
+  const std::string result = Evaluate(full_query).GetString();
+  if (not_found)
+    *not_found = result;
+  return result.empty();
+}
+
+base::Value WebContentsInteractionTestUtil::EvaluateAt(
+    const DeepQuery& where,
+    const std::string& function,
+    std::string* error_message) {
+  const std::string full_query = CreateDeepQuery(where, function);
+  return Evaluate(full_query, error_message);
+}
+
+void WebContentsInteractionTestUtil::ExecuteAt(const DeepQuery& where,
+                                               const std::string& function) {
+  const std::string full_query = CreateDeepQuery(where, function);
+  Execute(full_query);
+}
+
+bool WebContentsInteractionTestUtil::Exists(const std::string& selector) {
+  return Exists(DeepQuery{selector});
+}
+
+base::Value WebContentsInteractionTestUtil::EvaluateAt(
+    const std::string& selector,
+    const std::string& function) {
+  return EvaluateAt(DeepQuery{selector}, function);
+}
+
+void WebContentsInteractionTestUtil::ExecuteAt(const std::string& selector,
+                                               const std::string& function) {
+  ExecuteAt(DeepQuery{selector}, function);
+}
+
+gfx::Rect WebContentsInteractionTestUtil::GetElementBoundsInScreen(
+    const DeepQuery& where) const {
+  if (!current_element_) {
+    return gfx::Rect();
+  }
+
+  views::WebView* const web_view = GetWebView();
+  if (!web_view) {
+    return gfx::Rect();
+  }
+
+  // TODO(dfried): Screen bounds returned by GetBoundsInScreen() are in DIPs.
+  // We are also assuming that Element.getBoundingClientRect() also returns a
+  // value in DIPs (this seems to be borne out by anecdotal evidence in online
+  // discussions). However, if that's not the case, either the offset or element
+  // bounds will need to be adjusted by the current display's scale factor.
+  const gfx::Point offset = web_view->GetBoundsInScreen().origin();
+
+  // Perform our custom bounds calculation, taking into account e.g. iframes.
+  // Note that this does not modify the contents of the frame, so it's safe to
+  // do this const cast.
+  const base::Value result =
+      const_cast<WebContentsInteractionTestUtil*>(this)->Evaluate(
+          GetElementBounds(where));
+
+  // This will crash if any of the values are not found, however, since this is
+  // test code that's fine; it *should* crash the test.
+  const auto& dict = result.GetDict();
+  gfx::Rect element_bounds(
+      dict.Find("x")->GetDouble(), dict.Find("y")->GetDouble(),
+      dict.Find("w")->GetDouble(), dict.Find("h")->GetDouble());
+
+  element_bounds.Offset(offset.x(), offset.y());
+  return element_bounds;
+}
+
+gfx::Rect WebContentsInteractionTestUtil::GetElementBoundsInScreen(
+    const std::string& where) const {
+  return GetElementBoundsInScreen(DeepQuery{where});
+}
+
+void WebContentsInteractionTestUtil::DidStopLoading() {
+  // In some cases we will not have an "on load complete" event, so ensure that
+  // we check for page fully loaded in other callbacks.
+  MaybeCreateElement();
+}
+
+void WebContentsInteractionTestUtil::DidFinishLoad(
+    content::RenderFrameHost* render_frame_host,
+    const GURL& validated_url) {
+  // In some cases we will not have an "on load complete" event, so ensure that
+  // we check for page fully loaded in other callbacks.
+  MaybeCreateElement();
+}
+
+void WebContentsInteractionTestUtil::
+    DocumentOnLoadCompletedInPrimaryMainFrame() {
+  // Even if the page is still "loading" it should be ready for interaction at
+  // this point. Note that in some cases we won't receive this event, which is
+  // why we also check at DidStopLoading() and DidFinishLoad().
+  MaybeCreateElement();
+}
+
+void WebContentsInteractionTestUtil::PrimaryPageChanged(content::Page& page) {
+  DiscardCurrentElement();
+}
+
+void WebContentsInteractionTestUtil::WebContentsDestroyed() {
+  DiscardCurrentElement();
+}
+
+void WebContentsInteractionTestUtil::DidFirstVisuallyNonEmptyPaint() {
+  MaybeSendPaintEvent();
+}
+
+WebContentsInteractionTestUtil::WebContentsInteractionTestUtil(
+    content::WebContents* web_contents,
+    ui::ElementIdentifier page_identifier)
+    : WebContentsObserver(web_contents), page_identifier_(page_identifier) {
+  CHECK(page_identifier);
+}
+
+void WebContentsInteractionTestUtil::MaybeCreateElement() {
+  if (current_element_ || !web_contents()) {
+    return;
+  }
+
+  if (!web_contents()->IsDocumentOnLoadCompletedInPrimaryMainFrame() ||
+      web_contents()->HasUncommittedNavigationInPrimaryMainFrame()) {
+    return;
+  }
+
+  ui::ElementContext context = GetElementContext();
+  if (!context) {
+    return;
+  }
+
+  // Ignore events on a page we're navigating away from.
+  if (navigating_away_from_ &&
+      navigating_away_from_->EqualsIgnoringRef(web_contents()->GetURL())) {
+    return;
+  }
+  navigating_away_from_.reset();
+
+  current_element_ = std::make_unique<TrackedElementWebContents>(
+      page_identifier_, context, this);
+
+  // Init (send shown event, etc.) after current_element_ is set in order to
+  // ensure that is_page_loaded() is true during any callbacks.
+  current_element_->Init();
+
+  // Because callbacks to the above method may result in the contents or current
+  // element being destroyed, make sure to check before trying to access the
+  // objects again.
+  if (current_element_) {
+    if (web_contents()->CompletedFirstVisuallyNonEmptyPaint()) {
+      MaybeSendPaintEvent();
+    }
+  }
+}
+
+void WebContentsInteractionTestUtil::MaybeSendPaintEvent() {
+  if (sent_paint_event_ || !current_element_) {
+    return;
+  }
+
+  CHECK(web_contents());
+  CHECK(web_contents()->CompletedFirstVisuallyNonEmptyPaint());
+
+  sent_paint_event_ = true;
+  ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
+      current_element_.get(), TrackedElementWebContents::kFirstNonEmptyPaint);
+}
+
+void WebContentsInteractionTestUtil::DiscardCurrentElement() {
+  sent_paint_event_ = false;
+  current_element_.reset();
+  for (const auto& poller : pollers_) {
+    CHECK(poller->state_change().continue_across_navigation)
+        << "Unexpectedly left page while still waiting for StateChange event "
+        << poller->state_change().event;
+  }
+}
+
+bool WebContentsInteractionTestUtil::ForceNavigateWithController() const {
+  return false;
+}
+
+void WebContentsInteractionTestUtil::OnPollEvent(
+    Poller* poller,
+    ui::CustomElementEventType event) {
+  CHECK(current_element_)
+      << "StateChange succeeded (or failed) while no page was loaded; "
+         "this is always an error even if continue_across_navigation is true.";
+  const auto it =
+      std::find_if(pollers_.begin(), pollers_.end(),
+                   [poller](const auto& ptr) { return ptr.get() == poller; });
+  CHECK(it != pollers_.end());
+  pollers_.erase(it);
+  if (event) {
+    ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
+        current_element_.get(), event);
+  }
+}
+
+class TabWebContentsInteractionTestUtil::NewTabWatcher
     : public TabStripModelObserver,
       public BrowserListObserver {
  public:
-  NewTabWatcher(WebContentsInteractionTestUtil* owner, Browser* browser)
+  NewTabWatcher(TabWebContentsInteractionTestUtil* owner, Browser* browser)
       : owner_(owner), browser_(browser) {
     if (browser_) {
       browser_->tab_strip_model()->AddObserver(this);
     } else {
       BrowserList::GetInstance()->AddObserver(this);
-      for (Browser* const open_browser : *BrowserList::GetInstance())
+      for (Browser* const open_browser : *BrowserList::GetInstance()) {
         open_browser->tab_strip_model()->AddObserver(this);
+      }
     }
   }
 
@@ -268,102 +1019,132 @@ class WebContentsInteractionTestUtil::NewTabWatcher
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override {
-    if (change.type() != TabStripModelChange::Type::kInserted)
+    if (change.type() != TabStripModelChange::Type::kInserted) {
       return;
+    }
 
     auto* const web_contents =
         change.GetInsert()->contents.front().contents.get();
-    CHECK(!browser_ ||
-          browser_ == chrome::FindBrowserWithWebContents(web_contents));
+    CHECK(!browser_ || browser_ == chrome::FindBrowserWithTab(web_contents));
     owner_->StartWatchingWebContents(web_contents);
   }
 
-  const raw_ptr<WebContentsInteractionTestUtil> owner_;
+  const raw_ptr<TabWebContentsInteractionTestUtil> owner_;
   const raw_ptr<Browser> browser_;
 };
 
-class WebContentsInteractionTestUtil::Poller {
- public:
-  Poller(WebContentsInteractionTestUtil* const owner,
-         const std::string& function,
-         const DeepQuery& where,
-         absl::optional<base::TimeDelta> timeout,
-         base::TimeDelta interval)
-      : function_(function),
-        where_(where),
-        interval_(interval),
-        timeout_(timeout),
-        owner_(owner) {}
+TabWebContentsInteractionTestUtil::TabWebContentsInteractionTestUtil(
+    content::WebContents* web_contents,
+    ui::ElementIdentifier page_identifier)
+    : WebContentsInteractionTestUtil(web_contents, page_identifier) {
+  StartWatchingWebContents(web_contents);
+}
 
-  ~Poller() = default;
+TabWebContentsInteractionTestUtil::TabWebContentsInteractionTestUtil(
+    Browser* to_watch,
+    ui::ElementIdentifier page_identifier)
+    : WebContentsInteractionTestUtil(nullptr, page_identifier),
+      new_tab_watcher_(std::make_unique<NewTabWatcher>(this, to_watch)) {}
 
-  void StartPolling() {
-    CHECK(!timer_.IsRunning());
-    timer_.Start(FROM_HERE, interval_,
-                 base::BindRepeating(&Poller::Poll, base::Unretained(this)));
+TabWebContentsInteractionTestUtil::~TabWebContentsInteractionTestUtil() =
+    default;
+
+void TabWebContentsInteractionTestUtil::LoadPageInNewTab(const GURL& url,
+                                                         bool activate_tab) {
+  // We use tertiary operator rather than value_or to avoid failing if we're in
+  // a wait state.
+  Browser* browser = new_tab_watcher_
+                         ? new_tab_watcher_->browser()
+                         : chrome::FindBrowserWithTab(web_contents());
+  CHECK(browser);
+  NavigateParams navigate_params(browser, url, ui::PAGE_TRANSITION_TYPED);
+  navigate_params.disposition = activate_tab
+                                    ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+                                    : WindowOpenDisposition::NEW_BACKGROUND_TAB;
+  auto navigate_result = Navigate(&navigate_params);
+  CHECK(navigate_result);
+}
+
+views::WebView* TabWebContentsInteractionTestUtil::GetWebView() const {
+  if (!current_element()) {
+    return nullptr;
   }
 
- private:
-  void Poll() {
-    // Callback can get called again if Evaluate() below stalls. We don't want
-    // to stack callbacks because of issues with message passing to/from web
-    // contents.
-    if (is_polling_)
-      return;
+  Browser* const browser = InteractionTestUtilBrowser::GetBrowserFromContext(
+      current_element()->context());
+  BrowserView* const browser_view =
+      BrowserView::GetBrowserViewForBrowser(browser);
+  CHECK(browser_view);
+  if (web_contents() != browser_view->GetActiveWebContents()) {
+    return nullptr;
+  }
 
-    auto weak_ptr = weak_factory_.GetWeakPtr();
-    base::WeakAutoReset is_polling_auto_reset(weak_ptr, &Poller::is_polling_,
-                                              true);
+  return browser_view->contents_web_view();
+}
 
-    base::Value result;
-    if (where_.empty()) {
-      result = owner_->Evaluate(function_);
-    } else if (function_.empty()) {
-      result = base::Value(owner_->Exists(where_));
-    } else {
-      result = owner_->EvaluateAt(where_, function_);
-    }
+ui::ElementContext TabWebContentsInteractionTestUtil::GetElementContext()
+    const {
+  ui::ElementContext context;
+  if (Browser* const browser = chrome::FindBrowserWithTab(web_contents())) {
+    context = browser->window()->GetElementContext();
+  }
+  return context;
+}
 
-    // At this point, weak_ptr might be invalid since we could have been deleted
-    // while we were waiting for Evaluate[At]() to complete.
-    if (weak_ptr) {
-      if (IsTruthy(result)) {
-        owner_->OnPollEvent(this);
-      } else if (timeout_.has_value() &&
-                 elapsed_.Elapsed() > timeout_.value()) {
-        owner_->OnPollTimeout(this);
+void TabWebContentsInteractionTestUtil::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  // Don't bother processing if we don't have a target WebContents.
+  if (!web_contents()) {
+    return;
+  }
+
+  // Ensure that if a tab is moved to another browser, we track that move.
+  if (change.type() == TabStripModelChange::Type::kRemoved) {
+    for (auto& removed_tab : change.GetRemove()->contents) {
+      if (removed_tab.contents != web_contents()) {
+        continue;
+      }
+      // We won't handle deleted reason here, since we already capture
+      // WebContentsDestroyed().
+      if (removed_tab.remove_reason ==
+          TabStripModelChange::RemoveReason::kInsertedIntoOtherTabStrip) {
+        DiscardCurrentElement();
+        Observe(nullptr);
       }
     }
+  } else if (change.type() == TabStripModelChange::Type::kReplaced) {
+    auto* const replace = change.GetReplace();
+    if (web_contents() == replace->old_contents) {
+      DiscardCurrentElement();
+      Observe(replace->new_contents);
+      MaybeCreateElement();
+    }
   }
+}
 
-  const base::ElapsedTimer elapsed_;
-  const std::string function_;
-  const DeepQuery where_;
-  const base::TimeDelta interval_;
-  const absl::optional<base::TimeDelta> timeout_;
-  const raw_ptr<WebContentsInteractionTestUtil> owner_;
-  base::RepeatingTimer timer_;
-  bool is_polling_ = false;
-  base::WeakPtrFactory<Poller> weak_factory_{this};
-};
-
-struct WebContentsInteractionTestUtil::PollerData {
-  std::unique_ptr<Poller> poller;
-  ui::CustomElementEventType event;
-  ui::CustomElementEventType timeout_event;
-};
+void TabWebContentsInteractionTestUtil::StartWatchingWebContents(
+    content::WebContents* web_contents) {
+  DCHECK(web_contents);
+  Browser* const browser = chrome::FindBrowserWithTab(web_contents);
+  CHECK(browser);
+  browser->tab_strip_model()->AddObserver(this);
+  if (new_tab_watcher_) {
+    new_tab_watcher_.reset();
+    Observe(web_contents);
+  }
+  MaybeCreateElement();
+}
 
 // Class that tracks a WebView and its WebContents in a secondary UI.
-class WebContentsInteractionTestUtil::WebViewData : public views::ViewObserver {
+class WebViewWebContentsInteractionTestUtil::WebViewData
+    : public views::ViewObserver {
  public:
-  WebViewData(WebContentsInteractionTestUtil* owner, views::WebView* web_view)
+  WebViewData(WebViewWebContentsInteractionTestUtil* owner,
+              views::WebView* web_view)
       : owner_(owner), web_view_(web_view) {}
-  ~WebViewData() override {
-    EXPECT_FALSE(minimum_size_data_)
-        << "Minimum size " << minimum_size_data_->webview_size.ToString()
-        << " never reached; event never sent: "
-        << minimum_size_data_->event_type;
-  }
+  ~WebViewData() override = default;
 
   // Separate init is required from construction so that the util object that
   // owns this object can store a pointer before any calls back to the util
@@ -400,27 +1181,6 @@ class WebContentsInteractionTestUtil::WebViewData : public views::ViewObserver {
     }
   }
 
-  void SendEventOnMinimumSize(const gfx::Size& minimum_webview_size,
-                              ui::CustomElementEventType event_type,
-                              const DeepQuery& element_to_check,
-                              const gfx::Size& minimum_element_size) {
-    CHECK(!minimum_size_data_)
-        << "Already have a pending minimum webview size with event "
-        << minimum_size_data_->event_type;
-    CHECK(!minimum_webview_size.IsEmpty());
-    CHECK(element_to_check.empty() || !minimum_element_size.IsEmpty());
-
-    minimum_size_data_ = std::make_unique<MinimumSizeData>();
-    minimum_size_data_->webview_size = minimum_webview_size;
-    minimum_size_data_->event_type = event_type;
-    minimum_size_data_->element = element_to_check;
-    minimum_size_data_->element_size = minimum_element_size;
-
-    // If the WebView already meets the minimum size, queue the event now.
-    if (Contains(minimum_webview_size, web_view_->size()))
-      QueueMinimumSizeEvent();
-  }
-
   ui::ElementContext context() const { return context_; }
 
   bool visible() const { return visible_; }
@@ -436,22 +1196,26 @@ class WebContentsInteractionTestUtil::WebViewData : public views::ViewObserver {
   };
 
   void OnElementShown(ui::TrackedElement* element) {
-    if (visible_)
+    if (visible_) {
       return;
+    }
     auto* el = element->AsA<views::TrackedElementViews>();
-    if (!el || el->view() != web_view_)
+    if (!el || el->view() != web_view_) {
       return;
+    }
     visible_ = true;
     owner_->Observe(web_view_->web_contents());
     owner_->MaybeCreateElement();
   }
 
   void OnElementHidden(ui::TrackedElement* element) {
-    if (!visible_)
+    if (!visible_) {
       return;
+    }
     auto* el = element->AsA<views::TrackedElementViews>();
-    if (!el || el->view() != web_view_)
+    if (!el || el->view() != web_view_) {
       return;
+    }
     visible_ = false;
     owner_->Observe(nullptr);
     owner_->DiscardCurrentElement();
@@ -468,13 +1232,6 @@ class WebContentsInteractionTestUtil::WebViewData : public views::ViewObserver {
     owner_->DiscardCurrentElement();
   }
 
-  void OnViewBoundsChanged(views::View* observed_view) override {
-    if (!minimum_size_data_)
-      return;
-    if (Contains(minimum_size_data_->webview_size, observed_view->size()))
-      QueueMinimumSizeEvent();
-  }
-
   void OnWebContentsAttached(views::WebView* observed_view) {
     CHECK_EQ(web_view_.get(), observed_view);
     content::WebContents* const to_observe =
@@ -487,549 +1244,149 @@ class WebContentsInteractionTestUtil::WebViewData : public views::ViewObserver {
     owner_->MaybeCreateElement();
   }
 
-  void QueueMinimumSizeEvent() {
-    if (!owner_->current_element_)
-      return;
-
-    // This clears the current data, allowing us to queue another minimum size
-    // event.
-    std::unique_ptr<MinimumSizeData> data = std::move(minimum_size_data_);
-
-    // The final step is to poke the WebView to determine when the target
-    // element (or page, if one has not been specified) has actually been
-    // rendered at a nonzero size.
-    owner_->SendEventOnElementMinimumSize(data->event_type, data->element,
-                                          data->element_size,
-                                          /* must_already_exist =*/false);
-  }
-
   static bool Contains(const gfx::Size& bounds, const gfx::Size& size) {
     return bounds.height() <= size.height() && bounds.width() <= size.width();
   }
 
-  const raw_ptr<WebContentsInteractionTestUtil> owner_;
+  const raw_ptr<WebViewWebContentsInteractionTestUtil> owner_;
   raw_ptr<views::WebView> web_view_;
   bool visible_ = false;
   ui::ElementContext context_;
   ui::ElementTracker::Subscription shown_subscription_;
   ui::ElementTracker::Subscription hidden_subscription_;
-  std::unique_ptr<MinimumSizeData> minimum_size_data_;
   base::ScopedObservation<views::View, views::ViewObserver> scoped_observation_{
       this};
   base::CallbackListSubscription web_contents_attached_subscription_;
   base::WeakPtrFactory<WebViewData> weak_factory_{this};
 };
 
-// static
-constexpr base::TimeDelta
-    WebContentsInteractionTestUtil::kDefaultPollingInterval;
-
-WebContentsInteractionTestUtil::~WebContentsInteractionTestUtil() {
-  // Stop observing before eliminating the element, as a callback could cascade
-  // into additional events.
-  new_tab_watcher_.reset();
-  Observe(nullptr);
-  pollers_.clear();
-}
-
-// static
-bool WebContentsInteractionTestUtil::IsTruthy(const base::Value& value) {
-  using Type = base::Value::Type;
-  switch (value.type()) {
-    case Type::BOOLEAN:
-      return value.GetBool();
-    case Type::INTEGER:
-      return value.GetInt() != 0;
-    case Type::DOUBLE:
-      // Note: this should probably also include handling of NaN, but
-      // base::Value itself cannot handle NaN values because JSON cannot.
-      return value.GetDouble() != 0.0;
-    case Type::BINARY:
-      return true;
-    case Type::DICT:
-      return true;
-    case Type::LIST:
-      return true;
-    case Type::STRING:
-      return !value.GetString().empty();
-    case Type::NONE:
-      return false;
-  }
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForExistingTabInContext(
-    ui::ElementContext context,
-    ui::ElementIdentifier page_identifier,
-    absl::optional<int> tab_index) {
-  return ForExistingTabInBrowser(
-      InteractionTestUtilBrowser::GetBrowserFromContext(context),
-      page_identifier, tab_index);
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForExistingTabInBrowser(
-    Browser* browser,
-    ui::ElementIdentifier page_identifier,
-    absl::optional<int> tab_index) {
-  return ForTabWebContents(GetWebContents(browser, tab_index), page_identifier);
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForTabWebContents(
-    content::WebContents* web_contents,
-    ui::ElementIdentifier page_identifier) {
-  return base::WrapUnique(new WebContentsInteractionTestUtil(
-      web_contents, page_identifier, absl::nullopt, nullptr));
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForNonTabWebView(
+WebViewWebContentsInteractionTestUtil::WebViewWebContentsInteractionTestUtil(
     views::WebView* web_view,
-    ui::ElementIdentifier page_identifier) {
-  return base::WrapUnique(new WebContentsInteractionTestUtil(
-      web_view->GetWebContents(), page_identifier, absl::nullopt, web_view));
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForNextTabInContext(
-    ui::ElementContext context,
-    ui::ElementIdentifier page_identifier) {
-  Browser* const browser =
-      InteractionTestUtilBrowser::GetBrowserFromContext(context);
-  return ForNextTabInBrowser(browser, page_identifier);
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForNextTabInBrowser(
-    Browser* browser,
-    ui::ElementIdentifier page_identifier) {
-  CHECK(browser);
-  return base::WrapUnique(new WebContentsInteractionTestUtil(
-      nullptr, page_identifier, browser, nullptr));
-}
-
-// static
-std::unique_ptr<WebContentsInteractionTestUtil>
-WebContentsInteractionTestUtil::ForNextTabInAnyBrowser(
-    ui::ElementIdentifier page_identifier) {
-  return base::WrapUnique(new WebContentsInteractionTestUtil(
-      nullptr, page_identifier, nullptr, nullptr));
-}
-
-views::WebView* WebContentsInteractionTestUtil::GetWebView() {
-  if (web_view_data_)
-    return web_view_data_->web_view();
-
-  if (!current_element_)
-    return nullptr;
-
-  Browser* const browser = InteractionTestUtilBrowser::GetBrowserFromContext(
-      current_element_->context());
-  BrowserView* const browser_view =
-      BrowserView::GetBrowserViewForBrowser(browser);
-  CHECK(browser_view);
-  if (web_contents() != browser_view->GetActiveWebContents())
-    return nullptr;
-
-  return browser_view->contents_web_view();
-}
-
-void WebContentsInteractionTestUtil::LoadPage(const GURL& url) {
+    ui::ElementIdentifier page_identifier)
+    : WebContentsInteractionTestUtil(web_view->GetWebContents(),
+                                     page_identifier) {
   CHECK(web_contents());
-  if (!web_contents()->GetURL().EqualsIgnoringRef(url)) {
-    navigating_away_from_ = web_contents()->GetURL();
-    DiscardCurrentElement();
-  }
-  if (url.SchemeIs("chrome") || web_view_data_) {
-    // Secure pages and non-tab WebViews must be navigated via the controller.
-    content::NavigationController::LoadURLParams params(url);
-    CHECK(web_contents()->GetController().LoadURLWithParams(params));
-  } else {
-    // Regular web pages can be navigated directly.
-    //
-    // In an ideal world, this should use `BeginNavigateToURLFromRenderer()`,
-    // which verifies that the navigation successfully starts. However,
-    // `BeginNavigateToURLFromRenderer()` itself uses a RunLoop to listen for
-    // the navigation starting.
-    //
-    // For reasons that are not well understood, this is problematic when used
-    // in conjunction with the interaction sequence test utils, which often
-    // run the entire test inside a top-level RunLoop; the now nested RunLoop
-    // inside `BeginNavigateToURLFromRenderer()` never receives the
-    // `DidStartNavigation()` callback, and the test just ends up hanging.
-    //
-    // Use Execute() as a workaround this hang. Note that unlike the
-    // similarly-named `content::ExecJs()`, this helper does not actually
-    // validate or wait for the script to execute; hopefully, errors from
-    // navigation failures will be obvious enough in subsequent steps.
-    ExecuteJsLocal(web_contents(), content::JsReplace("location = $1", url));
-  }
+  CHECK(!chrome::FindBrowserWithTab(web_contents()));
+  web_view_data_ = std::make_unique<WebViewData>(this, web_view);
+  web_view_data_->Init();
 }
 
-void WebContentsInteractionTestUtil::LoadPageInNewTab(const GURL& url,
-                                                      bool activate_tab) {
-  // We use tertiary operator rather than value_or to avoid failing if we're in
-  // a wait state.
-  Browser* browser = new_tab_watcher_
-                         ? new_tab_watcher_->browser()
-                         : chrome::FindBrowserWithWebContents(web_contents());
-  CHECK(browser);
-  NavigateParams navigate_params(browser, url, ui::PAGE_TRANSITION_TYPED);
-  navigate_params.disposition = activate_tab
-                                    ? WindowOpenDisposition::NEW_FOREGROUND_TAB
-                                    : WindowOpenDisposition::NEW_BACKGROUND_TAB;
-  auto navigate_result = Navigate(&navigate_params);
-  CHECK(navigate_result);
+WebViewWebContentsInteractionTestUtil::
+    ~WebViewWebContentsInteractionTestUtil() = default;
+
+views::WebView* WebViewWebContentsInteractionTestUtil::GetWebView() const {
+  return web_view_data_->visible() ? web_view_data_->web_view() : nullptr;
 }
 
-base::Value WebContentsInteractionTestUtil::Evaluate(
-    const std::string& function) {
-  CHECK(is_page_loaded());
-  auto result = EvalJsLocal(web_contents(), function);
-  CHECK(result.error.empty()) << result.error;
-
-  // Despite the fact that EvalJsResult::value is const, base::Value in general
-  // is moveable and nothing special is done on EvalJsResult destructor, which
-  // means it's safe to const-cast and move the value out of the struct.
-  auto& value = const_cast<base::Value&>(result.value);
-
-  return std::move(value);
-}
-
-void WebContentsInteractionTestUtil::Execute(const std::string& function) {
-  CHECK(is_page_loaded());
-  ExecuteJsLocal(web_contents(), function);
-}
-
-void WebContentsInteractionTestUtil::SendEventOnElementMinimumSize(
-    ui::CustomElementEventType event_type,
-    const DeepQuery& where,
-    const gfx::Size& minimum_size,
-    bool must_already_exist) {
-  DCHECK(!minimum_size.IsEmpty());
-  StateChange change;
-  change.event = event_type;
-  change.type = must_already_exist ? StateChange::Type::kConditionTrue
-                                   : StateChange::Type::kExistsAndConditionTrue;
-  change.where = where;
-  change.test_function =
-      base::StringPrintf(R"(
-        el => {
-          const rect = el.getBoundingClientRect();
-          return rect.width >= %i && rect.height >= %i;
-        }
-      )",
-                         minimum_size.width(), minimum_size.height());
-  SendEventOnStateChange(change);
-}
-
-void WebContentsInteractionTestUtil::SendEventOnStateChange(
-    const StateChange& configuration) {
-  CHECK(current_element_);
-  CHECK(!configuration.where.empty() || !configuration.test_function.empty());
-  CHECK(configuration.event);
-  CHECK(configuration.timeout.has_value() || !configuration.timeout_event)
-      << "Cannot specify timeout event without timeout.";
-
-  // Determine the actual query we should use; for kConditionTrue we can use
-  // configuration.test_function directly, but for the other options we need to
-  // modify it.
-  std::string actual_func;
-  switch (configuration.type) {
-    case StateChange::Type::kExists:
-      DCHECK(configuration.test_function.empty());
-      actual_func = GetExistsQuery("false", "true");
-      break;
-    case StateChange::Type::kConditionTrue:
-      actual_func = configuration.test_function;
-      break;
-    case StateChange::Type::kExistsAndConditionTrue:
-      const std::string on_found = "(" + configuration.test_function + ")(el)";
-      actual_func = GetExistsQuery("false", on_found.c_str());
-      break;
-  }
-
-  PollerData poller_data{
-      std::make_unique<Poller>(this, actual_func, configuration.where,
-                               configuration.timeout,
-                               configuration.polling_interval),
-      configuration.event, configuration.timeout_event};
-  auto* const poller = poller_data.poller.get();
-  pollers_.emplace(poller, std::move(poller_data));
-  poller->StartPolling();
-}
-
-bool WebContentsInteractionTestUtil::Exists(const DeepQuery& query,
-                                            std::string* not_found) {
-  const std::string full_query =
-      CreateDeepQuery(query, GetExistsQuery("err.selector", "''"));
-  const std::string result = Evaluate(full_query).GetString();
-  if (not_found)
-    *not_found = result;
-  return result.empty();
-}
-
-base::Value WebContentsInteractionTestUtil::EvaluateAt(
-    const DeepQuery& where,
-    const std::string& function) {
-  const std::string full_query = CreateDeepQuery(where, function);
-  return Evaluate(full_query);
-}
-
-void WebContentsInteractionTestUtil::ExecuteAt(const DeepQuery& where,
-                                               const std::string& function) {
-  const std::string full_query = CreateDeepQuery(where, function);
-  Execute(full_query);
-}
-
-bool WebContentsInteractionTestUtil::Exists(const std::string& selector) {
-  return Exists(DeepQuery{selector});
-}
-
-base::Value WebContentsInteractionTestUtil::EvaluateAt(
-    const std::string& selector,
-    const std::string& function) {
-  return EvaluateAt(DeepQuery{selector}, function);
-}
-
-void WebContentsInteractionTestUtil::ExecuteAt(const std::string& selector,
-                                               const std::string& function) {
-  ExecuteAt(DeepQuery{selector}, function);
-}
-
-gfx::Rect WebContentsInteractionTestUtil::GetElementBoundsInScreen(
-    const DeepQuery& where) {
-  if (!current_element_)
-    return gfx::Rect();
-
-  views::WebView* web_view = nullptr;
-  if (web_view_data_) {
-    DCHECK(web_view_data_->visible() && web_view_data_->web_view());
-    web_view = web_view_data_->web_view();
-  } else {
-    Browser* const browser = chrome::FindBrowserWithWebContents(web_contents());
-    if (!browser ||
-        web_contents() != browser->tab_strip_model()->GetActiveWebContents()) {
-      return gfx::Rect();
-    }
-    web_view =
-        BrowserView::GetBrowserViewForBrowser(browser)->contents_web_view();
-  }
-  CHECK(web_view);
-
-  // TODO(dfried): Screen bounds returned by GetBoundsInScreen() are in DIPs.
-  // We are also assuming that Element.getBoundingClientRect() also returns a
-  // value in DIPs (this seems to be borne out by anecdotal evidence in online
-  // discussions). However, if that's not the case, either the offset or element
-  // bounds will need to be adjusted by the current display's scale factor.
-  const gfx::Point offset = web_view->GetBoundsInScreen().origin();
-
-  const base::Value result = EvaluateAt(where,
-                                        R"(el => {
-      const rect = el.getBoundingClientRect();
-      return {
-        "x": rect.x,
-        "y": rect.y,
-        "w": rect.width,
-        "h": rect.height
-      };
-    })");
-
-  // This will crash if any of the values are not found, however, since this is
-  // test code that's fine; it *should* crash the test.
-  const auto& dict = result.GetDict();
-  gfx::Rect element_bounds(
-      dict.Find("x")->GetDouble(), dict.Find("y")->GetDouble(),
-      dict.Find("w")->GetDouble(), dict.Find("h")->GetDouble());
-
-  element_bounds.Offset(offset.x(), offset.y());
-  return element_bounds;
-}
-
-gfx::Rect WebContentsInteractionTestUtil::GetElementBoundsInScreen(
-    const std::string& where) {
-  return GetElementBoundsInScreen(DeepQuery{where});
-}
-
-void WebContentsInteractionTestUtil::SendEventOnWebViewMinimumSize(
-    const gfx::Size& minimum_webview_size,
-    ui::CustomElementEventType event_type,
-    const DeepQuery& element_to_check,
-    const gfx::Size& minimum_element_size) {
-  CHECK(web_view_data_)
-      << "Only supported for util objects created with ForNonTabWebView()";
-  web_view_data_->SendEventOnMinimumSize(
-      minimum_webview_size, event_type, element_to_check, minimum_element_size);
-}
-
-void WebContentsInteractionTestUtil::DidStopLoading() {
-  // In some cases we will not have an "on load complete" event, so ensure that
-  // we check for page fully loaded in other callbacks.
-  MaybeCreateElement();
-}
-
-void WebContentsInteractionTestUtil::DidFinishLoad(
-    content::RenderFrameHost* render_frame_host,
-    const GURL& validated_url) {
-  // In some cases we will not have an "on load complete" event, so ensure that
-  // we check for page fully loaded in other callbacks.
-  MaybeCreateElement();
-}
-
-void WebContentsInteractionTestUtil::
-    DocumentOnLoadCompletedInPrimaryMainFrame() {
-  // Even if the page is still "loading" it should be ready for interaction at
-  // this point. Note that in some cases we won't receive this event, which is
-  // why we also check at DidStopLoading() and DidFinishLoad().
-  MaybeCreateElement(/*force =*/true);
-}
-
-void WebContentsInteractionTestUtil::PrimaryPageChanged(content::Page& page) {
-  DiscardCurrentElement();
-}
-
-void WebContentsInteractionTestUtil::WebContentsDestroyed() {
-  DiscardCurrentElement();
-}
-
-void WebContentsInteractionTestUtil::OnTabStripModelChanged(
-    TabStripModel* tab_strip_model,
-    const TabStripModelChange& change,
-    const TabStripSelectionChange& selection) {
-  // Don't bother processing if we don't have a target WebContents.
-  if (!web_contents())
-    return;
-
-  // Ensure that if a tab is moved to another browser, we track that move.
-  if (change.type() == TabStripModelChange::Type::kRemoved) {
-    for (auto& removed_tab : change.GetRemove()->contents) {
-      if (removed_tab.contents != web_contents())
-        continue;
-      // We won't handle deleted reason here, since we already capture
-      // WebContentsDestroyed().
-      if (removed_tab.remove_reason ==
-          TabStripModelChange::RemoveReason::kInsertedIntoOtherTabStrip) {
-        DiscardCurrentElement();
-        Observe(nullptr);
-      }
-    }
-  } else if (change.type() == TabStripModelChange::Type::kReplaced) {
-    auto* const replace = change.GetReplace();
-    if (web_contents() == replace->old_contents) {
-      DiscardCurrentElement();
-      Observe(replace->new_contents);
-      MaybeCreateElement(false);
-    }
-  }
-}
-
-WebContentsInteractionTestUtil::WebContentsInteractionTestUtil(
-    content::WebContents* web_contents,
-    ui::ElementIdentifier page_identifier,
-    absl::optional<Browser*> browser,
-    views::WebView* web_view)
-    : WebContentsObserver(web_contents), page_identifier_(page_identifier) {
-  CHECK(page_identifier);
-
-  if (web_view) {
-    // This is specifically for a web view that is not a tab.
-    CHECK(web_contents);
-    CHECK(!browser);
-    CHECK(!chrome::FindBrowserWithWebContents(web_contents));
-    web_view_data_ = std::make_unique<WebViewData>(this, web_view);
-    web_view_data_->Init();
-  } else if (browser.has_value()) {
-    // Watching for a new tab.
-    CHECK(!web_contents);
-    new_tab_watcher_ = std::make_unique<NewTabWatcher>(this, browser.value());
-  } else {
-    // This has to be a tab, so use standard watching logic.
-    StartWatchingWebContents(web_contents);
-  }
-}
-
-void WebContentsInteractionTestUtil::MaybeCreateElement(bool force) {
-  if (current_element_ || !web_contents())
-    return;
-
-  if (!force && !web_contents()->IsDocumentOnLoadCompletedInPrimaryMainFrame())
-    return;
-
-  ui::ElementContext context = ui::ElementContext();
-  if (web_view_data_) {
-    if (!web_view_data_->visible())
-      return;
+ui::ElementContext WebViewWebContentsInteractionTestUtil::GetElementContext()
+    const {
+  ui::ElementContext context;
+  if (web_view_data_->visible()) {
     context = web_view_data_->context();
-  } else {
-    Browser* const browser = chrome::FindBrowserWithWebContents(web_contents());
-    if (!browser)
+  }
+  return context;
+}
+
+class InnerWebContentsInteractionTestUtil::ParentWebContentsObserver
+    : public WebContentsObserver {
+ public:
+  explicit ParentWebContentsObserver(InnerWebContentsInteractionTestUtil& owner)
+      : owner_(owner) {}
+  ~ParentWebContentsObserver() override = default;
+
+  void StartObserving(content::WebContents* parent_contents) {
+    Observe(parent_contents);
+  }
+
+  void StopObserving() { Observe(nullptr); }
+
+ private:
+  // WebContentsObserver:
+  void InnerWebContentsAttached(content::WebContents* inner_web_contents,
+                                content::RenderFrameHost*) override {
+    owner_->MaybeObserveChild();
+  }
+
+  const raw_ref<InnerWebContentsInteractionTestUtil> owner_;
+};
+
+InnerWebContentsInteractionTestUtil::InnerWebContentsInteractionTestUtil(
+    ui::ElementIdentifier outer_webcontents_id,
+    size_t inner_contents_index,
+    ui::ElementIdentifier page_identifier)
+    : WebContentsInteractionTestUtil(nullptr, page_identifier),
+      inner_contents_index_(inner_contents_index),
+      parent_observer_(std::make_unique<ParentWebContentsObserver>(*this)) {
+  auto* const tracker = ui::ElementTracker::GetElementTracker();
+  parent_shown_subscription_ = tracker->AddElementShownInAnyContextCallback(
+      outer_webcontents_id,
+      base::BindRepeating(&InnerWebContentsInteractionTestUtil::OnParentShown,
+                          base::Unretained(this)));
+  parent_hidden_subscription_ = tracker->AddElementHiddenInAnyContextCallback(
+      outer_webcontents_id,
+      base::BindRepeating(&InnerWebContentsInteractionTestUtil::OnParentHidden,
+                          base::Unretained(this)));
+  if (auto* const parent_el =
+          tracker->GetElementInAnyContext(outer_webcontents_id)) {
+    OnParentShown(parent_el);
+  }
+}
+
+InnerWebContentsInteractionTestUtil::~InnerWebContentsInteractionTestUtil() =
+    default;
+
+views::WebView* InnerWebContentsInteractionTestUtil::GetWebView() const {
+  if (auto* const parent = parent_util()) {
+    return parent->GetWebView();
+  }
+  return nullptr;
+}
+
+gfx::Rect InnerWebContentsInteractionTestUtil::GetElementBoundsInScreen(
+    const DeepQuery& where) const {
+  // TODO(dfried): IMPLEMENT
+  NOTREACHED();
+}
+
+ui::ElementContext InnerWebContentsInteractionTestUtil::GetElementContext()
+    const {
+  if (auto* const parent = parent_util()) {
+    return parent->GetElementContext();
+  }
+  return ui::ElementContext();
+}
+
+void InnerWebContentsInteractionTestUtil::MaybeObserveChild() {
+  if (auto* const parent = parent_observer_->web_contents()) {
+    const auto inner_contents = parent->GetInnerWebContents();
+    if (inner_contents_index_ < inner_contents.size()) {
+      auto* inner = inner_contents[inner_contents_index_];
+      if (web_contents() && web_contents() != inner) {
+        DiscardCurrentElement();
+      }
+      Observe(inner_contents[inner_contents_index_]);
+      MaybeCreateElement();
       return;
-    context = browser->window()->GetElementContext();
+    }
   }
-
-  // Ignore events on a page we're navigating away from.
-  if (navigating_away_from_ &&
-      navigating_away_from_->EqualsIgnoringRef(web_contents()->GetURL())) {
-    return;
-  }
-  navigating_away_from_.reset();
-
-  current_element_ = std::make_unique<TrackedElementWebContents>(
-      page_identifier_, context, this);
-
-  // Init (send shown event, etc.) after current_element_ is set in order to
-  // ensure that is_page_loaded() is true during any callbacks.
-  current_element_->Init();
+  DiscardCurrentElement();
 }
 
-void WebContentsInteractionTestUtil::DiscardCurrentElement() {
-  current_element_.reset();
-  CHECK(pollers_.empty())
-      << "Unexpectedly left page while still waiting for event "
-      << pollers_.begin()->second.event.GetName();
-  pollers_.clear();
+void InnerWebContentsInteractionTestUtil::OnParentShown(
+    ui::TrackedElement* parent_el) {
+  CHECK(!parent_element_);
+  parent_element_ = parent_el->AsA<TrackedElementWebContents>();
+  CHECK(parent_element_);
+  parent_observer_->StartObserving(parent_element_->owner()->web_contents());
+  MaybeObserveChild();
 }
 
-void WebContentsInteractionTestUtil::OnPollTimeout(Poller* poller) {
-  CHECK(current_element_);
-  auto it = pollers_.find(poller);
-  CHECK(it != pollers_.end());
-  auto event = it->second.timeout_event;
-  pollers_.erase(it);
-  CHECK(event) << "SendEventOnStateChange timed out, but no timeout event was "
-                  "specified.";
-  ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
-      current_element_.get(), event);
-}
-
-void WebContentsInteractionTestUtil::OnPollEvent(Poller* poller) {
-  CHECK(current_element_);
-  auto it = pollers_.find(poller);
-  CHECK(it != pollers_.end());
-  auto event = it->second.event;
-  pollers_.erase(it);
-  ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(
-      current_element_.get(), event);
-}
-
-void WebContentsInteractionTestUtil::StartWatchingWebContents(
-    content::WebContents* web_contents) {
-  DCHECK(web_contents);
-  Browser* const browser = chrome::FindBrowserWithWebContents(web_contents);
-  CHECK(browser);
-  browser->tab_strip_model()->AddObserver(this);
-  if (new_tab_watcher_) {
-    new_tab_watcher_.reset();
-    Observe(web_contents);
-  }
-  MaybeCreateElement();
+void InnerWebContentsInteractionTestUtil::OnParentHidden(
+    ui::TrackedElement* parent_el) {
+  CHECK_EQ(parent_el, parent_element_.get());
+  parent_element_ = nullptr;
+  parent_observer_->StopObserving();
+  DiscardCurrentElement();
 }
 
 void PrintTo(const WebContentsInteractionTestUtil::DeepQuery& deep_query,
@@ -1041,5 +1398,42 @@ extern std::ostream& operator<<(
     std::ostream& os,
     const WebContentsInteractionTestUtil::DeepQuery& deep_query) {
   PrintTo(deep_query, &os);
+  return os;
+}
+
+void PrintTo(const WebContentsInteractionTestUtil::StateChange& state_change,
+             std::ostream* os) {
+  using Type = WebContentsInteractionTestUtil::StateChange::Type;
+  *os << "{ ";
+  switch (state_change.type) {
+    case Type::kAuto:
+      *os << "kAuto";
+      break;
+    case Type::kExists:
+      *os << "kExists";
+      break;
+    case Type::kExistsAndConditionTrue:
+      *os << "kExistsAndConditionTrue";
+      break;
+    case Type::kConditionTrue:
+      *os << "kConditionTrue";
+      break;
+    case Type::kDoesNotExist:
+      *os << "kDoesNotExist";
+      break;
+  }
+
+  *os << ", test_function: \"" << state_change.test_function << "\""
+      << ", where: " << state_change.where << ", event: " << state_change.event
+      << ", continue_across_navigation: "
+      << base::ToString(state_change.continue_across_navigation)
+      << ", timeout: " << state_change.timeout.value_or(base::TimeDelta())
+      << ", timeout_event: " << state_change.timeout_event << " }";
+}
+
+extern std::ostream& operator<<(
+    std::ostream& os,
+    const WebContentsInteractionTestUtil::StateChange& state_change) {
+  PrintTo(state_change, &os);
   return os;
 }

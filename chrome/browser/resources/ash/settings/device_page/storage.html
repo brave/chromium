@@ -123,7 +123,7 @@
         <div class="message-title">$i18n{storageSpaceLowMessageTitle}</div>
         <div class="message-description">
           <span>$i18n{storageSpaceLowMessageLine1}</span>
-          <span>$i18n{storageSpaceLowMessageLine2}</span>
+          <span>&nbsp;$i18n{storageSpaceLowMessageLine2}</span>
         </div>
       </div>
     </div>
@@ -139,7 +139,7 @@
         </div>
         <div class="message-description">
           <span>$i18n{storageSpaceCriticallyLowMessageLine1}</span>
-          <span>$i18n{storageSpaceCriticallyLowMessageLine2}</span>
+          <span>&nbsp;$i18n{storageSpaceCriticallyLowMessageLine2}</span>
         </div>
       </div>
     </div>
@@ -148,8 +148,9 @@
 <div class="settings-box first">
   <div id="barArea">
     <progress id="bar" class$="[[getBarClass_(sizeStat_.spaceState)]]"
-        value="[[sizeStat_.usedRatio]]"
+        value="[[roundTo2DecimalPoints_(sizeStat_.usedRatio)]]"
         aria-label="$i18n{storageOverviewAriaLabel}"
+        aria-valuetext$="[[sizeStat_.usedSize]]"
         aria-describedby="barLabels">
     </progress>
     <div id="barLabels" aria-hidden="true">
@@ -170,11 +171,28 @@
     </div>
   </div>
 </div>
-<cr-link-row id="myFilesSize" class="hr" on-click="onMyFilesClick_"
-    label="$i18n{storageItemMyFiles}"
-    sub-label="$i18n{storageSizeComputing}"
-    external>
-</cr-link-row>
+
+<template is="dom-if" if="[[localUserFilesAllowed_(prefs.filebrowser.local_user_files_allowed.value)]]">
+  <cr-link-row id="myFilesSizeLink" class="hr" on-click="onMyFilesClick_"
+      label="$i18n{storageItemMyFiles}"
+      sub-label="[[myFilesSizeSubLabel_]]"
+      external>
+  </cr-link-row>
+</template>
+<template is="dom-if" if="[[!localUserFilesAllowed_(prefs.filebrowser.local_user_files_allowed.value)]]">
+  <div id="myFilesSizeDiv"
+      class="settings-box two-line single-column"
+      aria-describedby="myFilesSizeLabel"
+      aria-labelledby="myFilesSizeLabel">
+    <div id="myFilesSizeLabel" class="label" aria-hidden="true">
+      $i18n{storageItemMyFiles}
+    </div>
+    <div id="myFilesSizeSubLabel" class="secondary label" aria-hidden="true">
+      [[myFilesSizeSubLabel_]]
+    </div>
+  </div>
+</template>
+
 <cr-link-row id="browsingDataSize" class="hr" on-click="onBrowsingDataClick_"
     label="$i18n{storageItemBrowsingData}"
     sub-label="$i18n{storageSizeComputing}"
@@ -185,8 +203,9 @@
     sub-label="$i18n{storageSizeComputing}"
     external>
 </cr-link-row>
-<template is="dom-if" if="[[showDriveOfflineStorage_]]">
-  <cr-link-row id="driveOfflineSize" class="hr" on-click="onDriveOfflineClick_"
+<template is="dom-if" if="[[shouldShowOfflineFilesRow_(isDriveEnabled_)]]">
+  <cr-link-row id="driveOfflineSize" class="hr"
+      on-click="onDriveOfflineClick_"
       label="$i18n{storageItemOffline}"
       sub-label="$i18n{storageSizeComputing}"
       role-description="$i18n{subpageArrowRoleDescription}">
@@ -209,8 +228,8 @@
 <template is="dom-if" if="[[!isEphemeralUser_]]">
   <div id="systemSize"
       class="settings-box two-line single-column stretch settings-box-text"
-      aria-describedby="systemSizeLabel"
-      aria-labelledby="systemSizeSubLabel">
+      aria-describedby="systemSizeSubLabel"
+      aria-labelledby="systemSizeLabel">
     <div id="systemSizeLabel" class="label" aria-hidden="true">
       $i18n{storageItemSystem}
     </div>
@@ -219,7 +238,21 @@
     </div>
   </div>
 </template>
-<template is="dom-if" if="[[androidEnabled]]">
+<template is="dom-if" if="[[!isEphemeralUser_]]">
+  <div id="systemEncryption"
+      class="settings-box two-line single-column stretch settings-box-text"
+      aria-describedby="systemEncryptionSubLabel"
+      aria-labelledby="systemEncryptionLabel">
+    <div id="systemEncryptionLabel" class="label" aria-hidden="true">
+      $i18n{storageItemEncryption}
+    </div>
+    <div id="systemEncryptionSubLabel"
+        class="secondary label" aria-hidden="true">
+      [[storageEncryptionSubLabel_]]
+    </div>
+  </div>
+</template>
+<template is="dom-if" if="[[isExternalStorageEnabled_]]">
   <cr-link-row id="externalStoragePreferences" class="hr"
       on-click="onExternalStoragePreferencesClick_"
       label="$i18n{storageExternal}"

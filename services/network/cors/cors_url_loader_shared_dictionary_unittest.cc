@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "services/network/cors/cors_url_loader.h"
-
 #include "base/feature_list.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "net/cookies/site_for_cookies.h"
+#include "services/network/cors/cors_url_loader.h"
 #include "services/network/cors/cors_url_loader_test_util.h"
 #include "services/network/network_context.h"
 #include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/loading_params.h"
 #include "services/network/shared_dictionary/shared_dictionary_constants.h"
+#include "services/network/shared_dictionary/shared_dictionary_in_memory.h"
 #include "services/network/shared_dictionary/shared_dictionary_manager.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage_in_memory.h"
@@ -84,9 +85,8 @@ class CorsURLLoaderSharedDictionaryTest : public CorsURLLoaderTestBase {
     options.struct_size = sizeof(MojoCreateDataPipeOptions);
     options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
     options.element_num_bytes = 1;
-    options.capacity_num_bytes =
-        network::features::GetDataPipeDefaultAllocationSize(
-            features::DataPipeAllocationSize::kLargerSizeIfPossible);
+    options.capacity_num_bytes = network::GetDataPipeDefaultAllocationSize(
+        network::DataPipeAllocationSize::kLargerSizeIfPossible);
     ASSERT_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(&options, producer_handle_,
                                                    consumer_handle_));
   }
@@ -100,6 +100,7 @@ class CorsURLLoaderSharedDictionaryTest : public CorsURLLoaderTestBase {
     extra_headers.emplace_back(
         network::shared_dictionary::kUseAsDictionaryHeaderName,
         "match=\"/path*\"");
+    extra_headers.emplace_back("cache-control", "max-age=2592000");
     NotifyLoaderClientOnReceiveResponse(extra_headers,
                                         std::move(consumer_handle_));
   }
@@ -116,7 +117,7 @@ class CorsURLLoaderSharedDictionaryTest : public CorsURLLoaderTestBase {
       bool expect_exists,
       const GURL& dictionary_url = GURL("https://origin.test/test")) {
     ASSERT_TRUE(isolation_info_.frame_origin());
-    absl::optional<net::SharedDictionaryIsolationKey> isolation_key =
+    std::optional<net::SharedDictionaryIsolationKey> isolation_key =
         net::SharedDictionaryIsolationKey::MaybeCreate(isolation_info_);
     ASSERT_TRUE(isolation_key);
     scoped_refptr<SharedDictionaryStorage> storage =
@@ -133,24 +134,29 @@ class CorsURLLoaderSharedDictionaryTest : public CorsURLLoaderTestBase {
               dictionary_map.begin()->first);
 
     ASSERT_EQ(1u, dictionary_map.begin()->second.size());
-    EXPECT_EQ("/path*", dictionary_map.begin()->second.begin()->first);
+    EXPECT_EQ(std::make_tuple("/path*", std::set<mojom::RequestDestination>()),
+              dictionary_map.begin()->second.begin()->first);
     const auto& dictionary_info =
         dictionary_map.begin()->second.begin()->second;
     EXPECT_EQ(dictionary_url, dictionary_info.url());
     EXPECT_EQ(base::FeatureList::IsEnabled(
                   network::features::kCompressionDictionaryTransport)
-                  ? shared_dictionary::kDefaultExpiration
+                  ? base::Seconds(2592000)
                   : shared_dictionary::kMaxExpirationForOriginTrial,
               dictionary_info.expiration());
     EXPECT_EQ("/path*", dictionary_info.match());
     EXPECT_EQ(kTestData.size(), dictionary_info.size());
-    EXPECT_EQ(kTestData, std::string(dictionary_info.data()->data(),
-                                     dictionary_info.size()));
+    EXPECT_EQ(net::OK, dictionary_info.dictionary()->ReadAll(
+                           base::BindOnce([](int) { NOTREACHED(); })));
+    EXPECT_EQ(kTestData,
+              std::string(dictionary_info.dictionary()->data()->data(),
+                          dictionary_info.size()));
   }
 
   const std::map<
       url::SchemeHostPort,
-      std::map<std::string, SharedDictionaryStorageInMemory::DictionaryInfo>>&
+      std::map<std::tuple<std::string, std::set<mojom::RequestDestination>>,
+               SharedDictionaryStorageInMemory::DictionaryInfo>>&
   GetInMemoryDictionaryMap(SharedDictionaryStorage* storage) {
     return static_cast<SharedDictionaryStorageInMemory*>(storage)
         ->GetDictionaryMap();
@@ -283,9 +289,9 @@ TEST_F(CorsURLLoaderSharedDictionaryTest, SameOriginUrlNavigateModeRequest) {
   RunUntilComplete();
   EXPECT_EQ(net::OK, client().completion_status().error_code);
 
-  // The response of Navigation mode request should not be stored to the
+  // The response of Navigation mode request should be stored to the
   // dictionary storage.
-  CheckDictionaryInStorage(/*expect_exists=*/false);
+  CheckDictionaryInStorage(/*expect_exists=*/true);
 }
 
 TEST_F(CorsURLLoaderSharedDictionaryTest,

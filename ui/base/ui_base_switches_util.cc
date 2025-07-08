@@ -20,8 +20,6 @@ bool IsElasticOverscrollEnabled() {
 // but the system default is true.
 #if BUILDFLAG(IS_APPLE)
   return true;
-#elif BUILDFLAG(IS_WIN)
-  return base::FeatureList::IsEnabled(features::kElasticOverscroll);
 #elif BUILDFLAG(IS_ANDROID)
   return base::android::BuildInfo::GetInstance()->sdk_int() >=
              base::android::SDK_VERSION_S &&
@@ -29,16 +27,7 @@ bool IsElasticOverscrollEnabled() {
              switches::kDisableOverscrollEdgeEffect) &&
          base::FeatureList::IsEnabled(features::kElasticOverscroll);
 #else
-  return false;
-#endif
-}
-
-bool IsTouchDragDropEnabled() {
-  const auto* const command_line = base::CommandLine::ForCurrentProcess();
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  return !command_line->HasSwitch(kDisableTouchDragDrop);
-#else
-  return command_line->HasSwitch(kEnableTouchDragDrop);
+  return base::FeatureList::IsEnabled(features::kElasticOverscroll);
 #endif
 }
 

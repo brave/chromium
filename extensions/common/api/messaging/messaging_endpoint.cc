@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/debug/crash_logging.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 
@@ -46,7 +47,6 @@ const char* ConvertMessagingSourceTypeToString(
       return "NativeApp";
   }
   NOTREACHED();
-  return "<unrecognized enum value>";
 }
 
 base::debug::ScopedCrashKeyString CreateExtensionIdOrNativeAppNameScopedKey(
@@ -67,9 +67,6 @@ base::debug::ScopedCrashKeyString CreateExtensionIdOrNativeAppNameScopedKey(
   }
 
   NOTREACHED();
-  return base::debug::ScopedCrashKeyString(
-      GetMessagingSourceExtensionIdCrashKey(),
-      endpoint.extension_id.value_or("<unrecognized MessagingEndpoint::Type>"));
 }
 
 }  // namespace

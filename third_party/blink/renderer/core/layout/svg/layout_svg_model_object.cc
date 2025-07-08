@@ -33,6 +33,7 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_container.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/paint/compositing/compositing_reason_finder.h"
@@ -57,12 +58,6 @@ void LayoutSVGModelObject::MapLocalToAncestor(
   SVGLayoutSupport::MapLocalToAncestor(this, ancestor, transform_state, flags);
 }
 
-PhysicalRect LayoutSVGModelObject::VisualRectInDocument(
-    VisualRectFlags flags) const {
-  NOT_DESTROYED();
-  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View(), flags);
-}
-
 void LayoutSVGModelObject::MapAncestorToLocal(
     const LayoutBoxModelObject* ancestor,
     TransformState& transform_state,
@@ -71,11 +66,13 @@ void LayoutSVGModelObject::MapAncestorToLocal(
   SVGLayoutSupport::MapAncestorToLocal(*this, ancestor, transform_state, flags);
 }
 
-void LayoutSVGModelObject::AbsoluteQuads(Vector<gfx::QuadF>& quads,
-                                         MapCoordinatesFlags mode) const {
+void LayoutSVGModelObject::QuadsInAncestorInternal(
+    Vector<gfx::QuadF>& quads,
+    const LayoutBoxModelObject* ancestor,
+    MapCoordinatesFlags mode) const {
   NOT_DESTROYED();
   quads.push_back(
-      LocalToAbsoluteQuad(gfx::QuadF(DecoratedBoundingBox()), mode));
+      LocalToAncestorQuad(gfx::QuadF(DecoratedBoundingBox()), ancestor, mode));
 }
 
 // This method is called from inside PaintOutline(), and since we call
@@ -83,7 +80,7 @@ void LayoutSVGModelObject::AbsoluteQuads(Vector<gfx::QuadF>& quads,
 void LayoutSVGModelObject::AddOutlineRects(OutlineRectCollector& collector,
                                            OutlineInfo* info,
                                            const PhysicalOffset&,
-                                           NGOutlineType) const {
+                                           OutlineType) const {
   NOT_DESTROYED();
   gfx::RectF visual_rect = VisualRectInLocalSVGCoordinates();
   bool was_empty = visual_rect.IsEmpty();
@@ -109,13 +106,14 @@ void LayoutSVGModelObject::WillBeDestroyed() {
 }
 
 bool LayoutSVGModelObject::CheckForImplicitTransformChange(
+    const SVGLayoutInfo& layout_info,
     bool bbox_changed) const {
   NOT_DESTROYED();
   // If the transform is relative to the reference box, check relevant
   // conditions to see if we need to recompute the transform.
   switch (StyleRef().TransformBox()) {
     case ETransformBox::kViewBox:
-      return SVGLayoutSupport::LayoutSizeOfNearestViewportChanged(this);
+      return layout_info.viewport_changed;
     case ETransformBox::kFillBox:
     case ETransformBox::kContentBox:
     case ETransformBox::kStrokeBox:
@@ -123,7 +121,26 @@ bool LayoutSVGModelObject::CheckForImplicitTransformChange(
       return bbox_changed;
   }
   NOTREACHED();
-  return false;
+}
+
+void LayoutSVGModelObject::ImageChanged(WrappedImagePtr image,
+                                        CanDeferInvalidation defer) {
+  NOT_DESTROYED();
+  for (const FillLayer* layer = &StyleRef().MaskLayers(); layer;
+       layer = layer->Next()) {
+    const StyleImage* style_image = layer->GetImage();
+    if (style_image && image == style_image->Data()) {
+      SetShouldDoFullPaintInvalidationWithoutLayoutChange(
+          PaintInvalidationReason::kImage);
+      if (style_image->IsMaskSource()) {
+        // Since an invalid <mask> reference does not yield a paint property on
+        // SVG content (see CSSMaskPainter), we need to update paint properties
+        // when such a reference changes.
+        SetNeedsPaintPropertyUpdate();
+      }
+      break;
+    }
+  }
 }
 
 void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
@@ -132,7 +149,6 @@ void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
   LayoutObject::StyleDidChange(diff, old_style);
 
   if (diff.NeedsFullLayout()) {
-    SetNeedsBoundariesUpdate();
     if (diff.TransformChanged())
       SetNeedsTransformUpdate();
   }
@@ -152,9 +168,13 @@ void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
           StyleRef().HasBlendMode() ? kDescendantIsolationRequired
                                     : kDescendantIsolationNeedsUpdate);
     }
-    if (StyleRef().HasCurrentTransformRelatedAnimation() &&
-        !old_style->HasCurrentTransformRelatedAnimation()) {
-      Parent()->SetSVGDescendantMayHaveTransformRelatedAnimation();
+    if ((StyleRef().HasCurrentTransformRelatedAnimation() &&
+         !old_style->HasCurrentTransformRelatedAnimation()) ||
+        (RuntimeEnabledFeatures::
+             SvgAvoidCullingElementsWithTransformOperationsEnabled() &&
+         StyleRef().HasNonIdentityTransformOperation() &&
+         !old_style->HasNonIdentityTransformOperation())) {
+      Parent()->SetSVGDescendantMayHaveTransformRelatedOperations();
     }
   }
 
@@ -165,11 +185,6 @@ void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
 void LayoutSVGModelObject::InsertedIntoTree() {
   NOT_DESTROYED();
   LayoutObject::InsertedIntoTree();
-  // Ensure that the viewport dependency flag gets set on the ancestor chain.
-  if (SVGSelfOrDescendantHasViewportDependency()) {
-    ClearSVGSelfOrDescendantHasViewportDependency();
-    SetSVGSelfOrDescendantHasViewportDependency();
-  }
   LayoutSVGResourceContainer::MarkForLayoutAndParentResourceInvalidation(*this,
                                                                          false);
   if (StyleRef().HasSVGEffect())

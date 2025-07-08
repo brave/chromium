@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/ash_view_ids.h"
 #include "ash/public/cpp/system_tray_test_api.h"
 #include "ash/root_window_controller.h"
@@ -18,7 +17,6 @@
 #include "ash/system/unified/unified_system_tray_bubble.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/overview/overview_controller.h"
-#include "base/test/scoped_feature_list.h"
 #include "components/account_id/account_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -28,33 +26,15 @@
 namespace ash {
 namespace {
 
-AccountId GetActiveUser() {
-  return Shell::Get()
-      ->session_controller()
-      ->GetUserSession(/*user_index=*/0)
-      ->user_info.account_id;
-}
-
-class UserChooserDetailedViewControllerTest
-    : public AshTestBase,
-      public testing::WithParamInterface<bool> {
+class UserChooserDetailedViewControllerTest : public AshTestBase {
  public:
-  UserChooserDetailedViewControllerTest() {
-    if (IsQsRevampEnabled()) {
-      feature_list_.InitAndEnableFeature(features::kQsRevamp);
-    } else {
-      feature_list_.InitAndDisableFeature(features::kQsRevamp);
-    }
-  }
-
+  UserChooserDetailedViewControllerTest() = default;
   UserChooserDetailedViewControllerTest(
       const UserChooserDetailedViewControllerTest&) = delete;
   UserChooserDetailedViewControllerTest& operator=(
       const UserChooserDetailedViewControllerTest&) = delete;
 
   ~UserChooserDetailedViewControllerTest() override = default;
-
-  bool IsQsRevampEnabled() const { return GetParam(); }
 
   // AshTestBase
   void SetUp() override {
@@ -70,13 +50,6 @@ class UserChooserDetailedViewControllerTest
   }
 
   void ShowUserChooserView() {
-    if (!IsQsRevampEnabled()) {
-      // Click the user avatar button.
-      ASSERT_TRUE(IsBubbleViewVisible(VIEW_ID_QS_USER_AVATAR_BUTTON));
-      tray_test_api()->ClickBubbleView(VIEW_ID_QS_USER_AVATAR_BUTTON);
-      return;
-    }
-
     // Click the power button to show the menu.
     ASSERT_TRUE(IsBubbleViewVisible(VIEW_ID_QS_POWER_BUTTON));
     tray_test_api()->ClickBubbleView(VIEW_ID_QS_POWER_BUTTON);
@@ -98,16 +71,11 @@ class UserChooserDetailedViewControllerTest
   SystemTrayTestApi* tray_test_api() { return tray_test_api_.get(); }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<ui::ScopedAnimationDurationScaleMode> disable_animations_;
   std::unique_ptr<SystemTrayTestApi> tray_test_api_;
 };
 
-INSTANTIATE_TEST_SUITE_P(QsRevamp,
-                         UserChooserDetailedViewControllerTest,
-                         testing::Bool());
-
-TEST_P(UserChooserDetailedViewControllerTest,
+TEST_F(UserChooserDetailedViewControllerTest,
        ShowMultiProfileLoginWithOverview) {
   // Enter overview mode.
   EnterOverview();
@@ -126,15 +94,18 @@ TEST_P(UserChooserDetailedViewControllerTest,
   tray_test_api()->ClickBubbleView(VIEW_ID_ADD_USER_BUTTON);
 }
 
-TEST_P(UserChooserDetailedViewControllerTest, SwitchUserWithOverview) {
-  // Add a secondary user.
-  const AccountId secondary_user =
-      AccountId::FromUserEmail("secondary@gmail.com");
-  GetSessionControllerClient()->AddUserSession(secondary_user.GetUserEmail());
-  ASSERT_NE(GetActiveUser(), secondary_user);
+TEST_F(UserChooserDetailedViewControllerTest, SwitchUserWithOverview) {
+  auto* session_controller = Shell::Get()->session_controller();
+  auto first_user = session_controller->GetActiveAccountId();
+
+  // Add a secondary user then switch back to first user.
+  auto secondary_user = SimulateUserLogin({"secondary@gmail.com"});
+  SwitchActiveUser(first_user);
+  ASSERT_NE(session_controller->GetActiveAccountId(), secondary_user);
 
   // Create an activatable widget.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   // Enter overview mode.
   EnterOverview();
@@ -153,17 +124,17 @@ TEST_P(UserChooserDetailedViewControllerTest, SwitchUserWithOverview) {
   tray_test_api()->ClickBubbleView(secondary_user_button_id);
 
   // Active user is switched.
-  EXPECT_EQ(GetActiveUser(), secondary_user);
+  EXPECT_EQ(session_controller->GetActiveAccountId(), secondary_user);
 }
 
-TEST_P(UserChooserDetailedViewControllerTest,
+TEST_F(UserChooserDetailedViewControllerTest,
        MultiProfileLoginDisabledForFamilyLinkUsers) {
   EXPECT_TRUE(UserChooserDetailedViewController::IsUserChooserEnabled());
 
-  GetSessionControllerClient()->Reset();
+  ClearLogin();
 
   // Log in as a child user.
-  SimulateUserLogin("child@gmail.com", user_manager::USER_TYPE_CHILD);
+  SimulateUserLogin({"child@gmail.com", user_manager::UserType::kChild});
 
   EXPECT_FALSE(UserChooserDetailedViewController::IsUserChooserEnabled());
 }

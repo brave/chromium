@@ -1,12 +1,15 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/linux_chromium_ubsan_rel_ng/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "linux-ubsan-vptr",
+              "builder": "Linux UBSan Builder",
               "project": "chromium"
             },
             "builder_spec": {
@@ -18,11 +21,41 @@
                   "mb"
                 ],
                 "build_config": "Release",
-                "config": "chromium",
-                "target_bits": 64
+                "config": "chromium_msan",
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
+              }
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
+              "builder": "Linux UBSan Tests",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "build_gs_bucket": "chromium-memory-archive",
+              "builder_group": "chromium.memory",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "linux"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "Linux UBSan Builder",
+                "project": "chromium"
               }
             }
           }
@@ -31,17 +64,32 @@
       "builder_ids": [
         {
           "bucket": "ci",
-          "builder": "linux-ubsan-vptr",
+          "builder": "Linux UBSan Builder",
           "project": "chromium"
         }
-      ]
+      ],
+      "builder_ids_in_scope_for_testing": [
+        {
+          "bucket": "ci",
+          "builder": "Linux UBSan Tests",
+          "project": "chromium"
+        }
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/linux_chromium_ubsan_rel_ng/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 150,
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "output_local_strategy": "minimum",
+    "project": "rbe-chromium-untrusted"
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

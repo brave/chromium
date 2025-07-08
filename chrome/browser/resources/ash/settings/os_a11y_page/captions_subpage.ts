@@ -8,17 +8,20 @@
  * equivalent Browser Settings UI (in chrome://settings/captions).
  */
 
-import '//resources/cr_elements/cr_shared_style.css.js';
-import '/shared/settings/controls/settings_slider.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_style.css.js';
+import '../controls/settings_slider.js';
 import '../settings_shared.css.js';
 import './live_caption_section.js';
 
-import {loadTimeData} from '//resources/js/load_time_data.js';
-import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {FontsBrowserProxyImpl, FontsData} from '/shared/settings/appearance_page/fonts_browser_proxy.js';
-import {DropdownMenuOptionList} from '/shared/settings/controls/settings_dropdown_menu.js';
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
+import type {FontsData} from '/shared/settings/appearance_page/fonts_browser_proxy.js';
+import {FontsBrowserProxyImpl} from '/shared/settings/appearance_page/fonts_browser_proxy.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
+import type {LanguageHelper, LanguagesModel} from '../os_languages_page/languages_types.js';
 
 import {getTemplate} from './captions_subpage.html.js';
 
@@ -36,10 +39,15 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
 
   static get properties() {
     return {
-      prefs: {
+      /**
+       * Read-only reference to the languages model provided by the
+       * 'settings-languages' instance.
+       */
+      languages: {
         type: Object,
-        notify: true,
       },
+
+      languageHelper: Object,
 
       /**
        * List of options for the background opacity drop-down menu.
@@ -141,6 +149,9 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
 
       /**
        * List of options for the text shadow drop-down menu.
+       *
+       * These values are based on
+       * https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/resources/ash/settings/a11y_page/captions_subpage.ts;l=142;drc=0918c7f73782a9575396f0c6b80a722b5a3d255a
        */
       textShadowOptions_: {
         readOnly: true,
@@ -198,6 +209,8 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
     };
   }
 
+  languages: LanguagesModel;
+  languageHelper: LanguageHelper;
   private readonly backgroundOpacityOptions_: DropdownMenuOptionList;
   private readonly colorOptions_: DropdownMenuOptionList;
   private textFontOptions_: DropdownMenuOptionList;
@@ -206,7 +219,7 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
   private readonly textSizeOptions_: DropdownMenuOptionList;
   private enableLiveCaption_: boolean;
 
-  override ready() {
+  override ready(): void {
     super.ready();
     FontsBrowserProxyImpl.getInstance().fetchFontsData().then(
         (response: FontsData) => this.setFontsData_(response));
@@ -225,7 +238,7 @@ export class SettingsCaptionsElement extends SettingsCaptionsElementBase {
   /**
    * @param response A list of fonts.
    */
-  private setFontsData_(response: FontsData) {
+  private setFontsData_(response: FontsData): void {
     const fontMenuOptions =
         [{value: '', name: loadTimeData.getString('captionsDefaultSetting')}];
     for (const fontData of response.fontList) {

@@ -17,10 +17,6 @@
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @class WebContentsViewCocoa;
 
 namespace content {
@@ -62,11 +58,11 @@ class CONTENT_EXPORT WebContentsNSViewBridge : public mojom::WebContentsNSView {
   void MakeFirstResponder() override;
   void TakeFocus(bool reverse) override;
   void StartDrag(const content::DropData& drop_data,
+                 const url::Origin& source_origin,
                  uint32_t operation_mask,
                  const gfx::ImageSkia& image,
                  const gfx::Vector2d& image_offset,
                  bool is_privileged) override;
-  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
   void Destroy() override;
 
  private:

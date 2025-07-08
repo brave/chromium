@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 
 #include "base/command_line.h"
@@ -20,7 +21,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "chrome/grit/theme_resources.h"
@@ -56,14 +57,14 @@ struct RawPrepopulatedPage {
 
 #if !BUILDFLAG(IS_ANDROID)
 // Android does not use prepopulated pages.
-const RawPrepopulatedPage kRawPrepopulatedPages[] = {
+constexpr auto kRawPrepopulatedPages = std::to_array<RawPrepopulatedPage>({
     {
         IDS_WEBSTORE_URL,
         IDS_EXTENSION_WEB_STORE_TITLE_SHORT,
         IDR_WEBSTORE_ICON_32,
         SkColorSetRGB(63, 132, 197),
     },
-};
+});
 #endif
 
 void InitializePrepopulatedPageList(
@@ -127,9 +128,12 @@ TopSitesFactory::TopSitesFactory()
           "TopSites",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(HistoryServiceFactory::GetInstance());
   DependsOn(TemplateURLServiceFactory::GetInstance());

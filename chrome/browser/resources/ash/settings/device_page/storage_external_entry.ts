@@ -8,14 +8,14 @@
  * external storage device with a toggle switch. When the switch is ON,
  * the storage's uuid will be saved to a preference.
  */
-import 'chrome://resources/cr_components/settings_prefs/prefs.js';
 import '../settings_shared.css.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import '../controls/settings_toggle_button.js';
 
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 
 import {getTemplate} from './storage_external_entry.html.js';
 
@@ -58,6 +58,7 @@ class StorageExternalEntryElement extends StorageExternalEntryElementBase {
     ];
   }
 
+  label: string;
   uuid: string;
   private visiblePref_: chrome.settingsPrivate.PrefObject<boolean>;
 

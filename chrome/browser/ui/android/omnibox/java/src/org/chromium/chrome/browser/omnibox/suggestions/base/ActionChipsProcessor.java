@@ -4,12 +4,11 @@
 
 package org.chromium.chrome.browser.omnibox.suggestions.base;
 
-import android.content.Context;
 import android.util.ArrayMap;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.omnibox.OmniboxMetrics;
 import org.chromium.chrome.browser.omnibox.suggestions.SuggestionHost;
 import org.chromium.components.browser_ui.widget.chips.ChipProperties;
 import org.chromium.components.omnibox.AutocompleteMatch;
@@ -18,34 +17,36 @@ import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * A class that handles model creation for the Action Chips.
- */
+/** A class that handles model creation for the Action Chips. */
+@NullMarked
 public class ActionChipsProcessor {
-    private final @NonNull Context mContext;
-    private final @NonNull SuggestionHost mSuggestionHost;
-    private final @NonNull ArrayMap<OmniboxAction, Integer> mVisibleActions;
+    private final SuggestionHost mSuggestionHost;
+    private final ArrayMap<OmniboxAction, Integer> mVisibleActions;
 
     /** The action that was executed, or null if no action was executed by the user. */
     private @Nullable OmniboxAction mExecutedAction;
 
     /**
-     * @param context An Android context.
      * @param suggestionHost Component receiving suggestion events.
      */
-    public ActionChipsProcessor(@NonNull Context context, @NonNull SuggestionHost suggestionHost) {
-        mContext = context;
+    public ActionChipsProcessor(SuggestionHost suggestionHost) {
         mSuggestionHost = suggestionHost;
         mVisibleActions = new ArrayMap<>();
     }
 
-    public void onUrlFocusChange(boolean hasFocus) {
-        if (hasFocus) {
+    public void onOmniboxSessionStateChange(boolean activated) {
+        // Note: do not record any histograms if we did not show Actions.
+        if (activated || mVisibleActions.isEmpty()) {
             return;
         }
-        mVisibleActions.forEach((OmniboxAction action, Integer position) -> {
-            action.recordActionShown(position, action == mExecutedAction);
-        });
+
+        mVisibleActions.forEach(
+                (OmniboxAction action, Integer position) -> {
+                    var wasValid = action.recordActionShown(position, action == mExecutedAction);
+                    OmniboxMetrics.recordOmniboxActionIsValid(wasValid);
+                });
+
+        OmniboxMetrics.recordOmniboxActionIsUsed(mExecutedAction != null);
         mVisibleActions.clear();
     }
 
@@ -78,6 +79,9 @@ public class ActionChipsProcessor {
                             .with(ChipProperties.CLICK_HANDLER, m -> executeAction(chip, position))
                             .with(ChipProperties.ICON, chip.icon.iconRes)
                             .with(ChipProperties.APPLY_ICON_TINT, chip.icon.tintWithTextColor)
+                            .with(
+                                    ChipProperties.PRIMARY_TEXT_APPEARANCE,
+                                    chip.primaryTextAppearance)
                             .build();
 
             modelList.add(new ListItem(ActionChipsProperties.ViewType.CHIP, chipModel));
@@ -87,11 +91,9 @@ public class ActionChipsProcessor {
         model.set(ActionChipsProperties.ACTION_CHIPS, modelList);
     }
 
-    /**
-     * Invoke action associated with the ActionChip.
-     */
-    private void executeAction(@NonNull OmniboxAction action, int position) {
+    /** Invoke action associated with the ActionChip. */
+    private void executeAction(OmniboxAction action, int position) {
         mExecutedAction = action;
-        mSuggestionHost.onOmniboxActionClicked(action);
+        mSuggestionHost.onOmniboxActionClicked(action, position);
     }
 }

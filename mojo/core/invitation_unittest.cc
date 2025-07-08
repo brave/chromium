@@ -2,14 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "mojo/public/c/system/invitation.h"
+
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/base_paths.h"
 #include "base/base_switches.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -21,7 +31,6 @@
 #include "base/path_service.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
@@ -29,22 +38,23 @@
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "mojo/buildflags.h"
-#include "mojo/core/core.h"
 #include "mojo/core/embedder/embedder.h"
 #include "mojo/core/ipcz_api.h"
-#include "mojo/core/node_controller.h"
 #include "mojo/core/test/mojo_test_base.h"
 #include "mojo/core/test/test_switches.h"
-#include "mojo/public/c/system/invitation.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/system/invitation.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "mojo/public/cpp/system/platform_handle.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+
+#if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
+#include "mojo/core/core.h"
+#include "mojo/core/node_controller.h"
+#endif
 
 #if BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
-#include "base/mac/mach_port_rendezvous.h"
+#include "base/apple/mach_port_rendezvous.h"
 #endif
 
 namespace mojo {
@@ -53,7 +63,7 @@ namespace {
 
 const char kSecondaryChannelHandleSwitch[] = "test-secondary-channel-handle";
 
-// TODO(https://crbug.com/1428561): Flaky on Tsan.
+// TODO(crbug.com/40900578): Flaky on Tsan.
 #if defined(THREAD_SANITIZER)
 #define MAYBE_InvitationTest DISABLED_InvitationTest
 #else
@@ -79,15 +89,14 @@ class MAYBE_InvitationTest : public test::MojoTestBase {
       base::CommandLine* custom_command_line = nullptr,
       base::LaunchOptions* custom_launch_options = nullptr);
 
-  static void SendInvitationToClient(
-      PlatformHandle endpoint_handle,
-      base::ProcessHandle process,
-      MojoHandle* primordial_pipes,
-      size_t num_primordial_pipes,
-      MojoSendInvitationFlags flags,
-      MojoProcessErrorHandler error_handler,
-      uintptr_t error_handler_context,
-      base::StringPiece isolated_invitation_name);
+  static void SendInvitationToClient(PlatformHandle endpoint_handle,
+                                     base::ProcessHandle process,
+                                     MojoHandle* primordial_pipes,
+                                     size_t num_primordial_pipes,
+                                     MojoSendInvitationFlags flags,
+                                     MojoProcessErrorHandler error_handler,
+                                     uintptr_t error_handler_context,
+                                     std::string_view isolated_invitation_name);
 
   static void WaitForProcessToTerminate(base::Process& process) {
     int wait_result = -1;
@@ -104,21 +113,8 @@ class MAYBE_InvitationTest : public test::MojoTestBase {
 void PrepareToPassRemoteEndpoint(PlatformChannel* channel,
                                  base::LaunchOptions* options,
                                  base::CommandLine* command_line,
-                                 base::StringPiece switch_name = {}) {
-  std::string value;
-#if BUILDFLAG(IS_FUCHSIA)
-  channel->PrepareToPassRemoteEndpoint(&options->handles_to_transfer, &value);
-#elif BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
-  channel->PrepareToPassRemoteEndpoint(&options->mach_ports_for_rendezvous,
-                                       &value);
-#elif BUILDFLAG(IS_POSIX)
-  channel->PrepareToPassRemoteEndpoint(&options->fds_to_remap, &value);
-#elif BUILDFLAG(IS_WIN)
-  channel->PrepareToPassRemoteEndpoint(&options->handles_to_inherit, &value);
-#else
-#error "Platform not yet supported."
-#endif
-
+                                 std::string_view switch_name = {}) {
+  const std::string value = channel->PrepareToPassRemoteEndpoint(*options);
   if (switch_name.empty()) {
     switch_name = PlatformChannel::kHandleSwitch;
   }
@@ -378,7 +374,7 @@ void MAYBE_InvitationTest::SendInvitationToClient(
     MojoSendInvitationFlags flags,
     MojoProcessErrorHandler error_handler,
     uintptr_t error_handler_context,
-    base::StringPiece isolated_invitation_name) {
+    std::string_view isolated_invitation_name) {
   MojoPlatformHandle handle;
   PlatformHandle::ToMojoPlatformHandle(std::move(endpoint_handle), &handle);
   CHECK_NE(handle.type, MOJO_PLATFORM_HANDLE_TYPE_INVALID);
@@ -425,7 +421,7 @@ class TestClientBase : public MAYBE_InvitationTest {
   TestClientBase& operator=(const TestClientBase&) = delete;
 
   static MojoHandle AcceptInvitation(MojoAcceptInvitationFlags flags,
-                                     base::StringPiece switch_name = {}) {
+                                     std::string_view switch_name = {}) {
     const auto& command_line = *base::CommandLine::ForCurrentProcess();
     PlatformChannelEndpoint channel_endpoint;
     if (switch_name.empty()) {
@@ -582,11 +578,12 @@ class RemoteProcessState {
   void NotifyError(const std::string& error_message, bool disconnected) {
     base::AutoLock lock(lock_);
     CHECK(!disconnected_);
-    EXPECT_NE(error_message.find(expected_error_message_), std::string::npos);
+    EXPECT_TRUE(base::Contains(error_message, expected_error_message_));
     disconnected_ = disconnected;
     ++call_count_;
-    if (error_callback_)
+    if (error_callback_) {
       callback_task_runner_->PostTask(FROM_HERE, error_callback_);
+    }
   }
 
  private:
@@ -662,6 +659,7 @@ DEFINE_TEST_CLIENT(ProcessErrorsClient) {
   EXPECT_EQ(MOJO_RESULT_OK, MojoClose(pipe));
 }
 
+#if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
 // Temporary removed support for reinvitation for non-isolated connections.
 TEST_F(MAYBE_InvitationTest, DISABLED_Reinvitation) {
   // The gist of this test is that a process should be able to accept an
@@ -711,6 +709,7 @@ TEST_F(MAYBE_InvitationTest, DISABLED_Reinvitation) {
 
   WaitForProcessToTerminate(child_process);
 }
+#endif  // BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
 
 DEFINE_TEST_CLIENT(ReinvitationClient) {
   MojoHandle invitation = AcceptInvitation(MOJO_ACCEPT_INVITATION_FLAG_NONE);
@@ -923,7 +922,14 @@ DEFINE_TEST_CLIENT(BrokenTransportClient) {
   // No-op. Exit immediately without accepting any invitation.
 }
 
-TEST_F(MAYBE_InvitationTest, NonBrokerToNonBroker) {
+// TODO(crbug.com/407060377): Flaky in Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_NonBrokerToNonBroker DISABLED_NonBrokerToNonBroker
+#else
+#define MAYBE_NonBrokerToNonBroker NonBrokerToNonBroker
+#endif
+
+TEST_F(MAYBE_InvitationTest, MAYBE_NonBrokerToNonBroker) {
   // Tests a non-broker inviting another non-broker to join the network.
   MojoHandle host;
   base::Process host_process = LaunchChildTestClient(
@@ -1029,7 +1035,7 @@ TEST_F(MAYBE_InvitationTest, MultiBrokerNetwork) {
   MojoClose(client);
 }
 
-MojoHandle CreateMemory(base::StringPiece contents) {
+MojoHandle CreateMemory(std::string_view contents) {
   auto region = base::WritableSharedMemoryRegion::Create(contents.size());
   auto mapping = region.Map();
   memcpy(mapping.memory(), contents.data(), contents.size());
@@ -1042,8 +1048,8 @@ std::string ReadMemory(MojoHandle handle) {
   auto region = UnwrapReadOnlySharedMemoryRegion(
       ScopedSharedBufferHandle{SharedBufferHandle{handle}});
   auto mapping = region.Map();
-  base::StringPiece contents{reinterpret_cast<const char*>(mapping.memory()),
-                             region.GetSize()};
+  std::string_view contents{reinterpret_cast<const char*>(mapping.memory()),
+                            region.GetSize()};
   return std::string{contents};
 }
 

@@ -4,10 +4,16 @@
 
 #include "ash/public/cpp/holding_space/holding_space_file.h"
 
+#include <tuple>
+
 namespace ash {
 
-HoldingSpaceFile::HoldingSpaceFile(FileSystemType file_system_type)
-    : file_system_type(file_system_type) {}
+HoldingSpaceFile::HoldingSpaceFile(const base::FilePath& file_path,
+                                   FileSystemType file_system_type,
+                                   const GURL& file_system_url)
+    : file_path(file_path),
+      file_system_type(file_system_type),
+      file_system_url(file_system_url) {}
 
 HoldingSpaceFile::HoldingSpaceFile(const HoldingSpaceFile&) = default;
 
@@ -21,7 +27,8 @@ HoldingSpaceFile& HoldingSpaceFile::operator=(HoldingSpaceFile&&) = default;
 HoldingSpaceFile::~HoldingSpaceFile() = default;
 
 bool HoldingSpaceFile::operator==(const HoldingSpaceFile& rhs) const {
-  return file_system_type == rhs.file_system_type;
+  return std::tie(file_path, file_system_type, file_system_url) ==
+         std::tie(rhs.file_path, rhs.file_system_type, rhs.file_system_url);
 }
 
 bool HoldingSpaceFile::operator!=(const HoldingSpaceFile& rhs) const {

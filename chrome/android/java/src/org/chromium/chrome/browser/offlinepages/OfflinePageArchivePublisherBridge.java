@@ -9,18 +9,20 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore.MediaColumns;
 import android.text.format.DateUtils;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
+
 import org.chromium.base.ContentUriUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.chromium.build.annotations.NullMarked;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
@@ -30,12 +32,14 @@ import java.lang.reflect.Method;
 
 /**
  * Since the {@link AndroidDownloadManager} can only be accessed from Java, this bridge will
- * transfer all C++ calls over to Java land for making the call to ADM.  This is a one-way bridge,
- * from C++ to Java only.  The Java side of this bridge is not called by other Java code.
+ * transfer all C++ calls over to Java land for making the call to ADM. This is a one-way bridge,
+ * from C++ to Java only. The Java side of this bridge is not called by other Java code.
  */
 @JNINamespace("offline_pages")
+@NullMarked
 public class OfflinePageArchivePublisherBridge {
     private static final String TAG = "OPArchivePublisher";
+
     /** Offline pages should not be scanned as for media content. */
     public static final boolean IS_MEDIA_SCANNER_SCANNABLE = false;
 
@@ -55,18 +59,24 @@ public class OfflinePageArchivePublisherBridge {
 
     /**
      * This is a pass through to the {@link AndroidDownloadManager} function of the same name.
+     *
      * @param title The display name for this download.
      * @param description Long description for this download.
      * @param path File system path for this download.
      * @param length Length in bytes of this downloaded item.
-     * @param uri The origin of this download.  Used in API 24+ only.
-     * @param referer Where this download was refered from.  Used in API 24+ only.
+     * @param uri The origin of this download. Used in API 24+ only.
+     * @param referer Where this download was refered from. Used in API 24+ only.
      * @return the download ID of this item as assigned by the download manager.
      */
     @CalledByNative
     @VisibleForTesting
-    public static long addCompletedDownload(String title, String description, String path,
-            long length, String uri, String referer) {
+    public static long addCompletedDownload(
+            @JniType("std::string") String title,
+            @JniType("std::string") String description,
+            @JniType("std::string") String path,
+            long length,
+            @JniType("std::string") String uri,
+            @JniType("std::string") String referer) {
         try {
             return callAddCompletedDownload(title, description, path, length, uri, referer);
         } catch (Exception e) {
@@ -76,13 +86,26 @@ public class OfflinePageArchivePublisherBridge {
         }
     }
 
-    private static long callAddCompletedDownload(String title, String description, String path,
-            long length, String uri, String referer) {
+    private static long callAddCompletedDownload(
+            String title,
+            String description,
+            String path,
+            long length,
+            String uri,
+            String referer) {
         DownloadManager downloadManager = getDownloadManager();
         if (downloadManager == null) return 0;
 
-        return downloadManager.addCompletedDownload(title, description, IS_MEDIA_SCANNER_SCANNABLE,
-                MIME_TYPE, path, length, SHOW_NOTIFICATION, Uri.parse(uri), Uri.parse(referer));
+        return downloadManager.addCompletedDownload(
+                title,
+                description,
+                IS_MEDIA_SCANNER_SCANNABLE,
+                MIME_TYPE,
+                path,
+                length,
+                SHOW_NOTIFICATION,
+                Uri.parse(uri),
+                Uri.parse(referer));
     }
 
     /**
@@ -105,24 +128,23 @@ public class OfflinePageArchivePublisherBridge {
     }
 
     private static DownloadManager getDownloadManager() {
-        return (DownloadManager) ContextUtils.getApplicationContext().getSystemService(
-                Context.DOWNLOAD_SERVICE);
+        return (DownloadManager)
+                ContextUtils.getApplicationContext().getSystemService(Context.DOWNLOAD_SERVICE);
     }
 
     /**
      * Adds an archive to the downloads collection on Android Q+. Preferred alternative to
      * addCompletedDownload for Android Q and later.
      *
-     * TODO(iwells): Remove reflection once API level 29 is supported.
+     * <p>TODO(iwells): Remove reflection once API level 29 is supported.
      *
      * @param page Offline page to be published.
      * @return Content URI referring to the published page.
      */
     @CalledByNative
     @VisibleForTesting
-    public static String publishArchiveToDownloadsCollection(OfflinePageItem page) {
-        assert Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
-
+    public static @JniType("std::string") String publishArchiveToDownloadsCollection(
+            OfflinePageItem page) {
         final String isPending = "is_pending"; // MediaStore.IS_PENDING
 
         // Collect all fields for creating intermediate URI.
@@ -171,15 +193,21 @@ public class OfflinePageArchivePublisherBridge {
                     fileUtilsClazz.getMethod("copy", InputStream.class, OutputStream.class);
 
             OutputStream out = contentResolver.openOutputStream(intermediateUri);
+            assert out != null;
             InputStream in = new FileInputStream(page.getFilePath());
             copyMethod.invoke(null, in, out);
             in.close();
             out.close();
         } catch (Exception e) {
-            Log.i(TAG,
+            Log.i(
+                    TAG,
                     "Unable to copy archive to pending URI (externalDownloadUri: "
-                            + externalDownloadUri + ", intermediateUri: " + intermediateUri
-                            + ", page.getFilePath(): " + page.getFilePath() + ")",
+                            + externalDownloadUri
+                            + ", intermediateUri: "
+                            + intermediateUri
+                            + ", page.getFilePath(): "
+                            + page.getFilePath()
+                            + ")",
                     e);
             return "";
         }
@@ -190,8 +218,11 @@ public class OfflinePageArchivePublisherBridge {
         publishValues.putNull("date_expires");
         publishValues.put(MediaColumns.DISPLAY_NAME, page.getTitle());
         publishValues.put(MediaColumns.MIME_TYPE, "multipart/related");
-        if (!updateContentResolver(contentResolver, intermediateUri, publishValues,
-                    "Failed to finish publishing archive.")) {
+        if (!updateContentResolver(
+                contentResolver,
+                intermediateUri,
+                publishValues,
+                "Failed to finish publishing archive.")) {
             return "";
         }
 
@@ -201,15 +232,18 @@ public class OfflinePageArchivePublisherBridge {
         // See crbug.com/1010829 for more details.
         final ContentValues mimeTypeValues = new ContentValues();
         mimeTypeValues.put(MediaColumns.MIME_TYPE, "multipart/related");
-        if (!updateContentResolver(contentResolver, intermediateUri, mimeTypeValues,
-                    "Failed to update mime type.")) {
+        if (!updateContentResolver(
+                contentResolver, intermediateUri, mimeTypeValues, "Failed to update mime type.")) {
             return "";
         }
         return intermediateUri.toString();
     }
 
-    private static boolean updateContentResolver(ContentResolver contentResolver, Uri uri,
-            ContentValues contentValues, String errorMessage) {
+    private static boolean updateContentResolver(
+            ContentResolver contentResolver,
+            Uri uri,
+            ContentValues contentValues,
+            String errorMessage) {
         /* Even though the documentation for ContentResolver.update doesn't mention it, an
          * IllegalStateException (and other RuntimeException's) may be thrown in some situations.
          * This is the case, for instance, when there is a long enough sequence of similarly named

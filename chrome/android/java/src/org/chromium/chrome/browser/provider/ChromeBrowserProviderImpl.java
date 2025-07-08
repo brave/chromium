@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.provider;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.SearchManager;
 import android.content.ContentValues;
 import android.content.Context;
@@ -14,10 +16,15 @@ import android.net.Uri;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.build.annotations.EnsuresNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
 /**
  * This class provides access to user data stored in Chrome, such as bookmarks, most visited pages,
  * etc. It is used to support android.provider.Browser.
  */
+@NullMarked
 public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
     private static final String TAG = "ChromeBrowserProvider";
 
@@ -26,12 +33,13 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
      * {@link SearchColumns#SEARCH}, and {@link SearchColumns#DATE}.
      */
     @VisibleForTesting
-    public static final String[] SEARCHES_PROJECTION = new String[] {
-            // if you change column order you must also change indices below
-            SearchColumns.ID, // 0
-            SearchColumns.SEARCH, // 1
-            SearchColumns.DATE, // 2
-    };
+    public static final String[] SEARCHES_PROJECTION =
+            new String[] {
+                // if you change column order you must also change indices below
+                SearchColumns.ID, // 0
+                SearchColumns.SEARCH, // 1
+                SearchColumns.DATE, // 2
+            };
 
     // Defines Chrome's API authority, so it can be run and tested
     // independently.
@@ -79,20 +87,28 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
     private static final int URL_MATCH_BOOKMARK_HISTORY_SUGGESTIONS_ID = 11;
 
     private static final String[] BOOKMARK_DEFAULT_PROJECTION =
-            new String[] {BookmarkColumns.ID, BookmarkColumns.URL, BookmarkColumns.VISITS,
-                    BookmarkColumns.DATE, BookmarkColumns.BOOKMARK, BookmarkColumns.TITLE,
-                    BookmarkColumns.FAVICON, BookmarkColumns.CREATED};
+            new String[] {
+                BookmarkColumns.ID,
+                BookmarkColumns.URL,
+                BookmarkColumns.VISITS,
+                BookmarkColumns.DATE,
+                BookmarkColumns.BOOKMARK,
+                BookmarkColumns.TITLE,
+                BookmarkColumns.FAVICON,
+                BookmarkColumns.CREATED
+            };
 
     private final Object mInitializeUriMatcherLock = new Object();
-    private UriMatcher mUriMatcher;
+    private @Nullable UriMatcher mUriMatcher;
 
+    @EnsuresNonNull("mUriMatcher")
     private void ensureUriMatcherInitialized() {
         synchronized (mInitializeUriMatcherLock) {
             if (mUriMatcher != null) return;
 
             mUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
             // The internal URIs
-            String authority = getContext().getPackageName() + AUTHORITY_SUFFIX;
+            String authority = assumeNonNull(getContext()).getPackageName() + AUTHORITY_SUFFIX;
             mUriMatcher.addURI(authority, BOOKMARKS_PATH, URI_MATCH_BOOKMARKS);
             mUriMatcher.addURI(authority, BOOKMARKS_PATH + "/#", URI_MATCH_BOOKMARKS_ID);
             // The internal authority for public APIs
@@ -108,26 +124,36 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
             // The internal authority for BrowserContracts
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_API_AUTHORITY, HISTORY_PATH, URL_MATCH_API_HISTORY_CONTENT);
-            mUriMatcher.addURI(BROWSER_CONTRACT_API_AUTHORITY, HISTORY_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_API_AUTHORITY,
+                    HISTORY_PATH + "/#",
                     URL_MATCH_API_HISTORY_CONTENT_ID);
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_API_AUTHORITY, COMBINED_PATH, URL_MATCH_API_BOOKMARK);
-            mUriMatcher.addURI(BROWSER_CONTRACT_API_AUTHORITY, COMBINED_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_API_AUTHORITY,
+                    COMBINED_PATH + "/#",
                     URL_MATCH_API_BOOKMARK_ID);
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_API_AUTHORITY, SEARCHES_PATH, URL_MATCH_API_SEARCHES);
-            mUriMatcher.addURI(BROWSER_CONTRACT_API_AUTHORITY, SEARCHES_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_API_AUTHORITY,
+                    SEARCHES_PATH + "/#",
                     URL_MATCH_API_SEARCHES_ID);
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_API_AUTHORITY, BOOKMARKS_PATH, URL_MATCH_API_BOOKMARK_CONTENT);
-            mUriMatcher.addURI(BROWSER_CONTRACT_API_AUTHORITY, BOOKMARKS_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_API_AUTHORITY,
+                    BOOKMARKS_PATH + "/#",
                     URL_MATCH_API_BOOKMARK_CONTENT_ID);
             // Added the Android Framework URIs, so the provider can easily switched
             // by adding 'browser' and 'com.android.browser' in manifest.
             // The Android's BrowserContract
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_AUTHORITY, HISTORY_PATH, URL_MATCH_API_HISTORY_CONTENT);
-            mUriMatcher.addURI(BROWSER_CONTRACT_AUTHORITY, HISTORY_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_AUTHORITY,
+                    HISTORY_PATH + "/#",
                     URL_MATCH_API_HISTORY_CONTENT_ID);
             mUriMatcher.addURI(BROWSER_CONTRACT_AUTHORITY, "combined", URL_MATCH_API_BOOKMARK);
             mUriMatcher.addURI(BROWSER_CONTRACT_AUTHORITY, "combined/#", URL_MATCH_API_BOOKMARK_ID);
@@ -136,7 +162,9 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
                     BROWSER_CONTRACT_AUTHORITY, SEARCHES_PATH + "/#", URL_MATCH_API_SEARCHES_ID);
             mUriMatcher.addURI(
                     BROWSER_CONTRACT_AUTHORITY, BOOKMARKS_PATH, URL_MATCH_API_BOOKMARK_CONTENT);
-            mUriMatcher.addURI(BROWSER_CONTRACT_AUTHORITY, BOOKMARKS_PATH + "/#",
+            mUriMatcher.addURI(
+                    BROWSER_CONTRACT_AUTHORITY,
+                    BOOKMARKS_PATH + "/#",
                     URL_MATCH_API_BOOKMARK_CONTENT_ID);
             // For supporting android.provider.browser.BookmarkColumns and
             // SearchColumns
@@ -145,32 +173,43 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
             mUriMatcher.addURI("browser", SEARCHES_PATH, URL_MATCH_API_SEARCHES);
             mUriMatcher.addURI("browser", SEARCHES_PATH + "/#", URL_MATCH_API_SEARCHES_ID);
 
-            mUriMatcher.addURI(apiAuthority,
+            mUriMatcher.addURI(
+                    apiAuthority,
                     BOOKMARKS_PATH + "/" + SearchManager.SUGGEST_URI_PATH_QUERY,
                     URL_MATCH_BOOKMARK_SUGGESTIONS_ID);
-            mUriMatcher.addURI(apiAuthority, SearchManager.SUGGEST_URI_PATH_QUERY,
+            mUriMatcher.addURI(
+                    apiAuthority,
+                    SearchManager.SUGGEST_URI_PATH_QUERY,
                     URL_MATCH_BOOKMARK_HISTORY_SUGGESTIONS_ID);
         }
     }
 
     @Override
-    public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
-            String sortOrder) {
+    public Cursor query(
+            Uri uri,
+            String @Nullable [] projection,
+            @Nullable String selection,
+            String @Nullable [] selectionArgs,
+            @Nullable String sortOrder) {
         return new MatrixCursor(BOOKMARK_DEFAULT_PROJECTION, 0);
     }
 
     @Override
-    public Uri insert(Uri uri, ContentValues values) {
+    public @Nullable Uri insert(Uri uri, @Nullable ContentValues values) {
         return null;
     }
 
     @Override
-    public int delete(Uri uri, String selection, String[] selectionArgs) {
+    public int delete(Uri uri, @Nullable String selection, String @Nullable [] selectionArgs) {
         return 0;
     }
 
     @Override
-    public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+    public int update(
+            Uri uri,
+            @Nullable ContentValues values,
+            @Nullable String selection,
+            String @Nullable [] selectionArgs) {
         return 0;
     }
 
@@ -194,24 +233,17 @@ public class ChromeBrowserProviderImpl extends ChromeBrowserProvider.Impl {
         // Keep returning non-null values just in case, to avoid breaking old apps.
         ensureUriMatcherInitialized();
         int match = mUriMatcher.match(uri);
-        switch (match) {
-            case URI_MATCH_BOOKMARKS:
-            case URL_MATCH_API_BOOKMARK:
-                return BROWSER_CONTRACT_BOOKMARK_CONTENT_TYPE;
-            case URI_MATCH_BOOKMARKS_ID:
-            case URL_MATCH_API_BOOKMARK_ID:
-                return BROWSER_CONTRACT_BOOKMARK_CONTENT_ITEM_TYPE;
-            case URL_MATCH_API_SEARCHES:
-                return BROWSER_CONTRACT_SEARCH_CONTENT_TYPE;
-            case URL_MATCH_API_SEARCHES_ID:
-                return BROWSER_CONTRACT_SEARCH_CONTENT_ITEM_TYPE;
-            case URL_MATCH_API_HISTORY_CONTENT:
-                return BROWSER_CONTRACT_HISTORY_CONTENT_TYPE;
-            case URL_MATCH_API_HISTORY_CONTENT_ID:
-                return BROWSER_CONTRACT_HISTORY_CONTENT_ITEM_TYPE;
-            default:
-                throw new IllegalArgumentException(TAG + ": getType - unknown URL " + uri);
-        }
+        return switch (match) {
+            case URI_MATCH_BOOKMARKS,
+                    URL_MATCH_API_BOOKMARK -> BROWSER_CONTRACT_BOOKMARK_CONTENT_TYPE;
+            case URI_MATCH_BOOKMARKS_ID,
+                    URL_MATCH_API_BOOKMARK_ID -> BROWSER_CONTRACT_BOOKMARK_CONTENT_ITEM_TYPE;
+            case URL_MATCH_API_SEARCHES -> BROWSER_CONTRACT_SEARCH_CONTENT_TYPE;
+            case URL_MATCH_API_SEARCHES_ID -> BROWSER_CONTRACT_SEARCH_CONTENT_ITEM_TYPE;
+            case URL_MATCH_API_HISTORY_CONTENT -> BROWSER_CONTRACT_HISTORY_CONTENT_TYPE;
+            case URL_MATCH_API_HISTORY_CONTENT_ID -> BROWSER_CONTRACT_HISTORY_CONTENT_ITEM_TYPE;
+            default -> throw new IllegalArgumentException(uri.toString());
+        };
     }
 
     private static Uri buildContentUri(String authority, String path) {

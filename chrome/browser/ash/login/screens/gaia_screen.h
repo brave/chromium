@@ -45,8 +45,8 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
     BACK_CHILD,
     CANCEL,
     ENTERPRISE_ENROLL,
-    START_CONSUMER_KIOSK,
-    QUICK_START,
+    ENTER_QUICK_START,
+    QUICK_START_ONGOING,
   };
 
   static std::string GetResultString(Result result);
@@ -61,13 +61,8 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
 
   ~GaiaScreen() override;
 
-  // Loads online Gaia into the webview.
-  void LoadOnline(const AccountId& account);
-  // Loads online Gaia (for child signup) into the webview.
-  void LoadOnlineForChildSignup();
-  // Loads online Gaia (for child signin) into the webview.
-  void LoadOnlineForChildSignin();
-  void ShowAllowlistCheckFailedError();
+  // Loads online GAIA into the webview.
+  void LoadOnlineGaia();
   // Reset authenticator.
   void Reset();
   // Calls authenticator reload on JS side.
@@ -80,6 +75,7 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
       ScreenBacklightState screen_backlight_state) override;
 
  private:
+  bool MaybeSkip(WizardContext& context) override;
   void ShowImpl() override;
   void HideImpl() override;
   void OnUserAction(const base::Value::List& args) override;
@@ -87,7 +83,7 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
   void HandleIdentifierEntered(const std::string& account_identifier);
 
   void OnGetAuthFactorsConfiguration(std::unique_ptr<UserContext> user_context,
-                                     absl::optional<AuthenticationError> error);
+                                     std::optional<AuthenticationError> error);
   // Fetch Gaia reauth request token from the recovery service.
   void FetchGaiaReauthToken(const AccountId& account);
   void OnGaiaReauthTokenFetched(const AccountId& account,
@@ -102,11 +98,18 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
 
   // Called when quick start button is clicked.
   void OnQuickStartButtonClicked();
+  void SetQuickStartButtonVisibility(bool visible);
 
-  void EnableQuickStart();
+  // Starts online authentication for a given account (can be empty if
+  // user is unknown). If `force_default_gaia_page` is true, will
+  // choose the Gaia path corresponding to
+  // `WizardContext::GaiaPath::kDefault`.
+  void LoadOnlineGaiaForAccount(const AccountId& account,
+                                bool force_default_gaia_page = false);
 
-  void OnGetQuickStartFeatureSupportStatus(
-      quick_start::TargetDeviceConnectionBroker::FeatureSupportStatus status);
+  // Whether the QuickStart entry point visibility has already been determined.
+  // This flag prevents duplicate histogram entries.
+  bool has_emitted_quick_start_visible = false;
 
   AuthFactorEditor auth_factor_editor_;
   std::unique_ptr<GaiaReauthTokenFetcher> gaia_reauth_token_fetcher_;
@@ -118,9 +121,6 @@ class GaiaScreen : public BaseScreen, public ScreenBacklightObserver {
 
   base::ScopedObservation<BacklightsForcedOffSetter, ScreenBacklightObserver>
       backlights_forced_off_observation_{this};
-
-  base::WeakPtr<quick_start::TargetDeviceBootstrapController>
-      bootstrap_controller_;
 
   // Used to cache email between "identifierEntered" event and a switch to
   // enrollment screen.

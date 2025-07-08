@@ -7,7 +7,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/containers/cxx20_erase_forward_list.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
@@ -40,7 +39,7 @@ MojomDevToolsAgentHost::MojomDevToolsAgentHost(
 MojomDevToolsAgentHost::~MojomDevToolsAgentHost() {
   associated_agent_remote_.reset();
   delegate_.reset();
-  base::Erase(host_ids(), GetId());
+  std::erase(host_ids(), GetId());
 }
 
 // Devtools Agent host overrides:
@@ -71,8 +70,7 @@ void MojomDevToolsAgentHost::Reload() {
 
 // Devtools agent host impl overrides:
 
-bool MojomDevToolsAgentHost::AttachSession(DevToolsSession* session,
-                                           bool aquire_wake_lock) {
+bool MojomDevToolsAgentHost::AttachSession(DevToolsSession* session) {
   session->AttachToAgent(associated_agent_remote_.get(),
                          delegate_->ForceIOSession());
   return true;

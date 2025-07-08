@@ -31,17 +31,20 @@ export interface SmbBrowserProxy {
       authMethod: string, shouldOpenFileManagerAfterMount: boolean,
       saveCredentials: boolean): Promise<SmbMountResult>;
   startDiscovery(): void;
-  updateCredentials(mountId: string, username: string, password: string): void;
+  updateCredentials(username: string, password: string): void;
+  hasAnySmbMountedBefore(): Promise<boolean>;
 }
 
 declare class SmbBrowserProxyImpl implements SmbBrowserProxy {
-  static setInstanceForTesting(instance: SmbBrowserProxy): void;
+  static getInstance(): SmbBrowserProxy;
+  static setInstance(instance: SmbBrowserProxy): void;
   smbMount(
       smbUrl: string, smbName: string, username: string, password: string,
       authMethod: string, shouldOpenFileManagerAfterMount: boolean,
       saveCredentials: boolean): Promise<SmbMountResult>;
   startDiscovery(): void;
-  updateCredentials(mountId: string, username: string, password: string): void;
+  updateCredentials(username: string, password: string): void;
+  hasAnySmbMountedBefore(): Promise<boolean>;
 }
 
 export {SmbBrowserProxyImpl};

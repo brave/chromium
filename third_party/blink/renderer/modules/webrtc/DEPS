@@ -11,6 +11,7 @@ include_rules = [
     "+media/base/audio_parameters.h",
     "+media/base/audio_pull_fifo.h",
     "+media/base/audio_renderer_sink.h",
+    "+media/base/audio_sample_types.h",
     "+media/base/audio_timestamp_helper.h",
     "+media/base/channel_layout.h",
     "+media/base/sample_rates.h",
@@ -20,10 +21,3 @@ include_rules = [
     "+third_party/blink/renderer/modules/modules_export.h",
     "+third_party/blink/renderer/modules/webrtc",
 ]
-
-specific_include_rules = {
-  "webrtc_audio_renderer\.cc": [
-    # TODO(crbug.com/1198375): Remove this temporary exception after migration.
-    "+base/task/bind_post_task.h",
-  ],
-}

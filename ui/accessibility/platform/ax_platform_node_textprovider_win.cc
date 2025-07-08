@@ -14,31 +14,28 @@
 #include "ui/accessibility/platform/ax_platform_node_textrangeprovider_win.h"
 
 #define UIA_VALIDATE_TEXTPROVIDER_CALL() \
-  if (!owner()->GetDelegate())           \
+  if (owner()->IsDestroyed())            \
     return UIA_E_ELEMENTNOTAVAILABLE;
 #define UIA_VALIDATE_TEXTPROVIDER_CALL_1_ARG(arg) \
-  if (!owner()->GetDelegate())                    \
+  if (owner()->IsDestroyed())                     \
     return UIA_E_ELEMENTNOTAVAILABLE;             \
   if (!arg)                                       \
     return E_INVALIDARG;
 
 namespace ui {
 
-AXPlatformNodeTextProviderWin::AXPlatformNodeTextProviderWin() {
-  DVLOG(1) << __func__;
-}
+AXPlatformNodeTextProviderWin::AXPlatformNodeTextProviderWin() {}
 
 AXPlatformNodeTextProviderWin::~AXPlatformNodeTextProviderWin() {}
 
 // static
-AXPlatformNodeTextProviderWin* AXPlatformNodeTextProviderWin::Create(
-    AXPlatformNodeWin* owner) {
+Microsoft::WRL::ComPtr<AXPlatformNodeTextProviderWin>
+AXPlatformNodeTextProviderWin::Create(AXPlatformNodeWin* owner) {
   CComObject<AXPlatformNodeTextProviderWin>* text_provider = nullptr;
   if (SUCCEEDED(CComObject<AXPlatformNodeTextProviderWin>::CreateInstance(
           &text_provider))) {
     DCHECK(text_provider);
     text_provider->owner_ = owner;
-    text_provider->AddRef();
     return text_provider;
   }
 
@@ -132,12 +129,12 @@ HRESULT AXPlatformNodeTextProviderWin::GetVisibleRanges(
 
   // Whether we expose embedded object characters for nodes is managed by the
   // |g_ax_embedded_object_behavior| global variable set in ax_node_position.cc.
-  // When on Windows, this variable is always set to kExposeCharacter... which
-  // is incorrect if we run UIA-specific code relating to computing text content
-  // of nodes that themselves do not have text, such as `<p>` elements. To avoid
-  // problems caused by that, we use the following
-  // ScopedAXEmbeddedObjectBehaviorSetter to modify the value of the global
-  // variable to what is really expected on UIA.
+  // When on Windows, this variable is always set to
+  // kExposeCharacterForHypertext... which is incorrect if we run UIA-specific
+  // code relating to computing text content of nodes that themselves do not
+  // have text, such as `<p>` elements. To avoid problems caused by that, we use
+  // the following ScopedAXEmbeddedObjectBehaviorSetter to modify the value of
+  // the global variable to what is really expected on UIA.
 
   ScopedAXEmbeddedObjectBehaviorSetter ax_embedded_object_behavior(
       AXEmbeddedObjectBehavior::kSuppressCharacter);
@@ -175,7 +172,8 @@ HRESULT AXPlatformNodeTextProviderWin::GetVisibleRanges(
     if (frame_rect.Intersects(current_rect)) {
       Microsoft::WRL::ComPtr<ITextRangeProvider> text_range_provider;
       AXPlatformNodeTextRangeProviderWin::CreateTextRangeProvider(
-          current_line_start->Clone(), current_line_end->Clone(),
+          current_line_start->AsLeafTextPosition(),
+          current_line_end->AsLeafTextPosition(),
           &text_range_provider);
 
       ranges.emplace_back(text_range_provider);
@@ -220,7 +218,7 @@ HRESULT AXPlatformNodeTextProviderWin::RangeFromChild(
 
   *range = nullptr;
 
-  Microsoft::WRL::ComPtr<ui::AXPlatformNodeWin> child_platform_node;
+  Microsoft::WRL::ComPtr<AXPlatformNodeWin> child_platform_node;
   if (!SUCCEEDED(child->QueryInterface(IID_PPV_ARGS(&child_platform_node))))
     return UIA_E_INVALIDOPERATION;
 
@@ -263,6 +261,8 @@ HRESULT AXPlatformNodeTextProviderWin::RangeFromPoint(
 
 HRESULT AXPlatformNodeTextProviderWin::get_DocumentRange(
     ITextRangeProvider** range) {
+  ScopedAXEmbeddedObjectBehaviorSetter ax_embedded_object_behavior(
+      AXEmbeddedObjectBehavior::kUIAExposeCharacterForTextContent);
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXT_GET_DOCUMENTRANGE);
   UIA_VALIDATE_TEXTPROVIDER_CALL();
 
@@ -304,13 +304,15 @@ HRESULT AXPlatformNodeTextProviderWin::GetConversionTarget(
 }
 
 void AXPlatformNodeTextProviderWin::GetRangeFromChild(
-    ui::AXPlatformNodeWin* ancestor,
-    ui::AXPlatformNodeWin* descendant,
+    AXPlatformNodeWin* ancestor,
+    AXPlatformNodeWin* descendant,
     ITextRangeProvider** range) {
   DCHECK(ancestor);
   DCHECK(descendant);
   DCHECK(descendant->GetDelegate());
   DCHECK(ancestor->IsDescendant(descendant));
+  ScopedAXEmbeddedObjectBehaviorSetter ax_embedded_object_behavior(
+      AXEmbeddedObjectBehavior::kUIAExposeCharacterForTextContent);
 
   // Start and end should be leaf text positions that span the beginning and end
   // of text content within a node. The start position should be the directly
@@ -349,7 +351,7 @@ void AXPlatformNodeTextProviderWin::GetRangeFromChild(
 }
 
 void AXPlatformNodeTextProviderWin::CreateDegenerateRangeAtStart(
-    ui::AXPlatformNodeWin* node,
+    AXPlatformNodeWin* node,
     ITextRangeProvider** text_range_provider) {
   DCHECK(node);
   DCHECK(node->GetDelegate());
@@ -362,7 +364,7 @@ void AXPlatformNodeTextProviderWin::CreateDegenerateRangeAtStart(
       std::move(start), std::move(end), text_range_provider);
 }
 
-ui::AXPlatformNodeWin* AXPlatformNodeTextProviderWin::owner() const {
+AXPlatformNodeWin* AXPlatformNodeTextProviderWin::owner() const {
   return owner_.Get();
 }
 

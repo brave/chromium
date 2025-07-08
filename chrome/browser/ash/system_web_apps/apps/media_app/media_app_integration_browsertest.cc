@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "ash/constants/ash_switches.h"
 #include "ash/webui/media_app_ui/buildflags.h"
@@ -11,7 +13,6 @@
 #include "ash/webui/media_app_ui/url_constants.h"
 #include "ash/webui/system_apps/public/system_web_app_type.h"
 #include "base/check_deref.h"
-#include "base/containers/cxx20_erase_vector.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -19,17 +20,14 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_file_util.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_utils.h"
-#include "chrome/browser/ash/file_manager/app_id.h"
 #include "chrome/browser/ash/file_manager/app_service_file_tasks.h"
 #include "chrome/browser/ash/file_manager/file_manager_test_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
@@ -46,6 +44,7 @@
 #include "chrome/browser/error_reporting/mock_chrome_js_error_report_processor.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/notifications/notification_display_service.h"
+#include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -55,6 +54,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/ash/components/dbus/cros_disks/cros_disks_client.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
@@ -107,6 +107,9 @@ constexpr char kFileVideoVP9[] = "world.webm";
 
 // A 5-second long 96kb/s Ogg-Vorbis 44.1kHz mono audio file.
 constexpr char kFileAudioOgg[] = "music.ogg";
+
+// A 10-second long mp3 file.
+constexpr char kFileAudioMp3[] = "audio_10s.mp3";
 
 // A 1-page (8.5" x 11") PDF with some text and metadata.
 constexpr char kFilePdfTall[] = "tall.pdf";
@@ -271,9 +274,8 @@ class MediaAppIntegrationPhotosIntegrationTest
     auto* proxy = apps::AppServiceProxyFactory::GetForProfile(profile);
     std::vector<apps::AppPtr> registry_deltas;
     registry_deltas.push_back(MakePhotosApp(photos_version));
-    proxy->AppRegistryCache().OnApps(std::move(registry_deltas),
-                                     apps::AppType::kUnknown,
-                                     /*should_notify_initialized=*/false);
+    proxy->OnApps(std::move(registry_deltas), apps::AppType::kUnknown,
+                  /*should_notify_initialized=*/false);
   }
 
   static bool GetFlagInApp(content::WebContents* web_ui, const char* flag) {
@@ -302,12 +304,14 @@ class NotificationWatcher : public NotificationDisplayService::Observer {
       : profile_(profile) {
     // Notifications only fire if the device is "online". Simulate that.
     network_portal_detector.SimulateDefaultNetworkState(
-        ash::NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE);
+        ash::NetworkPortalDetectorMixin::NetworkStatus::kOnline);
 
-    NotificationDisplayService::GetForProfile(profile_)->AddObserver(this);
+    NotificationDisplayServiceFactory::GetForProfile(profile_)->AddObserver(
+        this);
   }
   ~NotificationWatcher() override {
-    NotificationDisplayService::GetForProfile(profile_)->RemoveObserver(this);
+    NotificationDisplayServiceFactory::GetForProfile(profile_)->RemoveObserver(
+        this);
   }
   std::string NextSeenNotificationId() {
     if (seen_notification_id_.empty()) {
@@ -317,7 +321,7 @@ class NotificationWatcher : public NotificationDisplayService::Observer {
   }
 
  private:
-  raw_ptr<Profile, ExperimentalAsh> profile_;
+  raw_ptr<Profile> profile_;
   base::RunLoop run_loop_;
   std::string seen_notification_id_;
 
@@ -388,19 +392,13 @@ std::string FindAnyTTF() {
   return base::JoinString(slice, "/");
 }
 
-void PrepareAppForTest(content::WebContents* web_ui) {
-  EXPECT_TRUE(WaitForLoadStop(web_ui));
-  EXPECT_EQ(nullptr, MediaAppUiBrowserTest::EvalJsInAppFrame(
-                         web_ui, MediaAppUiBrowserTest::AppJsTestLibrary()));
-}
-
 content::WebContents* PrepareActiveBrowserForTest(
     int expected_browser_count = 2) {
   WaitForBrowserCount(expected_browser_count);
   Browser* app_browser = chrome::FindBrowserWithActiveWindow();
   content::WebContents* web_ui =
       app_browser->tab_strip_model()->GetActiveWebContents();
-  PrepareAppForTest(web_ui);
+  MediaAppUiBrowserTest::PrepareAppForTest(web_ui);
   return web_ui;
 }
 
@@ -479,7 +477,7 @@ content::WebContents* MediaAppIntegrationTest::LaunchWithOneTestFile(
 
 content::WebContents* MediaAppIntegrationTest::LaunchWithNoFiles() {
   content::WebContents* web_ui = LaunchApp(MediaAppLaunchParams());
-  PrepareAppForTest(web_ui);
+  MediaAppUiBrowserTest::PrepareAppForTest(web_ui);
   return web_ui;
 }
 
@@ -518,7 +516,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppLaunchWithFile) {
   // Launch the App for the first time.
   content::WebContents* app = DirectlyLaunchWithFile(TestFile(kFilePng800x600));
   Browser* first_browser = chrome::FindBrowserWithActiveWindow();
-  PrepareAppForTest(app);
+  MediaAppUiBrowserTest::PrepareAppForTest(app);
 
   EXPECT_EQ("800x600", WaitForImageAlt(app, kFilePng800x600));
   ExpectProductSurveyData({.open_image = "1"});
@@ -526,7 +524,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppLaunchWithFile) {
   // Launch with a different file in a new window.
   app = DirectlyLaunchWithFile(TestFile(kFileJpeg640x480));
   Browser* second_browser = chrome::FindBrowserWithActiveWindow();
-  PrepareAppForTest(app);
+  MediaAppUiBrowserTest::PrepareAppForTest(app);
 
   EXPECT_EQ("640x480", WaitForImageAlt(app, kFileJpeg640x480));
   EXPECT_NE(first_browser, second_browser);
@@ -611,14 +609,14 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppHandlesIntents) {
         GetAppsForMimeType(proxy, "application/octet-stream");
 
     // Media App should not be in the returned list of handlers.
-    EXPECT_FALSE(base::ranges::any_of(
+    EXPECT_FALSE(std::ranges::any_of(
         intent_launch_info,
         [&media_app_id](const apps::IntentLaunchInfo& info) {
           return info.app_id == media_app_id;
         }));
   }
 
-  auto media_app_info = CreateWebAppInfoForMediaWebApp();
+  auto media_app_info = MediaSystemAppDelegate(profile()).GetWebAppInfo();
 
   // Ensure that Media App is returned as a handler for every mime type listed
   // in its file handlers.
@@ -629,7 +627,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppHandlesIntents) {
 
       // Media App should be in the returned list of handlers.
       EXPECT_FALSE(intent_launch_info.empty()) << " at " << accept.mime_type;
-      EXPECT_TRUE(base::ranges::any_of(
+      EXPECT_TRUE(std::ranges::any_of(
           intent_launch_info,
           [&media_app_id](const apps::IntentLaunchInfo& info) {
             return info.app_id == media_app_id;
@@ -637,33 +635,6 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppHandlesIntents) {
           << " at " << accept.mime_type;
     }
   }
-}
-
-// Regression test for b/172881869.
-IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, LoadsPdf) {
-  LaunchWithNoFiles();
-  content::WebContents* app = PrepareActiveBrowserForTest();
-  // TODO(crbug/1148090): To fully load PDFs, "frame-src" needs to be set, this
-  // test doesn't provide coverage for that.
-  // Note: If "object-src" is not set in the CSP, the `<embed>` element fails to
-  // load and times out.
-  constexpr char kLoadPdf[] = R"(
-      (function loadPdf() {
-        const embedBlob =  document.createElement('embed');
-        embedBlob.type ='application/pdf';
-        embedBlob.height = '100%';
-        embedBlob.width = '100%';
-        const loadPromise = new Promise((resolve, reject) => {
-          embedBlob.addEventListener('load', () => resolve(true));
-          embedBlob.addEventListener('error', () => reject(false));
-        });
-        document.body.appendChild(embedBlob);
-        embedBlob.src = 'blob:chrome-untrusted://media-app/fake-pdf-blob-hash';
-        return loadPromise;
-      })();
-  )";
-
-  EXPECT_EQ(true, MediaAppUiBrowserTest::EvalJsInAppFrame(app, kLoadPdf));
 }
 
 namespace {
@@ -694,7 +665,7 @@ bool isAppBarButtonOn(content::WebContents* app, const std::string& selector) {
     (async function isAppBarButtonOn() {
       const button =
           await getNode('$1', ['backlight-app-bar', 'backlight-app']);
-      return button.hasAttribute('toggled');
+      return button.hasAttribute('selected');
     })();
   )";
   return MediaAppUiBrowserTest::EvalJsInAppFrame(
@@ -725,7 +696,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
                        MAYBE_LoadsInkForImageAnnotation) {
   content::WebContents* app =
       DirectlyLaunchWithFile(TestFile(kFileJpeg640x480));
-  PrepareAppForTest(app);
+  MediaAppUiBrowserTest::PrepareAppForTest(app);
 
   EXPECT_EQ("640x480", WaitForImageAlt(app, kFileJpeg640x480));
 
@@ -757,7 +728,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MAYBE_InformationPanel) {
   content::WebContents* app =
       DirectlyLaunchWithFile(TestFile(kFileJpeg640x480));
-  PrepareAppForTest(app);
+  MediaAppUiBrowserTest::PrepareAppForTest(app);
   EXPECT_EQ("640x480", WaitForImageAlt(app, kFileJpeg640x480));
 
   // Expect info panel to not be open on first load.
@@ -811,7 +782,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationWithFilesAppTest,
 
   constexpr char kHasSaveDiscardButtons[] = R"(
     (async function hasSaveDiscardButtons() {
-      const discardButton = await getNode('ea-button[label="Discard edits"]',
+      const discardButton = await getNode('#DiscardEdits',
           ['backlight-app-bar', 'backlight-app']);
       const saveButton = await getNode('backlight-split-button[label="Save"]',
           ['backlight-app-bar', 'backlight-app']);
@@ -832,7 +803,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationWithFilesAppTest,
           ['backlight-crop-panel', 'backlight-image-handler']);
       rotateAntiClockwiseButton.click();
       const doneButton = await waitForNode(
-          'ea-button[label="Done"]', ['backlight-app-bar', 'backlight-app']);
+          '#Done', ['backlight-app-bar', 'backlight-app']);
       doneButton.click();
       await waitForNode('backlight-split-button[label="Save"]',
           ['backlight-app-bar', 'backlight-app']);
@@ -1015,11 +986,6 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaAppEligibleOpenTask) {
     std::vector<file_manager::file_tasks::FullTaskDescriptor> result =
         file_manager::test::GetTasksForFile(profile(), file_path);
 
-    // Files SWA internal task "select" matches any file, we ignore it here.
-    base::EraseIf(result, [](auto task) {
-      return task.task_descriptor.app_id == file_manager::kFileManagerSwaAppId;
-    });
-
     ASSERT_LT(0u, result.size());
     EXPECT_EQ(1u, result.size());
     const auto& task = result[0];
@@ -1038,7 +1004,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationAllProfilesTest,
   // Check system_web_app_manager has the correct attributes for Media App.
   auto* system_app = GetManager().GetSystemApp(ash::SystemWebAppType::MEDIA);
   EXPECT_TRUE(system_app->ShouldShowInLauncher());
-  EXPECT_TRUE(system_app->ShouldShowInSearch());
+  EXPECT_TRUE(system_app->ShouldShowInSearchAndShelf());
 }
 
 // Note: Error reporting tests are limited to one per test instance otherwise we
@@ -1179,7 +1145,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationWithFilesAppAllProfilesTest,
   Browser* app_browser = chrome::FindBrowserWithActiveWindow();
   content::WebContents* web_ui =
       app_browser->tab_strip_model()->GetActiveWebContents();
-  PrepareAppForTest(web_ui);
+  MediaAppUiBrowserTest::PrepareAppForTest(web_ui);
 
   EXPECT_EQ(open_result, platform_util::OPEN_SUCCEEDED);
 
@@ -1222,7 +1188,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationPhotosIntegrationTest,
 
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
                        HasCorrectThemeAndBackgroundColor) {
-  web_app::AppId app_id = MediaAppAppId();
+  webapps::AppId app_id = MediaAppAppId();
 
   web_app::WebAppRegistrar& registrar =
       web_app::WebAppProvider::GetForTest(profile())->registrar_unsafe();
@@ -1250,7 +1216,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
   Browser* audio_app_browser = chrome::FindBrowserWithActiveWindow();
   content::WebContents* audio_web_ui =
       audio_app_browser->tab_strip_model()->GetActiveWebContents();
-  PrepareAppForTest(audio_web_ui);
+  MediaAppUiBrowserTest::PrepareAppForTest(audio_web_ui);
 
   // Launch with the image file.
   EXPECT_EQ(folder.Open(TestFile(kFileJpeg640x480)),
@@ -1259,7 +1225,7 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest,
   Browser* image_app_browser = chrome::FindBrowserWithActiveWindow();
   content::WebContents* image_web_ui =
       image_app_browser->tab_strip_model()->GetActiveWebContents();
-  PrepareAppForTest(image_web_ui);
+  MediaAppUiBrowserTest::PrepareAppForTest(image_web_ui);
 
   EXPECT_NE(image_app_browser, audio_app_browser);
   EXPECT_TRUE(ash::IsBrowserForSystemWebApp(image_app_browser,
@@ -1309,8 +1275,14 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, Autoplay) {
 
 // Ensures the autoplay on audio file launch updates the global media controls
 // with an appropriate media source name.
+// TODO(crbug.com/409122482): Update this test to be resilient for all audio
+// files. Indeed, this test is dependent on specific audio files to hit a "happy
+// path" and not time out. E.g., `kFileAudioMp3` works fine, but `kFileAudioOgg`
+// causes a timeout. This is probably a test issue, since MediaControls seemed
+// to be working regardless of the file, when manually playing audio through
+// the app.
 IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaControls) {
-  using absl::optional;
+  using std::optional;
   class MediaControlsObserver
       : public media_session::mojom::MediaControllerObserver {
    public:
@@ -1349,7 +1321,8 @@ IN_PROC_BROWSER_TEST_P(MediaAppIntegrationTest, MediaControls) {
   media_controller_remote->AddObserver(
       observer_receiver_.BindNewPipeAndPassRemote());
 
-  LaunchWithOneTestFile(kFileAudioOgg);
+  // TODO(crbug.com/409122482): switch back to using `kFileAudioOgg`.
+  LaunchWithOneTestFile(kFileAudioMp3);
 
   if (observer.source_title.empty()) {
     observer.run_loop.Run();

@@ -134,10 +134,10 @@ TEST_F(VisibleUnitsTest, canonicalPositionOfWithHTMLHtmlElement) {
       "contenteditable=false>333</span></html>";
   SetBodyContent(body_content);
 
-  Node* one = GetDocument().QuerySelector(AtomicString("#one"));
-  Node* two = GetDocument().QuerySelector(AtomicString("#two"));
-  Node* three = GetDocument().QuerySelector(AtomicString("#three"));
-  Node* four = GetDocument().QuerySelector(AtomicString("#four"));
+  Node* one = QuerySelector("#one");
+  Node* two = QuerySelector("#two");
+  Node* three = QuerySelector("#three");
+  Node* four = QuerySelector("#four");
   Element* html = GetDocument().CreateRawElement(html_names::kHTMLTag);
   // Move two, three and four into second html element.
   html->AppendChild(two);
@@ -172,7 +172,7 @@ TEST_F(VisibleUnitsTest, canonicalPositionOfWithHTMLHtmlElement) {
 // For http://crbug.com/695317
 TEST_F(VisibleUnitsTest, canonicalPositionOfWithInputElement) {
   SetBodyContent("<input>123");
-  Element* const input = GetDocument().QuerySelector(AtomicString("input"));
+  Element* const input = QuerySelector("input");
 
   EXPECT_EQ(Position::BeforeNode(*input),
             CanonicalPositionOf(Position::FirstPositionInNode(
@@ -195,9 +195,9 @@ TEST_F(VisibleUnitsTest, canonicalPositionOfWithCrossBlockFlowlement) {
 
   UpdateAllLifecyclePhasesForTest();
 
-  Element* const one = GetDocument().QuerySelector(AtomicString("#one"));
-  Element* const two = GetDocument().QuerySelector(AtomicString("#two"));
-  Element* const three = GetDocument().QuerySelector(AtomicString("#three"));
+  Element* const one = QuerySelector("#one");
+  Element* const two = QuerySelector("#two");
+  Element* const three = QuerySelector("#three");
   Element* const one_span = one->QuerySelector(AtomicString("span"));
   Element* const two_span = two->QuerySelector(AtomicString("span"));
   Element* const three_span = three->QuerySelector(AtomicString("span"));
@@ -280,7 +280,7 @@ TEST_F(VisibleUnitsTest,
       "</div>");
   const PositionWithAffinity& result =
       AdjustForwardPositionToAvoidCrossingEditingBoundaries(
-          PositionWithAffinity(selection.Extent()), selection.Base());
+          PositionWithAffinity(selection.Focus()), selection.Anchor());
   ASSERT_TRUE(result.IsNotNull());
   EXPECT_EQ(
       "<div contenteditable>"
@@ -348,10 +348,10 @@ TEST_F(VisibleUnitsTest, IsVisuallyEquivalentCandidateWithHTMLHtmlElement) {
       "contenteditable=false>333</span></html>";
   SetBodyContent(body_content);
 
-  Node* one = GetDocument().QuerySelector(AtomicString("#one"));
-  Node* two = GetDocument().QuerySelector(AtomicString("#two"));
-  Node* three = GetDocument().QuerySelector(AtomicString("#three"));
-  Node* four = GetDocument().QuerySelector(AtomicString("#four"));
+  Node* one = QuerySelector("#one");
+  Node* two = QuerySelector("#two");
+  Node* three = QuerySelector("#three");
+  Node* four = QuerySelector("#four");
   Element* html = GetDocument().CreateRawElement(html_names::kHTMLTag);
   // Move two, three and four into second html element.
   html->AppendChild(two);
@@ -385,10 +385,10 @@ TEST_F(VisibleUnitsTest, isVisuallyEquivalentCandidateWithHTMLBodyElement) {
       "contenteditable=false>333</span>";
   SetBodyContent(body_content);
 
-  Node* one = GetDocument().QuerySelector(AtomicString("#one"));
-  Node* two = GetDocument().QuerySelector(AtomicString("#two"));
-  Node* three = GetDocument().QuerySelector(AtomicString("#three"));
-  Node* four = GetDocument().QuerySelector(AtomicString("#four"));
+  Node* one = QuerySelector("#one");
+  Node* two = QuerySelector("#two");
+  Node* three = QuerySelector("#three");
+  Node* four = QuerySelector("#four");
   Element* body = GetDocument().CreateRawElement(html_names::kBodyTag);
   Element* empty_body = GetDocument().CreateRawElement(html_names::kBodyTag);
   Element* div = GetDocument().CreateRawElement(html_names::kDivTag);
@@ -446,7 +446,7 @@ TEST_F(VisibleUnitsTest, mostBackwardCaretPositionAfterAnchor) {
 }
 
 TEST_F(VisibleUnitsTest, mostBackwardCaretPositionFirstLetter) {
-  // Note: first-letter pseudo element contains letter and punctuations.
+  // Note: first-letter pseudo-element contains letter and punctuations.
   const char* body_content =
       "<style>p:first-letter {color:red;}</style><p id=sample> (2)45 </p>";
   SetBodyContent(body_content);
@@ -552,7 +552,7 @@ TEST_F(VisibleUnitsTest, MostForwardCaretPositionBeforeSvg) {
 }
 
 TEST_F(VisibleUnitsTest, mostForwardCaretPositionFirstLetter) {
-  // Note: first-letter pseudo element contains letter and punctuations.
+  // Note: first-letter pseudo-element contains letter and punctuations.
   const char* body_content =
       "<style>p:first-letter {color:red;}</style><p id=sample> (2)45 </p>";
   SetBodyContent(body_content);
@@ -633,7 +633,7 @@ TEST_F(VisibleUnitsTest, nextPositionOfTable) {
   Element* table = GetDocument().getElementById(AtomicString("table"));
   // Couldn't include the <br> in the HTML above since the parser would have
   // messed up the structure in the DOM.
-  table->setInnerHTML("<br>", ASSERT_NO_EXCEPTION);
+  table->SetInnerHTMLWithoutTrustedTypes("<br>");
   UpdateAllLifecyclePhasesForTest();
 
   Position position(table, 0);
@@ -853,7 +853,7 @@ TEST_F(VisibleUnitsTest,
       "<button> </button><script>document.designMode = 'on'</script>";
   SetBodyContent(body_content);
 
-  Node* button = GetDocument().QuerySelector(AtomicString("button"));
+  Node* button = QuerySelector("button");
   EXPECT_TRUE(EndsOfNodeAreVisuallyDistinctPositions(button));
 }
 
@@ -864,7 +864,7 @@ TEST_F(VisibleUnitsTest,
       "<button><rt><script>document.designMode = 'on'</script></rt></button>";
   SetBodyContent(body_content);
 
-  Node* button = GetDocument().QuerySelector(AtomicString("button"));
+  Node* button = QuerySelector("button");
   EXPECT_TRUE(EndsOfNodeAreVisuallyDistinctPositions(button));
 }
 
@@ -873,7 +873,7 @@ TEST_F(VisibleUnitsTest,
        canonicalizationWithCollapsedSpaceAndIsolatedCombiningCharacter) {
   SetBodyContent("<p>  &#x20E3;</p>");  // Leading space is necessary
 
-  Node* paragraph = GetDocument().QuerySelector(AtomicString("p"));
+  Node* paragraph = QuerySelector("p");
   Node* text = paragraph->firstChild();
   Position start = CanonicalPositionOf(Position::BeforeNode(*paragraph));
   EXPECT_EQ(Position(text, 2), start);
@@ -883,15 +883,14 @@ TEST_F(VisibleUnitsTest, MostForwardCaretPositionWithInvisibleFirstLetter) {
   InsertStyleElement("div::first-letter{visibility:hidden}");
   // Use special syntax to set input position DIV@0
   const Position position = SetCaretTextToBody("<div><!--|-->foo</div>");
-  const Node* foo =
-      GetDocument().QuerySelector(AtomicString("div"))->firstChild();
+  const Node* foo = QuerySelector("div")->firstChild();
   EXPECT_EQ(Position(foo, 1), MostForwardCaretPosition(position));
 }
 
 // Regression test for crbug.com/1172091
 TEST_F(VisibleUnitsTest, MostBackwardOrForwardCaretPositionWithBrInOptgroup) {
   SetBodyContent("<optgroup><br></optgroup>");
-  Node* br = GetDocument().QuerySelector(AtomicString("br"));
+  Node* br = QuerySelector("br");
   const Position& before = Position::BeforeNode(*br);
   EXPECT_EQ(before, MostBackwardCaretPosition(before));
   EXPECT_EQ(before, MostForwardCaretPosition(before));
@@ -924,7 +923,7 @@ TEST_F(VisibleUnitsTest, SnapBackwardWithZeroWidthSpace) {
 TEST_F(VisibleUnitsTest, SnapForwardWithImg) {
   SetBodyContent("<img>");
   const auto& body = *GetDocument().body();
-  const auto& img = *GetDocument().QuerySelector(AtomicString("img"));
+  const auto& img = *QuerySelector("img");
 
   EXPECT_EQ(Position::BeforeNode(img),
             MostForwardCaretPosition(Position::FirstPositionInNode(body)));
@@ -943,7 +942,7 @@ TEST_F(VisibleUnitsTest, SnapForwardWithImg) {
 TEST_F(VisibleUnitsTest, SnapForwardWithInput) {
   SetBodyContent("<input>");
   const auto& body = *GetDocument().body();
-  const auto& input = *GetDocument().QuerySelector(AtomicString("input"));
+  const auto& input = *QuerySelector("input");
 
   EXPECT_EQ(Position::BeforeNode(input),
             MostForwardCaretPosition(Position::FirstPositionInNode(body)));
@@ -966,7 +965,7 @@ TEST_F(VisibleUnitsTest, SnapForwardWithSelect) {
       "<select><option>1</option><option>2</option><option>3</option></"
       "select>");
   const auto& body = *GetDocument().body();
-  const auto& select = *GetDocument().QuerySelector(AtomicString("select"));
+  const auto& select = *QuerySelector("select");
 
   EXPECT_EQ(Position::BeforeNode(select),
             MostForwardCaretPosition(Position(body, 0)));
@@ -1006,7 +1005,7 @@ TEST_F(VisibleUnitsTest, SnapForwardWithSelect) {
             MostForwardCaretPosition(PositionInFlatTree::BeforeNode(select)));
 
   // Note: `PositionIterator::DeprecatedComputePosition()` returns
-  // `BeforeNode(<select>)` for <select>@n where n is 0 to 3, becase
+  // `BeforeNode(<select>)` for <select>@n where n is 0 to 3, because
   // `EditingIgnoresContent(<select>)` is true.
   EXPECT_EQ(PositionInFlatTree::BeforeNode(select),
             MostForwardCaretPosition(
@@ -1015,8 +1014,12 @@ TEST_F(VisibleUnitsTest, SnapForwardWithSelect) {
             MostForwardCaretPosition(PositionInFlatTree(select, 0)));
   EXPECT_EQ(PositionInFlatTree::BeforeNode(select),
             MostForwardCaretPosition(PositionInFlatTree(select, 1)));
-  EXPECT_EQ(PositionInFlatTree::AfterNode(select),
+  EXPECT_EQ(PositionInFlatTree::BeforeNode(select),
             MostForwardCaretPosition(PositionInFlatTree(select, 2)));
+  EXPECT_EQ(PositionInFlatTree::BeforeNode(select),
+            MostForwardCaretPosition(PositionInFlatTree(select, 3)));
+  EXPECT_EQ(PositionInFlatTree::AfterNode(select),
+            MostForwardCaretPosition(PositionInFlatTree(select, 4)));
 
   EXPECT_EQ(
       PositionInFlatTree::AfterNode(select),
@@ -1028,9 +1031,9 @@ TEST_F(VisibleUnitsTest, SnapForwardWithSelect) {
 // From ReplaceSelectionCommandTest.TableAndImages)
 TEST_F(VisibleUnitsTest, SnapForwardWithTableAndImages) {
   SetBodyContent("<table> <tbody></tbody> </table>");
-  const auto& table = *GetDocument().QuerySelector(AtomicString("table"));
+  const auto& table = *QuerySelector("table");
   const auto& body = *GetDocument().body();
-  auto& tbody = *GetDocument().QuerySelector(AtomicString("tbody"));
+  auto& tbody = *QuerySelector("tbody");
   auto& img1 = *GetDocument().CreateRawElement(html_names::kImgTag);
   tbody.AppendChild(&img1);
   auto& img2 = *GetDocument().CreateRawElement(html_names::kImgTag);
@@ -1129,6 +1132,17 @@ TEST_F(VisibleUnitsTest, FirstRectForRangeVerticalWrap) {
       SetSelectionTextToBody("<div>^abc def|</div>");
   const gfx::Rect rect = FirstRectForRange(selection.ComputeRange());
   EXPECT_EQ(gfx::Rect(28, 8, 20, 59), rect);
+}
+
+// crbug.com/402791086
+TEST_F(VisibleUnitsTest, ComputeTextRect) {
+  LoadAhem();
+  InsertStyleElement("div { font:10px Ahem; white-space:pre}");
+  const gfx::Rect rect = ComputeTextRect(
+      SetSelectionTextToBody("<div>^start<br>end|</div>").ComputeRange());
+  const gfx::Rect reference = ComputeTextRect(
+      SetSelectionTextToBody("<div>^start\nend|</div>").ComputeRange());
+  EXPECT_EQ(reference, rect);
 }
 
 }  // namespace visible_units_test

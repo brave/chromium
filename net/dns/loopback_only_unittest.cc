@@ -4,6 +4,7 @@
 
 #include "net/dns/loopback_only.h"
 
+#include <optional>
 #include <unordered_set>
 
 #include "base/test/bind.h"
@@ -13,7 +14,6 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/test_completion_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_LINUX)
 #include <linux/if.h>
@@ -232,7 +232,7 @@ TEST_F(LoopbackOnlyTest, ExtraOnlineLinks) {
   EXPECT_TRUE(GetResultOfRunHaveOnlyLoopbackAddressesJob());
 }
 
-// TODO(crbug.com/1450403): Test HaveOnlyLoopbackAddressesUsingGetifaddrs().
+// TODO(crbug.com/40270154): Test HaveOnlyLoopbackAddressesUsingGetifaddrs().
 
 #endif  // BUILDFLAG(IS_LINUX)
 

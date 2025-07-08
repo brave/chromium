@@ -45,7 +45,6 @@ SystemProfileProto::Channel AsProtobufChannel(version_info::Channel channel) {
       return SystemProfileProto::CHANNEL_STABLE;
   }
   NOTREACHED();
-  return SystemProfileProto::CHANNEL_UNKNOWN;
 }
 
 std::string GetAppPackageName() {

@@ -17,6 +17,8 @@ namespace ash {
 class AuthHub;
 class AuthPolicyConnector;
 class AuthSessionStorage;
+class AuthSurfaceRegistry;
+class LegacyAuthSurfaceRegistry;
 class AuthFactorEngineFactory;
 class CryptohomeCore;
 
@@ -41,11 +43,14 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_OSAUTH) AuthParts {
   virtual AuthHub* GetAuthHub() = 0;
   virtual CryptohomeCore* GetCryptohomeCore() = 0;
   virtual AuthPolicyConnector* GetAuthPolicyConnector() = 0;
+  virtual LegacyAuthSurfaceRegistry* GetLegacyAuthSurfaceRegistry() = 0;
+  virtual AuthSurfaceRegistry* GetAuthSurfaceRegistry() = 0;
 
   virtual void RegisterEngineFactory(
       std::unique_ptr<AuthFactorEngineFactory> factory) = 0;
   virtual void RegisterEarlyLoginAuthPolicyConnector(
       std::unique_ptr<AuthPolicyConnector> connector) = 0;
+  virtual void ReleaseEarlyLoginAuthPolicyConnector() = 0;
   virtual void SetProfilePrefsAuthPolicyConnector(
       AuthPolicyConnector* connector) = 0;
 

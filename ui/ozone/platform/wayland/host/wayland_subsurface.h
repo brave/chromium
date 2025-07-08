@@ -5,12 +5,11 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SUBSURFACE_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_SUBSURFACE_H_
 
+#include <variant>
+
 #include "base/containers/linked_list.h"
 #include "base/memory/raw_ptr.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-#include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/gfx/overlay_transform.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_surface.h"
 
@@ -41,26 +40,22 @@ class WaylandSubsurface : public base::LinkNode<WaylandSubsurface> {
   //   |bounds_px|: The pixel bounds of this subsurface content in
   //     display::Display coordinates used by chrome.
   //   |parent_bounds_px|: Same as |bounds_px| but for the parent surface.
-  //   |clip_rect_px|: The pixel bounds of this subsurface's clip rect in
-  //     display::Display coordinates. Pass nullopt to unset the clip rect.
-  //   |transform|: If this is a gfx::Transform, it should be an affine
-  //     transform to apply when drawing this subsurface.
   //   |buffer_scale|: the scale factor of the next attached buffer.
   //   |reference_below| & |reference_above|: this subsurface is taken from the
   //     subsurface stack and inserted back to be immediately below/above the
   //     reference subsurface.
-  void ConfigureAndShowSurface(
+  // Returns whether or not changes require a commit to the wl_surface.
+  bool ConfigureAndShowSurface(
       const gfx::RectF& bounds_px,
       const gfx::RectF& parent_bounds_px,
-      const absl::optional<gfx::Rect>& clip_rect_px,
-      const absl::variant<gfx::OverlayTransform, gfx::Transform>& transform,
       float buffer_scale,
       WaylandSubsurface* reference_below,
       WaylandSubsurface* reference_above);
 
   // Assigns wl_subsurface role to the wl_surface so it is visible when a
   // wl_buffer is attached.
-  void Show();
+  // Returns whether or not changes require a commit to the wl_surface.
+  bool Show();
   // Remove this from the stack to make this invisible.
   void Hide();
   bool IsVisible() const;
@@ -73,11 +68,8 @@ class WaylandSubsurface : public base::LinkNode<WaylandSubsurface> {
 
   WaylandSurface wayland_surface_;
   wl::Object<wl_subsurface> subsurface_;
-  wl::Object<augmented_sub_surface> augmented_subsurface_;
   gfx::PointF position_dip_;
-  absl::optional<gfx::RectF> clip_dip_;
-  absl::variant<gfx::OverlayTransform, gfx::Transform> transform_ =
-      gfx::OVERLAY_TRANSFORM_NONE;
+  std::optional<gfx::RectF> clip_dip_;
 
   const raw_ptr<WaylandConnection> connection_;
   // |parent_| refers to the WaylandWindow whose wl_surface is the parent to

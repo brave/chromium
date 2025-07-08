@@ -60,6 +60,14 @@ MicrophonePrivacySwitchController::~MicrophonePrivacySwitchController() {
   CrasAudioHandler::Get()->RemoveAudioObserver(this);
 }
 
+// static
+MicrophonePrivacySwitchController* MicrophonePrivacySwitchController::Get() {
+  auto* privacy_hub_controller = PrivacyHubController::Get();
+  return privacy_hub_controller
+             ? privacy_hub_controller->microphone_controller()
+             : nullptr;
+}
+
 void MicrophonePrivacySwitchController::OnActiveUserPrefServiceChanged(
     PrefService* pref_service) {
   // Subscribing again to pref changes.
@@ -74,6 +82,11 @@ void MicrophonePrivacySwitchController::OnActiveUserPrefServiceChanged(
   // preference when creating the controller during the browser initialization
   // after creating the user profile.
   SetSystemMute();
+}
+
+bool MicrophonePrivacySwitchController::IsMicrophoneUsageAllowed() const {
+  return pref_change_registrar_->prefs()->GetBoolean(
+      prefs::kUserMicrophoneAllowed);
 }
 
 void MicrophonePrivacySwitchController::OnInputMuteChanged(

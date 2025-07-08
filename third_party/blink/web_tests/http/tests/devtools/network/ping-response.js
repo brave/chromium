@@ -8,7 +8,6 @@ import {ConsoleTestRunner} from 'console_test_runner';
 
 (async function() {
   TestRunner.addResult(`Test that ping request response is recorded.\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('network');
   await TestRunner.evaluateInPagePromise(`
       function sendBeacon()
@@ -21,7 +20,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
   TestRunner.evaluateInPage('sendBeacon()');
 
   function step2() {
-    NetworkTestRunner.networkRequests().pop().requestContent().then(step3);
+    NetworkTestRunner.networkRequests().pop().requestContentData().then(step3);
   }
 
   async function step3() {

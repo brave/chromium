@@ -1,8 +1,10 @@
-# META: timeout=long
-
 import pytest
 
-from webdriver.error import NoSuchWindowException, StaleElementReferenceException
+from webdriver.error import (
+    MoveTargetOutOfBoundsException,
+    NoSuchWindowException,
+    StaleElementReferenceException,
+)
 
 from tests.classic.perform_actions.support.mouse import (
     get_inview_center,
@@ -28,12 +30,36 @@ def test_no_browsing_context(session, closed_frame, pen_chain):
         pen_chain.click().perform()
 
 
+def test_pointer_down_closes_browsing_context(
+    session, configuration, http_new_tab, inline, pen_chain
+):
+    session.url = inline(
+        """<input onpointerdown="window.close()">close</input>""")
+    origin = session.find.css("input", all=False)
+
+    with pytest.raises(NoSuchWindowException):
+        pen_chain.pointer_move(0, 0, origin=origin) \
+            .pointer_down(button=0) \
+            .pause(100 * configuration["timeout_multiplier"]) \
+            .pointer_up(button=0) \
+            .perform()
+
+
 @pytest.mark.parametrize("as_frame", [False, True], ids=["top_context", "child_context"])
 def test_stale_element_reference(session, stale_element, pen_chain, as_frame):
     element = stale_element("input#text", as_frame=as_frame)
 
     with pytest.raises(StaleElementReferenceException):
         pen_chain.click(element=element).perform()
+
+
+@pytest.mark.parametrize("origin", ["element", "pointer", "viewport"])
+def test_params_actions_origin_outside_viewport(session, test_actions_page, pen_chain, origin):
+    if origin == "element":
+        origin = session.find.css("#outer", all=False)
+
+    with pytest.raises(MoveTargetOutOfBoundsException):
+        pen_chain.pointer_move(-100, -100, origin=origin).perform()
 
 
 @pytest.mark.parametrize("mode", ["open", "closed"])
@@ -78,7 +104,7 @@ def test_pen_pointer_properties(session, test_actions_pointer_page, pen_chain):
     pointerArea = session.find.css("#pointerArea", all=False)
     center = get_inview_center(pointerArea.rect, get_viewport_rect(session))
     pen_chain.pointer_move(0, 0, origin=pointerArea) \
-        .pointer_down(pressure=0.36, tilt_x=-72, tilt_y=9, twist=86) \
+        .pointer_down(pressure=0.36, altitude_angle=0.3, azimuth_angle=0.2419, twist=86) \
         .pointer_move(10, 10, origin=pointerArea) \
         .pointer_up() \
         .pointer_move(80, 50, origin=pointerArea) \
@@ -98,8 +124,8 @@ def test_pen_pointer_properties(session, test_actions_pointer_page, pen_chain):
     assert round(events[3]["width"], 2) == 1
     assert round(events[3]["height"], 2) == 1
     assert round(events[3]["pressure"], 2) == 0.36
-    assert events[3]["tiltX"] == -72
-    assert events[3]["tiltY"] == 9
+    assert events[3]["tiltX"] == 72
+    assert events[3]["tiltY"] == 38
     assert events[3]["twist"] == 86
     assert events[6]["type"] == "pointermove"
     assert events[6]["pageX"] == pytest.approx(center["x"]+10, abs=1.0)

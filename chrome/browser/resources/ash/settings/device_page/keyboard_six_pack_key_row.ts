@@ -9,18 +9,17 @@
  * six pack key action.
  */
 
-import 'chrome://resources/cr_components/settings_prefs/prefs.js';
 import './input_device_settings_shared.css.js';
-import '../icons.html.js';
 import '../settings_shared.css.js';
-import '/shared/settings/controls/settings_dropdown_menu.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import '../controls/settings_dropdown_menu.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 
-import {DropdownMenuOptionList} from '/shared/settings/controls/settings_dropdown_menu.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
 
 import {SixPackKey, SixPackShortcutModifier} from './input_device_settings_types.js';
 import {getTemplate} from './keyboard_six_pack_key_row.html.js';
@@ -30,9 +29,9 @@ interface SixPackKeyProperties {
   label: string;
 }
 
-const offMenuOption = {
+const disabledMenuOption = {
   value: SixPackShortcutModifier.kNone,
-  name: loadTimeData.getString('sixPackKeyOff'),
+  name: loadTimeData.getString('sixPackKeyDisabled'),
 };
 
 export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
@@ -46,7 +45,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyDeleteSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelDelete'),
   },
@@ -60,7 +59,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyHomeSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelHome'),
   },
@@ -74,7 +73,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyEndSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelEnd'),
   },
@@ -84,7 +83,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyInsertSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelInsert'),
   },
@@ -98,7 +97,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyPageDownSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelPageDown'),
   },
@@ -112,7 +111,7 @@ export const sixPackKeyProperties: {[k in SixPackKey]: SixPackKeyProperties} = {
         value: SixPackShortcutModifier.kSearch,
         name: loadTimeData.getString('sixPackKeyPageUpSearch'),
       },
-      offMenuOption,
+      disabledMenuOption,
     ],
     label: loadTimeData.getString('sixPackKeyLabelPageUp'),
   },

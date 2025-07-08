@@ -2,22 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <stddef.h>
-#include <stdint.h>
+#include <cstdint>
+#include <string_view>
 
-#include <tuple>
-
+#include "base/logging.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-  base::StringPiece key_str_piece(reinterpret_cast<const char*>(data), size);
-  auto indexed_db_key = std::make_unique<blink::IndexedDBKey>();
-  std::ignore = content::DecodeIDBKey(&key_str_piece, &indexed_db_key);
+  std::string_view input(reinterpret_cast<const char*>(data), size);
+  std::string_view parsed_input(input);
+  blink::IndexedDBKey key = content::indexed_db::DecodeIDBKey(&parsed_input);
 
-  // Ensure that encoding |indexed_db_key| produces the same result.
-  std::string result;
-  content::EncodeIDBKey(*indexed_db_key, &result);
-  assert(base::StringPiece(result) == key_str_piece);
+  // If any prefix of the input decoded into a valid key, re-encode it, then
+  // ensure that the encoding matches the original prefix that got decoded.
+  if (key.IsValid()) {
+    std::string result;
+    content::indexed_db::EncodeIDBKey(key, &result);
+    // DecodeIDBKey() leaves the unparsed suffix in parsed_input, so strip that
+    // much off the end of input before comparing.
+    input.remove_suffix(parsed_input.size());
+    CHECK_EQ(std::string_view(result), input);
+  }
+
   return 0;
 }

@@ -9,13 +9,14 @@
 #include <utility>
 
 #include "base/notreached.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/chromeos/policy/dlp/dialogs/policy_dialog_base.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_confidential_contents.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_confidential_file.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 #include "ui/views/layout/box_layout.h"
@@ -39,9 +40,6 @@ constexpr int kBodyFontSize = 14;
 
 // The line height of the text.
 constexpr int kBodyLineHeight = 20;
-
-// The line height of the confidential content title label.
-constexpr int kConfidentialContentLineHeight = 20;
 
 // The spacing between the elements in a box layout.
 constexpr int kBetweenChildSpacing = 16;
@@ -72,25 +70,31 @@ DlpWarnDialog::DlpWarnDialogOptions::operator=(
 
 DlpWarnDialog::DlpWarnDialogOptions::~DlpWarnDialogOptions() = default;
 
-DlpWarnDialog::DlpWarnDialog(OnDlpRestrictionCheckedCallback callback,
+DlpWarnDialog::DlpWarnDialog(WarningCallback callback,
                              DlpWarnDialogOptions options)
     : restriction_(options.restriction),
       application_title_(options.application_title),
       contents_(std::move(options.confidential_contents)) {
-  SetOnDlpRestrictionCheckedCallback(std::move(callback));
+  SetWarningCallback(std::move(callback));
 
   set_margins(gfx::Insets::TLBR(20, 0, 20, 0));
 
-  SetModalType(ui::MODAL_TYPE_SYSTEM);
+  SetModalType(ui::mojom::ModalType::kSystem);
 
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, GetOkButton());
-  SetButtonLabel(ui::DIALOG_BUTTON_CANCEL, GetCancelButton());
+  SetButtonLabel(ui::mojom::DialogButton::kOk, GetOkButton());
+  SetButtonLabel(ui::mojom::DialogButton::kCancel, GetCancelButton());
 
   AddGeneralInformation();
   MaybeAddConfidentialRows();
 }
 
 DlpWarnDialog::~DlpWarnDialog() = default;
+
+void DlpWarnDialog::SetWarningCallback(WarningCallback callback) {
+  auto split = base::SplitOnceCallback(std::move(callback));
+  SetAcceptCallback(base::BindOnce(std::move(split.first), true));
+  SetCancelCallback(base::BindOnce(std::move(split.second), false));
+}
 
 views::Label* DlpWarnDialog::AddTitle(const std::u16string& title) {
   // Call the parent class to setup the element. Do not remove.
@@ -139,7 +143,6 @@ std::u16string DlpWarnDialog::GetOkButton() {
           IDS_POLICY_DLP_SCREEN_SHARE_WARN_CONTINUE_BUTTON);
     case DlpWarnDialog::Restriction::kFiles:
       NOTREACHED();
-      return u"";
   }
 }
 
@@ -154,7 +157,6 @@ std::u16string DlpWarnDialog::GetCancelButton() {
       return l10n_util::GetStringUTF16(IDS_POLICY_DLP_WARN_CANCEL_BUTTON);
     case DlpWarnDialog::Restriction::kFiles:
       NOTREACHED();
-      return u"";
   }
 }
 
@@ -171,7 +173,6 @@ std::u16string DlpWarnDialog::GetTitle() {
       return l10n_util::GetStringUTF16(IDS_POLICY_DLP_SCREEN_SHARE_WARN_TITLE);
     case DlpWarnDialog::Restriction::kFiles:
       NOTREACHED();
-      return u"";
   }
 }
 
@@ -191,7 +192,6 @@ std::u16string DlpWarnDialog::GetMessage() {
           IDS_POLICY_DLP_SCREEN_SHARE_WARN_MESSAGE, application_title_.value());
     case DlpWarnDialog::Restriction::kFiles:
       NOTREACHED();
-      return u"";
   }
 }
 
@@ -207,13 +207,14 @@ void DlpWarnDialog::AddConfidentialRow(const gfx::ImageSkia& icon,
   AddRowIcon(icon, row);
 
   views::Label* title_label = AddRowTitle(title, row);
+  title_label->SetMultiLine(false);
+  title_label->SetElideBehavior(gfx::ElideBehavior::FADE_TAIL);
   title_label->SetFontList(gfx::FontList({kFontName}, gfx::Font::NORMAL,
                                          kBodyFontSize,
                                          gfx::Font::Weight::NORMAL));
-  title_label->SetLineHeight(kConfidentialContentLineHeight);
 }
 
-BEGIN_METADATA(DlpWarnDialog, PolicyDialogBase)
+BEGIN_METADATA(DlpWarnDialog)
 END_METADATA
 
 }  // namespace policy

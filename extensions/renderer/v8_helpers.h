@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #ifndef EXTENSIONS_RENDERER_V8_HELPERS_H_
 #define EXTENSIONS_RENDERER_V8_HELPERS_H_
 
@@ -19,7 +24,7 @@ namespace v8_helpers {
 
 // Helper functions for V8 APIs.
 
-// Converts |str| to a V8 string. Returns true on success.
+// Converts `str` to a V8 string. Returns true on success.
 inline bool ToV8String(v8::Isolate* isolate,
                        const char* str,
                        v8::Local<v8::String>* out) {
@@ -33,7 +38,7 @@ inline bool ToV8String(v8::Isolate* isolate,
   return ToV8String(isolate, str.c_str(), out);
 }
 
-// Converts |str| to a V8 string.
+// Converts `str` to a V8 string.
 // This crashes when strlen(str) > v8::String::kMaxLength.
 inline v8::Local<v8::String> ToV8StringUnsafe(
     v8::Isolate* isolate,
@@ -51,7 +56,7 @@ inline v8::Local<v8::String> ToV8StringUnsafe(
   return ToV8StringUnsafe(isolate, str.c_str(), string_type);
 }
 
-// Returns true if |maybe| is both a value, and that value is true.
+// Returns true if `maybe` is both a value, and that value is true.
 inline bool IsTrue(v8::Maybe<bool> maybe) {
   return maybe.IsJust() && maybe.FromJust();
 }
@@ -62,18 +67,18 @@ inline bool SetPrivateProperty(v8::Local<v8::Context> context,
                                v8::Local<v8::String> key,
                                v8::Local<v8::Value> value) {
   return IsTrue(object->SetPrivate(
-      context, v8::Private::ForApi(context->GetIsolate(), key), value));
+      context, v8::Private::ForApi(v8::Isolate::GetCurrent(), key), value));
 }
 
 inline bool SetPrivateProperty(v8::Local<v8::Context> context,
                                v8::Local<v8::Object> object,
                                const char* key,
                                v8::Local<v8::Value> value) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::String> v8_key;
-  return ToV8String(context->GetIsolate(), key, &v8_key) &&
+  return ToV8String(isolate, key, &v8_key) &&
          IsTrue(object->SetPrivate(
-             context, v8::Private::ForApi(context->GetIsolate(), v8_key),
-             value));
+             context, v8::Private::ForApi(isolate, v8_key), value));
 }
 
 // GetProperty() family calls V8::Object::Get() and extracts a value from
@@ -92,8 +97,9 @@ inline bool GetProperty(v8::Local<v8::Context> context,
                         const char* key,
                         v8::Local<v8::Value>* out) {
   v8::Local<v8::String> v8_key;
-  if (!ToV8String(context->GetIsolate(), key, &v8_key))
+  if (!ToV8String(v8::Isolate::GetCurrent(), key, &v8_key)) {
     return false;
+  }
   return GetProperty(context, object, v8_key, out);
 }
 
@@ -103,7 +109,7 @@ inline bool GetPrivateProperty(v8::Local<v8::Context> context,
                                v8::Local<v8::String> key,
                                v8::Local<v8::Value>* out) {
   return object
-      ->GetPrivate(context, v8::Private::ForApi(context->GetIsolate(), key))
+      ->GetPrivate(context, v8::Private::ForApi(v8::Isolate::GetCurrent(), key))
       .ToLocal(out);
 }
 
@@ -112,7 +118,7 @@ inline bool GetPrivateProperty(v8::Local<v8::Context> context,
                                const char* key,
                                v8::Local<v8::Value>* out) {
   v8::Local<v8::String> v8_key;
-  return ToV8String(context->GetIsolate(), key, &v8_key) &&
+  return ToV8String(v8::Isolate::GetCurrent(), key, &v8_key) &&
          GetPrivateProperty(context, object, v8_key, out);
 }
 
@@ -123,8 +129,9 @@ inline v8::Local<v8::Value> GetPropertyUnsafe(
     v8::Local<v8::Object> object,
     const char* key,
     v8::NewStringType string_type = v8::NewStringType::kNormal) {
-  return object->Get(context,
-                     ToV8StringUnsafe(context->GetIsolate(), key, string_type))
+  return object
+      ->Get(context,
+            ToV8StringUnsafe(v8::Isolate::GetCurrent(), key, string_type))
       .ToLocalChecked();
 }
 

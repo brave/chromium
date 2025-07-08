@@ -12,12 +12,15 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shelf/login_shelf_button.h"
 #include "ash/shell.h"
+#include "base/check.h"
 #include "base/functional/callback.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "ui/base/models/simple_menu_model.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/menus/simple_menu_model.h"
 #include "ui/views/controls/menu/menu_runner.h"
 
 namespace ash {
@@ -36,10 +39,20 @@ class KioskAppsButton::KioskAppsMenuModel
   bool IsLaunchEnabled() const { return is_launch_enabled_; }
   void SetLaunchEnabled(bool enabled) { is_launch_enabled_ = enabled; }
 
-  bool LaunchApp(const std::string& app_id) {
+  bool LaunchApp(const std::string& chrome_app_id) {
     for (size_t i = 0; i < kiosk_apps_.size(); ++i) {
-      if (kiosk_apps_[i].app_id == app_id) {
-        ExecuteCommand(i, 0);
+      if (kiosk_apps_[i].chrome_app_id == chrome_app_id) {
+        ExecuteCommand(/*command_id=*/i, /*event_flags=*/0);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool LaunchApp(const AccountId& account_id) {
+    for (size_t i = 0; i < kiosk_apps_.size(); ++i) {
+      if (kiosk_apps_[i].account_id == account_id) {
+        ExecuteCommand(/*command_id=*/i, /*event_flags=*/0);
         return true;
       }
     }
@@ -123,8 +136,12 @@ KioskAppsButton::KioskAppsButton()
 
 KioskAppsButton::~KioskAppsButton() = default;
 
-bool KioskAppsButton::LaunchAppForTesting(const std::string& app_id) {
-  return menu_model_->LaunchApp(app_id);
+bool KioskAppsButton::LaunchAppForTesting(const std::string& chrome_app_id) {
+  return menu_model_->LaunchApp(chrome_app_id);
+}
+
+bool KioskAppsButton::LaunchAppForTesting(const AccountId& account_id) {
+  return menu_model_->LaunchApp(account_id);
 }
 
 void KioskAppsButton::SetApps(
@@ -160,10 +177,11 @@ void KioskAppsButton::DisplayMenu() {
   const gfx::Point origin(point.x() - width(), point.y() - height());
   menu_runner_ = std::make_unique<views::MenuRunner>(
       menu_model_.get(), views::MenuRunner::HAS_MNEMONICS);
-  menu_runner_->RunMenuAt(
-      GetWidget()->GetTopLevelWidget(), menu_button_controller_,
-      gfx::Rect(origin, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
-      ui::MENU_SOURCE_NONE);
+  menu_runner_->RunMenuAt(GetWidget()->GetTopLevelWidget(),
+                          menu_button_controller_,
+                          gfx::Rect(origin, gfx::Size()),
+                          views::MenuAnchorPosition::kBubbleBottomLeft,
+                          ui::mojom::MenuSourceType::kNone);
 }
 
 bool KioskAppsButton::IsMenuOpened() const {
@@ -178,5 +196,8 @@ void KioskAppsButton::NotifyClick(const ui::Event& event) {
   // Run pressed callback via MenuButtonController, instead of directly.
   menu_button_controller_->Activate(&event);
 }
+
+BEGIN_METADATA(KioskAppsButton)
+END_METADATA
 
 }  // namespace ash

@@ -3,25 +3,29 @@
 // found in the LICENSE file.
 
 import './app_details_item.js';
+import './app_language_item.js';
 import './pin_to_shelf_item.js';
 import './read_only_permission_item.js';
 import './resize_lock_item.js';
-import './supported_links_item.js';
 import './app_management_cros_shared_style.css.js';
-import 'chrome://resources/cr_components/app_management/icons.html.js';
-import 'chrome://resources/cr_components/app_management/more_permissions_item.js';
-import 'chrome://resources/cr_components/app_management/permission_item.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import '../../app_management_icons.html.js';
+import './more_permissions_item.js';
+import './permission_item.js';
+import './supported_links_item.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
 
-import {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
-import {PermissionTypeIndex} from 'chrome://resources/cr_components/app_management/permission_constants.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import type {AppMap} from 'chrome://resources/cr_components/app_management/constants.js';
+import type {PermissionTypeIndex} from 'chrome://resources/cr_components/app_management/permission_constants.js';
 import {getPermission, getSelectedApp} from 'chrome://resources/cr_components/app_management/util.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import {AppManagementStoreMixin} from '../../common/app_management/store_mixin.js';
+import type {PrefsState} from '../../common/types.js';
+
 import {getTemplate} from './arc_detail_view.html.js';
-import {AppManagementStoreMixin} from './store_mixin.js';
 
 const AppManagementArcDetailViewElementBase =
     AppManagementStoreMixin(I18nMixin(PolymerElement));
@@ -49,8 +53,13 @@ export class AppManagementArcDetailViewElement extends
 
   static get properties() {
     return {
+      prefs: {
+        type: Object,
+        notify: true,
+      },
       app_: Object,
 
+      apps_: Object,
       /**
        * Static definition for the list of permissions to display for the app.
        */
@@ -96,7 +105,12 @@ export class AppManagementArcDetailViewElement extends
     };
   }
 
+  // Public API: Bidirectional data flow.
+  /** Passed down to children. Do not access without using PrefsMixin. */
+  prefs: PrefsState;
+
   private app_: App;
+  private apps_: AppMap;
   private permissionDefinitions_: PermissionDefinition[];
   private hasReadOnlyPermissions_: boolean;
 
@@ -104,6 +118,7 @@ export class AppManagementArcDetailViewElement extends
     super.connectedCallback();
 
     this.watch('app_', state => getSelectedApp(state));
+    this.watch('apps_', state => state.apps);
     this.updateFromStore();
   }
 

@@ -11,21 +11,12 @@
   }
 
   #qrCodeCanvas {
+    background-color: white;
     display: block;
     margin: 20px auto 20px auto;
     max-width: calc(var(--cr-dialog-width) -
         var(--cr-dialog-title-slot-padding-start) -
         var(--cr-dialog-title-slot-padding-end));
-  }
-
-  @media(prefers-color-scheme: dark) {
-    /* NOTE: In dark mode a light background is applied to the QR code
-      * canvas as some QR code scanners cannot read an inverted QR code in
-      * which the background is darker than the foreground. */
-    #qrCodeCanvas {
-      background-color: var(--cros-icon-color-primary);
-      padding: 1px;
-    }
   }
 
   .info-container {
@@ -46,7 +37,7 @@
 </style>
 <cr-dialog id="deviceInfoDialog" show-on-attach>
   <div slot="title">$i18n{mobileDeviceInfoPopupTitle}</div>
-  <div slot="body" aria-label="[[getA11yLabel_(deviceState, eid_)]]">
+  <div slot="body" id="body" aria-label="[[getA11yLabel_(deviceState, eid_)]]">
     <div id="dialogDescription" aria-hidden="true">
       $i18n{mobileDeviceInfoPopupDescription}
     </div>
@@ -69,6 +60,16 @@
         </div>
         <div id="imei" class="info-value" aria-hidden="true">
           [[deviceState.imei]]
+        </div>
+      </div>
+    </template>
+    <template is="dom-if" if="[[shouldShowSerial_(deviceState)]]">
+      <div class="info-container">
+        <div class="info-label" aria-hidden="true">
+          $i18n{deviceInfoPopupSerialLabel}
+        </div>
+        <div id="serialLabel" class="info-value" aria-hidden="true">
+          [[deviceState.serial]]
         </div>
       </div>
     </template>

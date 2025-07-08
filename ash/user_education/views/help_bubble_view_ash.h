@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "ash/ash_export.h"
@@ -14,8 +15,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "components/user_education/common/help_bubble_params.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/user_education/common/help_bubble/help_bubble_params.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/rect.h"
@@ -26,13 +26,11 @@
 namespace views {
 class ImageView;
 class Label;
-class MdTextButton;
 }  // namespace views
 
 namespace ash {
 
 enum class HelpBubbleId;
-enum class HelpBubbleStyle;
 
 namespace internal {
 
@@ -50,11 +48,13 @@ struct HelpBubbleAnchorParams {
 // in-product help which educates users about certain Chrome features in
 // a deferred context.
 class ASH_EXPORT HelpBubbleViewAsh : public views::BubbleDialogDelegateView {
+  METADATA_HEADER(HelpBubbleViewAsh, views::BubbleDialogDelegateView)
+
  public:
-  METADATA_HEADER(HelpBubbleViewAsh);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kHelpBubbleElementIdForTesting);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDefaultButtonIdForTesting);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kFirstNonDefaultButtonIdForTesting);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kBodyIconIdForTesting);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kBodyTextIdForTesting);
 
   HelpBubbleViewAsh(HelpBubbleId id,
@@ -72,8 +72,11 @@ class ASH_EXPORT HelpBubbleViewAsh : public views::BubbleDialogDelegateView {
   views::LabelButton* GetDefaultButtonForTesting() const;
   views::LabelButton* GetNonDefaultButtonForTesting(int index) const;
 
+  // Gets the `gfx::Rect` representing the area of this view's widget/window for
+  // which located events should be targeted to this view.
+  gfx::Rect GetHitRect() const;
+
   HelpBubbleId id() const { return id_; }
-  HelpBubbleStyle style() const { return style_; }
 
  protected:
   // views::BubbleDialogDelegateView:
@@ -84,7 +87,8 @@ class ASH_EXPORT HelpBubbleViewAsh : public views::BubbleDialogDelegateView {
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   void OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) override;
   void OnThemeChanged() override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   gfx::Rect GetAnchorRect() const override;
   void GetWidgetHitTestMask(SkPath* mask) const override;
   bool WidgetHasHitTestMask() const override;
@@ -92,6 +96,7 @@ class ASH_EXPORT HelpBubbleViewAsh : public views::BubbleDialogDelegateView {
  private:
   FRIEND_TEST_ALL_PREFIXES(HelpBubbleViewTimeoutTest,
                            RespectsProvidedTimeoutAfterActivate);
+  FRIEND_TEST_ALL_PREFIXES(HelpBubbleViewAshTest, RootViewAccessibleName);
   friend class HelpBubbleViewsTest;
 
   void MaybeStartAutoCloseTimer();
@@ -104,14 +109,14 @@ class ASH_EXPORT HelpBubbleViewAsh : public views::BubbleDialogDelegateView {
   void UpdateRoundedCorners();
 
   const HelpBubbleId id_;
-  const HelpBubbleStyle style_;
 
   raw_ptr<views::ImageView> icon_view_ = nullptr;
-  std::vector<views::Label*> labels_;
+  std::vector<raw_ptr<views::Label, VectorExperimental>> labels_;
 
   // If the bubble has buttons, it must be focusable.
-  std::vector<views::MdTextButton*> non_default_buttons_;
-  raw_ptr<views::MdTextButton> default_button_ = nullptr;
+  std::vector<raw_ptr<views::LabelButton, VectorExperimental>>
+      non_default_buttons_;
+  raw_ptr<views::LabelButton> default_button_ = nullptr;
   raw_ptr<views::Button> close_button_ = nullptr;
 
   // This is the base accessible name of the window.

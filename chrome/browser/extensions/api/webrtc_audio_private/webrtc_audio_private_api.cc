@@ -24,6 +24,8 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension_id.h"
+#include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/audio/audio_system.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -48,8 +50,7 @@ WebrtcAudioPrivateEventService::WebrtcAudioPrivateEventService(
     system_monitor->AddDevicesChangedObserver(this);
 }
 
-WebrtcAudioPrivateEventService::~WebrtcAudioPrivateEventService() {
-}
+WebrtcAudioPrivateEventService::~WebrtcAudioPrivateEventService() = default;
 
 void WebrtcAudioPrivateEventService::Shutdown() {
   // In unit tests, the SystemMonitor may not be created.
@@ -91,9 +92,10 @@ void WebrtcAudioPrivateEventService::SignalEvent() {
 
   for (const scoped_refptr<const extensions::Extension>& extension :
        ExtensionRegistry::Get(browser_context_)->enabled_extensions()) {
-    const std::string& extension_id = extension->id();
+    const ExtensionId& extension_id = extension->id();
     if (router->ExtensionHasEventListener(extension_id, kEventName) &&
-        extension->permissions_data()->HasAPIPermission("webrtcAudioPrivate")) {
+        extension->permissions_data()->HasAPIPermission(
+            mojom::APIPermissionID::kWebrtcAudioPrivate)) {
       std::unique_ptr<Event> event =
           std::make_unique<Event>(events::WEBRTC_AUDIO_PRIVATE_ON_SINKS_CHANGED,
                                   kEventName, base::Value::List());
@@ -102,9 +104,9 @@ void WebrtcAudioPrivateEventService::SignalEvent() {
   }
 }
 
-WebrtcAudioPrivateFunction::WebrtcAudioPrivateFunction() {}
+WebrtcAudioPrivateFunction::WebrtcAudioPrivateFunction() = default;
 
-WebrtcAudioPrivateFunction::~WebrtcAudioPrivateFunction() {}
+WebrtcAudioPrivateFunction::~WebrtcAudioPrivateFunction() = default;
 
 url::Origin WebrtcAudioPrivateFunction::GetExtensionOrigin() const {
   return url::Origin::Create(source_url());
@@ -253,7 +255,7 @@ void WebrtcAudioPrivateGetAssociatedSinkFunction::GotExtensionSalt(
 
 void WebrtcAudioPrivateGetAssociatedSinkFunction::CalculateHMACAndReply(
     const std::string& extension_salt,
-    const absl::optional<std::string>& raw_sink_id) {
+    const std::optional<std::string>& raw_sink_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!raw_sink_id || !raw_sink_id->empty());
   // If no |raw_sink_id| is provided, the default device is used.

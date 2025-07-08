@@ -18,9 +18,9 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.FakeTimeTestRule;
-import org.chromium.base.FeatureList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.omaha.MockRequestGenerator.DeviceType;
 
@@ -46,11 +46,13 @@ import java.util.List;
  * system, such as whether Chrome was installed through the system image.
  */
 @RunWith(BaseRobolectricTestRunner.class)
+@Batch(Batch.UNIT_TESTS)
 @Config(manifest = Config.NONE)
+@SuppressWarnings("UnusedMethod")
 public class OmahaBaseTest {
     private static class TimestampPair {
-        public long timestampNextRequest;
-        public long timestampNextPost;
+        public final long timestampNextRequest;
+        public final long timestampNextPost;
 
         public TimestampPair(long timestampNextRequest, long timestampNextPost) {
             this.timestampNextRequest = timestampNextRequest;
@@ -59,14 +61,13 @@ public class OmahaBaseTest {
     }
 
     private static class MockOmahaDelegate extends OmahaDelegate {
-        private final List<Integer> mPostResults = new ArrayList<Integer>();
-        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<Boolean>();
+        private final List<Integer> mPostResults = new ArrayList<>();
+        private final List<Boolean> mGenerateAndPostRequestResults = new ArrayList<>();
 
         private final boolean mIsOnTablet;
         private final boolean mIsInForeground;
         private final boolean mIsInSystemImage;
         private final ExponentialBackoffScheduler mScheduler;
-        private MockRequestGenerator mMockGenerator;
 
         private int mNumUUIDsGenerated;
         private long mNextScheduledTimestamp = -1;
@@ -80,15 +81,18 @@ public class OmahaBaseTest {
             mIsInForeground = true;
             mIsInSystemImage = installSource == InstallSource.SYSTEM_IMAGE;
 
-            mScheduler = new ExponentialBackoffScheduler(OmahaBase.PREF_PACKAGE,
-                    OmahaBase.MS_POST_BASE_DELAY, OmahaBase.MS_POST_MAX_DELAY);
+            mScheduler =
+                    new ExponentialBackoffScheduler(
+                            OmahaPrefUtils.PREF_PACKAGE,
+                            OmahaBase.MS_POST_BASE_DELAY,
+                            OmahaBase.MS_POST_MAX_DELAY);
         }
 
         @Override
         protected RequestGenerator createRequestGenerator() {
-            mMockGenerator =
+            MockRequestGenerator mockGenerator =
                     new MockRequestGenerator(mIsOnTablet ? DeviceType.TABLET : DeviceType.HANDSET);
-            return mMockGenerator;
+            return mockGenerator;
         }
 
         @Override
@@ -142,7 +146,7 @@ public class OmahaBaseTest {
 
     private static class ClosableThreadAssertsDisabler implements AutoCloseable {
         ClosableThreadAssertsDisabler() {
-            ThreadUtils.setThreadAssertsDisabledForTesting(true);
+            ThreadUtils.hasSubtleSideEffectsSetThreadAssertsDisabledForTesting(true);
         }
 
         @Override
@@ -173,8 +177,7 @@ public class OmahaBaseTest {
     private MockOmahaDelegate mDelegate;
     private MockOmahaBase mOmahaBase;
 
-    @Rule
-    public FakeTimeTestRule mFakeTimeRule = new FakeTimeTestRule();
+    @Rule public FakeTimeTestRule mFakeTimeRule = new FakeTimeTestRule();
 
     private MockOmahaBase createOmahaBase() {
         return createOmahaBase(
@@ -194,7 +197,6 @@ public class OmahaBaseTest {
 
     @After
     public void tearDown() {
-        FeatureList.setTestValues(null);
         OmahaBase.setIsDisabledForTesting(true);
     }
 
@@ -208,8 +210,11 @@ public class OmahaBaseTest {
         private String mUpdateVersion;
         private String mInstalledVersion;
 
-        public MockOmahaBase(OmahaDelegate delegate, @ServerResponse int serverResponse,
-                @ConnectionStatus int connectionStatus, DeviceType deviceType) {
+        public MockOmahaBase(
+                OmahaDelegate delegate,
+                @ServerResponse int serverResponse,
+                @ConnectionStatus int connectionStatus,
+                DeviceType deviceType) {
             super(delegate);
             mSendValidResponse = serverResponse == ServerResponse.SUCCESS;
             mConnectionTimesOut = connectionStatus == ConnectionStatus.TIMES_OUT;
@@ -218,23 +223,17 @@ public class OmahaBaseTest {
             mInstalledVersion = "1.2.3.4";
         }
 
-        /**
-         * Gets the number of MockConnections created.
-         */
+        /** Gets the number of MockConnections created. */
         public int getNumConnectionsMade() {
             return mMockConnections.size();
         }
 
-        /**
-         * Returns a particular connection.
-         */
+        /** Returns a particular connection. */
         public MockConnection getConnection(int index) {
             return mMockConnections.get(index);
         }
 
-        /**
-         * Returns the last MockPingConection used to simulate communication with the server.
-         */
+        /** Returns the last MockPingConection used to simulate communication with the server. */
         public MockConnection getLastConnection() {
             return mMockConnections.getLast();
         }
@@ -260,8 +259,14 @@ public class OmahaBaseTest {
             MockConnection connection = null;
             try {
                 URL url = new URL(mDelegate.getRequestGenerator().getServerUrl());
-                connection = new MockConnection(url, mIsOnTablet, mSendValidResponse,
-                        mSendInstallEvent, mConnectionTimesOut, mUpdateVersion);
+                connection =
+                        new MockConnection(
+                                url,
+                                mIsOnTablet,
+                                mSendValidResponse,
+                                mSendInstallEvent,
+                                mConnectionTimesOut,
+                                mUpdateVersion);
                 mMockConnections.addLast(connection);
             } catch (MalformedURLException e) {
                 Assert.fail("Caught a malformed URL exception: " + e);
@@ -296,7 +301,9 @@ public class OmahaBaseTest {
         // Successful requests mean that the next scheduled event should be checking for when the
         // user is active.
         Assert.assertEquals(now + OmahaBase.MS_BETWEEN_REQUESTS, mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
@@ -306,10 +313,10 @@ public class OmahaBaseTest {
         final long now = mDelegate.getScheduler().getCurrentTime();
 
         // Record that an install event has already been sent and that we're due for a new request.
-        SharedPreferences.Editor editor = OmahaBase.getSharedPreferences().edit();
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, now);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, now);
+        SharedPreferences.Editor editor = OmahaPrefUtils.getSharedPreferences().edit();
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, now);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, now);
         editor.apply();
 
         // Trigger Omaha.
@@ -326,14 +333,15 @@ public class OmahaBaseTest {
         // Successful requests mean that the next scheduled event should be checking for when the
         // user is active.
         Assert.assertEquals(now + OmahaBase.MS_BETWEEN_REQUESTS, mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
     @Test
     @Feature({"Omaha"})
     public void testPipelineFreshInstallUpdatedAvailable_crbug_1095755() {
-        final long now = mDelegate.getScheduler().getCurrentTime();
         final String updateVersion = "10.0.0.0";
 
         // Trigger Omaha.
@@ -345,9 +353,10 @@ public class OmahaBaseTest {
         Assert.assertTrue(mDelegate.mGenerateAndPostRequestResults.get(0));
         Assert.assertTrue(mDelegate.mGenerateAndPostRequestResults.get(1));
 
-        SharedPreferences sharedPreferences = OmahaBase.getSharedPreferences();
-        String storedLastVersion = sharedPreferences.getString(OmahaBase.PREF_LATEST_VERSION, null);
-        String storedMarketURL = sharedPreferences.getString(OmahaBase.PREF_MARKET_URL, null);
+        SharedPreferences sharedPreferences = OmahaPrefUtils.getSharedPreferences();
+        String storedLastVersion =
+                sharedPreferences.getString(OmahaPrefUtils.PREF_LATEST_VERSION, null);
+        String storedMarketURL = sharedPreferences.getString(OmahaPrefUtils.PREF_MARKET_URL, null);
         Assert.assertEquals(updateVersion, storedLastVersion);
         Assert.assertEquals(MockConnection.STRIPPED_MARKET_URL, storedMarketURL);
     }
@@ -359,10 +368,10 @@ public class OmahaBaseTest {
         String updateVersion = "10.0.0.0";
 
         // Record that an install event has already been sent and that we're due for a new request.
-        SharedPreferences.Editor editor = OmahaBase.getSharedPreferences().edit();
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, now);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, now);
+        SharedPreferences.Editor editor = OmahaPrefUtils.getSharedPreferences().edit();
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, now);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, now);
         editor.apply();
 
         // Trigger Omaha.
@@ -374,9 +383,10 @@ public class OmahaBaseTest {
         Assert.assertEquals(1, mDelegate.mGenerateAndPostRequestResults.size());
         Assert.assertTrue(mDelegate.mGenerateAndPostRequestResults.get(0));
 
-        SharedPreferences sharedPreferences = OmahaBase.getSharedPreferences();
-        String storedLastVersion = sharedPreferences.getString(OmahaBase.PREF_LATEST_VERSION, null);
-        String storedMarketURL = sharedPreferences.getString(OmahaBase.PREF_MARKET_URL, null);
+        SharedPreferences sharedPreferences = OmahaPrefUtils.getSharedPreferences();
+        String storedLastVersion =
+                sharedPreferences.getString(OmahaPrefUtils.PREF_LATEST_VERSION, null);
+        String storedMarketURL = sharedPreferences.getString(OmahaPrefUtils.PREF_MARKET_URL, null);
         Assert.assertEquals(updateVersion, storedLastVersion);
         Assert.assertEquals(MockConnection.STRIPPED_MARKET_URL, storedMarketURL);
     }
@@ -388,8 +398,8 @@ public class OmahaBaseTest {
         final long later = now + 10000;
 
         // Put the time for the next request in the future.
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
-        prefs.edit().putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, later).apply();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
+        prefs.edit().putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, later).apply();
 
         // Trigger Omaha.
         mOmahaBase = createOmahaBase();
@@ -413,16 +423,16 @@ public class OmahaBaseTest {
         final long timeSendNewPost = timeGeneratedRequest + 20000L;
         final long timeSendNewRequest = timeSendNewPost + 30000L;
 
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
         SharedPreferences.Editor editor = prefs.edit();
 
         // Make it so that a request was generated and is just waiting to be sent.
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeSendNewRequest);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
-        editor.putString(OmahaBase.PREF_PERSISTED_REQUEST_ID, "persisted_id");
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeSendNewRequest);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
+        editor.putString(OmahaPrefUtils.PREF_PERSISTED_REQUEST_ID, "persisted_id");
 
         // Put the time for the next post in the future.
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
         editor.apply();
 
         // Trigger Omaha.
@@ -452,17 +462,17 @@ public class OmahaBaseTest {
         final long timeSendNewPost = now;
         final long timeRegisterNewRequest = now + 10000;
 
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
         SharedPreferences.Editor editor = prefs.edit();
 
         // Make it so that a regular <ping> was generated and is just waiting to be sent.
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
-        editor.putString(OmahaBase.PREF_PERSISTED_REQUEST_ID, "persisted_id");
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
+        editor.putString(OmahaPrefUtils.PREF_PERSISTED_REQUEST_ID, "persisted_id");
 
         // Send the POST now.
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
         editor.apply();
 
         // Trigger Omaha.
@@ -481,7 +491,9 @@ public class OmahaBaseTest {
         // The next scheduled event is the request generation because there is nothing to POST.
         // A successful POST adjusts all timestamps for the current time.
         Assert.assertEquals(timeRegisterNewRequest, mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
@@ -493,22 +505,23 @@ public class OmahaBaseTest {
         final long timeSendNewPost = now;
         final long timeRegisterNewRequest = timeGeneratedRequest + OmahaBase.MS_BETWEEN_REQUESTS;
 
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
         SharedPreferences.Editor editor = prefs.edit();
 
         // Make it so that a regular <ping> was generated and is just waiting to be sent.
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
-        editor.putString(OmahaBase.PREF_PERSISTED_REQUEST_ID, "persisted_id");
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
+        editor.putString(OmahaPrefUtils.PREF_PERSISTED_REQUEST_ID, "persisted_id");
 
         // Send the POST now.
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
         editor.apply();
 
         // Trigger Omaha.
-        mOmahaBase = createOmahaBase(
-                ServerResponse.FAILURE, ConnectionStatus.RESPONDS, DeviceType.HANDSET);
+        mOmahaBase =
+                createOmahaBase(
+                        ServerResponse.FAILURE, ConnectionStatus.RESPONDS, DeviceType.HANDSET);
         mOmahaBase.run();
 
         // Registering code shouldn't have fired.
@@ -522,9 +535,12 @@ public class OmahaBaseTest {
 
         // The next scheduled event should be the POST event, which is delayed by the base delay
         // because no failures have happened yet.
-        Assert.assertEquals(mDelegate.mTimestampsOnSaveState.timestampNextPost,
+        Assert.assertEquals(
+                mDelegate.mTimestampsOnSaveState.timestampNextPost,
                 mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(timeRegisterNewRequest, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                timeRegisterNewRequest,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
@@ -534,12 +550,12 @@ public class OmahaBaseTest {
         final long now = mDelegate.getScheduler().getCurrentTime();
         final long timeRegisterNewRequest = OmahaBase.MS_BETWEEN_REQUESTS + 1;
 
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
         SharedPreferences.Editor editor = prefs.edit();
 
         // Indicate that the next request should be generated way past an expected timeframe.
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
         editor.apply();
 
         // Trigger Omaha.
@@ -556,9 +572,12 @@ public class OmahaBaseTest {
         Assert.assertTrue(mDelegate.mGenerateAndPostRequestResults.get(0));
 
         // The next scheduled event should be the timestamp for a new request generation.
-        Assert.assertEquals(mDelegate.mTimestampsOnSaveState.timestampNextRequest,
+        Assert.assertEquals(
+                mDelegate.mTimestampsOnSaveState.timestampNextRequest,
                 mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
@@ -573,13 +592,13 @@ public class OmahaBaseTest {
 
         // Record that a regular <ping> was generated, but not sent, then assign it an invalid
         // timestamp and try to send it now.
-        SharedPreferences prefs = OmahaBase.getSharedPreferences();
+        SharedPreferences prefs = OmahaPrefUtils.getSharedPreferences();
         SharedPreferences.Editor editor = prefs.edit();
-        editor.putBoolean(OmahaBase.PREF_SEND_INSTALL_EVENT, false);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
-        editor.putString(OmahaBase.PREF_PERSISTED_REQUEST_ID, "persisted_id");
-        editor.putLong(OmahaBase.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
+        editor.putBoolean(OmahaPrefUtils.PREF_SEND_INSTALL_EVENT, false);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEW_REQUEST, timeRegisterNewRequest);
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_OF_REQUEST, timeGeneratedRequest);
+        editor.putString(OmahaPrefUtils.PREF_PERSISTED_REQUEST_ID, "persisted_id");
+        editor.putLong(OmahaPrefUtils.PREF_TIMESTAMP_FOR_NEXT_POST_ATTEMPT, timeSendNewPost);
         editor.apply();
 
         // Trigger Omaha.
@@ -587,7 +606,9 @@ public class OmahaBaseTest {
         mOmahaBase.run();
 
         // Registering code shouldn't have fired.
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now,
                 mDelegate.mTimestampsOnRegisterNewRequest);
 
         // Because we didn't send an install event, only one POST should have occurred.
@@ -597,20 +618,23 @@ public class OmahaBaseTest {
         Assert.assertTrue(mDelegate.mGenerateAndPostRequestResults.get(0));
 
         // The next scheduled event should be the registration event.
-        Assert.assertEquals(mDelegate.mTimestampsOnSaveState.timestampNextRequest,
+        Assert.assertEquals(
+                mDelegate.mTimestampsOnSaveState.timestampNextRequest,
                 mDelegate.mNextScheduledTimestamp);
-        checkTimestamps(now + OmahaBase.MS_BETWEEN_REQUESTS, now + OmahaBase.MS_POST_BASE_DELAY,
+        checkTimestamps(
+                now + OmahaBase.MS_BETWEEN_REQUESTS,
+                now + OmahaBase.MS_POST_BASE_DELAY,
                 mDelegate.mTimestampsOnSaveState);
     }
 
     @Test
     @Feature({"Omaha"})
     public void testCheckForUpdatesConnectionTimesOut() throws Exception {
-        mOmahaBase = createOmahaBase(
-                ServerResponse.FAILURE, ConnectionStatus.TIMES_OUT, DeviceType.HANDSET);
+        mOmahaBase =
+                createOmahaBase(
+                        ServerResponse.FAILURE, ConnectionStatus.TIMES_OUT, DeviceType.HANDSET);
 
-        @OmahaBase.UpdateStatus
-        int status;
+        @OmahaBase.UpdateStatus int status;
         try (ClosableThreadAssertsDisabler ignored = new ClosableThreadAssertsDisabler()) {
             status = mOmahaBase.checkForUpdates();
         }
@@ -626,8 +650,7 @@ public class OmahaBaseTest {
         mOmahaBase.setInstalledVersion(version);
         mOmahaBase.setUpdateVersion(version);
 
-        @OmahaBase.UpdateStatus
-        int status;
+        @OmahaBase.UpdateStatus int status;
         try (ClosableThreadAssertsDisabler ignored = new ClosableThreadAssertsDisabler()) {
             status = mOmahaBase.checkForUpdates();
         }
@@ -644,8 +667,7 @@ public class OmahaBaseTest {
         mOmahaBase.setInstalledVersion(oldVersion);
         mOmahaBase.setUpdateVersion(newVersion);
 
-        @OmahaBase.UpdateStatus
-        int status;
+        @OmahaBase.UpdateStatus int status;
         try (ClosableThreadAssertsDisabler ignored = new ClosableThreadAssertsDisabler()) {
             status = mOmahaBase.checkForUpdates();
         }
@@ -662,8 +684,7 @@ public class OmahaBaseTest {
         mOmahaBase.setInstalledVersion(oldVersion);
         mOmahaBase.setUpdateVersion(newVersion);
 
-        @OmahaBase.UpdateStatus
-        int status;
+        @OmahaBase.UpdateStatus int status;
         try (ClosableThreadAssertsDisabler ignored = new ClosableThreadAssertsDisabler()) {
             status = mOmahaBase.checkForUpdates();
         }
@@ -680,8 +701,7 @@ public class OmahaBaseTest {
         mOmahaBase.setInstalledVersion(oldVersion);
         mOmahaBase.setUpdateVersion(newVersion);
 
-        @OmahaBase.UpdateStatus
-        int status;
+        @OmahaBase.UpdateStatus int status;
         try (ClosableThreadAssertsDisabler ignored = new ClosableThreadAssertsDisabler()) {
             status = mOmahaBase.checkForUpdates();
         }
@@ -694,9 +714,7 @@ public class OmahaBaseTest {
         Assert.assertEquals(expectedPostTimestamp, timestamps.timestampNextPost);
     }
 
-    /**
-     * Simulates communication with the actual Omaha server.
-     */
+    /** Simulates communication with the actual Omaha server. */
     private static class MockConnection extends HttpURLConnection {
         // Omaha appends a "/" to the URL.
         private static final String STRIPPED_MARKET_URL =
@@ -718,8 +736,13 @@ public class OmahaBaseTest {
         private String mRequestPropertyField;
         private String mRequestPropertyValue;
 
-        MockConnection(URL url, boolean usingTablet, boolean sendValidResponse,
-                boolean sendInstallEvent, boolean connectionTimesOut, String updateVersion) {
+        MockConnection(
+                URL url,
+                boolean usingTablet,
+                boolean sendValidResponse,
+                boolean sendInstallEvent,
+                boolean connectionTimesOut,
+                String updateVersion) {
             super(url);
             Assert.assertEquals(MockRequestGenerator.SERVER_URL, url.toString());
 
@@ -747,8 +770,10 @@ public class OmahaBaseTest {
             response += "<response protocol=\"3.0\" server=\"prod\">";
             response += "<daystart elapsed_days=\"4088\" elapsed_seconds=\"12345\"/>";
             response += "<app appid=\"";
-            response += (isOnTablet ? MockRequestGenerator.UUID_TABLET
-                                    : MockRequestGenerator.UUID_PHONE);
+            response +=
+                    (isOnTablet
+                            ? MockRequestGenerator.UUID_TABLET
+                            : MockRequestGenerator.UUID_PHONE);
             response += "\" status=\"ok\">";
             if (sendInstallEvent) {
                 response += "<event status=\"ok\"/>";
@@ -802,10 +827,13 @@ public class OmahaBaseTest {
             if (mNumTimesResponseCodeRetrieved == 0) {
                 // The output stream should now have the generated XML for the request.
                 // Check if its length is correct.
-                Assert.assertEquals("Expected OmahaBase to write out certain number of bytes",
-                        mContentLength, mOutputStream.toByteArray().length);
+                Assert.assertEquals(
+                        "Expected OmahaBase to write out certain number of bytes",
+                        mContentLength,
+                        mOutputStream.toByteArray().length);
             }
-            Assert.assertTrue("Tried to retrieve response code more than twice",
+            Assert.assertTrue(
+                    "Tried to retrieve response code more than twice",
                     mNumTimesResponseCodeRetrieved < 2);
             mNumTimesResponseCodeRetrieved++;
             return mHTTPResponseCode;

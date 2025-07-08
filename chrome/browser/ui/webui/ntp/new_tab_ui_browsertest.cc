@@ -45,9 +45,7 @@ bool HandleMessage(int severity,
 
 class NewTabUIBrowserTest : public InProcessBrowserTest {
  public:
-  NewTabUIBrowserTest() {
-    logging::SetLogMessageHandler(&HandleMessage);
-  }
+  NewTabUIBrowserTest() { logging::SetLogMessageHandler(&HandleMessage); }
 
   ~NewTabUIBrowserTest() override { logging::SetLogMessageHandler(nullptr); }
 
@@ -65,11 +63,11 @@ IN_PROC_BROWSER_TEST_F(NewTabUIBrowserTest, ShowIncognito) {
 
 class NewTabUIProcessPerTabTest : public NewTabUIBrowserTest {
  public:
-   NewTabUIProcessPerTabTest() {}
+  NewTabUIProcessPerTabTest() = default;
 
-   void SetUpCommandLine(base::CommandLine* command_line) override {
-     command_line->AppendSwitch(switches::kProcessPerTab);
-   }
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(switches::kProcessPerTab);
+  }
 };
 
 // Navigates away from NTP before it commits, in process-per-tab mode.
@@ -95,8 +93,10 @@ IN_PROC_BROWSER_TEST_F(NewTabUIProcessPerTabTest, NavBeforeNTPCommits) {
   // for current loading to stop.
   content::TestNavigationObserver observer(
       browser()->tab_strip_model()->GetActiveWebContents());
-  browser()->OpenURL(OpenURLParams(
-      GURL("data:text/html,hello world"), Referrer(),
-      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
+  browser()->OpenURL(
+      OpenURLParams(GURL("data:text/html,hello world"), Referrer(),
+                    WindowOpenDisposition::CURRENT_TAB,
+                    ui::PAGE_TRANSITION_TYPED, false),
+      /*navigation_handle_callback=*/{});
   observer.Wait();
 }

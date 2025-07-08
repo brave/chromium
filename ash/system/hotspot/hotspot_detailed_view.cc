@@ -4,6 +4,7 @@
 
 #include "ash/system/hotspot/hotspot_detailed_view.h"
 
+#include "ash/ash_element_identifiers.h"
 #include "ash/bubble/bubble_utils.h"
 #include "ash/public/cpp/system_tray_client.h"
 #include "ash/resources/vector_icons/vector_icons.h"
@@ -19,6 +20,7 @@
 #include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/tray_popup_utils.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -26,10 +28,12 @@
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/view_class_properties.h"
 
 namespace ash {
 
@@ -42,12 +46,18 @@ namespace {
 // Used for setting the insets of broader hotspot entry row.
 constexpr auto kToggleRowTriViewInsets = gfx::Insets::VH(8, 24);
 
-bool IsIntermediateState(HotspotState state) {
-  return state == HotspotState::kDisabling || state == HotspotState::kEnabling;
-}
-
 bool IsEnabledOrEnabling(HotspotState state) {
   return state == HotspotState::kEnabled || state == HotspotState::kEnabling;
+}
+
+bool CanToggleHotspot(HotspotState state, HotspotAllowStatus allow_status) {
+  if (state == HotspotState::kDisabling) {
+    return false;
+  }
+  if (state == HotspotState::kEnabling || state == HotspotState::kEnabled) {
+    return true;
+  }
+  return allow_status == HotspotAllowStatus::kAllowed;
 }
 
 }  // namespace
@@ -78,13 +88,14 @@ void HotspotDetailedView::UpdateViewForHotspot(HotspotInfoPtr hotspot_info) {
   }
 
   UpdateSubText(hotspot_info);
+  allow_status_ = hotspot_info->allow_status;
   UpdateToggleState(hotspot_info->state, hotspot_info->allow_status);
   UpdateExtraIcon(hotspot_info->allow_status);
 }
 
 void HotspotDetailedView::HandleViewClicked(views::View* view) {
   // Handle clicks on the on/off toggle row.
-  if (view == entry_row_) {
+  if (view == entry_row_ && CanToggleHotspot(state_, allow_status_)) {
     // The toggle button has the old state, so switch to the opposite state.
     ToggleHotspot(!toggle_->GetIsOn());
     return;
@@ -108,8 +119,6 @@ void HotspotDetailedView::CreateExtraTitleRowButtons() {
 }
 
 void HotspotDetailedView::CreateContainer() {
-  SetAccessibleName(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_HOTSPOT));
-
   row_container_ =
       scroll_content()->AddChildView(std::make_unique<RoundedContainer>(
           RoundedContainer::Behavior::kAllRounded));
@@ -118,7 +127,6 @@ void HotspotDetailedView::CreateContainer() {
 
   entry_row_ = row_container_->AddChildView(
       std::make_unique<HoverHighlightView>(/*listener=*/this));
-  entry_row_->SetFocusBehavior(FocusBehavior::NEVER);
   entry_row_->SetID(static_cast<int>(HotspotDetailedViewChildId::kEntryRow));
 
   // The icon image and label text depend on whether hotspot is enabled. They
@@ -130,17 +138,21 @@ void HotspotDetailedView::CreateContainer() {
       kHotspotOffIcon, cros_tokens::kCrosSysOnSurface));
   hotspot_icon_ = hotspot_icon.get();
   entry_row_->AddViewAndLabel(std::move(hotspot_icon), u"");
-  entry_row_->text_label()->SetText(l10n_util::GetStringFUTF16(
-      IDS_ASH_HOTSPOT_DETAILED_VIEW_TITLE, ui::GetChromeOSDeviceName()));
-  entry_row_->text_label()->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  const std::u16string text_label = l10n_util::GetStringFUTF16(
+      IDS_ASH_HOTSPOT_DETAILED_VIEW_TITLE, ui::GetChromeOSDeviceName());
+  entry_row_->text_label()->SetText(text_label);
+  entry_row_->text_label()->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton1,
                                         *entry_row_->text_label());
+  entry_row_->GetViewAccessibility().SetName(text_label);
 
   auto toggle = std::make_unique<Switch>(base::BindRepeating(
       &HotspotDetailedView::OnToggleClicked, weak_factory_.GetWeakPtr()));
-  toggle->SetAccessibleName(l10n_util::GetStringUTF16(
+  toggle->GetViewAccessibility().SetName(l10n_util::GetStringUTF16(
       IDS_ASH_HOTSPOT_DETAILED_VIEW_TOGGLE_A11Y_TEXT));
   toggle->SetID(static_cast<int>(HotspotDetailedViewChildId::kToggle));
+  toggle->SetProperty(views::kElementIdentifierKey,
+                      kHotspotDetailedViewToggleElementId);
   toggle_ = toggle.get();
   entry_row_->AddRightView(toggle.release());
 
@@ -181,11 +193,13 @@ void HotspotDetailedView::UpdateIcon() {
 void HotspotDetailedView::UpdateToggleState(
     const HotspotState& state,
     const HotspotAllowStatus& allow_status) {
-  toggle_->SetIsOn(IsEnabledOrEnabling(state));
-
-  bool enabled = !IsIntermediateState(state) &&
-                 allow_status == HotspotAllowStatus::kAllowed;
-  entry_row_->SetEnabled(enabled);
+  toggle_->SetEnabled(CanToggleHotspot(state, allow_status));
+  const bool is_enabled_or_enabling = IsEnabledOrEnabling(state);
+  toggle_->SetIsOn(is_enabled_or_enabling);
+  entry_row_->SetAccessibilityState(
+      is_enabled_or_enabling
+          ? HoverHighlightView::AccessibilityState::CHECKED_CHECKBOX
+          : HoverHighlightView::AccessibilityState::UNCHECKED_CHECKBOX);
 }
 
 void HotspotDetailedView::UpdateSubText(const HotspotInfoPtr& hotspot_info) {
@@ -227,26 +241,25 @@ void HotspotDetailedView::UpdateSubText(const HotspotInfoPtr& hotspot_info) {
   if (!sub_text.empty()) {
     entry_row_->SetSubText(sub_text);
     entry_row_->sub_text_label()->SetVisible(true);
+    entry_row_->GetViewAccessibility().SetDescription(sub_text);
     if (hotspot_info->state != HotspotState::kEnabled) {
       // If hotspot is not enabled, no need to set primary color for the status
       // sublabel text.
       return;
     }
     // Set color for the subtext that shows hotspot is connected.
-    if (chromeos::features::IsJellyEnabled()) {
-      entry_row_->sub_text_label()->SetEnabledColorId(
-          cros_tokens::kCrosSysPositive);
-      TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosAnnotation1,
-                                            *entry_row_->sub_text_label());
-    } else {
-      entry_row_->sub_text_label()->SetEnabledColorId(
-          kColorAshTextColorPositive);
-    }
+    entry_row_->sub_text_label()->SetEnabledColor(
+        cros_tokens::kCrosSysPositive);
+    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosAnnotation1,
+                                          *entry_row_->sub_text_label());
     return;
   }
   // If no subtext is set, previous subtext should be hidden.
   if (entry_row_->sub_text_label()) {
     entry_row_->sub_text_label()->SetVisible(false);
+    entry_row_->GetViewAccessibility().SetDescription(
+        std::u16string(),
+        ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty);
   }
 }
 
@@ -264,13 +277,16 @@ void HotspotDetailedView::UpdateExtraIcon(
   extra_icon_->SetImage(ui::ImageModel::FromVectorIcon(
       use_managed_icon ? kSystemTrayManagedIcon : kUnifiedMenuInfoIcon,
       kColorAshIconColorPrimary));
-  extra_icon_->SetTooltipText(l10n_util::GetStringUTF16(
+  const std::u16string tooltip = l10n_util::GetStringUTF16(
       use_managed_icon
           ? IDS_ASH_HOTSPOT_DETAILED_VIEW_INFO_TOOLTIP_PROHIBITED_BY_POLICY
-          : IDS_ASH_HOTSPOT_DETAILED_VIEW_INFO_TOOLTIP_MOBILE_DATA_NOT_SUPPORTED));
+          : IDS_ASH_HOTSPOT_DETAILED_VIEW_INFO_TOOLTIP_MOBILE_DATA_NOT_SUPPORTED);
+  extra_icon_->SetFocusBehavior(FocusBehavior::ALWAYS);
+  extra_icon_->SetTooltipText(tooltip);
+  extra_icon_->GetViewAccessibility().SetName(tooltip);
 }
 
-BEGIN_METADATA(HotspotDetailedView, TrayDetailedView)
+BEGIN_METADATA(HotspotDetailedView)
 END_METADATA
 
 }  // namespace ash

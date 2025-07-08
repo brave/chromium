@@ -11,17 +11,19 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/webui/test_data_source.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/base/web_ui_test_data_source.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 #include "components/guest_view/browser/test_guest_view_manager.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -29,14 +31,18 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/common/api/test.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/mojom/context_type.mojom.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/resource/resource_bundle.h"
 
 namespace extensions {
 
 namespace OnMessage = api::test::OnMessage;
 
 namespace {
+
+#if !BUILDFLAG(IS_WIN)  // flaky http://crbug.com/530722
 
 // Tests running extension APIs on WebUI.
 class ExtensionWebUITest : public ExtensionApiTest {
@@ -86,14 +92,31 @@ class ExtensionWebUITest : public ExtensionApiTest {
 };
 
 // Tests running within an <extensionoptions>.
-class ExtensionWebUIEmbeddedOptionsTest : public ExtensionWebUITest {
+class ExtensionWebUIEmbeddedOptionsTest
+    : public ExtensionWebUITest,
+      public testing::WithParamInterface<bool> {
  public:
+  static std::string DescribeParams(
+      const testing::TestParamInfo<ParamType>& info) {
+    return info.param ? "MPArch" : "InnerWebContents";
+  }
+
+  ExtensionWebUIEmbeddedOptionsTest() {
+    scoped_feature_list_.InitWithFeatureState(features::kGuestViewMPArch,
+                                              GetParam());
+  }
+
   void SetUpOnMainThread() override {
     ExtensionWebUITest::SetUpOnMainThread();
     test_guest_view_manager_ =
         test_guest_view_manager_factory_.GetOrCreateTestGuestViewManager(
             browser()->profile(),
             ExtensionsAPIClient::Get()->CreateGuestViewManagerDelegate());
+  }
+
+  void TearDownOnMainThread() override {
+    test_guest_view_manager_ = nullptr;
+    ExtensionWebUITest::TearDownOnMainThread();
   }
 
  protected:
@@ -108,47 +131,45 @@ class ExtensionWebUIEmbeddedOptionsTest : public ExtensionWebUITest {
     EXPECT_EQ(0U, test_guest_view_manager_->num_guests_created());
 
     EXPECT_TRUE(content::ExecJs(
-        webui,
-        content::JsReplace(
-            "let extensionoptions = document.createElement('extensionoptions');"
-            "extensionoptions.extension = $1;"
-            "document.body.appendChild(extensionoptions);",
-            extension->id())));
+        webui, content::JsReplace(
+                   "(() => {"
+                   "  let extensionoptions = "
+                   "      document.createElement('extensionoptions');"
+                   "  extensionoptions.extension = $1;"
+                   "  return new Promise((resolve) => {"
+                   "    extensionoptions.addEventListener('load', () => {"
+                   "      resolve();"
+                   "    });"
+                   "    document.body.appendChild(extensionoptions);"
+                   "  });"
+                   "})();",
+                   extension->id())));
 
     guest_view::GuestViewBase* guest_view =
         test_guest_view_manager_->WaitForSingleGuestViewCreated();
     EXPECT_TRUE(guest_view);
-    WaitForGuestViewLoadStop(guest_view);
+    test_guest_view_manager_->WaitUntilAttached(guest_view);
 
     return guest_view->GetGuestMainFrame();
   }
 
  private:
-  // In preparation for the migration of guest view from inner WebContents to
-  // MPArch (crbug/1261928), individual tests should avoid accessing the guest's
-  // inner WebContents. The direct access is centralized in this helper function
-  // for easier migration.
-  //
-  // TODO(crbug/1261928): Update this implementation for MPArch, and consider
-  // relocate it to `content/public/test/browser_test_utils.h`.
-  void WaitForGuestViewLoadStop(guest_view::GuestViewBase* guest_view) {
-    auto* guest_contents = guest_view->web_contents();
-    ASSERT_TRUE(content::WaitForLoadStop(guest_contents));
-  }
-
   guest_view::TestGuestViewManagerFactory test_guest_view_manager_factory_;
-  raw_ptr<guest_view::TestGuestViewManager, DanglingUntriaged>
-      test_guest_view_manager_ = nullptr;
+  raw_ptr<guest_view::TestGuestViewManager> test_guest_view_manager_ = nullptr;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-#if !BUILDFLAG(IS_WIN)  // flaky http://crbug.com/530722
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         ExtensionWebUIEmbeddedOptionsTest,
+                         testing::Bool(),
+                         ExtensionWebUIEmbeddedOptionsTest::DescribeParams);
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, SanityCheckAvailableAPIs) {
-  ASSERT_TRUE(RunTestOnExtensionsPage("sanity_check_available_apis.js"));
+IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ConfidenceCheckAvailableAPIs) {
+  ASSERT_TRUE(RunTestOnExtensionsPage("confidence_check_available_apis.js"));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, SanityCheckUnavailableAPIs) {
-  ASSERT_TRUE(RunTestOnAboutPage("sanity_check_available_apis.js"));
+IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ConfidenceCheckUnavailableAPIs) {
+  ASSERT_TRUE(RunTestOnAboutPage("confidence_check_available_apis.js"));
 }
 
 // Tests chrome.test.sendMessage, which exercises WebUI making a
@@ -198,7 +219,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, RuntimeLastError) {
   EXPECT_EQ("true", result_listener.message());
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, CanEmbedExtensionOptions) {
+IN_PROC_BROWSER_TEST_P(ExtensionWebUIEmbeddedOptionsTest,
+                       CanEmbedExtensionOptions) {
   ExtensionTestMessageListener ready_listener("ready",
                                               ReplyBehavior::kWillReply);
 
@@ -219,7 +241,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, CanEmbedExtensionOptions) {
 // including chrome.storage (semi-privileged; exposed to trusted contexts and
 // contexts like content scripts and embedded resources in platform apps) and
 // chrome.tabs (privileged; only exposed to trusted contexts).
-IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
+IN_PROC_BROWSER_TEST_P(ExtensionWebUIEmbeddedOptionsTest,
                        ExtensionOptionsCanAccessAppropriateAPIs) {
   const Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("extension_options")
@@ -273,12 +295,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
             content::EvalJs(guest_render_frame_host, "onChangedPromise;"));
 
   // Now check access to the tabs API, which is restricted to
-  // Feature::BLESSED_EXTENSION_CONTEXTs (which this should be).
+  // mojom::ContextType::kPrivilegedExtensions (which this should be).
   static constexpr char kTabsExecution[] =
       R"(new Promise(r => {
            chrome.tabs.create({}, (tab) => {
              let message;
-             // Sanity check that it looks and smells like a tab.
+             // Confidence check that it looks and smells like a tab.
              if (tab && tab.index) {
                message = 'success';
              } else {
@@ -293,8 +315,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
             content::EvalJs(guest_render_frame_host, kTabsExecution));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
+IN_PROC_BROWSER_TEST_P(ExtensionWebUIEmbeddedOptionsTest,
                        ExtensionOptionsExternalLinksOpenInNewTab) {
+  // TODO(crbug.com/40202416): Implement new window creation under MPArch.
+  if (base::FeatureList::IsEnabled(features::kGuestViewMPArch)) {
+    GTEST_SKIP() << "MPArch implementation skipped. https://crbug.com/40202416";
+  }
+
   const Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("extension_options")
                         .AppendASCII("extension_with_options_page"));
@@ -310,7 +337,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
             browser()->tab_strip_model()->GetIndexOfWebContents(new_contents));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ReceivesExtensionOptionsOnClose) {
+IN_PROC_BROWSER_TEST_P(ExtensionWebUIEmbeddedOptionsTest,
+                       ReceivesExtensionOptionsOnClose) {
   ExtensionTestMessageListener ready_listener("ready",
                                               ReplyBehavior::kWillReply);
 
@@ -332,7 +360,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ReceivesExtensionOptionsOnClose) {
 //
 // Same setup as CanEmbedExtensionOptions but disable the extension before
 // embedding.
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, EmbedDisabledExtension) {
+IN_PROC_BROWSER_TEST_P(ExtensionWebUIEmbeddedOptionsTest,
+                       EmbedDisabledExtension) {
   ExtensionTestMessageListener ready_listener("ready",
                                               ReplyBehavior::kWillReply);
 
@@ -385,13 +414,30 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, EmbedExtensionWithoutOptionsPage) {
   ASSERT_TRUE(create_failed_listener.WaitUntilSatisfied());
 }
 
+class ExtensionWebUIListenersTest : public ExtensionWebUITest {
+ public:
+  void SetUpOnMainThread() override {
+    ExtensionWebUITest::SetUpOnMainThread();
+
+    // Load browser_tests.pak.
+    base::FilePath pak_path;
+    ASSERT_TRUE(base::PathService::Get(base::DIR_ASSETS, &pak_path));
+    pak_path = pak_path.AppendASCII("browser_tests.pak");
+    ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+        pak_path, ui::kScaleFactorNone);
+    // Register the chrome://webui-test data source.
+    webui::CreateAndAddWebUITestDataSource(profile());
+  }
+};
+
 // Tests crbug.com/1253745 where adding and removing listeners in a WebUI frame
 // causes all listeners to be removed.
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, MultipleURLListeners) {
-  content::URLDataSource::Add(profile(),
-                              std::make_unique<TestDataSource>("extensions"));
-  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(),
-                                           GURL("chrome://test/body1.html")));
+IN_PROC_BROWSER_TEST_F(ExtensionWebUIListenersTest, MultipleURLListeners) {
+  // Use the same URL both for the parent and child frames for convenience.
+  // These could be different WebUI URLs.
+  GURL test_url("chrome://webui-test/extension_webui_listeners_test.html");
+
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), test_url));
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   content::RenderFrameHost* main_frame = web_contents->GetPrimaryMainFrame();
@@ -403,7 +449,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, MultipleURLListeners) {
       var listener = e => {};
       chrome.test.onMessage.addListener(listener);
       const iframe = document.createElement('iframe');
-      iframe.src = 'chrome://test/body2.html';
+      iframe.src = 'chrome://webui-test/extension_webui_listeners_test.html';
       document.body.appendChild(iframe);
   )"));
   EXPECT_TRUE(event_router->HasEventListener("test.onMessage"));
@@ -411,8 +457,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, MultipleURLListeners) {
 
   // Add and remove the listener in the child frame.
   content::RenderFrameHost* child_frame = ChildFrameAt(main_frame, 0);
-  EXPECT_EQ(GURL("chrome://test/body2.html"),
-            child_frame->GetLastCommittedURL());
+  EXPECT_EQ(test_url, child_frame->GetLastCommittedURL());
   EXPECT_TRUE(content::ExecJs(child_frame, R"(
       const listener = e => {};
       chrome.test.onMessage.addListener(listener);

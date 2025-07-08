@@ -12,36 +12,37 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.util.SadTabRule;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.mock.MockRenderFrameHost;
 import org.chromium.content_public.browser.test.mock.MockWebContents;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.url.GURL;
 
 import java.util.concurrent.ExecutionException;
 
-/**
- * Tests (requiring native) of the ShareDelegateImpl.
- */
+/** Tests (requiring native) of the ShareDelegateImpl. */
 @Batch(Batch.PER_CLASS)
 @RunWith(BaseJUnit4ClassRunner.class)
 public class ShareDelegateImplTest {
     @ClassRule
     public static final ChromeBrowserTestRule sBrowserTestRule = new ChromeBrowserTestRule();
 
-    @Rule
-    public final SadTabRule mSadTabRule = new SadTabRule();
+    @Rule public final SadTabRule mSadTabRule = new SadTabRule();
 
     @Test
     @SmallTest
     public void testShouldFetchCanonicalUrl() throws ExecutionException {
         MockUrlTab mockTab =
-                TestThreadUtils.runOnUiThreadBlocking(() -> { return new MockUrlTab(); });
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> {
+                            return new MockUrlTab();
+                        });
         MockWebContents mockWebContents = new MockWebContents();
         MockRenderFrameHost mockRenderFrameHost = new MockRenderFrameHost();
         mSadTabRule.setTab(mockTab);
@@ -106,7 +107,7 @@ public class ShareDelegateImplTest {
         public boolean isShowingErrorPage;
 
         public MockUrlTab() {
-            super(INVALID_TAB_ID, false);
+            super(INVALID_TAB_ID, ProfileManager.getLastUsedRegularProfile());
         }
 
         @Override

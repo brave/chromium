@@ -17,25 +17,16 @@ class PrinterInstallationManager {
  public:
   virtual ~PrinterInstallationManager() = default;
 
-  // Record that the given printers has been installed in CUPS for usage.
-  // Parameter |is_automatic| should be set to true if the printer was
-  // saved automatically (without requesting additional information
-  // from the user).
-  virtual void PrinterInstalled(const chromeos::Printer& printer,
-                                bool is_automatic) = 0;
-
   // Returns true if |printer| is currently installed in CUPS with this
   // configuration.
   virtual bool IsPrinterInstalled(const chromeos::Printer& printer) const = 0;
 
-  // Record that a requested printer installation failed because the printer
-  // is not autoconfigurable (does not meet IPP Everywhere requirements).
-  // This results in shifting the printer from automatic to discovered class.
-  virtual void PrinterIsNotAutoconfigurable(
-      const chromeos::Printer& printer) = 0;
-
   // Install `printer` in CUPS. The result is returned by `callback`.
+  // Parameter `is_automatic_installation` should be set to true if the printer
+  // was set up automatically (without requesting additional information from
+  // the user, like make-and-model or a PPD file).
   virtual void SetUpPrinter(const chromeos::Printer& printer,
+                            bool is_automatic_installation,
                             PrinterSetupCallback callback) = 0;
   // Remove `printer` from CUPS.
   virtual void UninstallPrinter(const std::string& printer_id) = 0;

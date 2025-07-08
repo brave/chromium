@@ -5,8 +5,9 @@
 #ifndef ASH_STYLE_STYLE_UTIL_H_
 #define ASH_STYLE_STYLE_UTIL_H_
 
+#include <optional>
+
 #include "ash/ash_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/color/color_id.h"
 #include "ui/compositor_extra/shadow.h"
 #include "ui/gfx/color_palette.h"
@@ -97,7 +98,11 @@ class ASH_EXPORT StyleUtil {
   // ring. If it is not given, then the default (-0.5 * thickness) will be used.
   static views::FocusRing* SetUpFocusRingForView(
       views::View* view,
-      absl::optional<int> halo_inset = absl::nullopt);
+      std::optional<int> halo_inset = std::nullopt);
+
+  static void InstallRoundedCornerHighlightPathGenerator(
+      views::View* view,
+      const gfx::RoundedCornersF& corners);
 
   // Creates a background that fills the canvas with a fully rounded rect whose
   // rounded corner radius is set to the half of the minimum dimension of view's

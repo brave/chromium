@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/ash/projector/pending_screencast_manager.h"
 
 #include <memory>
+#include <utility>
 
 #include "ash/constants/ash_features.h"
 #include "ash/webui/projector_app/projector_app_client.h"
@@ -22,14 +28,16 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/drivefs_test_support.h"
 #include "chrome/browser/ash/login/login_manager_test.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
-#include "chrome/browser/ash/login/ui/user_adding_screen.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/ash/login/user_adding_screen.h"
 #include "chrome/browser/ui/ash/projector/projector_app_client_impl.h"
 #include "chrome/browser/ui/ash/projector/projector_drivefs_provider.h"
 #include "chrome/browser/ui/browser.h"
@@ -38,10 +46,8 @@
 #include "content/public/test/browser_test.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/utility/utility.h"
 
 namespace ash {
-
 namespace {
 
 constexpr char kTestScreencastPath[] = "/root/test_screencast";
@@ -97,8 +103,7 @@ class PendingScreencastMangerBrowserTest : public InProcessBrowserTest {
  public:
   PendingScreencastMangerBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
-        {features::kProjectorUpdateIndexableText},
-        {ash::features::kFilesInlineSyncStatus});
+        {features::kProjectorUpdateIndexableText}, {});
   }
   PendingScreencastMangerBrowserTest(
       const PendingScreencastMangerBrowserTest&) = delete;
@@ -144,7 +149,7 @@ class PendingScreencastMangerBrowserTest : public InProcessBrowserTest {
     fake_drivefs_helper_ =
         std::make_unique<drive::FakeDriveFsHelper>(profile, mount_path);
     auto* integration_service = new drive::DriveIntegrationService(
-        profile, std::string(), mount_path,
+        g_browser_process->local_state(), profile, std::string(), mount_path,
         fake_drivefs_helper_->CreateFakeDriveFsListenerFactory());
     return integration_service;
   }
@@ -224,7 +229,7 @@ class PendingScreencastMangerBrowserTest : public InProcessBrowserTest {
                             int64_t total_bytes,
                             int64_t transferred_bytes) {
     syncing_status.item_events.emplace_back(
-        absl::in_place, /*stable_id=*/1, /*group_id=*/1, path,
+        std::in_place, /*stable_id=*/1, /*group_id=*/1, path,
         total_bytes == transferred_bytes
             ? drivefs::mojom::ItemEvent::State::kCompleted
             : drivefs::mojom::ItemEvent::State::kInProgress,
@@ -391,7 +396,8 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerBrowserTest, ValidScreencast) {
   EXPECT_EQ(ps.container_dir(), base::FilePath(kTestScreencastPath));
   EXPECT_EQ(ps.pending_screencast().name, kTestScreencastName);
   EXPECT_EQ(ps.pending_screencast().created_time,
-            GetFileCreatedTime(media_file).ToJsTimeIgnoringNull());
+            GetFileCreatedTime(media_file)
+                .InMillisecondsFSinceUnixEpochIgnoringNull());
 
   // Tests PendingScreencastChangeCallback won't be invoked if pending
   // screencast status doesn't change.
@@ -770,11 +776,16 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerBrowserTest,
                        UpdateIndexableTextSuccess) {
   // Prepares a ".projector" file and it's metadata:
   const std::string kProjectorFileContent =
-      "{\"captionLanguage\":\"en\",\"captions\":[{\"endOffset\":1260,"
-      "\"hypothesisParts\":[],\"startOffset\":760,\"text\":\"metadata "
-      "file.\"},{\"endOffset\":2300,"
-      "\"hypothesisParts\":[],\"startOffset\":2000,\"text\":\"another sentence."
-      "\"}],\"tableOfContent\":[]}";
+      R"({
+        "captionLanguage": "en",
+        "captions": [
+          {"endOffset": 400, "startOffset": 200, "editState": 1},
+          {"endOffset": 1260, "hypothesisParts": [], "startOffset": 760,
+          "text": "metadata file."},
+          {"endOffset": 2300, "hypothesisParts": [], "startOffset": 2000,
+          "text": "another sentence."}
+        ],
+        "tableOfContent":[]})";
   CreateFileInDriveFsFolder(kDefaultMetadataFilePath, kProjectorFileContent);
   drivefs::FakeMetadata metadata;
   metadata.path = base::FilePath(kDefaultMetadataFilePath);
@@ -791,7 +802,7 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerBrowserTest,
       std::make_unique<MockXhrSender>(
           base::BindLambdaForTesting(
               [&](const GURL& url, projector::mojom::RequestType method,
-                  const absl::optional<std::string>& request_body) {
+                  const std::optional<std::string>& request_body) {
                 EXPECT_EQ(
                     "{\"contentHints\":{\"indexableText\":\" metadata file. "
                     "another sentence.\"}}",
@@ -912,7 +923,7 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerBrowserTest,
   app_client->NotifyAppUIActive(false);
   SimulateSyncingEvent(syncing_status);
   WaitForPendingStatusUpdateToBeFinished();
-  VerifyNotificationCount(1);
+  VerifyNotificationCount(0);
 
   // When app is open, the notification gets suppressed again:
   app_client->NotifyAppUIActive(true);
@@ -926,7 +937,7 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerBrowserTest,
                                  /*transferred_bytes=*/0, syncing_status);
   SimulateSyncingEvent(syncing_status);
   WaitForPendingStatusUpdateToBeFinished();
-  VerifyNotificationCount(1);
+  VerifyNotificationCount(0);
 }
 
 class PendingScreencastMangerMultiProfileTest : public LoginManagerTest {
@@ -967,8 +978,8 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerMultiProfileTest,
   Profile* profile1 = ProfileHelper::Get()->GetProfileByAccountId(account_id1_);
   drive::DriveIntegrationService* service_for_account1 =
       drive::DriveIntegrationServiceFactory::FindForProfile(profile1);
-  EXPECT_TRUE(pending_screencast_manager_->IsDriveFsObservationObservingSource(
-      service_for_account1->GetDriveFsHost()));
+  EXPECT_EQ(pending_screencast_manager_->GetHost(),
+            service_for_account1->GetDriveFsHost());
 
   // Add user 2.
   ash::UserAddingScreen::Get()->Start();
@@ -977,14 +988,14 @@ IN_PROC_BROWSER_TEST_F(PendingScreencastMangerMultiProfileTest,
   Profile* profile2 = ProfileHelper::Get()->GetProfileByAccountId(account_id2_);
   drive::DriveIntegrationService* service_for_account2 =
       drive::DriveIntegrationServiceFactory::FindForProfile(profile2);
-  EXPECT_TRUE(pending_screencast_manager_->IsDriveFsObservationObservingSource(
-      service_for_account2->GetDriveFsHost()));
+  EXPECT_EQ(pending_screencast_manager_->GetHost(),
+            service_for_account2->GetDriveFsHost());
 
   // Switch back to user1.
   user_manager::UserManager::Get()->SwitchActiveUser(account_id1_);
   // Verify DriveFsHost observation is observing user 1's DriveFsHost.
-  EXPECT_TRUE(pending_screencast_manager_->IsDriveFsObservationObservingSource(
-      service_for_account1->GetDriveFsHost()));
+  EXPECT_EQ(pending_screencast_manager_->GetHost(),
+            service_for_account1->GetDriveFsHost());
 }
 
 }  // namespace ash

@@ -7,6 +7,7 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_childnodepart_documentpartroot.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/part.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -16,10 +17,13 @@ namespace blink {
 
 class ContainerNode;
 class Document;
-class DocumentPartRoot;
-class Part;
 
 using PartRootUnion = V8UnionChildNodePartOrDocumentPartRoot;
+
+// These should be the data (text content) of the start and end comment nodes
+// that represent the endpoints of a ChildNodePart range.
+#define kChildNodePartStartCommentData "#"
+#define kChildNodePartEndCommentData "/"
 
 // Implementation of the PartRoot class, which is part of the DOM Parts API.
 // PartRoot is the base of the class hierarchy.
@@ -34,10 +38,19 @@ class CORE_EXPORT PartRoot : public GarbageCollectedMixin {
   // Adds a new part to this PartRoot's collection of maintained parts.
   void AddPart(Part& new_part);
   void RemovePart(Part& part);
-  void MarkPartsDirty() { cached_parts_list_dirty_ = true; }
+  static void CloneParts(const Node& source_node,
+                         Node& destination_node,
+                         NodeCloningData& data);
+  void MarkPartsDirty() {
+    DCHECK(!RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled());
+    cached_parts_list_dirty_ = true;
+  }
+  void SwapPartsList(PartRoot& other);
 
   virtual Document& GetDocument() const = 0;
   virtual bool IsDocumentPartRoot() const = 0;
+  virtual Node* FirstIncludedChildNode() const = 0;
+  virtual Node* LastIncludedChildNode() const = 0;
 
   // Utilities to convert to/from the IDL union.
   static PartRootUnion* GetUnionFromPartRoot(PartRoot* root);
@@ -47,20 +60,21 @@ class CORE_EXPORT PartRoot : public GarbageCollectedMixin {
   }
 
   // PartRoot API
-  HeapVector<Member<Part>> getParts();
+  using PartNodeList = GCedHeapVector<Member<Node>, 20>;
+  using PartList = GCedHeapVector<Member<Part>, 20>;
+  const PartList& getParts();
+  const PartNodeList& getNodePartNodes();
+  const PartNodeList& getChildNodePartNodes();
   virtual ContainerNode* rootContainer() const = 0;
 
  protected:
-  PartRoot() = default;
+  PartRoot();
   virtual const PartRoot* GetParentPartRoot() const = 0;
 
  private:
-  const DocumentPartRoot* GetDocumentPartRoot();
-  HeapVector<Member<Part>> RebuildPartsList();
-
-  HeapVector<Member<Part>> parts_unordered_;
-  HeapVector<Member<Part>> cached_ordered_parts_;
-  bool cached_parts_list_dirty_{true};
+  void RebuildPartsList();
+  Member<PartList> cached_ordered_parts_;
+  bool cached_parts_list_dirty_{false};
 };
 
 }  // namespace blink

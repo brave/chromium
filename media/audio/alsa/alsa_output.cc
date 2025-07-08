@@ -1,7 +1,12 @@
 // Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
+
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 // THREAD SAFETY
 //
 // AlsaPcmOutputStream object is *not* thread-safe and should only be used
@@ -43,6 +48,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
@@ -50,6 +56,7 @@
 #include "media/audio/alsa/alsa_util.h"
 #include "media/audio/alsa/alsa_wrapper.h"
 #include "media/audio/alsa/audio_manager_alsa.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/channel_mixer.h"
 #include "media/base/data_buffer.h"
@@ -60,14 +67,14 @@ namespace media {
 // Set to 0 during debugging if you want error messages due to underrun
 // events or other recoverable errors.
 #if defined(NDEBUG)
-static const int kPcmRecoverIsSilent = 1;
+constexpr int kPcmRecoverIsSilent = 1;
 #else
-static const int kPcmRecoverIsSilent = 0;
+constexpr int kPcmRecoverIsSilent = 0;
 #endif
 
 // The output channel layout if we set up downmixing for the kDefaultDevice
 // device.
-static const ChannelLayout kDefaultOutputChannelLayout = CHANNEL_LAYOUT_STEREO;
+constexpr ChannelLayout kDefaultOutputChannelLayout = CHANNEL_LAYOUT_STEREO;
 
 // While the "default" device may support multi-channel audio, in Alsa, only
 // the device names surround40, surround41, surround50, etc, have a defined
@@ -133,16 +140,8 @@ std::ostream& operator<<(std::ostream& os,
   return os;
 }
 
-static const SampleFormat kSampleFormat = kSampleFormatS16;
-static const snd_pcm_format_t kAlsaSampleFormat = SND_PCM_FORMAT_S16;
-
-const char AlsaPcmOutputStream::kDefaultDevice[] = "default";
-const char AlsaPcmOutputStream::kAutoSelectDevice[] = "";
-const char AlsaPcmOutputStream::kPlugPrefix[] = "plug:";
-
-// We use 40ms as our minimum required latency. If it is needed, we may be able
-// to get it down to 20ms.
-const uint32_t AlsaPcmOutputStream::kMinLatencyMicros = 40 * 1000;
+constexpr SampleFormat kSampleFormat = kSampleFormatS16;
+constexpr snd_pcm_format_t kAlsaSampleFormat = SND_PCM_FORMAT_S16;
 
 AlsaPcmOutputStream::AlsaPcmOutputStream(const std::string& device_name,
                                          const AudioParameters& params,
@@ -200,7 +199,6 @@ bool AlsaPcmOutputStream::Open() {
 
   if (!CanTransitionTo(kIsOpened)) {
     NOTREACHED() << "Invalid state: " << state();
-    return false;
   }
 
   // We do not need to check if the transition was successful because
@@ -316,10 +314,10 @@ void AlsaPcmOutputStream::Start(AudioSourceCallback* callback) {
   }
 
   // Ensure the first buffer is silence to avoid startup glitches.
-  int buffer_size = GetAvailableFrames() * bytes_per_output_frame_;
-  scoped_refptr<DataBuffer> silent_packet = new DataBuffer(buffer_size);
-  silent_packet->set_data_size(buffer_size);
-  memset(silent_packet->writable_data(), 0, silent_packet->data_size());
+  const size_t buffer_capacity = GetAvailableFrames() * bytes_per_output_frame_;
+  auto silent_packet = base::MakeRefCounted<DataBuffer>(buffer_capacity);
+  silent_packet->set_size(buffer_capacity);
+  silent_packet->FillWithZeroes();
   buffer_->Append(silent_packet);
   WritePacket();
 
@@ -388,7 +386,7 @@ void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
     const base::TimeDelta delay =
         AudioTimestampHelper::FramesToTime(GetCurrentDelay(), sample_rate_);
 
-    scoped_refptr<DataBuffer> packet = new DataBuffer(packet_size_);
+    auto packet = base::MakeRefCounted<DataBuffer>(packet_size_);
     int frames_filled =
         RunDataCallback(delay, tick_clock_->NowTicks(), audio_bus_.get());
 
@@ -430,10 +428,11 @@ void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
     // and sanitized since it may come from an untrusted source such as NaCl.
     output_bus->Scale(volume_);
     output_bus->ToInterleaved<SignedInt16SampleTypeTraits>(
-        frames_filled, reinterpret_cast<int16_t*>(packet->writable_data()));
+        frames_filled,
+        reinterpret_cast<int16_t*>(packet->writable_data().data()));
 
     if (packet_size > 0) {
-      packet->set_data_size(packet_size);
+      packet->set_size(packet_size);
       // Add the packet to the buffer.
       buffer_->Append(packet);
     } else {
@@ -457,18 +456,17 @@ void AlsaPcmOutputStream::WritePacket() {
 
   CHECK_EQ(buffer_->forward_bytes() % bytes_per_output_frame_, 0u);
 
-  const uint8_t* buffer_data;
-  int buffer_size;
-  if (buffer_->GetCurrentChunk(&buffer_data, &buffer_size)) {
+  const base::span<const uint8_t> chunk = buffer_->GetCurrentChunk();
+  if (!chunk.empty()) {
     snd_pcm_sframes_t frames = std::min(
-        static_cast<snd_pcm_sframes_t>(buffer_size / bytes_per_output_frame_),
+        static_cast<snd_pcm_sframes_t>(chunk.size() / bytes_per_output_frame_),
         GetAvailableFrames());
 
     if (!frames)
       return;
 
     snd_pcm_sframes_t frames_written =
-        wrapper_->PcmWritei(playback_handle_, buffer_data, frames);
+        wrapper_->PcmWritei(playback_handle_, chunk.data(), frames);
     if (frames_written < 0) {
       // Attempt once to immediately recover from EINTR,
       // EPIPE (overrun/underrun), ESTRPIPE (stream suspended).  WritePacket
@@ -581,7 +579,10 @@ std::string AlsaPcmOutputStream::FindDeviceForChannels(uint32_t channels) {
   if (error == 0) {
     // NOTE: Do not early return from inside this if statement.  The
     // hints above need to be freed.
-    for (void** hint_iter = hints; *hint_iter != nullptr; hint_iter++) {
+    // SAFETY: the ALSA API guarantees that `hint_iter` will dereference to
+    // nullptr as the last element before it goes out of bounds.
+    for (void** hint_iter = hints; *hint_iter != nullptr;
+         UNSAFE_BUFFERS(++hint_iter)) {
       // Only examine devices that are output capable..  Valid values are
       // "Input", "Output", and nullptr which means both input and output.
       std::unique_ptr<char, base::FreeDeleter> io(
@@ -613,8 +614,8 @@ snd_pcm_sframes_t AlsaPcmOutputStream::GetCurrentDelay() {
   TRACE_EVENT_BEGIN(TRACE_DISABLED_BY_DEFAULT("audio"),
                     "AlsaPcmOutputStream::GetCurrentDelay");
   // Intermediate values saved for tracing.
-  absl::optional<snd_pcm_sframes_t> pcm_delay;
-  absl::optional<snd_pcm_sframes_t> available_frames;
+  std::optional<snd_pcm_sframes_t> pcm_delay;
+  std::optional<snd_pcm_sframes_t> available_frames;
 
   snd_pcm_sframes_t delay = -1;
   // Don't query ALSA's delay if we have underrun since it'll be jammed at some
@@ -745,9 +746,10 @@ snd_pcm_t* AlsaPcmOutputStream::AutoSelectDevice(unsigned int latency) {
   // downmixing.
   uint32_t default_channels = channels_;
   if (default_channels > 2) {
-    channel_mixer_ = std::make_unique<ChannelMixer>(
-        channel_layout_, kDefaultOutputChannelLayout);
     default_channels = 2;
+    channel_mixer_ = std::make_unique<ChannelMixer>(channel_layout_, channels_,
+                                                    kDefaultOutputChannelLayout,
+                                                    default_channels);
     mixed_audio_bus_ = AudioBus::Create(
         default_channels, audio_bus_->frames());
   }
@@ -805,7 +807,6 @@ AlsaPcmOutputStream::TransitionTo(InternalState to) {
 
   if (!CanTransitionTo(to)) {
     NOTREACHED() << "Cannot transition from: " << state_ << " to: " << to;
-    state_ = kInError;
   } else {
     state_ = to;
   }

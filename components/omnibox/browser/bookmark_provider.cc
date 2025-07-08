@@ -10,23 +10,25 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/cxx20_erase.h"
-#include "base/containers/extend.h"
 #include "base/feature_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/keyword_provider.h"
+#include "components/omnibox/browser/match_compare.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_triggered_feature_service.h"
 #include "components/omnibox/browser/scoring_functor.h"
 #include "components/omnibox/browser/titled_url_match_utils.h"
 #include "components/prefs/pref_service.h"
+#include "components/query_parser/query_parser.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
 #include "third_party/metrics_proto/omnibox_input_type.pb.h"
+#include "third_party/omnibox_proto/groups.pb.h"
 #include "ui/base/page_transition_types.h"
 #include "url/url_constants.h"
 
@@ -36,19 +38,16 @@ using bookmarks::TitledUrlMatch;
 BookmarkProvider::BookmarkProvider(AutocompleteProviderClient* client)
     : AutocompleteProvider(AutocompleteProvider::TYPE_BOOKMARK),
       client_(client),
-      local_or_syncable_bookmark_model_(
-          client ? client_->GetLocalOrSyncableBookmarkModel() : nullptr),
-      account_bookmark_model_(client ? client_->GetAccountBookmarkModel()
-                                     : nullptr) {}
+      bookmark_model_(client ? client_->GetBookmarkModel() : nullptr) {}
 
 void BookmarkProvider::Start(const AutocompleteInput& input,
                              bool minimal_changes) {
   TRACE_EVENT0("omnibox", "BookmarkProvider::Start");
   matches_.clear();
 
-  if (input.focus_type() != metrics::OmniboxFocusType::INTERACTION_DEFAULT ||
-      input.text().empty())
+  if (input.IsZeroSuggest() || input.text().empty()) {
     return;
+  }
 
   DoAutocomplete(input);
 }
@@ -57,20 +56,18 @@ BookmarkProvider::~BookmarkProvider() = default;
 
 void BookmarkProvider::DoAutocomplete(const AutocompleteInput& input) {
   // We may not have a bookmark model for some unit tests.
-  // TODO(https://crbug.com/1424825): Add support for account bookmarks.
-  if (!local_or_syncable_bookmark_model_) {
+  if (!bookmark_model_) {
     return;
   }
 
   // Retrieve enough bookmarks so that we have a reasonable probability of
   // suggesting the one that the user desires.
-  const size_t kMaxBookmarkMatchesPerModel = 50;
+  const size_t kMaxBookmarkMatches = 50;
 
   // Remove the keyword from input if we're in keyword mode for a starter pack
   // engine.
   const auto [adjusted_input, starter_pack_engine] =
-      KeywordProvider::AdjustInputForStarterPackEngines(
-          input, client_->GetTemplateURLService());
+      AdjustInputForStarterPackKeyword(input, client_->GetTemplateURLService());
 
   const query_parser::MatchingAlgorithm matching_algorithm =
       GetMatchingAlgorithm(adjusted_input);
@@ -92,18 +89,8 @@ void BookmarkProvider::DoAutocomplete(const AutocompleteInput& input) {
   // Please refer to the code for TitledUrlIndex::GetResultsMatching for
   // complete details of how searches are performed against the user's
   // bookmarks.
-  std::vector<TitledUrlMatch> matches =
-      local_or_syncable_bookmark_model_->GetBookmarksMatching(
-          adjusted_input.text(), kMaxBookmarkMatchesPerModel,
-          matching_algorithm);
-
-  // If the account bookmark model exists, append the corresponding matches. The
-  // initial order isn't relevant because matches are sorted later below.
-  if (account_bookmark_model_) {
-    base::Extend(matches, account_bookmark_model_->GetBookmarksMatching(
-                              adjusted_input.text(),
-                              kMaxBookmarkMatchesPerModel, matching_algorithm));
-  }
+  std::vector<TitledUrlMatch> matches = bookmark_model_->GetBookmarksMatching(
+      adjusted_input.text(), kMaxBookmarkMatches, matching_algorithm);
 
   if (matches.empty())
     return;  // There were no matches.
@@ -127,6 +114,11 @@ void BookmarkProvider::DoAutocomplete(const AutocompleteInput& input) {
         match.transition = ui::PAGE_TRANSITION_KEYWORD;
       }
 
+      if (input.current_page_classification() ==
+          metrics::OmniboxEventProto_PageClassification_ANDROID_HUB) {
+        match.suggestion_group_id = omnibox::GROUP_MOBILE_BOOKMARKS;
+      }
+
       matches_.push_back(match);
     }
   }
@@ -134,7 +126,7 @@ void BookmarkProvider::DoAutocomplete(const AutocompleteInput& input) {
   // In keyword mode, it's possible we only provide results from one or two
   // autocomplete provider(s), so it's sometimes necessary to show more results
   // than provider_max_matches_.
-  size_t max_matches = InKeywordMode(adjusted_input)
+  size_t max_matches = adjusted_input.InKeywordMode()
                            ? provider_max_matches_in_keyword_mode_
                            : provider_max_matches_;
 
@@ -142,18 +134,26 @@ void BookmarkProvider::DoAutocomplete(const AutocompleteInput& input) {
   size_t num_matches = std::min(matches_.size(), max_matches);
   std::partial_sort(matches_.begin(), matches_.begin() + num_matches,
                     matches_.end(), AutocompleteMatch::MoreRelevant);
-  ResizeMatches(
-      num_matches,
-      OmniboxFieldTrial::IsMlUrlScoringIncreaseNumCandidatesEnabled());
+  if (input.current_page_classification() !=
+      PageClassification::OmniboxEventProto_PageClassification_ANDROID_HUB) {
+    ResizeMatches(
+        num_matches,
+        OmniboxFieldTrial::IsMlUrlScoringUnlimitedNumCandidatesEnabled());
+  }
 }
 
 query_parser::MatchingAlgorithm BookmarkProvider::GetMatchingAlgorithm(
     AutocompleteInput input) {
+  if (input.current_page_classification() ==
+      PageClassification::OmniboxEventProto_PageClassification_ANDROID_HUB) {
+    return query_parser::MatchingAlgorithm::ALWAYS_PREFIX_SEARCH;
+  }
+
   // TODO(yoangela): This might have to check whether we're in @bookmarks mode
   //  specifically, since we might still get bookmarks suggestions in
   //  non-bookmarks keyword mode. This is enough of an edge case it makes sense
   //  to just stick with simplicity for now.
-  if (InKeywordMode(input)) {
+  if (input.InKeywordMode()) {
     return query_parser::MatchingAlgorithm::ALWAYS_PREFIX_SEARCH;
   }
 
@@ -231,7 +231,7 @@ std::pair<int, int> BookmarkProvider::CalculateBookmarkMatchRelevance(
 
   // Bookmarks with javascript scheme ("bookmarklets") that do not have title
   // matches get a lower base and lower maximum score because returning them
-  // for matches in their (often very long) URL looks stupid and is often not
+  // for matches in their (often very long) URL looks bad and is often not
   // intended by the user.
   const GURL& url(bookmark_match.node->GetTitledUrlNodeUrl());
   const bool bookmarklet_without_title_match =
@@ -252,32 +252,13 @@ std::pair<int, int> BookmarkProvider::CalculateBookmarkMatchRelevance(
     return {relevance, /*bookmark_count=*/-1};
   }
 
-  // Boost the score if the bookmark's URL is referenced by other bookmarks. If
-  // two bookmark models are involved (i.e.
-  // `AutocompleteProviderClient::GetAccountBookmarkModel()` returns non-null),
-  // the boosting takes effect across models.
-  const int kURLCountBoost[4] = {0, 75, 125, 150};
+  // Boost the score if the bookmark's URL is referenced by other bookmarks.
+  constexpr std::array<int, 4> kURLCountBoost = {0, 75, 125, 150};
 
-  size_t url_node_count = 0;
-
-  {
-    std::vector<const BookmarkNode*> nodes;
-    local_or_syncable_bookmark_model_->GetNodesByURL(url, &nodes);
-    url_node_count += nodes.size();
-  }
-
-  // If the account bookmark model exists, also count the nodes in there and
-  // take the maximum. This appears more robust against edge cases where a user
-  // may have many or all bookmarks duplicated between the two models.
-  if (account_bookmark_model_) {
-    std::vector<const BookmarkNode*> nodes;
-    account_bookmark_model_->GetNodesByURL(url, &nodes);
-    url_node_count = std::max(url_node_count, nodes.size());
-  }
-
+  const size_t url_node_count = bookmark_model_->GetNodesByURL(url).size();
   DCHECK_GE(std::min(std::size(kURLCountBoost), url_node_count), 1U);
   relevance +=
-      kURLCountBoost[std::min(std::size(kURLCountBoost), url_node_count) - 1];
+      kURLCountBoost[std::min(kURLCountBoost.size(), url_node_count) - 1];
   relevance = std::min(kMaxBookmarkScore, relevance);
   return {relevance, url_node_count};
 }

@@ -6,6 +6,7 @@
 
 #include "base/feature_list.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/types/pass_key.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
@@ -388,7 +389,7 @@ void CrossThreadMediaSourceAttachment::AddTrackToMediaElementOnMainThread(
   // media element. Note, we use default nullptr for the supplemental
   // sourceBuffer attribute to prevent main thread JS from attempting to
   // reference worker-thread SourceBuffer. Due to lack of deducible conversion
-  // from WTF::String to WTF::AtomicString, we construct the atomics locally for
+  // from WTF::String to AtomicString, we construct the atomics locally for
   // use in track creation here.
   const AtomicString atomic_id(id);
   const AtomicString atomic_kind(kind);
@@ -398,7 +399,8 @@ void CrossThreadMediaSourceAttachment::AddTrackToMediaElementOnMainThread(
     case TrackAddRemovalType::kAudio: {
       auto* audio_track =
           MakeGarbageCollected<AudioTrack>(atomic_id, atomic_kind, atomic_label,
-                                           atomic_language, enable_or_select);
+                                           atomic_language, enable_or_select,
+                                           /*exclusive=*/false);
       attached_element_->audioTracks().Add(audio_track);
       break;
     }
@@ -476,7 +478,7 @@ bool CrossThreadMediaSourceAttachment::RunExclusively(
 
 void CrossThreadMediaSourceAttachment::Unregister() {
   // MSE-in-Worker does NOT use object URLs, so this should not be called.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 MediaSourceTracer*
@@ -602,8 +604,8 @@ void CrossThreadMediaSourceAttachment::CompleteAttachingToMediaElement(
 
     // In unlikely case this attachment is reused, clear the cached state of
     // previous attachment.
-    cached_buffered_.Clear();
-    cached_seekable_.Clear();
+    cached_buffered_.clear();
+    cached_seekable_.clear();
 
     // Verify the rest of the status once we're completing this in the worker
     // thread. Using WTF::RetainedRef(this) here to ensure we are still alive

@@ -9,6 +9,8 @@
 
 #include <vector>
 
+@class NSWindow;
+
 namespace blink {
 class WebGestureEvent;
 class WebMouseEvent;
@@ -20,9 +22,9 @@ namespace ui {
 class LatencyInfo;
 }  // namespace ui
 
-namespace content {
+namespace input {
 struct NativeWebKeyboardEvent;
-}  // namespace content
+}  // namespace input
 
 namespace remote_cocoa {
 
@@ -47,6 +49,9 @@ class RenderWidgetHostNSViewHostHelper {
 
   virtual ~RenderWidgetHostNSViewHostHelper() = default;
 
+  // Return the RenderWidget's accessibility node.
+  virtual id GetAccessibilityElement() = 0;
+
   // Return the RenderWidget's BrowserAccessibilityManager's root accessibility
   // node.
   virtual id GetRootBrowserAccessibilityElement() = 0;
@@ -60,10 +65,10 @@ class RenderWidgetHostNSViewHostHelper {
   // Forward a keyboard event to the RenderWidgetHost that is currently handling
   // the key-down event.
   virtual void ForwardKeyboardEvent(
-      const content::NativeWebKeyboardEvent& key_event,
+      const input::NativeWebKeyboardEvent& key_event,
       const ui::LatencyInfo& latency_info) = 0;
   virtual void ForwardKeyboardEventWithCommands(
-      const content::NativeWebKeyboardEvent& key_event,
+      const input::NativeWebKeyboardEvent& key_event,
       const ui::LatencyInfo& latency_info,
       std::vector<blink::mojom::EditCommandPtr> commands) = 0;
 
@@ -80,12 +85,10 @@ class RenderWidgetHostNSViewHostHelper {
   virtual void ForwardWheelEvent(
       const blink::WebMouseWheelEvent& web_event) = 0;
 
-  // Handling pinch gesture events.
-  virtual void GestureBegin(blink::WebGestureEvent begin_event,
-                            bool is_synthetically_injected) = 0;
-  virtual void GestureUpdate(blink::WebGestureEvent update_event) = 0;
-  virtual void GestureEnd(blink::WebGestureEvent end_event) = 0;
-  virtual void SmartMagnify(
+  // Handling gesture events.
+  virtual void PinchEvent(blink::WebGestureEvent pinch_event,
+                          bool is_synthetically_injected) = 0;
+  virtual void SmartMagnifyEvent(
       const blink::WebGestureEvent& smart_magnify_event) = 0;
 };
 

@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
@@ -24,28 +26,11 @@ namespace {
 
 SubprocessMetricsProvider* g_subprocess_metrics_provider = nullptr;
 
-bool SubprocessAsyncEnabled() {
-  return base::FeatureList::IsEnabled(features::kSubprocessMetricsAsync);
-}
-
 scoped_refptr<base::TaskRunner> CreateTaskRunner() {
-  if (!SubprocessAsyncEnabled() || !features::kDeregisterAsync.Get()) {
-    return nullptr;
-  }
-
   // This task runner must block shutdown to ensure metrics are not lost.
-  //
-  // It may be sequenced to prevent contention (since an exclusive lock may be
-  // required to merge metrics with the StatisticsRecorder, and many tasks may
-  // be posted in a short amount of time, e.g. when closing the browser).
-  // Though, this is being evaluated through A/B testing, since there are
-  // benefits to making this not sequenced (the tasks being processed in
-  // parallel).
-  const base::TaskTraits& traits = {base::TaskPriority::BEST_EFFORT,
-                                    base::TaskShutdownBehavior::BLOCK_SHUTDOWN};
-  return features::kDeregisterSequenced.Get()
-             ? base::ThreadPool::CreateSequencedTaskRunner(traits)
-             : base::ThreadPool::CreateTaskRunner(traits);
+  return base::ThreadPool::CreateTaskRunner(
+      {base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
 }
 
 }  // namespace
@@ -104,6 +89,14 @@ void SubprocessMetricsProvider::RegisterSubprocessAllocator(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   CHECK(allocator);
 
+  // Pass a custom RangesManager so that we do not register the BucketRanges
+  // with the global StatisticsRecorder when creating histogram objects using
+  // the allocator's underlying data. This avoids unnecessary contention on the
+  // global StatisticsRecorder lock.
+  // Note: Since |allocator| may be merged from different threads concurrently,
+  // for example on the UI thread and on a background thread, we must use
+  // ThreadSafeRangesManager.
+  allocator->SetRangesManager(new base::ThreadSafeRangesManager());
   // Insert the allocator into the internal map and verify that there was no
   // allocator with the same ID already.
   auto result = allocators_by_id_.emplace(
@@ -127,36 +120,24 @@ void SubprocessMetricsProvider::DeregisterSubprocessAllocator(int id) {
 
   // Merge the last deltas from the allocator before releasing the ref (and
   // deleting if the last one).
-  if (SubprocessAsyncEnabled() && features::kDeregisterAsync.Get()) {
-    // This needs to be done carefully. Currently (without async), if the user
-    // closes Chrome, a bunch of subprocesses are closed, their metrics are
-    // merged synchronously, and then a last metrics log is closed (which would
-    // include the subprocess metrics). When this is done asynchronously, the
-    // subprocess metrics likely won't make it to the last log as the tasks
-    // would likely not have run yet. Though, that might not be an issue since
-    // they'd still be recoverable through the persistent histogram system.
-    auto* allocator_ptr = allocator.get();
-    task_runner_->PostTaskAndReply(
-        FROM_HERE,
-        base::BindOnce(
-            &SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator, id,
-            // Unretained is needed to pass a refcounted class as a raw pointer.
-            // It is safe because it is kept alive by the reply task.
-            base::Unretained(allocator_ptr)),
-        base::BindOnce(
-            &SubprocessMetricsProvider::OnMergeHistogramDeltasFromAllocator,
-            std::move(allocator)));
-  } else {
-    MergeHistogramDeltasFromAllocator(id, allocator.get());
-  }
+  auto* allocator_ptr = allocator.get();
+  task_runner_->PostTaskAndReply(
+      FROM_HERE,
+      base::BindOnce(
+          &SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator, id,
+          // Unretained is needed to pass a refcounted class as a raw pointer.
+          // It is safe because it is kept alive by the reply task.
+          base::Unretained(allocator_ptr)),
+      base::BindOnce(
+          &SubprocessMetricsProvider::OnMergeHistogramDeltasFromAllocator,
+          std::move(allocator)));
 }
 
 void SubprocessMetricsProvider::MergeHistogramDeltas(
     bool async,
     base::OnceClosure done_callback) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (async && SubprocessAsyncEnabled() &&
-      features::kPeriodicMergeAsync.Get()) {
+  if (async) {
     // Make a copy of the internal allocators map (with its own refptrs) to pass
     // to the background task.
     auto allocators = std::make_unique<AllocatorByIdMap>(allocators_by_id_);
@@ -189,13 +170,18 @@ void SubprocessMetricsProvider::BrowserChildProcessLaunchedAndConnected(
   // This call can only be made on the browser's IO thread.
   content::BrowserChildProcessHost* host =
       content::BrowserChildProcessHost::FromID(data.id);
-  CHECK(host);
+  // |host| should not be null, but such cases have been observed in the wild so
+  // gracefully handle this scenario.
+  if (!host) {
+    return;
+  }
 
   std::unique_ptr<base::PersistentMemoryAllocator> allocator =
       host->TakeMetricsAllocator();
   // The allocator can be null in tests.
-  if (!allocator)
+  if (!allocator) {
     return;
+  }
 
   RegisterSubprocessAllocator(
       data.id, std::make_unique<base::PersistentHistogramAllocator>(
@@ -226,8 +212,9 @@ void SubprocessMetricsProvider::OnRenderProcessHostCreated(
     content::RenderProcessHost* host) {
   // Sometimes, the same host will cause multiple notifications in tests so
   // could possibly do the same in a release build.
-  if (!scoped_observations_.IsObservingSource(host))
+  if (!scoped_observations_.IsObservingSource(host)) {
     scoped_observations_.AddObservation(host);
+  }
 }
 
 void SubprocessMetricsProvider::RenderProcessReady(
@@ -240,8 +227,9 @@ void SubprocessMetricsProvider::RenderProcessReady(
       host->TakeMetricsAllocator();
   if (allocator) {
     RegisterSubprocessAllocator(
-        host->GetID(), std::make_unique<base::PersistentHistogramAllocator>(
-                           std::move(allocator)));
+        host->GetDeprecatedID(),
+        std::make_unique<base::PersistentHistogramAllocator>(
+            std::move(allocator)));
   }
 }
 
@@ -250,7 +238,7 @@ void SubprocessMetricsProvider::RenderProcessExited(
     const content::ChildProcessTerminationInfo& info) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  DeregisterSubprocessAllocator(host->GetID());
+  DeregisterSubprocessAllocator(host->GetDeprecatedID());
 }
 
 void SubprocessMetricsProvider::RenderProcessHostDestroyed(
@@ -261,7 +249,7 @@ void SubprocessMetricsProvider::RenderProcessHostDestroyed(
   // (above) being called so it's necessary to de-register also upon the
   // destruction of the host. If both get called, no harm is done.
 
-  DeregisterSubprocessAllocator(host->GetID());
+  DeregisterSubprocessAllocator(host->GetDeprecatedID());
   scoped_observations_.RemoveObservation(host);
 }
 
@@ -283,7 +271,21 @@ void SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator(
     if (!histogram) {
       break;
     }
-    allocator_ptr->MergeHistogramDeltaToStatisticsRecorder(histogram.get());
+    // We expect histograms to match as subprocesses shouldn't have version skew
+    // with the browser process.
+    bool merge_success =
+        allocator_ptr->MergeHistogramDeltaToStatisticsRecorder(histogram.get());
+
+    // When merging child process histograms into the parent, we expect the
+    // merge operation to succeed. If it doesn't, it means the histograms have
+    // different types or buckets, which indicates a programming error (i.e.
+    // non-matching logging code across browser and child for a histogram). In
+    // this case DumpWithoutCrashing() with a crash key with the histogram name.
+    if (!merge_success) {
+      SCOPED_CRASH_KEY_STRING256("SubprocessMetricsProvider", "histogram",
+                                 histogram->histogram_name());
+      base::debug::DumpWithoutCrashing();
+    }
     ++histogram_count;
   }
 

@@ -7,16 +7,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h"
 #include "components/remote_cocoa/common/select_file_dialog.mojom.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class ExtensionDropdownHandler;
 @class SelectFileDialogDelegate;
@@ -28,12 +25,6 @@ namespace remote_cocoa {
 class REMOTE_COCOA_APP_SHIM_EXPORT SelectFileDialogBridge
     : public mojom::SelectFileDialog {
  public:
-  // Callback made from the NSSavePanel's completion block.
-  using PanelEndedCallback =
-      base::OnceCallback<void(bool was_cancelled,
-                              const std::vector<base::FilePath>& files,
-                              int index)>;
-
   explicit SelectFileDialogBridge(NSWindow* owning_window);
 
   SelectFileDialogBridge(const SelectFileDialogBridge&) = delete;
@@ -56,6 +47,8 @@ class REMOTE_COCOA_APP_SHIM_EXPORT SelectFileDialogBridge
   static NSSavePanel* GetLastCreatedNativePanelForTesting();
 
  private:
+  class ScopedPreventKeyWindow;
+
   // Sets the accessory view for |dialog_| and sets
   // |extension_dropdown_handler_|. |is_save_panel| specifies whether this is
   // for a save panel or not.
@@ -78,6 +71,9 @@ class REMOTE_COCOA_APP_SHIM_EXPORT SelectFileDialogBridge
 
   // The parent window for |panel_|.
   NSWindow* __strong owning_window_;
+
+  // Used to prevent the sheet parent from getting key.
+  std::unique_ptr<ScopedPreventKeyWindow> scoped_prevent_key_window_;
 
   // The delegate for |panel|.
   SelectFileDialogDelegate* __strong delegate_;

@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import './warning_banner.js';
+
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 import {assertEquals} from 'chrome://webui-test/chromeos/chai_assert.js';
 
-import {mockUtilVisitURL} from '../../../../common/js/mock_util.js';
+import {getLastVisitedURL} from '../../../../common/js/util.js';
 
 import {BannerEvent} from './types.js';
-import {WarningBanner} from './warning_banner.js';
+import type {WarningBanner} from './warning_banner.js';
 
 let warningBanner: WarningBanner;
 
 export function setUp() {
-  const html = `<warning-banner>
+  document.body.innerHTML = getTrustedHTML`
+    <warning-banner>
       <span slot="text">Banner text</span>
       <button slot="extra-button" href="http://test.com">
         Test Banner
@@ -22,8 +26,7 @@ export function setUp() {
         Dismiss
       </button>
     </warning-banner>
-    `;
-  document.body.innerHTML = html;
+  `;
   warningBanner = document.body.querySelector<WarningBanner>('warning-banner')!;
 }
 
@@ -44,13 +47,11 @@ export async function testDismissHandlerEmitsEvent(done: () => void) {
  * button is clicked.
  */
 export async function testAdditionalButtonCanBeClicked() {
-  const mockVisitURL = mockUtilVisitURL();
   warningBanner.addEventListener(
-      'click', () => console.log('additional event listner'));
+      'click', () => console.info('additional event listner'));
   warningBanner.querySelector<CrButtonElement>(
                    '[slot="extra-button"]')!.click();
-  assertEquals(mockVisitURL.getURL(), 'http://test.com');
-  mockVisitURL.restoreVisitURL();
+  assertEquals(getLastVisitedURL(), 'http://test.com');
 }
 
 /**

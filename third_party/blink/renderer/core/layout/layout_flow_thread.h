@@ -54,6 +54,7 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
   ~LayoutFlowThread() override = default;
   void Trace(Visitor*) const override;
 
+  bool IsLayoutNGObject() const final;
   bool IsLayoutFlowThread() const final {
     NOT_DESTROYED();
     return true;
@@ -92,8 +93,6 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
       const LayoutObject&,
       AncestorSearchConstraint);
 
-  void UpdateLayout() final;
-
   PaintLayerType LayerTypeRequired() const final;
 
   virtual void FlowThreadDescendantWasInserted(LayoutObject*) {
@@ -103,26 +102,29 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
     NOT_DESTROYED();
   }
   virtual void FlowThreadDescendantStyleWillChange(
-      LayoutBox*,
+      LayoutBoxModelObject*,
       StyleDifference,
       const ComputedStyle& new_style) {
     NOT_DESTROYED();
   }
   virtual void FlowThreadDescendantStyleDidChange(
-      LayoutBox*,
+      LayoutBoxModelObject*,
       StyleDifference,
       const ComputedStyle& old_style) {
     NOT_DESTROYED();
   }
 
-  void AbsoluteQuadsForDescendant(const LayoutBox& descendant,
-                                  Vector<gfx::QuadF>&,
-                                  MapCoordinatesFlags mode = 0);
+  void QuadsInAncestorForDescendant(const LayoutBox& descendant,
+                                    Vector<gfx::QuadF>&,
+                                    const LayoutBoxModelObject* ancestor,
+                                    MapCoordinatesFlags);
 
   void AddOutlineRects(OutlineRectCollector&,
                        OutlineInfo*,
                        const PhysicalOffset& additional_offset,
-                       NGOutlineType) const override;
+                       OutlineType) const override;
+
+  void Paint(const PaintInfo& paint_info) const final;
 
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation&,
@@ -131,11 +133,6 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
 
   virtual void AddColumnSetToThread(LayoutMultiColumnSet*) = 0;
   virtual void RemoveColumnSetFromThread(LayoutMultiColumnSet*);
-
-  void ComputeLogicalHeight(LayoutUnit logical_height,
-                            LayoutUnit logical_top,
-                            LogicalExtentComputedValues&) const override;
-  virtual void UpdateLogicalWidth() = 0;
 
   bool HasColumnSets() const {
     NOT_DESTROYED();
@@ -166,12 +163,6 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
   PhysicalRect FragmentsBoundingBox(
       const PhysicalRect& layer_bounding_box) const;
 
-  // Convert a logical position in the flow thread coordinate space to a logical
-  // position in the containing coordinate space.
-  LogicalOffset FlowThreadToContainingCoordinateSpace(
-      LayoutUnit block_position,
-      LayoutUnit inline_position) const;
-
   virtual PhysicalOffset VisualPointToFlowThreadPoint(
       const PhysicalOffset& visual_point) const = 0;
 
@@ -181,15 +172,16 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
 
   const char* GetName() const override = 0;
 
+  RecalcScrollableOverflowResult RecalcScrollableOverflow() final;
+
  protected:
   void GenerateColumnSetIntervalTree();
 
   LayoutMultiColumnSetList multi_column_set_list_;
 
-  typedef WTF::PODInterval<LayoutUnit, LayoutMultiColumnSet*>
-      MultiColumnSetInterval;
-  typedef WTF::PODIntervalTree<LayoutUnit, LayoutMultiColumnSet*>
-      MultiColumnSetIntervalTree;
+  using MultiColumnSetInterval = PodInterval<LayoutUnit, LayoutMultiColumnSet*>;
+  using MultiColumnSetIntervalTree =
+      PodIntervalTree<LayoutUnit, LayoutMultiColumnSet*>;
 
   class MultiColumnSetSearchAdapter {
     STACK_ALLOCATED();
@@ -221,24 +213,22 @@ struct DowncastTraits<LayoutFlowThread> {
   }
 };
 
-}  // namespace blink
-
-namespace WTF {
-// These structures are used by PODIntervalTree for debugging.
+// These structures are used by PodIntervalTree for debugging.
 #ifndef NDEBUG
 template <>
-struct ValueToString<blink::LayoutMultiColumnSet*> {
-  static String ToString(const blink::LayoutMultiColumnSet* value) {
+struct ValueToString<LayoutMultiColumnSet*> {
+  static String ToString(const LayoutMultiColumnSet* value) {
     return String::Format("%p", value);
   }
 };
 template <>
-struct ValueToString<blink::LayoutUnit> {
-  static String ToString(const blink::LayoutUnit value) {
+struct ValueToString<LayoutUnit> {
+  static String ToString(const LayoutUnit value) {
     return String::Number(value.ToFloat());
   }
 };
 #endif
-}  // namespace WTF
+
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_FLOW_THREAD_H_

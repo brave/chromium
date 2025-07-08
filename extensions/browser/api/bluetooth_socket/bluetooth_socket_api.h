@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -21,7 +22,6 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_histogram_value.h"
 #include "extensions/common/api/bluetooth_socket.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 class BluetoothSocket;
@@ -123,7 +123,7 @@ class BluetoothSocketListenFunction : public BluetoothSocketAsyncApiFunction {
   virtual void CreateService(
       scoped_refptr<device::BluetoothAdapter> adapter,
       const device::BluetoothUUID& uuid,
-      const absl::optional<std::string>& name,
+      const std::optional<std::string>& name,
       device::BluetoothAdapter::CreateServiceCallback callback,
       device::BluetoothAdapter::CreateServiceErrorCallback error_callback) = 0;
   virtual base::Value::List CreateResults() = 0;
@@ -160,7 +160,7 @@ class BluetoothSocketListenUsingRfcommFunction
   bool CreateParams() override;
   void CreateService(scoped_refptr<device::BluetoothAdapter> adapter,
                      const device::BluetoothUUID& uuid,
-                     const absl::optional<std::string>& name,
+                     const std::optional<std::string>& name,
                      device::BluetoothAdapter::CreateServiceCallback callback,
                      device::BluetoothAdapter::CreateServiceErrorCallback
                          error_callback) override;
@@ -170,7 +170,7 @@ class BluetoothSocketListenUsingRfcommFunction
   ~BluetoothSocketListenUsingRfcommFunction() override;
 
  private:
-  absl::optional<bluetooth_socket::ListenUsingRfcomm::Params> params_;
+  std::optional<bluetooth_socket::ListenUsingRfcomm::Params> params_;
 };
 
 class BluetoothSocketListenUsingL2capFunction
@@ -188,7 +188,7 @@ class BluetoothSocketListenUsingL2capFunction
   bool CreateParams() override;
   void CreateService(scoped_refptr<device::BluetoothAdapter> adapter,
                      const device::BluetoothUUID& uuid,
-                     const absl::optional<std::string>& name,
+                     const std::optional<std::string>& name,
                      device::BluetoothAdapter::CreateServiceCallback callback,
                      device::BluetoothAdapter::CreateServiceErrorCallback
                          error_callback) override;
@@ -198,7 +198,7 @@ class BluetoothSocketListenUsingL2capFunction
   ~BluetoothSocketListenUsingL2capFunction() override;
 
  private:
-  absl::optional<bluetooth_socket::ListenUsingL2cap::Params> params_;
+  std::optional<bluetooth_socket::ListenUsingL2cap::Params> params_;
 };
 
 class BluetoothSocketAbstractConnectFunction :
@@ -214,7 +214,7 @@ class BluetoothSocketAbstractConnectFunction :
   ResponseAction Run() override;
 
   // Subclasses should implement this method to connect to the service
-  // registered with |uuid| on the |device|.
+  // registered with `uuid` on the `device`.
   virtual void ConnectToService(device::BluetoothDevice* device,
                                 const device::BluetoothUUID& uuid) = 0;
 
@@ -224,7 +224,7 @@ class BluetoothSocketAbstractConnectFunction :
  private:
   virtual void OnGetAdapter(scoped_refptr<device::BluetoothAdapter> adapter);
 
-  absl::optional<bluetooth_socket::Connect::Params> params_;
+  std::optional<bluetooth_socket::Connect::Params> params_;
   raw_ptr<BluetoothSocketEventDispatcher> socket_event_dispatcher_ = nullptr;
 };
 
@@ -304,7 +304,7 @@ class BluetoothSocketSendFunction : public BluetoothSocketAsyncApiFunction {
   void OnError(BluetoothApiSocket::ErrorReason reason,
                const std::string& message);
 
-  absl::optional<bluetooth_socket::Send::Params> params_;
+  std::optional<bluetooth_socket::Send::Params> params_;
   scoped_refptr<net::IOBuffer> io_buffer_;
   size_t io_buffer_size_;
 };

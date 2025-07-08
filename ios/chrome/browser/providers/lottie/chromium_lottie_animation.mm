@@ -9,12 +9,9 @@
 
 #if !BUILDFLAG(IS_IOS_MACCATALYST)
 #import <Lottie/Lottie.h>
+
 #import "base/check.h"
 #endif  // BUILDFLAG(IS_IOS_MACCATALYST)
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface ChromiumLottieAnimation : NSObject <LottieAnimation>
 
@@ -58,6 +55,12 @@
 - (void)stop {
 #if !BUILDFLAG(IS_IOS_MACCATALYST)
   [_lottieAnimation stop];
+#endif  // BUILDFLAG(IS_IOS_MACCATALYST)
+}
+
+- (void)pause {
+#if !BUILDFLAG(IS_IOS_MACCATALYST)
+  [_lottieAnimation pause];
 #endif  // BUILDFLAG(IS_IOS_MACCATALYST)
 }
 

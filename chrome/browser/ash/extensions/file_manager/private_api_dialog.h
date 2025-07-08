@@ -10,9 +10,9 @@
 
 #include <vector>
 
-#include "ash/components/arc/mojom/intent_helper.mojom-forward.h"
 #include "chrome/browser/ash/extensions/file_manager/logged_extension_function.h"
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "chromeos/ash/experiences/arc/mojom/intent_helper.mojom-forward.h"
 
 namespace ui {
 struct SelectedFileInfo;
@@ -75,7 +75,9 @@ class FileManagerPrivateSelectFilesFunction : public LoggedExtensionFunction {
       const std::vector<ui::SelectedFileInfo>& files);
 
   bool should_return_local_path_;
-  std::vector<GURL> file_urls_;
+  // Only used when we need to resync files so we can save the local paths of
+  // the selected files after resync is done.
+  std::vector<base::FilePath> local_paths_for_resync_callback_;
   int resync_files_remaining_ = 0;
 };
 

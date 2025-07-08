@@ -12,13 +12,11 @@
 #include "content/browser/aggregation_service/aggregatable_report_assembler.h"
 #include "content/browser/aggregation_service/aggregatable_report_sender.h"
 #include "content/browser/aggregation_service/aggregation_service_storage.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/storage_partition.h"
-
-class GURL;
 
 namespace base {
 class Time;
-class Value;
 }  // namespace base
 
 namespace url {
@@ -28,18 +26,14 @@ class Origin;
 namespace content {
 
 class AggregationServiceObserver;
-class AggregatableReport;
 class AggregatableReportRequest;
 class BrowserContext;
 
 // External interface for the aggregation service.
-class AggregationService {
+class CONTENT_EXPORT AggregationService {
  public:
   using AssemblyStatus = AggregatableReportAssembler::AssemblyStatus;
   using AssemblyCallback = AggregatableReportAssembler::AssemblyCallback;
-
-  using SendStatus = AggregatableReportSender::RequestStatus;
-  using SendCallback = AggregatableReportSender::ReportSentCallback;
 
   // No more report requests can be scheduled and not yet sent than this. Any
   // additional requests will silently be dropped until there is more capacity.
@@ -55,23 +49,9 @@ class AggregationService {
 
   // Constructs an AggregatableReport from the information in `report_request`.
   // `callback` will be run once completed which returns the assembled report
-  // if successful, otherwise `absl::nullopt` will be returned.
+  // if successful, otherwise `std::nullopt` will be returned.
   virtual void AssembleReport(AggregatableReportRequest report_request,
                               AssemblyCallback callback) = 0;
-
-  // TODO(alexmt): Consider removing `SendReport()`.
-
-  // Sends an aggregatable report to the reporting endpoint `url`.
-  virtual void SendReport(const GURL& url,
-                          const AggregatableReport& report,
-                          SendCallback callback) = 0;
-
-  // Sends the contents of an aggregatable report to the reporting endpoint
-  // `url`. This allows a caller to modify the report's JSON serialization as
-  // needed.
-  virtual void SendReport(const GURL& url,
-                          const base::Value& contents,
-                          SendCallback callback) = 0;
 
   // Deletes all data in storage that were fetched/stored between `delete_begin`
   // and `delete_end` time (inclusive). Null times are treated as unbounded

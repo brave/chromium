@@ -40,6 +40,21 @@ SessionProtoDBFactory<
   return GetCommerceSubscriptionSessionProtoDBFactory();
 }
 
+SessionProtoDBFactory<parcel_tracking_db::ParcelTrackingContent>*
+GetParcelTrackingSessionProtoDBFactory() {
+  static base::NoDestructor<
+      SessionProtoDBFactory<parcel_tracking_db::ParcelTrackingContent>>
+      instance;
+  return instance.get();
+}
+
+template <>
+SessionProtoDBFactory<parcel_tracking_db::ParcelTrackingContent>*
+SessionProtoDBFactory<
+    parcel_tracking_db::ParcelTrackingContent>::GetInstance() {
+  return GetParcelTrackingSessionProtoDBFactory();
+}
+
 #if !BUILDFLAG(IS_ANDROID)
 SessionProtoDBFactory<cart_db::ChromeCartContentProto>*
 GetChromeCartSessionProtoDBFactory() {
@@ -67,6 +82,35 @@ template <>
 SessionProtoDBFactory<coupon_db::CouponContentProto>*
 SessionProtoDBFactory<coupon_db::CouponContentProto>::GetInstance() {
   return GetCouponSessionProtoDBFactory();
+}
+
+SessionProtoDBFactory<discounts_db::DiscountsContentProto>*
+GetDiscountsSessionProtoDBFactory() {
+  static base::NoDestructor<
+      SessionProtoDBFactory<discounts_db::DiscountsContentProto>>
+      instance;
+  return instance.get();
+}
+
+template <>
+SessionProtoDBFactory<discounts_db::DiscountsContentProto>*
+SessionProtoDBFactory<discounts_db::DiscountsContentProto>::GetInstance() {
+  return GetDiscountsSessionProtoDBFactory();
+}
+
+SessionProtoDBFactory<discount_infos_db::DiscountInfosContentProto>*
+GetDiscountInfosSessionProtoDBFactory() {
+  static base::NoDestructor<
+      SessionProtoDBFactory<discount_infos_db::DiscountInfosContentProto>>
+      instance;
+  return instance.get();
+}
+
+template <>
+SessionProtoDBFactory<discount_infos_db::DiscountInfosContentProto>*
+SessionProtoDBFactory<
+    discount_infos_db::DiscountInfosContentProto>::GetInstance() {
+  return GetDiscountInfosSessionProtoDBFactory();
 }
 
 #else

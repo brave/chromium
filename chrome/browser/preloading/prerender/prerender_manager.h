@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_PRELOADING_PRERENDER_PRERENDER_MANAGER_H_
 #define CHROME_BROWSER_PRELOADING_PRERENDER_PRERENDER_MANAGER_H_
 
+#include <optional>
 #include <string>
 
+#include "chrome/browser/preloading/preloading_features.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/prerender_handle.h"
@@ -24,8 +26,15 @@ extern const char kHistogramPrerenderPredictionStatusDefaultSearchEngine[];
 extern const char kHistogramPrerenderPredictionStatusDirectUrlInput[];
 }  // namespace internal
 
+// If you change this, please follow the process in
+// go/preloading-dashboard-updates to update the mapping reflected in dashboard,
+// or if you are not a Googler, please file an FYI bug on https://crbug.new with
+// component Internals>Preload.
+//
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
+//
+// LINT.IfChange
 enum class PrerenderPredictionStatus {
   // The prerender was not started at all for this omnibox interaction.
   kNotStarted = 0,
@@ -37,6 +46,7 @@ enum class PrerenderPredictionStatus {
   kHitFinished = 3,
   kMaxValue = kHitFinished,
 };
+// LINT.ThenChange()
 
 // Manages running prerenders in the //chrome.
 // Chrome manages running prerenders separately, as it prioritizes the latest
@@ -50,18 +60,20 @@ class PrerenderManager : public content::WebContentsObserver,
   ~PrerenderManager() override;
 
   // content::WebContentsObserver
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
-  // The entry of Default Search Engine prerender. Calling this method will lead
-  // to the cancellation of the previous prerender if the given `match`'s search
-  // suggestion canonical URL differs from the ongoing one's.
-  // TODO(https://crbug.com/1295170): Remove this method after Search prerender
-  // work properly with Search prefetch.
-  void StartPrerenderSearchSuggestion(const AutocompleteMatch& match,
-                                      const GURL& canonical_search_url);
+  // Maybe start prerendering a prewarm page if we haven't prewarm it yet for
+  // the underlying WebContents. Returns true if a new prerender is started.
+  // TODO(https://crbug.com/423465927): Decide a better timing to close.
+  bool MaybeStartPrewarmSearchResult();
+
+  // Deletes the existing prewarm page to start another one for testing.
+  void StopPrewarmSearchResultForTesting();
+
+  // Sets the prewarm page URL for testing as it's difficult to set the testing
+  // server's URL as a Finch parameter in the tests.
+  void SetPrewarmUrlForTesting(const GURL& url);
 
   // Calling this method will lead to the cancellation of the previous prerender
   // if the given `canonical_search_url` differs from the ongoing one's.
@@ -72,29 +84,9 @@ class PrerenderManager : public content::WebContentsObserver,
 
   // Cancels the prerender that is prerendering the given
   // `canonical_search_url`.
-  // TODO(https://crbug.com/1295170): Use the creator's address to identify the
+  // TODO(crbug.com/40214220): Use the creator's address to identify the
   // owner that can cancels the corresponding prerendering?
   void StopPrerenderSearchResult(const GURL& canonical_search_url);
-
-  // The entry of bookmark prerender.
-  // Calling this method will return WeakPtr of the started prerender, and lead
-  // to the cancellation of the previous prerender if the given url is different
-  // from the on-going one. If the url given is already on-going, this function
-  // will return the weak pointer to the on-going prerender handle.
-  base::WeakPtr<content::PrerenderHandle> StartPrerenderBookmark(
-      const GURL& prerendering_url,
-      content::PreloadingPredictor predictor);
-  void StopPrerenderBookmark(
-      base::WeakPtr<content::PrerenderHandle> prerender_handle);
-
-  // The entry of new tab page prerender.
-  // Calling this method will return WeakPtr of the started prerender, and lead
-  // to the cancellation of the previous prerender if the given url is different
-  // from the on-going one. If the url given is already on-going, this function
-  // will return the weak pointer to the on-going prerender handle.
-  base::WeakPtr<content::PrerenderHandle> StartPrerenderNewTabPage(
-      const GURL& prerendering_url,
-      content::PreloadingPredictor predictor);
 
   // The entry of direct url input prerender.
   // Calling this method will return WeakPtr of the started prerender, and lead
@@ -103,8 +95,6 @@ class PrerenderManager : public content::WebContentsObserver,
   // will return the weak pointer to the on-going prerender handle.
   // PreloadingAttempt represents the attempt corresponding to this prerender to
   // log the necessary metrics.
-  // TODO(https://crbug.com/1278634): Merge the start method with DSE interface
-  // using AutocompleteMatch as the parameter instead of GURL.
   base::WeakPtr<content::PrerenderHandle> StartPrerenderDirectUrlInput(
       const GURL& prerendering_url,
       content::PreloadingAttempt& preloading_attempt);
@@ -118,10 +108,6 @@ class PrerenderManager : public content::WebContentsObserver,
   // Returns the prerendered search terms if search_prerender_task_ exists.
   // Returns empty string otherwise.
   const GURL GetPrerenderCanonicalSearchURLForTesting() const;
-
-  void set_skip_template_url_service_for_testing() {
-    skip_template_url_service_for_testing_ = true;
-  }
 
  private:
   class SearchPrerenderTask;
@@ -142,27 +128,15 @@ class PrerenderManager : public content::WebContentsObserver,
       const GURL& canonical_search_url,
       base::WeakPtr<content::PreloadingAttempt> attempt);
 
-  void StartPrerenderSearchResultInternal(
-      const GURL& canonical_search_url,
-      const GURL& prerendering_url,
-      base::WeakPtr<content::PreloadingAttempt> attempt);
-
-  // Stops search prefetch from being upgraded to prerender.
-  void UnregisterSearchPrerender();
+  std::unique_ptr<content::PrerenderHandle> search_prewarm_handle_;
+  std::optional<GURL> prewarm_url_for_testing_;
 
   // Stores the prerender which serves for search results. It is responsible for
-  // tracking a started search prerender, and it keeps alive even if the
-  // prerender has been destroyed by the timer. With its help, PrerenderManager
-  // can record the prediction regardless whether a prerender is expired or not.
+  // tracking a started search prerender, and informing `SearchPrefetchService`
+  // of the prerender status.
   std::unique_ptr<SearchPrerenderTask> search_prerender_task_;
 
-  std::unique_ptr<content::PrerenderHandle> bookmark_prerender_handle_;
-
-  std::unique_ptr<content::PrerenderHandle> new_tab_page_prerender_handle_;
-
   std::unique_ptr<content::PrerenderHandle> direct_url_input_prerender_handle_;
-
-  bool skip_template_url_service_for_testing_ = false;
 
   base::WeakPtrFactory<PrerenderManager> weak_factory_{this};
 

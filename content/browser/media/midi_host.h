@@ -17,7 +17,6 @@
 #include "base/thread_annotations.h"
 #include "base/tuple.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "media/midi/midi_manager.h"
@@ -36,8 +35,7 @@ namespace content {
 
 class CONTENT_EXPORT MidiHost : public midi::MidiManagerClient,
                                 public midi::mojom::MidiSessionProvider,
-                                public midi::mojom::MidiSession,
-                                public base::SupportsWeakPtr<MidiHost> {
+                                public midi::mojom::MidiSession {
  public:
   MidiHost(const MidiHost&) = delete;
   MidiHost& operator=(const MidiHost&) = delete;
@@ -78,6 +76,10 @@ class CONTENT_EXPORT MidiHost : public midi::MidiManagerClient,
 
  protected:
   MidiHost(int renderer_process_id, midi::MidiService* midi_service);
+
+  void SetHasMidiPermissionForTesting(bool value) {
+    has_midi_permission_ = value;
+  }
 
  private:
   // Use this to call methods on |midi_client_|. It makes sure that midi_client_
@@ -134,6 +136,9 @@ class CONTENT_EXPORT MidiHost : public midi::MidiManagerClient,
   // Bound on the IO thread and should only be called there. Use CallClient to
   // call midi::mojom::MidiSessionClient methods.
   mojo::Remote<midi::mojom::MidiSessionClient> midi_client_;
+
+  // WeakPtr factory for CallClient callbacks.
+  base::WeakPtrFactory<MidiHost> weak_ptr_factory_{this};
 };
 
 }  // namespace content

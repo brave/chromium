@@ -4,15 +4,20 @@
 
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_ambient_provider_impl.h"
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "ash/ambient/ambient_controller.h"
 #include "ash/ambient/metrics/ambient_metrics.h"
-#include "ash/constants/ambient_theme.h"
+#include "ash/ambient/util/ambient_util.h"
+#include "ash/ambient/util/time_of_day_utils.h"
 #include "ash/constants/ambient_video.h"
 #include "ash/constants/ash_features.h"
+#include "ash/constants/ash_pref_names.h"
+#include "ash/constants/geolocation_access_level.h"
 #include "ash/controls/contextual_tooltip.h"
 #include "ash/public/cpp/ambient/ambient_backend_controller.h"
 #include "ash/public/cpp/ambient/ambient_client.h"
@@ -30,8 +35,7 @@
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/notreached.h"
-#include "base/ranges/algorithm.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/ambient_video_albums.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_manager.h"
@@ -39,11 +43,11 @@
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_metrics.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chromeos/ash/components/system/statistics_provider.h"
 #include "components/prefs/pref_service.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "net/base/backoff_entry.h"
 #include "personalization_app_ambient_provider_impl.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
 
@@ -51,13 +55,10 @@ namespace ash::personalization_app {
 
 namespace {
 
-// Width and height of the preview images without Jelly.
-constexpr int kBannerWidthPx = 160;
-constexpr int kBannerHeightPx = 160;
-// When Jelly is enabled, the max possible preview image container is 460x290.
+// The max possible preview image container is 460x290.
 // Double the fetched image W/H to stay sharp when scaled down.
-constexpr int kJellyBannerWidthPx = 920;
-constexpr int kJellyBannerHeightPx = 580;
+constexpr int kBannerWidthPx = 920;
+constexpr int kBannerHeightPx = 580;
 
 constexpr int kMaxRetries = 3;
 
@@ -112,6 +113,11 @@ PersonalizationAppAmbientProviderImpl::PersonalizationAppAmbientProviderImpl(
       base::BindRepeating(
           &PersonalizationAppAmbientProviderImpl::OnAmbientUiSettingsChanged,
           base::Unretained(this)));
+  pref_change_registrar_.Add(
+      ash::prefs::kUserGeolocationAccessLevel,
+      base::BindRepeating(&PersonalizationAppAmbientProviderImpl::
+                              NotifyGeolocationPermissionChanged,
+                          base::Unretained(this)));
   ambient_ui_model_observer_.Observe(
       Shell::Get()->ambient_controller()->ambient_ui_model());
 }
@@ -141,6 +147,39 @@ void PersonalizationAppAmbientProviderImpl::IsAmbientModeEnabled(
       pref_service->GetBoolean(ash::ambient::prefs::kAmbientModeEnabled));
 }
 
+bool PersonalizationAppAmbientProviderImpl::
+    IsGeolocationEnabledForSystemServices() {
+  PrefService* pref_service = profile_->GetPrefs();
+  CHECK(pref_service);
+  const auto access_level = static_cast<GeolocationAccessLevel>(
+      pref_service->GetInteger(prefs::kUserGeolocationAccessLevel));
+
+  switch (access_level) {
+    case ash::GeolocationAccessLevel::kAllowed:
+    case ash::GeolocationAccessLevel::kOnlyAllowedForSystem:
+      return true;
+    case ash::GeolocationAccessLevel::kDisallowed:
+      return false;
+  }
+}
+
+bool PersonalizationAppAmbientProviderImpl::IsGeolocationUserModifiable() {
+  PrefService* pref_service = profile_->GetPrefs();
+  CHECK(pref_service);
+  return pref_service->IsUserModifiablePreference(
+      prefs::kUserGeolocationAccessLevel);
+}
+
+void PersonalizationAppAmbientProviderImpl::
+    NotifyGeolocationPermissionChanged() {
+  if (!ambient_observer_remote_.is_bound()) {
+    return;
+  }
+
+  ambient_observer_remote_->OnGeolocationPermissionForSystemServicesChanged(
+      IsGeolocationEnabledForSystemServices(), IsGeolocationUserModifiable());
+}
+
 void PersonalizationAppAmbientProviderImpl::SetAmbientObserver(
     mojo::PendingRemote<ash::personalization_app::mojom::AmbientObserver>
         observer) {
@@ -156,13 +195,14 @@ void PersonalizationAppAmbientProviderImpl::SetAmbientObserver(
   // Call it once to get the current ambient mode enabled status.
   BroadcastAmbientModeEnabledStatus(IsAmbientModeEnabled());
 
+  // Call it once to get the ambient theme preview images.
+  NotifyAmbientThemePreviewImagesChanged();
+
   // Call it once to get the current ambient ui settings.
   OnAmbientUiSettingsChanged();
 
   // Call it once to get the current ambient duration settings.
-  if (ash::features::IsScreenSaverDurationEnabled()) {
-    OnScreenSaverDurationChanged();
-  }
+  OnScreenSaverDurationChanged();
 
   ResetLocalSettings();
 }
@@ -174,21 +214,21 @@ void PersonalizationAppAmbientProviderImpl::SetAmbientModeEnabled(
   pref_service->SetBoolean(ash::ambient::prefs::kAmbientModeEnabled, enabled);
 }
 
-void PersonalizationAppAmbientProviderImpl::SetAnimationTheme(
-    ash::AmbientTheme to_theme) {
+void PersonalizationAppAmbientProviderImpl::SetAmbientTheme(
+    mojom::AmbientTheme to_theme) {
   PrefService* pref_service = profile_->GetPrefs();
   DCHECK(pref_service);
   LogAmbientModeTheme(to_theme);
   AmbientUiSettings orig_settings = GetCurrentUiSettings();
-  AmbientTheme from_theme = orig_settings.theme();
+  mojom::AmbientTheme from_theme = orig_settings.theme();
   if (from_theme == to_theme) {
     return;
   }
 
   // Attempt to retrieve the previously selected video. If not, fallback to the
   // default video. Only applicable when target theme is `AmbientTheme::kVideo`.
-  AmbientVideo video = orig_settings.video().value_or(kDefaultAmbientVideo);
-  if (to_theme == AmbientTheme::kVideo) {
+  AmbientVideo video = orig_settings.video().value_or(GetDefaultAmbientVideo());
+  if (to_theme == mojom::AmbientTheme::kVideo) {
     LogAmbientModeVideo(video);
   }
   AmbientUiSettings(to_theme, video).WriteToPrefService(*pref_service);
@@ -198,35 +238,35 @@ void PersonalizationAppAmbientProviderImpl::SetAnimationTheme(
   //
   // If `settings_` is null, the next call to `FetchSettingsAndAlbums()` will
   // broadcast the `OnTopicSourceChanged()` call that's being done here.
-  if (settings_ && (to_theme == AmbientTheme::kVideo ||
-                    from_theme == AmbientTheme::kVideo)) {
+  if (settings_ && (to_theme == mojom::AmbientTheme::kVideo ||
+                    from_theme == mojom::AmbientTheme::kVideo)) {
     OnTopicSourceChanged();
   }
 }
 
 void PersonalizationAppAmbientProviderImpl::SetTopicSource(
-    ash::AmbientModeTopicSource topic_source) {
-  AmbientTheme current_theme = GetCurrentUiSettings().theme();
+    mojom::TopicSource topic_source) {
+  mojom::AmbientTheme current_theme = GetCurrentUiSettings().theme();
   // The presence of the `kVideo` theme in pref automatically means the `kVideo`
   // topic source is active. `settings_` should be kept as the server's view of
-  // the user's ambient settings, and `SetAnimationTheme(kVideo)` already
+  // the user's ambient settings, and `SetAmbientTheme(kVideo)` already
   // broadcasts an `OnTopicSourceChanged()`, so there's no work to do here.
-  if (current_theme == AmbientTheme::kVideo) {
-    if (topic_source != AmbientModeTopicSource::kVideo) {
+  if (current_theme == mojom::AmbientTheme::kVideo) {
+    if (topic_source != mojom::TopicSource::kVideo) {
       LOG(ERROR) << "Cannot set topic source to "
                  << static_cast<int>(topic_source) << " for video theme";
     }
     return;
   }
 
-  if (topic_source == AmbientModeTopicSource::kVideo) {
+  if (topic_source == mojom::TopicSource::kVideo) {
     LOG(ERROR) << "Video topic source does not apply to theme "
-               << ToString(current_theme);
+               << ambient::util::AmbientThemeToString(current_theme);
     return;
   }
 
   // If this is an Art gallery album page, will select art gallery topic source.
-  if (topic_source == ash::AmbientModeTopicSource::kArtGallery) {
+  if (topic_source == mojom::TopicSource::kArtGallery) {
     MaybeUpdateTopicSource(topic_source);
     return;
   }
@@ -234,12 +274,12 @@ void PersonalizationAppAmbientProviderImpl::SetTopicSource(
   // If this is a Google Photos album page, will
   // 1. Select art gallery topic source if no albums or no album is selected.
   if (settings_->selected_album_ids.empty()) {
-    MaybeUpdateTopicSource(ash::AmbientModeTopicSource::kArtGallery);
+    MaybeUpdateTopicSource(mojom::TopicSource::kArtGallery);
     return;
   }
 
   // 2. Select Google Photos topic source if at least one album is selected.
-  MaybeUpdateTopicSource(ash::AmbientModeTopicSource::kGooglePhotos);
+  MaybeUpdateTopicSource(mojom::TopicSource::kGooglePhotos);
 }
 
 void PersonalizationAppAmbientProviderImpl::SetScreenSaverDuration(
@@ -260,10 +300,10 @@ void PersonalizationAppAmbientProviderImpl::SetTemperatureUnit(
 
 void PersonalizationAppAmbientProviderImpl::SetAlbumSelected(
     const std::string& id,
-    ash::AmbientModeTopicSource topic_source,
+    mojom::TopicSource topic_source,
     bool selected) {
   switch (topic_source) {
-    case (ash::AmbientModeTopicSource::kGooglePhotos): {
+    case (mojom::TopicSource::kGooglePhotos): {
       ash::PersonalAlbum* target_personal_album = FindPersonalAlbumById(id);
       if (!target_personal_album) {
         ambient_receiver_.ReportBadMessage("Invalid album id.");
@@ -282,9 +322,9 @@ void PersonalizationAppAmbientProviderImpl::SetAlbumSelected(
 
       // Update topic source based on selections.
       if (settings_->selected_album_ids.empty()) {
-        settings_->topic_source = ash::AmbientModeTopicSource::kArtGallery;
+        settings_->topic_source = mojom::TopicSource::kArtGallery;
       } else {
-        settings_->topic_source = ash::AmbientModeTopicSource::kGooglePhotos;
+        settings_->topic_source = mojom::TopicSource::kGooglePhotos;
       }
 
       ash::ambient::RecordAmbientModeTotalNumberOfAlbums(
@@ -293,7 +333,7 @@ void PersonalizationAppAmbientProviderImpl::SetAlbumSelected(
           settings_->selected_album_ids.size());
       break;
     }
-    case (ash::AmbientModeTopicSource::kArtGallery): {
+    case (mojom::TopicSource::kArtGallery): {
       // For Art gallery, we set the corresponding setting to be enabled or not
       // based on the selections.
       auto* art_setting = FindArtAlbumById(id);
@@ -304,14 +344,14 @@ void PersonalizationAppAmbientProviderImpl::SetAlbumSelected(
       art_setting->enabled = selected;
       break;
     }
-    case AmbientModeTopicSource::kVideo:
+    case mojom::TopicSource::kVideo:
       if (!selected) {
         DVLOG(4) << "Exactly one video must be selected at all times. Setting "
                     "the desired video to selected==true automatically "
                     "unselects all other videos.";
         return;
       }
-      absl::optional<AmbientVideo> video = FindAmbientVideoByAlbumId(id);
+      std::optional<AmbientVideo> video = FindAmbientVideoByAlbumId(id);
       if (!video) {
         ambient_receiver_.ReportBadMessage("Invalid album id.");
         return;
@@ -341,12 +381,9 @@ void PersonalizationAppAmbientProviderImpl::FetchSettingsAndAlbums() {
   // update the UI with the new settings. If update fails, it will restore
   // previous settings and update UI.
   if (is_updating_backend_) {
-    has_pending_fetch_request_ = true;
     return;
   }
 
-  // TODO(b/161044021): Add a helper function to get all the albums. Currently
-  // only load 100 latest modified albums.
   ash::AmbientBackendController::Get()->FetchSettingsAndAlbums(
       kBannerWidthPx, kBannerHeightPx, /*num_albums=*/100,
       base::BindOnce(
@@ -362,11 +399,17 @@ void PersonalizationAppAmbientProviderImpl::OnAmbientModeEnabledChanged() {
     // incremented though every time the hub is simply opened.
     AmbientUiSettings current_ui_settings = GetCurrentUiSettings();
     LogAmbientModeTheme(current_ui_settings.theme());
-    if (current_ui_settings.theme() == AmbientTheme::kVideo) {
+    if (current_ui_settings.theme() == mojom::AmbientTheme::kVideo) {
       LogAmbientModeVideo(*current_ui_settings.video());
     }
   }
   BroadcastAmbientModeEnabledStatus(enabled);
+  if (!enabled) {
+    // UpdateSettings assumes that ambient is enabled. Since ambient is now
+    // disabled, cancel any requests to update settings.
+    write_weak_factory_.InvalidateWeakPtrs();
+    is_updating_backend_ = false;
+  }
 }
 
 void PersonalizationAppAmbientProviderImpl::BroadcastAmbientModeEnabledStatus(
@@ -388,7 +431,7 @@ void PersonalizationAppAmbientProviderImpl::OnAmbientUiSettingsChanged() {
     return;
   }
 
-  ambient_observer_remote_->OnAnimationThemeChanged(
+  ambient_observer_remote_->OnAmbientThemeChanged(
       GetCurrentUiSettings().theme());
 }
 
@@ -422,16 +465,12 @@ void PersonalizationAppAmbientProviderImpl::OnTopicSourceChanged() {
   // Empty the WebUI store so it doesn't show the previously selected albums'
   // previews.
   OnPreviewsFetched(std::vector<GURL>());
-  if (features::IsPersonalizationJellyEnabled() ||
-      GetCurrentTopicSource() == AmbientModeTopicSource::kGooglePhotos ||
-      GetCurrentTopicSource() == AmbientModeTopicSource::kVideo) {
-    if (is_updating_backend_) {
-      // Once settings updated, fetch preview images.
-      needs_update_previews_ = true;
-    } else {
-      // Fetch preview images if settings have been updated.
-      FetchPreviewImages();
-    }
+  if (is_updating_backend_) {
+    // Once settings updated, fetch preview images.
+    needs_update_previews_ = true;
+  } else {
+    // Fetch preview images if settings have been updated.
+    FetchPreviewImages();
   }
 
   ambient_observer_remote_->OnTopicSourceChanged(GetCurrentTopicSource());
@@ -454,7 +493,7 @@ void PersonalizationAppAmbientProviderImpl::OnAlbumsChanged() {
     album->description = personal_album.description;
     album->number_of_photos = personal_album.number_of_photos;
     album->url = GURL(personal_album.banner_image_url);
-    album->topic_source = ash::AmbientModeTopicSource::kGooglePhotos;
+    album->topic_source = mojom::TopicSource::kGooglePhotos;
     albums.emplace_back(std::move(album));
   }
 
@@ -472,14 +511,14 @@ void PersonalizationAppAmbientProviderImpl::OnAlbumsChanged() {
     album->title = setting.title;
     album->description = setting.description;
     album->url = GURL(setting.preview_image_url);
-    album->topic_source = ash::AmbientModeTopicSource::kArtGallery;
+    album->topic_source = mojom::TopicSource::kArtGallery;
     albums.emplace_back(std::move(album));
   }
 
   // Video:
   AppendAmbientVideoAlbums(
       /*currently_selected_video*/ GetCurrentUiSettings().video().value_or(
-          kDefaultAmbientVideo),
+          GetDefaultAmbientVideo()),
       albums);
 
   ambient_observer_remote_->OnAlbumsChanged(std::move(albums));
@@ -507,99 +546,59 @@ void PersonalizationAppAmbientProviderImpl::UpdateSettings() {
   DCHECK(IsAmbientModeEnabled())
       << "Ambient mode must be enabled to update settings";
   DCHECK(settings_);
-  DCHECK_NE(settings_->topic_source, AmbientModeTopicSource::kVideo)
+  DCHECK_NE(settings_->topic_source, mojom::TopicSource::kVideo)
       << "Ambient backend is not aware of the video topic source";
 
   // Prevent fetch settings callback changing `settings_` and `personal_albums_`
   // while updating.
   read_weak_factory_.InvalidateWeakPtrs();
+  // Cancel in-flight write requests, as this newer update will overwrite them.
+  write_weak_factory_.InvalidateWeakPtrs();
 
-  if (is_updating_backend_) {
-    has_pending_updates_for_backend_ = true;
-    return;
-  }
-
-  has_pending_updates_for_backend_ = false;
   is_updating_backend_ = true;
 
   // Explicitly set show_weather to true to force server to respond with
   // weather information. See: b/158630188.
   settings_->show_weather = true;
 
-  settings_sent_for_update_ = settings_;
   ash::AmbientBackendController::Get()->UpdateSettings(
       *settings_,
       base::BindOnce(&PersonalizationAppAmbientProviderImpl::OnUpdateSettings,
                      write_weak_factory_.GetWeakPtr()));
 }
 
-void PersonalizationAppAmbientProviderImpl::OnUpdateSettings(bool success) {
+void PersonalizationAppAmbientProviderImpl::OnUpdateSettings(
+    bool success,
+    const AmbientSettings& settings) {
   is_updating_backend_ = false;
 
   if (success) {
     update_settings_retry_backoff_.Reset();
-    cached_settings_ = settings_sent_for_update_;
+    OnSettingsAndAlbumsFetched(settings, std::move(personal_albums_));
+    // The request to fetch preview images came in during |UpdateSettings|. Call
+    // it now that updating has finished.
     if (needs_update_previews_) {
       FetchPreviewImages();
     }
   } else {
     update_settings_retry_backoff_.InformOfRequest(/*succeeded=*/false);
+    // When the update fails, send a retry or revert to cached settings.
+    if (update_settings_retry_backoff_.failure_count() <= kMaxRetries) {
+      const base::TimeDelta kDelay =
+          update_settings_retry_backoff_.GetTimeUntilRelease();
+      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&PersonalizationAppAmbientProviderImpl::UpdateSettings,
+                         write_weak_factory_.GetWeakPtr()),
+          kDelay);
+    } else {
+      OnSettingsAndAlbumsFetched(cached_settings_, std::move(personal_albums_));
+    }
   }
-
-  if (MaybeScheduleNewUpdateSettings(success)) {
-    return;
-  }
-
-  UpdateUIWithCachedSettings(success);
-}
-
-bool PersonalizationAppAmbientProviderImpl::MaybeScheduleNewUpdateSettings(
-    bool success) {
-  // If it was unsuccessful to update settings, but have not reached
-  // `kMaxRetries`, then it will retry.
-  const bool need_retry_update_settings_at_backend =
-      !success && update_settings_retry_backoff_.failure_count() <= kMaxRetries;
-
-  // If there has pending updates or need to retry, then updates settings again.
-  const bool should_update_settings_at_backend =
-      has_pending_updates_for_backend_ || need_retry_update_settings_at_backend;
-
-  if (!should_update_settings_at_backend) {
-    return false;
-  }
-
-  const base::TimeDelta kDelay =
-      update_settings_retry_backoff_.GetTimeUntilRelease();
-  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&PersonalizationAppAmbientProviderImpl::UpdateSettings,
-                     write_weak_factory_.GetWeakPtr()),
-      kDelay);
-  return true;
-}
-
-void PersonalizationAppAmbientProviderImpl::UpdateUIWithCachedSettings(
-    bool success) {
-  // If it was unsuccessful to update settings with `kMaxRetries`, need to
-  // restore to cached settings.
-  const bool should_restore_previous_settings =
-      !success && update_settings_retry_backoff_.failure_count() > kMaxRetries;
-
-  // Otherwise, if there has pending fetching request or need to restore
-  // cached settings, then updates the WebUi.
-  const bool should_update_web_ui =
-      has_pending_fetch_request_ || should_restore_previous_settings;
-
-  if (!should_update_web_ui) {
-    return;
-  }
-
-  OnSettingsAndAlbumsFetched(cached_settings_, std::move(personal_albums_));
-  has_pending_fetch_request_ = false;
 }
 
 void PersonalizationAppAmbientProviderImpl::OnSettingsAndAlbumsFetched(
-    const absl::optional<ash::AmbientSettings>& settings,
+    const std::optional<ash::AmbientSettings>& settings,
     ash::PersonalAlbums personal_albums) {
   // `settings` value implies success.
   if (!settings) {
@@ -642,7 +641,7 @@ void PersonalizationAppAmbientProviderImpl::OnSettingsAndAlbumsFetched(
 
 void PersonalizationAppAmbientProviderImpl::SyncSettingsAndAlbums() {
   // Clear the `selected` field, which will be populated with new value below.
-  // It is neceessary if `UpdateSettings()` failed and we need to reset the
+  // It is necessary if `UpdateSettings()` failed and we need to reset the
   // cached settings.
   for (auto& album : personal_albums_.albums) {
     album.selected = false;
@@ -662,13 +661,13 @@ void PersonalizationAppAmbientProviderImpl::SyncSettingsAndAlbums() {
   }
 
   if (settings_->selected_album_ids.empty()) {
-    MaybeUpdateTopicSource(ash::AmbientModeTopicSource::kArtGallery);
+    MaybeUpdateTopicSource(mojom::TopicSource::kArtGallery);
   }
 }
 
 void PersonalizationAppAmbientProviderImpl::MaybeUpdateTopicSource(
-    ash::AmbientModeTopicSource topic_source) {
-  DCHECK_NE(settings_->topic_source, AmbientModeTopicSource::kVideo)
+    mojom::TopicSource topic_source) {
+  DCHECK_NE(settings_->topic_source, mojom::TopicSource::kVideo)
       << "Video topic source should automatically get set via the video "
          "AmbientTheme. Should not be reflected in the server.";
   // If the setting is the same, no need to update.
@@ -686,23 +685,20 @@ void PersonalizationAppAmbientProviderImpl::MaybeUpdateTopicSource(
 void PersonalizationAppAmbientProviderImpl::FetchPreviewImages() {
   needs_update_previews_ = false;
   previews_weak_factory_.InvalidateWeakPtrs();
-  if (GetCurrentUiSettings().theme() == AmbientTheme::kVideo) {
-    absl::optional<AmbientVideo> video = GetCurrentUiSettings().video();
+  if (GetCurrentUiSettings().theme() == mojom::AmbientTheme::kVideo) {
+    std::optional<AmbientVideo> video = GetCurrentUiSettings().video();
     DCHECK(video.has_value());
     auto url_arr =
         AmbientBackendController::Get()->GetTimeOfDayVideoPreviewImageUrls(
             video.value());
     std::vector<GURL> previews;
-    base::ranges::transform(url_arr, std::back_inserter(previews),
-                            [](const char* url) { return GURL(url); });
+    std::ranges::transform(url_arr, std::back_inserter(previews),
+                           [](const char* url) { return GURL(url); });
     OnPreviewsFetched(std::move(previews));
     return;
   }
 
-  const gfx::Size image_size =
-      features::IsPersonalizationJellyEnabled()
-          ? gfx::Size(kJellyBannerWidthPx, kJellyBannerHeightPx)
-          : gfx::Size(kBannerWidthPx, kBannerHeightPx);
+  const gfx::Size image_size = gfx::Size(kBannerWidthPx, kBannerHeightPx);
   ash::AmbientBackendController::Get()->FetchPreviewImages(
       image_size,
       base::BindOnce(&PersonalizationAppAmbientProviderImpl::OnPreviewsFetched,
@@ -715,11 +711,46 @@ void PersonalizationAppAmbientProviderImpl::OnPreviewsFetched(
   ambient_observer_remote_->OnPreviewsFetched(preview_urls);
 }
 
+void PersonalizationAppAmbientProviderImpl::
+    NotifyAmbientThemePreviewImagesChanged() {
+  if (!ambient_observer_remote_.is_bound()) {
+    return;
+  }
+  system::StatisticsProvider::GetInstance()->ScheduleOnMachineStatisticsLoaded(
+      base::BindOnce(
+          &PersonalizationAppAmbientProviderImpl::OnMachineStatisticsReady,
+          ambient_theme_previews_weak_factory_.GetWeakPtr()));
+}
+
+void PersonalizationAppAmbientProviderImpl::OnMachineStatisticsReady() {
+  base::flat_map<mojom::AmbientTheme, GURL> previews;
+  previews.emplace(mojom::AmbientTheme::kSlideshow,
+                   GURL("chrome://personalization/images/slideshow.png"));
+  previews.emplace(mojom::AmbientTheme::kFeelTheBreeze,
+                   GURL("chrome://personalization/images/feel_the_breeze.png"));
+  previews.emplace(mojom::AmbientTheme::kFloatOnBy,
+                   GURL("chrome://personalization/images/float_on_by.png"));
+  if (features::IsTimeOfDayScreenSaverEnabled()) {
+    const std::optional<std::string_view> customization_id =
+        system::StatisticsProvider::GetInstance()->GetMachineStatistic(
+            system::kCustomizationIdKey);
+    DVLOG(1) << __func__
+             << " customization_id= " << customization_id.value_or("null");
+    previews.emplace(
+        mojom::AmbientTheme::kVideo,
+        GURL(customization_id == kJupiterScreensaverCustomizationId
+                 ? "chrome://personalization/time_of_day/thumbnails/jupiter.jpg"
+                 : "chrome://personalization/time_of_day/thumbnails/"
+                   "new_mexico.jpg"));
+  }
+  ambient_observer_remote_->OnAmbientThemePreviewImagesChanged(previews);
+}
+
 ash::PersonalAlbum*
 PersonalizationAppAmbientProviderImpl::FindPersonalAlbumById(
     const std::string& album_id) {
-  auto it = base::ranges::find(personal_albums_.albums, album_id,
-                               &ash::PersonalAlbum::album_id);
+  auto it = std::ranges::find(personal_albums_.albums, album_id,
+                              &ash::PersonalAlbum::album_id);
 
   if (it == personal_albums_.albums.end()) {
     return nullptr;
@@ -730,8 +761,8 @@ PersonalizationAppAmbientProviderImpl::FindPersonalAlbumById(
 
 ash::ArtSetting* PersonalizationAppAmbientProviderImpl::FindArtAlbumById(
     const std::string& album_id) {
-  auto it = base::ranges::find(settings_->art_settings, album_id,
-                               &ash::ArtSetting::album_id);
+  auto it = std::ranges::find(settings_->art_settings, album_id,
+                              &ash::ArtSetting::album_id);
   // Album does not exist any more.
   if (it == settings_->art_settings.end()) {
     return nullptr;
@@ -747,10 +778,9 @@ void PersonalizationAppAmbientProviderImpl::ResetLocalSettings() {
 
   settings_.reset();
   cached_settings_.reset();
-  settings_sent_for_update_.reset();
-  has_pending_fetch_request_ = false;
+  update_settings_retry_backoff_.Reset();
+  fetch_settings_retry_backoff_.Reset();
   is_updating_backend_ = false;
-  has_pending_updates_for_backend_ = false;
 }
 
 void PersonalizationAppAmbientProviderImpl::StartScreenSaverPreview() {
@@ -779,6 +809,25 @@ void PersonalizationAppAmbientProviderImpl::HandleTimeOfDayBannerDismissed() {
       contextual_tooltip::TooltipType::kTimeOfDayFeatureBanner);
 }
 
+void PersonalizationAppAmbientProviderImpl::
+    IsGeolocationEnabledForSystemServices(
+        IsGeolocationEnabledForSystemServicesCallback callback) {
+  std::move(callback).Run(IsGeolocationEnabledForSystemServices());
+}
+
+void PersonalizationAppAmbientProviderImpl::IsGeolocationUserModifiable(
+    IsGeolocationUserModifiableCallback callback) {
+  std::move(callback).Run(IsGeolocationUserModifiable());
+}
+
+void PersonalizationAppAmbientProviderImpl::
+    EnableGeolocationForSystemServices() {
+  PrefService* pref_service = profile_->GetPrefs();
+  pref_service->SetInteger(
+      prefs::kUserGeolocationAccessLevel,
+      static_cast<int>(GeolocationAccessLevel::kOnlyAllowedForSystem));
+}
+
 void PersonalizationAppAmbientProviderImpl::OnAmbientUiVisibilityChanged(
     ash::AmbientUiVisibility visibility) {
   if (ambient_observer_remote_.is_bound()) {
@@ -786,10 +835,10 @@ void PersonalizationAppAmbientProviderImpl::OnAmbientUiVisibilityChanged(
   }
 }
 
-AmbientModeTopicSource
+mojom::TopicSource
 PersonalizationAppAmbientProviderImpl::GetCurrentTopicSource() const {
-  if (GetCurrentUiSettings().theme() == AmbientTheme::kVideo) {
-    return AmbientModeTopicSource::kVideo;
+  if (GetCurrentUiSettings().theme() == mojom::AmbientTheme::kVideo) {
+    return mojom::TopicSource::kVideo;
   } else {
     DCHECK(settings_);
     return settings_->topic_source;

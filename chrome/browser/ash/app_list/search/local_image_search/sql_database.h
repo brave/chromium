@@ -6,17 +6,17 @@
 #define CHROME_BROWSER_ASH_APP_LIST_SEARCH_LOCAL_IMAGE_SEARCH_SQL_DATABASE_H_
 
 #include <memory>
-#include <string>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/sequence_checker.h"
+#include "base/strings/cstring_view.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
+#include "sql/statement_id.h"
 
 namespace sql {
 class Statement;
-class StatementID;
 }  // namespace sql
 
 namespace app_list {
@@ -27,7 +27,7 @@ class SqlDatabase {
  public:
   SqlDatabase(
       const base::FilePath& path_to_db,
-      const std::string& histogram_tag,
+      sql::Database::Tag histogram_tag,
       int current_version_number,
       base::RepeatingCallback<int(SqlDatabase* db)> create_table_schema,
       base::RepeatingCallback<int(SqlDatabase* db, int current_version_number)>
@@ -36,6 +36,8 @@ class SqlDatabase {
   ~SqlDatabase();
   SqlDatabase(const SqlDatabase&) = delete;
   SqlDatabase& operator=(const SqlDatabase&) = delete;
+  SqlDatabase(SqlDatabase&&) = delete;
+  SqlDatabase& operator=(SqlDatabase&&) = delete;
 
   // Opens or initializes the database.
   [[nodiscard]] bool Initialize();
@@ -46,8 +48,10 @@ class SqlDatabase {
   // Allows us to interact with the database. If the database is open, returns
   // a statement that can Bind* and Run(), otherwise nullptr.
   std::unique_ptr<sql::Statement> GetStatementForQuery(
-      const sql::StatementID& sql_from_here,
-      const char* query);
+      sql::StatementID sql_from_here,
+      base::cstring_view query);
+
+  base::FilePath GetPathToDb() const;
 
  private:
   void OnErrorCallback(int error, sql::Statement* stmt);
@@ -67,9 +71,6 @@ class SqlDatabase {
 
   // The path to the *.db file.
   const base::FilePath path_to_db_;
-
-  // The identifying prefix for metrics.
-  const std::string histogram_tag_;
 
   sql::Database db_;
   sql::MetaTable meta_table_;

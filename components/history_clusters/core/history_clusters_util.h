@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "components/history/core/browser/history_types.h"
 #include "url/gurl.h"
 
@@ -87,6 +88,9 @@ bool IsVisitInCategories(const history::ClusterVisit& visit,
 // categories in `categories`.
 bool IsClusterInCategories(const history::Cluster& cluster,
                            const base::flat_set<std::string>& categories);
+
+// Return the set of category ids associated with a given cluster.
+std::set<std::string> GetClusterCategoryIds(const history::Cluster& cluster);
 
 }  // namespace history_clusters
 

@@ -8,21 +8,27 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
+#include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "printing/backend/cups_ipp_constants.h"
 #include "printing/backend/mock_cups_printer.h"
 #include "printing/backend/print_backend_utils.h"
 #include "printing/mojom/print.mojom.h"
+#include "printing/printing_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace printing {
 
 using ::testing::Pointwise;
+using ::testing::UnorderedElementsAre;
+using ::testing::UnorderedElementsAreArray;
 using ::testing::UnorderedPointwise;
 
 // Matches the name field to a string.
@@ -40,6 +46,9 @@ MATCHER(EqualsMediaColEntry, "") {
 
 class MockCupsPrinterWithMarginsAndAttributes : public MockCupsPrinter {
  public:
+  // name and value of IPP attribute; needed to fetch localized display name
+  using LocalizationKey = std::pair<std::string_view, std::string_view>;
+
   MockCupsPrinterWithMarginsAndAttributes() = default;
   ~MockCupsPrinterWithMarginsAndAttributes() override = default;
 
@@ -51,13 +60,13 @@ class MockCupsPrinterWithMarginsAndAttributes : public MockCupsPrinter {
   }
 
   // CupsOptionProvider:
-  std::vector<base::StringPiece> GetSupportedOptionValueStrings(
+  std::vector<std::string_view> GetSupportedOptionValueStrings(
       const char* option_name) const override {
     ipp_attribute_t* attr = GetSupportedOptionValues(option_name);
     if (!attr)
-      return std::vector<base::StringPiece>();
+      return std::vector<std::string_view>();
 
-    std::vector<base::StringPiece> strings;
+    std::vector<std::string_view> strings;
     const int size = ippGetCount(attr);
     strings.reserve(size);
     for (int i = 0; i < size; ++i) {
@@ -87,15 +96,29 @@ class MockCupsPrinterWithMarginsAndAttributes : public MockCupsPrinter {
   bool CheckOptionSupported(const char* name,
                             const char* value) const override {
     NOTREACHED();
-    return false;
   }
 
-  void SetSupportedOptions(base::StringPiece name, ipp_attribute_t* attribute) {
+  const char* GetLocalizedOptionValueName(const char* option_name,
+                                          const char* value) const override {
+    LocalizationKey key = {option_name, value};
+    auto localized_name = localized_strings_.find(key);
+    if (localized_name == localized_strings_.end()) {
+      return nullptr;
+    }
+    return localized_name->second.c_str();
+  }
+
+  void SetSupportedOptions(std::string_view name, ipp_attribute_t* attribute) {
     supported_attributes_[name] = attribute;
   }
 
-  void SetOptionDefault(base::StringPiece name, ipp_attribute_t* attribute) {
+  void SetOptionDefault(std::string_view name, ipp_attribute_t* attribute) {
     default_attributes_[name] = attribute;
+  }
+
+  void SetLocalizedOptionValueNames(
+      std::map<LocalizationKey, std::string> strings) {
+    localized_strings_ = std::move(strings);
   }
 
   void SetMediaColDatabase(ipp_attribute_t* attribute) {
@@ -103,8 +126,11 @@ class MockCupsPrinterWithMarginsAndAttributes : public MockCupsPrinter {
   }
 
  private:
-  std::map<base::StringPiece, ipp_attribute_t*> supported_attributes_;
-  std::map<base::StringPiece, ipp_attribute_t*> default_attributes_;
+  std::map<std::string_view, raw_ptr<ipp_attribute_t, CtnExperimental>>
+      supported_attributes_;
+  std::map<std::string_view, raw_ptr<ipp_attribute_t, CtnExperimental>>
+      default_attributes_;
+  std::map<LocalizationKey, std::string> localized_strings_;
   raw_ptr<ipp_attribute_t, DanglingUntriaged> media_col_database_;
 };
 
@@ -336,6 +362,41 @@ TEST_F(PrintBackendCupsIppHelperTest, CopiesCapable) {
   EXPECT_EQ(2, caps.copies_max);
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+TEST_F(PrintBackendCupsIppHelperTest, PaperMargins) {
+  // There is one borderless variant of the paper. Thus, the total margins
+  // stored will be papers.size() - 1 as borderless margins are not stored
+  // as a separate entry.
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  static const std::array<PaperMargins, 3> kExpectedMarginsUm = {
+      PaperMargins{2960, 3150, 2960, 3150},
+      PaperMargins{3900, 100, 6350, 200},
+      PaperMargins{1000, 1000, 1000, 1000},
+  };
+
+  printer_->SetMediaColDatabase(
+      MakeMediaColDatabase(ipp_, {
+                                     {21000, 29700, 0, 0, 0, 0, {}},
+                                     {21000, 29700, 296, 315, 315, 296, {}},
+                                     {21590, 35560, 635, 20, 10, 390, {}},
+                                     {18200, 25700, 100, 100, 100, 100, {}},
+                                 }));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+  EXPECT_EQ(kExpectedMarginsUm.size(), caps.papers.size());
+
+  std::vector<PaperMargins> supported_margins_um;
+  for (const auto& paper : caps.papers) {
+    ASSERT_TRUE(paper.supported_margins_um().has_value());
+    supported_margins_um.emplace_back(paper.supported_margins_um().value());
+  }
+  EXPECT_THAT(supported_margins_um,
+              UnorderedElementsAreArray(kExpectedMarginsUm));
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 TEST_F(PrintBackendCupsIppHelperTest, CopiesNotCapable) {
   // copies missing, no setup
   PrinterSemanticCapsAndDefaults caps;
@@ -379,8 +440,8 @@ TEST_F(PrintBackendCupsIppHelperTest, DuplexSupported) {
   CapsAndDefaultsFromPrinter(*printer_, &caps);
 
   EXPECT_THAT(caps.duplex_modes,
-              testing::UnorderedElementsAre(mojom::DuplexMode::kSimplex,
-                                            mojom::DuplexMode::kLongEdge));
+              UnorderedElementsAre(mojom::DuplexMode::kSimplex,
+                                   mojom::DuplexMode::kLongEdge));
   EXPECT_EQ(mojom::DuplexMode::kSimplex, caps.duplex_default);
 }
 
@@ -393,8 +454,53 @@ TEST_F(PrintBackendCupsIppHelperTest, DuplexNotSupported) {
   CapsAndDefaultsFromPrinter(*printer_, &caps);
 
   EXPECT_THAT(caps.duplex_modes,
-              testing::UnorderedElementsAre(mojom::DuplexMode::kSimplex));
+              UnorderedElementsAre(mojom::DuplexMode::kSimplex));
   EXPECT_EQ(mojom::DuplexMode::kSimplex, caps.duplex_default);
+}
+
+TEST_F(PrintBackendCupsIppHelperTest, MediaTypes) {
+  printer_->SetSupportedOptions(
+      "media-type",
+      MakeStringCollection(
+          ipp_, {"stationery", "custom-1", "photographic-glossy", "custom-2"}));
+  printer_->SetOptionDefault("media-type", MakeString(ipp_, "stationery"));
+
+  // set mock display names that would be read from the printer's strings file
+  // (printer-strings-uri)
+  printer_->SetLocalizedOptionValueNames({
+      {{"media-type", "stationery"}, "Plain Paper"},
+      {{"media-type", "custom-2"}, "Custom Two"},
+  });
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.default_media_type.vendor_id, "stationery");
+  ASSERT_EQ(caps.media_types.size(), 4U);
+  EXPECT_EQ(caps.media_types[0].vendor_id, "stationery");
+  EXPECT_EQ(caps.media_types[0].display_name, "Plain Paper");
+  EXPECT_EQ(caps.media_types[1].vendor_id, "custom-1");
+  EXPECT_EQ(caps.media_types[1].display_name, "custom-1");
+  EXPECT_EQ(caps.media_types[2].vendor_id, "photographic-glossy");
+  EXPECT_EQ(caps.media_types[2].display_name, "photographic-glossy");
+  EXPECT_EQ(caps.media_types[3].vendor_id, "custom-2");
+  EXPECT_EQ(caps.media_types[3].display_name, "Custom Two");
+}
+
+TEST_F(PrintBackendCupsIppHelperTest, DefaultMediaTypeNotSupported) {
+  printer_->SetSupportedOptions(
+      "media-type",
+      MakeStringCollection(ipp_, {"stationery", "photographic-glossy"}));
+  printer_->SetOptionDefault("media-type",
+                             MakeString(ipp_, "not-actually-supported"));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.default_media_type.vendor_id, "stationery");
+  ASSERT_EQ(caps.media_types.size(), 2U);
+  EXPECT_EQ(caps.media_types[0].vendor_id, "stationery");
+  EXPECT_EQ(caps.media_types[1].vendor_id, "photographic-glossy");
 }
 
 TEST_F(PrintBackendCupsIppHelperTest, A4PaperSupported) {
@@ -404,10 +510,42 @@ TEST_F(PrintBackendCupsIppHelperTest, A4PaperSupported) {
   PrinterSemanticCapsAndDefaults caps;
   CapsAndDefaultsFromPrinter(*printer_, &caps);
 
+  ASSERT_EQ(1U, caps.papers.size());
+
   PrinterSemanticCapsAndDefaults::Paper paper = caps.papers[0];
   EXPECT_EQ(210000, paper.size_um().width());
   EXPECT_EQ(297000, paper.size_um().height());
 }
+
+#if BUILDFLAG(IS_MAC)
+TEST_F(PrintBackendCupsIppHelperTest, NearA4PaperDetected) {
+  printer_->SetMediaColDatabase(
+      MakeMediaColDatabase(ipp_, {{20990, 29704, 10, 10, 10, 10, {}}}));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  ASSERT_EQ(1U, caps.papers.size());
+
+  PrinterSemanticCapsAndDefaults::Paper paper = caps.papers[0];
+  EXPECT_EQ(210000, paper.size_um().width());
+  EXPECT_EQ(297000, paper.size_um().height());
+}
+
+TEST_F(PrintBackendCupsIppHelperTest, NonStandardPaperUnchanged) {
+  printer_->SetMediaColDatabase(
+      MakeMediaColDatabase(ipp_, {{20800, 29500, 10, 10, 10, 10, {}}}));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  ASSERT_EQ(1U, caps.papers.size());
+
+  PrinterSemanticCapsAndDefaults::Paper paper = caps.papers[0];
+  EXPECT_EQ(208000, paper.size_um().width());
+  EXPECT_EQ(295000, paper.size_um().height());
+}
+#endif  // BUILDFLAG(IS_MAC)
 
 TEST_F(PrintBackendCupsIppHelperTest, CustomPaperSupported) {
   printer_->SetMediaColDatabase(MakeMediaColDatabase(
@@ -529,8 +667,8 @@ TEST_F(PrintBackendCupsIppHelperTest, IncludePapersWithSizeRanges) {
 
 // Tests that when the media-col-database contains both bordered and borderless
 // versions of a size, CapsAndDefaultsFromPrinter() takes the bordered version
-// and drops the borderless version.
-TEST_F(PrintBackendCupsIppHelperTest, PreferBorderedSizes) {
+// and marks it as having a borderless variant.
+TEST_F(PrintBackendCupsIppHelperTest, HandleBorderlessVariants) {
   PrinterSemanticCapsAndDefaults caps;
 
   printer_->SetMediaColDatabase(
@@ -542,6 +680,7 @@ TEST_F(PrintBackendCupsIppHelperTest, PreferBorderedSizes) {
   ASSERT_EQ(1U, caps.papers.size());
   EXPECT_NE(gfx::Rect(0, 0, 210000, 297000),
             caps.papers[0].printable_area_um());
+  EXPECT_TRUE(caps.papers[0].has_borderless_variant());
 
   printer_->SetMediaColDatabase(
       MakeMediaColDatabase(ipp_, {
@@ -552,6 +691,7 @@ TEST_F(PrintBackendCupsIppHelperTest, PreferBorderedSizes) {
   ASSERT_EQ(1U, caps.papers.size());
   EXPECT_NE(gfx::Rect(0, 0, 210000, 297000),
             caps.papers[0].printable_area_um());
+  EXPECT_TRUE(caps.papers[0].has_borderless_variant());
 
   // If the only available version of a size is borderless, go ahead and use it.
   // Not sure if any actual printers do this, but it's allowed by the IPP spec.
@@ -563,6 +703,20 @@ TEST_F(PrintBackendCupsIppHelperTest, PreferBorderedSizes) {
   ASSERT_EQ(1U, caps.papers.size());
   EXPECT_EQ(gfx::Rect(0, 0, 210000, 297000),
             caps.papers[0].printable_area_um());
+  EXPECT_FALSE(caps.papers[0].has_borderless_variant());
+
+  // If the only available versions of a size are bordered, there shouldn't be
+  // a borderless variant.
+  printer_->SetMediaColDatabase(
+      MakeMediaColDatabase(ipp_, {
+                                     {21000, 29700, 100, 100, 100, 100, {}},
+                                     {21000, 29700, 200, 200, 200, 200, {}},
+                                 }));
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+  ASSERT_EQ(1U, caps.papers.size());
+  EXPECT_EQ(gfx::Rect(1000, 1000, 210000 - 1000 - 1000, 297000 - 1000 - 1000),
+            caps.papers[0].printable_area_um());
+  EXPECT_FALSE(caps.papers[0].has_borderless_variant());
 }
 
 // At the time of this writing, there are no media-source or media-type
@@ -922,6 +1076,42 @@ TEST_F(PrintBackendCupsIppHelperTest,
            media_info{5800, 4000, 0, 0, 0, 0, {}, false, 0, true, 100000}}));
 }
 
+TEST_F(PrintBackendCupsIppHelperTest,
+       OverrideUnavailableCanonDefaultMediaType) {
+  printer_->SetSupportedOptions(
+      "media-type",
+      MakeStringCollection(ipp_, {"com.canon.unavailable", "stationery"}));
+  printer_->SetOptionDefault("media-type",
+                             MakeString(ipp_, "com.canon.unavailable"));
+
+  printer_->SetLocalizedOptionValueNames({
+      {{"media-type", "com.canon.unavailable"}, "Unavailable Media"},
+      {{"media-type", "stationery"}, "Plain Paper"},
+  });
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+  EXPECT_EQ(caps.default_media_type.vendor_id, "stationery");
+}
+
+TEST_F(PrintBackendCupsIppHelperTest,
+       OverrideUnavailableCanonDefaultMediaTypeStationeryUnavailable) {
+  printer_->SetSupportedOptions(
+      "media-type",
+      MakeStringCollection(ipp_, {"com.canon.unavailable", "not.stationery"}));
+  printer_->SetOptionDefault("media-type",
+                             MakeString(ipp_, "com.canon.unavailable"));
+
+  printer_->SetLocalizedOptionValueNames({
+      {{"media-type", "com.canon.unavailable"}, "Unavailable Media"},
+      {{"media-type", "not.stationery"}, "Not Plain Paper"},
+  });
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+  EXPECT_EQ(caps.default_media_type.vendor_id, "com.canon.unavailable");
+}
+
 #if BUILDFLAG(IS_CHROMEOS)
 TEST_F(PrintBackendCupsIppHelperTest, PinSupported) {
   printer_->SetSupportedOptions("job-password", MakeInteger(ipp_, 4));
@@ -1020,6 +1210,153 @@ TEST_F(PrintBackendCupsIppHelperTest, MediaSource) {
               Pointwise(AdvancedCapabilityName(),
                         {"top", "main", "auto", "tray-3", "tray-4"}));
 }
+
+// Test print-scaling values are correctly stored.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetSupportedOptions(
+      "print-scaling",
+      MakeStringCollection(ipp_, {"auto", "auto-fit", "fill", "fit", "none"}));
+  printer_->SetOptionDefault("print-scaling", MakeString(ipp_, "fit"));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default, mojom::PrintScalingType::kFit);
+  EXPECT_THAT(
+      caps.print_scaling_types,
+      UnorderedElementsAreArray(
+          {mojom::PrintScalingType::kAuto, mojom::PrintScalingType::kAutoFit,
+           mojom::PrintScalingType::kFill, mojom::PrintScalingType::kFit,
+           mojom::PrintScalingType::kNone}));
+}
+
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_CorrectMapping) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  struct ScalingTypeToString {
+    std::string str;
+    mojom::PrintScalingType type;
+  };
+  constexpr std::array<ScalingTypeToString, 5> kScalingTypes{
+      ScalingTypeToString{"auto", mojom::PrintScalingType::kAuto},
+      ScalingTypeToString{"auto-fit", mojom::PrintScalingType::kAutoFit},
+      ScalingTypeToString{"fill", mojom::PrintScalingType::kFill},
+      ScalingTypeToString{"fit", mojom::PrintScalingType::kFit},
+      ScalingTypeToString{"none", mojom::PrintScalingType::kNone}};
+
+  for (const auto& value : kScalingTypes) {
+    printer_->SetSupportedOptions(
+        "print-scaling", MakeStringCollection(ipp_, {value.str.c_str()}));
+    PrinterSemanticCapsAndDefaults caps;
+    CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+    EXPECT_EQ(caps.print_scaling_type_default, value.type);
+    EXPECT_THAT(caps.print_scaling_types,
+                UnorderedElementsAreArray({value.type}));
+  }
+}
+
+// Test first value from supported values is used as default if default is
+// missing.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_NoDefault) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetSupportedOptions(
+      "print-scaling",
+      MakeStringCollection(ipp_, {"auto-fit", "fill", "none"}));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default, mojom::PrintScalingType::kAutoFit);
+  EXPECT_THAT(caps.print_scaling_types,
+              UnorderedElementsAreArray({mojom::PrintScalingType::kAutoFit,
+                                         mojom::PrintScalingType::kFill,
+                                         mojom::PrintScalingType::kNone}));
+}
+
+// Test first value from supported values is used as default if default is
+// unknown.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_DefaultUnknown) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetSupportedOptions(
+      "print-scaling", MakeStringCollection(ipp_, {"fit", "fill", "none"}));
+  printer_->SetOptionDefault("print-scaling", MakeString(ipp_, "value-1"));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default, mojom::PrintScalingType::kFit);
+  EXPECT_THAT(caps.print_scaling_types,
+              UnorderedElementsAreArray({mojom::PrintScalingType::kFit,
+                                         mojom::PrintScalingType::kFill,
+                                         mojom::PrintScalingType::kNone}));
+}
+
+// Test no values are stored when there are no supported values.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_NoValues) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default,
+            mojom::PrintScalingType::kUnknownPrintScalingType);
+  EXPECT_TRUE(caps.print_scaling_types.empty());
+}
+
+// Test no values are stored despite printer saying it has one default value
+// while supported values are empty.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_NoValues2) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetOptionDefault("print-scaling", MakeString(ipp_, "auto"));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default,
+            mojom::PrintScalingType::kUnknownPrintScalingType);
+  EXPECT_TRUE(caps.print_scaling_types.empty());
+}
+
+// Test unknown values are not stored and default is correctly set as first
+// value of known print-scaling types.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_UnknownValues) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetSupportedOptions(
+      "print-scaling",
+      MakeStringCollection(ipp_, {"value-1", "value-2", "auto", "none"}));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default, mojom::PrintScalingType::kAuto);
+  EXPECT_THAT(caps.print_scaling_types,
+              UnorderedElementsAreArray({mojom::PrintScalingType::kAuto,
+                                         mojom::PrintScalingType::kNone}));
+}
+
+// Test default is not set if only unknown values are supported.
+TEST_F(PrintBackendCupsIppHelperTest, PrintScalingTypes_UnknownValues2) {
+  base::test::ScopedFeatureList scoped_enable;
+  scoped_enable.InitAndEnableFeature(features::kApiPrintingMarginsAndScale);
+  printer_->SetSupportedOptions(
+      "print-scaling",
+      MakeStringCollection(ipp_, {"value-1", "value-2", "value-3", "value-4"}));
+
+  PrinterSemanticCapsAndDefaults caps;
+  CapsAndDefaultsFromPrinter(*printer_, &caps);
+
+  EXPECT_EQ(caps.print_scaling_type_default,
+            mojom::PrintScalingType::kUnknownPrintScalingType);
+  EXPECT_TRUE(caps.print_scaling_types.empty());
+}
+
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace printing

@@ -45,7 +45,6 @@ attribution_reporting_promise_test(async t => {
   trigger.aggregatable_values.campaignCounts = 1;
   registerAttributionSrcByImg(createRedirectChain([
     {
-      cookie: attributionDebugCookie,
       trigger,
     },
   ]));

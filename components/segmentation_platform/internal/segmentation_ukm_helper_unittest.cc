@@ -5,6 +5,8 @@
 #include "components/segmentation_platform/internal/segmentation_ukm_helper.h"
 
 #include <cmath>
+#include <optional>
+#include <string_view>
 
 #include "base/bit_cast.h"
 #include "base/strings/string_number_conversions.h"
@@ -24,8 +26,8 @@
 #include "components/segmentation_platform/public/segmentation_platform_service.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using Segmentation_ModelExecution = ukm::builders::Segmentation_ModelExecution;
 
@@ -49,8 +51,8 @@ void CompareEncodeDecodeDifference(float tensor) {
       kRoundingError);
 }
 
-absl::optional<proto::PredictionResult> GetPredictionResult(
-    absl::optional<base::Time> prediction_time = absl::nullopt) {
+std::optional<proto::PredictionResult> GetPredictionResult(
+    std::optional<base::Time> prediction_time = std::nullopt) {
   proto::PredictionResult result;
   result.add_result(0.5);
   result.add_result(0.4);
@@ -90,12 +92,16 @@ class SegmentationUkmHelperTest : public testing::Test {
     SegmentationUkmHelper::GetInstance()->Initialize();
   }
 
-  void ExpectUkmMetrics(const base::StringPiece entry_name,
-                        const std::vector<base::StringPiece>& keys,
-                        const std::vector<int64_t>& values) {
+  void ExpectUkmMetrics(std::string_view entry_name,
+                        const std::vector<std::string_view>& keys,
+                        const std::vector<int64_t>& values,
+                        ukm::SourceId source_id = ukm::kInvalidSourceId) {
     const auto& entries = test_recorder_.GetEntriesByName(entry_name);
     EXPECT_EQ(1u, entries.size());
-    for (const auto* entry : entries) {
+    for (const ukm::mojom::UkmEntry* entry : entries) {
+      if (source_id != ukm::kInvalidSourceId) {
+        EXPECT_EQ(entry->source_id, source_id);
+      }
       const size_t keys_size = keys.size();
       EXPECT_EQ(keys_size, values.size());
       for (size_t i = 0; i < keys_size; ++i) {
@@ -104,7 +110,7 @@ class SegmentationUkmHelperTest : public testing::Test {
     }
   }
 
-  void ExpectEmptyUkmMetrics(const base::StringPiece entry_name) {
+  void ExpectEmptyUkmMetrics(std::string_view entry_name) {
     EXPECT_EQ(0u, test_recorder_.GetEntriesByName(entry_name).size());
   }
 
@@ -173,8 +179,8 @@ TEST_F(SegmentationUkmHelperTest, TestTrainingDataCollectionReporting) {
       proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 10);
   selected_segment.selection_time = base::Time::Now() - base::Seconds(10);
   SegmentationUkmHelper::GetInstance()->RecordTrainingData(
-      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101, input_tensors,
-      outputs, output_indexes,
+      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101,
+      /*ukm_source_id=*/55, input_tensors, outputs, output_indexes,
       GetPredictionResult(selected_segment.selection_time), selected_segment);
   ExpectUkmMetrics(Segmentation_ModelExecution::kEntryName,
                    {Segmentation_ModelExecution::kOptimizationTargetName,
@@ -196,7 +202,8 @@ TEST_F(SegmentationUkmHelperTest, TestTrainingDataCollectionReporting) {
                        SegmentationUkmHelper::FloatToInt64(0.4),
                        proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB,
                        10,
-                   });
+                   },
+                   /*source_id=*/55);
 }
 
 // Tests tensor uploading for default allowed list.
@@ -278,22 +285,25 @@ TEST_F(SegmentationUkmHelperTest, OutputsValidation) {
 
   ukm::SourceId source_id =
       SegmentationUkmHelper::GetInstance()->RecordTrainingData(
-          proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101, input_tensors,
-          outputs, output_indexes, GetPredictionResult(), absl::nullopt);
+          proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101,
+          ukm::kInvalidSourceId, input_tensors, outputs, output_indexes,
+          GetPredictionResult(), std::nullopt);
   ASSERT_EQ(source_id, ukm::kInvalidSourceId);
 
   // output_indexes value too large.
   output_indexes = {100, 1000};
   source_id = SegmentationUkmHelper::GetInstance()->RecordTrainingData(
-      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101, input_tensors,
-      outputs, output_indexes, GetPredictionResult(), absl::nullopt);
+      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101,
+      ukm::kInvalidSourceId, input_tensors, outputs, output_indexes,
+      GetPredictionResult(), std::nullopt);
   ASSERT_EQ(source_id, ukm::kInvalidSourceId);
 
   // Valid outputs.
   output_indexes = {3, 0};
   source_id = SegmentationUkmHelper::GetInstance()->RecordTrainingData(
-      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101, input_tensors,
-      outputs, output_indexes, GetPredictionResult(), absl::nullopt);
+      proto::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 101,
+      ukm::kInvalidSourceId, input_tensors, outputs, output_indexes,
+      GetPredictionResult(), std::nullopt);
   ASSERT_NE(source_id, ukm::kInvalidSourceId);
 }
 

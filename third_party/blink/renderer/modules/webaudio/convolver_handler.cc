@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/platform/audio/reverb.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -36,13 +37,13 @@ constexpr unsigned kDefaultNumberOfOutputChannels = 1;
 }  // namespace
 
 ConvolverHandler::ConvolverHandler(AudioNode& node, float sample_rate)
-    : AudioHandler(kNodeTypeConvolver, node, sample_rate) {
+    : AudioHandler(NodeType::kNodeTypeConvolver, node, sample_rate) {
   AddInput();
   AddOutput(kDefaultNumberOfOutputChannels);
 
   // Node-specific default mixing rules.
   channel_count_ = kDefaultNumberOfInputChannels;
-  SetInternalChannelCountMode(kClampedMax);
+  SetInternalChannelCountMode(V8ChannelCountMode::Enum::kClampedMax);
   SetInternalChannelInterpretation(AudioBus::kSpeakers);
 
   Initialize();
@@ -50,7 +51,7 @@ ConvolverHandler::ConvolverHandler(AudioNode& node, float sample_rate)
   // Until something is connected, we're not actively processing, so disable
   // outputs so that we produce a single channel of silence.  The graph lock is
   // needed to be able to disable outputs.
-  BaseAudioContext::GraphAutoLocker context_locker(Context());
+  DeferredTaskHandler::GraphAutoLocker context_locker(Context());
 
   DisableOutputs();
 }
@@ -95,7 +96,7 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   DCHECK(IsMainThread());
 
   if (!buffer) {
-    BaseAudioContext::GraphAutoLocker context_locker(Context());
+    DeferredTaskHandler::GraphAutoLocker context_locker(Context());
     base::AutoLock locker(process_lock_);
     reverb_.reset();
     shared_buffer_ = nullptr;
@@ -105,9 +106,10 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   if (buffer->sampleRate() != Context()->sampleRate()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "The buffer sample rate of " + String::Number(buffer->sampleRate()) +
-            " does not match the context rate of " +
-            String::Number(Context()->sampleRate()) + " Hz.");
+        StrCat({"The buffer sample rate of ",
+                String::Number(buffer->sampleRate()),
+                " does not match the context rate of ",
+                String::Number(Context()->sampleRate()), " Hz."}));
     return;
   }
 
@@ -124,8 +126,8 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   if (!is_channel_count_good) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "The buffer must have 1, 2, or 4 channels, not " +
-            String::Number(number_of_channels));
+        StrCat({"The buffer must have 1, 2, or 4 channels, not ",
+                String::Number(number_of_channels)}));
     return;
   }
 
@@ -156,7 +158,7 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
     // If any channel is detached, we're supposed to treat it as if all were.
     // This means the buffer effectively has length 0, which is the same as if
     // no buffer were given.
-    BaseAudioContext::GraphAutoLocker context_locker(Context());
+    DeferredTaskHandler::GraphAutoLocker context_locker(Context());
     base::AutoLock locker(process_lock_);
     reverb_.reset();
     shared_buffer_ = nullptr;
@@ -178,7 +180,7 @@ void ConvolverHandler::SetBuffer(AudioBuffer* buffer,
   {
     // The context must be locked since changing the buffer can
     // re-configure the number of channels that are output.
-    BaseAudioContext::GraphAutoLocker context_locker(Context());
+    DeferredTaskHandler::GraphAutoLocker context_locker(Context());
 
     // Synchronize with process().
     base::AutoLock locker(process_lock_);
@@ -234,7 +236,7 @@ unsigned ConvolverHandler::ComputeNumberOfOutputChannels(
 void ConvolverHandler::SetChannelCount(unsigned channel_count,
                                        ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::GraphAutoLocker locker(Context());
+  DeferredTaskHandler::GraphAutoLocker locker(Context());
 
   // channelCount must be 1 or 2
   if (channel_count == 1 || channel_count == 2) {
@@ -252,26 +254,25 @@ void ConvolverHandler::SetChannelCount(unsigned channel_count,
   }
 }
 
-void ConvolverHandler::SetChannelCountMode(const String& mode,
+void ConvolverHandler::SetChannelCountMode(V8ChannelCountMode::Enum mode,
                                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::GraphAutoLocker locker(Context());
+  DeferredTaskHandler::GraphAutoLocker locker(Context());
 
-  ChannelCountMode old_mode = InternalChannelCountMode();
+  V8ChannelCountMode::Enum old_mode = InternalChannelCountMode();
 
   // The channelCountMode cannot be "max".  For a convolver node, the
   // number of input channels must be 1 or 2 (see
   // https://webaudio.github.io/web-audio-api/#audionode-channelcount-constraints)
   // and "max" would be incompatible with that.
-  if (mode == "max") {
+  if (mode == V8ChannelCountMode::Enum::kMax) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "ConvolverNode: channelCountMode cannot be changed to 'max'");
     new_channel_count_mode_ = old_mode;
-  } else if (mode == "explicit") {
-    new_channel_count_mode_ = kExplicit;
-  } else if (mode == "clamped-max") {
-    new_channel_count_mode_ = kClampedMax;
+  } else if (mode == V8ChannelCountMode::Enum::kExplicit ||
+             mode == V8ChannelCountMode::Enum::kClampedMax) {
+    new_channel_count_mode_ = mode;
   } else {
     NOTREACHED();
   }

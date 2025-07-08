@@ -206,7 +206,7 @@ class DuplicateColorsTest(unittest.TestCase):
     self.assertEqual('  %s:2' % helpers.COLOR_PALETTE_RELATIVE_PATH,
                      errors[0].items[1].splitlines()[0])
 
-  def testSucess(self):
+  def testSuccess(self):
     lines = ['<color name="color1">#61000000</color>',
              '<color name="color1">#FFFFFF</color>']
     mock_input_api = MockInputApi()
@@ -266,7 +266,7 @@ class XmlNamespacePrefixesTest(unittest.TestCase):
     self.assertEqual('  chrome/java/res_test/file.xml:1',
                      errors[0].items[0].splitlines()[0])
 
-  def testSucess(self):
+  def testSuccess(self):
     lines = ['xmlns:app="http://schemas.android.com/apk/res-auto"']
     mock_input_api = MockInputApi()
     mock_input_api.files = [MockFile('chrome/java/res_test/file.xml', lines)]
@@ -583,6 +583,119 @@ class StringResourcesTest(unittest.TestCase):
     self.assertEqual('  ui/android/string/chrome_android_string.grd:3',
                      result[0].items[0].splitlines()[0])
 
+
+class BadStyleReferenceTest(unittest.TestCase):
+  def testFailure(self):
+    lines = [
+        ' android:theme="style/foo"',
+        ' android:theme="@stylefoo"',
+        ' android:theme="@foo"',
+        ' android:theme="@foo/foo"',
+        ' android:theme="attr/foo"',
+        ' android:theme="?attrfoo"',
+        ' android:theme="@attr/foo"',
+        ' android:theme="?anroid:attrfoo"',
+        ' android:theme="?foo"',
+        ' android:theme="?foo/foo"',
+        ' android:textAppearance="foo"',
+        ' style="foo"',
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+        MockFile(helpers.COLOR_PALETTE_RELATIVE_PATH, lines)
+    ]
+    warnings = checkxmlstyle._CheckBadStyleReference(mock_input_api,
+                                                     MockOutputApi())
+    self.assertEqual(1, len(warnings))
+    self.assertEqual(12, len(warnings[0].items))
+
+  def testSuccess(self):
+    lines = [
+        ' android:theme="@style/foo"',
+        ' android:theme="?attr/foo"',
+        ' android:theme="?android:attr/foo"',
+        ' android:textAppearance="@style/foo"',
+        ' android:textAppearance="?attr/foo"',
+        ' android:textAppearance="?android:attr/foo"',
+        ' style="@style/foo"',
+        ' style="?attr/foo"',
+        ' style="?android:attr/foo"',
+        ' foo="foo/stuff"',
+        ' foo="foo"',
+        ' foo="@foo"',
+        ' foo="?foo"',
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [MockFile('chrome/java/res_test/colors.xml', lines)]
+    warnings = checkxmlstyle._CheckBadStyleReference(mock_input_api,
+                                                     MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+
+class CheckThemeColorAttributesTest(unittest.TestCase):
+
+  def testValidMacroUsage(self):
+    """Tests that semantic macros in layout.xml are not flagged."""
+    lines = [
+        '<View', '    android:background="@macro/divider_line_bg_color" />'
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+        MockFile('chrome/android/java/res/layout/test_layout_valid.xml', lines)
+    ]
+    warnings = checkxmlstyle._CheckThemeColorAttributes(mock_input_api,
+                                                        MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testInvalidThemeAttributeUsage(self):
+    """Tests that direct theme attribute usage is flagged."""
+    lines = [
+        '<TextView', '    android:textColor="?attr/colorPrimary" />', '<View',
+        '    app:backgroundTint="?attr/colorSurfaceContainer" />'
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+        MockFile('chrome/android/java/res/layout/test_layout_invalid.xml',
+                 lines)
+    ]
+    warnings = checkxmlstyle._CheckThemeColorAttributes(mock_input_api,
+                                                        MockOutputApi())
+    # The check should return one warning object.
+    self.assertEqual(1, len(warnings))
+    # That warning object should contain two items for the two flagged lines.
+    self.assertEqual(2, len(warnings[0].items))
+    self.assertIn('test_layout_invalid.xml:2', warnings[0].items[0])
+    self.assertIn('test_layout_invalid.xml:4', warnings[0].items[1])
+
+  def testNonLayoutFileIsIgnored(self):
+    """Tests that non-layout files are not checked."""
+    lines = [
+        '<style name="OverflowMenuButton">',
+        '    <item name="android:textColor">?attr/colorPrimary</item>',
+        '</style>'
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+        MockFile('chrome/android/java/res/values/styles.xml', lines)
+    ]
+    warnings = checkxmlstyle._CheckThemeColorAttributes(mock_input_api,
+                                                        MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testValidNonColorThemeAttribute(self):
+    """Tests that non-color theme attributes are not flagged."""
+    lines = [
+        '<View', '    android:layout_width="?attr/testWidth" />', '<Button',
+        '    style="?attr/testCustomButtonStyle" />'
+    ]
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+        MockFile('chrome/android/java/res/layout/test_non_color_attr.xml',
+                 lines)
+    ]
+    warnings = checkxmlstyle._CheckThemeColorAttributes(mock_input_api,
+                                                        MockOutputApi())
+    self.assertEqual(0, len(warnings))
 
 if __name__ == '__main__':
   unittest.main()

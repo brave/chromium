@@ -6,11 +6,12 @@
 
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "components/services/filesystem/public/mojom/types.mojom-blink.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -59,7 +60,7 @@ class FileSystemDispatcher::ReadDirectoryListener
       bool has_more) override {
     for (const auto& entry : entries) {
       callbacks_->DidReadDirectoryEntry(
-          FilePathToWebString(entry->name),
+          FilePathToWebString(entry->name.path()),
           entry->type == filesystem::mojom::blink::FsFileType::DIRECTORY);
     }
     callbacks_->DidReadDirectoryEntries(has_more);
@@ -422,8 +423,7 @@ void FileSystemDispatcher::WriteSync(const KURL& path,
 
 void FileSystemDispatcher::Cancel(int request_id_to_cancel,
                                   StatusCallback callback) {
-  if (cancellable_operations_.find(request_id_to_cancel) ==
-      cancellable_operations_.end()) {
+  if (!base::Contains(cancellable_operations_, request_id_to_cancel)) {
     std::move(callback).Run(base::File::FILE_ERROR_INVALID_OPERATION);
     return;
   }
@@ -529,7 +529,7 @@ void FileSystemDispatcher::DidReadDirectory(
   if (error_code == base::File::Error::FILE_OK) {
     for (const auto& entry : entries) {
       callbacks->DidReadDirectoryEntry(
-          FilePathToWebString(entry->name),
+          FilePathToWebString(entry->name.path()),
           entry->type == filesystem::mojom::blink::FsFileType::DIRECTORY);
     }
     callbacks->DidReadDirectoryEntries(false);

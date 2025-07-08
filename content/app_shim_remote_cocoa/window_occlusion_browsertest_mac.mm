@@ -4,38 +4,29 @@
 
 #include <memory>
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
+#include "base/apple/scoped_objc_class_swizzler.h"
 #import "base/mac/mac_util.h"
-#include "base/mac/scoped_objc_class_swizzler.h"
 #import "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #import "content/app_shim_remote_cocoa/web_contents_occlusion_checker_mac.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/common/content_features.h"
+#include "content/common/features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
+using content::DropData;
 using remote_cocoa::mojom::DraggingInfo;
 using remote_cocoa::mojom::DraggingInfoPtr;
 using remote_cocoa::mojom::SelectionDirection;
-using content::DropData;
 
 namespace {
 
 const int kNeverCalled = -100;
 
-struct FeatureState {
-  bool enhanced_occlusion_detection_enabled = false;
-};
-
 struct Version {
-  int32_t major;
-  int32_t minor;
+  int packed_version;
   bool supported;
 };
 
@@ -98,7 +89,7 @@ struct Version {
 - (void)updateWebContentsVisibility:
     (remote_cocoa::mojom::Visibility)windowVisibility {
   WebContentsHostWindowForOcclusionTesting* hostWindow =
-      base::mac::ObjCCast<WebContentsHostWindowForOcclusionTesting>(
+      base::apple::ObjCCast<WebContentsHostWindowForOcclusionTesting>(
           [self window]);
 
   EXPECT_FALSE([hostWindow modifyingChildWindowList]);
@@ -116,7 +107,7 @@ struct Version {
 
 @implementation WebContentVisibilityUpdateWatcher
 
-+ (std::unique_ptr<base::mac::ScopedObjCClassSwizzler>&)
++ (std::unique_ptr<base::apple::ScopedObjCClassSwizzler>&)
     performOcclusionStateUpdatesSwizzler {
   // The swizzler needs to be generally available (i.e. not stored in an
   // instance variable) because we want to call the original
@@ -126,15 +117,17 @@ struct Version {
   // not WebContentVisibilityUpdateWatcher, so it has no access to any
   // instance variables we define for WebContentVisibilityUpdateWatcher.
   // Storing the swizzler in a static makes it available to any caller.
-  static base::NoDestructor<std::unique_ptr<base::mac::ScopedObjCClassSwizzler>>
+  static base::NoDestructor<
+      std::unique_ptr<base::apple::ScopedObjCClassSwizzler>>
       performOcclusionStateUpdatesSwizzler;
 
   return *performOcclusionStateUpdatesSwizzler;
 }
 
-+ (std::unique_ptr<base::mac::ScopedObjCClassSwizzler>&)
++ (std::unique_ptr<base::apple::ScopedObjCClassSwizzler>&)
     setWebContentsOccludedSwizzler {
-  static base::NoDestructor<std::unique_ptr<base::mac::ScopedObjCClassSwizzler>>
+  static base::NoDestructor<
+      std::unique_ptr<base::apple::ScopedObjCClassSwizzler>>
       setWebContentsOccludedSwizzler;
 
   return *setWebContentsOccludedSwizzler;
@@ -153,13 +146,13 @@ struct Version {
   // The tests should access WebContentsOcclusionCheckerMac directly, rather
   // than through NSClassFromString(). See crbug.com/1450724 .
   [WebContentVisibilityUpdateWatcher performOcclusionStateUpdatesSwizzler] =
-      std::make_unique<base::mac::ScopedObjCClassSwizzler>(
+      std::make_unique<base::apple::ScopedObjCClassSwizzler>(
           NSClassFromString(@"WebContentsOcclusionCheckerMac"),
           [WebContentVisibilityUpdateWatcher class],
           @selector(performOcclusionStateUpdates));
 
   [WebContentVisibilityUpdateWatcher setWebContentsOccludedSwizzler] =
-      std::make_unique<base::mac::ScopedObjCClassSwizzler>(
+      std::make_unique<base::apple::ScopedObjCClassSwizzler>(
           NSClassFromString(@"WebContentsViewCocoa"),
           [WebContentVisibilityUpdateWatcher class],
           @selector(performDelayedSetWebContentsOccluded));
@@ -217,8 +210,9 @@ struct Version {
 
 @implementation WebContentVisibilityUpdateCounter
 
-+ (std::unique_ptr<base::mac::ScopedObjCClassSwizzler>&)swizzler {
-  static base::NoDestructor<std::unique_ptr<base::mac::ScopedObjCClassSwizzler>>
++ (std::unique_ptr<base::apple::ScopedObjCClassSwizzler>&)swizzler {
+  static base::NoDestructor<
+      std::unique_ptr<base::apple::ScopedObjCClassSwizzler>>
       swizzler;
 
   return *swizzler;
@@ -240,7 +234,7 @@ struct Version {
 
   // Set up the swizzling.
   [WebContentVisibilityUpdateCounter swizzler] =
-      std::make_unique<base::mac::ScopedObjCClassSwizzler>(
+      std::make_unique<base::apple::ScopedObjCClassSwizzler>(
           NSClassFromString(@"WebContentsOcclusionCheckerMac"),
           [WebContentVisibilityUpdateCounter class],
           @selector(scheduleOcclusionStateUpdates));
@@ -276,7 +270,7 @@ class WebContentsNSViewHostStub
  public:
   WebContentsNSViewHostStub() = default;
 
-  void OnMouseEvent(bool motion, bool exited) override {}
+  void OnMouseEvent(std::unique_ptr<ui::Event> event) override {}
 
   void OnBecameFirstResponder(SelectionDirection direction) override {}
 
@@ -315,6 +309,7 @@ class WebContentsNSViewHostStub
   bool DragPromisedFileTo(const ::base::FilePath& file_path,
                           const ::content::DropData& drop_data,
                           const ::GURL& download_url,
+                          const ::url::Origin& source_origin,
                           ::base::FilePath* out_file_path) override {
     return false;
   }
@@ -322,6 +317,7 @@ class WebContentsNSViewHostStub
   void DragPromisedFileTo(const ::base::FilePath& file_path,
                           const ::content::DropData& drop_data,
                           const ::GURL& download_url,
+                          const ::url::Origin& source_origin,
                           DragPromisedFileToCallback callback) override {}
 
   void EndDrag(uint32_t drag_operation,
@@ -333,21 +329,8 @@ class WebContentsNSViewHostStub
 };
 
 // Sets up occlusion tests.
-class WindowOcclusionBrowserTestMac
-    : public ::testing::WithParamInterface<FeatureState>,
-      public ContentBrowserTest {
+class WindowOcclusionBrowserTestMac : public ContentBrowserTest {
  public:
-  WindowOcclusionBrowserTestMac() {
-    if (GetParam().enhanced_occlusion_detection_enabled) {
-      base::FieldTrialParams params;
-      params["EnhancedWindowOcclusionDetection"] = "true";
-      features_.InitAndEnableFeatureWithParameters(
-          features::kMacWebContentsOcclusion, params);
-    } else {
-      features_.InitAndDisableFeature(features::kMacWebContentsOcclusion);
-    }
-  }
-
   void SetUp() override {
     if (![NSClassFromString(@"WebContentsOcclusionCheckerMac")
             manualOcclusionDetectionSupportedForCurrentMacOSVersion]) {
@@ -397,9 +380,6 @@ class WindowOcclusionBrowserTestMac
   }
 
   void WaitForOcclusionUpdate() {
-    if (!base::FeatureList::IsEnabled(features::kMacWebContentsOcclusion))
-      return;
-
     while ([[NSClassFromString(@"WebContentsOcclusionCheckerMac")
                sharedInstance] occlusionStateUpdatesAreScheduledForTesting] ||
            WebContentsAwaitingUpdates()) {
@@ -480,20 +460,14 @@ class WindowOcclusionBrowserTestMac
   void OrderWindowFront(NSWindow* window) {
     [[maybe_unused]] WebContentVisibilityUpdateCounter* watcher;
 
-    if (!kEnhancedWindowOcclusionDetection.Get()) {
-      watcher = [[WebContentVisibilityUpdateCounter alloc] init];
-    }
-
-    [window orderWindow:NSWindowAbove relativeTo:0];
+    [window orderFront:nil];
     ASSERT_TRUE([window isVisible]);
 
-    if (kEnhancedWindowOcclusionDetection.Get()) {
-      WaitForOcclusionUpdate();
-    }
+    WaitForOcclusionUpdate();
   }
 
   void OrderWindowOut(NSWindow* window) {
-    [window orderWindow:NSWindowOut relativeTo:0];
+    [window orderOut:nil];
     ASSERT_FALSE(window.visible);
 
     WaitForOcclusionUpdate();
@@ -575,86 +549,24 @@ class WindowOcclusionBrowserTestMac
   WebContentsNSViewHostStub host_a_;
 };
 
-using WindowOcclusionBrowserTestMacWithoutOcclusionFeature =
-    WindowOcclusionBrowserTestMac;
-using WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature =
-    WindowOcclusionBrowserTestMac;
-
-// Tests that should only work without the occlusion detection feature.
-INSTANTIATE_TEST_SUITE_P(NoFeature,
-                         WindowOcclusionBrowserTestMacWithoutOcclusionFeature,
-                         ::testing::Values(FeatureState{
-                             .enhanced_occlusion_detection_enabled = false}));
-
-// Tests that should work with or without the occlusion detection feature.
-INSTANTIATE_TEST_SUITE_P(
-    Common,
-    WindowOcclusionBrowserTestMac,
-    ::testing::Values(
-        FeatureState{.enhanced_occlusion_detection_enabled = false},
-        FeatureState{.enhanced_occlusion_detection_enabled = true}));
-
-// Tests that require enhanced window occlusion detection.
-INSTANTIATE_TEST_SUITE_P(
-    EnhancedWindowOcclusionDetection,
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ::testing::Values(FeatureState{
-        .enhanced_occlusion_detection_enabled = true}));
-
 // Tests that we correctly disallow unsupported macOS versions.
-IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMac, MacOSVersionChecking) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac, MacOSVersionChecking) {
   Class WebContentsOcclusionCheckerMac =
       NSClassFromString(@"WebContentsOcclusionCheckerMac");
   std::vector<Version> versions = {
-      {11, 0, true},  {12, 0, true},  {12, 9, true}, {13, 0, false},
-      {13, 1, false}, {13, 2, false}, {13, 3, true}, {14, 0, true}};
+      {11'00'00, true},  {12'00'00, true},  {12'09'00, true}, {13'00'00, false},
+      {13'01'00, false}, {13'02'00, false}, {13'03'00, true}, {14'00'00, true}};
 
   for (const auto& version : versions) {
-    bool supported = [WebContentsOcclusionCheckerMac manualOcclusionDetectionSupportedForVersion:version.major
-                                                                                                :version.minor];
+    bool supported = [WebContentsOcclusionCheckerMac
+        manualOcclusionDetectionSupportedForPackedVersion:version
+                                                              .packed_version];
     EXPECT_EQ(supported, version.supported);
   }
 }
 
-// Tests that enhanced occlusion detection isn't triggered if the feature's
-// not enabled.
-IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMacWithoutOcclusionFeature,
-                       ManualOcclusionDetectionDisabled) {
-  InitWindowA();
-
-  // Create a second window and place it exactly over window_a. The window
-  // should still be considered visible.
-  InitWindowB([window_a_ frame]);
-  EXPECT_EQ(WindowAWebContentsVisibility(),
-            remote_cocoa::mojom::Visibility::kVisible);
-}
-
-// Test that display sleep and app hide detection don't work if the feature's
-// not enabled.
-IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMacWithoutOcclusionFeature,
-                       OcclusionDetectionOnDisplaySleepDisabled) {
-  InitWindowA();
-
-  EXPECT_EQ(WindowAWebContentsVisibility(),
-            remote_cocoa::mojom::Visibility::kVisible);
-
-  // Fake a display sleep notification.
-  ASSERT_TRUE(NSWorkspace.sharedWorkspace.notificationCenter);
-  [[maybe_unused]] WebContentVisibilityUpdateCounter* watcher =
-      [[WebContentVisibilityUpdateCounter alloc] init];
-
-  [NSWorkspace.sharedWorkspace.notificationCenter
-      postNotificationName:NSWorkspaceScreensDidSleepNotification
-                    object:nil
-                  userInfo:nil];
-
-  EXPECT_TRUE([WebContentVisibilityUpdateCounter methodNeverCalled]);
-  EXPECT_EQ(WindowAWebContentsVisibility(),
-            remote_cocoa::mojom::Visibility::kVisible);
-}
-
 // Test that we properly handle occlusion notifications from macOS.
-IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMac,
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
                        MacOSOcclusionNotifications) {
   InitWindowA();
 
@@ -671,9 +583,8 @@ IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMac,
             remote_cocoa::mojom::Visibility::kVisible);
 }
 
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ManualOcclusionDetection) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ManualOcclusionDetection) {
   InitWindowA();
 
   // Create a second window and place it exactly over window_a. Unlike macOS,
@@ -709,9 +620,8 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Checks manual occlusion detection as windows change display order.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ManualOcclusionDetectionOnWindowOrderChange) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ManualOcclusionDetectionOnWindowOrderChange) {
   InitWindowA();
 
   // Size and position the second window so that it exactly covers the
@@ -733,9 +643,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Checks that window_a, occluded by window_b, transitions to kVisible while the
 // user resizes window_b.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ManualOcclusionDetectionOnWindowLiveResize) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ManualOcclusionDetectionOnWindowLiveResize) {
   InitWindowA();
 
   // Size and position the second window so that it exactly covers the
@@ -764,9 +673,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Checks that window_a, occluded by window_b, transitions to kVisible when
 // window_b is set to close.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ManualOcclusionDetectionOnWindowClose) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ManualOcclusionDetectionOnWindowClose) {
   InitWindowA();
 
   // Size and position the second window so that it exactly covers the
@@ -787,9 +695,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Checks that window_a, occluded by window_b and window_c, remains kOccluded
 // when window_b is set to close.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ManualOcclusionDetectionOnMiddleWindowClose) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ManualOcclusionDetectionOnMiddleWindowClose) {
   InitWindowA();
 
   // Size and position the second window so that it exactly covers the
@@ -820,9 +727,8 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Checks that web contents are marked kHidden on display sleep.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    OcclusionDetectionOnDisplaySleep) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       OcclusionDetectionOnDisplaySleep) {
   InitWindowA();
 
   EXPECT_EQ(WindowAWebContentsVisibility(),
@@ -843,9 +749,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Checks that occlusion updates are ignored in between fullscreen transition
 // notifications.
-IN_PROC_BROWSER_TEST_P(
+IN_PROC_BROWSER_TEST_F(
     WindowOcclusionBrowserTestMac,
-    //                       WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
     IgnoreOcclusionUpdatesBetweenWindowFullscreenTransitionNotifications) {
   InitWindowA();
 
@@ -906,9 +811,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Tests that each web contents in a window receives an updated occlusion
 // state updated.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    OcclusionDetectionForMultipleWebContents) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       OcclusionDetectionForMultipleWebContents) {
   InitWindowA();
 
   EXPECT_EQ(WindowAWebContentsVisibility(),
@@ -959,7 +863,7 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Checks that web contentses are marked kHidden on WebContentsViewCocoa hide.
-IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMac,
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
                        OcclusionDetectionOnWebContentsViewCocoaHide) {
   InitWindowA();
 
@@ -986,7 +890,7 @@ IN_PROC_BROWSER_TEST_P(WindowOcclusionBrowserTestMac,
 
 // Checks that web contentses are marked kHidden on WebContentsViewCocoa removal
 // from the view hierarchy.
-IN_PROC_BROWSER_TEST_P(
+IN_PROC_BROWSER_TEST_F(
     WindowOcclusionBrowserTestMac,
     OcclusionDetectionOnWebContentsViewCocoaRemoveFromSuperview) {
   InitWindowA();
@@ -1023,9 +927,8 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Checks that web contentses are marked kHidden on window miniaturize.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    OcclusionDetectionOnWindowMiniaturize) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       OcclusionDetectionOnWindowMiniaturize) {
   InitWindowA();
 
   EXPECT_EQ(WindowAWebContentsVisibility(),
@@ -1051,9 +954,8 @@ IN_PROC_BROWSER_TEST_P(
 // triggering a visibility update, which causes a visibility watcher to add
 // a second child window (while we're still inside AppKit code adding the
 // first).
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    ChildWindowListMutationDuringManualOcclusionDetection) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       ChildWindowListMutationDuringManualOcclusionDetection) {
   InitWindowA();
 
   const NSRect kContentRect = NSMakeRect(0.0, 0.0, 20.0, 20.0);
@@ -1082,9 +984,8 @@ IN_PROC_BROWSER_TEST_P(
 
 // Tests that when a window becomes a child, if the occlusion system
 // previously marked it occluded, the window transitions to visible.
-IN_PROC_BROWSER_TEST_P(
-    WindowOcclusionBrowserTestMacWithOcclusionDetectionFeature,
-    WindowMadeChildForcedVisible) {
+IN_PROC_BROWSER_TEST_F(WindowOcclusionBrowserTestMac,
+                       WindowMadeChildForcedVisible) {
   InitWindowA();
 
   // Create a second window that occludes window_a.

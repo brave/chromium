@@ -8,6 +8,7 @@ import android.content.Context;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.feedback.FeedbackSource;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -17,26 +18,24 @@ import java.util.HashMap;
 import java.util.Map;
 
 /** Feedback Source around relevant user and UI settings for auto dark mode. */
+@NullMarked
 public class AutoDarkFeedbackSource implements FeedbackSource {
-    @VisibleForTesting
-    static final String AUTO_DARK_FEEDBACK_KEY = "auto_dark_web_content_enabled";
-    @VisibleForTesting
-    static final String ENABLED_VALUE = "Enabled";
+    @VisibleForTesting static final String AUTO_DARK_FEEDBACK_KEY = "auto_dark_web_content_enabled";
+    @VisibleForTesting static final String ENABLED_VALUE = "Enabled";
 
     /** Feature flag for auto dark is disabled. */
-    @VisibleForTesting
-    static final String DISABLED_VALUE = "Disabled";
+    @VisibleForTesting static final String DISABLED_VALUE = "Disabled";
 
     private final HashMap<String, String> mMap;
 
     public AutoDarkFeedbackSource(Profile profile, Context context, GURL url) {
-        mMap = new HashMap<String, String>(1);
+        mMap = new HashMap<>(1);
 
         // Ignore user settings in incognito, or not in auto dark feature is not enabled.
         if (profile.isOffTheRecord()) return;
 
         if (!ChromeFeatureList.isEnabled(
-                    ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING)) {
+                ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING)) {
             mMap.put(AUTO_DARK_FEEDBACK_KEY, DISABLED_VALUE);
         } else {
             boolean enabledState =

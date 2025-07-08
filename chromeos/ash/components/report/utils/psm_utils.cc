@@ -18,17 +18,13 @@ namespace {
 
 std::string GetDigestString(const std::string& key,
                             const std::string& message) {
-  crypto::HMAC hmac(crypto::HMAC::SHA256);
-  std::vector<uint8_t> digest(hmac.DigestLength());
-  if (!hmac.Init(key) || !hmac.Sign(message, &digest[0], digest.size())) {
-    return std::string();
-  }
-  return base::HexEncode(&digest[0], digest.size());
+  return base::HexEncode(crypto::hmac::SignSha256(base::as_byte_span(key),
+                                                  base::as_byte_span(message)));
 }
 
 }  // namespace
 
-absl::optional<psm_rlwe::RlwePlaintextId> GeneratePsmIdentifier(
+std::optional<psm_rlwe::RlwePlaintextId> GeneratePsmIdentifier(
     const std::string& high_entropy_seed,
     const std::string& psm_use_case_str,
     const std::string& window_id) {
@@ -37,25 +33,16 @@ absl::optional<psm_rlwe::RlwePlaintextId> GeneratePsmIdentifier(
     LOG(ERROR)
         << "Failed to generate PSM id without the high entropy seed, use "
         << "case, and window id being defined.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   std::string unhashed_psm_id =
       base::JoinString({psm_use_case_str, window_id}, "|");
 
-  // Represents a 64 byte hex encoded value by default.
-  std::string psm_id_str = GetDigestString(high_entropy_seed, unhashed_psm_id);
-
-  if (!psm_id_str.empty()) {
-    psm_rlwe::RlwePlaintextId psm_rlwe_id;
-    psm_rlwe_id.set_sensitive_id(psm_id_str);
-
-    return psm_rlwe_id;
-  }
-
-  // Failed HMAC-SHA256 hash on PSM id.
-  LOG(ERROR) << "Failed to calculate HMAC-256 has on PSM id.";
-  return absl::nullopt;
+  psm_rlwe::RlwePlaintextId psm_rlwe_id;
+  psm_rlwe_id.set_sensitive_id(
+      GetDigestString(high_entropy_seed, unhashed_psm_id));
+  return psm_rlwe_id;
 }
 
 }  // namespace ash::report::utils

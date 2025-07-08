@@ -2,30 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
-
 #import <Cocoa/Cocoa.h>
 #include <objc/runtime.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
+#import "base/apple/foundation_util.h"
+#import "base/apple/scoped_objc_class_swizzler.h"
 #include "base/functional/bind.h"
-#import "base/mac/foundation_util.h"
 #import "base/mac/mac_util.h"
-#import "base/mac/scoped_objc_class_swizzler.h"
 #include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #import "components/remote_cocoa/app_shim/bridged_content_view.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
 #import "testing/gtest_mac.h"
 #include "ui/base/cocoa/find_pasteboard.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/ime/input_method.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #import "ui/base/test/cocoa_helper.h"
 #include "ui/display/screen.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
@@ -42,15 +45,11 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using base::ASCIIToUTF16;
-using base::SysNSStringToUTF8;
 using base::SysNSStringToUTF16;
-using base::SysUTF8ToNSString;
+using base::SysNSStringToUTF8;
 using base::SysUTF16ToNSString;
+using base::SysUTF8ToNSString;
 
 #define EXPECT_EQ_RANGE(a, b)        \
   EXPECT_EQ(a.location, b.location); \
@@ -146,8 +145,9 @@ void SetCompositionText(ui::TextInputClient* client,
   composition.selection = gfx::Range(caret_pos);
   composition.text = composition_text;
   client->SetCompositionText(composition);
-  if (caret_range)
+  if (caret_range) {
     *caret_range = NSMakeRange(caret_pos, 0);
+  }
 }
 
 // Returns a zero width rectangle corresponding to current caret position.
@@ -187,8 +187,8 @@ gfx::Rect GetExpectedBoundsForRange(ui::TextInputClient* client,
 // Uses the NSTextInputClient protocol to extract a substring from |view|.
 NSString* GetViewStringForRange(NSView<NSTextInputClient>* view,
                                 NSRange range) {
-  return [[view attributedSubstringForProposedRange:range actualRange:nullptr]
-      string];
+  return [[view attributedSubstringForProposedRange:range
+                                        actualRange:nullptr] string];
 }
 
 // The behavior of NSTextView for RTL strings is buggy for some move and select
@@ -419,7 +419,7 @@ class MockNativeWidgetMac : public NativeWidgetMac {
 
     // Usually the bridge gets initialized here. It is skipped to run extra
     // checks in tests, and so that a second window isn't created.
-    delegate()->OnNativeWidgetCreated();
+    delegate_for_testing()->OnNativeWidgetCreated();
 
     // To allow events to dispatch to a view, it needs a way to get focus.
     SetFocusManager(GetWidget()->GetFocusManager());
@@ -432,13 +432,16 @@ class MockNativeWidgetMac : public NativeWidgetMac {
 
 // Helper test base to construct a NativeWidgetNSWindowBridge with a valid
 // parent.
-class BridgedNativeWidgetTestBase : public ui::CocoaTest {
+class BridgedNativeWidgetTestBase : public ui::CocoaTest,
+                                    public WidgetObserver {
  public:
   struct SkipInitialization {};
 
   BridgedNativeWidgetTestBase()
       : widget_(new Widget),
-        native_widget_mac_(new MockNativeWidgetMac(widget_.get())) {}
+        native_widget_mac_(new MockNativeWidgetMac(widget_.get())) {
+    observation_.Observe(widget_.get());
+  }
 
   explicit BridgedNativeWidgetTestBase(SkipInitialization tag)
       : native_widget_mac_(nullptr) {}
@@ -448,10 +451,11 @@ class BridgedNativeWidgetTestBase : public ui::CocoaTest {
       delete;
 
   remote_cocoa::NativeWidgetNSWindowBridge* bridge() {
-    return native_widget_mac_->GetInProcessNSWindowBridge();
+    return native_widget_mac_ ? native_widget_mac_->GetInProcessNSWindowBridge()
+                              : nullptr;
   }
   NativeWidgetMacNSWindowHost* GetNSWindowHost() {
-    return native_widget_mac_->GetNSWindowHost();
+    return native_widget_mac_ ? native_widget_mac_->GetNSWindowHost() : nullptr;
   }
 
   // Generate an autoreleased KeyDown NSEvent* in |widget_| for pressing the
@@ -473,50 +477,62 @@ class BridgedNativeWidgetTestBase : public ui::CocoaTest {
   void SetUp() override {
     ui::CocoaTest::SetUp();
 
-    Widget::InitParams init_params;
+    Widget::InitParams init_params(ownership_);
     init_params.native_widget = native_widget_mac_.get();
     init_params.type = type_;
-    init_params.ownership = ownership_;
     init_params.opacity = opacity_;
     init_params.bounds = bounds_;
     init_params.shadow_type = shadow_type_;
 
-    if (native_widget_mac_)
+    if (native_widget_mac_) {
       native_widget_mac_->GetWidget()->Init(std::move(init_params));
+    }
   }
 
   void TearDown() override {
     // ui::CocoaTest::TearDown will wait until all NSWindows are destroyed, so
     // be sure to destroy the widget (which will destroy its NSWindow)
     // beforehand.
-    widget_.reset();
+    native_widget_mac_ = nullptr;
+    if (widget_) {
+      observation_.Reset();
+      widget_->CloseNow();
+    }
     ui::CocoaTest::TearDown();
   }
 
   NSWindow* bridge_window() const {
-    if (auto* bridge = native_widget_mac_->GetInProcessNSWindowBridge())
+    if (auto* bridge = native_widget_mac_->GetInProcessNSWindowBridge()) {
       return bridge->ns_window();
+    }
     return nil;
   }
 
   bool BridgeWindowHasShadow() {
-    return
-        [base::mac::ObjCCast<NativeWidgetMacNSWindowForTesting>(bridge_window())
-            hasShadowForTesting];
+    return [base::apple::ObjCCast<NativeWidgetMacNSWindowForTesting>(
+        bridge_window()) hasShadowForTesting];
+  }
+
+  // Overridden from WidgetObserver:
+  void OnWidgetDestroyed(Widget* widget) override {
+    native_widget_mac_ = nullptr;
+    if (observation_.IsObservingSource(widget)) {
+      observation_.Reset();
+    }
   }
 
  protected:
   std::unique_ptr<Widget> widget_;
-  raw_ptr<MockNativeWidgetMac, DanglingUntriaged>
-      native_widget_mac_;  // Weak. Owned by |widget_|.
+  base::ScopedObservation<Widget, WidgetObserver> observation_{this};
+  raw_ptr<MockNativeWidgetMac> native_widget_mac_;  // Owned by `widget_`.
 
   // Use a frameless window, otherwise Widget will try to center the window
   // before the tests covering the Init() flow are ready to do that.
   Widget::InitParams::Type type_ = Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   // To control the lifetime without an actual window that must be closed,
-  // tests in this file need to use WIDGET_OWNS_NATIVE_WIDGET.
+  // tests in this file use CLIENT_OWNS_WIDGET.
   Widget::InitParams::Ownership ownership_ =
-      Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+      Widget::InitParams::CLIENT_OWNS_WIDGET;
   // Opacity defaults to "infer" which is usually updated by ViewsDelegate.
   Widget::InitParams::WindowOpacity opacity_ =
       Widget::InitParams::WindowOpacity::kOpaque;
@@ -625,6 +641,8 @@ class BridgedNativeWidgetTest : public BridgedNativeWidgetTestBase,
 // Class that counts occurrences of a VKEY_RETURN accelerator, marking them
 // processed.
 class EnterAcceleratorView : public View {
+  METADATA_HEADER(EnterAcceleratorView, View)
+
  public:
   EnterAcceleratorView() { AddAccelerator({ui::VKEY_RETURN, 0}); }
   int count() const { return count_; }
@@ -639,6 +657,9 @@ class EnterAcceleratorView : public View {
   int count_ = 0;
 };
 
+BEGIN_METADATA(EnterAcceleratorView)
+END_METADATA
+
 BridgedNativeWidgetTest::BridgedNativeWidgetTest() = default;
 
 BridgedNativeWidgetTest::~BridgedNativeWidgetTest() = default;
@@ -651,7 +672,7 @@ Textfield* BridgedNativeWidgetTest::InstallTextField(
   textfield->SetTextInputType(text_input_type);
   textfield->set_controller(this);
   view_->RemoveAllChildViews();
-  view_->AddChildView(textfield);
+  view_->AddChildViewRaw(textfield);
   textfield->SetBoundsRect(bounds_);
 
   // Request focus so the InputMethod can dispatch events to the RootView, and
@@ -699,7 +720,7 @@ NSRange BridgedNativeWidgetTest::GetExpectedSelectionRange() {
 }
 
 void BridgedNativeWidgetTest::SetSelectionRange(NSRange range) {
-  ui::TextInputClient* client = [ns_view_ textInputClient];
+  ui::TextInputClient* client = [ns_view_ textInputClientForTesting];
   client->SetEditableSelectionRange(gfx::Range(range));
 
   [dummy_text_view_ setSelectedRange:range];
@@ -711,7 +732,7 @@ void BridgedNativeWidgetTest::PerformCommand(SEL sel) {
 }
 
 void BridgedNativeWidgetTest::MakeSelection(int start, int end) {
-  ui::TextInputClient* client = [ns_view_ textInputClient];
+  ui::TextInputClient* client = [ns_view_ textInputClientForTesting];
   const gfx::Range range(start, end);
 
   // Although a gfx::Range is directed, the underlying model will not choose an
@@ -743,7 +764,7 @@ void BridgedNativeWidgetTest::SetUp() {
   EXPECT_TRUE([window delegate]);
   GetNSWindowHost()->SetRootView(view_.get());
   bridge()->CreateContentView(GetNSWindowHost()->GetRootViewNSViewId(),
-                              view_->bounds());
+                              view_->bounds(), std::nullopt);
   ns_view_ = bridge()->ns_view();
 
   // Pretend it has been shown via NativeWidgetMac::Show().
@@ -765,8 +786,9 @@ void BridgedNativeWidgetTest::TearDown() {
 
 bool BridgedNativeWidgetTest::HandleKeyEvent(Textfield* sender,
                                              const ui::KeyEvent& key_event) {
-  if (handle_key_event_callback_)
+  if (handle_key_event_callback_) {
     return handle_key_event_callback_.Run(sender, key_event);
+  }
   return false;
 }
 
@@ -871,8 +893,9 @@ void BridgedNativeWidgetTest::TestEditingCommands(NSArray* selectors) {
 
           // Bail out early for selection-modifying commands that are buggy in
           // Cocoa, since the selected text will not match.
-          if (test_case.is_rtl && i != j && IsRTLSelectBuggy(sel))
+          if (test_case.is_rtl && i != j && IsRTLSelectBuggy(sel)) {
             continue;
+          }
 
           PerformCommand(sel);
           EXPECT_NSEQ(GetExpectedSelectedText(), GetActualSelectedText());
@@ -973,15 +996,20 @@ class BridgedNativeWidgetInitTest : public BridgedNativeWidgetTestBase {
 
   // Prepares a new |window_| and |widget_| for a call to PerformInit().
   void CreateNewWidgetToInit() {
+    native_widget_mac_ = nullptr;
+    if (widget_) {
+      observation_.Reset();
+      widget_->CloseNow();
+    }
     widget_ = std::make_unique<Widget>();
+    observation_.Observe(widget_.get());
     native_widget_mac_ = new MockNativeWidgetMac(widget_.get());
   }
 
   void PerformInit() {
-    Widget::InitParams init_params;
+    Widget::InitParams init_params(ownership_);
     init_params.native_widget = native_widget_mac_.get();
     init_params.type = type_;
-    init_params.ownership = ownership_;
     init_params.opacity = opacity_;
     init_params.bounds = bounds_;
     init_params.shadow_type = shadow_type_;
@@ -1000,6 +1028,7 @@ TEST_F(BridgedNativeWidgetInitTest, InitNotCalled) {
   native_widget_mac_ = native_widget.get();
   EXPECT_FALSE(bridge());
   EXPECT_FALSE(GetNSWindowHost()->GetInProcessNSWindow());
+  native_widget_mac_ = nullptr;
 }
 
 // Tests the shadow type given in InitParams.
@@ -1032,8 +1061,6 @@ TEST_F(BridgedNativeWidgetInitTest, ShadowType) {
   CreateNewWidgetToInit();
   PerformInit();
   EXPECT_TRUE(BridgeWindowHasShadow());  // Preserves shadow.
-
-  widget_.reset();
 }
 
 // Ensure a nil NSTextInputContext is returned when the ui::TextInputClient is
@@ -1464,8 +1491,9 @@ TEST_F(BridgedNativeWidgetTest, NilTextInputClient) {
   // doCommandBySelector: (it calls -insertText: directly instead).
   [selectors addObjectsFromArray:kMiscActions];
 
-  for (NSString* selector in selectors)
+  for (NSString* selector in selectors) {
     [ns_view_ doCommandBySelector:NSSelectorFromString(selector)];
+  }
 
   [ns_view_ insertText:@""];
 }
@@ -1479,7 +1507,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_Transpose) {
 // empty or outside composition range.
 TEST_F(BridgedNativeWidgetTest, TextInput_FirstRectForCharacterRange_Caret) {
   InstallTextField("");
-  ui::TextInputClient* client = [ns_view_ textInputClient];
+  ui::TextInputClient* client = [ns_view_ textInputClientForTesting];
 
   // No composition. Ensure bounds and range corresponding to the current caret
   // position are returned.
@@ -1541,7 +1569,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_FirstRectForCharacterRange_Caret) {
 // the composition range.
 TEST_F(BridgedNativeWidgetTest, TextInput_FirstRectForCharacterRange) {
   InstallTextField("");
-  ui::TextInputClient* client = [ns_view_ textInputClient];
+  ui::TextInputClient* client = [ns_view_ textInputClientForTesting];
 
   const std::u16string test_string = u"test_str";
   const size_t kTextLength = 8;
@@ -1569,7 +1597,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_FirstRectForCharacterRange) {
 // phonetic languages such as Korean and Vietnamese.
 TEST_F(BridgedNativeWidgetTest, TextInput_SimulatePhoneticIme) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   object_setClass(ns_view_, [InterpretKeyEventMockedBridgedContentView class]);
 
@@ -1641,7 +1669,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_SimulatePhoneticIme) {
 // no candidate IME window to dismiss for this IME.
 TEST_F(BridgedNativeWidgetTest, TextInput_SimulateTelexMoo) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   EnterAcceleratorView* enter_view = new EnterAcceleratorView();
   textfield->parent()->AddChildView(enter_view);
@@ -1707,7 +1735,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_SimulateTelexMoo) {
 // suppressing accelerators.
 TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorPinyinSelectWord) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   EnterAcceleratorView* enter_view = new EnterAcceleratorView();
   textfield->parent()->AddChildView(enter_view);
@@ -1793,7 +1821,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorPinyinSelectWord) {
 // accelerators.
 TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorEnterComposition) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   EnterAcceleratorView* enter_view = new EnterAcceleratorView();
   textfield->parent()->AddChildView(enter_view);
@@ -1803,7 +1831,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorEnterComposition) {
   // Note 0 is the actual keyCode for 'a', not a placeholder.
   NSEvent* a_in_ime = UnicodeKeyDown(0, @"a");
   InterpretKeyEventsCallback handle_a_in_ime = base::BindRepeating([](id view) {
-    // TODO(crbug/612675): |text| should be an NSAttributedString.
+    // TODO(crbug.com/41254370): |text| should be an NSAttributedString.
     [view setMarkedText:@"あ"
            selectedRange:NSMakeRange(1, 0)
         replacementRange:NSMakeRange(NSNotFound, 0)];
@@ -1843,7 +1871,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorEnterComposition) {
 // suppressing accelerators.
 TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorTabEnterComposition) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   EnterAcceleratorView* enter_view = new EnterAcceleratorView();
   textfield->parent()->AddChildView(enter_view);
@@ -1852,7 +1880,7 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorTabEnterComposition) {
   // with Hiragana IME and pressing 'a', Tab, then Enter on the keyboard.
   NSEvent* a_in_ime = UnicodeKeyDown(0, @"a");
   InterpretKeyEventsCallback handle_a_in_ime = base::BindRepeating([](id view) {
-    // TODO(crbug/612675): |text| should have an underline.
+    // TODO(crbug.com/41254370): |text| should have an underline.
     [view setMarkedText:@"あ"
            selectedRange:NSMakeRange(1, 0)
         replacementRange:NSMakeRange(NSNotFound, 0)];
@@ -1860,8 +1888,8 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorTabEnterComposition) {
 
   InterpretKeyEventsCallback handle_tab_in_ime =
       base::BindRepeating([](id view) {
-        // TODO(crbug/612675): |text| should be an NSAttributedString (now with
-        // a different underline color).
+        // TODO(crbug.com/41254370): |text| should be an NSAttributedString (now
+        // with a different underline color).
         [view setMarkedText:@"a"
                selectedRange:NSMakeRange(0, 1)
             replacementRange:NSMakeRange(NSNotFound, 0)];
@@ -1924,13 +1952,13 @@ TEST_F(BridgedNativeWidgetTest, TextInput_NoAcceleratorTabEnterComposition) {
 // change. Twice.
 TEST_F(BridgedNativeWidgetTest, TextInput_RecursiveUpdateWindows) {
   Textfield* textfield = InstallTextField("");
-  EXPECT_TRUE([ns_view_ textInputClient]);
+  EXPECT_TRUE([ns_view_ textInputClientForTesting]);
 
   object_setClass(ns_view_, [InterpretKeyEventMockedBridgedContentView class]);
-  base::mac::ScopedObjCClassSwizzler update_windows_swizzler(
+  base::apple::ScopedObjCClassSwizzler update_windows_swizzler(
       [NSApplication class], [UpdateWindowsDonorForNSApp class],
       @selector(updateWindows));
-  base::mac::ScopedObjCClassSwizzler current_input_context_swizzler(
+  base::apple::ScopedObjCClassSwizzler current_input_context_swizzler(
       [NSTextInputContext class],
       [CurrentInputContextDonorForNSTextInputContext class],
       @selector(currentInputContext));
@@ -2060,9 +2088,9 @@ TEST_F(BridgedNativeWidgetTest, TextInput_WriteToPasteboard) {
 }
 
 TEST_F(BridgedNativeWidgetTest, WriteToFindPasteboard) {
-  base::mac::ScopedObjCClassSwizzler swizzler([FindPasteboard class],
-                                              [MockFindPasteboard class],
-                                              @selector(sharedInstance));
+  base::apple::ScopedObjCClassSwizzler swizzler([FindPasteboard class],
+                                                [MockFindPasteboard class],
+                                                @selector(sharedInstance));
   EXPECT_NSEQ(@"", [[FindPasteboard sharedInstance] findText]);
 
   const std::string test_string = "foo bar baz";

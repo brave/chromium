@@ -94,6 +94,13 @@ bool DesktopMessagePopupCollection::BlockForMixedFullscreen(
   return false;
 }
 
+bool DesktopMessagePopupCollection::CanUseTransformForBoundsAnimation() const {
+  // Desktop message popups are desktop widgets. Transform could not be used
+  // for bounds change because each widget hosts a window tree and transform
+  // could not show contents outside the window tree.
+  return false;
+}
+
 // Anytime the display configuration changes, we need to recompute the alignment
 // on the primary display. But, we get different events on different platforms.
 // On Windows, for example, when switching from a laptop display to an external
@@ -115,9 +122,9 @@ void DesktopMessagePopupCollection::OnDisplayAdded(
   UpdatePrimaryDisplay();
 }
 
-void DesktopMessagePopupCollection::OnDisplayRemoved(
-    const display::Display& removed_display) {
-  // The removed display may have been the primary display.
+void DesktopMessagePopupCollection::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
+  // One of the removed displays may have been the primary display.
   UpdatePrimaryDisplay();
 }
 

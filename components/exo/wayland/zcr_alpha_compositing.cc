@@ -7,6 +7,7 @@
 #include <alpha-compositing-unstable-v1-server-protocol.h>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "components/exo/surface.h"
 #include "components/exo/surface_observer.h"
 #include "components/exo/wayland/server_util.h"
@@ -62,7 +63,7 @@ class Blending : public SurfaceObserver {
   }
 
  private:
-  raw_ptr<Surface, ExperimentalAsh> surface_;
+  raw_ptr<Surface> surface_;
 };
 
 void blending_destroy(wl_client* client, wl_resource* resource) {

@@ -28,9 +28,7 @@ import java.util.ArrayList;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- *  An Instrumentation that runs tests based on NativeTest.
- */
+/** An Instrumentation that runs tests based on NativeTest. */
 public class NativeTestInstrumentationTestRunner extends Instrumentation {
     private static final String EXTRA_NATIVE_TEST_ACTIVITY =
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.NativeTestActivity";
@@ -44,32 +42,37 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.TestList";
     private static final String EXTRA_TEST =
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.Test";
+    // An extra to indicate if user data dir should be kept when running the
+    // given test list. no-op if given a single test.
+    private static final String EXTRA_KEEP_USER_DATA_DIR =
+            "org.chromium.native_test.NativeTestInstrumentationTestRunner.KeepUserDataDir";
 
-    private static final String TAG = "NativeTest";
+    private static final String TAG = "NativeTestRunner";
 
     private static final long DEFAULT_SHARD_NANO_TIMEOUT = 60 * 1000000000L;
     // Default to no size limit.
     private static final int DEFAULT_SHARD_SIZE_LIMIT = 0;
 
-    private Handler mHandler = new Handler();
-    private Bundle mLogBundle = new Bundle();
-    private SparseArray<ShardMonitor> mMonitors = new SparseArray<ShardMonitor>();
+    private final Handler mHandler = new Handler();
+    private final Bundle mLogBundle = new Bundle();
+    private final SparseArray<ShardMonitor> mMonitors = new SparseArray<ShardMonitor>();
     private String mNativeTestActivity;
     private TestStatusReceiver mReceiver;
-    private Queue<String> mShards = new ArrayDeque<String>();
+    private final Queue<ShardMetadata> mShards = new ArrayDeque<ShardMetadata>();
     private long mShardNanoTimeout = DEFAULT_SHARD_NANO_TIMEOUT;
     private int mShardSizeLimit = DEFAULT_SHARD_SIZE_LIMIT;
     private File mStdoutFile;
     private Bundle mTransparentArguments;
+    private boolean mKeepUserDataDir;
 
     @Override
     public void onCreate(Bundle arguments) {
-        Context context = getContext();
         mTransparentArguments = new Bundle(arguments);
 
         mNativeTestActivity = arguments.getString(EXTRA_NATIVE_TEST_ACTIVITY);
         if (mNativeTestActivity == null) {
-            Log.e(TAG,
+            Log.e(
+                    TAG,
                     "Unable to find org.chromium.native_test.NativeUnitTestActivity extra on "
                             + "NativeTestInstrumentationTestRunner launch intent.");
             finish(Activity.RESULT_CANCELED, new Bundle());
@@ -90,8 +93,9 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
             mStdoutFile = new File(stdoutFile);
         } else {
             try {
-                mStdoutFile = File.createTempFile(
-                        ".temp_stdout_", ".txt", Environment.getExternalStorageDirectory());
+                mStdoutFile =
+                        File.createTempFile(
+                                ".temp_stdout_", ".txt", Environment.getExternalStorageDirectory());
                 Log.i(TAG, "stdout file created: " + mStdoutFile.getAbsolutePath());
             } catch (IOException e) {
                 Log.e(TAG, "Unable to create temporary stdout file.", e);
@@ -102,14 +106,22 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
 
         mTransparentArguments.remove(EXTRA_STDOUT_FILE);
 
+        mKeepUserDataDir = arguments.containsKey(EXTRA_KEEP_USER_DATA_DIR);
+        if (mKeepUserDataDir) {
+            Log.i(TAG, "user data dir will be kept between the given tests.");
+        }
+        mTransparentArguments.remove(EXTRA_KEEP_USER_DATA_DIR);
+
         String singleTest = arguments.getString(EXTRA_TEST);
         if (singleTest != null) {
-            mShards.add(singleTest);
+            mShards.add(new ShardMetadata(singleTest, false));
         }
 
         String testListFilePath = arguments.getString(EXTRA_TEST_LIST_FILE);
         if (testListFilePath != null) {
             File testListFile = new File(testListFilePath);
+
+            boolean isFirstTest = true;
             try {
                 BufferedReader testListFileReader =
                         new BufferedReader(new FileReader(testListFile));
@@ -117,15 +129,26 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
                 String test;
                 ArrayList<String> workingShard = new ArrayList<String>();
                 while ((test = testListFileReader.readLine()) != null) {
+                    // For multiple tests passed via a test list file, data
+                    // in user data dir should:
+                    //  - Be cleaned before the 1st test, and
+                    //  - Kept in the followed tests.
+                    boolean keepUserDataDirForTest = mKeepUserDataDir && !isFirstTest;
+                    isFirstTest = false;
                     workingShard.add(test);
                     if (workingShard.size() == mShardSizeLimit) {
-                        mShards.add(TextUtils.join(":", workingShard));
+                        mShards.add(
+                                new ShardMetadata(
+                                        TextUtils.join(":", workingShard), keepUserDataDirForTest));
                         workingShard = new ArrayList<String>();
                     }
                 }
 
                 if (!workingShard.isEmpty()) {
-                    mShards.add(TextUtils.join(":", workingShard));
+                    boolean keepUserDataDirForTest = mKeepUserDataDir && !isFirstTest;
+                    mShards.add(
+                            new ShardMetadata(
+                                    TextUtils.join(":", workingShard), keepUserDataDirForTest));
                 }
 
                 testListFileReader.close();
@@ -145,45 +168,68 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
 
         mReceiver = new TestStatusReceiver();
         mReceiver.register(getContext());
-        mReceiver.registerCallback(new TestStatusReceiver.TestRunCallback() {
-            @Override
-            public void testRunStarted(int pid) {
-                if (pid != Process.myPid()) {
-                    ShardMonitor m = new ShardMonitor(pid, System.nanoTime() + mShardNanoTimeout);
-                    mMonitors.put(pid, m);
-                    mHandler.post(m);
-                }
-            }
+        mReceiver.registerCallback(
+                new TestStatusReceiver.TestRunCallback() {
+                    @Override
+                    public void testRunStarted(int pid) {
+                        if (pid != Process.myPid()) {
+                            ShardMonitor m =
+                                    new ShardMonitor(pid, System.nanoTime() + mShardNanoTimeout);
+                            mMonitors.put(pid, m);
+                            mHandler.post(m);
+                        }
+                    }
 
-            @Override
-            public void testRunFinished(int pid) {
-                ShardMonitor m = mMonitors.get(pid);
-                if (m != null) {
-                    m.stopped();
-                    mMonitors.remove(pid);
-                }
-                mHandler.post(new ShardEnder(pid));
-            }
+                    @Override
+                    public void testRunFinished(int pid) {
+                        ShardMonitor m = mMonitors.get(pid);
+                        if (m != null) {
+                            m.stopped();
+                            mMonitors.remove(pid);
+                        }
+                        mHandler.post(new ShardEnder(pid));
+                    }
 
-            @Override
-            public void uncaughtException(int pid, String stackTrace) {
-                mLogBundle.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
-                        String.format("Uncaught exception in test process (pid: %d)%n%s%n", pid,
-                                stackTrace));
-                sendStatus(0, mLogBundle);
-            }
-        });
+                    @Override
+                    public void uncaughtException(int pid, String stackTrace) {
+                        mLogBundle.putString(
+                                Instrumentation.REPORT_KEY_STREAMRESULT,
+                                String.format(
+                                        "Uncaught exception in test process (pid: %d)%n%s%n",
+                                        pid, stackTrace));
+                        sendStatus(0, mLogBundle);
+                    }
+                });
 
         mHandler.post(new ShardStarter());
+    }
+
+    /** Stores the metadata for a test shard. */
+    private static class ShardMetadata {
+        private final String mGtestFilter;
+        private final boolean mKeepUserDataDir;
+
+        public ShardMetadata(String gtestFilter, boolean keepUserDataDir) {
+            mGtestFilter = gtestFilter;
+            mKeepUserDataDir = keepUserDataDir;
+        }
+
+        public String getGtestFilter() {
+            return mGtestFilter;
+        }
+
+        public boolean shouldKeepUserDataDir() {
+            return mKeepUserDataDir;
+        }
     }
 
     /** Monitors a test shard's execution. */
     private class ShardMonitor implements Runnable {
         private static final int MONITOR_FREQUENCY_MS = 1000;
 
-        private long mExpirationNanoTime;
-        private int mPid;
-        private AtomicBoolean mStopped;
+        private final long mExpirationNanoTime;
+        private final int mPid;
+        private final AtomicBoolean mStopped;
 
         public ShardMonitor(int pid, long expirationNanoTime) {
             mPid = pid;
@@ -233,16 +279,17 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         i.putExtras(mTransparentArguments);
         if (mShards != null && !mShards.isEmpty()) {
-            String gtestFilter = mShards.remove();
-            i.putExtra(NativeTestIntent.EXTRA_GTEST_FILTER, gtestFilter);
+            ShardMetadata shardMetadata = mShards.remove();
+            i.putExtra(NativeTestIntent.EXTRA_GTEST_FILTER, shardMetadata.getGtestFilter());
+            i.putExtra(
+                    NativeTestIntent.EXTRA_KEEP_USER_DATA_DIR,
+                    shardMetadata.shouldKeepUserDataDir());
         }
         i.putExtra(NativeTestIntent.EXTRA_STDOUT_FILE, mStdoutFile.getAbsolutePath());
         return i;
     }
 
-    /**
-     * Starts the NativeTest Activity.
-     */
+    /** Starts the NativeTest Activity. */
     private class ShardStarter implements Runnable {
         @Override
         public void run() {
@@ -253,7 +300,7 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
     private class ShardEnder implements Runnable {
         private static final int WAIT_FOR_DEATH_MILLIS = 10;
 
-        private int mPid;
+        private final int mPid;
 
         public ShardEnder(int pid) {
             mPid = pid;

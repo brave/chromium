@@ -4,32 +4,38 @@
 
 #include "chrome/updater/cleanup_task.h"
 
+#include <optional>
+#include <utility>
+
+#include "base/check_op.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/sequence_checker.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/updater/app/app_uninstall.h"
+#include "chrome/updater/configurator.h"
+#include "chrome/updater/persisted_data.h"
 #include "chrome/updater/updater_version.h"
 #include "chrome/updater/util/util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/update_client/crx_cache.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/updater/util/win_util.h"
 #endif
 
 namespace updater {
-
 namespace {
 
-// Versions up to this version will be uninstalled.
-constexpr char kCleanupVersionMax[] = "117.0.5859.0";
+constexpr int kMilestoneDeletionThreshold = 8;
 
 void CleanupGoogleUpdate(UpdaterScope scope) {
 #if BUILDFLAG(IS_WIN)
@@ -41,29 +47,29 @@ void CleanupGoogleUpdate(UpdaterScope scope) {
 }
 
 void CleanupOldUpdaterVersions(UpdaterScope scope) {
-  CHECK(base::Version(kCleanupVersionMax).IsValid());
-  CHECK(base::Version(kUpdaterVersion)
-            .CompareTo(base::Version(kCleanupVersionMax)) > 0);
-  absl::optional<base::FilePath> dir = GetInstallDirectory(scope);
+  base::Version cleanup_max =
+      base::Version({base::Version(kUpdaterVersion).components()[0] -
+                     kMilestoneDeletionThreshold});
+  CHECK_GT(base::Version(kUpdaterVersion), cleanup_max);
+  std::optional<base::FilePath> dir = GetInstallDirectory(scope);
   if (!dir) {
     return;
   }
   base::FileEnumerator(*dir, false, base::FileEnumerator::DIRECTORIES)
-      .ForEach([&scope](const base::FilePath& item) {
-        base::Version version(item.BaseName().MaybeAsASCII());
-        if (!version.IsValid() ||
-            version.CompareTo(base::Version(kCleanupVersionMax)) > 0) {
+      .ForEach([&scope, &cleanup_max](const base::FilePath& item) {
+        base::Version version(item.BaseName().AsUTF8Unsafe());
+        if (!version.IsValid() || version.CompareTo(cleanup_max) > 0) {
           return;
         }
         VLOG(1) << __func__ << " cleaning up " << item;
 
         // Attempt a normal uninstall.
-        const base::FilePath version_executable_path =
-            item.Append(GetExecutableRelativePath());
-        if (base::PathExists(version_executable_path)) {
-          base::LaunchProcess(
-              GetUninstallSelfCommandLine(scope, version_executable_path), {})
-              .WaitForExitWithTimeout(base::Minutes(5), nullptr);
+        const base::Process process = base::LaunchProcess(
+            GetUninstallSelfCommandLine(
+                scope, item.Append(GetExecutableRelativePath())),
+            {});
+        if (process.IsValid()) {
+          process.WaitForExitWithTimeout(base::Minutes(5), nullptr);
         }
 
         // Recursively delete the directory in case uninstall fails.
@@ -73,7 +79,8 @@ void CleanupOldUpdaterVersions(UpdaterScope scope) {
 
 }  // namespace
 
-CleanupTask::CleanupTask(UpdaterScope scope) : scope_(scope) {}
+CleanupTask::CleanupTask(UpdaterScope scope, scoped_refptr<Configurator> config)
+    : scope_(scope), config_(config) {}
 
 CleanupTask::~CleanupTask() = default;
 
@@ -86,9 +93,19 @@ void CleanupTask::Run(base::OnceClosure callback) {
           [](UpdaterScope scope) {
             CleanupGoogleUpdate(scope);
             CleanupOldUpdaterVersions(scope);
+#if BUILDFLAG(IS_MAC)
+            // TODO(crbug.com/394302692): Delete after M140.
+            CleanOldCrxCache();
+#endif  // IS_MAC
           },
           scope_),
-      std::move(callback));
+      base::BindOnce(
+          [](scoped_refptr<Configurator> config, base::OnceClosure callback) {
+            config->GetCrxCache()->RemoveIfNot(
+                config->GetUpdaterPersistedData()->GetAppIds(),
+                std::move(callback));
+          },
+          config_, std::move(callback)));
 }
 
 }  // namespace updater

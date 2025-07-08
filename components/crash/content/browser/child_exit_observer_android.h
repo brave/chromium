@@ -90,6 +90,15 @@ class ChildExitObserver : public content::BrowserChildProcessObserver,
     // about virtual address space OOM situation, private memory footprint,
     // swap size, vm size and the estimation of blink memory usage.
     blink::OomInterventionMetrics blink_oom_metrics;
+
+    // Applies to renderer process only. Whether the killed process is a
+    // spare renderer.
+    bool is_spare_renderer = false;
+
+    // Applies to renderer process only. Whether there is any spare renderer
+    // in the browser when the process is killed. Always true if the killed
+    // process is a spare renderer.
+    bool has_spare_renderer = false;
   };
 
   // ChildExitObserver client interface.
@@ -109,7 +118,7 @@ class ChildExitObserver : public content::BrowserChildProcessObserver,
     // OnChildExit may be called twice for the same process.
     virtual void OnChildExit(const TerminationInfo& info) = 0;
 
-    virtual ~Client() {}
+    virtual ~Client() = default;
   };
   ChildExitObserver();
   ~ChildExitObserver() override;
@@ -134,6 +143,11 @@ class ChildExitObserver : public content::BrowserChildProcessObserver,
       const content::ChildProcessTerminationInfo& info) override;
 
   // RenderProcessHostObserver implementation.
+  // RenderProcessHostDestroyed() corresponds to death of an underlying
+  // RenderProcess. RenderProcessExited() corresponds to when the
+  // RenderProcessHost's lifetime is ending. Ideally, we'd only listen to the
+  // former, but if the RenderProcessHost is destroyed before the RenderProcess,
+  // then the former is never observed.
   void RenderProcessExited(
       content::RenderProcessHost* host,
       const content::ChildProcessTerminationInfo& info) override;

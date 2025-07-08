@@ -7,6 +7,7 @@
 import argparse
 import pathlib
 import subprocess
+import shlex
 import os
 import sys
 import re
@@ -141,6 +142,7 @@ def main():
   parser.add_argument('--depfile', required=True, type=pathlib.Path)
   parser.add_argument('--rsp', type=pathlib.Path, required=True)
   parser.add_argument('--target-windows', action='store_true')
+  parser.add_argument('-v', action='store_true')
   parser.add_argument('args', metavar='ARG', nargs='+')
 
   args = parser.parse_args()
@@ -175,6 +177,7 @@ def main():
     # Work around for "-l<foo>.lib", where ".lib" suffix is undesirable.
     # Full fix will come from https://gn-review.googlesource.com/c/gn/+/12480
     rsp_args = [remove_lib_suffix_from_l_args(arg) for arg in rsp_args]
+    rustc_args = [remove_lib_suffix_from_l_args(arg) for arg in rustc_args]
   out_rsp = str(args.rsp) + ".rsp"
   with open(out_rsp, 'w') as rspfile:
     # rustc needs the rsp file to be separated by newlines. Note that GN
@@ -191,9 +194,13 @@ def main():
     fixed_env_vars.append(k)
 
   try:
+    if args.v:
+      print(' '.join(f'{k}={shlex.quote(v)}' for k, v in env.items()),
+            args.rustc, shlex.join(rustc_args))
     r = subprocess.run([args.rustc, *rustc_args], env=env, check=False)
   finally:
-    os.remove(out_rsp)
+    if not args.v:
+      os.remove(out_rsp)
   if r.returncode != 0:
     sys.exit(r.returncode)
 

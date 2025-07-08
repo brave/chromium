@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/codec/audio_encoder_opus.h"
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/multi_channel_resampler.h"
 #include "third_party/opus/src/include/opus.h"
 

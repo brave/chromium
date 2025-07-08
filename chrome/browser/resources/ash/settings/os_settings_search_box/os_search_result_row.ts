@@ -5,23 +5,31 @@
 /**
  * @fileoverview 'os-search-result-row' is the container for one search result.
  */
-import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
+// <if expr="_google_chrome">
+import '/nearby/nearby-share-internal-icons.m.js';
+// </if>
 import '../os_settings_icons.html.js';
 import '../settings_shared.css.js';
 
-import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
-import {FocusRowMixin} from 'chrome://resources/cr_elements/focus_row_mixin.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import {FocusRowMixin} from 'chrome://resources/ash/common/cr_elements/focus_row_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {mojoString16ToString} from 'chrome://resources/js/mojo_type_util.js';
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
+import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {SearchResult as PersonalizationSearchResult} from '../mojom-webui/personalization_search.mojom-webui.js';
-import {SearchResult as SettingsSearchResult, SearchResultIdentifier, SearchResultType} from '../mojom-webui/search.mojom-webui.js';
+import type {SearchResult as PersonalizationSearchResult} from '../mojom-webui/personalization_search.mojom-webui.js';
+import type {Section, Subpage} from '../mojom-webui/routes.mojom-webui.js';
+import type {SearchResult as SettingsSearchResult, SearchResultIdentifier} from '../mojom-webui/search.mojom-webui.js';
+import {SearchResultType} from '../mojom-webui/search.mojom-webui.js';
 import {SearchResultIcon} from '../mojom-webui/search_result_icon.mojom-webui.js';
+import type {Setting} from '../mojom-webui/setting.mojom-webui.js';
 import {Router} from '../router.js';
-import {SearchResult} from '../search/combined_search_handler.js';
+import type {SearchResult} from '../search/combined_search_handler.js';
 
 import {getTemplate} from './os_search_result_row.html.js';
 
@@ -73,7 +81,7 @@ function isPersonalizationSearchResult(result: SearchResult):
  * Used to locate matches such that the query text omits a hyphen when the
  * matching result text contains a hyphen.
  */
-const DELOCALIZED_HYPHEN: string = '-';
+const DELOCALIZED_HYPHEN = '-';
 
 /**
  * A list of hyphens in all languages that will be ignored during the
@@ -92,7 +100,7 @@ const HYPHENS: string[] = [
 /**
  * String form of the regexp expressing hyphen chars.
  */
-const HYPHENS_REGEX_STR: string = `[${HYPHENS.join('')}]`;
+const HYPHENS_REGEX_STR = `[${HYPHENS.join('')}]`;
 
 /**
  * Regexp expressing hyphen chars.
@@ -193,7 +201,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
   listLength: number;
   private resultText_: string;
 
-  private makeA11yAnnouncementIfSelectedAndUnfocused_() {
+  private makeA11yAnnouncementIfSelectedAndUnfocused_(): void {
     if (!this.selected || this.lastFocused) {
       // Do not alert the user if the result is not selected, or
       // the list is focused, defer to aria tags instead.
@@ -208,7 +216,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
   private computeResultText_(): string {
     // The C++ layer stores the text result as an array of 16 bit char codes,
     // so it must be converted to a JS String.
-    return String.fromCharCode.apply(null, this.searchResult.text.data);
+    return mojoString16ToString(this.searchResult.text);
   }
 
   /**
@@ -255,7 +263,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
 
     // Filters out query tokens that are not substrings of the currently
     // processing text token to be displayed.
-    const queryTokenFilter = (queryToken: string) => {
+    const queryTokenFilter = (queryToken: string): boolean => {
       return !!queryToken && normalizedToken.includes(queryToken);
     };
 
@@ -265,7 +273,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
     // 'Wi-Fi-no-blankspsc-WiFi', (i.e. |normalizedToken| =
     // 'WiFinoblankspcWiFi') and |queryTokenLowerCaseNoSpecial| = 'wif', the
     // resulting mapping would be ['Wi-F', 'WiF'].
-    const queryTokenToSegment = (queryToken: string) => {
+    const queryTokenToSegment = (queryToken: string): string[] => {
       const regExpStr = queryToken.split('').join(`${HYPHENS_REGEX_STR}*`);
 
       // Since |queryToken| does not contain accents and |innerHtmlToken| may
@@ -339,7 +347,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
     // substring for "and"). Only the queryToken "ssistan" should be kept
     // since it's the longest queryToken.
     const getLongestTokensPerSegment =
-        ([querySegment, queryTokens]: [string, string[]]) => {
+        ([querySegment, queryTokens]: [string, string[]]): string[] => {
           // If there are no queryTokens, return none.
           // Example: |normalizedResultText| = "search and assistant"
           //          |normalizedQuery| = "hi goog"
@@ -513,10 +521,10 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
   /**
    * @return The result string with <span> tags around keywords.
    */
-  private getResultInnerHtml_(): string {
+  private getResultInnerHtml_(): TrustedHTML {
     if (!(this.searchResult as SettingsSearchResult)
              .wasGeneratedFromTextMatch) {
-      return this.resultText_;
+      return sanitizeInnerHtml(this.resultText_);
     }
 
     if (this.resultText_.match(/\s/) ||
@@ -528,13 +536,13 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
       // the uppercase (as they commonly will in languages like English
       // and Russian), tokenize the result text by blankspaces, and bold based
       // off of matching substrings in the tokens.
-      return this.getTokenizeMatchedBoldTagged_();
+      return sanitizeInnerHtml(this.getTokenizeMatchedBoldTagged_());
     }
 
     // If the result text does not contain blankspaces or characters that
     // have upper/lower case differentiation (as they commonly do in languages
     // like Chinese and Japanese), bold exact characters that match.
-    return this.getMatchingIndividualCharsBolded_();
+    return sanitizeInnerHtml(this.getMatchingIndividualCharsBolded_());
   }
 
   /**
@@ -551,14 +559,14 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
    * Only relevant when the focus-row-control is focus()ed. This keypress
    * handler specifies that pressing 'Enter' should cause a route change.
    */
-  private onKeyPress_(e: KeyboardEvent) {
+  private onKeyPress_(e: KeyboardEvent): void {
     if (e.key === 'Enter') {
       e.stopPropagation();
       this.onSearchResultSelected();
     }
   }
 
-  private recordSearchResultMetrics_() {
+  private recordSearchResultMetrics_(): void {
     if (isPersonalizationSearchResult(this.searchResult)) {
       chrome.metricsPrivate.recordSparseValue(
           'ChromeOS.Settings.SearchResultPersonalizationSelected',
@@ -572,35 +580,39 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
       return;
     }
 
-    const settingsSearchResult = this.searchResult as SettingsSearchResult;
+    const settingsSearchResult = this.searchResult;
     chrome.metricsPrivate.recordEnumerationValue(
         'ChromeOS.Settings.SearchResultTypeSelected', settingsSearchResult.type,
         SearchResultType.MAX_VALUE);
 
-    const metricArgs = (type: number, id: SearchResultIdentifier) => {
-      switch (type) {
-        case SearchResultType.kSection:
-          return {
-            metricName: 'ChromeOS.Settings.SearchResultSectionSelected',
-            value: id.section,
-          };
-        case SearchResultType.kSubpage:
-          return {
-            metricName: 'ChromeOS.Settings.SearchResultSubpageSelected',
-            value: id.subpage,
-          };
-        case SearchResultType.kSetting:
-          return {
-            metricName: 'ChromeOS.Settings.SearchResultSettingSelected',
-            value: id.setting,
-          };
-        default:
-          assertNotReached('Search Result Type not specified.');
-      }
-    };
+    interface MetricArg {
+      metricName: string;
+      value?: Section|Subpage|Setting;
+    }
+    const metricArgs =
+        (type: number, id: SearchResultIdentifier): MetricArg => {
+          switch (type) {
+            case SearchResultType.kSection:
+              return {
+                metricName: 'ChromeOS.Settings.SearchResultSectionSelected',
+                value: id.section,
+              };
+            case SearchResultType.kSubpage:
+              return {
+                metricName: 'ChromeOS.Settings.SearchResultSubpageSelected',
+                value: id.subpage,
+              };
+            case SearchResultType.kSetting:
+              return {
+                metricName: 'ChromeOS.Settings.SearchResultSettingSelected',
+                value: id.setting,
+              };
+            default:
+              assertNotReached('Search Result Type not specified.');
+          }
+        };
 
-    const args =
-        metricArgs(settingsSearchResult.type, settingsSearchResult.id)!;
+    const args = metricArgs(settingsSearchResult.type, settingsSearchResult.id);
     if (args.value) {
       chrome.metricsPrivate.recordSparseValue(args.metricName, args.value);
     }
@@ -610,7 +622,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
    * Navigate to a search result route or launch an external url based on
    * the search result's id.
    */
-  onSearchResultSelected() {
+  onSearchResultSelected(): void {
     if (isPersonalizationSearchResult(this.searchResult)) {
       this.recordSearchResultMetrics_();
       OpenWindowProxyImpl.getInstance().openUrl(
@@ -619,7 +631,7 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
       return;
     }
 
-    const settingsSearchResult = this.searchResult as SettingsSearchResult;
+    const settingsSearchResult = this.searchResult;
     assert(settingsSearchResult.urlPathWithParameters, 'Url path is empty.');
     this.recordSearchResultMetrics_();
 
@@ -653,21 +665,25 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
    */
   private getResultIcon_(): string {
     if (isPersonalizationSearchResult(this.searchResult)) {
-      return 'os-settings:paint-brush';
+      return 'os-settings:personalization';
     }
 
-    const settingsSearchResult = this.searchResult as SettingsSearchResult;
+    const settingsSearchResult = this.searchResult;
     switch (settingsSearchResult.icon) {
       case SearchResultIcon.kA11y:
         return 'os-settings:accessibility';
+      case SearchResultIcon.kAlwaysShowScrollbars:
+        return 'os-settings:scroll-vertical';
       case SearchResultIcon.kAndroid:
         return 'os-settings:android';
+      case SearchResultIcon.kAppsParentalControls:
+        return 'os-settings:apps-parental-controls';
       case SearchResultIcon.kAppsGrid:
         return 'os-settings:apps';
       case SearchResultIcon.kAssistant:
         return 'os-settings:assistant';
       case SearchResultIcon.kAudio:
-        return 'os-settings:audio';
+        return 'os-settings:device-audio';
       case SearchResultIcon.kAuthKey:
         return 'os-settings:auth-key';
       case SearchResultIcon.kAutoclick:
@@ -675,97 +691,154 @@ export class OsSearchResultRowElement extends OsSearchResultRowElementBase {
       case SearchResultIcon.kSwitchAccess:
         return 'os-settings:switch-access';
       case SearchResultIcon.kAvatar:
-        return 'cr:person';
+        return 'os-settings:privacy-manage-people';
       case SearchResultIcon.kBluetooth:
         return 'cr:bluetooth';
       case SearchResultIcon.kCamera:
         return 'os-settings:camera';
       case SearchResultIcon.kCellular:
         return 'os-settings:cellular';
+      case SearchResultIcon.kCheckForUpdate:
+        return 'os-settings:about-update-complete';
       case SearchResultIcon.kChrome:
         return 'os-settings:chrome';
-      case SearchResultIcon.kChromeVox:
-        return 'os-settings:chromevox';
       case SearchResultIcon.kClock:
-        return 'os-settings:access-time';
+        return 'os-settings:clock';
       case SearchResultIcon.kContrast:
         return 'os-settings:contrast';
+      case SearchResultIcon.kCreateImage:
+        return 'ash-internal:lobster';
+      case SearchResultIcon.kCursorClick:
+        return 'os-settings:cursor-click';
+      case SearchResultIcon.kDetailedBuild:
+        return 'os-settings:about-additional-details';
       case SearchResultIcon.kDeveloperTags:
         return 'os-settings:developer-tags';
+      case SearchResultIcon.kDiagnostics:
+        return 'os-settings:about-diagnostics';
       case SearchResultIcon.kDictation:
         return 'os-settings:dictation';
       case SearchResultIcon.kDisplay:
-        return 'os-settings:display';
+        return 'os-settings:device-display';
       case SearchResultIcon.kDockedMagnifier:
         return 'os-settings:docked-magnifier';
-      case SearchResultIcon.kDrive:
-        return 'os-settings:google-drive';
       case SearchResultIcon.kEthernet:
         return 'os-settings:settings-ethernet';
+      case SearchResultIcon.kFaceGaze:
+        return 'os-settings:face-gaze';
       case SearchResultIcon.kFingerprint:
         return 'os-settings:fingerprint';
+      case SearchResultIcon.kFirmwareUpdates:
+        return 'os-settings:about-firmware-updates';
       case SearchResultIcon.kFolder:
         return 'os-settings:folder-outline';
+      case SearchResultIcon.kFolderShared:
+        return 'os-settings:folder-shared';
       case SearchResultIcon.kFullscreenMagnifier:
         return 'os-settings:fullscreen-magnifier';
       case SearchResultIcon.kGeolocation:
         return 'os-settings:geolocation';
-      case SearchResultIcon.kGlobe:
-        return 'os-settings:language';
+      case SearchResultIcon.kGoogleDrive:
+        return 'os-settings:google-drive';
       case SearchResultIcon.kGooglePlay:
         return 'os-settings:google-play';
-      case SearchResultIcon.kHardDrive:
-        return 'os-settings:hard-drive';
+      case SearchResultIcon.kGraduation:
+        return 'os-settings:graduation';
+      case SearchResultIcon.kHearing:
+        return 'os-settings:a11y-hearing';
+      case SearchResultIcon.kHelp:
+        return 'os-settings:about-help';
+      case SearchResultIcon.kHelpMeRead:
+        return 'os-settings:help-me-read';
+      case SearchResultIcon.kHelpMeWrite:
+        return 'os-settings:help-me-write';
       case SearchResultIcon.kHotspot:
         return 'os-settings:hotspot';
       case SearchResultIcon.kInstantTethering:
         return 'os-settings:magic-tethering';
       case SearchResultIcon.kKeyboard:
-        return 'os-settings:keyboard';
+        return 'os-settings:device-keyboard';
+      case SearchResultIcon.kLanguage:
+        return 'os-settings:language';
       case SearchResultIcon.kLaptop:
         return 'os-settings:laptop-chromebook';
       case SearchResultIcon.kLock:
         return 'os-settings:lock';
-      case SearchResultIcon.kMagnifyingGlass:
-        return 'cr:search';
-      case SearchResultIcon.kMessages:
-        return 'os-settings:multidevice-messages';
+      case SearchResultIcon.kMagicBoost:
+        return 'os-settings:magic-boost';
       case SearchResultIcon.kMicrophone:
         return 'os-settings:microphone';
       case SearchResultIcon.kMouse:
-        return 'os-settings:mouse';
+        return 'os-settings:device-mouse';
       case SearchResultIcon.kNearbyShare:
+        // <if expr="_google_chrome">
+        if (loadTimeData.getBoolean('isNameEnabled')) {
+          return 'nearby-share-internal:nearby-share';
+        }
+        // </if>
         return 'os-settings:nearby-share';
+      case SearchResultIcon.kNotifications:
+        return 'os-settings:apps-notifications';
+      case SearchResultIcon.kOneDrive:
+        return 'os-settings:onedrive';
       case SearchResultIcon.kOnScreenKeyboard:
         return 'os-settings:on-screen-keyboard';
       case SearchResultIcon.kPaintbrush:
-        return 'os-settings:paint-brush';
+        return 'os-settings:personalization';
       case SearchResultIcon.kPenguin:
         return 'os-settings:crostini-mascot';
+      case SearchResultIcon.kPersonalization:
+        return 'os-settings:personalization-menu';
       case SearchResultIcon.kPhone:
-        return 'os-settings:multidevice-better-together-suite';
+        return 'os-settings:connected-devices-android-phone';
       case SearchResultIcon.kPluginVm:
         return 'os-settings:plugin-vm';
+      case SearchResultIcon.kPointingStick:
+        return 'os-settings:device-pointing-stick';
       case SearchResultIcon.kPower:
         return 'os-settings:power';
       case SearchResultIcon.kPrinter:
-        return 'os-settings:print';
+        return 'os-settings:device-print';
+      case SearchResultIcon.kPrivacyControls:
+        return 'os-settings:privacy-controls';
+      case SearchResultIcon.kReducedAnimations:
+        return 'os-settings:reduced-animations';
+      case SearchResultIcon.kReleaseNotes:
+        return 'os-settings:about-release-notes';
       case SearchResultIcon.kReset:
+        return 'os-settings:startup';
+      case SearchResultIcon.kRestore:
         return 'os-settings:restore';
+      case SearchResultIcon.kScanner:
+        return 'os-settings:device-scan';
+      case SearchResultIcon.kScannerActions:
+        return 'os-settings:scanner';
+      case SearchResultIcon.kSearch:
+        return 'os-settings:explore';
       case SearchResultIcon.kSelectToSpeak:
         return 'os-settings:select-to-speak';
       case SearchResultIcon.kShield:
         return 'cr:security';
-      case SearchResultIcon.kStartup:
-        return 'os-settings:startup';
+      case SearchResultIcon.kSnapWindowSuggestions:
+        return 'os-settings:snap-window-suggestions';
+      case SearchResultIcon.kStorage:
+        return 'os-settings:storage';
       case SearchResultIcon.kStylus:
-        return 'os-settings:stylus';
+        return 'os-settings:device-stylus';
       case SearchResultIcon.kSync:
         return 'os-settings:sync';
+      case SearchResultIcon.kSystemPreferences:
+        return 'os-settings:system-preferences';
+      case SearchResultIcon.kTextToSpeech:
+        return 'os-settings:text-to-speech';
+      case SearchResultIcon.kTouchpad:
+        return 'os-settings:device-touchpad';
       case SearchResultIcon.kWallpaper:
         return 'os-settings:wallpaper';
       case SearchResultIcon.kWifi:
         return 'os-settings:network-wifi';
+      case SearchResultIcon.kZoomIn:
+        return 'os-settings:zoom-in';
       default:
         return 'os-settings:settings-general';
     }

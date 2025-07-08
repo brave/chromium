@@ -6,9 +6,10 @@
 #define CHROME_BROWSER_UI_WEBUI_COMMERCE_SHOPPING_UI_HANDLER_DELEGATE_H_
 
 #include "base/memory/raw_ptr.h"
-#include "components/commerce/core/webui/shopping_list_handler.h"
+#include "components/commerce/core/webui/shopping_service_handler.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
-class ShoppingInsightsSidePanelUI;
+class Browser;
 
 namespace bookmarks {
 class BookmarkModel;
@@ -19,31 +20,30 @@ class Profile;
 
 namespace commerce {
 
-class ShoppingUiHandlerDelegate : public ShoppingListHandler::Delegate {
+class ShoppingUiHandlerDelegate : public ShoppingServiceHandler::Delegate {
  public:
-  ShoppingUiHandlerDelegate(ShoppingInsightsSidePanelUI* insights_side_panel_ui,
-                            Profile* profile);
+  explicit ShoppingUiHandlerDelegate(Profile* profile);
   ShoppingUiHandlerDelegate(const ShoppingUiHandlerDelegate&) = delete;
   ShoppingUiHandlerDelegate& operator=(const ShoppingUiHandlerDelegate&) =
       delete;
   ~ShoppingUiHandlerDelegate() override;
 
-  absl::optional<GURL> GetCurrentTabUrl() override;
-
-  void ShowInsightsSidePanelUI() override;
+  std::optional<GURL> GetCurrentTabUrl() override;
 
   const bookmarks::BookmarkNode* GetOrAddBookmarkForCurrentUrl() override;
 
+  void SwitchToOrOpenTab(const GURL& url) override;
+
   void OpenUrlInNewTab(const GURL& url) override;
 
-  void ShowBookmarkEditorForCurrentUrl() override;
+  void ShowFeedbackForProductSpecifications(const std::string& log_id) override;
 
-  void ShowFeedback() override;
+  // Get the main frame source id from the page load.
+  ukm::SourceId GetCurrentTabUkmSourceId() override;
 
  private:
-  // This delegate is owned by |insights_side_panel_ui_| so we expect
-  // |insights_side_panel_ui_| to remain valid for the lifetime of |this|.
-  raw_ptr<ShoppingInsightsSidePanelUI> insights_side_panel_ui_;
+  void NavigateToUrl(Browser* browser, const GURL& url);
+
   raw_ptr<Profile> profile_;
   raw_ptr<bookmarks::BookmarkModel> bookmark_model_;
 };

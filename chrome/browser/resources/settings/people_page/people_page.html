@@ -1,4 +1,4 @@
-    <style include="cr-shared-style settings-shared iron-flex">
+    <style include="cr-shared-style settings-shared">
       .sync-row {
         align-items: center;
         flex: auto;
@@ -14,6 +14,15 @@
 
       #sync-setup {
         --cr-secondary-text-color: var(--settings-error-color);
+      }
+
+      #sync-not-allowed {
+        border-top: var(--cr-separator-line);
+        background:  var(--google-grey-100);
+      }
+
+      #sync-not-allowed-text {
+        margin-left: 8px;
       }
 
       cr-link-row {
@@ -49,10 +58,17 @@
         font-size: 1.1rem;
         line-height: 1.625rem;
       }
+
+      @media (prefers-color-scheme: dark) {
+        #sync-not-allowed {
+          background:  var(--google-grey-800);
+        }
+      }
     </style>
     <settings-animated-pages id="pages" section="people"
         focus-config="[[focusConfig_]]">
       <div route-path="default">
+<if expr="not is_chromeos">
         <template is="dom-if" if="[[shouldShowSyncAccountControl_(
             syncStatus.syncSystemEnabled)]]">
           <settings-sync-account-control
@@ -66,6 +82,7 @@
                   "$i18n{peopleSignInPromptSecondaryWithNoAccount}">
           </settings-sync-account-control>
         </template>
+</if>
         <template is="dom-if" if="[[!shouldShowSyncAccountControl_(
             syncStatus.syncSystemEnabled, signinAllowed_)]]" restamp>
           <div id="profile-row" class="cr-row first two-line"
@@ -80,20 +97,21 @@
                 <span id="profile-name">[[profileName_]]</span>
 <!-- When the user is signed-in, the settings-sync-account-control is always
 shown on non-ChromeOS platforms -->
-<if expr="chromeos_ash">
-                <div class="secondary" hidden="[[!syncStatus.signedIn]]">
+<if expr="is_chromeos">
+                <div class="secondary" hidden="[[!isSyncing_(
+                      syncStatus.signedInState)]]">
                   [[syncStatus.signedInUsername]]
                 </div>
 </if>
               </div>
-<if expr="not chromeos_ash">
+<if expr="not is_chromeos">
               <cr-icon-button class="subpage-arrow"
                   aria-label="$i18n{editPerson}"
                   aria-describedby="profile-name"
                   aria-roledescription="$i18n{subpageArrowRoleDescription}">
               </cr-icon-button>
 </if>
-<if expr="chromeos_ash">
+<if expr="is_chromeos">
               <cr-icon-button class="icon-external"
                   id="profile-subpage-arrow"
                   hidden="[[!isProfileActionable_]]"
@@ -106,12 +124,11 @@ shown on non-ChromeOS platforms -->
 
         <cr-link-row id="sync-setup"
             label="$i18n{syncAndNonPersonalizedServices}"
-            sub-label="[[getSyncAndGoogleServicesSubtext_(syncStatus)]]"
             on-click="onSyncClick_"
             role-description="$i18n{subpageArrowRoleDescription}">
         </cr-link-row>
 
-<if expr="not chromeos_ash">
+<if expr="not is_chromeos">
         <template is="dom-if" if="[[signinAllowed_]]">
           <cr-link-row id="manage-google-account"
               label="$i18n{manageGoogleAccount}"
@@ -130,6 +147,17 @@ shown on non-ChromeOS platforms -->
             on-click="onImportDataClick_"></cr-link-row>
 </if>
 
+<if expr="not is_chromeos">
+        <template is="dom-if" if="[[isDasherlessProfile_]]">
+          <div id="sync-not-allowed" class="cr-row continuation">
+            <cr-icon id="info-icon" icon="cr:info-outline"></cr-icon>
+            <div id="sync-not-allowed-text" class="flex cr-padded-text">
+              $i18n{syncUnavailableForNonGoogleAccount}
+            </div>
+          </div>
+        </template>
+</if>
+
       </div>
       <template is="dom-if" route-path="/syncSetup">
         <settings-subpage
@@ -138,7 +166,6 @@ shown on non-ChromeOS platforms -->
             learn-more-url="$i18n{syncAndGoogleServicesLearnMoreURL}">
           <settings-sync-page
               sync-status="[[syncStatus]]" prefs="{{prefs}}"
-              page-visibility="[[pageVisibility.privacy]]"
               focus-config="[[focusConfig_]]">
           </settings-sync-page>
         </settings-subpage>
@@ -153,7 +180,7 @@ shown on non-ChromeOS platforms -->
         </settings-subpage>
       </template>
 
-<if expr="not chromeos_ash">
+<if expr="not is_chromeos">
       <template is="dom-if" route-path="/manageProfile">
         <settings-subpage
             associated-control=
@@ -167,6 +194,7 @@ shown on non-ChromeOS platforms -->
 </if>
     </settings-animated-pages>
 
+<if expr="not is_chromeos">
     <template is="dom-if" if="[[showSignoutDialog_]]" restamp>
       <settings-signout-dialog sync-status="[[syncStatus]]"
           on-close="onDisconnectDialogClosed_">
@@ -178,6 +206,7 @@ shown on non-ChromeOS platforms -->
           on-close="onImportDataDialogClosed_">
       </settings-import-data-dialog>
     </template>
+</if>
     <cr-toast duration="3000" id="toast">
       <span>$i18n{syncSettingsSavedToast}</span>
     </cr-toast>

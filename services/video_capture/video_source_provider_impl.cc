@@ -5,6 +5,7 @@
 #include "services/video_capture/video_source_provider_impl.h"
 
 #include "base/functional/bind.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "services/video_capture/public/mojom/producer.mojom.h"
 #include "services/video_capture/video_source_impl.h"
 #include "services/video_capture/virtual_device_enabled_device_factory.h"
@@ -31,7 +32,18 @@ void VideoSourceProviderImpl::AddClient(
 }
 
 void VideoSourceProviderImpl::GetSourceInfos(GetSourceInfosCallback callback) {
-  device_factory_->GetDeviceInfos(std::move(callback));
+  // The service might be shut down before the callback has a chance to be
+  // executed. This triggers the CHECK in mojo code, which assumes that
+  // callbacks are either executed or the underlying channel is closed. Wrap
+  // the callback to ensure it will be executed on destruction.
+  GetSourceInfosCallback callback_with_default =
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          std::move(callback),
+          VideoSourceProvider::GetSourceInfosResult::kErrorDroppedRequest,
+          std::vector<media::VideoCaptureDeviceInfo>());
+  device_factory_->GetDeviceInfos(
+      base::BindOnce(std::move(callback_with_default),
+                     VideoSourceProvider::GetSourceInfosResult::kSuccess));
 }
 
 void VideoSourceProviderImpl::GetVideoSource(

@@ -9,7 +9,7 @@
 
   // Icon specification similar to an ImageResource.
   dictionary Icon {
-    // TODO(crbug.com/1362192) Add `DOMString? label;` for accessibility.
+    // TODO(crbug.com/40238266) Add `DOMString? label;` for accessibility.
 
     // URL from which a user agent can fetch image data.
     DOMString src;
@@ -43,8 +43,8 @@
     Icon[]? icons;
 
     // Whether multiple files should be opened in a single client or multiple.
-    // Defaults to `single-client`, which opens one window containing one array
-    // with each file. `multiple-clients` opens a new window for each file.
+    // Defaults to `single-client`, which makes all files available in only one
+    // tab. `multiple-client` opens a new tab for each file.
     DOMString? launch_type;
   };
 

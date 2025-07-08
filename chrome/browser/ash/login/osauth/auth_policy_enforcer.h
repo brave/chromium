@@ -48,22 +48,22 @@ class AuthPolicyEnforcer {
   void OnAuthFactorConfigurationLoaded(
       AuthOperationCallback callback,
       std::unique_ptr<UserContext> context,
-      absl::optional<AuthenticationError> error);
+      std::optional<AuthenticationError> error);
   // Ensures that recovery-related policies are applied.
   // If no errors happen, would end up calling `OnPolicesApplied`.
   void EnforceRecoveryPolicies(std::unique_ptr<UserContext> context,
                                AuthOperationCallback callback);
   void OnRecoveryUpdated(AuthOperationCallback callback,
                          std::unique_ptr<UserContext> context,
-                         absl::optional<AuthenticationError> error);
+                         std::optional<AuthenticationError> error);
   // Called when policies for all applicable factor types were applied.
   void OnPolicesApplied(std::unique_ptr<UserContext> context,
                         AuthOperationCallback callback);
 
   std::unique_ptr<AuthFactorEditor> editor_;
-  base::raw_ptr<AuthPolicyConnector> connector_;
-  base::raw_ptr<UserDataAuthClient> user_data_auth_;
-  base::raw_ptr<PrefService> local_state_;
+  raw_ptr<AuthPolicyConnector> connector_;
+  raw_ptr<UserDataAuthClient> user_data_auth_;
+  raw_ptr<PrefService> local_state_;
   // Must be the last member.
   base::WeakPtrFactory<AuthPolicyEnforcer> weak_factory_{this};
 };

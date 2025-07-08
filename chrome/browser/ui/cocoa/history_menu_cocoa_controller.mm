@@ -4,7 +4,7 @@
 
 #import "chrome/browser/ui/cocoa/history_menu_cocoa_controller.h"
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/app/chrome_command_ids.h"  // IDC_HISTORY_MENU
@@ -23,16 +23,12 @@
 #import "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/window_open_disposition.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using content::OpenURLParams;
 using content::Referrer;
 
 namespace {
 
-// TODO(crbug.com/1334721): Single-tab windows get restored as tabs instead of
+// TODO(crbug.com/40228273): Single-tab windows get restored as tabs instead of
 // windows, which is confusing.
 //
 // NB: Takes |node| by value, because the HistoryMenuBridge could be destroyed
@@ -40,8 +36,9 @@ namespace {
 void OpenURLForItem(HistoryMenuBridge::HistoryItem node,
                     WindowOpenDisposition disposition,
                     Profile* profile) {
-  if (!profile)
+  if (!profile) {
     return;  // Failed to load profile, ignore.
+  }
   // If this item can be restored using TabRestoreService, do so. Otherwise,
   // just load the URL.
   if (node.session_id.is_valid()) {
@@ -55,8 +52,9 @@ void OpenURLForItem(HistoryMenuBridge::HistoryItem node,
     // bridge, target the active profile. Without this, history menu items open
     // in the nearest non-incognito window, or create one.
     if (auto* active_browser = chrome::FindBrowserWithActiveWindow()) {
-      if (active_browser->profile()->GetOriginalProfile() == target_profile)
+      if (active_browser->profile()->GetOriginalProfile() == target_profile) {
         target_profile = active_browser->profile();
+      }
     }
 
     NavigateParams params(target_profile, node.url,

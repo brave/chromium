@@ -13,25 +13,25 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 
+#include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/buildflags.h"
 #include "components/keep_alive_registry/keep_alive_state_observer.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
-#include "components/nacl/common/buildflags.h"
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "components/services/screen_ai/buildflags/buildflags.h"
+#include "components/safe_browsing/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "media/media_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/mojom/network_service.mojom-forward.h"
@@ -48,6 +48,7 @@
 class BatteryMetrics;
 class ChromeMetricsServicesManagerClient;
 class DevToolsAutoOpener;
+class GlobalFeatures;
 class RemoteDebuggingServer;
 class PrefRegistrySimple;
 class SecureOriginPrefsObserver;
@@ -64,11 +65,16 @@ class OriginTrialsSettingsStorage;
 }  // namespace embedder_support
 
 namespace extensions {
-class ChromeExtensionsBrowserClient;
+class ExtensionsBrowserClient;
 }
 
 namespace gcm {
 class GCMDriver;
+}
+
+namespace os_crypt_async {
+class KeyProvider;
+class OSCryptAsync;
 }
 
 namespace policy {
@@ -81,12 +87,11 @@ class WebRtcEventLogManager;
 }  // namespace webrtc_event_logging
 
 namespace speech {
-class SodaInstallerImpl;
-class SodaInstallerImplChromeOS;
+class SodaInstaller;
 }  // namespace speech
 
 namespace screen_ai {
-class ScreenAIDownloader;
+class ScreenAIInstallState;
 }  // namespace screen_ai
 
 // Real implementation of BrowserProcess that creates and returns the services.
@@ -109,7 +114,7 @@ class BrowserProcessImpl : public BrowserProcess,
 #if !BUILDFLAG(IS_ANDROID)
   // Sets a closure to be run to break out of a run loop on browser shutdown
   // (when the KeepAlive count reaches zero).
-  // TODO(https://crbug.com/845966): This is also used on macOS for the Cocoa
+  // TODO(crbug.com/41390731): This is also used on macOS for the Cocoa
   // first run dialog so that shutdown can be initiated via a signal while the
   // first run dialog is showing.
   void SetQuitClosure(base::OnceClosure quit_closure);
@@ -118,7 +123,7 @@ class BrowserProcessImpl : public BrowserProcess,
 #if BUILDFLAG(IS_MAC)
   // Clears the quit closure. Shutdown will not be initiated should the
   // KeepAlive count reach zero. This function may be called more than once.
-  // TODO(https://crbug.com/845966): Remove this once the Cocoa first run
+  // TODO(crbug.com/41390731): Remove this once the Cocoa first run
   // dialog no longer needs it.
   void ClearQuitClosure();
 #endif
@@ -162,9 +167,10 @@ class BrowserProcessImpl : public BrowserProcess,
   GetOriginTrialsSettingsStorage() override;
   ProfileManager* profile_manager() override;
   PrefService* local_state() override;
+  signin::ActivePrimaryAccountsMetricsRecorder*
+  active_primary_accounts_metrics_recorder() override;
   variations::VariationsService* variations_service() override;
   BrowserProcessPlatformPart* platform_part() override;
-  extensions::EventRouterForwarder* extension_event_router_forwarder() override;
   NotificationUIManager* notification_ui_manager() override;
   NotificationPlatformBridge* notification_platform_bridge() override;
   policy::ChromeBrowserPolicyConnector* browser_policy_connector() override;
@@ -185,21 +191,23 @@ class BrowserProcessImpl : public BrowserProcess,
   void SetApplicationLocale(const std::string& actual_locale) override;
   DownloadStatusUpdater* download_status_updater() override;
   DownloadRequestLimiter* download_request_limiter() override;
-  BackgroundModeManager* background_mode_manager() override;
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
+  BackgroundModeManager* background_mode_manager() override;
   void set_background_mode_manager_for_test(
       std::unique_ptr<BackgroundModeManager> manager) override;
 #endif
   StatusTray* status_tray() override;
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   safe_browsing::SafeBrowsingService* safe_browsing_service() override;
+#endif
   subresource_filter::RulesetService* subresource_filter_ruleset_service()
       override;
+  subresource_filter::RulesetService*
+  fingerprinting_protection_ruleset_service() override;
 
   StartupData* startup_data() override;
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   void StartAutoupdateTimer() override;
 #endif
 
@@ -214,15 +222,23 @@ class BrowserProcessImpl : public BrowserProcess,
   resource_coordinator::ResourceCoordinatorParts* resource_coordinator_parts()
       override;
 
-#if !BUILDFLAG(IS_ANDROID)
   SerialPolicyAllowedPorts* serial_policy_allowed_ports() override;
+#if !BUILDFLAG(IS_ANDROID)
   HidSystemTrayIcon* hid_system_tray_icon() override;
   UsbSystemTrayIcon* usb_system_tray_icon() override;
 #endif
 
+  os_crypt_async::OSCryptAsync* os_crypt_async() override;
+
+  void set_additional_os_crypt_async_provider_for_test(
+      size_t precedence,
+      std::unique_ptr<os_crypt_async::KeyProvider> provider) override;
+
   BuildState* GetBuildState() override;
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
+  GlobalFeatures* GetFeatures() override;
+  void CreateGlobalFeaturesForTesting() override;
 
  private:
   using WebRtcEventLogManager = webrtc_event_logging::WebRtcEventLogManager;
@@ -241,8 +257,11 @@ class BrowserProcessImpl : public BrowserProcess,
   void CreateNotificationUIManager();
   void CreatePrintPreviewDialogController();
   void CreateBackgroundPrintingManager();
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   void CreateSafeBrowsingService();
+#endif
   void CreateSubresourceFilterRulesetService();
+  void CreateFingerprintingProtectionRulesetService();
   void CreateOptimizationGuideService();
   void CreateStatusTray();
   void CreateBackgroundModeManager();
@@ -251,6 +270,9 @@ class BrowserProcessImpl : public BrowserProcess,
 
   void ApplyDefaultBrowserPolicy();
 
+  // ApplicationLocaleStorage callback
+  void OnLocaleChanged(const std::string& new_locale);
+
   // Methods called to control our lifetime. The browser process can be "pinned"
   // to make sure it keeps running.
   void Pin();
@@ -258,8 +280,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   const raw_ptr<StartupData> startup_data_;
 
+  // Must be destroyed after |browser_policy_connector_|.
+  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
+
   // Must be destroyed after |local_state_|.
   // Must be destroyed after |profile_manager_|.
+  // Must be destroyed before |gcm_driver_|.
   std::unique_ptr<policy::ChromeBrowserPolicyConnector> const
       browser_policy_connector_;
 
@@ -269,13 +295,18 @@ class BrowserProcessImpl : public BrowserProcess,
 
   const std::unique_ptr<PrefService> local_state_;
 
-  // |metrics_services_manager_| owns this.
-  raw_ptr<ChromeMetricsServicesManagerClient, AcrossTasksDanglingUntriaged>
-      metrics_services_manager_client_ = nullptr;
-
   // Must be destroyed before |local_state_|.
+  std::unique_ptr<signin::ActivePrimaryAccountsMetricsRecorder>
+      active_primary_accounts_metrics_recorder_;
+
+  // Must be destroyed before |local_state_| and after
+  // |metrics_services_manager_client_|.
   std::unique_ptr<metrics_services_manager::MetricsServicesManager>
       metrics_services_manager_;
+
+  // |metrics_services_manager_| owns this.
+  raw_ptr<ChromeMetricsServicesManagerClient> metrics_services_manager_client_ =
+      nullptr;
 
 #if BUILDFLAG(IS_ANDROID)
   // Must be destroyed before |local_state_|.
@@ -299,13 +330,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<GpuModeManager> gpu_mode_manager_;
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  std::unique_ptr<extensions::ChromeExtensionsBrowserClient>
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  std::unique_ptr<extensions::ExtensionsBrowserClient>
       extensions_browser_client_;
+#endif
 
-  scoped_refptr<extensions::EventRouterForwarder>
-      extension_event_router_forwarder_;
-
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   std::unique_ptr<MediaFileSystemRegistry> media_file_system_registry_;
 #endif
 
@@ -315,7 +345,7 @@ class BrowserProcessImpl : public BrowserProcess,
 #endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-  scoped_refptr<printing::PrintPreviewDialogController>
+  std::unique_ptr<printing::PrintPreviewDialogController>
       print_preview_dialog_controller_;
 
   std::unique_ptr<printing::BackgroundPrintingManager>
@@ -334,9 +364,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<StatusTray> status_tray_;
 
-#if BUILDFLAG(ENABLE_SYSTEM_NOTIFICATIONS)
   bool created_notification_bridge_ = false;
-#endif
 
   std::unique_ptr<NotificationPlatformBridge> notification_bridge_;
 
@@ -349,12 +377,18 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<BackgroundModeManager> background_mode_manager_;
 #endif
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   bool created_safe_browsing_service_ = false;
   scoped_refptr<safe_browsing::SafeBrowsingService> safe_browsing_service_;
+#endif
 
   bool created_subresource_filter_ruleset_service_ = false;
   std::unique_ptr<subresource_filter::RulesetService>
       subresource_filter_ruleset_service_;
+
+  bool created_fingerprinting_protection_ruleset_service_ = false;
+  std::unique_ptr<subresource_filter::RulesetService>
+      fingerprinting_protection_ruleset_service_;
 
   bool shutting_down_ = false;
 
@@ -365,7 +399,7 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<printing::PrintJobManager> print_job_manager_;
 #endif
 
-  std::string locale_;
+  base::CallbackListSubscription on_locale_changed_callback_subscription_;
 
   // Download status updates (like a changing application icon on dock/taskbar)
   // are global per-application. DownloadStatusUpdater does no work in the ctor
@@ -380,9 +414,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<BatteryMetrics> battery_metrics_;
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   base::RepeatingTimer autoupdate_timer_;
 
   // Gets called by autoupdate timer to see if browser needs restart and can be
@@ -391,31 +423,23 @@ class BrowserProcessImpl : public BrowserProcess,
   bool IsRunningInBackground() const;
   void OnPendingRestartResult(bool is_update_pending_restart);
   void RestartBackgroundInstance();
-#endif  // BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS_LACROS))
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 
   // component updater is normally not used under ChromeOS due
   // to concerns over integrity of data shared between profiles,
   // but some users of component updater only install per-user.
   std::unique_ptr<component_updater::ComponentUpdateService> component_updater_;
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_ANDROID)
   // Used to create a singleton instance of SodaInstallerImpl, which can be
   // retrieved using speech::SodaInstaller::GetInstance().
   // SodaInstallerImpl depends on ComponentUpdateService, so define it here
   // to ensure that SodaInstallerImpl gets destructed first.
-  std::unique_ptr<speech::SodaInstallerImpl> soda_installer_impl_;
-#endif
+  std::unique_ptr<speech::SodaInstaller> soda_installer_impl_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Chrome OS has a different implementation of SodaInstaller.
-  std::unique_ptr<speech::SodaInstallerImplChromeOS> soda_installer_impl_;
-#endif
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   // Used to download Screen AI on demand and keep track of the library
   // availability.
-  std::unique_ptr<screen_ai::ScreenAIDownloader> screen_ai_download_;
+  std::unique_ptr<screen_ai::ScreenAIInstallState> screen_ai_download_;
 #endif
 
   std::unique_ptr<BrowserProcessPlatformPart> platform_part_;
@@ -431,19 +455,17 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
 
-  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
-
   std::unique_ptr<resource_coordinator::ResourceCoordinatorParts>
       resource_coordinator_parts_;
 
   std::unique_ptr<SecureOriginPrefsObserver> secure_origin_prefs_observer_;
   std::unique_ptr<SiteIsolationPrefsObserver> site_isolation_prefs_observer_;
 
+  std::unique_ptr<SerialPolicyAllowedPorts> serial_policy_allowed_ports_;
 #if !BUILDFLAG(IS_ANDROID)
   // Called to signal the process' main message loop to exit.
   base::OnceClosure quit_closure_;
 
-  std::unique_ptr<SerialPolicyAllowedPorts> serial_policy_allowed_ports_;
   std::unique_ptr<HidSystemTrayIcon> hid_system_tray_icon_;
   std::unique_ptr<UsbSystemTrayIcon> usb_system_tray_icon_;
 
@@ -454,10 +476,20 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<base::android::ApplicationStatusListener> app_state_listener_;
 #endif
 
+  std::unique_ptr<GlobalFeatures> features_;
+
   // Observes application-wide events and logs them to breadcrumbs. Null if
   // breadcrumbs logging is disabled.
   std::unique_ptr<breadcrumbs::ApplicationBreadcrumbsLogger>
       application_breadcrumbs_logger_;
+
+  std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_async_;
+
+  std::optional<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
+      additional_provider_for_test_;
+
+  // Do not add new members to this class. Instead use GlobalFeatures. See
+  // browser_process.h file level comments for more details.
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

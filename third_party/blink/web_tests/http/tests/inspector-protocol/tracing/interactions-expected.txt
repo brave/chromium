@@ -7,8 +7,10 @@ Object: {
 		data: {
 			cancelable: boolean
 			duration: number
+			enqueuedToMainThreadTime: number
 			frame: string
 			interactionId: number
+			interactionOffset: number
 			nodeId: number
 			processingEnd: number
 			processingStart: number

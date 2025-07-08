@@ -25,6 +25,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/tracing_observer_proto.h"
 #include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -52,24 +53,24 @@ namespace memory_instrumentation {
 
 namespace {
 
-const char kMDPName[] = "TestDumpProvider";
-const char* kWhitelistedMDPName = "WhitelistedTestDumpProvider";
-const char* kBackgroundButNotSummaryWhitelistedMDPName =
+constexpr char kMDPName[] = "TestDumpProvider";
+constexpr char kWhitelistedMDPName[] = "WhitelistedTestDumpProvider";
+constexpr char kBackgroundButNotSummaryWhitelistedMDPName[] =
     "BackgroundButNotSummaryWhitelistedTestDumpProvider";
-const char* const kTestMDPWhitelist[] = {
-    kWhitelistedMDPName, kBackgroundButNotSummaryWhitelistedMDPName, nullptr};
+constexpr auto kTestMDPWhitelist = std::to_array<std::string_view>(
+    {kWhitelistedMDPName, kBackgroundButNotSummaryWhitelistedMDPName});
 
 // GTest matchers for MemoryDumpRequestArgs arguments.
 MATCHER(IsDetailedDump, "") {
-  return arg.level_of_detail == MemoryDumpLevelOfDetail::DETAILED;
+  return arg.level_of_detail == MemoryDumpLevelOfDetail::kDetailed;
 }
 
 MATCHER(IsLightDump, "") {
-  return arg.level_of_detail == MemoryDumpLevelOfDetail::LIGHT;
+  return arg.level_of_detail == MemoryDumpLevelOfDetail::kLight;
 }
 
 MATCHER(IsBackgroundDump, "") {
-  return arg.level_of_detail == MemoryDumpLevelOfDetail::BACKGROUND;
+  return arg.level_of_detail == MemoryDumpLevelOfDetail::kBackground;
 }
 
 // TODO(ssid): This class is replicated in memory_dump_manager_unittest. Move
@@ -142,6 +143,11 @@ class MemoryTracingIntegrationTest : public testing::Test {
     task_environment_ =
         std::make_unique<base::test::SingleThreadTaskEnvironment>();
     coordinator_ = std::make_unique<MockCoordinator>(this);
+
+    TraceLog::GetInstance()->InitializePerfettoIfNeeded();
+    tracing::PerfettoTracedProcess::DataSourceBase::ResetTaskRunner(
+        base::SingleThreadTaskRunner::GetCurrentDefault());
+    TracingObserverProto::GetInstance()->ResetForTesting();
   }
 
   void InitializeClientProcess(mojom::ProcessType process_type) {
@@ -215,14 +221,12 @@ class MemoryTracingIntegrationTest : public testing::Test {
  protected:
   void EnableMemoryInfraTracing() {
     TraceLog::GetInstance()->SetEnabled(
-        TraceConfig(MemoryDumpManager::kTraceCategory, ""),
-        TraceLog::RECORDING_MODE);
+        TraceConfig(MemoryDumpManager::kTraceCategory, ""));
   }
 
   void EnableMemoryInfraTracingWithTraceConfig(
       const std::string& trace_config) {
-    TraceLog::GetInstance()->SetEnabled(TraceConfig(trace_config),
-                                        TraceLog::RECORDING_MODE);
+    TraceLog::GetInstance()->SetEnabled(TraceConfig(trace_config));
   }
 
   void DisableTracing() { TraceLog::GetInstance()->SetDisabled(); }
@@ -290,8 +294,8 @@ TEST_F(MemoryTracingIntegrationTest, InitializedAfterStartOfTracing) {
   MockMemoryDumpProvider mdp;
   RegisterDumpProvider(&mdp, nullptr, MemoryDumpProvider::Options());
   EXPECT_CALL(mdp, OnMemoryDump(_, _)).Times(1);
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::DETAILED));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kDetailed));
   DisableTracing();
 }
 
@@ -332,12 +336,12 @@ TEST_F(MemoryTracingIntegrationTest, TestBackgroundTracingSetup) {
 
   // When requesting non-BACKGROUND dumps the MDP will be invoked.
   EXPECT_CALL(*mdp, OnMemoryDump(IsLightDump(), _));
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::LIGHT));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kLight));
 
   EXPECT_CALL(*mdp, OnMemoryDump(IsDetailedDump(), _));
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::DETAILED));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kDetailed));
 
   ASSERT_TRUE(IsPeriodicDumpingEnabled());
   DisableTracing();
@@ -357,6 +361,8 @@ TEST_F(MemoryTracingIntegrationTest, TraceConfigExpectations) {
   // Enabling memory-infra in a non-coordinator process should not trigger any
   // periodic dumps.
   EnableMemoryInfraTracing();
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_FALSE(IsPeriodicDumpingEnabled());
   DisableTracing();
 
@@ -366,6 +372,8 @@ TEST_F(MemoryTracingIntegrationTest, TraceConfigExpectations) {
   EnableMemoryInfraTracingWithTraceConfig(
       base::trace_event::TraceConfigMemoryTestUtil::
           GetTraceConfig_PeriodicTriggers(1, 5));
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_FALSE(IsPeriodicDumpingEnabled());
   DisableTracing();
 }
@@ -376,6 +384,8 @@ TEST_F(MemoryTracingIntegrationTest, TraceConfigExpectationsWhenIsCoordinator) {
   // Enabling memory-infra with the legacy TraceConfig (category filter) in
   // a coordinator process should not enable periodic dumps.
   EnableMemoryInfraTracing();
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_FALSE(IsPeriodicDumpingEnabled());
   DisableTracing();
 
@@ -386,6 +396,7 @@ TEST_F(MemoryTracingIntegrationTest, TraceConfigExpectationsWhenIsCoordinator) {
   EnableMemoryInfraTracingWithTraceConfig(
       base::trace_event::TraceConfigMemoryTestUtil::
           GetTraceConfig_PeriodicTriggers(100, 5));
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(IsPeriodicDumpingEnabled());
   DisableTracing();
@@ -458,8 +469,8 @@ TEST_F(MemoryTracingIntegrationTest, TestWhitelistingMDP) {
 
   EnableMemoryInfraTracing();
   EXPECT_FALSE(IsPeriodicDumpingEnabled());
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::BACKGROUND));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kBackground));
   DisableTracing();
 }
 
@@ -478,10 +489,8 @@ TEST_F(MemoryTracingIntegrationTest, GenerationChangeDoesntReenterMDM) {
   auto thread =
       std::make_unique<base::TestIOThread>(base::TestIOThread::kAutoStart);
 
-  TraceLog::GetInstance()->SetEnabled(
-      TraceConfig(kMemoryInfraTracingOnly,
-                  base::trace_event::RECORD_UNTIL_FULL),
-      TraceLog::RECORDING_MODE);
+  TraceLog::GetInstance()->SetEnabled(TraceConfig(
+      kMemoryInfraTracingOnly, base::trace_event::RECORD_UNTIL_FULL));
 
   // Creating a new thread after tracing has started causes the posted
   // TRACE_EVENT0 to initialize and register a new ThreadLocalEventBuffer.
@@ -498,8 +507,8 @@ TEST_F(MemoryTracingIntegrationTest, GenerationChangeDoesntReenterMDM) {
           run_loop.QuitClosure()));
   run_loop.Run();
 
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::DETAILED));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kDetailed));
   DisableTracing();
 
   // Now enable tracing again with a different RECORD_ mode. This will cause
@@ -509,12 +518,10 @@ TEST_F(MemoryTracingIntegrationTest, GenerationChangeDoesntReenterMDM) {
   // The bug here conisted in MemoryDumpManager::InvokeOnMemoryDump() to hit
   // that (which in turn causes an invalidation of the ThreadLocalEventBuffer)
   // after having checked that the MDP is valid and having decided to invoke it.
-  TraceLog::GetInstance()->SetEnabled(
-      TraceConfig(kMemoryInfraTracingOnly,
-                  base::trace_event::RECORD_CONTINUOUSLY),
-      TraceLog::RECORDING_MODE);
-  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::EXPLICITLY_TRIGGERED,
-                                       MemoryDumpLevelOfDetail::DETAILED));
+  TraceLog::GetInstance()->SetEnabled(TraceConfig(
+      kMemoryInfraTracingOnly, base::trace_event::RECORD_CONTINUOUSLY));
+  EXPECT_TRUE(RequestChromeDumpAndWait(MemoryDumpType::kExplicitlyTriggered,
+                                       MemoryDumpLevelOfDetail::kDetailed));
   DisableTracing();
 }
 

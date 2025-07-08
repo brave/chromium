@@ -4,37 +4,43 @@
 
 package org.chromium.android_webview;
 
+import android.graphics.Insets;
+import android.graphics.Point;
+import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.FrameLayout;
 
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.android_webview.common.Lifetime;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ViewAndroidDelegate;
+import org.chromium.ui.dragdrop.DragStateTracker;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 
-/**
- * Implementation of the abstract class {@link ViewAndroidDelegate} for WebView.
- */
+/** Implementation of the abstract class {@link ViewAndroidDelegate} for WebView. */
+@Lifetime.WebView
 public class AwViewAndroidDelegate extends ViewAndroidDelegate {
-    /** Used for logging. */
-    private static final String TAG = "AwVAD";
-
     /**
-     * List of anchor views stored in the order in which they were acquired mapped
-     * to their position.
+     * List of anchor views stored in the order in which they were acquired mapped to their
+     * position.
      */
     private final Map<View, Position> mAnchorViews = new LinkedHashMap<>();
 
     private final AwContentsClient mContentsClient;
     private final AwScrollOffsetManager mScrollManager;
+    private final WebContents mWebContents;
 
-    /**
-     * Represents the position of an anchor view.
-     */
+    private int mBottomInset;
+
+    /** Represents the position of an anchor view. */
     @VisibleForTesting
     private static class Position {
         public final float mX;
@@ -44,8 +50,8 @@ public class AwViewAndroidDelegate extends ViewAndroidDelegate {
         public final int mLeftMargin;
         public final int mTopMargin;
 
-        public Position(float x, float y, float width, float height, int leftMargin,
-                int topMargin) {
+        public Position(
+                float x, float y, float width, float height, int leftMargin, int topMargin) {
             mX = x;
             mY = y;
             mWidth = width;
@@ -56,11 +62,23 @@ public class AwViewAndroidDelegate extends ViewAndroidDelegate {
     }
 
     @VisibleForTesting
-    public AwViewAndroidDelegate(ViewGroup containerView, AwContentsClient contentsClient,
-            AwScrollOffsetManager scrollManager) {
+    public AwViewAndroidDelegate(
+            ViewGroup containerView,
+            AwContentsClient contentsClient,
+            AwScrollOffsetManager scrollManager,
+            WebContents webContents) {
         super(containerView);
         mContentsClient = contentsClient;
         mScrollManager = scrollManager;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            mContainerView.setOnApplyWindowInsetsListener(this::onApplyWindowInsets);
+        }
+        mWebContents = webContents;
+    }
+
+    @Override
+    public @Nullable DragStateTracker getDragStateTracker() {
+        return getDragStateTrackerInternal();
     }
 
     @Override
@@ -94,16 +112,28 @@ public class AwViewAndroidDelegate extends ViewAndroidDelegate {
             }
             mContainerView.addView(anchorView);
             if (position != null) {
-                setViewPosition(anchorView, position.mX, position.mY, position.mWidth,
-                        position.mHeight, position.mLeftMargin, position.mTopMargin);
+                setViewPosition(
+                        anchorView,
+                        position.mX,
+                        position.mY,
+                        position.mWidth,
+                        position.mHeight,
+                        position.mLeftMargin,
+                        position.mTopMargin);
             }
         }
     }
 
     @SuppressWarnings("deprecation") // AbsoluteLayout
     @Override
-    public void setViewPosition(View anchorView, float x, float y, float width, float height,
-            int leftMargin, int topMargin) {
+    public void setViewPosition(
+            View anchorView,
+            float x,
+            float y,
+            float width,
+            float height,
+            int leftMargin,
+            int topMargin) {
         ViewGroup containerView = getContainerViewGroup();
         if (!mAnchorViews.containsKey(anchorView) || containerView == null) return;
 
@@ -126,5 +156,49 @@ public class AwViewAndroidDelegate extends ViewAndroidDelegate {
     @Override
     public void onBackgroundColorChanged(int color) {
         mContentsClient.onBackgroundColorChanged(color);
+    }
+
+    /**
+     * @return The Visual Viewport bottom inset in pixels.
+     */
+    @Override
+    @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
+    public int getViewportInsetBottom() {
+        return mBottomInset;
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+        Insets imeInsets = insets.getInsets(WindowInsets.Type.ime());
+        if (imeInsets.bottom == 0) {
+            mBottomInset = 0;
+            if (mWebContents != null && mWebContents.getRenderWidgetHostView() != null) {
+                mWebContents.getRenderWidgetHostView().onViewportInsetBottomChanged();
+            }
+            return insets;
+        }
+        View containerView = getContainerView();
+        if (containerView.getDisplay() == null) {
+            // View is not attached yet, do nothing and pass insets through.
+            return insets;
+        }
+        int[] pos = new int[2];
+        containerView.getLocationOnScreen(pos);
+        Point screenSize = new Point();
+        containerView.getDisplay().getRealSize(screenSize);
+        // Calculate the intersect between the WebView bounds and the IME and clamp it to >= 0.
+        mBottomInset =
+                Math.max(
+                        0,
+                        (pos[1] + containerView.getHeight()) - (screenSize.y - imeInsets.bottom));
+        if (mWebContents != null && mWebContents.getRenderWidgetHostView() != null) {
+            mWebContents.getRenderWidgetHostView().onViewportInsetBottomChanged();
+        }
+        // Remove the bottom IME inset as we've consumed that one.
+        return new WindowInsets.Builder(insets)
+                .setInsets(
+                        WindowInsets.Type.ime(),
+                        Insets.of(imeInsets.left, imeInsets.top, imeInsets.right, 0))
+                .build();
     }
 }

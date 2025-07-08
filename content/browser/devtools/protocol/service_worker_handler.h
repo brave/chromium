@@ -31,7 +31,7 @@ namespace protocol {
 class ServiceWorkerHandler : public DevToolsDomainHandler,
                              public ServiceWorker::Backend {
  public:
-  explicit ServiceWorkerHandler(bool allow_inspect_worker);
+  ServiceWorkerHandler();
 
   ServiceWorkerHandler(const ServiceWorkerHandler&) = delete;
   ServiceWorkerHandler& operator=(const ServiceWorkerHandler&) = delete;
@@ -51,7 +51,6 @@ class ServiceWorkerHandler : public DevToolsDomainHandler,
   void StopAllWorkers(
       std::unique_ptr<StopAllWorkersCallback> callback) override;
   Response UpdateRegistration(const std::string& scope_url) override;
-  Response InspectWorker(const std::string& version_id) override;
   Response SetForceUpdateOnPageLoad(bool force_update_on_page_load) override;
   Response DeliverPushMessage(const std::string& origin,
                               const std::string& registration_id,
@@ -76,13 +75,12 @@ class ServiceWorkerHandler : public DevToolsDomainHandler,
   void OpenNewDevToolsWindow(int process_id, int devtools_agent_route_id);
   void ClearForceUpdate();
 
-  const bool allow_inspect_worker_;
   scoped_refptr<ServiceWorkerContextWrapper> context_;
   std::unique_ptr<ServiceWorker::Frontend> frontend_;
   bool enabled_;
   scoped_refptr<ServiceWorkerContextWatcher> context_watcher_;
   raw_ptr<BrowserContext> browser_context_;
-  StoragePartitionImpl* storage_partition_;
+  raw_ptr<StoragePartitionImpl> storage_partition_;
 
   base::WeakPtrFactory<ServiceWorkerHandler> weak_factory_{this};
 };

@@ -2,10 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/cocoa/apps/quit_with_apps_controller_mac.h"
-
+#import "base/apple/foundation_util.h"
 #include "base/command_line.h"
-#import "base/mac/foundation_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #import "chrome/browser/app_controller_mac.h"
@@ -22,16 +20,13 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/cocoa/apps/quit_with_apps_controller_mac.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/test/extension_test_message_listener.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -93,8 +88,8 @@ IN_PROC_BROWSER_TEST_F(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   // If notification was dismissed by click, show again on next quit.
   display_service.SimulateClick(
       NotificationHandler::Type::TRANSIENT,
-      QuitWithAppsController::kQuitWithAppsNotificationID, absl::nullopt,
-      absl::nullopt);
+      QuitWithAppsController::kQuitWithAppsNotificationID, std::nullopt,
+      std::nullopt);
   EXPECT_FALSE(display_service.GetNotification(
       QuitWithAppsController::kQuitWithAppsNotificationID));
   EXPECT_FALSE(controller->ShouldQuit());
@@ -144,7 +139,7 @@ IN_PROC_BROWSER_TEST_F(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   display_service.SimulateClick(
       NotificationHandler::Type::TRANSIENT,
       QuitWithAppsController::kQuitWithAppsNotificationID,
-      0 /* kQuitAllAppsButtonIndex */, absl::nullopt);
+      0 /* kQuitAllAppsButtonIndex */, std::nullopt);
   destroyed_watcher.Wait();
   EXPECT_FALSE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
   quit_observer.Run();

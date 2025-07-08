@@ -2,32 +2,41 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_icons.css.js';
 import 'chrome://resources/cr_elements/cr_input/cr_input_style.css.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_icons.css.js';
 import 'chrome://resources/cr_elements/cr_input/cr_input.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
+import 'chrome://resources/cr_elements/policy/cr_tooltip_icon.js';
 import '../shared_style.css.js';
 import './credential_details_card.css.js';
 import '../dialogs/edit_password_dialog.js';
 import '../dialogs/multi_store_delete_password_dialog.js';
+import '../sharing/share_password_flow.js';
+import '../sharing/metrics_utils.js';
+import '../dialogs/move_single_password_dialog.js';
 
-import {CrToastElement} from '//resources/cr_elements/cr_toast/cr_toast.js';
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
+import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import type {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import type {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import type {PasswordsMovedEvent, ValueCopiedEvent} from '../password_manager_app.js';
 import {PasswordManagerImpl, PasswordViewPageInteractions} from '../password_manager_proxy.js';
+import {PasswordSharingActions, recordPasswordSharingInteraction} from '../sharing/metrics_utils.js';
 import {ShowPasswordMixin} from '../show_password_mixin.js';
 import {UserUtilMixin} from '../user_utils_mixin.js';
 
-import {CredentialFieldElement} from './credential_field.js';
-import {CredentialNoteElement} from './credential_note.js';
+import type {CredentialFieldElement} from './credential_field.js';
+import type {CredentialNoteElement} from './credential_note.js';
 import {getTemplate} from './password_details_card.html.js';
+
+export const PASSWORD_SHARE_BUTTON_BUTTON_ELEMENT_ID =
+    'PasswordManagerUI::kSharePasswordElementId';
 
 export type PasswordRemovedEvent =
     CustomEvent<{removedFromStores: chrome.passwordsPrivate.PasswordStoreSet}>;
@@ -35,6 +44,8 @@ export type PasswordRemovedEvent =
 declare global {
   interface HTMLElementEventMap {
     'password-removed': PasswordRemovedEvent;
+    'passwords-moved': PasswordsMovedEvent;
+    'value-copied': ValueCopiedEvent;
   }
 }
 
@@ -48,13 +59,14 @@ export interface PasswordDetailsCardElement {
     noteValue: CredentialNoteElement,
     showMore: HTMLAnchorElement,
     showPasswordButton: CrIconButtonElement,
-    toast: CrToastElement,
     usernameValue: CredentialFieldElement,
+    shareButton: CrButtonElement,
+    shareButtonContainer: HTMLElement,
   };
 }
 
-const PasswordDetailsCardElementBase =
-    UserUtilMixin(ShowPasswordMixin(I18nMixin(PolymerElement)));
+const PasswordDetailsCardElementBase = PrefsMixin(HelpBubbleMixin(
+    UserUtilMixin(ShowPasswordMixin(I18nMixin(PolymerElement)))));
 
 export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   static get is() {
@@ -67,40 +79,77 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
 
   static get properties() {
     return {
-      password: Object,
+      password: {
+        type: Object,
+        observer: 'onPasswordChanged_',
+      },
       groupName: String,
-      toastMessage_: String,
-      usernameCopyInteraction_: {
-        type: PasswordViewPageInteractions,
-        value() {
-          return PasswordViewPageInteractions.USERNAME_COPY_BUTTON_CLICKED;
-        },
+      iconUrl: String,
+      shouldRegisterSharingPromo: {
+        type: Boolean,
+        value: false,
+      },
+
+      isBackup: {
+        type: Boolean,
+        value: false,
+      },
+
+      interactionsEnum_: {
+        type: Object,
+        value: PasswordViewPageInteractions,
       },
 
       showEditPasswordDialog_: Boolean,
       showDeletePasswordDialog_: Boolean,
+      showMovePasswordDialog_: Boolean,
+
+
+      showShareButton_: {
+        type: Boolean,
+        value: false,
+        // <if expr="_google_chrome">
+        computed: 'computeShowShareButton_(isAccountStoreUser, ' +
+            'isSyncingPasswords)',
+        // </if>
+      },
+
+      passwordSharingDisabled_: {
+        type: Boolean,
+        computed: 'computePasswordSharingDisabled_(' +
+            'prefs.password_manager.password_sharing_enabled.enforcement, ' +
+            'prefs.password_manager.password_sharing_enabled.value)',
+      },
 
       showShareFlow_: {
         type: Boolean,
         value: false,
       },
 
-      enableSendPasswords_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('enableSendPasswords');
-        },
-      },
+      isUsingAccountStore: Boolean,
     };
   }
 
-  password: chrome.passwordsPrivate.PasswordUiEntry;
-  groupName: string;
-  private toastMessage_: string;
-  private showEditPasswordDialog_: boolean;
-  private showDeletePasswordDialog_: boolean;
-  private showShareFlow_: boolean;
-  private enableSendPasswords_: boolean;
+  declare password: chrome.passwordsPrivate.PasswordUiEntry;
+  declare groupName: string;
+  declare iconUrl: string;
+  declare isUsingAccountStore: boolean;
+  /* This is set by the parent element, to only show help buble on the first
+   * card on the page. */
+  declare shouldRegisterSharingPromo: boolean;
+  /* Set when the card should display the backup password */
+  declare isBackup: boolean;
+  declare private showEditPasswordDialog_: boolean;
+  declare private passwordSharingDisabled_: boolean;
+  declare private showDeletePasswordDialog_: boolean;
+  declare private showShareFlow_: boolean;
+  declare private showShareButton_: boolean;
+  declare private showMovePasswordDialog_: boolean;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.maybeRegisterSharingHelpBubble_();
+  }
 
   private isFederated_(): boolean {
     return !!this.password.federationText;
@@ -112,8 +161,13 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private getPasswordValue_(): string|undefined {
-    return this.isFederated_() ? this.password.federationText :
-                                 this.password.password;
+    if (this.isBackup) {
+      return this.password.backupPassword;
+    }
+    if (this.isFederated_()) {
+      return this.password.federationText;
+    }
+    return this.password.password;
   }
 
   private getPasswordType_(): string {
@@ -138,6 +192,10 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private onDeleteClick_() {
+    // TODO(crbug.com/420801799): Handle delete button for backup entries.
+    if (this.isBackup) {
+      return;
+    }
     PasswordManagerImpl.getInstance().recordPasswordViewInteraction(
         PasswordViewPageInteractions.PASSWORD_DELETE_BUTTON_CLICKED);
     if (this.password.storedIn ===
@@ -157,8 +215,11 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private showToast_(message: string) {
-    this.toastMessage_ = message;
-    this.$.toast.show();
+    this.dispatchEvent(new CustomEvent('value-copied', {
+      bubbles: true,
+      composed: true,
+      detail: {toastMessage: message},
+    }));
   }
 
   private onEditClicked_() {
@@ -182,11 +243,17 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
   }
 
   private onShareButtonClick_() {
+    recordPasswordSharingInteraction(
+        PasswordSharingActions.PASSWORD_DETAILS_SHARE_BUTTON_CLICKED);
+    this.hideHelpBubble(PASSWORD_SHARE_BUTTON_BUTTON_ELEMENT_ID);
     this.showShareFlow_ = true;
   }
 
   private onShareFlowDone_() {
     this.showShareFlow_ = false;
+    setTimeout(() => {
+      this.$.shareButton.focus();
+    }, 0);
   }
 
   private extendAuthValidity_() {
@@ -204,8 +271,86 @@ export class PasswordDetailsCardElement extends PasswordDetailsCardElementBase {
     return hasApps ? this.i18n('appsLabel') : this.i18n('sitesLabel');
   }
 
-  private showShareButton_(): boolean {
-    return this.isSyncingPasswords && this.enableSendPasswords_;
+  private computeShowShareButton_(): boolean {
+    return !this.isFederated_() && !this.isBackup &&
+        (this.isSyncingPasswords || this.isAccountStoreUser);
+  }
+
+  private computePasswordSharingDisabled_(): boolean {
+    const pref = this.getPref('password_manager.password_sharing_enabled');
+    return pref.enforcement === chrome.settingsPrivate.Enforcement.ENFORCED &&
+        !pref.value;
+  }
+
+  private getCredentialTypeString_(): string {
+    return this.isFederated_() ? this.i18n(
+                                     'federatedCredentialProviderAriaLabel',
+                                     this.password.federationText!) :
+                                 this.i18n('passwordLabel');
+  }
+
+  private getAriaLabelForPasswordCard_(): string {
+    return this.password.username ?
+        this.i18n(
+            'passwordDetailsCardAriaLabel', this.getCredentialTypeString_(),
+            this.password.username) :
+        this.getCredentialTypeString_();
+  }
+
+  private getAriaLabelForEditButton_(): string {
+    return this.password.username ?
+        this.i18n(
+            'passwordDetailsCardEditButtonAriaLabel',
+            this.getCredentialTypeString_(), this.password.username) :
+        this.i18n(
+            'passwordDetailsCardEditButtonNoUsernameAriaLabel',
+            this.getCredentialTypeString_());
+  }
+
+  private getAriaLabelForDeleteButton_(): string {
+    return this.password.username ?
+        this.i18n(
+            'passwordDetailsCardDeleteButtonAriaLabel',
+            this.getCredentialTypeString_(), this.password.username) :
+        this.i18n(
+            'passwordDetailsCardDeleteButtonNoUsernameAriaLabel',
+            this.getCredentialTypeString_());
+  }
+
+  private computeMovePasswordText_(): TrustedHTML {
+    return this.i18nAdvanced('moveSinglePassword');
+  }
+
+  private movePasswordClicked_(e: Event): void {
+    e.preventDefault();
+    this.showMovePasswordDialog_ = true;
+  }
+
+  private showMovePasswordEntry_(): boolean {
+    return this.isUsingAccountStore &&
+        this.password.storedIn ===
+        chrome.passwordsPrivate.PasswordStoreSet.DEVICE;
+  }
+
+  private onMovePasswordDialogClose_(): void {
+    this.showMovePasswordDialog_ = false;
+  }
+
+  private onPasswordChanged_(): void {
+    this.isPasswordVisible = false;
+  }
+
+  private maybeRegisterSharingHelpBubble_(): void {
+    // Register the help bubble only if this is the first card in the list
+    // (`shouldRegisterSharingPromo` is true), and the share button is visible
+    // and not disabled.
+    if (!this.shouldRegisterSharingPromo ||
+        (!this.showShareButton_ && !this.passwordSharingDisabled_)) {
+      return;
+    }
+
+    this.registerHelpBubble(
+        PASSWORD_SHARE_BUTTON_BUTTON_ELEMENT_ID, this.$.shareButtonContainer);
   }
 }
 

@@ -47,9 +47,11 @@ template <typename Interface>
 class ScopedHandleBase;
 class DataPipeProducerHandle;
 typedef ScopedHandleBase<DataPipeProducerHandle> ScopedDataPipeProducerHandle;
+class DataPipeConsumerHandle;
+typedef ScopedHandleBase<DataPipeConsumerHandle> ScopedDataPipeConsumerHandle;
 }  // namespace mojo
 
-namespace WTF {
+namespace blink {
 
 template <typename Interface>
 struct CrossThreadCopier<mojo::PendingReceiver<Interface>>
@@ -86,6 +88,13 @@ struct CrossThreadCopier<mojo::ScopedDataPipeProducerHandle>
   STATIC_ONLY(CrossThreadCopier);
 };
 
-}  // namespace WTF
+template <>
+struct CrossThreadCopier<mojo::ScopedDataPipeConsumerHandle>
+    : public CrossThreadCopierByValuePassThrough<
+          mojo::ScopedDataPipeConsumerHandle> {
+  STATIC_ONLY(CrossThreadCopier);
+};
+
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_CROSS_THREAD_COPIER_MOJO_H_

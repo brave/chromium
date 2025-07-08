@@ -7,25 +7,27 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
+#include "base/containers/to_vector.h"
 #include "base/dcheck_is_on.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/ostream_operators.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
@@ -46,7 +48,6 @@
 #include "net/dns/public/dns_query_type.h"
 #include "net/dns/record_parsed.h"
 #include "net/dns/record_rdata.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
@@ -153,10 +154,10 @@ std::vector<HostPortPair> SortServiceTargets(
 // Validates that all `aliases` form a single non-looping chain, starting from
 // `query_name` and that all alias records are valid. Also validates that all
 // `data_records` are at the final name at the end of the alias chain.
-// TODO(crbug.com/1381506): Consider altering chain TTLs so that each TTL is
+// TODO(crbug.com/40245250): Consider altering chain TTLs so that each TTL is
 // less than or equal to all previous links in the chain.
 ExtractionError ValidateNamesAndAliases(
-    base::StringPiece query_name,
+    std::string_view query_name,
     const AliasMap& aliases,
     const std::vector<std::unique_ptr<const RecordParsed>>& data_records,
     std::string& out_final_chain_name) {
@@ -213,7 +214,7 @@ RecordsOrError ExtractResponseRecords(
   DCHECK_EQ(response.question_count(), 1u);
 
   std::vector<std::unique_ptr<const RecordParsed>> data_records;
-  absl::optional<base::TimeDelta> response_ttl;
+  std::optional<base::TimeDelta> response_ttl;
 
   DnsRecordParser parser = response.Parser();
 
@@ -254,7 +255,16 @@ RecordsOrError ExtractResponseRecords(
   std::string final_chain_name;
   ExtractionError name_and_alias_validation_error = ValidateNamesAndAliases(
       response.GetSingleDottedName(), aliases, data_records, final_chain_name);
-  if (name_and_alias_validation_error != ExtractionError::kOk) {
+  bool has_extraction_error =
+      name_and_alias_validation_error != ExtractionError::kOk;
+
+  if (query_type == DnsQueryType::A || query_type == DnsQueryType::AAAA) {
+    UMA_HISTOGRAM_BOOLEAN(
+        DnsResponseResultExtractor::kHasValidCnameRecordsHistogram,
+        !has_extraction_error && !aliases.empty());
+  }
+
+  if (has_extraction_error) {
     return base::unexpected(name_and_alias_validation_error);
   }
 
@@ -267,7 +277,7 @@ RecordsOrError ExtractResponseRecords(
         alias.second->rdata<CnameRecordRdata>()->cname()));
   }
 
-  absl::optional<base::TimeDelta> error_ttl;
+  std::optional<base::TimeDelta> error_ttl;
   for (unsigned i = 0; i < response.authority_count(); ++i) {
     DnsResourceRecord record;
     if (!parser.ReadRecord(&record)) {
@@ -376,6 +386,9 @@ ResultsOrError ExtractTxtResults(const DnsResponse& response,
   for (const auto& record : txt_records.value()) {
     const TxtRecordRdata* rdata = record->rdata<net::TxtRecordRdata>();
     DCHECK(rdata);
+    // TXT invalid without at least one string. If none, should be rejected by
+    // parser.
+    CHECK(!rdata->texts().empty());
     strings.insert(strings.end(), rdata->texts().begin(), rdata->texts().end());
 
     base::TimeDelta ttl = base::Seconds(record->ttl());
@@ -477,7 +490,7 @@ bool RecordIsAlias(const RecordParsed* record) {
 }
 
 ResultsOrError ExtractHttpsResults(const DnsResponse& response,
-                                   base::StringPiece original_domain_name,
+                                   std::string_view original_domain_name,
                                    uint16_t request_port,
                                    base::Time now,
                                    base::TimeTicks now_ticks) {
@@ -490,25 +503,38 @@ ResultsOrError ExtractHttpsResults(const DnsResponse& response,
     return base::unexpected(https_records.error());
   }
 
+  // Min TTL among records of full use to Chrome.
+  std::optional<base::TimeDelta> min_ttl;
+
+  // Min TTL among all records considered compatible with Chrome, per
+  // RFC9460#section-8.
+  std::optional<base::TimeDelta> min_compatible_ttl;
+
   std::multimap<HttpsRecordPriority, ConnectionEndpointMetadata> metadatas;
-  auto min_ttl = base::TimeDelta::Max();
   bool compatible_record_found = false;
   bool default_alpn_found = false;
   for (const auto& record : https_records.value()) {
     const HttpsRecordRdata* rdata = record->rdata<HttpsRecordRdata>();
     DCHECK(rdata);
 
+    base::TimeDelta ttl = base::Seconds(record->ttl());
+
     // Chrome does not yet support alias records.
     if (rdata->IsAlias()) {
       // Alias records are always considered compatible because they do not
       // support "mandatory" params.
       compatible_record_found = true;
+      min_compatible_ttl =
+          std::min(ttl, min_compatible_ttl.value_or(base::TimeDelta::Max()));
+
       continue;
     }
 
     const ServiceFormHttpsRecordRdata* service = rdata->AsServiceForm();
     if (service->IsCompatible()) {
       compatible_record_found = true;
+      min_compatible_ttl =
+          std::min(ttl, min_compatible_ttl.value_or(base::TimeDelta::Max()));
     } else {
       // Ignore services incompatible with Chrome's HTTPS record parser.
       // draft-ietf-dnsop-svcb-https-12#section-8
@@ -565,10 +591,11 @@ ResultsOrError ExtractHttpsResults(const DnsResponse& response,
 
     metadata.target_name = std::move(target_name);
 
+    metadata.trust_anchor_ids = base::ToVector(service->trust_anchor_ids());
+
     metadatas.emplace(service->priority(), std::move(metadata));
 
-    base::TimeDelta ttl = base::Seconds(record->ttl());
-    min_ttl = std::min(ttl, min_ttl);
+    min_ttl = std::min(ttl, min_ttl.value_or(base::TimeDelta::Max()));
 
     if (service->default_alpn()) {
       default_alpn_found = true;
@@ -577,8 +604,8 @@ ResultsOrError ExtractHttpsResults(const DnsResponse& response,
 
   // Ignore all records if any are an alias record. Chrome does not yet support
   // alias records, but aliases take precedence over any other records.
-  if (base::ranges::any_of(https_records.value(), &RecordIsAlias,
-                           &UnwrapRecordPtr)) {
+  if (std::ranges::any_of(https_records.value(), &RecordIsAlias,
+                          &UnwrapRecordPtr)) {
     metadatas.clear();
   }
 
@@ -590,12 +617,23 @@ ResultsOrError ExtractHttpsResults(const DnsResponse& response,
     metadatas.clear();
   }
 
-  // Empty metadata result signifies that compatible HTTPS records were
-  // received but with no contained metadata of use to Chrome.
-  if (!metadatas.empty() || compatible_record_found) {
+  if (metadatas.empty() && compatible_record_found) {
+    // Empty metadata result signifies that compatible HTTPS records were
+    // received but with no contained metadata of use to Chrome. Use the min TTL
+    // of all compatible records.
+    CHECK(min_compatible_ttl.has_value());
     results.insert(std::make_unique<HostResolverInternalMetadataResult>(
         https_records->front()->name(), DnsQueryType::HTTPS,
-        now_ticks + min_ttl, now + min_ttl, Source::kDns,
+        now_ticks + min_compatible_ttl.value(),
+        now + min_compatible_ttl.value(), Source::kDns,
+        /*metadatas=*/
+        std::multimap<HttpsRecordPriority, ConnectionEndpointMetadata>{}));
+  } else if (!metadatas.empty()) {
+    // Use min TTL only of those records contributing useful metadata.
+    CHECK(min_ttl.has_value());
+    results.insert(std::make_unique<HostResolverInternalMetadataResult>(
+        https_records->front()->name(), DnsQueryType::HTTPS,
+        now_ticks + min_ttl.value(), now + min_ttl.value(), Source::kDns,
         std::move(metadatas)));
   }
 
@@ -614,7 +652,7 @@ DnsResponseResultExtractor::~DnsResponseResultExtractor() = default;
 
 ResultsOrError DnsResponseResultExtractor::ExtractDnsResults(
     DnsQueryType query_type,
-    base::StringPiece original_domain_name,
+    std::string_view original_domain_name,
     uint16_t request_port) const {
   DCHECK(!original_domain_name.empty());
 
@@ -622,7 +660,6 @@ ResultsOrError DnsResponseResultExtractor::ExtractDnsResults(
     case DnsQueryType::UNSPECIFIED:
       // Should create multiple transactions with specified types.
       NOTREACHED();
-      return base::unexpected(ExtractionError::kUnexpected);
     case DnsQueryType::A:
     case DnsQueryType::AAAA:
       return ExtractAddressResults(*response_, query_type, clock_->Now(),

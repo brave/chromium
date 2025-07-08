@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "ui/ozone/platform/wayland/test/test_selection_device_manager.h"
 #include "ui/ozone/platform/wayland/test/test_wayland_server_thread.h"
@@ -86,6 +87,10 @@ struct GtkPrimarySelectionSource : public TestSelectionSource::Delegate {
   }
 
   void SendDndAction(uint32_t action) override {
+    NOTREACHED() << "The interface does not support this method.";
+  }
+
+  void SendDndDropPerformed() override {
     NOTREACHED() << "The interface does not support this method.";
   }
 

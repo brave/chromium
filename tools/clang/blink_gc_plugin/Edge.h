@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <deque>
+#include <string>
 #include <vector>
 
 #include "TracingStatus.h"
@@ -111,6 +112,7 @@ class Edge {
   virtual bool IsMember() { return false; }
   virtual bool IsWeakMember() { return false; }
   virtual bool IsCollection() { return false; }
+  virtual bool IsArray() { return false; }
   virtual bool IsTraceWrapperV8Reference() { return false; }
 };
 
@@ -134,8 +136,12 @@ class ArrayEdge : public Edge {
   explicit ArrayEdge(Edge* value) : value_(value){};
   LivenessKind Kind() override { return kStrong; }
   bool NeedsFinalization() override { return false; }
+  TracingStatus NeedsTracing(NeedsTracingOption option) override {
+    return value_->NeedsTracing(option);
+  }
   void Accept(EdgeVisitor* visitor) override { visitor->VisitArrayEdge(this); }
   Edge* element() { return value_; }
+  bool IsArray() override { return true; }
 
  private:
   Edge* value_;
@@ -267,7 +273,7 @@ class TraceWrapperV8Reference : public PtrEdge {
 class Collection : public Edge {
  public:
   typedef std::vector<Edge*> Members;
-  Collection(RecordInfo* info, bool on_heap) : info_(info), on_heap_(on_heap) {}
+  explicit Collection(RecordInfo* info);
   ~Collection() {
     for (Members::iterator it = members_.begin(); it != members_.end(); ++it) {
       assert(*it && "Collection-edge members must be non-null");
@@ -285,23 +291,8 @@ class Collection : public Edge {
       (*it)->Accept(visitor);
   }
   bool NeedsFinalization() override;
-  TracingStatus NeedsTracing(NeedsTracingOption) override {
-    if (on_heap_)
-      return TracingStatus::Needed();
-
-    // This will be handled by matchers.
-    if (IsSTDCollection()) {
-      return TracingStatus::Unknown();
-    }
-
-    // For off-heap collections, determine tracing status of members.
-    TracingStatus status = TracingStatus::Unneeded();
-    for (Members::iterator it = members_.begin(); it != members_.end(); ++it) {
-      // Do a non-recursive test here since members could equal the holder.
-      status = status.LUB((*it)->NeedsTracing(kNonRecursive));
-    }
-    return status;
-  }
+  TracingStatus NeedsTracing(NeedsTracingOption) override;
+  std::string GetCollectionName() const;
 
  private:
   RecordInfo* info_;
@@ -312,7 +303,7 @@ class Collection : public Edge {
 // An iterator edge is a direct edge to some iterator type.
 class Iterator : public Edge {
  public:
-  Iterator(RecordInfo* info, bool on_heap) : info_(info), on_heap_(on_heap) {}
+  explicit Iterator(RecordInfo* info);
   ~Iterator() {}
 
   void Accept(EdgeVisitor* visitor) override { visitor->VisitIterator(this); }

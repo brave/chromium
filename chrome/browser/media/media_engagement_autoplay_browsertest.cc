@@ -29,8 +29,11 @@
 namespace {
 
 base::FilePath GetPythonPath() {
-  // Every environment should have python3.
-  return base::FilePath(FILE_PATH_LITERAL("python3"));
+#if BUILDFLAG(IS_WIN)
+  return base::FilePath(FILE_PATH_LITERAL("vpython3.bat"));
+#else
+  return base::FilePath(FILE_PATH_LITERAL("vpython3"));
+#endif
 }
 
 const base::FilePath kTestDataPath = base::FilePath(
@@ -183,7 +186,8 @@ class MediaEngagementAutoplayBrowserTest
   void ApplyEmptyPreloadedList() {
     // Get the path relative to the source root.
     base::FilePath source_root;
-    EXPECT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &source_root));
+    EXPECT_TRUE(
+        base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_root));
 
     base::ScopedAllowBlockingForTesting allow_blocking;
     EXPECT_TRUE(MediaEngagementPreloadedList::GetInstance()->LoadFromFile(

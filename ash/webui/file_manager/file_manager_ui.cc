@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/file_manager/file_manager_ui.h"
 
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/webui/common/trusted_types_util.h"
 #include "ash/webui/file_manager/file_manager_page_handler.h"
@@ -22,8 +28,8 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/url_constants.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
+#include "ui/file_manager/grit/file_manager_gen_resources.h"
 #include "ui/file_manager/grit/file_manager_gen_resources_map.h"
-#include "ui/file_manager/grit/file_manager_resources.h"
 #include "ui/file_manager/grit/file_manager_resources_map.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
 
@@ -33,22 +39,23 @@ namespace {
 bool IsKioskSession() {
   auto* session_controller = Shell::Get()->session_controller();
   auto account_id = session_controller->GetActiveAccountId();
-  const auto user_type =
-      session_controller->GetUserSessionByAccountId(account_id)->user_info.type;
+  auto* session = session_controller->GetUserSessionByAccountId(account_id);
+  if (!session) {
+    return false;
+  }
+  const auto user_type = session->user_info.type;
 
   switch (user_type) {
-    case user_manager::USER_TYPE_REGULAR:
-    case user_manager::USER_TYPE_CHILD:
-    case user_manager::USER_TYPE_GUEST:
-    case user_manager::USER_TYPE_PUBLIC_ACCOUNT:
-    case user_manager::USER_TYPE_ACTIVE_DIRECTORY:
+    case user_manager::UserType::kRegular:
+    case user_manager::UserType::kChild:
+    case user_manager::UserType::kGuest:
+    case user_manager::UserType::kPublicAccount:
       return false;
-    case user_manager::USER_TYPE_KIOSK_APP:
-    case user_manager::USER_TYPE_ARC_KIOSK_APP:
-    case user_manager::USER_TYPE_WEB_KIOSK_APP:
+    case user_manager::UserType::kKioskChromeApp:
+    case user_manager::UserType::kKioskWebApp:
+    case user_manager::UserType::kKioskIWA:
+    case user_manager::UserType::kKioskArcvmApp:
       return true;
-    case user_manager::NUM_USER_TYPES:
-      NOTREACHED_NORETURN();
   }
 }
 
@@ -62,6 +69,8 @@ FileManagerUIConfig::FileManagerUIConfig(
 
 bool FileManagerUIConfig::IsWebUIEnabled(
     content::BrowserContext* browser_context) {
+  // Enable file manager WebUI if enable for SWA config or
+  // for the Kiosk session.
   return SystemWebAppUIConfig::IsWebUIEnabled(browser_context) ||
          IsKioskSession();
 }
@@ -86,6 +95,8 @@ FileManagerUI::FileManagerUI(content::WebUI* web_ui,
   CreateAndAddTrustedAppDataSource(web_ui, window_counter_);
   // Add ability to request chrome-untrusted: URLs
   web_ui->AddRequestableScheme(content::kChromeUIUntrustedScheme);
+  // Add a handler to provide pluralized strings.
+  web_ui->AddMessageHandler(delegate_->GetPluralStringHandler());
 }
 
 void FileManagerUI::CreateAndAddTrustedAppDataSource(content::WebUI* web_ui,
@@ -94,16 +105,12 @@ void FileManagerUI::CreateAndAddTrustedAppDataSource(content::WebUI* web_ui,
       web_ui->GetWebContents()->GetBrowserContext(), kChromeUIFileManagerHost);
 
   // Setup chrome://file-manager main and default page.
-  source->AddResourcePath("", IDR_FILE_MANAGER_SWA_MAIN_HTML);
-
+  source->AddResourcePath("", IDR_FILE_MANAGER_MAIN_HTML);
   // Add chrome://file-manager content.
-  source->AddResourcePaths(
-      base::make_span(kFileManagerSwaResources, kFileManagerSwaResourcesSize));
+  source->AddResourcePaths(kFileManagerSwaResources);
 
-  AddFilesAppResources(source, kFileManagerResources,
-                       kFileManagerResourcesSize);
-  AddFilesAppResources(source, kFileManagerGenResources,
-                       kFileManagerGenResourcesSize);
+  AddFilesAppResources(source, kFileManagerResources);
+  AddFilesAppResources(source, kFileManagerGenResources);
 
   // Load time data: add files app strings and feature flags.
   source->EnableReplaceI18nInJS();
@@ -148,6 +155,9 @@ FileManagerUI::~FileManagerUI() {
   if (!instance_count_) {
     delegate_->ProgressPausedTasks();
     delegate_->ShouldPollDriveHostedPinStates(false);
+    // There might be some tasks blocked by policy that already completed, but
+    // still have a notification so notify FPNM to show them if necessary.
+    delegate_->ShowPolicyNotifications();
   }
 }
 

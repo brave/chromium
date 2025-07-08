@@ -7,13 +7,13 @@
  * to install and uninstall Crostini.
  */
 
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
 
 import {sendWithPromise} from 'chrome://resources/js/cr.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js';
+import type {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js';
 
-import {GuestId, TERMINA_VM_TYPE} from '../guest_os/guest_os_browser_proxy.js';
+import {type GuestId, TERMINA_VM_TYPE} from '../guest_os/guest_os_browser_proxy.js';
 
 // Identifiers for the default Crostini VM and container.
 export const DEFAULT_CROSTINI_VM = TERMINA_VM_TYPE;
@@ -73,9 +73,8 @@ export interface CrostiniPortActiveSetting {
 
 export const PortState = {
   VALID: '',
-  INVALID: loadTimeData.getString('crostiniPortForwardingAddError') as string,
-  DUPLICATE: loadTimeData.getString('crostiniPortForwardingAddExisting') as
-      string,
+  INVALID: loadTimeData.getString('crostiniPortForwardingAddError'),
+  DUPLICATE: loadTimeData.getString('crostiniPortForwardingAddExisting'),
 };
 
 export const MIN_VALID_PORT_NUMBER = 1024;   // Minimum 16-bit integer value.
@@ -218,10 +217,17 @@ export interface CrostiniBrowserProxy {
 
   checkCrostiniIsRunning(): Promise<boolean>;
 
+  checkBruschettaIsRunning(): Promise<boolean>;
+
   /**
    * Shuts Crostini (Termina VM) down.
    */
   shutdownCrostini(): void;
+
+  /**
+   * Shuts Bruschetta (gLinux for ChromeOS) down.
+   */
+  shutdownBruschetta(): void;
 
   /**
    * @param enabled Set Crostini's access to the mic.
@@ -312,59 +318,59 @@ export class CrostiniBrowserProxyImpl implements CrostiniBrowserProxy {
     return instance || (instance = new CrostiniBrowserProxyImpl());
   }
 
-  static setInstanceForTesting(obj: CrostiniBrowserProxy) {
+  static setInstanceForTesting(obj: CrostiniBrowserProxy): void {
     instance = obj;
   }
 
-  requestCrostiniInstallerView() {
+  requestCrostiniInstallerView(): void {
     chrome.send('requestCrostiniInstallerView');
   }
 
-  requestRemoveCrostini() {
+  requestRemoveCrostini(): void {
     chrome.send('requestRemoveCrostini');
   }
 
-  requestCrostiniInstallerStatus() {
+  requestCrostiniInstallerStatus(): void {
     chrome.send('requestCrostiniInstallerStatus');
   }
 
-  requestCrostiniExportImportOperationStatus() {
+  requestCrostiniExportImportOperationStatus(): void {
     chrome.send('requestCrostiniExportImportOperationStatus');
   }
 
-  exportCrostiniContainer(containerId: GuestId) {
+  exportCrostiniContainer(containerId: GuestId): void {
     chrome.send('exportCrostiniContainer', [containerId]);
   }
 
-  importCrostiniContainer(containerId: GuestId) {
+  importCrostiniContainer(containerId: GuestId): void {
     chrome.send('importCrostiniContainer', [containerId]);
   }
 
-  requestArcAdbSideloadStatus() {
+  requestArcAdbSideloadStatus(): void {
     chrome.send('requestArcAdbSideloadStatus');
   }
 
-  getCanChangeArcAdbSideloading() {
+  getCanChangeArcAdbSideloading(): void {
     chrome.send('getCanChangeArcAdbSideloading');
   }
 
-  enableArcAdbSideload() {
+  enableArcAdbSideload(): void {
     chrome.send('enableArcAdbSideload');
   }
 
-  disableArcAdbSideload() {
+  disableArcAdbSideload(): void {
     chrome.send('disableArcAdbSideload');
   }
 
-  requestCrostiniContainerUpgradeView() {
+  requestCrostiniContainerUpgradeView(): void {
     chrome.send('requestCrostiniContainerUpgradeView');
   }
 
-  requestCrostiniUpgraderDialogStatus() {
+  requestCrostiniUpgraderDialogStatus(): void {
     chrome.send('requestCrostiniUpgraderDialogStatus');
   }
 
-  requestCrostiniContainerUpgradeAvailable() {
+  requestCrostiniContainerUpgradeAvailable(): void {
     chrome.send('requestCrostiniContainerUpgradeAvailable');
   }
 
@@ -395,7 +401,7 @@ export class CrostiniBrowserProxyImpl implements CrostiniBrowserProxy {
         'removeCrostiniPortForward', containerId, portNumber, protocol);
   }
 
-  removeAllCrostiniPortForwards(containerId: GuestId) {
+  removeAllCrostiniPortForwards(containerId: GuestId): void {
     chrome.send('removeAllCrostiniPortForwards', [containerId]);
   }
 
@@ -425,11 +431,19 @@ export class CrostiniBrowserProxyImpl implements CrostiniBrowserProxy {
     return sendWithPromise('checkCrostiniIsRunning');
   }
 
-  shutdownCrostini() {
+  checkBruschettaIsRunning(): Promise<boolean> {
+    return sendWithPromise('checkBruschettaIsRunning');
+  }
+
+  shutdownCrostini(): void {
     chrome.send('shutdownCrostini');
   }
 
-  setCrostiniMicSharingEnabled(enabled: boolean) {
+  shutdownBruschetta(): void {
+    chrome.send('shutdownBruschetta');
+  }
+
+  setCrostiniMicSharingEnabled(enabled: boolean): void {
     chrome.send('setCrostiniMicSharingEnabled', [enabled]);
   }
 
@@ -439,25 +453,25 @@ export class CrostiniBrowserProxyImpl implements CrostiniBrowserProxy {
 
   createContainer(
       containerId: GuestId, imageServer: string|null, imageAlias: string|null,
-      containerFile: string|null) {
+      containerFile: string|null): void {
     chrome.send(
         'createContainer',
         [containerId, imageServer, imageAlias, containerFile]);
   }
 
-  deleteContainer(containerId: GuestId) {
+  deleteContainer(containerId: GuestId): void {
     chrome.send('deleteContainer', [containerId]);
   }
 
-  requestContainerInfo() {
+  requestContainerInfo(): void {
     chrome.send('requestContainerInfo');
   }
 
-  setContainerBadgeColor(containerId: GuestId, badgeColor: SkColor) {
+  setContainerBadgeColor(containerId: GuestId, badgeColor: SkColor): void {
     chrome.send('setContainerBadgeColor', [containerId, badgeColor]);
   }
 
-  stopContainer(containerId: GuestId) {
+  stopContainer(containerId: GuestId): void {
     chrome.send('stopContainer', [containerId]);
   }
 
@@ -465,7 +479,7 @@ export class CrostiniBrowserProxyImpl implements CrostiniBrowserProxy {
     return sendWithPromise('openContainerFileSelector');
   }
 
-  requestSharedVmDevices() {
+  requestSharedVmDevices(): void {
     chrome.send('requestSharedVmDevices');
   }
 

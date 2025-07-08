@@ -4,14 +4,14 @@
 
 package org.chromium.components.omnibox.action;
 
-import androidx.annotation.NonNull;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.NativeMethods;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.NativeMethods;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
-/**
- * An interface for creation of the OmniboxAction instances.
- */
+/** An interface for creation of the OmniboxAction instances. */
+@NullMarked
 public interface OmniboxActionFactory {
     /**
      * Create a new OmniboxPedal.
@@ -22,42 +22,41 @@ public interface OmniboxActionFactory {
      * @return new instance of an OmniboxPedal
      */
     @CalledByNative
-    @NonNull
-    OmniboxAction buildOmniboxPedal(long instance, @NonNull String hint,
-            @NonNull String accessibilityHint, @OmniboxPedalId int pedalId);
+    @Nullable OmniboxAction buildOmniboxPedal(
+            long instance, String hint, String accessibilityHint, @OmniboxPedalId int pedalId);
 
     /**
      * Create a new OmniboxActionInSuggest.
      *
      * @param hint the title displayed on the chip
      * @param accessibilityHint the text to be announced to the accessibility-enabled users
-     * @param actionType the specific type of an action matching the
-     *         {@link EntityInfoProto.ActionInfo.ActionType}
+     * @param actionType the specific type of an action matching the {@link
+     *     EntityInfoProto.ActionInfo.ActionType}
      * @param actionUri the corresponding action URI/URL (serialized intent)
      * @return new instance of an OmniboxActionInSuggest
      */
     @CalledByNative
-    @NonNull
-    OmniboxAction buildActionInSuggest(long instance, @NonNull String hint,
-            @NonNull String accessibilityHint,
-            /* EntityInfoProto.ActionInfo.ActionType */ int actionType, @NonNull String actionUri);
+    @Nullable OmniboxAction buildActionInSuggest(
+            long instance,
+            String hint,
+            String accessibilityHint,
+            /* EntityInfoProto.ActionInfo.ActionType */ int actionType,
+            String actionUri);
 
     /**
-     * Create a new HistoryClustersAction.
+     * Construct a new OmniboxAnswerAction.
      *
-     * @param hint the title displayed on the chip
-     * @param accessibilityHint the text to be announced to the accessibility-enabled users
-     * @param query the user-specific query associated with History Clusters
-     * @return new instance of an HistoryClustersAction
+     * @param nativeInstance Pointer to native instance of the object.
+     * @param hint Text that should be displayed in the associated action chip.
+     * @param accessibilityHint Text for screen reader to read when focusing action chip
      */
     @CalledByNative
-    @NonNull
-    OmniboxAction buildHistoryClustersAction(long instance, @NonNull String hint,
-            @NonNull String accessibilityHint, @NonNull String query);
+    OmniboxAction buildOmniboxAnswerAction(
+            long nativeInstance, String hint, String accessibilityHint);
 
     @NativeMethods
     public interface Natives {
         /** Pass the OmniboxActionFactory instance to C++. */
-        void setFactory(OmniboxActionFactory javaFactory);
+        void setFactory(@Nullable OmniboxActionFactory javaFactory);
     }
 }

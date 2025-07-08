@@ -11,7 +11,7 @@ build_webui("build") {
     "location_internals.html",
   ]
 
-  non_web_component_files = [ "location_internals.ts" ]
+  ts_files = [ "location_internals.ts" ]
 
   web_component_files = [
     "diagnose_info_table.ts",
@@ -25,8 +25,6 @@ build_webui("build") {
 
   ts_composite = true
 
-  html_to_wrapper_template = "native"
-
   mojo_files_deps = [
     "//chrome/browser/ui/webui/location_internals:mojo_bindings_ts__generator",
     "//services/device/public/mojom:geolocation_internals_ts__generator",
@@ -37,4 +35,5 @@ build_webui("build") {
     "$root_gen_dir/services/device/public/mojom/geolocation_internals.mojom-webui.ts",
     "$root_gen_dir/services/device/public/mojom/geoposition.mojom-webui.ts",
   ]
+  webui_context_type = "trusted"
 }

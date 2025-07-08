@@ -8,7 +8,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/scoped_environment_variable_override.h"
 #include "base/strings/stringprintf.h"
-#include "build/build_config.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/print_settings.h"
@@ -29,7 +28,7 @@ bool PapersEqual(const PrinterSemanticCapsAndDefaults::Paper& lhs,
 }
 
 void VerifyCapabilityColorModels(const PrinterSemanticCapsAndDefaults& caps) {
-  absl::optional<bool> maybe_color = IsColorModelSelected(caps.color_model);
+  std::optional<bool> maybe_color = IsColorModelSelected(caps.color_model);
   ASSERT_TRUE(maybe_color.has_value());
   EXPECT_TRUE(maybe_color.value());
   maybe_color = IsColorModelSelected(caps.bw_model);
@@ -419,8 +418,9 @@ TEST(PrintBackendCupsHelperTest, PpdParsingBrotherPrinters) {
 }
 
 TEST(PrintBackendCupsHelperTest, PpdParsingHpPrinters) {
-  constexpr char kTestPpdData[] =
-      R"(*PPD-Adobe: "4.3"
+  {
+    constexpr char kTestPpdData[] =
+        R"(*PPD-Adobe: "4.3"
 *ColorDevice: True
 *OpenUI *HPColorMode/Mode: PickOne
 *DefaultHPColorMode: ColorPrint
@@ -430,14 +430,35 @@ TEST(PrintBackendCupsHelperTest, PpdParsingHpPrinters) {
   << /ProcessColorModel /DeviceGray >> setpagedevice"
 *CloseUI: *HPColorMode)";
 
-  PrinterSemanticCapsAndDefaults caps;
-  EXPECT_TRUE(ParsePpdCapabilities(/*dest=*/nullptr, /*locale=*/"",
-                                   kTestPpdData, &caps));
-  EXPECT_TRUE(caps.color_changeable);
-  EXPECT_TRUE(caps.color_default);
-  EXPECT_EQ(mojom::ColorModel::kHPColorColor, caps.color_model);
-  EXPECT_EQ(mojom::ColorModel::kHPColorBlack, caps.bw_model);
-  VerifyCapabilityColorModels(caps);
+    PrinterSemanticCapsAndDefaults caps;
+    EXPECT_TRUE(ParsePpdCapabilities(/*dest=*/nullptr, /*locale=*/"",
+                                     kTestPpdData, &caps));
+    EXPECT_TRUE(caps.color_changeable);
+    EXPECT_TRUE(caps.color_default);
+    EXPECT_EQ(mojom::ColorModel::kHPColorColor, caps.color_model);
+    EXPECT_EQ(mojom::ColorModel::kHPColorBlack, caps.bw_model);
+    VerifyCapabilityColorModels(caps);
+  }
+
+  {
+    constexpr char kTestPpdData[] =
+        R"(*PPD-Adobe: "4.3"
+*ColorDevice: True
+*OpenUI *HPPJLColorAsGray/Print Color as Gray: PickOne
+*DefaultHPPJLColorAsGray: no
+*HPPJLColorAsGray yes/On: " "
+*HPPJLColorAsGray no/Off: " "
+*CloseUI: *HPPJLColorAsGray)";
+
+    PrinterSemanticCapsAndDefaults caps;
+    EXPECT_TRUE(ParsePpdCapabilities(/*dest=*/nullptr, /*locale=*/"",
+                                     kTestPpdData, &caps));
+    EXPECT_TRUE(caps.color_changeable);
+    EXPECT_TRUE(caps.color_default);
+    EXPECT_EQ(mojom::ColorModel::kHpPjlColorAsGrayNo, caps.color_model);
+    EXPECT_EQ(mojom::ColorModel::kHpPjlColorAsGrayYes, caps.bw_model);
+    VerifyCapabilityColorModels(caps);
+  }
 }
 
 TEST(PrintBackendCupsHelperTest, PpdParsingCanonPrinters) {
@@ -790,11 +811,7 @@ TEST(PrintBackendCupsHelperTest,
 }
 
 TEST(PrintBackendCupsHelperTest, PpdParsingResolutionNoResolution) {
-#if BUILDFLAG(IS_MAC)
-  constexpr gfx::Size kExpectedDpi(kDefaultMacDpi, kDefaultMacDpi);
-#else
   constexpr gfx::Size kExpectedDpi(kDefaultPdfDpi, kDefaultPdfDpi);
-#endif
 
   // If the PPD does not have a valid resolution, the DPI should still be set to
   // an OS-dependent default value.
@@ -929,11 +946,7 @@ TEST(PrintBackendCupsHelperTest, NoTempFileLeftBehind) {
   EXPECT_TRUE(base::IsDirectoryEmpty(temp_dir.GetPath()));
 
   {
-#if BUILDFLAG(IS_MAC)
-    const char kTempDirEnvVar[] = "MAC_CHROMIUM_TMPDIR";
-#else
-    const char kTempDirEnvVar[] = "TMPDIR";
-#endif
+    static constexpr char kTempDirEnvVar[] = "TMPDIR";
     base::ScopedEnvironmentVariableOverride env_override(
         kTempDirEnvVar, temp_dir.GetPath().value());
 

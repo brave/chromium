@@ -5,33 +5,24 @@
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any
 import unittest
-
-import gpu_path_util
-
-from gpu_tests import common_typing as ct
-from gpu_tests import expected_color_test_cases
-from gpu_tests import gpu_integration_test
-from gpu_tests import skia_gold_integration_test_base
 
 from py_utils import cloud_storage
 from telemetry.util import image_util
 from telemetry.util import rgba_color
 
+import gpu_path_util
+from gpu_tests import common_typing as ct
+from gpu_tests import expected_color_test_cases
+from gpu_tests import gpu_integration_test
+from gpu_tests import skia_gold_heartbeat_integration_test_base as sghitb
+
 _MAPS_PERF_TEST_PATH = os.path.join(gpu_path_util.TOOLS_PERF_DIR, 'page_sets',
                                     'maps_perf_test')
 
-_OFF_WHITE_TOP_ROW_DEVICES = {
-    # Samsung A13.
-    'SM-A135M',
-    # Samsung A23.
-    'SM-A235M',
-}
 
-
-class ExpectedColorTest(
-    skia_gold_integration_test_base.SkiaGoldIntegrationTestBase):
+class ExpectedColorTest(sghitb.SkiaGoldHeartbeatIntegrationTestBase):
   """Variant of a regular pixel test that only uses Gold to surface images.
 
   Instead of normal pixel comparison, correctness is verified by looking for
@@ -47,12 +38,12 @@ class ExpectedColorTest(
   @classmethod
   def SetUpProcess(cls) -> None:
     cloud_storage.GetIfChanged(
-        os.path.join(_MAPS_PERF_TEST_PATH, 'load_dataset'),
+        os.path.join(_MAPS_PERF_TEST_PATH, 'dataset', 'load_dataset'),
         cloud_storage.PUBLIC_BUCKET)
     super().SetUpProcess()
 
   @classmethod
-  def _GetStaticServerDirs(cls) -> List[str]:
+  def _GetStaticServerDirs(cls) -> list[str]:
     static_dirs = super()._GetStaticServerDirs()
     static_dirs.append(_MAPS_PERF_TEST_PATH)
     return static_dirs
@@ -65,59 +56,46 @@ class ExpectedColorTest(
       yield (tc.name, tc.url, [tc])
 
   @classmethod
-  def ExpectationsFiles(cls) -> List[str]:
+  def ExpectationsFiles(cls) -> list[str]:
     return [
         os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      'test_expectations', 'expected_color_expectations.txt')
     ]
 
   def RunActualGpuTest(self, test_path: str, args: ct.TestArgs) -> None:
+    super().RunActualGpuTest(test_path, args)
     test_case = args[0]
     # Some pixel tests require non-standard browser arguments. Need to
     # check before running each page that it can run in the current
     # browser instance.
     self.RestartBrowserIfNecessaryWithArgs(test_case.extra_browser_args)
-    url = self.UrlOfStaticFilePath(test_path)
-    tab = self.tab
-    tab.Navigate(
-        url,
-        script_to_evaluate_on_commit=self._dom_automation_controller_script)
+    tab_data = sghitb.TabData(self.tab,
+                              self.__class__.websocket_server,
+                              is_default_tab=True)
+    self.NavigateTo(test_path, tab_data)
 
-    test_case.pre_capture_action(tab)
+    loop_state = sghitb.LoopState()
+    for action in test_case.test_actions:
+      action.Run(test_case, tab_data, loop_state, self)
 
     if test_case.ShouldCaptureFullScreenshot(self.browser):
-      screenshot = tab.FullScreenshot(5)
+      screenshot = self.tab.FullScreenshot(5)
     else:
-      screenshot = tab.Screenshot(5)
+      screenshot = self.tab.Screenshot(5)
     if screenshot is None:
       self.fail('Could not capture screenshot')
 
-    dpr = tab.EvaluateJavaScript('window.devicePixelRatio')
+    dpr = self.tab.EvaluateJavaScript('window.devicePixelRatio')
     logging.info('devicePixelRatio is %s', dpr)
 
-    # The bottom corners of Mac screenshots have black triangles due to the
-    # rounded corners of Mac windows. So, crop the bottom few rows off now to
-    # get rid of those. The triangles appear to be 5 pixels wide and tall
-    # regardless of DPI, so 10 pixels should be sufficient. However, when
-    # running under Python 3, 10 isn't quite enough for some reason, so use
-    # 20 instead.
-    if self.browser.platform.GetOSName() == 'mac':
-      img_height = image_util.Height(screenshot)
-      img_width = image_util.Width(screenshot)
-      screenshot = image_util.Crop(screenshot, 0, 0, img_width, img_height - 20)
-    # For some reason, the top row of the screenshot is very slightly off-white
-    # instead of pure white on some devices, which messes with the crop
-    # boundaries. So, chop off the top row now.
-    if tab.browser.platform.GetDeviceTypeName() in _OFF_WHITE_TOP_ROW_DEVICES:
-      screenshot = image_util.Crop(screenshot, 0, 1,
-                                   image_util.Width(screenshot),
-                                   image_util.Height(screenshot) - 1)
-    x1, y1, x2, y2 = _GetCropBoundaries(screenshot)
-    screenshot = image_util.Crop(screenshot, x1, y1, x2 - x1, y2 - y1)
+    screenshot = test_case.crop_action.CropScreenshot(
+        screenshot, dpr, self.browser.platform.GetDeviceTypeName(),
+        self.browser.platform.GetOSName())
 
-    self._ValidateScreenshotSamplesWithSkiaGold(tab, test_case, screenshot, dpr)
+    self._ValidateScreenshotSamplesWithSkiaGold(self.tab, test_case, screenshot,
+                                                dpr)
 
-  def GetGoldOptionalKeys(self) -> Dict[str, str]:
+  def GetGoldOptionalKeys(self) -> dict[str, str]:
     keys = super().GetGoldOptionalKeys()
     keys['expected_color_comment'] = (
         'This is an expected color test. Triaging in Gold will not affect test '
@@ -188,11 +166,11 @@ class ExpectedColorTest(
       y1 = int((location.y + size.height) * device_pixel_ratio)
       for x in range(x0, x1):
         for y in range(y0, y1):
-          if (x < 0 or y < 0 or x >= image_util.Width(screenshot)
-              or y >= image_util.Height(screenshot)):
-            self.fail(('Expected pixel location [%d, %d] is out of range on ' +
-                       '[%d, %d] image') % (x, y, image_util.Width(screenshot),
-                                            image_util.Height(screenshot)))
+          image_width = image_util.Width(screenshot)
+          image_height = image_util.Height(screenshot)
+          if x < 0 or y < 0 or x >= image_width or y >= image_height:
+            self.fail(f'Expected pixel location [{x}, {y}] is out of range on '
+                      f'[{image_width}, {image_height}] image')
 
           actual_color = image_util.GetPixelColor(screenshot, x, y)
           expected_color = rgba_color.RgbaColor(expectation.color.r,
@@ -200,10 +178,9 @@ class ExpectedColorTest(
                                                 expectation.color.b,
                                                 expectation.color.a)
           if not actual_color.IsEqual(expected_color, tolerance):
-            self.fail('Expected pixel at %s (actual pixel (%s, %s)) to be %s '
-                      'but got [%s, %s, %s, %s]' %
-                      (location, x, y, expectation.color, actual_color.r,
-                       actual_color.g, actual_color.b, actual_color.a))
+            self.fail(f'Expected pixel at {location} (actual pixel ({x}, {y})) '
+                      f'to be {expectation.color} but got [{actual_color.r}, '
+                      f'{actual_color.g}, {actual_color.b}, {actual_color.a}]')
 
     expected_colors = test_case.expected_colors
 
@@ -226,72 +203,6 @@ class ExpectedColorTest(
                    if color_expectation.tolerance is None else
                    color_expectation.tolerance)
       _CompareScreenshotWithExpectation(color_expectation)
-
-
-def _GetCropBoundaries(screenshot: ct.Screenshot) -> Tuple[int, int, int, int]:
-  """Returns the boundaries to crop the screenshot to.
-
-  Specifically, we look for the boundaries where the white background
-  transitions into the (non-white) content we care about.
-
-  Args:
-    screenshot: A screenshot returned by Tab.Screenshot() (numpy ndarray?)
-
-  Returns:
-    A 4-tuple (x1, y1, x2, y2) denoting the top left and bottom right
-    coordinates to crop to.
-  """
-  img_height = image_util.Height(screenshot)
-  img_width = image_util.Width(screenshot)
-
-  # We include start/end as optional arguments as an optimization for finding
-  # the lower right corner. If the original image is large and the non-white
-  # portions are small and in the upper left (which is the most common case),
-  # checking every row/column for white can take a while.
-  def RowIsWhite(row, start=None, end=None):
-    start = start or 0
-    end = end or img_width
-    for col in range(start, end):
-      pixel = image_util.GetPixelColor(screenshot, col, row)
-      if pixel.r != 255 or pixel.g != 255 or pixel.b != 255:
-        return False
-    return True
-
-  def ColumnIsWhite(column, start=None, end=None):
-    start = start or 0
-    end = end or img_height
-    for row in range(start, end):
-      pixel = image_util.GetPixelColor(screenshot, column, row)
-      if pixel.r != 255 or pixel.g != 255 or pixel.b != 255:
-        return False
-    return True
-
-  x1 = y1 = 0
-  x2 = img_width
-  y2 = img_height
-  for column in range(img_width):
-    if not ColumnIsWhite(column):
-      x1 = column
-      break
-
-  for row in range(img_height):
-    if not RowIsWhite(row, start=x1):
-      y1 = row
-      break
-
-  # We work from the right/bottom of the image here in case there are multiple
-  # things that need to be tested separated by whitespace like is the case for
-  # many video-related tests.
-  for column in range(img_width - 1, x1, -1):
-    if not ColumnIsWhite(column, start=y1):
-      x2 = column
-      break
-
-  for row in range(img_height - 1, y1, -1):
-    if not RowIsWhite(row, start=x1, end=x2):
-      y2 = row
-      break
-  return x1, y1, x2, y2
 
 
 def load_tests(loader: unittest.TestLoader, tests: Any,

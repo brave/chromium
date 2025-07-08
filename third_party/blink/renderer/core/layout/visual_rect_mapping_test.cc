@@ -48,7 +48,7 @@ class VisualRectMappingTest : public PaintTestConfigurations,
       const LayoutObject& object,
       const LayoutBoxModelObject& ancestor,
       const PhysicalRect& expected_visual_rect_in_ancestor) {
-    CheckVisualRect(object, ancestor, object.LocalVisualRect(),
+    CheckVisualRect(object, ancestor, LocalVisualRect(object),
                     expected_visual_rect_in_ancestor);
   }
 
@@ -379,7 +379,7 @@ TEST_P(VisualRectMappingTest, LayoutViewDisplayNone) {
   EXPECT_TRUE(frame_div->MapToVisualRectInAncestorSpace(frame_container, rect));
   EXPECT_EQ(rect, PhysicalRect(4, 13, 20, 37));
 
-  Element* frame_element = GetDocument().getElementById(AtomicString("frame"));
+  Element* frame_element = GetElementById("frame");
   frame_element->SetInlineStyleProperty(CSSPropertyID::kDisplay, "none");
   UpdateAllLifecyclePhasesForTest();
 
@@ -396,7 +396,7 @@ TEST_P(VisualRectMappingTest, SelfFlippedWritingMode) {
   )HTML");
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect local_visual_rect = target->LocalVisualRect();
+  PhysicalRect local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 70 = height(50) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 70), local_visual_rect);
@@ -421,7 +421,7 @@ TEST_P(VisualRectMappingTest, ContainerFlippedWritingMode) {
   )HTML");
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect target_local_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -440,7 +440,7 @@ TEST_P(VisualRectMappingTest, ContainerFlippedWritingMode) {
   CheckPaintInvalidationVisualRect(*target, GetLayoutView(),
                                    PhysicalRect(322, 111, 140, 110));
 
-  PhysicalRect container_local_visual_rect = container->LocalVisualRect();
+  PhysicalRect container_local_visual_rect = LocalVisualRect(*container);
   EXPECT_EQ(PhysicalRect(0, 0, 200, 100), container_local_visual_rect);
   rect = container_local_visual_rect;
   EXPECT_TRUE(container->MapToVisualRectInAncestorSpace(container, rect));
@@ -469,7 +469,7 @@ TEST_P(VisualRectMappingTest, ContainerOverflowScroll) {
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect target_local_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -492,7 +492,7 @@ TEST_P(VisualRectMappingTest, ContainerOverflowScroll) {
   CheckPaintInvalidationVisualRect(*target, GetLayoutView(),
                                    PhysicalRect(232, 121, 50, 80));
 
-  PhysicalRect container_local_visual_rect = container->LocalVisualRect();
+  PhysicalRect container_local_visual_rect = LocalVisualRect(*container);
   // Because container has overflow clip, its visual overflow doesn't include
   // overflow from children.
   // 70 = width(50) + border_left_width(10) + border_right_width(10)
@@ -524,14 +524,14 @@ TEST_P(VisualRectMappingTest, ContainerFlippedWritingModeAndOverflowScroll) {
   EXPECT_EQ(0, scrollable_area->ScrollPosition().y());
   // The initial scroll offset is to the left-most because of flipped blocks
   // writing mode.
-  // 150 = total_layout_overflow(100 + 100) - width(50)
+  // 150 = total_scrollable_overflow(100 + 100) - width(50)
   EXPECT_EQ(150, scrollable_area->ScrollPosition().x());
   // Scroll to the right by 8 pixels.
   scrollable_area->ScrollToAbsolutePosition(gfx::PointF(142, 7));
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect target_local_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -556,7 +556,7 @@ TEST_P(VisualRectMappingTest, ContainerFlippedWritingModeAndOverflowScroll) {
   PhysicalRect expectation(262, 121, 50, 80);
   CheckPaintInvalidationVisualRect(*target, GetLayoutView(), expectation);
 
-  PhysicalRect container_local_visual_rect = container->LocalVisualRect();
+  PhysicalRect container_local_visual_rect = LocalVisualRect(*container);
   // Because container has overflow clip, its visual overflow doesn't include
   // overflow from children.
   // 110 = width(50) + border_left_width(40) + border_right_width(20)
@@ -589,7 +589,7 @@ TEST_P(VisualRectMappingTest, ContainerOverflowHidden) {
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  auto target_local_visual_rect = target->LocalVisualRect();
+  auto target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -619,13 +619,13 @@ TEST_P(VisualRectMappingTest, ContainerFlippedWritingModeAndOverflowHidden) {
   EXPECT_EQ(0, scrollable_area->ScrollPosition().y());
   // The initial scroll offset is to the left-most because of flipped blocks
   // writing mode.
-  // 150 = total_layout_overflow(100 + 100) - width(50)
+  // 150 = total_scrollable_overflow(100 + 100) - width(50)
   EXPECT_EQ(150, scrollable_area->ScrollPosition().x());
   scrollable_area->ScrollToAbsolutePosition(gfx::PointF(82, 7));
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect target_local_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -658,14 +658,14 @@ TEST_P(VisualRectMappingTest, ContainerAndTargetDifferentFlippedWritingMode) {
   EXPECT_EQ(0, scrollable_area->ScrollPosition().y());
   // The initial scroll offset is to the left-most because of flipped blocks
   // writing mode.
-  // 150 = total_layout_overflow(100 + 100) - width(50)
+  // 150 = total_scrollable_overflow(100 + 100) - width(50)
   EXPECT_EQ(150, scrollable_area->ScrollPosition().x());
   // Scroll to the right by 8 pixels.
   scrollable_area->ScrollToAbsolutePosition(gfx::PointF(142, 7));
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
-  PhysicalRect target_local_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_local_visual_rect = LocalVisualRect(*target);
   // 140 = width(100) + box_shadow_offset_x(40)
   // 110 = height(90) + box_shadow_offset_y(20)
   EXPECT_EQ(PhysicalRect(0, 0, 140, 110), target_local_visual_rect);
@@ -708,7 +708,7 @@ TEST_P(VisualRectMappingTest,
 
   auto* normal_flow =
       To<LayoutBlock>(GetLayoutObjectByElementId("normal-flow"));
-  PhysicalRect normal_flow_visual_rect = normal_flow->LocalVisualRect();
+  PhysicalRect normal_flow_visual_rect = LocalVisualRect(*normal_flow);
   EXPECT_EQ(PhysicalRect(0, 0, 2000, 2000), normal_flow_visual_rect);
   PhysicalRect rect = normal_flow_visual_rect;
   EXPECT_TRUE(normal_flow->MapToVisualRectInAncestorSpace(scroller, rect));
@@ -719,7 +719,7 @@ TEST_P(VisualRectMappingTest,
   auto* absolute = To<LayoutBlock>(GetLayoutObjectByElementId("absolute"));
   EXPECT_EQ(stacking_context, absolute->Container());
 
-  EXPECT_EQ(PhysicalRect(0, 0, 50, 50), absolute->LocalVisualRect());
+  EXPECT_EQ(PhysicalRect(0, 0, 50, 50), LocalVisualRect(*absolute));
   CheckPaintInvalidationVisualRect(*absolute, *stacking_context,
                                    PhysicalRect(222, 111, 50, 50));
 }
@@ -748,7 +748,7 @@ TEST_P(VisualRectMappingTest,
   auto* container = To<LayoutBlock>(GetLayoutObjectByElementId("container"));
   EXPECT_EQ(container, absolute->Container());
 
-  PhysicalRect absolute_visual_rect = absolute->LocalVisualRect();
+  PhysicalRect absolute_visual_rect = LocalVisualRect(*absolute);
   EXPECT_EQ(PhysicalRect(0, 0, 50, 50), absolute_visual_rect);
   PhysicalRect rect = absolute_visual_rect;
   EXPECT_TRUE(absolute->MapToVisualRectInAncestorSpace(stacking_context, rect));
@@ -769,7 +769,7 @@ TEST_P(VisualRectMappingTest, CSSClip) {
 
   auto* target = GetLayoutBoxByElementId("target");
 
-  EXPECT_EQ(PhysicalRect(0, 0, 400, 400), target->LocalVisualRect());
+  EXPECT_EQ(PhysicalRect(0, 0, 400, 400), LocalVisualRect(*target));
   CheckPaintInvalidationVisualRect(*target, GetLayoutView(),
                                    PhysicalRect(0, 0, 200, 200));
 }
@@ -784,7 +784,7 @@ TEST_P(VisualRectMappingTest, ContainPaint) {
 
   auto* target = GetLayoutBoxByElementId("target");
 
-  EXPECT_EQ(PhysicalRect(0, 0, 400, 400), target->LocalVisualRect());
+  EXPECT_EQ(PhysicalRect(0, 0, 400, 400), LocalVisualRect(*target));
   CheckPaintInvalidationVisualRect(*target, GetLayoutView(),
                                    PhysicalRect(0, 0, 200, 200));
 }
@@ -802,7 +802,7 @@ TEST_P(VisualRectMappingTest, FloatUnderInline) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  PhysicalRect target_visual_rect = target->LocalVisualRect();
+  PhysicalRect target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   PhysicalRect rect = target_visual_rect;
@@ -831,7 +831,7 @@ TEST_P(VisualRectMappingTest, FloatUnderInlineVerticalRL) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  auto target_visual_rect = target->LocalVisualRect();
+  auto target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   auto rect = target_visual_rect;
@@ -862,7 +862,7 @@ TEST_P(VisualRectMappingTest, InlineBlock) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  auto target_visual_rect = target->LocalVisualRect();
+  auto target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   auto rect = target_visual_rect;
@@ -888,7 +888,7 @@ TEST_P(VisualRectMappingTest, InlineBlockVerticalRL) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  auto target_visual_rect = target->LocalVisualRect();
+  auto target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   auto rect = target_visual_rect;
@@ -916,7 +916,7 @@ TEST_P(VisualRectMappingTest, AbsoluteUnderRelativeInline) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  auto target_visual_rect = target->LocalVisualRect();
+  auto target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   auto rect = target_visual_rect;
@@ -942,7 +942,7 @@ TEST_P(VisualRectMappingTest, AbsoluteUnderRelativeInlineVerticalRL) {
   auto* span = To<LayoutBoxModelObject>(GetLayoutObjectByElementId("span"));
   auto* target = GetLayoutBoxByElementId("target");
 
-  auto target_visual_rect = target->LocalVisualRect();
+  auto target_visual_rect = LocalVisualRect(*target);
   EXPECT_EQ(PhysicalRect(0, 0, 33, 44), target_visual_rect);
 
   auto rect = target_visual_rect;
@@ -1104,7 +1104,7 @@ TEST_P(VisualRectMappingTest, PerspectivePlusScroll) {
     </div>
   )HTML");
   auto* container = To<LayoutBlock>(GetLayoutObjectByElementId("container"));
-  To<Element>(container->GetNode())->scrollTo(0, 5);
+  To<Element>(container->GetNode())->scrollToForTesting(0, 5);
   UpdateAllLifecyclePhasesForTest();
 
   auto* target = To<LayoutBlock>(GetLayoutObjectByElementId("target"));
@@ -1173,8 +1173,7 @@ TEST_P(VisualRectMappingTest, FixedContentsWithScrollOffset) {
   )HTML");
 
   auto* ancestor = GetLayoutBoxByElementId("ancestor");
-  auto* fixed =
-      GetDocument().getElementById(AtomicString("fixed"))->GetLayoutObject();
+  auto* fixed = GetLayoutObjectByElementId("fixed");
 
   CheckMapToVisualRectInAncestorSpace(PhysicalRect(0, 0, 400, 300),
                                       PhysicalRect(0, -10, 400, 300), fixed,
@@ -1201,8 +1200,7 @@ TEST_P(VisualRectMappingTest, FixedContentsUnderViewWithScrollOffset) {
     <div id='forcescroll' style='height:1000px;'></div>
   )HTML");
 
-  auto* fixed =
-      GetDocument().getElementById(AtomicString("fixed"))->GetLayoutObject();
+  auto* fixed = GetLayoutObjectByElementId("fixed");
 
   CheckMapToVisualRectInAncestorSpace(
       PhysicalRect(0, 0, 400, 300), PhysicalRect(0, 0, 400, 300), fixed,
@@ -1290,8 +1288,6 @@ TEST_P(VisualRectMappingTest, PerspectiveWithAnonymousTable) {
 }
 
 TEST_P(VisualRectMappingTest, AnchorPositionScroll) {
-  ScopedCSSAnchorPositioningForTest enabled_scope(true);
-
   GetDocument().SetBaseURLOverride(KURL("http://test.com"));
   SetBodyInnerHTML(R"HTML(
     <style>
@@ -1323,7 +1319,7 @@ TEST_P(VisualRectMappingTest, AnchorPositionScroll) {
         bottom: anchor(--anchor top);
         width: 50px;
         height: 50px;
-        anchor-default: --anchor;
+        position-anchor: --anchor;
       }
     </style>
     <div id=cb>
@@ -1353,6 +1349,35 @@ TEST_P(VisualRectMappingTest, AnchorPositionScroll) {
   // #anchored is moved into view and should have a non-empty visual rect
   CheckVisualRect(anchored, ancestor, PhysicalRect(0, 0, 50, 50),
                   PhysicalRect(100, 50, 50, 50));
+}
+
+TEST_P(VisualRectMappingTest, IgnoreFilters) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="parent">
+      <div id="filter" style="filter: blur(1px)">
+        <div id="child"></div>
+      </div>
+    </div>
+  )HTML");
+
+  auto* parent = GetLayoutBoxByElementId("parent");
+  auto* filter = GetLayoutBoxByElementId("filter");
+  auto* child = GetLayoutBoxByElementId("child");
+  PhysicalRect input(0, 0, 50, 50);
+  PhysicalRect expected_without_filter = input;
+  PhysicalRect expected_with_filter(-3, -3, 56, 56);
+  CheckMapToVisualRectInAncestorSpace(input, expected_without_filter, child,
+                                      filter, kDefaultVisualRectFlags, true);
+  CheckMapToVisualRectInAncestorSpace(input, expected_without_filter, child,
+                                      filter, kIgnoreFilters, true);
+  CheckMapToVisualRectInAncestorSpace(input, expected_with_filter, child,
+                                      parent, kDefaultVisualRectFlags, true);
+  CheckMapToVisualRectInAncestorSpace(input, expected_without_filter, child,
+                                      parent, kIgnoreFilters, true);
+  CheckMapToVisualRectInAncestorSpace(input, expected_with_filter, filter,
+                                      parent, kDefaultVisualRectFlags, true);
+  CheckMapToVisualRectInAncestorSpace(input, expected_without_filter, filter,
+                                      parent, kIgnoreFilters, true);
 }
 
 }  // namespace blink

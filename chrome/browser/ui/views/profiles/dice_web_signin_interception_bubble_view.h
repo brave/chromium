@@ -5,16 +5,19 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_PROFILES_DICE_WEB_SIGNIN_INTERCEPTION_BUBBLE_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_PROFILES_DICE_WEB_SIGNIN_INTERCEPTION_BUBBLE_VIEW_H_
 
-#include "ui/views/bubble/bubble_dialog_delegate_view.h"
-
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
+#include "base/time/time.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/signin/dice_web_signin_interceptor.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 namespace views {
 class View;
@@ -28,9 +31,12 @@ class Profile;
 // implemented as a WebUI page rendered inside a native bubble.
 class DiceWebSigninInterceptionBubbleView
     : public views::BubbleDialogDelegateView,
-      content::WebContentsDelegate {
+      public content::WebContentsDelegate,
+      public signin::IdentityManager::Observer {
+  METADATA_HEADER(DiceWebSigninInterceptionBubbleView,
+                  views::BubbleDialogDelegateView)
+
  public:
-  METADATA_HEADER(DiceWebSigninInterceptionBubbleView);
   DiceWebSigninInterceptionBubbleView(
       const DiceWebSigninInterceptionBubbleView& other) = delete;
   DiceWebSigninInterceptionBubbleView& operator=(
@@ -56,28 +62,42 @@ class DiceWebSigninInterceptionBubbleView
   // Returns true if the user has accepted the interception.
   bool GetAccepted() const;
 
-  // content::WebContentsDelegate:
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+  // IdentityManager::Observer:
+  void OnPrimaryAccountChanged(
+      const signin::PrimaryAccountChangeEvent& event_details) override;
+  void OnExtendedAccountInfoRemoved(const AccountInfo& info) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
-                           BubbleClosed);
+                           BubbleIgnored);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            BubbleDeclined);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            BubbleAccepted);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           BubbleDismissedByEscapeKey);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           BubbleDismissedByEscapeKeyTwice);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           BubbleDismissedByPressingAvatarButton);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            BubbleAcceptedGuestMode);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            ProfileKeepAlive);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            OpenLearnMoreLinkInNewTab);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninAccepted);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninDeclined);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninSignedOutDismiss);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninSignedOutBeforeBubbleShown);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninSigninDismiss);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleWithParamBrowserTest,
+                           AvatarEffectWithInterceptType);
   FRIEND_TEST_ALL_PREFIXES(ProfileBubbleInteractiveUiTest,
                            InterceptionBubbleFocus);
 
@@ -91,6 +111,10 @@ class DiceWebSigninInterceptionBubbleView
 
     ScopedHandle& operator=(const ScopedHandle&) = delete;
     ScopedHandle(const ScopedHandle&) = delete;
+
+    DiceWebSigninInterceptionBubbleView* GetBubbleViewForTesting() {
+      return bubble_.get();
+    }
 
    private:
     base::WeakPtr<DiceWebSigninInterceptionBubbleView> bubble_;
@@ -107,9 +131,12 @@ class DiceWebSigninInterceptionBubbleView
   // alive until the bubble should be closed.
   std::unique_ptr<ScopedWebSigninInterceptionBubbleHandle> GetHandle();
 
-  // This bubble has no native buttons. The user accepts or cancels or selects
-  // Guest profile through this method, which is called by the inner web UI.
+  // This bubble has no native buttons. The user accepts or cancels, which is
+  // called by the inner web UI.
   void OnWebUIUserChoice(SigninInterceptionUserChoice user_choice);
+
+  // Treats the response based on the interception result.
+  void OnInterceptionResult(SigninInterceptionResult result);
 
   content::WebContents* GetBubbleWebContentsForTesting();
 
@@ -117,16 +144,47 @@ class DiceWebSigninInterceptionBubbleView
   // the page is loaded and the height is sent by DiceWebSigninInterceptHandler.
   void SetHeightAndShowWidget(int height);
 
+  // content::WebContentsDelegate:
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
+
+  // Dimisses the bubbles and finishes the flow.
+  void Dismiss(SigninInterceptionDismissReason reason);
+
+  // Returns whether the bubble displayed is the Chrome Signin one or not.
+  bool IsChromeSignin() const;
+
+  // Applies the effect of the changing the text and the button action of the
+  // identity pill avatar button.
+  void ApplyAvatarButtonEffects();
+
   // This bubble can outlive the Browser, in particular on Mac (see
   // https://crbug.com/1302729). Retain the profile to prevent use-after-free.
   ScopedProfileKeepAlive profile_keep_alive_;
 
   base::WeakPtr<Browser> browser_;
   raw_ptr<Profile> profile_;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
   bool accepted_ = false;
   WebSigninInterceptor::Delegate::BubbleParameters bubble_parameters_;
   base::OnceCallback<void(SigninInterceptionResult)> callback_;
   raw_ptr<views::WebView> web_view_;
+
+  base::TimeTicks chrome_signin_bubble_shown_time_;
+
+  // Callback to clear the avatar button affects applied by
+  // `ApplyAvatarButtonEffects`.
+  base::ScopedClosureRunner clear_avatar_button_effects_callback_;
 
   // Last member in the class: pointers are invalidated before other fields.
   base::WeakPtrFactory<DiceWebSigninInterceptionBubbleView> weak_factory_{this};

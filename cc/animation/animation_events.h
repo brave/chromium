@@ -6,6 +6,7 @@
 #define CC_ANIMATION_ANIMATION_EVENTS_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/time/time.h"
@@ -16,7 +17,7 @@
 namespace cc {
 
 struct CC_ANIMATION_EXPORT AnimationEvent {
-  enum Type { STARTED, FINISHED, ABORTED, TAKEOVER, TIME_UPDATED };
+  enum class Type { kStarted, kFinished, kAborted, kTakeOver, kTimeUpdated };
 
   typedef size_t KeyframeEffectId;
   struct UniqueKeyframeModelId {
@@ -34,7 +35,7 @@ struct CC_ANIMATION_EXPORT AnimationEvent {
   // Constructs AnimationEvent of TIME_UPDATED type.
   AnimationEvent(int timeline_id,
                  int animation_id,
-                 absl::optional<base::TimeDelta> local_time);
+                 std::optional<base::TimeDelta> local_time);
 
   AnimationEvent(const AnimationEvent& other);
   AnimationEvent& operator=(const AnimationEvent& other);
@@ -55,7 +56,7 @@ struct CC_ANIMATION_EXPORT AnimationEvent {
   std::unique_ptr<gfx::AnimationCurve> curve;
 
   // Set for TIME_UPDATED events.
-  absl::optional<base::TimeDelta> local_time;
+  std::optional<base::TimeDelta> local_time;
 };
 
 class CC_ANIMATION_EXPORT AnimationEvents : public MutatorEvents {
@@ -71,12 +72,12 @@ class CC_ANIMATION_EXPORT AnimationEvents : public MutatorEvents {
     needs_time_updated_events_ = value;
   }
 
-  // TODO(gerchiko): Make events_ a private member variable with methods to add
-  // and retrieve the events.
-  std::vector<AnimationEvent> events_;
+  const std::vector<AnimationEvent>& events() const { return events_; }
+  std::vector<AnimationEvent>& events() { return events_; }
 
  private:
-  bool needs_time_updated_events_;
+  std::vector<AnimationEvent> events_;
+  bool needs_time_updated_events_ = false;
 };
 
 }  // namespace cc

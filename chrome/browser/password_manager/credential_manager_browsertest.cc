@@ -10,8 +10,8 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_manager_test_base.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/password_manager/passwords_navigation_observer.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/browser/ui/browser.h"
@@ -20,7 +20,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "components/password_manager/core/browser/test_password_store.h"
+#include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -36,6 +36,9 @@
 namespace {
 
 using password_manager::MatchesFormExceptStore;
+using ::testing::ElementsAre;
+using ::testing::Pair;
+using ::testing::SizeIs;
 
 class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
  public:
@@ -182,8 +185,9 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     // ContentCredentialManager should have closed the underlying interface
     // connection in response to DidCommitProvisionalLoad in Step 3, and the
     // method call should be ignored.
-    if (!client->was_store_ever_called())
+    if (!client->was_store_ever_called()) {
       return;
+    }
 
     BubbleObserver prompt_observer(WebContents());
     prompt_observer.WaitForAutomaticSavePrompt();
@@ -194,7 +198,7 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
 
     password_manager::TestPasswordStore* test_password_store =
         static_cast<password_manager::TestPasswordStore*>(
-            PasswordStoreFactory::GetForProfile(
+            ProfilePasswordStoreFactory::GetForProfile(
                 browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
                 .get());
 
@@ -270,7 +274,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   // Save credentials with 'skip_zero_click'.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -323,7 +327,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
                        StoreExistingCredentialIsNoOp) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
 
@@ -412,7 +416,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
                        StoreUpdatesPasswordOfExistingCredential) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
 
@@ -504,7 +508,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   // credentials contain metadata.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
 
@@ -604,7 +608,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
                        StoreSavesPSLMatchedCredential) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
 
@@ -661,7 +665,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
                        UpdatingPSLMatchedCredentialCreatesSecondEntry) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
 
@@ -724,7 +728,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   http_form.password_value = u"12345";
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_store->AddLogin(http_form);
@@ -746,10 +750,8 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   // Wait for the migration logic to actually touch the password store.
   WaitForPasswordStore();
   // Only HTTPS passwords should be present.
-  EXPECT_TRUE(
-      password_store->stored_passwords().at(http_origin.spec()).empty());
-  EXPECT_FALSE(
-      password_store->stored_passwords().at(https_origin.spec()).empty());
+  EXPECT_THAT(password_store->stored_passwords(),
+              ElementsAre(Pair(https_origin.spec(), SizeIs(1))));
 }
 
 IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
@@ -757,7 +759,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   // Save credentials with 'skip_zero_click' false.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -919,7 +921,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, SaveViaAPIAndAutofill) {
   WaitForPasswordStore();
   password_manager::TestPasswordStore::PasswordMap stored =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get())
           ->stored_passwords();
@@ -936,7 +938,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, UpdateViaAPIAndAutofill) {
   // Save credentials with 'skip_zero_click' false.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -1027,7 +1029,7 @@ class CredentialManagerPrerenderBrowserTest
   ~CredentialManagerPrerenderBrowserTest() override = default;
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     CredentialManagerBrowserTest::SetUp();
   }
 
@@ -1045,7 +1047,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerPrerenderBrowserTest,
   // Save credentials with 'skip_zero_click' false.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -1062,7 +1064,8 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerPrerenderBrowserTest,
   auto prerender_url =
       embedded_test_server()->GetURL("/password/credentials.html");
   // Loads a page in the prerender.
-  int host_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper()->AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*WebContents(), host_id);
 
   // It should not have binding mojom::CredentialManager.
@@ -1128,14 +1131,15 @@ void CredentialManagerAvatarTest::AddPasswordForURL(const GURL& url) {
   form.icon_url = https_test_server().GetURL(kAvatarOrigin, kAvatarPath);
 
   scoped_refptr<password_manager::PasswordStoreInterface> password_store =
-      PasswordStoreFactory::GetForProfile(browser()->profile(),
-                                          ServiceAccessType::EXPLICIT_ACCESS);
+      ProfilePasswordStoreFactory::GetForProfile(
+          browser()->profile(), ServiceAccessType::EXPLICIT_ACCESS);
   password_store->AddLogin(form);
 }
 
 void CredentialManagerAvatarTest::WaitForAvatarCounter(size_t expected) {
-  if (avatar_request_counter_ == expected)
+  if (avatar_request_counter_ == expected) {
     return;
+  }
   // The logic doesn't support increments by more than one.
   EXPECT_EQ(expected, avatar_request_counter_ + 1);
   base::RunLoop loop;

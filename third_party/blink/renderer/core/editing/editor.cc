@@ -88,6 +88,7 @@
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
@@ -99,7 +100,8 @@ namespace {
 bool IsInPasswordFieldWithUnrevealedPassword(const Position& position) {
   if (auto* input =
           DynamicTo<HTMLInputElement>(EnclosingTextControl(position))) {
-    return (input->type() == input_type_names::kPassword) &&
+    return input->FormControlType() ==
+               mojom::blink::FormControlType::kInputPassword &&
            !input->ShouldRevealPassword();
   }
   return false;
@@ -116,11 +118,12 @@ SelectionInDOMTree Editor::SelectionForCommand(Event* event) {
     return selection;
   // If the target is a text control, and the current selection is outside of
   // its shadow tree, then use the saved selection for that text control.
-  if (!IsTextControl(*event->target()->ToNode()))
+  if (!IsTextControl(*event->RawTarget()->ToNode())) {
     return selection;
+  }
   auto* text_control_of_selection_start =
-      EnclosingTextControl(selection.Base());
-  auto* text_control_of_target = ToTextControl(event->target()->ToNode());
+      EnclosingTextControl(selection.Anchor());
+  auto* text_control_of_target = ToTextControl(event->RawTarget()->ToNode());
   if (!selection.IsNone() &&
       text_control_of_target == text_control_of_selection_start)
     return selection;
@@ -160,7 +163,7 @@ static bool IsCaretAtStartOfWrappedLine(const FrameSelection& selection) {
     return false;
   int prev_offset = prev.ComputeOffsetInContainerNode();
   UChar prev_char = prev_node->data()[prev_offset];
-  return prev_char == kSpaceCharacter;
+  return prev_char == uchar::kSpace;
 }
 
 bool Editor::HandleTextEvent(TextEvent* event) {
@@ -204,7 +207,8 @@ bool Editor::HandleTextEvent(TextEvent* event) {
   // TODO(kojii): rich editing has the same issue, but has more options and
   // needs coordination with JS. Enable for plaintext only for now and collect
   // feedback.
-  if (data == " " && !CanEditRichly() &&
+  if (!RuntimeEnabledFeatures::CaretWithTextAffinityUpstreamEnabled() &&
+      data == " " && !CanEditRichly() &&
       IsCaretAtStartOfWrappedLine(GetFrameSelection())) {
     InsertLineBreak();
   }
@@ -224,7 +228,7 @@ bool Editor::CanEditRichly() const {
       GetFrame()
           .Selection()
           .ComputeVisibleSelectionInDOMTreeDeprecated()
-          .Base());
+          .Anchor());
 }
 
 bool Editor::CanCut() const {
@@ -478,7 +482,6 @@ Editor::Editor(LocalFrame& frame)
       // matches IE but not FF).
       should_style_with_css_(false),
       kill_ring_(std::make_unique<KillRing>()),
-      are_marked_text_matches_highlighted_(false),
       default_paragraph_separator_(EditorParagraphSeparator::kIsDiv) {}
 
 Editor::~Editor() = default;
@@ -569,7 +572,7 @@ static void CountEditingEvent(ExecutionContext* execution_context,
                               WebFeature feature_on_text_area,
                               WebFeature feature_on_content_editable,
                               WebFeature feature_on_non_node) {
-  EventTarget* event_target = event.target();
+  EventTarget* event_target = event.RawTarget();
   Node* node = event_target->ToNode();
   if (!node) {
     UseCounter::Count(execution_context, feature_on_non_node);
@@ -814,7 +817,7 @@ bool Editor::FindString(LocalFrame& frame,
   Range* const result_range = FindRangeOfString(
       *frame.GetDocument(), target,
       EphemeralRangeInFlatTree(selection.Start(), selection.End()),
-      static_cast<FindOptions>(options | kFindAPICall));
+      options.SetFindApiCall(true));
 
   if (!result_range)
     return false;
@@ -836,7 +839,7 @@ static Range* FindStringBetweenPositions(
     FindOptions options) {
   EphemeralRangeInFlatTree search_range(reference_range);
 
-  bool forward = !(options & kBackwards);
+  bool forward = !options.IsBackwards();
 
   while (true) {
     EphemeralRangeInFlatTree result_range =
@@ -869,7 +872,6 @@ static Range* FindStringBetweenPositions(
   }
 
   NOTREACHED();
-  return nullptr;
 }
 
 Range* Editor::FindRangeOfString(
@@ -888,10 +890,10 @@ Range* Editor::FindRangeOfString(
       EphemeralRangeInFlatTree::RangeOfContents(document);
   EphemeralRangeInFlatTree search_range(document_range);
 
-  const bool forward = !(options & kBackwards);
+  const bool forward = !options.IsBackwards();
   bool start_in_reference_range = false;
   if (reference_range.IsNotNull()) {
-    start_in_reference_range = options & kStartInSelection;
+    start_in_reference_range = options.IsStartingInSelection();
     if (forward && start_in_reference_range) {
       search_range = EphemeralRangeInFlatTree(reference_range.StartPosition(),
                                               document_range.EndPosition());
@@ -928,22 +930,13 @@ Range* Editor::FindRangeOfString(
     result_range = FindStringBetweenPositions(target, search_range, options);
   }
 
-  if (!result_range && options & kWrapAround) {
+  if (!result_range && options.IsWrappingAround()) {
     if (wrapped_around)
       *wrapped_around = true;
     return FindStringBetweenPositions(target, document_range, options);
   }
 
   return result_range;
-}
-
-void Editor::SetMarkedTextMatchesAreHighlighted(bool flag) {
-  if (flag == are_marked_text_matches_highlighted_)
-    return;
-
-  are_marked_text_matches_highlighted_ = flag;
-  GetFrame().GetDocument()->Markers().RepaintMarkers(
-      DocumentMarker::MarkerTypes::TextMatch());
 }
 
 void Editor::RespondToChangedSelection() {
@@ -953,6 +946,7 @@ void Editor::RespondToChangedSelection() {
 }
 
 void Editor::SyncSelection(SyncCondition force_sync) {
+  TRACE_EVENT0("blink", "Editor::SyncSelection");
   frame_->Client()->DidChangeSelection(
       !GetFrameSelection().GetSelectionInDOMTree().IsRange(), force_sync);
 }
@@ -979,9 +973,6 @@ void Editor::ReplaceSelection(const String& text) {
 }
 
 void Editor::ElementRemoved(Element* element) {
-  if (!RuntimeEnabledFeatures::DontLeakDetachedInputEnabled()) {
-    return;
-  }
   if (last_edit_command_ &&
       last_edit_command_->EndingSelection().RootEditableElement() == element) {
     last_edit_command_ = nullptr;

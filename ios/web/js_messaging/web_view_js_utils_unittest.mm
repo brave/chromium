@@ -6,23 +6,17 @@
 
 #import <WebKit/WebKit.h>
 
-#import "base/functional/bind.h"
-#import "base/functional/callback_helpers.h"
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #import "base/test/ios/wait_util.h"
 #import "base/values.h"
 #import "ios/web/test/fakes/crw_fake_script_message_handler.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
-#import "third_party/abseil-cpp/absl/types/optional.h"
+#import "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-using base::test::ios::WaitUntilConditionOrTimeout;
 using base::test::ios::kWaitForJSCompletionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace web {
 
@@ -40,7 +34,7 @@ NSString* const kMockGetExistingFramesScript =
 
 // Returns the WKFrameInfo instance for the main frame of `web_view`.
 WKFrameInfo* GetMainFrameWKFrameInfo(WKWebView* web_view) {
-  // Setup a message handler and recieve a message to obtain a WKFrameInfo
+  // Setup a message handler and receive a message to obtain a WKFrameInfo
   // instance.
   CRWFakeScriptMessageHandler* script_message_handler =
       [[CRWFakeScriptMessageHandler alloc] init];
@@ -205,9 +199,9 @@ TEST_F(WebViewJsUtilsTest, ValueResultFromDictionaryWithDepthCheckWKResult) {
   test_dictionary_2[obj_c_key] = test_dictionary;
 
   // Break the retain cycle so that the dictionaries are freed.
-  base::ScopedClosureRunner runner(base::BindOnce(^{
+  absl::Cleanup cycle_breaker = ^{
     [test_dictionary_2 removeAllObjects];
-  }));
+  };
 
   // Check that parsing the dictionary stopped at a depth of
   // `kMaximumParsingRecursionDepth`.
@@ -236,9 +230,9 @@ TEST_F(WebViewJsUtilsTest, ValueResultFromArrayWithDepthCheckWKResult) {
   test_array_2[0] = test_array;
 
   // Break the retain cycle so that the arrays are freed.
-  base::ScopedClosureRunner runner(base::BindOnce(^{
+  absl::Cleanup cycle_breaker = ^{
     [test_array removeAllObjects];
-  }));
+  };
 
   // Check that parsing the array stopped at a depth of
   // `kMaximumParsingRecursionDepth`.
@@ -254,8 +248,9 @@ TEST_F(WebViewJsUtilsTest, ValueResultFromArrayWithDepthCheckWKResult) {
     ASSERT_TRUE(current_list);
 
     inner_list = nullptr;
-    if (!current_list->empty())
+    if (!current_list->empty()) {
       inner_list = (*current_list)[0].GetIfList();
+    }
     current_list = inner_list;
   }
   EXPECT_FALSE(current_list);
@@ -333,7 +328,7 @@ TEST_F(WebViewJsUtilsTest, NSObjectFromDictValueResult) {
   EXPECT_TRUE([wk_result isKindOfClass:[NSDictionary class]]);
 
   NSDictionary* wk_result_dictionary =
-      base::mac::ObjCCastStrict<NSDictionary>(wk_result);
+      base::apple::ObjCCastStrict<NSDictionary>(wk_result);
   EXPECT_NSEQ(@"Value1", wk_result_dictionary[@"Key1"]);
 
   NSDictionary* inner_dictionary = wk_result_dictionary[@"Key2"];
@@ -357,7 +352,7 @@ TEST_F(WebViewJsUtilsTest, NSObjectFromListValueResult) {
   EXPECT_TRUE(wk_result);
   EXPECT_TRUE([wk_result isKindOfClass:[NSArray class]]);
 
-  NSArray* wk_result_array = base::mac::ObjCCastStrict<NSArray>(wk_result);
+  NSArray* wk_result_array = base::apple::ObjCCastStrict<NSArray>(wk_result);
 
   EXPECT_EQ(3UL, wk_result_array.count);
   EXPECT_NSEQ(@"Value1", wk_result_array[0]);

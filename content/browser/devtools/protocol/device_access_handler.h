@@ -11,6 +11,8 @@
 
 namespace content {
 
+class DevToolsAgentHostImpl;
+
 namespace protocol {
 
 class DeviceAccessHandler : public DevToolsDomainHandler,
@@ -40,7 +42,7 @@ class DeviceAccessHandler : public DevToolsDomainHandler,
       DevtoolsDeviceRequestPromptInfo* prompt_info);
   DevtoolsDeviceRequestPromptInfo* FindRequest(const String& requestId);
 
-  absl::optional<DeviceAccess::Frontend> frontend_;
+  std::optional<DeviceAccess::Frontend> frontend_;
 
   bool enabled_ = false;
 

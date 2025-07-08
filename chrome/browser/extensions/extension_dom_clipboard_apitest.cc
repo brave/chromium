@@ -6,6 +6,7 @@
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -15,6 +16,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/background_script_executor.h"
+#include "extensions/browser/script_executor.h"
 #include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -199,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(ClipboardApiTest, HostedAppNoPermission) {
   EXPECT_TRUE(ExecuteCopyInSelectedTab()) << message_;
   EXPECT_FALSE(ExecutePasteInSelectedTab()) << message_;
 
-  // User acitvation doesn't propagate to a child frame.
+  // User activation doesn't propagate to a child frame.
   EXPECT_FALSE(ExecuteCommandInIframeInSelectedTab("copy")) << message_;
   EXPECT_FALSE(ExecuteCommandInIframeInSelectedTab("paste")) << message_;
 }

@@ -12,14 +12,16 @@
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
 #include "net/base/network_isolation_key.h"
 #include "net/extras/shared_dictionary/shared_dictionary_info.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/extras/sqlite/sqlite_persistent_shared_dictionary_store.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage.h"
 #include "services/network/shared_dictionary/shared_dictionary_writer_on_disk.h"
 #include "url/gurl.h"
@@ -27,34 +29,79 @@
 
 namespace network {
 
+class SharedDictionaryCache;
 class SharedDictionaryManagerOnDisk;
+class SimpleUrlPatternMatcher;
 
 // A SharedDictionaryStorage which is managed by SharedDictionaryManagerOnDisk.
 class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
  public:
+  class WrappedDictionaryInfo : public net::SharedDictionaryInfo {
+   public:
+    WrappedDictionaryInfo(net::SharedDictionaryInfo info,
+                          std::unique_ptr<SimpleUrlPatternMatcher> matcher);
+    ~WrappedDictionaryInfo();
+    WrappedDictionaryInfo(const WrappedDictionaryInfo&) = delete;
+    WrappedDictionaryInfo& operator=(const WrappedDictionaryInfo&) = delete;
+    WrappedDictionaryInfo(WrappedDictionaryInfo&&);
+    WrappedDictionaryInfo& operator=(WrappedDictionaryInfo&&);
+
+    const std::set<mojom::RequestDestination>& match_dest() const {
+      return match_dest_;
+    }
+    const SimpleUrlPatternMatcher* matcher() const { return matcher_.get(); }
+
+   private:
+    std::unique_ptr<SimpleUrlPatternMatcher> matcher_;
+    std::set<mojom::RequestDestination> match_dest_;
+  };
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class CacheResult {
+    kCacheMiss = 0,
+    kCacheHitLRU = 1,
+    kCacheHitActive = 2,
+    kMaxValue = kCacheHitActive,
+  };
+
   SharedDictionaryStorageOnDisk(
       base::WeakPtr<SharedDictionaryManagerOnDisk> manager,
       const net::SharedDictionaryIsolationKey& isolation_key,
-      base::ScopedClosureRunner on_deleted_closure_runner);
+      base::ScopedClosureRunner on_deleted_closure_runner,
+      scoped_refptr<SharedDictionaryCache> dictionary_cache);
 
   SharedDictionaryStorageOnDisk(const SharedDictionaryStorageOnDisk&) = delete;
   SharedDictionaryStorageOnDisk& operator=(
       const SharedDictionaryStorageOnDisk&) = delete;
 
   // SharedDictionaryStorage
-  std::unique_ptr<SharedDictionary> GetDictionarySync(const GURL& url) override;
-  void GetDictionary(const GURL& url,
-                     base::OnceCallback<void(std::unique_ptr<SharedDictionary>)>
-                         callback) override;
-  scoped_refptr<SharedDictionaryWriter> CreateWriter(
+  scoped_refptr<net::SharedDictionary> GetDictionarySync(
+      const GURL& url,
+      mojom::RequestDestination destination) override;
+  void GetDictionary(
+      const GURL& url,
+      mojom::RequestDestination destination,
+      base::OnceCallback<void(scoped_refptr<net::SharedDictionary>)> callback)
+      override;
+  base::expected<scoped_refptr<SharedDictionaryWriter>,
+                 mojom::SharedDictionaryError>
+  CreateWriter(const GURL& url,
+               base::Time last_fetch_time,
+               base::Time response_time,
+               base::TimeDelta expiration,
+               const std::string& match,
+               const std::set<mojom::RequestDestination>& match_dest,
+               const std::string& id,
+               std::unique_ptr<SimpleUrlPatternMatcher> matcher) override;
+  bool UpdateLastFetchTimeIfAlreadyRegistered(
       const GURL& url,
       base::Time response_time,
       base::TimeDelta expiration,
-      const std::string& match) override;
-  bool IsAlreadyRegistered(const GURL& url,
-                           base::Time response_time,
-                           base::TimeDelta expiration,
-                           const std::string& match) override;
+      const std::string& match,
+      const std::set<mojom::RequestDestination>& match_dest,
+      const std::string& id,
+      base::Time last_fetch_time) override;
 
   // Called from `SharedDictionaryManagerOnDisk` when dictionary has been
   // deleted.
@@ -68,17 +115,20 @@ class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
   friend class SharedDictionaryManagerTest;
   friend class SharedDictionaryManagerOnDiskTest;
 
-  class RefCountedSharedDictionary;
-  class WrappedSharedDictionary;
-
   void OnDatabaseRead(
       net::SQLitePersistentSharedDictionaryStore::DictionaryListOrError result);
-  void OnDictionaryWritten(net::SharedDictionaryInfo info);
-  void OnRefCountedSharedDictionaryDeleted(
+  void OnDictionaryWritten(std::unique_ptr<SimpleUrlPatternMatcher> matcher,
+                           net::SharedDictionaryInfo info);
+  void OnSharedDictionaryDeleted(
       const base::UnguessableToken& disk_cache_key_token);
 
-  const std::map<url::SchemeHostPort,
-                 std::map<std::string, net::SharedDictionaryInfo>>&
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level);
+
+  const std::map<
+      url::SchemeHostPort,
+      std::map<std::tuple<std::string, std::set<mojom::RequestDestination>>,
+               WrappedDictionaryInfo>>&
   GetDictionaryMapForTesting() {
     return dictionary_info_map_;
   }
@@ -86,11 +136,19 @@ class SharedDictionaryStorageOnDisk : public SharedDictionaryStorage {
   base::WeakPtr<SharedDictionaryManagerOnDisk> manager_;
   const net::SharedDictionaryIsolationKey isolation_key_;
   base::ScopedClosureRunner on_deleted_closure_runner_;
-  std::map<url::SchemeHostPort,
-           std::map<std::string, net::SharedDictionaryInfo>>
+  std::map<
+      url::SchemeHostPort,
+      std::map<std::tuple<std::string, std::set<mojom::RequestDestination>>,
+               WrappedDictionaryInfo>>
       dictionary_info_map_;
-  std::map<base::UnguessableToken, raw_ptr<RefCountedSharedDictionary>>
+
+  scoped_refptr<SharedDictionaryCache> dictionary_cache_;
+  std::map<base::UnguessableToken, raw_ptr<net::SharedDictionary>>
       dictionaries_;
+
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level_ =
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
 
   bool get_dictionary_called_ = false;
   bool is_metadata_ready_ = false;

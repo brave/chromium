@@ -5,16 +5,21 @@
 #include "chromecast/base/cast_sys_info_android.h"
 
 #include <sys/system_properties.h>
+
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/logging.h"
 #include "base/system/sys_info.h"
 #include "chromecast/base/cast_sys_info_util.h"
-#include "chromecast/base/jni_headers/CastSysInfoAndroid_jni.h"
 #include "chromecast/base/version.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chromecast/base/jni_headers/CastSysInfoAndroid_jni.h"
 
 namespace chromecast {
 

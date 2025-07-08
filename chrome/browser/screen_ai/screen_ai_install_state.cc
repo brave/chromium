@@ -6,36 +6,39 @@
 
 #include <memory>
 
+#include "base/check_is_test.h"
+#include "base/cpu.h"
 #include "base/files/file_path.h"
-#include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
-#include "base/task/thread_pool.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
-#include "chrome/browser/browser_process.h"
+#include "build/build_config.h"
 #include "chrome/browser/screen_ai/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/services/screen_ai/public/cpp/utilities.h"
-#include "content/public/browser/browser_thread.h"
-
-#if BUILDFLAG(IS_LINUX)
-#include "base/cpu.h"
-#endif
+#include "services/screen_ai/public/cpp/utilities.h"
+#include "ui/accessibility/accessibility_features.h"
 
 namespace {
+// From 140.0, the library has the new `SetOCRLightMode` API function.
+// TODO(crbug.com/412553116): Change to 140.0 after 140.0 is distributed.
+const char kMinExpectedVersion[] = "138.0";
 const int kScreenAICleanUpDelayInDays = 30;
-const char kMinExpectedVersion[] = "114.0";
 
 bool IsDeviceCompatible() {
+#if defined(ARCH_CPU_X86_FAMILY)
   // Check if the CPU has the required instruction set to run the Screen AI
   // library.
-#if BUILDFLAG(IS_LINUX)
-  if (!base::CPU().has_sse41()) {
-    return false;
-  }
+  // TODO(crbug.com/381256355): Update when ScreenAI library is compatible with
+  // older CPUs.
+  static const bool device_compatible = base::CPU().has_sse42();
+#elif BUILDFLAG(IS_LINUX)
+  // On Linux, the library is only built for X86 CPUs.
+  static constexpr bool device_compatible = false;
+#else
+  static constexpr bool device_compatible = true;
 #endif
-  return true;
+
+  return device_compatible;
 }
 
 }  // namespace
@@ -48,17 +51,32 @@ ScreenAIInstallState* g_instance = nullptr;
 
 // static
 ScreenAIInstallState* ScreenAIInstallState::GetInstance() {
-  return g_instance;
+  if (g_instance) {
+    return g_instance;
+  }
+  // `!g_instance` only happens in unit tests in which a browser instance is
+  // not created. Assert that this code path is only taken in tests.
+  CHECK_IS_TEST();
+  return ScreenAIInstallState::CreateForTesting();
 }
 
 // static
-bool ScreenAIInstallState::VerifyLibraryVersion(const std::string& version) {
-  if (version >= kMinExpectedVersion) {
-    return true;
+bool ScreenAIInstallState::VerifyLibraryVersion(const base::Version& version) {
+  base::Version min_version(kMinExpectedVersion);
+  CHECK(min_version.IsValid());
+
+  if (!version.IsValid()) {
+    VLOG(0) << "Cannot verify library version.";
+    return false;
   }
-  VLOG(0) << "Screen AI library version is expected to be at least "
-          << kMinExpectedVersion << ", but it is: " << version;
-  return false;
+
+  if (version < min_version) {
+    VLOG(0) << "Version is expected to be at least " << kMinExpectedVersion
+            << ", but it is: " << version;
+    return false;
+  }
+
+  return true;
 }
 
 ScreenAIInstallState::ScreenAIInstallState() {
@@ -73,7 +91,10 @@ ScreenAIInstallState::~ScreenAIInstallState() {
 
 // static
 bool ScreenAIInstallState::ShouldInstall(PrefService* local_state) {
-  if (!IsDeviceCompatible()) {
+  bool device_compatible = IsDeviceCompatible();
+  base::UmaHistogramBoolean("Accessibility.ScreenAI.DeviceCompatible",
+                            device_compatible);
+  if (!device_compatible) {
     return false;
   }
 
@@ -95,7 +116,7 @@ bool ScreenAIInstallState::ShouldInstall(PrefService* local_state) {
 
 void ScreenAIInstallState::AddObserver(
     ScreenAIInstallState::Observer* observer) {
-  observers_.push_back(observer);
+  observers_.AddObserver(observer);
   observer->StateChanged(state_);
 
   // Adding an observer indicates that we need the component.
@@ -104,6 +125,12 @@ void ScreenAIInstallState::AddObserver(
 }
 
 void ScreenAIInstallState::DownloadComponent() {
+  if (!features::IsScreenAIOCREnabled() &&
+      !features::IsScreenAIMainContentExtractionEnabled()) {
+    SetState(State::kDownloadFailed);
+    return;
+  }
+
   if (MayTryDownload()) {
     DownloadComponentInternal();
   }
@@ -111,10 +138,7 @@ void ScreenAIInstallState::DownloadComponent() {
 
 void ScreenAIInstallState::RemoveObserver(
     ScreenAIInstallState::Observer* observer) {
-  auto pos = base::ranges::find(observers_, observer);
-  if (pos != observers_.end()) {
-    observers_.erase(pos);
-  }
+  observers_.RemoveObserver(observer);
 }
 
 void ScreenAIInstallState::SetComponentFolder(
@@ -128,33 +152,29 @@ void ScreenAIInstallState::SetComponentFolder(
   // session will continue using that and the new one will be used after next
   // Chrome restart. Otherwise the new component will be used when a service
   // request arrives as its path is stored in |component_binary_path_|.
-  if (state_ != State::kReady && state_ != State::kDownloaded) {
+  if (state_ != State::kDownloaded) {
     SetState(State::kDownloaded);
   }
 }
 
 void ScreenAIInstallState::SetState(State state) {
   if (state == state_) {
-    // Failed and ready state can be repeated as they come from different
-    // profiles. Downloading can be repeated in ChromeOS tests that call
+    // `kDownloadFailed` state can be repeated as download can be retriggered.
+    // `kDownloading` can be repeated in ChromeOS tests that call
     // LoginManagerTest::AddUser() and reset UserSessionInitializer.
-    // TODO(crbug.com/1278249): While the case is highly unexpected, add more
-    // control logic if state is changed from failed to ready or vice versa.
-    DCHECK(state == State::kReady || state == State::kFailed ||
-           state == State::kDownloading);
+    DCHECK(state == State::kDownloadFailed || state == State::kDownloading);
     return;
   }
 
   state_ = state;
-  for (ScreenAIInstallState::Observer* observer : observers_) {
-    observer->StateChanged(state_);
+  for (ScreenAIInstallState::Observer& observer : observers_) {
+    observer.StateChanged(state_);
   }
 }
 
 void ScreenAIInstallState::SetDownloadProgress(double progress) {
-  DCHECK_EQ(state_, State::kDownloading);
-  for (ScreenAIInstallState::Observer* observer : observers_) {
-    observer->DownloadProgressChanged(progress);
+  for (ScreenAIInstallState::Observer& observer : observers_) {
+    observer.DownloadProgressChanged(progress);
   }
 }
 
@@ -162,19 +182,14 @@ bool ScreenAIInstallState::IsComponentAvailable() {
   return !get_component_binary_path().empty();
 }
 
-void ScreenAIInstallState::SetComponentReadyForTesting() {
-  state_ = State::kReady;
-}
-
 bool ScreenAIInstallState::MayTryDownload() {
   switch (state_) {
     case State::kNotDownloaded:
-    case State::kFailed:
+    case State::kDownloadFailed:
       return true;
 
     case State::kDownloading:
     case State::kDownloaded:
-    case State::kReady:
       return false;
   }
 }
@@ -186,6 +201,9 @@ void ScreenAIInstallState::ResetForTesting() {
 
 void ScreenAIInstallState::SetStateForTesting(State state) {
   state_ = state;
+  for (ScreenAIInstallState::Observer& observer : observers_) {
+    observer.StateChanged(state_);
+  }
 }
 
 }  // namespace screen_ai

@@ -10,6 +10,7 @@
 #include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/tray_popup_utils.h"
 #include "base/functional/bind.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -26,6 +27,11 @@ namespace {
 
 // Start offset in pixels to use for option views.
 constexpr int kOptionInset = 16;
+
+void RecordSpeedMetric(int value) {
+  base::UmaHistogramSparse("Accessibility.CrosSelectToSpeak.SpeedSetFromBubble",
+                           value);
+}
 
 }  // namespace
 
@@ -60,8 +66,10 @@ void SelectToSpeakSpeedView::AddMenuItem(int option_id,
 
 void SelectToSpeakSpeedView::OnViewClicked(views::View* sender) {
   unsigned int speed_index = sender->GetID() - 1;
+  double speech_rate = kSelectToSpeakSpeechRates[speed_index];
   if (speed_index >= 0 && speed_index < std::size(kSelectToSpeakSpeechRates)) {
-    delegate_->OnSpeechRateSelected(kSelectToSpeakSpeechRates[speed_index]);
+    delegate_->OnSpeechRateSelected(speech_rate);
+    RecordSpeedMetric(floor(speech_rate * 100));
   }
 }
 
@@ -73,7 +81,8 @@ void SelectToSpeakSpeedView::SetInitialFocus() {
 }
 
 void SelectToSpeakSpeedView::OnKeyEvent(ui::KeyEvent* key_event) {
-  if (key_event->type() != ui::ET_KEY_PRESSED || key_event->is_repeat()) {
+  if (key_event->type() != ui::EventType::kKeyPressed ||
+      key_event->is_repeat()) {
     // Only process key when first pressed.
     return;
   }
@@ -93,7 +102,7 @@ void SelectToSpeakSpeedView::OnKeyEvent(ui::KeyEvent* key_event) {
   key_event->StopPropagation();
 }
 
-BEGIN_METADATA(SelectToSpeakSpeedView, views::BoxLayoutView)
+BEGIN_METADATA(SelectToSpeakSpeedView)
 END_METADATA
 
 }  // namespace ash

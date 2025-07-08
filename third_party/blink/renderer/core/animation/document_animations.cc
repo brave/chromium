@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -63,6 +62,17 @@ void UpdateAnimationTiming(
     Document& document,
     HeapHashSet<WeakMember<AnimationTimeline>>& timelines,
     TimingUpdateReason reason) {
+  if (RuntimeEnabledFeatures::AnimationTriggerEnabled()) {
+    // First service all triggers because servicing a trigger might result in an
+    // animation's timeline being "dirtied", i.e. marked with an outdated
+    // animation whose currentTime was updated. This can happen if an
+    // animation's timeline is serviced first and then the trigger's timeline is
+    // serviced afterwards.
+    for (auto& timeline : timelines) {
+      timeline->ServiceAnimationTriggers();
+    }
+  }
+
   for (auto& timeline : timelines)
     timeline->ServiceAnimations(reason);
   document.GetWorkletAnimationController().UpdateAnimationTimings(reason);
@@ -153,8 +163,7 @@ void DocumentAnimations::MarkPendingIfCompositorPropertyAnimationChanges(
 size_t DocumentAnimations::GetAnimationsCount() {
   wtf_size_t total_animations_count = 0;
   if (document_->View()) {
-    if (cc::AnimationHost* host =
-            document_->View()->GetCompositorAnimationHost()) {
+    if (document_->View()->GetCompositorAnimationHost()) {
       for (auto& timeline : timelines_) {
         if (timeline->HasAnimations())
           total_animations_count += timeline->AnimationsNeedingUpdateCount();
@@ -199,7 +208,7 @@ void DocumentAnimations::DetachCompositorTimelines() {
     if (cc::AnimationHost* host =
             document_->GetPage()->GetChromeClient().GetCompositorAnimationHost(
                 *document_->GetFrame())) {
-      host->RemoveAnimationTimeline(compositor_timeline);
+      host->DetachAnimationTimeline(compositor_timeline);
     }
   }
 }
@@ -237,7 +246,7 @@ void DocumentAnimations::RemoveReplacedAnimations(
     DocumentAnimations::ReplaceableAnimationsMap* replaceable_animations_map) {
   HeapVector<Member<Animation>> animations_to_remove;
   for (auto& elem_it : *replaceable_animations_map) {
-    HeapVector<Member<Animation>>* animations = elem_it.value;
+    GCedHeapVector<Member<Animation>>* animations = elem_it.value;
 
     // Only elements with multiple animations in the replaceable state need to
     // be checked.
@@ -261,9 +270,8 @@ void DocumentAnimations::RemoveReplacedAnimations(
       // the process of iterating over properties if not removable to update
       // the set of properties being replaced.
       bool replace = (*anim_it)->ReplaceStateActive();
-      PropertyHandleSet animation_properties =
-          To<KeyframeEffect>((*anim_it)->effect())->Model()->Properties();
-      for (const auto& property : animation_properties) {
+      for (const auto& property :
+           To<KeyframeEffect>((*anim_it)->effect())->Model()->Properties()) {
         auto inserted = replaced_properties.insert(property);
         if (inserted.is_new_entry) {
           // Top-most compositor order animation affecting this property.

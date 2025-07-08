@@ -13,10 +13,6 @@
 #include "content/public/browser/browser_thread.h"
 #import "ui/base/cocoa/find_pasteboard.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 namespace {
 
@@ -34,6 +30,45 @@ void ClipboardHostImpl::WriteStringToFindPboard(const std::u16string& text) {
       [[FindPasteboard sharedInstance] setFindText:nsText];
     }
   }
+}
+
+void ClipboardHostImpl::GetPlatformPermissionState(
+    GetPlatformPermissionStateCallback callback) {
+  // Note: This method is only called when the MacSystemClipboardPermissionCheck
+  // runtime flag is enabled in the renderer process.
+
+  // Check macOS system privacy settings for programmatic clipboard access using
+  // the accessBehavior property available in macOS 15.4+. These settings only
+  // affect programmatic access - direct user actions like ⌘V always work.
+  blink::mojom::PlatformClipboardPermissionState state =
+      blink::mojom::PlatformClipboardPermissionState::kAsk;
+
+  if (@available(macOS 15.4, *)) {
+    NSPasteboardAccessBehavior access_behavior =
+        [NSPasteboard generalPasteboard].accessBehavior;
+
+    switch (access_behavior) {
+      case NSPasteboardAccessBehaviorAlwaysAllow:
+        state = blink::mojom::PlatformClipboardPermissionState::kAllow;
+        break;
+      case NSPasteboardAccessBehaviorAlwaysDeny:
+        state = blink::mojom::PlatformClipboardPermissionState::kDeny;
+        break;
+      case NSPasteboardAccessBehaviorAsk:
+        state = blink::mojom::PlatformClipboardPermissionState::kAsk;
+        break;
+      case NSPasteboardAccessBehaviorDefault:
+        // Default behavior for the General pasteboard is to ask upon
+        // programmatic access
+        state = blink::mojom::PlatformClipboardPermissionState::kAsk;
+        break;
+    }
+  } else {
+    // The behavior of older macOS versions is effectively kAllow.
+    state = blink::mojom::PlatformClipboardPermissionState::kAllow;
+  }
+
+  std::move(callback).Run(state);
 }
 
 }  // namespace content

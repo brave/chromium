@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_ACCESS_CODE_CAST_ACCESS_CODE_CAST_HANDLER_H_
 
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/media/router/discovery/access_code/access_code_cast_sink_service.h"
@@ -52,6 +53,15 @@ class AccessCodeCastHandler : public access_code_cast::mojom::PageHandler,
       const media_router::CastModeSet& cast_mode_set,
       std::unique_ptr<MediaRouteStarter> media_route_starter);
 
+  // Testing constructor used to inject an access_code_sink_service. Only use
+  // the above constructor.
+  AccessCodeCastHandler(
+      mojo::PendingReceiver<access_code_cast::mojom::PageHandler> page_handler,
+      mojo::PendingRemote<access_code_cast::mojom::Page> page,
+      const media_router::CastModeSet& cast_mode_set,
+      std::unique_ptr<MediaRouteStarter> media_route_starter,
+      AccessCodeCastSinkService* access_code_sink_service);
+
   ~AccessCodeCastHandler() override;
 
   // access_code_cast::mojom::PageHandler overrides:
@@ -62,26 +72,25 @@ class AccessCodeCastHandler : public access_code_cast::mojom::PageHandler,
   // access_code_cast::mojom::PageHandler overrides:
   void CastToSink(CastToSinkCallback callback) override;
 
+  // Testing methods, do not use these outside of tests.
+  void SetSinkIdForTesting(const MediaSink::Id& sink_id) { sink_id_ = sink_id; }
+  void SetSinkCallbackForTesting(AddSinkCallback callback);
+  void SetIdentityManagerForTesting(signin::IdentityManager* identity_manager);
+  void SetSyncServiceForTesting(syncer::SyncService* sync_service);
+
+  MediaRouteStarter* GetMediaRouteStarterForTesting() {
+    return media_route_starter_.get();
+  }
+  const std::optional<MediaSink::Id>& GetSinkIdForTesting() { return sink_id_; }
+
+  void OnSinkAddedResultForTesting(
+      access_code_cast::mojom::AddSinkResultCode add_sink_result,
+      std::optional<MediaSink::Id> sink_id);
+
+  void OnSinksUpdatedForTesting(
+      const std::vector<MediaSinkWithCastModes>& sinks);
+
  private:
-  friend class AccessCodeCastHandlerTest;
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, DiscoveredDeviceAdded);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, OtherDevicesIgnored);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, DesktopMirroring);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, DesktopMirroringError);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, OnSinkAddedResult);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, RouteAlreadyExists);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, ProfileSyncSuccess);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, ProfileSyncError);
-  FRIEND_TEST_ALL_PREFIXES(AccessCodeCastHandlerTest, ProfileSyncPaused);
-
-  // Constructor that is used for testing.
-  AccessCodeCastHandler(
-      mojo::PendingReceiver<access_code_cast::mojom::PageHandler> page_handler,
-      mojo::PendingRemote<access_code_cast::mojom::Page> page,
-      const media_router::CastModeSet& cast_mode_set,
-      std::unique_ptr<MediaRouteStarter> media_route_starter,
-      AccessCodeCastSinkService* access_code_sink_service);
-
   void Init();
 
   // Returns true if the specified cast mode is among the cast modes specified
@@ -94,7 +103,7 @@ class AccessCodeCastHandler : public access_code_cast::mojom::PageHandler,
 
   void OnSinkAddedResult(
       access_code_cast::mojom::AddSinkResultCode add_sink_result,
-      absl::optional<MediaSink::Id> sink_id);
+      std::optional<MediaSink::Id> sink_id);
 
   // MediaSinkWithCastModesObserver:
   void OnSinksUpdated(
@@ -107,14 +116,6 @@ class AccessCodeCastHandler : public access_code_cast::mojom::PageHandler,
                        const MediaSink::Id& sink_id,
                        CastToSinkCallback dialog_callback,
                        const RouteRequestResult& result);
-
-  void SetSinkCallbackForTesting(AddSinkCallback callback);
-  void SetIdentityManagerForTesting(signin::IdentityManager* identity_manager);
-  void SetSyncServiceForTesting(syncer::SyncService* sync_service);
-
-  void set_sink_id_for_testing(const MediaSink::Id& sink_id) {
-    sink_id_ = sink_id;
-  }
 
   // Checks to see if all the conditions necessary to complete discovery have
   // been satisfied. If so, alerts the dialog.
@@ -146,10 +147,10 @@ class AccessCodeCastHandler : public access_code_cast::mojom::PageHandler,
   int access_code_not_found_count_ = 0;
 
   // The id of the media sink discovered from the access code;
-  absl::optional<MediaSink::Id> sink_id_;
+  std::optional<MediaSink::Id> sink_id_;
 
   // This contains a value only when tracking a pending route request.
-  absl::optional<RouteRequest> current_route_request_;
+  std::optional<RouteRequest> current_route_request_;
 
   // The time that the AddSink() function was last called. Used for metrics.
   base::Time add_sink_request_time_;

@@ -29,49 +29,38 @@ IN_PROC_BROWSER_TEST_F(OmniboxPopupViewWebUITest,
 
   // Start with the Omnibox unfocused.
   omnibox_view()->GetFocusManager()->ClearFocus();
-  const SkColor color_before_focus = location_bar()->background()->get_color();
+  const SkColor color_before_focus =
+      location_bar()->GetBackgroundColorForTesting();
   EXPECT_EQ(color_before_focus, omnibox_view()->GetBackgroundColor());
 
   // Give the Omnibox focus and get its focused color.
   omnibox_view()->RequestFocus();
-  const SkColor color_after_focus = location_bar()->background()->get_color();
+  const SkColor color_after_focus =
+      location_bar()->GetBackgroundColorForTesting();
 
-  // Sanity check that the colors are different, otherwise this test will not be
-  // testing anything useful. It is possible that a particular theme could
-  // configure these colors to be the same. In that case, this test should be
-  // updated to detect that, or switch to a theme where they are different.
-  EXPECT_NE(color_before_focus, color_after_focus);
   EXPECT_EQ(color_after_focus, omnibox_view()->GetBackgroundColor());
 
   // The background is hosted in the view that contains the results area.
   CreatePopupForTestQuery();
-  views::View* background_host = location_bar();
-  EXPECT_EQ(color_after_focus, background_host->background()->get_color());
+  LocationBarView* background_host = location_bar();
+  EXPECT_EQ(color_after_focus, background_host->GetBackgroundColorForTesting());
 
   omnibox_view()->GetFocusManager()->ClearFocus();
 
-  if (features::GetChromeRefresh2023Level() ==
-          features::ChromeRefresh2023Level::kLevel2 ||
-      base::FeatureList::IsEnabled(
-          omnibox::kOmniboxSteadyStateBackgroundColor)) {
-    // With CR23, blurring the Omnibox w/ in-progress input (e.g. "foo") should
-    // result in the on-focus colors.
-    EXPECT_EQ(color_after_focus, location_bar()->background()->get_color());
-    EXPECT_EQ(color_after_focus, omnibox_view()->GetBackgroundColor());
-  } else {
-    // Without CR23, blurring the Omnibox w/ in-progress input (e.g. "foo")
-    // should restore the original colors.
-    EXPECT_EQ(color_before_focus, location_bar()->background()->get_color());
-    EXPECT_EQ(color_before_focus, omnibox_view()->GetBackgroundColor());
-  }
+  // Blurring the Omnibox w/ in-progress input (e.g. "foo") should result in
+  // the on-focus colors.
+  EXPECT_EQ(color_after_focus, location_bar()->GetBackgroundColorForTesting());
+  EXPECT_EQ(color_after_focus, omnibox_view()->GetBackgroundColor());
 }
 
 IN_PROC_BROWSER_TEST_F(OmniboxPopupViewWebUITest, PopupLoadsAndAcceptsCalls) {
   WaitForHandler();
+  popup_view()->presenter_->Show();
   popup_view()->UpdatePopupAppearance();
   OmniboxPopupSelection selection(OmniboxPopupSelection::kNoMatch);
   popup_view()->OnSelectionChanged(selection, selection);
   popup_view()->ProvideButtonFocusHint(0);
+  popup_view()->presenter_->Hide();
 }
 
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)

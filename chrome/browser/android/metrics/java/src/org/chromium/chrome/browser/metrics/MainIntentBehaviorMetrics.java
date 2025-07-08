@@ -12,13 +12,14 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.ui.default_browser_promo.DefaultBrowserPromoUtils;
 
-/**
- * Records the behavior metrics after an ACTION_MAIN intent is received.
- */
+/** Records the behavior metrics after an ACTION_MAIN intent is received. */
+@NullMarked
 public class MainIntentBehaviorMetrics {
     static final long TIMEOUT_DURATION_MS = 10000;
 
@@ -28,9 +29,7 @@ public class MainIntentBehaviorMetrics {
 
     private final Runnable mLogLaunchRunnable;
 
-    /**
-     * Constructs a metrics handler for ACTION_MAIN intents received for an activity.
-     */
+    /** Constructs a metrics handler for ACTION_MAIN intents received for an activity. */
     public MainIntentBehaviorMetrics() {
         mLogLaunchRunnable = () -> logLaunchBehaviorInternal();
     }
@@ -38,11 +37,12 @@ public class MainIntentBehaviorMetrics {
     private void ensureApplicationStateListenerRegistered() {
         if (sHasRegisteredApplicationStateListener) return;
         sHasRegisteredApplicationStateListener = true;
-        ApplicationStatus.registerApplicationStateListener(newState -> {
-            if (newState == ApplicationState.HAS_STOPPED_ACTIVITIES) {
-                sLoggedLaunchBehavior = false;
-            }
-        });
+        ApplicationStatus.registerApplicationStateListener(
+                newState -> {
+                    if (newState == ApplicationState.HAS_STOPPED_ACTIVITIES) {
+                        sLoggedLaunchBehavior = false;
+                    }
+                });
     }
 
     /**
@@ -66,9 +66,7 @@ public class MainIntentBehaviorMetrics {
         logLaunchBehaviorInternal();
     }
 
-    /**
-     * Allows test to override the timeout duration.
-     */
+    /** Allows test to override the timeout duration. */
     public static void setTimeoutDurationMsForTesting(long duration) {
         var oldValue = sTimeoutDurationMs;
         sTimeoutDurationMs = duration;
@@ -90,7 +88,7 @@ public class MainIntentBehaviorMetrics {
         if (sLoggedLaunchBehavior) return;
         sLoggedLaunchBehavior = true;
 
-        SharedPreferencesManager prefs = SharedPreferencesManager.getInstance();
+        SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
         long current = System.currentTimeMillis();
         long timestamp =
                 prefs.readLong(ChromePreferenceKeys.METRICS_MAIN_INTENT_LAUNCH_TIMESTAMP, 0);

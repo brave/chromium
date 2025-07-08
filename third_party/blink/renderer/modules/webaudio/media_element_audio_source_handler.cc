@@ -20,6 +20,7 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -55,7 +56,7 @@ class MediaElementAudioSourceHandlerLocker final {
 MediaElementAudioSourceHandler::MediaElementAudioSourceHandler(
     AudioNode& node,
     HTMLMediaElement& media_element)
-    : AudioHandler(kNodeTypeMediaElementAudioSource,
+    : AudioHandler(NodeType::kNodeTypeMediaElementAudioSource,
                    node,
                    node.context()->sampleRate()),
       media_element_(media_element) {
@@ -144,7 +145,7 @@ void MediaElementAudioSourceHandler::SetFormat(uint32_t number_of_channels,
 
     {
       // The context must be locked when changing the number of output channels.
-      BaseAudioContext::GraphAutoLocker context_locker(Context());
+      DeferredTaskHandler::GraphAutoLocker context_locker(Context());
 
       // Do any necesssary re-configuration to the output's number of channels.
       Output(0).SetNumberOfChannels(number_of_channels);
@@ -163,9 +164,9 @@ void MediaElementAudioSourceHandler::PrintCorsMessage(const String& message) {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kSecurity,
             mojom::ConsoleMessageLevel::kInfo,
-            "MediaElementAudioSource outputs zeroes due to "
-            "CORS access restrictions for " +
-                message));
+            StrCat({"MediaElementAudioSource outputs zeroes due to CORS access "
+                    "restrictions for ",
+                    message})));
   }
 }
 

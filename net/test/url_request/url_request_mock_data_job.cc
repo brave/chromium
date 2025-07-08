@@ -8,6 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -122,9 +123,10 @@ void URLRequestMockDataJob::Start() {
 }
 
 int URLRequestMockDataJob::ReadRawData(IOBuffer* buf, int buf_size) {
-  int bytes_read =
-      std::min(static_cast<size_t>(buf_size), data_.length() - data_offset_);
-  memcpy(buf->data(), data_.c_str() + data_offset_, bytes_read);
+  size_t bytes_read = std::min(base::checked_cast<size_t>(buf_size),
+                               data_.length() - data_offset_);
+  buf->span().copy_prefix_from(
+      base::as_byte_span(data_).subspan(data_offset_, bytes_read));
   data_offset_ += bytes_read;
   return bytes_read;
 }

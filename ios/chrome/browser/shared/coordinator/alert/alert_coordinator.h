@@ -27,8 +27,8 @@
 // Whether the alert is visible. This will be true after `-start` is called
 // until a subsequent `-stop`.
 @property(nonatomic, readonly, getter=isVisible) BOOL visible;
-// Block called when the alert is stopped with `stop` or during dealloc. It is
-// called only if no interaction with the alert has occurred.
+// Block called synchronously when the alert is stopped with `stop` or during
+// dealloc. It is called only if no interaction with the alert has occurred.
 @property(nonatomic, copy) ProceduralBlock noInteractionAction;
 
 // Init a coordinator for displaying a alert on this view controller.
@@ -41,11 +41,11 @@
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                    browser:(Browser*)browser NS_UNAVAILABLE;
 
-// Adds an item at the end of the menu. It does nothing if `visible` is true.
-// Asserts that at moste one element with style UIAlertActionStyleCancel is
-// added. If `enabled` is NO, the action appears dimmed and non-interactable. If
-// `preferred` is YES, the action will be in bold letters. Only one item can be
-// preferred.
+// Adds an item at the end of the menu. Asserts that the alert is not yet
+// visible. Asserts that at most one element with style
+// UIAlertActionStyleCancel is added. If `enabled` is NO, the action appears
+// dimmed and non-interactable. If `preferred` is YES, the action will be in
+// bold letters. Only one item can be preferred.
 - (void)addItemWithTitle:(NSString*)title
                   action:(ProceduralBlock)actionBlock
                    style:(UIAlertActionStyle)style

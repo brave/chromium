@@ -7,6 +7,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
+#include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/template_url_service_observer.h"
 
@@ -24,56 +25,43 @@ class TemplateUrlServiceAndroid : public TemplateURLServiceObserver {
   ~TemplateUrlServiceAndroid() override;
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
-  void Load(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Load(JNIEnv* env);
   void SetUserSelectedDefaultSearchProvider(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& jkeyword);
-  jboolean IsLoaded(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& obj) const;
-  jboolean IsDefaultSearchManaged(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  jboolean IsSearchByImageAvailable(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  jboolean DoesDefaultSearchEngineHaveLogo(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  jboolean IsDefaultSearchEngineGoogle(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+      const base::android::JavaParamRef<jstring>& jkeyword,
+      jint choice_made_location);
+  jboolean IsLoaded(JNIEnv* env) const;
+  jboolean IsDefaultSearchManaged(JNIEnv* env);
+  jboolean IsSearchByImageAvailable(JNIEnv* env);
+  jboolean DoesDefaultSearchEngineHaveLogo(JNIEnv* env);
+  jboolean IsDefaultSearchEngineGoogle(JNIEnv* env);
   jboolean IsSearchResultsPageFromDefaultSearchProvider(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& jurl);
   base::android::ScopedJavaLocalRef<jstring> GetUrlForSearchQuery(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jquery,
       const base::android::JavaParamRef<jobjectArray>& jsearch_params);
   base::android::ScopedJavaLocalRef<jstring> GetSearchQueryForUrl(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& jurl);
   base::android::ScopedJavaLocalRef<jobject> GetUrlForVoiceSearchQuery(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jquery);
+  base::android::ScopedJavaLocalRef<jobject> GetComposeplateUrl(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
   base::android::ScopedJavaLocalRef<jobject> GetUrlForContextualSearchQuery(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jquery,
       const base::android::JavaParamRef<jstring>& jalternate_term,
       jboolean jshould_prefetch,
       const base::android::JavaParamRef<jstring>& jprotocol_version);
   base::android::ScopedJavaLocalRef<jstring> GetSearchEngineUrlFromTemplateUrl(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jkeyword);
   int GetSearchEngineTypeFromTemplateUrl(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jkeyword);
 
   // Adds a search engine, set by Play API. Sets it as DSE if possible.
@@ -82,7 +70,6 @@ class TemplateUrlServiceAndroid : public TemplateURLServiceObserver {
   // attempt to set search engine).
   jboolean SetPlayAPISearchEngine(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jname,
       const base::android::JavaParamRef<jstring>& jkeyword,
       const base::android::JavaParamRef<jstring>& jsearch_url,
@@ -95,14 +82,12 @@ class TemplateUrlServiceAndroid : public TemplateURLServiceObserver {
       const base::android::JavaParamRef<jstring>&
           jimage_translate_source_language_param_key,
       const base::android::JavaParamRef<jstring>&
-          jimage_translate_target_language_param_key,
-      jboolean set_as_default);
+          jimage_translate_target_language_param_key);
 
   // Adds a custom search engine, sets |jkeyword| as its short_name and keyword,
   // and sets its date_created as |age_in_days| days before the current time.
   base::android::ScopedJavaLocalRef<jstring> AddSearchEngineForTesting(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jkeyword,
       jint age_in_days);
 
@@ -110,28 +95,37 @@ class TemplateUrlServiceAndroid : public TemplateURLServiceObserver {
   // last_visited time as the current time.
   base::android::ScopedJavaLocalRef<jstring> UpdateLastVisitedForTesting(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jkeyword);
 
   // Get all the available search engines and add them to the
   // |template_url_list_obj| list.
   void GetTemplateUrls(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& template_url_list_obj);
 
   // Get current default search engine.
   base::android::ScopedJavaLocalRef<jobject> GetDefaultSearchEngine(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+      JNIEnv* env);
+
+  // Get the image search url and the post content.
+  base::android::ScopedJavaLocalRef<jobjectArray> GetImageUrlAndPostContent(
+      JNIEnv* env);
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(TemplateUrlServiceAndroidUnitTest,
+                           FilterUserSelectableTemplateUrls);
+
   bool IsDefaultSearchEngineGoogle();
 
   void OnTemplateURLServiceLoaded();
 
   // TemplateUrlServiceObserver:
   void OnTemplateURLServiceChanged() override;
+
+  // Given a vector of TemplateURL pointers, returns an array of TemplateURLs
+  // that should be selectable by the user as their primary Search Engine.
+  static std::vector<raw_ptr<TemplateURL>> FilterUserSelectableTemplateUrls(
+      std::vector<raw_ptr<TemplateURL, VectorExperimental>> template_urls);
 
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 

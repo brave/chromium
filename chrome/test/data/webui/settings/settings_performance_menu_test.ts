@@ -5,7 +5,8 @@
 /** @fileoverview Runs tests for the settings performance menu item. */
 
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {pageVisibility, Router, routes, SettingsMenuElement} from 'chrome://settings/settings.js';
+import type {SettingsMenuElement} from 'chrome://settings/settings.js';
+import {resetPageVisibilityForTesting, Router, routes} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 
 suite('SettingsMenuPerformance', function() {
@@ -15,13 +16,20 @@ suite('SettingsMenuPerformance', function() {
     return settingsMenu.shadowRoot!.querySelector<HTMLElement>('#performance');
   }
 
-  setup(function() {
+  function createSettingsMenu() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
-    Router.getInstance().navigateTo(routes.PERFORMANCE, undefined);
+    Router.getInstance().navigateTo(routes.PERFORMANCE);
     settingsMenu = document.createElement('settings-menu');
-    settingsMenu.pageVisibility = pageVisibility;
     document.body.appendChild(settingsMenu);
     flush();
+  }
+
+  setup(function() {
+    createSettingsMenu();
+  });
+
+  teardown(function() {
+    resetPageVisibilityForTesting();
   });
 
   test('navigateToPerformanceSection', function() {
@@ -31,9 +39,8 @@ suite('SettingsMenuPerformance', function() {
         !!menu.selected,
         'a menu item should be selected when directly navigating to the ' +
             'performance route');
-    const path = new window.URL(menu.selected.toString()).pathname;
     assertEquals(
-        '/performance', path,
+        '/performance', menu.selected.toString(),
         'the selected menu item should be for the performance settings');
   });
 
@@ -48,8 +55,8 @@ suite('SettingsMenuPerformance', function() {
   });
 
   test('performanceMenuItemHidden', function() {
-    settingsMenu.pageVisibility =
-        Object.assign(settingsMenu.pageVisibility || {}, {performance: false});
+    resetPageVisibilityForTesting({performance: false});
+    createSettingsMenu();
     assertTrue(
         getPerformanceMenuItem()!.hidden,
         'performance menu item should be hidden when pageVisibility is false');

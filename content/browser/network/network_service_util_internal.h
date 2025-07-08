@@ -7,7 +7,6 @@
 
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 

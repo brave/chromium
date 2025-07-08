@@ -4,14 +4,14 @@
 
 #include "ui/ozone/platform/wayland/gpu/wayland_buffer_manager_gpu.h"
 
-#include <surface-augmenter-client-protocol.h>
-
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/process/process.h"
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/trace_event.h"
+#include "base/version.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rrect_f.h"
 #include "ui/gfx/linux/drm_util_linux.h"
@@ -24,7 +24,7 @@
 
 #if defined(WAYLAND_GBM)
 #include "ui/gfx/linux/gbm_wrapper.h"  // nogncheck
-#include "ui/ozone/platform/wayland/gpu/drm_render_node_handle.h"
+#include "ui/ozone/platform/wayland/common/drm_render_node_handle.h"
 #endif
 
 namespace ui {
@@ -77,7 +77,6 @@ void WaylandBufferManagerGpu::Initialize(
     bool supports_viewporter,
     bool supports_acquire_fence,
     bool supports_overlays,
-    uint32_t supported_surface_augmentor_version,
     bool supports_single_pixel_buffer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
 
@@ -90,23 +89,13 @@ void WaylandBufferManagerGpu::Initialize(
   supports_acquire_fence_ = supports_acquire_fence;
   supports_dmabuf_ = supports_dma_buf;
   supports_overlays_ = supports_overlays;
-
-  supports_non_backed_solid_color_buffers_ =
-      supported_surface_augmentor_version >=
-      SURFACE_AUGMENTER_CREATE_SOLID_COLOR_BUFFER_SINCE_VERSION;
-  supports_subpixel_accurate_position_ =
-      supported_surface_augmentor_version >=
-      SURFACE_AUGMENTER_GET_AUGMENTED_SUBSURFACE_SINCE_VERSION;
-  supports_surface_background_color_ =
-      supported_surface_augmentor_version >=
-      AUGMENTED_SURFACE_SET_BACKGROUND_COLOR_SINCE_VERSION;
-  supports_clip_rect_ = supported_surface_augmentor_version >=
-                        AUGMENTED_SUB_SURFACE_SET_CLIP_RECT_SINCE_VERSION;
-  supports_affine_transform_ =
-      supported_surface_augmentor_version >=
-      AUGMENTED_SUB_SURFACE_SET_TRANSFORM_SINCE_VERSION;
-
   supports_single_pixel_buffer_ = supports_single_pixel_buffer;
+
+  // Allow to rebind the interface if it hasn't been destroyed yet. Used, for
+  // example, by tests which use buffer manager to emulate frames presentation.
+  if (remote_host_.is_bound() || associated_receiver_.is_bound()) {
+    OnHostDisconnected();
+  }
   BindHostInterface(std::move(remote_host));
 
   ProcessPendingTasks();
@@ -247,25 +236,6 @@ void WaylandBufferManagerGpu::CreateShmBasedBuffer(base::ScopedFD shm_fd,
   RunOrQueueTask(std::move(task));
 }
 
-void WaylandBufferManagerGpu::CreateSolidColorBuffer(SkColor4f color,
-                                                     const gfx::Size& size,
-                                                     uint32_t buf_id) {
-  DCHECK(gpu_thread_runner_);
-  if (!gpu_thread_runner_->BelongsToCurrentThread()) {
-    // Do the mojo call on the GpuMainThread.
-    gpu_thread_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&WaylandBufferManagerGpu::CreateSolidColorBuffer,
-                       base::Unretained(this), color, size, buf_id));
-    return;
-  }
-
-  base::OnceClosure task =
-      base::BindOnce(&WaylandBufferManagerGpu::CreateSolidColorBufferTask,
-                     base::Unretained(this), color, size, buf_id);
-  RunOrQueueTask(std::move(task));
-}
-
 void WaylandBufferManagerGpu::CreateSinglePixelBuffer(SkColor4f color,
                                                       uint32_t buf_id) {
   DCHECK(gpu_thread_runner_);
@@ -289,6 +259,7 @@ void WaylandBufferManagerGpu::CommitBuffer(gfx::AcceleratedWidget widget,
                                            uint32_t buffer_id,
                                            gfx::FrameData data,
                                            const gfx::Rect& bounds_rect,
+                                           bool enable_blend,
                                            const gfx::RoundedCornersF& corners,
                                            float surface_scale_factor,
                                            const gfx::Rect& damage_region) {
@@ -298,10 +269,11 @@ void WaylandBufferManagerGpu::CommitBuffer(gfx::AcceleratedWidget widget,
   overlay_configs.emplace_back(
       gfx::OverlayPlaneData(
           INT32_MIN, gfx::OverlayTransform::OVERLAY_TRANSFORM_NONE,
-          gfx::RectF(bounds_rect), gfx::RectF(1.f, 1.f) /* no crop */, false,
-          damage_region, 1.0f /*opacity*/, gfx::OverlayPriorityHint::kNone,
+          gfx::RectF(bounds_rect), gfx::RectF(1.f, 1.f) /* no crop */,
+          enable_blend, damage_region, 1.0f /*opacity*/,
+          gfx::OverlayPriorityHint::kNone,
           gfx::RRectF(gfx::RectF(bounds_rect), corners), gfx::ColorSpace(),
-          absl::nullopt),
+          std::nullopt),
       nullptr, buffer_id, surface_scale_factor);
   CommitOverlays(widget, frame_id, data, std::move(overlay_configs));
 }
@@ -353,23 +325,17 @@ GbmDevice* WaylandBufferManagerGpu::GetGbmDevice() {
     return nullptr;
   }
 
-  if (gbm_device_ || use_fake_gbm_device_for_test_)
-    return gbm_device_.get();
-
-  if (!drm_render_node_fd_.is_valid()) {
-    supports_dmabuf_ = false;
-    return nullptr;
-  }
-
-  gbm_device_ = CreateGbmDevice(drm_render_node_fd_.get());
-  if (!gbm_device_) {
-    supports_dmabuf_ = false;
-    LOG(WARNING) << "Failed to initialize gbm device.";
-    return nullptr;
-  }
+  MaybeCreateGbmDevice();
   return gbm_device_.get();
 }
 #endif  // defined(WAYLAND_GBM)
+
+gl::EGLDisplayPlatform WaylandBufferManagerGpu::GetNativeDisplay() {
+#if defined(WAYLAND_GBM)
+  MaybeCreateGbmDevice();
+#endif
+  return native_display_;
+}
 
 void WaylandBufferManagerGpu::AddBindingWaylandBufferManagerGpu(
     mojo::PendingReceiver<ozone::mojom::WaylandBufferManagerGpu> receiver) {
@@ -478,6 +444,30 @@ void WaylandBufferManagerGpu::OpenAndStoreDrmRenderNodeFd(
 
   drm_render_node_fd_ = handle.PassFD();
 }
+
+void WaylandBufferManagerGpu::MaybeCreateGbmDevice() {
+  if (use_fake_gbm_device_for_test_) {
+    return;
+  }
+  CHECK_EQ(!!gbm_device_, native_display_.Valid());
+  if (gbm_device_) {
+    return;
+  }
+  if (!drm_render_node_fd_.is_valid()) {
+    supports_dmabuf_ = false;
+    return;
+  }
+  TRACE_EVENT("gpu,startup", "ui::CreateGbmDevice");
+  gbm_device* device = gbm_create_device(drm_render_node_fd_.get());
+  if (!device) {
+    supports_dmabuf_ = false;
+    LOG(WARNING) << "Failed to initialize gbm device.";
+    return;
+  }
+  native_display_ = gl::EGLDisplayPlatform(
+      reinterpret_cast<EGLNativeDisplayType>(device), EGL_PLATFORM_GBM_KHR);
+  gbm_device_ = WrapGbmDevice(device);
+}
 #endif
 
 void WaylandBufferManagerGpu::OnHostDisconnected() {
@@ -536,15 +526,6 @@ void WaylandBufferManagerGpu::CreateShmBasedBufferTask(base::ScopedFD shm_fd,
 
   remote_host_->CreateShmBasedBuffer(mojo::PlatformHandle(std::move(shm_fd)),
                                      length, size, buffer_id);
-}
-
-void WaylandBufferManagerGpu::CreateSolidColorBufferTask(SkColor4f color,
-                                                         const gfx::Size& size,
-                                                         uint32_t buf_id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
-  DCHECK(remote_host_);
-
-  remote_host_->CreateSolidColorBuffer(size, color, buf_id);
 }
 
 void WaylandBufferManagerGpu::CreateSinglePixelBufferTask(SkColor4f color,

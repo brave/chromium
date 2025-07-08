@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/chromeos/libyuv_image_processor_backend.h"
 
 #include <sys/mman.h>
@@ -14,6 +19,7 @@
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "media/gpu/chromeos/fourcc.h"
+#include "media/gpu/chromeos/video_frame_resource.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/video_frame_mapper.h"
 #include "media/gpu/video_frame_mapper_factory.h"
@@ -47,6 +53,9 @@ static constexpr struct {
 #define CONV(in, out, trans, result) \
   {Fourcc::in, Fourcc::out, Transform::trans, SupportResult::result}
     // Conversion.
+#if BUILDFLAG(IS_LINUX)
+    CONV(NV12, AR24, kConversion, Supported),
+#endif
     CONV(NV12, NV12, kConversion, Supported),
     CONV(YM16, NV12, kConversion, Supported),
     CONV(YM16, YU12, kConversion, Supported),
@@ -132,50 +141,32 @@ LibYUVImageProcessorBackend::CreateWithTaskRunner(
     return nullptr;
   }
 
-  std::unique_ptr<VideoFrameMapper> input_frame_mapper;
   // LibYUVImageProcessorBackend supports only memory-based video frame for
   // input.
-  VideoFrame::StorageType input_storage_type = VideoFrame::STORAGE_UNKNOWN;
-  for (auto input_type : input_config.preferred_storage_types) {
-    if (input_type == VideoFrame::STORAGE_DMABUFS ||
-        input_type == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
-      input_frame_mapper = VideoFrameMapperFactory::CreateMapper(
-          input_config.fourcc.ToVideoPixelFormat(), input_type, true);
-      if (input_frame_mapper) {
-        input_storage_type = input_type;
-        break;
-      }
-    }
-
-    if (VideoFrame::IsStorageTypeMappable(input_type)) {
-      input_storage_type = input_type;
-      break;
-    }
+  std::unique_ptr<VideoFrameMapper> input_frame_mapper;
+  if (input_config.storage_type == VideoFrame::STORAGE_DMABUFS ||
+      input_config.storage_type == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
+    input_frame_mapper = VideoFrameMapperFactory::CreateMapper(
+        input_config.fourcc.ToVideoPixelFormat(), input_config.storage_type,
+        /*force_linear_buffer_mapper=*/true);
   }
-  if (input_storage_type == VideoFrame::STORAGE_UNKNOWN) {
+
+  if (!input_frame_mapper &&
+      !VideoFrame::IsStorageTypeMappable(input_config.storage_type)) {
     VLOGF(2) << "Unsupported input storage type";
     return nullptr;
   }
 
   std::unique_ptr<VideoFrameMapper> output_frame_mapper;
-  VideoFrame::StorageType output_storage_type = VideoFrame::STORAGE_UNKNOWN;
-  for (auto output_type : output_config.preferred_storage_types) {
-    if (output_type == VideoFrame::STORAGE_DMABUFS ||
-        output_type == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
-      output_frame_mapper = VideoFrameMapperFactory::CreateMapper(
-          output_config.fourcc.ToVideoPixelFormat(), output_type, true);
-      if (output_frame_mapper) {
-        output_storage_type = output_type;
-        break;
-      }
-    }
-
-    if (VideoFrame::IsStorageTypeMappable(output_type)) {
-      output_storage_type = output_type;
-      break;
-    }
+  if (output_config.storage_type == VideoFrame::STORAGE_DMABUFS ||
+      output_config.storage_type == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
+    output_frame_mapper = VideoFrameMapperFactory::CreateMapper(
+        output_config.fourcc.ToVideoPixelFormat(), output_config.storage_type,
+        /*force_linear_buffer_mapper=*/true);
   }
-  if (output_storage_type == VideoFrame::STORAGE_UNKNOWN) {
+
+  if (!output_frame_mapper &&
+      !VideoFrame::IsStorageTypeMappable(output_config.storage_type)) {
     VLOGF(2) << "Unsupported output storage type";
     return nullptr;
   }
@@ -197,27 +188,42 @@ LibYUVImageProcessorBackend::CreateWithTaskRunner(
     return nullptr;
   }
 
-  if (input_config.fourcc.ToVideoPixelFormat() ==
-      output_config.fourcc.ToVideoPixelFormat()) {
-    if (output_config.visible_rect.origin() != gfx::Point(0, 0)) {
-      VLOGF(2) << "Output visible rectangle is not (0, 0), "
-               << "output_config.visible_rect="
-               << output_config.visible_rect.ToString();
-      return nullptr;
-    }
-  }
-
-  scoped_refptr<VideoFrame> intermediate_frame;
+  scoped_refptr<FrameResource> intermediate_frame;
   if (res == SupportResult::SupportedWithI420Pivot ||
       res == SupportResult::SupportedWithNV12Pivot) {
-    intermediate_frame = VideoFrame::CreateFrame(
+    intermediate_frame = VideoFrameResource::Create(VideoFrame::CreateFrame(
         res == SupportResult::SupportedWithI420Pivot ? PIXEL_FORMAT_I420
                                                      : PIXEL_FORMAT_NV12,
         input_config.visible_rect.size(),
         gfx::Rect(input_config.visible_rect.size()),
-        input_config.visible_rect.size(), base::TimeDelta());
+        input_config.visible_rect.size(), base::TimeDelta()));
     if (!intermediate_frame) {
       VLOGF(1) << "Failed to create intermediate frame";
+      return nullptr;
+    }
+  }
+
+  // This intermediate frame is only needed in the event of a crop operation
+  // that does not start with the upper left corner at (0,0). Tiled formats such
+  // as MM21 can not easily be converted starting at arbitrary origins. With
+  // this intermediate buffer the tiled format can be converted to a linear
+  // format that can be easily cropped.
+  scoped_refptr<FrameResource> crop_intermediate_frame;
+  if (input_config.visible_rect.origin() != gfx::Point(0, 0) &&
+      (input_config.fourcc == Fourcc(Fourcc::MM21) ||
+       input_config.fourcc == Fourcc(Fourcc::MT2T))) {
+    if (transform != Transform::kScaling) {
+      crop_intermediate_frame =
+          VideoFrameResource::Create(VideoFrame::CreateFrame(
+              output_config.fourcc.ToVideoPixelFormat(), input_config.size,
+              input_config.visible_rect, input_config.size, base::TimeDelta()));
+      if (!crop_intermediate_frame) {
+        VLOGF(1) << "Failed to create cropping intermediate frame";
+        return nullptr;
+      }
+    } else {
+      VLOGF(1) << "Scaling and cropping simultaneously are not supported for "
+                  "MM21/M2T2.";
       return nullptr;
     }
   }
@@ -225,14 +231,8 @@ LibYUVImageProcessorBackend::CreateWithTaskRunner(
   auto processor =
       base::WrapUnique<ImageProcessorBackend>(new LibYUVImageProcessorBackend(
           std::move(input_frame_mapper), std::move(output_frame_mapper),
-          std::move(intermediate_frame),
-          PortConfig(input_config.fourcc, input_config.size,
-                     input_config.planes, input_config.visible_rect,
-                     {input_storage_type}),
-          PortConfig(output_config.fourcc, output_config.size,
-                     output_config.planes, output_config.visible_rect,
-                     {output_storage_type}),
-          OutputMode::IMPORT, std::move(error_cb),
+          std::move(intermediate_frame), std::move(crop_intermediate_frame),
+          input_config, output_config, OutputMode::IMPORT, std::move(error_cb),
           std::move(backend_task_runner)));
   VLOGF(2) << "LibYUVImageProcessorBackend created for converting from "
            << input_config.ToString() << " to " << output_config.ToString();
@@ -242,7 +242,8 @@ LibYUVImageProcessorBackend::CreateWithTaskRunner(
 LibYUVImageProcessorBackend::LibYUVImageProcessorBackend(
     std::unique_ptr<VideoFrameMapper> input_frame_mapper,
     std::unique_ptr<VideoFrameMapper> output_frame_mapper,
-    scoped_refptr<VideoFrame> intermediate_frame,
+    scoped_refptr<FrameResource> intermediate_frame,
+    scoped_refptr<FrameResource> crop_intermediate_frame,
     const PortConfig& input_config,
     const PortConfig& output_config,
     OutputMode output_mode,
@@ -255,7 +256,8 @@ LibYUVImageProcessorBackend::LibYUVImageProcessorBackend(
                             std::move(backend_task_runner)),
       input_frame_mapper_(std::move(input_frame_mapper)),
       output_frame_mapper_(std::move(output_frame_mapper)),
-      intermediate_frame_(std::move(intermediate_frame)) {}
+      intermediate_frame_(std::move(intermediate_frame)),
+      crop_intermediate_frame_(std::move(crop_intermediate_frame)) {}
 
 LibYUVImageProcessorBackend::~LibYUVImageProcessorBackend() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(backend_sequence_checker_);
@@ -265,10 +267,10 @@ std::string LibYUVImageProcessorBackend::type() const {
   return "LibYUVImageProcessor";
 }
 
-void LibYUVImageProcessorBackend::Process(
-    scoped_refptr<VideoFrame> input_frame,
-    scoped_refptr<VideoFrame> output_frame,
-    FrameReadyCB cb) {
+void LibYUVImageProcessorBackend::ProcessFrame(
+    scoped_refptr<FrameResource> input_frame,
+    scoped_refptr<FrameResource> output_frame,
+    FrameResourceReadyCB cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(backend_sequence_checker_);
   DVLOGF(4);
   if (input_frame->storage_type() == VideoFrame::STORAGE_DMABUFS ||
@@ -277,28 +279,30 @@ void LibYUVImageProcessorBackend::Process(
     int mapping_permissions = PROT_READ;
     if (input_frame->storage_type() != VideoFrame::STORAGE_DMABUFS)
       mapping_permissions |= PROT_WRITE;
-    input_frame =
-        input_frame_mapper_->Map(std::move(input_frame), mapping_permissions);
-    if (!input_frame) {
-      VLOGF(1) << "Failed to map input VideoFrame";
+    scoped_refptr<VideoFrame> mapped_input_frame =
+        input_frame_mapper_->MapFrame(input_frame, mapping_permissions);
+    if (!mapped_input_frame) {
+      VLOGF(1) << "Failed to map input FrameResource";
       error_cb_.Run();
       return;
     }
+    input_frame = VideoFrameResource::Create(std::move(mapped_input_frame));
   }
 
   // We don't replace |output_frame| with a mapped frame, because |output_frame|
   // is the output of ImageProcessor.
-  scoped_refptr<VideoFrame> mapped_frame = output_frame;
+  scoped_refptr<FrameResource> mapped_frame = output_frame;
   if (output_frame->storage_type() == VideoFrame::STORAGE_DMABUFS ||
       output_frame->storage_type() == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
     DCHECK_NE(output_frame_mapper_.get(), nullptr);
-    mapped_frame =
-        output_frame_mapper_->Map(output_frame, PROT_READ | PROT_WRITE);
-    if (!mapped_frame) {
-      VLOGF(1) << "Failed to map output VideoFrame";
+    scoped_refptr<VideoFrame> mapped_output_frame =
+        output_frame_mapper_->MapFrame(output_frame, PROT_READ | PROT_WRITE);
+    if (!mapped_output_frame) {
+      VLOGF(1) << "Failed to map output FrameResource";
       error_cb_.Run();
       return;
     }
+    mapped_frame = VideoFrameResource::Create(std::move(mapped_output_frame));
   }
 
   int res;
@@ -307,7 +311,39 @@ void LibYUVImageProcessorBackend::Process(
                  input_frame->AsHumanReadableString(), "output_frame",
                  mapped_frame->AsHumanReadableString());
     SCOPED_UMA_HISTOGRAM_TIMER("LibYUVImageProcessorBackend::Process");
-    res = DoConversion(input_frame.get(), mapped_frame.get());
+    if (input_config_.visible_rect.origin() == gfx::Point(0, 0) ||
+        (input_config_.fourcc != Fourcc(Fourcc::MM21) &&
+         input_config_.fourcc != Fourcc(Fourcc::MT2T))) {
+      res = DoConversion(input_frame.get(), mapped_frame.get());
+    } else {
+      res = DoConversion(input_frame.get(), crop_intermediate_frame_.get());
+
+      // This is cropping routine that should be able to support any (known)
+      // pixel format).
+      if (!res) {
+        for (size_t plane = 0;
+             plane < VideoFrame::NumPlanes(crop_intermediate_frame_->format());
+             plane++) {
+          const uint8_t* src_row_ptr =
+              crop_intermediate_frame_->visible_data(plane);
+          uint8_t* dst_row_ptr = mapped_frame->GetWritableVisibleData(plane);
+          for (size_t row = 0;
+               row < VideoFrame::Rows(
+                         plane, crop_intermediate_frame_->format(),
+                         crop_intermediate_frame_->visible_rect().height());
+               row++) {
+            memcpy(dst_row_ptr, src_row_ptr,
+                   VideoFrame::Columns(
+                       plane, crop_intermediate_frame_->format(),
+                       crop_intermediate_frame_->visible_rect().width()) *
+                       VideoFrame::BytesPerElement(
+                           crop_intermediate_frame_->format(), plane));
+            src_row_ptr += crop_intermediate_frame_->row_bytes(plane);
+            dst_row_ptr += mapped_frame->row_bytes(plane);
+          }
+        }
+      }
+    }
   }
 
   if (res != 0) {
@@ -321,55 +357,66 @@ void LibYUVImageProcessorBackend::Process(
   std::move(cb).Run(std::move(output_frame));
 }
 
-int LibYUVImageProcessorBackend::DoConversion(const VideoFrame* const input,
-                                              VideoFrame* const output) {
+int LibYUVImageProcessorBackend::DoConversion(const FrameResource* const input,
+                                              FrameResource* const output) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(backend_sequence_checker_);
 
 #define Y_U_V_DATA(fr)                                                        \
-  fr->visible_data(VideoFrame::kYPlane), fr->stride(VideoFrame::kYPlane),     \
-      fr->visible_data(VideoFrame::kUPlane), fr->stride(VideoFrame::kUPlane), \
-      fr->visible_data(VideoFrame::kVPlane), fr->stride(VideoFrame::kVPlane)
+  fr->visible_data(VideoFrame::Plane::kY), fr->stride(VideoFrame::Plane::kY), \
+      fr->visible_data(VideoFrame::Plane::kU),                                \
+      fr->stride(VideoFrame::Plane::kU),                                      \
+      fr->visible_data(VideoFrame::Plane::kV),                                \
+      fr->stride(VideoFrame::Plane::kV)
 
-#define Y_U_V_DATA_W(fr)                               \
-  fr->GetWritableVisibleData(VideoFrame::kYPlane),     \
-      fr->stride(VideoFrame::kYPlane),                 \
-      fr->GetWritableVisibleData(VideoFrame::kUPlane), \
-      fr->stride(VideoFrame::kUPlane),                 \
-      fr->GetWritableVisibleData(VideoFrame::kVPlane), \
-      fr->stride(VideoFrame::kVPlane)
+#define Y_U_V_DATA_W(fr)                                 \
+  fr->GetWritableVisibleData(VideoFrame::Plane::kY),     \
+      fr->stride(VideoFrame::Plane::kY),                 \
+      fr->GetWritableVisibleData(VideoFrame::Plane::kU), \
+      fr->stride(VideoFrame::Plane::kU),                 \
+      fr->GetWritableVisibleData(VideoFrame::Plane::kV), \
+      fr->stride(VideoFrame::Plane::kV)
 
 #define Y_V_U_DATA(fr)                                                        \
-  fr->visible_data(VideoFrame::kYPlane), fr->stride(VideoFrame::kYPlane),     \
-      fr->visible_data(VideoFrame::kVPlane), fr->stride(VideoFrame::kVPlane), \
-      fr->visible_data(VideoFrame::kUPlane), fr->stride(VideoFrame::kUPlane)
+  fr->visible_data(VideoFrame::Plane::kY), fr->stride(VideoFrame::Plane::kY), \
+      fr->visible_data(VideoFrame::Plane::kV),                                \
+      fr->stride(VideoFrame::Plane::kV),                                      \
+      fr->visible_data(VideoFrame::Plane::kU),                                \
+      fr->stride(VideoFrame::Plane::kU)
 
-#define Y_UV_DATA(fr)                                                     \
-  fr->visible_data(VideoFrame::kYPlane), fr->stride(VideoFrame::kYPlane), \
-      fr->visible_data(VideoFrame::kUVPlane), fr->stride(VideoFrame::kUVPlane)
+#define Y_UV_DATA(fr)                                                         \
+  fr->visible_data(VideoFrame::Plane::kY), fr->stride(VideoFrame::Plane::kY), \
+      fr->visible_data(VideoFrame::Plane::kUV),                               \
+      fr->stride(VideoFrame::Plane::kUV)
 
-#define Y_UV_DATA_W(fr)                                 \
-  fr->GetWritableVisibleData(VideoFrame::kYPlane),      \
-      fr->stride(VideoFrame::kYPlane),                  \
-      fr->GetWritableVisibleData(VideoFrame::kUVPlane), \
-      fr->stride(VideoFrame::kUVPlane)
+#define Y_UV_DATA_W(fr)                                   \
+  fr->GetWritableVisibleData(VideoFrame::Plane::kY),      \
+      fr->stride(VideoFrame::Plane::kY),                  \
+      fr->GetWritableVisibleData(VideoFrame::Plane::kUV), \
+      fr->stride(VideoFrame::Plane::kUV)
 
 #define YUY2_DATA(fr) \
-  fr->visible_data(VideoFrame::kYPlane), fr->stride(VideoFrame::kYPlane)
+  fr->visible_data(VideoFrame::Plane::kY), fr->stride(VideoFrame::Plane::kY)
 
-#define Y_UV_DATA_10BIT(fr)                                                 \
-  reinterpret_cast<const uint16_t*>(fr->visible_data(VideoFrame::kYPlane)), \
-      fr->stride(VideoFrame::kYPlane),                                      \
-      reinterpret_cast<const uint16_t*>(                                    \
-          fr->visible_data(VideoFrame::kUVPlane)),                          \
-      fr->stride(VideoFrame::kUVPlane)
+#define Y_UV_DATA_10BIT(fr)                                                   \
+  reinterpret_cast<const uint16_t*>(fr->visible_data(VideoFrame::Plane::kY)), \
+      fr->stride(VideoFrame::Plane::kY),                                      \
+      reinterpret_cast<const uint16_t*>(                                      \
+          fr->visible_data(VideoFrame::Plane::kUV)),                          \
+      fr->stride(VideoFrame::Plane::kUV)
 
-#define Y_UV_DATA_W_10BIT(fr)                                \
-  reinterpret_cast<uint16_t*>(                               \
-      fr->GetWritableVisibleData(VideoFrame::kYPlane)),      \
-      fr->stride(VideoFrame::kYPlane),                       \
-      reinterpret_cast<uint16_t*>(                           \
-          fr->GetWritableVisibleData(VideoFrame::kUVPlane)), \
-      fr->stride(VideoFrame::kUVPlane)
+#define Y_UV_DATA_W_10BIT(fr)                                  \
+  reinterpret_cast<uint16_t*>(                                 \
+      fr->GetWritableVisibleData(VideoFrame::Plane::kY)),      \
+      fr->stride(VideoFrame::Plane::kY),                       \
+      reinterpret_cast<uint16_t*>(                             \
+          fr->GetWritableVisibleData(VideoFrame::Plane::kUV)), \
+      fr->stride(VideoFrame::Plane::kUV)
+
+#if BUILDFLAG(IS_LINUX)
+#define ARGB_DATA(fr)                                   \
+  fr->GetWritableVisibleData(VideoFrame::Plane::kARGB), \
+      fr->stride(VideoFrame::Plane::kARGB)
+#endif
 
 #define LIBYUV_FUNC(func, i, o)                      \
   libyuv::func(i, o, output->visible_rect().width(), \
@@ -385,18 +432,19 @@ int LibYUVImageProcessorBackend::DoConversion(const VideoFrame* const input,
       case PIXEL_FORMAT_NV12:
         // MM21 mode.
         if (input_config_.fourcc == Fourcc(Fourcc::MM21)) {
-          // The X and Y of the input rectangle seem to have a more complicated
-          // relationship with the channel offsets. This is what we have managed
-          // to figure out. (b/248991039)
-          const int luma_offset =
-              input->visible_rect().x() * (input->visible_rect().y() - 1);
-          const int chroma_offset = luma_offset / 2 - input->visible_rect().y();
           return libyuv::MM21ToNV12(
-              input->visible_data(VideoFrame::kYPlane) + luma_offset,
-              input->stride(VideoFrame::kYPlane),
-              input->visible_data(VideoFrame::kUVPlane) + chroma_offset,
-              input->stride(VideoFrame::kUVPlane), Y_UV_DATA_W(output),
-              output->visible_rect().width(), output->visible_rect().height());
+              input->data(VideoFrame::Plane::kY),
+              input->stride(VideoFrame::Plane::kY),
+              input->data(VideoFrame::Plane::kUV),
+              input->stride(VideoFrame::Plane::kUV),
+              output->writable_data(VideoFrame::Plane::kY),
+              output->stride(VideoFrame::Plane::kY),
+              output->writable_data(VideoFrame::Plane::kUV),
+              output->stride(VideoFrame::Plane::kUV),
+              std::min(output->coded_size().width(),
+                       input->coded_size().width()),
+              std::min(output->coded_size().height(),
+                       input->coded_size().height()));
         }
 
         // Scaling mode.
@@ -501,12 +549,39 @@ int LibYUVImageProcessorBackend::DoConversion(const VideoFrame* const input,
     }
   }
 
-  if (output->format() == PIXEL_FORMAT_P016LE) {
+  if (output->format() == PIXEL_FORMAT_P010LE) {
     if (input_config_.fourcc == Fourcc(Fourcc::MT2T)) {
-      return LIBYUV_FUNC(MT2TToP010, Y_UV_DATA(input),
-                         Y_UV_DATA_W_10BIT(output));
+      // stride is 5/4 because MT2T is a packed 10bit format
+      const uint32_t src_stride_mt2t =
+          (input->stride(VideoFrame::Plane::kY) * 5) >> 2;
+
+      int libyuv_result = libyuv::MT2TToP010(
+          input->visible_data(VideoFrame::Plane::kY), src_stride_mt2t,
+          input->visible_data(VideoFrame::Plane::kUV), src_stride_mt2t,
+          reinterpret_cast<uint16_t*>(
+              output->GetWritableVisibleData(VideoFrame::Plane::kY)),
+          output->stride(VideoFrame::Plane::kY) >> 1,
+          reinterpret_cast<uint16_t*>(
+              output->GetWritableVisibleData(VideoFrame::Plane::kUV)),
+          output->stride(VideoFrame::Plane::kUV) >> 1,
+          output->visible_rect().width(), output->visible_rect().height());
+
+      if (libyuv_result) {
+        return libyuv_result;
+      }
+
+      return 0;
     }
   }
+
+#if BUILDFLAG(IS_LINUX)
+  if (output->format() == PIXEL_FORMAT_ARGB) {
+    if (input_config_.fourcc == Fourcc(Fourcc::NV12)) {
+      return LIBYUV_FUNC(NV12ToARGB, Y_UV_DATA(input),
+                         ARGB_DATA(output));
+    }
+  }
+#endif
 
 #undef Y_U_V_DATA
 #undef Y_V_U_DATA

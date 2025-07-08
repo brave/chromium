@@ -6,11 +6,19 @@
 
 #include "base/android/jni_string.h"
 #include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/profiles/profile_android.h"
-#include "chrome/browser/quick_delete/jni_headers/QuickDeleteBridge_jni.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/hats/hats_service.h"
+#include "chrome/browser/ui/hats/hats_service_factory.h"
+#include "chrome/browser/ui/hats/survey_config.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "content/public/browser/web_contents.h"
+#include "ui/base/l10n/l10n_util.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/quick_delete/jni_headers/QuickDeleteBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -68,7 +76,7 @@ void QuickDeleteBridge::GetLastVisitedDomainAndUniqueDomainCount(
       &task_tracker_);
 }
 
-// TODO(crbug.com/1412087) use rvalue reference to pass the result and define
+// TODO(crbug.com/40255099) use rvalue reference to pass the result and define
 // copy ctor and copy assignment in history::DomainsVisitedResult.
 void QuickDeleteBridge::OnGetLastVisitedDomainAndUniqueDomainCountComplete(
     const JavaRef<jobject>& j_callback,
@@ -83,11 +91,9 @@ void QuickDeleteBridge::OnGetLastVisitedDomainAndUniqueDomainCountComplete(
       quickDeleteResult.domain_count);
 }
 
-static jlong JNI_QuickDeleteBridge_Init(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jobject>& j_profile) {
-  QuickDeleteBridge* bridge =
-      new QuickDeleteBridge(ProfileAndroid::FromProfileAndroid(j_profile));
+static jlong JNI_QuickDeleteBridge_Init(JNIEnv* env,
+                                        const JavaParamRef<jobject>& obj,
+                                        Profile* profile) {
+  QuickDeleteBridge* bridge = new QuickDeleteBridge(profile);
   return reinterpret_cast<intptr_t>(bridge);
 }

@@ -1,34 +1,34 @@
-// Copyright 2021 The Chromium Authors
+// Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_radio_group/cr_radio_group.js';
+import './app_management_cros_shared_style.css.js';
+import './supported_links_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_group/cr_radio_group.js';
+import 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import './supported_links_dialog.js';
 import './supported_links_overlapping_apps_dialog.js';
 
-import {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
-import {AppManagementUserAction, AppType, WindowMode} from 'chrome://resources/cr_components/app_management/constants.js';
-import {recordAppManagementUserAction} from 'chrome://resources/cr_components/app_management/util.js';
-import {LocalizedLinkElement} from 'chrome://resources/cr_components/localized_link/localized_link.js';
-import {CrRadioButtonElement} from 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import {CrRadioGroupElement} from 'chrome://resources/cr_elements/cr_radio_group/cr_radio_group.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {CrRadioButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import type {CrRadioGroupElement} from 'chrome://resources/ash/common/cr_elements/cr_radio_group/cr_radio_group.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {LocalizedLinkElement} from 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import type {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import {AppType} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import {BrowserProxy} from 'chrome://resources/cr_components/app_management/browser_proxy.js';
+import type {AppMap} from 'chrome://resources/cr_components/app_management/constants.js';
+import {AppManagementUserAction, WindowMode} from 'chrome://resources/cr_components/app_management/constants.js';
+import {castExists, recordAppManagementUserAction} from 'chrome://resources/cr_components/app_management/util.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {castExists} from '../../assert_extras.js';
-import {recordSettingChange} from '../../metrics_recorder.js';
-
-import {AppManagementBrowserProxy} from './browser_proxy.js';
-import {AppMap} from './store.js';
-import {AppManagementStoreMixin} from './store_mixin.js';
 import {getTemplate} from './supported_links_item.html.js';
-import {AppManagementSupportedLinksOverlappingAppsDialogElement} from './supported_links_overlapping_apps_dialog.js';
+import type {AppManagementSupportedLinksOverlappingAppsDialogElement} from './supported_links_overlapping_apps_dialog.js';
 
 type PreferenceType = 'preferred'|'browser';
-const PREFERRED_APP_PREF = 'preferred' as const;
+const PREFERRED_APP_PREF = 'preferred';
 
 export interface AppManagementSupportedLinksItemElement {
   $: {
@@ -38,8 +38,7 @@ export interface AppManagementSupportedLinksItemElement {
   };
 }
 
-const AppManagementSupportedLinksItemElementBase =
-    AppManagementStoreMixin(I18nMixin(PolymerElement));
+const AppManagementSupportedLinksItemElementBase = I18nMixin(PolymerElement);
 
 export class AppManagementSupportedLinksItemElement extends
     AppManagementSupportedLinksItemElementBase {
@@ -80,14 +79,10 @@ export class AppManagementSupportedLinksItemElement extends
         type: String,
       },
 
-      showOverlappingAppsWarning_: {
-        type: Boolean,
-        value: false,
-      },
+      showOverlappingAppsWarning_:
+          {type: Boolean, value: false, reflectToAttribute: true},
 
-      apps_: {
-        type: Object,
-      },
+      apps: Object,
 
       overlappingAppIds_: {
         type: Array,
@@ -97,26 +92,19 @@ export class AppManagementSupportedLinksItemElement extends
 
   static get observers() {
     return [
-      'getOverlappingAppsWarning_(apps_, app)',
+      'updateOverlappingAppsWarning_(apps, app)',
     ];
   }
 
   app: App;
+  apps: AppMap;
   override hidden: boolean;
-  private apps_: AppMap;
   private disabled_: boolean;
   private overlappingAppsWarning_: string;
   private overlappingAppIds_: string[];
   private showOverlappingAppsDialog_: boolean;
   private showOverlappingAppsWarning_: boolean;
   private showSupportedLinksDialog_: boolean;
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-
-    this.watch('apps_', state => state.apps);
-    this.updateFromStore();
-  }
 
   /**
    * The supported links item is not available when an app has no supported
@@ -149,7 +137,7 @@ export class AppManagementSupportedLinksItemElement extends
         {substitutions: [String(app.title)]});
   }
 
-  private async getOverlappingAppsWarning_(
+  private async updateOverlappingAppsWarning_(
       apps: AppMap|undefined, app: App|undefined): Promise<void> {
     if (!apps || !app || app.isPreferredApp) {
       this.showOverlappingAppsWarning_ = false;
@@ -158,8 +146,9 @@ export class AppManagementSupportedLinksItemElement extends
 
     let overlappingAppIds: string[] = [];
     try {
-      const {appIds: appIds} = await AppManagementBrowserProxy.getInstance()
-                                   .handler.getOverlappingPreferredApps(app.id);
+      const {appIds: appIds} =
+          await BrowserProxy.getInstance().handler.getOverlappingPreferredApps(
+              app.id);
       overlappingAppIds = appIds;
     } catch (err) {
       // If we fail to get the overlapping preferred apps, do not
@@ -170,7 +159,7 @@ export class AppManagementSupportedLinksItemElement extends
     }
     this.overlappingAppIds_ = overlappingAppIds;
 
-    const appNames = overlappingAppIds.map(appId => apps[appId]!.title!);
+    const appNames = overlappingAppIds.map(appId => apps[appId].title!);
     if (appNames.length === 0) {
       this.showOverlappingAppsWarning_ = false;
       return;
@@ -213,7 +202,6 @@ export class AppManagementSupportedLinksItemElement extends
     e.stopPropagation();
     this.showSupportedLinksDialog_ = true;
 
-    recordSettingChange();
     recordAppManagementUserAction(
         this.app.type, AppManagementUserAction.SUPPORTED_LINKS_LIST_SHOWN);
   }
@@ -232,8 +220,8 @@ export class AppManagementSupportedLinksItemElement extends
     let overlappingAppIds: string[] = [];
     try {
       const {appIds: appIds} =
-          await AppManagementBrowserProxy.getInstance()
-              .handler.getOverlappingPreferredApps(this.app.id);
+          await BrowserProxy.getInstance().handler.getOverlappingPreferredApps(
+              this.app.id);
       overlappingAppIds = appIds;
     } catch (err) {
       // If we fail to get the overlapping preferred apps, don't prevent the
@@ -281,10 +269,8 @@ export class AppManagementSupportedLinksItemElement extends
   private setAppAsPreferredApp_(preference: PreferenceType): void {
     const newState = preference === PREFERRED_APP_PREF;
 
-    AppManagementBrowserProxy.getInstance().handler.setPreferredApp(
-        this.app.id, newState);
+    BrowserProxy.getInstance().handler.setPreferredApp(this.app.id, newState);
 
-    recordSettingChange();
     const userAction = newState ?
         AppManagementUserAction.PREFERRED_APP_TURNED_ON :
         AppManagementUserAction.PREFERRED_APP_TURNED_OFF;

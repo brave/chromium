@@ -12,16 +12,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
-#include "chrome/browser/ash/login/oobe_quick_start/target_device_bootstrap_controller.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_context.h"
-#include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
+#include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/enrollment/account_status_check_fetcher.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
+#include "chromeos/ash/components/install_attributes/install_attributes.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
+#include "chromeos/ash/services/auth_factor_config/auth_factor_config_utils.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
@@ -33,13 +33,12 @@ namespace {
 constexpr char kUserActionBack[] = "back";
 constexpr char kUserActionCancel[] = "cancel";
 constexpr char kUserActionStartEnrollment[] = "startEnrollment";
-constexpr char kUserActionReloadDefault[] = "reloadDefault";
-constexpr char kUserActionRetry[] = "retry";
+constexpr char kUserActionReloadGaia[] = "reloadGaia";
 constexpr char kUserActionEnterIdentifier[] = "identifierEntered";
 constexpr char kUserActionQuickStartButtonClicked[] = "activateQuickStart";
 
 bool ShouldPrepareForRecovery(const AccountId& account_id) {
-  if (!features::IsCryptohomeRecoveryEnabled() || !account_id.is_valid()) {
+  if (!account_id.is_valid()) {
     return false;
   }
 
@@ -57,28 +56,22 @@ bool ShouldPrepareForRecovery(const AccountId& account_id) {
       static_cast<int>(ReauthReason::kOther),
   };
   user_manager::KnownUser known_user(g_browser_process->local_state());
-  absl::optional<int> reauth_reason = known_user.FindReauthReason(account_id);
+  std::optional<int> reauth_reason = known_user.FindReauthReason(account_id);
   return reauth_reason.has_value() &&
          base::Contains(kPossibleReasons, reauth_reason.value());
 }
 
 bool ShouldUseReauthEndpoint(const AccountId& account_id) {
-  if (!account_id.is_valid()) {
-    return false;
-  }
-  auto* user = user_manager::UserManager::Get()->FindUser(account_id);
-  DCHECK(user);
-  // Use reauth endpoint for child users.
-  if (user && user->IsChild()) {
-    return true;
-  }
-  return features::IsGaiaReauthEndpointEnabled();
+  // Use reauth endpoint when there is an existing user going through Gaia
+  // sign-in.
+  return account_id.is_valid();
 }
 
 }  // namespace
 
 // static
 std::string GaiaScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::BACK:
       return "Back";
@@ -88,11 +81,12 @@ std::string GaiaScreen::GetResultString(Result result) {
       return "Cancel";
     case Result::ENTERPRISE_ENROLL:
       return "EnterpriseEnroll";
-    case Result::START_CONSUMER_KIOSK:
-      return "StartConsumerKiosk";
-    case Result::QUICK_START:
-      return "QuickStart";
+    case Result::ENTER_QUICK_START:
+      return "EnterQuickStart";
+    case Result::QUICK_START_ONGOING:
+      return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 GaiaScreen::GaiaScreen(base::WeakPtr<TView> view,
@@ -106,27 +100,58 @@ GaiaScreen::~GaiaScreen() {
   backlights_forced_off_observation_.Reset();
 }
 
-void GaiaScreen::LoadOnline(const AccountId& account) {
+bool GaiaScreen::MaybeSkip(WizardContext& context) {
+  // Continue QuickStart flow if there is an ongoing setup.
+  if (context.quick_start_setup_ongoing &&
+      context.gaia_config.gaia_path !=
+          WizardContext::GaiaPath::kQuickStartFallback) {
+    exit_callback_.Run(Result::QUICK_START_ONGOING);
+    return true;
+  }
+
+  return false;
+}
+
+void GaiaScreen::LoadOnlineGaia() {
+  if (!view_) {
+    return;
+  }
+
+  auto* context = LoginDisplayHost::default_host()->GetWizardContext();
+  switch (context->gaia_config.gaia_path) {
+    case WizardContext::GaiaPath::kDefault:
+    case WizardContext::GaiaPath::kSamlRedirect:
+    case WizardContext::GaiaPath::kReauth:
+    case WizardContext::GaiaPath::kQuickStartFallback:
+      LoadOnlineGaiaForAccount(context->gaia_config.prefilled_account);
+      break;
+    case WizardContext::GaiaPath::kChildSignin:
+    case WizardContext::GaiaPath::kChildSignup:
+      view_->LoadGaiaAsync(EmptyAccountId());
+      break;
+  }
+}
+
+void GaiaScreen::LoadOnlineGaiaForAccount(const AccountId& account,
+                                          const bool force_default_gaia_page) {
   if (!view_)
     return;
-  auto gaia_path = GaiaView::GaiaPath::kDefault;
-  if (ShouldUseReauthEndpoint(account)) {
-    gaia_path = GaiaView::GaiaPath::kReauth;
-  }
-  view_->SetGaiaPath(gaia_path);
+
   view_->SetReauthRequestToken(std::string());
 
+  auto& gaia_config =
+      LoginDisplayHost::default_host()->GetWizardContext()->gaia_config;
   // Always fetch Gaia reauth request token if the testing switch is set. It
   // will allow to test the recovery without triggering the real recovery
   // conditions which may be difficult as of now.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kForceCryptohomeRecoveryForTesting)) {
-    DCHECK(features::IsCryptohomeRecoveryEnabled());
+    gaia_config.gaia_path = WizardContext::GaiaPath::kReauth;
     FetchGaiaReauthToken(account);
     return;
   }
 
-  if (ShouldPrepareForRecovery(account)) {
+  if (account.is_valid()) {
     auto user_context = std::make_unique<UserContext>();
     user_context->SetAccountId(account);
     auth_factor_editor_.GetAuthFactorsConfiguration(
@@ -134,34 +159,28 @@ void GaiaScreen::LoadOnline(const AccountId& account) {
         base::BindOnce(&GaiaScreen::OnGetAuthFactorsConfiguration,
                        weak_ptr_factory_.GetWeakPtr()));
   } else {
+    if (!force_default_gaia_page &&
+        GaiaScreenHandler::GetGaiaScreenMode(/*email=*/"") ==
+            WizardContext::GaiaScreenMode::kSamlRedirect) {
+      gaia_config.screen_mode = WizardContext::GaiaScreenMode::kSamlRedirect;
+      gaia_config.gaia_path = WizardContext::GaiaPath::kSamlRedirect;
+    } else {
+      gaia_config.screen_mode = WizardContext::GaiaScreenMode::kDefault;
+      CHECK(gaia_config.gaia_path != WizardContext::GaiaPath::kSamlRedirect);
+    }
     view_->LoadGaiaAsync(account);
   }
-}
-
-void GaiaScreen::LoadOnlineForChildSignup() {
-  if (!view_)
-    return;
-  view_->SetGaiaPath(GaiaView::GaiaPath::kChildSignup);
-  view_->LoadGaiaAsync(EmptyAccountId());
-}
-
-void GaiaScreen::LoadOnlineForChildSignin() {
-  if (!view_)
-    return;
-  view_->SetGaiaPath(GaiaView::GaiaPath::kChildSignin);
-  view_->LoadGaiaAsync(EmptyAccountId());
-}
-
-void GaiaScreen::ShowAllowlistCheckFailedError() {
-  if (!view_)
-    return;
-  view_->ShowAllowlistCheckFailedError();
 }
 
 void GaiaScreen::Reset() {
   if (!view_)
     return;
-  view_->SetGaiaPath(GaiaView::GaiaPath::kDefault);
+
+  auto* context = LoginDisplayHost::default_host()->GetWizardContext();
+  context->gaia_config.gaia_path = WizardContext::GaiaPath::kDefault;
+  context->gaia_config.screen_mode = WizardContext::GaiaScreenMode::kDefault;
+  context->gaia_config.prefilled_account = EmptyAccountId();
+  view_->SetIsGaiaPasswordRequired(false);
   view_->Reset();
 }
 
@@ -183,18 +202,25 @@ void GaiaScreen::ShowImpl() {
     backlights_forced_off_observation_.Observe(
         Shell::Get()->backlights_forced_off_setter());
   }
+
+  LoadOnlineGaia();
+
   // Landed on the login screen. No longer skipping enrollment for tests.
   context()->skip_to_login_for_tests = false;
   view_->Show();
 
-  // Quick Start can be enabled either by feature flag or by keyboard shortcut.
-  // The shortcut method enables a simpler workflow for testers, while the
-  // feature flag will enable us to perform a first run field trial.
-  // QuickStart should not be enabled for Demo mode or OS Install flows
-  if (features::IsOobeQuickStartEnabled() &&
-      !DemoSetupController::IsOobeDemoSetupFlowInProgress() &&
-      !switches::IsOsInstallAllowed()) {
-    EnableQuickStart();
+  // QuickStart entry point may only be visible for the default flow.
+  // TODO(b/334944713) - Cover with tests for the other paths.
+  if (LoginDisplayHost::default_host()
+          ->GetWizardContext()
+          ->gaia_config.gaia_path == WizardContext::GaiaPath::kDefault) {
+    WizardController::default_controller()
+        ->quick_start_controller()
+        ->DetermineEntryPointVisibility(
+            base::BindRepeating(&GaiaScreen::SetQuickStartButtonVisibility,
+                                weak_ptr_factory_.GetWeakPtr()));
+  } else {
+    SetQuickStartButtonVisibility(/*visible=*/false);
   }
 }
 
@@ -206,20 +232,23 @@ void GaiaScreen::HideImpl() {
   enrollment_nudge_email_.clear();
   if (!view_)
     return;
-  view_->SetGaiaPath(GaiaView::GaiaPath::kDefault);
+
+  // Reset gaia_config after storing the current GAIA Path in
+  // `gaia_config.last_gaia_path_shown`.
+  context()->gaia_config.last_gaia_path_shown =
+      context()->gaia_config.gaia_path;
+  Reset();
+
   view_->Hide();
   backlights_forced_off_observation_.Reset();
-  if (context()->quick_start_enabled) {
-    bootstrap_controller_.reset();
-  }
 }
 
 void GaiaScreen::OnUserAction(const base::Value::List& args) {
   const std::string& action_id = args[0].GetString();
   if (action_id == kUserActionBack) {
-    GaiaView::GaiaPath gaiaPath = view_->GetGaiaPath();
-    if (gaiaPath == GaiaView::GaiaPath::kChildSignup ||
-        gaiaPath == GaiaView::GaiaPath::kChildSignin) {
+    WizardContext::GaiaPath gaiaPath = context()->gaia_config.gaia_path;
+    if (gaiaPath == WizardContext::GaiaPath::kChildSignup ||
+        gaiaPath == WizardContext::GaiaPath::kChildSignin) {
       exit_callback_.Run(Result::BACK_CHILD);
     } else {
       exit_callback_.Run(Result::BACK);
@@ -228,11 +257,11 @@ void GaiaScreen::OnUserAction(const base::Value::List& args) {
     exit_callback_.Run(Result::CANCEL);
   } else if (action_id == kUserActionStartEnrollment) {
     exit_callback_.Run(Result::ENTERPRISE_ENROLL);
-  } else if (action_id == kUserActionReloadDefault) {
+  } else if (action_id == kUserActionReloadGaia) {
+    CHECK_EQ(2u, args.size());
+    const bool force_default_gaia_page = args[1].GetBool();
     Reset();
-    LoadOnline(EmptyAccountId());
-  } else if (action_id == kUserActionRetry) {
-    LoadOnline(EmptyAccountId());
+    LoadOnlineGaiaForAccount(EmptyAccountId(), force_default_gaia_page);
   } else if (action_id == kUserActionEnterIdentifier) {
     CHECK_EQ(2u, args.size());
     const std::string& email = args[1].GetString();
@@ -247,10 +276,6 @@ void GaiaScreen::OnUserAction(const base::Value::List& args) {
 bool GaiaScreen::HandleAccelerator(LoginAcceleratorAction action) {
   if (action == LoginAcceleratorAction::kStartEnrollment) {
     exit_callback_.Run(Result::ENTERPRISE_ENROLL);
-    return true;
-  }
-  if (action == LoginAcceleratorAction::kEnableConsumerKiosk) {
-    exit_callback_.Run(Result::START_CONSUMER_KIOSK);
     return true;
   }
 
@@ -273,7 +298,7 @@ void GaiaScreen::HandleIdentifierEntered(const std::string& user_email) {
     account_status_fetcher_->Fetch(
         base::BindOnce(&GaiaScreen::OnAccountStatusFetched,
                        base::Unretained(this), user_email),
-        /*fetch_entollment_nudge_policy=*/true);
+        /*fetch_enrollment_nudge_policy=*/true);
     // Note: we don't check if user is allowlisted since
     // `ShouldFetchEnrollmentNudgePolicy` would return true only for unowned
     // devices in which case there are no device policies yet.
@@ -287,22 +312,66 @@ void GaiaScreen::HandleIdentifierEntered(const std::string& user_email) {
 
 void GaiaScreen::OnGetAuthFactorsConfiguration(
     std::unique_ptr<UserContext> user_context,
-    absl::optional<AuthenticationError> error) {
-  if (error.has_value()) {
-    LOG(WARNING) << "Failed to get auth factors configuration, code "
-                 << error->get_cryptohome_code()
-                 << ", skip fetching reauth request token";
-    view_->LoadGaiaAsync(user_context->GetAccountId());
+    std::optional<AuthenticationError> error) {
+  bool is_recovery_configured = false;
+  bool is_gaia_password_configured = true;
+  if (!view_) {
+    LOG(WARNING) << "The view is nullptr during OnGetAuthFactorsConfiguration";
     return;
   }
-
-  const auto& config = user_context->GetAuthFactorsConfiguration();
-  bool is_configured =
-      config.HasConfiguredFactor(cryptohome::AuthFactorType::kRecovery);
-  if (is_configured) {
-    FetchGaiaReauthToken(user_context->GetAccountId());
+  CHECK(user_context);
+  if (error.has_value()) {
+    LOG(WARNING) << "Failed to get auth factors configuration, code "
+                 << error->get_cryptohome_error()
+                 << ", skip fetching reauth request token";
   } else {
-    view_->LoadGaiaAsync(user_context->GetAccountId());
+    const auto& config = user_context->GetAuthFactorsConfiguration();
+    is_recovery_configured =
+        config.HasConfiguredFactor(cryptohome::AuthFactorType::kRecovery);
+    auto* password_factor =
+        config.FindFactorByType(cryptohome::AuthFactorType::kPassword);
+    if (password_factor != nullptr) {
+      is_gaia_password_configured =
+          password_factor && auth::IsGaiaPassword(*password_factor);
+    }
+  }
+
+  // Disallow passwordless login when Gaia password is configured during
+  // reauthentication or recovery flow.
+  CHECK(context());
+  auto flow = context()->knowledge_factor_setup.auth_setup_flow;
+  if ((flow == WizardContext::AuthChangeFlow::kReauthentication ||
+       flow == WizardContext::AuthChangeFlow::kRecovery) &&
+      is_gaia_password_configured) {
+    view_->SetIsGaiaPasswordRequired(true);
+  }
+
+  const AccountId& account_id = user_context->GetAccountId();
+  CHECK(account_id.is_valid());
+
+  LoginDisplayHost* login_display_host = LoginDisplayHost::default_host();
+  CHECK(login_display_host);
+
+  WizardContext* wizard_context = login_display_host->GetWizardContext();
+  CHECK(wizard_context);
+
+  WizardContext::GaiaConfig& gaia_config = wizard_context->gaia_config;
+  WizardContext::GaiaPath& gaia_path = gaia_config.gaia_path;
+  WizardContext::GaiaScreenMode& screen_mode = gaia_config.screen_mode;
+
+  if (GaiaScreenHandler::GetGaiaScreenMode(account_id.GetUserEmail()) ==
+      WizardContext::GaiaScreenMode::kSamlRedirect) {
+    gaia_path = WizardContext::GaiaPath::kSamlRedirect;
+    screen_mode = WizardContext::GaiaScreenMode::kSamlRedirect;
+  } else if (ShouldUseReauthEndpoint(account_id)) {
+    gaia_path = WizardContext::GaiaPath::kReauth;
+    screen_mode = WizardContext::GaiaScreenMode::kDefault;
+  }
+
+  if (ShouldPrepareForRecovery(account_id) && is_recovery_configured) {
+    FetchGaiaReauthToken(account_id);
+  } else {
+    view_->LoadGaiaAsync(account_id);
   }
 }
 
@@ -316,7 +385,7 @@ void GaiaScreen::FetchGaiaReauthToken(const AccountId& account) {
 void GaiaScreen::OnGaiaReauthTokenFetched(const AccountId& account,
                                           const std::string& token) {
   if (token.empty()) {
-    context()->gaia_reauth_token_fetch_error = true;
+    LOG(ERROR) << "Gaia reauth request token is empty";
   }
   gaia_reauth_token_fetcher_.reset();
   view_->SetReauthRequestToken(token);
@@ -337,7 +406,7 @@ void GaiaScreen::OnAccountStatusFetched(const std::string& user_email,
   }
   if (status.enrollment_required) {
     const std::string email_domain =
-        chrome::enterprise_util::GetDomainFromEmail(user_email);
+        enterprise_util::GetDomainFromEmail(user_email);
     // Cache email in case we will need to pass it to the enrollment screen.
     enrollment_nudge_email_ = user_email;
     view_->ShowEnrollmentNudge(email_domain);
@@ -346,16 +415,13 @@ void GaiaScreen::OnAccountStatusFetched(const std::string& user_email,
 
 bool GaiaScreen::ShouldFetchEnrollmentNudgePolicy(
     const std::string& user_email) {
-  const bool is_enterprise_managed = g_browser_process->platform_part()
-                                         ->browser_policy_connector_ash()
-                                         ->IsDeviceEnterpriseManaged();
-  if (is_enterprise_managed) {
+  if (ash::InstallAttributes::Get()->IsEnterpriseManaged()) {
     // Device either already went through enterprise enrollment flow or goes
     // through it right now. No need for nudging.
     return false;
   }
   const bool is_first_user =
-      user_manager::UserManager::Get()->GetUsers().empty();
+      user_manager::UserManager::Get()->GetPersistedUsers().empty();
   if (!is_first_user) {
     // Enrollment nudge targets only initial OOBE flow on unowned devices.
     // Current user is not a first user which means that device is already
@@ -363,37 +429,29 @@ bool GaiaScreen::ShouldFetchEnrollmentNudgePolicy(
     return false;
   }
   const std::string email_domain =
-      chrome::enterprise_util::GetDomainFromEmail(user_email);
+      enterprise_util::GetDomainFromEmail(user_email);
   // Enrollment nudging can't apply to users not belonging to a managed domain
-  return !chrome::enterprise_util::IsKnownConsumerDomain(email_domain);
+  return !enterprise_util::IsKnownConsumerDomain(email_domain);
 }
 
 void GaiaScreen::OnQuickStartButtonClicked() {
   CHECK(context()->quick_start_enabled);
-  exit_callback_.Run(Result::QUICK_START);
+  CHECK(!context()->quick_start_setup_ongoing);
+  exit_callback_.Run(Result::ENTER_QUICK_START);
 }
 
-void GaiaScreen::EnableQuickStart() {
-  context()->quick_start_enabled = true;
-  bootstrap_controller_ =
-      LoginDisplayHost::default_host()->GetQuickStartBootstrapController();
-
-  bootstrap_controller_->GetFeatureSupportStatusAsync(
-      base::BindOnce(&GaiaScreen::OnGetQuickStartFeatureSupportStatus,
-                     weak_ptr_factory_.GetWeakPtr()));
-}
-
-void GaiaScreen::OnGetQuickStartFeatureSupportStatus(
-    quick_start::TargetDeviceConnectionBroker::FeatureSupportStatus status) {
-  if (status != quick_start::TargetDeviceConnectionBroker::
-                    FeatureSupportStatus::kSupported) {
-    return;
-  }
-
+void GaiaScreen::SetQuickStartButtonVisibility(bool visible) {
   if (!view_) {
     return;
   }
-  view_->SetQuickStartEnabled();
+
+  view_->SetQuickStartEntryPointVisibility(visible);
+
+  if (visible && !has_emitted_quick_start_visible) {
+    has_emitted_quick_start_visible = true;
+    quick_start::QuickStartMetrics::RecordEntryPointVisible(
+        quick_start::QuickStartMetrics::EntryPoint::GAIA_SCREEN);
+  }
 }
 
 }  // namespace ash

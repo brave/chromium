@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_WEB_APPLICATIONS_OS_INTEGRATION_WEB_APP_SHORTCUT_LINUX_H_
 #define CHROME_BROWSER_WEB_APPLICATIONS_OS_INTEGRATION_WEB_APP_SHORTCUT_LINUX_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -40,7 +40,7 @@ struct DesktopActionInfo {
   std::string name;
   // The URL to launch the app in for this action.
   GURL exec_launch_url;
-  // TODO(crbug.com/1069293): Process icons.
+  // TODO(crbug.com/40683945): Process icons.
 
   bool operator<(const DesktopActionInfo& other) const;
 };
@@ -62,8 +62,8 @@ bool CreateDesktopShortcut(base::Environment* env,
 
 // Returns filename for .desktop file based on |profile_path| and
 // |app_id|, sanitized for security.
-base::FilePath GetAppShortcutFilename(const base::FilePath& profile_path,
-                                      const std::string& app_id);
+base::FilePath GetAppDesktopShortcutFilename(const base::FilePath& profile_path,
+                                             const std::string& app_id);
 
 // Returns the set of locations in which shortcuts are installed for the
 // extension with |extension_id| in |profile_path|.
@@ -78,7 +78,7 @@ ShortcutLocations GetExistingShortcutLocations(
 bool UpdateDesktopShortcuts(
     base::Environment* env,
     const ShortcutInfo& shortcut_info,
-    absl::optional<ShortcutLocations> user_specified_locations);
+    std::optional<ShortcutLocations> user_specified_locations);
 
 // Delete any desktop shortcuts on desktop or in the application menu that have
 // been added for the extension with |extension_id| in |profile_path|. Returns

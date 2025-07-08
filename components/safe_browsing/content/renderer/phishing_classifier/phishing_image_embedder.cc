@@ -34,10 +34,6 @@ void PhishingImageEmbedder::BeginImageEmbedding(DoneCallback done_callback) {
                                     this);
   DCHECK(is_ready());
 
-  // The RenderView should have CancelPendingImageEmbedding() before calling
-  // ImageEmbedding, so DCHECK this.
-  DCHECK(done_callback_.is_null());
-
   // However, in an opt build, we will go ahead and clean up the pending
   // image embedding so that we can start in a known state.
   CancelPendingImageEmbedding();
@@ -52,6 +48,7 @@ void PhishingImageEmbedder::BeginImageEmbedding(DoneCallback done_callback) {
 }
 
 void PhishingImageEmbedder::OnPlaybackDone(std::unique_ptr<SkBitmap> bitmap) {
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
   if (bitmap) {
     bitmap_ = std::move(bitmap);
     ScorerStorage::GetInstance()
@@ -63,6 +60,9 @@ void PhishingImageEmbedder::OnPlaybackDone(std::unique_ptr<SkBitmap> bitmap) {
   } else {
     RunFailureCallback();
   }
+#else
+  RunFailureCallback();
+#endif
 }
 
 void PhishingImageEmbedder::CancelPendingImageEmbedding() {

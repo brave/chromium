@@ -10,14 +10,15 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/apps/app_service/app_icon/icon_key_util.h"
 #include "chrome/browser/apps/app_service/app_notifications.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/apps/app_service/media_requests.h"
 #include "chrome/browser/apps/app_service/paused_apps.h"
 #include "chrome/browser/apps/app_service/publishers/extension_apps_base.h"
 #include "chrome/browser/ash/app_list/arc/arc_app_list_prefs.h"
+#include "chrome/browser/extensions/file_handlers/web_file_handlers_permission_handler.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/notifications/notification_common.h"
 #include "chrome/browser/notifications/notification_display_service.h"
@@ -73,7 +74,6 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
   // ExtensionAppsBase overrides.
   void Initialize() override;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Requests a compressed icon data for an app identified by `app_id`. The icon
   // is identified by `size_in_dip` and `scale_factor`. Calls `callback` with
   // the result.
@@ -81,7 +81,6 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
                              int32_t size_in_dip,
                              ui::ResourceScaleFactor scale_factor,
                              LoadIconCallback callback) override;
-#endif
 
   void LaunchAppWithParamsImpl(AppLaunchParams&& params,
                                LaunchCallback callback) override;
@@ -100,6 +99,7 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
   // apps::AppPublisher overrides.
   void PauseApp(const std::string& app_id) override;
   void UnpauseApp(const std::string& app_id) override;
+  void UpdateAppSize(const std::string& app_id) override;
 
   // Overridden from AppWindowRegistry::Observer:
   void OnAppWindowAdded(extensions::AppWindow* app_window) override;
@@ -158,6 +158,8 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
   AppPtr CreateApp(const extensions::Extension* extension,
                    Readiness readiness) override;
 
+  void OnSizeCalculated(const std::string& app_id, const int64_t size);
+
   // Calculate the icon effects for the extension.
   IconEffects GetIconEffects(const extensions::Extension* extension,
                              bool paused);
@@ -188,7 +190,16 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
                        WindowInfoPtr window_info,
                        LaunchCallback callback);
 
-  const raw_ptr<apps::InstanceRegistry, ExperimentalAsh> instance_registry_;
+  // See LacrosExtensionAppsController::LaunchAppWithArgumentsCallback().
+  void LaunchAppWithArgumentsCallback(LaunchSource launch_source,
+                                      const std::string& app_id,
+                                      int32_t event_flags,
+                                      IntentPtr intent,
+                                      WindowInfoPtr window_info,
+                                      LaunchCallback callback,
+                                      bool should_run);
+
+  const raw_ptr<apps::InstanceRegistry> instance_registry_;
   base::ScopedObservation<extensions::AppWindowRegistry,
                           extensions::AppWindowRegistry::Observer>
       app_window_registry_{this};
@@ -202,9 +213,10 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
   // and is set by updating SystemDisabledMode policy.
   bool is_disabled_apps_mode_hidden_ = false;
 
-  std::map<extensions::AppWindow*, aura::Window*> app_window_to_aura_window_;
+  std::map<extensions::AppWindow*, raw_ptr<aura::Window, CtnExperimental>>
+      app_window_to_aura_window_;
 
-  raw_ptr<ArcAppListPrefs, ExperimentalAsh> arc_prefs_ = nullptr;
+  raw_ptr<ArcAppListPrefs> arc_prefs_ = nullptr;
 
   // Registrar used to monitor the profile prefs.
   PrefChangeRegistrar profile_pref_change_registrar_;
@@ -223,6 +235,11 @@ class ExtensionAppsChromeOs : public ExtensionAppsBase,
       notification_display_service_{this};
 
   AppNotifications app_notifications_;
+
+  std::unique_ptr<extensions::WebFileHandlersPermissionHandler>
+      web_file_handlers_permission_handler_;
+
+  base::WeakPtrFactory<ExtensionAppsChromeOs> weak_factory_{this};
 };
 
 }  // namespace apps

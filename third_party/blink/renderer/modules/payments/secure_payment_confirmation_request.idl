@@ -13,8 +13,13 @@ dictionary SecurePaymentConfirmationRequest {
     USVString payeeName;
     USVString payeeOrigin;
     AuthenticationExtensionsClientInputs extensions;
+    [RuntimeEnabled=SecurePaymentConfirmationBrowserBoundKeys] sequence<PublicKeyCredentialParameters> browserBoundPubKeyCredParams;
     sequence<USVString> locale;
 
     // Whether or not to show an opt-out flow in the SPC UX.
     [RuntimeEnabled=SecurePaymentConfirmationOptOut, MeasureAs=SecurePaymentConfirmationOptOut] boolean showOptOut;
+
+    // A list of logos representing entities that are facilitating the payment
+    // that this SPC call is for.
+    [RuntimeEnabled=SecurePaymentConfirmationUxRefresh] sequence<PaymentEntityLogo> paymentEntitiesLogos;
 };

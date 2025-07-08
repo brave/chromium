@@ -4,7 +4,9 @@
 
 package org.chromium.android_webview;
 
+import org.chromium.android_webview.common.Lifetime;
 import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.UsedByReflection;
 
 import java.io.File;
@@ -12,10 +14,12 @@ import java.io.File;
 /**
  * Provides Android WebView debugging entrypoints.
  *
- * Methods in this class can be called from any thread, including threads created by
- * the client of WebView.
+ * <p>Methods in this class can be called from any thread, including threads created by the client
+ * of WebView.
  */
+@Lifetime.Singleton
 @UsedByReflection("")
+@NullMarked
 public class AwDebug {
     private static final String TAG = "AwDebug";
 

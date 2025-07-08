@@ -5,19 +5,25 @@
 #ifndef CONTENT_BROWSER_PRELOADING_PREFETCH_PREFETCH_STATUS_H_
 #define CONTENT_BROWSER_PRELOADING_PREFETCH_PREFETCH_STATUS_H_
 
+#include "content/public/browser/preloading.h"
+
 namespace content {
 
 // The various states that a prefetch can go through or terminate with. Used in
 // UKM logging so don't remove or reorder values. Update
 // |PrefetchProxyPrefetchStatus| in //tools/metrics/histograms/enums.xml
 // whenever this is changed.
-// These are also mapped onto the first content internal range of
-// `PreloadingEligibility` and onto `PreloadingFailureReason`.
 //
 // If you change this, please follow the process
 // https://docs.google.com/document/d/1PnrfowsZMt62PX1EvvTp2Nqs3ji1zrklrAEe1JYbkTk
 // to ensure failure reasons are correctly shown in the DevTools
 // frontend.
+//
+// If you change this, please follow the process in
+// go/preloading-dashboard-updates to update the mapping reflected in dashboard,
+// or if you are not a Googler, please file an FYI bug on https://crbug.new with
+// component Internals>Preload.
+// LINT.IfChange
 enum class PrefetchStatus {
   // Deprecated. Replaced by `kPrefetchResponseUsed`.
   //
@@ -42,29 +48,34 @@ enum class PrefetchStatus {
   //
   // The url was not eligible to be prefetched because it is a Google-owned
   // domain.
-  // kPrefetchNotEligibleGoogleDomain = 4,
+  // kPrefetchIneligibleGoogleDomain = 4,
 
   // The url was not eligible to be prefetched because the user had cookies for
   // that origin.
-  kPrefetchNotEligibleUserHasCookies = 5,
+  kPrefetchIneligibleUserHasCookies = 5,
 
   // The url was not eligible to be prefetched because there was a registered
   // service worker for that origin.
-  kPrefetchNotEligibleUserHasServiceWorker = 6,
+  // Some other ServiceWorker-related `PrefetchStatus`/`PreloadingEligibility`
+  // values (e.g. `kPrefetchIneligibleUserHasServiceWorkerNoFetchHandler`) are
+  // used for some subcases.
+  // Even after the initial ServiceWorker support (https://crbug.com/40947546),
+  // this will still used for ServiceWorker-ineligible prefetches.
+  kPrefetchIneligibleUserHasServiceWorker = 6,
 
   // The url was not eligible to be prefetched because its scheme was not
   // https://.
-  kPrefetchNotEligibleSchemeIsNotHttps = 7,
+  kPrefetchIneligibleSchemeIsNotHttps = 7,
 
   // Deprecated. No longer a reason for ineligibility.
   //
   // The url was not eligible to be prefetched because its host was an IP
   // address.
-  // kPrefetchNotEligibleHostIsIPAddress = 8,
+  // kPrefetchIneligibleHostIsIPAddress = 8,
 
   // The url was not eligible to be prefetched because it uses a non-default
   // storage partition.
-  kPrefetchNotEligibleNonDefaultStoragePartition = 9,
+  kPrefetchIneligibleNonDefaultStoragePartition = 9,
 
   // The network request was cancelled before it finished. This happens when
   // there is a new navigation.
@@ -131,7 +142,7 @@ enum class PrefetchStatus {
   // A network error or intentional loadshed was previously encountered when
   // trying to setup a connection to the proxy and a prefetch should not be done
   // right now.
-  kPrefetchProxyNotAvailable = 28,
+  kPrefetchIneligiblePrefetchProxyNotAvailable = 28,
 
   // The prefetch was not eligible, but was put on the network anyways and not
   // used to disguise that the user had some kind of previous relationship with
@@ -151,7 +162,7 @@ enum class PrefetchStatus {
   // initial eligibility check.
   kPrefetchNotUsedCookiesChanged = 34,
 
-  // Deprecated. Support for redirecs added.
+  // Deprecated. Support for redirects added.
   //
   // The prefetch was redirected, but following redirects was disabled.
   // See crbug.com/1266876 for more details.
@@ -160,22 +171,24 @@ enum class PrefetchStatus {
   // The url was not eligible to be prefetched because its host was not unique
   // (e.g., a non publicly routable IP address or a hostname which is not
   // registry-controlled) but the prefetch was to be proxied.
-  kPrefetchNotEligibleHostIsNonUnique = 36,
+  kPrefetchIneligibleHostIsNonUnique = 36,
 
   // The prefetch was not made because the user requested that the browser use
   // less data.
-  kPrefetchNotEligibleDataSaverEnabled = 37,
+  kPrefetchIneligibleDataSaverEnabled = 37,
 
   // The URL is not eligible to be prefetched, because in the default network
   // context it is configured to use a proxy server.
-  kPrefetchNotEligibleExistingProxy = 38,
+  kPrefetchIneligibleExistingProxy = 38,
 
   // Prefetch not supported in Guest or Incognito mode.
-  kPrefetchNotEligibleBrowserContextOffTheRecord = 39,
+  // OBSOLETE: kPrefetchIneligibleBrowserContextOffTheRecord = 39,
 
   // Whether this prefetch is heldback for counterfactual logging.
   kPrefetchHeldback = 40,
-  kPrefetchAllowed = 41,
+
+  // DEPRECATED
+  // kPrefetchAllowed = 41,
 
   // The response of the prefetch is used for the next navigation. This is the
   // final successful state.
@@ -188,31 +201,74 @@ enum class PrefetchStatus {
   // prefetch.
   kPrefetchFailedIneligibleRedirect = 44,
 
+  // Deprecated; prefetches are now queued until other prefetches are evicted
+  // when the limit is reached.
+  //
   // The prefetch was not made because prefetches exceeded the limit per
   // page.
-  kPrefetchFailedPerPageLimitExceeded = 45,
+  // kPrefetchFailedPerPageLimitExceeded = 45,
 
   // The prefetch needed to fetch a same-site cross-origin URL and required the
   // use of the prefetch proxy. These prefetches are blocked since the default
   // network context cannot be configured to use the prefetch proxy for a single
   // prefetch request.
-  // TODO(https://crbug.com/1439986): Allow same-site cross-origin prefetches
+  // TODO(crbug.com/40265797): Allow same-site cross-origin prefetches
   // that require the prefetch proxy to be made.
-  kPrefetchNotEligibleSameSiteCrossOriginPrefetchRequiredProxy = 46,
+  kPrefetchIneligibleSameSiteCrossOriginPrefetchRequiredProxy = 46,
 
   // The prefetch was not made because the `Battery Saver` setting was enabled.
-  kPrefetchNotEligibleBatterySaverEnabled = 47,
+  kPrefetchIneligibleBatterySaverEnabled = 47,
 
   // The prefetch was not made because preloading was disabled.
-  kPrefetchNotEligiblePreloadingDisabled = 48,
+  kPrefetchIneligiblePreloadingDisabled = 48,
 
-  // The prefetch was evicted to make room for a newer prefetch. This currently
-  // only happens when |kPrefetchNewLimits| is enabled.
-  kPrefetchEvicted = 49,
+  // The prefetch was evicted to make room for a newer prefetch.
+  // kPrefetchEvicted = 49, DEPRECATED
+  kPrefetchEvictedAfterCandidateRemoved = 50,
+  kPrefetchEvictedForNewerPrefetch = 51,
+
+  // The initial URL is controlled by a ServiceWorker and then redirected
+  // (https://crbug.com/399819894).
+  kPrefetchIneligibleRedirectFromServiceWorker = 52,
+
+  // The initial URL is redirected to a URL controlled by a ServiceWorker
+  // (https://crbug.com/399819894).
+  // This case was previously counted as
+  // `kPrefetchIneligibleUserHasServiceWorker`.
+  kPrefetchIneligibleRedirectToServiceWorker = 53,
+
+  // The url was not eligible to be prefetched because there was a registered
+  // service worker with no fetch handler (when
+  // `kPrefetchServiceWorkerNoFetchHandlerFix` is enabled).
+  // This case was previously counted as
+  // `kPrefetchIneligibleUserHasServiceWorker`.
+  // Even after the initial ServiceWorker support (https://crbug.com/40947546),
+  // this will be still used for ServiceWorker-ineligible prefetches.
+  kPrefetchIneligibleUserHasServiceWorkerNoFetchHandler = 54,
+
+  // The prefetch canceled by clearing cache from browsing data removal.
+  kPrefetchEvictedAfterBrowsingDataRemoved = 55,
 
   // The max value of the PrefetchStatus. Update this when new enums are added.
-  kMaxValue = kPrefetchEvicted,
+  kMaxValue = kPrefetchEvictedAfterBrowsingDataRemoved,
 };
+// LINT.ThenChange(/tools/metrics/histograms/enums.xml)
+
+// Mapping from `PrefetchStatus` to `PreloadingFailureReason`.
+static_assert(
+    static_cast<int>(PrefetchStatus::kMaxValue) +
+        static_cast<int>(
+            PreloadingFailureReason::kPreloadingFailureReasonCommonEnd) <=
+    static_cast<int>(
+        PreloadingFailureReason::kPreloadingFailureReasonContentEnd));
+
+inline PreloadingFailureReason ToPreloadingFailureReason(
+    PrefetchStatus prefetch_container_metrics) {
+  return static_cast<PreloadingFailureReason>(
+      static_cast<int>(prefetch_container_metrics) +
+      static_cast<int>(
+          PreloadingFailureReason::kPreloadingFailureReasonCommonEnd));
+}
 
 }  // namespace content
 

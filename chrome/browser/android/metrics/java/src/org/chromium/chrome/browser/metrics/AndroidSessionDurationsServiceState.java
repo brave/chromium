@@ -6,14 +6,18 @@ package org.chromium.chrome.browser.metrics;
 
 import android.os.Bundle;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
 
 /**
  * Bridge for native |AndroidSessionDurationsService| state, for storage and retrieval
  * of Incognito session duration metrics.
  */
+@NullMarked
 public class AndroidSessionDurationsServiceState {
     private static final String INCOGNITO_SESSION_STARTUP_TIME = "incognito_session_startup_time";
     private static final String INCOGNITO_SESSION_LAST_REPORTED_DURATION =
@@ -58,9 +62,11 @@ public class AndroidSessionDurationsServiceState {
         long lastReportedDuration = inState.getLong(INCOGNITO_SESSION_LAST_REPORTED_DURATION, -1);
         assert lastReportedDuration != -1;
 
-        AndroidSessionDurationsServiceStateJni.get().restoreAndroidSessionDurationsServiceState(
-                profile,
-                new AndroidSessionDurationsServiceState(sessionStartTime, lastReportedDuration));
+        AndroidSessionDurationsServiceStateJni.get()
+                .restoreAndroidSessionDurationsServiceState(
+                        profile,
+                        new AndroidSessionDurationsServiceState(
+                                sessionStartTime, lastReportedDuration));
     }
 
     /**
@@ -73,16 +79,19 @@ public class AndroidSessionDurationsServiceState {
      */
     public static void serializeFromNative(Bundle outState, Profile profile) {
         AndroidSessionDurationsServiceState data =
-                AndroidSessionDurationsServiceStateJni.get().getAndroidSessionDurationsServiceState(
-                        profile);
+                AndroidSessionDurationsServiceStateJni.get()
+                        .getAndroidSessionDurationsServiceState(profile);
         outState.putLong(INCOGNITO_SESSION_STARTUP_TIME, data.getSessionStartTime());
         outState.putLong(INCOGNITO_SESSION_LAST_REPORTED_DURATION, data.getLastReportedDuration());
     }
 
     @NativeMethods
     public interface Natives {
-        AndroidSessionDurationsServiceState getAndroidSessionDurationsServiceState(Profile profile);
+        AndroidSessionDurationsServiceState getAndroidSessionDurationsServiceState(
+                @JniType("Profile*") Profile profile);
+
         void restoreAndroidSessionDurationsServiceState(
-                Profile profile, AndroidSessionDurationsServiceState durationService);
+                @JniType("Profile*") Profile profile,
+                AndroidSessionDurationsServiceState durationService);
     }
 }

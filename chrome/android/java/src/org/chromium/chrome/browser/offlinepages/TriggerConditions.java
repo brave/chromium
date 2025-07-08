@@ -4,7 +4,10 @@
 
 package org.chromium.chrome.browser.offlinepages;
 
+import org.chromium.build.annotations.NullMarked;
+
 /** Set of system conditions to trigger background processing. */
+@NullMarked
 public class TriggerConditions {
     private final boolean mRequirePowerConnected;
     private final int mMinimumBatteryPercentage;
@@ -16,7 +19,9 @@ public class TriggerConditions {
      * @param minimumBatteryPercentage minimum percentage (0-100) of remaining battery power
      * @param requireUnmeteredNetwork whether to require connection to unmetered network
      */
-    public TriggerConditions(boolean requirePowerConnected, int minimumBatteryPercentage,
+    public TriggerConditions(
+            boolean requirePowerConnected,
+            int minimumBatteryPercentage,
             boolean requireUnmeteredNetwork) {
         mRequirePowerConnected = requirePowerConnected;
         mMinimumBatteryPercentage = minimumBatteryPercentage;

@@ -12,12 +12,15 @@ import android.nfc.NfcAdapter;
 import android.os.Process;
 import android.provider.Settings;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
@@ -26,9 +29,10 @@ import org.chromium.ui.base.WindowAndroid;
  *
  * This class should be used only on the UI thread.
  */
+@NullMarked
 public class NfcSystemLevelSetting {
-    private static Boolean sNfcSupportForTesting;
-    private static Boolean sSystemNfcSettingForTesting;
+    private static @Nullable Boolean sNfcSupportForTesting;
+    private static @Nullable Boolean sSystemNfcSettingForTesting;
 
     @CalledByNative
     public static boolean isNfcAccessPossible() {
@@ -65,21 +69,23 @@ public class NfcSystemLevelSetting {
         WindowAndroid window = webContents.getTopLevelNativeWindow();
         if (window == null) {
             // Consuming code may not expect a sync callback to happen.
-            PostTask.postTask(TaskTraits.UI_DEFAULT,
-                    ()
-                            -> NfcSystemLevelSettingJni.get().onNfcSystemLevelPromptCompleted(
-                                    nativeCallback));
+            PostTask.postTask(
+                    TaskTraits.UI_DEFAULT,
+                    () ->
+                            NfcSystemLevelSettingJni.get()
+                                    .onNfcSystemLevelPromptCompleted(nativeCallback));
             return;
         }
 
         NfcSystemLevelPrompt prompt = new NfcSystemLevelPrompt();
-        prompt.show(window,
-                ()
-                        -> NfcSystemLevelSettingJni.get().onNfcSystemLevelPromptCompleted(
-                                nativeCallback));
+        prompt.show(
+                window,
+                () ->
+                        NfcSystemLevelSettingJni.get()
+                                .onNfcSystemLevelPromptCompleted(nativeCallback));
     }
 
-    public static Intent getNfcSystemLevelSettingIntent() {
+    public static @Nullable Intent getNfcSystemLevelSettingIntent() {
         Intent intent = new Intent(Settings.ACTION_NFC_SETTINGS);
         Context context = ContextUtils.getApplicationContext();
         if (intent.resolveActivity(context.getPackageManager()) == null) {

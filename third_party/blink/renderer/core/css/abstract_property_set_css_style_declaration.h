@@ -46,7 +46,19 @@ class CORE_EXPORT AbstractPropertySetCSSStyleDeclaration
   explicit AbstractPropertySetCSSStyleDeclaration(ExecutionContext* context)
       : CSSStyleDeclaration(context) {}
 
+  // Some subclasses only allow a subset of the properties, for example
+  // CSSPositionTryDescriptors only allows inset and sizing properties.
+  virtual bool IsPropertyValid(CSSPropertyID) const = 0;
+
   void Trace(Visitor*) const override;
+
+  String GetPropertyValueInternal(CSSPropertyID) final;
+  void SetPropertyInternal(CSSPropertyID,
+                           const String& custom_property_name,
+                           StringView value,
+                           bool important,
+                           SecureContextMode,
+                           ExceptionState&) final;
 
  private:
   bool IsAbstractPropertySet() const final { return true; }
@@ -63,6 +75,7 @@ class CORE_EXPORT AbstractPropertySetCSSStyleDeclaration
                    const String& priority,
                    ExceptionState&) final;
   String removeProperty(const String& property_name, ExceptionState&) final;
+  void QuietlyRemoveProperty(const String& property_name) final;
   String CssFloat() const;
   void SetCSSFloat(const String&, ExceptionState&);
   String cssText() const final;
@@ -72,17 +85,10 @@ class CORE_EXPORT AbstractPropertySetCSSStyleDeclaration
   const CSSValue* GetPropertyCSSValueInternal(CSSPropertyID) final;
   const CSSValue* GetPropertyCSSValueInternal(
       const AtomicString& custom_property_name) final;
-  String GetPropertyValueInternal(CSSPropertyID) final;
   String GetPropertyValueWithHint(const String& property_name,
                                   unsigned index) final;
   String GetPropertyPriorityWithHint(const String& property_name,
                                      unsigned index) final;
-  void SetPropertyInternal(CSSPropertyID,
-                           const String& custom_property_name,
-                           StringView value,
-                           bool important,
-                           SecureContextMode,
-                           ExceptionState&) final;
 
   bool CssPropertyMatches(CSSPropertyID, const CSSValue&) const final;
 

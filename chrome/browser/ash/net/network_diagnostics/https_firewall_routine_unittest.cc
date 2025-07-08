@@ -93,7 +93,8 @@ class HttpsFirewallRoutineTest : public ::testing::Test {
   void SetUpRoutine(
       base::circular_deque<TlsProberReturnValue> fake_probe_results) {
     fake_probe_results_ = std::move(fake_probe_results);
-    https_firewall_routine_ = std::make_unique<HttpsFirewallRoutine>();
+    https_firewall_routine_ = std::make_unique<HttpsFirewallRoutine>(
+        mojom::RoutineCallSource::kDiagnosticsUI);
     https_firewall_routine_->set_tls_prober_getter_callback_for_testing(
         base::BindRepeating(
             &HttpsFirewallRoutineTest::CreateAndExecuteTlsProber,
@@ -117,7 +118,7 @@ class HttpsFirewallRoutineTest : public ::testing::Test {
   }
 
   std::unique_ptr<TlsProber> CreateAndExecuteTlsProber(
-      TlsProber::NetworkContextGetter network_context_getter,
+      network::NetworkContextGetter network_context_getter,
       net::HostPortPair host_port_pair,
       bool negotiate_tls,
       TlsProber::TlsProbeCompleteCallback callback) {
@@ -151,6 +152,19 @@ TEST_F(HttpsFirewallRoutineTest, TestHighDnsResolutionFailuresRate) {
       fake_probe_results.push_back(
           TlsProberReturnValue{net::OK, TlsProber::ProbeExitEnum::kSuccess});
     }
+  }
+  SetUpAndRunRoutine(
+      std::move(fake_probe_results), mojom::RoutineVerdict::kProblem,
+      {mojom::HttpsFirewallProblem::kHighDnsResolutionFailureRate});
+}
+
+// Edge case for tls_probe_failure_rate calculation.
+TEST_F(HttpsFirewallRoutineTest, TestNoDnsResolutionSuccess) {
+  base::circular_deque<TlsProberReturnValue> fake_probe_results;
+  // kTotalHosts = 9
+  for (int i = 0; i < kTotalHosts; i++) {
+    fake_probe_results.push_back(TlsProberReturnValue{
+        net::ERR_NAME_NOT_RESOLVED, TlsProber::ProbeExitEnum::kDnsFailure});
   }
   SetUpAndRunRoutine(
       std::move(fake_probe_results), mojom::RoutineVerdict::kProblem,

@@ -7,20 +7,19 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/display/display_features.h"
 #include "ui/display/manager/util/display_manager_test_util.h"
-
-using base::StringPiece;
+#include "ui/gfx/geometry/size.h"
 
 namespace display {
 
@@ -35,8 +34,9 @@ constexpr float PixelPitchMmFromDPI(float dpi) {
 // exactly once the result will be empty and the input string will be
 // unmodified. Otherwise, the input string will contain the text before the
 // delimiter and the result will be the text after the delimiter.
-StringPiece ExtractSuffix(StringPiece* str, StringPiece delimiter) {
-  std::vector<StringPiece> parts = base::SplitStringPiece(
+std::string_view ExtractSuffix(std::string_view* str,
+                               std::string_view delimiter) {
+  std::vector<std::string_view> parts = base::SplitStringPiece(
       *str, delimiter, base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 
   if (parts.size() == 2) {
@@ -44,7 +44,7 @@ StringPiece ExtractSuffix(StringPiece* str, StringPiece delimiter) {
     return parts[1];
   }
 
-  return StringPiece();
+  return std::string_view();
 }
 
 // Parses a display mode from |str| in the format HxW[%R], returning null if
@@ -74,14 +74,14 @@ std::unique_ptr<DisplayMode> ParseDisplayMode(const std::string& str) {
     return nullptr;
   }
 
-  return std::make_unique<DisplayMode>(gfx::Size(width, height), false,
+  return std::make_unique<DisplayMode>(gfx::Size{width, height}, false,
                                        static_cast<float>(refresh_rate));
 }
 
 // Parses a list of alternate display modes, adding each new display mode to
 // |builder|. Returns false if any of the modes are invalid.
 bool HandleModes(FakeDisplaySnapshot::Builder* builder,
-                 StringPiece resolutions) {
+                 std::string_view resolutions) {
   for (const std::string& mode_str :
        base::SplitString(resolutions, ":", base::TRIM_WHITESPACE,
                          base::SPLIT_WANT_NONEMPTY)) {
@@ -97,7 +97,7 @@ bool HandleModes(FakeDisplaySnapshot::Builder* builder,
 
 // Parses device DPI and updates |builder|. Returns false if an invalid DPI
 // string is provided.
-bool HandleDPI(FakeDisplaySnapshot::Builder* builder, StringPiece dpi) {
+bool HandleDPI(FakeDisplaySnapshot::Builder* builder, std::string_view dpi) {
   if (dpi.empty())
     return true;
 
@@ -114,7 +114,8 @@ bool HandleDPI(FakeDisplaySnapshot::Builder* builder, StringPiece dpi) {
 // Parses a list of display options and set each option true on |builder|.
 // Returns false if any invalid options are provided. If an option appears more
 // than once it will have no effect the second time.
-bool HandleOptions(FakeDisplaySnapshot::Builder* builder, StringPiece options) {
+bool HandleOptions(FakeDisplaySnapshot::Builder* builder,
+                   std::string_view options) {
   for (char option : options) {
     switch (option) {
       case 'o':
@@ -149,7 +150,6 @@ Builder::~Builder() = default;
 std::unique_ptr<FakeDisplaySnapshot> Builder::Build() {
   if (modes_.empty() || id_ == kInvalidDisplayId) {
     NOTREACHED() << "Display modes or display ID missing";
-    return nullptr;
   }
 
   const int64_t alternate_id = ProduceAlternativeSchemeIdForId(id_);
@@ -184,11 +184,9 @@ std::unique_ptr<FakeDisplaySnapshot> Builder::Build() {
       id_, port_display_id_, edid_display_id_, connector_index_, origin_,
       physical_size, type_, base_connector_id_, path_topology_,
       is_aspect_preserving_scaling_, has_overscan_, privacy_screen_state_,
-      has_content_protection_key_, has_color_correction_matrix_,
-      color_correction_in_linear_space_, name_, sys_path_, std::move(modes_),
+      has_content_protection_key_, name_, sys_path_, std::move(modes_),
       current_mode_, native_mode_, product_code_, maximum_cursor_size_,
-      color_space_, bits_per_channel_, hdr_static_metadata_,
-      variable_refresh_rate_state_, vsync_rate_min_, DrmFormatsAndModifiers());
+      color_info_, variable_refresh_rate_state_, DrmFormatsAndModifiers());
 }
 
 Builder& Builder::SetId(int64_t id) {
@@ -272,12 +270,7 @@ Builder& Builder::SetHasOverscan(bool has_overscan) {
 }
 
 Builder& Builder::SetHasColorCorrectionMatrix(bool val) {
-  has_color_correction_matrix_ = val;
-  return *this;
-}
-
-Builder& Builder::SetColorCorrectionInLinearSpace(bool val) {
-  color_correction_in_linear_space_ = val;
+  color_info_.supports_color_temperature_adjustment = val;
   return *this;
 }
 
@@ -325,30 +318,24 @@ Builder& Builder::SetHasContentProtectionKey(bool has_content_protection_key) {
 }
 
 Builder& Builder::SetColorSpace(const gfx::ColorSpace& color_space) {
-  color_space_ = color_space;
+  color_info_.color_space = color_space;
   return *this;
 }
 
 Builder& Builder::SetBitsPerChannel(uint32_t bits_per_channel) {
-  bits_per_channel_ = bits_per_channel;
+  color_info_.bits_per_channel = bits_per_channel;
   return *this;
 }
 
 Builder& Builder::SetHDRStaticMetadata(
     const gfx::HDRStaticMetadata& hdr_static_metadata) {
-  hdr_static_metadata_ = hdr_static_metadata;
+  color_info_.hdr_static_metadata = hdr_static_metadata;
   return *this;
 }
 
 Builder& Builder::SetVariableRefreshRateState(
     VariableRefreshRateState variable_refresh_rate_state) {
   variable_refresh_rate_state_ = variable_refresh_rate_state;
-  return *this;
-}
-
-Builder& Builder::SetVsyncRateMin(
-    const absl::optional<uint16_t>& vsync_rate_min) {
-  vsync_rate_min_ = vsync_rate_min;
   return *this;
 }
 
@@ -392,8 +379,6 @@ FakeDisplaySnapshot::FakeDisplaySnapshot(
     bool has_overscan,
     PrivacyScreenState privacy_screen_state,
     bool has_content_protection_key,
-    bool has_color_correction_matrix,
-    bool color_correction_in_linear_space,
     std::string display_name,
     const base::FilePath& sys_path,
     DisplayModeList modes,
@@ -401,11 +386,8 @@ FakeDisplaySnapshot::FakeDisplaySnapshot(
     const DisplayMode* native_mode,
     int64_t product_code,
     const gfx::Size& maximum_cursor_size,
-    const gfx::ColorSpace& color_space,
-    uint32_t bits_per_channel,
-    const gfx::HDRStaticMetadata& hdr_static_metadata,
+    const DisplaySnapshot::ColorInfo& color_info,
     VariableRefreshRateState variable_refresh_rate_state,
-    const absl::optional<uint16_t>& vsync_rate_min,
     const DrmFormatsAndModifiers& drm_formats_and_modifiers)
     : DisplaySnapshot(display_id,
                       port_display_id,
@@ -420,11 +402,7 @@ FakeDisplaySnapshot::FakeDisplaySnapshot(
                       has_overscan,
                       privacy_screen_state,
                       has_content_protection_key,
-                      has_color_correction_matrix,
-                      color_correction_in_linear_space,
-                      color_space,
-                      bits_per_channel,
-                      hdr_static_metadata,
+                      color_info,
                       display_name,
                       sys_path,
                       std::move(modes),
@@ -436,7 +414,6 @@ FakeDisplaySnapshot::FakeDisplaySnapshot(
                       2018 /*year_of_manufacture */,
                       maximum_cursor_size,
                       variable_refresh_rate_state,
-                      vsync_rate_min,
                       drm_formats_and_modifiers) {}
 
 FakeDisplaySnapshot::~FakeDisplaySnapshot() = default;
@@ -445,12 +422,12 @@ FakeDisplaySnapshot::~FakeDisplaySnapshot() = default;
 std::unique_ptr<DisplaySnapshot> FakeDisplaySnapshot::CreateFromSpec(
     int64_t id,
     const std::string& spec) {
-  StringPiece leftover(spec);
+  std::string_view leftover(spec);
 
   // Cut off end of string at each delimiter to split.
-  StringPiece options = ExtractSuffix(&leftover, "/");
-  StringPiece dpi = ExtractSuffix(&leftover, "^");
-  StringPiece resolutions = ExtractSuffix(&leftover, "#");
+  std::string_view options = ExtractSuffix(&leftover, "/");
+  std::string_view dpi = ExtractSuffix(&leftover, "^");
+  std::string_view resolutions = ExtractSuffix(&leftover, "#");
 
   // Leftovers should be just the native mode at this point.
   std::unique_ptr<DisplayMode> native_mode =

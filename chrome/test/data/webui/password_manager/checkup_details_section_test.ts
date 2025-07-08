@@ -4,7 +4,8 @@
 
 import 'chrome://password-manager/password_manager.js';
 
-import {CheckupSubpage, CrExpandButtonElement, OpenWindowProxyImpl, Page, PasswordCheckInteraction, PasswordManagerImpl, PluralStringProxyImpl, Router} from 'chrome://password-manager/password_manager.js';
+import type {CrExpandButtonElement} from 'chrome://password-manager/password_manager.js';
+import {CheckupSubpage, OpenWindowProxyImpl, Page, PasswordCheckInteraction, PasswordManagerImpl, PluralStringProxyImpl, Router} from 'chrome://password-manager/password_manager.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
@@ -64,9 +65,15 @@ suite('CheckupDetailsSectionTest', function() {
             assertEquals(type + 'Passwords', params.messageName);
             assertEquals(2, params.itemCount);
 
-            assertEquals(
-                loadTimeData.getString(`${type}PasswordsTitle`),
-                section.$.subtitle.textContent!.trim());
+            if (type === CheckupSubpage.COMPROMISED) {
+              // getPluralString() should be called 2 times: 1 for page title,
+              // and 1 more for page subtitle.
+              assertEquals(2, pluralString.getCallCount('getPluralString'));
+            } else {
+              assertEquals(
+                  loadTimeData.getString(`${type}PasswordsTitle`),
+                  section.$.subtitle.textContent!.trim());
+            }
             assertEquals(
                 loadTimeData.getString(`${type}PasswordsDescription`),
                 section.$.description.textContent!.trim());
@@ -261,6 +268,7 @@ suite('CheckupDetailsSectionTest', function() {
     assertFalse(isVisible(listItemElements[0]));
 
     dismissedButton.click();
+    await dismissedButton.updateComplete;
 
     assertTrue(isVisible(listItemElements[0]));
   });

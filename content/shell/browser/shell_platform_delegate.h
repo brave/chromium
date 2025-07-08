@@ -18,7 +18,7 @@
 #include "ui/gfx/native_widget_types.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "content/public/browser/native_web_keyboard_event.h"
+#include "components/input/native_web_keyboard_event.h"
 #endif
 
 #if BUILDFLAG(IS_APPLE)
@@ -93,9 +93,9 @@ class ShellPlatformDelegate {
   virtual std::unique_ptr<JavaScriptDialogManager>
   CreateJavaScriptDialogManager(Shell* shell);
 
-  // Requests handling of locking the mouse. This returns true if the request
-  // has been handled, otherwise false.
-  virtual bool HandleRequestToLockMouse(Shell* shell,
+  // Requests handling of locking the mouse pointer. This returns true if the
+  // request has been handled, otherwise false.
+  virtual bool HandlePointerLockRequest(Shell* shell,
                                         WebContents* web_contents,
                                         bool user_gesture,
                                         bool last_unlocked_by_target);
@@ -137,7 +137,7 @@ class ShellPlatformDelegate {
 
   virtual bool HandleKeyboardEvent(Shell* shell,
                                    WebContents* source,
-                                   const NativeWebKeyboardEvent& event);
+                                   const input::NativeWebKeyboardEvent& event);
 #endif
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)

@@ -4,12 +4,15 @@
 
 #import "ios/chrome/app/spotlight/reading_list_spotlight_manager.h"
 
+#import "base/apple/foundation_util.h"
+#import "base/containers/span.h"
+#import "base/location.h"
+#import "base/memory/raw_ptr.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/task/sequenced_task_runner.h"
 #import "base/task/single_thread_task_runner.h"
 #import "base/test/ios/wait_util.h"
-#import "base/test/task_environment.h"
 #import "components/favicon/core/large_icon_service_impl.h"
 #import "components/favicon/core/test/mock_favicon_service.h"
 #import "components/reading_list/core/reading_list_model.h"
@@ -17,10 +20,11 @@
 #import "ios/chrome/app/spotlight/fake_spotlight_interface.h"
 #import "ios/chrome/app/spotlight/spotlight_manager.h"
 #import "ios/chrome/app/spotlight/spotlight_util.h"
-#import "ios/chrome/browser/reading_list/reading_list_model_factory.h"
-#import "ios/chrome/browser/reading_list/reading_list_test_utils.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
-#import "net/base/mac/url_conversions.h"
+#import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
+#import "ios/chrome/browser/reading_list/model/reading_list_test_utils.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/web/public/test/web_task_environment.h"
+#import "net/base/apple/url_conversions.h"
 #import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -29,10 +33,6 @@
 #import "third_party/ocmock/gtest_support.h"
 #import "third_party/skia/include/core/SkBitmap.h"
 #import "ui/base/test/ios/ui_image_test_utils.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using testing::_;
 using ui::test::uiimage_utils::UIImageWithSizeAndSolidColor;
@@ -54,8 +54,8 @@ favicon_base::FaviconRawBitmapResult CreateTestBitmap(int w, int h) {
   CGSize size = CGSizeMake(w, h);
   UIImage* favicon = UIImageWithSizeAndSolidColor(size, [UIColor redColor]);
   NSData* png = UIImagePNGRepresentation(favicon);
-  scoped_refptr<base::RefCountedBytes> data(new base::RefCountedBytes(
-      static_cast<const unsigned char*>([png bytes]), [png length]));
+  scoped_refptr<base::RefCountedBytes> data(
+      new base::RefCountedBytes(base::apple::NSDataToSpan(png)));
 
   result.bitmap_data = data;
   result.pixel_size = gfx::Size(w, h);
@@ -76,16 +76,15 @@ class ReadingListSpotlightManagerTest : public PlatformTest {
     initial_entries.push_back(base::MakeRefCounted<ReadingListEntry>(
         GURL(kTestURL2), kTestTitle2, base::Time::Now()));
 
-    TestChromeBrowserState::Builder builder;
+    TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         ReadingListModelFactory::GetInstance(),
         base::BindRepeating(&BuildReadingListModelWithFakeStorage,
                             std::move(initial_entries)));
 
-    browser_state_ = builder.Build();
+    profile_ = std::move(builder).Build();
 
-    model_ = ReadingListModelFactory::GetInstance()->GetForBrowserState(
-        browser_state_.get());
+    model_ = ReadingListModelFactory::GetForProfile(profile_.get());
 
     CreateMockLargeIconService();
     spotlightInterface_ = [[FakeSpotlightInterface alloc] init];
@@ -114,12 +113,12 @@ class ReadingListSpotlightManagerTest : public PlatformTest {
         });
   }
 
-  base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<TestChromeBrowserState> browser_state_;
+  web::WebTaskEnvironment task_environment_;
+  std::unique_ptr<TestProfileIOS> profile_;
   testing::StrictMock<favicon::MockFaviconService> mock_favicon_service_;
   std::unique_ptr<favicon::LargeIconServiceImpl> large_icon_service_;
   base::CancelableTaskTracker cancelable_task_tracker_;
-  ReadingListModel* model_;
+  raw_ptr<ReadingListModel> model_;
   FakeSpotlightInterface* spotlightInterface_;
   FakeSearchableItemFactory* searchableItemFactory_;
 };
@@ -204,12 +203,93 @@ TEST_F(ReadingListSpotlightManagerTest, testRemoveEntry) {
             spotlightInterface:fakeSpotlightInterface
          searchableItemFactory:searchableItemFactory_];
 
-  model_->RemoveEntryByURL(GURL(kTestURL1));
+  model_->RemoveEntryByURL(GURL(kTestURL1), FROM_HERE);
 
   // We expect to attempt deleting the item that was removed, from spotlight.
   EXPECT_EQ(
       fakeSpotlightInterface.deleteSearchableItemsWithIdentifiersCallsCount,
       1u);
+
+  [manager shutdown];
+}
+
+// Test that model updates in background don't do anything until the app is
+// foregrounded, at which point they cause a full reindex.
+TEST_F(ReadingListSpotlightManagerTest, testBackgroundPausesModelUpdates) {
+  FakeSpotlightInterface* fakeSpotlightInterface =
+      [[FakeSpotlightInterface alloc] init];
+
+  ReadingListSpotlightManager* manager = [[ReadingListSpotlightManager alloc]
+      initWithLargeIconService:large_icon_service_.get()
+              readingListModel:model_
+            spotlightInterface:fakeSpotlightInterface
+         searchableItemFactory:searchableItemFactory_];
+
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationDidEnterBackgroundNotification
+                    object:nil
+                  userInfo:nil];
+
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            1u);
+
+  model_->RemoveEntryByURL(GURL(kTestURL1), FROM_HERE);
+
+  EXPECT_EQ(
+      fakeSpotlightInterface.deleteSearchableItemsWithIdentifiersCallsCount,
+      0u);
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            1u);
+
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationWillEnterForegroundNotification
+                    object:nil
+                  userInfo:nil];
+
+  EXPECT_EQ(
+      fakeSpotlightInterface.deleteSearchableItemsWithIdentifiersCallsCount,
+      0u);
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            2u);
+
+  [manager shutdown];
+}
+
+// Test that attempting public API calls don't have an immediate effect in
+// background, and the update only happens when the app is foregrounded again.
+TEST_F(ReadingListSpotlightManagerTest, testBackgroundPausesAPICalls) {
+  FakeSpotlightInterface* fakeSpotlightInterface =
+      [[FakeSpotlightInterface alloc] init];
+
+  ReadingListSpotlightManager* manager = [[ReadingListSpotlightManager alloc]
+      initWithLargeIconService:large_icon_service_.get()
+              readingListModel:model_
+            spotlightInterface:fakeSpotlightInterface
+         searchableItemFactory:searchableItemFactory_];
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            1u);
+
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationDidEnterBackgroundNotification
+                    object:nil
+                  userInfo:nil];
+
+  [manager clearAndReindexReadingList];
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            1u);
+
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationWillEnterForegroundNotification
+                    object:nil
+                  userInfo:nil];
+  EXPECT_EQ(fakeSpotlightInterface
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            2u);
 
   [manager shutdown];
 }

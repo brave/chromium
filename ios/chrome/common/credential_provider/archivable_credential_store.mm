@@ -11,10 +11,6 @@
 #import "base/strings/sys_string_conversions.h"
 #import "ios/chrome/common/credential_provider/archivable_credential.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @interface ArchivableCredentialStore ()
 
 // The fileURL to the disk file.
@@ -42,7 +38,7 @@
   dispatch_barrier_async(self.workingQueue, ^{
     if (weakSelf) {
       [weakSelf saveDataWithCompletionBlockBody:completion];
-    } else {
+    } else if (completion) {
       NSError* error =
           [[NSError alloc] initWithDomain:@""
                                      code:0
@@ -72,7 +68,7 @@
       // File has not been created, return a fresh mutable set.
       return [[NSMutableDictionary alloc] init];
     }
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED() << error.localizedDescription;
   }
   NSData* data = [NSData dataWithContentsOfURL:self.fileURL
                                        options:0

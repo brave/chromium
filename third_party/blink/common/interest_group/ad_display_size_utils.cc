@@ -7,6 +7,8 @@
 #include <string>
 #include <string_view>
 
+#include "base/check.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "third_party/re2/src/re2/re2.h"
 
@@ -14,8 +16,7 @@ namespace blink {
 
 namespace {
 
-blink::AdSize::LengthUnit ConvertUnitStringToUnitEnum(
-    const base::StringPiece input) {
+blink::AdSize::LengthUnit ConvertUnitStringToUnitEnum(std::string_view input) {
   if (input == "px") {
     return blink::AdSize::LengthUnit::kPixels;
   }
@@ -33,6 +34,10 @@ blink::AdSize::LengthUnit ConvertUnitStringToUnitEnum(
 
 }  // namespace
 
+std::string ConvertAdDimensionToString(double value, AdSize::LengthUnit units) {
+  return base::NumberToString(value) + ConvertAdSizeUnitToString(units);
+}
+
 std::string ConvertAdSizeUnitToString(const blink::AdSize::LengthUnit& unit) {
   switch (unit) {
     case blink::AdSize::LengthUnit::kPixels:
@@ -46,8 +51,15 @@ std::string ConvertAdSizeUnitToString(const blink::AdSize::LengthUnit& unit) {
   }
 }
 
+std::string ConvertAdSizeToString(const blink::AdSize& ad_size) {
+  DCHECK(IsValidAdSize(ad_size));
+  return base::StrCat(
+      {ConvertAdDimensionToString(ad_size.width, ad_size.width_units), ",",
+       ConvertAdDimensionToString(ad_size.height, ad_size.height_units)});
+}
+
 std::tuple<double, blink::AdSize::LengthUnit> ParseAdSizeString(
-    const base::StringPiece input) {
+    std::string_view input) {
   std::string value;
   std::string unit;
   // This regular expression is used to parse the ad size specified in

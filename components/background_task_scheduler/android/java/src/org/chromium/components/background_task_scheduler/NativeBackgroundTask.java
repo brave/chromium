@@ -4,6 +4,7 @@
 
 package org.chromium.components.background_task_scheduler;
 
+import android.app.Notification;
 import android.content.Context;
 
 import androidx.annotation.IntDef;
@@ -11,6 +12,8 @@ import androidx.annotation.IntDef;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.content_public.browser.BrowserStartupController;
 
 import java.lang.annotation.Retention;
@@ -20,16 +23,22 @@ import java.lang.annotation.RetentionPolicy;
  * Base class implementing {@link BackgroundTask} that adds native initialization, ensuring that
  * tasks are run after Chrome is successfully started.
  */
+@NullMarked
 public abstract class NativeBackgroundTask implements BackgroundTask {
     /** Specifies which action to take following onStartTaskBeforeNativeLoaded. */
-    @IntDef({StartBeforeNativeResult.LOAD_NATIVE, StartBeforeNativeResult.RESCHEDULE,
-            StartBeforeNativeResult.DONE})
+    @IntDef({
+        StartBeforeNativeResult.LOAD_NATIVE,
+        StartBeforeNativeResult.RESCHEDULE,
+        StartBeforeNativeResult.DONE
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface StartBeforeNativeResult {
         /** Task should continue to load native parts of browser. */
         int LOAD_NATIVE = 0;
+
         /** Task should request rescheduling, without loading native parts of browser. */
         int RESCHEDULE = 1;
+
         /** Task should neither load native parts of browser nor reschedule. */
         int DONE = 2;
     }
@@ -47,6 +56,7 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
     private boolean mRunningInMinimalBrowserMode;
 
     /** Loads native and handles initialization. */
+    @SuppressWarnings("NullAway.Init")
     private NativeBackgroundTaskDelegate mDelegate;
 
     protected NativeBackgroundTask() {}
@@ -67,10 +77,24 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
 
         mTaskId = taskParameters.getTaskId();
 
-        TaskFinishedCallback wrappedCallback = needsReschedule -> {
-            PostTask.runOrPostTask(
-                    TaskTraits.UI_DEFAULT, () -> { callback.taskFinished(needsReschedule); });
-        };
+        TaskFinishedCallback wrappedCallback =
+                new TaskFinishedCallback() {
+                    @Override
+                    public void taskFinished(boolean needsReschedule) {
+                        PostTask.runOrPostTask(
+                                TaskTraits.UI_DEFAULT,
+                                () -> {
+                                    callback.taskFinished(needsReschedule);
+                                });
+                    }
+
+                    @Override
+                    public void setNotification(int notificationId, Notification notification) {
+                        PostTask.runOrPostTask(
+                                TaskTraits.UI_DEFAULT,
+                                () -> callback.setNotification(notificationId, notification));
+                    }
+                };
 
         // WrappedCallback will only be called when the work is done or in onStopTask. If the task
         // is short-circuited early (by returning DONE or RESCHEDULE as a StartBeforeNativeResult),
@@ -91,7 +115,8 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
         }
 
         assert beforeNativeResult == StartBeforeNativeResult.LOAD_NATIVE;
-        runWithNative(buildStartWithNativeRunnable(context, taskParameters, wrappedCallback),
+        runWithNative(
+                buildStartWithNativeRunnable(context, taskParameters, wrappedCallback),
                 buildRescheduleRunnable(wrappedCallback));
         return true;
     }
@@ -130,24 +155,29 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
         boolean wasInMinimalBrowserMode = isNativeLoadedInMinimalBrowserMode();
         mRunningInMinimalBrowserMode = supportsMinimalBrowser();
 
-        PostTask.postTask(TaskTraits.UI_DEFAULT, new Runnable() {
-            @Override
-            public void run() {
-                // If task was stopped before we got here, don't start native initialization.
-                if (mTaskStopped) return;
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        // If task was stopped before we got here, don't start native
+                        // initialization.
+                        if (mTaskStopped) return;
 
-                // Record transitions from No Native to Minimal Browser Mode and from No Native
-                // to Full Browser mode, but not cases in which Minimal Browser Mode was
-                // already started.
-                if (!wasInMinimalBrowserMode) {
-                    getUmaReporter().reportTaskStartedNative(mTaskId);
-                }
+                        // Record transitions from No Native to Minimal Browser Mode and from No
+                        // Native to Full Browser mode, but not cases in which Minimal Browser
+                        // Mode was already started.
+                        if (!wasInMinimalBrowserMode) {
+                            getUmaReporter().reportTaskStartedNative(mTaskId);
+                        }
 
-                // Start native initialization.
-                mDelegate.initializeNativeAsync(
-                        mRunningInMinimalBrowserMode, startWithNativeRunnable, rescheduleRunnable);
-            }
-        });
+                        // Start native initialization.
+                        mDelegate.initializeNativeAsync(
+                                mRunningInMinimalBrowserMode,
+                                startWithNativeRunnable,
+                                rescheduleRunnable);
+                    }
+                });
     }
 
     /**
@@ -175,10 +205,10 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
     /**
      * Method that should be implemented in derived classes to provide implementation of {@link
      * BackgroundTask#onStartTask(Context, TaskParameters, TaskFinishedCallback)} when native is
-     * loaded.
-     * This method will not be called unless {@link #onStartTaskBeforeNativeLoaded} returns
+     * loaded. This method will not be called unless {@link #onStartTaskBeforeNativeLoaded} returns
      * LOAD_NATIVE.
      */
+    @Initializer
     protected abstract void onStartTaskWithNative(
             Context context, TaskParameters taskParameters, TaskFinishedCallback callback);
 
@@ -202,8 +232,10 @@ public abstract class NativeBackgroundTask implements BackgroundTask {
     }
 
     /** Builds a runnable starting task with native portion. */
-    private Runnable buildStartWithNativeRunnable(final Context context,
-            final TaskParameters taskParameters, final TaskFinishedCallback callback) {
+    private Runnable buildStartWithNativeRunnable(
+            final Context context,
+            final TaskParameters taskParameters,
+            final TaskFinishedCallback callback) {
         return new Runnable() {
             @Override
             public void run() {

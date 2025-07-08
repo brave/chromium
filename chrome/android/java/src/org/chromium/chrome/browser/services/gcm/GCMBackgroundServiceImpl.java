@@ -10,6 +10,7 @@ import android.os.Bundle;
 import org.chromium.base.Log;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.gcm_driver.GCMMessage;
 
 /**
@@ -21,7 +22,7 @@ public class GCMBackgroundServiceImpl extends GCMBackgroundService.Impl {
     private static final String TAG = "GCMBackgroundService";
 
     @Override
-    protected void onHandleIntent(Intent intent) {
+    protected void onHandleIntent(@Nullable Intent intent) {
         Bundle extras = intent.getExtras();
         GCMMessage message = GCMMessage.createFromBundle(extras);
         if (message == null) {
@@ -29,7 +30,8 @@ public class GCMBackgroundServiceImpl extends GCMBackgroundService.Impl {
             return;
         }
 
-        PostTask.runSynchronously(TaskTraits.UI_DEFAULT,
+        PostTask.runSynchronously(
+                TaskTraits.UI_DEFAULT,
                 () -> ChromeGcmListenerServiceImpl.dispatchMessageToDriver(message));
     }
 }

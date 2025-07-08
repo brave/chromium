@@ -50,7 +50,6 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
   switch (filter_type) {
     case PaintFilter::Type::kNullFilter:
       NOTREACHED();
-      return nullptr;
     case PaintFilter::Type::kColorFilter:
       return sk_make_sp<ColorFilterPaintFilter>(ColorFilter::MakeLuma(),
                                                 image_filter, &crop_rect);
@@ -93,7 +92,7 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
       return record_filter;
     case PaintFilter::Type::kMerge: {
       sk_sp<PaintFilter> filters[2] = {image_filter, record_filter};
-      return sk_make_sp<MergePaintFilter>(filters, 2, &crop_rect);
+      return sk_make_sp<MergePaintFilter>(filters, &crop_rect);
     }
     case PaintFilter::Type::kMorphology:
       return sk_make_sp<MorphologyPaintFilter>(
@@ -135,7 +134,6 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
           0.5f, 0.6f, image_filter, &crop_rect);
   }
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace

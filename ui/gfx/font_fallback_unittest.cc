@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <tuple>
 
 #include "base/containers/contains.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/task_environment.h"
@@ -202,6 +206,14 @@ TEST_P(GetFallbackFontTest, GetFallbackFont) {
       return;
     }
   }
+
+#if BUILDFLAG(IS_IOS)
+  // TODO(crbug.com/40279916): font fallback does not appear to be working
+  // consistently.
+  if (fallback_font.GetFontName() == ".LastResort") {
+    GTEST_SKIP() << ".LastResort is not currently behaving correctly.";
+  }
+#endif
 
   // Ensure that glyphs exists in the fallback font.
   if (!DoesFontSupportCodePoints(fallback_font, test_case_.text)) {

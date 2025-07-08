@@ -5,19 +5,38 @@
 #ifndef CONTENT_PUBLIC_BROWSER_IDENTITY_REQUEST_ACCOUNT_H_
 #define CONTENT_PUBLIC_BROWSER_IDENTITY_REQUEST_ACCOUNT_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/webid/login_status_account.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
 namespace content {
 
+class IdentityProviderData;
+
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.content.webid
+// GENERATED_JAVA_CLASS_NAME_OVERRIDE: IdentityRequestDialogDisclosureField
+enum class IdentityRequestDialogDisclosureField : int32_t {
+  kName,
+  kEmail,
+  kPicture,
+  kPhoneNumber,
+  kUsername
+};
+
 // Represents a federated user account which is used when displaying the FedCM
 // account selector.
-struct CONTENT_EXPORT IdentityRequestAccount {
+class CONTENT_EXPORT IdentityRequestAccount
+    : public base::RefCounted<IdentityRequestAccount> {
+ public:
   enum class LoginState {
     // This is a returning user signing in with RP/IDP in this browser.
     kSignIn,
@@ -42,25 +61,76 @@ struct CONTENT_EXPORT IdentityRequestAccount {
 
   IdentityRequestAccount(
       const std::string& id,
+      const std::string& display_identifier,
+      const std::string& display_name,
       const std::string& email,
       const std::string& name,
       const std::string& given_name,
       const GURL& picture,
+      const std::string& phone,
+      const std::string& username,
       std::vector<std::string> login_hints,
-      absl::optional<LoginState> login_state = absl::nullopt);
-  IdentityRequestAccount(const IdentityRequestAccount&);
-  ~IdentityRequestAccount();
+      std::vector<std::string> domain_hints,
+      std::vector<std::string> labels,
+      std::optional<LoginState> idp_claimed_login_state = std::nullopt,
+      LoginState browser_trusted_login_state = LoginState::kSignUp,
+      std::optional<base::Time> last_used_timestamp = std::nullopt);
+
+  explicit IdentityRequestAccount(
+      const blink::common::webid::LoginStatusAccount& account);
+
+  // The identity provider to which the account belongs to. This is not set in
+  // the constructor but instead set later.
+  scoped_refptr<IdentityProviderData> identity_provider = nullptr;
 
   std::string id;
+  // E.g. email or phone number
+  std::string display_identifier;
+  // E.g. the user's full name or username
+  std::string display_name;
   std::string email;
   std::string name;
   std::string given_name;
   GURL picture;
-  std::vector<std::string> login_hints;
+  std::string phone;
+  std::string username;
+  // This will be an empty image if fetching failed.
+  gfx::Image decoded_picture;
 
-  // The account login state. Unlike the other fields this one can be populated
-  // either by the IDP or by the browser based on its stored permission grants.
-  absl::optional<LoginState> login_state;
+  std::vector<std::string> login_hints;
+  std::vector<std::string> domain_hints;
+  std::vector<std::string> labels;
+
+  // The list of fields the UI should prompt the user for. This is based on the
+  // fields that the RP requested and affected by the login state and the
+  // actual available fields in the IDP accounts response.
+  std::vector<IdentityRequestDialogDisclosureField> fields;
+
+  // The account login state populated by the IDP through an approved clients
+  // list.
+  std::optional<LoginState> idp_claimed_login_state;
+
+  // The account login state populated by the browser based on stored permission
+  // grants.
+  LoginState browser_trusted_login_state;
+
+  // The last used timestamp, or nullopt if the account has not been used
+  // before.
+  std::optional<base::Time> last_used_timestamp;
+
+  // Whether this account is filtered out or not. An account may be filtered out
+  // due to login hint, domain hint, or account label.
+  bool is_filtered_out = false;
+
+  // Whether this account was retrieved from the Lightweight FedCM Accounts Push
+  // storage. If this is true, the request for the account picture will only
+  // check against cache, and will fail on cache miss.
+  bool from_accounts_push = false;
+
+ private:
+  friend class base::RefCounted<IdentityRequestAccount>;
+
+  ~IdentityRequestAccount();
 };
 
 }  // namespace content

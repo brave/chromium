@@ -2,25 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/projector/projector_controller_impl.h"
-
+#include <array>
 #include <initializer_list>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "ash/annotator/annotator_controller.h"
 #include "ash/constants/ash_features.h"
 #include "ash/projector/model/projector_session_impl.h"
+#include "ash/projector/projector_controller_impl.h"
 #include "ash/projector/projector_metadata_controller.h"
 #include "ash/projector/projector_metrics.h"
 #include "ash/projector/test/mock_projector_metadata_controller.h"
-#include "ash/projector/test/mock_projector_ui_controller.h"
 #include "ash/public/cpp/projector/projector_new_screencast_precondition.h"
-#include "ash/public/cpp/projector/projector_session.h"
 #include "ash/public/cpp/projector/speech_recognition_availability.h"
 #include "ash/public/cpp/test/mock_projector_client.h"
 #include "ash/shell.h"
+#include "ash/system/tray/tray_container.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/webui/annotator/test/mock_annotator_client.h"
 #include "ash/webui/projector_app/public/cpp/projector_app_constants.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -29,24 +30,17 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
-#include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
-#include "base/values.h"
-#include "build/branding_buildflags.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
 #include "chromeos/ash/components/dbus/audio/audio_node.h"
 #include "chromeos/ash/components/dbus/audio/fake_cras_audio_client.h"
 #include "media/mojo/mojom/speech_recognition_result.h"
-#include "media/mojo/mojom/speech_recognition_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/icu/source/common/unicode/locid.h"
-#include "third_party/icu/source/common/unicode/utypes.h"
-#include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
 namespace ash {
@@ -75,7 +69,7 @@ constexpr char kSpeechRecognitionEndStateServerBased[] =
     "Ash.Projector.SpeechRecognitionEndState.ServerBased";
 
 constexpr char kMetadataFileName[] = "MyScreencast";
-constexpr char kProjectorExtension[] = "projector";
+constexpr char kProjectorV2Extension[] = "screencast";
 
 void NotifyControllerForFinalSpeechResult(ProjectorControllerImpl* controller) {
   media::SpeechRecognitionResult result;
@@ -86,8 +80,8 @@ void NotifyControllerForFinalSpeechResult(ProjectorControllerImpl* controller) {
   result.timing_information->audio_end_time = base::Milliseconds(3000);
 
   std::vector<media::HypothesisParts> hypothesis_parts;
-  std::string hypothesis_text[3] = {"transcript", "text", "1"};
-  int hypothesis_time[3] = {1000, 2000, 2500};
+  std::array<std::string, 3> hypothesis_text = {"transcript", "text", "1"};
+  std::array<int, 3> hypothesis_time = {1000, 2000, 2500};
   for (int i = 0; i < 3; i++) {
     hypothesis_parts.emplace_back(
         std::vector<std::string>({hypothesis_text[i]}),
@@ -144,14 +138,8 @@ class ProjectorControllerTest : public AshTestBase {
   // AshTestBase:
   void SetUp() override {
     AshTestBase::SetUp();
-
     controller_ =
         static_cast<ProjectorControllerImpl*>(ProjectorController::Get());
-
-    auto mock_ui_controller =
-        std::make_unique<MockProjectorUiController>(controller_);
-    mock_ui_controller_ = mock_ui_controller.get();
-    controller_->SetProjectorUiControllerForTest(std::move(mock_ui_controller));
 
     auto mock_metadata_controller =
         std::make_unique<MockProjectorMetadataController>();
@@ -165,6 +153,9 @@ class ProjectorControllerTest : public AshTestBase {
     ON_CALL(mock_client_, GetSpeechRecognitionAvailability)
         .WillByDefault(testing::Return(availability));
     controller_->SetClient(&mock_client_);
+
+    auto* annotator_controller = Shell::Get()->annotator_controller();
+    annotator_controller->SetToolClient(&mock_annotator_client_);
   }
 
   void InitializeRealMetadataController() {
@@ -197,16 +188,16 @@ class ProjectorControllerTest : public AshTestBase {
     CrasAudioHandler::Get()->SetActiveInputNodes({kInternalMic->id});
   }
 
-  raw_ptr<MockProjectorUiController, ExperimentalAsh> mock_ui_controller_ =
-      nullptr;
-  raw_ptr<MockProjectorMetadataController, ExperimentalAsh>
+  raw_ptr<MockProjectorMetadataController, DanglingUntriaged>
       mock_metadata_controller_ = nullptr;
-  raw_ptr<ProjectorMetadataControllerForTest, ExperimentalAsh>
+  raw_ptr<ProjectorMetadataControllerForTest, DanglingUntriaged>
       metadata_controller_;
-  raw_ptr<ProjectorControllerImpl, ExperimentalAsh> controller_;
+  raw_ptr<ProjectorControllerImpl, DanglingUntriaged> controller_;
   MockProjectorClient mock_client_;
+  MockAnnotatorClient mock_annotator_client_;
   base::HistogramTester histogram_tester_;
   base::ScopedTempDir temp_dir_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(ProjectorControllerTest, OnTranscription) {
@@ -286,25 +277,11 @@ TEST_F(ProjectorControllerTest, OnSpeechRecognitionAvailabilityChanged) {
   controller_->OnSpeechRecognitionAvailabilityChanged();
 }
 
-TEST_F(ProjectorControllerTest, EnableAnnotatorTool) {
-  // Verify that |OnMarkerPressed| in |ProjectorUiController| is called.
-  EXPECT_CALL(*mock_ui_controller_, EnableAnnotatorTool());
-  controller_->EnableAnnotatorTool();
-}
-
-TEST_F(ProjectorControllerTest, SetAnnotatorTool) {
-  AnnotatorTool tool;
-  // Verify that |SetAnnotatorTool| in |ProjectorUiController| is called.
-  EXPECT_CALL(*mock_ui_controller_, SetAnnotatorTool(tool));
-  controller_->SetAnnotatorTool(tool);
-}
-
 TEST_F(ProjectorControllerTest, RecordingStarted) {
   EXPECT_CALL(mock_client_, StartSpeechRecognition());
   EXPECT_CALL(*mock_metadata_controller_, OnRecordingStarted());
 
   auto* root = Shell::GetPrimaryRootWindow();
-  EXPECT_CALL(*mock_ui_controller_, ShowAnnotationTray(root)).Times(1);
   controller_->projector_session()->Start(
       base::SafeBaseName::Create("projector_data").value());
   histogram_tester_.ExpectUniqueSample(
@@ -324,9 +301,6 @@ TEST_F(ProjectorControllerTest, RecordingEnded) {
   ON_CALL(mock_client_, IsDriveFsMounted())
       .WillByDefault(testing::Return(true));
 
-  // Verify that |HideAnnotationTray| in |ProjectorUiController| is
-  // called.
-  EXPECT_CALL(*mock_ui_controller_, HideAnnotationTray()).Times(1);
   EXPECT_CALL(mock_client_, OpenProjectorApp()).Times(0);
   EXPECT_CALL(mock_client_,
               OnNewScreencastPreconditionChanged(NewScreencastPrecondition(
@@ -490,7 +464,7 @@ TEST_P(ProjectorOnDlpRestrictionCheckedAtVideoEndTest, WrapUpRecordingOnce) {
           EXPECT_CALL(*mock_metadata_controller_, SaveMetadata(_)).Times(0);
           // Expects notification gets resumed if recording deleted.
           const std::vector<base::FilePath> screencast_files = {
-              expected_path.AddExtension(kProjectorMetadataFileExtension),
+              expected_path.AddExtension(kProjectorV2MetadataFileExtension),
               expected_path.AddExtension(kProjectorMediaFileExtension),
               expected_path.DirName().Append(
                   kScreencastDefaultThumbnailFileName)};
@@ -565,7 +539,7 @@ TEST_F(ProjectorControllerTest, NoTranscriptsTest) {
 
   // Verify the written metadata file size is between 0-100 bytes. Change this
   // limit as needed if you make significant changes to the metadata file.
-  base::File file(metadata_file.AddExtension(kProjectorExtension),
+  base::File file(metadata_file.AddExtension(kProjectorV2Extension),
                   base::File::FLAG_OPEN | base::File::FLAG_READ);
   EXPECT_GT(file.GetLength(), 0);
   EXPECT_LT(file.GetLength(), 100);
@@ -594,7 +568,36 @@ TEST_F(ProjectorControllerTest, TranscriptsTest) {
   // Verify the written metadata file size is between 400-500 bytes. This file
   // should be larger than the one in the NoTranscriptsTest above. Change this
   // limit as needed if you make significant changes to the metadata file.
-  base::File file(metadata_file.AddExtension(kProjectorExtension),
+  base::File file(metadata_file.AddExtension(kProjectorV2Extension),
+                  base::File::FLAG_OPEN | base::File::FLAG_READ);
+  EXPECT_GT(file.GetLength(), 400);
+  EXPECT_LT(file.GetLength(), 500);
+}
+
+TEST_F(ProjectorControllerTest, V2TranscriptsTest) {
+  InitializeRealMetadataController();
+  metadata_controller_->OnRecordingStarted();
+
+  base::RunLoop run_loop;
+  metadata_controller_->SetRunLoopQuitClosure(run_loop.QuitClosure());
+
+  // Simulate adding some transcripts.
+  NotifyControllerForFinalSpeechResult(controller_);
+  NotifyControllerForFinalSpeechResult(controller_);
+
+  // Simulate ending the recording and saving the metadata file.
+  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+  base::FilePath metadata_file(temp_dir_.GetPath().Append(kMetadataFileName));
+  metadata_controller_->SaveMetadata(metadata_file);
+  run_loop.Run();
+
+  histogram_tester_.ExpectUniqueSample(kProjectorTranscriptsCountHistogramName,
+                                       /*sample=*/2, /*count=*/1);
+
+  // Verify the written metadata file size is between 400-500 bytes. This file
+  // should be larger than the one in the NoTranscriptsTest above. Change this
+  // limit as needed if you make significant changes to the metadata file.
+  base::File file(metadata_file.AddExtension(kProjectorV2Extension),
                   base::File::FLAG_OPEN | base::File::FLAG_READ);
   EXPECT_GT(file.GetLength(), 400);
   EXPECT_LT(file.GetLength(), 500);
@@ -634,7 +637,7 @@ TEST_F(ProjectorControllerTest, SuppressDriveNotification) {
 
   const std::vector<base::FilePath> screencast_files = {
       expected_path_with_no_extension.AddExtension(
-          kProjectorMetadataFileExtension),
+          kProjectorV2MetadataFileExtension),
       expected_path_with_no_extension.AddExtension(
           kProjectorMediaFileExtension),
       expect_container_path.Append(kScreencastDefaultThumbnailFileName)};

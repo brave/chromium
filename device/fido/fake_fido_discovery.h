@@ -54,8 +54,7 @@ namespace test {
 //   // Destroy the production instance to eventually stop the discovery.
 //   // hid_instance.reset();
 //
-class FakeFidoDiscovery : public FidoDeviceDiscovery,
-                          public base::SupportsWeakPtr<FakeFidoDiscovery> {
+class FakeFidoDiscovery final : public FidoDeviceDiscovery {
  public:
   enum class StartMode {
     // SimulateStarted() needs to be called manually to finish starting the
@@ -67,6 +66,7 @@ class FakeFidoDiscovery : public FidoDeviceDiscovery,
 
   explicit FakeFidoDiscovery(FidoTransportProtocol transport,
                              StartMode mode = StartMode::kManual);
+  ~FakeFidoDiscovery() override;
 
   FakeFidoDiscovery(const FakeFidoDiscovery&) = delete;
   FakeFidoDiscovery& operator=(const FakeFidoDiscovery&) = delete;
@@ -91,6 +91,7 @@ class FakeFidoDiscovery : public FidoDeviceDiscovery,
 
   const StartMode mode_;
   base::RunLoop wait_for_start_loop_;
+  base::WeakPtrFactory<FakeFidoDiscovery> weak_ptr_factory_{this};
 };
 
 // Overrides FidoDeviceDiscovery::Create* to construct FakeFidoDiscoveries.
@@ -108,6 +109,9 @@ class FakeFidoDiscoveryFactory : public device::FidoDiscoveryFactory {
   // Constructs a fake discovery to be returned from the next call to
   // FidoDeviceDiscovery::Create. Returns a raw pointer to the fake so that
   // tests can set it up according to taste.
+  //
+  // ForgeNextPlatformDiscovery() will queue discoveries if called multiple
+  // times.
   //
   // It is an error not to call the relevant method prior to a call to
   // FidoDeviceDiscovery::Create with the respective transport.
@@ -136,7 +140,7 @@ class FakeFidoDiscoveryFactory : public device::FidoDiscoveryFactory {
   std::unique_ptr<FakeFidoDiscovery> next_hid_discovery_;
   std::unique_ptr<FakeFidoDiscovery> next_nfc_discovery_;
   std::unique_ptr<FakeFidoDiscovery> next_cable_discovery_;
-  std::unique_ptr<FakeFidoDiscovery> next_platform_discovery_;
+  std::vector<std::unique_ptr<FidoDiscoveryBase>> next_platform_discovery_list_;
   bool discover_win_webauthn_api_authenticator_ = false;
 };
 

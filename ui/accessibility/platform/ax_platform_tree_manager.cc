@@ -6,8 +6,11 @@
 
 namespace ui {
 
-bool AXPlatformTreeManager::IsPlatformTreeManager() const {
-  return true;
-}
+AXPlatformTreeManager::AXPlatformTreeManager(std::unique_ptr<AXTree> tree)
+    : AXTreeManager(std::move(tree), /*is_platform_tree_manager=*/true) {}
+
+AXPlatformTreeManager::~AXPlatformTreeManager() = default;
+
+void AXPlatformTreeManager::FireSentinelEventForTesting() {}
 
 }  // namespace ui

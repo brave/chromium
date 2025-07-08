@@ -15,11 +15,13 @@ import static org.mockito.Mockito.verify;
 import android.graphics.Bitmap;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
@@ -27,34 +29,32 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
 
-import jp.tomorrowkey.android.gifplayer.BaseGifImage;
-
-/**
- * Test for ImageFetcher.java.
- */
+/** Test for ImageFetcher.java. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class ImageFetcherTest {
-    private static final GURL URL = JUnitTestGURLs.getGURL(JUnitTestGURLs.EXAMPLE_URL);
-    private static final GURL URL_2 = JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_2);
+    private static final GURL URL = JUnitTestGURLs.EXAMPLE_URL;
+    private static final GURL URL_2 = JUnitTestGURLs.URL_2;
     private static final String CLIENT_NAME = "client";
     private static final int WIDTH_PX = 100;
     private static final int HEIGHT_PX = 200;
     private static final int EXPIRATION_INTERVAL = 60;
 
-    /**
-     * Concrete implementation for testing purposes.
-     */
-    private class ImageFetcherForTest extends ImageFetcher {
+    /** Concrete implementation for testing purposes. */
+    private static class ImageFetcherForTest extends ImageFetcher {
         ImageFetcherForTest(ImageFetcherBridge imageFetcherBridge) {
             super(imageFetcherBridge);
         }
 
         @Override
-        public void fetchGif(final Params params, Callback<BaseGifImage> callback) {}
+        public void fetchGif(final Params params, Callback<ImageDataFetchResult> callback) {}
 
         @Override
         public void fetchImage(final Params params, Callback<Bitmap> callback) {}
+
+        @Override
+        public void fetchImageWithRequestMetadata(
+                final Params params, Callback<ImageFetchResult> callback) {}
 
         @Override
         public void clear() {}
@@ -68,8 +68,8 @@ public class ImageFetcherTest {
         public void destroy() {}
     }
 
-    @Mock
-    ImageFetcherBridge mBridge;
+    @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @Mock ImageFetcherBridge mBridge;
 
     private final Bitmap mBitmap =
             Bitmap.createBitmap(WIDTH_PX, HEIGHT_PX, Bitmap.Config.ARGB_8888);
@@ -78,7 +78,6 @@ public class ImageFetcherTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mImageFetcher = Mockito.spy(new ImageFetcherForTest(mBridge));
     }
 
@@ -142,8 +141,9 @@ public class ImageFetcherTest {
     @Test
     public void testCreateParamsWithExpirationInterval() {
         // Verifies params with expiration interval.
-        ImageFetcher.Params params = ImageFetcher.Params.createWithExpirationInterval(
-                URL, CLIENT_NAME, WIDTH_PX, HEIGHT_PX, EXPIRATION_INTERVAL);
+        ImageFetcher.Params params =
+                ImageFetcher.Params.createWithExpirationInterval(
+                        URL, CLIENT_NAME, WIDTH_PX, HEIGHT_PX, EXPIRATION_INTERVAL);
         assertEquals(URL.getSpec(), params.url);
         assertEquals(CLIENT_NAME, params.clientName);
         assertEquals(WIDTH_PX, params.width);
@@ -188,8 +188,9 @@ public class ImageFetcherTest {
         assertNotEquals(params1.hashCode(), params2.hashCode());
 
         // Different expiration intervals.
-        params1 = ImageFetcher.Params.createWithExpirationInterval(
-                URL, CLIENT_NAME, WIDTH_PX, HEIGHT_PX, EXPIRATION_INTERVAL);
+        params1 =
+                ImageFetcher.Params.createWithExpirationInterval(
+                        URL, CLIENT_NAME, WIDTH_PX, HEIGHT_PX, EXPIRATION_INTERVAL);
         assertFalse(params1.equals(params2));
         assertFalse(params2.equals(params1));
         assertNotEquals(params1.hashCode(), params2.hashCode());

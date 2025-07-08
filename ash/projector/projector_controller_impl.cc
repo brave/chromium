@@ -12,10 +12,8 @@
 #include "ash/projector/projector_metadata_controller.h"
 #include "ash/projector/projector_metrics.h"
 #include "ash/projector/projector_ui_controller.h"
-#include "ash/public/cpp/projector/annotator_tool.h"
 #include "ash/public/cpp/projector/projector_client.h"
 #include "ash/public/cpp/projector/projector_new_screencast_precondition.h"
-#include "ash/public/cpp/projector/projector_session.h"
 #include "ash/public/cpp/projector/speech_recognition_availability.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
@@ -27,14 +25,11 @@
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
-#include "base/scoped_multi_source_observation.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
-#include "media/mojo/mojom/speech_recognition_service.mojom.h"
 #include "ui/gfx/image/image.h"
 
 namespace ash {
@@ -150,13 +145,17 @@ NewScreencastPrecondition ServerBasedRecognitionAvailabilityToPrecondition(
   }
 }
 
+const base::FilePath::StringViewType getMetadataFileExtension() {
+  return ash::kProjectorV2MetadataFileExtension;
+}
+
 }  // namespace
 
 ProjectorControllerImpl::ProjectorControllerImpl()
     : projector_session_(std::make_unique<ash::ProjectorSessionImpl>()),
       metadata_controller_(
           std::make_unique<ash::ProjectorMetadataController>()) {
-  ui_controller_ = std::make_unique<ash::ProjectorUiController>(this);
+  ui_controller_ = std::make_unique<ash::ProjectorUiController>();
 
   projector_session_->AddObserver(this);
   CrasAudioHandler::Get()->AddAudioObserver(this);
@@ -188,7 +187,7 @@ void ProjectorControllerImpl::StartProjectorSession(
            NewScreencastPreconditionState::kEnabled);
 
   auto* controller = CaptureModeController::Get();
-  if (!controller->is_recording_in_progress()) {
+  if (controller->can_start_new_recording()) {
     // A capture mode session can be blocked by many factors, such as policy,
     // DLP, ... etc. We don't start a Projector session until we're sure a
     // capture session started.
@@ -228,7 +227,7 @@ void ProjectorControllerImpl::OnTranscriptionError() {
           : SpeechRecognitionEndState::kSpeechRecognitionEnounteredError;
   RecordSpeechRecognitionEndState(end_state, use_on_device_speech_recognition);
 
-  force_stop_recognition_timer_.AbandonAndStop();
+  force_stop_recognition_timer_.Stop();
 
   // TODO(b/261093550) Investigate the real reason why
   // we get a speech recognition error after we notify it to
@@ -265,7 +264,7 @@ void ProjectorControllerImpl::OnSpeechRecognitionStopped(bool forced) {
 
   // Try to wrap up recording. This can be no-op if DLP check is not completed.
   MaybeWrapUpRecording();
-  force_stop_recognition_timer_.AbandonAndStop();
+  force_stop_recognition_timer_.Stop();
 }
 
 NewScreencastPrecondition
@@ -306,7 +305,7 @@ ProjectorControllerImpl::GetNewScreencastPrecondition() const {
   }
 
   auto* capture_mode_controller = CaptureModeController::Get();
-  if (capture_mode_controller->is_recording_in_progress()) {
+  if (!capture_mode_controller->can_start_new_recording()) {
     result.state = NewScreencastPreconditionState::kDisabled;
     result.reasons = {
         NewScreencastPreconditionReason::kScreenRecordingInProgress};
@@ -330,27 +329,6 @@ ProjectorControllerImpl::GetNewScreencastPrecondition() const {
   return result;
 }
 
-void ProjectorControllerImpl::OnUndoRedoAvailabilityChanged(
-    bool undo_available,
-    bool redo_available) {
-  // TODO(b/198184362): Reflect undo and redo buttons availability on the
-  // Projector toolbar.
-}
-
-void ProjectorControllerImpl::OnCanvasInitialized(bool success) {
-  ui_controller_->OnCanvasInitialized(success);
-  if (on_canvas_initialized_callback_for_test_)
-    std::move(on_canvas_initialized_callback_for_test_).Run();
-}
-
-bool ProjectorControllerImpl::GetAnnotatorAvailability() {
-  return ui_controller_->GetAnnotatorAvailability();
-}
-
-void ProjectorControllerImpl::ToggleAnnotationTray() {
-  return ui_controller_->ToggleAnnotationTray();
-}
-
 void ProjectorControllerImpl::CreateScreencastContainerFolder(
     CreateScreencastContainerFolderCallback callback) {
   base::FilePath mounted_path;
@@ -370,36 +348,11 @@ void ProjectorControllerImpl::CreateScreencastContainerFolder(
                      weak_factory_.GetWeakPtr(), path, std::move(callback)));
 }
 
-void ProjectorControllerImpl::EnableAnnotatorTool() {
-  DCHECK(ui_controller_);
-  ui_controller_->EnableAnnotatorTool();
-}
-
-void ProjectorControllerImpl::SetAnnotatorTool(const AnnotatorTool& tool) {
-  DCHECK(ui_controller_);
-  ui_controller_->SetAnnotatorTool(tool);
-}
-
-void ProjectorControllerImpl::ResetTools() {
-  if (ui_controller_) {
-    ui_controller_->ResetTools();
-  }
-}
-
-bool ProjectorControllerImpl::IsAnnotatorEnabled() {
-  return ui_controller_ && ui_controller_->is_annotator_enabled();
-}
-
 void ProjectorControllerImpl::OnNewScreencastPreconditionChanged() {
   // `client_` could be not available in unit tests.
   if (client_) {
     client_->OnNewScreencastPreconditionChanged(GetNewScreencastPrecondition());
   }
-}
-
-void ProjectorControllerImpl::SetProjectorUiControllerForTest(
-    std::unique_ptr<ProjectorUiController> ui_controller) {
-  ui_controller_ = std::move(ui_controller);
 }
 
 void ProjectorControllerImpl::SetProjectorMetadataControllerForTest(
@@ -427,10 +380,6 @@ void ProjectorControllerImpl::OnRecordingStarted(aura::Window* current_root) {
     return;
   }
 
-  if (ui_controller_) {
-    ui_controller_->ShowAnnotationTray(current_root);
-  }
-
   StartSpeechRecognition();
   metadata_controller_->OnRecordingStarted();
 
@@ -440,10 +389,6 @@ void ProjectorControllerImpl::OnRecordingStarted(aura::Window* current_root) {
 void ProjectorControllerImpl::OnRecordingEnded() {
   if (!projector_session_->is_active()) {
     return;
-  }
-
-  if (ui_controller_) {
-    ui_controller_->HideAnnotationTray();
   }
 
   MaybeStopSpeechRecognition();
@@ -479,11 +424,7 @@ void ProjectorControllerImpl::OnVideoFileFinalized(
 }
 
 void ProjectorControllerImpl::OnRecordedWindowChangingRoot(
-    aura::Window* new_root) {
-  if (projector_session_->is_active()) {
-    ui_controller_->OnRecordedWindowChangingRoot(new_root);
-  }
-}
+    aura::Window* new_root) {}
 
 void ProjectorControllerImpl::OnRecordingStartAborted() {
   if (!projector_session_->is_active()) {
@@ -690,7 +631,9 @@ std::vector<base::FilePath> ProjectorControllerImpl::GetScreencastFilePaths()
   DCHECK(container_folder);
   const base::FilePath path_with_no_extension =
       projector_session_->GetScreencastFilePathNoExtension();
-  return {path_with_no_extension.AddExtension(kProjectorMetadataFileExtension),
+  const base::FilePath::StringViewType metadata_file_extension =
+      getMetadataFileExtension();
+  return {path_with_no_extension.AddExtension(metadata_file_extension),
           path_with_no_extension.AddExtension(kProjectorMediaFileExtension),
           container_folder->Append(kScreencastDefaultThumbnailFileName)};
 }

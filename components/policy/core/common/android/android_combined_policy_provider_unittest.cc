@@ -43,8 +43,8 @@ TEST_F(AndroidCombinedPolicyProviderTest, SetShouldWaitForPolicy) {
   AndroidCombinedPolicyProvider::SetShouldWaitForPolicy(true);
   SchemaRegistry registry;
   AndroidCombinedPolicyProvider manager(&registry);
-  EXPECT_TRUE(manager.IsInitializationComplete(POLICY_DOMAIN_CHROME));
-  manager.FlushPolicies(nullptr, nullptr);
+  EXPECT_FALSE(manager.IsInitializationComplete(POLICY_DOMAIN_CHROME));
+  manager.FlushPolicies(nullptr);
   EXPECT_TRUE(manager.IsInitializationComplete(POLICY_DOMAIN_CHROME));
   // If the manager is deleted (by going out of scope) without being shutdown
   // first it DCHECKs.
@@ -60,19 +60,18 @@ TEST_F(AndroidCombinedPolicyProviderTest, FlushPolices) {
       "}";
 
   PolicyNamespace ns(POLICY_DOMAIN_CHROME, std::string());
-  std::string error;
-  Schema schema = Schema::Parse(kSchemaTemplate, &error);
+  const auto schema = Schema::Parse(kSchemaTemplate);
+  ASSERT_TRUE(schema.has_value());
   SchemaRegistry registry;
-  registry.RegisterComponent(ns, schema);
+  registry.RegisterComponent(ns, *schema);
   AndroidCombinedPolicyProvider manager(&registry);
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jstring> jpolicy =
       ConvertUTF8ToJavaString(env, "TestPolicy");
   ScopedJavaLocalRef<jstring> jvalue =
       ConvertUTF8ToJavaString(env, "TestValue");
-  manager.GetPolicyConverterForTesting()->SetPolicyString(env, nullptr, jpolicy,
-                                                          jvalue);
-  manager.FlushPolicies(env, nullptr);
+  manager.GetPolicyConverterForTesting()->SetPolicyString(env, jpolicy, jvalue);
+  manager.FlushPolicies(env);
   const PolicyBundle& bundle = manager.policies();
   const PolicyMap& map = bundle.Get(ns);
   const base::Value* value =

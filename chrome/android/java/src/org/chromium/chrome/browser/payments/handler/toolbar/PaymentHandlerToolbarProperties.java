@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.payments.handler.toolbar;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey;
@@ -12,6 +13,7 @@ import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 import org.chromium.url.GURL;
 
 /** PaymentHandlerToolbar UI properties, which fully describe the state of the UI. */
+@NullMarked
 /* package */ class PaymentHandlerToolbarProperties {
     /* package */ static final WritableObjectPropertyKey<GURL> URL =
             new WritableObjectPropertyKey<>();
@@ -38,9 +40,17 @@ import org.chromium.url.GURL;
     /* package */ static final WritableObjectPropertyKey<Runnable> CLOSE_BUTTON_ON_CLICK_CALLBACK =
             new WritableObjectPropertyKey<>();
 
-    /* package */ static final PropertyKey[] ALL_KEYS = new PropertyKey[] {URL, TITLE,
-            LOAD_PROGRESS, PROGRESS_VISIBLE, SECURITY_ICON, SECURITY_ICON_CONTENT_DESCRIPTION,
-            SECURITY_ICON_ON_CLICK_CALLBACK, CLOSE_BUTTON_ON_CLICK_CALLBACK};
+    /* package */ static final PropertyKey[] ALL_KEYS =
+            new PropertyKey[] {
+                URL,
+                TITLE,
+                LOAD_PROGRESS,
+                PROGRESS_VISIBLE,
+                SECURITY_ICON,
+                SECURITY_ICON_CONTENT_DESCRIPTION,
+                SECURITY_ICON_ON_CLICK_CALLBACK,
+                CLOSE_BUTTON_ON_CLICK_CALLBACK
+            };
 
     // Prevent instantiation.
     private PaymentHandlerToolbarProperties() {}

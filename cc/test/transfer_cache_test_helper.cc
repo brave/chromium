@@ -8,6 +8,8 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/containers/contains.h"
+#include "base/containers/heap_array.h"
 #include "base/containers/span.h"
 
 namespace cc {
@@ -85,16 +87,19 @@ ServiceTransferCacheEntry* TransferCacheTestHelper::GetEntryInternal(
     TransferCacheEntryType type,
     uint32_t id) {
   auto key = std::make_pair(type, id);
-  if (locked_entries_.count(key) + local_entries_.count(key) == 0)
+  if (locked_entries_.count(key) + local_entries_.count(key) == 0) {
     return nullptr;
-  if (entries_.find(key) == entries_.end())
+  }
+  if (!base::Contains(entries_, key)) {
     return nullptr;
+  }
   return entries_[key].get();
 }
 
 bool TransferCacheTestHelper::LockEntryInternal(const EntryKey& key) {
-  if (entries_.find(key) == entries_.end())
+  if (!base::Contains(entries_, key)) {
     return false;
+  }
 
   locked_entries_.insert(key);
   EnforceLimits();
@@ -103,14 +108,14 @@ bool TransferCacheTestHelper::LockEntryInternal(const EntryKey& key) {
 
 uint32_t TransferCacheTestHelper::CreateEntryInternal(
     const ClientTransferCacheEntry& client_entry,
-    char* memory) {
+    uint8_t* memory) {
   auto key = std::make_pair(client_entry.Type(), client_entry.Id());
-  DCHECK(entries_.find(key) == entries_.end());
+  DCHECK(!base::Contains(entries_, key));
 
   // Serialize data.
   uint32_t size = client_entry.SerializedSize();
-  std::unique_ptr<uint8_t[]> data(new uint8_t[size]);
-  auto span = base::make_span(data.get(), size);
+  auto data = base::HeapArray<uint8_t>::Uninit(size);
+  auto span = base::span(data);
   bool success = client_entry.Serialize(span);
   DCHECK(success);
   CreateEntryDirect(key, span);

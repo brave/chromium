@@ -14,10 +14,6 @@
 #import "net/base/url_util.h"
 #import "url/gurl.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 const char kOriginalUrlKey[] = "url";
@@ -51,8 +47,8 @@ NSString* InjectedErrorPageFilePath() {
 @interface CRWErrorPageHelper ()
 @property(nonatomic, strong) NSError* error;
 // The error page HTML to be injected into existing page.
-@property(nonatomic, strong) NSString* automaticReloadJavaScript;
-@property(nonatomic, strong, readonly) NSString* failedNavigationURLString;
+@property(nonatomic, copy) NSString* automaticReloadJavaScript;
+@property(nonatomic, copy, readonly) NSString* failedNavigationURLString;
 @end
 
 @implementation CRWErrorPageHelper
@@ -61,7 +57,7 @@ NSString* InjectedErrorPageFilePath() {
 @synthesize errorPageFileURL = _errorPageFileURL;
 
 - (instancetype)initWithError:(NSError*)error {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     _error = [error copy];
   }
   return self;
@@ -114,8 +110,9 @@ NSString* InjectedErrorPageFilePath() {
 #pragma mark - Public
 
 + (GURL)failedNavigationURLFromErrorPageFileURL:(const GURL&)URL {
-  if (!URL.is_valid())
+  if (!URL.is_valid()) {
     return GURL();
+  }
 
   if (URL.SchemeIsFile() &&
       URL.path() == base::SysNSStringToUTF8(LoadedErrorPageFilePath())) {

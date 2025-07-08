@@ -32,11 +32,16 @@ class PopupTestBase : public InProcessBrowserTest {
   void SetUpCommandLine(base::CommandLine* command_line) override;
 
   // Returns the popup opened by running `script` in `browser`'s active tab.
-  static Browser* OpenPopup(Browser* browser, const std::string& script);
+  // `script` executes with a user gesture when `user_gesture` is true.
+  static Browser* OpenPopup(Browser* browser,
+                            const std::string& script,
+                            bool user_gesture = true);
 
   // Returns the popup opened by running `script` in `adapter`'s frame.
+  // `script` executes with a user gesture when `user_gesture` is true.
   static Browser* OpenPopup(const content::ToRenderFrameHost& adapter,
-                            const std::string& script);
+                            const std::string& script,
+                            bool user_gesture = true);
 
   // Waits for the browser window to move or resize by the given threshold.
   static void WaitForBoundsChange(Browser* browser, int move_by, int resize_by);
@@ -49,9 +54,10 @@ class PopupTestBase : public InProcessBrowserTest {
   // Returns the display nearest `browser`'s window; see display::Screen.
   static display::Display GetDisplayNearestBrowser(const Browser* browser);
 
-  // Waits for HTML fullscreen of `contents`; returns immediately if already so.
-  // https://fullscreen.spec.whatwg.org/
-  static void WaitForHTMLFullscreen(content::WebContents* contents);
+  // Waits for any active user activation to expire.
+  // TODO(crbug.com/40276892): Improve and consolidate this to a common
+  // function.
+  static void WaitForUserActivationExpiry(Browser* browser);
 };
 
 #endif  // CHROME_BROWSER_UI_TEST_POPUP_TEST_BASE_H_

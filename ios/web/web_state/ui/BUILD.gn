@@ -33,10 +33,9 @@ source_set("ui") {
     "//ios/web/navigation:core",
     "//ios/web/navigation:navigation_manager_util",
     "//ios/web/navigation:wk_navigation_util",
-    "//ios/web/net:net",
+    "//ios/web/net",
     "//ios/web/public",
     "//ios/web/public/annotations",
-    "//ios/web/public/deprecated",
     "//ios/web/public/download",
     "//ios/web/public/find_in_page",
     "//ios/web/public/js_messaging",
@@ -45,14 +44,12 @@ source_set("ui") {
     "//ios/web/public/webui",
     "//ios/web/security",
     "//ios/web/session",
-    "//ios/web/text_fragments",
-    "//ios/web/web_state:page_viewport_state",
+    "//ios/web/util",
     "//ios/web/web_state:user_interaction",
     "//ios/web/web_state:web_state_impl_header",
     "//ios/web/web_state:web_view_internal_creation_util",
     "//ios/web/web_state/ui:wk_web_view_configuration_provider",
-    "//ios/web/web_view:util",
-    "//ios/web/webui:webui",
+    "//ios/web/webui",
     "//net",
     "//services/metrics/public/cpp:ukm_builders",
     "//ui/base",
@@ -60,7 +57,8 @@ source_set("ui") {
   ]
 
   sources = [
-    "crw_context_menu_item.mm",
+    "crw_media_capture_permission_request.h",
+    "crw_media_capture_permission_request.mm",
     "crw_touch_tracking_recognizer.mm",
     "crw_web_controller.mm",
     "crw_web_controller_container_view.h",
@@ -85,10 +83,7 @@ source_set("web_controller_header") {
     "crw_web_controller.h",
   ]
 
-  deps = [
-    ":crw_web_view_navigation_proxy",
-    "//ios/web/public/deprecated",
-  ]
+  deps = [ ":crw_web_view_navigation_proxy" ]
 
   public_deps = [ "//base" ]
 }
@@ -112,7 +107,6 @@ source_set("crw_context_menu_controller") {
     ":wk_web_view_configuration_provider",
     "//base",
     "//ios/web/common",
-    "//ios/web/common:features",
     "//ios/web/js_features/context_menu",
     "//ios/web/js_messaging",
     "//ios/web/public",
@@ -145,10 +139,10 @@ source_set("wk_web_view_configuration_provider") {
     "//ios/components/security_interstitials/https_only_mode:feature",
     "//ios/third_party/webkit",
     "//ios/web/common",
+    "//ios/web/js_features/window_error",
     "//ios/web/js_messaging",
     "//ios/web/js_messaging:java_script_feature",
     "//ios/web/js_messaging:java_script_feature_util",
-    "//ios/web/navigation:session_restore_feature",
     "//ios/web/public",
     "//ios/web/webui",
   ]
@@ -159,6 +153,5 @@ source_set("wk_web_view_configuration_provider") {
     "wk_content_rule_list_util.h",
     "wk_content_rule_list_util.mm",
     "wk_web_view_configuration_provider.mm",
-    "wk_web_view_configuration_provider_observer.h",
   ]
 }

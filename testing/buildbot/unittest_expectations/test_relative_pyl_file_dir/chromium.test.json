@@ -7,13 +7,12 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "kvm": "1",
-              "os": "Linux"
-            }
-          ]
+          "dimensions": {
+            "kvm": "1",
+            "os": "Linux"
+          }
         },
         "test": "foo_test",
         "test_id_prefix": "ninja://chrome/test:foo_test/"
@@ -27,12 +26,10 @@
         },
         "name": "variation_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "kvm": "1",
-              "os": "Linux"
-            }
-          ]
+          "dimensions": {
+            "kvm": "1",
+            "os": "Linux"
+          }
         },
         "test": "foo_test",
         "test_id_prefix": "ninja://chrome/test:foo_test/"

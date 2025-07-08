@@ -66,7 +66,7 @@ Image ImageMultiPool::GetBufferFromSimplePool(
   CVPixelBufferRef buffer;
   CVReturn err = mediapipe::CreateCVPixelBufferWithoutPool(
       spec.width, spec.height, cv_format, &buffer);
-  CHECK(!err) << "Error creating pixel buffer: " << err;
+  ABSL_CHECK(!err) << "Error creating pixel buffer: " << err;
   return Image(MakeCFHolderAdopting(buffer));
 #else
   CVPixelBufferRef buffer;
@@ -88,7 +88,7 @@ Image ImageMultiPool::GetBufferFromSimplePool(
         }
       },
       &buffer);
-  CHECK(!err) << "Error creating pixel buffer: " << err;
+  ABSL_CHECK(!err) << "Error creating pixel buffer: " << err;
   return Image(MakeCFHolderAdopting(buffer));
 #endif  // TARGET_IPHONE_SIMULATOR
 }
@@ -104,7 +104,9 @@ ImageMultiPool::SimplePoolGpu ImageMultiPool::MakeSimplePoolGpu(
 
 Image ImageMultiPool::GetBufferFromSimplePool(
     IBufferSpec spec, const ImageMultiPool::SimplePoolGpu& pool) {
-  return Image(pool->GetBuffer());
+  auto buffer = pool->GetBuffer();
+  ABSL_CHECK_OK(buffer);
+  return Image(*std::move(buffer));
 }
 
 #endif  // MEDIAPIPE_GPU_BUFFER_USE_CV_PIXEL_BUFFER
@@ -200,8 +202,8 @@ ImageMultiPool::~ImageMultiPool() {
 void ImageMultiPool::RegisterTextureCache(mediapipe::CVTextureCacheType cache) {
   absl::MutexLock lock(&mutex_gpu_);
 
-  CHECK(std::find(texture_caches_.begin(), texture_caches_.end(), cache) ==
-        texture_caches_.end())
+  ABSL_CHECK(std::find(texture_caches_.begin(), texture_caches_.end(), cache) ==
+             texture_caches_.end())
       << "Attempting to register a texture cache twice";
   texture_caches_.emplace_back(cache);
 }
@@ -211,7 +213,7 @@ void ImageMultiPool::UnregisterTextureCache(
   absl::MutexLock lock(&mutex_gpu_);
 
   auto it = std::find(texture_caches_.begin(), texture_caches_.end(), cache);
-  CHECK(it != texture_caches_.end())
+  ABSL_CHECK(it != texture_caches_.end())
       << "Attempting to unregister an unknown texture cache";
   texture_caches_.erase(it);
 }

@@ -27,6 +27,7 @@
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/insets.h"
@@ -68,7 +69,6 @@ SearchResultListView::SearchResultListType CategoryToListType(
       return SearchResultListView::SearchResultListType::kGames;
     case ash::AppListSearchResultCategory::kUnknown:
       NOTREACHED();
-      return SearchResultListView::SearchResultListType::kBestMatch;
   }
 }
 
@@ -78,10 +78,10 @@ SearchResultListView::SearchResultListView(
     AppListViewDelegate* view_delegate,
     SearchResultPageDialogController* dialog_controller,
     SearchResultView::SearchResultViewType search_result_view_type,
-    absl::optional<size_t> productivity_launcher_index)
+    std::optional<size_t> search_result_category_index)
     : SearchResultContainerView(view_delegate),
       results_container_(new views::View),
-      productivity_launcher_index_(productivity_launcher_index),
+      search_result_category_index_(search_result_category_index),
       search_result_view_type_(search_result_view_type) {
   auto* layout = results_container_->SetLayoutManager(
       std::make_unique<views::FlexLayout>());
@@ -90,14 +90,10 @@ SearchResultListView::SearchResultListView(
       u"", CONTEXT_SEARCH_RESULT_CATEGORY_LABEL, STYLE_LAUNCHER));
   title_label_->SetBackgroundColor(SK_ColorTRANSPARENT);
   title_label_->SetAutoColorReadabilityEnabled(false);
-  if (chromeos::features::IsJellyEnabled()) {
-    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
-                                          *title_label_);
-    title_label_->SetEnabledColorId(
-        static_cast<ui::ColorId>(cros_tokens::kCrosSysOnSurfaceVariant));
-  } else {
-    title_label_->SetEnabledColorId(kColorAshTextColorSecondary);
-  }
+  TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
+                                        *title_label_);
+  title_label_->SetEnabledColor(cros_tokens::kCrosSysOnSurfaceVariant);
+
   title_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_label_->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(
       kPreferredTitleTopMargins, kPreferredTitleHorizontalMargins,
@@ -106,7 +102,7 @@ SearchResultListView::SearchResultListView(
   title_label_->SetPaintToLayer();
   title_label_->layer()->SetFillsBoundsOpaquely(false);
 
-  results_container_->AddChildView(title_label_.get());
+  results_container_->AddChildViewRaw(title_label_.get());
 
   size_t result_count =
       ash::SharedAppListConfig::instance()
@@ -122,7 +118,7 @@ SearchResultListView::SearchResultListView(
     results_container_->AddChildView(search_result_views_.back());
     AddObservedResultView(search_result_views_.back());
   }
-  AddChildView(results_container_.get());
+  AddChildViewRaw(results_container_.get());
 }
 
 SearchResultListView::~SearchResultListView() = default;
@@ -199,10 +195,12 @@ void SearchResultListView::SetListType(SearchResultListType list_type) {
   }
 
   // A valid role must be set prior to setting the name.
-  GetViewAccessibility().OverrideRole(ax::mojom::Role::kListBox);
-  GetViewAccessibility().OverrideName(l10n_util::GetStringFUTF16(
-      IDS_ASH_SEARCH_RESULT_CATEGORY_LABEL_ACCESSIBLE_NAME,
-      title_label_->GetText()));
+  GetViewAccessibility().SetRole(ax::mojom::Role::kListBox);
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringFUTF16(
+          IDS_ASH_SEARCH_RESULT_CATEGORY_LABEL_ACCESSIBLE_NAME,
+          std::u16string(title_label_->GetText())),
+      ax::mojom::NameFrom::kAttribute);
 
 #if DCHECK_IS_ON()
   switch (list_type_.value()) {
@@ -268,13 +266,13 @@ void SearchResultListView::OnSelectedResultChanged() {
 }
 
 int SearchResultListView::DoUpdate() {
-  if (productivity_launcher_index_.has_value()) {
+  if (search_result_category_index_.has_value()) {
     std::vector<ash::AppListSearchResultCategory>* ordered_categories =
         AppListModelProvider::Get()->search_model()->ordered_categories();
-    if (productivity_launcher_index_ < ordered_categories->size()) {
+    if (search_result_category_index_ < ordered_categories->size()) {
       enabled_ = true;
       SetListType(CategoryToListType(
-          (*ordered_categories)[productivity_launcher_index_.value()]));
+          (*ordered_categories)[search_result_category_index_.value()]));
     } else {
       enabled_ = false;
       list_type_.reset();
@@ -287,15 +285,16 @@ int SearchResultListView::DoUpdate() {
   }
 
   std::vector<SearchResult*> displayed_results = UpdateResultViews();
-  NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged, false);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kChildrenChanged, false);
 
   auto* notifier = view_delegate()->GetNotifier();
 
-  // TODO(crbug/1216097): replace metrics with something more meaningful.
+  // TODO(crbug.com/40184658): replace metrics with something more meaningful.
   if (notifier) {
     std::vector<AppListNotifier::Result> notifier_results;
     for (const auto* result : displayed_results)
-      notifier_results.emplace_back(result->id(), result->metrics_type());
+      notifier_results.emplace_back(result->id(), result->metrics_type(),
+                                    result->continue_file_suggestion_type());
     notifier->NotifyResultsUpdated(
         list_type_ == SearchResultListType::kAnswerCard
             ? SearchResultDisplayType::kAnswerCard
@@ -326,20 +325,13 @@ std::vector<views::View*> SearchResultListView::GetViewsToAnimate() {
   return results;
 }
 
-void SearchResultListView::Layout() {
+void SearchResultListView::Layout(PassKey) {
   results_container_->SetBoundsRect(GetLocalBounds());
 }
 
-gfx::Size SearchResultListView::CalculatePreferredSize() const {
-  return results_container_->GetPreferredSize();
-}
-
-const char* SearchResultListView::GetClassName() const {
-  return "SearchResultListView";
-}
-
-int SearchResultListView::GetHeightForWidth(int w) const {
-  return results_container_->GetHeightForWidth(w);
+gfx::Size SearchResultListView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
+  return results_container_->GetPreferredSize(available_size);
 }
 
 void SearchResultListView::SearchResultActivated(SearchResultView* view,
@@ -385,7 +377,6 @@ SearchResult::Category SearchResultListView::GetSearchCategory() {
       // Categories are undefined for |KBestMatch|, and
       // |kAnswerCard| list types.
       NOTREACHED();
-      return SearchResult::Category::kUnknown;
     case SearchResultListType::kApps:
       return SearchResult::Category::kApps;
     case SearchResultListType::kAppShortcuts:
@@ -480,5 +471,8 @@ bool SearchResultListView::FilterSearchResultsByCategory(
   return result.category() == category && !result.best_match() &&
          result.display_type() == SearchResultDisplayType::kList;
 }
+
+BEGIN_METADATA(SearchResultListView)
+END_METADATA
 
 }  // namespace ash

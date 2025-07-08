@@ -14,9 +14,9 @@
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
 #include "chrome/test/chromedriver/chrome/page_load_strategy.h"
 #include "chrome/test/chromedriver/chrome/status.h"
+#include "chrome/test/chromedriver/chrome/web_view.h"
 
 class DevToolsClient;
-class JavaScriptDialogManager;
 class Status;
 class Timeout;
 
@@ -25,13 +25,11 @@ class NavigationTracker : public PageLoadStrategy {
  public:
   NavigationTracker(DevToolsClient* client,
                     WebView* web_view,
-                    const JavaScriptDialogManager* dialog_manager,
                     const bool is_eager = false);
 
   NavigationTracker(DevToolsClient* client,
                     LoadingState known_state,
                     WebView* web_view,
-                    const JavaScriptDialogManager* dialog_manager,
                     const bool is_eager = false);
 
   NavigationTracker(const NavigationTracker&) = delete;
@@ -76,7 +74,6 @@ class NavigationTracker : public PageLoadStrategy {
   // May be empty to signify current frame is
   // no longer valid
   std::string current_frame_id_;
-  raw_ptr<const JavaScriptDialogManager> dialog_manager_;
   const bool is_eager_;
   bool timed_out_;
   std::unordered_map<std::string, LoadingState> frame_to_state_map_;

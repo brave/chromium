@@ -19,7 +19,6 @@
 
 namespace views {
 class Combobox;
-class ImageButton;
 class RadioButton;
 class LabelButton;
 }  // namespace views
@@ -36,9 +35,10 @@ class LabelButton;
 class ContentSettingBubbleContents : public content::WebContentsObserver,
                                      public views::BubbleDialogDelegateView,
                                      public ContentSettingBubbleModel::Owner {
+  METADATA_HEADER(ContentSettingBubbleContents, views::BubbleDialogDelegateView)
+
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kMainElementId);
-  METADATA_HEADER(ContentSettingBubbleContents);
   ContentSettingBubbleContents(
       std::unique_ptr<ContentSettingBubbleModel> content_setting_bubble_model,
       content::WebContents* web_contents,
@@ -68,6 +68,10 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
     content_setting_bubble_model_->OnLearnMoreClicked();
   }
 
+  std::u16string get_message_for_test() const {
+    return content_setting_bubble_model_->bubble_content().message;
+  }
+
  protected:
   // views::WidgetDelegate:
   std::u16string GetWindowTitle() const override;
@@ -75,13 +79,9 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
 
   // views::BubbleDialogDelegateView:
   void Init() override;
-  void OnThemeChanged() override;
 
  private:
   class ListItemContainer;
-
-  // Applies coloring to the learn more button.
-  void StyleLearnMoreButton();
 
   // Create the extra view for this dialog, which contains any subset of: a
   // "learn more" button and a "manage" button.
@@ -102,11 +102,11 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
 
   raw_ptr<ListItemContainer, DanglingUntriaged> list_item_container_ = nullptr;
 
-  typedef std::vector<views::RadioButton*> RadioGroup;
+  typedef std::vector<raw_ptr<views::RadioButton, VectorExperimental>>
+      RadioGroup;
   RadioGroup radio_group_;
   raw_ptr<views::LabelButton, DanglingUntriaged> manage_button_ = nullptr;
   raw_ptr<views::Checkbox, DanglingUntriaged> manage_checkbox_ = nullptr;
-  raw_ptr<views::ImageButton, DanglingUntriaged> learn_more_button_ = nullptr;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_CONTENT_SETTING_BUBBLE_CONTENTS_H_

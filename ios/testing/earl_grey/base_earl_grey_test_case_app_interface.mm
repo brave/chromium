@@ -7,13 +7,9 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
+#import "base/apple/foundation_util.h"
 #import "base/logging.h"
-#import "base/mac/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface UIApplication (Testing)
 - (void)_terminateWithStatus:(int)status;
@@ -22,15 +18,25 @@
 @implementation BaseEarlGreyTestCaseAppInterface
 
 + (void)logMessage:(NSString*)message {
-  DLOG(WARNING) << base::SysNSStringToUTF8(message);
+  LOG(WARNING) << base::SysNSStringToUTF8(message);
 }
 
 + (void)enableFastAnimation {
   for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
     UIWindowScene* windowScene =
-        base::mac::ObjCCastStrict<UIWindowScene>(scene);
+        base::apple::ObjCCastStrict<UIWindowScene>(scene);
     for (UIWindow* window in windowScene.windows) {
       [[window layer] setSpeed:100];
+    }
+  }
+}
+
++ (void)disableFastAnimation {
+  for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+    UIWindowScene* windowScene =
+        base::apple::ObjCCastStrict<UIWindowScene>(scene);
+    for (UIWindow* window in windowScene.windows) {
+      [[window layer] setSpeed:1];
     }
   }
 }

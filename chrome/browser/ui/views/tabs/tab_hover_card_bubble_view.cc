@@ -8,16 +8,20 @@
 #include <ios>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/containers/lru_cache.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/performance_controls/tab_resource_usage_tab_helper.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_tab_data.h"
 #include "chrome/browser/ui/tabs/tab_renderer_data.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
 #include "chrome/browser/ui/thumbnails/thumbnail_image.h"
@@ -26,16 +30,16 @@
 #include "chrome/browser/ui/views/tabs/fade_label_view.h"
 #include "chrome/browser/ui/views/tabs/filename_elider.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
-#include "chrome/browser/ui/views/tabs/tab_hover_card_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_style_views.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/performance_manager/public/features.h"
+#include "components/collaboration/public/messaging/message.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
@@ -66,38 +70,21 @@ namespace {
 
 // Maximum number of lines that a title label occupies.
 constexpr int kHoverCardTitleMaxLines = 2;
-
-constexpr int kHorizontalMargin = 18;
-constexpr int kVerticalMargin = 10;
-constexpr int kFootnoteVerticalMargin = 8;
-constexpr auto kTitleMargins =
-    gfx::Insets::VH(kVerticalMargin, kHorizontalMargin);
-constexpr auto kAlertMargins =
-    gfx::Insets::VH(kFootnoteVerticalMargin, kHorizontalMargin);
-constexpr auto kTextAreaRefreshMargins = gfx::Insets::VH(12, 12);
-
-std::unique_ptr<views::Label> CreateAlertView(const TabAlertState& state) {
-  const int text_style = features::IsChromeRefresh2023()
-                             ? views::style::STYLE_BODY_4
-                             : views::style::STYLE_PRIMARY;
-  auto alert_state_label = std::make_unique<views::Label>(
-      std::u16string(), views::style::CONTEXT_DIALOG_BODY_TEXT, text_style);
-  alert_state_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  alert_state_label->SetMultiLine(true);
-  alert_state_label->SetVisible(true);
-  alert_state_label->SetText(chrome::GetTabAlertStateText(state));
-  return alert_state_label;
-}
+// Spacing used to separate the title and domain labels.
+constexpr int kTitleDomainSpacing = 4;
+// Margins space surrounding the text (title and domain) in the hover card.
+constexpr auto kTextMargins = gfx::Insets::VH(12, 12);
 
 // Calculates an appropriate size to display a preview image in the hover card.
-// For the vast majority of images, the |preferred_size| is used, but extremely
+// For the vast majority of images, the `preferred_size` is used, but extremely
 // tall or wide images use the image size instead, centering in the available
 // space.
 gfx::Size GetPreviewImageSize(gfx::Size preview_size,
                               gfx::Size preferred_size) {
   DCHECK(!preferred_size.IsEmpty());
-  if (preview_size.IsEmpty())
+  if (preview_size.IsEmpty()) {
     return preview_size;
+  }
   const float preview_aspect_ratio =
       static_cast<float>(preview_size.width()) / preview_size.height();
   const float preferred_aspect_ratio =
@@ -111,8 +98,9 @@ gfx::Size GetPreviewImageSize(gfx::Size preview_size,
   // tuned).
   constexpr float kMinStretchRatio = 0.667f;
   constexpr float kMaxStretchRatio = 1.5f;
-  if (ratio >= kMinStretchRatio && ratio <= kMaxStretchRatio)
+  if (ratio >= kMinStretchRatio && ratio <= kMaxStretchRatio) {
     return preferred_size;
+  }
   return preview_size;
 }
 }  // namespace
@@ -125,6 +113,8 @@ gfx::Size GetPreviewImageSize(gfx::Size preview_size,
 class TabHoverCardBubbleView::ThumbnailView
     : public views::View,
       public views::AnimationDelegateViews {
+  METADATA_HEADER(ThumbnailView, views::View)
+
  public:
   explicit ThumbnailView(TabHoverCardBubbleView* bubble_view)
       : AnimationDelegateViews(this),
@@ -142,6 +132,10 @@ class TabHoverCardBubbleView::ThumbnailView
     image_fading_out_->layer()->SetOpacity(0.0f);
 
     SetLayoutManager(std::make_unique<views::FillLayout>());
+  }
+
+  void SetAnimationEnabled(bool animation_enabled) {
+    animation_enabled_ = animation_enabled;
   }
 
   // Sets the appropriate rounded corners for the preview image, for platforms
@@ -164,15 +158,17 @@ class TabHoverCardBubbleView::ThumbnailView
   // Clears the preview image and replaces it with a placeholder image. The old
   // image will be faded out.
   void SetPlaceholderImage() {
-    if (image_type_ == ImageType::kPlaceholder)
+    if (image_type_ == ImageType::kPlaceholder) {
       return;
+    }
 
     // Color provider may be null if there is no associated widget. In that case
     // there is nothing to render, and we can't get default colors to render
     // with anyway, so bail out.
     const auto* const color_provider = GetColorProvider();
-    if (!color_provider)
+    if (!color_provider) {
       return;
+    }
 
     StartFadeOut();
 
@@ -193,8 +189,9 @@ class TabHoverCardBubbleView::ThumbnailView
   }
 
   void ClearImage() {
-    if (image_type_ == ImageType::kNone)
+    if (image_type_ == ImageType::kNone) {
       return;
+    }
 
     StartFadeOut();
     SetImage(target_tab_image_, gfx::ImageSkia(), ImageType::kNone);
@@ -223,12 +220,12 @@ class TabHoverCardBubbleView::ThumbnailView
   void SetImage(views::ImageView* image_view,
                 gfx::ImageSkia image,
                 ImageType image_type) {
-    image_view->SetImage(image);
+    image_view->SetImage(ui::ImageModel::FromImageSkia(image));
     switch (image_type) {
       case ImageType::kNone:
       case ImageType::kNoneButWaiting:
         image_view->SetBackground(
-            views::CreateSolidBackground(bubble_view_->color()));
+            views::CreateSolidBackground(bubble_view_->background_color()));
         break;
       case ImageType::kPlaceholder:
         image_view->SetVerticalAlignment(views::ImageView::Alignment::kCenter);
@@ -249,7 +246,8 @@ class TabHoverCardBubbleView::ThumbnailView
   // views::View:
   gfx::Size GetMinimumSize() const override { return gfx::Size(); }
 
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
     return image_type_ == ImageType::kNone
                ? gfx::Size()
                : bubble_view_->tab_style_->GetPreviewImageSize();
@@ -282,11 +280,15 @@ class TabHoverCardBubbleView::ThumbnailView
     // ColorProvider is needed for fading out placeholder images. (Note that
     // GetColorProvider() returns nullptr if there is no widget.)
     // See: crbug.com/1246914
-    if (!GetVisible() || !GetColorProvider())
+    if (!GetVisible() || !GetColorProvider()) {
       return;
+    }
 
-    if (!GetPreviewImageCrossfadeStart().has_value())
+    // For consistency, always bail out with a "don't crossfade" response if
+    // animations are disabled.
+    if (!animation_enabled_ || !GetPreviewImageCrossfadeStart().has_value()) {
       return;
+    }
 
     gfx::ImageSkia old_image = target_tab_image_->GetImage();
 
@@ -296,8 +298,9 @@ class TabHoverCardBubbleView::ThumbnailView
       // underneath.
       const double current_value =
           image_transition_animation_.GetCurrentValue();
-      if (current_value <= 0.5)
+      if (current_value <= 0.5) {
         return;
+      }
 
       // Currently we have:
       //  - old preview at `current_value` opacity
@@ -320,6 +323,8 @@ class TabHoverCardBubbleView::ThumbnailView
 
   const raw_ptr<TabHoverCardBubbleView> bubble_view_;
 
+  bool animation_enabled_ = true;
+
   // Displays the image that we are trying to display for the target/current
   // tab. Placed under `image_fading_out_` so that it is revealed as the
   // previous image fades out.
@@ -340,6 +345,9 @@ class TabHoverCardBubbleView::ThumbnailView
   ImageType image_type_ = ImageType::kNone;
 };
 
+BEGIN_METADATA(TabHoverCardBubbleView, ThumbnailView)
+END_METADATA
+
 // TabHoverCardBubbleView:
 // ----------------------------------------------------------
 
@@ -348,17 +356,17 @@ constexpr base::TimeDelta TabHoverCardBubbleView::kHoverCardSlideDuration;
 
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(TabHoverCardBubbleView,
                                       kHoverCardBubbleElementId);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(TabHoverCardBubbleView,
+                                      kHoverCardDomainLabelElementId);
 
-TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
+TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab,
+                                               const InitParams& params)
     : BubbleDialogDelegateView(tab,
                                views::BubbleBorder::TOP_LEFT,
                                views::BubbleBorder::STANDARD_SHADOW),
       tab_style_(TabStyle::Get()),
-      discard_tab_treatment_enabled_(base::FeatureList::IsEnabled(
-          performance_manager::features::kDiscardedTabTreatment)),
-      memory_usage_in_hovercards_enabled_(base::FeatureList::IsEnabled(
-          performance_manager::features::kMemoryUsageInHovercards)) {
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+      bubble_params_(params) {
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 
   // Remove the accessible role so that hover cards are not read when they
   // appear because tabs handle accessibility text.
@@ -372,7 +380,7 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
   // not become active. Setting this to false creates the need to explicitly
   // hide the hovercard on press, touch, and keyboard events.
   SetCanActivate(false);
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   set_accept_events(false);
 #endif
 
@@ -380,28 +388,25 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
   // navigating through the tab strip.
   set_focus_traversable_from_anchor_view(false);
 
-  if (features::IsChromeRefresh2023()) {
-    title_label_ = AddChildView(std::make_unique<FadeLabelView>(
-        kHoverCardTitleMaxLines, CONTEXT_TAB_HOVER_CARD_TITLE,
-        views::style::STYLE_BODY_3_EMPHASIS));
-    domain_label_ = AddChildView(std::make_unique<FadeLabelView>(
-        1, views::style::CONTEXT_DIALOG_BODY_TEXT, views::style::STYLE_BODY_4));
-    domain_label_->SetEnabledColorId(kColorTabHoverCardSecondaryText);
-  } else {
-    title_label_ = AddChildView(std::make_unique<FadeLabelView>(
-        kHoverCardTitleMaxLines, CONTEXT_TAB_HOVER_CARD_TITLE));
-    domain_label_ = AddChildView(std::make_unique<FadeLabelView>(
-        1, views::style::CONTEXT_DIALOG_BODY_TEXT));
-  }
+  title_label_ = AddChildView(std::make_unique<FadeLabelView>(
+      kHoverCardTitleMaxLines, CONTEXT_TAB_HOVER_CARD_TITLE,
+      views::style::STYLE_BODY_3_EMPHASIS));
+  domain_label_ = AddChildView(std::make_unique<FadeLabelView>(
+      1, views::style::CONTEXT_DIALOG_BODY_TEXT, views::style::STYLE_BODY_4));
+  domain_label_->SetEnabledColor(kColorTabHoverCardSecondaryText);
 
-  if (TabHoverCardController::AreHoverCardImagesEnabled()) {
+  if (bubble_params_.show_image_preview) {
     thumbnail_view_ = AddChildView(std::make_unique<ThumbnailView>(this));
+    thumbnail_view_->SetAnimationEnabled(bubble_params_.use_animation);
     thumbnail_view_->SetRoundedCorners(true, corner_radius_);
   }
 
-  if (discard_tab_treatment_enabled_ || memory_usage_in_hovercards_enabled_) {
-    footer_view_ = AddChildView(std::make_unique<FooterView>());
-  }
+  footer_view_ = AddChildView(std::make_unique<FooterView>());
+  footer_view_->SetProperty(
+      views::kFlexBehaviorKey,
+      views::FlexSpecification(
+          footer_view_->flex_layout()->GetDefaultFlexRule())
+          .WithWeight(0));
 
   // Set up layout.
 
@@ -416,16 +421,16 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
   // label. In those cases, we need to adjust the bottom margin of the title
   // element because it is no longer above another text element and needs a
   // bottom margin.
-  const bool show_domain = tab->controller()->ShowDomainInHoverCards();
 
-  gfx::Insets title_margins =
-      features::IsChromeRefresh2023() ? kTextAreaRefreshMargins : kTitleMargins;
-  domain_label_->SetVisible(show_domain);
-  if (show_domain) {
-    const gfx::Insets domain_margins = gfx::Insets::TLBR(
-        0, title_margins.left(), title_margins.bottom(), title_margins.right());
-    domain_label_->SetProperty(views::kMarginsKey, domain_margins);
+  gfx::Insets title_margins = kTextMargins;
+  domain_label_->SetVisible(bubble_params_.show_domain);
+  domain_label_->SetProperty(views::kElementIdentifierKey,
+                             kHoverCardDomainLabelElementId);
+  if (bubble_params_.show_domain) {
     title_margins.set_bottom(0);
+    gfx::Insets domain_margins = kTextMargins;
+    domain_margins.set_top(kTitleDomainSpacing);
+    domain_label_->SetProperty(views::kMarginsKey, domain_margins);
   }
 
   title_label_->SetProperty(views::kMarginsKey, title_margins);
@@ -446,14 +451,11 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
 
   views::BubbleDialogDelegateView::CreateBubble(this);
   set_adjust_if_offscreen(true);
-  const gfx::Insets alert_margins =
-      features::IsChromeRefresh2023() ? kTextAreaRefreshMargins : kAlertMargins;
-  GetBubbleFrameView()->SetFootnoteMargins(alert_margins);
   GetBubbleFrameView()->SetPreferredArrowAdjustment(
       views::BubbleFrameView::PreferredArrowAdjustment::kOffset);
   GetBubbleFrameView()->set_hit_test_transparent(true);
 
-  GetBubbleFrameView()->SetCornerRadius(corner_radius_);
+  GetBubbleFrameView()->SetRoundedCorners(gfx::RoundedCornersF(corner_radius_));
 
   // Placeholder image should be used when there is no image data for the
   // given tab. Otherwise don't flash the placeholder while we wait for the
@@ -462,9 +464,7 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
   // Note that this code has to go after CreateBubble() above, since setting up
   // the placeholder image and background color require a ColorProvider, which
   // is only available once this View has been added to its widget.
-  if (thumbnail_view_ &&
-      (!tab->data().thumbnail || !tab->data().thumbnail->has_data()) &&
-      !tab->IsActive()) {
+  if (thumbnail_view_ && !tab->HasThumbnail() && !tab->IsActive()) {
     thumbnail_view_->SetPlaceholderImage();
   }
 
@@ -477,18 +477,52 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab)
 
 TabHoverCardBubbleView::~TabHoverCardBubbleView() = default;
 
+CollaborationMessagingRowData
+TabHoverCardBubbleView::GetCollaborationMessagingData(
+    const TabRendererData& tab_data) {
+  using collaboration::messaging::CollaborationEvent;
+
+  CollaborationMessagingRowData collaboration_messaging_data;
+  collaboration_messaging_data.should_show_collaboration_messaging = false;
+
+  auto data = tab_data.collaboration_messaging;
+  if (!data || !data->HasMessage()) {
+    return collaboration_messaging_data;
+  }
+
+  switch (data->collaboration_event()) {
+    case CollaborationEvent::TAB_ADDED:
+      collaboration_messaging_data.text = l10n_util::GetStringFUTF16(
+          IDS_DATA_SHARING_RECENT_ACTIVITY_MEMBER_ADDED_THIS_TAB,
+          data->given_name());
+      break;
+    case CollaborationEvent::TAB_UPDATED:
+      collaboration_messaging_data.text = l10n_util::GetStringFUTF16(
+          IDS_DATA_SHARING_RECENT_ACTIVITY_MEMBER_CHANGED_THIS_TAB,
+          data->given_name());
+      break;
+    default:
+      NOTREACHED();
+  }
+
+  collaboration_messaging_data.avatar = data->GetHoverCardImage(GetWidget());
+  collaboration_messaging_data.should_show_collaboration_messaging = true;
+
+  return collaboration_messaging_data;
+}
+
 void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
   // Preview image is never visible for the active tab.
   if (thumbnail_view_) {
-    if (tab->IsActive())
+    if (tab->IsActive() || (tab->IsDiscarded() && !tab->HasThumbnail())) {
       thumbnail_view_->ClearImage();
-    else
+    } else {
       thumbnail_view_->SetWaitingForImage();
+    }
   }
 
   std::u16string title;
-  absl::optional<TabAlertState> old_alert_state = alert_state_;
-  TabRendererData tab_data = tab->data();
+  const TabRendererData& tab_data = tab->data();
   GURL domain_url;
   // Use committed URL to determine if no page has yet loaded, since the title
   // can be blank for some web pages.
@@ -497,7 +531,7 @@ void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
     title = tab_data.IsCrashed()
                 ? l10n_util::GetStringUTF16(IDS_HOVER_CARD_CRASHED_TITLE)
                 : l10n_util::GetStringUTF16(IDS_TAB_LOADING_TITLE);
-    alert_state_ = absl::nullopt;
+    alert_state_ = std::nullopt;
   } else {
     domain_url = tab_data.last_committed_url;
     title = tab_data.title;
@@ -538,30 +572,43 @@ void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
   }
 
   title_label_->SetData({title, is_filename});
-  domain_label_->SetData({domain, false});
+  domain_label_->SetData({domain, false, gfx::ELIDE_HEAD});
 
-  bool show_footer = alert_state_.has_value();
-  if (discard_tab_treatment_enabled_ || memory_usage_in_hovercards_enabled_) {
-    const bool show_discard_status =
-        tab_data.should_show_discard_status && discard_tab_treatment_enabled_;
-    const uint64_t tab_memory_usage_in_bytes =
-        tab_data.tab_resource_usage
-            ? tab_data.tab_resource_usage->memory_usage_in_bytes()
-            : 0;
-    show_footer =
-        show_footer || show_discard_status || tab_memory_usage_in_bytes > 0;
-    const int hover_card_width = views::View::GetContentsBounds().width();
-    footer_view_->SetAlertData({alert_state_, hover_card_width});
-    footer_view_->SetPerformanceData(
-        {show_discard_status, tab_data.discarded_memory_savings_in_bytes,
-         tab_memory_usage_in_bytes, hover_card_width});
-  } else {
-    if (alert_state_ != old_alert_state) {
-      std::unique_ptr<views::Label> alert_label =
-          alert_state_.has_value() ? CreateAlertView(*alert_state_) : nullptr;
-      GetBubbleFrameView()->SetFootnoteView(std::move(alert_label));
-    }
-  }
+  CollaborationMessagingRowData collaboration_messaging_data =
+      GetCollaborationMessagingData(tab_data);
+  bool show_collaboration_messaging =
+      collaboration_messaging_data.should_show_collaboration_messaging;
+
+  // Collaboration messaging takes precedence over discard status for shared
+  // tabs.
+  const bool show_discard_status =
+      !show_collaboration_messaging && tab_data.should_show_discard_status;
+  const int64_t tab_memory_usage_in_bytes =
+      tab_data.tab_resource_usage
+          ? tab_data.tab_resource_usage->memory_usage_in_bytes()
+          : 0;
+  const bool is_high_memory_usage =
+      tab_data.tab_resource_usage
+          ? tab_data.tab_resource_usage->is_high_memory_usage()
+          : false;
+  // High memory usage notification is considered a tab alert. Show it even
+  // if the memory usage in hover cards pref is disabled.
+  // However, collaboration messaging takes precedence over memory usage for
+  // shared tabs.
+  const bool show_memory_usage =
+      !show_collaboration_messaging && !show_discard_status &&
+      ((bubble_params_.show_memory_usage && tab_memory_usage_in_bytes > 0) ||
+       is_high_memory_usage);
+  const bool show_footer = alert_state_.has_value() || show_discard_status ||
+                           show_memory_usage || show_collaboration_messaging;
+
+  footer_view_->SetAlertData({alert_state_, show_discard_status,
+                              tab_data.discarded_memory_savings_in_bytes});
+
+  footer_view_->SetPerformanceData(
+      {show_memory_usage, is_high_memory_usage, tab_memory_usage_in_bytes});
+
+  footer_view_->SetCollaborationMessagingData(collaboration_messaging_data);
 
   if (thumbnail_view_) {
     // We only clip the corners of the fade image when there isn't a footer.
@@ -572,9 +619,7 @@ void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
 void TabHoverCardBubbleView::SetTextFade(double percent) {
   title_label_->SetFade(percent);
   domain_label_->SetFade(percent);
-  if (footer_view_) {
-    footer_view_->SetFade(percent);
-  }
+  footer_view_->SetFade(percent);
 }
 
 void TabHoverCardBubbleView::SetTargetTabImage(gfx::ImageSkia preview_image) {
@@ -589,35 +634,41 @@ void TabHoverCardBubbleView::SetPlaceholderImage() {
   thumbnail_view_->SetPlaceholderImage();
 }
 
-std::u16string TabHoverCardBubbleView::GetTitleTextForTesting() const {
+std::u16string_view TabHoverCardBubbleView::GetTitleTextForTesting() const {
   return title_label_->GetText();
 }
 
-std::u16string TabHoverCardBubbleView::GetDomainTextForTesting() const {
+std::u16string_view TabHoverCardBubbleView::GetDomainTextForTesting() const {
   return domain_label_->GetText();
 }
 
-// static
-absl::optional<double> TabHoverCardBubbleView::GetPreviewImageCrossfadeStart() {
-  // For consistency, always bail out with a "don't crossfade" response if
-  // animations are disabled.
-  if (!TabHoverCardController::UseAnimations())
-    return absl::nullopt;
+views::View* TabHoverCardBubbleView::GetThumbnailViewForTesting() {
+  return thumbnail_view_;
+}
 
+FooterView* TabHoverCardBubbleView::GetFooterViewForTesting() {
+  return footer_view_;
+}
+
+// static
+std::optional<double> TabHoverCardBubbleView::GetPreviewImageCrossfadeStart() {
   static const double start_percent = base::GetFieldTrialParamByFeatureAsDouble(
       features::kTabHoverCardImages,
       features::kTabHoverCardImagesCrossfadePreviewAtParameterName, 0.25);
   return start_percent >= 0.0
-             ? absl::make_optional(std::clamp(start_percent, 0.0, 1.0))
-             : absl::nullopt;
+             ? std::make_optional(std::clamp(start_percent, 0.0, 1.0))
+             : std::nullopt;
 }
 
-gfx::Size TabHoverCardBubbleView::CalculatePreferredSize() const {
-  gfx::Size preferred_size = GetLayoutManager()->GetPreferredSize(this);
-  preferred_size.set_width(tab_style_->GetPreviewImageSize().width());
+gfx::Size TabHoverCardBubbleView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
+  const int width = tab_style_->GetPreviewImageSize().width();
+  const int height =
+      GetLayoutManager()->GetPreferredHeightForWidth(this, width);
+  const gfx::Size preferred_size(width, height);
   DCHECK(!preferred_size.IsEmpty());
   return preferred_size;
 }
 
-BEGIN_METADATA(TabHoverCardBubbleView, views::BubbleDialogDelegateView)
+BEGIN_METADATA(TabHoverCardBubbleView)
 END_METADATA

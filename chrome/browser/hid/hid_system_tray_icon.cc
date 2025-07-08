@@ -8,7 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/device_notifications/device_system_tray_icon_renderer.h"
 #include "chrome/browser/hid/hid_connection_tracker_factory.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/vector_icons/vector_icons.h"
 #include "extensions/buildflags/buildflags.h"
@@ -16,9 +16,8 @@
 #include "ui/gfx/paint_vector_icon.h"
 
 // static
-gfx::ImageSkia HidSystemTrayIcon::GetIcon() {
-  return gfx::CreateVectorIcon(vector_icons::kVideogameAssetIcon,
-                               gfx::kGoogleGrey300);
+const gfx::VectorIcon& HidSystemTrayIcon::GetIcon() {
+  return vector_icons::kVideogameAssetIcon;
 }
 
 // static
@@ -27,8 +26,9 @@ std::u16string HidSystemTrayIcon::GetTitleLabel(size_t num_origins,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   return l10n_util::GetPluralStringFUTF16(IDS_WEBHID_SYSTEM_TRAY_ICON_TITLE,
                                           static_cast<int>(num_connections));
+#else
+  NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-  NOTREACHED_NORETURN();
 }
 
 // static

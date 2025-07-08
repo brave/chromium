@@ -33,20 +33,21 @@ CWSInfoServiceFactory::CWSInfoServiceFactory()
           "CWSInfoService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
+              // TODO(crbug.com/40257657): Audit whether these should be
+              // redirected or should have their own instance.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(extensions::ExtensionPrefsFactory::GetInstance());
   DependsOn(extensions::ExtensionRegistryFactory::GetInstance());
 }
 
-KeyedService* CWSInfoServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+CWSInfoServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  if (base::FeatureList::IsEnabled(kCWSInfoService) == false) {
-    return nullptr;
-  }
-  return new CWSInfoService(Profile::FromBrowserContext(context));
+  return std::make_unique<CWSInfoService>(Profile::FromBrowserContext(context));
 }
 
 bool CWSInfoServiceFactory::ServiceIsCreatedWithBrowserContext() const {
@@ -60,6 +61,7 @@ bool CWSInfoServiceFactory::ServiceIsNULLWhileTesting() const {
 void CWSInfoServiceFactory::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterTimePref(prefs::kCWSInfoTimestamp, base::Time());
+  registry->RegisterTimePref(prefs::kCWSInfoFetchErrorTimestamp, base::Time());
 }
 
 }  // namespace extensions

@@ -6,11 +6,12 @@
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_CONTEXT_MENU_MODEL_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/base/models/simple_menu_model.h"
+#include "extensions/common/extension_id.h"
+#include "ui/menus/simple_menu_model.h"
 #include "url/origin.h"
 
 class Browser;
@@ -24,11 +25,19 @@ namespace extensions {
 class ContextMenuMatcher;
 class Extension;
 class ExtensionAction;
+class SidePanelService;
 
 // The context menu model for extension icons.
 class ExtensionContextMenuModel : public ui::SimpleMenuModel,
                                   public ui::SimpleMenuModel::Delegate {
  public:
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kHomePageMenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToggleVisibilityMenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPageAccessMenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPageAccessRunOnClickSubmenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPageAccessRunOnSiteSubmenuItem);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kPageAccessRunOnAllSitesSubmenuItem);
+
   enum MenuEntries {
     HOME_PAGE = 0,
     OPTIONS,
@@ -47,6 +56,7 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
     PAGE_ACCESS_PERMISSIONS_PAGE,
     VIEW_WEB_PERMISSIONS,
     POLICY_INSTALLED,
+    TOGGLE_SIDE_PANEL_VISIBILITY,
     // NOTE: If you update this, you probably need to update the
     // ContextMenuAction enum below.
   };
@@ -74,7 +84,10 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
     kPageAccessPermissionsPage = 12,
     kViewWebPermissions = 13,
     kPolicyInstalled = 14,
-    kMaxValue = kPolicyInstalled,
+    kToggleSidePanelVisibility = 15,
+    kMaxValue = kToggleSidePanelVisibility,
+    // NOTE: Please update ExtensionContextMenuAction in enums.xml if you modify
+    // this enum.
   };
 
   // Location where the context menu is open from.
@@ -89,13 +102,13 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
     virtual void InspectPopup() = 0;
 
    protected:
-    virtual ~PopupDelegate() {}
+    virtual ~PopupDelegate() = default;
   };
 
   // Creates a menu model for the given extension. If
   // prefs::kExtensionsUIDeveloperMode is enabled then a menu item
   // will be shown for "Inspect Popup" which, when selected, will cause
-  // ShowPopupForDevToolsWindow() to be called on |delegate|.
+  // ShowPopupForDevToolsWindow() to be called on `delegate`.
   ExtensionContextMenuModel(const Extension* extension,
                             Browser* browser,
                             bool is_pinned,
@@ -133,13 +146,6 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   void CreatePageAccessItems(const Extension* extension,
                              content::WebContents* web_contents);
 
-  // Returns true if the given page access command is enabled in the menu.
-  bool IsPageAccessCommandEnabled(const Extension& extension,
-                                  int command_id) const;
-
-  void HandlePageAccessCommand(int command_id,
-                               const Extension* extension) const;
-
   // Gets the extension we are displaying the menu for. Returns NULL if the
   // extension has been uninstalled and no longer exists.
   const Extension* GetExtension() const;
@@ -147,11 +153,18 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   // Returns the active web contents.
   content::WebContents* GetActiveWebContents() const;
 
+  // Returns the side panel service for the current profile.
+  SidePanelService* GetSidePanelService() const;
+
   // Appends the extension's context menu items.
   void AppendExtensionItems();
 
+  // Appends the side panel menu item to the context menu if `extension` has one
+  // it can open.
+  void AddSidePanelEntryIfPresent(const Extension& extension);
+
   // A copy of the extension's id.
-  std::string extension_id_;
+  ExtensionId extension_id_;
 
   // Whether the menu is for a component extension.
   bool is_component_;
@@ -177,12 +190,12 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
 
   // The action taken by the menu. Has a valid value when the menu is being
   // shown.
-  absl::optional<ContextMenuAction> action_taken_;
+  std::optional<ContextMenuAction> action_taken_;
 
   ContextMenuSource source_;
 
-  // The origin used for populating the page access items.
-  // TODO(crbug.com/1435117): Web contents may change while the menu is open,
+  // The origin used to populate the context menu's content.
+  // TODO(crbug.com/40265043): Web contents may change while the menu is open,
   // which may affect the context menu contents. We should dynamically update
   // the context menu, or close it when this happens.
   url::Origin origin_;

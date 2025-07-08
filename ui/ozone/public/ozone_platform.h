@@ -15,7 +15,6 @@
 #include "base/message_loop/message_pump_type.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "mojo/public/cpp/bindings/binder_map.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/platform_window/platform_window.h"
@@ -25,8 +24,12 @@ namespace display {
 class NativeDisplayDelegate;
 }
 
+namespace mojo {
+class BinderMap;
+}  // namespace mojo
+
 namespace ui {
-enum class DomCode;
+enum class DomCode : uint32_t;
 enum class PlatformKeyboardHookTypes;
 
 class CursorFactory;
@@ -36,9 +39,6 @@ class InputMethod;
 class InputController;
 class KeyEvent;
 class OverlayManagerOzone;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-class PalmDetector;
-#endif
 class PlatformClipboard;
 class PlatformGLEGLUtility;
 class PlatformGlobalShortcutListener;
@@ -46,6 +46,7 @@ class PlatformGlobalShortcutListenerDelegate;
 class PlatformKeyboardHook;
 class PlatformMenuUtils;
 class PlatformScreen;
+class PlatformSessionManager;
 class PlatformUserInputMonitor;
 class PlatformUtils;
 class SurfaceFactoryOzone;
@@ -95,6 +96,13 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // TODO(fangzhoug): Some Chrome OS boards still use the legacy video
     // decoder. Remove this once ChromeOSVideoDecoder is on everywhere.
     bool allow_sync_and_real_buffer_page_flip_testing = false;
+
+    // TODO(b/331237773): Unfortunately, the kHandleOverlaysSwapFailure feature
+    // cannot be checked by the overlay manager in ozone/drm directly as it
+    // creates a circular dependency that gn complains about. That's why this
+    // control bool is here. Remove this once kHandleOverlaysSwapFailure is
+    // removed and DrmOverlayManager is always handling swap failures.
+    bool handle_overlays_swap_failure = false;
   };
 
   // Struct used to indicate platform properties.
@@ -131,10 +139,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // If true, the platform shows and updates the drag image.
     bool platform_shows_drag_image = true;
 
-    // Linux only, but see a TODO in BrowserDesktopWindowTreeHostLinux.
-    // Determines whether the platform supports the global application menu.
-    bool supports_global_application_menus = false;
-
     // Determines if the application modal dialogs should use the event blocker
     // to allow the only browser window receiving UI events.
     bool app_modal_dialogs_use_event_blocker = false;
@@ -143,27 +147,25 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // back via gpu extra info.
     bool fetch_buffer_formats_for_gmb_on_gpu = false;
 
-#if BUILDFLAG(IS_LINUX)
-    // TODO(crbug.com/1116701): add vaapi support for other Ozone platforms on
-    // Linux. At the moment, VA-API Linux implementation supports only X11
-    // backend. This implementation must be refactored to support Ozone
-    // properly. As a temporary solution, VA-API on Linux checks if vaapi is
-    // supported (which implicitly means that it is Ozone/X11).
-    bool supports_vaapi = false;
-#endif
-
     // Indicates that the platform allows client applications to manipulate
     // global screen coordinates. Wayland, for example, disallow it by design.
     bool supports_global_screen_coordinates = true;
+
+    // Whether the platform supports system/shell integrated color picker
+    // dialog. An example is XDG Desktop Portal provided PickColor dialog.
+    bool supports_color_picker_dialog = true;
+
+    // Whether the platform supports drag and drop as an entrypoint to create
+    // new Split Views.
+    bool supports_split_view_drag_and_drop = true;
   };
 
   // Groups platform properties that can only be known at run time.
   struct PlatformRuntimeProperties {
     PlatformRuntimeProperties();
 
-    // Values to override the value of the
-    // supports_server_side_window_decorations property in tests.
-    enum class SupportsSsdForTest {
+    // Values to override the value of a property in tests.
+    enum class SupportsForTest {
       kNotSet,  // The property is not overridden.
       kYes,     // The platform should return true.
       kNo,      // The plafrorm should return false.
@@ -173,18 +175,18 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // via overlays. If overlays are not supported the promotion and validation
     // logic can be skipped.
     bool supports_overlays = false;
+
     // Indicates whether the platform supports server-side window decorations.
     bool supports_server_side_window_decorations = true;
+
+    // Indicates whether the platform supports window controls menus.
+    bool supports_server_window_menus = false;
 
     // For platforms that have optional support for server-side decorations,
     // this parameter allows setting the desired state in tests.  The platform
     // must have the appropriate logic in its GetPlatformRuntimeProperties()
     // method.
-    static SupportsSsdForTest override_supports_ssd_for_test;
-
-    // Wayland only: determines whether solid color overlays can be delegated
-    // without a backing image via a wayland protocol.
-    bool supports_non_backed_solid_color_buffers = false;
+    static SupportsForTest override_supports_ssd_for_test;
 
     // Wayland only: determines whether single pixel buffer protocol is
     // supported.
@@ -197,21 +199,27 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // be stacked below an AcceleratedWidget to make a widget opaque.
     bool needs_background_image = false;
 
-    // Wayland only: determines whether clip rects can be delegated via the
-    // wayland protocol when no quad is out of window.
-    bool supports_clip_rect = false;
+    // Wayland only: whether bubble widgets can use platform objects.
+    bool supports_subwindows_as_accelerated_widgets = false;
 
-    // Wayland only: determine whether toplevel surfaces can be activated and
-    // deactivated.
-    bool supports_activation = false;
+    // Indicates whether the platform supports system-controlled per-window
+    // scaling.
+    bool supports_per_window_scaling = false;
 
-    // Wayland only: determines whether non axis-aligned 2d transforms can be
-    // delegated via the wayland protocol.
-    bool supports_affine_transform = false;
+    // Whether status icon windows (with a wm_role_name of
+    // ui::kStatusIconWmRoleName) are supported.
+    bool supports_system_tray_windowing = false;
 
-    // Wayland only: determines whether clip rects can be delegated via the
-    // wayland protocol when some quads are out of window.
-    bool supports_out_of_window_clip_rect = false;
+    // Allows overriding whether per window scaling is enabled in tests.
+    static SupportsForTest override_supports_per_window_scaling_for_test;
+
+    // Whether windowing system level session management is supported. If set,
+    // GetSessionManager method must return a valid object.
+    bool supports_session_management = false;
+
+    // Linux only, but see a TODO in BrowserDesktopWindowTreeHostLinux.
+    // Determines whether the platform supports the global application menu.
+    bool supports_global_application_menus = false;
   };
 
   // Corresponds to chrome_browser_main_extra_parts.h.
@@ -235,6 +243,8 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   // task_runner suitable for handling user input after the message loop
   // started. It's required to call this so that we can exit cleanly if the
   // server can exit before we do.
+  // Note: This is currently not strongly enforced and so it may not be called
+  // in all content embedders or tests.
   virtual void PostCreateMainMessageLoop(
       base::OnceCallback<void()> shutdown_cb,
       scoped_refptr<base::SingleThreadTaskRunner> user_input_task_runner);
@@ -301,12 +311,18 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   virtual std::unique_ptr<PlatformKeyboardHook> CreateKeyboardHook(
       PlatformKeyboardHookTypes type,
       base::RepeatingCallback<void(KeyEvent* event)> callback,
-      absl::optional<base::flat_set<DomCode>> dom_codes,
+      std::optional<base::flat_set<DomCode>> dom_codes,
       gfx::AcceleratedWidget accelerated_widget);
+  // Returns the PlatformSessionManager instance, if platform-level session
+  // management is supported, null otherwise.
+  virtual PlatformSessionManager* GetSessionManager();
 
   // Returns true if the specified buffer format is supported.
   virtual bool IsNativePixmapConfigSupported(gfx::BufferFormat format,
                                              gfx::BufferUsage usage) const;
+
+  // Whether the platform supports compositing windows with transparency.
+  virtual bool IsWindowCompositingSupported() const = 0;
 
   // Returns whether a custom frame should be used for windows.
   // The default behaviour is returning what is suggested by the
@@ -358,17 +374,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
 
   virtual void DumpState(std::ostream& out) const {}
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Sets the proper PalmDetector implementation from outside Ozone. This is
-  // used for touch screen palm rejection on ChromeOS, so this interface should
-  // be only used from ChromeOS. We use this interface instead of directly
-  // creating the implementation because we don't want Ozone code to depend on
-  // ChromeOS code to avoid circular dependency.
-  void SetPalmDetector(std::unique_ptr<PalmDetector> params);
-
-  PalmDetector* GetPalmDetector();
-#endif
-
  protected:
   bool has_initialized_ui() const { return initialized_ui_; }
   bool has_initialized_gpu() const { return initialized_gpu_; }
@@ -405,10 +410,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   // modifications to |single_process_| visible by other threads. Mutex is not
   // needed since it's set before other threads are started.
   volatile bool single_process_ = false;
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  std::unique_ptr<PalmDetector> palm_detector_;
-#endif
 };
 
 }  // namespace ui

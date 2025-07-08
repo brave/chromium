@@ -7,6 +7,9 @@
 
 #include "base/no_destructor.h"
 #include "chrome/browser/profiles/profile_keyed_service_factory.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -27,7 +30,7 @@ class ErrorConsoleFactory : public ProfileKeyedServiceFactory {
   ~ErrorConsoleFactory() override;
 
   // BrowserContextKeyedServiceFactory implementation
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 

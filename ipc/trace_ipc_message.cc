@@ -28,27 +28,6 @@ void WriteIpcMessageIdAsProtozero(uint32_t message_id,
     case WorkerMsgStart:
       message_class = ChromeLegacyIpc::CLASS_WORKER;
       break;
-    case NaClMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_NACL;
-      break;
-    case PpapiMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_PPAPI;
-      break;
-    case ExtensionMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_EXTENSION;
-      break;
-    case NaClHostMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_NACL_HOST;
-      break;
-    case EncryptedMediaMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_ENCRYPTED_MEDIA;
-      break;
-    case GinJavaBridgeMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_GIN_JAVA_BRIDGE;
-      break;
-    case ExtensionWorkerMsgStart:
-      message_class = ChromeLegacyIpc::CLASS_EXTENSION_WORKER;
-      break;
   }
   legacy_ipc->set_message_class(message_class);
   legacy_ipc->set_message_line(IPC_MESSAGE_ID_LINE(message_id));

@@ -8,8 +8,7 @@
 
 #include "base/files/file_path.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
-#include "chrome/browser/enterprise/connectors/device_trust/device_trust_features.h"
+#include "build/build_config.h"
 #include "chrome/browser/enterprise/connectors/device_trust/fake_device_trust_connector_service.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/policy/core/common/policy_types.h"
@@ -19,12 +18,13 @@
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/browser_task_environment.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace enterprise_signals {
 
@@ -34,7 +34,7 @@ namespace {
 
 constexpr char kUserEmail[] = "someEmail@example.com";
 constexpr char kOtherUserEmail[] = "someOtherUser@example.com";
-constexpr char kOtherUserGaiaId[] = "some-other-user-gaia";
+constexpr GaiaId::Literal kOtherUserGaiaId("some-other-user-gaia");
 
 base::Value::List GetUrls() {
   base::Value::List trusted_urls;
@@ -49,7 +49,7 @@ class UserDelegateImplTest : public testing::Test {
  protected:
   void CreateDelegate(
       bool is_managed_user = true,
-      absl::optional<base::FilePath> profile_path = absl::nullopt) {
+      std::optional<base::FilePath> profile_path = std::nullopt) {
     TestingProfile::Builder builder;
     builder.OverridePolicyConnectorIsManagedForTesting(is_managed_user);
 
@@ -77,7 +77,7 @@ class UserDelegateImplTest : public testing::Test {
   std::unique_ptr<UserDelegateImpl> user_delegate_;
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Tests that the sign-in profile is considered as sign-in context.
 TEST_F(UserDelegateImplTest, IsSigninContext_True) {
   CreateDelegate(/*is_managed_user=*/true,
@@ -90,7 +90,7 @@ TEST_F(UserDelegateImplTest, IsSigninContext_False) {
   CreateDelegate();
   EXPECT_FALSE(user_delegate_->IsSigninContext());
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Tests that IsManagedUser returns false when the user is not managed.
 TEST_F(UserDelegateImplTest, IsManagedUser_False) {
@@ -165,70 +165,39 @@ TEST_F(UserDelegateImplTest, GetPolicyScopesNeedingSignals_Empty) {
             std::set<policy::PolicyScope>());
 }
 
-class UserDelegateImplFlagsTest : public UserDelegateImplTest,
-                                  public testing::WithParamInterface<bool> {
- protected:
-  UserDelegateImplFlagsTest() {
-    scoped_feature_list_.InitWithFeatureState(
-        enterprise_connectors::kUserDTCInlineFlowEnabled,
-        is_new_flag_enabled());
-  }
-
-  bool is_new_flag_enabled() const { return GetParam(); }
-
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
 // Tests what GetPolicyScopesNeedingSignals returns when the policy is enabled
 // at the user level.
-TEST_P(UserDelegateImplFlagsTest, GetPolicyScopesNeedingSignals_User) {
+TEST_F(UserDelegateImplTest, GetPolicyScopesNeedingSignals_User) {
   CreateDelegate();
   fake_dt_connector_service_->UpdateInlinePolicy(GetUrls(),
                                                  DTCPolicyLevel::kUser);
 
-  const auto& policy_scopes = user_delegate_->GetPolicyScopesNeedingSignals();
-
-  std::set<policy::PolicyScope> expected_scopes = {policy::POLICY_SCOPE_USER};
-  if (!is_new_flag_enabled()) {
-    expected_scopes.insert(policy::POLICY_SCOPE_MACHINE);
-  }
-  EXPECT_EQ(policy_scopes, expected_scopes);
+  EXPECT_EQ(user_delegate_->GetPolicyScopesNeedingSignals(),
+            std::set<policy::PolicyScope>({policy::POLICY_SCOPE_USER}));
 }
 
 // Tests what GetPolicyScopesNeedingSignals returns when the policy is enabled
 // at the browser level.
-TEST_P(UserDelegateImplFlagsTest, GetPolicyScopesNeedingSignals_Browser) {
+TEST_F(UserDelegateImplTest, GetPolicyScopesNeedingSignals_Browser) {
   CreateDelegate();
   fake_dt_connector_service_->UpdateInlinePolicy(GetUrls(),
                                                  DTCPolicyLevel::kBrowser);
-
-  const auto& policy_scopes = user_delegate_->GetPolicyScopesNeedingSignals();
-
-  std::set<policy::PolicyScope> expected_scopes = {
-      policy::POLICY_SCOPE_MACHINE};
-  if (!is_new_flag_enabled()) {
-    expected_scopes.insert(policy::POLICY_SCOPE_USER);
-  }
-  EXPECT_EQ(policy_scopes, expected_scopes);
+  EXPECT_EQ(user_delegate_->GetPolicyScopesNeedingSignals(),
+            std::set<policy::PolicyScope>({policy::POLICY_SCOPE_MACHINE}));
 }
 
 // Tests what GetPolicyScopesNeedingSignals returns when the policy is enabled
 // at the both the user and browser levels.
-TEST_P(UserDelegateImplFlagsTest,
-       GetPolicyScopesNeedingSignals_UserAndBrowser) {
+TEST_F(UserDelegateImplTest, GetPolicyScopesNeedingSignals_UserAndBrowser) {
   CreateDelegate();
   fake_dt_connector_service_->UpdateInlinePolicy(GetUrls(),
                                                  DTCPolicyLevel::kBrowser);
   fake_dt_connector_service_->UpdateInlinePolicy(GetUrls(),
                                                  DTCPolicyLevel::kUser);
 
-  const auto& policy_scopes = user_delegate_->GetPolicyScopesNeedingSignals();
-
-  std::set<policy::PolicyScope> expected_scopes = {policy::POLICY_SCOPE_MACHINE,
-                                                   policy::POLICY_SCOPE_USER};
-  EXPECT_EQ(policy_scopes, expected_scopes);
+  EXPECT_EQ(user_delegate_->GetPolicyScopesNeedingSignals(),
+            std::set<policy::PolicyScope>(
+                {policy::POLICY_SCOPE_MACHINE, policy::POLICY_SCOPE_USER}));
 }
-
-INSTANTIATE_TEST_SUITE_P(, UserDelegateImplFlagsTest, testing::Bool());
 
 }  // namespace enterprise_signals

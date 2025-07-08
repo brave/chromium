@@ -23,9 +23,6 @@ class FakeWindowState : public WindowState::State {
 
   bool was_visible_on_minimize() const { return was_visible_on_minimize_; }
 
-  int num_system_ui_area_changes() const { return num_system_ui_area_changes_; }
-  void reset_num_system_ui_area_changes() { num_system_ui_area_changes_ = 0; }
-
   const gfx::Rect& last_requested_bounds() const {
     return last_requested_bounds_;
   }
@@ -39,7 +36,6 @@ class FakeWindowState : public WindowState::State {
 
  private:
   bool was_visible_on_minimize_ = true;
-  int num_system_ui_area_changes_ = 0;
   gfx::Rect last_requested_bounds_;
   const chromeos::WindowStateType state_type_;
 };
@@ -62,8 +58,7 @@ class FakeWindowStateDelegate : public WindowStateDelegate {
   // WindowStateDelegate:
   bool ToggleFullscreen(WindowState* window_state) override;
   void ToggleLockedFullscreen(WindowState* window_state) override;
-  std::unique_ptr<PresentationTimeRecorder> OnDragStarted(
-      int component) override;
+  void OnDragStarted(int component) override;
   void OnDragFinished(bool cancel, const gfx::PointF& location) override;
 
  private:

@@ -7,9 +7,20 @@
 
 #include <memory>
 
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/vk/GrVkTypes.h"
+#include "third_party/skia/include/core/SkPixmap.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkTypes.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
+
+class GrDirectContext;
+
+namespace gfx {
+class ColorSpace;
+}  // namespace gfx
+
+namespace viz {
+class SharedImageFormat;
+}  // namespace viz
 
 namespace gpu {
 
@@ -17,12 +28,16 @@ class VulkanImage;
 
 // Holds VulkanImage + skia representations of it.
 struct TextureHolderVk {
-  explicit TextureHolderVk(std::unique_ptr<VulkanImage> image);
+  explicit TextureHolderVk(std::unique_ptr<VulkanImage> image,
+                           const viz::SharedImageFormat& si_format,
+                           const gfx::ColorSpace& color_space);
   TextureHolderVk(TextureHolderVk&& other);
   TextureHolderVk& operator=(TextureHolderVk&& other);
   ~TextureHolderVk();
 
   GrVkImageInfo GetGrVkImageInfo() const;
+
+  bool Readback(GrDirectContext* context, const SkPixmap& destination);
 
   std::unique_ptr<VulkanImage> vulkan_image;
   GrBackendTexture backend_texture;

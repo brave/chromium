@@ -37,11 +37,12 @@ class TypecdClientImpl : public TypecdClient {
  private:
   void ThunderboltDeviceConnectedReceived(dbus::Signal* signal);
   void CableWarningReceived(dbus::Signal* signal);
+  void UsbLimitReceived(dbus::Signal* signal);
   void OnSignalConnected(const std::string& interface_name,
                          const std::string& signal_name,
                          bool success);
 
-  raw_ptr<dbus::ObjectProxy, ExperimentalAsh> typecd_proxy_ = nullptr;
+  raw_ptr<dbus::ObjectProxy> typecd_proxy_ = nullptr;
   base::WeakPtrFactory<TypecdClientImpl> weak_ptr_factory_{this};
 };
 
@@ -55,7 +56,8 @@ void TypecdClientImpl::Init(dbus::Bus* bus) {
   const std::pair<const char*, SignalMethod> kSignalMethods[] = {
       {typecd::kTypecdDeviceConnected,
        &TypecdClientImpl::ThunderboltDeviceConnectedReceived},
-      {typecd::kTypecdCableWarning, &TypecdClientImpl::CableWarningReceived}};
+      {typecd::kTypecdCableWarning, &TypecdClientImpl::CableWarningReceived},
+      {typecd::kTypecdUsbLimit, &TypecdClientImpl::UsbLimitReceived}};
 
   auto on_connected_callback = base::BindRepeating(
       &TypecdClientImpl::OnSignalConnected, weak_ptr_factory_.GetWeakPtr());
@@ -100,6 +102,21 @@ void TypecdClientImpl::CableWarningReceived(dbus::Signal* signal) {
   NotifyOnCableWarning(cable_warning_type);
 }
 
+void TypecdClientImpl::UsbLimitReceived(dbus::Signal* signal) {
+  dbus::MessageReader reader(signal);
+  uint32_t usb_limit_signal = 0u;
+  if (!reader.PopUint32(&usb_limit_signal)) {
+    LOG(ERROR) << "Typecd: Unable to decode USB limit type from"
+               << typecd::kTypecdUsbLimit << " signal.";
+    return;
+  }
+  typecd::UsbLimitType usb_limit_type =
+      static_cast<typecd::UsbLimitType>(usb_limit_signal);
+  VLOG(1) << "Typecd: Received USB limit signal with "
+          << "UsbLimitType: " << usb_limit_signal;
+  NotifyOnUsbLimit(usb_limit_type);
+}
+
 void TypecdClientImpl::OnSignalConnected(const std::string& interface_name,
                                          const std::string& signal_name,
                                          bool success) {
@@ -128,7 +145,7 @@ void TypecdClientImpl::SetTypeCPortsUsingDisplays(
   dbus::MethodCall method_call(typecd::kTypecdServiceInterface,
                                typecd::kTypecdSetPortsUsingDisplaysMethod);
   dbus::MessageWriter writer(&method_call);
-  writer.AppendArrayOfUint32s(port_nums.data(), port_nums.size());
+  writer.AppendArrayOfUint32s(port_nums);
 
   typecd_proxy_->CallMethod(
       &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT, base::DoNothing());
@@ -153,6 +170,12 @@ void TypecdClient::NotifyOnCableWarning(
     typecd::CableWarningType cable_warning_type) {
   for (auto& observer : observer_list_)
     observer.OnCableWarning(cable_warning_type);
+}
+
+void TypecdClient::NotifyOnUsbLimit(typecd::UsbLimitType usb_limit_type) {
+  for (auto& observer : observer_list_) {
+    observer.OnUsbLimit(usb_limit_type);
+  }
 }
 
 TypecdClient::TypecdClient() {

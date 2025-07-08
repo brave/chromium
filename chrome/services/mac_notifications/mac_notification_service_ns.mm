@@ -20,10 +20,13 @@
 #include "mojo/public/cpp/bindings/shared_remote.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/gfx/image/image.h"
+#include "url/origin.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+// This class implements the Chromium interface to a deprecated API. It is in
+// the process of being replaced, and warnings about its deprecation are not
+// helpful. https://crbug.com/1127306
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 @interface AlertNSNotificationCenterDelegate
     : NSObject <NSUserNotificationCenterDelegate>
@@ -109,14 +112,6 @@ void AddActionButtons(
   // Force the notification to always show its action buttons.
   [notification setValue:@YES forKey:@"_showsButtons"];
 
-  // A default close button label is provided by the platform but we explicitly
-  // override it in case the user decides to not use the OS language in Chrome.
-  // macOS 11 already shows a close button in the top-left corner.
-  if (!base::mac::IsAtLeastOS11()) {
-    [notification setOtherButtonTitle:l10n_util::GetNSString(
-                                          IDS_NOTIFICATION_BUTTON_CLOSE)];
-  }
-
   NSMutableArray* action_buttons = [NSMutableArray arrayWithCapacity:3];
   for (const auto& button : buttons)
     [action_buttons addObject:base::SysUTF16ToNSString(button->title)];
@@ -149,16 +144,11 @@ void AddActionButtons(
   DCHECK([notification
       respondsToSelector:@selector(_alternateActionButtonTitles)]);
 
-  // macOS 11 does not support overriding the text of the overflow button and
+  // macOS does not support overriding the text of the overflow button and
   // will always show "Options" via this API. Setting actionButtonTitle just
   // appends another button into the overflow menu. Only the new UNNotification
-  // API allows overriding this title on macOS 11.
-  if (base::mac::IsAtLeastOS11()) {
-    [notification setValue:@NO forKey:@"_hasActionButton"];
-  } else {
-    [notification setActionButtonTitle:l10n_util::GetNSString(
-                                           IDS_NOTIFICATION_BUTTON_MORE)];
-  }
+  // API allows overriding this title.
+  [notification setValue:@NO forKey:@"_hasActionButton"];
 
   // Show the alternate menu with developer actions and settings if needed.
   [notification setValue:@YES forKey:@"_alwaysShowAlternateActionMenu"];
@@ -208,6 +198,7 @@ void MacNotificationServiceNS::DisplayNotification(
 
 void MacNotificationServiceNS::GetDisplayedNotifications(
     mojom::ProfileIdentifierPtr profile,
+    const std::optional<GURL>& origin,
     GetDisplayedNotificationsCallback callback) {
   std::vector<mojom::NotificationIdentifierPtr> notifications;
   // Note: |profile| might be null if we want all notifications.
@@ -224,10 +215,15 @@ void MacNotificationServiceNS::GetDisplayedNotifications(
 
     if (!profile_id || ([profile_id isEqualToString:toast_profile_id] &&
                         incognito == toast_incognito)) {
-      auto profile_identifier = mojom::ProfileIdentifier::New(
-          base::SysNSStringToUTF8(toast_profile_id), toast_incognito);
-      notifications.push_back(mojom::NotificationIdentifier::New(
-          base::SysNSStringToUTF8(toast_id), std::move(profile_identifier)));
+      NSString* toast_origin_url =
+          [toast.userInfo objectForKey:kNotificationOrigin];
+      GURL toast_origin = GURL(base::SysNSStringToUTF8(toast_origin_url));
+      if (!origin.has_value() || url::IsSameOriginWith(toast_origin, *origin)) {
+        auto profile_identifier = mojom::ProfileIdentifier::New(
+            base::SysNSStringToUTF8(toast_profile_id), toast_incognito);
+        notifications.push_back(mojom::NotificationIdentifier::New(
+            base::SysNSStringToUTF8(toast_id), std::move(profile_identifier)));
+      }
     }
   }
 
@@ -280,6 +276,16 @@ void MacNotificationServiceNS::CloseAllNotifications() {
   [notification_center_ removeAllDeliveredNotifications];
 }
 
+void MacNotificationServiceNS::OkayToTerminateService(
+    OkayToTerminateServiceCallback callback) {
+  GetDisplayedNotifications(
+      /*profile=*/nullptr, /*origin=*/std::nullopt,
+      base::BindOnce([](std::vector<mojom::NotificationIdentifierPtr>
+                            notifications) {
+        return notifications.empty();
+      }).Then(std::move(callback)));
+}
+
 }  // namespace mac_notifications
 
 @implementation AlertNSNotificationCenterDelegate {
@@ -306,7 +312,7 @@ void MacNotificationServiceNS::CloseAllNotifications() {
       GetNotificationOperationFromNotification(notification);
   int buttonIndex = GetActionButtonIndexFromNotification(notification);
   auto actionInfo = mac_notifications::mojom::NotificationActionInfo::New(
-      std::move(meta), operation, buttonIndex, /*reply=*/absl::nullopt);
+      std::move(meta), operation, buttonIndex, /*reply=*/std::nullopt);
   _handler->OnNotificationAction(std::move(actionInfo));
 }
 
@@ -323,7 +329,7 @@ void MacNotificationServiceNS::CloseAllNotifications() {
   auto operation = NotificationOperation::kClose;
   int buttonIndex = kNotificationInvalidButtonIndex;
   auto actionInfo = mac_notifications::mojom::NotificationActionInfo::New(
-      std::move(meta), operation, buttonIndex, /*reply=*/absl::nullopt);
+      std::move(meta), operation, buttonIndex, /*reply=*/std::nullopt);
   _handler->OnNotificationAction(std::move(actionInfo));
 }
 
@@ -340,7 +346,7 @@ void MacNotificationServiceNS::CloseAllNotifications() {
     auto operation = NotificationOperation::kClose;
     int buttonIndex = kNotificationInvalidButtonIndex;
     auto actionInfo = mac_notifications::mojom::NotificationActionInfo::New(
-        std::move(meta), operation, buttonIndex, /*reply=*/absl::nullopt);
+        std::move(meta), operation, buttonIndex, /*reply=*/std::nullopt);
     _handler->OnNotificationAction(std::move(actionInfo));
   }
 }
@@ -352,3 +358,5 @@ void MacNotificationServiceNS::CloseAllNotifications() {
 }
 
 @end
+
+#pragma clang diagnostic pop

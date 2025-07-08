@@ -16,14 +16,16 @@ namespace url {
 class Origin;
 }
 
-namespace js_injection {
+namespace origin_matcher {
 class OriginMatcher;
 }
 
 namespace android_webview {
 
-// Wrapper for a |js_incection::OriginMatcher| that allows locked updates
+// Wrapper for a |origin_matcher::OriginMatcher| that allows locked updates
 // to the match rules.
+//
+// Lifetime: WebView
 class AwContentsOriginMatcher
     : public base::RefCountedThreadSafe<AwContentsOriginMatcher> {
  public:
@@ -39,7 +41,7 @@ class AwContentsOriginMatcher
   ~AwContentsOriginMatcher();
 
   base::Lock lock_;
-  std::unique_ptr<js_injection::OriginMatcher> origin_matcher_;
+  std::unique_ptr<origin_matcher::OriginMatcher> origin_matcher_;
 };
 
 }  // namespace android_webview

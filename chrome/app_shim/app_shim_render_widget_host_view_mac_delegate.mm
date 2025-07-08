@@ -9,10 +9,7 @@
 #include "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #include "components/remote_cocoa/app_shim/ns_view_ids.h"
 #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/native_widget_types.h"
 
 @interface AppShimRenderWidgetHostViewMacDelegate () <HistorySwiperDelegate>
 @end
@@ -46,14 +43,6 @@
 
 // NSWindow events.
 
-- (void)beginGestureWithEvent:(NSEvent*)event {
-  [_historySwiper beginGestureWithEvent:event];
-}
-
-- (void)endGestureWithEvent:(NSEvent*)event {
-  [_historySwiper endGestureWithEvent:event];
-}
-
 // This is a low level API which provides touches associated with an event.
 // It is used in conjunction with gestures to determine finger placement
 // on the trackpad.
@@ -71,11 +60,6 @@
 
 - (void)touchesEndedWithEvent:(NSEvent*)event {
   [_historySwiper touchesEndedWithEvent:event];
-}
-
-- (void)rendererHandledWheelEvent:(const blink::WebMouseWheelEvent&)event
-                         consumed:(BOOL)consumed {
-  [_historySwiper rendererHandledWheelEvent:event consumed:consumed];
 }
 
 - (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
@@ -100,9 +84,10 @@
 - (BOOL)canNavigateInDirection:(history_swiper::NavigationDirection)direction
                       onWindow:(NSWindow*)window {
   auto* bridge =
-      remote_cocoa::NativeWidgetNSWindowBridge::GetFromNativeWindow(window);
-  if (!bridge)
+      remote_cocoa::NativeWidgetNSWindowBridge::GetFromNSWindow(window);
+  if (!bridge) {
     return NO;
+  }
 
   if (direction == history_swiper::kForwards) {
     return bridge->CanGoForward();
@@ -114,9 +99,10 @@
 - (void)navigateInDirection:(history_swiper::NavigationDirection)direction
                    onWindow:(NSWindow*)window {
   auto* bridge =
-      remote_cocoa::NativeWidgetNSWindowBridge::GetFromNativeWindow(window);
-  if (!bridge)
+      remote_cocoa::NativeWidgetNSWindowBridge::GetFromNSWindow(window);
+  if (!bridge) {
     return;
+  }
 
   bool was_executed = false;
   if (direction == history_swiper::kForwards) {

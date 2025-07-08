@@ -20,7 +20,8 @@ GameCaptureBarView::GameCaptureBarView()
           l10n_util::GetStringUTF16(
               IDS_ASH_GAME_CAPTURE_START_RECORDING_BUTTON),
           PillButton::kPrimaryWithoutIcon))) {
-  AppendCommonElements();
+  AppendSettingsButton();
+  AppendCloseButton();
 
   CaptureModeSessionFocusCycler::HighlightHelper::Install(
       start_recording_button_);
@@ -36,7 +37,7 @@ void GameCaptureBarView::StartRecording() {
   CaptureModeController::Get()->PerformCapture();
 }
 
-BEGIN_METADATA(GameCaptureBarView, CaptureModeBarView)
+BEGIN_METADATA(GameCaptureBarView)
 END_METADATA
 
 }  // namespace ash

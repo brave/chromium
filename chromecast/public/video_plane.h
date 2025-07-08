@@ -26,10 +26,8 @@ class VideoPlane {
   virtual ~VideoPlane() {}
 
   // Updates the video plane geometry.
-  // |screen_rect| specifies the rectangle that the video should occupy,
-  // in screen resolution coordinates.
-  // |transform| specifies how the video should be transformed within that
-  // rectangle.
+  // |screen_rect| specifies the rectangle that the video should occupy, in
+  // graphics coordinates.
   virtual void SetGeometry(const RectF& screen_rect, Transform transform) = 0;
 };
 

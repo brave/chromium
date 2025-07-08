@@ -6,7 +6,6 @@ There are several test suites for verifying ChromeDriver's correctness:
 | ---------- | ------- | --------- |
 | Unit tests | Quick tests for verifying individual objects or functions | CQ |
 | Python integration tests | Verify important features work correctly with Chrome | CQ |
-| Java acceptance tests | Verify correct interaction with Chrome and Selenium Java API | Manual runs |
 | Web platform tests | Verify W3C standard complaince | CI waterfall |
 | JavaScript unit tests | Verify ChromeDriver's JavaScript functions | CQ |
 
@@ -27,7 +26,8 @@ out/Default/chromedriver_unittests
 ## Python integration tests
 
 These tests are maintained by the ChromeDriver team,
-and are intended to verify that ChromeDriver works correctly with Chrome.
+and are intended to verify that ChromeDriver works correctly with Chrome and
+chrome-headless-shell.
 They are written in Python script, in
 [`test/run_py_tests.py`](https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/chromedriver/test/run_py_tests.py).
 We run these tests on the CQ (commit queue) on all desktop platforms,
@@ -48,6 +48,18 @@ The `run_py_tests.py` script has a number of options.
 Run it with `--help` for more information.
 The only require option is `--chromedriver` to specify the location of
 the ChromeDriver binary.
+
+### chrome-headless-shell
+
+To run the tests you need to build chrome-headless-shell and ChromeDriver, and then
+invoke `run_py_tests.py`:
+
+```bash
+autoninja -C out/Default headless_shell chromedriver
+vpython3 <CHROMEDRIVER_DIR>/test/run_py_tests.py\
+         --browser-name=chrome-headless-shell\
+         --chromedriver=out/Default/chromedriver
+```
 
 ### Test filtering
 
@@ -73,8 +85,8 @@ particilar platform), explain it in a comment.
 
 ### Running in Commit Queue
 
-The Python integration tests are run in the Commit Queue (CQ) in a step
-named `chromedriver_py_tests`.
+The Python integration tests are run in the Commit Queue (CQ) in steps
+named `chromedriver_py_tests` and `chromedriver_py_tests_headless_shell`.
 
 When running inside the CQ, the `--test-type=integration` option is passed to
 the `run_py_tests.py` command line. This has the following effects:
@@ -107,47 +119,6 @@ option, where `package_name` can be one of the following values:
 
 There is future plan to [run these tests in the Chromium Commit
 Queue](https://crbug.com/813466).
-
-## WebDriver Java acceptance tests (`test/run_java_tests.py`)
-
-These are integration tests from the Selenium WebDriver open source project.
-They are not currently run on any bots, but we have plan to include these tests
-in the commit queue in the future.
-
-The source code for these tests are in the Selenium repository at
-<https://github.com/SeleniumHQ/selenium/tree/master/java/client/test/org/openqa/selenium>.
-We compile these tests, and store them in a special repository at
-<https://chromium.googlesource.com/chromium/deps/webdriver/>.
-We use a Python script
-[`test/run_java_tests.py`](https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/chromedriver/test/run_java_tests.py)
-to drive these tests.
-
-Before running these tests, you need to do a one-time setup with the following
-commands:
-
-```bash
-mkdir <CHROMEDRIVER_DIR>/third_party
-cd <CHROMEDRIVER_DIR>/third_party
-git clone https://chromium.googlesource.com/chromium/deps/webdriver java_tests
-```
-
-After the setup, the tests can be run with
-
-```bash
-python3 <CHROMEDRIVER_DIR>/test/run_java_tests.py --chromedriver=out/Default/chromedriver
-```
-
-The `run_py_tests.py` script has a number of options.
-Run it with `--help` for more information.
-The only require option is `--chromedriver` to specify the location of
-the ChromeDriver binary.
-
-### Disabling a Java acceptance test
-
-If there are any test cases that fail or are flaky, and you can't fix them
-quickly, please add the test names to one of the filters in
-[`test_expectations`](https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/chromedriver/test/test_expectations)
-file in the same directory as `run_java_tests.py`.
 
 ## Web Platform Tests (WPT)
 
@@ -218,16 +189,22 @@ for the New Session command, use
 
 The tests are located in [//third_party/blink/web_tests/external/wpt](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/web_tests/external/wpt)
 directory.
-You can use the following command to run them.
+You can use the following commands to run them:
 
 ```bash
-testing/xvfb.py chrome/test/chromedriver/test/run_webdriver_tests.py \
-                --chromedriver=out/Release/chromedriver \
-                --test-path=third_party/blink/web_tests/external/wpt/<test-offset>
+autoninja -C out/Default chrome_wpt_tests
+out/Default/bin/run_chrome_wpt_tests -t Default external/wpt/webdriver/path/to/test/or/dir
 ```
 
-Note: The path to the tests must be specified relatively to the Chromium source
-code root.
+This will invoke [`//third_party/blink/tools/run_wpt_tests.py`][1], a thin
+wrapper around wptrunner used to run WPTs (including webdriver tests) in Chromium CQ/CI.
+See [these instructions] for suppressing failures for webdriver tests.
+The [WPT importer] will automatically generate test expectations or baselines to suppress new
+test failures.
+
+[1]: /docs/testing/run_web_platform_tests.md
+[these instructions]: /docs/testing/run_web_platform_tests.md#test-expectations-and-baselines
+[WPT importer]: /docs/testing/web_platform_tests.md#Importing-tests
 
 ## JavaScript Unit Tests
 

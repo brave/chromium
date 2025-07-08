@@ -8,28 +8,28 @@
  */
 
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
 
-import {getDeviceName} from 'chrome://resources/ash/common/bluetooth/bluetooth_utils.js';
+import {getDeviceNameUnsafe} from 'chrome://resources/ash/common/bluetooth/bluetooth_utils.js';
 import {getBluetoothConfig} from 'chrome://resources/ash/common/bluetooth/cros_bluetooth_config.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {PairedBluetoothDeviceProperties} from 'chrome://resources/mojo/chromeos/ash/services/bluetooth_config/public/mojom/cros_bluetooth_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './os_bluetooth_change_device_name_dialog.html.js';
 
-const MAX_INPUT_LENGTH: number = 32;
+const MAX_INPUT_LENGTH = 32;
 
-interface SettingsBluetoothChangeDeviceNameDialogElement {
+export interface SettingsBluetoothChangeDeviceNameDialogElement {
   $: {dialog: CrDialogElement};
 }
 
 const SettingsBluetoothChangeDeviceNameDialogElementBase =
     I18nMixin(PolymerElement);
 
-class SettingsBluetoothChangeDeviceNameDialogElement extends
+export class SettingsBluetoothChangeDeviceNameDialogElement extends
     SettingsBluetoothChangeDeviceNameDialogElementBase {
   static get is() {
     return 'os-settings-bluetooth-change-device-name-dialog' as const;
@@ -43,7 +43,6 @@ class SettingsBluetoothChangeDeviceNameDialogElement extends
     return {
       device: {
         type: Object,
-        observer: 'onDeviceChanged_',
       },
 
       /** Used to reference the maxInputLength constant in HTML. */
@@ -52,6 +51,11 @@ class SettingsBluetoothChangeDeviceNameDialogElement extends
         value: MAX_INPUT_LENGTH,
       },
 
+      /**
+       * WARNING: This string may contain malicious HTML and should not be used
+       * for Polymer bindings in CSS code. For additional information see
+       * b/298724102.
+       */
       deviceName_: {
         type: String,
         value: '',
@@ -70,8 +74,9 @@ class SettingsBluetoothChangeDeviceNameDialogElement extends
   private deviceName_: string;
   private isInputInvalid_: boolean;
 
-  private onDeviceChanged_(): void {
-    this.deviceName_ = getDeviceName(this.device);
+  override ready(): void {
+    super.ready();
+    this.deviceName_ = getDeviceNameUnsafe(this.device);
   }
 
   private onCancelClick_(): void {
@@ -118,7 +123,7 @@ class SettingsBluetoothChangeDeviceNameDialogElement extends
   }
 
   private isDoneDisabled_(): boolean {
-    if (this.deviceName_ === getDeviceName(this.device)) {
+    if (this.deviceName_ === getDeviceNameUnsafe(this.device)) {
       return true;
     }
 
@@ -127,6 +132,10 @@ class SettingsBluetoothChangeDeviceNameDialogElement extends
     }
 
     return false;
+  }
+
+  getNameForTest(): string|null {
+    return getDeviceNameUnsafe(this.device);
   }
 }
 

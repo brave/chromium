@@ -5,12 +5,11 @@
 /** @fileoverview Suite of tests for extensions-review-panel. */
 import 'chrome://extensions/extensions.js';
 
-import {ExtensionsReviewPanelElement, PluralStringProxyImpl} from 'chrome://extensions/extensions.js';
-import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {ExtensionsReviewPanelElement} from 'chrome://extensions/extensions.js';
+import {PluralStringProxyImpl} from 'chrome://extensions/extensions.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {TestPluralStringProxy} from 'chrome://webui-test/test_plural_string_proxy.js';
-import {isVisible} from 'chrome://webui-test/test_util.js';
+import {isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {createExtensionInfo, MockItemDelegate} from './test_util.js';
 
@@ -29,15 +28,13 @@ suite('ExtensionsReviewPanel', function() {
         id: 'a'.repeat(32),
         safetyCheckText: {panelString: 'This extension contains malware.'},
       }),
-      createExtensionInfo({name: 'Bravo', id: 'b'.repeat(32)}),
-      createExtensionInfo({name: 'Charlie', id: 'c'.repeat(29)}),
     ];
     element.extensions = extensionItems;
     document.body.appendChild(element);
-    return flushTasks();
+    return microtasksFinished();
   });
 
-  test('ReviewPanelTextExists', async function() {
+  test('ReviewPanelTextExists', function() {
     // Review panel should be visible.
     const reviewPanelContainer = element.$.reviewPanelContainer;
     assertTrue(!!reviewPanelContainer);
@@ -61,17 +58,15 @@ suite('ExtensionsReviewPanel', function() {
     assertEquals('safetyCheckDescription', descriptionArgs.messageName);
     assertEquals(1, descriptionArgs.itemCount);
 
-    // Verify that Remove All button exists.
-    const removeAllButton = element.$.removeAllButton;
-    assertTrue(!!removeAllButton);
-    assertEquals(removeAllButton.innerText, 'Remove All');
+    const safetyHubHeader = element.$.safetyHubTitleContainer;
+    assertTrue(isVisible(safetyHubHeader));
   });
 
-  test('CollapsibleList', function() {
+  test('CollapsibleList', async function() {
     const expandButton = element.$.expandButton;
     assertTrue(!!expandButton);
 
-    const extensionsList = element.shadowRoot!.querySelector('iron-collapse');
+    const extensionsList = element.shadowRoot.querySelector('cr-collapse');
     assertTrue(!!extensionsList);
 
     // Button and list start out expanded.
@@ -80,7 +75,7 @@ suite('ExtensionsReviewPanel', function() {
 
     // User collapses the list.
     expandButton.click();
-    flush();
+    await microtasksFinished();
 
     // Button and list are collapsed.
     assertFalse(expandButton.expanded);
@@ -88,16 +83,16 @@ suite('ExtensionsReviewPanel', function() {
 
     // User expands the list.
     expandButton.click();
-    flush();
+    await microtasksFinished();
 
     // Button and list are expanded.
     assertTrue(expandButton.expanded);
     assertTrue(extensionsList.opened);
   });
 
-  test('ReviewPanelUnsafeExtensionRowsExist', async function() {
+  test('ReviewPanelUnsafeExtensionRowsExist', function() {
     const extensionNameContainers =
-        element.shadowRoot!.querySelectorAll('.extension-row');
+        element.shadowRoot.querySelectorAll('.panel-extension-row');
     assertEquals(extensionNameContainers.length, 1);
     assertEquals(
         extensionNameContainers[0]
@@ -106,9 +101,23 @@ suite('ExtensionsReviewPanel', function() {
         'Alpha');
   });
 
+  test(
+      'CompletionStateShouldNotBeShownIfNoExtensionsAndNoAction',
+      async function() {
+        const completionTextContainer =
+            element.shadowRoot.querySelector('.completion-container');
+        assertTrue(!!completionTextContainer);
+        assertFalse(isVisible(completionTextContainer));
+
+        element.extensions = [];
+        await microtasksFinished();
+
+        assertFalse(isVisible(completionTextContainer));
+      });
+
   test('CompletionStateShouldBeShownAfterDeletingItems', async function() {
     const completionTextContainer =
-        element.shadowRoot!.querySelector('.completion-container');
+        element.shadowRoot.querySelector('.completion-container');
     assertFalse(isVisible(completionTextContainer));
     class MockUninstallItemDelegate extends MockItemDelegate {
       override uninstallItem(id: string): Promise<void> {
@@ -120,34 +129,79 @@ suite('ExtensionsReviewPanel', function() {
       override setItemSafetyCheckWarningAcknowledged(): void {}
     }
     element.delegate = new MockUninstallItemDelegate();
-    element.shadowRoot!.querySelector('cr-icon-button')?.click();
-    await flushTasks();
+    element.shadowRoot.querySelector('cr-icon-button')?.click();
+    await microtasksFinished();
+    const completionText = pluralString.getArgs('getPluralString')[5];
     assertTrue(!!completionTextContainer);
     assertTrue(isVisible(completionTextContainer));
+    assertEquals(completionText.messageName, 'safetyCheckAllDoneForNow');
+    assertEquals(completionText.itemCount, 1);
   });
 
-  test('CompletionStateShouldBeShownAfterKeepingItems', async function() {
-    const completionTextContainer =
-        element.shadowRoot!.querySelector('.completion-container');
-    class MockKeepItemDelegate extends MockItemDelegate {
-      override setItemSafetyCheckWarningAcknowledged(): void {
+  test(
+      'CompletionStateShouldBeShownAfterDeletingMultipleExtensions',
+      async function() {
+        const completionTextContainer =
+            element.shadowRoot.querySelector('.completion-container');
+        assertFalse(isVisible(completionTextContainer));
+        class MockDeleteItemDelegate extends MockItemDelegate {
+          override deleteItems(ids: string[]) {
+            element.extensions = element.extensions.filter(
+                extension => !ids.includes(extension.id));
+            return Promise.resolve();
+          }
+          override setItemSafetyCheckWarningAcknowledged(): void {}
+        }
         const extensionItems = [
           createExtensionInfo({
             name: 'Alpha',
             id: 'a'.repeat(32),
             safetyCheckText: {panelString: 'This extension contains malware.'},
-            acknowledgeSafetyCheckWarning: true,
           }),
-          createExtensionInfo({name: 'Bravo', id: 'b'.repeat(32)}),
-          createExtensionInfo({name: 'Charlie', id: 'c'.repeat(29)}),
+          createExtensionInfo({
+            name: 'Bravo',
+            id: 'b'.repeat(32),
+            safetyCheckText: {panelString: 'This extension contains malware.'},
+          }),
+          createExtensionInfo({
+            name: 'Charlie',
+            id: 'c'.repeat(29),
+            safetyCheckText: {panelString: 'This extension contains malware.'},
+          }),
         ];
         element.extensions = extensionItems;
+        element.delegate = new MockDeleteItemDelegate();
+
+        // Wait for the UI to finish rendering and reset plural string calls.
+        await microtasksFinished();
+        pluralString.resetResolver('getPluralString');
+
+        // Wait until the async response comes back. This should trigger 3
+        // calls for plural strings.
+        element.shadowRoot.querySelector<HTMLElement>(
+                              '#removeAllButton')!.click();
+        await microtasksFinished();
+        const completionText = pluralString.getArgs('getPluralString')[2];
+        assertTrue(!!completionTextContainer);
+        assertTrue(isVisible(completionTextContainer));
+        assertEquals(completionText.messageName, 'safetyCheckAllDoneForNow');
+        assertEquals(completionText.itemCount, 3);
+      });
+
+  test('CompletionStateShouldBeShownAfterKeepingItems', async function() {
+    const completionTextContainer =
+        element.shadowRoot.querySelector('.completion-container');
+    class MockKeepItemDelegate extends MockItemDelegate {
+      override setItemSafetyCheckWarningAcknowledged(): void {
+        // Update extensions to be an empty list since the only previous
+        // extension was marked as acknowledged.
+        element.extensions = [];
       }
     }
     element.delegate = new MockKeepItemDelegate();
     assertFalse(isVisible(completionTextContainer));
     const extensionRowContainers =
-        element.shadowRoot!.querySelectorAll('.extension-row');
+        element.shadowRoot.querySelectorAll('.panel-extension-row');
     assertEquals(1, extensionRowContainers.length);
     const menuButton = extensionRowContainers[0]!.querySelector<HTMLElement>(
         '.icon-more-vert')!;
@@ -156,12 +210,13 @@ suite('ExtensionsReviewPanel', function() {
 
     // Open the three dots action menu.
     menuButton.click();
+    await microtasksFinished();
     // The three dots action menu should be open.
     assertTrue(actionMenu.open);
 
     // Click the Keep the Extension button.
     actionMenu.querySelector('button')!.click();
-    await flushTasks();
+    await microtasksFinished();
 
     // The extension row should be removed and the completion state should be
     // shown.

@@ -6,7 +6,10 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
@@ -15,13 +18,12 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/services/printing/public/mojom/print_backend_service.mojom.h"
@@ -31,10 +33,12 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "printing/backend/print_backend.h"
 #include "printing/buildflags/buildflags.h"
+#include "printing/printing_context.h"
 #include "printing/printing_features.h"
 
 #if BUILDFLAG(IS_LINUX)
 #include "content/public/common/content_switches.h"
+#include "ui/linux/linux_ui.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -55,27 +59,47 @@ namespace printing {
 
 namespace {
 
-// Histogram name for capturing if any printer drivers were encountered that
-// required fallback to workaround an access-denied error.  Determining if this
-// happens in the wild would be the impetus to pursue further efforts to
-// identify and possibly better rectify such cases.
-constexpr char kPrintBackendRequiresElevatedPrivilegeHistogramName[] =
-    "Printing.PrintBackend.DriversRequiringElevatedPrivilegeEncountered";
-
 // For fetching remote IDs when there is no printer name.
 constexpr char kEmptyPrinterName[] = "";
 
 PrintBackendServiceManager* g_print_backend_service_manager_singleton = nullptr;
 
+// Helper when dispatching callbacks with base::expected<copyable, copyable>.
+template <typename T, typename E, typename... Args>
+  requires(std::copy_constructible<T>)
+void MaybeCloneOrCopy(
+    base::OnceCallback<void(base::expected<T, E>, Args... rest)> cb,
+    const base::expected<T, E>& result,
+    Args... rest) {
+  // Implicit copy of result.
+  std::move(cb).Run(result, rest...);
+}
+
+// Helper when dispatching callbacks with base::expected<!copyable, copyable>.
+// Copies the the expected type using mojo's Clone().
+template <typename T, typename E, typename... Args>
+  requires(!std::copy_constructible<T>)
+void MaybeCloneOrCopy(
+    base::OnceCallback<void(base::expected<T, E>, Args... rest)> cb,
+    const base::expected<T, E>& result,
+    Args... rest) {
+  base::expected<T, E> clone;
+  if (result.has_value()) {
+    clone = base::ok(result.value().Clone());
+  } else {
+    clone = base::unexpected(result.error());
+  }
+  std::move(cb).Run(std::move(clone), rest...);
+}
+
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
-// TODO(crbug.com/809738):  Update for other platforms as they are made able
+// TODO(crbug.com/40561724):  Update for other platforms as they are made able
 // to support modal dialogs from OOP.
 uint32_t NativeViewToUint(gfx::NativeView view) {
 #if BUILDFLAG(IS_WIN)
   return base::win::HandleToUint32(views::HWNDForNativeView(view));
 #else
   NOTREACHED();
-  return 0;
 #endif
 }
 #endif
@@ -89,9 +113,26 @@ PrintBackendServiceManager::CallbackContext::CallbackContext(
 
 PrintBackendServiceManager::CallbackContext::~CallbackContext() = default;
 
+PrintBackendServiceManager::ServiceAndCallbackContext::
+    ServiceAndCallbackContext(
+        CallbackContext callback_context,
+        const mojo::Remote<mojom::PrintBackendService>& backend_service)
+    : context(std::move(callback_context)), service(backend_service) {}
+
+PrintBackendServiceManager::ServiceAndCallbackContext::
+    ~ServiceAndCallbackContext() = default;
+
 PrintBackendServiceManager::PrintBackendServiceManager() = default;
 
 PrintBackendServiceManager::~PrintBackendServiceManager() = default;
+
+// static
+void PrintBackendServiceManager::LaunchPersistentService() {
+  PrintBackendServiceManager& service_mgr = GetInstance();
+  // Registering a query client causes a service to be launched.
+  service_mgr.persistent_service_ = true;
+  std::ignore = service_mgr.RegisterQueryClient();
+}
 
 // static
 std::string PrintBackendServiceManager::ClientTypeToString(
@@ -108,7 +149,7 @@ std::string PrintBackendServiceManager::ClientTypeToString(
 
 // static
 void PrintBackendServiceManager::LogCallToRemote(
-    base::StringPiece name,
+    std::string_view name,
     const CallbackContext& context) {
   DVLOG(1) << "Sending " << name << " on remote `" << context.remote_id
            << "`, saved callback ID of " << context.saved_callback_id;
@@ -116,7 +157,7 @@ void PrintBackendServiceManager::LogCallToRemote(
 
 // static
 void PrintBackendServiceManager::LogCallbackFromRemote(
-    base::StringPiece name,
+    std::string_view name,
     const CallbackContext& context) {
   DVLOG(1) << name << " completed for remote `" << context.remote_id
            << "` saved callback ID " << context.saved_callback_id;
@@ -126,14 +167,14 @@ void PrintBackendServiceManager::SetCrashKeys(const std::string& printer_name) {
   if (sandboxed_service_remote_for_test_)
     return;
 
-  // TODO(crbug.com/1227561)  Remove local call for driver info, don't want
+  // TODO(crbug.com/40777132)  Remove local call for driver info, don't want
   // any residual accesses left into the printer drivers from the browser
   // process.
   base::ScopedAllowBlocking allow_blocking;
   scoped_refptr<PrintBackend> print_backend =
       PrintBackend::CreateInstance(g_browser_process->GetApplicationLocale());
   crash_keys_ = std::make_unique<crash_keys::ScopedPrinterInfo>(
-      print_backend->GetPrinterDriverInfo(printer_name));
+      printer_name, print_backend->GetPrinterDriverInfo(printer_name));
 }
 
 PrintBackendServiceManager::ClientId
@@ -141,7 +182,7 @@ PrintBackendServiceManager::RegisterQueryClient() {
   return *RegisterClient(ClientType::kQuery, kEmptyPrinterName);
 }
 
-absl::optional<PrintBackendServiceManager::ClientId>
+std::optional<PrintBackendServiceManager::ClientId>
 PrintBackendServiceManager::RegisterQueryWithUiClient() {
   return RegisterClient(ClientType::kQueryWithUi, kEmptyPrinterName);
 }
@@ -152,18 +193,25 @@ PrintBackendServiceManager::RegisterPrintDocumentClient(
   return *RegisterClient(ClientType::kPrintDocument, printer_name);
 }
 
-PrintBackendServiceManager::ClientId
+std::optional<PrintBackendServiceManager::ClientId>
 PrintBackendServiceManager::RegisterPrintDocumentClientReusingClientRemote(
     ClientId id) {
-  DCHECK(query_with_ui_clients_.contains(id));
-  return *RegisterClient(ClientType::kPrintDocument,
-                         query_with_ui_clients_[id]);
+  const auto iter = query_with_ui_clients_.find(id);
+  if (iter == query_with_ui_clients_.end()) {
+    // If the client is gone then that suggests that the renderer process
+    // terminated while the system print dialog was displayed.  Proceeding
+    // with printing will not be possible in such a case.
+    VLOG(1) << "Registering a print document client reusing client " << id
+            << " failed because that client is no longer registered";
+    return std::nullopt;
+  }
+  return RegisterClient(ClientType::kPrintDocument, iter->second);
 }
 
 void PrintBackendServiceManager::UnregisterClient(ClientId id) {
   // Determine which client type has this ID, and remove it once found.
-  absl::optional<ClientType> client_type;
-  RemoteId remote_id = GetRemoteIdForPrinterName(kEmptyPrinterName);
+  std::optional<ClientType> client_type;
+  std::optional<RemoteId> remote_id;
   if (query_clients_.erase(id) != 0) {
     client_type = ClientType::kQuery;
   } else if (query_with_ui_clients_.erase(id) != 0) {
@@ -189,11 +237,14 @@ void PrintBackendServiceManager::UnregisterClient(ClientId id) {
           << ClientTypeToString(client_type.value())
           << ") from print backend service.";
 
-  absl::optional<base::TimeDelta> new_timeout =
+  if (!remote_id.has_value()) {
+    remote_id = GetRemoteIdForPrinterName(kEmptyPrinterName);
+  }
+  std::optional<base::TimeDelta> new_timeout =
       DetermineIdleTimeoutUpdateOnUnregisteredClient(client_type.value(),
-                                                     remote_id);
+                                                     remote_id.value());
   if (new_timeout.has_value())
-    UpdateServiceIdleTimeoutByRemoteId(remote_id, new_timeout.value());
+    UpdateServiceIdleTimeoutByRemoteId(remote_id.value(), new_timeout.value());
 
 #if BUILDFLAG(IS_WIN)
   if (base::FeatureList::IsEnabled(features::kReadPrinterCapabilitiesWithXps) &&
@@ -205,108 +256,105 @@ void PrintBackendServiceManager::UnregisterClient(ClientId id) {
 
 void PrintBackendServiceManager::EnumeratePrinters(
     mojom::PrintBackendService::EnumeratePrintersCallback callback) {
-  CallbackContext context;
-  auto& service =
-      GetServiceAndCallbackContextForQuery(kEmptyPrinterName, context);
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQuery(kEmptyPrinterName);
+  SaveCallback(
+      GetRemoteSavedEnumeratePrintersCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
-  SaveCallback(GetRemoteSavedEnumeratePrintersCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
-
-  LogCallToRemote("EnumeratePrinters", context);
+  LogCallToRemote("EnumeratePrinters", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->EnumeratePrinters(
+  result.service.get()->EnumeratePrinters(
       base::BindOnce(&PrintBackendServiceManager::OnDidEnumeratePrinters,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 void PrintBackendServiceManager::FetchCapabilities(
     const std::string& printer_name,
     mojom::PrintBackendService::FetchCapabilitiesCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForQuery(printer_name, context);
-
-  SaveCallback(GetRemoteSavedFetchCapabilitiesCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQuery(printer_name);
+  SaveCallback(
+      GetRemoteSavedFetchCapabilitiesCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("FetchCapabilities", context);
+  LogCallToRemote("FetchCapabilities", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->FetchCapabilities(
+  result.service.get()->FetchCapabilities(
       printer_name,
       base::BindOnce(&PrintBackendServiceManager::OnDidFetchCapabilities,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 void PrintBackendServiceManager::GetDefaultPrinterName(
     mojom::PrintBackendService::GetDefaultPrinterNameCallback callback) {
-  CallbackContext context;
-  auto& service =
-      GetServiceAndCallbackContextForQuery(kEmptyPrinterName, context);
-
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQuery(kEmptyPrinterName);
   SaveCallback(
-      GetRemoteSavedGetDefaultPrinterNameCallbacks(context.is_sandboxed),
-      context.remote_id, context.saved_callback_id, std::move(callback));
+      GetRemoteSavedGetDefaultPrinterNameCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
-  LogCallToRemote("GetDefaultPrinterName", context);
+  LogCallToRemote("GetDefaultPrinterName", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->GetDefaultPrinterName(
+  result.service.get()->GetDefaultPrinterName(
       base::BindOnce(&PrintBackendServiceManager::OnDidGetDefaultPrinterName,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void PrintBackendServiceManager::GetPrinterSemanticCapsAndDefaults(
     const std::string& printer_name,
     mojom::PrintBackendService::GetPrinterSemanticCapsAndDefaultsCallback
         callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForQuery(printer_name, context);
-
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQuery(printer_name);
   SaveCallback(GetRemoteSavedGetPrinterSemanticCapsAndDefaultsCallbacks(
-                   context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
+                   result.context.is_sandboxed),
+               result.context.remote_id, result.context.saved_callback_id,
                std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("GetPrinterSemanticCapsAndDefaults", context);
+  LogCallToRemote("GetPrinterSemanticCapsAndDefaults", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->GetPrinterSemanticCapsAndDefaults(
+  result.service.get()->GetPrinterSemanticCapsAndDefaults(
       printer_name,
       base::BindOnce(
           &PrintBackendServiceManager::OnDidGetPrinterSemanticCapsAndDefaults,
-          base::Unretained(this), std::move(context)));
+          base::Unretained(this), std::move(result.context)));
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN)
 void PrintBackendServiceManager::GetPaperPrintableArea(
     const std::string& printer_name,
     const PrintSettings::RequestedMedia& media,
     mojom::PrintBackendService::GetPaperPrintableAreaCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForQuery(printer_name, context);
-
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQuery(printer_name);
   SaveCallback(
-      GetRemoteSavedGetPaperPrintableAreaCallbacks(context.is_sandboxed),
-      context.remote_id, context.saved_callback_id, std::move(callback));
+      GetRemoteSavedGetPaperPrintableAreaCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("GetPaperPrintableArea", context);
+  LogCallToRemote("GetPaperPrintableArea", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->GetPaperPrintableArea(
+  result.service.get()->GetPaperPrintableArea(
       printer_name, media,
       base::BindOnce(&PrintBackendServiceManager::OnDidGetPaperPrintableArea,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 #endif
 
@@ -327,19 +375,18 @@ PrintBackendServiceManager::EstablishPrintingContext(
   // be deduced from the provided `printer_name`, since the printer cannot be
   // known ahead of time for a system print dialog query, but must be known
   // when printing a document.
-  CallbackContext context;
-  auto& service = printer_name.empty()
-                      ? GetServiceAndCallbackContextForQueryWithUiClient(
-                            client_id, kEmptyPrinterName, context)
-                      : GetServiceAndCallbackContextForPrintDocumentClient(
-                            client_id, printer_name, context);
+  ServiceAndCallbackContext result =
+      printer_name.empty() ? GetServiceAndCallbackContextForQueryWithUiClient(
+                                 client_id, kEmptyPrinterName)
+                           : GetServiceAndCallbackContextForPrintDocumentClient(
+                                 client_id, printer_name);
 
-  LogCallToRemote("EstablishPrintingContext", context);
+  LogCallToRemote("EstablishPrintingContext", result.context);
   ContextId context_id = ContextId(++last_context_id_);
-  service->EstablishPrintingContext(*context_id
+  result.service.get()->EstablishPrintingContext(*context_id
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
-                                    ,
-                                    NativeViewToUint(parent_view)
+                                                 ,
+                                                 NativeViewToUint(parent_view)
 #endif
   );
   return context_id;
@@ -354,21 +401,21 @@ void PrintBackendServiceManager::UseDefaultSettings(
   // call to `AskDefaultSettings()`.  Since that call requires `kQueryWithUi`,
   // it will behave better to ensure this uses the same type to reuse the same
   // process.
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForQueryWithUiClient(
-      client_id, kEmptyPrinterName, context);
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQueryWithUiClient(client_id,
+                                                       kEmptyPrinterName);
+  SaveCallback(
+      GetRemoteSavedUseDefaultSettingsCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
-  SaveCallback(GetRemoteSavedUseDefaultSettingsCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
-
-  LogCallToRemote("UseDefaultSettings", context);
+  LogCallToRemote("UseDefaultSettings", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->UseDefaultSettings(
+  result.service.get()->UseDefaultSettings(
       *context_id,
       base::BindOnce(&PrintBackendServiceManager::OnDidUseDefaultSettings,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
@@ -379,21 +426,21 @@ void PrintBackendServiceManager::AskUserForSettings(
     bool has_selection,
     bool is_scripted,
     mojom::PrintBackendService::AskUserForSettingsCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForQueryWithUiClient(
-      client_id, kEmptyPrinterName, context);
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForQueryWithUiClient(client_id,
+                                                       kEmptyPrinterName);
+  SaveCallback(
+      GetRemoteSavedAskUserForSettingsCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
-  SaveCallback(GetRemoteSavedAskUserForSettingsCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
-
-  LogCallToRemote("AskUserForSettings", context);
+  LogCallToRemote("AskUserForSettings", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->AskUserForSettings(
+  result.service.get()->AskUserForSettings(
       *context_id, max_pages, has_selection, is_scripted,
       base::BindOnce(&PrintBackendServiceManager::OnDidAskUserForSettings,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 #endif  // BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
 
@@ -406,26 +453,25 @@ void PrintBackendServiceManager::UpdatePrintSettings(
   // A blank `printer_name` indicates the destination is unknown, which occurs
   // when initiating a system print dialog.  When printing a document the
   // destination must be known.
-  CallbackContext context;
-  auto& service = printer_name.empty()
-                      ? GetServiceAndCallbackContextForQueryWithUiClient(
-                            client_id, printer_name, context)
-                      : GetServiceAndCallbackContextForPrintDocumentClient(
-                            client_id, printer_name, context);
-
-  SaveCallback(GetRemoteSavedUpdatePrintSettingsCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
+  ServiceAndCallbackContext result =
+      printer_name.empty() ? GetServiceAndCallbackContextForQueryWithUiClient(
+                                 client_id, printer_name)
+                           : GetServiceAndCallbackContextForPrintDocumentClient(
+                                 client_id, printer_name);
+  SaveCallback(
+      GetRemoteSavedUpdatePrintSettingsCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("UpdatePrintSettings", context);
+  LogCallToRemote("UpdatePrintSettings", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->UpdatePrintSettings(
+  result.service.get()->UpdatePrintSettings(
       *context_id, std::move(job_settings),
       base::BindOnce(&PrintBackendServiceManager::OnDidUpdatePrintSettings,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 void PrintBackendServiceManager::StartPrinting(
@@ -435,29 +481,29 @@ void PrintBackendServiceManager::StartPrinting(
     int document_cookie,
     const std::u16string& document_name,
 #if !BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
-    absl::optional<PrintSettings> settings,
+    std::optional<PrintSettings> settings,
 #endif
     mojom::PrintBackendService::StartPrintingCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForPrintDocumentClient(
-      client_id, printer_name, context);
-
-  SaveCallback(GetRemoteSavedStartPrintingCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForPrintDocumentClient(client_id,
+                                                         printer_name);
+  SaveCallback(
+      GetRemoteSavedStartPrintingCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("StartPrinting", context);
+  LogCallToRemote("StartPrinting", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->StartPrinting(
+  result.service.get()->StartPrinting(
       *context_id, document_cookie, document_name,
 #if !BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
       settings,
 #endif
       base::BindOnce(&PrintBackendServiceManager::OnDidStartPrinting,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -469,28 +515,28 @@ void PrintBackendServiceManager::RenderPrintedPage(
     mojom::MetafileDataType page_data_type,
     base::ReadOnlySharedMemoryRegion serialized_page_data,
     mojom::PrintBackendService::RenderPrintedPageCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForPrintDocumentClient(
-      client_id, printer_name, context);
-
-  SaveCallback(GetRemoteSavedRenderPrintedPageCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
-               std::move(callback));
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForPrintDocumentClient(client_id,
+                                                         printer_name);
+  SaveCallback(
+      GetRemoteSavedRenderPrintedPageCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
   // Page numbers are 0-based for the printing context.
   const uint32_t page_index = page.page_number() - 1;
 
-  LogCallToRemote("RenderPrintedPage", context);
+  LogCallToRemote("RenderPrintedPage", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->RenderPrintedPage(
+  result.service.get()->RenderPrintedPage(
       document_cookie, page_index, page_data_type,
       std::move(serialized_page_data), page.page_size(),
       page.page_content_rect(), page.shrink_factor(),
       base::BindOnce(&PrintBackendServiceManager::OnDidRenderPrintedPage,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -502,23 +548,23 @@ void PrintBackendServiceManager::RenderPrintedDocument(
     mojom::MetafileDataType data_type,
     base::ReadOnlySharedMemoryRegion serialized_data,
     mojom::PrintBackendService::RenderPrintedDocumentCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForPrintDocumentClient(
-      client_id, printer_name, context);
-
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForPrintDocumentClient(client_id,
+                                                         printer_name);
   SaveCallback(
-      GetRemoteSavedRenderPrintedDocumentCallbacks(context.is_sandboxed),
-      context.remote_id, context.saved_callback_id, std::move(callback));
+      GetRemoteSavedRenderPrintedDocumentCallbacks(result.context.is_sandboxed),
+      result.context.remote_id, result.context.saved_callback_id,
+      std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("RenderPrintedDocument", context);
+  LogCallToRemote("RenderPrintedDocument", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->RenderPrintedDocument(
+  result.service.get()->RenderPrintedDocument(
       document_cookie, page_count, data_type, std::move(serialized_data),
       base::BindOnce(&PrintBackendServiceManager::OnDidRenderPrintedDocument,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 void PrintBackendServiceManager::DocumentDone(
@@ -526,23 +572,22 @@ void PrintBackendServiceManager::DocumentDone(
     const std::string& printer_name,
     int document_cookie,
     mojom::PrintBackendService::DocumentDoneCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForPrintDocumentClient(
-      client_id, printer_name, context);
-
-  SaveCallback(GetRemoteSavedDocumentDoneCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForPrintDocumentClient(client_id,
+                                                         printer_name);
+  SaveCallback(GetRemoteSavedDocumentDoneCallbacks(result.context.is_sandboxed),
+               result.context.remote_id, result.context.saved_callback_id,
                std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("DocumentDone", context);
+  LogCallToRemote("DocumentDone", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->DocumentDone(
+  result.service.get()->DocumentDone(
       document_cookie,
       base::BindOnce(&PrintBackendServiceManager::OnDidDocumentDone,
-                     base::Unretained(this), std::move(context)));
+                     base::Unretained(this), std::move(result.context)));
 }
 
 void PrintBackendServiceManager::Cancel(
@@ -550,22 +595,22 @@ void PrintBackendServiceManager::Cancel(
     const std::string& printer_name,
     int document_cookie,
     mojom::PrintBackendService::CancelCallback callback) {
-  CallbackContext context;
-  auto& service = GetServiceAndCallbackContextForPrintDocumentClient(
-      client_id, printer_name, context);
-
-  SaveCallback(GetRemoteSavedCancelCallbacks(context.is_sandboxed),
-               context.remote_id, context.saved_callback_id,
+  ServiceAndCallbackContext result =
+      GetServiceAndCallbackContextForPrintDocumentClient(client_id,
+                                                         printer_name);
+  SaveCallback(GetRemoteSavedCancelCallbacks(result.context.is_sandboxed),
+               result.context.remote_id, result.context.saved_callback_id,
                std::move(callback));
 
   SetCrashKeys(printer_name);
 
-  LogCallToRemote("Cancel", context);
+  LogCallToRemote("Cancel", result.context);
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
-  service->Cancel(document_cookie,
-                  base::BindOnce(&PrintBackendServiceManager::OnDidCancel,
-                                 base::Unretained(this), std::move(context)));
+  result.service.get()->Cancel(
+      document_cookie,
+      base::BindOnce(&PrintBackendServiceManager::OnDidCancel,
+                     base::Unretained(this), std::move(result.context)));
 }
 
 bool PrintBackendServiceManager::PrinterDriverFoundToRequireElevatedPrivilege(
@@ -579,17 +624,16 @@ void PrintBackendServiceManager::
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   VLOG(1) << "Destination '" << printer_name
           << "' requires elevated privileges.";
-  if (drivers_requiring_elevated_privilege_.emplace(printer_name).second &&
-      drivers_requiring_elevated_privilege_.size() == 1) {
-    // First time we've detected a problem for any driver.
-    base::UmaHistogramBoolean(
-        kPrintBackendRequiresElevatedPrivilegeHistogramName, /*sample=*/true);
-  }
+  drivers_requiring_elevated_privilege_.emplace(printer_name);
 }
 
 void PrintBackendServiceManager::SetServiceForTesting(
     mojo::Remote<mojom::PrintBackendService>* remote) {
   sandboxed_service_remote_for_test_ = remote;
+  if (!sandboxed_service_remote_for_test_) {
+    return;
+  }
+
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
   sandboxed_service_remote_for_test_->set_disconnect_handler(base::BindOnce(
@@ -601,6 +645,10 @@ void PrintBackendServiceManager::SetServiceForTesting(
 void PrintBackendServiceManager::SetServiceForFallbackTesting(
     mojo::Remote<mojom::PrintBackendService>* remote) {
   unsandboxed_service_remote_for_test_ = remote;
+  if (!unsandboxed_service_remote_for_test_) {
+    return;
+  }
+
   // Safe to use base::Unretained(this) since `this` is a global singleton
   // which never goes away.
   unsandboxed_service_remote_for_test_->set_disconnect_handler(base::BindOnce(
@@ -630,7 +678,8 @@ PrintBackendServiceManager::RemoteId
 PrintBackendServiceManager::GetRemoteIdForPrinterName(
     const std::string& printer_name) {
 #if BUILDFLAG(IS_WIN)
-  if (!sandboxed_service_remote_for_test_) {
+  if (!sandboxed_service_remote_for_test_ &&
+      !features::kEnableOopPrintDriversSingleProcess.Get()) {
     // Windows drivers are not thread safe.  Use a process per driver to prevent
     // bad interactions when interfacing to multiple drivers in parallel.
     // https://crbug.com/957242
@@ -639,17 +688,14 @@ PrintBackendServiceManager::GetRemoteIdForPrinterName(
       return iter->second;
     }
 
-    // No remote yet for this printer so make one.  RemoteId is only used within
-    // browse process management code, so a simple incrementing sequence is
-    // sufficient.
-    static uint32_t id_sequence = 0;
-    return remote_id_map_.insert({printer_name, RemoteId(++id_sequence)})
+    // No remote yet for this printer so make one.
+    return remote_id_map_
+        .insert({printer_name, RemoteId(++remote_id_sequence_)})
         .first->second;
   }
 #endif
 
-  // Non-Windows platforms and the testing environment always just use one
-  // instance for all printers.
+  // Just a single process that services all printers.
   return RemoteId(1);
 }
 
@@ -670,19 +716,19 @@ PrintBackendServiceManager::GetRemoteIdForPrintDocumentClientId(
       return item.first;
     }
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
-absl::optional<PrintBackendServiceManager::ClientId>
+std::optional<PrintBackendServiceManager::ClientId>
 PrintBackendServiceManager::RegisterClient(
     ClientType client_type,
-    absl::variant<std::string, RemoteId> destination) {
+    std::variant<std::string, RemoteId> destination) {
   ClientId client_id = ClientId(++last_client_id_);
   RemoteId remote_id =
-      absl::holds_alternative<std::string>(destination)
+      std::holds_alternative<std::string>(destination)
           ? GetRemoteIdForPrinterName(
-                /*printer_name=*/absl::get<std::string>(destination))
-          : absl::get<RemoteId>(destination);
+                /*printer_name=*/std::get<std::string>(destination))
+          : std::get<RemoteId>(destination);
 
   VLOG(1) << "Registering a client with ID " << client_id << " (client type "
           << ClientTypeToString(client_type) << ") for print backend service.";
@@ -693,7 +739,7 @@ PrintBackendServiceManager::RegisterClient(
     case ClientType::kQueryWithUi:
 #if !BUILDFLAG(ENABLE_CONCURRENT_BASIC_PRINT_DIALOGS)
       if (!query_with_ui_clients_.empty())
-        return absl::nullopt;
+        return std::nullopt;
 #endif
       query_with_ui_clients_.insert({client_id, remote_id});
       break;
@@ -720,16 +766,22 @@ PrintBackendServiceManager::RegisterClient(
     // Service already existed, possibly was recently marked for being reset
     // with a short timeout or is already in use for other client types.
     // Determine if any adjustment to the timeout is actually necessary.
-    absl::optional<base::TimeDelta> new_timeout =
+    std::optional<base::TimeDelta> new_timeout =
         DetermineIdleTimeoutUpdateOnRegisteredClient(client_type, remote_id);
     if (new_timeout.has_value())
       UpdateServiceIdleTimeoutByRemoteId(remote_id, new_timeout.value());
   } else {
     // Service not already available, so launch it now so that it will be
     // ready by the time the client gets to point of invoking a Mojo call.
-    DCHECK(absl::holds_alternative<std::string>(destination));
+    if (std::holds_alternative<RemoteId>(destination)) {
+      // When the destination is to reuse an existing remote, and that remote
+      // is gone, then any expected context in that remote is also gone.  Such
+      // a loss of context should be treated as a failure for the user's request
+      // to print the document, so return nullopt for the client ID.
+      return std::nullopt;
+    }
     bool should_sandbox = ShouldServiceBeSandboxed(
-        /*printer_name=*/absl::get<std::string>(destination), client_type);
+        /*printer_name=*/std::get<std::string>(destination), client_type);
     GetService(remote_id, client_type, should_sandbox);
   }
 
@@ -788,6 +840,10 @@ const mojo::Remote<mojom::PrintBackendService>&
 PrintBackendServiceManager::GetService(const RemoteId& remote_id,
                                        ClientType client_type,
                                        bool sandboxed) {
+  // Performance is improved if a service is launched ahead of the time it will
+  // be needed by client callers.
+  DCHECK_GT(GetClientsRegisteredCount(), 0u);
+
   if (sandboxed_service_remote_for_test_) {
     // The presence of a sandboxed remote for testing signals a testing
     // environment.  If no unsandboxed test service was provided for fallback
@@ -797,23 +853,6 @@ PrintBackendServiceManager::GetService(const RemoteId& remote_id,
     }
 
     return *sandboxed_service_remote_for_test_;
-  }
-
-  // Performance is improved if a service is launched ahead of the time it will
-  // be needed by client callers.
-  DCHECK_GT(GetClientsRegisteredCount(), 0u);
-
-  if (sandboxed) {
-    // On the first print that will try to use sandboxed service, make note that
-    // so far no drivers have been discovered to require fallback beyond any
-    // predetermined known cases.
-    static bool first_sandboxed_print = true;
-    if (first_sandboxed_print) {
-      first_sandboxed_print = false;
-      base::UmaHistogramBoolean(
-          kPrintBackendRequiresElevatedPrivilegeHistogramName,
-          /*sample=*/false);
-    }
   }
 
   if (sandboxed) {
@@ -846,14 +885,19 @@ PrintBackendServiceManager::GetServiceFromBundle(
             << (sandboxed ? "sandboxed" : "unsandboxed") << " for `"
             << remote_id << "`";
 
+    std::vector<std::string> extra_switches;
+#if BUILDFLAG(IS_LINUX)
+    if (auto* linux_ui = ui::LinuxUi::instance()) {
+      extra_switches = linux_ui->GetCmdLineFlagsForCopy();
+    }
+    extra_switches.push_back(switches::kMessageLoopTypeUi);
+#endif
     mojo::Remote<T>& host = bundle->host;
     content::ServiceProcessHost::Launch(
         host.BindNewPipeAndPassReceiver(),
         content::ServiceProcessHost::Options()
             .WithDisplayName(IDS_UTILITY_PROCESS_PRINT_BACKEND_SERVICE_NAME)
-#if BUILDFLAG(IS_LINUX)
-            .WithExtraCommandLineSwitches({switches::kMessageLoopTypeUi})
-#endif
+            .WithExtraCommandLineSwitches(std::move(extra_switches))
             .Pass());
     host->BindBackend(service.BindNewPipeAndPassReceiver());
 
@@ -889,9 +933,13 @@ PrintBackendServiceManager::GetServiceFromBundle(
   return service;
 }
 
-// static
 constexpr base::TimeDelta PrintBackendServiceManager::GetClientTypeIdleTimeout(
-    ClientType client_type) {
+    ClientType client_type) const {
+  if (persistent_service_) {
+    // Intentionally keep service around indefinitely.
+    return base::TimeDelta::Max();
+  }
+
   switch (client_type) {
     case ClientType::kQuery:
       // Want a long timeout so that the service is available across typical
@@ -945,7 +993,7 @@ size_t PrintBackendServiceManager::GetPrintDocumentClientsCountForRemoteId(
   return 0;
 }
 
-absl::optional<base::TimeDelta>
+std::optional<base::TimeDelta>
 PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnRegisteredClient(
     ClientType registered_client_type,
     const RemoteId& remote_id) const {
@@ -957,11 +1005,11 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnRegisteredClient(
       // any of them have clients.
       if (!query_with_ui_clients_.empty() ||
           HasPrintDocumentClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 
       if (query_clients_.size() > 1)
-        return absl::nullopt;
+        return std::nullopt;
 
       // First client of type and no others will need an update.
       break;
@@ -970,7 +1018,7 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnRegisteredClient(
 #if BUILDFLAG(ENABLE_CONCURRENT_BASIC_PRINT_DIALOGS)
       // No need to update if there were other query with UI clients.
       if (query_with_ui_clients_.size() > 1)
-        return absl::nullopt;
+        return std::nullopt;
 #else
       // A modal system dialog, of which there should only ever be at most one
       // of these.
@@ -980,7 +1028,7 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnRegisteredClient(
       // This is the longest timeout.  No need to update if there is a similarly
       // long timeout due to a printing client.
       if (HasPrintDocumentClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
       break;
 
@@ -991,19 +1039,19 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnRegisteredClient(
       // No need to update if there were other printing clients for same remote
       // ID.
       if (clients_count > 1)
-        return absl::nullopt;
+        return std::nullopt;
 
       // This is the longest timeout.  No need to update if there is a similarly
       // long timeout due to query with UI.
       if (!query_with_ui_clients_.empty())
-        return absl::nullopt;
+        return std::nullopt;
       break;
   }
 
   return GetClientTypeIdleTimeout(registered_client_type);
 }
 
-absl::optional<base::TimeDelta>
+std::optional<base::TimeDelta>
 PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnUnregisteredClient(
     ClientType unregistered_client_type,
     const RemoteId& remote_id) const {
@@ -1013,11 +1061,11 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnUnregisteredClient(
       // any of them have clients.
       if (HasQueryWithUiClientForRemoteId(remote_id) ||
           HasPrintDocumentClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 
       if (!query_clients_.empty())
-        return absl::nullopt;
+        return std::nullopt;
 
       // No remaining clients, can switch to short timeout for quick
       // reclamation.
@@ -1027,7 +1075,7 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnUnregisteredClient(
 #if BUILDFLAG(IS_LINUX)
       // No need to update if there were other query with UI clients.
       if (HasQueryWithUiClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 #else
       // A modal system dialog, of which there should only ever be at most one
@@ -1038,7 +1086,7 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnUnregisteredClient(
       // This is the longest timeout, so no need to update if there is a
       // printing client for this `remote_id`.
       if (HasPrintDocumentClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 
       // New timeout depends upon existence of other queries.
@@ -1050,7 +1098,7 @@ PrintBackendServiceManager::DetermineIdleTimeoutUpdateOnUnregisteredClient(
       // UI clients for same remote ID.
       if (HasQueryWithUiClientForRemoteId(remote_id) ||
           HasPrintDocumentClientForRemoteId(remote_id)) {
-        return absl::nullopt;
+        return std::nullopt;
       }
 
       // New timeout depends upon existence of other queries.
@@ -1074,7 +1122,7 @@ void PrintBackendServiceManager::SetServiceIdleHandler(
       base::BindRepeating(&PrintBackendServiceManager::OnIdleTimeout,
                           base::Unretained(this), sandboxed, remote_id));
 
-  // TODO(crbug.com/1225111)  Make a superfluous call to the service, just to
+  // TODO(crbug.com/40775634)  Make a superfluous call to the service, just to
   // cause an IPC that will in turn make the adjusted timeout value actually
   // take effect.
   service->Poke();
@@ -1122,39 +1170,37 @@ void PrintBackendServiceManager::OnRemoteDisconnected(
   } else {
     unsandboxed_remotes_bundles_.erase(remote_id);
   }
-  RunSavedCallbacksStructResult(
-      GetRemoteSavedEnumeratePrintersCallbacks(sandboxed), remote_id,
-      mojom::PrinterListResult::NewResultCode(mojom::ResultCode::kFailed));
-  RunSavedCallbacksStructResult(
-      GetRemoteSavedFetchCapabilitiesCallbacks(sandboxed), remote_id,
-      mojom::PrinterCapsAndInfoResult::NewResultCode(
-          mojom::ResultCode::kFailed));
-  RunSavedCallbacksStructResult(
+  RunSavedResultCallbacks(GetRemoteSavedEnumeratePrintersCallbacks(sandboxed),
+                          remote_id,
+                          base::unexpected(mojom::ResultCode::kFailed));
+  RunSavedResultCallbacks(GetRemoteSavedFetchCapabilitiesCallbacks(sandboxed),
+                          remote_id,
+                          base::unexpected(mojom::ResultCode::kFailed));
+  RunSavedResultCallbacks(
       GetRemoteSavedGetDefaultPrinterNameCallbacks(sandboxed), remote_id,
-      mojom::DefaultPrinterNameResult::NewResultCode(
-          mojom::ResultCode::kFailed));
-  RunSavedCallbacksStructResult(
+      base::unexpected(mojom::ResultCode::kFailed));
+#if BUILDFLAG(IS_CHROMEOS)
+  RunSavedResultCallbacks(
       GetRemoteSavedGetPrinterSemanticCapsAndDefaultsCallbacks(sandboxed),
-      remote_id,
-      mojom::PrinterSemanticCapsAndDefaultsResult::NewResultCode(
-          mojom::ResultCode::kFailed));
+      remote_id, base::unexpected(mojom::ResultCode::kFailed));
+#endif
 #if BUILDFLAG(IS_WIN)
   RunSavedCallbacks(GetRemoteSavedGetPaperPrintableAreaCallbacks(sandboxed),
                     remote_id, gfx::Rect());
 #endif
-  RunSavedCallbacksStructResult(
-      GetRemoteSavedUseDefaultSettingsCallbacks(sandboxed), remote_id,
-      mojom::PrintSettingsResult::NewResultCode(mojom::ResultCode::kFailed));
+  RunSavedResultCallbacks(GetRemoteSavedUseDefaultSettingsCallbacks(sandboxed),
+                          remote_id,
+                          base::unexpected(mojom::ResultCode::kFailed));
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
-  RunSavedCallbacksStructResult(
-      GetRemoteSavedAskUserForSettingsCallbacks(sandboxed), remote_id,
-      mojom::PrintSettingsResult::NewResultCode(mojom::ResultCode::kFailed));
+  RunSavedResultCallbacks(GetRemoteSavedAskUserForSettingsCallbacks(sandboxed),
+                          remote_id,
+                          base::unexpected(mojom::ResultCode::kFailed));
 #endif
-  RunSavedCallbacksStructResult(
-      GetRemoteSavedUpdatePrintSettingsCallbacks(sandboxed), remote_id,
-      mojom::PrintSettingsResult::NewResultCode(mojom::ResultCode::kFailed));
+  RunSavedResultCallbacks(GetRemoteSavedUpdatePrintSettingsCallbacks(sandboxed),
+                          remote_id,
+                          base::unexpected(mojom::ResultCode::kFailed));
   RunSavedCallbacks(GetRemoteSavedStartPrintingCallbacks(sandboxed), remote_id,
-                    mojom::ResultCode::kFailed);
+                    mojom::ResultCode::kFailed, PrintingContext::kNoPrintJobId);
 #if BUILDFLAG(IS_WIN)
   RunSavedCallbacks(GetRemoteSavedRenderPrintedPageCallbacks(sandboxed),
                     remote_id, mojom::ResultCode::kFailed);
@@ -1187,6 +1233,7 @@ PrintBackendServiceManager::GetRemoteSavedGetDefaultPrinterNameCallbacks(
                    : unsandboxed_saved_get_default_printer_name_callbacks_;
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 PrintBackendServiceManager::
     RemoteSavedGetPrinterSemanticCapsAndDefaultsCallbacks&
     PrintBackendServiceManager::
@@ -1196,6 +1243,7 @@ PrintBackendServiceManager::
              ? sandboxed_saved_get_printer_semantic_caps_and_defaults_callbacks_
              : unsandboxed_saved_get_printer_semantic_caps_and_defaults_callbacks_;
 }
+#endif
 
 #if BUILDFLAG(IS_WIN)
 PrintBackendServiceManager::RemoteSavedGetPaperPrintableAreaCallbacks&
@@ -1266,42 +1314,45 @@ PrintBackendServiceManager::GetRemoteSavedCancelCallbacks(bool sandboxed) {
                    : unsandboxed_saved_cancel_callbacks_;
 }
 
-const mojo::Remote<mojom::PrintBackendService>&
+PrintBackendServiceManager::ServiceAndCallbackContext
 PrintBackendServiceManager::GetServiceAndCallbackContextForQuery(
-    const std::string& printer_name,
-    CallbackContext& context) {
+    const std::string& printer_name) {
+  CallbackContext context;
   context.remote_id = GetRemoteIdForPrinterName(printer_name);
   context.saved_callback_id = base::UnguessableToken::Create();
   context.is_sandboxed =
       ShouldServiceBeSandboxed(printer_name, ClientType::kQuery);
-  return GetService(context.remote_id, ClientType::kQuery,
-                    context.is_sandboxed);
+  auto& service =
+      GetService(context.remote_id, ClientType::kQuery, context.is_sandboxed);
+  return ServiceAndCallbackContext(std::move(context), service);
 }
 
-const mojo::Remote<mojom::PrintBackendService>&
+PrintBackendServiceManager::ServiceAndCallbackContext
 PrintBackendServiceManager::GetServiceAndCallbackContextForQueryWithUiClient(
     ClientId client_id,
-    const std::string& printer_name,
-    CallbackContext& context) {
+    const std::string& printer_name) {
+  CallbackContext context;
   context.remote_id = GetRemoteIdForQueryWithUiClientId(client_id);
   context.saved_callback_id = base::UnguessableToken::Create();
   context.is_sandboxed =
       ShouldServiceBeSandboxed(printer_name, ClientType::kQueryWithUi);
-  return GetService(context.remote_id, ClientType::kQueryWithUi,
-                    context.is_sandboxed);
+  auto& service = GetService(context.remote_id, ClientType::kQueryWithUi,
+                             context.is_sandboxed);
+  return ServiceAndCallbackContext(std::move(context), service);
 }
 
-const mojo::Remote<mojom::PrintBackendService>&
+PrintBackendServiceManager::ServiceAndCallbackContext
 PrintBackendServiceManager::GetServiceAndCallbackContextForPrintDocumentClient(
     ClientId client_id,
-    const std::string& printer_name,
-    CallbackContext& context) {
+    const std::string& printer_name) {
+  CallbackContext context;
   context.remote_id = GetRemoteIdForPrintDocumentClientId(client_id);
   context.saved_callback_id = base::UnguessableToken::Create();
   context.is_sandboxed =
       ShouldServiceBeSandboxed(printer_name, ClientType::kPrintDocument);
-  return GetService(context.remote_id, ClientType::kPrintDocument,
-                    context.is_sandboxed);
+  auto& service = GetService(context.remote_id, ClientType::kPrintDocument,
+                             context.is_sandboxed);
+  return ServiceAndCallbackContext(std::move(context), service);
 }
 
 template <class... T, class... X>
@@ -1320,12 +1371,12 @@ void PrintBackendServiceManager::ServiceCallbackDone(
     const base::UnguessableToken& saved_callback_id,
     X... data) {
   auto found_callback_map = saved_callbacks.find(remote_id);
-  DCHECK(found_callback_map != saved_callbacks.end());
+  CHECK(found_callback_map != saved_callbacks.end());
 
   SavedCallbacks<T...>& callback_map = found_callback_map->second;
 
   auto callback_entry = callback_map.find(saved_callback_id);
-  DCHECK(callback_entry != callback_map.end());
+  CHECK(callback_entry != callback_map.end());
   auto callback = std::move(callback_entry->second);
   callback_map.erase(callback_entry);
 
@@ -1335,7 +1386,7 @@ void PrintBackendServiceManager::ServiceCallbackDone(
 
 void PrintBackendServiceManager::OnDidEnumeratePrinters(
     const CallbackContext& context,
-    mojom::PrinterListResultPtr printer_list) {
+    mojom::PrintBackendService::EnumeratePrintersResult printer_list) {
   LogCallbackFromRemote("EnumeratePrinters", context);
   ServiceCallbackDone(
       GetRemoteSavedEnumeratePrintersCallbacks(context.is_sandboxed),
@@ -1344,7 +1395,7 @@ void PrintBackendServiceManager::OnDidEnumeratePrinters(
 
 void PrintBackendServiceManager::OnDidFetchCapabilities(
     const CallbackContext& context,
-    mojom::PrinterCapsAndInfoResultPtr printer_caps_and_info) {
+    mojom::PrintBackendService::FetchCapabilitiesResult printer_caps_and_info) {
   LogCallbackFromRemote("FetchCapabilities", context);
   ServiceCallbackDone(
       GetRemoteSavedFetchCapabilitiesCallbacks(context.is_sandboxed),
@@ -1354,22 +1405,25 @@ void PrintBackendServiceManager::OnDidFetchCapabilities(
 
 void PrintBackendServiceManager::OnDidGetDefaultPrinterName(
     const CallbackContext& context,
-    mojom::DefaultPrinterNameResultPtr printer_name) {
+    mojom::PrintBackendService::GetDefaultPrinterNameResult printer_name) {
   LogCallbackFromRemote("GetDefaultPrinterName", context);
   ServiceCallbackDone(
       GetRemoteSavedGetDefaultPrinterNameCallbacks(context.is_sandboxed),
       context.remote_id, context.saved_callback_id, std::move(printer_name));
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 void PrintBackendServiceManager::OnDidGetPrinterSemanticCapsAndDefaults(
     const CallbackContext& context,
-    mojom::PrinterSemanticCapsAndDefaultsResultPtr printer_caps) {
+    mojom::PrintBackendService::GetPrinterSemanticCapsAndDefaultsResult
+        printer_caps) {
   LogCallbackFromRemote("GetPrinterSemanticCapsAndDefaults", context);
   ServiceCallbackDone(GetRemoteSavedGetPrinterSemanticCapsAndDefaultsCallbacks(
                           context.is_sandboxed),
                       context.remote_id, context.saved_callback_id,
                       std::move(printer_caps));
 }
+#endif
 
 #if BUILDFLAG(IS_WIN)
 void PrintBackendServiceManager::OnDidGetPaperPrintableArea(
@@ -1384,7 +1438,7 @@ void PrintBackendServiceManager::OnDidGetPaperPrintableArea(
 
 void PrintBackendServiceManager::OnDidUseDefaultSettings(
     const CallbackContext& context,
-    mojom::PrintSettingsResultPtr settings) {
+    PrintSettingsResult settings) {
   LogCallbackFromRemote("UseDefaultSettings", context);
   ServiceCallbackDone(
       GetRemoteSavedUseDefaultSettingsCallbacks(context.is_sandboxed),
@@ -1394,7 +1448,7 @@ void PrintBackendServiceManager::OnDidUseDefaultSettings(
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
 void PrintBackendServiceManager::OnDidAskUserForSettings(
     const CallbackContext& context,
-    mojom::PrintSettingsResultPtr settings) {
+    PrintSettingsResult settings) {
   LogCallbackFromRemote("AskUserForSettings", context);
   ServiceCallbackDone(
       GetRemoteSavedAskUserForSettingsCallbacks(context.is_sandboxed),
@@ -1404,7 +1458,7 @@ void PrintBackendServiceManager::OnDidAskUserForSettings(
 
 void PrintBackendServiceManager::OnDidUpdatePrintSettings(
     const CallbackContext& context,
-    mojom::PrintSettingsResultPtr settings) {
+    PrintSettingsResult settings) {
   LogCallbackFromRemote("UpdatePrintSettings", context);
   ServiceCallbackDone(
       GetRemoteSavedUpdatePrintSettingsCallbacks(context.is_sandboxed),
@@ -1413,11 +1467,12 @@ void PrintBackendServiceManager::OnDidUpdatePrintSettings(
 
 void PrintBackendServiceManager::OnDidStartPrinting(
     const CallbackContext& context,
-    mojom::ResultCode result) {
+    mojom::ResultCode result,
+    int job_id) {
   LogCallbackFromRemote("StartPrinting", context);
   ServiceCallbackDone(
       GetRemoteSavedStartPrintingCallbacks(context.is_sandboxed),
-      context.remote_id, context.saved_callback_id, result);
+      context.remote_id, context.saved_callback_id, result, job_id);
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -1454,32 +1509,7 @@ void PrintBackendServiceManager::OnDidCancel(const CallbackContext& context) {
                       context.remote_id, context.saved_callback_id);
 }
 
-template <class T>
-void PrintBackendServiceManager::RunSavedCallbacksStructResult(
-    RemoteSavedStructCallbacks<T>& saved_callbacks,
-    const RemoteId& remote_id,
-    mojo::StructPtr<T> result_to_clone) {
-  auto found_callbacks_map = saved_callbacks.find(remote_id);
-  if (found_callbacks_map == saved_callbacks.end())
-    return;  // No callbacks to run.
-
-  SavedCallbacks<mojo::StructPtr<T>>& callbacks_map =
-      found_callbacks_map->second;
-  for (auto& iter : callbacks_map) {
-    const base::UnguessableToken& saved_callback_id = iter.first;
-    DVLOG(1) << "Propagating print backend callback, saved callback ID "
-             << saved_callback_id << " for remote `" << remote_id << "`";
-
-    // Don't remove entries from the map while we are iterating through it,
-    // just run the callbacks.
-    base::OnceCallback<void(mojo::StructPtr<T>)>& callback = iter.second;
-    std::move(callback).Run(result_to_clone.Clone());
-  }
-
-  // Now that we're done iterating we can safely delete all of the callbacks.
-  callbacks_map.clear();
-}
-
+// For cases that do not need to clone `result...`.
 template <class... T>
 void PrintBackendServiceManager::RunSavedCallbacks(
     RemoteSavedCallbacks<T...>& saved_callbacks,
@@ -1499,6 +1529,33 @@ void PrintBackendServiceManager::RunSavedCallbacks(
     // just run the callbacks.
     base::OnceCallback<void(T...)>& callback = iter.second;
     std::move(callback).Run(result...);
+  }
+
+  // Now that we're done iterating we can safely delete all of the callbacks.
+  callbacks_map.clear();
+}
+
+// For cases that need to copy a single base::expected<T,E>
+template <class... T>
+void PrintBackendServiceManager::RunSavedResultCallbacks(
+    RemoteSavedCallbacks<T...>& saved_callbacks,
+    const RemoteId& remote_id,
+    typename std::remove_reference<T>::type... result) {
+  auto found_callbacks_map = saved_callbacks.find(remote_id);
+  if (found_callbacks_map == saved_callbacks.end())
+    return;  // No callbacks to run.
+
+  SavedCallbacks<T...>& callbacks_map = found_callbacks_map->second;
+  for (auto& iter : callbacks_map) {
+    const base::UnguessableToken& saved_callback_id = iter.first;
+    DVLOG(1) << "Propagating print backend callback, saved callback ID "
+             << saved_callback_id << " for remote `" << remote_id << "`";
+
+    // Don't remove entries from the map while we are iterating through it,
+    // just run the callbacks.
+    base::OnceCallback<void(T...)>& callback = iter.second;
+    // Callback parameters that must be moved need cloning first.
+    MaybeCloneOrCopy(std::move(callback), result...);
   }
 
   // Now that we're done iterating we can safely delete all of the callbacks.

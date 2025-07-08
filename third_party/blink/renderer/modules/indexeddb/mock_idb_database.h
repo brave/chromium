@@ -6,15 +6,18 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_MOCK_IDB_DATABASE_H_
 
 #include <gmock/gmock.h>
-#include <memory>
 
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 
 namespace blink {
+class AbstrackMockIDBDatabase {
+  virtual void OnDisconnect() = 0;
+};
 
-class MockIDBDatabase : public testing::StrictMock<mojom::blink::IDBDatabase> {
+class MockIDBDatabase : public testing::StrictMock<mojom::blink::IDBDatabase>,
+                        public testing::StrictMock<AbstrackMockIDBDatabase> {
  public:
   MOCK_METHOD(void,
               RenameObjectStore,
@@ -31,18 +34,13 @@ class MockIDBDatabase : public testing::StrictMock<mojom::blink::IDBDatabase> {
        mojom::blink::IDBTransactionMode,
        mojom::blink::IDBTransactionDurability),
       (override));
-  MOCK_METHOD(void, Close, (), (override));
   MOCK_METHOD(void, VersionChangeIgnored, (), (override));
   MOCK_METHOD(void, Abort, (int64_t transaction_id), (override));
   MOCK_METHOD(void,
               CreateIndex,
               (int64_t transaction_id,
                int64_t object_store_id,
-               int64_t index_id,
-               const String& name,
-               const IDBKeyPath&,
-               bool unique,
-               bool multi_entry),
+               const scoped_refptr<IDBIndexMetadata>& index_metadata),
               (override));
   MOCK_METHOD(void,
               DeleteIndex,
@@ -72,22 +70,10 @@ class MockIDBDatabase : public testing::StrictMock<mojom::blink::IDBDatabase> {
                int64_t object_store_id,
                int64_t index_id,
                mojom::blink::IDBKeyRangePtr,
-               bool key_only,
+               mojom::blink::IDBGetAllResultType result_type,
                int64_t max_count,
+               mojom::blink::IDBCursorDirection direction,
                GetAllCallback),
-              (override));
-  MOCK_METHOD(void,
-              SetIndexKeys,
-              (int64_t transaction_id,
-               int64_t object_store_id,
-               std::unique_ptr<IDBKey> primary_key,
-               Vector<IDBIndexKeys>),
-              (override));
-  MOCK_METHOD(void,
-              SetIndexesReady,
-              (int64_t transaction_id,
-               int64_t object_store_id,
-               const Vector<int64_t>& index_ids),
               (override));
   MOCK_METHOD(void,
               OpenCursor,
@@ -126,6 +112,10 @@ class MockIDBDatabase : public testing::StrictMock<mojom::blink::IDBDatabase> {
               (int64_t transaction_id, int64_t object_store_id, ClearCallback),
               (override));
   MOCK_METHOD(void, DidBecomeInactive, (), (override));
+  MOCK_METHOD(void, UpdatePriority, (int new_priority), (override));
+
+  // AbstrackMockIDBDatabase::OnDisconnect()
+  MOCK_METHOD(void, OnDisconnect, (), (override));
 
   void Bind(mojo::PendingAssociatedReceiver<mojom::blink::IDBDatabase>);
   mojo::PendingAssociatedRemote<mojom::blink::IDBDatabase>

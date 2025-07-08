@@ -10,6 +10,8 @@ import android.graphics.Rect;
 import androidx.annotation.IntDef;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -26,20 +28,28 @@ import java.lang.annotation.RetentionPolicy;
  * the status of the generation. Upon receiving the BITMAP_GENERATED success code, callers can call
  * {@link getBitmap} to retrieve the generated bitmap.
  */
+@NullMarked
 public class LongScreenshotsEntry {
-    private Rect mRect;
-    private BitmapGenerator mGenerator;
+    private final @Nullable Rect mRect;
+    private @Nullable BitmapGenerator mGenerator;
     private @EntryStatus int mCurrentStatus;
 
     // Generated bitmap
-    private Bitmap mGeneratedBitmap;
-    private EntryListener mEntryListener;
-    private Callback<Integer> mMemoryTracker;
+    private @Nullable Bitmap mGeneratedBitmap;
+    private @Nullable EntryListener mEntryListener;
+    private final @Nullable Callback<Integer> mMemoryTracker;
 
-    @IntDef({EntryStatus.UNKNOWN, EntryStatus.INSUFFICIENT_MEMORY, EntryStatus.GENERATION_ERROR,
-            EntryStatus.BITMAP_GENERATED, EntryStatus.CAPTURE_COMPLETE,
-            EntryStatus.CAPTURE_IN_PROGRESS, EntryStatus.BITMAP_GENERATION_IN_PROGRESS,
-            EntryStatus.BOUNDS_ABOVE_CAPTURE, EntryStatus.BOUNDS_BELOW_CAPTURE})
+    @IntDef({
+        EntryStatus.UNKNOWN,
+        EntryStatus.INSUFFICIENT_MEMORY,
+        EntryStatus.GENERATION_ERROR,
+        EntryStatus.BITMAP_GENERATED,
+        EntryStatus.CAPTURE_COMPLETE,
+        EntryStatus.CAPTURE_IN_PROGRESS,
+        EntryStatus.BITMAP_GENERATION_IN_PROGRESS,
+        EntryStatus.BOUNDS_ABOVE_CAPTURE,
+        EntryStatus.BOUNDS_BELOW_CAPTURE
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface EntryStatus {
         int UNKNOWN = 0;
@@ -71,7 +81,9 @@ public class LongScreenshotsEntry {
      * @param memoryTracker Callback to be notified of the entry's memory usage.
      */
     public LongScreenshotsEntry(
-            BitmapGenerator generator, Rect bounds, Callback<Integer> memoryTracker) {
+            @Nullable BitmapGenerator generator,
+            @Nullable Rect bounds,
+            @Nullable Callback<Integer> memoryTracker) {
         mRect = bounds;
         mGenerator = generator;
         mMemoryTracker = memoryTracker;
@@ -113,6 +125,7 @@ public class LongScreenshotsEntry {
             return;
         }
         updateStatus(EntryStatus.BITMAP_GENERATION_IN_PROGRESS);
+        assert mRect != null;
         mGenerator.compositeBitmap(mRect, this::onBitmapGenerationError, this::onBitmapGenerated);
     }
 
@@ -128,7 +141,7 @@ public class LongScreenshotsEntry {
      *         should only call this function after listening their EntryListener gets called with a
      *         status update.
      */
-    public Bitmap getBitmap() {
+    public @Nullable Bitmap getBitmap() {
         return mGeneratedBitmap;
     }
 

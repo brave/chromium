@@ -44,7 +44,7 @@ using CRUUpdatePolicyDictionary =
 @interface CRUManagedPreferencePolicyManager : NSObject
 
 @property(nonatomic, readonly, nullable) NSString* source;
-@property(nonatomic, readonly) BOOL managed;
+@property(nonatomic, readonly) BOOL hasActivePolicy;
 
 // Global-level policies.
 @property(nonatomic, readonly) int lastCheckPeriodMinutes;
@@ -61,6 +61,8 @@ using CRUUpdatePolicyDictionary =
 - (nullable NSString*)targetChannel:(nonnull NSString*)appid;
 - (nullable NSString*)targetVersionPrefix:(nonnull NSString*)appid;
 - (int)rollbackToTargetVersion:(nonnull NSString*)appid;
+- (int)majorVersionRolloutPolicy:(nonnull NSString*)appid;
+- (int)minorVersionRolloutPolicy:(nonnull NSString*)appid;
 
 - (nullable NSArray<NSString*>*)appsWithPolicy;
 

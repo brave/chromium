@@ -11,14 +11,18 @@
 #include "content/browser/android/text_suggestion_host_mojo_impl_android.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/android/content_jni_headers/SuggestionInfo_jni.h"
-#include "content/public/android/content_jni_headers/TextSuggestionHost_jni.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "ui/gfx/android/view_configuration.h"
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "content/public/android/content_jni_headers/SuggestionInfo_jni.h"
+#include "content/public/android/content_jni_headers/TextSuggestionHost_jni.h"
+
 using base::android::AttachCurrentThread;
+using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::GetClass;
 using base::android::JavaParamRef;
@@ -43,9 +47,11 @@ TextSuggestionHostAndroid::TextSuggestionHostAndroid(JNIEnv* env,
                                                      WebContents* web_contents)
     : RenderWidgetHostConnector(web_contents),
       rwhva_(nullptr),
-      suggestion_menu_timeout_(base::BindRepeating(
-          &TextSuggestionHostAndroid::OnSuggestionMenuTimeout,
-          base::Unretained(this))) {}
+      suggestion_menu_timeout_(
+          base::BindRepeating(
+              &TextSuggestionHostAndroid::OnSuggestionMenuTimeout,
+              base::Unretained(this)),
+          GetUIThreadTaskRunner({BrowserTaskType::kUserInput})) {}
 
 TextSuggestionHostAndroid::~TextSuggestionHostAndroid() {
   JNIEnv* env = AttachCurrentThread();
@@ -67,7 +73,6 @@ void TextSuggestionHostAndroid::UpdateRenderProcessConnection(
 
 void TextSuggestionHostAndroid::ApplySpellCheckSuggestion(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
     const base::android::JavaParamRef<jstring>& replacement) {
   const mojo::Remote<blink::mojom::TextSuggestionBackend>&
       text_suggestion_backend = GetTextSuggestionBackend();
@@ -79,7 +84,6 @@ void TextSuggestionHostAndroid::ApplySpellCheckSuggestion(
 
 void TextSuggestionHostAndroid::ApplyTextSuggestion(
     JNIEnv*,
-    const JavaParamRef<jobject>&,
     int marker_tag,
     int suggestion_index) {
   const mojo::Remote<blink::mojom::TextSuggestionBackend>&
@@ -89,9 +93,7 @@ void TextSuggestionHostAndroid::ApplyTextSuggestion(
   text_suggestion_backend->ApplyTextSuggestion(marker_tag, suggestion_index);
 }
 
-void TextSuggestionHostAndroid::DeleteActiveSuggestionRange(
-    JNIEnv*,
-    const JavaParamRef<jobject>&) {
+void TextSuggestionHostAndroid::DeleteActiveSuggestionRange(JNIEnv*) {
   const mojo::Remote<blink::mojom::TextSuggestionBackend>&
       text_suggestion_backend = GetTextSuggestionBackend();
   if (!text_suggestion_backend)
@@ -101,7 +103,6 @@ void TextSuggestionHostAndroid::DeleteActiveSuggestionRange(
 
 void TextSuggestionHostAndroid::OnNewWordAddedToDictionary(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
     const base::android::JavaParamRef<jstring>& word) {
   const mojo::Remote<blink::mojom::TextSuggestionBackend>&
       text_suggestion_backend = GetTextSuggestionBackend();
@@ -111,9 +112,7 @@ void TextSuggestionHostAndroid::OnNewWordAddedToDictionary(
       ConvertJavaStringToUTF8(env, word));
 }
 
-void TextSuggestionHostAndroid::OnSuggestionMenuClosed(
-    JNIEnv*,
-    const JavaParamRef<jobject>&) {
+void TextSuggestionHostAndroid::OnSuggestionMenuClosed(JNIEnv*) {
   const mojo::Remote<blink::mojom::TextSuggestionBackend>&
       text_suggestion_backend = GetTextSuggestionBackend();
   if (!text_suggestion_backend)

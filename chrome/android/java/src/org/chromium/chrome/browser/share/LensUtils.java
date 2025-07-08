@@ -5,43 +5,27 @@
 package org.chromium.chrome.browser.share;
 
 import android.content.Context;
-import android.os.Build;
-import android.text.TextUtils;
 
 import org.chromium.base.ResettersForTesting;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.gsa.GSAState;
+import org.chromium.chrome.browser.gsa.GSAUtils;
 import org.chromium.components.externalauth.ExternalAuthUtils;
 
-/**
- * This class provides utilities for intenting into Google Lens.
- */
-// TODO(crbug/1157496): Consolidate param-checks into a single function.
+/** This class provides utilities for intenting into Google Lens. */
+// TODO(crbug.com/40160855): Consolidate param-checks into a single function.
 public class LensUtils {
-    private static final String MIN_AGSA_VERSION_FEATURE_PARAM_NAME = "minAgsaVersionName";
     private static final String LOG_UKM_PARAM_NAME = "logUkm";
-    private static final String ENABLE_ON_TABLET_PARAM_NAME = "enableContextMenuSearchOnTablet";
-    private static final String DISABLE_ON_INCOGNITO_PARAM_NAME = "disableOnIncognito";
-    private static final String ORDER_SHARE_IMAGE_BEFORE_LENS_PARAM_NAME =
-            "orderShareImageBeforeLens";
-    private static final String USE_LENS_CONTEXT_MENU_ALTERNATE_TEXT_1_PARAM_NAME =
-            "useLensContextMenuAlternateText1";
-    private static final String USE_LENS_CONTEXT_MENU_ALTERNATE_TEXT_2_PARAM_NAME =
-            "useLensContextMenuAlternateText2";
 
     private static final String MIN_AGSA_VERSION_NAME_FOR_LENS_POSTCAPTURE = "10.65";
 
-    /**
-     * See function for details.
-     */
+    /** See function for details. */
     private static boolean sFakePassableLensEnvironmentForTesting;
 
-    /*
+    /**
      * If true, short-circuit the version name intent check to always return a high enough version.
-     * Also hardcode the device OS check to return true.
-     * Used by test cases.
+     * Also hardcode the device OS check to return true. Used by test cases.
+     *
      * @param shouldFake Whether to fake the version check.
      */
     public static void setFakePassableLensEnvironmentForTesting(final boolean shouldFake) {
@@ -64,7 +48,7 @@ public class LensUtils {
             if (context == null) {
                 return "";
             }
-            String agsaVersion = GSAState.getInstance().getAgsaVersionName();
+            String agsaVersion = GSAUtils.getAgsaVersionName();
             if (agsaVersion == null) {
                 return "";
             } else {
@@ -83,86 +67,34 @@ public class LensUtils {
      * @return The minimum version name string or an empty string if not available.
      */
     public static String getMinimumAgsaVersionForLensSupport() {
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS)) {
-            final String serverProvidedMinAgsaVersion =
-                    ChromeFeatureList.getFieldTrialParamByFeature(
-                            ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS,
-                            MIN_AGSA_VERSION_FEATURE_PARAM_NAME);
-            if (TextUtils.isEmpty(serverProvidedMinAgsaVersion)) {
-                // Falls into this block if the user enabled the feature using chrome://flags
-                // and the param was not set by the server.
-                return MIN_AGSA_VERSION_NAME_FOR_LENS_POSTCAPTURE;
-            }
-            return serverProvidedMinAgsaVersion;
-        }
-        // The feature is disabled so no need to return a minimum version.
-        return "";
+        return MIN_AGSA_VERSION_NAME_FOR_LENS_POSTCAPTURE;
     }
 
     /**
-     * Checks whether the device is below Android O. We restrict to these versions
-     * to limit to OS"s where image processing vulnerabilities can be retroactively
-     * fixed if they are discovered in the future.
-     *
-     * @return Whether the device is below Android O.
-     */
-    public static boolean isDeviceOsBelowMinimum() {
-        if (sFakePassableLensEnvironmentForTesting) {
-            return false;
-        }
-
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O;
-    }
-
-    /**
-     * Checks whether the GSA package on the device is guaranteed to be an official
-     * GSA build.
+     * Checks whether the GSA package on the device is guaranteed to be an official GSA build.
      *
      * @return Whether the package is valid.
      */
-    public static boolean isValidAgsaPackage(final ExternalAuthUtils externalAuthUtils) {
+    public static boolean isValidAgsaPackage() {
         if (sFakePassableLensEnvironmentForTesting) {
             return true;
         }
 
-        return externalAuthUtils.isGoogleSigned(IntentHandler.PACKAGE_GSA);
+        return ExternalAuthUtils.getInstance().isGoogleSigned(IntentHandler.PACKAGE_GSA);
     }
 
     public static boolean isGoogleLensFeatureEnabled(boolean isIncognito) {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS)
-                && !(isIncognito
-                        && ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                                ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS,
-                                DISABLE_ON_INCOGNITO_PARAM_NAME, true));
-    }
-
-    public static boolean isGoogleLensFeatureEnabledOnTablet() {
-        return ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS, ENABLE_ON_TABLET_PARAM_NAME,
-                true);
-    }
-
-    /**
-     * Adjust chip ordering slightly. The image chip feature changes the context menu height
-     * which can result  in the final image menu items being hidden in certain contexts.
-     * @return Whether to list 'Share Image' above 'Search with Google Lens'.
-     */
-    public static boolean orderShareImageBeforeLens() {
-        return ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                ChromeFeatureList.CONTEXT_MENU_GOOGLE_LENS_CHIP,
-                ORDER_SHARE_IMAGE_BEFORE_LENS_PARAM_NAME, false);
+        return !isIncognito;
     }
 
     public static boolean shouldLogUkmForLensContextMenuFeatures() {
-        return shouldLogUkmByFeature(ChromeFeatureList.CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS)
-                || shouldLogUkmByFeature(ChromeFeatureList.CONTEXT_MENU_GOOGLE_LENS_CHIP)
-                || shouldLogUkmByFeature(ChromeFeatureList.CONTEXT_MENU_TRANSLATE_WITH_GOOGLE_LENS);
+        return shouldLogUkmByFeature(ChromeFeatureList.CONTEXT_MENU_TRANSLATE_WITH_GOOGLE_LENS);
     }
 
-    /*
-     * Whether to log UKM pings for lens-related behavior.
-     * If in the experiment will log by default and will only be disabled
-     * if the parameter is not absent and set to true.
+    /**
+     * Whether to log UKM pings for lens-related behavior. If in the experiment will log by default
+     * and will only be disabled if the parameter is not absent and set to true.
+     *
      * @param featureName The feature that uses the UKM reporting.
      */
     public static boolean shouldLogUkmByFeature(String featureName) {
@@ -171,24 +103,5 @@ public class LensUtils {
                     featureName, LOG_UKM_PARAM_NAME, true);
         }
         return false;
-    }
-
-    /**
-     * Check if experiment to get context menu alternate name text.
-     */
-    public static int getLensContextMenuText() {
-        if (ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                    ChromeFeatureList.CONTEXT_MENU_GOOGLE_LENS_SEARCH_OPTIMIZATIONS,
-                    USE_LENS_CONTEXT_MENU_ALTERNATE_TEXT_1_PARAM_NAME, false)) {
-            return R.string.contextmenu_search_image_with_google_lens_alt_text_1;
-        }
-
-        if (ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                    ChromeFeatureList.CONTEXT_MENU_GOOGLE_LENS_SEARCH_OPTIMIZATIONS,
-                    USE_LENS_CONTEXT_MENU_ALTERNATE_TEXT_2_PARAM_NAME, false)) {
-            return R.string.contextmenu_search_image_with_google_lens_alt_text_2;
-        }
-
-        return R.string.contextmenu_search_image_with_google_lens;
     }
 }

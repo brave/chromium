@@ -13,10 +13,6 @@
 #include "components/system_media_controls/mac/now_playing_info_center_delegate_cocoa.h"
 #include "skia/ext/skia_utils_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace system_media_controls::internal {
 
 namespace {
@@ -33,7 +29,6 @@ MPNowPlayingPlaybackState PlaybackStatusToMPNowPlayingPlaybackState(
     default:
       NOTREACHED();
   }
-  return MPNowPlayingPlaybackStateUnknown;
 }
 
 }  // anonymous namespace
@@ -73,8 +68,7 @@ void NowPlayingInfoCenterDelegate::SetAlbum(const std::u16string& album) {
 }
 
 void NowPlayingInfoCenterDelegate::SetThumbnail(const SkBitmap& bitmap) {
-  NSImage* image = skia::SkBitmapToNSImageWithColorSpace(
-      bitmap, base::mac::GetSystemColorSpace());
+  NSImage* image = skia::SkBitmapToNSImage(bitmap);
   [now_playing_info_center_delegate_cocoa_ setThumbnail:image];
   [now_playing_info_center_delegate_cocoa_ updateNowPlayingInfo];
 }

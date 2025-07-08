@@ -10,13 +10,15 @@
 #include "chrome/browser/ui/passwords/password_generation_popup_view.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_base_view.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/views/accessibility/view_accessibility.h"
+
 class PasswordGenerationPopupController;
 
 class PasswordGenerationPopupViewViews : public autofill::PopupBaseView,
                                          public PasswordGenerationPopupView {
- public:
-  METADATA_HEADER(PasswordGenerationPopupViewViews);
+  METADATA_HEADER(PasswordGenerationPopupViewViews, autofill::PopupBaseView)
 
+ public:
   PasswordGenerationPopupViewViews(
       base::WeakPtr<PasswordGenerationPopupController> controller,
       views::Widget* parent_widget);
@@ -32,7 +34,11 @@ class PasswordGenerationPopupViewViews : public autofill::PopupBaseView,
   void UpdateState() override;
   void UpdateGeneratedPasswordValue() override;
   [[nodiscard]] bool UpdateBoundsAndRedrawPopup() override;
-  void PasswordSelectionUpdated() override;
+  void ButtonSelectionUpdated() override;
+
+  const views::ViewAccessibility& GetPasswordViewViewAccessibilityForTest();
+  const views::ViewAccessibility& GetAcceptButtonViewAccessibilityForTest();
+  const views::ViewAccessibility& GetCancelButtonViewAccessibilityForTest();
 
  private:
   class GeneratedPasswordBox;
@@ -42,11 +48,21 @@ class PasswordGenerationPopupViewViews : public autofill::PopupBaseView,
   void CreateLayoutAndChildren();
 
   // views:Views implementation.
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+
+  // Helper function to update the expanded and collapsed accessible states of
+  // the view.
+  void UpdateExpandedCollapsedAccessibleState();
+
+  // Helper function to update the invisible accessible state of the view.
+  void UpdateInvisibleAccessibleState();
 
   // Sub view that displays the actual generated password.
   raw_ptr<GeneratedPasswordBox> password_view_ = nullptr;
+
+  // Sub view that displays the nudge password buttons row.
+  raw_ptr<views::View> nudge_password_buttons_view_ = nullptr;
 
   // Controller for this view. Weak reference.
   base::WeakPtr<PasswordGenerationPopupController> controller_;

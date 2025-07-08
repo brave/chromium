@@ -61,14 +61,13 @@ bool ParseScriptLevel(const AtomicString& attributeValue,
     value = value.Right(1);
   }
 
-  return WTF::VisitCharacters(
-      value, [&](const auto* position, unsigned length) {
-        WTF::NumberParsingResult result;
-        constexpr auto kOptions =
-            WTF::NumberParsingOptions().SetAcceptMinusZeroForUnsigned();
-        scriptLevel = CharactersToUInt(position, length, kOptions, &result);
-        return result == WTF::NumberParsingResult::kSuccess;
-      });
+  return WTF::VisitCharacters(value, [&](auto chars) {
+    NumberParsingResult result;
+    constexpr auto kOptions =
+        NumberParsingOptions().SetAcceptMinusZeroForUnsigned();
+    scriptLevel = CharactersToUInt(chars, kOptions, &result);
+    return result == NumberParsingResult::kSuccess;
+  });
 }
 
 }  // namespace
@@ -76,7 +75,7 @@ bool ParseScriptLevel(const AtomicString& attributeValue,
 void MathMLElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == html_names::kDirAttr) {
     if (IsValidDirAttribute(value)) {
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kDirection,
@@ -132,14 +131,14 @@ void MathMLElement::ParseAttribute(const AttributeModificationParams& param) {
   Element::ParseAttribute(param);
 }
 
-absl::optional<bool> MathMLElement::BooleanAttribute(
+std::optional<bool> MathMLElement::BooleanAttribute(
     const QualifiedName& name) const {
   const AtomicString& value = FastGetAttribute(name);
   if (EqualIgnoringASCIICase(value, "true"))
     return true;
   if (EqualIgnoringASCIICase(value, "false"))
     return false;
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 const CSSPrimitiveValue* MathMLElement::ParseMathLength(
@@ -161,7 +160,7 @@ const CSSPrimitiveValue* MathMLElement::ParseMathLength(
   return parsed_value;
 }
 
-absl::optional<Length> MathMLElement::AddMathLengthToComputedStyle(
+std::optional<Length> MathMLElement::AddMathLengthToComputedStyle(
     const CSSToLengthConversionData& conversion_data,
     const QualifiedName& attr_name,
     AllowPercentages allow_percentages,
@@ -170,7 +169,7 @@ absl::optional<Length> MathMLElement::AddMathLengthToComputedStyle(
           ParseMathLength(attr_name, allow_percentages, value_range)) {
     return parsed_value->ConvertToLength(conversion_data);
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace blink

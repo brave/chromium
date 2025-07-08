@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("//mediapipe/framework/port:build_config.bzl", "mediapipe_cc_proto_library")
+# Placeholder: load proto_library
 
 licenses(["notice"])
 
@@ -63,6 +64,7 @@ cc_library(
         "//mediapipe/framework/port:status",
         "//mediapipe/graphs/object_detection_3d/calculators:model_matrix_cc_proto",
         "//mediapipe/modules/objectron/calculators:box",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",

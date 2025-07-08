@@ -9,14 +9,13 @@ import {PerformanceTestRunner} from 'performance_test_runner';
 (async function() {
   TestRunner.addResult('Testing a11y in performance panel - settings pane.');
 
-  await TestRunner.loadLegacyModule('timeline');
   await TestRunner.showPanel('timeline');
 
   await PerformanceTestRunner.runPerfTraceWithReload();
   const widget = await PerformanceTestRunner.getTimelineWidget();
   const settingsButton = widget.showSettingsPaneButton.element;
   settingsButton.click();
-  await AxeCoreTestRunner.runValidation(widget.settingsPane.contentElement);
+  await AxeCoreTestRunner.runValidation(widget.settingsPane);
 
   TestRunner.completeTest();
 })();

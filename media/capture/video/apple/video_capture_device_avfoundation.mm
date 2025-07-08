@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "media/capture/video/apple/video_capture_device_avfoundation.h"
 
 #import <AVFoundation/AVFoundation.h>
@@ -9,18 +14,22 @@
 #import <CoreVideo/CoreVideo.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <optional>
 #include <sstream>
 
+#include "base/apple/foundation_util.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/location.h"
-#include "base/mac/foundation_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #import "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "components/crash/core/common/crash_key.h"
 #include "media/base/mac/color_space_util_mac.h"
 #include "media/base/timestamp_constants.h"
@@ -39,9 +48,13 @@
 #import <UIKit/UIKit.h>
 #endif
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+BASE_FEATURE(kAVFoundationCaptureForwardSampleTimestamps,
+             "AVFoundationCaptureForwardSampleTimestamps",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kAVFoundationCaptureSonomaRestartStalledCamera,
+             "AVFoundationCaptureSonomaRestartStalledCamera",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
@@ -52,7 +65,7 @@ constexpr NSString* kModelIdLogitech4KPro =
 constexpr gfx::ColorSpace kColorSpaceRec709Apple(
     gfx::ColorSpace::PrimaryID::BT709,
     gfx::ColorSpace::TransferID::BT709_APPLE,
-    gfx::ColorSpace::MatrixID::SMPTE170M,
+    gfx::ColorSpace::MatrixID::BT709,
     gfx::ColorSpace::RangeID::LIMITED);
 
 constexpr int kTimeToWaitBeforeStoppingPhotoOutputInSeconds = 60;
@@ -66,14 +79,26 @@ constexpr FourCharCode kDefaultFourCCPixelFormat =
 // of precision during manipulation.
 constexpr float kFrameRateEpsilon = 0.001;
 
-base::TimeDelta GetCMSampleBufferTimestamp(CMSampleBufferRef sampleBuffer) {
+std::optional<base::TimeTicks> GetCMSampleBufferTimestamp(
+    CMSampleBufferRef sampleBuffer) {
   const CMTime cm_timestamp =
       CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-  const base::TimeDelta timestamp =
-      CMTIME_IS_VALID(cm_timestamp)
-          ? base::Seconds(CMTimeGetSeconds(cm_timestamp))
-          : media::kNoTimestamp;
-  return timestamp;
+  if (CMTIME_IS_VALID(cm_timestamp)) {
+    uint64_t mach_time = CMClockConvertHostTimeToSystemUnits(cm_timestamp);
+    return base::TimeTicks::FromMachAbsoluteTime(mach_time);
+  }
+  return std::nullopt;
+}
+
+bool ShouldRestartStalledCamera() {
+  // The stall check should not be needed on macOS 14 due to a redesign of the
+  // camera capture in macOS 14. It also interferes with the Presenter's Overlay
+  // feature that was introduced in macOS 14. See https://crbug.com/335210401.
+  if (@available(macOS 14.0, *)) {
+    return base::FeatureList::IsEnabled(
+        kAVFoundationCaptureSonomaRestartStalledCamera);
+  }
+  return true;
 }
 
 constexpr size_t kPixelBufferPoolSize = 10;
@@ -86,6 +111,12 @@ namespace media {
 BASE_FEATURE(kConfigureCaptureBeforeStart,
              "ConfigureCaptureBeforeStart",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Allow disabling optimizations (https://crbug.com/1143477,
+// https://crbug.com/959962) because of flickering (https://crbug.com/1515598).
+BASE_FEATURE(kOverrideCameraIOSurfaceColorSpace,
+             "OverrideCameraIOSurfaceColorSpace",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 AVCaptureDeviceFormat* FindBestCaptureFormat(
     NSArray<AVCaptureDeviceFormat*>* formats,
@@ -104,15 +135,6 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
         [VideoCaptureDeviceAVFoundation FourCCToChromiumPixelFormat:fourcc];
     CMVideoDimensions dimensions =
         CMVideoFormatDescriptionGetDimensions(captureFormat.formatDescription);
-    Float64 maxFrameRate = 0;
-    bool matchesFrameRate = false;
-    for (AVFrameRateRange* frameRateRange in captureFormat
-             .videoSupportedFrameRateRanges) {
-      maxFrameRate = std::max(maxFrameRate, frameRateRange.maxFrameRate);
-      matchesFrameRate |=
-          frameRateRange.minFrameRate <= frame_rate + kFrameRateEpsilon &&
-          frame_rate - kFrameRateEpsilon <= frameRateRange.maxFrameRate;
-    }
 
     // If the pixel format is unsupported by our code, then it is not useful.
     if (pixelFormat == VideoPixelFormat::PIXEL_FORMAT_UNKNOWN) {
@@ -125,6 +147,15 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
       continue;
     }
 
+    Float64 maxFrameRate = 0;
+    bool matchesFrameRate = false;
+    for (AVFrameRateRange* frameRateRange in captureFormat
+             .videoSupportedFrameRateRanges) {
+      maxFrameRate = std::max(maxFrameRate, frameRateRange.maxFrameRate);
+      matchesFrameRate |=
+          frameRateRange.minFrameRate <= frame_rate + kFrameRateEpsilon &&
+          frame_rate - kFrameRateEpsilon <= frameRateRange.maxFrameRate;
+    }
     // Prefer a capture format that handles the requested framerate to one
     // that doesn't.
     if (bestCaptureFormat) {
@@ -180,7 +211,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   // Usage of GPU memory buffer is controlled by
   // `--disable-video-capture-use-gpu-memory-buffer` and
   // `--video-capture-use-gpu-memory-buffer` commandline switches. This flag
-  // handles whether to use a GPU memoery for a video frame or not.
+  // handles whether to use a GPU memory for a video frame or not.
   bool _useGPUMemoryBuffer;
 
   // The capture format that best matches the above attributes.
@@ -195,6 +226,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   base::Lock _lock;
   // Used to avoid UAF in -captureOutput.
   base::Lock _destructionLock;
+  base::Lock _metadataLock;
   raw_ptr<media::VideoCaptureDeviceAVFoundationFrameReceiver> _frameReceiver
       GUARDED_BY(_lock);  // weak.
   bool _capturedFirstFrame GUARDED_BY(_lock);
@@ -204,8 +236,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     base::WeakPtrFactory<SelfHolder> weak_ptr_factory{this};
   };
   SelfHolder _weakPtrHolderForStallCheck;
-  // Timestamp offset to subtract from all frames, to avoid leaking uptime.
-  base::TimeDelta _startTimestamp;
+  // TimeTicks to subtract from all frames, to avoid leaking uptime.
+  base::TimeTicks _startTimestamp;
 
   // Used to rate-limit crash reports for https://crbug.com/1168112.
   bool _hasDumpedForFrameSizeMismatch;
@@ -221,6 +253,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   // When enabled, converts captured frames to NV12.
   std::unique_ptr<media::SampleBufferTransformer> _sampleBufferTransformer;
 
+  // Cache the color space after transform. The cache is used to avoid log spam
+  // in case the color space cannot be correclty determined from the buffer.
+  std::optional<gfx::ColorSpace> _colorSpaceAfterTransform;
+
   AVCapturePhotoOutput* __strong _photoOutput;
 
   // Only accessed on the main thread. The takePhoto() operation is considered
@@ -231,8 +267,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   // For testing.
   base::RepeatingCallback<void()> _onPhotoOutputStopped;
-  absl::optional<bool> _isPortraitEffectSupportedForTesting;
-  absl::optional<bool> _isPortraitEffectActiveForTesting;
+  std::optional<bool> _isPortraitEffectSupportedForTesting
+      GUARDED_BY(_metadataLock);
+  std::optional<bool> _isPortraitEffectActiveForTesting
+      GUARDED_BY(_metadataLock);
 
   scoped_refptr<base::SingleThreadTaskRunner> _mainThreadTaskRunner;
 }
@@ -313,7 +351,28 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     // To avoid races with concurrent callbacks, grab the lock before stopping
     // capture and clearing all the variables.
     base::AutoLock lock(_lock);
+
+    // Cleanup AVCaptureSession
+    // 1. Stop the AVCaptureSession
     [self stopCapture];
+    // 2. Remove AVCaptureInputs and AVCaptureOutputs
+    for (AVCaptureInput* input in _captureSession.inputs) {
+      [_captureSession removeInput:input];
+    }
+    for (AVCaptureOutput* output in _captureSession.outputs) {
+      [_captureSession removeOutput:output];
+    }
+    // 3. Set the AVCaptureSession to nil to remove strong references
+    _captureSession = nil;
+
+    // Cleanup AVCaptureDevice
+    // 1. Unlock any configuration (if locked)
+    [_captureDevice unlockForConfiguration];
+    // 2. Remove observer
+    [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
+    // 3. Release and deallocate the capture device
+    _captureDevice = nil;
+
     _frameReceiver = nullptr;
     _sampleBufferTransformer.reset();
     _mainThreadTaskRunner = nullptr;
@@ -335,6 +394,19 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   _frameReceiver = frameReceiver;
 }
 
+- (void)logMessage:(const std::string&)message {
+  base::AutoLock lock(_lock);
+  [self logMessageLocked:message];
+}
+
+- (void)logMessageLocked:(const std::string&)message {
+  auto loggedMessage = std::string("AVFoundation: ") + message;
+  VLOG(1) << loggedMessage;
+  if (_frameReceiver) {
+    _frameReceiver->OnLog(loggedMessage);
+  }
+}
+
 - (void)setUseGPUMemoryBuffer:(bool)useGPUMemoryBuffer {
   _useGPUMemoryBuffer = useGPUMemoryBuffer;
 }
@@ -352,9 +424,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     [self stopPhotoOutput];
     if (_captureDeviceInput) {
       DCHECK(_captureDevice);
-      if (@available(macOS 12.0, *)) {
-        [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
-      }
+      [_captureDevice removeObserver:self forKeyPath:@"portraitEffectActive"];
       [_captureSession stopRunning];
       [_captureSession removeInput:_captureDeviceInput];
       _captureDeviceInput = nil;
@@ -397,12 +467,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   [_captureVideoDataOutput setSampleBufferDelegate:self queue:_sampleQueue];
   [_captureSession addOutput:_captureVideoDataOutput];
 
-  if (@available(macOS 12.0, *)) {
-    [_captureDevice addObserver:self
-                     forKeyPath:@"portraitEffectActive"
-                        options:0
-                        context:(__bridge void*)_captureDevice];
-  }
+  [_captureDevice addObserver:self
+                   forKeyPath:@"portraitEffectActive"
+                      options:0
+                      context:(__bridge void*)_captureDevice];
 
 #if BUILDFLAG(IS_IOS)
   _orientation = [[UIDevice currentDevice] orientation];
@@ -437,7 +505,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   if (best_fourcc == kCMVideoCodecType_JPEG_OpenDML) {
     // Capturing MJPEG for the following camera does not work (frames not
     // forwarded). macOS can convert to the default pixel format for us instead.
-    // TODO(crbug.com/1124884): figure out if there's another workaround.
+    // TODO(crbug.com/40147585): figure out if there's another workaround.
     if ([_captureDevice.modelID isEqualToString:kModelIdLogitech4KPro]) {
       LOG(WARNING) << "Activating MJPEG workaround for camera "
                    << base::SysNSStringToUTF8(kModelIdLogitech4KPro);
@@ -487,7 +555,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 - (BOOL)startCapture {
   DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
   if (!_captureSession) {
-    DLOG(ERROR) << "Video capture session not initialized.";
+    [self logMessage:"Video capture session not initialized."];
     return NO;
   }
   // Connect the notifications.
@@ -722,9 +790,10 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 }
 
 - (void)processSample:(CMSampleBufferRef)sampleBuffer
-        captureFormat:(const media::VideoCaptureFormat&)captureFormat
-           colorSpace:(const gfx::ColorSpace&)colorSpace
-            timestamp:(const base::TimeDelta)timestamp {
+         captureFormat:(const media::VideoCaptureFormat&)captureFormat
+            colorSpace:(const gfx::ColorSpace&)colorSpace
+             timestamp:(const base::TimeDelta)timestamp
+    capture_begin_time:(std::optional<base::TimeTicks>)capture_begin_time {
   VLOG(3) << __func__;
   // Trust |_frameReceiver| to do decompression.
   char* baseAddress = nullptr;
@@ -743,7 +812,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     if (safe_to_forward) {
       _frameReceiver->ReceiveFrame(
           reinterpret_cast<const uint8_t*>(baseAddress), frameSize,
-          captureFormat, colorSpace, 0, 0, timestamp, _rotation);
+          captureFormat, colorSpace, 0, 0, timestamp, capture_begin_time,
+          _rotation);
     }
   }
 }
@@ -751,7 +821,9 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 - (BOOL)processPixelBufferPlanes:(CVImageBufferRef)pixelBuffer
                    captureFormat:(const media::VideoCaptureFormat&)captureFormat
                       colorSpace:(const gfx::ColorSpace&)colorSpace
-                       timestamp:(const base::TimeDelta)timestamp {
+                       timestamp:(const base::TimeDelta)timestamp
+              capture_begin_time:
+                  (std::optional<base::TimeTicks>)capture_begin_time {
   VLOG(3) << __func__;
   if (CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly) !=
       kCVReturnSuccess) {
@@ -853,10 +925,11 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   _lock.AssertAcquired();
   DCHECK(_frameReceiver);
-  _frameReceiver->ReceiveFrame(
-      packedBufferCopy.empty() ? pixelBufferAddresses[0]
-                               : packedBufferCopy.data(),
-      frameSize, captureFormat, colorSpace, 0, 0, timestamp, _rotation);
+  _frameReceiver->ReceiveFrame(packedBufferCopy.empty()
+                                   ? pixelBufferAddresses[0]
+                                   : packedBufferCopy.data(),
+                               frameSize, captureFormat, colorSpace, 0, 0,
+                               timestamp, capture_begin_time, _rotation);
   CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
   return YES;
 }
@@ -865,7 +938,9 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
                           captureFormat:
                               (const media::VideoCaptureFormat&)captureFormat
                              colorSpace:(const gfx::ColorSpace&)colorSpace
-                              timestamp:(const base::TimeDelta)timestamp {
+                              timestamp:(const base::TimeDelta)timestamp
+                     capture_begin_time:
+                         (std::optional<base::TimeTicks>)capture_begin_time {
   VLOG(3) << __func__;
   DCHECK_EQ(captureFormat.pixel_format, media::PIXEL_FORMAT_NV12);
 
@@ -879,8 +954,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   // The lock is needed for |_frameReceiver|.
   _lock.AssertAcquired();
   DCHECK(_frameReceiver);
-  _frameReceiver->ReceiveExternalGpuMemoryBufferFrame(std::move(externalBuffer),
-                                                      timestamp);
+  _frameReceiver->ReceiveExternalGpuMemoryBufferFrame(
+      std::move(externalBuffer), timestamp, capture_begin_time);
 }
 
 - (media::CapturedExternalVideoBuffer)
@@ -892,7 +967,6 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
                                           (const gfx::ColorSpace&)colorSpace {
   DCHECK(ioSurface);
   gfx::GpuMemoryBufferHandle handle;
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
   handle.type = gfx::GpuMemoryBufferType::IO_SURFACE_BUFFER;
   handle.io_surface.reset(ioSurface, base::scoped_policy::RETAIN);
 
@@ -903,7 +977,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   // https://crbug.com/1143477 (CPU usage parsing ICC profile)
   // https://crbug.com/959962 (ignoring color space)
   gfx::ColorSpace overriddenColorSpace = colorSpace;
-  if (colorSpace == kColorSpaceRec709Apple) {
+  if (colorSpace == kColorSpaceRec709Apple &&
+      base::FeatureList::IsEnabled(media::kOverrideCameraIOSurfaceColorSpace)) {
     overriddenColorSpace = gfx::ColorSpace(
         gfx::ColorSpace::PrimaryID::BT709, gfx::ColorSpace::TransferID::SRGB,
         gfx::ColorSpace::MatrixID::BT709, gfx::ColorSpace::RangeID::LIMITED);
@@ -962,10 +1037,15 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
             nextFailedCheckCount),
         kStallCheckInterval);
   } else {
-    // Capture appears to be stalled. Restart it.
-    LOG(ERROR) << "Capture appears to have stalled, restarting.";
-    [self stopCapture];
-    [self startCapture];
+    if (ShouldRestartStalledCamera()) {
+      [self logMessage:"Capture appears to have stalled, restarting."];
+      [self stopCapture];
+      [self startCapture];
+    } else {
+      [self logMessage:
+                "Capture appears to have stalled, restarting may have helped "
+                "but is disabled. See https://issues.chromium.org/335210401."];
+    }
   }
 }
 
@@ -984,25 +1064,33 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   base::AutoLock lock(_lock);
   _capturedFrameSinceLastStallCheck = YES;
   if (!_frameReceiver || !_sampleBufferTransformer) {
+    VLOG(1) << "dropping frame due to no receiver";
     return;
   }
-
-  const base::TimeDelta pres_timestamp =
-      GetCMSampleBufferTimestamp(sampleBuffer);
-  if (_startTimestamp.is_zero()) {
+  auto capture_begin_time = GetCMSampleBufferTimestamp(sampleBuffer);
+  const base::TimeTicks pres_timestamp =
+      capture_begin_time.value_or(base::TimeTicks());
+  if (_startTimestamp.is_null()) {
     _startTimestamp = pres_timestamp;
   }
   const base::TimeDelta timestamp = pres_timestamp - _startTimestamp;
 #if BUILDFLAG(IS_MAC)
   bool logUma = !std::exchange(_capturedFirstFrame, true);
   if (logUma) {
+    [self logMessageLocked:"First frame received for this capturer instance"];
     media::LogFirstCapturedVideoFrame(_bestCaptureFormat, sampleBuffer);
   }
 #endif
+  // Forget the sample timestamp if we're out of the experiment.
+  if (!base::FeatureList::IsEnabled(
+          kAVFoundationCaptureForwardSampleTimestamps)) {
+    capture_begin_time = std::nullopt;
+  }
+
   // The SampleBufferTransformer CHECK-crashes if the sample buffer is not MJPEG
   // and does not have a pixel buffer (https://crbug.com/1160647) so we fall
   // back on the M87 code path if this is the case.
-  // TODO(https://crbug.com/1160315): When the SampleBufferTransformer is
+  // TODO(crbug.com/40162135): When the SampleBufferTransformer is
   // patched to support non-MJPEG-and-non-pixel-buffer sample buffers, remove
   // this workaround and the fallback other code path.
   bool sampleHasPixelBufferOrIsMjpeg =
@@ -1012,23 +1100,41 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 
   // If the SampleBufferTransformer is enabled, convert all possible capture
   // formats to an IOSurface-backed NV12 pixel buffer.
-  // TODO(https://crbug.com/1175142): Refactor to not hijack the code paths
+  // TODO(crbug.com/40747183): Refactor to not hijack the code paths
   // below the transformer code.
   if (_useGPUMemoryBuffer && sampleHasPixelBufferOrIsMjpeg) {
     _sampleBufferTransformer->Reconfigure(
         media::SampleBufferTransformer::GetBestTransformerForNv12Output(
             sampleBuffer),
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-        media::GetSampleBufferSize(sampleBuffer), kPixelBufferPoolSize);
-    base::ScopedCFTypeRef<CVPixelBufferRef> pixelBuffer =
+        media::GetSampleBufferSize(sampleBuffer), _rotation,
+        kPixelBufferPoolSize);
+    base::apple::ScopedCFTypeRef<CVPixelBufferRef> pixelBuffer =
         _sampleBufferTransformer->Transform(sampleBuffer);
     if (!pixelBuffer) {
-      LOG(ERROR) << "Failed to transform captured frame. Dropping frame.";
+      [self logMessageLocked:
+                "Failed to transform captured frame. Dropping frame."];
       return;
     }
+
+#if BUILDFLAG(IS_MAC)
+    base::apple::ScopedCFTypeRef<CVPixelBufferRef> final_pixel_buffer =
+        pixelBuffer;
+#else
+    // The rotated_pixelBuffer might not be the same size as the source
+    // pixelBuffer as it gets rotated by rotation_angle_. In order to restore
+    // the original size, rotated_pixelBuffer need to scale it to its original
+    // size by transforming it.
+    base::apple::ScopedCFTypeRef<CVPixelBufferRef> rotated_pixelBuffer =
+        _sampleBufferTransformer->Rotate(pixelBuffer.get());
+    base::apple::ScopedCFTypeRef<CVPixelBufferRef> final_pixel_buffer =
+        _sampleBufferTransformer->Transform(rotated_pixelBuffer.get());
+
+#endif
+
     const media::VideoCaptureFormat captureFormat(
-        gfx::Size(CVPixelBufferGetWidth(pixelBuffer),
-                  CVPixelBufferGetHeight(pixelBuffer)),
+        gfx::Size(CVPixelBufferGetWidth(final_pixel_buffer.get()),
+                  CVPixelBufferGetHeight(final_pixel_buffer.get())),
         _frameRate, media::PIXEL_FORMAT_NV12);
     // When the |pixelBuffer| is the result of a conversion (not camera
     // pass-through) then it originates from a CVPixelBufferPool and the color
@@ -1040,10 +1146,25 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     // TODO(hbos): Investigate how to successfully parse and/or configure the
     // color space correctly. The implications of this hack is not fully
     // understood.
-    [self processPixelBufferNV12IOSurface:pixelBuffer
+    if (!_colorSpaceAfterTransform) {
+      // Avoid log spam in case there's a problem determining the color space by
+      // only calling GetImageBufferColorSpace() once.
+      _colorSpaceAfterTransform =
+          media::GetImageBufferColorSpace(final_pixel_buffer.get());
+      base::UmaHistogramBoolean(
+          "Media.VideoCapture.Mac.ValidColorSpaceAfterTransform",
+          _colorSpaceAfterTransform->IsValid());
+
+      if (!_colorSpaceAfterTransform->IsValid()) {
+        _colorSpaceAfterTransform = kColorSpaceRec709Apple;
+      }
+    }
+
+    [self processPixelBufferNV12IOSurface:final_pixel_buffer.get()
                             captureFormat:captureFormat
-                               colorSpace:kColorSpaceRec709Apple
-                                timestamp:timestamp];
+                               colorSpace:*_colorSpaceAfterTransform
+                                timestamp:timestamp
+                       capture_begin_time:capture_begin_time];
     return;
   }
 
@@ -1082,7 +1203,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
         [self processPixelBufferNV12IOSurface:pixelBuffer
                                 captureFormat:captureFormat
                                    colorSpace:colorSpace
-                                    timestamp:timestamp];
+                                    timestamp:timestamp
+                           capture_begin_time:capture_begin_time];
         return;
       }
     }
@@ -1090,7 +1212,8 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
     if ([self processPixelBufferPlanes:pixelBuffer
                          captureFormat:captureFormat
                             colorSpace:colorSpace
-                             timestamp:timestamp]) {
+                             timestamp:timestamp
+                    capture_begin_time:capture_begin_time]) {
       return;
     }
   }
@@ -1099,56 +1222,53 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
   gfx::ColorSpace colorSpace =
       media::GetFormatDescriptionColorSpace(formatDescription);
   [self processSample:sampleBuffer
-        captureFormat:captureFormat
-           colorSpace:colorSpace
-            timestamp:timestamp];
+           captureFormat:captureFormat
+              colorSpace:colorSpace
+               timestamp:timestamp
+      capture_begin_time:capture_begin_time];
 }
 
 - (void)setIsPortraitEffectSupportedForTesting:
     (bool)isPortraitEffectSupportedForTesting {
+  base::AutoLock lock(_metadataLock);
   _isPortraitEffectSupportedForTesting = isPortraitEffectSupportedForTesting;
 }
 
 - (bool)isPortraitEffectSupported {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  base::AutoLock lock(_metadataLock);
   if (_isPortraitEffectSupportedForTesting.has_value()) {
     return _isPortraitEffectSupportedForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.activeFormat.portraitEffectSupported;
-  }
-  return false;
+  return _captureDevice.activeFormat.portraitEffectSupported;
 }
 
 - (void)setIsPortraitEffectActiveForTesting:
     (bool)isPortraitEffectActiveForTesting {
-  if (_isPortraitEffectActiveForTesting.has_value() &&
-      _isPortraitEffectActiveForTesting == isPortraitEffectActiveForTesting) {
-    return;
+  {
+    base::AutoLock lock(_metadataLock);
+    if (_isPortraitEffectActiveForTesting.has_value() &&
+        _isPortraitEffectActiveForTesting == isPortraitEffectActiveForTesting) {
+      return;
+    }
+    _isPortraitEffectActiveForTesting = isPortraitEffectActiveForTesting;
   }
-  _isPortraitEffectActiveForTesting = isPortraitEffectActiveForTesting;
   [self captureConfigurationChanged];
 }
 
 - (bool)isPortraitEffectActive {
-  DCHECK(_mainThreadTaskRunner->BelongsToCurrentThread());
+  base::AutoLock lock(_metadataLock);
   if (_isPortraitEffectActiveForTesting.has_value()) {
     return _isPortraitEffectActiveForTesting.value();
   }
-  if (@available(macOS 12.0, *)) {
-    return _captureDevice.portraitEffectActive;
-  }
-  return false;
+  return _captureDevice.portraitEffectActive;
 }
 
 - (void)observeValueForKeyPath:(NSString*)keyPath
                       ofObject:(id)object
                         change:(NSDictionary*)change
                        context:(void*)context {
-  if (@available(macOS 12.0, *)) {
-    if ([keyPath isEqual:@"portraitEffectActive"]) {
-      [self captureConfigurationChanged];
-    }
+  if ([keyPath isEqual:@"portraitEffectActive"]) {
+    [self captureConfigurationChanged];
   }
 }
 
@@ -1160,7 +1280,7 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 }
 
 - (void)onVideoError:(NSNotification*)errorNotification {
-  NSError* error = base::mac::ObjCCast<NSError>(
+  NSError* error = base::apple::ObjCCast<NSError>(
       errorNotification.userInfo[AVCaptureSessionErrorKey]);
   [self
       sendErrorString:[NSString stringWithFormat:@"%@: %@",
@@ -1169,13 +1289,14 @@ AVCaptureDeviceFormat* FindBestCaptureFormat(
 }
 
 - (void)sendErrorString:(NSString*)error {
-  DLOG(ERROR) << base::SysNSStringToUTF8(error);
+  auto message = base::SysNSStringToUTF8(error);
+  VLOG(1) << __func__ << " message " << message;
   base::AutoLock lock(_lock);
   if (_frameReceiver) {
     _frameReceiver->ReceiveError(
         media::VideoCaptureError::
             kMacAvFoundationReceivedAVCaptureSessionRuntimeErrorNotification,
-        FROM_HERE, base::SysNSStringToUTF8(error));
+        FROM_HERE, message);
   }
 }
 

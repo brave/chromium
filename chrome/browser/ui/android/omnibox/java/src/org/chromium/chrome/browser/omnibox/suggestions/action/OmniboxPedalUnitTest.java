@@ -19,7 +19,8 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.components.browser_ui.settings.SettingsLauncher.SettingsFragment;
+import org.chromium.chrome.browser.omnibox.R;
+import org.chromium.components.browser_ui.settings.SettingsNavigation.SettingsFragment;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.omnibox.action.OmniboxAction;
 import org.chromium.components.omnibox.action.OmniboxActionDelegate;
@@ -28,20 +29,19 @@ import org.chromium.components.omnibox.action.OmniboxPedalId;
 
 import java.util.List;
 
-/**
- * Tests for {@link OmniboxPedal}s.
- */
+/** Tests for {@link OmniboxPedal}s. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class OmniboxPedalUnitTest {
     public @Rule MockitoRule mockitoRule = MockitoJUnit.rule();
     private @Mock OmniboxActionDelegate mDelegate;
-    private static List<Integer> sPedalsWithCustomIcons =
+    private static final List<Integer> sPedalsWithCustomIcons =
             List.of(OmniboxPedalId.PLAY_CHROME_DINO_GAME);
 
     @Test
     public void creation_usesExpectedCustomIconForDinoGame() {
-        assertEquals(OmniboxPedal.DINO_GAME_ICON,
+        assertEquals(
+                OmniboxPedal.DINO_GAME_ICON,
                 new OmniboxPedal(0, "hint", "accessibility", OmniboxPedalId.PLAY_CHROME_DINO_GAME)
                         .icon);
     }
@@ -50,22 +50,25 @@ public class OmniboxPedalUnitTest {
     public void creation_usesDefaultIconForAllNonCustomizedCases() {
         for (int type = OmniboxPedalId.NONE; type < OmniboxPedalId.TOTAL_COUNT; type++) {
             if (sPedalsWithCustomIcons.contains(type)) continue;
-            assertEquals(OmniboxAction.DEFAULT_ICON,
+            assertEquals(
+                    OmniboxAction.DEFAULT_ICON,
                     new OmniboxPedal(0, "hint", "accessibility", type).icon);
         }
     }
 
     @Test
     public void creation_failsWithNullHint() {
-        assertThrows(AssertionError.class,
-                ()
-                        -> new OmniboxPedal(
+        assertThrows(
+                AssertionError.class,
+                () ->
+                        new OmniboxPedal(
                                 0, null, "accessibility", OmniboxPedalId.CLEAR_BROWSING_DATA));
     }
 
     @Test
     public void creation_failsWithEmptyHint() {
-        assertThrows(AssertionError.class,
+        assertThrows(
+                AssertionError.class,
                 () -> new OmniboxPedal(0, "", "accessibility", OmniboxPedalId.CLEAR_BROWSING_DATA));
     }
 
@@ -76,17 +79,27 @@ public class OmniboxPedalUnitTest {
 
     @Test
     public void safeCasting_assertsWithWrongClassType() {
-        assertThrows(AssertionError.class,
-                () -> OmniboxPedal.from(new OmniboxAction(OmniboxActionId.PEDAL, 0, "", "", null) {
-                    @Override
-                    public void execute(OmniboxActionDelegate d) {}
-                }));
+        assertThrows(
+                AssertionError.class,
+                () ->
+                        OmniboxPedal.from(
+                                new OmniboxAction(
+                                        OmniboxActionId.PEDAL,
+                                        0,
+                                        "",
+                                        "",
+                                        null,
+                                        R.style.TextAppearance_ChipText) {
+                                    @Override
+                                    public void execute(OmniboxActionDelegate d) {}
+                                }));
     }
 
     @Test
     public void safeCasting_successWithFactoryBuiltAction() {
-        OmniboxPedal.from(OmniboxActionFactoryImpl.get().buildOmniboxPedal(
-                0, "hint", "accessibility", OmniboxPedalId.NONE));
+        OmniboxPedal.from(
+                OmniboxActionFactoryImpl.get()
+                        .buildOmniboxPedal(0, "hint", "accessibility", OmniboxPedalId.NONE));
     }
 
     @Test
@@ -99,7 +112,7 @@ public class OmniboxPedalUnitTest {
     @Test
     public void executePedal_clearBrowsingData() {
         new OmniboxPedal(0, "hint", "", OmniboxPedalId.CLEAR_BROWSING_DATA).execute(mDelegate);
-        verify(mDelegate, times(1)).openSettingsPage(SettingsFragment.CLEAR_BROWSING_DATA);
+        verify(mDelegate).handleClearBrowsingData();
         verifyNoMoreInteractions(mDelegate);
     }
 

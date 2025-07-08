@@ -3,11 +3,13 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/css/invalidation/invalidation_set.h"
+
+#include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
-
-#include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 namespace {
@@ -275,10 +277,11 @@ TEST(InvalidationSetTest, Backing_GetHashSet) {
 }
 
 TEST(InvalidationSetTest, ClassInvalidatesElement) {
+  test::TaskEnvironment task_environment;
   auto dummy_page_holder =
       std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
   auto& document = dummy_page_holder->GetDocument();
-  document.body()->setInnerHTML("<div id=test class='a b'>");
+  document.body()->SetInnerHTMLWithoutTrustedTypes("<div id=test class='a b'>");
   document.View()->UpdateAllLifecyclePhasesForTest();
   Element* element = document.getElementById(AtomicString("test"));
   ASSERT_TRUE(element);
@@ -301,10 +304,11 @@ TEST(InvalidationSetTest, ClassInvalidatesElement) {
 }
 
 TEST(InvalidationSetTest, AttributeInvalidatesElement) {
+  test::TaskEnvironment task_environment;
   auto dummy_page_holder =
       std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
   auto& document = dummy_page_holder->GetDocument();
-  document.body()->setInnerHTML("<div id=test a b>");
+  document.body()->SetInnerHTMLWithoutTrustedTypes("<div id=test a b>");
   document.View()->UpdateAllLifecyclePhasesForTest();
   Element* element = document.getElementById(AtomicString("test"));
   ASSERT_TRUE(element);

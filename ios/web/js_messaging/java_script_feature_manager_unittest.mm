@@ -14,10 +14,6 @@
 #import "ios/web/web_state/ui/wk_web_view_configuration_provider.h"
 #import "testing/gtest_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 // A test fixture for testing JavaScriptFeatureManager.
 class JavaScriptFeatureManagerTest : public web::WebTest {
  protected:
@@ -48,7 +44,7 @@ class JavaScriptFeatureManagerTest : public web::WebTest {
 TEST_F(JavaScriptFeatureManagerTest, AllFramesStartFeature) {
   ASSERT_TRUE(GetJavaScriptFeatureManager());
 
-  std::vector<const web::JavaScriptFeature::FeatureScript> feature_scripts = {
+  const std::vector<web::JavaScriptFeature::FeatureScript> feature_scripts = {
       web::JavaScriptFeature::FeatureScript::CreateWithFilename(
           "java_script_feature_test_inject_once",
           web::JavaScriptFeature::FeatureScript::InjectionTime::kDocumentStart,
@@ -74,7 +70,7 @@ TEST_F(JavaScriptFeatureManagerTest, AllFramesStartFeature) {
 TEST_F(JavaScriptFeatureManagerTest, MainFrameEndFeature) {
   ASSERT_TRUE(GetJavaScriptFeatureManager());
 
-  std::vector<const web::JavaScriptFeature::FeatureScript> feature_scripts = {
+  const std::vector<web::JavaScriptFeature::FeatureScript> feature_scripts = {
       web::JavaScriptFeature::FeatureScript::CreateWithFilename(
           "java_script_feature_test_inject_once",
           web::JavaScriptFeature::FeatureScript::InjectionTime::kDocumentEnd,
@@ -99,7 +95,7 @@ TEST_F(JavaScriptFeatureManagerTest, MainFrameEndFeature) {
 TEST_F(JavaScriptFeatureManagerTest, MainFrameEndFeatureIsolatedWorld) {
   ASSERT_TRUE(GetJavaScriptFeatureManager());
 
-  std::vector<const web::JavaScriptFeature::FeatureScript> feature_scripts = {
+  const std::vector<web::JavaScriptFeature::FeatureScript> feature_scripts = {
       web::JavaScriptFeature::FeatureScript::CreateWithFilename(
           "java_script_feature_test_inject_once",
           web::JavaScriptFeature::FeatureScript::InjectionTime::kDocumentEnd,

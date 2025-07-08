@@ -10,11 +10,15 @@
 #include "ash/system/media/media_notification_provider.h"
 #include "ash/system/media/quick_settings_media_view.h"
 #include "ash/system/unified/unified_system_tray_controller.h"
+#include "components/global_media_controls/public/constants.h"
 #include "components/global_media_controls/public/media_item_manager.h"
 #include "components/global_media_controls/public/media_session_item_producer.h"
+#include "components/global_media_controls/public/views/media_item_ui_detailed_view.h"
 #include "components/global_media_controls/public/views/media_item_ui_view.h"
 #include "services/media_session/public/cpp/media_session_service.h"
 #include "ui/views/view.h"
+
+using global_media_controls::GlobalMediaControlsEntryPoint;
 
 namespace ash {
 
@@ -46,7 +50,7 @@ QuickSettingsMediaViewController::QuickSettingsMediaViewController(
   media_session_item_producer_ =
       std::make_unique<global_media_controls::MediaSessionItemProducer>(
           std::move(audio_focus_remote), std::move(controller_manager_remote),
-          media_item_manager_.get(), /*source_id=*/absl::nullopt);
+          media_item_manager_.get(), /*source_id=*/std::nullopt);
 
   media_item_manager_->AddObserver(this);
   media_item_manager_->AddItemProducer(media_session_item_producer_.get());
@@ -76,14 +80,11 @@ QuickSettingsMediaViewController::ShowMediaItem(
   CHECK(MediaNotificationProvider::Get());
 
   auto media_item_ui = std::make_unique<global_media_controls::MediaItemUIView>(
-      id, item,
-      MediaNotificationProvider::Get()->BuildFooterView(
-          item,
-          global_media_controls::GlobalMediaControlsEntryPoint::kSystemTray),
+      id, item, MediaNotificationProvider::Get()->BuildFooterView(id, item),
       MediaNotificationProvider::Get()->BuildDeviceSelectorView(
           id, item,
           global_media_controls::GlobalMediaControlsEntryPoint::kSystemTray),
-      /*notification_theme=*/absl::nullopt, GetCrosMediaColorTheme(),
+      /*notification_theme=*/std::nullopt, GetCrosMediaColorTheme(),
       global_media_controls::MediaDisplayPage::kQuickSettingsMediaView);
   auto* media_item_ui_ptr = media_item_ui.get();
   media_item_ui_observer_set_.Observe(id, media_item_ui_ptr);
@@ -103,18 +104,16 @@ void QuickSettingsMediaViewController::HideMediaItem(const std::string& id) {
 // global_media_controls::MediaItemUIObserver implementations:
 
 void QuickSettingsMediaViewController::OnMediaItemUIClicked(
-    const std::string& id) {
-  tray_controller_->ShowMediaControlsDetailedView();
-}
-
-void QuickSettingsMediaViewController::OnMediaItemUIDestroyed(
-    const std::string& id) {
-  media_item_ui_observer_set_.StopObserving(id);
+    const std::string& id,
+    bool activate_original_media) {
+  tray_controller_->ShowMediaControlsDetailedView(
+      GlobalMediaControlsEntryPoint::kQuickSettingsMiniPlayer);
 }
 
 void QuickSettingsMediaViewController::OnMediaItemUIShowDevices(
     const std::string& id) {
-  tray_controller_->ShowMediaControlsDetailedView(id);
+  tray_controller_->ShowMediaControlsDetailedView(
+      GlobalMediaControlsEntryPoint::kQuickSettingsMiniPlayerCastButton, id);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -122,7 +121,7 @@ void QuickSettingsMediaViewController::OnMediaItemUIShowDevices(
 
 std::unique_ptr<views::View> QuickSettingsMediaViewController::CreateView() {
   auto media_view = std::make_unique<QuickSettingsMediaView>(this);
-  media_view_ = media_view.get();
+  media_view_ = media_view->AsWeakPtr();
   media_item_manager_->SetDialogDelegate(this);
   return std::move(media_view);
 }
@@ -132,7 +131,13 @@ void QuickSettingsMediaViewController::SetShowMediaView(bool show_media_view) {
 }
 
 void QuickSettingsMediaViewController::UpdateMediaItemOrder() {
+  CHECK(media_view_);
   media_view_->UpdateItemOrder(media_item_manager_->GetActiveItemIds());
+}
+
+int QuickSettingsMediaViewController::GetMediaViewHeight() {
+  CHECK(media_view_);
+  return media_view_->GetMediaViewHeight();
 }
 
 }  // namespace ash

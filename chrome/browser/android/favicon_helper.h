@@ -17,6 +17,8 @@
 #include "components/favicon_base/favicon_types.h"
 #include "url/gurl.h"
 
+class Profile;
+
 class FaviconHelper {
  public:
   FaviconHelper();
@@ -25,22 +27,16 @@ class FaviconHelper {
   FaviconHelper(const FaviconHelper&) = delete;
   FaviconHelper& operator=(const FaviconHelper&) = delete;
 
-  jboolean GetComposedFaviconImage(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& j_profile,
-      const base::android::JavaParamRef<jobjectArray>& j_urls,
-      jint j_desired_size_in_pixel,
-      const base::android::JavaParamRef<jobject>& j_favicon_image_callback);
   jboolean GetLocalFaviconImageForURL(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& j_profile,
-      const base::android::JavaParamRef<jobject>& j_page_url,
+      Profile* profile,
+      GURL& page_url,
       jint j_desired_size_in_pixel,
       const base::android::JavaParamRef<jobject>& j_favicon_image_callback);
   jboolean GetForeignFaviconImageForURL(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jprofile,
-      const base::android::JavaParamRef<jobject>& j_page_url,
+      Profile* profile,
+      GURL& page_url,
       jint j_desired_size_in_pixel,
       const base::android::JavaParamRef<jobject>& j_favicon_image_callback);
 
@@ -49,21 +45,10 @@ class FaviconHelper {
       GURL url,
       int desired_size_in_pixel,
       favicon_base::FaviconRawBitmapCallback callback_runner);
-  void GetComposedFaviconImageInternal(
-      favicon::FaviconService* favicon_service,
-      std::vector<GURL> urls,
-      int desired_size_in_pixel,
-      favicon_base::FaviconResultsCallback callback_runner);
   void OnJobFinished(int job_id);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(FaviconHelperTest, GetLargestSizeIndex);
-
   virtual ~FaviconHelper();
-
-  class Job;
-
-  static size_t GetLargestSizeIndex(const std::vector<gfx::Size>& sizes);
 
   // This function is expected to be bound to a WeakPtr<FaviconHelper>, so that
   // it won't be run if the FaviconHelper is deleted and
@@ -72,15 +57,7 @@ class FaviconHelper {
       const base::android::JavaRef<jobject>& j_favicon_image_callback,
       const favicon_base::FaviconRawBitmapResult& result);
 
-  void OnComposedFaviconBitmapResultsAvailable(
-      const base::android::JavaRef<jobject>& j_favicon_image_callback,
-      const int desired_size_in_pixel,
-      const std::vector<favicon_base::FaviconRawBitmapResult>& result);
-
   std::unique_ptr<base::CancelableTaskTracker> cancelable_task_tracker_;
-
-  std::map<int, std::unique_ptr<Job>> id_to_job_;
-  int last_used_job_id_;
 
   base::WeakPtrFactory<FaviconHelper> weak_ptr_factory_{this};
 };

@@ -7,7 +7,28 @@
 #include "base/android/build_info.h"
 #include "base/android/jni_string.h"
 #include "base/no_destructor.h"
+#include "media/base/media_switches.h"
+#include "media/base/video_codecs.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "media/base/android/media_jni_headers/VideoAcceleratorUtil_jni.h"
+
+namespace {
+bool isEncoderSupportedProfile(media::VideoCodecProfile profile) {
+  media::VideoCodec codec = media::VideoCodecProfileToVideoCodec(profile);
+  if (codec == media::VideoCodec::kHEVC) {
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+    // Currently only 8bit NV12 and I420 encoding is supported, so limit
+    // this to main profile only just like other platforms.
+    return base::FeatureList::IsEnabled(media::kPlatformHEVCEncoderSupport) &&
+           profile == media::VideoCodecProfile::HEVCPROFILE_MAIN;
+#else
+    return false;
+#endif
+  }
+  return true;
+}
+}  // namespace
 
 namespace media {
 
@@ -15,7 +36,7 @@ const std::vector<MediaCodecEncoderInfo>& GetEncoderInfoCache() {
   static const base::NoDestructor<std::vector<MediaCodecEncoderInfo>> infos([] {
     // Sadly the NDK doesn't provide a mechanism for accessing the equivalent of
     // the SDK's MediaCodecList, so we must call into Java to enumerate support.
-    JNIEnv* env = base::android::AttachCurrentThread();
+    JNIEnv* env = jni_zero::AttachCurrentThread();
     CHECK(env);
     auto java_profiles =
         Java_VideoAcceleratorUtil_getSupportedEncoderProfiles(env);
@@ -30,6 +51,9 @@ const std::vector<MediaCodecEncoderInfo>& GetEncoderInfoCache() {
       MediaCodecEncoderInfo info;
       info.profile.profile = static_cast<VideoCodecProfile>(
           Java_SupportedProfileAdapter_getProfile(env, java_profile));
+      if (!isEncoderSupportedProfile(info.profile.profile)) {
+        continue;
+      }
       info.profile.min_resolution = gfx::Size(
           Java_SupportedProfileAdapter_getMinWidth(env, java_profile),
           Java_SupportedProfileAdapter_getMinHeight(env, java_profile));
@@ -53,11 +77,25 @@ const std::vector<MediaCodecEncoderInfo>& GetEncoderInfoCache() {
       info.profile.is_software_codec =
           Java_SupportedProfileAdapter_isSoftwareCodec(env, java_profile);
 
+      int num_temporal_layers =
+          Java_SupportedProfileAdapter_getMaxNumberOfTemporalLayers(
+              env, java_profile);
+
+      info.profile.scalability_modes.push_back(SVCScalabilityMode::kL1T1);
+      if (num_temporal_layers >= 2) {
+        info.profile.scalability_modes.push_back(SVCScalabilityMode::kL1T2);
+      }
+      if (num_temporal_layers >= 3) {
+        info.profile.scalability_modes.push_back(SVCScalabilityMode::kL1T3);
+      }
       info.name = base::android::ConvertJavaStringToUTF8(
           Java_SupportedProfileAdapter_getName(env, java_profile));
       cpp_infos.push_back(info);
     }
-    std::sort(
+
+    // Use a stable sort since codec information is returned in a rank order
+    // specified by the OEM.
+    std::stable_sort(
         cpp_infos.begin(), cpp_infos.end(),
         [](const MediaCodecEncoderInfo& a, const MediaCodecEncoderInfo& b) {
           return a.profile.profile < b.profile.profile;
@@ -69,7 +107,7 @@ const std::vector<MediaCodecEncoderInfo>& GetEncoderInfoCache() {
 
 const std::vector<MediaCodecDecoderInfo>& GetDecoderInfoCache() {
   static const base::NoDestructor<std::vector<MediaCodecDecoderInfo>> infos([] {
-    JNIEnv* env = base::android::AttachCurrentThread();
+    JNIEnv* env = jni_zero::AttachCurrentThread();
     CHECK(env);
     auto java_profiles =
         Java_VideoAcceleratorUtil_getSupportedDecoderProfiles(env);
@@ -111,7 +149,10 @@ const std::vector<MediaCodecDecoderInfo>& GetDecoderInfoCache() {
           Java_SupportedProfileAdapter_getName(env, java_profile));
       cpp_infos.push_back(info);
     }
-    std::sort(
+
+    // Use a stable sort since codec information is returned in a rank order
+    // specified by the OEM.
+    std::stable_sort(
         cpp_infos.begin(), cpp_infos.end(),
         [](const MediaCodecDecoderInfo& a, const MediaCodecDecoderInfo& b) {
           return a.profile < b.profile;

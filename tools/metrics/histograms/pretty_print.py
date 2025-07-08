@@ -57,23 +57,6 @@ def canonicalizeUnits(tree):
   for child in tree:
     canonicalizeUnits(child)
 
-def fixObsoleteOrder(tree):
-  """Put obsolete tags at the beginning of histogram tags."""
-  obsoletes = []
-
-  for child in tree:
-    if child.tag == 'obsolete':
-      obsoletes.append(child)
-    else:
-      fixObsoleteOrder(child)
-
-  for obsolete in obsoletes:
-    tree.remove(obsolete)
-
-  # Only keep the first obsolete tag.
-  if obsoletes:
-    tree.insert(0, obsoletes[0])
-
 def DropNodesByTagName(tree, tag, dropped_nodes=[]):
   """Drop all nodes with named tag from the XML tree."""
   removes = []
@@ -151,7 +134,6 @@ def PrettyPrintHistogramsTree(tree):
   DropNodesByTagName(tree, 'enums')
   FixMisplacedHistogramsAndHistogramSuffixes(tree)
   canonicalizeUnits(tree)
-  fixObsoleteOrder(tree)
   return histogram_configuration_model.PrettifyTree(tree)
 
 
@@ -177,10 +159,11 @@ def main():
     --presubmit: (Optional) Simply prints a message if the input is not
         formatted correctly instead of modifying the file.
     --diff: (Optional) Prints diff to stdout rather than modifying the file.
+    --cleanup: (Optional) Removes any backup file created during the execution.
 
   Example usage:
     pretty_print.py metadata/Fingerprint/histograms.xml
-    pretty_print.py enums.xml
+    pretty_print.py enums.xml --cleanup
   """
   parser = argparse.ArgumentParser()
   parser.add_argument('filepath', help="relative path to XML file")
@@ -188,11 +171,14 @@ def main():
   parser.add_argument('--non-interactive', action="store_true")
   parser.add_argument('--presubmit', action="store_true")
   parser.add_argument('--diff', action="store_true")
+  parser.add_argument('--cleanup',
+                      action="store_true",
+                      help="Remove the backup file after a successful run.")
   args = parser.parse_args()
 
   status = 0
   if 'enums.xml' in args.filepath:
-    status = presubmit_util.DoPresubmit(sys.argv, 'enums.xml',
+    status = presubmit_util.DoPresubmit(sys.argv, args.filepath,
                                         'enums.before.pretty-print.xml',
                                         PrettyPrintEnums)
 

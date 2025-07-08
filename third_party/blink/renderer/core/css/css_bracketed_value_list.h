@@ -41,7 +41,7 @@ class CSSBracketedValueList : public CSSValueList {
  public:
   CSSBracketedValueList();
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   void TraceAfterDispatch(blink::Visitor* visitor) const {
     CSSValueList::TraceAfterDispatch(visitor);

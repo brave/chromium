@@ -6,22 +6,23 @@ package org.chromium.components.messages;
 
 import android.content.Context;
 
+import androidx.annotation.DrawableRes;
+import androidx.annotation.IdRes;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.components.browser_ui.widget.listmenu.BasicListMenu;
-import org.chromium.components.browser_ui.widget.listmenu.BasicListMenu.ListMenuItemType;
-import org.chromium.components.browser_ui.widget.listmenu.ListMenu;
-import org.chromium.components.browser_ui.widget.listmenu.ListMenuItemProperties;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils;
+import org.chromium.components.browser_ui.widget.ListItemBuilder;
+import org.chromium.ui.listmenu.BasicListMenu.ListMenuItemType;
+import org.chromium.ui.listmenu.ListMenu;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * A class used by {@link MessageWrapper} to manage the message secondary menu and menu items.
- */
+/** A class used by {@link MessageWrapper} to manage the message secondary menu and menu items. */
+@NullMarked
 public class MessageSecondaryMenuItems {
-    @VisibleForTesting
-    ModelList mMenuItems = new ModelList();
+    @VisibleForTesting ModelList mMenuItems = new ModelList();
 
     /**
      * Creates and returns a {@link ListMenu} populated by |mMenuItems|.
@@ -30,57 +31,58 @@ public class MessageSecondaryMenuItems {
      * @return A {@link ListMenu} populated by |mMenuItems|.
      */
     ListMenu createListMenu(Context context, ListMenu.Delegate delegate) {
-        return new BasicListMenu(context, mMenuItems, delegate);
+        return BrowserUiListMenuUtils.getBasicListMenu(context, mMenuItems, delegate);
     }
 
     /**
      * Add an item to the list menu.
+     *
      * @param itemId The list menu item ID.
      * @param resourceId The start icon resource ID of the list menu item.
      * @param itemText The title of the list menu item.
      */
-    PropertyModel addMenuItem(int itemId, int resourceId, String itemText) {
-        PropertyModel item = new PropertyModel.Builder(ListMenuItemProperties.ALL_KEYS)
-                                     .with(ListMenuItemProperties.MENU_ITEM_ID, itemId)
-                                     .with(ListMenuItemProperties.START_ICON_ID, resourceId)
-                                     .with(ListMenuItemProperties.TITLE, itemText)
-                                     .with(ListMenuItemProperties.ENABLED, true)
-                                     .build();
-        mMenuItems.add(new ListItem(ListMenuItemType.MENU_ITEM, item));
-        return item;
-    }
-
-    /**
-     * Add an item to the list menu.
-     * @param itemId The list menu item ID.
-     * @param resourceId The start icon resource ID of the list menu item.
-     * @param itemText The title of the list menu item.
-     * @param itemDescription The a11y content description of menu item.
-     * Set empty string/NULL to unset content description.
-     */
-    PropertyModel addMenuItem(int itemId, int resourceId, String itemText, String itemDescription) {
-        PropertyModel item =
-                new PropertyModel.Builder(ListMenuItemProperties.ALL_KEYS)
-                        .with(ListMenuItemProperties.MENU_ITEM_ID, itemId)
-                        .with(ListMenuItemProperties.START_ICON_ID, resourceId)
-                        .with(ListMenuItemProperties.TITLE, itemText)
-                        .with(ListMenuItemProperties.CONTENT_DESCRIPTION, itemDescription)
-                        .with(ListMenuItemProperties.ENABLED, true)
+    PropertyModel addMenuItem(@IdRes int itemId, @DrawableRes int resourceId, String itemText) {
+        final ListItem item =
+                new ListItemBuilder()
+                        .withTitle(itemText)
+                        .withMenuId(itemId)
+                        .withStartIconRes(resourceId)
                         .build();
-        mMenuItems.add(new ListItem(ListMenuItemType.MENU_ITEM, item));
-        return item;
+        mMenuItems.add(item);
+        return item.model;
     }
 
     /**
-     * Remove all items from the list menu.
+     * Add an item to the list menu.
+     *
+     * @param itemId The list menu item ID.
+     * @param resourceId The start icon resource ID of the list menu item.
+     * @param itemText The title of the list menu item.
+     * @param itemDescription The a11y content description of menu item. Set empty string/NULL to
+     *     unset content description.
      */
+    PropertyModel addMenuItem(
+            @IdRes int itemId,
+            @DrawableRes int resourceId,
+            String itemText,
+            String itemDescription) {
+        final ListItem item =
+                new ListItemBuilder()
+                        .withTitle(itemText)
+                        .withMenuId(itemId)
+                        .withStartIconRes(resourceId)
+                        .withContentDescription(itemDescription)
+                        .build();
+        mMenuItems.add(item);
+        return item.model;
+    }
+
+    /** Remove all items from the list menu. */
     void clearMenuItems() {
         mMenuItems.clear();
     }
 
-    /**
-     * Add a divider to the list menu.
-     */
+    /** Add a divider to the list menu. */
     void addMenuDivider() {
         mMenuItems.add(new ListItem(ListMenuItemType.DIVIDER, new PropertyModel()));
     }

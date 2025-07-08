@@ -9,10 +9,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ContextUtils;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
 
 /**
  * Java implementations of SystemTimeChangeNotifierAndroid functionality.
@@ -36,7 +37,7 @@ public final class SystemTimeChangeNotifierAndroid {
             @Override
             public void onReceive(Context context, Intent intent) {
                 SystemTimeChangeNotifierAndroidJni.get().onTimeChanged(
-                        nativeSystemTimeChangeNotifier, SystemTimeChangeNotifierAndroid.this);
+                        nativeSystemTimeChangeNotifier);
             }
         };
         IntentFilter filter = new IntentFilter(Intent.ACTION_TIME_CHANGED);
@@ -51,7 +52,6 @@ public final class SystemTimeChangeNotifierAndroid {
 
     @NativeMethods
     interface Natives {
-        void onTimeChanged(
-                long nativeSystemTimeChangeNotifierAndroid, SystemTimeChangeNotifierAndroid caller);
+        void onTimeChanged(long nativeSystemTimeChangeNotifierAndroid);
     }
 }

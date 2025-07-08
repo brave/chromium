@@ -11,6 +11,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "chrome/browser/notifications/scheduler/internal/scheduler_utils.h"
 
@@ -45,8 +46,8 @@ std::string ToDatabaseKey(SchedulerClientType type) {
     case SchedulerClientType::kTest3:
       return "Test3";
     case SchedulerClientType::kUnknown:
+    case SchedulerClientType::kDeprecatedFeatureGuide:
       NOTREACHED();
-      return std::string();
     case SchedulerClientType::kWebUI:
       return "WebUI";
     case SchedulerClientType::kChromeUpdate:
@@ -55,8 +56,6 @@ std::string ToDatabaseKey(SchedulerClientType type) {
       return "Prefetch";
     case SchedulerClientType::kReadingList:
       return "ReadingList";
-    case SchedulerClientType::kFeatureGuide:
-      return "FeatureGuide";
   }
 }
 
@@ -90,7 +89,7 @@ void ImpressionHistoryTrackerImpl::AddImpression(
     const std::string& guid,
     const Impression::ImpressionResultMap& impression_mapping,
     const Impression::CustomData& custom_data,
-    absl::optional<base::TimeDelta> ignore_timeout_duration) {
+    std::optional<base::TimeDelta> ignore_timeout_duration) {
   DCHECK(initialized_);
   auto it = client_states_.find(type);
   if (it == client_states_.end())
@@ -323,7 +322,6 @@ void ImpressionHistoryTrackerImpl::GenerateImpressionResult(
         break;
       case UserFeedback::kNoFeedback:
         NOTREACHED();
-        break;
     }
   }
 }
@@ -345,7 +343,6 @@ void ImpressionHistoryTrackerImpl::UpdateThrottling(ClientState* client_state,
       break;
     case ImpressionResult::kInvalid:
       NOTREACHED();
-      break;
   }
 }
 

@@ -12,14 +12,17 @@
 #include <cerrno>
 
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/channel_layout.h"
 #include "media/base/encryption_scheme.h"
 #include "media/base/media_export.h"
 #include "media/base/sample_format.h"
 #include "media/base/video_codecs.h"
-#include "media/base/video_frame.h"
+#include "media/base/video_types.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
 #include "third_party/ffmpeg/ffmpeg_features.h"
 
@@ -30,6 +33,9 @@ extern "C" {
 #include <libavformat/avio.h>
 #include <libavutil/avutil.h>
 #include <libavutil/channel_layout.h>
+#if BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
+#include <libavutil/dovi_meta.h>
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
 #include <libavutil/imgutils.h>
 #include <libavutil/log.h>
 #include <libavutil/mastering_display_metadata.h>
@@ -40,6 +46,14 @@ extern "C" {
 namespace media {
 
 constexpr int64_t kNoFFmpegTimestamp = static_cast<int64_t>(AV_NOPTS_VALUE);
+
+// Alignment requirement by FFmpeg for input and output buffers. This need to
+// be updated to match FFmpeg when it changes.
+#if defined(ARCH_CPU_ARM_FAMILY)
+constexpr inline int kFFmpegBufferAddressAlignment = 16;
+#else
+constexpr inline int kFFmpegBufferAddressAlignment = 32;
+#endif
 
 class AudioDecoderConfig;
 class VideoDecoderConfig;
@@ -65,6 +79,40 @@ inline void ScopedPtrAVFreeContext::operator()(void* x) const {
 inline void ScopedPtrAVFreeFrame::operator()(void* x) const {
   AVFrame* frame = static_cast<AVFrame*>(x);
   av_frame_free(&frame);
+}
+
+// Returns the data from `packet` as a `base::span`. `packet` must be a valid
+// `AVPacket` returned from ffmpeg.
+inline base::span<const uint8_t> AVPacketData(const AVPacket& packet) {
+  // SAFETY: Once initialized by ffmpeg, an `AVPacket` will describe a valid
+  // buffer. We assume that callers do not create uninitialized `AVPacket`s on
+  // the stack, as ffmpeg's documentation says to only create `AVPacket`s with
+  // `av_packet_alloc`, or `ScopedAVPacket` in Chromium. This is not enforced
+  // due to limitations from ffmpeg being a C API.
+  return UNSAFE_BUFFERS(
+      base::span(packet.data, base::checked_cast<size_t>(packet.size)));
+}
+
+inline base::span<AVStream*> AVFormatContextToSpan(
+    const AVFormatContext* codec_context) {
+  // SAFETY:
+  // https://ffmpeg.org/doxygen/trunk/structAVFormatContext.html#a0b748d924898b08b89ff4974afd17285
+  // ffmpeg documentation: `nb_streams` is the number of elements in
+  // `AVFormatContext.streams`.
+  return UNSAFE_BUFFERS(
+      base::span(codec_context->streams,
+                 base::checked_cast<size_t>(codec_context->nb_streams)));
+}
+
+inline base::span<AVPacketSideData> AVCodecParametersCodedSideToSpan(
+    const AVCodecParameters* codecpar) {
+  // SAFETY:
+  // https://ffmpeg.org/doxygen/trunk/structAVCodecParameters.html#a29643cfd94231e2d148a5d17b08d115b
+  // ffmpeg documentation: `nb_coded_side_data` is the amount of entries in
+  // `coded_side_data`.
+  return UNSAFE_BUFFERS(
+      base::span(codecpar->coded_side_data,
+                 base::checked_cast<size_t>(codecpar->nb_coded_side_data)));
 }
 
 // Converts an int64_t timestamp in |time_base| units to a base::TimeDelta.
@@ -138,6 +186,9 @@ std::string AVErrorToString(int errnum);
 // Returns a 32-bit hash for the given codec name.  See the VerifyUmaCodecHashes
 // unit test for more information and code for generating the histogram XML.
 MEDIA_EXPORT int32_t HashCodecName(const char* codec_name);
+
+// Returns the list of allowed decoders for audio.
+MEDIA_EXPORT const char* GetAllowedAudioDecoders();
 
 }  // namespace media
 

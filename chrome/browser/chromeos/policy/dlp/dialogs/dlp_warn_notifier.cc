@@ -6,8 +6,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <vector>
 
-#include "base/containers/cxx20_erase.h"
 #include "chrome/browser/chromeos/policy/dlp/dialogs/dlp_warn_dialog.h"
 #include "chrome/browser/chromeos/policy/dlp/dialogs/policy_dialog_base.h"
 #include "ui/aura/client/aura_constants.h"
@@ -30,15 +30,14 @@ void DlpWarnNotifier::OnWidgetDestroying(views::Widget* widget) {
   RemoveWidget(widget);
 }
 
-void DlpWarnNotifier::ShowDlpPrintWarningDialog(
-    OnDlpRestrictionCheckedCallback callback) {
+void DlpWarnNotifier::ShowDlpPrintWarningDialog(WarningCallback callback) {
   ShowDlpWarningDialog(std::move(callback),
                        DlpWarnDialog::DlpWarnDialogOptions(
                            DlpWarnDialog::Restriction::kPrinting));
 }
 
 void DlpWarnNotifier::ShowDlpScreenCaptureWarningDialog(
-    OnDlpRestrictionCheckedCallback callback,
+    WarningCallback callback,
     const DlpConfidentialContents& confidential_contents) {
   ShowDlpWarningDialog(
       std::move(callback),
@@ -47,7 +46,7 @@ void DlpWarnNotifier::ShowDlpScreenCaptureWarningDialog(
 }
 
 void DlpWarnNotifier::ShowDlpVideoCaptureWarningDialog(
-    OnDlpRestrictionCheckedCallback callback,
+    WarningCallback callback,
     const DlpConfidentialContents& confidential_contents) {
   ShowDlpWarningDialog(
       std::move(callback),
@@ -56,7 +55,7 @@ void DlpWarnNotifier::ShowDlpVideoCaptureWarningDialog(
 }
 
 base::WeakPtr<views::Widget> DlpWarnNotifier::ShowDlpScreenShareWarningDialog(
-    OnDlpRestrictionCheckedCallback callback,
+    WarningCallback callback,
     const DlpConfidentialContents& confidential_contents,
     const std::u16string& application_title) {
   return ShowDlpWarningDialog(std::move(callback),
@@ -70,7 +69,7 @@ int DlpWarnNotifier::ActiveWarningDialogsCountForTesting() const {
 }
 
 base::WeakPtr<views::Widget> DlpWarnNotifier::ShowDlpWarningDialog(
-    OnDlpRestrictionCheckedCallback callback,
+    WarningCallback callback,
     DlpWarnDialog::DlpWarnDialogOptions options) {
   views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
       std::make_unique<DlpWarnDialog>(std::move(callback), options),
@@ -94,7 +93,7 @@ void DlpWarnNotifier::ShowWidget(views::Widget* widget) {
 
 void DlpWarnNotifier::RemoveWidget(views::Widget* widget) {
   widget->RemoveObserver(this);
-  base::EraseIf(widgets_, [=](views::Widget* widget_ptr) -> bool {
+  std::erase_if(widgets_, [=](views::Widget* widget_ptr) -> bool {
     return widget_ptr == widget;
   });
 }

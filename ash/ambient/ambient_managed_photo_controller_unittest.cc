@@ -12,16 +12,13 @@
 #include "ash/ambient/model/ambient_slideshow_photo_config.h"
 #include "ash/ambient/test/ambient_ash_test_base.h"
 #include "ash/ambient/test/mock_ambient_backend_model_observer.h"
-#include "ash/ambient/test/test_ambient_managed_photo_source.h"
-#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_paths.h"
 #include "ash/public/cpp/ambient/proto/photo_cache_entry.pb.h"
-#include "ash/public/cpp/test/in_process_image_decoder.h"
+#include "ash/public/cpp/test/in_process_data_decoder.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
@@ -91,9 +88,6 @@ class AmbientManagedPhotoControllerTest : public AmbientAshTestBase {
   void CleanUpTestData() { image_file_paths_.clear(); }
 
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        ash::features::kAmbientModeManagedScreensaver);
-
     AmbientAshTestBase::SetUp();
     photo_controller_ = std::make_unique<AmbientManagedPhotoController>(
         *ambient_controller()->ambient_view_delegate(),
@@ -165,8 +159,7 @@ class AmbientManagedPhotoControllerTest : public AmbientAshTestBase {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-  InProcessImageDecoder decoder_;
+  InProcessDataDecoder decoder_;
   std::vector<base::FilePath> image_file_paths_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<base::ScopedPathOverride>

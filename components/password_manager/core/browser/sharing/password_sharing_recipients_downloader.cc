@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/metrics/histogram_base.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
@@ -31,6 +33,19 @@ constexpr char kPasswordSharingRecipientsEndpoint[] =
     "password_sharing_recipients";
 constexpr base::TimeDelta kRequestTimeout = base::Seconds(10);
 
+void LogRequestResult(const network::SimpleURLLoader& url_loader) {
+  int http_status_code = -1;
+  if (url_loader.ResponseInfo() && url_loader.ResponseInfo()->headers) {
+    http_status_code = url_loader.ResponseInfo()->headers->response_code();
+  }
+  const int net_error_code = url_loader.NetError();
+  const bool request_succeeded =
+      net_error_code == net::OK && http_status_code != -1;
+  base::UmaHistogramSparse(
+      "PasswordManager.PasswordSharingRecipients.ResponseOrErrorCode",
+      request_succeeded ? http_status_code : net_error_code);
+}
+
 }  // namespace
 
 PasswordSharingRecipientsDownloader::PasswordSharingRecipientsDownloader(
@@ -51,23 +66,13 @@ PasswordSharingRecipientsDownloader::~PasswordSharingRecipientsDownloader() {
 void PasswordSharingRecipientsDownloader::Start(base::OnceClosure on_complete) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(on_complete);
-  CHECK(!ongoing_access_token_fetch_);
   CHECK(!on_request_complete_callback_);
 
-  ongoing_access_token_fetch_ =
-      std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-          kPasswordSharingRecipientsOAuthConsumerName, identity_manager_,
-          signin::ScopeSet{GaiaConstants::kChromeSyncOAuth2Scope},
-          base::BindOnce(
-              &PasswordSharingRecipientsDownloader::AccessTokenFetched,
-              base::Unretained(this)),
-          signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
-          signin::ConsentLevel::kSignin);
-
   on_request_complete_callback_ = std::move(on_complete);
+  StartFetchingAccessToken();
 }
 
-absl::optional<sync_pb::PasswordSharingRecipientsResponse>
+std::optional<sync_pb::PasswordSharingRecipientsResponse>
 PasswordSharingRecipientsDownloader::TakeResponse() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return std::move(response_);
@@ -83,6 +88,12 @@ int PasswordSharingRecipientsDownloader::GetHttpError() const {
   return http_error_;
 }
 
+GoogleServiceAuthError PasswordSharingRecipientsDownloader::GetAuthError()
+    const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return last_auth_error_;
+}
+
 void PasswordSharingRecipientsDownloader::AccessTokenFetched(
     GoogleServiceAuthError error,
     signin::AccessTokenInfo access_token_info) {
@@ -90,14 +101,29 @@ void PasswordSharingRecipientsDownloader::AccessTokenFetched(
   DVLOG(1) << "Access token fetch complete, error state: "
            << static_cast<int>(error.state());
 
+  base::UmaHistogramEnumeration(
+      "PasswordManager.PasswordSharingRecipients.FetchAccessTokenResult",
+      error.state(), GoogleServiceAuthError::NUM_STATES);
+
   CHECK(ongoing_access_token_fetch_);
   ongoing_access_token_fetch_.reset();
 
+  last_auth_error_ = error;
   if (error.state() == GoogleServiceAuthError::NONE) {
     SendRequest(access_token_info);
     return;
   }
-  // TODO(crbug.com/1454712): handle errors (transient and permanent).
+
+  // Do not retry on permanent error or if there was a retry before.
+  if (error.IsPersistentError() || access_token_retried_) {
+    std::move(on_request_complete_callback_).Run();
+    return;
+  }
+
+  // Otherwise, retry fetching the access token.
+  DVLOG(1) << "Retry fetching the access token";
+  access_token_retried_ = true;
+  StartFetchingAccessToken();
 }
 
 void PasswordSharingRecipientsDownloader::OnSimpleLoaderComplete(
@@ -107,6 +133,7 @@ void PasswordSharingRecipientsDownloader::OnSimpleLoaderComplete(
   CHECK(!ongoing_access_token_fetch_);
   CHECK(simple_url_loader_);
 
+  LogRequestResult(*simple_url_loader_);
   net_error_ = simple_url_loader_->NetError();
   if (simple_url_loader_->ResponseInfo() &&
       simple_url_loader_->ResponseInfo()->headers) {
@@ -193,10 +220,9 @@ void PasswordSharingRecipientsDownloader::SendRequest(
   simple_url_loader_->AttachStringForUpload(msg, "application/x-protobuf");
   simple_url_loader_->SetTimeoutDuration(kRequestTimeout);
   simple_url_loader_->SetAllowHttpErrorResults(true);
-  // TODO(crbug.com/1454712): implement backoff retries.
   simple_url_loader_->SetRetryOptions(
-      3, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE |
-             network::SimpleURLLoader::RETRY_ON_5XX);
+      /*max_retries=*/2, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE |
+                             network::SimpleURLLoader::RETRY_ON_5XX);
   simple_url_loader_->DownloadToString(
       url_loader_factory_.get(),
       base::BindOnce(
@@ -218,6 +244,19 @@ GURL PasswordSharingRecipientsDownloader::GetPasswordSharingRecipientsURL(
   GURL::Replacements replacements;
   replacements.SetPathStr(path);
   return sync_service_url.ReplaceComponents(replacements);
+}
+
+void PasswordSharingRecipientsDownloader::StartFetchingAccessToken() {
+  CHECK(!ongoing_access_token_fetch_);
+  ongoing_access_token_fetch_ =
+      std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
+          kPasswordSharingRecipientsOAuthConsumerName, identity_manager_,
+          signin::ScopeSet{GaiaConstants::kChromeSyncOAuth2Scope},
+          base::BindOnce(
+              &PasswordSharingRecipientsDownloader::AccessTokenFetched,
+              base::Unretained(this)),
+          signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
+          signin::ConsentLevel::kSignin);
 }
 
 }  // namespace password_manager

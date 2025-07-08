@@ -9,10 +9,11 @@
 #include "base/command_line.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_driver_desktop.h"
+#include "components/version_info/channel.h"
+#include "components/version_info/version_info.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
 
@@ -29,9 +30,9 @@ GCMClient::ChromePlatform GetPlatform() {
   return GCMClient::PLATFORM_IOS;
 #elif BUILDFLAG(IS_ANDROID)
   return GCMClient::PLATFORM_ANDROID;
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
+#elif BUILDFLAG(IS_CHROMEOS)
   return GCMClient::PLATFORM_CROS;
-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_LINUX)
   return GCMClient::PLATFORM_LINUX;
 #else
   // For all other platforms, return as LINUX.
@@ -53,7 +54,6 @@ GCMClient::ChromeChannel GetChannel(version_info::Channel channel) {
       return GCMClient::CHANNEL_STABLE;
   }
   NOTREACHED();
-  return GCMClient::CHANNEL_UNKNOWN;
 }
 
 std::string GetVersion() {

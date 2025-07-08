@@ -28,7 +28,7 @@ std::vector<uint8_t> EncryptPayload(
       /*additional_data=*/base::span<uint8_t>());
 }
 
-absl::optional<std::vector<uint8_t>> DecryptPayload(
+std::optional<std::vector<uint8_t>> DecryptPayload(
     base::span<const uint8_t> payload,
     base::span<const uint8_t> secret,
     base::span<const uint8_t> nonce) {
@@ -38,50 +38,50 @@ absl::optional<std::vector<uint8_t>> DecryptPayload(
                    /*additional_data=*/base::span<uint8_t>());
 }
 
-absl::optional<proto::V1Message> ParseAuthMessage(
+std::optional<proto::V1Message> ParseAuthMessage(
     base::span<const uint8_t> auth_message_bytes) {
   proto::AesGcmAuthenticationMessage auth_message;
   if (!auth_message.ParseFromString(
           std::string(auth_message_bytes.begin(), auth_message_bytes.end()))) {
     QS_LOG(ERROR) << "Failed to parse AesGcmAuthenticationMessage.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   if (!auth_message.has_version() || auth_message.version() != 1 ||
       !auth_message.has_v1()) {
     QS_LOG(ERROR) << "AesGcmAuthenticationMessage has unknown version.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   const proto::V1Message& v1_message = auth_message.v1();
   if (!v1_message.has_nonce()) {
     QS_LOG(ERROR) << "AesGcmAuthenticationMessage missing nonce.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   if (v1_message.nonce().size() != 12u) {
     QS_LOG(ERROR) << "Nonce has bad length. Should be 12 bytes.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   if (!v1_message.has_payload()) {
     QS_LOG(ERROR) << "AesGcmAuthenticationMessage missing payload.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   return v1_message;
 }
 
-absl::optional<proto::V1Message::AuthenticationPayload> ParseAuthPayload(
+std::optional<proto::V1Message::AuthenticationPayload> ParseAuthPayload(
     base::span<const uint8_t> bytes) {
   proto::V1Message::AuthenticationPayload auth_payload;
   if (!auth_payload.ParseFromString(std::string(bytes.begin(), bytes.end()))) {
     QS_LOG(ERROR) << "Failed to parse AuthenticationPayload.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   if (!auth_payload.has_role()) {
     QS_LOG(ERROR) << "AuthenticationPayload missing role.";
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (!auth_payload.has_auth_string()) {
     QS_LOG(ERROR) << "AuthenticationPayload missing auth_string.";
-    return absl::nullopt;
+    return std::nullopt;
   }
   return auth_payload;
 }
@@ -91,7 +91,7 @@ absl::optional<proto::V1Message::AuthenticationPayload> ParseAuthPayload(
 std::vector<uint8_t> BuildHandshakeMessage(
     const std::string& auth_token,
     std::array<uint8_t, 32> secret,
-    absl::optional<std::array<uint8_t, 12>> nonce,
+    std::optional<std::array<uint8_t, 12>> nonce,
     DeviceRole role) {
   std::array<uint8_t, 12> nonce_bytes;
   if (nonce) {
@@ -121,17 +121,18 @@ std::vector<uint8_t> BuildHandshakeMessage(
                               auth_message_serialized.end());
 }
 
-bool VerifyHandshakeMessage(base::span<const uint8_t> auth_message_bytes,
-                            const std::string& auth_token,
-                            std::array<uint8_t, 32> secret,
-                            DeviceRole role) {
-  absl::optional<proto::V1Message> v1_message =
+VerifyHandshakeMessageStatus VerifyHandshakeMessage(
+    base::span<const uint8_t> auth_message_bytes,
+    const std::string& auth_token,
+    std::array<uint8_t, 32> secret,
+    DeviceRole role) {
+  std::optional<proto::V1Message> v1_message =
       ParseAuthMessage(auth_message_bytes);
   if (!v1_message) {
-    return false;
+    return VerifyHandshakeMessageStatus::kFailedToParse;
   }
 
-  absl::optional<std::vector<uint8_t>> decrypted_bytes =
+  std::optional<std::vector<uint8_t>> decrypted_bytes =
       DecryptPayload(std::vector<uint8_t>(v1_message->payload().begin(),
                                           v1_message->payload().end()),
                      secret,
@@ -139,28 +140,47 @@ bool VerifyHandshakeMessage(base::span<const uint8_t> auth_message_bytes,
                                           v1_message->nonce().end()));
   if (!decrypted_bytes) {
     QS_LOG(ERROR) << "Auth payload failed to decrypt.";
-    return false;
+    return VerifyHandshakeMessageStatus::kFailedToDecryptAuthPayload;
   }
 
-  absl::optional<proto::V1Message::AuthenticationPayload> auth_payload =
+  std::optional<proto::V1Message::AuthenticationPayload> auth_payload =
       ParseAuthPayload(*decrypted_bytes);
   if (!auth_payload) {
-    return false;
+    return VerifyHandshakeMessageStatus::kFailedToParseAuthPayload;
   }
 
   if (auth_payload->role() != static_cast<int32_t>(role)) {
     QS_LOG(ERROR) << "AuthenticationPayload role does not match expected role ("
                   << (role == DeviceRole::kSource ? "Source" : "Target")
                   << ").";
-    return false;
+    return VerifyHandshakeMessageStatus::kUnexpectedAuthPayloadRole;
   }
 
   if (auth_payload->auth_string() != auth_token) {
     QS_LOG(ERROR)
         << "AuthenticationPayload auth_string does not match auth token.";
-    return false;
+    return VerifyHandshakeMessageStatus::kUnexpectedAuthPayloadAuthToken;
   }
-  return true;
+  return VerifyHandshakeMessageStatus::kSuccess;
+}
+
+QuickStartMetrics::HandshakeErrorCode MapHandshakeStatusToErrorCode(
+    handshake::VerifyHandshakeMessageStatus handshake_status) {
+  switch (handshake_status) {
+    case VerifyHandshakeMessageStatus::kSuccess:
+      return QuickStartMetrics::HandshakeErrorCode::kInvalidHandshakeErrorCode;
+    case VerifyHandshakeMessageStatus::kFailedToParse:
+      return QuickStartMetrics::HandshakeErrorCode::kFailedToParse;
+    case VerifyHandshakeMessageStatus::kFailedToDecryptAuthPayload:
+      return QuickStartMetrics::HandshakeErrorCode::kFailedToDecryptAuthPayload;
+    case VerifyHandshakeMessageStatus::kFailedToParseAuthPayload:
+      return QuickStartMetrics::HandshakeErrorCode::kFailedToParseAuthPayload;
+    case VerifyHandshakeMessageStatus::kUnexpectedAuthPayloadRole:
+      return QuickStartMetrics::HandshakeErrorCode::kUnexpectedAuthPayloadRole;
+    case VerifyHandshakeMessageStatus::kUnexpectedAuthPayloadAuthToken:
+      return QuickStartMetrics::HandshakeErrorCode::
+          kUnexpectedAuthPayloadAuthToken;
+  }
 }
 
 }  // namespace ash::quick_start::handshake

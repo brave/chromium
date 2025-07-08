@@ -5,7 +5,8 @@
 #include "components/segmentation_platform/embedder/input_delegate/tab_rank_dispatcher.h"
 #include <memory>
 
-#include "base/allocator/partition_allocator/pointers/raw_ptr.h"
+#include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/time/time.h"
@@ -13,6 +14,7 @@
 #include "components/segmentation_platform/public/constants.h"
 #include "components/segmentation_platform/public/result.h"
 #include "components/segmentation_platform/public/testing/mock_segmentation_platform_service.h"
+#include "components/segmentation_platform/public/trigger.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
 #include "components/sync_sessions/synced_session.h"
@@ -32,6 +34,7 @@ constexpr char kRemoteTabName2[] = "remote_2";
 const base::TimeDelta kTime1 = base::Minutes(15);
 const base::TimeDelta kTime2 = base::Minutes(10);
 const base::TimeDelta kTime3 = base::Minutes(5);
+const TrainingRequestId kTestRequestId = TrainingRequestId::FromUnsafeValue(5);
 
 std::unique_ptr<sync_sessions::SyncedSession> CreateNewSession(
     const std::string& tab_guid,
@@ -70,12 +73,9 @@ class MockSessionSyncService : public sync_sessions::SessionSyncService {
               SubscribeToForeignSessionsChanged,
               (const base::RepeatingClosure& cb),
               (override));
-  MOCK_METHOD(base::WeakPtr<syncer::ModelTypeControllerDelegate>,
+  MOCK_METHOD(base::WeakPtr<syncer::DataTypeControllerDelegate>,
               GetControllerDelegate,
               ());
-  MOCK_METHOD(void,
-              ProxyTabsStateChanged,
-              (syncer::DataTypeController::State state));
 };
 
 class MockOpenTabsUIDelegate : public sync_sessions::OpenTabsUIDelegate {
@@ -97,12 +97,13 @@ class MockOpenTabsUIDelegate : public sync_sessions::OpenTabsUIDelegate {
   }
 
   bool GetAllForeignSessions(
-      std::vector<const sync_sessions::SyncedSession*>* sessions) override {
+      std::vector<raw_ptr<const sync_sessions::SyncedSession,
+                          VectorExperimental>>* sessions) override {
     *sessions = foreign_sessions_;
-    base::ranges::sort(*sessions, std::greater(),
-                       [](const sync_sessions::SyncedSession* session) {
-                         return session->GetModifiedTime();
-                       });
+    std::ranges::sort(*sessions, std::greater(),
+                      [](const sync_sessions::SyncedSession* session) {
+                        return session->GetModifiedTime();
+                      });
 
     return !sessions->empty();
   }
@@ -124,9 +125,9 @@ class MockOpenTabsUIDelegate : public sync_sessions::OpenTabsUIDelegate {
 
   MOCK_METHOD1(DeleteForeignSession, void(const std::string& tag));
 
-  MOCK_METHOD2(GetForeignSession,
-               bool(const std::string& tag,
-                    std::vector<const sessions::SessionWindow*>* windows));
+  MOCK_METHOD1(
+      GetForeignSession,
+      std::vector<const sessions::SessionWindow*>(const std::string& tag));
 
   MOCK_METHOD2(GetForeignSessionTabs,
                bool(const std::string& tag,
@@ -135,9 +136,11 @@ class MockOpenTabsUIDelegate : public sync_sessions::OpenTabsUIDelegate {
  private:
   std::vector<std::unique_ptr<sync_sessions::SyncedSession>>
       foreign_sessions_owned_;
-  std::vector<const sync_sessions::SyncedSession*> foreign_sessions_;
+  std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
+      foreign_sessions_;
   std::unique_ptr<sync_sessions::SyncedSession> local_session_;
-  std::map<std::string, const sessions::SessionTab*> session_to_tab_;
+  std::map<std::string, raw_ptr<const sessions::SessionTab, CtnExperimental>>
+      session_to_tab_;
 };
 
 AnnotatedNumericResult CreateResult(float val) {
@@ -147,6 +150,7 @@ AnnotatedNumericResult CreateResult(float val) {
       ->mutable_generic_predictor()
       ->add_output_labels(kTabResumptionClassifierKey);
   result.result.add_result(val);
+  result.request_id = kTestRequestId;
   return result;
 }
 
@@ -195,6 +199,7 @@ TEST_F(TabRankDispatcherTest, RankTabs) {
             EXPECT_NEAR((++tabs.begin())->model_score, 0.5, 0.001);
             EXPECT_EQ(tab3.session_tab->guid, kRemoteTabName2);
             EXPECT_NEAR(tabs.rbegin()->model_score, 0.3, 0.001);
+            EXPECT_EQ(tabs.begin()->request_id, kTestRequestId);
           },
           dispatcher.tab_fetcher()));
 }
@@ -203,7 +208,10 @@ TEST_F(TabRankDispatcherTest, FilterTabs) {
   TabRankDispatcher dispatcher(
       &segmentation_service_, &session_sync_service_,
       std::make_unique<TabFetcher>(&session_sync_service_));
-  TabRankDispatcher::TabFilter filter{.max_tab_age = kTime2 + base::Seconds(1)};
+  TabRankDispatcher::TabFilter filter =
+      base::BindRepeating([](const TabFetcher::Tab& tab) {
+        return tab.time_since_modified <= kTime2 + base::Seconds(1);
+      });
 
   testing::InSequence s;
   EXPECT_CALL(segmentation_service_, GetAnnotatedNumericResult(_, _, _, _))

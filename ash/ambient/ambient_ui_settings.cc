@@ -6,8 +6,11 @@
 
 #include <utility>
 
+#include "ash/ambient/util/ambient_util.h"
+#include "ash/ambient/util/time_of_day_utils.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/ambient/ambient_prefs.h"
+#include "ash/webui/personalization_app/mojom/personalization_app.mojom-shared.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -16,6 +19,8 @@
 
 namespace ash {
 namespace {
+
+using ash::personalization_app::mojom::AmbientTheme;
 
 // Validity is always checked for both |AmbientTheme| and |AmbientVideo| in case
 // pref storage is corrupted. Both use the integer representation of their enum
@@ -29,16 +34,16 @@ bool EnumInRange(T val) {
 }  // namespace
 
 // static
-absl::optional<AmbientUiSettings> AmbientUiSettings::CreateFromDict(
+std::optional<AmbientUiSettings> AmbientUiSettings::CreateFromDict(
     const base::Value::Dict& dict) {
-  absl::optional<int> theme_as_int =
+  std::optional<int> theme_as_int =
       dict.FindInt(ambient::prefs::kAmbientUiSettingsFieldTheme);
   if (!theme_as_int) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   AmbientUiSettings settings;
   settings.theme_ = static_cast<AmbientTheme>(*theme_as_int);
-  absl::optional<int> video_as_int =
+  std::optional<int> video_as_int =
       dict.FindInt(ambient::prefs::kAmbientUiSettingsFieldVideo);
   if (video_as_int) {
     settings.video_ = static_cast<AmbientVideo>(*video_as_int);
@@ -46,7 +51,7 @@ absl::optional<AmbientUiSettings> AmbientUiSettings::CreateFromDict(
   if (settings.IsValid()) {
     return settings;
   } else {
-    return absl::nullopt;
+    return std::nullopt;
   }
 }
 
@@ -55,7 +60,7 @@ AmbientUiSettings AmbientUiSettings::ReadFromPrefService(
     PrefService& pref_service) {
   const base::Value::Dict& settings_dict =
       pref_service.GetDict(ambient::prefs::kAmbientUiSettings);
-  absl::optional<AmbientUiSettings> settings_loaded =
+  std::optional<AmbientUiSettings> settings_loaded =
       CreateFromDict(settings_dict);
   if (settings_loaded) {
     return *settings_loaded;
@@ -66,7 +71,7 @@ AmbientUiSettings AmbientUiSettings::ReadFromPrefService(
           << "Loaded invalid AmbientUiSettings from pref. Using default.";
       pref_service.ClearPref(ambient::prefs::kAmbientUiSettings);
     } else if (features::IsTimeOfDayScreenSaverEnabled()) {
-      return AmbientUiSettings(AmbientTheme::kVideo, kDefaultAmbientVideo);
+      return AmbientUiSettings(AmbientTheme::kVideo, GetDefaultAmbientVideo());
     }
     return AmbientUiSettings();
   }
@@ -75,7 +80,7 @@ AmbientUiSettings AmbientUiSettings::ReadFromPrefService(
 AmbientUiSettings::AmbientUiSettings() = default;
 
 AmbientUiSettings::AmbientUiSettings(AmbientTheme theme,
-                                     absl::optional<AmbientVideo> video)
+                                     std::optional<AmbientVideo> video)
     : theme_(theme), video_(std::move(video)) {
   CHECK(IsValid());
 }
@@ -107,7 +112,7 @@ void AmbientUiSettings::WriteToPrefService(PrefService& pref_service) const {
 }
 
 std::string AmbientUiSettings::ToString() const {
-  std::string output(ash::ToString(theme_));
+  std::string output(ambient::util::AmbientThemeToString(theme_));
   if (theme_ == AmbientTheme::kVideo) {
     CHECK(video_);
     base::StrAppend(&output, {".", ash::ToString(*video_)});

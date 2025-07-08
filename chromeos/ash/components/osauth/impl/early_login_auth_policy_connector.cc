@@ -5,11 +5,15 @@
 #include "chromeos/ash/components/osauth/impl/early_login_auth_policy_connector.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "ash/constants/ash_pref_names.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "chromeos/ash/components/early_prefs/early_prefs_reader.h"
+#include "chromeos/ash/components/osauth/public/auth_policy_connector.h"
+#include "chromeos/ash/components/osauth/public/common_types.h"
+#include "components/account_id/account_id.h"
 
 namespace ash {
 
@@ -25,18 +29,18 @@ void EarlyLoginAuthPolicyConnector::SetLoginScreenAuthPolicyConnector(
   login_screen_connector_ = connector;
 }
 
-absl::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryInitialState(
+std::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryInitialState(
     const AccountId& account) {
   return login_screen_connector_->GetRecoveryInitialState(account);
 }
 
-absl::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryDefaultState(
+std::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryDefaultState(
     const AccountId& account) {
   NOTIMPLEMENTED();
   return false;
 }
 
-absl::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryMandatoryState(
+std::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryMandatoryState(
     const AccountId& account) {
   if (early_prefs_->HasPref(ash::prefs::kRecoveryFactorBehavior) &&
       early_prefs_->IsManaged(ash::prefs::kRecoveryFactorBehavior) &&
@@ -44,7 +48,7 @@ absl::optional<bool> EarlyLoginAuthPolicyConnector::GetRecoveryMandatoryState(
     return early_prefs_->GetValue(ash::prefs::kRecoveryFactorBehavior)
         ->GetIfBool();
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 bool EarlyLoginAuthPolicyConnector::IsAuthFactorManaged(

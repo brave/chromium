@@ -52,10 +52,10 @@ class PLATFORM_EXPORT BlobURL {
 
  public:
   static KURL CreatePublicURL(const SecurityOrigin*);
-  static String GetOrigin(const KURL&);
+  static WTF::String GetOrigin(const KURL&);
 
  private:
-  static KURL CreateBlobURL(const String& origin_string);
+  static KURL CreateBlobURL(const WTF::String& origin_string);
   static const char kBlobProtocol[];
 };
 

@@ -5,30 +5,28 @@
 #include "chrome/browser/ui/webui/support_tool/support_tool_ui_utils.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/containers/to_vector.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/support_tool/data_collection_module.pb.h"
 #include "chrome/browser/support_tool/data_collector.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/feedback/redaction_tool/pii_types.h"
 #include "content/public/test/browser_task_environment.h"
 #include "net/base/url_util.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/crosapi/fake_browser_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 using ::testing::ContainerEq;
 using ::testing::IsEmpty;
@@ -50,19 +48,27 @@ const PIIMap kPIIMap = {
 const redaction::PIIType kPIITypes[] = {redaction::PIIType::kIPAddress,
                                         redaction::PIIType::kURL,
                                         redaction::PIIType::kStableIdentifier};
+
 }  // namespace
 
 class SupportToolUiUtilsTest : public ::testing::Test {
  public:
-  SupportToolUiUtilsTest()
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      : browser_manager_(std::make_unique<crosapi::FakeBrowserManager>()){}
-#else
-      = default;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+  SupportToolUiUtilsTest() = default;
 
-        SupportToolUiUtilsTest(const SupportToolUiUtilsTest&) = delete;
+  SupportToolUiUtilsTest(const SupportToolUiUtilsTest&) = delete;
   SupportToolUiUtilsTest& operator=(const SupportToolUiUtilsTest&) = delete;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  void SetUp() override {
+    profile_manager_ = std::make_unique<TestingProfileManager>(
+        TestingBrowserProcess::GetGlobal());
+    ASSERT_TRUE(profile_manager_->SetUp());
+  }
+
+  void TearDown() override {
+    profile_manager_.reset();
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Change included field of `included_data_collectors` in `data_collectors` as
   // true for testing.
@@ -72,41 +78,37 @@ class SupportToolUiUtilsTest : public ::testing::Test {
           included_data_collectors) {
     for (auto& data_collector : data_collectors) {
       base::Value::Dict& data_collector_item = data_collector.GetDict();
-      absl::optional<int> data_collector_enum =
+      std::optional<int> data_collector_enum =
           data_collector_item.FindInt(support_tool_ui::kDataCollectorProtoEnum);
       ASSERT_TRUE(data_collector_enum);
       if (base::Contains(included_data_collectors,
                          static_cast<support_tool::DataCollectorType>(
-                             data_collector_enum.value())))
+                             data_collector_enum.value()))) {
         data_collector_item.Set(support_tool_ui::kDataCollectorIncluded, true);
+      }
     }
   }
 
   std::string GetExpectedPIIDefinitionString(
       const redaction::PIIType& pii_type) {
     // PII types with the definition strings.
-    const auto kExpectedPiiTypeDefinitions =
-        base::MakeFixedFlatMap<redaction::PIIType, std::string>(
-            {{redaction::PIIType::kIPAddress,
-              l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_IP_ADDRESS)},
-             {redaction::PIIType::kURL,
-              l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_URLS)},
+    static constexpr auto kExpectedPiiTypeDefinitions =
+        base::MakeFixedFlatMap<redaction::PIIType, int>(
+            {{redaction::PIIType::kIPAddress, IDS_SUPPORT_TOOL_IP_ADDRESS},
+             {redaction::PIIType::kURL, IDS_SUPPORT_TOOL_URLS},
              {redaction::PIIType::kStableIdentifier,
-              l10n_util::GetStringUTF8(IDS_SUPPORT_TOOL_STABLE_IDENTIDIERS)}});
-    // fixed_flat_map uses std::array<T> as the backing container, which has
-    // std::array::iterator<T> = T*, thus the iterator of the
-    // `kExpectedPiiTypeDefinitions` is a pointer.
-    auto* it = kExpectedPiiTypeDefinitions.find(pii_type);
+              IDS_SUPPORT_TOOL_STABLE_IDENTIDIERS}});
+    auto it = kExpectedPiiTypeDefinitions.find(pii_type);
     EXPECT_NE(kExpectedPiiTypeDefinitions.end(), it);
-    std::string definition = it->second;
+    std::string definition = l10n_util::GetStringUTF8(it->second);
     return definition;
   }
 
  private:
   content::BrowserTaskEnvironment task_environment_;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  std::unique_ptr<crosapi::FakeBrowserManager> browser_manager_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<TestingProfileManager> profile_manager_;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 };
 
 TEST_F(SupportToolUiUtilsTest, PiiItems) {
@@ -127,10 +129,16 @@ TEST_F(SupportToolUiUtilsTest, PiiItems) {
     // The definition string must equal to the expected one in
     // `kPIIStringsWithDefinition`.
     EXPECT_EQ(*description, GetExpectedPIIDefinitionString(pii_type));
-    const std::string* pii_data =
-        pii_item->FindString(support_tool_ui::kPiiItemDetectedDataKey);
+    const base::Value::List* pii_data =
+        pii_item->FindList(support_tool_ui::kPiiItemDetectedDataKey);
     // Check the detected data.
     EXPECT_TRUE(pii_data);
+    EXPECT_THAT(kPIIMap.at(pii_type),
+                UnorderedElementsAreArray(
+                    base::ToVector(*pii_data, [](const base::Value& value) {
+                      // Contents of PII data must be string.
+                      return value.GetString();
+                    })));
   }
 
   // Update all PII items to have their keep value as true.

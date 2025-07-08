@@ -19,7 +19,7 @@ class DevToolsEventListener;
 
 namespace base {
 class FilePath;
-enum TerminationStatus;
+enum TerminationStatus : int;
 }  // namespace base
 
 namespace network::mojom {
@@ -30,12 +30,15 @@ class Chrome;
 class DeviceManager;
 class Status;
 
+Switches GetDesktopSwitches();
+
 Status LaunchChrome(network::mojom::URLLoaderFactory* factory,
                     const SyncWebSocketFactory& socket_factory,
                     DeviceManager& device_manager,
                     const Capabilities& capabilities,
                     std::vector<std::unique_ptr<DevToolsEventListener>>
                         devtools_event_listeners,
+                    base::RepeatingClosure on_socket_message,
                     bool w3c_compliant,
                     std::unique_ptr<Chrome>& chrome);
 

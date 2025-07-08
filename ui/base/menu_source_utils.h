@@ -7,19 +7,20 @@
 
 #include "base/component_export.h"
 #include "build/branding_buildflags.h"
-#include "ui/base/ui_base_types.h"
+#include "build/build_config.h"
+#include "ui/base/mojom/menu_source_type.mojom-forward.h"
 
 namespace ui {
 
 class Event;
 
 COMPONENT_EXPORT(UI_BASE)
-MenuSourceType GetMenuSourceTypeForEvent(const Event& event);
+mojom::MenuSourceType GetMenuSourceTypeForEvent(const Event& event);
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(GOOGLE_CHROME_BRANDING)
 // Returns the menu source type based on `event_flags`.
 COMPONENT_EXPORT(UI_BASE)
-MenuSourceType GetMenuSourceType(int event_flags);
+mojom::MenuSourceType GetMenuSourceType(int event_flags);
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace ui

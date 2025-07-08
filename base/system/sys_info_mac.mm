@@ -12,24 +12,23 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 
+#include <optional>
+#include <string_view>
+
+#include "base/apple/scoped_mach_port.h"
 #include "base/check_op.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_mach_port.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/posix/sysctl.h"
 #include "base/process/process_metrics.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/system/sys_info_internal.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace base {
 
@@ -42,33 +41,20 @@ bool g_is_cpu_security_mitigation_enabled = false;
 // mitigations state changes after a call to NumberOfProcessors().
 bool g_is_cpu_security_mitigation_enabled_read = false;
 
-// Queries sysctlbyname() for the given key and returns the value from the
-// system or the empty string on failure.
-std::string GetSysctlStringValue(const char* key_name) {
-  char value[256];
-  size_t len = sizeof(value);
-  if (sysctlbyname(key_name, &value, &len, nullptr, 0) != 0)
-    return std::string();
-  DCHECK_GE(len, 1u);
-  DCHECK_LE(len, sizeof(value));
-  DCHECK_EQ('\0', value[len - 1]);
-  return std::string(value, len - 1);
-}
-
 }  // namespace
 
 namespace internal {
 
-absl::optional<int> NumberOfPhysicalProcessors() {
+std::optional<int> NumberOfPhysicalProcessors() {
   return GetSysctlIntValue("hw.physicalcpu_max");
 }
 
-absl::optional<int> NumberOfProcessorsWhenCpuSecurityMitigationEnabled() {
+std::optional<int> NumberOfProcessorsWhenCpuSecurityMitigationEnabled() {
   g_is_cpu_security_mitigation_enabled_read = true;
 
   if (!g_is_cpu_security_mitigation_enabled ||
       !FeatureList::IsEnabled(kNumberOfCoresWithCpuSecurityMitigation)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return NumberOfPhysicalProcessors();
 }
@@ -77,7 +63,7 @@ absl::optional<int> NumberOfProcessorsWhenCpuSecurityMitigationEnabled() {
 
 BASE_FEATURE(kNumberOfCoresWithCpuSecurityMitigation,
              "NumberOfCoresWithCpuSecurityMitigation",
-             FEATURE_DISABLED_BY_DEFAULT);
+             FEATURE_ENABLED_BY_DEFAULT);
 
 // static
 std::string SysInfo::OperatingSystemName() {
@@ -114,25 +100,11 @@ std::string SysInfo::OperatingSystemArchitecture() {
 }
 
 // static
-uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
-  struct host_basic_info hostinfo;
-  mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
-  base::mac::ScopedMachSendRight host(mach_host_self());
-  int result = host_info(host.get(), HOST_BASIC_INFO,
-                         reinterpret_cast<host_info_t>(&hostinfo), &count);
-  if (result != KERN_SUCCESS) {
-    NOTREACHED();
-    return 0;
-  }
-  DCHECK_EQ(HOST_BASIC_INFO_COUNT, count);
-  return hostinfo.max_mem;
-}
-
-// static
 uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfoKB info;
-  if (!GetSystemMemoryInfo(&info))
+  if (!GetSystemMemoryInfo(&info)) {
     return 0;
+  }
   // We should add inactive file-backed memory also but there is no such
   // information from Mac OS unfortunately.
   return checked_cast<uint64_t>(info.free + info.speculative) * 1024;
@@ -140,12 +112,37 @@ uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
 
 // static
 std::string SysInfo::CPUModelName() {
-  return GetSysctlStringValue("machdep.cpu.brand_string");
+  return StringSysctlByName("machdep.cpu.brand_string").value_or(std::string{});
 }
 
 // static
 std::string SysInfo::HardwareModelName() {
-  return GetSysctlStringValue("hw.model");
+  // Note that there is lots of code out there that uses "hw.model", but that is
+  // deprecated in favor of "hw.product" as used here. See the sysctl.h file for
+  // more info.
+  return StringSysctl({CTL_HW, HW_PRODUCT}).value_or(std::string{});
+}
+
+// static
+std::optional<SysInfo::HardwareModelNameSplit>
+SysInfo::SplitHardwareModelNameDoNotUse(std::string_view name) {
+  size_t number_loc = name.find_first_of("0123456789");
+  if (number_loc == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t comma_loc = name.find(',', number_loc);
+  if (comma_loc == std::string::npos) {
+    return std::nullopt;
+  }
+
+  HardwareModelNameSplit split;
+  if (!StringToInt(name.substr(0u, comma_loc).substr(number_loc),
+                   &split.model) ||
+      !StringToInt(name.substr(comma_loc + 1), &split.variant)) {
+    return std::nullopt;
+  }
+  split.category = name.substr(0u, number_loc);
+  return split;
 }
 
 // static

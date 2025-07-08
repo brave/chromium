@@ -13,8 +13,11 @@ static_library("web_ui") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   deps = [
+    ":local_state_delegate",
+    ":util",
     "//base",
     "//components/enterprise/common/proto:connectors_proto",
+    "//components/enterprise/common/proto:connectors_proto_extras",
     "//components/password_manager/core/browser:hash_password_manager",
     "//components/resources:components_resources_grit",
     "//components/resources:components_scaled_resources_grit",
@@ -29,11 +32,15 @@ static_library("web_ui") {
     "//components/safe_browsing/core/common",
     "//components/safe_browsing/core/common:safe_browsing_prefs",
     "//components/safe_browsing/core/common/proto:csd_proto",
+    "//components/safe_browsing/core/common/proto:csd_proto_extras",
     "//components/safe_browsing/core/common/proto:realtimeapi_proto",
-    "//components/safe_browsing/core/common/proto:safebrowsingv5_alpha1_proto",
+    "//components/safe_browsing/core/common/proto:realtimeapi_proto_extras",
+    "//components/safe_browsing/core/common/proto:safebrowsingv5_proto",
+    "//components/safe_browsing/core/common/proto:safebrowsingv5_proto_extras",
     "//components/strings:components_strings_grit",
     "//components/sync/protocol:protocol",
     "//components/user_prefs:user_prefs",
+    "//components/webui/safe_browsing/resources:resources_grit",
     "//content/public/browser",
     "//net",
     "//url",
@@ -42,13 +49,34 @@ static_library("web_ui") {
   public_deps = [ "//components/safe_browsing/core/common/proto:webui_proto" ]
 }
 
+source_set("local_state_delegate") {
+  sources = [ "safe_browsing_local_state_delegate.h" ]
+}
+
+source_set("util") {
+  sources = [
+    "safe_browsing_ui_util.cc",
+    "safe_browsing_ui_util.h",
+  ]
+
+  deps = [
+    "//base",
+    "//components/safe_browsing:buildflags",
+    "//components/safe_browsing/core/browser/db:hit_report",
+    "//components/safe_browsing/core/common/proto:csd_proto",
+    "//components/safe_browsing/core/common/proto:realtimeapi_proto",
+    "//components/safe_browsing/core/common/proto:safebrowsingv5_proto",
+    "//components/sync/protocol",
+  ]
+}
+
 source_set("unit_tests") {
   testonly = true
   sources = [ "safe_browsing_ui_unittest.cc" ]
 
   deps = [
     ":web_ui",
-    "//components/safe_browsing/core/common/proto:safebrowsingv5_alpha1_proto",
+    "//components/safe_browsing/core/common/proto:safebrowsingv5_proto",
     "//content/test:test_support",
     "//testing/gtest",
   ]

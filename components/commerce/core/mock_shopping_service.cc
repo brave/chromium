@@ -6,13 +6,15 @@
 
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/uuid.h"
+#include "components/commerce/core/mock_cluster_manager.h"
+#include "components/commerce/core/product_specifications/mock_product_specifications_service.h"
+#include "components/sync/test/mock_data_type_local_change_processor.h"
 
 namespace commerce {
 
 // static
 std::unique_ptr<KeyedService> MockShoppingService::Build() {
-  return std::make_unique<MockShoppingService>();
+  return std::make_unique<testing::NiceMock<MockShoppingService>>();
 }
 
 MockShoppingService::MockShoppingService()
@@ -25,34 +27,56 @@ MockShoppingService::MockShoppingService()
                                 nullptr,
                                 nullptr,
                                 nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
                                 nullptr) {
-  // Set up some defaults so tests don't have to explicitly set up each.
+  product_specifications_service_ =
+      std::make_unique<testing::NiceMock<MockProductSpecificationsService>>();
+  ON_CALL(*this, GetProductSpecificationsService)
+      .WillByDefault(testing::Return(product_specifications_service_.get()));
+  cluster_manager_ = std::make_unique<testing::NiceMock<MockClusterManager>>(
+      product_specifications_service_.get());
+  ON_CALL(*this, GetClusterManager)
+      .WillByDefault(testing::Return(cluster_manager_.get()));
+}
+
+MockShoppingService::~MockShoppingService() = default;
+
+void MockShoppingService::SetupPermissiveMock() {
   SetIsReady(true);
-  SetResponseForGetProductInfoForUrl(absl::nullopt);
+  SetResponseForGetProductInfoForUrl(std::nullopt);
   SetResponsesForGetUpdatedProductInfoForBookmarks(
-      std::map<base::Uuid, ProductInfo>());
+      std::map<int64_t, ProductInfo>());
   ON_CALL(*this, GetMaxProductBookmarkUpdatesPerBatch)
       .WillByDefault(testing::Return(30));
-  SetResponseForGetMerchantInfoForUrl(absl::nullopt);
+  SetResponseForGetMerchantInfoForUrl(std::nullopt);
+  SetResponseForIsShoppingPage(std::nullopt);
+  SetResponseForGetDiscountInfoForUrl(std::vector<DiscountInfo>());
   SetSubscribeCallbackValue(true);
   SetUnsubscribeCallbackValue(true);
   SetIsSubscribedCallbackValue(true);
   SetGetAllSubscriptionsCallbackValue(std::vector<CommerceSubscription>());
   SetIsShoppingListEligible(true);
-  SetIsClusterIdTrackedByUserResponse(true);
-  SetIsMerchantViewerEnabled(true);
   SetGetAllPriceTrackedBookmarksCallbackValue(
       std::vector<const bookmarks::BookmarkNode*>());
   SetGetAllShoppingBookmarksValue(
       std::vector<const bookmarks::BookmarkNode*>());
-  SetIsPriceInsightsEligible(true);
-  SetResponseForGetPriceInsightsInfoForUrl(absl::nullopt);
+  SetResponseForGetPriceInsightsInfoForUrl(std::nullopt);
 }
 
-MockShoppingService::~MockShoppingService() = default;
+void MockShoppingService::SetAccountChecker(AccountChecker* account_checker) {
+  ON_CALL(*this, GetAccountChecker)
+      .WillByDefault(testing::Return(account_checker));
+}
 
 void MockShoppingService::SetResponseForGetProductInfoForUrl(
-    absl::optional<commerce::ProductInfo> product_info) {
+    std::optional<commerce::ProductInfo> product_info) {
   ON_CALL(*this, GetProductInfoForUrl)
       .WillByDefault([product_info](const GURL& url,
                                     commerce::ProductInfoCallback callback) {
@@ -65,7 +89,7 @@ void MockShoppingService::SetResponseForGetProductInfoForUrl(
 }
 
 void MockShoppingService::SetResponseForGetPriceInsightsInfoForUrl(
-    absl::optional<commerce::PriceInsightsInfo> price_insights_info) {
+    std::optional<commerce::PriceInsightsInfo> price_insights_info) {
   ON_CALL(*this, GetPriceInsightsInfoForUrl)
       .WillByDefault(
           [price_insights_info](const GURL& url,
@@ -76,15 +100,21 @@ void MockShoppingService::SetResponseForGetPriceInsightsInfoForUrl(
           });
 }
 
+void MockShoppingService::SetResponseForGetUrlInfosForActiveWebWrappers(
+    std::vector<commerce::UrlInfo> url_infos) {
+  ON_CALL(*this, GetUrlInfosForActiveWebWrappers)
+      .WillByDefault(testing::Return(url_infos));
+}
+
 void MockShoppingService::SetResponsesForGetUpdatedProductInfoForBookmarks(
-    std::map<base::Uuid, ProductInfo> bookmark_updates) {
+    std::map<int64_t, ProductInfo> bookmark_updates) {
   ON_CALL(*this, GetUpdatedProductInfoForBookmarks)
       .WillByDefault(
           [bookmark_updates = std::move(bookmark_updates)](
-              const std::vector<base::Uuid>& bookmark_uuids,
+              const std::vector<int64_t>& bookmark_ids,
               BookmarkProductInfoUpdatedCallback info_updated_callback) {
-            for (const auto& uuid : bookmark_uuids) {
-              auto it = bookmark_updates.find(uuid);
+            for (auto id : bookmark_ids) {
+              auto it = bookmark_updates.find(id);
 
               if (it == bookmark_updates.end()) {
                 continue;
@@ -98,13 +128,24 @@ void MockShoppingService::SetResponsesForGetUpdatedProductInfoForBookmarks(
 }
 
 void MockShoppingService::SetResponseForGetMerchantInfoForUrl(
-    absl::optional<commerce::MerchantInfo> merchant_info) {
+    std::optional<commerce::MerchantInfo> merchant_info) {
   ON_CALL(*this, GetMerchantInfoForUrl)
       .WillByDefault([merchant_info](const GURL& url,
                                      MerchantInfoCallback callback) {
         base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(callback), url, merchant_info));
       });
+}
+
+void MockShoppingService::SetResponseForIsShoppingPage(
+    std::optional<bool> is_shopping_page) {
+  ON_CALL(*this, IsShoppingPage)
+      .WillByDefault(
+          [is_shopping_page](const GURL& url, IsShoppingPageCallback callback) {
+            base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+                FROM_HERE,
+                base::BindOnce(std::move(callback), url, is_shopping_page));
+          });
 }
 
 void MockShoppingService::SetSubscribeCallbackValue(
@@ -172,20 +213,6 @@ void MockShoppingService::SetIsReady(bool ready) {
           });
 }
 
-void MockShoppingService::SetIsClusterIdTrackedByUserResponse(bool is_tracked) {
-  ON_CALL(*this, IsClusterIdTrackedByUser)
-      .WillByDefault([is_tracked](uint64_t cluster_id,
-                                  base::OnceCallback<void(bool)> callback) {
-        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-            FROM_HERE, base::BindOnce(std::move(callback), is_tracked));
-      });
-}
-
-void MockShoppingService::SetIsMerchantViewerEnabled(bool is_enabled) {
-  ON_CALL(*this, IsMerchantViewerEnabled)
-      .WillByDefault(testing::Return(is_enabled));
-}
-
 void MockShoppingService::SetGetAllPriceTrackedBookmarksCallbackValue(
     std::vector<const bookmarks::BookmarkNode*> bookmarks) {
   ON_CALL(*this, GetAllPriceTrackedBookmarks)
@@ -204,9 +231,27 @@ void MockShoppingService::SetGetAllShoppingBookmarksValue(
       .WillByDefault(testing::Return(bookmarks));
 }
 
-void MockShoppingService::SetIsPriceInsightsEligible(bool is_eligible) {
-  ON_CALL(*this, IsPriceInsightsEligible)
-      .WillByDefault(testing::Return(is_eligible));
+void MockShoppingService::SetResponseForGetDiscountInfoForUrl(
+    const std::vector<DiscountInfo>& infos) {
+  ON_CALL(*this, GetDiscountInfoForUrl)
+      .WillByDefault([infos](const GURL& url, DiscountInfoCallback callback) {
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback), url, infos));
+      });
+}
+
+void MockShoppingService::SetResponseForGetProductSpecificationsForUrls(
+    ProductSpecifications specs) {
+  ON_CALL(*this, GetProductSpecificationsForUrls)
+      .WillByDefault(
+          [specs = std::move(specs)](const std::vector<GURL>& urls,
+                                     ProductSpecificationsCallback callback) {
+            std::vector<uint64_t> ids{0};
+            base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+                FROM_HERE, base::BindOnce(std::move(callback), std::move(ids),
+                                          std::optional<ProductSpecifications>(
+                                              std::move(specs))));
+          });
 }
 
 }  // namespace commerce

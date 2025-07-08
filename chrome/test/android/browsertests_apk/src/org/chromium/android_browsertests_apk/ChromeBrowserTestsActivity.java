@@ -6,7 +6,7 @@ package org.chromium.android_browsertests_apk;
 
 import android.content.Intent;
 
-import org.chromium.base.test.util.UrlUtils;
+import org.chromium.base.PathUtils;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.content_public.browser.BrowserStartupController;
 import org.chromium.native_test.NativeBrowserTest;
@@ -14,13 +14,11 @@ import org.chromium.native_test.NativeTest;
 
 import java.io.File;
 
-/**
- * Android activity for running chrome browser tests.
- */
+/** Android activity for running chrome browser tests. */
 public class ChromeBrowserTestsActivity extends ChromeTabbedActivity {
     private static final String TAG = "browser_test";
 
-    private NativeTest mTest = new NativeTest();
+    private final NativeTest mTest = new NativeTest();
 
     @Override
     public void performPreInflationStartup() {
@@ -39,30 +37,38 @@ public class ChromeBrowserTestsActivity extends ChromeTabbedActivity {
         mTest.appendCommandLineFlags(
                 "--remote-debugging-socket-name android_browsertests_devtools_remote");
 
-        NativeBrowserTest.deletePrivateDataDirectory(getPrivateDataDirectory());
+        // Explicitly set the "--user-data-dir" switch to a private data dir
+        // so that c++ test won't create the temp dir.
+        // This is to keep the private data dir when needed, e.g. PRE tests.
+        String userDataDirFlag = "--user-data-dir=" + getPrivateDataDirectory();
+        mTest.appendCommandLineFlags(userDataDirFlag);
+
+        if (!mTest.shouldKeepUserDataDir()) {
+            NativeBrowserTest.deletePrivateDataDirectory(getPrivateDataDirectory());
+        }
 
         // Replace ContentMain() with running our NativeTest suite.
-        BrowserStartupController.getInstance().setContentMainCallbackForTests(() -> {
-            // This jumps into C++ to set up and run the test harness. The test harness runs
-            // ContentMain()-equivalent code, and then waits for javaStartupTasksComplete()
-            // to be called. We delay that until finishNativeInitialization() is done which
-            // marks the end of the startup tasks posted from C++ in ContentMain() and then
-            // by Java in BrowserStartupControllerImpl::browserStartupComplete().
-            mTest.postStart(this, false);
-        });
+        BrowserStartupController.getInstance()
+                .setContentMainCallbackForTests(
+                        () -> {
+                            // This jumps into C++ to set up and run the test harness. The test
+                            // harness runs ContentMain()-equivalent code, and then waits for
+                            // javaStartupTasksComplete() to be called. We delay that until
+                            // finishNativeInitialization() is done which marks the end of the
+                            // startup tasks posted from C++ in ContentMain()
+                            // and then by Java in
+                            // BrowserStartupControllerImpl::browserStartupComplete().
+                            mTest.postStart(this, false);
+                        });
     }
 
-    /**
-     * Tests don't use the preallocated child connection.
-     */
+    /** Tests don't use the preallocated child connection. */
     @Override
     public boolean shouldAllocateChildConnection() {
         return false;
     }
 
-    /**
-     * Tests should not go through the first run process every time.
-     */
+    /** Tests should not go through the first run process every time. */
     @Override
     protected boolean requiresFirstRunToBeCompleted(Intent intent) {
         return false;
@@ -80,15 +86,17 @@ public class ChromeBrowserTestsActivity extends ChromeTabbedActivity {
     }
 
     private File getPrivateDataDirectory() {
-        // TODO(agrieve): We should not be touching the side-loaded test data directory.
-        //     https://crbug.com/617734
-        return new File(UrlUtils.getIsolatedTestRoot(),
+        return new File(
+                PathUtils.getDataDirectory(),
                 ChromeBrowserTestsApplication.PRIVATE_DATA_DIRECTORY_SUFFIX);
     }
 
     @Override
     public void recreate() {
-        throw new AssertionError("Unexpected call of recreate() in " + TAG
-                + ". See crbug.com/1359066 to fix the issue.");
+        super.recreate();
+        throw new AssertionError(
+                "Unexpected call of recreate() in "
+                        + TAG
+                        + ". See crbug.com/1359066 to fix the issue.");
     }
 }

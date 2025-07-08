@@ -6,14 +6,17 @@
 #define ASH_SYSTEM_UPDATE_EOL_NOTICE_QUICK_SETTINGS_VIEW_H_
 
 #include "ash/ash_export.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ash/system/update/quick_settings_notice_view.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 
 namespace ash {
 
 // Label button shown in the quick settings when the device has reached end of
 // life. Clicking the label will request a page with more info about device end
 // of life to be opened.
-class ASH_EXPORT EolNoticeQuickSettingsView : public views::LabelButton {
+class ASH_EXPORT EolNoticeQuickSettingsView : public QuickSettingsNoticeView {
+  METADATA_HEADER(EolNoticeQuickSettingsView, QuickSettingsNoticeView)
+
  public:
   EolNoticeQuickSettingsView();
   ~EolNoticeQuickSettingsView() override;
@@ -22,15 +25,9 @@ class ASH_EXPORT EolNoticeQuickSettingsView : public views::LabelButton {
   EolNoticeQuickSettingsView& operator=(const EolNoticeQuickSettingsView&) =
       delete;
 
-  // Sets a special "narrow" layout which uses a shorter string label.
-  void SetNarrowLayout(bool narrow);
-
-  // views::LabelButton:
-  void PaintButtonContents(gfx::Canvas* canvas) override;
-  void OnThemeChanged() override;
-
- private:
-  const bool is_qs_revamp_enabled_;
+ protected:
+  // QuickSettingsNoticeView:
+  int GetShortTextId() const override;
 };
 
 }  // namespace ash

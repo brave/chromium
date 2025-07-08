@@ -24,7 +24,7 @@ function ridToMid(description, rids) {
 
   // Skip mid extension; we are replacing it with the rid extmap
   rtpParameters.headerExtensions = rtpParameters.headerExtensions.filter(
-    ext => ext.uri != 'urn:ietf:params:rtp-hdrext:sdes:mid'
+    ext => ext.uri !== 'urn:ietf:params:rtp-hdrext:sdes:mid'
   );
 
   for (const ext of rtpParameters.headerExtensions) {
@@ -45,7 +45,8 @@ function ridToMid(description, rids) {
   let sdp = SDPUtils.writeSessionBoilerplate() +
     SDPUtils.writeDtlsParameters(dtls, setupValue) +
     SDPUtils.writeIceParameters(ice) +
-    'a=group:BUNDLE ' + rids.join(' ') + '\r\n';
+    'a=group:BUNDLE ' + rids.join(' ') + '\r\n' +
+    'a=msid-semantic: WMS *\r\n';
   const baseRtpDescription = SDPUtils.writeRtpDescription(mline.kind, rtpParameters);
   for (const rid of rids) {
     sdp += baseRtpDescription +
@@ -107,7 +108,8 @@ function midToRid(description, localDescription, rids) {
   let sdp = SDPUtils.writeSessionBoilerplate() +
     SDPUtils.writeDtlsParameters(dtls, setupValue) +
     SDPUtils.writeIceParameters(ice) +
-    'a=group:BUNDLE ' + localMid + '\r\n';
+    'a=group:BUNDLE ' + localMid + '\r\n' +
+    'a=msid-semantic: WMS *\r\n';
   sdp += SDPUtils.writeRtpDescription(mline.kind, rtpParameters);
   // Although we are converting mids to rids, we still need a mid.
   // The first one will be consistent with trickle ICE candidates.
@@ -218,7 +220,7 @@ function swapRidAndMidExtensionsInSimulcastAnswer(answer, localDescription, rids
 }
 
 async function negotiateSimulcastAndWaitForVideo(
-    t, rids, pc1, pc2, codec, scalabilityMode = undefined) {
+    t, stream, rids, pc1, pc2, codec, scalabilityMode = undefined) {
   exchangeIceCandidates(pc1, pc2);
 
   const metadataToBeLoaded = [];
@@ -249,10 +251,6 @@ async function negotiateSimulcastAndWaitForVideo(
     scaleResolutionDownBy *= 2;
   }
 
-  // Use getUserMedia as getNoiseStream does not have enough entropy to ramp-up.
-  await setMediaPermission();
-  const stream = await navigator.mediaDevices.getUserMedia({video: {width: 1280, height: 720}});
-  t.add_cleanup(() => stream.getTracks().forEach(track => track.stop()));
   const transceiver = pc1.addTransceiver(stream.getVideoTracks()[0], {
     streams: [stream],
     sendEncodings: sendEncodings,
@@ -275,4 +273,12 @@ async function negotiateSimulcastAndWaitForVideo(
   });
   assert_equals(metadataToBeLoaded.length, rids.length);
   return Promise.all(metadataToBeLoaded);
+}
+
+async function getCameraStream(t) {
+  // Use getUserMedia as getNoiseStream does not have enough entropy to ramp-up.
+  await setMediaPermission();
+  const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+  t.add_cleanup(() => stream.getTracks().forEach(track => track.stop()));
+  return stream;
 }

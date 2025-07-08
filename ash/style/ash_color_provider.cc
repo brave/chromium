@@ -45,51 +45,16 @@ AshColorProvider* AshColorProvider::Get() {
   return g_instance;
 }
 
-SkColor AshColorProvider::GetBaseLayerColor(BaseLayerType type) const {
-  // TODO(crbug.com/1350510): Delete this function after all clients migrate.
-  auto* color_provider = GetColorProvider();
-  DCHECK(color_provider);
-
-  switch (type) {
-    case BaseLayerType::kTransparent20:
-      return color_provider->GetColor(kColorAshShieldAndBase20);
-    case BaseLayerType::kTransparent40:
-      return color_provider->GetColor(kColorAshShieldAndBase40);
-    case BaseLayerType::kTransparent60:
-      return color_provider->GetColor(kColorAshShieldAndBase60);
-    case BaseLayerType::kTransparent80:
-      return color_provider->GetColor(kColorAshShieldAndBase80);
-    case BaseLayerType::kInvertedTransparent80:
-      return color_provider->GetColor(kColorAshInvertedShieldAndBase80);
-    case BaseLayerType::kTransparent90:
-      return color_provider->GetColor(kColorAshShieldAndBase90);
-    case BaseLayerType::kTransparent95:
-      return color_provider->GetColor(kColorAshShieldAndBase95);
-    case BaseLayerType::kOpaque:
-      return color_provider->GetColor(kColorAshShieldAndBaseOpaque);
-  }
-}
-
 SkColor AshColorProvider::GetControlsLayerColor(ControlsLayerType type) const {
   // TODO(crbug.com/1292244): Delete this function after all callers migrate.
   auto* color_provider = GetColorProvider();
   DCHECK(color_provider);
 
   switch (type) {
-    case ControlsLayerType::kHairlineBorderColor:
-      return color_provider->GetColor(kColorAshHairlineBorderColor);
     case ControlsLayerType::kControlBackgroundColorActive:
       return color_provider->GetColor(kColorAshControlBackgroundColorActive);
     case ControlsLayerType::kControlBackgroundColorInactive:
       return color_provider->GetColor(kColorAshControlBackgroundColorInactive);
-    case ControlsLayerType::kControlBackgroundColorAlert:
-      return color_provider->GetColor(kColorAshControlBackgroundColorAlert);
-    case ControlsLayerType::kControlBackgroundColorWarning:
-      return color_provider->GetColor(kColorAshControlBackgroundColorWarning);
-    case ControlsLayerType::kControlBackgroundColorPositive:
-      return color_provider->GetColor(kColorAshControlBackgroundColorPositive);
-    case ControlsLayerType::kFocusAuraColor:
-      return color_provider->GetColor(kColorAshFocusAuraColor);
     case ControlsLayerType::kFocusRingColor:
       return color_provider->GetColor(ui::kColorAshFocusRing);
   }
@@ -104,12 +69,6 @@ SkColor AshColorProvider::GetContentLayerColor(ContentLayerType type) const {
       return color_provider->GetColor(kColorAshIconColorSecondary);
     case ContentLayerType::kIconColorSecondaryBackground:
       return color_provider->GetColor(kColorAshIconColorSecondaryBackground);
-    case ContentLayerType::kScrollBarColor:
-      return color_provider->GetColor(kColorAshScrollBarColor);
-    case ContentLayerType::kSliderColorInactive:
-      return color_provider->GetColor(kColorAshSliderColorInactive);
-    case ContentLayerType::kRadioColorInactive:
-      return color_provider->GetColor(kColorAshRadioColorInactive);
     case ContentLayerType::kSwitchKnobColorInactive:
       return color_provider->GetColor(kColorAshSwitchKnobColorInactive);
     case ContentLayerType::kSwitchTrackColorInactive:
@@ -118,71 +77,26 @@ SkColor AshColorProvider::GetContentLayerColor(ContentLayerType type) const {
       return color_provider->GetColor(kColorAshButtonLabelColorBlue);
     case ContentLayerType::kTextColorURL:
       return color_provider->GetColor(kColorAshTextColorURL);
-    case ContentLayerType::kSliderColorActive:
-      return color_provider->GetColor(kColorAshSliderColorActive);
-    case ContentLayerType::kRadioColorActive:
-      return color_provider->GetColor(kColorAshRadioColorActive);
     case ContentLayerType::kSwitchKnobColorActive:
       return color_provider->GetColor(kColorAshSwitchKnobColorActive);
-    case ContentLayerType::kProgressBarColorForeground:
-      return color_provider->GetColor(kColorAshProgressBarColorForeground);
-    case ContentLayerType::kProgressBarColorBackground:
-      return color_provider->GetColor(kColorAshProgressBarColorBackground);
-    case ContentLayerType::kCaptureRegionColor:
-      return color_provider->GetColor(kColorAshCaptureRegionColor);
     case ContentLayerType::kSwitchTrackColorActive:
       return color_provider->GetColor(kColorAshSwitchTrackColorActive);
-    case ContentLayerType::kButtonLabelColorPrimary:
-      return color_provider->GetColor(kColorAshButtonLabelColorPrimary);
     case ContentLayerType::kButtonIconColorPrimary:
       return color_provider->GetColor(kColorAshButtonIconColorPrimary);
-    case ContentLayerType::kBatteryBadgeColor:
-      return color_provider->GetColor(kColorAshBatteryBadgeColor);
-    case ContentLayerType::kAppStateIndicatorColorInactive:
-      return color_provider->GetColor(kColorAshAppStateIndicatorColorInactive);
-    case ContentLayerType::kCurrentDeskColor:
-      return color_provider->GetColor(kColorAshCurrentDeskColor);
-    case ContentLayerType::kSwitchAccessInnerStrokeColor:
-      return color_provider->GetColor(kColorAshSwitchAccessInnerStrokeColor);
-    case ContentLayerType::kSwitchAccessOuterStrokeColor:
-      return color_provider->GetColor(kColorAshSwitchAccessOuterStrokeColor);
-    case ContentLayerType::kHighlightColorHover:
-      return color_provider->GetColor(kColorAshHighlightColorHover);
-    case ContentLayerType::kAppStateIndicatorColor:
-      return color_provider->GetColor(kColorAshAppStateIndicatorColor);
     case ContentLayerType::kButtonIconColor:
       return color_provider->GetColor(kColorAshButtonIconColor);
     case ContentLayerType::kButtonLabelColor:
       return color_provider->GetColor(kColorAshButtonLabelColor);
-    case ContentLayerType::kBatterySystemInfoBackgroundColor:
-      return color_provider->GetColor(
-          kColorAshBatterySystemInfoBackgroundColor);
-    case ContentLayerType::kBatterySystemInfoIconColor:
-      return color_provider->GetColor(kColorAshBatterySystemInfoIconColor);
-    case ContentLayerType::kInvertedTextColorPrimary:
-      return color_provider->GetColor(kColorAshInvertedTextColorPrimary);
-    case ContentLayerType::kInvertedButtonLabelColor:
-      return color_provider->GetColor(kColorAshInvertedButtonLabelColor);
-    case ContentLayerType::kTextColorSuggestion:
-      return color_provider->GetColor(kColorAshTextColorSuggestion);
     case ContentLayerType::kTextColorPrimary:
       return color_provider->GetColor(kColorAshTextColorPrimary);
     case ContentLayerType::kTextColorSecondary:
       return color_provider->GetColor(kColorAshTextColorSecondary);
-    case ContentLayerType::kTextColorAlert:
-      return color_provider->GetColor(kColorAshTextColorAlert);
-    case ContentLayerType::kTextColorWarning:
-      return color_provider->GetColor(kColorAshTextColorWarning);
-    case ContentLayerType::kTextColorPositive:
-      return color_provider->GetColor(kColorAshTextColorPositive);
     case ContentLayerType::kIconColorPrimary:
       return color_provider->GetColor(kColorAshIconColorPrimary);
     case ContentLayerType::kIconColorAlert:
       return color_provider->GetColor(kColorAshIconColorAlert);
     case ContentLayerType::kIconColorWarning:
       return color_provider->GetColor(kColorAshIconColorWarning);
-    case ContentLayerType::kIconColorPositive:
-      return color_provider->GetColor(kColorAshIconColorPositive);
     case ContentLayerType::kIconColorProminent:
       return color_provider->GetColor(kColorAshIconColorProminent);
   }

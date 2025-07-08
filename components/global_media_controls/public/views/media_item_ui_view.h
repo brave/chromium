@@ -5,13 +5,8 @@
 #ifndef COMPONENTS_GLOBAL_MEDIA_CONTROLS_PUBLIC_VIEWS_MEDIA_ITEM_UI_VIEW_H_
 #define COMPONENTS_GLOBAL_MEDIA_CONTROLS_PUBLIC_VIEWS_MEDIA_ITEM_UI_VIEW_H_
 
-#include <string>
-
 #include "base/component_export.h"
-#include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "components/global_media_controls/media_notification_view_ash_impl.h"
 #include "components/global_media_controls/public/constants.h"
 #include "components/global_media_controls/public/media_item_ui.h"
 #include "components/global_media_controls/public/views/media_item_ui_device_selector.h"
@@ -20,7 +15,6 @@
 #include "components/media_message_center/media_notification_view_impl.h"
 #include "media/base/media_switches.h"
 #include "ui/base/metadata/metadata_header_macros.h"
-#include "ui/views/animation/slide_out_controller_delegate.h"
 #include "ui/views/focus/focus_manager.h"
 
 namespace media_message_center {
@@ -29,11 +23,11 @@ class MediaNotificationItem;
 
 namespace views {
 class ImageButton;
-class SlideOutController;
 }  // namespace views
 
 namespace global_media_controls {
 
+enum class MediaDisplayPage;
 class MediaItemUIObserver;
 
 // MediaItemUIView holds a media notification for display
@@ -43,11 +37,10 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
     : public views::Button,
       public media_message_center::MediaNotificationContainer,
       public global_media_controls::MediaItemUI,
-      public views::SlideOutControllerDelegate,
       public views::FocusChangeListener {
- public:
-  METADATA_HEADER(MediaItemUIView);
+  METADATA_HEADER(MediaItemUIView, views::Button)
 
+ public:
   // MediaItemUIView is used in multiple places so some optional parameters may
   // not be set:
   // - Chrome OS media UI will set notification_theme for color theme.
@@ -59,11 +52,11 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
       base::WeakPtr<media_message_center::MediaNotificationItem> item,
       std::unique_ptr<MediaItemUIFooter> footer_view,
       std::unique_ptr<MediaItemUIDeviceSelector> device_selector_view,
-      absl::optional<media_message_center::NotificationTheme>
-          notification_theme = absl::nullopt,
-      absl::optional<media_message_center::MediaColorTheme> media_color_theme =
-          absl::nullopt,
-      absl::optional<MediaDisplayPage> media_display_page = absl::nullopt);
+      std::optional<media_message_center::NotificationTheme>
+          notification_theme = std::nullopt,
+      std::optional<media_message_center::MediaColorTheme> media_color_theme =
+          std::nullopt,
+      std::optional<MediaDisplayPage> media_display_page = std::nullopt);
   MediaItemUIView(const MediaItemUIView&) = delete;
   MediaItemUIView& operator=(const MediaItemUIView&) = delete;
   ~MediaItemUIView() override;
@@ -76,10 +69,10 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
 
   // views::View:
   void OnGestureEvent(ui::GestureEvent* event) override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
   // views::FocusChangeListener:
-  void OnWillChangeFocus(views::View* focused_before,
-                         views::View* focused_now) override {}
   void OnDidChangeFocus(views::View* focused_before,
                         views::View* focused_now) override;
 
@@ -96,14 +89,9 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
   void OnColorsChanged(SkColor foreground,
                        SkColor foreground_disabled,
                        SkColor background) override;
-  void OnHeaderClicked() override;
+  void OnHeaderClicked(bool activate_original_media) override;
   void OnShowCastingDevicesRequested() override;
-
-  // views::SlideOutControllerDelegate:
-  ui::Layer* GetSlideOutLayer() override;
-  void OnSlideStarted() override {}
-  void OnSlideChanged(bool in_progress) override;
-  void OnSlideOut() override;
+  void OnListViewSizeChanged() override;
 
   // global_media_controls::MediaItemUI:
   void AddObserver(
@@ -111,7 +99,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
   void RemoveObserver(
       global_media_controls::MediaItemUIObserver* observer) override;
 
-  void OnDeviceSelectorViewSizeChanged();
+  // Called when the devices in the device selector view have changed.
+  void OnDeviceSelectorViewDevicesChanged(bool has_devices);
 
   const std::u16string& GetTitle() const;
 
@@ -126,16 +115,12 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
   views::ImageButton* GetDismissButtonForTesting();
 
   media_message_center::MediaNotificationViewImpl* view_for_testing() {
-    DCHECK(!base::FeatureList::IsEnabled(media::kGlobalMediaControlsModernUI));
     return static_cast<media_message_center::MediaNotificationViewImpl*>(view_);
   }
   MediaItemUIDeviceSelector* device_selector_view_for_testing() {
     return device_selector_view_;
   }
   MediaItemUIFooter* footer_view_for_testing() { return footer_view_; }
-  views::SlideOutController* slide_out_controller_for_testing() {
-    return slide_out_controller_.get();
-  }
 
   bool is_playing_for_testing() { return is_playing_; }
   bool is_expanded_for_testing() { return is_expanded_; }
@@ -150,11 +135,10 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
   // Updates the forced expanded state of |view_|.
   void ForceExpandedState();
   // Notify observers that we've been clicked.
-  void ContainerClicked();
+  void ContainerClicked(bool activate_original_media);
   void OnSizeChanged();
 
   const std::string id_;
-  raw_ptr<views::View> swipeable_container_ = nullptr;
 
   std::u16string title_;
 
@@ -173,9 +157,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
   raw_ptr<DismissButton> dismiss_button_ = nullptr;
   raw_ptr<media_message_center::MediaNotificationView> view_ = nullptr;
 
-  raw_ptr<MediaItemUIFooter, DanglingUntriaged> footer_view_ = nullptr;
-  raw_ptr<MediaItemUIDeviceSelector, DanglingUntriaged> device_selector_view_ =
-      nullptr;
+  raw_ptr<MediaItemUIFooter> footer_view_ = nullptr;
+  raw_ptr<MediaItemUIDeviceSelector> device_selector_view_ = nullptr;
 
   SkColor foreground_color_ = kDefaultForegroundColor;
   SkColor foreground_disabled_color_ = kDefaultForegroundColor;
@@ -188,15 +171,13 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaItemUIView
 
   bool is_expanded_ = false;
 
-  bool is_sliding_ = false;
-
   base::ObserverList<global_media_controls::MediaItemUIObserver> observers_;
-
-  // Handles gesture events for swiping to dismiss notifications.
-  std::unique_ptr<views::SlideOutController> slide_out_controller_;
 
   // Sets to true when the notification theme is provided on Chrome OS.
   const bool has_notification_theme_;
+
+  // Sets to true if the updated UI is enabled.
+  bool use_updated_ui_ = false;
 };
 
 }  // namespace global_media_controls

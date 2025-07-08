@@ -4,7 +4,7 @@
 
 #include "chrome/browser/browser_process_platform_part_mac.h"
 
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #import "chrome/browser/app_controller_mac.h"
@@ -13,20 +13,11 @@
 #include "chrome/browser/apps/platform_apps/extension_app_shim_manager_delegate_mac.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
-#include "services/device/public/cpp/geolocation/system_geolocation_source_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "services/device/public/cpp/geolocation/system_geolocation_source_apple.h"
 
 BrowserProcessPlatformPart::BrowserProcessPlatformPart() = default;
 
 BrowserProcessPlatformPart::~BrowserProcessPlatformPart() = default;
-
-void BrowserProcessPlatformPart::BeginStartTearDown() {
-  if (app_shim_manager_)
-    app_shim_manager_->OnBeginTearDown();
-}
 
 void BrowserProcessPlatformPart::StartTearDown() {
   app_shim_listener_ = nullptr;
@@ -74,9 +65,12 @@ void BrowserProcessPlatformPart::PreMainMessageLoopRun() {
   DCHECK(!app_shim_listener_.get());
   app_shim_listener_ = new AppShimListener;
 
-  if (!device::GeolocationManager::GetInstance()) {
-    device::GeolocationManager::SetInstance(
-        device::SystemGeolocationSourceMac::CreateGeolocationManagerOnMac());
+  // Workaround for https://crbug.com/40155239: This needs to be created at
+  // browser startup.
+  if (!device::GeolocationSystemPermissionManager::GetInstance()) {
+    device::GeolocationSystemPermissionManager::SetInstance(
+        device::SystemGeolocationSourceApple::
+            CreateGeolocationSystemPermissionManager());
   }
 }
 

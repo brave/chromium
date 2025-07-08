@@ -4,6 +4,7 @@
 
 #include "ash/test/test_window_builder.h"
 
+#include "ash/examples/client_controlled_state_util.h"
 #include "ash/shell.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/window_parenting_client.h"
@@ -12,6 +13,43 @@
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
+using SignalCallback =
+    base::RepeatingCallback<void(TestWindowBuilder::Operation)>;
+
+namespace {
+
+ClientControlledStateUtil::StateChangeRequestCallback CreateStateChangeCallback(
+    SignalCallback signal_callback) {
+  return base::BindRepeating(
+      [](SignalCallback signal_callback, WindowState* window_state,
+         ClientControlledState* state, chromeos::WindowStateType next_state) {
+        ClientControlledStateUtil::ApplyWindowStateRequest(window_state, state,
+                                                           next_state);
+        if (!signal_callback.is_null()) {
+          signal_callback.Run(TestWindowBuilder::kStateChange);
+        }
+      },
+      signal_callback);
+}
+
+ClientControlledStateUtil::BoundsChangeRequestCallback
+CreateBoundsChangeCallback(SignalCallback signal_callback) {
+  return base::BindRepeating(
+      [](SignalCallback signal_callback, WindowState* window_state,
+         ClientControlledState* state,
+         chromeos::WindowStateType requested_state,
+         const gfx::Rect& bounds_in_display, int64_t display_id) {
+        ClientControlledStateUtil::ApplyBoundsRequest(
+            window_state, state, requested_state, bounds_in_display,
+            display_id);
+        if (!signal_callback.is_null()) {
+          signal_callback.Run(TestWindowBuilder::kBoundsChange);
+        }
+      },
+      signal_callback);
+}
+
+}  // namespace
 
 TestWindowBuilder::TestWindowBuilder() = default;
 
@@ -89,7 +127,8 @@ TestWindowBuilder& TestWindowBuilder::SetTestWindowDelegate() {
 TestWindowBuilder& TestWindowBuilder::AllowAllWindowStates() {
   DCHECK(!built_);
   init_properties_.SetProperty(aura::client::kResizeBehaviorKey,
-                               aura::client::kResizeBehaviorCanMaximize |
+                               aura::client::kResizeBehaviorCanFullscreen |
+                                   aura::client::kResizeBehaviorCanMaximize |
                                    aura::client::kResizeBehaviorCanMinimize |
                                    aura::client::kResizeBehaviorCanResize);
   return *this;
@@ -98,6 +137,13 @@ TestWindowBuilder& TestWindowBuilder::AllowAllWindowStates() {
 TestWindowBuilder& TestWindowBuilder::SetShow(bool show) {
   DCHECK(!built_);
   show_ = show;
+  return *this;
+}
+
+TestWindowBuilder& TestWindowBuilder::SetClientControlled(
+    SignalCallback signal_callback) {
+  DCHECK(!built_);
+  operation_signal_callback_ = signal_callback;
   return *this;
 }
 
@@ -133,7 +179,13 @@ std::unique_ptr<aura::Window> TestWindowBuilder::Build() {
     }
 
     DCHECK(context_);
-    aura::client::ParentWindowWithContext(window.get(), context_, bounds_);
+    aura::client::ParentWindowWithContext(window.get(), context_, bounds_,
+                                          display::kInvalidDisplayId);
+  }
+  if (operation_signal_callback_) {
+    ClientControlledStateUtil::BuildAndSet(
+        window.get(), CreateStateChangeCallback(*operation_signal_callback_),
+        CreateBoundsChangeCallback(*operation_signal_callback_));
   }
   if (show_)
     window->Show();

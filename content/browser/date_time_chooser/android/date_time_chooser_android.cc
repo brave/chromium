@@ -10,12 +10,14 @@
 #include "base/android/jni_string.h"
 #include "base/i18n/char_iterator.h"
 #include "base/i18n/unicodestring.h"
-#include "content/public/android/content_jni_headers/DateTimeChooserAndroid_jni.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "ui/android/window_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "content/public/android/content_jni_headers/DateTimeChooserAndroid_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -106,14 +108,11 @@ void DateTimeChooserAndroid::DismissAndDestroyJavaObject() {
   }
 }
 
-void DateTimeChooserAndroid::ReplaceDateTime(JNIEnv* env,
-                                             const JavaRef<jobject>&,
-                                             jdouble value) {
+void DateTimeChooserAndroid::ReplaceDateTime(JNIEnv* env, jdouble value) {
   std::move(open_date_time_response_callback_).Run(true, value);
 }
 
-void DateTimeChooserAndroid::CancelDialog(JNIEnv* env,
-                                          const JavaRef<jobject>&) {
+void DateTimeChooserAndroid::CancelDialog(JNIEnv* env) {
   std::move(open_date_time_response_callback_).Run(false, 0.0);
 }
 

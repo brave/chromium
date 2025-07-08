@@ -72,7 +72,6 @@ storage::FileSystemType ToStorageFileSystemType(
       return storage::FileSystemType::kFileSystemTypeExternal;
   }
   NOTREACHED();
-  return storage::FileSystemType::kFileSystemTypeTemporary;
 }
 
 blink::mojom::FileSystemType ToMojoFileSystemType(
@@ -91,7 +90,6 @@ blink::mojom::FileSystemType ToMojoFileSystemType(
     case storage::FileSystemType::kFileSystemInternalTypeEnumStart:
     case storage::FileSystemType::kFileSystemTypeTest:
     case storage::FileSystemType::kFileSystemTypeLocal:
-    case storage::FileSystemType::kFileSystemTypeRestrictedLocal:
     case storage::FileSystemType::kFileSystemTypeDragged:
     case storage::FileSystemType::kFileSystemTypeLocalMedia:
     case storage::FileSystemType::kFileSystemTypeDeviceMedia:
@@ -108,10 +106,8 @@ blink::mojom::FileSystemType ToMojoFileSystemType(
     case storage::FileSystemType::kFileSystemTypeFuseBox:
     case storage::FileSystemType::kFileSystemInternalTypeEnumEnd:
       NOTREACHED();
-      return blink::mojom::FileSystemType::kTemporary;
   }
   NOTREACHED();
-  return blink::mojom::FileSystemType::kTemporary;
 }
 
 blink::mojom::FileSystemInfoPtr ToMojoFileSystemInfo(
@@ -215,7 +211,7 @@ void FileSystemManagerImpl::Open(const url::Origin& origin,
                                  OpenCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanAccessDataForOrigin,
@@ -242,7 +238,7 @@ void FileSystemManagerImpl::ContinueOpen(
   }
 
   context_->OpenFileSystem(
-      storage_key, /*bucket=*/absl::nullopt,
+      storage_key, /*bucket=*/std::nullopt,
       ToStorageFileSystemType(file_system_type),
       storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
       base::BindOnce(&FileSystemManagerImpl::DidOpenFileSystem, GetWeakPtr(),
@@ -254,14 +250,14 @@ void FileSystemManagerImpl::ResolveURL(const GURL& filesystem_url,
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(
       context_->CrackURL(filesystem_url, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(blink::mojom::FileSystemInfo::New(),
                             base::FilePath(), false, opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -296,14 +292,14 @@ void FileSystemManagerImpl::Move(const GURL& src_path,
       context_->CrackURL(src_path, receivers_.current_context()));
   FileSystemURL dest_url(
       context_->CrackURL(dest_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(src_url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(src_url);
   if (!opt_error)
     opt_error = ValidateFileSystemURL(dest_url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanMoveFileSystemFile,
@@ -348,7 +344,7 @@ void FileSystemManagerImpl::Copy(const GURL& src_path,
       context_->CrackURL(src_path, receivers_.current_context()));
   FileSystemURL dest_url(
       context_->CrackURL(dest_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(src_url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(src_url);
   if (!opt_error)
     opt_error = ValidateFileSystemURL(dest_url);
   if (opt_error) {
@@ -356,7 +352,7 @@ void FileSystemManagerImpl::Copy(const GURL& src_path,
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanCopyFileSystemFile,
@@ -398,13 +394,13 @@ void FileSystemManagerImpl::Remove(const GURL& path,
                                    RemoveCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanDeleteFileSystemFile,
@@ -442,13 +438,13 @@ void FileSystemManagerImpl::ReadMetadata(const GURL& path,
                                          ReadMetadataCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(base::File::Info(), opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -480,9 +476,9 @@ void FileSystemManagerImpl::ContinueReadMetadata(
 
   fs_op_runner->GetMetadata(
       url,
-      FileSystemOperation::GET_METADATA_FIELD_IS_DIRECTORY |
-          FileSystemOperation::GET_METADATA_FIELD_SIZE |
-          FileSystemOperation::GET_METADATA_FIELD_LAST_MODIFIED,
+      {storage::FileSystemOperation::GetMetadataField::kIsDirectory,
+       storage::FileSystemOperation::GetMetadataField::kSize,
+       storage::FileSystemOperation::GetMetadataField::kLastModified},
       base::BindOnce(&FileSystemManagerImpl::DidGetMetadata, GetWeakPtr(),
                      std::move(callback)));
 }
@@ -494,13 +490,13 @@ void FileSystemManagerImpl::Create(const GURL& path,
                                    CreateCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanCreateFileSystemFile,
@@ -548,13 +544,13 @@ void FileSystemManagerImpl::Exists(const GURL& path,
                                    ExistsCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -600,7 +596,7 @@ void FileSystemManagerImpl::ReadDirectory(
         pending_listener) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   mojo::Remote<blink::mojom::FileSystemOperationListener> listener(
       std::move(pending_listener));
   if (opt_error) {
@@ -608,7 +604,7 @@ void FileSystemManagerImpl::ReadDirectory(
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -648,13 +644,13 @@ void FileSystemManagerImpl::ReadDirectorySync(
     ReadDirectorySyncCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(context_->CrackURL(path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(std::vector<filesystem::mojom::DirectoryEntryPtr>(),
                             opt_error.value());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -701,14 +697,14 @@ void FileSystemManagerImpl::Write(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(
       context_->CrackURL(file_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   mojo::Remote<blink::mojom::FileSystemOperationListener> listener(
       std::move(pending_listener));
   if (opt_error) {
     listener->ErrorOccurred(opt_error.value());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanWriteFileSystemFile,
@@ -776,12 +772,12 @@ void FileSystemManagerImpl::WriteSync(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(
       context_->CrackURL(file_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(0, opt_error.value());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanWriteFileSystemFile,
@@ -829,12 +825,12 @@ void FileSystemManagerImpl::Truncate(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(
       context_->CrackURL(file_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanWriteFileSystemFile,
@@ -881,13 +877,13 @@ void FileSystemManagerImpl::TruncateSync(const GURL& file_path,
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   FileSystemURL url(
       context_->CrackURL(file_path, receivers_.current_context()));
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(opt_error.value());
     return;
   }
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanWriteFileSystemFile,
@@ -934,13 +930,13 @@ void FileSystemManagerImpl::CreateSnapshotFile(
   // Make sure if this file can be read by the renderer as this is
   // called when the renderer is about to create a new File object
   // (for reading the file).
-  absl::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
+  std::optional<base::File::Error> opt_error = ValidateFileSystemURL(url);
   if (opt_error) {
     std::move(callback).Run(base::File::Info(), base::FilePath(),
                             opt_error.value(), mojo::NullRemote());
     return;
   }
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -975,9 +971,9 @@ void FileSystemManagerImpl::ContinueCreateSnapshotFile(
   if (backend->SupportsStreaming(url)) {
     fs_op_runner->GetMetadata(
         url,
-        FileSystemOperation::GET_METADATA_FIELD_IS_DIRECTORY |
-            FileSystemOperation::GET_METADATA_FIELD_SIZE |
-            FileSystemOperation::GET_METADATA_FIELD_LAST_MODIFIED,
+        {storage::FileSystemOperation::GetMetadataField::kIsDirectory,
+         storage::FileSystemOperation::GetMetadataField::kSize,
+         storage::FileSystemOperation::GetMetadataField::kLastModified},
         base::BindOnce(&FileSystemManagerImpl::DidGetMetadataForStreaming,
                        GetWeakPtr(), std::move(callback)));
   } else {
@@ -1002,12 +998,12 @@ void FileSystemManagerImpl::RegisterBlob(
     const std::string& content_type,
     const GURL& url,
     uint64_t length,
-    absl::optional<base::Time> expected_modification_time,
+    std::optional<base::Time> expected_modification_time,
     RegisterBlobCallback callback) {
   storage::FileSystemURL crack_url =
       context_->CrackURL(url, receivers_.current_context());
 
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           &ChildProcessSecurityPolicyImpl::CanReadFileSystemFile,
@@ -1023,7 +1019,7 @@ void FileSystemManagerImpl::ContinueRegisterBlob(
     const std::string& content_type,
     const GURL& url,
     uint64_t length,
-    absl::optional<base::Time> expected_modification_time,
+    std::optional<base::Time> expected_modification_time,
     RegisterBlobCallback callback,
     storage::FileSystemURL crack_url,
     bool security_check_success) {
@@ -1215,7 +1211,7 @@ void FileSystemManagerImpl::DidCreateSnapshot(
   // Post a task to use ChildProcessSecurityPolicy to check and grant file read
   // permission on the UI thread, since access to these functions on the IO
   // thread should be avoided.
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
+  GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(
           [](ChildProcessSecurityPolicyImpl* security_policy, int process_id,
@@ -1318,13 +1314,13 @@ void FileSystemManagerImpl::GetPlatformPathOnFileThread(
           std::move(file_system_manager), context, std::move(callback)));
 }
 
-absl::optional<base::File::Error> FileSystemManagerImpl::ValidateFileSystemURL(
+std::optional<base::File::Error> FileSystemManagerImpl::ValidateFileSystemURL(
     const storage::FileSystemURL& url) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!FileSystemURLIsValid(context_.get(), url))
     return base::File::FILE_ERROR_INVALID_URL;
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 FileSystemManagerImpl::OperationListenerID FileSystemManagerImpl::AddOpListener(

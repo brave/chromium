@@ -8,11 +8,14 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/create_element_flags.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/platform/text/character.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/code_point_iterator.h"
+#include "third_party/blink/renderer/platform/wtf/text/utf16.h"
 
 namespace blink {
 
@@ -49,25 +52,47 @@ class CORE_EXPORT CustomElement {
       return true;
 
     // This quickly rejects all common built-in element names.
+    // name contains a U+002D (-)
     if (name.find('-', 1) == kNotFound)
       return false;
 
+    // name's 0th code point is an ASCII lower alpha
     if (!IsASCIILower(name[0]))
       return false;
 
-    if (name.Is8Bit()) {
-      const LChar* characters = name.Characters8();
-      for (wtf_size_t i = 1; i < name.length(); ++i) {
-        if (!Character::IsPotentialCustomElementName8BitChar(characters[i]))
-          return false;
+    if (RuntimeEnabledFeatures::RelaxDOMValidNamesEnabled()) {
+      // https://github.com/whatwg/html/pull/7991
+      // name is a valid element local name
+      if (!Document::IsValidElementLocalNameNewSpec(name)) {
+        return false;
+      }
+      // name does not contain any ASCII upper alphas
+      if (!WTF::VisitCharacters(name.GetString(), [](auto characters) {
+            for (size_t i = 0; i < characters.size(); i++) {
+              if (IsASCIIUpper(characters[i])) {
+                return false;
+              }
+            }
+            return true;
+          })) {
+        return false;
       }
     } else {
-      const UChar* characters = name.Characters16();
-      for (wtf_size_t i = 1; i < name.length();) {
-        UChar32 ch;
-        U16_NEXT(characters, i, name.length(), ch);
-        if (!Character::IsPotentialCustomElementNameChar(ch))
-          return false;
+      if (name.Is8Bit()) {
+        auto characters = name.Span8();
+        for (size_t i = 1; i < characters.size(); ++i) {
+          if (!Character::IsPotentialCustomElementName8BitChar(characters[i])) {
+            return false;
+          }
+        }
+      } else {
+        auto characters = name.Span16();
+        for (size_t i = 1; i < characters.size();) {
+          UChar32 ch = CodePointAtAndNext(characters, i);
+          if (!Character::IsPotentialCustomElementNameChar(ch)) {
+            return false;
+          }
+        }
       }
     }
 
@@ -99,6 +124,7 @@ class CORE_EXPORT CustomElement {
 
   static void Enqueue(Element&, CustomElementReaction&);
   static void EnqueueConnectedCallback(Element&);
+  static void EnqueueConnectedMoveCallback(Element&);
   static void EnqueueDisconnectedCallback(Element&);
   static void EnqueueAdoptedCallback(Element&,
                                      Document& old_owner,

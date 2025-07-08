@@ -3,25 +3,21 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/cookie_controls/cookie_controls_service.h"
+
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/cookie_controls/cookie_controls_service_factory.h"
-#include "components/content_settings/core/common/cookie_controls_enforcement.h"
-
-#include "base/values.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/web_contents.h"
-#include "content/public/test/test_web_ui.h"
-
-#include "chrome/browser/policy/profile_policy_connector.h"
-#include "components/policy/core/common/policy_service.h"
+#include "components/privacy_sandbox/privacy_sandbox_features.h"
 
 // Handles requests for prefs::kCookieControlsMode retrival/update.
 class CookieControlsServiceObserver : public CookieControlsService::Observer {
  public:
   explicit CookieControlsServiceObserver(Profile* profile) {
+    feature_list_.InitAndDisableFeature(
+        privacy_sandbox::kAlwaysBlock3pcsIncognito);
     service_ = CookieControlsServiceFactory::GetForProfile(profile);
     service_->AddObserver(this);
     checked_ = false;
@@ -44,20 +40,18 @@ class CookieControlsServiceObserver : public CookieControlsService::Observer {
 
  private:
   raw_ptr<CookieControlsService, DanglingUntriaged> service_;
+  base::test::ScopedFeatureList feature_list_;
   bool checked_;
 };
 
 class CookieControlsServiceTest : public ChromeRenderViewHostTestHarness {
  public:
-  void SetUp() override {
-    ChromeRenderViewHostTestHarness::SetUp();
-  }
+  void SetUp() override { ChromeRenderViewHostTestHarness::SetUp(); }
 
   void TearDown() override { ChromeRenderViewHostTestHarness::TearDown(); }
 
  protected:
   std::unique_ptr<CookieControlsServiceObserver> observer_;
-
 };
 
 TEST_F(CookieControlsServiceTest, HandleCookieControlsToggleChanged) {

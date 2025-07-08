@@ -8,30 +8,36 @@
  * system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
-import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
+import './per_device_touchpad_subsection.js';
 
-import {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {PolymerElementProperties} from 'chrome://resources/polymer/v3_0/polymer/interfaces.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, routes} from '../router.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {Route} from '../router.js';
+import {routes} from '../router.js';
 
-import {Touchpad} from './input_device_settings_types.js';
+import type {Touchpad} from './input_device_settings_types.js';
+import {getDeviceStateChangesToAnnounce} from './input_device_settings_utils.js';
 import {getTemplate} from './per_device_touchpad.html.js';
 
-const SettingsPerDeviceTouchpadElementBase = RouteObserverMixin(PolymerElement);
+const SettingsPerDeviceTouchpadElementBase =
+    PrefsMixin(RouteObserverMixin(I18nMixin(PolymerElement)));
 
 export class SettingsPerDeviceTouchpadElement extends
     SettingsPerDeviceTouchpadElementBase {
-  static get is(): string {
+  static get is() {
     return 'settings-per-device-touchpad';
   }
 
@@ -43,6 +49,7 @@ export class SettingsPerDeviceTouchpadElement extends
     return {
       touchpads: {
         type: Array,
+        observer: 'onTouchpadListUpdated',
       },
     };
   }
@@ -56,7 +63,20 @@ export class SettingsPerDeviceTouchpadElement extends
     }
   }
 
-  private computeIsLastDevice(index: number) {
+  private onTouchpadListUpdated(
+      newTouchpadList: Touchpad[],
+      oldTouchpadList: Touchpad[]|undefined): void {
+    if (!oldTouchpadList) {
+      return;
+    }
+    const {msgId, deviceNames} =
+        getDeviceStateChangesToAnnounce(newTouchpadList, oldTouchpadList);
+    for (const deviceName of deviceNames) {
+      getAnnouncerInstance().announce(this.i18n(msgId, deviceName));
+    }
+  }
+
+  private computeIsLastDevice(index: number): boolean {
     return index === this.touchpads.length - 1;
   }
 }

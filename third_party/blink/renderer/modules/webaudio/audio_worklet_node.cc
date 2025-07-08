@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -52,12 +53,13 @@ AudioWorkletNode::AudioWorkletNode(
       param_automation_rate = AudioParamHandler::AutomationRate::kControl;
     }
     AudioParam* audio_param = AudioParam::Create(
-        context, Uuid(), AudioParamHandler::kParamTypeAudioWorklet,
+        context, Uuid(),
+        AudioParamHandler::AudioParamType::kParamTypeAudioWorklet,
         param_info.DefaultValue(), param_automation_rate,
         AudioParamHandler::AutomationRateMode::kVariable, param_info.MinValue(),
         param_info.MaxValue());
-    audio_param->SetCustomParamName("AudioWorkletNode(\"" + name + "\")." +
-                                    param_name);
+    audio_param->SetCustomParamName(
+        StrCat({"AudioWorkletNode(\"", name, "\").", param_name}));
     audio_param_map.Set(param_name, audio_param);
     param_handler_map.Set(param_name, WrapRefCounted(&audio_param->Handler()));
 
@@ -95,11 +97,11 @@ AudioWorkletNode* AudioWorkletNode::Create(
     if (options->numberOfOutputs() != options->outputChannelCount().size()) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kIndexSizeError,
-          "AudioWorkletNode cannot be created: Length of specified "
-          "'outputChannelCount' (" +
-              String::Number(options->outputChannelCount().size()) +
-              ") does not match the given number of outputs (" +
-              String::Number(options->numberOfOutputs()) + ").");
+          StrCat({"AudioWorkletNode cannot be created: Length of specified "
+                  "'outputChannelCount' (",
+                  String::Number(options->outputChannelCount().size()),
+                  ") does not match the given number of outputs (",
+                  String::Number(options->numberOfOutputs()), ")."}));
       return nullptr;
     }
 
@@ -130,8 +132,8 @@ AudioWorkletNode* AudioWorkletNode::Create(
   if (!context->audioWorklet()->IsProcessorRegistered(name)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
-        "AudioWorkletNode cannot be created: The node name '" + name +
-            "' is not defined in AudioWorkletGlobalScope.");
+        StrCat({"AudioWorkletNode cannot be created: The node name '", name,
+                "' is not defined in AudioWorkletGlobalScope."}));
     return nullptr;
   }
 
@@ -175,8 +177,7 @@ AudioWorkletNode* AudioWorkletNode::Create(
   scoped_refptr<SerializedScriptValue> serialized_node_options =
       SerializedScriptValue::Serialize(
           isolate,
-          ToV8Traits<AudioWorkletNodeOptions>::ToV8(script_state, options)
-              .ToLocalChecked(),
+          ToV8Traits<AudioWorkletNodeOptions>::ToV8(script_state, options),
           serialize_options, exception_state);
 
   // `serialized_node_options` can be nullptr if the option dictionary is not
@@ -195,7 +196,7 @@ AudioWorkletNode* AudioWorkletNode::Create(
   {
     // The node should be manually added to the automatic pull node list,
     // even without a `connect()` call.
-    BaseAudioContext::GraphAutoLocker locker(context);
+    DeferredTaskHandler::GraphAutoLocker locker(context);
     node->Handler().UpdatePullStatusIfNeeded();
   }
 
@@ -207,29 +208,37 @@ bool AudioWorkletNode::HasPendingActivity() const {
 }
 
 AudioParamMap* AudioWorkletNode::parameters() const {
-  return parameter_map_;
+  return parameter_map_.Get();
 }
 
 MessagePort* AudioWorkletNode::port() const {
-  return node_port_;
+  return node_port_.Get();
 }
 
 void AudioWorkletNode::FireProcessorError(
     AudioWorkletProcessorErrorState error_state) {
   DCHECK(IsMainThread());
   DCHECK(error_state == AudioWorkletProcessorErrorState::kConstructionError ||
-         error_state == AudioWorkletProcessorErrorState::kProcessError);
+         error_state == AudioWorkletProcessorErrorState::kProcessError ||
+         error_state ==
+             AudioWorkletProcessorErrorState::kProcessMethodUndefinedError);
 
   String error_message = "an error thrown from ";
   switch (error_state) {
     case AudioWorkletProcessorErrorState::kNoError:
       NOTREACHED();
-      return;
     case AudioWorkletProcessorErrorState::kConstructionError:
-      error_message = error_message + "AudioWorkletProcessor constructor";
+      error_message =
+          StrCat({error_message, "AudioWorkletProcessor constructor"});
       break;
     case AudioWorkletProcessorErrorState::kProcessError:
-      error_message = error_message + "AudioWorkletProcessor::process() method";
+      error_message =
+          StrCat({error_message, "AudioWorkletProcessor::process() method"});
+      break;
+    case AudioWorkletProcessorErrorState::kProcessMethodUndefinedError:
+      error_message = StrCat({error_message,
+                              "AudioWorkletProcessor::process() method is "
+                              "undefined from the processor"});
       break;
   }
   ErrorEvent* event = ErrorEvent::Create(

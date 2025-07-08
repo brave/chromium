@@ -14,9 +14,8 @@ namespace sql::features {
 // be documented alongside the definition of their values in the .cc file.
 
 // Alphabetical:
-COMPONENT_EXPORT(SQL) BASE_DECLARE_FEATURE(kClearDbIfCloseFails);
-COMPONENT_EXPORT(SQL) BASE_DECLARE_FEATURE(kEnableWALModeByDefault);
-COMPONENT_EXPORT(SQL) BASE_DECLARE_FEATURE(kUseBuiltInRecoveryIfSupported);
+COMPONENT_EXPORT(SQL) BASE_DECLARE_FEATURE(kSqlFixedMmapSize);
+COMPONENT_EXPORT(SQL) BASE_DECLARE_FEATURE(kUnlockDatabaseOnClose);
 
 }  // namespace sql::features
 

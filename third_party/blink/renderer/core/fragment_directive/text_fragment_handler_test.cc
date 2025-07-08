@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -125,11 +126,12 @@ class TextFragmentHandlerTest : public SimTest {
   }
 
   void LoadAhem() {
-    scoped_refptr<SharedBuffer> shared_buffer =
+    std::optional<Vector<char>> data =
         test::ReadFromFile(test::CoreTestDataPath("Ahem.ttf"));
+    ASSERT_TRUE(data);
     auto* buffer =
         MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferViewOrString>(
-            DOMArrayBuffer::Create(shared_buffer));
+            DOMArrayBuffer::Create(base::as_byte_span(*data)));
     FontFace* ahem = FontFace::Create(GetDocument().GetExecutionContext(),
                                       AtomicString("Ahem"), buffer,
                                       FontFaceDescriptors::Create());
@@ -423,7 +425,7 @@ TEST_F(TextFragmentHandlerTest, ExtractFirstTextFragmentRectScroll) {
       GetDocument().GetFrame()->View()->FrameToViewport(rect);
   // ExtractFirstTextFragmentsRect should return the first matched scaled
   // viewport relative location since the page is loaded zoomed in 4X
-  ASSERT_EQ(gfx::Rect(432, 300, 360, 40), expected_rect);
+  ASSERT_EQ(gfx::Rect(432, 296, 360, 40), expected_rect);
 
   gfx::Rect text_fragment_rect = ExtractFirstTextFragmentsRect();
 
@@ -997,6 +999,9 @@ TEST_F(TextFragmentHandlerTest,
 // crbug.com/1266937 Even if |TextFragmentSelectorGenerator| gets reset between
 // generation completion and selector request we should record the correct error
 // code.
+// TODO(https://crbug.com/338340754): It's not clear how useful this behavior is
+// and it prevents us from clearing the TextFragmentHandler and
+// TextFragmentSelectorGenerator entirely between navigations.
 TEST_F(TextFragmentHandlerTest, IfGeneratorResetShouldRecordCorrectError) {
   SimRequest request("https://example.com/test.html", "text/html");
   LoadURL("https://example.com/test.html");
@@ -1086,13 +1091,13 @@ TEST_F(TextFragmentHandlerTest, InvalidateOverflowOnRemoval) {
   Text* first_paragraph = To<Text>(
       GetDocument().getElementById(AtomicString("first"))->firstChild());
   LayoutText* layout_text = first_paragraph->GetLayoutObject();
-  PhysicalRect marker_rect = layout_text->PhysicalVisualOverflowRect();
+  PhysicalRect marker_rect = layout_text->VisualOverflowRect();
 
   GetTextFragmentHandler().RemoveFragments();
   Compositor().BeginFrame();
 
   EXPECT_EQ(0u, GetDocument().Markers().Markers().size());
-  PhysicalRect removed_rect = layout_text->PhysicalVisualOverflowRect();
+  PhysicalRect removed_rect = layout_text->VisualOverflowRect();
 
   // Platforms differ in exact sizes, but the relative sizes are sufficient
   // for testing.

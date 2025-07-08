@@ -1,9 +1,9 @@
-(async function(testRunner) {
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
   const base = 'https://a.test:8443/inspector-protocol/resources/'
   const bp = testRunner.browserP();
   const {page, session, dp} = await testRunner.startBlank(
       'Tracing of network activity FLEDGE worklets.',
-      {url: base + 'fledge_join.html?40'});
+      {url: base + 'fledge_join.html?count=40'});
   const testStart = Date.now();
   const testLimit = 5 * 60 * 1000;  // Way longer than the test may take.
 
@@ -38,7 +38,7 @@
 
   const auctionJs = `
     navigator.runAdAuction({
-      decisionLogicUrl: "${base}fledge_decision_logic.js.php",
+      decisionLogicURL: "${base}fledge_decision_logic.js.php",
       seller: "https://a.test:8443",
       interestGroupBuyers: ["https://a.test:8443"]})`;
 
@@ -97,10 +97,11 @@
         validateRelativeMs(data.timing, 'sslEnd');
         validateRelativeMs(data.timing, 'sslStart');
       }
+
       // requestTime and finishTime are in TimeTicks, so their absolute values
       // can't be interpreted.
       testRunner.log(
-          data, ev.name + ' ', ['requestId', 'requestTime', 'finishTime']);
+          data, ev.name + ' ', ['requestId', 'requestTime', 'finishTime', 'value']);
     }
     testRunner.log('\n');
   }

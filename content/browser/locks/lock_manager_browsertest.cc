@@ -12,6 +12,7 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/feature_observer_client.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -99,7 +100,6 @@ class LockManagerBrowserTest : public ContentBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ContentBrowserTest::SetUpCommandLine(command_line);
     mock_cert_verifier_.SetUpCommandLine(command_line);
   }
 
@@ -216,7 +216,7 @@ IN_PROC_BROWSER_TEST_F(LockManagerBrowserTest, ObserverTwoLocks) {
 
 // Verify that content::FeatureObserver is notified that a frame stopped holding
 // locks when it is navigated away.
-// TODO(crbug.com/1286329): Flakes on all platforms.
+// TODO(crbug.com/40815542): Flakes on all platforms.
 IN_PROC_BROWSER_TEST_F(LockManagerBrowserTest, DISABLED_ObserverNavigate) {
   if (!CheckShouldRunTestAndNavigate())
     return;

@@ -59,6 +59,10 @@ class PowerButtonControllerTestApi {
   // GetMenuBoundsInScreen.
   PowerButtonMenuView* GetPowerButtonMenuView() const;
 
+  // Gets the layer associated with the `controller_`'s menu background
+  // (a `PowerButtonMenuBackgroundView`).
+  ui::Layer* GetPowerButtonMenuBackgroundLayer() const;
+
   // True if the menu is opened.
   bool IsMenuOpened() const;
 
@@ -89,8 +93,7 @@ class PowerButtonControllerTestApi {
   bool ShowMenuAnimationDone() const;
 
  private:
-  raw_ptr<PowerButtonController, DanglingUntriaged | ExperimentalAsh>
-      controller_;  // Not owned.
+  raw_ptr<PowerButtonController, DanglingUntriaged> controller_;  // Not owned.
 };
 
 }  // namespace ash

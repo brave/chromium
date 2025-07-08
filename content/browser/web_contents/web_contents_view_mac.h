@@ -25,10 +25,6 @@
 #import "ui/base/cocoa/views_hostable.h"
 #include "ui/gfx/geometry/size.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @class WebContentsViewCocoa;
 @class WebDragDest;
 
@@ -93,17 +89,21 @@ class WebContentsViewMac : public WebContentsView,
   bool CloseTabAfterEventTrackingIfNeeded() override;
   void OnCapturerCountChanged() override;
   void FullscreenStateChanged(bool is_fullscreen) override;
-  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
+  BackForwardTransitionAnimationManager*
+  GetBackForwardTransitionAnimationManager() override;
+  void DestroyBackForwardTransitionAnimationManager() override;
 
   // RenderViewHostDelegateView:
   void StartDragging(const DropData& drop_data,
+                     const url::Origin& source_origin,
                      blink::DragOperationsMask allowed_operations,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& cursor_offset,
                      const gfx::Rect& drag_obj_rect,
                      const blink::mojom::DragEventSourceInfo& event_info,
                      RenderWidgetHostImpl* source_rwh) override;
-  void UpdateDragCursor(ui::mojom::DragOperation operation) override;
+  void UpdateDragOperation(ui::mojom::DragOperation operation,
+                           bool document_is_handling_drag) override;
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void TakeFocus(bool reverse) override;
@@ -113,7 +113,6 @@ class WebContentsViewMac : public WebContentsView,
       RenderFrameHost* render_frame_host,
       mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
       const gfx::Rect& bounds,
-      int item_height,
       double item_font_size,
       int selected_item,
       std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -149,11 +148,14 @@ class WebContentsViewMac : public WebContentsView,
   CONTENT_EXPORT static void InstallCreateHookForTests(
       RenderWidgetHostViewCreateFunction create_render_widget_host_view);
 
+  CONTENT_EXPORT static void SetReadWritePermissionsForFileForTests(
+      base::File& file);
+
  private:
   WebContentsViewCocoa* GetInProcessNSView() const;
 
   // remote_cocoa::mojom::WebContentsNSViewHost:
-  void OnMouseEvent(bool motion, bool exited) override;
+  void OnMouseEvent(std::unique_ptr<ui::Event> event) override;
   void OnBecameFirstResponder(
       remote_cocoa::mojom::SelectionDirection direction) override;
   void OnWindowVisibilityChanged(
@@ -169,10 +171,18 @@ class WebContentsViewMac : public WebContentsView,
   bool DragPromisedFileTo(const base::FilePath& file_path,
                           const DropData& drop_data,
                           const GURL& download_url,
+                          const url::Origin& source_origin,
                           base::FilePath* out_file_path) override;
-  void EndDrag(uint32_t drag_opeation,
+  void EndDrag(uint32_t drag_operation,
                const gfx::PointF& local_point,
                const gfx::PointF& screen_point) override;
+
+  // Helper used by `EndDrag` to pass a callback to `drag_dest_`. This can be
+  // called either synchronously or asynchronously depending on if `drag_dest_`
+  // delays firing "dragend" or not.
+  void PerformEndDrag(uint32_t drag_operation,
+                      const gfx::PointF& local_point,
+                      const gfx::PointF& screen_point);
 
   // remote_cocoa::mojom::WebContentsNSViewHost, synchronous methods:
   void DraggingEntered(remote_cocoa::mojom::DraggingInfoPtr dragging_info,
@@ -184,6 +194,7 @@ class WebContentsViewMac : public WebContentsView,
   void DragPromisedFileTo(const base::FilePath& file_path,
                           const DropData& drop_data,
                           const GURL& download_url,
+                          const url::Origin& source_origin,
                           DragPromisedFileToCallback callback) override;
 
   // Return the list of child RenderWidgetHostViewMacs. This will remove any
@@ -213,12 +224,18 @@ class WebContentsViewMac : public WebContentsView,
   raw_ptr<ViewsHostableView::Host> views_host_ = nullptr;
 
   // The accessibility element specified via ViewsHostableSetParentAccessible.
-  gfx::NativeViewAccessible views_host_accessibility_element_ = nil;
+  gfx::NativeViewAccessible views_host_accessibility_element_;
 
   std::unique_ptr<PopupMenuHelper> popup_menu_helper_;
 
   // The id that may be used to look up this NSView.
   const uint64_t ns_view_id_;
+
+  // Bounding rect for the part at the top of the WebContents that is not
+  // covered by window controls when window controls overlay is enabled.
+  // This is cached here in case this rect is set before the web contents has
+  // been attached to a remote view.
+  gfx::Rect window_controls_overlay_bounding_rect_;
 
   // The WebContentsViewCocoa that lives in the NSView hierarchy in this
   // process. This is always non-null, even when the view is being displayed

@@ -3,22 +3,13 @@
 // found in the LICENSE file.
 
 #include "components/viz/common/resources/transferable_resource.h"
+
+#include "base/feature_list.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/resources/returned_resource.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 
 namespace viz {
-
-// static
-TransferableResource TransferableResource::MakeSoftware(
-    const SharedBitmapId& id,
-    const gfx::Size& size,
-    SharedImageFormat format) {
-  TransferableResource r;
-  r.is_software = true;
-  r.mailbox_holder.mailbox = id;
-  r.size = size;
-  r.format = format;
-  return r;
-}
 
 // static
 TransferableResource TransferableResource::MakeGpu(
@@ -27,16 +18,62 @@ TransferableResource TransferableResource::MakeGpu(
     const gpu::SyncToken& sync_token,
     const gfx::Size& size,
     SharedImageFormat format,
-    bool is_overlay_candidate) {
+    bool is_overlay_candidate,
+    ResourceSource source) {
+  // Passed in format must be either single or multiplane and not default set.
+  CHECK(format.is_single_plane() || format.is_multi_plane());
   TransferableResource r;
   r.is_software = false;
-  r.mailbox_holder.mailbox = mailbox;
-  r.mailbox_holder.texture_target = texture_target;
-  r.mailbox_holder.sync_token = sync_token;
+  r.memory_buffer_id_ = mailbox;
+  r.texture_target_ = texture_target;
+  r.sync_token_ = sync_token;
   r.size = size;
   r.format = format;
   r.is_overlay_candidate = is_overlay_candidate;
+  r.resource_source = source;
   return r;
+}
+
+TransferableResource TransferableResource::Make(
+    const scoped_refptr<gpu::ClientSharedImage>& shared_image,
+    ResourceSource source,
+    const gpu::SyncToken& sync_token,
+    const MetadataOverride& override) {
+  CHECK(shared_image);
+  TransferableResource resource;
+  resource.is_software = shared_image->is_software();
+  resource.memory_buffer_id_ = shared_image->mailbox();
+  resource.sync_token_ = sync_token;
+  resource.resource_source = source;
+
+  resource.size = override.size.value_or(shared_image->size());
+  resource.format = override.format.value_or(shared_image->format());
+  // Passed in format must be either single or multiplane and not default set.
+  CHECK(resource.format.is_single_plane() || resource.format.is_multi_plane());
+  resource.is_overlay_candidate = override.is_overlay_candidate.value_or(
+      shared_image->usage().Has(gpu::SHARED_IMAGE_USAGE_SCANOUT));
+  resource.color_space =
+      override.color_space.value_or(shared_image->color_space());
+  resource.origin = override.origin.value_or(shared_image->surface_origin());
+  SkAlphaType alpha_type =
+      override.alpha_type.value_or(shared_image->alpha_type());
+  // Historically `alpha_type` has been compressed to a "premul" bool with
+  // kOpaque_SkAlphaType being treated as kPremul_SkAlphaType on the service
+  // side. Eliminate this historical behavior under a killswitch.
+  // TODO(crbug.com/410591523): Remove killswitch after it has safely rolled
+  // out.
+  if (base::FeatureList::IsEnabled(
+          features::kTransferableResourcePassAlphaTypeDirectly)) {
+    resource.alpha_type = alpha_type;
+  } else {
+    resource.alpha_type = (alpha_type == kUnpremul_SkAlphaType)
+                              ? alpha_type
+                              : kPremul_SkAlphaType;
+  }
+  resource.set_texture_target(
+      override.texture_target.value_or(shared_image->GetTextureTarget()));
+
+  return resource;
 }
 
 TransferableResource::TransferableResource() = default;
@@ -50,7 +87,7 @@ TransferableResource& TransferableResource::operator=(
 ReturnedResource TransferableResource::ToReturnedResource() const {
   ReturnedResource returned;
   returned.id = id;
-  returned.sync_token = mailbox_holder.sync_token;
+  returned.sync_token = sync_token_;
   returned.count = 1;
   return returned;
 }

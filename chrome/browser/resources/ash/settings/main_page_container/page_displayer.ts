@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {Section} from '../mojom-webui/routes.mojom-webui.js';
@@ -30,20 +30,25 @@ export class PageDisplayerElement extends PolymerElement {
         type: Number,
         reflectToAttribute: true,
       },
+
+      ariaLabel: String,
     };
   }
 
+  override ariaLabel: string;
   active: boolean;
   section: Section;
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
     assert(this.section in Section, `Invalid section: ${this.section}.`);
   }
 
-  override focus() {
-    this.shadowRoot!.getElementById('focusHost')!.focus();
+  override focus(): void {
+    // Since the focus host contains the whole page content, it should not cause
+    // a scroll jump when focused.
+    this.shadowRoot!.getElementById('focusHost')!.focus({preventScroll: true});
   }
 }
 

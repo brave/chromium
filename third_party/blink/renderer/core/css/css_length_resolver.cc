@@ -299,7 +299,6 @@ double CSSLengthResolver::ZoomedComputedPixels(
 
     default:
       NOTREACHED();
-      return 0;
   }
 }
 

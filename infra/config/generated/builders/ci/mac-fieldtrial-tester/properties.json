@@ -23,6 +23,9 @@
                 "target_platform": "mac"
               },
               "legacy_gclient_config": {
+                "apply_configs": [
+                  "chromium_with_telemetry_dependencies"
+                ],
                 "config": "chromium"
               }
             }
@@ -42,7 +45,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "mac"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -68,7 +72,8 @@
           "builder": "mac-fieldtrial-tester",
           "group": "tryserver.chromium.mac"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/mac-fieldtrial-tester/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {

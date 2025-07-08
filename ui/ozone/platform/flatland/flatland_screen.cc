@@ -4,7 +4,7 @@
 
 #include "ui/ozone/platform/flatland/flatland_screen.h"
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "ui/display/display.h"
 #include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/point.h"
@@ -15,7 +15,7 @@ namespace {
 constexpr gfx::Size kDefaultDisplaySize = gfx::Size(1280, 720);
 }  // namespace
 
-// TODO(crbug.com/1242052): Integrate with platform APIs for screen enumeration
+// TODO(crbug.com/40194936): Integrate with platform APIs for screen enumeration
 // and management, when available.
 
 FlatlandScreen::FlatlandScreen()

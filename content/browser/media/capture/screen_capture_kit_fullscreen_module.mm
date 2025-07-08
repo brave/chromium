@@ -11,16 +11,8 @@
 #import "base/task/single_thread_task_runner.h"
 #include "content/public/common/content_features.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 namespace {
-
-BASE_FEATURE(kScreenCaptureKitFullscreenModule,
-             "ScreenCaptureKitFullscreenModule",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 static NSString* const kApplicationNameKeynote = @"Keynote";
 static NSString* const kApplicationNameLibreOffice = @"LibreOffice";
@@ -98,41 +90,35 @@ MaybeCreateScreenCaptureKitFullscreenModule(
     scoped_refptr<base::SingleThreadTaskRunner> device_task_runner,
     ScreenCaptureKitResetStreamInterface& reset_stream_interface,
     SCWindow* original_window) {
-  if (base::FeatureList::IsEnabled(kScreenCaptureKitFullscreenModule)) {
-    // Check if we should enable the fullscreen module for this window and what
-    // mode to use.
-    if ([kApplicationNamePowerPoint
-            isEqualToString:original_window.owningApplication
-                                .applicationName]) {
-      return std::make_unique<ScreenCaptureKitFullscreenModule>(
-          device_task_runner, reset_stream_interface, original_window.windowID,
-          original_window.owningApplication.processID,
-          ScreenCaptureKitFullscreenModule::Mode::kPowerPoint);
-    }
-    if ([kApplicationNameKeynote
-            isEqualToString:original_window.owningApplication
-                                .applicationName]) {
-      return std::make_unique<ScreenCaptureKitFullscreenModule>(
-          device_task_runner, reset_stream_interface, original_window.windowID,
-          original_window.owningApplication.processID,
-          ScreenCaptureKitFullscreenModule::Mode::kKeynote);
-    }
-    if ([kApplicationNameOpenOffice
-            isEqualToString:original_window.owningApplication
-                                .applicationName] &&
-        IsOpenOfficeImpressWindow(original_window.title)) {
-      return std::make_unique<ScreenCaptureKitFullscreenModule>(
-          device_task_runner, reset_stream_interface, original_window.windowID,
-          original_window.owningApplication.processID,
-          ScreenCaptureKitFullscreenModule::Mode::kOpenOffice);
-    }
-    if ([kApplicationNameLibreOffice
-            isEqualToString:original_window.owningApplication
-                                .applicationName]) {
-      // TODO(crbug.com/1348011): Implement support for LibreOffice.
-      LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kLibreOffice);
-      return nullptr;
-    }
+  // Check if we should enable the fullscreen module for this window and what
+  // mode to use.
+  if ([kApplicationNamePowerPoint
+          isEqualToString:original_window.owningApplication.applicationName]) {
+    return std::make_unique<ScreenCaptureKitFullscreenModule>(
+        device_task_runner, reset_stream_interface, original_window.windowID,
+        original_window.owningApplication.processID,
+        ScreenCaptureKitFullscreenModule::Mode::kPowerPoint);
+  }
+  if ([kApplicationNameKeynote
+          isEqualToString:original_window.owningApplication.applicationName]) {
+    return std::make_unique<ScreenCaptureKitFullscreenModule>(
+        device_task_runner, reset_stream_interface, original_window.windowID,
+        original_window.owningApplication.processID,
+        ScreenCaptureKitFullscreenModule::Mode::kKeynote);
+  }
+  if ([kApplicationNameOpenOffice
+          isEqualToString:original_window.owningApplication.applicationName] &&
+      IsOpenOfficeImpressWindow(original_window.title)) {
+    return std::make_unique<ScreenCaptureKitFullscreenModule>(
+        device_task_runner, reset_stream_interface, original_window.windowID,
+        original_window.owningApplication.processID,
+        ScreenCaptureKitFullscreenModule::Mode::kOpenOffice);
+  }
+  if ([kApplicationNameLibreOffice
+          isEqualToString:original_window.owningApplication.applicationName]) {
+    // TODO(crbug.com/40233195): Implement support for LibreOffice.
+    LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kLibreOffice);
+    return nullptr;
   }
   LogModeToUma(ScreenCaptureKitFullscreenModule::Mode::kUnsupported);
   return nullptr;
@@ -218,7 +204,7 @@ void ScreenCaptureKitFullscreenModule::OnFullscreenShareableContentCreated(
       if (window.windowID == fullscreen_window_id_) {
         if (!window.isOnScreen) {
           fullscreen_mode_active_ = false;
-          reset_stream_interface_.ResetStreamTo(editor_window);
+          reset_stream_interface_->ResetStreamTo(editor_window);
         }
         break;
       }
@@ -233,7 +219,7 @@ void ScreenCaptureKitFullscreenModule::OnFullscreenShareableContentCreated(
       // instead.
       fullscreen_mode_active_ = true;
       fullscreen_window_id_ = fullscreen_window.windowID;
-      reset_stream_interface_.ResetStreamTo(fullscreen_window);
+      reset_stream_interface_->ResetStreamTo(fullscreen_window);
     }
   }
 }
@@ -280,7 +266,7 @@ SCWindow* ScreenCaptureKitFullscreenModule::GetFullscreenWindow(
           }
           break;
         case Mode::kLibreOffice:
-        // TODO(crbug.com/1348011): Implement support for LibreOffice.
+        // TODO(crbug.com/40233195): Implement support for LibreOffice.
         case Mode::kUnsupported:
           NOTREACHED();
       }

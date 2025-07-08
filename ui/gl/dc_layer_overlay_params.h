@@ -5,9 +5,10 @@
 #ifndef UI_GL_DC_LAYER_OVERLAY_PARAMS_H_
 #define UI_GL_DC_LAYER_OVERLAY_PARAMS_H_
 
+#include <optional>
+
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/point.h"
@@ -16,6 +17,7 @@
 #include "ui/gfx/geometry/rrect_f.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/hdr_metadata.h"
+#include "ui/gfx/overlay_layer_id.h"
 #include "ui/gfx/video_types.h"
 #include "ui/gl/dc_layer_overlay_image.h"
 #include "ui/gl/gl_export.h"
@@ -26,17 +28,22 @@ struct GL_EXPORT DCLayerOverlayParams {
   DCLayerOverlayParams();
   ~DCLayerOverlayParams();
 
+  DCLayerOverlayParams(DCLayerOverlayParams&&);
+  DCLayerOverlayParams& operator=(DCLayerOverlayParams&&);
+
   // Image to display in overlay - could be hardware or software video frame,
-  // swap chain, or dcomp surface. If |background_color| is present, this is
-  // ignored and can be null.
-  absl::optional<DCLayerOverlayImage> overlay_image;
+  // swap chain, or dcomp surface. If null and |background_color| is present,
+  // then this overlay will represents a solid color quad. If both this and
+  // |background_color| are null, this overlay will not have any visible output.
+  std::optional<DCLayerOverlayImage> overlay_image;
 
   // Stacking order relative to backbuffer which has z-order 0.
   int z_order = 1;
 
   // What part of |overlay_image| to display in pixels. Ignored, if this overlay
-  // represents a solid color.
-  gfx::Rect content_rect;
+  // represents a solid color. Usually integral, but can be non-integral in the
+  // case of combining occlusion with scaling.
+  gfx::RectF content_rect;
 
   // Bounds of the overlay in pre-transform space.
   gfx::Rect quad_rect;
@@ -46,7 +53,7 @@ struct GL_EXPORT DCLayerOverlayParams {
   gfx::Transform transform;
 
   // If present, then clip to |clip_rect| in root target space.
-  absl::optional<gfx::Rect> clip_rect;
+  std::optional<gfx::Rect> clip_rect;
 
   // When false, this overlay will be scaled with linear sampling.
   bool nearest_neighbor_filter = false;
@@ -56,25 +63,38 @@ struct GL_EXPORT DCLayerOverlayParams {
   // The rounded corner bounds, in root target space
   gfx::RRectF rounded_corner_bounds;
 
-  // If present, this overlay represents a solid color quad.
-  absl::optional<SkColor4f> background_color;
+  // If present, the overlay will contain this color as a background fill,
+  // blended behind |overlay_image|.
+  std::optional<SkColor4f> background_color;
 
-  //
-  // Below are parameters only used for |SwapChainPresenter|.
-  //
+  // Expected to be unique in a frame.
+  // See |OverlayCandidate::layer_id|.
+  gfx::OverlayLayerId layer_id;
 
-  gfx::ProtectedVideoType protected_video_type =
-      gfx::ProtectedVideoType::kClear;
+  // Parameters for video overlays, only used by |SwapChainPresenter|.
+  struct VideoParams {
+    VideoParams();
+    ~VideoParams();
 
-  gfx::ColorSpace color_space;
+    gfx::ProtectedVideoType protected_video_type =
+        gfx::ProtectedVideoType::kClear;
 
-  gfx::HDRMetadata hdr_metadata;
+    gfx::ColorSpace color_space;
 
-  // Indication of the overlay to be detected as possible full screen
-  // letterboxing.
-  // Go to viz::OverlayCandidate::possible_video_fullscreen_letterboxing for the
-  // details.
-  bool possible_video_fullscreen_letterboxing = false;
+    gfx::HDRMetadata hdr_metadata;
+
+    // P010 pixel format is used for 10-bit YUV video frames, either HDR or
+    // SDR.
+    bool is_p010_content = false;
+
+    // Indication of the overlay to be detected as possible full screen
+    // letterboxing.
+    // Go to viz::OverlayCandidate::possible_video_fullscreen_letterboxing for
+    // the details.
+    bool possible_video_fullscreen_letterboxing = false;
+  };
+
+  VideoParams video_params;
 };
 
 }  // namespace gl

@@ -6,8 +6,6 @@
 #define CHROME_BROWSER_PLUGINS_CHROME_CONTENT_BROWSER_CLIENT_PLUGINS_PART_H_
 
 #include "chrome/browser/chrome_content_browser_client_parts.h"
-#include "content/public/browser/browser_ppapi_host.h"
-#include "content/public/common/socket_permission_request.h"
 
 namespace plugins {
 
@@ -24,32 +22,10 @@ class ChromeContentBrowserClientPluginsPart
 
   ~ChromeContentBrowserClientPluginsPart() override;
 
-  // Corresponding to the ChromeContentBrowserClient function of the same name.
-  static bool IsPluginAllowedToUseDevChannelAPIs(
-      content::BrowserContext* browser_context,
-      const GURL& url);
-
-  static bool AllowPepperSocketAPI(
-      content::BrowserContext* browser_context,
-      const GURL& url,
-      bool private_api,
-      const content::SocketPermissionRequest* params);
-
-  static bool IsPepperVpnProviderAPIAllowed(
-      content::BrowserContext* browser_context,
-      const GURL& url);
-
-  static bool IsPluginAllowedToCallRequestOSFileHandle(
-      content::BrowserContext* browser_context,
-      const GURL& url);
-
-  static void DidCreatePpapiPlugin(content::BrowserPpapiHost* browser_host);
-
  private:
-  void ExposeInterfacesToRenderer(
-      service_manager::BinderRegistry* registry,
-      blink::AssociatedInterfaceRegistry* associated_registry,
-      content::RenderProcessHost* render_process_host) override;
+  void ExposeInterfacesToRendererForRenderFrameHost(
+      content::RenderFrameHost& frame_host,
+      blink::AssociatedInterfaceRegistry& associated_registry) override;
 };
 
 }  // namespace plugins

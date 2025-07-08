@@ -4,20 +4,18 @@
 
 package org.chromium.chrome.browser.omnibox.suggestions.action;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.omnibox.EntityInfoProto;
 import org.chromium.components.omnibox.action.OmniboxAction;
 import org.chromium.components.omnibox.action.OmniboxActionFactory;
 import org.chromium.components.omnibox.action.OmniboxActionFactoryJni;
 import org.chromium.components.omnibox.action.OmniboxPedalId;
 
-/**
- * A factory creating the OmniboxAction instances.
- */
+/** A factory creating the OmniboxAction instances. */
+@NullMarked
 public class OmniboxActionFactoryImpl implements OmniboxActionFactory {
-    private static OmniboxActionFactoryImpl sFactory;
+    private static @Nullable OmniboxActionFactoryImpl sFactory;
     private boolean mDialerAvailable;
 
     /** Private constructor to suppress direct instantiation of this class. */
@@ -33,7 +31,7 @@ public class OmniboxActionFactoryImpl implements OmniboxActionFactory {
      * Creates (if not already created) and returns the App-wide instance of the
      * OmniboxActionFactory.
      */
-    public static @NonNull OmniboxActionFactoryImpl get() {
+    public static OmniboxActionFactoryImpl get() {
         if (sFactory == null) {
             sFactory = new OmniboxActionFactoryImpl();
         }
@@ -41,30 +39,34 @@ public class OmniboxActionFactoryImpl implements OmniboxActionFactory {
     }
 
     /**
-     * Initialize (if not already done) and return the instance of the OmniboxActionFactory
-     * to be used until application is destroyed.
+     * Initialize (if not already done) and return the instance of the OmniboxActionFactory to be
+     * used until application is destroyed.
      */
     public void initNativeFactory() {
         OmniboxActionFactoryJni.get().setFactory(this);
     }
 
-    /**
-     * Destroy the OmniboxActionFactory if previously created.
-     */
+    /** Destroy the OmniboxActionFactory if previously created. */
     public void destroyNativeFactory() {
         OmniboxActionFactoryJni.get().setFactory(null);
     }
 
     @Override
-    public @Nullable OmniboxAction buildOmniboxPedal(long nativeInstance, @NonNull String hint,
-            @NonNull String accessibilityHint, @OmniboxPedalId int pedalId) {
+    public @Nullable OmniboxAction buildOmniboxPedal(
+            long nativeInstance,
+            String hint,
+            String accessibilityHint,
+            @OmniboxPedalId int pedalId) {
         return new OmniboxPedal(nativeInstance, hint, accessibilityHint, pedalId);
     }
 
     @Override
-    public @Nullable OmniboxAction buildActionInSuggest(long nativeInstance, @NonNull String hint,
-            @NonNull String accessibilityHint,
-            /* EntityInfoProto.ActionInfo.ActionType */ int actionType, @NonNull String actionUri) {
+    public @Nullable OmniboxAction buildActionInSuggest(
+            long nativeInstance,
+            String hint,
+            String accessibilityHint,
+            /* EntityInfoProto.ActionInfo.ActionType */ int actionType,
+            String actionUri) {
         if (actionType == EntityInfoProto.ActionInfo.ActionType.CALL_VALUE && !mDialerAvailable) {
             return null;
         }
@@ -73,8 +75,8 @@ public class OmniboxActionFactoryImpl implements OmniboxActionFactory {
     }
 
     @Override
-    public @Nullable OmniboxAction buildHistoryClustersAction(long nativeInstance,
-            @NonNull String hint, @NonNull String accessibilityHint, @NonNull String query) {
-        return new HistoryClustersAction(nativeInstance, hint, accessibilityHint, query);
+    public OmniboxAction buildOmniboxAnswerAction(
+            long nativeInstance, String hint, String accessibilityHint) {
+        return new OmniboxAnswerAction(nativeInstance, hint, accessibilityHint);
     }
 }

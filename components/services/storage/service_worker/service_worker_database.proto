@@ -22,7 +22,7 @@ message ServiceWorkerNavigationPreloadState {
   optional string header = 2;
 }
 
-// NEXT ID TO USE: 25
+// NEXT ID TO USE: 27
 message ServiceWorkerRegistrationData {
   enum ServiceWorkerScriptType {
     CLASSIC = 0;
@@ -59,10 +59,10 @@ message ServiceWorkerRegistrationData {
     STRICT_ORIGIN = 8;
   }
 
-  // https://wicg.github.io/private-network-access/#framework
+  // https://wicg.github.io/local-network-access/
   enum IPAddressSpace {
     UNKNOWN = 0;
-    LOCAL = 1;
+    LOOPBACK = 1;
     PRIVATE = 2;
     PUBLIC = 3;
   }
@@ -71,7 +71,7 @@ message ServiceWorkerRegistrationData {
     optional ReferrerPolicyValue referrer_policy = 1 [default = DEFAULT];
     optional int32 sandbox_flags = 2 [default = 0];
     optional IPAddressSpace ip_address_space = 3 [default = UNKNOWN];
-    // TODO(https://crbug.com/1177199): add content security policies
+    // TODO(crbug.com/40168691): add content security policies
   }
 
   message RouterRules {
@@ -79,8 +79,6 @@ message ServiceWorkerRegistrationData {
       message Condition {
         // Structure representing a URLPattern as described in:
         // https://wicg.github.io/urlpattern/.
-        // This currently only represents the pathname part of the pattern but
-        // other parts can be added as needed.
         message URLPattern {
           message Part {
             enum Modifier {
@@ -113,8 +111,22 @@ message ServiceWorkerRegistrationData {
               WildcardPattern full_wildcard = 5;
             }
           }
-          repeated Part pathname = 1;
+          message Options {
+            optional bool ignore_case = 1 [default = false];
+          }
+
+          repeated Part legacy_pathname = 1;
+
+          repeated Part protocol = 3;
+          repeated Part username = 4;
+          repeated Part password = 5;
           repeated Part hostname = 2;
+          repeated Part port = 6;
+          repeated Part pathname = 7;
+          repeated Part search = 8;
+          repeated Part hash = 9;
+
+          optional Options options = 10;
         }
         message Request {
           optional string method = 1;
@@ -154,6 +166,9 @@ message ServiceWorkerRegistrationData {
             kFencedframeDestination = 22;
             kWebIdentityDestination = 23;
             kDictionaryDestination = 24;
+            kSpeculationRulesDestination = 25;
+            kJsonDestination = 26;
+            kSharedStorageWorkletDestination = 27;
           }
           optional Destination destination = 3;
         }
@@ -164,6 +179,17 @@ message ServiceWorkerRegistrationData {
           }
           optional Status status = 1;
         }
+        // TODO(crbug.com/40285651): Remove and replace this to `condition`
+        message ConditionObject {
+          repeated Condition conditions = 1;
+        }
+        message OrCondition {
+          repeated ConditionObject objects = 1;
+        }
+        message NotCondition {
+          required ConditionObject object = 1;
+        }
+        // TODO(crbug.com/40285651): Make this a `message` to fit WebIDL
         oneof condition {
           // Used for representing URLPattern.
           URLPattern url_pattern = 1;
@@ -171,16 +197,34 @@ message ServiceWorkerRegistrationData {
           Request request = 2;
           // Used for representing running status.
           RunningStatus running_status = 3;
+          // Used for representing 'or' condition.
+          // The `_condition` suffix is to avoid conflicts with keywords in C++
+          OrCondition or_condition = 4;
+          // Used for representing 'not' condition.
+          // The `_condition` suffix is to avoid conflicts with keywords in C++
+          NotCondition not_condition = 5;
         }
       }
       message Source {
         message NetworkSource {}
-        message RaceSource {}
+        message RaceNetworkAndFetchEventSource {
+          reserved 1;         // Deprecated
+          reserved "target";  // Deprecated
+        }
         message FetchEventSource {}
+        message CacheSource {
+          optional string cache_name = 1;
+        }
+        message RaceNetworkAndCacheSource {
+          required CacheSource cache_source = 1;
+        }
         oneof source {
           NetworkSource network_source = 1;
-          RaceSource race_source = 2;
+          RaceNetworkAndFetchEventSource race_network_and_fetch_event_source =
+              2;
           FetchEventSource fetch_event_source = 3;
+          CacheSource cache_source = 4;
+          RaceNetworkAndCacheSource race_network_and_cache_source = 5;
         }
       }
       repeated Condition condition = 1;
@@ -245,6 +289,10 @@ message ServiceWorkerRegistrationData {
   optional PolicyContainerPolicies policy_container_policies = 23;
 
   optional RouterRules router_rules = 24;
+
+  optional bool has_hid_event_handlers = 25;
+
+  optional bool has_usb_event_handlers = 26;
 }
 
 message ServiceWorkerResourceRecord {

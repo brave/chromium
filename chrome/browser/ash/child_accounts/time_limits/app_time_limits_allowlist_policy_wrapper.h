@@ -11,8 +11,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/values.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 class AppId;
 
@@ -30,10 +29,9 @@ class AppTimeLimitsAllowlistPolicyWrapper {
   std::vector<AppId> GetAllowlistAppList() const;
 
  private:
-  raw_ptr<const base::Value::Dict, ExperimentalAsh> dict_;
+  raw_ptr<const base::Value::Dict> dict_;
 };
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time
 
 #endif  // CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_TIME_LIMITS_ALLOWLIST_POLICY_WRAPPER_H_

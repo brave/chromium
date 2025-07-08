@@ -5,6 +5,7 @@
 #include "components/send_tab_to_self/send_tab_to_self_infobar_delegate.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/notimplemented.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/send_tab_to_self/send_tab_to_self_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -20,10 +21,10 @@ SendTabToSelfInfoBarDelegate::Create(content::WebContents* web_contents,
       new SendTabToSelfInfoBarDelegate(web_contents, entry));
 }
 
-SendTabToSelfInfoBarDelegate::~SendTabToSelfInfoBarDelegate() {}
+SendTabToSelfInfoBarDelegate::~SendTabToSelfInfoBarDelegate() = default;
 
 std::u16string SendTabToSelfInfoBarDelegate::GetInfobarMessage() const {
-  // TODO(crbug.com/944602): Define real string.
+  // TODO(crbug.com/40619532): Define real string.
   NOTIMPLEMENTED();
   return u"Open";
 }
@@ -34,9 +35,9 @@ void SendTabToSelfInfoBarDelegate::OpenTab() {
       WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui::PageTransition::PAGE_TRANSITION_LINK,
       false /* is_renderer_initiated */);
-  web_contents_->OpenURL(open_url_params);
+  web_contents_->OpenURL(open_url_params, /*navigation_handle_callback=*/{});
 
-  // TODO(crbug.com/944602): Update the model to reflect that an infobar is
+  // TODO(crbug.com/40619532): Update the model to reflect that an infobar is
   // shown.
 }
 

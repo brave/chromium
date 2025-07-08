@@ -4,15 +4,16 @@
 
 package org.chromium.chrome.browser.browserservices.ui.controller.webapps;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Promise;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browserservices.ui.controller.Verifier;
 
 /**
  * Contains common implementation between {@link AddToHomescreenVerifier} and
  * {@link WebApkVerifier}.
  */
+@NullMarked
 public abstract class WebappVerifier implements Verifier {
     @Override
     public final Promise<Boolean> verify(String url) {
@@ -24,9 +25,8 @@ public abstract class WebappVerifier implements Verifier {
         return isUrlInScope(url);
     }
 
-    @Nullable
     @Override
-    public final String getVerifiedScope(String url) {
+    public final @Nullable String getVerifiedScope(String url) {
         if (isUrlInScope(url)) return getScope();
         return url;
     }
@@ -36,10 +36,8 @@ public abstract class WebappVerifier implements Verifier {
         return isUrlInScope(url);
     }
 
-    /**
-     * Returns the scope that the homscreen shortcut/WebAPK is valid for.
-     */
-    protected abstract String getScope();
+    /** Returns the scope that the homscreen shortcut/WebAPK is valid for. */
+    protected abstract @Nullable String getScope();
 
     /**
      * @return {@code true} if given {@code url} is in scope of the webapp.

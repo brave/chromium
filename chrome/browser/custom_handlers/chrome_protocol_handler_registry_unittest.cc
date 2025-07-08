@@ -68,4 +68,4 @@ TEST_F(ChromeProtocolHandlerRegistryTest, ExtensionHandler) {
       "news", chrome_extension_handler_url,
       blink::ProtocolHandlerSecurityLevel::kExtensionFeatures));
 }
-#endif
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)

@@ -6,10 +6,6 @@
 
 #import "base/check.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 AllWebStateObservationForwarder::AllWebStateObservationForwarder(
     WebStateList* web_state_list,
     web::WebStateObserver* observer)
@@ -62,5 +58,17 @@ void AllWebStateObservationForwarder::WebStateListDidChange(
           insert_change.inserted_web_state());
       break;
     }
+    case WebStateListChange::Type::kGroupCreate:
+      // Do nothing when a group is created.
+      break;
+    case WebStateListChange::Type::kGroupVisualDataUpdate:
+      // Do nothing when a tab group's visual data are updated.
+      break;
+    case WebStateListChange::Type::kGroupMove:
+      // Do nothing when a tab group is moved.
+      break;
+    case WebStateListChange::Type::kGroupDelete:
+      // Do nothing when a group is deleted.
+      break;
   }
 }

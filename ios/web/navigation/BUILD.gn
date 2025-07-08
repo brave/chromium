@@ -18,7 +18,9 @@ source_set("navigation") {
     ":core",
     ":navigation_manager_util",
     "//base",
+    "//components/security_interstitials/core:insecure_form_util",
     "//components/sessions:session_id",
+    "//ios/components/security_interstitials/https_only_mode:feature",
     "//ios/net",
     "//ios/web:core",
     "//ios/web/common",
@@ -33,11 +35,11 @@ source_set("navigation") {
     "//ios/web/public/session/proto",
     "//ios/web/security",
     "//ios/web/session",
+    "//ios/web/util",
     "//ios/web/web_state:user_interaction",
     "//ios/web/web_state:web_state_impl_header",
     "//ios/web/web_state/ui:web_controller_header",
     "//ios/web/web_state/ui:web_view_handler",
-    "//ios/web/web_view:util",
     "//net",
     "//services/metrics/public/cpp:metrics_cpp",
     "//ui/base",
@@ -74,7 +76,7 @@ source_set("core") {
   deps = [
     ":proto_util",
     "//base",
-    "//components/url_formatter:url_formatter",
+    "//components/url_formatter",
     "//ios/web/common:features",
     "//ios/web/common:user_agent",
     "//ios/web/navigation:wk_navigation_util",
@@ -97,6 +99,7 @@ source_set("core") {
     "navigation_manager_delegate.h",
     "navigation_manager_impl.h",
     "navigation_manager_impl.mm",
+    "navigation_util.mm",
     "referrer.cc",
     "synthesized_history_entry_data.h",
     "synthesized_history_entry_data.mm",
@@ -144,21 +147,6 @@ optimize_ts("navigation_listeners_js") {
   ]
 }
 
-source_set("session_restore_feature") {
-  deps = [
-    "//base",
-    "//ios/web/js_messaging",
-    "//ios/web/js_messaging:scoped_wk_script_message_handler",
-    "//ios/web/js_messaging:web_view_js_utils",
-    "//ios/web/public",
-    "//ios/web/public/js_messaging",
-  ]
-  sources = [
-    "session_restore_java_script_feature.h",
-    "session_restore_java_script_feature.mm",
-  ]
-}
-
 source_set("wk_navigation_util") {
   deps = [
     "//base",
@@ -192,10 +180,7 @@ source_set("navigation_manager_util") {
 
 source_set("proto_util") {
   public_deps = [ "//ios/web/public/session/proto" ]
-  deps = [
-    "//base",
-    "//ios/web/public/navigation",
-  ]
+  deps = [ "//base" ]
 
   sources = [
     "proto_util.h",

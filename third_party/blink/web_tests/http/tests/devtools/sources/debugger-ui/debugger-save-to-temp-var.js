@@ -6,10 +6,11 @@ import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as UIModule from 'devtools/ui/legacy/legacy.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests saving objects to temporary variables while paused.\n`);
-  await TestRunner.loadLegacyModule('console');
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.evaluateInPagePromise(`
       var thisObj;
@@ -52,11 +53,11 @@ import {SourcesTestRunner} from 'sources_test_runner';
   SourcesTestRunner.setQuiet(true);
   SourcesTestRunner.startDebuggerTest(step1);
 
-  TestRunner.addResult('Number of expressions: ' + expressions.length);
-  TestRunner.addResult('Names [temp3..temp7] are reserved\n');
-
   function step1() {
     SourcesTestRunner.runTestFunctionAndWaitUntilPaused(didPause);
+
+    TestRunner.addResult('Number of expressions: ' + expressions.length);
+    TestRunner.addResult('Names [temp3..temp7] are reserved\n');
   }
 
   function didPause() {
@@ -72,11 +73,16 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
     function didEvaluate(result) {
       TestRunner.assertTrue(!result.exceptionDetails, 'FAIL: was thrown. Expression: ' + expression);
-      SDK.consoleModel.saveToTempVariable(UI.context.flavor(SDK.ExecutionContext), result.object);
+      const executionContext = UIModule.Context.Context.instance().flavor(
+          SDK.RuntimeModel.ExecutionContext);
+      const consoleModel =
+          executionContext.target().model(SDK.ConsoleModel.ConsoleModel);
+      consoleModel.saveToTempVariable(executionContext, result.object);
       ConsoleTestRunner.waitUntilNthMessageReceived(2, evaluateNext);
     }
 
-    UI.context.flavor(SDK.ExecutionContext)
+    UIModule.Context.Context.instance()
+        .flavor(SDK.RuntimeModel.ExecutionContext)
         .evaluate({expression: expression, objectGroup: 'console'})
         .then(didEvaluate);
   }

@@ -4,17 +4,29 @@
 
 #include "content/public/test/fenced_frame_test_util.h"
 
+#include <algorithm>
+#include <string_view>
+#include <vector>
+
+#include "base/strings/string_number_conversions.h"
+#include "base/test/run_until.h"
 #include "base/trace_event/typed_macros.h"
 #include "content/browser/fenced_frame/fenced_frame.h"
+#include "content/browser/fenced_frame/fenced_frame_config.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/test/fenced_frame_test_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/blink/public/common/input/web_pointer_properties.h"
+#include "ui/gfx/geometry/point_f.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -45,11 +57,18 @@ FencedFrameTestHelper::FencedFrameTestHelper() {
   scoped_feature_list_.InitWithFeaturesAndParameters(
       {{blink::features::kFencedFrames, {}},
        {features::kPrivacySandboxAdsAPIsOverride, {}},
-       {blink::features::kInterestGroupStorage, {}},
+       {network::features::kInterestGroupStorage, {}},
        {blink::features::kAdInterestGroupAPI, {}},
        {blink::features::kFledge, {}},
        {blink::features::kFencedFramesAPIChanges, {}},
-       {blink::features::kFencedFramesDefaultMode, {}}},
+       {blink::features::kFencedFramesDefaultMode, {}},
+       {features::kFencedFramesEnforceFocus, {}},
+       {blink::features::kFencedFramesAutomaticBeaconCredentials, {}},
+       {blink::features::kFencedFramesLocalUnpartitionedDataAccess, {}},
+       {blink::features::kFencedFramesCrossOriginEventReporting, {}},
+       {blink::features::kFencedFramesReportEventHeaderChanges, {}},
+       {blink::features::kExemptUrlFromNetworkRevocationForTesting, {}},
+       {blink::features::kFencedFramesCrossOriginAutomaticBeaconData, {}}},
       {/* disabled_features */});
 }
 
@@ -82,7 +101,7 @@ RenderFrameHost* FencedFrameTestHelper::CreateFencedFrame(
   FencedFrame* fenced_frame = fenced_frames.back();
   // It is possible that we got the did stop loading notification because the
   // fenced frame was actually being destroyed. Check to make sure that's not
-  // the case. TODO(crbug.com/1123606): Consider weakly referencing the fenced
+  // the case. TODO(crbug.com/40053214): Consider weakly referencing the fenced
   // frame if the removal-and-stop-loading scenario is a useful one to test.
   EXPECT_EQ(previous_fenced_frame_count + 1,
             fenced_frame_parent_rfh->GetFencedFrames().size());
@@ -101,9 +120,9 @@ RenderFrameHost* FencedFrameTestHelper::CreateFencedFrame(
   // embedder-initiation urn navigations make sense.
   EXPECT_EQ(mode, blink::FencedFrame::DeprecatedFencedFrameMode::kOpaqueAds);
   GURL potentially_urn_url = url;
-  absl::optional<GURL> urn_uuid = fenced_frame_parent_rfh->GetPage()
-                                      .fenced_frame_urls_map()
-                                      .AddFencedFrameURLForTesting(url);
+  std::optional<GURL> urn_uuid = fenced_frame_parent_rfh->GetPage()
+                                     .fenced_frame_urls_map()
+                                     .AddFencedFrameURLForTesting(url);
   EXPECT_TRUE(urn_uuid.has_value());
   EXPECT_TRUE(urn_uuid->is_valid());
   potentially_urn_url = *urn_uuid;
@@ -140,12 +159,12 @@ void FencedFrameTestHelper::NavigateFencedFrameUsingFledge(
       const FLEDGE_DECISION_URL = "/interest_group/decision_logic.js";
 
       const page_origin = new URL($1).origin;
-      const bidding_url = new URL(FLEDGE_BIDDING_URL, page_origin)
+      const bidding_url = new URL(FLEDGE_BIDDING_URL, page_origin);
       const interest_group = {
         name: 'testAd1',
         owner: page_origin,
         biddingLogicUrl: bidding_url,
-        ads: [{renderURL: $1, bid: 1}],
+        ads: [{renderURL: $1, bid: 1, allowedReportingOrigins: [$1]}],
       };
 
       // Pick an arbitrarily high duration to guarantee that we never leave the
@@ -153,12 +172,10 @@ void FencedFrameTestHelper::NavigateFencedFrameUsingFledge(
       await navigator.joinAdInterestGroup(
           interest_group, /*durationSeconds=*/3000000);
 
-      const url_to_navigate = new URL(FLEDGE_DECISION_URL, page_origin);
-
       const auction_config = {
         seller: page_origin,
         interestGroupBuyers: [page_origin],
-        decisionLogicUrl: new URL(FLEDGE_DECISION_URL, page_origin),
+        decisionLogicURL: new URL(FLEDGE_DECISION_URL, page_origin),
       };
       auction_config.resolveToConfig = true;
 
@@ -212,7 +229,7 @@ RenderFrameHost* FencedFrameTestHelper::NavigateFrameInFencedFrameTree(
 void FencedFrameTestHelper::SendBasicRequest(
     WebContents* web_contents,
     GURL url,
-    absl::optional<std::string> content) {
+    std::optional<std::string> content) {
   // Construct the resource request.
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
       web_contents->GetPrimaryMainFrame()
@@ -226,7 +243,7 @@ void FencedFrameTestHelper::SendBasicRequest(
   request->method = net::HttpRequestHeaders::kPostMethod;
   request->trusted_params = network::ResourceRequest::TrustedParams();
   request->trusted_params->isolation_info =
-      net::IsolationInfo::CreateTransient();
+      net::IsolationInfo::CreateTransient(/*nonce=*/std::nullopt);
 
   std::unique_ptr<network::SimpleURLLoader> simple_url_loader =
       network::SimpleURLLoader::Create(std::move(request),
@@ -255,6 +272,18 @@ RenderFrameHost* FencedFrameTestHelper::GetMostRecentlyAddedFencedFrame(
   return fenced_frames.back()->GetInnerRoot();
 }
 
+// static
+std::vector<RenderFrameHost*> FencedFrameTestHelper::GetChildFencedFrameHosts(
+    RenderFrameHost* rfh) {
+  std::vector<RenderFrameHost*> fenced_hosts;
+  std::vector<FencedFrame*> fenced_frames =
+      static_cast<RenderFrameHostImpl*>(rfh)->GetFencedFrames();
+  for (FencedFrame* frame : fenced_frames) {
+    fenced_hosts.push_back(frame->GetInnerRoot());
+  }
+  return fenced_hosts;
+}
+
 GURL CreateFencedFrameURLMapping(RenderFrameHost* rfh, const GURL& url) {
   FrameTreeNode* target_node =
       static_cast<RenderFrameHostImpl*>(rfh)->frame_tree_node();
@@ -267,13 +296,184 @@ GURL AddAndVerifyFencedFrameURL(
     FencedFrameURLMapping* fenced_frame_url_mapping,
     const GURL& https_url,
     scoped_refptr<FencedFrameReporter> fenced_frame_reporter) {
-  absl::optional<GURL> urn_uuid =
+  std::optional<GURL> urn_uuid =
       fenced_frame_url_mapping->AddFencedFrameURLForTesting(
           https_url, std::move(fenced_frame_reporter));
   EXPECT_TRUE(urn_uuid.has_value());
   EXPECT_TRUE(urn_uuid->is_valid());
   return urn_uuid.value();
 }
+
+bool RevokeFencedFrameUntrustedNetwork(RenderFrameHost* rfh) {
+  static_cast<RenderFrameHostImpl*>(rfh)->DisableUntrustedNetworkInFencedFrame(
+      base::DoNothing());
+  return base::test::RunUntil(
+      [rfh]() { return rfh->IsUntrustedNetworkDisabled(); });
+}
+
+void ExemptUrlsFromFencedFrameNetworkRevocation(RenderFrameHost* rfh,
+                                                const std::vector<GURL>& urls) {
+  std::ranges::for_each(urls, [rfh](GURL url) {
+    static_cast<RenderFrameHostImpl*>(rfh)
+        ->ExemptUrlFromNetworkRevocationForTesting(url, base::DoNothing());
+  });
+}
+
+void SetFencedFrameConfig(RenderFrameHost* rfh, const GURL& url) {
+  FencedFrameConfig config(url);
+  FencedFrameProperties properties = FencedFrameProperties(config);
+
+  static_cast<RenderFrameHostImpl*>(rfh)
+      ->frame_tree_node()
+      ->set_fenced_frame_properties(properties);
+}
+
+void SimulateClickInFencedFrameTree(const ToRenderFrameHost& adapter,
+                                    blink::WebMouseEvent::Button button,
+                                    const gfx::PointF& point) {
+  blink::WebMouseEvent mouse_event(
+      blink::WebInputEvent::Type::kMouseDown,
+      blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::GetStaticTimeStampForTests());
+  mouse_event.button = button;
+  mouse_event.SetPositionInWidget(point);
+  mouse_event.click_count = 1;
+  adapter.render_frame_host()->GetRenderWidgetHost()->ForwardMouseEvent(
+      mouse_event);
+  mouse_event.SetType(blink::WebInputEvent::Type::kMouseUp);
+  adapter.render_frame_host()->GetRenderWidgetHost()->ForwardMouseEvent(
+      mouse_event);
+}
+
+gfx::PointF GetTopLeftCoordinatesOfElementWithId(
+    const ToRenderFrameHost& adapter,
+    std::string_view id) {
+  double x = EvalJs(adapter, content::JsReplace(R"(
+                                  const bounds =
+                                    document.getElementById($1).
+                                    getBoundingClientRect();
+                                  Math.floor(bounds.left)
+                                )",
+                                                id))
+                 .ExtractDouble();
+  double y = EvalJs(adapter, content::JsReplace(R"(
+                                  const bounds =
+                                    document.getElementById($1).
+                                    getBoundingClientRect();
+                                  Math.floor(bounds.top)
+                                )",
+                                                id))
+                 .ExtractDouble();
+
+  return gfx::PointF(x, y);
+}
+
+FencedFrameTestHelper::FencedFrameVisibilityObserver::
+    FencedFrameVisibilityObserver(WebContents* web_contents,
+                                  blink::mojom::FrameVisibility visibility,
+                                  RenderFrameHost* fenced_frame_root)
+    : WebContentsObserver(web_contents),
+      target_visibility_(visibility),
+      fenced_frame_root_(fenced_frame_root) {
+  CHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (fenced_frame_root_) {
+    CHECK(fenced_frame_root_->IsFencedFrameRoot());
+  }
+}
+
+void FencedFrameTestHelper::FencedFrameVisibilityObserver::RenderFrameCreated(
+    RenderFrameHost* render_frame_host) {
+  if (!render_frame_host->IsFencedFrameRoot()) {
+    return;
+  }
+
+  // If no fenced frame root node was provided at construction time, grab
+  // this first newly-created fenced frame root, and wait for this one to
+  // have `visibility_` instead.
+  if (!fenced_frame_root_) {
+    fenced_frame_root_ = render_frame_host;
+  }
+}
+
+void FencedFrameTestHelper::FencedFrameVisibilityObserver::
+    RenderFrameHostChanged(RenderFrameHost* old_host,
+                           RenderFrameHost* new_host) {
+  // The original host may be nullptr, but the new host replacing it should
+  // always be a fenced frame root.
+  if (!new_host->IsFencedFrameRoot()) {
+    return;
+  }
+
+  if (old_host == fenced_frame_root_) {
+    fenced_frame_root_ = new_host;
+  }
+}
+
+void FencedFrameTestHelper::FencedFrameVisibilityObserver::
+    OnFrameVisibilityChanged(RenderFrameHost* rfh,
+                             blink::mojom::FrameVisibility visibility) {
+  if (rfh != fenced_frame_root_) {
+    return;
+  }
+
+  if (visibility == target_visibility_) {
+    run_loop_.Quit();
+  }
+}
+
+void FencedFrameTestHelper::FencedFrameVisibilityObserver::Wait() {
+  if (static_cast<RenderFrameHostImpl*>(fenced_frame_root_.get())
+          ->visibility() == target_visibility_) {
+    return;
+  }
+
+  run_loop_.Run();
+}
+
+RenderFrameHost*
+FencedFrameTestHelper::CreateFencedFrameAndWaitUntilRenderedInViewport(
+    RenderFrameHost* parent_rfh,
+    base::optional_ref<const GURL> url) {
+  auto* parent_impl = static_cast<RenderFrameHostImpl*>(parent_rfh);
+  const char* ff_create_script =
+      R"({
+          let fenced_frame = document.createElement('fencedframe');
+          document.body.appendChild(fenced_frame);
+        })";
+  FencedFrameVisibilityObserver visibility_observer(
+      WebContentsImpl::FromRenderFrameHostImpl(parent_impl),
+      blink::mojom::FrameVisibility::kRenderedInViewport,
+      /*fenced_frame_root=*/nullptr);
+  EXPECT_TRUE(ExecJs(parent_impl, ff_create_script));
+  visibility_observer.Wait();
+  FrameTreeNode* ff_root_node = GetFencedFrameRootNode(
+      parent_impl->child_at(parent_impl->child_count() - 1));
+  EXPECT_TRUE(ff_root_node->IsFencedFrameRoot());
+  EXPECT_EQ(ff_root_node->current_frame_host()->visibility(),
+            blink::mojom::FrameVisibility::kRenderedInViewport);
+
+  if (url) {
+    const char* ff_navigate_script =
+        R"({
+            let fenced_frames =
+                document.getElementsByTagName('fencedframe');
+            let last_frame = fenced_frames[fenced_frames.length - 1];
+            last_frame.config = new FencedFrameConfig($1);
+          })";
+    TestFrameNavigationObserver navigation_observer(
+        ff_root_node->current_frame_host());
+    EXPECT_TRUE(ExecJs(parent_impl, JsReplace(ff_navigate_script, *url)));
+    navigation_observer.Wait();
+    EXPECT_TRUE(navigation_observer.last_navigation_succeeded());
+    EXPECT_EQ(ff_root_node->current_frame_host()->GetLastCommittedURL(), *url);
+    // The frame should not change visibility after navigating.
+    EXPECT_EQ(ff_root_node->current_frame_host()->visibility(),
+              blink::mojom::FrameVisibility::kRenderedInViewport);
+  }
+
+  return ff_root_node->current_frame_host();
+}
+
 }  // namespace test
 
 }  // namespace content

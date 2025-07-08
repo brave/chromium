@@ -4,13 +4,13 @@
 
 #include "chrome/browser/ash/child_accounts/time_limits/app_time_limits_allowlist_policy_wrapper.h"
 
+#include <optional>
+
 #include "base/logging.h"
 #include "chrome/browser/ash/child_accounts/time_limits/app_time_policy_helpers.h"
 #include "chrome/browser/ash/child_accounts/time_limits/app_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 AppTimeLimitsAllowlistPolicyWrapper::AppTimeLimitsAllowlistPolicyWrapper(
     const base::Value::Dict* dict)
@@ -30,13 +30,13 @@ std::vector<AppId> AppTimeLimitsAllowlistPolicyWrapper::GetAllowlistAppList()
   }
 
   for (const base::Value& value : *app_list) {
-    absl::optional<AppId> app_id = policy::AppIdFromDict(value.GetIfDict());
-    if (app_id)
+    std::optional<AppId> app_id = policy::AppIdFromDict(value.GetIfDict());
+    if (app_id) {
       return_value.push_back(*app_id);
+    }
   }
 
   return return_value;
 }
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time

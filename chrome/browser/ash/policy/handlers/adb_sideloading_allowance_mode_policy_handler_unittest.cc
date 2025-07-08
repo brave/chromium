@@ -14,22 +14,26 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/notifications/mock_adb_sideloading_policy_change_notification.h"
 #include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_task_environment.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
 constexpr char kFakeUserName[] = "test@example.com";
-constexpr char kFakeGaiaId[] = "1234567890";
+constexpr GaiaId::Literal kFakeGaiaId("1234567890");
 
 }  // namespace
 
@@ -43,14 +47,18 @@ class AdbSideloadingAllowanceModePolicyHandlerTest : public testing::Test {
       : local_state_(TestingBrowserProcess::GetGlobal()),
         user_manager_(new ash::FakeChromeUserManager()),
         user_manager_enabler_(base::WrapUnique(user_manager_.get())),
-        mock_notification_(
-            new ash::MockAdbSideloadingPolicyChangeNotification()) {
+        mock_notification_(new ash::MockAdbSideloadingPolicyChangeNotification(
+            TestingBrowserProcess::GetGlobal()
+                ->platform_part()
+                ->browser_policy_connector_ash())) {
     chromeos::PowerManagerClient::InitializeFake();
 
     adb_sideloading_allowance_mode_policy_handler_ =
         std::make_unique<AdbSideloadingAllowanceModePolicyHandler>(
             ash::CrosSettings::Get(), local_state_.Get(),
-            chromeos::PowerManagerClient::Get(), mock_notification_);
+            chromeos::PowerManagerClient::Get(),
+            // Ownership is moved to AdbSideloadingAllowanceModePolicyHandler.
+            base::WrapUnique(mock_notification_.get()));
 
     adb_sideloading_allowance_mode_policy_handler_
         ->SetCheckSideloadingStatusCallbackForTesting(
@@ -116,12 +124,15 @@ class AdbSideloadingAllowanceModePolicyHandlerTest : public testing::Test {
 
   content::BrowserTaskEnvironment task_environment_;
   ScopedTestingLocalState local_state_;
-  raw_ptr<ash::FakeChromeUserManager, ExperimentalAsh> user_manager_;
+  raw_ptr<ash::FakeChromeUserManager, DanglingUntriaged> user_manager_;
   user_manager::ScopedUserManager user_manager_enabler_;
 
   ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 
-  raw_ptr<ash::MockAdbSideloadingPolicyChangeNotification, ExperimentalAsh>
+  // Needed for `browser_policy_connector_ash()`.
+  ash::ScopedStubInstallAttributes scoped_stub_install_attributes_;
+
+  raw_ptr<ash::MockAdbSideloadingPolicyChangeNotification, DanglingUntriaged>
       mock_notification_;
   std::unique_ptr<AdbSideloadingAllowanceModePolicyHandler>
       adb_sideloading_allowance_mode_policy_handler_;

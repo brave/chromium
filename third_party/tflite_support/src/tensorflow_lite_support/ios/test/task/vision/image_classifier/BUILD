@@ -1,14 +1,13 @@
-load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
-load("@org_tensorflow//tensorflow/lite/ios:ios.bzl", "TFL_DEFAULT_TAGS", "TFL_DISABLED_SANITIZER_TAGS")
 load("@build_bazel_rules_apple//apple:ios.bzl", "ios_unit_test")
+load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 load("@org_tensorflow//tensorflow/lite:special_rules.bzl", "tflite_ios_lab_runner")
+load("@org_tensorflow//tensorflow/lite/ios:ios.bzl", "TFL_DEFAULT_TAGS", "TFL_DISABLED_SANITIZER_TAGS")
 load(
     "//tensorflow_lite_support/ios:ios.bzl",
     "TFL_TASK_MINIMUM_OS_VERSION",
 )
 
 package(
-    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:private"],
     licenses = ["notice"],  # Apache 2.0
 )

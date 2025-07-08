@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <tuple>
 
+#include "ash/constants/ash_features.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -25,6 +28,8 @@
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
 #include "chrome/browser/ash/file_manager/volume_manager_factory.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/disks/fake_disk_mount_manager.h"
 #include "content/public/test/browser_task_environment.h"
@@ -33,7 +38,6 @@
 #include "storage/browser/test/test_file_system_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 using ::base::test::RunClosure;
@@ -60,7 +64,7 @@ MATCHER_P(EntryStatusUrls, matcher, "") {
 }
 
 MATCHER_P(EntryStatusErrors, matcher, "") {
-  std::vector<absl::optional<base::File::Error>> errors;
+  std::vector<std::optional<base::File::Error>> errors;
   for (const auto& status : arg) {
     errors.push_back(status.error);
   }
@@ -88,7 +92,11 @@ std::unique_ptr<KeyedService> BuildVolumeManager(
       file_manager::VolumeManager::GetMtpStorageInfoCallback());
 }
 
-class CopyOrMoveIOTaskTest : public testing::TestWithParam<OperationType> {
+class CopyOrMoveIOTaskTestBase : public testing::Test {
+ public:
+  CopyOrMoveIOTaskTestBase()
+      : scoped_testing_local_state_(TestingBrowserProcess::GetGlobal()) {}
+
  protected:
   void SetUp() override {
     // Define a VolumeManager to associate with the testing profile.
@@ -108,11 +116,25 @@ class CopyOrMoveIOTaskTest : public testing::TestWithParam<OperationType> {
         base::FilePath::FromUTF8Unsafe(path));
   }
 
+  ScopedTestingLocalState scoped_testing_local_state_;
+  content::BrowserTaskEnvironment task_environment_;
+  ash::disks::FakeDiskMountManager disk_mount_manager_;
+  TestingProfile profile_;
+  base::ScopedTempDir temp_dir_;
+  ProgressStatus progress_;
+  scoped_refptr<storage::FileSystemContext> file_system_context_;
+  const blink::StorageKey kTestStorageKey =
+      blink::StorageKey::CreateFromStringForTesting("chrome-extension://abc");
+};
+
+class CopyOrMoveIOTaskTest : public CopyOrMoveIOTaskTestBase,
+                             public testing::WithParamInterface<OperationType> {
+ protected:
   State CheckDrivePooledQuota(bool is_shared_drive,
                               drive::FileError error,
                               drivefs::mojom::PooledQuotaUsagePtr usage) {
     progress_.sources.emplace_back(CreateFileSystemURL("foo.txt"),
-                                   absl::nullopt);
+                                   std::nullopt);
     base::CreateDirectory(temp_dir_.GetPath().Append("dest_folder"));
     progress_.SetDestinationFolder(CreateFileSystemURL("dest_folder/"));
     CopyOrMoveIOTaskImpl task(GetParam(), progress_, {},
@@ -128,7 +150,7 @@ class CopyOrMoveIOTaskTest : public testing::TestWithParam<OperationType> {
   State CheckSharedDriveQuota(drive::FileError error,
                               drivefs::mojom::FileMetadataPtr metadata) {
     progress_.sources.emplace_back(CreateFileSystemURL("foo.txt"),
-                                   absl::nullopt);
+                                   std::nullopt);
     base::CreateDirectory(temp_dir_.GetPath().Append("dest_folder"));
     progress_.SetDestinationFolder(CreateFileSystemURL("dest_folder/"));
     CopyOrMoveIOTaskImpl task(GetParam(), progress_, {},
@@ -140,15 +162,6 @@ class CopyOrMoveIOTaskTest : public testing::TestWithParam<OperationType> {
     task.GotSharedDriveMetadata(10, error, std::move(metadata));
     return progress_.state;
   }
-
-  content::BrowserTaskEnvironment task_environment_;
-  ash::disks::FakeDiskMountManager disk_mount_manager_;
-  TestingProfile profile_;
-  base::ScopedTempDir temp_dir_;
-  ProgressStatus progress_;
-  scoped_refptr<storage::FileSystemContext> file_system_context_;
-  const blink::StorageKey kTestStorageKey =
-      blink::StorageKey::CreateFromStringForTesting("chrome-extension://abc");
 };
 
 TEST_P(CopyOrMoveIOTaskTest, Basic) {
@@ -189,7 +202,7 @@ TEST_P(CopyOrMoveIOTaskTest, Basic) {
                 Field(&ProgressStatus::bytes_transferred, kTestFileSize),
                 Field(&ProgressStatus::sources,
                       EntryStatusErrors(
-                          ElementsAre(base::File::FILE_OK, absl::nullopt))),
+                          ElementsAre(base::File::FILE_OK, std::nullopt))),
                 Field(&ProgressStatus::outputs,
                       EntryStatusUrls(ElementsAre(expected_output_urls[0]))),
                 Field(&ProgressStatus::outputs,
@@ -337,7 +350,7 @@ TEST_P(CopyOrMoveIOTaskTest, MissingSource) {
                 Field(&ProgressStatus::sources, EntryStatusUrls(source_urls)),
                 Field(&ProgressStatus::sources,
                       EntryStatusErrors(ElementsAre(
-                          base::File::FILE_ERROR_NOT_FOUND, absl::nullopt))),
+                          base::File::FILE_ERROR_NOT_FOUND, std::nullopt))),
                 Field(&ProgressStatus::outputs, IsEmpty()))))
       .WillOnce(RunClosure(run_loop.QuitClosure()));
 
@@ -542,6 +555,148 @@ INSTANTIATE_TEST_SUITE_P(CopyOrMove,
                          testing::Values(OperationType::kCopy,
                                          OperationType::kMove));
 
+class CopyOrMoveIOTaskPauseResumeTest
+    : public CopyOrMoveIOTaskTestBase,
+      public testing::WithParamInterface<
+          std::tuple<OperationType, std::string, bool>> {
+ protected:
+  void SetUp() override {
+    CopyOrMoveIOTaskTestBase::SetUp();
+    scoped_feature_list_.InitAndEnableFeature(
+        ash::features::kFilesConflictDialog);
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_P(CopyOrMoveIOTaskPauseResumeTest, PauseResume) {
+  auto [type, conflict_resolve, conflict_apply_to_all] = GetParam();
+
+  std::string foo_contents = base::RandBytesAsString(kTestFileSize);
+  std::string bar_contents = base::RandBytesAsString(kTestFileSize);
+  ASSERT_TRUE(
+      base::WriteFile(temp_dir_.GetPath().Append("foo.txt"), foo_contents));
+  ASSERT_TRUE(
+      base::WriteFile(temp_dir_.GetPath().Append("bar.txt"), bar_contents));
+
+  ASSERT_TRUE(base::CreateDirectory(temp_dir_.GetPath().Append("dest_folder")));
+  // Create files with the same name in the destination directory.
+  ASSERT_TRUE(base::WriteFile(temp_dir_.GetPath().Append("dest_folder/foo.txt"),
+                              foo_contents));
+  ASSERT_TRUE(base::WriteFile(temp_dir_.GetPath().Append("dest_folder/bar.txt"),
+                              bar_contents));
+
+  base::RunLoop run_loop;
+  std::vector<storage::FileSystemURL> source_urls = {
+      CreateFileSystemURL("foo.txt"),
+      CreateFileSystemURL("bar.txt"),
+  };
+  std::string output_1 = (conflict_resolve == "replace")
+                             ? "dest_folder/foo.txt"
+                             : "dest_folder/foo (1).txt";
+  std::string output_2 = (conflict_resolve == "replace")
+                             ? "dest_folder/bar.txt"
+                             : "dest_folder/bar (1).txt";
+  std::vector<storage::FileSystemURL> expected_output_urls = {
+      CreateFileSystemURL(output_1),
+      CreateFileSystemURL(output_2),
+  };
+  auto dest = CreateFileSystemURL("dest_folder/");
+
+  auto base_matcher =
+      AllOf(Field(&ProgressStatus::type, type),
+            Field(&ProgressStatus::sources, EntryStatusUrls(source_urls)),
+            Property(&ProgressStatus::GetDestinationFolder, dest),
+            Field(&ProgressStatus::total_bytes, 2 * kTestFileSize));
+  base::MockRepeatingCallback<void(const ProgressStatus&)> progress_callback;
+  base::MockOnceCallback<void(ProgressStatus)> complete_callback;
+  // Progress callback may be called any number of times, so this expectation
+  // catches extra calls.
+  EXPECT_CALL(progress_callback,
+              Run(AllOf(Field(&ProgressStatus::state, State::kInProgress),
+                        base_matcher)))
+      .Times(AnyNumber());
+  CopyOrMoveIOTask task(type, source_urls, dest, &profile_,
+                        file_system_context_);
+  // We should get one progress callback with the first conflict.
+  PauseParams pause_params;
+  pause_params.conflict_params.emplace();
+  pause_params.conflict_params->conflict_name = "foo.txt";
+  pause_params.conflict_params->conflict_is_directory = false;
+  pause_params.conflict_params->conflict_multiple = true;
+  pause_params.conflict_params->conflict_target_url = dest.ToGURL().spec();
+  EXPECT_CALL(progress_callback,
+              Run(AllOf(Field(&ProgressStatus::state, State::kPaused),
+                        Field(&ProgressStatus::bytes_transferred, 0),
+                        Field(&ProgressStatus::pause_params, pause_params),
+                        base_matcher)))
+      .WillOnce([&task, conflict_resolve,
+                 conflict_apply_to_all](const ProgressStatus& status) {
+        ResumeParams params;
+        params.conflict_params.emplace(conflict_resolve, conflict_apply_to_all);
+        task.Resume(std::move(params));
+      });
+
+  if (!conflict_apply_to_all) {
+    // We should get another progress callback with the second conflict.
+    pause_params.conflict_params.emplace();
+    pause_params.conflict_params->conflict_name = "bar.txt";
+    pause_params.conflict_params->conflict_is_directory = false;
+    pause_params.conflict_params->conflict_multiple = false;
+    pause_params.conflict_params->conflict_target_url = dest.ToGURL().spec();
+    EXPECT_CALL(
+        progress_callback,
+        Run(AllOf(Field(&ProgressStatus::state, State::kPaused),
+                  Field(&ProgressStatus::bytes_transferred, kTestFileSize),
+                  Field(&ProgressStatus::pause_params, pause_params),
+                  base_matcher)))
+        .WillOnce([&task, conflict_resolve,
+                   conflict_apply_to_all](const ProgressStatus& status) {
+          ResumeParams params;
+          params.conflict_params.emplace(conflict_resolve,
+                                         conflict_apply_to_all);
+          task.Resume(std::move(params));
+        });
+  }
+  // We should get one complete callback when the copy finishes.
+  EXPECT_CALL(
+      complete_callback,
+      Run(AllOf(Field(&ProgressStatus::state, State::kSuccess),
+                Field(&ProgressStatus::bytes_transferred, 2 * kTestFileSize),
+                Field(&ProgressStatus::sources,
+                      EntryStatusErrors(ElementsAre(base::File::FILE_OK,
+                                                    base::File::FILE_OK))),
+                Field(&ProgressStatus::outputs,
+                      EntryStatusUrls(expected_output_urls)),
+                Field(&ProgressStatus::outputs,
+                      EntryStatusErrors(ElementsAre(base::File::FILE_OK,
+                                                    base::File::FILE_OK))),
+                base_matcher)))
+      .WillOnce(RunClosure(run_loop.QuitClosure()));
+
+  task.Execute(progress_callback.Get(), complete_callback.Get());
+  run_loop.Run();
+
+  // The files in dest should be replaced by the copied or moved files.
+  ExpectFileContents(temp_dir_.GetPath().Append(output_1), foo_contents);
+  ExpectFileContents(temp_dir_.GetPath().Append(output_2), bar_contents);
+  if (type == OperationType::kCopy) {
+    ExpectFileContents(temp_dir_.GetPath().Append("foo.txt"), foo_contents);
+    ExpectFileContents(temp_dir_.GetPath().Append("bar.txt"), bar_contents);
+  } else {  // kMove
+    EXPECT_FALSE(base::PathExists(temp_dir_.GetPath().Append("foo.txt")));
+    EXPECT_FALSE(base::PathExists(temp_dir_.GetPath().Append("bar.txt")));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(CopyOrMove,
+                         CopyOrMoveIOTaskPauseResumeTest,
+                         testing::Combine(testing::Values(OperationType::kCopy,
+                                                          OperationType::kMove),
+                                          testing::Values("replace",
+                                                          "keepboth"),
+                                          testing::Bool()));
+
 class CopyOrMoveIsCrossFileSystemTest : public testing::Test {
  public:
   CopyOrMoveIsCrossFileSystemTest() = default;
@@ -647,7 +802,7 @@ TEST_F(CopyOrMoveIsCrossFileSystemTest, SameVolumeNotDownloads) {
 
 TEST_F(CopyOrMoveIsCrossFileSystemTest, MyFilesToMyFiles) {
   // Downloads is intentionally misspelled in these 2 test cases. These paths
-  // should be interpreted as regular "My files" paths.
+  // should be interpreted as regular MyFiles paths.
   base::FilePath source_path = downloads_volume_path_.Append("a.txt");
   base::FilePath destination_path =
       downloads_volume_path_.Append("Download/a.txt");
@@ -662,21 +817,21 @@ TEST_F(CopyOrMoveIsCrossFileSystemTest, MyFileToDownloads) {
   base::FilePath source_path = downloads_volume_path_.Append("a.txt");
   base::FilePath destination_path =
       downloads_volume_path_.Append("Downloads/b/a.txt");
-  ASSERT_TRUE(IsCrossFileSystem(source_path, destination_path));
+  ASSERT_FALSE(IsCrossFileSystem(source_path, destination_path));
 
   source_path = downloads_volume_path_.Append("a/b.txt");
   destination_path = downloads_volume_path_.Append("Downloads");
-  ASSERT_TRUE(IsCrossFileSystem(source_path, destination_path));
+  ASSERT_FALSE(IsCrossFileSystem(source_path, destination_path));
 }
 
 TEST_F(CopyOrMoveIsCrossFileSystemTest, DownloadsToMyFiles) {
   base::FilePath source_path = downloads_volume_path_.Append("Downloads/a.txt");
   base::FilePath destination_path = downloads_volume_path_.Append("b/a.txt");
-  ASSERT_TRUE(IsCrossFileSystem(source_path, destination_path));
+  ASSERT_FALSE(IsCrossFileSystem(source_path, destination_path));
 
   source_path = downloads_volume_path_.Append("Downloads/a/b.txt");
   destination_path = downloads_volume_path_;
-  ASSERT_TRUE(IsCrossFileSystem(source_path, destination_path));
+  ASSERT_FALSE(IsCrossFileSystem(source_path, destination_path));
 }
 
 TEST_F(CopyOrMoveIsCrossFileSystemTest, DownloadsToDownloads) {

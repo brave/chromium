@@ -5,14 +5,13 @@
 #ifndef CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_TIME_NOTIFICATION_DELEGATE_H_
 #define CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_TIME_NOTIFICATION_DELEGATE_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
 
 namespace base {
 class TimeDelta;
 }  // namespace base
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 class AppId;
 enum class AppNotification;
@@ -29,11 +28,10 @@ class AppTimeNotificationDelegate {
 
   virtual void ShowAppTimeLimitNotification(
       const AppId& app_id,
-      const absl::optional<base::TimeDelta>& time_limit,
+      const std::optional<base::TimeDelta>& time_limit,
       AppNotification notification) = 0;
 };
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time
 
 #endif  // CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_TIME_NOTIFICATION_DELEGATE_H_

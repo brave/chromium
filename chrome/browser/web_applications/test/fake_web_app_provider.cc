@@ -16,12 +16,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/file_utils_wrapper.h"
-#include "chrome/browser/web_applications/isolated_web_apps/install_isolated_web_app_from_command_line.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_installation_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
 #include "chrome/browser/web_applications/manifest_update_manager.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
-#include "chrome/browser/web_applications/test/fake_externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/test/fake_os_integration_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_database_factory.h"
 #include "chrome/browser/web_applications/test/fake_web_app_ui_manager.h"
@@ -34,6 +35,7 @@
 #include "chrome/browser/web_applications/web_app_install_finalizer.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
 #include "chrome/browser/web_applications/web_app_origin_association_manager.h"
+#include "chrome/browser/web_applications/web_app_profile_deletion_manager.h"
 #include "chrome/browser/web_applications/web_app_provider_factory.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -44,11 +46,10 @@
 #include "chrome/common/chrome_switches.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/mock_data_type_local_change_processor.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/web_app_run_on_os_login_manager.h"
 #endif
 
@@ -61,9 +62,9 @@ std::unique_ptr<KeyedService> FakeWebAppProvider::BuildDefault(
       Profile::FromBrowserContext(context));
 
   // Do not call default production StartImpl if in TestingProfile.
-  provider->SetRunSubsystemStartupTasks(false);
+  provider->SetStartSystemOnStart(false);
 
-  // TODO(crbug.com/973324): Consider calling `CreateFakeSubsystems` in the
+  // TODO(crbug.com/41464466): Consider calling `CreateFakeSubsystems` in the
   // constructor instead.
   provider->CreateFakeSubsystems();
   provider->ConnectSubsystems();
@@ -73,9 +74,8 @@ std::unique_ptr<KeyedService> FakeWebAppProvider::BuildDefault(
 
 // static
 FakeWebAppProvider* FakeWebAppProvider::Get(Profile* profile) {
-  CHECK(profile->AsTestingProfile());
-  auto* test_provider = static_cast<FakeWebAppProvider*>(
-      WebAppProvider::GetForLocalAppsUnchecked(profile));
+  auto* test_provider = WebAppProvider::GetForLocalAppsUnchecked(profile)
+                            ->AsFakeWebAppProviderForTesting();
   CHECK(test_provider);
 
   return test_provider;
@@ -86,10 +86,11 @@ FakeWebAppProvider::FakeWebAppProvider(Profile* profile)
 
 FakeWebAppProvider::~FakeWebAppProvider() = default;
 
-void FakeWebAppProvider::SetRunSubsystemStartupTasks(
-    bool run_subsystem_startup_tasks) {
-  CheckNotStartedAndDisconnect();
-  run_subsystem_startup_tasks_ = run_subsystem_startup_tasks;
+void FakeWebAppProvider::SetStartSystemOnStart(bool run_system_on_start) {
+  CheckNotStartedAndDisconnect(
+      "The system was already started, perhaps the profile has already been "
+      "created & started.");
+  run_system_on_start_ = run_system_on_start;
 }
 
 void FakeWebAppProvider::SetSynchronizePreinstalledAppsOnStartup(
@@ -98,13 +99,23 @@ void FakeWebAppProvider::SetSynchronizePreinstalledAppsOnStartup(
   synchronize_preinstalled_app_on_startup_ = synchronize_on_startup;
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
+void FakeWebAppProvider::UseRealOsIntegrationManager() {
+  CheckNotStartedAndDisconnect();
+  auto file_handler_manager =
+      std::make_unique<WebAppFileHandlerManager>(profile_);
+  auto protocol_handler_manager =
+      std::make_unique<WebAppProtocolHandlerManager>(profile_);
+
+  SetOsIntegrationManager(std::make_unique<OsIntegrationManager>(
+      profile_, std::move(file_handler_manager),
+      std::move(protocol_handler_manager)));
+}
+
 void FakeWebAppProvider::SetEnableAutomaticIwaUpdates(
     AutomaticIwaUpdateStrategy automatic_iwa_update_strategy) {
   CheckNotStartedAndDisconnect();
   automatic_iwa_update_strategy_ = automatic_iwa_update_strategy;
 }
-#endif
 
 void FakeWebAppProvider::SetRegistrar(
     std::unique_ptr<WebAppRegistrarMutable> registrar) {
@@ -173,12 +184,12 @@ void FakeWebAppProvider::SetWebAppUiManager(
   ui_manager_ = std::move(ui_manager);
 }
 
-void FakeWebAppProvider::SetIsolatedWebAppCommandLineInstallManager(
-    std::unique_ptr<IsolatedWebAppCommandLineInstallManager>
-        iwa_command_line_install_manager) {
+void FakeWebAppProvider::SetIsolatedWebAppInstallationManager(
+    std::unique_ptr<IsolatedWebAppInstallationManager>
+        isolated_web_app_installation_manager) {
   CheckNotStartedAndDisconnect();
-  iwa_command_line_install_manager_ =
-      std::move(iwa_command_line_install_manager);
+  isolated_web_app_installation_manager_ =
+      std::move(isolated_web_app_installation_manager);
 }
 
 void FakeWebAppProvider::SetWebAppPolicyManager(
@@ -245,14 +256,6 @@ WebAppIconManager& FakeWebAppProvider::GetIconManager() const {
   return *icon_manager_;
 }
 
-#if BUILDFLAG(IS_CHROMEOS)
-WebAppRunOnOsLoginManager& FakeWebAppProvider::GetWebAppRunOnOsLoginManager()
-    const {
-  DCHECK(web_app_run_on_os_login_manager_);
-  return *web_app_run_on_os_login_manager_;
-}
-#endif
-
 WebAppCommandManager& FakeWebAppProvider::GetCommandManager() const {
   DCHECK(command_manager_);
   return *command_manager_;
@@ -279,8 +282,8 @@ OsIntegrationManager& FakeWebAppProvider::GetOsIntegrationManager() const {
 }
 
 void FakeWebAppProvider::StartWithSubsystems() {
-  CheckNotStartedAndDisconnect();
-  SetRunSubsystemStartupTasks(true);
+  CheckNotStartedAndDisconnect("Cannot start system if it's already started.");
+  SetStartSystemOnStart(true);
   Start();
 }
 
@@ -295,10 +298,9 @@ void FakeWebAppProvider::CreateFakeSubsystems() {
   SetWebContentsManager(std::make_unique<FakeWebContentsManager>());
 
   SetOsIntegrationManager(std::make_unique<FakeOsIntegrationManager>(
-      profile_, /*app_shortcut_manager=*/nullptr,
+      profile_,
       /*file_handler_manager=*/nullptr,
-      /*protocol_handler_manager=*/nullptr,
-      /*url_handler_manager=*/nullptr));
+      /*protocol_handler_manager=*/nullptr));
 
   SetSyncBridge(std::make_unique<WebAppSyncBridge>(
       &GetRegistrarMutable(), processor().CreateForwardingProcessor()));
@@ -307,8 +309,7 @@ void FakeWebAppProvider::CreateFakeSubsystems() {
 
   SetWebAppUiManager(std::make_unique<FakeWebAppUiManager>());
 
-  SetExternallyManagedAppManager(
-      std::make_unique<FakeExternallyManagedAppManager>(profile_));
+  IwaIdentityValidator::CreateSingleton();
 
   // Do not create real subsystems here. That will be done already by
   // WebAppProvider::CreateSubsystems in the WebAppProvider constructor.
@@ -332,25 +333,35 @@ void FakeWebAppProvider::Shutdown() {
     externally_managed_app_manager_->Shutdown();
   if (manifest_update_manager_)
     manifest_update_manager_->Shutdown();
-#if BUILDFLAG(IS_CHROMEOS)
   if (iwa_update_manager_) {
     iwa_update_manager_->Shutdown();
   }
-#endif
   if (install_manager_)
     install_manager_->Shutdown();
+  web_app_policy_manager_->Shutdown();
   if (icon_manager_)
     icon_manager_->Shutdown();
   if (install_finalizer_)
     install_finalizer_->Shutdown();
-  if (registrar_)
-    registrar_->Shutdown();
+  if (profile_deletion_manager_) {
+    profile_deletion_manager_->Shutdown();
+  }
   is_registry_ready_ = false;
 }
 
-void FakeWebAppProvider::CheckNotStartedAndDisconnect() {
+FakeWebAppProvider* FakeWebAppProvider::AsFakeWebAppProviderForTesting() {
+  return this;
+}
+
+FakeWebContentsManager* FakeWebAppProvider::GetFakeWebContentsManager() const {
+  return static_cast<FakeWebContentsManager*>(web_contents_manager_.get());
+}
+
+void FakeWebAppProvider::CheckNotStartedAndDisconnect(
+    std::string optional_message) {
   CHECK(!started_) << "Attempted to set a WebAppProvider subsystem after "
-                      "Start() was called.";
+                      "Start() was called. "
+                   << optional_message;
   connected_ = false;
 }
 
@@ -358,7 +369,6 @@ void FakeWebAppProvider::StartImpl() {
   preinstalled_web_app_manager_->SetSkipStartupSynchronizeForTesting(
       !synchronize_preinstalled_app_on_startup_);
 
-#if BUILDFLAG(IS_CHROMEOS)
   switch (automatic_iwa_update_strategy_) {
     case AutomaticIwaUpdateStrategy::kDefault:
       break;
@@ -369,14 +379,24 @@ void FakeWebAppProvider::StartImpl() {
       iwa_update_manager_->SetEnableAutomaticUpdatesForTesting(true);
       break;
   }
-#endif
 
-  if (run_subsystem_startup_tasks_) {
+  if (run_system_on_start_) {
     WebAppProvider::StartImpl();
   } else {
     on_registry_ready_.Signal();
     is_registry_ready_ = true;
   }
+}
+
+FakeWebAppProviderCreator::FakeWebAppProviderCreator()
+    : callback_(base::BindRepeating([](Profile* profile) {
+        return FakeWebAppProvider::BuildDefault(profile);
+      })) {
+  create_services_subscription_ =
+      BrowserContextDependencyManager::GetInstance()
+          ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
+              &FakeWebAppProviderCreator::OnWillCreateBrowserContextServices,
+              base::Unretained(this)));
 }
 
 FakeWebAppProviderCreator::FakeWebAppProviderCreator(

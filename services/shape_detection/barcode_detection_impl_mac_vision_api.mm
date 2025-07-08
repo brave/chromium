@@ -7,10 +7,6 @@
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace shape_detection {
 
 namespace {
@@ -22,19 +18,15 @@ class VisionAPI : public VisionAPIInterface {
   ~VisionAPI() override = default;
 
   NSArray<VNBarcodeSymbology>* GetSupportedSymbologies() const override {
-    if (@available(macOS 12.0, *)) {
-      VNDetectBarcodesRequest* barcodes_request =
-          [[VNDetectBarcodesRequest alloc] init];
-      NSError* error = nil;
-      NSArray<VNBarcodeSymbology>* symbologies =
-          [barcodes_request supportedSymbologiesAndReturnError:&error];
-      if (error) {
-        DLOG(ERROR) << base::SysNSStringToUTF8(error.localizedDescription);
-      }
-      return symbologies;
-    } else {
-      return VNDetectBarcodesRequest.supportedSymbologies;
+    VNDetectBarcodesRequest* barcodes_request =
+        [[VNDetectBarcodesRequest alloc] init];
+    NSError* error = nil;
+    NSArray<VNBarcodeSymbology>* symbologies =
+        [barcodes_request supportedSymbologiesAndReturnError:&error];
+    if (error) {
+      DLOG(ERROR) << base::SysNSStringToUTF8(error.localizedDescription);
     }
+    return symbologies;
   }
 };
 

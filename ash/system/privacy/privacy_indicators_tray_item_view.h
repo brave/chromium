@@ -11,7 +11,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "ui/compositor/throughput_tracker.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/compositor/compositor_metrics_tracker.h"
 
 namespace gfx {
 class LinearAnimation;
@@ -28,6 +29,8 @@ class Shelf;
 // is currently accessing camera/microphone.
 class ASH_EXPORT PrivacyIndicatorsTrayItemView : public TrayItemView,
                                                  public SessionObserver {
+  METADATA_HEADER(PrivacyIndicatorsTrayItemView, TrayItemView)
+
  public:
   enum AnimationState {
     // No animation is running.
@@ -54,7 +57,8 @@ class ASH_EXPORT PrivacyIndicatorsTrayItemView : public TrayItemView,
   // This enum covers all the possible variations for the privacy indicators
   // view type that we are interested in recording metrics, specifying whether
   // camera/mic access and screen sharing icons are showing. Note to keep in
-  // sync with enum PrivacyIndicatorsType in tools/metrics/histograms/enums.xml.
+  // sync with enum `PrivacyIndicatorsType` in
+  // tools/metrics/histograms/metadata/ash/enums.xml.
   enum class Type {
     kCamera = 1 << 1,
     kMicrophone = 1 << 2,
@@ -93,25 +97,22 @@ class ASH_EXPORT PrivacyIndicatorsTrayItemView : public TrayItemView,
   // Update the view according to the shelf alignment.
   void UpdateAlignmentForShelf(Shelf* shelf);
 
-  // TrayItemView:
-  std::u16string GetTooltipText(const gfx::Point& point) const override;
-
   // Update the view's visibility based on camera/mic access and screen sharing
   // state.
   void UpdateVisibility();
 
  private:
+  friend class PrivacyIndicatorsTrayItemViewPixelTest;
   friend class PrivacyIndicatorsTrayItemViewTest;
-  friend class CaptureModePrivacyIndicatorsTest;
 
   // TrayItemView:
   void PerformVisibilityAnimation(bool visible) override;
   void HandleLocaleChange() override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   void OnThemeChanged() override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   views::View* GetTooltipHandlerForPoint(const gfx::Point& point) override;
-  const char* GetClassName() const override;
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
   void AnimationCanceled(const gfx::Animation* animation) override;
@@ -147,12 +148,14 @@ class ASH_EXPORT PrivacyIndicatorsTrayItemView : public TrayItemView,
   // Record repeated shows metric when the timer is stop.
   void RecordRepeatedShows();
 
-  raw_ptr<views::BoxLayout, ExperimentalAsh> layout_manager_ = nullptr;
+  void UpdateTooltipText();
+
+  raw_ptr<views::BoxLayout> layout_manager_ = nullptr;
 
   // Owned by the views hierarchy.
-  raw_ptr<views::ImageView, ExperimentalAsh> camera_icon_ = nullptr;
-  raw_ptr<views::ImageView, ExperimentalAsh> microphone_icon_ = nullptr;
-  raw_ptr<views::ImageView, ExperimentalAsh> screen_share_icon_ = nullptr;
+  raw_ptr<views::ImageView> camera_icon_ = nullptr;
+  raw_ptr<views::ImageView> microphone_icon_ = nullptr;
+  raw_ptr<views::ImageView> screen_share_icon_ = nullptr;
 
   // Keep track of the current screen sharing state.
   bool is_screen_sharing_ = false;
@@ -173,16 +176,12 @@ class ASH_EXPORT PrivacyIndicatorsTrayItemView : public TrayItemView,
   // Used to record metrics of the number of shows per session.
   int count_visible_per_session_ = 0;
 
-  // Used to record metrics of repeated shows per 100 ms.
-  int count_repeated_shows_ = 0;
-  base::DelayTimer repeated_shows_timer_;
-
   // Keeps track of the last time the indicator starts showing. Used to record
   // visibility duration metrics.
   base::Time start_showing_time_;
 
   // Measure animation smoothness metrics for all the animations.
-  absl::optional<ui::ThroughputTracker> throughput_tracker_;
+  std::optional<ui::ThroughputTracker> throughput_tracker_;
 };
 
 }  // namespace ash

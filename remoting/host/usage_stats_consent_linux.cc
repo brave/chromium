@@ -5,26 +5,20 @@
 #include "remoting/host/usage_stats_consent.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/notreached.h"
-#include "base/strings/string_util.h"
+#include "base/notimplemented.h"
 #include "base/values.h"
 #include "remoting/base/file_path_util_linux.h"
+#include "remoting/base/is_google_email.h"
 #include "remoting/host/config_file_watcher.h"
 #include "remoting/host/host_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace remoting {
-
-namespace {
-// The default email domain for Googlers. Used to determine whether the host's
-// email address is Google-internal or not.
-constexpr char kGooglerEmailDomain[] = "@google.com";
-}  // namespace
 
 bool GetUsageStatsConsent(bool* allowed, bool* set_by_policy) {
   *set_by_policy = false;
@@ -32,26 +26,27 @@ bool GetUsageStatsConsent(bool* allowed, bool* set_by_policy) {
 
   std::string filename = GetHostHash() + ".json";
   base::FilePath config_path = GetConfigDirectoryPath().Append(filename);
-  absl::optional<base::Value::Dict> config(HostConfigFromJsonFile(config_path));
+  std::optional<base::Value::Dict> config(HostConfigFromJsonFile(config_path));
   if (!config.has_value()) {
     LOG(ERROR) << "No host config file found.";
     return false;
   }
 
-  // TODO(joedow): Check kUsageStatsConsentConfigPath to enable crash reporting
-  // for non-Google Linux hosts.  Also requires modifying the native message
-  // host to write the value during setup.
+  bool initialized = false;
+  auto usage_stats_consent = config->FindBool(kUsageStatsConsentConfigPath);
+  if (usage_stats_consent.has_value()) {
+    initialized = true;
+    *allowed = *usage_stats_consent;
+  }
   const std::string* host_owner_ptr = config->FindString(kHostOwnerConfigPath);
-  if (!host_owner_ptr) {
-    LOG(ERROR) << "Host config has no host_owner field.";
-    return false;
+  if (host_owner_ptr) {
+    // Override crash reporting for Google hosts.
+    initialized = true;
+    *allowed |= IsGoogleEmail(*host_owner_ptr);
   }
 
-  *allowed = base::EndsWith(*host_owner_ptr, kGooglerEmailDomain,
-                            base::CompareCase::INSENSITIVE_ASCII);
-
-  // Indicate that |allowed| was successfully initialized.
-  return true;
+  // Indicate whether |allowed| was successfully initialized.
+  return initialized;
 }
 
 bool IsUsageStatsAllowed() {

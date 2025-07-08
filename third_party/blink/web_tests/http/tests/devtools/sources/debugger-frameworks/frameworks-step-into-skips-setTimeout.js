@@ -5,10 +5,11 @@
 import {TestRunner} from 'test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that stepping into blackboxed framework will not pause on setTimeout() inside the framework.\n`);
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.loadHTML(`
       <input type="button" onclick="testFunction()" value="Test">
@@ -37,7 +38,7 @@ import {SourcesTestRunner} from 'sources_test_runner';
   `);
 
   var frameworkRegexString = '/framework\\.js$';
-  Common.settingForTest('skipStackFramesPattern').set(frameworkRegexString);
+  Common.Settings.settingForTest('skip-stack-frames-pattern').set(frameworkRegexString);
 
   SourcesTestRunner.startDebuggerTest(step1, true);
 

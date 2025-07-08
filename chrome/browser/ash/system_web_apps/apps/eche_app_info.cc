@@ -14,7 +14,9 @@
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
+#include "chrome/grit/generated_resources.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/display/screen.h"
 
 namespace {
@@ -24,25 +26,6 @@ constexpr gfx::Size kMinimumEcheSize(240, 240);
 
 }  // namespace
 
-std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForEcheApp() {
-  std::unique_ptr<web_app::WebAppInstallInfo> info =
-      std::make_unique<web_app::WebAppInstallInfo>();
-  info->start_url = GURL(ash::eche_app::kChromeUIEcheAppURL);
-  info->scope = GURL(ash::eche_app::kChromeUIEcheAppURL);
-  // |title| should come from a resource string, but this is the Eche app, and
-  // doesn't have one.
-  info->title = u"Eche App";
-  web_app::CreateIconInfoForSystemWebApp(
-      info->start_url,
-      {{"app_icon_256.png", 256, IDR_ASH_ECHE_APP_ICON_256_PNG}}, *info);
-  info->theme_color = 0xFFFFFFFF;
-  info->background_color = 0xFFFFFFFF;
-  info->display_mode = blink::mojom::DisplayMode::kMinimalUi;
-  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
-
-  return info;
-}
-
 EcheSystemAppDelegate::EcheSystemAppDelegate(Profile* profile)
     : ash::SystemWebAppDelegate(ash::SystemWebAppType::ECHE,
                                 "Eche",
@@ -51,15 +34,30 @@ EcheSystemAppDelegate::EcheSystemAppDelegate(Profile* profile)
 
 std::unique_ptr<web_app::WebAppInstallInfo>
 EcheSystemAppDelegate::GetWebAppInfo() const {
-  return CreateWebAppInfoForEcheApp();
+  GURL start_url = GURL(ash::eche_app::kChromeUIEcheAppURL);
+  auto info =
+      web_app::CreateSystemWebAppInstallInfoWithStartUrlAsIdentity(start_url);
+  info->scope = GURL(ash::eche_app::kChromeUIEcheAppURL);
+  info->title = l10n_util::GetStringUTF16(IDS_ECHE_APP_NAME);
+  web_app::CreateIconInfoForSystemWebApp(
+      info->start_url(),
+      {{"app_icon_256.png", 256, IDR_ASH_ECHE_APP_ICON_256_PNG}}, *info);
+  info->theme_color = 0xFFFFFFFF;
+  info->background_color = 0xFFFFFFFF;
+  info->display_mode = blink::mojom::DisplayMode::kMinimalUi;
+  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
+  return info;
 }
+
 bool EcheSystemAppDelegate::ShouldCaptureNavigations() const {
   return true;
 }
+
 bool EcheSystemAppDelegate::ShouldShowInLauncher() const {
   return false;
 }
-bool EcheSystemAppDelegate::ShouldShowInSearch() const {
+
+bool EcheSystemAppDelegate::ShouldShowInSearchAndShelf() const {
   return false;
 }
 
@@ -68,6 +66,10 @@ bool EcheSystemAppDelegate::ShouldAllowResize() const {
 }
 
 bool EcheSystemAppDelegate::ShouldAllowMaximize() const {
+  return false;
+}
+
+bool EcheSystemAppDelegate::ShouldAllowFullscreen() const {
   return false;
 }
 
@@ -81,16 +83,7 @@ bool EcheSystemAppDelegate::ShouldAllowScriptsToCloseWindows() const {
   return !base::FeatureList::IsEnabled(ash::features::kEcheSWADebugMode);
 }
 
-gfx::Rect EcheSystemAppDelegate::GetDefaultBounds(Browser* browser) const {
-  return GetDefaultBoundsForEche();
-}
-
-bool EcheSystemAppDelegate::IsAppEnabled() const {
-  return base::FeatureList::IsEnabled(ash::features::kEcheSWA);
-}
-
-// TODO(nayebi): Remove this after migrating completely from SWA to bubble.
-gfx::Rect EcheSystemAppDelegate::GetDefaultBoundsForEche() const {
+gfx::Rect EcheSystemAppDelegate::GetDefaultBounds(ash::BrowserDelegate*) const {
   // Ensures the Eche bounds is always 16:9 portrait aspect ratio and not more
   // than half of the windows.
   gfx::Rect bounds =
@@ -105,4 +98,8 @@ gfx::Rect EcheSystemAppDelegate::GetDefaultBoundsForEche() const {
   bounds.ClampToCenteredSize(
       gfx::Size(new_width, new_width * kDefaultAspectRatio));
   return bounds;
+}
+
+bool EcheSystemAppDelegate::IsAppEnabled() const {
+  return base::FeatureList::IsEnabled(ash::features::kEcheSWA);
 }

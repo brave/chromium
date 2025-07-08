@@ -2,21 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 
 import {waitForElementUpdate} from '../common/js/unittest_util.js';
-import {constants} from '../foreground/js/constants.js';
+import {ICON_TYPES} from '../foreground/js/constants.js';
 
-import {XfIcon} from './xf_icon.js';
-import {XfTree} from './xf_tree.js';
-import {TREE_ITEM_INDENT, TreeItemCollapsedEvent, TreeItemExpandedEvent, XfTreeItem} from './xf_tree_item.js';
+import type {XfIcon} from './xf_icon.js';
+import type {XfTree} from './xf_tree.js';
+import {TREE_ITEM_INDENT, type TreeItemCollapsedEvent, type TreeItemExpandedEvent, XfTreeItem} from './xf_tree_item.js';
 
 /** Construct a single tree item. */
 async function setUpSingleTreeItem() {
-  document.body.setAttribute('theme', 'refresh23');
-  document.body.innerHTML =
-      '<xf-tree><xf-tree-item id="item1" label="item1"></xf-tree-item></xf-tree>';
+  document.body.innerHTML = getTrustedHTML`
+    <xf-tree>
+      <xf-tree-item id="item1" label="item1"></xf-tree-item>
+    </xf-tree>
+  `;
   const element = document.querySelector('xf-tree-item');
   assertNotEquals(null, element);
   await waitForElementUpdate(element!);
@@ -30,7 +33,9 @@ async function setUpNestedTreeItems() {
   //    └── item1b
   //        └── item1bi
   // ── item2
-  document.body.innerHTML = '<xf-tree><xf-tree>';
+  document.body.innerHTML = getTrustedHTML`
+    <xf-tree><xf-tree>
+  `;
   const tree = document.querySelector('xf-tree')!;
   assertNotEquals(null, tree);
 
@@ -67,7 +72,7 @@ function getTreeItemById(id: string): XfTreeItem {
 /** Helper method to get inner elements from a tree item. */
 function getTreeItemInnerElements(treeItem: XfTreeItem): {
   root: HTMLLIElement,
-  treeRow: HTMLDivElement,
+  treeRow: HTMLElement,
   expandIcon: HTMLSpanElement,
   treeLabel: HTMLSpanElement,
   treeLabelIcon: XfIcon,
@@ -421,13 +426,38 @@ export async function testRemoveSelectedItem(done: () => void) {
   done();
 }
 
+/** Tests removal of the focused item. */
+export async function testRemoveFocusedItem(done: () => void) {
+  await setUpNestedTreeItems();
+  const tree = getTree();
+
+  // Focus item1a.
+  const item1a = getTreeItemById('item1a');
+  tree.focusedItem = item1a;
+
+  // Select item1b.
+  const item1b = getTreeItemById('item1b');
+  item1b.selected = true;
+  await waitForElementUpdate(item1b);
+
+  // Remove item1a.
+  const item1 = getTreeItemById('item1');
+  item1.removeChild(item1a);
+  await waitForElementUpdate(item1);
+
+  // The focused item should be the selected item now.
+  assertEquals('item1b', tree.focusedItem.id);
+
+  done();
+}
+
 /** Tests that iconSet has higher priority than icon property. */
 export async function testIconSetIgnoreIcon(done: () => void) {
   await setUpSingleTreeItem();
 
   // Set both icon and iconSet.
   const item1 = getTreeItemById('item1');
-  item1.icon = constants.ICON_TYPES.ANDROID_FILES;
+  item1.icon = ICON_TYPES.ANDROID_FILES;
   item1.iconSet = {
     icon16x16Url: undefined,
     icon32x32Url: 'fake-base64-data',

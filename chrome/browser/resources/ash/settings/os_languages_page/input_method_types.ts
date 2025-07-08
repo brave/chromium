@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// LINT.IfChange(JpOptionValues)
 export enum JapaneseInputMode {
   KANA = 'Kana',
   ROMAJI = 'Romaji',
@@ -34,11 +35,9 @@ export enum JapaneseSectionShortcut {
 }
 
 export enum JapaneseKeymapStyle {
-  CUSTOM = 'Custom',
   ATOK = 'Atok',
   MS_IME = 'MsIme',
   KOTOERI = 'Kotoeri',
-  MOBILE = 'Mobile',
   CHROME_OS = 'ChromeOs',
 }
 
@@ -47,3 +46,5 @@ export enum JapaneseShiftKeyModeStyle {
   ALPHANUMERIC = 'Alphanumeric',
   KATAKANA = 'Katakana',
 }
+// LINT.ThenChange(/chrome/browser/ash/input_method/japanese/japanese_prefs_constants.h:JpOptionValues)
+

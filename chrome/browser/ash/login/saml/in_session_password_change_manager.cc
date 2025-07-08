@@ -4,22 +4,32 @@
 
 #include "chrome/browser/ash/login/saml/in_session_password_change_manager.h"
 
-#include "ash/constants/ash_features.h"
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "ash/public/cpp/session/session_controller.h"
-#include "base/feature_list.h"
+#include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/location.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/task_traits.h"
+#include "base/time/time.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/saml/password_change_success_notification.h"
 #include "chrome/browser/ash/login/saml/password_expiry_notification.h"
+#include "chrome/browser/ash/login/saml/password_sync_token_fetcher.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/ash/in_session_password_change/password_change_dialogs.h"
-#include "chrome/common/chrome_features.h"
 #include "chromeos/ash/components/login/auth/auth_session_authenticator.h"
 #include "chromeos/ash/components/login/auth/public/authentication_error.h"
+#include "chromeos/ash/components/login/auth/public/key.h"
+#include "chromeos/ash/components/login/auth/public/saml_password_attributes.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/known_user.h"
@@ -34,7 +44,7 @@ using PasswordSource = InSessionPasswordChangeManager::PasswordSource;
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused. This must be kept in sync with
-// SamlInSessionPasswordChangeEvent in tools/metrics/histogram/enums.xml
+// SamlInSessionPasswordChangeEvent in tools/metrics/histograms/enums.xml
 enum class InSessionPasswordChangeEvent {
   kManagerCreated = 0,
   kNotified = 1,
@@ -158,8 +168,7 @@ void RecheckPasswordExpiryTask::CancelPendingRecheck() {
 // static
 std::unique_ptr<InSessionPasswordChangeManager>
 InSessionPasswordChangeManager::CreateIfEnabled(Profile* primary_profile) {
-  if (base::FeatureList::IsEnabled(::features::kInSessionPasswordChange) &&
-      primary_profile->GetPrefs()->GetBoolean(
+  if (primary_profile->GetPrefs()->GetBoolean(
           prefs::kSamlInSessionPasswordChangeEnabled)) {
     std::unique_ptr<InSessionPasswordChangeManager> manager =
         std::make_unique<InSessionPasswordChangeManager>(primary_profile);
@@ -386,7 +395,7 @@ void InSessionPasswordChangeManager::OnPasswordUpdateFailure(
     std::unique_ptr<UserContext> /*user_context*/,
     AuthenticationError error) {
   VLOG(1) << "Failed to change cryptohome password: "
-          << error.get_cryptohome_code();
+          << error.get_cryptohome_error();
   RecordCryptohomePasswordChangeFailure(password_source_);
   NotifyObservers(Event::CRYPTOHOME_PASSWORD_CHANGE_FAILURE);
 }
@@ -413,9 +422,8 @@ void InSessionPasswordChangeManager::OnPasswordUpdateSuccess(
   DismissExpiryNotification();
   PasswordChangeDialog::Dismiss();
   ConfirmPasswordChangeDialog::Dismiss();
-  if (features::IsSamlNotificationOnPasswordChangeSuccessEnabled()) {
-    PasswordChangeSuccessNotification::Show(primary_profile_);
-  }
+  PasswordChangeSuccessNotification::Show(primary_profile_);
+
   // We request a new sync token. It will be updated locally and signal the fact
   // of password change to other devices owned by the user.
   CreateTokenAsync();
@@ -450,7 +458,7 @@ void InSessionPasswordChangeManager::OnTokenVerified(bool is_valid) {
 
 void InSessionPasswordChangeManager::OnApiCallFailed(
     PasswordSyncTokenFetcher::ErrorType error_type) {
-  // TODO(crbug.com/1112896): Error types will be tracked by UMA histograms.
+  // TODO(crbug.com/40143230): Error types will be tracked by UMA histograms.
   // Going forward we should also consider re-trying token creation depending on
   // the error_type.
 }

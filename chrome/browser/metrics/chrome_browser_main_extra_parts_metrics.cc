@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
 
 #include <algorithm>
@@ -20,6 +25,7 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/power_monitor/power_monitor_buildflags.h"
 #include "base/rand_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/task_traits.h"
@@ -29,7 +35,6 @@
 #include "base/trace_event/trace_log.h"
 #include "base/version.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "build/config/compiler/compiler_buildflags.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
@@ -39,11 +44,14 @@
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
+#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/shell_integration.h"
+#include "chrome/browser/ui/performance_controls/performance_controls_metrics.h"
+#include "chrome/browser/web_applications/sampling_metrics_provider.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/flags_ui/pref_service_flags_storage.h"
 #include "components/metrics/android_metrics_helper.h"
+#include "components/performance_manager/public/performance_manager.h"
 #include "components/policy/core/common/management/management_service.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -51,9 +59,11 @@
 #include "components/variations/variations_ids_provider.h"
 #include "components/variations/variations_switches.h"
 #include "components/version_info/version_info_values.h"
+#include "components/webui/flags/pref_service_flags_storage.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
+#include "crypto/unexportable_key.h"
 #include "crypto/unexportable_key_metrics.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/browser_metrics.h"
 #include "ui/base/pointer/pointer_device.h"
@@ -66,7 +76,6 @@
 #include "chrome/browser/metrics/power/battery_discharge_reporter.h"
 #include "chrome/browser/metrics/power/power_metrics_reporter.h"
 #include "chrome/browser/metrics/power/process_monitor.h"
-#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID)
@@ -77,50 +86,48 @@
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if defined(__GLIBC__) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_LINUX)
+#if defined(__GLIBC__)
 #include <gnu/libc-version.h>
+#endif  // defined(__GLIBC__)
 
 #include "base/linux_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
-
-#if BUILDFLAG(IS_OZONE)
-#include "ui/events/devices/device_data_manager.h"
-#include "ui/events/devices/input_device_event_observer.h"
-#endif  // BUILDFLAG(IS_OZONE)
+#endif  // BUILDFLAG(IS_LINUX)
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/win/base_win_buildflags.h"
+#include "base/win/hardware_check.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "chrome/browser/metrics/key_credential_manager_support_reporter_win.h"
 #include "chrome/browser/shell_integration_win.h"
+#include "chrome/browser/win/cloud_synced_folder_checker.h"
 #include "chrome/installer/util/taskbar_util.h"
 #endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/cpp/crosapi_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 #if BUILDFLAG(IS_LINUX)
 #include "chrome/browser/metrics/pressure/pressure_metrics_reporter.h"
 #endif  // BUILDFLAG(IS_LINUX)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "components/user_manager/user_manager.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "components/power_metrics/system_power_monitor.h"
 #endif
+
+#if BUILDFLAG(IS_MAC)
+#include "base/mac/process_requirement.h"
+#include "chrome/common/chrome_version.h"
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace {
 
@@ -128,10 +135,16 @@ namespace {
 constexpr int kEnableBenchmarkingCountdownDefault = 3;
 constexpr char kEnableBenchmarkingPrefId[] = "enable_benchmarking_countdown";
 
+#if BUILDFLAG(IS_MAC)
+constexpr char kUnexportableKeysKeychainAccessGroup[] =
+    MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING
+                               ".unexportable-keys";
+#endif  // BUILDFLAG(IS_MAC)
+
 void RecordMemoryMetrics();
 
-// Gets the delay for logging memory related metrics for testing.
-absl::optional<base::TimeDelta> GetDelayForNextMemoryLogTest() {
+// Gets the delay for logging memory related metrics. Minimum is 1 second.
+base::TimeDelta GetDelayForNextMemoryLogTest() {
   int test_delay_in_minutes;
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
@@ -139,24 +152,28 @@ absl::optional<base::TimeDelta> GetDelayForNextMemoryLogTest() {
       base::StringToInt(command_line->GetSwitchValueASCII(
                             switches::kTestMemoryLogDelayInMinutes),
                         &test_delay_in_minutes)) {
-    return base::Minutes(test_delay_in_minutes);
+    // Setting --test-memory-log-delay-in-minutes=0 is useful for testing the
+    // feature, but zero delay tends to overwhelm the system.
+    return test_delay_in_minutes <= 0 ? base::Seconds(1)
+                                      : base::Minutes(test_delay_in_minutes);
   }
-  return absl::nullopt;
+  return memory_instrumentation::GetDelayForNextMemoryLog();
 }
 
 // Records memory metrics after a delay.
 void RecordMemoryMetricsAfterDelay() {
   content::GetUIThreadTaskRunner({})->PostDelayedTask(
       FROM_HERE, base::BindOnce(&RecordMemoryMetrics),
-      GetDelayForNextMemoryLogTest().value_or(
-          memory_instrumentation::GetDelayForNextMemoryLog()));
+      GetDelayForNextMemoryLogTest());
 }
 
-// Records memory metrics, and then triggers memory colleciton after a delay.
+// Records memory metrics, and then triggers memory collection after a delay.
 void RecordMemoryMetrics() {
   scoped_refptr<ProcessMemoryMetricsEmitter> emitter(
       new ProcessMemoryMetricsEmitter);
   emitter->FetchAndEmitProcessMemoryMetrics();
+
+  performance_manager::PerformanceManager::RecordMemoryMetrics();
 
   RecordMemoryMetricsAfterDelay();
 }
@@ -358,55 +375,12 @@ enum class UmaLinuxDistro {
   kMaxValue = kZorin,
 };
 
-enum UMALinuxGlibcVersion {
+enum UMALinuxGlibcVersion : uint32_t {
   UMA_LINUX_GLIBC_NOT_PARSEABLE,
   UMA_LINUX_GLIBC_UNKNOWN,
   UMA_LINUX_GLIBC_2_11,
   // To log newer versions, just update tools/metrics/histograms/histograms.xml.
 };
-
-enum UMATouchEventFeatureDetectionState {
-  UMA_TOUCH_EVENT_FEATURE_DETECTION_ENABLED,
-  UMA_TOUCH_EVENT_FEATURE_DETECTION_AUTO_ENABLED,
-  UMA_TOUCH_EVENT_FEATURE_DETECTION_AUTO_DISABLED,
-  UMA_TOUCH_EVENT_FEATURE_DETECTION_DISABLED,
-  // NOTE: Add states only immediately above this line. Make sure to
-  // update the enum list in tools/metrics/histograms/histograms.xml
-  // accordingly.
-  UMA_TOUCH_EVENT_FEATURE_DETECTION_STATE_COUNT
-};
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-// These values are written to logs.  New enum values can be added, but existing
-// enums must never be renumbered or deleted and reused.
-enum class ChromeOSChannel {
-  kUnknown = 0,
-  kCanary = 1,
-  kDev = 2,
-  kBeta = 3,
-  kStable = 4,
-  kMaxValue = kStable,
-};
-
-// Records the underlying Chrome OS release channel, which may be different than
-// the Lacros browser's release channel.
-void RecordChromeOSChannel() {
-  ChromeOSChannel os_channel = ChromeOSChannel::kUnknown;
-  std::string release_track;
-  if (base::SysInfo::GetLsbReleaseValue(crosapi::kChromeOSReleaseTrack,
-                                        &release_track)) {
-    if (release_track == crosapi::kReleaseChannelStable)
-      os_channel = ChromeOSChannel::kStable;
-    else if (release_track == crosapi::kReleaseChannelBeta)
-      os_channel = ChromeOSChannel::kBeta;
-    else if (release_track == crosapi::kReleaseChannelDev)
-      os_channel = ChromeOSChannel::kDev;
-    else if (release_track == crosapi::kReleaseChannelCanary)
-      os_channel = ChromeOSChannel::kCanary;
-  }
-  base::UmaHistogramEnumeration("ChromeOS.Lacros.OSChannel", os_channel);
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 void RecordMicroArchitectureStats() {
 #if defined(ARCH_CPU_X86_FAMILY)
@@ -415,8 +389,6 @@ void RecordMicroArchitectureStats() {
   base::UmaHistogramEnumeration("Platform.IntelMaxMicroArchitecture", arch,
                                 base::CPU::MAX_INTEL_MICRO_ARCHITECTURE);
 #endif  // defined(ARCH_CPU_X86_FAMILY)
-  base::UmaHistogramSparse("Platform.LogicalCpuCount",
-                           base::SysInfo::NumberOfProcessors());
 }
 
 #if BUILDFLAG(IS_LINUX)
@@ -708,9 +680,7 @@ void RecordLinuxDistro() {
 #endif  // BUILDFLAG(IS_LINUX)
 
 void RecordLinuxGlibcVersion() {
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if defined(__GLIBC__) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if defined(__GLIBC__) && BUILDFLAG(IS_LINUX)
   base::Version version(gnu_get_libc_version());
 
   UMALinuxGlibcVersion glibc_version_result = UMA_LINUX_GLIBC_NOT_PARSEABLE;
@@ -734,85 +704,9 @@ void RecordLinuxGlibcVersion() {
 #endif
 }
 
-void RecordTouchEventState() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  const std::string touch_enabled_switch =
-      command_line.HasSwitch(switches::kTouchEventFeatureDetection)
-          ? command_line.GetSwitchValueASCII(
-                switches::kTouchEventFeatureDetection)
-          : switches::kTouchEventFeatureDetectionAuto;
-
-  UMATouchEventFeatureDetectionState state;
-  if (touch_enabled_switch.empty() ||
-      touch_enabled_switch == switches::kTouchEventFeatureDetectionEnabled) {
-    state = UMA_TOUCH_EVENT_FEATURE_DETECTION_ENABLED;
-  } else if (touch_enabled_switch ==
-             switches::kTouchEventFeatureDetectionAuto) {
-    state = (ui::GetTouchScreensAvailability() ==
-             ui::TouchScreensAvailability::ENABLED)
-                ? UMA_TOUCH_EVENT_FEATURE_DETECTION_AUTO_ENABLED
-                : UMA_TOUCH_EVENT_FEATURE_DETECTION_AUTO_DISABLED;
-  } else if (touch_enabled_switch ==
-             switches::kTouchEventFeatureDetectionDisabled) {
-    state = UMA_TOUCH_EVENT_FEATURE_DETECTION_DISABLED;
-  } else {
-    NOTREACHED();
-    return;
-  }
-
-  base::UmaHistogramEnumeration("Touchscreen.TouchEventsEnabled", state,
-                                UMA_TOUCH_EVENT_FEATURE_DETECTION_STATE_COUNT);
-}
-
-#if BUILDFLAG(IS_OZONE)
-
-// Asynchronously records the touch event state when the ui::DeviceDataManager
-// completes a device scan.
-class AsynchronousTouchEventStateRecorder
-    : public ui::InputDeviceEventObserver {
- public:
-  AsynchronousTouchEventStateRecorder();
-
-  AsynchronousTouchEventStateRecorder(
-      const AsynchronousTouchEventStateRecorder&) = delete;
-  AsynchronousTouchEventStateRecorder& operator=(
-      const AsynchronousTouchEventStateRecorder&) = delete;
-
-  ~AsynchronousTouchEventStateRecorder() override;
-
-  // ui::InputDeviceEventObserver overrides.
-  void OnDeviceListsComplete() override;
-};
-
-AsynchronousTouchEventStateRecorder::AsynchronousTouchEventStateRecorder() {
-  ui::DeviceDataManager::GetInstance()->AddObserver(this);
-}
-
-AsynchronousTouchEventStateRecorder::~AsynchronousTouchEventStateRecorder() {
-  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
-}
-
-void AsynchronousTouchEventStateRecorder::OnDeviceListsComplete() {
-  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
-  RecordTouchEventState();
-}
-
-#endif  // BUILDFLAG(IS_OZONE)
-
 #if BUILDFLAG(IS_WIN)
-void RecordPinnedToTaskbarProcessError(bool error) {
-  base::UmaHistogramBoolean("Windows.IsPinnedToTaskbar.ProcessError", error);
-}
-
-void OnShellHandlerConnectionError() {
-  RecordPinnedToTaskbarProcessError(true);
-}
-
 // Record the UMA histogram when a response is received.
 void OnIsPinnedToTaskbarResult(bool succeeded, bool is_pinned_to_taskbar) {
-  RecordPinnedToTaskbarProcessError(false);
-
   // Used for histograms; do not reorder.
   enum Result { NOT_PINNED = 0, PINNED = 1, FAILURE = 2, NUM_RESULTS };
 
@@ -826,7 +720,7 @@ void OnIsPinnedToTaskbarResult(bool succeeded, bool is_pinned_to_taskbar) {
   // If Chrome is not pinned to taskbar, clear the recording that the installer
   // pinned Chrome to the taskbar, so that if the user pins Chrome back to the
   // taskbar, we don't count launches as coming from an installer-pinned
-  // shortcut.  TODO(https://crbug.com/1353953): We currently only check if
+  // shortcut.  TODO(crbug.com/40235395): We currently only check if
   // Chrome is pinned to the taskbar 1 out every 100 launches, which makes this
   // less meaningful, so if keeping track of whether the installer pinned Chrome
   // to the taskbar is important, we need to deal with that.
@@ -849,7 +743,6 @@ void OnIsPinnedToTaskbarResult(bool succeeded, bool is_pinned_to_taskbar) {
 // startup.
 void RecordIsPinnedToTaskbarHistogram() {
   shell_integration::win::GetIsPinnedToTaskbarState(
-      base::BindOnce(&OnShellHandlerConnectionError),
       base::BindOnce(&OnIsPinnedToTaskbarResult));
 }
 
@@ -883,15 +776,73 @@ bool IsParallelDllLoadingEnabled() {
 // process.
 void RecordAppCompatMetrics() {
   HMODULE mod = ::GetModuleHandleW(L"AcLayers.dll");
-  base::UmaHistogramBoolean("Windows.AcLayersLoaded", mod ? true : false);
+  base::UmaHistogramBoolean("Windows.AcLayersLoaded", !!mod);
+}
+
+void RecordWin11HardwareRequirementsMetrics(
+    const base::win::HardwareEvaluationResult& result) {
+  base::UmaHistogramBoolean("Windows.Win11UpgradeEligible",
+                            result.IsEligible());
+  base::UmaHistogramBoolean("Windows.Win11HardwareRequirements.CPUCheck",
+                            result.cpu);
+  base::UmaHistogramBoolean("Windows.Win11HardwareRequirements.MemoryCheck",
+                            result.memory);
+  base::UmaHistogramBoolean("Windows.Win11HardwareRequirements.DiskCheck",
+                            result.disk);
+  base::UmaHistogramBoolean("Windows.Win11HardwareRequirements.FirmwareCheck",
+                            result.firmware);
+  base::UmaHistogramBoolean("Windows.Win11HardwareRequirements.TPMCheck",
+                            result.tpm);
+}
+
+void MaybeRecordOneDriveSyncMetrics() {
+  if (!base::FeatureList::IsEnabled(
+          cloud_synced_folder_checker::features::kCloudSyncedFolderChecker)) {
+    return;
+  }
+
+  cloud_synced_folder_checker::CloudSyncStatus status =
+      cloud_synced_folder_checker::EvaluateOneDriveSyncStatus();
+
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.Synced",
+                            status.synced());
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.DesktopSynced",
+                            status.desktop_synced());
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.DocumentsSynced",
+                            status.documents_synced());
 }
 
 #endif  // BUILDFLAG(IS_WIN)
 
 void RecordDisplayHDRStatus(const display::Display& display) {
   base::UmaHistogramBoolean("Hardware.Display.SupportsHDR",
-                            display.color_spaces().SupportsHDR());
+                            display.GetColorSpaces().SupportsHDR());
 }
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+// Records whether Chrome is the default PDF viewer.
+void RecordDefaultPdfViewerState() {
+#if BUILDFLAG(IS_MAC)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForUTType, "com.adobe.pdf");
+#elif BUILDFLAG(IS_WIN)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForFileExtension, ".pdf");
+#else
+#error Unsupported platform
+#endif
+  auto record_default_state_callback =
+      std::move(is_default_callback)
+          .Then(base::BindOnce(
+              [](shell_integration::DefaultWebClientState default_state) {
+                base::UmaHistogramEnumeration(
+                    "PDF.DefaultState", default_state,
+                    shell_integration::NUM_DEFAULT_STATES);
+              }));
+  base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock()},
+                             std::move(record_default_state_callback));
+}
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 // Called on a background thread, with low priority to avoid slowing down
 // startup with metrics that aren't trivial to compute.
@@ -917,6 +868,8 @@ void RecordStartupMetrics() {
 
   base::UmaHistogramBoolean("Windows.HasHighResolutionTimeTicks",
                             base::TimeTicks::IsHighResolution());
+  base::UmaHistogramBoolean("Windows.HasThreadTicks",
+                            base::ThreadTicks::IsSupported());
 
   // Determine whether parallel DLL loading is enabled for the browser process
   // executable. This is disabled by default on fresh Windows installations, but
@@ -926,8 +879,24 @@ void RecordStartupMetrics() {
   base::UmaHistogramBoolean("Windows.ParallelDllLoadingEnabled",
                             IsParallelDllLoadingEnabled());
   RecordAppCompatMetrics();
-  crypto::MaybeMeasureTpmOperations();
+
+  MaybeRecordOneDriveSyncMetrics();
+
+  if (base::win::OSInfo::Kernel32Version() < base::win::Version::WIN11) {
+    base::win::HardwareEvaluationResult result =
+        base::win::EvaluateWin11HardwareRequirements();
+    RecordWin11HardwareRequirementsMetrics(result);
+  }
+  key_credential_manager_support::ReportKeyCredentialManagerSupport();
 #endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  crypto::UnexportableKeyProvider::Config config;
+#if BUILDFLAG(IS_MAC)
+  config.keychain_access_group = kUnexportableKeysKeychainAccessGroup;
+#endif  // BUILDFLAG(IS_MAC)
+  crypto::MaybeMeasureTpmOperations(std::move(config));
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
   // Record whether Chrome is the default browser or not.
   // Disabled on Linux due to hanging browser tests, see crbug.com/1216328.
@@ -938,16 +907,23 @@ void RecordStartupMetrics() {
                                 shell_integration::NUM_DEFAULT_STATES);
 #endif  // !BUILDFLAG(IS_LINUX)
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  RecordChromeOSChannel();
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  // Record whether Chrome is the default PDF viewer.
+  RecordDefaultPdfViewerState();
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_MAC)
+  base::mac::ProcessRequirement::MaybeGatherMetrics();
 #endif
 }
+
+}  // namespace
 
 #if BUILDFLAG(IS_ANDROID)
 bool IsBundleForMixedDeviceAccordingToVersionCode(
     const std::string& version_code) {
   // Primary bitness of the bundle is encoded in the last digit of the version
-  // code.
+  // code. And the variant (package name) is encoded in the second to last.
   //
   // From build/util/android_chrome_version.py:
   //       'arm': {
@@ -963,13 +939,30 @@ bool IsBundleForMixedDeviceAccordingToVersionCode(
   //          '64_32': 8,
   //          '64': 9,
   //      },
+  //
+  //      _PACKAGE_NAMES = {
+  //          'CHROME': 0,
+  //          'CHROME_MODERN': 10,
+  //          'MONOCHROME': 20,
+  //          'TRICHROME': 30,
+  //          [...]
+
+  if (version_code.length() < 2) {
+    return false;
+  }
+
+  // '32' and '64' bundles go on 32bit-only and 64bit-only devices, so exclude
+  // them.
   std::set<char> arch_codes_mixed = {'1', '2', '3', '7', '8'};
   char arch_code = version_code.back();
-  return arch_codes_mixed.count(arch_code) > 0;
+
+  // Only 'TRICHROME' supports 64-bit.
+  constexpr char kTriChromeVariant = '3';
+  char variant = version_code[version_code.length() - 2];
+
+  return arch_codes_mixed.count(arch_code) > 0 && variant == kTriChromeVariant;
 }
 #endif  // BUILDFLAG(IS_ANDROID)
-
-}  // namespace
 
 ChromeBrowserMainExtraPartsMetrics::ChromeBrowserMainExtraPartsMetrics()
     : display_count_(0) {}
@@ -978,7 +971,6 @@ ChromeBrowserMainExtraPartsMetrics::~ChromeBrowserMainExtraPartsMetrics() =
     default;
 
 void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
-#if !BUILDFLAG(IS_ANDROID)
   // Initialize the TabStatsTracker singleton instance. Must be initialized
   // before `responsiveness::Watcher`, which happens in
   // BrowserMainLoop::PreMainMessageLoopRun(), thus the decision to use
@@ -991,7 +983,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
         std::make_unique<metrics::TabStatsTracker>(
             g_browser_process->local_state()));
   }
-#endif
 }
 
 void ChromeBrowserMainExtraPartsMetrics::PostCreateMainMessageLoop() {
@@ -1012,7 +1003,7 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
 
   // Log once here at browser start rather than at each renderer launch.
   ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("ClangPGO",
-#if BUILDFLAG(CLANG_PGO)
+#if BUILDFLAG(CLANG_PGO_OPTIMIZED)
 #if BUILDFLAG(USE_THIN_LTO)
                                                             "EnabledWithThinLTO"
 #else
@@ -1025,7 +1016,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
 
   // Records whether or not the Segment heap is in use.
 #if BUILDFLAG(IS_WIN)
-
   if (base::win::GetVersion() >= base::win::Version::WIN10_20H1) {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinSegmentHeap",
 #if BUILDFLAG(ENABLE_SEGMENT_HEAP)
@@ -1038,17 +1028,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinSegmentHeap",
                                                               "NotSupported");
   }
-
-  // Records whether or not CFG indirect call dispatch guards are present
-  // or not.
-  ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinCFG",
-#if BUILDFLAG(WIN_ENABLE_CFG_GUARDS)
-                                                            "Enabled"
-#else
-                                                            "Disabled"
-#endif
-  );
-
 #endif  // BUILDFLAG(IS_WIN)
 
   // Register synthetic Finch trials proposed by PartitionAlloc.
@@ -1083,41 +1062,47 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
       IsBundleForMixedDeviceAccordingToVersionCode(
           base::android::BuildInfo::GetInstance()->package_version_code());
   if (is_device_of_interest) {
-    uint32_t gws_experiment_id = 0;
+    std::vector<std::string> gws_experiment_ids;
     std::string trial_group;
     base::Version product_version(PRODUCT_VERSION);
 #if defined(ARCH_CPU_64_BITS)
     trial_group = "64bit";
+    gws_experiment_ids.push_back("3368915");
     if (product_version.IsValid()) {
-      // For now, we only plan to run the experiment in Chrome 116 and 117, so
+      // For now, we only plan to run the experiment in Chrome 117+ and 118+, so
       // only send GWS IDs for those versions.
-      switch (product_version.components()[0]) {
-        case 116:
-          gws_experiment_id = 3367343;
-          break;
-        case 117:
-          gws_experiment_id = 3367345;
-          break;
-        default:
-            // Leave 0-initialized.
-            ;
+      auto milestone = product_version.components()[0];
+      if (milestone >= 117) {
+        gws_experiment_ids.push_back("3367345");
+      }
+      if (milestone >= 118) {
+        gws_experiment_ids.push_back("3368917");
+      }
+      if (milestone >= 119) {
+        gws_experiment_ids.push_back("3369945");
+      }
+      if (milestone >= 120) {
+        gws_experiment_ids.push_back("3369947");
       }
     }
 #else   // defined(ARCH_CPU_64_BITS)
+    gws_experiment_ids.push_back("3368914");
     trial_group = "32bit";
     if (product_version.IsValid()) {
-      // For now, we only plan to run the experiment in Chrome 116 and 117, so
+      // For now, we only plan to run the experiment in Chrome 117+ and 118+, so
       // only send GWS IDs for those versions.
-      switch (product_version.components()[0]) {
-        case 116:
-          gws_experiment_id = 3367342;
-          break;
-        case 117:
-          gws_experiment_id = 3367344;
-          break;
-        default:
-            // Leave 0-initialized.
-            ;
+      auto milestone = product_version.components()[0];
+      if (milestone >= 117) {
+        gws_experiment_ids.push_back("3367344");
+      }
+      if (milestone >= 118) {
+        gws_experiment_ids.push_back("3368916");
+      }
+      if (milestone >= 119) {
+        gws_experiment_ids.push_back("3369944");
+      }
+      if (milestone >= 120) {
+        gws_experiment_ids.push_back("3369946");
       }
     }
 #endif  // defined(ARCH_CPU_64_BITS)
@@ -1128,11 +1113,8 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
         "BitnessForMidRangeRAM_wVersion",
         std::string(PRODUCT_VERSION) + "_" + trial_group,
         variations::SyntheticTrialAnnotationMode::kCurrentLog);
-    if (gws_experiment_id) {
-      std::vector<std::string> ids = {base::NumberToString(gws_experiment_id)};
-      variations::VariationsIdsProvider::GetInstance()->ForceVariationIds(ids,
-                                                                          "");
-    }
+    variations::VariationsIdsProvider::GetInstance()->ForceVariationIds(
+        gws_experiment_ids, "");
   }
 #endif  // BUILDFLAG(IS_ANDROID)
 }
@@ -1148,24 +1130,6 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   base::ThreadPool::PostTask(FROM_HERE, kBestEffortTaskTraits,
                              base::BindOnce(&RecordLinuxDistro));
 #endif
-
-#if BUILDFLAG(IS_OZONE)
-  // The touch event state for Ozone based event sub-systems are based on device
-  // scans that happen asynchronously. So we may need to attach an observer to
-  // wait until these scans complete.
-  if (ui::DeviceDataManager::GetInstance()->AreDeviceListsComplete()) {
-    RecordTouchEventState();
-  } else {
-    input_device_event_observer_ =
-        std::make_unique<AsynchronousTouchEventStateRecorder>();
-  }
-#else
-  RecordTouchEventState();
-#endif  // BUILDFLAG(IS_OZONE)
-
-#if BUILDFLAG(IS_MAC)
-  RecordMacMetrics();
-#endif  // BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_WIN)
   // RecordStartupMetrics calls into shell_integration::GetDefaultBrowser(),
@@ -1206,7 +1170,16 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   display_observer_.emplace(this);
 
 #if !BUILDFLAG(IS_ANDROID)
+// In ChromeOS, the chrome application typically starts at the login screen and
+// waits for the user to log in before opening a browser window, so calling
+// `BeginFirstWebContentsProfiling()` is inappropriate because the
+// `BrowserList` is typically empty at this point. Similarly, a restart after a
+// crash (which has no login screen) requires the user to click a notification
+// prompt before browser windows are restored, so the `BrowserList` is also
+// empty in this case.
+#if !BUILDFLAG(IS_CHROMEOS)
   metrics::BeginFirstWebContentsProfiling();
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // Instantiate the power-related metrics reporters.
 
@@ -1216,7 +1189,7 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   // The TabStatsTracker always exists (except during unit tests), while the
   // BatteryStateSampler only exists on platform where a BatteryLevelProvider
   // implementation exists.
-  if (metrics::TabStatsTracker::GetInstance() &&
+  if (metrics::TabStatsTracker::HasInstance() &&
       base::BatteryStateSampler::Get()) {
     battery_discharge_reporter_ = std::make_unique<BatteryDischargeReporter>(
         base::BatteryStateSampler::Get());
@@ -1229,6 +1202,13 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
     power_metrics_reporter_ =
         std::make_unique<PowerMetricsReporter>(process_monitor_.get());
   }
+
+  performance_intervention_metrics_reporter_ =
+      std::make_unique<PerformanceInterventionMetricsReporter>(
+          g_browser_process->local_state());
+
+  web_app_metrics_provider_ =
+      std::make_unique<web_app::SamplingMetricsProvider>();
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_LINUX)
@@ -1258,10 +1238,22 @@ void ChromeBrowserMainExtraPartsMetrics::PreMainMessageLoopRun() {
   }
 }
 
-void ChromeBrowserMainExtraPartsMetrics::PostMainMessageLoopRun() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  profile_manager_observation_.Reset();
-#endif
+void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
+  if (metrics::TabStatsTracker::HasInstance()) {
+    // responsiveness::Watcher currently outlives TabStatsTracker and
+    // RemoveObserver is never called (see UsageScenarioTracker). This should be
+    // considered/addressed if refining Watcher's lifetime or migrating
+    // TabStatsTracker away from global state, as this could lead to a dangling
+    // pointer or similar.
+    metrics::TabStatsTracker::ClearInstance();
+  }
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Reset the pointer to `performance_intervention_metrics_reporter_` to ensure
+  // that PrefService outlives the metrics reporter to prevent the reporter from
+  // holding a dangling pointer.
+  performance_intervention_metrics_reporter_.reset();
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void ChromeBrowserMainExtraPartsMetrics::RegisterPrefs(
@@ -1277,10 +1269,14 @@ void ChromeBrowserMainExtraPartsMetrics::HandleEnableBenchmarkingCountdown(
   std::set<std::string> flags = storage->GetFlags();
 
   // The implicit assumption here is that chrome://flags are stored in
-  // flags_ui::PrefServiceFlagsStorage and the string matches the command line
-  // flag. If the flag is not found (which should be the case for almost all
-  // users) then this method short-circuits and does nothing.
-  if (flags.find(variations::switches::kEnableBenchmarking) == flags.end()) {
+  // flags_ui::PrefServiceFlagsStorage and the multi-value switch has format
+  // enable-benchmarking@<n>.
+  std::string prefix =
+      base::StrCat({variations::switches::kEnableBenchmarking, "@"});
+  auto it = std::find_if(
+      flags.begin(), flags.end(),
+      [&prefix](std::string flag) { return base::StartsWith(flag, prefix); });
+  if (it == flags.end()) {
     return;
   }
 
@@ -1291,7 +1287,7 @@ void ChromeBrowserMainExtraPartsMetrics::HandleEnableBenchmarkingCountdown(
     pref_service->ClearPref(kEnableBenchmarkingPrefId);
 
     // Clear the flag storage.
-    flags.erase(variations::switches::kEnableBenchmarking);
+    flags.erase(it);
     storage->SetFlags(std::move(flags));
   } else {
     pref_service->SetInteger(kEnableBenchmarkingPrefId, countdown);
@@ -1300,16 +1296,23 @@ void ChromeBrowserMainExtraPartsMetrics::HandleEnableBenchmarkingCountdown(
 
 void ChromeBrowserMainExtraPartsMetrics::
     HandleEnableBenchmarkingCountdownAsync() {
-  // On ChromeOS we must wait until post-login to be able to accurately assess
-  // whether the enable-benchmarking flag has been enabled. This logic assumes
-  // that it always runs pre-login.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  profile_manager_observation_.Observe(g_browser_process->profile_manager());
-#else
-  about_flags::GetStorage(/*profile=*/nullptr,
+  Profile* profile = nullptr;
+#if BUILDFLAG(IS_CHROMEOS)
+  // This logic is subtle. There are two ways for PostBrowserStart to be called
+  // on ChromeOS. The first is when the device first shows the login screen. In
+  // this case the profile is the login profile. The second is after the user
+  // logs in. If any flags have been changed from the login profile's flags,
+  // then all of ash is restarted. We only care about invoking this logic in the
+  // second case. Thus we check if IsUserLoggedIn() to guard the logic.
+  if (!user_manager::UserManager::IsInitialized() ||
+      !user_manager::UserManager::Get()->IsUserLoggedIn()) {
+    return;
+  }
+  profile = g_browser_process->profile_manager()->GetPrimaryUserProfile();
+#endif
+  about_flags::GetStorage(profile,
                           base::BindOnce(&HandleEnableBenchmarkingCountdown,
                                          g_browser_process->local_state()));
-#endif
 }
 
 void ChromeBrowserMainExtraPartsMetrics::OnDisplayAdded(
@@ -1318,8 +1321,8 @@ void ChromeBrowserMainExtraPartsMetrics::OnDisplayAdded(
   RecordDisplayHDRStatus(new_display);
 }
 
-void ChromeBrowserMainExtraPartsMetrics::OnDisplayRemoved(
-    const display::Display& old_display) {
+void ChromeBrowserMainExtraPartsMetrics::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   EmitDisplaysChangedMetric();
 }
 
@@ -1339,23 +1342,6 @@ void ChromeBrowserMainExtraPartsMetrics::EmitDisplaysChangedMetric() {
                                 display_count_);
   }
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-void ChromeBrowserMainExtraPartsMetrics::OnProfileAdded(Profile* profile) {
-  // This may be called with the login profile which is a side effect when
-  // ash-chrome restarts during login. We only want to trigger the
-  // HandleEnableBenchmarkingCountdown logic for the primary profile.
-
-  if (!user_manager::UserManager::Get()->IsPrimaryUser(
-          ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile))) {
-    return;
-  }
-
-  about_flags::GetStorage(profile,
-                          base::BindOnce(&HandleEnableBenchmarkingCountdown,
-                                         g_browser_process->local_state()));
-}
-#endif
 
 namespace chrome {
 

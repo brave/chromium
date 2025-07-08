@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests exception message from eval on worker context in console contains stack trace.\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('console');
   await TestRunner.evaluateInPagePromise(`
       function startWorker()
@@ -16,7 +17,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
       }
   `);
 
-  TestRunner.addSniffer(SDK.RuntimeModel.prototype, 'executionContextCreated', contextCreated);
+  TestRunner.addSniffer(SDK.RuntimeModel.RuntimeModel.prototype, 'executionContextCreated', contextCreated);
   TestRunner.evaluateInPage('startWorker()');
 
   function contextCreated() {

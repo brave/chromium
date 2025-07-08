@@ -12,9 +12,12 @@
 
 #include "base/component_export.h"
 #include "base/files/file_path.h"
+#include "printing/backend/cups_deleters.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(IS_LINUX));
 
 namespace printing {
 
@@ -34,11 +37,6 @@ class PrintBackendCUPS : public PrintBackend {
   static std::string PrinterDriverInfoFromCUPS(const cups_dest_t& printer);
 
  private:
-  struct DestinationDeleter {
-    void operator()(cups_dest_t* dest) const;
-  };
-  using ScopedDestination = std::unique_ptr<cups_dest_t, DestinationDeleter>;
-
   ~PrintBackendCUPS() override;
 
   // PrintBackend implementation.

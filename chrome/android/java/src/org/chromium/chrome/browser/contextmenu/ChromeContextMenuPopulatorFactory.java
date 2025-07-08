@@ -6,30 +6,30 @@ package org.chromium.chrome.browser.contextmenu;
 
 import android.content.Context;
 
-import androidx.annotation.NonNull;
-
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.contextmenu.ChromeContextMenuPopulator.ContextMenuMode;
 import org.chromium.chrome.browser.share.ShareDelegate;
+import org.chromium.chrome.browser.tab.TabContextMenuItemDelegate;
+import org.chromium.components.embedder_support.contextmenu.ContextMenuNativeDelegate;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
-import org.chromium.components.externalauth.ExternalAuthUtils;
+import org.chromium.components.embedder_support.contextmenu.ContextMenuPopulator;
+import org.chromium.components.embedder_support.contextmenu.ContextMenuPopulatorFactory;
 
-/**
- * Factory for creating {@link ContextMenuPopulator}s.
- */
+/** Factory for creating {@link ContextMenuPopulator}s. */
+@NullMarked
 public class ChromeContextMenuPopulatorFactory implements ContextMenuPopulatorFactory {
-    private final ContextMenuItemDelegate mItemDelegate;
+    private final TabContextMenuItemDelegate mItemDelegate;
     private final Supplier<ShareDelegate> mShareDelegateSupplier;
     private final @ContextMenuMode int mContextMenuMode;
-    private final ExternalAuthUtils mExternalAuthUtils;
 
-    public ChromeContextMenuPopulatorFactory(@NonNull ContextMenuItemDelegate itemDelegate,
-            Supplier<ShareDelegate> shareDelegateSupplier, @ContextMenuMode int contextMenuMode,
-            ExternalAuthUtils externalAuthUtils) {
+    public ChromeContextMenuPopulatorFactory(
+            TabContextMenuItemDelegate itemDelegate,
+            Supplier<ShareDelegate> shareDelegateSupplier,
+            @ContextMenuMode int contextMenuMode) {
         mItemDelegate = itemDelegate;
         mShareDelegateSupplier = shareDelegateSupplier;
         mContextMenuMode = contextMenuMode;
-        mExternalAuthUtils = externalAuthUtils;
     }
 
     @Override
@@ -40,7 +40,12 @@ public class ChromeContextMenuPopulatorFactory implements ContextMenuPopulatorFa
     @Override
     public ContextMenuPopulator createContextMenuPopulator(
             Context context, ContextMenuParams params, ContextMenuNativeDelegate nativeDelegate) {
-        return new ChromeContextMenuPopulator(mItemDelegate, mShareDelegateSupplier,
-                mContextMenuMode, mExternalAuthUtils, context, params, nativeDelegate);
+        return new ChromeContextMenuPopulator(
+                mItemDelegate,
+                mShareDelegateSupplier,
+                mContextMenuMode,
+                context,
+                params,
+                nativeDelegate);
     }
 }

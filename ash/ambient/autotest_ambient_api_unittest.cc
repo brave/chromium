@@ -4,6 +4,7 @@
 
 #include "ash/public/cpp/autotest_ambient_api.h"
 
+#include <optional>
 #include <string>
 
 #include "ash/ambient/ambient_controller.h"
@@ -11,12 +12,14 @@
 #include "ash/ambient/test/ambient_ash_test_base.h"
 #include "ash/ambient/ui/ambient_container_view.h"
 #include "ash/ambient/ui/ambient_view_ids.h"
-#include "ash/constants/ambient_theme.h"
+#include "ash/ambient/util/time_of_day_utils.h"
 #include "ash/constants/ambient_video.h"
 #include "ash/public/cpp/ambient/ambient_prefs.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
+#include "ash/test/ash_test_helper.h"
 #include "ash/test/test_ash_web_view.h"
+#include "ash/webui/personalization_app/mojom/personalization_app.mojom-shared.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_writer.h"
@@ -27,21 +30,28 @@
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chromeos/ash/components/dbus/dlcservice/fake_dlcservice_client.h"
 #include "components/prefs/pref_service.h"
 #include "net/base/url_util.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace ash {
 
+using ash::personalization_app::mojom::AmbientTheme;
 using ::testing::NotNull;
 
 constexpr base::TimeDelta kVideoPlaybackTimeout = base::Seconds(10);
 
 class AutotestAmbientApiTest : public AmbientAshTestBase {
  protected:
+  void SetUp() override {
+    AmbientAshTestBase::SetUp();
+    ash_test_helper()->dlc_service_client()->set_install_root_path(
+        "/test/dlc/root/path");
+  }
+
   void ScheduleVideoPlaybackStarted(base::TimeDelta delay, bool success) {
     auto signal_video_playback_started = [this, success]() {
       TestAshWebView* web_view = static_cast<TestAshWebView*>(
@@ -50,7 +60,7 @@ class AutotestAmbientApiTest : public AmbientAshTestBase {
       ASSERT_FALSE(web_view->GetVisibleURL().is_empty());
       base::Value::Dict url_fragment_dict;
       url_fragment_dict.Set("playback_started", success);
-      absl::optional<std::string> url_fragment =
+      std::optional<std::string> url_fragment =
           base::WriteJson(url_fragment_dict);
       CHECK(url_fragment);
       web_view->Navigate(
@@ -63,7 +73,6 @@ class AutotestAmbientApiTest : public AmbientAshTestBase {
         delay);
   }
 
-  data_decoder::test::InProcessDataDecoder data_decoder_;
   base::test::TestFuture<void> completion_;
   base::test::TestFuture<void> timeout_;
   base::test::TestFuture<std::string> error_;
@@ -110,7 +119,7 @@ TEST_F(AutotestAmbientApiTest,
 
 TEST_F(AutotestAmbientApiTest, ShouldSuccessfullyWaitForVideoStarted) {
   SetAmbientUiSettings(
-      AmbientUiSettings(AmbientTheme::kVideo, kDefaultAmbientVideo));
+      AmbientUiSettings(AmbientTheme::kVideo, GetDefaultAmbientVideo()));
   SetAmbientShownAndWaitForWidgets();
 
   // Simulate video playback starting half-way to the timeout.
@@ -128,7 +137,7 @@ TEST_F(AutotestAmbientApiTest, ShouldSuccessfullyWaitForVideoStarted) {
 
 TEST_F(AutotestAmbientApiTest, ShouldCallErrorCallbackIfVideoPlaybackTimedOut) {
   SetAmbientUiSettings(
-      AmbientUiSettings(AmbientTheme::kVideo, kDefaultAmbientVideo));
+      AmbientUiSettings(AmbientTheme::kVideo, GetDefaultAmbientVideo()));
   SetAmbientShownAndWaitForWidgets();
 
   AutotestAmbientApi test_api;
@@ -143,7 +152,7 @@ TEST_F(AutotestAmbientApiTest, ShouldCallErrorCallbackIfVideoPlaybackTimedOut) {
 
 TEST_F(AutotestAmbientApiTest, ShouldCallErrorCallbackIfVideoPlaybackFailed) {
   SetAmbientUiSettings(
-      AmbientUiSettings(AmbientTheme::kVideo, kDefaultAmbientVideo));
+      AmbientUiSettings(AmbientTheme::kVideo, GetDefaultAmbientVideo()));
   SetAmbientShownAndWaitForWidgets();
 
   // Simulate immediate video playback failure.

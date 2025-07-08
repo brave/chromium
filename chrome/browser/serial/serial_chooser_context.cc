@@ -4,11 +4,13 @@
 
 #include "chrome/browser/serial/serial_chooser_context.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
 #include "base/containers/contains.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -16,7 +18,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -24,15 +25,19 @@
 #include "chrome/browser/serial/serial_chooser_histograms.h"
 #include "chrome/browser/serial/serial_policy_allowed_ports.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/device_service.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/device/public/cpp/usb/usb_ids.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID)
+#include "services/device/public/cpp/usb/usb_ids.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "components/user_manager/user.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -50,26 +55,26 @@ constexpr char kUsbDriverKey[] = "usb_driver";
 #endif  // BUILDFLAG(IS_MAC)
 #endif  // BUILDFLAG(IS_WIN)
 
+using content_settings::SettingSource;
+
 std::string EncodeToken(const base::UnguessableToken& token) {
   const uint64_t data[2] = {token.GetHighForSerialization(),
                             token.GetLowForSerialization()};
-  std::string buffer;
-  base::Base64Encode(
-      base::StringPiece(reinterpret_cast<const char*>(&data[0]), sizeof(data)),
-      &buffer);
-  return buffer;
+  return base::Base64Encode(base::as_byte_span(data));
 }
 
-base::UnguessableToken DecodeToken(base::StringPiece input) {
+base::UnguessableToken DecodeToken(std::string_view input) {
   std::string buffer;
   if (!base::Base64Decode(input, &buffer) ||
       buffer.length() != sizeof(uint64_t) * 2) {
     return base::UnguessableToken();
   }
 
-  const uint64_t* data = reinterpret_cast<const uint64_t*>(buffer.data());
-  absl::optional<base::UnguessableToken> token =
-      base::UnguessableToken::Deserialize(data[0], data[1]);
+  base::span<const uint8_t> byte_buffer = base::as_byte_span(buffer);
+  uint64_t high = base::U64FromLittleEndian(byte_buffer.first<8>());
+  uint64_t low = base::U64FromLittleEndian(byte_buffer.subspan<8, 8>());
+  std::optional<base::UnguessableToken> token =
+      base::UnguessableToken::Deserialize(high, low);
   if (!token.has_value()) {
     return base::UnguessableToken();
   }
@@ -83,6 +88,7 @@ bool IsPolicyGrantedObject(const base::Value::Dict& object) {
 base::Value VendorAndProductIdsToValue(uint16_t vendor_id,
                                        uint16_t product_id) {
   base::Value::Dict object;
+#if !BUILDFLAG(IS_ANDROID)
   const char* product_name =
       device::UsbIds::GetProductName(vendor_id, product_id);
   if (product_name) {
@@ -97,19 +103,23 @@ base::Value VendorAndProductIdsToValue(uint16_t vendor_id,
               base::ASCIIToUTF16(base::StringPrintf("%04X", product_id)),
               base::UTF8ToUTF16(vendor_name)));
     } else {
+#endif  // !BUILDFLAG(IS_ANDROID)
       object.Set(
           kPortNameKey,
           l10n_util::GetStringFUTF16(
               IDS_SERIAL_POLICY_DESCRIPTION_FOR_USB_PRODUCT_ID_AND_VENDOR_ID,
               base::ASCIIToUTF16(base::StringPrintf("%04X", product_id)),
               base::ASCIIToUTF16(base::StringPrintf("%04X", vendor_id))));
+#if !BUILDFLAG(IS_ANDROID)
     }
   }
+#endif  // !BUILDFLAG(IS_ANDROID)
   return base::Value(std::move(object));
 }
 
 base::Value VendorIdToValue(uint16_t vendor_id) {
   base::Value::Dict object;
+#if !BUILDFLAG(IS_ANDROID)
   const char* vendor_name = device::UsbIds::GetVendorName(vendor_id);
   if (vendor_name) {
     object.Set(kPortNameKey,
@@ -117,11 +127,14 @@ base::Value VendorIdToValue(uint16_t vendor_id) {
                    IDS_SERIAL_POLICY_DESCRIPTION_FOR_USB_VENDOR_NAME,
                    base::UTF8ToUTF16(vendor_name)));
   } else {
+#endif  // !BUILDFLAG(IS_ANDROID)
     object.Set(kPortNameKey,
                l10n_util::GetStringFUTF16(
                    IDS_SERIAL_POLICY_DESCRIPTION_FOR_USB_VENDOR_ID,
                    base::ASCIIToUTF16(base::StringPrintf("%04X", vendor_id))));
+#if !BUILDFLAG(IS_ANDROID)
   }
+#endif  // !BUILDFLAG(IS_ANDROID)
   return base::Value(std::move(object));
 }
 
@@ -270,9 +283,7 @@ SerialChooserContext::GetGrantedObjects(const url::Origin& origin) {
 
         base::Value::Dict port = PortInfoToValue(*port_it->second);
         objects.push_back(std::make_unique<Object>(
-            origin, std::move(port),
-            content_settings::SettingSource::SETTING_SOURCE_USER,
-            IsOffTheRecord()));
+            origin, std::move(port), SettingSource::kUser, IsOffTheRecord()));
       }
     }
   }
@@ -287,8 +298,7 @@ SerialChooserContext::GetGrantedObjects(const url::Origin& origin) {
       base::Value object =
           VendorAndProductIdsToValue(entry.first.first, entry.first.second);
       objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-          origin, std::move(object), content_settings::SETTING_SOURCE_POLICY,
-          IsOffTheRecord()));
+          origin, std::move(object), SettingSource::kPolicy, IsOffTheRecord()));
     }
 
     for (const auto& entry : policy->usb_vendor_policy()) {
@@ -298,8 +308,7 @@ SerialChooserContext::GetGrantedObjects(const url::Origin& origin) {
 
       base::Value object = VendorIdToValue(entry.first);
       objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-          origin, std::move(object), content_settings::SETTING_SOURCE_POLICY,
-          IsOffTheRecord()));
+          origin, std::move(object), SettingSource::kPolicy, IsOffTheRecord()));
     }
 
     if (base::Contains(policy->all_ports_policy(), origin)) {
@@ -307,8 +316,8 @@ SerialChooserContext::GetGrantedObjects(const url::Origin& origin) {
       object.Set(kPortNameKey, l10n_util::GetStringUTF16(
                                    IDS_SERIAL_POLICY_DESCRIPTION_FOR_ANY_PORT));
       objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-          origin, base::Value(std::move(object)),
-          content_settings::SETTING_SOURCE_POLICY, IsOffTheRecord()));
+          origin, base::Value(std::move(object)), SettingSource::kPolicy,
+          IsOffTheRecord()));
     }
   }
 
@@ -330,10 +339,9 @@ SerialChooserContext::GetAllGrantedObjects() {
       if (it == port_info_.end())
         continue;
 
-      objects.push_back(std::make_unique<Object>(
-          origin, PortInfoToValue(*it->second),
-          content_settings::SettingSource::SETTING_SOURCE_USER,
-          IsOffTheRecord()));
+      objects.push_back(
+          std::make_unique<Object>(origin, PortInfoToValue(*it->second),
+                                   SettingSource::kUser, IsOffTheRecord()));
     }
   }
 
@@ -345,8 +353,7 @@ SerialChooserContext::GetAllGrantedObjects() {
 
       for (const auto& origin : entry.second) {
         objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-            origin, object.Clone(), content_settings::SETTING_SOURCE_POLICY,
-            IsOffTheRecord()));
+            origin, object.Clone(), SettingSource::kPolicy, IsOffTheRecord()));
       }
     }
 
@@ -355,8 +362,7 @@ SerialChooserContext::GetAllGrantedObjects() {
 
       for (const auto& origin : entry.second) {
         objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-            origin, object.Clone(), content_settings::SETTING_SOURCE_POLICY,
-            IsOffTheRecord()));
+            origin, object.Clone(), SettingSource::kPolicy, IsOffTheRecord()));
       }
     }
 
@@ -365,8 +371,8 @@ SerialChooserContext::GetAllGrantedObjects() {
                                  IDS_SERIAL_POLICY_DESCRIPTION_FOR_ANY_PORT));
     for (const auto& origin : policy->all_ports_policy()) {
       objects.push_back(std::make_unique<ObjectPermissionContextBase::Object>(
-          origin, base::Value(object.Clone()),
-          content_settings::SETTING_SOURCE_POLICY, IsOffTheRecord()));
+          origin, base::Value(object.Clone()), SettingSource::kPolicy,
+          IsOffTheRecord()));
     }
   }
 
@@ -488,14 +494,15 @@ bool SerialChooserContext::HasPortPermission(
       return true;
     } else {
 #if BUILDFLAG(IS_WIN)
-      const std::string& device_instance_id =
-          *device.FindString(kDeviceInstanceIdKey);
-      if (port.device_instance_id == device_instance_id) {
+      const std::string* device_instance_id =
+          device.FindString(kDeviceInstanceIdKey);
+      if (device_instance_id &&
+          port.device_instance_id == *device_instance_id) {
         return true;
       }
 #else
-      const absl::optional<int> vendor_id = device.FindInt(kVendorIdKey);
-      const absl::optional<int> product_id = device.FindInt(kProductIdKey);
+      const std::optional<int> vendor_id = device.FindInt(kVendorIdKey);
+      const std::optional<int> product_id = device.FindInt(kProductIdKey);
       const std::string* serial_number = device.FindString(kSerialNumberKey);
       if (!vendor_id || !product_id || !serial_number) {
         continue;
@@ -638,6 +645,18 @@ void SerialChooserContext::OnPortRemoved(
   }
 }
 
+void SerialChooserContext::OnPortConnectedStateChanged(
+    device::mojom::SerialPortInfoPtr port) {
+  for (auto& observer : port_observer_list_) {
+    observer.OnPortConnectedStateChanged(*port);
+  }
+}
+
+void SerialChooserContext::Shutdown() {
+  FlushScheduledSaveSettingsCalls();
+  permissions::ObjectPermissionContextBase::Shutdown();
+}
+
 void SerialChooserContext::EnsurePortManagerConnection() {
   if (port_manager_)
     return;
@@ -690,7 +709,7 @@ void SerialChooserContext::OnPortManagerConnectionError() {
 }
 
 bool SerialChooserContext::CanApplyPortSpecificPolicy() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   auto* profile_helper = ash::ProfileHelper::Get();
   DCHECK(profile_helper);
   user_manager::User* user = profile_helper->GetUserByProfile(profile_);

@@ -17,7 +17,8 @@ class CONTENT_EXPORT CommonSourceInfo {
  public:
   CommonSourceInfo(attribution_reporting::SuitableOrigin source_origin,
                    attribution_reporting::SuitableOrigin reporting_origin,
-                   attribution_reporting::mojom::SourceType);
+                   attribution_reporting::mojom::SourceType,
+                   bool cookie_based_debug_allowed = false);
 
   ~CommonSourceInfo();
 
@@ -41,14 +42,23 @@ class CONTENT_EXPORT CommonSourceInfo {
 
   const net::SchemefulSite& source_site() const { return source_site_; }
 
+  bool cookie_based_debug_allowed() const {
+    return cookie_based_debug_allowed_;
+  }
+
+  void set_cookie_based_debug_allowed(bool value) {
+    cookie_based_debug_allowed_ = value;
+  }
+
+  friend bool operator==(const CommonSourceInfo&,
+                         const CommonSourceInfo&) = default;
+
  private:
   net::SchemefulSite source_site_;
   attribution_reporting::SuitableOrigin source_origin_;
   attribution_reporting::SuitableOrigin reporting_origin_;
   attribution_reporting::mojom::SourceType source_type_;
-
-  // When adding new members, the corresponding `operator==()` definition in
-  // `attribution_test_utils.h` should also be updated.
+  bool cookie_based_debug_allowed_;
 };
 
 }  // namespace content

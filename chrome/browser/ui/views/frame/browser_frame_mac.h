@@ -5,15 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_FRAME_MAC_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_FRAME_MAC_H_
 
-#include "chrome/browser/ui/views/frame/native_browser_frame.h"
-
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/command_observer.h"
+#include "chrome/browser/ui/views/frame/native_browser_frame.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/views/widget/native_widget_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 class BrowserFrame;
 class BrowserView;
@@ -44,16 +40,17 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   void OnWindowFullscreenTransitionComplete() override;
 
   // Overridden from NativeBrowserFrame:
-  views::Widget::InitParams GetWidgetParams() override;
+  views::Widget::InitParams GetWidgetParams(
+      views::Widget::InitParams::Ownership ownership) override;
   bool UseCustomFrame() const override;
   bool UsesNativeSystemMenu() const override;
   bool ShouldSaveWindowPlacement() const override;
-  void GetWindowPlacement(gfx::Rect* bounds,
-                          ui::WindowShowState* show_state) const override;
+  void GetWindowPlacement(
+      gfx::Rect* bounds,
+      ui::mojom::WindowShowState* show_state) const override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) override;
   bool ShouldRestorePreviousBrowserWidgetState() const override;
   bool ShouldUseInitialVisibleOnAllWorkspaces() const override;
   void AnnounceTextInInProcessWindow(const std::u16string& text) override;

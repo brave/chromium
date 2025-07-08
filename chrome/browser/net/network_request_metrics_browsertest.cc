@@ -13,7 +13,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/predictors/loading_predictor_config.h"
@@ -24,14 +23,16 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/filename_util.h"
 #include "net/base/net_errors.h"
-#include "net/http/http_response_info.h"
+#include "net/http/http_connection_info.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -81,7 +82,7 @@ class WaitForMainFrameResourceObserver : public content::WebContentsObserver {
   WaitForMainFrameResourceObserver& operator=(
       const WaitForMainFrameResourceObserver&) = delete;
 
-  ~WaitForMainFrameResourceObserver() override {}
+  ~WaitForMainFrameResourceObserver() override = default;
 
   // content::WebContentsObserver implementation:
   void ResourceLoadComplete(
@@ -106,11 +107,7 @@ class NetworkRequestMetricsBrowserTest
     : public InProcessBrowserTest,
       public testing::WithParamInterface<RequestType> {
  public:
-  NetworkRequestMetricsBrowserTest() {
-    scoped_feature_list_.InitAndDisableFeature(
-        predictors::kSpeculativePreconnectFeature);
-  }
-  ~NetworkRequestMetricsBrowserTest() override {}
+  ~NetworkRequestMetricsBrowserTest() override = default;
 
   // ContentBrowserTest implementation:
   void SetUpOnMainThread() override {
@@ -142,7 +139,6 @@ class NetworkRequestMetricsBrowserTest
       case RequestType::kMainFrame:
         NOTREACHED();
     }
-    return std::string();
   }
 
   void StartNavigatingAndWaitForRequest() {
@@ -191,9 +187,8 @@ class NetworkRequestMetricsBrowserTest
                                       -expected_net_error, 1);
 
       if (headers_received == HeadersReceived::kHeadersReceived) {
-        histograms_->ExpectUniqueSample(
-            "Net.ConnectionInfo.MainFrame",
-            net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1, 1);
+        histograms_->ExpectUniqueSample("Net.ConnectionInfo.MainFrame",
+                                        net::HttpConnectionInfo::kHTTP1_1, 1);
       } else {
         histograms_->ExpectTotalCount("Net.ConnectionInfo.MainFrame", 0);
       }
@@ -238,9 +233,8 @@ class NetworkRequestMetricsBrowserTest
     // A subresource load requires a main frame load, which is only logged for
     // network URLs.
     if (network_accessed == NetworkAccessed::kNetworkAccessed) {
-      histograms_->ExpectUniqueSample(
-          "Net.ConnectionInfo.MainFrame",
-          net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1, 1);
+      histograms_->ExpectUniqueSample("Net.ConnectionInfo.MainFrame",
+                                      net::HttpConnectionInfo::kHTTP1_1, 1);
       if (headers_received == HeadersReceived::kHeadersReceived) {
         // Favicon request may or may not have received a response.
         size_t subresources =
@@ -260,8 +254,9 @@ class NetworkRequestMetricsBrowserTest
   // The request identified by GetParam() is expected to fail with
   // net::ERR_ABORTED.
   void CheckHistogramsAfterMainFrameInterruption() {
-    // Some metrics may come from the renderer. This call ensures that those
+    // Some metrics may come from the renderer. These call ensures that those
     // metrics are available.
+    FetchHistogramsFromChildProcesses();
     metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
 
     if (GetParam() == RequestType::kMainFrame) {
@@ -329,7 +324,6 @@ class NetworkRequestMetricsBrowserTest
   base::HistogramTester* histograms() { return histograms_.get(); }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<net::test_server::ControllableHttpResponse>
       uninteresting_main_frame_response_;
   std::unique_ptr<net::test_server::ControllableHttpResponse>
@@ -462,8 +456,8 @@ IN_PROC_BROWSER_TEST_P(NetworkRequestMetricsBrowserTest, Download) {
   }
 
   browser()->profile()->GetPrefs()->SetInteger(
-      prefs::kDownloadRestrictions,
-      static_cast<int>(DownloadPrefs::DownloadRestriction::ALL_FILES));
+      policy::policy_prefs::kDownloadRestrictions,
+      static_cast<int>(policy::DownloadRestriction::ALL_FILES));
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kPromptForDownload,
                                                false);
 
@@ -522,9 +516,8 @@ IN_PROC_BROWSER_TEST_P(NetworkRequestMetricsBrowserTest, Download) {
         << "Found unexpected load with result: " << bucket.min;
   }
 
-  histograms()->ExpectUniqueSample(
-      "Net.ConnectionInfo.MainFrame",
-      net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1, 1);
+  histograms()->ExpectUniqueSample("Net.ConnectionInfo.MainFrame",
+                                   net::HttpConnectionInfo::kHTTP1_1, 1);
   // Favicon request may or may not have received a response.
   size_t subresources =
       histograms()->GetAllSamples("Net.ConnectionInfo.SubResource").size();

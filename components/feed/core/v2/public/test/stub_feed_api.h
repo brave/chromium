@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_FEED_CORE_V2_PUBLIC_TEST_STUB_FEED_API_H_
 #define COMPONENTS_FEED_CORE_V2_PUBLIC_TEST_STUB_FEED_API_H_
 
+#include <string_view>
+
 #include "components/feed/core/proto/v2/store.pb.h"
 #include "components/feed/core/v2/public/feed_api.h"
 #include "components/feed/core/v2/public/persistent_key_value_store.h"
@@ -51,6 +53,12 @@ class StubFeedApi : public FeedApi {
                 base::OnceCallback<void(bool)> callback) override {}
   void ManualRefresh(SurfaceId surface_id,
                      base::OnceCallback<void(bool)> callback) override {}
+  void FetchResource(
+      const GURL& url,
+      const std::string& method,
+      const std::vector<std::string>& header_names_and_values,
+      const std::string& post_data,
+      base::OnceCallback<void(NetworkResponse)> callback) override {}
   ImageFetchId FetchImage(
       const GURL& url,
       base::OnceCallback<void(NetworkResponse)> callback) override;
@@ -64,15 +72,15 @@ class StubFeedApi : public FeedApi {
       std::vector<feedstore::DataOperation> operations) override;
   EphemeralChangeId CreateEphemeralChangeFromPackedData(
       SurfaceId surface_id,
-      base::StringPiece data) override;
+      std::string_view data) override;
   bool CommitEphemeralChange(SurfaceId surface_id,
                              EphemeralChangeId id) override;
   bool RejectEphemeralChange(SurfaceId surface_id,
                              EphemeralChangeId id) override;
   void ProcessThereAndBackAgain(
-      base::StringPiece data,
+      std::string_view data,
       const LoggingParameters& logging_parameters) override {}
-  void ProcessViewAction(base::StringPiece data,
+  void ProcessViewAction(std::string_view data,
                          const LoggingParameters& logging_parameters) override {
   }
   bool WasUrlRecentlyNavigatedFromFeed(const GURL& url) override;
@@ -94,6 +102,7 @@ class StubFeedApi : public FeedApi {
                              FeedUserActionType action_type) override {}
   void ReportOtherUserAction(const StreamType& stream_type,
                              FeedUserActionType action_type) override {}
+  void ReportOtherUserAction(FeedUserActionType action_type) override {}
   void ReportInfoCardTrackViewStarted(SurfaceId surface_id,
                                       int info_card_type) override {}
   void ReportInfoCardViewed(SurfaceId surface_id,

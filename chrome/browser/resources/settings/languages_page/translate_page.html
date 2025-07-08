@@ -1,11 +1,12 @@
-<style include="cr-shared-style settings-shared md-select iron-flex"></style>
+<style include="cr-shared-style settings-shared md-select"></style>
+<settings-section page-title="$i18n{translatePageTitle}">
 <settings-toggle-button id="offerTranslateOtherLanguages"
     pref="{{prefs.translate.enabled}}"
     label="$i18n{offerToEnableTranslate}"
     sub-label="$i18n{offerToEnableTranslateSublabel}"
     on-settings-boolean-control-change="onTranslateToggleChange_">
 </settings-toggle-button>
-<iron-collapse opened="[[prefs.translate.enabled.value]]">
+<cr-collapse opened="[[prefs.translate.enabled.value]]">
   <div class="cr-row continuation">
     <div id="targetLanguageLabel" class="flex cr-padded-text"
         aria-hidden="true">
@@ -81,18 +82,19 @@
       $i18n{noLanguagesAdded}
     </div>
   </div>
-</iron-collapse>
+</cr-collapse>
 <template is="dom-if" if="[[showAddAlwaysTranslateDialog_]]" restamp>
-  <settings-add-languages-dialog languages="[[addLanguagesDialogLanguages_]]"
-      language-helper="[[languageHelper]]" id="alwaysTranslateDialog"
+  <settings-add-languages-dialog id="alwaysTranslateDialog"
+      languages="[[addLanguagesDialogLanguages_]]"
       on-close="onAlwaysTranslateDialogClose_"
       on-languages-added="onAlwaysTranslateLanguagesAdded_">
   </settings-add-languages-dialog>
 </template>
 <template is="dom-if" if="[[showAddNeverTranslateDialog_]]" restamp>
-  <settings-add-languages-dialog languages="[[addLanguagesDialogLanguages_]]"
-      language-helper="[[languageHelper]]" id="neverTranslateDialog"
+  <settings-add-languages-dialog id="neverTranslateDialog"
+      languages="[[addLanguagesDialogLanguages_]]"
       on-close="onNeverTranslateDialogClose_"
       on-languages-added="onNeverTranslateLanguagesAdded_">
   </settings-add-languages-dialog>
 </template>
+</settings-section>

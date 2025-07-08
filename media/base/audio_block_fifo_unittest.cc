@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/base/audio_block_fifo.h"
+
 #include <stdint.h>
+
+#include <algorithm>
 #include <memory>
 
 #include "base/time/time.h"
-#include "media/base/audio_block_fifo.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -39,9 +42,9 @@ class AudioBlockFifoTest : public testing::Test {
     DCHECK_LE(frames_to_push, fifo->GetUnfilledFrames());
     const int bytes_per_sample = 2;
     const int data_byte_size = bytes_per_sample * channels * frames_to_push;
-    auto data = std::make_unique<uint8_t[]>(data_byte_size);
-    memset(data.get(), 1, data_byte_size);
-    fifo->Push(data.get(), frames_to_push, bytes_per_sample);
+    auto data = base::HeapArray<uint8_t>::Uninit(data_byte_size);
+    std::ranges::fill(data, 1);
+    fifo->Push(data, frames_to_push, bytes_per_sample);
   }
 
   void ConsumeAndVerify(AudioBlockFifo* fifo,
@@ -52,9 +55,9 @@ class AudioBlockFifoTest : public testing::Test {
     EXPECT_EQ(fifo->available_blocks(), expected_available_blocks);
 
     // Verify the audio data is not 0.
-    for (int i = 0; i < bus->channels(); ++i) {
-      EXPECT_GT(bus->channel(i)[0], 0.0f);
-      EXPECT_GT(bus->channel(i)[bus->frames() - 1], 0.0f);
+    for (auto channel : bus->AllChannels()) {
+      EXPECT_GT(channel[0], 0.0f);
+      EXPECT_GT(channel[bus->frames() - 1], 0.0f);
     }
   }
 };

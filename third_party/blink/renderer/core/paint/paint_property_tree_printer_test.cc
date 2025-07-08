@@ -8,7 +8,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/paint/paint_controller_paint_test.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 #if DCHECK_IS_ON()
 
@@ -52,8 +51,9 @@ TEST_P(PaintPropertyTreePrinterTest, SimpleEffectTree) {
       EffectPropertyTreeAsString(*GetDocument().View());
   EXPECT_THAT(
       effect_tree_as_string.Ascii().c_str(),
-      testing::MatchesRegex("root .*"
-                            "  Effect \\(LayoutN?G?BlockFlow DIV\\) .*"));
+      testing::MatchesRegex(
+          "root .*"
+          "  Effect \\(LayoutN?G?BlockFlow \\(children-inline\\) DIV\\) .*"));
 }
 
 TEST_P(PaintPropertyTreePrinterTest, SimpleScrollTree) {
@@ -79,7 +79,7 @@ TEST_P(PaintPropertyTreePrinterTest, SimpleTransformTreePath) {
       transformed_object_properties->Transform()->ToTreeString();
   EXPECT_THAT(transform_path_as_string.Ascii().c_str(),
               testing::MatchesRegex("root .*\"scroll\".*"
-                                    "  .*\"parent\".*"
+                                    "  .*\"in_subtree_of_page_scale\".*"
                                     "    .*\"translation2d\".*"
                                     "      .*\"matrix\".*"));
 }
@@ -110,7 +110,7 @@ TEST_P(PaintPropertyTreePrinterTest, SimpleEffectTreePath) {
       effect_object_properties->Effect()->ToTreeString();
   EXPECT_THAT(effect_path_as_string.Ascii().c_str(),
               testing::MatchesRegex("root .*\"outputClip\".*"
-                                    "  .*\"parent\".*\"opacity\".*"));
+                                    "  .*\"opacity\".*"));
 }
 
 TEST_P(PaintPropertyTreePrinterTest, SimpleScrollTreePath) {
@@ -128,7 +128,7 @@ TEST_P(PaintPropertyTreePrinterTest, SimpleScrollTreePath) {
                                      ->ToTreeString();
   EXPECT_THAT(scroll_path_as_string.Ascii().c_str(),
               testing::MatchesRegex("root .*"
-                                    "  .*\"parent\".*"));
+                                    "  Scroll.*"));
 }
 
 }  // namespace blink

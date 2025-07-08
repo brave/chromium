@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,7 +87,8 @@ class ASH_EXPORT AmbientAnimationFrameRateController
   // Points to the current section in the |schedule_| that's being played.
   // Set to |schedule_.end()| if the animation is not playing currently.
   AmbientAnimationFrameRateScheduleIterator current_section_;
-  base::flat_map<aura::Window*, lottie::Animation*> windows_to_throttle_;
+  base::flat_map<aura::Window*, raw_ptr<lottie::Animation, CtnExperimental>>
+      windows_to_throttle_;
   base::ScopedMultiSourceObservation<lottie::Animation,
                                      lottie::AnimationObserver>
       animation_observations_{this};

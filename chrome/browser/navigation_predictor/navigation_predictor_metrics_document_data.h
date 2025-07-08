@@ -30,7 +30,7 @@ class NavigationPredictorMetricsDocumentData
   };
   struct PageLinkClickData {
     int anchor_element_index_;
-    absl::optional<bool> href_unchanged_;
+    std::optional<bool> href_unchanged_;
     base::TimeDelta navigation_start_to_link_clicked_;
   };
   struct AnchorElementMetricsData {
@@ -39,19 +39,19 @@ class NavigationPredictorMetricsDocumentData
 
     AnchorElementMetricsData& operator=(AnchorElementMetricsData&&);
 
-    size_t bucketed_path_hash_;
-    bool contains_image_;
-    size_t font_size_;
-    bool has_text_sibling_;
-    bool is_bold_;
-    bool is_in_iframe_;
-    bool is_url_incremented_by_one_;
+    uint8_t font_size_bucket_;
+    bool contains_image_ : 1;
+    bool has_text_sibling_ : 1;
+    bool is_bold_ : 1;
+    bool is_in_iframe_ : 1;
+    bool is_url_incremented_by_one_ : 1;
+    bool is_same_host_ : 1;
     base::TimeDelta navigation_start_to_link_logged;
-    size_t path_depth_;
-    size_t path_length_;
-    int percent_clickable_area_;
+    uint8_t path_length_;
+    uint8_t path_depth_;
+    uint8_t bucketed_path_hash_;
+    uint8_t percent_clickable_area_;
     int percent_vertical_distance_;
-    bool is_same_origin_;
   };
 
   // This structure holds the user interactions with a given anchor element.
@@ -65,6 +65,10 @@ class NavigationPredictorMetricsDocumentData
   // |navigation_start_to_click_| to update |max_hover_dwell_time|. We then
   // record |max_time_in_viewport|, and |max_hover_dwell_time| to UKM.
   struct UserInteractionsData {
+    UserInteractionsData();
+    UserInteractionsData(const UserInteractionsData&);
+    UserInteractionsData& operator=(const UserInteractionsData&);
+
     // True if the anchor element is still in viewport, otherwise false.
     bool is_in_viewport = false;
     // True if the pointer is still hovering over the anchor element,
@@ -72,28 +76,42 @@ class NavigationPredictorMetricsDocumentData
     bool is_hovered = false;
     // Number of times the pointer was hovering over the anchor element.
     int pointer_hovering_over_count = 0;
+    // Number of times the anchor element entered the viewport.
+    int entered_viewport_count = 0;
     // If the anchor element is still in viewport, it is the TimeDelta between
     // the navigation start of the anchor element's root document and the last
     // time the anchor element entered the viewport, otherwise empty.
-    absl::optional<base::TimeDelta> last_navigation_start_to_entered_viewport;
+    std::optional<base::TimeDelta> last_navigation_start_to_entered_viewport;
     // The maximum duration that the anchor element was in the viewport.
-    absl::optional<base::TimeDelta> max_time_in_viewport;
+    std::optional<base::TimeDelta> max_time_in_viewport;
     // TimeDelta between the navigation start of the anchor element's root
     // document and the last time the pointer started to hover over the anchor
     // element, otherwise empty.
-    absl::optional<base::TimeDelta> last_navigation_start_to_pointer_over;
+    std::optional<base::TimeDelta> last_navigation_start_to_pointer_over;
     // TimeDelta between the navigation start of the anchor element's root
     // document and the last time the pointer down event happened over the
     // anchor element, otherwise empty.
-    absl::optional<base::TimeDelta> last_navigation_start_to_last_pointer_down;
+    std::optional<base::TimeDelta> last_navigation_start_to_last_pointer_down;
     // The maximum the pointer hover dwell time over the anchor element.
-    absl::optional<base::TimeDelta> max_hover_dwell_time;
+    std::optional<base::TimeDelta> max_hover_dwell_time;
+    // Mouse velocity when the on-hover event was triggered.
+    std::optional<double> mouse_velocity;
+    // Mouse acceleration when the on-hover event was triggered.
+    std::optional<double> mouse_acceleration;
+    // Vertical position of the anchor element's center in the viewport
+    // (recorded as a percentage of the viewport's height).
+    std::optional<int> percent_vertical_position;
+    // Vertical distance of the anchor element from the most recently recorded
+    // pointerdown that initiated a scroll. This is recorded as a _signed_
+    // percentage of the screen height, so that the cases of the link being
+    // above and below the pointer are distinguishable.
+    std::optional<int> percent_distance_from_pointer_down;
   };
 
   struct PreloadOnHoverData {
     bool taken = false;
-    absl::optional<base::TimeDelta> hover_dwell_time;
-    absl::optional<base::TimeDelta> pointer_down_duration;
+    std::optional<base::TimeDelta> hover_dwell_time;
+    std::optional<base::TimeDelta> pointer_down_duration;
   };
 
   NavigationPredictorMetricsDocumentData(
@@ -151,7 +169,7 @@ class NavigationPredictorMetricsDocumentData
   // to make sure that `NavigationPredictorMetricsDocumentData` and
   // 'PageAnchorMetricsObserver` are not getting out of sync. In future, we
   // should remove the `ukm_source_id` from the methods' arguments.
-  absl::optional<ukm::SourceId> ukm_source_id_;
+  std::optional<ukm::SourceId> ukm_source_id_;
   AnchorsData anchor_data_;
   std::vector<PageLinkClickData> page_link_clicks_;
   std::map<int, AnchorElementMetricsData> anchor_element_metrics_;
@@ -159,7 +177,7 @@ class NavigationPredictorMetricsDocumentData
   std::vector<PreloadOnHoverData> preload_on_hover_;
   // The time between navigation start and the last time user clicked on a
   // link.
-  absl::optional<base::TimeDelta> navigation_start_to_click_;
+  std::optional<base::TimeDelta> navigation_start_to_click_;
   base::TimeTicks navigation_start_time_;
   DOCUMENT_USER_DATA_KEY_DECL();
 };

@@ -15,18 +15,22 @@ SensitivityPersistedTabDataAndroid::SensitivityPersistedTabDataAndroid(
       tab_(tab_android) {}
 
 void SensitivityPersistedTabDataAndroid::RegisterPCAService(
-    optimization_guide::PageContentAnnotationsService*
+    page_content_annotations::PageContentAnnotationsService*
         page_content_annotations_service) {
   DCHECK(page_content_annotations_service);
+  if (page_content_annotations_service_ == page_content_annotations_service) {
+    return;
+  }
+
   page_content_annotations_service_ = page_content_annotations_service;
   page_content_annotations_service_->AddObserver(
-      optimization_guide::AnnotationType::kContentVisibility, this);
+      page_content_annotations::AnnotationType::kContentVisibility, this);
 }
 
 SensitivityPersistedTabDataAndroid::~SensitivityPersistedTabDataAndroid() {
   if (page_content_annotations_service_ != nullptr) {
     page_content_annotations_service_->RemoveObserver(
-        optimization_guide::AnnotationType::kContentVisibility, this);
+        page_content_annotations::AnnotationType::kContentVisibility, this);
   }
 }
 
@@ -34,14 +38,13 @@ void SensitivityPersistedTabDataAndroid::From(
     TabAndroid* tab_android,
     PersistedTabDataAndroid::FromCallback from_callback) {
   PersistedTabDataAndroid::From(
-      tab_android, SensitivityPersistedTabDataAndroid::UserDataKey(),
-      base::BindOnce(
-          [](TabAndroid* tab_android)
-              -> std::unique_ptr<PersistedTabDataAndroid> {
-            return std::make_unique<SensitivityPersistedTabDataAndroid>(
-                tab_android);
-          },
-          tab_android),
+      tab_android->GetTabAndroidWeakPtr(),
+      SensitivityPersistedTabDataAndroid::UserDataKey(),
+      base::BindOnce([](TabAndroid* tab_android)
+                         -> std::unique_ptr<PersistedTabDataAndroid> {
+        return std::make_unique<SensitivityPersistedTabDataAndroid>(
+            tab_android);
+      }),
       std::move(from_callback));
 }
 
@@ -50,8 +53,8 @@ SensitivityPersistedTabDataAndroid::Serialize() {
   sensitivity::SensitivityData sensitivity_data;
   sensitivity_data.set_is_sensitive(is_sensitive_);
   std::unique_ptr<std::vector<uint8_t>> data =
-      std::make_unique<std::vector<uint8_t>>(sensitivity_data.ByteSize());
-  sensitivity_data.SerializeToArray(data->data(), sensitivity_data.ByteSize());
+      std::make_unique<std::vector<uint8_t>>(sensitivity_data.ByteSizeLong());
+  sensitivity_data.SerializeToArray(data->data(), data->size());
   return data;
 }
 
@@ -66,7 +69,7 @@ void SensitivityPersistedTabDataAndroid::Deserialize(
 
 void SensitivityPersistedTabDataAndroid::OnPageContentAnnotated(
     const GURL& url,
-    const optimization_guide::PageContentAnnotationsResult& result) {
+    const page_content_annotations::PageContentAnnotationsResult& result) {
   if (tab_->GetURL() != url) {
     return;
   }
@@ -74,6 +77,14 @@ void SensitivityPersistedTabDataAndroid::OnPageContentAnnotated(
   // sensitivity. This value ensures that we neither overclassify nor
   // underclassify sensitive data
   set_is_sensitive(result.GetContentVisibilityScore() < 0.5);
+}
+
+void SensitivityPersistedTabDataAndroid::ExistsForTesting(
+    TabAndroid* tab_android,
+    base::OnceCallback<void(bool)> exists_callback) {
+  PersistedTabDataAndroid::ExistsForTesting(
+      tab_android, SensitivityPersistedTabDataAndroid::UserDataKey(),
+      std::move(exists_callback));
 }
 
 TAB_ANDROID_USER_DATA_KEY_IMPL(SensitivityPersistedTabDataAndroid)

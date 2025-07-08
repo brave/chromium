@@ -67,11 +67,13 @@ bool AppPreloadServiceFactory::IsAvailable(Profile* profile) {
     return false;
   }
 
-  // App Preload Service is currently only available for unmanaged, unsupervised
-  // accounts.
-  std::string user_type = apps::DetermineUserType(profile);
-  if (user_type != apps::kUserTypeUnmanaged) {
-    return false;
+  // App Preload Service is only available for unmanaged, unsupervised accounts
+  // if AppPreloadServiceAllUserTypes is not enabled.
+  if (!base::FeatureList::IsEnabled(kAppPreloadServiceAllUserTypes)) {
+    std::string user_type = apps::DetermineUserType(profile);
+    if (user_type != apps::kUserTypeUnmanaged) {
+      return false;
+    }
   }
 
   return true;
@@ -83,13 +85,14 @@ void AppPreloadServiceFactory::SkipApiKeyCheckForTesting(
   g_skip_api_key_check = skip_api_key_check;
 }
 
-KeyedService* AppPreloadServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AppPreloadServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
   if (!IsAvailable(profile)) {
     return nullptr;
   }
-  return new AppPreloadService(profile);
+  return std::make_unique<AppPreloadService>(profile);
 }
 
 bool AppPreloadServiceFactory::ServiceIsCreatedWithBrowserContext() const {

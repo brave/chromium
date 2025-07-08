@@ -4,10 +4,6 @@
 
 #include "content/shell/browser/color_chooser/shell_color_chooser_ios.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace content {
 
 ShellColorChooserIOS::ShellColorChooserIOS(
@@ -15,7 +11,7 @@ ShellColorChooserIOS::ShellColorChooserIOS(
     SkColor initial_color,
     const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
     : web_contents_(web_contents) {
-  // TODO(crbug.com/1467802): Show a color chooser using UI components on iOS.
+  // TODO(crbug.com/40276929): Show a color chooser using UI components on iOS.
 }
 
 ShellColorChooserIOS::~ShellColorChooserIOS() = default;
@@ -30,10 +26,10 @@ std::unique_ptr<ColorChooser> ShellColorChooserIOS::OpenColorChooser(
 }
 
 void ShellColorChooserIOS::End() {
-  // TODO(crbug.com/1467802): Close the color chooser.
+  // TODO(crbug.com/40276929): Close the color chooser.
 }
 
 void ShellColorChooserIOS::SetSelectedColor(SkColor color) {
-}  // TODO(crbug.com/1467802): Set the color.
+}  // TODO(crbug.com/40276929): Set the color.
 
 }  // namespace content

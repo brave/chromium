@@ -19,11 +19,12 @@ import androidx.core.content.ContextCompat;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.base.MimeTypeUtils;
 import org.chromium.ui.display.DisplayAndroid;
 
@@ -32,16 +33,15 @@ import org.chromium.ui.display.DisplayAndroid;
  * storages, and notifies the ScreenshotMonitorDelegate. The caller should use
  * @{link ScreenshotMonitor#create(ScreenshotMonitorDelegate)} to create an instance.
  */
+@NullMarked
 public class ScreenshotMonitorImpl extends ScreenshotMonitor {
     private static final String TAG = "ScreenshotMonitor";
     private final ScreenshotMonitorContentObserver mContentObserver;
 
-    private ContentResolver mContentResolverForTesting;
-    private DisplayAndroid mDisplayAndroidForTesting;
+    private @Nullable ContentResolver mContentResolverForTesting;
+    private @Nullable DisplayAndroid mDisplayAndroidForTesting;
 
-    /**
-     * Observe content changes in the Media database looking for screenshots.
-     */
+    /** Observe content changes in the Media database looking for screenshots. */
     private class ScreenshotMonitorContentObserver extends ContentObserver {
         private final ScreenshotMonitor mScreenshotMonitor;
 
@@ -53,26 +53,27 @@ public class ScreenshotMonitorImpl extends ScreenshotMonitor {
 
         // ContentObsever implementation.
         @Override
-        public void onChange(boolean selfChange, Uri uri) {
+        public void onChange(boolean selfChange, @Nullable Uri uri) {
             checkAndNotify(uri);
         }
 
-        private void checkAndNotify(Uri uri) {
+        private void checkAndNotify(@Nullable Uri uri) {
             if (uri == null) return;
 
             Log.d(TAG, "Detected change to the media database " + uri);
-            String uriPath = uri.toString();
             // Validate the uri before processing it.
             if (uri == null || !uri.toString().startsWith(Media.EXTERNAL_CONTENT_URI.toString())) {
                 Log.w(TAG, "uri: %s is not valid. Returning without processing screenshot", uri);
                 return;
             }
 
-            PostTask.postTask(TaskTraits.UI_DEFAULT, () -> {
-                // Unit tests do not have a media database to query, so skip if necessary.
-                if (!doesChangeLookLikeScreenshot(uri)) return;
-                mScreenshotMonitor.notifyDelegate();
-            });
+            PostTask.postTask(
+                    TaskTraits.UI_DEFAULT,
+                    () -> {
+                        // Unit tests do not have a media database to query, so skip if necessary.
+                        if (!doesChangeLookLikeScreenshot(uri)) return;
+                        mScreenshotMonitor.notifyDelegate();
+                    });
         }
 
         // Returns true if the uri appears to correspond to a screenshot.  This will look at the
@@ -87,22 +88,27 @@ public class ScreenshotMonitorImpl extends ScreenshotMonitor {
             String imageWidthString = "";
             String imageHeightString = "";
 
-            String[] mediaProjection = new String[] {MediaStore.Images.ImageColumns.DATE_TAKEN,
-                    MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.HEIGHT,
-                    MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns._ID};
+            String[] mediaProjection =
+                    new String[] {
+                        MediaStore.Images.ImageColumns.DATE_TAKEN,
+                        MediaStore.MediaColumns.DATA,
+                        MediaStore.MediaColumns.HEIGHT,
+                        MediaStore.MediaColumns.WIDTH,
+                        MediaStore.MediaColumns._ID
+                    };
 
             // Check if the appropriate disk access permission is enabled.
             String requiredPermission =
                     MimeTypeUtils.getPermissionNameForMimeType(MimeTypeUtils.Type.IMAGE);
             if (requiredPermission != null
                     && ContextCompat.checkSelfPermission(
-                               ContextUtils.getApplicationContext(), requiredPermission)
+                                    ContextUtils.getApplicationContext(), requiredPermission)
                             != PackageManager.PERMISSION_GRANTED) {
                 RecordUserAction.record("Tab.Screenshot.WithoutStoragePermission");
                 return false;
             }
 
-            try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
+            try {
                 ContentResolver contentResolver = mContentResolverForTesting;
                 if (contentResolver == null) {
                     contentResolver = ContextUtils.getApplicationContext().getContentResolver();
@@ -120,12 +126,15 @@ public class ScreenshotMonitorImpl extends ScreenshotMonitor {
 
             try {
                 while (cursor.moveToNext()) {
-                    foundPath = cursor.getString(
-                            cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA));
-                    imageHeightString = cursor.getString(
-                            cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT));
-                    imageWidthString = cursor.getString(
-                            cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH));
+                    foundPath =
+                            cursor.getString(
+                                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA));
+                    imageHeightString =
+                            cursor.getString(
+                                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT));
+                    imageWidthString =
+                            cursor.getString(
+                                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH));
                     break;
                 }
             } finally {
@@ -178,8 +187,11 @@ public class ScreenshotMonitorImpl extends ScreenshotMonitor {
     }
 
     @VisibleForTesting
-    ScreenshotMonitorImpl(ScreenshotMonitorDelegate delegate, Activity activity,
-            ContentResolver contentResolver, DisplayAndroid displayAndroid) {
+    ScreenshotMonitorImpl(
+            ScreenshotMonitorDelegate delegate,
+            Activity activity,
+            ContentResolver contentResolver,
+            DisplayAndroid displayAndroid) {
         this(delegate, activity);
         mContentResolverForTesting = contentResolver;
         mDisplayAndroidForTesting = displayAndroid;

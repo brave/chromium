@@ -4,6 +4,8 @@
 
 #include "components/printing/browser/print_to_pdf/pdf_print_job.h"
 
+#include <variant>
+
 #include "base/functional/bind.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "components/printing/browser/print_composite_client.h"
@@ -12,7 +14,6 @@
 #include "printing/mojom/print.mojom.h"
 #include "printing/page_range.h"
 #include "printing/printing_utils.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace print_to_pdf {
 
@@ -43,14 +44,14 @@ void PdfPrintJob::StartJob(
     return;
   }
 
-  absl::variant<printing::PageRanges, PdfPrintResult> pages =
+  std::variant<printing::PageRanges, PdfPrintResult> pages =
       TextPageRangesToPageRanges(page_ranges);
-  if (absl::holds_alternative<PdfPrintResult>(pages)) {
-    std::move(callback).Run(absl::get<PdfPrintResult>(pages), nullptr);
+  if (std::holds_alternative<PdfPrintResult>(pages)) {
+    std::move(callback).Run(std::get<PdfPrintResult>(pages), nullptr);
     return;
   }
 
-  print_pages_params->pages = absl::get<printing::PageRanges>(pages);
+  print_pages_params->pages = std::get<printing::PageRanges>(pages);
 
   // Job is self-owned and will delete itself when complete.
   auto* job = new PdfPrintJob(contents, rfh, std::move(callback));
@@ -60,9 +61,9 @@ void PdfPrintJob::StartJob(
 }
 
 void PdfPrintJob::OnDidPrintWithParams(
-    printing::mojom::PrintWithParamsResultPtr result) {
-  if (result->is_failure_reason()) {
-    switch (result->get_failure_reason()) {
+    printing::mojom::PrintRenderFrame::PrintWithParamsResult result) {
+  if (!result.has_value()) {
+    switch (result.error()) {
       case printing::mojom::PrintFailureReason::kGeneralFailure:
         FailJob(PdfPrintResult::kPrintFailure);
         return;
@@ -76,7 +77,7 @@ void PdfPrintJob::OnDidPrintWithParams(
   }
 
   const printing::mojom::DidPrintDocumentParamsPtr& params =
-      result->get_data()->params;
+      result.value()->params;
   const auto& content = *params->content;
   const auto& region = content.metafile_data_region;
   if (!region.IsValid()) {
@@ -85,18 +86,18 @@ void PdfPrintJob::OnDidPrintWithParams(
   }
 
   // If the printed data already looks like a PDF, report it now.
-  if (printing::LooksLikePdf(region.Map().GetMemoryAsSpan<char>())) {
+  if (printing::LooksLikePdf(region.Map().GetMemoryAsSpan<const uint8_t>())) {
     ReportMemoryRegion(region);
     return;
   }
 
   // Otherwise assume this is a composite document and invoke compositor.
   printing::PrintCompositeClient::FromWebContents(web_contents())
-      ->DoCompositeDocumentToPdf(
+      ->CompositeDocument(
           params->document_cookie, printing_rfh_, content,
-#if BUILDFLAG(ENABLE_TAGGED_PDF)
-          result->get_data()->accessibility_tree,
-#endif
+          result.value()->accessibility_tree,
+          result.value()->generate_document_outline,
+          printing::mojom::PrintCompositor::DocumentType::kPDF,
           base::BindOnce(&PdfPrintJob::OnCompositeDocumentToPdfDone,
                          weak_ptr_factory_.GetWeakPtr()));
 }
@@ -121,7 +122,7 @@ void PdfPrintJob::OnCompositeDocumentToPdfDone(
 void PdfPrintJob::ReportMemoryRegion(
     const base::ReadOnlySharedMemoryRegion& region) {
   DCHECK(region.IsValid());
-  DCHECK(printing::LooksLikePdf(region.Map().GetMemoryAsSpan<char>()));
+  DCHECK(printing::LooksLikePdf(region.Map().GetMemoryAsSpan<const uint8_t>()));
 
   base::ReadOnlySharedMemoryMapping mapping = region.Map();
   if (!mapping.IsValid()) {

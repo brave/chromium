@@ -27,6 +27,9 @@
 
 #include "third_party/blink/renderer/core/editing/commands/editor_command.h"
 
+#include <array>
+#include <iterator>
+
 #include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
@@ -47,6 +50,7 @@
 #include "third_party/blink/renderer/core/editing/commands/remove_format_command.h"
 #include "third_party/blink/renderer/core/editing/commands/style_commands.h"
 #include "third_party/blink/renderer/core/editing/commands/typing_command.h"
+#include "third_party/blink/renderer/core/editing/commands/undo_stack.h"
 #include "third_party/blink/renderer/core/editing/commands/unlink_command.h"
 #include "third_party/blink/renderer/core/editing/editing_tri_state.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -80,8 +84,6 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
-#include <iterator>
-
 namespace blink {
 
 namespace {
@@ -110,8 +112,9 @@ EditingCommandType EditingCommandTypeFromCommandName(
         return CodeUnitCompareIgnoringASCIICase(needle, entry.name) > 0;
       });
   if (result != std::end(kCommandNameEntries) &&
-      CodeUnitCompareIgnoringASCIICase(command_name, result->name) == 0)
+      CodeUnitCompareIgnoringASCIICase(command_name, result->name) == 0) {
     return result->type;
+  }
   return EditingCommandType::kInvalid;
 }
 
@@ -126,9 +129,10 @@ InputEvent::InputType InputTypeFromCommandType(EditingCommandType command_type,
 
   // |executeInsertNewline()| could do two things but we have no other ways to
   // predict.
-  if (command_type == CommandType::kInsertNewline)
+  if (command_type == CommandType::kInsertNewline) {
     return frame.GetEditor().CanEditRichly() ? InputType::kInsertParagraph
                                              : InputType::kInsertLineBreak;
+  }
 
   switch (command_type) {
     // Insertion.
@@ -146,6 +150,8 @@ InputEvent::InputType InputTypeFromCommandType(EditingCommandType command_type,
       return InputType::kInsertOrderedList;
     case CommandType::kInsertUnorderedList:
       return InputType::kInsertUnorderedList;
+    case CommandType::kCreateLink:
+      return InputType::kInsertLink;
 
     // Deletion.
     case CommandType::kDelete:
@@ -198,22 +204,32 @@ InputEvent::InputType InputTypeFromCommandType(EditingCommandType command_type,
   }
 }
 
-StaticRangeVector* RangesFromCurrentSelectionOrExtendCaret(
+GCedStaticRangeVector* RangesFromCurrentSelectionOrExtendCaret(
     const LocalFrame& frame,
     SelectionModifyDirection direction,
     TextGranularity granularity) {
+  // Due to interoperability differences in getTargetRanges() when deleting
+  // content, we do not provide these ranges for EditContext. Developers are
+  // expected to compute the ranges themselves based on selection position.
+  // See https://github.com/w3c/input-events/issues/146.
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return nullptr;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   SelectionModifier selection_modifier(
       frame, frame.Selection().GetSelectionInDOMTree());
   selection_modifier.SetSelectionIsDirectional(
       frame.Selection().IsDirectional());
-  if (selection_modifier.Selection().IsCaret())
+  if (selection_modifier.Selection().IsCaret()) {
     selection_modifier.Modify(SelectionModifyAlteration::kExtend, direction,
                               granularity);
-  StaticRangeVector* ranges = MakeGarbageCollected<StaticRangeVector>();
+  }
+  GCedStaticRangeVector* ranges = MakeGarbageCollected<GCedStaticRangeVector>();
   // We only supports single selections.
-  if (selection_modifier.Selection().IsNone())
+  if (selection_modifier.Selection().IsNone()) {
     return ranges;
+  }
   ranges->push_back(StaticRange::Create(
       FirstEphemeralRangeOf(selection_modifier.Selection())));
   return ranges;
@@ -222,19 +238,22 @@ StaticRangeVector* RangesFromCurrentSelectionOrExtendCaret(
 EphemeralRange ComputeRangeForTranspose(LocalFrame& frame) {
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTree();
-  if (!selection.IsCaret())
+  if (!selection.IsCaret()) {
     return EphemeralRange();
+  }
 
   // Make a selection that goes back one character and forward two characters.
   const VisiblePosition& caret = selection.VisibleStart();
   const VisiblePosition& next =
       IsEndOfParagraph(caret) ? caret : NextPositionOf(caret);
   const VisiblePosition& previous = PreviousPositionOf(next);
-  if (next.DeepEquivalent() == previous.DeepEquivalent())
+  if (next.DeepEquivalent() == previous.DeepEquivalent()) {
     return EphemeralRange();
+  }
   const VisiblePosition& previous_of_previous = PreviousPositionOf(previous);
-  if (!InSameParagraph(next, previous_of_previous))
+  if (!InSameParagraph(next, previous_of_previous)) {
     return EphemeralRange();
+  }
   return MakeRange(previous_of_previous, next);
 }
 
@@ -277,7 +296,6 @@ static bool ExecuteApplyParagraphStyle(LocalFrame& frame,
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 bool ExpandSelectionToGranularity(LocalFrame& frame,
@@ -286,10 +304,12 @@ bool ExpandSelectionToGranularity(LocalFrame& frame,
       frame.Selection().ComputeVisibleSelectionInDOMTree().AsSelection(),
       granularity);
   const EphemeralRange& new_range = NormalizeRange(selection);
-  if (new_range.IsNull())
+  if (new_range.IsNull()) {
     return false;
-  if (new_range.IsCollapsed())
+  }
+  if (new_range.IsCollapsed()) {
     return false;
+  }
   frame.Selection().SetSelection(
       SelectionInDOMTree::Builder().SetBaseAndExtent(new_range).Build(),
       SetSelectionOptions::Builder().SetShouldCloseTyping(true).Build());
@@ -300,13 +320,19 @@ static bool HasChildTags(Element& element, const QualifiedName& tag_name) {
   return !element.getElementsByTagName(tag_name.LocalName())->IsEmpty();
 }
 
-static EditingTriState SelectionListState(const FrameSelection& selection,
+static EditingTriState SelectionListState(LocalFrame& frame,
                                           const QualifiedName& tag_name) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return EditingTriState::kFalse;
+  }
+
+  const FrameSelection& selection = frame.Selection();
   if (selection.ComputeVisibleSelectionInDOMTreeDeprecated().IsCaret()) {
     if (EnclosingElementWithTag(
             selection.ComputeVisibleSelectionInDOMTreeDeprecated().Start(),
-            tag_name))
+            tag_name)) {
       return EditingTriState::kTrue;
+    }
   } else if (selection.ComputeVisibleSelectionInDOMTreeDeprecated().IsRange()) {
     Element* start_element = EnclosingElementWithTag(
         selection.ComputeVisibleSelectionInDOMTreeDeprecated().Start(),
@@ -320,8 +346,9 @@ static EditingTriState SelectionListState(const FrameSelection& selection,
       // See http://crbug.com/385374
       if (HasChildTags(*start_element, tag_name.Matches(html_names::kUlTag)
                                            ? html_names::kOlTag
-                                           : html_names::kUlTag))
+                                           : html_names::kUlTag)) {
         return EditingTriState::kFalse;
+      }
       return EditingTriState::kTrue;
     }
   }
@@ -353,8 +380,9 @@ static bool ExecuteCreateLink(LocalFrame& frame,
                               Event*,
                               EditorCommandSource,
                               const String& value) {
-  if (value.empty())
+  if (value.empty()) {
     return false;
+  }
   DCHECK(frame.GetDocument());
   return MakeGarbageCollected<CreateLinkCommand>(*frame.GetDocument(), value)
       ->Apply();
@@ -377,8 +405,9 @@ static bool ExecuteDefaultParagraphSeparator(LocalFrame& frame,
 }
 
 static void PerformDelete(LocalFrame& frame) {
-  if (!frame.GetEditor().CanDelete())
+  if (!frame.GetEditor().CanDelete()) {
     return;
+  }
 
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited.  See http://crbug.com/590369 for more details.
@@ -421,7 +450,6 @@ static bool ExecuteDelete(LocalFrame& frame,
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 static bool DeleteWithDirection(LocalFrame& frame,
@@ -430,45 +458,40 @@ static bool DeleteWithDirection(LocalFrame& frame,
                                 bool kill_ring,
                                 bool is_typing_action) {
   Editor& editor = frame.GetEditor();
-  if (!editor.CanEdit())
+  if (!editor.CanEdit()) {
     return false;
+  }
 
-  EditingState editing_state;
   if (frame.Selection()
           .ComputeVisibleSelectionInDOMTreeDeprecated()
-          .IsRange()) {
-    if (is_typing_action) {
-      DCHECK(frame.GetDocument());
-      TypingCommand::DeleteKeyPressed(
-          *frame.GetDocument(),
-          CanSmartCopyOrDelete(frame) ? TypingCommand::kSmartDelete : 0,
-          granularity);
-      editor.RevealSelectionAfterEditingOperation();
-    } else {
-      if (kill_ring)
-        editor.AddToKillRing(editor.SelectedRange());
-      editor.DeleteSelectionWithSmartDelete(
-          CanSmartCopyOrDelete(frame) ? DeleteMode::kSmart
-                                      : DeleteMode::kSimple,
-          DeletionInputTypeFromTextGranularity(direction, granularity));
-      // Implicitly calls revealSelectionAfterEditingOperation().
+          .IsRange() &&
+      !is_typing_action) {
+    if (kill_ring) {
+      editor.AddToKillRing(editor.SelectedRange());
     }
+    editor.DeleteSelectionWithSmartDelete(
+        CanSmartCopyOrDelete(frame) ? DeleteMode::kSmart : DeleteMode::kSimple,
+        DeletionInputTypeFromTextGranularity(direction, granularity));
+    // Implicitly calls revealSelectionAfterEditingOperation().
   } else {
+    EditingState editing_state;
     TypingCommand::Options options = 0;
-    if (CanSmartCopyOrDelete(frame))
+    if (CanSmartCopyOrDelete(frame)) {
       options |= TypingCommand::kSmartDelete;
-    if (kill_ring)
+    }
+    if (kill_ring) {
       options |= TypingCommand::kKillRing;
+    }
+    DCHECK(frame.GetDocument());
     switch (direction) {
       case DeleteDirection::kForward:
-        DCHECK(frame.GetDocument());
         TypingCommand::ForwardDeleteKeyPressed(
             *frame.GetDocument(), &editing_state, options, granularity);
-        if (editing_state.IsAborted())
+        if (editing_state.IsAborted()) {
           return false;
+        }
         break;
       case DeleteDirection::kBackward:
-        DCHECK(frame.GetDocument());
         TypingCommand::DeleteKeyPressed(*frame.GetDocument(), options,
                                         granularity);
         break;
@@ -479,8 +502,9 @@ static bool DeleteWithDirection(LocalFrame& frame,
   // FIXME: We should to move this down into deleteKeyPressed.
   // clear the "start new kill ring sequence" setting, because it was set to
   // true when the selection was updated by deleting the range
-  if (kill_ring)
+  if (kill_ring) {
     editor.SetStartNewKillRingSequence(false);
+  }
 
   return true;
 }
@@ -605,7 +629,9 @@ static bool ExecuteFindString(LocalFrame& frame,
                               Event*,
                               EditorCommandSource,
                               const String& value) {
-  return Editor::FindString(frame, value, kCaseInsensitive | kWrapAround);
+  return Editor::FindString(
+      frame, value,
+      FindOptions().SetCaseInsensitive(true).SetWrappingAround(true));
 }
 
 static bool ExecuteFormatBlock(LocalFrame& frame,
@@ -613,13 +639,17 @@ static bool ExecuteFormatBlock(LocalFrame& frame,
                                EditorCommandSource,
                                const String& value) {
   String tag_name = value.DeprecatedLower();
-  if (tag_name[0] == '<' && tag_name[tag_name.length() - 1] == '>')
+  if (tag_name[0] == '<' && tag_name[tag_name.length() - 1] == '>') {
     tag_name = tag_name.Substring(1, tag_name.length() - 2);
+  }
 
   AtomicString local_name, prefix;
-  if (!Document::ParseQualifiedName(AtomicString(tag_name), prefix, local_name,
-                                    IGNORE_EXCEPTION_FOR_TESTING))
+  if (!Document::ParseQualifiedName(
+          AtomicString(tag_name), prefix, local_name,
+          IGNORE_EXCEPTION_FOR_TESTING,
+          Document::QualifiedNameParsingMode::kParsingElement)) {
     return false;
+  }
   QualifiedName qualified_tag_name(prefix, local_name,
                                    html_names::xhtmlNamespaceURI);
 
@@ -648,12 +678,12 @@ static bool ExecuteForwardDelete(LocalFrame& frame,
       DCHECK(frame.GetDocument());
       TypingCommand::ForwardDeleteKeyPressed(*frame.GetDocument(),
                                              &editing_state);
-      if (editing_state.IsAborted())
+      if (editing_state.IsAborted()) {
         return false;
+      }
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 static bool ExecuteIgnoreSpelling(LocalFrame& frame,
@@ -734,8 +764,9 @@ static bool ExecutePrint(LocalFrame& frame,
                          EditorCommandSource,
                          const String&) {
   Page* page = frame.GetPage();
-  if (!page)
+  if (!page) {
     return false;
+  }
   return page->GetChromeClient().Print(&frame);
 }
 
@@ -819,7 +850,10 @@ static bool ExecuteSelectAll(LocalFrame& frame,
       source == EditorCommandSource::kMenuOrKeyBinding
           ? SetSelectionBy::kUser
           : SetSelectionBy::kSystem;
-  frame.Selection().SelectAll(set_selection_by);
+  frame.Selection().SelectAll(
+      set_selection_by,
+      /* canonicalize_selection */ RuntimeEnabledFeatures::
+          RemoveVisibleSelectionInDOMSelectionEnabled());
   return true;
 }
 
@@ -851,8 +885,9 @@ static bool ExecuteSelectToMark(LocalFrame& frame,
   const EphemeralRange mark =
       frame.GetEditor().Mark().ToNormalizedEphemeralRange();
   EphemeralRange selection = frame.GetEditor().SelectedRange();
-  if (mark.IsNull() || selection.IsNull())
+  if (mark.IsNull() || selection.IsNull()) {
     return false;
+  }
   frame.Selection().SetSelection(
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(UnionEphemeralRanges(mark, selection))
@@ -884,8 +919,9 @@ static bool ExecuteSwapWithMark(LocalFrame& frame,
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
   const bool mark_is_directional = frame.GetEditor().MarkIsDirectional();
-  if (mark.IsNone() || selection.IsNone())
+  if (mark.IsNone() || selection.IsNone()) {
     return false;
+  }
 
   frame.GetEditor().SetMark();
   frame.Selection().SetSelection(mark.AsSelection(),
@@ -900,8 +936,9 @@ static bool ExecuteTranspose(LocalFrame& frame,
                              EditorCommandSource,
                              const String&) {
   Editor& editor = frame.GetEditor();
-  if (!editor.CanEdit())
+  if (!editor.CanEdit()) {
     return false;
+  }
 
   Document* const document = frame.GetDocument();
 
@@ -910,26 +947,30 @@ static bool ExecuteTranspose(LocalFrame& frame,
   document->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   const EphemeralRange& range = ComputeRangeForTranspose(frame);
-  if (range.IsNull())
+  if (range.IsNull()) {
     return false;
+  }
 
   // Transpose the two characters.
   const String& text = PlainText(range);
-  if (text.length() != 2)
+  if (text.length() != 2) {
     return false;
+  }
   const String& transposed = text.Right(1) + text.Left(1);
 
   if (DispatchBeforeInputInsertText(EventTargetNodeForDocument(document),
                                     transposed,
                                     InputEvent::InputType::kInsertTranspose,
-                                    MakeGarbageCollected<StaticRangeVector>(
+                                    MakeGarbageCollected<GCedStaticRangeVector>(
                                         1, StaticRange::Create(range))) !=
-      DispatchEventResult::kNotCanceled)
+      DispatchEventResult::kNotCanceled) {
     return false;
+  }
 
   // 'beforeinput' event handler may destroy document->
-  if (frame.GetDocument() != document)
+  if (frame.GetDocument() != document) {
     return false;
+  }
 
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited.  See http://crbug.com/590369 for more details.
@@ -938,12 +979,14 @@ static bool ExecuteTranspose(LocalFrame& frame,
   // 'beforeinput' event handler may change selection, we need to re-calculate
   // range.
   const EphemeralRange& new_range = ComputeRangeForTranspose(frame);
-  if (new_range.IsNull())
+  if (new_range.IsNull()) {
     return false;
+  }
 
   const String& new_text = PlainText(new_range);
-  if (new_text.length() != 2)
+  if (new_text.length() != 2) {
     return false;
+  }
   const String& new_transposed = new_text.Right(1) + new_text.Left(1);
 
   const SelectionInDOMTree& new_selection =
@@ -951,8 +994,9 @@ static bool ExecuteTranspose(LocalFrame& frame,
 
   // Select the two characters.
   if (CreateVisibleSelection(new_selection) !=
-      frame.Selection().ComputeVisibleSelectionInDOMTree())
+      frame.Selection().ComputeVisibleSelectionInDOMTree()) {
     frame.Selection().SetSelectionAndEndTyping(new_selection);
+  }
 
   // Insert the transposed characters.
   editor.ReplaceSelectionWithText(new_transposed, false, false,
@@ -992,12 +1036,14 @@ static bool ExecuteYank(LocalFrame& frame,
   if (DispatchBeforeInputInsertText(
           EventTargetNodeForDocument(frame.GetDocument()), yank_string,
           InputEvent::InputType::kInsertFromYank) !=
-      DispatchEventResult::kNotCanceled)
+      DispatchEventResult::kNotCanceled) {
     return true;
+  }
 
   // 'beforeinput' event handler may destroy document.
-  if (frame.GetDocument()->GetFrame() != &frame)
+  if (frame.GetDocument()->GetFrame() != &frame) {
     return false;
+  }
 
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited. see http://crbug.com/590369 for more details.
@@ -1017,12 +1063,14 @@ static bool ExecuteYankAndSelect(LocalFrame& frame,
   if (DispatchBeforeInputInsertText(
           EventTargetNodeForDocument(frame.GetDocument()), yank_string,
           InputEvent::InputType::kInsertFromYank) !=
-      DispatchEventResult::kNotCanceled)
+      DispatchEventResult::kNotCanceled) {
     return true;
+  }
 
   // 'beforeinput' event handler may destroy document.
-  if (frame.GetDocument()->GetFrame() != &frame)
+  if (frame.GetDocument()->GetFrame() != &frame) {
     return false;
+  }
 
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited. see http://crbug.com/590369 for more details.
@@ -1054,11 +1102,17 @@ static bool Enabled(LocalFrame&, Event*, EditorCommandSource) {
 static bool EnabledVisibleSelection(LocalFrame& frame,
                                     Event* event,
                                     EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
 
   // The term "visible" here includes a caret in editable text, a range in any
   // text, or a caret in non-editable text when caret browsing is enabled.
@@ -1072,11 +1126,17 @@ static bool EnabledVisibleSelection(LocalFrame& frame,
 static bool EnabledVisibleSelectionAndMark(LocalFrame& frame,
                                            Event* event,
                                            EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
 
   const VisibleSelection& selection =
       CreateVisibleSelection(frame.GetEditor().SelectionForCommand(event));
@@ -1089,11 +1149,17 @@ static bool EnabledVisibleSelectionAndMark(LocalFrame& frame,
 static bool EnableCaretInEditableText(LocalFrame& frame,
                                       Event* event,
                                       EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
   const VisibleSelection& selection =
       CreateVisibleSelection(frame.GetEditor().SelectionForCommand(event));
   return selection.IsCaret() && selection.IsContentEditable();
@@ -1102,14 +1168,28 @@ static bool EnableCaretInEditableText(LocalFrame& frame,
 static bool EnabledInEditableText(LocalFrame& frame,
                                   Event* event,
                                   EditorCommandSource source) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    if (source == EditorCommandSource::kDOM) {
+      return false;
+    } else if (source == EditorCommandSource::kMenuOrKeyBinding) {
+      // If there's an active EditContext, always give the EditContext
+      // a chance to handle menu or key binding commands regardless
+      // of the selection position. This is important for the case
+      // where the EditContext's associated element is a <canvas>,
+      // which cannot contain selection; only focus.
+      return true;
+    }
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
   const SelectionInDOMTree selection =
       frame.GetEditor().SelectionForCommand(event);
   return RootEditableElementOf(
-      CreateVisiblePosition(selection.Base()).DeepEquivalent());
+      CreateVisiblePosition(selection.Anchor()).DeepEquivalent());
 }
 
 static bool EnabledInEditableTextOrCaretBrowsing(LocalFrame& frame,
@@ -1132,29 +1212,40 @@ static bool EnabledDelete(LocalFrame& frame,
       return EnabledInEditableText(frame, event, source);
   }
   NOTREACHED();
-  return false;
 }
 
 static bool EnabledInRichlyEditableText(LocalFrame& frame,
                                         Event*,
                                         EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTree();
-  return !selection.IsNone() && IsRichlyEditablePosition(selection.Base()) &&
+  return !selection.IsNone() && IsRichlyEditablePosition(selection.Anchor()) &&
          selection.RootEditableElement();
 }
 
 static bool EnabledRangeInEditableText(LocalFrame& frame,
                                        Event*,
                                        EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
   return frame.Selection()
              .ComputeVisibleSelectionInDOMTreeDeprecated()
              .IsRange() &&
@@ -1166,13 +1257,19 @@ static bool EnabledRangeInEditableText(LocalFrame& frame,
 static bool EnabledRangeInRichlyEditableText(LocalFrame& frame,
                                              Event*,
                                              EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
+      !frame.Selection().SelectionHasFocus()) {
     return false;
+  }
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTree();
-  return selection.IsRange() && IsRichlyEditablePosition(selection.Base());
+  return selection.IsRange() && IsRichlyEditablePosition(selection.Anchor());
 }
 
 static bool EnabledRedo(LocalFrame& frame, Event*, EditorCommandSource) {
@@ -1185,7 +1282,12 @@ static bool EnabledUndo(LocalFrame& frame, Event*, EditorCommandSource) {
 
 static bool EnabledUnselect(LocalFrame& frame,
                             Event* event,
-                            EditorCommandSource) {
+                            EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   // The term "visible" here includes a caret in editable text or a range in any
@@ -1199,21 +1301,29 @@ static bool EnabledUnselect(LocalFrame& frame,
 static bool EnabledSelectAll(LocalFrame& frame,
                              Event*,
                              EditorCommandSource source) {
+  if (source == EditorCommandSource::kDOM &&
+      frame.GetInputMethodController().GetActiveEditContext()) {
+    return false;
+  }
+
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited.  See http://crbug.com/590369 for more details.
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTree();
-  if (selection.IsNone())
+  if (selection.IsNone()) {
     return true;
+  }
   // Hidden selection appears as no selection to users, in which case user-
   // triggered SelectAll should be enabled and act as if there is no selection.
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      frame.Selection().IsHidden())
+      frame.Selection().IsHidden()) {
     return true;
+  }
   if (Node* root = HighestEditableRoot(selection.Start())) {
-    if (!root->hasChildren())
+    if (!root->hasChildren()) {
       return false;
+    }
 
     // When the editable appears as an empty line without any visible content,
     // allowing select-all confuses users.
@@ -1221,12 +1331,10 @@ static bool EnabledSelectAll(LocalFrame& frame,
       if (IsA<HTMLBRElement>(root->firstChild())) {
         return false;
       }
-      if (RuntimeEnabledFeatures::DisableSelectAllForEmptyTextEnabled()) {
-        if (Text* text = DynamicTo<Text>(root->firstChild())) {
-          LayoutText* layout_text = text->GetLayoutObject();
-          if (!layout_text || !layout_text->HasNonCollapsedText()) {
-            return false;
-          }
+      if (Text* text = DynamicTo<Text>(root->firstChild())) {
+        LayoutText* layout_text = text->GetLayoutObject();
+        if (!layout_text || !layout_text->HasNonCollapsedText()) {
+          return false;
         }
       }
     }
@@ -1244,11 +1352,11 @@ static EditingTriState StateNone(LocalFrame&, Event*) {
 }
 
 EditingTriState StateOrderedList(LocalFrame& frame, Event*) {
-  return SelectionListState(frame.Selection(), html_names::kOlTag);
+  return SelectionListState(frame, html_names::kOlTag);
 }
 
 static EditingTriState StateUnorderedList(LocalFrame& frame, Event*) {
-  return SelectionListState(frame.Selection(), html_names::kUlTag);
+  return SelectionListState(frame, html_names::kUlTag);
 }
 
 static EditingTriState StateJustifyCenter(LocalFrame& frame, Event*) {
@@ -1272,8 +1380,9 @@ static EditingTriState StateJustifyRight(LocalFrame& frame, Event*) {
 static String ValueStateOrNull(const EditorInternalCommand& self,
                                LocalFrame& frame,
                                Event* triggering_event) {
-  if (self.state == StateNone)
+  if (self.state == StateNone) {
     return String();
+  }
   return self.state(frame, triggering_event) == EditingTriState::kTrue
              ? "true"
              : "false";
@@ -1297,7 +1406,6 @@ static String ValueDefaultParagraphSeparator(const EditorInternalCommand&,
   }
 
   NOTREACHED();
-  return String();
 }
 
 static String ValueFormatBlock(const EditorInternalCommand&,
@@ -1306,13 +1414,15 @@ static String ValueFormatBlock(const EditorInternalCommand&,
   const VisibleSelection& selection =
       frame.Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
   if (selection.IsNone() || !selection.IsValidFor(*(frame.GetDocument())) ||
-      !selection.IsContentEditable())
+      !selection.IsContentEditable()) {
     return "";
+  }
   Element* format_block_element =
       FormatBlockCommand::ElementForFormatBlockCommand(
           FirstEphemeralRangeOf(selection));
-  if (!format_block_element)
+  if (!format_block_element) {
     return "";
+  }
   return format_block_element->localName();
 }
 
@@ -1326,7 +1436,7 @@ static bool CanNotExecuteWhenDisabled(LocalFrame&, EditorCommandSource) {
 
 static const EditorInternalCommand* InternalCommand(
     const String& command_name) {
-  static const EditorInternalCommand kEditorCommands[] = {
+  static const auto kEditorCommands = std::to_array<EditorInternalCommand>({
       // Lists all commands in blink::EditingCommandType.
       // Must be ordered by |commandType| for index lookup.
       // Covered by unit tests in editing_command_test.cc
@@ -1833,7 +1943,7 @@ static const EditorInternalCommand* InternalCommand(
        ClipboardCommands::ExecutePasteFromImageURL,
        SupportedFromMenuOrKeyBinding, EnabledInEditableText, StateNone,
        ValueStateOrNull, kNotTextInsertion, CanNotExecuteWhenDisabled},
-  };
+  });
   // Handles all commands except EditingCommandType::Invalid.
   static_assert(
       std::size(kEditorCommands) + 1 ==
@@ -1842,8 +1952,9 @@ static const EditorInternalCommand* InternalCommand(
 
   EditingCommandType command_type =
       EditingCommandTypeFromCommandName(command_name);
-  if (command_type == EditingCommandType::kInvalid)
+  if (command_type == EditingCommandType::kInvalid) {
     return nullptr;
+  }
 
   int command_index = static_cast<int>(command_type) - 1;
   DCHECK(command_index >= 0 &&
@@ -1874,10 +1985,12 @@ bool Editor::ExecuteCommand(const String& command_name) {
     }
     return true;
   }
-  if (command_name == "DeleteBackward")
+  if (command_name == "DeleteBackward") {
     return CreateCommand(AtomicString("BackwardDelete")).Execute();
-  if (command_name == "DeleteForward")
+  }
+  if (command_name == "DeleteForward") {
     return CreateCommand(AtomicString("ForwardDelete")).Execute();
+  }
   if (command_name == "AdvanceToNextMisspelling") {
     // TODO(editing-dev): Use of UpdateStyleAndLayout
     // needs to be audited. see http://crbug.com/590369 for more details.
@@ -1945,10 +2058,11 @@ EditorCommand::EditorCommand(const EditorInternalCommand* command,
                              LocalFrame* frame)
     : command_(command), source_(source), frame_(command ? frame : nullptr) {
   // Use separate assertions so we can tell which bad thing happened.
-  if (!command)
+  if (!command) {
     DCHECK(!frame_);
-  else
+  } else {
     DCHECK(frame_);
+  }
 }
 
 LocalFrame& EditorCommand::GetFrame() const {
@@ -1958,20 +2072,40 @@ LocalFrame& EditorCommand::GetFrame() const {
 
 bool EditorCommand::Execute(const String& parameter,
                             Event* triggering_event) const {
-  if (!CanExecute(triggering_event))
+  if (!CanExecute(triggering_event)) {
     return false;
+  }
 
   if (source_ == EditorCommandSource::kMenuOrKeyBinding) {
     InputEvent::InputType input_type =
         InputTypeFromCommandType(command_->command_type, *frame_);
     if (input_type != InputEvent::InputType::kNone) {
-      if (DispatchBeforeInputEditorCommand(
-              EventTargetNodeForDocument(frame_->GetDocument()), input_type,
-              GetTargetRanges()) != DispatchEventResult::kNotCanceled)
+      UndoStep* undo_step = nullptr;
+      // The node associated with the Undo/Redo command may not necessarily be
+      // the currently focused node. See
+      // https://issues.chromium.org/issues/326117120 for more details.
+      if (RuntimeEnabledFeatures::
+              UseUndoStepElementDispatchBeforeInputEnabled()) {
+        if (command_->command_type == EditingCommandType::kUndo &&
+            frame_->GetEditor().CanUndo()) {
+          undo_step = *frame_->GetEditor().GetUndoStack().UndoSteps().begin();
+        } else if (command_->command_type == EditingCommandType::kRedo &&
+                   frame_->GetEditor().CanRedo()) {
+          undo_step = *frame_->GetEditor().GetUndoStack().RedoSteps().begin();
+        }
+      }
+      Node* target_node =
+          undo_step ? undo_step->StartingRootEditableElement()
+                    : EventTargetNodeForDocument(frame_->GetDocument());
+      if (DispatchBeforeInputEditorCommand(target_node, input_type,
+                                           GetTargetRanges()) !=
+          DispatchEventResult::kNotCanceled) {
         return true;
+      }
       // 'beforeinput' event handler may destroy target frame.
-      if (frame_->GetDocument()->GetFrame() != frame_)
+      if (frame_->GetDocument()->GetFrame() != frame_) {
         return false;
+      }
     }
 
     // If EditContext is active, we may return early and not execute the
@@ -2013,7 +2147,7 @@ bool EditorCommand::Execute(const String& parameter,
   // We need to force unlock activatable DisplayLocks for Editor::FindString
   // before the following call to UpdateStyleAndLayout. Otherwise,
   // ExecuteFindString/Editor::FindString will hit bad style/layout data.
-  absl::optional<DisplayLockDocumentState::ScopedForceActivatableDisplayLocks>
+  std::optional<DisplayLockDocumentState::ScopedForceActivatableDisplayLocks>
       forced_locks;
   if (command_->command_type == EditingCommandType::kFindString) {
     forced_locks = GetFrame()
@@ -2034,14 +2168,16 @@ bool EditorCommand::Execute(Event* triggering_event) const {
 }
 
 bool EditorCommand::CanExecute(Event* triggering_event) const {
-  if (IsEnabled(triggering_event))
+  if (IsEnabled(triggering_event)) {
     return true;
+  }
   return IsSupported() && frame_ && command_->can_execute(*frame_, source_);
 }
 
 bool EditorCommand::IsSupported() const {
-  if (!command_)
+  if (!command_) {
     return false;
+  }
   switch (source_) {
     case EditorCommandSource::kMenuOrKeyBinding:
       return true;
@@ -2049,24 +2185,26 @@ bool EditorCommand::IsSupported() const {
       return command_->is_supported_from_dom(frame_);
   }
   NOTREACHED();
-  return false;
 }
 
 bool EditorCommand::IsEnabled(Event* triggering_event) const {
-  if (!IsSupported() || !frame_)
+  if (!IsSupported() || !frame_) {
     return false;
+  }
   return command_->is_enabled(*frame_, triggering_event, source_);
 }
 
 EditingTriState EditorCommand::GetState(Event* triggering_event) const {
-  if (!IsSupported() || !frame_)
+  if (!IsSupported() || !frame_) {
     return EditingTriState::kFalse;
+  }
   return command_->state(*frame_, triggering_event);
 }
 
 String EditorCommand::Value(Event* triggering_event) const {
-  if (!IsSupported() || !frame_)
+  if (!IsSupported() || !frame_) {
     return String();
+  }
   return command_->value(*command_, *frame_, triggering_event);
 }
 
@@ -2083,10 +2221,11 @@ int EditorCommand::IdForHistogram() const {
   return IsSupported() ? static_cast<int>(command_->command_type) : 0;
 }
 
-const StaticRangeVector* EditorCommand::GetTargetRanges() const {
+const GCedStaticRangeVector* EditorCommand::GetTargetRanges() const {
   const Node* target = EventTargetNodeForDocument(frame_->GetDocument());
-  if (!IsSupported() || !frame_ || !target || !IsRichlyEditable(*target))
+  if (!IsSupported() || !frame_ || !target || !IsRichlyEditable(*target)) {
     return nullptr;
+  }
 
   switch (command_->command_type) {
     case EditingCommandType::kDelete:

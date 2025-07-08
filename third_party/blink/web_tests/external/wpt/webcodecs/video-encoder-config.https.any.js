@@ -51,6 +51,15 @@ const invalidConfigs = [
       height: 480,
     },
   },
+  {
+    comment: 'bitrate is present but zero',
+    config: {
+      codec: 'vp8',
+      width: 640,
+      height: 480,
+      bitrate: 0
+    },
+  },
 ];
 
 invalidConfigs.forEach(entry => {
@@ -90,6 +99,22 @@ const validButUnsupportedConfigs = [
     },
   },
   {
+  comment: 'VP8 codec string not accepted by Web Codecs',
+    config: {
+      codec: 'vp08.00.10.08',
+      width: 640,
+      height: 480,
+    },
+  },
+  {
+    comment: 'Codec with bad casing',
+    config: {
+      codec: 'vP8',
+      width: 640,
+      height: 480,
+    },
+  },
+  {
     comment: 'Width is too large',
     config: {
       codec: 'vp8',
@@ -110,8 +135,8 @@ const validButUnsupportedConfigs = [
     config: {
       codec: 'vp8',
       hardwareAcceleration: 'prefer-hardware',
-      width: 20000,
-      height: 20000,
+      width: 30000,
+      height: 30000,
       bitrate: 1,
       framerate: 240,
     }
@@ -158,6 +183,14 @@ const validButUnsupportedConfigs = [
       height: 480,
     },
   },
+  {
+    comment: 'codec with spaces',
+    config: {
+      codec: '  vp09.00.10.08  ',
+      width: 640,
+      height: 480,
+    }
+  }
 ];
 
 validButUnsupportedConfigs.forEach(entry => {
@@ -181,13 +214,27 @@ validButUnsupportedConfigs.forEach(entry => {
 });
 
 validButUnsupportedConfigs.forEach(entry => {
-  async_test(
+  promise_test(
       t => {
-        let codec = new VideoEncoder(getDefaultCodecInit(t));
-        assert_throws_dom('NotSupportedError', () => {
-          codec.configure(entry.config);
+        let isErrorCallbackCalled = false;
+        let codec = new VideoEncoder({
+          output: t.unreached_func('unexpected output'),
+          error: t.step_func_done(e => {
+            isErrorCallbackCalled = true;
+            assert_true(e instanceof DOMException);
+            assert_equals(e.name, 'NotSupportedError');
+            assert_equals(codec.state, 'closed', 'state');
+          })
         });
-        t.done();
+        codec.configure(entry.config);
+        return codec.flush()
+            .then(t.unreached_func('flush succeeded unexpectedly'))
+            .catch(t.step_func(e => {
+              assert_true(isErrorCallbackCalled, "isErrorCallbackCalled");
+              assert_true(e instanceof DOMException);
+              assert_equals(e.name, 'NotSupportedError');
+              assert_equals(codec.state, 'closed', 'state');
+            }));
       },
       'Test that VideoEncoder.configure() doesn\'t support config: ' +
           entry.comment);
@@ -251,12 +298,7 @@ validConfigs.forEach(config => {
       assert_equals(new_config.latencyMode, config.latencyMode);
     if (config.alpha)
       assert_equals(new_config.alpha, config.alpha);
-    if (config.codec.startsWith('avc')) {
-      if (config.avc) {
-        assert_equals(new_config.avc.format, config.avc.format);
-      }
-    } else {
-      assert_equals(new_config.avc, undefined);
-    }
+    if (config.avc)
+      assert_equals(new_config.avc.format, config.avc.format);
   }, "VideoEncoder.isConfigSupported() supports:" + JSON.stringify(config));
 });

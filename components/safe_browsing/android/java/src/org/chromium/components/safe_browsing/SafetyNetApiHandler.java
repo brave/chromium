@@ -6,59 +6,88 @@ package org.chromium.components.safe_browsing;
 
 import androidx.annotation.IntDef;
 
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
+import org.chromium.build.annotations.NullMarked;
 
 /**
- * Java interface that a SafetyNetApiHandler must implement when used with
- * {@code SafeBrowsingApiBridge}.
+ * Java interface that a SafetyNetApiHandler must implement when used with {@code
+ * SafeBrowsingApiBridge}.
  */
+@NullMarked
 public interface SafetyNetApiHandler {
+    // Enumerates possible initialization states for the SafetyNetApiHandler.
+    @IntDef({
+        SafetyNetApiState.NOT_AVAILABLE,
+        SafetyNetApiState.INITIALIZED,
+        SafetyNetApiState.INITIALIZED_FIRST_PARTY,
+    })
+    public @interface SafetyNetApiState {
+        // The API handler is not initialized. Calls to methods below will not work.
+        int NOT_AVAILABLE = 0;
+        // The API handler is initialized for most usages, but calls to {@link getSafetyNetId} will
+        // not work.
+        int INITIALIZED = 1;
+        // The API handler is initialized for all method calls.
+        int INITIALIZED_FIRST_PARTY = 2;
+    };
+
     /**
-     * Observer to be notified when the SafetyNetApiHandler determines the verdict for a url.
+     * Observer to be notified when the SafetyNetApiHandler determines the result of asynchronous
+     * calls.
      */
     interface Observer {
-        // Note: |checkDelta| is the time the remote call took in microseconds.
-        void onUrlCheckDone(long callbackId, @SafeBrowsingResult int resultStatus, String metadata,
-                long checkDelta);
-    }
+        void onVerifyAppsEnabledDone(long callbackId, @VerifyAppsResult int result);
 
-    // Possible values for resultStatus. Native side has the same definitions.
-    @IntDef({SafeBrowsingResult.INTERNAL_ERROR, SafeBrowsingResult.SUCCESS,
-            SafeBrowsingResult.TIMEOUT})
-    @Retention(RetentionPolicy.SOURCE)
-    @interface SafeBrowsingResult {
-        int INTERNAL_ERROR = -1;
-        int SUCCESS = 0;
-        int TIMEOUT = 1;
+        void onGetSafetyNetIdDone(String result);
     }
 
     /**
-     * Verifies that SafetyNetApiHandler can operate and initializes if feasible.
-     * Should be called on the same sequence as |startUriLookup|.
+     * Verifies that SafetyNetApiHandler can operate and initializes if feasible. Should be called
+     * on the same sequence as {@link startAllowlistLookup}, {@link isVerifyAppsEnabled}, and {@link
+     * getSafetyNetId}.
      *
-     * @param result The object on which to call the callback functions when URL checking
-     * is complete.
-     *
-     * @return whether Safe Browsing is supported for this installation.
+     * @param observer The object on which to call the callback functions when app verification
+     *     checking is complete.
+     * @return Enum value indicating which methods are supported for this installation.
      */
-    boolean init(Observer result);
+    @SafetyNetApiState
+    int initialize(Observer observer);
 
     /**
-     * Start a URI-lookup to determine if it matches one of the specified threats.
-     * This is called on every URL resource Chrome loads, on the same sequence as |init|.
-     */
-    void startUriLookup(long callbackId, String uri, int[] threatsOfInterest);
-
-    /**
-     * Start a check to determine if a uri is in an allowlist. If true, password protection
-     * service will consider the uri to be safe.
+     * Start a check to determine if a uri is in an allowlist. If true, Safe Browsing will consider
+     * the uri to be safe. Requires initialized state {@code INITIALIZED} or {@code
+     * INITIALIZED_FIRST_PARTY}.
      *
-     * @param uri The uri from a password protection event(user focuses on password form
-     *      * or user reuses their password)
+     * @param uri The uri from a safe browsing relevant event (for password protection: user focuses
+     *     on password form or user reuses their password; for download protection: a downloaded
+     *     file of appropriate filetype).
      * @param threatType determines the type of the allowlist that the uri will be matched to.
-     *
      * @return true if the uri is found in the corresponding allowlist. Otherwise, false.
      */
     boolean startAllowlistLookup(String uri, int threatType);
+
+    /**
+     * Start a check to see if the user has app verification enabled. The response will be provided
+     * to the observer with the onVerifyAppsEnabledDone method. Requires initialized state {@code
+     * INITIALIZED} or {@code INITIALIZED_FIRST_PARTY}.
+     *
+     * @param callbackId The id of the callback which should be returned with the result.
+     */
+    void isVerifyAppsEnabled(long callbackId);
+
+    /**
+     * Prompt the user to enable app verification. The response will be provided to the observer
+     * with the onVerifyAppsEnabledDone method. Requires initialized state {@code INITIALIZED} or
+     * {@code INITIALIZED_FIRST_PARTY}.
+     *
+     * @param callbackId The id of the callback which should be returned with the result.
+     */
+    void enableVerifyApps(long callbackId);
+
+    /**
+     * Get the shared UUID from the SafetyNet API. A result will be returned to {@link
+     * Observer#onGetSafetyNetIdDone}. Result may be empty string in case of error, in which case
+     * the error is not likely recoverable during this process lifetime. May also return a non-empty
+     * default value for some errors. Requires initialized state {@code INITIALIZED_FIRST_PARTY}.
+     */
+    void getSafetyNetId();
 }

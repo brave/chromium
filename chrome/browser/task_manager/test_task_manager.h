@@ -25,7 +25,7 @@ class TestTaskManager : public TaskManagerInterface {
   // task_manager::TaskManagerInterface:
   void ActivateTask(TaskId task_id) override;
   bool IsTaskKillable(TaskId task_id) override;
-  void KillTask(TaskId task_id) override;
+  bool KillTask(TaskId task_id) override;
   double GetPlatformIndependentCPUUsage(TaskId task_id) const override;
   base::Time GetStartTime(TaskId task_id) const override;
   base::TimeDelta GetCpuTime(TaskId task_id) const override;
@@ -35,7 +35,6 @@ class TestTaskManager : public TaskManagerInterface {
                             bool* has_duplicates) const override;
   int GetIdleWakeupsPerSecond(TaskId task_id) const override;
   int GetHardFaultsPerSecond(TaskId task_id) const override;
-  int GetNaClDebugStubPort(TaskId task_id) const override;
   void GetGDIHandles(TaskId task_id,
                      int64_t* current,
                      int64_t* peak) const override;
@@ -49,7 +48,9 @@ class TestTaskManager : public TaskManagerInterface {
   const gfx::ImageSkia& GetIcon(TaskId task_id) const override;
   const base::ProcessHandle& GetProcessHandle(TaskId task_id) const override;
   const base::ProcessId& GetProcessId(TaskId task_id) const override;
+  TaskId GetRootTaskId(TaskId task_id) const override;
   Task::Type GetType(TaskId task_id) const override;
+  Task::SubType GetSubType(TaskId task_id) const override;
   SessionID GetTabId(TaskId task_id) const override;
   int GetChildProcessUniqueId(TaskId task_id) const override;
   void GetTerminationStatus(TaskId task_id,
@@ -72,6 +73,7 @@ class TestTaskManager : public TaskManagerInterface {
   bool IsRunningInVM(TaskId task_id) const override;
   TaskId GetTaskIdForWebContents(
       content::WebContents* web_contents) const override;
+  bool IsTaskValid(TaskId task_id) const override;
 
   base::TimeDelta GetRefreshTime();
   int64_t GetEnabledFlags();

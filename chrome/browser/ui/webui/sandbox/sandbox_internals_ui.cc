@@ -15,6 +15,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/ui/webui/sandbox/sandbox_handler.h"
@@ -69,9 +70,12 @@ static void SetSandboxStatusData(content::WebUIDataSource* source) {
 void CreateAndAddDataSource(Profile* profile) {
   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
       profile, chrome::kChromeUISandboxHost);
-  source->AddResourcePaths(base::make_span(kSandboxInternalsResources,
-                                           kSandboxInternalsResourcesSize));
+  source->AddResourcePaths(kSandboxInternalsResources);
   source->SetDefaultResource(IDR_SANDBOX_INTERNALS_SANDBOX_INTERNALS_HTML);
+
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ScriptSrc,
+      "script-src chrome://resources chrome://webui-test 'self';");
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   SetSandboxStatusData(source);

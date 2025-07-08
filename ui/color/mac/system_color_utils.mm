@@ -8,10 +8,6 @@
 
 #include "ui/gfx/color_utils.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 bool graphite_tint_test_override = false;
 }
@@ -19,8 +15,9 @@ bool graphite_tint_test_override = false;
 namespace ui {
 
 bool IsSystemGraphiteTinted() {
-  if (graphite_tint_test_override)
+  if (graphite_tint_test_override) {
     return true;
+  }
 
   return NSColor.currentControlTint == NSGraphiteControlTint;
 }

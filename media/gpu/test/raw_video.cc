@@ -2,7 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/test/raw_video.h"
+
+#include <array>
 
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
@@ -11,6 +18,7 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -20,12 +28,13 @@
 #include "media/base/video_frame.h"
 #include "media/base/video_types.h"
 #include "media/ffmpeg/ffmpeg_common.h"
+#include "media/ffmpeg/scoped_av_packet.h"
 #include "media/filters/ffmpeg_glue.h"
 #include "media/filters/in_memory_url_protocol.h"
 #include "media/filters/offloading_video_decoder.h"
-#include "media/filters/vp9_parser.h"
 #include "media/filters/vpx_video_decoder.h"
 #include "media/gpu/test/video_frame_helpers.h"
+#include "media/parsers/vp9_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/ffmpeg/libavformat/avformat.h"
 #include "third_party/ffmpeg/libavutil/avutil.h"
@@ -49,9 +58,15 @@ std::unique_ptr<base::MemoryMappedFile> CreateMemoryMappedFile(size_t size) {
   }
   auto mmapped_file = std::make_unique<base::MemoryMappedFile>();
   bool success = mmapped_file->Initialize(
-      base::File(tmp_file_path,
-                 base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_READ |
-                     base::File::FLAG_WRITE | base::File::FLAG_APPEND),
+      base::File(
+          tmp_file_path, base::File::FLAG_CREATE_ALWAYS |
+                             base::File::FLAG_READ | base::File::FLAG_WRITE
+// On Windows FLAG_CREATE_ALWAYS will require FLAG_WRITE, and FLAG_APPEND
+// must not be specified.
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+                             | base::File::FLAG_APPEND
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+          ),
       base::MemoryMappedFile::Region{0, size},
       base::MemoryMappedFile::READ_WRITE_EXTEND);
   base::DeleteFile(tmp_file_path);
@@ -98,7 +113,8 @@ class RawVideo::VP9Decoder {
                                     base::Unretained(this), &result, &event));
       event.Wait();
       LOG_ASSERT(result.is_ok())
-          << "Failed to initialize VpxVideoDecoder: " << MediaSerialize(result)
+          << "Failed to initialize VpxVideoDecoder: "
+          << MediaSerializeForTesting(result)
           << "with config=" << config_.AsHumanReadableString();
     }
 
@@ -122,6 +138,8 @@ class RawVideo::VP9Decoder {
 
  private:
   struct VP9Data : public base::RefCountedThreadSafe<VP9Data> {
+    REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
     VP9Data(std::unique_ptr<base::MemoryMappedFile> mmap_file,
             const std::vector<base::span<const uint8_t>>& chunks,
             const std::vector<size_t>& keyframe_indices)
@@ -129,7 +147,8 @@ class RawVideo::VP9Decoder {
           keyframe_indices(keyframe_indices),
           mmap_file_(std::move(mmap_file)) {}
 
-    const std::vector<base::span<const uint8_t>> chunks;
+    // TODO(367764863) Rewrite to base::raw_span.
+    RAW_PTR_EXCLUSION const std::vector<base::span<const uint8_t>> chunks;
     const std::vector<size_t> keyframe_indices;
 
    protected:
@@ -201,13 +220,13 @@ class RawVideo::VP9Decoder {
     for (size_t i = before_keyframe_index; i < next_keyframe_index; ++i) {
       base::span<const uint8_t> chunk = vp9_data_->chunks[i];
       vpx_decoder_->Decode(
-          DecoderBuffer::CopyFrom(chunk.data(), chunk.size()),
+          DecoderBuffer::CopyFrom(chunk),
           base::BindOnce([](DecoderStatus* out_status,
                             DecoderStatus status) { *out_status = status; },
                          &decode_status));
       LOG_ASSERT(decode_status.is_ok())
           << "Failed to decode the " << i
-          << "-th vp9 chunk: " << MediaSerialize(decode_status);
+          << "-th vp9 chunk: " << MediaSerializeForTesting(decode_status);
       LOG_ASSERT(!!last_decoded_frame_)
           << "|last_decoded_frame_| is not filled";
       auto buffer = CreateBufferFromFrame(*last_decoded_frame_);
@@ -269,7 +288,7 @@ class RawVideo::VP9Decoder {
   // frame_index -> file index
   static constexpr size_t kNumCachedFrames = 30;
   size_t cached_frame_indices_[kNumCachedFrames];
-  std::vector<uint8_t> cached_frames_[kNumCachedFrames];
+  std::array<std::vector<uint8_t>, kNumCachedFrames> cached_frames_;
 
   SEQUENCE_CHECKER(decoder_sequence_);
 };
@@ -291,51 +310,49 @@ std::unique_ptr<RawVideo::VP9Decoder> RawVideo::VP9Decoder::Create(
   InitializeMediaLibrary();
 
   // Initialize ffmpeg with the compressed video data.
-  InMemoryUrlProtocol protocol(vp9_webm_data.data(), vp9_webm_data.size(),
-                               /*streaming=*/false);
+  InMemoryUrlProtocol protocol(vp9_webm_data, /*streaming=*/false);
   FFmpegGlue glue(&protocol);
   LOG_ASSERT(glue.OpenContext()) << "Failed to open AVFormatContext";
   // Find the first VP9 stream in the file.
-  absl::optional<size_t> vp9_stream_index;
   VideoDecoderConfig config;
-  for (size_t i = 0; i < glue.format_context()->nb_streams; ++i) {
-    AVStream* stream = glue.format_context()->streams[i];
+  base::span<AVStream*> format_context =
+      AVFormatContextToSpan(glue.format_context());
+  auto iter = std::ranges::find_if(format_context, [&config](AVStream* stream) {
     const AVCodecParameters* codec_parameters = stream->codecpar;
     const AVMediaType codec_type = codec_parameters->codec_type;
     const AVCodecID codec_id = codec_parameters->codec_id;
-    if (codec_type == AVMEDIA_TYPE_VIDEO && codec_id == AV_CODEC_ID_VP9 &&
-        AVStreamToVideoDecoderConfig(stream, &config) &&
-        config.IsValidConfig()) {
-      vp9_stream_index = i;
-      break;
-    }
-  }
-  if (!vp9_stream_index) {
+    return codec_type == AVMEDIA_TYPE_VIDEO && codec_id == AV_CODEC_ID_VP9 &&
+           AVStreamToVideoDecoderConfig(stream, &config) &&
+           config.IsValidConfig();
+  });
+  if (iter == format_context.end()) {
     return nullptr;
   }
-
+  std::optional<size_t> vp9_stream_index =
+      std::distance(format_context.begin(), iter);
   auto vp9_data_mmap_file = CreateMemoryMappedFile(vp9_webm_data.size());
   uint8_t* const vp9_data = vp9_data_mmap_file->data();
   size_t vp9_data_size = 0;
-  AVPacket packet = {};
+  auto packet = ScopedAVPacket::Allocate();
   size_t num_packets = 0;
-  Vp9Parser vp9_parser(/*parsing_compressed_header=*/false);
+  Vp9Parser vp9_parser;
   std::vector<size_t> keyframe_indices;
   std::vector<base::span<const uint8_t>> vp9_data_chunks(num_read_frames);
-  while (av_read_frame(glue.format_context(), &packet) >= 0 &&
+  while (av_read_frame(glue.format_context(), packet.get()) >= 0 &&
          num_packets < num_read_frames) {
-    if (base::checked_cast<size_t>(packet.stream_index) ==
+    if (base::checked_cast<size_t>(packet->stream_index) ==
         (*vp9_stream_index)) {
-      LOG_ASSERT(vp9_data_size + packet.size <= vp9_data_mmap_file->length())
+      LOG_ASSERT(vp9_data_size + packet->size <= vp9_data_mmap_file->length())
           << "The vp9 data size must be less than webm file size";
-      std::memcpy(vp9_data + vp9_data_size, packet.data, packet.size);
+      std::memcpy(vp9_data + vp9_data_size, packet->data, packet->size);
       vp9_data_chunks[num_packets] = base::span<const uint8_t>(
-          vp9_data + vp9_data_size, base::checked_cast<size_t>(packet.size));
-      vp9_data_size += packet.size;
+          vp9_data + vp9_data_size, base::checked_cast<size_t>(packet->size));
+      vp9_data_size += packet->size;
 
       Vp9FrameHeader header;
       gfx::Size allocate_size;
-      vp9_parser.SetStream(packet.data, packet.size, /*stream_config=*/nullptr);
+      vp9_parser.SetStream(packet->data, packet->size,
+                           /*stream_config=*/nullptr);
       if (vp9_parser.ParseNextFrame(&header, &allocate_size, nullptr) ==
           Vp9Parser::kInvalidStream) {
         LOG(ERROR) << "Failed parsing vp9 data";
@@ -346,7 +363,7 @@ std::unique_ptr<RawVideo::VP9Decoder> RawVideo::VP9Decoder::Create(
       }
       num_packets++;
     }
-    av_packet_unref(&packet);
+    av_packet_unref(packet.get());
   }
   CHECK_EQ(num_read_frames, num_packets);
   CHECK(!keyframe_indices.empty());
@@ -446,26 +463,26 @@ bool RawVideo::LoadMetadata(const base::FilePath& json_file_path,
   }
   is_vp9_data = !!profile;
 
-  absl::optional<int> frame_rate = metadata_dict.FindInt("frame_rate");
+  std::optional<int> frame_rate = metadata_dict.FindInt("frame_rate");
   if (!frame_rate.has_value()) {
     LOG(ERROR) << "Key \"frame_rate\" is not found in " << json_file_path;
     return false;
   }
   metadata.frame_rate = base::checked_cast<uint32_t>(*frame_rate);
 
-  absl::optional<int> num_frames = metadata_dict.FindInt("num_frames");
+  std::optional<int> num_frames = metadata_dict.FindInt("num_frames");
   if (!num_frames.has_value()) {
     LOG(ERROR) << "Key \"num_frames\" is not found in " << json_file_path;
     return false;
   }
   metadata.num_frames = base::checked_cast<size_t>(*num_frames);
 
-  absl::optional<int> width = metadata_dict.FindInt("width");
+  std::optional<int> width = metadata_dict.FindInt("width");
   if (!width.has_value()) {
     LOG(ERROR) << "Key \"width\" is not found in " << json_file_path;
     return false;
   }
-  absl::optional<int> height = metadata_dict.FindInt("height");
+  std::optional<int> height = metadata_dict.FindInt("height");
   if (!height) {
     LOG(ERROR) << "Key \"height\" is not found in " << json_file_path;
     return false;
@@ -610,7 +627,7 @@ std::unique_ptr<RawVideo> RawVideo::CreateExpandedVideo(
   LOG_ASSERT(visible_rect.x() % 2 == 0 && visible_rect.y() % 2 == 0)
       << "An odd origin point is not supported";
   LOG_ASSERT(!vp9_decoder_ && !!memory_mapped_file_);
-  const absl::optional<VideoFrameLayout> dst_layout =
+  const std::optional<VideoFrameLayout> dst_layout =
       CreateVideoFrameLayout(PIXEL_FORMAT_NV12, resolution, 1u /* alignment*/);
   LOG_ASSERT(dst_layout) << "Failed creating VideoFrameLayout";
   const auto& dst_planes = dst_layout->planes();

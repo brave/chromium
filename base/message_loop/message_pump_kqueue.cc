@@ -2,35 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/message_loop/message_pump_kqueue.h"
 
 #include <sys/errno.h>
 
 #include <atomic>
 
+#include "base/apple/mach_logging.h"
+#include "base/apple/scoped_nsautorelease_pool.h"
 #include "base/auto_reset.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/mach_logging.h"
-#include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/notreached.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/task/task_features.h"
 #include "base/time/time_override.h"
+#include "build/blink_buildflags.h"
+
+#if BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK)
+#include <BrowserEngineCore/BEkevent.h>
+#endif
 
 namespace base {
 
 namespace {
 
-// Under this feature a simplified version of the Run() function is used. It
-// improves legibility and avoids some calls to kevent64(). Remove once
-// crbug.com/1200141 is resolved.
-BASE_FEATURE(kUseSimplifiedMessagePumpKqueueLoop,
-             "UseSimplifiedMessagePumpKqueueLoop",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Caches the state of the "UseSimplifiedMessagePumpKqueueLoop".
-std::atomic_bool g_use_simplified_version = false;
+// Caches the state of the "TimerSlackMac" feature for efficiency.
+std::atomic_bool g_timer_slack = false;
 
 #if DCHECK_IS_ON()
 // Prior to macOS 10.14, kqueue timers may spuriously wake up, because earlier
@@ -48,8 +52,21 @@ bool KqueueTimersSpuriouslyWakeUp() {
 }
 #endif
 
+int platform_kevent64(int kq,
+                      const struct kevent64_s* changelist,
+                      int nchanges,
+                      struct kevent64_s* eventlist,
+                      int nevents,
+                      unsigned int flags) {
+#if BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK)
+  return be_kevent64(kq, changelist, nchanges, eventlist, nevents, flags);
+#else
+  return kevent64(kq, changelist, nchanges, eventlist, nevents, flags, nullptr);
+#endif
+}
+
 int ChangeOneEvent(const ScopedFD& kqueue, kevent64_s* event) {
-  return HANDLE_EINTR(kevent64(kqueue.get(), event, 1, nullptr, 0, 0, nullptr));
+  return HANDLE_EINTR(platform_kevent64(kqueue.get(), event, 1, nullptr, 0, 0));
 }
 
 }  // namespace
@@ -63,8 +80,9 @@ MessagePumpKqueue::FdWatchController::~FdWatchController() {
 }
 
 bool MessagePumpKqueue::FdWatchController::StopWatchingFileDescriptor() {
-  if (!pump_)
+  if (!pump_) {
     return true;
+  }
   return pump_->StopWatchingFileDescriptor(this);
 }
 
@@ -98,8 +116,9 @@ MessagePumpKqueue::MachPortWatchController::~MachPortWatchController() {
 }
 
 bool MessagePumpKqueue::MachPortWatchController::StopWatchingMachPort() {
-  if (!pump_)
+  if (!pump_) {
     return true;
+  }
   return pump_->StopWatchingMachPort(this);
 }
 
@@ -130,7 +149,7 @@ MessagePumpKqueue::MessagePumpKqueue()
   // using an EVFILT_USER event, especially when triggered across threads.
   kern_return_t kr = mach_port_allocate(
       mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
-      base::mac::ScopedMachReceiveRight::Receiver(wakeup_).get());
+      base::apple::ScopedMachReceiveRight::Receiver(wakeup_).get());
   MACH_CHECK(kr == KERN_SUCCESS, kr) << "mach_port_allocate";
 
   // Configure the event to directly receive the Mach message as part of the
@@ -147,65 +166,37 @@ MessagePumpKqueue::MessagePumpKqueue()
   PCHECK(rv == 0) << "kevent64";
 }
 
-MessagePumpKqueue::~MessagePumpKqueue() {}
+MessagePumpKqueue::~MessagePumpKqueue() = default;
 
 void MessagePumpKqueue::InitializeFeatures() {
-  g_use_simplified_version.store(
-      base::FeatureList::IsEnabled(kUseSimplifiedMessagePumpKqueueLoop),
-      std::memory_order_relaxed);
+  g_timer_slack.store(FeatureList::IsEnabled(kTimerSlackMac),
+                      std::memory_order_relaxed);
 }
 
 void MessagePumpKqueue::Run(Delegate* delegate) {
   AutoReset<bool> reset_keep_running(&keep_running_, true);
-
-  if (g_use_simplified_version.load(std::memory_order_relaxed)) {
-    RunSimplified(delegate);
-  } else {
-    while (keep_running_) {
-      mac::ScopedNSAutoreleasePool pool;
-
-      bool do_more_work = DoInternalWork(delegate, nullptr);
-      if (!keep_running_)
-        break;
-
-      Delegate::NextWorkInfo next_work_info = delegate->DoWork();
-      do_more_work |= next_work_info.is_immediate();
-      if (!keep_running_)
-        break;
-
-      if (do_more_work)
-        continue;
-
-      do_more_work |= delegate->DoIdleWork();
-      if (!keep_running_)
-        break;
-
-      if (do_more_work)
-        continue;
-
-      DoInternalWork(delegate, &next_work_info);
-    }
-  }
-}
-
-void MessagePumpKqueue::RunSimplified(Delegate* delegate) {
-  // Look for native work once before the loop starts. Without this call the
-  // loop would break without checking native work even once in cases where
-  // QuitWhenIdle was used. This is sometimes the case in tests.
-  DoInternalWork(delegate, nullptr);
-
   while (keep_running_) {
-    mac::ScopedNSAutoreleasePool pool;
+    apple::ScopedNSAutoreleasePool pool;
+
+    bool do_more_work = DoInternalWork(delegate, nullptr);
+    if (!keep_running_) {
+      break;
+    }
 
     Delegate::NextWorkInfo next_work_info = delegate->DoWork();
-    if (!keep_running_)
+    do_more_work |= next_work_info.is_immediate();
+    if (!keep_running_) {
       break;
-
-    if (!next_work_info.is_immediate()) {
-      delegate->DoIdleWork();
     }
-    if (!keep_running_)
+
+    if (do_more_work) {
+      continue;
+    }
+
+    delegate->DoIdleWork();
+    if (!keep_running_) {
       break;
+    }
 
     DoInternalWork(delegate, &next_work_info);
   }
@@ -271,6 +262,17 @@ bool MessagePumpKqueue::WatchMachReceivePort(
   return true;
 }
 
+TimeTicks MessagePumpKqueue::AdjustDelayedRunTime(TimeTicks earliest_time,
+                                                  TimeTicks run_time,
+                                                  TimeTicks latest_time) {
+  if (GetAlignWakeUpsEnabled() &&
+      g_timer_slack.load(std::memory_order_relaxed)) {
+    return earliest_time;
+  }
+  return MessagePump::AdjustDelayedRunTime(earliest_time, run_time,
+                                           latest_time);
+}
+
 bool MessagePumpKqueue::WatchFileDescriptor(int fd,
                                             bool persistent,
                                             int mode,
@@ -304,9 +306,9 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd,
     events.push_back(base_event);
   }
 
-  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(),
-                                 checked_cast<int>(events.size()), nullptr, 0,
-                                 0, nullptr));
+  int rv = HANDLE_EINTR(platform_kevent64(kqueue_.get(), events.data(),
+                                          checked_cast<int>(events.size()),
+                                          nullptr, 0, 0));
   if (rv < 0) {
     DPLOG(ERROR) << "WatchFileDescriptor kevent64";
     return false;
@@ -319,6 +321,7 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd,
 }
 
 void MessagePumpKqueue::SetWakeupTimerEvent(const base::TimeTicks& wakeup_time,
+                                            base::TimeDelta leeway,
                                             kevent64_s* timer_event) {
   // The ident of the wakeup timer. There's only the one timer as the pair
   // (ident, filter) is the identity of the event.
@@ -341,6 +344,13 @@ void MessagePumpKqueue::SetWakeupTimerEvent(const base::TimeTicks& wakeup_time,
     // timer is set immediately.
     timer_event->fflags = NOTE_USECONDS;
     timer_event->data = (wakeup_time - base::TimeTicks::Now()).InMicroseconds();
+
+    if (!leeway.is_zero() && g_timer_slack.load(std::memory_order_relaxed)) {
+      // Specify slack based on |leeway|.
+      // See "man kqueue" in recent macOSen for documentation.
+      timer_event->fflags |= NOTE_LEEWAY;
+      timer_event->ext[1] = static_cast<uint64_t>(leeway.InMicroseconds());
+    }
   }
 }
 
@@ -370,8 +380,9 @@ bool MessagePumpKqueue::StopWatchingFileDescriptor(
   int mode = controller->mode();
   controller->Reset();
 
-  if (fd < 0)
+  if (fd < 0) {
     return true;
+  }
 
   std::vector<kevent64_s> events;
 
@@ -388,9 +399,9 @@ bool MessagePumpKqueue::StopWatchingFileDescriptor(
     events.push_back(base_event);
   }
 
-  int rv = HANDLE_EINTR(kevent64(kqueue_.get(), events.data(),
-                                 checked_cast<int>(events.size()), nullptr, 0,
-                                 0, nullptr));
+  int rv = HANDLE_EINTR(platform_kevent64(kqueue_.get(), events.data(),
+                                          checked_cast<int>(events.size()),
+                                          nullptr, 0, 0));
   DPLOG_IF(ERROR, rv < 0) << "StopWatchingFileDescriptor kevent64";
 
   // The keys for the IDMap aren't recorded anywhere (they're attached to the
@@ -417,14 +428,15 @@ bool MessagePumpKqueue::DoInternalWork(Delegate* delegate,
   unsigned int flags = immediate ? KEVENT_FLAG_IMMEDIATE : 0;
 
   if (!immediate) {
-    MaybeUpdateWakeupTimer(next_work_info->delayed_run_time);
+    MaybeUpdateWakeupTimer(next_work_info->delayed_run_time,
+                           next_work_info->leeway);
     DCHECK_EQ(scheduled_wakeup_time_, next_work_info->delayed_run_time);
     delegate->BeforeWait();
   }
 
   int rv =
-      HANDLE_EINTR(kevent64(kqueue_.get(), nullptr, 0, events_.data(),
-                            checked_cast<int>(events_.size()), flags, nullptr));
+      HANDLE_EINTR(platform_kevent64(kqueue_.get(), nullptr, 0, events_.data(),
+                                     checked_cast<int>(events_.size()), flags));
   if (rv == 0) {
     // No events to dispatch so no need to call ProcessEvents().
     return false;
@@ -437,6 +449,7 @@ bool MessagePumpKqueue::DoInternalWork(Delegate* delegate,
 bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
   bool did_work = false;
 
+  delegate->BeginNativeWorkBeforeDoWork();
   for (size_t i = 0; i < count; ++i) {
     auto* event = &events_[i];
     if (event->filter == EVFILT_READ || event->filter == EVFILT_WRITE) {
@@ -459,14 +472,16 @@ bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
         --event_count_;
       }
 
-      auto scoped_do_work_item = delegate->BeginWorkItem();
-      // WatchFileDescriptor() originally upcasts event->ident from an int.
-      if (event->filter == EVFILT_READ) {
-        fd_watcher->OnFileCanReadWithoutBlocking(
-            static_cast<int>(event->ident));
-      } else if (event->filter == EVFILT_WRITE) {
-        fd_watcher->OnFileCanWriteWithoutBlocking(
-            static_cast<int>(event->ident));
+      if (fd_watcher) {
+        auto scoped_do_work_item = delegate->BeginWorkItem();
+        // WatchFileDescriptor() originally upcasts event->ident from an int.
+        if (event->filter == EVFILT_READ) {
+          fd_watcher->OnFileCanReadWithoutBlocking(
+              static_cast<int>(event->ident));
+        } else if (event->filter == EVFILT_WRITE) {
+          fd_watcher->OnFileCanWriteWithoutBlocking(
+              static_cast<int>(event->ident));
+        }
       }
     } else if (event->filter == EVFILT_MACHPORT) {
       // WatchMachReceivePort() originally sets event->ident from a mach_port_t.
@@ -514,7 +529,8 @@ bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
 }
 
 void MessagePumpKqueue::MaybeUpdateWakeupTimer(
-    const base::TimeTicks& wakeup_time) {
+    const base::TimeTicks& wakeup_time,
+    base::TimeDelta leeway) {
   if (wakeup_time == scheduled_wakeup_time_) {
     // No change in the timer setting necessary.
     return;
@@ -525,7 +541,7 @@ void MessagePumpKqueue::MaybeUpdateWakeupTimer(
     if (scheduled_wakeup_time_ != base::TimeTicks::Max()) {
       // Clear the timer.
       kevent64_s timer{};
-      SetWakeupTimerEvent(wakeup_time, &timer);
+      SetWakeupTimerEvent(wakeup_time, leeway, &timer);
       int rv = ChangeOneEvent(kqueue_, &timer);
       PCHECK(rv == 0) << "kevent64, delete timer";
       --event_count_;
@@ -533,13 +549,14 @@ void MessagePumpKqueue::MaybeUpdateWakeupTimer(
   } else {
     // Set/reset the timer.
     kevent64_s timer{};
-    SetWakeupTimerEvent(wakeup_time, &timer);
+    SetWakeupTimerEvent(wakeup_time, leeway, &timer);
     int rv = ChangeOneEvent(kqueue_, &timer);
     PCHECK(rv == 0) << "kevent64, set timer";
 
     // Bump the event count if we just added the timer.
-    if (scheduled_wakeup_time_ == base::TimeTicks::Max())
+    if (scheduled_wakeup_time_ == base::TimeTicks::Max()) {
       ++event_count_;
+    }
   }
 
   scheduled_wakeup_time_ = wakeup_time;

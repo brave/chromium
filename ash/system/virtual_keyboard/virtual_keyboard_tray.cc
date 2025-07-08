@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/constants/tray_background_view_catalog.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/metrics/user_metrics_recorder.h"
@@ -24,6 +24,7 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 
@@ -39,8 +40,8 @@ VirtualKeyboardTray::VirtualKeyboardTray(
     Shelf* shelf,
     TrayBackgroundViewCatalogName catalog_name)
     : TrayBackgroundView(shelf, catalog_name), shelf_(shelf) {
-  SetPressedCallback(base::BindRepeating(&VirtualKeyboardTray::OnButtonPressed,
-                                         base::Unretained(this)));
+  SetCallback(base::BindRepeating(&VirtualKeyboardTray::OnButtonPressed,
+                                  base::Unretained(this)));
 
   auto icon = std::make_unique<views::ImageView>();
   const ui::ImageModel image = ui::ImageModel::FromVectorIcon(
@@ -56,9 +57,7 @@ VirtualKeyboardTray::VirtualKeyboardTray(
   // First sets the image with non-Jelly color to get the image dimension and
   // create the correct paddings, and then updates the color if Jelly is
   // enabled.
-  if (chromeos::features::IsJellyEnabled()) {
-    UpdateTrayItemColor(is_active());
-  }
+  UpdateTrayItemColor(is_active());
 
   // The Shell may not exist in some unit tests.
   if (Shell::HasInstance()) {
@@ -66,6 +65,9 @@ VirtualKeyboardTray::VirtualKeyboardTray(
     Shell::Get()->AddShellObserver(this);
     keyboard::KeyboardUIController::Get()->AddObserver(this);
   }
+
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(IDS_ASH_VIRTUAL_KEYBOARD_TRAY_ACCESSIBLE_NAME));
 }
 
 VirtualKeyboardTray::~VirtualKeyboardTray() {
@@ -111,11 +113,6 @@ void VirtualKeyboardTray::Initialize() {
       Shell::Get()->accessibility_controller()->virtual_keyboard().enabled());
 }
 
-std::u16string VirtualKeyboardTray::GetAccessibleNameForTray() {
-  return l10n_util::GetStringUTF16(
-      IDS_ASH_VIRTUAL_KEYBOARD_TRAY_ACCESSIBLE_NAME);
-}
-
 void VirtualKeyboardTray::HandleLocaleChange() {
   icon_->SetTooltipText(l10n_util::GetStringUTF16(
       IDS_ASH_STATUS_TRAY_ACCESSIBILITY_VIRTUAL_KEYBOARD));
@@ -124,15 +121,16 @@ void VirtualKeyboardTray::HandleLocaleChange() {
 void VirtualKeyboardTray::HideBubbleWithView(
     const TrayBubbleView* bubble_view) {}
 
-void VirtualKeyboardTray::ClickedOutsideBubble() {}
+void VirtualKeyboardTray::ClickedOutsideBubble(const ui::LocatedEvent& event) {}
 
 void VirtualKeyboardTray::UpdateTrayItemColor(bool is_active) {
-  DCHECK(chromeos::features::IsJellyEnabled());
   icon_->SetImage(ui::ImageModel::FromVectorIcon(
       kShelfKeyboardNewuiIcon,
       is_active ? cros_tokens::kCrosSysSystemOnPrimaryContainer
                 : cros_tokens::kCrosSysOnSurface));
 }
+
+void VirtualKeyboardTray::HideBubble(const TrayBubbleView* bubble_view) {}
 
 void VirtualKeyboardTray::OnAccessibilityStatusChanged() {
   bool new_enabled =
@@ -144,7 +142,7 @@ void VirtualKeyboardTray::OnKeyboardVisibilityChanged(const bool is_visible) {
   SetIsActive(is_visible);
 }
 
-BEGIN_METADATA(VirtualKeyboardTray, TrayBackgroundView);
+BEGIN_METADATA(VirtualKeyboardTray);
 END_METADATA
 
 }  // namespace ash

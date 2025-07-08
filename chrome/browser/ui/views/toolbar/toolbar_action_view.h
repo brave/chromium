@@ -15,7 +15,6 @@
 #include "ui/views/controls/button/menu_button_controller.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/drag_controller.h"
-#include "ui/views/view.h"
 
 class ExtensionContextMenuController;
 
@@ -25,9 +24,9 @@ class ExtensionContextMenuController;
 // action in the browser's toolbar.
 class ToolbarActionView : public views::MenuButton,
                           public ToolbarActionViewDelegateViews {
- public:
-  METADATA_HEADER(ToolbarActionView);
+  METADATA_HEADER(ToolbarActionView, views::MenuButton)
 
+ public:
   // Need DragController here because ToolbarActionView could be
   // dragged/dropped.
   class Delegate : public views::DragController {
@@ -41,6 +40,13 @@ class ToolbarActionView : public views::MenuButton,
 
     // Returns the preferred size of the ToolbarActionView.
     virtual gfx::Size GetToolbarActionSize() = 0;
+
+    // Instructs the delegate to move this action (as indicated by `action_id`)
+    // by the specified `move_by` amount. It is the delegate's responsibility to
+    // handle if that would go out-of-bounds, since this class does not know its
+    // position.
+    virtual void MovePinnedActionBy(const std::string& action_id,
+                                    int move_by) = 0;
 
    protected:
     ~Delegate() override = default;
@@ -67,9 +73,7 @@ class ToolbarActionView : public views::MenuButton,
   content::WebContents* GetCurrentWebContents() const override;
   void UpdateState() override;
 
-  ToolbarActionViewController* view_controller() {
-    return view_controller_;
-  }
+  ToolbarActionViewController* view_controller() { return view_controller_; }
 
   // Returns button icon so it can be accessed during tests.
   gfx::ImageSkia GetIconForTest();
@@ -81,7 +85,8 @@ class ToolbarActionView : public views::MenuButton,
   friend class ToolbarActionHoverCardBubbleViewUITest;
 
   // views::MenuButton:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
@@ -90,7 +95,6 @@ class ToolbarActionView : public views::MenuButton,
   void RemovedFromWidget() override;
 
   // ToolbarActionViewDelegateViews:
-  views::View* GetAsView() override;
   views::FocusManager* GetFocusManagerForAccelerator() override;
   views::Button* GetReferenceButtonForPopup() override;
   void ShowContextMenuAsFallback() override;

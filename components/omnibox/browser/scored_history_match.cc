@@ -6,6 +6,9 @@
 
 #include <math.h>
 
+#include <algorithm>
+#include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,7 +16,6 @@
 #include "base/check_op.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -26,7 +28,7 @@
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/url_prefix.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/omnibox/common/string_cleaning.h"
 #include "url/gurl.h"
 #include "url/third_party/mozilla/url_parse.h"
 
@@ -45,7 +47,7 @@ const int kMaxRawTermScore = 30;
 // lookups of scores without requiring math. This is initialized by
 // InitDaysAgoToRecencyScoreArray called by
 // ScoredHistoryMatch::Init().
-float days_ago_to_recency_score[kDaysToPrecomputeRecencyScoresFor];
+std::array<float, kDaysToPrecomputeRecencyScoresFor> days_ago_to_recency_score;
 
 // Pre-computed information to speed up calculating topicality scores.
 // |raw_term_score_to_topicality_score| is a simple array mapping how raw terms
@@ -54,7 +56,7 @@ float days_ago_to_recency_score[kDaysToPrecomputeRecencyScoresFor];
 // assign it.  This allows easy lookups of scores without requiring math. This
 // is initialized by InitRawTermScoreToTopicalityScoreArray() called from
 // ScoredHistoryMatch::Init().
-float raw_term_score_to_topicality_score[kMaxRawTermScore];
+std::array<float, kMaxRawTermScore> raw_term_score_to_topicality_score;
 
 // Precalculates raw_term_score_to_topicality_score, used in
 // GetTopicalityScore().
@@ -135,7 +137,6 @@ ScoredHistoryMatch::ScoredHistoryMatch()
                          RowWordStarts(),
                          false,
                          1,
-                         false,
                          base::Time::Max()) {}
 
 ScoredHistoryMatch::ScoredHistoryMatch(
@@ -147,7 +148,6 @@ ScoredHistoryMatch::ScoredHistoryMatch(
     const RowWordStarts& word_starts,
     bool is_url_bookmarked,
     size_t num_matching_pages,
-    bool is_highly_visited_host,
     base::Time now) {
   // Initialize HistoryMatch fields. TODO(tommycli): Merge these two classes.
   url_info = row;
@@ -164,7 +164,7 @@ ScoredHistoryMatch::ScoredHistoryMatch(
 
   if (OmniboxFieldTrial::IsPopulatingUrlScoringSignalsEnabled()) {
     // Populate the scoring signals available in the URL Row.
-    scoring_signals = absl::make_optional<ScoringSignals>();
+    scoring_signals = std::make_optional<ScoringSignals>();
     scoring_signals->set_typed_count(row.typed_count());
     scoring_signals->set_visit_count(row.visit_count());
     base::TimeDelta elapsed_time = now - row.last_visit();
@@ -178,8 +178,8 @@ ScoredHistoryMatch::ScoredHistoryMatch(
   base::OffsetAdjuster::Adjustments adjustments;
   GURL gurl = row.url();
   std::u16string cleaned_up_url_for_matching =
-      bookmarks::CleanUpUrlForMatching(gurl, &adjustments);
-  std::u16string title = bookmarks::CleanUpTitleForMatching(row.title());
+      string_cleaning::CleanUpUrlForMatching(gurl, &adjustments);
+  std::u16string title = string_cleaning::CleanUpTitleForMatching(row.title());
   int term_num = 0;
   for (const auto& term : terms_vector) {
     TermMatches url_term_matches =
@@ -292,42 +292,8 @@ ScoredHistoryMatch::ScoredHistoryMatch(
     frequency_score = GetFrequency(now, is_url_bookmarked, visits);
     specificity_score = GetDocumentSpecificityScore(num_matching_pages);
   }
-  raw_score_before_domain_boosting =
-      base::saturated_cast<int>(GetFinalRelevancyScore(
-          topicality_score, frequency_score, specificity_score, 1));
-
-  // Calculate the score considering `domain_score` as well (if enabled).
-  static float domain_suggestions_score_factor =
-      OmniboxFieldTrial::kDomainSuggestionsScoreFactor.Get();
-  DCHECK_GE(domain_suggestions_score_factor, 1);
-  const float domain_score =
-      is_highly_visited_host ? domain_suggestions_score_factor : 1;
-  raw_score_after_domain_boosting =
-      domain_score > 1 ? base::saturated_cast<int>(GetFinalRelevancyScore(
-                             topicality_score, frequency_score,
-                             specificity_score, domain_score))
-                       : raw_score_before_domain_boosting;
-  DCHECK(domain_score > 1 ? raw_score_before_domain_boosting <=
-                                raw_score_after_domain_boosting
-                          : raw_score_before_domain_boosting ==
-                                raw_score_after_domain_boosting);
-
-  // Calculate the score using an alternative domain scoring (if enabled).
-  static bool domain_suggestions_alternative_scoring =
-      OmniboxFieldTrial::kDomainSuggestionsAlternativeScoring.Get();
-  if (is_highly_visited_host && domain_suggestions_alternative_scoring) {
-    raw_score_after_domain_boosting =
-        std::max(GetDomainRelevancyScore(now), raw_score_after_domain_boosting);
-  }
-
-  // If the domain suggestions feature is CF enabled, use the un-boosted score;
-  // if non-CF enabled, use the boosted score; and if disabled, it doesn't
-  // matter as the scores are equal.
-  static const bool domain_suggestions_counterfactual =
-      OmniboxFieldTrial::kDomainSuggestionsCounterfactual.Get();
-  raw_score = domain_suggestions_counterfactual
-                  ? raw_score_before_domain_boosting
-                  : raw_score_after_domain_boosting;
+  raw_score = base::saturated_cast<int>(GetFinalRelevancyScore(
+      topicality_score, frequency_score, specificity_score));
 
   if (also_do_hup_like_scoring_ && likely_can_inline) {
     // HistoryURL-provider-like scoring gives any match that is
@@ -496,9 +462,11 @@ ScoredHistoryMatch::ComputeUrlMatchingSignals(
   size_t last_part_of_host_pos =
       url.possibly_invalid_spec().rfind('.', path_pos);
 
-  // Get end position for 'www'. Not set if 'www' not exists in host.
-  absl::optional<size_t> www_end_pos;
-  if (base::ToLowerASCII(url.spec().substr(host_pos, 3)).compare("www") == 0) {
+  // Get end position for 'www'. Not set if 'www' does not exist in the host
+  // component.
+  std::optional<size_t> www_end_pos;
+  if (host_pos + 3 <= url.spec().length() &&
+      base::ToLowerASCII(url.spec().substr(host_pos, 3)).compare("www") == 0) {
     www_end_pos = host_pos + 2;
   }
 
@@ -514,9 +482,9 @@ ScoredHistoryMatch::ComputeUrlMatchingSignals(
     www_end_pos = end_pos;
   }
 
-  absl::optional<bool> host_match_at_word_boundary = absl::nullopt;
-  absl::optional<bool> has_non_scheme_www_match = absl::nullopt;
-  absl::optional<size_t> first_url_match_position = absl::nullopt;
+  std::optional<bool> host_match_at_word_boundary = std::nullopt;
+  std::optional<bool> has_non_scheme_www_match = std::nullopt;
+  std::optional<size_t> first_url_match_position = std::nullopt;
   size_t total_url_match_length = 0;
   size_t total_host_match_length = 0;
   size_t total_path_match_length = 0;
@@ -916,8 +884,8 @@ float ScoredHistoryMatch::GetFrequency(const base::Time& now,
   auto visits_end =
       visits.begin() + std::min(visits.size(), max_visits_to_score_);
   // Visits should be in newest to oldest order.
-  DCHECK(base::ranges::adjacent_find(visits.begin(), visits_end, std::less<>(),
-                                     &history::VisitInfo::first) == visits_end);
+  DCHECK(std::ranges::adjacent_find(visits.begin(), visits_end, std::less<>(),
+                                    &history::VisitInfo::first) == visits_end);
   for (auto i = visits.begin(); i != visits_end; ++i) {
     const bool is_page_transition_typed =
         ui::PageTransitionCoreTypeIs(i->second, ui::PAGE_TRANSITION_TYPED);
@@ -951,8 +919,7 @@ float ScoredHistoryMatch::GetDocumentSpecificityScore(
 // static
 float ScoredHistoryMatch::GetFinalRelevancyScore(float topicality_score,
                                                  float frequency_score,
-                                                 float specificity_score,
-                                                 float domain_score) {
+                                                 float specificity_score) {
   // |relevance_buckets| gives a mapping from intermediate score to the final
   // relevance score.
   static base::NoDestructor<ScoreMaxRelevances> default_relevance_buckets(
@@ -992,7 +959,7 @@ float ScoredHistoryMatch::GetFinalRelevancyScore(float topicality_score,
   // The score maxes out at 1399 (i.e., cannot beat a good inlineable result
   // from HistoryURL provider).
   const float intermediate_score =
-      topicality_score * frequency_score * specificity_score * domain_score;
+      topicality_score * frequency_score * specificity_score;
 
   // Find the threshold where intermediate score is greater than bucket.
   size_t i = 1;
@@ -1045,31 +1012,3 @@ ScoredHistoryMatch::GetHQPBucketsFromString(const std::string& buckets_str) {
   return hqp_buckets;
 }
 
-int ScoredHistoryMatch::GetDomainRelevancyScore(base::Time now) const {
-  // Domain scores consider only the last visit time as they're intended for
-  // pages the user hasn't yet visited many times. The goal is to score them
-  // highly enough to surface but not so high they constantly displace
-  // traditional suggestions. Otherwise, for inputs matching a highly visited
-  // domain, domain suggestions would overwhelm all other suggestions. Besides,
-  // if scored conservatively, they'll still be boosted by traditional scores
-  // after they're selected.
-
-  // For simplicity, score them linearly: 1000 - 80 / day.
-  // 80 because (1000-200) / (10-0) = 80.
-  constexpr int max_score = 1000;
-  constexpr int min_score = 200;
-  constexpr auto demote_start = base::Days(0);
-  constexpr auto demote_end = base::Days(10);
-
-  auto elapsed = now - url_info.last_visit();
-
-  // If visited more recently than `demote_start`, return `max_score`.
-  if (elapsed <= demote_start)
-    return max_score;
-  // If visited less recently than `demote_end`, return 0 (not `min_score`).
-  if (elapsed >= demote_end)
-    return 0;
-  // Otherwise, linearly interpolate `max_score` and `min_score`.
-  return max_score - (elapsed - demote_start) / (demote_end - demote_start) *
-                         (max_score - min_score);
-}

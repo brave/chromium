@@ -4,113 +4,140 @@
 
 #include "components/page_image_service/image_service_consent_helper.h"
 
-#include "base/feature_list.h"
-#include "components/page_image_service/features.h"
+#include "base/metrics/histogram_functions.h"
+#include "components/page_image_service/metrics_util.h"
 #include "components/sync/service/sync_service.h"
-#include "components/unified_consent/consent_throttle.h"
-#include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
+#include "components/sync/service/sync_service_utils.h"
 
 namespace page_image_service {
 
 namespace {
 
-constexpr base::TimeDelta kTimeout = base::Seconds(10);
+PageImageServiceConsentStatus ConsentStatusToUmaStatus(
+    std::optional<bool> consent_status) {
+  if (!consent_status) {
+    return PageImageServiceConsentStatus::kTimedOut;
+  }
+  return consent_status.value() ? PageImageServiceConsentStatus::kSuccess
+                                : PageImageServiceConsentStatus::kFailure;
+}
 
 }  // namespace
 
 ImageServiceConsentHelper::ImageServiceConsentHelper(
     syncer::SyncService* sync_service,
-    syncer::ModelType model_type)
-    : sync_service_(sync_service), model_type_(model_type) {
-  if (base::FeatureList::IsEnabled(kImageServiceObserveSyncDownloadStatus)) {
+    syncer::DataType data_type)
+    : sync_service_(sync_service),
+      data_type_(data_type),
+      timeout_duration_(base::Seconds(10)) {
+  // `sync_service` can be null, for example when disabled via flags.
+  if (sync_service) {
     sync_service_observer_.Observe(sync_service);
-  } else if (model_type == syncer::ModelType::BOOKMARKS) {
-    consent_throttle_ = std::make_unique<unified_consent::ConsentThrottle>(
-        unified_consent::UrlKeyedDataCollectionConsentHelper::
-            NewPersonalizedBookmarksDataCollectionConsentHelper(sync_service),
-        kTimeout);
-  } else if (model_type == syncer::ModelType::HISTORY_DELETE_DIRECTIVES) {
-    consent_throttle_ = std::make_unique<unified_consent::ConsentThrottle>(
-        unified_consent::UrlKeyedDataCollectionConsentHelper::
-            NewPersonalizedDataCollectionConsentHelper(sync_service),
-        kTimeout);
-  } else {
-    NOTREACHED();
   }
 }
 
 ImageServiceConsentHelper::~ImageServiceConsentHelper() = default;
 
 void ImageServiceConsentHelper::EnqueueRequest(
-    base::OnceCallback<void(bool)> callback) {
-  if (consent_throttle_) {
-    consent_throttle_->EnqueueRequest(std::move(callback));
-    return;
-  }
+    base::OnceCallback<void(PageImageServiceConsentStatus)> callback,
+    mojom::ClientId client_id) {
+  base::UmaHistogramBoolean("PageImageService.ConsentStatusRequestCount", true);
 
-  absl::optional<bool> consent_status = GetConsentStatus();
+  std::optional<bool> consent_status = GetConsentStatus();
   if (consent_status.has_value()) {
-    std::move(callback).Run(*consent_status);
+    std::move(callback).Run(*consent_status
+                                ? PageImageServiceConsentStatus::kSuccess
+                                : PageImageServiceConsentStatus::kFailure);
     return;
   }
 
-  enqueued_request_callbacks_.emplace_back(std::move(callback));
+  enqueued_request_callbacks_.emplace_back(std::move(callback), client_id);
   if (!request_processing_timer_.IsRunning()) {
     request_processing_timer_.Start(
-        FROM_HERE, kTimeout,
-        base::BindOnce(
-            &ImageServiceConsentHelper::OnTimeoutExpired,
-            // Unretained usage here okay, because this object owns the timer.
-            base::Unretained(this)));
+        FROM_HERE, timeout_duration_,
+        base::BindOnce(&ImageServiceConsentHelper::OnTimeoutExpired,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
 void ImageServiceConsentHelper::OnStateChanged(
     syncer::SyncService* sync_service) {
   CHECK_EQ(sync_service_, sync_service);
-  CHECK(base::FeatureList::IsEnabled(kImageServiceObserveSyncDownloadStatus));
 
-  absl::optional<bool> consent_status = GetConsentStatus();
+  std::optional<bool> consent_status = GetConsentStatus();
   if (!consent_status.has_value()) {
     return;
   }
 
-  for (auto& request_callback : enqueued_request_callbacks_) {
-    std::move(request_callback).Run(*consent_status);
-  }
-
-  enqueued_request_callbacks_.clear();
   request_processing_timer_.Stop();
+
+  // The request callbacks can modify the vector while running. Swap the vector
+  // onto the stack to prevent crashing. https://crbug.com/1472360.
+  std::vector<std::pair<base::OnceCallback<void(PageImageServiceConsentStatus)>,
+                        mojom::ClientId>>
+      callbacks;
+  std::swap(callbacks, enqueued_request_callbacks_);
+  for (auto& request_callback_with_client_id : callbacks) {
+    std::move(request_callback_with_client_id.first)
+        .Run(*consent_status ? PageImageServiceConsentStatus::kSuccess
+                             : PageImageServiceConsentStatus::kFailure);
+  }
 }
 
 void ImageServiceConsentHelper::OnSyncShutdown(
     syncer::SyncService* sync_service) {
   CHECK_EQ(sync_service_, sync_service);
-  CHECK(base::FeatureList::IsEnabled(kImageServiceObserveSyncDownloadStatus));
 
   sync_service_observer_.Reset();
+  sync_service_ = nullptr;
 }
 
-absl::optional<bool> ImageServiceConsentHelper::GetConsentStatus() {
-  CHECK(base::FeatureList::IsEnabled(kImageServiceObserveSyncDownloadStatus));
+std::optional<bool> ImageServiceConsentHelper::GetConsentStatus() {
+  if (!sync_service_) {
+    return false;
+  }
 
-  syncer::SyncService::ModelTypeDownloadStatus download_status =
-      sync_service_->GetDownloadStatusFor(model_type_);
+  // If upload of the given DataType is disabled (or inactive due to an
+  // error), then consent must be assumed to be NOT given.
+  // Note that the "INITIALIZING" state is good enough: It means the data
+  // type is enabled in principle, Sync just hasn't fully finished
+  // initializing yet. This case is handled by the DownloadStatus check
+  // below.
+  if (syncer::GetUploadToGoogleState(sync_service_, data_type_) ==
+      syncer::UploadState::NOT_ACTIVE) {
+    return false;
+  }
+
+  // Ensure Sync has downloaded all relevant updates (i.e. any deletions from
+  // other devices are known).
+  syncer::SyncService::DataTypeDownloadStatus download_status =
+      sync_service_->GetDownloadStatusFor(data_type_);
   switch (download_status) {
-    case syncer::SyncService::ModelTypeDownloadStatus::kWaitingForUpdates:
-      return absl::nullopt;
-    case syncer::SyncService::ModelTypeDownloadStatus::kUpToDate:
+    case syncer::SyncService::DataTypeDownloadStatus::kWaitingForUpdates:
+      return std::nullopt;
+    case syncer::SyncService::DataTypeDownloadStatus::kUpToDate:
       return true;
-    case syncer::SyncService::ModelTypeDownloadStatus::kError:
+    case syncer::SyncService::DataTypeDownloadStatus::kError:
       return false;
   }
 }
 
 void ImageServiceConsentHelper::OnTimeoutExpired() {
-  for (auto& request_callback : enqueued_request_callbacks_) {
-    std::move(request_callback).Run(false);
+  // The request callbacks can modify the vector while running. Swap the vector
+  // onto the stack to prevent crashing. https://crbug.com/1472360.
+  std::vector<std::pair<base::OnceCallback<void(PageImageServiceConsentStatus)>,
+                        mojom::ClientId>>
+      callbacks;
+  std::swap(callbacks, enqueued_request_callbacks_);
+  for (auto& request_callback_with_client_id : callbacks) {
+    // Report consent status on timeout for each request to compare against the
+    // number of all requests.
+    PageImageServiceConsentStatus consent_status =
+        ConsentStatusToUmaStatus(GetConsentStatus());
+    base::UmaHistogramEnumeration("PageImageService.ConsentStatusOnTimeout",
+                                  consent_status);
+    std::move(request_callback_with_client_id.first).Run(consent_status);
   }
-  enqueued_request_callbacks_.clear();
 }
 
 }  // namespace page_image_service

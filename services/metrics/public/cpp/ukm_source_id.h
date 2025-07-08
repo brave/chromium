@@ -24,8 +24,8 @@ const SourceId kInvalidSourceId = 0;
 // NOTES ON USAGE: if only the underlying int value is required to identify a
 // Source and is used in Mojo interface, and no type conversion needs to be
 // performed, use ukm::SourceId instead.
-// TODO(crbug/1046951): migrate callers to use the public methods below then
-// remove METRICS_EXPORT on this class.
+// TODO(crbug.com/40671096): migrate callers to use the public methods below
+// then remove METRICS_EXPORT on this class.
 class METRICS_EXPORT SourceIdObj {
  public:
   enum class Type : SourceId {
@@ -90,8 +90,23 @@ class METRICS_EXPORT SourceIdObj {
     // Some criteria (e.g. checking if it's a synced extension) will be applied
     // when recording metrics with this type.
     EXTENSION_ID = 12,
+    // Source ID type for service-worker triggered persisted notification
+    // events.
+    // Notification events may occur in the background and an associated URL is
+    // not necessarily present in the browsing history. A new source of this
+    // type and associated events are expected to be recorded within the same
+    // report
+    // interval; it will not be kept in memory between different reports.
+    NOTIFICATION_ID = 13,
+    // Source ID type for Content Decryption Module triggered events.
+    // The CDM persists a CDM origin which it receives from the renderer, and is
+    // used for crash reporting. To avoid making a round trip from the utility
+    // process where the CDM is hosted, and because the adapter exists for ~ 5
+    // more seconds after the renderer/tab is tore down, the events are logged
+    // with a CDM_ID SourceId type to specify exactly where it is coming from.
+    CDM_ID = 14,
 
-    kMaxValue = EXTENSION_ID,
+    kMaxValue = CDM_ID,
   };
 
   // Default constructor has the invalid value.
@@ -101,12 +116,8 @@ class METRICS_EXPORT SourceIdObj {
   constexpr SourceIdObj& operator=(const SourceIdObj& other) = default;
 
   // Allow identity comparisons.
-  constexpr bool operator==(SourceIdObj other) const {
-    return value_ == other.value_;
-  }
-  constexpr bool operator!=(SourceIdObj other) const {
-    return value_ != other.value_;
-  }
+  friend constexpr bool operator==(const SourceIdObj&,
+                                   const SourceIdObj&) = default;
 
   // Extract the Type of the SourceId.
   Type GetType() const;

@@ -1,32 +1,30 @@
-// Copyright 2023 The Chromium Authors
+// Copyright 2024 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.base;
 
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
 
-/**
- * Java accessor for base::Features listed in {@link BaseFeatures}
- */
+import org.chromium.build.annotations.NullMarked;
+
+@NullMarked
 @JNINamespace("base::android")
-public final class BaseFeatureMap extends FeatureMap {
+public class BaseFeatureMap extends FeatureMap {
     private static final BaseFeatureMap sInstance = new BaseFeatureMap();
 
     // Do not instantiate this class.
     private BaseFeatureMap() {}
 
     /**
-     * @return the singleton DeviceFeatureMap.
+     * @return the singleton UiAndroidFeatureMap.
      */
     public static BaseFeatureMap getInstance() {
         return sInstance;
     }
 
-    /**
-     * Convenience method to call {@link #isEnabledInNative(String)} statically.
-     */
+    /** Convenience method to call {@link #isEnabledInNative(String)} statically. */
     public static boolean isEnabled(String featureName) {
         return getInstance().isEnabledInNative(featureName);
     }

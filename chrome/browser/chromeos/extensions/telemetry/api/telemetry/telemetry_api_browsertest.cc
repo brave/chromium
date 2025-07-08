@@ -7,27 +7,20 @@
 #include <utility>
 #include <vector>
 
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/base_telemetry_extension_browser_test.h"
-#include "chrome/browser/chromeos/extensions/telemetry/api/telemetry/fake_probe_service.h"
+#include "chrome/browser/chromeos/extensions/telemetry/api/common/remote_probe_service_strategy.h"
+#include "chromeos/ash/components/telemetry_extension/telemetry/probe_service_ash.h"
+#include "chromeos/crosapi/cpp/telemetry/fake_probe_service.h"
 #include "chromeos/crosapi/mojom/nullable_primitives.mojom.h"
 #include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "chromeos/services/network_config/public/mojom/network_types.mojom.h"
 #include "chromeos/services/network_health/public/mojom/network_health_types.mojom.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/extension_features.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/telemetry_extension/telemetry/probe_service_ash.h"
-#include "chrome/browser/chromeos/extensions/telemetry/api/telemetry/fake_probe_service_factory.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
-#include "mojo/public/cpp/bindings/pending_receiver.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace chromeos {
 
@@ -35,16 +28,14 @@ namespace {
 
 namespace crosapi = ::crosapi::mojom;
 
+using testing::UnorderedElementsAreArray;
+
 }  // namespace
 
 class TelemetryExtensionTelemetryApiBrowserTest
     : public BaseTelemetryExtensionBrowserTest {
  public:
-  TelemetryExtensionTelemetryApiBrowserTest() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    ash::ProbeServiceAsh::Factory::SetForTesting(&fake_probe_factory_);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-  }
+  TelemetryExtensionTelemetryApiBrowserTest() = default;
   ~TelemetryExtensionTelemetryApiBrowserTest() override = default;
 
   TelemetryExtensionTelemetryApiBrowserTest(
@@ -52,42 +43,20 @@ class TelemetryExtensionTelemetryApiBrowserTest
   TelemetryExtensionTelemetryApiBrowserTest& operator=(
       const TelemetryExtensionTelemetryApiBrowserTest&) = delete;
 
- protected:
-  void SetServiceForTesting(
-      std::unique_ptr<FakeProbeService> fake_probe_service_impl) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    fake_probe_factory_.SetCreateInstanceResponse(
-        std::move(fake_probe_service_impl));
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    fake_probe_service_impl_ = std::move(fake_probe_service_impl);
-    // Replace the production Probe service with a mock for testing.
-    chromeos::LacrosService::Get()->InjectRemoteForTesting(
-        fake_probe_service_impl_->BindNewPipeAndPassRemote());
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Set up the fake probe service for accessing healthd.
+  void SetUpProbeService() {
+    probe_service_ = std::make_unique<FakeProbeService>();
+    RemoteProbeServiceStrategy::Get()->SetServiceForTesting(
+        probe_service_->BindNewPipeAndPassRemote());
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  FakeProbeServiceFactory fake_probe_factory_;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  std::unique_ptr<FakeProbeService> fake_probe_service_impl_;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+ protected:
+  std::unique_ptr<FakeProbeService> probe_service_;
 };
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetAudioInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kAudio});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getAudioInfo() {
@@ -99,14 +68,16 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kAudio}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetAudioInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       std::vector<crosapi::ProbeAudioOutputNodeInfoPtr> output_infos;
       auto output_node_info = crosapi::ProbeAudioOutputNodeInfo::New();
@@ -137,13 +108,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->audio_result =
           crosapi::ProbeAudioResult::NewAudioInfo(std::move(audio_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kAudio});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -178,19 +143,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kAudio}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetBatteryInfo_ApiInternalError) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kBattery});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getBatteryInfo() {
@@ -202,10 +161,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kBattery}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetBatteryInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -231,13 +194,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->battery_result =
           crosapi::ProbeBatteryResult::NewBatteryInfo(std::move(battery_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kBattery});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -267,19 +224,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kBattery}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetNonRemovableBlockDeviceInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kNonRemovableBlockDevices});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getNonRemovableBlockDevicesInfo() {
@@ -291,14 +243,17 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray(
+                  {crosapi::ProbeCategoryEnum::kNonRemovableBlockDevices}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetNonRemovableBlockDeviceInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       auto first_element = crosapi::ProbeNonRemovableBlockDeviceInfo::New();
       first_element->size = crosapi::UInt64Value::New(100000000);
@@ -319,13 +274,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::ProbeNonRemovableBlockDeviceResult::NewBlockDeviceInfo(
               std::move(block_devices_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kNonRemovableBlockDevices});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -348,19 +297,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray(
+                  {crosapi::ProbeCategoryEnum::kNonRemovableBlockDevices}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetCpuInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kCpu});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getCpuInfo() {
@@ -372,14 +316,16 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kCpu}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetCpuInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       auto c_state1 = crosapi::ProbeCpuCStateInfo::New();
       c_state1->name = "C1";
@@ -398,8 +344,8 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::UInt32Value::New(1073764046);
       logical_info1->scaling_current_frequency_khz =
           crosapi::UInt32Value::New(536904245);
-      // Idle time cannot be tested in browser test, because it requires USER_HZ
-      // system constant to convert idle_time_user_hz to milliseconds.
+      // Idle time cannot be tested in browser test, because it requires
+      // USER_HZ system constant to convert idle_time_user_hz to milliseconds.
       logical_info1->idle_time_ms = crosapi::UInt64Value::New(0);
       logical_info1->c_states.push_back(std::move(c_state1));
       logical_info1->c_states.push_back(std::move(c_state2));
@@ -412,8 +358,8 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::UInt32Value::New(1063764046);
       logical_info2->scaling_current_frequency_khz =
           crosapi::UInt32Value::New(936904246);
-      // Idle time cannot be tested in browser test, because it requires USER_HZ
-      // system constant to convert idle_time_user_hz to milliseconds.
+      // Idle time cannot be tested in browser test, because it requires
+      // USER_HZ system constant to convert idle_time_user_hz to milliseconds.
       logical_info2->idle_time_ms = crosapi::UInt64Value::New(0);
       logical_info2->core_id = crosapi::UInt32Value::New(43);
 
@@ -429,8 +375,8 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::UInt32Value::New(1263764046);
       logical_info3->scaling_current_frequency_khz =
           crosapi::UInt32Value::New(946904246);
-      // Idle time cannot be tested in browser test, because it requires USER_HZ
-      // system constant to convert idle_time_user_hz to milliseconds.
+      // Idle time cannot be tested in browser test, because it requires
+      // USER_HZ system constant to convert idle_time_user_hz to milliseconds.
       logical_info3->idle_time_ms = crosapi::UInt64Value::New(0);
       logical_info3->core_id = crosapi::UInt32Value::New(44);
 
@@ -447,13 +393,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->cpu_result =
           crosapi::ProbeCpuResult::NewCpuInfo(std::move(cpu_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kCpu});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -508,19 +448,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kCpu}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetMarketingInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kSystem});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getMarketingInfo() {
@@ -532,10 +466,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kSystem}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetMarketingInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -549,13 +486,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->system_result =
           crosapi::ProbeSystemResult::NewSystemInfo(std::move(system_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kSystem});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -570,19 +501,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kSystem}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetMemoryInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kMemory});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getMemoryInfo() {
@@ -594,14 +519,16 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kMemory}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetMemoryInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       auto memory_info = crosapi::ProbeMemoryInfo::New();
       memory_info->total_memory_kib = crosapi::UInt32Value::New(2147483647);
@@ -613,13 +540,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->memory_result =
           crosapi::ProbeMemoryResult::NewMemoryInfo(std::move(memory_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kMemory});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -635,19 +556,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kMemory}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetInternetConnectivityInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kNetwork});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getInternetConnectivityInfo() {
@@ -659,14 +574,17 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kNetwork}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetInternetConnectivityInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       auto network = chromeos::network_health::mojom::Network::New();
       network->type = chromeos::network_config::mojom::NetworkType::kWiFi;
@@ -685,13 +603,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::ProbeNetworkResult::NewNetworkHealth(
               std::move(network_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kNetwork});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -712,16 +624,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kNetwork}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetOemDataWithSerialNumberPermission_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getOemData() {
@@ -737,15 +647,12 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetOemDataWithSerialNumberPermission_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-
     auto oem_data = crosapi::ProbeOemData::New();
     oem_data->oem_data = "123456789";
-    fake_service_impl->SetOemDataResponse(std::move(oem_data));
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetOemDataResponse(std::move(oem_data));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -762,15 +669,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetOsVersionInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kSystem});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getOsVersionInfo() {
@@ -782,10 +681,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kSystem}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetOsVersionInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -805,13 +707,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->system_result =
           crosapi::ProbeSystemResult::NewSystemInfo(std::move(system_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kSystem});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -829,19 +725,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kSystem}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetVpdInfoError) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kCachedVpdData});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getVpdInfo() {
@@ -853,14 +743,17 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kCachedVpdData}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetVpdInfoWithSerialNumberPermission) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
     {
       auto vpd_info = crosapi::ProbeCachedVpdInfo::New();
       vpd_info->first_power_date = "2021-50";
@@ -871,13 +764,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->vpd_result =
           crosapi::ProbeCachedVpdResult::NewVpdInfo(std::move(vpd_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kCachedVpdData});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -892,19 +779,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kCachedVpdData}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetStatefulPartitionInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kStatefulPartition});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getStatefulPartitionInfo() {
@@ -916,10 +798,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray(
+                  {crosapi::ProbeCategoryEnum::kStatefulPartition}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetStatefulPartitionInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -934,13 +820,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
           crosapi::ProbeStatefulPartitionResult::NewPartitionInfo(
               std::move(stateful_part_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kStatefulPartition});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -958,19 +838,14 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray(
+                  {crosapi::ProbeCategoryEnum::kStatefulPartition}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetTpmInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kTpm});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getTpmInfo() {
@@ -982,10 +857,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kTpm}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetTpmInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -1019,13 +897,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->tpm_result =
           crosapi::ProbeTpmResult::NewTpmInfo(std::move(tpm_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kTpm});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -1061,19 +933,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kTpm}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetUsbBusInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kBus});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getUsbBusInfo() {
@@ -1085,10 +951,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kBus}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetUsbBusInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -1122,13 +991,7 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->bus_result =
           crosapi::ProbeBusResult::NewBusDevicesInfo(std::move(input));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kBus});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -1168,294 +1031,13 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
-}
-
-class TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest
-    : public TelemetryExtensionTelemetryApiBrowserTest {
- public:
-  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest() =
-      default;
-  ~TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest()
-      override = default;
-
-  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest(
-      const BaseTelemetryExtensionBrowserTest&) = delete;
-  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest&
-  operator=(
-      const TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest&) =
-      delete;
-
- protected:
-  std::string GetManifestFile(const std::string& matches_origin) override {
-    return base::StringPrintf(R"(
-          {
-            "key": "%s",
-            "name": "Test Telemetry Extension",
-            "version": "1",
-            "manifest_version": 3,
-            "chromeos_system_extension": {},
-            "background": {
-              "service_worker": "sw.js"
-            },
-            "permissions": [ "os.diagnostics", "os.telemetry" ],
-            "externally_connectable": {
-              "matches": [
-                "%s"
-              ]
-            },
-            "options_page": "options.html"
-          }
-        )",
-                              public_key().c_str(), matches_origin.c_str());
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(
-    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
-    GetBatteryInfoWithoutSerialNumberPermission) {
-  // Configure FakeProbeService.
-  {
-    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-    {
-      auto battery_info = crosapi::ProbeBatteryInfo::New();
-      battery_info->cycle_count = crosapi::Int64Value::New(100000000000000);
-      battery_info->voltage_now = crosapi::DoubleValue::New(1234567890.123456);
-      battery_info->vendor = "Google";
-      battery_info->serial_number = "abcdef";
-      battery_info->charge_full_design =
-          crosapi::DoubleValue::New(3000000000000000);
-      battery_info->charge_full = crosapi::DoubleValue::New(9000000000000000);
-      battery_info->voltage_min_design =
-          crosapi::DoubleValue::New(1000000000.1001);
-      battery_info->model_name = "Google Battery";
-      battery_info->charge_now = crosapi::DoubleValue::New(7777777777.777);
-      battery_info->current_now = crosapi::DoubleValue::New(0.9999999999999);
-      battery_info->technology = "Li-ion";
-      battery_info->status = "Charging";
-      battery_info->manufacture_date = "2020-07-30";
-      battery_info->temperature = crosapi::UInt64Value::New(7777777777777777);
-
-      telemetry_info->battery_result =
-          crosapi::ProbeBatteryResult::NewBatteryInfo(std::move(battery_info));
-    }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kBattery});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function getBatteryInfo() {
-        const result = await chrome.os.telemetry.getBatteryInfo();
-         chrome.test.assertEq(
-          // The dictionary members are ordered lexicographically by the Unicode
-          // codepoints that comprise their identifiers.
-          {
-            chargeFull: 9000000000000000,
-            chargeFullDesign: 3000000000000000,
-            chargeNow: 7777777777.777,
-            currentNow: 0.9999999999999,
-            cycleCount: 100000000000000,
-            manufactureDate: '2020-07-30',
-            modelName: 'Google Battery',
-            // serialNumber: null,
-            status: 'Charging',
-            technology: 'Li-ion',
-            temperature: 7777777777777777,
-            vendor: 'Google',
-            voltageMinDesign: 1000000000.1001,
-            voltageNow: 1234567890.123456,
-          }, result);
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(
-    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
-    GetOemInternetConnectivityWithoutPermission) {
-  // Configure FakeProbeService.
-  {
-    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
-    {
-      auto network = chromeos::network_health::mojom::Network::New();
-      network->type = chromeos::network_config::mojom::NetworkType::kWiFi;
-      network->state = chromeos::network_health::mojom::NetworkState::kOnline;
-      network->mac_address = "00:00:5e:00:53:af";
-      network->ipv4_address = "1.1.1.1";
-      network->ipv6_addresses = {"FE80:CD00:0000:0CDE:1257:0000:211E:729C"};
-      network->signal_strength =
-          chromeos::network_health::mojom::UInt32Value::New(100);
-
-      auto network_info =
-          chromeos::network_health::mojom::NetworkHealthState::New();
-      network_info->networks.push_back(std::move(network));
-
-      telemetry_info->network_result =
-          crosapi::ProbeNetworkResult::NewNetworkHealth(
-              std::move(network_info));
-    }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kNetwork});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function getInternetConnectivityInfo() {
-        const result = await chrome.os.telemetry.getInternetConnectivityInfo();
-        chrome.test.assertEq(1, result.networks.length);
-
-        const network_result = result.networks[0];
-        chrome.test.assertEq('wifi', network_result.type);
-        chrome.test.assertEq('online', network_result.state);
-        chrome.test.assertEq('1.1.1.1', network_result.ipv4Address);
-        chrome.test.assertEq(null, network_result.macAddress);
-        chrome.test.assertEq(['FE80:CD00:0000:0CDE:1257:0000:211E:729C'],
-          network_result.ipv6Addresses);
-        chrome.test.assertEq(100, network_result.signalStrength);
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(
-    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
-    GetOemDataWithoutSerialNumberPermission) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function getOemData() {
-        await chrome.test.assertPromiseRejects(
-            chrome.os.telemetry.getOemData(),
-            'Error: Unauthorized access to chrome.os.telemetry.getOemData. ' +
-            'Extension doesn\'t have the permission.'
-        );
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(
-    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
-    GetUsbBusInfoWithoutPermission) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function getUsbBusInfo() {
-        await chrome.test.assertPromiseRejects(
-            chrome.os.telemetry.getUsbBusInfo(),
-            'Error: Unauthorized access to chrome.os.telemetry.' +
-            'getUsbBusInfo. Extension doesn\'t have the permission.'
-        );
-        chrome.test.succeed();
-      }
-    ]);
-  )");
-}
-
-IN_PROC_BROWSER_TEST_F(
-    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
-    GetVpdInfoWithoutSerialNumberPermission) {
-  // Configure FakeProbeService.
-  {
-    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
-
-    {
-      auto vpd_info = crosapi::ProbeCachedVpdInfo::New();
-      vpd_info->first_power_date = "2021-50";
-      vpd_info->model_name = "COOL-LAPTOP-CHROME";
-      vpd_info->serial_number = "5CD9132880";
-      vpd_info->sku_number = "sku15";
-
-      telemetry_info->vpd_result =
-          crosapi::ProbeCachedVpdResult::NewVpdInfo(std::move(vpd_info));
-    }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kCachedVpdData});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-      async function getVpdInfo() {
-        const result = await chrome.os.telemetry.getVpdInfo();
-        chrome.test.assertEq("2021-50", result.activateDate);
-        chrome.test.assertEq("COOL-LAPTOP-CHROME", result.modelName);
-        chrome.test.assertEq(null, result.serialNumber);
-        chrome.test.assertEq("sku15", result.skuNumber);
-        chrome.test.succeed();
-      }
-    ]);
-  )");
+  EXPECT_THAT(probe_service_->GetLastRequestedCategories(),
+              UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kBus}));
 }
 
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
-                       GetDisplayInfo_NoFeatureFlagEnabledError) {
-  // If the permission is not enabled, the method isn't defined
-  // on `chrome.os.telemetry`.
-  CreateExtensionAndRunServiceWorker(R"(
-    chrome.test.runTests([
-        function getDisplayInfo() {
-            chrome.test.assertThrows(() => {
-                    chrome.os.telemetry.getDisplayInfo();
-                }, [],
-                "chrome.os.telemetry.getDisplayInfo is not a function");
-            chrome.test.succeed();
-        }
-    ]);
-  )");
-}
-
-class PendingApprovalTelemetryExtensionTelemetryApiBrowserTest
-    : public TelemetryExtensionTelemetryApiBrowserTest {
- public:
-  PendingApprovalTelemetryExtensionTelemetryApiBrowserTest() {
-    feature_list_.InitAndEnableFeature(
-        extensions_features::kTelemetryExtensionPendingApprovalApi);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
                        GetDisplayInfo_Error) {
-  // Configure FakeProbeService.
-  {
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kDisplay});
-
-    SetServiceForTesting(std::move(fake_service_impl));
-  }
-
+  SetUpProbeService();
   CreateExtensionAndRunServiceWorker(R"(
     chrome.test.runTests([
       async function getDisplayInfo() {
@@ -1467,10 +1049,14 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kDisplay}));
 }
 
-IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
                        GetDisplayInfo_Success) {
+  SetUpProbeService();
   // Configure FakeProbeService.
   {
     auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
@@ -1519,13 +1105,7 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
       telemetry_info->display_result =
           crosapi::ProbeDisplayResult::NewDisplayInfo(std::move(display_info));
     }
-
-    auto fake_service_impl = std::make_unique<FakeProbeService>();
-    fake_service_impl->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
-    fake_service_impl->SetExpectedLastRequestedCategories(
-        {crosapi::ProbeCategoryEnum::kDisplay});
-
-    SetServiceForTesting(std::move(fake_service_impl));
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
   }
 
   CreateExtensionAndRunServiceWorker(R"(
@@ -1536,7 +1116,7 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
           // The dictionary members are ordered lexicographically by the Unicode
           // codepoints that comprise their identifiers.
           {
-            "external_displays": [
+            "externalDisplays": [
               {
                 "displayHeight": 12,
                 "displayName": "display2",
@@ -1549,14 +1129,13 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
                 "modelId": 16,
                 "refreshRate": 15,
                 "resolutionHorizontal": 13,
-                "resolutionVertical": 14,
-                "serialNumber": 17
+                "resolutionVertical": 14
               },
               {
                 "inputType": "unknown"
               }
             ],
-            "embedded_display": {
+            "embeddedDisplay": {
               "displayHeight": 2,
               "displayName": "display1",
               "displayWidth": 1,
@@ -1570,14 +1149,303 @@ IN_PROC_BROWSER_TEST_F(PendingApprovalTelemetryExtensionTelemetryApiBrowserTest,
               "privacyScreenSupported": true,
               "refreshRate": 5,
               "resolutionHorizontal": 3,
-              "resolutionVertical": 4,
-              "serialNumber": 7
+              "resolutionVertical": 4
             }
           }, result);
         chrome.test.succeed();
       }
     ]);
   )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kDisplay}));
+}
+class TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest
+    : public TelemetryExtensionTelemetryApiBrowserTest {
+ public:
+  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest() =
+      default;
+  ~TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest()
+      override = default;
+
+  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest(
+      const BaseTelemetryExtensionBrowserTest&) = delete;
+  TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest&
+  operator=(
+      const TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest&) =
+      delete;
+
+ protected:
+  std::string GetManifestFile(const std::string& manifest_key,
+                              const std::string& matches_origin) override {
+    return base::StringPrintf(R"(
+          {
+            "key": "%s",
+            "name": "Test Telemetry Extension",
+            "version": "1",
+            "manifest_version": 3,
+            "chromeos_system_extension": {},
+            "background": {
+              "service_worker": "sw.js"
+            },
+            "permissions": [ "os.diagnostics", "os.telemetry" ],
+            "externally_connectable": {
+              "matches": [
+                "%s"
+              ]
+            },
+            "options_page": "options.html"
+          }
+        )",
+                              manifest_key.c_str(), matches_origin.c_str());
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
+    GetBatteryInfoWithoutSerialNumberPermission) {
+  SetUpProbeService();
+  // Configure FakeProbeService.
+  {
+    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
+    {
+      auto battery_info = crosapi::ProbeBatteryInfo::New();
+      battery_info->cycle_count = crosapi::Int64Value::New(100000000000000);
+      battery_info->voltage_now = crosapi::DoubleValue::New(1234567890.123456);
+      battery_info->vendor = "Google";
+      battery_info->serial_number = "abcdef";
+      battery_info->charge_full_design =
+          crosapi::DoubleValue::New(3000000000000000);
+      battery_info->charge_full = crosapi::DoubleValue::New(9000000000000000);
+      battery_info->voltage_min_design =
+          crosapi::DoubleValue::New(1000000000.1001);
+      battery_info->model_name = "Google Battery";
+      battery_info->charge_now = crosapi::DoubleValue::New(7777777777.777);
+      battery_info->current_now = crosapi::DoubleValue::New(0.9999999999999);
+      battery_info->technology = "Li-ion";
+      battery_info->status = "Charging";
+      battery_info->manufacture_date = "2020-07-30";
+      battery_info->temperature = crosapi::UInt64Value::New(7777777777777777);
+
+      telemetry_info->battery_result =
+          crosapi::ProbeBatteryResult::NewBatteryInfo(std::move(battery_info));
+    }
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
+  }
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getBatteryInfo() {
+        const result = await chrome.os.telemetry.getBatteryInfo();
+         chrome.test.assertEq(
+          // The dictionary members are ordered lexicographically by the Unicode
+          // codepoints that comprise their identifiers.
+          {
+            chargeFull: 9000000000000000,
+            chargeFullDesign: 3000000000000000,
+            chargeNow: 7777777777.777,
+            currentNow: 0.9999999999999,
+            cycleCount: 100000000000000,
+            manufactureDate: '2020-07-30',
+            modelName: 'Google Battery',
+            // serialNumber: null,
+            status: 'Charging',
+            technology: 'Li-ion',
+            temperature: 7777777777777777,
+            vendor: 'Google',
+            voltageMinDesign: 1000000000.1001,
+            voltageNow: 1234567890.123456,
+          }, result);
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kBattery}));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
+    GetOemInternetConnectivityWithoutPermission) {
+  SetUpProbeService();
+  // Configure FakeProbeService.
+  {
+    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
+    {
+      auto network = chromeos::network_health::mojom::Network::New();
+      network->type = chromeos::network_config::mojom::NetworkType::kWiFi;
+      network->state = chromeos::network_health::mojom::NetworkState::kOnline;
+      network->mac_address = "00:00:5e:00:53:af";
+      network->ipv4_address = "1.1.1.1";
+      network->ipv6_addresses = {"FE80:CD00:0000:0CDE:1257:0000:211E:729C"};
+      network->signal_strength =
+          chromeos::network_health::mojom::UInt32Value::New(100);
+
+      auto network_info =
+          chromeos::network_health::mojom::NetworkHealthState::New();
+      network_info->networks.push_back(std::move(network));
+
+      telemetry_info->network_result =
+          crosapi::ProbeNetworkResult::NewNetworkHealth(
+              std::move(network_info));
+    }
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
+  }
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getInternetConnectivityInfo() {
+        const result = await chrome.os.telemetry.getInternetConnectivityInfo();
+        chrome.test.assertEq(1, result.networks.length);
+
+        const network_result = result.networks[0];
+        chrome.test.assertEq('wifi', network_result.type);
+        chrome.test.assertEq('online', network_result.state);
+        chrome.test.assertEq('1.1.1.1', network_result.ipv4Address);
+        chrome.test.assertEq(null, network_result.macAddress);
+        chrome.test.assertEq(['FE80:CD00:0000:0CDE:1257:0000:211E:729C'],
+          network_result.ipv6Addresses);
+        chrome.test.assertEq(100, network_result.signalStrength);
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kNetwork}));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
+    GetOemDataWithoutSerialNumberPermission) {
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getOemData() {
+        await chrome.test.assertPromiseRejects(
+            chrome.os.telemetry.getOemData(),
+            'Error: Unauthorized access to chrome.os.telemetry.getOemData. ' +
+            'Extension doesn\'t have the permission.'
+        );
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
+    GetUsbBusInfoWithoutPermission) {
+  SetUpProbeService();
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getUsbBusInfo() {
+        await chrome.test.assertPromiseRejects(
+            chrome.os.telemetry.getUsbBusInfo(),
+            'Error: Unauthorized access to chrome.os.telemetry.' +
+            'getUsbBusInfo. Extension doesn\'t have the permission.'
+        );
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TelemetryExtensionTelemetryApiWithoutAdditionalPermissionsBrowserTest,
+    GetVpdInfoWithoutSerialNumberPermission) {
+  SetUpProbeService();
+  // Configure FakeProbeService.
+  {
+    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
+    {
+      auto vpd_info = crosapi::ProbeCachedVpdInfo::New();
+      vpd_info->first_power_date = "2021-50";
+      vpd_info->model_name = "COOL-LAPTOP-CHROME";
+      vpd_info->serial_number = "5CD9132880";
+      vpd_info->sku_number = "sku15";
+
+      telemetry_info->vpd_result =
+          crosapi::ProbeCachedVpdResult::NewVpdInfo(std::move(vpd_info));
+    }
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
+  }
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getVpdInfo() {
+        const result = await chrome.os.telemetry.getVpdInfo();
+        chrome.test.assertEq("2021-50", result.activateDate);
+        chrome.test.assertEq("COOL-LAPTOP-CHROME", result.modelName);
+        chrome.test.assertEq(null, result.serialNumber);
+        chrome.test.assertEq("sku15", result.skuNumber);
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kCachedVpdData}));
+}
+
+IN_PROC_BROWSER_TEST_F(TelemetryExtensionTelemetryApiBrowserTest,
+                       GetThermalInfo_Success) {
+  SetUpProbeService();
+  // Configure FakeProbeService.
+  {
+    auto telemetry_info = crosapi::ProbeTelemetryInfo::New();
+    {
+      auto thermal_sensor_1 = crosapi::ProbeThermalSensorInfo::New();
+      thermal_sensor_1->name = "thermal_sensor_1";
+      thermal_sensor_1->temperature_celsius = 100;
+      thermal_sensor_1->source = crosapi::ProbeThermalSensorSource::kEc;
+
+      auto thermal_sensor_2 = crosapi::ProbeThermalSensorInfo::New();
+      thermal_sensor_2->name = "thermal_sensor_2";
+      thermal_sensor_2->temperature_celsius = 50;
+      thermal_sensor_2->source = crosapi::ProbeThermalSensorSource::kSysFs;
+
+      std::vector<crosapi::ProbeThermalSensorInfoPtr> thermal_sensors;
+      thermal_sensors.push_back(std::move(thermal_sensor_1));
+      thermal_sensors.push_back(std::move(thermal_sensor_2));
+
+      auto thermal_info =
+          crosapi::ProbeThermalInfo::New(std::move(thermal_sensors));
+
+      telemetry_info->thermal_result =
+          crosapi::ProbeThermalResult::NewThermalInfo(std::move(thermal_info));
+    }
+    probe_service_->SetProbeTelemetryInfoResponse(std::move(telemetry_info));
+  }
+
+  CreateExtensionAndRunServiceWorker(R"(
+    chrome.test.runTests([
+      async function getThermalInfo() {
+        const result = await chrome.os.telemetry.getThermalInfo();
+        chrome.test.assertEq(
+          // The dictionary members are ordered lexicographically by the Unicode
+          // codepoints that comprise their identifiers.
+          {
+            "thermalSensors": [
+              {
+                "name": "thermal_sensor_1",
+                "temperatureCelsius": 100,
+                "source": "ec",
+              },
+              {
+                "name": "thermal_sensor_2",
+                "temperatureCelsius": 50,
+                "source": "sysFs",
+              }
+            ]
+          }, result);
+        chrome.test.succeed();
+      }
+    ]);
+  )");
+  EXPECT_THAT(
+      probe_service_->GetLastRequestedCategories(),
+      UnorderedElementsAreArray({crosapi::ProbeCategoryEnum::kThermal}));
 }
 
 }  // namespace chromeos

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ash/login/demo_mode/demo_mode_test_utils.h"
 
+#include <string_view>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -13,8 +15,6 @@
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_config.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_status.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/proto/device_management_backend.pb.h"
@@ -34,12 +34,12 @@ MATCHER(ConfigIsAttestation, "") {
 namespace test {
 
 void SetupDemoModeNoEnrollment(MockEnrollmentLauncher* mock) {
-  EXPECT_CALL(*mock, Setup(_, _, _)).Times(0);
+  EXPECT_CALL(*mock, Setup(_, _)).Times(0);
 }
 
 void SetupDemoModeOnlineEnrollment(MockEnrollmentLauncher* mock,
                                    DemoModeSetupResult result) {
-  EXPECT_CALL(*mock, Setup(ConfigIsAttestation(), _, _));
+  EXPECT_CALL(*mock, Setup(ConfigIsAttestation(), _));
 
   EXPECT_CALL(*mock, EnrollUsingAttestation())
       .WillRepeatedly(testing::Invoke([mock, result]() {
@@ -79,7 +79,7 @@ bool SetupDummyOfflinePolicyDir(const std::string& account_id,
   }
 
   if (!base::WriteFile(policy_dir.AppendASCII("device_policy"),
-                       base::StringPiece())) {
+                       std::string_view())) {
     LOG(ERROR) << "Failed to create device_policy file";
     return false;
   }

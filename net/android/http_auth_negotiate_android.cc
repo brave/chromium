@@ -17,6 +17,8 @@
 #include "net/http/http_auth_multi_round_parse.h"
 #include "net/http/http_auth_preferences.h"
 #include "net/log/net_log_with_source.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "net/net_jni_headers/HttpNegotiateAuthenticator_jni.h"
 
 using base::android::AttachCurrentThread;
@@ -36,7 +38,6 @@ JavaNegotiateResultWrapper::JavaNegotiateResultWrapper(
 JavaNegotiateResultWrapper::~JavaNegotiateResultWrapper() = default;
 
 void JavaNegotiateResultWrapper::SetResult(JNIEnv* env,
-                                           const JavaParamRef<jobject>& obj,
                                            int result,
                                            const JavaParamRef<jstring>& token) {
   // This will be called on the UI thread, so we have to post a task back to the

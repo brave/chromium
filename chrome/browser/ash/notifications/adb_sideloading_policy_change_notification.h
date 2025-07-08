@@ -5,8 +5,14 @@
 #ifndef CHROME_BROWSER_ASH_NOTIFICATIONS_ADB_SIDELOADING_POLICY_CHANGE_NOTIFICATION_H_
 #define CHROME_BROWSER_ASH_NOTIFICATIONS_ADB_SIDELOADING_POLICY_CHANGE_NOTIFICATION_H_
 
+#include <optional>
+
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+
+namespace policy {
+class BrowserPolicyConnectorAsh;
+}  // namespace policy
 
 namespace ash {
 
@@ -32,7 +38,9 @@ class AdbSideloadingPolicyChangeNotification {
     kPowerwashOnNextReboot = 3
   };
 
-  AdbSideloadingPolicyChangeNotification();
+  // `browser_policy_connector_ash` must be non-null and must outlive `this`.
+  explicit AdbSideloadingPolicyChangeNotification(
+      const policy::BrowserPolicyConnectorAsh* browser_policy_connector_ash);
 
   // Not copyable or movable
   AdbSideloadingPolicyChangeNotification(
@@ -43,9 +51,12 @@ class AdbSideloadingPolicyChangeNotification {
   virtual ~AdbSideloadingPolicyChangeNotification();
 
   virtual void Show(Type type);
-  void HandleNotificationClick(absl::optional<int> button_index);
+  void HandleNotificationClick(std::optional<int> button_index);
 
  private:
+  const raw_ref<const policy::BrowserPolicyConnectorAsh>
+      browser_policy_connector_ash_;
+
   base::WeakPtrFactory<AdbSideloadingPolicyChangeNotification>
       weak_ptr_factory_{this};
 };

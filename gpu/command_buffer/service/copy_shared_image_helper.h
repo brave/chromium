@@ -6,6 +6,8 @@
 #define GPU_COMMAND_BUFFER_SERVICE_COPY_SHARED_IMAGE_HELPER_H_
 
 #include <stdint.h>
+
+#include <array>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
@@ -38,16 +40,6 @@ class GPU_GLES2_EXPORT CopySharedImageHelper {
       SharedContextState* shared_context_state);
   ~CopySharedImageHelper();
 
-  base::expected<void, GLError> ConvertRGBAToYUVAMailboxes(
-      GLenum yuv_color_space,
-      GLenum plane_config,
-      GLenum subsampling,
-      const volatile GLbyte* mailboxes_in);
-  base::expected<void, GLError> ConvertYUVAMailboxesToRGB(
-      GLenum yuv_color_space,
-      GLenum plane_config,
-      GLenum subsampling,
-      const volatile GLbyte* mailboxes_in);
   base::expected<void, GLError> CopySharedImage(
       GLint xoffset,
       GLint yoffset,
@@ -55,10 +47,9 @@ class GPU_GLES2_EXPORT CopySharedImageHelper {
       GLint y,
       GLsizei width,
       GLsizei height,
-      GLboolean unpack_flip_y,
       const volatile GLbyte* mailboxes);
   // Only used by passthrough decoder.
-  // TODO(crbug.com/1444777): Handle this use-case for graphite.
+  // TODO(crbug.com/40064510): Handle this use-case for graphite.
   base::expected<void, GLError> CopySharedImageToGLTexture(
       GLuint texture_service_id,
       GLenum target,
@@ -68,7 +59,7 @@ class GPU_GLES2_EXPORT CopySharedImageHelper {
       GLint src_y,
       GLsizei width,
       GLsizei height,
-      GLboolean flip_y,
+      GrSurfaceOrigin dst_origin,
       const volatile GLbyte* src_mailbox);
   base::expected<void, GLError> ReadPixels(
       GLint src_x,
@@ -90,7 +81,6 @@ class GPU_GLES2_EXPORT CopySharedImageHelper {
  private:
   raw_ptr<SharedImageRepresentationFactory> representation_factory_ = nullptr;
   raw_ptr<SharedContextState> shared_context_state_ = nullptr;
-  bool is_drdc_enabled_ = false;
 };
 
 }  // namespace gpu

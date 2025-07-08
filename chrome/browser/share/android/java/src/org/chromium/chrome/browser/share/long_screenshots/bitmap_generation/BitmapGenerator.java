@@ -4,14 +4,18 @@
 
 package org.chromium.chrome.browser.share.long_screenshots.bitmap_generation;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.util.Size;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.paintpreview.player.CompositorStatus;
 import org.chromium.url.GURL;
@@ -21,17 +25,18 @@ import org.chromium.url.GURL;
  * to capture the webpage, then using {@link LongScreenshotsCompositor} to composite the bitmap.
  * Callers of this class should supply a GeneratorCallback to receive status updates.
  */
+@NullMarked
 public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcessor {
     // Compositor delegate responsible for compositing the skia
-    private LongScreenshotsCompositor mCompositor;
+    private @MonotonicNonNull LongScreenshotsCompositor mCompositor;
     private LongScreenshotsTabService mTabService;
-    private Tab mTab;
+    private final Tab mTab;
 
     private static final String DIR_NAME = "long_screenshots_dir";
 
     protected GeneratorCallBack mGeneratorCallBack;
     private CompositorFactory mCompositorFactory;
-    private ScreenshotBoundsManager mBoundsManager;
+    private final ScreenshotBoundsManager mBoundsManager;
     private float mScaleFactor;
 
     /**
@@ -39,26 +44,22 @@ public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcess
      * the constructor.
      */
     public interface GeneratorCallBack {
-        /**
-         * Called when the compositor cannot be successfully initialized.
-         */
+        /** Called when the compositor cannot be successfully initialized. */
         void onCompositorResult(@CompositorStatus int status);
 
-        /**
-         * Called when the capture is complete.
-         */
+        /** Called when the capture is complete. */
         void onCaptureResult(@Status int status);
     }
 
-    /**
-     * Tests can override the {@link CompositorFactory} to inject a compositor.
-     */
+    /** Tests can override the {@link CompositorFactory} to inject a compositor. */
     public interface CompositorFactory {
-        /**
-         * Identical interface to {@link LongScreenshotsCompositor} constructor.
-         */
-        LongScreenshotsCompositor create(GURL url, LongScreenshotsTabService tabService,
-                String directoryName, long nativeCaptureResultPtr, Callback<Integer> callback);
+        /** Identical interface to {@link LongScreenshotsCompositor} constructor. */
+        LongScreenshotsCompositor create(
+                GURL url,
+                LongScreenshotsTabService tabService,
+                String directoryName,
+                long nativeCaptureResultPtr,
+                Callback<Integer> callback);
     }
 
     /**
@@ -85,6 +86,7 @@ public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcess
      * Starts the capture of the screenshot.
      * @param inMemory Capture the contents of the tab in memory rather than using temporary files.
      */
+    @Initializer
     public void captureTab(boolean inMemory) {
         if (mTabService == null) {
             mTabService = LongScreenshotsTabServiceFactory.getServiceInstance();
@@ -104,8 +106,13 @@ public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcess
     @Override
     public void processCapturedTab(long nativeCaptureResultPtr, @Status int status) {
         if (status == Status.OK && mCompositor == null) {
-            mCompositor = mCompositorFactory.create(GURL.emptyGURL(), mTabService, DIR_NAME,
-                    nativeCaptureResultPtr, this::onCompositorResult);
+            mCompositor =
+                    mCompositorFactory.create(
+                            GURL.emptyGURL(),
+                            mTabService,
+                            DIR_NAME,
+                            nativeCaptureResultPtr,
+                            this::onCompositorResult);
             // Don't call {@link #onCaptureResult()} CAPTURE_COMPLETE will be propagated after
             // compositor initialization.
         } else {
@@ -130,12 +137,12 @@ public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcess
         if (mScaleFactor == 0f) {
             mScaleFactor = mBoundsManager.getBitmapScaleFactor();
         }
+        assumeNonNull(mCompositor);
         return mCompositor.requestBitmap(rect, mScaleFactor, errorCallback, onBitmapGenerated);
     }
 
-    /**
-     * Destroy and clean up any memory.
-     */
+    /** Destroy and clean up any memory. */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         if (mCompositor != null) {
             mCompositor.destroy();
@@ -166,6 +173,7 @@ public class BitmapGenerator implements LongScreenshotsTabService.CaptureProcess
 
     private void onCompositorResult(@CompositorStatus int status) {
         if (status == CompositorStatus.OK) {
+            assumeNonNull(mCompositor);
             mBoundsManager.setCompositedSize(mCompositor.getContentSize());
             mBoundsManager.setCompositedScrollOffset(mCompositor.getScrollOffset());
         }

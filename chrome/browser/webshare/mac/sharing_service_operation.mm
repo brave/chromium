@@ -30,10 +30,6 @@
 #include "storage/browser/blob/blob_storage_context.h"
 #include "url/gurl.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using content::BrowserContext;
 using content::StoragePartition;
 
@@ -176,7 +172,7 @@ void SharingServiceOperation::OnShowSharePicker(
     blink::mojom::ShareError error) {
   if (file_paths_.size() > 0) {
     PrepareDirectoryTask::ScheduleSharedFileDeletion(std::move(file_paths_),
-                                                     base::Minutes(0));
+                                                     base::Seconds(60));
   }
   std::move(callback_).Run(error);
 }

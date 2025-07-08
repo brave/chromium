@@ -11,6 +11,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -35,23 +36,19 @@ class RenderFrameHostImpl;
 class CONTENT_EXPORT SubresourceProxyingURLLoaderService final
     : public network::mojom::URLLoaderFactory {
  public:
-  struct CONTENT_EXPORT BindContext {
+  struct CONTENT_EXPORT BindContext : public base::RefCounted<BindContext> {
     // `factory` is a clone of the default factory bundle for document
     // subresource requests.
-    BindContext(int frame_tree_node_id,
+    BindContext(FrameTreeNodeId frame_tree_node_id,
                 scoped_refptr<network::SharedURLLoaderFactory> factory,
                 base::WeakPtr<RenderFrameHostImpl> render_frame_host,
                 scoped_refptr<PrefetchedSignedExchangeCache>
                     prefetched_signed_exchange_cache);
 
-    explicit BindContext(const std::unique_ptr<BindContext>& other);
-
-    ~BindContext();
-
     // Set `document` to `committed_document`.
     void OnDidCommitNavigation(WeakDocumentPtr committed_document);
 
-    const int frame_tree_node_id;
+    const FrameTreeNodeId frame_tree_node_id;
     scoped_refptr<network::SharedURLLoaderFactory> factory;
     base::WeakPtr<RenderFrameHostImpl> render_frame_host;
 
@@ -74,6 +71,10 @@ class CONTENT_EXPORT SubresourceProxyingURLLoaderService final
     // This must be the last member.
     base::WeakPtrFactory<SubresourceProxyingURLLoaderService::BindContext>
         weak_ptr_factory{this};
+
+   private:
+    ~BindContext();
+    friend class base::RefCounted<BindContext>;
   };
 
   explicit SubresourceProxyingURLLoaderService(BrowserContext* browser_context);
@@ -86,7 +87,7 @@ class CONTENT_EXPORT SubresourceProxyingURLLoaderService final
 
   base::WeakPtr<BindContext> GetFactory(
       mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
-      int frame_tree_node_id,
+      FrameTreeNodeId frame_tree_node_id,
       scoped_refptr<network::SharedURLLoaderFactory>
           subresource_proxying_factory_bundle,
       base::WeakPtr<RenderFrameHostImpl> render_frame_host,
@@ -120,7 +121,7 @@ class CONTENT_EXPORT SubresourceProxyingURLLoaderService final
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation);
 
   mojo::ReceiverSet<network::mojom::URLLoaderFactory,
-                    std::unique_ptr<BindContext>>
+                    scoped_refptr<BindContext>>
       loader_factory_receivers_;
 
   mojo::ReceiverSet<network::mojom::URLLoader,

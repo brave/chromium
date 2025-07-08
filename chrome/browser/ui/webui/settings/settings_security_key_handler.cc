@@ -4,15 +4,17 @@
 
 #include "chrome/browser/ui/webui/settings/settings_security_key_handler.h"
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/base64.h"
+#include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/platform_util.h"
@@ -20,14 +22,12 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
-#include "chrome/browser/webauthn/cablev2_devices.h"
 #include "chrome/browser/webauthn/local_credential_management.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "device/fido/cable/cable_discovery_data.h"
 #include "device/fido/credential_management.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/pin.h"
@@ -35,7 +35,6 @@
 #include "device/fido/public_key_credential_user_entity.h"
 #include "device/fido/reset_request_handler.h"
 #include "device/fido/set_pin_request_handler.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -64,19 +63,8 @@ base::Value::Dict EncodeEnrollment(const std::vector<uint8_t>& id,
                                    const std::string& name) {
   base::Value::Dict value;
   value.Set("name", name);
-  value.Set("id", base::HexEncode(id.data(), id.size()));
+  value.Set("id", base::HexEncode(id));
   return value;
-}
-
-bool DecodePublicKey(const std::string& value,
-                     std::array<uint8_t, device::kP256X962Length>* out) {
-  std::string bytes;
-  if (!base::Base64Decode(value, &bytes) || bytes.size() != out->size()) {
-    return false;
-  }
-
-  base::ranges::copy(bytes, out->begin());
-  return true;
 }
 
 }  // namespace
@@ -146,7 +134,7 @@ void SecurityKeysPINHandler::HandleStartSetPIN(const base::Value::List& args) {
 
 void SecurityKeysPINHandler::OnGatherPIN(uint32_t current_min_pin_length,
                                          uint32_t new_min_pin_length,
-                                         absl::optional<int64_t> num_retries) {
+                                         std::optional<int64_t> num_retries) {
   DCHECK_EQ(State::kStartSetPIN, state_);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -192,8 +180,8 @@ void SecurityKeysPINHandler::HandleSetPIN(const base::Value::List& args) {
 
   DCHECK(callback_id_.empty());
   callback_id_ = args[0].GetString();
-  const std::string old_pin = args[1].GetString();
-  const std::string new_pin = args[2].GetString();
+  const std::string& old_pin = args[1].GetString();
+  const std::string& new_pin = args[2].GetString();
 
   DCHECK((state_ == State::kGatherNewPIN) == old_pin.empty());
 
@@ -396,7 +384,7 @@ void SecurityKeysCredentialHandler::HandlePIN(const base::Value::List& args) {
   DCHECK(callback_id_.empty());
 
   callback_id_ = args[0].GetString();
-  std::string pin = args[1].GetString();
+  const std::string& pin = args[1].GetString();
 
   std::move(credential_management_provide_pin_cb_).Run(pin);
 }
@@ -431,7 +419,6 @@ void SecurityKeysCredentialHandler::HandleDelete(
     std::vector<uint8_t> credential_id_bytes;
     if (!base::HexStringToBytes(el.GetString(), &credential_id_bytes)) {
       NOTREACHED();
-      continue;
     }
     device::PublicKeyCredentialDescriptor credential_id(
         device::CredentialType::kPublicKey, std::move(credential_id_bytes));
@@ -465,12 +452,11 @@ void SecurityKeysCredentialHandler::HandleUpdateUserInformation(
   if (!base::HexStringToBytes(args[2].GetString(), &user_handle)) {
     NOTREACHED();
   }
-  std::string new_username = args[3].GetString();
-  std::string new_displayname = args[4].GetString();
+  const std::string& new_username = args[3].GetString();
+  const std::string& new_displayname = args[4].GetString();
 
   device::PublicKeyCredentialUserEntity updated_user(
-      std::move(user_handle), std::move(new_username),
-      std::move(new_displayname));
+      std::move(user_handle), new_username, new_displayname);
 
   credential_management_->UpdateUserInformation(
       std::move(credential_id), std::move(updated_user),
@@ -491,9 +477,9 @@ void SecurityKeysCredentialHandler::OnCredentialManagementReady() {
 
 void SecurityKeysCredentialHandler::OnHaveCredentials(
     device::CtapDeviceResponseCode status,
-    absl::optional<std::vector<device::AggregatedEnumerateCredentialsResponse>>
+    std::optional<std::vector<device::AggregatedEnumerateCredentialsResponse>>
         responses,
-    absl::optional<size_t> remaining_credentials) {
+    std::optional<size_t> remaining_credentials) {
   DCHECK_EQ(State::kGettingCredentials, state_);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(credential_management_);
@@ -518,15 +504,12 @@ void SecurityKeysCredentialHandler::OnHaveCredentials(
     for (const auto& credential : response.credentials) {
       base::Value::Dict credential_dict;
       std::string credential_id = base::HexEncode(credential.credential_id.id);
-      if (credential_id.empty()) {
-        NOTREACHED();
-        continue;
-      }
-      std::string userHandle = base::HexEncode(credential.user.id);
+      CHECK(!credential_id.empty());
+      std::string user_handle = base::HexEncode(credential.user.id);
 
       credential_dict.Set("credentialId", std::move(credential_id));
       credential_dict.Set("relyingPartyId", response.rp.id);
-      credential_dict.Set("userHandle", std::move(userHandle));
+      credential_dict.Set("userHandle", std::move(user_handle));
       credential_dict.Set("userName", credential.user.name.value_or(""));
       credential_dict.Set("userDisplayName",
                           credential.user.display_name.value_or(""));
@@ -570,7 +553,6 @@ void SecurityKeysCredentialHandler::OnCredentialsDeleted(
     device::CtapDeviceResponseCode status) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(State::kDeletingCredentials, state_);
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(credential_management_);
   DCHECK(!callback_id_.empty());
 
@@ -591,7 +573,6 @@ void SecurityKeysCredentialHandler::OnUserInformationUpdated(
     device::CtapDeviceResponseCode status) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(State::kUpdatingUserInformation, state_);
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(credential_management_);
   DCHECK(!callback_id_.empty());
 
@@ -839,7 +820,7 @@ void SecurityKeysBioEnrollmentHandler::HandleEnumerate(
 
 void SecurityKeysBioEnrollmentHandler::OnHaveEnumeration(
     device::CtapDeviceResponseCode code,
-    absl::optional<std::map<std::vector<uint8_t>, std::string>> enrollments) {
+    std::optional<std::map<std::vector<uint8_t>, std::string>> enrollments) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback_id_.empty());
   DCHECK_EQ(state_, State::kEnumerating);
@@ -906,7 +887,7 @@ void SecurityKeysBioEnrollmentHandler::OnEnrollmentFinished(
 void SecurityKeysBioEnrollmentHandler::OnHavePostEnrollmentEnumeration(
     std::vector<uint8_t> enrolled_template_id,
     device::CtapDeviceResponseCode code,
-    absl::optional<std::map<std::vector<uint8_t>, std::string>> enrollments) {
+    std::optional<std::map<std::vector<uint8_t>, std::string>> enrollments) {
   DCHECK_EQ(state_, State::kEnrolling);
   DCHECK(!callback_id_.empty());
   state_ = State::kReady;
@@ -933,7 +914,6 @@ void SecurityKeysBioEnrollmentHandler::HandleDelete(
   std::vector<uint8_t> template_id;
   if (!base::HexStringToBytes(args[1].GetString(), &template_id)) {
     NOTREACHED();
-    return;
   }
   bio_->DeleteTemplate(
       std::move(template_id),
@@ -961,7 +941,6 @@ void SecurityKeysBioEnrollmentHandler::HandleRename(
   std::vector<uint8_t> template_id;
   if (!base::HexStringToBytes(args[1].GetString(), &template_id)) {
     NOTREACHED();
-    return;
   }
   bio_->RenameTemplate(
       std::move(template_id), args[2].GetString(),
@@ -988,127 +967,6 @@ void SecurityKeysBioEnrollmentHandler::HandleCancel(
   DCHECK(!callback_id_.empty());
   // OnEnrollmentFinished() will be invoked once the cancellation is complete.
   bio_->CancelEnrollment();
-}
-
-SecurityKeysPhonesHandler::SecurityKeysPhonesHandler() = default;
-SecurityKeysPhonesHandler::~SecurityKeysPhonesHandler() = default;
-
-void SecurityKeysPhonesHandler::OnJavascriptAllowed() {}
-void SecurityKeysPhonesHandler::OnJavascriptDisallowed() {}
-
-void SecurityKeysPhonesHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(
-      "securityKeyPhonesEnumerate",
-      base::BindRepeating(&SecurityKeysPhonesHandler::HandleEnumerate,
-                          base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "securityKeyPhonesDelete",
-      base::BindRepeating(&SecurityKeysPhonesHandler::HandleDelete,
-                          base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "securityKeyPhonesRename",
-      base::BindRepeating(&SecurityKeysPhonesHandler::HandleRename,
-                          base::Unretained(this)));
-}
-
-void SecurityKeysPhonesHandler::HandleEnumerate(const base::Value::List& args) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(1u, args.size());
-
-  AllowJavascript();
-  DoEnumerate(args[0]);
-}
-
-void SecurityKeysPhonesHandler::HandleDelete(const base::Value::List& args) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(2u, args.size());
-
-  AllowJavascript();
-  const std::string public_key_base64 = args[1].GetString();
-  std::array<uint8_t, device::kP256X962Length> public_key;
-  const bool ok = DecodePublicKey(public_key_base64, &public_key);
-  DCHECK(ok);
-
-  PrefService* const prefs =
-      Profile::FromBrowserContext(
-          web_ui()->GetWebContents()->GetBrowserContext())
-          ->GetPrefs();
-  cablev2::DeletePairingByPublicKey(prefs, public_key);
-
-  DoEnumerate(args[0]);
-}
-
-void SecurityKeysPhonesHandler::HandleRename(const base::Value::List& args) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(3u, args.size());
-
-  AllowJavascript();
-  const std::string public_key_base64 = args[1].GetString();
-  const std::string new_name = args[2].GetString();
-  content::BrowserContext* const browser_ctx =
-      web_ui()->GetWebContents()->GetBrowserContext();
-
-  std::array<uint8_t, device::kP256X962Length> public_key;
-  const bool ok = DecodePublicKey(public_key_base64, &public_key);
-  DCHECK(ok);
-
-  // `existing_names` is built without calling `cablev2::MergeDevices` because
-  // that function will discard linked entries with duplicate public keys, which
-  // can hide some names that we would still like to avoid colliding with.
-  std::unique_ptr<cablev2::KnownDevices> known_devices =
-      cablev2::KnownDevices::FromProfile(
-          Profile::FromBrowserContext(browser_ctx));
-
-  // Remove the device that is getting renamed from the set of linked devices.
-  auto new_end = std::remove_if(
-      known_devices->linked_devices.begin(),
-      known_devices->linked_devices.end(),
-      [&public_key](const std::unique_ptr<device::cablev2::Pairing>& device)
-          -> bool { return device->peer_public_key_x962 == public_key; });
-  known_devices->linked_devices.erase(new_end,
-                                      known_devices->linked_devices.end());
-
-  PrefService* const prefs =
-      Profile::FromBrowserContext(browser_ctx)->GetPrefs();
-  cablev2::RenamePairing(prefs, public_key, new_name, known_devices->Names());
-
-  ResolveJavascriptCallback(args[0], base::Value());
-}
-
-void SecurityKeysPhonesHandler::DoEnumerate(const base::Value& callback_id) {
-  const std::vector<std::unique_ptr<device::cablev2::Pairing>> pairings =
-      cablev2::MergeDevices(
-          cablev2::KnownDevices::FromProfile(Profile::FromBrowserContext(
-              web_ui()->GetWebContents()->GetBrowserContext())),
-          &icu::Locale::getDefault());
-
-  base::Value::List synced;
-  base::Value::List linked;
-  absl::optional<std::string> last_synced_device_name;
-  for (const auto& pairing : pairings) {
-    base::Value::Dict dict;
-    dict.Set("name", pairing->name);
-    dict.Set("publicKey", base::Base64Encode(pairing->peer_public_key_x962));
-
-    if (pairing->from_sync_deviceinfo) {
-      // Synced devices can have duplicate names. (E.g. if two or more
-      // channels are syncing from the same phone.) These are deduplicated
-      // here.
-      if (!last_synced_device_name ||
-          *last_synced_device_name != pairing->name) {
-        synced.Append(std::move(dict));
-      }
-      last_synced_device_name = pairing->name;
-    } else {
-      linked.Append(std::move(dict));
-    }
-  }
-
-  base::Value::List result;
-  result.Append(std::move(synced));
-  result.Append(std::move(linked));
-
-  ResolveJavascriptCallback(callback_id, result);
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
@@ -1188,7 +1046,7 @@ void PasskeysHandler::HandleManagePasskeys(const base::Value::List& args) {
 
   // If no system management exists, fall back to Chrome's own settings UI.
   chrome::ShowSettingsSubPage(
-      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents()),
+      chrome::FindBrowserWithTab(web_ui()->GetWebContents()),
       chrome::kPasskeysSubPage);
 }
 
@@ -1208,7 +1066,7 @@ void PasskeysHandler::DoEnumerate(std::string callback_id) {
 
 void PasskeysHandler::OnEnumerateComplete(
     std::string callback_id,
-    absl::optional<std::vector<device::DiscoverableCredentialMetadata>>
+    std::optional<std::vector<device::DiscoverableCredentialMetadata>>
         credentials) {
   base::Value result;
 
@@ -1270,9 +1128,9 @@ void PasskeysHandler::HandleEdit(const base::Value::List& args) {
   const bool ok = base::HexStringToBytes(args[1].GetString(), &credential_id);
   DCHECK(ok);
 
-  std::string new_username = args[2].GetString();
+  const std::string& new_username = args[2].GetString();
   local_cred_man_->Edit(
-      credential_id, std::move(new_username),
+      credential_id, new_username,
       base::BindOnce(&PasskeysHandler::OnEditComplete,
                      weak_factory_.GetWeakPtr(), args[0].GetString()));
 }

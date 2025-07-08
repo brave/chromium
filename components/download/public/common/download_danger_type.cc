@@ -41,8 +41,6 @@ const char* GetDownloadDangerTypeString(const DownloadDangerType& danger_type) {
       return "DeepScannedOpenedDangerous";
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING:
       return "PromptForScanning";
-    case download::DOWNLOAD_DANGER_TYPE_BLOCKED_UNSUPPORTED_FILETYPE:
-      return "BlockedUnsupportedFiletype";
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_ACCOUNT_COMPROMISE:
       return "DangerousAccountCompromise";
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
@@ -53,11 +51,16 @@ const char* GetDownloadDangerTypeString(const DownloadDangerType& danger_type) {
       return "UserValidated";
     case download::DOWNLOAD_DANGER_TYPE_ALLOWLISTED_BY_POLICY:
       return "AllowlistedByPolicy";
+    case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
+      return "PromptForLocalPasswordScanning";
+    case download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING:
+      return "AsyncLocalPasswordScanning";
+    case download::DOWNLOAD_DANGER_TYPE_BLOCKED_SCAN_FAILED:
+      return "BlockedScanFailed";
     case download::DOWNLOAD_DANGER_TYPE_MAX:
       break;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace download

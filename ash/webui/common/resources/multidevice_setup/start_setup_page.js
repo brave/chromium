@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,44 +6,30 @@ import './icons.html.js';
 import './mojo_api.js';
 import './multidevice_setup_shared.css.js';
 import './ui_page.js';
+import './pausable_lottie.js';
 import '//resources/ash/common/cr.m.js';
-import '//resources/cr_elements/cr_lottie/cr_lottie.js';
 import '//resources/polymer/v3_0/iron-icon/iron-icon.js';
 import '//resources/polymer/v3_0/iron-media-query/iron-media-query.js';
+import 'chrome://resources/cros_components/lottie_renderer/lottie-renderer.js';
 
 import {loadTimeData} from '//resources/ash/common/load_time_data.m.js';
 import {WebUIListenerBehavior} from '//resources/ash/common/web_ui_listener_behavior.js';
 import {Polymer} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {ConnectivityStatus} from 'chrome://resources/mojo/chromeos/ash/services/device_sync/public/mojom/device_sync.mojom-webui.js';
-import {HostDevice} from 'chrome://resources/mojo/chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom-webui.js';
 
 import {MojoInterfaceProvider, MojoInterfaceProviderImpl} from './mojo_api.js';
 import {MultiDeviceSetupDelegate} from './multidevice_setup_delegate.js';
 import {getTemplate} from './start_setup_page.html.js';
 import {UiPageContainerBehavior} from './ui_page_container_behavior.js';
 
-/**
- * The multidevice setup animation for light mode.
- * TODO(b/279667779): Remove when Jelly is fully launched.
- * @type {string}
- */
-const MULTIDEVICE_ANIMATION_DARK_URL =
-    'chrome://resources/ash/common/multidevice_setup/multidevice_setup_dark.json';
-
-/**
- * The multidevice setup animation for dark mode.
- * TODO(b/279667779): Remove when Jelly is fully launched.
- * @type {string}
- */
-const MULTIDEVICE_ANIMATION_LIGHT_URL =
-    'chrome://resources/ash/common/multidevice_setup/multidevice_setup_light.json';
+/** @typedef {*} HostDevice */
 
 /**
  * The multidevice setup animation for dynamic colors.
  * @type {string}
  */
 const MULTIDEVICE_ANIMATION_JELLY_URL =
-    'chrome://resources/ash/common/multidevice_setup/multidevice_setup_jelly.json';
+    'chrome://resources/ash/common/multidevice_setup/multidevice_setup_animation.json';
 
 Polymer({
   _template: getTemplate(),
@@ -88,7 +74,7 @@ Polymer({
      * Unique identifier for the currently selected host device. This uses the
      * device's Instance ID if it is available; otherwise, the device's legacy
      * device ID is used.
-     * TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, only
+     * TODO(crbug.com/40105247): When v1 DeviceSync is turned off, only
      * use Instance ID since all devices are guaranteed to have one.
      *
      * Undefined if the no list of potential hosts has been received from mojo
@@ -117,33 +103,11 @@ Polymer({
     },
 
     /** @private */
-    phoneHubCameraRollEnabled_: {
+    phoneHubEnabled_: {
       type: Boolean,
       value() {
-        return loadTimeData.valueExists('phoneHubCameraRollEnabled') &&
-            loadTimeData.getBoolean('phoneHubCameraRollEnabled');
-      },
-    },
-
-    /**
-     * Whether the multidevice setup page is being rendered in dark mode.
-     * TODO(b/279667779): Remove when Jelly is fully launched.
-     * @private {boolean}
-     */
-    isDarkModeActive_: {
-      type: Boolean,
-      value: false,
-    },
-
-    /**
-     * Whether the multidevice setup page is being rendered with dynamic colors.
-     * @private {boolean}
-     */
-    isJellyEnabled_: {
-      type: Boolean,
-      value() {
-        return loadTimeData.valueExists('isJellyEnabled') &&
-            loadTimeData.getBoolean('isJellyEnabled');
+        return loadTimeData.valueExists('phoneHubEnabled') &&
+            loadTimeData.getBoolean('phoneHubEnabled');
       },
     },
 
@@ -175,8 +139,6 @@ Polymer({
     this.addWebUIListener(
         'multidevice_setup.initializeSetupFlow',
         () => this.initializeSetupFlow_());
-
-    this.addAccessibilityLabel_();
   },
 
   /**
@@ -184,28 +146,15 @@ Polymer({
    * @param {boolean} enabled Whether the animation should play or not.
    */
   setPlayAnimation(enabled) {
-    /** @type {!CrLottieElement} */ (this.$.multideviceSetupAnimation)
-        .setPlay(enabled);
+    this.$.multideviceSetupAnimation.playing = enabled;
   },
 
   /**
-   * Since web links cannot be opened in OOBE as there is no web browser, this
-   * attaches a listener to open a webview modal in OOBE when "Learn More" links
-   * are clicked.
+   * If the user used Quick Start, this method retrieves and sets the ID of the
+   * phone a user used to complete the flow earlier in OOBE.
    * @private
    */
   initializeSetupFlow_() {
-    // The "Learn More" links are inside a grdp string, so we cannot actually
-    // add an onclick handler directly to the html. Instead, grab the two and
-    // manaully add onclick handlers.
-    const helpArticleLinks = [
-      this.$$('#multidevice-summary-message a'),
-    ];
-    for (let i = 0; i < helpArticleLinks.length; i++) {
-      helpArticleLinks[i].onclick = this.fire.bind(
-          this, 'open-learn-more-webview-requested', helpArticleLinks[i].href);
-    }
-
     this.mojoInterfaceProvider_.getMojoServiceRemote()
         .getQuickStartPhoneInstanceID()
         .then(({qsPhoneInstanceId}) => {
@@ -218,23 +167,6 @@ Polymer({
         .catch((error) => {
           console.warn('Mojo service failure: ' + error);
         });
-  },
-
-  /**
-   * Adds ARIA description to "Learn More" links since the link tag is embedded
-   * in the grdp string without additional attributes.
-   * @private
-   */
-  addAccessibilityLabel_() {
-    // Since the "Learn More" links are inside a grdp string, we add the
-    // attribute here.
-    const helpArticleLinks = [
-      this.$$('#multidevice-summary-message a'),
-    ];
-    for (let i = 0; i < helpArticleLinks.length; i++) {
-      helpArticleLinks[i].setAttribute(
-          'aria-describedby', 'multidevice-summary-message');
-    }
   },
 
   /**
@@ -319,7 +251,7 @@ Polymer({
    * @return {string} Returns a unique identifier for the input device, using
    *     the device's Instance ID if it is available; otherwise, the device's
    *     legacy device ID is used.
-   *     TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, only
+   *     TODO(crbug.com/40105247): When v1 DeviceSync is turned off, only
    *     use Instance ID since all devices are guaranteed to have one.
    * @private
    */
@@ -395,12 +327,6 @@ Polymer({
    * @private
    */
   getAnimationUrl_() {
-    if (this.isJellyEnabled_) {
-      return MULTIDEVICE_ANIMATION_JELLY_URL;
-    }
-
-    // TODO(b/279667779): Remove when Jelly is fully launched.
-    return this.isDarkModeActive_ ? MULTIDEVICE_ANIMATION_DARK_URL :
-                                    MULTIDEVICE_ANIMATION_LIGHT_URL;
+    return MULTIDEVICE_ANIMATION_JELLY_URL;
   },
 });

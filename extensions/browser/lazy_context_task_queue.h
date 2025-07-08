@@ -38,8 +38,6 @@ class LazyContextTaskQueue {
     const int64_t service_worker_version_id;
     const int worker_thread_id;
     const GURL url;
-    // TODO(dbertoni): This needs to be initialized for the Service Worker
-    // version of the constructor.
     // `browser_context` is not a raw_ptr<...> for performance reasons (based on
     // analysis of sampling profiler data).
     RAW_PTR_EXCLUSION content::BrowserContext* const browser_context = nullptr;
@@ -56,6 +54,10 @@ class LazyContextTaskQueue {
                 int64_t service_worker_version_id,
                 int worker_thread_id,
                 const GURL& url);
+
+    ContextInfo(const ContextInfo& other);
+    ContextInfo(ContextInfo&& other);
+    ~ContextInfo();
   };
   using PendingTask =
       base::OnceCallback<void(std::unique_ptr<ContextInfo> params)>;
@@ -64,7 +66,11 @@ class LazyContextTaskQueue {
   // extension has a lazy background page or service worker that isn't ready
   // yet).
   virtual bool ShouldEnqueueTask(content::BrowserContext* context,
-                                 const Extension* extension) = 0;
+                                 const Extension* extension) const = 0;
+
+  // Returns true if the lazy context is ready to run tasks (a.k.a active).
+  virtual bool IsReadyToRunTasks(content::BrowserContext* context,
+                                 const Extension* extension) const = 0;
 
   // Adds a task to the queue for a given extension. If this is the first
   // task added for the extension, its "lazy context" (i.e. lazy background

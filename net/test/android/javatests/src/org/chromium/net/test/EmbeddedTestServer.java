@@ -17,24 +17,29 @@ import androidx.annotation.GuardedBy;
 import org.junit.Assert;
 
 import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.BaseJUnit4ClassRunner.ClassHook;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.net.X509Util;
 import org.chromium.net.test.util.CertTestUtil;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 /**
  * A simple file server for java tests.
  *
- * An example use:
+ * <p>An example use:
+ *
  * <pre>
  * EmbeddedTestServer s = EmbeddedTestServer.createAndStartServer(context);
  *
  * // serve requests...
  * s.getURL("/foo/bar.txt");
  *
+ * // Generally safe to omit as ResettersForTesting will call it.
  * s.stopAndDestroyServer();
  * </pre>
  *
@@ -47,28 +52,33 @@ public class EmbeddedTestServer {
             "org.chromium.net.test.EMBEDDED_TEST_SERVER_SERVICE";
     private static final long SERVICE_CONNECTION_WAIT_INTERVAL_MS = 5000;
 
+    private static boolean sTestRootInitDone;
+
     @GuardedBy("mImplMonitor")
     private IEmbeddedTestServerImpl mImpl;
-    private ServiceConnection mConn = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            synchronized (mImplMonitor) {
-                mImpl = IEmbeddedTestServerImpl.Stub.asInterface(service);
-                mImplMonitor.notify();
-            }
-        }
 
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-            synchronized (mImplMonitor) {
-                mImpl = null;
-                mImplMonitor.notify();
-            }
-        }
-    };
+    private final ServiceConnection mConn =
+            new ServiceConnection() {
+                @Override
+                public void onServiceConnected(ComponentName name, IBinder service) {
+                    synchronized (mImplMonitor) {
+                        mImpl = IEmbeddedTestServerImpl.Stub.asInterface(service);
+                        mImplMonitor.notify();
+                    }
+                }
+
+                @Override
+                public void onServiceDisconnected(ComponentName name) {
+                    synchronized (mImplMonitor) {
+                        mImpl = null;
+                        mImplMonitor.notify();
+                    }
+                }
+            };
 
     private Context mContext;
     private final Object mImplMonitor = new Object();
+    boolean mDisableResetterForTesting;
 
     // Whether the server should use HTTP or HTTPS.
     public enum ServerHTTPSSetting {
@@ -76,9 +86,7 @@ public class EmbeddedTestServer {
         USE_HTTPS,
     }
 
-    /**
-     * Exception class raised on failure in the EmbeddedTestServer.
-     */
+    /** Exception class raised on failure in the EmbeddedTestServer. */
     public static final class EmbeddedTestServerFailure extends Error {
         public EmbeddedTestServerFailure(String errorDesc) {
             super(errorDesc);
@@ -95,27 +103,24 @@ public class EmbeddedTestServer {
      * Notifications are asynchronous and delivered to the UI thread.
      */
     public static class ConnectionListener {
-        private final IConnectionListener mListener = new IConnectionListener.Stub() {
-            @Override
-            public void acceptedSocket(final long socketId) {
-                ThreadUtils.runOnUiThread(new Runnable() {
+        private final IConnectionListener mListener =
+                new IConnectionListener.Stub() {
                     @Override
-                    public void run() {
-                        ConnectionListener.this.acceptedSocket(socketId);
+                    public void acceptedSocket(final long socketId) {
+                        ThreadUtils.runOnUiThread(
+                                () -> {
+                                    ConnectionListener.this.acceptedSocket(socketId);
+                                });
                     }
-                });
-            }
 
-            @Override
-            public void readFromSocket(final long socketId) {
-                ThreadUtils.runOnUiThread(new Runnable() {
                     @Override
-                    public void run() {
-                        ConnectionListener.this.readFromSocket(socketId);
+                    public void readFromSocket(final long socketId) {
+                        ThreadUtils.runOnUiThread(
+                                () -> {
+                                    ConnectionListener.this.readFromSocket(socketId);
+                                });
                     }
-                });
-            }
-        };
+                };
 
         /**
          * A new socket connection has been opened on the server.
@@ -173,6 +178,9 @@ public class EmbeddedTestServer {
             if (!initialized) {
                 throw new EmbeddedTestServerFailure("Failed to initialize native server.");
             }
+            if (!mDisableResetterForTesting) {
+                ResettersForTesting.register(this::stopAndDestroyServer);
+            }
 
             if (httpsSetting == ServerHTTPSSetting.USE_HTTPS) {
                 try {
@@ -219,8 +227,10 @@ public class EmbeddedTestServer {
             }
         } catch (RemoteException e) {
             throw new EmbeddedTestServerFailure(
-                    "Failed to add default handlers and start serving files from " + directoryPath
-                    + ": " + e.toString());
+                    "Failed to add default handlers and start serving files from "
+                            + directoryPath
+                            + ": "
+                            + e.toString());
         }
     }
 
@@ -341,9 +351,11 @@ public class EmbeddedTestServer {
      *  @return The created server.
      */
     public static EmbeddedTestServer createAndStartServerWithPort(Context context, int port) {
-        Assert.assertNotEquals("EmbeddedTestServer should not be created on UiThread, "
-                + "the instantiation will hang forever waiting for tasks to post to UI thread",
-                Looper.getMainLooper(), Looper.myLooper());
+        Assert.assertNotEquals(
+                "EmbeddedTestServer should not be created on UiThread, the instantiation will hang"
+                    + " forever waiting for tasks to post to UI thread",
+                Looper.getMainLooper(),
+                Looper.myLooper());
         EmbeddedTestServer server = new EmbeddedTestServer();
         return initializeAndStartServer(server, context, port);
     }
@@ -359,7 +371,7 @@ public class EmbeddedTestServer {
      */
     public static EmbeddedTestServer createAndStartHTTPSServer(
             Context context, @ServerCertificate int serverCertificate) {
-        return createAndStartHTTPSServerWithPort(context, serverCertificate, 0 /* port */);
+        return createAndStartHTTPSServerWithPort(context, serverCertificate, /* port= */ 0);
     }
 
     /** Create and initialize an HTTPS server with the default handlers and specified port.
@@ -374,10 +386,12 @@ public class EmbeddedTestServer {
      */
     public static EmbeddedTestServer createAndStartHTTPSServerWithPort(
             Context context, @ServerCertificate int serverCertificate, int port) {
-        Assert.assertNotEquals("EmbeddedTestServer should not be created on UiThread, "
+        Assert.assertNotEquals(
+                "EmbeddedTestServer should not be created on UiThread, "
                         + "the instantiation will hang forever waiting for tasks"
                         + " to post to UI thread",
-                Looper.getMainLooper(), Looper.myLooper());
+                Looper.getMainLooper(),
+                Looper.myLooper());
         EmbeddedTestServer server = new EmbeddedTestServer();
         return initializeAndStartHTTPSServer(server, context, serverCertificate, port);
     }
@@ -460,12 +474,12 @@ public class EmbeddedTestServer {
         }
     }
 
-    /** Get the full URLs for the given relative URLs.
+    /**
+     * Get the full URLs for the given relative URLs.
      *
-     *  @see #getURL(String)
-     *
-     *  @param relativeUrls The relative URLs for which full URLs will be obtained.
-     *  @return The URLs as a String array.
+     * @see #getURL(String)
+     * @param relativeUrls The relative URLs for which full URLs will be obtained.
+     * @return The URLs as a String array.
      */
     public String[] getURLs(String... relativeUrls) {
         String[] absoluteUrls = new String[relativeUrls.length];
@@ -475,45 +489,89 @@ public class EmbeddedTestServer {
         return absoluteUrls;
     }
 
-    /** Shutdown the server.
+    /**
+     * Get the full URLs for the given relative URLs.
      *
-     *  @return Whether the server was successfully shut down.
+     * @see #getURL(String)
+     * @param relativeUrls The relative URLs for which full URLs will be obtained.
+     * @return The URLs as a List.
      */
-    public boolean shutdownAndWaitUntilComplete() {
-        try {
-            synchronized (mImplMonitor) {
-                checkServiceLocked();
-                return mImpl.shutdownAndWaitUntilComplete();
-            }
-        } catch (RemoteException e) {
-            throw new EmbeddedTestServerFailure("Failed to shut down.", e);
+    public List<String> getURLs(List<String> relativeUrls) {
+        List<String> absoluteUrls = new ArrayList<>(relativeUrls.size());
+        for (String relativeUrl : relativeUrls) {
+            absoluteUrls.add(getURL(relativeUrl));
         }
+        return absoluteUrls;
     }
 
-    /** Destroy the native EmbeddedTestServer object. */
-    public void destroy() {
-        try {
-            synchronized (mImplMonitor) {
-                checkServiceLocked();
-                mImpl.destroy();
-                mImpl = null;
-            }
-        } catch (RemoteException e) {
-            throw new EmbeddedTestServerFailure("Failed to destroy native server.", e);
-        } finally {
-            mContext.unbindService(mConn);
-        }
-    }
-
-    /** Stop and destroy the server.
+    /**
+     * Get the request headers observed on the server for the given relative URL.
      *
-     *  This handles stopping the server and destroying the native object.
+     * @param relativeUrl The relative URL for which request headers should be returned.
+     * @return The map of the header key and value pairs.
+     */
+    public HashMap<String, String> getRequestHeadersForUrl(final String relativeUrl) {
+        try {
+            synchronized (mImplMonitor) {
+                checkServiceLocked();
+                String[] headers_array = mImpl.getRequestHeadersForUrl(relativeUrl);
+                // The length of the vector should be even, as the vector alternates between header
+                // names (even indices) and their corresponding values (odd indices).
+                Assert.assertEquals(0, headers_array.length % 2);
+
+                HashMap<String, String> headers = new HashMap<String, String>();
+                for (int i = 0; i < headers_array.length; i += 2) {
+                    headers.put(headers_array[i], headers_array[i + 1]);
+                }
+                return headers;
+            }
+        } catch (RemoteException e) {
+            throw new EmbeddedTestServerFailure(
+                    "Failed to get request headers for " + relativeUrl, e);
+        }
+    }
+
+    /**
+     * Get the request count observed on the server for the given relative URL.
+     *
+     * @param relativeUrl The relative URL for which request count should be returned.
+     * @return The request count.
+     */
+    public int getRequestCountForUrl(final String relativeUrl) {
+        try {
+            synchronized (mImplMonitor) {
+                checkServiceLocked();
+                return mImpl.getRequestCountForUrl(relativeUrl);
+            }
+        } catch (RemoteException e) {
+            throw new EmbeddedTestServerFailure(
+                    "Failed to get request count for " + relativeUrl, e);
+        }
+    }
+
+    /**
+     * Stop and destroy the server.
+     *
+     * <p>This handles stopping the server and destroying the native object.
      */
     public void stopAndDestroyServer() {
-        if (!shutdownAndWaitUntilComplete()) {
-            throw new EmbeddedTestServerFailure("Failed to stop server.");
+        synchronized (mImplMonitor) {
+            // ResettersForTesting call can cause this to be called multiple times.
+            if (mImpl == null) {
+                return;
+            }
+            try {
+                if (!mImpl.shutdownAndWaitUntilComplete()) {
+                    throw new EmbeddedTestServerFailure("Failed to stop server.");
+                }
+                mImpl.destroy();
+                mImpl = null;
+            } catch (RemoteException e) {
+                throw new EmbeddedTestServerFailure("Failed to shut down.", e);
+            } finally {
+                mContext.unbindService(mConn);
+            }
         }
-        destroy();
     }
 
     /** Get the path of the PEM file of the root cert. */
@@ -528,13 +586,7 @@ public class EmbeddedTestServer {
         }
     }
 
-    public static ClassHook getPreClassHook() {
-        return (targetContext, testClass) -> EmbeddedTestServer.setUpClass(testClass);
-    }
-
-    private static boolean sTestRootInitDone;
-
-    public static void setUpClass(Class<?> clazz) {
+    public static void initCerts() {
         if (sTestRootInitDone) {
             return;
         }

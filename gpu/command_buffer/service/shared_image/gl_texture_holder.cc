@@ -8,20 +8,22 @@
 #include "build/build_config.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/gl_repack_utils.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_gl_utils.h"
 #include "gpu/command_buffer/service/skia_utils.h"
-#include "third_party/skia/include/gpu/GrContextThreadSafeProxy.h"
+#include "third_party/skia/include/gpu/ganesh/GrContextThreadSafeProxy.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/progress_reporter.h"
 #include "ui/gl/scoped_binders.h"
+#include "ui/gl/scoped_restore_texture.h"
 
 namespace gpu {
 namespace {
 
 // This value can't be cached as it may change for different contexts.
 bool SupportsUnpackSubimage() {
-  return gl::g_current_gl_version->is_es3_capable ||
+  return gl::g_current_gl_version->IsAtLeastGLES(3, 0) ||
          gl::g_current_gl_driver->ext.b_GL_EXT_unpack_subimage;
 }
 
@@ -33,7 +35,7 @@ bool SupportsPackSubimage() {
   // for that row.
   return false;
 #else
-  return gl::g_current_gl_version->is_es3_capable;
+  return gl::g_current_gl_version->IsAtLeastGLES(3, 0);
 #endif
 }
 
@@ -53,6 +55,7 @@ constexpr int ComputeBestAlignment(size_t bytes_per_pixel, size_t stride) {
 }  // anonymous namespace
 
 // static
+// TODO(hitawala): Check GLFormatCaps for format support.
 viz::SharedImageFormat GLTextureHolder::GetPlaneFormat(
     viz::SharedImageFormat format,
     int plane_index) {
@@ -61,16 +64,21 @@ viz::SharedImageFormat GLTextureHolder::GetPlaneFormat(
     return format;
   }
 
-  if (format == viz::MultiPlaneFormat::kNV12) {
-    return plane_index == 0 ? viz::SinglePlaneFormat::kR_8
-                            : viz::SinglePlaneFormat::kRG_88;
-  } else if (format == viz::MultiPlaneFormat::kYV12 ||
-             format == viz::MultiPlaneFormat::kI420) {
-    return viz::SinglePlaneFormat::kR_8;
+  int num_channels = format.NumChannelsInPlane(plane_index);
+  DCHECK_LE(num_channels, 2);
+  switch (format.channel_format()) {
+    case viz::SharedImageFormat::ChannelFormat::k8:
+      return num_channels == 2 ? viz::SinglePlaneFormat::kRG_88
+                               : viz::SinglePlaneFormat::kR_8;
+    case viz::SharedImageFormat::ChannelFormat::k10:
+    case viz::SharedImageFormat::ChannelFormat::k16:
+      return num_channels == 2 ? viz::SinglePlaneFormat::kRG_1616
+                               : viz::SinglePlaneFormat::kR_16;
+    case viz::SharedImageFormat::ChannelFormat::k16F:
+      CHECK_EQ(num_channels, 1);
+      return viz::SinglePlaneFormat::kR_F16;
   }
-
   NOTREACHED();
-  return viz::SinglePlaneFormat::kRGBA_8888;
 }
 
 GLTextureHolder::GLTextureHolder(viz::SharedImageFormat format,
@@ -136,10 +144,9 @@ void GLTextureHolder::Initialize(
   format_desc_.image_internal_format = format_info.image_internal_format;
   format_desc_.storage_internal_format = format_info.storage_internal_format;
 
-  GLTextureImageBackingHelper::MakeTextureAndSetParameters(
-      format_desc_.target, framebuffer_attachment_angle,
-      is_passthrough_ ? &passthrough_texture_ : nullptr,
-      is_passthrough_ ? nullptr : &texture_);
+  MakeTextureAndSetParameters(format_desc_.target, framebuffer_attachment_angle,
+                              is_passthrough_ ? &passthrough_texture_ : nullptr,
+                              is_passthrough_ ? nullptr : &texture_);
 
   if (is_passthrough_) {
     passthrough_texture_->SetEstimatedSize(format_.EstimatedSizeInBytes(size_));
@@ -156,8 +163,8 @@ void GLTextureHolder::Initialize(
   }
 
   gl::GLApi* api = gl::g_current_gl_context;
-  GLTextureImageBackingHelper::ScopedRestoreTexture scoped_restore(
-      api, format_desc_.target, GetServiceId());
+  gl::ScopedRestoreTexture scoped_restore(api, format_desc_.target,
+                                          GetServiceId());
 
   // Initialize the texture storage/image parameters and upload initial pixels
   // if available.
@@ -210,7 +217,8 @@ void GLTextureHolder::Initialize(
     texture_->SetCompatibilitySwizzle(format_info.swizzle);
   }
 
-  if (!debug_label.empty()) {
+  // If the extension does not exist, do not pass debug label to avoid crashes.
+  if (!debug_label.empty() && gl::g_current_gl_driver->ext.b_GL_KHR_debug) {
     api->glObjectLabelFn(GL_TEXTURE, GetServiceId(), -1, debug_label.c_str());
   }
 }

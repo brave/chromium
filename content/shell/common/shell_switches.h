@@ -11,15 +11,12 @@
 
 namespace switches {
 
-extern const char kContentShellDataPath[];
+extern const char kContentShellUserDataDir[];
 extern const char kCrashDumpsDir[];
 extern const char kDisableSystemFontCheck[];
 extern const char kExposeInternalsForTesting[];
 extern const char kContentShellHostWindowSize[];
 extern const char kContentShellHideToolbar[];
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-extern const char kContentShellDevToolsTabTarget[];
-#endif
 extern const char kIsolatedContextOrigins[];
 extern const char kRemoteDebuggingAddress[];
 extern const char kRunWebTests[];

@@ -6,23 +6,24 @@
 #define COMPONENTS_SYNC_MODEL_SYNCABLE_SERVICE_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/model/model_error.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace syncer {
 
 class SyncChangeProcessor;
+struct EntityData;
 
-// TODO(zea): remove SupportsWeakPtr in favor of having all SyncableService
-// implementers provide a way of getting a weak pointer to themselves.
-// See crbug.com/100114.
-class SyncableService : public base::SupportsWeakPtr<SyncableService> {
+// DEPRECATED: new code should use DataTypeSyncBridge instead.
+// See https://www.chromium.org/developers/design-documents/sync/model-api/ for
+// background.
+class SyncableService {
  public:
   SyncableService() = default;
 
@@ -40,44 +41,79 @@ class SyncableService : public base::SupportsWeakPtr<SyncableService> {
   // 2) You want remote data to be visible immediately; for example if the
   // history page is open, you want remote sessions data to be available there.
   // 3) You want to signal to sync that it's safe to start now that the
-  // browser's IO-intensive startup process is over. The ModelType parameter is
-  // included so that the recieving end can track usage and timing statistics,
+  // browser's IO-intensive startup process is over. The DataType parameter is
+  // included so that the receiving end can track usage and timing statistics,
   // make optimizations or tradeoffs by type, etc.
-  using StartSyncFlare = base::RepeatingCallback<void(ModelType)>;
+  using StartSyncFlare = base::RepeatingCallback<void(DataType)>;
 
   // Allows the SyncableService to delay sync events (all below) until the model
   // becomes ready to sync. Callers must ensure there is no previous ongoing
   // wait (per datatype, if the SyncableService supports multiple).
   virtual void WaitUntilReadyToSync(base::OnceClosure done) = 0;
 
-  // Informs the service to begin syncing the specified synced datatype |type|.
-  // The service should then merge |initial_sync_data| into it's local data,
-  // calling |sync_processor|'s ProcessSyncChanges as necessary to reconcile the
+  // Informs the service that initial sync is about start. This is to allow the
+  // service to differentiate between browser startup and initial sync since
+  // MergeDataAndStartSyncing is called during both.
+  virtual void WillStartInitialSync();
+
+  // Informs the service to begin syncing the specified synced datatype `type`.
+  // The service should then merge `initial_sync_data` into it's local data,
+  // calling `sync_processor`'s ProcessSyncChanges as necessary to reconcile the
   // two. After this, the SyncableService's local data should match the server
   // data, and the service should be ready to receive and process any further
   // SyncChange's as they occur.
-  // Returns: absl::nullopt if no error was encountered while merging the two
-  //          models, otherwise a absl::optional filled with such error.
-  virtual absl::optional<syncer::ModelError> MergeDataAndStartSyncing(
-      ModelType type,
+  // Returns: std::nullopt if no error was encountered while merging the two
+  //          models, otherwise a std::optional filled with such error.
+  virtual std::optional<syncer::ModelError> MergeDataAndStartSyncing(
+      DataType type,
       const SyncDataList& initial_sync_data,
       std::unique_ptr<SyncChangeProcessor> sync_processor) = 0;
 
-  // Stop syncing the specified type and reset state.
-  virtual void StopSyncing(ModelType type) = 0;
+  // Stop syncing the specified type and reset state. The syncable service may
+  // want to clear data as a result, specially data that is known to be strictly
+  // bound to an account (and should not be kept in local storage after
+  // signout). Note that, if the syncable service implements such data cleanup
+  // in this function, it should very likely implement analogous logic in
+  // `StayStoppedAndMaybeClearData()` (retries to ensure reliable deletions).
+  // TODO(crbug.com/401453180): Rename this method to
+  // StopSyncingAndMaybeClearData().
+  virtual void StopSyncing(DataType type) = 0;
 
   // Notifies the syncable service to stop syncing on browser shutdown. This is
   // a separate method from StopSyncing() to let implementations do something
   // different in case of shutdown.
-  virtual void OnBrowserShutdown(ModelType type);
+  virtual void OnBrowserShutdown(DataType type);
+
+  // Notifies the syncable service (while it is not running) that no data should
+  // currently exist, specially data that is known to be strictly bound to an
+  // account (and should not be kept in local storage after signout). This is
+  // triggered when the bridge detects an empty or an invalid metadata upon
+  // profile load, to cover cases like the user being signed out upon profile
+  // load. The main purpose is that, if the syncable service implements some
+  // deletion/cleanup logic in StopSyncing(), this function gives the syncable
+  // service the opportunity to verify or retry those deletions (e.g. if it
+  // previously ran into I/O errors or the browser crashed before changes were
+  // flushed to disk or the account state changed upon startup).
+  virtual void StayStoppedAndMaybeClearData(DataType type);
 
   // SyncChangeProcessor interface.
   // Process a list of new SyncChanges and update the local data as necessary.
-  // Returns: absl::nullopt if no error was encountered, otherwise a
-  //          absl::optional filled with such error.
-  virtual absl::optional<ModelError> ProcessSyncChanges(
+  // Returns: std::nullopt if no error was encountered, otherwise a
+  //          std::optional filled with such error.
+  virtual std::optional<ModelError> ProcessSyncChanges(
       const base::Location& from_here,
       const SyncChangeList& change_list) = 0;
+
+  // TODO(crbug.com/40726283): Make pure virtual once all subclasses implement
+  // this function.
+  virtual std::string GetClientTag(const EntityData& entity_data) const;
+
+  // TODO(crbug.com/40726283): This function will be removed when all
+  // syncable services support GetClientTag().
+  virtual bool SupportsGetClientTag() const;
+
+  // Get a WeakPtr to the instance.
+  virtual base::WeakPtr<SyncableService> AsWeakPtr() = 0;
 };
 
 }  // namespace syncer

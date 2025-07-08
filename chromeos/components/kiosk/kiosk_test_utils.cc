@@ -4,35 +4,28 @@
 
 #include "chromeos/components/kiosk/kiosk_test_utils.h"
 
-#include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/ash/components/login/login_state/login_state.h"  // nogncheck
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_init_params.h"  // nogncheck
-#endif
+#include "base/check.h"
+#include "components/account_id/account_id.h"
+#include "components/user_manager/test_helper.h"
+#include "components/user_manager/user.h"
+#include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_manager_impl.h"
 
 namespace chromeos {
 
-void SetUpFakeKioskSession() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  ash::LoginState::Initialize();
-  ash::LoginState::Get()->SetLoggedInState(
-      ash::LoginState::LoggedInState::LOGGED_IN_ACTIVE,
-      ash::LoginState::LoggedInUserType::LOGGED_IN_USER_KIOSK);
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-  crosapi::mojom::BrowserInitParamsPtr init_params =
-      chromeos::BrowserInitParams::GetForTests()->Clone();
-  init_params->session_type = crosapi::mojom::SessionType::kWebKioskSession;
-  chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
-#endif
-}
+void SetUpFakeKioskSession(std::string_view email) {
+  CHECK(user_manager::UserManager::IsInitialized())
+      << "UserManager instance needs to be set up to start Kiosk session.";
 
-void TearDownFakeKioskSession() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  ash::LoginState::Shutdown();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+  auto* user_manager = user_manager::UserManager::Get();
+  auto* user =
+      user_manager::TestHelper(user_manager).AddKioskChromeAppUser(email);
+  CHECK_EQ(user_manager->GetLoggedInUsers().size(), 0u);
+  user_manager->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
+  CHECK_EQ(user_manager->GetLoggedInUsers().size(), 1u);
+  CHECK_EQ(user, user_manager->GetActiveUser());
 }
 
 }  // namespace chromeos

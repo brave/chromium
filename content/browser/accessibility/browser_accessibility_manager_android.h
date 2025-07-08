@@ -5,22 +5,20 @@
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_MANAGER_ANDROID_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_MANAGER_ANDROID_H_
 
-#include <unordered_set>
 #include <utility>
 
-#include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/mojom/render_accessibility.mojom-forward.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
+#include "ui/accessibility/platform/browser_accessibility_manager.h"
 
 namespace ui {
 
 class MotionEventAndroid;
+class AXPlatformTreeManagerDelegate;
 
 }  // namespace ui
 
 namespace content {
-
-class WebAXPlatformTreeManagerDelegate;
 
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.content.browser.accessibility
@@ -35,8 +33,13 @@ enum AndroidMovementGranularity {
 
 // From android.view.accessibility.AccessibilityEvent in Java:
 enum {
+  ANDROID_ACCESSIBILITY_EVENT_CONTENT_CHANGE_TYPE_UNDEFINED = 0,
+  ANDROID_ACCESSIBILITY_EVENT_CONTENT_CHANGE_TYPE_TEXT = 2,
+  ANDROID_ACCESSIBILITY_EVENT_CONTENT_CHANGE_TYPE_PANE_TITLE = 8,
   ANDROID_ACCESSIBILITY_EVENT_TEXT_CHANGED = 16,
+  ANDROID_ACCESSIBILITY_EVENT_CONTENT_CHANGE_TYPE_STATE_DESCRIPTION = 64,
   ANDROID_ACCESSIBILITY_EVENT_TEXT_SELECTION_CHANGED = 8192,
+  ANDROID_ACCESSIBILITY_EVENT_CONTENT_CHANGE_TYPE_EXPANDED = 16384,
   ANDROID_ACCESSIBILITY_EVENT_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY = 131072
 };
 
@@ -44,12 +47,23 @@ class BrowserAccessibilityAndroid;
 class WebContentsAccessibilityAndroid;
 
 class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
-    : public BrowserAccessibilityManager {
+    : public ui::BrowserAccessibilityManager {
  public:
+  // Creates the platform-specific BrowserAccessibilityManager.
+  static BrowserAccessibilityManager* Create(
+      const ui::AXTreeUpdate& initial_tree,
+      ui::AXNodeIdDelegate& node_id_delegate,
+      ui::AXPlatformTreeManagerDelegate* delegate);
+
+  static BrowserAccessibilityManager* Create(
+      ui::AXNodeIdDelegate& node_id_delegate,
+      ui::AXPlatformTreeManagerDelegate* delegate);
+
   BrowserAccessibilityManagerAndroid(
       const ui::AXTreeUpdate& initial_tree,
       base::WeakPtr<WebContentsAccessibilityAndroid> web_contents_accessibility,
-      WebAXPlatformTreeManagerDelegate* delegate);
+      ui::AXNodeIdDelegate& node_id_delegate,
+      ui::AXPlatformTreeManagerDelegate* delegate);
 
   BrowserAccessibilityManagerAndroid(
       const BrowserAccessibilityManagerAndroid&) = delete;
@@ -62,6 +76,10 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
 
   void set_allow_image_descriptions_for_testing(bool is_allowed) {
     allow_image_descriptions_for_testing_ = is_allowed;
+  }
+
+  const absl::flat_hash_set<int32_t>& nodes_already_cleared_for_test() const {
+    return nodes_already_cleared_;
   }
 
   // By default, the tree is pruned for a better screen reading experience,
@@ -84,8 +102,6 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
 
   // State properties defined from Java-side code.
   bool ShouldAllowImageDescriptions();
-  bool ShouldRespectDisplayedPasswordText();
-  bool ShouldExposePasswordText();
 
   // Consume hover event if necessary, and return true if it did.
   bool OnHoverEvent(const ui::MotionEventAndroid& event);
@@ -94,18 +110,26 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   void FireFocusEvent(ui::AXNode* node) override;
 
   // BrowserAccessibilityManager overrides.
-  BrowserAccessibility* GetFocus() const override;
+  ui::BrowserAccessibility* GetFocus() const override;
+  ui::BrowserAccessibility* GetAccessibilityFocus() const override;
   void SendLocationChangeEvents(
-      const std::vector<blink::mojom::LocationChangesPtr>& changes) override;
+      const std::vector<ui::AXLocationChange>& changes) override;
   ui::AXNode* RetargetForEvents(ui::AXNode* node,
                                 RetargetEventType type) const override;
   void FireBlinkEvent(ax::mojom::Event event_type,
-                      BrowserAccessibility* node,
+                      ui::BrowserAccessibility* node,
                       int action_request_id) override;
   void FireGeneratedEvent(ui::AXEventGenerator::Event event_type,
                           const ui::AXNode* node) override;
 
-  void FireLocationChanged(BrowserAccessibility* node);
+  void FireAriaNotificationEvent(
+      ui::BrowserAccessibility* node,
+      const std::string& announcement,
+      ax::mojom::AriaNotificationPriority priority_property,
+      ax::mojom::AriaNotificationInterrupt interrupt_property,
+      const std::string& type) override;
+
+  void FireLocationChanged(ui::BrowserAccessibility* node);
 
   // Helper functions to compute the next start and end index when moving
   // forwards or backwards by character, word, or line. This part is
@@ -129,23 +153,31 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
 
   std::u16string GenerateAccessibilityNodeInfoString(int32_t unique_id);
 
+  std::vector<std::string> GetMetadataForTree() const;
+
+ protected:
+  std::unique_ptr<ui::BrowserAccessibility> CreateBrowserAccessibility(
+      ui::AXNode* node) override;
+
  private:
   // AXTreeObserver overrides.
+  void OnAtomicUpdateStarting(
+      ui::AXTree* tree,
+      const absl::flat_hash_set<ui::AXNodeID>& deleting_nodes,
+      const absl::flat_hash_set<ui::AXNodeID>& reparenting_nodes) override;
   void OnAtomicUpdateFinished(
       ui::AXTree* tree,
       bool root_changed,
       const std::vector<ui::AXTreeObserver::Change>& changes) override;
 
-  void OnNodeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
-
-  WebContentsAccessibilityAndroid* GetWebContentsAXFromRootManager();
+  WebContentsAccessibilityAndroid* GetWebContentsAXFromRootManager() const;
 
   // This gives BrowserAccessibilityManager::Create access to the class
   // constructor.
-  friend class BrowserAccessibilityManager;
+  friend class ui::BrowserAccessibilityManager;
 
   // Handle a hover event from the renderer process.
-  void HandleHoverEvent(BrowserAccessibility* node);
+  void HandleHoverEvent(ui::BrowserAccessibility* node);
 
   // A weak reference to WebContentsAccessibility for reaching Java layer.
   // Only the root manager has the reference. Should be accessed through
@@ -160,10 +192,9 @@ class CONTENT_EXPORT BrowserAccessibilityManagerAndroid
   // tree dumps for nodes without creating web_contents_accessibility_android.
   bool allow_image_descriptions_for_testing_ = false;
 
-  // An unordered_set of |unique_id| values for nodes cleared from the cache
+  // A set of |unique_id| values for nodes cleared from the cache
   // with each atomic update to prevent superfluous cache clear calls.
-  std::unordered_set<int32_t> nodes_already_cleared_ =
-      std::unordered_set<int32_t>();
+  absl::flat_hash_set<int32_t> nodes_already_cleared_;
 };
 
 }  // namespace content

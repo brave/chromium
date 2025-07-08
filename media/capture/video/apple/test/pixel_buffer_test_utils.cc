@@ -171,12 +171,14 @@ std::vector<uint8_t> CreateArgbBufferFromYuvsIOSurface(
   DCHECK(width % 16 == 0);
   size_t argb_stride = GetArgbStride(width);
   size_t yuvs_stride = GetYuvsStride(width);
+  IOSurfaceLock(io_surface, kIOSurfaceLockReadOnly, /*seed=*/0);
   uint8_t* pixels = static_cast<uint8_t*>(IOSurfaceGetBaseAddress(io_surface));
   DCHECK(pixels);
   std::vector<uint8_t> argb_buffer;
   argb_buffer.resize(argb_stride * height);
   libyuv::YUY2ToARGB(pixels, yuvs_stride, &argb_buffer[0], argb_stride, width,
                      height);
+  IOSurfaceUnlock(io_surface, kIOSurfaceLockReadOnly, /*seed=*/0);
   return argb_buffer;
 }
 
@@ -193,7 +195,7 @@ bool PixelBufferIsSingleColor(CVPixelBufferRef pixel_buffer,
                               uint8_t g,
                               uint8_t b) {
   OSType pixel_format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-  base::ScopedCFTypeRef<CVPixelBufferRef> yuvs_pixel_buffer;
+  base::apple::ScopedCFTypeRef<CVPixelBufferRef> yuvs_pixel_buffer;
   if (pixel_format == kPixelFormatYuvs) {
     // The pixel buffer is already YUVS, so we know how to check its color.
     yuvs_pixel_buffer.reset(pixel_buffer, base::scoped_policy::RETAIN);
@@ -206,10 +208,10 @@ bool PixelBufferIsSingleColor(CVPixelBufferRef pixel_buffer,
             ->CreateBuffer();
     PixelBufferTransferer transferer;
     bool transfer_success =
-        transferer.TransferImage(pixel_buffer, yuvs_pixel_buffer);
+        transferer.TransferImage(pixel_buffer, yuvs_pixel_buffer.get());
     DCHECK(transfer_success);
   }
-  IOSurfaceRef io_surface = CVPixelBufferGetIOSurface(yuvs_pixel_buffer);
+  IOSurfaceRef io_surface = CVPixelBufferGetIOSurface(yuvs_pixel_buffer.get());
   DCHECK(io_surface);
   return YuvsIOSurfaceIsSingleColor(io_surface, r, g, b);
 }

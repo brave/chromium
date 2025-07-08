@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_ASH_ARC_INPUT_OVERLAY_UI_ARROW_CONTAINER_H_
 #define CHROME_BROWSER_ASH_ARC_INPUT_OVERLAY_UI_ARROW_CONTAINER_H_
 
+#include <memory>
+
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
 
 namespace gfx {
@@ -16,6 +19,8 @@ namespace arc::input_overlay {
 
 // ArrowContainer is a container with an arrow on left or right side.
 class ArrowContainer : public views::View {
+  METADATA_HEADER(ArrowContainer, views::View)
+
  public:
   ArrowContainer();
   ArrowContainer(const ArrowContainer&) = delete;
@@ -31,11 +36,16 @@ class ArrowContainer : public views::View {
   void SetArrowOnLeft(bool arrow_on_left);
 
  private:
+  class ShadowLayer;
+
   void UpdateBorder();
 
   // views::View:
   void OnPaintBackground(gfx::Canvas* canvas) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+
+  std::unique_ptr<ShadowLayer> shadow_layer_;
 
   int arrow_vertical_offset_ = 0;
   bool arrow_on_left_ = false;

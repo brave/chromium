@@ -14,7 +14,6 @@
 #include "ash/test_shell_delegate.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "components/user_manager/user_type.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -34,7 +33,7 @@ class MockNewWindowDelegate
 };
 
 class ShelfContextMenuModelTest
-    : public AshTestBase,
+    : public NoSessionAshTestBase,
       public ::testing::WithParamInterface<user_manager::UserType> {
  public:
   ShelfContextMenuModelTest() = default;
@@ -46,24 +45,18 @@ class ShelfContextMenuModelTest
   ~ShelfContextMenuModelTest() override = default;
 
   void SetUp() override {
-    delegate_provider_ = std::make_unique<TestNewWindowDelegateProvider>(
-        std::make_unique<MockNewWindowDelegate>());
     AshTestBase::SetUp();
-    TestSessionControllerClient* session = GetSessionControllerClient();
-    session->AddUserSession("user1@test.com", GetUserType());
-    session->SetSessionState(session_manager::SessionState::ACTIVE);
-    session->SwitchActiveUser(AccountId::FromUserEmail("user1@test.com"));
+    SimulateUserLogin({"user1@test.com", GetUserType()});
   }
 
   user_manager::UserType GetUserType() const { return GetParam(); }
 
-  MockNewWindowDelegate* GetMockNewWindowDelegate() {
-    return static_cast<MockNewWindowDelegate*>(
-        delegate_provider_->GetPrimary());
+  MockNewWindowDelegate& GetMockNewWindowDelegate() {
+    return new_window_delegate_;
   }
 
  private:
-  std::unique_ptr<TestNewWindowDelegateProvider> delegate_provider_;
+  MockNewWindowDelegate new_window_delegate_;
 };
 
 // A test shelf item delegate that records the commands sent for execution.
@@ -99,8 +92,8 @@ class TestShelfItemDelegate : public ShelfItemDelegate {
 
 INSTANTIATE_TEST_SUITE_P(,
                          ShelfContextMenuModelTest,
-                         ::testing::Values(user_manager::USER_TYPE_REGULAR,
-                                           user_manager::USER_TYPE_CHILD));
+                         ::testing::Values(user_manager::UserType::kRegular,
+                                           user_manager::UserType::kChild));
 
 // Tests the default items in a shelf context menu.
 TEST_P(ShelfContextMenuModelTest, Basic) {
@@ -162,7 +155,7 @@ TEST_P(ShelfContextMenuModelTest, OpensPersonalizationHubOrWallpaper) {
 
   ShelfContextMenuModel menu(nullptr, display_id, /*menu_in_shelf=*/false);
 
-  EXPECT_CALL(*GetMockNewWindowDelegate(), OpenPersonalizationHub).Times(1);
+  EXPECT_CALL(GetMockNewWindowDelegate(), OpenPersonalizationHub).Times(1);
   menu.ActivatedAt(2);
 }
 
@@ -203,7 +196,8 @@ TEST_P(ShelfContextMenuModelTest, AutohideShelfOptionOnExternalDisplay) {
   int64_t secondary_id = GetSecondaryDisplay().id();
 
   // Create a normal window on the primary display.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->Show();
   widget->SetFullscreen(true);
 
@@ -282,8 +276,8 @@ TEST_P(ShelfContextMenuModelTest, CommandIdsMatchEnumsForHistograms) {
 TEST_P(ShelfContextMenuModelTest, ShelfContextMenuOptions) {
   // Tests that there are exactly 3 shelf context menu options. If you're adding
   // a context menu option ensure that you have added the enum to
-  // tools/metrics/enums.xml and that you haven't modified the order of the
-  // existing enums.
+  // tools/metrics/histograms/enums.xml and that you haven't modified the order
+  // of the existing enums.
   ShelfContextMenuModel menu(nullptr, GetPrimaryDisplay().id(),
                              /*menu_in_shelf=*/false);
   EXPECT_EQ(3u, menu.GetItemCount());
@@ -301,9 +295,7 @@ TEST_P(ShelfContextMenuModelTest, NotificationContainerEnabled) {
 
 class DeskButtonContextMenuModelTest : public ShelfContextMenuModelTest {
  public:
-  DeskButtonContextMenuModelTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kDeskButton);
-  }
+  DeskButtonContextMenuModelTest() = default;
 
   DeskButtonContextMenuModelTest(const DeskButtonContextMenuModelTest&) =
       delete;
@@ -311,15 +303,12 @@ class DeskButtonContextMenuModelTest : public ShelfContextMenuModelTest {
       const DeskButtonContextMenuModelTest&) = delete;
 
   ~DeskButtonContextMenuModelTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(,
                          DeskButtonContextMenuModelTest,
-                         ::testing::Values(user_manager::USER_TYPE_REGULAR,
-                                           user_manager::USER_TYPE_CHILD));
+                         ::testing::Values(user_manager::UserType::kRegular,
+                                           user_manager::UserType::kChild));
 
 // Tests that the default items are in the shelf context menu when it is created
 // outside of the shelf, and that the desk button menu item also appears when

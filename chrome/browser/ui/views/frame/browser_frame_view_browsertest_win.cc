@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
-
 #include <tuple>
 
 #include "base/files/file_util.h"
@@ -16,6 +14,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_caption_button_container_win.h"
+#include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/windows_caption_button.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_frame_toolbar_test_helper.h"
@@ -24,6 +23,7 @@
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/win/titlebar_config.h"
@@ -31,11 +31,14 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view_utils.h"
 
 class BrowserFrameViewWinTest : public InProcessBrowserTest {
@@ -137,6 +140,48 @@ IN_PROC_BROWSER_TEST_F(BrowserFrameViewWinTest,
   EXPECT_TRUE(maximize_button->GetEnabled());
 }
 
+class CaptionButtonContainerTest : public BrowserFrameViewWinTest,
+                                   public ::testing::WithParamInterface<bool> {
+ public:
+  CaptionButtonContainerTest() = default;
+  CaptionButtonContainerTest(const CaptionButtonContainerTest&) = delete;
+  CaptionButtonContainerTest& operator=(const CaptionButtonContainerTest&) =
+      delete;
+  ~CaptionButtonContainerTest() override = default;
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         CaptionButtonContainerTest,
+                         ::testing::Values(false, true));
+
+// Test that the caption button hit tests returns the correct non-client
+// hit test result in LTR/RTL mode.
+IN_PROC_BROWSER_TEST_P(CaptionButtonContainerTest,
+                       VerifyCaptionButtonHitTestResults) {
+  const bool is_rtl = GetParam();
+  base::i18n::SetRTLForTesting(is_rtl);
+
+  auto* frame_view = GetBrowserFrameViewWin();
+  auto* maximize_button = GetMaximizeButton();
+
+  // Hit test maximize button.
+  const gfx::Point maximize_button_center =
+      maximize_button->GetBoundsInScreen().CenterPoint();
+  EXPECT_EQ(frame_view->NonClientHitTest(maximize_button_center), HTMAXBUTTON);
+
+  const int button_width = maximize_button->width();
+
+  EXPECT_EQ(frame_view->NonClientHitTest(
+                gfx::Point(maximize_button_center.x() + button_width,
+                           maximize_button_center.y())),
+            is_rtl ? HTMINBUTTON : HTCLOSE);
+
+  EXPECT_EQ(frame_view->NonClientHitTest(
+                gfx::Point(maximize_button_center.x() - button_width,
+                           maximize_button_center.y())),
+            is_rtl ? HTCLOSE : HTMINBUTTON);
+}
+
 class WebAppBrowserFrameViewWinTest : public InProcessBrowserTest {
  public:
   WebAppBrowserFrameViewWinTest() = default;
@@ -145,23 +190,29 @@ class WebAppBrowserFrameViewWinTest : public InProcessBrowserTest {
       const WebAppBrowserFrameViewWinTest&) = delete;
   ~WebAppBrowserFrameViewWinTest() override = default;
 
-  GURL GetStartURL() { return GURL("https://test.org"); }
+  GURL GetStartURL() {
+    return embedded_test_server()->GetURL("/web_apps/no_manifest.html");
+  }
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
-
-    WebAppToolbarButtonContainer::DisableAnimationForTesting();
+    CHECK(embedded_test_server()->Start());
+    WebAppToolbarButtonContainer::DisableAnimationForTesting(true);
   }
 
   void InstallAndLaunchWebApp() {
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = GetStartURL();
-    web_app_info->scope = GetStartURL().GetWithoutFilename();
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(GetStartURL());
     if (theme_color_) {
       web_app_info->theme_color = *theme_color_;
     }
+    if (!display_override_.empty()) {
+      web_app_info->user_display_mode =
+          web_app::mojom::UserDisplayMode::kStandalone;
+      web_app_info->display_override = display_override_;
+    }
 
-    web_app::AppId app_id = web_app::test::InstallWebApp(
+    webapps::AppId app_id = web_app::test::InstallWebApp(
         browser()->profile(), std::move(web_app_info));
     content::TestNavigationObserver navigation_observer(GetStartURL());
     navigation_observer.StartWatchingNewWebContents();
@@ -179,13 +230,17 @@ class WebAppBrowserFrameViewWinTest : public InProcessBrowserTest {
     DCHECK(web_app_frame_toolbar_->GetVisible());
   }
 
-  absl::optional<SkColor> theme_color_ = SK_ColorBLUE;
+  std::optional<SkColor> theme_color_ = SK_ColorBLUE;
+  std::vector<blink::mojom::DisplayMode> display_override_ = {};
   raw_ptr<Browser, AcrossTasksDanglingUntriaged> app_browser_ = nullptr;
   raw_ptr<BrowserView, AcrossTasksDanglingUntriaged> browser_view_ = nullptr;
   raw_ptr<BrowserFrameViewWin, AcrossTasksDanglingUntriaged> frame_view_ =
       nullptr;
   raw_ptr<WebAppFrameToolbarView, AcrossTasksDanglingUntriaged>
       web_app_frame_toolbar_ = nullptr;
+
+ private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, ThemeColor) {
@@ -195,7 +250,7 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, ThemeColor) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, NoThemeColor) {
-  theme_color_ = absl::nullopt;
+  theme_color_ = std::nullopt;
   InstallAndLaunchWebApp();
 
   EXPECT_EQ(
@@ -255,6 +310,36 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, ContainerHeight) {
             frame_view_->caption_button_container_for_testing()->height());
 }
 
+IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, WebAppIconInTitlebar) {
+  InstallAndLaunchWebApp();
+  ASSERT_EQ(true, frame_view_->window_icon_for_testing()->GetVisible());
+}
+
+class TabbedWebAppBrowserFrameViewWinTest
+    : public WebAppBrowserFrameViewWinTest {
+ public:
+  TabbedWebAppBrowserFrameViewWinTest() = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      blink::features::kDesktopPWAsTabStrip};
+};
+
+IN_PROC_BROWSER_TEST_F(TabbedWebAppBrowserFrameViewWinTest,
+                       TabbedWebAppIconInTitlebar) {
+  display_override_ = {blink::mojom::DisplayMode::kTabbed};
+  InstallAndLaunchWebApp();
+
+  ASSERT_FALSE(frame_view_->window_icon_for_testing()->GetVisible());
+}
+
+IN_PROC_BROWSER_TEST_F(TabbedWebAppBrowserFrameViewWinTest,
+                       NonTabbedWebAppIconInTitlebar) {
+  InstallAndLaunchWebApp();
+
+  ASSERT_TRUE(frame_view_->window_icon_for_testing()->GetVisible());
+}
+
 class WebAppBrowserFrameViewWinWindowControlsOverlayTest
     : public InProcessBrowserTest {
  public:
@@ -280,8 +365,8 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
 
     std::vector<blink::mojom::DisplayMode> display_overrides = {
         blink::mojom::DisplayMode::kWindowControlsOverlay};
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = start_url;
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     web_app_info->scope = start_url.GetWithoutFilename();
     web_app_info->display_mode = blink::mojom::DisplayMode::kStandalone;
     web_app_info->user_display_mode =
@@ -289,7 +374,7 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
     web_app_info->title = u"A Web App";
     web_app_info->display_override = display_overrides;
 
-    web_app::AppId app_id = web_app::test::InstallWebApp(
+    webapps::AppId app_id = web_app::test::InstallWebApp(
         browser()->profile(), std::move(web_app_info));
 
     content::TestNavigationObserver navigation_observer(start_url);
@@ -298,11 +383,11 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
     Browser* app_browser =
         web_app::LaunchWebAppBrowser(browser()->profile(), app_id);
 
-    // TODO(crbug.com/1191186): Register binder for BrowserInterfaceBroker
+    // TODO(crbug.com/40174440): Register binder for BrowserInterfaceBroker
     // during testing.
     app_browser->app_controller()->SetOnUpdateDraggableRegionForTesting(
         loop.QuitClosure());
-    web_app::NavigateToURLAndWait(app_browser, start_url);
+    web_app::NavigateViaLinkClickToURLAndWait(app_browser, start_url);
     loop.Run();
     navigation_observer.WaitForNavigationFinished();
 
@@ -334,6 +419,7 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
   WebAppFrameToolbarTestHelper web_app_frame_toolbar_helper_;
 
  private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
   base::ScopedTempDir temp_dir_;
 };
 
@@ -363,6 +449,9 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
 
   // ClientView should be covering the entire screen.
   EXPECT_EQ(frame_view_->GetBoundsForClientView().y(), 0);
+
+  // Exit full screen.
+  frame_view_->frame()->SetFullscreen(false);
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
@@ -389,12 +478,13 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
 
   // Verify tooltip text has been updated.
   EXPECT_EQ(minimize_button->GetTooltipText(),
-            minimize_button->GetAccessibleName());
+            minimize_button->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(maximize_button->GetTooltipText(),
-            maximize_button->GetAccessibleName());
+            maximize_button->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(restore_button->GetTooltipText(),
-            restore_button->GetAccessibleName());
-  EXPECT_EQ(close_button->GetTooltipText(), close_button->GetAccessibleName());
+            restore_button->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(close_button->GetTooltipText(),
+            close_button->GetViewAccessibility().GetCachedName());
 
   ToggleWindowControlsOverlayEnabledAndWait();
 
@@ -405,8 +495,14 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
   EXPECT_EQ(close_button->GetTooltipText(), u"");
 }
 
+// TODO(crbug.com/361780162): This test has been flaky on Windows ASan testers.
+#if BUILDFLAG(IS_WIN) && defined(ADDRESS_SANITIZER)
+#define MAYBE_CaptionButtonHitTest DISABLED_CaptionButtonHitTest
+#else
+#define MAYBE_CaptionButtonHitTest CaptionButtonHitTest
+#endif
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
-                       CaptionButtonHitTest) {
+                       MAYBE_CaptionButtonHitTest) {
   InstallAndLaunchWebAppWithWindowControlsOverlay();
   frame_view_->GetWidget()->LayoutRootViewIfNecessary();
 

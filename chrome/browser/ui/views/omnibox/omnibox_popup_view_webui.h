@@ -8,7 +8,6 @@
 #include <stddef.h>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
@@ -16,15 +15,12 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/font_list.h"
-#include "ui/gfx/image/image.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget_observer.h"
 
 class LocationBarView;
 class OmniboxController;
 class OmniboxViewViews;
-class RealboxHandler;
 class OmniboxPopupPresenter;
 
 class OmniboxPopupViewWebUI : public OmniboxPopupView {
@@ -45,17 +41,12 @@ class OmniboxPopupViewWebUI : public OmniboxPopupView {
   void ProvideButtonFocusHint(size_t line) override;
   void OnMatchIconUpdated(size_t match_index) override;
   void OnDragCanceled() override;
-  void GetPopupAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void AddPopupAccessibleNodeData(ui::AXNodeData* node_data) override;
-  std::u16string GetAccessibleButtonTextForResult(size_t line) override;
+  void GetPopupAccessibleNodeData(ui::AXNodeData* node_data) const override;
 
  protected:
   friend class OmniboxPopupViewWebUITest;
   FRIEND_TEST_ALL_PREFIXES(OmniboxPopupViewWebUITest,
                            PopupLoadsAndAcceptsCalls);
-
-  // Convenience accessor that returns the webui_view_'s WebUI handler.
-  RealboxHandler* handler() const;
 
  private:
   // Time when this instance was constructed, or null after use for histogram.

@@ -59,7 +59,7 @@ class HostEventReporterTest : public ::testing::Test {
 
   base::test::SingleThreadTaskEnvironment task_environment_;
 
-  const raw_ptr<TestHostEventReporterDelegate, ExperimentalAsh> delegate_;
+  const raw_ptr<TestHostEventReporterDelegate, DanglingUntriaged> delegate_;
   scoped_refptr<HostStatusMonitor> monitor_;
   HostEventReporterImpl reporter_;
 };

@@ -8,6 +8,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "build/branding_buildflags.h"
@@ -93,8 +94,9 @@ void AddCdmHostFilePaths(
 #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
   base::FilePath chrome_exe_dir;
-  if (!base::PathService::Get(base::DIR_EXE, &chrome_exe_dir))
+  if (!base::PathService::Get(base::DIR_EXE, &chrome_exe_dir)) {
     NOTREACHED();
+  }
 
   base::FilePath chrome_path =
       chrome_exe_dir.Append(FILE_PATH_LITERAL("chrome"));

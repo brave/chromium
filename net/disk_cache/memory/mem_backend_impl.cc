@@ -154,7 +154,8 @@ void MemBackendImpl::SetClockForTesting(base::Clock* clock) {
   custom_clock_for_testing_ = clock;
 }
 
-int32_t MemBackendImpl::GetEntryCount() const {
+int32_t MemBackendImpl::GetEntryCount(
+    net::Int32CompletionOnceCallback callback) const {
   return static_cast<int32_t>(entries_.size());
 }
 
@@ -314,7 +315,7 @@ std::unique_ptr<Backend::Iterator> MemBackendImpl::CreateIterator() {
 void MemBackendImpl::OnExternalCacheHit(const std::string& key) {
   auto it = entries_.find(key);
   if (it != entries_.end())
-    it->second->UpdateStateOnUse(MemEntryImpl::ENTRY_WAS_NOT_MODIFIED);
+    it->second->UpdateStateOnUse();
 }
 
 void MemBackendImpl::EvictIfNeeded() {

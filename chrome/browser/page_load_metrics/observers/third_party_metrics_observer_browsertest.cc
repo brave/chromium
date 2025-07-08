@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/page_load_metrics/browser/observers/third_party_metrics_observer.h"
+
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/page_load_metrics/observers/third_party_metrics_observer.h"
+#include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/page_load_metrics/browser/page_load_metrics_test_waiter.h"
 #include "content/public/test/browser_test.h"
@@ -14,6 +17,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -132,7 +136,6 @@ class ThirdPartyMetricsObserverBrowserTest : public InProcessBrowserTest {
 
   // TODO(ericrobinson) The following functions all have an assumed frame.
   // Prefer passing in a frame to make the tests clearer and extendable.
-
   void NavigateFrameAndWaitForFCP(
       const std::string& host,
       const std::string& path,
@@ -140,10 +143,18 @@ class ThirdPartyMetricsObserverBrowserTest : public InProcessBrowserTest {
     GURL page = https_server()->GetURL(host, path);
     NavigateFrameAndWaitForFCP(page, waiter);
   }
-
   void NavigateFrameAndWaitForFCP(
       const GURL& url,
       page_load_metrics::PageLoadMetricsTestWaiter* waiter) {
+    NavigateFrameAndWaitFor(url, waiter,
+                            page_load_metrics::PageLoadMetricsTestWaiter::
+                                TimingField::kFirstContentfulPaint);
+  }
+
+  void NavigateFrameAndWaitFor(
+      const GURL& url,
+      page_load_metrics::PageLoadMetricsTestWaiter* waiter,
+      page_load_metrics::PageLoadMetricsTestWaiter::TimingField field) {
     // Waiting for the frame to navigate ensures that any previous RFHs for this
     // frame have been deleted and therefore won't pollute any future frame
     // expectations (such as FCP).
@@ -151,9 +162,7 @@ class ThirdPartyMetricsObserverBrowserTest : public InProcessBrowserTest {
     NavigateFrameToUrl(url);
     waiter->Wait();
 
-    waiter->AddSubFrameExpectation(
-        page_load_metrics::PageLoadMetricsTestWaiter::TimingField::
-            kFirstContentfulPaint);
+    waiter->AddSubFrameExpectation(field);
     waiter->Wait();
   }
 
@@ -172,6 +181,11 @@ class ThirdPartyMetricsObserverBrowserTest : public InProcessBrowserTest {
         ChildFrameAt(web_contents()->GetPrimaryMainFrame(), 0);
     const std::string no_op_script = "// No-op script";
     EXPECT_TRUE(ExecJs(ad_frame, no_op_script));
+  }
+
+  void Enable3pcForUrl(GURL url) {
+    CookieSettingsFactory::GetForProfile(browser()->profile())
+        ->SetCookieSetting(url, CONTENT_SETTING_ALLOW);
   }
 
   content::WebContents* web_contents() {
@@ -210,8 +224,16 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
   histogram_tester.ExpectTotalCount(kSubframeFCPHistogram, 1);
 }
 
+// TODO(crbug.com/334416161): Re-enble this test.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ThreeThirdPartyFrames_ThreeTimingsRecorded \
+  DISABLED_ThreeThirdPartyFrames_ThreeTimingsRecorded
+#else
+#define MAYBE_ThreeThirdPartyFrames_ThreeTimingsRecorded \
+  ThreeThirdPartyFrames_ThreeTimingsRecorded
+#endif
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
-                       ThreeThirdPartyFrames_ThreeTimingsRecorded) {
+                       MAYBE_ThreeThirdPartyFrames_ThreeTimingsRecorded) {
   base::HistogramTester histogram_tester;
 
   page_load_metrics::PageLoadMetricsTestWaiter waiter(
@@ -244,7 +266,9 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
   NavigateFrameAndWaitForFCP("b.com", "/select.html", &waiter);
 
   // Navigate the frame to an opaque origin URL.
-  NavigateFrameAndWaitForFCP(GURL("data:,hello"), &waiter);
+  NavigateFrameAndWaitFor(GURL("data:,hello"), &waiter,
+                          page_load_metrics::PageLoadMetricsTestWaiter::
+                              TimingField::kLargestContentfulPaint);
 
   content::RenderFrameHost* subframe_rfh =
       ChildFrameAt(web_contents()->GetPrimaryMainFrame(), /*index=*/0);
@@ -308,6 +332,7 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        ThirdPartyCookiesReadAndWrite) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
   content::CookieChangeObserver observer(web_contents(), 2);
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
@@ -332,11 +357,12 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        ThirdPartyCookiesIPAddress) {
+  GURL url =
+      https_server()->GetURL("/set-cookie?thirdparty=1;SameSite=None;Secure");
+  Enable3pcForUrl(url);
   content::CookieChangeObserver observer(web_contents(), 2);
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
-  GURL url =
-      https_server()->GetURL("/set-cookie?thirdparty=1;SameSite=None;Secure");
   // Hostname is an IP address.
   ASSERT_EQ(
       "",
@@ -361,6 +387,8 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        MultipleThirdPartyCookiesReadAndWrite) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
+  Enable3pcForUrl(https_server()->GetURL("c.com", "/"));
   content::CookieChangeObserver observer(web_contents(), 4);
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
@@ -416,6 +444,7 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        ThirdPartyDocCookieReadAndWrite) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
   content::CookieChangeObserver observer(web_contents(), 2);
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
@@ -446,6 +475,7 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        ThirdPartyDocCookieReadNoWrite) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
   NavigateFrameTo("b.com", "/empty.html");
@@ -471,6 +501,7 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
                        ThirdPartyDocCookieWriteNoRead) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
   content::CookieChangeObserver observer(web_contents());
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");  // Same origin cookie read.
@@ -484,10 +515,12 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
   observer.Wait();
   NavigateToUntrackedUrl();
 
-  histogram_tester.ExpectUniqueSample(kReadCookieHistogram, 0, 1);
+  const int expected_reads =
+      base::FeatureList::IsEnabled(network::features::kGetCookiesOnSet) ? 1 : 0;
+  histogram_tester.ExpectUniqueSample(kReadCookieHistogram, expected_reads, 1);
   histogram_tester.ExpectBucketCount(
       "Blink.UseCounter.Features",
-      blink::mojom::WebFeature::kThirdPartyCookieRead, 0);
+      blink::mojom::WebFeature::kThirdPartyCookieRead, expected_reads);
   histogram_tester.ExpectBucketCount(
       "Blink.UseCounter.Features",
       blink::mojom::WebFeature::kThirdPartyCookieWrite, 1);
@@ -587,6 +620,8 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyMetricsObserverBrowserTest,
 IN_PROC_BROWSER_TEST_F(
     ThirdPartyMetricsObserverBrowserTest,
     ThirdPartyFrameWithAccessAndActivationOnDifferentThirdParties) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
+  Enable3pcForUrl(https_server()->GetURL("c.com", "/"));
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");
   NavigateFrameTo("b.com", "/");
@@ -607,6 +642,7 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     ThirdPartyMetricsObserverBrowserTest,
     ThirdPartyFrameWithAccessAndActivationOnSameThirdParties) {
+  Enable3pcForUrl(https_server()->GetURL("b.com", "/"));
   base::HistogramTester histogram_tester;
   NavigateToPageWithFrame("a.com");
   NavigateFrameTo("b.com", "/set-cookie?thirdparty=1;SameSite=None;Secure");

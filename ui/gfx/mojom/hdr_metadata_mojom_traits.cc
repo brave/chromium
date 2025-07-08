@@ -26,12 +26,30 @@ bool StructTraits<gfx::mojom::HdrMetadataSmpteSt2086DataView,
   return true;
 }
 
+bool StructTraits<gfx::mojom::HdrMetadataNdwlDataView, gfx::HdrMetadataNdwl>::
+    Read(gfx::mojom::HdrMetadataNdwlDataView data,
+         gfx::HdrMetadataNdwl* output) {
+  output->nits = data.nits();
+  return true;
+}
+
 bool StructTraits<gfx::mojom::HdrMetadataExtendedRangeDataView,
                   gfx::HdrMetadataExtendedRange>::
     Read(gfx::mojom::HdrMetadataExtendedRangeDataView data,
          gfx::HdrMetadataExtendedRange* output) {
   output->current_headroom = data.current_headroom();
   output->desired_headroom = data.desired_headroom();
+  return true;
+}
+
+bool StructTraits<gfx::mojom::HdrMetadataAgtmDataView, gfx::HdrMetadataAgtm>::
+    Read(gfx::mojom::HdrMetadataAgtmDataView data,
+         gfx::HdrMetadataAgtm* output) {
+  ArrayDataView<uint8_t> payload;
+  data.GetPayloadDataView(&payload);
+  if (!payload.is_null()) {
+    output->payload = SkData::MakeWithCopy(payload.data(), payload.size());
+  }
   return true;
 }
 
@@ -44,7 +62,13 @@ bool StructTraits<gfx::mojom::HDRMetadataDataView, gfx::HDRMetadata>::Read(
   if (!data.ReadSmpteSt2086(&output->smpte_st_2086)) {
     return false;
   }
+  if (!data.ReadNdwl(&output->ndwl)) {
+    return false;
+  }
   if (!data.ReadExtendedRange(&output->extended_range)) {
+    return false;
+  }
+  if (!data.ReadAgtm(&output->agtm)) {
     return false;
   }
   return true;

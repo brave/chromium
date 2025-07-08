@@ -2,21 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/viz/service/debugger/viz_debugger_unittests/viz_debugger_unittest_base.h"
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "base/base64.h"
 #include "base/check.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/viz/service/debugger/viz_debugger.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/codec/SkCodec.h"
 #include "third_party/skia/include/codec/SkPngDecoder.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/skia_span_util.h"
 
 #if VIZ_DEBUGGER_IS_ON()
 
@@ -67,26 +74,23 @@ VisualDebuggerTestBase::VisualDebuggerTestBase() = default;
 VisualDebuggerTestBase::~VisualDebuggerTestBase() = default;
 
 void VisualDebuggerTestBase::SetFilter(std::vector<TestFilter> filters) {
-  base::Value::Dict filters_json;
   base::Value::List filters_list;
   for (auto&& each : filters) {
-    base::Value::Dict full_filter;
-    base::Value::Dict selector;
+    auto selector = base::Value::Dict().Set("anno", each.anno);
     if (!each.file.empty())
       selector.Set("file", each.file);
 
     if (!each.func.empty())
       selector.Set("func", each.func);
 
-    selector.Set("anno", each.anno);
-
-    full_filter.Set("selector", std::move(selector));
-    full_filter.Set("active", each.active);
-    full_filter.Set("enabled", each.enabled);
-    filters_list.Append(std::move(full_filter));
+    filters_list.Append(base::Value::Dict()
+                            .Set("selector", std::move(selector))
+                            .Set("active", each.active)
+                            .Set("enabled", each.enabled));
   }
-  filters_json.Set("filters", std::move(filters_list));
-  GetInternal()->FilterDebugStream(std::move(filters_json));
+
+  GetInternal()->FilterDebugStream(
+      base::Value::Dict().Set("filters", std::move(filters_list)));
   GetInternal()->GetRWLock()->WriteLock();
   GetInternal()->UpdateFilters();
   GetInternal()->GetRWLock()->WriteUnLock();
@@ -106,9 +110,8 @@ void VisualDebuggerTestBase::GetFrameData(bool clear_cache) {
   size_t const kNumLogSubmission = static_cast<size_t>(
       std::min(GetInternal()->GetLogsTailIdx(), GetInternal()->GetLogsSize()));
 
-  absl::optional<base::Value> maybe_global_dict_val =
-      GetInternal()->FrameAsJson(
-          frame_counter_, gfx::Size(window_x_, window_y_), base::TimeTicks());
+  std::optional<base::Value> maybe_global_dict_val = GetInternal()->FrameAsJson(
+      frame_counter_, gfx::Size(window_x_, window_y_), base::TimeTicks());
   EXPECT_TRUE(maybe_global_dict_val);
   EXPECT_TRUE(maybe_global_dict_val->is_dict());
   const base::Value::Dict& global_dict = maybe_global_dict_val->GetDict();
@@ -198,7 +201,7 @@ void VisualDebuggerTestBase::GetFrameData(bool clear_cache) {
       uv_size_h = (*list_uv_size)[1].GetIfDouble().value_or(1.0f);
     }
 
-    const absl::optional<int> buffer_id = local_dict.FindInt("buff_id");
+    const std::optional<int> buffer_id = local_dict.FindInt("buff_id");
     const std::string* text_str = local_dict.FindString("text");
     VizDebuggerInternal::DrawCall draw_call(
         draw_index, source_index, thread_id, option, gfx::SizeF(size_x, size_y),
@@ -221,16 +224,16 @@ void VisualDebuggerTestBase::GetFrameData(bool clear_cache) {
       // without extra metadata about the image.
       constexpr const char* kDataUriPrefix = "data:image/png;base64,";
       EXPECT_TRUE(image_data_uri.starts_with(kDataUriPrefix));
-      base::StringPiece image_base64_encoded =
-          base::StringPiece(image_data_uri).substr(strlen(kDataUriPrefix));
-      const absl::optional<std::vector<uint8_t>> image_bytes =
+      std::string_view image_base64_encoded =
+          std::string_view(image_data_uri).substr(strlen(kDataUriPrefix));
+      const std::optional<std::vector<uint8_t>> image_bytes =
           base::Base64Decode(image_base64_encoded);
       EXPECT_TRUE(image_bytes.has_value());
 
-      // |MakeWithoutCopy| is safe because we expect to be done decoding |data|
-      // into |buff.bitmap| before we release |image_bytes|.
-      sk_sp<SkData> data =
-          SkData::MakeWithoutCopy(image_bytes->data(), image_bytes->size());
+      // Safe for `data` to be a span over `image_bytes` because this code will
+      // be done decoding `data` into `buff.bitmap` before releasing
+      // `image_bytes`.
+      sk_sp<SkData> data = gfx::MakeSkDataFromSpanWithoutCopy(*image_bytes);
       SkCodec::Result decode_result;
       std::unique_ptr<SkCodec> codec =
           SkPngDecoder::Decode(data, &decode_result);

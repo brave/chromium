@@ -2,18 +2,87 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/sanitizers/sanitizers.gni")
+import("//build/rust/rust_bindgen.gni")
+import("//build/rust/rust_static_library.gni")
 import("//third_party/fontconfig/fontconfig.gni")
 
 assert(is_linux || is_chromeos)
 
 if (use_bundled_fontconfig) {
+  rust_bindgen("fontconfig_h_bindgen") {
+    header = "include/fontconfig/fontconfig.h"
+    bindgen_flags = [
+      "merge-extern-blocks",
+      "allowlist-item=(FcCharSet.*|FC_(SLANT|WEIGHT|WIDTH)_.*|FcFontSet(Add|Create|Destroy).*|FcLangSet(Create|Destroy|Copy|Add|HasLang)|FcWeightFromOpenType.*|FC_DUAL|FC_MONO)",
+    ]
+    crate_name = "fontconfig_bindings"
+    configs = [
+      ":fontconfig_config",
+      ":bindgen_config",
+    ]
+  }
+
+  rust_bindgen("fcint_h_bindgen") {
+    header = "src/src/fcint.h"
+
+    bindgen_flags = [
+      "merge-extern-blocks",
+      "allowlist-item=(FcPattern.*|FcRange.*|FcCharSet.*|FcLangSetFromCharSet|FC_.*_OBJECT)",
+    ]
+    crate_name = "fcint_bindings"
+    deps = [ ":fontconfig_h_bindgen" ]
+    configs = [
+      ":fontconfig_config",
+      ":bindgen_config",
+    ]
+  }
+
+  rust_static_library("fontconfig_fontations_ffi") {
+    allow_unsafe = true  # Needed for FFI that underpins the `cxx` crate.
+    crate_root = "src/fc-fontations/mod.rs"
+    sources = [
+      "src/fc-fontations/attributes.rs",
+      "src/fc-fontations/bitmap.rs",
+      "src/fc-fontations/capabilities.rs",
+      "src/fc-fontations/charset.rs",
+      "src/fc-fontations/foundries.rs",
+      "src/fc-fontations/instance_enumerate.rs",
+      "src/fc-fontations/lang.rs",
+      "src/fc-fontations/mod.rs",
+      "src/fc-fontations/name_records.rs",
+      "src/fc-fontations/names.rs",
+      "src/fc-fontations/pattern_bindings/fc_wrapper.rs",
+      "src/fc-fontations/pattern_bindings/mod.rs",
+    ]
+    deps = [
+      ":fcint_h_bindgen",
+      ":fontconfig_h_bindgen",
+      "//third_party/rust/font_types/v0_9:lib",
+      "//third_party/rust/libc/v0_2:lib",
+      "//third_party/rust/read_fonts/v0_30:lib",
+      "//third_party/rust/skrifa/v0_32:lib",
+    ]
+  }
+
   config("fontconfig_config") {
-    include_dirs = [ "src" ]
+    include_dirs = [
+      "src",
+      "include/fc-lang/",
+    ]
+  }
+
+  config("bindgen_config") {
+    include_dirs = [ "include" ]
+    defines = [
+      "BINDGEN_IGNORE_VISIBILITY=1",
+      "FC_NO_MT=1",
+      "FLEXIBLE_ARRAY_MEMBER=1",
+    ]
   }
 
   component("fontconfig") {
     sources = [
+      "include/fontconfig/fontconfig.h",
       "src/src/fcarch.h",
       "src/src/fcatomic.c",
       "src/src/fccache.c",
@@ -28,6 +97,7 @@ if (use_bundled_fontconfig) {
       "src/src/fcfs.c",
       "src/src/fchash.c",
       "src/src/fcinit.c",
+      "src/src/fcint.h",
       "src/src/fclang.c",
       "src/src/fclist.c",
       "src/src/fcmatch.c",
@@ -51,34 +121,11 @@ if (use_bundled_fontconfig) {
       "include/src",
     ]
 
-    defines = [
-      "HAVE_CONFIG_H",
-      "FC_CACHEDIR=\"/var/cache/fontconfig\"",
-      "FC_TEMPLATEDIR=\"/usr/share/fontconfig/conf.avail\"",
-      "FONTCONFIG_PATH=\"/etc/fonts\"",
-      "CONFIGDIR=\"/etc/fonts/conf.d\"",
-    ]
+    defines = [ "HAVE_CONFIG_H" ]
 
     # Fontconfig symbols should not be exported from chrome, nacl_helper, or
-    # anything else. However, if using the instrumented libraries, we do want to
-    # export fontconfig symbols: in this configuration, there are 3 different
-    # fontconfigs: this one, the one from instrumented_libraries, and the one
-    # from the system. Only the first two get loaded: this one from Chrome, and
-    # the one in instrumented_libraries indirectly through eg. gtk -> cairo ->
-    # fontconfig. The latter is a different version of fontconfig with a
-    # different cache file format. Therefore, the caches would have to get
-    # regenerated every time Chrome runs for this other version. Depending on
-    # how many fonts the user has installed, this could take several minutes,
-    # especially for msan builds. Exporting the newer fontconfig symbols here
-    # will ensure that cairo uses this fontconfig, and so avoids the caching
-    # issue. In non-instrumented builds, it is ok that the real system
-    # fontconfig is used by cairo instead of chromium's because caches for that
-    # are warm. We don't *always* export fontconfig because in a rare case, it's
-    # possible for the system fontconfig to be newer and have some Foo() that's
-    # not in ours. Then eg. cairo would call init functions from our fontconfig
-    # and then Foo() from the system fontconfig and crash.
-    if (!is_component_build && !(use_prebuilt_instrumented_libraries ||
-                                 use_locally_built_instrumented_libraries)) {
+    # anything else.
+    if (!is_component_build) {
       defines += [
         "FC_ATTRIBUTE_VISIBILITY_HIDDEN=__attribute((visibility(\"hidden\")))",
         "FC_ATTRIBUTE_VISIBILITY_EXPORT=__attribute((visibility(\"hidden\")))",
@@ -86,6 +133,7 @@ if (use_bundled_fontconfig) {
     }
 
     deps = [
+      ":fontconfig_fontations_ffi",
       "//build/config/freetype",
       "//third_party/libxml",
       "//third_party/zlib",

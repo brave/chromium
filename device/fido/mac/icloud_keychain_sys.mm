@@ -8,14 +8,13 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/device_event_log/device_event_log.h"
+#include "device/fido/features.h"
+#include "device/fido/large_blob.h"
 #include "device/fido/mac/icloud_keychain_internals.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -23,6 +22,38 @@ namespace {
 // in the top-level namespace.
 NSData* ToNSData(base::span<const uint8_t> data) {
   return [NSData dataWithBytes:data.data() length:data.size()];
+}
+
+API_AVAILABLE(macos(15.0))
+ASAuthorizationPublicKeyCredentialPRFAssertionInputValues* ToInputValues(
+    const device::PRFInput& input) {
+  NSData* first = ToNSData(input.input1);
+  NSData* second = nil;
+  if (input.input2) {
+    second = ToNSData(*input.input2);
+  }
+  return [[ASAuthorizationPublicKeyCredentialPRFAssertionInputValues alloc]
+      initWithSaltInput1:first
+              saltInput2:second];
+}
+
+API_AVAILABLE(macos(15.0))
+NSDictionary<NSData*,
+             ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*>*
+ToPerCredValues(base::span<const device::PRFInput> inputs) {
+  NSMutableDictionary<
+      NSData*, ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*>*
+      ret = [NSMutableDictionary dictionary];
+
+  for (const device::PRFInput& input : inputs) {
+    // The first element may not have a credential_id
+    if (!input.credential_id) {
+      continue;
+    }
+    [ret setObject:ToInputValues(input) forKey:ToNSData(*input.credential_id)];
+  }
+
+  return ret;
 }
 
 }  // namespace
@@ -42,6 +73,10 @@ API_AVAILABLE(macos(13.3))
     (ASAuthorizationController*)controller {
   return _window;
 }
+@end
+
+@interface ASAuthorizationPlatformPublicKeyCredentialAssertionRequest (Extras)
+@property(nonatomic) BOOL shouldShowHybridTransport;
 @end
 
 // ICloudKeychainDelegate receives callbacks when an `ASAuthorizationController`
@@ -89,7 +124,7 @@ API_AVAILABLE(macos(13.3))
 @end
 
 @implementation ICloudKeychainCreateController {
-  absl::optional<device::CtapMakeCredentialRequest> request_;
+  std::optional<device::CtapMakeCredentialRequest> request_;
 }
 
 - (void)setRequest:(device::CtapMakeCredentialRequest)request {
@@ -155,7 +190,7 @@ API_AVAILABLE(macos(13.3))
 @end
 
 @implementation ICloudKeychainGetController {
-  absl::optional<device::CtapGetAssertionRequest> request_;
+  std::optional<device::CtapGetAssertionRequest> request_;
 }
 
 - (void)setRequest:(device::CtapGetAssertionRequest)request {
@@ -178,6 +213,11 @@ API_AVAILABLE(macos(13.3))
 @end
 
 namespace device::fido::icloud_keychain {
+SystemInterface::LargeBlobAssertionInputs::LargeBlobAssertionInputs() = default;
+SystemInterface::LargeBlobAssertionInputs::~LargeBlobAssertionInputs() =
+    default;
+SystemInterface::LargeBlobAssertionInputs::LargeBlobAssertionInputs(
+    const LargeBlobAssertionInputs&) = default;
 namespace {
 
 API_AVAILABLE(macos(13.3))
@@ -186,16 +226,17 @@ ASAuthorizationWebBrowserPublicKeyCredentialManager* GetManager() {
 }
 
 bool ProcessHasEntitlement() {
-  base::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
+  base::apple::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
   if (!task) {
     return false;
   }
 
-  base::ScopedCFTypeRef<CFTypeRef> entitlement_value_cftype(
+  base::apple::ScopedCFTypeRef<CFTypeRef> entitlement_value_cftype(
       SecTaskCopyValueForEntitlement(
-          task, CFSTR("com.apple.developer.web-browser.public-key-credential"),
+          task.get(),
+          CFSTR("com.apple.developer.web-browser.public-key-credential"),
           nullptr));
-  return entitlement_value_cftype;
+  return !!entitlement_value_cftype;
 }
 
 API_AVAILABLE(macos(13.3))
@@ -254,6 +295,7 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
   void MakeCredential(
       NSWindow* window,
       CtapMakeCredentialRequest request,
+      MakeCredentialOptions options,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override {
     DCHECK(!create_controller_);
     DCHECK(!get_controller_);
@@ -272,6 +314,29 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
             [provider createCredentialRegistrationRequestWithChallenge:challenge
                                                                   name:name
                                                                 userID:user_id];
+    if (options.large_blob_support != LargeBlobSupport::kNotRequested) {
+      if (@available(macOS 14.0, *)) {
+        ASAuthorizationPublicKeyCredentialLargeBlobSupportRequirement
+            support_mode;
+        switch (options.large_blob_support) {
+          case LargeBlobSupport::kRequired:
+            support_mode =
+                ASAuthorizationPublicKeyCredentialLargeBlobSupportRequirementRequired;
+            break;
+          case LargeBlobSupport::kPreferred:
+            support_mode =
+                ASAuthorizationPublicKeyCredentialLargeBlobSupportRequirementPreferred;
+            break;
+          case LargeBlobSupport::kNotRequested:
+            NOTREACHED();
+        }
+        ASAuthorizationPublicKeyCredentialLargeBlobRegistrationInput*
+            large_blob_input =
+                [[ASAuthorizationPublicKeyCredentialLargeBlobRegistrationInput
+                    alloc] initWithSupportRequirement:support_mode];
+        create_request.largeBlob = large_blob_input;
+      }
+    }
     create_request.attestationPreference =
         Convert(request.attestation_preference);
     create_request.userVerificationPreference =
@@ -279,6 +344,17 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
     if (request.user.display_name) {
       create_request.displayName =
           base::SysUTF8ToNSString(*request.user.display_name);
+    }
+    if (@available(macOS 15.0, *)) {
+      if (request.prf && !request.prf_input) {
+        create_request.prf =
+            [ASAuthorizationPublicKeyCredentialPRFRegistrationInput
+                checkForSupport];
+      } else if (request.prf_input) {
+        create_request.prf =
+            [[ASAuthorizationPublicKeyCredentialPRFRegistrationInput alloc]
+                initWithInputValues:ToInputValues(*request.prf_input)];
+      }
     }
 
     create_controller_ = [[ICloudKeychainCreateController alloc]
@@ -299,6 +375,7 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
   void GetAssertion(
       NSWindow* window,
       CtapGetAssertionRequest request,
+      LargeBlobAssertionInputs large_blob_inputs,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override {
     DCHECK(!create_controller_);
     DCHECK(!get_controller_);
@@ -322,7 +399,37 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
                         alloc] initWithCredentialID:ToNSData(cred.id)]];
     }
     get_request.allowedCredentials = allowedCredentials;
+    [get_request setShouldShowHybridTransport:false];
     get_request.userVerificationPreference = Convert(request.user_verification);
+    if (@available(macOS 15.0, *)) {
+      if (!request.prf_inputs.empty()) {
+        ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*
+            default_values = nil;
+        if (!request.prf_inputs[0].credential_id) {
+          default_values = ToInputValues(request.prf_inputs[0]);
+        }
+        get_request.prf =
+            [[ASAuthorizationPublicKeyCredentialPRFAssertionInput alloc]
+                     initWithInputValues:default_values
+                perCredentialInputValues:ToPerCredValues(request.prf_inputs)];
+      }
+    }
+    if (@available(macOS 14.0, *)) {
+      if (large_blob_inputs.read) {
+        auto* large_blob_input =
+            [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput alloc]
+                initWithOperation:
+                    ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationRead];
+        get_request.largeBlob = large_blob_input;
+      } else if (large_blob_inputs.write) {
+        auto* large_blob_input =
+            [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput alloc]
+                initWithOperation:
+                    ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationWrite];
+        large_blob_input.dataToWrite = ToNSData(*large_blob_inputs.write);
+        get_request.largeBlob = large_blob_input;
+      }
+    }
     get_controller_ = [[ICloudKeychainGetController alloc]
         initWithAuthorizationRequests:@[ get_request ]];
     [get_controller_ setRequest:std::move(request)];
@@ -336,6 +443,17 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
     get_controller_.presentationContextProvider = presentation_delegate_;
 
     [get_controller_ performRequests];
+  }
+
+  void Cancel() override {
+    // Sending `cancel` will cause the controller to resolve the delegate with
+    // an error. That will end up calling `Cleanup` to drop these references.
+    if (create_controller_) {
+      [create_controller_ cancel];
+    }
+    if (get_controller_) {
+      [get_controller_ cancel];
+    }
   }
 
  protected:
@@ -356,15 +474,15 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
 
 API_AVAILABLE(macos(13.3))
 scoped_refptr<SystemInterface> GetNativeSystemInterface() {
-  static scoped_refptr<SystemInterface> native_sys_interface =
-      base::MakeRefCounted<NativeSystemInterface>();
-  return native_sys_interface;
+  static base::NoDestructor<scoped_refptr<SystemInterface>>
+      native_sys_interface(base::MakeRefCounted<NativeSystemInterface>());
+  return *native_sys_interface;
 }
 
 API_AVAILABLE(macos(13.3))
 scoped_refptr<SystemInterface>& GetTestInterface() {
-  static scoped_refptr<SystemInterface> test_interface;
-  return test_interface;
+  static base::NoDestructor<scoped_refptr<SystemInterface>> test_interface;
+  return *test_interface;
 }
 
 }  // namespace

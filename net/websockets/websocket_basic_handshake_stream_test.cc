@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -19,11 +20,13 @@
 #include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/socket_test_util.h"
+#include "net/socket/stream_socket.h"
 #include "net/socket/websocket_endpoint_lock_manager.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/websockets/websocket_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -39,8 +42,8 @@ TEST(WebSocketBasicHandshakeStreamTest, ConnectionClosedOnFailure) {
       "HTTP/1.1 404 Not Found\r\n"
       "Content-Length: 0\r\n"
       "\r\n";
-  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request.c_str())};
-  MockRead reads[] = {MockRead(SYNCHRONOUS, 1, response.c_str()),
+  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request)};
+  MockRead reads[] = {MockRead(SYNCHRONOUS, 1, response),
                       MockRead(SYNCHRONOUS, ERR_IO_PENDING, 2)};
   IPEndPoint end_point(IPAddress(127, 0, 0, 1), 80);
   SequencedSocketData sequenced_socket_data(
@@ -95,8 +98,8 @@ TEST(WebSocketBasicHandshakeStreamTest, DnsAliasesCanBeAccessed) {
       url::Origin::Create(GURL("http://origin.example.org")),
       /*send_additional_request_headers=*/{}, /*extra_headers=*/{});
   std::string response = WebSocketStandardResponse("");
-  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request.c_str())};
-  MockRead reads[] = {MockRead(SYNCHRONOUS, 1, response.c_str()),
+  MockWrite writes[] = {MockWrite(SYNCHRONOUS, 0, request)};
+  MockRead reads[] = {MockRead(SYNCHRONOUS, 1, response),
                       MockRead(SYNCHRONOUS, ERR_IO_PENDING, 2)};
 
   IPEndPoint end_point(IPAddress(127, 0, 0, 1), 80);

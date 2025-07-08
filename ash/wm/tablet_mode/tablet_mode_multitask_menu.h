@@ -10,7 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "ui/aura/window.h"
 #include "ui/display/display_observer.h"
-#include "ui/views/focus/widget_focus_manager.h"
+#include "ui/views/focus/native_view_focus_manager.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 
 namespace chromeos {
@@ -25,7 +25,7 @@ class TabletModeMultitaskMenuView;
 // Creates and maintains the multitask menu. Responsible for showing,
 // hiding, and animating the menu.
 class ASH_EXPORT TabletModeMultitaskMenu
-    : public views::WidgetFocusChangeListener,
+    : public views::NativeViewFocusChangeListener,
       public display::DisplayObserver {
  public:
   TabletModeMultitaskMenu(TabletModeMultitaskMenuController* controller,
@@ -42,8 +42,7 @@ class ASH_EXPORT TabletModeMultitaskMenu
   // is true, otherwise a slide up animation.
   void Animate(bool show);
 
-  // Performs a fade out animation and closes the menu. Called when tap outside
-  // the menu dismisses it.
+  // Performs a fade out animation and closes the menu.
   void AnimateFadeOut();
 
   // Actions called by the event handler, where `initial_y` and `current_y` are
@@ -57,7 +56,7 @@ class ASH_EXPORT TabletModeMultitaskMenu
   // Calls the event handler to destroy `this`.
   void Reset();
 
-  // views::WidgetFocusChangeListener:
+  // views::NativeViewFocusChangeListener:
   void OnNativeFocusChanged(gfx::NativeView focused_now) override;
 
   // display::DisplayObserver:
@@ -69,7 +68,7 @@ class ASH_EXPORT TabletModeMultitaskMenu
  private:
   // The event handler that created this multitask menu. Guaranteed to outlive
   // `this`.
-  raw_ptr<TabletModeMultitaskMenuController, ExperimentalAsh> controller_;
+  raw_ptr<TabletModeMultitaskMenuController> controller_;
 
   // Widget implementation that is created and maintained by `this`.
   views::UniqueWidgetPtr widget_ = std::make_unique<views::Widget>();

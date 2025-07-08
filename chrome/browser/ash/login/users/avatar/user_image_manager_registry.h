@@ -20,22 +20,34 @@ class UserManager;
 
 namespace ash {
 
-class UserImageManager;
+class UserImageManagerImpl;
+class UserImageLoaderDelegate;
 
 // UserImageManger is per user. This manages the mapping from each user
 // identified by AccountId to UserImageManager.
 // This is effectively a singleton in production.
 class UserImageManagerRegistry : public user_manager::UserManager::Observer {
  public:
+  // Returns the global UserImageManagerRegistry instance.
+  static UserImageManagerRegistry* Get();
+
+  // Given user_manager's lifetime needs to outlive this instance.
   explicit UserImageManagerRegistry(user_manager::UserManager* user_manager);
+
+  // Constructor to inject a test version of `UserImageLoaderDelegate`.
+  UserImageManagerRegistry(
+      user_manager::UserManager* user_manager,
+      std::unique_ptr<UserImageLoaderDelegate> user_image_loader_delegate);
+
   UserImageManagerRegistry(const UserImageManagerRegistry&) = delete;
   UserImageManagerRegistry operator=(UserImageManagerRegistry&) = delete;
+
   ~UserImageManagerRegistry() override;
 
   // Returns the manager for the given avator.
   // If it is not instantiated, the call lazily creates the instance,
   // and returns the pointer.
-  UserImageManager* GetManager(const AccountId& account_id);
+  UserImageManagerImpl* GetManager(const AccountId& account_id);
 
   // Shuts down all UserImageManager this instance holds.
   void Shutdown();
@@ -47,8 +59,13 @@ class UserImageManagerRegistry : public user_manager::UserManager::Observer {
   void OnUserProfileCreated(const user_manager::User& user) override;
 
  private:
-  const base::raw_ptr<user_manager::UserManager, ExperimentalAsh> user_manager_;
-  std::map<AccountId, std::unique_ptr<UserImageManager>> map_;
+  // Owned. Expected to outlive `map_` as it is shared by every
+  // `UserImageManagerImpl`.
+  const std::unique_ptr<UserImageLoaderDelegate> user_image_loader_delegate_;
+
+  const raw_ptr<user_manager::UserManager> user_manager_;
+
+  std::map<AccountId, std::unique_ptr<UserImageManagerImpl>> map_;
 
   base::ScopedObservation<user_manager::UserManager,
                           user_manager::UserManager::Observer>

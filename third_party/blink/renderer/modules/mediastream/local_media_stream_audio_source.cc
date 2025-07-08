@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "media/audio/audio_source_parameters.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
@@ -22,35 +23,44 @@ LocalMediaStreamAudioSource::LocalMediaStreamAudioSource(
     const MediaStreamDevice& device,
     const int* requested_buffer_size,
     bool disable_local_echo,
+    const MediaStreamAudioProcessingLayout& processing_layout,
     ConstraintsRepeatingCallback started_callback,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : MediaStreamAudioSource(std::move(task_runner),
                              true /* is_local_source */,
                              disable_local_echo),
+      processing_layout_(processing_layout),
       consumer_frame_(consumer_frame),
       started_callback_(std::move(started_callback)) {
-  DVLOG(1) << "LocalMediaStreamAudioSource::LocalMediaStreamAudioSource()";
-  SetDevice(device);
+  CHECK(!processing_layout_.NeedWebrtcAudioProcessing());
 
-  int frames_per_buffer = device.input.frames_per_buffer();
-  if (requested_buffer_size)
+  DVLOG(1) << "LocalMediaStreamAudioSource::LocalMediaStreamAudioSource("
+              "device.input="
+           << device.input.AsHumanReadableString()
+           << " requested_buffer_size=" << requested_buffer_size
+           << " enable_system_echo_cancellation="
+           << base::ToString(processing_layout_.AecIsPlatformProvided()) << ")"
+           << " system AEC available: "
+           << (!!(device.input.effects() &
+                  media::AudioParameters::ECHO_CANCELLER)
+                   ? "YES"
+                   : "NO");
+  MediaStreamDevice device_to_request(device);
+  device_to_request.input.set_effects(processing_layout_.platform_effects());
+  SetDevice(device_to_request);
+
+  media::AudioParameters params = device_to_request.input;
+  int frames_per_buffer = params.frames_per_buffer();
+  if (requested_buffer_size) {
     frames_per_buffer = *requested_buffer_size;
-
+  }
   // If the device buffer size was not provided, use a default.
   if (frames_per_buffer <= 0) {
-    frames_per_buffer =
-        (device.input.sample_rate() * kFallbackAudioLatencyMs) / 1000;
+    frames_per_buffer = (params.sample_rate() * kFallbackAudioLatencyMs) / 1000;
   }
+  params.set_format(media::AudioParameters::AUDIO_PCM_LOW_LATENCY);
+  params.set_frames_per_buffer(frames_per_buffer);
 
-  // Set audio format and take into account the special case where a discrete
-  // channel layout is reported since it will result in an invalid channel
-  // count (=0) if only default constructions is used.
-  media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                device.input.channel_layout_config(),
-                                device.input.sample_rate(), frames_per_buffer);
-  if (device.input.channel_layout() == media::CHANNEL_LAYOUT_DISCRETE) {
-    DCHECK_LE(device.input.channels(), 2);
-  }
   SetFormat(params);
 }
 
@@ -111,12 +121,13 @@ void LocalMediaStreamAudioSource::OnCaptureStarted() {
   started_callback_.Run(this, mojom::MediaStreamRequestResult::OK, "");
 }
 
-void LocalMediaStreamAudioSource::Capture(const media::AudioBus* audio_bus,
-                                          base::TimeTicks audio_capture_time,
-                                          double volume,
-                                          bool key_pressed) {
+void LocalMediaStreamAudioSource::Capture(
+    const media::AudioBus* audio_bus,
+    base::TimeTicks audio_capture_time,
+    const media::AudioGlitchInfo& glitch_info,
+    double volume) {
   DCHECK(audio_bus);
-  DeliverDataToTracks(*audio_bus, audio_capture_time);
+  DeliverDataToTracks(*audio_bus, audio_capture_time, glitch_info);
 }
 
 void LocalMediaStreamAudioSource::OnCaptureError(
@@ -143,20 +154,9 @@ void LocalMediaStreamAudioSource::ChangeSourceImpl(
   EnsureSourceIsStarted();
 }
 
-using EchoCancellationType =
-    blink::AudioProcessingProperties::EchoCancellationType;
-
-absl::optional<blink::AudioProcessingProperties>
+std::optional<blink::AudioProcessingProperties>
 LocalMediaStreamAudioSource::GetAudioProcessingProperties() const {
-  blink::AudioProcessingProperties properties;
-  properties.DisableDefaultProperties();
-
-  if (device().input.effects() & media::AudioParameters::ECHO_CANCELLER) {
-    properties.echo_cancellation_type =
-        EchoCancellationType::kEchoCancellationSystem;
-  }
-
-  return properties;
+  return processing_layout_.properties();
 }
 
 }  // namespace blink

@@ -14,6 +14,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
+#include "net/base/load_timing_info.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_database.h"
 #include "net/cert/cert_verifier.h"
@@ -23,7 +24,6 @@
 
 namespace net {
 
-class CTPolicyEnforcer;
 class HostPortPair;
 class SCTAuditingDelegate;
 class SSLClientSessionCache;
@@ -40,6 +40,31 @@ class TransportSecurityState;
 //
 class NET_EXPORT SSLClientSocket : public SSLSocket {
  public:
+  // Records some histograms based on the result of the SSL handshake.
+  static void RecordSSLConnectResult(
+      SSLClientSocket* ssl_socket,
+      int result,
+      bool is_ech_capable,
+      bool ech_enabled,
+      const std::optional<std::vector<uint8_t>>& ech_retry_configs,
+      bool trust_anchor_ids_from_dns,
+      bool retried_with_trust_anchor_ids,
+      const LoadTimingInfo::ConnectTiming& connect_timing);
+
+  // These values are persisted to logs. Entries should not be renumbered
+  // and numeric values should never be reused.
+  enum class TrustAnchorIDsResult {
+    // The connection succeeded on the initial connection.
+    kSuccessInitial = 0,
+    // The connection failed on the initial connection, without retrying.
+    kErrorInitial = 1,
+    // The connection succeeded after retrying with fresh Trust Anchor IDs.
+    kSuccessRetry = 2,
+    // The connection failed after retrying with fresh Trust Anchor IDs.
+    kErrorRetry = 3,
+    kMaxValue = kErrorRetry,
+  };
+
   SSLClientSocket();
 
   // Called in response to |ERR_ECH_NOT_NEGOTIATED| in Connect(), to determine
@@ -50,6 +75,15 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
   // connection can be retried with ECH disabled.
   virtual std::vector<uint8_t> GetECHRetryConfigs() = 0;
 
+  // Called in response to a connection error in Connect(), when the client
+  // advertised the TLS Trust Anchor IDs extension. If this method returns a
+  // non-empty set, it is the Trust Anchor IDs (in binary representation) that
+  // the server provided in the handshake. The connection can be retried with
+  // these new Trust Anchor IDs, overriding the Trust Anchor IDs that the server
+  // advertised in DNS.
+  virtual std::vector<std::vector<uint8_t>>
+  GetServerTrustAnchorIDsForRetry() = 0;
+
   // Log SSL key material to |logger|. Must be called before any
   // SSLClientSockets are created.
   //
@@ -57,33 +91,10 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
   // once https://crbug.com/458365 is resolved.
   static void SetSSLKeyLogger(std::unique_ptr<SSLKeyLogger> logger);
 
- protected:
-  void set_signed_cert_timestamps_received(
-      bool signed_cert_timestamps_received) {
-    signed_cert_timestamps_received_ = signed_cert_timestamps_received;
-  }
-
-  void set_stapled_ocsp_response_received(bool stapled_ocsp_response_received) {
-    stapled_ocsp_response_received_ = stapled_ocsp_response_received;
-  }
-
   // Serialize |next_protos| in the wire format for ALPN: protocols are listed
   // in order, each prefixed by a one-byte length.
   static std::vector<uint8_t> SerializeNextProtos(
       const NextProtoVector& next_protos);
-
- private:
-  FRIEND_TEST_ALL_PREFIXES(SSLClientSocket, SerializeNextProtos);
-  // For signed_cert_timestamps_received_ and stapled_ocsp_response_received_.
-  FRIEND_TEST_ALL_PREFIXES(SSLClientSocketVersionTest,
-                           ConnectSignedCertTimestampsTLSExtension);
-  FRIEND_TEST_ALL_PREFIXES(SSLClientSocketVersionTest,
-                           ConnectSignedCertTimestampsEnablesOCSP);
-
-  // True if SCTs were received via a TLS extension.
-  bool signed_cert_timestamps_received_ = false;
-  // True if a stapled OCSP response was received.
-  bool stapled_ocsp_response_received_ = false;
 };
 
 // Shared state and configuration across multiple SSLClientSockets.
@@ -120,7 +131,6 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   SSLClientContext(SSLConfigService* ssl_config_service,
                    CertVerifier* cert_verifier,
                    TransportSecurityState* transport_security_state,
-                   CTPolicyEnforcer* ct_policy_enforcer,
                    SSLClientSessionCache* ssl_client_session_cache,
                    SCTAuditingDelegate* sct_auditing_delegate);
 
@@ -136,7 +146,6 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   TransportSecurityState* transport_security_state() {
     return transport_security_state_;
   }
-  CTPolicyEnforcer* ct_policy_enforcer() { return ct_policy_enforcer_; }
   SSLClientSessionCache* ssl_client_session_cache() {
     return ssl_client_session_cache_;
   }
@@ -181,6 +190,24 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   // observers.
   bool ClearClientCertificate(const HostPortPair& server);
 
+  // Clears a client certificate preference for |host| set by
+  // SetClientCertificate() if |certificate| doesn't match the cached
+  // certificate.
+  //
+  // Note this method will synchronously call OnSSLConfigForServersChanged() on
+  // observers.
+  void ClearClientCertificateIfNeeded(
+      const net::HostPortPair& host,
+      const scoped_refptr<net::X509Certificate>& certificate);
+
+  // Clears a client certificate preference, set by SetClientCertificate(),
+  // for all hosts whose cached certificate matches |certificate|.
+  //
+  // Note this method will synchronously call OnSSLConfigForServersChanged() on
+  // observers.
+  void ClearMatchingClientCertificate(
+      const scoped_refptr<net::X509Certificate>& certificate);
+
   base::flat_set<HostPortPair> GetClientCertificateCachedServersForTesting()
       const {
     return ssl_client_auth_cache_.GetCachedServers();
@@ -213,7 +240,6 @@ class NET_EXPORT SSLClientContext : public SSLConfigService::Observer,
   raw_ptr<SSLConfigService> ssl_config_service_;
   raw_ptr<CertVerifier> cert_verifier_;
   raw_ptr<TransportSecurityState> transport_security_state_;
-  raw_ptr<CTPolicyEnforcer> ct_policy_enforcer_;
   raw_ptr<SSLClientSessionCache> ssl_client_session_cache_;
   raw_ptr<SCTAuditingDelegate> sct_auditing_delegate_;
 

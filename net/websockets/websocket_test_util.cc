@@ -5,17 +5,22 @@
 #include "net/websockets/websocket_test_util.h"
 
 #include <stddef.h>
+
 #include <algorithm>
+#include <sstream>
 #include <utility>
 
+#include "base/check.h"
+#include "base/containers/span.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "net/base/ip_endpoint.h"
+#include "net/base/net_errors.h"
 #include "net/http/http_network_session.h"
 #include "net/proxy_resolution/configured_proxy_resolution_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/socket/socket_test_util.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
@@ -23,6 +28,11 @@
 #include "url/origin.h"
 
 namespace net {
+class AuthChallengeInfo;
+class AuthCredentials;
+class HttpResponseHeaders;
+class WebSocketHttp2HandshakeStream;
+class WebSocketHttp3HandshakeStream;
 
 namespace {
 
@@ -110,13 +120,12 @@ std::string WebSocketStandardRequestWithCookies(
 }
 
 std::string WebSocketStandardResponse(const std::string& extra_headers) {
-  return base::StringPrintf(
-      "HTTP/1.1 101 Switching Protocols\r\n"
-      "Upgrade: websocket\r\n"
-      "Connection: Upgrade\r\n"
-      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
-      "%s\r\n",
-      extra_headers.c_str());
+  return base::StrCat(
+      {"HTTP/1.1 101 Switching Protocols\r\n"
+       "Upgrade: websocket\r\n"
+       "Connection: Upgrade\r\n"
+       "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n",
+       extra_headers, "\r\n"});
 }
 
 HttpRequestHeaders WebSocketCommonTestHeaders() {
@@ -134,12 +143,12 @@ HttpRequestHeaders WebSocketCommonTestHeaders() {
   return request_headers;
 }
 
-spdy::Http2HeaderBlock WebSocketHttp2Request(
+quiche::HttpHeaderBlock WebSocketHttp2Request(
     const std::string& path,
     const std::string& authority,
     const std::string& origin,
     const WebSocketExtraHeaders& extra_headers) {
-  spdy::Http2HeaderBlock request_headers;
+  quiche::HttpHeaderBlock request_headers;
   request_headers[spdy::kHttp2MethodHeader] = "CONNECT";
   request_headers[spdy::kHttp2AuthorityHeader] = authority;
   request_headers[spdy::kHttp2SchemeHeader] = "https";
@@ -160,9 +169,9 @@ spdy::Http2HeaderBlock WebSocketHttp2Request(
   return request_headers;
 }
 
-spdy::Http2HeaderBlock WebSocketHttp2Response(
+quiche::HttpHeaderBlock WebSocketHttp2Response(
     const WebSocketExtraHeaders& extra_headers) {
-  spdy::Http2HeaderBlock response_headers;
+  quiche::HttpHeaderBlock response_headers;
   response_headers[spdy::kHttp2StatusHeader] = "200";
   for (const auto& header : extra_headers) {
     response_headers[base::ToLowerASCII(header.first)] = header.second;
@@ -193,27 +202,24 @@ MockClientSocketFactory* WebSocketMockClientSocketFactoryMaker::factory() {
 void WebSocketMockClientSocketFactoryMaker::SetExpectations(
     const std::string& expect_written,
     const std::string& return_to_read) {
-  const size_t kHttpStreamParserBufferSize = 4096;
+  constexpr size_t kHttpStreamParserBufferSize = 4096;
   // We need to extend the lifetime of these strings.
   detail_->expect_written = expect_written;
   detail_->return_to_read = return_to_read;
   int sequence = 0;
-  detail_->write = MockWrite(SYNCHRONOUS,
-                             detail_->expect_written.data(),
-                             detail_->expect_written.size(),
-                             sequence++);
+  detail_->write = MockWrite(SYNCHRONOUS, sequence++, detail_->expect_written);
   // HttpStreamParser reads 4KB at a time. We need to take this implementation
   // detail into account if |return_to_read| is big enough.
-  for (size_t place = 0; place < detail_->return_to_read.size();
+  std::string_view to_read(detail_->return_to_read);
+  for (size_t place = 0; place < to_read.size();
        place += kHttpStreamParserBufferSize) {
-    detail_->reads.emplace_back(SYNCHRONOUS,
-                                detail_->return_to_read.data() + place,
-                                std::min(detail_->return_to_read.size() - place,
-                                         kHttpStreamParserBufferSize),
-                                sequence++);
+    detail_->reads.emplace_back(
+        SYNCHRONOUS, sequence++,
+        to_read.substr(place, std::min(to_read.size() - place,
+                                       kHttpStreamParserBufferSize)));
   }
   auto socket_data = std::make_unique<SequencedSocketData>(
-      detail_->reads, base::make_span(&detail_->write, 1u));
+      detail_->reads, base::span_from_ref(detail_->write));
   socket_data->set_connect_data(MockConnect(SYNCHRONOUS, OK));
   AddRawExpectations(std::move(socket_data));
 }
@@ -264,12 +270,15 @@ void WebSocketTestURLRequestContextHost::SetProxyConfig(
       std::move(proxy_resolution_service));
 }
 
+void DummyConnectDelegate::OnURLRequestConnected(URLRequest* request,
+                                                 const TransportInfo& info) {}
+
 int DummyConnectDelegate::OnAuthRequired(
     const AuthChallengeInfo& auth_info,
     scoped_refptr<HttpResponseHeaders> response_headers,
     const IPEndPoint& host_port_pair,
     base::OnceCallback<void(const AuthCredentials*)> callback,
-    absl::optional<AuthCredentials>* credentials) {
+    std::optional<AuthCredentials>* credentials) {
   return OK;
 }
 

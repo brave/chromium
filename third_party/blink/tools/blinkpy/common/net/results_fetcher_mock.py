@@ -41,14 +41,14 @@ class MockTestResultsFetcher(TestResultsFetcher):
         super().__init__(web, luci_auth)
         self._canned_results = {}
         self._canned_retry_summary_json = {}
-        self._webdriver_results = {}
         self.fetched_builds = []
-        self.fetched_webdriver_builds = []
 
     def set_results(self, build, results, step_name=None):
         step_name = step_name or results.step_name()
         step = BuilderStep(build=build, step_name=step_name)
         self._canned_results[step] = results
+        if not results.build:
+            results.build = build
 
     def gather_results(self,
                        build: Build,
@@ -57,7 +57,8 @@ class MockTestResultsFetcher(TestResultsFetcher):
                        only_unexpected: bool = True) -> WebTestResults:
         step = BuilderStep(build=build, step_name=step_name)
         self.fetched_builds.append(step)
-        return self._canned_results.get(step)
+        empty_results = WebTestResults([], build=build, step_name=step_name)
+        return self._canned_results.get(step, empty_results)
 
     def set_retry_sumary_json(self, build, content):
         self._canned_retry_summary_json[build] = content

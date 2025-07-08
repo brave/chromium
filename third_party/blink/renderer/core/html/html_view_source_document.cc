@@ -24,6 +24,8 @@
 
 #include "third_party/blink/renderer/core/html/html_view_source_document.h"
 
+#include "third_party/blink/public/common/view_source/rendering_preferences.h"
+#include "third_party/blink/public/mojom/persistent_renderer_prefs.mojom-blink.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/css/css_value_id_mappings.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -54,16 +56,32 @@
 
 namespace blink {
 
+static const char* const kLineWrapClass = "line-wrap";
+
 class ViewSourceEventListener : public NativeEventListener {
  public:
   ViewSourceEventListener(HTMLTableElement* table, HTMLInputElement* checkbox)
       : table_(table), checkbox_(checkbox) {}
 
-  void Invoke(ExecutionContext*, Event* event) override {
+  void Invoke(ExecutionContext* execution_context, Event* event) override {
     DCHECK_EQ(event->type(), event_type_names::kChange);
-    table_->setAttribute(html_names::kClassAttr, checkbox_->Checked()
-                                                     ? AtomicString("line-wrap")
-                                                     : g_empty_atom);
+    table_->setAttribute(
+        html_names::kClassAttr,
+        checkbox_->Checked() ? AtomicString(kLineWrapClass) : g_empty_atom);
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_FUCHSIA)
+    // TODO(crbug.com/40255878): The service is implemented in Chrome, so it may
+    // not be provided in other embedders. Ensure that case is handled properly.
+    // TODO(crbug.com/415945840): Implement the PersistentRendererPrefsService
+    // for Android WebViews, and remove the Android part of the above guard.
+    mojo::Remote<mojom::blink::PersistentRendererPrefsService>
+        persistent_renderer_prefs_service;
+    execution_context->GetBrowserInterfaceBroker().GetInterface(
+        persistent_renderer_prefs_service.BindNewPipeAndPassReceiver());
+    DCHECK(persistent_renderer_prefs_service);
+    persistent_renderer_prefs_service->SetViewSourceLineWrapping(
+        checkbox_->Checked());
+#endif
   }
 
   void Trace(Visitor* visitor) const override {
@@ -94,7 +112,7 @@ void HTMLViewSourceDocument::CreateContainingTable() {
   auto* head = MakeGarbageCollected<HTMLHeadElement>(*this);
   auto* meta =
       MakeGarbageCollected<HTMLMetaElement>(*this, CreateElementFlags());
-  meta->setAttribute(html_names::kNameAttr, AtomicString("color-scheme"));
+  meta->setAttribute(html_names::kNameAttr, keywords::kColorScheme);
   meta->setAttribute(html_names::kContentAttr, AtomicString("light dark"));
   head->ParserAppendChild(meta);
   html->ParserAppendChild(head);
@@ -116,18 +134,24 @@ void HTMLViewSourceDocument::CreateContainingTable() {
   line_number_ = 0;
 
   // Create a checkbox to control line wrapping.
-  auto* checkbox =
-      MakeGarbageCollected<HTMLInputElement>(*this, CreateElementFlags());
+  auto* checkbox = MakeGarbageCollected<HTMLInputElement>(*this);
   checkbox->setAttribute(html_names::kTypeAttr, input_type_names::kCheckbox);
   checkbox->addEventListener(
       event_type_names::kChange,
       MakeGarbageCollected<ViewSourceEventListener>(table, checkbox),
       /*use_capture=*/false);
-  checkbox->setAttribute(html_names::kAriaLabelAttr, WTF::AtomicString(Locale::DefaultLocale().QueryString(
-                              IDS_VIEW_SOURCE_LINE_WRAP)));
+  checkbox->setAttribute(html_names::kAriaLabelAttr,
+                         AtomicString(Locale::DefaultLocale().QueryString(
+                             IDS_VIEW_SOURCE_LINE_WRAP)));
+
+  if (ViewSourceLineWrappingPreference::Get()) {
+    table->setAttribute(html_names::kClassAttr, AtomicString(kLineWrapClass));
+    checkbox->SetChecked(true);
+  }
+
   auto* label = MakeGarbageCollected<HTMLLabelElement>(*this);
   label->ParserAppendChild(
-      Text::Create(*this, WTF::AtomicString(Locale::DefaultLocale().QueryString(
+      Text::Create(*this, AtomicString(Locale::DefaultLocale().QueryString(
                               IDS_VIEW_SOURCE_LINE_WRAP))));
   label->setAttribute(html_names::kClassAttr,
                       AtomicString("line-wrap-control"));
@@ -152,7 +176,6 @@ void HTMLViewSourceDocument::AddSource(
   switch (token.GetType()) {
     case HTMLToken::kUninitialized:
       NOTREACHED();
-      break;
     case HTMLToken::DOCTYPE:
       ProcessDoctypeToken(source, token);
       break;
@@ -167,6 +190,8 @@ void HTMLViewSourceDocument::AddSource(
       ProcessCommentToken(source, token);
       break;
     case HTMLToken::kCharacter:
+    case HTMLToken::kDOMPart:
+      // Process DOM Parts as character tokens.
       ProcessCharacterToken(source, token);
       break;
   }
@@ -260,7 +285,7 @@ Element* HTMLViewSourceDocument::AddSpanWithClassName(
     const AtomicString& class_name) {
   if (current_ == tbody_) {
     AddLine(class_name);
-    return current_;
+    return current_.Get();
   }
 
   auto* span = MakeGarbageCollected<HTMLSpanElement>(*this);

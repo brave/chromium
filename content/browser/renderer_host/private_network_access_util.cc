@@ -6,13 +6,14 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/policy_container_host.h"
+#include "content/common/features.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/ip_address_space_util.h"
 #include "services/network/public/mojom/client_security_state.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom.h"
@@ -48,14 +49,14 @@ FeatureState FeatureStateForContext(RequestContext request_context) {
       }
 
       return FeatureState::kEnabled;
-    case RequestContext::kIframe:
+    case RequestContext::kNavigation:
       if (!base::FeatureList::IsEnabled(
-              features::kPrivateNetworkAccessForIframes)) {
+              features::kPrivateNetworkAccessForNavigations)) {
         return FeatureState::kDisabled;
       }
 
       if (base::FeatureList::IsEnabled(
-              features::kPrivateNetworkAccessForIframesWarningOnly)) {
+              features::kPrivateNetworkAccessForNavigationsWarningOnly)) {
         return FeatureState::kWarningOnly;
       }
 
@@ -65,15 +66,22 @@ FeatureState FeatureStateForContext(RequestContext request_context) {
 
 }  // namespace
 
-Policy DerivePrivateNetworkRequestPolicy(
-    const PolicyContainerPolicies& policies,
-    RequestContext private_network_request_context) {
-  return DerivePrivateNetworkRequestPolicy(policies.ip_address_space,
-                                           policies.is_web_secure_context,
-                                           private_network_request_context);
-}
+Policy DerivePolicyForNonSecureContext(
+    AddressSpace ip_address_space,
+    bool local_network_access_checks_enabled) {
+  if (local_network_access_checks_enabled) {
+    // LNA blocks all local network access requests coming from non-secure
+    // contexts.
+    // See:
+    // https://github.com/explainers-by-googlers/local-network-access?tab=readme-ov-file#integration-with-fetch
+    //
+    // TODO(crbug.com/395895368): figure out how this interacts with https
+    // upgrades.
+    return network::features::kLocalNetworkAccessChecksWarn.Get()
+               ? Policy::kPermissionWarn
+               : Policy::kBlock;
+  }
 
-Policy DerivePolicyForNonSecureContext(AddressSpace ip_address_space) {
   switch (ip_address_space) {
     case AddressSpace::kUnknown:
       // Requests from the `unknown` address space are controlled separately
@@ -93,11 +101,11 @@ Policy DerivePolicyForNonSecureContext(AddressSpace ip_address_space) {
                  ? Policy::kBlock
                  : Policy::kWarn;
     case AddressSpace::kPublic:
-    case AddressSpace::kLocal:
+    case AddressSpace::kLoopback:
       // Private network requests from non secure contexts are blocked if the
       // secure context restriction is enabled in general.
       //
-      // NOTE: We also set this when `ip_address_space` is `kLocal`, but that
+      // NOTE: We also set this when `ip_address_space` is `kLoopback`, but that
       // has no effect. Indeed, requests initiated from the local address space
       // are never considered private network requests - they cannot target
       // more-private address spaces.
@@ -108,7 +116,16 @@ Policy DerivePolicyForNonSecureContext(AddressSpace ip_address_space) {
   }
 }
 
-Policy DerivePolicyForSecureContext(AddressSpace ip_address_space) {
+Policy DerivePolicyForSecureContext(AddressSpace ip_address_space,
+                                    bool local_network_access_checks_enabled) {
+  if (local_network_access_checks_enabled) {
+    // See:
+    // https://github.com/explainers-by-googlers/local-network-access?tab=readme-ov-file#permission-prompts
+    return network::features::kLocalNetworkAccessChecksWarn.Get()
+               ? Policy::kPermissionWarn
+               : Policy::kPermissionBlock;
+  }
+
   // The goal is to eliminate occurrences of this case as much as possible,
   // before removing this special case.
   if (ip_address_space == AddressSpace::kUnknown) {
@@ -161,14 +178,32 @@ Policy DerivePrivateNetworkRequestPolicy(
     return Policy::kAllow;
   }
 
+  bool local_network_access_checks_enabled = base::FeatureList::IsEnabled(
+      network::features::kLocalNetworkAccessChecks);
+
   FeatureState feature_state =
       FeatureStateForContext(private_network_request_context);
 
-  Policy policy = is_web_secure_context
-                      ? DerivePolicyForSecureContext(ip_address_space)
-                      : DerivePolicyForNonSecureContext(ip_address_space);
+  Policy policy =
+      is_web_secure_context
+          ? DerivePolicyForSecureContext(ip_address_space,
+                                         local_network_access_checks_enabled)
+          : DerivePolicyForNonSecureContext(
+                ip_address_space, local_network_access_checks_enabled);
 
-  return ApplyFeatureStateToPolicy(feature_state, policy);
+  if (local_network_access_checks_enabled) {
+    return policy;
+  } else {
+    return ApplyFeatureStateToPolicy(feature_state, policy);
+  }
+}
+
+Policy DerivePrivateNetworkRequestPolicy(
+    const PolicyContainerPolicies& policies,
+    RequestContext private_network_request_context) {
+  return DerivePrivateNetworkRequestPolicy(policies.ip_address_space,
+                                           policies.is_web_secure_context,
+                                           private_network_request_context);
 }
 
 network::mojom::ClientSecurityStatePtr DeriveClientSecurityState(
@@ -178,21 +213,24 @@ network::mojom::ClientSecurityStatePtr DeriveClientSecurityState(
       policies.cross_origin_embedder_policy, policies.is_web_secure_context,
       policies.ip_address_space,
       DerivePrivateNetworkRequestPolicy(policies,
-                                        private_network_request_context));
+                                        private_network_request_context),
+      policies.document_isolation_policy);
 }
 
-// Special chrome schemes cannot directly be categorized in public/private/local
-// address spaces using information from the network or the PolicyContainer. We
-// have to classify them manually. In its default state an unhandled scheme will
-// have an IPAddressSpace of kUnknown, which is equivalent to public.
+// Special chrome schemes cannot directly be categorized in
+// public/private/loopback address spaces using information from the network or
+// the PolicyContainer. We have to classify them manually. In its default state
+// an unhandled scheme will have an IPAddressSpace of kUnknown, which is
+// equivalent to public.
 // This means a couple of things:
-// - They cannot embed anything private or local without being secure contexts
+// - They cannot embed anything private or loopback without being secure
+// contexts
 //   and triggering a CORS preflight.
 // - Private Network Access does not prevent them being embedded by less private
 //   content.
 // - It pollutes metrics since kUnknown could also mean a missed edge case.
 // To address these issues we list here a number of schemes that should be
-// considered local.
+// considered loopback.
 // TODO(titouan): It might be better to have these schemes (and in general
 // other schemes such as data: or blob:) handled directly by the URLLoaders.
 // Investigate on whether this is worth doing.
@@ -201,17 +239,17 @@ AddressSpace IPAddressSpaceForSpecialScheme(const GURL& url,
   // This only handles schemes that are known to the content/ layer.
   // List here: content/public/common/url_constants.cc.
   const char* special_content_schemes[] = {
-    kChromeDevToolsScheme,
-    kChromeUIScheme,
-    kChromeUIUntrustedScheme,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    kExternalFileScheme,
+      kChromeDevToolsScheme,
+      kChromeUIScheme,
+      kChromeUIUntrustedScheme,
+#if BUILDFLAG(IS_CHROMEOS)
+      kExternalFileScheme,
 #endif
   };
 
   for (auto* scheme : special_content_schemes) {
     if (url.SchemeIs(scheme)) {
-      return AddressSpace::kLocal;
+      return AddressSpace::kLoopback;
     }
   }
 
@@ -230,12 +268,21 @@ AddressSpace CalculateIPAddressSpace(
     ContentBrowserClient* client) {
   // Determine the IPAddressSpace, based on the IP address and the response
   // headers received.
-  absl::optional<network::CalculateClientAddressSpaceParams> params =
-      absl::nullopt;
+  std::optional<network::CalculateClientAddressSpaceParams> params =
+      std::nullopt;
   if (response_head) {
-    params.emplace(response_head->url_list_via_service_worker,
-                   response_head->parsed_headers,
-                   response_head->remote_endpoint);
+    std::optional<network::mojom::IPAddressSpace> client_address_space;
+    if (response_head->was_fetched_via_service_worker &&
+        response_head->client_address_space !=
+            network::mojom::IPAddressSpace::kUnknown) {
+      client_address_space = response_head->client_address_space;
+    }
+    params.emplace<network::CalculateClientAddressSpaceParams>({
+        .client_address_space_inherited_from_service_worker =
+            client_address_space,
+        .parsed_headers = &response_head->parsed_headers,
+        .remote_endpoint = &response_head->remote_endpoint,
+    });
   }
   AddressSpace computed_ip_address_space =
       network::CalculateClientAddressSpace(url, params);
@@ -245,6 +292,22 @@ AddressSpace CalculateIPAddressSpace(
   }
 
   return IPAddressSpaceForSpecialScheme(url, client);
+}
+
+// TODO(crbug.com/395895368): rename to be more clear about functionality (as
+// its not overriding block with warn, but the other way around).
+network::mojom::PrivateNetworkRequestPolicy OverrideBlockWithWarn(
+    network::mojom::PrivateNetworkRequestPolicy policy) {
+  switch (policy) {
+    case network::mojom::PrivateNetworkRequestPolicy::kWarn:
+      return network::mojom::PrivateNetworkRequestPolicy::kBlock;
+    case network::mojom::PrivateNetworkRequestPolicy::kPreflightWarn:
+      return network::mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
+    case network::mojom::PrivateNetworkRequestPolicy::kPermissionWarn:
+      return network::mojom::PrivateNetworkRequestPolicy::kPermissionBlock;
+    default:
+      return policy;
+  }
 }
 
 }  // namespace content

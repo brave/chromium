@@ -4,8 +4,10 @@
 
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router_factory.h"
 
+#include "chrome/browser/autofill/autofill_entity_data_manager_factory.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -32,18 +34,25 @@ AutofillPrivateEventRouterFactory::AutofillPrivateEventRouterFactory()
           "AutofillPrivateEventRouter",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
+              // TODO(crbug.com/40257657): Audit whether these should be
+              // redirected or should have their own instance.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(autofill::PersonalDataManagerFactory::GetInstance());
+  DependsOn(autofill::AutofillEntityDataManagerFactory::GetInstance());
+  DependsOn(SyncServiceFactory::GetInstance());
 }
 
-KeyedService* AutofillPrivateEventRouterFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AutofillPrivateEventRouterFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  // TODO(1426498): pass router's dependencies directly instead of context.
-  return AutofillPrivateEventRouter::Create(context);
+  // TODO(crbug.com/40261321): pass router's dependencies directly instead of
+  // context.
+  return std::make_unique<AutofillPrivateEventRouter>(context);
 }
 
 bool AutofillPrivateEventRouterFactory::

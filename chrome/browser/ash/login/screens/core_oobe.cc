@@ -3,22 +3,23 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/login/screens/core_oobe.h"
+
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/shelf_config.h"
-#include "ash/public/cpp/tablet_mode.h"
 #include "ash/shell.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "build/branding_buildflags.h"
 #include "chrome/browser/ash/login/configuration_keys.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
-#include "chrome/browser/ash/login/ui/oobe_dialog_size_utils.h"
 #include "chrome/browser/ash/system/input_device_settings.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/oobe_dialog_size_utils.h"
 #include "chrome/browser/ui/webui/ash/login/core_oobe_handler.h"
 #include "chrome/browser/ui/webui/ash/login/oobe_ui.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/channel.h"
 #include "ui/display/screen.h"
+#include "ui/display/tablet_state.h"
 
 namespace ash {
 
@@ -27,7 +28,6 @@ CoreOobe::CoreOobe(const std::string& display_type,
     : view_(view) {
   is_oobe_display_ = display_type == OobeUI::kOobeDisplay;
 
-  TabletMode::Get()->AddObserver(this);
   OobeConfiguration::Get()->AddAndFireObserver(this);
   ChromeKeyboardControllerClient::Get()->AddObserver(this);
 
@@ -40,6 +40,7 @@ CoreOobe::CoreOobe(const std::string& display_type,
   version_info_updater_.StartUpdate(false);
 #endif
 
+  OnTabletModeChanged(display::Screen::GetScreen()->InTabletMode());
   UpdateClientAreaSize(
       display::Screen::GetScreen()->GetPrimaryDisplay().size());
 
@@ -63,19 +64,15 @@ CoreOobe::CoreOobe(const std::string& display_type,
 CoreOobe::~CoreOobe() {
   OobeConfiguration::Get()->RemoveObserver(this);
 
-  // Ash may be released before us.
-  if (TabletMode::Get()) {
-    TabletMode::Get()->RemoveObserver(this);
-  }
-
   if (ChromeKeyboardControllerClient::Get()) {
     ChromeKeyboardControllerClient::Get()->RemoveObserver(this);
   }
 }
 
 void CoreOobe::ShowScreenWithData(const OobeScreenId& screen,
-                                  absl::optional<base::Value::Dict> data) {
-  const bool is_priority_screen = view_ && view_->IsPriorityScreen(screen.name);
+                                  std::optional<base::Value::Dict> data) {
+  const bool is_priority_screen =
+      PriorityScreenChecker::IsPriorityScreen(screen);
 
   switch (ui_init_state_) {
     case CoreOobeView::UiState::kUninitialized:
@@ -191,25 +188,17 @@ void CoreOobe::OnKeyboardVisibilityChanged(bool shown) {
   }
 }
 
-void CoreOobe::OnTabletModeStarted() {
-  OnTabletModeChanged(/*tablet_mode_enabled=*/true);
-}
-
-void CoreOobe::OnTabletModeEnded() {
-  OnTabletModeChanged(/*tablet_mode_enabled=*/false);
-}
-
-void CoreOobe::OnTabletModeChanged(bool tablet_mode_enabled) {
-  // Defer until fully initialized.
-  if (ui_init_state_ != CoreOobeView::UiState::kFullyInitialized) {
-    pending_calls_.on_tablet_mode_changed =
-        base::BindOnce(&CoreOobe::OnTabletModeChanged, base::Unretained(this),
-                       tablet_mode_enabled);
-    return;
-  }
-
-  if (view_) {
-    view_->SetTabletModeState(tablet_mode_enabled);
+void CoreOobe::OnDisplayTabletStateChanged(display::TabletState state) {
+  switch (state) {
+    case display::TabletState::kEnteringTabletMode:
+    case display::TabletState::kExitingTabletMode:
+      break;
+    case display::TabletState::kInTabletMode:
+      OnTabletModeChanged(/*tablet_mode_enabled=*/true);
+      break;
+    case display::TabletState::kInClamshellMode:
+      OnTabletModeChanged(/*tablet_mode_enabled=*/false);
+      break;
   }
 }
 
@@ -230,7 +219,6 @@ void CoreOobe::UpdateUiInitState(CoreOobeView::UiState state) {
   switch (state) {
     case CoreOobeView::UiState::kUninitialized:
       NOTREACHED();
-      break;
     case CoreOobeView::UiState::kCoreHandlerInitialized:
       // JavaScript is now allowed in the handler.
       CHECK(ui_init_state_ == CoreOobeView::UiState::kUninitialized);
@@ -289,6 +277,20 @@ void CoreOobe::MaybeShowPriorityScreen() {
   // once the UI fully initializes.
   if (pending_calls_.show_screen_with_data) {
     std::move(pending_calls_.show_screen_with_data).Run();
+  }
+}
+
+void CoreOobe::OnTabletModeChanged(bool tablet_mode_enabled) {
+  // Defer until fully initialized.
+  if (ui_init_state_ != CoreOobeView::UiState::kFullyInitialized) {
+    pending_calls_.on_tablet_mode_changed =
+        base::BindOnce(&CoreOobe::OnTabletModeChanged, base::Unretained(this),
+                       tablet_mode_enabled);
+    return;
+  }
+
+  if (view_) {
+    view_->SetTabletModeState(tablet_mode_enabled);
   }
 }
 

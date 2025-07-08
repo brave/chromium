@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/intersection_observer_test_helper.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -71,8 +70,9 @@ TEST_F(DisplayLockUtilitiesTest, DISABLED_ActivatableLockedInclusiveAncestors) {
   Element& inner_b = *GetDocument().getElementById(AtomicString("innerB"));
   Element& innermost = *GetDocument().getElementById(AtomicString("innermost"));
   ShadowRoot& shadow_root =
-      inner_b.AttachShadowRootInternal(ShadowRootType::kOpen);
-  shadow_root.setInnerHTML("<div id='shadowDiv'>shadow!</div>");
+      inner_b.AttachShadowRootForTesting(ShadowRootMode::kOpen);
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(
+      "<div id='shadowDiv'>shadow!</div>");
   Element& shadow_div = *shadow_root.getElementById(AtomicString("shadowDiv"));
 
   LockElement(outer, true);
@@ -279,7 +279,7 @@ TEST_F(DisplayLockUtilitiesTest, InteractionWithIntersectionObserver) {
   LockElement(*container, false);
   EXPECT_TRUE(ChildDocument().View()->ShouldThrottleRenderingForTest());
 
-  target->setInnerHTML("Hello, world!");
+  target->SetInnerHTMLWithoutTrustedTypes("Hello, world!");
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(ChildDocument().View()->ShouldThrottleRenderingForTest());
   EXPECT_TRUE(ChildDocument().Lifecycle().GetState() ==
@@ -288,8 +288,9 @@ TEST_F(DisplayLockUtilitiesTest, InteractionWithIntersectionObserver) {
   IntersectionObserverInit* observer_init = IntersectionObserverInit::Create();
   TestIntersectionObserverDelegate* observer_delegate =
       MakeGarbageCollected<TestIntersectionObserverDelegate>(ChildDocument());
-  IntersectionObserver* observer =
-      IntersectionObserver::Create(observer_init, *observer_delegate);
+  IntersectionObserver* observer = IntersectionObserver::Create(
+      observer_init, *observer_delegate,
+      LocalFrameUkmAggregator::kDisplayLockIntersectionObserver);
   observer->observe(target);
   UpdateAllLifecyclePhasesForTest();
   test::RunPendingTasks();
@@ -300,9 +301,9 @@ TEST_F(DisplayLockUtilitiesTest, InteractionWithIntersectionObserver) {
   EXPECT_EQ(observer_delegate->EntryCount(), 1);
   EXPECT_FALSE(observer_delegate->LastEntry()->GetGeometry().IsIntersecting());
   EXPECT_EQ(observer_delegate->LastEntry()->GetGeometry().TargetRect(),
-            PhysicalRect());
+            gfx::RectF());
   EXPECT_EQ(observer_delegate->LastEntry()->GetGeometry().RootRect(),
-            PhysicalRect());
+            gfx::RectF());
 
   CommitElement(*container);
   test::RunPendingTasks();
@@ -321,11 +322,11 @@ TEST_F(DisplayLockUtilitiesTest, InteractionWithIntersectionObserver) {
   EXPECT_EQ(observer_delegate->EntryCount(), 2);
   EXPECT_TRUE(observer_delegate->LastEntry()->GetGeometry().IsIntersecting());
   EXPECT_NE(observer_delegate->LastEntry()->GetGeometry().TargetRect(),
-            PhysicalRect());
+            gfx::RectF());
   EXPECT_EQ(observer_delegate->LastEntry()->GetGeometry().IntersectionRect(),
             observer_delegate->LastEntry()->GetGeometry().TargetRect());
   EXPECT_NE(observer_delegate->LastEntry()->GetGeometry().RootRect(),
-            PhysicalRect());
+            gfx::RectF());
 }
 
 TEST_F(DisplayLockUtilitiesTest, ContainerQueryCrash) {

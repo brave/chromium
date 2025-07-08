@@ -14,27 +14,16 @@ found in the LICENSE file.
              which causes a cryptic crash in EditorDialog. See: https://crbug.com/1254821. -->
         <item name="android:windowContentTransitions">false</item>
     </style>
-    <style name="ThemeOverlay.BrowserUI.Fullscreen"
-        parent="Base.ThemeOverlay.BrowserUI.Fullscreen" />
+    <style name="ThemeOverlay.BrowserUI.Fullscreen" parent="Base.ThemeOverlay.BrowserUI.Fullscreen">
+        <item name="android:navigationBarColor">@macro/bottom_system_nav_color</item>
+        <item name="android:navigationBarDividerColor">@macro/bottom_system_nav_divider_color</item>
+        <item name="android:windowLightNavigationBar">@bool/window_light_navigation_bar</item>
+    </style>
 
     <!-- Applied to the SettingsActivity's AppBarLayout to disable the
          liftOnScroll color-fill effect. -->
     <style name="ThemeOverlay.Settings.DisableElevationOverlay" parent="">
         <item name="elevationOverlayEnabled">false</item>
-    </style>
-
-    <!-- Updated Clank Baseline Surface-N Colors. See https://crbug.com/1410537. -->
-    <style name="SurfaceColorsThemeOverlay" parent="">
-        <item name="elevationOverlayColor">@color/gm3_baseline_surface_tint</item>
-        <item name="elevationOverlayAccentColor">@android:color/transparent</item>
-        <item name="tileViewIconBackgroundModern">@drawable/oval_surface_2</item>
-        <item name="cardElevation">@dimen/default_elevation_2</item>
-        <item name="defaultBgColorDarkElev1Baseline">@color/default_bg_color_dark_elev_1_gm3_baseline</item>
-        <item name="defaultBgColorElev1Baseline">@color/default_bg_color_elev_1_gm3_baseline</item>
-        <item name="defaultBgColorElev2Baseline">@color/default_bg_color_elev_2_gm3_baseline</item>
-        <item name="defaultBgColorElev3Baseline">@color/default_bg_color_elev_3_gm3_baseline</item>
-        <item name="defaultBgColorElev4Baseline">@color/default_bg_color_elev_4_gm3_baseline</item>
-        <item name="defaultBgColorElev5Baseline">@color/default_bg_color_elev_5_gm3_baseline</item>
     </style>
 
     <style name="ThemeOverlay.BrowserUI.DynamicColors" parent="ThemeOverlay.Material3.DynamicColors.DayNight">
@@ -48,24 +37,30 @@ found in the LICENSE file.
         <item name="android:textColorHint">@color/default_text_color_hint_list</item>
     </style>
 
-    <!-- Add a persistent back button toolbar to automotive -->
-    <style name="ThemeOverlay.BrowserUI.Automotive.PersistentBackButtonToolbar" parent="">
-        <item name="windowActionBar">true</item>
-        <item name="windowNoTitle">false</item>
-        <item name="actionBarStyle">@style/ActionBarWithBackButton</item>
-        <item name="actionBarTheme">@style/DarkModeActionBarTheme</item>
-    </style>
-
-    <!-- Black action bar with back button -->
-    <style name="ActionBarWithBackButton">
-        <item name="displayOptions">homeAsUp</item>
-        <item name="homeAsUpIndicator">@drawable/ic_arrow_back_24dp</item>
-    </style>
-
     <style name="DarkModeActionBarTheme">
         <item name="background">@android:color/black</item>
         <item name="colorControlNormal">@android:color/white</item>
         <!-- Click event uses dark mode colors -->
         <item name="colorControlHighlight">@color/ripple_material_dark</item>
+    </style>
+    <!-- Incognito switch theme overlay -->
+    <!-- TODO(sinansahin): See if we can pass the baseline dark theme to the incognito NTP instead.
+         -->
+    <style name="ThemeOverlay.BrowserUI.Switch.Incognito" parent="">
+        <item name="colorSurface">@color/gm3_baseline_surface_dark</item>
+        <item name="colorOnSurface">@color/baseline_neutral_90</item>
+        <item name="colorOnSurfaceVariant">@color/baseline_neutral_variant_80</item>
+        <item name="colorSurfaceVariant">@color/baseline_neutral_variant_30</item>
+        <item name="colorSurfaceBright">@color/gm3_baseline_surface_bright_dark</item>
+        <item name="colorSurfaceDim">@color/gm3_baseline_surface_dim_dark</item>
+        <item name="colorPrimary">@color/baseline_primary_80</item>
+        <item name="colorOnPrimary">@color/baseline_primary_20</item>
+        <item name="colorPrimaryContainer">@color/baseline_primary_30</item>
+        <item name="colorOutline">@color/baseline_neutral_variant_60</item>
+        <item name="colorOutlineVariant">@color/baseline_neutral_variant_30</item>
+        <item name="colorSurfaceContainerLow">@color/gm3_baseline_surface_container_low_dark</item>
+        <item name="colorSurfaceContainer">@color/gm3_baseline_surface_container_dark</item>
+        <item name="colorSurfaceContainerHigh">@color/gm3_baseline_surface_container_high_dark</item>
+        <item name="colorSurfaceContainerHighest">@color/gm3_baseline_surface_container_highest_dark</item>
     </style>
 </resources>

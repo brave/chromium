@@ -27,13 +27,14 @@ void BatterySaverButtonController::Init(
   UpdateVisibilityState(is_active);
 }
 
-void BatterySaverButtonController::OnBatterySaverModeChanged(bool is_active) {
+void BatterySaverButtonController::OnBatterySaverActiveChanged(bool is_active) {
   UpdateVisibilityState(is_active);
 }
 
 void BatterySaverButtonController::UpdateVisibilityState(bool is_active) {
-  if (is_active)
+  if (is_active) {
     delegate_->Show();
-  else
+  } else {
     delegate_->Hide();
+  }
 }

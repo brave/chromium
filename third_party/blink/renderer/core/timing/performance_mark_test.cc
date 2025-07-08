@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/timing/performance_mark.h"
 
 #include "base/json/json_reader.h"
+#include "components/page_load_metrics/browser/observers/use_counter_page_load_metrics_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -14,11 +15,18 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
 
-TEST(PerformanceMarkTest, CreateWithOptions) {
+class PerformanceMarkTest : public testing::Test {
+ protected:
+  test::TaskEnvironment task_environment_;
+};
+
+TEST_F(PerformanceMarkTest, CreateWithOptions) {
   V8TestingScope scope;
 
   ExceptionState& exception_state = scope.GetExceptionState();
@@ -39,7 +47,7 @@ TEST(PerformanceMarkTest, CreateWithOptions) {
             pm->detail(script_state).V8Value());
 }
 
-TEST(PerformanceMarkTest, Construction) {
+TEST_F(PerformanceMarkTest, Construction) {
   V8TestingScope scope;
 
   ExceptionState& exception_state = scope.GetExceptionState();
@@ -55,10 +63,10 @@ TEST(PerformanceMarkTest, Construction) {
 
   ASSERT_EQ(SerializedScriptValue::NullValue()->Deserialize(isolate),
             pm->detail(script_state).V8Value());
-  ASSERT_TRUE(WTF::IsValidUUID(pm->navigationId()));
+  ASSERT_TRUE(IsValidUUID(pm->navigationId()));
 }
 
-TEST(PerformanceMarkTest, ConstructionWithDetail) {
+TEST_F(PerformanceMarkTest, ConstructionWithDetail) {
   V8TestingScope scope;
 
   ExceptionState& exception_state = scope.GetExceptionState();
@@ -77,7 +85,7 @@ TEST(PerformanceMarkTest, ConstructionWithDetail) {
             pm->detail(script_state).V8Value());
 }
 
-TEST(PerformanceMarkTest, BuildJSONValue) {
+TEST_F(PerformanceMarkTest, BuildJSONValue) {
   V8TestingScope scope;
 
   ExceptionState& exception_state = scope.GetExceptionState();
@@ -87,14 +95,16 @@ TEST(PerformanceMarkTest, BuildJSONValue) {
   const double expected_start_time = 0;
   const double expected_duration = 0;
   const AtomicString expected_entry_type("mark");
-  PerformanceMark pm(expected_name, expected_start_time, base::TimeTicks(),
-                     SerializedScriptValue::NullValue(), exception_state,
-                     LocalDOMWindow::From(script_state));
+  PerformanceMark* pm = MakeGarbageCollected<PerformanceMark>(
+      expected_name, expected_start_time, base::TimeTicks(),
+      SerializedScriptValue::NullValue(), exception_state,
+      LocalDOMWindow::From(script_state));
 
-  ScriptValue json_object = pm.toJSONForBinding(script_state);
+  ScriptValue json_object = pm->toJSONForBinding(script_state);
   EXPECT_TRUE(json_object.IsObject());
 
   String json_string = ToBlinkString<String>(
+      scope.GetIsolate(),
       v8::JSON::Stringify(scope.GetContext(),
                           json_object.V8Value().As<v8::Object>())
           .ToLocalChecked(),
@@ -113,6 +123,18 @@ TEST(PerformanceMarkTest, BuildJSONValue) {
             parsed_json->GetDict().FindDouble("duration").value());
 
   EXPECT_EQ(5ul, parsed_json->GetDict().size());
+}
+
+TEST_F(PerformanceMarkTest, UserFeatureNamesHaveCorrespondingWebFeature) {
+  const PerformanceMark::UserFeatureNameToWebFeatureMap& map =
+      PerformanceMark::GetUseCounterMappingForTesting();
+  const UseCounterMetricsRecorder::UkmFeatureList& allowed_features =
+      UseCounterMetricsRecorder::GetAllowedUkmFeaturesForTesting();
+
+  // Each user feature name should be mapped to an allowed UKM feature.
+  for (auto [userFeatureName, webFeature] : map) {
+    ASSERT_TRUE(allowed_features.contains(webFeature));
+  }
 }
 
 }  // namespace blink

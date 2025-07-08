@@ -18,12 +18,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <array>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/queue.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -31,8 +34,10 @@
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -46,8 +51,6 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
-#include "net/cert/ct_policy_enforcer.h"
-#include "net/cert/ct_policy_status.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/mock_client_cert_verifier.h"
 #include "net/cert/signed_certificate_timestamp_and_status.h"
@@ -58,6 +61,7 @@
 #include "net/socket/socket_test_util.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/stream_socket.h"
+#include "net/ssl/openssl_private_key.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_client_session_cache.h"
@@ -66,7 +70,6 @@
 #include "net/ssl/ssl_private_key.h"
 #include "net/ssl/ssl_server_config.h"
 #include "net/ssl/test_ssl_config_service.h"
-#include "net/ssl/test_ssl_private_key.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
@@ -93,7 +96,7 @@ const char kWrongClientCertFileName[] = "client_2.pem";
 const char kWrongClientPrivateKeyFileName[] = "client_2.pk8";
 #endif  // BUILDFLAG(ENABLE_CLIENT_CERTIFICATES)
 
-const uint16_t kEcdheCiphers[] = {
+const auto kEcdheCiphers = std::to_array<uint16_t>({
     0xc007,  // ECDHE_ECDSA_WITH_RC4_128_SHA
     0xc009,  // ECDHE_ECDSA_WITH_AES_128_CBC_SHA
     0xc00a,  // ECDHE_ECDSA_WITH_AES_256_CBC_SHA
@@ -106,19 +109,7 @@ const uint16_t kEcdheCiphers[] = {
     0xc030,  // ECDHE_RSA_WITH_AES_256_GCM_SHA384
     0xcca8,  // ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
     0xcca9,  // ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
-};
-
-class MockCTPolicyEnforcer : public CTPolicyEnforcer {
- public:
-  MockCTPolicyEnforcer() = default;
-  ~MockCTPolicyEnforcer() override = default;
-  ct::CTPolicyCompliance CheckCompliance(
-      X509Certificate* cert,
-      const ct::SCTList& verified_scts,
-      const NetLogWithSource& net_log) override {
-    return ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-  }
-};
+});
 
 class FakeDataChannel {
  public:
@@ -208,7 +199,7 @@ class FakeDataChannel {
   int PropagateData(scoped_refptr<IOBuffer> read_buf, int read_buf_len) {
     scoped_refptr<DrainableIOBuffer> buf = data_.front();
     int copied = std::min(buf->BytesRemaining(), read_buf_len);
-    memcpy(read_buf->data(), buf->data(), copied);
+    read_buf->span().copy_prefix_from(buf->first(copied));
     buf->DidConsume(copied);
 
     if (!buf->BytesRemaining())
@@ -293,9 +284,9 @@ class FakeSocket : public StreamSocket {
 
   bool WasEverUsed() const override { return true; }
 
-  bool WasAlpnNegotiated() const override { return false; }
-
-  NextProto GetNegotiatedProtocol() const override { return kProtoUnknown; }
+  NextProto GetNegotiatedProtocol() const override {
+    return NextProto::kProtoUnknown;
+  }
 
   bool GetSSLInfo(SSLInfo* ssl_info) override { return false; }
 
@@ -324,26 +315,24 @@ TEST(FakeSocketTest, DataTransfer) {
   FakeSocket client(&channel_1, &channel_2);
   FakeSocket server(&channel_2, &channel_1);
 
-  const char kTestData[] = "testing123";
-  const int kTestDataSize = strlen(kTestData);
+  static constexpr std::string_view kTestData = "testing123";
   const int kReadBufSize = 1024;
-  scoped_refptr<IOBuffer> write_buf =
-      base::MakeRefCounted<StringIOBuffer>(kTestData);
-  scoped_refptr<IOBuffer> read_buf =
-      base::MakeRefCounted<IOBuffer>(kReadBufSize);
+  auto write_buf = base::MakeRefCounted<StringIOBuffer>(std::string(kTestData));
+  auto read_buf = base::MakeRefCounted<IOBufferWithSize>(kReadBufSize);
 
   // Write then read.
   int written =
-      server.Write(write_buf.get(), kTestDataSize, CompletionOnceCallback(),
+      server.Write(write_buf.get(), kTestData.size(), CompletionOnceCallback(),
                    TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_GT(written, 0);
-  EXPECT_LE(written, kTestDataSize);
+  EXPECT_LE(written, kTestData.size());
 
   int read =
       client.Read(read_buf.get(), kReadBufSize, CompletionOnceCallback());
   EXPECT_GT(read, 0);
   EXPECT_LE(read, written);
-  EXPECT_EQ(0, memcmp(kTestData, read_buf->data(), read));
+  EXPECT_EQ(kTestData.substr(0, read),
+            base::as_string_view(read_buf->first(read)));
 
   // Read then write.
   TestCompletionCallback callback;
@@ -351,15 +340,16 @@ TEST(FakeSocketTest, DataTransfer) {
             server.Read(read_buf.get(), kReadBufSize, callback.callback()));
 
   written =
-      client.Write(write_buf.get(), kTestDataSize, CompletionOnceCallback(),
+      client.Write(write_buf.get(), kTestData.size(), CompletionOnceCallback(),
                    TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_GT(written, 0);
-  EXPECT_LE(written, kTestDataSize);
+  EXPECT_LE(written, kTestData.size());
 
   read = callback.WaitForResult();
   EXPECT_GT(read, 0);
   EXPECT_LE(read, written);
-  EXPECT_EQ(0, memcmp(kTestData, read_buf->data(), read));
+  EXPECT_EQ(kTestData.substr(0, read),
+            base::as_string_view(read_buf->first(read)));
 }
 
 class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
@@ -370,7 +360,6 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
         cert_verifier_(std::make_unique<MockCertVerifier>()),
         client_cert_verifier_(std::make_unique<MockClientCertVerifier>()),
         transport_security_state_(std::make_unique<TransportSecurityState>()),
-        ct_policy_enforcer_(std::make_unique<MockCTPolicyEnforcer>()),
         ssl_client_session_cache_(std::make_unique<SSLClientSessionCache>(
             SSLClientSessionCache::Config())) {}
 
@@ -397,8 +386,8 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
 
     client_context_ = std::make_unique<SSLClientContext>(
         ssl_config_service_.get(), cert_verifier_.get(),
-        transport_security_state_.get(), ct_policy_enforcer_.get(),
-        ssl_client_session_cache_.get(), nullptr);
+        transport_security_state_.get(), ssl_client_session_cache_.get(),
+        nullptr);
   }
 
  protected:
@@ -480,18 +469,15 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
   }
 #endif  // BUILDFLAG(ENABLE_CLIENT_CERTIFICATES)
 
-  std::unique_ptr<crypto::RSAPrivateKey> ReadTestKey(base::StringPiece name) {
+  std::unique_ptr<crypto::RSAPrivateKey> ReadTestKey(std::string_view name) {
     base::FilePath certs_dir(GetTestCertsDirectory());
     base::FilePath key_path = certs_dir.AppendASCII(name);
     std::string key_string;
     if (!base::ReadFileToString(key_path, &key_string))
       return nullptr;
-    std::vector<uint8_t> key_vector(
-        reinterpret_cast<const uint8_t*>(key_string.data()),
-        reinterpret_cast<const uint8_t*>(key_string.data() +
-                                         key_string.length()));
     std::unique_ptr<crypto::RSAPrivateKey> key(
-        crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(key_vector));
+        crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(
+            base::as_byte_span(key_string)));
     return key;
   }
 
@@ -501,7 +487,7 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
         base::MakeRefCounted<StringIOBuffer>("testing123");
     scoped_refptr<DrainableIOBuffer> read_buf =
         base::MakeRefCounted<DrainableIOBuffer>(
-            base::MakeRefCounted<IOBuffer>(kReadBufSize), kReadBufSize);
+            base::MakeRefCounted<IOBufferWithSize>(kReadBufSize), kReadBufSize);
     TestCompletionCallback write_callback;
     TestCompletionCallback read_callback;
     int server_ret = server_socket_->Write(write_buf.get(), write_buf->size(),
@@ -520,13 +506,14 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
 
   std::unique_ptr<FakeDataChannel> channel_1_;
   std::unique_ptr<FakeDataChannel> channel_2_;
-  SSLConfig client_ssl_config_;
-  SSLServerConfig server_ssl_config_;
   std::unique_ptr<TestSSLConfigService> ssl_config_service_;
   std::unique_ptr<MockCertVerifier> cert_verifier_;
   std::unique_ptr<MockClientCertVerifier> client_cert_verifier_;
+  SSLConfig client_ssl_config_;
+  // Note that this has a pointer to the `cert_verifier_`, so must be destroyed
+  // before that is.
+  SSLServerConfig server_ssl_config_;
   std::unique_ptr<TransportSecurityState> transport_security_state_;
-  std::unique_ptr<MockCTPolicyEnforcer> ct_policy_enforcer_;
   std::unique_ptr<SSLClientSessionCache> ssl_client_session_cache_;
   std::unique_ptr<SSLClientContext> client_context_;
   std::unique_ptr<SSLServerContext> server_context_;
@@ -924,7 +911,7 @@ TEST_F(SSLServerSocketTest, HandshakeWithWrongClientCertSupplied) {
   const int kReadBufSize = 1024;
   scoped_refptr<DrainableIOBuffer> read_buf =
       base::MakeRefCounted<DrainableIOBuffer>(
-          base::MakeRefCounted<IOBuffer>(kReadBufSize), kReadBufSize);
+          base::MakeRefCounted<IOBufferWithSize>(kReadBufSize), kReadBufSize);
   TestCompletionCallback read_callback;
   client_ret = client_socket_->Read(read_buf.get(), read_buf->BytesRemaining(),
                                     read_callback.callback());
@@ -982,7 +969,7 @@ TEST_F(SSLServerSocketTest, HandshakeWithWrongClientCertSuppliedCached) {
   const int kReadBufSize = 1024;
   scoped_refptr<DrainableIOBuffer> read_buf =
       base::MakeRefCounted<DrainableIOBuffer>(
-          base::MakeRefCounted<IOBuffer>(kReadBufSize), kReadBufSize);
+          base::MakeRefCounted<IOBufferWithSize>(kReadBufSize), kReadBufSize);
   TestCompletionCallback read_callback;
   client_ret = client_socket_->Read(read_buf.get(), read_buf->BytesRemaining(),
                                     read_callback.callback());
@@ -1036,7 +1023,7 @@ TEST_P(SSLServerSocketReadTest, DataTransfer) {
       base::MakeRefCounted<StringIOBuffer>("testing123");
   scoped_refptr<DrainableIOBuffer> read_buf =
       base::MakeRefCounted<DrainableIOBuffer>(
-          base::MakeRefCounted<IOBuffer>(kReadBufSize), kReadBufSize);
+          base::MakeRefCounted<IOBufferWithSize>(kReadBufSize), kReadBufSize);
 
   // Write then read.
   TestCompletionCallback write_callback;
@@ -1065,7 +1052,7 @@ TEST_P(SSLServerSocketReadTest, DataTransfer) {
   }
   EXPECT_EQ(write_buf->size(), read_buf->BytesConsumed());
   read_buf->SetOffset(0);
-  EXPECT_EQ(0, memcmp(write_buf->data(), read_buf->data(), write_buf->size()));
+  EXPECT_EQ(write_buf->span(), read_buf->first(write_buf->size()));
 
   // Read then write.
   write_buf = base::MakeRefCounted<StringIOBuffer>("hello123");
@@ -1099,7 +1086,7 @@ TEST_P(SSLServerSocketReadTest, DataTransfer) {
   }
   EXPECT_EQ(write_buf->size(), read_buf->BytesConsumed());
   read_buf->SetOffset(0);
-  EXPECT_EQ(0, memcmp(write_buf->data(), read_buf->data(), write_buf->size()));
+  EXPECT_EQ(write_buf->span(), read_buf->first(write_buf->size()));
 }
 
 // A regression test for bug 127822 (http://crbug.com/127822).
@@ -1181,32 +1168,33 @@ TEST_F(SSLServerSocketTest, ExportKeyingMaterial) {
 
   const int kKeyingMaterialSize = 32;
   const char kKeyingLabel[] = "EXPERIMENTAL-server-socket-test";
-  const char kKeyingContext[] = "";
-  unsigned char server_out[kKeyingMaterialSize];
-  int rv = server_socket_->ExportKeyingMaterial(
-      kKeyingLabel, false, kKeyingContext, server_out, sizeof(server_out));
+  std::array<uint8_t, kKeyingMaterialSize> server_out;
+  int rv = server_socket_->ExportKeyingMaterial(kKeyingLabel, std::nullopt,
+                                                server_out);
   ASSERT_THAT(rv, IsOk());
 
-  unsigned char client_out[kKeyingMaterialSize];
-  rv = client_socket_->ExportKeyingMaterial(kKeyingLabel, false, kKeyingContext,
-                                            client_out, sizeof(client_out));
+  std::array<uint8_t, kKeyingMaterialSize> client_out;
+  rv = client_socket_->ExportKeyingMaterial(kKeyingLabel, std::nullopt,
+                                            client_out);
   ASSERT_THAT(rv, IsOk());
-  EXPECT_EQ(0, memcmp(server_out, client_out, sizeof(server_out)));
+  EXPECT_EQ(server_out, client_out);
 
   const char kKeyingLabelBad[] = "EXPERIMENTAL-server-socket-test-bad";
-  unsigned char client_bad[kKeyingMaterialSize];
-  rv = client_socket_->ExportKeyingMaterial(
-      kKeyingLabelBad, false, kKeyingContext, client_bad, sizeof(client_bad));
+  std::array<uint8_t, kKeyingMaterialSize> client_bad;
+  rv = client_socket_->ExportKeyingMaterial(kKeyingLabelBad, std::nullopt,
+                                            client_bad);
   ASSERT_EQ(rv, OK);
-  EXPECT_NE(0, memcmp(server_out, client_bad, sizeof(server_out)));
+  EXPECT_NE(server_out, client_bad);
 }
 
 // Verifies that SSLConfig::require_ecdhe flags works properly.
 TEST_F(SSLServerSocketTest, RequireEcdheFlag) {
   // Disable all ECDHE suites on the client side.
   SSLContextConfig config;
-  config.disabled_cipher_suites.assign(
-      kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));
+  config.disabled_cipher_suites.assign(kEcdheCiphers.data(),
+                                       base::span<const uint16_t>(kEcdheCiphers)
+                                           .subspan(std::size(kEcdheCiphers))
+                                           .data());
 
   // Legacy RSA key exchange ciphers only exist in TLS 1.2 and below.
   config.version_max = SSL_PROTOCOL_VERSION_TLS1_2;
@@ -1336,8 +1324,10 @@ TEST_F(SSLServerSocketTest,
 TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKeyRequireEcdhe) {
   // Disable all ECDHE suites on the client side.
   SSLContextConfig config;
-  config.disabled_cipher_suites.assign(
-      kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));
+  config.disabled_cipher_suites.assign(kEcdheCiphers.data(),
+                                       base::span<const uint16_t>(kEcdheCiphers)
+                                           .subspan(std::size(kEcdheCiphers))
+                                           .data());
   // TLS 1.3 always works with SSLPrivateKey.
   config.version_max = SSL_PROTOCOL_VERSION_TLS1_2;
   ssl_config_service_->UpdateSSLConfigAndNotify(config);
@@ -1379,15 +1369,28 @@ TEST_P(SSLServerSocketAlpsTest, Alps) {
   const std::string server_data = "server sends some test data";
   const std::string client_data = "client also sends some data";
 
-  server_ssl_config_.alpn_protos = {kProtoHTTP2};
+  server_ssl_config_.alpn_protos = {NextProto::kProtoHTTP2};
   if (server_alps_enabled_) {
-    server_ssl_config_.application_settings[kProtoHTTP2] =
+    server_ssl_config_.application_settings[NextProto::kProtoHTTP2] =
         std::vector<uint8_t>(server_data.begin(), server_data.end());
   }
 
-  client_ssl_config_.alpn_protos = {kProtoHTTP2};
+  // Configure the server to support whichever ALPS codepoint the client sent.
+  server_ssl_config_.client_hello_callback_for_testing =
+      base::BindRepeating([](const SSL_CLIENT_HELLO* client_hello) {
+        const uint8_t* unused_extension_bytes;
+        size_t unused_extension_len;
+        int use_alps_new_codepoint = SSL_early_callback_ctx_extension_get(
+            client_hello, TLSEXT_TYPE_application_settings,
+            &unused_extension_bytes, &unused_extension_len);
+        SSL_set_alps_use_new_codepoint(client_hello->ssl,
+                                       use_alps_new_codepoint);
+        return true;
+      });
+
+  client_ssl_config_.alpn_protos = {NextProto::kProtoHTTP2};
   if (client_alps_enabled_) {
-    client_ssl_config_.application_settings[kProtoHTTP2] =
+    client_ssl_config_.application_settings[NextProto::kProtoHTTP2] =
         std::vector<uint8_t>(client_data.begin(), client_data.end());
   }
 
@@ -1438,7 +1441,7 @@ TEST_F(SSLServerSocketTest, CancelReadIfReady) {
   // Attempt to read from the server socket. There will not be anything to read.
   // Cancel the read immediately afterwards.
   TestCompletionCallback read_callback;
-  auto read_buf = base::MakeRefCounted<IOBuffer>(1);
+  auto read_buf = base::MakeRefCounted<IOBufferWithSize>(1);
   int read_ret =
       server_socket_->ReadIfReady(read_buf.get(), 1, read_callback.callback());
   ASSERT_THAT(read_ret, IsError(ERR_IO_PENDING));

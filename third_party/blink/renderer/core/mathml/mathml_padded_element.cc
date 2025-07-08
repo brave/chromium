@@ -5,7 +5,7 @@
 #include "third_party/blink/renderer/core/mathml/mathml_padded_element.h"
 
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
-#include "third_party/blink/renderer/core/layout/ng/mathml/layout_ng_mathml_block_with_anonymous_mrow.h"
+#include "third_party/blink/renderer/core/layout/mathml/layout_mathml_block_with_anonymous_mrow.h"
 
 namespace blink {
 
@@ -72,7 +72,7 @@ bool MathMLPaddedElement::IsPresentationAttribute(
 void MathMLPaddedElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
+    HeapVector<CSSPropertyValue, 8>& style) {
   if (name == mathml_names::kWidthAttr) {
     if (const CSSPrimitiveValue* width_value =
             ParseMathLength(name, AllowPercentages::kNo,
@@ -90,7 +90,7 @@ LayoutObject* MathMLPaddedElement::CreateLayoutObject(
   if (!style.IsDisplayMathType()) {
     return MathMLElement::CreateLayoutObject(style);
   }
-  return MakeGarbageCollected<LayoutNGMathMLBlockWithAnonymousMrow>(this);
+  return MakeGarbageCollected<LayoutMathMLBlockWithAnonymousMrow>(this);
 }
 
 }  // namespace blink

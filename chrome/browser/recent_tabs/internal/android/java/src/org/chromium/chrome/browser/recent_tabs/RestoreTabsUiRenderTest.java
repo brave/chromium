@@ -31,14 +31,15 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSession;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSessionTab;
 import org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.DetailItemType;
@@ -51,12 +52,11 @@ import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.sync_device_info.FormFactor;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.BlankUiTestActivity;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.ui.test.util.RenderTestRule;
 import org.chromium.ui.test.util.ViewUtils;
@@ -79,26 +79,18 @@ public class RestoreTabsUiRenderTest {
     public final ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(RenderTestRule.Component.UI_BROWSER_MOBILE_RECENT_TABS)
-                    .setRevision(3)
+                    .setRevision(4)
                     .build();
+
     @Rule
     public BaseActivityTestRule<BlankUiTestActivity> mActivityTestRule =
             new BaseActivityTestRule<>(BlankUiTestActivity.class);
-    @Rule
-    public JniMocker jniMocker = new JniMocker();
-    @Rule
-    public final DisableAnimationsTestRule mDisableAnimationsRule = new DisableAnimationsTestRule();
 
-    @Mock
-    ForeignSessionHelper.Natives mForeignSessionHelperJniMock;
-    @Mock
-    FaviconHelper.Natives mFaviconHelperJniMock;
-    @Mock
-    private Profile mProfile;
-    @Mock
-    private TabCreatorManager mTabCreatorManager;
-    @Mock
-    private BottomSheetController mBottomSheetController;
+    @Mock ForeignSessionHelper.Natives mForeignSessionHelperJniMock;
+    @Mock FaviconHelper.Natives mFaviconHelperJniMock;
+    @Mock private Profile mProfile;
+    @Mock private TabCreatorManager mTabCreatorManager;
+    @Mock private BottomSheetController mBottomSheetController;
 
     private RestoreTabsCoordinator mCoordinator;
     private View mView;
@@ -113,31 +105,36 @@ public class RestoreTabsUiRenderTest {
     @Before
     public void setUp() throws InterruptedException {
         MockitoAnnotations.initMocks(this);
-        Profile.setLastUsedProfileForTesting(mProfile);
-        jniMocker.mock(ForeignSessionHelperJni.TEST_HOOKS, mForeignSessionHelperJniMock);
-        jniMocker.mock(FaviconHelperJni.TEST_HOOKS, mFaviconHelperJniMock);
+        ProfileManager.setLastUsedProfileForTesting(mProfile);
+        ForeignSessionHelperJni.setInstanceForTesting(mForeignSessionHelperJniMock);
+        FaviconHelperJni.setInstanceForTesting(mFaviconHelperJniMock);
         mActivityTestRule.launchActivity(null);
         when(mFaviconHelperJniMock.init()).thenReturn(1L);
 
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            Activity activity = mActivityTestRule.getActivity();
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Activity activity = mActivityTestRule.getActivity();
 
-            mCoordinator = new RestoreTabsCoordinator(mActivityTestRule.getActivity(), mProfile,
-                    mTabCreatorManager, mBottomSheetController);
-            mView = mCoordinator.getContentViewForTesting();
-            mView.setBackground(
-                    AppCompatResources.getDrawable(activity, R.drawable.menu_bg_tinted));
-            mModel = mCoordinator.getPropertyModelForTesting();
+                    mCoordinator =
+                            new RestoreTabsCoordinator(
+                                    mActivityTestRule.getActivity(),
+                                    mProfile,
+                                    mTabCreatorManager,
+                                    mBottomSheetController);
+                    mView = mCoordinator.getContentViewForTesting();
+                    mView.setBackground(
+                            AppCompatResources.getDrawable(activity, R.drawable.menu_bg_tinted));
+                    mModel = mCoordinator.getPropertyModelForTesting();
 
-            mRootView = new FrameLayout(activity);
-            activity.setContentView(mRootView);
-            mRootView.addView(mView);
-        });
+                    mRootView = new FrameLayout(activity);
+                    activity.setContentView(mRootView);
+                    mRootView.addView(mView);
+                });
     }
 
     @After
     public void tearDownTest() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> NightModeTestUtils.tearDownNightModeForBlankUiTestActivity());
     }
 
@@ -145,27 +142,34 @@ public class RestoreTabsUiRenderTest {
     @MediumTest
     @Feature("RenderTest")
     public void testPromoScreenSheet_allOptionsEnabled() throws IOException, InterruptedException {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            // 0 devices in DEVICE_MODEL_LIST and 1 selected tab in REVIEW_TABS_MODEL_LIST.
-            // Restore tabs button enabled and chevron/onClickListener for device view.
-            ForeignSessionTab tab = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-            ForeignSession session = new ForeignSession(
-                    "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    // 0 devices in DEVICE_MODEL_LIST and 1 selected tab in REVIEW_TABS_MODEL_LIST.
+                    // Restore tabs button enabled and chevron/onClickListener for device view.
+                    ForeignSessionTab tab =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+                    ForeignSession session =
+                            new ForeignSession(
+                                    "tag",
+                                    "John's iPhone 6",
+                                    32L,
+                                    new ArrayList<>(),
+                                    FormFactor.PHONE);
 
-            ModelList tabItems = mModel.get(RestoreTabsProperties.REVIEW_TABS_MODEL_LIST);
-            tabItems.clear();
-            PropertyModel model = TabItemProperties.create(/*tab=*/tab, /*isSelected=*/true);
-            model.set(TabItemProperties.ON_CLICK_LISTENER, () -> {});
-            tabItems.add(new ListItem(DetailItemType.TAB, model));
+                    ModelList tabItems = mModel.get(RestoreTabsProperties.REVIEW_TABS_MODEL_LIST);
+                    tabItems.clear();
+                    PropertyModel model =
+                            TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
+                    model.set(TabItemProperties.ON_CLICK_LISTENER, () -> {});
+                    tabItems.add(new ListItem(DetailItemType.TAB, model));
 
-            mModel.set(SELECTED_DEVICE, session);
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-        });
+                    mModel.set(SELECTED_DEVICE, session);
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_promo_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(mRootView, "restore_tabs_promo_screen_all_enabled");
     }
@@ -175,26 +179,35 @@ public class RestoreTabsUiRenderTest {
     @Feature("RenderTest")
     public void testPromoScreenSheet_disabledDeviceViewAndRestoreButtonWithTabletIcon()
             throws IOException, InterruptedException {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            // 1 device in DEVICE_MODEL_LIST and 0 selected tabs in REVIEW_TABS_MODEL_LIST.
-            // Restore tabs button disabled, tablet icon and no chevron/onClickListener for device
-            // view.
-            ForeignSession session = new ForeignSession(
-                    "tag", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.TABLET);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    // 1 device in DEVICE_MODEL_LIST and 0 selected tabs in REVIEW_TABS_MODEL_LIST.
+                    // Restore tabs button disabled, tablet icon and no chevron/onClickListener for
+                    // device view.
+                    ForeignSession session =
+                            new ForeignSession(
+                                    "tag",
+                                    "John's iPhone 6",
+                                    32L,
+                                    new ArrayList<>(),
+                                    FormFactor.TABLET);
 
-            ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
-            sessionItems.clear();
-            PropertyModel model = ForeignSessionItemProperties.create(
-                    /*session=*/session, /*isSelected=*/false, /*onClickListener=*/() -> {});
-            sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
+                    ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
+                    sessionItems.clear();
+                    PropertyModel model =
+                            ForeignSessionItemProperties.create(
+                                    /* session= */ session,
+                                    /* isSelected= */ false,
+                                    /* onClickListener= */ () -> {});
+                    sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
 
-            mModel.set(SELECTED_DEVICE, session);
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-        });
+                    mModel.set(SELECTED_DEVICE, session);
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_promo_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(mRootView, "restore_tabs_promo_screen_disabled_elements");
     }
@@ -206,31 +219,45 @@ public class RestoreTabsUiRenderTest {
             throws IOException, InterruptedException {
         // For simplicity, this test sets all listed devices as selected to test UI elements
         // instead of calling core logic functions to select the most recently accessed device.
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            ForeignSession session1 = new ForeignSession(
-                    "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
-            ForeignSession session2 = new ForeignSession(
-                    "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ForeignSession session1 =
+                            new ForeignSession(
+                                    "tag1",
+                                    "John's iPhone 6",
+                                    32L,
+                                    new ArrayList<>(),
+                                    FormFactor.PHONE);
+                    ForeignSession session2 =
+                            new ForeignSession(
+                                    "tag2",
+                                    "John's iPhone 7",
+                                    33L,
+                                    new ArrayList<>(),
+                                    FormFactor.PHONE);
 
-            List<ForeignSession> sessions = new ArrayList<>();
-            sessions.add(session1);
-            sessions.add(session2);
+                    List<ForeignSession> sessions = new ArrayList<>();
+                    sessions.add(session1);
+                    sessions.add(session2);
 
-            ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
-            sessionItems.clear();
-            for (ForeignSession session : sessions) {
-                PropertyModel model = ForeignSessionItemProperties.create(
-                        /*session=*/session, /*isSelected=*/true, /*onClickListener=*/() -> {});
-                sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
-            }
+                    ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
+                    sessionItems.clear();
+                    for (ForeignSession session : sessions) {
+                        PropertyModel model =
+                                ForeignSessionItemProperties.create(
+                                        /* session= */ session,
+                                        /* isSelected= */ true,
+                                        /* onClickListener= */ () -> {});
+                        sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
+                    }
 
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-            mView.findViewById(R.id.restore_tabs_selected_device_view).performClick();
-        });
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_selected_device_view).performClick();
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(mRootView, "restore_tabs_detail_screen_two_item_decoration");
     }
@@ -242,34 +269,53 @@ public class RestoreTabsUiRenderTest {
             throws IOException, InterruptedException {
         // For simplicity, this test sets all listed devices as deselected instead of calling
         // core logic functions to select the most recently accessed device.
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            ForeignSession session1 = new ForeignSession(
-                    "tag1", "John's iPhone 6", 32L, new ArrayList<>(), FormFactor.PHONE);
-            ForeignSession session2 = new ForeignSession(
-                    "tag2", "John's iPhone 7", 33L, new ArrayList<>(), FormFactor.PHONE);
-            ForeignSession session3 = new ForeignSession(
-                    "tag3", "John's iPad Air", 34L, new ArrayList<>(), FormFactor.TABLET);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ForeignSession session1 =
+                            new ForeignSession(
+                                    "tag1",
+                                    "John's iPhone 6",
+                                    32L,
+                                    new ArrayList<>(),
+                                    FormFactor.PHONE);
+                    ForeignSession session2 =
+                            new ForeignSession(
+                                    "tag2",
+                                    "John's iPhone 7",
+                                    33L,
+                                    new ArrayList<>(),
+                                    FormFactor.PHONE);
+                    ForeignSession session3 =
+                            new ForeignSession(
+                                    "tag3",
+                                    "John's iPad Air",
+                                    34L,
+                                    new ArrayList<>(),
+                                    FormFactor.TABLET);
 
-            List<ForeignSession> sessions = new ArrayList<>();
-            sessions.add(session1);
-            sessions.add(session2);
-            sessions.add(session3);
+                    List<ForeignSession> sessions = new ArrayList<>();
+                    sessions.add(session1);
+                    sessions.add(session2);
+                    sessions.add(session3);
 
-            ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
-            sessionItems.clear();
-            for (ForeignSession session : sessions) {
-                PropertyModel model = ForeignSessionItemProperties.create(
-                        /*session=*/session, /*isSelected=*/false, /*onClickListener=*/() -> {});
-                sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
-            }
+                    ModelList sessionItems = mModel.get(DEVICE_MODEL_LIST);
+                    sessionItems.clear();
+                    for (ForeignSession session : sessions) {
+                        PropertyModel model =
+                                ForeignSessionItemProperties.create(
+                                        /* session= */ session,
+                                        /* isSelected= */ false,
+                                        /* onClickListener= */ () -> {});
+                        sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
+                    }
 
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-            mView.findViewById(R.id.restore_tabs_selected_device_view).performClick();
-        });
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_selected_device_view).performClick();
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(mRootView, "restore_tabs_detail_screen_three_item_decoration");
     }
@@ -277,36 +323,92 @@ public class RestoreTabsUiRenderTest {
     @Test
     @MediumTest
     @Feature("RenderTest")
-    public void testReviewTabsScreenSheet_allTabsSelected()
+    public void testReviewTabsScreenSheet_checkBackArrowRTL()
             throws IOException, InterruptedException {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            ForeignSessionTab tab1 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-            ForeignSessionTab tab2 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title2", 33L, 0);
-            ForeignSessionTab tab3 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title3", 34L, 0);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    // Reinitialize the constructor and dependents to include RTL for testing.
+                    mRootView.removeView(mView);
 
-            List<ForeignSessionTab> tabs = new ArrayList<>();
-            tabs.add(tab1);
-            tabs.add(tab2);
-            tabs.add(tab3);
+                    Activity activity = mActivityTestRule.getActivity();
+                    LocalizationUtils.setRtlForTesting(true);
+                    mCoordinator =
+                            new RestoreTabsCoordinator(
+                                    mActivityTestRule.getActivity(),
+                                    mProfile,
+                                    mTabCreatorManager,
+                                    mBottomSheetController);
+                    mView = mCoordinator.getContentViewForTesting();
+                    mView.setBackground(
+                            AppCompatResources.getDrawable(activity, R.drawable.menu_bg_tinted));
+                    mModel = mCoordinator.getPropertyModelForTesting();
+                    mRootView.addView(mView);
 
-            ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-            tabItems.clear();
-            for (ForeignSessionTab tab : tabs) {
-                PropertyModel model = TabItemProperties.create(
-                        /*tab=*/tab, /*isSelected=*/true);
-                tabItems.add(new ListItem(DetailItemType.TAB, model));
-            }
+                    ForeignSessionTab tab1 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+                    ForeignSessionTab tab2 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title2", 33L, 33L, 0);
+                    ForeignSessionTab tab3 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title3", 34L, 34L, 0);
 
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-            mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
-        });
+                    List<ForeignSessionTab> tabs = new ArrayList<>();
+                    tabs.add(tab1);
+                    tabs.add(tab2);
+                    tabs.add(tab3);
+
+                    ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
+                    tabItems.clear();
+                    for (ForeignSessionTab tab : tabs) {
+                        PropertyModel model =
+                                TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
+                        tabItems.add(new ListItem(DetailItemType.TAB, model));
+                    }
+
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
+        Thread.sleep(2000);
+        mRenderTestRule.render(mRootView, "restore_tabs_detail_screen_review_tabs_rtl");
+    }
+
+    @Test
+    @MediumTest
+    @Feature("RenderTest")
+    public void testReviewTabsScreenSheet_allTabsSelected()
+            throws IOException, InterruptedException {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ForeignSessionTab tab1 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+                    ForeignSessionTab tab2 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title2", 33L, 33L, 0);
+                    ForeignSessionTab tab3 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title3", 34L, 34L, 0);
+
+                    List<ForeignSessionTab> tabs = new ArrayList<>();
+                    tabs.add(tab1);
+                    tabs.add(tab2);
+                    tabs.add(tab3);
+
+                    ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
+                    tabItems.clear();
+                    for (ForeignSessionTab tab : tabs) {
+                        PropertyModel model =
+                                TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
+                        tabItems.add(new ListItem(DetailItemType.TAB, model));
+                    }
+
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
+                });
+
+        ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(mRootView, "restore_tabs_detail_screen_review_tabs_all_selected");
     }
@@ -316,29 +418,30 @@ public class RestoreTabsUiRenderTest {
     @Feature("RenderTest")
     public void testReviewTabsScreenSheet_noTabsSelectedSingleTab()
             throws IOException, InterruptedException {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            ForeignSessionTab tab1 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ForeignSessionTab tab1 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
 
-            List<ForeignSessionTab> tabs = new ArrayList<>();
-            tabs.add(tab1);
+                    List<ForeignSessionTab> tabs = new ArrayList<>();
+                    tabs.add(tab1);
 
-            ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-            tabItems.clear();
-            for (ForeignSessionTab tab : tabs) {
-                PropertyModel model = TabItemProperties.create(
-                        /*tab=*/tab, /*isSelected=*/false);
-                tabItems.add(new ListItem(DetailItemType.TAB, model));
-            }
+                    ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
+                    tabItems.clear();
+                    for (ForeignSessionTab tab : tabs) {
+                        PropertyModel model =
+                                TabItemProperties.create(/* tab= */ tab, /* isSelected= */ false);
+                        tabItems.add(new ListItem(DetailItemType.TAB, model));
+                    }
 
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-            mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
-            mModel.set(NUM_TABS_DESELECTED, 1);
-        });
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
+                    mModel.set(NUM_TABS_DESELECTED, 1);
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
         mRenderTestRule.render(
                 mRootView, "restore_tabs_detail_screen_review_tabs_none_selected_single_tab");
@@ -349,54 +452,56 @@ public class RestoreTabsUiRenderTest {
     @Feature("RenderTest")
     public void testReviewTabsScreenSheet_fillScreenWithTabsScrolledToBottom()
             throws IOException, InterruptedException {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            ForeignSessionTab tab1 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title", 32L, 0);
-            ForeignSessionTab tab2 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title2", 33L, 0);
-            ForeignSessionTab tab3 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title3", 34L, 0);
-            ForeignSessionTab tab4 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title4", 35L, 0);
-            ForeignSessionTab tab5 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title5", 36L, 0);
-            ForeignSessionTab tab6 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title6", 37L, 0);
-            ForeignSessionTab tab7 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title7", 38L, 0);
-            ForeignSessionTab tab8 = new ForeignSessionTab(
-                    JUnitTestGURLs.getGURL(JUnitTestGURLs.URL_1), "title8", 39L, 0);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    ForeignSessionTab tab1 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title", 32L, 32L, 0);
+                    ForeignSessionTab tab2 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title2", 33L, 33L, 0);
+                    ForeignSessionTab tab3 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title3", 34L, 34L, 0);
+                    ForeignSessionTab tab4 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title4", 35L, 35L, 0);
+                    ForeignSessionTab tab5 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title5", 36L, 36L, 0);
+                    ForeignSessionTab tab6 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title6", 37L, 37L, 0);
+                    ForeignSessionTab tab7 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title7", 38L, 38L, 0);
+                    ForeignSessionTab tab8 =
+                            new ForeignSessionTab(JUnitTestGURLs.URL_1, "title8", 39L, 39L, 0);
 
-            List<ForeignSessionTab> tabs = new ArrayList<>();
-            tabs.add(tab1);
-            tabs.add(tab2);
-            tabs.add(tab3);
-            tabs.add(tab4);
-            tabs.add(tab5);
-            tabs.add(tab6);
-            tabs.add(tab7);
-            tabs.add(tab8);
+                    List<ForeignSessionTab> tabs = new ArrayList<>();
+                    tabs.add(tab1);
+                    tabs.add(tab2);
+                    tabs.add(tab3);
+                    tabs.add(tab4);
+                    tabs.add(tab5);
+                    tabs.add(tab6);
+                    tabs.add(tab7);
+                    tabs.add(tab8);
 
-            ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
-            tabItems.clear();
-            for (ForeignSessionTab tab : tabs) {
-                PropertyModel model = TabItemProperties.create(
-                        /*tab=*/tab, /*isSelected=*/true);
-                tabItems.add(new ListItem(DetailItemType.TAB, model));
-            }
+                    ModelList tabItems = mModel.get(REVIEW_TABS_MODEL_LIST);
+                    tabItems.clear();
+                    for (ForeignSessionTab tab : tabs) {
+                        PropertyModel model =
+                                TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
+                        tabItems.add(new ListItem(DetailItemType.TAB, model));
+                    }
 
-            mModel.set(CURRENT_SCREEN, HOME_SCREEN);
-            mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
-            RecyclerView recyclerView =
-                    mView.findViewById(R.id.restore_tabs_detail_screen_recycler_view);
-            recyclerView.scrollToPosition(tabs.size() - 1);
-        });
+                    mModel.set(CURRENT_SCREEN, HOME_SCREEN);
+                    mView.findViewById(R.id.restore_tabs_button_review_tabs).performClick();
+                    RecyclerView recyclerView =
+                            mView.findViewById(R.id.restore_tabs_detail_screen_recycler_view);
+                    recyclerView.scrollToPosition(tabs.size() - 1);
+                });
 
         ViewUtils.waitForView(mRootView, withId(R.id.restore_tabs_detail_screen_sheet));
-        // TODO(1447243): With transitions causing unclear goldens, there is no particular view
-        // that can be waited on hence the need to use a sleep for rendering a cleaner image.
+        // TODO(crbug.com/40268908): With transitions causing unclear goldens, there is no view that
+        // can be waited on hence the need to use a sleep for rendering a cleaner image.
         Thread.sleep(2000);
-        mRenderTestRule.render(mRootView,
+        mRenderTestRule.render(
+                mRootView,
                 "restore_tabs_detail_screen_review_tabs_filled_screen_scrolled_to_bottom");
     }
 }

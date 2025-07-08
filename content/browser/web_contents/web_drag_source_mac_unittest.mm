@@ -4,14 +4,11 @@
 
 #import "content/app_shim_remote_cocoa/web_drag_source_mac.h"
 
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "content/public/common/drop_data.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "url/origin.h"
 
 namespace content {
 
@@ -23,12 +20,13 @@ TEST_F(WebDragSourceMacTest, DragInvalidlyEscapedBookmarklet) {
 
   WebDragSource* source = [[WebDragSource alloc] initWithHost:nullptr
                                                      dropData:drop_data
+                                                 sourceOrigin:url::Origin()
                                                  isPrivileged:NO];
 
   // Test that asking for the data of an invalidly-escaped URL doesn't throw any
   // exceptions. http://crbug.com/128371
   id result = [source pasteboardPropertyListForType:NSPasteboardTypeURL];
-  NSString* result_string = base::mac::ObjCCast<NSString>(result);
+  NSString* result_string = base::apple::ObjCCast<NSString>(result);
   EXPECT_NSEQ(@"javascript:%25", result_string);
 }
 

@@ -13,10 +13,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @class NativeFileDialog;
 
 namespace ui {
@@ -35,8 +31,7 @@ class SelectFileDialogImpl : public SelectFileDialog {
   bool IsRunning(gfx::NativeWindow parent_window) const override;
   void ListenerDestroyed() override;
 
-  void FileWasSelected(void* params,
-                       bool is_multi,
+  void FileWasSelected(bool is_multi,
                        bool was_cancelled,
                        const std::vector<base::FilePath>& files,
                        int index);
@@ -50,7 +45,6 @@ class SelectFileDialogImpl : public SelectFileDialog {
                       int file_type_index,
                       const base::FilePath::StringType& default_extension,
                       gfx::NativeWindow owning_window,
-                      void* params,
                       const GURL* caller) override;
   bool HasMultipleFileTypeChoicesImpl() override;
 

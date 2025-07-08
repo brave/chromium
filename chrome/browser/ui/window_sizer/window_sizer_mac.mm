@@ -10,10 +10,6 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 // How much horizontal and vertical offset there is between newly
 // opened windows.
 const int WindowSizer::kWindowTilePixels = 22;
@@ -30,16 +26,16 @@ gfx::Point WindowSizer::GetDefaultPopupOrigin(const gfx::Size& size) {
     NSRect window_frame = [window frame];
 
     // Limit to not overflow the work area right and bottom edges.
-    NSPoint limit = NSMakePoint(
-        std::min(NSMinX(window_frame) + kWindowTilePixels,
-                 NSMaxX(work_area) - size.width()),
-        std::max(NSMaxY(window_frame) - kWindowTilePixels,
-                 NSMinY(work_area) + size.height()));
+    NSPoint limit =
+        NSMakePoint(std::min(NSMinX(window_frame) + kWindowTilePixels,
+                             NSMaxX(work_area) - size.width()),
+                    std::max(NSMaxY(window_frame) - kWindowTilePixels,
+                             NSMinY(work_area) + size.height()));
 
     // Adjust corner to now overflow the work area left and top edges, so
     // that if a popup does not fit the title-bar is remains visible.
-    corner = NSMakePoint(std::max(corner.x, limit.x),
-                         std::min(corner.y, limit.y));
+    corner =
+        NSMakePoint(std::max(corner.x, limit.x), std::min(corner.y, limit.y));
   }
 
   return gfx::Point(corner.x, NSHeight(main_area) - corner.y);

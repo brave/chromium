@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://webui-test/mojo_webui_test_support.js';
-
-import {POSITION_CACHE_TABLE_ID, WIFI_DATA_TABLE_ID, WIFI_POLLING_POLICY_TABLE_ID} from 'chrome://location-internals/diagnose_info_view.js';
-import {GeolocationDiagnostics, GeolocationInternalsInterface, GeolocationInternalsPendingReceiver, GeolocationInternalsReceiver, INVALID_CHANNEL, INVALID_RADIO_SIGNAL_STRENGTH, INVALID_SIGNAL_TO_NOISE} from 'chrome://location-internals/geolocation_internals.mojom-webui.js';
+import {LAST_NETWORK_REQUEST_TABLE_ID, LAST_NETWORK_RESPONSE_TABLE_ID, LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID, POSITION_CACHE_TABLE_ID, WIFI_DATA_TABLE_ID, WIFI_POLLING_POLICY_TABLE_ID} from 'chrome://location-internals/diagnose_info_view.js';
+import type {AccessPointData, GeolocationDiagnostics, GeolocationInternalsInterface, GeolocationInternalsObserverRemote, GeolocationInternalsPendingReceiver, NetworkLocationResponse} from 'chrome://location-internals/geolocation_internals.mojom-webui.js';
+import {GeolocationInternalsReceiver, INVALID_CHANNEL, INVALID_RADIO_SIGNAL_STRENGTH, INVALID_SIGNAL_TO_NOISE} from 'chrome://location-internals/geolocation_internals.mojom-webui.js';
 import {BAD_ACCURACY, BAD_ALTITUDE, BAD_HEADING, BAD_LATITUDE_LONGITUDE, BAD_SPEED} from 'chrome://location-internals/geoposition.mojom-webui.js';
-import {DIAGNOSE_INFO_VIEW_ID, initializeMojo, REFRESH_BUTTON_ID, REFRESH_FINISH_EVENT, REFRESH_STATUS_FAILURE, REFRESH_STATUS_ID, REFRESH_STATUS_SUCCESS, WATCH_BUTTON_ID} from 'chrome://location-internals/location_internals.js';
-import {LocationInternalsHandler, LocationInternalsHandlerInterface, LocationInternalsHandlerReceiver} from 'chrome://location-internals/location_internals.mojom-webui.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {getRequiredElement} from 'chrome://resources/js/util_ts.js';
-import {Time, TimeDelta} from 'chrome://resources/mojo/mojo/public/mojom/base/time.mojom-webui.js';
+import {DIAGNOSE_INFO_VIEW_ID, initializeMojo, REFRESH_FINISH_EVENT, REFRESH_STATUS_ID, REFRESH_STATUS_SUCCESS, REFRESH_STATUS_UNINITIALIZED, WATCH_BUTTON_ID} from 'chrome://location-internals/location_internals.js';
+import type {LocationInternalsHandlerInterface} from 'chrome://location-internals/location_internals.mojom-webui.js';
+import {LocationInternalsHandler, LocationInternalsHandlerReceiver} from 'chrome://location-internals/location_internals.mojom-webui.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
+import {getRequiredElement} from 'chrome://resources/js/util.js';
+import type {Time, TimeDelta} from 'chrome://resources/mojo/mojo/public/mojom/base/time.mojom-webui.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 
@@ -19,11 +20,22 @@ let geolocationInternalsRemote: FakeGeolocationInternalsRemote|null = null;
 
 // Updates diagnostic information, then clicks the refresh button and returns a
 // promise that resolves when the display has updated.
-function simulateDiagnosticsUpdate(diagnostics: GeolocationDiagnostics|null) {
+function simulateDiagnosticsUpdate(diagnostics: GeolocationDiagnostics) {
+  const promise = eventToPromise(REFRESH_FINISH_EVENT, window);
   geolocationInternalsRemote!.installDiagnostics(diagnostics);
-  const refreshButton = getRequiredElement<HTMLElement>(REFRESH_BUTTON_ID);
-  const promise = eventToPromise(REFRESH_FINISH_EVENT, refreshButton);
-  refreshButton.click();
+  return promise;
+}
+
+function simulateNetworkLocationRequest(request: AccessPointData[]) {
+  const promise = eventToPromise(REFRESH_FINISH_EVENT, window);
+  geolocationInternalsRemote!.simulateNetworkLocationRequest(request);
+  return promise;
+}
+
+function simulateNetworkLocationResponse(response: NetworkLocationResponse|
+                                         null) {
+  const promise = eventToPromise(REFRESH_FINISH_EVENT, window);
+  geolocationInternalsRemote!.simulateNetworkLocationResponse(response);
   return promise;
 }
 
@@ -58,7 +70,7 @@ function checkTableHidden(tableId: string) {
       getRequiredElement<HTMLElement>(DIAGNOSE_INFO_VIEW_ID);
   assert(diagnoseInfoView);
   const diagnoseInfoTable =
-      diagnoseInfoView.shadowRoot!.querySelector(`#${tableId}`) as HTMLElement;
+      diagnoseInfoView.shadowRoot!.querySelector<HTMLElement>(`#${tableId}`);
   assert(diagnoseInfoTable);
   assert(diagnoseInfoTable.style.display === 'none');
 }
@@ -74,7 +86,7 @@ function checkTableContents(
       getRequiredElement<HTMLElement>(DIAGNOSE_INFO_VIEW_ID);
   assert(diagnoseInfoView);
   const diagnoseInfoTable =
-      diagnoseInfoView.shadowRoot!.querySelector(`#${tableId}`) as HTMLElement;
+      diagnoseInfoView.shadowRoot!.querySelector<HTMLElement>(`#${tableId}`);
   assert(diagnoseInfoTable);
   assert(diagnoseInfoTable.style.display !== 'none');
   const tableElement = diagnoseInfoTable.shadowRoot!.querySelector('table');
@@ -110,9 +122,9 @@ function checkTableContents(
   const footerElement = tableElement.querySelector('#table-footer');
   assert(footerElement);
   if (footerPrefix === undefined) {
-    assert(footerElement!.textContent === '');
+    assert(footerElement.textContent === '');
   } else {
-    assert(footerElement!.textContent!.startsWith(footerPrefix));
+    assert(footerElement.textContent!.startsWith(footerPrefix));
   }
 }
 
@@ -141,6 +153,7 @@ class FakeLocationInternalsHandlerRemote extends TestBrowserProxy implements
 class FakeGeolocationInternalsRemote extends TestBrowserProxy implements
     GeolocationInternalsInterface {
   private receiver_: GeolocationInternalsReceiver;
+  private observer_: GeolocationInternalsObserverRemote|null;
   private diagnostics_: GeolocationDiagnostics|null;
 
   constructor(pendingReceiver: GeolocationInternalsPendingReceiver) {
@@ -150,16 +163,33 @@ class FakeGeolocationInternalsRemote extends TestBrowserProxy implements
 
     this.receiver_ = new GeolocationInternalsReceiver(this);
     this.receiver_.$.bindHandle(pendingReceiver.handle);
+    this.observer_ = null;
     this.diagnostics_ = null;
   }
 
-  getDiagnostics(): Promise<{diagnostics: GeolocationDiagnostics | null}> {
-    this.methodCalled('getDiagnostics');
+  addInternalsObserver(observer: GeolocationInternalsObserverRemote):
+      Promise<{diagnostics: (GeolocationDiagnostics | null)}> {
+    this.observer_ = observer;
     return Promise.resolve({diagnostics: this.diagnostics_});
   }
 
-  installDiagnostics(diagnostics: GeolocationDiagnostics|null) {
+  installDiagnostics(diagnostics: GeolocationDiagnostics) {
     this.diagnostics_ = diagnostics;
+    if (this.observer_ !== null) {
+      this.observer_.onDiagnosticsChanged(this.diagnostics_);
+    }
+  }
+
+  simulateNetworkLocationRequest(request: AccessPointData[]) {
+    if (this.observer_ !== null) {
+      this.observer_.onNetworkLocationRequested(request);
+    }
+  }
+
+  simulateNetworkLocationResponse(request: NetworkLocationResponse|null) {
+    if (this.observer_ !== null) {
+      this.observer_.onNetworkLocationReceived(request);
+    }
   }
 }
 
@@ -167,15 +197,20 @@ suite('LocationInternalsUITest', function() {
   let fakeLocationInternalsHandler: FakeLocationInternalsHandlerRemote|null =
       null;
 
-  suiteSetup(async function() {
+  suiteSetup(function() {
+    const promiseResolver = new PromiseResolver<void>();
+
     const internalsHandlerInterceptor =
         new MojoInterfaceInterceptor(LocationInternalsHandler.$interfaceName);
     internalsHandlerInterceptor.oninterfacerequest = (e) => {
       fakeLocationInternalsHandler =
           new FakeLocationInternalsHandlerRemote(e.handle);
+      promiseResolver.resolve();
     };
     internalsHandlerInterceptor.start();
     initializeMojo();
+
+    return promiseResolver.promise;
   });
 
   teardown(function() {
@@ -183,32 +218,39 @@ suite('LocationInternalsUITest', function() {
     geolocationInternalsRemote?.reset();
   });
 
-  test('PageLoaded', async function() {
+  test('PageLoaded', function() {
     const watchButton = getRequiredElement<HTMLElement>(WATCH_BUTTON_ID);
     assert(watchButton);
   });
 
   test('RefreshStatus', async function() {
+    // Check that the initial status indicates the API is not initialized.
     const refreshStatus = getRequiredElement<HTMLElement>(REFRESH_STATUS_ID);
+    assert(refreshStatus.textContent!.includes(REFRESH_STATUS_UNINITIALIZED));
 
-    // Simulate geolocation not yet initialized.
-    await simulateDiagnosticsUpdate(null);
-    assert(refreshStatus.textContent! === REFRESH_STATUS_FAILURE);
-
-    // Installed valid data and trigger click again. On real UI we will append
-    // timestamp to `refreshStatus`, here we simply validate that the
-    // refreshStatus's text includes REFRESH_STATUS_SUCCESS.
-    await simulateDiagnosticsUpdate({providerState: 0});
+    // Simulate an update and check that the status message indicates success.
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
     assert(refreshStatus.textContent!.includes(REFRESH_STATUS_SUCCESS));
   });
 
   test('NetworkLocationDiagnosticsHidden', async function() {
     // Simulate geolocation not yet initialized.
-    await simulateDiagnosticsUpdate(null);
     checkTableHidden(WIFI_DATA_TABLE_ID);
 
     // Simulate network location provider not initialized.
-    await simulateDiagnosticsUpdate({providerState: 0});
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
     checkTableHidden(WIFI_DATA_TABLE_ID);
   });
 
@@ -216,7 +258,10 @@ suite('LocationInternalsUITest', function() {
     // Simulate network provider created but no data received yet.
     await simulateDiagnosticsUpdate({
       providerState: 1,
-      networkLocationDiagnostics: {accessPointData: []},
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: {accessPointData: [], wifiTimestamp: null},
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
     });
     checkTableContents(
         WIFI_DATA_TABLE_ID, WIFI_DATA_TABLE_ID,
@@ -234,6 +279,7 @@ suite('LocationInternalsUITest', function() {
     // Simulate network provider receiving data for two access points.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
       networkLocationDiagnostics: {
         accessPointData: [
           {
@@ -253,6 +299,8 @@ suite('LocationInternalsUITest', function() {
         ],
         wifiTimestamp: dateToMojoTime(new Date('2020-01-12T22:27:00')),
       },
+      wifiPollingPolicyDiagnostics: null,
+      positionCacheDiagnostics: null,
     });
     checkTableContents(
         WIFI_DATA_TABLE_ID, WIFI_DATA_TABLE_ID,
@@ -286,16 +334,19 @@ suite('LocationInternalsUITest', function() {
     // Simulate network provider receiving invalid access point data.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
       networkLocationDiagnostics: {
         accessPointData: [{
           macAddress: '00-11-22-33-44-55',
           radioSignalStrength: INVALID_RADIO_SIGNAL_STRENGTH,
           channel: INVALID_CHANNEL,
           signalToNoise: INVALID_SIGNAL_TO_NOISE,
-          timestamp: undefined,
+          timestamp: null,
         }],
         wifiTimestamp: dateToMojoTime(new Date('2020-01-12T22:27:00')),
       },
+      wifiPollingPolicyDiagnostics: null,
+      positionCacheDiagnostics: null,
     });
     checkTableContents(
         WIFI_DATA_TABLE_ID, WIFI_DATA_TABLE_ID,
@@ -312,11 +363,16 @@ suite('LocationInternalsUITest', function() {
 
   test('PositionCacheDiagnosticsHidden', async function() {
     // Simulate geolocation not yet initialized.
-    await simulateDiagnosticsUpdate(null);
     checkTableHidden(POSITION_CACHE_TABLE_ID);
 
     // Simulate uninitialized position cache.
-    await simulateDiagnosticsUpdate({providerState: 0});
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
     checkTableHidden(POSITION_CACHE_TABLE_ID);
   });
 
@@ -324,7 +380,16 @@ suite('LocationInternalsUITest', function() {
     // Simulate position cache created but no cached data yet.
     await simulateDiagnosticsUpdate({
       providerState: 1,
-      positionCacheDiagnostics: {cacheSize: 0},
+      locationProviderManagerMode: null,
+      positionCacheDiagnostics: {
+        cacheSize: 0,
+        hitRate: null,
+        lastMiss: null,
+        lastHit: null,
+        lastNetworkResult: null,
+      },
+      networkLocationDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
     });
     checkTableContents(
         POSITION_CACHE_TABLE_ID, POSITION_CACHE_TABLE_ID,
@@ -343,6 +408,8 @@ suite('LocationInternalsUITest', function() {
     // `Geoposition`.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
       positionCacheDiagnostics: {
         cacheSize: 1,
         lastHit: dateToMojoTime(new Date('2020-01-12T22:27:00')),
@@ -361,6 +428,7 @@ suite('LocationInternalsUITest', function() {
           },
         },
       },
+      wifiPollingPolicyDiagnostics: null,
     });
     checkTableContents(
         POSITION_CACHE_TABLE_ID, POSITION_CACHE_TABLE_ID,
@@ -385,8 +453,12 @@ suite('LocationInternalsUITest', function() {
     // invalid data.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
       positionCacheDiagnostics: {
         cacheSize: 0,
+        hitRate: null,
+        lastHit: null,
+        lastMiss: null,
         lastNetworkResult: {
           position: {
             latitude: BAD_LATITUDE_LONGITUDE,
@@ -400,6 +472,9 @@ suite('LocationInternalsUITest', function() {
           },
         },
       },
+      networkLocationDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+
     });
     checkTableContents(
         POSITION_CACHE_TABLE_ID, POSITION_CACHE_TABLE_ID,
@@ -422,6 +497,7 @@ suite('LocationInternalsUITest', function() {
     // both valid.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
       positionCacheDiagnostics: {
         cacheSize: 0,
         lastNetworkResult: {
@@ -436,7 +512,12 @@ suite('LocationInternalsUITest', function() {
             timestamp: dateToMojoTime(new Date('2020-01-12T22:27:00')),
           },
         },
+        hitRate: null,
+        lastHit: null,
+        lastMiss: null,
       },
+      networkLocationDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
     });
     checkTableContents(
         POSITION_CACHE_TABLE_ID, POSITION_CACHE_TABLE_ID,
@@ -460,6 +541,7 @@ suite('LocationInternalsUITest', function() {
     // Set `lastNetworkResult` to a `GeopositionError`.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
       positionCacheDiagnostics: {
         cacheSize: 0,
         lastNetworkResult: {
@@ -469,7 +551,12 @@ suite('LocationInternalsUITest', function() {
             errorTechnical: 'error-technical',
           },
         },
+        hitRate: null,
+        lastHit: null,
+        lastMiss: null,
       },
+      networkLocationDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
     });
     checkTableContents(
         POSITION_CACHE_TABLE_ID, POSITION_CACHE_TABLE_ID,
@@ -490,12 +577,17 @@ suite('LocationInternalsUITest', function() {
   });
 
   test('WifiPollingPolicyTableHidden', async function() {
-    // Simulate geolocation not yet initialized.
-    await simulateDiagnosticsUpdate(null);
+    // Geolocation not yet initialized.
     checkTableHidden(WIFI_POLLING_POLICY_TABLE_ID);
 
     // Simulate wifi polling policy not initialized.
-    await simulateDiagnosticsUpdate({providerState: 0});
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
     checkTableHidden(WIFI_POLLING_POLICY_TABLE_ID);
   });
 
@@ -503,6 +595,9 @@ suite('LocationInternalsUITest', function() {
     // Simulate valid wifi polling policy data is populated.
     await simulateDiagnosticsUpdate({
       providerState: 1,
+      locationProviderManagerMode: null,
+      positionCacheDiagnostics: null,
+      networkLocationDiagnostics: null,
       wifiPollingPolicyDiagnostics: {
         intervalStart: dateToMojoTime(new Date('2020-01-12T22:27:00')),
         intervalDuration:
@@ -536,6 +631,200 @@ suite('LocationInternalsUITest', function() {
           '120',
           '600',
           '20',
+        ]]);
+  });
+
+  test('NetworkLocationRequestHidden', async function() {
+    // The network request table remains hidden until the first request is
+    // created.
+    checkTableHidden(LAST_NETWORK_REQUEST_TABLE_ID);
+
+    // Updating diagnostics does not display the network request table.
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
+    checkTableHidden(LAST_NETWORK_REQUEST_TABLE_ID);
+  });
+
+  test('NetworkLocationRequestEmpty', async function() {
+    // Simulate an empty update. The table is displayed with a message
+    // indicating no access points were sent.
+    await simulateNetworkLocationRequest([]);
+    checkTableContents(
+        LAST_NETWORK_REQUEST_TABLE_ID, LAST_NETWORK_REQUEST_TABLE_ID,
+        [
+          'MAC address',
+          'Signal strength',
+          'Channel',
+          'Signal to Noise Ratio',
+          'Timestamp',
+        ],
+        [[
+          'No access point data',
+          '',
+          '',
+          '',
+          '',
+        ]],
+        'Request sent at ');
+  });
+
+  test('NetworkLocationRequestPopulated', async function() {
+    // Simulate an update with one access point.
+    await simulateNetworkLocationRequest([{
+      macAddress: 'aa-bb-cc-dd-ee-ff',
+      radioSignalStrength: -42,
+      channel: 2,
+      signalToNoise: 15,
+      timestamp: dateToMojoTime(new Date('2020-01-12T22:26:00')),
+    }]);
+    checkTableContents(
+        LAST_NETWORK_REQUEST_TABLE_ID, LAST_NETWORK_REQUEST_TABLE_ID,
+        [
+          'MAC address',
+          'Signal strength',
+          'Channel',
+          'Signal to Noise Ratio',
+          'Timestamp',
+        ],
+        [[
+          'aa-bb-cc-dd-ee-ff',
+          '-42 dBm',
+          '2',
+          '15 dB',
+          '1/12/2020, 10:26:00 PM',
+        ]],
+        'Request sent at ');
+  });
+
+  test('NetworkLocationResponseHidden', async function() {
+    // The network response table remains hidden until the first response is
+    // received.
+    checkTableHidden(LAST_NETWORK_RESPONSE_TABLE_ID);
+
+    // Updating diagnostics does not display the network response table.
+    await simulateDiagnosticsUpdate({
+      providerState: 0,
+      locationProviderManagerMode: null,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
+    checkTableHidden(LAST_NETWORK_RESPONSE_TABLE_ID);
+  });
+
+  test('NetworkLocationResponseInvalid', async function() {
+    // Set the response to null to simulate an invalid response.
+    await simulateNetworkLocationResponse(null);
+    checkTableContents(
+        LAST_NETWORK_RESPONSE_TABLE_ID, LAST_NETWORK_RESPONSE_TABLE_ID,
+        [
+          'Position estimate',
+        ],
+        [[
+          'None',
+        ]],
+        'Response received at ');
+  });
+
+  test('NetworkLocationResponsePopulated', async function() {
+    // Simulate an update with all fields populated.
+    await simulateNetworkLocationResponse({
+      latitude: 37.0,
+      longitude: -112.0,
+      accuracy: 5.0,
+    });
+    checkTableContents(
+        LAST_NETWORK_RESPONSE_TABLE_ID, LAST_NETWORK_RESPONSE_TABLE_ID,
+        [
+          'Position estimate',
+        ],
+        [[
+          '37°, -112° ±5 m',
+        ]],
+        'Response received at ');
+  });
+
+  test('NetworkLocationResponseNoAccuracy', async function() {
+    // Simulate an update without the optional accuracy field.
+    await simulateNetworkLocationResponse({
+      latitude: 37.0,
+      longitude: -112.0,
+      accuracy: null,
+    });
+    checkTableContents(
+        LAST_NETWORK_RESPONSE_TABLE_ID, LAST_NETWORK_RESPONSE_TABLE_ID,
+        [
+          'Position estimate',
+        ],
+        [[
+          '37°, -112°',
+        ]],
+        'Response received at ');
+  });
+
+  test('LocationProviderManagerModeNetworkOnly', async function() {
+    checkTableHidden(LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID);
+    // Simulate LocationProviderManager mode is initialized as 'kNetworkOnly'.
+    await simulateDiagnosticsUpdate({
+      providerState: 1,
+      locationProviderManagerMode: 0,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
+    checkTableContents(
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        [
+          'Location Provider Manager Mode',
+        ],
+        [[
+          'kNetworkOnly',
+        ]]);
+  });
+
+  test('LocationProviderManagerModeUpdate', async function() {
+    // Simulate LocationProviderManager mode is initialized as
+    // 'kHybridPlatform'.
+    await simulateDiagnosticsUpdate({
+      providerState: 1,
+      locationProviderManagerMode: 3,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
+    checkTableContents(
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        [
+          'Location Provider Manager Mode',
+        ],
+        [[
+          'kHybridPlatform',
+        ]]);
+
+    // Simulate LocationProviderManager mode is updated as
+    // 'kHybridFallbackNetwork'.
+    await simulateDiagnosticsUpdate({
+      providerState: 1,
+      locationProviderManagerMode: 4,
+      networkLocationDiagnostics: null,
+      positionCacheDiagnostics: null,
+      wifiPollingPolicyDiagnostics: null,
+    });
+    checkTableContents(
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        LOCATION_PROVIDER_MANAGER_MODE_TABLE_ID,
+        [
+          'Location Provider Manager Mode',
+        ],
+        [[
+          'kHybridFallbackNetwork',
         ]]);
   });
 });

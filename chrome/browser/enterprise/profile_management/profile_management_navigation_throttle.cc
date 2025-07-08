@@ -4,6 +4,7 @@
 
 #include "chrome/browser/enterprise/profile_management/profile_management_navigation_throttle.h"
 
+#include <optional>
 #include <string>
 
 #include "base/command_line.h"
@@ -18,10 +19,10 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/profile_management/profile_management_features.h"
 #include "chrome/browser/enterprise/profile_management/saml_response_parser.h"
+#include "chrome/browser/enterprise/signin/profile_token_web_signin_interceptor.h"
+#include "chrome/browser/enterprise/signin/profile_token_web_signin_interceptor_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/signin/profile_token_web_signin_interceptor.h"
-#include "chrome/browser/signin/profile_token_web_signin_interceptor_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
@@ -34,7 +35,6 @@
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "net/base/url_util.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace profile_management {
@@ -64,7 +64,7 @@ base::flat_map<std::string, SAMLProfileAttributes>& GetAttributeMap() {
     return *profile_attributes;
   }
 
-  // TODO(crbug.com/1445072): Add actual domains with attribute names.
+  // TODO(crbug.com/40267996): Add actual domains with attribute names.
   profile_attributes->insert(std::make_pair(
       "supported.test",
       SAMLProfileAttributes("placeholderName", "placeholderDomain",
@@ -77,7 +77,7 @@ base::flat_map<std::string, SAMLProfileAttributes>& GetAttributeMap() {
     return *profile_attributes;
   }
 
-  absl::optional<base::Value> switch_value = base::JSONReader::Read(
+  std::optional<base::Value> switch_value = base::JSONReader::Read(
       command_line.GetSwitchValueASCII(switches::kProfileManagementAttributes));
   if (!switch_value || !switch_value->is_dict()) {
     VLOG(1) << "[Profile management] Failed to parse attributes JSON.";
@@ -114,21 +114,21 @@ base::flat_map<std::string, SAMLProfileAttributes>& GetAttributeMap() {
   return *profile_attributes;
 }
 
-absl::optional<std::string> GetDomainFromAttributeValue(
+std::optional<std::string> GetDomainFromAttributeValue(
     const std::string& domain_attribute_value) {
   // Exclude empty and and dotless domains as they are not supported by the
   // Google identity service.
   if (domain_attribute_value.empty() ||
       domain_attribute_value.find(".") == std::string::npos) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // If '@' is found in the domain value, treat it as an email address and
   // extract the domain from it.
   if (domain_attribute_value.find("@") != std::string::npos) {
     std::string email_domain = gaia::ExtractDomainName(domain_attribute_value);
-    return email_domain.empty() ? absl::nullopt
-                                : absl::make_optional(email_domain);
+    return email_domain.empty() ? std::nullopt
+                                : std::make_optional(email_domain);
   }
 
   return domain_attribute_value;
@@ -149,7 +149,7 @@ class ProfileManagementWebContentsLifetimeHelper
   }
 
   void OpenURL(const content::OpenURLParams& url_params) {
-    GetWebContents().OpenURL(url_params);
+    GetWebContents().OpenURL(url_params, /*navigation_handle_callback=*/{});
   }
 
  private:
@@ -167,26 +167,25 @@ WEB_CONTENTS_USER_DATA_KEY_IMPL(ProfileManagementWebContentsLifetimeHelper);
 }  // namespace
 
 // static
-std::unique_ptr<ProfileManagementNavigationThrottle>
-ProfileManagementNavigationThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* navigation_handle) {
+void ProfileManagementNavigationThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
   if ((!base::FeatureList::IsEnabled(features::kThirdPartyProfileManagement) &&
        !base::FeatureList::IsEnabled(
            features::kEnableProfileTokenManagement)) ||
       !g_browser_process->local_state() ||
       !profiles::IsProfileCreationAllowed()) {
-    return nullptr;
+    return;
   }
 
   // The throttle is created for all requests since it intercepts specific HTTP
   // responses.
-  return std::make_unique<ProfileManagementNavigationThrottle>(
-      navigation_handle);
+  registry.AddThrottle(
+      std::make_unique<ProfileManagementNavigationThrottle>(registry));
 }
 
 ProfileManagementNavigationThrottle::ProfileManagementNavigationThrottle(
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 
 ProfileManagementNavigationThrottle::~ProfileManagementNavigationThrottle() =
     default;
@@ -221,7 +220,7 @@ void ProfileManagementNavigationThrottle::ClearAttributeMapForTesting() {
 
 void ProfileManagementNavigationThrottle::OnResponseBodyReady(
     const std::string& body) {
-  // TODO(crbug.com/1445072): As a fallback, check more attributes that may
+  // TODO(crbug.com/40267996): As a fallback, check more attributes that may
   // contain the user's email address.
   const auto profile_attributes =
       GetAttributeMap().at(navigation_handle()->GetURL().host());
@@ -316,7 +315,7 @@ void ProfileManagementNavigationThrottle::NavigateTo(const GURL& url) {
 
 void ProfileManagementNavigationThrottle::RegisterWithDomain(
     const std::string& domain) {
-  absl::optional<std::string> management_domain =
+  std::optional<std::string> management_domain =
       GetDomainFromAttributeValue(domain);
   if (management_domain) {
     auto* prefs =

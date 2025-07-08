@@ -7,6 +7,7 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.os.PersistableBundle;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManagerImpl;
 import org.chromium.components.minidump_uploader.MinidumpUploaderDelegate;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
@@ -14,17 +15,14 @@ import org.chromium.components.minidump_uploader.util.NetworkPermissionUtil;
 
 import java.io.File;
 
-/**
- * Chrome-specific implementations for minidump uploading logic.
- */
+/** Chrome-specific implementations for minidump uploading logic. */
+@NullMarked
 public class ChromeMinidumpUploaderDelegate implements MinidumpUploaderDelegate {
     // PersistableBundle keys:
-    static final String IS_CLIENT_IN_METRICS_SAMPLE = "isClientInMetricsSample";
+    static final String IS_CLIENT_IN_SAMPLE_FOR_CRASHES = "isClientInSampleForCrashes";
     static final String IS_UPLOAD_ENABLED_FOR_TESTS = "isUploadEnabledForTests";
 
-    /**
-     * The application context in which minidump uploads are running.
-     */
+    /** The application context in which minidump uploads are running. */
     private final Context mContext;
 
     /**
@@ -33,9 +31,7 @@ public class ChromeMinidumpUploaderDelegate implements MinidumpUploaderDelegate 
      */
     private final PersistableBundle mPermissions;
 
-    /**
-     * The system connectivity manager service, used to determine the network state.
-     */
+    /** The system connectivity manager service, used to determine the network state. */
     private final ConnectivityManager mConnectivityManager;
 
     /**
@@ -59,8 +55,8 @@ public class ChromeMinidumpUploaderDelegate implements MinidumpUploaderDelegate 
     public CrashReportingPermissionManager createCrashReportingPermissionManager() {
         return new CrashReportingPermissionManager() {
             @Override
-            public boolean isClientInMetricsSample() {
-                return mPermissions.getBoolean(IS_CLIENT_IN_METRICS_SAMPLE, true);
+            public boolean isClientInSampleForCrashes() {
+                return mPermissions.getBoolean(IS_CLIENT_IN_SAMPLE_FOR_CRASHES, true);
             }
 
             @Override

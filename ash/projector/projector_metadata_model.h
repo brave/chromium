@@ -28,6 +28,12 @@ enum class ASH_EXPORT RecognitionStatus : int {
   kError = 2
 };
 
+enum class ASH_EXPORT MetadataVersionNumber : int {
+  kUnknown = 0,
+  kV1 = 1,
+  kV2 = 2
+};
+
 // Base class to describe a metadata item.
 class MetadataItem {
  public:
@@ -41,6 +47,8 @@ class MetadataItem {
   base::TimeDelta& start_time() { return start_time_; }
 
   base::TimeDelta& end_time() { return end_time_; }
+
+  std::string& text() { return text_; }
 
   // Return the serialized metadata item. This is used for storage.
   virtual base::Value::Dict ToJson() = 0;
@@ -74,6 +82,7 @@ class ASH_EXPORT ProjectorTranscript : public MetadataItem {
   ProjectorTranscript(
       const base::TimeDelta start_time,
       const base::TimeDelta end_time,
+      int group_id,
       const std::string& text,
       const std::vector<media::HypothesisParts>& hypothesis_parts);
   ProjectorTranscript(const ProjectorTranscript&) = delete;
@@ -82,7 +91,12 @@ class ASH_EXPORT ProjectorTranscript : public MetadataItem {
 
   base::Value::Dict ToJson() override;
 
+  std::vector<media::HypothesisParts>& hypothesis_parts() {
+    return hypothesis_parts_;
+  }
+
  private:
+  const int group_id_;
   std::vector<media::HypothesisParts> hypothesis_parts_;
 };
 
@@ -100,10 +114,12 @@ class ASH_EXPORT ProjectorMetadata {
 
   // Adds the transcript to the metadata.
   void AddTranscript(std::unique_ptr<ProjectorTranscript> transcript);
+
   // Notifies the metadata that transcription has completed.
   void SetSpeechRecognitionStatus(RecognitionStatus status);
   // Marks a beginning of a key idea. The timing info of the next transcript
   // will be used as the timing of the key idea.
+  void SetMetadataVersionNumber(MetadataVersionNumber version);
   void MarkKeyIdea();
   // Serializes the metadata for storage.
   std::string Serialize();
@@ -112,7 +128,9 @@ class ASH_EXPORT ProjectorMetadata {
 
  private:
   base::Value::Dict ToJson();
-
+  // Add sentence transcripts to the metadata.
+  void AddSentenceTranscripts(
+      std::vector<std::unique_ptr<ProjectorTranscript>> sentence_transcripts);
   std::vector<std::unique_ptr<ProjectorTranscript>> transcripts_;
   std::vector<std::unique_ptr<ProjectorKeyIdea>> key_ideas_;
   std::string caption_language_;
@@ -123,6 +141,7 @@ class ASH_EXPORT ProjectorMetadata {
 
   // The speech recognition status.
   RecognitionStatus speech_recognition_status_ = RecognitionStatus::kIncomplete;
+  MetadataVersionNumber metadata_version_number_;
 };
 
 }  // namespace ash

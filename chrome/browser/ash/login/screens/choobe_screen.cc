@@ -23,6 +23,7 @@ constexpr const char kUserActionSelect[] = "choobeSelect";
 
 // static
 std::string ChoobeScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::SELECTED:
       return "Selected";
@@ -31,6 +32,7 @@ std::string ChoobeScreen::GetResultString(Result result) {
     case Result::NOT_APPLICABLE:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 ChoobeScreen::ChoobeScreen(base::WeakPtr<ChoobeScreenView> view,
@@ -49,7 +51,7 @@ bool ChoobeScreen::MaybeSkip(WizardContext& context) {
     return true;
   }
 
-  if (chrome_user_manager_util::IsPublicSessionOrEphemeralLogin()) {
+  if (chrome_user_manager_util::IsManagedGuestSessionOrEphemeralLogin()) {
     exit_callback_.Run(Result::NOT_APPLICABLE);
     return true;
   }

@@ -11,7 +11,6 @@
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/tray_background_view.h"
 #include "ash/system/tray/tray_constants.h"
-#include "ash/system/unified/unified_system_tray_view.h"
 #include "ash/wm/collision_detection/collision_detection_utils.h"
 #include "ash/wm/work_area_insets.h"
 #include "ash/wm/workspace/workspace_layout_manager.h"
@@ -218,7 +217,7 @@ void AutoclickScrollBubbleController::ShowBubble(
   scroll_view_ = new AutoclickScrollView();
   scroll_view_->SetBorder(views::CreateEmptyBorder(
       gfx::Insets::TLBR(kUnifiedTopShortcutSpacing, 0, 0, 0)));
-  bubble_view_->AddChildView(scroll_view_.get());
+  bubble_view_->AddChildViewRaw(scroll_view_.get());
 
   bubble_widget_ = views::BubbleDialogDelegateView::CreateBubble(bubble_view_);
   TrayBackgroundView::InitializeBubbleAnimations(bubble_widget_);
@@ -253,12 +252,12 @@ void AutoclickScrollBubbleController::ClickOnBubble(gfx::Point location_in_dips,
   location_in_dips -= bubble_view_->GetBoundsInScreen().OffsetFromOrigin();
 
   // Generate synthesized mouse events for the click.
-  const ui::MouseEvent press_event(ui::ET_MOUSE_PRESSED, location_in_dips,
-                                   location_in_dips, ui::EventTimeForNow(),
-                                   mouse_event_flags | ui::EF_LEFT_MOUSE_BUTTON,
-                                   ui::EF_LEFT_MOUSE_BUTTON);
+  const ui::MouseEvent press_event(
+      ui::EventType::kMousePressed, location_in_dips, location_in_dips,
+      ui::EventTimeForNow(), mouse_event_flags | ui::EF_LEFT_MOUSE_BUTTON,
+      ui::EF_LEFT_MOUSE_BUTTON);
   const ui::MouseEvent release_event(
-      ui::ET_MOUSE_RELEASED, location_in_dips, location_in_dips,
+      ui::EventType::kMouseReleased, location_in_dips, location_in_dips,
       ui::EventTimeForNow(), mouse_event_flags | ui::EF_LEFT_MOUSE_BUTTON,
       ui::EF_LEFT_MOUSE_BUTTON);
 
@@ -280,6 +279,12 @@ void AutoclickScrollBubbleController::BubbleViewDestroyed() {
 
 std::u16string AutoclickScrollBubbleController::GetAccessibleNameForBubble() {
   return l10n_util::GetStringUTF16(IDS_ASH_AUTOCLICK_SCROLL_BUBBLE);
+}
+
+void AutoclickScrollBubbleController::HideBubble(
+    const TrayBubbleView* bubble_view) {
+  // This function is currently not unused for bubbles of type
+  // `kAccessibilityBubble`, so can leave this empty.
 }
 
 }  // namespace ash

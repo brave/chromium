@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
 #include "third_party/blink/renderer/core/svg/graphics/filters/svg_fe_image.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_preserve_aspect_ratio.h"
+#include "third_party/blink/renderer/core/svg/svg_filter_element.h"
 #include "third_party/blink/renderer/core/svg/svg_preserve_aspect_ratio.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
@@ -56,10 +57,10 @@ void SVGFEImageElement::Trace(Visitor* visitor) const {
   ImageResourceObserver::Trace(visitor);
 }
 
-bool SVGFEImageElement::CurrentFrameHasSingleSecurityOrigin() const {
+bool SVGFEImageElement::HasSingleSecurityOrigin() const {
   if (cached_image_) {
     if (Image* image = cached_image_->GetImage())
-      return image->CurrentFrameHasSingleSecurityOrigin();
+      return image->HasSingleSecurityOrigin();
   }
   return true;
 }
@@ -120,13 +121,11 @@ void SVGFEImageElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   const QualifiedName& attr_name = params.name;
   if (attr_name == svg_names::kPreserveAspectRatioAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     Invalidate();
     return;
   }
 
   if (SVGURIReference::IsKnownAttribute(attr_name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     BuildPendingResource();
     return;
   }

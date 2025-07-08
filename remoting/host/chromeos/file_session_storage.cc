@@ -4,6 +4,8 @@
 
 #include "remoting/host/chromeos/file_session_storage.h"
 
+#include <optional>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/callback.h"
@@ -15,7 +17,6 @@
 #include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace remoting {
 
@@ -24,8 +25,8 @@ namespace {
 constexpr char kStoredSessionFileName[] = "session";
 
 template <class T>
-absl::optional<T> make_nullopt() {
-  return absl::nullopt;
+std::optional<T> make_nullopt() {
+  return std::nullopt;
 }
 
 base::TaskTraits GetFileTaskTraits() {
@@ -61,19 +62,19 @@ void FileExistsAsync(const base::FilePath& file,
 
 // Wrapper around base::ReadFileToString that returns the result as an optional
 // string.
-absl::optional<std::string> ReadFileToString(const base::FilePath& file) {
+std::optional<std::string> ReadFileToString(const base::FilePath& file) {
   std::string result;
   bool success = base::ReadFileToString(file, &result);
   if (success) {
     return result;
   } else {
-    return absl::nullopt;
+    return std::nullopt;
   }
 }
 
 void ReadFileAsync(
     const base::FilePath& file,
-    base::OnceCallback<void(absl::optional<std::string>)> on_done) {
+    base::OnceCallback<void(std::optional<std::string>)> on_done) {
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, GetFileTaskTraits(), base::BindOnce(&ReadFileToString, file),
       std::move(on_done));
@@ -95,7 +96,7 @@ FileSessionStorage::FileSessionStorage(const base::FilePath& storage_directory)
 
 void FileSessionStorage::StoreSession(const base::Value::Dict& information,
                                       base::OnceClosure on_done) {
-  WriteFileAsync(session_file(), base::WriteJson(information).value(),
+  WriteFileAsync(session_file(), *base::WriteJson(information),
                  base::BindOnce([](bool success) {
                    LOG_IF(ERROR, !success)
                        << "Failed to create CRD session information file";
@@ -111,16 +112,15 @@ void FileSessionStorage::DeleteSession(base::OnceClosure on_done) {
 }
 
 void FileSessionStorage::RetrieveSession(
-    base::OnceCallback<void(absl::optional<base::Value::Dict>)> on_done) {
+    base::OnceCallback<void(std::optional<base::Value::Dict>)> on_done) {
   ReadFileAsync(session_file(),
-                base::BindOnce([](absl::optional<std::string> content) {
+                base::BindOnce([](std::optional<std::string> content) {
                   if (!content.has_value()) {
                     LOG(ERROR) << "Failed to read CRD session information file";
                     return make_nullopt<base::Value::Dict>();
                   }
 
-                  auto dict_optional =
-                      base::JSONReader::ReadDict(content.value());
+                  auto dict_optional = base::JSONReader::ReadDict(*content);
                   LOG_IF(ERROR, !dict_optional.has_value())
                       << "Failed to parse stored CRD session information";
                   return dict_optional;

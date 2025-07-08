@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromecast/media/cma/backend/mixer/mixer_input.h"
 
 #include <stdint.h>
@@ -21,6 +26,7 @@
 #include "chromecast/media/cma/backend/mixer/filter_group.h"
 #include "chromecast/media/cma/backend/mixer/post_processing_pipeline.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/multi_channel_resampler.h"
 
@@ -32,6 +38,7 @@ namespace {
 const int64_t kMicrosecondsPerSecond = 1000 * 1000;
 const int kDefaultSlewTimeMs = 50;
 const int kDefaultFillBufferFrames = 2048;
+constexpr int kMaxChannels = 32;
 
 int RoundUpMultiple(int value, int multiple) {
   return multiple * ((value + (multiple - 1)) / multiple);
@@ -208,10 +215,7 @@ void MixerInput::RemoveAudioOutputRedirector(
                   << ")";
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(redirector);
-  audio_output_redirectors_.erase(
-      std::remove(audio_output_redirectors_.begin(),
-                  audio_output_redirectors_.end(), redirector),
-      audio_output_redirectors_.end());
+  std::erase(audio_output_redirectors_, redirector);
 }
 
 bool MixerInput::Render(
@@ -308,7 +312,8 @@ int MixerInput::FillAudioData(int num_frames,
     redirected = true;
   }
 
-  float* channels[num_channels_];
+  CHECK_LE(num_channels_, kMaxChannels);
+  float* channels[kMaxChannels];
   for (int c = 0; c < num_channels_; ++c) {
     channels[c] = dest->channel(c);
   }

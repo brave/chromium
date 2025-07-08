@@ -14,6 +14,7 @@
 
 #include "mediapipe/framework/scheduler.h"
 
+#include <functional>
 #include <memory>
 #include <queue>
 #include <utility>
@@ -21,6 +22,7 @@
 
 #include "absl/log/absl_check.h"
 #include "absl/memory/memory.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "mediapipe/framework/calculator_graph.h"
 #include "mediapipe/framework/executor.h"
@@ -36,8 +38,10 @@ namespace mediapipe {
 
 namespace internal {
 
+inline constexpr absl::string_view kDefaultQueueName = "default_queue";
+
 Scheduler::Scheduler(CalculatorGraph* graph)
-    : graph_(graph), shared_(), default_queue_(&shared_) {
+    : graph_(graph), shared_(), default_queue_(kDefaultQueueName, &shared_) {
   shared_.error_callback =
       std::bind(&CalculatorGraph::RecordError, graph_, std::placeholders::_1);
   default_queue_.SetIdleCallback(std::bind(&Scheduler::QueueIdleStateChanged,
@@ -90,7 +94,7 @@ absl::Status Scheduler::SetNonDefaultExecutor(const std::string& name,
                                              "be called after the scheduler "
                                              "has started";
   auto inserted = non_default_queues_.emplace(
-      name, absl::make_unique<SchedulerQueue>(&shared_));
+      name, absl::make_unique<SchedulerQueue>(name, &shared_));
   RET_CHECK(inserted.second)
       << "SetNonDefaultExecutor must be called only once for the executor \""
       << name << "\"";
@@ -148,7 +152,7 @@ void Scheduler::HandleIdle() {
       // Note: TryToScheduleNextSourceLayer unlocks and locks state_mutex_
       // internally.
       bool did_activate = TryToScheduleNextSourceLayer();
-      CHECK(did_activate || active_sources_.empty());
+      ABSL_CHECK(did_activate || active_sources_.empty());
       continue;
     }
 
@@ -184,7 +188,7 @@ void Scheduler::HandleIdle() {
 void Scheduler::Quit() {
   // All calls to Calculator::Process() have returned (even if we had an
   // error).
-  CHECK(state_ == STATE_RUNNING || state_ == STATE_CANCELLING);
+  ABSL_CHECK(state_ == STATE_RUNNING || state_ == STATE_CANCELLING);
   SetQueuesRunning(false);
   shared_.timer.EndRun();
 
@@ -271,13 +275,6 @@ absl::Status Scheduler::WaitForObservedOutput() {
   return observed ? absl::OkStatus() : absl::OutOfRangeError("Graph is done.");
 }
 
-// Idleness requires:
-// 1. either the graph has no source nodes or all source nodes are closed, and
-// 2. no packets are added to graph input streams.
-// For simplicity, we only fully support WaitUntilIdle() to be called on a graph
-// with no source nodes.
-// The application must ensure no other threads are adding packets to graph
-// input streams while a WaitUntilIdle() call is in progress.
 absl::Status Scheduler::WaitUntilIdle() {
   RET_CHECK_NE(state_, STATE_NOT_STARTED);
   ApplicationThreadAwait(std::bind(&Scheduler::IsIdle, this));
@@ -334,15 +331,15 @@ void Scheduler::ClosedAllGraphInputStreams() {
 // container.
 void Scheduler::ScheduleNodeIfNotThrottled(
     CalculatorNode* node, CalculatorContext* calculator_context) {
-  DCHECK(node);
-  DCHECK(calculator_context);
+  ABSL_DCHECK(node);
+  ABSL_DCHECK(calculator_context);
   if (!graph_->IsNodeThrottled(node->Id())) {
     node->GetSchedulerQueue()->AddNode(node, calculator_context);
   }
 }
 
 void Scheduler::ScheduleNodeForOpen(CalculatorNode* node) {
-  DCHECK(node);
+  ABSL_DCHECK(node);
   VLOG(1) << "Scheduling OpenNode of calculator " << node->DebugName();
   node->GetSchedulerQueue()->AddNodeForOpen(node);
 }
@@ -352,7 +349,7 @@ void Scheduler::ScheduleUnthrottledReadyNodes(
   for (CalculatorNode* node : nodes_to_schedule) {
     // Source nodes always reuse the default calculator context because they
     // can't be executed in parallel.
-    CHECK(node->IsSource());
+    ABSL_CHECK(node->IsSource());
     CalculatorContext* default_context = node->GetDefaultCalculatorContext();
     node->GetSchedulerQueue()->AddNode(node, default_context);
   }
@@ -375,8 +372,8 @@ void Scheduler::CleanupActiveSources() {
 bool Scheduler::TryToScheduleNextSourceLayer() {
   VLOG(3) << "TryToScheduleNextSourceLayer";
 
-  CHECK(active_sources_.empty());
-  CHECK(!sources_queue_.empty());
+  ABSL_CHECK(active_sources_.empty());
+  ABSL_CHECK(!sources_queue_.empty());
 
   if (!unopened_sources_.empty() &&
       (*unopened_sources_.begin())->source_layer() <
@@ -447,7 +444,7 @@ void Scheduler::AssignNodeToSchedulerQueue(CalculatorNode* node) {
   SchedulerQueue* queue;
   if (!node->Executor().empty()) {
     auto iter = non_default_queues_.find(node->Executor());
-    CHECK(iter != non_default_queues_.end());
+    ABSL_CHECK(iter != non_default_queues_.end());
     queue = iter->second.get();
   } else {
     queue = &default_queue_;
@@ -530,7 +527,7 @@ void Scheduler::CleanupAfterRun() {
     while (!sources_queue_.empty()) {
       sources_queue_.pop();
     }
-    CHECK(app_thread_tasks_.empty());
+    ABSL_CHECK(app_thread_tasks_.empty());
   }
   for (auto queue : scheduler_queues_) {
     queue->CleanupAfterRun();

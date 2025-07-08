@@ -5,10 +5,14 @@
 #include "components/sync/nigori/cryptographer_impl.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "components/sync/nigori/cross_user_sharing_keys.h"
+#include "components/sync/protocol/nigori_local_data.pb.h"
+#include "components/sync/protocol/nigori_specifics.pb.h"
 
 namespace syncer {
 
@@ -35,7 +39,7 @@ std::unique_ptr<CryptographerImpl> CryptographerImpl::FromSingleKeyForTesting(
 std::unique_ptr<CryptographerImpl> CryptographerImpl::FromProto(
     const sync_pb::CryptographerData& proto) {
   NigoriKeyBag key_bag = NigoriKeyBag::CreateFromProto(proto.key_bag());
-  // TODO(crbug.com/1109221): An invalid local state should be handled in the
+  // TODO(crbug.com/40141634): An invalid local state should be handled in the
   // caller instead of CHECK-ing here, e.g. by resetting the local state.
   CHECK(proto.default_key_name().empty() ||
         key_bag.HasKey(proto.default_key_name()));
@@ -76,19 +80,18 @@ std::string CryptographerImpl::EmplaceKey(
       Nigori::CreateByDerivation(derivation_params, passphrase));
 }
 
-void CryptographerImpl::EmplaceKeyPair(
+void CryptographerImpl::SetKeyPair(
     CrossUserSharingPublicPrivateKeyPair private_key,
     uint32_t version) {
-  cross_user_sharing_keys_.AddKeyPair(std::move(private_key), version);
+  cross_user_sharing_keys_.SetKeyPair(std::move(private_key), version);
 }
 
 void CryptographerImpl::EmplaceKeysFrom(const NigoriKeyBag& key_bag) {
   key_bag_.AddAllUnknownKeysFrom(key_bag);
 }
 
-void CryptographerImpl::EmplaceCrossUserSharingKeysFrom(
-    const CrossUserSharingKeys& keys) {
-  cross_user_sharing_keys_.AddAllUnknownKeysFrom(keys);
+void CryptographerImpl::ReplaceCrossUserSharingKeys(CrossUserSharingKeys keys) {
+  cross_user_sharing_keys_ = std::move(keys);
 }
 
 void CryptographerImpl::SelectDefaultEncryptionKey(
@@ -98,10 +101,9 @@ void CryptographerImpl::SelectDefaultEncryptionKey(
   default_encryption_key_name_ = key_name;
 }
 
-void CryptographerImpl::EmplaceKeysAndSelectDefaultKeyFrom(
+void CryptographerImpl::EmplaceAllNigoriKeysFrom(
     const CryptographerImpl& other) {
   EmplaceKeysFrom(other.key_bag_);
-  SelectDefaultEncryptionKey(other.default_encryption_key_name_);
 }
 
 void CryptographerImpl::ClearDefaultEncryptionKey() {
@@ -111,14 +113,25 @@ void CryptographerImpl::ClearDefaultEncryptionKey() {
 void CryptographerImpl::ClearAllKeys() {
   default_encryption_key_name_.clear();
   key_bag_ = NigoriKeyBag::CreateEmpty();
+  default_cross_user_sharing_key_version_ = std::nullopt;
+  cross_user_sharing_keys_ = CrossUserSharingKeys::CreateEmpty();
 }
 
 bool CryptographerImpl::HasKey(const std::string& key_name) const {
   return key_bag_.HasKey(key_name);
 }
 
-bool CryptographerImpl::HasKeyPair(const uint32_t key_pair_version) const {
+bool CryptographerImpl::HasKeyPair(uint32_t key_pair_version) const {
   return cross_user_sharing_keys_.HasKeyPair(key_pair_version);
+}
+
+size_t CryptographerImpl::KeyPairSizeForMetrics() const {
+  return cross_user_sharing_keys_.size();
+}
+
+const CrossUserSharingPublicPrivateKeyPair&
+CryptographerImpl::GetCrossUserSharingKeyPair(uint32_t version) const {
+  return cross_user_sharing_keys_.GetKeyPair(version);
 }
 
 sync_pb::NigoriKey CryptographerImpl::ExportDefaultKey() const {
@@ -134,12 +147,6 @@ std::unique_ptr<CryptographerImpl> CryptographerImpl::Clone() const {
 
 size_t CryptographerImpl::KeyBagSizeForTesting() const {
   return key_bag_.size();
-}
-
-const CrossUserSharingPublicPrivateKeyPair&
-CryptographerImpl::GetCrossUserSharingKeyPairForTesting(
-    uint32_t version) const {
-  return cross_user_sharing_keys_.GetKeyPair(version);
 }
 
 bool CryptographerImpl::CanEncrypt() const {
@@ -164,14 +171,58 @@ bool CryptographerImpl::EncryptString(const std::string& decrypted,
     return false;
   }
 
-  return key_bag_.EncryptWithKey(default_encryption_key_name_, decrypted,
-                                 encrypted);
+  *encrypted = key_bag_.EncryptWithKey(default_encryption_key_name_, decrypted);
+  return true;
 }
 
 bool CryptographerImpl::DecryptToString(const sync_pb::EncryptedData& encrypted,
                                         std::string* decrypted) const {
   DCHECK(decrypted);
   return key_bag_.Decrypt(encrypted, decrypted);
+}
+
+std::optional<std::vector<uint8_t>>
+CryptographerImpl::AuthEncryptForCrossUserSharing(
+    base::span<const uint8_t> plaintext,
+    base::span<const uint8_t> recipient_public_key) const {
+  if (!default_cross_user_sharing_key_version_.has_value()) {
+    VLOG(1) << "Default encryption key pair version is not set";
+    return std::nullopt;
+  }
+  if (!cross_user_sharing_keys_.HasKeyPair(
+          default_cross_user_sharing_key_version_.value())) {
+    VLOG(1) << "Encryption key pair is not available";
+    return std::nullopt;
+  }
+
+  const CrossUserSharingPublicPrivateKeyPair& encryption_key_pair =
+      cross_user_sharing_keys_.GetKeyPair(
+          default_cross_user_sharing_key_version_.value());
+
+  return encryption_key_pair.HpkeAuthEncrypt(plaintext, recipient_public_key,
+                                             {});
+}
+
+std::optional<std::vector<uint8_t>>
+CryptographerImpl::AuthDecryptForCrossUserSharing(
+    base::span<const uint8_t> encrypted_data,
+    base::span<const uint8_t> sender_public_key,
+    const uint32_t recipient_key_version) const {
+  if (!cross_user_sharing_keys_.HasKeyPair(recipient_key_version)) {
+    VLOG(1) << "Decryption key pair does not exist: " << recipient_key_version;
+    return std::nullopt;
+  }
+
+  const CrossUserSharingPublicPrivateKeyPair& decryption_key_pair =
+      cross_user_sharing_keys_.GetKeyPair(recipient_key_version);
+
+  return decryption_key_pair.HpkeAuthDecrypt(encrypted_data, sender_public_key,
+                                             {});
+}
+
+void CryptographerImpl::SelectDefaultCrossUserSharingKey(
+    const uint32_t version) {
+  default_cross_user_sharing_key_version_ = version;
 }
 
 }  // namespace syncer

@@ -12,12 +12,10 @@ features:
   unlisted: true
 owners:
 - vshenvi@google.com
-- cros-reporting-team@google.com
+- cros-reporting-eng@google.com
 schema:
   minimum: 300000
   type: integer
-supported_chrome_os_management:
-- google_cloud
 supported_on:
 - chrome_os:117-
 tags:

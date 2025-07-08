@@ -11,9 +11,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
+#include "gpu/command_buffer/service/shared_image/ozone_image_backing.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_pixmap.h"
 
@@ -40,7 +42,8 @@ DawnOzoneImageRepresentation::~DawnOzoneImageRepresentation() {
 }
 
 wgpu::Texture DawnOzoneImageRepresentation::BeginAccess(
-    wgpu::TextureUsage usage) {
+    wgpu::TextureUsage usage,
+    wgpu::TextureUsage internal_usage) {
   // It doesn't make sense to have two overlapping BeginAccess calls on the same
   // representation.
   if (texture_) {
@@ -56,18 +59,23 @@ wgpu::Texture DawnOzoneImageRepresentation::BeginAccess(
          pixmap_->GetNumberOfPlanes() == 1)
       << "Disjoint Multi-plane importing is not supported.";
 
-  if (!ozone_backing()->VaSync()) {
+  std::vector<gfx::GpuFenceHandle> fences;
+  bool need_end_fence;
+  is_readonly_ =
+      (usage & kWriteUsage) == 0 && (internal_usage & kWriteUsage) == 0;
+  if (is_readonly_ && !IsCleared()) {
+    // Read-only access of an uncleared texture is not allowed: clients
+    // relying on Dawn's lazy clearing of uninitialized textures must make
+    // this reliance explicit by passing a write usage.
     return nullptr;
   }
 
-  std::vector<gfx::GpuFenceHandle> fences;
-  bool need_end_fence;
   if (!ozone_backing()->BeginAccess(
-          /*readonly=*/false, OzoneImageBacking::AccessStream::kWebGPU, &fences,
-          need_end_fence)) {
+          /*readonly=*/is_readonly_, OzoneImageBacking::AccessStream::kWebGPU,
+          &fences, need_end_fence)) {
     return nullptr;
   }
-  DCHECK(need_end_fence);
+  DCHECK(need_end_fence || is_readonly_);
 
   gfx::Size pixmap_size = pixmap_->GetBufferSize();
   wgpu::TextureDescriptor texture_descriptor;
@@ -81,15 +89,9 @@ wgpu::Texture DawnOzoneImageRepresentation::BeginAccess(
   texture_descriptor.mipLevelCount = 1;
   texture_descriptor.sampleCount = 1;
 
-  // We need to have internal usages of CopySrc for copies,
-  // RenderAttachment for clears, and TextureBinding for copyTextureForBrowser.
   wgpu::DawnTextureInternalUsageDescriptor internalDesc;
-  internalDesc.internalUsage = wgpu::TextureUsage::CopySrc;
-  // No write access to multi-planar pixmaps.
-  if (pixmap_->GetNumberOfPlanes() == 1) {
-    internalDesc.internalUsage |= wgpu::TextureUsage::RenderAttachment |
-                                  wgpu::TextureUsage::TextureBinding;
-  }
+  internalDesc.internalUsage = internal_usage;
+
   texture_descriptor.nextInChain = &internalDesc;
 
   dawn::native::vulkan::ExternalImageDescriptorDmaBuf descriptor = {};
@@ -112,13 +114,13 @@ wgpu::Texture DawnOzoneImageRepresentation::BeginAccess(
   descriptor.waitFDs = {};
 
   for (auto& fence : fences) {
-    descriptor.waitFDs.push_back(fence.owned_fd.release());
+    descriptor.waitFDs.push_back(fence.Release().release());
   }
 
   texture_ = wgpu::Texture::Acquire(
       dawn::native::vulkan::WrapVulkanImage(device_.Get(), &descriptor));
   if (!texture_) {
-    ozone_backing()->EndAccess(/*readonly=*/false,
+    ozone_backing()->EndAccess(is_readonly_,
                                OzoneImageBacking::AccessStream::kWebGPU,
                                gfx::GpuFenceHandle());
     close(fd);
@@ -145,8 +147,8 @@ void DawnOzoneImageRepresentation::EndAccess() {
     // TODO(hob): Handle waiting on multiple semaphores from dawn.
     DCHECK(export_info.semaphoreHandles.size() == 1);
     gfx::GpuFenceHandle fence;
-    fence.owned_fd = base::ScopedFD(export_info.semaphoreHandles[0]);
-    ozone_backing()->EndAccess(/*readonly=*/false,
+    fence.Adopt(base::ScopedFD(export_info.semaphoreHandles[0]));
+    ozone_backing()->EndAccess(is_readonly_,
                                OzoneImageBacking::AccessStream::kWebGPU,
                                std::move(fence));
   }

@@ -10,25 +10,29 @@
 import './internet_shared.css.js';
 import 'chrome://resources/ash/common/network/apn_list.js';
 
-import {ApnList} from 'chrome://resources/ash/common/network/apn_list.js';
+import type {ApnListElement} from 'chrome://resources/ash/common/network/apn_list.js';
 import {processDeviceState} from 'chrome://resources/ash/common/network/cellular_utils.js';
 import {MojoInterfaceProviderImpl} from 'chrome://resources/ash/common/network/mojo_interface_provider.js';
-import {NetworkListenerBehavior, NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import type {NetworkListenerBehaviorInterface} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
+import {NetworkListenerBehavior} from 'chrome://resources/ash/common/network/network_listener_behavior.js';
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {CrosNetworkConfigInterface, ManagedProperties, MAX_NUM_CUSTOM_APNS, NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import type {CrosNetworkConfigInterface, ManagedProperties, NetworkStateProperties} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {MAX_NUM_CUSTOM_APNS} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
 import {NetworkType} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
 import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {Constructor} from '../common/types.js';
-import {RouteObserverMixin, RouteObserverMixinInterface} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {RouteObserverMixinInterface} from '../common/route_observer_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {Constructor} from '../common/types.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './apn_subpage.html.js';
 
 export interface ApnSubpageElement {
   $: {
-    apnList: ApnList,
+    apnList: ApnListElement,
   };
 }
 
@@ -51,15 +55,20 @@ export class ApnSubpageElement extends ApnSubpageElementBase {
 
   static get properties() {
     return {
-      /** The GUID of the network to display details for. */
-      guid_: String,
-
       isNumCustomApnsLimitReached: {
         type: Boolean,
         notify: true,
         value: false,
         computed: 'computeIsNumCustomApnsLimitReached_(managedProperties_)',
       },
+
+      shouldDisallowApnModification: {
+        type: Boolean,
+        value: false,
+      },
+
+      /** The GUID of the network to display details for. */
+      guid_: String,
 
       managedProperties_: {
         type: Object,
@@ -73,6 +82,7 @@ export class ApnSubpageElement extends ApnSubpageElementBase {
   }
 
   isNumCustomApnsLimitReached: boolean;
+  shouldDisallowApnModification: boolean;
   private deviceState_: OncMojo.DeviceStateProperties|null;
   private guid_: string;
   private managedProperties_: ManagedProperties|undefined;
@@ -143,9 +153,18 @@ export class ApnSubpageElement extends ApnSubpageElementBase {
    * Helper method that can be used by parent elements to open the APN
    * creation dialog.
    */
-  openApnDetailDialogInCreateMode() {
+  openApnDetailDialogInCreateMode(): void {
     assert(this.guid_);
     this.$.apnList.openApnDetailDialogInCreateMode();
+  }
+
+  /**
+   * Helper method that can be used by parent elements to open the APN
+   * selection dialog.
+   */
+  openApnSelectionDialog(): void {
+    assert(this.guid_);
+    this.$.apnList.openApnSelectionDialog();
   }
 
   private async getNetworkDetails_(): Promise<void> {
@@ -170,12 +189,6 @@ export class ApnSubpageElement extends ApnSubpageElementBase {
       return;
     }
 
-    if (this.deviceState_ && this.deviceState_.scanning) {
-      // Cellular properties may be invalid while scanning, so keep the
-      // existing properties instead.
-      response.result.typeProperties.cellular =
-          this.managedProperties_!.typeProperties.cellular;
-    }
     this.managedProperties_ = response.result;
 
     if (!this.deviceState_) {

@@ -9,14 +9,15 @@
 #include "base/json/values_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/reporting/prefs.h"
 #include "chrome/browser/extensions/extension_management.h"
+#include "chrome/browser/extensions/managed_installation_mode.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
-#include "components/enterprise/common/proto/extensions_workflow_events.pb.h"
+#include "components/enterprise/common/proto/synced/extensions_workflow_events.pb.h"
 #include "components/policy/core/common/cloud/cloud_policy_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -34,10 +35,11 @@ std::unique_ptr<ExtensionsWorkflowEvent> GenerateReport(
   auto report = std::make_unique<ExtensionsWorkflowEvent>();
   report->set_id(extension_id);
   if (request_data) {
-    absl::optional<base::Time> timestamp = ::base::ValueToTime(
+    std::optional<base::Time> timestamp = ::base::ValueToTime(
         request_data->Find(extension_misc::kExtensionRequestTimestamp));
     if (timestamp) {
-      report->set_request_timestamp_millis(timestamp->ToJavaTime());
+      report->set_request_timestamp_millis(
+          timestamp->InMillisecondsSinceUnixEpoch());
     }
 
     const std::string* justification = request_data->FindString(
@@ -49,12 +51,12 @@ std::unique_ptr<ExtensionsWorkflowEvent> GenerateReport(
   } else {
     report->set_removed(true);
   }
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   report->set_client_type(ExtensionsWorkflowEvent::CHROME_OS_USER);
 #else
   report->set_client_type(ExtensionsWorkflowEvent::BROWSER_DEVICE);
   report->set_device_name(policy::GetMachineName());
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   return report;
 }
 
@@ -67,8 +69,8 @@ bool ExtensionRequestReportGenerator::ShouldUploadExtensionRequest(
     extensions::ExtensionManagement* extension_management) {
   auto mode = extension_management->GetInstallationMode(extension_id,
                                                         webstore_update_url);
-  return (mode == extensions::ExtensionManagement::INSTALLATION_BLOCKED ||
-          mode == extensions::ExtensionManagement::INSTALLATION_REMOVED) &&
+  return (mode == extensions::ManagedInstallationMode::kBlocked ||
+          mode == extensions::ManagedInstallationMode::kRemoved) &&
          !extension_management->IsInstallationExplicitlyBlocked(extension_id);
 }
 

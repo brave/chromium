@@ -9,11 +9,11 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/component_export.h"
 #include "printing/backend/cups_deleters.h"
-#include "url/gurl.h"
 
 namespace printing {
 
@@ -31,7 +31,7 @@ class COMPONENT_EXPORT(PRINT_BACKEND) CupsOptionProvider {
 
   // Returns supported attribute values for `option_name` where the value can be
   // converted to a string.
-  virtual std::vector<base::StringPiece> GetSupportedOptionValueStrings(
+  virtual std::vector<std::string_view> GetSupportedOptionValueStrings(
       const char* option_name) const = 0;
 
   // Returns the default ipp attributes for the given `option_name`.
@@ -46,6 +46,12 @@ class COMPONENT_EXPORT(PRINT_BACKEND) CupsOptionProvider {
   // Returns the IPP "media-col-database" attribute for this printer.
   // ipp_attribute_t* is owned by CupsOptionProvider.
   virtual ipp_attribute_t* GetMediaColDatabase() const = 0;
+
+  // Returns the human-readable display name for an option value. Used to get
+  // fallback display names for non-standard values that Chromium doesn't have
+  // built-in localizations for.
+  virtual const char* GetLocalizedOptionValueName(const char* option_name,
+                                                  const char* value) const = 0;
 };
 
 // Represents a CUPS printer.

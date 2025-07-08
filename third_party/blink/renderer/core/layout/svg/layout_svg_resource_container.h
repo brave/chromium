@@ -24,8 +24,13 @@
 #include "third_party/blink/renderer/core/style/style_svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_resource_client.h"
+#include "third_party/blink/renderer/core/svg/svg_unit_types.h"
 
 namespace blink {
+
+class SVGLength;
+class SVGLengthConversionData;
+class SVGViewportResolver;
 
 enum LayoutSVGResourceType {
   kMaskerResourceType,
@@ -54,11 +59,10 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
     return false;
   }
 
-  void UpdateLayout() override;
-  bool IsOfType(LayoutObjectType type) const override {
+  SVGLayoutResult UpdateSVGLayout(const SVGLayoutInfo&) override;
+  bool IsSVGResourceContainer() const final {
     NOT_DESTROYED();
-    return type == kLayoutObjectSVGResourceContainer ||
-           LayoutSVGHiddenContainer::IsOfType(type);
+    return true;
   }
 
   virtual LayoutSVGResourceType ResourceType() const = 0;
@@ -85,6 +89,48 @@ class LayoutSVGResourceContainer : public LayoutSVGHiddenContainer {
     NOT_DESTROYED();
     completed_invalidations_mask_ = 0;
   }
+
+  // Resolve the rectangle defined by `x`, `y`, `width` and `height` in the
+  // unit space defined by `type` into user units.
+  static gfx::RectF ResolveRectangle(
+      const SVGViewportResolver&,
+      const SVGLengthConversionData&,
+      SVGUnitTypes::SVGUnitType type,
+      const gfx::RectF& reference_box,
+      const SVGLength& x,
+      const SVGLength& y,
+      const SVGLength& width,
+      const SVGLength& height,
+      const std::optional<gfx::SizeF>& override_viewport = std::nullopt);
+  static gfx::RectF ResolveRectangle(
+      const SVGElement& context,
+      SVGUnitTypes::SVGUnitType type,
+      const gfx::RectF& reference_box,
+      const SVGLength& x,
+      const SVGLength& y,
+      const SVGLength& width,
+      const SVGLength& height,
+      const std::optional<gfx::SizeF>& override_viewport = std::nullopt);
+  // Like the above, but pass `x()`, `y()`, `width()` and `height()` from the
+  // context element for the corresponding arguments.
+  template <typename T>
+  static gfx::RectF ResolveRectangle(
+      const T& context,
+      SVGUnitTypes::SVGUnitType type,
+      const gfx::RectF& reference_box,
+      const std::optional<gfx::SizeF>& override_viewport = std::nullopt) {
+    return ResolveRectangle(
+        context, type, reference_box, *context.x()->CurrentValue(),
+        *context.y()->CurrentValue(), *context.width()->CurrentValue(),
+        *context.height()->CurrentValue(), override_viewport);
+  }
+
+  gfx::RectF ResolveRectangle(SVGUnitTypes::SVGUnitType type,
+                              const gfx::RectF& reference_box,
+                              const SVGLength& x,
+                              const SVGLength& y,
+                              const SVGLength& width,
+                              const SVGLength& height) const;
 
  protected:
   typedef unsigned InvalidationModeMask;

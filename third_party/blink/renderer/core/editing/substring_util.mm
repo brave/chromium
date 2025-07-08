@@ -34,11 +34,12 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/apple/bridging.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/node.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -58,10 +59,7 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/mac/color_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -106,7 +104,7 @@ NSAttributedString* AttributedSubstringFromRange(LocalFrame* frame,
     // scale factor must be multiplied in.
 
     const ComputedStyle* style = layout_object->Style();
-    const SimpleFontData* primaryFont = style->GetFont().PrimaryFont();
+    const SimpleFontData* primaryFont = style->GetFont()->PrimaryFont();
     const FontPlatformData& font_platform_data = primaryFont->PlatformData();
 
     const float page_scale_factor = frame->GetPage()->PageScaleFactor();
@@ -136,7 +134,7 @@ NSAttributedString* AttributedSubstringFromRange(LocalFrame* frame,
     if (!font || floor(font_platform_data.size()) !=
                      floor(original_font.fontDescriptor.pointSize)) {
       font = [NSFont systemFontOfSize:style->GetFont()
-                                          .GetFontDescription()
+                                          ->GetFontDescription()
                                           .ComputedSize() *
                                       page_scale_factor / device_scale_factor];
     }
@@ -185,20 +183,20 @@ gfx::Point GetBaselinePoint(LocalFrameView* frame_view,
 
 }  // namespace
 
-base::ScopedCFTypeRef<CFAttributedStringRef>
+base::apple::ScopedCFTypeRef<CFAttributedStringRef>
 SubstringUtil::AttributedWordAtPoint(WebFrameWidgetImpl* frame_widget,
                                      gfx::Point point,
                                      gfx::Point& baseline_point) {
   HitTestResult result = frame_widget->CoreHitTestResultAt(gfx::PointF(point));
 
   if (!result.InnerNode()) {
-    return base::ScopedCFTypeRef<CFAttributedStringRef>();
+    return base::apple::ScopedCFTypeRef<CFAttributedStringRef>();
   }
   LocalFrame* frame = result.InnerNode()->GetDocument().GetFrame();
   EphemeralRange range =
       frame->GetEditor().RangeForPoint(result.RoundedPointInInnerNodeFrame());
   if (range.IsNull()) {
-    return base::ScopedCFTypeRef<CFAttributedStringRef>();
+    return base::apple::ScopedCFTypeRef<CFAttributedStringRef>();
   }
 
   // Expand to word under point.
@@ -210,31 +208,45 @@ SubstringUtil::AttributedWordAtPoint(WebFrameWidgetImpl* frame_widget,
   // Convert to CFAttributedStringRef.
   NSAttributedString* string = AttributedSubstringFromRange(frame, word_range);
   baseline_point = GetBaselinePoint(frame->View(), word_range, string);
-  return base::ScopedCFTypeRef<CFAttributedStringRef>(
+  return base::apple::ScopedCFTypeRef<CFAttributedStringRef>(
       base::apple::NSToCFOwnershipCast(string));
 }
 
-base::ScopedCFTypeRef<CFAttributedStringRef>
+base::apple::ScopedCFTypeRef<CFAttributedStringRef>
 SubstringUtil::AttributedSubstringInRange(LocalFrame* frame,
                                           wtf_size_t location,
                                           wtf_size_t length,
                                           gfx::Point& baseline_point) {
   frame->View()->UpdateStyleAndLayout();
 
-  Element* editable = frame->Selection().RootEditableElementOrDocumentElement();
-  if (!editable) {
-    return base::ScopedCFTypeRef<CFAttributedStringRef>();
+  ContainerNode* container_node = nullptr;
+  if (RuntimeEnabledFeatures::HandleShadowDOMInSubstringUtilEnabled()) {
+    Position start =
+        frame->Selection().ComputeVisibleSelectionInDOMTree().Start();
+    if (IsEditablePosition(start)) {
+      container_node = RootEditableElementOf(start);
+    } else if (start.AnchorNode() && start.AnchorNode()->IsInShadowTree()) {
+      container_node = start.AnchorNode()->ContainingShadowRoot();
+    } else {
+      container_node = frame->GetDocument()->documentElement();
+    }
+  } else {
+    container_node = frame->Selection().RootEditableElementOrDocumentElement();
   }
+  if (!container_node) {
+    return base::apple::ScopedCFTypeRef<CFAttributedStringRef>();
+  }
+
   const EphemeralRange ephemeral_range(
-      PlainTextRange(location, location + length).CreateRange(*editable));
+      PlainTextRange(location, location + length).CreateRange(*container_node));
   if (ephemeral_range.IsNull()) {
-    return base::ScopedCFTypeRef<CFAttributedStringRef>();
+    return base::apple::ScopedCFTypeRef<CFAttributedStringRef>();
   }
 
   NSAttributedString* string =
       AttributedSubstringFromRange(frame, ephemeral_range);
   baseline_point = GetBaselinePoint(frame->View(), ephemeral_range, string);
-  return base::ScopedCFTypeRef<CFAttributedStringRef>(
+  return base::apple::ScopedCFTypeRef<CFAttributedStringRef>(
       base::apple::NSToCFOwnershipCast(string));
 }
 

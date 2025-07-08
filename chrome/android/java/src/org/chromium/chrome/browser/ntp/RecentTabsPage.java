@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.ntp;
 import android.app.Activity;
 import android.content.res.Resources;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
@@ -15,11 +14,24 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ExpandableListView;
 
+import androidx.annotation.Nullable;
+
+import org.chromium.base.Callback;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
-import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
+import org.chromium.chrome.browser.native_page.NativePageNavigationDelegate;
+import org.chromium.chrome.browser.tab_ui.InvalidationAwareThumbnailProvider;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
+import org.chromium.chrome.browser.ui.native_page.BasicSmoothTransitionDelegate;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
-import org.chromium.chrome.browser.ui.native_page.NativePageHost;
+import org.chromium.chrome.browser.ui.native_page.TouchEnabledDelegate;
+import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.ViewUtils;
@@ -29,20 +41,24 @@ import org.chromium.ui.base.ViewUtils;
  * synced devices, and snapshot documents sent from Chrome to Mobile in an expandable list view.
  */
 public class RecentTabsPage
-        implements NativePage, ExpandableListView.OnChildClickListener,
-                   ExpandableListView.OnGroupCollapseListener,
-                   ExpandableListView.OnGroupExpandListener, RecentTabsManager.UpdatedCallback,
-                   View.OnAttachStateChangeListener, View.OnCreateContextMenuListener,
-                   InvalidationAwareThumbnailProvider, BrowserControlsStateProvider.Observer {
+        implements NativePage,
+                ExpandableListView.OnChildClickListener,
+                ExpandableListView.OnGroupCollapseListener,
+                ExpandableListView.OnGroupExpandListener,
+                RecentTabsManager.UpdatedCallback,
+                View.OnAttachStateChangeListener,
+                View.OnCreateContextMenuListener,
+                InvalidationAwareThumbnailProvider,
+                BrowserControlsStateProvider.Observer,
+                TouchEnabledDelegate {
     private final Activity mActivity;
-    private final BrowserControlsStateProvider mBrowserControlsStateProvider;
+    @Nullable private final BrowserControlsStateProvider mBrowserControlsStateProvider;
     private final ExpandableListView mListView;
     private final String mTitle;
     private final ViewGroup mView;
-
+    private final ContextMenuManager mContextMenuManager;
     private RecentTabsManager mRecentTabsManager;
     private RecentTabsRowAdapter mAdapter;
-    private NativePageHost mPageHost;
 
     private boolean mSnapshotContentChanged;
     private int mSnapshotListPosition;
@@ -50,32 +66,49 @@ public class RecentTabsPage
     private int mSnapshotWidth;
     private int mSnapshotHeight;
 
-    /**
-     * Whether {@link #mView} is attached to the application window.
-     */
+    /** Whether {@link #mView} is attached to the application window. */
     private boolean mIsAttachedToWindow;
+
+    private final ObservableSupplier<Integer> mTabStripHeightSupplier;
+    private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeSupplier;
+    private final Callback<Integer> mTabStripHeightChangeCallback;
+    private SmoothTransitionDelegate mSmoothTransitionDelegate;
+    private EdgeToEdgePadAdjuster mPadAdjuster;
+    private boolean mIsTouchEnabled = true;
 
     /**
      * Constructor returns an instance of RecentTabsPage.
      *
      * @param activity The activity this view belongs to.
      * @param recentTabsManager The RecentTabsManager which provides the model data.
-     * @param pageHost The NativePageHost used to provide a history navigation delegate object.
-     * @param browserControlsManager The BrowserControlsManager used to provide offset values.
+     * @param navigationDelegate The {@link NativePageNavigationDelegate} for handling navigation.
+     * @param browserControlsStateProvider The {@link BrowserControlsStateProvider} used to provide
+     *     offset values.
+     * @param tabStripHeightSupplier Supplier for the tab strip height.
+     * @param edgeToEdgeSupplier Supplier for the {@link EdgeToEdgeController} for bottom insets.
      */
-    public RecentTabsPage(Activity activity, RecentTabsManager recentTabsManager,
-            NativePageHost pageHost, BrowserControlsStateProvider browserControlsStateProvider) {
+    public RecentTabsPage(
+            Activity activity,
+            RecentTabsManager recentTabsManager,
+            NativePageNavigationDelegate navigationDelegate,
+            BrowserControlsStateProvider browserControlsStateProvider,
+            ObservableSupplier<Integer> tabStripHeightSupplier,
+            ObservableSupplier<EdgeToEdgeController> edgeToEdgeSupplier) {
         mActivity = activity;
         mRecentTabsManager = recentTabsManager;
-        mPageHost = pageHost;
         Resources resources = activity.getResources();
 
         mTitle = resources.getString(R.string.recent_tabs);
         mRecentTabsManager.setUpdatedCallback(this);
         LayoutInflater inflater = LayoutInflater.from(activity);
         mView = (ViewGroup) inflater.inflate(R.layout.recent_tabs_page, null);
-        mListView = (ExpandableListView) mView.findViewById(R.id.odp_listview);
-        mAdapter = new RecentTabsRowAdapter(activity, recentTabsManager);
+        mListView = mView.findViewById(R.id.odp_listview);
+
+        mContextMenuManager =
+                new ContextMenuManager(
+                        navigationDelegate, this, mActivity::closeContextMenu, "RecentTabs");
+
+        mAdapter = new RecentTabsRowAdapter(activity, recentTabsManager, mContextMenuManager);
         mListView.setAdapter(mAdapter);
         mListView.setOnChildClickListener(this);
         mListView.setGroupIndicator(null);
@@ -88,10 +121,28 @@ public class RecentTabsPage
         if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
             mBrowserControlsStateProvider = browserControlsStateProvider;
             mBrowserControlsStateProvider.addObserver(this);
-            onBottomControlsHeightChanged(mBrowserControlsStateProvider.getBottomControlsHeight(),
+            onBottomControlsHeightChanged(
+                    mBrowserControlsStateProvider.getBottomControlsHeight(),
                     mBrowserControlsStateProvider.getBottomControlsMinHeight());
         } else {
             mBrowserControlsStateProvider = null;
+        }
+
+        mTabStripHeightSupplier = tabStripHeightSupplier;
+        mView.setPadding(0, mTabStripHeightSupplier.get(), 0, 0);
+        mTabStripHeightChangeCallback =
+                newHeight ->
+                        mView.setPadding(
+                                mView.getPaddingLeft(),
+                                newHeight,
+                                mView.getPaddingRight(),
+                                mView.getPaddingBottom());
+        mTabStripHeightSupplier.addObserver(mTabStripHeightChangeCallback);
+        mEdgeToEdgeSupplier = edgeToEdgeSupplier;
+        if (EdgeToEdgeUtils.isDrawKeyNativePageToEdgeEnabled()) {
+            mPadAdjuster =
+                    EdgeToEdgeControllerFactory.createForViewAndObserveSupplier(
+                            mListView, mEdgeToEdgeSupplier);
         }
 
         onUpdated();
@@ -111,7 +162,7 @@ public class RecentTabsPage
 
     @Override
     public int getBackgroundColor() {
-        return Color.WHITE;
+        return SemanticColorUtils.getDefaultBgColor(mActivity);
     }
 
     @Override
@@ -130,11 +181,23 @@ public class RecentTabsPage
     }
 
     @Override
+    public SmoothTransitionDelegate enableSmoothTransition() {
+        if (mSmoothTransitionDelegate == null) {
+            mSmoothTransitionDelegate = new BasicSmoothTransitionDelegate(getView());
+        }
+        return mSmoothTransitionDelegate;
+    }
+
+    @Override
+    public boolean supportsEdgeToEdge() {
+        return !ChromeFeatureList.sDrawKeyNativeEdgeToEdgeDisableRecentTabsE2e.getValue();
+    }
+
+    @Override
     public void destroy() {
         assert !mIsAttachedToWindow : "Destroy called before removed from window";
         mRecentTabsManager.destroy();
         mRecentTabsManager = null;
-        mPageHost = null;
         mAdapter.notifyDataSetInvalidated();
         mAdapter = null;
         mListView.setAdapter((RecentTabsRowAdapter) null);
@@ -143,10 +206,22 @@ public class RecentTabsPage
         if (mBrowserControlsStateProvider != null) {
             mBrowserControlsStateProvider.removeObserver(this);
         }
+
+        mTabStripHeightSupplier.removeObserver(mTabStripHeightChangeCallback);
+        if (mPadAdjuster != null) {
+            mPadAdjuster.destroy();
+            mPadAdjuster = null;
+        }
     }
 
     @Override
-    public void updateForUrl(String url) {
+    public void updateForUrl(String url) {}
+
+    @Override
+    public int getHeightOverlappedWithTopControls() {
+        return mBrowserControlsStateProvider == null
+                ? 0
+                : mBrowserControlsStateProvider.getTopControlsHeight();
     }
 
     // View.OnAttachStateChangeListener
@@ -170,8 +245,9 @@ public class RecentTabsPage
 
     // ExpandableListView.OnChildClickedListener
     @Override
-    public boolean onChildClick(ExpandableListView parent, View v, int groupPosition,
-            int childPosition, long id) {
+    public boolean onChildClick(
+            ExpandableListView parent, View v, int groupPosition, int childPosition, long id) {
+        if (!mIsTouchEnabled) return true;
         return mAdapter.getGroup(groupPosition).onChildClick(childPosition);
     }
 
@@ -208,18 +284,29 @@ public class RecentTabsPage
         // Would prefer to have this context menu view managed internal to RecentTabsGroupView
         // Unfortunately, setting either onCreateContextMenuListener or onLongClickListener
         // disables the native onClick (expand/collapse) behaviour of the group view.
+
+        // Due to issues with theming the android context menu,
+        // we switch to using ContextMenuAdapter that is managed internally.
+        // Due to the reason listed above, we use onCreateContextMenu to catch any long presses
+        // from the user, and then keep a boolean internally to disable click events during a long
+        // press.
+        menu.clear();
+
         ExpandableListView.ExpandableListContextMenuInfo info =
                 (ExpandableListView.ExpandableListContextMenuInfo) menuInfo;
 
         int type = ExpandableListView.getPackedPositionType(info.packedPosition);
         int groupPosition = ExpandableListView.getPackedPositionGroup(info.packedPosition);
 
+        View anchorView = info.targetView;
+        if (anchorView == null) return;
+
         if (type == ExpandableListView.PACKED_POSITION_TYPE_GROUP) {
-            mAdapter.getGroup(groupPosition).onCreateContextMenuForGroup(menu, mActivity);
+            mAdapter.getGroup(groupPosition).onCreateContextMenuForGroup(mActivity, anchorView);
         } else if (type == ExpandableListView.PACKED_POSITION_TYPE_CHILD) {
             int childPosition = ExpandableListView.getPackedPositionChild(info.packedPosition);
-            mAdapter.getGroup(groupPosition).onCreateContextMenuForChild(childPosition, menu,
-                    mActivity);
+            mAdapter.getGroup(groupPosition)
+                    .onCreateContextMenuForChild(childPosition, mActivity, anchorView);
         }
     }
 
@@ -260,8 +347,15 @@ public class RecentTabsPage
     }
 
     @Override
-    public void onControlsOffsetChanged(int topOffset, int topControlsMinHeightOffset,
-            int bottomOffset, int bottomControlsMinHeightOffset, boolean needsAnimate) {
+    public void onControlsOffsetChanged(
+            int topOffset,
+            int topControlsMinHeightOffset,
+            boolean topControlsMinHeightChanged,
+            int bottomOffset,
+            int bottomControlsMinHeightOffset,
+            boolean bottomControlsMinHeightChanged,
+            boolean requestNewFrame,
+            boolean isVisibilityForced) {
         updateMargins();
     }
 
@@ -291,5 +385,14 @@ public class RecentTabsPage
             layoutParams.bottomMargin = bottomMargin;
             recentTabsRoot.setLayoutParams(layoutParams);
         }
+    }
+
+    Callback<Integer> getTabStripHeightChangeCallbackForTesting() {
+        return mTabStripHeightChangeCallback;
+    }
+
+    @Override
+    public void setTouchEnabled(boolean enabled) {
+        mIsTouchEnabled = enabled;
     }
 }

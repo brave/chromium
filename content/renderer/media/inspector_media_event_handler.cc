@@ -13,9 +13,9 @@ namespace content {
 
 namespace {
 
-absl::optional<blink::InspectorPlayerError> ErrorFromParams(
+std::optional<blink::InspectorPlayerError> ErrorFromParams(
     const base::Value::Dict& param) {
-  absl::optional<int> code = param.FindInt(media::StatusConstants::kCodeKey);
+  std::optional<int> code = param.FindInt(media::StatusConstants::kCodeKey);
   const std::string* group =
       param.FindString(media::StatusConstants::kGroupKey);
   const std::string* message =
@@ -31,13 +31,13 @@ absl::optional<blink::InspectorPlayerError> ErrorFromParams(
       caused_by.push_back(*parsed_cause);
   }
 
-  blink::WebVector<blink::InspectorPlayerError::SourceLocation> stack_vec;
+  std::vector<blink::InspectorPlayerError::SourceLocation> stack_vec;
   if (const auto* vec = param.FindList(media::StatusConstants::kStackKey)) {
     for (const auto& loc : *vec) {
       const auto& loc_dict = loc.GetDict();
       const std::string* file =
           loc_dict.FindString(media::StatusConstants::kFileKey);
-      absl::optional<int> line =
+      std::optional<int> line =
           loc_dict.FindInt(media::StatusConstants::kLineKey);
       if (!file || !line.has_value())
         continue;
@@ -47,7 +47,7 @@ absl::optional<blink::InspectorPlayerError> ErrorFromParams(
     }
   }
 
-  blink::WebVector<blink::InspectorPlayerError::Data> data_vec;
+  std::vector<blink::InspectorPlayerError::Data> data_vec;
   if (auto* data = param.FindDict(media::StatusConstants::kDataKey)) {
     for (const auto pair : *data) {
       std::string json;
@@ -144,7 +144,7 @@ void InspectorMediaEventHandler::SendQueuedMediaEvents(
         break;
       }
       case media::MediaLogRecord::Type::kMediaStatus: {
-        absl::optional<blink::InspectorPlayerError> error =
+        std::optional<blink::InspectorPlayerError> error =
             ErrorFromParams(event.params);
         if (error.has_value())
           errors.emplace_back(std::move(*error));

@@ -46,20 +46,17 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+#include <optional>
+
 #include "base/files/file_descriptor_watcher_posix.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #endif
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/trace_log.h"  // nogncheck
-#endif                                   // BUILDFLAG(ENABLE_BASE_TRACING)
-
-namespace base {
-namespace test {
+namespace base::test {
 
 namespace {
 
@@ -84,7 +81,6 @@ base::MessagePumpType GetMessagePumpTypeForMainThreadType(
       return MessagePumpType::IO;
   }
   NOTREACHED();
-  return MessagePumpType::DEFAULT;
 }
 
 std::unique_ptr<sequence_manager::SequenceManager>
@@ -253,7 +249,7 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
   // non-delayed work. Advances time to the next task unless
   // |quit_when_idle_requested| or TaskEnvironment controls mock time.
   bool MaybeFastForwardToWakeUp(
-      absl::optional<sequence_manager::WakeUp> next_wake_up,
+      std::optional<sequence_manager::WakeUp> next_wake_up,
       bool quit_when_idle_requested) override {
     if (quit_when_idle_requested) {
       return false;
@@ -309,13 +305,13 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
   // by the same amount. If false, `LiveTicks` won't be advanced (behaving as if
   // the system was suspended).
   NextTaskSource FastForwardToNextTaskOrCap(
-      absl::optional<sequence_manager::WakeUp> next_main_thread_wake_up,
+      std::optional<sequence_manager::WakeUp> next_main_thread_wake_up,
       TimeTicks fast_forward_cap,
       bool advance_live_ticks) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
     // Consider the next thread pool tasks iff they're running.
-    absl::optional<TimeTicks> next_thread_pool_task_time;
+    std::optional<TimeTicks> next_thread_pool_task_time;
     if (thread_pool_ && thread_pool_task_tracker_->TasksAllowedToRun()) {
       next_thread_pool_task_time =
           thread_pool_->NextScheduledRunTimeForTesting();
@@ -324,7 +320,7 @@ class TaskEnvironment::MockTimeDomain : public sequence_manager::TimeDomain {
     // Custom comparison logic to consider nullopt the largest rather than
     // smallest value. Could consider using TimeTicks::Max() instead of nullopt
     // to represent out-of-tasks?
-    absl::optional<TimeTicks> next_task_time;
+    std::optional<TimeTicks> next_task_time;
     if (!next_main_thread_wake_up) {
       next_task_time = next_thread_pool_task_time;
     } else if (!next_thread_pool_task_time) {
@@ -450,7 +446,7 @@ TaskEnvironment::TaskEnvironment(
                                     : nullptr),
       scoped_lazy_task_runner_list_for_testing_(
           std::make_unique<internal::ScopedLazyTaskRunnerListForTesting>()),
-      // TODO(https://crbug.com/922098): Enable Run() timeouts even for
+      // TODO(crbug.com/41435712): Enable Run() timeouts even for
       // instances created with TimeSource::MOCK_TIME.
       run_loop_timeout_(
           mock_time_domain_
@@ -511,11 +507,9 @@ TaskEnvironment::TestTaskTracker* TaskEnvironment::CreateThreadPool() {
 }
 
 void TaskEnvironment::InitializeThreadPool() {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // Force the creation of TraceLog instance before starting ThreadPool and
   // creating additional threads to avoid race conditions.
   trace_event::TraceLog::GetInstance();
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
   task_tracker_ = CreateThreadPool();
   if (mock_time_domain_) {
@@ -873,7 +867,7 @@ TimeDelta TaskEnvironment::NextMainThreadPendingTaskDelay() const {
   if (!sequence_manager_->IsIdleForTesting()) {
     return TimeDelta();
   }
-  absl::optional<sequence_manager::WakeUp> wake_up =
+  std::optional<sequence_manager::WakeUp> wake_up =
       sequence_manager_->GetNextDelayedWakeUp();
   return wake_up ? wake_up->time - lazy_now.Now() : TimeDelta::Max();
 }
@@ -1089,5 +1083,4 @@ void TaskEnvironment::TestTaskTracker::AssertFlushForTestingAllowed() {
          "under it should thus never FlushForTesting().";
 }
 
-}  // namespace test
-}  // namespace base
+}  // namespace base::test

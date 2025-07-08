@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2023 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -8,239 +9,14 @@ from python.generators.diff_tests.testing import DiffTestBlueprint
 from python.generators.diff_tests.testing import TestSuite
 
 
-class Chrome(TestSuite):
-  # Tests related to Chrome's use of Perfetto. Chrome histogram hashes
-  def test_chrome_histogram_hashes(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat1"
-            type: 3
-            name_iid: 1
-            chrome_histogram_sample {
-              name_hash: 10
-              sample: 100
-            }
-          }
-        }
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat2"
-            type: 3
-            name_iid: 2
-            chrome_histogram_sample {
-              name_hash: 20
-            }
-          }
-        }
-        """),
-        query=Metric('chrome_histogram_hashes'),
-        out=TextProto(r"""
-        [perfetto.protos.chrome_histogram_hashes]: {
-          hash: 10
-          hash: 20
-        }
-        """))
-
-  # Chrome user events
-  def test_chrome_user_event_hashes(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat1"
-            type: 3
-            name_iid: 1
-            chrome_user_event {
-              action_hash: 10
-            }
-          }
-        }
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat2"
-            type: 3
-            name_iid: 2
-            chrome_user_event {
-              action_hash: 20
-            }
-          }
-        }
-        """),
-        query=Metric('chrome_user_event_hashes'),
-        out=TextProto(r"""
-        [perfetto.protos.chrome_user_event_hashes]: {
-          action_hash: 10
-          action_hash: 20
-        }
-        """))
-
-  # Chrome performance mark
-  def test_chrome_performance_mark_hashes(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat1"
-            type: 3
-            name: "name1"
-            [perfetto.protos.ChromeTrackEvent.chrome_hashed_performance_mark] {
-              site_hash: 10
-              mark_hash: 100
-            }
-          }
-        }
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 0
-          incremental_state_cleared: true
-          track_event {
-            categories: "cat2"
-            type: 3
-            name: "name2"
-            [perfetto.protos.ChromeTrackEvent.chrome_hashed_performance_mark] {
-              site_hash: 20
-              mark_hash: 200
-            }
-          }
-        }
-        """),
-        query=Metric('chrome_performance_mark_hashes'),
-        out=TextProto(r"""
-        [perfetto.protos.chrome_performance_mark_hashes]: {
-          site_hash: 10
-          site_hash: 20
-          mark_hash: 100
-          mark_hash: 200
-        }
-        """))
-
-  # Chrome reliable range
-  def test_chrome_reliable_range(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        12,"First slice for utid=2","[NULL]",2
-        """))
-
-  def test_chrome_reliable_range_cropping(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range_cropping.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        10000,"Range of interest packet","[NULL]",2
-        """))
-
-  def test_chrome_reliable_range_missing_processes(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range_missing_processes.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        1011,"Missing process data for upid=2",2,1
-        """))
-
-  def test_chrome_reliable_range_missing_browser_main(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range_missing_browser_main.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        1011,"Missing main thread for upid=1",1,1
-        """))
-
-  def test_chrome_reliable_range_missing_gpu_main(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range_missing_gpu_main.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        1011,"Missing main thread for upid=1",1,1
-        """))
-
-  def test_chrome_reliable_range_missing_renderer_main(self):
-    return DiffTestBlueprint(
-        trace=Path('chrome_reliable_range_missing_renderer_main.textproto'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        1011,"Missing main thread for upid=1",1,1
-        """))
-
-  def test_chrome_reliable_range_non_chrome_process(self):
-    return DiffTestBlueprint(
-        # We need a trace with a large number of non-chrome slices, so that the
-        # reliable range is affected by their filtering.
-        trace=DataPath('example_android_trace_30s.pb'),
-        query=Path('chrome_reliable_range_test.sql'),
-        out=Csv("""
-        "start","reason","debug_limiting_upid","debug_limiting_utid"
-        0,"[NULL]","[NULL]","[NULL]"
-        """))
-
-  # Chrome slices
-  def test_chrome_slice_names(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 1000
-          track_event {
-            categories: "cat"
-            name: "Looper.Dispatch: class1"
-            type: 3
-          }
-        }
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 2000
-          track_event {
-            categories: "cat"
-            name: "name2"
-            type: 3
-          }
-        }
-        packet {
-          chrome_metadata {
-            chrome_version_code: 123
-          }
-        }
-        """),
-        query=Metric('chrome_slice_names'),
-        out=TextProto(r"""
-        [perfetto.protos.chrome_slice_names]: {
-          chrome_version_code: 123
-          slice_name: "Looper.Dispatch: class1"
-          slice_name: "name2"
-        }
-        """))
-
+class ChromeStdlib(TestSuite):
   # Chrome tasks.
   def test_chrome_tasks(self):
     return DiffTestBlueprint(
         trace=DataPath(
             'chrome_page_load_all_categories_not_extended.pftrace.gz'),
         query="""
-        SELECT IMPORT('chrome.tasks');
+        INCLUDE PERFETTO MODULE chrome.tasks;
 
         SELECT full_name as name, task_type, count() AS count
         FROM chrome_tasks
@@ -255,7 +31,7 @@ class Chrome(TestSuite):
     return DiffTestBlueprint(
         trace=DataPath('top_level_java_choreographer_slices'),
         query="""
-        SELECT IMPORT('chrome.tasks');
+        INCLUDE PERFETTO MODULE chrome.tasks;
 
         SELECT
           full_name,
@@ -269,207 +45,12 @@ class Chrome(TestSuite):
             'top_level_java_choreographer_slices_top_level_java_chrome_tasks_test.out'
         ))
 
-  # Chrome stack samples.
-  def test_chrome_stack_samples_for_task(self):
-    return DiffTestBlueprint(
-        trace=DataPath('chrome_stack_traces_symbolized_trace.pftrace'),
-        query="""
-        SELECT RUN_METRIC('chrome/chrome_stack_samples_for_task.sql',
-            'target_duration_ms', '0.000001',
-            'thread_name', '"CrBrowserMain"',
-            'task_name', '"sendTouchEvent"');
-
-        SELECT
-          sample.description,
-          sample.ts,
-          sample.depth
-        FROM chrome_stack_samples_for_task sample
-        JOIN (
-            SELECT
-              ts,
-              dur
-            FROM slice
-            WHERE ts = 696373965001470
-        ) test_slice
-        ON sample.ts >= test_slice.ts
-          AND sample.ts <= test_slice.ts + test_slice.dur
-        ORDER BY sample.ts, sample.depth;
-        """,
-        out=Path('chrome_stack_samples_for_task_test.out'))
-
-  # Log messages.
-  def test_chrome_log_message(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          timestamp: 0
-          incremental_state_cleared: true
-          trusted_packet_sequence_id: 1
-          track_descriptor {
-            uuid: 12345
-            thread {
-              pid: 123
-              tid: 345
-            }
-            parent_uuid: 0
-            chrome_thread {
-              thread_type: THREAD_POOL_FG_WORKER
-            }
-          }
-        }
-
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 10
-          track_event {
-            track_uuid: 12345
-            categories: "cat1"
-            type: TYPE_INSTANT
-            name: "slice1"
-            log_message {
-                body_iid: 1
-                source_location_iid: 3
-            }
-          }
-          interned_data {
-            log_message_body {
-                iid: 1
-                body: "log message"
-            }
-            source_locations {
-                iid: 3
-                function_name: "func"
-                file_name: "foo.cc"
-                line_number: 123
-            }
-          }
-        }
-        """),
-        query="""
-        SELECT utid, tag, msg, prio FROM android_logs;
-        """,
-        # If the log_message_body doesn't have any priority, a default 4 (i.e.
-        # INFO) is assumed (otherwise the UI will not show the message).
-        out=Csv("""
-        "utid","tag","msg","prio"
-        1,"foo.cc:123","log message",4
-        """))
-
-  def test_chrome_log_message_priority(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          timestamp: 0
-          incremental_state_cleared: true
-          trusted_packet_sequence_id: 1
-          track_descriptor {
-            uuid: 12345
-            thread {
-              pid: 123
-              tid: 345
-            }
-            parent_uuid: 0
-            chrome_thread {
-              thread_type: THREAD_POOL_FG_WORKER
-            }
-          }
-        }
-
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 10
-          track_event {
-            track_uuid: 12345
-            categories: "cat1"
-            type: TYPE_INSTANT
-            name: "slice1"
-            log_message {
-                body_iid: 1
-                source_location_iid: 3
-                prio: PRIO_WARN
-            }
-          }
-          interned_data {
-            log_message_body {
-                iid: 1
-                body: "log message"
-            }
-            source_locations {
-                iid: 3
-                function_name: "func"
-                file_name: "foo.cc"
-                line_number: 123
-            }
-          }
-        }
-        """),
-        query="""
-        SELECT utid, tag, msg, prio FROM android_logs;
-        """,
-        out=Csv("""
-        "utid","tag","msg","prio"
-        1,"foo.cc:123","log message",5
-        """))
-
-  def test_chrome_log_message_args(self):
-    return DiffTestBlueprint(
-        trace=TextProto(r"""
-        packet {
-          timestamp: 0
-          incremental_state_cleared: true
-          trusted_packet_sequence_id: 1
-          track_descriptor {
-            uuid: 12345
-            thread {
-              pid: 123
-              tid: 345
-            }
-            parent_uuid: 0
-            chrome_thread {
-              thread_type: THREAD_POOL_FG_WORKER
-            }
-          }
-        }
-
-        packet {
-          trusted_packet_sequence_id: 1
-          timestamp: 10
-          track_event {
-            track_uuid: 12345
-            categories: "cat1"
-            type: TYPE_INSTANT
-            name: "slice1"
-            log_message {
-                body_iid: 1
-                source_location_iid: 3
-            }
-          }
-          interned_data {
-            log_message_body {
-                iid: 1
-                body: "log message"
-            }
-            source_locations {
-                iid: 3
-                function_name: "func"
-                file_name: "foo.cc"
-                line_number: 123
-            }
-          }
-        }
-        """),
-        query=Path('chrome_log_message_args_test.sql'),
-        out=Csv("""
-        "log_message","function_name","file_name","line_number"
-        "log message","func","foo.cc",123
-        """))
-
   # Chrome custom navigation event names
   def test_chrome_custom_navigation_tasks(self):
     return DiffTestBlueprint(
         trace=DataPath('chrome_custom_navigation_trace.gz'),
         query="""
-        SELECT IMPORT('chrome.tasks');
+        INCLUDE PERFETTO MODULE chrome.tasks;
 
         SELECT full_name, task_type, count() AS count
         FROM chrome_tasks
@@ -494,7 +75,7 @@ class Chrome(TestSuite):
     return DiffTestBlueprint(
         trace=DataPath('chrome_5672_histograms.pftrace.gz'),
         query="""
-        SELECT IMPORT('chrome.histograms');
+        INCLUDE PERFETTO MODULE chrome.histograms;
 
         SELECT
           name,
@@ -528,36 +109,224 @@ class Chrome(TestSuite):
         "Net.HttpResponseCode",541
         """))
 
-  # Trace proto content
-  def test_proto_content(self):
+  def test_speedometer_2_1_score(self):
     return DiffTestBlueprint(
-        trace=DataPath('chrome_scroll_without_vsync.pftrace'),
-        query=Path('proto_content_test.sql'),
-        out=Path('proto_content.out'))
+        trace=DataPath('speedometer_21.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
 
-  def test_speedometer(self):
+        SELECT format("%.1f", chrome_speedometer_score()) AS score
+        """,
+        out=Csv("""
+        "score"
+        "95.8"
+        """))
+
+  def test_speedometer_2_1_iteration(self):
     return DiffTestBlueprint(
-        trace=DataPath('speedometer.perfetto_trace.gz'),
-        query=Path('chrome_speedometer_test.sql'),
-        out=Path('chrome_speedometer.out'))
+        trace=DataPath('speedometer_21.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
 
-  # TODO(mayzner): Uncomment when it works
-  # def test_proto_content_path(self):
-  #   return DiffTestBlueprint(
-  #       trace=DataPath('chrome_scroll_without_vsync.pftrace'),
-  #       query=Path('proto_content_path_test.sql'),
-  #       out=Csv("""
-  #       "total_size","field_type","field_name","parent_id","event_category",
-  #                                                          "event_name"
-  #       137426,"TracePacket","[NULL]","[NULL]","[NULL]","[NULL]"
-  #       59475,"TrackEvent","#track_event",415,"[NULL]","[NULL]"
-  #       37903,"TrackEvent","#track_event",17,"[NULL]","[NULL]"
-  #       35904,"int32","#trusted_uid",17,"[NULL]","[NULL]"
-  #       35705,"TracePacket","[NULL]","[NULL]","input,benchmark",
-  #                                             "LatencyInfo.Flow"
-  #       29403,"TracePacket","[NULL]","[NULL]","cc,input","[NULL]"
-  #       24703,"ChromeLatencyInfo","#chrome_latency_info",18,"[NULL]","[NULL]"
-  #       22620,"uint64","#time_us",26,"[NULL]","[NULL]"
-  #       18711,"TrackEvent","#track_event",1467,"[NULL]","[NULL]"
-  #       15606,"uint64","#timestamp",17,"[NULL]","[NULL]"
-  #       """))
+        SELECT
+         ts,dur,name,iteration,
+         format("%.1f", geomean) AS geomean,
+         format("%.1f", score) AS score
+           FROM chrome_speedometer_iteration
+          ORDER BY iteration ASC
+        """,
+        out=Csv("""
+        "ts","dur","name","iteration","geomean","score"
+        693997310311984,7020297000,"iteration-1",1,"254.2","78.7"
+        694004414619984,6308034000,"iteration-2",2,"224.4","89.1"
+        694010770005984,5878289000,"iteration-3",3,"200.3","99.9"
+        694016699502984,5934578000,"iteration-4",4,"201.2","99.4"
+        694022683560984,5952163000,"iteration-5",5,"203.0","98.5"
+        694028690570984,5966530000,"iteration-6",6,"204.3","97.9"
+        694034719276984,5853043000,"iteration-7",7,"200.4","99.8"
+        694040637173984,6087435000,"iteration-8",8,"203.0","98.5"
+        694046772284984,6040820000,"iteration-9",9,"199.3","100.3"
+        694052857814984,6063770000,"iteration-10",10,"208.0","96.2"
+        """))
+
+  def test_speedometer_2_1_renderer_main_utid(self):
+    return DiffTestBlueprint(
+        trace=DataPath('speedometer_21.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
+
+        SELECT chrome_speedometer_renderer_main_utid();
+        """,
+        out=Csv("""
+        "chrome_speedometer_renderer_main_utid()"
+        4
+        """))
+
+  def test_speedometer_3_score(self):
+    return DiffTestBlueprint(
+        trace=DataPath('speedometer_3.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
+
+        SELECT format("%.2f", chrome_speedometer_score()) AS score
+        """,
+        out=Csv("""
+        "score"
+        "9.32"
+        """))
+
+  def test_speedometer_3_iteration(self):
+    return DiffTestBlueprint(
+        trace=DataPath('speedometer_3.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
+
+        SELECT
+         ts,dur,name,iteration,
+         format("%.1f", geomean) AS geomean,
+         format("%.1f", score) AS score
+           FROM chrome_speedometer_iteration
+          ORDER BY iteration ASC
+        """,
+        out=Csv("""
+        "ts","dur","name","iteration","geomean","score"
+        303831755756,29237440000,"iteration-0",0,"149.6","6.7"
+        333069212756,5852045000,"iteration-1",1,"110.7","9.0"
+        338921282756,5128440000,"iteration-2",2,"113.5","8.8"
+        344049763756,4640412000,"iteration-3",3,"105.0","9.5"
+        348690198756,4790109000,"iteration-4",4,"106.9","9.4"
+        353480329756,5150878000,"iteration-5",5,"106.0","9.4"
+        358631265756,4825246000,"iteration-6",6,"103.1","9.7"
+        363456560756,4447621000,"iteration-7",7,"95.5","10.5"
+        367904208756,4566333000,"iteration-8",8,"100.8","9.9"
+        372470568756,4301553000,"iteration-9",9,"96.9","10.3"
+        """))
+
+  def test_speedometer_3_renderer_main_utid(self):
+    return DiffTestBlueprint(
+        trace=DataPath('speedometer_3.perfetto_trace.gz'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.speedometer;
+
+        SELECT chrome_speedometer_renderer_main_utid();
+        """,
+        out=Csv("""
+        "chrome_speedometer_renderer_main_utid()"
+        2
+        """))
+
+  def test_chrome_graphics_pipeline_surface_frame_steps(self):
+    return DiffTestBlueprint(
+        trace=DataPath('scroll_m131.pftrace'),
+        query="""
+        INCLUDE PERFETTO MODULE chrome.graphics_pipeline;
+
+        SELECT
+          id,
+          ts,
+          dur,
+          step,
+          surface_frame_trace_id,
+          utid
+        FROM chrome_graphics_pipeline_surface_frame_steps
+        ORDER BY ts
+        LIMIT 10;
+        """,
+        out=Csv("""
+        "id","ts","dur","step","surface_frame_trace_id","utid"
+        209,1292552020392633,142000,"STEP_ISSUE_BEGIN_FRAME",1407387768455321,6
+        210,1292552020907210,1264000,"STEP_RECEIVE_BEGIN_FRAME",1407387768455321,4
+        259,1292552026179210,1550000,"STEP_GENERATE_COMPOSITOR_FRAME",1407387768455321,4
+        264,1292552026586210,924000,"STEP_SUBMIT_COMPOSITOR_FRAME",1407387768455321,4
+        265,1292552027255633,791000,"STEP_RECEIVE_COMPOSITOR_FRAME",1407387768455321,6
+        268,1292552028200633,122000,"STEP_ISSUE_BEGIN_FRAME",4294967439,6
+        269,1292552028581257,1772000,"STEP_GENERATE_COMPOSITOR_FRAME",4294967439,1
+        276,1292552030185257,164000,"STEP_SUBMIT_COMPOSITOR_FRAME",4294967439,1
+        277,1292552030600633,195000,"STEP_RECEIVE_COMPOSITOR_FRAME",4294967439,6
+        302,1292552032277633,178000,"STEP_ISSUE_BEGIN_FRAME",1407387768455322,6
+        """))
+
+  def test_chrome_graphics_pipeline_display_frame_steps(self):
+    return DiffTestBlueprint(
+      trace=DataPath('scroll_m131.pftrace'),
+      query="""
+      INCLUDE PERFETTO MODULE chrome.graphics_pipeline;
+
+      SELECT
+        id,
+        ts,
+        dur,
+        step,
+        display_trace_id,
+        utid
+      FROM chrome_graphics_pipeline_display_frame_steps
+      ORDER BY ts
+      LIMIT 10;
+      """,
+      out=Csv("""
+      "id","ts","dur","step","display_trace_id","utid"
+      279,1292552030930633,1263000,"STEP_DRAW_AND_SWAP",65565,6
+      285,1292552031240633,143000,"STEP_SURFACE_AGGREGATION",65565,6
+      299,1292552032042633,68000,"STEP_SEND_BUFFER_SWAP",65565,6
+      319,1292552033751131,667000,"STEP_BUFFER_SWAP_POST_SUBMIT",65565,7
+      337,1292552036240633,2033000,"STEP_DRAW_AND_SWAP",65566,6
+      341,1292552036520633,873000,"STEP_SURFACE_AGGREGATION",65566,6
+      359,1292552038113633,75000,"STEP_SEND_BUFFER_SWAP",65566,6
+      376,1292552039773131,458000,"STEP_BUFFER_SWAP_POST_SUBMIT",65566,7
+      394,1292552043191131,48000,"STEP_FINISH_BUFFER_SWAP",65565,7
+      397,1292552043253633,75000,"STEP_SWAP_BUFFERS_ACK",65565,6
+      """))
+
+  def test_chrome_surface_frame_id_to_first_display_id(self):
+    return DiffTestBlueprint(
+      trace=DataPath('scroll_m131.pftrace'),
+      query="""
+      INCLUDE PERFETTO MODULE chrome.graphics_pipeline;
+
+      SELECT
+        surface_frame_trace_id,
+        display_trace_id
+      FROM chrome_surface_frame_id_to_first_display_id
+      ORDER BY surface_frame_trace_id, display_trace_id
+      LIMIT 10;
+      """,
+      out=Csv("""
+      "surface_frame_trace_id","display_trace_id"
+      4294967439,65565
+      4294967440,65566
+      4294967441,65567
+      4294967442,65568
+      4294967443,65569
+      4294967449,65658
+      4294967458,65716
+      4294967459,65717
+      4294967460,65718
+      4294967461,65719
+      """))
+
+  def test_chrome_graphics_pipeline_inputs_to_surface_frames(self):
+    return DiffTestBlueprint(
+      trace=DataPath('scroll_m131.pftrace'),
+      query="""
+      INCLUDE PERFETTO MODULE chrome.graphics_pipeline;
+
+      SELECT
+        surface_frame_trace_id,
+        latency_id
+      FROM chrome_graphics_pipeline_inputs_to_surface_frames
+      ORDER BY surface_frame_trace_id, latency_id
+      LIMIT 10;
+      """,
+      out=Csv("""
+      "surface_frame_trace_id","latency_id"
+      1407387768455321,-2143831735395279174
+      1407387768455321,-2143831735395279169
+      1407387768455322,-2143831735395279191
+      1407387768455323,-2143831735395279278
+      1407387768455324,-2143831735395279270
+      1407387768455325,-2143831735395279284
+      1407387768455326,-2143831735395279244
+      1407387768455327,-2143831735395279233
+      1407387768455328,-2143831735395279258
+      1407387768455329,-2143831735395279255
+      """))

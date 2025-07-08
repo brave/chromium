@@ -85,8 +85,8 @@ TEST(GoogleNewLogoApiTest, ResolvesRelativeUrl) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -103,8 +103,8 @@ TEST(GoogleNewLogoApiTest, DoesNotResolveAbsoluteUrl) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -125,8 +125,8 @@ TEST(GoogleNewLogoApiTest, RequiresHttpsForContainedUrls) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -150,8 +150,8 @@ TEST(GoogleNewLogoApiTest, AcceptsHttpForContainedUrlsIfBaseInsecure) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -176,13 +176,13 @@ TEST(GoogleNewLogoApiTest, ParsesStaticImage) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
-  EXPECT_EQ("abc", logo->encoded_image->data());
-  EXPECT_EQ("xyz", logo->dark_encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
+  EXPECT_EQ("xyz", logo->dark_encoded_image->as_string());
   EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
 }
 
@@ -194,44 +194,19 @@ TEST(GoogleNewLogoApiTest, ParsesShareButtonForSimpleDoodle) {
   "ddljson": {
     "doodle_type": "SIMPLE",
     "data_uri": "data:image/png;base64,YWJj",
-    "short_link": "//g.co",
-    "share_button": {
-      "background_color": "#fe8080",
-      "icon_image": "test_img",
-      "offset_x": 111,
-      "offset_y": 222,
-      "opacity": 0.5
-    },
-    "dark_share_button": {
-      "background_color": "#ee22bb",
-      "icon_image": "dark_test_img",
-      "offset_x": 99,
-      "offset_y": 191,
-      "opacity": 0.7
-    }
+    "short_link": "//g.co"
   }
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
-  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
   EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
   EXPECT_EQ("https://g.co/", logo->metadata.short_link);
-
-  EXPECT_EQ("#fe8080", logo->metadata.share_button_bg);
-  EXPECT_EQ("test_img", logo->metadata.share_button_icon);
-  EXPECT_EQ(111, logo->metadata.share_button_x);
-  EXPECT_EQ(222, logo->metadata.share_button_y);
-  EXPECT_EQ(0.5, logo->metadata.share_button_opacity);
-  EXPECT_EQ("#ee22bb", logo->metadata.dark_share_button_bg);
-  EXPECT_EQ("dark_test_img", logo->metadata.dark_share_button_icon);
-  EXPECT_EQ(99, logo->metadata.dark_share_button_x);
-  EXPECT_EQ(191, logo->metadata.dark_share_button_y);
-  EXPECT_EQ(0.7, logo->metadata.dark_share_button_opacity);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfWrongShortLinkFormat) {
@@ -242,41 +217,19 @@ TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfWrongShortLinkFormat) {
   "ddljson": {
     "doodle_type": "SIMPLE",
     "data_uri": "data:image/png;base64,YWJj",
-    "short_link": "www.//g.co",
-    "share_button": {
-      "background_color": "#fe8080",
-      "icon_image": "test_img",
-      "offset_x": 111,
-      "offset_y": 222,
-      "opacity": 0.5
-    },
-    "dark_share_button": {
-      "background_color": "#ee22bb",
-      "icon_image": "dark_test_img",
-      "offset_x": 99,
-      "offset_y": 191,
-      "opacity": 0.7
-    }
+    "short_link": "www.//g.co"
   }
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
-  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
   EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
   ASSERT_TRUE(logo->metadata.short_link.is_empty());
-  ASSERT_TRUE(logo->metadata.share_button_icon.empty());
-  EXPECT_EQ(-1, logo->metadata.share_button_x);
-  EXPECT_EQ(-1, logo->metadata.share_button_y);
-  EXPECT_EQ(0, logo->metadata.share_button_opacity);
-  ASSERT_TRUE(logo->metadata.dark_share_button_icon.empty());
-  EXPECT_EQ(-1, logo->metadata.dark_share_button_x);
-  EXPECT_EQ(-1, logo->metadata.dark_share_button_y);
-  EXPECT_EQ(0, logo->metadata.dark_share_button_opacity);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfShortLinkInvalid) {
@@ -287,41 +240,19 @@ TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfShortLinkInvalid) {
   "ddljson": {
     "doodle_type": "SIMPLE",
     "data_uri": "data:image/png;base64,YWJj",
-    "short_link": "//dsdjf2(*&^%&",
-    "share_button": {
-      "background_color": "#fe8080",
-      "icon_image": "test_img",
-      "offset_x": 111,
-      "offset_y": 222,
-      "opacity": 0.5
-    },
-    "dark_share_button": {
-      "background_color": "#ee22bb",
-      "icon_image": "dark_test_img",
-      "offset_x": 99,
-      "offset_y": 191,
-      "opacity": 0.7
-    }
+    "short_link": "//dsdjf2(*&^%&"
   }
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
-  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
   EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
   ASSERT_FALSE(logo->metadata.short_link.is_valid());
-  ASSERT_TRUE(logo->metadata.share_button_icon.empty());
-  EXPECT_EQ(-1, logo->metadata.share_button_x);
-  EXPECT_EQ(-1, logo->metadata.share_button_y);
-  EXPECT_EQ(0, logo->metadata.share_button_opacity);
-  ASSERT_TRUE(logo->metadata.dark_share_button_icon.empty());
-  EXPECT_EQ(-1, logo->metadata.dark_share_button_x);
-  EXPECT_EQ(-1, logo->metadata.dark_share_button_y);
-  EXPECT_EQ(0, logo->metadata.dark_share_button_opacity);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesShareButtonForAnimatedDoodle) {
@@ -337,46 +268,21 @@ TEST(GoogleNewLogoApiTest, ParsesShareButtonForAnimatedDoodle) {
       "url": "https://www.doodle.com/image.gif"
     },
     "short_link": "//g.co",
-    "cta_data_uri": "data:image/png;base64,YWJj",
-    "share_button": {
-      "background_color": "#fe8080",
-      "icon_image": "test_img",
-      "offset_x": 111,
-      "offset_y": 222,
-      "opacity": 0.5
-    },
-    "dark_share_button": {
-      "background_color": "#ee22bb",
-      "icon_image": "dark_test_img",
-      "offset_x": 99,
-      "offset_y": 191,
-      "opacity": 0.7
-    }
+    "cta_data_uri": "data:image/png;base64,YWJj"
   }
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
   EXPECT_EQ(GURL("https://www.doodle.com/image.gif"),
             logo->metadata.animated_url);
-  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
   EXPECT_EQ(LogoType::ANIMATED, logo->metadata.type);
   EXPECT_EQ("https://g.co/", logo->metadata.short_link);
-
-  EXPECT_EQ("#fe8080", logo->metadata.share_button_bg);
-  EXPECT_EQ("test_img", logo->metadata.share_button_icon);
-  EXPECT_EQ(111, logo->metadata.share_button_x);
-  EXPECT_EQ(222, logo->metadata.share_button_y);
-  EXPECT_EQ(0.5, logo->metadata.share_button_opacity);
-  EXPECT_EQ("#ee22bb", logo->metadata.dark_share_button_bg);
-  EXPECT_EQ("dark_test_img", logo->metadata.dark_share_button_icon);
-  EXPECT_EQ(99, logo->metadata.dark_share_button_x);
-  EXPECT_EQ(191, logo->metadata.dark_share_button_y);
-  EXPECT_EQ(0.7, logo->metadata.dark_share_button_opacity);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
@@ -403,8 +309,8 @@ TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -413,8 +319,8 @@ TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
   EXPECT_EQ(GURL("https://www.doodle.com/dark_image.gif"),
             logo->metadata.dark_animated_url);
   EXPECT_EQ("#ABCDEF", logo->metadata.dark_background_color);
-  EXPECT_EQ("abc", logo->encoded_image->data());
-  EXPECT_EQ("xyz", logo->dark_encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
+  EXPECT_EQ("xyz", logo->dark_encoded_image->as_string());
   EXPECT_EQ(LogoType::ANIMATED, logo->metadata.type);
 }
 
@@ -437,8 +343,8 @@ TEST(GoogleNewLogoApiTest, ParsesLoggingUrls) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -466,8 +372,8 @@ TEST(GoogleNewLogoApiTest, ParsesImageSize) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   EXPECT_EQ(500, logo->metadata.width_px);
@@ -490,8 +396,8 @@ TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodle) {
 })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -519,8 +425,8 @@ TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodleWithNewWindowAsSimple) {
     })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -529,7 +435,7 @@ TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodleWithNewWindowAsSimple) {
   EXPECT_EQ(GURL("https://base.doo/play"), logo->metadata.full_page_url);
   EXPECT_EQ(0, logo->metadata.iframe_width_px);
   EXPECT_EQ(0, logo->metadata.iframe_height_px);
-  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("abc", logo->encoded_image->as_string());
 }
 
 TEST(GoogleNewLogoApiTest, DefaultsInteractiveIframeSize) {
@@ -544,8 +450,8 @@ TEST(GoogleNewLogoApiTest, DefaultsInteractiveIframeSize) {
     })json";
 
   bool failed = false;
-  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+  std::unique_ptr<EncodedLogo> logo =
+      ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
   ASSERT_FALSE(failed);
   ASSERT_TRUE(logo);
@@ -559,7 +465,8 @@ TEST(GoogleNewLogoApiTest, ParsesCapturedApiResult) {
   const GURL base_url("https://base.doo/");
 
   base::FilePath test_data_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir));
   test_data_dir = test_data_dir.AppendASCII("components")
                       .AppendASCII("test")
                       .AppendASCII("data")
@@ -593,8 +500,8 @@ TEST(GoogleNewLogoApiTest, ParsesCapturedApiResult) {
         << test_case.file;
 
     bool failed = false;
-    std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
-        base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+    std::unique_ptr<EncodedLogo> logo =
+        ParseDoodleLogoResponse(base_url, json, base::Time(), &failed);
 
     EXPECT_FALSE(failed) << test_case.file;
     EXPECT_TRUE(logo) << test_case.file;

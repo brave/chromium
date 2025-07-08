@@ -24,10 +24,26 @@
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/svg/animation/smil_animation_effect_parameters.h"
 #include "third_party/blink/renderer/core/svg/animation/smil_animation_value.h"
+#include "third_party/blink/renderer/core/svg/svg_a_element.h"
+#include "third_party/blink/renderer/core/svg/svg_circle_element.h"
+#include "third_party/blink/renderer/core/svg/svg_clip_path_element.h"
+#include "third_party/blink/renderer/core/svg/svg_defs_element.h"
+#include "third_party/blink/renderer/core/svg/svg_ellipse_element.h"
+#include "third_party/blink/renderer/core/svg/svg_foreign_object_element.h"
+#include "third_party/blink/renderer/core/svg/svg_g_element.h"
+#include "third_party/blink/renderer/core/svg/svg_image_element.h"
+#include "third_party/blink/renderer/core/svg/svg_line_element.h"
 #include "third_party/blink/renderer/core/svg/svg_mpath_element.h"
 #include "third_party/blink/renderer/core/svg/svg_parser_utilities.h"
 #include "third_party/blink/renderer/core/svg/svg_path_element.h"
 #include "third_party/blink/renderer/core/svg/svg_path_utilities.h"
+#include "third_party/blink/renderer/core/svg/svg_point.h"
+#include "third_party/blink/renderer/core/svg/svg_polygon_element.h"
+#include "third_party/blink/renderer/core/svg/svg_polyline_element.h"
+#include "third_party/blink/renderer/core/svg/svg_rect_element.h"
+#include "third_party/blink/renderer/core/svg/svg_switch_element.h"
+#include "third_party/blink/renderer/core/svg/svg_text_element.h"
+#include "third_party/blink/renderer/core/svg/svg_use_element.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -41,8 +57,12 @@ namespace {
 bool TargetCanHaveMotionTransform(const SVGElement& target) {
   // We don't have a special attribute name to verify the animation type. Check
   // the element name instead.
-  if (!IsA<SVGGraphicsElement>(target))
+  if (IsA<SVGClipPathElement>(target)) {
+    return true;
+  }
+  if (!IsA<SVGGraphicsElement>(target)) {
     return false;
+  }
   // Spec: SVG 1.1 section 19.2.15
   // FIXME: svgTag is missing. Needs to be checked, if transforming <svg> could
   // cause problems.
@@ -52,11 +72,11 @@ bool TargetCanHaveMotionTransform(const SVGElement& target) {
          IsA<SVGRectElement>(target) || IsA<SVGCircleElement>(target) ||
          IsA<SVGEllipseElement>(target) || IsA<SVGLineElement>(target) ||
          IsA<SVGPolylineElement>(target) || IsA<SVGPolygonElement>(target) ||
-         IsA<SVGTextElement>(target) || IsA<SVGClipPathElement>(target) ||
-         IsA<SVGMaskElement>(target) || IsA<SVGAElement>(target) ||
+         IsA<SVGTextElement>(target) || IsA<SVGAElement>(target) ||
          IsA<SVGForeignObjectElement>(target);
 }
-}
+
+}  // namespace
 
 SVGAnimateMotionElement::SVGAnimateMotionElement(Document& document)
     : SVGAnimationElement(svg_names::kAnimateMotionTag, document) {
@@ -81,12 +101,15 @@ void SVGAnimateMotionElement::DidChangeAnimationTarget() {
   SVGAnimationElement::DidChangeAnimationTarget();
 }
 
+void SVGAnimateMotionElement::ChildMPathChanged() {
+  AnimationAttributeChanged();
+}
+
 void SVGAnimateMotionElement::ParseAttribute(
     const AttributeModificationParams& params) {
   if (params.name == svg_names::kPathAttr) {
-    path_ = Path();
-    BuildPathFromString(params.new_value, path_);
-    UpdateAnimationPath();
+    path_ = BuildPathFromString(params.new_value);
+    AnimationAttributeChanged();
     return;
   }
 
@@ -107,50 +130,48 @@ SVGAnimateMotionElement::RotateMode SVGAnimateMotionElement::GetRotateMode()
 
 void SVGAnimateMotionElement::UpdateAnimationPath() {
   animation_path_ = Path();
-  bool found_m_path = false;
 
   for (SVGMPathElement* mpath = Traversal<SVGMPathElement>::FirstChild(*this);
        mpath; mpath = Traversal<SVGMPathElement>::NextSibling(*mpath)) {
     if (SVGPathElement* path_element = mpath->PathElement()) {
       animation_path_ = path_element->AttributePath();
-      found_m_path = true;
-      break;
+      return;
     }
   }
 
-  if (!found_m_path && FastHasAttribute(svg_names::kPathAttr))
+  if (FastHasAttribute(svg_names::kPathAttr))
     animation_path_ = path_;
-
-  UpdateAnimationMode();
 }
 
 template <typename CharType>
-static bool ParsePointInternal(const CharType* ptr,
-                               const CharType* end,
-                               gfx::PointF& point) {
+static std::optional<gfx::PointF> ParsePointInternal(const CharType* ptr,
+                                                     const CharType* end) {
   if (!SkipOptionalSVGSpaces(ptr, end))
-    return false;
+    return std::nullopt;
 
   float x = 0;
   if (!ParseNumber(ptr, end, x))
-    return false;
+    return std::nullopt;
 
   float y = 0;
   if (!ParseNumber(ptr, end, y))
-    return false;
-
-  point = gfx::PointF(x, y);
+    return std::nullopt;
 
   // disallow anything except spaces at the end
-  return !SkipOptionalSVGSpaces(ptr, end);
+  if (SkipOptionalSVGSpaces(ptr, end)) {
+    return std::nullopt;
+  }
+  return gfx::PointF(x, y);
 }
 
-static bool ParsePoint(const String& string, gfx::PointF& point) {
-  if (string.empty())
-    return false;
-  return WTF::VisitCharacters(string, [&](const auto* chars, unsigned length) {
-    return ParsePointInternal(chars, chars + length, point);
-  });
+static SVGPoint* ParsePoint(const String& string) {
+  std::optional<gfx::PointF> point;
+  if (!string.empty()) {
+    point = WTF::VisitCharacters(string, [&](auto chars) {
+      return ParsePointInternal(chars.data(), chars.data() + chars.size());
+    });
+  }
+  return MakeGarbageCollected<SVGPoint>(point.value_or(gfx::PointF{}));
 }
 
 SMILAnimationValue SVGAnimateMotionElement::CreateAnimationValue() const {
@@ -165,33 +186,35 @@ void SVGAnimateMotionElement::ClearAnimationValue() {
   target_element->ClearAnimatedMotionTransform();
 }
 
-bool SVGAnimateMotionElement::CalculateToAtEndOfDurationValue(
-    const String& to_at_end_of_duration_string) {
-  ParsePoint(to_at_end_of_duration_string, to_point_at_end_of_duration_);
-  return true;
+void SVGAnimateMotionElement::UpdateKeyframeValues(const Keyframe& keyframe) {
+  DCHECK(targetElement());
+  from_point_ = values_[keyframe.from_index];
+  to_point_ = values_[keyframe.to_index];
 }
 
-bool SVGAnimateMotionElement::CalculateFromAndToValues(
+void SVGAnimateMotionElement::CalculateFromAndToValues(
     const String& from_string,
     const String& to_string) {
-  ParsePoint(from_string, from_point_);
-  ParsePoint(to_string, to_point_);
-  // TODO(fs): Looks like this would clobber the at-end-of-duration
-  // value for a cumulative 'values' animation.
-  to_point_at_end_of_duration_ = to_point_;
-  return true;
+  from_point_ = ParsePoint(from_string);
+  to_point_ = ParsePoint(to_string);
 }
 
-bool SVGAnimateMotionElement::CalculateFromAndByValues(
+void SVGAnimateMotionElement::CalculateFromAndByValues(
     const String& from_string,
     const String& by_string) {
   CalculateFromAndToValues(from_string, by_string);
   // Apply 'from' to 'to' to get 'by' semantics. If the animation mode
   // is 'by', |from_string| will be the empty string and yield a point
   // of (0,0).
-  to_point_ += from_point_.OffsetFromOrigin();
-  to_point_at_end_of_duration_ = to_point_;
-  return true;
+  to_point_->SetValue(to_point_->Value() +
+                      from_point_->Value().OffsetFromOrigin());
+}
+
+void SVGAnimateMotionElement::CalculateValues(const Vector<String>& values) {
+  values_.clear();
+  for (const auto& value : values) {
+    values_.push_back(ParsePoint(value));
+  }
 }
 
 void SVGAnimateMotionElement::CalculateAnimationValue(
@@ -202,15 +225,23 @@ void SVGAnimateMotionElement::CalculateAnimationValue(
 
   PointAndTangent position;
   if (GetAnimationMode() != kPathAnimation) {
+    // Values-animation accumulates using the last values entry corresponding to
+    // the end of duration time.
+    const SVGPoint* to_point_at_end_of_duration_value =
+        GetAnimationMode() == kValuesAnimation ? values_.back() : to_point_;
+    const gfx::PointF& from_point = from_point_->Value();
+    const gfx::PointF& to_point = to_point_->Value();
+    const gfx::PointF& to_point_at_end_of_duration =
+        To<SVGPoint>(*to_point_at_end_of_duration_value).Value();
     position.point =
         gfx::PointF(ComputeAnimatedNumber(parameters, percentage, repeat_count,
-                                          from_point_.x(), to_point_.x(),
-                                          to_point_at_end_of_duration_.x()),
+                                          from_point.x(), to_point.x(),
+                                          to_point_at_end_of_duration.x()),
                     ComputeAnimatedNumber(parameters, percentage, repeat_count,
-                                          from_point_.y(), to_point_.y(),
-                                          to_point_at_end_of_duration_.y()));
+                                          from_point.y(), to_point.y(),
+                                          to_point_at_end_of_duration.y()));
     position.tangent_in_degrees =
-        Rad2deg((to_point_ - from_point_).SlopeAngleRadians());
+        Rad2deg((to_point - from_point).SlopeAngleRadians());
   } else {
     DCHECK(!animation_path_.IsEmpty());
 
@@ -261,22 +292,27 @@ void SVGAnimateMotionElement::ApplyResultsToTarget(
   target_element->SetAnimatedMotionTransform(animation_value.motion_transform);
 }
 
-float SVGAnimateMotionElement::CalculateDistance(const String& from_string,
-                                                 const String& to_string) {
-  gfx::PointF from;
-  gfx::PointF to;
-  if (!ParsePoint(from_string, from))
-    return -1;
-  if (!ParsePoint(to_string, to))
-    return -1;
-  return (to - from).Length();
+float SVGAnimateMotionElement::CalculateDistance(
+    const Keyframe& keyframe) const {
+  const SVGPoint& from_point = *values_[keyframe.from_index];
+  const SVGPoint& to_point = *values_[keyframe.to_index];
+  return (to_point.Value() - from_point.Value()).Length();
 }
 
-void SVGAnimateMotionElement::UpdateAnimationMode() {
-  if (!animation_path_.IsEmpty())
-    SetAnimationMode(kPathAnimation);
-  else
-    SVGAnimationElement::UpdateAnimationMode();
+AnimationMode SVGAnimateMotionElement::CalculateAnimationMode() {
+  UpdateAnimationPath();
+
+  if (!animation_path_.IsEmpty()) {
+    return kPathAnimation;
+  }
+  return SVGAnimationElement::CalculateAnimationMode();
+}
+
+void SVGAnimateMotionElement::Trace(Visitor* visitor) const {
+  visitor->Trace(from_point_);
+  visitor->Trace(to_point_);
+  visitor->Trace(values_);
+  SVGAnimationElement::Trace(visitor);
 }
 
 }  // namespace blink

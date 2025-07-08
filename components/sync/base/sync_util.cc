@@ -4,13 +4,15 @@
 
 #include "components/sync/base/sync_util.h"
 
+#include <string_view>
+
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringize_macros.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/sync/base/command_line_switches.h"
+#include "components/version_info/version_info.h"
 #include "google_apis/gaia/gaia_config.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
@@ -20,7 +22,7 @@ namespace {
 // Returns string that represents system in UserAgent.
 std::string GetSystemString() {
   std::string system;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   system = "CROS ";
 #elif BUILDFLAG(IS_ANDROID)
   if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
@@ -36,7 +38,7 @@ std::string GetSystemString() {
   }
 #elif BUILDFLAG(IS_WIN)
   system = "WIN ";
-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_LINUX)
   system = "LINUX ";
 #elif BUILDFLAG(IS_FREEBSD)
   system = "FREEBSD ";
@@ -55,7 +57,10 @@ namespace internal {
 
 std::string FormatUserAgentForSync(const std::string& system,
                                    version_info::Channel channel) {
-  constexpr base::StringPiece kProduct = STRINGIZE(SYNC_USER_AGENT_PRODUCT);
+#ifndef SYNC_USER_AGENT_PRODUCT
+#error SYNC_USER_AGENT_PRODUCT not defined, check BUILD.gn.
+#endif
+  constexpr std::string_view kProduct = STRINGIZE(SYNC_USER_AGENT_PRODUCT);
   return base::StrCat(
       {kProduct, " ", system, version_info::GetVersionNumber(), " (",
        version_info::GetLastChange(), ")",

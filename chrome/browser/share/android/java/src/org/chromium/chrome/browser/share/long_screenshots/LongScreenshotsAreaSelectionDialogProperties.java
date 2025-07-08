@@ -6,12 +6,12 @@ package org.chromium.chrome.browser.share.long_screenshots;
 
 import android.view.View.OnClickListener;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
-/**
- * Data properties for the Long Screenshots area selection dialog.
- */
+/** Data properties for the Long Screenshots area selection dialog. */
+@NullMarked
 final class LongScreenshotsAreaSelectionDialogProperties {
     // Callback handling clicks on the done (check) button.
     public static final WritableObjectPropertyKey<OnClickListener> DONE_BUTTON_CALLBACK =
@@ -32,7 +32,10 @@ final class LongScreenshotsAreaSelectionDialogProperties {
     private LongScreenshotsAreaSelectionDialogProperties() {}
 
     static PropertyModel.Builder defaultModelBuilder() {
-        return new PropertyModel.Builder(DONE_BUTTON_CALLBACK, CLOSE_BUTTON_CALLBACK,
-                DOWN_BUTTON_CALLBACK, UP_BUTTON_CALLBACK);
+        return new PropertyModel.Builder(
+                DONE_BUTTON_CALLBACK,
+                CLOSE_BUTTON_CALLBACK,
+                DOWN_BUTTON_CALLBACK,
+                UP_BUTTON_CALLBACK);
     }
 }

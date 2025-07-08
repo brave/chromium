@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/loader/web_bundle/script_web_bundle.h"
 
+#include <variant>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/unguessable_token.h"
 #include "components/web_package/web_bundle_utils.h"
@@ -25,6 +27,7 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -45,15 +48,16 @@ class ScriptWebBundle::ReleaseResourceTask {
   Persistent<ScriptWebBundle> script_web_bundle_;
 };
 
-absl::variant<ScriptWebBundle*, ScriptWebBundleError>
+std::variant<ScriptWebBundle*, ScriptWebBundleError>
 ScriptWebBundle::CreateOrReuseInline(ScriptElementBase& element,
                                      const String& source_text) {
   Document& document = element.GetDocument();
   auto rule_or_error = ScriptWebBundleRule::ParseJson(
       source_text, document.BaseURL(), document.GetExecutionContext());
-  if (absl::holds_alternative<ScriptWebBundleError>(rule_or_error))
-    return absl::get<ScriptWebBundleError>(rule_or_error);
-  auto& rule = absl::get<ScriptWebBundleRule>(rule_or_error);
+  if (std::holds_alternative<ScriptWebBundleError>(rule_or_error)) {
+    return std::get<ScriptWebBundleError>(rule_or_error);
+  }
+  auto& rule = std::get<ScriptWebBundleRule>(rule_or_error);
 
   ResourceFetcher* resource_fetcher = document.Fetcher();
   if (!resource_fetcher) {
@@ -68,8 +72,8 @@ ScriptWebBundle::CreateOrReuseInline(ScriptElementBase& element,
       context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::blink::ConsoleMessageSource::kOther,
           mojom::blink::ConsoleMessageLevel::kWarning,
-          "A nested bundle is not supported: " +
-              rule.source_url().ElidedString()));
+          StrCat({"A nested bundle is not supported: ",
+                  rule.source_url().ElidedString()})));
     }
     return ScriptWebBundleError(ScriptWebBundleError::Type::kSystemError,
                                 "A nested bundle is not supported.");
@@ -125,17 +129,19 @@ bool ScriptWebBundle::CanHandleRequest(const KURL& url) const {
   DCHECK(bundle_loader_);
   if (!bundle_loader_->GetSecurityOrigin()->IsSameOriginWith(
           SecurityOrigin::Create(url).get())) {
-    OnWebBundleError(url.ElidedString() + " cannot be loaded from WebBundle " +
-                     bundle_loader_->url().ElidedString() +
-                     ": bundled resource must be same origin with the bundle.");
+    OnWebBundleError(
+        StrCat({url.ElidedString(), " cannot be loaded from WebBundle ",
+                bundle_loader_->url().ElidedString(),
+                ": bundled resource must be same origin with the bundle."}));
     return false;
   }
 
   if (!url.GetString().StartsWith(bundle_loader_->url().BaseAsString())) {
     OnWebBundleError(
-        url.ElidedString() + " cannot be loaded from WebBundle " +
-        bundle_loader_->url().ElidedString() +
-        ": bundled resource path must contain the bundle's path as a prefix.");
+        StrCat({url.ElidedString(), " cannot be loaded from WebBundle ",
+                bundle_loader_->url().ElidedString(),
+                ": bundled resource path must contain the bundle's path as a "
+                "prefix."}));
     return false;
   }
   return true;

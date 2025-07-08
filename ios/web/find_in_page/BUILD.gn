@@ -24,7 +24,6 @@ source_set("find_in_page") {
     "find_in_page_constants.mm",
     "find_in_page_java_script_feature.h",
     "find_in_page_java_script_feature.mm",
-    "find_in_page_manager.mm",
     "find_in_page_manager_delegate_bridge.mm",
     "find_in_page_manager_impl.h",
     "find_in_page_manager_impl.mm",
@@ -42,7 +41,6 @@ compile_ts("compile_ts") {
   sources = [
     "resources/find_in_page.ts",
     "resources/find_in_page_constants.ts",
-    "resources/find_in_page_utils.ts",
   ]
 }
 

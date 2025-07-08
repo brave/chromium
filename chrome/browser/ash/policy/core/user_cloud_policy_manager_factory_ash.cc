@@ -6,10 +6,8 @@
 
 #include <utility>
 
-#include "ash/components/arc/arc_features.h"
 #include "ash/constants/ash_switches.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -24,16 +22,17 @@
 #include "chrome/browser/ash/policy/core/user_cloud_policy_store_ash.h"
 #include "chrome/browser/ash/policy/external_data/user_cloud_external_data_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/policy/schema_registry_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_features.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/cryptohome_misc_client.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
+#include "chromeos/ash/components/settings/user_login_permission_tracker.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
 #include "chromeos/dbus/constants/dbus_paths.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
@@ -43,6 +42,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_names.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace policy {
@@ -102,15 +102,13 @@ std::unique_ptr<UserCloudPolicyManagerAsh> CreateUserCloudPolicyManagerAsh(
   //   |UserCloudPolicyManagerAsh| is created here.
   // - For device-local accounts, policy is provided by
   //   |DeviceLocalAccountPolicyService|.
-  // For non-enterprise accounts only for users with type USER_TYPE_CHILD
+  // For non-enterprise accounts only for users with type kChild
   //   |UserCloudPolicyManagerAsh| is created here.
   // All other user types do not have user policy.
   const AccountId& account_id = user->GetAccountId();
-  if (user->GetType() != user_manager::USER_TYPE_CHILD &&
-      signin::AccountManagedStatusFinder::IsEnterpriseUserBasedOnEmail(
-          account_id.GetUserEmail()) ==
-          signin::AccountManagedStatusFinder::EmailEnterpriseStatus::
-              kKnownNonEnterprise) {
+  if (user->GetType() != user_manager::UserType::kChild &&
+      !signin::AccountManagedStatusFinder::MayBeEnterpriseUserBasedOnEmail(
+          account_id.GetUserEmail())) {
     DLOG(WARNING) << "No policy loaded for known non-enterprise user";
     // Mark this profile as not requiring policy.
     known_user.SetProfileRequiresPolicy(
@@ -124,22 +122,20 @@ std::unique_ptr<UserCloudPolicyManagerAsh> CreateUserCloudPolicyManagerAsh(
     case AccountType::UNKNOWN:
     case AccountType::GOOGLE:
       // TODO(tnagel): Return nullptr for unknown accounts once AccountId
-      // migration is finished.  (KioskAppManager still needs to be migrated.)
+      // migration is finished.  (KioskChromeAppManager still needs to be
+      // migrated.)
       if (!user->HasGaiaAccount()) {
         DLOG(WARNING) << "No policy for users without Gaia accounts";
         return nullptr;
       }
       break;
-    case AccountType::ACTIVE_DIRECTORY:
-      NOTREACHED_NORETURN();
   }
 
   const ProfileRequiresPolicy requires_policy_user_property =
       known_user.GetProfileRequiresPolicy(account_id);
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  const bool is_stub_user =
-      user_manager::UserManager::Get()->IsStubAccountId(account_id);
+  const bool is_stub_user = account_id == user_manager::StubAccountId();
 
   // If true, we don't know if we've ever checked for policy for this user, so
   // we need to do a policy check during initialization. This differs from
@@ -205,8 +201,7 @@ std::unique_ptr<UserCloudPolicyManagerAsh> CreateUserCloudPolicyManagerAsh(
   // block signin. Policy refresh will fail without the token that is available
   // only after profile initialization.
   const bool policy_refresh_requires_oauth_token =
-      user->GetType() == user_manager::USER_TYPE_CHILD &&
-      base::FeatureList::IsEnabled(features::kDMServerOAuthForChildUser);
+      user->GetType() == user_manager::UserType::kChild;
 
   base::TimeDelta policy_refresh_timeout;
   if (block_profile_init_on_policy_refresh &&
@@ -261,12 +256,11 @@ std::unique_ptr<UserCloudPolicyManagerAsh> CreateUserCloudPolicyManagerAsh(
 
   bool wildcard_match = false;
   if (connector->IsDeviceEnterpriseManaged() &&
-      ash::CrosSettings::Get()->IsUserAllowlisted(
+      ash::UserLoginPermissionTracker::Get()->IsUserAllowlisted(
           account_id.GetUserEmail(), &wildcard_match, user->GetType()) &&
       wildcard_match &&
-      signin::AccountManagedStatusFinder::IsEnterpriseUserBasedOnEmail(
-          account_id.GetUserEmail()) ==
-          signin::AccountManagedStatusFinder::EmailEnterpriseStatus::kUnknown) {
+      signin::AccountManagedStatusFinder::MayBeEnterpriseUserBasedOnEmail(
+          account_id.GetUserEmail())) {
     manager->EnableWildcardLoginCheck(account_id.GetUserEmail());
   }
 

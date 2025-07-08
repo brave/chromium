@@ -11,7 +11,6 @@
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/passwords/password_generation_popup_controller.h"
 #include "chrome/browser/ui/passwords/password_generation_popup_observer.h"
-#include "components/autofill/core/browser/test_autofill_client.h"
 
 using GenerationUIState = PasswordGenerationPopupController::GenerationUIState;
 
@@ -51,30 +50,20 @@ class TestGenerationPopupObserver : public PasswordGenerationPopupObserver {
       PasswordGenerationPopupController::kOfferGeneration;
 };
 
-// A test AutofillClient client that can block until
-// the ShowAutofillPopup() is called.
-class ObservingAutofillClient
-    : public autofill::TestAutofillClient,
-      public content::WebContentsUserData<ObservingAutofillClient> {
+// An Autofill client that can block until ShowAutofillSuggestions() is called.
+class ObservingAutofillClient : public autofill::ChromeAutofillClient {
  public:
-  ObservingAutofillClient(const ObservingAutofillClient&) = delete;
-  ObservingAutofillClient& operator=(const ObservingAutofillClient&) = delete;
+  explicit ObservingAutofillClient(content::WebContents* web_contents);
 
-  // Blocks the current thread until ShowAutofillPopup() is called.
+  // Blocks the current thread until ShowAutofillSuggestions() is called.
   void WaitForAutofillPopup();
 
-  void ShowAutofillPopup(
+  SuggestionUiSessionId ShowAutofillSuggestions(
       const autofill::AutofillClient::PopupOpenArgs& open_args,
-      base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
+      base::WeakPtr<autofill::AutofillSuggestionDelegate> delegate) override;
 
  private:
-  explicit ObservingAutofillClient(content::WebContents* web_contents)
-      : content::WebContentsUserData<ObservingAutofillClient>(*web_contents) {}
-  friend class content::WebContentsUserData<ObservingAutofillClient>;
-
   raw_ptr<base::RunLoop> run_loop_ = nullptr;
-
-  WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
 #endif  // CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_MANAGER_UITEST_UTIL_H_

@@ -4,7 +4,8 @@
 
 #include "components/media_device_salt/media_device_salt_database.h"
 
-#include "base/containers/cxx20_erase_vector.h"
+#include <vector>
+
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/strings/strcat.h"
@@ -17,10 +18,6 @@
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace media_device_salt {
-
-BASE_FEATURE(kMediaDeviceSaltDatabaseUseBuiltInRecoveryIfSupported,
-             "MediaDeviceSaltDatabaseUseBuiltInRecoveryIfSupported",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 namespace {
 // The current version of the database schema.
@@ -37,20 +34,19 @@ std::string CreateRandomSalt() {
 
 MediaDeviceSaltDatabase::MediaDeviceSaltDatabase(const base::FilePath& db_path)
     : db_path_(db_path),
-      db_(sql::DatabaseOptions{.exclusive_locking = true,
-                               .page_size = 4096,
-                               .cache_size = 16}) {}
+      db_(sql::DatabaseOptions().set_cache_size(16),
+          /*tag=*/"MediaDeviceSalts") {}
 
-absl::optional<std::string> MediaDeviceSaltDatabase::GetOrInsertSalt(
+std::optional<std::string> MediaDeviceSaltDatabase::GetOrInsertSalt(
     const blink::StorageKey& storage_key,
-    absl::optional<std::string> candidate_salt) {
+    std::optional<std::string> candidate_salt) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (storage_key.origin().opaque() || !EnsureOpen()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   sql::Transaction transaction(&db_);
   if (!transaction.Begin()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   static constexpr char kGetSaltSql[] =
       "SELECT salt FROM media_device_salts WHERE storage_key=?";
@@ -62,7 +58,7 @@ absl::optional<std::string> MediaDeviceSaltDatabase::GetOrInsertSalt(
     return select_statement.ColumnString(0);
   }
   if (!select_statement.Succeeded()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   static constexpr char kInsertSaltSql[] =
@@ -76,8 +72,8 @@ absl::optional<std::string> MediaDeviceSaltDatabase::GetOrInsertSalt(
   std::string new_salt = candidate_salt.value_or(CreateRandomSalt());
   insert_statement.BindString(2, new_salt);
   return insert_statement.Run() && transaction.Commit()
-             ? absl::make_optional(new_salt)
-             : absl::nullopt;
+             ? std::make_optional(new_salt)
+             : std::nullopt;
 }
 
 void MediaDeviceSaltDatabase::DeleteEntries(
@@ -119,9 +115,9 @@ void MediaDeviceSaltDatabase::DeleteEntries(
     serialized_storage_keys.push_back(select_statement.ColumnString(0));
   }
 
-  base::EraseIf(serialized_storage_keys,
+  std::erase_if(serialized_storage_keys,
                 [&matcher](const std::string& serialized_storage_key) {
-                  absl::optional<blink::StorageKey> storage_key =
+                  std::optional<blink::StorageKey> storage_key =
                       blink::StorageKey::Deserialize(serialized_storage_key);
                   if (!storage_key.has_value()) {
                     // This shouldn't happen, but include non-Deserializable
@@ -139,9 +135,9 @@ void MediaDeviceSaltDatabase::DeleteEntries(
       base::StrCat({"DELETE FROM media_device_salts "
                     "WHERE storage_key IN ('",
                     base::JoinString(serialized_storage_keys, "','"), "')"});
-  DCHECK(db_.IsSQLValid(delete_storage_keys_sql.c_str()));
+  DCHECK(db_.IsSQLValid(delete_storage_keys_sql));
   sql::Statement delete_statement(
-      db_.GetUniqueStatement(delete_storage_keys_sql.c_str()));
+      db_.GetUniqueStatement(delete_storage_keys_sql));
   delete_statement.Run() && transaction.Commit();
 }
 
@@ -171,8 +167,8 @@ std::vector<blink::StorageKey> MediaDeviceSaltDatabase::GetAllStorageKeys() {
   DCHECK(db_.IsSQLValid(kGetStorageKeysSql));
   sql::Statement statement(db_.GetUniqueStatement(kGetStorageKeysSql));
   while (statement.Step()) {
-    absl::optional<blink::StorageKey> key =
-        blink::StorageKey::Deserialize(statement.ColumnString(0));
+    std::optional<blink::StorageKey> key =
+        blink::StorageKey::Deserialize(statement.ColumnStringView(0));
     if (key.has_value()) {
       storage_keys.push_back(*key);
     }
@@ -189,7 +185,6 @@ bool MediaDeviceSaltDatabase::EnsureOpen(bool is_retry) {
     return false;
   }
 
-  db_.set_histogram_tag("Media Device Salts");
   // base::Unretained() is safe here because `this` owns `db`.
   db_.set_error_callback(base::BindRepeating(
       &MediaDeviceSaltDatabase::OnDatabaseError, base::Unretained(this)));
@@ -226,10 +221,8 @@ void MediaDeviceSaltDatabase::OnDatabaseError(int error,
                                               sql::Statement* statement) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   sql::UmaHistogramSqliteResult("Media.MediaDevices.SaltDatabaseErrors", error);
-  std::ignore = sql::BuiltInRecovery::RecoverIfPossible(
-      &db_, error,
-      sql::BuiltInRecovery::Strategy::kRecoverWithMetaVersionOrRaze,
-      &kMediaDeviceSaltDatabaseUseBuiltInRecoveryIfSupported);
+  std::ignore = sql::Recovery::RecoverIfPossible(
+      &db_, error, sql::Recovery::Strategy::kRecoverWithMetaVersionOrRaze);
 }
 
 }  // namespace media_device_salt

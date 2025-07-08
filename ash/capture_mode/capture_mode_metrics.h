@@ -42,7 +42,8 @@ enum class EndRecordingReason {
   kKeyboardShortcut,
   kGameDashboardStopRecordingButton,
   kGameToolbarStopRecordingButton,
-  kMaxValue = kGameToolbarStopRecordingButton,
+  kGameDashboardTabletMode,
+  kMaxValue = kGameDashboardTabletMode,
 };
 
 // Enumeration of capture bar buttons that can be pressed while in capture mode.
@@ -86,7 +87,8 @@ enum class CaptureModeEntryType {
   kProjector,
   kCaptureGivenWindow,
   kGameDashboard,
-  kMaxValue = kGameDashboard,
+  kSunfish,
+  kMaxValue = kSunfish,
 };
 
 // Enumeration of quick actions on screenshot notification. Note that these
@@ -96,7 +98,8 @@ enum class CaptureQuickAction {
   kBacklight,
   kFiles,
   kDelete,
-  kMaxValue = kDelete,
+  kOpenDefault,
+  kMaxValue = kOpenDefault,
 };
 
 // Enumeration of user's selection on save-to locations. Note that these values
@@ -107,7 +110,9 @@ enum class CaptureModeSaveToLocation {
   kDrive,
   kDriveFolder,
   kCustomizedFolder,
-  kMaxValue = kCustomizedFolder,
+  kOneDrive,
+  kOneDriveFolder,
+  kMaxValue = kOneDriveFolder,
 };
 
 // Enumeration of reasons for which the capture folder is switched to default
@@ -129,6 +134,15 @@ enum class CaptureModeCameraSize {
   kCollapsed,
   kMaxValue = kCollapsed,
 };
+
+// Enumeration of the entry point to create the search results panel.
+// LINT.IfChange(SearchResultsPanelEntryType)
+enum class SearchResultsPanelEntryType {
+  kSunfishRegionSelection,
+  kDefaultSearchButton,
+  kMaxValue = kDefaultSearchButton,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/ash/enums.xml:SearchResultsPanelEntryType)
 
 // Records the `reason` for which screen recording was ended.
 void RecordEndRecordingReason(EndRecordingReason reason);
@@ -158,7 +172,7 @@ void RecordCaptureModeRecordingDuration(base::TimeDelta recording_duration,
 // Records the given video file `size_in_kb`. The used histogram will depend on
 // whether this video file was GIF or WebM.
 void RecordVideoFileSizeKB(bool is_gif,
-                           const CaptureModeBehavior* behavior,
+                           const char* client_metric_component,
                            int size_in_kb);
 
 // Records if the user has switched modes during a capture session.
@@ -226,6 +240,24 @@ void RecordCameraPositionOnStart(CameraPreviewSnapPosition camera_position);
 // Records how often recording starts with demo tools feature enabled.
 void RecordRecordingStartsWithDemoTools(bool demo_tools_enabled,
                                         const CaptureModeBehavior* behavior);
+
+// Records that the Search button was pressed in a default capture session.
+void RecordSearchButtonPressed();
+
+// Records that the Search button was shown to a user in a default capture
+// session.
+void RecordSearchButtonShown();
+
+// Records the method used to create the search results panel, based on the
+// active behavior.
+void RecordSearchResultsPanelEntryType(const CaptureModeBehavior* behavior);
+
+// Recorded whenever the search results panel is shown, including after it has
+// already been created but needs to be re-shown.
+void RecordSearchResultsPanelShown();
+
+// Records that a search result URL was clicked in the search results panel.
+void RecordSearchResultClicked();
 
 // Prepends the common prefix to the `root_word` and optionally inserts the
 // client's metric component (as specified by the given `behavior`) or appends

@@ -9,13 +9,16 @@ import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.Scre
 import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.ScreenType.REVIEW_TABS_SCREEN;
 import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.ScreenType.UNINITIALIZED;
 
+import android.content.Context;
 import android.view.View;
 import android.widget.ScrollView;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.recent_tabs.RestoreTabsMetricsHelper.RestoreTabsOnFREBackPressType;
 import org.chromium.chrome.browser.recent_tabs.RestoreTabsMetricsHelper.RestoreTabsOnFRERestoredTabsResult;
 import org.chromium.chrome.browser.recent_tabs.RestoreTabsMetricsHelper.RestoreTabsOnFREResultAction;
@@ -25,9 +28,8 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * The bottom sheet content for the Restore Tabs promo.
- */
+/** The bottom sheet content for the Restore Tabs promo. */
+@NullMarked
 public class RestoreTabsPromoSheetContent implements BottomSheetContent {
     private final View mContentView;
     private final PropertyModel mModel;
@@ -46,20 +48,21 @@ public class RestoreTabsPromoSheetContent implements BottomSheetContent {
         mScrollView = mContentView.findViewById(R.id.restore_tabs_promo_sheet_scrollview);
         mRecyclerView = mContentView.findViewById(R.id.restore_tabs_detail_screen_recycler_view);
 
-        mBottomSheetOpenedObserver = new EmptyBottomSheetObserver() {
-            @Override
-            public void onSheetOpened(@BottomSheetController.StateChangeReason int reason) {
-                super.onSheetOpened(reason);
-                mBackPressStateChangedSupplier.set(true);
-            }
+        mBottomSheetOpenedObserver =
+                new EmptyBottomSheetObserver() {
+                    @Override
+                    public void onSheetOpened(@BottomSheetController.StateChangeReason int reason) {
+                        super.onSheetOpened(reason);
+                        mBackPressStateChangedSupplier.set(true);
+                    }
 
-            @Override
-            public void onSheetClosed(@BottomSheetController.StateChangeReason int reason) {
-                super.onSheetClosed(reason);
-                mBackPressStateChangedSupplier.set(false);
-                mBottomSheetController.removeObserver(mBottomSheetOpenedObserver);
-            }
-        };
+                    @Override
+                    public void onSheetClosed(@BottomSheetController.StateChangeReason int reason) {
+                        super.onSheetClosed(reason);
+                        mBackPressStateChangedSupplier.set(false);
+                        mBottomSheetController.removeObserver(mBottomSheetOpenedObserver);
+                    }
+                };
         mBottomSheetController.addObserver(mBottomSheetOpenedObserver);
     }
 
@@ -108,11 +111,6 @@ public class RestoreTabsPromoSheetContent implements BottomSheetContent {
     }
 
     @Override
-    public int getPeekHeight() {
-        return BottomSheetContent.HeightMode.DISABLED;
-    }
-
-    @Override
     public float getFullHeightRatio() {
         return BottomSheetContent.HeightMode.WRAP_CONTENT;
     }
@@ -139,22 +137,22 @@ public class RestoreTabsPromoSheetContent implements BottomSheetContent {
     }
 
     @Override
-    public int getSheetContentDescriptionStringId() {
-        return R.string.restore_tabs_content_description;
+    public String getSheetContentDescription(Context context) {
+        return context.getString(R.string.restore_tabs_content_description);
     }
 
     @Override
-    public int getSheetClosedAccessibilityStringId() {
+    public @StringRes int getSheetClosedAccessibilityStringId() {
         return R.string.restore_tabs_sheet_closed;
     }
 
     @Override
-    public int getSheetHalfHeightAccessibilityStringId() {
+    public @StringRes int getSheetHalfHeightAccessibilityStringId() {
         return R.string.restore_tabs_content_description;
     }
 
     @Override
-    public int getSheetFullHeightAccessibilityStringId() {
+    public @StringRes int getSheetFullHeightAccessibilityStringId() {
         return R.string.restore_tabs_content_description;
     }
 
@@ -178,7 +176,7 @@ public class RestoreTabsPromoSheetContent implements BottomSheetContent {
                         RestoreTabsOnFRERestoredTabsResult.NONE);
                 break;
             default:
-                assert currentScreen == UNINITIALIZED : "Backpressing on an unidentified screen.";
+                assert currentScreen == UNINITIALIZED : "Back pressing on an unidentified screen.";
         }
 
         if (currentScreen != UNINITIALIZED) {

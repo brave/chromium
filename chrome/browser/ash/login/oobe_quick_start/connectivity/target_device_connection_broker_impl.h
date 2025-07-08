@@ -12,18 +12,20 @@
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/connection.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/session_context.h"
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/target_device_connection_broker.h"
-#include "chrome/browser/nearby_sharing/public/cpp/nearby_connections_manager.h"
-#include "chromeos/ash/services/nearby/public/mojom/quick_start_decoder.mojom.h"
+#include "chromeos/ash/components/nearby/common/connections_manager/nearby_connections_manager.h"
+#include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "mojo/public/cpp/bindings/shared_remote.h"
 
 namespace ash::quick_start {
 
 class FastPairAdvertiser;
+class QuickStartConnectivityService;
 
 class TargetDeviceConnectionBrokerImpl
     : public TargetDeviceConnectionBroker,
-      public NearbyConnectionsManager::IncomingConnectionListener {
+      public NearbyConnectionsManager::IncomingConnectionListener,
+      public device::BluetoothAdapter::Observer {
  public:
   using FeatureSupportStatus =
       TargetDeviceConnectionBroker::FeatureSupportStatus;
@@ -50,10 +52,9 @@ class TargetDeviceConnectionBrokerImpl
   };
 
   TargetDeviceConnectionBrokerImpl(
-      SessionContext session_context,
-      base::WeakPtr<NearbyConnectionsManager> nearby_connections_manager,
-      std::unique_ptr<Connection::Factory> connection_factory,
-      mojo::SharedRemote<mojom::QuickStartDecoder> quick_start_decoder);
+      SessionContext* session_context,
+      QuickStartConnectivityService* quick_start_connectivity_service,
+      std::unique_ptr<Connection::Factory> connection_factory);
   TargetDeviceConnectionBrokerImpl(TargetDeviceConnectionBrokerImpl&) = delete;
   TargetDeviceConnectionBrokerImpl& operator=(
       TargetDeviceConnectionBrokerImpl&) = delete;
@@ -65,10 +66,10 @@ class TargetDeviceConnectionBrokerImpl
                         bool use_pin_authentication,
                         ResultCallback on_start_advertising_callback) override;
   void StopAdvertising(base::OnceClosure on_stop_advertising_callback) override;
-  std::string GetSessionIdDisplayCode() override;
+  std::string GetAdvertisingIdDisplayCode() override;
 
  private:
-  // Used to access the |random_session_id_| in tests, and to allow testing
+  // Used to access the |advertising_id_| in tests, and to allow testing
   // |GenerateEndpointInfo()| directly.
   friend class TargetDeviceConnectionBrokerImplTest;
 
@@ -108,6 +109,12 @@ class TargetDeviceConnectionBrokerImpl
 
   void OnHandshakeCompleted(bool success);
 
+  // device::BluetoothAdapter::Observer:
+  void AdapterPresentChanged(device::BluetoothAdapter* adapter,
+                             bool present) override;
+  void AdapterPoweredChanged(device::BluetoothAdapter* adapter,
+                             bool powered) override;
+
   // A 4-digit decimal pin code derived from the connection's authentication
   // token for the pin authentication flow.
   std::string pin_;
@@ -115,15 +122,13 @@ class TargetDeviceConnectionBrokerImpl
   scoped_refptr<device::BluetoothAdapter> bluetooth_adapter_;
   base::OnceClosure deferred_start_advertising_callback_;
 
-  SessionContext session_context_;
+  raw_ptr<SessionContext> session_context_;
   std::unique_ptr<FastPairAdvertiser> fast_pair_advertiser_;
 
-  base::WeakPtr<NearbyConnectionsManager> nearby_connections_manager_;
+  raw_ptr<QuickStartConnectivityService> quick_start_connectivity_service_;
   std::unique_ptr<Connection::Factory> connection_factory_;
   std::unique_ptr<Connection> connection_;
-
-  mojo::SharedRemote<mojom::QuickStartDecoder> quick_start_decoder_;
-  bool is_resume_after_update_;
+  std::unique_ptr<QuickStartMetrics> quick_start_metrics_;
 
   base::OneShotTimer
       nearby_connections_advertisement_after_update_timeout_timer_;

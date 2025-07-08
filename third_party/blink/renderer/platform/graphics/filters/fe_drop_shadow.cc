@@ -24,7 +24,7 @@
 #include "third_party/blink/renderer/platform/graphics/filters/fe_gaussian_blur.h"
 #include "third_party/blink/renderer/platform/graphics/filters/filter.h"
 #include "third_party/blink/renderer/platform/graphics/filters/paint_filter_builder.h"
-#include "third_party/blink/renderer/platform/wtf/text/text_stream.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder_stream.h"
 
 namespace blink {
 
@@ -74,7 +74,7 @@ sk_sp<PaintFilter> FEDropShadow::CreateImageFilter() {
   drop_shadow_color.SetAlpha(shadow_opacity_ * drop_shadow_color.Alpha());
   drop_shadow_color =
       AdaptColorToOperatingInterpolationSpace(drop_shadow_color);
-  absl::optional<PaintFilter::CropRect> crop_rect = GetCropRect();
+  std::optional<PaintFilter::CropRect> crop_rect = GetCropRect();
   return sk_make_sp<DropShadowPaintFilter>(
       SkFloatToScalar(dx), SkFloatToScalar(dy), SkFloatToScalar(std_x),
       SkFloatToScalar(std_y), drop_shadow_color.toSkColor4f(),
@@ -82,8 +82,8 @@ sk_sp<PaintFilter> FEDropShadow::CreateImageFilter() {
       std::move(input), base::OptionalToPtr(crop_rect));
 }
 
-WTF::TextStream& FEDropShadow::ExternalRepresentation(WTF::TextStream& ts,
-                                                      int indent) const {
+StringBuilder& FEDropShadow::ExternalRepresentation(StringBuilder& ts,
+                                                    wtf_size_t indent) const {
   WriteIndent(ts, indent);
   ts << "[feDropShadow";
   FilterEffect::ExternalRepresentation(ts);

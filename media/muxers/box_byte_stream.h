@@ -5,13 +5,15 @@
 #ifndef MEDIA_MUXERS_BOX_BYTE_STREAM_H_
 #define MEDIA_MUXERS_BOX_BYTE_STREAM_H_
 
-#include <queue>
+#include <optional>
+#include <string_view>
 #include <vector>
 
-#include "base/big_endian.h"
+#include "base/containers/queue.h"
+#include "base/containers/span_writer.h"
+#include "base/containers/stack.h"
 #include "media/base/media_export.h"
 #include "media/formats/mp4/fourccs.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -32,9 +34,7 @@ class MEDIA_EXPORT BoxByteStream {
   void StartBox(mp4::FourCC fourcc);
   void StartFullBox(mp4::FourCC fourcc,
                     uint32_t flags = 0,
-                    // Chromium MP4 Muxer supports 64 bits as a default, but the
-                    // individual box can override it as needed.
-                    uint8_t version = 1);
+                    uint8_t version = 0);
 
   // Writes primitives types in big endian format. If `value` can be larger than
   // the the type being written, methods will `CHECK()` that `value` fits in the
@@ -44,7 +44,7 @@ class MEDIA_EXPORT BoxByteStream {
   void WriteU32(uint32_t value);
   void WriteU64(uint64_t value);
   void WriteBytes(const void* buf, size_t len);
-  void WriteString(base::StringPiece value);
+  void WriteString(std::string_view value);
 
   // Ends a writing session. All pending placeholder values in `size_offsets_`
   // are filled in based on their distance from `position_`.
@@ -64,10 +64,16 @@ class MEDIA_EXPORT BoxByteStream {
   // when the `BoxByteStream` is created with `moof` box.
   void FlushCurrentOffset();
 
-  // Validates whether there is a open box or not.
+  // Validates whether there is an open box or not.
   bool has_open_boxes() const { return !size_offsets_.empty(); }
 
-  // TODO(crbug.com/1072056): Investigate if this is a reasonable starting size.
+  // Returns size of the top level box size until this point.
+  // The function is used for `mfro` box where its last property
+  // is a total size of the top `mfra' box.
+  size_t size() const { return position_; }
+
+  // TODO(crbug.com/40127044): Investigate if this is a reasonable starting
+  // size.
   static constexpr int kDefaultBufferLimit = 4096;
 
   // Test helper method that returns internal size offset vector.
@@ -78,11 +84,12 @@ class MEDIA_EXPORT BoxByteStream {
   void GrowWriter();
 
   std::vector<size_t> size_offsets_;
-  std::queue<size_t> data_offsets_by_track_;
+  base::queue<size_t> data_offsets_by_track_;
+  base::stack<size_t> parent_box_size_offsets_;
 
   size_t position_ = 0;
   std::vector<uint8_t> buffer_;
-  absl::optional<base::BigEndianWriter> writer_;
+  std::optional<base::SpanWriter<uint8_t>> writer_;
 };
 
 }  // namespace media

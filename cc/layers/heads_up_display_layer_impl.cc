@@ -9,14 +9,15 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/shared_memory_mapping.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -24,7 +25,7 @@
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
 #include "cc/debug/debug_colors.h"
-#include "cc/metrics/dropped_frame_counter.h"
+#include "cc/metrics/frame_sorter.h"
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/image_provider.h"
 #include "cc/paint/paint_canvas.h"
@@ -37,29 +38,31 @@
 #include "cc/trees/layer_tree_frame_sink.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
-#include "components/viz/common/resources/bitmap_allocation.h"
 #include "components/viz/common/resources/platform_color.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/GLES2/gl2extchromium.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/config/gpu_feature_info.h"
+#include "gpu/ipc/client/client_shared_image_interface.h"
 #include "skia/ext/legacy_display_globals.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkFont.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
 #include "third_party/skia/include/core/SkTypeface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -91,15 +94,8 @@ class DummyImageProvider : public ImageProvider {
   ImageProvider::ScopedResult GetRasterContent(
       const DrawImage& draw_image) override {
     NOTREACHED();
-    return ScopedResult();
   }
 };
-
-std::string ToStringTwoDecimalPrecision(double input) {
-  std::stringstream stream;
-  stream << std::fixed << std::setprecision(2) << input;
-  return stream.str();
-}
 
 #if BUILDFLAG(IS_ANDROID)
 struct MetricsDrawSizes {
@@ -121,71 +117,28 @@ struct MetricsDrawSizes {
 } constexpr metrics_sizes;
 #endif
 
-constexpr int ComputeTotalHeight(int num_of_lines) {
-  int num_of_spaces = std::max(0, num_of_lines - 1);
-  return num_of_lines * metrics_sizes.kFontHeight +
-         num_of_spaces * metrics_sizes.kPadding + 2 * metrics_sizes.kTopPadding;
-}
 }  // namespace
 
-HeadsUpDisplayLayerImpl::HeadsUpDisplayLayerImpl(LayerTreeImpl* tree_impl,
-                                                 int id)
-    : LayerImpl(tree_impl, id) {}
+HeadsUpDisplayLayerImpl::HeadsUpDisplayLayerImpl(
+    LayerTreeImpl* tree_impl,
+    int id,
+    const std::string& paused_localized_message)
+    : LayerImpl(tree_impl, id),
+      paused_localized_message_(paused_localized_message) {}
 
 HeadsUpDisplayLayerImpl::~HeadsUpDisplayLayerImpl() {
   ReleaseResources();
 }
 
-std::unique_ptr<LayerImpl> HeadsUpDisplayLayerImpl::CreateLayerImpl(
-    LayerTreeImpl* tree_impl) const {
-  return HeadsUpDisplayLayerImpl::Create(tree_impl, id());
+mojom::LayerType HeadsUpDisplayLayerImpl::GetLayerType() const {
+  return mojom::LayerType::kHeadsUpDisplay;
 }
 
-class HudGpuBacking : public ResourcePool::GpuBacking {
- public:
-  ~HudGpuBacking() override {
-    if (mailbox.IsZero())
-      return;
-    if (returned_sync_token.HasData())
-      shared_image_interface->DestroySharedImage(returned_sync_token, mailbox);
-    else if (mailbox_sync_token.HasData())
-      shared_image_interface->DestroySharedImage(mailbox_sync_token, mailbox);
-  }
-
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {
-    if (mailbox.IsZero())
-      return;
-
-    auto tracing_guid = gpu::GetSharedImageGUIDForTracing(mailbox);
-    pmd->CreateSharedGlobalAllocatorDump(tracing_guid);
-    pmd->AddOwnershipEdge(buffer_dump_guid, tracing_guid, importance);
-  }
-
-  raw_ptr<gpu::SharedImageInterface> shared_image_interface = nullptr;
-};
-
-class HudSoftwareBacking : public ResourcePool::SoftwareBacking {
- public:
-  ~HudSoftwareBacking() override {
-    layer_tree_frame_sink->DidDeleteSharedBitmap(shared_bitmap_id);
-  }
-
-  void OnMemoryDump(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
-      uint64_t tracing_process_id,
-      int importance) const override {
-    pmd->CreateSharedMemoryOwnershipEdge(buffer_dump_guid,
-                                         shared_mapping.guid(), importance);
-  }
-
-  raw_ptr<LayerTreeFrameSink> layer_tree_frame_sink;
-  base::WritableSharedMemoryMapping shared_mapping;
-};
+std::unique_ptr<LayerImpl> HeadsUpDisplayLayerImpl::CreateLayerImpl(
+    LayerTreeImpl* tree_impl) const {
+  return HeadsUpDisplayLayerImpl::Create(tree_impl, id(),
+                                         paused_localized_message_);
+}
 
 bool HeadsUpDisplayLayerImpl::WillDraw(
     DrawMode draw_mode,
@@ -196,7 +149,7 @@ bool HeadsUpDisplayLayerImpl::WillDraw(
   }
 
   int max_texture_size = layer_tree_impl()->max_texture_size();
-  // TODO(crbug.com/1196414): Support 2D scales in heads up layers.
+  // TODO(crbug.com/40176440): Support 2D scales in heads up layers.
   internal_contents_scale_ = GetIdealContentsScaleKey();
   internal_content_bounds_ =
       gfx::ScaleToCeiledSize(bounds(), internal_contents_scale_);
@@ -206,7 +159,16 @@ bool HeadsUpDisplayLayerImpl::WillDraw(
   return true;
 }
 
+void HeadsUpDisplayLayerImpl::DidDraw(
+    viz::ClientResourceProvider* resource_provider) {
+  LayerImpl::DidDraw(resource_provider);
+  // We always clear `placeholder_quad_` as drawing may get skipped and
+  // `UpdateHudTexture` might not get called.
+  placeholder_quad_ = nullptr;
+}
+
 void HeadsUpDisplayLayerImpl::AppendQuads(
+    const AppendQuadsContext& context,
     viz::CompositorRenderPass* render_pass,
     AppendQuadsData* append_quads_data) {
   viz::SharedQuadState* shared_quad_state =
@@ -246,8 +208,12 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
   // Update state that will be drawn.
   UpdateHudContents();
 
+  // Note the layer properties changed, to force the layer to update changes to
+  // Viz/Display.
+  NoteLayerPropertyChanged();
+
   viz::RasterContextProvider* raster_context_provider = nullptr;
-  absl::optional<viz::RasterContextProvider::ScopedRasterContextLock> lock;
+  std::optional<viz::RasterContextProvider::ScopedRasterContextLock> lock;
   if (draw_mode == DRAW_MODE_HARDWARE) {
     // TODO(penghuang): It would be better to use context_provider() instead of
     // worker_context_provider() if/when it's switched to RasterContextProvider.
@@ -282,64 +248,41 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
     pool_resource = pool_->AcquireResource(
         internal_content_bounds_, raster_caps.tile_format, gfx::ColorSpace());
 
-    if (!pool_resource.gpu_backing()) {
-      auto backing = std::make_unique<HudGpuBacking>();
+    if (!pool_resource.backing()) {
       auto* sii = raster_context_provider->SharedImageInterface();
-      backing->shared_image_interface = sii;
-      backing->overlay_candidate = raster_caps.tile_overlay_candidate;
-      backing->texture_target = raster_caps.tile_texture_target;
 
-      uint32_t flags =
-          gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_RASTER;
-      if (raster_caps.use_gpu_rasterization) {
-        flags |= gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
-      }
-      if (backing->overlay_candidate) {
-        flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
-      }
-      backing->mailbox = sii->CreateSharedImage(
-          pool_resource.format(), pool_resource.size(),
-          pool_resource.color_space(), kTopLeft_GrSurfaceOrigin,
-          kPremul_SkAlphaType, flags, "HeadsUpDisplayLayer",
-          gpu::kNullSurfaceHandle);
-      auto* ri = raster_context_provider->RasterInterface();
-      ri->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
-      pool_resource.set_gpu_backing(std::move(backing));
+      pool_resource.InstallGpuBacking(sii, raster_caps.tile_overlay_candidate,
+                                      raster_caps.use_gpu_rasterization,
+                                      "HeadsUpDisplayLayer");
+      pool_resource.backing()->returned_sync_token =
+          pool_resource.backing()->shared_image()->creation_sync_token();
       needs_clear = true;
-    } else if (pool_resource.gpu_backing()->returned_sync_token.HasData()) {
-      auto* ri = raster_context_provider->RasterInterface();
-      ri->WaitSyncTokenCHROMIUM(
-          pool_resource.gpu_backing()->returned_sync_token.GetConstData());
-      pool_resource.gpu_backing()->returned_sync_token = gpu::SyncToken();
     }
   } else {
     DCHECK_EQ(draw_mode, DRAW_MODE_SOFTWARE);
 
+    auto sii = layer_tree_frame_sink->shared_image_interface();
+    DCHECK(sii);
     pool_resource = pool_->AcquireResource(internal_content_bounds_,
-                                           viz::SinglePlaneFormat::kRGBA_8888,
+                                           viz::SinglePlaneFormat::kBGRA_8888,
                                            gfx::ColorSpace());
 
-    if (!pool_resource.software_backing()) {
-      auto backing = std::make_unique<HudSoftwareBacking>();
-      backing->layer_tree_frame_sink = layer_tree_frame_sink;
-      backing->shared_bitmap_id = viz::SharedBitmap::GenerateId();
-      base::MappedReadOnlyRegion shm =
-          viz::bitmap_allocation::AllocateSharedBitmap(pool_resource.size(),
-                                                       pool_resource.format());
-      backing->shared_mapping = std::move(shm.mapping);
-
-      layer_tree_frame_sink->DidAllocateSharedBitmap(std::move(shm.region),
-                                                     backing->shared_bitmap_id);
-
-      pool_resource.set_software_backing(std::move(backing));
+    if (!pool_resource.backing()) {
+      pool_resource.InstallSoftwareBacking(sii, "HeadsUpDisplayLayer");
     }
   }
 
   if (draw_mode == DRAW_MODE_HARDWARE) {
-    DCHECK(pool_resource.gpu_backing());
-    auto* backing = static_cast<HudGpuBacking*>(pool_resource.gpu_backing());
+    DCHECK(pool_resource.backing());
+    auto* backing = pool_resource.backing();
     auto* ri = raster_context_provider->RasterInterface();
 
+    std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+        backing->shared_image()->BeginRasterAccess(
+            ri, backing->returned_sync_token, /*readonly=*/false);
+    if (backing->returned_sync_token.HasData()) {
+      backing->returned_sync_token = gpu::SyncToken();
+    }
     if (raster_caps.use_gpu_rasterization) {
       // If using |gpu_raster|, DrawHudContents() directly to a gpu texture
       // which is wrapped in an SkSurface.
@@ -358,16 +301,17 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
       ri->BeginRasterCHROMIUM(background_color, needs_clear, msaa_sample_count,
                               gpu::raster::kNoMSAA, can_use_lcd_text,
                               /*visible=*/true, gfx::ColorSpace::CreateSRGB(),
-                              backing->mailbox.name);
+                              /*hdr_headroom=*/1.f,
+                              backing->shared_image()->mailbox().name);
       constexpr gfx::Vector2dF post_translate(0.f, 0.f);
       constexpr gfx::Vector2dF post_scale(1.f, 1.f);
       DummyImageProvider image_provider;
       size_t max_op_size_limit =
           gpu::raster::RasterInterface::kDefaultMaxOpSizeHint;
-      ri->RasterCHROMIUM(display_item_list.get(), &image_provider, size,
-                         gfx::Rect(size), gfx::Rect(size), post_translate,
-                         post_scale, /*requires_clear=*/false,
-                         &max_op_size_limit);
+      ri->RasterCHROMIUM(
+          display_item_list.get(), &image_provider, size, gfx::Rect(size),
+          gfx::Rect(size), post_translate, post_scale, /*requires_clear=*/false,
+          /*raster_inducing_scroll_offsets=*/nullptr, &max_op_size_limit);
       ri->EndRasterCHROMIUM();
     } else {
       // If not using |gpu_raster| but using gpu compositing, DrawHudContents()
@@ -390,34 +334,43 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
       SkPixmap pixmap;
       staging_surface_->peekPixels(&pixmap);
 
-      ri->WritePixels(backing->mailbox, /*dst_x_offset=*/0, /*dst_y_offset=*/0,
-                      /*dst_plane_index=*/0, backing->texture_target, pixmap);
+      uint32_t texture_target = backing->shared_image()->GetTextureTarget();
+      ri->WritePixels(backing->shared_image()->mailbox(), /*dst_x_offset=*/0,
+                      /*dst_y_offset=*/0, texture_target, pixmap);
     }
 
     backing->mailbox_sync_token =
-        viz::ClientResourceProvider::GenerateSyncTokenHelper(ri);
+        gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
   } else {
     // If not using gpu compositing, we DrawHudContents() directly into a shared
     // memory bitmap, wrapped in an SkSurface, that can be shared to the display
     // compositor.
     DCHECK_EQ(draw_mode, DRAW_MODE_SOFTWARE);
-    DCHECK(pool_resource.software_backing());
+    DCHECK(pool_resource.backing());
 
     SkImageInfo info = SkImageInfo::MakeN32Premul(
         pool_resource.size().width(), pool_resource.size().height());
-    auto* backing =
-        static_cast<HudSoftwareBacking*>(pool_resource.software_backing());
     SkSurfaceProps props = skia::LegacyDisplayGlobals::GetSkSurfaceProps();
-    sk_sp<SkSurface> surface = SkSurfaces::WrapPixels(
-        info, backing->shared_mapping.memory(), info.minRowBytes(), &props);
+    const size_t row_bytes = info.minRowBytes();
+    auto* backing = pool_resource.backing();
+    auto mapping = backing->shared_image()->Map();
+    base::span<uint8_t> mem = mapping->GetMemoryForPlane(0);
+    CHECK_GE(mem.size(), info.computeByteSize(row_bytes));
+    sk_sp<SkSurface> surface =
+        SkSurfaces::WrapPixels(info, mem.data(), row_bytes, &props);
 
     SkiaPaintCanvas canvas(surface->getCanvas());
     DrawHudContents(&canvas);
+
+    auto sii = layer_tree_frame_sink->shared_image_interface();
+    backing->mailbox_sync_token = sii->GenVerifiedSyncToken();
   }
 
   // Exports the backing to the ResourceProvider, giving it a ResourceId that
   // can be used in a DrawQuad.
-  bool exported = pool_->PrepareForExport(pool_resource);
+  bool exported = pool_->PrepareForExport(
+      pool_resource,
+      viz::TransferableResource::ResourceSource::kHeadsUpDisplay);
   DCHECK(exported);
   viz::ResourceId resource_id = pool_resource.resource_id_for_export();
 
@@ -452,13 +405,11 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
             static_cast<double>(internal_content_bounds_.height()) /
             static_cast<double>(in_flight_resource_.size().height()));
       }
-      const float vertex_opacity[] = {1.f, 1.f, 1.f, 1.f};
       quad->SetNew(sqs, quad_rect, visible_rect, /*needs_blending=*/true,
-                   resource_id, /*premultiplied_alpha=*/true,
+                   resource_id,
                    /*uv_top_left=*/gfx::PointF(),
                    /*uv_bottom_right=*/uv_bottom_right,
-                   /*background_color=*/SkColors::kTransparent, vertex_opacity,
-                   /*flipped=*/false,
+                   /*background_color=*/SkColors::kTransparent,
                    /*nearest_neighbor=*/false, /*secure_output_only=*/false,
                    gfx::ProtectedVideoType::kClear);
       ValidateQuadResources(quad);
@@ -502,9 +453,20 @@ void HeadsUpDisplayLayerImpl::ClearLayoutShiftRects() {
   layout_shift_rects_.clear();
 }
 
-void HeadsUpDisplayLayerImpl::SetWebVitalMetrics(
-    std::unique_ptr<WebVitalMetrics> web_vital_metrics) {
-  web_vital_metrics_ = std::move(web_vital_metrics);
+void HeadsUpDisplayLayerImpl::GetContentsResourceId(
+    viz::ResourceId* resource_id,
+    gfx::Size* resource_size,
+    gfx::SizeF* resource_uv_size) const {
+  if (in_flight_resource_ && in_flight_resource_.backing()) {
+    *resource_id = in_flight_resource_.resource_id_for_export();
+    *resource_size = in_flight_resource_.size();
+    // HUD layers use the full texture.
+    *resource_uv_size = gfx::SizeF(1.f, 1.f);
+  } else {
+    *resource_id = viz::kInvalidResourceId;
+    *resource_size = gfx::Size();
+    *resource_uv_size = gfx::SizeF();
+  }
 }
 
 void HeadsUpDisplayLayerImpl::PushPropertiesTo(LayerImpl* layer) {
@@ -516,8 +478,6 @@ void HeadsUpDisplayLayerImpl::PushPropertiesTo(LayerImpl* layer) {
   layer_impl->SetHUDTypeface(typeface_);
   layer_impl->SetLayoutShiftRects(layout_shift_rects_);
   layout_shift_rects_.clear();
-  if (web_vital_metrics_ && web_vital_metrics_->HasValue())
-    layer_impl->SetWebVitalMetrics(std::move(web_vital_metrics_));
 }
 
 void HeadsUpDisplayLayerImpl::UpdateHudContents() {
@@ -530,7 +490,7 @@ void HeadsUpDisplayLayerImpl::UpdateHudContents() {
 
     if (debug_state.show_fps_counter) {
       throughput_value_ =
-          layer_tree_impl()->dropped_frame_counter()->GetAverageThroughput();
+          layer_tree_impl()->frame_sorter()->GetAverageThroughput();
       const auto& args = layer_tree_impl()->CurrentBeginFrameArgs();
       if (args.IsValid())
         frame_interval_ = args.interval;
@@ -554,6 +514,12 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(PaintCanvas* canvas) {
   canvas->save();
   canvas->scale(internal_contents_scale_);
 
+  if (debug_state.debugger_paused) {
+    DrawDebuggerPaused(canvas);
+    canvas->restore();
+    return;
+  }
+
   if (debug_state.ShowDebugRects()) {
     DrawDebugRects(canvas, layer_tree_impl()->debug_rect_history());
     if (IsAnimatingHUDContents()) {
@@ -574,8 +540,7 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(PaintCanvas* canvas) {
   SkRect area = SkRect::MakeXYWH(0, 0, 0, 0);
 
   if (debug_state.show_fps_counter) {
-    area = DrawFrameThroughputDisplay(
-        canvas, layer_tree_impl()->dropped_frame_counter(), 0, 0);
+    area = DrawFrameThroughputDisplay(canvas, 0, 0);
     area = DrawGpuRasterizationStatus(canvas, 0, area.bottom(),
                                       std::max<SkScalar>(area.width(), 150));
   }
@@ -592,21 +557,37 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(PaintCanvas* canvas) {
                              static_cast<double>(metrics_sizes.kWidth);
     canvas->scale(scale_to_bounds, scale_to_bounds);
   }
-  SkRect metrics_area = SkRect::MakeXYWH(
-      std::max<SkScalar>(0, bounds_width_in_dips() - metrics_sizes.kWidth), 0,
-      metrics_sizes.kWidth, 0);
-  if (debug_state.show_web_vital_metrics) {
-    metrics_area = DrawWebVitalMetrics(
-        canvas, metrics_area.left(), metrics_area.bottom(),
-        std::max<SkScalar>(metrics_area.width(), metrics_sizes.kWidth));
-  }
 
-  if (debug_state.show_smoothness_metrics) {
-    metrics_area = DrawSmoothnessMetrics(
-        canvas, metrics_area.left(), metrics_area.bottom(),
-        std::max<SkScalar>(metrics_area.width(), metrics_sizes.kWidth));
-  }
+  canvas->restore();
+}
 
+void HeadsUpDisplayLayerImpl::DrawDebuggerPaused(PaintCanvas* canvas) {
+  SkColor4f background{0.0f, 0.0f, 0.0f, 0.35f};
+  canvas->clear(background);
+
+  const int kPadding = 4;
+  const int kFontHeight = 12;
+
+  PaintFlags label_flags;
+  label_flags.setColor(SkColorSetARGB(255, 255, 255, 194));
+  SkFont label_font(typeface_, kFontHeight);
+
+  const SkScalar label_text_width = label_font.measureText(
+      paused_localized_message_.c_str(), paused_localized_message_.length(),
+      SkTextEncoding::kUTF8);
+
+  canvas->save();
+
+  gfx::Size space = internal_content_bounds_;
+  space.Enlarge(-(label_text_width + 2 * kPadding), 0);
+  canvas->translate(space.width() / 2, kFontHeight * 2);
+  canvas->drawRect(SkRect::MakeWH(label_text_width + 2 * kPadding,
+                                  kFontHeight + 2 * kPadding),
+                   label_flags);
+
+  label_flags.setColor(SkColorSetARGB(255, 50, 50, 50));
+  DrawText(canvas, label_flags, paused_localized_message_, TextAlign::kLeft,
+           kFontHeight, kPadding, kFontHeight * 0.8f + kPadding);
   canvas->restore();
 }
 
@@ -673,9 +654,9 @@ void HeadsUpDisplayLayerImpl::DrawSeparatorLine(PaintCanvas* canvas,
 
 SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
     PaintCanvas* canvas,
-    const DroppedFrameCounter* dropped_frame_counter,
     int right,
     int top) const {
+  FrameSorter* frame_sorter = layer_tree_impl()->frame_sorter();
   const int kPadding = 4;
   const int kGap = 6;
 
@@ -683,7 +664,7 @@ SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
   const int kFontHeight = 12;
 
   const int kGraphWidth =
-      base::saturated_cast<int>(dropped_frame_counter->frame_history_size());
+      base::saturated_cast<int>(frame_sorter->frame_history_size());
   const int kGraphHeight = 40;
 
   int width = kGraphWidth + 4 * kPadding;
@@ -730,14 +711,13 @@ SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
   SkPath good_path;
   SkPath dropped_path;
   SkPath partial_path;
-  for (auto it = dropped_frame_counter->End(); it; --it) {
+  for (auto it = frame_sorter->End(); it; --it) {
     const auto state = **it;
     int x = graph_bounds.left() + it.index();
-    SkPath& path = state == DroppedFrameCounter::kFrameStateDropped
-                       ? dropped_path
-                       : state == DroppedFrameCounter::kFrameStateComplete
-                             ? good_path
-                             : partial_path;
+    SkPath& path = state == FrameInfo::FrameFinalState::kDropped ? dropped_path
+                   : state == FrameInfo::FrameFinalState::kPresentedAll
+                       ? good_path
+                       : partial_path;
     path.moveTo(x, graph_bounds.top());
     path.lineTo(x, graph_bounds.bottom());
   }
@@ -873,7 +853,7 @@ SkRect HeadsUpDisplayLayerImpl::DrawGpuRasterizationStatus(PaintCanvas* canvas,
 
   SkPoint gpu_status_pos = SkPoint::Make(left + width - kPadding,
                                          top + 2 * kFontHeight + 2 * kPadding);
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   flags.setColor(DebugColors::HUDTitleColor().toSkColor());
   DrawText(canvas, flags, "GPU raster", TextAlign::kLeft, kTitleFontHeight,
            left + kPadding, top + kFontHeight + kPadding);
@@ -953,61 +933,67 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
     std::string label_text;
 
     switch (debug_rects[i].type) {
-      case LAYOUT_SHIFT_RECT_TYPE:
+      case DebugRectType::kLayoutShift:
         new_layout_shift_rects.push_back(debug_rects[i]);
         continue;
-      case PAINT_RECT_TYPE:
+      case DebugRectType::kPaint:
         new_paint_rects.push_back(debug_rects[i]);
         continue;
-      case PROPERTY_CHANGED_RECT_TYPE:
+      case DebugRectType::kPropertyChanged:
         stroke_color = DebugColors::PropertyChangedRectBorderColor();
         fill_color = DebugColors::PropertyChangedRectFillColor();
         stroke_width = DebugColors::PropertyChangedRectBorderWidth();
         break;
-      case SURFACE_DAMAGE_RECT_TYPE:
+      case DebugRectType::kSurfaceDamage:
         stroke_color = DebugColors::SurfaceDamageRectBorderColor();
         fill_color = DebugColors::SurfaceDamageRectFillColor();
         stroke_width = DebugColors::SurfaceDamageRectBorderWidth();
         break;
-      case SCREEN_SPACE_RECT_TYPE:
+      case DebugRectType::kScreenSpace:
         stroke_color = DebugColors::ScreenSpaceLayerRectBorderColor();
         fill_color = DebugColors::ScreenSpaceLayerRectFillColor();
         stroke_width = DebugColors::ScreenSpaceLayerRectBorderWidth();
         break;
-      case TOUCH_EVENT_HANDLER_RECT_TYPE:
+      case DebugRectType::kTouchEventHandler:
         stroke_color = DebugColors::TouchEventHandlerRectBorderColor();
         fill_color = DebugColors::TouchEventHandlerRectFillColor();
         stroke_width = DebugColors::TouchEventHandlerRectBorderWidth();
         label_text = "touch event listener: ";
         label_text.append(TouchActionToString(debug_rects[i].touch_action));
         break;
-      case WHEEL_EVENT_HANDLER_RECT_TYPE:
+      case DebugRectType::kWheelEventHandler:
         stroke_color = DebugColors::WheelEventHandlerRectBorderColor();
         fill_color = DebugColors::WheelEventHandlerRectFillColor();
         stroke_width = DebugColors::WheelEventHandlerRectBorderWidth();
         label_text = "mousewheel event listener";
         break;
-      case SCROLL_EVENT_HANDLER_RECT_TYPE:
+      case DebugRectType::kScrollEventHandler:
         stroke_color = DebugColors::ScrollEventHandlerRectBorderColor();
         fill_color = DebugColors::ScrollEventHandlerRectFillColor();
         stroke_width = DebugColors::ScrollEventHandlerRectBorderWidth();
         label_text = "scroll event listener";
         break;
-      case NON_FAST_SCROLLABLE_RECT_TYPE:
-        stroke_color = DebugColors::NonFastScrollableRectBorderColor();
-        fill_color = DebugColors::NonFastScrollableRectFillColor();
-        stroke_width = DebugColors::NonFastScrollableRectBorderWidth();
-        label_text = "repaints on scroll";
+      case DebugRectType::kMainThreadScrollHitTest:
+        stroke_color = DebugColors::MainThreadScrollHitTestRectBorderColor();
+        fill_color = DebugColors::MainThreadScrollHitTestRectFillColor();
+        stroke_width = DebugColors::MainThreadScrollHitTestRectBorderWidth();
+        label_text = "main thread scroll hit test";
         break;
-      case MAIN_THREAD_SCROLLING_REASON_RECT_TYPE:
-        stroke_color = DebugColors::MainThreadScrollingReasonRectBorderColor();
-        fill_color = DebugColors::MainThreadScrollingReasonRectFillColor();
-        stroke_width = DebugColors::MainThreadScrollingReasonRectBorderWidth();
-        label_text = "main thread scrolling: ";
+      case DebugRectType::kMainThreadScrollRepaint:
+        stroke_color = DebugColors::MainThreadScrollRepaintRectBorderColor();
+        fill_color = DebugColors::MainThreadScrollRepaintRectFillColor();
+        stroke_width = DebugColors::MainThreadScrollRepaintRectBorderWidth();
+        label_text = "main thread scroll repaint: ";
         label_text.append(base::ToLowerASCII(MainThreadScrollingReason::AsText(
-            debug_rects[i].main_thread_scrolling_reasons)));
+            debug_rects[i].main_thread_scroll_repaint_reasons)));
         break;
-      case ANIMATION_BOUNDS_RECT_TYPE:
+      case DebugRectType::kRasterInducingScroll:
+        stroke_color = DebugColors::RasterInducingScrollRectBorderColor();
+        fill_color = DebugColors::RasterInducingScrollRectFillColor();
+        stroke_width = DebugColors::RasterInducingScrollRectBorderWidth();
+        label_text = "raster-inducing scroll (not bad)";
+        break;
+      case DebugRectType::kAnimationBounds:
         stroke_color = DebugColors::LayerAnimationBoundsBorderColor();
         fill_color = DebugColors::LayerAnimationBoundsFillColor();
         stroke_width = DebugColors::LayerAnimationBoundsBorderWidth();
@@ -1039,8 +1025,8 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
   if (layout_shift_rects_fade_step_ > 0) {
     layout_shift_rects_fade_step_--;
     for (auto& layout_shift_debug_rect : layout_shift_debug_rects_) {
-      // TODO(crbug/1308932): Remove all instances of toSkColor below and make
-      // all SkColor4f.
+      // TODO(crbug.com/40219248): Remove all instances of toSkColor below and
+      // make all SkColor4f.
       DrawDebugRect(
           canvas, &flags, layout_shift_debug_rect,
           DebugColors::LayoutShiftRectBorderColor(),
@@ -1048,176 +1034,6 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
           DebugColors::LayoutShiftRectBorderWidth(), "");
     }
   }
-}
-
-int HeadsUpDisplayLayerImpl::DrawSingleMetric(
-    PaintCanvas* canvas,
-    int left,
-    int right,
-    int top,
-    std::string name,
-    const WebVitalMetrics::MetricsInfo& info,
-    bool has_value,
-    double value) const {
-  std::string value_str = "-";
-  SkColor4f metrics_color = DebugColors::HUDTitleColor();
-  SkColor4f badge_color = SkColors::kGreen;
-  if (has_value) {
-    value_str = ToStringTwoDecimalPrecision(value) + info.UnitToString();
-    if (value < info.green_threshold) {
-      metrics_color = SkColors::kGreen;
-    } else if (value < info.yellow_threshold) {
-      metrics_color = SkColors::kYellow;
-      badge_color = SkColors::kYellow;
-    } else {
-      metrics_color = SkColors::kRed;
-      badge_color = SkColors::kRed;
-    }
-  }
-
-  // Draw the badge for this metric.
-  PaintFlags badge_flags;
-  badge_flags.setColor(badge_color);
-  badge_flags.setStyle(PaintFlags::kFill_Style);
-  badge_flags.setAntiAlias(true);
-  if (badge_color == SkColors::kGreen) {
-    constexpr int kRadius = 6;
-    int x = left + metrics_sizes.kSidePadding + kRadius;
-    int y = top - kRadius - 2;
-    SkPath circle = SkPath::Circle(x, y, kRadius);
-    canvas->drawPath(circle, badge_flags);
-  } else if (badge_color == SkColors::kYellow) {
-    constexpr int kSquareSize = 12;
-    int x = left + metrics_sizes.kSidePadding;
-    int y = top - kSquareSize - 2;
-    SkPath square =
-        SkPath::Rect(SkRect::MakeXYWH(x, y, kSquareSize, kSquareSize));
-    canvas->drawPath(square, badge_flags);
-  } else {
-    constexpr int kTriangleSize = 16;
-    int top_x = left + metrics_sizes.kSidePadding + kTriangleSize / 2;
-    int top_y = top - kTriangleSize;
-    int bottom_y = top_y + kTriangleSize;
-    SkPath triangle =
-        SkPath::Polygon({SkPoint::Make(top_x, top_y),
-                         SkPoint::Make(top_x - kTriangleSize / 2, bottom_y),
-                         SkPoint::Make(top_x + kTriangleSize / 2, bottom_y)},
-                        true);
-    canvas->drawPath(triangle, badge_flags);
-  }
-
-  // Draw the label and values of the metric.
-  PaintFlags flags;
-  flags.setColor(DebugColors::HUDTitleColor());
-  DrawText(canvas, flags, name, TextAlign::kLeft, metrics_sizes.kFontHeight,
-           left + metrics_sizes.kSidePadding + metrics_sizes.kBadgeWidth, top);
-  flags.setColor(metrics_color);
-  DrawText(canvas, flags, value_str, TextAlign::kRight,
-           metrics_sizes.kFontHeight, right - metrics_sizes.kSidePadding, top);
-
-  return top + metrics_sizes.kFontHeight + metrics_sizes.kPadding;
-}
-
-SkRect HeadsUpDisplayLayerImpl::DrawWebVitalMetrics(PaintCanvas* canvas,
-                                                    int left,
-                                                    int top,
-                                                    int width) const {
-  const int height = ComputeTotalHeight(3);
-  const SkRect area = SkRect::MakeXYWH(left, top, width, height);
-
-  PaintFlags flags;
-  DrawGraphBackground(canvas, &flags, area);
-
-  int current_top = top + metrics_sizes.kTopPadding + metrics_sizes.kFontHeight;
-  double metric_value = 0.f;
-  bool has_lcp = web_vital_metrics_ && web_vital_metrics_->has_lcp;
-  if (has_lcp)
-    metric_value = web_vital_metrics_->largest_contentful_paint.InSecondsF();
-  current_top = DrawSingleMetric(
-      canvas, left, left + width, current_top, "Largest Contentful Paint",
-      WebVitalMetrics::lcp_info, has_lcp, metric_value);
-
-  bool has_fid = web_vital_metrics_ && web_vital_metrics_->has_fid;
-  if (has_fid)
-    metric_value = web_vital_metrics_->first_input_delay.InMillisecondsF();
-  current_top = DrawSingleMetric(canvas, left, left + width, current_top,
-                                 "First Input Delay", WebVitalMetrics::fid_info,
-                                 has_fid, metric_value);
-
-  bool has_layout_shift = web_vital_metrics_ && web_vital_metrics_->has_cls;
-  if (has_layout_shift)
-    metric_value = web_vital_metrics_->layout_shift;
-  current_top = DrawSingleMetric(
-      canvas, left, left + width, current_top, "Cumulative Layout Shift",
-      WebVitalMetrics::cls_info, has_layout_shift, metric_value);
-
-  return area;
-}
-
-int HeadsUpDisplayLayerImpl::DrawSinglePercentageMetric(PaintCanvas* canvas,
-                                                        int left,
-                                                        int right,
-                                                        int top,
-                                                        std::string name,
-                                                        double value) const {
-  std::string value_str = "-";
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
-  SkColor metrics_color = DebugColors::HUDTitleColor().toSkColor();
-  value_str = ToStringTwoDecimalPrecision(value) + "%";
-
-  PaintFlags flags;
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
-  flags.setColor(DebugColors::HUDTitleColor().toSkColor());
-  DrawText(canvas, flags, name, TextAlign::kLeft, metrics_sizes.kFontHeight,
-           left + metrics_sizes.kSidePadding + metrics_sizes.kBadgeWidth, top);
-  flags.setColor(metrics_color);
-  DrawText(canvas, flags, value_str, TextAlign::kRight,
-           metrics_sizes.kFontHeight, right - metrics_sizes.kSidePadding, top);
-
-  return top + metrics_sizes.kFontHeight + metrics_sizes.kPadding;
-}
-
-SkRect HeadsUpDisplayLayerImpl::DrawSmoothnessMetrics(PaintCanvas* canvas,
-                                                      int left,
-                                                      int top,
-                                                      int width) const {
-  const int height = ComputeTotalHeight(3);
-  const SkRect area = SkRect::MakeXYWH(left, top, width, height);
-
-  PaintFlags flags;
-  DrawGraphBackground(canvas, &flags, area);
-  if (top != 0) {
-    // There are metrics drawn before this.
-    SkRect separator =
-        SkRect::MakeXYWH(area.x(), area.y(), area.width(), area.height());
-    DrawSeparatorLine(canvas, &flags, separator);
-  }
-
-  int current_top = top + metrics_sizes.kTopPadding + metrics_sizes.kFontHeight;
-  double avg_smoothness = layer_tree_impl()
-                              ->dropped_frame_counter()
-                              ->GetMostRecentAverageSmoothness();
-  current_top =
-      DrawSinglePercentageMetric(canvas, left, left + width, current_top,
-                                 "Average Dropped Frame", avg_smoothness);
-  double worst_smoothness = layer_tree_impl()
-                                ->dropped_frame_counter()
-                                ->sliding_window_max_percent_dropped();
-  current_top =
-      DrawSinglePercentageMetric(canvas, left, left + width, current_top,
-                                 "Max Dropped Frame", worst_smoothness);
-  double percentile_smoothness = layer_tree_impl()
-                                     ->dropped_frame_counter()
-                                     ->GetMostRecent95PercentileSmoothness();
-  current_top =
-      DrawSinglePercentageMetric(canvas, left, left + width, current_top,
-                                 "95th Percentile DF", percentile_smoothness);
-
-  return area;
-}
-
-const char* HeadsUpDisplayLayerImpl::LayerTypeAsString() const {
-  return "cc::HeadsUpDisplayLayerImpl";
 }
 
 void HeadsUpDisplayLayerImpl::AsValueInto(

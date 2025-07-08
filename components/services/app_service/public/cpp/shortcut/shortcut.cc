@@ -9,11 +9,27 @@
 
 #include "base/check.h"
 #include "base/strings/strcat.h"
+#include "components/app_constants/constants.h"
 #include "components/crx_file/id_util.h"
 
 namespace apps {
 
-APP_ENUM_TO_STRING(ShortcutSource, kUnknown, kUser, kDeveloper)
+std::ostream& operator<<(std::ostream& os, ShortcutSource v) {
+  switch (v) {
+    case ShortcutSource::kUnknown:
+      return os << "ShortcutSource::kUnknown";
+    case ShortcutSource::kUser:
+      return os << "ShortcutSource::kUser";
+    case ShortcutSource::kPolicy:
+      return os << "ShortcutSource::kPolicy";
+    case ShortcutSource::kDefault:
+      return os << "ShortcutSource::kDefault";
+  }
+
+  // Just in case, where the value comes from outside of the chrome code
+  // then casted without checks.
+  return os << "(unknown: " << static_cast<int>(v) << ")";
+}
 
 Shortcut::Shortcut(const std::string& host_app_id, const std::string& local_id)
     : host_app_id(host_app_id),
@@ -26,7 +42,9 @@ bool Shortcut::operator==(const Shortcut& rhs) const {
   return this->shortcut_id == rhs.shortcut_id &&
          this->host_app_id == rhs.host_app_id &&
          this->local_id == rhs.local_id && this->name == rhs.name &&
-         this->shortcut_source == rhs.shortcut_source;
+         this->shortcut_source == rhs.shortcut_source &&
+         this->icon_key == rhs.icon_key &&
+         this->allow_removal == rhs.allow_removal;
 }
 
 std::unique_ptr<Shortcut> Shortcut::Clone() const {
@@ -34,7 +52,10 @@ std::unique_ptr<Shortcut> Shortcut::Clone() const {
 
   shortcut->name = name;
   shortcut->shortcut_source = shortcut_source;
-
+  if (icon_key.has_value()) {
+    shortcut->icon_key = std::move(*icon_key->Clone());
+  }
+  shortcut->allow_removal = allow_removal;
   return shortcut;
 }
 
@@ -44,9 +65,12 @@ std::string Shortcut::ToString() const {
   if (name.has_value()) {
     out << "- name: " << name.value() << std::endl;
   }
-  out << "- shortcut_source: " << EnumToString(shortcut_source) << std::endl;
+  out << "- shortcut_source: " << shortcut_source << std::endl;
   out << "- host_app_id: " << host_app_id << std::endl;
   out << "- local_id: " << local_id << std::endl;
+  if (allow_removal.has_value()) {
+    out << "- allow_removal: " << allow_removal.value() << std::endl;
+  }
   return out.str();
 }
 
@@ -61,6 +85,13 @@ Shortcuts CloneShortcuts(const Shortcuts& source_shortcuts) {
 
 ShortcutId GenerateShortcutId(const std::string& host_app_id,
                               const std::string& local_id) {
+  // For web app based browser shortcut, we just use the local_id
+  // that is generated in the web app system, so that we can keep
+  // all the launcher and shelf locations without needing to migrate the sync
+  // data.
+  if (host_app_id == app_constants::kChromeAppId) {
+    return ShortcutId(local_id);
+  }
   const std::string input = base::StrCat({host_app_id, "#", local_id});
   return ShortcutId(crx_file::id_util::GenerateId(input));
 }

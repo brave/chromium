@@ -14,6 +14,7 @@
 #include "ash/webui/projector_app/projector_app_client.h"
 #include "ash/webui/projector_app/projector_oauth_token_fetcher.h"
 #include "ash/webui/projector_app/projector_xhr_sender.h"
+#include "ash/webui/projector_app/public/mojom/projector_types.mojom-forward.h"
 #include "ash/webui/projector_app/public/mojom/projector_types.mojom.h"
 #include "base/files/safe_base_name.h"
 #include "components/prefs/pref_service.h"
@@ -64,7 +65,7 @@ std::string GetPrefName(projector::mojom::PrefsThatProjectorCanAskFor pref) {
       return ash::prefs::kProjectorGalleryOnboardingShowCount;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -192,11 +193,11 @@ void UntrustedProjectorPageHandlerImpl::StartProjectorSession(
 void UntrustedProjectorPageHandlerImpl::SendXhr(
     const GURL& url,
     projector::mojom::RequestType method,
-    const absl::optional<std::string>& request_body,
+    const std::optional<std::string>& request_body,
     bool use_credentials,
     bool use_api_key,
-    const absl::optional<base::flat_map<std::string, std::string>>& headers,
-    const absl::optional<std::string>& account_email,
+    const std::optional<base::flat_map<std::string, std::string>>& headers,
+    const std::optional<std::string>& account_email,
     SendXhrCallback callback) {
   CHECK(url.is_valid());
   xhr_sender_.Send(
@@ -228,7 +229,7 @@ void UntrustedProjectorPageHandlerImpl::GetAccounts(
 
 void UntrustedProjectorPageHandlerImpl::GetVideo(
     const std::string& video_file_id,
-    const absl::optional<std::string>& resource_key,
+    const std::optional<std::string>& resource_key,
     GetVideoCallback callback) {
   ProjectorAppClient::Get()->GetVideo(
       video_file_id, resource_key,
@@ -249,19 +250,16 @@ UntrustedProjectorPageHandlerImpl::GetWeakPtr() {
 
 void UntrustedProjectorPageHandlerImpl::OnXhrRequestCompleted(
     SendXhrCallback callback,
-    const std::string& response_body,
-    projector::mojom::XhrResponseCode response_code) {
+    projector::mojom::XhrResponsePtr xhr_responose) {
   // If the request made is an unsupported url, then
   // crash the renderer.
-  if (response_code == projector::mojom::XhrResponseCode::kUnsupportedURL) {
+  if (xhr_responose->response_code ==
+      projector::mojom::XhrResponseCode::kUnsupportedURL) {
     receiver_.ReportBadMessage("Unsupported url requested.");
     return;
   }
 
-  auto response = projector::mojom::XhrResponse::New();
-  response->response = response_body;
-  response->response_code = response_code;
-  std::move(callback).Run(std::move(response));
+  std::move(callback).Run(std::move(xhr_responose));
 }
 
 }  // namespace ash

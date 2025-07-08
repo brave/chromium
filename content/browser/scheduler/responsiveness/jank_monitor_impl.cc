@@ -5,14 +5,10 @@
 #include "content/browser/scheduler/responsiveness/jank_monitor_impl.h"
 
 #include "base/compiler_specific.h"
-#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "ui/base/ui_base_features.h"
 
 namespace content {
 
@@ -215,7 +211,7 @@ void JankMonitorImpl::DestroyOnMonitorThread() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(monitor_sequence_checker_);
   DCHECK(timer_);
 
-  timer_->AbandonAndStop();
+  timer_->Stop();
   timer_ = nullptr;
   timer_running_ = false;
 }
@@ -274,7 +270,7 @@ void JankMonitorImpl::OnJankStopped(
 }
 
 void JankMonitorImpl::NotifyJankStopIfNecessary(const void* opaque_identifier) {
-  if (LIKELY(!janky_task_id_ || janky_task_id_ != opaque_identifier)) {
+  if (!janky_task_id_ || janky_task_id_ != opaque_identifier) [[likely]] {
     // Most tasks are unlikely to be janky.
     return;
   }
@@ -300,7 +296,7 @@ JankMonitorImpl::ThreadExecutionState::ThreadExecutionState() {
 
 JankMonitorImpl::ThreadExecutionState::~ThreadExecutionState() = default;
 
-absl::optional<const void*>
+std::optional<const void*>
 JankMonitorImpl::ThreadExecutionState::CheckJankiness() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(monitor_sequence_checker_);
 
@@ -308,11 +304,11 @@ JankMonitorImpl::ThreadExecutionState::CheckJankiness() {
   static base::TimeDelta jank_threshold = base::Milliseconds(kJankThresholdMs);
 
   base::AutoLock lock(lock_);
-  if (LIKELY(task_execution_metadata_.empty() ||
-             (now - task_execution_metadata_.back().execution_start_time) <
-                 jank_threshold)) {
+  if (task_execution_metadata_.empty() ||
+      (now - task_execution_metadata_.back().execution_start_time) <
+          jank_threshold) [[likely]] {
     // Most tasks are unlikely to be janky.
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Mark that the target thread is janky and notify the monitor thread.
@@ -334,14 +330,14 @@ void JankMonitorImpl::ThreadExecutionState::DidRunTaskOrEvent(
   AssertOnTargetThread();
 
   base::AutoLock lock(lock_);
-  if (UNLIKELY(task_execution_metadata_.empty()) ||
-      opaque_identifier != task_execution_metadata_.back().identifier) {
+  if (task_execution_metadata_.empty() ||
+      opaque_identifier != task_execution_metadata_.back().identifier)
+      [[unlikely]] {
     // Mismatches can happen (e.g: on ozone/wayland when Paste button is pressed
     // in context menus, among others). Simply ignore the mismatches for now.
     // See https://crbug.com/929813 for the details of why the mismatch
     // happens.
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && \
-    BUILDFLAG(IS_OZONE)
+#if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE)
     task_execution_metadata_.clear();
 #endif
     return;

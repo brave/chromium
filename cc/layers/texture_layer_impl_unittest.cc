@@ -27,10 +27,15 @@ TEST(TextureLayerImplTest, VisibleOpaqueRegion) {
 
   LayerTreeImplTestBase impl;
 
-  TextureLayerImpl* layer = impl.AddLayer<TextureLayerImpl>();
+  auto resource = viz::TransferableResource::Make(
+      gpu::ClientSharedImage::CreateForTesting(),
+      viz::TransferableResource::ResourceSource::kTest, gpu::SyncToken());
+
+  TextureLayerImpl* layer = impl.AddLayerInActiveTree<TextureLayerImpl>();
   layer->SetBounds(layer_bounds);
   layer->draw_properties().visible_layer_rect = layer_rect;
   layer->SetBlendBackgroundColor(true);
+  layer->SetTransferableResource(resource, base::BindOnce(&IgnoreCallback));
   CopyProperties(impl.root_layer(), layer);
 
   // Verify initial conditions.
@@ -53,14 +58,12 @@ TEST(TextureLayerImplTest, Occlusion) {
 
   LayerTreeImplTestBase impl;
 
-  auto resource = viz::TransferableResource::MakeGpu(
-      gpu::Mailbox::GenerateForSharedImage(), GL_TEXTURE_2D,
-      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
-                     gpu::CommandBufferId::FromUnsafeValue(0x234), 0x456),
-      layer_size, viz::SinglePlaneFormat::kRGBA_8888,
-      false /* is_overlay_candidate */);
+  auto resource = viz::TransferableResource::Make(
+      gpu::ClientSharedImage::CreateForTesting(),
+      viz::TransferableResource::ResourceSource::kTest, gpu::SyncToken());
 
-  TextureLayerImpl* texture_layer_impl = impl.AddLayer<TextureLayerImpl>();
+  TextureLayerImpl* texture_layer_impl =
+      impl.AddLayerInActiveTree<TextureLayerImpl>();
   texture_layer_impl->SetBounds(layer_size);
   texture_layer_impl->SetDrawsContent(true);
   texture_layer_impl->SetTransferableResource(resource,

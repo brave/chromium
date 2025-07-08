@@ -28,17 +28,22 @@ SyncSessionsWebContentsRouterFactory::SyncSessionsWebContentsRouterFactory()
           "SyncSessionsWebContentsRouter",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {}
 
 SyncSessionsWebContentsRouterFactory::~SyncSessionsWebContentsRouterFactory() =
     default;
 
-KeyedService* SyncSessionsWebContentsRouterFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SyncSessionsWebContentsRouterFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new SyncSessionsWebContentsRouter(static_cast<Profile*>(context));
+  return std::make_unique<SyncSessionsWebContentsRouter>(
+      static_cast<Profile*>(context));
 }
 
 }  // namespace sync_sessions

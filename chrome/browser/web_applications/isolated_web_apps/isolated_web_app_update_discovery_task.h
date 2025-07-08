@@ -5,24 +5,58 @@
 #ifndef CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_ISOLATED_WEB_APP_UPDATE_DISCOVERY_TASK_H_
 #define CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_ISOLATED_WEB_APP_UPDATE_DISCOVERY_TASK_H_
 
+#include <iosfwd>
 #include <memory>
+#include <optional>
 
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/types/expected.h"
 #include "base/version.h"
+#include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_prepare_and_store_update_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_downloader.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest_fetcher.h"
-#include "chrome/browser/web_applications/web_app_command_scheduler.h"
-#include "chrome/browser/web_applications/web_app_id.h"
-#include "chrome/browser/web_applications/web_app_registrar.h"
+#include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "net/base/net_errors.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace web_app {
+class WebAppCommandScheduler;
+class WebAppRegistrar;
+
+class IwaUpdateDiscoveryTaskParams {
+ public:
+  IwaUpdateDiscoveryTaskParams(
+      const GURL& update_manifest_url,
+      const UpdateChannel& update_channel,
+      bool allow_downgrades,
+      const std::optional<base::Version>& pinned_version,
+      const IsolatedWebAppUrlInfo& url_info,
+      bool dev_mode);
+
+  IwaUpdateDiscoveryTaskParams(IwaUpdateDiscoveryTaskParams&& other);
+  ~IwaUpdateDiscoveryTaskParams();
+
+  const GURL& update_manifest_url() const { return update_manifest_url_; }
+  const UpdateChannel& update_channel() const { return update_channel_; }
+  bool allow_downgrades() const { return allow_downgrades_; }
+  const std::optional<base::Version>& pinned_version() const {
+    return pinned_version_;
+  }
+  const IsolatedWebAppUrlInfo& url_info() const { return url_info_; }
+  bool dev_mode() const { return dev_mode_; }
+
+ private:
+  GURL update_manifest_url_;
+  UpdateChannel update_channel_;
+  bool allow_downgrades_;
+  std::optional<base::Version> pinned_version_;
+  IsolatedWebAppUrlInfo url_info_;
+  bool dev_mode_;
+};
 
 class IsolatedWebAppUpdateDiscoveryTask {
  public:
@@ -46,7 +80,9 @@ class IsolatedWebAppUpdateDiscoveryTask {
     kBundleDownloadError,
 
     // Update dry run errors
-    kUpdateDryRunFailed
+    kUpdateDryRunFailed,
+
+    kSystemShutdown,
   };
 
   static std::string SuccessToString(Success success);
@@ -56,11 +92,11 @@ class IsolatedWebAppUpdateDiscoveryTask {
   using CompletionCallback = base::OnceCallback<void(CompletionStatus status)>;
 
   IsolatedWebAppUpdateDiscoveryTask(
-      GURL update_manifest_url,
-      IsolatedWebAppUrlInfo url_info,
+      IwaUpdateDiscoveryTaskParams task_params,
       WebAppCommandScheduler& command_scheduler,
       WebAppRegistrar& registrar,
-      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      Profile& profile);
   ~IsolatedWebAppUpdateDiscoveryTask();
 
   IsolatedWebAppUpdateDiscoveryTask(const IsolatedWebAppUpdateDiscoveryTask&) =
@@ -71,7 +107,9 @@ class IsolatedWebAppUpdateDiscoveryTask {
   void Start(CompletionCallback callback);
   bool has_started() const { return has_started_; }
 
-  const IsolatedWebAppUrlInfo& url_info() const { return url_info_; }
+  const IsolatedWebAppUrlInfo& url_info() const {
+    return task_params_.url_info();
+  }
 
   base::Value AsDebugValue() const;
 
@@ -82,31 +120,39 @@ class IsolatedWebAppUpdateDiscoveryTask {
 
   void OnUpdateManifestFetched(
       base::expected<UpdateManifest, UpdateManifestFetcher::Error>
-          update_manifest);
+          fetch_result);
 
-  void GetDownloadPath(UpdateManifest::VersionEntry version_entry);
+  void CheckIntegrityBundleForRotatedKey(
+      UpdateManifest::VersionEntry version_entry,
+      std::vector<uint8_t> rotated_key,
+      std::optional<std::string> initial_bytes);
 
-  void OnGetDownloadPath(UpdateManifest::VersionEntry version_entry,
-                         absl::optional<base::FilePath> download_path);
+  void CreateTempFile(UpdateManifest::VersionEntry version_entry);
 
-  void OnWebBundleDownloaded(const base::FilePath& download_path,
-                             const base::Version& expected_version,
+  void OnTempFileCreated(UpdateManifest::VersionEntry version_entry,
+                         ScopedTempWebBundleFile bundle);
+
+  void OnWebBundleDownloaded(const base::Version& expected_version,
                              int32_t net_error);
 
   void OnUpdateDryRunDone(
-      base::expected<void, IsolatedWebAppUpdatePrepareAndStoreCommandError>
-          result);
+      IsolatedWebAppUpdatePrepareAndStoreCommandResult result);
 
   base::Value::Dict debug_log_;
   bool has_started_ = false;
   CompletionCallback callback_;
 
-  GURL update_manifest_url_;
-  IsolatedWebAppUrlInfo url_info_;
+  const IwaUpdateDiscoveryTaskParams task_params_;
 
-  base::raw_ref<WebAppCommandScheduler> command_scheduler_;
-  base::raw_ref<WebAppRegistrar> registrar_;
+  raw_ref<WebAppCommandScheduler> command_scheduler_;
+  raw_ref<WebAppRegistrar> registrar_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+  // Set on Start:
+  std::unique_ptr<ScopedKeepAlive> keep_alive_;
+  std::unique_ptr<ScopedProfileKeepAlive> profile_keep_alive_;
+  const raw_ref<Profile> profile_;
+
+  ScopedTempWebBundleFile bundle_;
 
   std::unique_ptr<UpdateManifestFetcher> update_manifest_fetcher_;
   std::unique_ptr<IsolatedWebAppDownloader> bundle_downloader_;

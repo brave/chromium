@@ -4,12 +4,12 @@
 
 #include "content/browser/client_hints/client_hints.h"
 
+#include <algorithm>
+
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "content/public/test/mock_client_hints_controller_delegate.h"
 #include "content/public/test/test_browser_context.h"
@@ -20,6 +20,8 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/cpp/client_hints.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "third_party/blink/public/common/client_hints/client_hints.h"
 
 namespace content {
 
@@ -58,7 +60,7 @@ class ClientHintsTest : public RenderViewHostImplTestHarness {
         /*document_ukm_source_id=*/ukm::kInvalidSourceId);
   }
 
-  absl::optional<ClientHintsVector> ParseAndPersist(
+  std::optional<ClientHintsVector> ParseAndPersist(
       const GURL& url,
       const net::HttpResponseHeaders* response_header,
       const std::string& accept_ch_str,
@@ -72,16 +74,16 @@ class ClientHintsTest : public RenderViewHostImplTestHarness {
         browser_context(), delegate, frame_tree_node);
   }
 
-  std::string HintsToString(absl::optional<ClientHintsVector> hints) {
+  std::string HintsToString(std::optional<ClientHintsVector> hints) {
     if (!hints)
       return "";
 
     std::vector<std::string> hints_list;
     const auto& map = network::GetClientHintToNameMap();
-    base::ranges::transform(hints.value(), std::back_inserter(hints_list),
-                            [&map](network::mojom::WebClientHintsType hint) {
-                              return map.at(hint);
-                            });
+    std::ranges::transform(hints.value(), std::back_inserter(hints_list),
+                           [&map](network::mojom::WebClientHintsType hint) {
+                             return map.at(hint);
+                           });
 
     return base::JoinString(hints_list, ",");
   }
@@ -220,12 +222,6 @@ TEST_F(ClientHintsTest, DownlinkRandomized) {
 }
 
 TEST_F(ClientHintsTest, IntegrationTestsOnParseLookUp) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      {blink::features::kUserAgentClientHint,
-       blink::features::kClientHintsFormFactor},
-      {});
-
   GURL url = GURL(ClientHintsTest::kOriginUrl);
   contents()->NavigateAndCommit(url);
   FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
@@ -241,25 +237,25 @@ TEST_F(ClientHintsTest, IntegrationTestsOnParseLookUp) {
     std::string description;
     std::string accept_ch_str;
     raw_ptr<FrameTreeNode> frame_tree_node;
-    absl::optional<ClientHintsVector> expect_hints;
+    std::optional<ClientHintsVector> expect_hints;
     ClientHintsVector expect_commit_hints;
   } tests[] = {
       {"Persist hints for main frame", "sec-ch-ua-platform, sec-ch-ua-bitness",
        main_frame_node,
-       absl::make_optional(ClientHintsVector{WebClientHintsType::kUAPlatform,
-                                             WebClientHintsType::kUABitness}),
+       std::make_optional(ClientHintsVector{WebClientHintsType::kUAPlatform,
+                                            WebClientHintsType::kUABitness}),
        ClientHintsVector{WebClientHintsType::kUAPlatform,
                          WebClientHintsType::kUABitness}},
       {"No persist hints for sub frame",
-       "sec-ch-ua-platform, sec-ch-ua-bitness", sub_frame_node, absl::nullopt,
+       "sec-ch-ua-platform, sec-ch-ua-bitness", sub_frame_node, std::nullopt,
        ClientHintsVector{WebClientHintsType::kUAPlatform,
                          WebClientHintsType::kUABitness}},
       {"All client hints for main frame", all_non_origin_trial_hints_pair.first,
        main_frame_node,
-       absl::make_optional(all_non_origin_trial_hints_pair.second),
+       std::make_optional(all_non_origin_trial_hints_pair.second),
        all_non_origin_trial_hints_pair.second},
       {"All client hints for sub frame", all_non_origin_trial_hints_pair.first,
-       sub_frame_node, absl::nullopt, all_non_origin_trial_hints_pair.second},
+       sub_frame_node, std::nullopt, all_non_origin_trial_hints_pair.second},
   };
 
   for (const auto& test : tests) {
@@ -285,10 +281,6 @@ TEST_F(ClientHintsTest, IntegrationTestsOnParseLookUp) {
 }
 
 TEST_F(ClientHintsTest, SubFrame) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({blink::features::kUserAgentClientHint},
-                                       {});
-
   GURL url = GURL(ClientHintsTest::kOriginUrl);
   contents()->NavigateAndCommit(url);
   FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
@@ -314,11 +306,38 @@ TEST_F(ClientHintsTest, SubFrame) {
   auto actual_updated_hints = ParseAndPersist(
       url, response_headers.get(), accept_ch_str, sub_frame_node, &delegate);
 
-  EXPECT_EQ(absl::nullopt, actual_updated_hints);
+  EXPECT_EQ(std::nullopt, actual_updated_hints);
   blink::EnabledClientHints current_hints;
   delegate.GetAllowedClientHintsFromSource(url::Origin::Create(url),
                                            &current_hints);
   EXPECT_EQ(existing_hints, current_hints.GetEnabledHints());
+}
+
+TEST_F(ClientHintsTest, GetEnabledClientHints) {
+  url::Origin origin = url::Origin::Create(GURL(ClientHintsTest::kOriginUrl));
+
+  FrameTree& frame_tree = contents()->GetPrimaryFrameTree();
+  FrameTreeNode* main_frame_node = frame_tree.root();
+
+  blink::UserAgentMetadata ua_metadata;
+  MockClientHintsControllerDelegate delegate(ua_metadata);
+
+  std::vector<network::mojom::WebClientHintsType> expected_types = {
+      network::mojom::WebClientHintsType::kUAArch,
+      network::mojom::WebClientHintsType::kUAWoW64,
+  };
+  delegate.SetAdditionalClientHints(expected_types);
+  // Add default ClientHints.
+  for (const auto& [hint, _] : network::GetClientHintToNameMap()) {
+    if (blink::IsClientHintSentByDefault(hint)) {
+      expected_types.push_back(hint);
+    }
+  }
+  std::vector<network::mojom::WebClientHintsType> actual_types =
+      GetEnabledClientHints(origin, main_frame_node, &delegate);
+
+  // We do not care the order of contents.
+  EXPECT_THAT(actual_types, testing::UnorderedElementsAreArray(expected_types));
 }
 
 }  // namespace content

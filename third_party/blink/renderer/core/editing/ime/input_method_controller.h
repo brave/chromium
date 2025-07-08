@@ -111,7 +111,9 @@ class CORE_EXPORT InputMethodController final
 
   PlainTextRange GetSelectionOffsets() const;
   // Returns true if setting selection to specified offsets, otherwise false.
-  bool SetEditableSelectionOffsets(const PlainTextRange&);
+  bool SetEditableSelectionOffsets(const PlainTextRange&,
+                                   bool show_handle = false,
+                                   bool show_context_menu = false);
   void ExtendSelectionAndDelete(int before, int after);
   void ExtendSelectionAndReplace(int before,
                                  int after,
@@ -137,7 +139,9 @@ class CORE_EXPORT InputMethodController final
   void WillChangeFocus();
 
   // Returns the |EditContext| that is currently active
-  EditContext* GetActiveEditContext() const { return active_edit_context_; }
+  EditContext* GetActiveEditContext() const {
+    return active_edit_context_.Get();
+  }
   void SetActiveEditContext(EditContext* edit_context) {
     active_edit_context_ = edit_context;
   }
@@ -167,6 +171,7 @@ class CORE_EXPORT InputMethodController final
   ui::mojom::VirtualKeyboardPolicy VirtualKeyboardPolicyOfFocusedElement()
       const;
   WebTextInputType TextInputType() const;
+  int TextInputFlags() const;
 
  private:
   friend class InputMethodControllerTest;
@@ -231,7 +236,6 @@ class CORE_EXPORT InputMethodController final
       int selection_start,
       int selection_end,
       size_t text_length) const;
-  int TextInputFlags() const;
 
   // Implements |ExecutionContextLifecycleObserver|.
   void ContextDestroyed() final;
@@ -239,10 +243,16 @@ class CORE_EXPORT InputMethodController final
   enum class TypingContinuation;
 
   // Returns true if setting selection to specified offsets, otherwise false.
-  bool SetEditableSelectionOffsets(const PlainTextRange&, TypingContinuation);
+  bool SetEditableSelectionOffsets(const PlainTextRange&,
+                                   TypingContinuation,
+                                   bool show_handle = false,
+                                   bool show_context_menu = false);
 
   // Returns true if selection offsets were successfully set.
-  bool SetSelectionOffsets(const PlainTextRange&, TypingContinuation);
+  bool SetSelectionOffsets(const PlainTextRange&,
+                           TypingContinuation,
+                           bool show_handle = false,
+                           bool show_context_menu = false);
 
   // There are few cases we need to remove suggestion markers which are also in
   // composing range. (SuggestionSpan with FLAG_AUTO_CORRECTION and
@@ -263,12 +273,15 @@ class CORE_EXPORT InputMethodController final
       TypingCommand::TextCompositionType composition_type);
   void DispatchCompositionEndEvent(LocalFrame& frame, const String& text);
 
-  WebVector<ui::ImeTextSpan> GetImeTextSpans() const;
+  std::vector<ui::ImeTextSpan> GetImeTextSpans() const;
 
   FRIEND_TEST_ALL_PREFIXES(InputMethodControllerTest,
                            InputModeOfFocusedElement);
   FRIEND_TEST_ALL_PREFIXES(InputMethodControllerTest,
                            VirtualKeyboardPolicyOfFocusedElement);
+  FRIEND_TEST_ALL_PREFIXES(
+      InputMethodControllerTest,
+      DeleteSelectionAndBeforeInputEventHandlerChangingStyle);
 };
 
 }  // namespace blink

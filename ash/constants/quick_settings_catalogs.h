@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,7 +32,8 @@ enum class QsButtonCatalogName {
   kSupervisedButton = 16,
   kEolNoticeButton = 17,
   kPowerEmailMenuButton = 18,
-  kMaxValue = kPowerEmailMenuButton
+  kExtendedUpdatesNoticeButton = 19,
+  kMaxValue = kExtendedUpdatesNoticeButton
 };
 
 // A catalog that registers all the features on the Quick Settings page. This

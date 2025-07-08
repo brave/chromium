@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/raw_ptr.h"
+#include "base/containers/contains.h"
 #include "base/no_destructor.h"
-#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/vr/test/mock_xr_device_hook_base.h"
 #include "chrome/browser/vr/test/multi_class_browser_test.h"
 #include "chrome/browser/vr/test/webxr_vr_browser_test.h"
-#include "device/vr/openxr/openxr_interaction_profile_type.h"
+#include "device/vr/public/cpp/features.h"
 #include "device/vr/public/mojom/browser_test_interfaces.mojom.h"
+#include "device/vr/public/mojom/openxr_interaction_profile_type.mojom.h"
+#include "device/vr/test/test_hook.h"
+#include "ui/gfx/geometry/decomposed_transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 // Browser test equivalent of
 // chrome/android/javatests/src/.../browser/vr/WebXrVrInputTest.java.
@@ -60,6 +63,7 @@ void VerifyInputCounts(WebXrVrBrowserTestBase* t,
 // input.
 void TestPresentationLocksFocusImpl(WebXrVrBrowserTestBase* t,
                                     std::string filename) {
+  MockXRDeviceHookBase mock;
   t->LoadFileAndAwaitInitialization(filename);
   t->EnterSessionWithUserGestureOrFail();
   t->ExecuteStepAndWait("stepSetupFocusLoss()");
@@ -72,31 +76,20 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestPresentationLocksFocus) {
 
 class WebXrControllerInputMock : public MockXRDeviceHookBase {
  public:
-  void OnFrameSubmitted(
-      std::vector<device_test::mojom::ViewDataPtr> views,
-      device_test::mojom::XRTestHook::OnFrameSubmittedCallback callback) final;
-
-  void WaitNumFrames(unsigned int num_frames) {
-    DCHECK(!wait_loop_);
-    target_submitted_frames_ = num_submitted_frames_ + num_frames;
-    wait_loop_ = new base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed);
-    wait_loop_->Run();
-    delete wait_loop_;
-    wait_loop_ = nullptr;
-  }
-
-  // TODO(https://crbug.com/887726): Figure out why waiting for OpenVR to grab
+  // TODO(crbug.com/41416308): Figure out why waiting for OpenVR to grab
   // the updated state instead of waiting for a number of frames causes frames
   // to be submitted at an extremely slow rate. Once fixed, switch away from
   // waiting on number of frames.
   void UpdateControllerAndWait(
       unsigned int index,
       const device::ControllerFrameData& controller_data) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     UpdateController(index, controller_data);
     WaitNumFrames(30);
   }
 
   void ToggleButtonTouches(unsigned int index, uint64_t button_mask) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(index);
 
     controller_data.packet_number++;
@@ -106,6 +99,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   }
 
   void ToggleButtons(unsigned int index, uint64_t button_mask) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(index);
 
     controller_data.packet_number++;
@@ -115,6 +109,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   }
 
   void ToggleTriggerButton(unsigned int index, device::XrButtonId button_id) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(index);
     uint64_t button_mask = device::XrButtonMaskFromId(button_id);
 
@@ -135,6 +130,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
                device::XrButtonId button_id,
                float x,
                float y) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(index);
     unsigned int axis_offset = device::XrAxisOffsetFromId(button_id);
     DCHECK(controller_data.axis_data[axis_offset].axis_type != 0);
@@ -146,10 +142,12 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   }
 
   void TogglePrimaryTrigger(unsigned int index) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     ToggleTriggerButton(index, device::XrButtonId::kAxisTrigger);
   }
 
   void PressReleasePrimaryTrigger(unsigned int index) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     TogglePrimaryTrigger(index);
     TogglePrimaryTrigger(index);
   }
@@ -157,15 +155,49 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   void SetControllerPose(unsigned int index,
                          const gfx::Transform& device_to_origin,
                          bool is_valid) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(index);
     controller_data.pose_data.is_valid = is_valid;
-    device_to_origin.GetColMajorF(controller_data.pose_data.device_to_origin);
+    device_to_origin.GetColMajorF(
+        controller_data.pose_data.device_to_origin.data());
+    UpdateControllerAndWait(index, controller_data);
+  }
+
+  void AssignDefaultHandData(auto& controller_data,
+                             gfx::Quaternion orientation = gfx::Quaternion()) {
+    // Stateless helper may be called on any thread.
+    gfx::DecomposedTransform decomposed_transform;
+    decomposed_transform.quaternion = orientation;
+    auto& joint_data = controller_data.hand_data;
+    for (uint32_t i = 0; i < std::size(joint_data); i++) {
+      decomposed_transform.translate[0] = i / 100.0;
+      joint_data[i] = {static_cast<device::mojom::XRHandJoint>(i),
+                       gfx::Transform::Compose(decomposed_transform),
+                       static_cast<float>(i)};
+    }
+
+    controller_data.has_hand_data = true;
+  }
+
+  void SetDefaultHandData(unsigned int index,
+                          gfx::Quaternion orientation = gfx::Quaternion()) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
+    auto controller_data = GetCurrentControllerData(index);
+    AssignDefaultHandData(controller_data, orientation);
+    UpdateControllerAndWait(index, controller_data);
+  }
+
+  void ClearHandData(unsigned int index) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
+    auto controller_data = GetCurrentControllerData(index);
+    controller_data.has_hand_data = false;
     UpdateControllerAndWait(index, controller_data);
   }
 
   unsigned int CreateAndConnectMinimalGamepad(
       device::ControllerRole role =
           device::ControllerRole::kControllerRoleRight) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     // Create a controller that only supports select via a trigger, i.e. it has
     // just enough data to be considered a gamepad.
     uint64_t supported_buttons =
@@ -182,6 +214,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
       device::ControllerRole role,
       std::map<device::XrButtonId, unsigned int> axis_types = {},
       uint64_t supported_buttons = UINT64_MAX) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller = CreateValidController(role);
     controller.supported_buttons = supported_buttons;
     for (const auto& axis_type : axis_types) {
@@ -196,6 +229,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
       unsigned int controller_index,
       const std::map<device::XrButtonId, unsigned int>& axis_types,
       uint64_t supported_buttons) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(controller_index);
 
     for (unsigned int i = 0; i < device::kMaxNumAxes; i++) {
@@ -214,13 +248,15 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
 
   void UpdateControllerRole(unsigned int controller_index,
                             device::ControllerRole role) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     auto controller_data = GetCurrentControllerData(controller_index);
     controller_data.role = role;
     UpdateControllerAndWait(controller_index, controller_data);
   }
 
   void UpdateInteractionProfile(
-      device_test::mojom::InteractionProfileType new_profile) {
+      device::mojom::OpenXrInteractionProfileType new_profile) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     device_test::mojom::EventData data = {};
     data.type = device_test::mojom::EventType::kInteractionProfileChanged;
     data.interaction_profile = new_profile;
@@ -230,6 +266,7 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   // A controller is necessary to simulate voice input because of how the test
   // API works.
   unsigned int CreateVoiceController() {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
     return CreateAndConnectMinimalGamepad(
         device::ControllerRole::kControllerRoleVoice);
   }
@@ -238,30 +275,19 @@ class WebXrControllerInputMock : public MockXRDeviceHookBase {
   // kAxisTrackpad is the first entry in XrButtonId that maps to an axis and the
   // subsequent entries are also for input axes.
   device::XrButtonId GetAxisId(unsigned int offset) {
+    // Stateless helper may be called on any thread.
     return static_cast<device::XrButtonId>(device::XrButtonId::kAxisTrackpad +
                                            offset);
   }
 
   device::ControllerFrameData GetCurrentControllerData(unsigned int index) {
+    // Getter may be called on any thread.
+    base::AutoLock lock(lock_);
     auto iter = controller_data_map_.find(index);
-    DCHECK(iter != controller_data_map_.end());
+    CHECK(iter != controller_data_map_.end());
     return iter->second;
   }
-
-  raw_ptr<base::RunLoop, DanglingUntriaged> wait_loop_ = nullptr;
-  unsigned int num_submitted_frames_ = 0;
-  unsigned int target_submitted_frames_ = 0;
 };
-
-void WebXrControllerInputMock::OnFrameSubmitted(
-    std::vector<device_test::mojom::ViewDataPtr> views,
-    device_test::mojom::XRTestHook::OnFrameSubmittedCallback callback) {
-  num_submitted_frames_++;
-  if (wait_loop_ && target_submitted_frames_ == num_submitted_frames_) {
-    wait_loop_->Quit();
-  }
-  std::move(callback).Run();
-}
 
 // Ensure that when an input source's handedness changes, an input source change
 // event is fired and a new input source is created.
@@ -309,7 +335,7 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestInputHandednessChange) {
 WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestInputSourcesChange) {
   WebXrControllerInputMock my_mock;
 
-  // TODO(crbug.com/963676): Figure out if the race is a product or test bug.
+  // TODO(crbug.com/41459138): Figure out if the race is a product or test bug.
   // There's a potential for a race causing the input sources change event to
   // fire multiple times if we disconnect a controller that has a gamepad.
   // Even just a select trigger is sufficient to have an xr-standard mapping, so
@@ -606,7 +632,7 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestInteractionProfileChanged) {
   // Simulate the runtime sending an interaction profile change event to change
   // from Windows motion controller to Khronos simple Controller.
   my_mock.UpdateInteractionProfile(
-      device_test::mojom::InteractionProfileType::kKHRSimple);
+      device::mojom::OpenXrInteractionProfileType::kKHRSimple);
   // Make sure change events happens again since interaction profile changed
   t->PollJavaScriptBooleanOrFail("inputChangeEvents === 2",
                                  WebXrVrBrowserTestBase::kPollTimeoutShort);
@@ -617,35 +643,74 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestInteractionProfileChanged) {
   t->EndTest();
 }
 
-// We explicitly translate between the two types because this ensures that we
-// add a corresponding mojom InteractionProfileType whenever we add a new OpenXr
-// Interaction Profile. Since the mojom type is only needed for tests, we can't
-// just use only the mojom type, and because the mojom type may be used for
-// other runtimes, we can't just typemap it.
-device_test::mojom::InteractionProfileType GetMojomInteractionProfile(
-    device::OpenXrInteractionProfileType profile) {
-  switch (profile) {
-    case device::OpenXrInteractionProfileType::kMicrosoftMotion:
-      return device_test::mojom::InteractionProfileType::kWMRMotion;
-    case device::OpenXrInteractionProfileType::kKHRSimple:
-      return device_test::mojom::InteractionProfileType::kKHRSimple;
-    case device::OpenXrInteractionProfileType::kOculusTouch:
-      return device_test::mojom::InteractionProfileType::kOculusTouch;
-    case device::OpenXrInteractionProfileType::kValveIndex:
-      return device_test::mojom::InteractionProfileType::kValveIndex;
-    case device::OpenXrInteractionProfileType::kHTCVive:
-      return device_test::mojom::InteractionProfileType::kHTCVive;
-    case device::OpenXrInteractionProfileType::kSamsungOdyssey:
-      return device_test::mojom::InteractionProfileType::kSamsungOdyssey;
-    case device::OpenXrInteractionProfileType::kHPReverbG2:
-      return device_test::mojom::InteractionProfileType::kHPReverbG2;
-    case device::OpenXrInteractionProfileType::kHandSelectGrasp:
-      return device_test::mojom::InteractionProfileType::kHandSelectGrasp;
-    case device::OpenXrInteractionProfileType::kViveCosmos:
-      return device_test::mojom::InteractionProfileType::kViveCosmos;
-    case device::OpenXrInteractionProfileType::kCount:
-      return device_test::mojom::InteractionProfileType::kInvalid;
+// Set up an initial constant and some compile time validations for it.
+constexpr device::mojom::OpenXrInteractionProfileType
+    kInitialInteractionProfile =
+        device::mojom::OpenXrInteractionProfileType::kMinValue;
+
+// If intentionally changing `Invalid` to be the 0th profile, please update the
+// assignment above.
+static_assert(kInitialInteractionProfile !=
+                  device::mojom::OpenXrInteractionProfileType::kInvalid,
+              "TestAllKnownInteractionProfileTypes expects the 0th profile in "
+              "OpenXrInteractionProfileType to be valid.");
+
+// A list of interaction profiles that should be skipped by the below test. Each
+// profile must have a comment indicating why it is skipped.
+constexpr device::mojom::OpenXrInteractionProfileType
+    kSkippedInteractionProfiles[] = {
+        // The "Invalid" entry is not a real profile.
+        device::mojom::OpenXrInteractionProfileType::kInvalid,
+        // kMetaHandAim is a "synthetic" interaction profile type which is
+        // synthesized via it's own set of extension methods and needs to use a
+        // different mechanism to send button clicks rather than the rest of the
+        // methods.
+        device::mojom::OpenXrInteractionProfileType::kMetaHandAim,
+};
+
+void TestHandProfiles(WebXrVrBrowserTestBase* t, bool joint_support) {
+  WebXrControllerInputMock my_mock;
+  my_mock.UpdateInteractionProfile(
+      device::mojom::OpenXrInteractionProfileType::kExtHand);
+  auto controller_data = my_mock.CreateValidController(
+      device::ControllerRole::kControllerRoleRight);
+  my_mock.ConnectController(controller_data);
+
+  t->LoadFileAndAwaitInitialization("test_webxr_profiles");
+  if (joint_support) {
+    t->RunJavaScriptOrFail("setupImmersiveSessionToRequestHands()");
   }
+
+  t->EnterSessionWithUserGestureOrFail();
+
+  // We should only have seen the first change indicating we have input sources.
+  t->PollJavaScriptBooleanOrFail("inputChangeEvents === 1",
+                                 WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  std::string expected_string =
+      joint_support ? "generic-hand" : "generic-fixed-hand";
+  std::string unexpected_string =
+      joint_support ? "generic-fixed-hand" : "generic-hand";
+
+  t->RunJavaScriptOrFail("validateAllInputSourcesContainProfile('" +
+                         expected_string + "')");
+  t->RunJavaScriptOrFail("validateNoInputSourcesContainProfile('" +
+                         unexpected_string + "')");
+}
+
+class WebXrVrOpenXrHandBrowserTest : public WebXrVrOpenXrBrowserTest {
+ public:
+  WebXrVrOpenXrHandBrowserTest() {
+    enable_features_.push_back(device::features::kWebXrHandInput);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(WebXrVrOpenXrHandBrowserTest, TestProfilesHandJoint) {
+  TestHandProfiles(this, true);
+}
+
+IN_PROC_BROWSER_TEST_F(WebXrVrOpenXrBrowserTest, TestProfilesFixedHand) {
+  TestHandProfiles(this, false);
 }
 
 // Ensure that OpenXR can change between all known Interaction Profile types.
@@ -655,11 +720,7 @@ device_test::mojom::InteractionProfileType GetMojomInteractionProfile(
 // adding with the new interaction profile.
 WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestAllKnownInteractionProfileTypes) {
   WebXrControllerInputMock my_mock;
-
-  // Explicitly set us to the first interaction profile before we start the
-  // session.
-  my_mock.UpdateInteractionProfile(GetMojomInteractionProfile(
-      static_cast<device::OpenXrInteractionProfileType>(0)));
+  my_mock.UpdateInteractionProfile(kInitialInteractionProfile);
   auto controller_data = my_mock.CreateValidController(
       device::ControllerRole::kControllerRoleRight);
   my_mock.ConnectController(controller_data);
@@ -675,11 +736,16 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestAllKnownInteractionProfileTypes) {
 
   // Note that since we explicitly set ourselves to the 0th value above, we want
   // to start changing to the first item in the enum.
-  static uint32_t kFinalValue =
-      static_cast<uint32_t>(device::OpenXrInteractionProfileType::kCount);
-  for (uint32_t i = 1; i < kFinalValue; i++) {
-    my_mock.UpdateInteractionProfile(GetMojomInteractionProfile(
-        static_cast<device::OpenXrInteractionProfileType>(i)));
+  static uint32_t kFinalValue = static_cast<uint32_t>(
+      device::mojom::OpenXrInteractionProfileType::kMaxValue);
+  static uint32_t kFirstChangedProfileIndex =
+      static_cast<uint32_t>(kInitialInteractionProfile) + 1;
+  for (uint32_t i = kFirstChangedProfileIndex; i <= kFinalValue; i++) {
+    auto profile = static_cast<device::mojom::OpenXrInteractionProfileType>(i);
+    if (base::Contains(kSkippedInteractionProfiles, profile)) {
+      continue;
+    }
+    my_mock.UpdateInteractionProfile(profile);
     expected_change_events++;
     // Make sure change events happens again since interaction profile changed
     t->PollJavaScriptBooleanOrFail(
@@ -749,11 +815,11 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestControllerInputRegistered) {
 }
 
 std::string TransformToColMajorString(const gfx::Transform& t) {
-  float array[16];
-  t.GetColMajorF(array);
+  std::array<float, 16> array;
+  t.GetColMajorF(array.data());
   std::string array_string = "[";
-  for (int i = 0; i < 16; i++) {
-    array_string += base::NumberToString(array[i]) + ",";
+  for (const auto& val : array) {
+    array_string += base::NumberToString(val) + ",";
   }
   array_string.pop_back();
   array_string.push_back(']');
@@ -788,20 +854,133 @@ WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestControllerPositionTracking) {
   t->AssertNoJavaScriptErrors();
 }
 
+// Test that the `hand` property on the Input Source remains null, even if the
+// runtime reports it, without the appropriate feature request.
+WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestHandDataNotVisibleWithoutFeature) {
+  WebXrControllerInputMock my_mock;
+
+  auto controller_data = my_mock.CreateValidController(
+      device::ControllerRole::kControllerRoleRight);
+  my_mock.AssignDefaultHandData(controller_data);
+
+  my_mock.ConnectController(controller_data);
+
+  t->LoadFileAndAwaitInitialization("test_webxr_hand_tracking");
+  t->EnterSessionWithUserGestureOrFail();
+
+  // We should only have seen the first change indicating we have input sources.
+  uint32_t expected_change_events = 1;
+  t->PollJavaScriptBooleanOrFail(
+      "inputChangeEvents === " + base::NumberToString(expected_change_events),
+      WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  t->RunJavaScriptOrFail("assertHandTrackingFeatureState(false)");
+  t->RunJavaScriptOrFail("assertHandsNotPresent()");
+  t->AssertNoJavaScriptErrors();
+
+  t->RunJavaScriptOrFail("done()");
+  t->EndTest();
+}
+
+// Test that the `hand` property on the Input Source is not null, if the
+// runtime reports it, with the appropriate feature request.
+WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestHandDataVisibleWithFeature) {
+  WebXrControllerInputMock my_mock;
+
+  auto controller_data = my_mock.CreateValidController(
+      device::ControllerRole::kControllerRoleRight);
+  my_mock.AssignDefaultHandData(controller_data);
+
+  my_mock.ConnectController(controller_data);
+
+  t->LoadFileAndAwaitInitialization("test_webxr_hand_tracking");
+  t->RunJavaScriptOrFail("setupRequestHandTracking()");
+  t->EnterSessionWithUserGestureOrFail();
+
+  // We should only have seen the first change indicating we have input sources.
+  uint32_t expected_change_events = 1;
+  t->PollJavaScriptBooleanOrFail(
+      "inputChangeEvents === " + base::NumberToString(expected_change_events),
+      WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  t->RunJavaScriptOrFail("assertHandTrackingFeatureState(true)");
+  t->RunJavaScriptOrFail("assertHandsPresent()");
+  t->AssertNoJavaScriptErrors();
+
+  t->RunJavaScriptOrFail("done()");
+  t->EndTest();
+}
+
+// Test that the `hand` property on the Input Source is null when hand data
+// cannot be provided, with the appropriate feature request.
+WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestHandDataVisibleToggle) {
+  WebXrControllerInputMock my_mock;
+
+  auto controller_data = my_mock.CreateValidController(
+      device::ControllerRole::kControllerRoleRight);
+
+  unsigned int index = my_mock.ConnectController(controller_data);
+
+  t->LoadFileAndAwaitInitialization("test_webxr_hand_tracking");
+  t->RunJavaScriptOrFail("setupRequestHandTracking()");
+  t->EnterSessionWithUserGestureOrFail();
+
+  // We should only have seen the first change indicating we have input sources.
+  uint32_t expected_change_events = 1;
+  t->PollJavaScriptBooleanOrFail(
+      "inputChangeEvents === " + base::NumberToString(expected_change_events),
+      WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  t->RunJavaScriptOrFail("assertHandTrackingFeatureState(true)");
+  t->RunJavaScriptOrFail("assertHandsNotPresent()");
+
+  // Add hand data, it should now be visible.
+  my_mock.SetDefaultHandData(index);
+  expected_change_events++;
+  t->PollJavaScriptBooleanOrFail(
+      "inputChangeEvents === " + base::NumberToString(expected_change_events),
+      WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  t->RunJavaScriptOrFail("assertHandsPresent()");
+
+  // Remove hand data, it should no longer be visible.
+  my_mock.ClearHandData(index);
+  expected_change_events++;
+  t->PollJavaScriptBooleanOrFail(
+      "inputChangeEvents === " + base::NumberToString(expected_change_events),
+      WebXrVrBrowserTestBase::kPollTimeoutShort);
+
+  t->RunJavaScriptOrFail("assertHandsNotPresent()");
+
+  t->AssertNoJavaScriptErrors();
+
+  t->RunJavaScriptOrFail("done()");
+  t->EndTest();
+}
+
 class WebXrHeadPoseMock : public MockXRDeviceHookBase {
  public:
   void WaitGetPresentingPose(
       device_test::mojom::XRTestHook::WaitGetPresentingPoseCallback callback)
       final {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(mock_device_sequence_);
     auto pose = device_test::mojom::PoseFrameData::New();
-    pose->device_to_origin = pose_;
+    {
+      base::AutoLock lock(pose_lock);
+      pose->device_to_origin = pose_;
+    }
     std::move(callback).Run(std::move(pose));
   }
 
-  void SetHeadPose(const gfx::Transform& pose) { pose_ = pose; }
+  void SetHeadPose(const gfx::Transform& pose) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
+    base::AutoLock lock(pose_lock);
+    pose_ = pose;
+  }
 
  private:
-  gfx::Transform pose_;
+  base::Lock pose_lock;
+  gfx::Transform pose_ GUARDED_BY(pose_lock);
 };
 
 // Test that head pose changes are properly reflected in the viewer pose

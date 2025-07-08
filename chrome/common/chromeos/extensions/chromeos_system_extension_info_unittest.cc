@@ -4,7 +4,10 @@
 
 #include "chrome/common/chromeos/extensions/chromeos_system_extension_info.h"
 
+#include "ash/constants/ash_features.h"
 #include "base/command_line.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,8 +18,11 @@ TEST(ChromeOSSystemExtensionInfo, GoogleExtension) {
   const auto& extension_info =
       chromeos::GetChromeOSExtensionInfoById(google_extension_id);
   EXPECT_THAT(extension_info.manufacturers,
-              testing::UnorderedElementsAre("ASUS", "HP"));
-  EXPECT_EQ("*://googlechromelabs.github.io/*", extension_info.pwa_origin);
+              testing::UnorderedElementsAre("ASUS", "HP", "Acer", "Lenovo"));
+  EXPECT_EQ(
+      "*://googlechromelabs.github.io/cros-sample-telemetry-extension/"
+      "test-page/*",
+      extension_info.pwa_origin);
   EXPECT_FALSE(extension_info.iwa_id);
 }
 
@@ -44,6 +50,54 @@ TEST(ChromeOSSystemExtensionInfo, ASUSExtension) {
   EXPECT_FALSE(extension_info.iwa_id);
 }
 
+TEST(ChromeOSSystemExtensionInfo, AcerExtension) {
+  const auto& acer_extension_id = "aoefhlbfcighemjpchndkhonjfjoehnm";
+  ASSERT_TRUE(chromeos::IsChromeOSSystemExtension(acer_extension_id));
+
+  const auto& extension_info =
+      chromeos::GetChromeOSExtensionInfoById(acer_extension_id);
+  EXPECT_THAT(extension_info.manufacturers,
+              testing::UnorderedElementsAre("Acer"));
+  EXPECT_EQ("https://acerpartners.com/*", extension_info.pwa_origin);
+  EXPECT_FALSE(extension_info.iwa_id);
+}
+
+TEST(ChromeOSSystemExtensionInfo, LenovoExtension) {
+  const auto& lenovo_extension_id = "mconamggkmbalafmibfjlcmimnlbgmlb";
+  ASSERT_TRUE(chromeos::IsChromeOSSystemExtension(lenovo_extension_id));
+
+  const auto& extension_info =
+      chromeos::GetChromeOSExtensionInfoById(lenovo_extension_id);
+  EXPECT_THAT(extension_info.manufacturers,
+              testing::UnorderedElementsAre("Lenovo"));
+  EXPECT_EQ("https://chromebookdiags.lenovo.com/*", extension_info.pwa_origin);
+
+  ASSERT_TRUE(extension_info.iwa_id);
+  const auto& lenovo_iwa_id =
+      "huhncggoe22ofjan6nylwijltmewmbevapiotudwgbyjbhrlphrqaaic";
+  EXPECT_EQ(extension_info.iwa_id->id(), lenovo_iwa_id);
+}
+
+TEST(ChromeOSSystemExtensionInfo, DevExtension) {
+  ASSERT_FALSE(chromeos::IsChromeOSSystemExtension(
+      chromeos::kChromeOSSystemExtensionDevExtensionId));
+
+  auto scoped_info =
+      chromeos::ScopedChromeOSSystemExtensionInfo::CreateForTesting();
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      ash::features::kShimlessRMA3pDiagnosticsDevMode);
+  scoped_info->ApplyCommandLineSwitchesForTesting();
+
+  ASSERT_TRUE(chromeos::IsChromeOSSystemExtension(
+      chromeos::kChromeOSSystemExtensionDevExtensionId));
+  const auto& extension_info = chromeos::GetChromeOSExtensionInfoById(
+      chromeos::kChromeOSSystemExtensionDevExtensionId);
+  EXPECT_TRUE(extension_info.manufacturers.contains("Google"));
+  EXPECT_TRUE(extension_info.pwa_origin);
+  EXPECT_TRUE(extension_info.iwa_id);
+}
+
 TEST(ChromeOSSystemExtensionInfo, ManufacturerOverride) {
   constexpr char kManufacturerOverride[] = "TEST_OEM";
 
@@ -56,8 +110,10 @@ TEST(ChromeOSSystemExtensionInfo, ManufacturerOverride) {
 
   const auto& google_extension_info = chromeos::GetChromeOSExtensionInfoById(
       "gogonhoemckpdpadfnjnpgbjpbjnodgc");
-  EXPECT_EQ("*://googlechromelabs.github.io/*",
-            google_extension_info.pwa_origin);
+  EXPECT_EQ(
+      "*://googlechromelabs.github.io/cros-sample-telemetry-extension/"
+      "test-page/*",
+      google_extension_info.pwa_origin);
   EXPECT_THAT(google_extension_info.manufacturers,
               testing::UnorderedElementsAre(kManufacturerOverride));
   EXPECT_FALSE(google_extension_info.iwa_id);
@@ -85,7 +141,7 @@ TEST(ChromeOSSystemExtensionInfo, PwaOriginOverride) {
       "gogonhoemckpdpadfnjnpgbjpbjnodgc");
   EXPECT_EQ(kPwaOriginOverride, google_extension_info.pwa_origin);
   EXPECT_THAT(google_extension_info.manufacturers,
-              testing::UnorderedElementsAre("HP", "ASUS"));
+              testing::UnorderedElementsAre("HP", "ASUS", "Acer", "Lenovo"));
   EXPECT_FALSE(google_extension_info.iwa_id);
 
   const auto& hp_extension_info = chromeos::GetChromeOSExtensionInfoById(
@@ -109,10 +165,12 @@ TEST(ChromeOSSystemExtensionInfo, IwaIdOverride) {
 
   const auto& google_extension_info = chromeos::GetChromeOSExtensionInfoById(
       "gogonhoemckpdpadfnjnpgbjpbjnodgc");
-  EXPECT_EQ("*://googlechromelabs.github.io/*",
-            google_extension_info.pwa_origin);
+  EXPECT_EQ(
+      "*://googlechromelabs.github.io/cros-sample-telemetry-extension/"
+      "test-page/*",
+      google_extension_info.pwa_origin);
   EXPECT_THAT(google_extension_info.manufacturers,
-              testing::UnorderedElementsAre("HP", "ASUS"));
+              testing::UnorderedElementsAre("HP", "ASUS", "Acer", "Lenovo"));
   EXPECT_EQ(kIwaIdOverride, google_extension_info.iwa_id->id());
 
   const auto& hp_extension_info = chromeos::GetChromeOSExtensionInfoById(
@@ -122,4 +180,41 @@ TEST(ChromeOSSystemExtensionInfo, IwaIdOverride) {
   EXPECT_THAT(hp_extension_info.manufacturers,
               testing::UnorderedElementsAre("HP"));
   EXPECT_EQ(kIwaIdOverride, hp_extension_info.iwa_id->id());
+}
+
+TEST(ChromeOSSystemExtensionInfo, IsChromeOSSystemExtensionProvider) {
+  auto scoped_info =
+      chromeos::ScopedChromeOSSystemExtensionInfo::CreateForTesting();
+
+  EXPECT_TRUE(chromeos::IsChromeOSSystemExtensionProvider("HP"));
+  EXPECT_TRUE(chromeos::IsChromeOSSystemExtensionProvider("ASUS"));
+  EXPECT_TRUE(chromeos::IsChromeOSSystemExtensionProvider("Acer"));
+  EXPECT_TRUE(chromeos::IsChromeOSSystemExtensionProvider("Lenovo"));
+
+  EXPECT_FALSE(chromeos::IsChromeOSSystemExtensionProvider("NotAProvider"));
+  // "Google" is only for dev extension.
+  EXPECT_FALSE(chromeos::IsChromeOSSystemExtensionProvider("Google"));
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      ash::features::kShimlessRMA3pDiagnosticsDevMode);
+  scoped_info->ApplyCommandLineSwitchesForTesting();
+  EXPECT_TRUE(chromeos::IsChromeOSSystemExtensionProvider("Google"));
+}
+
+TEST(ChromeOSSystemExtensionInfo, Is3pDiagnosticsIwaId) {
+  auto scoped_info =
+      chromeos::ScopedChromeOSSystemExtensionInfo::CreateForTesting();
+  auto dev_iwa_id =
+      web_package::SignedWebBundleId::Create(
+          "pt2jysa7yu326m2cbu5mce4rrajvguagronrsqwn5dhbaris6eaaaaic")
+          .value();
+  // The dev IWA ID is only allowed when feature flag is on.
+  EXPECT_FALSE(chromeos::Is3pDiagnosticsIwaId(dev_iwa_id));
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      ash::features::kShimlessRMA3pDiagnosticsDevMode);
+  scoped_info->ApplyCommandLineSwitchesForTesting();
+  EXPECT_TRUE(chromeos::Is3pDiagnosticsIwaId(dev_iwa_id));
 }

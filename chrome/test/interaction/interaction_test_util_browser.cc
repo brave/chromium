@@ -9,7 +9,6 @@
 #include "base/command_line.h"
 #include "base/strings/strcat.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -21,11 +20,14 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/interaction/tracked_element_webcontents.h"
 #include "chrome/test/interaction/webcontents_interaction_test_util.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/update_user_activation_state_interceptor.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/interaction/interaction_test_util.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/events/event.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/types/event_type.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/interaction/element_tracker_views.h"
@@ -61,7 +63,7 @@ class PixelTestUi : public TestBrowserUi {
     auto* const test_info =
         testing::UnitTest::GetInstance()->current_test_info();
     const std::string test_name =
-        base::StrCat({test_info->test_case_name(), "_", test_info->name()});
+        base::StrCat({test_info->test_suite_name(), "_", test_info->name()});
     const std::string screenshot_name =
         screenshot_name_.empty()
             ? baseline_
@@ -75,6 +77,38 @@ class PixelTestUi : public TestBrowserUi {
   std::string baseline_;
 };
 
+views::View* GetScreenshotTargetView(ui::TrackedElement* element) {
+  if (auto* const view_el = element->AsA<views::TrackedElementViews>()) {
+    return view_el->view();
+  } else if (auto* const page_el = element->AsA<TrackedElementWebContents>()) {
+    return page_el->owner()->GetWebView();
+  }
+  return nullptr;
+}
+
+ui::test::ActionResult CompareScreenshotCommon(
+    views::View* view,
+    const std::string& screenshot_name,
+    const std::string& baseline_cl) {
+  // pixel_browser_tests and pixel_interactive_ui_tests specify this command
+  // line, which is checked by TestBrowserUi before attempting any screen
+  // capture; otherwise screenshotting is a silent no-op.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kVerifyPixels)) {
+    LOG(WARNING)
+        << "Cannot take screenshot: pixel test command line not set. This is "
+           "normal for non-pixel-test jobs such as vanilla browser_tests.";
+    return ui::test::ActionResult::kKnownIncompatible;
+  }
+
+  PixelTestUi pixel_test_ui(view, screenshot_name, baseline_cl);
+  ui::test::ActionResult result = pixel_test_ui.VerifyUiWithResult();
+  if (result == ui::test::ActionResult::kKnownIncompatible) {
+    LOG(WARNING) << "Current platform does not support pixel tests.";
+  }
+  return result;
+}
+
 // Special handler for browsers and browser tab strips that enables SelectTab().
 class InteractionTestUtilSimulatorBrowser
     : public ui::test::InteractionTestUtil::Simulator {
@@ -82,73 +116,180 @@ class InteractionTestUtilSimulatorBrowser
   InteractionTestUtilSimulatorBrowser() = default;
   ~InteractionTestUtilSimulatorBrowser() override = default;
 
-#if BUILDFLAG(IS_MAC)
-  // Browser accelerators must be sent via key events to the window on Mac or
-  // they don't work properly. Dialog accelerators still appear to work the same
-  // as on other platforms.
   ui::test::ActionResult SendAccelerator(ui::TrackedElement* element,
                                          ui::Accelerator accelerator) override {
-    Browser* const browser =
-        InteractionTestUtilBrowser::GetBrowserFromContext(element->context());
-    if (!browser)
-      return ui::test::ActionResult::kNotAttempted;
-
-    if (!ui_controls::SendKeyPress(
-            browser->window()->GetNativeWindow(), accelerator.key_code(),
-            accelerator.IsCtrlDown(), accelerator.IsShiftDown(),
-            accelerator.IsAltDown(), accelerator.IsCmdDown())) {
-      LOG(ERROR) << "Failed to send accelerator"
-                 << accelerator.GetShortcutText() << " to " << *element;
-      return ui::test::ActionResult::kFailed;
+#if BUILDFLAG(IS_MAC)
+    // Browser accelerators must be sent via key events to the window on Mac or
+    // they don't work properly. Dialog accelerators still appear to work the
+    // same as on other platforms.
+    if (Browser* const browser =
+            InteractionTestUtilBrowser::GetBrowserFromContext(
+                element->context())) {
+      if (!ui_controls::SendKeyPress(
+              browser->window()->GetNativeWindow(), accelerator.key_code(),
+              accelerator.IsCtrlDown(), accelerator.IsShiftDown(),
+              accelerator.IsAltDown(), accelerator.IsCmdDown())) {
+        LOG(ERROR) << "Failed to send accelerator"
+                   << accelerator.GetShortcutText() << " to " << *element;
+        return ui::test::ActionResult::kFailed;
+      }
+      return ui::test::ActionResult::kSucceeded;
     }
-    return ui::test::ActionResult::kSucceeded;
-  }
 #endif  // BUILDFLAG(IS_MAC)
+
+    if (auto* const tracked_contents =
+            element->AsA<TrackedElementWebContents>()) {
+      if (auto* const view = tracked_contents->owner()->GetWebView()) {
+        // There are two possibilities:
+        //  1. This is a legitimate accelerator, which must be handled by the
+        //     focus manager.
+        //  2. This is a control key that will be processed by Blink (e.g.
+        //     pressing enter or space to "click" an HTML button), and therefore
+        //     must be injected as a keypress.
+        bool result = view->GetFocusManager()->ProcessAccelerator(accelerator);
+        if (!result) {
+          result = ui_controls::SendKeyPress(
+              tracked_contents->owner()
+                  ->web_contents()
+                  ->GetTopLevelNativeWindow(),
+              accelerator.key_code(), accelerator.IsCtrlDown(),
+              accelerator.IsShiftDown(), accelerator.IsAltDown(),
+              accelerator.IsCmdDown());
+        }
+        return result ? ui::test::ActionResult::kSucceeded
+                      : ui::test::ActionResult::kFailed;
+      } else {
+        LOG(ERROR) << "No associated view to send accelerators to.";
+        return ui::test::ActionResult::kFailed;
+      }
+    }
+
+    return ui::test::ActionResult::kNotAttempted;
+  }
+
+  // Handle sending key presses to web contents. All other cases are handled by
+  // the Views simulator.
+  ui::test::ActionResult SendKeyPress(ui::TrackedElement* element,
+                                      ui::KeyboardCode key,
+                                      int flags) override {
+    if (auto* const tracked_contents =
+            element->AsA<TrackedElementWebContents>()) {
+      auto native_window =
+          tracked_contents->owner()->web_contents()->GetTopLevelNativeWindow();
+      const bool result = ui_test_utils::SendKeyPressToWindowSync(
+          native_window, key, flags & ui::EF_CONTROL_DOWN,
+          flags & ui::EF_SHIFT_DOWN, flags & ui::EF_ALT_DOWN,
+          flags & ui::EF_COMMAND_DOWN);
+      return result ? ui::test::ActionResult::kSucceeded
+                    : ui::test::ActionResult::kFailed;
+    }
+
+    return ui::test::ActionResult::kNotAttempted;
+  }
 
   // Chrome has better and more thorough functionality for bringing a browser
   // window to the front, but it's expensive, so only actually use it for
   // browser windows on platforms where activation requires extra steps.
   ui::test::ActionResult ActivateSurface(ui::TrackedElement* el) override {
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-    if (!el->IsA<views::TrackedElementViews>()) {
+    views::View* view = nullptr;
+    bool is_web_contents = false;
+    if (auto* view_el = el->AsA<views::TrackedElementViews>()) {
+      view = view_el->view();
+    } else if (auto* contents_el = el->AsA<TrackedElementWebContents>()) {
+      is_web_contents = true;
+      view = contents_el->owner()->GetWebView();
+      if (!view) {
+        LOG(ERROR) << "WebContents not associated with any UI element.";
+        return ui::test::ActionResult::kFailed;
+      }
+    }
+    if (!view) {
       return ui::test::ActionResult::kNotAttempted;
     }
 
     // Get the browser and browser window associated with the current context.
-    // If there is none, do not use this implementation.
-    auto* const browser =
-        InteractionTestUtilBrowser::GetBrowserFromContext(el->context());
-    if (!browser) {
-      return ui::test::ActionResult::kNotAttempted;
-    }
-    auto* const browser_view = BrowserView::GetBrowserViewForBrowser(browser);
-    if (!browser_view) {
-      return ui::test::ActionResult::kNotAttempted;
-    }
-
-    // If the target widget is not the primary window widget, do not use this
-    // implementation.
-    if (browser_view->GetWidget() !=
-        el->AsA<views::TrackedElementViews>()->view()->GetWidget()) {
-      return ui::test::ActionResult::kNotAttempted;
-    }
-
-    // Bring the browser window to the front using the most aggressive method
-    // for the current platform. If this is not done, then mouse events might
-    // not get routed to the correct surface.
-    if (!ui_test_utils::BringBrowserWindowToFront(browser)) {
-      LOG(ERROR) << "BringBrowserWindowToFront() failed.";
-      return ui::test::ActionResult::kFailed;
-    }
-    return ui::test::ActionResult::kSucceeded;
+    // If there is none, or it is not the same widget as the view, do not use
+    // this implementation.
+    if (auto* const browser =
+            InteractionTestUtilBrowser::GetBrowserFromContext(el->context())) {
+      if (auto* const browser_view =
+              BrowserView::GetBrowserViewForBrowser(browser)) {
+        if (browser_view->GetWidget() == view->GetWidget()) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+          // Bring the browser window to the front using the most aggressive
+          // method for the current platform. If this is not done, then mouse
+          // events might not get routed to the correct surface.
+          if (!ui_test_utils::BringBrowserWindowToFront(browser)) {
+            LOG(ERROR) << "BringBrowserWindowToFront() failed.";
+            return ui::test::ActionResult::kFailed;
+          }
+          return ui::test::ActionResult::kSucceeded;
 #else
-    return ui::test::ActionResult::kNotAttempted;
+          // Use the default logic to activate the browser.
+          return views::test::InteractionTestUtilSimulatorViews::ActivateWidget(
+              view->GetWidget());
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+        }
+      }
+    }
+
+    // Because the fallback Views handler doesn't know about WebContents, handle
+    // activation here.
+    if (is_web_contents) {
+      return views::test::InteractionTestUtilSimulatorViews::ActivateWidget(
+          view->GetWidget());
+    }
+
+    return ui::test::ActionResult::kNotAttempted;
   }
 
-  ui::test::ActionResult SelectTab(ui::TrackedElement* tab_collection,
-                                   size_t index,
-                                   InputType input_type) override {
+  ui::test::ActionResult FocusElement(ui::TrackedElement* element) override {
+    auto* const instrumented = element->AsA<TrackedElementWebContents>();
+    if (!instrumented) {
+      return ui::test::ActionResult::kNotAttempted;
+    }
+
+    auto* const contents = instrumented->owner()->web_contents();
+    if (!contents) {
+      LOG(ERROR) << "WebContents not present.";
+      return ui::test::ActionResult::kFailed;
+    }
+
+    // Focus the renderer.
+    if (!contents->GetRenderWidgetHostView()) {
+      LOG(ERROR) << "No render widget host.";
+      return ui::test::ActionResult::kFailed;
+    }
+    contents->GetRenderWidgetHostView()->Focus();
+
+    // Prepare the renderer for input.
+    if (!contents->GetPrimaryMainFrame()) {
+      LOG(ERROR) << "No main frame.";
+      return ui::test::ActionResult::kFailed;
+    }
+    content::UpdateUserActivationStateInterceptor user_activation_interceptor(
+        contents->GetPrimaryMainFrame());
+    user_activation_interceptor.UpdateUserActivationState(
+        blink::mojom::UserActivationUpdateType::kNotifyActivation,
+        blink::mojom::UserActivationNotificationType::kTest);
+
+    // Ensure the correct WebView is focused before returning.
+    auto* web_view = instrumented->owner()->GetWebView();
+    if (!web_view) {
+      LOG(ERROR) << "No web view.";
+      return ui::test::ActionResult::kFailed;
+    }
+    views::test::ViewFocusedWaiter focus_waiter(*web_view);
+    focus_waiter.Wait();
+
+    return ui::test::ActionResult::kSucceeded;
+  }
+
+  ui::test::ActionResult SelectTab(
+      ui::TrackedElement* tab_collection,
+      size_t index,
+      InputType input_type,
+      std::optional<size_t> expected_index_after_selection) override {
     // This handler *explicitly* only handles Browser and TabStrip; it will
     // reject any other element or View type.
     if (!tab_collection->IsA<views::TrackedElementViews>())
@@ -178,7 +319,10 @@ class InteractionTestUtilSimulatorBrowser
     Tab* const tab = tab_strip->tab_at(index);
     views::test::InteractionTestUtilSimulatorViews::DoDefaultAction(tab,
                                                                     input_type);
-    if (static_cast<int>(index) != tab_strip->GetActiveIndex()) {
+
+    const int expected =
+        static_cast<int>(expected_index_after_selection.value_or(index));
+    if (expected != tab_strip->GetActiveIndex()) {
       LOG(ERROR) << "Failed to select tabstrip tab " << index;
       return ui::test::ActionResult::kFailed;
     }
@@ -192,9 +336,11 @@ class InteractionTestUtilSimulatorBrowser
       return ui::test::ActionResult::kNotAttempted;
     auto* const view = element->AsA<views::TrackedElementViews>()->view();
     if (auto* const omnibox = views::AsViewClass<OmniboxViewViews>(view)) {
-      ui::KeyEvent press(ui::ET_KEY_PRESSED, ui::VKEY_RETURN, ui::EF_NONE);
+      ui::KeyEvent press(ui::EventType::kKeyPressed, ui::VKEY_RETURN,
+                         ui::EF_NONE);
       omnibox->OnKeyEvent(&press);
-      ui::KeyEvent release(ui::ET_KEY_RELEASED, ui::VKEY_RETURN, ui::EF_NONE);
+      ui::KeyEvent release(ui::EventType::kKeyReleased, ui::VKEY_RETURN,
+                           ui::EF_NONE);
       omnibox->OnKeyEvent(&release);
       return ui::test::ActionResult::kSucceeded;
     }
@@ -230,32 +376,23 @@ Browser* InteractionTestUtilBrowser::GetBrowserFromContext(
 ui::test::ActionResult InteractionTestUtilBrowser::CompareScreenshot(
     ui::TrackedElement* element,
     const std::string& screenshot_name,
-    const std::string& baseline) {
-  views::View* view = nullptr;
-  if (auto* const view_el = element->AsA<views::TrackedElementViews>()) {
-    view = view_el->view();
-  } else if (auto* const page_el = element->AsA<TrackedElementWebContents>()) {
-    view = page_el->owner()->GetWebView();
-  }
+    const std::string& baseline_cl) {
+  views::View* const view = GetScreenshotTargetView(element);
   if (!view) {
     return ui::test::ActionResult::kNotAttempted;
   }
+  return CompareScreenshotCommon(view, screenshot_name, baseline_cl);
+}
 
-  // pixel_browser_tests and pixel_interactive_ui_tests specify this command
-  // line, which is checked by TestBrowserUi before attempting any screen
-  // capture; otherwise screenshotting is a silent no-op.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kVerifyPixels)) {
-    LOG(WARNING)
-        << "Cannot take screenshot: pixel test command line not set. This is "
-           "normal for non-pixel-test jobs such as vanilla browser_tests.";
-    return ui::test::ActionResult::kKnownIncompatible;
+// static
+ui::test::ActionResult InteractionTestUtilBrowser::CompareSurfaceScreenshot(
+    ui::TrackedElement* element_in_surface,
+    const std::string& screenshot_name,
+    const std::string& baseline_cl) {
+  views::View* const view = GetScreenshotTargetView(element_in_surface);
+  if (!view || !view->GetWidget()) {
+    return ui::test::ActionResult::kNotAttempted;
   }
-
-  PixelTestUi pixel_test_ui(view, screenshot_name, baseline);
-  ui::test::ActionResult result = pixel_test_ui.VerifyUiWithResult();
-  if (result == ui::test::ActionResult::kKnownIncompatible) {
-    LOG(WARNING) << "Current platform does not support pixel tests.";
-  }
-  return result;
+  return CompareScreenshotCommon(view->GetWidget()->GetRootView(),
+                                 screenshot_name, baseline_cl);
 }

@@ -14,17 +14,13 @@
 #import "testing/gtest/include/gtest/gtest.h"
 #import "ui/base/resource/resource_bundle.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace web {
 
 WebTestSuite::WebTestSuite(int argc, char** argv)
     : base::TestSuite(argc, argv),
       web_client_(std::make_unique<FakeWebClient>()) {
   CHECK(IsCustomWebKitLoadedIfRequested());
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
   DCHECK(ObjcEvilDoers::ZombieEnable(true, 10000));
 #endif
 }

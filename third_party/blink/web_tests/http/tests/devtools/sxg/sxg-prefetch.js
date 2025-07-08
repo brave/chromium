@@ -5,14 +5,15 @@
 import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
+
+import * as SDK from 'devtools/core/sdk/sdk.js';
 (async function() {
   TestRunner.addResult('Tests the signed exchange information are available when the prefetch succeeded.\n');
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('network');
   NetworkTestRunner.networkLog().reset();
 
   const promise = new Promise(resolve => {
-    TestRunner.addSniffer(SDK.NetworkDispatcher.prototype, 'loadingFinished', loadingFinished, true);
+    TestRunner.addSniffer(SDK.NetworkManager.NetworkDispatcher.prototype, 'loadingFinished', loadingFinished, true);
     function loadingFinished(requestId, finishTime, encodedDataLength) {
       var request = NetworkTestRunner.networkLog().requestByManagerAndId(
           TestRunner.networkManager, requestId);

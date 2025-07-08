@@ -6,17 +6,15 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
+#include "base/notimplemented.h"
 #import "ui/accessibility/platform/ax_platform_node_mac.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/native_widget_types.h"
 #import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace views {
 namespace {
@@ -29,8 +27,8 @@ void EnsureNativeViewHasNoChildWidgets(NSView* native_view) {
   // whether those child Widgets need to be distinguished from Widgets that code
   // might want to associate with the hosted NSView instead.
   {
-    Widget::Widgets child_widgets;
-    Widget::GetAllChildWidgets(native_view, &child_widgets);
+    Widget::Widgets child_widgets =
+        Widget::GetAllChildWidgets(gfx::NativeView(native_view));
     CHECK_GE(1u, child_widgets.size());  // 1 (itself) or 0 if detached.
   }
 }
@@ -87,16 +85,18 @@ ui::Layer* NativeViewHostMac::GetUiLayer() const {
 remote_cocoa::mojom::Application* NativeViewHostMac::GetRemoteCocoaApplication()
     const {
   if (auto* window_host = GetNSWindowHost()) {
-    if (auto* application_host = window_host->application_host())
+    if (auto* application_host = window_host->application_host()) {
       return application_host->GetApplication();
+    }
   }
   return nullptr;
 }
 
 uint64_t NativeViewHostMac::GetNSViewId() const {
   auto* window_host = GetNSWindowHost();
-  if (window_host)
+  if (window_host) {
     return window_host->GetRootViewNSViewId();
+  }
   return 0;
 }
 
@@ -126,7 +126,7 @@ void NativeViewHostMac::AttachNativeView() {
   NSWindow* ns_window = [native_view_ window];
   Widget* widget = Widget::GetWidgetForNativeView(host_->native_view());
 
-  // TODO(https://crbug.com/933679): This is lifted out the ViewsHostableAttach
+  // TODO(crbug.com/41442285): This is lifted out the ViewsHostableAttach
   // call below because of crashes being observed in the field.
   NSView* superview =
       window_host->native_widget_mac()->GetNativeView().GetNativeNSView();
@@ -179,8 +179,9 @@ void NativeViewHostMac::NativeViewDetaching(bool destroyed) {
   EnsureNativeViewHasNoChildWidgets(native_view_);
   auto* window_host = GetNSWindowHost();
   // NativeWidgetNSWindowBridge can be null when Widget is closing.
-  if (window_host)
+  if (window_host) {
     window_host->OnNativeViewHostDetach(host_);
+  }
 
   // If the previous call to AttachNativeView() removed the native_view_ from
   // its window (and it was the window's contentView), remove the reference we
@@ -203,16 +204,18 @@ void NativeViewHostMac::NativeViewDetaching(bool destroyed) {
 }
 
 void NativeViewHostMac::AddedToWidget() {
-  if (!host_->native_view())
+  if (!host_->native_view()) {
     return;
+  }
 
   AttachNativeView();
-  host_->Layout();
+  host_->DeprecatedLayoutImmediately();
 }
 
 void NativeViewHostMac::RemovedFromWidget() {
-  if (!host_->native_view())
+  if (!host_->native_view()) {
     return;
+  }
 
   NativeViewDetaching(false);
 }
@@ -224,11 +227,6 @@ bool NativeViewHostMac::SetCornerRadii(
   layer->SetRoundedCornerRadius(corner_radii);
   layer->SetIsFastRoundedCorner(true);
   return true;
-}
-
-bool NativeViewHostMac::SetCustomMask(std::unique_ptr<ui::LayerOwner> mask) {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 void NativeViewHostMac::SetHitTestTopInset(int top_inset) {
@@ -258,7 +256,7 @@ void NativeViewHostMac::ShowWidget(int x,
                                    int h,
                                    int native_w,
                                    int native_h) {
-  // TODO(https://crbug.com/415024): Implement host_->fast_resize().
+  // TODO(crbug.com/41132564): Implement host_->fast_resize().
 
   if (native_view_hostable_) {
     native_view_hostable_->ViewsHostableSetBounds(gfx::Rect(x, y, w, h));
@@ -281,31 +279,34 @@ void NativeViewHostMac::ShowWidget(int x,
 }
 
 void NativeViewHostMac::HideWidget() {
-  if (native_view_hostable_)
+  if (native_view_hostable_) {
     native_view_hostable_->ViewsHostableSetVisible(false);
-  else
+  } else {
     [native_view_ setHidden:YES];
+  }
 }
 
 void NativeViewHostMac::SetFocus() {
   if (native_view_hostable_) {
     native_view_hostable_->ViewsHostableMakeFirstResponder();
   } else {
-    if ([native_view_ acceptsFirstResponder])
+    if ([native_view_ acceptsFirstResponder]) {
       [[native_view_ window] makeFirstResponder:native_view_];
+    }
   }
 }
 
 gfx::NativeView NativeViewHostMac::GetNativeViewContainer() const {
   NOTIMPLEMENTED();
-  return nullptr;
+  return gfx::NativeView();
 }
 
 gfx::NativeViewAccessible NativeViewHostMac::GetNativeViewAccessible() {
-  if (native_view_hostable_)
+  if (native_view_hostable_) {
     return native_view_hostable_->ViewsHostableGetAccessibilityElement();
-  else
-    return native_view_;
+  } else {
+    return gfx::NativeViewAccessible(native_view_);
+  }
 }
 
 ui::Cursor NativeViewHostMac::GetCursor(int x, int y) {
@@ -323,10 +324,11 @@ ui::Cursor NativeViewHostMac::GetCursor(int x, int y) {
 }
 
 void NativeViewHostMac::SetVisible(bool visible) {
-  if (native_view_hostable_)
+  if (native_view_hostable_) {
     native_view_hostable_->ViewsHostableSetVisible(visible);
-  else
+  } else {
     [native_view_ setHidden:!visible];
+  }
 }
 
 void NativeViewHostMac::SetParentAccessible(
@@ -344,7 +346,11 @@ void NativeViewHostMac::SetParentAccessible(
 gfx::NativeViewAccessible NativeViewHostMac::GetParentAccessible() {
   return native_view_hostable_
              ? native_view_hostable_->ViewsHostableGetParentAccessible()
-             : nullptr;
+             : gfx::NativeViewAccessible();
+}
+
+ui::Layer* NativeViewHostMac::GetUILayer() {
+  return host_->layer();
 }
 
 // static

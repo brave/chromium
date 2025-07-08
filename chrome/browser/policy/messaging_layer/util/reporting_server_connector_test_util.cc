@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/check.h"
@@ -13,6 +14,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/singleton.h"
+#include "build/build_config.h"
 #include "chrome/browser/policy/device_management_service_configuration.h"
 #include "chrome/browser/policy/messaging_layer/upload/encrypted_reporting_client.h"
 #include "chrome/browser/policy/messaging_layer/util/reporting_server_connector.h"
@@ -26,18 +28,18 @@
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/dm_token.h"
-#include "components/policy/core/common/cloud/encrypted_reporting_job_configuration.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_service.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "components/policy/core/common/policy_pref_names.h"
+#include "components/reporting/util/status_macros.h"
+#include "components/reporting/util/statusor.h"
 #include "services/network/public/cpp/data_element.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_network_connection_tracker.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
 #include "chromeos/ash/components/system/statistics_provider.h"
 #endif
@@ -76,16 +78,17 @@ ReportingServerConnector::TestEnvironment::TestEnvironment()
           store_.get(),
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           network::TestNetworkConnectionTracker::CreateGetter())) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   fake_statistics_provider_ =
       std::make_unique<ash::system::ScopedFakeStatisticsProvider>();
-  fake_statistics_provider_->SetMachineStatistic(
-      ash::system::kSerialNumberKeyForTest, "fake-serial-number");
+  fake_statistics_provider_->SetMachineStatistic(ash::system::kSerialNumberKey,
+                                                 "fake-serial-number");
 #endif
   device_management_service_ =
       std::make_unique<policy::DeviceManagementService>(
           std::make_unique<policy::DeviceManagementServiceConfiguration>(
-              "", "", kServerUrl));
+              /*dm_server_url=*/"", /*realtime_reporting_server_url=*/"",
+              /*encrypted_reporting_server_url=*/kServerUrl));
   device_management_service_->ScheduleInitialization(0);
   TestingBrowserProcess::GetGlobal()->SetSharedURLLoaderFactory(
       url_loader_factory_.GetSafeWeakWrapper());
@@ -104,11 +107,11 @@ ReportingServerConnector::TestEnvironment::TestEnvironment()
   auto delegate =
       std::make_unique<FakeDelegate>(device_management_service_.get());
   SetEncryptedReportingClient(
-      std::make_unique<EncryptedReportingClient>(std::move(delegate)));
+      EncryptedReportingClient::Create(std::move(delegate)));
 }
 
 ReportingServerConnector::TestEnvironment::~TestEnvironment() {
-  policy::EncryptedReportingJobConfiguration::ResetUploadsStateForTest();
+  EncryptedReportingClient::ResetUploadsStateForTest();
   base::Singleton<ReportingServerConnector>::OnExit(nullptr);
 }
 
@@ -120,7 +123,7 @@ base::Value::Dict ReportingServerConnector::TestEnvironment::request_body(
   CHECK(request.request_body);
   CHECK(request.request_body->elements());
 
-  absl::optional<base::Value> body =
+  std::optional<base::Value> body =
       base::JSONReader::Read(request.request_body->elements()
                                  ->at(0)
                                  .As<network::DataElementBytes>()
@@ -132,16 +135,14 @@ base::Value::Dict ReportingServerConnector::TestEnvironment::request_body(
 
 void ReportingServerConnector::TestEnvironment::SimulateResponseForRequest(
     size_t index) {
-  absl::optional<base::Value::Dict> response =
-      ResponseBuilder(request_body(index)).Build();
-  CHECK(response);
+  auto response = ResponseBuilder(request_body(index)).Build();
+  CHECK_OK(response) << response.error();
   SimulateCustomResponseForRequest(index, std::move(*response));
 }
 
 void ReportingServerConnector::TestEnvironment::
-    SimulateCustomResponseForRequest(
-        size_t index,
-        absl::optional<base::Value::Dict> response) {
+    SimulateCustomResponseForRequest(size_t index,
+                                     StatusOr<base::Value::Dict> response) {
   const std::string& pending_request_url =
       (*url_loader_factory()->pending_requests())[0].request.url.spec();
   std::string response_string = "";

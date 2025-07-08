@@ -3,17 +3,17 @@
         --cr-icon-button-margin-start: 20px;
       }
 
-      cr-link-row:not([hidden]) + cr-link-row {
+      cr-link-row:not([hidden]) ~ cr-link-row {
         border-top: var(--cr-separator-line);
       }
     </style>
     <settings-animated-pages id="pages" section="autofill"
         focus-config="[[focusConfig_]]">
       <div route-path="default">
-        <cr-link-row id="passwordManagerButton" start-icon="settings20:vpn-key"
+        <cr-link-row id="passwordManagerButton"
             label="$i18n{localPasswordManager}" on-click="onPasswordsClick_"
             role-description="$i18n{subpageArrowRoleDescription}"
-            external>
+            start-icon="cr20:password" external>
         </cr-link-row>
         <cr-link-row id="paymentManagerButton"
             start-icon="settings20:credit-card" label="$i18n{creditCards}"
@@ -21,8 +21,16 @@
             role-description="$i18n{subpageArrowRoleDescription}"></cr-link-row>
         <cr-link-row id="addressesManagerButton"
             start-icon="settings:location-on" label="$i18n{addressesTitle}"
+            sub-label="[[addressesSublabel_()]]"
             on-click="onAddressesClick_"
             role-description="$i18n{subpageArrowRoleDescription}"></cr-link-row>
+        <template is="dom-if" if="[[autofillAiAvailable_]]">
+          <cr-link-row id="autofillAiManagerButton"
+              start-icon="settings20:text-analysis"
+              label="$i18n{autofillAiPageTitle}"
+              sub-label="$i18n{autofillAiDescription}"
+              on-click="onAutofillAiClick_"></cr-link-row>
+        </template>
       </div>
       <if expr="is_win or is_macosx">
         <template is="dom-if" route-path="/passkeys">
@@ -52,6 +60,17 @@
             learn-more-url="$i18n{addressesAndPaymentMethodsLearnMoreURL}">
           <settings-autofill-section id="autofillSection" prefs="{{prefs}}">
           </settings-autofill-section>
+        </settings-subpage>
+      </template>
+      <template is="dom-if" route-path="/autofillAi"
+          no-search="[[!autofillAiAvailable_]]">
+        <settings-subpage
+            associated-control="[[$$('#autofillAiManagerButton')]]"
+            page-title="$i18n{autofillAiPageTitle}">
+          <settings-autofill-ai-section
+              id="autofillAiSection" prefs="{{prefs}}"
+              ineligible-user="[[!userEligibleForAutofillAi_]]">
+          </settings-autofill-ai-section>
         </settings-subpage>
       </template>
     </settings-animated-pages>

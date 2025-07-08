@@ -22,9 +22,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_SVG_ANIMATE_MOTION_ELEMENT_H_
 
 #include "third_party/blink/renderer/core/svg/svg_animation_element.h"
-#include "third_party/blink/renderer/platform/graphics/path.h"
+#include "third_party/blink/renderer/platform/geometry/path.h"
 
 namespace blink {
+
+class SVGPoint;
 
 class SVGAnimateMotionElement final : public SVGAnimationElement {
   DEFINE_WRAPPERTYPEINFO();
@@ -33,7 +35,9 @@ class SVGAnimateMotionElement final : public SVGAnimationElement {
   explicit SVGAnimateMotionElement(Document&);
   ~SVGAnimateMotionElement() override;
 
-  void UpdateAnimationPath();
+  void ChildMPathChanged();
+
+  void Trace(Visitor*) const override;
 
  private:
   bool HasValidAnimation() const override;
@@ -44,29 +48,34 @@ class SVGAnimateMotionElement final : public SVGAnimationElement {
 
   SMILAnimationValue CreateAnimationValue() const override;
   void ClearAnimationValue() override;
-  bool CalculateToAtEndOfDurationValue(
-      const String& to_at_end_of_duration_string) override;
-  bool CalculateFromAndToValues(const String& from_string,
+  void UpdateKeyframeValues(const Keyframe& keyframe) override;
+  void CalculateFromAndToValues(const String& from_string,
                                 const String& to_string) override;
-  bool CalculateFromAndByValues(const String& from_string,
+  void CalculateFromAndByValues(const String& from_string,
                                 const String& by_string) override;
+  void CalculateValues(const Vector<String>& values) override;
+  wtf_size_t ValuesCount() const override {
+    DCHECK_EQ(GetAnimationMode(), kValuesAnimation);
+    return values_.size();
+  }
   void CalculateAnimationValue(SMILAnimationValue&,
                                float percentage,
                                unsigned repeat_count) const override;
   void ApplyResultsToTarget(const SMILAnimationValue&) override;
-  float CalculateDistance(const String& from_string,
-                          const String& to_string) override;
+  float CalculateDistance(const Keyframe&) const override;
 
   enum RotateMode { kRotateAngle, kRotateAuto, kRotateAutoReverse };
   RotateMode GetRotateMode() const;
 
-  void UpdateAnimationMode() override;
+  AnimationMode CalculateAnimationMode() override;
+  void UpdateAnimationPath();
 
   // Note: we do not support percentage values for to/from coords as the spec
   // implies we should (opera doesn't either)
-  gfx::PointF from_point_;
-  gfx::PointF to_point_;
-  gfx::PointF to_point_at_end_of_duration_;
+  Member<SVGPoint> from_point_;
+  Member<SVGPoint> to_point_;
+
+  HeapVector<Member<SVGPoint>> values_;
 
   Path path_;
   Path animation_path_;

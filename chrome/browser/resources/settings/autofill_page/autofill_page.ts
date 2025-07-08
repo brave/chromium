@@ -9,23 +9,34 @@
  */
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/cr_components/settings_prefs/prefs.js';
+import 'chrome://resources/cr_elements/icons.html.js';
+import '/shared/settings/prefs/prefs.js';
 import '../settings_page/settings_animated_pages.js';
 import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
+// <if expr="_google_chrome">
+import '../internal/icons.html.js';
+// </if>
+// <if expr="not _google_chrome">
+import '../icons.html.js';
 
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+// </if>
+
+import {I18nMixin} from '//resources/cr_elements/i18n_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
+import {loadTimeData} from '../i18n_setup.js';
 import {routes} from '../route.js';
 import {Router} from '../router.js';
 
 import {getTemplate} from './autofill_page.html.js';
 import {PasswordManagerImpl, PasswordManagerPage} from './password_manager_proxy.js';
 
-const SettingsAutofillPageElementBase = PrefsMixin(BaseMixin(PolymerElement));
+const SettingsAutofillPageElementBase =
+    PrefsMixin(I18nMixin(BaseMixin(PolymerElement)));
 
 export interface SettingsAutofillPageElement {
   $: {
@@ -61,11 +72,27 @@ export class SettingsAutofillPageElement extends
           return map;
         },
       },
+
+      userEligibleForAutofillAi_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('userEligibleForAutofillAi');
+        },
+      },
+
+      autofillAiAvailable_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('showAutofillAiControl');
+        },
+      },
     };
   }
 
-  private passkeyFilter_: string;
-  private focusConfig_: Map<string, string>;
+  declare private passkeyFilter_: string;
+  declare private userEligibleForAutofillAi_: boolean;
+  declare private autofillAiAvailable_: boolean;
+  declare private focusConfig_: Map<string, string>;
 
   /**
    * Shows the manage addresses sub page.
@@ -88,6 +115,22 @@ export class SettingsAutofillPageElement extends
     PasswordManagerImpl.getInstance().recordPasswordsPageAccessInSettings();
     PasswordManagerImpl.getInstance().showPasswordManager(
         PasswordManagerPage.PASSWORDS);
+  }
+
+  /**
+   * Shows the Autofill AI settings sub page.
+   */
+  private onAutofillAiClick_() {
+    Router.getInstance().navigateTo(routes.AUTOFILL_AI);
+  }
+
+  /**
+   * @returns the sublabel of the address entry.
+   */
+  private addressesSublabel_() {
+    return loadTimeData.getBoolean('plusAddressEnabled') ?
+        this.i18n('addressesSublabel') :
+        '';
   }
 }
 

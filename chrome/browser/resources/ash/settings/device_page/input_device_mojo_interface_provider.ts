@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 
 import {InputDeviceSettingsProvider} from '../mojom-webui/input_device_settings_provider.mojom-webui.js';
 
 import {fakeGraphicsTabletButtonActions, fakeGraphicsTablets, fakeKeyboards, fakeMice, fakeMouseButtonActions, fakePointingSticks, fakeStyluses, fakeTouchpads} from './fake_input_device_data.js';
 import {FakeInputDeviceSettingsProvider} from './fake_input_device_settings_provider.js';
-import {InputDeviceSettingsProviderInterface} from './input_device_settings_types.js';
+import type {InputDeviceSettingsProviderInterface} from './input_device_settings_types.js';
+import {MetaKey} from './input_device_settings_types.js';
 
 /**
  * @fileoverview
@@ -34,6 +35,10 @@ export function setupFakeInputDeviceSettingsProvider(): void {
   provider.setFakeActionsForGraphicsTabletButtonCustomization(
       fakeGraphicsTabletButtonActions);
   provider.setFakeActionsForMouseButtonCustomization(fakeMouseButtonActions);
+  provider.setFakeMetaKeyToDisplay(MetaKey.kSearch);
+  provider.setFakeIsRgbKeyboardSupported(true);
+  provider.setFakeHasKeyboardBacklight(true);
+  provider.setFakeHasAmbientLightSensor(true);
   inputDeviceSettingsProvider = provider;
 }
 

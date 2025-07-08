@@ -7,12 +7,11 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "foo": "bar"
-            }
-          ]
+          "dimensions": {
+            "foo": "bar"
+          }
         },
         "test": "foo_test"
       }

@@ -4,7 +4,6 @@
 
 #include "ash/system/audio/unified_volume_slider_controller.h"
 
-#include "ash/constants/ash_features.h"
 #include "ash/constants/quick_settings_catalogs.h"
 #include "ash/system/audio/unified_volume_view.h"
 #include "base/metrics/histogram_functions.h"
@@ -45,9 +44,12 @@ UnifiedVolumeSliderController::UnifiedVolumeSliderController()
 UnifiedVolumeSliderController::~UnifiedVolumeSliderController() = default;
 
 std::unique_ptr<UnifiedVolumeView>
-UnifiedVolumeSliderController::CreateVolumeSlider(uint64_t device_id) {
+UnifiedVolumeSliderController::CreateVolumeSlider(
+    uint64_t device_id,
+    const gfx::Insets& inside_padding) {
   auto slider = std::make_unique<UnifiedVolumeView>(
-      this, device_id, /*is_active_output_node=*/false);
+      this, device_id, /*is_active_output_node=*/false,
+      /*inside_padding=*/inside_padding);
 
   if (g_map_slider_device_callback) {
     g_map_slider_device_callback->Run(device_id, slider.get());
@@ -63,6 +65,10 @@ void UnifiedVolumeSliderController::SetMapDeviceSliderCallbackForTest(
 }
 
 std::unique_ptr<UnifiedSliderView> UnifiedVolumeSliderController::CreateView() {
+#if DCHECK_IS_ON()
+  DCHECK(!created_view_);
+  created_view_ = true;
+#endif
   return std::make_unique<UnifiedVolumeView>(this, delegate_,
                                              /*is_active_output_node=*/true);
 }
@@ -92,9 +98,9 @@ void UnifiedVolumeSliderController::SliderValueChanged(
                       audio_handler->GetOutputVolumePercent());
   audio_handler->SetOutputVolumePercent(level);
 
-  // For QsRevamp: Manually sets the mute state since we don't distinguish muted
-  // and level is 0 state in QsRevamp.
-  if (features::IsQsRevampEnabled() && level == 0) {
+  // Manually sets the mute state since we don't distinguish muted and level is
+  // 0 state.
+  if (level == 0) {
     audio_handler->SetOutputMute(/*mute_on=*/true);
   }
 
@@ -112,8 +118,7 @@ void UnifiedVolumeSliderController::SliderButtonPressed() {
   const bool mute = !audio_handler->IsOutputMuted();
 
   // If the level is 0, the slider is still muted, and nothing needs to be done.
-  if (features::IsQsRevampEnabled() &&
-      audio_handler->GetOutputVolumePercent() == 0) {
+  if (audio_handler->GetOutputVolumePercent() == 0) {
     return;
   }
 

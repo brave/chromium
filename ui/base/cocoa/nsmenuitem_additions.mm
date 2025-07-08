@@ -3,18 +3,14 @@
 // found in the LICENSE file.
 
 #import "ui/base/cocoa/nsmenuitem_additions.h"
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 
 #include <Carbon/Carbon.h>
 
 #include "base/apple/bridging.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/check.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui::cocoa {
 
@@ -22,6 +18,7 @@ namespace {
 bool g_is_input_source_command_qwerty = false;
 bool g_is_input_source_dvorak_right_or_left = false;
 bool g_is_input_source_command_hebrew = false;
+bool g_is_input_source_command_arabic = false;
 }  // namespace
 
 void SetIsInputSourceCommandQwertyForTesting(bool is_command_qwerty) {
@@ -34,6 +31,10 @@ void SetIsInputSourceDvorakRightOrLeftForTesting(bool is_dvorak_right_or_left) {
 
 void SetIsInputSourceCommandHebrewForTesting(bool is_command_hebrew) {
   g_is_input_source_command_hebrew = is_command_hebrew;
+}
+
+void SetIsInputSourceCommandArabicForTesting(bool is_command_arabic) {
+  g_is_input_source_command_arabic = is_command_arabic;
 }
 
 bool IsKeyboardLayoutCommandQwerty(NSString* layout_id) {
@@ -52,6 +53,11 @@ bool IsKeyboardLayoutCommandHebrew(NSString* layout_id) {
   // com.apple.keylayout.Hebrew, com.apple.keylayout.Hebrew-PC,
   // com.apple.keylayout.Hebrew-QWERTY.
   return [layout_id hasPrefix:@"com.apple.keylayout.Hebrew"];
+}
+
+bool IsKeyboardLayoutCommandArabic(NSString* layout_id) {
+  return [layout_id hasPrefix:@"com.apple.keylayout.ArabicPC"] ||
+         [layout_id hasPrefix:@"com.apple.keylayout.Arabic-AZERTY"];
 }
 
 NSUInteger ModifierMaskForKeyEvent(NSEvent* event) {
@@ -108,10 +114,10 @@ NSUInteger ModifierMaskForKeyEvent(NSEvent* event) {
 }
 
 - (void)updateInputSource {
-  base::ScopedCFTypeRef<TISInputSourceRef> inputSource(
+  base::apple::ScopedCFTypeRef<TISInputSourceRef> inputSource(
       TISCopyCurrentKeyboardInputSource());
   NSString* layoutId = base::apple::CFToNSPtrCast(
-      base::mac::CFCast<CFStringRef>(TISGetInputSourceProperty(
+      base::apple::CFCast<CFStringRef>(TISGetInputSourceProperty(
           inputSource.get(), kTISPropertyInputSourceID)));
   ui::cocoa::g_is_input_source_command_qwerty =
       ui::cocoa::IsKeyboardLayoutCommandQwerty(layoutId);
@@ -119,6 +125,8 @@ NSUInteger ModifierMaskForKeyEvent(NSEvent* event) {
       ui::cocoa::IsKeyboardLayoutDvorakRightOrLeft(layoutId);
   ui::cocoa::g_is_input_source_command_hebrew =
       ui::cocoa::IsKeyboardLayoutCommandHebrew(layoutId);
+  ui::cocoa::g_is_input_source_command_arabic =
+      ui::cocoa::IsKeyboardLayoutCommandArabic(layoutId);
 }
 
 - (void)inputSourceDidChange:(NSNotification*)notification {
@@ -173,6 +181,14 @@ NSUInteger ModifierMaskForKeyEvent(NSEvent* event) {
       // Instead, the Cmd-q likely travels to the renderer and upon its return
       // triggers -[NSApplication terminate:], the selector associated with
       // Chrome -> Quit. We handle this special case here.
+      useEventCharacters = true;
+    } else if (ui::cocoa::g_is_input_source_command_arabic &&
+               [eventString isEqualToString:@"{"] &&
+               [eventCharacters isEqualToString:@"V"]) {
+      // Similar problem of our hack not working for the "V" key in certain
+      // Arabic layouts. In this case, the first char of eventString ("{") is
+      // not < 0x7f, so the hack doesn't choose eventCharacters (which is
+      // "V"). This causes ⇧⌘V not to match Paste and Match Style.
       useEventCharacters = true;
     }
   }
@@ -280,6 +296,18 @@ NSUInteger ModifierMaskForKeyEvent(NSEvent* event) {
 
   return [eventString isEqualToString:self.keyEquivalent] &&
          eventModifiers == self.keyEquivalentModifierMask;
+}
+
+- (void)cr_setKeyEquivalent:(NSString*)aString
+               modifierMask:(NSEventModifierFlags)mask {
+  DCHECK(aString);
+  self.keyEquivalent = aString;
+  self.keyEquivalentModifierMask = mask;
+}
+
+- (void)cr_clearKeyEquivalent {
+  self.keyEquivalent = @"";
+  self.keyEquivalentModifierMask = 0;
 }
 
 @end

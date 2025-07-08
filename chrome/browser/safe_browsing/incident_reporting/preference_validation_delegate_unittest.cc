@@ -114,7 +114,7 @@ class PreferenceValidationDelegateTest : public testing::Test {
 // Tests that a NULL value results in an incident with no value.
 TEST_F(PreferenceValidationDelegateTest, NullValue) {
   instance_->OnAtomicPreferenceValidation(
-      kPrefPath, absl::nullopt, ValueState::CLEARED, ValueState::UNSUPPORTED,
+      kPrefPath, std::nullopt, ValueState::CLEARED, ValueState::UNSUPPORTED,
       false /* is_personal */);
   std::unique_ptr<safe_browsing::ClientIncidentReport_IncidentData> incident(
       incidents_.back()->TakePayload());
@@ -229,7 +229,7 @@ class PreferenceValidationDelegateNoIncident
 
 TEST_P(PreferenceValidationDelegateNoIncident, Atomic) {
   instance_->OnAtomicPreferenceValidation(
-      kPrefPath, absl::make_optional<base::Value>(), value_state_,
+      kPrefPath, std::make_optional<base::Value>(), value_state_,
       external_validation_value_state_, false /* is_personal */);
   EXPECT_EQ(0U, incidents_.size());
 }
@@ -245,7 +245,6 @@ INSTANTIATE_TEST_SUITE_P(
     NoIncident,
     PreferenceValidationDelegateNoIncident,
     testing::Combine(testing::Values(ValueState::UNCHANGED,
-                                     ValueState::SECURE_LEGACY,
                                      ValueState::TRUSTED_UNKNOWN_VALUE),
                      testing::Values(ValueState::UNCHANGED,
                                      ValueState::UNSUPPORTED,
@@ -272,7 +271,7 @@ class PreferenceValidationDelegateWithIncident
 
 TEST_P(PreferenceValidationDelegateWithIncident, Atomic) {
   instance_->OnAtomicPreferenceValidation(
-      kPrefPath, absl::make_optional<base::Value>(), value_state_,
+      kPrefPath, std::make_optional<base::Value>(), value_state_,
       external_validation_value_state_, is_personal_);
   ASSERT_EQ(1U, incidents_.size());
   std::unique_ptr<safe_browsing::ClientIncidentReport_IncidentData> incident(
@@ -339,7 +338,6 @@ INSTANTIATE_TEST_SUITE_P(
     WithBypassIncident,
     PreferenceValidationDelegateWithIncident,
     testing::Combine(testing::Values(ValueState::UNCHANGED,
-                                     ValueState::SECURE_LEGACY,
                                      ValueState::TRUSTED_UNKNOWN_VALUE),
                      testing::Values(ValueState::CHANGED, ValueState::CLEARED),
                      testing::Bool()));

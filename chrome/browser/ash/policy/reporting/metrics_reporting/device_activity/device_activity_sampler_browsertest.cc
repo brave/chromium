@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/login/lock/screen_locker_tester.h"
 #include "chrome/browser/ash/login/test/cryptohome_mixin.h"
+#include "chrome/browser/ash/login/test/scoped_policy_update.h"
+#include "chrome/browser/ash/login/test/user_auth_config.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_mixin.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_test_helper.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/chromeos/reporting/metric_default_utils.h"
 #include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -30,6 +29,8 @@
 #include "ui/base/user_activity/user_activity_detector.h"
 
 using ::testing::Eq;
+using ::testing::IsNull;
+using ::testing::Not;
 using ::testing::StrEq;
 
 namespace reporting {
@@ -70,6 +71,9 @@ class DeviceActivitySamplerBrowserTest
     // Initialize the MockClock.
     test::MockClock::Get();
     crypto_home_mixin_.MarkUserAsExisting(affiliation_mixin_.account_id());
+    crypto_home_mixin_.ApplyAuthConfig(
+        affiliation_mixin_.account_id(),
+        ash::test::UserAuthConfig::Create(ash::test::kDefaultAuthSetup));
     ::policy::SetDMTokenForTesting(
         ::policy::DMToken::CreateValidToken(kDMToken));
   }
@@ -94,15 +98,15 @@ class DeviceActivitySamplerBrowserTest
   }
 
   void SetPolicyEnabled(bool is_enabled) {
-    scoped_testing_cros_settings_.device_settings()->SetBoolean(
-        ::ash::kDeviceActivityHeartbeatEnabled, is_enabled);
+    auto device_policy_update = device_state_.RequestDevicePolicyUpdate();
+    device_policy_update->policy_payload()
+        ->mutable_device_reporting()
+        ->set_device_activity_heartbeat_enabled(is_enabled);
   }
 
  private:
-  ::policy::DevicePolicyCrosTestHelper test_helper_;
-  ::policy::AffiliationMixin affiliation_mixin_{&mixin_host_, &test_helper_};
+  ::policy::AffiliationMixin affiliation_mixin_{&mixin_host_, policy_helper()};
   ::ash::CryptohomeMixin crypto_home_mixin_{&mixin_host_};
-  ::ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 };
 
 IN_PROC_BROWSER_TEST_F(DeviceActivitySamplerBrowserTest,
@@ -116,7 +120,7 @@ IN_PROC_BROWSER_TEST_F(DeviceActivitySamplerBrowserTest,
   SetPolicyEnabled(true);
 
   // Simulate locked activity for the current session.
-  DCHECK(::session_manager::SessionManager::Get());
+  ASSERT_THAT(::session_manager::SessionManager::Get(), Not(IsNull()));
   ::ash::ScreenLockerTester().Lock();
 
   // Force telemetry collection by advancing the timer and verify data that is

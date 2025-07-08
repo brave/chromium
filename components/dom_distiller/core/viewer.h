@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/values.h"
 #include "components/dom_distiller/core/distilled_page_prefs.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
@@ -28,7 +29,8 @@ namespace viewer {
 // so the returned HTML should be safe.
 const std::string GetArticleTemplateHtml(mojom::Theme theme,
                                          mojom::FontFamily font_family,
-                                         const std::string& csp_nonce);
+                                         const std::string& csp_nonce,
+                                         bool use_offline_data);
 
 // Returns the JavaScript to place a full article's HTML on the page. The
 // returned HTML should be considered unsafe, so callers must ensure
@@ -53,6 +55,10 @@ const std::string GetSetTextDirectionJs(const std::string& direction);
 // Returns a JavaScript blob for updating a view request with error page
 // contents.
 const std::string GetErrorPageJs();
+
+// Returns a JavaScript blob with unsafe content converted to a JavaScript
+// string that adds it to the page.
+const std::string GetAddToPageJs(const std::string& unsafe_content);
 
 // Returns a JavaScript blob for controlling the "in-progress" indicator when
 // viewing a partially-distilled page. |is_last_page| indicates whether this is

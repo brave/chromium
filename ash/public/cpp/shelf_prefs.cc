@@ -8,7 +8,6 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
-#include "ash/public/cpp/tablet_mode.h"
 #include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -114,7 +113,6 @@ const char* AlignmentToPref(ShelfAlignment alignment) {
       return nullptr;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 ShelfAutoHideBehavior AutoHideBehaviorFromPref(const std::string& value) {
@@ -140,7 +138,6 @@ const char* AutoHideBehaviorToPref(ShelfAutoHideBehavior behavior) {
       return nullptr;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace
@@ -182,7 +179,7 @@ ShelfAutoHideBehavior GetShelfAutoHideBehaviorPref(PrefService* prefs,
                           prefs::kShelfAutoHideBehavior));
   }
 
-  const bool is_in_tablet_mode = TabletMode::Get()->InTabletMode();
+  const bool is_in_tablet_mode = display::Screen::GetScreen()->InTabletMode();
   // See comment in |kShelfAlignment| as to why we consider two prefs.
   return AutoHideBehaviorFromPref(GetPerDisplayPref(
       prefs, display_id,
@@ -212,7 +209,7 @@ void SetShelfAutoHideBehaviorPref(PrefService* prefs,
     return;
   }
 
-  const bool is_in_tablet_mode = TabletMode::Get()->InTabletMode();
+  const bool is_in_tablet_mode = display::Screen::GetScreen()->InTabletMode();
   SetPerDisplayShelfPref(prefs, display_id,
                          is_in_tablet_mode
                              ? prefs::kShelfAutoHideTabletModeBehavior

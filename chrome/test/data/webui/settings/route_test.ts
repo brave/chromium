@@ -3,8 +3,9 @@
 // found in the LICENSE file.
 
 // clang-format off
-import {buildRouter, loadTimeData, Route, Router, routes, setPageVisibilityForTesting, SettingsRoutes} from 'chrome://settings/settings.js';
-import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import type {SettingsRoutes} from 'chrome://settings/settings.js';
+import {resetRouterForTesting, buildRouter, loadTimeData, Route, Router, routes, resetPageVisibilityForTesting} from 'chrome://settings/settings.js';
+import {assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 
 // clang-format on
@@ -166,6 +167,11 @@ suite('Basic', function() {
             routes.APPEARANCE);
       });
 
+  test('navigate back to nested sibling route', function() {
+    return testNavigateBackUsesHistory(
+        routes.FONTS, routes.SECURITY, routes.FONTS);
+  });
+
   test('navigate back to parent when previous route is deeper', function() {
     Router.getInstance().navigateTo(routes.SYNC);
     Router.getInstance().navigateTo(routes.PEOPLE);
@@ -254,12 +260,12 @@ suite('Basic', function() {
     assertTrue(routes.TRIGGERED_RESET_DIALOG.isNavigableDialog);
     assertTrue(routes.TRIGGERED_RESET_DIALOG.parent === routes.RESET);
 
-    // <if expr="chromeos_ash">
+    // <if expr="is_chromeos">
     // Regression test for b/265453606.
-    assertFalse(!!routes.SIGN_OUT);
+    assertFalse('SIGN_OUT' in routes);
     // </if>
 
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     assertTrue(routes.SIGN_OUT.isNavigableDialog);
     assertTrue(routes.SIGN_OUT.parent === routes.PEOPLE);
     assertTrue(routes.IMPORT_DATA.isNavigableDialog);
@@ -273,7 +279,7 @@ suite('Basic', function() {
   });
 
   test('pageVisibility affects route availability', function() {
-    setPageVisibilityForTesting({
+    resetPageVisibilityForTesting({
       appearance: false,
       autofill: false,
       defaultBrowser: false,
@@ -313,6 +319,39 @@ suite('Basic', function() {
         assertEquals(
             'chrome://settings/languages', routes.LANGUAGES.getAbsolutePath());
       });
+
+  test('resetRouterForTesting updates routes', function() {
+    resetRouterForTesting();
+    const routesLocal1 = Router.getInstance().getRoutes();
+    assertEquals(routes, routesLocal1);
+
+    resetRouterForTesting();
+    const routesLocal2 = Router.getInstance().getRoutes();
+    assertNotEquals(routesLocal1, routesLocal2);
+    assertEquals(routes, routesLocal2);
+  });
+
+  test('autofillAi route defined', function() {
+    resetPageVisibilityForTesting({
+      autofill: true,
+    });
+    loadTimeData.overrideValues({
+      showAutofillAiControl: true,
+    });
+    resetRouterForTesting();
+    assertTrue(!!routes.AUTOFILL_AI);
+  });
+
+  test('autofillAi route not defined', function() {
+    resetPageVisibilityForTesting({
+      autofill: true,
+    });
+    loadTimeData.overrideValues({
+      showAutofillAiControl: false,
+    });
+    resetRouterForTesting();
+    assertFalse(!!routes.AUTOFILL_AI);
+  });
 });
 
 suite('DynamicParameters', function() {
@@ -363,19 +402,17 @@ suite('NonExistentRoute', function() {
   });
 });
 
-suite('SafetyHubReachable', function() {
+suite('SafetyHub', function() {
   let routes: SettingsRoutes;
 
-  setup(function() {
-    loadTimeData.overrideValues({enableSafetyHub: true});
-    Router.resetInstanceForTesting(buildRouter());
-
+  function setupRoutes() {
+    resetPageVisibilityForTesting();
+    resetRouterForTesting();
     routes = Router.getInstance().getRoutes();
-    Router.getInstance().navigateTo(routes.BASIC);
-    return flushTasks();
-  });
+  }
 
   test('SafetyHubRouteReachable', async function() {
+    setupRoutes();
     let path = Router.getInstance().getCurrentRoute().path;
     assertEquals('/', path);
 
@@ -384,22 +421,14 @@ suite('SafetyHubReachable', function() {
 
     // Assert that the route is changed to safety hub.
     path = Router.getInstance().getCurrentRoute().path;
-    assertEquals('/safetyHub', path);
-  });
-});
-
-suite('SafetyHubNotReachable', function() {
-  let routes: SettingsRoutes;
-
-  setup(function() {
-    loadTimeData.overrideValues({enableSafetyHub: false});
-    Router.resetInstanceForTesting(buildRouter());
-
-    routes = Router.getInstance().getRoutes();
+    assertEquals('/safetyCheck', path);
   });
 
-  test('SafetyHubRouteNotReachable', async function() {
-    // Assert that safety hub route is not reachable.
-    assertEquals(routes.SAFETY_HUB, undefined);
+  test('SafetyHubRouteNotReachableInGuestMode', function() {
+    loadTimeData.overrideValues({isGuest: true});
+    setupRoutes();
+
+    // Safety Hub should not be reachable in Guest mode.
+    assertEquals(undefined, routes.SAFETY_HUB);
   });
 });

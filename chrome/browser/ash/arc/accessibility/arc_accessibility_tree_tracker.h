@@ -166,10 +166,9 @@ class ArcAccessibilityTreeTracker : public aura::EnvObserver {
   virtual void DispatchCustomSpokenFeedbackToggled(bool enabled);
   virtual aura::Window* GetFocusedArcWindow() const;
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
-  raw_ptr<ax::android::AXTreeSourceAndroid::Delegate, ExperimentalAsh>
-      tree_source_delegate_;
-  const raw_ref<const AccessibilityHelperInstanceRemoteProxy, ExperimentalAsh>
+  const raw_ptr<Profile> profile_;
+  raw_ptr<ax::android::AXTreeSourceAndroid::Delegate> tree_source_delegate_;
+  const raw_ref<const AccessibilityHelperInstanceRemoteProxy>
       accessibility_helper_instance_;
 
   TreeMap trees_;
@@ -189,7 +188,7 @@ class ArcAccessibilityTreeTracker : public aura::EnvObserver {
   // a11y window id (obtained from exo, put for each window) to task id.
   std::map<int32_t, int32_t> window_id_to_task_id_;
   // task id to top aura::window.
-  std::map<int32_t, aura::Window*> task_id_to_window_;
+  std::map<int32_t, raw_ptr<aura::Window, CtnExperimental>> task_id_to_window_;
 
   ax::android::mojom::AccessibilityFilterType filter_type_ =
       ax::android::mojom::AccessibilityFilterType::OFF;

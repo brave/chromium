@@ -5,6 +5,7 @@
 #ifndef UI_ACCESSIBILITY_AX_ENUM_UTIL_H_
 #define UI_ACCESSIBILITY_AX_ENUM_UTIL_H_
 
+#include <optional>
 #include <string>
 
 #include "base/containers/flat_map.h"
@@ -12,7 +13,6 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/types/cxx23_to_underlying.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_base_export.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 
@@ -136,6 +136,9 @@ AX_BASE_EXPORT const char* ToString(ax::mojom::NameFrom name_from);
 AX_BASE_EXPORT const char* ToString(
     ax::mojom::DescriptionFrom description_from);
 
+// ax::mojom::DetailsFrom
+AX_BASE_EXPORT const char* ToString(ax::mojom::DetailsFrom details_from);
+
 // ax::mojom::EventFrom
 AX_BASE_EXPORT const char* ToString(ax::mojom::EventFrom event_from);
 
@@ -151,11 +154,16 @@ AX_BASE_EXPORT const char* ToString(ax::mojom::TreeOrder tree_order);
 // ax::mojom::ImageAnnotationStatus
 AX_BASE_EXPORT const char* ToString(ax::mojom::ImageAnnotationStatus status);
 
-// ax::mojom::Dropeffect
-AX_BASE_EXPORT const char* ToString(ax::mojom::Dropeffect dropeffect);
+// ax::mojom::AriaNotificationInterrupt
+AX_BASE_EXPORT const char* ToString(
+    ax::mojom::AriaNotificationInterrupt interrupt);
+
+// ax::mojom::AriaNotificationPriority
+AX_BASE_EXPORT const char* ToString(
+    ax::mojom::AriaNotificationPriority priority);
 
 template <typename T>
-absl::optional<T> MaybeParseAXEnum(const char* attribute) {
+std::optional<T> MaybeParseAXEnum(const char* attribute) {
   static const base::NoDestructor<base::flat_map<std::string, T>> attr_map([] {
     static_assert(T::kNone == T::kMinValue);
     static_assert(base::to_underlying(T::kNone) == 0);
@@ -168,7 +176,7 @@ absl::optional<T> MaybeParseAXEnum(const char* attribute) {
     for (auto i = base::to_underlying(T::kMinValue);
          i <= base::to_underlying(T::kMaxValue); ++i) {
       T attr = T{i};
-      std::string str = ui::ToString(attr);
+      std::string str = ToString(attr);
       entries.push_back({std::move(str), attr});
     }
     return base::flat_map(std::move(entries));
@@ -177,12 +185,12 @@ absl::optional<T> MaybeParseAXEnum(const char* attribute) {
   if (iter != attr_map->end()) {
     return iter->second;
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // Convert from the string representation of an enum defined in ax_enums.mojom
 // into the enum value. The first time this is called, builds up a map.
-// Relies on the existence of ui::ToString(enum).
+// Relies on the existence of ToString(enum).
 template <typename T>
 T ParseAXEnum(const char* attribute) {
   auto result = MaybeParseAXEnum<T>(attribute);
@@ -190,9 +198,7 @@ T ParseAXEnum(const char* attribute) {
     return result.value();
   }
 
-  LOG(ERROR) << "Could not parse: " << attribute;
-  NOTREACHED();
-  return T::kNone;
+  NOTREACHED() << "Could not parse: " << attribute;
 }
 
 }  // namespace ui

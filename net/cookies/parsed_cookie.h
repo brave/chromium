@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -36,7 +37,7 @@ class NET_EXPORT ParsedCookie {
   // informative exclusion reasons if the resulting ParsedCookie is invalid.
   // The CookieInclusionStatus will not be altered if the resulting ParsedCookie
   // is valid.
-  explicit ParsedCookie(const std::string& cookie_line,
+  explicit ParsedCookie(std::string_view cookie_line,
                         CookieInclusionStatus* status_out = nullptr);
 
   ParsedCookie(const ParsedCookie&) = delete;
@@ -52,27 +53,31 @@ class NET_EXPORT ParsedCookie {
   const std::string& Token() const { return Name(); }
   const std::string& Value() const { return pairs_[0].second; }
 
-  bool HasPath() const { return path_index_ != 0; }
-  const std::string& Path() const {
-    DCHECK(HasPath());
+  std::optional<std::string_view> Path() const {
+    if (path_index_ == 0) {
+      return std::nullopt;
+    }
     return pairs_[path_index_].second;
   }
   // Note that Domain() may return the empty string; in the case of cookie_line
-  // "domain=", HasDomain() will return true (as the empty string is an
-  // acceptable domain value), so Domain() will return std::string().
-  bool HasDomain() const { return domain_index_ != 0; }
-  const std::string& Domain() const {
-    DCHECK(HasDomain());
+  // "domain=", Domain().has_value() will return true (as the empty string is an
+  // acceptable domain value), and Domain().value() will be an empty string.
+  std::optional<std::string_view> Domain() const {
+    if (domain_index_ == 0) {
+      return std::nullopt;
+    }
     return pairs_[domain_index_].second;
   }
-  bool HasExpires() const { return expires_index_ != 0; }
-  const std::string& Expires() const {
-    DCHECK(HasExpires());
+  std::optional<std::string_view> Expires() const {
+    if (expires_index_ == 0) {
+      return std::nullopt;
+    }
     return pairs_[expires_index_].second;
   }
-  bool HasMaxAge() const { return maxage_index_ != 0; }
-  const std::string& MaxAge() const {
-    DCHECK(HasMaxAge());
+  std::optional<std::string_view> MaxAge() const {
+    if (maxage_index_ == 0) {
+      return std::nullopt;
+    }
     return pairs_[maxage_index_].second;
   }
   bool IsSecure() const { return secure_index_ != 0; }
@@ -82,13 +87,8 @@ class NET_EXPORT ParsedCookie {
   CookieSameSite SameSite(
       CookieSameSiteString* samesite_string = nullptr) const;
   CookiePriority Priority() const;
-  bool IsSameParty() const { return same_party_index_ != 0; }
   bool IsPartitioned() const { return partitioned_index_ != 0; }
   bool HasInternalHtab() const { return internal_htab_; }
-  TruncatingCharacterInCookieStringType
-  GetTruncatingCharacterInCookieStringType() const {
-    return truncating_char_in_cookie_string_type_;
-  }
   // Returns the number of attributes, for example, returning 2 for:
   //   "BLAH=hah; path=/; domain=.google.com"
   size_t NumberOfAttributes() const { return pairs_.size() - 1; }
@@ -113,7 +113,6 @@ class NET_EXPORT ParsedCookie {
   bool SetIsHttpOnly(bool is_http_only);
   bool SetSameSite(const std::string& same_site);
   bool SetPriority(const std::string& priority);
-  bool SetIsSameParty(bool is_same_party);
   bool SetIsPartitioned(bool is_partitioned);
 
   // Returns the cookie description as it appears in a HTML response header.
@@ -121,7 +120,7 @@ class NET_EXPORT ParsedCookie {
 
   // Returns an iterator pointing to the first terminator character found in
   // the given string.
-  static std::string::const_iterator FindFirstTerminator(const std::string& s);
+  static std::string_view::iterator FindFirstTerminator(std::string_view s);
 
   // Given iterators pointing to the beginning and end of a string segment,
   // returns as output arguments token_start and token_end to the start and end
@@ -129,24 +128,24 @@ class NET_EXPORT ParsedCookie {
   // updates the segment iterator to point to the next segment to be parsed.
   // If no token is found, the function returns false and the segment iterator
   // is set to end.
-  static bool ParseToken(std::string::const_iterator* it,
-                         const std::string::const_iterator& end,
-                         std::string::const_iterator* token_start,
-                         std::string::const_iterator* token_end);
+  static bool ParseToken(std::string_view::iterator* it,
+                         const std::string_view::iterator& end,
+                         std::string_view::iterator* token_start,
+                         std::string_view::iterator* token_end);
 
   // Given iterators pointing to the beginning and end of a string segment,
   // returns as output arguments value_start and value_end to the start and end
   // positions of a cookie attribute value parsed from the segment, and updates
   // the segment iterator to point to the next segment to be parsed.
-  static void ParseValue(std::string::const_iterator* it,
-                         const std::string::const_iterator& end,
-                         std::string::const_iterator* value_start,
-                         std::string::const_iterator* value_end);
+  static void ParseValue(std::string_view::iterator* it,
+                         const std::string_view::iterator& end,
+                         std::string_view::iterator* value_start,
+                         std::string_view::iterator* value_end);
 
   // Same as the above functions, except the input is assumed to contain the
   // desired token/value and nothing else.
-  static std::string ParseTokenString(const std::string& token);
-  static std::string ParseValueString(const std::string& value);
+  static std::string ParseTokenString(std::string_view token);
+  static std::string ParseValueString(std::string_view value);
 
   // Returns |true| if the parsed version of |value| matches |value|.
   static bool ValueMatchesParsedValue(const std::string& value);
@@ -161,7 +160,7 @@ class NET_EXPORT ParsedCookie {
   static bool CookieAttributeValueHasValidCharSet(const std::string& value);
 
   // Is the string less than the size limits set for attribute values?
-  static bool CookieAttributeValueHasValidSize(const std::string& value);
+  static bool CookieAttributeValueHasValidSize(std::string_view value);
 
   // Returns `true` if the name and value combination are valid. Calls
   // IsValidCookieName() and IsValidCookieValue() on `name` and `value`
@@ -173,7 +172,7 @@ class NET_EXPORT ParsedCookie {
       CookieInclusionStatus* status_out = nullptr);
 
  private:
-  void ParseTokenValuePairs(const std::string& cookie_line,
+  void ParseTokenValuePairs(std::string_view cookie_line,
                             CookieInclusionStatus& status_out);
   void SetupAttributes();
 
@@ -209,10 +208,7 @@ class NET_EXPORT ParsedCookie {
   size_t httponly_index_ = 0;
   size_t same_site_index_ = 0;
   size_t priority_index_ = 0;
-  size_t same_party_index_ = 0;
   size_t partitioned_index_ = 0;
-  TruncatingCharacterInCookieStringType truncating_char_in_cookie_string_type_ =
-      TruncatingCharacterInCookieStringType::kTruncatingCharNone;
   // For metrics on cookie name/value internal HTABS
   bool internal_htab_ = false;
 };

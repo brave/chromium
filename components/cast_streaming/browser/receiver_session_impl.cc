@@ -11,7 +11,7 @@
 #include "components/cast_streaming/common/public/features.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/video_decoder_config.h"
-#include "third_party/openscreen/src/cast/streaming/receiver_constraints.h"
+#include "third_party/openscreen/src/cast/streaming/public/receiver_constraints.h"
 
 namespace cast_streaming {
 
@@ -32,7 +32,7 @@ ReceiverSessionImpl::ReceiverSessionImpl(
       av_constraints_(std::move(av_constraints)),
       client_(client),
       weak_factory_(this) {
-  // TODO(crbug.com/1218495): Validate the provided codecs against build flags.
+  // TODO(crbug.com/40771653): Validate the provided codecs against build flags.
   DCHECK(message_port_provider_);
 }
 
@@ -87,8 +87,8 @@ void ReceiverSessionImpl::OnReceiverEnabled() {
 
 void ReceiverSessionImpl::OnSessionInitialization(
     StreamingInitializationInfo initialization_info,
-    absl::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
-    absl::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer) {
+    std::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
+    std::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer) {
   DVLOG(1) << __func__;
   DCHECK_EQ(!!initialization_info.audio_stream_info, !!audio_pipe_consumer);
   DCHECK_EQ(!!initialization_info.video_stream_info, !!video_pipe_consumer);
@@ -136,7 +136,6 @@ void ReceiverSessionImpl::OnSessionInitialization(
                                            std::move(video_info));
 
   PreloadBuffersAndStartPlayback();
-  InformClientOfConfigChange();
 }
 
 void ReceiverSessionImpl::OnAudioBufferReceived(
@@ -164,8 +163,8 @@ void ReceiverSessionImpl::OnSessionReinitializationPending() {
 
 void ReceiverSessionImpl::OnSessionReinitialization(
     StreamingInitializationInfo initialization_info,
-    absl::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
-    absl::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer) {
+    std::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
+    std::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer) {
   DVLOG(1) << __func__;
   DCHECK(audio_pipe_consumer || video_pipe_consumer);
   DCHECK_EQ(!!audio_pipe_consumer, !!initialization_info.audio_stream_info);
@@ -202,20 +201,6 @@ void ReceiverSessionImpl::OnSessionReinitialization(
   }
 
   PreloadBuffersAndStartPlayback();
-  InformClientOfConfigChange();
-}
-
-void ReceiverSessionImpl::InformClientOfConfigChange() {
-  if (client_) {
-    if (audio_demuxer_stream_data_provider_) {
-      client_->OnAudioConfigUpdated(
-          audio_demuxer_stream_data_provider_->config());
-    }
-    if (video_demuxer_stream_data_provider_) {
-      client_->OnVideoConfigUpdated(
-          video_demuxer_stream_data_provider_->config());
-    }
-  }
 }
 
 void ReceiverSessionImpl::OnSessionEnded() {
@@ -231,6 +216,10 @@ void ReceiverSessionImpl::OnSessionEnded() {
 
   if (client_) {
     client_->OnStreamingSessionEnded();
+    // OnSessionEnded may be called multiple times. Avoid using client_ after
+    // OnstreamingSessionEnded has been called, since it may have been
+    // destroyed in the shutdown process.
+    client_ = nullptr;
   }
 }
 

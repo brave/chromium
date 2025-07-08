@@ -10,7 +10,6 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
@@ -41,7 +40,6 @@ bool IsGCMPermissionEnabled(const Extension* extension) {
 
 }  // namespace
 
-
 // static
 BrowserContextKeyedAPIFactory<ExtensionGCMAppHandler>*
 ExtensionGCMAppHandler::GetFactoryInstance() {
@@ -51,7 +49,7 @@ ExtensionGCMAppHandler::GetFactoryInstance() {
 ExtensionGCMAppHandler::ExtensionGCMAppHandler(content::BrowserContext* context)
     : profile_(Profile::FromBrowserContext(context)) {
   extension_registry_observation_.Observe(ExtensionRegistry::Get(profile_));
-  js_event_router_ = std::make_unique<extensions::GcmJsEventRouter>(profile_);
+  js_event_router_ = std::make_unique<GcmJsEventRouter>(profile_);
 }
 
 ExtensionGCMAppHandler::~ExtensionGCMAppHandler() = default;
@@ -72,8 +70,8 @@ void ExtensionGCMAppHandler::ShutdownHandler() {
 }
 
 void ExtensionGCMAppHandler::OnStoreReset() {
-  // TODO(crbug.com/661660): Notify the extension somehow that its registration
-  // was invalidated and deleted?
+  // TODO(crbug.com/40491756): Notify the extension somehow that its
+  // registration was invalidated and deleted?
 }
 
 void ExtensionGCMAppHandler::OnMessage(const std::string& app_id,
@@ -125,7 +123,7 @@ void ExtensionGCMAppHandler::OnExtensionUnloaded(
     // GCMAccountMapper, which is automatically added and removed by
     // GCMDriverDesktop.
     //
-    // Also note that the GCM message routing will not be interruptted during
+    // Also note that the GCM message routing will not be interrupted during
     // the update process since unloading and reloading extension are done in
     // the single function ExtensionService::AddExtension.
     AddDummyAppHandler();
@@ -136,7 +134,7 @@ void ExtensionGCMAppHandler::OnExtensionUnloaded(
                        weak_factory_.GetWeakPtr()));
   }
 
-  // When the extention is being uninstalled, it will be unloaded first. We
+  // When the extension is being uninstalled, it will be unloaded first. We
   // should not remove the app handler in this case and it will be handled
   // in OnExtensionUninstalled.
   if (reason != UnloadedExtensionReason::UNINSTALL)
@@ -146,7 +144,7 @@ void ExtensionGCMAppHandler::OnExtensionUnloaded(
 void ExtensionGCMAppHandler::OnExtensionUninstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    extensions::UninstallReason reason) {
+    UninstallReason reason) {
   if (IsGCMPermissionEnabled(extension)) {
     // Let's first remove InstanceID data. GCM unregistration will be triggered
     // after the asynchronous call is returned in OnDeleteIDCompleted.
@@ -181,10 +179,20 @@ void ExtensionGCMAppHandler::OnUnregisterCompleted(
 }
 
 void ExtensionGCMAppHandler::OnDeleteIDCompleted(
-    const std::string& app_id, instance_id::InstanceID::Result result) {
+    const std::string& app_id,
+    instance_id::InstanceID::Result result) {
+#if BUILDFLAG(IS_ANDROID)
+  // The server-side unregister API is deprecated, so don't try to unregister.
+  // TODO(crbug.com/421235963): Consider deprecating on other platforms.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&ExtensionGCMAppHandler::OnUnregisterCompleted,
+                                weak_factory_.GetWeakPtr(), app_id,
+                                gcm::GCMClient::UNKNOWN_ERROR));
+#else
   GetGCMDriver()->Unregister(
       app_id, base::BindOnce(&ExtensionGCMAppHandler::OnUnregisterCompleted,
                              weak_factory_.GetWeakPtr(), app_id));
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // InstanceIDDriver::RemoveInstanceID will delete the InstanceID itself.
   // Postpone to do it outside this calling context to avoid any risk to

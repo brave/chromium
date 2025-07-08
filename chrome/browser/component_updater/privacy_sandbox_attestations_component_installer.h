@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_COMPONENT_UPDATER_PRIVACY_SANDBOX_ATTESTATIONS_COMPONENT_INSTALLER_H_
 
 #include <cstdint>
-
 #include <string>
 #include <vector>
 
@@ -29,7 +28,7 @@ class PrivacySandboxAttestationsComponentInstallerPolicy
     : public ComponentInstallerPolicy {
  public:
   using AttestationsReadyRepeatingCallback =
-      base::RepeatingCallback<void(base::Version, base::FilePath)>;
+      base::RepeatingCallback<void(base::Version, base::FilePath, bool)>;
 
   // Once the attestations file is ready, `ComponentReady` will be invoked on
   // the UI thread, which in turn invokes `on_attestations_ready_`.
@@ -42,28 +41,25 @@ class PrivacySandboxAttestationsComponentInstallerPolicy
   PrivacySandboxAttestationsComponentInstallerPolicy operator=(
       const PrivacySandboxAttestationsComponentInstallerPolicy&) = delete;
 
+  // Forward the call to private member function `ComponentReady()`. Only used
+  // in tests.
+  void ComponentReadyForTesting(const base::Version& version,
+                                const base::FilePath& install_dir,
+                                base::Value::Dict manifest);
+
+  // Get the installation path to the attestations list file.
+  static base::FilePath GetInstalledFilePath(const base::FilePath& base);
+
+  // Get the installation folder directory.
+  static base::FilePath GetInstalledDirectory(const base::FilePath& base);
+
  private:
-  FRIEND_TEST_ALL_PREFIXES(
-      PrivacySandboxAttestationsInstallerFeatureDisabledTest,
-      DeleteExistingFilesIfFeatureDisabled);
   FRIEND_TEST_ALL_PREFIXES(
       PrivacySandboxAttestationsInstallerFeatureEnabledTest,
       VerifyInstallation);
   FRIEND_TEST_ALL_PREFIXES(
       PrivacySandboxAttestationsInstallerFeatureEnabledTest,
       OnCustomInstall);
-  FRIEND_TEST_ALL_PREFIXES(
-      PrivacySandboxAttestationsInstallerFeatureEnabledTest,
-      InvokeOnAttestationsReadyCallbackOnComponentReady);
-  FRIEND_TEST_ALL_PREFIXES(
-      PrivacySandboxAttestationsInstallerFeatureEnabledTest,
-      DoNotInvokeOnAttestationsReadyCallbackIfInvalidVersion);
-  FRIEND_TEST_ALL_PREFIXES(
-      PrivacySandboxAttestationsInstallerFeatureEnabledTest,
-      DoNotInvokeOnAttestationsReadyCallbackIfEmptyPath);
-  FRIEND_TEST_ALL_PREFIXES(
-      PrivacySandboxAttestationsInstallerFeatureEnabledTest,
-      CallLoadNewAttestationsFile);
 
   // The following methods override `ComponentInstallerPolicy`.
   bool VerifyInstallation(const base::Value::Dict& manifest,
@@ -81,9 +77,6 @@ class PrivacySandboxAttestationsComponentInstallerPolicy
   void GetHash(std::vector<uint8_t>* hash) const override;
   std::string GetName() const override;
   update_client::InstallerAttributes GetInstallerAttributes() const override;
-
-  static base::FilePath GetInstalledDirectory(const base::FilePath& base);
-  static base::FilePath GetInstalledPath(const base::FilePath& base);
 
   // Upon newer version of attestations file becomes ready, the callback is
   // invoked to update the existing in-memory attestations map. So this is a

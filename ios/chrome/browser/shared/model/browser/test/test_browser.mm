@@ -4,42 +4,70 @@
 
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 
+#import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser_observer.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/fake_web_state_list_delegate.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/chrome/browser/snapshots/model/snapshot_browser_agent.h"
 
 TestBrowser::TestBrowser(
-    ChromeBrowserState* browser_state,
-    std::unique_ptr<WebStateListDelegate> web_state_list_delegate)
-    : browser_state_(browser_state),
+    ProfileIOS* profile,
+    SceneState* scene_state,
+    std::unique_ptr<WebStateListDelegate> web_state_list_delegate,
+    Type type)
+    : type_(type),
+      profile_(profile),
+      scene_state_(scene_state),
       web_state_list_delegate_(std::move(web_state_list_delegate)),
       command_dispatcher_([[CommandDispatcher alloc] init]) {
-  DCHECK(browser_state_);
+  DCHECK(profile_);
   DCHECK(web_state_list_delegate_);
   web_state_list_ =
       std::make_unique<WebStateList>(web_state_list_delegate_.get());
 }
 
-TestBrowser::TestBrowser(ChromeBrowserState* browser_state)
-    : TestBrowser(browser_state, std::make_unique<FakeWebStateListDelegate>()) {
-}
+TestBrowser::TestBrowser(ProfileIOS* profile, SceneState* scene_state)
+    : TestBrowser(
+          profile,
+          scene_state,
+          std::make_unique<FakeWebStateListDelegate>(),
+          profile->IsOffTheRecord() ? Type::kIncognito : Type::kRegular) {}
+
+TestBrowser::TestBrowser(
+    ProfileIOS* profile,
+    std::unique_ptr<WebStateListDelegate> web_state_list_delegate)
+    : TestBrowser(
+          profile,
+          nil,
+          std::move(web_state_list_delegate),
+          profile->IsOffTheRecord() ? Type::kIncognito : Type::kRegular) {}
+
+TestBrowser::TestBrowser(ProfileIOS* profile)
+    : TestBrowser(
+          profile,
+          nil,
+          std::make_unique<FakeWebStateListDelegate>(),
+          profile->IsOffTheRecord() ? Type::kIncognito : Type::kRegular) {}
 
 TestBrowser::~TestBrowser() {
+  // Ensure all WebStates are closed before destroying the Browser.
+  CloseAllWebStates(*web_state_list_, WebStateList::CLOSE_NO_FLAGS);
   for (auto& observer : observers_) {
     observer.BrowserDestroyed(this);
   }
+  ClearAllUserData();
 }
 
 #pragma mark - Browser
 
-ChromeBrowserState* TestBrowser::GetBrowserState() {
-  return browser_state_;
+Browser::Type TestBrowser::type() const {
+  return type_;
+}
+
+ProfileIOS* TestBrowser::GetProfile() {
+  return profile_;
 }
 
 WebStateList* TestBrowser::GetWebStateList() {
@@ -48,6 +76,10 @@ WebStateList* TestBrowser::GetWebStateList() {
 
 CommandDispatcher* TestBrowser::GetCommandDispatcher() {
   return command_dispatcher_;
+}
+
+SceneState* TestBrowser::GetSceneState() {
+  return scene_state_;
 }
 
 void TestBrowser::AddObserver(BrowserObserver* observer) {
@@ -63,7 +95,7 @@ base::WeakPtr<Browser> TestBrowser::AsWeakPtr() {
 }
 
 bool TestBrowser::IsInactive() const {
-  return false;
+  return type_ == Type::kInactive;
 }
 
 Browser* TestBrowser::GetActiveBrowser() {
@@ -75,9 +107,20 @@ Browser* TestBrowser::GetInactiveBrowser() {
 }
 
 Browser* TestBrowser::CreateInactiveBrowser() {
-  NOTREACHED_NORETURN();
+  CHECK_EQ(type_, Type::kRegular);
+  inactive_browser_ = std::make_unique<TestBrowser>(
+      profile_, scene_state_, std::make_unique<FakeWebStateListDelegate>(),
+      Type::kInactive);
+  SnapshotBrowserAgent::CreateForBrowser(inactive_browser_.get());
+  SnapshotBrowserAgent::FromBrowser(inactive_browser_.get())
+      ->SetSessionID("some_id");
+  return inactive_browser_.get();
 }
 
 void TestBrowser::DestroyInactiveBrowser() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
+}
+
+void TestBrowser::SetCommandDispatcher(CommandDispatcher* dispatcher) {
+  command_dispatcher_ = dispatcher;
 }

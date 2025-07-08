@@ -16,10 +16,10 @@
 //
 //  Operating System:
 //    IS_AIX / IS_ANDROID / IS_ASMJS / IS_CHROMEOS / IS_FREEBSD / IS_FUCHSIA /
-//    IS_IOS / IS_IOS_MACCATALYST / IS_LINUX / IS_MAC / IS_NACL / IS_NETBSD /
-//    IS_OPENBSD / IS_QNX / IS_SOLARIS / IS_WIN
+//    IS_IOS / IS_IOS_MACCATALYST / IS_IOS_TVOS / IS_LINUX / IS_MAC / IS_NACL /
+//    IS_NETBSD / IS_OPENBSD / IS_QNX / IS_SOLARIS / IS_WATCHOS / IS_WIN
 //  Operating System family:
-//    IS_APPLE: IOS or MAC or IOS_MACCATALYST
+//    IS_APPLE: IOS or MAC or IOS_MACCATALYST or IOS_TVOS or WATCHOS
 //    IS_BSD: FREEBSD or NETBSD or OPENBSD
 //    IS_POSIX: AIX or ANDROID or ASMJS or CHROMEOS or FREEBSD or IOS or LINUX
 //              or MAC or NACL or NETBSD or OPENBSD or QNX or SOLARIS
@@ -54,6 +54,11 @@
 
 #include "build/buildflag.h"  // IWYU pragma: export
 
+// Clangd does not detect BUILDFLAG_INTERNAL_* indirect usage, so mark the
+// header as "always_keep" to avoid "unused include" warning.
+//
+// IWYU pragma: always_keep
+
 // A set of macros to use for platform detection.
 #if defined(__native_client__)
 // __native_client__ must be first, so that other OS_ defines are not set.
@@ -72,6 +77,12 @@
 #if defined(TARGET_OS_MACCATALYST) && TARGET_OS_MACCATALYST
 #define OS_IOS_MACCATALYST
 #endif  // defined(TARGET_OS_MACCATALYST) && TARGET_OS_MACCATALYST
+#if defined(TARGET_OS_TV) && TARGET_OS_TV
+#define OS_IOS_TVOS 1
+#endif  // defined(TARGET_OS_TV) && TARGET_OS_TV
+#if defined(TARGET_OS_WATCH) && TARGET_OS_WATCH
+#define OS_WATCHOS 1
+#endif  // defined(TARGET_OS_WATCH) && TARGET_OS_WATCH
 #else
 #define OS_MAC 1
 #endif  // defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
@@ -194,6 +205,12 @@
 #define BUILDFLAG_INTERNAL_IS_IOS_MACCATALYST() (0)
 #endif
 
+#if defined(OS_IOS_TVOS)
+#define BUILDFLAG_INTERNAL_IS_IOS_TVOS() (1)
+#else
+#define BUILDFLAG_INTERNAL_IS_IOS_TVOS() (0)
+#endif
+
 #if defined(OS_LINUX)
 #define BUILDFLAG_INTERNAL_IS_LINUX() (1)
 #else
@@ -240,6 +257,12 @@
 #define BUILDFLAG_INTERNAL_IS_SOLARIS() (1)
 #else
 #define BUILDFLAG_INTERNAL_IS_SOLARIS() (0)
+#endif
+
+#if defined(OS_WATCHOS)
+#define BUILDFLAG_INTERNAL_IS_WATCHOS() (1)
+#else
+#define BUILDFLAG_INTERNAL_IS_WATCHOS() (0)
 #endif
 
 #if defined(OS_WIN)
@@ -356,19 +379,19 @@
 
 // Type detection for wchar_t.
 #if defined(OS_WIN)
-#define WCHAR_T_IS_UTF16
+#define WCHAR_T_IS_16_BIT
 #elif defined(OS_FUCHSIA)
-#define WCHAR_T_IS_UTF32
+#define WCHAR_T_IS_32_BIT
 #elif defined(OS_POSIX) && defined(COMPILER_GCC) && defined(__WCHAR_MAX__) && \
     (__WCHAR_MAX__ == 0x7fffffff || __WCHAR_MAX__ == 0xffffffff)
-#define WCHAR_T_IS_UTF32
+#define WCHAR_T_IS_32_BIT
 #elif defined(OS_POSIX) && defined(COMPILER_GCC) && defined(__WCHAR_MAX__) && \
     (__WCHAR_MAX__ == 0x7fff || __WCHAR_MAX__ == 0xffff)
 // On Posix, we'll detect short wchar_t, but projects aren't guaranteed to
 // compile in this mode (in particular, Chrome doesn't). This is intended for
 // other projects using base who manage their own dependencies and make sure
 // short wchar works for them.
-#define WCHAR_T_IS_UTF16
+#define WCHAR_T_IS_16_BIT
 #else
 #error Please add support for your compiler in build/build_config.h
 #endif
@@ -380,6 +403,26 @@
 // The compiler thinks std::u16string::const_iterator and "char16*" are
 // equivalent types.
 #define BASE_STRING16_ITERATOR_IS_CHAR16_POINTER
+#endif
+
+// Architecture-specific feature detection.
+
+#if !defined(CPU_ARM_NEON)
+#if defined(ARCH_CPU_ARM_FAMILY) && \
+    (defined(__ARM_NEON__) || defined(__ARM_NEON))
+#define CPU_ARM_NEON 1
+#endif
+#endif  // !defined(CPU_ARM_NEON)
+
+// Sanity check.
+#if defined(ARCH_CPU_ARM64) && !defined(CPU_ARM_NEON)
+#error "AArch64 mandates NEON, should be detected"
+#endif
+
+#if !defined(HAVE_MIPS_MSA_INTRINSICS)
+#if defined(__mips_msa) && defined(__mips_isa_rev) && (__mips_isa_rev >= 5)
+#define HAVE_MIPS_MSA_INTRINSICS 1
+#endif
 #endif
 
 #endif  // BUILD_BUILD_CONFIG_H_

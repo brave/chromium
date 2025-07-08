@@ -9,6 +9,7 @@
 #include "base/path_service.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
@@ -26,9 +27,6 @@
 #include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
-#include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_features.h"
@@ -46,8 +44,6 @@
 #include "content/public/browser/browser_child_process_host.h"
 #endif  // BUILDFLAG(IS_MAC)
 
-using content::RenderViewHost;
-using content::RenderWidgetHost;
 using content::WebContents;
 
 namespace {
@@ -57,18 +53,13 @@ int RenderProcessHostCount() {
 }
 
 WebContents* FindFirstDevToolsContents() {
-  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
-      RenderWidgetHost::GetRenderWidgetHosts());
-  while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
-    if (!widget->GetProcess()->IsInitializedAndNotDead())
-      continue;
-    RenderViewHost* view_host = RenderViewHost::From(widget);
-    if (!view_host)
-      continue;
-    WebContents* contents = WebContents::FromRenderViewHost(view_host);
-    GURL url = contents->GetURL();
-    if (url.SchemeIs(content::kChromeDevToolsScheme))
-      return contents;
+  for (content::WebContents* web_contents : content::GetAllWebContents()) {
+    if (web_contents->GetURL().SchemeIs(content::kChromeDevToolsScheme) &&
+        web_contents->GetPrimaryMainFrame()
+            ->GetProcess()
+            ->IsInitializedAndNotDead()) {
+      return web_contents;
+    }
   }
   return nullptr;
 }
@@ -89,13 +80,14 @@ base::Process ProcessFromHandle(base::ProcessHandle handle) {
   return base::Process(handle);
 }
 
-// Returns true if `process` is backgrounded.
+// Returns true if the priority of `process` is kBestEffort.
 bool IsProcessBackgrounded(const base::Process& process) {
 #if BUILDFLAG(IS_MAC)
-  return process.IsProcessBackgrounded(
-      content::BrowserChildProcessHost::GetPortProvider());
+  return process.GetPriority(
+             content::BrowserChildProcessHost::GetPortProvider()) ==
+         base::Process::Priority::kBestEffort;
 #else
-  return process.IsProcessBackgrounded();
+  return process.GetPriority() == base::Process::Priority::kBestEffort;
 #endif
 }
 
@@ -103,7 +95,7 @@ bool IsProcessBackgrounded(const base::Process& process) {
 
 class ChromeRenderProcessHostTest : public extensions::ExtensionBrowserTest {
  public:
-  ChromeRenderProcessHostTest() {}
+  ChromeRenderProcessHostTest() = default;
 
   ChromeRenderProcessHostTest(const ChromeRenderProcessHostTest&) = delete;
   ChromeRenderProcessHostTest& operator=(const ChromeRenderProcessHostTest&) =
@@ -278,13 +270,7 @@ class ChromeRenderProcessHostTestWithCommandLine
   }
 };
 
-// TODO(crbug.com/1241506): Enable this test on macOS after the issue is fixed.
-#if BUILDFLAG(IS_MAC)
-#define MAYBE_ProcessPerTab DISABLED_ProcessPerTab
-#else
-#define MAYBE_ProcessPerTab ProcessPerTab
-#endif
-IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
+IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, ProcessPerTab) {
   // Set max renderers to 1 to force running out of processes.
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
 
@@ -314,9 +300,12 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
 
   // Create a new normal tab with a data URL.  It should be in its own process.
   GURL page1("data:text/html,hello world1");
+  content::TestNavigationObserver navigation_observer1(page1);
+  navigation_observer1.StartWatchingNewWebContents();
   ui_test_utils::TabAddedWaiter add_tab1(browser());
   ::ShowSingletonTab(browser(), page1);
   add_tab1.Wait();
+  navigation_observer1.Wait();
   tab_count++;
   host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
@@ -325,9 +314,12 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
   // Create another data URL tab.  With Site Isolation, this will require its
   // own process, but without Site Isolation, it can share the previous process.
   GURL page2("data:text/html,hello world2");
+  content::TestNavigationObserver navigation_observer2(page2);
+  navigation_observer2.StartWatchingNewWebContents();
   ui_test_utils::TabAddedWaiter add_tab2(browser());
   ::ShowSingletonTab(browser(), page2);
   add_tab2.Wait();
+  navigation_observer2.Wait();
   tab_count++;
   if (content::AreAllSitesIsolatedForTesting())
     host_count++;
@@ -391,9 +383,10 @@ class ChromeRenderProcessHostBackgroundingTest
   void VerifyProcessPriority(content::RenderProcessHost* process,
                              bool expected_is_backgrounded) {
     EXPECT_TRUE(process->IsInitializedAndNotDead());
-    EXPECT_EQ(expected_is_backgrounded, process->IsProcessBackgrounded());
+    EXPECT_EQ(expected_is_backgrounded,
+              process->GetPriority() == base::Process::Priority::kBestEffort);
 
-    if (base::Process::CanBackgroundProcesses()) {
+    if (base::Process::CanSetPriority()) {
       base::Process p = ProcessFromHandle(process->GetProcess().Handle());
       ASSERT_TRUE(p.IsValid());
       EXPECT_EQ(expected_is_backgrounded, IsProcessBackgrounded(p));
@@ -525,7 +518,8 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   DCHECK(devtools);
 
   // DevTools start in a separate process.
-  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect());
+  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect(),
+                                     DevToolsOpenedByAction::kUnknown);
   host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
@@ -565,7 +559,8 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   DCHECK(devtools);
 
   // DevTools start in a separate process.
-  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect());
+  DevToolsWindow::OpenDevToolsWindow(devtools, DevToolsToggleAction::Inspect(),
+                                     DevToolsOpenedByAction::kUnknown);
   host_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
   EXPECT_EQ(host_count, RenderProcessHostCount());
@@ -645,8 +640,17 @@ class ChromeRenderProcessHostBackgroundingTestWithAudio
     : public ChromeRenderProcessHostTest {
  public:
   ChromeRenderProcessHostBackgroundingTestWithAudio() {
-    // Tests require that each tab has a different process.
-    feature_list_.InitAndEnableFeature(features::kDisableProcessReuse);
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {
+          // Tests require that each tab has a different process.
+          features::kDisableProcessReuse,
+#if BUILDFLAG(IS_MAC)
+          // Tests require that backgrounding processes is possible.
+          features::kMacAllowBackgroundingRenderProcesses,
+#endif
+        },
+        /*disabled_features=*/{});
   }
 
   ChromeRenderProcessHostBackgroundingTestWithAudio(
@@ -668,7 +672,8 @@ class ChromeRenderProcessHostBackgroundingTestWithAudio
 
     // Set up the server and get the test pages.
     base::FilePath test_data_dir;
-    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+    ASSERT_TRUE(
+        base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir));
     embedded_test_server()->ServeFilesFromDirectory(
         test_data_dir.AppendASCII("chrome/test/data/"));
     audio_url_ = embedded_test_server()->GetURL("/extensions/loop_audio.html");
@@ -701,11 +706,10 @@ class ChromeRenderProcessHostBackgroundingTestWithAudio
                              bool lhs_backgrounded,
                              const base::Process& rhs,
                              bool rhs_backgrounded) {
-    while (IsProcessBackgrounded(lhs) != lhs_backgrounded ||
-           IsProcessBackgrounded(rhs) != rhs_backgrounded) {
-      base::RunLoop().RunUntilIdle();
-      base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
-    }
+    EXPECT_TRUE(base::test::RunUntil([&]() {
+      return IsProcessBackgrounded(lhs) == lhs_backgrounded &&
+             IsProcessBackgrounded(rhs) == rhs_backgrounded;
+    }));
   }
 
   GURL audio_url_;
@@ -725,9 +729,10 @@ class ChromeRenderProcessHostBackgroundingTestWithAudio
 // from the active tab and there is an immediate tab switch.
 IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostBackgroundingTestWithAudio,
                        ProcessPriorityAfterStoppedAudio) {
-  // This test is invalid on platforms that can't background.
-  if (!base::Process::CanBackgroundProcesses())
+  // This test is invalid on platforms that can't set priority.
+  if (!base::Process::CanSetPriority()) {
     return;
+  }
 
   ShowSingletonTab(audio_url_);
 
@@ -749,9 +754,10 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostBackgroundingTestWithAudio,
 // stops playing from a hidden tab.
 IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostBackgroundingTestWithAudio,
                        ProcessPriorityAfterAudioStopsOnNotVisibleTab) {
-  // This test is invalid on platforms that can't background.
-  if (!base::Process::CanBackgroundProcesses())
+  // This test is invalid on platforms that can't set priority.
+  if (!base::Process::CanSetPriority()) {
     return;
+  }
 
   // Wait until the two pages are not backgrounded.
   WaitUntilBackgrounded(audio_process_, false, no_audio_process_, false);
@@ -771,8 +777,9 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostBackgroundingTestWithAudio,
 IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostBackgroundingTestWithAudio,
                        ProcessPriorityAfterAudioStartsFromBackgroundTab) {
   // This test is invalid on platforms that can't background.
-  if (!base::Process::CanBackgroundProcesses())
+  if (!base::Process::CanSetPriority()) {
     return;
+  }
 
   // Stop the audio.
   ASSERT_TRUE(

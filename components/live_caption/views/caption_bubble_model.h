@@ -7,22 +7,33 @@
 
 #include <string>
 
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/types/id_type.h"
 
 namespace captions {
+
+// This feature enables scrollability in Live Caption.
+BASE_DECLARE_FEATURE(kLiveCaptionScrollable);
+
+// This parameter sets maximum number of lines in the text,
+// if scrollability is enabled.
+BASE_DECLARE_FEATURE_PARAM(size_t, kLiveCaptionScrollableMaxLines);
 
 class CaptionBubble;
 class CaptionBubbleContext;
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
+// LINT.IfChange(CaptionBubbleErrorType)
 enum CaptionBubbleErrorType {
   kGeneric = 0,
   kMediaFoundationRendererUnsupported = 1,
   kMaxValue = kMediaFoundationRendererUnsupported
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:CaptionBubbleErrorType)
 
 using OnErrorClickedCallback = base::RepeatingCallback<void()>;
 using OnDoNotShowAgainClickedCallback =
@@ -65,22 +76,27 @@ class CaptionBubbleModel {
   void SetObserver(CaptionBubble* observer);
   void RemoveObserver();
 
-  // Set the partial text and alert the observer.
+  // Sets the partial text and alerts the observer.
   void SetPartialText(const std::string& partial_text);
+
+  // Sets the download progress label and alerts the observer.
+  void SetDownloadProgressText(const std::u16string& download_progress_text);
+
+  // Notifies the observer that a language pack was installed.
+  void OnLanguagePackInstalled();
 
   // Commits the partial text as final text.
   void CommitPartialText();
 
-  // Set that the bubble has an error and alert the observer.
+  // Sets that the bubble has an error and alert the observer.
   void OnError(CaptionBubbleErrorType error_type,
                OnErrorClickedCallback error_clicked_callback,
                OnDoNotShowAgainClickedCallback error_silenced_callback);
 
-  // Mark the bubble as closed.
+  // Marks the bubble as closed.
   void CloseButtonPressed();
 
-  // Clear the partial and final text, and alert the
-  // observer.
+  // Clears the partial and final text and alerts the observer.
   void Close();
 
   // Clears the partial and final text and alerts the observer.
@@ -89,8 +105,11 @@ class CaptionBubbleModel {
   bool IsClosed() const { return is_closed_; }
   bool HasError() const { return has_error_; }
   CaptionBubbleErrorType ErrorType() const { return error_type_; }
-  std::string GetFullText() const { return final_text_ + partial_text_; }
+  std::string GetFullText() const;
   CaptionBubbleContext* GetContext() { return context_; }
+  std::u16string GetDownloadProgressText() const {
+    return download_progress_text_;
+  }
 
   // Returns the auto-detected language code or an empty string if the language
   // was not automatically switched.
@@ -117,6 +136,7 @@ class CaptionBubbleModel {
 
   std::string final_text_;
   std::string partial_text_;
+  std::u16string download_progress_text_;
 
   std::string auto_detected_language_code_ = std::string();
 
@@ -133,6 +153,10 @@ class CaptionBubbleModel {
   raw_ptr<CaptionBubble, DanglingUntriaged> observer_ = nullptr;
 
   OnCaptionBubbleClosedCallback caption_bubble_closed_callback_;
+
+  // Used to calculate and log the amount of flickering between partial results.
+  int erasure_count_ = 0;
+  int partial_result_count_ = 0;
 
   const raw_ptr<CaptionBubbleContext, DanglingUntriaged> context_;
 };

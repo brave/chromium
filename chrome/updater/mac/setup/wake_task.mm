@@ -6,8 +6,10 @@
 
 #include <Foundation/Foundation.h>
 
+#include <optional>
+
+#include "base/apple/foundation_util.h"
 #include "base/files/file_path.h"
-#include "base/mac/foundation_util.h"
 #include "base/strings/strcat.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/updater/constants.h"
@@ -15,11 +17,6 @@
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/util/mac_util.h"
 #include "chrome/updater/util/util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace updater {
 
@@ -43,10 +40,10 @@ NSString* MakeProgramArgumentWithValue(const char* argument,
   return base::SysUTF8ToNSString(base::StrCat({"--", argument, "=", value}));
 }
 
-absl::optional<base::FilePath> GetWakeTaskTarget(UpdaterScope scope) {
-  absl::optional<base::FilePath> install_dir = GetInstallDirectory(scope);
+std::optional<base::FilePath> GetWakeTaskTarget(UpdaterScope scope) {
+  std::optional<base::FilePath> install_dir = GetInstallDirectory(scope);
   if (!install_dir) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return install_dir->Append("Current").Append(GetExecutableRelativePath());
 }
@@ -54,12 +51,16 @@ absl::optional<base::FilePath> GetWakeTaskTarget(UpdaterScope scope) {
 }  // namespace
 
 NSDictionary* CreateWakeLaunchdPlist(UpdaterScope scope) {
-  absl::optional<base::FilePath> target = GetWakeTaskTarget(scope);
+  std::optional<base::FilePath> target = GetWakeTaskTarget(scope);
   if (!target) {
     return nil;
   }
 
   // See the man page for launchd.plist.
+  // Explicitly logging switches are no longer necessary but are not removed
+  // because updating the plist file could cause a popup on newer macOS. We
+  // can remove the logging switches the next time when we have to change the
+  // plist file.
   NSMutableArray<NSString*>* program_arguments =
       [NSMutableArray<NSString*> array];
   [program_arguments addObjectsFromArray:@[
@@ -73,12 +74,16 @@ NSDictionary* CreateWakeLaunchdPlist(UpdaterScope scope) {
     [program_arguments addObject:MakeProgramArgument(kSystemSwitch)];
   }
 
+  NSArray<NSString*>* associated_ids =
+      @[ base::SysUTF8ToNSString(MAC_BUNDLE_IDENTIFIER_STRING) ];
+
   NSDictionary<NSString*, id>* launchd_plist = @{
     @LAUNCH_JOBKEY_LABEL : base::SysUTF8ToNSString(GetWakeLaunchdName(scope)),
     @LAUNCH_JOBKEY_PROGRAMARGUMENTS : program_arguments,
     @LAUNCH_JOBKEY_STARTINTERVAL : @3600,
     @LAUNCH_JOBKEY_ABANDONPROCESSGROUP : @YES,
-    @LAUNCH_JOBKEY_LIMITLOADTOSESSIONTYPE : NSStringSessionType(scope)
+    @LAUNCH_JOBKEY_LIMITLOADTOSESSIONTYPE : NSStringSessionType(scope),
+    @LAUNCH_JOBKEY_ASSOCIATEDBUNDLEIDENTIFIERS : associated_ids
   };
 
   return launchd_plist;

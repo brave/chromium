@@ -7,6 +7,9 @@
 
 #include <linux/videodev2.h>
 
+#include "base/atomic_ref_count.h"
+#include "base/containers/flat_map.h"
+#include "base/containers/queue.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -16,11 +19,15 @@
 #include "media/gpu/media_gpu_export.h"
 
 namespace base {
-class SequencedTaskRunner;
+class Location;
+class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace media {
 
+class H264FrameReassembler;
+class H264Parser;
+class V4L2FrameRateControl;
 class V4L2Queue;
 
 // V4L2StatefulVideoDecoder is an implementation of VideoDecoderMixin
@@ -43,14 +50,12 @@ class MEDIA_GPU_EXPORT V4L2StatefulVideoDecoder : public VideoDecoderMixin {
       scoped_refptr<base::SequencedTaskRunner> task_runner,
       base::WeakPtr<VideoDecoderMixin::Client> client);
 
-  static absl::optional<SupportedVideoDecoderConfigs> GetSupportedConfigs();
-
   // VideoDecoderMixin implementation, VideoDecoder part.
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
                   InitCB init_cb,
-                  const OutputCB& output_cb,
+                  const PipelineOutputCB& output_cb,
                   const WaitingCB& waiting_cb) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
   void Reset(base::OnceClosure reset_cb) override;
@@ -64,15 +69,15 @@ class MEDIA_GPU_EXPORT V4L2StatefulVideoDecoder : public VideoDecoderMixin {
   size_t GetMaxOutputFramePoolSize() const override;
   void SetDmaIncoherentV4L2(bool incoherent) override;
 
+  static int GetMaxNumDecoderInstancesForTesting() {
+    return GetMaxNumDecoderInstances();
+  }
+
  private:
   V4L2StatefulVideoDecoder(std::unique_ptr<MediaLog> media_log,
                            scoped_refptr<base::SequencedTaskRunner> task_runner,
                            base::WeakPtr<VideoDecoderMixin::Client> client);
   ~V4L2StatefulVideoDecoder() override;
-
-  // Checks whether there is a pending V4L2_EVENT_SOURCE_CHANGE in |device_fd_|,
-  // returning true if so, or false if there's no event or any error.
-  bool PollOnceForResolutionChangeEvent();
 
   // Tries to create, configure and fill |CAPTURE_queue_|. This method, which
   // should be called after PollOnceForResolutionChangeEvent() has returned
@@ -95,8 +100,9 @@ class MEDIA_GPU_EXPORT V4L2StatefulVideoDecoder : public VideoDecoderMixin {
   // default, conservative value).
   size_t GetNumberOfReferenceFrames();
 
-  // Convenience method to PostTask a wait for a |CAPTURE_queue_| event with a
-  // callback pointing to TryAndDequeueCAPTUREQueueBuffers().
+  // Convenience method to PostTask a wait for a |CAPTURE_queue_| event with
+  // callbacks pointing to TryAndDequeueCAPTUREQueueBuffers() (for data
+  // available) and InitializeCAPTUREQueue() (for re/configuration events).
   void RearmCAPTUREQueueMonitoring();
   // Dequeues all the available |CAPTURE_queue_| buffers and sends their
   // associated VideoFrames to |output_cb_|. If all goes well, it will
@@ -109,17 +115,58 @@ class MEDIA_GPU_EXPORT V4L2StatefulVideoDecoder : public VideoDecoderMixin {
   // CAPTURE queue (V4L2Queues don't do that by default upon allocation).
   void TryAndEnqueueCAPTUREQueueBuffers();
 
+  // Dequeues all the available |OUTPUT_queue_| buffers. This will effectively
+  // make those available for sending further encoded chunks to the driver.
+  // Returns false if any ioctl fails, true otherwise.
+  bool DrainOUTPUTQueue();
+
+  // Tries to "enqueue" all encoded chunks in |decoder_buffer_and_callbacks_|
+  // in |OUTPUT_queue_|, Run()nning their respective DecodeCBs. Returns false if
+  // any enqueueing operation's ioctl fails, true otherwise.
+  bool TryAndEnqueueOUTPUTQueueBuffers();
+
+  // Prints a VLOG with the state of |OUTPUT_queue| and |CAPTURE_queue_| for
+  // debugging, preceded with |from_here|s function name. Also TRACEs the
+  // queues' state.
+  void PrintAndTraceQueueStates(const base::Location& from_here);
+
+  // Returns true if this class has successfully Initialize()d.
+  bool IsInitialized() const;
+
+  // Pages with multiple decoder instances might run out of memory (e.g.
+  // b/170870476) or crash (e.g. crbug.com/1109312). this class method provides
+  // that number to prevent that erroneous behaviour during Initialize().
+  static int GetMaxNumDecoderInstances();
+  // Tracks the number of decoder instances globally in the process.
+  static base::AtomicRefCount num_decoder_instances_;
+
   base::ScopedFD device_fd_ GUARDED_BY_CONTEXT(sequence_checker_);
   // This |wake_event_| is used to interrupt a blocking poll() call, such as the
   // one started by e.g. RearmCAPTUREQueueMonitoring().
   base::ScopedFD wake_event_ GUARDED_BY_CONTEXT(sequence_checker_);
 
+  // VideoDecoderConfigs supported by the driver. Cached on first Initialize().
+  SupportedVideoDecoderConfigs supported_configs_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
   // Bitstream information and other stuff collected during Initialize().
-  VideoCodecProfile profile_ GUARDED_BY_CONTEXT(sequence_checker_) =
-      VIDEO_CODEC_PROFILE_UNKNOWN;
-  VideoAspectRatio aspect_ratio_ GUARDED_BY_CONTEXT(sequence_checker_);
-  OutputCB output_cb_ GUARDED_BY_CONTEXT(sequence_checker_);
+  VideoDecoderConfig config_ GUARDED_BY_CONTEXT(sequence_checker_);
+  PipelineOutputCB output_cb_ GUARDED_BY_CONTEXT(sequence_checker_);
   DecodeCB flush_cb_ GUARDED_BY_CONTEXT(sequence_checker_);
+  // Set to true when the driver identifies itself as a Mediatek 8173.
+  bool is_mtk8173_ GUARDED_BY_CONTEXT(sequence_checker_) = false;
+
+  // Used only on V4L2_MEMORY_MMAP queues (e.g. Hana MT8173) to grab the visible
+  // rectangle upon |CAPTURE_queue_| configuration in InitializeCAPTUREQueue().
+  gfx::Rect visible_rect_;
+
+  // Map of enqueuing timecodes to system timestamp, for histogramming purposes.
+  base::flat_map<int64_t, base::TimeTicks> encoding_timestamps_;
+
+  // Holds pairs of encoded chunk (DecoderBuffer) and associated DecodeCB for
+  // decoding via TryAndEnqueueOUTPUTQueueBuffers().
+  base::queue<std::pair<scoped_refptr<DecoderBuffer>, DecodeCB>>
+      decoder_buffer_and_callbacks_;
 
   // OUTPUT in V4L2 terminology is the queue holding encoded chunks of
   // bitstream. CAPTURE is the queue holding decoded pictures. See e.g. [1].
@@ -127,21 +174,30 @@ class MEDIA_GPU_EXPORT V4L2StatefulVideoDecoder : public VideoDecoderMixin {
   scoped_refptr<V4L2Queue> OUTPUT_queue_ GUARDED_BY_CONTEXT(sequence_checker_);
   scoped_refptr<V4L2Queue> CAPTURE_queue_ GUARDED_BY_CONTEXT(sequence_checker_);
 
+  // Some drivers, e.g. QC SC7180, require the client to inform the driver of
+  // the framerate (to tweak internal resources).
+  std::unique_ptr<V4L2FrameRateControl> framerate_control_;
+
   // A sequenced TaskRunner to wait for events coming from |CAPTURE_queue_| or
   // |wake_event_|.
-  scoped_refptr<base::SequencedTaskRunner> event_task_runner_;
+  scoped_refptr<base::SingleThreadTaskRunner> event_task_runner_;
   // Used to (try to) cancel the Tasks sent by RearmCAPTUREQueueMonitoring(),
   // and not serviced yet, when no longer needed.
   base::CancelableTaskTracker cancelable_task_tracker_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
+  // Optional helper class to reassemble full H.264 frames out of NALUs.
+  std::unique_ptr<H264FrameReassembler> h264_frame_reassembler_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
   // Pegged to the construction and main work thread. Notably, |task_runner| is
   // not used.
   SEQUENCE_CHECKER(sequence_checker_);
 
-  // Weak pointer/factory associated with the main thread (|sequence_checker|).
-  base::WeakPtr<V4L2StatefulVideoDecoder> weak_this_;
-  base::WeakPtrFactory<V4L2StatefulVideoDecoder> weak_this_factory_;
+  // Weak factories associated with the main thread (|sequence_checker|).
+  base::WeakPtrFactory<V4L2StatefulVideoDecoder> weak_ptr_factory_for_events_;
+  base::WeakPtrFactory<V4L2StatefulVideoDecoder>
+      weak_ptr_factory_for_CAPTURE_availability_;
 };
 
 }  // namespace media

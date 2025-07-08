@@ -7,7 +7,9 @@
 #include <stdint.h>
 
 #include "base/no_destructor.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "media/base/media_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media::cast::encoding_support {
@@ -30,20 +32,35 @@ GetValidProfiles() {
 }  // namespace
 
 TEST(EncodingSupportTest, EnablesVp8HardwareEncoderAlways) {
-  EXPECT_TRUE(IsHardwareEnabled(Codec::kVideoVp8, GetValidProfiles()));
+  EXPECT_TRUE(IsHardwareEnabled(VideoCodec::kVP8, GetValidProfiles()));
+}
+
+TEST(EncodingSupportTest, DenyListedHardwareEncoderNotOffered) {
+  EXPECT_TRUE(IsHardwareEnabled(VideoCodec::kVP8, GetValidProfiles()));
+  EXPECT_FALSE(IsHardwareDenyListed(VideoCodec::kVP8));
+  DenyListHardwareCodec(VideoCodec::kVP8);
+  EXPECT_FALSE(IsHardwareEnabled(VideoCodec::kVP8, GetValidProfiles()));
+  EXPECT_TRUE(IsHardwareDenyListed(VideoCodec::kVP8));
 }
 
 TEST(EncodingSupportTest, EnablesH264HardwareEncoderProperly) {
-  static const bool is_enabled =
-// The hardware encoder also has major issues on Mac OSX and on Windows.
-#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
-      false;
-#else
-      true;
-#endif
+#if BUILDFLAG(IS_MAC)
+  base::test::ScopedFeatureList feature(kCastStreamingMacHardwareH264);
+  EXPECT_TRUE(IsHardwareEnabled(VideoCodec::kH264, GetValidProfiles()));
 
-  EXPECT_EQ(is_enabled,
-            IsHardwareEnabled(Codec::kVideoH264, GetValidProfiles()));
+  feature.Reset();
+  feature.InitAndDisableFeature(kCastStreamingMacHardwareH264);
+  EXPECT_FALSE(IsHardwareEnabled(VideoCodec::kH264, GetValidProfiles()));
+#elif BUILDFLAG(IS_WIN)
+  base::test::ScopedFeatureList feature(kCastStreamingWinHardwareH264);
+  EXPECT_TRUE(IsHardwareEnabled(VideoCodec::kH264, GetValidProfiles()));
+
+  feature.Reset();
+  feature.InitAndDisableFeature(kCastStreamingWinHardwareH264);
+  EXPECT_FALSE(IsHardwareEnabled(VideoCodec::kH264, GetValidProfiles()));
+#else
+  EXPECT_EQ(true, IsHardwareEnabled(VideoCodec::kH264, GetValidProfiles()));
+#endif
 }
 
 }  // namespace media::cast::encoding_support

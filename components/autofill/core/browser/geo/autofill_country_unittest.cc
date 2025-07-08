@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/autofill/core/browser/geo/autofill_country.h"
+
 #include <set>
 #include <string>
 
 #include "base/containers/contains.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
+#include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/geo/address_i18n.h"
-#include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/geo/country_data.h"
-#include "components/autofill/core/common/autofill_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_field.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_metadata.h"
@@ -20,11 +20,11 @@
 #include "base/android/build_info.h"
 #endif
 
-using autofill::CountryDataMap;
-using base::ASCIIToUTF16;
-using ::i18n::addressinput::AddressField;
-
 namespace autofill {
+namespace {
+
+using ::base::ASCIIToUTF16;
+using ::i18n::addressinput::AddressField;
 
 // Test the constructor and accessors
 TEST(AutofillCountryTest, AutofillCountry) {
@@ -70,6 +70,22 @@ TEST(AutofillCountryTest, CountryCodeForLocale) {
   EXPECT_EQ("US", AutofillCountry::CountryCodeForLocale("es-419"));
 }
 
+// Test that the correct country code is retrieved from the app locale if no
+// geo ip country code could be retrieved.
+TEST(AutofillCountryTest, GetDefaultCountryCodeForNewAddressFromAppLocale) {
+  EXPECT_EQ("US", AutofillCountry::GetDefaultCountryCodeForNewAddress(
+                      GeoIpCountryCode(""), "en_US")
+                      .value());
+}
+
+// Test that the country code is is set as the geo ip country code,
+// and that it is not extracted from the app locale.
+TEST(AutofillCountryTest, GetDefaultCountryCodeForNewAddressFromGeoIp) {
+  EXPECT_EQ("DE", AutofillCountry::GetDefaultCountryCodeForNewAddress(
+                      GeoIpCountryCode("DE"), "en_US")
+                      .value());
+}
+
 // Test the address requirement methods for the US.
 TEST(AutofillCountryTest, UsaAddressRequirements) {
   // The US requires a zip, state, city and line1 entry.
@@ -81,15 +97,12 @@ TEST(AutofillCountryTest, UsaAddressRequirements) {
   EXPECT_TRUE(country.requires_city());
   EXPECT_TRUE(country.requires_line1());
 
-  // The same expectations via ServerFieldType.
+  // The same expectations via FieldType.
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_ZIP));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STATE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_CITY));
   EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_ZIP));
-  EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_STATE));
-  EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_CITY));
-  EXPECT_TRUE(country.IsAddressFieldRequired(
-      ServerFieldType::ADDRESS_HOME_STREET_ADDRESS));
+      country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STREET_ADDRESS));
 }
 
 // Test that unknown country codes have US requirements.
@@ -120,15 +133,12 @@ TEST(AutofillCountryTest, BrAddressRequirements) {
   EXPECT_TRUE(country.requires_city());
   EXPECT_TRUE(country.requires_line1());
 
-  // The same expectations via ServerFieldType.
+  // The same expectations via FieldType.
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_ZIP));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STATE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_CITY));
   EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_ZIP));
-  EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_STATE));
-  EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_CITY));
-  EXPECT_TRUE(country.IsAddressFieldRequired(
-      ServerFieldType::ADDRESS_HOME_STREET_ADDRESS));
+      country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STREET_ADDRESS));
 }
 
 // Test the address requirement method for Turkey.
@@ -145,35 +155,12 @@ TEST(AutofillCountryTest, TrAddressRequirements) {
   EXPECT_TRUE(country.requires_city());
   EXPECT_TRUE(country.requires_line1());
 
-  // The same expectations via ServerFieldType.
-  EXPECT_FALSE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_ZIP));
+  // The same expectations via FieldType.
+  EXPECT_FALSE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_ZIP));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STATE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_CITY));
   EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_STATE));
-  EXPECT_TRUE(
-      country.IsAddressFieldRequired(ServerFieldType::ADDRESS_HOME_CITY));
-  EXPECT_TRUE(country.IsAddressFieldRequired(
-      ServerFieldType::ADDRESS_HOME_STREET_ADDRESS));
-}
-
-// Test the full name requirement depending on the
-// kAutofillRequireNameForProfileImport feature flag.
-TEST(AutofillCountryTest, IsAddressFieldRequired_RequireName) {
-  AutofillCountry country("US", "en_US");
-
-  {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        features::kAutofillRequireNameForProfileImport);
-    EXPECT_FALSE(country.IsAddressFieldRequired(ServerFieldType::NAME_FULL));
-  }
-
-  {
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeature(
-        features::kAutofillRequireNameForProfileImport);
-    EXPECT_TRUE(country.IsAddressFieldRequired(ServerFieldType::NAME_FULL));
-  }
+      country.IsAddressFieldRequired(FieldType::ADDRESS_HOME_STREET_ADDRESS));
 }
 
 // Test mapping all country codes to country names.
@@ -190,8 +177,9 @@ TEST(AutofillCountryTest, AllCountryCodesHaveCountryName) {
   const std::vector<std::string>& country_codes =
       CountryDataMap::GetInstance()->country_codes();
   for (const std::string& country_code : country_codes) {
-    if (base::Contains(expected_failures, country_code))
+    if (base::Contains(expected_failures, country_code)) {
       continue;
+    }
     SCOPED_TRACE("Country code '" + country_code + "' should have a name.");
     EXPECT_NE(ASCIIToUTF16(country_code),
               AutofillCountry(country_code, "en").name());
@@ -252,4 +240,14 @@ TEST(AutofillCountryTest, VerifyAddressFormatExtensions) {
   }
 }
 
+// Test the address requirement method for Poland.
+TEST(AutofillCountryTest, PLAddressRequirements) {
+  AutofillCountry country("PL", "pl_PL");
+
+  EXPECT_FALSE(country.requires_state());
+  EXPECT_TRUE(
+      country.IsAddressFieldSettingAccessible(FieldType::ADDRESS_HOME_STATE));
+}
+
+}  // namespace
 }  // namespace autofill

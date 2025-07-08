@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "cc/layers/texture_layer.h"
 
 #include <stddef.h>
@@ -43,14 +48,13 @@
 #include "cc/trees/single_thread_proxy.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
-#include "components/viz/common/resources/bitmap_allocation.h"
 #include "components/viz/common/resources/returned_resource.h"
-#include "components/viz/common/resources/shared_bitmap.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/test/fake_output_surface.h"
 #include "gpu/GLES2/gl2extchromium.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -60,7 +64,7 @@ using ::testing::AtLeast;
 using ::testing::InvokeWithoutArgs;
 using ::testing::Mock;
 
-// TODO(https://crbug.com/1400943): settings new expecations after
+// TODO(crbug.com/40883999): settings new expectations after
 // VerifyAndClearExpectations is undefined behavior. See
 // http://google.github.io/googletest/gmock_cook_book.html#forcing-a-verification
 #define EXPECT_SET_NEEDS_COMMIT(expect, code_to_test)                 \
@@ -73,15 +77,40 @@ using ::testing::Mock;
 namespace cc {
 namespace {
 
-gpu::Mailbox MailboxFromChar(char value) {
-  gpu::Mailbox mailbox;
-  memset(mailbox.name, value, sizeof(mailbox.name));
-  return mailbox;
+// Compares SyncToken ignoring verified_flush() bit.
+MATCHER_P(SameSyncToken, other, "") {
+  gpu::SyncToken a = arg;
+  gpu::SyncToken b = other;
+  a.SetVerifyFlush();
+  b.SetVerifyFlush();
+  return a == b;
 }
 
-gpu::SyncToken SyncTokenFromUInt(uint32_t value) {
+gpu::SyncToken GenSyncToken() {
+  static int next_release = 1;
   return gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
-                        gpu::CommandBufferId::FromUnsafeValue(0x123), value);
+                        gpu::CommandBufferId::FromUnsafeValue(0x234),
+                        next_release++);
+}
+
+viz::TransferableResource MakeFakeResource() {
+  return viz::TransferableResource::Make(
+      gpu::ClientSharedImage::CreateForTesting(),
+      viz::TransferableResource::ResourceSource::kTest, GenSyncToken());
+}
+
+viz::TransferableResource MakeFakeSoftwareResource() {
+  // Generate verified tokens, as (a)
+  // ClientResourceProvider::PrepareSendToParent() does not verify tokens for
+  // software resources, and (b) when these tests are run with TreesInViz the
+  // tokens go through serialization, which enforces the invariant that they be
+  // verified.
+  auto sync_token = GenSyncToken();
+  sync_token.SetVerifyFlush();
+
+  return viz::TransferableResource::Make(
+      gpu::ClientSharedImage::CreateSoftwareForTesting(),
+      viz::TransferableResource::ResourceSource::kTest, sync_token);
 }
 
 class MockLayerTreeHost : public LayerTreeHost {
@@ -115,77 +144,64 @@ class MockLayerTreeHost : public LayerTreeHost {
 
 class MockReleaseCallback {
  public:
-  MOCK_METHOD3(Release,
-               void(const gpu::Mailbox& mailbox,
-                    const gpu::SyncToken& sync_token,
-                    bool lost_resource));
-  MOCK_METHOD3(Release2,
-               void(const viz::SharedBitmapId& shared_bitmap_id,
-                    const gpu::SyncToken& sync_token,
-                    bool lost_resource));
+  MOCK_METHOD2(Release,
+               void(const gpu::SyncToken& sync_token, bool lost_resource));
 };
 
 struct CommonResourceObjects {
-  explicit CommonResourceObjects(viz::SharedBitmapManager* manager)
-      : mailbox_name1_(MailboxFromChar('1')),
-        mailbox_name2_(MailboxFromChar('2')),
-        sync_token1_(gpu::CommandBufferNamespace::GPU_IO,
-                     gpu::CommandBufferId::FromUnsafeValue(0x234),
-                     1),
-        sync_token2_(gpu::CommandBufferNamespace::GPU_IO,
-                     gpu::CommandBufferId::FromUnsafeValue(0x234),
-                     2) {
-    release_callback1_ =
-        base::BindRepeating(&MockReleaseCallback::Release,
-                            base::Unretained(&mock_callback_), mailbox_name1_);
-    release_callback2_ =
-        base::BindRepeating(&MockReleaseCallback::Release,
-                            base::Unretained(&mock_callback_), mailbox_name2_);
-    const uint32_t arbitrary_target1 = GL_TEXTURE_2D;
-    const uint32_t arbitrary_target2 = GL_TEXTURE_EXTERNAL_OES;
-    gfx::Size size(128, 128);
-    resource1_ = viz::TransferableResource::MakeGpu(
-        mailbox_name1_, arbitrary_target1, sync_token1_, size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
-    resource2_ = viz::TransferableResource::MakeGpu(
-        mailbox_name2_, arbitrary_target2, sync_token2_, size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
-    shared_bitmap_id_ = viz::SharedBitmap::GenerateId();
-    sw_release_callback_ = base::BindRepeating(
-        &MockReleaseCallback::Release2, base::Unretained(&mock_callback_),
-        shared_bitmap_id_);
-    sw_resource_ = viz::TransferableResource::MakeSoftware(
-        shared_bitmap_id_, size, viz::SinglePlaneFormat::kRGBA_8888);
+  explicit CommonResourceObjects(bool software) {
+    if (software) {
+      resource = MakeFakeSoftwareResource();
+    } else {
+      resource = MakeFakeResource();
+    }
+
+    creation_sync_token = resource.sync_token();
+
+    release_callback = base::BindRepeating(&MockReleaseCallback::Release,
+                                           base::Unretained(&mock_callback));
   }
+
+  CommonResourceObjects& ExpectReleaseWithSyncToken(
+      const gpu::SyncToken& sync_token,
+      bool lost) {
+    EXPECT_CALL(mock_callback, Release(sync_token, lost)).Times(1);
+    return *this;
+  }
+
+  CommonResourceObjects& ExpectRelease() {
+    EXPECT_CALL(mock_callback,
+                Release(SameSyncToken(creation_sync_token), false))
+        .Times(1);
+    return *this;
+  }
+
+  CommonResourceObjects& ExpectNoRelease() {
+    EXPECT_CALL(mock_callback, Release(_, _)).Times(0);
+    return *this;
+  }
+
+  void Verify() { Mock::VerifyAndClearExpectations(&mock_callback); }
 
   using RepeatingReleaseCallback =
       base::RepeatingCallback<void(const gpu::SyncToken& sync_token,
                                    bool is_lost)>;
 
-  gpu::Mailbox mailbox_name1_;
-  gpu::Mailbox mailbox_name2_;
-  MockReleaseCallback mock_callback_;
-  RepeatingReleaseCallback release_callback1_;
-  RepeatingReleaseCallback release_callback2_;
-  RepeatingReleaseCallback sw_release_callback_;
-  gpu::SyncToken sync_token1_;
-  gpu::SyncToken sync_token2_;
-  viz::SharedBitmapId shared_bitmap_id_;
-  viz::TransferableResource resource1_;
-  viz::TransferableResource resource2_;
-  viz::TransferableResource sw_resource_;
+  RepeatingReleaseCallback release_callback;
+  viz::TransferableResource resource;
+  gpu::SyncToken creation_sync_token;
+  MockReleaseCallback mock_callback;
 };
 
 class TextureLayerTest : public testing::Test {
  public:
   TextureLayerTest()
       : layer_tree_frame_sink_(FakeLayerTreeFrameSink::Create3d()),
-        host_impl_(&task_runner_provider_, &task_graph_runner_),
-        test_data_(&shared_bitmap_manager_) {}
+        host_impl_(&task_runner_provider_, &task_graph_runner_) {}
 
  protected:
   void SetUp() override {
-    animation_host_ = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+    animation_host_ = AnimationHost::CreateForTesting(ThreadInstance::kMain);
     layer_tree_host_ = MockLayerTreeHost::Create(
         &fake_client_, &task_graph_runner_, animation_host_.get());
     EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AnyNumber());
@@ -208,29 +224,31 @@ class TextureLayerTest : public testing::Test {
   std::unique_ptr<AnimationHost> animation_host_;
   FakeImplTaskRunnerProvider task_runner_provider_;
   FakeLayerTreeHostClient fake_client_;
-  viz::TestSharedBitmapManager shared_bitmap_manager_;
   TestTaskGraphRunner task_graph_runner_;
   std::unique_ptr<LayerTreeFrameSink> layer_tree_frame_sink_;
   FakeLayerTreeHostImpl host_impl_;
-  CommonResourceObjects test_data_;
+  CommonResourceObjects test_resource1_{false};
+  CommonResourceObjects test_resource2_{false};
+  CommonResourceObjects test_resource_sw_{true};
 };
 
 TEST_F(TextureLayerTest, CheckPropertyChangeCausesCorrectBehavior) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   EXPECT_SET_NEEDS_COMMIT(1, layer_tree_host_->SetRootLayer(test_layer));
 
   // Test properties that should call SetNeedsCommit.  All properties need to
   // be set to new values in order for SetNeedsCommit to be called.
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetFlipped(false));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetNearestNeighbor(true));
+  EXPECT_SET_NEEDS_COMMIT(
+      1, test_layer->SetFilterQuality(PaintFlags::FilterQuality::kNone));
+  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetDynamicRangeLimit(
+
+                                 PaintFlags::DynamicRangeLimitMixture(
+                                     PaintFlags::DynamicRangeLimit::kStandard)
+
+                                     ));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetUV(gfx::PointF(0.25f, 0.25f),
                                                gfx::PointF(0.75f, 0.75f)));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetPremultipliedAlpha(false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetBlendBackgroundColor(true));
-  EXPECT_SET_NEEDS_COMMIT(0, test_layer->SetHdrMetadata(gfx::HDRMetadata()));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetHdrMetadata(gfx::HDRMetadata(
-                                 gfx::HdrMetadataCta861_3(123, 456))));
 }
 
 class RunOnCommitLayerTreeHostClient : public FakeLayerTreeHostClient {
@@ -239,7 +257,7 @@ class RunOnCommitLayerTreeHostClient : public FakeLayerTreeHostClient {
     run_on_commit_and_draw_ = std::move(c);
   }
 
-  void DidCommitAndDrawFrame() override {
+  void DidCommitAndDrawFrame(int source_frame_number) override {
     if (run_on_commit_and_draw_)
       std::move(run_on_commit_and_draw_).Run();
   }
@@ -270,16 +288,14 @@ TEST_F(TextureLayerTest, ShutdownWithResource) {
     client.SetLayerTreeHost(host.get());
     client.SetUseSoftwareCompositing(!gpu);
 
-    scoped_refptr<TextureLayer> layer = TextureLayer::CreateForMailbox(nullptr);
+    scoped_refptr<TextureLayer> layer = TextureLayer::Create(nullptr);
     layer->SetIsDrawable(true);
     layer->SetBounds(gfx::Size(10, 10));
-    if (gpu) {
-      layer->SetTransferableResource(test_data_.resource1_,
-                                     test_data_.release_callback1_);
-    } else {
-      layer->SetTransferableResource(test_data_.sw_resource_,
-                                     test_data_.sw_release_callback_);
-    }
+
+    auto& test_resource = gpu ? test_resource1_ : test_resource_sw_;
+
+    layer->SetTransferableResource(test_resource.resource,
+                                   test_resource.release_callback);
 
     viz::ParentLocalSurfaceIdAllocator allocator;
     allocator.GenerateId();
@@ -295,6 +311,7 @@ TEST_F(TextureLayerTest, ShutdownWithResource) {
       loop.Run();
     }
 
+    client.SetLayerTreeHost(nullptr);
     // Destroy the LayerTreeHost and the compositor-thread LayerImpl trees
     // while the resource is still in the layer. The resource should be released
     // back to the TextureLayer's client, but is post-tasked back so...
@@ -304,15 +321,7 @@ TEST_F(TextureLayerTest, ShutdownWithResource) {
     // Our LayerTreeHostClient makes a FakeLayerTreeFrameSink which returns all
     // resources when its detached, so the resources will not be in use in the
     // display compositor, and will be returned as not lost.
-    if (gpu) {
-      EXPECT_CALL(test_data_.mock_callback_,
-                  Release(test_data_.mailbox_name1_, _, false))
-          .Times(1);
-    } else {
-      EXPECT_CALL(test_data_.mock_callback_,
-                  Release2(test_data_.shared_bitmap_id_, _, false))
-          .Times(1);
-    }
+    test_resource.ExpectRelease();
     {
       base::RunLoop loop;
       loop.RunUntilIdle();
@@ -331,18 +340,14 @@ class TestMailboxHolder : public TextureLayer::TransferableResourceHolder {
 class TextureLayerWithResourceTest : public TextureLayerTest {
  protected:
   void TearDown() override {
-    Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
-    EXPECT_CALL(
-        test_data_.mock_callback_,
-        Release(test_data_.mailbox_name1_, test_data_.sync_token1_, false))
-        .Times(1);
+    test_resource1_.Verify();
+    test_resource1_.ExpectRelease();
     TextureLayerTest::TearDown();
   }
 };
 
 TEST_F(TextureLayerWithResourceTest, ReplaceMailboxOnMainThreadBeforeCommit) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AnyNumber());
@@ -350,53 +355,81 @@ TEST_F(TextureLayerWithResourceTest, ReplaceMailboxOnMainThreadBeforeCommit) {
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  test_layer->SetTransferableResource(test_data_.resource1_,
-                                      test_data_.release_callback1_);
+  test_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  EXPECT_CALL(
-      test_data_.mock_callback_,
-      Release(test_data_.mailbox_name1_, test_data_.sync_token1_, false))
-      .Times(1);
-  test_layer->SetTransferableResource(test_data_.resource2_,
-                                      test_data_.release_callback2_);
+  test_resource1_.ExpectRelease();
+  test_layer->SetTransferableResource(test_resource2_.resource,
+                                      test_resource2_.release_callback);
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  EXPECT_CALL(
-      test_data_.mock_callback_,
-      Release(test_data_.mailbox_name2_, test_data_.sync_token2_, false))
-      .Times(1);
+  test_resource2_.ExpectRelease();
   test_layer->ClearTexture();
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource2_.Verify();
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  test_layer->SetTransferableResource(test_data_.sw_resource_,
-                                      test_data_.sw_release_callback_);
+  test_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release2(test_data_.shared_bitmap_id_, _, false))
-      .Times(1);
+  test_resource1_.ExpectRelease();
   test_layer->ClearTexture();
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 
   // Test destructor.
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
-  test_layer->SetTransferableResource(test_data_.resource1_,
-                                      test_data_.release_callback1_);
+  test_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
+}
+
+TEST_F(TextureLayerWithResourceTest, AffectedByHdr) {
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
+  ASSERT_TRUE(test_layer.get());
+  EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AnyNumber());
+  layer_tree_host_->SetRootLayer(test_layer);
+  Mock::VerifyAndClearExpectations(layer_tree_host_.get());
+  EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
+
+  // sRGB is unaffected by HDR parameters.
+  test_resource1_.resource.color_space = gfx::ColorSpace::CreateSRGB();
+  test_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
+  Mock::VerifyAndClearExpectations(layer_tree_host_.get());
+  EXPECT_FALSE(test_layer->RequiresSetNeedsDisplayOnHdrHeadroomChange());
+  EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
+  test_resource1_.ExpectRelease();
+
+  // HDR10 is affected by HDR parameters.
+  test_resource2_.resource.color_space = gfx::ColorSpace::CreateHDR10();
+  test_layer->SetTransferableResource(test_resource2_.resource,
+                                      test_resource2_.release_callback);
+  Mock::VerifyAndClearExpectations(layer_tree_host_.get());
+
+  EXPECT_TRUE(test_layer->RequiresSetNeedsDisplayOnHdrHeadroomChange());
+  test_resource2_.ExpectRelease();
+  EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AtLeast(1));
+
+  // sRGB with extended range is affected by HDR parameters.
+  test_resource1_.resource.hdr_metadata.extended_range.emplace(5.f, 5.f);
+  test_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
+  Mock::VerifyAndClearExpectations(layer_tree_host_.get());
+  EXPECT_TRUE(test_layer->RequiresSetNeedsDisplayOnHdrHeadroomChange());
 }
 
 class TextureLayerMailboxHolderTest : public TextureLayerTest {
  public:
   TextureLayerMailboxHolderTest() : main_thread_("MAIN") {
     main_thread_.Start();
+    sync_token1_ = GenSyncToken();
+    sync_token2_ = GenSyncToken();
   }
 
   void Wait(const base::Thread& thread) {
@@ -409,8 +442,8 @@ class TextureLayerMailboxHolderTest : public TextureLayerTest {
   }
 
   void CreateMainRef() {
-    resource_holder_ = TestMailboxHolder::Create(test_data_.resource1_,
-                                                 test_data_.release_callback1_);
+    resource_holder_ = TestMailboxHolder::Create(
+        test_resource1_.resource, test_resource1_.release_callback);
   }
 
   void ReleaseMainRef() { resource_holder_ = nullptr; }
@@ -426,11 +459,12 @@ class TextureLayerMailboxHolderTest : public TextureLayerTest {
  protected:
   scoped_refptr<TextureLayer::TransferableResourceHolder> resource_holder_;
   base::Thread main_thread_;
+  gpu::SyncToken sync_token1_;
+  gpu::SyncToken sync_token2_;
 };
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_BothReleaseThenMain) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -456,34 +490,30 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_BothReleaseThenMain) {
                                 main_thread_.task_runner()));
 
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 
   // The compositors both destroy their impl trees before the main thread layer
   // is destroyed.
-  std::move(compositor1).Run(SyncTokenFromUInt(100), false);
-  std::move(compositor2).Run(SyncTokenFromUInt(200), false);
+  std::move(compositor1).Run(sync_token1_, false);
+  std::move(compositor2).Run(sync_token2_, false);
 
   Wait(main_thread_);
 
-  EXPECT_CALL(test_data_.mock_callback_, Release(_, _, _)).Times(0);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectNoRelease().Verify();
 
   // The main thread ref is the last one, so the resource is released back to
   // the embedder, with the last sync point provided by the impl trees.
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name1_, SyncTokenFromUInt(200), false))
-      .Times(1);
+  test_resource1_.ExpectReleaseWithSyncToken(sync_token2_, false);
 
   main_thread_.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&TextureLayerMailboxHolderTest::ReleaseMainRef,
                                 base::Unretained(this)));
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 }
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleaseBetween) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -509,10 +539,10 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleaseBetween) {
                                 main_thread_.task_runner()));
 
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectNoRelease().Verify();
 
   // One compositor destroys their impl tree.
-  std::move(compositor1).Run(SyncTokenFromUInt(100), false);
+  std::move(compositor1).Run(sync_token1_, false);
 
   // Then the main thread reference is destroyed.
   main_thread_.task_runner()->PostTask(
@@ -521,23 +551,18 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleaseBetween) {
 
   Wait(main_thread_);
 
-  EXPECT_CALL(test_data_.mock_callback_, Release(_, _, _)).Times(0);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
-
+  test_resource1_.ExpectNoRelease().Verify();
   // The second impl reference is destroyed last, causing the resource to be
   // released back to the embedder with the last sync point from the impl tree.
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name1_, SyncTokenFromUInt(200), true))
-      .Times(1);
+  test_resource1_.ExpectReleaseWithSyncToken(sync_token2_, true);
 
-  std::move(compositor2).Run(SyncTokenFromUInt(200), true);
+  std::move(compositor2).Run(sync_token2_, true);
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 }
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleasedFirst) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -563,7 +588,7 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleasedFirst) {
                                 main_thread_.task_runner()));
 
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectNoRelease().Verify();
 
   // The main thread reference is destroyed first.
   main_thread_.task_runner()->PostTask(
@@ -571,22 +596,19 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleasedFirst) {
                                 base::Unretained(this)));
 
   // One compositor destroys their impl tree.
-  std::move(compositor2).Run(SyncTokenFromUInt(200), false);
+  std::move(compositor2).Run(sync_token2_, false);
 
   Wait(main_thread_);
 
-  EXPECT_CALL(test_data_.mock_callback_, Release(_, _, _)).Times(0);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectNoRelease().Verify();
 
   // The second impl reference is destroyed last, causing the resource to be
   // released back to the embedder with the last sync point from the impl tree.
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name1_, SyncTokenFromUInt(100), true))
-      .Times(1);
+  test_resource1_.ExpectReleaseWithSyncToken(sync_token1_, true);
 
-  std::move(compositor1).Run(SyncTokenFromUInt(100), true);
+  std::move(compositor1).Run(sync_token1_, true);
   Wait(main_thread_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 }
 
 class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
@@ -603,7 +625,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
         !layer_tree_host()->GetSettings().single_thread_proxy_scheduler;
     return std::make_unique<TestLayerTreeFrameSink>(
         compositor_context_provider, std::move(worker_context_provider),
-        gpu_memory_buffer_manager(), renderer_settings, &debug_settings_,
+        /*shared_image_interface=*/nullptr, renderer_settings, &debug_settings_,
         task_runner_provider(), synchronous_composite, disable_display_vsync,
         refresh_rate);
   }
@@ -614,7 +636,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
       case 1:
         // Case #1: change resource before the commit. The old resource should
         // be released immediately.
-        SetMailbox('2');
+        SetNewFakeResource();
         EXPECT_EQ(1, callback_count_);
         PostSetNeedsCommitToMainThread();
 
@@ -625,7 +647,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
         // Case #2: change resource after the commit (and draw), where the
         // layer draws. The old resource should be released during the next
         // commit.
-        SetMailbox('3');
+        SetNewFakeResource();
         EXPECT_EQ(1, callback_count_);
 
         // Cases 3-5 rely on a callback to advance.
@@ -636,7 +658,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
         // Case #3: change resource when the layer doesn't draw. The old
         // resource should be released during the next commit.
         layer_->SetBounds(gfx::Size());
-        SetMailbox('4');
+        SetNewFakeResource();
         break;
       case 4:
         EXPECT_EQ(3, callback_count_);
@@ -647,7 +669,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
       case 5:
         EXPECT_EQ(4, callback_count_);
         // Restore a resource for the next step.
-        SetMailbox('5');
+        SetNewFakeResource();
 
         // Cases 6 and 7 do not rely on callbacks to advance.
         pending_callback_ = false;
@@ -675,14 +697,11 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
 
   // Make sure callback is received on main and doesn't block the impl thread.
-  void ReleaseCallback(char mailbox_char,
-                       const gpu::SyncToken& sync_token,
-                       bool lost_resource) {
+  void ReleaseCallback(const gpu::SyncToken& sync_token, bool lost_resource) {
     EXPECT_EQ(true, main_thread_.CalledOnValidThread());
     EXPECT_FALSE(lost_resource);
     ++callback_count_;
@@ -700,17 +719,13 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
     }
   }
 
-  void SetMailbox(char mailbox_char) {
+  void SetNewFakeResource() {
     EXPECT_EQ(true, main_thread_.CalledOnValidThread());
     viz::ReleaseCallback callback = base::BindOnce(
         &TextureLayerImplWithMailboxThreadedCallback::ReleaseCallback,
-        base::Unretained(this), mailbox_char);
+        base::Unretained(this));
 
-    const gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGpu(
-        MailboxFromChar(mailbox_char), GL_TEXTURE_2D,
-        SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    auto resource = MakeFakeResource();
     layer_->SetTransferableResource(resource, std::move(callback));
     // Damage the layer so we send a new frame with the new resource to the
     // Display compositor.
@@ -724,7 +739,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -732,7 +747,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
     layer_tree_host()->SetRootLayer(root_);
     layer_tree_host()->SetViewportRectAndScale(gfx::Rect(bounds), 1.f,
                                                viz::LocalSurfaceId());
-    SetMailbox('1');
+    SetNewFakeResource();
     EXPECT_EQ(0, callback_count_);
 
     // Setup is complete - advance to test case 1.
@@ -770,7 +785,7 @@ class TextureLayerImplWithResourceTest : public TextureLayerTest {
 
   std::unique_ptr<TextureLayerImpl> CreateTextureLayer() {
     auto layer = TextureLayerImpl::Create(host_impl_.active_tree(), 1);
-    layer->set_visible_layer_rect(gfx::Rect(100, 100));
+    layer->SetVisibleLayerRectForTesting(gfx::Rect(100, 100));
     return layer;
   }
 
@@ -788,18 +803,11 @@ class TextureLayerImplWithResourceTest : public TextureLayerTest {
 // Test conditions for results of TextureLayerImpl::WillDraw under
 // different configurations of different mailbox, texture_id, and draw_mode.
 TEST_F(TextureLayerImplWithResourceTest, TestWillDraw) {
-  EXPECT_CALL(
-      test_data_.mock_callback_,
-      Release(test_data_.mailbox_name1_, test_data_.sync_token1_, false))
-      .Times(AnyNumber());
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release2(test_data_.shared_bitmap_id_, gpu::SyncToken(), false))
-      .Times(AnyNumber());
   // Hardware mode.
   {
     std::unique_ptr<TextureLayerImpl> impl_layer = CreateTextureLayer();
-    impl_layer->SetTransferableResource(test_data_.resource1_,
-                                        test_data_.release_callback1_);
+    impl_layer->SetTransferableResource(test_resource1_.resource,
+                                        test_resource1_.release_callback);
     EXPECT_TRUE(WillDraw(impl_layer.get(), DRAW_MODE_HARDWARE));
   }
 
@@ -814,8 +822,8 @@ TEST_F(TextureLayerImplWithResourceTest, TestWillDraw) {
   // Software mode.
   {
     std::unique_ptr<TextureLayerImpl> impl_layer = CreateTextureLayer();
-    impl_layer->SetTransferableResource(test_data_.resource1_,
-                                        test_data_.release_callback1_);
+    impl_layer->SetTransferableResource(test_resource1_.resource,
+                                        test_resource1_.release_callback);
     EXPECT_FALSE(WillDraw(impl_layer.get(), DRAW_MODE_SOFTWARE));
   }
 
@@ -829,16 +837,16 @@ TEST_F(TextureLayerImplWithResourceTest, TestWillDraw) {
   {
     // Software resource.
     std::unique_ptr<TextureLayerImpl> impl_layer = CreateTextureLayer();
-    impl_layer->SetTransferableResource(test_data_.sw_resource_,
-                                        test_data_.sw_release_callback_);
+    impl_layer->SetTransferableResource(test_resource_sw_.resource,
+                                        test_resource_sw_.release_callback);
     EXPECT_TRUE(WillDraw(impl_layer.get(), DRAW_MODE_SOFTWARE));
   }
 
   // Resourceless software mode.
   {
     std::unique_ptr<TextureLayerImpl> impl_layer = CreateTextureLayer();
-    impl_layer->SetTransferableResource(test_data_.resource1_,
-                                        test_data_.release_callback1_);
+    impl_layer->SetTransferableResource(test_resource1_.resource,
+                                        test_resource1_.release_callback);
     EXPECT_FALSE(WillDraw(impl_layer.get(), DRAW_MODE_RESOURCELESS_SOFTWARE));
   }
 }
@@ -853,53 +861,43 @@ TEST_F(TextureLayerImplWithResourceTest, TestImplLayerCallbacks) {
       pending_layer->CreateLayerImpl(host_impl_.active_tree()));
   ASSERT_TRUE(active_layer);
 
-  pending_layer->SetTransferableResource(test_data_.resource1_,
-                                         test_data_.release_callback1_);
+  pending_layer->SetTransferableResource(test_resource1_.resource,
+                                         test_resource1_.release_callback);
 
   // Test multiple commits without an activation. The resource wasn't used so
   // the original sync token is returned.
-  EXPECT_CALL(
-      test_data_.mock_callback_,
-      Release(test_data_.mailbox_name1_, test_data_.sync_token1_, false))
-      .Times(1);
-  pending_layer->SetTransferableResource(test_data_.resource2_,
-                                         test_data_.release_callback2_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectRelease();
+  pending_layer->SetTransferableResource(test_resource2_.resource,
+                                         test_resource2_.release_callback);
+  test_resource1_.Verify();
 
   // Test callback after activation.
   pending_layer->PushPropertiesTo(active_layer.get());
   active_layer->DidBecomeActive();
 
-  EXPECT_CALL(test_data_.mock_callback_, Release(_, _, _)).Times(0);
-  pending_layer->SetTransferableResource(test_data_.resource1_,
-                                         test_data_.release_callback1_);
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.ExpectNoRelease();
+  pending_layer->SetTransferableResource(test_resource1_.resource,
+                                         test_resource1_.release_callback);
+  test_resource1_.Verify();
 
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name2_, _, false))
-      .Times(1);
+  test_resource2_.ExpectRelease();
   pending_layer->PushPropertiesTo(active_layer.get());
   active_layer->DidBecomeActive();
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource2_.Verify();
 
   // Test resetting the mailbox.
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name1_, _, false))
-      .Times(1);
+  test_resource1_.ExpectRelease();
   pending_layer->SetTransferableResource(viz::TransferableResource(),
                                          viz::ReleaseCallback());
   pending_layer->PushPropertiesTo(active_layer.get());
   active_layer->DidBecomeActive();
-  Mock::VerifyAndClearExpectations(&test_data_.mock_callback_);
+  test_resource1_.Verify();
 
   // Test destructor. The resource wasn't used so the original sync token is
   // returned.
-  EXPECT_CALL(
-      test_data_.mock_callback_,
-      Release(test_data_.mailbox_name1_, test_data_.sync_token1_, false))
-      .Times(1);
-  pending_layer->SetTransferableResource(test_data_.resource1_,
-                                         test_data_.release_callback1_);
+  test_resource1_.ExpectRelease();
+  pending_layer->SetTransferableResource(test_resource1_.resource,
+                                         test_resource1_.release_callback);
 }
 
 TEST_F(TextureLayerImplWithResourceTest,
@@ -907,11 +905,9 @@ TEST_F(TextureLayerImplWithResourceTest,
   std::unique_ptr<TextureLayerImpl> impl_layer = CreateTextureLayer();
   ASSERT_TRUE(impl_layer);
 
-  EXPECT_CALL(test_data_.mock_callback_,
-              Release(test_data_.mailbox_name1_, _, false))
-      .Times(1);
-  impl_layer->SetTransferableResource(test_data_.resource1_,
-                                      test_data_.release_callback1_);
+  test_resource1_.ExpectRelease();
+  impl_layer->SetTransferableResource(test_resource1_.resource,
+                                      test_resource1_.release_callback);
   impl_layer->DidBecomeActive();
   EXPECT_TRUE(impl_layer->WillDraw(
       DRAW_MODE_HARDWARE, host_impl_.active_tree()->resource_provider()));
@@ -927,7 +923,6 @@ class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
  public:
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
-      SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
       viz::ReleaseCallback* release_callback) override {
     if (layer_tree_host()->SourceFrameNumber() == 1) {
@@ -936,10 +931,7 @@ class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
       return true;
     }
 
-    constexpr gfx::Size size(64, 64);
-    *resource = viz::TransferableResource::MakeGpu(
-        MailboxFromChar('1'), GL_TEXTURE_2D, SyncTokenFromUInt(0x123), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    *resource = MakeFakeResource();
     *release_callback = base::BindOnce(
         &TextureLayerNoExtraCommitForMailboxTest::ResourceReleased,
         base::Unretained(this));
@@ -956,7 +948,7 @@ class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
     root->SetBounds(gfx::Size(10, 10));
     root->SetIsDrawable(true);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(this);
+    texture_layer_ = TextureLayer::Create(this);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     texture_layer_->SetIsDrawable(true);
     root->AddChild(texture_layer_);
@@ -979,7 +971,6 @@ class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
         break;
       default:
         NOTREACHED();
-        break;
     }
   }
 
@@ -999,7 +990,6 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
 
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
-      SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
       viz::ReleaseCallback* release_callback) override {
     ++prepare_called_;
@@ -1014,20 +1004,29 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
   }
 
   viz::TransferableResource MakeResource(char name) {
-    constexpr gfx::Size size(64, 64);
-    return viz::TransferableResource::MakeGpu(
-        MailboxFromChar(name), GL_TEXTURE_2D,
-        SyncTokenFromUInt(static_cast<uint32_t>(name)), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    return MakeFakeResource();
   }
 
   void ResourceReleased(const gpu::SyncToken& sync_token, bool lost_resource) {
     EXPECT_TRUE(sync_token.HasData());
     ++resource_returned_;
 
+    if (resource_returned_ == 1) {
+      // The 1st resource should be released after the 2nd is prepared.
+      EXPECT_GE(prepare_called_, 2);
+
+      // Clear the 2nd resource to let the test complete.
+      MainThreadTaskRunner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(
+              &TextureLayerChangeInvisibleMailboxTest::ClearTextureLayerClient,
+              base::Unretained(this)));
+      return;
+    }
+
     // The actual releasing of resources by
     // TextureLayer::TransferableResourceHolder::dtor can be done as a PostTask.
-    // The test signal being used, DidReceiveCompositorFrameAck itself is also
+    // The test signal being used, DidPresentCompositorFrame itself is also
     // posted back from the Compositor-thread to the Main-thread. Due to this
     // there's a teardown race which tsan builds can encounter. So if
     // `close_on_resource_returned_` is set we actually end the test here.
@@ -1036,6 +1035,8 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
       EndTest();
     }
   }
+
+  void ClearTextureLayerClient() { texture_layer_->ClearClient(); }
 
   void SetupTree() override {
     scoped_refptr<Layer> root = Layer::Create();
@@ -1053,7 +1054,7 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
     parent_layer_->SetIsDrawable(true);
     root->AddChild(parent_layer_);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(this);
+    texture_layer_ = TextureLayer::Create(this);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     texture_layer_->SetIsDrawable(true);
     parent_layer_->AddChild(texture_layer_);
@@ -1064,14 +1065,16 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void DidReceiveCompositorFrameAck() override {
-    ++ack_count_;
-    // The fifth frame to be Acked will be returning resources. Due to PostTasks
-    // the ResourcesReleased callback may not yet have been called. So we can
-    // only end the test here if we have received the updated
+  void DidPresentCompositorFrame(
+      uint32_t frame_token,
+      const viz::FrameTimingDetails& frame_timing_details) override {
+    ++presented_count_;
+    // The fifth frame to be presented will be returning resources. Due to
+    // PostTasks the ResourcesReleased callback may not yet have been called. So
+    // we can only end the test here if we have received the updated
     // `resource_returned_`. Otherwise set `close_on_resources_returned_` to
     // have the callback do the teardown.
-    if (ack_count_ == 5) {
+    if (presented_count_ == 5) {
       if (resource_returned_ < 2) {
         close_on_resource_returned_ = true;
       } else {
@@ -1083,7 +1086,7 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
 
   void DidCommitAndDrawFrame() override {
     ++commit_and_draw_count_;
-    // The timing of DidReceiveCompositorFrameAck is not guaranteed. Each of
+    // The timing of DidPresentCompositorFrame is not guaranteed. Each of
     // these checks are actually valid immediately after frame submission, as
     // the are a part of Commit.
     switch (commit_and_draw_count_) {
@@ -1115,13 +1118,8 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
         // Layer should have been updated.
         // It's not sufficient to check if |prepare_called_| is 2. It's possible
         // for BeginMainFrame and hence PrepareTransferableResource to run twice
-        // before DidReceiveCompositorFrameAck due to pipelining.
+        // before DidPresentCompositorFrame due to pipelining.
         EXPECT_GE(prepare_called_, 2);
-        // So the old resource should have been returned already. This resource
-        // is returned during paint, and so does not need the same PostTask
-        // syncing as for frame 5.
-        EXPECT_EQ(1, resource_returned_);
-        texture_layer_->ClearClient();
         break;
       default:
         break;
@@ -1138,12 +1136,12 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
   viz::TransferableResource resource_;
   int resource_returned_ = 0;
   int prepare_called_ = 0;
-  int ack_count_ = 0;
+  int presented_count_ = 0;
   int commit_and_draw_count_ = 0;
   bool close_on_resource_returned_ = false;
 };
 
-// TODO(crbug.com/1197350): Test fails on chromeos-amd64-generic-rel.
+// TODO(crbug.com/40760099): Test fails on chromeos-amd64-generic-rel.
 #if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_SINGLE_AND_MULTI_THREAD_TEST_F MULTI_THREAD_TEST_F
 #else
@@ -1159,13 +1157,16 @@ class TextureLayerReleaseResourcesBase : public LayerTreeTest,
  public:
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
-      SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
       viz::ReleaseCallback* release_callback) override {
-    constexpr gfx::Size size(64, 64);
-    *resource = viz::TransferableResource::MakeGpu(
-        MailboxFromChar('1'), GL_TEXTURE_2D, SyncTokenFromUInt(1), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    if (commit_count_ > 0) {
+      // Any update after the first commit should clear the resource to ensure
+      // the main thread layer doesn't hold onto it.
+      *resource = viz::TransferableResource();
+      return true;
+    }
+
+    *resource = MakeFakeResource();
     *release_callback =
         base::BindOnce(&TextureLayerReleaseResourcesBase::ResourceReleased,
                        base::Unretained(this));
@@ -1174,13 +1175,16 @@ class TextureLayerReleaseResourcesBase : public LayerTreeTest,
 
   void ResourceReleased(const gpu::SyncToken& sync_token, bool lost_resource) {
     resource_released_ = true;
+    // End the test when resource is released.
+    if (commit_count_ >= 1) {
+      EndTest();
+    }
   }
 
   void SetupTree() override {
     LayerTreeTest::SetupTree();
 
-    scoped_refptr<TextureLayer> texture_layer =
-        TextureLayer::CreateForMailbox(this);
+    scoped_refptr<TextureLayer> texture_layer = TextureLayer::Create(this);
     texture_layer->SetBounds(gfx::Size(10, 10));
     texture_layer->SetIsDrawable(true);
 
@@ -1190,27 +1194,44 @@ class TextureLayerReleaseResourcesBase : public LayerTreeTest,
 
   void BeginTest() override {
     resource_released_ = false;
+    commit_count_ = 0;
     PostSetNeedsCommitToMainThread();
   }
 
-  void DidCommitAndDrawFrame() override { EndTest(); }
+  void DidCommitAndDrawFrame() override {
+    ++commit_count_;
+    PostSetNeedsCommitToMainThread();
+  }
 
   void AfterTest() override { EXPECT_TRUE(resource_released_); }
 
  protected:
   int texture_layer_id_;
+  int commit_count_ = 0;
 
  private:
-  bool resource_released_;
+  bool resource_released_ = false;
 };
 
 class TextureLayerReleaseResourcesAfterCommit
     : public TextureLayerReleaseResourcesBase {
  public:
   void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
-    LayerTreeImpl* tree = nullptr;
-    tree = host_impl->sync_tree();
-    tree->LayerById(texture_layer_id_)->ReleaseResources();
+    if (commit_count_ == 0) {
+      // After first commit, call ReleaseResources and verify it's released by
+      // the impl layer. It'll be released by the main thread layer during the
+      // next update.
+      auto* texture_impl = static_cast<TextureLayerImpl*>(
+          host_impl->sync_tree()->LayerById(texture_layer_id_));
+
+      // Verify resource exists before releasing
+      EXPECT_FALSE(texture_impl->transferable_resource().is_empty());
+
+      texture_impl->ReleaseResources();
+
+      // Verify resource was released from impl thread
+      EXPECT_TRUE(texture_impl->transferable_resource().is_empty());
+    }
   }
 };
 
@@ -1220,7 +1241,21 @@ class TextureLayerReleaseResourcesAfterActivate
     : public TextureLayerReleaseResourcesBase {
  public:
   void DidActivateTreeOnThread(LayerTreeHostImpl* host_impl) override {
-    host_impl->active_tree()->LayerById(texture_layer_id_)->ReleaseResources();
+    if (commit_count_ == 0) {
+      // After first commit, call ReleaseResources and verify it's released by
+      // the impl layer. It'll be released by the main thread layer during the
+      // next update.
+      auto* texture_impl = static_cast<TextureLayerImpl*>(
+          host_impl->active_tree()->LayerById(texture_layer_id_));
+
+      // Verify resource exists before releasing
+      EXPECT_FALSE(texture_impl->transferable_resource().is_empty());
+
+      texture_impl->ReleaseResources();
+
+      // Verify resource was released from impl thread
+      EXPECT_TRUE(texture_impl->transferable_resource().is_empty());
+    }
   }
 };
 
@@ -1235,16 +1270,12 @@ class TextureLayerWithResourceMainThreadDeleted : public LayerTreeTest {
     EndTest();
   }
 
-  void SetMailbox(char mailbox_char) {
+  void SetNewFakeResource() {
     EXPECT_EQ(true, main_thread_.CalledOnValidThread());
     viz::ReleaseCallback callback = base::BindOnce(
         &TextureLayerWithResourceMainThreadDeleted::ReleaseCallback,
         base::Unretained(this));
-    constexpr gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGpu(
-        MailboxFromChar(mailbox_char), GL_TEXTURE_2D,
-        SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    auto resource = MakeFakeResource();
     layer_->SetTransferableResource(resource, std::move(callback));
   }
 
@@ -1253,7 +1284,7 @@ class TextureLayerWithResourceMainThreadDeleted : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -1269,7 +1300,7 @@ class TextureLayerWithResourceMainThreadDeleted : public LayerTreeTest {
     callback_count_ = 0;
 
     // Set the resource on the main thread.
-    SetMailbox('1');
+    SetNewFakeResource();
     EXPECT_EQ(0, callback_count_);
 
     PostSetNeedsCommitToMainThread();
@@ -1306,16 +1337,12 @@ class TextureLayerWithResourceImplThreadDeleted : public LayerTreeTest {
     EndTest();
   }
 
-  void SetMailbox(char mailbox_char) {
+  void SetNewFakeResource() {
     EXPECT_EQ(true, main_thread_.CalledOnValidThread());
     viz::ReleaseCallback callback = base::BindOnce(
         &TextureLayerWithResourceImplThreadDeleted::ReleaseCallback,
         base::Unretained(this));
-    constexpr gfx::Size size(64, 64);
-    auto resource = viz::TransferableResource::MakeGpu(
-        MailboxFromChar(mailbox_char), GL_TEXTURE_2D,
-        SyncTokenFromUInt(static_cast<uint32_t>(mailbox_char)), size,
-        viz::SinglePlaneFormat::kRGBA_8888, false /* is_overlay_candidate */);
+    auto resource = MakeFakeResource();
     layer_->SetTransferableResource(resource, std::move(callback));
   }
 
@@ -1324,7 +1351,7 @@ class TextureLayerWithResourceImplThreadDeleted : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -1340,7 +1367,7 @@ class TextureLayerWithResourceImplThreadDeleted : public LayerTreeTest {
     callback_count_ = 0;
 
     // Set the resource on the main thread.
-    SetMailbox('1');
+    SetNewFakeResource();
     EXPECT_EQ(0, callback_count_);
 
     PostSetNeedsCommitToMainThread();
@@ -1375,7 +1402,6 @@ class StubTextureLayerClient : public TextureLayerClient {
  public:
   // TextureLayerClient implementation.
   bool PrepareTransferableResource(
-      SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
       viz::ReleaseCallback* release_callback) override {
     return false;
@@ -1408,6 +1434,13 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
  protected:
   SoftwareTextureLayerTest() : LayerTreeTest(viz::RendererType::kSoftware) {}
 
+  void AfterTest() override {
+    // Clear before the LayerTreeHost (and its TestLayerTreeFrameSink) is
+    // destroyed to prevent a dangling pointer during test cleanup.
+    frame_sink_ = nullptr;
+    LayerTreeTest::AfterTest();
+  }
+
   void SetupTree() override {
     root_ = Layer::Create();
     root_->SetBounds(gfx::Size(10, 10));
@@ -1419,7 +1452,7 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
     solid_color_layer_->SetBounds(gfx::Size(10, 10));
     root_->AddChild(solid_color_layer_);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(&client_);
+    texture_layer_ = TextureLayer::Create(&client_);
     texture_layer_->SetIsDrawable(true);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     layer_tree_host()->SetRootLayer(root_);
@@ -1432,12 +1465,16 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
       scoped_refptr<viz::RasterContextProvider> compositor_context_provider,
       scoped_refptr<viz::RasterContextProvider> worker_context_provider)
       override {
+    context_provider_sw_ = viz::TestContextProvider::CreateRaster();
+    gpu::SharedImageInterface* shared_image_interface_sw =
+        context_provider_sw_->SharedImageInterface();
+
     constexpr bool disable_display_vsync = false;
     bool synchronous_composite =
         !HasImplThread() &&
         !layer_tree_host()->GetSettings().single_thread_proxy_scheduler;
     auto sink = std::make_unique<TestLayerTreeFrameSink>(
-        nullptr, nullptr, gpu_memory_buffer_manager(), renderer_settings,
+        nullptr, nullptr, shared_image_interface_sw, renderer_settings,
         &debug_settings_, task_runner_provider(), synchronous_composite,
         disable_display_vsync, refresh_rate);
     frame_sink_ = sink.get();
@@ -1449,49 +1486,35 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
   scoped_refptr<Layer> root_;
   scoped_refptr<SolidColorLayer> solid_color_layer_;
   scoped_refptr<TextureLayer> texture_layer_;
-  raw_ptr<TestLayerTreeFrameSink, AcrossTasksDanglingUntriaged> frame_sink_ =
-      nullptr;
+  raw_ptr<TestLayerTreeFrameSink> frame_sink_ = nullptr;
   int num_frame_sinks_created_ = 0;
+
+  scoped_refptr<viz::RasterContextProvider> context_provider_sw_;
 };
 
 class SoftwareTextureLayerSwitchTreesTest : public SoftwareTextureLayerTest {
  protected:
   void BeginTest() override {
     PostSetNeedsCommitToMainThread();
-
-    gfx::Size size(1, 1);
-    viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id_ = viz::SharedBitmap::GenerateId();
-    bitmap_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
   }
 
   void DidCommitAndDrawFrame() override {
     step_ = layer_tree_host()->SourceFrameNumber();
     switch (step_) {
-      case 1:
+      case 1: {
         // The test starts by inserting the TextureLayer to the tree.
         root_->AddChild(texture_layer_);
-        // And registers a SharedBitmapId, which should be given to the
-        // LayerTreeFrameSink.
-        registration_ = texture_layer_->RegisterSharedBitmapId(id_, bitmap_);
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce([](const gpu::SyncToken&, bool) {}));
-        break;
+
+        texture_layer_->SetTransferableResource(MakeFakeSoftwareResource(),
+                                                base::DoNothing());
+      } break;
       case 2:
-        // When the layer is removed from the tree, the bitmap should be
+        // When the layer is removed from the tree, the layer should be
         // unregistered.
         texture_layer_->RemoveFromParent();
         break;
       case 3:
-        // When the layer is added to a new tree, the SharedBitmapId is
-        // registered again.
+        // When the layer is added to a new tree, the layer is registered again.
         root_->AddChild(texture_layer_);
         break;
       case 4:
@@ -1512,85 +1535,40 @@ class SoftwareTextureLayerSwitchTreesTest : public SoftwareTextureLayerTest {
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    switch (step_) {
-      case 0:
-        // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 1:
-        // For commit 1, we added a SharedBitmapId to |texture_layer_|.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id_);
-        verified_frames_++;
-        break;
-      case 2:
-        // For commit 2, we removed |texture_layer_| from the tree.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 3:
-        // For commit 3, we added |texture_layer_| back to the tree.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id_);
-        verified_frames_++;
-        break;
-      case 4:
-        // For commit 3, we removed+added |texture_layer_| back to the tree.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id_);
-        verified_frames_++;
-        break;
-    }
+    verified_frames_++;
   }
 
-  void AfterTest() override { EXPECT_EQ(5, verified_frames_); }
+  void AfterTest() override {
+    EXPECT_EQ(6, verified_frames_);
+    SoftwareTextureLayerTest::AfterTest();
+  }
 
   int step_ = 0;
   int verified_frames_ = 0;
-  viz::SharedBitmapId id_;
-  SharedBitmapIdRegistration registration_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap_;
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerSwitchTreesTest);
 
-// Verify that duplicate SharedBitmapIds aren't registered if resources are
-// purged due to memory pressure.
 class SoftwareTextureLayerPurgeMemoryTest : public SoftwareTextureLayerTest {
  protected:
   void BeginTest() override {
     PostSetNeedsCommitToMainThread();
-
-    const gfx::Size size(1, 1);
-    const viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id_ = viz::SharedBitmap::GenerateId();
-    bitmap_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
   }
 
   void DidCommitAndDrawFrame() override {
     step_ = layer_tree_host()->SourceFrameNumber();
     switch (step_) {
-      case 1:
+      case 1: {
         // The test starts by inserting the TextureLayer to the tree.
         root_->AddChild(texture_layer_);
-        // And registers a SharedBitmapId, which should be given to the
-        // LayerTreeFrameSink.
-        registration_ = texture_layer_->RegisterSharedBitmapId(id_, bitmap_);
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce([](const gpu::SyncToken&, bool) {}));
-        break;
+
+        texture_layer_->SetTransferableResource(MakeFakeSoftwareResource(),
+                                                base::DoNothing());
+      }
+
+      break;
       case 2:
-        // Draw again after OnPurgeMemory() was called on the impl thread so we
-        // can verify that duplicate SharedBitmapIds aren't registered by
-        // TextureLayerImpl.
+        // Draw again after OnPurgeMemory() was called on the impl thread.
         texture_layer_->SetNeedsDisplay();
         break;
       case 3:
@@ -1603,8 +1581,8 @@ class SoftwareTextureLayerPurgeMemoryTest : public SoftwareTextureLayerTest {
   }
 
   void DrawLayersOnThread(LayerTreeHostImpl* host_impl) override {
-    // TextureLayerImpl will have registered the SharedBitmapId at this point.
-    // Call OnPurgeMemory() to ensure that the same SharedBitmapId doesn't get
+    // TextureLayerImpl will have registered the layer at this point.
+    // Call OnPurgeMemory() to ensure that the same layer doesn't get
     // registered again on the next draw.
     if (step_ == 1)
       base::MemoryPressureListener::SimulatePressureNotification(
@@ -1613,74 +1591,53 @@ class SoftwareTextureLayerPurgeMemoryTest : public SoftwareTextureLayerTest {
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    if (step_ == 0) {
-      // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-      EXPECT_THAT(frame_sink_->owned_bitmaps(), testing::IsEmpty());
-      verified_frames_++;
-    } else {
-      // After commit 1, we added a SharedBitmapId to |texture_layer_|.
-      EXPECT_THAT(frame_sink_->owned_bitmaps(), testing::ElementsAre(id_));
-      verified_frames_++;
-    }
+    verified_frames_++;
   }
 
-  void AfterTest() override { EXPECT_EQ(4, verified_frames_); }
+  void AfterTest() override {
+    EXPECT_EQ(4, verified_frames_);
+    SoftwareTextureLayerTest::AfterTest();
+  }
 
   int step_ = 0;
   int verified_frames_ = 0;
-  viz::SharedBitmapId id_;
-  SharedBitmapIdRegistration registration_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerPurgeMemoryTest);
+// Run the single thread test only.
+// MemoryPressureListener::DoNotifyMemoryPressure() is called in this
+// PurgeMemoryTest. Although the observation is targeted on certain
+// configurations and will be dismissed later, it triggers a "CHECK failed:
+// checker.CalledOnValidSequence(&bound_at)" first on the multithreading
+// setting.
 
-class SoftwareTextureLayerMultipleRegisterTest
+SINGLE_THREAD_TEST_F(SoftwareTextureLayerPurgeMemoryTest);
+
+class SoftwareTextureLayerMultipleResourceTest
     : public SoftwareTextureLayerTest {
  protected:
   void BeginTest() override {
     PostSetNeedsCommitToMainThread();
-
-    gfx::Size size(1, 1);
-    viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id1_ = viz::SharedBitmap::GenerateId();
-    bitmap1_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id1_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
-    id2_ = viz::SharedBitmap::GenerateId();
-    bitmap2_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id2_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
   }
 
   void DidCommitAndDrawFrame() override {
     step_ = layer_tree_host()->SourceFrameNumber();
     switch (step_) {
-      case 1:
+      case 1: {
         // The test starts by inserting the TextureLayer to the tree.
         root_->AddChild(texture_layer_);
-        // And registers 2 SharedBitmapIds, which should be given to the
-        // LayerTreeFrameSink.
-        registration1_ = texture_layer_->RegisterSharedBitmapId(id1_, bitmap1_);
-        registration2_ = texture_layer_->RegisterSharedBitmapId(id2_, bitmap2_);
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id1_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce([](const gpu::SyncToken&, bool) {}));
-        break;
+
+        texture_layer_->SetTransferableResource(MakeFakeSoftwareResource(),
+                                                base::DoNothing());
+        texture_layer_->SetTransferableResource(MakeFakeSoftwareResource(),
+                                                base::DoNothing());
+      } break;
       case 2:
-        // Drop one registration, and force a commit and SubmitCompositorFrame
-        // so that we can see it.
-        registration2_ = SharedBitmapIdRegistration();
+        // Force a commit and SubmitCompositorFrame so that we can see it.
         texture_layer_->SetNeedsDisplay();
         break;
       case 3:
         // Drop the other registration.
         texture_layer_->ClearClient();
-        registration1_ = SharedBitmapIdRegistration();
         break;
       case 4:
         EndTest();
@@ -1689,146 +1646,24 @@ class SoftwareTextureLayerMultipleRegisterTest
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    switch (step_) {
-      case 0:
-        // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 1:
-        // For commit 1, we added 2 SharedBitmapIds to |texture_layer_|.
-        EXPECT_EQ(2u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 2:
-        // For commit 2, we removed one SharedBitmapId.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id1_);
-        verified_frames_++;
-        break;
-      case 3:
-        // For commit 3, we removed the other SharedBitmapId.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-    }
+    verified_frames_++;
   }
 
-  void AfterTest() override { EXPECT_EQ(4, verified_frames_); }
+  void AfterTest() override {
+    EXPECT_EQ(4, verified_frames_);
+    SoftwareTextureLayerTest::AfterTest();
+  }
 
   int step_ = 0;
   int verified_frames_ = 0;
-  viz::SharedBitmapId id1_;
-  viz::SharedBitmapId id2_;
-  SharedBitmapIdRegistration registration1_;
-  SharedBitmapIdRegistration registration2_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap1_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap2_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerMultipleRegisterTest);
-
-class SoftwareTextureLayerRegisterUnregisterTest
-    : public SoftwareTextureLayerTest {
- protected:
-  void BeginTest() override {
-    PostSetNeedsCommitToMainThread();
-
-    gfx::Size size(1, 1);
-    viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id1_ = viz::SharedBitmap::GenerateId();
-    bitmap1_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id1_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
-    id2_ = viz::SharedBitmap::GenerateId();
-    bitmap2_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id2_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
-  }
-
-  void DidCommitAndDrawFrame() override {
-    step_ = layer_tree_host()->SourceFrameNumber();
-    switch (step_) {
-      case 1:
-        // The test starts by inserting the TextureLayer to the tree.
-        root_->AddChild(texture_layer_);
-        // And registers 2 SharedBitmapIds, which would be given to the
-        // LayerTreeFrameSink. But we unregister one.
-        {
-          registration1_ =
-              texture_layer_->RegisterSharedBitmapId(id1_, bitmap1_);
-          // We explicitly drop this registration by letting it go out of scope
-          // and being destroyed. Versus the registration1_ which we drop by
-          // assigning an empty registration to it. Both should do the same
-          // thing.
-          SharedBitmapIdRegistration temp_reg =
-              texture_layer_->RegisterSharedBitmapId(id2_, bitmap2_);
-        }
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id1_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce([](const gpu::SyncToken&, bool) {}));
-        break;
-      case 2:
-        // Drop the other registration.
-        texture_layer_->ClearClient();
-        registration1_ = SharedBitmapIdRegistration();
-        break;
-      case 3:
-        EndTest();
-    }
-  }
-
-  void DisplayReceivedCompositorFrameOnThread(
-      const viz::CompositorFrame& frame) override {
-    switch (step_) {
-      case 0:
-        // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 1:
-        // For commit 1, we added 1 SharedBitmapId to |texture_layer_|.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id1_);
-        verified_frames_++;
-        break;
-      case 2:
-        // For commit 2, we removed the other SharedBitmapId.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-    }
-  }
-
-  void AfterTest() override { EXPECT_EQ(3, verified_frames_); }
-
-  int step_ = 0;
-  int verified_frames_ = 0;
-  viz::SharedBitmapId id1_;
-  viz::SharedBitmapId id2_;
-  SharedBitmapIdRegistration registration1_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap1_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap2_;
-};
-
-SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerRegisterUnregisterTest);
+SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerMultipleResourceTest);
 
 class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
  protected:
   void BeginTest() override {
     PostSetNeedsCommitToMainThread();
-
-    gfx::Size size(1, 1);
-    viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id_ = viz::SharedBitmap::GenerateId();
-    bitmap_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
   }
 
   void DidCommitAndDrawFrame() override {
@@ -1846,28 +1681,28 @@ class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
   void NextStep() {
     step_ = layer_tree_host()->SourceFrameNumber();
     switch (step_) {
-      case 1:
+      case 1: {
         // The test starts by inserting the TextureLayer to the tree.
         root_->AddChild(texture_layer_);
-        // And registers a SharedBitmapId, which should be given to the
-        // LayerTreeFrameSink.
-        registration_ = texture_layer_->RegisterSharedBitmapId(id_, bitmap_);
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce(
-                &SoftwareTextureLayerLoseFrameSinkTest::ReleaseCallback,
-                base::Unretained(this)));
+
+        auto release_callback = base::BindOnce(
+            &SoftwareTextureLayerLoseFrameSinkTest::ReleaseCallback,
+            base::Unretained(this));
+
+        texture_layer_->SetTransferableResource(MakeFakeSoftwareResource(),
+                                                std::move(release_callback));
+
         EXPECT_FALSE(released_);
-        break;
+      } break;
       case 2:
         // The frame sink is lost. The host will make a new one and submit
         // another frame, with the id being registered again.
         layer_tree_host()->SetVisible(false);
-        first_frame_sink_ =
-            layer_tree_host()->ReleaseLayerTreeFrameSink().get();
+        // Clear frame_sink_ before releasing to prevent dangling pointer. The
+        // normal clear in AfterTest won't handle it as this test is
+        // intentionally modifying the frame sink's lifetime.
+        frame_sink_ = nullptr;
+        layer_tree_host()->ReleaseLayerTreeFrameSink();
         layer_tree_host()->SetVisible(true);
         texture_layer_->SetNeedsDisplay();
         EXPECT_FALSE(released_);
@@ -1884,135 +1719,80 @@ class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    switch (step_) {
-      case 0:
-        // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 1:
-        // For commit 1, we added a SharedBitmapId to |texture_layer_|.
-        EXPECT_EQ(1, num_frame_sinks_created_);
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id_);
-        verified_frames_++;
-        break;
-      case 2:
-        // For commit 2, we should still have the SharedBitmapId in the new
-        // frame sink.
-        EXPECT_EQ(2, num_frame_sinks_created_);
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-    }
+    verified_frames_++;
   }
 
   void WillCommit(const CommitState& commit_state) override {
     source_frame_number_ = commit_state.source_frame_number;
   }
 
-  void ReleaseCallback(const gpu::SyncToken& token, bool lost) {
+  void ReleaseCallback(const gpu::SyncToken& sync_token, bool lost) {
     // The software resource is not released when the LayerTreeFrameSink is lost
     // since software resources are not destroyed by the GPU process dying. It
     // is released only after we call TextureLayer::ClearClient().
+
     EXPECT_EQ(source_frame_number_, 3);
     released_ = true;
     EndTest();
   }
 
-  void AfterTest() override { EXPECT_EQ(3, verified_frames_); }
+  void AfterTest() override {
+    EXPECT_EQ(4, verified_frames_);
+    SoftwareTextureLayerTest::AfterTest();
+  }
 
   int step_ = 0;
   int verified_frames_ = 0;
   int source_frame_number_ = 0;
   bool released_ = false;
-  viz::SharedBitmapId id_;
-  SharedBitmapIdRegistration registration_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap_;
-  // Keeps a pointer value of the first frame sink, which will be removed
-  // from the host and destroyed.
-  raw_ptr<void, AcrossTasksDanglingUntriaged> first_frame_sink_;
 };
 
 SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerLoseFrameSinkTest);
 
-class SoftwareTextureLayerUnregisterRegisterTest
-    : public SoftwareTextureLayerTest {
- protected:
-  void BeginTest() override {
-    PostSetNeedsCommitToMainThread();
-
-    gfx::Size size(1, 1);
-    viz::SharedImageFormat format = viz::SinglePlaneFormat::kRGBA_8888;
-
-    id_ = viz::SharedBitmap::GenerateId();
-    bitmap_ = base::MakeRefCounted<CrossThreadSharedBitmap>(
-        id_, viz::bitmap_allocation::AllocateSharedBitmap(size, format), size,
-        format);
+class TextureLayerNoResourceTest : public LayerTreeTest, TextureLayerClient {
+ public:
+  bool PrepareTransferableResource(
+      viz::TransferableResource* transferable_resource,
+      viz::ReleaseCallback* release_callback) override {
+    return false;
   }
 
-  void DidCommitAndDrawFrame() override {
-    step_ = layer_tree_host()->SourceFrameNumber();
-    switch (step_) {
-      case 1:
-        // The test starts by inserting the TextureLayer to the tree.
-        root_->AddChild(texture_layer_);
-
-        // We do a Register request, Unregister request, and then another
-        // Register request. The final register request should stick.
-        // And registers 2 SharedBitmapIds, which would be given to the
-        // LayerTreeFrameSink. But we unregister one.
-        {
-          // Register-Unregister-
-          SharedBitmapIdRegistration temp_reg =
-              texture_layer_->RegisterSharedBitmapId(id_, bitmap_);
-        }
-        // Register.
-        registration_ = texture_layer_->RegisterSharedBitmapId(id_, bitmap_);
-
-        // Give the TextureLayer a resource so it contributes to the frame. It
-        // doesn't need to register the SharedBitmapId otherwise.
-        texture_layer_->SetTransferableResource(
-            viz::TransferableResource::MakeSoftware(
-                id_, gfx::Size(1, 1), viz::SinglePlaneFormat::kRGBA_8888),
-            base::BindOnce([](const gpu::SyncToken&, bool) {}));
-        break;
-      case 2:
-        // Release the TransferableResource before shutdown.
-        texture_layer_->ClearClient();
-        break;
-      case 3:
-        EndTest();
-    }
+  void SetupTree() override {
+    SetInitialRootBounds(gfx::Size(100, 100));
+    LayerTreeTest::SetupTree();
+    auto texture_layer = TextureLayer::Create(this);
+    texture_layer->SetIsDrawable(true);
+    texture_layer->SetContentsOpaque(true);
+    texture_layer->SetBounds(gfx::Size(100, 100));
+    texture_layer->SetBackgroundColor(SkColors::kRed);
+    layer_tree_host()->root_layer()->AddChild(texture_layer);
+    texture_layer_id_ = static_cast<uint32_t>(texture_layer->id());
   }
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    switch (step_) {
-      case 0:
-        // Before commit 1, the |texture_layer_| has no SharedBitmapId yet.
-        EXPECT_EQ(0u, frame_sink_->owned_bitmaps().size());
-        verified_frames_++;
-        break;
-      case 1:
-        // For commit 1, we added 1 SharedBitmapId to |texture_layer_|.
-        EXPECT_EQ(1u, frame_sink_->owned_bitmaps().size());
-        EXPECT_EQ(*frame_sink_->owned_bitmaps().begin(), id_);
-        verified_frames_++;
-        break;
-    }
+    EXPECT_EQ(0u, frame.resource_list.size());
+    EXPECT_EQ(1u, frame.render_pass_list.size());
+
+    const auto& quad_list = frame.render_pass_list[0]->quad_list;
+    EXPECT_EQ(1u, quad_list.size());
+    EXPECT_NE(viz::DrawQuad::Material::kTextureContent,
+              quad_list.ElementAt(0)->material);
+
+    const auto& shared_list = frame.render_pass_list[0]->shared_quad_state_list;
+    EXPECT_EQ(1u, shared_list.size());
+    EXPECT_NE(texture_layer_id_, shared_list.ElementAt(0)->layer_id);
+
+    EndTest();
   }
 
-  void AfterTest() override { EXPECT_EQ(2, verified_frames_); }
-
-  int step_ = 0;
-  int verified_frames_ = 0;
-  viz::SharedBitmapId id_;
-  SharedBitmapIdRegistration registration_;
-  scoped_refptr<CrossThreadSharedBitmap> bitmap_;
+ private:
+  uint32_t texture_layer_id_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(SoftwareTextureLayerUnregisterRegisterTest);
+SINGLE_AND_MULTI_THREAD_TEST_F(TextureLayerNoResourceTest);
 
 }  // namespace
 }  // namespace cc

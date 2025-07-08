@@ -18,6 +18,7 @@
 #include <string>
 
 #include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
@@ -26,7 +27,6 @@
 #include "mediapipe/framework/formats/image_frame.h"
 #include "mediapipe/framework/formats/image_frame_opencv.h"
 #include "mediapipe/framework/formats/video_stream_header.h"
-#include "mediapipe/framework/port/integral_types.h"
 #include "mediapipe/framework/port/logging.h"
 #include "mediapipe/framework/port/ret_check.h"
 #include "mediapipe/framework/port/status.h"
@@ -349,8 +349,8 @@ absl::Status MotionAnalysisCalculator::Open(CalculatorContext* cc) {
     video_header =
         &(cc->Inputs().Tag(kSelectionTag).Header().Get<VideoHeader>());
   } else {
-    LOG(WARNING) << "No input video header found. Downstream calculators "
-                    "expecting video headers are likely to fail.";
+    ABSL_LOG(WARNING) << "No input video header found. Downstream calculators "
+                         "expecting video headers are likely to fail.";
   }
 
   with_saliency_ = options_.analysis_options().compute_motion_saliency();
@@ -358,9 +358,9 @@ absl::Status MotionAnalysisCalculator::Open(CalculatorContext* cc) {
   if (cc->Outputs().HasTag(kSaliencyTag)) {
     with_saliency_ = true;
     if (!options_.analysis_options().compute_motion_saliency()) {
-      LOG(WARNING) << "Enable saliency computation. Set "
-                   << "compute_motion_saliency to true to silence this "
-                   << "warning.";
+      ABSL_LOG(WARNING) << "Enable saliency computation. Set "
+                        << "compute_motion_saliency to true to silence this "
+                        << "warning.";
       options_.mutable_analysis_options()->set_compute_motion_saliency(true);
     }
   }
@@ -429,7 +429,7 @@ absl::Status MotionAnalysisCalculator::Process(CalculatorContext* cc) {
       selection_input_ ? &(cc->Inputs().Tag(kSelectionTag)) : nullptr;
 
   // Checked on Open.
-  CHECK(video_stream || selection_stream);
+  ABSL_CHECK(video_stream || selection_stream);
 
   // Lazy init.
   if (frame_width_ < 0 || frame_height_ < 0) {
@@ -473,11 +473,11 @@ absl::Status MotionAnalysisCalculator::Process(CalculatorContext* cc) {
   // Always use frame if selection is not activated.
   bool use_frame = !selection_input_;
   if (selection_input_) {
-    CHECK(selection_stream);
+    ABSL_CHECK(selection_stream);
 
     // Fill in timestamps we process.
     if (!selection_stream->Value().IsEmpty()) {
-      ASSIGN_OR_RETURN(
+      MP_ASSIGN_OR_RETURN(
           frame_selection_result,
           selection_stream->Value().ConsumeOrCopy<FrameSelectionResult>());
       use_frame = true;
@@ -604,8 +604,8 @@ absl::Status MotionAnalysisCalculator::Close(CalculatorContext* cc) {
   }
   if (csv_file_input_) {
     if (!meta_motions_.empty()) {
-      LOG(ERROR) << "More motions than frames. Unexpected! Remainder: "
-                 << meta_motions_.size();
+      ABSL_LOG(ERROR) << "More motions than frames. Unexpected! Remainder: "
+                      << meta_motions_.size();
     }
   }
   return absl::OkStatus();
@@ -742,8 +742,8 @@ absl::Status MotionAnalysisCalculator::InitOnProcess(
     }
     if (region_options->image_format() != image_format &&
         region_options->image_format() != image_format2) {
-      LOG(WARNING) << "Requested image format in RegionFlowComputation "
-                   << "does not match video stream format. Overriding.";
+      ABSL_LOG(WARNING) << "Requested image format in RegionFlowComputation "
+                        << "does not match video stream format. Overriding.";
       region_options->set_image_format(image_format);
     }
 
@@ -762,12 +762,12 @@ absl::Status MotionAnalysisCalculator::InitOnProcess(
     frame_width_ = camera_motion.frame_width();
     frame_height_ = camera_motion.frame_height();
   } else {
-    LOG(FATAL) << "Either VIDEO or SELECTION stream need to be specified.";
+    ABSL_LOG(FATAL) << "Either VIDEO or SELECTION stream need to be specified.";
   }
 
   // Filled by CSV file parsing.
   if (!meta_homographies_.empty()) {
-    CHECK(csv_file_input_);
+    ABSL_CHECK(csv_file_input_);
     AppendCameraMotionsFromHomographies(meta_homographies_,
                                         true,  // append identity.
                                         &meta_motions_, &meta_features_);
@@ -801,7 +801,7 @@ bool MotionAnalysisCalculator::ParseModelCSV(
   for (const auto& value : values) {
     double value_64f;
     if (!absl::SimpleAtod(value, &value_64f)) {
-      LOG(ERROR) << "Not a double, expected!";
+      ABSL_LOG(ERROR) << "Not a double, expected!";
       return false;
     }
 
@@ -814,12 +814,12 @@ bool MotionAnalysisCalculator::ParseModelCSV(
 bool MotionAnalysisCalculator::HomographiesFromValues(
     const std::vector<float>& homog_values,
     std::deque<Homography>* homographies) {
-  CHECK(homographies);
+  ABSL_CHECK(homographies);
 
   // Obvious constants are obvious :D
   constexpr int kHomographyValues = 9;
   if (homog_values.size() % kHomographyValues != 0) {
-    LOG(ERROR) << "Contents not a multiple of " << kHomographyValues;
+    ABSL_LOG(ERROR) << "Contents not a multiple of " << kHomographyValues;
     return false;
   }
 
@@ -831,7 +831,7 @@ bool MotionAnalysisCalculator::HomographiesFromValues(
 
     // Normalize last entry to 1.
     if (h_vals[kHomographyValues - 1] == 0) {
-      LOG(ERROR) << "Degenerate homography, last entry is zero";
+      ABSL_LOG(ERROR) << "Degenerate homography, last entry is zero";
       return false;
     }
 
@@ -845,8 +845,8 @@ bool MotionAnalysisCalculator::HomographiesFromValues(
   }
 
   if (homographies->size() % options_.meta_models_per_frame() != 0) {
-    LOG(ERROR) << "Total homographies not a multiple of specified models "
-               << "per frame.";
+    ABSL_LOG(ERROR) << "Total homographies not a multiple of specified models "
+                    << "per frame.";
     return false;
   }
 
@@ -856,7 +856,7 @@ bool MotionAnalysisCalculator::HomographiesFromValues(
 void MotionAnalysisCalculator::SubtractMetaMotion(
     const CameraMotion& meta_motion, RegionFlowFeatureList* features) {
   if (meta_motion.mixture_homography().model_size() > 0) {
-    CHECK(row_weights_ != nullptr);
+    ABSL_CHECK(row_weights_ != nullptr);
     RegionFlowFeatureListViaTransform(meta_motion.mixture_homography(),
                                       features, -1.0f,
                                       1.0f,  // subtract transformed.
@@ -923,8 +923,8 @@ void MotionAnalysisCalculator::AppendCameraMotionsFromHomographies(
     const std::deque<Homography>& homographies, bool append_identity,
     std::deque<CameraMotion>* camera_motions,
     std::deque<RegionFlowFeatureList>* features) {
-  CHECK(camera_motions);
-  CHECK(features);
+  ABSL_CHECK(camera_motions);
+  ABSL_CHECK(features);
 
   CameraMotion identity;
   identity.set_frame_width(frame_width_);

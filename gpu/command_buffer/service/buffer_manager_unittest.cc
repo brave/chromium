@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/buffer_manager.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 
+#include "base/containers/heap_array.h"
 #include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
@@ -26,17 +33,17 @@ namespace gles2 {
 
 class BufferManagerTestBase : public GpuServiceTest {
  protected:
-  void SetUpBase(
-      MemoryTracker* memory_tracker,
-      FeatureInfo* feature_info,
-      const char* extensions) {
+  void SetUpBase(scoped_refptr<MemoryTracker> memory_tracker,
+                 FeatureInfo* feature_info,
+                 const char* extensions) {
     GpuServiceTest::SetUp();
     if (feature_info) {
       TestHelper::SetupFeatureInfoInitExpectations(gl_.get(), extensions);
       feature_info->InitializeForTesting();
     }
     error_state_ = std::make_unique<MockErrorState>();
-    manager_ = std::make_unique<BufferManager>(memory_tracker, feature_info);
+    manager_ = std::make_unique<BufferManager>(std::move(memory_tracker),
+                                               feature_info);
   }
 
   void TearDown() override {
@@ -237,9 +244,14 @@ class BufferManagerTest : public BufferManagerTestBase {
 
 class BufferManagerMemoryTrackerTest : public BufferManagerTestBase {
  protected:
-  void SetUp() override { SetUpBase(&mock_memory_tracker_, nullptr, ""); }
+  void SetUp() override {
+    mock_memory_tracker_ =
+        base::MakeRefCounted<StrictMock<MockMemoryTracker>>();
 
-  StrictMock<MockMemoryTracker> mock_memory_tracker_;
+    SetUpBase(mock_memory_tracker_, nullptr, "");
+  }
+
+  scoped_refptr<StrictMock<MockMemoryTracker>> mock_memory_tracker_;
 };
 
 class BufferManagerClientSideArraysTest : public BufferManagerTestBase {
@@ -257,7 +269,7 @@ class BufferManagerClientSideArraysTest : public BufferManagerTestBase {
 };
 
 #define EXPECT_MEMORY_ALLOCATION_CHANGE(old_size, new_size)    \
-  EXPECT_CALL(mock_memory_tracker_,                            \
+  EXPECT_CALL(*mock_memory_tracker_,                           \
               TrackMemoryAllocatedChange(new_size - old_size)) \
       .Times(1)                                                \
       .RetiresOnSaturation()
@@ -362,9 +374,9 @@ TEST_F(BufferManagerTest, DoBufferSubData) {
   EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 0, -1, data));
   DoBufferData(buffer, kTarget, 1, GL_STATIC_DRAW, nullptr, GL_NO_ERROR);
   const int size = 0x20000;
-  std::unique_ptr<uint8_t[]> temp(new uint8_t[size]);
-  EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 0 - size, size, temp.get()));
-  EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 1, size / 2, temp.get()));
+  auto temp = base::HeapArray<uint8_t>::Uninit(size);
+  EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 0 - size, size, temp.data()));
+  EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 1, size / 2, temp.data()));
 }
 
 TEST_F(BufferManagerTest, GetRange) {
@@ -518,15 +530,10 @@ TEST_F(BufferManagerTest, BindBufferConflicts) {
 
   {
     // Except for ELEMENT_ARRAY_BUFFER, a buffer can switch to any targets.
-    const GLenum kTargets[] = {
-      GL_ARRAY_BUFFER,
-      GL_COPY_READ_BUFFER,
-      GL_COPY_WRITE_BUFFER,
-      GL_PIXEL_PACK_BUFFER,
-      GL_PIXEL_UNPACK_BUFFER,
-      GL_TRANSFORM_FEEDBACK_BUFFER,
-      GL_UNIFORM_BUFFER
-    };
+    const auto kTargets = std::to_array<GLenum>(
+        {GL_ARRAY_BUFFER, GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
+         GL_PIXEL_PACK_BUFFER, GL_PIXEL_UNPACK_BUFFER,
+         GL_TRANSFORM_FEEDBACK_BUFFER, GL_UNIFORM_BUFFER});
     for (size_t ii = 0; ii < std::size(kTargets); ++ii) {
       client_id++;
       service_id++;
@@ -545,15 +552,10 @@ TEST_F(BufferManagerTest, BindBufferConflicts) {
   {
     // Once a buffer is bound to non ELEMENT_ARRAY_BUFFER target, it can't be
     // bound to ELEMENT_ARRAY_BUFFER target.
-    const GLenum kTargets[] = {
-      GL_ARRAY_BUFFER,
-      GL_COPY_READ_BUFFER,
-      GL_COPY_WRITE_BUFFER,
-      GL_PIXEL_PACK_BUFFER,
-      GL_PIXEL_UNPACK_BUFFER,
-      GL_TRANSFORM_FEEDBACK_BUFFER,
-      GL_UNIFORM_BUFFER
-    };
+    const auto kTargets = std::to_array<GLenum>(
+        {GL_ARRAY_BUFFER, GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
+         GL_PIXEL_PACK_BUFFER, GL_PIXEL_UNPACK_BUFFER,
+         GL_TRANSFORM_FEEDBACK_BUFFER, GL_UNIFORM_BUFFER});
     for (size_t ii = 0; ii < std::size(kTargets); ++ii) {
       client_id++;
       service_id++;

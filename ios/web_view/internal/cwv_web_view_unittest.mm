@@ -2,28 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/web_view/internal/cwv_web_view_internal.h"
-
 #import <memory>
 
 #import "base/test/ios/wait_util.h"
-#import "base/test/scoped_feature_list.h"
 #import "ios/web/common/crw_input_view_provider.h"
-#import "ios/web/common/features.h"
 #import "ios/web/common/uikit_ui_util.h"
 #import "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "ios/web/public/web_client.h"
+#import "ios/web_view/internal/browser_state_keyed_service_factories.h"
 #import "ios/web_view/internal/cwv_web_view_configuration_internal.h"
+#import "ios/web_view/internal/cwv_web_view_internal.h"
 #import "ios/web_view/internal/web_view_browser_state.h"
 #import "ios/web_view/test/test_with_locale_and_resources.h"
 #import "ios/web_view/test/web_view_test_util.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using base::test::ios::kWaitForPageLoadTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
@@ -34,7 +28,6 @@ class CWVWebViewTest : public TestWithLocaleAndResources {
  public:
   void SetUp() override {
     TestWithLocaleAndResources::SetUp();
-    CWVWebView.customUserAgent = nil;
 
     configuration_ = [[CWVWebViewConfiguration alloc]
         initWithBrowserState:std::make_unique<WebViewBrowserState>(
@@ -47,7 +40,6 @@ class CWVWebViewTest : public TestWithLocaleAndResources {
     [configuration_ shutDown];
     configuration_ = nil;
 
-    CWVWebView.customUserAgent = nil;
     TestWithLocaleAndResources::TearDown();
   }
 
@@ -66,19 +58,14 @@ class CWVWebViewTest : public TestWithLocaleAndResources {
   }
 
  protected:
-  CWVWebViewTest() : web_client_(std::make_unique<web::WebClient>()) {}
+  CWVWebViewTest() : web_client_(std::make_unique<web::WebClient>()) {
+    EnsureBrowserStateKeyedServiceFactoriesBuilt();
+  }
 
   web::WebTaskEnvironment task_environment_;
   web::ScopedTestingWebClient web_client_;
   CWVWebViewConfiguration* configuration_;
 };
-
-// Test +[CWVWebView customUserAgent].
-TEST_F(CWVWebViewTest, CustomUserAgent) {
-  EXPECT_FALSE(CWVWebView.customUserAgent);
-  CWVWebView.customUserAgent = @"FooCustomUserAgent";
-  EXPECT_NSEQ(@"FooCustomUserAgent", CWVWebView.customUserAgent);
-}
 
 // Test CWVWebView's inputAccessoryView controls whether or not the overriding
 // behavior is enabled.
@@ -96,11 +83,8 @@ TEST_F(CWVWebViewTest, InputAccessoryView) {
 // Tests CWVWebView's session serialization logic by saving and then
 // restoring the WebView state (using only legacy code).
 TEST_F(CWVWebViewTest, EncodeDecodeLegacy) {
-  // Force disable the feature kEnableSessionSerializationOptimizations for
-  // the whole test.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      web::features::kEnableSessionSerializationOptimizations);
+  // Force the use of legacy storage.
+  CWVWebView.useOptimizedSessionStorage = NO;
 
   NSData* serialized_state = nil;
   {
@@ -149,11 +133,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeLegacy) {
 // Tests CWVWebView's session serialization logic by saving and then
 // restoring the WebView state (using only optimized code).
 TEST_F(CWVWebViewTest, EncodeDecodeOptimized) {
-  // Force enable the feature kEnableSessionSerializationOptimizations for
-  // the whole test.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      web::features::kEnableSessionSerializationOptimizations);
+  // Force the use of optimized storage.
+  CWVWebView.useOptimizedSessionStorage = YES;
 
   NSData* serialized_state = nil;
   {
@@ -204,13 +185,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeOptimized) {
 TEST_F(CWVWebViewTest, EncodeDecodeMigrateLegacyToOptimized) {
   NSData* serialized_state = nil;
   {
-    // Force disable the feature kEnableSessionSerializationOptimizations for
-    // the serialization, to force creating a serialized state in the legacy
-    // format.
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        web::features::kEnableSessionSerializationOptimizations);
-
+    // Force the use of legacy storage.
+    CWVWebView.useOptimizedSessionStorage = NO;
     CWVWebView* web_view = CreateWebView();
 
     ASSERT_TRUE(test::LoadUrl(web_view, [NSURL URLWithString:@"about:newtab"]));
@@ -227,11 +203,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeMigrateLegacyToOptimized) {
   }
 
   {
-    // Force enable the feature kEnableSessionSerializationOptimizations for
-    // the serialization, to force migration from the legacy format.
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeature(
-        web::features::kEnableSessionSerializationOptimizations);
+    // Force the use of optimized storage.
+    CWVWebView.useOptimizedSessionStorage = YES;
 
     // Create a new CWVWebView to restore the state into. Check that there is
     // no navigation history in it and then restore the state.
@@ -264,13 +237,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeMigrateLegacyToOptimized) {
 TEST_F(CWVWebViewTest, EncodeDecodeMigrateOptimizedToLegacy) {
   NSData* serialized_state = nil;
   {
-    // Force disable the feature kEnableSessionSerializationOptimizations for
-    // the serialization, to force creating a serialized state in the optimized
-    // format.
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndEnableFeature(
-        web::features::kEnableSessionSerializationOptimizations);
-
+    // Force the use of optimized storage.
+    CWVWebView.useOptimizedSessionStorage = YES;
     CWVWebView* web_view = CreateWebView();
 
     ASSERT_TRUE(test::LoadUrl(web_view, [NSURL URLWithString:@"about:newtab"]));
@@ -287,11 +255,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeMigrateOptimizedToLegacy) {
   }
 
   {
-    // Force enable the feature kEnableSessionSerializationOptimizations for
-    // the serialization, to force migration from the optimized format.
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        web::features::kEnableSessionSerializationOptimizations);
+    // Force the use of legacy storage.
+    CWVWebView.useOptimizedSessionStorage = NO;
 
     // Create a new CWVWebView to restore the state into. Check that there is
     // no navigation history in it and then restore the state.
@@ -322,11 +287,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeMigrateOptimizedToLegacy) {
 // Tests CWVWebView's session serialization logic by saving and then
 // restoring the WebView state (using only legacy code, after shutdown).
 TEST_F(CWVWebViewTest, EncodeDecodeLegacyAfterShutdown) {
-  // Force disable the feature kEnableSessionSerializationOptimizations for
-  // the whole test.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      web::features::kEnableSessionSerializationOptimizations);
+  // Force the use of legacy storage.
+  CWVWebView.useOptimizedSessionStorage = NO;
 
   NSData* serialized_state = nil;
   {
@@ -376,11 +338,8 @@ TEST_F(CWVWebViewTest, EncodeDecodeLegacyAfterShutdown) {
 // Tests CWVWebView's session serialization logic by saving and then
 // restoring the WebView state (using only optimized code, after shutdown).
 TEST_F(CWVWebViewTest, EncodeDecodeOptimizedAfterShutdown) {
-  // Force enable the feature kEnableSessionSerializationOptimizations for
-  // the whole test.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      web::features::kEnableSessionSerializationOptimizations);
+  // Force the use of optimized storage.
+  CWVWebView.useOptimizedSessionStorage = YES;
 
   NSData* serialized_state = nil;
   {

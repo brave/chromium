@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "mediapipe/framework/port/opencv_core_inc.h"
 #include "mediapipe/util/tracking/image_util.h"
 #include "mediapipe/util/tracking/push_pull_filtering.pb.h"
@@ -113,7 +114,7 @@ class FilterWeightMultiplierOne {
   void SetLevel(int mip_map_level, bool pull_down_sampling) {}
 
   float GetWeight(const float* anchor_ptr, const float* filter_ptr,
-                  const uint8* img_ptr, int x, int y) const {
+                  const uint8_t* img_ptr, int x, int y) const {
     return 1.0f;
   }
 };
@@ -243,7 +244,7 @@ class PushPullFiltering {
                         std::vector<int> tap_offsets[4],
                         std::vector<int> tap_space_offsets[4]);
 
-  inline int ColorDiffL1(const uint8* lhs_ptr, const uint8* rhs_ptr) {
+  inline int ColorDiffL1(const uint8_t* lhs_ptr, const uint8_t* rhs_ptr) {
     return abs(static_cast<int>(lhs_ptr[0]) - static_cast<int>(rhs_ptr[0])) +
            abs(static_cast<int>(lhs_ptr[1]) - static_cast<int>(rhs_ptr[1])) +
            abs(static_cast<int>(lhs_ptr[2]) - static_cast<int>(rhs_ptr[2]));
@@ -310,7 +311,7 @@ PushPullFiltering<C, FilterWeightMultiplier>::PushPullFiltering(
       weight_adjuster_(weight_adjuster) {
   border_ = BorderFromFilterType(filter_type);
   if (border_ < 0) {
-    LOG(FATAL) << "Unknown filter requested.";
+    ABSL_LOG(FATAL) << "Unknown filter requested.";
   }
 
   SetupFilters();
@@ -447,7 +448,7 @@ template <int C, class FilterWeightMultiplier>
 void PushPullFiltering<C, FilterWeightMultiplier>::AllocatePyramid(
     const cv::Size& domain_size, int border, int type, bool allocate_base_level,
     std::vector<cv::Mat>* pyramid) {
-  CHECK(pyramid != nullptr);
+  ABSL_CHECK(pyramid != nullptr);
   pyramid->clear();
   pyramid->reserve(16);  // Do not anticipate videos with dimensions
                          // larger than 2^16.
@@ -469,7 +470,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::AllocatePyramid(
 template <int C, class FilterWeightMultiplier>
 void PushPullFiltering<C, FilterWeightMultiplier>::InitializeImagePyramid(
     const cv::Mat& input_frame, std::vector<cv::Mat>* pyramid) {
-  CHECK(pyramid != nullptr);
+  ABSL_CHECK(pyramid != nullptr);
   ABSL_CHECK_GT(pyramid->size(), 0);
 
   cv::Mat base_level((*pyramid)[0],
@@ -480,7 +481,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::InitializeImagePyramid(
   ABSL_CHECK_EQ(base_level.type(), input_frame.type());
 
   input_frame.copyTo(base_level);
-  CopyNecessaryBorder<uint8, 3>(&(*pyramid)[0]);
+  CopyNecessaryBorder<uint8_t, 3>(&(*pyramid)[0]);
 
   for (int l = 0; l < pyramid->size() - 1; ++l) {
     cv::Mat source((*pyramid)[l],
@@ -490,7 +491,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::InitializeImagePyramid(
                         cv::Range(border_, (*pyramid)[l + 1].rows - border_),
                         cv::Range(border_, (*pyramid)[l + 1].cols - border_));
     cv::pyrDown(source, destination, destination.size());
-    CopyNecessaryBorder<uint8, 3>(&(*pyramid)[l + 1]);
+    CopyNecessaryBorder<uint8_t, 3>(&(*pyramid)[l + 1]);
   }
 }
 
@@ -508,7 +509,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::CopyNecessaryBorder(
       CopyMatBorder<T, 2, channels>(mat);
       break;
     default:
-      LOG(FATAL) << "Unknown filter";
+      ABSL_LOG(FATAL) << "Unknown filter";
   }
 }
 
@@ -745,7 +746,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PerformPushPull(
     const std::vector<float>* data_weights, const cv::Mat* input_frame,
     cv::Mat* results) {
   ABSL_CHECK_EQ(data_locations.size(), data_values.size());
-  CHECK(results != nullptr);
+  ABSL_CHECK(results != nullptr);
 
   if (data_weights) {
     ABSL_CHECK_EQ(data_weights->size(), data_locations.size());
@@ -807,7 +808,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PerformPushPullMat(
     int readout_level,           // Default: 0.
     const cv::Mat* input_frame,  // Optional.
     cv::Mat* results) {
-  CHECK(results != nullptr);
+  ABSL_CHECK(results != nullptr);
 
   // Create mip-map view (concat displacements with downsample_pyramid).
   std::vector<cv::Mat*> mip_map(PyramidLevels());
@@ -868,7 +869,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PerformPushPullImpl(
       filter_weights = gaussian5_weights_.data();
       break;
     default:
-      LOG(FATAL) << "Unknown filter requested.";
+      ABSL_LOG(FATAL) << "Unknown filter requested.";
   }
 
   const std::vector<cv::Mat*>& mip_map = *mip_map_ptr;
@@ -885,7 +886,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PerformPushPullImpl(
   }
 
   if (use_bilateral_) {
-    CHECK(input_frame != nullptr);
+    ABSL_CHECK(input_frame != nullptr);
     InitializeImagePyramid(*input_frame, &input_frame_pyramid_);
   }
 
@@ -907,7 +908,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PerformPushPullImpl(
 
 template <class T>
 inline const T* PtrOffset(const T* ptr, int offset) {
-  return reinterpret_cast<const T*>(reinterpret_cast<const uint8*>(ptr) +
+  return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(ptr) +
                                     offset);
 }
 
@@ -993,8 +994,8 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PullDownSampling(
       float* dst_ptr = mip_map[l]->ptr<float>(i + border) + border * channels;
       const float* src_ptr =
           mip_map[l - 1]->ptr<float>(2 * i + border) + border * channels;
-      const uint8* img_ptr =
-          use_bilateral_ ? (input_frame_pyramid_[l - 1].template ptr<uint8>(
+      const uint8_t* img_ptr =
+          use_bilateral_ ? (input_frame_pyramid_[l - 1].template ptr<uint8_t>(
                                 2 * i + border) +
                             border * 3)
                          : NULL;
@@ -1016,7 +1017,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PullDownSampling(
               continue;
             }
 
-            const uint8* match_ptr = PtrOffset(img_ptr, (*space_offsets)[k]);
+            const uint8_t* match_ptr = PtrOffset(img_ptr, (*space_offsets)[k]);
 
             float bilateral_w = bilateral_lut_[ColorDiffL1(img_ptr, match_ptr) *
                                                bilateral_scale];
@@ -1132,7 +1133,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PushUpSampling(
                          tap_weights, tap_offsets, tap_space_offsets);
         break;
       default:
-        LOG(FATAL) << "Filter unknown";
+        ABSL_LOG(FATAL) << "Filter unknown";
     }
 
     // Local copy for faster access.
@@ -1151,9 +1152,9 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PushUpSampling(
       float* dst_ptr = mip_map[l]->ptr<float>(i + border) + border * channels;
       const float* src_ptr =
           mip_map[l + 1]->ptr<float>(i / 2 + border) + border * channels;
-      const uint8* img_ptr =
+      const uint8_t* img_ptr =
           use_bilateral_
-              ? (input_frame_pyramid_[l].template ptr<uint8>(i + border) +
+              ? (input_frame_pyramid_[l].template ptr<uint8_t>(i + border) +
                  border * 3)
               : NULL;
 
@@ -1188,7 +1189,7 @@ void PushPullFiltering<C, FilterWeightMultiplier>::PushUpSampling(
               continue;
             }
 
-            const uint8* match_ptr = PtrOffset(img_ptr, tap_space_offset[k]);
+            const uint8_t* match_ptr = PtrOffset(img_ptr, tap_space_offset[k]);
             float bilateral_w = bilateral_lut_[ColorDiffL1(img_ptr, match_ptr) *
                                                bilateral_scale];
 

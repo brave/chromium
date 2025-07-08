@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""LayoutTests/ presubmit script for Blink.
+"""web_tests/ presubmit script for Blink.
 
 See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into gcl.
@@ -17,23 +17,21 @@ import re
 from html.parser import HTMLParser
 from typing import List
 
-WPT_IMPORTER_EMAIL = "wpt-autoroller@chops-service-accounts.iam.gserviceaccount.com"
 
+def _CheckTestharnessWdspecResults(input_api, output_api):
+    """Checks for all-PASS generic baselines for testharness/wdspec tests.
 
-def _CheckTestharnessResults(input_api, output_api):
-    """Checks for all-PASS generic baselines for testharness.js tests.
-
-    These files are unnecessary because for testharness.js tests, if there is no
+    These files are unnecessary because for testharness/wdspec tests, if there is no
     baseline file then the test is considered to pass when the output is all
     PASS. Note that only generic baselines are checked because platform specific
     and virtual baselines might be needed to prevent fallback.
     """
-    baseline_files = _TestharnessGenericBaselinesToCheck(input_api)
+    baseline_files = _TxtGenericBaselinesToCheck(input_api)
     if not baseline_files:
         return []
 
-    checker_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
-        '..', 'tools', 'check_testharness_expected_pass.py')
+    checker_path = input_api.os_path.join(input_api.PresubmitLocalPath(), '..',
+                                          'tools', 'check_expected_pass.py')
 
     # When running git cl presubmit --all this presubmit may be asked to check
     # ~19,000 files. Passing these on the command line would far exceed Windows
@@ -61,8 +59,8 @@ def _CheckTestharnessResults(input_api, output_api):
     return []
 
 
-def _TestharnessGenericBaselinesToCheck(input_api):
-    """Returns a list of paths of generic baselines for testharness.js tests."""
+def _TxtGenericBaselinesToCheck(input_api):
+    """Returns a list of paths of generic baselines for testharness/wdspec tests."""
     baseline_files = []
     this_dir = input_api.PresubmitLocalPath()
     for f in input_api.AffectedFiles():
@@ -133,6 +131,7 @@ def _CheckForRedundantBaselines(input_api, output_api, max_tests: int = 1000):
             input_api.python3_executable,
             path_to_blink_tool,
             'optimize-baselines',
+            '--no-manifest-update',
             '--check',
             f'--test-name-file={test_name_file.name}',
         ]
@@ -175,12 +174,12 @@ def _TestsCorrespondingToAffectedBaselines(input_api,
         test_prefix = baseline_match['test_prefix']
         # Getting the test name from the baseline path is not as easy as the
         # other direction. Try all extensions as a heuristic instead.
+        abs_prefix = input_api.os_path.join(input_api.PresubmitLocalPath(),
+                                            test_prefix)
         for extension in [
                 'html', 'xml', 'xhtml', 'xht', 'pl', 'htm', 'php', 'svg',
                 'mht', 'pdf', 'js'
         ]:
-            abs_prefix = input_api.os_path.join(input_api.PresubmitLocalPath(),
-                                                test_prefix)
             test_paths.update(input_api.glob(f'{abs_prefix}*.{extension}'))
     return [
         input_api.os_path.relpath(test_path, input_api.PresubmitLocalPath())
@@ -298,6 +297,11 @@ def _CheckForUnlistedTestFolder(input_api, output_api):
 def _CheckForExtraVirtualBaselines(input_api, output_api):
     """Checks that expectations in virtual test suites are for virtual test suites that exist
     """
+    # This test fails on Windows because win32pipe is not available and
+    # other errors.
+    if os.name == 'nt':
+        return []
+
     os_path = input_api.os_path
 
     local_dir = os_path.relpath(
@@ -322,11 +326,6 @@ def _CheckForExtraVirtualBaselines(input_api, output_api):
             check_all = True
 
     if not check_all and len(check_files) == 0:
-        return []
-
-    # The rest of this test fails on Windows because win32pipe is not available
-    # and other errors.
-    if os.name == 'nt':
         return []
 
     from blinkpy.common.host import Host
@@ -377,21 +376,6 @@ def _CheckForExtraVirtualBaselines(input_api, output_api):
     return results
 
 
-def _CheckWebViewExpectations(input_api, output_api):
-    src_dir = os.path.join(input_api.PresubmitLocalPath(), os.pardir,
-                           os.pardir, os.pardir)
-    webview_data_dir = input_api.os_path.join(src_dir, 'android_webview',
-                                              'tools', 'system_webview_shell',
-                                              'test', 'data', 'webexposed')
-    if webview_data_dir not in sys.path:
-        sys.path.append(webview_data_dir)
-
-    # pylint: disable=import-outside-toplevel
-    from exposed_webview_interfaces_presubmit import (
-        CheckNotWebViewExposedInterfaces)
-    return CheckNotWebViewExposedInterfaces(input_api, output_api)
-
-
 class _DoctypeParser(HTMLParser):
     """Parses HTML to check if there exists a DOCTYPE declaration before all other tags.
     """
@@ -431,12 +415,12 @@ def _CheckForDoctypeHTML(input_api, output_api):
     if input_api.no_diffs:
         return results
 
-    # These tests are being imported from WPT, so <!DOCTYPE html> is not required yet.
-    no_errors = (input_api.change.author_email == WPT_IMPORTER_EMAIL)
+    wpt_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
+                                      "external", "wpt")
 
     for f in input_api.AffectedFiles(include_deletes=False):
         path = f.LocalPath()
-        fname = os.path.basename(path)
+        fname = input_api.os_path.basename(path)
 
         if not fname.endswith(".html") or "quirk" in fname:
             continue
@@ -447,6 +431,9 @@ def _CheckForDoctypeHTML(input_api, output_api):
                     "to the name of your test." % path
 
             if f.Action() == "A" or _IsDoctypeHTMLSet(f.OldContents()):
+                # These tests are being imported from WPT, so <!DOCTYPE html> is
+                # not required yet.
+                no_errors = f.AbsoluteLocalPath().startswith(wpt_path)
                 if no_errors:
                     results.append(output_api.PresubmitPromptWarning(error))
                 else:
@@ -454,31 +441,36 @@ def _CheckForDoctypeHTML(input_api, output_api):
 
     return results
 
-
 def CheckChangeOnUpload(input_api, output_api):
     results = []
-    results.extend(_CheckTestharnessResults(input_api, output_api))
+    results.extend(_CheckTestharnessWdspecResults(input_api, output_api))
     results.extend(_CheckFilesUsingEventSender(input_api, output_api))
     results.extend(_CheckTestExpectations(input_api, output_api))
+    # `_CheckTestExpectations()` updates the WPT manifests for
+    # `_CheckForRedundantBaselines()`, so they must run in order. (Updating the
+    # manifest is needed to correctly detect tests but takes 10-15s, so try
+    # to only do so once; see crbug.com/1492238.)
     results.extend(_CheckForRedundantBaselines(input_api, output_api))
     results.extend(_CheckForJSTest(input_api, output_api))
     results.extend(_CheckForInvalidPreferenceError(input_api, output_api))
     results.extend(_CheckRunAfterLayoutAndPaintJS(input_api, output_api))
     results.extend(_CheckForUnlistedTestFolder(input_api, output_api))
     results.extend(_CheckForExtraVirtualBaselines(input_api, output_api))
-    results.extend(_CheckWebViewExpectations(input_api, output_api))
     results.extend(_CheckForDoctypeHTML(input_api, output_api))
     return results
 
 
 def CheckChangeOnCommit(input_api, output_api):
     results = []
-    results.extend(_CheckTestharnessResults(input_api, output_api))
+    results.extend(_CheckTestharnessWdspecResults(input_api, output_api))
     results.extend(_CheckFilesUsingEventSender(input_api, output_api))
     results.extend(_CheckTestExpectations(input_api, output_api))
+    # `_CheckTestExpectations()` updates the WPT manifests for
+    # `_CheckForRedundantBaselines()`, so they must run in order. (Updating the
+    # manifest is needed to correctly detect tests but takes 10-15s, so try
+    # to only do so once; see crbug.com/1492238.)
     results.extend(_CheckForRedundantBaselines(input_api, output_api))
     results.extend(_CheckForUnlistedTestFolder(input_api, output_api))
     results.extend(_CheckForExtraVirtualBaselines(input_api, output_api))
-    results.extend(_CheckWebViewExpectations(input_api, output_api))
     results.extend(_CheckForDoctypeHTML(input_api, output_api))
     return results

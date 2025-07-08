@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 
+#include <array>
+
 #include "build/build_config.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/paint/paint_image.h"
@@ -34,7 +36,7 @@ SkBlendMode const kBlendModes[] = {
     SkBlendMode::kHue,       SkBlendMode::kSaturation,
     SkBlendMode::kColor,     SkBlendMode::kLuminosity};
 
-SkColor kCSSTestColors[] = {
+auto kCSSTestColors = std::to_array<SkColor>({
     0xffff0000,  // red
     0xff00ff00,  // lime
     0xff0000ff,  // blue
@@ -54,8 +56,8 @@ SkColor kCSSTestColors[] = {
     0x80000000,  // black with transparency
     0xffffffff,  // white
     0x80ffffff,  // white with transparency
-    0x00000000   // transparent
-};
+    0x00000000,  // transparent
+});
 
 const int kCSSTestColorsCount = std::size(kCSSTestColors);
 
@@ -250,7 +252,10 @@ std::vector<RasterTestConfig> const kTestCases = {
     {viz::RendererType::kSkiaVk, TestRasterType::kGpu},
 #endif  // BUILDFLAG(ENABLE_VULKAN_BACKEND_TESTS)
 #if BUILDFLAG(ENABLE_SKIA_GRAPHITE_TESTS)
-    {viz::RendererType::kSkiaGraphite, TestRasterType::kGpu},
+    {viz::RendererType::kSkiaGraphiteDawn, TestRasterType::kGpu},
+#if BUILDFLAG(IS_IOS)
+    {viz::RendererType::kSkiaGraphiteMetal, TestRasterType::kGpu},
+#endif  // BUILDFLAG(IS_IOS)
 #endif  // BUILDFLAG(ENABLE_SKIA_GRAPHITE_TESTS)
 };
 

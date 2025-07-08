@@ -18,11 +18,11 @@ AppViewGuestInternalAttachFrameFunction::
 
 ExtensionFunction::ResponseAction
 AppViewGuestInternalAttachFrameFunction::Run() {
-  absl::optional<appview::AttachFrame::Params> params =
+  std::optional<appview::AttachFrame::Params> params =
       appview::AttachFrame::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  GURL url = extension()->GetResourceURL(params->url);
+  GURL url = extension()->ResolveExtensionURL(params->url);
   EXTENSION_FUNCTION_VALIDATE(url.is_valid());
 
   if (AppViewGuest::CompletePendingRequest(
@@ -40,7 +40,7 @@ AppViewGuestInternalDenyRequestFunction::
 
 ExtensionFunction::ResponseAction
 AppViewGuestInternalDenyRequestFunction::Run() {
-  absl::optional<appview::DenyRequest::Params> params =
+  std::optional<appview::DenyRequest::Params> params =
       appview::DenyRequest::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 

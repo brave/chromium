@@ -4,29 +4,46 @@
 
 #include "services/network/shared_dictionary/shared_dictionary_manager_on_disk.h"
 
+#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/strings/string_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/token.h"
 #include "base/unguessable_token.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
+#include "services/network/public/cpp/network_switches.h"
+#include "services/network/public/cpp/request_destination.h"
+#include "services/network/shared_dictionary/shared_dictionary_cache.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage_on_disk.h"
+#include "services/network/shared_dictionary/simple_url_pattern_matcher.h"
 
 namespace network {
 namespace {
 
-absl::optional<base::UnguessableToken> DeserializeToUnguessableToken(
+std::optional<base::UnguessableToken> DeserializeToUnguessableToken(
     const std::string& token_string) {
-  absl::optional<base::Token> token = base::Token::FromString(token_string);
+  std::optional<base::Token> token = base::Token::FromString(token_string);
   if (!token) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return base::UnguessableToken::Deserialize(token->high(), token->low());
+}
+
+std::string ToCommaSeparatedString(
+    const std::set<mojom::RequestDestination>& match_dest) {
+  std::vector<std::string_view> destinations;
+  for (auto dest : match_dest) {
+    std::string_view result = RequestDestinationToString(
+        dest, EmptyRequestDestinationOption::kUseFiveCharEmptyString);
+    destinations.push_back(result);
+  }
+  return base::JoinString(destinations, ",");
 }
 
 }  // namespace
@@ -244,7 +261,7 @@ class SharedDictionaryManagerOnDisk::MismatchingEntryDeletionTask
     }
     disk_cache::ScopedEntryPtr entry(result.ReleaseEntry());
     // 5) Get the disk cache key token of the entry.
-    absl::optional<base::UnguessableToken> token =
+    std::optional<base::UnguessableToken> token =
         DeserializeToUnguessableToken(entry->GetKey());
     if (!token) {
       // 6) If the disk cache entry key is not a valid token, deletes the entry.
@@ -349,6 +366,23 @@ class SharedDictionaryManagerOnDisk::CacheEvictionTask
     if (result.has_value()) {
       manager_->OnDictionaryDeleted(result.value(),
                                     /*need_to_doom_disk_cache_entries=*/true);
+    } else if (result.error() == net::SQLitePersistentSharedDictionaryStore::
+                                     Error::kFailedToGetTotalDictSize) {
+      // Assume the database gets corrupted for some reason, so call
+      // ClearAllDictionaries() to reset the database.
+      manager_->metadata_store().ClearAllDictionaries(
+          base::BindOnce(&CacheEvictionTask::OnClearAllDictionariesFinished,
+                         weak_factory_.GetWeakPtr()));
+      return;
+    }
+    manager_->OnFinishSerializedTask();
+  }
+  void OnClearAllDictionariesFinished(
+      net::SQLitePersistentSharedDictionaryStore::UnguessableTokenSetOrError
+          result) {
+    if (result.has_value()) {
+      manager_->OnDictionaryDeleted(result.value(),
+                                    /*need_to_doom_disk_cache_entries=*/true);
     }
     manager_->OnFinishSerializedTask();
   }
@@ -442,7 +476,7 @@ SharedDictionaryManagerOnDisk::SharedDictionaryManagerOnDisk(
     uint64_t cache_max_size,
     uint64_t cache_max_count,
 #if BUILDFLAG(IS_ANDROID)
-    base::android::ApplicationStatusListener* app_status_listener,
+    disk_cache::ApplicationStatusListenerGetter app_status_listener_getter,
 #endif  // BUILDFLAG(IS_ANDROID)
     scoped_refptr<disk_cache::BackendFileOperationsFactory>
         file_operations_factory)
@@ -454,10 +488,18 @@ SharedDictionaryManagerOnDisk::SharedDictionaryManagerOnDisk(
                       /*background_task_runner=*/
                       base::ThreadPool::CreateSequencedTaskRunner(
                           {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
-                           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
+                           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
+      cleanup_task_disabled_for_testing_(
+          base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kDisableSharedDictionaryStorageCleanupForTesting)) {
+  dictionary_cache_ = base::MakeRefCounted<SharedDictionaryCache>();
+  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+      FROM_HERE,
+      base::BindRepeating(&SharedDictionaryManagerOnDisk::OnMemoryPressure,
+                          weak_factory_.GetWeakPtr()));
   disk_cache_.Initialize(cache_directory_path,
 #if BUILDFLAG(IS_ANDROID)
-                         app_status_listener,
+                         app_status_listener_getter,
 #endif  // BUILDFLAG(IS_ANDROID)
                          std::move(file_operations_factory));
   MaybePostExpiredDictionaryDeletionTask();
@@ -475,7 +517,8 @@ SharedDictionaryManagerOnDisk::CreateStorage(
       weak_factory_.GetWeakPtr(), isolation_key,
       base::ScopedClosureRunner(
           base::BindOnce(&SharedDictionaryManager::OnStorageDeleted,
-                         GetWeakPtr(), isolation_key)));
+                         GetWeakPtr(), isolation_key)),
+      dictionary_cache_);
 }
 
 void SharedDictionaryManagerOnDisk::SetCacheMaxSize(uint64_t cache_max_size) {
@@ -518,7 +561,9 @@ void SharedDictionaryManagerOnDisk::GetSharedDictionaryInfo(
               return;
             }
             for (auto& info : result.value()) {
-              dictionaries.push_back(ToMojoSharedDictionaryInfo(info));
+              dictionaries.push_back(ToMojoSharedDictionaryInfo(
+                  SharedDictionaryStorageOnDisk::WrappedDictionaryInfo(
+                      info, /*matcher=*/nullptr)));
             }
             std::move(callback).Run(std::move(dictionaries));
           },
@@ -545,9 +590,12 @@ scoped_refptr<SharedDictionaryWriter>
 SharedDictionaryManagerOnDisk::CreateWriter(
     const net::SharedDictionaryIsolationKey& isolation_key,
     const GURL& url,
+    base::Time last_fetch_time,
     base::Time response_time,
     base::TimeDelta expiration,
     const std::string& match,
+    const std::set<mojom::RequestDestination>& match_dest,
+    const std::string& id,
     base::OnceCallback<void(net::SharedDictionaryInfo)> callback) {
   const base::UnguessableToken disk_cache_key_token =
       base::UnguessableToken::Create();
@@ -556,8 +604,9 @@ SharedDictionaryManagerOnDisk::CreateWriter(
       disk_cache_key_token,
       base::BindOnce(
           &SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDiskCache,
-          weak_factory_.GetWeakPtr(), isolation_key, url, response_time,
-          expiration, match, disk_cache_key_token, std::move(callback)),
+          weak_factory_.GetWeakPtr(), isolation_key, url, last_fetch_time,
+          response_time, expiration, match, match_dest, id,
+          disk_cache_key_token, std::move(callback)),
       disk_cache_.GetWeakPtr());
   writer->Initialize();
   return writer;
@@ -566,9 +615,12 @@ SharedDictionaryManagerOnDisk::CreateWriter(
 void SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDiskCache(
     const net::SharedDictionaryIsolationKey& isolation_key,
     const GURL& url,
+    base::Time last_fetch_time,
     base::Time response_time,
     base::TimeDelta expiration,
     const std::string& match,
+    const std::set<mojom::RequestDestination>& match_dest,
+    const std::string& id,
     const base::UnguessableToken& disk_cache_key_token,
     base::OnceCallback<void(net::SharedDictionaryInfo)> callback,
     SharedDictionaryWriterOnDisk::Result result,
@@ -584,10 +636,11 @@ void SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDiskCache(
     return;
   }
   base::Time last_used_time = base::Time::Now();
-  net::SharedDictionaryInfo info(url, response_time, expiration, match,
-                                 last_used_time, size, hash,
-                                 disk_cache_key_token,
-                                 /*primary_key_in_database=*/absl::nullopt);
+  net::SharedDictionaryInfo info(
+      url, last_fetch_time, response_time, expiration, match,
+      ToCommaSeparatedString(match_dest), id, last_used_time, size, hash,
+      disk_cache_key_token,
+      /*primary_key_in_database=*/std::nullopt);
   metadata_store_.RegisterDictionary(
       isolation_key, info,
       /*max_size_per_site*/ cache_max_size_ / 2,
@@ -640,6 +693,16 @@ void SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDatabase(
   MaybePostCacheEvictionTask();
 }
 
+void SharedDictionaryManagerOnDisk::UpdateDictionaryLastFetchTime(
+    net::SharedDictionaryInfo& info,
+    base::Time last_fetch_time) {
+  info.set_last_fetch_time(last_fetch_time);
+  CHECK(info.primary_key_in_database());
+  metadata_store_.UpdateDictionaryLastFetchTime(
+      *info.primary_key_in_database(), info.last_fetch_time(),
+      base::BindOnce([](net::SQLitePersistentSharedDictionaryStore::Error) {}));
+}
+
 void SharedDictionaryManagerOnDisk::UpdateDictionaryLastUsedTime(
     net::SharedDictionaryInfo& info) {
   info.set_last_used_time(base::Time::Now());
@@ -670,6 +733,9 @@ void SharedDictionaryManagerOnDisk::ClearDataForIsolationKey(
 
 void SharedDictionaryManagerOnDisk::PostSerializedTask(
     std::unique_ptr<SerializedTaskInfo> task_info) {
+  if (cleanup_task_disabled_for_testing_) {
+    return;
+  }
   pending_serialized_task_info_.push_back(std::move(task_info));
   MaybeStartSerializedTask();
 }
@@ -746,6 +812,13 @@ void SharedDictionaryManagerOnDisk::MaybePostExpiredDictionaryDeletionTask() {
             }
           },
           weak_factory_.GetWeakPtr())));
+}
+
+void SharedDictionaryManagerOnDisk::OnMemoryPressure(
+    base::MemoryPressureListener::MemoryPressureLevel level) {
+  if (level != base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
+    dictionary_cache_->Clear();
+  }
 }
 
 }  // namespace network

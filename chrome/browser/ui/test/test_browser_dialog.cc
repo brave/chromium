@@ -4,19 +4,21 @@
 
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 
-#include "base/containers/cxx20_erase.h"
+#include <set>
+
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/views/test/views_test_utils.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/shell.h"
 #endif
 
@@ -25,8 +27,8 @@
 #endif
 
 #if defined(TOOLKIT_VIEWS)
-#include "base/functional/callback_helpers.h"
 #include "base/strings/strcat.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/views/test/widget_test.h"
@@ -49,10 +51,11 @@ class WidgetCloser {
 
  private:
   void CloseWidget(bool async) {
-    if (async)
+    if (async) {
       widget_->Close();
-    else
+    } else {
       widget_->CloseNow();
+    }
   }
 
   raw_ptr<views::Widget, AcrossTasksDanglingUntriaged> widget_;
@@ -87,8 +90,9 @@ bool TestBrowserDialog::VerifyUi() {
 
   // Force pending layouts of all existing widgets. This ensures any
   // anchor Views are in the correct position.
-  for (views::Widget* widget : widgets_)
+  for (views::Widget* widget : widgets_) {
     widget->LayoutRootViewIfNecessary();
+  }
 
   // Get the list of added dialog widgets. Ignore non-dialog widgets, including
   // those added by tests to anchor dialogs and the browser's status bubble.
@@ -96,7 +100,7 @@ bool TestBrowserDialog::VerifyUi() {
   auto added =
       base::STLSetDifference<views::Widget::Widgets>(widgets_, widgets_before);
   std::string name = GetNonDialogName();
-  base::EraseIf(added, [&](views::Widget* widget) {
+  std::erase_if(added, [&](views::Widget* widget) {
     return !widget->widget_delegate()->AsDialogDelegate() &&
            (name.empty() || widget->GetName() != name);
   });
@@ -121,24 +125,29 @@ bool TestBrowserDialog::VerifyUi() {
   bool is_active = dialog_widget->IsActive();
   dialog_widget->Deactivate();
   dialog_widget->GetFocusManager()->ClearFocus();
-  base::ScopedClosureRunner unblock_close(
-      base::BindOnce(&views::Widget::SetBlockCloseForTesting,
-                     base::Unretained(dialog_widget), false));
+  absl::Cleanup unblock_close = [dialog_widget] {
+    dialog_widget->SetBlockCloseForTesting(false);
+  };
 
   auto* test_info = testing::UnitTest::GetInstance()->current_test_info();
   const std::string screenshot_name = base::StrCat(
-      {test_info->test_case_name(), "_", test_info->name(), "_", baseline_});
+      {test_info->test_suite_name(), "_", test_info->name(), "_", baseline_});
 
   if (VerifyPixelUi(dialog_widget, "BrowserUiDialog", screenshot_name) ==
       ui::test::ActionResult::kFailed) {
     LOG(INFO) << "VerifyUi(): Pixel compare failed.";
     return false;
   }
-  if (is_active)
+  if (is_active) {
     dialog_widget->Activate();
+  }
 
-  if (!should_verify_dialog_bounds_)
+  if (!should_verify_dialog_bounds_) {
     return true;
+  }
+
+  // RunScheduledLayout() is needed due to widget auto-resize.
+  views::test::RunScheduledLayout(dialog_widget);
 
   // Verify that the dialog's dimensions do not exceed the display's work area
   // bounds, which may be smaller than its bounds(), e.g. in the case of the
@@ -197,9 +206,10 @@ std::string TestBrowserDialog::GetNonDialogName() {
 
 void TestBrowserDialog::UpdateWidgets() {
   widgets_.clear();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  for (aura::Window* root_window : ash::Shell::GetAllRootWindows())
-    views::Widget::GetAllChildWidgets(root_window, &widgets_);
+#if BUILDFLAG(IS_CHROMEOS)
+  for (aura::Window* root_window : ash::Shell::GetAllRootWindows()) {
+    widgets_.merge(views::Widget::GetAllChildWidgets(root_window));
+  }
 #elif defined(TOOLKIT_VIEWS)
   widgets_ = views::test::WidgetTest::GetAllWidgets();
 #else

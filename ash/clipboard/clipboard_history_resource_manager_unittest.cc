@@ -9,7 +9,6 @@
 #include "ash/clipboard/clipboard_history.h"
 #include "ash/clipboard/clipboard_history_controller_impl.h"
 #include "ash/clipboard/clipboard_history_item.h"
-#include "ash/clipboard/clipboard_history_url_title_fetcher.h"
 #include "ash/clipboard/clipboard_history_util.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/clipboard_image_model_factory.h"
@@ -23,7 +22,6 @@
 #include "base/test/gmock_callback_support.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -54,15 +52,6 @@ class MockClipboardImageModelFactory : public ClipboardImageModelFactory {
   MOCK_METHOD(void, Deactivate, (), (override));
   MOCK_METHOD(void, RenderCurrentPendingRequests, (), (override));
   void OnShutdown() override {}
-};
-
-class MockClipboardHistoryUrlTitleFetcher
-    : public ClipboardHistoryUrlTitleFetcher {
- public:
-  MOCK_METHOD(void,
-              QueryHistory,
-              (const GURL& url, OnHistoryQueryCompleteCallback callback),
-              (override));
 };
 
 void FlushMessageLoop() {
@@ -125,8 +114,8 @@ class ClipboardHistoryResourceManagerTest : public AshTestBase {
   }
 
  private:
-  raw_ptr<const ClipboardHistory, ExperimentalAsh> clipboard_history_;
-  raw_ptr<const ClipboardHistoryResourceManager, ExperimentalAsh>
+  raw_ptr<const ClipboardHistory, DanglingUntriaged> clipboard_history_;
+  raw_ptr<const ClipboardHistoryResourceManager, DanglingUntriaged>
       resource_manager_;
   std::unique_ptr<MockClipboardImageModelFactory> mock_image_factory_;
 };
@@ -144,8 +133,7 @@ TEST_F(ClipboardHistoryResourceManagerTest, BasicImgCachedImageModel) {
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url");
   }
   FlushMessageLoop();
 
@@ -168,8 +156,7 @@ TEST_F(ClipboardHistoryResourceManagerTest, BasicTableCachedImageModel) {
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<table test>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<table test>", "source_url");
   }
   FlushMessageLoop();
 
@@ -193,8 +180,7 @@ TEST_F(ClipboardHistoryResourceManagerTest, BasicIneligibleCachedImageModel) {
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"HTML with no img or table tag", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"HTML with no img or table tag", "source_url");
   }
   FlushMessageLoop();
 
@@ -219,15 +205,13 @@ TEST_F(ClipboardHistoryResourceManagerTest, DuplicateHTML) {
   // are added to the clipboard history.
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url_1",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url_1");
   }
   FlushMessageLoop();
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url_2",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url_2");
   }
   FlushMessageLoop();
 
@@ -257,15 +241,13 @@ TEST_F(ClipboardHistoryResourceManagerTest, DifferentHTML) {
   EXPECT_CALL(*mock_image_factory(), CancelRequest).Times(0);
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url");
   }
   FlushMessageLoop();
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img different>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img different>", "source_url");
   }
   FlushMessageLoop();
 
@@ -290,8 +272,7 @@ TEST_F(ClipboardHistoryResourceManagerTest, IneligibleDisplayTypes) {
   // image model should be rendered.
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url");
     scw.WriteImage(GetRandomBitmap());
   }
   FlushMessageLoop();
@@ -343,8 +324,7 @@ TEST_F(ClipboardHistoryResourceManagerTest, PlaceholderDuringRender) {
 
   {
     ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-    scw.WriteHTML(u"<img test>", "source_url",
-                  ui::ClipboardContentType::kSanitized);
+    scw.WriteHTML(u"<img test>", "source_url");
   }
 
   // Wait for the clipboard history item to be created. This allows us to check
@@ -368,100 +348,6 @@ TEST_F(ClipboardHistoryResourceManagerTest, PlaceholderDuringRender) {
   // cached in the clipboard history item.
   ASSERT_TRUE(item.display_image().has_value());
   EXPECT_EQ(item.display_image().value(), expected_image_model);
-}
-
-// Base class for `ClipboardHistoryMenuResourceManager` tests parameterized by
-// whether the clipboard history URL titles feature is enabled.
-class ClipboardHistoryResourceManagerUrlTitlesTest
-    : public ClipboardHistoryResourceManagerTest,
-      public WithParamInterface</*enable_url_titles=*/bool> {
- public:
-  ClipboardHistoryResourceManagerUrlTitlesTest() {
-    scoped_feature_list_.InitWithFeatureStates(
-        {{chromeos::features::kClipboardHistoryRefresh,
-          IsClipboardHistoryUrlTitlesEnabled()},
-         {features::kClipboardHistoryUrlTitles,
-          IsClipboardHistoryUrlTitlesEnabled()},
-         {chromeos::features::kJelly, IsClipboardHistoryUrlTitlesEnabled()}});
-  }
-
-  // ClipboardHistoryResourceManagerTest:
-  void SetUp() override {
-    ClipboardHistoryResourceManagerTest::SetUp();
-    Shell::Get()
-        ->clipboard_history_controller()
-        ->set_confirmed_operation_callback_for_test(
-            operation_confirmed_future_.GetRepeatingCallback());
-  }
-
-  void WriteTextToClipboardAndConfirm(const std::u16string& str) {
-    EXPECT_FALSE(operation_confirmed_future_.IsReady());
-    {
-      ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
-      scw.WriteText(str);
-    }
-    EXPECT_TRUE(operation_confirmed_future_.Take());
-  }
-
-  bool IsClipboardHistoryUrlTitlesEnabled() const { return GetParam(); }
-
-  StrictMock<MockClipboardHistoryUrlTitleFetcher>& mock_url_title_fetcher() {
-    return mock_url_title_fetcher_;
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-  StrictMock<MockClipboardHistoryUrlTitleFetcher> mock_url_title_fetcher_;
-  base::test::TestFuture<bool> operation_confirmed_future_;
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ClipboardHistoryResourceManagerUrlTitlesTest,
-                         /*enable_url_titles=*/Bool());
-
-// Verifies the value of clipboard history text items' secondary display text
-// based on whether their display text is a URL, whether the URL title fetcher
-// finds a title for the URL, and what that title is.
-TEST_P(ClipboardHistoryResourceManagerUrlTitlesTest, SecondaryDisplayText) {
-  struct {
-    const std::u16string text;
-    const absl::optional<std::u16string> returned_title;
-    const absl::optional<std::u16string> expected_secondary_display_text;
-  } test_cases[]{
-      // Test that copying a visited URL sets the item's secondary display text
-      // with the page's title.
-      {u"https://visited.com", u"Title", u"Title"},
-      // Test that a visited URL's page title has its whitespace trimmed before
-      // being set as an item's secondary display text.
-      {u"https://visited.com", u" Title ", u"Title"},
-      // Test that a whitespace-only title is not treated as text an item should
-      // display.
-      {u"https://visited.com", u" ", absl::nullopt},
-      // Test that copying an unvisited URL triggers a history query but does
-      // not set the item's secondary display text.
-      {u"https://unvisited.com", absl::nullopt, absl::nullopt},
-      // Test that copying non-URL text does not trigger a history query or set
-      // the item's secondary display text.
-      {u"Not a URL", absl::nullopt, absl::nullopt},
-  };
-
-  for (const auto& [text, returned_title, expected_secondary_display_text] :
-       test_cases) {
-    const GURL url(text);
-    const bool should_fetch_title =
-        IsClipboardHistoryUrlTitlesEnabled() && url.is_valid();
-
-    EXPECT_CALL(mock_url_title_fetcher(), QueryHistory(url, _))
-        .Times(should_fetch_title ? 1 : 0)
-        .WillOnce(base::test::RunOnceCallback<1>(returned_title));
-
-    WriteTextToClipboardAndConfirm(text);
-    ASSERT_FALSE(clipboard_history()->IsEmpty());
-    const auto& item = clipboard_history()->GetItems().front();
-    EXPECT_EQ(
-        item.secondary_display_text(),
-        should_fetch_title ? expected_secondary_display_text : absl::nullopt);
-  }
 }
 
 }  // namespace ash

@@ -6,10 +6,10 @@
 #define UI_GFX_COLOR_TRANSFORM_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/feature_list.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/effects/SkRuntimeEffect.h"
 #include "ui/gfx/color_space.h"
@@ -18,9 +18,6 @@
 #include "ui/gfx/hdr_metadata.h"
 
 namespace gfx {
-
-COLOR_SPACE_EXPORT BASE_DECLARE_FEATURE(kHlgPqUnifiedTonemap);
-COLOR_SPACE_EXPORT BASE_DECLARE_FEATURE(kHlgPqSdrRelative);
 
 class COLOR_SPACE_EXPORT ColorTransform {
  public:
@@ -41,20 +38,25 @@ class COLOR_SPACE_EXPORT ColorTransform {
 
   // Parameters that may be specified when the transform is applied. Changing
   // these parameters will change the uniforms for a single SkShader.
-  struct RuntimeOptions {
+  struct COLOR_SPACE_EXPORT RuntimeOptions {
+    RuntimeOptions();
+    RuntimeOptions(const RuntimeOptions&) = delete;
+    RuntimeOptions& operator=(const RuntimeOptions&) = delete;
+    ~RuntimeOptions();
+
     // Offset and multiplier used when sampling textures;
     float offset = 0.f;
     float multiplier = 1.f;
 
+    // Used for tone mapping PQ sources.
+    std::optional<gfx::HDRMetadata> src_hdr_metadata;
+
     // Used for interpreting color spaces whose definition depends on an SDR
     // white point and for tone mapping.
-    float sdr_max_luminance_nits = ColorSpace::kDefaultSDRWhiteLevel;
-
-    // Used for tone mapping PQ sources.
-    absl::optional<gfx::HDRMetadata> src_hdr_metadata;
+    float dst_sdr_max_luminance_nits = ColorSpace::kDefaultSDRWhiteLevel;
 
     // The maximum luminance value for the destination, as a multiple of
-    // `sdr_max_luminance_nits` (so this is 1 for SDR displays).
+    // `dst_sdr_max_luminance_nits` (so this is 1 for SDR displays).
     float dst_max_luminance_relative = 1.f;
   };
 
@@ -76,13 +78,6 @@ class COLOR_SPACE_EXPORT ColorTransform {
   virtual void Transform(TriStim* colors,
                          size_t num,
                          const RuntimeOptions& options) const = 0;
-
-  // Return an SkRuntimeEffect to perform this transform.
-  virtual sk_sp<SkRuntimeEffect> GetSkRuntimeEffect() const = 0;
-
-  // Return the uniforms used by the above SkRuntimeEffect.
-  virtual sk_sp<SkData> GetSkShaderUniforms(
-      const RuntimeOptions& options) const = 0;
 
   // Returns true if this transform is the identity.
   virtual bool IsIdentity() const = 0;

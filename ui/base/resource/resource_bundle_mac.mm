@@ -7,11 +7,13 @@
 #import <AppKit/AppKit.h>
 #include <stddef.h>
 
+#include <string_view>
+
 #include "base/apple/bundle_locations.h"
+#include "base/apple/foundation_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
@@ -20,10 +22,6 @@
 #include "ui/base/resource/resource_handle.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/image/image.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
@@ -50,7 +48,7 @@ base::FilePath GetResourcesPakFilePath(NSString* name, NSString* mac_locale) {
     return base::FilePath(base::SysNSStringToUTF8(name) + ".pak");
   }
 
-  return base::mac::NSStringToFilePath(resource_path);
+  return base::apple::NSStringToFilePath(resource_path);
 }
 
 }  // namespace
@@ -68,8 +66,7 @@ void ResourceBundle::LoadCommonResources() {
 }
 
 // static
-base::FilePath ResourceBundle::GetLocaleFilePath(
-    const std::string& app_locale) {
+base::FilePath ResourceBundle::GetLocaleFilePath(std::string_view app_locale) {
   NSString* mac_locale = base::SysUTF8ToNSString(app_locale);
 
   // macOS uses "_" instead of "-", so swap to get a Mac-style value.
@@ -123,11 +120,7 @@ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
       }
     }
 
-    if (!ns_image) {
-      LOG(WARNING) << "Unable to load image with id " << resource_id;
-      NOTREACHED();  // Want to assert in debug mode.
-      return GetEmptyImage();
-    }
+    CHECK(ns_image) << "Unable to load image with id " << resource_id;
 
     image = gfx::Image(ns_image);
   }

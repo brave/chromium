@@ -7,11 +7,12 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <map>
-#include <set>
 #include <string>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
@@ -24,6 +25,7 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/custom_handlers/protocol_handler.h"
 #include "net/base/schemeful_site.h"
+#include "services/device/public/cpp/geolocation/buildflags.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
@@ -39,7 +41,7 @@ class ProtocolHandlerRegistry;
 namespace content {
 class Page;
 class WebContents;
-}
+}  // namespace content
 
 namespace ui {
 class Event;
@@ -140,6 +142,17 @@ class ContentSettingBubbleModel {
     kHoverButton,
   };
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class ContentSettingBubbleAction {
+    kOpened = 1,
+    kPermissionAllowed = 2,
+    kPermissionBlocked = 3,
+    kManageButtonClicked = 4,
+
+    kMaxValue = kManageButtonClicked
+  };
+
   struct BubbleContent {
     BubbleContent();
 
@@ -162,7 +175,6 @@ class ContentSettingBubbleModel {
     std::u16string manage_text;
     std::u16string manage_tooltip;
     ManageTextStyle manage_text_style = ManageTextStyle::kButton;
-    MediaMenuMap media_menus;
     bool show_learn_more = false;
     std::u16string done_button_text;
     std::u16string cancel_button_text;
@@ -196,8 +208,6 @@ class ContentSettingBubbleModel {
   virtual void OnManageButtonClicked() {}
   virtual void OnManageCheckboxChecked(bool is_checked) {}
   virtual void OnLearnMoreClicked() {}
-  virtual void OnMediaMenuClicked(blink::mojom::MediaStreamType type,
-                                  const std::string& selected_device_id) {}
   virtual void OnDoneButtonClicked() {}
   virtual void OnCancelButtonClicked() {}
   // Called by the view code when the bubble is closed.
@@ -229,7 +239,7 @@ class ContentSettingBubbleModel {
   virtual ContentSettingQuietRequestBubbleModel* AsQuietRequestBubbleModel();
 
   // Overrides the display URL used in the content bubble UI.
-  static base::AutoReset<absl::optional<bool>>
+  static base::AutoReset<std::optional<bool>>
   CreateScopedDisplayURLOverrideForTesting();
 
   bool is_UMA_for_test = false;
@@ -277,13 +287,6 @@ class ContentSettingBubbleModel {
   void set_manage_text_style(ManageTextStyle manage_text_style) {
     bubble_content_.manage_text_style = manage_text_style;
   }
-  void add_media_menu(blink::mojom::MediaStreamType type,
-                      const MediaMenu& menu) {
-    bubble_content_.media_menus[type] = menu;
-  }
-  void set_selected_device(const blink::MediaStreamDevice& device) {
-    bubble_content_.media_menus[device.type].selected_device = device;
-  }
   void set_show_learn_more(bool show_learn_more) {
     bubble_content_.show_learn_more = show_learn_more;
   }
@@ -320,6 +323,9 @@ class ContentSettingSimpleBubbleModel : public ContentSettingBubbleModel {
 
   // ContentSettingBubbleModel implementation.
   ContentSettingSimpleBubbleModel* AsSimpleBubbleModel() override;
+
+ protected:
+  bool IsContentAllowed();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(FramebustBlockBrowserTest, ManageButtonClicked);
@@ -427,13 +433,9 @@ class ContentSettingMediaStreamBubbleModel : public ContentSettingBubbleModel {
   void UpdateDefaultDeviceForType(blink::mojom::MediaStreamType type,
                                   const std::string& device);
 
-  // ContentSettingBubbleModel implementation.
-  void OnMediaMenuClicked(blink::mojom::MediaStreamType type,
-                          const std::string& selected_device) override;
-
   // The content settings that are associated with the individual radio
   // buttons.
-  ContentSetting radio_item_setting_[2];
+  std::array<ContentSetting, 2> radio_item_setting_;
   // The state of the microphone and camera access.
   content_settings::PageSpecificContentSettings::MicrophoneCameraState state_;
 };
@@ -601,12 +603,35 @@ class ContentSettingGeolocationBubbleModel
   // Initialize the bubble with the elements specific to the scenario when
   // geolocation is disabled on the system (OS) level.
   void InitializeSystemGeolocationPermissionBubble();
+
   void SetCustomLink();
 
   // Whether or not we are showing the bubble UI specific to when geolocation
   // permissions are turned off on a system level.
   bool show_system_geolocation_bubble_ = false;
 };
+
+#if BUILDFLAG(IS_MAC)
+// The bubble that informs users that the app does not have access to
+// Notifications and guides them to the system settings to fix that problem
+// if they wish.
+class ContentSettingNotificationsBubbleModel
+    : public ContentSettingSimpleBubbleModel {
+ public:
+  ContentSettingNotificationsBubbleModel(Delegate* delegate,
+                                         content::WebContents* web_contents);
+
+  ContentSettingNotificationsBubbleModel(
+      const ContentSettingNotificationsBubbleModel&) = delete;
+  ContentSettingNotificationsBubbleModel& operator=(
+      const ContentSettingNotificationsBubbleModel&) = delete;
+
+  ~ContentSettingNotificationsBubbleModel() override;
+
+  // ContentSettingBubbleModel:
+  void OnDoneButtonClicked() override;
+};
+#endif
 
 #if !BUILDFLAG(IS_ANDROID)
 // The model for the blocked Framebust bubble.

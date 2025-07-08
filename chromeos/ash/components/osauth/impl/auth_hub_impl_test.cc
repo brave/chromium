@@ -2,20 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chromeos/ash/components/osauth/impl/auth_hub_mode_lifecycle.h"
+#include "chromeos/ash/components/osauth/impl/auth_hub_impl.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
 
-#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/gmock_move_support.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
-#include "chromeos/ash/components/osauth/impl/auth_hub_impl.h"
+#include "base/time/time.h"
+#include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/osauth/impl/auth_hub_common.h"
 #include "chromeos/ash/components/osauth/impl/auth_parts_impl.h"
+#include "chromeos/ash/components/osauth/public/auth_factor_engine.h"
+#include "chromeos/ash/components/osauth/public/auth_factor_status_consumer.h"
 #include "chromeos/ash/components/osauth/public/auth_hub.h"
-#include "chromeos/ash/components/osauth/public/string_utils.h"
+#include "chromeos/ash/components/osauth/public/common_types.h"
 #include "chromeos/ash/components/osauth/test_support/mock_auth_attempt_consumer.h"
 #include "chromeos/ash/components/osauth/test_support/mock_auth_factor_engine.h"
 #include "chromeos/ash/components/osauth/test_support/mock_auth_factor_engine_factory.h"
@@ -23,11 +28,9 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/known_user.h"
-#include "components/user_manager/user_manager_base.h"
+#include "components/user_manager/user_manager_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#include "base/logging.h"
 
 namespace ash {
 
@@ -47,7 +50,7 @@ using testing::StrictMock;
 class AuthHubTestBase : public ::testing::Test {
  protected:
   AuthHubTestBase() {
-    user_manager::UserManagerBase::RegisterPrefs(local_state_.registry());
+    user_manager::UserManagerImpl::RegisterPrefs(local_state_.registry());
     user_manager_ =
         std::make_unique<user_manager::FakeUserManager>(&local_state_);
     user_manager_->Initialize();
@@ -72,10 +75,10 @@ class AuthHubTestBase : public ::testing::Test {
     EXPECT_CALL(*engine, GetFactor()).WillRepeatedly(Return(kFactor));
     EXPECT_CALL(*engine, InitializeCommon(_))
         .Times(AnyNumber())
-        .WillRepeatedly(RunOnceCallback<0>(kFactor));
+        .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(kFactor));
     EXPECT_CALL(*engine, ShutdownCommon(_))
         .Times(AnyNumber())
-        .WillRepeatedly(RunOnceCallback<0>(kFactor));
+        .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(kFactor));
 
     EXPECT_CALL(*engine_factory_, GetFactor()).WillRepeatedly(Return(kFactor));
     EXPECT_CALL(*engine_factory_, CreateEngine(_))
@@ -92,8 +95,10 @@ class AuthHubTestBase : public ::testing::Test {
   }
 
   void ExpectEngineStop() {
+    EXPECT_CALL(*engine_, CleanUp(_))
+        .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(kFactor));
     EXPECT_CALL(*engine_, StopAuthFlow(_))
-        .WillRepeatedly(RunOnceCallback<0>(kFactor));
+        .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(kFactor));
   }
 
   void ConfigureFactorAsAvailable() {
@@ -119,15 +124,16 @@ class AuthHubTestBase : public ::testing::Test {
 
   TestingPrefServiceSimple local_state_;
   std::unique_ptr<AuthFactorPresenceCache> factors_cache_;
+  ash::ScopedStubInstallAttributes install_attributes{
+      ash::StubInstallAttributes::CreateConsumerOwned()};
   std::unique_ptr<user_manager::FakeUserManager> user_manager_;
   std::unique_ptr<AuthPartsImpl> parts_;
 
-  base::raw_ptr<MockAuthFactorEngineFactory> engine_factory_ = nullptr;
-  base::raw_ptr<MockAuthFactorEngine> engine_ = nullptr;
-  base::raw_ptr<AuthFactorEngine::FactorEngineObserver,
-                AcrossTasksDanglingUntriaged>
+  raw_ptr<MockAuthFactorEngineFactory> engine_factory_ = nullptr;
+  raw_ptr<MockAuthFactorEngine> engine_ = nullptr;
+  raw_ptr<AuthFactorEngine::FactorEngineObserver, AcrossTasksDanglingUntriaged>
       engine_observer_ = nullptr;
-  absl::optional<AuthFactorEngine::UsageAllowed> engine_usage_;
+  std::optional<AuthFactorEngine::UsageAllowed> engine_usage_;
 };
 
 using AuthHubTestMode = AuthHubTestBase;
@@ -191,8 +197,7 @@ class AuthHubTestVector : public AuthHubTestBase {
 
   AccountId account_;
   AuthAttemptVector attempt_;
-  base::raw_ptr<AuthHubConnector, AcrossTasksDanglingUntriaged> connector_ =
-      nullptr;
+  raw_ptr<AuthHubConnector, AcrossTasksDanglingUntriaged> connector_ = nullptr;
   StrictMock<MockAuthAttemptConsumer> attempt_consumer_;
   StrictMock<MockAuthFactorStatusConsumer> status_consumer_;
   FactorsStatusMap factors_state_;

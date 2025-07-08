@@ -39,10 +39,11 @@ ProfilePrefsAuthPolicyConnectorFactory::ProfilePrefsAuthPolicyConnectorFactory()
 ProfilePrefsAuthPolicyConnectorFactory::
     ~ProfilePrefsAuthPolicyConnectorFactory() = default;
 
-KeyedService* ProfilePrefsAuthPolicyConnectorFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+ProfilePrefsAuthPolicyConnectorFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  auto* connector = new ProfilePrefsAuthPolicyConnector();
-  AuthParts::Get()->SetProfilePrefsAuthPolicyConnector(connector);
+  auto connector = std::make_unique<ProfilePrefsAuthPolicyConnector>();
+  AuthParts::Get()->SetProfilePrefsAuthPolicyConnector(connector.get());
   return connector;
 }
 
@@ -61,6 +62,7 @@ ProfilePrefsAuthPolicyConnectorFactory::GetBrowserContextToUse(
     return nullptr;
   }
 
+  AuthParts::Get()->ReleaseEarlyLoginAuthPolicyConnector();
   auto* user_manager = user_manager::UserManager::Get();
   if (auto* primary_user = user_manager->GetPrimaryUser()) {
     if (auto* primary_browser_context =

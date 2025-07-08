@@ -5,6 +5,7 @@
 The commands module wraps operations that have side-effects.
 """
 
+import asyncio
 import os
 import platform
 import plistlib
@@ -18,6 +19,13 @@ from signing import logger
 
 def file_exists(path):
     return os.path.exists(path)
+
+
+def delete_file_if_exists(path):
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
 
 
 def copy_files(source, dest):
@@ -95,6 +103,21 @@ def run_command_output(args, **kwargs):
     return subprocess.check_output(args, **kwargs)
 
 
+async def run_command_output_async(args, **kwargs):
+    logger.info('Running command: %s', args)
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        **kwargs)
+    stdout, stderr = await process.communicate()
+    if process.returncode:
+        logger.error('%s failed. stdout: %s stderr: %s', args, stdout, stderr)
+        raise subprocess.CalledProcessError(
+            process.returncode, args, output=stdout, stderr=stderr)
+    return stdout
+
+
 def lenient_run_command_output(args, **kwargs):
     """Runs a command, being fairly tolerant of errors.
 
@@ -137,8 +160,7 @@ def write_plist(data, path, format):
     # so if more than one hardlink points to destination all of them will be
     # modified. This is not what is expected, so delete destination file if
     # it does exist.
-    if os.path.exists(path):
-        os.unlink(path)
+    delete_file_if_exists(path)
     with open(path, 'wb') as f:
         plist_format = {
             'binary1': plistlib.FMT_BINARY,

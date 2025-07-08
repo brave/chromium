@@ -14,6 +14,7 @@
 #include "ash/clipboard/scoped_clipboard_history_pause_impl.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
@@ -135,7 +136,7 @@ class ClipboardHistoryTest : public AshTestBase {
     {
       ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
       scw.WritePickledData(input_data_pickle,
-                           ui::ClipboardFormatType::WebCustomDataType());
+                           ui::ClipboardFormatType::DataTransferCustomType());
     }
     base::RunLoop().RunUntilIdle();
 
@@ -146,10 +147,9 @@ class ClipboardHistoryTest : public AshTestBase {
       return;
     }
 
-    std::unordered_map<std::u16string, std::u16string> actual_data;
-    ui::ReadCustomDataIntoMap(items.front().data().custom_data_data().c_str(),
-                              items.front().data().custom_data_data().size(),
-                              &actual_data);
+    std::optional<std::unordered_map<std::u16string, std::u16string>>
+        actual_data = ui::ReadCustomDataIntoMap(base::as_byte_span(
+            items.front().data().GetDataTransferCustomData()));
 
     EXPECT_EQ(expected_data, actual_data);
   }
@@ -159,7 +159,7 @@ class ClipboardHistoryTest : public AshTestBase {
  private:
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
   // Owned by ClipboardHistoryControllerImpl.
-  raw_ptr<ClipboardHistory, ExperimentalAsh> clipboard_history_ = nullptr;
+  raw_ptr<ClipboardHistory, DanglingUntriaged> clipboard_history_ = nullptr;
 };
 
 // Tests that with nothing copied, nothing is shown.

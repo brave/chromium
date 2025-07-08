@@ -9,8 +9,8 @@
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
-#include "media/cdm/cdm_capability.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "media/base/cdm_capability.h"
+#include "media/cdm/cdm_type.h"
 
 namespace content {
 
@@ -18,6 +18,7 @@ namespace content {
 // MediaFoundationService for `key_system` by the CDM located in `cdm_path`.
 void GetMediaFoundationServiceCdmCapability(
     const std::string& key_system,
+    const media::CdmType& cdm_type,
     const base::FilePath& cdm_path,
     bool is_hw_secure,
     media::CdmCapabilityCB cdm_capability_cb);

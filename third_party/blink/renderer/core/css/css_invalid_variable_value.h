@@ -23,7 +23,7 @@ class CORE_EXPORT CSSInvalidVariableValue : public CSSValue {
   // Create() to get the pooled value.
   CSSInvalidVariableValue() : CSSValue(kInvalidVariableValueClass) {}
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSInvalidVariableValue&) const { return true; }
 

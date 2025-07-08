@@ -5,12 +5,12 @@
 #ifndef SERVICES_NETWORK_PUBLIC_CPP_URL_REQUEST_MOJOM_TRAITS_H_
 #define SERVICES_NETWORK_PUBLIC_CPP_URL_REQUEST_MOJOM_TRAITS_H_
 
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "base/component_export.h"
 #include "base/memory/scoped_refptr.h"
-#include "build/buildflag.h"
 #include "mojo/public/cpp/base/big_buffer_mojom_traits.h"
 #include "mojo/public/cpp/base/file_mojom_traits.h"
 #include "mojo/public/cpp/base/file_path_mojom_traits.h"
@@ -20,19 +20,23 @@
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "mojo/public/cpp/bindings/union_traits.h"
 #include "net/base/request_priority.h"
+#include "net/storage_access_api/status.h"
 #include "net/url_request/referrer_policy.h"
-#include "services/network/public/cpp/attribution_mojom_traits.h"
 #include "services/network/public/cpp/cookie_manager_shared_mojom_traits.h"
 #include "services/network/public/cpp/data_element.h"
 #include "services/network/public/cpp/network_isolation_key_mojom_traits.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_mojom_traits.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/cpp/source_type_mojom_traits.h"
 #include "services/network/public/mojom/attribution.mojom-forward.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/client_security_state.mojom-forward.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom-forward.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
+#include "services/network/public/mojom/device_bound_sessions.mojom-forward.h"
 #include "services/network/public/mojom/devtools_observer.mojom-forward.h"
+#include "services/network/public/mojom/fetch_retry_options.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom-forward.h"
 #include "services/network/public/mojom/trust_token_access_observer.mojom-forward.h"
 #include "services/network/public/mojom/trust_tokens.mojom-forward.h"
@@ -40,18 +44,10 @@
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom-forward.h"
 #include "services/network/public/mojom/url_request.mojom-forward.h"
 #include "services/network/public/mojom/web_bundle_handle.mojom-forward.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "services/network/public/mojom/web_client_hints_types.mojom-forward.h"
 #include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
-
-template <>
-struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
-    EnumTraits<network::mojom::SourceType, net::SourceStream::SourceType> {
-  static network::mojom::SourceType ToMojom(net::SourceStream::SourceType type);
-  static bool FromMojom(network::mojom::SourceType in,
-                        net::SourceStream::SourceType* out);
-};
 
 template <>
 struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
@@ -72,6 +68,15 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static bool allow_cookies_from_browser(
       const network::ResourceRequest::TrustedParams& trusted_params) {
     return trusted_params.allow_cookies_from_browser;
+  }
+  static bool include_request_cookies_with_response(
+      const network::ResourceRequest::TrustedParams& trusted_params) {
+    return trusted_params.include_request_cookies_with_response;
+  }
+  static const std::optional<std::vector<network::mojom::WebClientHintsType>>&
+  enabled_client_hints(
+      const network::ResourceRequest::TrustedParams& trusted_params) {
+    return trusted_params.enabled_client_hints;
   }
   static mojo::PendingRemote<network::mojom::CookieAccessObserver>
   cookie_observer(
@@ -112,6 +117,16 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
     return std::move(
         const_cast<network::ResourceRequest::TrustedParams&>(trusted_params)
             .devtools_observer);
+  }
+  static mojo::PendingRemote<network::mojom::DeviceBoundSessionAccessObserver>
+  device_bound_session_observer(
+      const network::ResourceRequest::TrustedParams& trusted_params) {
+    if (!trusted_params.device_bound_session_observer) {
+      return mojo::NullRemote();
+    }
+    return std::move(
+        const_cast<network::ResourceRequest::TrustedParams&>(trusted_params)
+            .device_bound_session_observer);
   }
   static const network::mojom::ClientSecurityStatePtr& client_security_state(
       const network::ResourceRequest::TrustedParams& trusted_params) {
@@ -189,7 +204,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.update_first_party_url_on_redirect;
   }
-  static const absl::optional<url::Origin>& request_initiator(
+  static const std::optional<url::Origin>& request_initiator(
       const network::ResourceRequest& request) {
     return request.request_initiator;
   }
@@ -197,7 +212,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.navigation_redirect_chain;
   }
-  static const absl::optional<url::Origin>& isolated_world_origin(
+  static const std::optional<url::Origin>& isolated_world_origin(
       const network::ResourceRequest& request) {
     return request.isolated_world_origin;
   }
@@ -240,9 +255,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static bool skip_service_worker(const network::ResourceRequest& request) {
     return request.skip_service_worker;
   }
-  static bool corb_detachable(const network::ResourceRequest& request) {
-    return request.corb_detachable;
-  }
   static network::mojom::RequestMode mode(
       const network::ResourceRequest& request) {
     return request.mode;
@@ -258,6 +270,10 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static const std::string& fetch_integrity(
       const network::ResourceRequest& request) {
     return request.fetch_integrity;
+  }
+  static const std::vector<std::string>& expected_public_keys(
+      const network::ResourceRequest& request) {
+    return request.expected_public_keys;
   }
   static network::mojom::RequestDestination destination(
       const network::ResourceRequest& request) {
@@ -276,8 +292,9 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static bool ad_auction_headers(const network::ResourceRequest& request) {
     return request.ad_auction_headers;
   }
-  static bool shared_storage_writable(const network::ResourceRequest& request) {
-    return request.shared_storage_writable;
+  static bool shared_storage_writable_eligible(
+      const network::ResourceRequest& request) {
+    return request.shared_storage_writable_eligible;
   }
   static bool has_user_gesture(const network::ResourceRequest& request) {
     return request.has_user_gesture;
@@ -306,32 +323,27 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static bool is_revalidating(const network::ResourceRequest& request) {
     return request.is_revalidating;
   }
-  static const absl::optional<base::UnguessableToken>& throttling_profile_id(
+  static const std::optional<base::UnguessableToken>& throttling_profile_id(
       const network::ResourceRequest& request) {
     return request.throttling_profile_id;
   }
-  static const net::HttpRequestHeaders& custom_proxy_pre_cache_headers(
-      const network::ResourceRequest& request) {
-    return request.custom_proxy_pre_cache_headers;
-  }
-  static const net::HttpRequestHeaders& custom_proxy_post_cache_headers(
-      const network::ResourceRequest& request) {
-    return request.custom_proxy_post_cache_headers;
-  }
-  static const absl::optional<base::UnguessableToken>& fetch_window_id(
+  static const std::optional<base::UnguessableToken>& fetch_window_id(
       const network::ResourceRequest& request) {
     return request.fetch_window_id;
   }
-  static const absl::optional<std::string>& devtools_request_id(
+  static const std::optional<std::string>& devtools_request_id(
       const network::ResourceRequest& request) {
     return request.devtools_request_id;
   }
-  static const absl::optional<std::string>& devtools_stack_id(
+  static const std::optional<std::string>& devtools_stack_id(
       const network::ResourceRequest& request) {
     return request.devtools_stack_id;
   }
   static bool is_fetch_like_api(const network::ResourceRequest& request) {
     return request.is_fetch_like_api;
+  }
+  static bool is_fetch_later_api(const network::ResourceRequest& request) {
+    return request.is_fetch_later_api;
   }
   static bool is_favicon(const network::ResourceRequest& request) {
     return request.is_favicon;
@@ -340,15 +352,15 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.original_destination;
   }
-  static const absl::optional<std::vector<net::SourceStream::SourceType>>&
+  static const std::optional<std::vector<net::SourceStreamType>>&
   devtools_accepted_stream_types(const network::ResourceRequest& request) {
     return request.devtools_accepted_stream_types;
   }
-  static const absl::optional<network::ResourceRequest::TrustedParams>&
+  static const std::optional<network::ResourceRequest::TrustedParams>&
   trusted_params(const network::ResourceRequest& request) {
     return request.trusted_params;
   }
-  static const absl::optional<base::UnguessableToken>& recursive_prefetch_token(
+  static const std::optional<base::UnguessableToken>& recursive_prefetch_token(
       const network::ResourceRequest& request) {
     return request.recursive_prefetch_token;
   }
@@ -356,15 +368,15 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.trust_token_params.as_ptr();
   }
-  static const absl::optional<network::ResourceRequest::WebBundleTokenParams>&
+  static const std::optional<network::ResourceRequest::WebBundleTokenParams>&
   web_bundle_token_params(const network::ResourceRequest& request) {
     return request.web_bundle_token_params;
   }
-  static const absl::optional<net::NetLogSource>& net_log_create_info(
+  static const std::optional<net::NetLogSource>& net_log_create_info(
       const network::ResourceRequest& request) {
     return request.net_log_create_info;
   }
-  static const absl::optional<net::NetLogSource>& net_log_reference_info(
+  static const std::optional<net::NetLogSource>& net_log_reference_info(
       const network::ResourceRequest& request) {
     return request.net_log_reference_info;
   }
@@ -372,8 +384,9 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.target_ip_address_space;
   }
-  static bool has_storage_access(const network::ResourceRequest& request) {
-    return request.has_storage_access;
+  static net::StorageAccessApiStatus storage_access_api_status(
+      const network::ResourceRequest& request) {
+    return request.storage_access_api_status;
   }
   static network::mojom::AttributionSupport attribution_reporting_support(
       const network::ResourceRequest& request) {
@@ -383,26 +396,45 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   attribution_reporting_eligibility(const network::ResourceRequest& request) {
     return request.attribution_reporting_eligibility;
   }
-  static const network::AttributionReportingRuntimeFeatures&
-  attribution_reporting_runtime_features(
-      const network::ResourceRequest& request) {
-    return request.attribution_reporting_runtime_features;
-  }
-  static const absl::optional<base::UnguessableToken>&
+  static const std::optional<base::UnguessableToken>&
   attribution_reporting_src_token(const network::ResourceRequest& request) {
     return request.attribution_reporting_src_token;
+  }
+  static const std::optional<base::UnguessableToken>& keepalive_token(
+      const network::ResourceRequest& request) {
+    return request.keepalive_token;
+  }
+  static bool is_ad_tagged(const network::ResourceRequest& request) {
+    return request.is_ad_tagged;
   }
   static bool shared_dictionary_writer_enabled(
       const network::ResourceRequest& request) {
     return request.shared_dictionary_writer_enabled;
   }
-
-#if BUILDFLAG(IS_ANDROID)
-  static const std::string& created_location(
+  static bool client_side_content_decoding_enabled(
       const network::ResourceRequest& request) {
-    return request.created_location;
+    return request.client_side_content_decoding_enabled;
   }
-#endif
+  static network::mojom::IPAddressSpace required_ip_address_space(
+      const network::ResourceRequest& request) {
+    return request.required_ip_address_space;
+  }
+  static const net::SocketTag& socket_tag(
+      const network::ResourceRequest& request) {
+    return request.socket_tag;
+  }
+  static bool allows_device_bound_session_registration(
+      const network::ResourceRequest& request) {
+    return request.allows_device_bound_session_registration;
+  }
+  static const std::optional<network::PermissionsPolicy>& permissions_policy(
+      const network::ResourceRequest& request) {
+    return request.permissions_policy;
+  }
+  static const std::optional<network::FetchRetryOptions>& fetch_retry_options(
+      const network::ResourceRequest& request) {
+    return request.fetch_retry_options;
+  }
 
   static bool Read(network::mojom::URLRequestDataView data,
                    network::ResourceRequest* out);
@@ -535,6 +567,53 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
 
   static bool Read(network::mojom::DataElementDataView data,
                    network::DataElement* out);
+};
+
+template <>
+struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
+    StructTraits<network::mojom::SocketTagDataView, net::SocketTag> {
+#if BUILDFLAG(IS_ANDROID)
+  static int32_t tag(const net::SocketTag& params) {
+    return params.traffic_stats_tag();
+  }
+  static uid_t uid(const net::SocketTag& params) { return params.uid(); }
+#endif  // BUILDFLAG(IS_ANDROID)
+  static bool Read(network::mojom::SocketTagDataView data, net::SocketTag* out);
+};
+
+template <>
+struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
+    StructTraits<network::mojom::FetchRetryOptionsDataView,
+                 network::FetchRetryOptions> {
+  using FetchRetryOptions = network::FetchRetryOptions;
+
+  static uint32_t max_attempts(const FetchRetryOptions& options) {
+    return options.max_attempts;
+  }
+  static std::optional<base::TimeDelta> initial_delay(
+      const FetchRetryOptions& options) {
+    return options.initial_delay;
+  }
+  static std::optional<base::TimeDelta> max_age(
+      const FetchRetryOptions& options) {
+    return options.max_age;
+  }
+  static const std::optional<double>& backoff_factor(
+      const FetchRetryOptions& options) {
+    return options.backoff_factor;
+  }
+  static bool retry_after_unload(const FetchRetryOptions& options) {
+    return options.retry_after_unload;
+  }
+  static bool retry_non_idempotent(const FetchRetryOptions& options) {
+    return options.retry_non_idempotent;
+  }
+  static bool retry_only_if_server_unreached(const FetchRetryOptions& options) {
+    return options.retry_only_if_server_unreached;
+  }
+
+  static bool Read(network::mojom::FetchRetryOptionsDataView data,
+                   network::FetchRetryOptions* out);
 };
 
 }  // namespace mojo

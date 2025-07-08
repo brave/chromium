@@ -5,6 +5,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -12,6 +13,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -25,10 +27,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "ui/base/cocoa/find_pasteboard.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 const char kSimple[] = "simple.html";
 
@@ -65,7 +63,8 @@ class FindBarPlatformHelperMacInteractiveUITest : public InProcessBrowserTest {
 // Tests that the pasteboard is updated when the find bar is changed.
 IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
                        PasteboardUpdatedFromFindBar) {
-  FindBarController* find_bar_controller = browser()->GetFindBarController();
+  FindBarController* find_bar_controller =
+      browser()->GetFeatures().GetFindBarController();
   ASSERT_NE(nullptr, find_bar_controller);
 
   const std::u16string empty_string;
@@ -84,7 +83,7 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_F, false,
                                               false, false, false));
 
-  std::u16string find_bar_string =
+  std::u16string_view find_bar_string =
       find_bar_controller->find_bar()->GetFindText();
 
   ASSERT_EQ(u"asdf", find_bar_string);
@@ -97,7 +96,7 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
                        IncognitoPasteboardNotUpdatedFromFindBar) {
   Browser* browser_incognito = CreateIncognitoBrowser();
   FindBarController* find_bar_controller =
-      browser_incognito->GetFindBarController();
+      browser_incognito->GetFeatures().GetFindBarController();
   ASSERT_NE(nullptr, find_bar_controller);
 
   const std::u16string empty_string;
@@ -120,7 +119,7 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_T, false,
                                               false, false, false));
 
-  std::u16string find_bar_string =
+  std::u16string_view find_bar_string =
       find_bar_controller->find_bar()->GetFindText();
 
   ASSERT_EQ(u"secret", find_bar_string);
@@ -134,7 +133,8 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
 // Flaky. crbug.com/864585
 IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
                        DISABLED_GlobalPasteBoardClearMatches) {
-  FindBarController* find_bar_controller = browser()->GetFindBarController();
+  FindBarController* find_bar_controller =
+      browser()->GetFeatures().GetFindBarController();
   ASSERT_NE(nullptr, find_bar_controller);
 
   GURL url = GetURL(kSimple);
@@ -210,7 +210,7 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
   ui_test_utils::FindResultWaiter(web_contents_incognito).Wait();
 
   FindBarController* find_bar_controller =
-      browser_incognito->GetFindBarController();
+      browser_incognito->GetFeatures().GetFindBarController();
   ASSERT_NE(nullptr, find_bar_controller);
   EXPECT_EQ(u"bar", find_bar_controller->find_bar()->GetFindText());
 }
@@ -220,7 +220,8 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
 // TODO(http://crbug.com/843878): Remove when referenced bug is fixed.
 IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
                        PreferPreviousSearch) {
-  FindBarController* find_bar_controller = browser()->GetFindBarController();
+  FindBarController* find_bar_controller =
+      browser()->GetFeatures().GetFindBarController();
   ASSERT_NE(nullptr, find_bar_controller);
 
   GURL url = GetURL(kSimple);
@@ -267,7 +268,7 @@ IN_PROC_BROWSER_TEST_F(FindBarPlatformHelperMacInteractiveUITest,
   find_bar_controller->EndFindSession(find_in_page::SelectionAction::kKeep,
                                       find_in_page::ResultAction::kKeep);
   // Simulate F3.
-  browser()->GetFindBarController()->Show(true /*find_next*/);
+  browser()->GetFeatures().GetFindBarController()->Show(true /*find_next*/);
   EXPECT_EQ(u"given", find_in_page::FindTabHelper::FromWebContents(
                           first_active_web_contents)
                           ->find_text());

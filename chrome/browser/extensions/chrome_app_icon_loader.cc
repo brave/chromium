@@ -27,7 +27,8 @@ ChromeAppIconLoader::ChromeAppIconLoader(Profile* profile,
                                          int icon_size_in_dip,
                                          const ResizeFunction& resize_function,
                                          AppIconLoaderDelegate* delegate)
-    : AppIconLoader(profile, icon_size_in_dip, delegate),
+    : AppIconLoader(icon_size_in_dip, delegate),
+      profile_(profile),
       resize_function_(resize_function) {}
 
 ChromeAppIconLoader::ChromeAppIconLoader(Profile* profile,
@@ -38,7 +39,7 @@ ChromeAppIconLoader::ChromeAppIconLoader(Profile* profile,
                           ResizeFunction(),
                           delegate) {}
 
-ChromeAppIconLoader::~ChromeAppIconLoader() {}
+ChromeAppIconLoader::~ChromeAppIconLoader() = default;
 
 bool ChromeAppIconLoader::CanLoadImageForApp(const std::string& id) {
   if (map_.find(id) != map_.end())
@@ -90,7 +91,9 @@ void ChromeAppIconLoader::SetExtensionsOnly() {
 }
 
 void ChromeAppIconLoader::OnIconUpdated(ChromeAppIcon* icon) {
-  delegate()->OnAppImageUpdated(icon->app_id(), icon->image_skia());
+  delegate()->OnAppImageUpdated(icon->app_id(), icon->image_skia(),
+                                /*is_placeholder_icon=*/false,
+                                /*badge_image=*/std::nullopt);
 }
 
 }  // namespace extensions

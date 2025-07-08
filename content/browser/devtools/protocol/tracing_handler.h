@@ -18,6 +18,7 @@
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/tracing.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/tracing_controller.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_config.h"
 #include "third_party/perfetto/include/perfetto/tracing/tracing.h"
@@ -60,8 +61,6 @@ class TracingHandler : public DevToolsDomainHandler, public Tracing::Backend {
   static std::vector<TracingHandler*> ForAgentHost(DevToolsAgentHostImpl* host);
 
   // DevToolsDomainHandler implementation.
-  void SetRenderer(int process_host_id,
-                   RenderFrameHostImpl* frame_host) override;
   void WillInitiatePrerender(FrameTreeNode* ftn);
 
   void Wire(UberDispatcher* dispatcher) override;
@@ -72,27 +71,27 @@ class TracingHandler : public DevToolsDomainHandler, public Tracing::Backend {
   void OnTraceToStreamComplete(const std::string& stream_handle);
 
   // Protocol methods.
-  void Start(Maybe<std::string> categories,
-             Maybe<std::string> options,
-             Maybe<double> buffer_usage_reporting_interval,
-             Maybe<std::string> transfer_mode,
-             Maybe<std::string> transfer_format,
-             Maybe<std::string> transfer_compression,
-             Maybe<Tracing::TraceConfig> config,
-             Maybe<Binary> perfetto_config,
-             Maybe<std::string> tracing_backend,
+  void Start(std::optional<std::string> categories,
+             std::optional<std::string> options,
+             std::optional<double> buffer_usage_reporting_interval,
+             std::optional<std::string> transfer_mode,
+             std::optional<std::string> transfer_format,
+             std::optional<std::string> transfer_compression,
+             std::unique_ptr<Tracing::TraceConfig> config,
+             std::optional<Binary> perfetto_config,
+             std::optional<std::string> tracing_backend,
              std::unique_ptr<StartCallback> callback) override;
   Response End() override;
   void GetCategories(std::unique_ptr<GetCategoriesCallback> callback) override;
   void RequestMemoryDump(
-      Maybe<bool> deterministic,
-      Maybe<std::string> level_of_detail,
+      std::optional<bool> deterministic,
+      std::optional<std::string> level_of_detail,
       std::unique_ptr<RequestMemoryDumpCallback> callback) override;
   Response RecordClockSyncMarker(const std::string& sync_id) override;
 
   bool did_initiate_recording() { return did_initiate_recording_; }
   void ReadyToCommitNavigation(NavigationRequest* navigation_request);
-  void FrameDeleted(int frame_tree_node_id);
+  void FrameDeleted(FrameTreeNodeId frame_tree_node_id);
 
  private:
   friend class TracingHandlerTest;
@@ -150,11 +149,11 @@ class TracingHandler : public DevToolsDomainHandler, public Tracing::Backend {
   std::unique_ptr<base::RepeatingTimer> buffer_usage_poll_timer_;
 
   std::unique_ptr<Tracing::Frontend> frontend_;
-  const base::raw_ptr<DevToolsIOContext> io_context_;
-  const base::raw_ptr<DevToolsAgentHostImpl> host_;  // Only null in unit tests.
+  const raw_ptr<DevToolsIOContext> io_context_;
+  const raw_ptr<DevToolsAgentHostImpl> host_;  // Only null in unit tests.
 
   // Session is for use in process filter and is null in browser.
-  const base::raw_ptr<DevToolsSession> session_for_process_filter_;
+  const raw_ptr<DevToolsSession> session_for_process_filter_;
   bool did_initiate_recording_;
   bool return_as_stream_;
   bool gzip_compression_;

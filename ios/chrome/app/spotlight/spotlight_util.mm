@@ -11,13 +11,10 @@
 #import "base/strings/sys_string_conversions.h"
 #import "build/branding_buildflags.h"
 #import "ios/chrome/app/spotlight/spotlight_logger.h"
+#import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util.h"
 #import "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 // This enum is used for Histogram. Items should not be removed or reordered and
@@ -105,9 +102,6 @@ Domain SpotlightDomainFromString(NSString* domain) {
   } else if ([domain hasPrefix:kSpotlightOpenTabsPrefix]) {
     return DOMAIN_OPEN_TABS;
   }
-  // On normal flow, it is not possible to reach this point. When testing the
-  // app, it may be possible though if the app is downgraded.
-  NOTREACHED();
   return DOMAIN_UNKNOWN;
 }
 
@@ -128,7 +122,6 @@ NSString* StringFromSpotlightDomain(Domain domain) {
       // On normal flow, it is not possible to reach this point. When testing
       // the app, it may be possible though if the app is downgraded.
       NOTREACHED();
-      return nil;
   }
 }
 
@@ -150,7 +143,6 @@ NSString* SpotlightItemSourceLabelFromDomain(Domain domain) {
       // On normal flow, it is not possible to reach this point. When testing
       // the app, it may be possible though if the app is downgraded.
       NOTREACHED();
-      return nil;
   }
 }
 
@@ -185,9 +177,10 @@ void GetURLForSpotlightItemID(NSString* itemID, BlockWithNSURL completion) {
       [NSString stringWithFormat:@"%@ == \"%@\"",
                                  GetSpotlightCustomAttributeItemID(), itemID];
 
-  CSSearchQuery* query =
-      [[CSSearchQuery alloc] initWithQueryString:queryString
-                                      attributes:@[ @"contentURL" ]];
+  CSSearchQueryContext* context = [[CSSearchQueryContext alloc] init];
+  context.fetchAttributes = @[ @"contentURL" ];
+  CSSearchQuery* query = [[CSSearchQuery alloc] initWithQueryString:queryString
+                                                       queryContext:context];
 
   [query setFoundItemsHandler:^(NSArray<CSSearchableItem*>* items) {
     if ([items count] == 1) {
@@ -198,7 +191,6 @@ void GetURLForSpotlightItemID(NSString* itemID, BlockWithNSURL completion) {
       }
     }
     completion(nil);
-
   }];
 
   [query start];

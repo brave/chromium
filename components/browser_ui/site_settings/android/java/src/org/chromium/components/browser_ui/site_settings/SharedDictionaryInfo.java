@@ -4,14 +4,14 @@
 
 package org.chromium.components.browser_ui.site_settings;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge.StorageInfoClearedCallback;
 import org.chromium.content_public.browser.BrowserContextHandle;
 
 import java.io.Serializable;
 
-/**
- * Shared dictionary information for a given frame origin and a top level site.
- */
+/** Shared dictionary information for a given frame origin and a top level site. */
+@NullMarked
 public class SharedDictionaryInfo implements Serializable {
     private final String mOrigin;
     private final String mTopLevelSite;
@@ -29,8 +29,8 @@ public class SharedDictionaryInfo implements Serializable {
 
     public void clear(
             BrowserContextHandle browserContextHandle, StorageInfoClearedCallback callback) {
-        WebsitePreferenceBridgeJni.get().clearSharedDictionary(
-                browserContextHandle, mOrigin, mTopLevelSite, callback);
+        WebsitePreferenceBridgeJni.get()
+                .clearSharedDictionary(browserContextHandle, mOrigin, mTopLevelSite, callback);
     }
 
     public long getSize() {

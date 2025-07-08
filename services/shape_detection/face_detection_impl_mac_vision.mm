@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/shape_detection/face_detection_impl_mac_vision.h"
 
 #include <vector>
@@ -10,10 +15,6 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace shape_detection {
 

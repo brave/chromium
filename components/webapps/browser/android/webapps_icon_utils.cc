@@ -8,12 +8,14 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "components/webapps/browser/android/webapps_jni_headers/WebappsIconUtils_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/color_analysis.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/webapps/browser/android/webapps_jni_headers/WebappsIconUtils_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -113,25 +115,20 @@ int WebappsIconUtils::GetIdealIconSizeForIconType(
   }
 }
 
-bool WebappsIconUtils::DoesAndroidSupportMaskableIcons() {
-  return base::android::BuildInfo::GetInstance()->sdk_int() >=
-         base::android::SDK_VERSION_OREO;
-}
-
-SkBitmap WebappsIconUtils::FinalizeLauncherIconInBackground(
+void WebappsIconUtils::FinalizeLauncherIconInBackground(
     const SkBitmap& bitmap,
     const GURL& url,
-    bool* is_generated) {
+    scoped_refptr<base::SequencedTaskRunner> ui_thread_task_runner,
+    base::OnceCallback<void(const SkBitmap&, bool)> callback) {
   base::AssertLongCPUWorkAllowed();
 
   JNIEnv* env = base::android::AttachCurrentThread();
-  *is_generated = false;
 
-  if (!bitmap.isNull()) {
-    if (Java_WebappsIconUtils_isIconLargeEnoughForLauncher(env, bitmap.width(),
-                                                           bitmap.height())) {
-      return bitmap;
-    }
+  if (!bitmap.isNull() && Java_WebappsIconUtils_isIconLargeEnoughForLauncher(
+                              env, bitmap.width(), bitmap.height())) {
+    ui_thread_task_runner->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), bitmap, false));
+    return;
   }
 
   ScopedJavaLocalRef<jobject> java_url =
@@ -142,16 +139,31 @@ SkBitmap WebappsIconUtils::FinalizeLauncherIconInBackground(
     mean_color = color_utils::CalculateKMeanColorOfBitmap(bitmap);
   }
 
-  *is_generated = true;
-
   ScopedJavaLocalRef<jobject> result =
       Java_WebappsIconUtils_generateHomeScreenIcon(
           env, java_url, SkColorGetR(mean_color), SkColorGetG(mean_color),
           SkColorGetB(mean_color));
 
-  return result.obj()
-             ? gfx::CreateSkBitmapFromJavaBitmap(gfx::JavaBitmap(result))
-             : SkBitmap();
+  SkBitmap result_bitmap =
+      result.obj() ? gfx::CreateSkBitmapFromJavaBitmap(gfx::JavaBitmap(result))
+                   : SkBitmap();
+  ui_thread_task_runner->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), result_bitmap, true));
+}
+
+SkBitmap WebappsIconUtils::GenerateHomeScreenIconInBackground(
+    const GURL& page_url) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> java_url =
+      url::GURLAndroid::FromNativeGURL(env, page_url);
+  ScopedJavaLocalRef<jobject> result =
+      Java_WebappsIconUtils_generateHomeScreenIcon(env, java_url, /*red=*/0x91,
+                                                   /*green=*/0x91,
+                                                   /*blue=*/0x91);
+  SkBitmap result_bitmap =
+      result.obj() ? gfx::CreateSkBitmapFromJavaBitmap(gfx::JavaBitmap(result))
+                   : SkBitmap();
+  return result_bitmap;
 }
 
 SkBitmap WebappsIconUtils::GenerateAdaptiveIconBitmap(const SkBitmap& bitmap) {
@@ -169,7 +181,7 @@ SkBitmap WebappsIconUtils::GenerateAdaptiveIconBitmap(const SkBitmap& bitmap) {
 }
 
 int WebappsIconUtils::GetIdealIconCornerRadiusPxForPromptUI() {
-  return Java_WebappsIconUtils_getIdealIconCornerRadiusPxForPromptUI(
+  return Java_WebappsIconUtils_getIdealIconCornerRadiusPxForPromptUi(
       base::android::AttachCurrentThread());
 }
 

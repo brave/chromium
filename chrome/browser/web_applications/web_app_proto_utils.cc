@@ -17,13 +17,13 @@ namespace web_app {
 
 namespace {
 
-absl::optional<apps::IconInfo::Purpose> SyncPurposeToIconInfoPurpose(
+std::optional<apps::IconInfo::Purpose> SyncPurposeToIconInfoPurpose(
     sync_pb::WebAppIconInfo_Purpose purpose) {
   switch (purpose) {
     // Treat UNSPECIFIED purpose as invalid. It means a new purpose was added
     // that this client does not understand.
     case sync_pb::WebAppIconInfo_Purpose_UNSPECIFIED:
-      return absl::nullopt;
+      return std::nullopt;
     case sync_pb::WebAppIconInfo_Purpose_ANY:
       return apps::IconInfo::Purpose::kAny;
     case sync_pb::WebAppIconInfo_Purpose_MASKABLE:
@@ -62,28 +62,28 @@ proto::UrlPatternPart::Modifier UrlPatternModifierToProto(
     liburlpattern::Modifier modifier) {
   switch (modifier) {
     case liburlpattern::Modifier::kZeroOrMore:
-      return proto::UrlPatternPart_Modifier_ZERO_OR_MORE;
+      return proto::UrlPatternPart::MODIFIER_ZERO_OR_MORE;
     case liburlpattern::Modifier::kOptional:
-      return proto::UrlPatternPart_Modifier_OPTIONAL;
+      return proto::UrlPatternPart::MODIFIER_OPTIONAL;
     case liburlpattern::Modifier::kOneOrMore:
-      return proto::UrlPatternPart_Modifier_ONE_OR_MORE;
+      return proto::UrlPatternPart::MODIFIER_ONE_OR_MORE;
     case liburlpattern::Modifier::kNone:
-      return proto::UrlPatternPart_Modifier_NONE;
+      return proto::UrlPatternPart::MODIFIER_NONE;
   }
 }
 
-absl::optional<liburlpattern::Modifier> ProtoToUrlPatternModifier(
+std::optional<liburlpattern::Modifier> ProtoToUrlPatternModifier(
     proto::UrlPatternPart::Modifier modifier) {
   switch (modifier) {
-    case proto::UrlPatternPart_Modifier_UNKNOWN_MODIFIER:
-      return absl::nullopt;
-    case proto::UrlPatternPart_Modifier_ZERO_OR_MORE:
+    case proto::UrlPatternPart::MODIFIER_UNSPECIFIED:
+      return std::nullopt;
+    case proto::UrlPatternPart::MODIFIER_ZERO_OR_MORE:
       return liburlpattern::Modifier::kZeroOrMore;
-    case proto::UrlPatternPart_Modifier_OPTIONAL:
+    case proto::UrlPatternPart::MODIFIER_OPTIONAL:
       return liburlpattern::Modifier::kOptional;
-    case proto::UrlPatternPart_Modifier_ONE_OR_MORE:
+    case proto::UrlPatternPart::MODIFIER_ONE_OR_MORE:
       return liburlpattern::Modifier::kOneOrMore;
-    case proto::UrlPatternPart_Modifier_NONE:
+    case proto::UrlPatternPart::MODIFIER_NONE:
       return liburlpattern::Modifier::kNone;
   }
 }
@@ -93,26 +93,25 @@ proto::UrlPatternPart::PartType UrlPatternPartTypeToProto(
   switch (part_type) {
     case liburlpattern::PartType::kRegex:
       NOTREACHED();
-      [[fallthrough]];
     case liburlpattern::PartType::kFullWildcard:
-      return proto::UrlPatternPart_PartType_FULL_WILDCARD;
+      return proto::UrlPatternPart::PART_TYPE_FULL_WILDCARD;
     case liburlpattern::PartType::kSegmentWildcard:
-      return proto::UrlPatternPart_PartType_SEGMENT_WILDCARD;
+      return proto::UrlPatternPart::PART_TYPE_SEGMENT_WILDCARD;
     case liburlpattern::PartType::kFixed:
-      return proto::UrlPatternPart_PartType_FIXED;
+      return proto::UrlPatternPart::PART_TYPE_FIXED;
   }
 }
 
-absl::optional<liburlpattern::PartType> ProtoToUrlPatternPartType(
+std::optional<liburlpattern::PartType> ProtoToUrlPatternPartType(
     proto::UrlPatternPart::PartType part_type) {
   switch (part_type) {
-    case proto::UrlPatternPart_PartType_UNKNOWN_PART_TYPE:
-      return absl::nullopt;
-    case proto::UrlPatternPart_PartType_FULL_WILDCARD:
+    case proto::UrlPatternPart::PART_TYPE_UNSPECIFIED:
+      return std::nullopt;
+    case proto::UrlPatternPart::PART_TYPE_FULL_WILDCARD:
       return liburlpattern::PartType::kFullWildcard;
-    case proto::UrlPatternPart_PartType_SEGMENT_WILDCARD:
+    case proto::UrlPatternPart::PART_TYPE_SEGMENT_WILDCARD:
       return liburlpattern::PartType::kSegmentWildcard;
-    case proto::UrlPatternPart_PartType_FIXED:
+    case proto::UrlPatternPart::PART_TYPE_FIXED:
       return liburlpattern::PartType::kFixed;
   }
 }
@@ -120,16 +119,16 @@ absl::optional<liburlpattern::PartType> ProtoToUrlPatternPartType(
 TabStrip::Visibility ProtoToTabStripVisibility(
     proto::TabStrip::Visibility visibility) {
   switch (visibility) {
-    case proto::TabStrip_Visibility_AUTO:
+    case proto::TabStrip::VISIBILITY_AUTO:
       return TabStrip::Visibility::kAuto;
-    case proto::TabStrip_Visibility_ABSENT:
+    case proto::TabStrip::VISIBILITY_ABSENT:
       return TabStrip::Visibility::kAbsent;
   }
 }
 
 }  // namespace
 
-absl::optional<std::vector<apps::IconInfo>> ParseAppIconInfos(
+std::optional<std::vector<apps::IconInfo>> ParseAppIconInfos(
     const char* container_name_for_logging,
     const RepeatedIconInfosProto& manifest_icons_proto) {
   std::vector<apps::IconInfo> manifest_icons;
@@ -141,20 +140,20 @@ absl::optional<std::vector<apps::IconInfo>> ParseAppIconInfos(
 
     if (!icon_info_proto.has_url()) {
       DLOG(ERROR) << container_name_for_logging << " IconInfo has missing url";
-      return absl::nullopt;
+      return std::nullopt;
     }
     icon_info.url = GURL(icon_info_proto.url());
     if (!icon_info.url.is_valid()) {
       DLOG(ERROR) << container_name_for_logging << " IconInfo has invalid url: "
                   << icon_info.url.possibly_invalid_spec();
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     if (icon_info_proto.has_purpose()) {
-      absl::optional<apps::IconInfo::Purpose> opt_purpose =
+      std::optional<apps::IconInfo::Purpose> opt_purpose =
           SyncPurposeToIconInfoPurpose(icon_info_proto.purpose());
       if (!opt_purpose.has_value())
-        return absl::nullopt;
+        return std::nullopt;
       icon_info.purpose = opt_purpose.value();
     } else {
       // Treat unset purpose as ANY so that old data without the field is
@@ -167,7 +166,7 @@ absl::optional<std::vector<apps::IconInfo>> ParseAppIconInfos(
   return manifest_icons;
 }
 
-absl::optional<std::vector<blink::Manifest::ImageResource>>
+std::optional<std::vector<blink::Manifest::ImageResource>>
 ParseAppImageResource(const char* container_name_for_logging,
                       const RepeatedImageResourceProto& manifest_icons_proto) {
   std::vector<blink::Manifest::ImageResource> manifest_icons;
@@ -178,7 +177,7 @@ ParseAppImageResource(const char* container_name_for_logging,
     if (!image_resource_proto.has_src()) {
       DLOG(ERROR) << container_name_for_logging
                   << " ImageResource has missing url";
-      return absl::nullopt;
+      return std::nullopt;
     }
     image_resource.src = GURL(image_resource_proto.src());
 
@@ -186,7 +185,7 @@ ParseAppImageResource(const char* container_name_for_logging,
       DLOG(ERROR) << container_name_for_logging
                   << " ImageResource has invalid url: "
                   << image_resource.src.possibly_invalid_spec();
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     if (image_resource_proto.has_type()) {
@@ -228,39 +227,6 @@ ParseAppImageResource(const char* container_name_for_logging,
   return manifest_icons;
 }
 
-sync_pb::WebAppSpecifics WebAppToSyncProto(const WebApp& app) {
-  DCHECK(!app.start_url().is_empty());
-  DCHECK(app.start_url().is_valid());
-
-  sync_pb::WebAppSpecifics sync_proto;
-  // The relative id does not include the initial '/' character.
-  std::string relative_manifest_id_path = app.manifest_id().PathForRequest();
-  if (relative_manifest_id_path.starts_with("/")) {
-    relative_manifest_id_path = relative_manifest_id_path.substr(1);
-  }
-  sync_proto.set_relative_manifest_id(relative_manifest_id_path);
-  sync_proto.set_start_url(app.start_url().spec());
-  sync_proto.set_user_display_mode(
-      ConvertUserDisplayModeToWebAppSpecificsUserDisplayMode(
-          app.user_display_mode().value_or(mojom::UserDisplayMode::kBrowser)));
-  sync_proto.set_name(app.sync_fallback_data().name);
-  if (app.sync_fallback_data().theme_color.has_value())
-    sync_proto.set_theme_color(app.sync_fallback_data().theme_color.value());
-  if (app.user_page_ordinal().IsValid()) {
-    sync_proto.set_user_page_ordinal(app.user_page_ordinal().ToInternalValue());
-  }
-  if (app.user_launch_ordinal().IsValid()) {
-    sync_proto.set_user_launch_ordinal(
-        app.user_launch_ordinal().ToInternalValue());
-  }
-  if (app.sync_fallback_data().scope.is_valid())
-    sync_proto.set_scope(app.sync_fallback_data().scope.spec());
-  for (const apps::IconInfo& icon_info : app.sync_fallback_data().icon_infos) {
-    *(sync_proto.add_icon_infos()) = AppIconInfoToSyncProto(icon_info);
-  }
-  return sync_proto;
-}
-
 sync_pb::WebAppIconInfo AppIconInfoToSyncProto(
     const apps::IconInfo& icon_info) {
   sync_pb::WebAppIconInfo icon_info_proto;
@@ -297,78 +263,31 @@ content::proto::ImageResource AppImageResourceToProto(
   return image_resource_proto;
 }
 
-absl::optional<WebApp::SyncFallbackData> ParseSyncFallbackDataStruct(
-    const sync_pb::WebAppSpecifics& sync_proto) {
-  WebApp::SyncFallbackData parsed_sync_fallback_data;
-
-  parsed_sync_fallback_data.name = sync_proto.name();
-
-  if (sync_proto.has_theme_color())
-    parsed_sync_fallback_data.theme_color = sync_proto.theme_color();
-
-  if (sync_proto.has_scope()) {
-    parsed_sync_fallback_data.scope = GURL(sync_proto.scope());
-    if (!parsed_sync_fallback_data.scope.is_valid()) {
-      DLOG(ERROR) << "WebAppSpecifics scope has invalid url: "
-                  << parsed_sync_fallback_data.scope.possibly_invalid_spec();
-      return absl::nullopt;
-    }
-  }
-
-  absl::optional<std::vector<apps::IconInfo>> parsed_icon_infos =
-      ParseAppIconInfos("WebAppSpecifics", sync_proto.icon_infos());
-  if (!parsed_icon_infos)
-    return absl::nullopt;
-
-  parsed_sync_fallback_data.icon_infos = std::move(parsed_icon_infos.value());
-
-  return parsed_sync_fallback_data;
-}
-
-::sync_pb::WebAppSpecifics::UserDisplayMode ToWebAppSpecificsUserDisplayMode(
-    DisplayMode user_display_mode) {
-  switch (user_display_mode) {
-    case DisplayMode::kBrowser:
-      return ::sync_pb::WebAppSpecifics::BROWSER;
-    case DisplayMode::kTabbed:
-      return ::sync_pb::WebAppSpecifics::TABBED;
-    case DisplayMode::kUndefined:
-    case DisplayMode::kMinimalUi:
-    case DisplayMode::kFullscreen:
-    case DisplayMode::kWindowControlsOverlay:
-    case DisplayMode::kBorderless:
-      NOTREACHED();
-      [[fallthrough]];
-    case DisplayMode::kStandalone:
-      return ::sync_pb::WebAppSpecifics::STANDALONE;
-  }
-}
-
-RunOnOsLoginMode ToRunOnOsLoginMode(WebAppProto::RunOnOsLoginMode mode) {
+RunOnOsLoginMode ToRunOnOsLoginMode(proto::WebApp::RunOnOsLoginMode mode) {
   switch (mode) {
-    case WebAppProto::MINIMIZED:
+    case proto::WebApp::RUN_ON_OS_LOGIN_MODE_MINIMIZED:
       return RunOnOsLoginMode::kMinimized;
-    case WebAppProto::WINDOWED:
+    case proto::WebApp::RUN_ON_OS_LOGIN_MODE_WINDOWED:
       return RunOnOsLoginMode::kWindowed;
-    case WebAppProto::NOT_RUN:
+    case proto::WebApp::RUN_ON_OS_LOGIN_MODE_NOT_RUN:
     default:
       return RunOnOsLoginMode::kNotRun;
   }
 }
 
-WebAppProto::RunOnOsLoginMode ToWebAppProtoRunOnOsLoginMode(
+proto::WebApp::RunOnOsLoginMode ToWebAppProtoRunOnOsLoginMode(
     RunOnOsLoginMode mode) {
   switch (mode) {
     case RunOnOsLoginMode::kMinimized:
-      return WebAppProto::MINIMIZED;
+      return proto::WebApp::RUN_ON_OS_LOGIN_MODE_MINIMIZED;
     case RunOnOsLoginMode::kWindowed:
-      return WebAppProto::WINDOWED;
+      return proto::WebApp::RUN_ON_OS_LOGIN_MODE_WINDOWED;
     case RunOnOsLoginMode::kNotRun:
-      return WebAppProto::NOT_RUN;
+      return proto::WebApp::RUN_ON_OS_LOGIN_MODE_NOT_RUN;
   }
 }
 
-absl::optional<blink::SafeUrlPattern> ToUrlPattern(
+std::optional<blink::SafeUrlPattern> ToUrlPattern(
     const proto::UrlPattern& proto_url_pattern) {
   blink::SafeUrlPattern url_pattern;
 
@@ -379,10 +298,10 @@ absl::optional<blink::SafeUrlPattern> ToUrlPattern(
       DLOG(ERROR) << "WebApp UrlPattern Part has missing type";
       continue;
     }
-    absl::optional<liburlpattern::PartType> opt_part_type =
+    std::optional<liburlpattern::PartType> opt_part_type =
         ProtoToUrlPatternPartType(proto_part.part_type());
     if (!opt_part_type.has_value()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     part.type = opt_part_type.value();
 
@@ -397,10 +316,10 @@ absl::optional<blink::SafeUrlPattern> ToUrlPattern(
       continue;
     }
 
-    absl::optional<liburlpattern::Modifier> opt_modifier =
+    std::optional<liburlpattern::Modifier> opt_modifier =
         ProtoToUrlPatternModifier(proto_part.modifier());
     if (!opt_modifier.has_value()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     part.modifier = opt_modifier.value();
 
@@ -439,13 +358,13 @@ proto::UrlPattern ToUrlPatternProto(const blink::SafeUrlPattern& url_pattern) {
   return url_pattern_proto;
 }
 
-absl::optional<TabStrip> ProtoToTabStrip(proto::TabStrip tab_strip_proto) {
+std::optional<TabStrip> ProtoToTabStrip(proto::TabStrip tab_strip_proto) {
   TabStrip tab_strip;
   if (tab_strip_proto.has_home_tab_visibility()) {
     tab_strip.home_tab =
         ProtoToTabStripVisibility(tab_strip_proto.home_tab_visibility());
   } else {
-    absl::optional<std::vector<blink::Manifest::ImageResource>> icons =
+    std::optional<std::vector<blink::Manifest::ImageResource>> icons =
         ParseAppImageResource("WebApp",
                               tab_strip_proto.home_tab_params().icons());
     blink::Manifest::HomeTabParams home_tab_params;
@@ -456,10 +375,10 @@ absl::optional<TabStrip> ProtoToTabStrip(proto::TabStrip tab_strip_proto) {
     std::vector<blink::SafeUrlPattern> scope_patterns;
     for (const proto::UrlPattern& proto_url_pattern :
          tab_strip_proto.home_tab_params().scope_patterns()) {
-      absl::optional<blink::SafeUrlPattern> url_pattern =
+      std::optional<blink::SafeUrlPattern> url_pattern =
           ToUrlPattern(proto_url_pattern);
       if (!url_pattern) {
-        return absl::nullopt;
+        return std::nullopt;
       }
       scope_patterns.push_back(url_pattern.value());
     }
@@ -468,18 +387,24 @@ absl::optional<TabStrip> ProtoToTabStrip(proto::TabStrip tab_strip_proto) {
     tab_strip.home_tab = std::move(home_tab_params);
   }
 
-  if (tab_strip_proto.has_new_tab_button_visibility()) {
-    tab_strip.new_tab_button =
-        ProtoToTabStripVisibility(tab_strip_proto.new_tab_button_visibility());
-  } else {
-    blink::Manifest::NewTabButtonParams new_tab_button_params;
-    if (tab_strip_proto.new_tab_button_params().has_url()) {
-      new_tab_button_params.url =
-          GURL(tab_strip_proto.new_tab_button_params().url());
-    }
-    tab_strip.new_tab_button = new_tab_button_params;
+  blink::Manifest::NewTabButtonParams new_tab_button_params;
+  if (tab_strip_proto.new_tab_button_params().has_url()) {
+    new_tab_button_params.url =
+        GURL(tab_strip_proto.new_tab_button_params().url());
   }
+  tab_strip.new_tab_button = new_tab_button_params;
+
   return tab_strip;
+}
+
+std::string RelativeManifestIdPath(webapps::ManifestId manifest_id) {
+  CHECK(manifest_id.is_valid());
+  // The relative id does not include the initial '/' character.
+  std::string relative_manifest_id_path = manifest_id.PathForRequest();
+  if (relative_manifest_id_path.starts_with("/")) {
+    relative_manifest_id_path = relative_manifest_id_path.substr(1);
+  }
+  return relative_manifest_id_path;
 }
 
 }  // namespace web_app

@@ -20,7 +20,6 @@ namespace {
 
 // We need to artificially limit the size of the update manifest, because it is
 // loaded into memory.
-// TODO(b/282633201): Document the limit.
 constexpr size_t kMaxUpdateManifestLength = 5 * 1024 * 1024;
 
 }  // namespace
@@ -54,7 +53,7 @@ void UpdateManifestFetcher::DownloadUpdateManifest() {
       destination: OTHER
       internal {
         contacts {
-          email: "peletskyi@google.com"
+          owners: "//chrome/browser/web_applications/isolated_web_apps/OWNERS"
         }
       }
       user_data {
@@ -102,31 +101,13 @@ void UpdateManifestFetcher::OnUpdateManifestDownloaded(
 
 void UpdateManifestFetcher::ParseUpdateManifest(
     const std::string& update_manifest_content) {
-  InitializeJsonParser();
+  base::JSONReader::Result result =
+      base::JSONReader::ReadAndReturnValueWithError(update_manifest_content,
+                                                    base::JSON_PARSE_RFC);
 
-  json_parser_->Parse(
-      update_manifest_content, base::JSON_PARSE_RFC,
-      base::BindOnce(&UpdateManifestFetcher::OnUpdateManifestParsed,
-                     base::Unretained(this)));
-}
-
-void UpdateManifestFetcher::InitializeJsonParser() {
-  CHECK(!json_parser_);
-  data_decoder_.GetService()->BindJsonParser(
-      json_parser_.BindNewPipeAndPassReceiver());
-  json_parser_.set_disconnect_handler(base::BindOnce(
-      &UpdateManifestFetcher::OnUpdateManifestParsed, base::Unretained(this),
-      absl::nullopt, "JsonParser terminated unexpectedly"));
-}
-
-void UpdateManifestFetcher::OnUpdateManifestParsed(
-    absl::optional<base::Value> result,
-    const absl::optional<std::string>& error) {
   if (!result.has_value()) {
-    if (error.has_value()) {
-      LOG(ERROR) << "Unable to parse IWA Update Manifest JSON for URL " << url_
-                 << ". Error: was" << *error;
-    }
+    LOG(ERROR) << "Unable to parse IWA Update Manifest JSON for URL " << url_
+               << ". Error: was" << result.error().message;
     std::move(fetch_callback_).Run(base::unexpected(Error::kInvalidJson));
     return;
   }
@@ -140,11 +121,11 @@ void UpdateManifestFetcher::OnUpdateManifestParsed(
           [](UpdateManifest::JsonFormatError error) -> Error {
             switch (error) {
               case UpdateManifest::JsonFormatError::kRootNotADictionary:
+              case UpdateManifest::JsonFormatError::kChannelsNotADictionary:
+              case UpdateManifest::JsonFormatError::kChannelNotADictionary:
               case UpdateManifest::JsonFormatError::kVersionsNotAnArray:
               case UpdateManifest::JsonFormatError::kVersionEntryNotADictionary:
                 return Error::kInvalidManifest;
-              case UpdateManifest::JsonFormatError::kNoApplicableVersion:
-                return Error::kNoApplicableVersion;
             }
           }));
 }

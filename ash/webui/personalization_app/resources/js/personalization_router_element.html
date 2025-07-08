@@ -5,12 +5,13 @@
     position: relative;
     width: 100%;
   }
+
   #breadcrumbArea {
-    background-color: var(--cros-bg-color);
+    background-color: var(--cros-sys-app_base_shaded);
     display: grid;
     grid-template-areas:
       '. . breadcrumb . .';
-    grid-template-columns: 1fr 16px minmax(568px, 920px) 16px 1fr;
+    grid-template-columns: 1fr 10px minmax(568px, 920px) 10px 1fr;
     grid-template-rows: var(--personalization-app-breadcrumb-height);
     position: sticky;
     top: 0;
@@ -20,18 +21,22 @@
     during scrolling in hub subpages */
     z-index: 3;
   }
-  :host-context(body.jelly-enabled) #breadcrumbArea {
-    background-color: var(--cros-sys-app_base_shaded);
-  }
+
   personalization-breadcrumb {
     grid-area: breadcrumb;
   }
+
   personalization-toast {
     bottom: 16px;
     left: 16px;
     max-width: 380px;
     position: sticky;
   }
+
+  sea-pen-router {
+    --sea-pen-router-min-height: var(--personalization-app-subpage-container-min-height);
+  }
+
   wallpaper-fullscreen {
     bottom: 0;
     height: 100%;
@@ -39,6 +44,19 @@
     pointer-events: none;
     position: absolute;
     width: 100%;
+  }
+
+  /**
+   * Visibly hide the wallpaper-selected element, but keep it in the dom so that it can announce
+   * when the wallpaper changes.
+   */
+  sea-pen-router .wallpaperSelectedHidden {
+    height: 1px;
+    left: -2px;
+    overflow: hidden;
+    position: fixed;
+    top: -2px;
+    width: 1px;
   }
 </style>
 <div id="container">
@@ -54,7 +72,8 @@
       <personalization-breadcrumb path="[[path_]]"
           collection-id="[[queryParams_.id]]"
           google-photos-album-id="[[queryParams_.googlePhotosAlbumId]]"
-          topic-source="[[queryParams_.topicSource]]">
+          topic-source="[[queryParams_.topicSource]]"
+          sea-pen-template-id="[[queryParams_.seaPenTemplateId]]">
       </personalization-breadcrumb>
     </div>
   </template>
@@ -72,5 +91,12 @@
     <wallpaper-subpage path="[[path_]]" query-params="[[queryParams_]]">
     </wallpaper-subpage>
   </template>
+  <template is="dom-if" if="[[shouldShowSeaPen_(path_)]]" restamp>
+    <sea-pen-router base-path="[[seaPenBasePath_]]" class="always-show-top">
+      <wallpaper-selected id="wallpaperSelected" class$="[[getWallpaperSelectedClass_(path_)]]">
+      </wallpaper-selected>
+    </sea-pen-router>
+  </template>
   <personalization-toast></personalization-toast>
+  <wallpaper-fullscreen></wallpaper-fullscreen>
 </div>

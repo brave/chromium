@@ -105,7 +105,7 @@ void FontIndexer::FontListHasLoaded(base::Value::List list) {
     const base::Value::List& font = i.GetList();
 
     std::string non_localized_name = font[0].GetString();
-    PrintAllFontsWithName(WTF::AtomicString(non_localized_name.c_str()));
+    PrintAllFontsWithName(blink::AtomicString(non_localized_name.c_str()));
   }
 
   has_font_list_loaded_ = true;
@@ -113,10 +113,10 @@ void FontIndexer::FontListHasLoaded(base::Value::List list) {
     std::move(quit_closure_).Run();
 }
 
-bool FontIndexer::DoesFontHaveDigest(WTF::AtomicString name,
+bool FontIndexer::DoesFontHaveDigest(blink::AtomicString name,
                                      blink::FontDescription font_description,
                                      int64_t digest) {
-  scoped_refptr<blink::SimpleFontData> font_data =
+  const blink::SimpleFontData* font_data =
       font_cache_->GetFontData(font_description, name);
   DCHECK(font_data);
   return blink::FontGlobalContext::Get()
@@ -125,7 +125,7 @@ bool FontIndexer::DoesFontHaveDigest(WTF::AtomicString name,
 }
 
 bool FontIndexer::DoFontsWithNameHaveVaryingWeights(
-    WTF::AtomicString name,
+    blink::AtomicString name,
     int64_t default_font_digest) {
   blink::FontDescription font_description;
 
@@ -138,7 +138,7 @@ bool FontIndexer::DoFontsWithNameHaveVaryingWeights(
 }
 
 bool FontIndexer::DoFontsWithNameHaveVaryingWidths(
-    WTF::AtomicString name,
+    blink::AtomicString name,
     int64_t default_font_digest) {
   blink::FontDescription font_description;
 
@@ -151,7 +151,7 @@ bool FontIndexer::DoFontsWithNameHaveVaryingWidths(
 }
 
 bool FontIndexer::DoFontsWithNameHaveVaryingSlopes(
-    WTF::AtomicString name,
+    blink::AtomicString name,
     int64_t default_font_digest) {
   blink::FontDescription font_description;
 
@@ -163,14 +163,14 @@ bool FontIndexer::DoFontsWithNameHaveVaryingSlopes(
   return (!DoesFontHaveDigest(name, font_description, default_font_digest));
 }
 
-void FontIndexer::PrintAllFontsWithName(WTF::AtomicString name) {
+void FontIndexer::PrintAllFontsWithName(blink::AtomicString name) {
   WTF::HashSet<int64_t> set_of_digests;
 
   // First, we load the font with default selection settings to verify any font
   // exists and for later comparison.
   int64_t default_font_digest;
   {
-    scoped_refptr<blink::SimpleFontData> font_data =
+    const blink::SimpleFontData* font_data =
         font_cache_->GetFontData(blink::FontDescription(), name);
     default_font_digest =
         font_data ? blink::FontGlobalContext::Get()
@@ -231,7 +231,7 @@ void FontIndexer::PrintAllFontsWithName(WTF::AtomicString name) {
       for (auto slope_pair : slopes) {
         font_description.SetStyle(slope_pair.first);
 
-        if (scoped_refptr<blink::SimpleFontData> font_data =
+        if (const blink::SimpleFontData* font_data =
                 font_cache_->GetFontData(font_description, name)) {
           uint64_t typeface_digest =
               blink::FontGlobalContext::Get()

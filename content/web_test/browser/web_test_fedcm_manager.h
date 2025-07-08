@@ -5,13 +5,14 @@
 #ifndef CONTENT_WEB_TEST_BROWSER_WEB_TEST_FEDCM_MANAGER_H_
 #define CONTENT_WEB_TEST_BROWSER_WEB_TEST_FEDCM_MANAGER_H_
 
-#include "base/functional/callback_forward.h"
-#include "mojo/public/cpp/bindings/receiver_set.h"
-#include "third_party/blink/public/mojom/webid/federated_auth_request_automation.mojom.h"
+#include "base/memory/weak_ptr.h"
+#include "third_party/blink/public/test/mojom/webid/federated_auth_request_automation.test-mojom.h"
 
 namespace content {
 
+class FederatedAuthRequestImpl;
 class RenderFrameHost;
+class RenderFrameHostImpl;
 
 class WebTestFedCmManager
     : public blink::test::mojom::FederatedAuthRequestAutomation {
@@ -24,15 +25,25 @@ class WebTestFedCmManager
   ~WebTestFedCmManager() override;
 
   // blink::test::mojom::FederatedAuthRequestAutomation
+  void GetDialogType(
+      blink::test::mojom::FederatedAuthRequestAutomation::GetDialogTypeCallback)
+      override;
   void GetFedCmDialogTitle(blink::test::mojom::FederatedAuthRequestAutomation::
                                GetFedCmDialogTitleCallback) override;
   void SelectFedCmAccount(uint32_t account_index,
                           SelectFedCmAccountCallback) override;
+  void DismissFedCmDialog(DismissFedCmDialogCallback) override;
+  void ClickFedCmDialogButton(blink::test::mojom::DialogButton button,
+                              ClickFedCmDialogButtonCallback) override;
 
  private:
-  raw_ptr<RenderFrameHost> render_frame_host_;
+  // Returns the active FederatedAuthRequestImpl for the current Page,
+  // or nullptr if there isn't one.
+  FederatedAuthRequestImpl* GetAuthRequestImpl();
+
+  base::WeakPtr<RenderFrameHostImpl> render_frame_host_;
 };
 
 }  // namespace content
 
-#endif  // CONTENT_WEB_TEST_BROWSER_WEB_TEST_STORAGE_ACCESS_MANAGER_H_
+#endif  // CONTENT_WEB_TEST_BROWSER_WEB_TEST_FEDCM_MANAGER_H_

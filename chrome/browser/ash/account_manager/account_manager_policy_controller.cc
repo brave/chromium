@@ -12,11 +12,12 @@
 #include "chrome/browser/ash/account_manager/account_manager_edu_coexistence_controller.h"
 #include "chrome/browser/ash/account_manager/account_manager_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chromeos/ash/components/account_manager/account_manager_facade_factory.h"
 #include "components/account_manager_core/account_manager_facade.h"
 #include "components/account_manager_core/chromeos/account_manager.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/account_manager_core/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "google_apis/gaia/gaia_id.h"
 
 namespace ash {
 
@@ -86,7 +87,7 @@ void AccountManagerPolicyController::RemoveSecondaryAccounts(
     }
 
     if (device_account_id_.GetAccountType() == AccountType::GOOGLE &&
-        account.key.id() == device_account_id_.GetGaiaId()) {
+        GaiaId(account.key.id()) == device_account_id_.GetGaiaId()) {
       // Do not remove the Device Account.
       continue;
     }

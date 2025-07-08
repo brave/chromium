@@ -22,19 +22,46 @@ void NotificationHandler::OnClose(Profile* profile,
 void NotificationHandler::OnClick(Profile* profile,
                                   const GURL& origin,
                                   const std::string& notification_id,
-                                  const absl::optional<int>& action_index,
-                                  const absl::optional<std::u16string>& reply,
+                                  const std::optional<int>& action_index,
+                                  const std::optional<std::u16string>& reply,
                                   base::OnceClosure completed_closure) {
   std::move(completed_closure).Run();
 }
 
-void NotificationHandler::DisableNotifications(Profile* profile,
-                                               const GURL& origin) {
+void NotificationHandler::DisableNotifications(
+    Profile* profile,
+    const GURL& origin,
+    const std::optional<std::string>& notification_id) {
   NOTREACHED();
 }
 
 void NotificationHandler::OpenSettings(Profile* profile, const GURL& origin) {
   // Notification types that display a settings button must override this method
   // to handle user interaction with it.
+  NOTREACHED();
+}
+
+void NotificationHandler::ReportNotificationAsSafe(
+    const std::string& notification_id,
+    const GURL& url,
+    Profile* profile) {
+  NOTREACHED();
+}
+
+void NotificationHandler::ReportWarnedNotificationAsSpam(
+    const std::string& notification_id,
+    const GURL& url,
+    Profile* profile) {
+  NOTREACHED();
+}
+
+void NotificationHandler::ReportUnwarnedNotificationAsSpam(
+    const std::string& notification_id,
+    const GURL& url,
+    Profile* profile) {
+  NOTREACHED();
+}
+
+void NotificationHandler::RecordShowOriginalNotification(const GURL& url) {
   NOTREACHED();
 }

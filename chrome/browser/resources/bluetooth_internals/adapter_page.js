@@ -8,7 +8,7 @@
 
 import './object_fieldset.js';
 
-import {$} from 'chrome://resources/js/util_ts.js';
+import {$} from 'chrome://resources/js/util.js';
 
 import {Page} from './page.js';
 
@@ -41,6 +41,14 @@ export class AdapterPage extends Page {
       this.refreshBtn_.disabled = true;
       this.pageDiv.dispatchEvent(new CustomEvent('refreshpressed'));
     });
+
+    // <if expr="is_chromeos">
+    const restartBluetoothBtn = $('restart-bluetooth-btn');
+    restartBluetoothBtn.addEventListener('click', () => {
+      restartBluetoothBtn.disabled = true;
+      this.pageDiv.dispatchEvent(new CustomEvent('restart-bluetooth-click'));
+    });
+    // </if>
   }
 
   /**
@@ -53,6 +61,17 @@ export class AdapterPage extends Page {
       // this property so that it's not displayed on adapterFieldSet.
       delete info.systemName;
     }
+
+    // <if expr="not is_chromeos">
+    // floss and extendedAdvertisementSupport is only set in ChromeOS anyway,
+    // so it's irrelevant on other platforms. Delete them.
+    if (info.hasOwnProperty('floss')) {
+      delete info.floss;
+    }
+    if (info.hasOwnProperty('extendedAdvertisementSupport')) {
+      delete info.extendedAdvertisementSupport;
+    }
+    // </if>
 
     this.adapterFieldSet.dataset.value = JSON.stringify(info);
     this.refreshBtn_.disabled = false;

@@ -5,11 +5,15 @@
 #ifndef CHROME_TEST_SUPERVISED_USER_EMBEDDED_TEST_SERVER_SETUP_MIXIN_H_
 #define CHROME_TEST_SUPERVISED_USER_EMBEDDED_TEST_SERVER_SETUP_MIXIN_H_
 
+#include <string>
 #include <vector>
+
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 
 namespace supervised_user {
 
@@ -32,9 +36,11 @@ class EmbeddedTestServerSetupMixin : public InProcessBrowserTestMixin {
   };
 
   EmbeddedTestServerSetupMixin() = delete;
-  explicit EmbeddedTestServerSetupMixin(InProcessBrowserTestMixinHost& host);
   EmbeddedTestServerSetupMixin(InProcessBrowserTestMixinHost& host,
-                               base::raw_ptr<net::EmbeddedTestServer> server,
+                               InProcessBrowserTest* test_base);
+  EmbeddedTestServerSetupMixin(InProcessBrowserTestMixinHost& host,
+                               InProcessBrowserTest* test_base,
+                               raw_ptr<net::EmbeddedTestServer> server,
                                const Options& options);
 
   EmbeddedTestServerSetupMixin(const EmbeddedTestServerSetupMixin&) = delete;
@@ -45,12 +51,16 @@ class EmbeddedTestServerSetupMixin : public InProcessBrowserTestMixin {
 
   // InProcessBrowserTestMixin:
   void SetUp() override;
-  void SetUpCommandLine(base::CommandLine* command_line) override;
   void TearDownOnMainThread() override;
+  void SetUpCommandLine(base::CommandLine* command_line) override;
   void SetUpOnMainThread() override;
 
+ private:
+  // This mixin dependencies.
+  raw_ptr<InProcessBrowserTest> test_base_;
+
   // Embedded test server owned by test that uses this mixin.
-  base::raw_ptr<net::EmbeddedTestServer> embedded_test_server_;
+  raw_ptr<net::EmbeddedTestServer> embedded_test_server_;
 
   // List of hosts that will be resolved to server's address.
   std::vector<std::string> resolver_rules_map_host_list_;
@@ -58,4 +68,4 @@ class EmbeddedTestServerSetupMixin : public InProcessBrowserTestMixin {
 
 }  // namespace supervised_user
 
-#endif  // CHROME_TEST_SUPERVISED_USER_EMBEDDED_TEST_SERVER_SETUP_MIXIN_H_:
+#endif  // CHROME_TEST_SUPERVISED_USER_EMBEDDED_TEST_SERVER_SETUP_MIXIN_H_

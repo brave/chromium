@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
@@ -18,8 +19,6 @@
 #include "net/dns/dns_config.h"
 #include "net/dns/dns_hosts.h"
 #include "net/dns/serial_worker.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "url/gurl.h"
 
 namespace net {
 
@@ -111,7 +110,7 @@ class NET_EXPORT_PRIVATE DnsConfigService {
    public:
     // `service` is expected to own the created reader and thus stay valid for
     // the lifetime of the created reader.
-    HostsReader(base::FilePath::StringPieceType hosts_file_path,
+    HostsReader(base::FilePath::StringViewType hosts_file_path,
                 DnsConfigService& service);
     ~HostsReader() override;
 
@@ -126,7 +125,7 @@ class NET_EXPORT_PRIVATE DnsConfigService {
 
       // Override if needed to implement platform-specific behavior, e.g. for a
       // platform-specific HOSTS format.
-      virtual absl::optional<DnsHosts> ReadHosts();
+      virtual std::optional<DnsHosts> ReadHosts();
 
       // Adds any necessary additional entries to the given `DnsHosts`. Returns
       // false on failure.
@@ -140,7 +139,7 @@ class NET_EXPORT_PRIVATE DnsConfigService {
      private:
       friend HostsReader;
 
-      absl::optional<DnsHosts> hosts_;
+      std::optional<DnsHosts> hosts_;
       std::unique_ptr<DnsHostsParser> dns_hosts_parser_;
     };
 
@@ -162,9 +161,9 @@ class NET_EXPORT_PRIVATE DnsConfigService {
   // triggering refreshes. Will trigger refreshes synchronously on nullopt.
   // Useful for platforms where multiple changes may be made and detected before
   // the config is stabilized and ready to be read.
-  explicit DnsConfigService(base::FilePath::StringPieceType hosts_file_path,
-                            absl::optional<base::TimeDelta>
-                                config_change_delay = base::Milliseconds(50));
+  explicit DnsConfigService(base::FilePath::StringViewType hosts_file_path,
+                            std::optional<base::TimeDelta> config_change_delay =
+                                base::Milliseconds(50));
 
   // Immediately attempts to read the current configuration.
   virtual void ReadConfigNow() = 0;
@@ -216,7 +215,7 @@ class NET_EXPORT_PRIVATE DnsConfigService {
   // Set when |timer_| expires.
   bool last_sent_empty_ = true;
 
-  const absl::optional<base::TimeDelta> config_change_delay_;
+  const std::optional<base::TimeDelta> config_change_delay_;
   const base::FilePath hosts_file_path_;
 
   // Created only if needed in ReadHostsNow() to avoid creating unnecessarily if

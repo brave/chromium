@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include <lib/async/default.h>
+#include <lib/inspect/component/cpp/component.h>
 #include <lib/sys/cpp/component_context.h>
-#include <lib/sys/inspect/cpp/component.h>
 #include <lib/trace-provider/provider.h>
 
+#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/check.h"
@@ -20,7 +22,6 @@
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/values.h"
 #include "build/chromecast_buildflags.h"
@@ -33,7 +34,6 @@
 #include "fuchsia_web/runners/cast/cast_runner.h"
 #include "fuchsia_web/runners/cast/cast_runner_switches.h"
 #include "fuchsia_web/webinstance_host/web_instance_host.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -48,8 +48,8 @@ constexpr char kHeadlessConfigKey[] = "headless";
 constexpr char kDisableCodeGenConfigKey[] = "disable-codegen";
 
 // Returns the value of |config_key| or false if it is not set.
-bool GetConfigBool(base::StringPiece config_key) {
-  const absl::optional<base::Value::Dict>& config =
+bool GetConfigBool(std::string_view config_key) {
+  const std::optional<base::Value::Dict>& config =
       fuchsia_component_support::LoadPackageConfig();
   if (config)
     return config->FindBool(config_key).value_or(false);
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
 
   base::CommandLine::Init(argc, argv);
 
-  static constexpr base::StringPiece kComponentUrl(
+  static constexpr std::string_view kComponentUrl(
       "fuchsia-pkg://fuchsia.com/cast_runner#meta/cast_runner.cm");
   fuchsia_component_support::RegisterProductDataForCrashReporting(
       kComponentUrl, "FuchsiaCastRunner");
@@ -129,8 +129,8 @@ int main(int argc, char** argv) {
   }
 
   // Publish version information for this component to Inspect.
-  sys::ComponentInspector inspect(base::ComponentContextForProcess());
-  fuchsia_component_support::PublishVersionInfoToInspect(&inspect);
+  inspect::ComponentInspector inspect(async_get_default_dispatcher(), {});
+  fuchsia_component_support::PublishVersionInfoToInspect(&inspect.root());
 
   outgoing_directory->ServeFromStartupInfo();
 

@@ -17,8 +17,6 @@ component("x") {
     "selection_requestor.h",
     "selection_utils.cc",
     "selection_utils.h",
-    "visual_picker_glx.cc",
-    "visual_picker_glx.h",
     "x11_clipboard_helper.cc",
     "x11_clipboard_helper.h",
     "x11_cursor.cc",
@@ -70,7 +68,6 @@ component("x") {
   deps = [
     "//base",
     "//base:i18n",
-    "//build:chromeos_buildflags",
     "//components/device_event_log",
     "//net",
     "//skia",
@@ -123,10 +120,7 @@ source_set("gl") {
     "x11_gl_egl_utility.h",
   ]
 
-  configs += [
-    "//build/config/compiler:wexit_time_destructors",
-    "//third_party/khronos:khronos_headers",
-  ]
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
   deps = [
     ":x",
     "//base",

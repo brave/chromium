@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import './state_banner.js';
+
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {getTrustedHTML} from 'chrome://resources/js/static_types.js';
 import {assertEquals} from 'chrome://webui-test/chromeos/chai_assert.js';
 
-import {mockUtilVisitURL} from '../../../../common/js/mock_util.js';
+import {crInjectTypeAndInit} from '../../../../common/js/cr_ui.js';
 import {waitUntil} from '../../../../common/js/test_error_reporting.js';
-import {decorate} from '../../../../common/js/ui.js';
+import {getLastVisitedURL} from '../../../../common/js/util.js';
 import {Command} from '../command.js';
 
-import {StateBanner} from './state_banner.js';
+import type {StateBanner} from './state_banner.js';
 
 let stateBanner: StateBanner;
 
@@ -36,14 +39,14 @@ function mockOpenSettingsSubpage() {
 }
 
 export function setUp() {
-  const html = `<state-banner>
+  document.body.innerHTML = getTrustedHTML`
+    <state-banner>
       <span slot="text">Banner title</span>
       <button slot="extra-button" href="http://test.com">
         Test Banner
       </button>
     </state-banner>
-    `;
-  document.body.innerHTML = html;
+  `;
   stateBanner = document.body.querySelector<StateBanner>('state-banner')!;
 }
 
@@ -52,10 +55,8 @@ export function setUp() {
  * button is clicked.
  */
 export async function testAdditionalButtonCanBeClicked() {
-  const mockVisitURL = mockUtilVisitURL();
   stateBanner.querySelector<CrButtonElement>('[slot="extra-button"]')!.click();
-  assertEquals(mockVisitURL.getURL(), 'http://test.com');
-  mockVisitURL.restoreVisitURL();
+  assertEquals(getLastVisitedURL(), 'http://test.com');
 }
 
 /**
@@ -76,14 +77,15 @@ export function testStateBannerDefaults() {
 export async function testChromeOsSettingsLink() {
   const mockSettingsSubpage = mockOpenSettingsSubpage();
   const subpage = 'test/settings/subpage';
-  const html = `<state-banner>
-  <span slot="text">Banner title</span>
-  <button slot="extra-button" href="chrome://os-settings/${subpage}">
-  Test Button
-  </button>
-  </state-banner>
+  document.body.innerHTML = getTrustedHTML`
+    <state-banner>
+      <span slot="text">Banner title</span>
+      <button slot="extra-button"
+          href="chrome://os-settings/test/settings/subpage">
+        Test Button
+      </button>
+    </state-banner>
   `;
-  document.body.innerHTML = html;
   stateBanner = document.body.querySelector<StateBanner>('state-banner')!;
   stateBanner.querySelector<CrButtonElement>('[slot="extra-button"]')!.click();
   assertEquals(mockSettingsSubpage.getSubpage(), subpage);
@@ -91,25 +93,23 @@ export async function testChromeOsSettingsLink() {
 }
 
 /**
- * Test that a href with no subpage, still calls util.visitURL as there is no
+ * Test that a href with no subpage, still calls visitURL as there is no
  * internal method to make the chrome://os-settings/ page appear except for
  * link capturing.
  */
 export async function testChromeOsSettingsNoSubpageLink() {
-  const mockVisitURL = mockUtilVisitURL();
   const osSettingsLink = 'chrome://os-settings/';
-  const html = `<state-banner>
+  document.body.innerHTML = getTrustedHTML`
+    <state-banner>
       <span slot="text">Banner title</span>
-      <button slot="extra-button" href="${osSettingsLink}">
+      <button slot="extra-button" href="chrome://os-settings/">
         Test Button
       </button>
     </state-banner>
-    `;
-  document.body.innerHTML = html;
+  `;
   stateBanner = document.body.querySelector<StateBanner>('state-banner')!;
   stateBanner.querySelector<CrButtonElement>('[slot="extra-button"]')!.click();
-  assertEquals(mockVisitURL.getURL(), osSettingsLink);
-  mockVisitURL.restoreVisitURL();
+  assertEquals(getLastVisitedURL(), osSettingsLink);
 }
 
 /**
@@ -117,16 +117,16 @@ export async function testChromeOsSettingsNoSubpageLink() {
  * type.
  */
 export async function testCommandsCanBeUsedForExtraButtons(done: () => void) {
-  const html = `<command id="format">
-    <state-banner>
-      <span slot="text">Banner title</span>
-      <button slot="extra-button" command="#format">
-        Test Button
-      </button>
-    </state-banner>
-    `;
-  document.body.innerHTML = html;
-  decorate('command', Command);
+  document.body.innerHTML = getTrustedHTML`
+    <command id="format">
+      <state-banner>
+        <span slot="text">Banner title</span>
+        <button slot="extra-button" command="#format">
+          Test Button
+        </button>
+      </state-banner>
+  `;
+  crInjectTypeAndInit(document.querySelector<Command>('command')!, Command);
 
   // Add a listener to wait for the #format command to be received and keep
   // track of the event it received. Given the actual command is not properly
@@ -144,7 +144,7 @@ export async function testCommandsCanBeUsedForExtraButtons(done: () => void) {
   stateBanner.querySelector<CrButtonElement>('[slot="extra-button"]')!.click();
 
   // Wait until the command has been received.
-  await waitUntil(() => commandReceived == true);
+  await waitUntil(() => commandReceived === true);
 
   // Assert the event type received is a command.
   assertEquals(commandEvent!.type, 'command');

@@ -5,6 +5,7 @@
 #ifndef IOS_WEB_TEST_FAKES_FAKE_NAVIGATION_MANAGER_DELEGATE_H_
 #define IOS_WEB_TEST_FAKES_FAKE_NAVIGATION_MANAGER_DELEGATE_H_
 
+#import "base/memory/raw_ptr.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 
 @protocol CRWWebViewNavigationProxy;
@@ -36,7 +37,7 @@ class FakeNavigationManagerDelegate : public NavigationManagerDelegate {
 
  private:
   id test_web_view_;
-  WebState* web_state_ = nullptr;
+  raw_ptr<WebState> web_state_ = nullptr;
 };
 
 }  // namespace web

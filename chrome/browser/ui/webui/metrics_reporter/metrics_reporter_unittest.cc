@@ -4,12 +4,18 @@
 
 #include "chrome/browser/ui/webui/metrics_reporter/metrics_reporter.h"
 
-#include "base/gtest_prod_util.h"
+#include <optional>
+#include <string>
+#include <utility>
+
+#include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "chrome/test/base/browser_with_test_window_test.h"
+#include "content/public/test/browser_task_environment.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using ::testing::_;
 using ::testing::Return;
@@ -30,6 +36,9 @@ class MockPageMetrics : public metrics_reporter::mojom::PageMetrics {
               (const std::string&, OnGetMarkCallback),
               (override));
   MOCK_METHOD(void, OnClearMark, (const std::string&), (override));
+
+  // Flush any pending mojo messages for testing.
+  void FlushForTesting() { receiver_.FlushForTesting(); }
 };
 
 class TestMetricsReporter : public MetricsReporter {
@@ -37,22 +46,28 @@ class TestMetricsReporter : public MetricsReporter {
   using MetricsReporter::OnGetMark;
   using MetricsReporter::OnPageRemoteCreated;
 };
-class WebUIMetricsReporterTest : public BrowserWithTestWindowTest {
+class WebUIMetricsReporterTest : public testing::Test {
  public:
   WebUIMetricsReporterTest()
-      : BrowserWithTestWindowTest(
+      : task_environment_(
             base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME) {
     metrics_reporter_.OnPageRemoteCreated(page_metrics_.BindAndGetRemote());
   }
 
+  void TearDown() override {
+    page_metrics_.FlushForTesting();
+    testing::Test::TearDown();
+  }
+
   MetricsReporter::OnGetMarkCallback TestGetMarkCallback(
-      absl::optional<base::TimeTicks> expected_time) {
+      std::optional<base::TimeTicks> expected_time) {
     return base::BindOnce(
-        [](absl::optional<base::TimeTicks> expected_time,
-           absl::optional<base::TimeDelta> time) {
+        [](std::optional<base::TimeTicks> expected_time,
+           std::optional<base::TimeDelta> time) {
           EXPECT_EQ(expected_time.has_value(), time.has_value());
-          if (time.has_value())
+          if (time.has_value()) {
             EXPECT_EQ(time, expected_time->since_origin());
+          }
         },
         expected_time);
   }
@@ -77,6 +92,7 @@ class WebUIMetricsReporterTest : public BrowserWithTestWindowTest {
  protected:
   const char* kHistogram = "TestHistogram";
 
+  content::BrowserTaskEnvironment task_environment_;
   testing::StrictMock<MockPageMetrics> page_metrics_;
   TestMetricsReporter metrics_reporter_;
 };
@@ -88,7 +104,7 @@ TEST_F(WebUIMetricsReporterTest, OnGetMark) {
 
   const base::TimeTicks mark1 = base::TimeTicks::Now();
   metrics_reporter_.Mark("mark1");
-  task_environment()->FastForwardBy(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Seconds(1));
   const base::TimeTicks mark2 = base::TimeTicks::Now();
   metrics_reporter_.Mark("mark2");
 
@@ -102,7 +118,7 @@ TEST_F(WebUIMetricsReporterTest, OverridesMarks) {
   metrics_reporter_.Mark("mark-override");
   const base::TimeTicks old_mark = base::TimeTicks::Now();
   // Overrides an existing mark.
-  task_environment()->FastForwardBy(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Seconds(1));
   const base::TimeTicks new_mark = base::TimeTicks::Now();
   metrics_reporter_.Mark("mark-override");
   metrics_reporter_.OnGetMark("mark-override", TestGetMarkCallback(new_mark));
@@ -115,7 +131,7 @@ TEST_F(WebUIMetricsReporterTest, HasMark) {
   EXPECT_CALL(page_metrics_, OnGetMark("nothing", _))
       .WillOnce([](const std::string& mark,
                    MetricsReporter::OnGetMarkCallback callback) {
-        std::move(callback).Run(absl::nullopt);
+        std::move(callback).Run(std::nullopt);
       });
   metrics_reporter_.HasMark("nothing", TestHasMarkCallback(false));
 
@@ -160,7 +176,7 @@ TEST_F(WebUIMetricsReporterTest, MarkAndMeasureLocally) {
   EXPECT_CALL(page_metrics_, OnClearMark(_)).Times(0);
 
   metrics_reporter_.Mark("start_mark");
-  task_environment()->FastForwardBy(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Seconds(1));
   metrics_reporter_.Measure("start_mark",
                             TestMeasureCallback(base::Seconds(1)));
 }
@@ -171,7 +187,7 @@ TEST_F(WebUIMetricsReporterTest, MeasureWithEndMark) {
   EXPECT_CALL(page_metrics_, OnClearMark(_)).Times(0);
 
   metrics_reporter_.Mark("start_mark");
-  task_environment()->FastForwardBy(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Seconds(1));
   metrics_reporter_.Mark("end_mark");
   metrics_reporter_.Measure("start_mark", "end_mark",
                             TestMeasureCallback(base::Seconds(1)));
@@ -186,7 +202,7 @@ TEST_F(WebUIMetricsReporterTest, MeasureRetrieveRemote) {
         std::move(callback).Run(remote_mark.since_origin());
       });
   EXPECT_CALL(page_metrics_, OnClearMark(_)).Times(0);
-  task_environment()->FastForwardBy(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Seconds(1));
   metrics_reporter_.Measure("remote_mark",
                             TestMeasureCallback(base::Seconds(1)));
 }

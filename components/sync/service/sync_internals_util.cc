@@ -14,6 +14,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
 #include "components/sync/engine/sync_status.h"
@@ -22,6 +23,7 @@
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_token_status.h"
 #include "components/sync/service/sync_user_settings.h"
+#include "components/sync/service/trusted_vault_synthetic_field_trial.h"
 #include "components/version_info/version_info.h"
 #include "url/gurl.h"
 
@@ -33,6 +35,45 @@ const char kUninitialized[] = "Uninitialized";
 
 const char kUninitializedCSSClass[] = "uninitialized";
 const char kBadStateCSSClass[] = "in_bad_state";
+
+std::string SeverityToString(TypeStatusForDebugging::Severity severity) {
+  switch (severity) {
+    case TypeStatusForDebugging::Severity::kError:
+      return "severity_error";
+    case TypeStatusForDebugging::Severity::kWarning:
+      return "severity_warning";
+    case TypeStatusForDebugging::Severity::kInfo:
+      return "severity_info";
+    case TypeStatusForDebugging::Severity::kTransitioning:
+      return "transitioning";
+    case TypeStatusForDebugging::Severity::kOk:
+      return "ok";
+  }
+  NOTREACHED();
+}
+
+// Converts TypeStatusMapForDebugging to a base::Value::List.
+base::Value::List TypeStatusMapToValueList(
+    const TypeStatusMapForDebugging& map) {
+  base::Value::List result;
+  auto type_status_header = base::Value::Dict()
+                                .Set("status", "header")
+                                .Set("name", "Data Type")
+                                .Set("num_entries", "Total Entries")
+                                .Set("num_live", "Live Entries")
+                                .Set("message", "Message")
+                                .Set("state", "State");
+  result.Append(std::move(type_status_header));
+  for (const auto& [type, status] : map) {
+    base::Value::Dict type_status;
+    type_status.Set("name", DataTypeToDebugString(type));
+    type_status.Set("status", SeverityToString(status.severity));
+    type_status.Set("state", status.state);
+    type_status.Set("message", status.message);
+    result.Append(std::move(type_status));
+  }
+  return result;
+}
 
 // This class represents one field in chrome://sync-internals. It gets
 // serialized into a dictionary with entries for 'stat_name', 'stat_value' and
@@ -119,14 +160,14 @@ class SectionList {
   SectionList() = default;
 
   // WARNING: If this section includes any Personally Identifiable Information,
-  // |is_sensitive| should be set to true.
+  // `is_sensitive` should be set to true.
   Section* AddSection(const std::string& title, bool is_sensitive) {
     sections_.push_back(std::make_unique<Section>(title, is_sensitive));
     return sections_.back().get();
   }
 
-  // If |include_sensitive_data| is true, returns all added sections. Otherwise,
-  // omits those added with |is_sensitive| set to true.
+  // If `include_sensitive_data` is true, returns all added sections. Otherwise,
+  // omits those added with `is_sensitive` set to true.
   base::Value::List ToValue(IncludeSensitiveData include_sensitive_data) const {
     base::Value::List result;
     for (const std::unique_ptr<Section>& section : sections_) {
@@ -140,45 +181,6 @@ class SectionList {
  private:
   std::vector<std::unique_ptr<Section>> sections_;
 };
-
-std::string GetDisableReasonsString(
-    SyncService::DisableReasonSet disable_reasons) {
-  if (disable_reasons.Empty()) {
-    return "None";
-  }
-  std::vector<std::string> reason_strings;
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_ENTERPRISE_POLICY)) {
-    reason_strings.push_back("Enterprise policy");
-  }
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_NOT_SIGNED_IN)) {
-    reason_strings.push_back("Not signed in");
-  }
-  if (disable_reasons.Has(SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR)) {
-    reason_strings.push_back("Unrecoverable error");
-  }
-  return base::JoinString(reason_strings, ", ");
-}
-
-std::string GetTransportStateString(syncer::SyncService::TransportState state) {
-  switch (state) {
-    case syncer::SyncService::TransportState::DISABLED:
-      return "Disabled";
-    case syncer::SyncService::TransportState::PAUSED:
-      return "Paused";
-    case syncer::SyncService::TransportState::START_DEFERRED:
-      return "Start deferred";
-    case syncer::SyncService::TransportState::INITIALIZING:
-      return "Initializing";
-    case syncer::SyncService::TransportState::PENDING_DESIRED_CONFIGURATION:
-      return "Pending desired configuration";
-    case syncer::SyncService::TransportState::CONFIGURING:
-      return "Configuring data types";
-    case syncer::SyncService::TransportState::ACTIVE:
-      return "Active";
-  }
-  NOTREACHED();
-  return std::string();
-}
 
 std::string GetUserActionableErrorString(
     SyncService::UserActionableError state) {
@@ -199,12 +201,9 @@ std::string GetUserActionableErrorString(
     case SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return "Trusted vault recoverability degraded for everything";
-    case SyncService::UserActionableError::kGenericUnrecoverableError:
-      return "Generic unrecoverable error";
   }
 
   NOTREACHED();
-  return std::string();
 }
 
 // Returns a string describing the chrome version environment. Version format:
@@ -215,7 +214,7 @@ std::string GetUserActionableErrorString(
 std::string GetVersionString(const std::string& channel) {
   // Build a version string that matches syncer::MakeUserAgentForSync with the
   // addition of channel info and proper OS names.
-  // |channel| will be an empty string for stable channel or unofficial builds,
+  // `channel` will be an empty string for stable channel or unofficial builds,
   // the channel string otherwise. We want to have "-devel" for unofficial
   // builds only.
   std::string version_modifier = channel;
@@ -290,10 +289,48 @@ std::string GetConnectionStatus(const SyncTokenStatus& status) {
           GetTimeStr(status.connection_status_update_time).c_str());
   }
   NOTREACHED();
-  return std::string();
 }
 
 }  // namespace
+
+std::string GetDisableReasonsDebugString(
+    SyncService::DisableReasonSet disable_reasons) {
+  if (disable_reasons.empty()) {
+    return "None";
+  }
+  std::vector<std::string> reason_strings;
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_ENTERPRISE_POLICY)) {
+    reason_strings.push_back("Enterprise policy");
+  }
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_NOT_SIGNED_IN)) {
+    reason_strings.push_back("Not signed in");
+  }
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR)) {
+    reason_strings.push_back("Unrecoverable error");
+  }
+  return base::JoinString(reason_strings, ", ");
+}
+
+std::string TransportStateStringToDebugString(
+    SyncService::TransportState state) {
+  switch (state) {
+    case SyncService::TransportState::DISABLED:
+      return "Disabled";
+    case SyncService::TransportState::PAUSED:
+      return "Paused";
+    case SyncService::TransportState::START_DEFERRED:
+      return "Start deferred";
+    case SyncService::TransportState::INITIALIZING:
+      return "Initializing";
+    case SyncService::TransportState::PENDING_DESIRED_CONFIGURATION:
+      return "Pending desired configuration";
+    case SyncService::TransportState::CONFIGURING:
+      return "Configuring data types";
+    case SyncService::TransportState::ACTIVE:
+      return "Active";
+  }
+  NOTREACHED();
+}
 
 // This function both defines the structure of the message to be returned and
 // its contents.  Most of the message consists of simple fields in
@@ -391,6 +428,8 @@ base::Value::Dict ConstructAboutInformation(
       section_encryption->AddStringStat("Trusted Vault Migration Time");
   Stat<int>* trusted_vault_key_version =
       section_encryption->AddIntStat("Trusted Vault Version/Epoch");
+  Stat<std::string>* trusted_vault_auto_upgrade_experiment_group =
+      section_encryption->AddStringStat("Trusted Vault Auto Upgrade Group");
 
   Section* section_last_session = section_list.AddSection(
       "Status from Last Completed Session", /*is_sensitive=*/false);
@@ -440,13 +479,17 @@ base::Value::Dict ConstructAboutInformation(
   }
 
   // Summary.
-  transport_state->Set(GetTransportStateString(service->GetTransportState()));
+  transport_state->Set(
+      TransportStateStringToDebugString(service->GetTransportState()));
   const SyncService::UserActionableError user_actionable_error =
       service->GetUserActionableError();
   error_state->Set(GetUserActionableErrorString(user_actionable_error),
                    /*is_good=*/user_actionable_error ==
                        SyncService::UserActionableError::kNone);
-  disable_reasons->Set(GetDisableReasonsString(service->GetDisableReasons()));
+  disable_reasons->Set(
+      GetDisableReasonsDebugString(service->GetDisableReasons()));
+  // TODO(crbug.com/40067058): Delete this when ConsentLevel::kSync is deleted.
+  // See ConsentLevel::kSync documentation for details.
   feature_enabled->Set(service->IsSyncFeatureEnabled());
   setup_in_progress->Set(service->IsSetupInProgress());
   std::string auth_error_str = service->GetAuthError().ToString();
@@ -467,7 +510,7 @@ base::Value::Dict ConstructAboutInformation(
   bool is_local_sync_enabled_state = service->IsLocalSyncEnabled();
 
   // Version Info.
-  // |client_version| was already set above.
+  // `client_version` was already set above.
   if (!is_local_sync_enabled_state) {
     server_url->Set(service->GetSyncServiceUrlForDebugging().spec());
   }
@@ -478,6 +521,8 @@ base::Value::Dict ConstructAboutInformation(
   }
   if (!is_local_sync_enabled_state) {
     username->Set(service->GetAccountInfo().email);
+    // TODO(crbug.com/40067058): Delete this when ConsentLevel::kSync is
+    // deleted. See ConsentLevel::kSync documentation for details.
     user_has_consent->Set(service->HasSyncConsent());
   }
 
@@ -498,6 +543,8 @@ base::Value::Dict ConstructAboutInformation(
           token_status.connection_status == CONNECTION_OK);
   last_synced->Set(
       GetLastSyncedTimeString(service->GetLastSyncedTimeForDebugging()));
+  // TODO(crbug.com/40067058): Delete this when ConsentLevel::kSync is deleted.
+  // See ConsentLevel::kSync documentation for details.
   is_setup_complete->Set(
       service->GetUserSettings()->IsInitialSyncFeatureSetupComplete());
   if (is_status_valid) {
@@ -523,7 +570,7 @@ base::Value::Dict ConstructAboutInformation(
   }
 
   // Encryption.
-  if (service->IsSyncFeatureActive()) {
+  if (service->IsEngineInitialized()) {
     is_using_explicit_passphrase->Set(
         service->GetUserSettings()->IsUsingExplicitPassphrase());
     is_passphrase_required->Set(
@@ -534,8 +581,7 @@ base::Value::Dict ConstructAboutInformation(
   if (is_status_valid) {
     cryptographer_can_encrypt->Set(full_status.cryptographer_can_encrypt);
     has_pending_keys->Set(full_status.crypto_has_pending_keys);
-    encrypted_types->Set(
-        ModelTypeSetToDebugString(full_status.encrypted_types));
+    encrypted_types->Set(DataTypeSetToDebugString(full_status.encrypted_types));
     has_keystore_key->Set(full_status.has_keystore_key);
     keystore_migration_time->Set(
         GetTimeStr(full_status.keystore_migration_time, "Not Migrated"));
@@ -547,6 +593,16 @@ base::Value::Dict ConstructAboutInformation(
           full_status.trusted_vault_debug_info.migration_time()));
       trusted_vault_key_version->Set(
           full_status.trusted_vault_debug_info.key_version());
+    }
+
+    if (full_status.trusted_vault_debug_info
+            .has_auto_upgrade_experiment_group()) {
+      const TrustedVaultAutoUpgradeSyntheticFieldTrialGroup group =
+          TrustedVaultAutoUpgradeSyntheticFieldTrialGroup::FromProto(
+              full_status.trusted_vault_debug_info
+                  .auto_upgrade_experiment_group());
+      trusted_vault_auto_upgrade_experiment_group->Set(
+          group.is_valid() ? group.name() : std::string("Invalid"));
     }
   }
 
@@ -561,12 +617,14 @@ base::Value::Dict ConstructAboutInformation(
                         /*is_good=*/!get_key_failed_state);
     SyncerError download_result_err =
         snapshot.model_neutral_state().last_download_updates_result;
-    download_result->Set(download_result_err.ToString(),
-                         /*is_good=*/!download_result_err.IsActualError());
+    download_result->Set(
+        download_result_err.ToString(),
+        /*is_good=*/download_result_err.type() == SyncerError::Type::kSuccess);
     SyncerError commit_result_err =
         snapshot.model_neutral_state().commit_result;
-    commit_result->Set(commit_result_err.ToString(),
-                       /*is_good=*/!commit_result_err.IsActualError());
+    commit_result->Set(
+        commit_result_err.ToString(),
+        /*is_good=*/commit_result_err.type() == SyncerError::Type::kSuccess);
   }
 
   // Running Totals.
@@ -629,6 +687,14 @@ base::Value::Dict ConstructAboutInformation(
   about_info.Set("unrecoverable_error_detected",
                  base::Value(service->HasUnrecoverableError()));
 
+  // Sync-the-feature should not be enabled on mobile platforms, where the
+  // sync-to-signin migration is completed.
+  const bool allow_enabling_sync_the_feature =
+      !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS);
+
+  about_info.Set("allow_enabling_sync_the_feature",
+                 base::Value(allow_enabling_sync_the_feature));
+
   if (service->HasUnrecoverableError()) {
     std::string unrecoverable_error_message =
         "Unrecoverable error detected at " +
@@ -638,7 +704,8 @@ base::Value::Dict ConstructAboutInformation(
                    base::Value(unrecoverable_error_message));
   }
 
-  about_info.Set("type_status", service->GetTypeStatusMapForDebugging());
+  about_info.Set("type_status", TypeStatusMapToValueList(
+                                    service->GetTypeStatusMapForDebugging()));
 
   return about_info;
 }

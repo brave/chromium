@@ -9,9 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/download/test_download_shelf.h"
 #include "chrome/browser/ui/autofill/test/test_autofill_bubble_handler.h"
 #include "chrome/browser/ui/browser.h"
@@ -20,11 +20,14 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/translate/partial_translate_bubble_model.h"
+#include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
 #include "chrome/common/buildflags.h"
+#include "components/user_education/common/new_badge/new_badge_controller.h"
 #include "ui/base/interaction/element_identifier.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 
 #if !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/apps/intent_helper/apps_navigation_types.h"
+#include "chrome/browser/apps/link_capturing/intent_picker_info.h"
 #endif  //  !BUILDFLAG(IS_ANDROID)
 
 class LocationBarTesting;
@@ -42,10 +45,12 @@ namespace sharing_hub {
 class SharingHubBubbleView;
 }  // namespace sharing_hub
 
-namespace user_education {
-class FeaturePromoController;
-}  // namespace user_education
-
+// WARNING WARNING WARNING WARNING
+// Do not use this class. See docs/chrome_browser_design_principles.md for
+// details.  Either write a browser test which provides both a "class Browser"
+// and a "class BrowserView" (a subclass of "class BrowserWindow") or a unit
+// test which should require neither.
+//
 // An implementation of BrowserWindow used for testing. TestBrowserWindow only
 // contains a valid LocationBar, all other getters return NULL.
 // However, some of them can be preset to a specific value.
@@ -72,6 +77,7 @@ class TestBrowserWindow : public BrowserWindow {
   void SetZOrderLevel(ui::ZOrderLevel order) override {}
   gfx::NativeWindow GetNativeWindow() const override;
   bool IsOnCurrentWorkspace() const override;
+  bool IsVisibleOnScreen() const override;
   void SetTopControlsShownRatio(content::WebContents* web_contents,
                                 float ratio) override;
   bool DoBrowserControlsShrinkRendererSize(
@@ -82,14 +88,14 @@ class TestBrowserWindow : public BrowserWindow {
   ui::ElementContext GetElementContext() override;
   int GetTopControlsHeight() const override;
   void SetTopControlsGestureScrollInProgress(bool in_progress) override;
-  StatusBubble* GetStatusBubble() override;
+  std::vector<StatusBubble*> GetStatusBubbles() override;
   void UpdateTitleBar() override {}
   void BookmarkBarStateChanged(
       BookmarkBar::AnimateChangeType change_type) override {}
+  void TemporarilyShowBookmarkBar(base::TimeDelta duration) override {}
   void UpdateDevTools() override {}
   void UpdateLoadingAnimations(bool is_visible) override {}
   void SetStarredState(bool is_starred) override {}
-  void SetTranslateIconToggled(bool is_lit) override {}
   void OnActiveTabChanged(content::WebContents* old_contents,
                           content::WebContents* new_contents,
                           int index,
@@ -98,7 +104,7 @@ class TestBrowserWindow : public BrowserWindow {
   }
   void ZoomChangedForActiveTab(bool can_show_bubble) override {}
   gfx::Rect GetRestoredBounds() const override;
-  ui::WindowShowState GetRestoredState() const override;
+  ui::mojom::WindowShowState GetRestoredState() const override;
   gfx::Rect GetBounds() const override;
   gfx::Size GetContentsSize() const override;
   void SetContentsSize(const gfx::Size& size) override;
@@ -107,6 +113,9 @@ class TestBrowserWindow : public BrowserWindow {
   void Maximize() override {}
   void Minimize() override {}
   void Restore() override {}
+  void OnWebApiWindowResizableChanged() override {}
+  bool GetCanResize() override;
+  ui::mojom::WindowShowState GetWindowShowState() const override;
   bool ShouldHideUIForFullscreen() const override;
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
@@ -119,7 +128,10 @@ class TestBrowserWindow : public BrowserWindow {
   void SetFocusToLocationBar(bool is_user_initiated) override {}
   void UpdateReloadStopState(bool is_loading, bool force) override {}
   void UpdateToolbar(content::WebContents* contents) override {}
+  bool UpdateToolbarSecurityState() override;
   void UpdateCustomTabBarVisibility(bool visible, bool animate) override {}
+  void SetContentScrimVisibility(bool visible) override {}
+  void SetDevToolsScrimVisibility(bool visible) override {}
   void ResetToolbarTabState(content::WebContents* contents) override {}
   void FocusToolbar() override {}
   ExtensionsContainer* GetExtensionsContainer() override;
@@ -132,19 +144,26 @@ class TestBrowserWindow : public BrowserWindow {
   void RotatePaneFocus(bool forwards) override {}
   void FocusWebContentsPane() override {}
   void ShowAppMenu() override {}
+  bool PreHandleMouseEvent(const blink::WebMouseEvent& event) override;
+  void PreHandleDragUpdate(const content::DropData& drop_data,
+                           const gfx::PointF& point) override {}
+
+  void PreHandleDragExit() override {}
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) override;
   bool IsBookmarkBarVisible() const override;
   bool IsBookmarkBarAnimating() const override;
   bool IsTabStripEditable() const override;
+  void SetTabStripNotEditableForTesting() override;
   void SetIsTabStripEditable(bool is_editable);
   bool IsToolbarVisible() const override;
   bool IsLocationBarVisible() const override;
   bool IsToolbarShowing() const override;
   bool IsBorderlessModeEnabled() const override;
   void ShowChromeLabs() override {}
+  views::WebView* GetContentsWebView() override;
+  BrowserView* AsBrowserView() override;
   SharingDialog* ShowSharingDialog(content::WebContents* contents,
                                    SharingDialogData data) override;
   void ShowUpdateChromeDialog() override {}
@@ -162,12 +181,9 @@ class TestBrowserWindow : public BrowserWindow {
       bool show_stay_in_chrome,
       bool show_remember_selection,
       apps::IntentPickerBubbleType bubble_type,
-      const absl::optional<url::Origin>& initiating_origin,
+      const std::optional<url::Origin>& initiating_origin,
       IntentPickerResponse callback) override {}
 #endif  //  !define(OS_ANDROID)
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  void VerifyUserEligibilityIOSPasswordPromoBubble() override;
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   send_tab_to_self::SendTabToSelfBubbleView*
   ShowSendTabToSelfDevicePickerBubble(content::WebContents* contents) override;
   send_tab_to_self::SendTabToSelfBubbleView* ShowSendTabToSelfPromoBubble(
@@ -195,23 +211,27 @@ class TestBrowserWindow : public BrowserWindow {
       base::OnceCallback<void(bool)> confirmed_callback) override {}
   bool IsDownloadShelfVisible() const override;
   DownloadShelf* GetDownloadShelf() override;
+  views::View* GetTopContainer() override;
+  views::View* GetLensOverlayView() override;
   DownloadBubbleUIController* GetDownloadBubbleUIController() override;
   void ConfirmBrowserCloseWithPendingDownloads(
       int download_count,
       Browser::DownloadCloseType dialog_type,
       base::OnceCallback<void(bool)> callback) override {}
   void UserChangedTheme(BrowserThemeChangeType theme_change_type) override {}
-  void CutCopyPaste(int command_id) override {}
   std::unique_ptr<FindBar> CreateFindBar() override;
   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
       override;
   void ShowAvatarBubbleFromAvatarButton(bool is_source_keyboard) override {}
   void MaybeShowProfileSwitchIPH() override {}
+  void MaybeShowSupervisedUserProfileSignInIPH() override {}
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
-    BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_FUCHSIA)
+    BUILDFLAG(IS_LINUX)
   void ShowHatsDialog(
       const std::string& site_id,
+      const std::optional<std::string>& hats_histogram_name,
+      const std::optional<uint64_t> hats_survey_ukm_id,
       base::OnceClosure success_callback,
       base::OnceClosure failure_callback,
       const SurveyBitsData& product_specific_bits_data,
@@ -234,39 +254,16 @@ class TestBrowserWindow : public BrowserWindow {
 
   void SetCloseCallback(base::OnceClosure close_callback);
 
-  void CreateTabSearchBubble() override {}
+  void CreateTabSearchBubble(
+      tab_search::mojom::TabSearchSection section =
+          tab_search::mojom::TabSearchSection::kSearch,
+      tab_search::mojom::TabOrganizationFeature feature =
+          tab_search::mojom::TabOrganizationFeature::kNone) override {}
   void CloseTabSearchBubble() override {}
 
-  user_education::FeaturePromoController* GetFeaturePromoController() override;
-  bool IsFeaturePromoActive(const base::Feature& iph_feature) const override;
-  bool MaybeShowFeaturePromo(
-      const base::Feature& iph_feature,
-      user_education::FeaturePromoController::BubbleCloseCallback
-          close_callback = base::DoNothing(),
-      user_education::FeaturePromoSpecification::FormatParameters body_params =
-          user_education::FeaturePromoSpecification::NoSubstitution(),
-      user_education::FeaturePromoSpecification::FormatParameters title_params =
-          user_education::FeaturePromoSpecification::NoSubstitution()) override;
-  bool MaybeShowStartupFeaturePromo(
-      const base::Feature& iph_feature,
-      user_education::FeaturePromoController::StartupPromoCallback
-          promo_callback = base::DoNothing(),
-      user_education::FeaturePromoController::BubbleCloseCallback
-          close_callback = base::DoNothing(),
-      user_education::FeaturePromoSpecification::FormatParameters body_params =
-          user_education::FeaturePromoSpecification::NoSubstitution(),
-      user_education::FeaturePromoSpecification::FormatParameters title_params =
-          user_education::FeaturePromoSpecification::NoSubstitution()) override;
-  bool CloseFeaturePromo(const base::Feature& iph_feature) override;
-  user_education::FeaturePromoHandle CloseFeaturePromoAndContinue(
-      const base::Feature& iph_feature) override;
-  void NotifyFeatureEngagementEvent(const char* event_name) override;
-
-  // Sets the controller returned by GetFeaturePromoController().
-  // Deletes the existing one, if any.
-  user_education::FeaturePromoController* SetFeaturePromoController(
-      std::unique_ptr<user_education::FeaturePromoController>
-          feature_promo_controller);
+  bool IsTabModalPopupDeprecated() const override;
+  void SetIsTabModalPopupDeprecated(
+      bool is_tab_modal_popup_deprecated) override;
 
   void set_workspace(std::string workspace) { workspace_ = workspace; }
   void set_visible_on_all_workspaces(bool visible_on_all_workspaces) {
@@ -274,6 +271,8 @@ class TestBrowserWindow : public BrowserWindow {
   }
   void set_is_active(bool active) { is_active_ = active; }
   void set_is_minimized(bool minimized) { is_minimized_ = minimized; }
+
+  bool IsClosed() const { return is_closed_; }
 
   void set_element_context(ui::ElementContext element_context) {
     element_context_ = element_context;
@@ -296,7 +295,6 @@ class TestBrowserWindow : public BrowserWindow {
     void UpdateContentSettingsIcons() override {}
     void SaveStateToContents(content::WebContents* contents) override {}
     void Revert() override {}
-    const OmniboxView* GetOmniboxView() const override;
     OmniboxView* GetOmniboxView() override;
     LocationBarTesting* GetLocationBarForTesting() override;
     LocationBarModel* GetLocationBarModel() override;
@@ -315,10 +313,9 @@ class TestBrowserWindow : public BrowserWindow {
   bool visible_on_all_workspaces_ = false;
   bool is_minimized_ = false;
   bool is_active_ = false;
+  bool is_closed_ = false;
   bool is_tab_strip_editable_ = true;
-
-  std::unique_ptr<user_education::FeaturePromoController>
-      feature_promo_controller_;
+  bool is_tab_modal_popup_deprecated_ = false;
 
   ui::ElementContext element_context_;
   base::OnceClosure close_callback_;
@@ -328,7 +325,7 @@ class TestBrowserWindow : public BrowserWindow {
 // destroyed.
 class TestBrowserWindowOwner : public BrowserListObserver {
  public:
-  explicit TestBrowserWindowOwner(TestBrowserWindow* window);
+  explicit TestBrowserWindowOwner(std::unique_ptr<TestBrowserWindow> window);
   TestBrowserWindowOwner(const TestBrowserWindowOwner&) = delete;
   TestBrowserWindowOwner& operator=(const TestBrowserWindowOwner&) = delete;
   ~TestBrowserWindowOwner() override;

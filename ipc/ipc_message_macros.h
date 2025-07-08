@@ -122,15 +122,6 @@
 //   - Registering existing struct and enum definitions with IPC
 //   - Defining the messages themselves
 //
-// New structs are defined with IPC_STRUCT_BEGIN(), IPC_STRUCT_MEMBER(),
-// IPC_STRUCT_END() family of macros.  These cause the XXX_messages.h
-// to proclaim equivalent struct declarations for use by callers, as well
-// as later registering the type with the message generation.  Note that
-// IPC_STRUCT_MEMBER() is only permitted inside matching calls to
-// IPC_STRUCT_BEGIN() / IPC_STRUCT_END(). There is also an
-// IPC_STRUCT_BEGIN_WITH_PARENT(), which behaves like IPC_STRUCT_BEGIN(),
-// but also accommodates structs that inherit from other structs.
-//
 // Externally-defined structs are registered with IPC_STRUCT_TRAITS_BEGIN(),
 // IPC_STRUCT_TRAITS_MEMBER(), and IPC_STRUCT_TRAITS_END() macros. These
 // cause registration of the types with message generation only.
@@ -199,29 +190,11 @@
 #include <tuple>
 
 #include "base/export_template.h"
-#include "base/hash/md5_constexpr.h"
-#include "base/notreached.h"
 #include "base/task/common/task_annotator.h"
 #include "ipc/ipc_message_templates.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/param_traits_macros.h"
-
-// Convenience macro for defining structs without inheritance. Should not need
-// to be subsequently redefined.
-#define IPC_STRUCT_BEGIN(struct_name) \
-  IPC_STRUCT_BEGIN_WITH_PARENT(struct_name, IPC::NoParams)
-
-// Macros for defining structs. Will be subsequently redefined.
-#define IPC_STRUCT_BEGIN_WITH_PARENT(struct_name, parent) \
-  struct struct_name; \
-  IPC_STRUCT_TRAITS_BEGIN(struct_name) \
-  IPC_STRUCT_TRAITS_END() \
-  struct IPC_MESSAGE_EXPORT struct_name : parent { \
-    struct_name();
-// Optional variadic parameters specify the default value for this struct
-// member. They are passed through to the constructor for |type|.
-#define IPC_STRUCT_MEMBER(type, name, ...) type name;
-#define IPC_STRUCT_END() };
+#include "ipc/tracing_helpers.h"
 
 // Message macros collect arguments and funnel them into the common message
 // generation macro.  These should never be redefined.
@@ -325,7 +298,7 @@
 // associated with the incoming IPC message that caused them to be posted.
 #define IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                            \
   static constexpr uint32_t kMessageHash =                               \
-      base::MD5Hash32Constexpr(IPC_TASK_ANNOTATOR_STRINGIFY(msg_class)); \
+      ipc::GetLegacyIpcTraceId(IPC_TASK_ANNOTATOR_STRINGIFY(msg_class)); \
   base::TaskAnnotator::ScopedSetIpcHash scoped_ipc_hash(kMessageHash);
 
 #define IPC_BEGIN_MESSAGE_MAP(class_name, msg)                   \
@@ -395,11 +368,6 @@
         code;                                                                  \
       }                                                                        \
       break;
-
-#define IPC_MESSAGE_UNHANDLED_ERROR() \
-  IPC_MESSAGE_UNHANDLED(NOTREACHED() << \
-                              "Invalid message with type = " << \
-                              ipc_message__.type())
 
 #define IPC_END_MESSAGE_MAP() \
   } \
@@ -525,6 +493,8 @@
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f))
 #define IPC_SYNC_MESSAGE_ROUTED3_4(msg, a, b, c, d, e, f, g) \
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f, g))
+#define IPC_SYNC_MESSAGE_ROUTED3_5(msg, a, b, c, d, e, f, g, h) \
+  IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c), (d, e, f, g, h))
 #define IPC_SYNC_MESSAGE_ROUTED4_0(msg, a, b, c, d) \
   IPC_SYNC_MESSAGE_ROUTED(msg, (a, b, c, d), ())
 #define IPC_SYNC_MESSAGE_ROUTED4_1(msg, a, b, c, d, e) \

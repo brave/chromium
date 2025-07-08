@@ -31,7 +31,6 @@ void H265DPB::Clear() {
 void H265DPB::StorePicture(scoped_refptr<H265Picture> pic) {
   DCHECK_LT(pics_.size(), max_num_pics_);
 
-  // TODO(b/261127809): set up |reference_type_| before calling StorePicture()
   LOG(INFO) << "Adding PicNum: " << pic->pic_order_cnt_val_
             << " reference type: " << static_cast<int>(pic->reference_type_);
   pics_.push_back(std::move(pic));
@@ -106,6 +105,18 @@ void H265DPB::AppendReferencePics(H265Picture::Vector* out) {
       out->push_back(pic);
     }
   }
+}
+
+std::set<uint32_t> H265DPB::GetBufferIdsInUse() const {
+  std::set<uint32_t> buffer_ids_in_use;
+
+  for (const auto& pic : pics_) {
+    if (pic->reference_type_ != H265Picture::kUnused || !pic->outputted_) {
+      buffer_ids_in_use.insert(pic->capture_queue_buffer_id_);
+    }
+  }
+
+  return buffer_ids_in_use;
 }
 
 }  // namespace media::v4l2_test

@@ -6,13 +6,12 @@
 
 #include <memory>
 
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/arc_util.h"
 #include "base/functional/bind.h"
 #include "chrome/browser/ash/arc/vmm/arc_system_state_observation.h"
 #include "chrome/browser/ash/arc/vmm/arc_vmm_manager.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #include "components/prefs/pref_service.h"
 #include "dbus/message.h"
 
@@ -27,8 +26,8 @@ PrefService* local_state() {
 
 ArcVmmSwapScheduler::ArcVmmSwapScheduler(
     base::RepeatingCallback<void(bool)> swap_callback,
-    absl::optional<base::TimeDelta> minimum_swapout_interval,
-    absl::optional<base::TimeDelta> swappable_checking_period,
+    std::optional<base::TimeDelta> minimum_swapout_interval,
+    std::optional<base::TimeDelta> swappable_checking_period,
     std::unique_ptr<PeaceDurationProvider> peace_duration_provider)
     : swap_callback_(swap_callback) {
   // Set callback to disable vmm-swap feature immdiately after the ARC get

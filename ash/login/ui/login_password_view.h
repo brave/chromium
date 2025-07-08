@@ -6,6 +6,7 @@
 #define ASH_LOGIN_UI_LOGIN_PASSWORD_VIEW_H_
 
 #include <string>
+#include <string_view>
 
 #include "ash/ash_export.h"
 #include "ash/ime/ime_controller_impl.h"
@@ -54,14 +55,13 @@ class LoginArrowNavigationDelegate;
 //
 //  1 2 3 4 5 6    (o)  (=>)
 //  ------------------
-class ASH_EXPORT LoginPasswordView
-    : public views::View,
-      public views::TextfieldController,
-      public ImeControllerImpl::Observer,
-      public ui::ImplicitAnimationObserver,
-      public base::SupportsWeakPtr<LoginPasswordView> {
+class ASH_EXPORT LoginPasswordView : public views::View,
+                                     public views::TextfieldController,
+                                     public ImeController::Observer,
+                                     public ui::ImplicitAnimationObserver {
+  METADATA_HEADER(LoginPasswordView, views::View)
+
  public:
-  METADATA_HEADER(LoginPasswordView);
   // TestApi is used for tests to get internal implementation details.
   class ASH_EXPORT TestApi {
    public:
@@ -74,16 +74,12 @@ class ASH_EXPORT LoginPasswordView
     views::View* submit_button() const;
     views::ToggleImageButton* display_password_button() const;
 
-    bool is_capslock_highlight_for_testing() {
-      return view_->is_capslock_higlight_;
-    }
-
    private:
-    raw_ptr<LoginPasswordView, ExperimentalAsh> view_;
+    raw_ptr<LoginPasswordView> view_;
   };
 
   using OnPasswordSubmit =
-      base::RepeatingCallback<void(const std::u16string& password)>;
+      base::RepeatingCallback<void(std::u16string_view password)>;
   using OnPasswordTextChanged = base::RepeatingCallback<void(bool is_empty)>;
 
   // Must call |Init| after construction.
@@ -100,9 +96,6 @@ class ASH_EXPORT LoginPasswordView
   // changes.
   void Init(const OnPasswordSubmit& on_submit,
             const OnPasswordTextChanged& on_password_text_changed);
-
-  // Whether or not the password field is enabled when there is no text.
-  void SetEnabledOnEmptyPassword(bool enabled);
 
   // Enable or disable focus on the child elements (i.e.: password field and
   // submit button, or display password button if it is shown).
@@ -130,7 +123,8 @@ class ASH_EXPORT LoginPasswordView
   bool IsReadOnly() const;
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   void RequestFocus() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
 
@@ -149,7 +143,7 @@ class ASH_EXPORT LoginPasswordView
   bool HandleKeyEvent(views::Textfield* sender,
                       const ui::KeyEvent& key_event) override;
 
-  // ImeControllerImpl::Observer:
+  // ImeController::Observer:
   void OnCapsLockChanged(bool enabled) override;
   void OnKeyboardLayoutNameChanged(const std::string&) override {}
 
@@ -164,6 +158,12 @@ class ASH_EXPORT LoginPasswordView
 
   // Sets the delegate of the arrow keys navigation.
   void SetLoginArrowNavigationDelegate(LoginArrowNavigationDelegate* delegate);
+
+  void SetAccessibleNameOnTextfield(const std::u16string& new_name);
+
+  base::WeakPtr<LoginPasswordView> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
  private:
   class DisplayPasswordButton;
@@ -182,16 +182,11 @@ class ASH_EXPORT LoginPasswordView
   // button when it is visible.
   void UpdateUiState();
 
-  void OnAccessibleNameChanged(const std::u16string& new_name) override;
-
   OnPasswordSubmit on_submit_;
   OnPasswordTextChanged on_password_text_changed_;
 
-  // Is the password field enabled when there is no text?
-  bool enabled_on_empty_password_ = false;
-
   // Arrow keystrokes delegate.
-  raw_ptr<LoginArrowNavigationDelegate, ExperimentalAsh>
+  raw_ptr<LoginArrowNavigationDelegate, DanglingUntriaged>
       arrow_navigation_delegate_ = nullptr;
 
   // Clears the password field after a time without action if the display
@@ -203,14 +198,13 @@ class ASH_EXPORT LoginPasswordView
   // through the password and make the characters read out loud one by one).
   base::RetainingOneShotTimer hide_password_timer_;
 
-  raw_ptr<LoginPasswordRow, ExperimentalAsh> password_row_ = nullptr;
-  raw_ptr<LoginTextfield, ExperimentalAsh> textfield_ = nullptr;
-  raw_ptr<ArrowButtonView, ExperimentalAsh> submit_button_ = nullptr;
-  raw_ptr<DisplayPasswordButton, ExperimentalAsh> display_password_button_ =
-      nullptr;
-  raw_ptr<views::ImageView, ExperimentalAsh> capslock_icon_ = nullptr;
+  raw_ptr<LoginPasswordRow> password_row_ = nullptr;
+  raw_ptr<LoginTextfield> textfield_ = nullptr;
+  raw_ptr<ArrowButtonView> submit_button_ = nullptr;
+  raw_ptr<DisplayPasswordButton> display_password_button_ = nullptr;
+  raw_ptr<views::ImageView> capslock_icon_ = nullptr;
 
-  bool is_capslock_higlight_ = false;
+  base::WeakPtrFactory<LoginPasswordView> weak_ptr_factory_{this};
 };
 
 }  // namespace ash

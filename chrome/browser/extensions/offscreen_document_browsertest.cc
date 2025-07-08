@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "extensions/browser/offscreen_document_host.h"
+#include "extensions/common/mojom/context_type.mojom.h"
 
 #include "base/test/bind.h"
 #include "base/test/values_test_util.h"
@@ -42,13 +43,10 @@ class OffscreenDocumentBrowserTest : public ExtensionApiTest {
   std::unique_ptr<OffscreenDocumentHost> CreateOffscreenDocument(
       const Extension& extension,
       const GURL& url) {
-    scoped_refptr<content::SiteInstance> site_instance =
-        ProcessManager::Get(profile())->GetSiteInstanceForURL(url);
-
     content::TestNavigationObserver navigation_observer(url);
     navigation_observer.StartWatchingNewWebContents();
-    auto offscreen_document = std::make_unique<OffscreenDocumentHost>(
-        extension, site_instance.get(), url);
+    auto offscreen_document =
+        std::make_unique<OffscreenDocumentHost>(extension, profile(), url);
     offscreen_document->CreateRendererSoon();
     navigation_observer.Wait();
     EXPECT_TRUE(navigation_observer.last_navigation_succeeded());
@@ -99,7 +97,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentBrowserTest,
   EXPECT_EQ(offscreen_url, contents->GetLastCommittedURL());
   // - The offscreen document should be, well, offscreen; it should not be
   //   contained within any Browser window.
-  EXPECT_EQ(nullptr, chrome::FindBrowserWithWebContents(contents));
+  EXPECT_EQ(nullptr, chrome::FindBrowserWithTab(contents));
   // - The view type should be correctly set (it should not be considered a
   //   background page, tab, or other type of view).
   EXPECT_EQ(mojom::ViewType::kOffscreenDocument,
@@ -107,7 +105,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentBrowserTest,
   EXPECT_EQ(mojom::ViewType::kOffscreenDocument, GetViewType(contents));
   // The offscreen document should be marked as never composited, excluding it
   // from certain a11y considerations.
-  EXPECT_TRUE(contents->GetDelegate()->IsNeverComposited(contents));
+  EXPECT_TRUE(contents->IsNeverComposited());
 
   {
     // Check the registration in the ProcessManager: the offscreen document
@@ -134,19 +132,20 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentBrowserTest,
   }
 
   {
-    Feature::Context context_type =
+    mojom::ContextType context_type =
         ProcessMap::Get(profile())->GetMostLikelyContextType(
-            extension, contents->GetPrimaryMainFrame()->GetProcess()->GetID(),
+            extension,
+            contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID(),
             &offscreen_url);
-    // TODO(https://crbug.com/1339382): The following check should be:
-    //   EXPECT_EQ(Feature::OFFSCREEN_EXTENSION_CONTEXT, context_type);
+    // TODO(crbug.com/40849649): The following check should be:
+    //   EXPECT_EQ(mojom::ContextType::kOffscreenExtension, context_type);
     // However, currently the ProcessMap can't differentiate between a
-    // blessed extension context and an offscreen document, as both run in the
-    // primary extension process and have committed to the extension origin.
+    // privileged extension context and an offscreen document, as both run in
+    // the primary extension process and have committed to the extension origin.
     // This is okay (this boundary isn't a security boundary), but is
     // technically incorrect.
     // See also comment in ProcessMap::GetMostLikelyContextType().
-    EXPECT_EQ(Feature::BLESSED_EXTENSION_CONTEXT, context_type);
+    EXPECT_EQ(mojom::ContextType::kPrivilegedExtension, context_type);
   }
 
   {
@@ -224,8 +223,9 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentBrowserTest, APIAccessIsLimited) {
         R"("PlatformArch","PlatformNaclArch","PlatformOs",)"
         R"("RequestUpdateCheckStatus",)"
         // Methods and events.
-        R"("connect","getURL","id","onConnect","onConnectExternal",)"
-        R"("onMessage","onMessageExternal","sendMessage"])";
+        R"("connect","dynamicId","getURL","id","onConnect",)"
+        R"("onConnectExternal","onMessage","onMessageExternal",)"
+        R"("sendMessage"])";
     EXPECT_EQ(kExpectedProperties, EvalJs(contents, kScript));
   }
 }

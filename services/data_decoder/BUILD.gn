@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
@@ -24,27 +23,20 @@ source_set("lib") {
     "data_decoder_service.h",
     "gzipper.cc",
     "gzipper.h",
-    "json_parser_impl.cc",
-    "json_parser_impl.h",
     "structured_headers_parser_impl.cc",
     "structured_headers_parser_impl.h",
     "xml_parser.cc",
     "xml_parser.h",
   ]
 
-  if (is_chromeos_ash) {
-    sources += [
-      "ble_scan_parser_impl.cc",
-      "ble_scan_parser_impl.h",
-    ]
-  }
-
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
+    "//build:blink_buildflags",
     "//components/cbor",
+    "//components/facilitated_payments/core/mojom:pix_code_validator_mojom",
+    "//components/facilitated_payments/core/validation",
     "//components/web_package",
     "//mojo/public/cpp/bindings",
     "//net",
@@ -57,6 +49,14 @@ source_set("lib") {
   ]
 
   public_deps = [ "//services/data_decoder/public/mojom" ]
+
+  if (is_chromeos) {
+    sources += [
+      "ble_scan_parser_impl.cc",
+      "ble_scan_parser_impl.h",
+    ]
+    deps += [ "//services/data_decoder/ble_scan_parser:parser" ]
+  }
 
   if (use_blink) {
     sources += [
@@ -81,21 +81,28 @@ source_set("tests") {
     "xml_parser_unittest.cc",
   ]
 
-  if (is_chromeos_ash) {
-    sources += [ "ble_scan_parser_impl_unittest.cc" ]
-  }
-
   deps = [
     ":lib",
     "//base",
     "//base/test:test_support",
     "//components/cbor",
+    "//components/web_package",
+    "//components/web_package/test_support:test_support",
     "//services/data_decoder/public/cpp",
     "//services/data_decoder/public/cpp:test_support",
     "//skia",
     "//testing/gtest",
     "//ui/gfx",
   ]
+
+  if (is_chromeos) {
+    sources += [ "ble_scan_parser_impl_unittest.cc" ]
+
+    deps += [
+      "//services/data_decoder/ble_scan_parser:lib",
+      "//services/data_decoder/ble_scan_parser:parser",
+    ]
+  }
 
   if (is_ios) {
     deps += [ "//components/test:web_package_test_bundle_data" ]
@@ -113,6 +120,22 @@ source_set("tests") {
     ]
     data_deps = [ "//tools/v8_context_snapshot" ]
     configs += [ "//v8:external_startup_data" ]
+  }
+}
+
+if (use_blink) {
+  test("json_sanitizer_fuzztests") {
+    sources = [ "public/cpp/json_sanitizer_fuzztests.cc" ]
+
+    fuzztests =
+        [ "JsonSanitizerFuzzTest.SanitizerAndBaseJsonReaderDecoderMatch" ]
+
+    deps = [
+      "//base",
+      "//base/test:test_support",
+      "//services/data_decoder/public/cpp",
+      "//third_party/fuzztest:fuzztest_gtest_main",
+    ]
   }
 }
 
@@ -142,9 +165,14 @@ fuzzer_test("xml_parser_fuzzer") {
   seed_corpus = "//third_party/libxml/fuzz/seed_corpus"
 }
 
-if (is_chromeos_ash) {
+if (is_chromeos) {
   fuzzer_test("ble_scan_parser_fuzzer") {
     sources = [ "ble_scan_parser_impl_fuzzer.cc" ]
-    deps = [ ":lib" ]
+    deps = [
+      ":lib",
+      "//services/data_decoder/ble_scan_parser:parser",
+    ]
+
+    seed_corpus = "//services/data_decoder/ble_scan_parser/data"
   }
 }

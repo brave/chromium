@@ -47,11 +47,12 @@ export interface AboutPageUpdateInfo {
  * Information related to device end of life. These values will always be
  * populated by the C++ handler.
  */
-interface EndOfLifeInfo {
+export interface EndOfLifeInfo {
   hasEndOfLife: boolean;
   aboutPageEndOfLifeMessage: string;
-  shouldShowEndOfLifeIncentive: boolean;
   shouldShowOfferText: boolean;
+  isExtendedUpdatesDatePassed: boolean;
+  isExtendedUpdatesOptInRequired: boolean;
 }
 
 export interface TpmFirmwareUpdateStatusChangedEvent {
@@ -135,7 +136,7 @@ export interface AboutPageBrowserProxy {
   /**
    * Applies deferred update if it exists.
    */
-  applyDeferredUpdate(): void;
+  applyDeferredUpdateAdvanced(): void;
 
   /**
    * Indicates to the browser that the page is ready.
@@ -198,6 +199,8 @@ export interface AboutPageBrowserProxy {
    */
   getChannelInfo(): Promise<ChannelInfo>;
 
+  canChangeFirmware(): Promise<boolean>;
+
   canChangeChannel(): Promise<boolean>;
 
   getVersionInfo(): Promise<VersionInfo>;
@@ -209,11 +212,6 @@ export interface AboutPageBrowserProxy {
    * receive updates.
    */
   getEndOfLifeInfo(): Promise<EndOfLifeInfo>;
-
-  /**
-   * Called when the end of life incentive button is clicked.
-   */
-  endOfLifeIncentiveButtonClicked(): void;
 
   /**
    * Request TPM firmware update status from the browser. It results in one or
@@ -231,6 +229,26 @@ export interface AboutPageBrowserProxy {
   isConsumerAutoUpdateEnabled(): Promise<boolean>;
 
   setConsumerAutoUpdate(enable: boolean): void;
+
+  /**
+   * Checks if the device is currently eligible for opt in.
+   * @param eolPassed Whether end of life date has passed.
+   * @param extendedDatePassed Whether extended updates date has passed.
+   * @param extendedOptInRequired Whether opt-in is required for the device.
+   */
+  isExtendedUpdatesOptInEligible(
+      eolPassed: boolean, extendedDatePassed: boolean,
+      extendedOptInRequired: boolean): Promise<boolean>;
+
+  /**
+   * Opens the extended updates opt-in dialog.
+   */
+  openExtendedUpdatesDialog(): void;
+
+  /**
+   * Records that the Extended Updates option was shown to the user.
+   */
+  recordExtendedUpdatesShown(): void;
 }
 
 let instance: AboutPageBrowserProxy|null = null;
@@ -240,66 +258,70 @@ export class AboutPageBrowserProxyImpl implements AboutPageBrowserProxy {
     return instance || (instance = new AboutPageBrowserProxyImpl());
   }
 
-  static setInstanceForTesting(obj: AboutPageBrowserProxy) {
+  static setInstanceForTesting(obj: AboutPageBrowserProxy): void {
     instance = obj;
   }
 
-  applyDeferredUpdate() {
-    chrome.send('applyDeferredUpdate');
+  applyDeferredUpdateAdvanced(): void {
+    chrome.send('applyDeferredUpdateAdvanced');
   }
 
-  pageReady() {
+  pageReady(): void {
     chrome.send('aboutPageReady');
   }
 
-  refreshUpdateStatus() {
+  refreshUpdateStatus(): void {
     chrome.send('refreshUpdateStatus');
   }
 
-  launchReleaseNotes() {
+  launchReleaseNotes(): void {
     chrome.send('launchReleaseNotes');
   }
 
   // <if expr="_google_chrome">
-  openFeedbackDialog() {
+  openFeedbackDialog(): void {
     chrome.send('openFeedbackDialog');
   }
   // </if>
 
-  openDiagnostics() {
+  openDiagnostics(): void {
     chrome.send('openDiagnostics');
   }
 
-  openProductLicenseOther() {
+  openProductLicenseOther(): void {
     chrome.send('openProductLicenseOther');
   }
 
-  openOsHelpPage() {
+  openOsHelpPage(): void {
     chrome.send('openOsHelpPage');
   }
 
-  openFirmwareUpdatesPage() {
+  openFirmwareUpdatesPage(): void {
     chrome.send('openFirmwareUpdatesPage');
   }
 
-  getFirmwareUpdateCount() {
+  getFirmwareUpdateCount(): Promise<number> {
     return sendWithPromise('getFirmwareUpdateCount');
   }
 
-  requestUpdate() {
+  requestUpdate(): void {
     chrome.send('requestUpdate');
   }
 
-  requestUpdateOverCellular(targetVersion: string, targetSize: string) {
+  requestUpdateOverCellular(targetVersion: string, targetSize: string): void {
     chrome.send('requestUpdateOverCellular', [targetVersion, targetSize]);
   }
 
-  setChannel(channel: BrowserChannel, isPowerwashAllowed: boolean) {
+  setChannel(channel: BrowserChannel, isPowerwashAllowed: boolean): void {
     chrome.send('setChannel', [channel, isPowerwashAllowed]);
   }
 
   getChannelInfo(): Promise<ChannelInfo> {
     return sendWithPromise('getChannelInfo');
+  }
+
+  canChangeFirmware(): Promise<boolean> {
+    return sendWithPromise('canChangeFirmware');
   }
 
   canChangeChannel(): Promise<boolean> {
@@ -316,10 +338,6 @@ export class AboutPageBrowserProxyImpl implements AboutPageBrowserProxy {
 
   getEndOfLifeInfo(): Promise<EndOfLifeInfo> {
     return sendWithPromise('getEndOfLifeInfo');
-  }
-
-  endOfLifeIncentiveButtonClicked(): void {
-    chrome.send('openEndOfLifeIncentive');
   }
 
   checkInternetConnection(): Promise<boolean> {
@@ -340,5 +358,21 @@ export class AboutPageBrowserProxyImpl implements AboutPageBrowserProxy {
 
   setConsumerAutoUpdate(enable: boolean): void {
     chrome.send('setConsumerAutoUpdate', [enable]);
+  }
+
+  isExtendedUpdatesOptInEligible(
+      eolPassed: boolean, extendedDatePassed: boolean,
+      extendedOptInRequired: boolean): Promise<boolean> {
+    return sendWithPromise(
+        'isExtendedUpdatesOptInEligible', eolPassed, extendedDatePassed,
+        extendedOptInRequired);
+  }
+
+  openExtendedUpdatesDialog(): void {
+    chrome.send('openExtendedUpdatesDialog');
+  }
+
+  recordExtendedUpdatesShown(): void {
+    chrome.send('recordExtendedUpdatesShown');
   }
 }

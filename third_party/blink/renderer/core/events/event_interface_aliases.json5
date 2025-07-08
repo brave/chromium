@@ -20,10 +20,6 @@
       ImplementedAs: "MouseEvent",
     },
     {
-      name: "MutationEvents",
-      ImplementedAs: "MutationEvent",
-    },
-    {
       name: "SVGEvents",
       ImplementedAs: "Event",
     },

@@ -4,6 +4,8 @@
 
 #include "ui/ozone/platform/x11/vulkan_implementation_x11.h"
 
+#include <optional>
+
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
@@ -15,10 +17,9 @@
 #include "gpu/vulkan/vulkan_instance.h"
 #include "gpu/vulkan/vulkan_surface.h"
 #include "gpu/vulkan/vulkan_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/x/connection.h"
 #include "ui/ozone/platform/x11/vulkan_surface_x11.h"
 
@@ -37,10 +38,10 @@ bool VulkanImplementationX11::InitializeVulkanInstance(bool using_surface) {
   using_surface_ = using_surface;
   // Unset DISPLAY env, so the vulkan can be initialized successfully, if the X
   // server doesn't support Vulkan surface.
-  absl::optional<base::ScopedEnvironmentVariableOverride> unset_display;
+  std::optional<base::ScopedEnvironmentVariableOverride> unset_display;
   if (!using_surface_) {
     unset_display =
-        absl::optional<base::ScopedEnvironmentVariableOverride>("DISPLAY");
+        std::optional<base::ScopedEnvironmentVariableOverride>("DISPLAY");
   }
 
   std::vector<const char*> required_extensions = {
@@ -114,24 +115,17 @@ VulkanImplementationX11::GetOptionalDeviceExtensions() {
 
 VkFence VulkanImplementationX11::CreateVkFenceForGpuFence(VkDevice vk_device) {
   NOTREACHED();
-  return VK_NULL_HANDLE;
 }
 
 std::unique_ptr<gfx::GpuFence> VulkanImplementationX11::ExportVkFenceToGpuFence(
     VkDevice vk_device,
     VkFence vk_fence) {
   NOTREACHED();
-  return nullptr;
-}
-
-VkExternalMemoryHandleTypeFlagBits
-VulkanImplementationX11::GetExternalImageHandleType() {
-  return VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
 }
 
 VkExternalSemaphoreHandleTypeFlagBits
 VulkanImplementationX11::GetExternalSemaphoreHandleType() {
-  return VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+  return VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
 }
 
 bool VulkanImplementationX11::CanImportGpuMemoryBuffer(
@@ -155,7 +149,7 @@ VulkanImplementationX11::CreateImageFromGpuMemoryHandle(
   constexpr auto kUsage =
       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-  auto tiling = gmb_handle.native_pixmap_handle.modifier ==
+  auto tiling = gmb_handle.native_pixmap_handle().modifier ==
                         gfx::NativePixmapHandle::kNoModifier
                     ? VK_IMAGE_TILING_OPTIMAL
                     : VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;

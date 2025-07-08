@@ -4,6 +4,7 @@
 
 #include "third_party/blink/public/common/loader/mime_sniffing_throttle.h"
 
+#include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -38,12 +39,13 @@ void MimeSniffingThrottle::WillProcessResponse(
     return;
 
   bool blocked_sniffing_mime = false;
-  std::string content_type_options;
-  if (response_head->headers &&
-      response_head->headers->GetNormalizedHeader("x-content-type-options",
-                                                  &content_type_options)) {
-    blocked_sniffing_mime =
-        base::EqualsCaseInsensitiveASCII(content_type_options, "nosniff");
+  if (response_head->headers) {
+    if (std::optional<std::string> content_type_options =
+            response_head->headers->GetNormalizedHeader(
+                "x-content-type-options")) {
+      blocked_sniffing_mime =
+          base::EqualsCaseInsensitiveASCII(*content_type_options, "nosniff");
+    }
   }
 
   if (!blocked_sniffing_mime &&

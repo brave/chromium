@@ -21,7 +21,7 @@
 #elif defined(USE_GLIB)
 #include "base/message_loop/message_pump_glib.h"
 #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_BSD)
-#include "base/message_loop/message_pump_libevent.h"
+#include "base/message_loop/message_pump_epoll.h"
 #elif BUILDFLAG(IS_FUCHSIA)
 #include "base/message_loop/message_pump_fuchsia.h"
 #endif
@@ -32,11 +32,10 @@ namespace base {
 // Windows defines it as-is.
 using MessagePumpForUI = MessagePumpForUI;
 #elif BUILDFLAG(IS_ANDROID)
-// Android defines it as-is.
-using MessagePumpForUI = MessagePumpForUI;
+using MessagePumpForUI = MessagePumpAndroid;
 #elif BUILDFLAG(IS_APPLE)
 // MessagePumpForUI isn't bound to a specific impl on Mac. While each impl can
-// be represented by a plain MessagePump: message_pump_mac::Create() must be
+// be represented by a plain MessagePump: message_pump_apple::Create() must be
 // used to instantiate the right impl.
 using MessagePumpForUI = MessagePump;
 #elif BUILDFLAG(IS_NACL) || BUILDFLAG(IS_AIX)
@@ -45,7 +44,7 @@ using MessagePumpForUI = MessagePump;
 #elif defined(USE_GLIB)
 using MessagePumpForUI = MessagePumpGlib;
 #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_BSD)
-using MessagePumpForUI = MessagePumpLibevent;
+using MessagePumpForUI = MessagePumpEpoll;
 #elif BUILDFLAG(IS_FUCHSIA)
 using MessagePumpForUI = MessagePumpFuchsia;
 #else

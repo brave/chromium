@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_ASH_CLOUD_UPLOAD_CLOUD_UPLOAD_NOTIFICATION_MANAGER_H_
 #define CHROME_BROWSER_UI_WEBUI_ASH_CLOUD_UPLOAD_CLOUD_UPLOAD_NOTIFICATION_MANAGER_H_
 
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
@@ -14,7 +15,6 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/file_manager/io_task.h"
 #include "chrome/browser/notifications/notification_display_service.h"
-#include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_dialog.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
 #include "ui/message_center/public/cpp/notification.h"
 
@@ -34,7 +34,6 @@ class CloudUploadNotificationManager
       base::OnceCallback<void(base::FilePath)>;
 
   CloudUploadNotificationManager(Profile* profile,
-                                 const std::string& file_name,
                                  const std::string& cloud_provider_name,
                                  const std::string& target_app_name,
                                  int num_files,
@@ -55,10 +54,13 @@ class CloudUploadNotificationManager
   // time.
   void ShowUploadError(const std::string& message);
 
-  // This class owns a reference to itself that is only deleted once the
-  // notification life cycle has completed. Tests can use this method to avoid
-  // leaking instances of this class.
-  void CloseForTest();
+  // Closes any existing notification, interrupts ongoing timers, and calls the
+  // completion callback, destroying this instance. This is called internally
+  // after the notification has completed and timed out, or when the error
+  // notification is clicked. It only needs to be called publicly in tests to
+  // avoid leaking instances of this class, or when no notification was ever
+  // started.
+  void CloseNotification();
 
   void SetDestinationPath(base::FilePath destination_path) {
     destination_path_ = destination_path;
@@ -102,18 +104,14 @@ class CloudUploadNotificationManager
   // Updates the notification immediately to show the complete state.
   void ShowCompleteNotification();
 
-  // Called when the upload flow is complete: Ensures that notifications are
-  // closed, timers are interrupted and the completion callback has been called.
-  void CloseNotification();
-
   // "Cancel" click handler for upload progress notification.
-  void HandleProgressNotificationClick(absl::optional<int> button_index);
+  void HandleProgressNotificationClick(std::optional<int> button_index);
 
   // "Sign in" click handler for authentication error notification.
-  void HandleErrorNotificationClick(absl::optional<int> button_index);
+  void HandleErrorNotificationClick(std::optional<int> button_index);
 
   // "Show in folder" click handler for upload complete notification.
-  void HandleCompleteNotificationClick(absl::optional<int> button_index);
+  void HandleCompleteNotificationClick(std::optional<int> button_index);
 
   // A state machine and the possible transitions. The state of showing the
   // error notification is not explicit because it is never used to determine
@@ -132,11 +130,10 @@ class CloudUploadNotificationManager
 
   // Counts the total number of notification manager instances. This counter is
   // never decremented.
-  static inline int notification_manager_counter_ = 0;
+  COMPONENT_EXPORT() static inline int notification_manager_counter_ = 0;
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile, LeakedDanglingUntriaged> profile_;
   CloudProvider provider_;
-  std::string file_name_;
   std::string cloud_provider_name_;
   std::string notification_id_;
   std::string target_app_name_;

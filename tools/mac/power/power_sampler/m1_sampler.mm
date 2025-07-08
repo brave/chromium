@@ -4,21 +4,18 @@
 
 #include "tools/mac/power/power_sampler/m1_sampler.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/strings/string_piece.h"
-#include "components/power_metrics/m1_sensors_mac.h"
+#include <string_view>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "base/memory/ptr_util.h"
+#include "components/power_metrics/m1_sensors_mac.h"
 
 namespace power_sampler {
 
 namespace {
 
 void MaybeAddToSample(Sampler::Sample* sample,
-                      base::StringPiece name,
-                      absl::optional<double> val) {
+                      std::string_view name,
+                      std::optional<double> val) {
   if (val.has_value())
     sample->emplace(name, val.value());
 }

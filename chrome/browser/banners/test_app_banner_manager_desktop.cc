@@ -13,13 +13,13 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/gmock_callback_support.h"
-#include "components/segmentation_platform/public/constants.h"
-#include "components/segmentation_platform/public/result.h"
-#include "components/segmentation_platform/public/testing/mock_segmentation_platform_service.h"
+#include "chrome/browser/webapps/webapps_client_desktop.h"
 #include "components/webapps/browser/banners/app_banner_manager.h"
 #include "components/webapps/browser/installable/installable_data.h"
+#include "components/webapps/browser/webapps_client.h"
 #include "content/public/browser/web_contents.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/manifest/manifest_util.h"
 
 namespace webapps {
 
@@ -29,24 +29,6 @@ TestAppBannerManagerDesktop::TestAppBannerManagerDesktop(
   // Ensure no real instance exists. This must be the only instance to avoid
   // observers of AppBannerManager left observing the wrong one.
   DCHECK_EQ(AppBannerManagerDesktop::FromWebContents(web_contents), nullptr);
-
-  // Create default responses for the ML system.
-  segmentation_platform_service_ = std::make_unique<
-      segmentation_platform::MockSegmentationPlatformService>();
-  segmentation_platform::ClassificationResult result(
-      segmentation_platform::PredictionStatus::kSucceeded);
-  result.ordered_labels.push_back("DontShow");
-  ON_CALL(*segmentation_platform_service_,
-          GetClassificationResult(
-              segmentation_platform::kWebAppInstallationPromoKey, testing::_,
-              testing::_, base::test::IsNotNullCallback()))
-      .WillByDefault(base::test::RunOnceCallback<3>(result));
-  ON_CALL(*segmentation_platform_service_,
-          CollectTrainingData(
-              segmentation_platform::proto::SegmentId::
-                  OPTIMIZATION_TARGET_WEB_APP_INSTALLATION_PROMO,
-              testing::_, testing::_, base::test::IsNotNullCallback()))
-      .WillByDefault(base::test::RunOnceCallback<3>(true));
 }
 
 TestAppBannerManagerDesktop::~TestAppBannerManagerDesktop() = default;
@@ -59,6 +41,7 @@ static std::unique_ptr<AppBannerManagerDesktop> CreateTestAppBannerManager(
 void TestAppBannerManagerDesktop::SetUp() {
   AppBannerManagerDesktop::override_app_banner_manager_desktop_for_testing_ =
       CreateTestAppBannerManager;
+  WebappsClientDesktop::CreateSingleton();
 }
 
 TestAppBannerManagerDesktop* TestAppBannerManagerDesktop::FromWebContents(
@@ -103,11 +86,6 @@ void TestAppBannerManagerDesktop::AwaitAppInstall() {
   loop.Run();
 }
 
-segmentation_platform::MockSegmentationPlatformService*
-TestAppBannerManagerDesktop::GetMockSegmentationPlatformService() {
-  return segmentation_platform_service_.get();
-}
-
 void TestAppBannerManagerDesktop::OnDidGetManifest(
     const InstallableData& result) {
   debug_log_.Append("OnDidGetManifest");
@@ -116,9 +94,10 @@ void TestAppBannerManagerDesktop::OnDidGetManifest(
   // The manifest URL changing in the middle of a pipeline doesn't always mean
   // the page data will be reset. To ensure that installable_ isn't accidentally
   // set twice, reset it here.
-  if (base::Contains(result.errors, MANIFEST_URL_CHANGED)) {
+  if (base::Contains(result.errors,
+                     InstallableStatusCode::MANIFEST_URL_CHANGED)) {
     installable_.reset();
-  } else if (!result.NoBlockingErrors()) {
+  } else if (blink::IsEmptyManifest(*result.manifest)) {
     // AppBannerManagerDesktop does not call
     // |OnDidPerformInstallableWebAppCheck| to complete the installability check
     // in this case, instead it early exits with failure.
@@ -127,9 +106,14 @@ void TestAppBannerManagerDesktop::OnDidGetManifest(
 }
 void TestAppBannerManagerDesktop::OnDidPerformInstallableWebAppCheck(
     const InstallableData& result) {
+  // If the renderer is existing, ensure installable isn't accidentally set
+  // twice.
+  if (base::Contains(result.errors, InstallableStatusCode::RENDERER_EXITING)) {
+    installable_.reset();
+  }
   debug_log_.Append("OnDidPerformInstallableWebAppCheck");
   AppBannerManagerDesktop::OnDidPerformInstallableWebAppCheck(result);
-  SetInstallable(result.NoBlockingErrors());
+  SetInstallable(result.errors.empty());
 }
 
 void TestAppBannerManagerDesktop::ResetCurrentPageData() {
@@ -146,26 +130,26 @@ void TestAppBannerManagerDesktop::RecheckInstallabilityForLoadedPage() {
   AppBannerManagerDesktop::RecheckInstallabilityForLoadedPage();
 }
 
-segmentation_platform::SegmentationPlatformService*
-TestAppBannerManagerDesktop::GetSegmentationPlatformService() {
-  return segmentation_platform_service_.get();
-}
-
 TestAppBannerManagerDesktop*
 TestAppBannerManagerDesktop::AsTestAppBannerManagerDesktopForTesting() {
   return this;
 }
 
-void TestAppBannerManagerDesktop::OnInstall(blink::mojom::DisplayMode display) {
-  AppBannerManager::OnInstall(display);
+void TestAppBannerManagerDesktop::OnInstall(
+    blink::mojom::DisplayMode display,
+    bool set_current_web_app_not_installable) {
+  AppBannerManager::OnInstall(display, set_current_web_app_not_installable);
   if (on_install_)
     std::move(on_install_).Run();
 }
 
 void TestAppBannerManagerDesktop::DidFinishCreatingWebApp(
-    const web_app::AppId& app_id,
+    const webapps::ManifestId& manifest_id,
+    base::WeakPtr<AppBannerManagerDesktop> is_navigation_current,
+    const webapps::AppId& app_id,
     webapps::InstallResultCode code) {
-  AppBannerManagerDesktop::DidFinishCreatingWebApp(app_id, code);
+  AppBannerManagerDesktop::DidFinishCreatingWebApp(
+      manifest_id, is_navigation_current, app_id, code);
   OnFinished();
 }
 
@@ -187,8 +171,7 @@ void TestAppBannerManagerDesktop::UpdateState(AppBannerManager::State state) {
       base::StringPrintf("State updated to %d", static_cast<int>(state)));
   AppBannerManager::UpdateState(state);
 
-  if (state == AppBannerManager::State::PENDING_ENGAGEMENT ||
-      state == AppBannerManager::State::PENDING_PROMPT_CANCELED ||
+  if (state == AppBannerManager::State::PENDING_PROMPT_CANCELED ||
       state == AppBannerManager::State::PENDING_PROMPT_NOT_CANCELED ||
       state == AppBannerManager::State::COMPLETE) {
     OnFinished();

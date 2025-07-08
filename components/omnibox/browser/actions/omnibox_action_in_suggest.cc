@@ -26,8 +26,8 @@ namespace {
 // GENERATED_JAVA_CLASS_NAME_OVERRIDE: ActionInSuggestUmaType
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused. The values should remain
-// synchronized with the enum AutocompleteMatchType in
-// //tools/metrics/histograms/enums.xml.
+// synchronized with the enum ActionInSuggestType in
+// //tools/metrics/histograms/metadata/omnibox/enums.xml.
 enum class ActionInSuggestUmaType {
   kUnknown = 0,
   kCall,
@@ -38,6 +38,19 @@ enum class ActionInSuggestUmaType {
   // Sentinel value. Must be set to the last valid ActionInSuggestUmaType.
   kMaxValue = kReviews
 };
+
+constexpr const char* ToUmaUsageHistogramName(
+    omnibox::ActionInfo::ActionType type) {
+  switch (type) {
+    case omnibox::ActionInfo_ActionType_CALL:
+      return "Omnibox.ActionInSuggest.UsageByType.Call";
+    case omnibox::ActionInfo_ActionType_DIRECTIONS:
+      return "Omnibox.ActionInSuggest.UsageByType.Directions";
+    case omnibox::ActionInfo_ActionType_REVIEWS:
+      return "Omnibox.ActionInSuggest.UsageByType.Reviews";
+  }
+  NOTREACHED() << "Unexpected type of Action: " << (int)type;
+}
 
 // Get the UMA action type from ActionInfo::ActionType.
 constexpr ActionInSuggestUmaType ToUmaActionType(
@@ -80,7 +93,7 @@ constexpr int ToActionContents(omnibox::ActionInfo::ActionType action_type) {
 
 OmniboxActionInSuggest::OmniboxActionInSuggest(
     omnibox::ActionInfo action_info,
-    absl::optional<TemplateURLRef::SearchTermsArgs> search_terms_args)
+    std::optional<TemplateURLRef::SearchTermsArgs> search_terms_args)
     : OmniboxAction(OmniboxAction::LabelStrings(
                         ToActionHint(action_info.action_type()),
                         ToActionContents(action_info.action_type()),
@@ -106,19 +119,14 @@ OmniboxActionInSuggest::GetOrCreateJavaObject(JNIEnv* env) const {
 #endif
 
 void OmniboxActionInSuggest::RecordActionShown(size_t position,
-                                               bool executed) const {
-  base::UmaHistogramEnumeration("Omnibox.ActionInSuggest.Shown",
-                                ToUmaActionType(action_info.action_type()));
-  if (executed) {
-    base::UmaHistogramEnumeration("Omnibox.ActionInSuggest.Used",
-                                  ToUmaActionType(action_info.action_type()));
-  }
+                                               bool used) const {
+  RecordShownAndUsedMetrics(action_info.action_type(), used);
 }
 
 void OmniboxActionInSuggest::Execute(ExecutionContext& context) const {
   // Note: this is platform-dependent.
-  // There's currently no code wiring ActionInSuggest on the Desktop and iOS.
-  // TODO(crbug/1418077): log searchboxstats metrics.
+  // There's currently no code wiring ActionInSuggest on Desktop.
+  // TODO(crbug.com/40257536): log searchboxstats metrics.
   NOTREACHED() << "Not implemented";
 }
 
@@ -139,6 +147,20 @@ OmniboxActionInSuggest* OmniboxActionInSuggest::FromAction(
     return static_cast<OmniboxActionInSuggest*>(action);
   }
   return nullptr;
+}
+
+// static
+void OmniboxActionInSuggest::RecordShownAndUsedMetrics(
+    omnibox::ActionInfo::ActionType type,
+    bool used) {
+  base::UmaHistogramEnumeration("Omnibox.ActionInSuggest.Shown",
+                                ToUmaActionType(type));
+  if (used) {
+    base::UmaHistogramEnumeration("Omnibox.ActionInSuggest.Used",
+                                  ToUmaActionType(type));
+  }
+
+  base::UmaHistogramBoolean(ToUmaUsageHistogramName(type), used);
 }
 
 omnibox::ActionInfo::ActionType OmniboxActionInSuggest::Type() const {

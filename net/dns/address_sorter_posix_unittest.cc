@@ -9,8 +9,10 @@
 #include <vector>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "net/base/ip_address.h"
@@ -68,6 +70,8 @@ class TestUDPClientSocket : public DatagramClientSocket {
   int SetReceiveBufferSize(int32_t) override { return OK; }
   int SetSendBufferSize(int32_t) override { return OK; }
   int SetDoNotFragment() override { return OK; }
+  int SetRecvTos() override { return OK; }
+  int SetTos(DiffServCodePoint dscp, EcnCodePoint ecn) override { return OK; }
 
   void Close() override {}
   int GetPeerAddress(IPEndPoint* address) const override {
@@ -148,6 +152,8 @@ class TestUDPClientSocket : public DatagramClientSocket {
   const NetLogWithSource& NetLog() const override { return net_log_; }
 
   void FinishConnect() { std::move(finish_connect_callback_).Run(); }
+
+  DscpAndEcn GetLastTos() const override { return {DSCP_DEFAULT, ECN_DEFAULT}; }
 
  private:
   void RunConnectCallback(CompletionOnceCallback callback, int rv) {
@@ -284,10 +290,13 @@ class AddressSorterPosixSyncOrAsyncTest
   // after sorting.
   void Verify(const char* const addresses[], const int order[]) {
     std::vector<IPEndPoint> endpoints;
-    for (const char* const* addr = addresses; *addr != nullptr; ++addr)
+    for (const char* const* addr = addresses; *addr != nullptr;
+         UNSAFE_TODO(++addr)) {
       endpoints.emplace_back(ParseIP(*addr), 80);
-    for (size_t i = 0; order[i] >= 0; ++i)
-      CHECK_LT(order[i], static_cast<int>(endpoints.size()));
+    }
+    for (size_t i = 0; UNSAFE_TODO(order[i]) >= 0; ++i) {
+      UNSAFE_TODO(CHECK_LT(order[i], static_cast<int>(endpoints.size())));
+    }
 
     std::vector<IPEndPoint> sorted;
     TestCompletionCallback callback;
@@ -296,8 +305,11 @@ class AddressSorterPosixSyncOrAsyncTest
                                  callback.callback()));
     callback.WaitForResult();
 
-    for (size_t i = 0; (i < sorted.size()) || (order[i] >= 0); ++i) {
-      IPEndPoint expected = order[i] >= 0 ? endpoints[order[i]] : IPEndPoint();
+    for (size_t i = 0; (i < sorted.size()) || (UNSAFE_TODO(order[i]) >= 0);
+         ++i) {
+      IPEndPoint expected = UNSAFE_TODO(order[i]) >= 0
+                                ? endpoints[UNSAFE_TODO(order[i])]
+                                : IPEndPoint();
       IPEndPoint actual = i < sorted.size() ? sorted[i] : IPEndPoint();
       EXPECT_TRUE(expected == actual)
           << "Endpoint out of order at position " << i << "\n"

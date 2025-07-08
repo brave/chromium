@@ -11,6 +11,7 @@
 #include "ash/public/cpp/system/toast_manager.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "base/containers/flat_set.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/apps/app_service/file_utils.h"
 #include "chrome/browser/ash/file_manager/filesystem_api_util.h"
 #include "chrome/browser/ash/fusebox/fusebox_server.h"
@@ -30,12 +31,6 @@
 
 namespace {
 const char kToastId[] = "copy_to_clipboard_share_action";
-
-void RecordFormFactorMetric() {
-  auto form_factor = ::sharesheet::SharesheetMetrics::GetFormFactorForMetrics();
-  ::sharesheet::SharesheetMetrics::RecordCopyToClipboardShareActionFormFactor(
-      form_factor);
-}
 
 void RecordMimeTypes(
     const base::flat_set<::sharesheet::SharesheetMetrics::MimeType>&
@@ -57,6 +52,11 @@ CopyToClipboardShareAction::CopyToClipboardShareAction(Profile* profile)
     : profile_(profile) {}
 
 CopyToClipboardShareAction::~CopyToClipboardShareAction() = default;
+
+::sharesheet::ShareActionType CopyToClipboardShareAction::GetActionType()
+    const {
+  return ::sharesheet::ShareActionType::kCopyToClipboardShare;
+}
 
 const std::u16string CopyToClipboardShareAction::GetActionName() {
   return l10n_util::GetStringUTF16(
@@ -107,7 +107,6 @@ void CopyToClipboardShareAction::LaunchAction(
     clipboard_writer.WriteFilenames(ui::FileInfosToURIList(file_infos));
   }
 
-  RecordFormFactorMetric();
   RecordMimeTypes(
       ::sharesheet::SharesheetMetrics::GetMimeTypesFromIntentForMetrics(
           intent));

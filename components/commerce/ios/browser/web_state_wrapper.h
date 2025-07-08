@@ -28,7 +28,9 @@ class WebStateWrapper : public WebWrapper {
   WebStateWrapper operator=(const WebStateWrapper&) = delete;
   ~WebStateWrapper() override;
 
-  const GURL& GetLastCommittedURL() override;
+  const GURL& GetLastCommittedURL() const override;
+
+  const std::u16string& GetTitle() override;
 
   bool IsFirstLoadForNavigationFinished() override;
 
@@ -39,6 +41,8 @@ class WebStateWrapper : public WebWrapper {
   void RunJavascript(
       const std::u16string& script,
       base::OnceCallback<void(const base::Value)> callback) override;
+
+  ukm::SourceId GetPageUkmSourceId() override;
 
   base::WeakPtr<WebWrapper> GetWeakPtr();
 

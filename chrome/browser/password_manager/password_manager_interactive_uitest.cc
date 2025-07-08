@@ -10,14 +10,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/test_timeouts.h"
+#include "base/test/run_until.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_manager_interactive_test_base.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/password_manager/passwords_navigation_observer.h"
-#include "chrome/browser/ui/autofill/autofill_popup_controller_impl.h"
+#include "chrome/browser/password_manager/profile_password_store_factory.h"
+#include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -27,7 +26,7 @@
 #include "components/password_manager/content/browser/content_password_manager_driver.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager.h"
-#include "components/password_manager/core/browser/test_password_store.h"
+#include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "content/public/test/browser_test.h"
@@ -40,18 +39,6 @@
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 namespace {
-
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Wait until |condition| returns true.
-void WaitForCondition(base::RepeatingCallback<bool()> condition) {
-  while (!condition.Run()) {
-    base::RunLoop run_loop;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
-    run_loop.Run();
-  }
-}
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 constexpr autofill::FieldRendererId kElementId(1000);
 
@@ -83,8 +70,9 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, UsernameChanged) {
   // At first let us save a credential to the password store.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
-              browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS).get());
+          ProfilePasswordStoreFactory::GetForProfile(
+              browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
+              .get());
   password_manager::PasswordForm signin_form;
   signin_form.signon_realm = embedded_test_server()->base_url().spec();
   signin_form.url = embedded_test_server()->base_url();
@@ -113,7 +101,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, UsernameChanged) {
       "document.getElementById('input_submit_button').click();";
   ASSERT_TRUE(content::ExecJs(WebContents(), submit));
   ASSERT_TRUE(navigation_observer.Wait());
-  EXPECT_TRUE(prompt_observer.IsSavePromptShownAutomatically());
+  prompt_observer.WaitForAutomaticSavePrompt();
   prompt_observer.AcceptSavePrompt();
 
   // Spin the message loop to make sure the password store had a chance to save
@@ -164,10 +152,10 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
 
   FillElementWithValue("password_field", "123");
   BubbleObserver prompt_observer(WebContents());
-  prompt_observer.WaitForFallbackForSaving();
 
   // Since the timeout is changed to zero for testing, the save prompt should be
-  // hidden right after show.
+  // hidden right after show. Potentially the manual fallback state is not
+  // caught by the test.
   prompt_observer.WaitForInactiveState();
   EXPECT_FALSE(prompt_observer.IsSavePromptAvailable());
 }
@@ -190,7 +178,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   // At first let us save a credential to the password store.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -202,8 +190,8 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
 
   NavigateToFile("/password/password_form.html");
 
-  SimulateUserDeletingFieldContent("password_field");
-  FillElementWithValue("password_field", "123");
+  SimulateUserDeletingFieldContent("username_field");
+  FillElementWithValue("username_field", "123");
   BubbleObserver prompt_observer(WebContents());
   prompt_observer.WaitForFallbackForSaving();
 
@@ -223,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_xhr()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -240,7 +228,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_xhr()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -255,19 +243,11 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_fetch()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
-// TODO(crbug.com/1241462):
-#if BUILDFLAG(IS_WIN)
-#define MAYBE_PromptForFetchWithNewPasswordsWithoutOnSubmit \
-  DISABLED_PromptForFetchWithNewPasswordsWithoutOnSubmit
-#else
-#define MAYBE_PromptForFetchWithNewPasswordsWithoutOnSubmit \
-  PromptForFetchWithNewPasswordsWithoutOnSubmit
-#endif
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
-                       MAYBE_PromptForFetchWithNewPasswordsWithoutOnSubmit) {
+                       PromptForFetchWithNewPasswordsWithoutOnSubmit) {
   NavigateToFile("/password/password_fetch_submit.html");
 
   // Verify that if Fetch navigation occurs and the form is properly filled out,
@@ -280,7 +260,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_fetch()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -328,8 +308,8 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
                        DeleteCredentialsUpdateDropdown) {
   password_manager::PasswordStoreInterface* password_store =
-      PasswordStoreFactory::GetForProfile(browser()->profile(),
-                                          ServiceAccessType::IMPLICIT_ACCESS)
+      ProfilePasswordStoreFactory::GetForProfile(
+          browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
           .get();
 
   // Start with two logins in the password store.
@@ -348,10 +328,25 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
 
   NavigateToFile("/password/password_form.html");
 
-  ContentPasswordManagerDriverFactory* factory =
-      ContentPasswordManagerDriverFactory::FromWebContents(WebContents());
+  autofill::ChromeAutofillClient* autofill_client =
+      autofill::ChromeAutofillClient::FromWebContentsForTesting(WebContents());
+  // The test page contains multiple password forms. All of them will be
+  // autofilled again every time the logins from the password store are changed.
+  // Updating every field takes time and triggers every time hiding the Autofill
+  // Popup with the reason `SuggestionHidingReason::kEndEditing` (because each
+  // field gains focus while it is autofilled). Therefore, we use
+  // `ChromeAutofillClient::SetKeepPopupOpenForTesting()` to keep the autofill
+  // popup open (and prevent the controller from being deleted).
+  // Note that `ChromeAutofillClient::SetKeepPopupOpenForTesting()` only ignores
+  // a specific very small set of hiding reasons, so the popup can still be
+  // hidden by almost all of the reasons (such as
+  // `SuggestionHidingReason::kStaleData`, which occurs only once when the test
+  // removes logins from the password store).
+  autofill_client->SetKeepPopupOpenForTesting(true);
+
   autofill::mojom::PasswordManagerDriver* driver =
-      factory->GetDriverForFrame(WebContents()->GetPrimaryMainFrame());
+      ContentPasswordManagerDriver::GetForRenderFrameHost(
+          WebContents()->GetPrimaryMainFrame());
 
   // Just fake a position of the <input> element within the content_area_bounds.
   // For this test it does not matter where the dropdown is rendered.
@@ -362,14 +357,20 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
 
   // Instruct Chrome to show the password dropdown.
   autofill::FormData form;
-  driver->ShowPasswordSuggestions(kElementId, form, 0, 0,
-                                  base::i18n::LEFT_TO_RIGHT, std::u16string(),
-                                  0, element_bounds);
-  autofill::ChromeAutofillClient* autofill_client =
-      autofill::ChromeAutofillClient::FromWebContentsForTesting(WebContents());
-  autofill::AutofillPopupController* controller =
-      autofill_client->popup_controller_for_testing().get();
-  ASSERT_TRUE(controller);
+  driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
+  autofill::AutofillSuggestionController* controller = nullptr;
+  // Showing the Autofill Popup is an asynchronous task.
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return controller =
+               autofill_client->suggestion_controller_for_testing().get();
+  })) << "Creating `AutofillPopupController` timed out.";
   // Two credentials, a separator line and "Manage passwords" should be
   // displayed.
   EXPECT_EQ(4, controller->GetLineCount());
@@ -380,37 +381,52 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   WaitForElementValue("username_field", "admin");
 
   // Delete one credential. It should not be in the dropdown.
-  password_store->RemoveLogin(admin_form);
+  password_store->RemoveLogin(FROM_HERE, admin_form);
   WaitForPasswordStore();
 
   // Wait for the refetch to finish.
-  EXPECT_FALSE(autofill_client->popup_controller_for_testing());
+  EXPECT_FALSE(autofill_client->suggestion_controller_for_testing());
   WaitForPasswordStore();
   // Reshow the dropdown.
-  driver->ShowPasswordSuggestions(kElementId, form, 0, 0,
-                                  base::i18n::LEFT_TO_RIGHT, std::u16string(),
-                                  0, element_bounds);
-  controller = autofill_client->popup_controller_for_testing().get();
-  ASSERT_TRUE(controller);
+  driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
+  // Showing the Autofill Popup is an asynchronous task.
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return controller =
+               autofill_client->suggestion_controller_for_testing().get();
+  })) << "Creating `AutofillPopupController` timed out.";
   EXPECT_EQ(3, controller->GetLineCount());
-  EXPECT_EQ(u"user", controller->GetSuggestionMainTextAt(0));
-  EXPECT_NE(u"admin", controller->GetSuggestionMainTextAt(1));
+  EXPECT_EQ(u"user", controller->GetSuggestionAt(0).main_text.value);
+  EXPECT_NE(u"admin", controller->GetSuggestionAt(1).main_text.value);
 
   // The username_field should get re-filled with "user" instead of "admin".
   WaitForElementValue("username_field", "user");
 
   // Delete all the credentials.
-  password_store->RemoveLogin(user_form);
+  password_store->RemoveLogin(FROM_HERE, user_form);
   WaitForPasswordStore();
 
   // Wait for the refetch to finish.
-  EXPECT_FALSE(autofill_client->popup_controller_for_testing());
+  EXPECT_FALSE(autofill_client->suggestion_controller_for_testing());
   WaitForPasswordStore();
   // Reshow the dropdown won't work because there is nothing to suggest.
-  driver->ShowPasswordSuggestions(kElementId, form, 0, 0,
-                                  base::i18n::LEFT_TO_RIGHT, std::u16string(),
-                                  0, element_bounds);
-  EXPECT_FALSE(autofill_client->popup_controller_for_testing());
+  driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
+  // Showing the Autofill Popup is an asynchronous task.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(autofill_client->suggestion_controller_for_testing());
 
   WaitForElementValue("username_field", "");
 }
@@ -421,7 +437,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, ChangePwdFormCleared) {
   // At first let us save credentials to the PasswordManager.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -442,7 +458,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, ChangePwdFormCleared) {
   std::string submit = "document.getElementById('chg_clear_button').click();";
   ASSERT_TRUE(content::ExecJs(WebContents(), submit));
 
-  EXPECT_TRUE(prompt_observer->IsUpdatePromptShownAutomatically());
+  prompt_observer->WaitForAutomaticUpdatePrompt();
 
   // We emulate that the user clicks "Update" button.
   prompt_observer->AcceptUpdatePrompt();
@@ -464,7 +480,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   // At first let us save credentials to the PasswordManager.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -493,10 +509,11 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
               ";";
     ASSERT_TRUE(content::ExecJs(WebContents(), submit));
 
-    if (all_fields_cleared)
-      EXPECT_TRUE(prompt_observer->IsUpdatePromptShownAutomatically());
-    else
+    if (all_fields_cleared) {
+      prompt_observer->WaitForAutomaticUpdatePrompt();
+    } else {
       EXPECT_FALSE(prompt_observer->IsUpdatePromptShownAutomatically());
+    }
 
     if (all_fields_cleared) {
       // We emulate that the user clicks "Update" button.
@@ -522,7 +539,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   // At first let us save credentials to the PasswordManager.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   password_manager::PasswordForm signin_form;
@@ -574,6 +591,45 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   }
 }
 
+// Tests that, when choosing the value for saving, user-typed values are
+// preferred to values coming from JS.
+IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
+                       UserTypedValuesAreSavedInsteadOfJsInputs) {
+  NavigateToFile("/password/simple_password.html");
+
+  // Simulate user typing username and password.
+  const std::string kRealUsername = "real-username";
+  FillElementWithValue("username_field", kRealUsername, kRealUsername);
+  const std::string kRealPassword = "real-password";
+  FillElementWithValue("password_field", kRealPassword, kRealPassword);
+
+  // Change input values with JS.
+  const std::string kFakeUsername = "it-is-a-trap-username";
+  const std::string kFakePassword = "it-is-a-trap-password";
+  ASSERT_TRUE(
+      content::ExecJs(WebContents(),
+                      R"(document.getElementById('username_field').focus();
+        document.getElementById('username_field').value = ')" +
+                          kFakeUsername + R"(';
+        document.getElementById('password_field').value = ')" +
+                          kFakePassword + "';"));
+  WaitForElementValue("username_field", kFakeUsername);
+  WaitForElementValue("password_field", kFakePassword);
+
+  // Submit the form and check that user typed inputs are saved.
+  PasswordsNavigationObserver navigation_observer(WebContents());
+  BubbleObserver prompt_observer(WebContents());
+  std::string submit =
+      "document.getElementById('input_submit_button').click();";
+  ASSERT_TRUE(content::ExecJs(WebContents(), submit));
+  ASSERT_TRUE(navigation_observer.Wait());
+  prompt_observer.WaitForAutomaticSavePrompt();
+  prompt_observer.AcceptSavePrompt();
+
+  WaitForPasswordStore();
+  CheckThatCredentialsStored(kRealUsername, kRealPassword);
+}
+
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 // This test suite only applies to Gaia signin page, and checks that the
 // signin interception bubble and the password bubbles never conflict.
@@ -605,7 +661,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTestWithSigninInterception,
   // Prepopulate Gaia credentials to trigger an update bubble.
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
-          PasswordStoreFactory::GetForProfile(
+          ProfilePasswordStoreFactory::GetForProfile(
               profile, ServiceAccessType::IMPLICIT_ACCESS)
               .get());
   helper_.StoreGaiaCredentials(password_store);
@@ -624,12 +680,12 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTestWithSigninInterception,
   FillElementWithValue("password_field", "new", "pwnew");
 
   // Wait until the form change is picked up by the password manager.
-  const PasswordManager* password_manager =
+  const PasswordManagerInterface* password_manager =
       ChromePasswordManagerClient::FromWebContents(WebContents())
           ->GetPasswordManager();
-  WaitForCondition(
-      base::BindRepeating(&PasswordManager::IsFormManagerPendingPasswordUpdate,
-                          base::Unretained(password_manager)));
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return password_manager->IsFormManagerPendingPasswordUpdate();
+  }));
 
   // Start the navigation.
   PasswordsNavigationObserver navigation_observer(WebContents());
@@ -644,9 +700,10 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTestWithSigninInterception,
   base::HistogramTester histogram_tester;
   DiceWebSigninInterceptor* signin_interceptor =
       helper_.GetSigninInterceptor(profile);
-  signin_interceptor->MaybeInterceptWebSignin(WebContents(), account_id,
-                                              /*is_new_account=*/true,
-                                              /*is_sync_signin=*/false);
+  signin_interceptor->MaybeInterceptWebSignin(
+      WebContents(), account_id, signin_metrics::AccessPoint::kUnknown,
+      /*is_new_account=*/true,
+      /*is_sync_signin=*/false);
   EXPECT_FALSE(signin_interceptor->is_interception_in_progress());
   histogram_tester.ExpectUniqueSample(
       "Signin.Intercept.HeuristicOutcome",
@@ -656,7 +713,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTestWithSigninInterception,
   // "pwnew", so update prompt is expected.
   BubbleObserver prompt_observer(WebContents());
   ASSERT_TRUE(navigation_observer.Wait());
-  EXPECT_TRUE(prompt_observer.IsUpdatePromptShownAutomatically());
+  prompt_observer.WaitForAutomaticUpdatePrompt();
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

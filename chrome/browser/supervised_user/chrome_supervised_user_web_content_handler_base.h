@@ -5,15 +5,16 @@
 #ifndef CHROME_BROWSER_SUPERVISED_USER_CHROME_SUPERVISED_USER_WEB_CONTENT_HANDLER_BASE_H_
 #define CHROME_BROWSER_SUPERVISED_USER_CHROME_SUPERVISED_USER_WEB_CONTENT_HANDLER_BASE_H_
 
-#include "base/allocator/partition_allocator/pointers/raw_ptr.h"
+#include "base/memory/raw_ptr.h"
 #include "components/supervised_user/core/browser/web_content_handler.h"
+#include "content/public/browser/frame_tree_node_id.h"
 
 namespace content {
 class WebContents;
 }  // namespace content
 
 // Implements common Web Content Handler functionality that can be shared
-// accross non-IOS platforms, but cannot belong in the base class due to
+// across non-IOS platforms, but cannot belong in the base class due to
 // prohibited dependencies in components.
 class ChromeSupervisedUserWebContentHandlerBase
     : public supervised_user::WebContentHandler {
@@ -29,10 +30,14 @@ class ChromeSupervisedUserWebContentHandlerBase
   void CleanUpInfoBarOnMainFrame() override;
   int64_t GetInterstitialNavigationId() const override;
   void GoBack() override;
+  void MaybeCloseLocalApproval() override;
+#if BUILDFLAG(IS_ANDROID)
+  void LearnMore(base::OnceClosure open_help_page) override;
+#endif  // BUILDFLAG(IS_ANDROID)
 
  protected:
   ChromeSupervisedUserWebContentHandlerBase(content::WebContents* web_contents,
-                                            int frame_id,
+                                            content::FrameTreeNodeId frame_id,
                                             int64_t interstitial_navigation_id);
   raw_ptr<content::WebContents> web_contents_;
 
@@ -40,11 +45,11 @@ class ChromeSupervisedUserWebContentHandlerBase
   // Tries to navigate to the previous page (if one exists) and returns
   // if it was successful.
   bool AttemptMoveAwayFromCurrentFrameURL();
-  // Notifies the consumers of the intestitial.
+  // Notifies the consumers of the interstitial.
   void OnInterstitialDone();
 
   // The uniquely identifying global id for the frame.
-  const int frame_id_;
+  const content::FrameTreeNodeId frame_id_;
   // The Navigation id of the navigation that last triggered the interstitial.
   int64_t interstitial_navigation_id_;
 };

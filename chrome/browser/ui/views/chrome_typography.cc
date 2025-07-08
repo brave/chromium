@@ -4,14 +4,11 @@
 
 #include "chrome/browser/ui/views/chrome_typography.h"
 
-#include "base/feature_list.h"
-#include "build/build_config.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "ui/base/default_style.h"
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/platform_font.h"
 
@@ -54,62 +51,42 @@ void ApplyCommonFontStyles(int context,
       details.weight = gfx::Font::Weight::BOLD;
       break;
     }
+    case CONTEXT_DEEMPHASIZED:
     case CONTEXT_OMNIBOX_PRIMARY:
     case CONTEXT_OMNIBOX_POPUP:
     case CONTEXT_OMNIBOX_SECTION_HEADER:
-    case CONTEXT_OMNIBOX_DEEMPHASIZED: {
+    case CONTEXT_OMNIBOX_POPUP_ROW_CHIP:
+    case CONTEXT_OMNIBOX_TOOLBELT_BUTTON: {
       const bool is_touch_ui = ui::TouchUiController::Get()->touch_ui();
-      const bool use_gm3_text_style =
-          OmniboxFieldTrial::IsGM3TextStyleEnabled();
-
       int desired_font_size = is_touch_ui ? 15 : 14;
-      if (use_gm3_text_style) {
-        desired_font_size = is_touch_ui
-                                ? OmniboxFieldTrial::kFontSizeTouchUI.Get()
-                                : OmniboxFieldTrial::kFontSizeNonTouchUI.Get();
-      }
-
       const int omnibox_primary_delta =
           GetFontSizeDeltaBoundedByAvailableHeight(
               LocationBarView::GetAvailableTextHeight(), desired_font_size);
       details.size_delta = omnibox_primary_delta;
-      if (context == CONTEXT_OMNIBOX_DEEMPHASIZED && !use_gm3_text_style) {
+      if (context == CONTEXT_DEEMPHASIZED) {
         --details.size_delta;
+      } else if (context == CONTEXT_OMNIBOX_POPUP_ROW_CHIP ||
+                 context == CONTEXT_OMNIBOX_SECTION_HEADER ||
+                 context == CONTEXT_OMNIBOX_TOOLBELT_BUTTON) {
+        details.size_delta -= 2;
       }
-
-      if (use_gm3_text_style) {
-        if (context == CONTEXT_OMNIBOX_SECTION_HEADER) {
-          --details.size_delta;
-        }
-
-        if (context == CONTEXT_OMNIBOX_PRIMARY ||
-            context == CONTEXT_OMNIBOX_SECTION_HEADER) {
-          details.weight = gfx::Font::Weight::MEDIUM;
-        } else if (context == CONTEXT_OMNIBOX_POPUP ||
-                   context == CONTEXT_OMNIBOX_DEEMPHASIZED) {
-          details.weight = gfx::Font::Weight::NORMAL;
-        }
+      if (context == CONTEXT_OMNIBOX_TOOLBELT_BUTTON ||
+          context == CONTEXT_OMNIBOX_SECTION_HEADER) {
+        details.weight = gfx::Font::Weight::MEDIUM;
       }
       break;
     }
-#if BUILDFLAG(IS_WIN)
-    case CONTEXT_WINDOWS10_NATIVE:
-      // Adjusts default font size up to match Win10 modern UI.
-      details.size_delta = gfx::PlatformFont::GetFontSizeDelta(15);
-      break;
-#endif
     case CONTEXT_IPH_BUBBLE_TITLE:
       details.size_delta =
           gfx::PlatformFont::GetFontSizeDeltaIgnoringUserOrLocaleSettings(18);
-      if (features::IsChromeRefresh2023()) {
-        details.weight = gfx::Font::Weight::MEDIUM;
-      }
+      details.weight = gfx::Font::Weight::MEDIUM;
       break;
     case CONTEXT_IPH_BUBBLE_BODY:
       details.size_delta =
           gfx::PlatformFont::GetFontSizeDeltaIgnoringUserOrLocaleSettings(14);
       break;
     case CONTEXT_SIDE_PANEL_TITLE:
+    case CONTEXT_TOAST_BODY_TEXT:
       details.size_delta =
           gfx::PlatformFont::GetFontSizeDeltaIgnoringUserOrLocaleSettings(13);
       break;

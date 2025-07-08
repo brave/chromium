@@ -43,7 +43,8 @@
 #include "v8/include/v8-inspector.h"
 
 namespace blink {
-using protocol::Maybe;
+
+using mojom::blink::FormControlType;
 
 namespace {
 
@@ -80,7 +81,7 @@ struct LegacyDOMSnapshotAgent::VectorStringHashTraits
   }
 
   static void ConstructDeletedValue(Vector<String>& vec) {
-    new (WTF::NotNullTag::kNotNull, &vec)
+    new (base::NotNullTag::kNotNull, &vec)
         Vector<String>(WTF::kHashTableDeletedValue);
   }
 
@@ -96,8 +97,8 @@ struct LegacyDOMSnapshotAgent::VectorStringHashTraits
 
 LegacyDOMSnapshotAgent::LegacyDOMSnapshotAgent(
     InspectorDOMDebuggerAgent* dom_debugger_agent,
-    OriginUrlMap* origin_url_map)
-    : origin_url_map_(origin_url_map),
+    base::WeakPtr<OriginUrlMap> origin_url_map)
+    : origin_url_map_(std::move(origin_url_map)),
       dom_debugger_agent_(dom_debugger_agent) {}
 
 LegacyDOMSnapshotAgent::~LegacyDOMSnapshotAgent() = default;
@@ -105,9 +106,9 @@ LegacyDOMSnapshotAgent::~LegacyDOMSnapshotAgent() = default;
 protocol::Response LegacyDOMSnapshotAgent::GetSnapshot(
     Document* document,
     std::unique_ptr<protocol::Array<String>> style_filter,
-    protocol::Maybe<bool> include_event_listeners,
-    protocol::Maybe<bool> include_paint_order,
-    protocol::Maybe<bool> include_user_agent_shadow_tree,
+    std::optional<bool> include_event_listeners,
+    std::optional<bool> include_paint_order,
+    std::optional<bool> include_user_agent_shadow_tree,
     std::unique_ptr<protocol::Array<protocol::DOMSnapshot::DOMNode>>* dom_nodes,
     std::unique_ptr<protocol::Array<protocol::DOMSnapshot::LayoutTreeNode>>*
         layout_tree_nodes,
@@ -185,16 +186,18 @@ int LegacyDOMSnapshotAgent::VisitNode(Node* node,
           .setBackendNodeId(IdentifiersFactory::IntIdForNode(node))
           .build();
   if (origin_url_map_ &&
-      origin_url_map_->Contains(owned_value->getBackendNodeId())) {
-    String origin_url = origin_url_map_->at(owned_value->getBackendNodeId());
+      origin_url_map_->map.Contains(owned_value->getBackendNodeId())) {
+    String origin_url =
+        origin_url_map_->map.at(owned_value->getBackendNodeId());
     // In common cases, it is implicit that a child node would have the same
     // origin url as its parent, so no need to mark twice.
     if (!node->parentNode()) {
       owned_value->setOriginURL(std::move(origin_url));
     } else {
-      DOMNodeId parent_id = DOMNodeIds::IdForNode(node->parentNode());
-      auto it = origin_url_map_->find(parent_id);
-      String parent_url = it != origin_url_map_->end() ? it->value : String();
+      DOMNodeId parent_id = node->parentNode()->GetDomNodeId();
+      auto it = origin_url_map_->map.find(parent_id);
+      String parent_url =
+          it != origin_url_map_->map.end() ? it->value : String();
       if (parent_url != origin_url)
         owned_value->setOriginURL(std::move(origin_url));
     }
@@ -255,8 +258,9 @@ int LegacyDOMSnapshotAgent::VisitNode(Node* node,
 
     if (auto* input_element = DynamicTo<HTMLInputElement>(*element)) {
       value->setInputValue(input_element->Value());
-      if ((input_element->type() == input_type_names::kRadio) ||
-          (input_element->type() == input_type_names::kCheckbox)) {
+      if ((input_element->FormControlType() == FormControlType::kInputRadio) ||
+          (input_element->FormControlType() ==
+           FormControlType::kInputCheckbox)) {
         value->setInputChecked(input_element->Checked());
       }
     }
@@ -264,9 +268,9 @@ int LegacyDOMSnapshotAgent::VisitNode(Node* node,
     if (auto* option_element = DynamicTo<HTMLOptionElement>(*element))
       value->setOptionSelected(option_element->Selected());
 
-    if (element->GetPseudoId()) {
-      value->setPseudoType(
-          InspectorDOMAgent::ProtocolPseudoElementType(element->GetPseudoId()));
+    if (element->IsPseudoElement()) {
+      value->setPseudoType(InspectorDOMAgent::ProtocolPseudoElementType(
+          element->GetPseudoIdForStyling()));
     }
     value->setPseudoElementIndexes(
         VisitPseudoElements(element, index, include_event_listeners,
@@ -334,14 +338,17 @@ LegacyDOMSnapshotAgent::VisitPseudoElements(
     bool include_event_listeners,
     bool include_user_agent_shadow_tree) {
   if (!parent->GetPseudoElement(kPseudoIdFirstLetter) &&
+      !parent->GetPseudoElement(kPseudoIdCheckMark) &&
       !parent->GetPseudoElement(kPseudoIdBefore) &&
-      !parent->GetPseudoElement(kPseudoIdAfter)) {
+      !parent->GetPseudoElement(kPseudoIdAfter) &&
+      !parent->GetPseudoElement(kPseudoIdPickerIcon)) {
     return nullptr;
   }
 
   auto pseudo_elements = std::make_unique<protocol::Array<int>>();
   for (PseudoId pseudo_id :
-       {kPseudoIdFirstLetter, kPseudoIdBefore, kPseudoIdAfter}) {
+       {kPseudoIdFirstLetter, kPseudoIdCheckMark, kPseudoIdBefore,
+        kPseudoIdAfter, kPseudoIdPickerIcon}) {
     if (Node* pseudo_node = parent->GetPseudoElement(pseudo_id)) {
       pseudo_elements->emplace_back(VisitNode(pseudo_node,
                                               include_event_listeners,
@@ -373,8 +380,8 @@ int LegacyDOMSnapshotAgent::VisitLayoutTreeNode(LayoutObject* layout_object,
   if (!layout_object)
     return -1;
 
-  if (node->GetPseudoId()) {
-    // For pseudo elements, visit the children of the layout object.
+  if (node->IsPseudoElement()) {
+    // For pseudo-elements, visit the children of the layout object.
     for (LayoutObject* child = layout_object->SlowFirstChild(); child;
          child = child->NextSibling()) {
       if (child->IsAnonymous())
@@ -407,7 +414,7 @@ int LegacyDOMSnapshotAgent::VisitLayoutTreeNode(LayoutObject* layout_object,
 
   if (layout_object->IsText()) {
     auto* layout_text = To<LayoutText>(layout_object);
-    layout_tree_node->setLayoutText(layout_text->GetText());
+    layout_tree_node->setLayoutText(layout_text->TransformedText());
     Vector<LayoutText::TextBoxInfo> text_boxes = layout_text->GetTextBoxInfo();
     if (!text_boxes.empty()) {
       auto inline_text_nodes = std::make_unique<
@@ -460,7 +467,8 @@ int LegacyDOMSnapshotAgent::GetStyleIndexForNode(Node* node) {
     if (const CSSValue* css_value =
             CSSProperty::Get(pair.second)
                 .CSSValueFromComputedStyle(*computed_style,
-                                           node->GetLayoutObject(), true)) {
+                                           node->GetLayoutObject(), true,
+                                           CSSValuePhase::kResolvedValue)) {
       value = css_value->CssText();
     }
     if (!value.empty())

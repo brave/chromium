@@ -14,7 +14,8 @@ namespace ash::hermes_metrics {
 
 void COMPONENT_EXPORT(CHROMEOS_NETWORK)
     LogInstallViaQrCodeResult(HermesResponseStatus status,
-                              dbus::DBusResult dbus_result);
+                              dbus::DBusResult dbus_result,
+                              bool is_initial_install);
 
 void COMPONENT_EXPORT(CHROMEOS_NETWORK)
     LogInstallPendingProfileResult(HermesResponseStatus status);
@@ -29,10 +30,7 @@ void COMPONENT_EXPORT(CHROMEOS_NETWORK)
     LogUninstallProfileResult(HermesResponseStatus status);
 
 void COMPONENT_EXPORT(CHROMEOS_NETWORK)
-    LogRequestPendingProfilesResult(HermesResponseStatus status);
-
-void COMPONENT_EXPORT(CHROMEOS_NETWORK)
-    LogRequestPendingProfilesLatency(base::TimeDelta call_latency);
+    LogRefreshInstalledProfilesLatency(base::TimeDelta call_latency);
 
 }  // namespace ash::hermes_metrics
 

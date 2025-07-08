@@ -6,6 +6,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "ash/constants/geolocation_access_level.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/public/cpp/system_tray_client.h"
 #include "ash/session/session_controller_impl.h"
@@ -25,7 +26,6 @@
 #include "base/time/time.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
 #include "components/prefs/pref_service.h"
-#include "privacy_hub_notification_controller.h"
 #include "ui/message_center/message_center.h"
 
 namespace ash {
@@ -89,20 +89,20 @@ class GeolocationThrottler : public PrivacyHubNotification::Throttler {
 }  // namespace
 
 PrivacyHubNotificationController::PrivacyHubNotificationController() {
+  PrivacyHubController* privacy_hub_controller = PrivacyHubController::Get();
+  CHECK(privacy_hub_controller);
+
   // If privacy hub is on and the camera fallback mechanism is active, we need
   // to use a different set of messages.
   // TODO(b/289510726): remove when all cameras fully support the software
   // switch.
   // Note: if the privacy hub is not enabled, this object may still exist as it
   // is used by privacy indicators as well.
-  bool use_camera_led_fallback =
-      features::IsCrosPrivacyHubEnabled() &&
-      CameraPrivacySwitchController::CheckCameraLEDFallbackDirectly();
 
   std::vector<int> camera_messages;
   std::vector<int> combined_messages;
 
-  if (use_camera_led_fallback) {
+  if (privacy_hub_controller->UsingCameraLEDFallback()) {
     camera_messages = {
         IDS_PRIVACY_HUB_CAMERA_OFF_NOTIFICATION_MESSAGE_WITH_DISCLAIMER,
         IDS_PRIVACY_HUB_CAMERA_OFF_NOTIFICATION_MESSAGE_WITH_ONE_APP_NAME_WITH_DISCLAIMER,
@@ -236,7 +236,7 @@ void PrivacyHubNotificationController::RemoveSoftwareSwitchNotification(
     }
     case Sensor::kMicrophone: {
       RemoveSensor(sensor);
-      if (!sensors_.Empty()) {
+      if (!sensors_.empty()) {
         combined_notification_->Update();
       } else {
         combined_notification_->Hide();
@@ -275,6 +275,7 @@ void PrivacyHubNotificationController::UpdateSoftwareSwitchNotification(
   }
 }
 
+// TODO(janlanik): Does this support geolocation?
 bool PrivacyHubNotificationController::
     IsSoftwareSwitchNotificationDisplayedForSensor(Sensor sensor) {
   return combined_notification_->IsShown() && sensors_.Has(sensor);
@@ -291,7 +292,7 @@ void PrivacyHubNotificationController::ShowHardwareSwitchNotification(
   switch (sensor) {
     case Sensor::kMicrophone: {
       RemoveSensor(sensor);
-      if (!sensors_.Empty()) {
+      if (!sensors_.empty()) {
         combined_notification_->Update();
       } else {
         // As the hardware switch notification for microphone will be displayed
@@ -371,24 +372,27 @@ void PrivacyHubNotificationController::
     return;
   }
 
-  const char* pref_name = nullptr;
   switch (sensor) {
     case Sensor::kCamera: {
-      pref_name = prefs::kUserCameraAllowed;
+      pref_service->SetBoolean(prefs::kUserCameraAllowed, enabled);
       break;
     }
     case Sensor::kMicrophone: {
-      pref_name = prefs::kUserMicrophoneAllowed;
+      pref_service->SetBoolean(prefs::kUserMicrophoneAllowed, enabled);
       break;
     }
     case Sensor::kLocation: {
-      pref_name = prefs::kUserGeolocationAllowed;
+      // Geolocation notification asks user to allow geolocation for everything
+      // (not only system services).
+      if (auto* controller = ash::GeolocationPrivacySwitchController::Get()) {
+        controller->SetAccessLevel(enabled
+                                       ? GeolocationAccessLevel::kAllowed
+                                       : GeolocationAccessLevel::kDisallowed);
+      }
       break;
     }
   }
-  CHECK(pref_name);
 
-  pref_service->SetBoolean(pref_name, enabled);
   privacy_hub_metrics::LogSensorEnabledFromNotification(sensor, enabled);
 }
 

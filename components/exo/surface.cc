@@ -4,40 +4,46 @@
 
 #include "components/exo/surface.h"
 
+#include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "ash/display/output_protection_delegate.h"
-#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/wm/desks/desks_util.h"
+#include "base/check_op.h"
 #include "base/containers/adapters.h"
+#include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
+#include "base/system/sys_info.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
 #include "components/exo/buffer.h"
 #include "components/exo/frame_sink_resource_manager.h"
+#include "components/exo/layer_tree_frame_sink_holder.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/surface_delegate.h"
 #include "components/exo/surface_observer.h"
 #include "components/exo/window_properties.h"
 #include "components/exo/wm_helper.h"
+#include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
+#include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/shared_quad_state.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
-#include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/resources/resource_id.h"
 #include "media/media_buildflags.h"
-#include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/client/aura_constants.h"
@@ -57,18 +63,19 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/dip_util.h"
+#include "ui/gfx/geometry/mask_filter_info.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/rrect_f.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/geometry/transform_util.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/gpu_fence.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/views/widget/widget.h"
 
@@ -76,7 +83,9 @@ DEFINE_UI_CLASS_PROPERTY_TYPE(exo::Surface*)
 
 namespace exo {
 
-DEFINE_UI_CLASS_PROPERTY_KEY(bool, kSurfaceHasAugmentedSurfaceKey, false)
+BASE_FEATURE(kDisableNonYUVOverlaysFromExo,
+             "DisableNonYUVOverlaysFromExo",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
@@ -92,7 +101,7 @@ DEFINE_UI_CLASS_PROPERTY_KEY(bool, kStylusOnlyKey, false)
 // with |key|.
 template <typename T, typename U>
 typename T::iterator FindListEntry(T& list, U key) {
-  return base::ranges::find(list, key, &T::value_type::first);
+  return std::ranges::find(list, key, &T::value_type::first);
 }
 
 // Helper function that returns true if |list| contains an entry with |key|.
@@ -101,19 +110,28 @@ bool ListContainsEntry(T& list, U key) {
   return FindListEntry(list, key) != list.end();
 }
 
-// Helper function that returns true if |format| may have an alpha channel.
-// Note: False positives are allowed but false negatives are not.
-bool FormatHasAlpha(gfx::BufferFormat format) {
-  switch (format) {
-    case gfx::BufferFormat::BGR_565:
-    case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::YVU_420:
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return false;
-    default:
-      return true;
+// TODO(crbug.com/369003507): Remove this check once we found the root
+// cause of crash on specific hatch platform.
+bool ShouldDisableOverlay(viz::SharedImageFormat format) {
+  static bool is_blocked_device = false;
+  static bool is_initialized = false;
+  static const base::flat_set<std::string> blocked_devices = {
+      "DRALLION", "HATCH", "VOLTEER"};
+  if (!is_initialized) {
+    is_initialized = true;
+    std::string device_model = base::SysInfo::HardwareModelName();
+    is_blocked_device = blocked_devices.contains(device_model);
   }
+
+  if (!is_blocked_device) {
+    return false;
+  }
+
+  if (format.is_multi_plane()) {
+    return false;
+  }
+
+  return true;
 }
 
 Transform InvertY(Transform transform) {
@@ -193,11 +211,13 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   CustomWindowDelegate(const CustomWindowDelegate&) = delete;
   CustomWindowDelegate& operator=(const CustomWindowDelegate&) = delete;
 
-  ~CustomWindowDelegate() override {}
+  ~CustomWindowDelegate() override = default;
 
   // Overridden from aura::WindowDelegate:
   gfx::Size GetMinimumSize() const override { return gfx::Size(); }
-  gfx::Size GetMaximumSize() const override { return gfx::Size(); }
+  std::optional<gfx::Size> GetMaximumSize() const override {
+    return std::nullopt;
+  }
   void OnBoundsChanged(const gfx::Rect& old_bounds,
                        const gfx::Rect& new_bounds) override {}
   gfx::NativeCursor GetCursor(const gfx::Point& point) override {
@@ -226,7 +246,10 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   void OnCaptureLost() override {}
   void OnPaint(const ui::PaintContext& context) override {}
   void OnDeviceScaleFactorChanged(float old_device_scale_factor,
-                                  float new_device_scale_factor) override {}
+                                  float new_device_scale_factor) override {
+    surface_->OnScaleFactorChanged(old_device_scale_factor,
+                                   new_device_scale_factor);
+  }
   void OnWindowDestroying(aura::Window* window) override {}
   void OnWindowDestroyed(aura::Window* window) override { delete this; }
   void OnWindowTargetVisibilityChanged(bool visible) override {}
@@ -251,17 +274,17 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   }
 
  private:
-  const raw_ptr<Surface, ExperimentalAsh> surface_;
+  const raw_ptr<Surface> surface_;
 };
 
 class CustomWindowTargeter : public aura::WindowTargeter {
  public:
-  CustomWindowTargeter() {}
+  CustomWindowTargeter() = default;
 
   CustomWindowTargeter(const CustomWindowTargeter&) = delete;
   CustomWindowTargeter& operator=(const CustomWindowTargeter&) = delete;
 
-  ~CustomWindowTargeter() override {}
+  ~CustomWindowTargeter() override = default;
 
   // Overridden from aura::WindowTargeter:
   bool EventLocationInsideBounds(aura::Window* window,
@@ -299,7 +322,7 @@ void ImmediateExplicitRelease(
 
 }  // namespace
 
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kClientSurfaceIdKey, nullptr)
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kClientSurfaceIdKey)
 
 // A property key to store the window session Id set by client or full_restore
 // component.
@@ -326,8 +349,8 @@ Surface::Surface()
   window_->Init(ui::LAYER_NOT_DRAWN);
   window_->SetEventTargeter(std::make_unique<CustomWindowTargeter>());
   window_->set_owned_by_parent(false);
-  WMHelper::GetInstance()->SetDragDropDelegate(window_.get());
 }
+
 Surface::~Surface() {
   for (SurfaceObserver& observer : observers_)
     observer.OnSurfaceDestroying(this);
@@ -365,15 +388,23 @@ Surface* Surface::AsSurface(const aura::Window* window) {
   return window->GetProperty(kSurfaceKey);
 }
 
+std::vector<raw_ptr<aura::Window, VectorExperimental>>
+Surface::GetChildWindows() const {
+  std::vector<raw_ptr<aura::Window, VectorExperimental>> children;
+  for (const auto& [sub_surface, _] : sub_surfaces_) {
+    children.push_back(sub_surface->window());
+  }
+  return children;
+}
+
 void Surface::Attach(Buffer* buffer) {
   Attach(buffer, gfx::Vector2d());
 }
 
 void Surface::Attach(Buffer* buffer, gfx::Vector2d offset) {
-  TRACE_EVENT2(
-      "exo", "Surface::Attach", "buffer_id",
-      buffer ? static_cast<const void*>(buffer->gfx_buffer()) : nullptr,
-      "app_id", GetApplicationId(window_.get()));
+  TRACE_EVENT2("exo", "Surface::Attach", "buffer_id",
+               buffer ? buffer->GetBufferId() : nullptr, "app_id",
+               GetApplicationId(window_.get()));
   has_pending_contents_ = true;
   if (!pending_state_.buffer.has_value())
     pending_state_.buffer.emplace();
@@ -394,11 +425,19 @@ bool Surface::HasPendingAttachedBuffer() const {
 void Surface::Damage(const gfx::Rect& damage) {
   TRACE_EVENT1("exo", "Surface::Damage", "damage", damage.ToString());
 
+  gfx::Rect t_damage = damage;
+  if (t_damage.width() == 0x7FFFFFFF) {
+    t_damage.set_width(0x7FFFFFFE);
+  }
+  if (t_damage.height() == 0x7FFFFFFF) {
+    t_damage.set_height(0x7FFFFFFE);
+  }
+
   // SkRegion forbids 0x7FFFFFFF (INT32_MAX) as width or height, see
   // SkRegion_kRunTypeSentinel, and would mark the resulting region from the
   // union below as empty. See https://crbug.com/1463905
   gfx::Rect intersected_damage = gfx::Rect(0x7FFFFFFE, 0x7FFFFFFE);
-  intersected_damage.Intersect(damage);
+  intersected_damage.Intersect(t_damage);
   pending_state_.damage.Union(intersected_damage);
 }
 
@@ -430,7 +469,7 @@ void Surface::SetInputRegion(const cc::Region& region) {
 void Surface::ResetInputRegion() {
   TRACE_EVENT0("exo", "Surface::ResetInputRegion");
 
-  pending_state_.basic_state.input_region = absl::nullopt;
+  pending_state_.basic_state.input_region = std::nullopt;
 }
 
 void Surface::SetInputOutset(int outset) {
@@ -453,18 +492,23 @@ void Surface::SetBufferTransform(Transform transform) {
 }
 
 void Surface::AddSubSurface(Surface* sub_surface) {
+  if (sub_surface->is_augmented()) {
+    auto* render_layer = sub_surface;
+    DCHECK(!render_layer->window()->parent());
+    DCHECK(!ListContainsEntry(render_layers_, render_layer));
+    render_layers_.emplace_back(render_layer, gfx::PointF());
+    return;
+  }
+
   TRACE_EVENT1("exo", "Surface::AddSubSurface", "sub_surface",
                sub_surface->AsTracedValue());
 
+  DCHECK(!is_augmented());
   DCHECK(!sub_surface->window()->parent());
   sub_surface->window()->SetBounds(
       gfx::Rect(sub_surface->window()->bounds().size()));
 
-  // As an optimization, don't add augmented subsurfaces's aura::Window to the
-  // tree.
-  if (!GetProperty(kSurfaceHasAugmentedSurfaceKey)) {
-    window_->AddChild(sub_surface->window());
-  }
+  window_->AddChild(sub_surface->window());
 
   DCHECK(!ListContainsEntry(pending_sub_surfaces_, sub_surface));
   pending_sub_surfaces_.push_back(std::make_pair(sub_surface, gfx::PointF()));
@@ -472,8 +516,9 @@ void Surface::AddSubSurface(Surface* sub_surface) {
   sub_surfaces_changed_ = true;
 
   // Propagate the kSkipImeProcessing property to the new child.
-  if (window_->GetProperty(aura::client::kSkipImeProcessing))
+  if (window_->GetProperty(aura::client::kSkipImeProcessing)) {
     sub_surface->window()->SetProperty(aura::client::kSkipImeProcessing, true);
+  }
 
   // The shell might have not be added to the root yet.
   if (window_->GetRootWindow()) {
@@ -489,11 +534,23 @@ void Surface::OnNewOutputAdded() {
 }
 
 void Surface::RemoveSubSurface(Surface* sub_surface) {
+  if (sub_surface->is_augmented()) {
+    auto* render_layer = sub_surface;
+    DCHECK(ListContainsEntry(render_layers_, render_layer));
+    auto it = FindListEntry(render_layers_, render_layer);
+    render_layers_.erase(it);
+    // Force recreating resources when the render_layer is added to a tree
+    // again.
+    render_layer->SurfaceHierarchyResourcesLost();
+    return;
+  }
+
   TRACE_EVENT1("exo", "Surface::RemoveSubSurface", "sub_surface",
                sub_surface->AsTracedValue());
 
-  if (sub_surface->window()->IsVisible())
+  if (sub_surface->window()->IsVisible()) {
     sub_surface->window()->Hide();
+  }
   if (sub_surface->window()->parent() == window_.get()) {
     window_->RemoveChild(sub_surface->window());
   }
@@ -504,6 +561,18 @@ void Surface::RemoveSubSurface(Surface* sub_surface) {
 
   DCHECK(ListContainsEntry(sub_surfaces_, sub_surface));
   auto it = FindListEntry(sub_surfaces_, sub_surface);
+
+  // Removing a non augmented subsurface extends the damage to the removed
+  // subsurface.
+  if (it != sub_surfaces_.end()) {
+    auto extended_damage = gfx::RectF(it->second, it->first->content_size());
+    if (extended_damage_dp_.has_value()) {
+      extended_damage_dp_->Union(extended_damage);
+    } else {
+      extended_damage_dp_.emplace(extended_damage);
+    }
+  }
+
   sub_surfaces_.erase(it);
   // Force recreating resources when the surface is added to a tree again.
   sub_surface->SurfaceHierarchyResourcesLost();
@@ -512,75 +581,116 @@ void Surface::RemoveSubSurface(Surface* sub_surface) {
 
 void Surface::SetSubSurfacePosition(Surface* sub_surface,
                                     const gfx::PointF& position) {
+  if (sub_surface->is_augmented()) {
+    auto* render_layer = sub_surface;
+    auto it = FindListEntry(render_layers_, render_layer);
+    CHECK(it != render_layers_.end());
+    if (it->second == position) {
+      return;
+    }
+    it->second = position;
+    return;
+  }
+
   TRACE_EVENT2("exo", "Surface::SetSubSurfacePosition", "sub_surface",
                sub_surface->AsTracedValue(), "position", position.ToString());
 
   auto it = FindListEntry(pending_sub_surfaces_, sub_surface);
-  DCHECK(it != pending_sub_surfaces_.end());
-  if (it->second == position)
+  CHECK(it != pending_sub_surfaces_.end());
+  if (it->second == position) {
     return;
+  }
   it->second = position;
   sub_surfaces_changed_ = true;
 }
 
 void Surface::PlaceSubSurfaceAbove(Surface* sub_surface, Surface* reference) {
-  TRACE_EVENT2("exo", "Surface::PlaceSubSurfaceAbove", "sub_surface",
-               sub_surface->AsTracedValue(), "reference",
-               reference->AsTracedValue());
-
   if (sub_surface == reference) {
     DLOG(WARNING) << "Client tried to place sub-surface above itself";
     return;
   }
-
-  auto position_it = pending_sub_surfaces_.begin();
-  if (reference != this) {
-    position_it = FindListEntry(pending_sub_surfaces_, reference);
-    if (position_it == pending_sub_surfaces_.end()) {
-      DLOG(WARNING) << "Client tried to place sub-surface above a reference "
-                       "surface that is neither a parent nor a sibling";
-      return;
-    }
-
-    // Advance iterator to have |position_it| point to the sibling surface
-    // above |reference|.
-    ++position_it;
+  if (sub_surface->is_augmented() != reference->is_augmented() &&
+      reference != this) {
+    DLOG(WARNING) << "Client tried to stack a augmented-surface relative to a "
+                     "sub-surface";
+    return;
   }
 
-  DCHECK(ListContainsEntry(pending_sub_surfaces_, sub_surface));
-  auto it = FindListEntry(pending_sub_surfaces_, sub_surface);
-  if (it == position_it)
-    return;
-  pending_sub_surfaces_.splice(position_it, pending_sub_surfaces_, it);
-  sub_surfaces_changed_ = true;
+  if (sub_surface->is_augmented()) {
+    DoPlaceAboveOrBelow(sub_surface, reference, render_layers_,
+                        /*place_above=*/true);
+  } else {
+    TRACE_EVENT2("exo", "Surface::PlaceSubSurfaceAbove", "sub_surface",
+                 sub_surface->AsTracedValue(), "reference",
+                 reference->AsTracedValue());
+
+    if (DoPlaceAboveOrBelow(sub_surface, reference, pending_sub_surfaces_,
+                            /*place_above=*/true)) {
+      sub_surfaces_changed_ = true;
+    }
+  }
 }
 
 void Surface::PlaceSubSurfaceBelow(Surface* sub_surface, Surface* sibling) {
-  TRACE_EVENT2("exo", "Surface::PlaceSubSurfaceBelow", "sub_surface",
-               sub_surface->AsTracedValue(), "sibling",
-               sibling->AsTracedValue());
-
   if (sub_surface == sibling) {
     DLOG(WARNING) << "Client tried to place sub-surface below itself";
     return;
   }
-
-  auto position_it = FindListEntry(pending_sub_surfaces_, sibling);
-  if (position_it == pending_sub_surfaces_.end()) {
-    DLOG(WARNING) << "Client tried to place sub-surface below a surface that "
-                     "is not a sibling";
+  if (sub_surface->is_augmented() != sibling->is_augmented()) {
+    DLOG(WARNING) << "Client tried to stack a augmented-surface relative to a "
+                     "sub-surface";
     return;
   }
 
-  DCHECK(ListContainsEntry(pending_sub_surfaces_, sub_surface));
-  auto it = FindListEntry(pending_sub_surfaces_, sub_surface);
+  if (sub_surface->is_augmented()) {
+    DoPlaceAboveOrBelow(sub_surface, sibling, render_layers_,
+                        /*place_above=*/false);
+  } else {
+    TRACE_EVENT2("exo", "Surface::PlaceSubSurfaceBelow", "sub_surface",
+                 sub_surface->AsTracedValue(), "sibling",
+                 sibling->AsTracedValue());
 
-  // If |sub_surface| is already immediately below |sibling|, do not do
-  // anything.
-  if (it == --position_it)
-    return;
-  pending_sub_surfaces_.splice(++position_it, pending_sub_surfaces_, it);
-  sub_surfaces_changed_ = true;
+    if (DoPlaceAboveOrBelow(sub_surface, sibling, pending_sub_surfaces_,
+                            /*place_above=*/false)) {
+      sub_surfaces_changed_ = true;
+    }
+  }
+}
+
+bool Surface::DoPlaceAboveOrBelow(Surface* child,
+                                  Surface* reference,
+                                  SubSurfaceEntryList& list,
+                                  bool place_above) {
+  auto position_it = (place_above && reference == this)
+                         ? list.begin()
+                         : FindListEntry(list, reference);
+  if (position_it == list.end()) {
+    LOG(WARNING) << "Client tried place a sub-surface "
+                 << (place_above ? "above" : "below")
+                 << " an invalid reference";
+    return false;
+  }
+
+  DCHECK(ListContainsEntry(list, child));
+  auto it = FindListEntry(list, child);
+
+  if (place_above) {
+    if (reference != this) {
+      ++position_it;
+    }
+  } else {
+    --position_it;
+  }
+  // If |child| is already immediately at the right position, do nothing.
+  if (it == position_it) {
+    return false;
+  }
+  if (!place_above) {
+    ++position_it;
+  }
+
+  list.splice(position_it, list, it);
+  return true;
 }
 
 void Surface::OnSubSurfaceCommit() {
@@ -588,12 +698,19 @@ void Surface::OnSubSurfaceCommit() {
     delegate_->OnSurfaceCommit();
 }
 
-void Surface::SetRoundedCorners(const gfx::RRectF& rounded_corners_bounds) {
+void Surface::SetRoundedCorners(const gfx::RRectF& rounded_corners_bounds,
+                                bool commit_override) {
   TRACE_EVENT1("exo", "Surface::SetRoundedCorner", "corners",
                rounded_corners_bounds.ToString());
+
   if (rounded_corners_bounds != pending_state_.rounded_corners_bounds) {
     has_pending_contents_ = true;
     pending_state_.rounded_corners_bounds = rounded_corners_bounds;
+  }
+
+  if (commit_override &&
+      rounded_corners_bounds != state_.rounded_corners_bounds) {
+    state_.rounded_corners_bounds = rounded_corners_bounds;
   }
 }
 
@@ -602,31 +719,19 @@ void Surface::SetOverlayPriorityHint(OverlayPriority hint) {
   pending_state_.overlay_priority_hint = hint;
 }
 
-void Surface::SetClipRect(const absl::optional<gfx::RectF>& clip_rect) {
+void Surface::SetClipRect(const std::optional<gfx::RectF>& clip_rect) {
   TRACE_EVENT1("exo", "Surface::SetClipRect", "clip_rect",
                (clip_rect ? clip_rect->ToString() : "nullopt"));
 
-  if (pending_state_.clip_rect == clip_rect &&
-      !pending_state_.clip_rect_is_parent_coordinates) {
+  if (pending_state_.clip_rect == clip_rect) {
     return;
   }
   has_pending_contents_ = true;
   pending_state_.clip_rect = clip_rect;
-  pending_state_.clip_rect_is_parent_coordinates = false;
 }
 
-void Surface::SetClipRectOnParentSurface(
-    const absl::optional<gfx::RectF>& clip_rect) {
-  TRACE_EVENT1("exo", "Surface::SetClipRectOnParentSurface", "clip_rect",
-               (clip_rect ? clip_rect->ToString() : "nullopt"));
-
-  if (pending_state_.clip_rect == clip_rect &&
-      pending_state_.clip_rect_is_parent_coordinates) {
-    return;
-  }
-  has_pending_contents_ = true;
-  pending_state_.clip_rect = clip_rect;
-  pending_state_.clip_rect_is_parent_coordinates = true;
+void Surface::SetFrameTraceId(int64_t frame_trace_id) {
+  pending_state_.frame_trace_id = frame_trace_id;
 }
 
 void Surface::SetSurfaceTransform(const gfx::Transform& transform) {
@@ -638,14 +743,9 @@ void Surface::SetSurfaceTransform(const gfx::Transform& transform) {
   }
 }
 
-void Surface::SetBackgroundColor(absl::optional<SkColor4f> background_color) {
+void Surface::SetBackgroundColor(std::optional<SkColor4f> background_color) {
   TRACE_EVENT0("exo", "Surface::SetBackgroundColor");
   pending_state_.basic_state.background_color = background_color;
-}
-
-void Surface::SetTrustedDamage(bool trusted_damage) {
-  TRACE_EVENT0("exo", "Surface::SetTrustedDamage");
-  trusted_damage_ = trusted_damage;
 }
 
 void Surface::SetViewport(const gfx::SizeF& viewport) {
@@ -801,7 +901,7 @@ std::string Surface::GetClientSurfaceId() const {
 
 void Surface::SetContainsVideo(bool contains_video) {
   TRACE_EVENT1("exo", "Surface::SetContainsVideo", "contains_video",
-               contains_video ? "true" : "false");
+               base::ToString(contains_video));
   pending_state_.basic_state.contains_video = contains_video;
 }
 
@@ -812,6 +912,11 @@ bool Surface::ContainsVideo() {
   for (auto& subsurface : sub_surfaces_) {
     if (subsurface.first->ContainsVideo())
       return true;
+  }
+  for (auto& render_layer : render_layers_) {
+    if (render_layer.first->ContainsVideo()) {
+      return true;
+    }
   }
   return false;
 }
@@ -842,19 +947,9 @@ void Surface::SetAspectRatio(const gfx::SizeF& aspect_ratio) {
     delegate_->SetAspectRatio(aspect_ratio);
 }
 
-void Surface::SetEmbeddedSurfaceId(
-    base::RepeatingCallback<viz::SurfaceId()> surface_id_callback) {
-  get_current_surface_id_ = std::move(surface_id_callback);
-  first_embedded_surface_id_ = viz::SurfaceId();
-}
-
-void Surface::SetEmbeddedSurfaceSize(const gfx::Size& size) {
-  embedded_surface_size_ = size;
-}
-
 void Surface::SetAcquireFence(std::unique_ptr<gfx::GpuFence> gpu_fence) {
   TRACE_EVENT1("exo", "Surface::SetAcquireFence", "fence_fd",
-               gpu_fence ? gpu_fence->GetGpuFenceHandle().owned_fd.get() : -1);
+               gpu_fence ? gpu_fence->GetGpuFenceHandle().Peek() : -1);
 
   pending_state_.acquire_fence = std::move(gpu_fence);
 }
@@ -883,7 +978,7 @@ void Surface::Commit() {
       "exo", "Surface::Commit", "buffer_id",
       static_cast<const void*>(
           pending_state_.buffer.has_value() && pending_state_.buffer->buffer()
-              ? pending_state_.buffer->buffer()->gfx_buffer()
+              ? pending_state_.buffer->buffer()->GetBufferId()
               : nullptr));
 
   for (auto& observer : observers_)
@@ -891,8 +986,20 @@ void Surface::Commit() {
 
   needs_commit_surface_ = true;
 
+  // We accumulate the pending offset in cached_state_. Although the spec does
+  // not explicitly describe how multiple commits for a synchronized subsurface
+  // behave between parent commits, we should probably accumulate pending
+  // offsets in cache too, considering that the cached state has been committed
+  // already (even though it has not been applied).
+  //
+  // Other compositors (Weston and Wlroots) seem to manage the offset similarly.
+  gfx::Vector2d new_offset =
+      cached_state_.basic_state.offset + pending_state_.basic_state.offset;
+
   // Transfer pending state to cached state.
   cached_state_.basic_state = pending_state_.basic_state;
+  cached_state_.basic_state.offset = new_offset;
+  pending_state_.basic_state.offset = gfx::Vector2d(0, 0);
   pending_state_.basic_state.only_visible_on_secure_output = false;
   has_cached_contents_ |= has_pending_contents_;
   has_pending_contents_ = false;
@@ -903,8 +1010,6 @@ void Surface::Commit() {
   cached_state_.rounded_corners_bounds = pending_state_.rounded_corners_bounds;
   cached_state_.overlay_priority_hint = pending_state_.overlay_priority_hint;
   cached_state_.clip_rect = pending_state_.clip_rect;
-  cached_state_.clip_rect_is_parent_coordinates =
-      pending_state_.clip_rect_is_parent_coordinates;
   cached_state_.surface_transform = pending_state_.surface_transform;
   cached_state_.acquire_fence = std::move(pending_state_.acquire_fence);
   cached_state_.per_commit_explicit_release_callback_ =
@@ -923,6 +1028,9 @@ void Surface::Commit() {
       cached_state_.presentation_callbacks.end(),
       pending_state_.presentation_callbacks);
 
+  cached_state_.frame_trace_id = pending_state_.frame_trace_id;
+  pending_state_.frame_trace_id = -1;
+
   if (delegate_)
     delegate_->OnSurfaceCommit();
   else
@@ -930,9 +1038,11 @@ void Surface::Commit() {
 }
 
 bool Surface::UpdateDisplay(int64_t old_display, int64_t new_display) {
-  if (!leave_enter_callback_.is_null()) {
-    if (!leave_enter_callback_.Run(old_display, new_display))
+  display_id_ = new_display;
+  if (has_contents() && !leave_enter_callback_.is_null()) {
+    if (!leave_enter_callback_.Run(old_display, new_display)) {
       return false;
+    }
   }
   for (const auto& sub_surface_entry : base::Reversed(sub_surfaces_)) {
     auto* sub_surface = sub_surface_entry.first;
@@ -959,10 +1069,9 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
 
     // TODO(penghuang): Make the damage more precise for sub surface changes.
     // https://crbug.com/779704
-    bool needs_full_damage = false;
-    if (!trusted_damage_) {
-      needs_full_damage =
-          sub_surfaces_changed_ ||
+    bool needs_full_damage = sub_surfaces_changed_;
+    if (!is_augmented()) {
+      needs_full_damage |=
           cached_state_.basic_state.opaque_region !=
               state_.basic_state.opaque_region ||
           cached_state_.basic_state.buffer_scale !=
@@ -1002,20 +1111,29 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
     if (!state_.basic_state.alpha && cached_state_.basic_state.alpha)
       needs_update_resource_ = true;
 
+    // The offset should be accumulated rather than replaced with the new
+    // offset.
+    gfx::Vector2d new_offset =
+        state_.basic_state.offset + cached_state_.basic_state.offset;
+
     state_.basic_state = cached_state_.basic_state;
+    state_.basic_state.offset = new_offset;
+    cached_state_.basic_state.offset = gfx::Vector2d(0, 0);
     cached_state_.basic_state.only_visible_on_secure_output = false;
 
-    window_->SetEventTargetingPolicy(
-        (state_.basic_state.input_region.has_value() &&
-         state_.basic_state.input_region->IsEmpty())
-            ? aura::EventTargetingPolicy::kDescendantsOnly
-            : aura::EventTargetingPolicy::kTargetAndDescendants);
+    if (!is_augmented()) {
+      window_->SetEventTargetingPolicy(
+          (state_.basic_state.input_region.has_value() &&
+           state_.basic_state.input_region->IsEmpty())
+              ? aura::EventTargetingPolicy::kDescendantsOnly
+              : aura::EventTargetingPolicy::kTargetAndDescendants);
 
-    if (state_.basic_state.is_tracking_occlusion) {
-      // TODO(edcourtney): Currently, it doesn't seem to be possible to stop
-      // tracking the occlusion state once started, but it would be nice to stop
-      // if the tracked occlusion region becomes empty.
-      window_->TrackOcclusionState();
+      if (state_.basic_state.is_tracking_occlusion) {
+        // TODO(edcourtney): Currently, it doesn't seem to be possible to stop
+        // tracking the occlusion state once started, but it would be nice to
+        // stop if the tracked occlusion region becomes empty.
+        window_->TrackOcclusionState();
+      }
     }
 
     if (needs_output_protection) {
@@ -1046,13 +1164,22 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
         needs_update_buffer_transform = true;
 
       if (cached_state_.buffer.has_value()) {
+        bool had_contents = has_contents();
+
         state_.buffer = std::move(cached_state_.buffer);
         cached_state_.buffer.reset();
+
+        if (display_id_ != display::kInvalidDisplayId &&
+            !leave_enter_callback_.is_null()) {
+          if (!had_contents && has_contents()) {
+            leave_enter_callback_.Run(display::kInvalidDisplayId, display_id_);
+          } else if (had_contents && !has_contents()) {
+            leave_enter_callback_.Run(display_id_, display::kInvalidDisplayId);
+          }
+        }
       }
       state_.rounded_corners_bounds = cached_state_.rounded_corners_bounds;
       state_.clip_rect = cached_state_.clip_rect;
-      state_.clip_rect_is_parent_coordinates =
-          cached_state_.clip_rect_is_parent_coordinates;
       state_.surface_transform = cached_state_.surface_transform;
       state_.acquire_fence = std::move(cached_state_.acquire_fence);
       state_.per_commit_explicit_release_callback_ =
@@ -1098,12 +1225,9 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
       aura::Window* stacking_target = nullptr;
       for (const auto& sub_surface_entry : pending_sub_surfaces_) {
         Surface* sub_surface = sub_surface_entry.first;
-        // If the parent has trusted damage set, then consider it trusted for
-        // all subsurfaces.
-        sub_surface->SetTrustedDamage(trusted_damage_);
         sub_surfaces_.push_back(sub_surface_entry);
         // Move sub-surface to its new position in the stack.
-        if (stacking_target && sub_surface->window()->parent()) {
+        if (stacking_target) {
           window_->StackChildAbove(sub_surface->window(), stacking_target);
         }
 
@@ -1127,35 +1251,45 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
       state_.damage.Intersect(output_rect);
     }
     cached_state_.damage.Clear();
+
+    state_.frame_trace_id = cached_state_.frame_trace_id;
+    cached_state_.frame_trace_id = -1;
   }
 
   surface_hierarchy_content_bounds_ =
       gfx::Rect(gfx::ToCeiledSize(content_size_));
 
-  if (state_.basic_state.input_region) {
-    hit_test_region_ = *state_.basic_state.input_region;
-    hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
-  } else {
-    hit_test_region_ = surface_hierarchy_content_bounds_;
+  for (const auto& render_layer_entry : base::Reversed(render_layers_)) {
+    auto* render_layer = render_layer_entry.first;
+    render_layer->CommitSurfaceHierarchy(synchronized);
   }
 
-  int outset = state_.basic_state.input_outset;
-  if (outset > 0) {
-    gfx::Rect input_rect = surface_hierarchy_content_bounds_;
-    input_rect.Inset(-outset);
-    hit_test_region_ = input_rect;
-  }
+  if (!is_augmented()) {
+    if (state_.basic_state.input_region) {
+      hit_test_region_ = *state_.basic_state.input_region;
+      hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
+    } else {
+      hit_test_region_ = surface_hierarchy_content_bounds_;
+    }
 
-  for (const auto& sub_surface_entry : base::Reversed(sub_surfaces_)) {
-    auto* sub_surface = sub_surface_entry.first;
-    gfx::Vector2d offset =
-        gfx::ToRoundedPoint(sub_surface_entry.second).OffsetFromOrigin();
-    // Synchronously commit all pending state of the sub-surface and its
-    // descendants.
-    sub_surface->CommitSurfaceHierarchy(synchronized);
-    surface_hierarchy_content_bounds_.Union(
-        sub_surface->surface_hierarchy_content_bounds() + offset);
-    hit_test_region_.Union(sub_surface->hit_test_region_ + offset);
+    int outset = state_.basic_state.input_outset;
+    if (outset > 0) {
+      gfx::Rect input_rect = surface_hierarchy_content_bounds_;
+      input_rect.Inset(-outset);
+      hit_test_region_ = input_rect;
+    }
+
+    for (const auto& sub_surface_entry : base::Reversed(sub_surfaces_)) {
+      auto* sub_surface = sub_surface_entry.first;
+      gfx::Vector2d offset =
+          gfx::ToRoundedPoint(sub_surface_entry.second).OffsetFromOrigin();
+      // Synchronously commit all pending state of the sub-surface and its
+      // descendants.
+      sub_surface->CommitSurfaceHierarchy(synchronized);
+      surface_hierarchy_content_bounds_.Union(
+          sub_surface->surface_hierarchy_content_bounds() + offset);
+      hit_test_region_.Union(sub_surface->hit_test_region_ + offset);
+    }
   }
 }
 
@@ -1168,6 +1302,12 @@ void Surface::AppendSurfaceHierarchyCallbacks(
   presentation_callbacks->splice(presentation_callbacks->end(),
                                  state_.presentation_callbacks);
 
+  for (const auto& render_layer_entry : base::Reversed(render_layers_)) {
+    auto* render_layer = render_layer_entry.first;
+    render_layer->AppendSurfaceHierarchyCallbacks(frame_callbacks,
+                                                  presentation_callbacks);
+  }
+
   for (const auto& sub_surface_entry : base::Reversed(sub_surfaces_)) {
     auto* sub_surface = sub_surface_entry.first;
     sub_surface->AppendSurfaceHierarchyCallbacks(frame_callbacks,
@@ -1176,19 +1316,38 @@ void Surface::AppendSurfaceHierarchyCallbacks(
 }
 
 void Surface::AppendSurfaceHierarchyContentsToFrame(
-    const gfx::PointF& origin,
+    const gfx::PointF& parent_to_root_px,
+    const gfx::PointF& to_parent_dp,
     bool needs_full_damage,
     FrameSinkResourceManager* resource_manager,
-    absl::optional<float> device_scale_factor,
+    std::optional<float> device_scale_factor,
     viz::CompositorFrame* frame) {
   // The top most sub-surface is at the front of the RenderPass's quad_list,
   // so we need composite sub-surface in reversed order.
   for (const auto& sub_surface_entry : base::Reversed(sub_surfaces_)) {
     auto* sub_surface = sub_surface_entry.first;
-    // Synchronsouly commit all pending state of the sub-surface and its
-    // decendents.
+    // Synchronously commit all pending state of the sub-surface and its
+    // descendents.
+    gfx::PointF to_root_px =
+        parent_to_root_px +
+        gfx::ScalePoint(to_parent_dp, device_scale_factor.value_or(1.f))
+            .OffsetFromOrigin();
     sub_surface->AppendSurfaceHierarchyContentsToFrame(
-        origin + sub_surface_entry.second.OffsetFromOrigin(), needs_full_damage,
+        to_root_px, sub_surface_entry.second, needs_full_damage,
+        resource_manager, device_scale_factor, frame);
+  }
+
+  // Make sure the sub_surfaces are rendered before render_layers for this
+  // surface s.t. sub_surfaces are rendered above the render_layers.
+  for (const auto& render_layer_entry : base::Reversed(render_layers_)) {
+    auto* render_layer = render_layer_entry.first;
+    // Synchronously commit all pending state of the layer and its descendents.
+    gfx::PointF to_root_px =
+        parent_to_root_px +
+        gfx::ScalePoint(to_parent_dp, device_scale_factor.value_or(1.f))
+            .OffsetFromOrigin();
+    render_layer->AppendSurfaceHierarchyContentsToFrame(
+        to_root_px, render_layer_entry.second, needs_full_damage,
         resource_manager, device_scale_factor, frame);
   }
 
@@ -1201,23 +1360,24 @@ void Surface::AppendSurfaceHierarchyContentsToFrame(
         std::move(state_.per_commit_explicit_release_callback_));
   }
 
-  AppendContentsToFrame(origin, needs_full_damage, device_scale_factor, frame);
+  AppendContentsToFrame(parent_to_root_px, to_parent_dp, needs_full_damage,
+                        device_scale_factor, frame);
 }
 
 bool Surface::IsSynchronized() const {
-  return delegate_ && delegate_->IsSurfaceSynchronized();
+  return (delegate_ && delegate_->IsSurfaceSynchronized()) || is_augmented();
 }
 
 bool Surface::IsInputEnabled(Surface* surface) const {
-  return !delegate_ || delegate_->IsInputEnabled(surface);
+  return !is_augmented() && (!delegate_ || delegate_->IsInputEnabled(surface));
 }
 
 bool Surface::HasHitTestRegion() const {
-  return !hit_test_region_.IsEmpty();
+  return !is_augmented() && !hit_test_region_.IsEmpty();
 }
 
 bool Surface::HitTest(const gfx::Point& point) const {
-  return hit_test_region_.Contains(point);
+  return !is_augmented() && hit_test_region_.Contains(point);
 }
 
 void Surface::GetHitTestMask(SkPath* mask) const {
@@ -1267,6 +1427,9 @@ void Surface::SetStylusOnly() {
 void Surface::SurfaceHierarchyResourcesLost() {
   // Update resource and full damage are needed for next frame.
   needs_update_resource_ = true;
+  for (const auto& render_layer : render_layers_) {
+    render_layer.first->SurfaceHierarchyResourcesLost();
+  }
   for (const auto& sub_surface : sub_surfaces_)
     sub_surface.first->SurfaceHierarchyResourcesLost();
 }
@@ -1294,7 +1457,7 @@ void Surface::SetSurfaceHierarchyContentBoundsForTest(
 ////////////////////////////////////////////////////////////////////////////////
 // Buffer, private:
 
-Surface::State::State() {}
+Surface::State::State() = default;
 
 Surface::State::~State() = default;
 
@@ -1371,27 +1534,33 @@ void Surface::UpdateResource(FrameSinkResourceManager* resource_manager) {
         state_.per_commit_explicit_release_callback_) {
       state_.buffer->buffer()->SkipLegacyRelease();
     }
-    if (state_.buffer->buffer()->ProduceTransferableResource(
-            resource_manager, std::move(state_.acquire_fence),
-            state_.basic_state.only_visible_on_secure_output,
-            &current_resource_, buffer_color_space,
-            window_->GetToplevelWindow()->GetProperty(
-                kProtectedNativePixmapQueryDelegate),
-            std::move(state_.per_commit_explicit_release_callback_))) {
+    // TODO(crbug.com/421207623): These only two fields that might be preserved
+    // across calls. Preserving synchronization type is likely bug and we should
+    // move sync token inside.
+    auto prev_sync_token =
+        current_resource_.value_or(viz::TransferableResource()).sync_token();
+    auto prev_synchronization_type =
+        current_resource_.value_or(viz::TransferableResource())
+            .synchronization_type;
+
+    current_resource_ = state_.buffer->buffer()->ProduceTransferableResource(
+        resource_manager, std::move(state_.acquire_fence),
+        state_.basic_state.only_visible_on_secure_output, buffer_color_space,
+        window_->GetToplevelWindow()->GetProperty(
+            kProtectedNativePixmapQueryDelegate),
+        std::move(state_.per_commit_explicit_release_callback_),
+        prev_sync_token, prev_synchronization_type);
+
+    if (current_resource_) {
       current_resource_has_alpha_ =
-          FormatHasAlpha(state_.buffer->buffer()->GetFormat());
-      current_resource_.color_space = state_.basic_state.color_space;
+          state_.buffer->buffer()->GetFormat().HasAlpha();
+      current_resource_->color_space = state_.basic_state.color_space;
     } else {
-      current_resource_.id = viz::kInvalidResourceId;
-      // Use the buffer's size, so the AppendContentsToFrame() will append
-      // a SolidColorDrawQuad with the buffer's size.
-      current_resource_.size = state_.buffer->size();
       SkColor4f color = state_.buffer->buffer()->GetColor();
       current_resource_has_alpha_ = !color.isOpaque();
     }
   } else {
-    current_resource_.id = viz::kInvalidResourceId;
-    current_resource_.size = gfx::Size();
+    current_resource_.reset();
     current_resource_has_alpha_ = false;
     ImmediateExplicitRelease(
         std::move(state_.per_commit_explicit_release_callback_));
@@ -1418,106 +1587,108 @@ void Surface::UpdateOverlayPriorityHint(OverlayPriority overlay_priority_hint) {
   }
 }
 
-// Try to share the |SharedQuadState| (sqs) when a single layer can be
-// reconstructed. This is important for performance reasons in the occlusion
-// code and correctness in the per edge anti-alias code.
-static viz::SharedQuadState* AppendOrCreateSharedQuadState(
-    float opacity,
+// Some clients (ARC) submit overlapping surfaces that are almost always
+// occluded. However, due how viz does quad overdrawn quad occlusion with
+// rounded corners, this does not always remove all occluded quads. To avoid
+// overdraw and subtle fast rounded corner compositing bugs we remove fully
+// occluded surfaces here before they even become quads to submit to the
+// compositor. See b/307557914
+// TODO( b/325307643 ) : Provide a generalized solution here for the compositor.
+static bool IsOccludedByPreviousSqs(
     const std::unique_ptr<viz::CompositorRenderPass>& render_pass,
-    const gfx::Transform quad_to_target_transform,
+    const gfx::Transform& quad_to_target_transform,
     const gfx::Rect& quad_rect,
-    const gfx::MaskFilterInfo& msk,
-    const absl::optional<gfx::Rect>& quad_clip_rect,
-    const bool are_contents_opaque) {
-  viz::SharedQuadState* quad_state =
+    const gfx::MaskFilterInfo& msk) {
+  const viz::SharedQuadState* prev_sqs =
       !render_pass->shared_quad_state_list.empty()
           ? render_pass->shared_quad_state_list.back()
           : nullptr;
-  auto test_union = quad_rect;
-  bool is_sealed_union = false;
-  if (quad_state) {
-    // A sealed union is when the combined rect has no gaps and can form a
-    // single layer rect.
-    test_union.Union(quad_state->quad_layer_rect);
-    if ((test_union.width() == quad_rect.width() &&
-         test_union.width() == quad_state->quad_layer_rect.width())) {
-      if (quad_rect.height() + quad_state->quad_layer_rect.height() >=
-          test_union.height())
-        is_sealed_union = true;
-    }
 
-    if ((test_union.height() == quad_rect.height() &&
-         test_union.height() == quad_state->quad_layer_rect.height())) {
-      if (quad_rect.width() + quad_state->quad_layer_rect.width() >=
-          test_union.width())
-        is_sealed_union = true;
-    }
+  if (!prev_sqs ||
+      !prev_sqs->quad_to_target_transform
+           .NonDegeneratePreserves2dAxisAlignment() ||
+      !quad_to_target_transform.NonDegeneratePreserves2dAxisAlignment()) {
+    return false;
   }
 
-  if (quad_state && is_sealed_union &&
-      quad_to_target_transform == quad_state->quad_to_target_transform &&
-      opacity == quad_state->opacity &&
-      quad_clip_rect == quad_state->clip_rect &&
-      are_contents_opaque == quad_state->are_contents_opaque &&
-      msk == quad_state->mask_filter_info) {
-    // Expland the layer portion of the sqs.
-    quad_state->quad_layer_rect = test_union;
-    quad_state->visible_quad_layer_rect = test_union;
-  } else {
-    quad_state = render_pass->CreateAndAppendSharedQuadState();
-    quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
-                       quad_clip_rect, are_contents_opaque, opacity,
-                       SkBlendMode::kSrcOver, 0);
+  if (prev_sqs->are_contents_opaque && prev_sqs->opacity == 1.f) {
+    const gfx::Rect quad_rect_in_target_space =
+        cc::MathUtil::MapEnclosedRectWith2dAxisAlignedTransform(
+            quad_to_target_transform, quad_rect);
+    if (prev_sqs->clip_rect &&
+        !prev_sqs->clip_rect->Contains(quad_rect_in_target_space)) {
+      return false;
+    }
+
+    const gfx::Rect sqs_rect_in_target =
+        cc::MathUtil::MapEnclosedRectWith2dAxisAlignedTransform(
+            prev_sqs->quad_to_target_transform,
+            prev_sqs->visible_quad_layer_rect);
+    if (sqs_rect_in_target.Contains(quad_rect_in_target_space)) {
+      if (msk == prev_sqs->mask_filter_info) {
+        return true;
+      }
+    }
   }
-  return quad_state;
+  return false;
 }
 
-void Surface::AppendContentsToFrame(const gfx::PointF& origin,
+void Surface::AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
+                                    const gfx::PointF& to_parent_dp,
                                     bool needs_full_damage,
-                                    absl::optional<float> device_scale_factor,
+                                    std::optional<float> device_scale_factor,
                                     viz::CompositorFrame* frame) {
+  UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.AppendContentsToFrame", true);
   const std::unique_ptr<viz::CompositorRenderPass>& render_pass =
       frame->render_pass_list.back();
-  gfx::RectF output_rect(origin, content_size_);
+  gfx::PointF parent_to_root_dp = gfx::ScalePoint(
+      parent_to_root_px, 1.f / device_scale_factor.value_or(1.f));
+  gfx::PointF to_root_dp = parent_to_root_dp + to_parent_dp.OffsetFromOrigin();
+  gfx::RectF output_rect(to_root_dp, content_size_);
   gfx::Rect quad_rect(0, 0, 1, 1);
 
-  // Surface bounds are in DIPs, but |damage_rect| and |output_rect| are in
+  // Surface bounds are in DIPs, but |damage_rect| should be specified in
   // pixels, so we need to scale by the |device_scale_factor|.
-  gfx::RectF damage_rect = needs_full_damage
-                               ? gfx::RectF(content_size_)
-                               : gfx::RectF(state_.damage.bounds());
-  if (!damage_rect.IsEmpty()) {
+  gfx::RectF damage_rect_px;
+  gfx::RectF damage_rect_dp = needs_full_damage
+                                  ? gfx::RectF(content_size_)
+                                  : gfx::RectF(state_.damage.bounds());
+  if (!damage_rect_dp.IsEmpty() || extended_damage_dp_.has_value()) {
     // Outset damage by 1 DIP to as damage is in surface coordinate space and
     // client might not be aware of |device_scale_factor| and the
     // scaling/filtering it requires.
-    damage_rect.Inset(-1);
-    damage_rect += origin.OffsetFromOrigin();
-    damage_rect.Intersect(output_rect);
+    if (!damage_rect_dp.IsEmpty()) {
+      damage_rect_dp.Inset(-1);
+      damage_rect_dp += to_root_dp.OffsetFromOrigin();
+      damage_rect_dp.Intersect(output_rect);
+    }
+    if (extended_damage_dp_.has_value()) {
+      damage_rect_dp.Union(extended_damage_dp_.value() +
+                           to_root_dp.OffsetFromOrigin());
+      extended_damage_dp_.reset();
+    }
 
+    damage_rect_px = damage_rect_dp;
     if (device_scale_factor.has_value()) {
       if (device_scale_factor.value() <= 1) {
-        damage_rect =
-            gfx::ConvertRectToPixels(damage_rect, device_scale_factor.value());
+        damage_rect_px = gfx::ConvertRectToPixels(damage_rect_px,
+                                                  device_scale_factor.value());
       } else {
         // The damage will eventually be rescaled by 1/device_scale_factor.
         // Since that scale factor is <1, taking the enclosed rect here means
         // that that rescaled RectF is <1px smaller than |damage_rect| in each
         // dimension, which makes the enclosing rect equal to |damage_rect|.
-        damage_rect.Scale(device_scale_factor.value());
+        damage_rect_px.Scale(device_scale_factor.value());
       }
     }
   }
 
-  absl::optional<gfx::Rect> quad_clip_rect;
+  std::optional<gfx::Rect> quad_clip_rect;
   if (state_.clip_rect) {
-    // `state_.clip_rect` should be on local surface coordinates but the
-    // deprecated implementation still uses parent surface coordinates. If so,
-    // we skip translating into the root surface coordinates to keep the old
-    // behavior.
-    // TODO(crbug.com/1457446): Remove this.
-    auto clip_rect_offset = state_.clip_rect_is_parent_coordinates
-                                ? gfx::Vector2d()
-                                : origin.OffsetFromOrigin();
+    auto clip_rect_offset =
+        gfx::ScalePoint(to_root_dp, device_scale_factor.value_or(1.f))
+            .OffsetFromOrigin();
+
     quad_clip_rect = gfx::ToEnclosedRect(*state_.clip_rect + clip_rect_offset);
   }
 
@@ -1527,26 +1698,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
 
   gfx::Vector2dF translate(0.0f, 0.0f);
 
-  // Surface quads require the quad rect to be appropriately sized and need to
-  // use the shared quad clip rect.
-  if (get_current_surface_id_) {
-    quad_rect = gfx::Rect(embedded_surface_size_);
-    scale = gfx::Vector2dF(1.0f, 1.0f);
-
-    if (!state_.basic_state.crop.IsEmpty()) {
-      // In order to crop an AxB rect to CxD we need to scale by A/C, B/D.
-      // We achieve clipping by scaling it up and then drawing only in the
-      // output rectangle.
-      scale.Scale(content_size_.width() / state_.basic_state.crop.width(),
-                  content_size_.height() / state_.basic_state.crop.height());
-
-      auto offset = state_.basic_state.crop.origin().OffsetFromOrigin();
-      translate =
-          gfx::Vector2dF(-offset.x() * scale.x(), -offset.y() * scale.y());
-    }
-  } else {
-    scale.Scale(state_.basic_state.buffer_scale);
-  }
+  scale.Scale(state_.basic_state.buffer_scale);
 
   bool are_contents_opaque =
       !current_resource_has_alpha_ ||
@@ -1556,25 +1708,33 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
 
   gfx::MaskFilterInfo msk;
   if (!state_.rounded_corners_bounds.IsEmpty()) {
-    DCHECK(sub_surfaces_.empty());
-    auto rounded_corners_rect = state_.rounded_corners_bounds;
+    // Rounded corner bounds are in the local space of the surface.
+    gfx::RRectF rounded_corner_bounds_local =
+        state_.rounded_corners_bounds + to_root_dp.OffsetFromOrigin();
+    if (device_scale_factor.has_value()) {
+      rounded_corner_bounds_local.Scale(device_scale_factor.value());
+    }
 
-    // Set the mask.
-    msk = gfx::MaskFilterInfo(rounded_corners_rect);
+    // Snap rounded corner bounds to pixel boundary. See b/40267343.
+    msk = gfx::MaskFilterInfo(gfx::RRectF::ToEnclosingRRectFIgnoringError(
+        rounded_corner_bounds_local));
   }
 
   // Compute the total transformation from post-transform buffer coordinates to
   // target coordinates.
-  // Scale and offset the normalized space to fit the content size rectangle.
+  // Scale to size then translate to position of subsurface in parent's space.
   gfx::Transform viewport_to_target_transform(
       gfx::AxisTransform2d::FromScaleAndTranslation(
-          scale, origin.OffsetFromOrigin() + translate));
+          scale, to_parent_dp.OffsetFromOrigin() + translate));
+  // Apply delegated transform matrix
   viewport_to_target_transform.PostConcat(state_.surface_transform);
-
   if (device_scale_factor.has_value()) {
     // Convert from DPs to pixels.
     viewport_to_target_transform.PostScale(device_scale_factor.value());
   }
+  // Translate to root in pixels.
+  viewport_to_target_transform.PostTranslate(
+      parent_to_root_px.OffsetFromOrigin());
 
   gfx::Transform quad_to_target_transform(buffer_transform_);
   quad_to_target_transform.PostConcat(viewport_to_target_transform);
@@ -1598,7 +1758,19 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
     }
   }
 
-  if (current_resource_.id) {
+  if (IsOccludedByPreviousSqs(render_pass, quad_to_target_transform, quad_rect,
+                              msk)) {
+    render_pass->damage_rect.Union(gfx::ToEnclosedRect(damage_rect_px));
+    if (current_resource_) {
+      CHECK(current_resource_->id);
+      frame->resource_list.push_back(*current_resource_);
+    }
+    UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.Occluded", true);
+    return;
+  }
+
+  if (current_resource_) {
+    CHECK(current_resource_->id);
     gfx::RectF uv_crop(gfx::SizeF(1, 1));
     if (!state_.basic_state.crop.IsEmpty()) {
       // The crop rectangle is a post-transformation rectangle. To get the UV
@@ -1606,7 +1778,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
       // pass them through the inverse of the buffer transformation.
       uv_crop = gfx::RectF(state_.basic_state.crop);
       gfx::Size transformed_buffer_size(ToTransformedSize(
-          current_resource_.size, state_.basic_state.buffer_transform));
+          current_resource_->size, state_.basic_state.buffer_transform));
       if (!transformed_buffer_size.IsEmpty()) {
         uv_crop.InvScale(transformed_buffer_size.width(),
                          transformed_buffer_size.height());
@@ -1620,113 +1792,66 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
     else if (current_resource_has_alpha_ && are_contents_opaque)
       background_color = SkColors::kBlack;  // Avoid writing alpha < 1
 
-    // If this surface is being replaced by a SurfaceId emit a SurfaceDrawQuad.
-    if (get_current_surface_id_) {
-      auto current_surface_id = get_current_surface_id_.Run();
-      // If the surface ID is valid update it, otherwise keep showing the old
-      // one for now.
-      if (current_surface_id.is_valid()) {
-        latest_embedded_surface_id_ = current_surface_id;
-        if (!current_surface_id.HasSameEmbedTokenAs(
-                first_embedded_surface_id_)) {
-          first_embedded_surface_id_ = current_surface_id;
-        }
+    if (state_.basic_state.alpha != 0.0f) {
+      // Our historical implementation of the wayland blending protocol is to
+      // treat blend none as fully opaque alpha and not simply "src". This allow
+      // us to treat client buffers as rgbx. For an example see b/305977429
+      const bool force_rgbx_for_opaque =
+          are_contents_opaque && current_resource_has_alpha_;
+      UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.TextureDrawQuad", true);
+      viz::SharedQuadState* quad_state =
+          render_pass->CreateAndAppendSharedQuadState();
+      quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
+                         quad_clip_rect, are_contents_opaque,
+                         state_.basic_state.alpha, SkBlendMode::kSrcOver,
+                         /*sorting_context=*/0,
+                         /*layer_id=*/0u, /*fast_rounded_corner=*/false);
+      viz::TextureDrawQuad* texture_quad =
+          render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
+      texture_quad->SetNew(
+          quad_state, quad_rect, quad_rect,
+          /* needs_blending=*/!are_contents_opaque, current_resource_->id,
+          uv_crop.origin(), uv_crop.bottom_right(), background_color,
+          /* nearest*/ false, state_.basic_state.only_visible_on_secure_output,
+          gfx::ProtectedVideoType::kClear);
+
+      if (force_rgbx_for_opaque) {
+        UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.ForceRGBAForOpaque", true);
+        texture_quad->set_force_rgbx();
       }
-      if (latest_embedded_surface_id_.is_valid() &&
-          !embedded_surface_size_.IsEmpty()) {
-        viz::SharedQuadState* quad_state =
-            render_pass->CreateAndAppendSharedQuadState();
-        quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
-                           quad_clip_rect, are_contents_opaque,
-                           state_.basic_state.alpha, SkBlendMode::kSrcOver, 0);
-        if (!state_.basic_state.crop.IsEmpty()) {
-          quad_state->clip_rect = gfx::ToEnclosedRect(output_rect);
-        }
-        viz::SurfaceDrawQuad* surface_quad =
-            render_pass->CreateAndAppendDrawQuad<viz::SurfaceDrawQuad>();
-        surface_quad->SetNew(quad_state, quad_rect, quad_rect,
-                             viz::SurfaceRange(first_embedded_surface_id_,
-                                               latest_embedded_surface_id_),
-                             background_color,
-                             /*stretch_content_to_fill_bounds=*/false);
+
+      CHECK_EQ(exo::OverlayPriority::REGULAR, state_.overlay_priority_hint);
+
+      if (state_.buffer.has_value() && state_.buffer->buffer() &&
+          ShouldDisableOverlay(state_.buffer->buffer()->GetFormat())) {
+        texture_quad->overlay_priority_hint = viz::OverlayPriority::kLow;
       }
-      // A resource was still produced for this so we still need to release it
-      // later.
-      frame->resource_list.push_back(current_resource_);
-    } else if (state_.basic_state.alpha != 0.0f) {
-      const viz::SharedQuadState* quad_state = AppendOrCreateSharedQuadState(
-          state_.basic_state.alpha, render_pass, quad_to_target_transform,
-          quad_rect, msk, quad_clip_rect, are_contents_opaque);
-
-      // Draw quad is only needed if buffer is not fully transparent.
-      const bool requires_texture_draw_quad =
-          state_.basic_state.only_visible_on_secure_output ||
-          state_.overlay_priority_hint != OverlayPriority::LOW;
-
-      if (requires_texture_draw_quad) {
-        viz::TextureDrawQuad* texture_quad =
-            render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
-        float vertex_opacity[4] = {1.0, 1.0, 1.0, 1.0};
-        texture_quad->SetNew(
-            quad_state, quad_rect, quad_rect,
-            /* needs_blending=*/!are_contents_opaque, current_resource_.id,
-            /* premultiplied*/ true, uv_crop.origin(), uv_crop.bottom_right(),
-            background_color, vertex_opacity,
-            /* flipped=*/false, /* nearest*/ false,
-            state_.basic_state.only_visible_on_secure_output,
-            gfx::ProtectedVideoType::kClear);
-        if (current_resource_.is_overlay_candidate)
-          texture_quad->set_resource_size_in_pixels(current_resource_.size);
-
-        switch (state_.overlay_priority_hint) {
-          case OverlayPriority::LOW:
-            texture_quad->overlay_priority_hint = viz::OverlayPriority::kLow;
-            break;
-          case OverlayPriority::REQUIRED:
-            texture_quad->overlay_priority_hint =
-                viz::OverlayPriority::kRequired;
-            break;
-          case OverlayPriority::REGULAR:
-            texture_quad->overlay_priority_hint =
-                viz::OverlayPriority::kRegular;
-            break;
-        }
 
 #if BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
-        if (state_.basic_state.only_visible_on_secure_output &&
-            state_.buffer.has_value() && state_.buffer->buffer() &&
-            state_.buffer->buffer()->NeedsHardwareProtection()) {
-          texture_quad->protected_video_type =
-              gfx::ProtectedVideoType::kHardwareProtected;
-        }
+      if (state_.basic_state.only_visible_on_secure_output &&
+          state_.buffer.has_value() && state_.buffer->buffer() &&
+          state_.buffer->buffer()->NeedsHardwareProtection()) {
+        UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.ProtectedVideoType", true);
+        texture_quad->protected_video_type =
+            gfx::ProtectedVideoType::kHardwareProtected;
+      }
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
 
-        if (!damage_rect.IsEmpty()) {
-          texture_quad->damage_rect = gfx::ToEnclosedRect(damage_rect);
-          render_pass->has_per_quad_damage = true;
-          // Clear handled damage so it will not be added to the |render_pass|.
-          damage_rect = gfx::RectF();
-        }
-      } else {
-        viz::TileDrawQuad* tile_quad =
-            render_pass->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
-        // TODO(crbug.com/1339335): Support AA quads coming from exo.
-        constexpr bool kForceAntiAliasingOff = true;
-        tile_quad->SetNew(
-            quad_state, quad_rect, quad_rect,
-            /* needs_blending=*/!are_contents_opaque, current_resource_.id,
-            gfx::ScaleRect(uv_crop, current_resource_.size.width(),
-                           current_resource_.size.height()),
-            current_resource_.size,
-            /* is_premultiplied=*/true,
-            /* nearest_neighbor */ false, kForceAntiAliasingOff);
-      }
-      frame->resource_list.push_back(current_resource_);
+      texture_quad->damage_rect = gfx::ToEnclosedRect(damage_rect_px);
+      render_pass->has_per_quad_damage = true;
+      // Clear handled damage so it will not be added to the |render_pass|.
+      damage_rect_px = gfx::RectF();
     }
-  } else {
-    const viz::SharedQuadState* quad_state = AppendOrCreateSharedQuadState(
-        state_.basic_state.alpha, render_pass, quad_to_target_transform,
-        quad_rect, msk, quad_clip_rect, are_contents_opaque);
+    frame->resource_list.push_back(*current_resource_);
+  } else if (state_.basic_state.alpha != 0.0f) {
+    UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.SolidColorDrawQuad", true);
+    viz::SharedQuadState* quad_state =
+        render_pass->CreateAndAppendSharedQuadState();
+    quad_state->SetAll(quad_to_target_transform, quad_rect, quad_rect, msk,
+                       quad_clip_rect, are_contents_opaque,
+                       state_.basic_state.alpha, SkBlendMode::kSrcOver,
+                       /*sorting_context=*/0,
+                       /*layer_id=*/0u, /*fast_rounded_corner=*/false);
     SkColor4f color = state_.buffer.has_value() && state_.buffer->buffer()
                           ? state_.buffer->buffer()->GetColor()
                           : SkColors::kBlack;
@@ -1736,7 +1861,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& origin,
                        false /* force_anti_aliasing_off */);
   }
 
-  render_pass->damage_rect.Union(gfx::ToEnclosedRect(damage_rect));
+  render_pass->damage_rect.Union(gfx::ToEnclosedRect(damage_rect_px));
 }
 
 void Surface::UpdateContentSize() {
@@ -1765,33 +1890,47 @@ void Surface::UpdateContentSize() {
     // Check that a window has a parent before showing it.
     // For example, aura::Window associated with augmented subsurfaces don't
     // have parents, because they are not part of the tree.
-    if (window_->parent()) {
+    if (!is_augmented() && window_->parent()) {
       window_->Show();
     }
-  } else {
+  } else if (!is_augmented()) {
     window_->Hide();
   }
 
   if (content_size_ != content_size) {
+    // Save this to later expand the damage area.
+    if (!is_augmented()) {
+      if (extended_damage_dp_.has_value()) {
+        extended_damage_dp_->Union(gfx::RectF(content_size_));
+      } else {
+        extended_damage_dp_.emplace(gfx::RectF(content_size_));
+      }
+    }
     content_size_ = content_size;
     // TODO(b/191414141) : Check is temporary to isolate damage issue.
     if (!gfx::ToRoundedSize(content_size_).GetCheckedArea().IsValid()) {
       DCHECK(false) << " content_size_=" << content_size_.ToString();
       constexpr int kMaxSizeScalar = 1 << 15;
-      // Forceably restrict |content_size_| to 32kx32k.
+      // Forcibly restrict |content_size_| to 32kx32k.
       content_size_.SetToMin(gfx::SizeF(kMaxSizeScalar, kMaxSizeScalar));
     }
-    window_->SetBounds(gfx::Rect(window_->bounds().origin(),
-                                 gfx::ToCeiledSize(content_size_)));
-
-    for (SurfaceObserver& observer : observers_)
-      observer.OnContentSizeChanged(this);
+    if (!is_augmented()) {
+      window_->SetBounds(gfx::Rect(window_->bounds().origin(),
+                                   gfx::ToCeiledSize(content_size_)));
+    }
   }
 }
 
 void Surface::SetFrameLocked(bool lock) {
   for (SurfaceObserver& observer : observers_)
     observer.OnFrameLockingChanged(this, lock);
+}
+
+void Surface::OnScaleFactorChanged(float old_scale_factor,
+                                   float new_scale_factor) {
+  for (SurfaceObserver& observer : observers_) {
+    observer.OnScaleFactorChanged(this, old_scale_factor, new_scale_factor);
+  }
 }
 
 void Surface::OnWindowOcclusionChanged(
@@ -1818,7 +1957,7 @@ void Surface::OnDeskChanged(int state) {
     observer.OnDeskChanged(this, state);
 }
 
-void Surface::OnTooltipShown(const std::u16string& text,
+void Surface::OnTooltipShown(std::u16string_view text,
                              const gfx::Rect& bounds) {
   for (SurfaceObserver& observer : observers_)
     observer.OnTooltipShown(this, text, bounds);
@@ -1885,7 +2024,7 @@ void Surface::SetClientAccessibilityId(int id) {
   if (id >= 0) {
     exo::SetShellClientAccessibilityId(window_.get(), id);
   } else {
-    exo::SetShellClientAccessibilityId(window_.get(), absl::nullopt);
+    exo::SetShellClientAccessibilityId(window_.get(), std::nullopt);
   }
 }
 
@@ -1909,6 +2048,35 @@ Buffer* Surface::GetBuffer() {
     return state_.buffer->buffer().get();
   }
   return nullptr;
+}
+
+std::string Surface::DumpDebugInfo() const {
+  bool has_buffer = state_.buffer.has_value() &&
+                    state_.buffer->buffer().get() &&
+                    state_.buffer->buffer()->GetBufferId();
+
+  auto blend_mode_str = [](SkBlendMode mode) -> std::string {
+    switch (mode) {
+      case SkBlendMode::kSrc:
+        return " kSrc";
+      case SkBlendMode::kSrcOver:
+        return " kSrcOver";
+      default:
+        NOTREACHED();
+    }
+  };
+
+  return "content-size=" + content_size_.ToString() +
+         (current_resource_has_alpha_ ? std::string(" has_alpha") : "") +
+         blend_mode_str(state_.basic_state.blend_mode) +
+         +" opaque-region=" + state_.basic_state.opaque_region.ToString() +
+         " " +
+         (has_buffer
+              ? (std::string("format=") +
+
+                 state_.buffer->buffer()->GetFormat().ToString() +
+                 (state_.buffer->buffer()->GetFormat().HasAlpha() ? "(a)" : ""))
+              : "");
 }
 
 }  // namespace exo

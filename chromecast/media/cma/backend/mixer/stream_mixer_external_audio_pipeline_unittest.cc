@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -21,6 +26,7 @@
 #include "chromecast/public/media/external_audio_pipeline_shlib.h"
 #include "chromecast/public/media/mixer_output_stream.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 

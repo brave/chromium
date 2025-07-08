@@ -11,18 +11,13 @@ import org.chromium.chrome.test.pagecontroller.utils.Ui2Locators;
 import org.chromium.chrome.test.pagecontroller.utils.UiAutomatorUtils;
 import org.chromium.chrome.test.pagecontroller.utils.UiLocatorHelper;
 
-/**
- * FirstRunNavigator is used to Navigate through FRE page.
- */
+/** FirstRunNavigator is used to Navigate through FRE page. */
 public class FirstRunNavigator {
     public static final String TAG = "FirstRunNavigator";
 
     public FirstRunNavigator() {}
 
     public void navigateThroughFRE() {
-        // Used in SyncConsentFirstRunFragment FRE page.
-        IUi2Locator noAddAccountButton = Ui2Locators.withAnyResEntry(R.id.negative_button);
-
         // Used in SigninFirstRunFragment FRE page.
         IUi2Locator signinSkipButton = Ui2Locators.withAnyResEntry(R.id.signin_fre_dismiss_button);
         IUi2Locator signinContinueButton =
@@ -45,15 +40,15 @@ public class FirstRunNavigator {
         UiLocatorHelper uiLocatorHelper = UiAutomatorUtils.getInstance().getLocatorHelper();
 
         // These locators show up in one FRE page or another
-        IUi2Locator[] frePageDetectors = new IUi2Locator[] {
-                playServicesUpdateText,
-                signinSkipButton,
-                signinContinueButton,
-                signinProgressSpinner,
-                noAddAccountButton,
-                defaultSearchEngineNextButton,
-                urlBar,
-        };
+        IUi2Locator[] frePageDetectors =
+                new IUi2Locator[] {
+                    playServicesUpdateText,
+                    signinSkipButton,
+                    signinContinueButton,
+                    signinProgressSpinner,
+                    defaultSearchEngineNextButton,
+                    urlBar,
+                };
 
         // Manually go through FRE.
         while (true) {
@@ -75,10 +70,6 @@ public class FirstRunNavigator {
                 } else {
                     Log.i(TAG, "Ignoring Play Services toast");
                 }
-            } else if (uiLocatorHelper.isOnScreen(noAddAccountButton)) {
-                // Do not add an account.
-                Log.i(TAG, "Clicking through add account dialog");
-                UiAutomatorUtils.getInstance().click(noAddAccountButton);
             } else if (uiLocatorHelper.isOnScreen(signinSkipButton)) {
                 // Do not sign in with an account.
                 Log.i(TAG, "Clicking through sign in dialog via \"skip\"");

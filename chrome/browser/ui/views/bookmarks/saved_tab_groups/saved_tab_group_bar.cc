@@ -6,23 +6,35 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include "base/functional/bind.h"
+#include "base/metrics/user_metrics.h"
+#include "base/types/to_address.h"
 #include "base/uuid.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_button.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_drag_data.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_overflow_button.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/saved_tab_groups/saved_tab_group_tab.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/feature_engagement/public/feature_list.h"
+#include "components/saved_tab_groups/public/features.h"
+#include "components/saved_tab_groups/public/saved_tab_group_tab.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
+#include "components/saved_tab_groups/public/types.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -31,6 +43,7 @@
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/dialog_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/compositor/layer_tree_owner.h"
@@ -39,6 +52,8 @@
 #include "ui/gfx/geometry/insets_outsets_base.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/border.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/layout/box_layout.h"
@@ -46,193 +61,77 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
 
+namespace tab_groups {
 namespace {
-// The maximum number of buttons (excluding the overflow menu button) that can
-// appear in the SavedTabGroupBar.
-constexpr int kMaxVisibleButtons = 4;
-// The amount of padding between elements listed in the overflow menu.
-const int kOverflowMenuButtonPadding = 8;
+
 // The padding at the top and bottom of the bar used to center all displayed
 // buttons.
 constexpr int kButtonPadding = 4;
-// The amount of padding between buttons in the view.
-constexpr int kBetweenElementSpacing = 8;
 // The thickness, in dips, of the drop indicators during drop sessions.
 constexpr int kDropIndicatorThicknessDips = 2;
 
-SavedTabGroupModel* GetSavedTabGroupModelFromBrowser(Browser* browser) {
-  DCHECK(browser);
-  SavedTabGroupKeyedService* keyed_service =
-      SavedTabGroupServiceFactory::GetForProfile(browser->profile());
-  return keyed_service ? keyed_service->model() : nullptr;
-}
 }  // namespace
 
-// OverflowMenu generally handles drop sessions by delegating to `parent_bar_`.
-// Important lifecycle note: when the drop session moves from the bar to the
-// overflow menu or vice versa, the state for tracking it in the bar will be
-// destroyed and recreated.
-class SavedTabGroupBar::OverflowMenu : public views::View {
- public:
-  explicit OverflowMenu(SavedTabGroupBar& parent_bar)
-      : parent_bar_(parent_bar) {}
-
-  ~OverflowMenu() override = default;
-
-  bool GetDropFormats(
-      int* formats,
-      std::set<ui::ClipboardFormatType>* format_types) override {
-    return parent_bar_->GetDropFormats(formats, format_types);
-  }
-
-  bool AreDropTypesRequired() override {
-    return parent_bar_->AreDropTypesRequired();
-  }
-
-  bool CanDrop(const OSExchangeData& data) override {
-    return parent_bar_->CanDrop(data);
-  }
-
-  void OnDragEntered(const ui::DropTargetEvent& event) override {
-    parent_bar_->OnDragEntered(event);
-  }
-
-  int OnDragUpdated(const ui::DropTargetEvent& event) override {
-    // Convert the event location into `parent_bar_`'s coordinate space.
-    const gfx::Point screen_loc = ConvertPointToScreen(this, event.location());
-    const gfx::Point bar_loc =
-        ConvertPointFromScreen(base::to_address(parent_bar_), screen_loc);
-    ui::DropTargetEvent event_copy(event);
-    event_copy.set_location(bar_loc);
-
-    return parent_bar_->OnDragUpdated(event_copy);
-  }
-
-  void OnDragExited() override { parent_bar_->OnDragExited(); }
-
-  void OnDragDone() override { parent_bar_->OnDragDone(); }
-
-  views::View::DropCallback GetDropCallback(
-      const ui::DropTargetEvent& event) override {
-    return parent_bar_->GetDropCallback(event);
-  }
-
-  void OnPaint(gfx::Canvas* canvas) override {
-    views::View::OnPaint(canvas);
-
-    MaybePaintDropIndicatorInOverflow(canvas);
-  }
-
-  void MaybePaintDropIndicatorInOverflow(gfx::Canvas* canvas) {
-    const absl::optional<int> overflow_menu_indicator_index =
-        CalculateDropIndicatorIndexInOverflow();
-    if (!overflow_menu_indicator_index.has_value()) {
-      return;
-    }
-
-    const int y = overflow_menu_indicator_index.value() > 0
-                      ? children()[overflow_menu_indicator_index.value() - 1]
-                                ->bounds()
-                                .bottom() +
-                            kOverflowMenuButtonPadding / 2
-                      : kDropIndicatorThicknessDips / 2;
-
-    const gfx::Rect drop_indicator_bounds =
-        gfx::Rect(0, y - kDropIndicatorThicknessDips / 2, width(),
-                  kDropIndicatorThicknessDips);
-    canvas->FillRect(drop_indicator_bounds,
-                     GetColorProvider()->GetColor(kColorBookmarkBarForeground));
-  }
-
-  // Returns the index within the overflow menu the drop indicator should be
-  // painted at, or nullopt if no indicator should be painted.
-  absl::optional<int> CalculateDropIndicatorIndexInOverflow() {
-    const absl::optional<int> indicator_index =
-        parent_bar_->CalculateDropIndicatorIndexInCombinedSpace();
-    if (!indicator_index.has_value()) {
-      return absl::nullopt;
-    }
-
-    const int overflow_menu_indicator_index =
-        indicator_index.value() - kMaxVisibleButtons;
-    if (overflow_menu_indicator_index < 0) {
-      // The drop index is not in the overflow menu. No drop indicator.
-      return absl::nullopt;
-    }
-
-    const bool came_from_bar = parent_bar_->saved_tab_group_model_
-                                   ->GetIndexOf(parent_bar_->drag_data_->guid())
-                                   .value() < kMaxVisibleButtons;
-    if (overflow_menu_indicator_index == 0 && came_from_bar) {
-      // The drop index is on the border between the overflow menu and the bar,
-      // and because the group came from the bar, it will stay in the bar.
-      return absl::nullopt;
-    }
-
-    return overflow_menu_indicator_index;
-  }
-
- private:
-  // The SavedTabGroupBar that this menu is associated with.
-  raw_ref<SavedTabGroupBar> parent_bar_;
-};
-
-// TODO(crbug/1372008): Prevent `SavedTabGroupBar` from instantiating if the
-// corresponding feature flag is disabled.
 SavedTabGroupBar::SavedTabGroupBar(Browser* browser,
-                                   SavedTabGroupModel* saved_tab_group_model,
-                                   bool animations_enabled = true)
-    : saved_tab_group_model_(saved_tab_group_model),
+                                   TabGroupSyncService* tab_group_service,
+                                   bool animations_enabled)
+    : tab_group_service_(tab_group_service),
       browser_(browser),
       animations_enabled_(animations_enabled) {
-  SetAccessibilityProperties(
-      ax::mojom::Role::kToolbar,
-      /*name=*/l10n_util::GetStringUTF16(IDS_ACCNAME_SAVED_TAB_GROUPS));
+  DCHECK(browser_);
+  DCHECK(tab_group_service);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(IDS_ACCNAME_SAVED_TAB_GROUPS));
 
   SetProperty(views::kElementIdentifierKey, kSavedTabGroupBarElementId);
 
-  // TODO(dljames): Add a container view which only houses the saved buttons.
-  // The overflow will continue to be directly added to the bar.
-  std::unique_ptr<views::LayoutManager> layout_manager =
-      std::make_unique<views::BoxLayout>(
-          views::BoxLayout::Orientation::kHorizontal,
-          gfx::Insets::VH(kButtonPadding, 0), kBetweenElementSpacing);
-  SetLayoutManager(std::move(layout_manager));
+  // Removed the insets for vertical padding from the layout manager.
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
+      kBetweenElementSpacing));
 
-  if (!saved_tab_group_model_) {
-    return;
-  }
+  overflow_button_ = AddChildView(CreateOverflowButton());
 
-  saved_tab_group_model_->AddObserver(this);
-
-  overflow_button_ = AddChildView(
-      std::make_unique<SavedTabGroupOverflowButton>(base::BindRepeating(
-          &SavedTabGroupBar::MaybeShowOverflowMenu, base::Unretained(this))));
-
-  HideOverflowButton();
-  LoadAllButtonsFromModel();
-  ReorderChildView(overflow_button_, children().size());
+  // When registering an observer, the TabGroupServiceImpl calls OnInitialized
+  // if it's already prepared to take input.
+  tab_group_service_->AddObserver(this);
 }
 
-SavedTabGroupBar::SavedTabGroupBar(Browser* browser,
-                                   bool animations_enabled = true)
+SavedTabGroupBar::SavedTabGroupBar(Browser* browser, bool animations_enabled)
     : SavedTabGroupBar(browser,
-                       GetSavedTabGroupModelFromBrowser(browser),
+                       tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+                           browser->profile()),
                        animations_enabled) {}
 
 SavedTabGroupBar::~SavedTabGroupBar() {
-  // Remove all buttons from the hierarchy
-  RemoveAllButtons();
-
-  if (saved_tab_group_model_) {
-    saved_tab_group_model_->RemoveObserver(this);
-  }
+  tab_group_service_->RemoveObserver(this);
 }
 
-void SavedTabGroupBar::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kToolbar;
-  node_data->SetNameChecked(
-      l10n_util::GetStringUTF16(IDS_ACCNAME_SAVED_TAB_GROUPS));
+void SavedTabGroupBar::ShowEverythingMenu() {
+  base::RecordAction(base::UserMetricsAction(
+      "TabGroups_SavedTabGroups_EverythingButtonPressed"));
+  if (everything_menu_ && everything_menu_->IsShowing()) {
+    return;
+  }
+
+  everything_menu_ = std::make_unique<STGEverythingMenu>(
+      overflow_button_->button_controller(), browser_);
+  everything_menu_->RunMenu();
+}
+
+std::optional<size_t> SavedTabGroupBar::GetIndexOfGroup(
+    const base::Uuid& guid) const {
+  std::vector<SavedTabGroup> groups = tab_group_service_->GetAllGroups();
+  auto it = std::ranges::find_if(groups, [&](const SavedTabGroup& group) {
+    return group.saved_guid() == guid;
+  });
+
+  if (it == groups.end()) {
+    return std::nullopt;
+  }
+
+  return std::distance(groups.begin(), it);
 }
 
 void SavedTabGroupBar::UpdateDropIndex() {
@@ -266,26 +165,10 @@ void SavedTabGroupBar::UpdateDropIndex() {
     return i;
   };
 
-  const absl::optional<size_t> current_index =
-      saved_tab_group_model_->GetIndexOf(dragged_group_guid);
+  const std::optional<size_t> current_index =
+      GetIndexOfGroup(dragged_group_guid);
 
-  absl::optional<size_t> drop_index = absl::nullopt;
-  if (overflow_menu_) {
-    // `cursor_location` is in mirrored coordinates (i.e. origin in the top
-    // right in RTL); ConvertPointFromScreen assumes unmirrored coordinates
-    // (i.e. origin in the top left in RTL).
-    const gfx::Point unmirrored_loc(GetMirroredXInView(cursor_location.x()),
-                                    cursor_location.y());
-    const gfx::Point overflow_menu_cursor_loc = ConvertPointFromScreen(
-        overflow_menu_, ConvertPointToScreen(this, unmirrored_loc));
-    // Re-mirroring is unnecessary, because we only care about y-coordinates
-    // after Contains (which wouldn't be affected by re-mirroring anyways).
-    if (overflow_menu_->bounds().Contains(overflow_menu_cursor_loc)) {
-      drop_index = get_drop_index(overflow_menu_, overflow_menu_cursor_loc,
-                                  /* vertical= */ true) +
-                   kMaxVisibleButtons;
-    }
-  }
+  std::optional<size_t> drop_index = std::nullopt;
 
   if (!drop_index.has_value()) {
     drop_index = get_drop_index(this, cursor_location, false);
@@ -299,29 +182,25 @@ void SavedTabGroupBar::UpdateDropIndex() {
     drop_index = drop_index.value() - 1;
   }
 
-  CHECK_LT(drop_index.value(),
-           saved_tab_group_model_->saved_tab_groups().size());
+  CHECK_LT(drop_index.value(), tab_group_service_->GetAllGroups().size());
   drag_data_->SetInsertionIndex(drop_index);
   SchedulePaint();
-  if (overflow_menu_) {
-    overflow_menu_->SchedulePaint();
-  }
 }
 
-absl::optional<size_t> SavedTabGroupBar::GetDropIndex() const {
+std::optional<size_t> SavedTabGroupBar::GetDropIndex() const {
   if (!drag_data_ || !drag_data_->insertion_index()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   CHECK_LT(drag_data_->insertion_index().value(),
-           saved_tab_group_model_->saved_tab_groups().size());
+           tab_group_service_->GetAllGroups().size());
   return drag_data_->insertion_index();
 }
 
 void SavedTabGroupBar::HandleDrop() {
-  saved_tab_group_model_->ReorderGroupLocally(drag_data_->guid(),
-                                              GetDropIndex().value());
-  drag_data_.release();
+  tab_group_service_->UpdateGroupPosition(drag_data_->guid(), std::nullopt,
+                                          GetDropIndex().value());
+  drag_data_.reset();
   SchedulePaint();
 }
 
@@ -337,12 +216,17 @@ bool SavedTabGroupBar::AreDropTypesRequired() {
 }
 
 bool SavedTabGroupBar::CanDrop(const OSExchangeData& data) {
-  // TODO(tbergquist): prevent cross-profile drops.
-  return data.HasCustomFormat(SavedTabGroupDragData::GetFormatType());
+  std::optional<SavedTabGroupDragData> drag_data =
+      SavedTabGroupDragData::ReadFromOSExchangeData(&data);
+  if (!drag_data.has_value()) {
+    return false;
+  }
+
+  return tab_group_service_->GetGroup(drag_data.value().guid()).has_value();
 }
 
 void SavedTabGroupBar::OnDragEntered(const ui::DropTargetEvent& event) {
-  absl::optional<SavedTabGroupDragData> drag_data =
+  std::optional<SavedTabGroupDragData> drag_data =
       SavedTabGroupDragData::ReadFromOSExchangeData(&(event.data()));
   CHECK(drag_data.has_value());
 
@@ -362,27 +246,11 @@ int SavedTabGroupBar::OnDragUpdated(const ui::DropTargetEvent& event) {
   drag_data_->SetLocation(gfx::Point(mirrored_x, event.location().y()));
   UpdateDropIndex();
 
-  const bool dragging_over_button =
-      overflow_button_->GetVisible() &&
-      mirrored_x >= overflow_button_->bounds().x();
-  const bool would_drop_into_overflow =
-      GetDropIndex() >= static_cast<size_t>(kMaxVisibleButtons);
-
-  if (dragging_over_button || would_drop_into_overflow) {
-    MaybeShowOverflowMenu();
-  }
-
   return ui::DragDropTypes::DRAG_MOVE;
 }
 
 void SavedTabGroupBar::OnDragExited() {
-  drag_data_.release();
-  SchedulePaint();
-}
-
-void SavedTabGroupBar::OnDragDone() {
-  drag_data_.release();
-  HideOverflowMenu();
+  drag_data_.reset();
   SchedulePaint();
 }
 
@@ -404,237 +272,225 @@ void SavedTabGroupBar::OnPaint(gfx::Canvas* canvas) {
   MaybePaintDropIndicatorInBar(canvas);
 }
 
-void SavedTabGroupBar::SavedTabGroupAddedLocally(const base::Uuid& guid) {
-  SavedTabGroupAdded(guid);
+void SavedTabGroupBar::OnInitialized() {
+  RemoveAllChildViews();
+  overflow_button_ = AddChildView(CreateOverflowButton());
+  LoadAllButtonsFromModel();
+  InvalidateLayout();
 }
 
-void SavedTabGroupBar::SavedTabGroupRemovedLocally(
-    const SavedTabGroup* removed_group) {
-  SavedTabGroupRemoved(removed_group->saved_guid());
+void SavedTabGroupBar::OnTabGroupAdded(const SavedTabGroup& group,
+                                       TriggerSource source) {
+  UpsertSavedTabGroupButton(group.saved_guid());
 }
 
-void SavedTabGroupBar::SavedTabGroupLocalIdChanged(
-    const base::Uuid& saved_group_id) {
-  SavedTabGroupUpdated(saved_group_id);
+void SavedTabGroupBar::OnTabGroupUpdated(const SavedTabGroup& group,
+                                         TriggerSource source) {
+  UpsertSavedTabGroupButton(group.saved_guid());
 }
 
-void SavedTabGroupBar::SavedTabGroupUpdatedLocally(
-    const base::Uuid& group_guid,
-    const absl::optional<base::Uuid>& tab_guid) {
-  SavedTabGroupUpdated(group_guid);
+void SavedTabGroupBar::OnTabGroupLocalIdChanged(
+    const base::Uuid& sync_id,
+    const std::optional<LocalTabGroupID>& local_id) {
+  UpsertSavedTabGroupButton(sync_id);
+  MaybeShowClosePromo(sync_id);
 }
 
-void SavedTabGroupBar::SavedTabGroupReorderedLocally() {
+void SavedTabGroupBar::OnTabGroupRemoved(const base::Uuid& sync_id,
+                                         TriggerSource source) {
+  SavedTabGroupRemoved(sync_id);
+}
+
+void SavedTabGroupBar::OnTabGroupMigrated(const SavedTabGroup& new_group,
+                                          const base::Uuid& old_sync_id,
+                                          TriggerSource source) {
+  SavedTabGroupRemoved(old_sync_id);
+  UpsertSavedTabGroupButton(new_group.saved_guid());
+}
+
+void SavedTabGroupBar::OnTabGroupsReordered(TriggerSource source) {
   SavedTabGroupReordered();
-}
-
-void SavedTabGroupBar::SavedTabGroupReorderedFromSync() {
-  SavedTabGroupReordered();
-}
-
-void SavedTabGroupBar::SavedTabGroupTabsReorderedLocally(
-    const base::Uuid& group_guid) {
-  SavedTabGroupUpdated(group_guid);
-}
-
-void SavedTabGroupBar::SavedTabGroupAddedFromSync(const base::Uuid& guid) {
-  SavedTabGroupAdded(guid);
-}
-
-void SavedTabGroupBar::SavedTabGroupRemovedFromSync(
-    const SavedTabGroup* removed_group) {
-  SavedTabGroupRemoved(removed_group->saved_guid());
-}
-
-void SavedTabGroupBar::SavedTabGroupUpdatedFromSync(
-    const base::Uuid& group_guid,
-    const absl::optional<base::Uuid>& tab_guid) {
-  SavedTabGroupUpdated(group_guid);
 }
 
 void SavedTabGroupBar::OnWidgetDestroying(views::Widget* widget) {
   widget_observation_.Reset();
-  overflow_menu_ = nullptr;
   bubble_delegate_ = nullptr;
 }
 
-int SavedTabGroupBar::CalculatePreferredWidthRestrictedBy(int max_x) {
-  // Happens when the browser is in incognito mode.
-  // TODO(crbug/1467894): Only add SavedTabGroupBar with regular profiles.
-  if (children().empty()) {
+void SavedTabGroupBar::Layout(PassKey) {
+  LayoutSuperclass<views::View>(this);
+  // If the everything_menu_button_ doesnt exist yet, then there's nothing to
+  // layout yet.
+  if (!overflow_button_) {
+    return;
+  }
+
+  const int stg_bar_width = width();
+  bool should_show_overflow = ShouldShowOverflowButtonForWidth(stg_bar_width);
+  const int overflow_button_width =
+      should_show_overflow ? overflow_button_->GetPreferredSize().width() +
+                                 kBetweenElementSpacing
+                           : 0;
+
+  const int last_visible_button_index = CalculateLastVisibleButtonIndexForWidth(
+      stg_bar_width - overflow_button_width);
+  UpdateButtonVisibilities(should_show_overflow, last_visible_button_index);
+}
+
+int SavedTabGroupBar::CalculatePreferredWidthRestrictedBy(int max_width) const {
+  // If the everything_menu_button_ doesnt exist yet, then there's nothing to
+  // layout yet.
+  if (!overflow_button_) {
+    return 0;
+  }
+  // For V2, the preferred width of Saved tab groups bar depends on the number
+  // of pinned tab groups (pinned state is WIP) in bookmark bar (plus Everything
+  // button);
+  // TODO(crbug.com/329659664): Refactor this method once pinned state is done
+  // and add tests.
+
+  // Everything button always shows for V2.
+  int width =
+      overflow_button_->GetPreferredSize().width() + kBetweenElementSpacing;
+  max_width -= width;
+  if (max_width < 0) {
     return 0;
   }
 
-  // Remove extra padding from the last button in the following loop if there is
-  // a button visible. children() is never empty because the overflow button is
-  // always added even when there are no groups.
-  int current_x = children()[0]->GetVisible() ? -kBetweenElementSpacing : 0;
-
-  // Calculate the amount of space that the SavedTabGroupBar can utilize
-  // restricted by `max_x`.
-  for (auto* button : children()) {
-    gfx::Size preferred_size = button->GetPreferredSize();
-    int next_x = current_x + (button->GetVisible() ? preferred_size.width() +
-                                                         kBetweenElementSpacing
-                                                   : 0);
-    if (next_x > max_x) {
-      return current_x;
-    }
-    current_x = next_x;
+  // Add all the visible buttons width to result.
+  const int last_visible_button_index =
+      CalculateLastVisibleButtonIndexForWidth(max_width);
+  for (int i = 0; i <= last_visible_button_index; ++i) {
+    width += children()[i]->GetPreferredSize().width() + kBetweenElementSpacing;
   }
+  return width;
+}
 
-  return current_x;
+bool SavedTabGroupBar::IsOverflowButtonVisible() const {
+  return overflow_button_ && overflow_button_->GetVisible();
 }
 
 void SavedTabGroupBar::AddTabGroupButton(const SavedTabGroup& group,
                                          int index) {
-  // Check that the index is valid for buttons
-  DCHECK_LE(index, static_cast<int>(children().size()));
+  // Do not add unpinned tab group for v2.
+  if (!group.is_pinned()) {
+    return;
+  }
 
-  // TODO dpenning: Find the open tab group in one of the browser linked to the
-  // profile of the SavedTabGroupModel. if there is one then set the highlight
-  // for the button.
-  AddChildViewAt(
+  // Ensure the button is placed within the bounds of children(). The last
+  // button is always reserved for the everything / overflow menu.
+  int num_buttons = static_cast<int>(children().size());
+  int clamped_index =
+      index < num_buttons ? index : std::max(0, num_buttons - 1);
+  views::View* view = AddChildViewAt(
       std::make_unique<SavedTabGroupButton>(
           group,
-          base::BindRepeating(&SavedTabGroupBar::page_navigator,
-                              base::Unretained(this)),
           base::BindRepeating(&SavedTabGroupBar::OnTabGroupButtonPressed,
                               base::Unretained(this), group.saved_guid()),
           browser_, animations_enabled_),
-      index);
-
-  if (children().size() > (kMaxVisibleButtons + 1)) {
-    // Only 4 buttons + the overflow button can be visible at a time. Hide any
-    // additional buttons.
-    if (!overflow_button_->GetVisible()) {
-      ShowOverflowButton();
-    }
-
-    auto* button = children()[index];
-    button->SetVisible(false);
-  } else if (overflow_button_->GetVisible()) {
-    HideOverflowButton();
+      clamped_index);
+  view->SetProperty(views::kMarginsKey, gfx::Insets::VH(kButtonPadding, 0));
+  if (group.saved_tabs().size() == 0) {
+    view->SetVisible(false);
   }
 }
 
 void SavedTabGroupBar::SavedTabGroupAdded(const base::Uuid& guid) {
-  absl::optional<int> index = saved_tab_group_model_->GetIndexOf(guid);
-  if (!index.has_value()) {
-    return;
-  }
-  AddTabGroupButton(*saved_tab_group_model_->Get(guid), index.value());
-
-  HideOverflowMenu();
-  PreferredSizeChanged();
+  UpsertSavedTabGroupButton(guid);
 }
 
 void SavedTabGroupBar::SavedTabGroupRemoved(const base::Uuid& guid) {
   RemoveTabGroupButton(guid);
 
-  HideOverflowMenu();
-  PreferredSizeChanged();
+  InvalidateLayout();
 }
 
-void SavedTabGroupBar::SavedTabGroupUpdated(const base::Uuid& guid) {
-  absl::optional<int> index = saved_tab_group_model_->GetIndexOf(guid);
+void SavedTabGroupBar::UpsertSavedTabGroupButton(const base::Uuid& guid) {
+  std::optional<int> index = GetIndexOfGroup(guid);
   if (!index.has_value()) {
     return;
   }
-  const SavedTabGroup* group = saved_tab_group_model_->Get(guid);
+
+  const std::optional<SavedTabGroup> group = tab_group_service_->GetGroup(guid);
+  CHECK(group.has_value());
   SavedTabGroupButton* button =
       views::AsViewClass<SavedTabGroupButton>(GetButton(group->saved_guid()));
-  DCHECK(button);
 
-  button->UpdateButtonData(*group);
+  bool currently_has_a_button = button != nullptr;
+  bool should_have_a_button =
+      group->is_pinned() && !group->saved_tabs().empty();
 
-  // Hide the button if it should not be visible.
-  if (index.value() >= kMaxVisibleButtons &&
-      children().size() >= (kMaxVisibleButtons + 1)) {
-    button->SetVisible(false);
-  } else {
-    button->SetSize(button->GetPreferredSize());
-    button->SetVisible(true);
+  if (currently_has_a_button && should_have_a_button) {
+    button->UpdateButtonData(group.value());
+  } else if (!currently_has_a_button && should_have_a_button) {
+    AddTabGroupButton(group.value(), 0);
+  } else if (currently_has_a_button && !should_have_a_button) {
+    RemoveChildViewT(button);
   }
 
-  if (button->GetVisible()) {
-    PreferredSizeChanged();
-  }
-
-  HideOverflowMenu();
-  SchedulePaint();
+  SavedTabGroupReordered();
 }
 
 void SavedTabGroupBar::SavedTabGroupReordered() {
-  // Selection sort the buttons to match the model's order.
-  std::unordered_map<std::string, SavedTabGroupButton*> buttons_by_guid;
+  std::unordered_map<base::Uuid, SavedTabGroupButton*, base::UuidHash>
+      buttons_by_guid;
   for (views::View* child : children()) {
     SavedTabGroupButton* button =
         views::AsViewClass<SavedTabGroupButton>(child);
     if (button) {
-      buttons_by_guid[button->guid().AsLowercaseString()] = button;
+      buttons_by_guid[button->guid()] = button;
     }
   }
 
-  int i = 0;
-  for (SavedTabGroup group : saved_tab_group_model_->saved_tab_groups()) {
-    views::View* const button =
-        buttons_by_guid[group.saved_guid().AsLowercaseString()];
-    ReorderChildView(button, i);
-    button->SetVisible(i < kMaxVisibleButtons);
+  // Assuming ReadAllGroups should return the groups in the correct order.
+  const std::vector<const SavedTabGroup*> groups =
+      tab_group_service_->ReadAllGroups();
+  for (size_t i = 0; i < groups.size(); ++i) {
+    const base::Uuid& guid = groups[i]->saved_guid();
 
-    i++;
+    if (base::Contains(buttons_by_guid, guid)) {
+      views::View* const button = buttons_by_guid[guid];
+      ReorderChildView(button, i);
+    }
   }
 
-  // Ensure the overflow button is the last button in the view hierarchy.
-  ReorderChildView(overflow_button_, children().size());
+  if (overflow_button_) {
+    // Ensure the overflow button is the last button in the view hierarchy.
+    ReorderChildView(overflow_button_, children().size());
+  }
 
-  HideOverflowMenu();
-  PreferredSizeChanged();
+  InvalidateLayout();
 }
 
 void SavedTabGroupBar::LoadAllButtonsFromModel() {
-  const std::vector<SavedTabGroup>& saved_tab_groups =
-      saved_tab_group_model_->saved_tab_groups();
+  const std::vector<const SavedTabGroup*> groups =
+      tab_group_service_->ReadAllGroups();
 
-  for (size_t index = 0; index < saved_tab_groups.size(); index++)
-    AddTabGroupButton(saved_tab_groups[index], index);
+  for (size_t index = 0; index < groups.size(); index++) {
+    AddTabGroupButton(*groups[index], index);
+  }
 }
 
 void SavedTabGroupBar::RemoveTabGroupButton(const base::Uuid& guid) {
   // Make sure we have a valid button before trying to remove it.
   views::View* button = GetButton(guid);
-  const bool visible_button_removed = button->GetVisible();
-
-  DCHECK(button);
-  RemoveChildViewT(button);
-
-  // If a visible button was removed set the next button to be visible.
-  if (children().size() >= (kMaxVisibleButtons + 1)) {
-    if (visible_button_removed) {
-      auto* invisible_button = children()[3];
-      invisible_button->SetSize(invisible_button->GetPreferredSize());
-      invisible_button->SetVisible(true);
-      PreferredSizeChanged();
-    }
-
-    if (children().size() == (kMaxVisibleButtons + 1)) {
-      HideOverflowButton();
-      PreferredSizeChanged();
-    }
+  if (button) {
+    RemoveChildViewT(button);
   }
 }
 
 void SavedTabGroupBar::RemoveAllButtons() {
-  for (int index = children().size() - 1; index >= 0; index--)
+  for (int index = children().size() - 1; index >= 0; index--) {
     RemoveChildViewT(children().at(index));
+  }
 }
 
 views::View* SavedTabGroupBar::GetButton(const base::Uuid& guid) {
   for (views::View* child : children()) {
     if (views::IsViewClass<SavedTabGroupButton>(child) &&
-        views::AsViewClass<SavedTabGroupButton>(child)->guid() == guid)
+        views::AsViewClass<SavedTabGroupButton>(child)->guid() == guid) {
       return child;
+    }
   }
 
   return nullptr;
@@ -642,8 +498,8 @@ views::View* SavedTabGroupBar::GetButton(const base::Uuid& guid) {
 
 void SavedTabGroupBar::OnTabGroupButtonPressed(const base::Uuid& id,
                                                const ui::Event& event) {
-  DCHECK(saved_tab_group_model_ && saved_tab_group_model_->Contains(id));
-  const SavedTabGroup* group = saved_tab_group_model_->Get(id);
+  DCHECK(tab_group_service_ && tab_group_service_->GetGroup(id).has_value());
+  const std::optional<SavedTabGroup> group = tab_group_service_->GetGroup(id);
 
   if (group->saved_tabs().empty()) {
     return;
@@ -655,100 +511,74 @@ void SavedTabGroupBar::OnTabGroupButtonPressed(const base::Uuid& id,
   bool left_mouse_button_pressed = event.flags() & ui::EF_LEFT_MOUSE_BUTTON;
 
   if (left_mouse_button_pressed || space_pressed) {
-    SavedTabGroupKeyedService* const keyed_service =
-        SavedTabGroupServiceFactory::GetForProfile(browser_->profile());
+    const bool will_open_shared_group =
+        group->is_shared_tab_group() && !group->local_group_id().has_value();
 
-    keyed_service->OpenSavedTabGroupInBrowser(browser_, group->saved_guid());
+    tab_group_service_->OpenTabGroup(
+        group->saved_guid(),
+        std::make_unique<TabGroupActionContextDesktop>(
+            browser_, OpeningSource::kOpenedFromRevisitUi));
+
+    if (will_open_shared_group) {
+      saved_tab_groups::metrics::RecordSharedTabGroupRecallType(
+          saved_tab_groups::metrics::SharedTabGroupRecallTypeDesktop::
+              kOpenedFromBookmarksBar);
+    }
   }
 }
 
-void SavedTabGroupBar::MaybeShowOverflowMenu() {
-  // Don't show the menu if it's already showing.
-  if (overflow_menu_) {
-    return;
+std::unique_ptr<SavedTabGroupOverflowButton>
+SavedTabGroupBar::CreateOverflowButton() {
+  return std::make_unique<SavedTabGroupOverflowButton>(base::BindRepeating(
+      &SavedTabGroupBar::ShowEverythingMenu, base::Unretained(this)));
+}
+
+int SavedTabGroupBar::GetNumberOfVisibleGroups() const {
+  int count = 0;
+  for (const auto* button : GetSavedTabGroupButtons()) {
+    if (button->GetVisible()) {
+      ++count;
+    }
   }
+  return count;
+}
 
-  // Don't show the menu if it would be empty.
-  if (saved_tab_group_model_->saved_tab_groups().size() <= kMaxVisibleButtons) {
-    return;
+void SavedTabGroupBar::UpdateButtonVisibilities(bool show_overflow,
+                                                int last_visible_button_index) {
+  // Update visibilities
+  overflow_button_->SetVisible(show_overflow);
+  for (int i = 0; i < static_cast<int>(children().size()) - 1; ++i) {
+    views::View* button = children()[i];
+    button->SetVisible(i <= last_visible_button_index);
   }
+}
 
-  // 1. Build the vertical list of buttons in the over flow menu.
-  auto overflow_menu = std::make_unique<OverflowMenu>(*this);
-  overflow_menu->SetProperty(views::kElementIdentifierKey,
-                             kSavedTabGroupOverflowMenuId);
+bool SavedTabGroupBar::ShouldShowOverflowButtonForWidth(int max_width) const {
+  return width() >=
+         overflow_button_->GetPreferredSize().width() + kBetweenElementSpacing;
+}
 
-  // Add all buttons that are not currently visible to the overflow menu.
-  for (const auto* const child : children()) {
-    if (child->GetVisible() ||
-        !views::IsViewClass<SavedTabGroupButton>(child)) {
-      continue;
+int SavedTabGroupBar::CalculateLastVisibleButtonIndexForWidth(
+    int max_width) const {
+  std::vector<SavedTabGroupButton*> buttons = GetSavedTabGroupButtons();
+  int current_width = 0;
+  int last_visible_button_index = -1;
+
+  for (int i = 0; i < static_cast<int>(buttons.size()); ++i) {
+    const int button_width = buttons[i]->GetPreferredSize().width();
+    current_width += button_width + kBetweenElementSpacing;
+    if (current_width > max_width) {
+      break;
     }
 
-    const SavedTabGroupButton* const button =
-        views::AsViewClass<SavedTabGroupButton>(child);
-    const SavedTabGroup* const group =
-        saved_tab_group_model_->Get(button->guid());
-
-    overflow_menu->AddChildView(std::make_unique<SavedTabGroupButton>(
-        *group,
-        base::BindRepeating(&SavedTabGroupBar::page_navigator,
-                            base::Unretained(this)),
-        base::BindRepeating(&SavedTabGroupBar::OnTabGroupButtonPressed,
-                            base::Unretained(this), group->saved_guid()),
-        browser_, animations_enabled_));
+    last_visible_button_index = i;
   }
 
-  // Make the list of buttons vertical.
-  const gfx::Insets insets = gfx::Insets::TLBR(16, 16, 16, 48);
-  auto box = std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kVertical, insets,
-      kOverflowMenuButtonPadding);
-  box->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);
-  overflow_menu->SetLayoutManager(std::move(box));
-
-  // 2. Create the bubble / background which will hold the overflow menu.
-  // TODO(dljames): Set the background color to match the current theme.
-  auto bubble_delegate = std::make_unique<views::BubbleDialogDelegate>(
-      overflow_button_, views::BubbleBorder::TOP_LEFT);
-  bubble_delegate->set_fixed_width(200);
-  bubble_delegate->set_margins(gfx::Insets());
-  bubble_delegate->set_adjust_if_offscreen(true);
-  bubble_delegate->set_close_on_deactivate(true);
-  bubble_delegate->SetShowTitle(false);
-  bubble_delegate->SetButtons(ui::DIALOG_BUTTON_NONE);
-  bubble_delegate->SetShowCloseButton(false);
-  bubble_delegate->SetEnableArrowKeyTraversal(true);
-  bubble_delegate->SetContentsView(std::move(overflow_menu));
-
-  bubble_delegate_ = bubble_delegate.get();
-  overflow_menu_ =
-      views::AsViewClass<OverflowMenu>(bubble_delegate->GetContentsView());
-
-  // 3. Display the menu.
-  auto* const widget =
-      views::BubbleDialogDelegate::CreateBubble(std::move(bubble_delegate));
-  widget_observation_.Observe(widget);
-  widget->Show();
-}
-
-void SavedTabGroupBar::HideOverflowMenu() {
-  if (bubble_delegate_) {
-    bubble_delegate_->CancelDialog();
-  }
-}
-
-void SavedTabGroupBar::HideOverflowButton() {
-  overflow_button_->SetVisible(false);
-}
-
-void SavedTabGroupBar::ShowOverflowButton() {
-  overflow_button_->SetVisible(true);
+  return last_visible_button_index;
 }
 
 void SavedTabGroupBar::MaybePaintDropIndicatorInBar(gfx::Canvas* canvas) {
-  const absl::optional<int> indicator_index =
-      CalculateDropIndicatorIndexInBar();
+  const std::optional<int> indicator_index = CalculateDropIndicatorIndexInBar();
   if (!indicator_index.has_value()) {
     return;
   }
@@ -762,50 +592,38 @@ void SavedTabGroupBar::MaybePaintDropIndicatorInBar(gfx::Canvas* canvas) {
   const gfx::Rect drop_indicator_bounds =
       gfx::Rect(x - kDropIndicatorThicknessDips / 2, 0,
                 kDropIndicatorThicknessDips, height());
-  // `drop_indiciator_bounds` is in mirrored coordinates (i.e. origin in the top
-  // right in RTL), but `FillRect` expects unmirrored coordinates (i.e. origin
-  // in the top left, even in RTL).
+  // `drop_indiciator_bounds` is in mirrored coordinates (i.e. origin in the
+  // top right in RTL), but `FillRect` expects unmirrored coordinates (i.e.
+  // origin in the top left, even in RTL).
   const gfx::Rect unmirrored_drop_indicator_bounds =
       GetMirroredRect(drop_indicator_bounds);
   canvas->FillRect(unmirrored_drop_indicator_bounds,
                    GetColorProvider()->GetColor(kColorBookmarkBarForeground));
 }
 
-absl::optional<int> SavedTabGroupBar::CalculateDropIndicatorIndexInBar() const {
-  const absl::optional<int> indicator_index =
+std::optional<int> SavedTabGroupBar::CalculateDropIndicatorIndexInBar() const {
+  const std::optional<int> indicator_index =
       CalculateDropIndicatorIndexInCombinedSpace();
   if (!indicator_index.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  if (indicator_index.value() > kMaxVisibleButtons) {
+  if (indicator_index.value() > GetNumberOfVisibleGroups()) {
     // The drop index is not in the bar.
-    return absl::nullopt;
-  }
-
-  const bool came_from_overflow_menu =
-      saved_tab_group_model_->GetIndexOf(drag_data_->guid()).value() >=
-      kMaxVisibleButtons;
-  if (indicator_index.value() == kMaxVisibleButtons &&
-      came_from_overflow_menu) {
-    // The drop index is on the border between the overflow menu and the bar,
-    // and because the group came from the overflow menu, it will stay in the
-    // overflow menu.
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return indicator_index;
 }
 
-absl::optional<int>
+std::optional<int>
 SavedTabGroupBar::CalculateDropIndicatorIndexInCombinedSpace() const {
   if (!drag_data_ || !GetDropIndex().has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   const int insertion_index = GetDropIndex().value();
-  const int current_index =
-      saved_tab_group_model_->GetIndexOf(drag_data_->guid()).value();
+  const int current_index = GetIndexOfGroup(drag_data_->guid()).value();
 
   if (insertion_index > current_index) {
     // `insertion_index` doesn't include `current_index`, add it back in if
@@ -813,9 +631,45 @@ SavedTabGroupBar::CalculateDropIndicatorIndexInCombinedSpace() const {
     return insertion_index + 1;
   } else if (insertion_index == current_index) {
     // Hide the indicator when the drop wouldn't reorder anything.
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Otherwise we can show an indicator at the actual drop index.
   return insertion_index;
 }
+
+void SavedTabGroupBar::MaybeShowClosePromo(const base::Uuid& saved_group_id) {
+  // Do not show close promo while the browser is closing
+  if (!browser_ || browser_->IsBrowserClosing()) {
+    return;
+  }
+
+  // Only show this promo if the group exists and was closed.
+  const std::optional<tab_groups::SavedTabGroup> group =
+      tab_group_service_->GetGroup(saved_group_id);
+  if (!group || group->local_group_id().has_value()) {
+    return;
+  }
+
+  user_education::FeaturePromoParams params(
+      feature_engagement::kIPHTabGroupsSaveV2CloseGroupFeature);
+  BrowserUserEducationInterface::From(browser_)->MaybeShowFeaturePromo(
+      std::move(params));
+}
+
+// New function implementation
+std::vector<SavedTabGroupButton*> SavedTabGroupBar::GetSavedTabGroupButtons()
+    const {
+  std::vector<SavedTabGroupButton*> buttons;
+  for (const views::View* child : children()) {
+    if (auto* button = views::AsViewClass<SavedTabGroupButton>(child)) {
+      buttons.push_back(const_cast<SavedTabGroupButton*>(button));
+    }
+  }
+  return buttons;
+}
+
+BEGIN_METADATA(SavedTabGroupBar)
+END_METADATA
+
+}  // namespace tab_groups

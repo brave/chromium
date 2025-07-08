@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <utility>
@@ -14,10 +15,8 @@
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram.h"
 #include "base/process/process.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
@@ -47,12 +46,6 @@ namespace {
 base::LazyInstance<BrowserContextKeyedAPIFactory<ProcessesAPI>>::
     DestructorAtExit g_processes_api_factory = LAZY_INSTANCE_INITIALIZER;
 
-int64_t GetRefreshTypesFlagOnlyEssentialData() {
-  // This is the only non-optional data in the Process as defined by the API in
-  // processes.idl.
-  return task_manager::REFRESH_TYPE_NACL;
-}
-
 // This does not include memory. The memory refresh flag will only be added once
 // a listener to OnUpdatedWithMemory event is added.
 int64_t GetRefreshTypesForProcessOptionalData() {
@@ -75,35 +68,32 @@ api::processes::ProcessType GetProcessType(
     task_manager::Task::Type task_type) {
   switch (task_type) {
     case task_manager::Task::BROWSER:
-      return api::processes::PROCESS_TYPE_BROWSER;
+      return api::processes::ProcessType::kBrowser;
 
     case task_manager::Task::RENDERER:
-      return api::processes::PROCESS_TYPE_RENDERER;
+      return api::processes::ProcessType::kRenderer;
 
     case task_manager::Task::EXTENSION:
     case task_manager::Task::GUEST:
-      return api::processes::PROCESS_TYPE_EXTENSION;
+      return api::processes::ProcessType::kExtension;
 
     case task_manager::Task::PLUGIN:
-      return api::processes::PROCESS_TYPE_PLUGIN;
+      return api::processes::ProcessType::kPlugin;
 
-    case task_manager::Task::NACL:
-      return api::processes::PROCESS_TYPE_NACL;
-
-    // TODO(https://crbug.com/1048715): Assign a different process type for each
+    // TODO(crbug.com/40117341): Assign a different process type for each
     //                                  worker type.
     case task_manager::Task::DEDICATED_WORKER:
     case task_manager::Task::SHARED_WORKER:
-      return api::processes::PROCESS_TYPE_WORKER;
+      return api::processes::ProcessType::kWorker;
 
     case task_manager::Task::SERVICE_WORKER:
-      return api::processes::PROCESS_TYPE_SERVICE_WORKER;
+      return api::processes::ProcessType::kServiceWorker;
 
     case task_manager::Task::UTILITY:
-      return api::processes::PROCESS_TYPE_UTILITY;
+      return api::processes::ProcessType::kUtility;
 
     case task_manager::Task::GPU:
-      return api::processes::PROCESS_TYPE_GPU;
+      return api::processes::ProcessType::kGpu;
 
     case task_manager::Task::UNKNOWN:
     case task_manager::Task::ARC:
@@ -111,14 +101,10 @@ api::processes::ProcessType GetProcessType(
     case task_manager::Task::PLUGIN_VM:
     case task_manager::Task::SANDBOX_HELPER:
     case task_manager::Task::ZYGOTE:
-    // TODO(crbug.com/1186464): Do not expose lacros tasks for now. Defer
-    // the decision until further discussion is made.
-    case task_manager::Task::LACROS:
-      return api::processes::PROCESS_TYPE_OTHER;
+      return api::processes::ProcessType::kOther;
   }
 
   NOTREACHED() << "Unknown task type.";
-  return api::processes::PROCESS_TYPE_NONE;
 }
 
 // Fills |out_process| with the data of the process in which the task with |id|
@@ -136,7 +122,6 @@ void FillProcessData(
   out_process->os_process_id = task_manager->GetProcessId(id);
   out_process->type = GetProcessType(task_manager->GetType(id));
   out_process->profile = base::UTF16ToUTF8(task_manager->GetProfileName(id));
-  out_process->nacl_debug_port = task_manager->GetNaClDebugStubPort(id);
 
   // Collect the tab IDs of all the tasks sharing this renderer if any.
   const task_manager::TaskIdList tasks_on_process =
@@ -194,8 +179,7 @@ ProcessesEventRouter::ProcessesEventRouter(content::BrowserContext* context)
       browser_context_(context),
       listeners_(0) {}
 
-ProcessesEventRouter::~ProcessesEventRouter() {
-}
+ProcessesEventRouter::~ProcessesEventRouter() = default;
 
 void ProcessesEventRouter::ListenerAdded() {
   UpdateRefreshTypesFlagsBasedOnListeners();
@@ -378,10 +362,6 @@ bool ProcessesEventRouter::ShouldReportOnCreatedOrOnExited(
 
 void ProcessesEventRouter::UpdateRefreshTypesFlagsBasedOnListeners() {
   int64_t refresh_types = task_manager::REFRESH_TYPE_NONE;
-  if (HasEventListeners(api::processes::OnCreated::kEventName) ||
-      HasEventListeners(api::processes::OnUnresponsive::kEventName)) {
-    refresh_types |= GetRefreshTypesFlagOnlyEssentialData();
-  }
 
   const int64_t on_updated_types = GetRefreshTypesForProcessOptionalData();
   if (HasEventListeners(api::processes::OnUpdated::kEventName))
@@ -459,24 +439,23 @@ ProcessesEventRouter* ProcessesAPI::processes_event_router() {
 
 ExtensionFunction::ResponseAction ProcessesGetProcessIdForTabFunction::Run() {
   // For this function, the task manager doesn't even need to be running.
-  absl::optional<api::processes::GetProcessIdForTab::Params> params =
+  std::optional<api::processes::GetProcessIdForTab::Params> params =
       api::processes::GetProcessIdForTab::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   const int tab_id = params->tab_id;
   content::WebContents* contents = nullptr;
-  int tab_index = -1;
-  if (!ExtensionTabUtil::GetTabById(
-          tab_id, Profile::FromBrowserContext(browser_context()),
-          include_incognito_information(), nullptr, nullptr, &contents,
-          &tab_index)) {
-    return RespondNow(
-        Error(tabs_constants::kTabNotFoundError, base::NumberToString(tab_id)));
+  if (!ExtensionTabUtil::GetTabById(tab_id, browser_context(),
+                                    include_incognito_information(),
+                                    &contents)) {
+    return RespondNow(Error(ExtensionTabUtil::kTabNotFoundError,
+                            base::NumberToString(tab_id)));
   }
 
-  // TODO(https://crbug.com/767563): chrome.processes.getProcessIdForTab API
+  // TODO(crbug.com/41345944): chrome.processes.getProcessIdForTab API
   // incorrectly assumes a *single* renderer process per tab.
-  const int process_id = contents->GetPrimaryMainFrame()->GetProcess()->GetID();
+  const int process_id =
+      contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID();
   return RespondNow(ArgumentList(
       api::processes::GetProcessIdForTab::Results::Create(process_id)));
 }
@@ -489,7 +468,7 @@ ExtensionFunction::ResponseAction ProcessesTerminateFunction::Run() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // For this function, the task manager doesn't even need to be running.
-  absl::optional<api::processes::Terminate::Params> params =
+  std::optional<api::processes::Terminate::Params> params =
       api::processes::Terminate::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -510,9 +489,8 @@ ExtensionFunction::ResponseAction ProcessesTerminateFunction::Run() {
     return RespondNow(
         TerminateIfAllowed(render_process_host->GetProcess().Handle()));
 
-  // This could be a non-renderer child process like a plugin or a nacl
-  // process. Try to get its handle from the BrowserChildProcessHost on the
-  // IO thread.
+  // This could be a non-renderer child process like a plugin.
+  // Try to get its handle from the BrowserChildProcessHost on the IO thread.
   content::GetIOThreadTaskRunner({})->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce(&ProcessesTerminateFunction::GetProcessHandleOnIO, this,
@@ -572,12 +550,11 @@ ProcessesTerminateFunction::TerminateIfAllowed(base::ProcessHandle handle) {
 ////////////////////////////////////////////////////////////////////////////////
 
 ProcessesGetProcessInfoFunction::ProcessesGetProcessInfoFunction()
-    : task_manager::TaskManagerObserver(
-          base::Seconds(1),
-          GetRefreshTypesFlagOnlyEssentialData()) {}
+    : task_manager::TaskManagerObserver(base::Seconds(1),
+                                        task_manager::REFRESH_TYPE_NONE) {}
 
 ExtensionFunction::ResponseAction ProcessesGetProcessInfoFunction::Run() {
-  absl::optional<api::processes::GetProcessInfo::Params> params =
+  std::optional<api::processes::GetProcessInfo::Params> params =
       api::processes::GetProcessInfo::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   if (params->process_ids.as_integer)
@@ -620,7 +597,7 @@ ProcessesGetProcessInfoFunction::OnTasksRefreshedWithBackgroundCalculations(
   GatherDataAndRespond(task_ids);
 }
 
-ProcessesGetProcessInfoFunction::~ProcessesGetProcessInfoFunction() {}
+ProcessesGetProcessInfoFunction::~ProcessesGetProcessInfoFunction() = default;
 
 void ProcessesGetProcessInfoFunction::GatherDataAndRespond(
     const task_manager::TaskIdList& task_ids) {
@@ -647,7 +624,7 @@ void ProcessesGetProcessInfoFunction::GatherDataAndRespond(
     if (specific_processes_requested) {
       // Note: we can't use |!process_host_ids_.empty()| directly in the above
       // condition as we will erase from |process_host_ids_| below.
-      auto itr = base::ranges::find(process_host_ids_, child_process_host_id);
+      auto itr = std::ranges::find(process_host_ids_, child_process_host_id);
       if (itr == process_host_ids_.end())
         continue;
 

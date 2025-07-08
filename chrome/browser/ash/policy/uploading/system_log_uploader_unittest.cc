@@ -17,6 +17,7 @@
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/policy/core/common/remote_commands/remote_command_job.h"
 #include "components/prefs/testing_pref_service.h"
@@ -83,7 +84,7 @@ class MockUploadJob : public UploadJob {
       {SystemLogUploader::kCommandIdHeaderName,
        base::NumberToString(kCommandId)}};
 
-  raw_ptr<UploadJob::Delegate, ExperimentalAsh> delegate_;
+  raw_ptr<UploadJob::Delegate> delegate_;
   bool is_upload_error_;
   bool is_immediate_upload_;
 };
@@ -169,21 +170,26 @@ class MockSystemLogDelegate : public SystemLogUploader::Delegate {
   SystemLogUploader::SystemLogs system_logs_;
 };
 
+class MockSystemLogUploader : public SystemLogUploader {
+ public:
+  MockSystemLogUploader(
+      std::unique_ptr<Delegate> syslog_delegate,
+      const scoped_refptr<base::SequencedTaskRunner>& task_runner)
+      : SystemLogUploader(std::move(syslog_delegate), task_runner) {}
+  MOCK_METHOD(void, OnSuccess, (), (override));
+};
+
 }  //  namespace
 
 class SystemLogUploaderTest : public testing::TestWithParam<bool> {
  public:
-  TestingPrefServiceSimple local_state_;
   SystemLogUploaderTest() : task_runner_(new base::TestSimpleTaskRunner()) {}
 
   void SetUp() override {
-    RegisterLocalState(local_state_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
     settings_helper_.ReplaceDeviceSettingsProviderWithStub();
   }
 
   void TearDown() override {
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     settings_helper_.RestoreRealDeviceSettingsProvider();
     content::RunAllTasksUntilIdle();
   }
@@ -214,6 +220,8 @@ class SystemLogUploaderTest : public testing::TestWithParam<bool> {
 
  protected:
   content::BrowserTaskEnvironment task_environment_;
+  ScopedTestingLocalState scoped_testing_local_state_{
+      TestingBrowserProcess::GetGlobal()};
   ash::ScopedCrosSettingsTestHelper settings_helper_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   base::test::ScopedFeatureList feature_list;
@@ -368,6 +376,67 @@ TEST_P(SystemLogUploaderTest, DisableLogUpload) {
       uploader, base::Milliseconds(SystemLogUploader::kDefaultUploadDelayMs));
   RunPendingUploadTaskAndCheckNext(
       uploader, base::Milliseconds(SystemLogUploader::kDefaultUploadDelayMs));
+}
+
+// Test that we observe for settings to become trusted and create log jobs
+// when the settings become trusted.
+TEST_F(SystemLogUploaderTest, DeviceSettingsPendingToTrusted) {
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
+      new MockSystemLogDelegate(/*is_upload_error=*/false,
+                                SystemLogUploader::SystemLogs(),
+                                /*is_immediate_upload=*/false));
+  MockSystemLogDelegate* mock_delegate = syslog_delegate.get();
+  settings_helper_.SetBoolean(ash::kSystemLogUploadEnabled, true);
+  settings_helper_.SetTrustedStatus(
+      ash::CrosSettingsProvider::TEMPORARILY_UNTRUSTED);
+  mock_delegate->set_upload_allowed(true);
+  MockSystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
+
+  // We should only see one log job success case after running all of the tasks.
+  EXPECT_CALL(uploader, OnSuccess()).Times(1);
+
+  // Tasks should not be pending while trusted settings are pending.
+  EXPECT_EQ(0U, task_runner_->NumPendingTasks());
+
+  // Change settings to trusted to trigger
+  // the log uploader's settings observer callback.
+  settings_helper_.SetTrustedStatus(ash::CrosSettingsProvider::TRUSTED);
+
+  // There should be a pending task now
+  EXPECT_EQ(1U, task_runner_->NumPendingTasks());
+  task_runner_->RunPendingTasks();
+}
+
+// Test that log jobs are not created when settings are untrusted
+// and permanently untrusted.
+TEST_F(SystemLogUploaderTest, DeviceSettingsPendingToUntrusted) {
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
+      new MockSystemLogDelegate(/*is_upload_error=*/false,
+                                SystemLogUploader::SystemLogs(),
+                                /*is_immediate_upload=*/false));
+  MockSystemLogDelegate* mock_delegate = syslog_delegate.get();
+  settings_helper_.SetBoolean(ash::kSystemLogUploadEnabled, true);
+  settings_helper_.SetTrustedStatus(
+      ash::CrosSettingsProvider::TEMPORARILY_UNTRUSTED);
+  mock_delegate->set_upload_allowed(true);
+  MockSystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
+
+  // We should not see any log job successes after running all of the tasks.
+  EXPECT_CALL(uploader, OnSuccess()).Times(0);
+
+  // Tasks should not be pending while trusted settings are pending.
+  EXPECT_EQ(0U, task_runner_->NumPendingTasks());
+
+  // Change settings to permanently untrusted.
+  settings_helper_.SetTrustedStatus(
+      ash::CrosSettingsProvider::PERMANENTLY_UNTRUSTED);
+
+  // Tasks should not be pending if trusted settings are permanently untrusted.
+  EXPECT_EQ(0U, task_runner_->NumPendingTasks());
 }
 
 INSTANTIATE_TEST_SUITE_P(SystemLogUploaderTestInstance,

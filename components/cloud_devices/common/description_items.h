@@ -10,13 +10,13 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace cloud_devices {
 
@@ -158,7 +158,7 @@ class SelectionCapability {
   typedef std::vector<Option> OptionVector;
 
   OptionVector options_;
-  absl::optional<size_t> default_idx_;
+  std::optional<size_t> default_idx_;
 };
 
 // Represents CDD capability that can be true or false.
@@ -193,12 +193,12 @@ class BooleanCapability {
 template <class Traits>
 class EmptyCapability {
  public:
-  EmptyCapability() {}
+  EmptyCapability() = default;
 
   EmptyCapability(const EmptyCapability&) = delete;
   EmptyCapability& operator=(const EmptyCapability&) = delete;
 
-  ~EmptyCapability() {}
+  ~EmptyCapability() = default;
 
   bool LoadFrom(const CloudDeviceDescription& description);
   void SaveTo(CloudDeviceDescription* description) const;

@@ -60,8 +60,9 @@ void CursorManager::Init() {
 
 bool CursorManager::ShouldHideCursorOnKeyEvent(
     const ui::KeyEvent& event) const {
-  if (event.type() != ui::ET_KEY_PRESSED)
+  if (event.type() != ui::EventType::kKeyPressed) {
     return false;
+  }
 
   // Pressing one key repeatedly will not hide the cursor.
   // To deal with the issue 855163 (http://crbug.com/855163).
@@ -99,6 +100,7 @@ bool CursorManager::ShouldHideCursorOnKeyEvent(
     case ui::VKEY_MENU:
     // Search key == VKEY_LWIN.
     case ui::VKEY_LWIN:
+    case ui::VKEY_RWIN:
     case ui::VKEY_WLAN:
     case ui::VKEY_POWER:
     case ui::VKEY_BRIGHTNESS_DOWN:

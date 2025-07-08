@@ -4,6 +4,7 @@
 
 import("//build/buildflag_header.gni")
 import("//chromecast/chromecast.gni")
+import("//testing/test.gni")
 import("//third_party/widevine/cdm/widevine.gni")
 
 buildflag_header("buildflags") {
@@ -41,8 +42,6 @@ cast_source_set("base") {
     "cast_decoder_buffer_impl.h",
     "decrypt_context_impl.cc",
     "decrypt_context_impl.h",
-    "media_caps.cc",
-    "media_caps.h",
     "supported_codec_profile_levels_memo.cc",
     "supported_codec_profile_levels_memo.h",
     "video_mode_switcher.cc",
@@ -94,23 +93,6 @@ cast_source_set("slew_volume") {
   deps = [
     "//base",
     "//media",
-  ]
-}
-
-cast_source_set("video_plane_controller") {
-  sources = [
-    "video_plane_controller.cc",
-    "video_plane_controller.h",
-  ]
-
-  public_deps = [ "//chromecast/public" ]
-
-  deps = [
-    "//base",
-    "//chromecast/media:libcast_media",
-    "//media",
-    "//ui/gfx",
-    "//ui/gfx/geometry",
   ]
 }
 

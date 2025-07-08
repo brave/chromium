@@ -17,10 +17,6 @@
 #include "device/fido/ctap_get_assertion_request.h"
 #include "device/fido/ctap_make_credential_request.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @class NSWindow;
 
 namespace device::fido::icloud_keychain {
@@ -31,6 +27,14 @@ namespace device::fido::icloud_keychain {
 class COMPONENT_EXPORT(DEVICE_FIDO) API_AVAILABLE(macos(13.3)) SystemInterface
     : public base::RefCounted<SystemInterface> {
  public:
+  struct LargeBlobAssertionInputs {
+    LargeBlobAssertionInputs();
+    ~LargeBlobAssertionInputs();
+    LargeBlobAssertionInputs(const LargeBlobAssertionInputs&);
+    bool read = false;
+    std::optional<std::vector<uint8_t>> write;
+  };
+
   // IsAvailable returns true if the other functions in this interface can be
   // called.
   virtual bool IsAvailable() const = 0;
@@ -63,12 +67,16 @@ class COMPONENT_EXPORT(DEVICE_FIDO) API_AVAILABLE(macos(13.3)) SystemInterface
   virtual void MakeCredential(
       NSWindow* window,
       CtapMakeCredentialRequest request,
+      MakeCredentialOptions options,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) = 0;
 
   virtual void GetAssertion(
       NSWindow* window,
       CtapGetAssertionRequest request,
+      LargeBlobAssertionInputs large_blob_inputs,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) = 0;
+
+  virtual void Cancel() = 0;
 
  protected:
   friend class base::RefCounted<SystemInterface>;

@@ -8,19 +8,19 @@ import android.os.Bundle;
 
 import androidx.fragment.app.FragmentActivity;
 
+import org.chromium.build.annotations.Nullable;
+
 import java.io.File;
 
-/**
- * An {@link android.app.Activity} for running native browser tests.
- */
+/** An {@link android.app.Activity} for running native browser tests. */
 public abstract class NativeBrowserTestActivity extends FragmentActivity {
-    private static final String TAG = "NativeTest";
+    private static final String TAG = "NativeTestActivity";
 
-    private NativeTest mTest = new NativeTest();
+    private final NativeTest mTest = new NativeTest();
     private boolean mStarted;
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         mTest.preCreate(this);
         super.onCreate(savedInstanceState);
         mTest.postCreate(this);
@@ -46,7 +46,9 @@ public abstract class NativeBrowserTestActivity extends FragmentActivity {
         if (mStarted) return;
 
         mStarted = true;
-        NativeBrowserTest.deletePrivateDataDirectory(getPrivateDataDirectory());
+        if (!mTest.shouldKeepUserDataDir()) {
+            NativeBrowserTest.deletePrivateDataDirectory(getPrivateDataDirectory());
+        }
         initializeBrowserProcess();
     }
 
@@ -64,13 +66,11 @@ public abstract class NativeBrowserTestActivity extends FragmentActivity {
     /**
      * Returns the command line switch used to specify the user data directory.
      *
-     *  The default implementation returns an empty string, which means no user
-     *  data directory.
-     *  If this method returns a non-empty value, the user data directory will be overridden to be
-     *  the private data directory, which is cleared at the beginning of each test run.
-     *  NOTE: The switch should not start with "--".
-     *  TODO(crbug.com/617734): Solve this problem holistically for Java and C++ at the level of
-     *  DIR_ANDROID_APP_DATA and eliminate the need for this solution.
+     * <p>The default implementation returns an empty string, which means no user data directory. If
+     * this method returns a non-empty value, the user data directory will be overridden to be the
+     * private data directory, which is cleared at the beginning of each test run. NOTE: The switch
+     * should not start with "--". TODO(crbug.com/40471984): Solve this problem holistically for
+     * Java and C++ at the level of DIR_ANDROID_APP_DATA and eliminate the need for this solution.
      */
     protected String getUserDataDirectoryCommandLineSwitch() {
         return "";

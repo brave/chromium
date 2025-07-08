@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "chrome/browser/ui/cocoa/applescript/bookmark_folder_applescript.h"
+
 #import <Foundation/Foundation.h>
 
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/applescript/bookmark_applescript_test_utils.h"
-#import "chrome/browser/ui/cocoa/applescript/bookmark_folder_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/bookmark_item_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/constants_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/error_applescript.h"
@@ -15,10 +16,6 @@
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using BookmarkFolderAppleScriptTest = BookmarkAppleScriptTest;
 

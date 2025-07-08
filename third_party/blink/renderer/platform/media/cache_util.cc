@@ -7,7 +7,9 @@
 #include <stddef.h>
 
 #include <string>
+#include <string_view>
 
+#include "base/containers/contains.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -28,15 +30,11 @@ uint32_t GetReasonsForUncacheability(const WebURLResponse& response) {
   const int code = response.HttpStatusCode();
   const int version = response.HttpVersion();
   const HttpVersion http_version =
-      version == WebURLResponse::kHTTPVersion_2_0
-          ? HttpVersion(2, 0)
-          : version == WebURLResponse::kHTTPVersion_1_1
-                ? HttpVersion(1, 1)
-                : version == WebURLResponse::kHTTPVersion_1_0
-                      ? HttpVersion(1, 0)
-                      : version == WebURLResponse::kHTTPVersion_0_9
-                            ? HttpVersion(0, 9)
-                            : HttpVersion();
+      version == WebURLResponse::kHTTPVersion_2_0   ? HttpVersion(2, 0)
+      : version == WebURLResponse::kHTTPVersion_1_1 ? HttpVersion(1, 1)
+      : version == WebURLResponse::kHTTPVersion_1_0 ? HttpVersion(1, 0)
+      : version == WebURLResponse::kHTTPVersion_0_9 ? HttpVersion(0, 9)
+                                                    : HttpVersion();
   if (code != kHttpOK && code != kHttpPartialContent)
     reasons |= kNoData;
   if (http_version < HttpVersion(1, 1) && code == kHttpPartialContent)
@@ -51,26 +49,31 @@ uint32_t GetReasonsForUncacheability(const WebURLResponse& response) {
 
   std::string cache_control_header =
       base::ToLowerASCII(response.HttpHeaderField("cache-control").Utf8());
-  if (cache_control_header.find("no-cache") != std::string::npos)
+
+  if (base::Contains(cache_control_header, "no-cache")) {
     reasons |= kNoCache;
-  if (cache_control_header.find("no-store") != std::string::npos)
+  }
+
+  if (base::Contains(cache_control_header, "no-store")) {
     reasons |= kNoStore;
-  if (cache_control_header.find("must-revalidate") != std::string::npos)
+  }
+
+  if (base::Contains(cache_control_header, "must-revalidate")) {
     reasons |= kHasMustRevalidate;
+  }
 
   const base::TimeDelta kMinimumAgeForUsefulness =
       base::Seconds(3600);  // Arbitrary value.
 
-  const char kMaxAgePrefix[] = "max-age=";
-  const size_t kMaxAgePrefixLen = std::size(kMaxAgePrefix) - 1;
-  if (cache_control_header.substr(0, kMaxAgePrefixLen) == kMaxAgePrefix) {
+  constexpr std::string_view kMaxAgePrefix = "max-age=";
+  if (cache_control_header.starts_with(kMaxAgePrefix)) {
     int64_t max_age_seconds;
     base::StringToInt64(
-        base::MakeStringPiece(cache_control_header.begin() + kMaxAgePrefixLen,
-                              cache_control_header.end()),
+        std::string_view(cache_control_header).substr(kMaxAgePrefix.size()),
         &max_age_seconds);
-    if (base::Seconds(max_age_seconds) < kMinimumAgeForUsefulness)
+    if (base::Seconds(max_age_seconds) < kMinimumAgeForUsefulness) {
       reasons |= kShortMaxAge;
+    }
   }
 
   Time date;
@@ -89,21 +92,20 @@ uint32_t GetReasonsForUncacheability(const WebURLResponse& response) {
 base::TimeDelta GetCacheValidUntil(const WebURLResponse& response) {
   std::string cache_control_header =
       base::ToLowerASCII(response.HttpHeaderField("cache-control").Utf8());
-  if (cache_control_header.find("no-cache") != std::string::npos)
+
+  if (base::Contains(cache_control_header, "no-cache") ||
+      base::Contains(cache_control_header, "must-revalidate")) {
     return base::TimeDelta();
-  if (cache_control_header.find("must-revalidate") != std::string::npos)
-    return base::TimeDelta();
+  }
 
   // Max cache timeout ~= 1 month.
   base::TimeDelta ret = base::Days(30);
 
-  const char kMaxAgePrefix[] = "max-age=";
-  const size_t kMaxAgePrefixLen = std::size(kMaxAgePrefix) - 1;
-  if (cache_control_header.substr(0, kMaxAgePrefixLen) == kMaxAgePrefix) {
+  constexpr std::string_view kMaxAgePrefix = "max-age=";
+  if (cache_control_header.starts_with(kMaxAgePrefix)) {
     int64_t max_age_seconds;
     base::StringToInt64(
-        base::MakeStringPiece(cache_control_header.begin() + kMaxAgePrefixLen,
-                              cache_control_header.end()),
+        std::string_view(cache_control_header).substr(kMaxAgePrefix.size()),
         &max_age_seconds);
 
     ret = std::min(ret, base::Seconds(max_age_seconds));

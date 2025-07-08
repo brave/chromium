@@ -7,11 +7,13 @@
 
 #include <map>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
-#include "base/strings/string_piece_forward.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
@@ -39,12 +41,12 @@
 #include "components/feed/core/v2/wire_response_translator.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/search_engines/template_url_service.h"
+#include "components/search_engines/search_engines_test_environment.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "net/http/http_status_code.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feed {
 namespace test {
@@ -75,8 +77,8 @@ std::string SerializedOfflineBadgeContent();
 
 feedwire::ThereAndBackAgainData MakeThereAndBackAgainData(int64_t id);
 
-std::string DatastoreEntryToString(base::StringPiece key,
-                                   base::StringPiece value);
+std::string DatastoreEntryToString(std::string_view key,
+                                   std::string_view value);
 
 class TestReliabilityLoggingBridge : public ReliabilityLoggingBridge {
  public:
@@ -121,6 +123,7 @@ class TestReliabilityLoggingBridge : public ReliabilityLoggingBridge {
                                    int64_t server_send_timestamp_ns) override;
   void LogLoadMoreRequestFinished(int canonical_status) override;
   void LogLoadMoreEnded(bool success) override;
+  void ReportExperiments(const std::vector<int32_t>& experiment_ids) override;
 
  private:
   std::vector<std::string> events_;
@@ -153,9 +156,9 @@ class TestSurfaceBase : public feed::SurfaceRenderer {
 
   // FeedStream::FeedStreamSurface.
   void StreamUpdate(const feedui::StreamUpdate& stream_update) override;
-  void ReplaceDataStoreEntry(base::StringPiece key,
-                             base::StringPiece data) override;
-  void RemoveDataStoreEntry(base::StringPiece key) override;
+  void ReplaceDataStoreEntry(std::string_view key,
+                             std::string_view data) override;
+  void RemoveDataStoreEntry(std::string_view key) override;
   ReliabilityLoggingBridge& GetReliabilityLoggingBridge() override;
 
   // Test functions.
@@ -176,9 +179,9 @@ class TestSurfaceBase : public feed::SurfaceRenderer {
 
   // The initial state of the stream, if it was received. This is nullopt if
   // only the loading spinner was seen.
-  absl::optional<feedui::StreamUpdate> initial_state;
+  std::optional<feedui::StreamUpdate> initial_state;
   // The last stream update received.
-  absl::optional<feedui::StreamUpdate> update;
+  std::optional<feedui::StreamUpdate> update;
   // All stream updates.
   std::vector<feedui::StreamUpdate> all_updates;
 
@@ -254,11 +257,19 @@ class TestFeedNetwork : public FeedNetwork {
 
   void SendDiscoverApiRequest(
       NetworkRequestType request_type,
-      base::StringPiece api_path,
-      base::StringPiece method,
+      std::string_view api_path,
+      std::string_view method,
       std::string request_bytes,
       const AccountInfo& account_info,
-      absl::optional<RequestMetadata> request_metadata,
+      std::optional<RequestMetadata> request_metadata,
+      base::OnceCallback<void(RawResponse)> callback) override;
+
+  void SendAsyncDataRequest(
+      const GURL& url,
+      std::string_view request_method,
+      net::HttpRequestHeaders request_headers,
+      std::string request_body,
+      const AccountInfo& account_info,
       base::OnceCallback<void(RawResponse)> callback) override;
 
   void CancelRequests() override;
@@ -274,7 +285,11 @@ class TestFeedNetwork : public FeedNetwork {
   template <typename API>
   void InjectApiResponse(const typename API::Response& response_message) {
     RawResponse response;
-    response.response_info.status_code = 200;
+    if (error != net::Error::OK) {
+      response.response_info.status_code = error;
+    } else {
+      response.response_info.status_code = http_status_code;
+    }
     response.response_bytes = response_message.SerializeAsString();
     response.response_info.response_body_bytes = response.response_bytes.size();
     response.response_info.account_info = last_account_info;
@@ -320,12 +335,15 @@ class TestFeedNetwork : public FeedNetwork {
   void InjectListWebFeedsResponse(const FeedNetwork::RawResponse& response) {
     InjectApiRawResponse<ListWebFeedsDiscoverApi>(response);
   }
+  void InjectRawResponse(const FeedNetwork::RawResponse& response) {
+    injected_raw_response_ = response;
+  }
 
   void InjectEmptyActionRequestResult();
 
   template <typename API>
-  absl::optional<typename API::Request> GetApiRequestSent() {
-    absl::optional<typename API::Request> result;
+  std::optional<typename API::Request> GetApiRequestSent() {
+    std::optional<typename API::Request> result;
     NetworkRequestType request_type = API::kRequestType;
     auto iter = api_requests_sent_.find(request_type);
     if (iter != api_requests_sent_.end()) {
@@ -333,7 +351,7 @@ class TestFeedNetwork : public FeedNetwork {
       if (!iter->second.empty()) {
         if (!message.ParseFromString(iter->second)) {
           LOG(ERROR) << "Failed to parse API request.";
-          return absl::nullopt;
+          return std::nullopt;
         }
       }
       result = message;
@@ -341,7 +359,7 @@ class TestFeedNetwork : public FeedNetwork {
     return result;
   }
 
-  absl::optional<feedwire::UploadActionsRequest> GetActionRequestSent();
+  std::optional<feedwire::UploadActionsRequest> GetActionRequestSent();
 
   template <typename API>
   int GetApiRequestCount() const {
@@ -382,7 +400,7 @@ class TestFeedNetwork : public FeedNetwork {
   void SendResponsesOnCommand(bool on);
   void SendResponse();
 
-  absl::optional<feedwire::Request> query_request_sent;
+  std::optional<feedwire::Request> query_request_sent;
   // Number of FeedQuery requests sent (including Web Feed ListContents).
   int send_query_call_count = 0;
   AccountInfo last_account_info;
@@ -402,7 +420,8 @@ class TestFeedNetwork : public FeedNetwork {
   std::map<NetworkRequestType, std::string> api_requests_sent_;
   std::map<NetworkRequestType, int> api_request_count_;
   std::vector<NetworkRequestType> sent_request_types_;
-  absl::optional<feedwire::Response> injected_response_;
+  std::optional<feedwire::Response> injected_response_;
+  std::optional<RawResponse> injected_raw_response_;
 };
 
 // Forwards to |FeedStream::WireResponseTranslator| unless a response is
@@ -417,11 +436,16 @@ class TestWireResponseTranslator : public WireResponseTranslator {
       const AccountInfo& account_info,
       base::Time current_time) const override;
   void InjectResponse(std::unique_ptr<StreamModelUpdateRequest> response,
-                      absl::optional<std::string> session_id = absl::nullopt);
+                      std::optional<std::string> session_id = std::nullopt);
   void InjectResponse(RefreshResponseData response_data);
   bool InjectedResponseConsumed() const;
 
  private:
+  std::optional<RefreshResponseData> TranslateStreamSource(
+      StreamModelUpdateRequest::Source source,
+      const AccountInfo& account_info,
+      base::Time current_time) const;
+
   mutable std::vector<RefreshResponseData> injected_responses_;
 };
 
@@ -471,26 +495,27 @@ class TestMetricsReporter : public MetricsReporter {
     ~StreamMetrics();
     StreamMetrics(const StreamMetrics&) = delete;
     StreamMetrics& operator=(const StreamMetrics&) = delete;
-    absl::optional<LoadStreamStatus> background_refresh_status;
+    std::optional<LoadStreamStatus> background_refresh_status;
   };
 
   StreamMetrics& Stream(const StreamType& stream_type);
 
   // Test access.
-  absl::optional<int> slice_viewed_index;
-  absl::optional<LoadStreamStatus> load_stream_status;
-  absl::optional<LoadStreamStatus> load_stream_from_store_status;
-  absl::optional<SurfaceId> load_more_surface_id;
-  absl::optional<LoadStreamStatus> load_more_status;
-  absl::optional<LoadStreamStatus> background_refresh_status;
-  absl::optional<UploadActionsStatus> upload_action_status;
+  std::optional<int> slice_viewed_index;
+  std::optional<LoadStreamStatus> load_stream_status;
+  std::optional<LoadStreamStatus> load_stream_from_store_status;
+  std::optional<SurfaceId> load_more_surface_id;
+  std::optional<LoadStreamStatus> load_more_status;
+  std::optional<LoadStreamStatus> background_refresh_status;
+  std::optional<UploadActionsStatus> upload_action_status;
 
   StreamMetrics web_feed;
   StreamMetrics for_you;
 };
 
 // Base text fixture for feed API tests.
-// Note: The web-feeds feature (kWebFeed) is enabled by default for these tests.
+// Note: The web-feeds feature is enabled by default for these tests because
+// GetCountry() is overridden to return one of the launch counties.
 class FeedApiTest : public testing::Test, public FeedStream::Delegate {
  public:
   FeedApiTest();
@@ -507,17 +532,20 @@ class FeedApiTest : public testing::Test, public FeedStream::Delegate {
   void ClearAll() override;
   AccountInfo GetAccountInfo() override;
   bool IsSigninAllowed() override;
-  bool IsSyncOn() override;
   void PrefetchImage(const GURL& url) override;
   void RegisterExperiments(const Experiments& experiments) override {}
   void RegisterFollowingFeedFollowCountFieldTrial(size_t follow_count) override;
-  void RegisterFeedUserSettingsFieldTrial(base::StringPiece group) override;
+  void RegisterFeedUserSettingsFieldTrial(std::string_view group) override;
+  std::string GetCountry() override;
+  void SetFeedLaunchCuiMetadata(const std::string& metadata) override;
 
   // For tests.
 
+  void SetCountry(const std::string& country);
+
   // Replace stream_.
   void CreateStream(bool wait_for_initialization = true,
-                    bool start_surface = false);
+                    bool is_new_tab_search_engine_url_android_enabled = false);
   std::unique_ptr<StreamModel> CreateStreamModel();
   bool IsTaskQueueIdle() const;
   void WaitForIdleTaskQueue();
@@ -538,7 +566,7 @@ class FeedApiTest : public testing::Test, public FeedStream::Delegate {
  protected:
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  TestingPrefServiceSimple profile_prefs_;
+  sync_preferences::TestingPrefServiceSyncable profile_prefs_;
   std::unique_ptr<TestMetricsReporter> metrics_reporter_;
   TestFeedNetwork network_;
   TestWireResponseTranslator response_translator_;
@@ -559,8 +587,7 @@ class FeedApiTest : public testing::Test, public FeedStream::Delegate {
               /*db_dir=*/{},
               task_environment_.GetMainThreadTaskRunner()));
 
-  std::unique_ptr<TemplateURLService> template_url_service_;
-
+  search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
   FakeRefreshTaskScheduler refresh_scheduler_;
   StreamModel::Context stream_model_context_;
   std::unique_ptr<FeedStream> stream_;
@@ -568,15 +595,13 @@ class FeedApiTest : public testing::Test, public FeedStream::Delegate {
   bool is_offline_ = false;
   AccountInfo account_info_ = TestAccountInfo();
   bool is_signin_allowed_ = true;
-  bool is_sync_on_ = false;
   int prefetch_image_call_count_ = 0;
   std::vector<GURL> prefetched_images_;
   base::RepeatingClosure on_clear_all_;
   std::vector<size_t> register_following_feed_follow_count_field_trial_calls_;
   std::vector<std::string> register_feed_user_settings_field_trial_calls_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  std::string country_ = "US";
+  std::string feed_launch_cui_metadata_;
 };
 
 class FeedStreamTestForAllStreamTypes
@@ -592,9 +617,6 @@ class FeedStreamTestForAllStreamTypes
   };
   void SetUp() override;
   RefreshTaskId GetRefreshTaskId() const;
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 class FeedNetworkEndpointTest

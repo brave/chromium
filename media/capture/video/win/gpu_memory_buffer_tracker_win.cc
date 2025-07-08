@@ -4,8 +4,11 @@
 
 #include "media/capture/video/win/gpu_memory_buffer_tracker_win.h"
 
+#include <dxgi1_2.h>
+
 #include "base/check.h"
 #include "base/logging.h"
+#include "base/memory/raw_span.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
@@ -14,9 +17,9 @@
 #include "gpu/ipc/common/dxgi_helpers.h"
 #include "media/base/win/mf_helpers.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/size.h"
-
-#include <dxgi1_2.h>
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace media {
 
@@ -38,7 +41,7 @@ class DXGIGMBTrackerHandle : public media::VideoCaptureBufferHandle {
   }
 
  private:
-  base::span<uint8_t> data_;
+  base::raw_span<uint8_t> data_;
   HANDLE dxgi_handle_;
   raw_ptr<ID3D11Device> d3d11_device_;
 };
@@ -113,7 +116,6 @@ bool GpuMemoryBufferTrackerWin::Init(const gfx::Size& dimensions,
   // Only support NV12
   if (format != PIXEL_FORMAT_NV12) {
     NOTREACHED() << "Unsupported VideoPixelFormat " << format;
-    return false;
   }
 
   if (is_external_dxgi_handle_) {
@@ -121,9 +123,18 @@ bool GpuMemoryBufferTrackerWin::Init(const gfx::Size& dimensions,
                                 std::move(dimensions));
   }
 
-  gfx::GpuMemoryBufferHandle gmb_handle;
-  gmb_handle.dxgi_handle = CreateNV12Texture(d3d_device_.Get(), dimensions);
-  gmb_handle.dxgi_token = gfx::DXGIHandleToken();
+  base::win::ScopedHandle scoped_handle =
+      CreateNV12Texture(d3d_device_.Get(), dimensions);
+  if (!scoped_handle.IsValid()) {
+    return false;
+  }
+
+  gfx::DXGIHandle dxgi_handle = gfx::DXGIHandle(std::move(scoped_handle));
+  if (!dxgi_handle.IsValid()) {
+    return false;
+  }
+
+  gfx::GpuMemoryBufferHandle gmb_handle(std::move(dxgi_handle));
   return CreateBufferInternal(std::move(gmb_handle), std::move(dimensions));
 }
 
@@ -135,26 +146,23 @@ bool GpuMemoryBufferTrackerWin::IsSameGpuMemoryBuffer(
   }
   // On Windows, we need use 'dxgi_token' to decide whether the two handles
   // point to same gmb instead of handle directly since handle could be
-  // duplicated, please see GpuMemoryBufferImplDXGI::CloneHandle.
-  return buffer_->GetToken() == handle.dxgi_token;
+  // duplicated.
+  return dxgi_handle_.token() == handle.dxgi_handle().token();
 }
 
 bool GpuMemoryBufferTrackerWin::CreateBufferInternal(
     gfx::GpuMemoryBufferHandle buffer_handle,
     const gfx::Size& dimensions) {
-  if (!buffer_handle.dxgi_handle.IsValid()) {
+  if (!buffer_handle.dxgi_handle().IsValid()) {
     LOG(ERROR) << "dxgi_handle is not valid.";
     return false;
   }
 
-  buffer_ = gpu::GpuMemoryBufferImplDXGI::CreateFromHandle(
-      std::move(buffer_handle), std::move(dimensions),
-      gfx::BufferFormat::YUV_420_BIPLANAR, gfx::BufferUsage::GPU_READ,
-      gpu::GpuMemoryBufferImpl::DestructionCallback(), nullptr, nullptr);
-  if (!buffer_) {
-    NOTREACHED() << "Failed to create GPU memory buffer";
-    return false;
-  }
+  dxgi_handle_ = std::move(buffer_handle).dxgi_handle();
+  dimensions_ = dimensions;
+  stride_ = gfx::RowSizeForBufferFormat(dimensions_.width(),
+                                        gfx::BufferFormat::YUV_420_BIPLANAR,
+                                        /*plane=*/0);
 
   region_ = base::UnsafeSharedMemoryRegion::Create(GetMemorySizeInBytes());
   mapping_ = region_.Map();
@@ -182,13 +190,13 @@ bool GpuMemoryBufferTrackerWin::IsReusableForFormat(
     const mojom::PlaneStridesPtr& strides) {
   // External buffer is never reused.
   return !IsD3DDeviceChanged() && (format == PIXEL_FORMAT_NV12) &&
-         (dimensions == buffer_->GetSize()) && !is_external_dxgi_handle_;
+         (dimensions == dimensions_) && !is_external_dxgi_handle_;
 }
 
 std::unique_ptr<VideoCaptureBufferHandle>
 GpuMemoryBufferTrackerWin::GetMemoryMappedAccess() {
   return std::make_unique<DXGIGMBTrackerHandle>(
-      mapping_.GetMemoryAsSpan<uint8_t>(), buffer_->GetHandle(),
+      mapping_.GetMemoryAsSpan<uint8_t>(), dxgi_handle_.buffer_handle(),
       d3d_device_.Get());
 }
 
@@ -197,14 +205,14 @@ GpuMemoryBufferTrackerWin::DuplicateAsUnsafeRegion() {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
                "GpuMemoryBufferTrackerWin::DuplicateAsUnsafeRegion");
 
-  if (!buffer_) {
+  if (!dxgi_handle_.IsValid()) {
     return base::UnsafeSharedMemoryRegion();
   }
 
   CHECK(region_.IsValid());
   CHECK(mapping_.IsValid());
 
-  if (!gpu::CopyDXGIBufferToShMem(buffer_->GetHandle(),
+  if (!gpu::CopyDXGIBufferToShMem(dxgi_handle_.buffer_handle(),
                                   mapping_.GetMemoryAsSpan<uint8_t>(),
                                   d3d_device_.Get(), &staging_texture_)) {
     DLOG(ERROR) << "Couldn't copy DXGI buffer to shmem";
@@ -214,20 +222,20 @@ GpuMemoryBufferTrackerWin::DuplicateAsUnsafeRegion() {
   return region_.Duplicate();
 }
 
-mojo::ScopedSharedBufferHandle
-GpuMemoryBufferTrackerWin::DuplicateAsMojoBuffer() {
-  NOTREACHED() << "Unsupported operation";
-  return mojo::ScopedSharedBufferHandle();
-}
-
 gfx::GpuMemoryBufferHandle
 GpuMemoryBufferTrackerWin::GetGpuMemoryBufferHandle() {
   if (IsD3DDeviceChanged()) {
     return gfx::GpuMemoryBufferHandle();
   }
-  auto handle = buffer_->CloneHandle();
-  handle.region = region_.Duplicate();
+  gfx::GpuMemoryBufferHandle handle(
+      dxgi_handle_.CloneWithRegion(region_.Duplicate()));
+  handle.offset = 0;
+  handle.stride = stride_;
   return handle;
+}
+
+VideoCaptureBufferType GpuMemoryBufferTrackerWin::GetBufferType() {
+  return VideoCaptureBufferType::kGpuMemoryBuffer;
 }
 
 void GpuMemoryBufferTrackerWin::OnHeldByConsumersChanged(
@@ -243,8 +251,8 @@ void GpuMemoryBufferTrackerWin::UpdateExternalData(
 }
 
 uint32_t GpuMemoryBufferTrackerWin::GetMemorySizeInBytes() {
-  DCHECK(buffer_);
-  return (buffer_->GetSize().width() * buffer_->GetSize().height() * 3) / 2;
+  DCHECK(dxgi_handle_.IsValid());
+  return (dimensions_.width() * dimensions_.height() * 3) / 2;
 }
 
 }  // namespace media

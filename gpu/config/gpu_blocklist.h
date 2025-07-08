@@ -7,11 +7,13 @@
 
 #include <memory>
 
+#include "base/containers/span.h"
+#include "gpu/config/gpu_config_export.h"
 #include "gpu/config/gpu_control_list.h"
 
 namespace gpu {
 
-class GPU_EXPORT GpuBlocklist : public GpuControlList {
+class GPU_CONFIG_EXPORT GpuBlocklist : public GpuControlList {
  public:
   GpuBlocklist(const GpuBlocklist&) = delete;
   GpuBlocklist& operator=(const GpuBlocklist&) = delete;
@@ -19,12 +21,13 @@ class GPU_EXPORT GpuBlocklist : public GpuControlList {
   ~GpuBlocklist() override;
 
   static std::unique_ptr<GpuBlocklist> Create();
-  static std::unique_ptr<GpuBlocklist> Create(const GpuControlListData& data);
+  static std::unique_ptr<GpuBlocklist> Create(
+      base::span<const GpuControlList::Entry> data);
 
   static bool AreEntryIndicesValid(const std::vector<uint32_t>& entry_indices);
 
  private:
-  explicit GpuBlocklist(const GpuControlListData& data);
+  explicit GpuBlocklist(base::span<const GpuControlList::Entry> data);
 };
 
 }  // namespace gpu

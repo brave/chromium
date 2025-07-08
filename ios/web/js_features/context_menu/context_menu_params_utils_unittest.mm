@@ -10,14 +10,10 @@
 #import "ios/web/common/referrer_util.h"
 #import "ios/web/js_features/context_menu/context_menu_constants.h"
 #import "ios/web/public/ui/context_menu_params.h"
-#import "net/base/mac/url_conversions.h"
+#import "net/base/apple/url_conversions.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 // Text values for the tapped element triggering the context menu.
@@ -39,7 +35,7 @@ bool CanShowContextMenuForParams(const web::ContextMenuParams& params) {
   }
   return false;
 }
-}
+}  // namespace
 
 namespace web {
 
@@ -85,7 +81,6 @@ TEST_F(ContextMenuParamsUtilsTest, DictionaryConstructorTest) {
   EXPECT_NSEQ(params.title_attribute, @(kTitle));
   EXPECT_NSEQ(params.alt_text, @(kAlt));
 }
-
 
 // Tests that a context menu will not be shown for empty params.
 TEST_F(ContextMenuParamsUtilsTest, CanShowContextMenuTestEmptyDictionary) {

@@ -26,7 +26,6 @@
 #include "third_party/blink/renderer/core/layout/layout_media.h"
 
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
@@ -74,15 +73,19 @@ bool LayoutMedia::IsChildAllowed(LayoutObject* child,
   // internal.
   if (child->GetNode()->IsMediaControls()) {
     // LayoutObject::IsInline() doesn't work at this timing.
-    DCHECK(!child->GetNode()->GetComputedStyle()->IsDisplayInlineType());
-    return child->IsFlexibleBoxIncludingNG();
+    DCHECK(!To<Element>(child->GetNode())
+                ->GetComputedStyle()
+                ->IsDisplayInlineType());
+    return child->IsFlexibleBox();
   }
 
   if (child->GetNode()->IsTextTrackContainer() ||
       child->GetNode()->IsMediaRemotingInterstitial() ||
       child->GetNode()->IsPictureInPictureInterstitial()) {
     // LayoutObject::IsInline() doesn't work at this timing.
-    DCHECK(!child->GetNode()->GetComputedStyle()->IsDisplayInlineType());
+    DCHECK(!To<Element>(child->GetNode())
+                ->GetComputedStyle()
+                ->IsDisplayInlineType());
     return true;
   }
 
@@ -183,8 +186,9 @@ LayoutUnit LayoutMedia::ComputePanelWidth(
   return LayoutUnit((edge_intersection_point - bottom_left_point).Length());
 }
 
-RecalcLayoutOverflowResult LayoutMedia::RecalcLayoutOverflow() {
-  return RecalcLayoutOverflowNG();
+RecalcScrollableOverflowResult LayoutMedia::RecalcScrollableOverflow() {
+  NOT_DESTROYED();
+  return RecalcScrollableOverflowNG();
 }
 
 }  // namespace blink

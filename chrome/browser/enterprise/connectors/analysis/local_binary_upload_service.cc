@@ -6,20 +6,19 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/syslog_logging.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "chrome/browser/enterprise/connectors/analysis/analysis_settings.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/signals/system_signals_service_host_factory.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/device_signals/core/browser/system_signals_service_host.h"
+#include "components/enterprise/connectors/core/analysis_settings.h"
 #include "content/public/browser/browser_thread.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/content_analysis_sdk/src/browser/include/content_analysis/sdk/analysis_client.h"
 
 namespace enterprise_connectors {
@@ -114,7 +113,7 @@ int SendCancelToSDK(
 }
 
 // Sends a request to the local agent and waits for a response.
-absl::optional<content_analysis::sdk::ContentAnalysisResponse> SendRequestToSDK(
+std::optional<content_analysis::sdk::ContentAnalysisResponse> SendRequestToSDK(
     scoped_refptr<ContentAnalysisSdkManager::WrappedClient> wrapped,
     content_analysis::sdk::ContentAnalysisRequest sdk_request) {
   DVLOG(1) << __func__ << ": token=" << sdk_request.request_token();
@@ -127,7 +126,7 @@ absl::optional<content_analysis::sdk::ContentAnalysisResponse> SendRequestToSDK(
     if (status == 0)
       return response;
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 #if defined(_DEBUG)
@@ -292,6 +291,11 @@ void LocalBinaryUploadService::MaybeCancelRequests(
 
   pending_cancel_requests_.insert(std::move(cancel));
   SendCancelRequestsIfNeeded();
+}
+
+base::WeakPtr<safe_browsing::BinaryUploadService>
+LocalBinaryUploadService::AsWeakPtr() {
+  return factory_.GetWeakPtr();
 }
 
 device_signals::mojom::SystemSignalsService*
@@ -492,7 +496,7 @@ void LocalBinaryUploadService::DoLocalContentAnalysis(Request::Id id,
 void LocalBinaryUploadService::HandleResponse(
     scoped_refptr<ContentAnalysisSdkManager::WrappedClient> wrapped,
     safe_browsing::BinaryUploadService::Request::Data data,
-    absl::optional<content_analysis::sdk::ContentAnalysisResponse>
+    std::optional<content_analysis::sdk::ContentAnalysisResponse>
         sdk_response) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DVLOG(1) << __func__;
@@ -654,7 +658,7 @@ void LocalBinaryUploadService::FinishRequest(Request::Id id,
     DVLOG(1) << __func__ << ": id=" << id << " not active";
   }
 
-  auto it2 = base::ranges::find(
+  auto it2 = std::ranges::find(
       pending_requests_, id,
       [](const RequestInfo& info) { return info.request->id(); });
   if (it2 != pending_requests_.end()) {

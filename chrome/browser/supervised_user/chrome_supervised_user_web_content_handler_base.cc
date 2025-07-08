@@ -4,10 +4,12 @@
 
 #include "chrome/browser/supervised_user/chrome_supervised_user_web_content_handler_base.h"
 
+#include "base/metrics/field_trial_params.h"
 #include "chrome/browser/supervised_user/supervised_user_interstitial_tab_closer.h"
 #include "chrome/browser/supervised_user/supervised_user_navigation_observer.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/infobars/core/infobar.h"
+#include "components/supervised_user/core/common/features.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -15,7 +17,7 @@
 ChromeSupervisedUserWebContentHandlerBase::
     ChromeSupervisedUserWebContentHandlerBase(
         content::WebContents* web_contents,
-        int frame_id,
+        content::FrameTreeNodeId frame_id,
         int64_t interstitial_navigation_id)
     : web_contents_(web_contents),
       frame_id_(frame_id),
@@ -52,9 +54,9 @@ void ChromeSupervisedUserWebContentHandlerBase::CleanUpInfoBarOnMainFrame() {
     details.previous_main_frame_url =
         controller.GetLastCommittedEntry()->GetURL();
   }
-  for (int i = manager->infobar_count() - 1; i >= 0; --i) {
-    infobars::InfoBar* infobar = manager->infobar_at(i);
-
+  // Copy the infobars to allow safe iteration while removing elements.
+  const auto infobars = manager->infobars();
+  for (infobars::InfoBar* infobar : infobars) {
     if (infobar->delegate()->ShouldExpire(
             infobars::ContentInfoBarManager::
                 NavigationDetailsFromLoadCommittedDetails(details))) {
@@ -76,6 +78,15 @@ void ChromeSupervisedUserWebContentHandlerBase::GoBack() {
   }
   OnInterstitialDone();
 }
+
+#if BUILDFLAG(IS_ANDROID)
+void ChromeSupervisedUserWebContentHandlerBase::LearnMore(base::OnceClosure open_help_page) {
+  std::move(open_help_page).Run();
+  OnInterstitialDone();
+}
+#endif  // BUILDFLAG(IS_ANDROID)
+
+void ChromeSupervisedUserWebContentHandlerBase::MaybeCloseLocalApproval() {}
 
 bool ChromeSupervisedUserWebContentHandlerBase::
     AttemptMoveAwayFromCurrentFrameURL() {

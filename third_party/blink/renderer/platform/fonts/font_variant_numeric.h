@@ -15,23 +15,23 @@ class FontVariantNumeric {
 
  public:
   enum NumericFigure { kNormalFigure = 0, kLiningNums, kOldstyleNums };
-  static String ToString(NumericFigure);
+  static WTF::String ToString(NumericFigure);
 
   enum NumericSpacing { kNormalSpacing = 0, kProportionalNums, kTabularNums };
-  static String ToString(NumericSpacing);
+  static WTF::String ToString(NumericSpacing);
 
   enum NumericFraction {
     kNormalFraction = 0,
     kDiagonalFractions,
     kStackedFractions
   };
-  static String ToString(NumericFraction);
+  static WTF::String ToString(NumericFraction);
 
   enum Ordinal { kOrdinalOff = 0, kOrdinalOn };
-  static String ToString(Ordinal);
+  static WTF::String ToString(Ordinal);
 
   enum SlashedZero { kSlashedZeroOff = 0, kSlashedZeroOn };
-  static String ToString(SlashedZero);
+  static WTF::String ToString(SlashedZero);
 
   FontVariantNumeric() : fields_as_unsigned_(0) {}
 
@@ -75,7 +75,7 @@ class FontVariantNumeric {
     return fields_as_unsigned_ == other.fields_as_unsigned_;
   }
 
-  String ToString() const;
+  WTF::String ToString() const;
 
  private:
   FontVariantNumeric(unsigned init_value) : fields_as_unsigned_(init_value) {}

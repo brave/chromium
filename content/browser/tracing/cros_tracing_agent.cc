@@ -11,7 +11,6 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
 #include "base/sequence_checker.h"
@@ -92,9 +91,7 @@ class CrOSSystemTracingSession {
   }
 
   bool is_tracing_ = false;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter
-  // for: #constexpr-ctor-field-initializer
-  RAW_PTR_EXCLUSION ash::DebugDaemonClient* debug_daemon_ = nullptr;
+  raw_ptr<ash::DebugDaemonClient> debug_daemon_ = nullptr;
 };
 
 namespace {
@@ -111,12 +108,10 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
 
   // Called from the tracing::PerfettoProducer on its sequence.
   void StartTracingImpl(
-      tracing::PerfettoProducer* perfetto_producer,
       const perfetto::DataSourceConfig& data_source_config) override {
     GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE, base::BindOnce(&CrOSDataSource::StartTracingOnUI,
-                                  base::Unretained(this), perfetto_producer,
-                                  data_source_config));
+                                  base::Unretained(this), data_source_config));
   }
 
   // Called from the tracing::PerfettoProducer on its sequence.
@@ -134,34 +129,23 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
 
  private:
   friend class base::NoDestructor<CrOSDataSource>;
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   using DataSourceProxy =
-      tracing::PerfettoTracedProcess::DataSourceProxy<CastDataSource>;
+      tracing::PerfettoTracedProcess::DataSourceProxy<CrOSDataSource>;
   using SystemTraceWriter =
       tracing::SystemTraceWriter<scoped_refptr<base::RefCountedString>,
                                  DataSourceProxy>;
-#else
-  using SystemTraceWriter =
-      tracing::SystemTraceWriter<scoped_refptr<base::RefCountedString>>;
-#endif
 
   CrOSDataSource()
       : DataSourceBase(tracing::mojom::kSystemTraceDataSourceName) {
     DETACH_FROM_SEQUENCE(ui_sequence_checker_);
-    tracing::PerfettoTracedProcess::Get()->AddDataSource(this);
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
     perfetto::DataSourceDescriptor dsd;
-    dsd.set_name(mojom::kSystemTraceDataSourceName);
+    dsd.set_name(tracing::mojom::kSystemTraceDataSourceName);
     DataSourceProxy::Register(dsd, this);
-#endif
   }
 
-  void StartTracingOnUI(tracing::PerfettoProducer* producer,
-                        const perfetto::DataSourceConfig& data_source_config) {
+  void StartTracingOnUI(const perfetto::DataSourceConfig& data_source_config) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(ui_sequence_checker_);
-    DCHECK(!producer_);
     DCHECK(!session_);
-    producer_ = producer;
     target_buffer_ = data_source_config.target_buffer();
     session_ = std::make_unique<CrOSSystemTracingSession>();
     session_->StartTracing(
@@ -179,7 +163,6 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
 
   void StopTracingOnUI(base::OnceClosure stop_complete_callback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(ui_sequence_checker_);
-    DCHECK(producer_);
     DCHECK(session_);
     if (!session_started_) {
       on_session_started_callback_ =
@@ -196,15 +179,12 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
   // Called on any thread.
   void OnTraceData(base::OnceClosure stop_complete_callback,
                    const scoped_refptr<base::RefCountedString>& events) {
-    if (!events || events->data().empty()) {
+    if (!events || events->as_string().empty()) {
       OnTraceDataCommitted(std::move(stop_complete_callback));
       return;
     }
 
     trace_writer_ = std::make_unique<SystemTraceWriter>(
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-        producer_,
-#endif
         target_buffer_, SystemTraceWriter::TraceType::kFTrace);
     trace_writer_->WriteData(events);
     trace_writer_->Flush(base::BindOnce(&CrOSDataSource::OnTraceDataCommitted,
@@ -226,16 +206,12 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
     DCHECK_CALLED_ON_VALID_SEQUENCE(ui_sequence_checker_);
     session_.reset();
     session_started_ = false;
-    producer_ = nullptr;
 
-    tracing::PerfettoTracedProcess::Get()
-        ->GetTaskRunner()
-        ->GetOrCreateTaskRunner()
-        ->PostTask(FROM_HERE, std::move(stop_complete_callback));
+    tracing::PerfettoTracedProcess::Get().GetTaskRunner()->PostTask(
+        FROM_HERE, std::move(stop_complete_callback));
   }
 
   SEQUENCE_CHECKER(ui_sequence_checker_);
-  raw_ptr<tracing::PerfettoProducer, ExperimentalAsh> producer_ = nullptr;
   std::unique_ptr<CrOSSystemTracingSession> session_;
   bool session_started_ = false;
   base::OnceClosure on_session_started_callback_;
@@ -245,11 +221,8 @@ class CrOSDataSource : public tracing::PerfettoTracedProcess::DataSourceBase {
 
 }  // namespace
 
-CrOSTracingAgent::CrOSTracingAgent() {
-  tracing::PerfettoTracedProcess::Get()->AddDataSource(
-      &CrOSDataSource::GetInstance());
+void RegisterCrOSTracingDataSource() {
+  CrOSDataSource::GetInstance();
 }
-
-CrOSTracingAgent::~CrOSTracingAgent() = default;
 
 }  // namespace content

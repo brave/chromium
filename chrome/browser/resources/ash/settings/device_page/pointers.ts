@@ -6,30 +6,33 @@
  * @fileoverview
  * 'settings-pointers' is the settings subpage with mouse and touchpad settings.
  */
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_slider.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_slider.js';
+import '../controls/settings_toggle_button.js';
 import '../settings_shared.css.js';
-import 'chrome://resources/cr_elements/cr_slider/cr_slider.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {isInputDeviceSettingsSplitEnabled} from '../common/load_time_booleans.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './pointers.html.js';
 
 const SettingsPointersElementBase =
-    DeepLinkingMixin(RouteObserverMixin(PrefsMixin(PolymerElement)));
+    DeepLinkingMixin(RouteObserverMixin(PrefsMixin(I18nMixin(PolymerElement))));
 
-class SettingsPointersElement extends SettingsPointersElementBase {
+export class SettingsPointersElement extends SettingsPointersElementBase {
   static get is() {
     return 'settings-pointers';
   }
@@ -48,7 +51,7 @@ class SettingsPointersElement extends SettingsPointersElementBase {
 
       hasHapticTouchpad: Boolean,
 
-      swapPrimaryOptions: {
+      swapPrimaryOptions_: {
         readOnly: true,
         type: Array,
         value() {
@@ -106,54 +109,48 @@ class SettingsPointersElement extends SettingsPointersElementBase {
       },
 
       /**
-       * TODO(khorimoto): Remove this conditional once the feature is launched.
-       */
-      allowScrollSettings_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('allowScrollSettings');
-        },
-      },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kTouchpadTapToClick,
-          Setting.kTouchpadTapDragging,
-          Setting.kTouchpadReverseScrolling,
-          Setting.kTouchpadAcceleration,
-          Setting.kTouchpadScrollAcceleration,
-          Setting.kTouchpadSpeed,
-          Setting.kTouchpadHapticFeedback,
-          Setting.kTouchpadHapticClickSensitivity,
-          Setting.kPointingStickAcceleration,
-          Setting.kPointingStickSpeed,
-          Setting.kPointingStickSwapPrimaryButtons,
-          Setting.kMouseSwapPrimaryButtons,
-          Setting.kMouseReverseScrolling,
-          Setting.kMouseAcceleration,
-          Setting.kMouseScrollAcceleration,
-          Setting.kMouseSpeed,
-        ]),
-      },
-
-      /**
        * Whether settings should be split per device.
        */
       isDeviceSettingsSplitEnabled_: {
         type: Boolean,
         value() {
-          return loadTimeData.getBoolean('enableInputDeviceSettingsSplit');
+          return isInputDeviceSettingsSplitEnabled();
         },
         readOnly: true,
       },
     };
   }
 
-  private isDeviceSettingsSplitEnabled_: boolean;
+  hasMouse: boolean;
+  hasPointingStick: boolean;
+  hasTouchpad: boolean;
+  hasHapticTouchpad: boolean;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kTouchpadTapToClick,
+    Setting.kTouchpadTapDragging,
+    Setting.kTouchpadReverseScrolling,
+    Setting.kTouchpadAcceleration,
+    Setting.kTouchpadSpeed,
+    Setting.kTouchpadHapticFeedback,
+    Setting.kTouchpadHapticClickSensitivity,
+    Setting.kPointingStickAcceleration,
+    Setting.kPointingStickSpeed,
+    Setting.kPointingStickSwapPrimaryButtons,
+    Setting.kMouseSwapPrimaryButtons,
+    Setting.kMouseReverseScrolling,
+    Setting.kMouseAcceleration,
+    Setting.kMouseSpeed,
+  ]);
+
+  private readonly hapticClickSensitivityValues_:
+      Array<{value: number, ariaValue: number}>;
+  private readonly isDeviceSettingsSplitEnabled_: boolean;
+  private readonly sensitivityValues_: number[];
+  private showHeadings_: boolean;
+  private subsectionClass_: string;
+  private swapPrimaryOptions_: Array<{value: boolean, name: string}>;
 
   /**
    * Headings should only be visible if more than one subsection is present.
@@ -179,7 +176,20 @@ class SettingsPointersElement extends SettingsPointersElementBase {
     return subsections ? 'subsection' : '';
   }
 
-  override currentRouteChanged(route: Route) {
+  private getCursorSpeedString(): TrustedHTML {
+    return this.i18nAdvanced(
+        loadTimeData.getBoolean('allowScrollSettings') ? 'cursorSpeed' :
+                                                         'mouseSpeed');
+  }
+
+  private getCursorAccelerationString(): TrustedHTML {
+    return this.i18nAdvanced(
+        loadTimeData.getBoolean('allowScrollSettings') ?
+            'cursorAccelerationLabel' :
+            'mouseAccelerationLabel');
+  }
+
+  override currentRouteChanged(route: Route): void {
     // Does not apply to this page.
     if (route !== routes.POINTERS) {
       return;
@@ -197,7 +207,7 @@ class SettingsPointersElement extends SettingsPointersElementBase {
     this.attemptDeepLink();
   }
 
-  private onLearnMoreLinkClicked_(event: Event) {
+  private onLearnMoreLinkClicked_(event: Event): void {
     const path = event.composedPath();
     if (!Array.isArray(path) || !path.length) {
       return;
@@ -209,19 +219,19 @@ class SettingsPointersElement extends SettingsPointersElementBase {
     }
   }
 
-  private onMouseReverseScrollRowClicked_() {
+  private onMouseReverseScrollRowClicked_(): void {
     this.setPrefValue(
         'settings.mouse.reverse_scroll',
         !this.getPref('settings.mouse.reverse_scroll').value);
   }
 
-  private onTouchpadReverseScrollRowClicked_() {
+  private onTouchpadReverseScrollRowClicked_(): void {
     this.setPrefValue(
         'settings.touchpad.natural_scroll',
         !this.getPref('settings.touchpad.natural_scroll').value);
   }
 
-  private onTouchpadHapticFeedbackRowClicked_() {
+  private onTouchpadHapticFeedbackRowClicked_(): void {
     this.setPrefValue(
         'settings.touchpad.haptic_feedback',
         !this.getPref('settings.touchpad.haptic_feedback').value);

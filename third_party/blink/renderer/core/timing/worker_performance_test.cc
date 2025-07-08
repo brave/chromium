@@ -4,6 +4,7 @@
 
 #include "base/test/trace_event_analyzer.h"
 #include "third_party/blink/renderer/core/workers/worker_thread_test_helper.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/googletest/src/googletest/include/gtest/gtest.h"
 
 namespace blink {
@@ -23,12 +24,12 @@ class WorkerPerformanceTest : public testing::Test {
 
     worker_thread_->WaitForShutdownForTesting();
   }
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<WorkerThreadForTest> worker_thread_;
   scoped_refptr<const SecurityOrigin> security_origin_;
   std::unique_ptr<MockWorkerReportingProxy> reporting_proxy_;
 };
 
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 // The trace_analyzer does not work on platforms on which the migration of
 // tracing into Perfetto has not completed.
 TEST_F(WorkerPerformanceTest, Mark) {
@@ -50,7 +51,7 @@ TEST_F(WorkerPerformanceTest, Mark) {
   ASSERT_TRUE(events[0]->HasDictArg("data"));
   base::Value::Dict arg_dict = events[0]->GetKnownArgAsDict("data");
 
-  absl::optional<double> start_time = arg_dict.FindDouble("startTime");
+  std::optional<double> start_time = arg_dict.FindDouble("startTime");
   ASSERT_TRUE(start_time.has_value());
 
   // The navigationId is NOT recorded when performance.mark is executed by a
@@ -58,6 +59,5 @@ TEST_F(WorkerPerformanceTest, Mark) {
   std::string* navigation_id = arg_dict.FindString("navigationId");
   ASSERT_FALSE(navigation_id);
 }
-#endif  // BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 }  // namespace blink

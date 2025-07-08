@@ -13,6 +13,7 @@
 using extensions::FeatureSwitch;
 using extensions::OptionsPageInfo;
 
+namespace extensions {
 namespace {
 
 class OptionsPageManifestTest : public ChromeManifestTest {
@@ -75,7 +76,7 @@ TEST_F(OptionsPageManifestTest, OptionsPageInApps) {
   extension = LoadAndExpectSuccess("platform_app_with_options_page.json");
   EXPECT_TRUE(!OptionsPageInfo::HasOptionsPage(extension.get()));
 
-  Testcase testcases[] = {
+  const Testcase testcases[] = {
       // Forbid options page with relative URL in hosted apps.
       Testcase("hosted_app_relative_options.json",
                extensions::manifest_errors::kInvalidOptionsPageInHostedApp),
@@ -85,10 +86,9 @@ TEST_F(OptionsPageManifestTest, OptionsPageInApps) {
                extensions::manifest_errors::kInvalidOptionsPageInHostedApp),
 
       // Forbid absolute URL for options page in packaged apps.
-      Testcase(
-          "packaged_app_absolute_options.json",
-          extensions::manifest_errors::kInvalidOptionsPageExpectUrlInPackage)};
-  RunTestcases(testcases, std::size(testcases), EXPECT_TYPE_ERROR);
+      Testcase("packaged_app_absolute_options.json",
+               extensions::manifest_errors::kInvalidOptionsPage)};
+  RunTestcases(testcases, EXPECT_TYPE_ERROR);
 }
 
 // Tests for the options_ui.page manifest field.
@@ -107,9 +107,9 @@ TEST_F(OptionsPageManifestTest, OptionsUIPage) {
                                extension->id().c_str()),
             OptionsPageInfo::GetOptionsPage(extension.get()).spec());
 
-  Testcase testcases[] = {Testcase("options_ui_page_bad_url.json",
-                                   "'page': expected page, got null")};
-  RunTestcases(testcases, std::size(testcases), EXPECT_TYPE_WARNING);
+  RunTestcase(Testcase("options_ui_page_bad_url.json",
+                       "'page': expected page, got null"),
+              EXPECT_TYPE_WARNING);
 }
 
 // Runs TestOptionsUIChromeStyleAndOpenInTab with and without the
@@ -149,3 +149,4 @@ TEST_F(OptionsPageManifestTest, OptionsPageChromeStyleManifestV3) {
 }
 
 }  // namespace
+}  // namespace extensions

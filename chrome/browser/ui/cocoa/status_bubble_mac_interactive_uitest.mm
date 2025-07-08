@@ -11,10 +11,6 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 class StatusBubbleMacInteractiveUITest : public InProcessBrowserTest {
@@ -27,7 +23,7 @@ class StatusBubbleMacInteractiveUITest : public InProcessBrowserTest {
 // do not work properly.
 IN_PROC_BROWSER_TEST_F(StatusBubbleMacInteractiveUITest,
                        DISABLED_TestSettingStatusDoesNotUnhideApp) {
-  StatusBubble* status_bubble = browser()->window()->GetStatusBubble();
+  StatusBubble* status_bubble = browser()->window()->GetStatusBubbles().front();
 
   EXPECT_FALSE(NSApp.hidden);
   [NSApp hide:nil];

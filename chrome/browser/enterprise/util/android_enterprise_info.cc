@@ -7,12 +7,18 @@
 #include <jni.h>
 
 #include "base/android/jni_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/browser/enterprise/util/jni_headers/EnterpriseInfo_jni.h"
 
-namespace chrome {
 namespace enterprise_util {
 AndroidEnterpriseInfo::AndroidEnterpriseInfo() = default;
 AndroidEnterpriseInfo::~AndroidEnterpriseInfo() = default;
+
+AndroidEnterpriseInfo* AndroidEnterpriseInfo::GetInstance() {
+  static base::NoDestructor<AndroidEnterpriseInfo> instance;
+  return instance.get();
+}
 
 void AndroidEnterpriseInfo::GetAndroidEnterpriseInfoState(
     EnterpriseInfoCallback callback) {
@@ -66,12 +72,11 @@ class AndroidEnterpriseInfoFriendHelper {
 };
 
 }  // namespace enterprise_util
-}  // namespace chrome
 
 void JNI_EnterpriseInfo_UpdateNativeOwnedState(JNIEnv* env,
                                                jboolean hasProfileOwnerApp,
                                                jboolean hasDeviceOwnerApp) {
-  chrome::enterprise_util::AndroidEnterpriseInfoFriendHelper::
-      ForwardToServiceCallbacks(static_cast<bool>(hasProfileOwnerApp),
-                                static_cast<bool>(hasDeviceOwnerApp));
+  enterprise_util::AndroidEnterpriseInfoFriendHelper::ForwardToServiceCallbacks(
+      static_cast<bool>(hasProfileOwnerApp),
+      static_cast<bool>(hasDeviceOwnerApp));
 }

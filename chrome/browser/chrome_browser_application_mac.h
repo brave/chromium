@@ -11,7 +11,7 @@
 #include <stddef.h>
 
 #import "base/mac/scoped_sending_event.h"
-#import "base/message_loop/message_pump_mac.h"
+#import "base/message_loop/message_pump_apple.h"
 
 @interface BrowserCrApplication
     : NSApplication <CrAppProtocol, CrAppControlProtocol>
@@ -20,6 +20,9 @@
 // application, i.e., begins a process which may lead to termination. This
 // method cancels that process.
 - (void)cancelTerminate:(id)sender;
+
+- (BOOL)voiceOverStateForTesting;
+
 @end
 
 #endif  // __OBJC__

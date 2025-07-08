@@ -5,6 +5,7 @@
 #ifndef UI_ANDROID_RESOURCES_RESOURCE_MANAGER_IMPL_H_
 #define UI_ANDROID_RESOURCES_RESOURCE_MANAGER_IMPL_H_
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -54,7 +55,6 @@ class UI_ANDROID_EXPORT ResourceManagerImpl
   // Called from Java
   // ----------------------------------------------------------
   void OnResourceReady(JNIEnv* env,
-                       const base::android::JavaRef<jobject>& jobj,
                        jint res_type,
                        jint res_id,
                        const base::android::JavaRef<jobject>& bitmap,
@@ -63,11 +63,12 @@ class UI_ANDROID_EXPORT ResourceManagerImpl
                        jlong native_resource);
   void RemoveResource(
       JNIEnv* env,
-      const base::android::JavaRef<jobject>& jobj,
       jint res_type,
       jint res_id);
-  void ClearTintedResourceCache(JNIEnv* env,
-      const base::android::JavaRef<jobject>& jobj);
+  void ClearTintedResourceCache(JNIEnv* env);
+  void DumpIfNoResource(JNIEnv* env,
+                        jint res_type,
+                        jint res_id);
 
   // base::trace_event::MemoryDumpProvider implementation.
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
@@ -92,7 +93,7 @@ class UI_ANDROID_EXPORT ResourceManagerImpl
       std::unordered_map<SkColor, std::unique_ptr<ResourceMap>>;
 
   raw_ptr<cc::UIResourceManager> ui_resource_manager_;
-  ResourceMap resources_[ANDROID_RESOURCE_TYPE_COUNT];
+  std::array<ResourceMap, ANDROID_RESOURCE_TYPE_COUNT> resources_;
   TintedResourceMap tinted_resources_;
 
   // The set of tints that are used for resources in the current frame.

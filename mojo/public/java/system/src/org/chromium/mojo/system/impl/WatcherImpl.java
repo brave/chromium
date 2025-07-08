@@ -4,18 +4,24 @@
 
 package org.chromium.mojo.system.impl;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.mojo.system.Core;
 import org.chromium.mojo.system.Handle;
 import org.chromium.mojo.system.MojoResult;
 import org.chromium.mojo.system.Watcher;
 
 @JNINamespace("mojo::android")
+@NullMarked
 class WatcherImpl implements Watcher {
-    private long mImplPtr = WatcherImplJni.get().createWatcher(WatcherImpl.this);
-    private Callback mCallback;
+    private long mImplPtr = WatcherImplJni.get().createWatcher();
+    private @Nullable Callback mCallback;
 
     @Override
     public int start(Handle handle, Core.HandleSignals signals, Callback callback) {
@@ -25,8 +31,13 @@ class WatcherImpl implements Watcher {
         if (!(handle instanceof HandleBase)) {
             return MojoResult.INVALID_ARGUMENT;
         }
-        int result = WatcherImplJni.get().start(WatcherImpl.this, mImplPtr,
-                ((HandleBase) handle).getMojoHandle(), signals.getFlags());
+        int result =
+                WatcherImplJni.get()
+                        .start(
+                                this,
+                                mImplPtr,
+                                ((HandleBase) handle).getMojoHandle(),
+                                signals.getFlags());
         if (result == MojoResult.OK) mCallback = callback;
         return result;
     }
@@ -37,7 +48,7 @@ class WatcherImpl implements Watcher {
             return;
         }
         mCallback = null;
-        WatcherImplJni.get().cancel(WatcherImpl.this, mImplPtr);
+        WatcherImplJni.get().cancel(mImplPtr);
     }
 
     @Override
@@ -45,20 +56,23 @@ class WatcherImpl implements Watcher {
         if (mImplPtr == 0) {
             return;
         }
-        WatcherImplJni.get().delete(WatcherImpl.this, mImplPtr);
+        WatcherImplJni.get().delete(mImplPtr);
         mImplPtr = 0;
     }
 
     @CalledByNative
     private void onHandleReady(int result) {
-        mCallback.onResult(result);
+        assumeNonNull(mCallback).onResult(result);
     }
 
     @NativeMethods
     interface Natives {
-        long createWatcher(WatcherImpl caller);
-        int start(WatcherImpl caller, long implPtr, long mojoHandle, int flags);
-        void cancel(WatcherImpl caller, long implPtr);
-        void delete(WatcherImpl caller, long implPtr);
+        long createWatcher();
+
+        int start(WatcherImpl self, long implPtr, long mojoHandle, int flags);
+
+        void cancel(long implPtr);
+
+        void delete(long implPtr);
     }
 }

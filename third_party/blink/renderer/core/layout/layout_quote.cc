@@ -27,18 +27,21 @@
 #include "third_party/blink/renderer/core/css/style_containment_scope_tree.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
+#include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/layout_ng_text_combine.h"
 #include "third_party/blink/renderer/platform/text/layout_locale.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
-LayoutQuote::LayoutQuote(PseudoElement& pseudo, QuoteType quote)
-    : LayoutInline(nullptr), type_(quote), depth_(0), owning_pseudo_(&pseudo) {
-  SetDocumentForAnonymous(&pseudo.GetDocument());
+LayoutQuote::LayoutQuote(LayoutObject& owner, QuoteType quote)
+    : LayoutInline(nullptr),
+      type_(quote),
+      depth_(0),
+      owning_pseudo_(DynamicTo<PseudoElement>(owner.GetNode())) {
+  SetDocumentForAnonymous(&owner.GetDocument());
 }
 
 LayoutQuote::~LayoutQuote() {
@@ -98,13 +101,12 @@ void LayoutQuote::UpdateText() {
 
   LayoutTextFragment* fragment = FindFragmentChild();
   if (fragment) {
-    fragment->SetStyle(IsA<LayoutNGTextCombine>(fragment->Parent())
+    fragment->SetStyle(IsA<LayoutTextCombine>(fragment->Parent())
                            ? fragment->Parent()->Style()
                            : Style());
     fragment->SetContentString(text_.Impl());
   } else {
-    fragment =
-        LayoutTextFragment::CreateAnonymous(*owning_pseudo_, text_.Impl());
+    fragment = LayoutTextFragment::CreateAnonymous(GetDocument(), text_.Impl());
     fragment->SetStyle(Style());
     AddChild(fragment);
   }
@@ -117,8 +119,9 @@ LayoutTextFragment* LayoutQuote::FindFragmentChild() const {
   auto* const last_child = LastChild();
   if (auto* fragment = DynamicTo<LayoutTextFragment>(last_child))
     return fragment;
-  if (auto* combine = DynamicTo<LayoutNGTextCombine>(last_child))
+  if (auto* combine = DynamicTo<LayoutTextCombine>(last_child)) {
     return DynamicTo<LayoutTextFragment>(combine->FirstChild());
+  }
   return nullptr;
 }
 
@@ -134,7 +137,6 @@ String LayoutQuote::ComputeText() const {
       return GetQuotesData()->GetOpenQuote(depth_).Impl();
   }
   NOTREACHED();
-  return g_empty_string;
 }
 
 scoped_refptr<const QuotesData> LayoutQuote::GetQuotesData() const {

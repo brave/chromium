@@ -15,14 +15,14 @@
 #include "components/omnibox/browser/omnibox.mojom-shared.h"
 #include "components/omnibox/browser/omnibox_navigation_observer.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
-#include "components/url_formatter/spoof_checks/idna_metrics.h"
+#include "components/security_state/core/security_state.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 
 class AutocompleteResult;
 class GURL;
-class LocationBarModel;
 class SessionID;
 class SkBitmap;
 class TemplateURL;
@@ -37,21 +37,16 @@ class BookmarkModel;
 namespace gfx {
 class Image;
 struct VectorIcon;
-}
+}  // namespace gfx
 
 class AutocompleteControllerEmitter;
 class PrefService;
-
-using BitmapFetchedCallback =
-    base::RepeatingCallback<void(int result_index, const SkBitmap& bitmap)>;
-using FaviconFetchedCallback =
-    base::OnceCallback<void(const gfx::Image& favicon)>;
 
 // Interface that allows the omnibox component to interact with its embedder
 // (e.g., getting information about the current page, retrieving objects
 // associated with the current tab, or performing operations that rely on such
 // objects under the hood).
-class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
+class OmniboxClient {
  public:
   OmniboxClient() = default;
   virtual ~OmniboxClient() = default;
@@ -64,7 +59,9 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // startup or shutdown, the omnibox may exist but have no attached page.
   virtual bool CurrentPageExists() const;
 
-  // Returns the URL of the current page.
+  // Returns the virtual URL currently being displayed in the URL bar, if there
+  // is one. This URL might be a pending navigation that hasn't committed yet,
+  // so it is not guaranteed to match the current page in this WebContents.
   virtual const GURL& GetURL() const;
 
   // Returns the title of the current page.
@@ -72,6 +69,9 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
 
   // Returns the favicon of the current page.
   virtual gfx::Image GetFavicon() const;
+
+  // Returns the UKM source id for the top frame of the current page.
+  virtual ukm::SourceId GetUKMSourceId() const;
 
   // Returns whether the current page is loading.
   virtual bool IsLoading() const;
@@ -95,6 +95,7 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
       omnibox::mojom::NavigationPredictor navigation_predictor) {}
 
   virtual PrefService* GetPrefs() = 0;
+  virtual const PrefService* GetPrefs() const = 0;
   virtual bookmarks::BookmarkModel* GetBookmarkModel();
   virtual AutocompleteControllerEmitter* GetAutocompleteControllerEmitter() = 0;
   virtual TemplateURLService* GetTemplateURLService();
@@ -105,7 +106,7 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // to determine the correct port while upgrading typed URLs to https if the
   // original URL has a non-default port. Only meaningful if
   // ShouldDefaultTypedNavigationsToHttps() returns true.
-  // TODO(crbug.com/1168371): Remove when URLLoaderInterceptor can simulate
+  // TODO(crbug.com/40743298): Remove when URLLoaderInterceptor can simulate
   // redirects.
   virtual int GetHttpsPortForTesting() const = 0;
 
@@ -114,10 +115,11 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // be true on iOS.
   virtual bool IsUsingFakeHttpsForHttpsUpgradeTesting() const = 0;
 
-  // Returns the icon corresponding to |match| if match is an extension match
-  // and an empty icon otherwise.
-  virtual gfx::Image GetIconIfExtensionMatch(
-      const AutocompleteMatch& match) const;
+  // Returns the icon corresponding to extension `template_url`.
+  virtual gfx::Image GetExtensionIcon(const TemplateURL* template_url) const;
+
+  // Returns the given |bitmap| with the correct size.
+  virtual gfx::Image GetSizedIcon(const SkBitmap* bitmap) const;
 
   // Returns the given |vector_icon_type| with the correct size.
   virtual gfx::Image GetSizedIcon(const gfx::VectorIcon& vector_icon_type,
@@ -126,16 +128,54 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // Returns the given |icon| with the correct size.
   virtual gfx::Image GetSizedIcon(const gfx::Image& icon) const;
 
-  // Checks whether |template_url| is an extension keyword; if so, asks the
-  // ExtensionOmniboxEventRouter to process |match| for it and returns true.
-  // Otherwise returns false. |observer| is the OmniboxNavigationObserver
-  // that was created by CreateOmniboxNavigationObserver() for |match|; in some
+  // Returns the formatted full URL for the toolbar. The formatting includes:
+  //   - Some characters may be unescaped.
+  //   - The scheme and/or trailing slash may be dropped.
+  // This method specifically keeps the URL suitable for editing by not
+  // applying any elisions that change the meaning of the URL.
+  virtual std::u16string GetFormattedFullURL() const = 0;
+
+  // Returns a simplified URL for display (but not editing) on the toolbar.
+  // This formatting is generally a superset of GetFormattedFullURL, and may
+  // include some destructive elisions that change the meaning of the URL.
+  // The returned string is not suitable for editing, and is for display only.
+  virtual std::u16string GetURLForDisplay() const = 0;
+
+  // Returns the URL of the current navigation entry.
+  virtual GURL GetNavigationEntryURL() const = 0;
+
+  // Classify the current page being viewed as, for example, the new tab
+  // page or a normal web page.  Used for logging omnibox events for
+  // UMA opted-in users.  Examines the user's profile to determine if the
+  // current page is the user's home page.
+  virtual metrics::OmniboxEventProto::PageClassification GetPageClassification(
+      bool is_prefetch) const = 0;
+
+  // Returns the security level that the toolbar should display.
+  virtual security_state::SecurityLevel GetSecurityLevel() const = 0;
+
+  // Returns the cert status of the current navigation entry.
+  virtual net::CertStatus GetCertStatus() const = 0;
+
+  // Returns the id of the icon to show to the left of the address, based on the
+  // current URL.  When search term replacement is active, this returns a search
+  // icon.
+  virtual const gfx::VectorIcon& GetVectorIcon() const = 0;
+
+  // Returns the LensOverlaySuggestInputs if available.
+  virtual std::optional<lens::proto::LensOverlaySuggestInputs>
+  GetLensOverlaySuggestInputs() const;
+
+  // Asks the `ExtensionOmniboxEventRouter` to process `match` for it.
+  // Some more processing is done to separate the keyword from the
+  // text if in keyword mode. `observer` is the OmniboxNavigationObserver that
+  // was created by `CreateOmniboxNavigationObserver()` for `match`; in some
   // embedding contexts, processing an extension keyword involves invoking
   // action on this observer.
-  virtual bool ProcessExtensionKeyword(const std::u16string& text,
-                                       const TemplateURL* template_url,
-                                       const AutocompleteMatch& match,
-                                       WindowOpenDisposition disposition);
+  virtual void ProcessExtensionMatch(const std::u16string& text,
+                                     const TemplateURL* template_url,
+                                     const AutocompleteMatch& match,
+                                     WindowOpenDisposition disposition);
 
   // Called to notify clients that the omnibox input state has changed.
   virtual void OnInputStateChanged() {}
@@ -143,6 +183,13 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // Called to notify clients that the omnibox focus state has changed.
   virtual void OnFocusChanged(OmniboxFocusState state,
                               OmniboxFocusChangeReason reason) {}
+
+  // Called to notify clients when keyword mode is entered or exited.
+  virtual void OnKeywordModeChanged(bool entered,
+                                    const std::u16string& keyword) {}
+
+  // Called to show HaTS survey if the proper criteria is met.
+  virtual void MaybeShowOnFocusHatsSurvey(AutocompleteProviderClient* client) {}
 
   // Called to notify the clients that the user has pasted into the omnibox, and
   // the resulting string in the omnibox is a valid URL.
@@ -152,7 +199,11 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // support preloading (currently, prefetching or prerendering) of search
   // results pages should preload only if `should_preload` is true. If the
   // implementation supports fetching of bitmaps for URLs (not all embedders
-  // do), `on_bitmap_fetched` will be called when the bitmap has been fetched.
+  // do), `on_bitmap_fetched` will be called when the bitmap has been fetched,
+  // with the arguments being the index of the result, the URL of the bitmap,
+  // and the bitmap itself.
+  using BitmapFetchedCallback = base::RepeatingCallback<
+      void(int result_index, const GURL& icon_url, const SkBitmap& bitmap)>;
   virtual void OnResultChanged(const AutocompleteResult& result,
                                bool default_match_changed,
                                bool should_preload,
@@ -164,6 +215,8 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // Otherwise, they return an empty gfx::Image and |on_favicon_fetched| may or
   // may not be called asynchronously later. |on_favicon_fetched| will never be
   // run synchronously, and will never be run with an empty result.
+  using FaviconFetchedCallback =
+      base::OnceCallback<void(const gfx::Image& favicon)>;
   virtual gfx::Image GetFaviconForPageUrl(
       const GURL& page_url,
       FaviconFetchedCallback on_favicon_fetched);
@@ -192,11 +245,14 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
   // Discards the state for all pending and transient navigations.
   virtual void DiscardNonCommittedNavigations() {}
 
-  // Presents prompt to update Chrome.
-  virtual void OpenUpdateChromeDialog() {}
-
   // Focuses the `WebContents`, i.e. the web page of the current tab.
   virtual void FocusWebContents() {}
+
+  // Called when the user presses the thumbs down button on a suggestion.
+  // Displays the Feedback form for submitting detailed feedback on why they
+  // disliked the suggestion.
+  virtual void ShowFeedbackPage(const std::u16string& input_text,
+                                const GURL& destination_url) {}
 
   virtual void OnAutocompleteAccept(
       const GURL& destination_url,
@@ -209,16 +265,35 @@ class OmniboxClient : public base::SupportsWeakPtr<OmniboxClient> {
       bool destination_url_entered_with_http_scheme,
       const std::u16string& text,
       const AutocompleteMatch& match,
-      const AutocompleteMatch& alternative_nav_match,
-      IDNA2008DeviationCharacter deviation_char_in_hostname) = 0;
+      const AutocompleteMatch& alternative_nav_match) = 0;
+
+  // Called when the input is accepted with a thumbnail and no user text. This
+  // is required because there is no verbatim match when the input is just an
+  // image without text.
+  virtual void OnThumbnailOnlyAccept() {}
 
   // Called when the view should update itself without restoring any tab state.
   virtual void OnInputInProgress(bool in_progress) {}
 
   // Called when the omnibox popup is shown or hidden.
-  virtual void OnPopupVisibilityChanged() {}
+  virtual void OnPopupVisibilityChanged(bool popup_is_open) {}
 
-  virtual LocationBarModel* GetLocationBarModel() = 0;
+  // Called when the thumbnail image has been removed.
+  virtual void OnThumbnailRemoved() {}
+
+  // Even though IPH suggestions aren't selectable like normal matches, they can
+  // have a 'learn more' or next-steps link. `OpenIphLink()` allows opening
+  // these in a new tab.
+  virtual void OpenIphLink(GURL gurl) {}
+
+  // Returns true if history embeddings is enabled and user has opted in.
+  virtual bool IsHistoryEmbeddingsEnabled() const;
+
+  // Optionally warm-up for the default search engine so that we can navigate to
+  // the search result page effectively.
+  virtual void MaybePrewarmForDefaultSearchEngine() {}
+
+  virtual base::WeakPtr<OmniboxClient> AsWeakPtr() = 0;
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_CLIENT_H_

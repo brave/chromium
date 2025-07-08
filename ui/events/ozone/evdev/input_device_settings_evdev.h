@@ -5,6 +5,8 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_INPUT_DEVICE_SETTINGS_EVDEV_H_
 #define UI_EVENTS_OZONE_EVDEV_INPUT_DEVICE_SETTINGS_EVDEV_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/component_export.h"
@@ -12,7 +14,7 @@
 
 namespace ui {
 
-enum class DomCode;
+enum class DomCode : uint32_t;
 
 constexpr int kDefaultSensitivity = 3;
 
@@ -86,6 +88,7 @@ struct COMPONENT_EXPORT(EVDEV) InputDeviceSettingsEvdev {
   bool enable_touch_screens = true;
   bool enable_internal_keyboard_filter = false;
   std::vector<DomCode> internal_keyboard_allowed_keys;
+  std::vector<int> blocked_modifiers_devices;
 
  private:
   mutable base::flat_map<int, TouchpadSettingsEvdev> touchpad_settings_;

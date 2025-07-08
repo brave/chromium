@@ -5,15 +5,13 @@
 #ifndef COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_METRICS_METRICS_COLLECTOR_H_
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_METRICS_METRICS_COLLECTOR_H_
 
-#include "base/memory/raw_ptr.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
-#include "components/performance_manager/public/graph/frame_node.h"
 #include "components/performance_manager/public/graph/graph.h"
 #include "components/performance_manager/public/graph/page_node.h"
 #include "components/performance_manager/public/graph/process_node.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "url/gurl.h"
 
 namespace performance_manager {
 
@@ -21,10 +19,9 @@ extern const base::TimeDelta kMetricsReportDelayTimeout;
 extern const int kDefaultFrequencyUkmEQTReported;
 
 // The MetricsCollector is a graph observer that reports UMA/UKM.
-class MetricsCollector : public FrameNode::ObserverDefaultImpl,
-                         public GraphOwned,
-                         public PageNode::ObserverDefaultImpl,
-                         public ProcessNode::ObserverDefaultImpl {
+class MetricsCollector : public GraphOwned,
+                         public PageNodeObserver,
+                         public ProcessNodeObserver {
  public:
   MetricsCollector();
 
@@ -74,9 +71,6 @@ class MetricsCollector : public FrameNode::ObserverDefaultImpl,
                                 ukm::SourceId ukm_source_id);
 
   void OnProcessDestroyed(const ProcessNode* process_node);
-
-  // The graph to which this object belongs.
-  raw_ptr<Graph> graph_ = nullptr;
 };
 
 }  // namespace performance_manager

@@ -12,6 +12,7 @@
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 
 namespace viz {
@@ -47,7 +48,13 @@ void TestContextSupport::GetGpuFence(
     base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) {}
 
 void TestContextSupport::SetAggressivelyFreeResources(
-    bool aggressively_free_resources) {}
+    bool aggressively_free_resources) {
+  aggressively_free_resources_ = aggressively_free_resources;
+}
+
+bool TestContextSupport::GetAggressivelyFreeResources() const {
+  return aggressively_free_resources_;
+}
 
 void TestContextSupport::CallAllSyncPointCallbacks() {
   size_t size = sync_point_callbacks_.size();

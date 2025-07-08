@@ -9,19 +9,20 @@
 
 #include "ash/accessibility/ui/accessibility_focus_ring_controller_impl.h"
 #include "ash/accessibility/ui/accessibility_focus_ring_layer.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/components/arc/session/arc_service_manager.h"
-#include "ash/components/arc/test/arc_util_test_support.h"
-#include "ash/components/arc/test/connection_holder_util.h"
-#include "ash/constants/app_types.h"
 #include "ash/shell.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_base.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
 #include "chrome/browser/ash/accessibility/magnification_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/shelf/app_service/exo_app_type_resolver.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
+#include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
+#include "chromeos/ash/experiences/arc/test/connection_holder_util.h"
 #include "components/exo/buffer.h"
 #include "components/exo/client_controlled_accelerators.h"
 #include "components/exo/shell_surface.h"
@@ -54,13 +55,19 @@ class MockAutomationEventRouter
   virtual ~MockAutomationEventRouter() = default;
 
   // extensions::AutomationEventRouterInterface:
-  void DispatchAccessibilityEvents(const ui::AXTreeID& tree_id,
-                                   std::vector<ui::AXTreeUpdate> updates,
-                                   const gfx::Point& mouse_location,
-                                   std::vector<ui::AXEvent> events) override {}
+  void DispatchAccessibilityEvents(
+      const ui::AXTreeID& tree_id,
+      const std::vector<ui::AXTreeUpdate>& updates,
+      const gfx::Point& mouse_location,
+      const std::vector<ui::AXEvent>& events) override {}
 
   void DispatchAccessibilityLocationChange(
-      const content::AXLocationChangeNotificationDetails& details) override {}
+      const ui::AXTreeID& tree_id,
+      const ui::AXLocationChange& details) override {}
+
+  void DispatchAccessibilityScrollChange(
+      const ui::AXTreeID& tree_id,
+      const ui::AXScrollChange& details) override {}
 
   void DispatchTreeDestroyedEvent(ui::AXTreeID tree_id) override {}
 
@@ -74,14 +81,14 @@ class MockAutomationEventRouter
 
   void DispatchGetTextLocationDataResult(
       const ui::AXActionData& data,
-      const absl::optional<gfx::Rect>& rect) override {
+      const std::optional<gfx::Rect>& rect) override {
     last_dispatched_action_data_ = data;
     last_dispatched_text_location_ = rect;
   }
 
-  absl::optional<ui::AXActionData> last_dispatched_action_data_;
-  absl::optional<bool> last_dispatched_action_result_;
-  absl::optional<gfx::Rect> last_dispatched_text_location_;
+  std::optional<ui::AXActionData> last_dispatched_action_data_;
+  std::optional<bool> last_dispatched_action_result_;
+  std::optional<gfx::Rect> last_dispatched_text_location_;
 };
 
 }  // namespace

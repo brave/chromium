@@ -6,12 +6,6 @@
 
 #include <memory>
 
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/metrics/arc_metrics_service.h"
-#include "ash/components/arc/metrics/stability_metrics_manager.h"
-#include "ash/components/arc/session/arc_service_manager.h"
-#include "ash/components/arc/test/arc_util_test_support.h"
-#include "ash/components/arc/test/fake_arc_session.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
@@ -41,10 +35,17 @@
 #include "chromeos/ash/components/dbus/vm_plugin_dispatcher/vm_plugin_dispatcher_client.h"
 #include "chromeos/ash/components/login/session/session_termination_manager.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/metrics/arc_metrics_service.h"
+#include "chromeos/ash/experiences/arc/metrics/stability_metrics_manager.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
+#include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
+#include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "google_apis/gaia/gaia_id.h"
 
 namespace policy {
 
@@ -103,6 +104,9 @@ class LockToSingleUserManagerTest : public BrowserWithTestWindowTest {
     arc_session_manager_->Shutdown();
     arc_session_manager_.reset();
 
+    // Must reset browser context reference before profile destruction.
+    arc_service_manager_->set_browser_context(nullptr);
+
     // Destruction order matters here.
     //
     // This line destroys profile, thus indirectly destroys
@@ -112,7 +116,6 @@ class LockToSingleUserManagerTest : public BrowserWithTestWindowTest {
     // ArcServiceManager must still be alive at this line.
     BrowserWithTestWindowTest::TearDown();
 
-    arc_service_manager_->set_browser_context(nullptr);
     arc_service_manager_.reset();
     ash::VmPluginDispatcherClient::Shutdown();
     ash::CryptohomeMiscClient::Shutdown();
@@ -126,10 +129,20 @@ class LockToSingleUserManagerTest : public BrowserWithTestWindowTest {
     ash::ChunneldClient::Shutdown();
   }
 
+  // BrowserWithTestWindowTest:
+  // Override to do nothing to inject this test's specific behavior.
+  // TODO(b/40286020): Consider migrating into BrowserWithTestWindowTest
+  // in better way. Current test implementation is different from
+  // what we're seeing in production.
+  void LogIn(std::string_view email, const GaiaId& gaia_id) override {}
+  void OnUserProfileCreated(const std::string& email,
+                            Profile* profile) override {}
+  void SwitchActiveUser(const std::string& email) override {}
+
   void LogInUser(bool is_affiliated) {
     base::RunLoop run_loop;
     const AccountId account_id(AccountId::FromUserEmailGaiaId(
-        profile()->GetProfileUserName(), "1234567890"));
+        profile()->GetProfileUserName(), GaiaId("1234567890")));
     fake_user_manager_->AddUserWithAffiliation(account_id, is_affiliated);
     fake_user_manager_->LoginUser(account_id);
     // This step should be part of LoginUser(). There's a TODO to add it there,
@@ -145,8 +158,8 @@ class LockToSingleUserManagerTest : public BrowserWithTestWindowTest {
 
     // Set up ChromeShelfController to avoid a crash in LaunchPluginVm().
     shelf_model_ = std::make_unique<ash::ShelfModel>();
-    chrome_shelf_controller_ = std::make_unique<ChromeShelfController>(
-        profile(), shelf_model_.get(), /*shelf_item_factory=*/nullptr);
+    chrome_shelf_controller_ =
+        std::make_unique<ChromeShelfController>(profile(), shelf_model_.get());
     chrome_shelf_controller_->SetProfileForTest(profile());
     chrome_shelf_controller_->SetShelfControllerHelperForTest(
         std::make_unique<ShelfControllerHelper>(profile()));
@@ -197,7 +210,7 @@ class LockToSingleUserManagerTest : public BrowserWithTestWindowTest {
   base::test::ScopedFeatureList scoped_feature_list_;
   ash::ScopedCrosSettingsTestHelper settings_helper_{
       /* create_settings_service= */ false};
-  raw_ptr<ash::FakeChromeUserManager, ExperimentalAsh> fake_user_manager_{
+  raw_ptr<ash::FakeChromeUserManager, DanglingUntriaged> fake_user_manager_{
       new ash::FakeChromeUserManager()};
   user_manager::ScopedUserManager scoped_user_manager_{
       base::WrapUnique(fake_user_manager_.get())};

@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "content/browser/screenlock_monitor/screenlock_monitor.h"
+
+#include <array>
 
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -59,11 +62,10 @@ class ScreenlockMonitorTest : public testing::Test {
     screenlock_monitor_ = std::make_unique<ScreenlockMonitor>(
         std::unique_ptr<ScreenlockMonitorSource>(screenlock_monitor_source_));
   }
-  ~ScreenlockMonitorTest() override = default;
+  ~ScreenlockMonitorTest() override { screenlock_monitor_source_ = nullptr; }
 
  protected:
-  raw_ptr<ScreenlockMonitorTestSource, DanglingUntriaged>
-      screenlock_monitor_source_;
+  raw_ptr<ScreenlockMonitorTestSource> screenlock_monitor_source_;
   std::unique_ptr<ScreenlockMonitor> screenlock_monitor_;
 
   base::test::SingleThreadTaskEnvironment task_environment_{
@@ -73,7 +75,7 @@ class ScreenlockMonitorTest : public testing::Test {
 TEST_F(ScreenlockMonitorTest, ScreenlockNotifications) {
   const int kObservers = 5;
 
-  ScreenlockMonitorTestObserver observers[kObservers];
+  std::array<ScreenlockMonitorTestObserver, kObservers> observers;
   for (int index = 0; index < kObservers; ++index)
     screenlock_monitor_->AddObserver(&observers[index]);
 

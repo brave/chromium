@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/test/test_system_tray_client.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/tray/fake_detailed_view_delegate.h"
 #include "ash/test/ash_test_base.h"
@@ -51,7 +51,7 @@ class AudioDetailedViewTest : public AshTestBase {
 
   std::unique_ptr<views::Widget> widget_;
   FakeDetailedViewDelegate detailed_view_delegate_;
-  raw_ptr<AudioDetailedView, ExperimentalAsh> audio_detailed_view_ = nullptr;
+  raw_ptr<AudioDetailedView, DanglingUntriaged> audio_detailed_view_ = nullptr;
 };
 
 TEST_F(AudioDetailedViewTest, PressingSettingsButtonOpensSettings) {
@@ -74,12 +74,11 @@ TEST_F(AudioDetailedViewTest, PressingSettingsButtonOpensSettings) {
 
 class AudioDetailedViewAgcInfoTest
     : public AudioDetailedViewTest,
-      public testing::WithParamInterface<testing::tuple<bool, bool, bool>> {
+      public testing::WithParamInterface<testing::tuple<bool, bool>> {
  public:
   void SetUp() override {
     scoped_feature_list_.InitWithFeatureStates(
-        {{media::kIgnoreUiGains, IsIgnoreUiGainsEnabled()},
-         {features::kQsRevamp, IsQsRevampEnabled()}});
+        {{media::kIgnoreUiGains, IsIgnoreUiGainsEnabled()}});
 
     AudioDetailedViewTest::SetUp();
 
@@ -109,16 +108,10 @@ class AudioDetailedViewAgcInfoTest
 
   bool IsIgnoreUiGainsEnabled() { return std::get<0>(GetParam()); }
   bool IsForceRespectUiGainsEnabled() { return std::get<1>(GetParam()); }
-  bool IsQsRevampEnabled() { return std::get<2>(GetParam()); }
 
   views::View* GetAgcInfoView() {
-    if (IsQsRevampEnabled()) {
-      return audio_detailed_view_->GetViewByID(
-          AudioDetailedView::AudioDetailedViewID::kAgcInfoView);
-    } else {
-      return audio_detailed_view_->GetViewByID(
-          AudioDetailedView::AudioDetailedViewID::kAgcInfoRow);
-    }
+    return audio_detailed_view_->GetViewByID(
+        AudioDetailedView::AudioDetailedViewID::kAgcInfoView);
   }
 
   static apps::AppPtr MakeApp(const char* app_id, const char* name) {
@@ -131,7 +124,7 @@ class AudioDetailedViewAgcInfoTest
 
   static apps::CapabilityAccessPtr MakeCapabilityAccess(
       const char* app_id,
-      absl::optional<bool> mic) {
+      std::optional<bool> mic) {
     apps::CapabilityAccessPtr access =
         std::make_unique<apps::CapabilityAccess>(app_id);
     access->camera = false;
@@ -141,11 +134,12 @@ class AudioDetailedViewAgcInfoTest
 
   void LaunchApp(const char* id,
                  const char* name,
-                 absl::optional<bool> use_mic) {
+                 std::optional<bool> use_mic) {
     std::vector<apps::AppPtr> registry_deltas;
     registry_deltas.push_back(MakeApp(id, name));
-    registry_cache_.OnApps(std::move(registry_deltas), apps::AppType::kUnknown,
-                           /* should_notify_initialized = */ false);
+    registry_cache_.OnAppsForTesting(std::move(registry_deltas),
+                                     apps::AppType::kUnknown,
+                                     /* should_notify_initialized = */ false);
 
     std::vector<apps::CapabilityAccessPtr> capability_access_deltas;
     capability_access_deltas.push_back(MakeCapabilityAccess(id, use_mic));
@@ -202,7 +196,6 @@ TEST_P(AudioDetailedViewAgcInfoTest, AgcInfoRowShowInProperConditions) {
 INSTANTIATE_TEST_SUITE_P(AudioDetailedViewAgcInfoVisibleTest,
                          AudioDetailedViewAgcInfoTest,
                          testing::Combine(testing::Bool(),
-                                          testing::Bool(),
                                           testing::Bool()));
 
 }  // namespace ash

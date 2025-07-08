@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/capture/video/mac/uvc_control_mac.h"
 
 #include <IOKit/IOCFPlugIn.h>
 
 #include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/feature_list.h"
-#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
 #include "base/strings/string_number_conversions.h"
 #include "media/capture/video/video_capture_device.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace media {
 
@@ -67,8 +68,8 @@ static void MaybeUpdatePanTiltControlRange(UvcControl& uvc,
 
 // Set pan and tilt values for a USB camera device.
 static void SetPanTiltCurrent(UvcControl& uvc,
-                              absl::optional<int> pan,
-                              absl::optional<int> tilt) {
+                              std::optional<int> pan,
+                              std::optional<int> tilt) {
   DCHECK(pan.has_value() || tilt.has_value());
 
   PanTilt pan_tilt_current;
@@ -178,15 +179,15 @@ static bool FindDeviceWithVendorAndProductIds(int vendor_id,
                                               int product_id,
                                               io_iterator_t* usb_iterator) {
   // Compose a search dictionary with vendor and product ID.
-  base::ScopedCFTypeRef<CFMutableDictionaryRef> query_dictionary(
+  base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> query_dictionary(
       IOServiceMatching(kIOUSBDeviceClassName));
-  CFDictionarySetValue(query_dictionary, CFSTR(kUSBVendorName),
+  CFDictionarySetValue(query_dictionary.get(), CFSTR(kUSBVendorName),
                        base::apple::NSToCFPtrCast(@(vendor_id)));
-  CFDictionarySetValue(query_dictionary, CFSTR(kUSBProductName),
+  CFDictionarySetValue(query_dictionary.get(), CFSTR(kUSBProductName),
                        base::apple::NSToCFPtrCast(@(product_id)));
 
   kern_return_t kr = IOServiceGetMatchingServices(
-      kIOMasterPortDefault, query_dictionary.release(), usb_iterator);
+      kIOMainPortDefault, query_dictionary.release(), usb_iterator);
   if (kr != kIOReturnSuccess) {
     VLOG(1) << "No devices found with specified Vendor and Product ID.";
     return false;
@@ -213,9 +214,11 @@ static bool FindDeviceInterfaceInUsbDevice(
   }
 
   // Fetch the Device Interface from the plugin.
-  HRESULT res = (*plugin)->QueryInterface(
-      plugin, CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID),
-      reinterpret_cast<LPVOID*>(device_interface));
+  HRESULT res =
+      (*plugin.get())
+          ->QueryInterface(plugin.get(),
+                           CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID),
+                           reinterpret_cast<LPVOID*>(device_interface));
   if (!SUCCEEDED(res) || !*device_interface) {
     VLOG(1) << "QueryInterface, couldn't create interface to USB";
     return false;
@@ -248,7 +251,7 @@ static bool FindVideoControlInterfaceInDeviceInterface(
 
   // There should be just one interface matching the class-subclass desired.
   base::mac::ScopedIOObject<io_service_t> found_interface(
-      IOIteratorNext(interface_iterator));
+      IOIteratorNext(interface_iterator.get()));
   if (!found_interface) {
     VLOG(1) << "Could not find a Video-AVControl interface in the device.";
     return false;
@@ -257,8 +260,8 @@ static bool FindVideoControlInterfaceInDeviceInterface(
   // Create a user side controller (i.e. a "plugin") for the found interface.
   SInt32 score;
   kr = IOCreatePlugInInterfaceForService(
-      found_interface, kIOUSBInterfaceUserClientTypeID, kIOCFPlugInInterfaceID,
-      video_control_interface, &score);
+      found_interface.get(), kIOUSBInterfaceUserClientTypeID,
+      kIOCFPlugInInterfaceID, video_control_interface, &score);
   if (kr != kIOReturnSuccess || !*video_control_interface) {
     VLOG(1) << "IOCreatePlugInInterfaceForService";
     return false;
@@ -270,10 +273,10 @@ template <typename DescriptorType>
 std::vector<uint8_t> ExtractControls(IOUSBDescriptorHeader* usb_descriptor) {
   auto* descriptor = reinterpret_cast<DescriptorType>(usb_descriptor);
   if (descriptor->bControlSize > 0) {
-    NSData* data = [[NSData alloc] initWithBytes:&descriptor->bmControls[0]
-                                          length:descriptor->bControlSize];
-    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(data.bytes);
-    return std::vector<uint8_t>(bytes, bytes + data.length);
+    const uint8_t* bytes =
+        reinterpret_cast<const uint8_t*>(&descriptor->bmControls[0]);
+    const size_t length = descriptor->bControlSize;
+    return std::vector<uint8_t>(bytes, bytes + length);
   }
   return std::vector<uint8_t>();
 }
@@ -305,7 +308,7 @@ static ScopedIOUSBInterfaceInterface OpenVideoClassSpecificControlInterface(
   base::mac::ScopedIOPluginInterface<IOCFPlugInInterface>
       video_control_interface;
 
-  while (io_service_t usb_device = IOIteratorNext(usb_iterator)) {
+  while (io_service_t usb_device = IOIteratorNext(usb_iterator.get())) {
     base::mac::ScopedIOObject<io_service_t> usb_device_ref(usb_device);
     base::mac::ScopedIOPluginInterface<IOUSBDeviceInterface> device_interface;
 
@@ -316,12 +319,12 @@ static ScopedIOUSBInterfaceInterface OpenVideoClassSpecificControlInterface(
     }
 
     if (FindVideoControlInterfaceInDeviceInterface(
-            device_interface, video_control_interface.InitializeInto())) {
+            device_interface.get(), video_control_interface.InitializeInto())) {
       break;
     }
   }
 
-  if (video_control_interface == nullptr) {
+  if (!video_control_interface) {
     return ScopedIOUSBInterfaceInterface();
   }
 
@@ -329,9 +332,9 @@ static ScopedIOUSBInterfaceInterface OpenVideoClassSpecificControlInterface(
   // the intermediate plugin.
   ScopedIOUSBInterfaceInterface control_interface;
   HRESULT res =
-      (*video_control_interface)
+      (*video_control_interface.get())
           ->QueryInterface(
-              video_control_interface,
+              video_control_interface.get(),
               CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID220),
               reinterpret_cast<LPVOID*>(control_interface.InitializeInto()));
   if (!SUCCEEDED(res) || !control_interface) {
@@ -342,7 +345,7 @@ static ScopedIOUSBInterfaceInterface OpenVideoClassSpecificControlInterface(
   // Find the device's unit ID presenting type kVcCsInterface and the descriptor
   // subtype.
   IOUSBDescriptorHeader* descriptor = nullptr;
-  while ((descriptor = (*control_interface)
+  while ((descriptor = (*control_interface.get())
                            ->FindNextAssociatedDescriptor(
                                control_interface.get(), descriptor,
                                uvc::kVcCsInterface))) {
@@ -365,14 +368,10 @@ static ScopedIOUSBInterfaceInterface OpenVideoClassSpecificControlInterface(
     return ScopedIOUSBInterfaceInterface();
   }
 
-  IOReturn ret = (*control_interface)->USBInterfaceOpen(control_interface);
+  IOReturn ret =
+      (*control_interface.get())->USBInterfaceOpen(control_interface.get());
   if (ret != kIOReturnSuccess) {
     VLOG(1) << "Unable to open control interface";
-
-    // Temporary additional debug logging for crbug.com/1270335
-    VLOG_IF(1, base::mac::IsAtLeastOS12() && ret == kIOReturnExclusiveAccess)
-        << "Camera USBInterfaceOpen failed with "
-        << "kIOReturnExclusiveAccess";
     return ScopedIOUSBInterfaceInterface();
   }
   return control_interface;
@@ -389,7 +388,7 @@ UvcControl::UvcControl(std::string device_model, int descriptor_subtype)
 
 UvcControl::~UvcControl() {
   if (interface_) {
-    (*interface_)->USBInterfaceClose(interface_);
+    (*interface_.get())->USBInterfaceClose(interface_.get());
   }
 }
 // static
@@ -547,11 +546,11 @@ void UvcControl::SetPhotoState(
   }
   if (UvcControl uvc(device_model, uvc::kVcInputTerminal); uvc.Good()) {
     if (settings->has_pan || settings->has_tilt) {
-      SetPanTiltCurrent(uvc,
-                        settings->has_pan ? absl::make_optional(settings->pan)
-                                          : absl::nullopt,
-                        settings->has_tilt ? absl::make_optional(settings->tilt)
-                                           : absl::nullopt);
+      SetPanTiltCurrent(
+          uvc,
+          settings->has_pan ? std::make_optional(settings->pan) : std::nullopt,
+          settings->has_tilt ? std::make_optional(settings->tilt)
+                             : std::nullopt);
     }
     if (settings->has_zoom) {
       uvc.SetControlCurrent<uint16_t>(uvc::kCtZoomAbsoluteControl,
@@ -663,13 +662,13 @@ bool UvcControl::IsControlAvailable(int control_selector) const {
   }
   size_t bitIndex;
   if (descriptor_subtype_ == uvc::kVcProcessingUnit) {
-    const auto* it = kProcessingUnitControlBitIndexes.find(control_selector);
+    const auto it = kProcessingUnitControlBitIndexes.find(control_selector);
     if (it == kProcessingUnitControlBitIndexes.end()) {
       return false;
     }
     bitIndex = it->second;
   } else if (descriptor_subtype_ == uvc::kVcInputTerminal) {
-    const auto* it = kCameraTerminalControlBitIndexes.find(control_selector);
+    const auto it = kCameraTerminalControlBitIndexes.find(control_selector);
     if (it == kCameraTerminalControlBitIndexes.end()) {
       return false;
     }
@@ -678,7 +677,7 @@ bool UvcControl::IsControlAvailable(int control_selector) const {
     return false;
   }
   UInt8 byteIndex = bitIndex / 8;
-  if (byteIndex > controls_.size()) {
+  if (byteIndex >= controls_.size()) {
     return false;
   }
   return ((controls_[byteIndex] & (1 << bitIndex % 8)) != 0);
@@ -694,7 +693,7 @@ IOUSBDevRequestTO UvcControl::CreateEmptyCommand(
   CHECK(interface_);
   CHECK((endpoint_direction == kUSBIn) || (endpoint_direction == kUSBOut));
   UInt8 interface_number;
-  (*interface_)->GetInterfaceNumber(interface_, &interface_number);
+  (*interface_.get())->GetInterfaceNumber(interface_.get(), &interface_number);
   IOUSBDevRequestTO command;
   memset(&command, 0, sizeof(command));
   command.bmRequestType = USBmakebmRequestType(

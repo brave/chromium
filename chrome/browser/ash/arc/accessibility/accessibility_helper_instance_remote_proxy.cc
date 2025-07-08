@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/components/arc/session/connection_holder.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
+#include "chromeos/ash/experiences/arc/session/connection_holder.h"
 
 namespace arc {
 
@@ -74,17 +74,6 @@ bool AccessibilityHelperInstanceRemoteProxy::RefreshWithExtraData(
 
   instance->RefreshWithExtraData(std::move(action_data_ptr),
                                  std::move(callback));
-  return true;
-}
-
-bool AccessibilityHelperInstanceRemoteProxy::SetCaptionStyle(
-    ax::android::mojom::CaptionStylePtr style_ptr) const {
-  auto* const instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service_->accessibility_helper(), SetCaptionStyle);
-  if (!instance)
-    return false;
-
-  instance->SetCaptionStyle(std::move(style_ptr));
   return true;
 }
 

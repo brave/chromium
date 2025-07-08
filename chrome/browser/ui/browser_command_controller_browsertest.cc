@@ -4,14 +4,14 @@
 
 #include "chrome/browser/ui/browser_command_controller.h"
 
+#include <string_view>
+
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -23,16 +23,21 @@
 #include "chrome/browser/translate/translate_test_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/profile_picker.h"
-#include "chrome/browser/ui/profile_ui_test_utils.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/profiles/profile_picker.h"
+#include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog_browsertest.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/ui_features.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/test_browser_window.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/commerce/core/commerce_feature_list.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
@@ -42,21 +47,35 @@
 #include "components/translate/core/browser/language_state.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/ui_base_features.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
-#include "chrome/browser/ui/ash/window_pin_util.h"
+#include "ash/wm/window_pin_util.h"
 #include "ui/aura/window.h"
+#endif
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#include "chrome/common/chrome_features.h"
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/common/chrome_switches.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #endif
 
 namespace chrome {
 
 class BrowserCommandControllerBrowserTest : public InProcessBrowserTest {
  public:
-  BrowserCommandControllerBrowserTest() {}
+  BrowserCommandControllerBrowserTest() = default;
 
   BrowserCommandControllerBrowserTest(
       const BrowserCommandControllerBrowserTest&) = delete;
@@ -66,7 +85,7 @@ class BrowserCommandControllerBrowserTest : public InProcessBrowserTest {
   ~BrowserCommandControllerBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     command_line->AppendSwitch(
         ash::switches::kIgnoreUserProfileMappingForTests);
 #endif
@@ -77,9 +96,7 @@ class BrowserCommandControllerBrowserTest : public InProcessBrowserTest {
 class BrowserCommandControllerBrowserTestRefreshOnly
     : public BrowserCommandControllerBrowserTest {
  public:
-  BrowserCommandControllerBrowserTestRefreshOnly() {
-    scoped_feature_list_.InitWithFeatures({features::kChromeRefresh2023}, {});
-  }
+  BrowserCommandControllerBrowserTestRefreshOnly() = default;
   BrowserCommandControllerBrowserTestRefreshOnly(
       const BrowserCommandControllerBrowserTestRefreshOnly&) = delete;
   BrowserCommandControllerBrowserTestRefreshOnly& operator=(
@@ -88,7 +105,7 @@ class BrowserCommandControllerBrowserTestRefreshOnly
   ~BrowserCommandControllerBrowserTestRefreshOnly() override = default;
 
  protected:
-  void LoadAndWaitForLanguage(base::StringPiece relative_url) {
+  void LoadAndWaitForLanguage(std::string_view relative_url) {
     ASSERT_TRUE(embedded_test_server()->Start());
 
     GURL url = embedded_test_server()->GetURL(relative_url);
@@ -111,10 +128,10 @@ class BrowserCommandControllerBrowserTestRefreshOnly
     net::NetworkChangeNotifier::CreateMockIfNeeded();
     browser()->command_controller()->TabStateChanged();
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
+// Test case for actions behind Toolbar Pinning.
+using BrowserCommandControllerBrowserTestToolbarPinningOnly =
+    BrowserCommandControllerBrowserTestRefreshOnly;
 
 // Verify that showing a constrained window disables find.
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest, DisableFind) {
@@ -177,7 +194,7 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest,
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_MOVE_TAB_TO_NEW_WINDOW));
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest,
                        NewAvatarMenuEnabledInGuestMode) {
   EXPECT_EQ(1U, BrowserList::GetInstance()->size());
@@ -190,47 +207,128 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest,
 }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest, LockedFullscreen) {
-  CommandUpdaterImpl* command_updater =
-      &browser()->command_controller()->command_updater_;
+#if BUILDFLAG(IS_CHROMEOS)
+class BrowserCommandControllerBrowserTestLockedFullscreen
+    : public BrowserCommandControllerBrowserTest {
+ protected:
+  void SetUpOnMainThread() override {
+    BrowserCommandControllerBrowserTest::SetUpOnMainThread();
+
+    // Set up browser for testing / validating page navigation and tab
+    // management command states. This mostly involves opening a new tab and
+    // ensuring that we are able to navigate back and forward for the test.
+    OpenUrlWithDisposition(GURL("chrome://new-tab-page/"),
+                           WindowOpenDisposition::NEW_FOREGROUND_TAB);
+    OpenUrlWithDisposition(GURL("chrome://version/"),
+                           WindowOpenDisposition::CURRENT_TAB);
+    OpenUrlWithDisposition(GURL("about:blank"),
+                           WindowOpenDisposition::CURRENT_TAB);
+
+    // Go back by one page to ensure the forward command is also available for
+    // testing purposes.
+    content::TestNavigationObserver navigation_observer(
+        browser()->tab_strip_model()->GetActiveWebContents());
+    chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
+    navigation_observer.Wait();
+    ASSERT_TRUE(chrome::CanGoBack(browser()));
+    ASSERT_TRUE(chrome::CanGoForward(browser()));
+  }
+
+  void EnterLockedFullscreen() {
+    PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+
+    // Update the corresponding command controller state as well as other
+    // states so we can verify what commands are enabled.
+    browser()->command_controller()->LockedFullscreenStateChanged();
+    browser()->command_controller()->TabStateChanged();
+    browser()->command_controller()->FullscreenStateChanged();
+    browser()->command_controller()->PrintingStateChanged();
+    browser()->command_controller()->ExtensionStateChanged();
+    browser()->command_controller()->FindBarVisibilityChanged();
+    browser()->command_controller()->UpdateReloadStopState(/*is_loading=*/true,
+                                                           /*force=*/false);
+  }
+
+  void ExitLockedFullscreen() {
+    UnpinWindow(browser()->window()->GetNativeWindow());
+    browser()->command_controller()->LockedFullscreenStateChanged();
+  }
+
+  CommandUpdaterImpl* GetCommandUpdater() {
+    return &browser()->command_controller()->command_updater_;
+  }
+
+ private:
+  void OpenUrlWithDisposition(GURL url, WindowOpenDisposition disposition) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
+        browser(), url, disposition,
+        ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestLockedFullscreen,
+                       WhenNotLockedForOnTask) {
+  browser()->SetLockedForOnTask(false);
+  CommandUpdaterImpl* const command_updater = GetCommandUpdater();
+
   // IDC_EXIT is always enabled in regular mode so it's a perfect candidate for
   // testing.
   EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_EXIT));
-  // Set locked fullscreen mode.
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
-  // Update the corresponding command_controller state.
-  browser()->command_controller()->LockedFullscreenStateChanged();
-  // Update some more states just to make sure the wrong commands don't get
+  EnterLockedFullscreen();
+
+  // IDC_EXIT is not enabled in locked fullscreen.
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_EXIT));
+  constexpr int kAllowlistedIds[] = {IDC_CUT, IDC_COPY, IDC_PASTE};
+
+  // Go through all the command ids and ensure only allowlisted commands are
   // enabled.
-  browser()->command_controller()->TabStateChanged();
-  browser()->command_controller()->FullscreenStateChanged();
-  browser()->command_controller()->PrintingStateChanged();
-  browser()->command_controller()->ExtensionStateChanged();
+  for (int id : command_updater->GetAllIds()) {
+    bool is_command_allowlisted = base::Contains(kAllowlistedIds, id);
+    EXPECT_EQ(command_updater->IsCommandEnabled(id), is_command_allowlisted)
+        << "Command " << id << " failed to meet enabled state expectation";
+  }
+
+  // Exit locked fullscreen and verify IDC_EXIT is enabled again.
+  ExitLockedFullscreen();
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_EXIT));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestLockedFullscreen,
+                       WhenLockedForOnTask) {
+  browser()->SetLockedForOnTask(true);
+  CommandUpdaterImpl* const command_updater = GetCommandUpdater();
+
+  // IDC_EXIT is always enabled in regular mode so it's a perfect candidate for
+  // testing.
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_EXIT));
+  EnterLockedFullscreen();
+
   // IDC_EXIT is not enabled in locked fullscreen.
   EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_EXIT));
 
-  constexpr int kAllowlistedIds[] = {IDC_CUT, IDC_COPY, IDC_PASTE};
+  // NOTE: If new commands are being added, please disable them by default and
+  // notify the ChromeOS team by filing a bug under this component --
+  // b/?q=componentid:1389107.
+  constexpr int kAllowlistedIds[] = {
+      IDC_CUT, IDC_COPY, IDC_PASTE,
+      // Page navigation commands.
+      IDC_BACK, IDC_FORWARD, IDC_RELOAD, IDC_RELOAD_BYPASSING_CACHE,
+      IDC_RELOAD_CLEARING_CACHE, IDC_STOP,
+      // Tab navigation commands.
+      IDC_SELECT_NEXT_TAB, IDC_SELECT_PREVIOUS_TAB,
+      // Find content commands.
+      IDC_FIND, IDC_FIND_NEXT, IDC_FIND_PREVIOUS, IDC_CLOSE_FIND_OR_STOP};
 
-  // Go through all the command ids and make sure all non-allowlisted commands
-  // are disabled.
+  // Go through all the command ids and ensure only allowlisted commands are
+  // enabled.
   for (int id : command_updater->GetAllIds()) {
-    if (base::Contains(kAllowlistedIds, id)) {
-      continue;
-    }
-    EXPECT_FALSE(command_updater->IsCommandEnabled(id));
+    bool is_command_allowlisted = base::Contains(kAllowlistedIds, id);
+    EXPECT_EQ(command_updater->IsCommandEnabled(id), is_command_allowlisted)
+        << "Command " << id << " failed to meet enabled state expectation";
   }
 
-  // Verify the set of allowlisted commands.
-  for (int id : kAllowlistedIds) {
-    EXPECT_TRUE(command_updater->IsCommandEnabled(id));
-  }
-
-  // Exit locked fullscreen mode.
-  UnpinWindow(browser()->window()->GetNativeWindow());
-  // Update the corresponding command_controller state.
-  browser()->command_controller()->LockedFullscreenStateChanged();
-  // IDC_EXIT is enabled again.
+  // Exit locked fullscreen and verify IDC_EXIT is enabled again.
+  ExitLockedFullscreen();
   EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_EXIT));
 }
 #endif
@@ -323,7 +421,7 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTest,
   ASSERT_EQ(false, commandController->IsCommandEnabled(IDC_OPEN_FILE));
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
                        ExecuteProfileMenuCustomizeChrome) {
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_CUSTOMIZE_CHROME));
@@ -357,6 +455,32 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
   content::WaitForLoadStop(web_contents);
   EXPECT_EQ(web_contents->GetURL().possibly_invalid_spec(),
             "chrome://settings/syncSetup");
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
+                       ExecuteShowCustomizeChrome) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WaitForLoadStop(web_contents);
+  EXPECT_TRUE(
+      chrome::ExecuteCommand(browser(), IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL));
+  const std::optional<SidePanelEntryId> current_entry =
+      browser()->GetFeatures().side_panel_ui()->GetCurrentEntryId();
+  EXPECT_TRUE(current_entry.has_value());
+  EXPECT_EQ(SidePanelEntryId::kCustomizeChrome, current_entry.value());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
+                       ExecuteShowCustomizeChromeToolbar) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WaitForLoadStop(web_contents);
+  EXPECT_TRUE(
+      chrome::ExecuteCommand(browser(), IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR));
+  const std::optional<SidePanelEntryId> current_entry =
+      browser()->GetFeatures().side_panel_ui()->GetCurrentEntryId();
+  EXPECT_TRUE(current_entry.has_value());
+  EXPECT_EQ(SidePanelEntryId::kCustomizeChrome, current_entry.value());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
@@ -432,5 +556,174 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestRefreshOnly,
   LoadAndWaitForLanguage("/french_page.html");
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_SHOW_TRANSLATE));
 }
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestToolbarPinningOnly,
+                       ShowTranslateStatusChromePage) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = GURL("chrome://new-tab-page/");
+  translate::TranslateManager::SetIgnoreMissingKeyForTesting(true);
+  net::NetworkChangeNotifier::CreateMockIfNeeded();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  browser()->command_controller()->TabStateChanged();
+
+  EXPECT_FALSE(actions::ActionManager::GetForTesting()
+                   .FindAction(kActionShowTranslate)
+                   ->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestToolbarPinningOnly,
+                       ShowTranslateStatusEnglishPage) {
+  LoadAndWaitForLanguage("/english_page.html");
+  EXPECT_TRUE(actions::ActionManager::GetForTesting()
+                  .FindAction(kActionShowTranslate)
+                  ->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestToolbarPinningOnly,
+                       ShowTranslateStatusFrenchPage) {
+  LoadAndWaitForLanguage("/french_page.html");
+  EXPECT_TRUE(actions::ActionManager::GetForTesting()
+                  .FindAction(kActionShowTranslate)
+                  ->GetEnabled());
+}
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+using CreateShortcutBrowserCommandControllerNavTest =
+    BrowserCommandControllerBrowserTest;
+
+IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserCommandControllerNavTest,
+                       ErrorUrlDisabled) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  // This returns a 404 server error, and cannot be unit-tested, since a valid
+  // request is not obtained for the navigation entry being committed in
+  // unit-tests.
+  GURL error_url(embedded_test_server()->GetURL("example.com", "/abcdef/"));
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), error_url));
+  EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_CREATE_SHORTCUT));
+}
+
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
+// Tests for comparison table submenu.
+class BrowserCommandControllerBrowserTestCompare
+    : public BrowserCommandControllerBrowserTest {
+ public:
+  BrowserCommandControllerBrowserTestCompare() {
+    scoped_feature_list_.InitAndEnableFeature(commerce::kProductSpecifications);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestCompare,
+                       AddToTableMenu_UrlSchemeHttp) {
+  GURL url = GURL("http://example.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  browser()->command_controller()->TabStateChanged();
+
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(
+      IDC_ADD_TO_COMPARISON_TABLE_MENU));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestCompare,
+                       AddToTableMenu_UrlSchemeHttps) {
+  GURL url = GURL("https://example.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  browser()->command_controller()->TabStateChanged();
+
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(
+      IDC_ADD_TO_COMPARISON_TABLE_MENU));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestCompare,
+                       AddToTableMenu_UrlSchemeNotHttpOrHttps) {
+  GURL url = GURL("chrome://history");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+
+  browser()->command_controller()->TabStateChanged();
+
+  EXPECT_FALSE(browser()->command_controller()->IsCommandEnabled(
+      IDC_ADD_TO_COMPARISON_TABLE_MENU));
+}
+
+#if BUILDFLAG(ENABLE_GLIC)
+class BrowserCommandControllerBrowserTestGlic
+    : public BrowserCommandControllerBrowserTest {
+ public:
+  void SetUp() override {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kGlic, features::kTabstripComboButton}, {});
+    BrowserCommandControllerBrowserTest::SetUp();
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // Bypass glic eligibility check.
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(::switches::kGlicDev);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       ExecuteGlicTogglePin) {
+  PrefService* profile_prefs = browser()->profile()->GetPrefs();
+  profile_prefs->SetBoolean(glic::prefs::kGlicPinnedToTabstrip, false);
+
+  EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_GLIC_TOGGLE_PIN));
+  EXPECT_TRUE(profile_prefs->GetBoolean(glic::prefs::kGlicPinnedToTabstrip));
+
+  EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_GLIC_TOGGLE_PIN));
+  EXPECT_FALSE(profile_prefs->GetBoolean(glic::prefs::kGlicPinnedToTabstrip));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       EnabledInRegularProfile) {
+  ASSERT_TRUE(browser()->profile()->IsRegularProfile());
+  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_GLIC_TOGGLE_PIN));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       DisabledInIncognitoProfile) {
+  Browser* incognito_browser = CreateIncognitoBrowser();
+  EXPECT_TRUE(incognito_browser->profile()->IsIncognitoProfile());
+  EXPECT_FALSE(
+      chrome::IsCommandEnabled(incognito_browser, IDC_GLIC_TOGGLE_PIN));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       DisabledInGuestProfile) {
+  Browser* guest_browser = CreateGuestBrowser();
+  EXPECT_TRUE(guest_browser->profile()->IsGuestSession());
+  EXPECT_FALSE(chrome::IsCommandEnabled(guest_browser, IDC_GLIC_TOGGLE_PIN));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       ThreeDotMenuItemEnabledInRegularProfile) {
+  ASSERT_TRUE(browser()->profile()->IsRegularProfile());
+  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPEN_GLIC));
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
+                       ExecuteGlicThreeDotMenuItem) {
+  // Bypass glic eligibility check.
+  PrefService* profile_prefs = browser()->profile()->GetPrefs();
+  profile_prefs->SetInteger(
+      ::prefs::kGeminiSettings,
+      static_cast<int>(glic::prefs::SettingsPolicyState::kEnabled));
+  // Bypass fre.
+  profile_prefs->SetInteger(glic::prefs::kGlicCompletedFre,
+                            static_cast<int>(glic::prefs::FreStatus::kCompleted));
+
+  EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_OPEN_GLIC));
+  ASSERT_TRUE(
+      glic::GlicKeyedServiceFactory::GetGlicKeyedService(browser()->profile())
+          ->IsWindowShowing());
+}
+#endif  // BUILDFLAG(ENABLE_GLIC)
 
 }  // namespace chrome

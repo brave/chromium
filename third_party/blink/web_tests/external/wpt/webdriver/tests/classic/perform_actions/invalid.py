@@ -1,6 +1,7 @@
 # META: timeout=long
-
 import pytest
+
+from webdriver.error import InvalidArgumentException
 
 from tests.support.asserts import assert_error
 from . import perform_actions
@@ -198,7 +199,7 @@ def test_input_source_action_sequence_actions_subtype_invalid_value(
 ):
     actions = [
         {
-            "type": value,
+            "type": action_type,
             "id": "foo",
             "actions": [
                 {
@@ -304,6 +305,28 @@ def test_key_action_value_invalid_type(session, key_action, value):
     assert_error(response, "invalid argument")
 
 
+@pytest.mark.parametrize("action_type", ["keyDown", "keyUp"])
+@pytest.mark.parametrize(
+    "value",
+    ["fa", "\u0BA8\u0BBFb", "\u0BA8\u0BBF\u0BA8", "\u1100\u1161\u11A8c"],
+)
+def test_key_action_invalid_value(session, action_type, value):
+    actions = [
+        {
+            "type": "key",
+            "id": "foo",
+            "actions": [
+                {
+                    "type": action_type,
+                    "value": value,
+                }
+            ],
+        }
+    ]
+    response = perform_actions(session, actions)
+    assert_error(response, "invalid argument")
+
+
 @pytest.mark.parametrize("value", ["", "pointerDowns", "pointerMoves", "pointerUps"])
 def test_pointer_action_subtype_invalid_value(session, value):
     if value == "pointerMoves":
@@ -339,28 +362,8 @@ def test_pointer_action_subtype_invalid_value(session, value):
 
 
 @pytest.mark.parametrize("coordinate", ["x", "y"])
-@pytest.mark.parametrize("value", [None, "foo", True, 0.1, [], {}])
+@pytest.mark.parametrize("value", [None, "foo", True, [], {}])
 def test_pointer_action_move_coordinate_invalid_type(session, coordinate, value):
-    actions = [
-        {
-            "type": "pointer",
-            "id": "foo",
-            "actions": [
-                {
-                    "type": "pointerMove",
-                    "x": value if coordinate == "x" else 0,
-                    "y": value if coordinate == "y" else 0,
-                }
-            ],
-        }
-    ]
-    response = perform_actions(session, actions)
-    assert_error(response, "invalid argument")
-
-
-@pytest.mark.parametrize("coordinate", ["x", "y"])
-@pytest.mark.parametrize("value", [MIN_INT - 1, MAX_INT + 1])
-def test_pointer_action_move_coordinate_invalid_value(session, coordinate, value):
     actions = [
         {
             "type": "pointer",
@@ -459,38 +462,22 @@ def test_pointer_action_up_down_button_missing(session, pointer_action):
 @pytest.mark.parametrize("pointer_action", ["pointerDown", "pointerUp"])
 @pytest.mark.parametrize("value", [None, "foo", True, 0.1, [], {}])
 def test_pointer_action_up_down_button_invalid_type(session, pointer_action, value):
-    actions = [
-        {
-            "type": "pointer",
-            "id": "foo",
-            "actions": [
-                {
-                    "type": pointer_action,
-                    "button": value,
-                }
-            ],
-        }
-    ]
-    response = perform_actions(session, actions)
+    action = create_pointer_common_object(pointer_action, {"button": value})
+
+    response = perform_actions(
+        session, [{"type": "pointer", "id": "foo", "actions": [action]}]
+    )
     assert_error(response, "invalid argument")
 
 
 @pytest.mark.parametrize("pointer_action", ["pointerDown", "pointerUp"])
 @pytest.mark.parametrize("value", [-1, MAX_INT + 1])
 def test_pointer_action_up_down_button_invalid_value(session, pointer_action, value):
-    actions = [
-        {
-            "type": "pointer",
-            "id": "foo",
-            "actions": [
-                {
-                    "type": pointer_action,
-                    "button": value,
-                }
-            ],
-        }
-    ]
-    response = perform_actions(session, actions)
+    action = create_pointer_common_object(pointer_action, {"button": value})
+
+    response = perform_actions(
+        session, [{"type": "pointer", "id": "foo", "actions": [action]}]
+    )
     assert_error(response, "invalid argument")
 
 
@@ -516,7 +503,7 @@ def test_pointer_action_common_properties_dimensions_invalid_type(
 
 @pytest.mark.parametrize("pointer_action", ["pointerDown", "pointerMove", "pointerUp"])
 @pytest.mark.parametrize("dimension", ["width", "height"])
-@pytest.mark.parametrize("value", [MIN_INT - 1, MAX_INT + 1])
+@pytest.mark.parametrize("value", [-1, MAX_INT + 1])
 def test_pointer_action_common_properties_dimensions_invalid_value(
     session, dimension, pointer_action, value
 ):
@@ -770,6 +757,30 @@ def test_wheel_action_scroll_origin_invalid_value(session, value):
     assert_error(response, "invalid argument")
 
 
+def test_wheel_action_scroll_origin_pointer_not_supported(session):
+    # Pointer origin isn't currently supported for wheel input source
+    # See: https://github.com/w3c/webdriver/issues/1758
+
+    actions = [
+        {
+            "type": "wheel",
+            "id": "foo",
+            "actions": [
+                {
+                    "type": "scroll",
+                    "x": 0,
+                    "y": 0,
+                    "deltaX": 0,
+                    "deltaY": 0,
+                    "origin": "pointer",
+                }
+            ],
+        }
+    ]
+    response = perform_actions(session, actions)
+    assert_error(response, "invalid argument")
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -821,3 +832,14 @@ def test_wheel_action_scroll_origin_element_invalid_value(session):
     ]
     response = perform_actions(session, actions)
     assert_error(response, "no such element")
+
+
+@pytest.mark.parametrize("missing", ["x", "y", "deltaX", "deltaY"])
+def test_wheel_action_scroll_missing_property(
+    session, test_actions_scroll_page, wheel_chain, missing
+):
+    actions = wheel_chain.scroll(0, 0, 5, 10, origin="viewport")
+    del actions._actions[-1][missing]
+
+    with pytest.raises(InvalidArgumentException):
+        actions.perform()

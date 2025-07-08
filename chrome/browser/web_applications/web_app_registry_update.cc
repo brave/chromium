@@ -9,7 +9,6 @@
 #include "base/functional/callback_helpers.h"
 #include "base/types/pass_key.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
-#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 
 namespace web_app {
 
@@ -41,7 +40,7 @@ void WebAppRegistryUpdate::CreateApp(std::unique_ptr<WebApp> web_app) {
   update_data_->apps_to_create.push_back(std::move(web_app));
 }
 
-void WebAppRegistryUpdate::DeleteApp(const AppId& app_id) {
+void WebAppRegistryUpdate::DeleteApp(const webapps::AppId& app_id) {
   DCHECK(update_data_);
   DCHECK(!app_id.empty());
   DCHECK(registrar_->GetAppById(app_id));
@@ -50,7 +49,7 @@ void WebAppRegistryUpdate::DeleteApp(const AppId& app_id) {
   update_data_->apps_to_delete.push_back(app_id);
 }
 
-WebApp* WebAppRegistryUpdate::UpdateApp(const AppId& app_id) {
+WebApp* WebAppRegistryUpdate::UpdateApp(const webapps::AppId& app_id) {
   DCHECK(update_data_);
   const WebApp* original_app = registrar_->GetAppById(app_id);
   if (!original_app)

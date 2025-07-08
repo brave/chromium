@@ -5,25 +5,22 @@
 package org.chromium.content.browser;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
-/**
- * A class factory for downstream injecting code to content layer.
- */
+/** A class factory for downstream injecting code to content layer. */
+@NullMarked
 public class ContentClassFactory {
-    private static ContentClassFactory sSingleton;
+    private static @Nullable ContentClassFactory sSingleton;
 
-    /**
-     * Sets the factory object.
-     */
+    /** Sets the factory object. */
     public static void set(ContentClassFactory factory) {
         ThreadUtils.assertOnUiThread();
 
         sSingleton = factory;
     }
 
-    /**
-     * Returns the factory object.
-     */
+    /** Returns the factory object. */
     public static ContentClassFactory get() {
         ThreadUtils.assertOnUiThread();
 
@@ -31,8 +28,6 @@ public class ContentClassFactory {
         return sSingleton;
     }
 
-    /**
-     * Constructor.
-     */
+    /** Constructor. */
     protected ContentClassFactory() {}
 }

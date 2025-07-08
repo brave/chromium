@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromecast/media/service/cast_renderer.h"
 
 #include <utility>
@@ -12,7 +17,6 @@
 #include "base/logging.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chromecast/base/task_runner_impl.h"
-#include "chromecast/common/mojom/constants.mojom.h"
 #include "chromecast/media/base/audio_device_ids.h"
 #include "chromecast/media/base/video_mode_switcher.h"
 #include "chromecast/media/base/video_resolution_policy.h"
@@ -22,8 +26,11 @@
 #include "chromecast/media/cma/pipeline/media_pipeline_impl.h"
 #include "chromecast/media/cma/pipeline/video_pipeline_client.h"
 #include "chromecast/media/service/video_geometry_setter_service.h"
+#include "chromecast/public/cast_media_shlib.h"
+#include "chromecast/public/graphics_types.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
 #include "chromecast/public/media/media_pipeline_device_params.h"
+#include "chromecast/public/video_plane.h"
 #include "chromecast/public/volume_control.h"
 #include "media/audio/audio_device_description.h"
 #include "media/base/audio_decoder_config.h"
@@ -31,7 +38,6 @@
 #include "media/base/media_log.h"
 #include "media/base/media_resource.h"
 #include "media/base/renderer_client.h"
-#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 
 namespace chromecast {
 namespace media {
@@ -61,7 +67,6 @@ CastRenderer::CastRenderer(
     VideoResolutionPolicy* video_resolution_policy,
     const base::UnguessableToken& overlay_plane_id,
     ::media::mojom::FrameInterfaceFactory* frame_interfaces,
-    external_service_support::ExternalConnector* connector,
     bool is_buffering_enabled)
     : backend_factory_(backend_factory),
       task_runner_(task_runner),
@@ -69,7 +74,6 @@ CastRenderer::CastRenderer(
       video_resolution_policy_(video_resolution_policy),
       overlay_plane_id_(overlay_plane_id),
       frame_interfaces_(frame_interfaces),
-      connector_(connector),
       client_(nullptr),
       cast_cdm_context_(nullptr),
       media_task_runner_factory_(
@@ -149,7 +153,9 @@ void CastRenderer::OnSubscribeToVideoGeometryChange(
     // default CastApplicationMediaInfo value below will be used.
     OnApplicationMediaInfoReceived(
         media_resource, client,
-        ::media::mojom::CastApplicationMediaInfo::New(std::string(), true));
+        ::media::mojom::CastApplicationMediaInfo::New(
+            std::string(), true /* mixer_audio_enabled */,
+            false /* is_audio_only_session */));
   }
 }
 
@@ -158,60 +164,23 @@ void CastRenderer::OnApplicationMediaInfoReceived(
     ::media::RendererClient* client,
     ::media::mojom::CastApplicationMediaInfoPtr application_media_info) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  if (application_media_info->application_session_id.empty()) {
-    OnGetMultiroomInfo(media_resource, client,
-                       std::move(application_media_info),
-                       chromecast::mojom::MultiroomInfo::New());
-    return;
-  }
-  connector_->BindInterface(chromecast::mojom::kChromecastServiceName,
-                            multiroom_manager_.BindNewPipeAndPassReceiver());
-  multiroom_manager_.set_disconnect_handler(
-      base::BindOnce(&CastRenderer::OnGetMultiroomInfo, base::Unretained(this),
-                     media_resource, client, application_media_info.Clone(),
-                     chromecast::mojom::MultiroomInfo::New()));
-  std::string session_id = application_media_info->application_session_id;
-  multiroom_manager_->GetMultiroomInfo(
-      session_id, base::BindOnce(&CastRenderer::OnGetMultiroomInfo,
-                                 base::Unretained(this), media_resource, client,
-                                 std::move(application_media_info)));
-}
-
-void CastRenderer::OnGetMultiroomInfo(
-    ::media::MediaResource* media_resource,
-    ::media::RendererClient* client,
-    ::media::mojom::CastApplicationMediaInfoPtr application_media_info,
-    chromecast::mojom::MultiroomInfoPtr multiroom_info) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
-  DCHECK(multiroom_info);
   LOG(INFO) << __FUNCTION__ << ": " << this
             << " session_id=" << application_media_info->application_session_id
             << ", mixer_audio_enabled="
-            << application_media_info->mixer_audio_enabled
-            << ", multiroom=" << multiroom_info->multiroom
-            << ", audio_channel=" << multiroom_info->audio_channel;
-  // Close the MultiroomManager message pipe so that a connection error does not
-  // trigger a second call to this function.
-  multiroom_manager_.reset();
+            << application_media_info->mixer_audio_enabled;
   // Create pipeline backend.
   backend_task_runner_.reset(new TaskRunnerImpl());
   // TODO(erickung): crbug.com/443956. Need to provide right LoadType.
   LoadType load_type = kLoadTypeMediaSource;
   MediaPipelineDeviceParams::MediaSyncType sync_type =
-      (load_type == kLoadTypeMediaStream)
+      (load_type == kLoadTypeMediaStream || !is_buffering_enabled_)
           ? MediaPipelineDeviceParams::kModeIgnorePts
           : MediaPipelineDeviceParams::kModeSyncPts;
 
-  const std::string& device_id =
-      (multiroom_info->output_device_id.empty()
-           ? ::media::AudioDeviceDescription::kDefaultDeviceId
-           : multiroom_info->output_device_id);
-  MediaPipelineDeviceParams params(sync_type, backend_task_runner_.get(),
-                                   AudioContentType::kMedia, device_id);
+  MediaPipelineDeviceParams params(
+      sync_type, backend_task_runner_.get(), AudioContentType::kMedia,
+      ::media::AudioDeviceDescription::kDefaultDeviceId);
   params.session_id = application_media_info->application_session_id;
-  params.multiroom = multiroom_info->multiroom;
-  params.audio_channel = multiroom_info->audio_channel;
-  params.output_delay_us = multiroom_info->output_delay.InMicroseconds();
   params.pass_through_audio_support_desired =
       !application_media_info->mixer_audio_enabled;
 
@@ -348,8 +317,8 @@ void CastRenderer::SetCdm(::media::CdmContext* cdm_context,
   std::move(cdm_attached_cb).Run(true);
 }
 
-void CastRenderer::SetLatencyHint(
-    absl::optional<base::TimeDelta> latency_hint) {}
+void CastRenderer::SetLatencyHint(std::optional<base::TimeDelta> latency_hint) {
+}
 
 void CastRenderer::Flush(base::OnceClosure flush_cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -404,7 +373,56 @@ void CastRenderer::OnVideoResolutionPolicyChanged() {
 
 void CastRenderer::OnVideoGeometryChange(const gfx::RectF& rect_f,
                                          gfx::OverlayTransform transform) {
-  GetOverlayCompositedCallback().Run(rect_f, transform);
+  if (!task_runner_->BelongsToCurrentThread()) {
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&CastRenderer::OnVideoGeometryChange,
+                       weak_factory_.GetWeakPtr(), rect_f, transform));
+    return;
+  }
+
+  VideoPlane* video_plane = CastMediaShlib::GetVideoPlane();
+  if (video_plane == nullptr) {
+    return;
+  }
+
+  VideoPlane::Transform cast_transform = VideoPlane::TRANSFORM_NONE;
+  switch (transform) {
+    case gfx::OVERLAY_TRANSFORM_NONE:
+      cast_transform = VideoPlane::TRANSFORM_NONE;
+      break;
+    case gfx::OVERLAY_TRANSFORM_FLIP_HORIZONTAL:
+      cast_transform = VideoPlane::FLIP_HORIZONTAL;
+      break;
+    case gfx::OVERLAY_TRANSFORM_FLIP_VERTICAL:
+      cast_transform = VideoPlane::FLIP_VERTICAL;
+      break;
+    // For rotations, per the documentation in
+    // //chromecast/public/video_plane.h, cast specifies them in the
+    // anticlockwise direction.
+    //
+    // However, note that the previous cast impl actually ignores this (e.g.
+    // it converts OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90 to ROTATE_90):
+    // https://source.chromium.org/chromium/chromium/src/+/main:chromecast/media/base/video_plane_controller.cc;l=46;drc=5e56f4c4b358b8b16e07a2ba62d07f640300fb9e
+    //
+    // So it's not clear what the "correct" behavior is here. Either the cast
+    // documentation or the original cast impl was wrong.
+    case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90:
+      cast_transform = VideoPlane::ROTATE_270;
+      break;
+    case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180:
+      cast_transform = VideoPlane::ROTATE_180;
+      break;
+    case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270:
+      cast_transform = VideoPlane::ROTATE_90;
+      break;
+    default:
+      LOG(ERROR) << "Unsupported transform: " << transform;
+      return;
+  }
+  video_plane->SetGeometry(
+      RectF(rect_f.x(), rect_f.y(), rect_f.width(), rect_f.height()),
+      cast_transform);
 }
 
 void CastRenderer::OnError(::media::PipelineStatus status) {
@@ -454,12 +472,6 @@ void CastRenderer::OnVideoOpacityChange(bool opaque) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(opaque);
   client_->OnVideoOpacityChange(opaque);
-}
-
-// static
-void CastRenderer::SetOverlayCompositedCallback(
-    const OverlayCompositedCallback& cb) {
-  GetOverlayCompositedCallback() = cb;
 }
 
 }  // namespace media

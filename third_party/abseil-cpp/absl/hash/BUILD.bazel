@@ -21,7 +21,14 @@ load(
     "ABSL_TEST_COPTS",
 )
 
-package(default_visibility = ["//visibility:public"])
+package(
+    default_visibility = ["//visibility:public"],
+    features = [
+        "header_modules",
+        "layering_check",
+        "parse_headers",
+    ],
+)
 
 licenses(["notice"])
 
@@ -36,10 +43,11 @@ cc_library(
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
         ":city",
-        ":low_level_hash",
+        ":weakly_mixed_integer",
         "//absl/base:config",
         "//absl/base:core_headers",
         "//absl/base:endian",
+        "//absl/base:prefetch",
         "//absl/container:fixed_array",
         "//absl/functional:function_ref",
         "//absl/meta:type_traits",
@@ -54,7 +62,7 @@ cc_library(
 
 cc_library(
     name = "hash_testing",
-    testonly = 1,
+    testonly = True,
     hdrs = ["hash_testing.h"],
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
@@ -62,33 +70,37 @@ cc_library(
         "//absl/meta:type_traits",
         "//absl/strings",
         "//absl/types:variant",
-        "@com_google_googletest//:gtest",
+        "@googletest//:gtest",
     ],
 )
 
 cc_test(
     name = "hash_test",
+    size = "large",
     srcs = [
         "hash_test.cc",
         "internal/hash_test.h",
     ],
     copts = ABSL_TEST_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
+    # TODO(b/417700722): Fix HashValueTest.PointerAlignment reporting more collisions under ubsan.
+    tags = ["noubsan"],
     deps = [
         ":hash",
         ":hash_testing",
         ":spy_hash_state",
         "//absl/base:config",
-        "//absl/base:core_headers",
-        "//absl/container:btree",
         "//absl/container:flat_hash_map",
         "//absl/container:flat_hash_set",
-        "//absl/container:node_hash_map",
-        "//absl/container:node_hash_set",
+        "//absl/memory",
         "//absl/meta:type_traits",
-        "//absl/numeric:int128",
+        "//absl/numeric:bits",
         "//absl/strings:cord_test_helpers",
-        "@com_google_googletest//:gtest_main",
+        "//absl/strings:string_view",
+        "//absl/types:optional",
+        "//absl/types:variant",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -109,13 +121,14 @@ cc_test(
         "//absl/container:flat_hash_set",
         "//absl/container:node_hash_map",
         "//absl/container:node_hash_set",
-        "@com_google_googletest//:gtest_main",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
     ],
 )
 
 cc_binary(
     name = "hash_benchmark",
-    testonly = 1,
+    testonly = True,
     srcs = ["hash_benchmark.cc"],
     copts = ABSL_TEST_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
@@ -129,19 +142,20 @@ cc_binary(
         "//absl/strings",
         "//absl/strings:cord",
         "//absl/strings:cord_test_helpers",
-        "@com_github_google_benchmark//:benchmark_main",
+        "@google_benchmark//:benchmark_main",
     ],
 )
 
 cc_library(
     name = "spy_hash_state",
-    testonly = 1,
+    testonly = True,
     hdrs = ["internal/spy_hash_state.h"],
     copts = ABSL_DEFAULT_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
     visibility = ["//visibility:private"],
     deps = [
         ":hash",
+        ":weakly_mixed_integer",
         "//absl/strings",
         "//absl/strings:str_format",
     ],
@@ -169,22 +183,23 @@ cc_test(
     linkopts = ABSL_DEFAULT_LINKOPTS,
     deps = [
         ":city",
-        "@com_google_googletest//:gtest_main",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
     ],
 )
 
 cc_library(
-    name = "low_level_hash",
-    srcs = ["internal/low_level_hash.cc"],
-    hdrs = ["internal/low_level_hash.h"],
+    name = "weakly_mixed_integer",
+    hdrs = ["internal/weakly_mixed_integer.h"],
     copts = ABSL_DEFAULT_COPTS,
     linkopts = ABSL_DEFAULT_LINKOPTS,
-    visibility = ["//visibility:private"],
+    visibility = [
+        "//absl/container:__pkg__",
+        "//absl/strings:__pkg__",
+        "//absl/types:__pkg__",
+    ],
     deps = [
         "//absl/base:config",
-        "//absl/base:endian",
-        "//absl/base:prefetch",
-        "//absl/numeric:int128",
     ],
 )
 
@@ -195,8 +210,9 @@ cc_test(
     linkopts = ABSL_DEFAULT_LINKOPTS,
     visibility = ["//visibility:private"],
     deps = [
-        ":low_level_hash",
+        ":hash",
         "//absl/strings",
-        "@com_google_googletest//:gtest_main",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
     ],
 )

@@ -4,34 +4,44 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_discovery_task.h"
 
+#include "base/containers/to_value_list.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/json/json_writer.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "base/version.h"
-#include "chrome/browser/ui/web_applications/test/isolated_web_app_builder.h"
 #include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_location.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_trust_checker.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolation_data.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_constants.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_contents_manager.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
-#include "chrome/browser/web_applications/web_contents/web_app_url_loader.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
+#include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/browser/web_applications/web_contents/web_contents_manager.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/webapps/browser/installable/installable_logging.h"
+#include "components/webapps/browser/web_contents/web_app_url_loader.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "content/public/common/content_features.h"
 #include "net/http/http_status_code.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -43,18 +53,40 @@
 namespace web_app {
 namespace {
 
-using ::testing::AllOf;
+using base::test::ErrorIs;
+using base::test::ValueIs;
+using ::testing::_;
 using ::testing::Eq;
 using ::testing::Field;
-using ::testing::IsFalse;
-using ::testing::IsTrue;
-using ::testing::NotNull;
-using ::testing::Optional;
-using ::testing::Property;
+using ::testing::VariantWith;
 
-MATCHER_P(IsInDir, directory, "") {
-  *result_listener << "where the directory is " << directory;
-  return arg.DirName() == directory;
+struct UpdateManifestVersionEntry {
+  std::string src;
+  base::Version version;
+  std::optional<std::vector<UpdateChannel>> update_channels;
+};
+
+constexpr char kDefaultBundleSrc[] = "https://example.com/bundle.swbn";
+constexpr char kFakeBundleSrc[] = "https://example.com/not_used_bundle.swbn";
+
+const UpdateManifestVersionEntry kDefaultVersionEntry = {
+    .src = kDefaultBundleSrc,
+    .version = base::Version("3.0.0")};
+
+web_app::IsolatedWebAppUrlInfo InstallIwa(
+    Profile* profile,
+    std::string installed_version,
+    std::string name = "Test Iwa",
+    web_package::SignedWebBundleId bundle_id =
+        test::GetDefaultEd25519WebBundleId()) {
+  const std::unique_ptr<web_app::ScopedBundledIsolatedWebApp> bundle =
+      web_app::IsolatedWebAppBuilder(web_app::ManifestBuilder()
+                                         .SetVersion(installed_version)
+                                         .SetName(name))
+          .BuildBundle(bundle_id, {test::GetDefaultEd25519KeyPair()});
+  bundle->FakeInstallPageState(profile);
+  bundle->TrustSigningKey();
+  return bundle->InstallChecked(profile);
 }
 
 class IsolatedWebAppUpdateDiscoveryTaskTest : public WebAppTest {
@@ -82,15 +114,36 @@ class IsolatedWebAppUpdateDiscoveryTaskTest : public WebAppTest {
         fake_provider().web_contents_manager());
   }
 
+  Task CreateDefaultIwaUpdateDiscoveryTask(
+      IsolatedWebAppUrlInfo url_info,
+      UpdateChannel update_channel = UpdateChannel::default_channel(),
+      std::optional<base::Version> pinned_version = std::nullopt,
+      bool allow_downgrades = false) {
+    return Task(IwaUpdateDiscoveryTaskParams(
+                    update_manifest_url_, update_channel, allow_downgrades,
+                    pinned_version, url_info, /*dev_mode=*/false),
+                fake_provider().scheduler(), fake_provider().registrar_unsafe(),
+                profile()->GetURLLoaderFactory(), *profile());
+  }
+
+  Task CreateDefaultIwaUpdateDiscoveryTask(
+      UpdateChannel update_channel = UpdateChannel::default_channel(),
+      std::optional<base::Version> pinned_version = std::nullopt,
+      bool allow_downgrades = false) {
+    return CreateDefaultIwaUpdateDiscoveryTask(
+        dummy_url_info_, update_channel, pinned_version, allow_downgrades);
+  }
+
   base::test::ScopedFeatureList scoped_feature_list_;
   data_decoder::test::InProcessDataDecoder data_decoder_;
 
   GURL update_manifest_url_ = GURL("https://example.com/update_manifest.json");
+  UpdateChannel beta_update_channel_ = UpdateChannel::Create("beta").value();
 
-  GURL url_ = GURL(base::StrCat(
-      {chrome::kIsolatedAppScheme, url::kStandardSchemeSeparator,
-       kTestEd25519WebBundleId, "/.well-known/_generated_install_page.html"}));
-  IsolatedWebAppUrlInfo url_info_ = *IsolatedWebAppUrlInfo::Create(url_);
+  IsolatedWebAppUrlInfo dummy_url_info_ = *IsolatedWebAppUrlInfo::Create(GURL(
+      base::StrCat({chrome::kIsolatedAppScheme, url::kStandardSchemeSeparator,
+                    test::GetDefaultEd25519WebBundleId().id(),
+                    "/.well-known/_generated_install_page.html"})));
 };
 
 using IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest =
@@ -100,47 +153,34 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, NotFound) {
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), "",
                                            net::HttpStatusCode::HTTP_NOT_FOUND);
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kUpdateManifestDownloadFailed);
+  EXPECT_THAT(future.Take(),
+              ErrorIs(Task::Error::kUpdateManifestDownloadFailed));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, InvalidJson) {
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(),
                                            "invalid json");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kUpdateManifestInvalidJson);
+  EXPECT_THAT(future.Take(), ErrorIs(Task::Error::kUpdateManifestInvalidJson));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, InvalidManifest) {
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), "[]");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kUpdateManifestInvalidManifest);
+  EXPECT_THAT(future.Take(),
+              ErrorIs(Task::Error::kUpdateManifestInvalidManifest));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
@@ -149,16 +189,28 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
     { "versions": [] }
   )");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
+  EXPECT_THAT(future.Take(),
+              ErrorIs(Task::Error::kUpdateManifestNoApplicableVersion));
+}
 
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kUpdateManifestNoApplicableVersion);
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
+       NoApplicableVersionForChannel) {
+  profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
+    { "versions": [
+      { "src": "https://example.com/bundle.swbn", "version": "2.0.0", "channels": ["beta"] }
+    ] }
+  )");
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(),
+              ErrorIs(Task::Error::kUpdateManifestNoApplicableVersion));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, IwaNotInstalled) {
@@ -170,20 +222,16 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, IwaNotInstalled) {
     }
   )");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kIwaNotInstalled);
+  EXPECT_THAT(future.Take(), ErrorIs(Task::Error::kIwaNotInstalled));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, AppIsNotIwa) {
-  test::InstallDummyWebApp(profile(), "non-iwa", url_info_.origin().GetURL());
+  test::InstallDummyWebApp(profile(), "non-iwa",
+                           dummy_url_info_.origin().GetURL());
 
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
     {
@@ -193,23 +241,16 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, AppIsNotIwa) {
     }
   )");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask();
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kIwaNotInstalled);
+  EXPECT_THAT(future.Take(), ErrorIs(Task::Error::kIwaNotInstalled));
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, NoUpdateFound) {
-  AddDummyIsolatedAppToRegistry(
-      profile(), url_info_.origin().GetURL(), "installed iwa",
-      WebApp::IsolationData(InstalledBundle{.path = base::FilePath()},
-                            base::Version("3.0.0")));
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      InstallIwa(profile(), "3.0.0");
 
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
     {
@@ -219,29 +260,43 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest, NoUpdateFound) {
     }
   )");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
+  EXPECT_THAT(future.Take(), ValueIs(Task::Success::kNoUpdateFound))
+      << task.AsDebugValue();
+}
 
-  ASSERT_TRUE(result.has_value())
-      << result.error() << ": " << task.AsDebugValue();
-  EXPECT_EQ(result.value(), Task::Success::kNoUpdateFound);
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
+       NoUpdateFoundForCurrentChannel) {
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      InstallIwa(profile(), "1.0.0");
+
+  // No "channels" field means that the version belongs only to "default"
+  // channel.
+  profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
+    {
+      "versions": [
+        { "src": "https://example.com/bundle.swbn", "version": "1.0.0", "channels": ["beta"]},
+        { "src": "https://example.com/bundle.swbn", "version": "2.0.0"}
+      ]
+    }
+  )");
+
+  Task task =
+      CreateDefaultIwaUpdateDiscoveryTask(url_info, beta_update_channel_);
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(), ValueIs(Task::Success::kNoUpdateFound))
+      << task.AsDebugValue();
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
        UpdateAlreadyPending) {
-  AddDummyIsolatedAppToRegistry(
-      profile(), url_info_.origin().GetURL(), "installed iwa",
-      WebApp::IsolationData(InstalledBundle{.path = base::FilePath()},
-                            base::Version("1.0.0"),
-                            /*controlled_frame_partitions=*/{},
-                            WebApp::IsolationData::PendingUpdateInfo(
-                                InstalledBundle{.path = base::FilePath()},
-                                base::Version("2.0.0"))));
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      InstallIwa(profile(), "1.0.0");
 
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
     {
@@ -251,29 +306,34 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskUpdateManifestTest,
     }
   )");
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  {
+    web_app::ScopedRegistryUpdate update =
+        fake_provider().sync_bridge_unsafe().BeginUpdate();
+    WebApp* web_app = update->UpdateApp(url_info.app_id());
+    web_app->SetIsolationData(
+        IsolationData::Builder(
+            IwaStorageOwnedBundle{"some_folder", /*dev_mode=*/false},
+            base::Version("1.0.0"))
+            .SetPendingUpdateInfo(IsolationData::PendingUpdateInfo(
+                IwaStorageOwnedBundle{"another_folder", /*dev_mode=*/false},
+                base::Version("2.0.0")))
+            .Build());
+  }
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_TRUE(result.has_value())
-      << result.error() << ": " << task.AsDebugValue();
-  EXPECT_EQ(result.value(), Task::Success::kUpdateAlreadyPending);
+  EXPECT_THAT(future.Take(), ValueIs(Task::Success::kUpdateAlreadyPending))
+      << task.AsDebugValue();
 }
 
 using IsolatedWebAppUpdateDiscoveryTaskWebBundleDownloadTest =
     IsolatedWebAppUpdateDiscoveryTaskTest;
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskWebBundleDownloadTest, NotFound) {
-  AddDummyIsolatedAppToRegistry(
-      profile(), url_info_.origin().GetURL(), "installed iwa",
-      WebApp::IsolationData(
-          InstalledBundle{.path = base::FilePath(
-                              FILE_PATH_LITERAL("/foo/bar/old-version.swbn"))},
-          base::Version("1.0.0")));
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      InstallIwa(profile(), "1.0.0");
 
   profile_url_loader_factory().AddResponse(update_manifest_url_.spec(), R"(
       {
@@ -287,16 +347,11 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskWebBundleDownloadTest, NotFound) {
                                            "",
                                            net::HttpStatusCode::HTTP_NOT_FOUND);
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kBundleDownloadError);
+  EXPECT_THAT(future.Take(), ErrorIs(Task::Error::kBundleDownloadError));
 }
 
 class IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest
@@ -304,52 +359,43 @@ class IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest
  protected:
   void SetUp() override {
     IsolatedWebAppUpdateDiscoveryTaskWebBundleDownloadTest::SetUp();
-
-    SetTrustedWebBundleIdsForTesting({url_info_.web_bundle_id()});
   }
 
-  void InstallIwa(
-      const base::Version installed_version,
-      const absl::optional<WebApp::IsolationData::PendingUpdateInfo>&
-          pending_update_info = absl::nullopt) {
-    AddDummyIsolatedAppToRegistry(
-        profile(), url_info_.origin().GetURL(), "installed iwa",
-        WebApp::IsolationData(installed_bundle_location_, installed_version,
-                              /*controlled_frame_partitions=*/{},
-                              pending_update_info));
-  }
-
-  FakeWebContentsManager::FakePageState& CreateUpdateManifesteAndBundle(
-      const base::Version& available_version) {
+  void CreateUpdateManifest(
+      const std::vector<UpdateManifestVersionEntry>& available_versions) {
     profile_url_loader_factory().AddResponse(
         update_manifest_url_.spec(),
-        base::ReplaceStringPlaceholders(R"(
-          {
-            "versions": [
-              { "src": "https://example.com/bundle.swbn", "version": "$1" }
-            ]
-          }
-        )",
-                                        {available_version.GetString()},
-                                        nullptr));
+        *base::WriteJson(base::Value::Dict().Set(
+            "versions",
+            base::ToValueList(
+                available_versions,
+                [](const UpdateManifestVersionEntry& entry) {
+                  base::Value::Dict entry_dict =
+                      base::Value::Dict()
+                          .Set("src", entry.src)
+                          .Set("version", entry.version.GetString());
 
-    TestSignedWebBundle bundle =
-        BuildDefaultTestSignedWebBundle(available_version);
-    profile_url_loader_factory().AddResponse(
-        "https://example.com/bundle.swbn",
-        std::string(bundle.data.begin(), bundle.data.end()));
+                  if (entry.update_channels.has_value()) {
+                    entry_dict.Set(
+                        "channels",
+                        base::ToValueList(entry.update_channels.value(),
+                                          &UpdateChannel::ToString));
+                  }
+                  return entry_dict;
+                }))));
+  }
 
-    auto& page_state =
-        fake_web_contents_manager().GetOrCreatePageState(install_url_);
-    page_state.url_load_result = WebAppUrlLoaderResult::kUrlLoaded;
-    page_state.error_code = webapps::InstallableStatusCode::NO_ERROR_DETECTED;
-    page_state.manifest_url =
-        url_info_.origin().GetURL().Resolve("manifest.webmanifest");
-    page_state.valid_manifest_for_web_app = true;
-    page_state.opt_manifest =
-        CreateDefaultManifest(url_info_.origin().GetURL(), available_version);
-
-    return page_state;
+  FakeWebContentsManager::FakePageState& CreateBundle(
+      std::string version,
+      web_package::SignedWebBundleId bundle_id =
+          test::GetDefaultEd25519WebBundleId()) {
+    const std::unique_ptr<web_app::ScopedBundledIsolatedWebApp> bundle_update =
+        web_app::IsolatedWebAppBuilder(
+            web_app::ManifestBuilder().SetVersion(version))
+            .BuildBundle(bundle_id, {test::GetDefaultEd25519KeyPair()});
+    profile_url_loader_factory().AddResponse(kDefaultBundleSrc,
+                                             bundle_update->GetBundleData());
+    return bundle_update->FakeInstallPageState(profile());
   }
 
   blink::mojom::ManifestPtr CreateDefaultManifest(const GURL& application_url,
@@ -365,93 +411,189 @@ class IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest
     return manifest;
   }
 
-  IsolatedWebAppLocation installed_bundle_location_ = InstalledBundle{
-      .path = base::FilePath(FILE_PATH_LITERAL("/foo/bar/old-version.swbn"))};
-
-  GURL install_url_ = GURL(base::StrCat(
-      {chrome::kIsolatedAppScheme, url::kStandardSchemeSeparator,
-       kTestEd25519WebBundleId, "/.well-known/_generated_install_page.html"}));
-  IsolatedWebAppUrlInfo url_info_ =
-      *IsolatedWebAppUrlInfo ::Create(install_url_);
+ private:
+  data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
 };
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest, Fails) {
-  InstallIwa(base::Version("1.0.0"));
-  auto& page_state = CreateUpdateManifesteAndBundle(base::Version("3.0.0"));
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), "1.0.0", "installed iwa", bundle_id);
+
+  auto& page_state =
+      CreateBundle(kDefaultVersionEntry.version.GetString(), bundle_id);
   page_state.error_code = webapps::InstallableStatusCode::CANNOT_DOWNLOAD_ICON;
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  CreateUpdateManifest(
+      std::vector<UpdateManifestVersionEntry>{kDefaultVersionEntry});
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error(), Task::Error::kUpdateDryRunFailed);
+  EXPECT_THAT(future.Take(), ErrorIs(Task::Error::kUpdateDryRunFailed));
 
   base::FilePath temp_dir;
   EXPECT_TRUE(base::GetTempDir(&temp_dir));
 
   const WebApp* web_app =
-      fake_provider().registrar_unsafe().GetAppById(url_info_.app_id());
-  ASSERT_THAT(web_app, NotNull());
-  EXPECT_THAT(web_app->untranslated_name(), Eq("installed iwa"));
-  EXPECT_THAT(
-      web_app->isolation_data(),
-      Optional(AllOf(Field("location", &WebApp::IsolationData::location,
-                           Eq(installed_bundle_location_)),
-                     Field("version", &WebApp::IsolationData::version,
-                           Eq(base::Version("1.0.0"))),
-                     Property("pending_update_info",
-                              &WebApp::IsolationData::pending_update_info,
-                              Eq(absl::nullopt)))))
+      fake_provider().registrar_unsafe().GetAppById(url_info.app_id());
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed iwa"),
+                          test::IsolationDataIs(
+                              /*location=*/_, Eq(base::Version("1.0.0")),
+                              /*controlled_frame_partitions=*/_,
+                              /*pending_update_info=*/Eq(std::nullopt),
+                              /*integrity_block_data=*/_)))
       << task.AsDebugValue();
 }
 
 TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest, Succeeds) {
-  InstallIwa(base::Version("1.0.0"));
-  CreateUpdateManifesteAndBundle(base::Version("3.0.0"));
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), "1.0.0", "installed iwa", bundle_id);
+
+  CreateBundle(kDefaultVersionEntry.version.GetString(), bundle_id);
+  CreateUpdateManifest(
+      std::vector<UpdateManifestVersionEntry>{kDefaultVersionEntry});
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_TRUE(result.has_value())
-      << result.error() << ": " << task.AsDebugValue();
-  EXPECT_EQ(result.value(), Task::Success::kUpdateFoundAndSavedInDatabase);
-
-  base::FilePath temp_dir;
-  EXPECT_TRUE(base::GetTempDir(&temp_dir));
+  EXPECT_THAT(future.Take(),
+              ValueIs(Task::Success::kUpdateFoundAndSavedInDatabase))
+      << task.AsDebugValue();
 
   const WebApp* web_app =
-      fake_provider().registrar_unsafe().GetAppById(url_info_.app_id());
-  ASSERT_THAT(web_app, NotNull());
-  EXPECT_THAT(web_app->untranslated_name(), Eq("installed iwa"));
+      fake_provider().registrar_unsafe().GetAppById(url_info.app_id());
   EXPECT_THAT(
-      web_app->isolation_data(),
-      Optional(AllOf(
-          Field("location", &WebApp::IsolationData::location,
-                Eq(installed_bundle_location_)),
-          Field("version", &WebApp::IsolationData::version,
-                Eq(base::Version("1.0.0"))),
-          Property(
-              "pending_update_info",
-              &WebApp::IsolationData::pending_update_info,
-              Optional(AllOf(
-                  Field(
-                      "location",
-                      &WebApp::IsolationData::PendingUpdateInfo::location,
-                      VariantWith<InstalledBundle>(Field(
-                          "path", &InstalledBundle::path, IsInDir(temp_dir)))),
-                  Field("version",
-                        &WebApp::IsolationData::PendingUpdateInfo::version,
-                        Eq(base::Version("3.0.0")))))))))
+      web_app,
+      test::IwaIs(
+          Eq("installed iwa"),
+          test::IsolationDataIs(
+              /*location=*/_, Eq(base::Version("1.0.0")),
+              /*controlled_frame_partitions=*/_,
+              test::PendingUpdateInfoIs(
+                  Property("variant", &IsolatedWebAppStorageLocation::variant,
+                           VariantWith<IwaStorageOwnedBundle>(_)),
+                  kDefaultVersionEntry.version, /*integrity_block_data=*/_),
+              /*integrity_block_data=*/_)))
+      << task.AsDebugValue();
+}
+
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest,
+       SucceedsWithNoUpdateFoundWhenPinningToCurrentVersion) {
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), kDefaultVersionEntry.version.GetString(),
+                          "installed iwa", bundle_id);
+
+  CreateBundle("5.0.0", bundle_id);
+  CreateUpdateManifest(
+      {kDefaultVersionEntry,
+       {.src = kFakeBundleSrc, .version = base::Version("5.0.0")}});
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(
+      url_info, UpdateChannel::default_channel(), kDefaultVersionEntry.version);
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(), ValueIs(Task::Success::kNoUpdateFound))
+      << task.AsDebugValue();
+}
+
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest,
+       SucceedsWithNoUpdateFoundWhenDowngradingToCurrentVersion) {
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), kDefaultVersionEntry.version.GetString(),
+                          "installed iwa", bundle_id);
+
+  CreateBundle("5.0.0", bundle_id);
+  CreateUpdateManifest(
+      {kDefaultVersionEntry,
+       {.src = kFakeBundleSrc, .version = base::Version("5.0.0")}});
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(
+      url_info, UpdateChannel::default_channel(), kDefaultVersionEntry.version,
+      /*allow_downgrades=*/true);
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(), ValueIs(Task::Success::kNoUpdateFound))
+      << task.AsDebugValue();
+}
+
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest,
+       SucceedsWithDowngrade) {
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), "5.0.0", "installed iwa", bundle_id);
+
+  CreateUpdateManifest(
+      {kDefaultVersionEntry,
+       {.src = kFakeBundleSrc, .version = base::Version("5.0.0")}});
+
+  CreateBundle(kDefaultVersionEntry.version.GetString(), bundle_id);
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(
+      url_info, UpdateChannel::default_channel(), kDefaultVersionEntry.version,
+      /*allow_downgrades=*/true);
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(),
+              ValueIs(Task::Success::kUpdateFoundAndSavedInDatabase))
+      << task.AsDebugValue();
+}
+TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest,
+       SucceedsWithUpdateToPinnedVersion) {
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), "1.0.0", "installed iwa", bundle_id);
+
+  CreateUpdateManifest(
+      {kDefaultVersionEntry,
+       {.src = kFakeBundleSrc, .version = base::Version("5.0.0")}});
+
+  CreateBundle(kDefaultVersionEntry.version.GetString(), bundle_id);
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(
+      url_info, UpdateChannel::default_channel(), kDefaultVersionEntry.version);
+
+  base::test::TestFuture<Task::CompletionStatus> future;
+  task.Start(future.GetCallback());
+  EXPECT_THAT(future.Take(),
+              ValueIs(Task::Success::kUpdateFoundAndSavedInDatabase))
+      << task.AsDebugValue();
+
+  const WebApp* web_app =
+      fake_provider().registrar_unsafe().GetAppById(url_info.app_id());
+  EXPECT_THAT(
+      web_app,
+      test::IwaIs(
+          Eq("installed iwa"),
+          test::IsolationDataIs(
+              /*location=*/_, Eq(base::Version("1.0.0")),
+              /*controlled_frame_partitions=*/_,
+              test::PendingUpdateInfoIs(
+                  Property("variant", &IsolatedWebAppStorageLocation::variant,
+                           VariantWith<IwaStorageOwnedBundle>(_)),
+                  kDefaultVersionEntry.version, /*integrity_block_data=*/_),
+              /*integrity_block_data=*/_)))
       << task.AsDebugValue();
 }
 
@@ -461,50 +603,55 @@ TEST_F(IsolatedWebAppUpdateDiscoveryTaskPrepareUpdateTest,
   // App database as a pending update, but the update manifest only contains
   // version 2 (i.e., version 3 was removed from the update manifest at some
   // point before that update had a chance to be applied).
-  InstallIwa(
-      base::Version("1.0.0"),
-      WebApp::IsolationData::PendingUpdateInfo(
-          InstalledBundle{.path = base::FilePath()}, base::Version("3.0.0")));
-  CreateUpdateManifesteAndBundle(base::Version("2.0.0"));
+  const web_package::SignedWebBundleId bundle_id =
+      test::GetDefaultEd25519WebBundleId();
+  const web_app::IsolatedWebAppUrlInfo url_info =
+      web_app::InstallIwa(profile(), "1.0.0", "installed iwa", bundle_id);
 
-  Task task(update_manifest_url_, url_info_, fake_provider().scheduler(),
-            fake_provider().registrar_unsafe(),
-            profile()->GetURLLoaderFactory());
+  {
+    web_app::ScopedRegistryUpdate update =
+        fake_provider().sync_bridge_unsafe().BeginUpdate();
+    WebApp* web_app = update->UpdateApp(url_info.app_id());
+
+    web_app->SetIsolationData(
+        IsolationData::Builder(
+            IwaStorageOwnedBundle{"some_folder", /*dev_mode=*/false},
+            base::Version("1.0.0"))
+            .SetPendingUpdateInfo(IsolationData::PendingUpdateInfo(
+                IwaStorageOwnedBundle{"another_folder", /*dev_mode=*/false},
+                base::Version("3.0.0")))
+            .Build());
+  }
+
+  const UpdateManifestVersionEntry second_version_entry = {
+      .src = kDefaultBundleSrc, .version = base::Version("2.0.0")};
+
+  CreateUpdateManifest({second_version_entry});
+  CreateBundle(second_version_entry.version.GetString(), bundle_id);
+
+  Task task = CreateDefaultIwaUpdateDiscoveryTask(url_info);
 
   base::test::TestFuture<Task::CompletionStatus> future;
   task.Start(future.GetCallback());
-  Task::CompletionStatus result = future.Take();
-
-  ASSERT_TRUE(result.has_value())
-      << result.error() << ": " << task.AsDebugValue();
-  EXPECT_EQ(result.value(), Task::Success::kUpdateFoundAndSavedInDatabase);
-
-  base::FilePath temp_dir;
-  EXPECT_TRUE(base::GetTempDir(&temp_dir));
+  EXPECT_THAT(future.Take(),
+              ValueIs(Task::Success::kUpdateFoundAndSavedInDatabase))
+      << task.AsDebugValue();
 
   const WebApp* web_app =
-      fake_provider().registrar_unsafe().GetAppById(url_info_.app_id());
-  ASSERT_THAT(web_app, NotNull());
-  EXPECT_THAT(web_app->untranslated_name(), Eq("installed iwa"));
+      fake_provider().registrar_unsafe().GetAppById(url_info.app_id());
   EXPECT_THAT(
-      web_app->isolation_data(),
-      Optional(AllOf(
-          Field("location", &WebApp::IsolationData::location,
-                Eq(installed_bundle_location_)),
-          Field("version", &WebApp::IsolationData::version,
-                Eq(base::Version("1.0.0"))),
-          Property(
-              "pending_update_info",
-              &WebApp::IsolationData::pending_update_info,
-              Optional(AllOf(
-                  Field(
-                      "location",
-                      &WebApp::IsolationData::PendingUpdateInfo::location,
-                      VariantWith<InstalledBundle>(Field(
-                          "path", &InstalledBundle::path, IsInDir(temp_dir)))),
-                  Field("version",
-                        &WebApp::IsolationData::PendingUpdateInfo::version,
-                        Eq(base::Version("2.0.0")))))))))
+      web_app,
+      test::IwaIs(
+          Eq("installed iwa"),
+          test::IsolationDataIs(
+              /*location=*/_, Eq(base::Version("1.0.0")),
+              /*controlled_frame_partitions=*/_,
+              test::PendingUpdateInfoIs(
+                  Property("variant", &IsolatedWebAppStorageLocation::variant,
+                           VariantWith<IwaStorageOwnedBundle>(_)),
+                  base::Version("2.0.0"),
+                  /*integrity_block_data=*/_),
+              /*integrity_block_data=*/_)))
       << task.AsDebugValue();
 }
 

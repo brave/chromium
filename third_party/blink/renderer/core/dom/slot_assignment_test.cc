@@ -2,11 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
@@ -16,7 +15,7 @@
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -57,6 +56,7 @@ class SlotAssignmentTest : public testing::Test {
  private:
   void SetUp() override;
 
+  test::TaskEnvironment task_environment_;
   Persistent<Document> document_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
@@ -69,14 +69,14 @@ void SlotAssignmentTest::SetUp() {
 
 void SlotAssignmentTest::SetBody(const char* html) {
   Element* body = GetDocument().body();
-  body->setInnerHTMLWithDeclarativeShadowDOMForTesting(String::FromUTF8(html));
+  body->SetHTMLUnsafeWithoutTrustedTypes(String::FromUTF8(html));
   RemoveWhiteSpaceOnlyTextNode(*body);
 }
 
 TEST_F(SlotAssignmentTest, DeclarativeShadowDOM) {
   SetBody(R"HTML(
     <div id=host>
-      <template shadowroot=open></template>
+      <template shadowrootmode=open></template>
     </div>
   )HTML");
 
@@ -88,9 +88,9 @@ TEST_F(SlotAssignmentTest, DeclarativeShadowDOM) {
 TEST_F(SlotAssignmentTest, NestedDeclarativeShadowDOM) {
   SetBody(R"HTML(
     <div id=host1>
-      <template shadowroot=open>
+      <template shadowrootmode=open>
         <div id=host2>
-          <template shadowroot=open></template>
+          <template shadowrootmode=open></template>
         </div>
       </template>
     </div>
@@ -110,7 +110,7 @@ TEST_F(SlotAssignmentTest, NestedDeclarativeShadowDOM) {
 TEST_F(SlotAssignmentTest, AssignedNodesAreSet) {
   SetBody(R"HTML(
     <div id=host>
-      <template shadowroot=open>
+      <template shadowrootmode=open>
         <slot></slot>
       </template>
       <div id='host-child'></div>
@@ -134,7 +134,7 @@ TEST_F(SlotAssignmentTest, AssignedNodesAreSet) {
 TEST_F(SlotAssignmentTest, ScheduleVisualUpdate) {
   SetBody(R"HTML(
     <div id="host">
-      <template shadowroot=open>
+      <template shadowrootmode=open>
         <slot></slot>
       </template>
       <div></div>

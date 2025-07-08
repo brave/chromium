@@ -7,15 +7,12 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <WebKit/WebKit.h>
 
+#import "base/apple/foundation_util.h"
+#import "base/debug/crash_logging.h"
 #import "base/logging.h"
-#import "base/mac/foundation_util.h"
 #import "base/notreached.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/values.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -23,8 +20,9 @@ namespace {
 // `wk_result` up to a depth of `max_depth`.
 std::unique_ptr<base::Value> ValueResultFromWKResult(id wk_result,
                                                      int max_depth) {
-  if (!wk_result)
+  if (!wk_result) {
     return nullptr;
+  }
 
   std::unique_ptr<base::Value> result;
 
@@ -49,8 +47,9 @@ std::unique_ptr<base::Value> ValueResultFromWKResult(id wk_result,
   } else if (result_type == CFDictionaryGetTypeID()) {
     base::Value::Dict dictionary;
     for (id key in wk_result) {
-      NSString* obj_c_string = base::mac::ObjCCast<NSString>(key);
+      NSString* obj_c_string = base::apple::ObjCCast<NSString>(key);
       const std::string path = base::SysNSStringToUTF8(obj_c_string);
+      SCOPED_CRASH_KEY_STRING32("ScriptMessage", "path", path);
       std::unique_ptr<base::Value> value =
           ValueResultFromWKResult(wk_result[obj_c_string], max_depth - 1);
       if (value) {

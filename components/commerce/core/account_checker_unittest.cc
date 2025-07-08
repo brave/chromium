@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/commerce/core/account_checker.h"
+
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -11,15 +13,18 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "components/commerce/core/account_checker.h"
+#include "base/time/time.h"
+#include "components/commerce/core/commerce_constants.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/pref_names.h"
 #include "components/endpoint_fetcher/mock_endpoint_fetcher.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/sync/test/test_sync_user_settings.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -28,14 +33,15 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
+using endpoint_fetcher::EndpointFetcher;
+using endpoint_fetcher::MockEndpointFetcher;
 using testing::_;
 using testing::InSequence;
 
 namespace {
 
-const int64_t kTimeoutMs = 10000;
+constexpr base::TimeDelta kTimeout = base::Milliseconds(10000);
 const char kPostData[] = "{\"preferences\":{\"price_track_email\":true}}";
 
 }  // namespace
@@ -49,7 +55,9 @@ class SpyAccountChecker : public AccountChecker {
       signin::IdentityManager* identity_manager,
       syncer::SyncService* sync_service,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
-      : AccountChecker(pref_service,
+      : AccountChecker("us",
+                       "en-us",
+                       pref_service,
                        identity_manager,
                        sync_service,
                        std::move(url_loader_factory)) {}
@@ -61,10 +69,10 @@ class SpyAccountChecker : public AccountChecker {
               CreateEndpointFetcher,
               (const std::string& oauth_consumer_name,
                const GURL& url,
-               const std::string& http_method,
+               const endpoint_fetcher::HttpMethod http_method,
                const std::string& content_type,
                const std::vector<std::string>& scopes,
-               int64_t timeout_ms,
+               const base::TimeDelta& timeout,
                const std::string& post_data,
                const net::NetworkTrafficAnnotationTag& annotation_tag),
               (override));
@@ -116,44 +124,46 @@ class AccountCheckerTest : public testing::Test {
   std::unique_ptr<SpyAccountChecker> account_checker_;
 };
 
-TEST_F(AccountCheckerTest, TestFetchWaaStatusOnAccountChanged) {
+TEST_F(AccountCheckerTest,
+       TestFetchWaaStatusOnSignin_ReplaceSyncPromosWithSignInPromosDisabled) {
+  base::test::ScopedFeatureList test_specific_features;
+  test_specific_features.InitAndDisableFeature(
+      syncer::kReplaceSyncPromosWithSignInPromos);
+
   const char waa_oauth_name[] = "web_history";
   const char waa_query_url[] =
       "https://history.google.com/history/api/lookup?client=web_app";
   const char waa_oauth_scope[] = "https://www.googleapis.com/auth/chromesync";
   const char waa_content_type[] = "application/json; charset=UTF-8";
-  const char waa_get_method[] = "GET";
-  const int64_t waa_timeout_ms = 30000;
+  constexpr base::TimeDelta waa_timeout = base::Milliseconds(30000);
   const char waa_post_data[] = "";
 
+  // ReplaceSyncPromosWithSignInPromos is disabled, so signing in should not
+  // trigger WAA request.
   EXPECT_CALL(*account_checker_,
               CreateEndpointFetcher(waa_oauth_name, GURL(waa_query_url),
-                                    waa_get_method, waa_content_type,
+                                    endpoint_fetcher::HttpMethod::kGet,
+                                    waa_content_type,
                                     std::vector<std::string>{waa_oauth_scope},
-                                    waa_timeout_ms, waa_post_data, _))
-      .Times(1);
+                                    waa_timeout, waa_post_data, _))
+      .Times(0);
 
-  ASSERT_EQ(true, account_checker_->IsWebAndAppActivityEnabled());
-  SetFetchResponse("{ \"history_recording_enabled\": false }");
   identity_test_env_.MakePrimaryAccountAvailable("mock_email@gmail.com",
-                                                 signin::ConsentLevel::kSync);
-  pref_service_.user_prefs_store()->WaitForValue(
-      kWebAndAppActivityEnabledForShopping, base::Value(false));
-  ASSERT_EQ(true, account_checker_->IsSignedIn());
-  ASSERT_EQ(false, account_checker_->IsWebAndAppActivityEnabled());
+                                                 signin::ConsentLevel::kSignin);
+  ASSERT_EQ(false, account_checker_->IsSignedIn());
 }
 
 TEST_F(AccountCheckerTest, TestFetchPriceEmailPref) {
   {
     InSequence s;
-    // Fetch Waa.
-    EXPECT_CALL(*account_checker_, CreateEndpointFetcher);
     // Fetch email pref.
-    EXPECT_CALL(*account_checker_,
-                CreateEndpointFetcher(kOAuthName, GURL(kNotificationsPrefUrl),
-                                      kGetHttpMethod, kContentType,
-                                      std::vector<std::string>{kOAuthScope},
-                                      kTimeoutMs, kEmptyPostData, _));
+    EXPECT_CALL(
+        *account_checker_,
+        CreateEndpointFetcher(
+            kOAuthName, GURL(kNotificationsPrefUrl),
+            endpoint_fetcher::HttpMethod::kGet, kContentType,
+            std::vector<std::string>{GaiaConstants::kChromeMemexOAuth2Scope},
+            kTimeout, kEmptyPostData, _));
   }
 
   ASSERT_EQ(false, pref_service_.GetBoolean(kPriceEmailNotificationsEnabled));
@@ -169,14 +179,14 @@ TEST_F(AccountCheckerTest, TestFetchPriceEmailPref) {
 TEST_F(AccountCheckerTest, TestSendPriceEmailPrefOnPrefChange) {
   {
     InSequence s;
-    // Fetch Waa.
-    EXPECT_CALL(*account_checker_, CreateEndpointFetcher);
     // Send email pref.
-    EXPECT_CALL(*account_checker_,
-                CreateEndpointFetcher(kOAuthName, GURL(kNotificationsPrefUrl),
-                                      kPostHttpMethod, kContentType,
-                                      std::vector<std::string>{kOAuthScope},
-                                      kTimeoutMs, kPostData, _));
+    EXPECT_CALL(
+        *account_checker_,
+        CreateEndpointFetcher(
+            kOAuthName, GURL(kNotificationsPrefUrl),
+            endpoint_fetcher::HttpMethod::kPost, kContentType,
+            std::vector<std::string>{GaiaConstants::kChromeMemexOAuth2Scope},
+            kTimeout, kPostData, _));
   }
 
   ASSERT_EQ(false, pref_service_.GetBoolean(kPriceEmailNotificationsEnabled));
@@ -187,31 +197,6 @@ TEST_F(AccountCheckerTest, TestSendPriceEmailPrefOnPrefChange) {
   pref_service_.user_prefs_store()->WaitForValue(
       kPriceEmailNotificationsEnabled, base::Value(true));
   ASSERT_EQ(true, pref_service_.GetBoolean(kPriceEmailNotificationsEnabled));
-}
-
-TEST_F(AccountCheckerTest, TestBookmarksSyncState) {
-  syncer::UserSelectableTypeSet type_set;
-  type_set.Put(syncer::UserSelectableType::kBookmarks);
-  sync_service_->GetUserSettings()->SetSelectedTypes(false,
-                                                     std::move(type_set));
-
-  sync_service_->SetTransportState(syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_TRUE(account_checker_->IsSyncingBookmarks());
-
-  sync_service_->SetTransportState(syncer::SyncService::TransportState::PAUSED);
-  ASSERT_FALSE(account_checker_->IsSyncingBookmarks());
-}
-
-TEST_F(AccountCheckerTest, TestBookmarksSyncState_NoBookmarks) {
-  // Intentionally pass an empty set to the set of things that are synced.
-  sync_service_->GetUserSettings()->SetSelectedTypes(
-      false, syncer::UserSelectableTypeSet());
-
-  sync_service_->SetTransportState(syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_FALSE(account_checker_->IsSyncingBookmarks());
-
-  sync_service_->SetTransportState(syncer::SyncService::TransportState::PAUSED);
-  ASSERT_FALSE(account_checker_->IsSyncingBookmarks());
 }
 
 }  // namespace commerce

@@ -16,17 +16,18 @@
 #include "content/public/browser/render_view_host.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-shared.h"
 #include "ui/aura/client/cursor_client.h"
-#include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
-#include "ui/base/pointer/touch_editing_controller.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/event_observer.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/touch_selection/touch_editing_controller.h"
 #include "ui/touch_selection/touch_handle_drawable_aura.h"
 #include "ui/touch_selection/touch_selection_magnifier_aura.h"
 #include "ui/touch_selection/touch_selection_menu_runner.h"
@@ -35,24 +36,7 @@ namespace content {
 namespace {
 
 // Delay before showing the quick menu, in milliseconds.
-const int kQuickMenuDelayInMs = 100;
-
-gfx::Rect ConvertRectToScreen(aura::Window* window, const gfx::RectF& rect) {
-  gfx::Point origin = gfx::ToRoundedPoint(rect.origin());
-  gfx::Point bottom_right = gfx::ToRoundedPoint(rect.bottom_right());
-
-  aura::Window* root_window = window->GetRootWindow();
-  if (root_window) {
-    aura::client::ScreenPositionClient* screen_position_client =
-        aura::client::GetScreenPositionClient(root_window);
-    if (screen_position_client) {
-      screen_position_client->ConvertPointToScreen(window, &origin);
-      screen_position_client->ConvertPointToScreen(window, &bottom_right);
-    }
-  }
-  return gfx::Rect(origin.x(), origin.y(), bottom_right.x() - origin.x(),
-                   bottom_right.y() - origin.y());
-}
+constexpr int kQuickMenuDelayInMs = 100;
 
 }  // namespace
 
@@ -66,8 +50,9 @@ class TouchSelectionControllerClientAura::EnvEventObserver
       : selection_controller_(selection_controller), window_(window) {
     // Observe certain event types sent to any event target, to hide this ui.
     aura::Env* env = aura::Env::GetInstance();
-    std::set<ui::EventType> types = {ui::ET_MOUSE_PRESSED, ui::ET_MOUSE_MOVED,
-                                     ui::ET_KEY_PRESSED, ui::ET_MOUSEWHEEL};
+    std::set<ui::EventType> types = {
+        ui::EventType::kMousePressed, ui::EventType::kMouseMoved,
+        ui::EventType::kKeyPressed, ui::EventType::kMousewheel};
     env->AddEventObserver(this, env, types);
   }
 
@@ -161,8 +146,8 @@ void TouchSelectionControllerClientAura::OnScrollCompleted() {
 
 bool TouchSelectionControllerClientAura::HandleContextMenu(
     const ContextMenuParams& params) {
-  if ((params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
-       params.source_type == ui::MENU_SOURCE_LONG_TAP) &&
+  if ((params.source_type == ui::mojom::MenuSourceType::kLongPress ||
+       params.source_type == ui::mojom::MenuSourceType::kLongTap) &&
       params.is_editable && params.selection_text.empty() &&
       IsQuickMenuAvailable()) {
     quick_menu_requested_ = true;
@@ -171,8 +156,8 @@ bool TouchSelectionControllerClientAura::HandleContextMenu(
   }
 
   if (::features::IsTouchTextEditingRedesignEnabled() &&
-      params.source_type == ui::MENU_SOURCE_TOUCH && params.is_editable &&
-      params.selection_text.empty()) {
+      params.source_type == ui::mojom::MenuSourceType::kTouch &&
+      params.is_editable && params.selection_text.empty()) {
     if (IsQuickMenuAvailable()) {
       // The selection controller might have been reset between the last
       // selection bound update and the current context menu event (e.g. if
@@ -193,9 +178,10 @@ bool TouchSelectionControllerClientAura::HandleContextMenu(
     return true;
   }
 
-  const bool from_touch = params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
-                          params.source_type == ui::MENU_SOURCE_LONG_TAP ||
-                          params.source_type == ui::MENU_SOURCE_TOUCH;
+  const bool from_touch =
+      params.source_type == ui::mojom::MenuSourceType::kLongPress ||
+      params.source_type == ui::mojom::MenuSourceType::kLongTap ||
+      params.source_type == ui::mojom::MenuSourceType::kTouch;
   if (from_touch && !params.selection_text.empty())
     return true;
 
@@ -215,6 +201,17 @@ void TouchSelectionControllerClientAura::OnSwipeToMoveCursorBegin() {
 void TouchSelectionControllerClientAura::OnSwipeToMoveCursorEnd() {
   GetTouchSelectionController()->OnSwipeToMoveCursorEnd();
   OnSelectionEvent(ui::INSERTION_HANDLE_DRAG_STOPPED);
+}
+
+void TouchSelectionControllerClientAura::OnClientHitTestRegionUpdated(
+    ui::TouchSelectionControllerClient* client) {
+  if (client != active_client_ || !GetTouchSelectionController() ||
+      GetTouchSelectionController()->active_status() ==
+          ui::TouchSelectionController::INACTIVE) {
+    return;
+  }
+
+  active_client_->DidScroll();
 }
 
 void TouchSelectionControllerClientAura::UpdateClientSelectionBounds(
@@ -249,6 +246,7 @@ void TouchSelectionControllerClientAura::InvalidateClient(
     ui::TouchSelectionControllerClient* client) {
   DCHECK(client != &internal_client_);
   if (client == active_client_) {
+    GetTouchSelectionController()->HideAndDisallowShowingAutomatically();
     active_client_ = &internal_client_;
     active_menu_client_ = this;
   }
@@ -279,34 +277,35 @@ void TouchSelectionControllerClientAura::ShowQuickMenu() {
   if (!ui::TouchSelectionMenuRunner::GetInstance())
     return;
 
-  gfx::RectF rect =
-      rwhva_->selection_controller()->GetVisibleRectBetweenBounds();
-
-  // Clip rect, which is in |rwhva_|'s window's coordinate space, to client
-  // bounds.
-  gfx::PointF origin = rect.origin();
-  gfx::PointF bottom_right = rect.bottom_right();
-  auto client_bounds = gfx::RectF(rwhva_->GetNativeView()->bounds());
-  origin.SetToMax(client_bounds.origin());
-  bottom_right.SetToMin(client_bounds.bottom_right());
-  if (origin.x() > bottom_right.x() || origin.y() > bottom_right.y())
+  // Don't show the menu if the selection bounds are zero, since this usually
+  // means that touch selection is not active or that there is no cursor or
+  // selection.
+  if (::features::IsTouchTextEditingRedesignEnabled() &&
+      rwhva_->selection_controller()->GetRectBetweenBounds() == gfx::RectF()) {
     return;
+  }
 
-  gfx::Vector2dF diagonal = bottom_right - origin;
-  gfx::SizeF size(diagonal.x(), diagonal.y());
-  gfx::RectF anchor_rect(origin, size);
+  gfx::Rect anchor_rect = gfx::ToRoundedRect(
+      rwhva_->selection_controller()->GetVisibleRectBetweenBounds());
 
-  // Calculate maximum handle image size;
+  // Clip the anchor rect to the rwhva bounds and only show the menu if there is
+  // at least some (possibly zero-area) overlap. We use `InclusiveIntersect`
+  // rather than checking `IsEmpty` here, since we might want to show the menu
+  // even if the anchor rect is empty (e.g. zero-width caret).
+  if (!anchor_rect.InclusiveIntersect(rwhva_->GetNativeView()->bounds())) {
+    return;
+  }
+
   gfx::SizeF max_handle_size =
       rwhva_->selection_controller()->GetStartHandleRect().size();
   max_handle_size.SetToMax(
       rwhva_->selection_controller()->GetEndHandleRect().size());
 
-  aura::Window* parent = rwhva_->GetNativeView();
   ui::TouchSelectionMenuRunner::GetInstance()->OpenMenu(
       active_menu_client_->GetWeakPtr(),
-      ConvertRectToScreen(parent, anchor_rect),
-      gfx::ToRoundedSize(max_handle_size), parent->GetToplevelWindow());
+      rwhva_->ConvertRectToScreen(anchor_rect),
+      gfx::ToRoundedSize(max_handle_size),
+      rwhva_->GetNativeView()->GetToplevelWindow());
 }
 
 void TouchSelectionControllerClientAura::UpdateQuickMenu() {
@@ -371,7 +370,6 @@ bool TouchSelectionControllerClientAura::SupportsAnimation() const {
 bool TouchSelectionControllerClientAura::InternalClient::SupportsAnimation()
     const {
   NOTREACHED();
-  return false;
 }
 
 void TouchSelectionControllerClientAura::SetNeedsAnimate() {
@@ -495,7 +493,6 @@ void TouchSelectionControllerClientAura::DidScroll() {}
 std::unique_ptr<ui::TouchHandleDrawable>
 TouchSelectionControllerClientAura::InternalClient::CreateDrawable() {
   NOTREACHED();
-  return nullptr;
 }
 
 // Since the top-level client can only ever have its selection position changed
@@ -517,7 +514,7 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
     case ui::TouchEditable::kPaste: {
       std::u16string result;
       ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
-          ui::EndpointType::kDefault, /*notify_if_restricted=*/false);
+          ui::EndpointType::kDefault, {.notify_if_restricted = false});
       ui::Clipboard::GetForCurrentThread()->ReadText(
           ui::ClipboardBuffer::kCopyPaste, &data_dst, &result);
       return editable && !result.empty();
@@ -572,7 +569,6 @@ void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -583,7 +579,7 @@ void TouchSelectionControllerClientAura::RunContextMenu() {
       gfx::PointF(anchor_rect.CenterPoint().x(), anchor_rect.y());
   RenderWidgetHostImpl* host = rwhva_->host();
   host->ShowContextMenuAtPoint(gfx::ToRoundedPoint(anchor_point),
-                               ui::MENU_SOURCE_TOUCH_EDIT_MENU);
+                               ui::mojom::MenuSourceType::kTouchEditMenu);
 
   // Hide selection handles after getting rect-between-bounds from touch
   // selection controller; otherwise, rect would be empty and the above

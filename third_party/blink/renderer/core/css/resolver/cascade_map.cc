@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/css/resolver/cascade_map.h"
+
+#include "base/compiler_specific.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 
 namespace blink {
@@ -35,7 +37,8 @@ const CascadePriority* CascadeMap::Find(const CSSPropertyName& name) const {
   size_t index = static_cast<size_t>(name.Id());
   DCHECK_LT(index, static_cast<size_t>(kNumCSSProperties));
   return native_properties_.Bits().Has(name.Id())
-             ? &native_properties_.Buffer()[index].Top(backing_vector_)
+             ? UNSAFE_TODO(&native_properties_.Buffer()[index])
+                   .Top(backing_vector_)
              : nullptr;
 }
 
@@ -66,7 +69,7 @@ const CascadePriority* CascadeMap::Find(const CSSPropertyName& name,
   DCHECK(native_properties_.Bits().Has(name.Id()));
   size_t index = static_cast<size_t>(name.Id());
   DCHECK_LT(index, static_cast<size_t>(kNumCSSProperties));
-  return find_origin(native_properties_.Buffer()[index], origin);
+  return find_origin(UNSAFE_TODO(native_properties_.Buffer()[index]), origin);
 }
 
 CascadePriority& CascadeMap::Top(CascadePriorityList& list) {
@@ -96,7 +99,8 @@ const CascadePriority* CascadeMap::FindRevertLayer(const CSSPropertyName& name,
   DCHECK(native_properties_.Bits().Has(name.Id()));
   size_t index = static_cast<size_t>(name.Id());
   DCHECK_LT(index, static_cast<size_t>(kNumCSSProperties));
-  return find_revert_layer(native_properties_.Buffer()[index], revert_from);
+  return find_revert_layer(UNSAFE_TODO(native_properties_.Buffer()[index]),
+                           revert_from);
 }
 
 void CascadeMap::Add(const AtomicString& custom_property_name,
@@ -119,15 +123,9 @@ void CascadeMap::Add(CSSPropertyID id, CascadePriority priority) {
   size_t index = static_cast<size_t>(static_cast<unsigned>(id));
   DCHECK_LT(index, static_cast<size_t>(kNumCSSProperties));
 
-  // Set bit in high_priority_, if appropriate.
-  static_assert(static_cast<int>(kLastHighPriorityCSSProperty) < 64,
-                "CascadeMap supports at most 63 high-priority properties");
-  if (IsHighPriority(id)) {
-    high_priority_ |= (1ull << index);
-  }
   has_important_ |= priority.IsImportant();
 
-  CascadePriorityList* list = &native_properties_.Buffer()[index];
+  CascadePriorityList* list = UNSAFE_TODO(&native_properties_.Buffer()[index]);
   if (!native_properties_.Bits().Has(id)) {
     native_properties_.Bits().Set(id);
     new (list) CascadeMap::CascadePriorityList(backing_vector_, priority);
@@ -163,7 +161,6 @@ void CascadeMap::Add(CascadePriorityList* list, CascadePriority priority) {
 
 void CascadeMap::Reset() {
   inline_style_lost_ = false;
-  high_priority_ = 0;
   has_important_ = false;
   native_properties_.Bits().Reset();
   custom_properties_.clear();

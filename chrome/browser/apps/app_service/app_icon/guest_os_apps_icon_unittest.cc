@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_decoder.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_factory.h"
@@ -31,6 +30,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image_skia_rep_default.h"
+#include "ui/gfx/image/image_unittest_util.h"
 
 namespace apps {
 
@@ -43,9 +43,6 @@ constexpr int kTestIconSize = 64;
 class AppServiceGuestOSIconTest : public testing::Test {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        apps::kUnifiedAppServiceIconLoading);
-
     ash::CiceroneClient::InitializeFake();
     ash::ConciergeClient::InitializeFake();
     ash::SeneschalClient::InitializeFake();
@@ -74,7 +71,7 @@ class AppServiceGuestOSIconTest : public testing::Test {
                               int size_dp,
                               IconType icon_type) {
     base::test::TestFuture<apps::IconValuePtr> result;
-    proxy().LoadIcon(AppType::kCrostini, app_id, icon_type, size_dp,
+    proxy().LoadIcon(app_id, icon_type, size_dp,
                      /*allow_placeholder_icon=*/false, result.GetCallback());
     return result.Take();
   }
@@ -96,7 +93,7 @@ class AppServiceGuestOSIconTest : public testing::Test {
 
   // Manually generates an icon made up of a `solid_color` with applied
   // `effects`, without going through any publisher icon loading code.
-  IconValuePtr GenerateIcon(absl::optional<std::string> app_id,
+  IconValuePtr GenerateIcon(std::optional<std::string> app_id,
                             SkColor solid_color,
                             int size_dp,
                             IconEffects effects) {
@@ -125,7 +122,6 @@ class AppServiceGuestOSIconTest : public testing::Test {
 
  private:
   content::BrowserTaskEnvironment task_environment_;
-  base::test::ScopedFeatureList scoped_feature_list_;
   raw_ptr<ash::FakeCiceroneClient, DanglingUntriaged> fake_cicerone_client_;
   std::unique_ptr<TestingProfile> profile_;
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
@@ -140,13 +136,13 @@ TEST_F(AppServiceGuestOSIconTest, GetStandardCrostiniIconFromVM) {
 
   // The VM can return an image of any size, it will be resized by App Service.
   constexpr int kVmIconSizePx = 150;
-  SkBitmap red_bitmap = CreateSquareIconBitmap(kVmIconSizePx, SK_ColorRED);
-  std::vector<uint8_t> png_bytes;
-  gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false, &png_bytes);
+  SkBitmap red_bitmap = gfx::test::CreateBitmap(kVmIconSizePx, SK_ColorRED);
+  std::optional<std::vector<uint8_t>> png_bytes =
+      gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false);
 
   vm_tools::cicerone::ContainerAppIconResponse response;
   auto* icon_response = response.add_icons();
-  icon_response->set_icon(&png_bytes[0], png_bytes.size());
+  icon_response->set_icon(png_bytes->data(), png_bytes->size());
   icon_response->set_desktop_file_id(kDesktopFileId);
   icon_response->set_format(vm_tools::cicerone::DesktopIcon::PNG);
   fake_cicerone_client()->set_container_app_icon_response(response);
@@ -167,13 +163,13 @@ TEST_F(AppServiceGuestOSIconTest, GetStandardCrostiniMultiContainerIconFromVM) {
   std::string app_id = AddApp(kDesktopFileId);
 
   constexpr int kVmIconSizePx = 150;
-  SkBitmap red_bitmap = CreateSquareIconBitmap(kVmIconSizePx, SK_ColorRED);
-  std::vector<uint8_t> png_bytes;
-  gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false, &png_bytes);
+  SkBitmap red_bitmap = gfx::test::CreateBitmap(kVmIconSizePx, SK_ColorRED);
+  std::optional<std::vector<uint8_t>> png_bytes =
+      gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false);
 
   vm_tools::cicerone::ContainerAppIconResponse response;
   auto* icon_response = response.add_icons();
-  icon_response->set_icon(&png_bytes[0], png_bytes.size());
+  icon_response->set_icon(png_bytes->data(), png_bytes->size());
   icon_response->set_desktop_file_id(kDesktopFileId);
   icon_response->set_format(vm_tools::cicerone::DesktopIcon::PNG);
   fake_cicerone_client()->set_container_app_icon_response(response);
@@ -195,13 +191,13 @@ TEST_F(AppServiceGuestOSIconTest, GetStandardCrostiniIconFromDisk) {
   std::string app_id = AddApp(kDesktopFileId);
 
   constexpr int kVmIconSizePx = 256;
-  SkBitmap red_bitmap = CreateSquareIconBitmap(kVmIconSizePx, SK_ColorGREEN);
-  std::vector<uint8_t> png_bytes;
-  gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false, &png_bytes);
+  SkBitmap red_bitmap = gfx::test::CreateBitmap(kVmIconSizePx, SK_ColorGREEN);
+  std::optional<std::vector<uint8_t>> png_bytes =
+      gfx::PNGCodec::EncodeBGRASkBitmap(red_bitmap, false);
 
   vm_tools::cicerone::ContainerAppIconResponse response;
   auto* icon_response = response.add_icons();
-  icon_response->set_icon(&png_bytes[0], png_bytes.size());
+  icon_response->set_icon(png_bytes->data(), png_bytes->size());
   icon_response->set_desktop_file_id(kDesktopFileId);
   icon_response->set_format(vm_tools::cicerone::DesktopIcon::PNG);
   fake_cicerone_client()->set_container_app_icon_response(response);

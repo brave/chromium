@@ -9,17 +9,14 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 
-#include "base/strings/string_piece.h"
 #include "base/types/supports_ostream_operator.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "third_party/perfetto/include/perfetto/test/traced_value_test_support.h"  // no-presubmit-check nogncheck
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
+#include "third_party/perfetto/include/perfetto/test/traced_value_test_support.h"
 
 namespace base {
 
@@ -41,7 +38,7 @@ uint64_t GetExampleValue<uint64_t>(int index) {
 
 template <>
 std::string GetExampleValue<std::string>(int index) {
-  return std::string('a', index);
+  return std::string(index, 'a');
 }
 
 template <typename T, typename U>
@@ -67,9 +64,10 @@ TYPED_TEST(StrongAliasTest, ValueAccessesUnderlyingValue) {
   // Const value getter.
   const FooAlias const_alias(GetExampleValue<TypeParam>(1));
   EXPECT_EQ(GetExampleValue<TypeParam>(1), const_alias.value());
-  static_assert(std::is_const<typename std::remove_reference<decltype(
-                    const_alias.value())>::type>::value,
-                "Reference returned by const value getter should be const.");
+  static_assert(
+      std::is_const_v<
+          typename std::remove_reference<decltype(const_alias.value())>::type>,
+      "Reference returned by const value getter should be const.");
 }
 
 TYPED_TEST(StrongAliasTest, ExplicitConversionToUnderlyingValue) {
@@ -103,7 +101,7 @@ TYPED_TEST(StrongAliasTest, CanBeMoveConstructed) {
 
   // Check that FooAlias is nothrow move constructible. This matters for
   // performance when used in std::vectors.
-  static_assert(std::is_nothrow_move_constructible<FooAlias>::value,
+  static_assert(std::is_nothrow_move_constructible_v<FooAlias>,
                 "Error: Alias is not nothow move constructible");
 }
 
@@ -148,7 +146,7 @@ TYPED_TEST(StrongAliasTest, MutableOperatorStar) {
   { Ptr ignore(*std::move(a)); }
   { Ptr ignore(std::move(*b)); }
 
-  EXPECT_FALSE(a.value());
+  EXPECT_FALSE(a.value());  // NOLINT(bugprone-use-after-move)
   EXPECT_FALSE(b.value());
 }
 
@@ -167,7 +165,7 @@ TYPED_TEST(StrongAliasTest, MutableValue) {
   { Ptr ignore(std::move(a).value()); }
   { Ptr ignore(std::move(b.value())); }
 
-  EXPECT_FALSE(a.value());
+  EXPECT_FALSE(a.value());  // NOLINT(bugprone-use-after-move)
   EXPECT_FALSE(b.value());
 }
 
@@ -186,35 +184,35 @@ TYPED_TEST(StrongAliasTest, SizeSameAsUnderlyingType) {
 
 TYPED_TEST(StrongAliasTest, IsDefaultConstructible) {
   using FooAlias = StrongAlias<class FooTag, TypeParam>;
-  static_assert(std::is_default_constructible<FooAlias>::value,
+  static_assert(std::is_default_constructible_v<FooAlias>,
                 "Should be possible to default-construct a StrongAlias.");
   static_assert(
-      std::is_trivially_default_constructible<FooAlias>::value ==
-          std::is_trivially_default_constructible<TypeParam>::value,
+      std::is_trivially_default_constructible_v<FooAlias> ==
+          std::is_trivially_default_constructible_v<TypeParam>,
       "Should be possible to trivially default-construct a StrongAlias iff the "
       "underlying type is trivially default constructible.");
 }
 
 TEST(StrongAliasTest, TrivialTypeAliasIsStandardLayout) {
   using FooAlias = StrongAlias<class FooTag, int>;
-  static_assert(std::is_standard_layout<FooAlias>::value,
+  static_assert(std::is_standard_layout_v<FooAlias>,
                 "int-based alias should have standard layout. ");
-  static_assert(std::is_trivially_copyable<FooAlias>::value,
+  static_assert(std::is_trivially_copyable_v<FooAlias>,
                 "int-based alias should be trivially copyable. ");
 }
 
 TYPED_TEST(StrongAliasTest, CannotBeCreatedFromDifferentAlias) {
   using FooAlias = StrongAlias<class FooTag, TypeParam>;
   using BarAlias = StrongAlias<class BarTag, TypeParam>;
-  static_assert(!std::is_constructible<FooAlias, BarAlias>::value,
+  static_assert(!std::is_constructible_v<FooAlias, BarAlias>,
                 "Should be impossible to construct FooAlias from a BarAlias.");
-  static_assert(!std::is_convertible<BarAlias, FooAlias>::value,
+  static_assert(!std::is_convertible_v<BarAlias, FooAlias>,
                 "Should be impossible to convert a BarAlias into FooAlias.");
 }
 
 TYPED_TEST(StrongAliasTest, CannotBeImplicitlyConverterToUnderlyingValue) {
   using FooAlias = StrongAlias<class FooTag, TypeParam>;
-  static_assert(!std::is_convertible<FooAlias, TypeParam>::value,
+  static_assert(!std::is_convertible_v<FooAlias, TypeParam>,
                 "Should be impossible to implicitly convert a StrongAlias into "
                 "an underlying type.");
 }
@@ -257,7 +255,7 @@ TEST(StrongAliasTest, CanBeDerivedFrom) {
   // those methods without the need to change any other code.
   class CountryCode : public StrongAlias<CountryCode, std::string> {
    public:
-    CountryCode(const std::string& value)
+    explicit CountryCode(const std::string& value)
         : StrongAlias<CountryCode, std::string>::StrongAlias(value) {
       if (value_.length() != 2) {
         // Country code invalid!
@@ -294,7 +292,7 @@ TEST(StrongAliasTest, CanWrapComplexStructures) {
 
 TYPED_TEST(StrongAliasTest, CanBeKeysInStdUnorderedMap) {
   using FooAlias = StrongAlias<class FooTag, TypeParam>;
-  std::unordered_map<FooAlias, std::string, typename FooAlias::Hasher> map;
+  std::unordered_map<FooAlias, std::string> map;
 
   FooAlias k1(GetExampleValue<TypeParam>(0));
   FooAlias k2(GetExampleValue<TypeParam>(1));
@@ -334,7 +332,7 @@ TYPED_TEST(StrongAliasTest, CanDifferentiateOverloads) {
 
 TEST(StrongAliasTest, EnsureConstexpr) {
   using FooAlias = StrongAlias<class FooTag, int>;
-  using BarAlias = StrongAlias<class BarTag, base::StringPiece>;
+  using BarAlias = StrongAlias<class BarTag, std::string_view>;
 
   // Check constructors.
   static constexpr FooAlias kZero{};
@@ -371,7 +369,7 @@ TEST(StrongAliasTest, EnsureConstexpr) {
 void StreamOperatorExists() {
   // Aliases of ints should be streamable because ints are streamable.
   using StreamableAlias = StrongAlias<class IntTag, int>;
-  static_assert(internal::SupportsOstreamOperator<StreamableAlias>::value);
+  static_assert(internal::SupportsOstreamOperator<StreamableAlias>);
 
   // Aliases of a class which does not expose a stream operator should
   // themselves not be streamable.
@@ -380,14 +378,12 @@ void StreamOperatorExists() {
     Scope() = default;
   };
   using NonStreamableAlias = StrongAlias<class ScopeTag, Scope>;
-  static_assert(!internal::SupportsOstreamOperator<NonStreamableAlias>::value);
+  static_assert(!internal::SupportsOstreamOperator<NonStreamableAlias>);
 }
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
 TEST(StrongAliasTest, TracedValueSupport) {
   using IntAlias = StrongAlias<class FooTag, int>;
   EXPECT_EQ(perfetto::TracedValueToString(IntAlias(42)), "42");
 }
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 }  // namespace base

@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 
 import {castExists} from './assert_extras.js';
-import {createRoutes, OsSettingsRoutes, Route} from './os_settings_routes.js';
-import {RouteObserverMixinInterface} from './route_observer_mixin.js';
+import type {RouteObserverMixinInterface} from './common/route_observer_mixin.js';
+import type {OsSettingsRoutes} from './os_settings_routes.js';
+import {createRoutes, PATH_REDIRECTS, Route} from './os_settings_routes.js';
 
 export {Route};
 
@@ -159,11 +160,16 @@ export class Router {
 
   /**
    * @return a Route matching the |path| containing a leading "/",
-   * or null if none matched
+   * or null if none matched.
    */
   getRouteForPath(path: string): Route|null {
-    // Allow trailing slash in paths.
-    const canonicalPath = path.replace(CANONICAL_PATH_REGEX, '$1$2');
+    assert(path[0] === '/', 'Path must contain a leading slash.');
+
+    // Remove any trailing slash.
+    let canonicalPath = path.replace(CANONICAL_PATH_REGEX, '$1$2');
+
+    // Handle redirects for paths (e.g. deprecated paths).
+    canonicalPath = PATH_REDIRECTS[canonicalPath] || canonicalPath;
 
     const matchingRoute = Object.values(this.routes_).find(route => {
       return route.path === canonicalPath && isNavigableRoute(route);
@@ -301,7 +307,7 @@ export class Router {
  *
  * Can be used from tests to re-create a Router with a new set of routes.
  */
-export function createRouter() {
+export function createRouter(): Router {
   return new Router(createRoutes());
 }
 
@@ -316,16 +322,6 @@ window.addEventListener('popstate', () => {
 });
 
 /**
- * @returns true if this route exists under the Advanced section.
- */
-export function isAdvancedRoute(route: Route|null): boolean {
-  if (!route) {
-    return false;
-  }
-  return routes.ADVANCED.contains(route);
-}
-
-/**
  * @returns true if this route exists under the Basic section (not advanced
  * section).
  */
@@ -334,16 +330,6 @@ export function isBasicRoute(route: Route|null): boolean {
     return false;
   }
   return routes.BASIC.contains(route);
-}
-
-/**
- * @returns true if this route exists under the About page
- */
-export function isAboutRoute(route: Route|null): boolean {
-  if (!route) {
-    return false;
-  }
-  return routes.ABOUT.contains(route);
 }
 
 /**

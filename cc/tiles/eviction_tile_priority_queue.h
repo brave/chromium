@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "cc/cc_export.h"
 #include "cc/layers/picture_layer_impl.h"
 #include "cc/tiles/tile_priority.h"
@@ -27,9 +28,10 @@ class CC_EXPORT EvictionTilePriorityQueue {
   EvictionTilePriorityQueue& operator=(const EvictionTilePriorityQueue&) =
       delete;
 
-  void Build(const std::vector<PictureLayerImpl*>& active_layers,
-             const std::vector<PictureLayerImpl*>& pending_layers,
-             TreePriority tree_priority);
+  void Build(const std::vector<raw_ptr<PictureLayerImpl, VectorExperimental>>&
+                 active_layers,
+             const std::vector<raw_ptr<PictureLayerImpl, VectorExperimental>>&
+                 pending_layers);
 
   bool IsEmpty() const;
   const PrioritizedTile& Top() const;
@@ -42,7 +44,6 @@ class CC_EXPORT EvictionTilePriorityQueue {
 
   std::vector<std::unique_ptr<TilingSetEvictionQueue>> active_queues_;
   std::vector<std::unique_ptr<TilingSetEvictionQueue>> pending_queues_;
-  TreePriority tree_priority_;
 };
 
 }  // namespace cc

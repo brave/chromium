@@ -5,21 +5,16 @@
 #include "ui/base/clipboard/clipboard_format_type.h"
 
 #import <Cocoa/Cocoa.h>
-#import <CoreServices/CoreServices.h>  // pre-macOS 11
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // macOS 11
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "base/apple/bridging.h"
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ui/base/clipboard/clipboard_constants.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
@@ -66,7 +61,7 @@ NSString* ClipboardFormatType::ToNSString() const {
 
 // static
 ClipboardFormatType ClipboardFormatType::Deserialize(
-    const std::string& serialization) {
+    std::string_view serialization) {
   return ClipboardFormatType(base::SysUTF8ToNSString(serialization));
 }
 
@@ -94,18 +89,12 @@ const ClipboardFormatType& ClipboardFormatType::WebCustomFormatMap() {
 
 // static
 ClipboardFormatType ClipboardFormatType::CustomPlatformType(
-    const std::string& format_string) {
-  DCHECK(base::IsStringASCII(format_string));
+    std::string_view format_string) {
+  CHECK(base::IsStringASCII(format_string));
   return ClipboardFormatType::Deserialize(format_string);
 }
 
 // Various predefined ClipboardFormatTypes.
-
-// static
-ClipboardFormatType ClipboardFormatType::GetType(
-    const std::string& format_string) {
-  return ClipboardFormatType::Deserialize(format_string);
-}
 
 // static
 const ClipboardFormatType& ClipboardFormatType::FilenamesType() {
@@ -136,14 +125,8 @@ const ClipboardFormatType& ClipboardFormatType::HtmlType() {
 }
 
 const ClipboardFormatType& ClipboardFormatType::SvgType() {
-  if (@available(macOS 11, *)) {
-    static base::NoDestructor<ClipboardFormatType> type(UTTypeSVG.identifier);
-    return *type;
-  } else {
-    static base::NoDestructor<ClipboardFormatType> type(
-        base::apple::CFToNSPtrCast(kUTTypeScalableVectorGraphics));
-    return *type;
-  }
+  static base::NoDestructor<ClipboardFormatType> type(UTTypeSVG.identifier);
+  return *type;
 }
 
 // static
@@ -172,9 +155,9 @@ const ClipboardFormatType& ClipboardFormatType::WebKitSmartPasteType() {
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::WebCustomDataType() {
+const ClipboardFormatType& ClipboardFormatType::DataTransferCustomType() {
   static base::NoDestructor<ClipboardFormatType> type(
-      kUTTypeChromiumWebCustomData);
+      kUTTypeChromiumDataTransferCustomData);
   return *type;
 }
 

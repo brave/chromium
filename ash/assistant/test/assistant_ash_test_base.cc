@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "ash/assistant/test/assistant_ash_test_base.h"
-#include "base/memory/raw_ptr.h"
 
 #include <string>
 #include <utility>
@@ -11,7 +10,6 @@
 #include "ash/app_list/app_list_controller_impl.h"
 #include "ash/app_list/views/app_list_view.h"
 #include "ash/assistant/test/test_assistant_setup.h"
-#include "ash/assistant/ui/main_stage/assistant_onboarding_suggestion_view.h"
 #include "ash/assistant/ui/main_stage/suggestion_chip_view.h"
 #include "ash/constants/ash_features.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
@@ -24,8 +22,10 @@
 #include "ash/test/ash_test_helper.h"
 #include "ash/test/test_ash_web_view_factory.h"
 #include "ash/test/view_drawn_waiter.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "chromeos/ash/services/assistant/test_support/scoped_assistant_browser_delegate.h"
 #include "ui/views/view_utils.h"
 
@@ -90,7 +90,7 @@ class ChildViewCollector {
       Get(child, result);
   }
 
-  raw_ptr<const views::View, ExperimentalAsh> parent_;
+  raw_ptr<const views::View> parent_;
 };
 
 }  // namespace
@@ -113,6 +113,10 @@ AssistantAshTestBase::~AssistantAshTestBase() = default;
 void AssistantAshTestBase::SetUp() {
   AshTestBase::SetUp();
 
+  if (ash::assistant::features::IsNewEntryPointEnabled()) {
+    GTEST_SKIP() << "Assistant is not enabled if new entry point is enabled.";
+  }
+
   // Make the display big enough to hold the app list.
   UpdateDisplay("1024x768");
 
@@ -134,23 +138,8 @@ void AssistantAshTestBase::TearDown() {
 void AssistantAshTestBase::CreateAndSwitchActiveUser(
     const std::string& display_email,
     const std::string& given_name) {
-  TestSessionControllerClient* session_controller_client =
-      ash_test_helper()->test_session_controller_client();
-
-  session_controller_client->Reset();
-
-  session_controller_client->AddUserSession(
-      display_email, user_manager::USER_TYPE_REGULAR,
-      /*provide_pref_service=*/true,
-      /*is_new_profile=*/false, given_name);
-
-  session_controller_client->SwitchActiveUser(Shell::Get()
-                                                  ->session_controller()
-                                                  ->GetUserSession(0)
-                                                  ->user_info.account_id);
-
-  session_controller_client->SetSessionState(
-      session_manager::SessionState::ACTIVE);
+  ClearLogin();
+  SimulateUserLogin({.display_email = display_email, .given_name = given_name});
 
   SetUpActiveUser();
 }
@@ -261,7 +250,7 @@ void AssistantAshTestBase::ClickOnAndWait(
   base::RunLoop().RunUntilIdle();
 }
 
-absl::optional<assistant::AssistantInteractionMetadata>
+std::optional<assistant::AssistantInteractionMetadata>
 AssistantAshTestBase::current_interaction() {
   return assistant_service()->current_interaction();
 }
@@ -275,7 +264,8 @@ aura::Window* AssistantAshTestBase::SwitchToNewAppWindow() {
 }
 
 views::Widget* AssistantAshTestBase::SwitchToNewWidget() {
-  widgets_.push_back(CreateTestWidget());
+  widgets_.push_back(
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET));
 
   views::Widget* result = widgets_.back().get();
   // Give the widget a non-zero size, otherwise things like tapping and clicking
@@ -308,22 +298,12 @@ views::View* AssistantAshTestBase::keyboard_input_toggle() {
   return test_api_->keyboard_input_toggle();
 }
 
-views::View* AssistantAshTestBase::onboarding_view() {
-  return test_api_->onboarding_view();
-}
-
 views::View* AssistantAshTestBase::opt_in_view() {
   return test_api_->opt_in_view();
 }
 
 views::View* AssistantAshTestBase::suggestion_chip_container() {
   return test_api_->suggestion_chip_container();
-}
-
-std::vector<AssistantOnboardingSuggestionView*>
-AssistantAshTestBase::GetOnboardingSuggestionViews() {
-  const views::View* container = onboarding_view();
-  return ChildViewCollector<AssistantOnboardingSuggestionView>{container}.Get();
 }
 
 std::vector<SuggestionChipView*> AssistantAshTestBase::GetSuggestionChips() {
@@ -344,7 +324,8 @@ void AssistantAshTestBase::DismissKeyboard() {
 
 bool AssistantAshTestBase::IsKeyboardShowing() const {
   auto* keyboard_controller = keyboard::KeyboardUIController::Get();
-  return keyboard_controller->IsEnabled() && keyboard::IsKeyboardShowing();
+  return keyboard_controller->IsEnabled() &&
+         keyboard::test::IsKeyboardShowing();
 }
 
 TestAssistantService* AssistantAshTestBase::assistant_service() {

@@ -12,18 +12,19 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/content_settings/browser/page_specific_content_settings.h"
 #include "components/content_settings/browser/ui/cookie_controls_controller.h"
 #include "components/content_settings/browser/ui/cookie_controls_view.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
+#include "components/page_info/core/page_info_action.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/web_contents.h"
-
-namespace content_settings {
-class PageSpecificContentSettings;
-}
+#include "net/base/schemeful_site.h"
 
 namespace net {
 class X509Certificate;
@@ -48,7 +49,8 @@ class PageInfoUI;
 // objects must be created on the heap. They destroy themselves after the UI is
 // closed.
 class PageInfo : private content_settings::CookieControlsObserver,
-                 content_settings::OldCookieControlsObserver {
+                 public content_settings::PageSpecificContentSettings::
+                     PermissionUsageObserver {
  public:
   // Status of a connection to a website.
   enum SiteConnectionStatus {
@@ -78,6 +80,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
     SITE_IDENTITY_STATUS_CERT,
     // The website provided a valid EV certificate.
     SITE_IDENTITY_STATUS_EV_CERT,
+    // The website provided a valid 1-QWAC certificate.
+    SITE_IDENTITY_STATUS_1QWAC_CERT,
     // Site identity could not be verified because the site did not provide a
     // certificate. This is the expected state for HTTP connections.
     SITE_IDENTITY_STATUS_NO_CERT,
@@ -85,9 +89,6 @@ class PageInfo : private content_settings::CookieControlsObserver,
     SITE_IDENTITY_STATUS_ERROR,
     // The site is a trusted internal chrome page.
     SITE_IDENTITY_STATUS_INTERNAL_PAGE,
-    // The profile has accessed data using an administrator-provided
-    // certificate, so the administrator might be able to intercept data.
-    SITE_IDENTITY_STATUS_ADMIN_PROVIDED_CERT,
     // The website provided a valid certificate, but the certificate or chain
     // is using a deprecated signature algorithm.
     SITE_IDENTITY_STATUS_DEPRECATED_SIGNATURE_ALGORITHM,
@@ -123,55 +124,6 @@ class PageInfo : private content_settings::CookieControlsObserver,
     END_OF_SSL_CERTIFICATE_DECISIONS_DID_REVOKE_ENUM
   };
 
-  // UMA statistics for PageInfo. Do not reorder or remove existing
-  // fields. A Java counterpart will be generated for this enum.
-  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.page_info
-  // All values here should have corresponding entries in
-  // WebsiteSettingsAction area of enums.xml.
-  enum PageInfoAction {
-    PAGE_INFO_OPENED = 0,
-    // No longer used; indicated actions for the old version of Page Info that
-    // had a "Permissions" tab and a "Connection" tab.
-    // PAGE_INFO_PERMISSIONS_TAB_SELECTED = 1,
-    // PAGE_INFO_CONNECTION_TAB_SELECTED = 2,
-    // PAGE_INFO_CONNECTION_TAB_SHOWN_IMMEDIATELY = 3,
-    PAGE_INFO_COOKIES_DIALOG_OPENED = 4,
-    PAGE_INFO_CHANGED_PERMISSION = 5,
-    PAGE_INFO_CERTIFICATE_DIALOG_OPENED = 6,
-    // No longer used; indicated a UI viewer for SCTs.
-    // PAGE_INFO_TRANSPARENCY_VIEWER_OPENED = 7,
-    PAGE_INFO_CONNECTION_HELP_OPENED = 8,
-    PAGE_INFO_SITE_SETTINGS_OPENED = 9,
-    PAGE_INFO_SECURITY_DETAILS_OPENED = 10,
-    PAGE_INFO_COOKIES_ALLOWED_FOR_SITE = 11,
-    PAGE_INFO_COOKIES_BLOCKED_FOR_SITE = 12,
-    PAGE_INFO_COOKIES_CLEARED = 13,
-    PAGE_INFO_PERMISSION_DIALOG_OPENED = 14,
-    PAGE_INFO_PERMISSIONS_CLEARED = 15,
-    // No longer used; indicated permission change but was a duplicate metric.
-    // PAGE_INFO_PERMISSIONS_CHANGED = 16,
-    PAGE_INFO_FORGET_SITE_OPENED = 17,
-    PAGE_INFO_FORGET_SITE_CLEARED = 18,
-    PAGE_INFO_HISTORY_OPENED = 19,
-    PAGE_INFO_HISTORY_ENTRY_REMOVED = 20,
-    PAGE_INFO_HISTORY_ENTRY_CLICKED = 21,
-    PAGE_INFO_PASSWORD_REUSE_ALLOWED = 22,
-    PAGE_INFO_CHANGE_PASSWORD_PRESSED = 23,
-    PAGE_INFO_SAFETY_TIP_HELP_OPENED = 24,
-    PAGE_INFO_CHOOSER_OBJECT_DELETED = 25,
-    PAGE_INFO_RESET_DECISIONS_CLICKED = 26,
-    PAGE_INFO_STORE_INFO_CLICKED = 27,
-    PAGE_INFO_ABOUT_THIS_SITE_PAGE_OPENED = 28,
-    PAGE_INFO_ABOUT_THIS_SITE_SOURCE_LINK_CLICKED = 29,
-    PAGE_INFO_AD_PERSONALIZATION_PAGE_OPENED = 30,
-    PAGE_INFO_AD_PERSONALIZATION_SETTINGS_OPENED = 31,
-    PAGE_INFO_ABOUT_THIS_SITE_MORE_ABOUT_CLICKED = 32,
-    PAGE_INFO_COOKIES_PAGE_OPENED = 33,
-    PAGE_INFO_COOKIES_SETTINGS_OPENED = 34,
-    PAGE_INFO_ALL_SITES_WITH_FPS_FILTER_OPENED = 35,
-    kMaxValue = PAGE_INFO_ALL_SITES_WITH_FPS_FILTER_OPENED
-  };
-
   struct ChooserUIInfo {
     ContentSettingsType content_settings_type;
     int description_string_id;
@@ -195,12 +147,12 @@ class PageInfo : private content_settings::CookieControlsObserver,
     ContentSetting default_setting = CONTENT_SETTING_DEFAULT;
     // The settings source e.g. user, extensions, policy, ... .
     content_settings::SettingSource source =
-        content_settings::SETTING_SOURCE_NONE;
+        content_settings::SettingSource::kNone;
     // Whether the permission is a one-time grant.
     bool is_one_time = false;
     // Only set for settings that can have multiple permissions for different
     // embedded origins.
-    absl::optional<url::Origin> requesting_origin;
+    std::optional<url::Origin> requesting_origin;
     // When the permission was used.
     base::Time last_used;
     // Whether the permission is in use.
@@ -225,6 +177,10 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // clicked.
   void OnThirdPartyToggleClicked(bool block_third_party_cookies);
 
+  // Called when the protections button in the privacy and site data subpage
+  // gets clicked.
+  void OnTrackingProtectionButtonPressed();
+
   // Checks whether this permission is currently the factory default, as set by
   // Chrome. Specifically, that the following three conditions are true:
   //   - The current active setting comes from the default or pref provider.
@@ -246,14 +202,14 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // that change on to the UI to be redrawn.
   void UpdateSecurityState();
 
-  void RecordPageInfoAction(PageInfoAction action);
+  void RecordPageInfoAction(page_info::PageInfoAction action);
 
   void UpdatePermissions();
 
   // This method is called when ever a permission setting is changed.
   void OnSitePermissionChanged(ContentSettingsType type,
                                ContentSetting value,
-                               absl::optional<url::Origin> requesting_origin,
+                               std::optional<url::Origin> requesting_origin,
                                bool is_one_time);
 
   // This method is called whenever access to an object is revoked.
@@ -274,9 +230,16 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // Handles opening the link to show cookies settings and records the event.
   void OpenCookiesSettingsView();
 
+  // Handles opening the link to show Incognito tracking protection settings.
+  void OpenIncognitoSettingsView();
+
   // Handles opening the link to show all sites settings with a filter for
   // current site's fps  and records the event.
-  void OpenAllSitesViewFilteredToFps();
+  void OpenAllSitesViewFilteredToRws();
+
+  // Handles opening the link to show Chrome Sync settings and records the
+  // event.
+  void OpenSyncSettingsView();
 
   // Handles opening the cookies dialog and records the event.
   void OpenCookiesDialog();
@@ -289,6 +252,9 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   // Handles opening the connection help center page and records the event.
   void OpenConnectionHelpCenterPage(const ui::Event& event);
+
+  // Handles opening the Safe Browsing help center page.
+  void OpenSafeBrowsingHelpCenterPage(const ui::Event& event);
 
   // Handles opening the settings page for a permission.
   void OpenContentSettingsExceptions(ContentSettingsType content_settings_type);
@@ -323,6 +289,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
     return safe_browsing_status_;
   }
 
+  content::WebContents* web_contents() const { return web_contents_.get(); }
+
   // For most sites, this returns a human-friendly string based on site origin,
   // without scheme, the username and password, the path or trivial subdomains.
   //
@@ -343,33 +311,22 @@ class PageInfo : private content_settings::CookieControlsObserver,
     is_subscribed_to_permission_change_for_testing = true;
   }
 
+  void PresentSitePermissionsForTesting() { PresentSitePermissions(); }
+
+  // PageSpecificContentSettings::PermissionUsageObserver:
+  void OnPermissionUsageChange() override;
+
  private:
-  FRIEND_TEST_ALL_PREFIXES(PageInfoTest,
-                           NonFactoryDefaultAndRecentlyChangedPermissionsShown);
-  FRIEND_TEST_ALL_PREFIXES(PageInfoTest, StorageAccessGrantsAreFiltered);
-  FRIEND_TEST_ALL_PREFIXES(PageInfoTest, IncognitoPermissionsEmptyByDefault);
-  FRIEND_TEST_ALL_PREFIXES(PageInfoTest, IncognitoPermissionsDontShowAsk);
   FRIEND_TEST_ALL_PREFIXES(PageInfoTest,
                            ShowInfoBarWhenAllowingThirdPartyCookies);
   FRIEND_TEST_ALL_PREFIXES(PageInfoTest,
                            ShowInfoBarWhenBlockingThirdPartyCookies);
 
-  // OldCookieControlsObserver:
-  void OnStatusChanged(CookieControlsStatus status,
-                       CookieControlsEnforcement enforcement,
-                       int allowed_cookies,
-                       int blocked_cookies) override;
-  void OnCookiesCountChanged(int allowed_cookies, int blocked_cookies) override;
-  void OnStatefulBounceCountChanged(int bounce_count) override;
-
   // CookieControlsObserver:
-  void OnStatusChanged(CookieControlsStatus status,
+  void OnStatusChanged(CookieControlsState controls_state,
                        CookieControlsEnforcement enforcement,
+                       CookieBlocking3pcdStatus blocking_status,
                        base::Time expiration) override;
-  void OnSitesCountChanged(int allowed_third_party_sites_count,
-                           int blocked_third_party_sites_count) override;
-  void OnBreakageConfidenceLevelChanged(
-      CookieControlsBreakageConfidenceLevel level) override;
 
   // Populates this object's UI state with provided security context. This
   // function does not update visible UI-- that's part of Present*().
@@ -439,21 +396,20 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // via Page Info UI.
   void ContentSettingChangedViaPageInfo(ContentSettingsType type);
 
-  // Get counts of allowed and blocked cookies.
-  int GetFirstPartyAllowedCookiesCount(const GURL& site_url);
-  int GetFirstPartyBlockedCookiesCount(const GURL& site_url);
-
   // Get the count of blocked and allowed sites.
   int GetSitesWithAllowedCookiesAccessCount();
   int GetThirdPartySitesWithBlockedCookiesAccessCount(const GURL& site_url);
 
   bool IsIsolatedWebApp() const;
 
+  std::set<net::SchemefulSite> GetTwoSitePermissionRequesters(
+      ContentSettingsType type);
+
   // The page info UI displays information and controls for site-
   // specific data (local stored objects like cookies), site-specific
   // permissions (location, pop-up, plugin, etc. permissions) and site-specific
   // information (identity, connection status, etc.).
-  raw_ptr<PageInfoUI, DanglingUntriaged> ui_;
+  raw_ptr<PageInfoUI, DanglingUntriaged> ui_ = nullptr;
 
   // A web contents getter used to retrieve the associated WebContents object.
   base::WeakPtr<content::WebContents> web_contents_;
@@ -481,6 +437,9 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   // For secure connection |certificate_| is set to the server certificate.
   scoped_refptr<net::X509Certificate> certificate_;
+
+  // The 2-QWAC certificate for a website, if it has one.
+  scoped_refptr<net::X509Certificate> two_qwac_;
 
   // Status of the connection to the website.
   SiteConnectionStatus site_connection_status_;
@@ -543,27 +502,20 @@ class PageInfo : private content_settings::CookieControlsObserver,
   base::ScopedObservation<content_settings::CookieControlsController,
                           content_settings::CookieControlsObserver>
       observation_{this};
-  base::ScopedObservation<content_settings::CookieControlsController,
-                          content_settings::OldCookieControlsObserver>
-      old_observation_{this};
-
-  CookieControlsStatus status_ = CookieControlsStatus::kUninitialized;
 
   CookieControlsEnforcement enforcement_ =
       CookieControlsEnforcement::kNoEnforcement;
 
+  CookieBlocking3pcdStatus blocking_status_ =
+      CookieBlocking3pcdStatus::kNotIn3pcd;
+
+  CookieControlsState controls_state_ = CookieControlsState::kBlocked3pc;
+
   base::Time cookie_exception_expiration_;
 
-  CookieControlsBreakageConfidenceLevel cookie_controls_confidence_ =
-      CookieControlsBreakageConfidenceLevel::kUninitialized;
-
-  // The number of third-party sites blocked from accessing storage.
-  absl::optional<int> blocked_third_party_sites_count_;
-
-  // The number of third-party sites allowed to access storage.
-  absl::optional<int> allowed_third_party_sites_count_;
-
   bool is_subscribed_to_permission_change_for_testing = false;
+
+  bool has_recorded_permission_metrics_ = false;
 
   base::WeakPtrFactory<PageInfo> weak_factory_{this};
 };

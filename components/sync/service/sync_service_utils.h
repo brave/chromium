@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_SYNC_SERVICE_SYNC_SERVICE_UTILS_H_
 #define COMPONENTS_SYNC_SERVICE_SYNC_SERVICE_UTILS_H_
 
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 
 namespace syncer {
 
@@ -21,7 +21,7 @@ enum class UploadState {
   INITIALIZING,
   // We are not syncing to Google, and the caller should assume that we do not
   // have consent to do so. This can have a number of reasons, e.g.: sync as a
-  // whole is disabled, or the given model type is disabled, or we're in
+  // whole is disabled, or the given data type is disabled, or we're in
   // "local sync" mode, or this data type is encrypted with a custom passphrase
   // (in which case we're technically still uploading, but Google can't inspect
   // the data), or we're in a persistent auth error state. As one special case
@@ -35,28 +35,42 @@ enum class UploadState {
   kMaxValue = ACTIVE
 };
 
-// Used for UMA histogram, do not reorder. Represents the UI elements which
-// contain trusted vault error button.
+// Represents the UI elements which contain trusted vault error button. These
+// values are persisted to logs. Entries should not be renumbered and numeric
+// values should never be reused. Keep in sync w/ TrustedVaultUserActionTrigger
+// in tools/metrics/histograms/metadata/sync/enums.xml.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.sync
+// LINT.IfChange(TrustedVaultUserActionTrigger)
 enum class TrustedVaultUserActionTriggerForUMA {
   // Settings pages, used on all platforms except ChromeOS.
-  kSettings,
+  kSettings = 0,
   // Used on desktop platform only.
-  kProfileMenu,
+  kProfileMenu = 1,
   // Used on Android and ChromeOS, represents OS-level notification.
-  kNotification,
+  kNotification = 2,
   // Used on iOS only. Represents Infobar on the New Tab Page.
-  // TODO(crbug.com/1083973): record this bucket bucket on Android once
+  // TODO(crbug.com/40131571): record this bucket bucket on Android once
   // corresponding UI added.
-  kNewTabPageInfobar,
-  kMaxValue = kNewTabPageInfobar
+  kNewTabPageInfobar = 3,
+  // This dialog is shown on Android and iOS during sign-in or sign-up flows
+  // when there is an error preventing passwords from being fetched from
+  // an account (e.g. need to retrieve trusted vault key for passwords).
+  kPasswordManagerErrorMessage = 4,
+  // Used on iOS only, from the account menu.
+  kAccountMenu = 5,
+  // From the Password Manager Settings (currently used only on iOS).
+  kPasswordManagerSettings = 6,
+  // From the passwords keyboard accessory (only used on Android).
+  kPasswordManagerKeyboardAccessory = 7,
+  kMaxValue = kPasswordManagerKeyboardAccessory
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultUserActionTrigger)
 
-// Returns whether |type| is being uploaded to Google. This is useful for
+// Returns whether `type` is being uploaded to Google. This is useful for
 // features that depend on user consent for uploading data (e.g. history) to
 // Google.
 UploadState GetUploadToGoogleState(const SyncService* sync_service,
-                                   ModelType type);
+                                   DataType type);
 
 void RecordKeyRetrievalTrigger(TrustedVaultUserActionTriggerForUMA trigger);
 

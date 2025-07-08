@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/views/frame/windows_caption_button.h"
+
 #include <memory>
 
 #include "base/numerics/safe_conversions.h"
@@ -36,7 +37,7 @@ WindowsCaptionButton::WindowsCaptionButton(
   SetAnimateOnStateChange(true);
   // Not focusable by default, only for accessibility.
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
-  SetAccessibleName(accessible_name);
+  GetViewAccessibility().SetName(accessible_name);
   SetID(button_type);
 }
 
@@ -50,20 +51,10 @@ WindowsCaptionButton::CreateIconPainter() {
   return std::make_unique<Windows10IconPainter>();
 }
 
-gfx::Size WindowsCaptionButton::CalculatePreferredSize() const {
+gfx::Size WindowsCaptionButton::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   const int width =
       WindowFrameUtil::kWindowsCaptionButtonWidth + GetBetweenButtonSpacing();
-  if (features::IsChromeRefresh2023()) {
-    const gfx::Rect tab_strip_region_bounds =
-        frame_view_->GetBoundsForTabStripRegion(frame_view_->browser_view()
-                                                    ->tab_strip_region_view()
-                                                    ->GetMinimumSize());
-
-    const int bottom_y = tab_strip_region_bounds.bottom() -
-                         GetLayoutConstant(TABSTRIP_TOOLBAR_OVERLAP);
-
-    return gfx::Size(width, bottom_y - frame_view_->WindowTopY());
-  }
 
   // TODO(bsep): The sizes in this function are for 1x device scale and don't
   // match Windows button sizes at hidpi.
@@ -71,7 +62,7 @@ gfx::Size WindowsCaptionButton::CalculatePreferredSize() const {
   if (!frame_view_->browser_view()->webui_tab_strip() &&
       frame_view_->IsMaximized()) {
     int maximized_height =
-        frame_view_->browser_view()->GetTabStripVisible()
+        frame_view_->browser_view()->ShouldDrawTabStrip()
             ? frame_view_->browser_view()->GetTabStripHeight()
             : frame_view_->TitlebarMaximizedVisualHeight();
     constexpr int kMaximizedBottomMargin = 2;
@@ -83,7 +74,7 @@ gfx::Size WindowsCaptionButton::CalculatePreferredSize() const {
 
 SkColor WindowsCaptionButton::GetBaseForegroundColor() const {
   return GetColorProvider()->GetColor(
-      frame_view_->ShouldPaintAsActive()
+      GetWidget()->ShouldPaintAsActive()
           ? kColorCaptionButtonForegroundActive
           : kColorCaptionButtonForegroundInactive);
 }
@@ -144,11 +135,12 @@ void WindowsCaptionButton::OnPaintBackground(gfx::Canvas* canvas) {
   }
 
   SkAlpha alpha;
-  if (GetState() == STATE_PRESSED)
+  if (GetState() == STATE_PRESSED) {
     alpha = pressed_alpha;
-  else
+  } else {
     alpha = gfx::Tween::IntValueBetween(hover_animation().GetCurrentValue(),
                                         SK_AlphaTRANSPARENT, hovered_alpha);
+  }
   canvas->FillRect(bounds, SkColorSetA(base_color, alpha));
 }
 
@@ -165,30 +157,24 @@ int WindowsCaptionButton::GetBetweenButtonSpacing() const {
 
 int WindowsCaptionButton::GetButtonDisplayOrderIndex() const {
   int button_display_order = 0;
-  const bool tab_search_enabled =
-      WindowFrameUtil::IsWindowsTabSearchCaptionButtonEnabled(
-          frame_view_->browser_view()->browser());
   switch (button_type_) {
-    case VIEW_ID_TAB_SEARCH_BUTTON:
-      button_display_order = 0;
-      break;
     case VIEW_ID_MINIMIZE_BUTTON:
-      button_display_order = 0 + (tab_search_enabled ? 1 : 0);
+      button_display_order = 0;
       break;
     case VIEW_ID_MAXIMIZE_BUTTON:
     case VIEW_ID_RESTORE_BUTTON:
-      button_display_order = 1 + (tab_search_enabled ? 1 : 0);
+      button_display_order = 1;
       break;
     case VIEW_ID_CLOSE_BUTTON:
-      button_display_order = 2 + (tab_search_enabled ? 1 : 0);
+      button_display_order = 2;
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   // Reverse the ordering if we're in RTL mode
   if (base::i18n::IsRTL()) {
-    const int max_index = tab_search_enabled ? 3 : 2;
+    const int max_index = 2;
     button_display_order = max_index - button_display_order;
   }
 
@@ -200,7 +186,7 @@ void WindowsCaptionButton::PaintSymbol(gfx::Canvas* canvas) {
   const SkColor hovered_color =
       GetColorProvider()->GetColor(kColorCaptionCloseButtonForegroundHovered);
   if (!GetEnabled() ||
-      (!frame_view_->ShouldPaintAsActive() && GetState() != STATE_HOVERED &&
+      (!GetWidget()->ShouldPaintAsActive() && GetState() != STATE_HOVERED &&
        GetState() != STATE_PRESSED)) {
     symbol_color =
         SkColorSetA(symbol_color, SkColorGetA(GetColorProvider()->GetColor(
@@ -217,7 +203,7 @@ void WindowsCaptionButton::PaintSymbol(gfx::Canvas* canvas) {
   gfx::ScopedCanvas scoped_canvas(canvas);
   const float scale = canvas->UndoDeviceScaleFactor();
 
-  const int symbol_size_pixels = std::round(10 * scale);
+  const int symbol_size_pixels = base::ClampRound(10 * scale);
   gfx::RectF bounds_rect(GetContentsBounds());
   bounds_rect.Scale(scale);
   gfx::Rect symbol_rect(gfx::ToEnclosingRect(bounds_rect));
@@ -228,8 +214,7 @@ void WindowsCaptionButton::PaintSymbol(gfx::Canvas* canvas) {
   flags.setAntiAlias(false);
   flags.setColor(symbol_color);
   flags.setStyle(cc::PaintFlags::kStroke_Style);
-  // Stroke width jumps up a pixel every time we reach a new integral scale.
-  const int stroke_width = std::floor(scale);
+  const int stroke_width = base::ClampRound(scale);
   flags.setStrokeWidth(stroke_width);
 
   switch (button_type_) {
@@ -257,16 +242,12 @@ void WindowsCaptionButton::PaintSymbol(gfx::Canvas* canvas) {
       return;
     }
 
-    case VIEW_ID_TAB_SEARCH_BUTTON:
-      icon_painter_->PaintTabSearchIcon(canvas, symbol_rect, flags);
-      return;
-
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
-BEGIN_METADATA(WindowsCaptionButton, views::Button)
+BEGIN_METADATA(WindowsCaptionButton)
 ADD_READONLY_PROPERTY_METADATA(int, BetweenButtonSpacing)
 ADD_READONLY_PROPERTY_METADATA(int, ButtonDisplayOrderIndex)
 ADD_READONLY_PROPERTY_METADATA(SkColor,

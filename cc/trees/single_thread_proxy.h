@@ -13,13 +13,17 @@
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "base/types/optional_ref.h"
+#include "cc/input/browser_controls_offset_tag_modifications.h"
 #include "cc/scheduler/scheduler.h"
 #include "cc/trees/layer_tree_host_impl.h"
+#include "cc/trees/layer_tree_host_impl_client.h"
 #include "cc/trees/paint_holding_reason.h"
 #include "cc/trees/proxy.h"
 #include "cc/trees/task_runner_provider.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
+#include "components/viz/common/view_transition_element_resource_id.h"
 
 namespace viz {
 class BeginFrameSource;
@@ -51,40 +55,51 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
       LayerTreeFrameSink* layer_tree_frame_sink) override;
   void ReleaseLayerTreeFrameSink() override;
   void SetVisible(bool visible) override;
-  void SetNeedsAnimate() override;
+  void SetShouldWarmUp() override;
+  void SetNeedsAnimate(bool urgent) override;
   void SetNeedsUpdateLayers() override;
   void SetNeedsCommit() override;
   void SetNeedsRedraw(const gfx::Rect& damage_rect) override;
   void SetTargetLocalSurfaceId(
       const viz::LocalSurfaceId& target_local_surface_id) override;
+  void DetachInputDelegateAndRenderFrameObserver() override;
   bool RequestedAnimatePending() override;
   void SetDeferMainFrameUpdate(bool defer_main_frame_update) override;
   void SetPauseRendering(bool pause_rendering) override;
+  void SetInputResponsePending() override;
   bool StartDeferringCommits(base::TimeDelta timeout,
                              PaintHoldingReason reason) override;
   void StopDeferringCommits(PaintHoldingCommitTrigger) override;
   bool IsDeferringCommits() const override;
+  void SetShouldThrottleFrameRate(bool flag) override;
   bool CommitRequested() const override;
   void Start() override;
   void Stop() override;
+  void QueueImageDecode(int request_id,
+                        const DrawImage& image,
+                        bool speculative) override;
+  bool SpeculativeDecodeRequestInFlight() const override;
   void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   void SetPaintWorkletLayerPainter(
       std::unique_ptr<PaintWorkletLayerPainter> painter) override;
   bool MainFrameWillHappenForTesting() override;
   void RequestBeginMainFrameNotExpected(bool new_state) override;
   void SetSourceURL(ukm::SourceId source_id, const GURL& url) override;
-  void SetUkmSmoothnessDestination(
+  void SetUkmDroppedFramesDestination(
       base::WritableSharedMemoryMapping ukm_smoothness_data) override;
   void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer) override;
   void CompositeImmediatelyForTest(base::TimeTicks frame_begin_time,
                                    bool raster,
                                    base::OnceClosure callback) override;
-  double GetPercentDroppedFrames() const override;
+  double GetAverageThroughput() const override;
 
-  void UpdateBrowserControlsState(BrowserControlsState constraints,
-                                  BrowserControlsState current,
-                                  bool animate) override;
+  void UpdateBrowserControlsState(
+      BrowserControlsState constraints,
+      BrowserControlsState current,
+      bool animate,
+      base::optional_ref<const BrowserControlsOffsetTagModifications>
+          offset_tag_modifications) override;
 
   // SchedulerClient implementation
   bool WillBeginImplFrame(const viz::BeginFrameArgs& args) override;
@@ -108,6 +123,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void ScheduledActionBeginMainFrameNotExpectedUntil(
       base::TimeTicks time) override;
   void FrameIntervalUpdated(base::TimeDelta interval) override;
+  void OnBeginImplFrameDeadline() override;
 
   // LayerTreeHostImplClient implementation
   void DidLoseLayerTreeFrameSinkOnImplThread() override;
@@ -120,7 +136,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void SetNeedsRedrawOnImplThread() override;
   void SetNeedsOneBeginImplFrameOnImplThread() override;
   void SetNeedsPrepareTilesOnImplThread() override;
-  void SetNeedsCommitOnImplThread() override;
+  void SetNeedsCommitOnImplThread(bool urgent) override;
   void SetVideoNeedsBeginFrames(bool needs_begin_frames) override;
   void SetDeferBeginMainFrameFromImpl(bool defer_begin_main_frame) override {}
   bool IsInsideDraw() override;
@@ -128,14 +144,18 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
                                             base::TimeDelta delay) override;
   void DidActivateSyncTree() override;
-  void WillPrepareTiles() override;
   void DidPrepareTiles() override;
   void DidCompletePageScaleAnimationOnImplThread() override;
   void OnDrawForLayerTreeFrameSink(bool resourceless_software_draw,
                                    bool skip_draw) override;
-  void NeedsImplSideInvalidation(bool needs_first_draw_on_activation) override;
-  void NotifyImageDecodeRequestFinished() override;
-  void NotifyTransitionRequestFinished(uint32_t sequence_id) override;
+  void SetNeedsImplSideInvalidation(
+      bool needs_first_draw_on_activation) override;
+  void NotifyImageDecodeRequestFinished(int request_id,
+                                        bool speculative,
+                                        bool decode_succeeded) override;
+  void NotifyTransitionRequestFinished(
+      uint32_t sequence_id,
+      const viz::ViewTransitionElementResourceRects&) override;
   void DidPresentCompositorFrameOnImplThread(
       uint32_t frame_token,
       PresentationTimeCallbackBuffer::PendingCallbacks callbacks,
@@ -145,16 +165,23 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
       ElementListType element_list_type) override;
   void NotifyPaintWorkletStateChange(
       Scheduler::PaintWorkletState state) override;
-  void NotifyThroughputTrackerResults(CustomTrackerResults results) override;
+  void NotifyCompositorMetricsTrackerResults(
+      CustomTrackerResults results) override;
   bool IsInSynchronousComposite() const override;
   void FrameSinksToThrottleUpdated(
       const base::flat_set<viz::FrameSinkId>& ids) override;
   void ClearHistory() override;
+  void SetHasActiveThreadedScroll(bool is_scrolling) override;
+  void SetWaitingForScrollEvent(bool waiting_for_scroll_event) override;
+  bool IsRenderingPaused() const override;
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
+
   size_t CommitDurationSampleCountForTesting() const override;
 
   void RequestNewLayerTreeFrameSink();
 
   void DidObserveFirstScrollDelay(
+      int source_frame_number,
       base::TimeDelta first_scroll_delay,
       base::TimeTicks first_scroll_timestamp) override;
 
@@ -173,12 +200,12 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void BeginMainFrame(const viz::BeginFrameArgs& begin_frame_args);
   void BeginMainFrameAbortedOnImplThread(CommitEarlyOutReason reason);
   void DoBeginMainFrame(const viz::BeginFrameArgs& begin_frame_args);
-  void DoPainting(const viz::BeginFrameArgs& commit_args);
+  void DoPainting();
   void DoCommit(const viz::BeginFrameArgs& commit_args);
   void DoPostCommit();
   DrawResult DoComposite(LayerTreeHostImpl::FrameData* frame);
   void DoSwap();
-  void DidCommitAndDrawFrame();
+  void DidCommitAndDrawFrame(int source_frame_number);
   void CommitComplete();
 
   bool ShouldComposite() const;
@@ -211,7 +238,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   bool inside_draw_;
   bool defer_main_frame_update_;
   bool pause_rendering_;
-  absl::optional<PaintHoldingReason> paint_holding_reason_;
+  std::optional<PaintHoldingReason> paint_holding_reason_;
   bool did_apply_compositor_deltas_ = false;
   bool animate_requested_;
   bool update_layers_requested_;
@@ -226,9 +253,14 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   // initialized.
   bool layer_tree_frame_sink_lost_;
 
+  // Only one speculative decode request may be in flight at a time.
+  bool speculative_decode_request_in_flight_ = false;
+
   // A number that kept incrementing in CompositeImmediately, which indicates a
   // new impl frame.
   uint64_t begin_frame_sequence_number_ = 1u;
+
+  int source_frame_number_for_next_commit_ = kInvalidSourceFrameNumber;
 
   // This is the callback for the scheduled RequestNewLayerTreeFrameSink.
   base::CancelableOnceClosure layer_tree_frame_sink_creation_callback_;

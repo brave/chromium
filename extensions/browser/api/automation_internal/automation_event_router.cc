@@ -4,14 +4,13 @@
 
 #include "extensions/browser/api/automation_internal/automation_event_router.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -22,7 +21,6 @@
 #include "extensions/common/api/automation_internal.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
-#include "extensions/common/extension_messages.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -37,10 +35,7 @@ AutomationEventRouter* AutomationEventRouter::GetInstance() {
       base::LeakySingletonTraits<AutomationEventRouter>>::get();
 }
 
-AutomationEventRouter::AutomationEventRouter()
-    : active_context_(ExtensionsAPIClient::Get()
-                          ->GetAutomationInternalApiDelegate()
-                          ->GetActiveUserContext()) {
+AutomationEventRouter::AutomationEventRouter() {
 #if defined(USE_AURA)
   // Not reset because |this| is leaked.
   ExtensionsAPIClient::Get()
@@ -95,24 +90,31 @@ void AutomationEventRouter::UnregisterAllListenersWithDesktopPermission() {
     DCHECK(process_manager);
 
     process_manager->DecrementServiceWorkerKeepaliveCount(
-        worker_id, request_uuid, extensions::Activity::ACCESSIBILITY,
-        std::string());
+        worker_id, request_uuid, Activity::ACCESSIBILITY, std::string());
   }
   keepalive_request_uuid_for_worker_.clear();
-
-  UpdateActiveProfile();
 }
 
 void AutomationEventRouter::DispatchAccessibilityLocationChange(
-    const content::AXLocationChangeNotificationDetails& details) {
+    const ui::AXTreeID& tree_id,
+    const ui::AXLocationChange& details) {
   if (remote_router_) {
-    remote_router_->DispatchAccessibilityLocationChange(details);
+    remote_router_->DispatchAccessibilityLocationChange(tree_id, details);
     return;
   }
 
   for (const auto& remote : automation_remote_set_) {
-    remote->DispatchAccessibilityLocationChange(details.ax_tree_id, details.id,
+    remote->DispatchAccessibilityLocationChange(tree_id, details.id,
                                                 details.new_location);
+  }
+}
+
+void AutomationEventRouter::DispatchAccessibilityScrollChange(
+    const ui::AXTreeID& tree_id,
+    const ui::AXScrollChange& details) {
+  for (const auto& remote : automation_remote_set_) {
+    remote->DispatchAccessibilityScrollChange(
+        tree_id, details.id, details.scroll_x, details.scroll_y);
   }
 }
 
@@ -133,8 +135,6 @@ void AutomationEventRouter::DispatchActionResult(
     content::BrowserContext* browser_context) {
   CHECK(!data.source_extension_id.empty());
 
-  browser_context = browser_context ? browser_context : active_context_.get();
-
   for (const auto& remote : automation_remote_set_) {
     remote->DispatchActionResult(data, result);
   }
@@ -142,16 +142,16 @@ void AutomationEventRouter::DispatchActionResult(
 
 void AutomationEventRouter::DispatchGetTextLocationDataResult(
     const ui::AXActionData& data,
-    const absl::optional<gfx::Rect>& rect) {
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-  NOTREACHED_NORETURN();
-#else
+    const std::optional<gfx::Rect>& rect) {
+#if BUILDFLAG(IS_CHROMEOS)
   CHECK(!data.source_extension_id.empty());
 
   for (const auto& remote : automation_remote_set_) {
     remote->DispatchGetTextLocationResult(data, rect);
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 void AutomationEventRouter::NotifyAllAutomationExtensionsGone() {
@@ -235,7 +235,6 @@ void AutomationEventRouter::Register(const ExtensionId& extension_id,
   content::RenderProcessHost* host =
       content::RenderProcessHost::FromID(listener_rph_id);
   rph_observers_.AddObservation(host);
-  UpdateActiveProfile();
   for (AutomationEventRouterObserver& observer : observers_)
     observer.ExtensionListenerAdded();
 
@@ -257,28 +256,19 @@ void AutomationEventRouter::Register(const ExtensionId& extension_id,
         process_manager->IncrementServiceWorkerKeepaliveCount(
             worker_id,
             content::ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout,
-            extensions::Activity::ACCESSIBILITY, std::string());
+            Activity::ACCESSIBILITY, std::string());
   }
 }
 
 void AutomationEventRouter::DispatchAccessibilityEvents(
     const ui::AXTreeID& tree_id,
-    std::vector<ui::AXTreeUpdate> updates,
+    const std::vector<ui::AXTreeUpdate>& updates,
     const gfx::Point& mouse_location,
-    std::vector<ui::AXEvent> events) {
+    const std::vector<ui::AXEvent>& events) {
   if (remote_router_) {
     remote_router_->DispatchAccessibilityEvents(
         tree_id, std::move(updates), mouse_location, std::move(events));
     return;
-  }
-
-  content::BrowserContext* active_context =
-      ExtensionsAPIClient::Get()
-          ->GetAutomationInternalApiDelegate()
-          ->GetActiveUserContext();
-  if (active_context_ != active_context) {
-    active_context_ = active_context;
-    UpdateActiveProfile();
   }
 
   for (const auto& remote : automation_remote_set_) {
@@ -300,7 +290,7 @@ void AutomationEventRouter::RenderProcessHostDestroyed(
 
 void AutomationEventRouter::RemoveAutomationListener(
     content::RenderProcessHost* host) {
-  RenderProcessHostId rph_id = host->GetID();
+  RenderProcessHostId rph_id = host->GetDeprecatedID();
   ExtensionId extension_id;
   for (auto listener = listeners_.begin(); listener != listeners_.end();) {
     if ((*listener)->render_process_host_id == rph_id) {
@@ -314,15 +304,13 @@ void AutomationEventRouter::RemoveAutomationListener(
 
   if (rph_observers_.IsObservingSource(host))
     rph_observers_.RemoveObservation(host);
-  UpdateActiveProfile();
 
-  if (rph_observers_.GetSourcesCount() == 0) {
+  if (!rph_observers_.IsObservingAnySource()) {
     for (AutomationEventRouterObserver& observer : observers_)
       observer.AllAutomationExtensionsGone();
   }
 
-  extensions::ProcessManager* process_manager =
-      ProcessManager::Get(host->GetBrowserContext());
+  auto* process_manager = ProcessManager::Get(host->GetBrowserContext());
   DCHECK(process_manager);
 
   std::vector<WorkerId> all_worker_ids =
@@ -341,8 +329,7 @@ void AutomationEventRouter::RemoveAutomationListener(
     keepalive_request_uuid_for_worker_.erase(worker_id);
 
     process_manager->DecrementServiceWorkerKeepaliveCount(
-        worker_id, request_uuid, extensions::Activity::ACCESSIBILITY,
-        std::string());
+        worker_id, request_uuid, Activity::ACCESSIBILITY, std::string());
   }
 }
 
@@ -350,34 +337,10 @@ void AutomationEventRouter::TreeRemoved(ui::AXTreeID ax_tree_id) {
   DispatchTreeDestroyedEvent(ax_tree_id);
 }
 
-void AutomationEventRouter::UpdateActiveProfile() {
-  for (auto& listener : listeners_) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    int extension_id_count = 0;
-    for (const auto& listener2 : listeners_) {
-      if (listener2->extension_id == listener->extension_id)
-        extension_id_count++;
-    }
-    content::RenderProcessHost* rph =
-        content::RenderProcessHost::FromID(listener->render_process_host_id);
-
-    // The purpose of is_active_context is to ensure different instances of
-    // the same extension running in different profiles don't interfere with
-    // one another. If an automation extension is only running in one profile,
-    // always mark it as active. If it's running in two or more profiles,
-    // only mark one as active.
-    listener->is_active_context = (extension_id_count == 1 ||
-                                   rph->GetBrowserContext() == active_context_);
-#else
-    listener->is_active_context = true;
-#endif
-  }
-}
-
 AutomationEventRouter::AutomationListener*
 AutomationEventRouter::GetListenerByRenderProcessID(
     const RenderProcessHostId& listener_rph_id) const {
-  const auto iter = base::ranges::find(
+  const auto iter = std::ranges::find(
       listeners_, listener_rph_id, &AutomationListener::render_process_host_id);
 
   if (iter != listeners_.end()) {

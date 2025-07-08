@@ -84,7 +84,7 @@ class ONCValidatorTest : public ::testing::Test {
  private:
   Validator::Result validation_result_;
   base::Value::Dict original_object_;
-  absl::optional<base::Value::Dict> repaired_object_;
+  std::optional<base::Value::Dict> repaired_object_;
 };
 
 namespace {
@@ -118,7 +118,7 @@ struct OncParams {
 // Ensure that the constant |kEmptyUnencryptedConfiguration| describes a valid
 // ONC toplevel object.
 TEST_F(ONCValidatorTest, EmptyUnencryptedConfiguration) {
-  absl::optional<base::Value::Dict> dict =
+  std::optional<base::Value::Dict> dict =
       ReadDictionaryFromJson(kEmptyUnencryptedConfiguration);
   EXPECT_TRUE(dict.has_value());
   Validate(true, std::move(dict.value()), &kToplevelConfigurationSignature,
@@ -191,6 +191,26 @@ INSTANTIATE_TEST_SUITE_P(
                   ::onc::ONC_SOURCE_DEVICE_POLICY),
         // AllowTextMessages is only allowed for device policies.
         OncParams("managed_toplevel_with_cellular_text_messages.onc",
+                  &kToplevelConfigurationSignature,
+                  true,
+                  ::onc::ONC_SOURCE_DEVICE_POLICY),
+        // RecommendedValuesAreEphemeral is only allowed for device policies.
+        OncParams("managed_toplevel_with_recommended_values_ephemeral.onc",
+                  &kToplevelConfigurationSignature,
+                  true,
+                  ::onc::ONC_SOURCE_DEVICE_POLICY),
+        OncParams("valid_cellular_with_admin_apns.onc",
+                  &kToplevelConfigurationSignature,
+                  true,
+                  ::onc::ONC_SOURCE_DEVICE_POLICY),
+        // UserCreatedNetworkConfigurationsAreEphemeral is only allowed for
+        // device policies.
+        OncParams("managed_toplevel_with_user_created_configs_ephemeral.onc",
+                  &kToplevelConfigurationSignature,
+                  true,
+                  ::onc::ONC_SOURCE_DEVICE_POLICY),
+        // AllowModifyApns is only allowed for device policies.
+        OncParams("managed_toplevel_with_apns.onc",
                   &kToplevelConfigurationSignature,
                   true,
                   ::onc::ONC_SOURCE_DEVICE_POLICY),
@@ -281,8 +301,10 @@ INSTANTIATE_TEST_SUITE_P(
         OncParams("cert_with_valid_scope.onc", &kCertificateSignature, false),
         OncParams("cert_with_explicit_default_scope.onc",
                   &kCertificateSignature,
-                  false)));
-
+                  false),
+        OncParams("wifi_with_check_captive_portal.onc",
+                  &kNetworkConfigurationSignature,
+                  true)));
 namespace {
 
 struct RepairParams {
@@ -662,6 +684,10 @@ INSTANTIATE_TEST_SUITE_P(
             OncParams("invalid-cellular-due-to-having-both-smdp-and-smds",
                       &kCellularSignature,
                       true),
-            ExpectBothNotValid("", ""))));
+            ExpectBothNotValid("", "")),
+        std::make_pair(OncParams("managed-network-invalid-check-captive-portal",
+                                 &kNetworkConfigurationSignature,
+                                 true),
+                       ExpectBothNotValid("", ""))));
 
 }  // namespace chromeos::onc

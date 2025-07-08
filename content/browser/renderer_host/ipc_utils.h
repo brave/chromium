@@ -7,6 +7,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "content/common/frame.mojom.h"
+#include "content/public/browser/render_process_host.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
@@ -55,7 +56,8 @@ bool VerifyOpenURLParams(RenderFrameHostImpl* current_rfh,
 // This function has to be called on the UI thread.
 bool VerifyBeginNavigationCommonParams(
     const RenderFrameHostImpl& current_rfh,
-    blink::mojom::CommonNavigationParams* common_params);
+    blink::mojom::CommonNavigationParams* common_params,
+    std::optional<blink::LocalFrameToken>& initiator_frame_token);
 
 // Verify that the initiator frame identified by `initiator_frame_token` and
 // `initiator_process_id` can navigate `current_rfh`.
@@ -70,7 +72,7 @@ bool VerifyBeginNavigationCommonParams(
 // This function has to be called on the UI thread.
 bool VerifyNavigationInitiator(
     RenderFrameHostImpl* current_rfh,
-    const absl::optional<blink::LocalFrameToken>& initiator_frame_token,
+    const std::optional<blink::LocalFrameToken>& initiator_frame_token,
     int initiator_process_id);
 
 }  // namespace content

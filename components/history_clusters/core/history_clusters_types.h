@@ -11,7 +11,6 @@
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
 #include "components/history/core/browser/history_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace history_clusters {
 
@@ -30,6 +29,9 @@ enum class ClusteringRequestSource {
 struct QueryClustersFilterParams {
   QueryClustersFilterParams();
   QueryClustersFilterParams(const QueryClustersFilterParams&);
+  QueryClustersFilterParams(QueryClustersFilterParams&&);
+  QueryClustersFilterParams& operator=(const QueryClustersFilterParams&);
+  QueryClustersFilterParams& operator=(QueryClustersFilterParams&&);
   ~QueryClustersFilterParams();
 
   // Parameters related to the minimum requirements for returned clusters.
@@ -68,6 +70,14 @@ struct QueryClustersFilterParams {
 
   // Whether to exclude visits that have interaction state equal to hidden.
   bool filter_hidden_visits = false;
+
+  // Whether to include synced visits. Defaults to true because Full History
+  // Sync launched in early 2024. But NTP quests is still flag guarding this,
+  // so this boolean needs to still exist.
+  bool include_synced_visits = true;
+
+  // Whether to return merged clusters that are similar based on content.
+  bool group_clusters_by_content = false;
 };
 
 struct QueryClustersContinuationParams {
@@ -87,8 +97,8 @@ struct QueryClustersContinuationParams {
   // Most of the values don't matter, but `exhausted_unclustered_visits` and
   // `exhausted_all_visits` should be true.
   static const QueryClustersContinuationParams DoneParams() {
-    static QueryClustersContinuationParams kDoneParams = {base::Time(), true,
-                                                          false, true, true};
+    static const QueryClustersContinuationParams kDoneParams = {
+        base::Time(), true, false, true, true};
     return kDoneParams;
   }
 

@@ -11,6 +11,8 @@
 #include "device/vr/openxr/context_provider_callbacks.h"
 #include "device/vr/openxr/openxr_device.h"
 #include "device/vr/public/cpp/vr_device_provider.h"
+#include "device/vr/public/mojom/browser_test_interfaces.mojom-forward.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 namespace device {
 class OpenXrDevice;
@@ -19,13 +21,16 @@ namespace webxr {
 
 class OpenXrDeviceProvider : public device::VRDeviceProvider {
  public:
+  static void SetTestHook(
+      mojo::PendingRemote<device_test::mojom::XRTestHook> hook_info);
   OpenXrDeviceProvider();
   ~OpenXrDeviceProvider() override;
 
   OpenXrDeviceProvider(const OpenXrDeviceProvider&) = delete;
   OpenXrDeviceProvider& operator=(const OpenXrDeviceProvider&) = delete;
 
-  void Initialize(device::VRDeviceProviderClient* client) override;
+  void Initialize(device::VRDeviceProviderClient* client,
+                  content::WebContents* initializing_web_contents) override;
   bool Initialized() override;
 
  private:

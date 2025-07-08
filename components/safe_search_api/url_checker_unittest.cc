@@ -6,14 +6,19 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <array>
+#include <iterator>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "components/safe_search_api/fake_url_checker_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -28,13 +33,17 @@ namespace {
 
 constexpr size_t kCacheSize = 2;
 
-const char* kURLs[] = {
-    "http://www.randomsite1.com", "http://www.randomsite2.com",
-    "http://www.randomsite3.com", "http://www.randomsite4.com",
-    "http://www.randomsite5.com", "http://www.randomsite6.com",
-    "http://www.randomsite7.com", "http://www.randomsite8.com",
+auto kURLs = std::to_array<const char*>({
+    "http://www.randomsite1.com",
+    "http://www.randomsite2.com",
+    "http://www.randomsite3.com",
+    "http://www.randomsite4.com",
+    "http://www.randomsite5.com",
+    "http://www.randomsite6.com",
+    "http://www.randomsite7.com",
+    "http://www.randomsite8.com",
     "http://www.randomsite9.com",
-};
+});
 
 ClientClassification ToAPIClassification(Classification classification,
                                          bool uncertain) {
@@ -47,6 +56,20 @@ ClientClassification ToAPIClassification(Classification classification,
     case Classification::UNSAFE:
       return ClientClassification::kRestricted;
   }
+}
+
+auto Recorded(const std::map<CacheAccessStatus, int>& expected) {
+  std::vector<base::Bucket> buckets_array;
+  std::ranges::transform(
+      expected, std::back_inserter(buckets_array),
+      [](auto& entry) { return base::Bucket(entry.first, entry.second); });
+  return base::BucketsInclude(buckets_array);
+}
+
+// A matcher which checks that the provided |ClassificationDetails| has the
+// expected |reason| value.
+MATCHER_P(ReasonEq, reason, "") {
+  return arg.reason == reason;
 }
 
 }  // namespace
@@ -63,7 +86,7 @@ class SafeSearchURLCheckerTest : public testing::Test {
   MOCK_METHOD3(OnCheckDone,
                void(const GURL& url,
                     Classification classification,
-                    bool uncertain));
+                    ClassificationDetails details));
 
  protected:
   GURL GetNewURL() {
@@ -87,32 +110,50 @@ class SafeSearchURLCheckerTest : public testing::Test {
     return result;
   }
 
+  std::vector<base::Bucket> CacheHitMetric() {
+    return histogram_tester_.GetAllSamples("Net.SafeSearch.CacheHit");
+  }
+
   size_t next_url_{0};
   raw_ptr<FakeURLCheckerClient, DanglingUntriaged> fake_client_;
   std::unique_ptr<URLChecker> checker_;
   base::test::SingleThreadTaskEnvironment task_environment_;
+
+ private:
+  base::HistogramTester histogram_tester_;
 };
 
 TEST_F(SafeSearchURLCheckerTest, Simple) {
   {
     GURL url(GetNewURL());
-    EXPECT_CALL(*this,
-                OnCheckDone(url, Classification::SAFE, /*uncertain=*/false));
+    EXPECT_CALL(
+        *this,
+        OnCheckDone(
+            url, Classification::SAFE,
+            ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
     ASSERT_FALSE(SendResponse(url, Classification::SAFE, /*uncertain=*/false));
   }
   {
     GURL url(GetNewURL());
-    EXPECT_CALL(*this,
-                OnCheckDone(url, Classification::UNSAFE, /*uncertain=*/false));
+    EXPECT_CALL(
+        *this,
+        OnCheckDone(
+            url, Classification::UNSAFE,
+            ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
     ASSERT_FALSE(
         SendResponse(url, Classification::UNSAFE, /*uncertain=*/false));
   }
   {
     GURL url(GetNewURL());
-    EXPECT_CALL(*this,
-                OnCheckDone(url, Classification::SAFE, /*uncertain=*/true));
+    EXPECT_CALL(
+        *this, OnCheckDone(
+                   url, Classification::SAFE,
+                   ReasonEq(ClassificationDetails::Reason::kFailedUseDefault)));
     ASSERT_FALSE(SendResponse(url, Classification::SAFE, /*uncertain=*/true));
   }
+
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 0},
+                                          {CacheAccessStatus::kNotFound, 3}}));
 }
 
 TEST_F(SafeSearchURLCheckerTest, Cache) {
@@ -123,29 +164,48 @@ TEST_F(SafeSearchURLCheckerTest, Cache) {
   GURL url3(GetNewURL());
 
   // Populate the cache.
-  EXPECT_CALL(*this,
-              OnCheckDone(url1, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url1, Classification::SAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url1, Classification::SAFE, /*uncertain=*/false));
-  EXPECT_CALL(*this,
-              OnCheckDone(url2, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url2, Classification::SAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url2, Classification::SAFE, /*uncertain=*/false));
 
   // Now we should get results synchronously, without a request to the api.
-  EXPECT_CALL(*this,
-              OnCheckDone(url2, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(url2, Classification::SAFE,
+                  ReasonEq(ClassificationDetails::Reason::kCachedResponse)));
   ASSERT_TRUE(CheckURL(url2));
-  EXPECT_CALL(*this,
-              OnCheckDone(url1, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(url1, Classification::SAFE,
+                  ReasonEq(ClassificationDetails::Reason::kCachedResponse)));
   ASSERT_TRUE(CheckURL(url1));
 
   // Now |url2| is the LRU and should be evicted on the next check.
-  EXPECT_CALL(*this,
-              OnCheckDone(url3, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url3, Classification::SAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url3, Classification::SAFE, /*uncertain=*/false));
 
-  EXPECT_CALL(*this,
-              OnCheckDone(url2, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url2, Classification::SAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url2, Classification::SAFE, /*uncertain=*/false));
+
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 2},
+                                          {CacheAccessStatus::kNotFound, 4}}));
 }
 
 TEST_F(SafeSearchURLCheckerTest, CoalesceRequestsToSameURL) {
@@ -154,8 +214,15 @@ TEST_F(SafeSearchURLCheckerTest, CoalesceRequestsToSameURL) {
   ASSERT_FALSE(CheckURL(url));
   ASSERT_FALSE(CheckURL(url));
   // A single response should answer both of those checks
-  EXPECT_CALL(*this, OnCheckDone(url, Classification::SAFE, false)).Times(2);
+  EXPECT_CALL(
+      *this, OnCheckDone(
+                 url, Classification::SAFE,
+                 ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)))
+      .Times(2);
   fake_client_->RunCallback(ToAPIClassification(Classification::SAFE, false));
+
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 0},
+                                          {CacheAccessStatus::kNotFound, 2}}));
 }
 
 TEST_F(SafeSearchURLCheckerTest, CacheTimeout) {
@@ -163,41 +230,37 @@ TEST_F(SafeSearchURLCheckerTest, CacheTimeout) {
 
   checker_->SetCacheTimeoutForTesting(base::Seconds(0));
 
-  EXPECT_CALL(*this,
-              OnCheckDone(url, Classification::SAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url, Classification::SAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url, Classification::SAFE, /*uncertain=*/false));
 
   // Since the cache timeout is zero, the cache entry should be invalidated
   // immediately.
-  EXPECT_CALL(*this,
-              OnCheckDone(url, Classification::UNSAFE, /*uncertain=*/false));
+  EXPECT_CALL(
+      *this,
+      OnCheckDone(
+          url, Classification::UNSAFE,
+          ReasonEq(ClassificationDetails::Reason::kFreshServerResponse)));
   ASSERT_FALSE(SendResponse(url, Classification::UNSAFE, /*uncertain=*/false));
+
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 0},
+                                          {CacheAccessStatus::kNotFound, 1},
+                                          {CacheAccessStatus::kOutdated, 1}}));
 }
 
 TEST_F(SafeSearchURLCheckerTest, DoNotCacheUncertainClassifications) {
-  // TODO(b/272209467): Remove when uncertain classifications are never cached.
-  base::test::ScopedFeatureList enable_feature{
-      kCacheOnlyCertainUrlClassifications};
-
   GURL url(GetNewURL());
 
   ASSERT_FALSE(SendResponse(
       url, Classification::SAFE,
       /*uncertain=*/true));     // First check was asynchronous (uncached).
   EXPECT_FALSE(CheckURL(url));  // And so was the second one.
-}
 
-TEST_F(SafeSearchURLCheckerTest, CacheUncertainClassifications) {
-  base::test::ScopedFeatureList disable_feature;
-  disable_feature.InitAndDisableFeature(kCacheOnlyCertainUrlClassifications);
-  GURL url(GetNewURL());
-
-  ASSERT_FALSE(
-      SendResponse(url, Classification::SAFE,
-                   /*uncertain=*/true));  // First check was asynchronous
-                                          // (uncached), but is cached.
-  EXPECT_TRUE(
-      CheckURL(url));  // Then, second check is synchronous (from cache).
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 0},
+                                          {CacheAccessStatus::kNotFound, 2}}));
 }
 
 TEST_F(SafeSearchURLCheckerTest, DestroyURLCheckerBeforeCallback) {
@@ -214,6 +277,9 @@ TEST_F(SafeSearchURLCheckerTest, DestroyURLCheckerBeforeCallback) {
 
   // The callback should now be invalid.
   task_environment_.RunUntilIdle();
+
+  EXPECT_THAT(CacheHitMetric(), Recorded({{CacheAccessStatus::kHit, 0},
+                                          {CacheAccessStatus::kNotFound, 1}}));
 }
 
 }  // namespace safe_search_api

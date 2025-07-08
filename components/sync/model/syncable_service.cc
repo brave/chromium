@@ -5,13 +5,37 @@
 #include "components/sync/model/syncable_service.h"
 
 namespace syncer {
-void SyncableService::OnBrowserShutdown(ModelType type) {
+
+void SyncableService::WillStartInitialSync() {}
+
+void SyncableService::OnBrowserShutdown(DataType type) {
   // Stop the syncable service to make sure instances of LocalChangeProcessor
   // are not continued to be used.
-  // TODO(crbug.com/1400437): This is a temporary workaround.
+  // TODO(crbug.com/40883731): This is a temporary workaround.
   // OnBrowserShutdown() should ideally have a default empty implementation. If
   // not feasible, a better long-term approach should be to pass an
   // `is_browser_shutdown` flag to StopSyncing() instead of using this method.
   StopSyncing(type);
 }
+
+void SyncableService::StayStoppedAndMaybeClearData(DataType type) {
+  // TODO(crbug.com/401453180): Either add a default implementation to start the
+  // syncable service followed by a call to StopSyncing(), or implement this
+  // method for the relevant syncable services.
+}
+
+std::string SyncableService::GetClientTag(const EntityData& entity_data) const {
+  // TODO(crbug.com/40726283): The default implementation should not be reached
+  // and is only implemented to enable linkage. Once the function declaration is
+  // made pure virtual, this function will be removed.
+  NOTREACHED();
+}
+
+bool SyncableService::SupportsGetClientTag() const {
+  // TODO(crbug.com/40726283): The default implementation returns false.
+  // This is a temporary workaround to avoid accessing the client tag
+  // without checking if the syncable service supports it.
+  return false;
+}
+
 }  // namespace syncer

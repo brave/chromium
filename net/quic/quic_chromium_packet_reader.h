@@ -7,6 +7,7 @@
 #define NET_QUIC_QUIC_CHROMIUM_PACKET_READER_H_
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/safety_checks.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_export.h"
@@ -27,6 +28,10 @@ const int kQuicYieldAfterPacketsRead = 32;
 const int kQuicYieldAfterDurationMilliseconds = 2;
 
 class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
+  // TODO(crbug.com/422045782): Remove this macro once we identified the cause
+  // of the bug.
+  ADVANCED_MEMORY_SAFETY_CHECKS();
+
  public:
   class NET_EXPORT_PRIVATE Visitor {
    public:
@@ -40,7 +45,7 @@ class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
                           const quic::QuicSocketAddress& peer_address) = 0;
   };
 
-  QuicChromiumPacketReader(DatagramClientSocket* socket,
+  QuicChromiumPacketReader(std::unique_ptr<DatagramClientSocket> socket,
                            const quic::QuicClock* clock,
                            Visitor* visitor,
                            int yield_after_packets,
@@ -56,13 +61,17 @@ class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
   // and passing the data along to the quic::QuicConnection.
   void StartReading();
 
+  DatagramClientSocket* socket() { return socket_.get(); }
+
+  void CloseSocket();
+
  private:
   // A completion callback invoked when a read completes.
   void OnReadComplete(int result);
   // Return true if reading should continue.
   bool ProcessReadResult(int result);
 
-  raw_ptr<DatagramClientSocket, DanglingUntriaged> socket_;
+  std::unique_ptr<DatagramClientSocket> socket_;
 
   raw_ptr<Visitor> visitor_;
   bool read_pending_ = false;

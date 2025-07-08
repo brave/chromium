@@ -11,6 +11,7 @@ requests: [
     "requestMethod": "GET",
     "requestHeaders": [
       {
+        "custom": {},
         "name": "Host",
         "value": "localhost:8000"
       }
@@ -18,6 +19,7 @@ requests: [
     "mimeType": "text/html",
     "responseHeaders": [
       {
+        "custom": {},
         "name": "Content-Type",
         "value": "text/html;charset=ISO-8859-1"
       }
@@ -30,25 +32,16 @@ requests: [
     "cached": false,
     "cachedInMemory": false,
     "contentData": {
-      "error": null,
       "content": "fake page data",
-      "encoded": false
+      "isEncoded": false
     },
     "remoteAddress": "[::1]:80",
-    "resourceType": {
-      "_name": "document",
-      "_title": "Document",
-      "_category": {
-        "title": "Documents",
-        "shortTitle": "Doc"
-      },
-      "_isTextType": true
-    },
+    "resourceType": {},
     "priority": "VeryHigh",
     "finished": true,
     "timing": {
-      "proxyStart": 2.0154479999188335,
-      "proxyEnd": 2.4644479999188333,
+      "proxyStart": 1.5674480810854585,
+      "proxyEnd": 2.0164480810854584,
       "requestTime": 1542746587.755448,
       "dnsStart": -1,
       "dnsEnd": -1,
@@ -58,11 +51,14 @@ requests: [
       "sslEnd": -1,
       "workerStart": -1,
       "workerReady": -1,
-      "sendStart": 2.4644479999188333,
-      "sendEnd": 2.534447999918833,
+      "workerFetchStart": -1,
+      "workerRespondWithSettled": -1,
+      "sendStart": 2.0164480810854584,
+      "sendEnd": 2.086448081085458,
       "pushStart": 0,
       "pushEnd": 0,
-      "receiveHeadersEnd": 5.624447982991114
+      "receiveHeadersStart": 2.086448081085458,
+      "receiveHeadersEnd": 5.176448064157739
     },
     "endTime": 1542746587.7661417,
     "frames": []
@@ -89,25 +85,16 @@ requests: [
     "cached": false,
     "cachedInMemory": false,
     "contentData": {
-      "error": null,
-      "content": null,
-      "encoded": false
+      "content": "",
+      "isEncoded": false
     },
     "remoteAddress": "[::1]:80",
-    "resourceType": {
-      "_name": "image",
-      "_title": "Image",
-      "_category": {
-        "title": "Images",
-        "shortTitle": "Img"
-      },
-      "_isTextType": false
-    },
+    "resourceType": {},
     "priority": "Low",
     "finished": true,
     "timing": {
-      "proxyStart": 1.7575360001232476,
-      "proxyEnd": 2.2485360001232477,
+      "proxyStart": 1.2215358768757434,
+      "proxyEnd": 1.7125358768757435,
       "requestTime": 1542746587.8705359,
       "dnsStart": -1,
       "dnsEnd": -1,
@@ -117,11 +104,14 @@ requests: [
       "sslEnd": -1,
       "workerStart": -1,
       "workerReady": -1,
-      "sendStart": 2.2485360001232477,
-      "sendEnd": 2.3095360001232477,
+      "workerFetchStart": -1,
+      "workerRespondWithSettled": -1,
+      "sendStart": 1.7125358768757435,
+      "sendEnd": 1.7735358768757434,
       "pushStart": 0,
       "pushEnd": 0,
-      "receiveHeadersEnd": 2.828536113491282
+      "receiveHeadersStart": 1.7735358768757434,
+      "receiveHeadersEnd": 2.2925359902437776
     },
     "endTime": 1542746587.8738945,
     "frames": []
@@ -144,25 +134,16 @@ requests: [
     "cached": false,
     "cachedInMemory": false,
     "contentData": {
-      "error": null,
-      "content": null,
-      "encoded": false
+      "content": "",
+      "isEncoded": false
     },
     "remoteAddress": "[::1]:80",
-    "resourceType": {
-      "_name": "script",
-      "_title": "Script",
-      "_category": {
-        "title": "Scripts",
-        "shortTitle": "JS"
-      },
-      "_isTextType": true
-    },
+    "resourceType": {},
     "priority": "Low",
     "finished": true,
     "timing": {
-      "proxyStart": 1.7575360001232476,
-      "proxyEnd": 2.2485360001232477,
+      "proxyStart": 1.2215358768757434,
+      "proxyEnd": 1.7125358768757435,
       "requestTime": 1542746587.8705359,
       "dnsStart": -1,
       "dnsEnd": -1,
@@ -172,11 +153,14 @@ requests: [
       "sslEnd": -1,
       "workerStart": -1,
       "workerReady": -1,
-      "sendStart": 2.2485360001232477,
-      "sendEnd": 2.3095360001232477,
+      "workerFetchStart": -1,
+      "workerRespondWithSettled": -1,
+      "sendStart": 1.7125358768757435,
+      "sendEnd": 1.7735358768757434,
       "pushStart": 0,
       "pushEnd": 0,
-      "receiveHeadersEnd": 2.828536113491282
+      "receiveHeadersStart": 1.7735358768757434,
+      "receiveHeadersEnd": 2.2925359902437776
     },
     "endTime": 1542746587.8738945,
     "frames": []
@@ -185,7 +169,11 @@ requests: [
     "url": "http://localhost:8000/endpoint",
     "documentURL": "http://localhost:8000/",
     "initiator": {
-      "type": "script"
+      "type": "script",
+      "stack": {
+        "custom": {},
+        "callFrames": []
+      }
     },
     "requestFormData": null,
     "connectionId": "2945",
@@ -201,25 +189,16 @@ requests: [
     "cached": false,
     "cachedInMemory": false,
     "contentData": {
-      "error": null,
-      "content": null,
-      "encoded": false
+      "content": "",
+      "isEncoded": false
     },
     "remoteAddress": "[::1]:80",
-    "resourceType": {
-      "_name": "fetch",
-      "_title": "Fetch",
-      "_category": {
-        "title": "XHR and Fetch",
-        "shortTitle": "XHR"
-      },
-      "_isTextType": true
-    },
+    "resourceType": {},
     "priority": "Low",
     "finished": true,
     "timing": {
-      "proxyStart": 1.7575360001232476,
-      "proxyEnd": 2.2485360001232477,
+      "proxyStart": 1.2215358768757434,
+      "proxyEnd": 1.7125358768757435,
       "requestTime": 1542746587.8705359,
       "dnsStart": -1,
       "dnsEnd": -1,
@@ -229,11 +208,14 @@ requests: [
       "sslEnd": -1,
       "workerStart": -1,
       "workerReady": -1,
-      "sendStart": 2.2485360001232477,
-      "sendEnd": 2.3095360001232477,
+      "workerFetchStart": -1,
+      "workerRespondWithSettled": -1,
+      "sendStart": 1.7125358768757435,
+      "sendEnd": 1.7735358768757434,
       "pushStart": 0,
       "pushEnd": 0,
-      "receiveHeadersEnd": 2.828536113491282
+      "receiveHeadersStart": 1.7735358768757434,
+      "receiveHeadersEnd": 2.2925359902437776
     },
     "endTime": 1542746587.8738945,
     "frames": []
@@ -242,75 +224,104 @@ requests: [
     "url": "ws://localhost:8880/echo",
     "documentURL": "ws://localhost:8880/echo",
     "initiator": {
-      "type": "script"
+      "type": "script",
+      "stack": {
+        "custom": {},
+        "callFrames": [
+          {
+            "custom": {},
+            "functionName": "",
+            "scriptId": "73",
+            "url": "",
+            "lineNumber": 0,
+            "columnNumber": 5
+          }
+        ]
+      }
     },
     "requestFormData": null,
     "connectionId": "",
     "requestMethod": "GET",
     "requestHeaders": [
       {
+        "custom": {},
         "name": "Pragma",
         "value": "no-cache"
       },
       {
+        "custom": {},
         "name": "Origin",
         "value": "http://localhost:8000"
       },
       {
+        "custom": {},
         "name": "Accept-Encoding",
         "value": "gzip, deflate, br"
       },
       {
+        "custom": {},
         "name": "Host",
         "value": "localhost:8880"
       },
       {
+        "custom": {},
         "name": "Accept-Language",
         "value": "en-US,en;q=0.9"
       },
       {
+        "custom": {},
         "name": "Sec-WebSocket-Key",
         "value": "EBTeYTo1PMrIJhQV3KCyLA=="
       },
       {
+        "custom": {},
         "name": "User-Agent",
         "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3762.0 Safari/537.36"
       },
       {
+        "custom": {},
         "name": "Upgrade",
         "value": "websocket"
       },
       {
+        "custom": {},
         "name": "Sec-WebSocket-Extensions",
         "value": "permessage-deflate; client_max_window_bits"
       },
       {
+        "custom": {},
         "name": "Cache-Control",
         "value": "no-cache"
       },
       {
+        "custom": {},
         "name": "Connection",
         "value": "Upgrade"
       },
       {
+        "custom": {},
         "name": "Sec-WebSocket-Version",
         "value": "13"
       }
     ],
     "responseHeaders": [
       {
+        "custom": {},
         "name": "Sec-WebSocket-Accept",
         "value": "U81HpQbqlT7cIvlTLbf4dTv7m5w="
       },
       {
+        "custom": {},
         "name": "Connection",
         "value": "Upgrade"
       },
       {
+        "custom": {},
         "name": "Sec-WebSocket-Extensions",
         "value": "permessage-deflate"
       },
       {
+        "custom": {},
         "name": "Upgrade",
         "value": "websocket"
       }
@@ -323,20 +334,11 @@ requests: [
     "cached": false,
     "cachedInMemory": false,
     "contentData": {
-      "error": null,
-      "content": null,
-      "encoded": false
+      "content": "",
+      "isEncoded": false
     },
     "remoteAddress": ":80",
-    "resourceType": {
-      "_name": "websocket",
-      "_title": "WebSocket",
-      "_category": {
-        "title": "WebSockets",
-        "shortTitle": "WS"
-      },
-      "_isTextType": false
-    },
+    "resourceType": {},
     "priority": null,
     "finished": true,
     "timing": {
@@ -351,10 +353,13 @@ requests: [
       "sslEnd": -1,
       "workerStart": -1,
       "workerReady": -1,
+      "workerFetchStart": -1,
+      "workerRespondWithSettled": -1,
       "sendStart": 0,
       "sendEnd": 0,
       "pushStart": 0,
       "pushEnd": 0,
+      "receiveHeadersStart": 0,
       "receiveHeadersEnd": 33045.93599960208
     },
     "endTime": 1555608261.2199361,

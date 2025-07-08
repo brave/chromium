@@ -11,11 +11,10 @@
 
   #help {
     align-items: flex-start;
-    color: var(--cros-text-color-disabled);
+    color: var(--cros-sys-secondary);
     display: flex;
     flex-direction: row;
-    font-size: 9px;
-    line-height: 12px;
+    font: var(--cros-annotation-2-font);
     margin-inline-end: 24px;
     margin-inline-start: 24px;
     padding: 8px;
@@ -27,38 +26,37 @@
 
   #infoIcon {
     flex-shrink: 0;
-    height: 20px;
-    margin-inline-end: 12px;
-    width: 20px;
+    height: 16px;
+    margin-inline-end: 8px;
+    width: 16px;
   }
 
   .icon-help-state {
-    fill: var(--cros-icon-color-disabled);
+    fill: var(--cros-sys-secondary);
   }
 
   .icon-error-state {
-    fill: var(--cros-icon-color-alert);
+    fill: var(--cros-sys-error);
   }
 
   #error {
     align-items: flex-start;
     display: flex;
     flex-direction: column;
-    font-size: 12px;
   }
 
   #errorTitle {
-    color: var(--cros-text-color-alert);
-    font-weight: bold;
+    color: var(--cros-sys-error);
+    font: var(--cros-button-2-font);
     margin-bottom: 3px;
   }
 
   #errorDescription {
-    color: var(--cros-text-color-secondary);
-    line-height: 13px;
+    color: var(--cros-sys-secondary);
+    font: var(--cros-annotation-2-font);
   }
 
-  cr-lottie {
+  #animation {
     bottom: 0;
     height: 100px;
     left: 0;
@@ -74,12 +72,9 @@
     cancel-button-label="$i18n{cancel}"
     close-only="[[getErrorTitle_(errorState_)]]">
   <div id="content" slot="content">
-    <iron-media-query query="(prefers-color-scheme: dark)"
-        query-matches="{{isDarkModeActive_}}">
-    </iron-media-query>
-    <cr-lottie animation-url="[[getAnimationUrl_(isDarkModeActive_)]]"
-      autoplay="true">
-    </cr-lottie>
+      <cros-lottie-renderer id="animation" asset-url="[[getAnimationUrl_()]]"
+          autoplay dynamic aria-hidden>
+      </cros-lottie-renderer>
     <div id="help">
       <template is="dom-if" if="[[!getErrorTitle_(errorState_)]]" restamp>
         <iron-icon id="infoIcon" icon="nearby20:info"

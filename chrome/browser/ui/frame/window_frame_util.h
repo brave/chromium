@@ -11,8 +11,6 @@ namespace gfx {
 class Size;
 }
 
-class Browser;
-
 // Static-only class containing values and helper functions for frame classes
 // that need to be accessible outside of /browser/ui/views.
 class WindowFrameUtil {
@@ -33,11 +31,8 @@ class WindowFrameUtil {
   // browser frame view.
   static gfx::Size GetWindowsCaptionButtonAreaSize();
 
-  // Returns true if the Windows caption button is enabled.
-  static bool IsWindowsTabSearchCaptionButtonEnabled(const Browser* browser);
-
  private:
-  WindowFrameUtil() {}
+  WindowFrameUtil() = default;
 };
 
 #endif  // CHROME_BROWSER_UI_FRAME_WINDOW_FRAME_UTIL_H_

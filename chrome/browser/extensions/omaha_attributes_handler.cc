@@ -4,13 +4,15 @@
 
 #include "chrome/browser/extensions/omaha_attributes_handler.h"
 
+#include <optional>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/blocklist_state.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "extensions/browser/extension_registrar.h"
+#include "extensions/browser/extension_registry.h"
 
 namespace extensions {
 
@@ -20,9 +22,10 @@ namespace {
 void ReportExtensionDisabledRemotely(bool should_be_remotely_disabled,
                                      ExtensionUpdateCheckDataKey reason) {
   // Report that the extension is newly disabled due to Omaha attributes.
-  if (should_be_remotely_disabled)
+  if (should_be_remotely_disabled) {
     base::UmaHistogramEnumeration("Extensions.ExtensionDisabledRemotely2",
                                   reason);
+  }
 
   // Report that the extension has added a new disable reason.
   base::UmaHistogramEnumeration(
@@ -57,7 +60,7 @@ void ReportReenableExtension(ExtensionUpdateCheckDataKey reason) {
 // Checks whether the `state` is in the `attributes`.
 bool HasOmahaBlocklistStateInAttributes(const base::Value::Dict& attributes,
                                         BitMapBlocklistState state) {
-  absl::optional<bool> state_value;
+  std::optional<bool> state_value;
   switch (state) {
     case BitMapBlocklistState::BLOCKLISTED_MALWARE:
       state_value = attributes.FindBool("_malware");
@@ -72,8 +75,6 @@ bool HasOmahaBlocklistStateInAttributes(const base::Value::Dict& attributes,
     case BitMapBlocklistState::BLOCKLISTED_SECURITY_VULNERABILITY:
       NOTREACHED()
           << "The other states are not applicable in Omaha attributes.";
-      state_value = absl::nullopt;
-      break;
   }
   return state_value.value_or(false);
 }
@@ -83,10 +84,10 @@ bool HasOmahaBlocklistStateInAttributes(const base::Value::Dict& attributes,
 OmahaAttributesHandler::OmahaAttributesHandler(
     ExtensionPrefs* extension_prefs,
     ExtensionRegistry* registry,
-    ExtensionService* extension_service)
+    ExtensionRegistrar* registrar)
     : extension_prefs_(extension_prefs),
       registry_(registry),
-      extension_service_(extension_service) {}
+      registrar_(registrar) {}
 
 void OmahaAttributesHandler::PerformActionBasedOnOmahaAttributes(
     const ExtensionId& extension_id,
@@ -127,7 +128,7 @@ void OmahaAttributesHandler::HandleMalwareOmahaAttribute(
     blocklist_prefs::RemoveOmahaBlocklistState(
         extension_id, BitMapBlocklistState::BLOCKLISTED_MALWARE,
         extension_prefs_);
-    extension_service_->OnBlocklistStateRemoved(extension_id);
+    registrar_->OnBlocklistStateRemoved(extension_id);
     return;
   }
 
@@ -138,14 +139,13 @@ void OmahaAttributesHandler::HandleMalwareOmahaAttribute(
     return;
   }
 
-  ReportExtensionDisabledRemotely(
-      extension_service_->IsExtensionEnabled(extension_id),
-      ExtensionUpdateCheckDataKey::kMalware);
+  ReportExtensionDisabledRemotely(registrar_->IsExtensionEnabled(extension_id),
+                                  ExtensionUpdateCheckDataKey::kMalware);
 
   blocklist_prefs::AddOmahaBlocklistState(
       extension_id, BitMapBlocklistState::BLOCKLISTED_MALWARE,
       extension_prefs_);
-  extension_service_->OnBlocklistStateAdded(extension_id);
+  registrar_->OnBlocklistStateAdded(extension_id);
 }
 
 void OmahaAttributesHandler::HandleGreylistOmahaAttribute(
@@ -163,7 +163,7 @@ void OmahaAttributesHandler::HandleGreylistOmahaAttribute(
                                                  extension_prefs_);
       ReportReenableExtension(reason);
     }
-    extension_service_->OnGreylistStateRemoved(extension_id);
+    registrar_->OnGreylistStateRemoved(extension_id);
     return;
   }
 
@@ -171,7 +171,7 @@ void OmahaAttributesHandler::HandleGreylistOmahaAttribute(
       /*should_be_remotely_disabled=*/!has_omaha_blocklist_state, reason);
   blocklist_prefs::AddOmahaBlocklistState(extension_id, greylist_state,
                                           extension_prefs_);
-  extension_service_->OnGreylistStateAdded(extension_id, greylist_state);
+  registrar_->OnGreylistStateAdded(extension_id, greylist_state);
 }
 
 }  // namespace extensions

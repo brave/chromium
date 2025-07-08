@@ -9,6 +9,8 @@
 #include <string>
 
 #include "ash/ash_export.h"
+#include "ash/system/notification_center/ash_message_popup_collection.h"
+#include "ash/system/notification_center/notification_grouping_controller.h"
 #include "ash/system/notification_center/notification_center_bubble.h"
 #include "ash/system/tray/tray_background_view.h"
 #include "ash/system/unified/notification_icons_controller.h"
@@ -32,9 +34,9 @@ class TrayBubbleView;
 // opens a bubble with a scrollable list of all current notifications.
 class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
                                           public TrayItemView::Observer {
- public:
-  METADATA_HEADER(NotificationCenterTray);
+  METADATA_HEADER(NotificationCenterTray, TrayBackgroundView)
 
+ public:
   // Inherit from this class to be notified of events that happen for a specific
   // `NotificationCenterTray`.
   class Observer : public base::CheckedObserver {
@@ -55,6 +57,9 @@ class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
   // Called when UnifiedSystemTray's preferred visibility changes.
   void OnSystemTrayVisibilityChanged(bool system_tray_visible);
 
+  // Callback called when this TrayBackgroundView is pressed.
+  void OnTrayButtonPressed();
+
   NotificationListView* GetNotificationListView();
 
   // True if the bubble is shown.
@@ -65,25 +70,32 @@ class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
   // otherwise.
   void UpdateVisibility();
 
+  // Update the accessible name of the tray in the ViewAccessibility cache.
+  void UpdateAccessibleName();
+
   // TrayBackgroundView:
   void Initialize() override;
   std::u16string GetAccessibleNameForBubble() override;
-  std::u16string GetAccessibleNameForTray() override;
   void HandleLocaleChange() override;
   void HideBubbleWithView(const TrayBubbleView* bubble_view) override;
-  void ClickedOutsideBubble() override;
+  void HideBubble(const TrayBubbleView* bubble_view) override;
+  void ClickedOutsideBubble(const ui::LocatedEvent& event) override;
   void UpdateTrayItemColor(bool is_active) override;
-  void CloseBubble() override;
+  void CloseBubbleInternal() override;
   void ShowBubble() override;
   void UpdateAfterLoginStatusChange() override;
   TrayBubbleView* GetBubbleView() override;
   views::Widget* GetBubbleWidget() const override;
-  void OnAnyBubbleVisibilityChanged(views::Widget* bubble_widget,
-                                    bool visible) override;
   void UpdateLayout() override;
 
   // ash::TrayItemView::Observer:
   void OnTrayItemVisibilityAboutToChange(bool target_visibility) override;
+  void OnTrayItemChildViewChanged() override {}
+
+  // Add a TooltipTextChanged callback on the ImageView associated with the
+  // tray_item. This impacts the tray's accessible name.
+  void AddTooltipChangedCallbackToNotificationIcon(
+      NotificationIconTrayItemView* tray_item);
 
   PrivacyIndicatorsTrayItemView* privacy_indicators_view() {
     return privacy_indicators_view_;
@@ -93,10 +105,31 @@ class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
     return notification_icons_controller_.get();
   }
 
+  NotificationGroupingController* notification_grouping_controller() {
+    return notification_grouping_controller_.get();
+  }
+
+  AshMessagePopupCollection* popup_collection() {
+    return popup_collection_.get();
+  }
+
+  NotificationCenterBubble* bubble() { return bubble_.get(); }
+
  private:
   friend class NotificationCenterTestApi;
   friend class NotificationCounterViewTest;
   friend class NotificationIconsControllerTest;
+
+  // Registers callbacks for child View properties that impact the tray's
+  // accessible properties.
+  void AddCallbacksForAccessibility();
+
+  // Manages notification grouping.
+  const std::unique_ptr<NotificationGroupingController>
+      notification_grouping_controller_;
+
+  // Manages notification popups.
+  const std::unique_ptr<AshMessagePopupCollection> popup_collection_;
 
   // Manages notification metrics.
   const std::unique_ptr<NotificationMetricsRecorder>
@@ -107,8 +140,7 @@ class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
       notification_icons_controller_;
 
   // Owned by the views hierarchy.
-  raw_ptr<PrivacyIndicatorsTrayItemView, ExperimentalAsh>
-      privacy_indicators_view_ = nullptr;
+  raw_ptr<PrivacyIndicatorsTrayItemView> privacy_indicators_view_ = nullptr;
 
   std::unique_ptr<NotificationCenterBubble> bubble_;
 
@@ -118,6 +150,17 @@ class ASH_EXPORT NotificationCenterTray : public TrayBackgroundView,
   bool system_tray_visible_ = true;
 
   base::ObserverList<Observer> observers_;
+
+  base::CallbackListSubscription
+      notification_counter_image_tooltip_changed_subscription_;
+
+  base::CallbackListSubscription quiet_mode_visibility_changed_subscription_;
+
+  base::CallbackListSubscription
+      notification_counter_visibility_changed_subscription_;
+
+  std::vector<base::CallbackListSubscription>
+      notification_icon_image_tooltip_changed_subscriptions_;
 };
 
 }  // namespace ash

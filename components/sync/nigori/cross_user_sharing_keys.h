@@ -10,7 +10,11 @@
 #include <string>
 
 #include "components/sync/engine/nigori/cross_user_sharing_public_private_key_pair.h"
-#include "components/sync/protocol/nigori_local_data.pb.h"
+
+namespace sync_pb {
+class CrossUserSharingKeys;
+class CrossUserSharingPrivateKey;
+}  // namespace sync_pb
 
 namespace syncer {
 
@@ -31,25 +35,22 @@ class CrossUserSharingKeys {
   // Serialization to proto.
   sync_pb::CrossUserSharingKeys ToProto() const;
 
-  // Makes a deep copy of |*this|.
+  // Makes a deep copy of `*this`.
   CrossUserSharingKeys Clone() const;
 
   size_t size() const;
   bool HasKeyPair(const uint32_t key_version) const;
 
-  // Merges all keys from another CrossUserSharingKeys object, which means
-  // adding all keys that we don't know about.
-  void AddAllUnknownKeysFrom(const CrossUserSharingKeys& other);
-
-  // Adds a Public-private key-pair associated with |version|.
-  void AddKeyPair(CrossUserSharingPublicPrivateKeyPair key_pair,
+  // Sets a Public-private key-pair associated with `version`. Replaces any
+  // pre-existing key pair for the given `version`.
+  void SetKeyPair(CrossUserSharingPublicPrivateKeyPair key_pair,
                   uint32_t version);
 
   // Similar to AddKeyPair, but reads the private-key material from a proto and
   // derives the public-key from the private-key.
   bool AddKeyPairFromProto(const sync_pb::CrossUserSharingPrivateKey& key);
 
-  // Returns the Public-private key-pair associated with |version|.
+  // Returns the Public-private key-pair associated with `version`.
   const CrossUserSharingPublicPrivateKeyPair& GetKeyPair(
       uint32_t version) const;
 
@@ -57,7 +58,7 @@ class CrossUserSharingKeys {
   CrossUserSharingKeys();
 
   // Public-private key-pairs we know about, mapped by version.
-  std::map<uint32_t, const CrossUserSharingPublicPrivateKeyPair> key_pairs_map_;
+  std::map<uint32_t, CrossUserSharingPublicPrivateKeyPair> key_pairs_map_;
 };
 
 }  // namespace syncer

@@ -10,17 +10,15 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/app_service_test.h"
-#include "chrome/browser/apps/app_service/package_id.h"
 #include "chrome/browser/apps/app_service/promise_apps/promise_app.h"
 #include "chrome/browser/apps/app_service/promise_apps/promise_app_registry_cache.h"
 #include "chrome/browser/ash/app_list/app_list_test_util.h"
 #include "chrome/browser/ash/app_list/chrome_app_list_item.h"
-#include "chrome/browser/ash/app_list/internal_app/internal_app_metadata.h"
 #include "chrome/browser/ash/app_list/test/fake_app_list_model_updater.h"
 #include "chrome/browser/ash/app_list/test/test_app_list_controller_delegate.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/test/base/testing_profile.h"
 #include "components/services/app_service/public/cpp/app_types.h"
+#include "components/services/app_service/public/cpp/package_id.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/test/test_screen.h"
@@ -50,8 +48,8 @@ class AppServicePromiseAppModelBuilderTest : public app_list::AppListTestBase {
   void CreateBuilder(bool guest_mode) {
     ResetBuilder();  // Destroy any existing builder in the correct order.
     scoped_feature_list_.InitAndEnableFeature(ash::features::kPromiseIcons);
-    testing_profile()->SetGuestSession(guest_mode);
-    app_service_test_.SetUp(profile());
+    SetGuestSessionOnProfile(guest_mode);
+    app_service_test_.SetUp(GetAppServiceProfile());
     model_updater_ = std::make_unique<FakeAppListModelUpdater>(
         /*profile=*/nullptr, /*reorder_delegate=*/nullptr);
     controller_ = std::make_unique<test::TestAppListControllerDelegate>();
@@ -63,8 +61,8 @@ class AppServicePromiseAppModelBuilderTest : public app_list::AppListTestBase {
         base::BindRepeating(
             &AppServicePromiseAppModelBuilderTest::InitAppPosition,
             weak_ptr_factory_.GetWeakPtr()));
-    builder_->Initialize(nullptr, profile(), model_updater_.get());
-    cache_ = apps::AppServiceProxyFactory::GetForProfile(profile())
+    builder_->Initialize(nullptr, GetAppServiceProfile(), model_updater_.get());
+    cache_ = apps::AppServiceProxyFactory::GetForProfile(GetAppServiceProfile())
                  ->PromiseAppRegistryCache();
   }
 
@@ -80,14 +78,12 @@ class AppServicePromiseAppModelBuilderTest : public app_list::AppListTestBase {
   void RegisterTestApps() {
     // Register two promise apps in the promise app registry cache.
     apps::PromiseAppPtr promise_app_1 = std::make_unique<apps::PromiseApp>(
-        apps::PackageId(apps::AppType::kArc, "test1"));
-    promise_app_1->name = "Test 1";
+        apps::PackageId(apps::PackageType::kArc, "test1"));
     promise_app_1->should_show = true;
     cache()->OnPromiseApp(std::move(promise_app_1));
 
     apps::PromiseAppPtr promise_app_2 = std::make_unique<apps::PromiseApp>(
-        apps::PackageId(apps::AppType::kArc, "test2"));
-    promise_app_2->name = "Test 2";
+        apps::PackageId(apps::PackageType::kArc, "test2"));
     promise_app_2->should_show = true;
     cache()->OnPromiseApp(std::move(promise_app_2));
   }
@@ -101,9 +97,7 @@ class AppServicePromiseAppModelBuilderTest : public app_list::AppListTestBase {
     // Confirm there are 2 launcher promise app items.
     EXPECT_EQ(model_updater()->ItemCount(), 2u);
     EXPECT_EQ(model_updater()->ItemAtForTest(0)->id(), "android:test1");
-    EXPECT_EQ(model_updater()->ItemAtForTest(0)->name(), "Test 1");
     EXPECT_EQ(model_updater()->ItemAtForTest(1)->id(), "android:test2");
-    EXPECT_EQ(model_updater()->ItemAtForTest(1)->name(), "Test 2");
   }
 
   AppListModelUpdater* model_updater() { return model_updater_.get(); }
@@ -121,7 +115,7 @@ class AppServicePromiseAppModelBuilderTest : public app_list::AppListTestBase {
   display::test::TestScreen test_screen_;
   std::unique_ptr<Profile> profile_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  raw_ptr<apps::PromiseAppRegistryCache, ExperimentalAsh> cache_;
+  raw_ptr<apps::PromiseAppRegistryCache> cache_;
   syncer::StringOrdinal last_position_;
   base::WeakPtrFactory<AppServicePromiseAppModelBuilderTest> weak_ptr_factory_{
       this};

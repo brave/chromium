@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -51,7 +52,7 @@ int MockMDnsDatagramServerSocket::HandleRecvNow(
     CompletionOnceCallback callback) {
   int size_returned =
       std::min(response_packet_.size(), static_cast<size_t>(size));
-  memcpy(buffer->data(), response_packet_.data(), size_returned);
+  UNSAFE_TODO(memcpy(buffer->data(), response_packet_.data(), size_returned));
   return size_returned;
 }
 
@@ -99,7 +100,7 @@ void MockMDnsSocketFactory::SimulateReceive(const uint8_t* packet, int size) {
   DCHECK(recv_buffer_.get());
   DCHECK(!recv_callback_.is_null());
 
-  memcpy(recv_buffer_->data(), packet, size);
+  UNSAFE_TODO(memcpy(recv_buffer_->data(), packet, size));
   std::move(recv_callback_).Run(size);
 }
 

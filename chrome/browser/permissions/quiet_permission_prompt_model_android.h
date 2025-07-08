@@ -7,7 +7,8 @@
 
 #include <string>
 
-#include "components/permissions/permission_ui_selector.h"
+#include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "url/gurl.h"
 
 // Model representing the expected UI labels on different surfaces and behaviors
@@ -37,8 +38,9 @@ struct QuietPermissionPromptModelAndroid {
   SecondaryButtonBehavior secondary_button_behavior;
 };
 
-QuietPermissionPromptModelAndroid GetQuietNotificationPermissionPromptModel(
-    permissions::PermissionUiSelector::QuietUiReason reason);
+QuietPermissionPromptModelAndroid GetQuietPermissionPromptModel(
+    permissions::PermissionUiSelector::QuietUiReason reason,
+    ContentSettingsType content_settings_type);
 
 GURL GetNotificationBlockedLearnMoreUrl();
 

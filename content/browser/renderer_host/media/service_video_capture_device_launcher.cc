@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
@@ -20,6 +19,11 @@
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/video_capture/public/cpp/receiver_media_to_mojo_adapter.h"
 #include "services/video_capture/public/mojom/video_frame_handler.mojom.h"
+#include "services/video_effects/public/cpp/buildflags.h"
+
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+#include "services/video_effects/public/mojom/video_effects_processor.mojom-forward.h"
+#endif
 
 #if BUILDFLAG(IS_WIN)
 #include "media/base/media_switches.h"
@@ -27,6 +31,10 @@
 
 #if BUILDFLAG(IS_LINUX)
 #include "content/browser/gpu/gpu_data_manager_impl.h"
+#endif
+
+#if BUILDFLAG(IS_MAC)
+#include "media/capture/video/apple/video_capture_device_factory_apple.h"
 #endif
 
 namespace content {
@@ -82,7 +90,13 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
     base::WeakPtr<media::VideoFrameReceiver> receiver,
     base::OnceClosure connection_lost_cb,
     Callbacks* callbacks,
-    base::OnceClosure done_cb) {
+    base::OnceClosure done_cb,
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+    mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor>
+        video_effects_processor,
+#endif
+    mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager>
+        readonly_video_effects_manager) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(state_ == State::READY_TO_LAUNCH);
 
@@ -122,6 +136,17 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
   service_connection_->source_provider()->GetVideoSource(
       device_id, source.BindNewPipeAndPassReceiver());
 
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+  if (video_effects_processor) {
+    source->RegisterVideoEffectsProcessor(std::move(video_effects_processor));
+  }
+
+  if (readonly_video_effects_manager) {
+    source->RegisterReadonlyVideoEffectsManager(
+        std::move(readonly_video_effects_manager));
+  }
+#endif  // BUILDFLAG(ENABLE_VIDEO_EFFECTS)
+
   auto receiver_adapter =
       std::make_unique<video_capture::ReceiverMediaToMojoAdapter>(
           std::make_unique<media::VideoFrameReceiverOnTaskRunner>(
@@ -143,7 +168,7 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
                          OnConnectionLostWhileWaitingForCallback,
                      base::Unretained(this)));
 
-  // TODO(crbug.com/925083)
+  // TODO(crbug.com/40610987)
   media::VideoCaptureParams new_params = params;
   new_params.power_line_frequency =
       media::VideoCaptureDevice::GetPowerLineFrequency(params);
@@ -158,8 +183,7 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
 #elif BUILDFLAG(IS_MAC)
   // For mac(https://crbug.com/1175142), zero-copy is always enabled unless the
   // user explicitly asks to disable it.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableVideoCaptureUseGpuMemoryBuffer)) {
+  if (media::ShouldEnableGpuMemoryBuffer(device_id)) {
     new_params.buffer_type = media::VideoCaptureBufferType::kGpuMemoryBuffer;
   }
 #else

@@ -5,11 +5,14 @@
 module media.mojom;
 
 import "media/mojo/mojom/audio_data.mojom";
+import "media/mojo/mojom/speech_recognition_audio_forwarder.mojom";
+import "media/mojo/mojom/speech_recognition_recognition_context.mojom";
+import "media/mojo/mojom/speech_recognizer.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/unguessable_token.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 
-// Next MinVersion: 3
+// Next MinVersion: 12
 
 // Corresponds to the LangIdEvent.ConfidenceInterval defined in
 // http://google3/speech/soda/public/soda_event.proto.
@@ -31,11 +34,12 @@ enum AsrSwitchResult {
   kSwitchSkipedNoLp,
 };
 
-// The main interface a renderer client uses to interact with a speech
-// recognition service process. In web Live Caption, every renderer can own one
+// The main interface a client uses to interact with a speech
+// recognition service process. For Live Caption, every renderer can own one
 // or more Remote<SpeechRecognitionContext>, with the receiver bound through the
-// BrowserInterfaceBroker. This is a stable interface that is used across the
-// LaCrOS/Ash boundary.
+// BrowserInterfaceBroker. For the Web Speech API, the browser is the client and
+// can own one or more Remote<SpeechRecognitionContext>. This is a stable
+// interface that is used across the LaCrOS/Ash boundary.
 [Stable]
 interface SpeechRecognitionContext {
   // Bind the recognizers to the speech recognition service. Returns a flag
@@ -44,7 +48,18 @@ interface SpeechRecognitionContext {
   BindRecognizer@0(pending_receiver<SpeechRecognitionRecognizer> receiver,
                    pending_remote<SpeechRecognitionRecognizerClient> client,
                    SpeechRecognitionOptions options)
-                   => (bool is_multichannel_supported);
+      => (bool is_multichannel_supported);
+
+  // Bind the recognizer used by the Web Speech API.
+  [MinVersion=6]
+  BindWebSpeechRecognizer@1(
+      pending_receiver<media.mojom.SpeechRecognitionSession> session_receiver,
+      pending_remote<media.mojom.SpeechRecognitionSessionClient> session_client,
+      pending_receiver<SpeechRecognitionAudioForwarder> audio_forwarder,
+      int32 channel_count,
+      int32 sample_rate,
+      SpeechRecognitionOptions options,
+      bool continuous);
 };
 
 // The interface used to pass raw audio from the renderer to the speech
@@ -57,7 +72,14 @@ interface SpeechRecognitionRecognizer {
   // Initialize the speech recognition instance. The speech recognition client
   // will return the recognition events containing the transcribed audio back
   // to the originating media.
-  SendAudioToSpeechRecognitionService@0(AudioDataS16 buffer);
+  // Optionally, `media_start_pts` is the media presentation timestamp of the
+  // first frame in `buffer`. If `media_start_pts` is omitted after being
+  // provided, the `SpeechRecognitionRecognizer` can assume that `buffer`s
+  // received are contiguous since the last `media_start_pts` are continuous. A
+  // new `media_start_pts` should be sent after any seeks or large gaps in the
+  // original media's timestamps.
+  SendAudioToSpeechRecognitionService@0(AudioDataS16 buffer,
+    [MinVersion=10] mojo_base.mojom.TimeDelta? media_start_pts);
 
   // Mark audio stream done. This informs the speech recognition client to stop
   // speech recognition after it finishes processing the audio it has received
@@ -71,7 +93,13 @@ interface SpeechRecognitionRecognizer {
 
   // Notify the speech recognition recognizer that the mask offensive words
   // setting has changed.
-  [MinVersion=2] OnMaskOffensiveWordsChanged@3(bool mask_offensive_words);
+  [MinVersion=2]
+  OnMaskOffensiveWordsChanged@3(bool mask_offensive_words);
+
+  // Notify the speech recognition recognizer to update the recognition context.
+  [MinVersion=8]
+  UpdateRecognitionContext@4(
+      SpeechRecognitionRecognitionContext recognition_context);
 };
 
 // The interface used to return speech recognition events from the speech
@@ -113,6 +141,12 @@ struct HypothesisParts {
   mojo_base.mojom.TimeDelta hypothesis_part_offset;
 };
 
+[Stable]
+struct MediaTimestampRange {
+  mojo_base.mojom.TimeDelta start;
+  mojo_base.mojom.TimeDelta end;
+};
+
 // The timing information for the transcript.
 [Stable]
 struct TimingInformation {
@@ -128,7 +162,17 @@ struct TimingInformation {
   // chromeos/services/machine_learning/public/mojom/soda.mojom. Therefore, it
   // must be optional. Hypothesis parts maybe non-empty optional containing a
   // zero length vector if no words were spoken during the event's time span.
-  array<HypothesisParts> ? hypothesis_parts;
+  array<HypothesisParts>? hypothesis_parts;
+
+  // The presentation timestamps of media that originated the transcription.
+  // Might contain multiple (possibly overlapping) ranges if the originating
+  // media was seeked. Ranges will appear in the order in which the audio was
+  // given to SODA, such that the first range matches `audio_start_time`, and
+  // the last range matches `audio_end_time`.
+  // Note: this metadata is provided by Chromium, and doesn't have a SODA
+  //       equivalent.
+  [MinVersion=11]
+  array<MediaTimestampRange>? originating_media_timestamps;
 };
 
 // A speech recognition result created by the speech service and passed to the
@@ -161,7 +205,8 @@ struct LanguageIdentificationEvent {
 
   // If multilang is enabled, describes the actions Automatic Speech Recognition
   // took as a result of this event.
-  [MinVersion=1] AsrSwitchResult? asr_switch_result;
+  [MinVersion=1]
+  AsrSwitchResult? asr_switch_result;
 };
 
 // The interface used to notify the speech recognition client of events
@@ -172,7 +217,8 @@ struct LanguageIdentificationEvent {
 interface SpeechRecognitionBrowserObserver {
   // Notify the speech recognition client when speech recognition availability
   // changes.
-  SpeechRecognitionAvailabilityChanged@0(bool is_speech_recognition_available);
+  SpeechRecognitionAvailabilityChanged@0(
+      bool is_speech_recognition_available);
 
   // Notify the speech recognition client when the speech recognition language
   // changes.
@@ -180,8 +226,8 @@ interface SpeechRecognitionBrowserObserver {
 
   // Notify the speech recognition client when the mask offensive words pref
   // changes.
-  [MinVersion=2] SpeechRecognitionMaskOffensiveWordsChanged@2(
-      bool mask_offensive_words);
+  [MinVersion=2]
+  SpeechRecognitionMaskOffensiveWordsChanged@2(bool mask_offensive_words);
 };
 
 // The user-facing source of recognized speech; typically a tab. The remote
@@ -212,16 +258,6 @@ interface SpeechRecognitionSurfaceClient {
   OnFullscreenToggled@1();
 };
 
-// Static metadata about a remote speech surface. Used by the speech service
-// client in Ash.
-[Stable]
-struct SpeechRecognitionSurfaceMetadata {
-  // A unique identifier for the "session" (i.e. tab) of the surface. Is used to
-  // hide the caption bubble for all streams in a tab if the bubble is closed
-  // once.
-  mojo_base.mojom.UnguessableToken session_id;
-};
-
 // This interface between the speech recognition client and the browser.
 // The remote lives in the renderer process and the receiver lives in the
 // browser process. Not necessary for browser-side features (e.g. CrOS system
@@ -230,17 +266,14 @@ struct SpeechRecognitionSurfaceMetadata {
 interface SpeechRecognitionClientBrowserInterface {
   // Bind the speech recognition availability observer.
   BindSpeechRecognitionBrowserObserver@0(
-    pending_remote<SpeechRecognitionBrowserObserver> observer);
+      pending_remote<SpeechRecognitionBrowserObserver> observer);
 
-  // Requests that a remote speech recognition client be instantiated and bound
-  // in the Ash browser process. The instantiated client should use the surface
-  // and surface client bindings to perform tasks (such as refocusing) that
-  // require coordination with the current lacros tab.
-  [MinVersion=1] BindRecognizerToRemoteClient@1(
-    pending_receiver<SpeechRecognitionRecognizerClient> client,
-    pending_receiver<SpeechRecognitionSurfaceClient> surface_client,
-    pending_remote<SpeechRecognitionSurface> surface,
-    SpeechRecognitionSurfaceMetadata metadata);
+  [MinVersion=1]
+  REMOVED_1@1();
+
+  // Was BindBabelOrcaSpeechRecognitionBrowserObserver()
+  [MinVersion=7, EnableIf=is_chromeos]
+  REMOVED_2@2(pending_remote<SpeechRecognitionBrowserObserver> observer);
 };
 
 // Corresponds to ExtendedSodaConfigMsg.RecognitionMode in
@@ -269,6 +302,8 @@ enum RecognizerClientType {
   kProjector,
   // CastModerator on ChromeOS.
   kCastModerator,
+  // SchoolTools on ChromeOS.
+  [MinVersion=9] kSchoolTools,
 };
 
 // Options for speech recognition.
@@ -283,15 +318,41 @@ struct SpeechRecognitionOptions {
   bool enable_formatting;
 
   // The BCP-47 localized language code to use (e.g. "en-US").
-  // TODO(crbug.com/1161569): Language needs to be required when multiple
+  // TODO(crbug.com/40162502): Language needs to be required when multiple
   // languages are supported by SODA, so that each SpeechRecognitionRecognizer
-  // can use its own language. Right now Language is only used by Projector
-  // and Dictation via OnDeviceSpeechRecognizer in Chrome OS.
+  // can use its own language.
   string? language;
 
   // Whether the recognition is happening on-device or remotely on a server.
-  [MinVersion=1] bool is_server_based;
+  [MinVersion=1]
+  bool is_server_based;
 
   // Which client is requesting the speech recognition session.
-  [MinVersion=1] RecognizerClientType recognizer_client_type;
+  [MinVersion=1]
+  RecognizerClientType recognizer_client_type;
+
+  // When true, if the incoming audio buffer is zero for an extended period
+  // (e.g. 10 seconds), audio won't be fed to the captioning model until nonzero
+  // audio is received.
+  // When false, even empty audio is captioned indefinitely.
+  // Set to false if accurate TimingInfo relative to the start of captioning is
+  // needed.
+  [MinVersion=4]
+  bool skip_continuously_empty_audio = false;
+
+  // The optional experiment recognizer routing key for current request.
+  [MinVersion=5]
+  string? experiment_recognizer_routing_key;
+
+  // The channel count of the forwarded audio.
+  [MinVersion=6]
+  int32 channel_count;
+
+  // The sample rate of the forwarded audio.
+  [MinVersion=6]
+  int32 sample_rate;
+
+  // The optional recognition context for speech recognition biasing.
+  [MinVersion=8]
+  SpeechRecognitionRecognitionContext? recognition_context;
 };

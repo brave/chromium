@@ -18,14 +18,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/test/result_catcher.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/network_settings_service.mojom.h"
-#include "chromeos/crosapi/mojom/prefs.mojom-shared.h"
-#include "chromeos/crosapi/mojom/prefs.mojom.h"
-#include "chromeos/lacros/crosapi_pref_observer.h"
-#include "chromeos/lacros/lacros_service.h"
-#endif
-
 namespace extensions {
 
 namespace {
@@ -34,52 +26,16 @@ const char kNoServer[] = "";
 const char kNoBypass[] = "";
 const char kNoPac[] = "";
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-bool IsLacrosServiceSyncingProxyPref() {
-  static constexpr int kMinVersionProxyPolicy = 4;
-  const int version = chromeos::LacrosService::Get()
-                          ->GetInterfaceVersion<crosapi::mojom::Prefs>();
-  return version >= kMinVersionProxyPolicy;
-}
-#endif
-
 }  // namespace
 
 class ProxySettingsApiTest : public ExtensionApiTest {
  public:
-  ProxySettingsApiTest() {}
+  ProxySettingsApiTest() = default;
 
   ProxySettingsApiTest(const ProxySettingsApiTest&) = delete;
   ProxySettingsApiTest& operator=(const ProxySettingsApiTest&) = delete;
 
  protected:
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  void TearDownOnMainThread() override {
-    // Clear the proxy from the test_ash_chrome since the same instance Ash is
-    // used for all tests in the target. Setting a proxy will prevent other
-    // tests which require a direct connection to complete successfully.
-    auto* lacros_service = chromeos::LacrosService::Get();
-    if (!lacros_service) {
-      ExtensionApiTest::TearDownOnMainThread();
-      return;
-    }
-    if (IsLacrosServiceSyncingProxyPref()) {
-      if (lacros_service->IsAvailable<crosapi::mojom::Prefs>()) {
-        lacros_service->GetRemote<crosapi::mojom::Prefs>()
-            ->ClearExtensionControlledPref(crosapi::mojom::PrefPath::kProxy,
-                                           base::DoNothing());
-      }
-    } else {
-      if (lacros_service
-              ->IsAvailable<crosapi::mojom::NetworkSettingsService>()) {
-        lacros_service->GetRemote<crosapi::mojom::NetworkSettingsService>()
-            ->ClearExtensionProxy();
-      }
-    }
-    ExtensionApiTest::TearDownOnMainThread();
-  }
-#endif
-
   void ValidateSettings(int expected_mode,
                         const std::string& expected_server,
                         const std::string& bypass,
@@ -354,13 +310,11 @@ IN_PROC_BROWSER_TEST_F(ProxySettingsApiTest, ProxyFixedIndividual) {
 
   PrefService* pref_service = browser()->profile()->GetPrefs();
   ValidateSettings(ProxyPrefs::MODE_FIXED_SERVERS,
-                   "http=quic://1.1.1.1:443;"
-                       "https=2.2.2.2:80;"  // http:// is pruned.
-                       "ftp=3.3.3.3:9000;"  // http:// is pruned.
-                       "socks=socks4://4.4.4.4:9090",
-                   kNoBypass,
-                   kNoPac,
-                   pref_service);
+                   "http=1.1.1.1:80;"   // http:// is pruned.
+                   "https=2.2.2.2:80;"  // http:// is pruned.
+                   "ftp=3.3.3.3:9000;"  // http:// is pruned.
+                   "socks=socks4://4.4.4.4:9090",
+                   kNoBypass, kNoPac, pref_service);
 
   // Now check the incognito preferences.
   pref_service = browser()
@@ -368,13 +322,11 @@ IN_PROC_BROWSER_TEST_F(ProxySettingsApiTest, ProxyFixedIndividual) {
                      ->GetPrimaryOTRProfile(/*create_if_needed=*/true)
                      ->GetPrefs();
   ValidateSettings(ProxyPrefs::MODE_FIXED_SERVERS,
-                   "http=quic://1.1.1.1:443;"
-                       "https=2.2.2.2:80;"
-                       "ftp=3.3.3.3:9000;"
-                       "socks=socks4://4.4.4.4:9090",
-                   kNoBypass,
-                   kNoPac,
-                   pref_service);
+                   "http=1.1.1.1:80;"
+                   "https=2.2.2.2:80;"
+                   "ftp=3.3.3.3:9000;"
+                   "socks=socks4://4.4.4.4:9090",
+                   kNoBypass, kNoPac, pref_service);
 }
 
 // Tests setting values only for incognito mode

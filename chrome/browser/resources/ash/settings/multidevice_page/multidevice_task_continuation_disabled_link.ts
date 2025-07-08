@@ -15,12 +15,14 @@
 
 import '../settings_shared.css.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
 
-import {MultiDeviceBrowserProxy, MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
+import type {MultiDeviceBrowserProxy} from './multidevice_browser_proxy.js';
+import {MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
 import {getTemplate} from './multidevice_task_continuation_disabled_link.html.js';
 
 const SettingsMultideviceTaskContinuationDisabledLinkElementBase =
@@ -59,7 +61,7 @@ export class SettingsMultideviceTaskContinuationDisabledLinkElement extends
    * @return  Localized summary of Task Continuation when Chrome Sync is
    *     turned off, formatted with correct aria-labels and click events.
    */
-  private getAriaLabelledContent_(): string {
+  private getAriaLabelledContent_(): TrustedHTML {
     const tempEl = document.createElement('div');
     tempEl.innerHTML = this.i18nAdvanced(
         'multidevicePhoneHubTaskContinuationDisabledSummary', {attrs: ['id']});
@@ -87,7 +89,10 @@ export class SettingsMultideviceTaskContinuationDisabledLinkElement extends
         'aria-label', this.i18n('multidevicePhoneHubLearnMoreLabel'));
     chromeSyncLink.href = '#';
 
-    return tempEl.innerHTML;
+    return sanitizeInnerHtml(tempEl.innerHTML, {
+      tags: ['span', 'a'],
+      attrs: ['id', 'aria-hidden', 'aria-label', 'href', 'target'],
+    });
   }
 
   private onChromeSyncLinkClick_(event: Event): void {

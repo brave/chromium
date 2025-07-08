@@ -14,37 +14,40 @@
  * </settings-lock-screen-subpage>
  */
 
-import 'chrome://resources/cr_components/settings_prefs/prefs.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_radio_group/cr_radio_group.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/cr_elements/policy/cr_policy_indicator.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_group/cr_radio_group.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_indicator.js';
+import '../controls/settings_toggle_button.js';
 import './setup_pin_dialog.js';
 import './pin_autosubmit_dialog.js';
 import './local_data_recovery_dialog.js';
 import '../settings_shared.css.js';
 import '../multidevice_page/multidevice_smartlock_item.js';
+import './password_settings.js';
 import './pin_settings.js';
 
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
 import {fireAuthTokenInvalidEvent} from 'chrome://resources/ash/common/quick_unlock/utils.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
-import {AuthFactor, ConfigureResult, FactorObserverReceiver, ManagementType} from 'chrome://resources/mojo/chromeos/ash/services/auth_factor_config/public/mojom/auth_factor_config.mojom-webui.js';
+import {AuthFactor, ConfigureResult, FactorObserverReceiver, ManagementType, PinFactorEditor} from 'chrome://resources/mojo/chromeos/ash/services/auth_factor_config/public/mojom/auth_factor_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {PrefsState} from '../common/types.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {LockStateMixin} from '../lock_state_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
-import {FingerprintBrowserProxy, FingerprintBrowserProxyImpl} from './fingerprint_browser_proxy.js';
+import type {FingerprintBrowserProxy} from './fingerprint_browser_proxy.js';
+import {FingerprintBrowserProxyImpl} from './fingerprint_browser_proxy.js';
 import {getTemplate} from './lock_screen_subpage.html.js';
 
 const SettingsLockScreenElementBase =
@@ -61,7 +64,10 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
 
   static get properties() {
     return {
-      prefs: {type: Object},
+      prefs: {
+        type: Object,
+        notify: true,
+      },
 
       /**
        * Authentication token provided by lock-screen-password-prompt-dialog.
@@ -90,7 +96,7 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
         observer: 'updateNumFingerprintsDescription_',
       },
 
-      numFingerprintsDescription_: {
+      numFingerprintDescription_: {
         type: String,
       },
 
@@ -120,17 +126,6 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
       },
 
       /**
-       * True if cryptohome recovery feature is enabled.
-       */
-      cryptohomeRecoveryEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('cryptohomeRecoveryEnabled');
-        },
-        readOnly: true,
-      },
-
-      /**
        * State of the recovery toggle. Is |null| iff recovery is not a
        * available.
        */
@@ -145,14 +140,15 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
       },
 
       /**
-       * Alias for the SmartLockUIRevamp feature flag.
+       * TODO(b/290916811): Whether to show a control for changing passwords.
+       * Currently, we only show this if the user has a local password, but not
+       * if the user has a Gaia password. Once the password-settings element
+       * allows switching between types of passwords, we should always show
+       * this control, making this flag obsolete.
        */
-      smartLockUIRevampEnabled_: {
+      showPasswordSettings_: {
         type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('smartLockUIRevampEnabled');
-        },
-        readOnly: true,
+        value: false,
       },
 
       noRecoveryVirtualPref_: Object,
@@ -160,37 +156,46 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
       showDisableRecoveryDialog_: Boolean,
 
       /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
+       * Whether the device account is managed.
        */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kLockScreenV2,
-          Setting.kChangeAuthPinV2,
-          Setting.kLockScreenNotification,
-        ]),
+      deviceAccountManaged_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('isDeviceAccountManaged');
+        },
+        readOnly: true,
       },
     };
   }
 
-  prefs: Object;
+  prefs: PrefsState;
   authToken: string|undefined;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kLockScreenV2,
+    Setting.kChangeAuthPinV2,
+    Setting.kLockScreenNotification,
+    Setting.kDataRecovery,
+  ]);
+
   private fingerprintUnlockEnabled_: boolean;
   private numFingerprints_: number;
   private numFingerprintDescription_: string;
   private lockScreenNotificationsEnabled_: boolean;
   private lockScreenHideSensitiveNotificationSupported_: boolean;
-  private cryptohomeRecoveryEnabled_: boolean;
   private recovery_: chrome.settingsPrivate.PrefObject|null;
   private noRecoveryVirtualPref_: chrome.settingsPrivate.PrefObject;
   private recoveryChangeInProcess_: boolean;
-  private smartLockUIRevampEnabled_: boolean;
+  private showPasswordSettings_: boolean;
   private showDisableRecoveryDialog_: boolean;
   private fingerprintBrowserProxy_: FingerprintBrowserProxy;
+  private deviceAccountManaged_: boolean;
 
   static get observers() {
     return [
       'updateRecoveryState_(authToken)',
+      'updatePasswordState_(authToken)',
     ];
   }
 
@@ -212,7 +217,7 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
   override ready(): void {
     super.ready();
     // Register observer for auth factor updates.
-    // TODO(crbug/1321440): Are we leaking |this| here because we never remove
+    // TODO(crbug.com/40223898): Are we leaking |this| here because we never remove
     // the observer? We could close the pipe with |$.close()|, but not clear
     // whether that removes all references to |receiver| and then eventually to
     // |this|.
@@ -221,13 +226,13 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
     this.authFactorConfig.observeFactorChanges(remote);
   }
 
-  override connectedCallback() {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     this.updateNumFingerprints_();
   }
 
-  override currentRouteChanged(newRoute: Route) {
+  override currentRouteChanged(newRoute: Route): void {
     if (newRoute === routes.LOCK_SCREEN) {
       this.updateNumFingerprints_();
       this.attemptDeepLink();
@@ -270,9 +275,6 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
   }
 
   private recoveryToggleSubLabel_(): string {
-    if (!this.cryptohomeRecoveryEnabled_) {
-      return '';
-    }
     if (this.recovery_) {
       return this.i18n('recoveryToggleSubLabel');
     }
@@ -280,14 +282,14 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
   }
 
   private recoveryToggleLearnMoreUrl_(): string {
-    if (!this.cryptohomeRecoveryEnabled_ || this.recovery_) {
+    if (this.recovery_) {
       return '';
     }
-    return this.i18n('recoveryNotSupportedMessage');
+    return this.i18n('recoveryLearnMoreUrl');
   }
 
   private recoveryToggleDisabled_(): boolean {
-    if (!this.cryptohomeRecoveryEnabled_ || !this.recovery_) {
+    if (!this.recovery_) {
       return true;
     }
     return this.recoveryChangeInProcess_;
@@ -358,6 +360,10 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
       case AuthFactor.kRecovery:
         this.updateRecoveryState_(this.authToken);
         break;
+      case AuthFactor.kGaiaPassword:
+      case AuthFactor.kLocalPassword:
+        this.updatePasswordState_(this.authToken);
+        break;
       default:
         break;
     }
@@ -423,6 +429,53 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
     }
     assert(authToken === this.authToken);
     this.recovery_ = await this.fetchFactorState_(AuthFactor.kRecovery);
+  }
+
+  /**
+   * Fetches the state of the password factor and updates the corresponding
+   * property.
+   * @param authToken Must be equal to |this.authToken|. The parameter is there
+   *     so that this function can be used as callback for changes of the
+   *     |authToken| property.
+   */
+  private async updatePasswordState_(authToken: string|
+                                     undefined): Promise<void> {
+    if (!authToken) {
+      return;
+    }
+    assert(authToken === this.authToken);
+
+    const [
+      { configured: hasGaiaPassword },
+      { configured: hasLocalPassword },
+      { pinFactor },
+    ] = await Promise.all([
+      this.authFactorConfig.isConfigured(
+        this.authToken, AuthFactor.kGaiaPassword),
+      this.authFactorConfig.isConfigured(
+        this.authToken, AuthFactor.kLocalPassword),
+      PinFactorEditor.getRemote().getConfiguredPinFactor(this.authToken),
+    ]);
+
+    if (hasLocalPassword) {
+      // Local Password is the overriding factor here. We need to show change
+      // option here.
+      this.showPasswordSettings_ = true;
+    } else if (!this.deviceAccountManaged_) {
+      // Onto scenarios for non managed accounts now.
+      if (hasGaiaPassword) {
+        // If the gaia password is setup, for non managed users, we will allow
+        // them to switch to local password.
+        this.showPasswordSettings_ = true;
+      } else if (!hasGaiaPassword && pinFactor !== null) {
+        // At this point we know the user does not have a password
+        // and has a pin. We can allow them to set password.
+        this.showPasswordSettings_ = true;
+      }
+    } else {
+      // This is a safety reset.
+      this.showPasswordSettings_ = false;
+    }
   }
 
   /**

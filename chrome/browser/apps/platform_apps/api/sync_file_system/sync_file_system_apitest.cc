@@ -10,7 +10,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/sync_file_system/file_status_observer.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync_file_system/local_change_processor.h"
 #include "chrome/browser/sync_file_system/mock_remote_file_sync_service.h"
 #include "chrome/browser/sync_file_system/sync_file_system_service.h"
@@ -19,6 +19,7 @@
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/extension_function.h"
+#include "storage/browser/file_system/file_system_features.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -34,34 +35,25 @@ using ::testing::WithArg;
 
 namespace {
 
+enum class SyncActionMetrics {
+  kNone = 0,
+  kAdded = 1,
+  kUpdated = 2,
+  kDeleted = 3,
+  kMaxValue = kDeleted
+};
+
 class SyncFileSystemApiTest : public extensions::ExtensionApiTest {
  public:
-  SyncFileSystemApiTest()
-      : mock_remote_service_(nullptr), real_default_quota_(0) {}
-
-  void SetUpInProcessBrowserTestFixture() override {
-    extensions::ExtensionApiTest::SetUpInProcessBrowserTestFixture();
-
-    // TODO(calvinlo): Update test code after default quota is made const
-    // (http://crbug.com/155488).
-    real_default_quota_ =
-        storage::QuotaManager::kSyncableStorageDefaultStorageKeyQuota;
-    storage::QuotaManager::kSyncableStorageDefaultStorageKeyQuota = 123456;
-  }
-
-  void TearDownInProcessBrowserTestFixture() override {
-    storage::QuotaManager::kSyncableStorageDefaultStorageKeyQuota =
-        real_default_quota_;
-    extensions::ExtensionApiTest::TearDownInProcessBrowserTestFixture();
-  }
+  SyncFileSystemApiTest() = default;
 
   void SetUpOnMainThread() override {
     extensions::ExtensionApiTest::SetUpOnMainThread();
 
     // Override factory to inject a mock RemoteFileSyncService.
     // Must happen after the browser process is created because instantiating
-    // the factory will instantiate ExtensionSystemFactory which depends on
-    // ExtensionsBrowserClient setup in BrowserProcessImpl.
+    // the factory will instantiate ChromeExtensionSystemFactory which depends
+    // on ExtensionsBrowserClient setup in BrowserProcessImpl.
     SyncFileSystemServiceFactory::GetInstance()->SetTestingFactoryAndUse(
         profile(),
         base::BindLambdaForTesting([this](content::BrowserContext* context)
@@ -81,8 +73,7 @@ class SyncFileSystemApiTest : public extensions::ExtensionApiTest {
 
  private:
   raw_ptr<::testing::NiceMock<MockRemoteFileSyncService>, DanglingUntriaged>
-      mock_remote_service_;
-  int64_t real_default_quota_;
+      mock_remote_service_ = nullptr;
 };
 
 ACTION_P2(UpdateRemoteChangeQueue, origin, mock_remote_service) {
@@ -96,17 +87,8 @@ ACTION_P2(UpdateRemoteChangeQueue, origin, mock_remote_service) {
 struct ReturnWithFakeFileAddedStatusFunctor {
   ReturnWithFakeFileAddedStatusFunctor(
       GURL* origin,
-      MockRemoteFileSyncService* mock_remote_service,
-      sync_file_system::SyncFileType file_type,
-      sync_file_system::SyncFileStatus sync_file_status,
-      sync_file_system::SyncAction sync_action_taken,
-      sync_file_system::SyncDirection sync_direction)
-      : origin_(origin),
-        mock_remote_service_(mock_remote_service),
-        file_type_(file_type),
-        sync_file_status_(sync_file_status),
-        sync_action_taken_(sync_action_taken),
-        sync_direction_(sync_direction) {}
+      MockRemoteFileSyncService* mock_remote_service)
+      : origin_(origin), mock_remote_service_(mock_remote_service) {}
 
   void operator()(sync_file_system::SyncFileCallback callback) {
     FileSystemURL mock_url = sync_file_system::CreateSyncableFileSystemURL(
@@ -115,18 +97,11 @@ struct ReturnWithFakeFileAddedStatusFunctor {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback),
                                   sync_file_system::SYNC_STATUS_OK, mock_url));
-    mock_remote_service_->NotifyFileStatusChanged(
-        mock_url, file_type_, sync_file_status_, sync_action_taken_,
-        sync_direction_);
   }
 
  private:
   raw_ptr<GURL> origin_;
   raw_ptr<MockRemoteFileSyncService, DanglingUntriaged> mock_remote_service_;
-  sync_file_system::SyncFileType file_type_;
-  sync_file_system::SyncFileStatus sync_file_status_;
-  sync_file_system::SyncAction sync_action_taken_;
-  sync_file_system::SyncDirection sync_direction_;
 };
 
 }  // namespace
@@ -163,10 +138,7 @@ IN_PROC_BROWSER_TEST_F(SyncFileSystemApiTest, OnFileStatusChanged) {
       .WillOnce(UpdateRemoteChangeQueue(&origin, mock_remote_service()));
   EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_))
       .WillOnce(WithArg<0>(Invoke(ReturnWithFakeFileAddedStatusFunctor(
-          &origin, mock_remote_service(), sync_file_system::SYNC_FILE_TYPE_FILE,
-          sync_file_system::SYNC_FILE_STATUS_SYNCED,
-          sync_file_system::SYNC_ACTION_ADDED,
-          sync_file_system::SYNC_DIRECTION_REMOTE_TO_LOCAL))));
+          &origin, mock_remote_service()))));
   ASSERT_TRUE(RunExtensionTest("sync_file_system/on_file_status_changed",
                                {.launch_as_platform_app = true}))
       << message_;
@@ -183,10 +155,7 @@ IN_PROC_BROWSER_TEST_F(SyncFileSystemApiTest, OnFileStatusChangedDeleted) {
       .WillOnce(UpdateRemoteChangeQueue(&origin, mock_remote_service()));
   EXPECT_CALL(*mock_remote_service(), ProcessRemoteChange(_))
       .WillOnce(WithArg<0>(Invoke(ReturnWithFakeFileAddedStatusFunctor(
-          &origin, mock_remote_service(), sync_file_system::SYNC_FILE_TYPE_FILE,
-          sync_file_system::SYNC_FILE_STATUS_SYNCED,
-          sync_file_system::SYNC_ACTION_DELETED,
-          sync_file_system::SYNC_DIRECTION_REMOTE_TO_LOCAL))));
+          &origin, mock_remote_service()))));
   ASSERT_TRUE(
       RunExtensionTest("sync_file_system/on_file_status_changed_deleted",
                        {.launch_as_platform_app = true}))

@@ -11,10 +11,6 @@
 #include "media/base/mac/color_space_util_mac.h"
 #include "ui/gfx/hdr_metadata_mac.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // https://developer.apple.com/documentation/avfoundation/avassettrack/1386694-formatdescriptions?language=objc
@@ -56,6 +52,10 @@ CFStringRef GetPrimaries(media::VideoColorSpace::PrimaryID primary_id) {
       return kCMFormatDescriptionColorPrimaries_SMPTE_C;
 
     case media::VideoColorSpace::PrimaryID::BT470BG:
+    case media::VideoColorSpace::PrimaryID::EBU_3213_E:
+      // Based on ITU H.273 8.1, there is a slight discrepancy between BT470 BG
+      // and EBU 3213 E, but a careful reading of E.B.U Tech 3213-E (1975) shows
+      // the primaries are identical.
       return kCMFormatDescriptionColorPrimaries_EBU_3213;
 
     case media::VideoColorSpace::PrimaryID::SMPTEST431_2:
@@ -140,20 +140,20 @@ CFStringRef GetMatrix(media::VideoColorSpace::MatrixID matrix_id) {
 
 void SetContentLightLevelInfo(
     NSMutableDictionary<NSString*, id>* extensions,
-    const absl::optional<gfx::HDRMetadata>& hdr_metadata) {
-  SetDictionaryValue(extensions,
-                     kCMFormatDescriptionExtension_ContentLightLevelInfo,
-                     base::apple::CFToNSPtrCast(
-                         gfx::GenerateContentLightLevelInfo(hdr_metadata)));
+    const std::optional<gfx::HDRMetadata>& hdr_metadata) {
+  SetDictionaryValue(
+      extensions, kCMFormatDescriptionExtension_ContentLightLevelInfo,
+      base::apple::CFToNSPtrCast(
+          gfx::GenerateContentLightLevelInfo(hdr_metadata).get()));
 }
 
 void SetColorVolumeMetadata(
     NSMutableDictionary<NSString*, id>* extensions,
-    const absl::optional<gfx::HDRMetadata>& hdr_metadata) {
+    const std::optional<gfx::HDRMetadata>& hdr_metadata) {
   SetDictionaryValue(
       extensions, kCMFormatDescriptionExtension_MasteringDisplayColorVolume,
       base::apple::CFToNSPtrCast(
-          gfx::GenerateMasteringDisplayColorVolume(hdr_metadata)));
+          gfx::GenerateMasteringDisplayColorVolume(hdr_metadata).get()));
 }
 
 void SetVp9CodecConfigurationBox(NSMutableDictionary<NSString*, id>* extensions,
@@ -198,15 +198,28 @@ void SetVp9CodecConfigurationBox(NSMutableDictionary<NSString*, id>* extensions,
   SetDictionaryValue(extensions, CFSTR("BitsPerComponent"), @(bit_depth));
 }
 
+void SetAv1CodecConfigurationBox(NSMutableDictionary<NSString*, id>* extensions,
+                                 int bit_depth,
+                                 base::span<const uint8_t> av1c) {
+  SetDictionaryValue(
+      extensions, kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms,
+      @{
+        @"av1C" : [NSData dataWithBytes:av1c.data() length:av1c.size()],
+      });
+  SetDictionaryValue(extensions, CFSTR("BitsPerComponent"), @(bit_depth));
+}
+
 }  // namespace
 
 namespace media {
 
-base::ScopedCFTypeRef<CFDictionaryRef> CreateFormatExtensions(
+base::apple::ScopedCFTypeRef<CFDictionaryRef> CreateFormatExtensions(
     CMVideoCodecType codec_type,
     VideoCodecProfile profile,
+    int bit_depth,
     const VideoColorSpace& color_space,
-    absl::optional<gfx::HDRMetadata> hdr_metadata) {
+    std::optional<gfx::HDRMetadata> hdr_metadata,
+    std::optional<base::span<const uint8_t>> csd_box) {
   NSMutableDictionary* extensions = [[NSMutableDictionary alloc] init];
 
   SetDictionaryValue(extensions, kCMFormatDescriptionExtension_FormatName,
@@ -245,10 +258,16 @@ base::ScopedCFTypeRef<CFDictionaryRef> CreateFormatExtensions(
     SetColorVolumeMetadata(extensions, hdr_metadata);
   }
 
-  if (profile >= VP9PROFILE_MIN && profile <= VP9PROFILE_MAX)
+  if (profile >= VP9PROFILE_MIN && profile <= VP9PROFILE_MAX) {
     SetVp9CodecConfigurationBox(extensions, profile, color_space);
+  }
 
-  return base::ScopedCFTypeRef<CFDictionaryRef>(
+  if (profile >= AV1PROFILE_MIN && profile <= AV1PROFILE_MAX) {
+    DCHECK(csd_box);
+    SetAv1CodecConfigurationBox(extensions, bit_depth, *csd_box);
+  }
+
+  return base::apple::ScopedCFTypeRef<CFDictionaryRef>(
       base::apple::NSToCFOwnershipCast(extensions));
 }
 

@@ -4,7 +4,7 @@
 
 #include "ash/system/accessibility/select_to_speak/select_to_speak_tray.h"
 
-#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/constants/tray_background_view_catalog.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/session/session_controller_impl.h"
@@ -14,13 +14,13 @@
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_container.h"
 #include "ash/system/tray/tray_utils.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
 #include "ui/color/color_id.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 
@@ -34,39 +34,26 @@ namespace {
 
 ui::ImageModel GetImageOnCurrentSelectToSpeakStatus(
     const SelectToSpeakState& select_to_speak_state) {
-  const bool is_jelly_enabled = chromeos::features::IsJellyEnabled();
-  // For Jelly: `kSelectToSpeakStateInactive` means the tray is inactive and
+  // `kSelectToSpeakStateInactive` means the tray is inactive and
   // will have a different icon color. `kSelectToSpeakStateSelecting` and
   // `kSelectToSpeakStateSpeaking` means the tray is active.
   switch (select_to_speak_state) {
     case SelectToSpeakState::kSelectToSpeakStateInactive:
-      return ui::ImageModel::FromVectorIcon(
-          kSystemTraySelectToSpeakNewuiIcon,
-          is_jelly_enabled
-              ? static_cast<ui::ColorId>(cros_tokens::kCrosSysOnSurface)
-              : kColorAshIconColorPrimary);
+      return ui::ImageModel::FromVectorIcon(kSystemTraySelectToSpeakNewuiIcon,
+                                            cros_tokens::kCrosSysOnSurface);
     case SelectToSpeakState::kSelectToSpeakStateSelecting:
       return ui::ImageModel::FromVectorIcon(
           kSystemTraySelectToSpeakActiveNewuiIcon,
-          is_jelly_enabled ? static_cast<ui::ColorId>(
-                                 cros_tokens::kCrosSysSystemOnPrimaryContainer)
-                           : kColorAshIconColorPrimary);
+          cros_tokens::kCrosSysSystemOnPrimaryContainer);
     case SelectToSpeakState::kSelectToSpeakStateSpeaking:
       return ui::ImageModel::FromVectorIcon(
           kSystemTrayStopNewuiIcon,
-          is_jelly_enabled ? static_cast<ui::ColorId>(
-                                 cros_tokens::kCrosSysSystemOnPrimaryContainer)
-                           : kColorAshIconColorPrimary);
+          cros_tokens::kCrosSysSystemOnPrimaryContainer);
   }
 }
 
 std::u16string GetTooltipTextOnCurrentSelectToSpeakStatus(
     const SelectToSpeakState& select_to_speak_state) {
-  if (!::features::IsAccessibilitySelectToSpeakHoverTextImprovementsEnabled()) {
-    return l10n_util::GetStringUTF16(
-        IDS_ASH_STATUS_TRAY_ACCESSIBILITY_SELECT_TO_SPEAK);
-  }
-
   switch (select_to_speak_state) {
     case SelectToSpeakState::kSelectToSpeakStateInactive:
       return l10n_util::GetStringUTF16(
@@ -85,7 +72,7 @@ std::u16string GetTooltipTextOnCurrentSelectToSpeakStatus(
 SelectToSpeakTray::SelectToSpeakTray(Shelf* shelf,
                                      TrayBackgroundViewCatalogName catalog_name)
     : TrayBackgroundView(shelf, catalog_name) {
-  SetPressedCallback(base::BindRepeating([](const ui::Event& event) {
+  SetCallback(base::BindRepeating([](const ui::Event& event) {
     Shell::Get()->accessibility_controller()->RequestSelectToSpeakStateChange();
   }));
 
@@ -106,6 +93,9 @@ SelectToSpeakTray::SelectToSpeakTray(Shelf* shelf,
   // Observe the accessibility controller state changes to know when Select to
   // Speak state is updated or when it is disabled/enabled.
   Shell::Get()->accessibility_controller()->AddObserver(this);
+
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(IDS_ASH_SELECT_TO_SPEAK_TRAY_ACCESSIBLE_NAME));
 }
 
 SelectToSpeakTray::~SelectToSpeakTray() {
@@ -124,11 +114,6 @@ SelectToSpeakTray::~SelectToSpeakTray() {
 void SelectToSpeakTray::Initialize() {
   TrayBackgroundView::Initialize();
   UpdateUXOnCurrentStatus();
-}
-
-std::u16string SelectToSpeakTray::GetAccessibleNameForTray() {
-  return l10n_util::GetStringUTF16(
-      IDS_ASH_SELECT_TO_SPEAK_TRAY_ACCESSIBLE_NAME);
 }
 
 void SelectToSpeakTray::HandleLocaleChange() {
@@ -179,7 +164,7 @@ void SelectToSpeakTray::UpdateIconOnColorChanges() {
   icon_->SetImage(GetImageOnCurrentSelectToSpeakStatus(select_to_speak_state));
 }
 
-BEGIN_METADATA(SelectToSpeakTray, TrayBackgroundView);
+BEGIN_METADATA(SelectToSpeakTray);
 END_METADATA
 
 }  // namespace ash

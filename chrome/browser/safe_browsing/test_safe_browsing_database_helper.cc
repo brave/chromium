@@ -30,18 +30,19 @@ namespace {
 class FakeSafeBrowsingUIManager
     : public safe_browsing::TestSafeBrowsingUIManager {
  public:
-  FakeSafeBrowsingUIManager() {}
+  FakeSafeBrowsingUIManager() = default;
 
   FakeSafeBrowsingUIManager(const FakeSafeBrowsingUIManager&) = delete;
   FakeSafeBrowsingUIManager& operator=(const FakeSafeBrowsingUIManager&) =
       delete;
 
  protected:
-  ~FakeSafeBrowsingUIManager() override {}
+  ~FakeSafeBrowsingUIManager() override = default;
 
   void DisplayBlockingPage(const UnsafeResource& resource) override {
     resource.DispatchCallback(FROM_HERE, true /* proceed */,
-                              true /* showed_interstitial */);
+                              true /* showed_interstitial */,
+                              false /* has_post_commit_interstitial_skipped */);
   }
 };
 
@@ -62,11 +63,11 @@ class InsertingDatabaseFactory : public safe_browsing::TestV4DatabaseFactory {
     const base::FilePath base_store_path(FILE_PATH_LITERAL("UrlDb.store"));
     for (const auto& id : lists_to_insert_) {
       if (!base::Contains(*store_map, id)) {
-        const base::FilePath store_path =
-            base_store_path.InsertBeforeExtensionASCII(base::StringPrintf(
-                " (%d)", base::GetUniquePathNumber(base_store_path)));
+        const base::FilePath store_path = base::GetUniquePath(base_store_path);
         store_map->insert(
-            {id, store_factory_->CreateV4Store(db_task_runner, store_path)});
+            {id, store_factory_->CreateV4Store(
+                     db_task_runner,
+                     store_path.empty() ? base_store_path : store_path)});
       }
     }
 

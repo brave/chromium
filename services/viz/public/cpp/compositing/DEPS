@@ -3,9 +3,10 @@ include_rules = [
   "+gpu/ipc",
   "+gpu/ipc/common",
   "+skia/public/mojom",
+  "+third_party/blink/public/common/tokens",
   "+third_party/skia/include",
   "+ui/gfx",
   "+ui/latency/mojom",
   "+ui/gl",
-  "+gpu/ipc/common/vulkan_ycbcr_info.h"
+  "+gpu/vulkan/vulkan_ycbcr_info.h"
 ]

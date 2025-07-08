@@ -23,7 +23,6 @@
 #include "components/payments/core/payments_profile_comparator.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/payment_app_provider.h"
-#include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "url/origin.h"
 
@@ -36,6 +35,7 @@ class RegionDataLoader;
 
 namespace content {
 class RenderFrameHost;
+class WebContents;
 }  // namespace content
 
 namespace payments {
@@ -68,7 +68,7 @@ class PaymentRequestState : public PaymentAppFactory::Delegate,
     virtual void OnSelectedInformationChanged() = 0;
 
    protected:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
   };
 
   class Delegate {
@@ -90,7 +90,7 @@ class PaymentRequestState : public PaymentAppFactory::Delegate,
     virtual void OnPayerInfoSelected(mojom::PayerDetailPtr payer_info) = 0;
 
    protected:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
   };
 
   using StatusCallback = base::OnceCallback<void(bool)>;
@@ -147,7 +147,7 @@ class PaymentRequestState : public PaymentAppFactory::Delegate,
   void SetCanMakePaymentEvenWithoutApps() override;
   base::WeakPtr<CSPChecker> GetCSPChecker() override;
   void SetOptOutOffered() override;
-  absl::optional<base::UnguessableToken> GetChromeOSTWAInstanceId()
+  std::optional<base::UnguessableToken> GetChromeOSTWAInstanceId()
       const override;
 
   // PaymentResponseHelper::Delegate
@@ -221,10 +221,12 @@ class PaymentRequestState : public PaymentAppFactory::Delegate,
 
   // Returns the appropriate Autofill Profiles for this user. The profiles
   // returned are owned by the PaymentRequestState.
-  const std::vector<autofill::AutofillProfile*>& shipping_profiles() {
+  const std::vector<raw_ptr<autofill::AutofillProfile, VectorExperimental>>&
+  shipping_profiles() {
     return shipping_profiles_;
   }
-  const std::vector<autofill::AutofillProfile*>& contact_profiles() {
+  const std::vector<raw_ptr<autofill::AutofillProfile, VectorExperimental>>&
+  contact_profiles() {
     return contact_profiles_;
   }
   const std::vector<std::unique_ptr<PaymentApp>>& available_apps() {
@@ -405,8 +407,10 @@ class PaymentRequestState : public PaymentAppFactory::Delegate,
   // loading and owned here. They are populated once only, and ordered by
   // frecency.
   std::vector<std::unique_ptr<autofill::AutofillProfile>> profile_cache_;
-  std::vector<autofill::AutofillProfile*> shipping_profiles_;
-  std::vector<autofill::AutofillProfile*> contact_profiles_;
+  std::vector<raw_ptr<autofill::AutofillProfile, VectorExperimental>>
+      shipping_profiles_;
+  std::vector<raw_ptr<autofill::AutofillProfile, VectorExperimental>>
+      contact_profiles_;
 
   std::vector<std::unique_ptr<PaymentApp>> available_apps_;
 

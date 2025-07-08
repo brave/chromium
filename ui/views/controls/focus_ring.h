@@ -10,6 +10,7 @@
 #include "base/functional/callback.h"
 #include "base/scoped_observation.h"
 #include "ui/base/class_property.h"
+#include "ui/base/metadata/metadata_types.h"
 #include "ui/color/color_id.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/focusable_border.h"
@@ -31,9 +32,9 @@ class HighlightPathGenerator;
 // TODO(tluk): FocusRing should not be a view but instead a new concept which
 // only participates in view painting ( https://crbug.com/840796 ).
 class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
- public:
-  METADATA_HEADER(FocusRing);
+  METADATA_HEADER(FocusRing, View)
 
+ public:
   static constexpr float kDefaultCornerRadiusDp = 2.0f;
 
   using ViewPredicate = base::RepeatingCallback<bool(const View* view)>;
@@ -81,8 +82,8 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   // focus, but the FocusRing sits on the parent instead of the inner view.
   void SetHasFocusPredicate(const ViewPredicate& predicate);
 
-  absl::optional<ui::ColorId> GetColorId() const;
-  void SetColorId(absl::optional<ui::ColorId> color_id);
+  std::optional<ui::ColorId> GetColorId() const;
+  void SetColorId(std::optional<ui::ColorId> color_id);
 
   float GetHaloThickness() const;
   float GetHaloInset() const;
@@ -97,7 +98,7 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   bool ShouldPaintForTesting();
 
   // View:
-  void Layout() override;
+  void Layout(PassKey) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
   void OnPaint(gfx::Canvas* canvas) override;
@@ -106,6 +107,7 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   // ViewObserver:
   void OnViewFocused(View* view) override;
   void OnViewBlurred(View* view) override;
+  void OnViewLayoutInvalidated(View* view) override;
 
  private:
   FocusRing();
@@ -143,7 +145,7 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   bool invalid_ = false;
 
   // Overriding color_id for the focus ring.
-  absl::optional<ui::ColorId> color_id_;
+  std::optional<ui::ColorId> color_id_;
 
   // The predicate used to determine whether the parent has focus.
   ViewPredicate has_focus_predicate_;

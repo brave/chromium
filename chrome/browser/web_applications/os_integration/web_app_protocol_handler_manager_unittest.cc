@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/web_applications/os_integration/web_app_protocol_handler_manager.h"
+
 #include "base/strings/escape.h"
 #include "chrome/browser/web_applications/test/fake_os_integration_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
@@ -12,6 +13,7 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "components/custom_handlers/protocol_handler.h"
 
 using custom_handlers::ProtocolHandler;
@@ -26,10 +28,9 @@ class WebAppProtocolHandlerManagerTest : public WebAppTest {
     provider_ = FakeWebAppProvider::Get(profile());
     provider_->SetOsIntegrationManager(
         std::make_unique<FakeOsIntegrationManager>(
-            profile(), /*app_shortcut_manager=*/nullptr,
+            profile(),
             /*file_handler_manager=*/nullptr,
-            std::make_unique<WebAppProtocolHandlerManager>(profile()),
-            /*url_handler_manager=*/nullptr));
+            std::make_unique<WebAppProtocolHandlerManager>(profile())));
     test::AwaitStartWebAppProviderAndSubsystems(profile());
   }
 
@@ -43,13 +44,13 @@ class WebAppProtocolHandlerManagerTest : public WebAppTest {
 
   WebAppRegistrar& app_registrar() { return provider().registrar_unsafe(); }
 
-  AppId CreateWebAppWithProtocolHandlers(
+  webapps::AppId CreateWebAppWithProtocolHandlers(
       const GURL& start_url,
       std::vector<apps::ProtocolHandlerInfo> protocol_handler_infos,
       base::flat_set<std::string> allowed_launch_protocols = {},
       base::flat_set<std::string> disallowed_launch_protocols = {}) {
     auto web_app = test::CreateWebApp(start_url);
-    const AppId app_id = web_app->app_id();
+    const webapps::AppId app_id = web_app->app_id();
     web_app->SetProtocolHandlers(protocol_handler_infos);
     web_app->SetAllowedLaunchProtocols(allowed_launch_protocols);
     web_app->SetDisallowedLaunchProtocols(disallowed_launch_protocols);
@@ -78,7 +79,7 @@ class WebAppProtocolHandlerManagerTest : public WebAppTest {
   }
 
  private:
-  raw_ptr<FakeWebAppProvider, DanglingUntriaged> provider_;
+  raw_ptr<FakeWebAppProvider, DanglingUntriaged> provider_ = nullptr;
 };
 
 TEST_F(WebAppProtocolHandlerManagerTest, GetAppProtocolHandlerInfos) {
@@ -86,7 +87,7 @@ TEST_F(WebAppProtocolHandlerManagerTest, GetAppProtocolHandlerInfos) {
       CreateDefaultProtocolHandlerInfos();
 
   auto web_app = test::CreateWebApp();
-  const AppId app_id = web_app->app_id();
+  const webapps::AppId app_id = web_app->app_id();
   web_app->SetProtocolHandlers(protocol_handler_infos);
 
   ASSERT_EQ(
@@ -109,7 +110,7 @@ TEST_F(WebAppProtocolHandlerManagerTest,
        GetAppProtocolHandlerInfosDisallowedProtocols) {
   std::vector<apps::ProtocolHandlerInfo> protocol_handler_infos =
       CreateDefaultProtocolHandlerInfos();
-  const AppId app_id = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id = CreateWebAppWithProtocolHandlers(
       GURL("https://example.com/path"), protocol_handler_infos, {},
       {"web+test"});
   std::vector<apps::ProtocolHandlerInfo> handler_infos =
@@ -119,10 +120,10 @@ TEST_F(WebAppProtocolHandlerManagerTest,
 }
 
 TEST_F(WebAppProtocolHandlerManagerTest, TranslateProtocolUrl) {
-  const AppId app_id = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id = CreateWebAppWithProtocolHandlers(
       GURL("https://example.com/path"), CreateDefaultProtocolHandlerInfos());
 
-  absl::optional<GURL> translated_url =
+  std::optional<GURL> translated_url =
       protocol_handler_manager().TranslateProtocolUrl(app_id,
                                                       GURL("web+test://test"));
   ASSERT_TRUE(translated_url.has_value());
@@ -138,7 +139,7 @@ TEST_F(WebAppProtocolHandlerManagerTest, GetAppProtocolHandlers) {
   std::vector<apps::ProtocolHandlerInfo> protocol_handler_infos =
       CreateDefaultProtocolHandlerInfos();
 
-  const AppId app_id = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id = CreateWebAppWithProtocolHandlers(
       GURL("https://example.com/path"), protocol_handler_infos);
 
   std::vector<ProtocolHandler> handlers =
@@ -156,10 +157,10 @@ TEST_F(WebAppProtocolHandlerManagerTest, GetAllowedHandlersForProtocol) {
       CreateProtocolHandlerInfo("web+test",
                                 GURL("http://example2.com/test=%s"))};
 
-  const AppId app_id1 = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id1 = CreateWebAppWithProtocolHandlers(
       GURL("https://example.com/path"), CreateDefaultProtocolHandlerInfos(),
       {"web+test"});
-  const AppId app_id2 = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id2 = CreateWebAppWithProtocolHandlers(
       GURL("https://example2.com/path"), protocol_handler_infos, {"web+test"});
   std::vector<ProtocolHandler> handlers =
       protocol_handler_manager().GetAllowedHandlersForProtocol("web+test");
@@ -180,10 +181,10 @@ TEST_F(WebAppProtocolHandlerManagerTest, GetDisallowedHandlersForProtocol) {
       CreateProtocolHandlerInfo("web+test",
                                 GURL("http://example2.com/test=%s"))};
 
-  const AppId app_id1 = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id1 = CreateWebAppWithProtocolHandlers(
       GURL("https://example.com/path"), CreateDefaultProtocolHandlerInfos(), {},
       {"web+test"});
-  const AppId app_id2 = CreateWebAppWithProtocolHandlers(
+  const webapps::AppId app_id2 = CreateWebAppWithProtocolHandlers(
       GURL("https://example2.com/path"), protocol_handler_infos, {},
       {"web+test"});
   std::vector<ProtocolHandler> handlers =

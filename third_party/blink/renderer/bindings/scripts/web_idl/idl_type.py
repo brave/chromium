@@ -33,6 +33,10 @@ from .reference import RefByIdFactory
 _IDL_TYPE_PASS_KEY = object()
 
 
+def IsArrayLike(idl_object):
+    return isinstance(idl_object, _ArrayLikeType)
+
+
 class IdlTypeFactory(object):
     """
     Creates a group of instances of IdlType, over which you can iterate later.
@@ -220,8 +224,8 @@ class IdlType(WithExtendedAttributes, WithDebugInfo):
     def keyword_typename(self):
         """
         Returns the keyword name of the type if this is a simple built-in type,
-        e.g. "any", "boolean", "unsigned long long", "void", etc.  Otherwise,
-        returns None.
+        e.g. "any", "boolean", "unsigned long long", "undefined", etc.
+        Otherwise, returns None.
         """
         return None
 
@@ -232,7 +236,7 @@ class IdlType(WithExtendedAttributes, WithDebugInfo):
 
         In case of x.apply_to_all_composing_elements(callback), |callback| will
         be recursively called back on x, x.inner_type, x.element_type,
-        x.result_type.original_type, etc. if any.
+        x.result_type, x.original_type, etc. if any.
 
         If |callback| raises a StopIteration, then this function stops
         traversing deeper than this type (inner type, etc.), however, siblings
@@ -289,7 +293,7 @@ class IdlType(WithExtendedAttributes, WithDebugInfo):
         For example, given the following IDL fragments,
 
           typedef [ExtAttr1] long NewLong;
-          void f([ExtAttr2] NewLong arg);
+          undefined f([ExtAttr2] NewLong arg);
 
         arg.idl_type.extended_attributes returns [ExtAttr2],
         arg.idl_type.unwrap().extended_attributes returns [ExtAttr1], and
@@ -395,8 +399,8 @@ class IdlType(WithExtendedAttributes, WithDebugInfo):
         return False
 
     @property
-    def is_void(self):
-        """Returns True if this is type 'void'."""
+    def is_undefined(self):
+        """Returns True if this is type 'undefined'."""
         return False
 
     @property
@@ -422,6 +426,16 @@ class IdlType(WithExtendedAttributes, WithDebugInfo):
     @property
     def is_callback_function(self):
         """Returns True if this is a callback function type."""
+        return False
+
+    @property
+    def is_async_iterator(self):
+        """Returns True if this is an asynchronous iterator type."""
+        return False
+
+    @property
+    def is_sync_iterator(self):
+        """Returns True if this is a synchronous iterator type."""
         return False
 
     @property
@@ -634,7 +648,7 @@ class SimpleType(IdlType):
     _TYPED_ARRAY_TYPES = ('Int8Array', 'Int16Array', 'Int32Array',
                           'BigInt64Array', 'Uint8Array', 'Uint16Array',
                           'Uint32Array', 'BigUint64Array', 'Uint8ClampedArray',
-                          'Float32Array', 'Float64Array')
+                          'Float16Array', 'Float32Array', 'Float64Array')
     # ArrayBufferView is not defined as a buffer source type in Web IDL, it's
     # defined as an union type of all typed array types.  However, practically
     # it's much more convenient and reasonable for most of (if not all) use
@@ -744,7 +758,7 @@ class SimpleType(IdlType):
         return self._name == 'any'
 
     @property
-    def is_void(self):
+    def is_undefined(self):
         return self._name == 'undefined' or self._name == 'void'
 
 
@@ -847,6 +861,14 @@ class DefinitionType(IdlType, WithIdentifier):
     @property
     def is_callback_function(self):
         return self.type_definition_object.is_callback_function
+
+    @property
+    def is_async_iterator(self):
+        return self.type_definition_object.is_async_iterator
+
+    @property
+    def is_sync_iterator(self):
+        return self.type_definition_object.is_sync_iterator
 
     @property
     def type_definition_object(self):
@@ -1215,6 +1237,10 @@ class PromiseType(IdlType):
 class UnionType(IdlType):
     """https://webidl.spec.whatwg.org/#idl-union"""
 
+    class Usage(object):
+        INPUT = 1
+        OUTPUT = 2
+
     def __init__(self,
                  member_types,
                  is_optional=False,
@@ -1231,6 +1257,7 @@ class UnionType(IdlType):
             pass_key=pass_key)
         self._member_types = tuple(member_types)
         self._union_definition_object = None
+        self._usage = 0
 
     def __eq__(self, other):
         """
@@ -1317,6 +1344,22 @@ class UnionType(IdlType):
     def set_union_definition_object(self, union_definition_object):
         assert self._union_definition_object is None
         self._union_definition_object = union_definition_object
+
+    @property
+    def is_phantom(self):
+        """Returns True if a class for union should not be generated,
+        as would be the case if enum only exists at the IDL level and
+        is not passed down to implementation. This can happen when all
+        enum variants are coerced to a single type."""
+        return "PassAsSpan" in self.effective_annotations
+
+    @property
+    def usage(self):
+        return self._usage
+
+    def add_usage(self, usage):
+        assert isinstance(usage, int)
+        self._usage = self._usage | usage
 
 
 class NullableType(IdlType):

@@ -6,6 +6,7 @@
 
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "ash/constants/ash_switches.h"
 #include "ash/metrics/login_unlock_throughput_recorder.h"
@@ -18,9 +19,10 @@
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics.h"
 #include "chrome/browser/ash/app_restore/app_restore_arc_task_handler.h"
+#include "chrome/browser/ash/app_restore/app_restore_arc_task_handler_factory.h"
 #include "chrome/browser/ash/app_restore/arc_app_queue_restore_handler.h"
 #include "chrome/browser/ash/app_restore/full_restore_service.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
+#include "chrome/browser/ash/app_restore/full_restore_service_factory.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
 #include "chrome/browser/ash/policy/scheduled_task_handler/reboot_notifications_scheduler.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
@@ -54,7 +56,39 @@ constexpr char kSessionRestoreExitResultPrefix[] =
 constexpr char kSessionRestoreWindowCountPrefix[] =
     "Apps.SessionRestoreWindowCount";
 constexpr char kFullRestoreTabCountPrefix[] = "Apps.FullRestoreTabCount";
-constexpr char kFullRestoreWindowCountPrefix[] = "Apps.FullRestoreWindowCount";
+
+// Collects window id and app id of normal browser windows.
+std::vector<LoginUnlockThroughputRecorder::RestoreWindowID>
+CollectRestoreIDsForNormalBrowserWindows(
+    ::app_restore::RestoreData* restore_data) {
+  if (!restore_data || restore_data->app_id_to_launch_list().empty()) {
+    return {};
+  }
+
+  std::vector<LoginUnlockThroughputRecorder::RestoreWindowID> app_restore_ids;
+  for (const auto& [app_id, launch_list] :
+       restore_data->app_id_to_launch_list()) {
+    const bool is_browser = app_id == app_constants::kChromeAppId;
+    // We are only interested in Ash browsers.
+    if (!is_browser) {
+      continue;
+    }
+
+    for (const auto& [window_id, app_restore_data] : launch_list) {
+      if (app_id == app_constants::kChromeAppId) {
+        // Ignore app type browsers.
+        const bool app_type_browser =
+            app_restore_data->browser_extra_info.app_type_browser.value_or(
+                false);
+        if (app_type_browser) {
+          continue;
+        }
+      }
+      app_restore_ids.emplace_back(window_id, app_id);
+    }
+  }
+  return app_restore_ids;
+}
 
 }  // namespace
 
@@ -87,7 +121,7 @@ void FullRestoreAppLaunchHandler::LaunchBrowserWhenReady(
             profile())) {
       auto* cache = &apps::AppServiceProxyFactory::GetForProfile(profile())
                          ->AppRegistryCache();
-      Observe(cache);
+      ObserveCache(cache);
 
       for (const auto app_type : cache->InitializedAppTypes()) {
         OnAppTypeInitialized(app_type);
@@ -174,19 +208,6 @@ void FullRestoreAppLaunchHandler::OnGotSession(Profile* session_profile,
     browser_window_count_ = window_count;
 }
 
-void FullRestoreAppLaunchHandler::OnMojoDisconnected() {
-  observation_.Reset();
-}
-
-void FullRestoreAppLaunchHandler::OnStateChanged() {
-  if (crosapi::BrowserManager::Get()->IsRunning()) {
-    observation_.Reset();
-    VLOG(1) << "Full restore opens Lacros";
-    crosapi::BrowserManager::Get()->OpenForFullRestore(
-        /*skip_crash_restore=*/IsLastSessionExitTypeCrashed());
-  }
-}
-
 void FullRestoreAppLaunchHandler::ForceLaunchBrowserForTesting() {
   ::full_restore::AddChromeBrowserLaunchInfoForTesting(profile()->GetPath());
   UserSessionManager::GetInstance()->LaunchBrowser(profile());
@@ -214,8 +235,14 @@ void FullRestoreAppLaunchHandler::OnGetRestoreData(
   // tests, and used by the desk template. Only when it is created by
   // FullRestoreService, we need to init FullRestoreService.
   bool is_full_restore_shown = false;
-  if (should_init_service_)
-    FullRestoreService::GetForProfile(profile())->Init(is_full_restore_shown);
+  if (should_init_service_) {
+    FullRestoreServiceFactory::GetForProfile(profile())->Init(
+        is_full_restore_shown);
+  }
+
+  // Must be called after `FullRestoreService::Init` so that `should_restore_`
+  // flag is updated when needed.
+  MaybeNotifyFullRestoreDataLoaded(ShouldRestore());
 
   policy::RebootNotificationsScheduler* reboot_notifications_scheduler =
       policy::RebootNotificationsScheduler::Get();
@@ -225,28 +252,44 @@ void FullRestoreAppLaunchHandler::OnGetRestoreData(
   }
 }
 
+void FullRestoreAppLaunchHandler::MaybeNotifyFullRestoreDataLoaded(
+    bool restore_automatically) {
+  // `Shell` might not exist in tests.
+  if (!Shell::HasInstance()) {
+    return;
+  }
+
+  // The notification is only needed for the primary user sign-in.
+  if (!ProfileHelper::IsPrimaryProfile(profile())) {
+    return;
+  }
+
+  Shell::Get()
+      ->login_unlock_throughput_recorder()
+      ->FullSessionRestoreDataLoaded(
+          CollectRestoreIDsForNormalBrowserWindows(restore_data()),
+          restore_automatically);
+}
+
 void FullRestoreAppLaunchHandler::MaybePostRestore() {
   MaybeStartSaveTimer();
 
-  // If the restore flag `should_restore_` is not true, or reading the restore
-  // data hasn't finished, don't restore.
-  if (!should_restore_ || !restore_data())
+  if (!ShouldRestore()) {
     return;
+  }
 
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(&FullRestoreAppLaunchHandler::MaybeRestore,
+      FROM_HERE, base::BindOnce(&FullRestoreAppLaunchHandler::Restore,
                                 weak_ptr_factory_.GetWeakPtr()));
 }
 
-void FullRestoreAppLaunchHandler::MaybeRestore() {
+void FullRestoreAppLaunchHandler::Restore() {
+  CHECK(ShouldRestore());
+
   ::full_restore::FullRestoreReadHandler::GetInstance()->SetStartTimeForProfile(
       profile()->GetPath());
   ::full_restore::FullRestoreReadHandler::GetInstance()->SetCheckRestoreData(
       profile()->GetPath());
-
-  auto [window_count, tab_count, total_count] =
-      ::app_restore::GetWindowAndTabCount(*restore_data());
-  base::UmaHistogramCounts100(kFullRestoreWindowCountPrefix, window_count);
 
   if (should_launch_browser_ && CanLaunchBrowser()) {
     LaunchBrowser();
@@ -255,12 +298,11 @@ void FullRestoreAppLaunchHandler::MaybeRestore() {
 
   VLOG(1) << "Restore apps in " << profile()->GetPath();
   if (auto* arc_task_handler =
-          app_restore::AppRestoreArcTaskHandler::GetForProfile(profile())) {
+          app_restore::AppRestoreArcTaskHandlerFactory::GetForProfile(
+              profile())) {
     arc_task_handler->GetFullRestoreArcAppQueueRestoreHandler()->RestoreArcApps(
         this);
   }
-
-  MaybeRestoreLacros();
 
   LaunchApps();
 
@@ -350,34 +392,6 @@ void FullRestoreAppLaunchHandler::LaunchBrowserForFirstRunFullRestore() {
       profile());
 }
 
-void FullRestoreAppLaunchHandler::MaybeRestoreLacros() {
-  if (!crosapi::browser_util::IsLacrosEnabled() ||
-      !::full_restore::features::IsFullRestoreForLacrosEnabled()) {
-    return;
-  }
-
-  // TODO(https://crbug.com/1239984):
-  // 1. Modify the restore conditions, e.g. check web apps ready, etc.
-  // 2. Handle the migration scenario, e.g. from flag disable to enable.
-  // 3. Add metrics to check whether the Lacros is restored successfully.
-  if (!base::Contains(restore_data()->app_id_to_launch_list(),
-                      app_constants::kLacrosAppId)) {
-    return;
-  }
-
-  restore_data()->RemoveApp(app_constants::kLacrosAppId);
-
-  if (crosapi::BrowserManager::Get()->IsRunning()) {
-    VLOG(1) << "Full restore opens Lacros";
-    crosapi::BrowserManager::Get()->OpenForFullRestore(
-        /*skip_crash_restore=*/IsLastSessionExitTypeCrashed());
-    return;
-  }
-
-  if (!crosapi::BrowserManager::Get()->IsTerminated())
-    observation_.Observe(crosapi::BrowserManager::Get());
-}
-
 void FullRestoreAppLaunchHandler::RecordRestoredAppLaunch(
     apps::AppTypeName app_type_name) {
   base::UmaHistogramEnumeration(kRestoredAppLaunchHistogramPrefix,
@@ -458,15 +472,8 @@ void FullRestoreAppLaunchHandler::RecordLaunchBrowserResult() {
 }
 
 void FullRestoreAppLaunchHandler::LogRestoreData() {
-  LoginUnlockThroughputRecorder* throughput_recorder =
-      Shell::HasInstance() ? Shell::Get()->login_unlock_throughput_recorder()
-                           : nullptr;
-
   if (!restore_data() || restore_data()->app_id_to_launch_list().empty()) {
     VLOG(1) << "There is no restore data from " << profile()->GetPath();
-    if (throughput_recorder) {
-      throughput_recorder->RestoreDataLoaded();
-    }
     return;
   }
 
@@ -481,17 +488,9 @@ void FullRestoreAppLaunchHandler::LogRestoreData() {
       continue;
     }
 
-    if (throughput_recorder) {
-      for (const auto& window : it.second) {
-        throughput_recorder->AddScheduledRestoreWindow(
-            window.first, it.first, LoginUnlockThroughputRecorder::kBrowser);
-      }
-    }
     ++other_app_count;
   }
-  if (throughput_recorder) {
-    throughput_recorder->RestoreDataLoaded();
-  }
+
   VLOG(1) << "There is restore data: Browser("
           << (::full_restore::HasAppTypeBrowser(profile()->GetPath())
                   ? " has app type browser "
@@ -533,6 +532,13 @@ void FullRestoreAppLaunchHandler::MaybeStartSaveTimer() {
 bool FullRestoreAppLaunchHandler::IsLastSessionExitTypeCrashed() {
   return ExitTypeService::GetLastSessionExitType(profile()) ==
          ExitType::kCrashed;
+}
+
+bool FullRestoreAppLaunchHandler::ShouldRestore() const {
+  // Returns true only when
+  //   - `should_restore_` is true (restore should be performed)
+  //   - restore data is loaded (there is something to restore)
+  return should_restore_ && restore_data();
 }
 
 ScopedLaunchBrowserForTesting::ScopedLaunchBrowserForTesting() {

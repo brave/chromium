@@ -10,16 +10,19 @@
 #include <string>
 #include <utility>
 
+#include "base/apple/foundation_util.h"
+#include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/popup_menu_helper_ios.h"
 #include "content/browser/renderer_host/render_widget_host_view_ios.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "ui/base/cocoa/animation_utils.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
+#if BUILDFLAG(IS_IOS_TVOS)
+#include "content/browser/renderer_host/render_widget_host_view_tvos.h"
 #endif
 
 namespace content {
@@ -30,6 +33,12 @@ WebContentsViewIOS::RenderWidgetHostViewCreateFunction
     g_create_render_widget_host_view = nullptr;
 
 }  // namespace
+
+#if !BUILDFLAG(IS_IOS_TVOS)
+using RenderWidgetHostViewClass = RenderWidgetHostViewIOS;
+#else
+using RenderWidgetHostViewClass = RenderWidgetHostViewTVOS;
+#endif
 
 // static
 void WebContentsViewIOS::InstallCreateHookForTests(
@@ -64,6 +73,7 @@ WebContentsViewIOS::WebContentsViewIOS(
   [ui_view_->view_ setScrollEnabled:NO];
   [ui_view_->view_ setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
                                        UIViewAutoresizingFlexibleHeight];
+  ui_view_->view_.backgroundColor = [UIColor lightGrayColor];
 }
 
 WebContentsViewIOS::~WebContentsViewIOS() {}
@@ -94,10 +104,11 @@ gfx::Rect WebContentsViewIOS::GetContainerBounds() const {
 
 void WebContentsViewIOS::OnCapturerCountChanged() {}
 
-void WebContentsViewIOS::FullscreenStateChanged(bool is_fullscreen) {}
-
-void WebContentsViewIOS::UpdateWindowControlsOverlay(
-    const gfx::Rect& bounding_rect) {}
+void WebContentsViewIOS::FullscreenStateChanged(bool is_fullscreen) {
+  if (is_fullscreen && popup_menu_helper_) {
+    popup_menu_helper_->CloseMenu();
+  }
+}
 
 void WebContentsViewIOS::Focus() {
   if (delegate_) {
@@ -159,7 +170,8 @@ DropData* WebContentsViewIOS::GetDropData() const {
 }
 
 gfx::Rect WebContentsViewIOS::GetViewBounds() const {
-  return gfx::Rect();
+  return gfx::Rect(ui_view_->view_.contentSize.width,
+                   ui_view_->view_.contentSize.height);
 }
 
 void WebContentsViewIOS::GotFocus(RenderWidgetHostImpl* render_widget_host) {
@@ -170,11 +182,19 @@ void WebContentsViewIOS::LostFocus(RenderWidgetHostImpl* render_widget_host) {
   web_contents_->NotifyWebContentsLostFocus(render_widget_host);
 }
 
+void WebContentsViewIOS::ShowContextMenu(RenderFrameHost& render_frame_host,
+                                         const ContextMenuParams& params) {
+  if (delegate_) {
+    delegate_->ShowContextMenu(render_frame_host, params);
+  } else {
+    DLOG(ERROR) << "Cannot show context menus without a delegate.";
+  }
+}
+
 void WebContentsViewIOS::ShowPopupMenu(
     RenderFrameHost* render_frame_host,
     mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
     const gfx::Rect& bounds,
-    int item_height,
     double item_font_size,
     int selected_item,
     std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -182,9 +202,9 @@ void WebContentsViewIOS::ShowPopupMenu(
     bool allow_multiple_selection) {
   popup_menu_helper_ = std::make_unique<PopupMenuHelper>(
       this, render_frame_host, std::move(popup_client));
-  popup_menu_helper_->ShowPopupMenu(bounds, item_height, item_font_size,
-                                    selected_item, std::move(menu_items),
-                                    right_aligned, allow_multiple_selection);
+  popup_menu_helper_->ShowPopupMenu(bounds, item_font_size, selected_item,
+                                    std::move(menu_items), right_aligned,
+                                    allow_multiple_selection);
 }
 
 void WebContentsViewIOS::OnMenuClosed() {
@@ -198,12 +218,12 @@ RenderWidgetHostViewBase* WebContentsViewIOS::CreateViewForWidget(
   if (g_create_render_widget_host_view) {
     return g_create_render_widget_host_view(render_widget_host);
   }
-  return new RenderWidgetHostViewIOS(render_widget_host);
+  return new RenderWidgetHostViewClass(render_widget_host);
 }
 
 RenderWidgetHostViewBase* WebContentsViewIOS::CreateViewForChildWidget(
     RenderWidgetHost* render_widget_host) {
-  return new RenderWidgetHostViewIOS(render_widget_host);
+  return new RenderWidgetHostViewClass(render_widget_host);
 }
 
 void WebContentsViewIOS::SetPageTitle(const std::u16string& title) {
@@ -230,7 +250,7 @@ void WebContentsViewIOS::RenderViewHostChanged(RenderViewHost* old_host,
   }
   web_contents_->UpdateBrowserControlsState(cc::BrowserControlsState::kBoth,
                                             cc::BrowserControlsState::kHidden,
-                                            false);
+                                            false, std::nullopt);
 }
 
 void WebContentsViewIOS::SetOverscrollControllerEnabled(bool enabled) {}
@@ -270,5 +290,12 @@ bool WebContentsViewIOS::OnlyExpandTopControlsAtPageTop() const {
   auto* delegate = web_contents_->GetDelegate();
   return delegate && delegate->OnlyExpandTopControlsAtPageTop();
 }
+
+BackForwardTransitionAnimationManager*
+WebContentsViewIOS::GetBackForwardTransitionAnimationManager() {
+  return nullptr;
+}
+
+void WebContentsViewIOS::DestroyBackForwardTransitionAnimationManager() {}
 
 }  // namespace content

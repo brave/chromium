@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.firstrun;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.Context;
@@ -12,35 +14,38 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.BuildInfo;
 import org.chromium.base.IntentUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.WebApkExtras;
 import org.chromium.chrome.browser.browserservices.intents.WebappExtras;
 import org.chromium.chrome.browser.webapps.WebappLauncherActivity;
-import org.chromium.ui.base.DeviceFormFactor;
 
 /**
  * This class makes a decision what FRE type to launch and creates a corresponding intent. Should be
  * instantiated using {@link AppHooks#createFreIntentCreator}.
  */
+@NullMarked
 public class FreIntentCreator {
     /**
      * Creates an intent to launch the First Run Experience.
      *
-     * @param caller               Activity instance that is requesting the first run.
-     * @param fromIntent           Intent used to launch the caller.
+     * @param caller Activity instance that is requesting the first run.
+     * @param fromIntent Intent used to launch the caller.
      * @param preferLightweightFre Whether to prefer the Lightweight First Run Experience.
+     * @param usePendingIntent Whether to use PendingIntent or original Intent after FRE.
      * @return Intent to launch First Run Experience.
      */
-    public Intent create(Context caller, Intent fromIntent, boolean preferLightweightFre) {
-        @Nullable
-        BrowserServicesIntentDataProvider webApkIntentDataProvider =
+    public Intent create(
+            Context caller,
+            Intent fromIntent,
+            boolean preferLightweightFre,
+            boolean usePendingIntent) {
+        @Nullable BrowserServicesIntentDataProvider webApkIntentDataProvider =
                 WebappLauncherActivity.maybeSlowlyGenerateWebApkIntentDataProviderFromIntent(
                         fromIntent);
 
@@ -48,16 +53,22 @@ public class FreIntentCreator {
         Intent intentToLaunchAfterFreComplete = fromIntent;
         if (webApkIntentDataProvider != null
                 && webApkIntentDataProvider.getWebApkExtras() != null) {
-            WebappExtras webappExtras = webApkIntentDataProvider.getWebappExtras();
+            WebappExtras webappExtras = assumeNonNull(webApkIntentDataProvider.getWebappExtras());
             associatedAppName = webappExtras.shortName;
 
             WebApkExtras webApkExtras = webApkIntentDataProvider.getWebApkExtras();
-            intentToLaunchAfterFreComplete = WebappLauncherActivity.createRelaunchWebApkIntent(
-                    fromIntent, webApkExtras.webApkPackageName, webappExtras.url);
+            intentToLaunchAfterFreComplete =
+                    WebappLauncherActivity.createRelaunchWebApkIntent(
+                            fromIntent, webApkExtras.webApkPackageName, webappExtras.url);
         }
 
         Intent result = createInternal(caller, fromIntent, preferLightweightFre, associatedAppName);
-        addPendingIntent(caller, result, intentToLaunchAfterFreComplete);
+        result.putExtra(FirstRunActivity.EXTRA_FRE_USE_PENDING_INTENT, usePendingIntent);
+        if (usePendingIntent) {
+            addPendingIntent(caller, result, intentToLaunchAfterFreComplete);
+        } else {
+            result.putExtra(FirstRunActivity.EXTRA_FRE_COMPLETE_LAUNCH_INTENT, fromIntent);
+        }
         return result;
     }
 
@@ -72,7 +83,10 @@ public class FreIntentCreator {
      *                             WebAPK. Null otherwise.
      * @return Intent to launch First Run Experience.
      */
-    protected Intent createInternal(Context caller, Intent fromIntent, boolean preferLightweightFre,
+    protected Intent createInternal(
+            Context caller,
+            Intent fromIntent,
+            boolean preferLightweightFre,
             @Nullable String associatedAppName) {
         // Launch the Generic First Run Experience if it was previously active.
         boolean isGenericFreActive = checkIsGenericFreActive();
@@ -101,19 +115,20 @@ public class FreIntentCreator {
 
     /**
      * Returns a generic intent to show the First Run Activity.
-     * @param context                        The context.
-     * @param fromIntent                     The intent that was used to launch Chrome.
+     *
+     * @param context The context.
+     * @param fromIntent The intent that was used to launch Chrome.
      */
     private static Intent createGenericFirstRunIntent(Context context, Intent fromIntent) {
-        Class<?> activityClass = shouldSwitchToTabbedMode(context)
-                ? TabbedModeFirstRunActivity.class
-                : FirstRunActivity.class;
-        Intent intent = new Intent(context, activityClass);
-        intent.putExtra(FirstRunActivity.EXTRA_COMING_FROM_CHROME_ICON,
+        Intent intent = new Intent(context, FirstRunActivity.class);
+        intent.putExtra(
+                FirstRunActivity.EXTRA_COMING_FROM_CHROME_ICON,
                 TextUtils.equals(fromIntent.getAction(), Intent.ACTION_MAIN));
-        intent.putExtra(FirstRunActivity.EXTRA_CHROME_LAUNCH_INTENT_IS_CCT,
+        intent.putExtra(
+                FirstRunActivity.EXTRA_CHROME_LAUNCH_INTENT_IS_CCT,
                 LaunchIntentDispatcher.isCustomTabIntent(fromIntent));
-        intent.putExtra(FirstRunActivityBase.EXTRA_FRE_INTENT_CREATION_ELAPSED_REALTIME_MS,
+        intent.putExtra(
+                FirstRunActivityBase.EXTRA_FRE_INTENT_CREATION_ELAPSED_REALTIME_MS,
                 SystemClock.elapsedRealtime());
 
         // Copy extras bundle from intent which was used to launch Chrome. Copying the extras
@@ -138,46 +153,24 @@ public class FreIntentCreator {
      */
     private static void addPendingIntent(
             Context context, Intent firstRunIntent, Intent intentToLaunchAfterFreComplete) {
-        int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_ONE_SHOT
-                | IntentUtils.getPendingIntentMutabilityFlag(false);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                context, 0, intentToLaunchAfterFreComplete, pendingIntentFlags);
+        int pendingIntentFlags =
+                PendingIntent.FLAG_UPDATE_CURRENT
+                        | PendingIntent.FLAG_ONE_SHOT
+                        | IntentUtils.getPendingIntentMutabilityFlag(false);
+        PendingIntent pendingIntent =
+                PendingIntent.getActivity(
+                        context, 0, intentToLaunchAfterFreComplete, pendingIntentFlags);
         firstRunIntent.putExtra(FirstRunActivity.EXTRA_FRE_COMPLETE_LAUNCH_INTENT, pendingIntent);
     }
 
     /** Returns whether the generic FRE is active. */
     private static boolean checkIsGenericFreActive() {
         for (Activity activity : ApplicationStatus.getRunningActivities()) {
-            // TabbedModeFirstRunActivity extends FirstRunActivity. LightweightFirstRunActivity
-            // does not.
+            // LightweightFirstRunActivity does not extends FirstRunActivity.
             if (activity instanceof FirstRunActivity) {
                 return true;
             }
         }
         return false;
-    }
-
-    /**
-     * On tablets, where FRE activity is a dialog, transitions from fillscreen activities
-     * (the ones that use Theme.Chromium.TabbedMode, e.g. ChromeTabbedActivity) look ugly, because
-     * when FRE is started from CTA.onCreate(), currently running animation for CTA window
-     * is aborted. This is perceived as a flash of white and doesn't look good.
-     *
-     * To solve this, we added TabbedMode FRE activity, which has the same window background
-     * as Theme.Chromium.TabbedMode activities, but shows content in a FRE-like dialog.
-     *
-     * This function returns whether to use the TabbedModeFRE.
-     */
-    private static boolean shouldSwitchToTabbedMode(Context caller) {
-        // Caller must be an activity.
-        if (!(caller instanceof Activity)) return false;
-
-        // Always show TabbedMode on automotive devices.
-        if (BuildInfo.getInstance().isAutomotive) return true;
-
-        // We must be on a tablet (where FRE is a dialog).
-        if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(caller)) return false;
-
-        return true;
     }
 }

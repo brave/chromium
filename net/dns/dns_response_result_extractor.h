@@ -9,9 +9,9 @@
 
 #include <memory>
 #include <set>
+#include <string_view>
 
 #include "base/memory/raw_ptr.h"
-#include "base/strings/string_piece.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
@@ -44,9 +44,10 @@ class NET_EXPORT_PRIVATE DnsResponseResultExtractor {
     kMultipleCnames,
     // Invalid alias chain, e.g. contains loops or disjoint aliases.
     kBadAliasChain,
-    // Not expected. Used for DCHECKs.
-    kUnexpected,
   };
+
+  static constexpr std::string_view kHasValidCnameRecordsHistogram =
+      "Net.DNS.DnsTask.HasValidCnameRecords";
 
   using ResultsOrError =
       base::expected<std::set<std::unique_ptr<HostResolverInternalResult>>,
@@ -76,7 +77,7 @@ class NET_EXPORT_PRIVATE DnsResponseResultExtractor {
   // are parsed, so while not an absolute requirement, any given DnsResponse
   // should only be used and extracted from at most once.
   ResultsOrError ExtractDnsResults(DnsQueryType query_type,
-                                   base::StringPiece original_domain_name,
+                                   std::string_view original_domain_name,
                                    uint16_t request_port) const;
 
  private:

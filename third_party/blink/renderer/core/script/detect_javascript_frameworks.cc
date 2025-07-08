@@ -16,6 +16,8 @@
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/html/html_head_element.h"
 #include "third_party/blink/renderer/core/html/html_meta_element.h"
+#include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
+#include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -26,8 +28,7 @@ namespace blink {
 namespace {
 
 constexpr char kGatsbyId[] = "___gatsby";
-constexpr char kNextjsId[] = "__next";
-constexpr char kNextjsData[] = "__NEXT_DATA__";
+constexpr char kNextjsData[] = "next";
 constexpr char kNuxtjsData[] = "__NUXT__";
 constexpr char kSapperData[] = "__SAPPER__";
 constexpr char kVuepressData[] = "__VUEPRESS__";
@@ -36,7 +37,7 @@ constexpr char kSquarespace[] = "Squarespace";
 
 bool IsFrameworkVariableUsed(v8::Local<v8::Context> context,
                              const String& framework_variable_name) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Object> global = context->Global();
   v8::TryCatch try_catch(isolate);
   bool has_property;
@@ -57,15 +58,11 @@ bool IsFrameworkIDUsed(Document& document, const AtomicString& framework_id) {
 }
 
 inline void CheckIdMatches(Document& document,
-                           JavaScriptFrameworkDetectionResult& result,
-                           bool& has_nextjs_id) {
+                           JavaScriptFrameworkDetectionResult& result) {
   DEFINE_STATIC_LOCAL(AtomicString, kReactId, ("react-root"));
   if (IsFrameworkIDUsed(document, AtomicString(kGatsbyId))) {
     result.detected_versions[JavaScriptFramework::kGatsby] =
         kNoFrameworkVersionDetected;
-  }
-  if (IsFrameworkIDUsed(document, AtomicString(kNextjsId))) {
-    has_nextjs_id = true;
   }
   if (IsFrameworkIDUsed(document, kReactId)) {
     result.detected_versions[JavaScriptFramework::kReact] =
@@ -100,12 +97,14 @@ inline void CheckPropertyMatches(Element& element,
                                  v8::Local<v8::Context> context,
                                  v8::Isolate* isolate,
                                  JavaScriptFrameworkDetectionResult& result) {
-  v8::Local<v8::Object> v8_element = dom_data_store.Get(&element, isolate);
-  if (v8_element.IsEmpty())
+  v8::Local<v8::Object> v8_element;
+  if (!dom_data_store.Get(isolate, &element).ToLocal(&v8_element)) {
     return;
+  }
   v8::Local<v8::Array> property_names;
-  if (!v8_element->GetOwnPropertyNames(context).ToLocal(&property_names))
+  if (!v8_element->GetOwnPropertyNames(context).ToLocal(&property_names)) {
     return;
+  }
 
   DEFINE_STATIC_LOCAL(AtomicString, vue_string, ("__vue__"));
   DEFINE_STATIC_LOCAL(AtomicString, vue_app_string, ("__vue_app__"));
@@ -119,7 +118,7 @@ inline void CheckPropertyMatches(Element& element,
     if (!property_names->Get(context, i).ToLocal(&key) || !key->IsString()) {
       continue;
     }
-    AtomicString key_value = ToCoreAtomicString(key.As<v8::String>());
+    AtomicString key_value = ToCoreAtomicString(isolate, key.As<v8::String>());
     if (key_value == vue_string || key_value == vue_app_string) {
       result.detected_versions[JavaScriptFramework::kVue] =
           kNoFrameworkVersionDetected;
@@ -140,12 +139,11 @@ inline void CheckPropertyMatches(Element& element,
 inline void CheckGlobalPropertyMatches(
     v8::Local<v8::Context> context,
     v8::Isolate* isolate,
-    JavaScriptFrameworkDetectionResult& result,
-    bool& has_nextjs_id) {
+    JavaScriptFrameworkDetectionResult& result) {
   static constexpr char kVueData[] = "Vue";
   static constexpr char kVue3Data[] = "__VUE__";
   static constexpr char kReactData[] = "React";
-  if (has_nextjs_id && IsFrameworkVariableUsed(context, kNextjsData)) {
+  if (IsFrameworkVariableUsed(context, kNextjsData)) {
     result.detected_versions[JavaScriptFramework::kNext] =
         kNoFrameworkVersionDetected;
   }
@@ -219,10 +217,13 @@ void DetectFrameworkVersions(Document& document,
                              const AtomicString& detected_ng_version) {
   v8::Local<v8::Object> global = context->Global();
   static constexpr char kVersionPattern[] = "([0-9]+)\\.([0-9]+)";
-  v8::Local<v8::RegExp> version_regexp =
-      v8::RegExp::New(context, V8AtomicString(isolate, kVersionPattern),
-                      v8::RegExp::kNone)
-          .ToLocalChecked();
+  v8::Local<v8::RegExp> version_regexp;
+
+  if (!v8::RegExp::New(context, V8AtomicString(isolate, kVersionPattern),
+                       v8::RegExp::kNone)
+           .ToLocal(&version_regexp)) {
+    return;
+  }
 
   auto SafeGetProperty = [&](v8::Local<v8::Value> object,
                              const char* prop_name) -> v8::Local<v8::Value> {
@@ -285,11 +286,13 @@ void DetectFrameworkVersions(Document& document,
 
   HTMLMetaElement* generator_meta = nullptr;
 
-  for (HTMLMetaElement& meta_element :
-       Traversal<HTMLMetaElement>::DescendantsOf(*document.head())) {
-    if (EqualIgnoringASCIICase(meta_element.GetName(), "generator")) {
-      generator_meta = &meta_element;
-      break;
+  if (document.head()) {
+    for (HTMLMetaElement& meta_element :
+         Traversal<HTMLMetaElement>::DescendantsOf(*document.head())) {
+      if (EqualIgnoringASCIICase(meta_element.GetName(), "generator")) {
+        generator_meta = &meta_element;
+        break;
+      }
     }
   }
 
@@ -335,22 +338,22 @@ void DetectFrameworkVersions(Document& document,
 }
 
 void TraverseTreeForFrameworks(Document& document,
+                               v8::Isolate* isolate,
                                v8::Local<v8::Context> context) {
-  v8::Isolate* isolate = context->GetIsolate();
   v8::TryCatch try_catch(isolate);
   JavaScriptFrameworkDetectionResult result;
   AtomicString detected_ng_version;
-  bool has_nextjs_id = false;
   if (!document.documentElement())
     return;
-  DOMDataStore& dom_data_store = DOMWrapperWorld::MainWorld().DomDataStore();
+  DOMDataStore& dom_data_store =
+      DOMWrapperWorld::MainWorld(isolate).DomDataStore();
   for (Element& element :
        ElementTraversal::InclusiveDescendantsOf(*document.documentElement())) {
     CheckAttributeMatches(element, result, detected_ng_version);
     CheckPropertyMatches(element, dom_data_store, context, isolate, result);
   }
-  CheckIdMatches(document, result, has_nextjs_id);
-  CheckGlobalPropertyMatches(context, isolate, result, has_nextjs_id);
+  CheckIdMatches(document, result);
+  CheckGlobalPropertyMatches(context, isolate, result);
   DetectFrameworkVersions(document, context, isolate, result,
                           detected_ng_version);
   DCHECK(!try_catch.HasCaught());
@@ -360,29 +363,32 @@ void TraverseTreeForFrameworks(Document& document,
 }  // namespace
 
 void DetectJavascriptFrameworksOnLoad(Document& document) {
-  // Only detect Javascript frameworks on the main frame and if URL and BaseURL
-  // is HTTP. Note: Without these checks, ToScriptStateForMainWorld will
-  // initialize WindowProxy and trigger a second DidClearWindowObject() earlier
-  // than expected for Android WebView. The Gin Java Bridge has a race condition
-  // that relies on a second DidClearWindowObject() firing immediately before
-  // executing JavaScript. See the document that explains this in more detail:
-  // https://docs.google.com/document/d/1R5170is5vY425OO2Ru-HJBEraEKu0HjQEakcYldcSzM/edit?usp=sharing
-  if (!document.GetFrame() || !document.GetFrame()->IsMainFrame() ||
-      document.GetFrame()->IsInFencedFrameTree() ||
+  LocalFrame* const frame = document.GetFrame();
+  if (!frame || !frame->IsOutermostMainFrame() ||
       !document.Url().ProtocolIsInHTTPFamily() ||
       !document.BaseURL().ProtocolIsInHTTPFamily()) {
     return;
   }
 
-  ScriptState* script_state = ToScriptStateForMainWorld(document.GetFrame());
-
-  if (!script_state || !script_state->ContextIsValid()) {
+  v8::Isolate* const isolate = ToIsolate(frame);
+  // It would be simpler to call `ToScriptStateForMainWorld()`; however, this
+  // forces WindowProxy initialization, which is somewhat expensive.  If the
+  // WindowProxy isn't already initialized, there are no JS frameworks by
+  // definition. As a bonus, this also helps preserve a historical quirk for Gin
+  // Java Bridge in Android WebView:
+  // https://docs.google.com/document/d/1R5170is5vY425OO2Ru-HJBEraEKu0HjQEakcYldcSzM/edit?usp=sharing
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context =
+      ToV8ContextMaybeEmpty(frame, DOMWrapperWorld::MainWorld(isolate));
+  if (context.IsEmpty()) {
     return;
   }
 
+  ScriptState* script_state = ScriptState::From(isolate, context);
+  DCHECK(script_state && script_state->ContextIsValid());
+
   ScriptState::Scope scope(script_state);
-  v8::Local<v8::Context> context = script_state->GetContext();
-  TraverseTreeForFrameworks(document, context);
+  TraverseTreeForFrameworks(document, isolate, context);
 }
 
 }  // namespace blink

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "services/accessibility/features/text_encoder.h"
 
 #include <cstring>
@@ -24,7 +29,8 @@
 namespace ax {
 
 // static
-gin::WrapperInfo TextEncoder::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo TextEncoder::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 // static
 gin::Handle<TextEncoder> TextEncoder::Create(v8::Local<v8::Context> context) {
@@ -34,7 +40,8 @@ gin::Handle<TextEncoder> TextEncoder::Create(v8::Local<v8::Context> context) {
 gin::ObjectTemplateBuilder TextEncoder::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
   // Note: We do not support TextEncoder::encodeInto.
-  return gin::Wrappable<TextEncoder>::GetObjectTemplateBuilder(isolate)
+  return gin::DeprecatedWrappable<TextEncoder>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("encode", &TextEncoder::Encode);
 }
 
@@ -43,7 +50,7 @@ void TextEncoder::Encode(gin::Arguments* arguments) {
   CHECK(isolate);
   v8::HandleScope handle_scope(isolate);
 
-  std::vector<v8::Local<v8::Value>> args = arguments->GetAll();
+  v8::LocalVector<v8::Value> args = arguments->GetAll();
   CHECK_GT(args.size(), 0u);
   CHECK(args[0]->IsString());
   v8::Local<v8::String> v8_input = args[0].As<v8::String>();

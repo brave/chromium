@@ -52,8 +52,8 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, EditPasswordDialog) {
   RunTest("password_manager/edit_password_dialog_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, MovePasswordsDialog) {
-  RunTest("password_manager/move_passwords_dialog_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, FullDataReset) {
+  RunTest("password_manager/full_data_reset_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, PasskeyDetailsCard) {
@@ -96,8 +96,18 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, SharePasswordHeader) {
   RunTest("password_manager/share_password_header_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, SharePasswordGroupAvatar) {
+  RunTest("password_manager/share_password_group_avatar_test.js",
+          "mocha.run()");
+}
+
 IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, SharePasswordLoadingDialog) {
   RunTest("password_manager/share_password_loading_dialog_test.js",
+          "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(PasswordManagerUITest, SharePasswordConfirmationDialog) {
+  RunTest("password_manager/share_password_confirmation_dialog_test.js",
           "mocha.run()");
 }
 

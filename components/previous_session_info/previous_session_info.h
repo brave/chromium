@@ -25,15 +25,14 @@ extern NSString* const kOSStartTime;
 // Key in the UserDefaults for a boolean describing whether or not the session
 // restoration is in progress.
 extern NSString* const kPreviousSessionInfoRestoringSession;
-// Key in the UserDefaults for an array which contains the ids for the connected
-// scene sessions on the previous run.
-extern NSString* const kPreviousSessionInfoConnectedSceneSessionIDs;
 // Prefix key in the UserDefaults for a dictionary with session info params.
 extern NSString* const kPreviousSessionInfoParamsPrefix;
 // Key in the UserDefaults for the memory footprint of the browser process.
 extern NSString* const kPreviousSessionInfoMemoryFootprint;
 // Key in the UserDefaults for the number of open tabs.
 extern NSString* const kPreviousSessionInfoTabCount;
+// Key in the UserDefaults for the number of open inactive tabs.
+extern NSString* const kPreviousSessionInfoInactiveTabCount;
 // Key in the UserDefaults for the number of open "off the record" tabs.
 extern NSString* const kPreviousSessionInfoOTRTabCount;
 
@@ -124,11 +123,6 @@ enum class DeviceBatteryState {
 // Reset to NO after resetSessionRestorationFlag call.
 @property(nonatomic, readonly) BOOL terminatedDuringSessionRestoration;
 
-// The list of the session IDs for all the connected scenes, used for crash
-// restoration.
-@property(nonatomic, readonly)
-    NSMutableSet<NSString*>* connectedSceneSessionsIDs;
-
 // Crash report parameters as key-value pairs.
 @property(atomic, readonly)
     NSDictionary<NSString*, NSString*>* reportParameters;
@@ -142,6 +136,9 @@ enum class DeviceBatteryState {
 
 // Number of open tabs in the previous session.
 @property(nonatomic, readonly) NSInteger tabCount;
+
+// Number of open inactive tabs in the previous session.
+@property(nonatomic, readonly) NSInteger inactiveTabCount;
 
 // Number of open "off the record" tabs in the previous session.
 @property(nonatomic, readonly) NSInteger OTRTabCount;
@@ -171,9 +168,6 @@ enum class DeviceBatteryState {
 // startRecordingMemoryFootprintWithInterval was no called.
 - (void)stopRecordingMemoryFootprint;
 
-// Updates the currently available device storage, in kilobytes.
-- (void)updateAvailableDeviceStorage:(NSInteger)availableStorage;
-
 // Updates the saved last known session time.
 - (void)updateSessionEndTime;
 
@@ -193,15 +187,6 @@ enum class DeviceBatteryState {
 // ignored.
 - (void)resetMemoryWarningFlag;
 
-// Adds |sessionID| to the list of connected sessions.
-- (void)addSceneSessionID:(NSString*)sessionID;
-
-// Removes |sessionID| from the list of connected sessions.
-- (void)removeSceneSessionID:(NSString*)sessionID;
-
-// Empties the list of connected session.
-- (void)resetConnectedSceneSessionIDs;
-
 // Increments the warm start count by one.
 - (void)incrementWarmStartCount;
 
@@ -218,8 +203,10 @@ enum class DeviceBatteryState {
 // gets destructed.
 - (void)resetSessionRestorationFlag;
 
-// Records number of regular (non off the record) tabs.
+// Records number of regular (non off the record and non inactive) tabs.
 - (void)updateCurrentSessionTabCount:(NSInteger)count;
+// Records number of inactive tabs.
+- (void)updateCurrentSessionInactiveTabCount:(NSInteger)count;
 // Records number of off the record tabs.
 - (void)updateCurrentSessionOTRTabCount:(NSInteger)count;
 

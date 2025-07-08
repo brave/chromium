@@ -7,13 +7,13 @@
 #include <string>
 
 #include "ash/constants/notifier_catalogs.h"
-#include "ash/test/ash_test_base.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ash/input_method/fake_suggestion_handler.h"
 #include "chrome/browser/ash/input_method/suggestion_enums.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "chrome/test/base/testing_profile.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/base_event_utils.h"
@@ -33,7 +33,7 @@ struct DiacriticsTestCase {
 };
 
 class LongpressDiacriticsSuggesterTest
-    : public AshTestBase,
+    : public ChromeAshTestBase,
       public testing::WithParamInterface<DiacriticsTestCase> {};
 
 using AssistiveWindowButton = ui::ime::AssistiveWindowButton;
@@ -54,8 +54,8 @@ const auto kDigitToDomCode = base::MakeFixedFlatMap<int, ui::DomCode>({
 });
 
 ui::KeyEvent CreateKeyEventFromCode(const ui::DomCode& code) {
-  return ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code, ui::EF_NONE,
-                      ui::DomKey::NONE, ui::EventTimeForNow());
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code,
+                      ui::EF_NONE, ui::DomKey::NONE, ui::EventTimeForNow());
 }
 
 ui::KeyEvent CreateRepeatKeyEventFromCode(const ui::DomCode& code,
@@ -64,7 +64,7 @@ ui::KeyEvent CreateRepeatKeyEventFromCode(const ui::DomCode& code,
   if (shifted) {
     flags |= ui::EF_SHIFT_DOWN;
   }
-  return ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_UNKNOWN, code, flags,
+  return ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, code, flags,
                       ui::DomKey::NONE, ui::EventTimeForNow());
 }
 
@@ -80,7 +80,7 @@ AssistiveWindowButton CreateDiacriticsButtonFor(
       .id = ui::ime::ButtonId::kSuggestion,
       .window_type =
           ash::ime::AssistiveWindowType::kLongpressDiacriticsSuggestion,
-      .index = index,
+      .suggestion_index = index,
       .announce_string = announce_string,
   };
   return button;

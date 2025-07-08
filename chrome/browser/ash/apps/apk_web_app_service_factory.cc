@@ -16,8 +16,10 @@ namespace ash {
 // static
 ApkWebAppService* ApkWebAppServiceFactory::GetForProfile(Profile* profile) {
   // ApkWebAppService is not supported if web apps aren't available.
-  if (!web_app::AreWebAppsEnabled(profile))
+  if (!web_app::AreWebAppsEnabled(profile) ||
+      !arc::IsArcAllowedForProfile(profile)) {
     return nullptr;
+  }
 
   return static_cast<ApkWebAppService*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
@@ -34,9 +36,12 @@ ApkWebAppServiceFactory::ApkWebAppServiceFactory()
           "ApkWebAppService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(ArcAppListPrefsFactory::GetInstance());
   DependsOn(web_app::WebAppProviderFactory::GetInstance());
@@ -44,13 +49,14 @@ ApkWebAppServiceFactory::ApkWebAppServiceFactory()
 
 ApkWebAppServiceFactory::~ApkWebAppServiceFactory() = default;
 
-KeyedService* ApkWebAppServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+ApkWebAppServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = static_cast<Profile*>(context);
   if (!arc::IsArcAllowedForProfile(profile))
     return nullptr;
 
-  return new ApkWebAppService(profile, /*test_delegate=*/nullptr);
+  return std::make_unique<ApkWebAppService>(profile, /*test_delegate=*/nullptr);
 }
 
 }  // namespace ash

@@ -17,14 +17,14 @@ class OmniboxActionInSuggest : public OmniboxAction {
  public:
   OmniboxActionInSuggest(
       omnibox::ActionInfo action_info,
-      absl::optional<TemplateURLRef::SearchTermsArgs> search_terms_args);
+      std::optional<TemplateURLRef::SearchTermsArgs> search_terms_args);
 
 #if BUILDFLAG(IS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetOrCreateJavaObject(
       JNIEnv* env) const override;
 #endif
 
-  void RecordActionShown(size_t position, bool executed) const override;
+  void RecordActionShown(size_t position, bool used) const override;
   void Execute(ExecutionContext& context) const override;
   OmniboxActionId ActionId() const override;
 
@@ -34,9 +34,14 @@ class OmniboxActionInSuggest : public OmniboxAction {
   // supplied instance represents one, otherwise returns nullptr.
   static const OmniboxActionInSuggest* FromAction(const OmniboxAction* action);
   static OmniboxActionInSuggest* FromAction(OmniboxAction* action);
+  // Static function that registers that an action with a specified type was
+  // shown or used. This function can be employed when avoiding the use of the
+  // action cpp pointer.
+  static void RecordShownAndUsedMetrics(omnibox::ActionInfo::ActionType type,
+                                        bool used);
 
   omnibox::ActionInfo action_info{};
-  absl::optional<TemplateURLRef::SearchTermsArgs> search_terms_args{};
+  std::optional<TemplateURLRef::SearchTermsArgs> search_terms_args{};
 
  private:
   ~OmniboxActionInSuggest() override;

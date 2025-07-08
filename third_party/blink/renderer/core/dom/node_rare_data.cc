@@ -45,13 +45,6 @@
 
 namespace blink {
 
-struct SameSizeAsNodeRareData : NodeData {
-  uint16_t bit_fields_;
-  Member<void*> member_[5];
-};
-
-ASSERT_SIZE(NodeRareData, SameSizeAsNodeRareData);
-
 void NodeMutationObserverData::Trace(Visitor* visitor) const {
   visitor->Trace(registry_);
   visitor->Trace(transient_registry_);
@@ -79,37 +72,10 @@ void NodeMutationObserverData::RemoveRegistration(
   registry_.EraseAt(registry_.Find(registration));
 }
 
-NodeData::NodeData(LayoutObject* layout_object,
-                   scoped_refptr<const ComputedStyle> computed_style)
-    : computed_style_(computed_style),
-      layout_object_(layout_object),
-      bit_field_(RestyleFlags::encode(0) |
-                 ClassTypeData::encode(static_cast<uint16_t>(
-                     ClassType::kNodeRareData))  // Just pick any.
-      ) {}
-
-NodeData::NodeData(blink::NodeData&&) = default;
-NodeData::~NodeData() = default;
-
-void NodeData::SetComputedStyle(
-    scoped_refptr<const ComputedStyle> computed_style) {
-  DCHECK_NE(&SharedEmptyData(), this);
-  computed_style_ = computed_style;
-}
-
-NodeData& NodeData::SharedEmptyData() {
-  DEFINE_STATIC_LOCAL(Persistent<NodeData>, shared_empty_data,
-                      (MakeGarbageCollected<NodeData>(nullptr, nullptr)));
-  return *shared_empty_data;
-}
-void NodeData::Trace(Visitor* visitor) const {
-  visitor->Trace(layout_object_);
-}
-
 void NodeRareData::RegisterScrollTimeline(ScrollTimeline* timeline) {
   if (!scroll_timelines_) {
     scroll_timelines_ =
-        MakeGarbageCollected<HeapHashSet<Member<ScrollTimeline>>>();
+        MakeGarbageCollected<GCedHeapHashSet<Member<ScrollTimeline>>>();
   }
   scroll_timelines_->insert(timeline);
 }
@@ -127,25 +93,39 @@ void NodeRareData::InvalidateAssociatedAnimationEffects() {
 }
 
 void NodeRareData::AddDOMPart(Part& part) {
+  DCHECK(!RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled());
   if (!dom_parts_) {
     dom_parts_ = MakeGarbageCollected<PartsList>();
   }
-  dom_parts_->insert(&part);
+  DCHECK(!base::Contains(*dom_parts_, &part));
+  dom_parts_->push_back(&part);
 }
 
 void NodeRareData::RemoveDOMPart(Part& part) {
-  if (!dom_parts_ || !dom_parts_->Contains(&part)) {
-    return;
+  DCHECK(!RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled());
+  DCHECK(dom_parts_ && base::Contains(*dom_parts_, &part));
+  // Common case is that one node has one part:
+  if (dom_parts_->size() == 1) {
+    DCHECK_EQ(dom_parts_->front(), &part);
+    dom_parts_->clear();
+  } else {
+    // This is the very slow case - multiple parts for a single node.
+    TemporaryPartsList new_list;
+    for (auto p : *dom_parts_) {
+      if (p != &part) {
+        new_list.push_back(p);
+      }
+    }
+    dom_parts_->Swap(new_list);
   }
-  dom_parts_->erase(&part);
   if (dom_parts_->empty()) {
     dom_parts_ = nullptr;
   }
 }
 
-PartsList NodeRareData::GetDOMParts() const {
-  CHECK(dom_parts_);
-  return *dom_parts_;
+PartsList* NodeRareData::GetDOMParts() const {
+  DCHECK(!dom_parts_ || !RuntimeEnabledFeatures::DOMPartsAPIMinimalEnabled());
+  return dom_parts_.Get();
 }
 
 void NodeRareData::Trace(blink::Visitor* visitor) const {
@@ -154,7 +134,6 @@ void NodeRareData::Trace(blink::Visitor* visitor) const {
   visitor->Trace(node_lists_);
   visitor->Trace(scroll_timelines_);
   visitor->Trace(dom_parts_);
-  NodeData::Trace(visitor);
 }
 
 void NodeRareData::IncrementConnectedSubframeCount() {

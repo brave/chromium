@@ -6,14 +6,13 @@ package org.chromium.net;
 
 import android.content.Context;
 
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ContextUtils;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.test.util.UrlUtils;
 
-/**
- * Wrapper class to start a Quic test server.
- */
+/** Wrapper class to start a Quic test server. */
 @JNINamespace("cronet")
 public final class QuicTestServer {
     private static final String TAG = QuicTestServer.class.getSimpleName();
@@ -32,14 +31,14 @@ public final class QuicTestServer {
             throw new IllegalStateException("Quic server is already running");
         }
         TestFilesInstaller.installIfNeeded(context);
-        QuicTestServerJni.get().startQuicTestServer(
-                TestFilesInstaller.getInstalledPath(context), UrlUtils.getIsolatedTestRoot());
+        QuicTestServerJni.get()
+                .startQuicTestServer(
+                        TestFilesInstaller.getInstalledPath(context),
+                        UrlUtils.getIsolatedTestRoot());
         sServerRunning = true;
     }
 
-    /**
-     * Shuts down the server. No-op if the server is already shut down.
-     */
+    /** Shuts down the server. No-op if the server is already shut down. */
     public static void shutdownQuicTestServer() {
         if (!sServerRunning) {
             return;
@@ -60,6 +59,14 @@ public final class QuicTestServer {
         return QuicTestServerJni.get().getServerPort();
     }
 
+    public static String getConnectionClosePath() {
+        return QuicTestServerJni.get().getConnectionClosePath();
+    }
+
+    public static void delayResponse(String path, int delayInSeconds) {
+        QuicTestServerJni.get().delayResponse(path, delayInSeconds);
+    }
+
     public static final String getServerCert() {
         return CERT_USED;
     }
@@ -73,12 +80,17 @@ public final class QuicTestServer {
         return MockCertVerifier.createMockCertVerifier(CERTS_USED, true);
     }
 
+    public static int numSessions() {
+        return QuicTestServerJni.get().numSessions();
+    }
+
     @NativeMethods("cronet_tests")
     interface Natives {
         /*
          * Runs a quic test server synchronously.
          */
         void startQuicTestServer(String filePath, String testDataDir);
+
         /*
          * Shutdowns the quic test-server synchronously.
          *
@@ -86,6 +98,29 @@ public final class QuicTestServer {
          * behavior if not compiled in debug mode.
          */
         void shutdownQuicTestServer();
+
         int getServerPort();
+
+        /*
+         * Responses for path will be delayed by delayInSeconds.
+         *
+         * Ideally this wouldn't take a delay. Instead, it should provide a synchronization
+         * mechanism that allows the caller to unblock the request. This would require changes all
+         * the way down to QUICHE though.
+         */
+        void delayResponse(String path, int delayInSeconds);
+
+        /*
+         * The server will send a CONNECTION_CLOSE packet to the client upon receiving a connection
+         * on the specified path.
+         *
+         * The expected error code is QUIC_NO_ERROR.
+         */
+        String getConnectionClosePath();
+
+        /*
+         * Returns the number of sessions.
+         */
+        int numSessions();
     }
 }

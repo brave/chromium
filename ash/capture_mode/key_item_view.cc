@@ -55,9 +55,7 @@ KeyItemView::KeyItemView(ui::KeyboardCode key_code)
 
   capture_mode_util::SetHighlightBorder(
       this, kKeyItemHeight / 2,
-      chromeos::features::IsJellyrollEnabled()
-          ? views::HighlightBorder::Type::kHighlightBorderOnShadow
-          : views::HighlightBorder::Type::kHighlightBorder1);
+      views::HighlightBorder::Type::kHighlightBorderOnShadow);
 
   shadow_->SetRoundedCornerRadius(kKeyItemHeight / 2);
 }
@@ -85,11 +83,11 @@ void KeyItemView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
 
 void KeyItemView::OnThemeChanged() {
   views::View::OnThemeChanged();
-  GetBackground()->SetNativeControlColor(GetColor());
+  GetBackground()->SetColor(GetColor());
   SchedulePaint();
 }
 
-void KeyItemView::Layout() {
+void KeyItemView::Layout(PassKey) {
   const auto bounds = GetContentsBounds();
   if (icon_) {
     icon_->SetBoundsRect(bounds);
@@ -100,7 +98,8 @@ void KeyItemView::Layout() {
   }
 }
 
-gfx::Size KeyItemView::CalculatePreferredSize() const {
+gfx::Size KeyItemView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   // Return the fixed size if the key item contains icon or label with a single
   // character.
   if (icon_ || (label_ && label_->GetText().length() == 1)) {
@@ -108,7 +107,7 @@ gfx::Size KeyItemView::CalculatePreferredSize() const {
   }
 
   int width = 0;
-  for (const auto* child : children()) {
+  for (const views::View* child : children()) {
     const auto child_size = child->GetPreferredSize();
     width += child_size.width();
   }
@@ -132,7 +131,7 @@ void KeyItemView::SetIcon(const gfx::VectorIcon& icon) {
 void KeyItemView::SetText(const std::u16string& text) {
   if (!label_) {
     label_ = AddChildView(std::make_unique<views::Label>());
-    label_->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+    label_->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
     label_->SetElideBehavior(gfx::ElideBehavior::NO_ELIDE);
     label_->SetFontList(gfx::FontList({kGoogleSansFont}, gfx::Font::NORMAL,
                                       kKeyItemViewFontSize,
@@ -151,7 +150,7 @@ void KeyItemView::SetText(const std::u16string& text) {
   label_->SetText(text);
 }
 
-BEGIN_METADATA(KeyItemView, views::View)
+BEGIN_METADATA(KeyItemView)
 END_METADATA
 
 }  // namespace ash

@@ -6,13 +6,15 @@ package org.chromium.chrome.browser.tab;
 
 import android.graphics.Color;
 
-import androidx.annotation.Nullable;
-
+import org.chromium.base.Token;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.util.ColorUtils;
 
-/**
- * Object that contains the state of a tab, including its navigation history.
- */
+import java.io.File;
+
+/** Object that contains the state of a tab, including its navigation history. */
+@NullMarked
 public class TabState {
     /** Special value for timestamp related attributes. */
     public static final long TIMESTAMP_NOT_SET = -1;
@@ -21,12 +23,24 @@ public class TabState {
     public static final int UNSPECIFIED_THEME_COLOR = Color.TRANSPARENT;
 
     /** Navigation history of the WebContents. */
-    public WebContentsState contentsState;
+    public @Nullable WebContentsState contentsState;
+
     public int parentId = Tab.INVALID_TAB_ID;
-    public int rootId;
+
+    /**
+     * The legacy tab group ID. This field is replaced by {@link tabGroupId}.
+     *
+     * @deprecated Use {@link tabGroupId} instead. This field will continue to exist and be updated
+     *     in the near term. However, any new code should use {@link tabGroupId} and old code should
+     *     migrate off of root id.
+     */
+    @Deprecated public int rootId;
+
+    /** The tab group ID. */
+    public @Nullable Token tabGroupId;
 
     public long timestampMillis = TIMESTAMP_NOT_SET;
-    public String openerAppId;
+    public @Nullable String openerAppId;
 
     /**
      * The tab's brand theme color. Set this to {@link #UNSPECIFIED_THEME_COLOR} for an unspecified
@@ -34,7 +48,9 @@ public class TabState {
      */
     public int themeColor = UNSPECIFIED_THEME_COLOR;
 
-    public @Nullable @TabLaunchType Integer tabLaunchTypeAtCreation;
+    public @TabLaunchType int tabLaunchTypeAtCreation;
+
+    public boolean tabHasSensitiveContent;
 
     /** Whether this TabState was created from a file containing info about an incognito Tab. */
     public boolean isIncognito;
@@ -44,16 +60,19 @@ public class TabState {
 
     public long lastNavigationCommittedTimestampMillis = TIMESTAMP_NOT_SET;
 
-    public boolean isIncognito() {
-        return isIncognito;
-    }
+    // Flag to signal TabState should be migrated to new FlatBuffer format.
+    // This field is not persisted on disk.
+    public boolean shouldMigrate;
 
-    /** @return The theme color of the tab or {@link #UNSPECIFIED_THEME_COLOR} if not set. */
-    public int getThemeColor() {
-        return themeColor;
-    }
+    // Temporary field indicating which legacy TabState file to delete (if
+    // applicable). Legacy TabState file should be deleted if the Tab has
+    // been migrated onto the new FlatBuffer format.
+    public @Nullable File legacyFileToDelete;
 
-    /** @return True if the tab has a theme color set. */
+    /* Indicates whether the tab is pinned. */
+    public boolean isPinned;
+
+    /** Returns true if the tab has a theme color set. */
     public boolean hasThemeColor() {
         return themeColor != UNSPECIFIED_THEME_COLOR
                 && !ColorUtils.isThemeColorTooBright(themeColor);

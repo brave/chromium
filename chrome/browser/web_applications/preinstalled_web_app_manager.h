@@ -7,8 +7,11 @@
 
 #include <map>
 #include <memory>
+#include <optional>
+#include <set>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -18,11 +21,8 @@
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
 #include "chrome/browser/web_applications/file_utils_wrapper.h"
+#include "chrome/browser/web_applications/preinstalled_web_apps/preinstalled_web_apps.h"
 #include "url/gurl.h"
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/web_applications/preinstalled_web_app_window_experiment.h"
-#endif
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -45,6 +45,8 @@ class WebAppProvider;
 // similar to WebAppPolicyManager.
 class PreinstalledWebAppManager {
  public:
+  using CacheDeviceInfoCallback = base::OnceClosure;
+  using ConsumeDeviceInfo = base::OnceCallback<void(DeviceInfo)>;
   using ConsumeLoadedConfigs = base::OnceCallback<void(LoadedConfigs)>;
   using ConsumeParsedConfigs = base::OnceCallback<void(ParsedConfigs)>;
   using ConsumeInstallOptions =
@@ -71,23 +73,24 @@ class PreinstalledWebAppManager {
   static const char* kHistogramCorruptUserUninstallPrefsCount;
   static const char* kHistogramInstallResult;
   static const char* kHistogramUninstallAndReplaceCount;
+  static const char* kHistogramInstallCount;
+  static const char* kHistogramUninstallTotalCount;
+  static const char* kHistogramUninstallSourceRemovedCount;
+  static const char* kHistogramUninstallAppRemovedCount;
   static const char* kHistogramAppToReplaceStillInstalledCount;
   static const char* kHistogramAppToReplaceStillDefaultInstalledCount;
   static const char* kHistogramAppToReplaceStillInstalledInShelfCount;
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
-  // TODO(crbug.com/1434692): All these should return a base::AutoReset<bool> to
-  // avoid leaking override state beyond unit test execution.
-  static void SkipStartupForTesting();
+  static base::AutoReset<bool> SkipStartupForTesting();
   static base::AutoReset<bool> BypassAwaitingDependenciesForTesting();
-  static void BypassOfflineManifestRequirementForTesting();
-
-  static void OverridePreviousUserUninstallConfigForTesting();
-  static void SetConfigDirForTesting(const base::FilePath* config_dir);
-
-  static void SetConfigsForTesting(const base::Value::List* configs);
-  static void SetFileUtilsForTesting(FileUtilsWrapper* file_utils);
+  static base::AutoReset<bool> BypassOfflineManifestRequirementForTesting();
+  static base::AutoReset<bool> OverridePreviousUserUninstallConfigForTesting();
+  static base::AutoReset<const base::Value::List*> SetConfigsForTesting(
+      const base::Value::List* configs);
+  static base::AutoReset<FileUtilsWrapper*> SetFileUtilsForTesting(
+      FileUtilsWrapper* file_utils);
 
   explicit PreinstalledWebAppManager(Profile* profile);
   PreinstalledWebAppManager(const PreinstalledWebAppManager&) = delete;
@@ -113,10 +116,6 @@ class PreinstalledWebAppManager {
   // global setting.
   void SetSkipStartupSynchronizeForTesting(bool skip_startup);
 
-#if BUILDFLAG(IS_CHROMEOS)
-  PreinstalledWebAppWindowExperiment& GetWindowExperimentForTesting();
-#endif
-
   // Debugging info used by: chrome://web-app-internals
   struct DebugInfo {
     DebugInfo();
@@ -124,13 +123,13 @@ class PreinstalledWebAppManager {
 
     bool is_start_up_task_complete = false;
     std::vector<std::string> parse_errors;
-    std::vector<ExternalInstallOptions> enabled_configs;
-    using DisabledConfigWithReason =
-        std::pair<ExternalInstallOptions, std::string>;
-    std::vector<DisabledConfigWithReason> disabled_configs;
+    using ConfigWithLog = std::pair<ExternalInstallOptions, std::string>;
+    std::vector<ConfigWithLog> uninstall_configs;
+    std::vector<ConfigWithLog> install_configs;
+    std::vector<ConfigWithLog> ignore_configs;
     std::map<InstallUrl, ExternallyManagedAppManager::InstallResult>
         install_results;
-    std::map<InstallUrl, bool> uninstall_results;
+    std::map<InstallUrl, webapps::UninstallResultCode> uninstall_results;
   };
   const DebugInfo* debug_info() const { return debug_info_.get(); }
 
@@ -142,6 +141,9 @@ class PreinstalledWebAppManager {
   void LoadAndSynchronize(SynchronizeCallback callback);
 
   void Load(ConsumeInstallOptions callback);
+  void LoadDeviceInfo(ConsumeDeviceInfo callback);
+  void CacheDeviceInfo(CacheDeviceInfoCallback callback,
+                       DeviceInfo device_info);
   void LoadConfigs(ConsumeLoadedConfigs callback);
   void ParseConfigs(ConsumeParsedConfigs callback,
                     LoadedConfigs loaded_configs);
@@ -152,14 +154,16 @@ class PreinstalledWebAppManager {
                    std::vector<ExternalInstallOptions>);
   void OnExternalWebAppsSynchronized(
       ExternallyManagedAppManager::SynchronizeCallback callback,
-      std::map<InstallUrl, std::vector<AppId>> desired_uninstall_and_replaces,
+      std::set<InstallUrl> desired_preferred_apps_for_supported_links,
+      std::map<InstallUrl, std::vector<webapps::AppId>>
+          desired_uninstall_and_replaces,
       std::map<InstallUrl, ExternallyManagedAppManager::InstallResult>
           install_results,
-      std::map<InstallUrl, bool> uninstall_results);
+      std::map<InstallUrl, webapps::UninstallResultCode> uninstall_results);
   void OnStartUpTaskCompleted(
       std::map<InstallUrl, ExternallyManagedAppManager::InstallResult>
           install_results,
-      std::map<InstallUrl, bool> uninstall_results);
+      std::map<InstallUrl, webapps::UninstallResultCode> uninstall_results);
 
   // Returns whether this is the first time we've deployed default apps on this
   // profile.
@@ -173,14 +177,13 @@ class PreinstalledWebAppManager {
   const raw_ptr<Profile> profile_;
   raw_ptr<WebAppProvider> provider_ = nullptr;
 
-#if BUILDFLAG(IS_CHROMEOS)
-  PreinstalledWebAppWindowExperiment preinstalled_web_app_window_experiment_;
-#endif
-
   bool skip_startup_for_testing_ = false;
   std::unique_ptr<DebugInfo> debug_info_;
 
   std::unique_ptr<DeviceDataInitializedEvent> device_data_initialized_event_;
+
+  // TODO(http://b/333583704): Revert CL which added this field after migration.
+  std::optional<DeviceInfo> device_info_;
 
   base::ObserverList<PreinstalledWebAppManager::Observer, /*check_empty=*/true>
       observers_;

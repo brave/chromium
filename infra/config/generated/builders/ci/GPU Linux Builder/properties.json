@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/GPU Linux Builder/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,11 +22,13 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
-                  "use_clang_coverage"
+                  "use_clang_coverage",
+                  "chromium_with_telemetry_dependencies"
                 ],
                 "config": "chromium"
               }
@@ -45,7 +50,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
@@ -86,15 +92,7 @@
           "group": "tryserver.chromium.linux"
         },
         {
-          "builder": "linux-inverse-fieldtrials-fyi-rel",
-          "group": "tryserver.chromium.linux"
-        },
-        {
-          "builder": "linux-mbi-mode-per-render-process-host-rel",
-          "group": "tryserver.chromium.linux"
-        },
-        {
-          "builder": "linux-mbi-mode-per-site-instance-rel",
+          "builder": "linux-full-remote-rel",
           "group": "tryserver.chromium.linux"
         },
         {
@@ -102,21 +100,24 @@
           "group": "tryserver.chromium.linux"
         },
         {
-          "builder": "linux-rel-ml",
-          "group": "tryserver.chromium.linux"
-        },
-        {
-          "builder": "linux-siso-rel",
+          "builder": "linux-rel-test-selection",
           "group": "tryserver.chromium.linux"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/GPU Linux Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 250,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -126,6 +127,9 @@
     ]
   },
   "builder_group": "chromium.gpu",
+  "gardener_rotations": [
+    "chromium.gpu"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium.gpu"

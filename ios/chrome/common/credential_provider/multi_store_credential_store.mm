@@ -7,10 +7,7 @@
 #import "base/check.h"
 #import "base/notreached.h"
 #import "ios/chrome/common/credential_provider/credential.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/chrome/common/credential_provider/credential_store_util.h"
 
 @interface MultiStoreCredentialStore ()
 
@@ -39,6 +36,15 @@
     }
   }
   return uniqueCredentials.allObjects;
+}
+
+- (void)getCredentialsWithCompletion:(CredentialFetchCompletion)completion {
+  credential_store_util::ReadFromMultipleCredentialStoresAsync(
+      self.stores,
+      base::BindOnce(
+          [](CredentialFetchCompletion completion,
+             NSArray<id<Credential>>* credentials) { completion(credentials); },
+          std::move(completion)));
 }
 
 - (id<Credential>)credentialWithRecordIdentifier:(NSString*)recordIdentifier {

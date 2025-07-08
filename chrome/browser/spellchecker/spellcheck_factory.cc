@@ -33,9 +33,12 @@ SpellcheckServiceFactory::SpellcheckServiceFactory()
           "SpellcheckService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   // TODO(erg): Uncomment these as they are initialized.
   // DependsOn(RequestContextFactory::GetInstance());
@@ -43,12 +46,11 @@ SpellcheckServiceFactory::SpellcheckServiceFactory()
 
 SpellcheckServiceFactory::~SpellcheckServiceFactory() = default;
 
-KeyedService* SpellcheckServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SpellcheckServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   // Many variables are initialized from the |context| in the SpellcheckService.
-  SpellcheckService* spellcheck = new SpellcheckService(context);
-
-  return spellcheck;
+  return std::make_unique<SpellcheckService>(context);
 }
 
 void SpellcheckServiceFactory::RegisterProfilePrefs(

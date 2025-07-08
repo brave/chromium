@@ -6,6 +6,7 @@
 #define CC_TEST_FAKE_PICTURE_LAYER_TILING_CLIENT_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "cc/raster/raster_source.h"
@@ -13,6 +14,7 @@
 #include "cc/tiles/picture_layer_tiling.h"
 #include "cc/tiles/tile.h"
 #include "cc/tiles/tile_manager.h"
+#include "cc/tiles/tile_priority.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace viz {
@@ -21,6 +23,8 @@ class RasterContextProvider;
 }
 
 namespace cc {
+
+class PictureLayerTilingSet;
 
 class FakePictureLayerTilingClient : public PictureLayerTilingClient {
  public:
@@ -43,9 +47,10 @@ class FakePictureLayerTilingClient : public PictureLayerTilingClient {
       const PictureLayerTiling* tiling) const override;
   bool RequiresHighResToDraw() const override;
   const PaintWorkletRecordMap& GetPaintWorkletRecords() const override;
-  bool IsDirectlyCompositedImage() const override;
-  bool ScrollInteractionInProgress() const override;
-  bool CurrentScrollCheckerboardsDueToNoRecording() const override;
+  std::vector<const DrawImage*> GetDiscardableImagesInRect(
+      const gfx::Rect& rect) const override;
+  ScrollOffsetMap GetRasterInducingScrollOffsets() const override;
+  const GlobalStateThatImpactsTilePriority& global_tile_state() const override;
 
   void set_twin_tiling_set(PictureLayerTilingSet* set) {
     twin_set_ = set;
@@ -66,18 +71,23 @@ class FakePictureLayerTilingClient : public PictureLayerTilingClient {
     return tile_manager_.get();
   }
 
+  void set_memory_limit_policy(TileMemoryLimitPolicy policy) {
+    global_tile_state_.memory_limit_policy = policy;
+  }
+
  protected:
   FakeTileManagerClient tile_manager_client_;
   std::unique_ptr<ResourcePool> resource_pool_;
   std::unique_ptr<TileManager> tile_manager_;
   scoped_refptr<RasterSource> raster_source_;
   gfx::Size tile_size_;
-  raw_ptr<PictureLayerTilingSet, DanglingUntriaged> twin_set_;
-  raw_ptr<PictureLayerTiling, DanglingUntriaged> twin_tiling_;
+  raw_ptr<PictureLayerTilingSet> twin_set_;
+  raw_ptr<PictureLayerTiling> twin_tiling_;
   gfx::Rect text_rect_;
   Region invalidation_;
   bool has_valid_tile_priorities_;
   PaintWorkletRecordMap paint_worklet_records_;
+  GlobalStateThatImpactsTilePriority global_tile_state_;
 };
 
 }  // namespace cc

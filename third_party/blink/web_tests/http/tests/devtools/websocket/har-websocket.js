@@ -5,6 +5,9 @@
 import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult('Verifies that HAR exports contain websocket messages');
   await TestRunner.showPanel('network');
@@ -36,9 +39,12 @@ import {NetworkTestRunner} from 'network_test_runner';
 
   const harString = await new Promise(async resolve => {
     const stream = new TestRunner.StringOutputStream(resolve);
-    const progress = new Common.Progress();
+    const progress = new Common.Progress.Progress();
     await NetworkTestRunner.writeHARLog(
-        stream, NetworkTestRunner.networkRequests(), progress);
+        stream,
+        NetworkTestRunner.networkRequests(),
+        {sanitize: false},
+        progress);
     progress.done();
     stream.close();
   });

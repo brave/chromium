@@ -40,15 +40,14 @@ class MEDIA_EXPORT AmplitudePeakDetector {
   AmplitudePeakDetector& operator=(const AmplitudePeakDetector&) = delete;
 
   // Detects increases in amplitude, and runs `peak_detected_cb_` when we cross
-  // a threshold (but not when amplitude falls back bellow the threshold).
-  void FindPeak(const void* data, int frames, int bytes_per_sample);
+  // a threshold (but not when amplitude falls back below the threshold).
+  void FindPeak(base::span<const uint8_t> data, size_t bytes_per_sample);
   void FindPeak(const AudioBus* audio_bus);
 
   void SetIsTracingEnabledForTests(bool is_tracing_enabled);
 
  private:
   bool AreFramesLoud(const AudioBus* audio_bus);
-  bool AreFramesLoud(const void* data, int frames, int bytes_per_sample);
 
   void MaybeReportPeak(bool are_frames_loud);
 

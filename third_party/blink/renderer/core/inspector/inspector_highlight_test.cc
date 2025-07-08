@@ -8,10 +8,11 @@
 #include "base/values.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/accessibility/ax_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/inspector_protocol/crdtp/json.h"
 #include "third_party/inspector_protocol/crdtp/span.h"
 
@@ -22,6 +23,7 @@ namespace {
 using base::test::ParseJson;
 using testing::ByRef;
 using testing::Eq;
+using testing::UnorderedElementsAre;
 
 void AssertValueEqualsJSON(const std::unique_ptr<protocol::Value>& actual_value,
                            const std::string& json_expected) {
@@ -43,6 +45,8 @@ class InspectorHighlightTest : public testing::Test {
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
 
  private:
+  test::TaskEnvironment task_environment_;
+
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
@@ -51,7 +55,7 @@ void InspectorHighlightTest::SetUp() {
 }
 
 TEST_F(InspectorHighlightTest, BuildSnapContainerInfoNoSnapAreas) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="target">test</div>
   )HTML");
   GetDocument().View()->UpdateAllLifecyclePhasesForTest();
@@ -60,7 +64,7 @@ TEST_F(InspectorHighlightTest, BuildSnapContainerInfoNoSnapAreas) {
 }
 
 TEST_F(InspectorHighlightTest, BuildSnapContainerInfoSnapAreas) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #snap {
         background-color: white;
@@ -111,7 +115,7 @@ TEST_F(InspectorHighlightTest, BuildSnapContainerInfoSnapAreas) {
 }
 
 TEST_F(InspectorHighlightTest, BuildSnapContainerInfoTopLevelSnapAreas) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       :root {
         scroll-snap-type: y mandatory;
@@ -155,7 +159,7 @@ TEST_F(InspectorHighlightTest, BuildSnapContainerInfoTopLevelSnapAreas) {
 
 TEST_F(InspectorHighlightTest,
        BuildContainerQueryContainerInfoWithoutDescendants) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #container {
         width: 400px;
@@ -185,7 +189,7 @@ TEST_F(InspectorHighlightTest,
 
 TEST_F(InspectorHighlightTest,
        BuildContainerQueryContainerInfoWithDescendants) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #container {
         width: 400px;
@@ -234,7 +238,7 @@ TEST_F(InspectorHighlightTest,
 }
 
 TEST_F(InspectorHighlightTest, BuildIsolatedElementInfo) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #element {
         width: 400px;
@@ -273,6 +277,8 @@ TEST_F(InspectorHighlightTest, BuildIsolatedElementInfo) {
 
 static std::string GetBackgroundColorFromElementInfo(Element* element) {
   EXPECT_TRUE(element);
+  AXContext ax_context(element->GetDocument(), ui::kAXModeBasic);
+  element->GetDocument().View()->UpdateAllLifecyclePhasesForTest();
   auto info = BuildElementInfo(element);
   EXPECT_TRUE(info);
   AppendStyleInfo(element, info.get(), {}, {});
@@ -298,7 +304,7 @@ static std::string GetBackgroundColorFromElementInfo(Element* element) {
 }
 
 TEST_F(InspectorHighlightTest, BuildElementInfo_Colors) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         width: 400px;
@@ -345,6 +351,136 @@ TEST_F(InspectorHighlightTest, BuildElementInfo_Colors) {
   EXPECT_THAT(GetBackgroundColorFromElementInfo(
                   GetDocument().getElementById(AtomicString("var"))),
               Eq("lab(20 -10 -10)"));
+}
+
+TEST_F(InspectorHighlightTest, GridLineNames) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+    #grid {
+      display: grid;
+      grid-template-columns: [a] 1fr [b] 1fr [c] 1fr;
+      grid-template-rows: [d] 1fr [e] 1fr [f] 1fr;
+    }
+    #subgrid {
+      display: grid;
+      grid-column: 1 / 4;
+      grid-row: 1 / 4;
+      grid-template-columns: subgrid [a_sub] [b_sub] [c_sub];
+      grid-template-rows: subgrid [d_sub] [e_sub] [f_sub];
+    }
+    </style>
+    <div id="grid">
+      <div id="subgrid">
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+      </div>
+    </div>
+  )HTML");
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+  Node* subgrid = GetDocument().getElementById(AtomicString("subgrid"));
+  EXPECT_TRUE(subgrid);
+  auto info =
+      InspectorGridHighlight(subgrid, InspectorHighlight::DefaultGridConfig());
+  EXPECT_TRUE(info);
+
+  auto GetLineNames = [](protocol::ListValue* row_or_column_list) {
+    Vector<String> ret;
+    for (wtf_size_t i = 0; i < row_or_column_list->size(); ++i) {
+      protocol::DictionaryValue* current_value =
+          static_cast<protocol::DictionaryValue*>(row_or_column_list->at(i));
+
+      WTF::String string_value;
+      EXPECT_TRUE(current_value->getString("name", &string_value));
+      ret.push_back(string_value);
+    }
+    return ret;
+  };
+
+  EXPECT_THAT(GetLineNames(info->getArray("rowLineNameOffsets")),
+              UnorderedElementsAre("d", "d_sub", "e", "e_sub", "f", "f_sub"));
+  EXPECT_THAT(GetLineNames(info->getArray("columnLineNameOffsets")),
+              UnorderedElementsAre("a", "a_sub", "b", "b_sub", "c", "c_sub"));
+}
+
+TEST_F(InspectorHighlightTest, GridAreaNames) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
+    <style>
+    #grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+      grid-template-areas:
+            "a a a"
+            "b b b"
+            "c c c";
+    }
+    #subgrid {
+      display: grid;
+      grid-column: 1 / 4;
+      grid-row: 1 / 4;
+      grid-template-columns: subgrid;
+      grid-template-rows: subgrid;
+      grid-template-areas:
+            "d d d"
+            "e e e"
+            "f f f";
+    }
+    </style>
+    <div id="grid">
+      <div id="subgrid">
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+        <div class="griditem"></div>
+      </div>
+    </div>
+  )HTML");
+  GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+
+  auto CompareAreaNames = [](protocol::DictionaryValue* area_names,
+                             WTF::Vector<WTF::String>& expected_names) -> void {
+    for (WTF::String& name : expected_names) {
+      EXPECT_TRUE(area_names->get(name));
+    }
+  };
+
+  Node* grid = GetDocument().getElementById(AtomicString("grid"));
+  EXPECT_TRUE(grid);
+  auto grid_info =
+      InspectorGridHighlight(grid, InspectorHighlight::DefaultGridConfig());
+  EXPECT_TRUE(grid_info);
+  protocol::DictionaryValue* grid_area_names =
+      grid_info->getObject("areaNames");
+  EXPECT_EQ(grid_area_names->size(), 3u);
+
+  WTF::Vector<WTF::String> expected_grid_area_names = {"a", "b", "c"};
+  CompareAreaNames(grid_area_names, expected_grid_area_names);
+
+  Node* subgrid = GetDocument().getElementById(AtomicString("subgrid"));
+  EXPECT_TRUE(subgrid);
+  auto subgrid_info =
+      InspectorGridHighlight(subgrid, InspectorHighlight::DefaultGridConfig());
+  EXPECT_TRUE(subgrid_info);
+
+  protocol::DictionaryValue* subgrid_area_names =
+      subgrid_info->getObject("areaNames");
+  EXPECT_EQ(subgrid_area_names->size(), 6u);
+
+  WTF::Vector<WTF::String> expected_subgrid_area_names = {"a", "b", "c",
+                                                          "d", "e", "f"};
+  CompareAreaNames(subgrid_area_names, expected_subgrid_area_names);
 }
 
 }  // namespace blink

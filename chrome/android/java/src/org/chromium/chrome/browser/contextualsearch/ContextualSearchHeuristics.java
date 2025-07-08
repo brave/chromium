@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
+import org.chromium.build.annotations.NullMarked;
+
 import java.util.HashSet;
 import java.util.Set;
 
@@ -11,14 +13,13 @@ import java.util.Set;
  * A set of {@link ContextualSearchHeuristic}s that support experimentation and logging for Tap
  * suppression.
  */
+@NullMarked
 public class ContextualSearchHeuristics {
     protected Set<ContextualSearchHeuristic> mHeuristics;
 
-    /**
-     * Manages a set of heuristics.
-     */
+    /** Manages a set of heuristics. */
     ContextualSearchHeuristics() {
-        mHeuristics = new HashSet<ContextualSearchHeuristic>();
+        mHeuristics = new HashSet<>();
     }
 
     /**
@@ -32,9 +33,7 @@ public class ContextualSearchHeuristics {
         }
     }
 
-    /**
-     * Logs the condition state for all the Tap suppression heuristics.
-     */
+    /** Logs the condition state for all the Tap suppression heuristics. */
     public void logContitionState() {
         for (ContextualSearchHeuristic heuristic : mHeuristics) {
             heuristic.logConditionState();

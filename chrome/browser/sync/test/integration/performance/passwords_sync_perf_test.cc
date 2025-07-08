@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/passwords_helper.h"
 #include "chrome/browser/sync/test/integration/performance/sync_timing_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/password_manager/core/browser/password_store_interface.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "content/public/test/browser_test.h"
 #include "testing/perf/perf_result_reporter.h"
 
@@ -99,7 +100,7 @@ std::string PasswordsSyncPerfTest::NextPassword() {
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordsSyncPerfTest, P0) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
 
   perf_test::PerfResultReporter reporter =
       SetUpReporter(base::NumberToString(kNumPasswords) + "_passwords");

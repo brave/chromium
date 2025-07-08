@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,7 +21,6 @@
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/cert/test_root_certs.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class GURL;
 
@@ -37,10 +37,8 @@ class BaseTestServer {
   typedef std::pair<std::string, std::string> StringPair;
 
   enum Type {
-    TYPE_BASIC_AUTH_PROXY,
     TYPE_WS,
     TYPE_WSS,
-    TYPE_PROXY,
   };
 
   // Container for various options to control how the HTTPS or WSS server is
@@ -68,10 +66,6 @@ class BaseTestServer {
       // An RSA certificate with the keyUsage extension specifying that the key
       // is only for digital signatures.
       CERT_KEY_USAGE_RSA_DIGITAL_SIGNATURE,
-
-      // A certificate with invalid notBefore and notAfter times. Windows'
-      // certificate library will not parse this certificate.
-      CERT_BAD_VALIDITY,
 
       // A certificate that covers a number of test names. See [test_names] in
       // net/data/ssl/scripts/ee.cnf. More may be added by editing this list and
@@ -171,11 +165,6 @@ class BaseTestServer {
     ws_basic_auth_ = ws_basic_auth;
   }
 
-  // Redirect proxied CONNECT requests to localhost.
-  void set_redirect_connect_to_localhost(bool redirect_connect_to_localhost) {
-    redirect_connect_to_localhost_ = redirect_connect_to_localhost;
-  }
-
   // Registers the test server's certs for the current process.
   [[nodiscard]] static ScopedTestRoot RegisterTestCerts();
 
@@ -223,7 +212,7 @@ class BaseTestServer {
   // { argument-name: argument-value, ... }
   //
   // Returns nullopt if an invalid configuration is specified.
-  absl::optional<base::Value::Dict> GenerateArguments() const;
+  std::optional<base::Value::Dict> GenerateArguments() const;
 
  private:
   void Init(const std::string& host);
@@ -254,9 +243,6 @@ class BaseTestServer {
 
   // Is WebSocket basic HTTP authentication enabled?
   bool ws_basic_auth_ = false;
-
-  // Redirect proxied CONNECT requests to localhost?
-  bool redirect_connect_to_localhost_ = false;
 
   std::unique_ptr<ScopedPortException> allowed_port_;
 };

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/protocol/fake_desktop_capturer.h"
 
 #include <stdint.h>
@@ -10,7 +15,7 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"

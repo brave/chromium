@@ -14,7 +14,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/device_notifications/device_system_tray_icon.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -29,6 +29,7 @@
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -52,7 +53,7 @@ const std::string& GetExpectedOriginName(Profile* profile,
     return extension->name();
   }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -67,7 +68,7 @@ void DeviceSystemTrayIconTestBase::TearDown() {
 
 Profile* DeviceSystemTrayIconTestBase::CreateTestingProfile(
     const std::string& profile_name) {
-  // TODO(crbug.com/1399310): Pass testing factory when creating profile.
+  // TODO(crbug.com/40249783): Pass testing factory when creating profile.
   // Ideally, we should be able to pass testing factory when calling profile
   // manager's CreateTestingProfile. However, due to the fact that:
   // 1) TestingProfile::TestingProfile(...) will call BrowserContextShutdown as
@@ -112,23 +113,17 @@ void DeviceSystemTrayIconTestBase::AddExtensionToProfile(
   extensions::ExtensionService* extension_service =
       extension_system->extension_service();
   if (!extension_service) {
-    extension_service = extension_system->CreateExtensionService(
+    extension_system->CreateExtensionService(
         base::CommandLine::ForCurrentProcess(), base::FilePath(),
         /*autoupdate_enabled=*/false);
   }
-  extension_service->AddExtension(extension);
+  extensions::ExtensionRegistrar::Get(profile)->AddExtension(extension);
 }
 
 void DeviceSystemTrayIconTestBase::UnloadExtensionFromProfile(
     Profile* profile,
     const extensions::Extension* extension) {
-  extensions::TestExtensionSystem* extension_system =
-      static_cast<extensions::TestExtensionSystem*>(
-          extensions::ExtensionSystem::Get(profile));
-  extensions::ExtensionService* extension_service =
-      extension_system->extension_service();
-  CHECK(extension_service);
-  extension_service->UnloadExtension(
+  extensions::ExtensionRegistrar::Get(profile)->RemoveExtension(
       extension->id(), extensions::UnloadedExtensionReason::UNINSTALL);
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -164,17 +159,17 @@ void DeviceSystemTrayIconTestBase::TestSingleProfile(
   CheckIcon(
       {{profile, {{origin1, 1, origin1_name}, {origin2, 1, origin2_name}}}});
 
-  // Two origins are removed 5 seconds apart.
+  // Two origins are removed 2 seconds apart.
   connection_tracker->DecrementConnectionCount(origin2);
   CheckIcon(
       {{profile, {{origin1, 1, origin1_name}, {origin2, 0, origin2_name}}}});
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(2));
   connection_tracker->DecrementConnectionCount(origin1);
   CheckIcon(
       {{profile, {{origin1, 0, origin1_name}, {origin2, 0, origin2_name}}}});
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(1));
   CheckIcon({{profile, {{origin1, 0, origin1_name}}}});
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(2));
   CheckIconHidden();
 }
 
@@ -274,7 +269,7 @@ void DeviceSystemTrayIconTestBase::TestMultipleProfiles(
               {{profile_origins_pairs[2].second[0].first, 1,
                 profile_origins_pairs[2].second[0].second}}}});
 
-  // The remaining two profiles are removed 5 seconds apart.
+  // The remaining two profiles are removed 2 seconds apart.
   connection_trackers[2]->DecrementConnectionCount(
       profile_origins_pairs[2].second[0].first);
   // Connection count is updated immediately while the profile is scheduled
@@ -288,7 +283,7 @@ void DeviceSystemTrayIconTestBase::TestMultipleProfiles(
               {{profile_origins_pairs[2].second[0].first, 0,
                 profile_origins_pairs[2].second[0].second}}}});
 
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(2));
   connection_trackers[1]->DecrementConnectionCount(
       profile_origins_pairs[1].second[0].first);
   connection_trackers[1]->DecrementConnectionCount(
@@ -302,13 +297,13 @@ void DeviceSystemTrayIconTestBase::TestMultipleProfiles(
               {{profile_origins_pairs[2].second[0].first, 0,
                 profile_origins_pairs[2].second[0].second}}}});
 
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(1));
   CheckIcon({{profile_origins_pairs[1].first,
               {{profile_origins_pairs[1].second[0].first, 0,
                 profile_origins_pairs[1].second[0].second},
                {profile_origins_pairs[1].second[1].first, 0,
                 profile_origins_pairs[1].second[1].second}}}});
-  task_environment()->FastForwardBy(base::Seconds(5));
+  task_environment()->FastForwardBy(base::Seconds(2));
   CheckIconHidden();
 }
 

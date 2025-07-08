@@ -15,10 +15,12 @@
 #include "ash/system/phonehub/ui_constants.h"
 #include "ash/system/tray/tray_constants.h"
 #include "base/strings/string_number_conversions.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/gfx/text_constants.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/animation_builder.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
@@ -35,9 +37,6 @@ constexpr int kCameraRollItemHorizontalPadding = 4;
 constexpr int kCameraRollItemVerticalPadding = 4;
 constexpr int kHeaderLabelLineHeight = 48;
 
-// Typography.
-constexpr int kHeaderTextFontSizeDip = 15;
-
 gfx::Size GetCameraRollItemSize() {
   int dimension =
       (kTrayMenuWidth - kBubbleHorizontalSidePaddingDip * 2 -
@@ -48,6 +47,8 @@ gfx::Size GetCameraRollItemSize() {
 }
 
 class HeaderView : public views::Label {
+  METADATA_HEADER(HeaderView, views::Label)
+
  public:
   HeaderView() {
     SetText(l10n_util::GetStringUTF16(IDS_ASH_PHONE_HUB_CAMERA_ROLL_TITLE));
@@ -58,15 +59,8 @@ class HeaderView : public views::Label {
     SetEnabledColor(AshColorProvider::Get()->GetContentLayerColor(
         AshColorProvider::ContentLayerType::kTextColorPrimary));
 
-    if (chromeos::features::IsJellyrollEnabled()) {
-      TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosButton1,
-                                            *this);
-    } else {
-      SetFontList(font_list()
-                      .DeriveWithSizeDelta(kHeaderTextFontSizeDip -
-                                           font_list().GetFontSize())
-                      .DeriveWithWeight(gfx::Font::Weight::MEDIUM));
-    }
+    TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosButton1,
+                                          *this);
 
     // Overriding because the typography line height set does not match Phone
     // Hub specs.
@@ -77,9 +71,10 @@ class HeaderView : public views::Label {
   HeaderView(HeaderView&) = delete;
   HeaderView operator=(HeaderView&) = delete;
 
-  // views::View:
-  const char* GetClassName() const override { return "HeaderView"; }
 };
+
+BEGIN_METADATA(HeaderView)
+END_METADATA
 
 }  // namespace
 
@@ -110,10 +105,6 @@ void CameraRollView::OnCameraRollViewUiStateUpdated() {
   Update();
 }
 
-const char* CameraRollView::GetClassName() const {
-  return "CameraRollView";
-}
-
 CameraRollView::CameraRollItemsView::CameraRollItemsView() = default;
 
 CameraRollView::CameraRollItemsView::~CameraRollItemsView() = default;
@@ -122,7 +113,7 @@ void CameraRollView::CameraRollItemsView::AddCameraRollItem(
     views::View* camera_roll_item) {
   size_t view_size = camera_roll_items_.view_size();
   camera_roll_items_.Add(camera_roll_item, view_size);
-  AddChildView(camera_roll_item);
+  AddChildViewRaw(camera_roll_item);
 }
 
 void CameraRollView::CameraRollItemsView::Reset() {
@@ -131,7 +122,8 @@ void CameraRollView::CameraRollItemsView::Reset() {
 }
 
 // views::View:
-gfx::Size CameraRollView::CameraRollItemsView::CalculatePreferredSize() const {
+gfx::Size CameraRollView::CameraRollItemsView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   auto item_size = GetCameraRollItemSize();
   int width = item_size.width() * kCameraRollItemsInRow +
               kCameraRollItemHorizontalSpacing * (kCameraRollItemsInRow - 1) +
@@ -144,17 +136,13 @@ gfx::Size CameraRollView::CameraRollItemsView::CalculatePreferredSize() const {
   return gfx::Size(width, height);
 }
 
-void CameraRollView::CameraRollItemsView::Layout() {
-  views::View::Layout();
+void CameraRollView::CameraRollItemsView::Layout(PassKey) {
+  LayoutSuperclass<views::View>(this);
   CalculateIdealBounds();
   for (size_t i = 0; i < camera_roll_items_.view_size(); ++i) {
     auto* thumbnail = camera_roll_items_.view_at(i);
     thumbnail->SetBoundsRect(camera_roll_items_.ideal_bounds(i));
   }
-}
-
-const char* CameraRollView::CameraRollItemsView::GetClassName() const {
-  return "CameraRollItemsView";
 }
 
 gfx::Point CameraRollView::CameraRollItemsView::GetCameraRollItemPosition(
@@ -176,6 +164,9 @@ void CameraRollView::CameraRollItemsView::CalculateIdealBounds() {
     camera_roll_items_.set_ideal_bounds(i, camera_roll_item_bounds);
   }
 }
+
+BEGIN_METADATA(CameraRollView, CameraRollItemsView)
+END_METADATA
 
 void CameraRollView::Update() {
   items_view_->Reset();
@@ -201,7 +192,7 @@ void CameraRollView::Update() {
             IDS_ASH_PHONE_HUB_CAMERA_ROLL_THUMBNAIL_ACCESSIBLE_NAME,
             base::NumberToString16(index + 1),
             base::NumberToString16(camera_roll_items.size()));
-        item_thumbnail->SetAccessibleName(accessible_name);
+        item_thumbnail->GetViewAccessibility().SetName(accessible_name);
         item_thumbnail->SetTooltipText(accessible_name);
         items_view_->AddCameraRollItem(item_thumbnail);
       }
@@ -214,5 +205,8 @@ void CameraRollView::Update() {
 
   PreferredSizeChanged();
 }
+
+BEGIN_METADATA(CameraRollView)
+END_METADATA
 
 }  // namespace ash

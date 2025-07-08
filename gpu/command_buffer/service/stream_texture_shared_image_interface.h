@@ -20,17 +20,13 @@ namespace gpu {
 class TextureOwner;
 class TextureBase;
 
-// This class lets SharedImageVideo draw video frames.
+// This class lets AndroidVideoImageBacking draw video frames.
 class GPU_GLES2_EXPORT StreamTextureSharedImageInterface
     : public base::RefCounted<StreamTextureSharedImageInterface> {
  public:
   // Release the underlying resources. This should be called when the image is
   // not longer valid or the context is lost.
   virtual void ReleaseResources() = 0;
-
-  // Whether the StreamTextureSharedImageInterface is accounting for gpu memory
-  // or not.
-  virtual bool IsUsingGpuMemory() const = 0;
 
   // Update texture image to the most recent frame.
   virtual void UpdateAndBindTexImage() = 0;

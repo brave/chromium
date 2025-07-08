@@ -7,12 +7,13 @@ package org.chromium.chrome.browser.sharing;
 import android.content.Context;
 import android.telephony.TelephonyManager;
 
-import org.chromium.base.ContextUtils;
-import org.chromium.base.annotations.CalledByNative;
+import org.jni_zero.CalledByNative;
 
-/**
- * JNI bridge for SharingService.
- */
+import org.chromium.base.ContextUtils;
+import org.chromium.build.annotations.NullMarked;
+
+/** JNI bridge for SharingService. */
+@NullMarked
 public class SharingJNIBridge {
     // Returns if device supports telephony capability.
     @CalledByNative

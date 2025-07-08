@@ -5,6 +5,7 @@
 #include "net/dns/system_dns_config_change_notifier.h"
 
 #include <map>
+#include <optional>
 #include <utility>
 
 #include "base/check_op.h"
@@ -17,6 +18,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
+#include "base/thread_annotations.h"
 #include "net/dns/dns_config_service.h"
 
 namespace net {
@@ -36,14 +38,14 @@ class WrappedObserver {
 
   ~WrappedObserver() { DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_); }
 
-  void OnNotifyThreadsafe(absl::optional<DnsConfig> config) {
+  void OnNotifyThreadsafe(std::optional<DnsConfig> config) {
     task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&WrappedObserver::OnNotify,
                        weak_ptr_factory_.GetWeakPtr(), std::move(config)));
   }
 
-  void OnNotify(absl::optional<DnsConfig> config) {
+  void OnNotify(std::optional<DnsConfig> config) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(!config || config.value().IsValid());
 
@@ -86,7 +88,7 @@ class SystemDnsConfigChangeNotifier::Core {
     DCHECK(wrapped_observers_.empty());
   }
 
-  void AddObserver(Observer* observer) {
+  void AddObserver(Observer* observer) LOCKS_EXCLUDED(lock_) {
     // Create wrapped observer outside locking in case construction requires
     // complex side effects.
     auto wrapped_observer = std::make_unique<WrappedObserver>(observer);
@@ -106,7 +108,7 @@ class SystemDnsConfigChangeNotifier::Core {
     }
   }
 
-  void RemoveObserver(Observer* observer) {
+  void RemoveObserver(Observer* observer) LOCKS_EXCLUDED(lock_) {
     // Destroy wrapped observer outside locking in case destruction requires
     // complex side effects.
     std::unique_ptr<WrappedObserver> removed_wrapped_observer;
@@ -114,7 +116,7 @@ class SystemDnsConfigChangeNotifier::Core {
     {
       base::AutoLock lock(lock_);
       auto it = wrapped_observers_.find(observer);
-      DCHECK(it != wrapped_observers_.end());
+      CHECK(it != wrapped_observers_.end());
       removed_wrapped_observer = std::move(it->second);
       wrapped_observers_.erase(it);
     }
@@ -143,12 +145,6 @@ class SystemDnsConfigChangeNotifier::Core {
     }
   }
 
-  void OnConfigChangedForTesting(const DnsConfig& config) {
-    task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&Core::OnConfigChanged,
-                                  weak_ptr_factory_.GetWeakPtr(), config));
-  }
-
  private:
   void SetAndStartDnsConfigService(
       std::unique_ptr<DnsConfigService> dns_config_service) {
@@ -159,14 +155,14 @@ class SystemDnsConfigChangeNotifier::Core {
         &Core::OnConfigChanged, weak_ptr_factory_.GetWeakPtr()));
   }
 
-  void OnConfigChanged(const DnsConfig& config) {
+  void OnConfigChanged(const DnsConfig& config) LOCKS_EXCLUDED(lock_) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     base::AutoLock lock(lock_);
 
-    // |config_| is |absl::nullopt| if most recent config was invalid (or no
+    // |config_| is |std::nullopt| if most recent config was invalid (or no
     // valid config has yet been read), so convert |config| to a similar form
     // before comparing for change.
-    absl::optional<DnsConfig> new_config;
+    std::optional<DnsConfig> new_config;
     if (config.IsValid())
       new_config = config;
 
@@ -188,10 +184,11 @@ class SystemDnsConfigChangeNotifier::Core {
   // Fields that may be accessed from any sequence. Must protect access using
   // |lock_|.
   mutable base::Lock lock_;
-  // Only stores valid configs. |absl::nullopt| if most recent config was
+  // Only stores valid configs. |std::nullopt| if most recent config was
   // invalid (or no valid config has yet been read).
-  absl::optional<DnsConfig> config_;
-  std::map<Observer*, std::unique_ptr<WrappedObserver>> wrapped_observers_;
+  std::optional<DnsConfig> config_ GUARDED_BY(lock_);
+  std::map<Observer*, std::unique_ptr<WrappedObserver>> wrapped_observers_
+      GUARDED_BY(lock_);
 
   // Fields valid only on |task_runner_|.
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
@@ -238,11 +235,6 @@ void SystemDnsConfigChangeNotifier::SetDnsConfigServiceForTesting(
 
   core_->SetDnsConfigServiceForTesting(  // IN-TEST
       std::move(dns_config_service), std::move(done_cb));
-}
-
-void SystemDnsConfigChangeNotifier::OnConfigChangedForTesting(
-    const DnsConfig& config) {
-  core_->OnConfigChangedForTesting(config);  // IN-TEST
 }
 
 }  // namespace net

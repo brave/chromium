@@ -9,7 +9,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "chrome/browser/ash/app_list/search/search_provider.h"
-#include "chrome/browser/ui/ash/thumbnail_loader.h"
+#include "chrome/browser/ui/ash/thumbnail_loader/thumbnail_loader.h"
 
 namespace app_list {
 
@@ -38,7 +38,7 @@ class LocalImageSearchProvider : public SearchProvider {
   base::TimeTicks query_start_time_;
   std::u16string last_query_;
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile> profile_;
   ash::ThumbnailLoader thumbnail_loader_;
 
   SEQUENCE_CHECKER(sequence_checker_);

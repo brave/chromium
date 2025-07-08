@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/host/installer/mac/uninstaller/remoting_uninstaller_app.h"
 
 #import <Cocoa/Cocoa.h>
@@ -9,10 +14,6 @@
 #include "remoting/base/string_resources.h"
 #include "remoting/host/installer/mac/uninstaller/remoting_uninstaller.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -77,7 +78,7 @@ NSMenu* BuildMainMenu() {
   NSButton* cancelButton =
       [[NSButton alloc] initWithFrame:NSMakeRect(308, 13, 82, 32)];
   cancelButton.buttonType = NSButtonTypeMomentaryPushIn;
-  cancelButton.bezelStyle = NSBezelStyleRounded;
+  cancelButton.bezelStyle = NSBezelStylePush;
   cancelButton.title = @"Cancel";
   cancelButton.action = @selector(cancel:);
   cancelButton.target = self;
@@ -86,7 +87,7 @@ NSMenu* BuildMainMenu() {
   NSButton* uninstallButton =
       [[NSButton alloc] initWithFrame:NSMakeRect(390, 13, 95, 32)];
   uninstallButton.buttonType = NSButtonTypeMomentaryPushIn;
-  uninstallButton.bezelStyle = NSBezelStyleRounded;
+  uninstallButton.bezelStyle = NSBezelStylePush;
   uninstallButton.title = @"Uninstall";
   uninstallButton.action = @selector(uninstall:);
   uninstallButton.target = self;

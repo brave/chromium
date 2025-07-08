@@ -16,6 +16,7 @@
 #include "content/browser/lock_screen/lock_screen_service_impl.h"
 #include "content/browser/lock_screen/lock_screen_storage_impl.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -119,7 +120,7 @@ IN_PROC_BROWSER_TEST_F(LockScreenServiceImplBrowserTest,
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath expected_dir = GetStoragePath();
   EXPECT_FALSE(base::PathExists(expected_dir));
-  // TODO(crbug.com/1268227): Consider testing write failure case.
+  // TODO(crbug.com/40204655): Consider testing write failure case.
   ASSERT_EQ(blink::mojom::LockScreenServiceStatus::kSuccess,
             AwaitSetData(service(), "key1", "data1"));
   ASSERT_TRUE(base::PathExists(expected_dir));

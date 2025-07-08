@@ -39,39 +39,6 @@ using ::testing::ElementsAre;
 
 class RangeTest : public EditingTestBase {};
 
-TEST_F(RangeTest, extractContentsWithDOMMutationEvent) {
-  if (!RuntimeEnabledFeatures::MutationEventsEnabled()) {
-    // TODO(crbug.com/1446498) Remove this test when MutationEvents are disabled
-    // for good. This is just a test of `DOMSubtreeModified` and ranges.
-    return;
-  }
-  GetDocument().body()->setInnerHTML("<span><b>abc</b>def</span>");
-  GetDocument().GetSettings()->SetScriptEnabled(true);
-  Element* const script_element =
-      GetDocument().CreateRawElement(html_names::kScriptTag);
-  script_element->setTextContent(
-      "let count = 0;"
-      "const span = document.querySelector('span');"
-      "span.addEventListener('DOMSubtreeModified', () => {"
-      "  if (++count > 1) return;"
-      "  span.firstChild.textContent = 'ABC';"
-      "  span.lastChild.textContent = 'DEF';"
-      "});");
-  GetDocument().body()->AppendChild(script_element);
-
-  Element* const span_element =
-      GetDocument().QuerySelector(AtomicString("span"));
-  auto* const range = MakeGarbageCollected<Range>(GetDocument(), span_element,
-                                                  0, span_element, 1);
-  Element* const result = GetDocument().CreateRawElement(html_names::kDivTag);
-  result->AppendChild(range->extractContents(ASSERT_NO_EXCEPTION));
-
-  EXPECT_EQ("<b>abc</b>", result->innerHTML())
-      << "DOM mutation event handler should not affect result.";
-  EXPECT_EQ("<span>DEF</span>", span_element->outerHTML())
-      << "DOM mutation event handler should be executed.";
-}
-
 // http://crbug.com/822510
 TEST_F(RangeTest, IntersectsNode) {
   SetBodyContent(
@@ -111,7 +78,7 @@ TEST_F(RangeTest, IntersectsNode) {
 TEST_F(RangeTest, SplitTextNodeRangeWithinText) {
   V8TestingScope scope;
 
-  GetDocument().body()->setInnerHTML("1234");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("1234");
   auto* old_text = To<Text>(GetDocument().body()->firstChild());
 
   auto* range04 =
@@ -156,7 +123,7 @@ TEST_F(RangeTest, SplitTextNodeRangeWithinText) {
 TEST_F(RangeTest, SplitTextNodeRangeOutsideText) {
   V8TestingScope scope;
 
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<span id=\"outer\">0<span id=\"inner-left\">1</span>SPLITME<span "
       "id=\"inner-right\">2</span>3</span>");
 
@@ -244,7 +211,7 @@ TEST_F(RangeTest, updateOwnerDocumentIfNeeded) {
 
 // Regression test for crbug.com/639184
 TEST_F(RangeTest, NotMarkedValidByIrrelevantTextInsert) {
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<div><span id=span1>foo</span>bar<span id=span2>baz</span></div>");
 
   Element* div = GetDocument().QuerySelector(AtomicString("div"));
@@ -266,7 +233,7 @@ TEST_F(RangeTest, NotMarkedValidByIrrelevantTextInsert) {
 
 // Regression test for crbug.com/639184
 TEST_F(RangeTest, NotMarkedValidByIrrelevantTextRemove) {
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<div><span id=span1>foofoo</span>bar<span id=span2>baz</span></div>");
 
   Element* div = GetDocument().QuerySelector(AtomicString("div"));
@@ -305,7 +272,7 @@ TEST_F(RangeTest, ToPosition) {
 
 TEST_F(RangeTest, BoundingRectMustIndependentFromSelection) {
   LoadAhem();
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<div style='font: Ahem; width: 2em;letter-spacing: 5px;'>xx xx </div>");
   Node* const div = GetDocument().QuerySelector(AtomicString("div"));
   // "x^x
@@ -315,10 +282,10 @@ TEST_F(RangeTest, BoundingRectMustIndependentFromSelection) {
   const gfx::RectF rect_before = range->BoundingRect();
   EXPECT_GT(rect_before.width(), 0);
   EXPECT_GT(rect_before.height(), 0);
-  Selection().SetSelectionAndEndTyping(
-      SelectionInDOMTree::Builder()
-          .SetBaseAndExtent(EphemeralRange(range))
-          .Build());
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .SetBaseAndExtent(EphemeralRange(range))
+                               .Build(),
+                           SetSelectionOptions());
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ(Selection().SelectedText(), "x x");
   const gfx::RectF rect_after = range->BoundingRect();
@@ -327,7 +294,8 @@ TEST_F(RangeTest, BoundingRectMustIndependentFromSelection) {
 
 // Regression test for crbug.com/681536
 TEST_F(RangeTest, BorderAndTextQuadsWithInputInBetween) {
-  GetDocument().body()->setInnerHTML("<div>foo <u><input> bar</u></div>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<div>foo <u><input> bar</u></div>");
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   Node* foo = GetDocument().QuerySelector(AtomicString("div"))->firstChild();
@@ -385,7 +353,7 @@ TEST_F(RangeTest, GetBorderAndTextQuadsWithCombinedText) {
 }
 
 TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterOne) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       body { font-size: 20px; }
       #sample::first-letter { font-size: 500%; }
@@ -431,7 +399,7 @@ TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterOne) {
 }
 
 TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterThree) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       body { font-size: 20px; }
       #sample::first-letter { font-size: 500%; }
@@ -493,7 +461,7 @@ TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterThree) {
 }
 
 TEST_F(RangeTest, CollapsedRangeGetBorderAndTextQuadsWithFirstLetter) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       body { font-size: 20px; }
       #sample::first-letter { font-size: 500%; }
@@ -544,6 +512,102 @@ TEST_F(RangeTest, CollapsedRangeGetBorderAndTextQuadsWithFirstLetter) {
                 GetBorderAndTextQuads(Position(sample->firstChild(), 2),
                                       Position(sample->firstChild(), 2))))
       << "Collapsed range in remaining text part";
+}
+
+TEST_F(RangeTest, ContainerNodeRemoval) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<p>aaaa</p><p>bbbbbb</p>");
+  auto* node_a = GetDocument().body()->firstChild();
+  auto* node_b = node_a->nextSibling();
+  auto* text_a = To<Text>(node_a->firstChild());
+  auto* text_b = To<Text>(node_b->firstChild());
+
+  auto* rangea0a2 =
+      MakeGarbageCollected<Range>(GetDocument(), text_a, 0, text_a, 2);
+  auto* rangea2a4 =
+      MakeGarbageCollected<Range>(GetDocument(), text_a, 2, text_a, 4);
+  auto* rangea2b2 =
+      MakeGarbageCollected<Range>(GetDocument(), text_a, 0, text_b, 2);
+  auto* rangeb2b6 =
+      MakeGarbageCollected<Range>(GetDocument(), text_b, 2, text_b, 6);
+
+  // remove children in node_a
+  node_a->setTextContent("");
+
+  EXPECT_TRUE(rangea0a2->BoundaryPointsValid());
+  EXPECT_EQ(node_a, rangea0a2->startContainer());
+  EXPECT_EQ(0u, rangea0a2->startOffset());
+  EXPECT_EQ(node_a, rangea0a2->endContainer());
+  EXPECT_EQ(0u, rangea0a2->endOffset());
+
+  EXPECT_TRUE(rangea2a4->BoundaryPointsValid());
+  EXPECT_EQ(node_a, rangea2a4->startContainer());
+  EXPECT_EQ(0u, rangea2a4->startOffset());
+  EXPECT_EQ(node_a, rangea2a4->endContainer());
+  EXPECT_EQ(0u, rangea2a4->endOffset());
+
+  EXPECT_TRUE(rangea2b2->BoundaryPointsValid());
+  EXPECT_EQ(node_a, rangea2b2->startContainer());
+  EXPECT_EQ(0u, rangea2b2->startOffset());
+  EXPECT_EQ(text_b, rangea2b2->endContainer());
+  EXPECT_EQ(2u, rangea2b2->endOffset());
+
+  EXPECT_TRUE(rangeb2b6->BoundaryPointsValid());
+  EXPECT_EQ(text_b, rangeb2b6->startContainer());
+  EXPECT_EQ(2u, rangeb2b6->startOffset());
+  EXPECT_EQ(text_b, rangeb2b6->endContainer());
+  EXPECT_EQ(6u, rangeb2b6->endOffset());
+
+  // remove children in body.
+  GetDocument().body()->setTextContent("");
+
+  EXPECT_TRUE(rangea0a2->BoundaryPointsValid());
+  EXPECT_EQ(GetDocument().body(), rangea0a2->startContainer());
+  EXPECT_EQ(0u, rangea0a2->startOffset());
+  EXPECT_EQ(GetDocument().body(), rangea0a2->endContainer());
+  EXPECT_EQ(0u, rangea0a2->endOffset());
+
+  EXPECT_TRUE(rangea2a4->BoundaryPointsValid());
+  EXPECT_EQ(GetDocument().body(), rangea2a4->startContainer());
+  EXPECT_EQ(0u, rangea2a4->startOffset());
+  EXPECT_EQ(GetDocument().body(), rangea2a4->endContainer());
+  EXPECT_EQ(0u, rangea2a4->endOffset());
+
+  EXPECT_TRUE(rangea2b2->BoundaryPointsValid());
+  EXPECT_EQ(GetDocument().body(), rangea2b2->startContainer());
+  EXPECT_EQ(0u, rangea2b2->startOffset());
+  EXPECT_EQ(GetDocument().body(), rangea2b2->endContainer());
+  EXPECT_EQ(0u, rangea2b2->endOffset());
+
+  EXPECT_TRUE(rangeb2b6->BoundaryPointsValid());
+  EXPECT_EQ(GetDocument().body(), rangeb2b6->startContainer());
+  EXPECT_EQ(0u, rangeb2b6->startOffset());
+  EXPECT_EQ(GetDocument().body(), rangeb2b6->endContainer());
+  EXPECT_EQ(0u, rangeb2b6->endOffset());
+}
+
+TEST_F(RangeTest,
+       ContainerNodeRemovalWithSequentialFocusNavigationStartingPoint) {
+  SetBodyContent("<input value='text inside input'>");
+  const auto& input =
+      ToTextControl(*GetDocument().QuerySelector(AtomicString("input")));
+  Node* text_inside_input = input.InnerEditorElement()->firstChild();
+  GetDocument().SetSequentialFocusNavigationStartingPoint(text_inside_input);
+
+  // Remove children in body.
+  GetDocument().body()->setTextContent("");
+
+  Range* sequential_focus_navigation_starting_point =
+      GetDocument().sequential_focus_navigation_starting_point_;
+
+  EXPECT_TRUE(
+      sequential_focus_navigation_starting_point->BoundaryPointsValid());
+  EXPECT_EQ(GetDocument().body(),
+            sequential_focus_navigation_starting_point->startContainer());
+  EXPECT_EQ(0u, sequential_focus_navigation_starting_point->startOffset());
+  EXPECT_EQ(GetDocument().body(),
+            sequential_focus_navigation_starting_point->endContainer());
+  EXPECT_EQ(0u, sequential_focus_navigation_starting_point->endOffset());
 }
 
 }  // namespace blink

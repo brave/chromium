@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/scanning/scanning_ui.h"
 
 #include <memory>
@@ -26,8 +31,8 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/resources/grit/webui_resources.h"
 
 namespace ash {
 
@@ -45,8 +50,6 @@ void SetUpWebUIDataSource(content::WebUIDataSource* source,
   source->AddResourcePath("test_loader.js", IDR_WEBUI_JS_TEST_LOADER_JS);
   source->AddResourcePath("test_loader_util.js",
                           IDR_WEBUI_JS_TEST_LOADER_UTIL_JS);
-  source->AddBoolean("isJellyEnabledForScanningApp",
-                     ash::features::IsJellyEnabledForScanningApp());
 }
 
 void AddScanningAppStrings(content::WebUIDataSource* html_source) {
@@ -167,22 +170,13 @@ ScanningUI::ScanningUI(
           kChromeUIScanningAppHost);
   html_source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
-      "script-src chrome://resources chrome://test chrome://webui-test "
-      "'self';");
+      "script-src chrome://resources chrome://webui-test 'self';");
   ash::EnableTrustedTypesCSP(html_source);
 
   accessibility_features_ = std::make_unique<AccessibilityFeatures>();
 
-  const auto resources =
-      base::make_span(kAshScanningAppResources, kAshScanningAppResourcesSize);
-  SetUpWebUIDataSource(html_source, resources, IDR_SCANNING_APP_INDEX_HTML);
-
-  html_source->AddResourcePath("scanning.mojom-lite.js",
-                               IDR_SCANNING_MOJO_LITE_JS);
-  html_source->AddResourcePath("file_path.mojom-lite.js",
-                               IDR_SCANNING_APP_FILE_PATH_MOJO_LITE_JS);
-  html_source->AddResourcePath("accessibility_features.mojom-lite.js",
-                               IDR_ACCESSIBILITY_FEATURES_MOJO_LITE_JS);
+  SetUpWebUIDataSource(html_source, kAshScanningAppResources,
+                       IDR_ASH_SCANNING_APP_INDEX_HTML);
 
   AddScanningAppStrings(html_source);
 

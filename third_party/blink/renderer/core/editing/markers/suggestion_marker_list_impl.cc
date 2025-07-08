@@ -4,8 +4,9 @@
 
 #include "third_party/blink/renderer/core/editing/markers/suggestion_marker_list_impl.h"
 
+#include "third_party/blink/renderer/core/editing/markers/overlapping_document_marker_list_editor.h"
+#include "third_party/blink/renderer/core/editing/markers/sorted_document_marker_list_editor.h"
 #include "third_party/blink/renderer/core/editing/markers/suggestion_marker_replacement_scope.h"
-#include "third_party/blink/renderer/core/editing/markers/unsorted_document_marker_list_editor.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
 
 namespace blink {
@@ -18,7 +19,7 @@ UChar32 GetCodePointAt(const String& text, wtf_size_t index) {
   return c;
 }
 
-absl::optional<DocumentMarker::MarkerOffsets>
+std::optional<DocumentMarker::MarkerOffsets>
 ComputeOffsetsAfterNonSuggestionEditingOperating(const DocumentMarker& marker,
                                                  const String& node_text,
                                                  unsigned offset,
@@ -34,17 +35,19 @@ ComputeOffsetsAfterNonSuggestionEditingOperating(const DocumentMarker& marker,
   // Text inserted/replaced immediately after the marker, remove marker if first
   // character is a (Unicode) letter or digit
   if (offset == marker_end && new_length > 0) {
-    if (WTF::unicode::IsAlphanumeric(GetCodePointAt(node_text, offset)))
+    if (unicode::IsAlphanumeric(GetCodePointAt(node_text, offset))) {
       return {};
+    }
     return marker.ComputeOffsetsAfterShift(offset, old_length, new_length);
   }
 
   // Text inserted/replaced immediately before the marker, remove marker if
   // first character is a (Unicode) letter or digit
   if (offset == marker_start && new_length > 0) {
-    if (WTF::unicode::IsAlphanumeric(
-            GetCodePointAt(node_text, offset + new_length - 1)))
+    if (unicode::IsAlphanumeric(
+            GetCodePointAt(node_text, offset + new_length - 1))) {
       return {};
+    }
     return marker.ComputeOffsetsAfterShift(offset, old_length, new_length);
   }
 
@@ -64,7 +67,7 @@ bool SuggestionMarkerListImpl::IsEmpty() const {
 
 void SuggestionMarkerListImpl::Add(DocumentMarker* marker) {
   DCHECK_EQ(DocumentMarker::kSuggestion, marker->GetType());
-  markers_.push_back(marker);
+  OverlappingDocumentMarkerListEditor::AddMarker(&markers_, marker);
 }
 
 void SuggestionMarkerListImpl::Clear() {
@@ -79,27 +82,27 @@ const HeapVector<Member<DocumentMarker>>& SuggestionMarkerListImpl::GetMarkers()
 DocumentMarker* SuggestionMarkerListImpl::FirstMarkerIntersectingRange(
     unsigned start_offset,
     unsigned end_offset) const {
-  return UnsortedDocumentMarkerListEditor::FirstMarkerIntersectingRange(
+  return SortedDocumentMarkerListEditor::FirstMarkerIntersectingRange(
       markers_, start_offset, end_offset);
 }
 
 HeapVector<Member<DocumentMarker>>
 SuggestionMarkerListImpl::MarkersIntersectingRange(unsigned start_offset,
                                                    unsigned end_offset) const {
-  return UnsortedDocumentMarkerListEditor::MarkersIntersectingRange(
+  return OverlappingDocumentMarkerListEditor::MarkersIntersectingRange(
       markers_, start_offset, end_offset);
 }
 
 bool SuggestionMarkerListImpl::MoveMarkers(int length,
                                            DocumentMarkerList* dst_list) {
-  return UnsortedDocumentMarkerListEditor::MoveMarkers(&markers_, length,
-                                                       dst_list);
+  return OverlappingDocumentMarkerListEditor::MoveMarkers(&markers_, length,
+                                                          dst_list);
 }
 
 bool SuggestionMarkerListImpl::RemoveMarkers(unsigned start_offset,
                                              int length) {
-  return UnsortedDocumentMarkerListEditor::RemoveMarkers(&markers_,
-                                                         start_offset, length);
+  return OverlappingDocumentMarkerListEditor::RemoveMarkers(
+      &markers_, start_offset, length);
 }
 
 bool SuggestionMarkerListImpl::ShiftMarkers(const String& node_text,
@@ -117,7 +120,7 @@ bool SuggestionMarkerListImpl::ShiftMarkersForSuggestionReplacement(
     unsigned offset,
     unsigned old_length,
     unsigned new_length) {
-  // Since suggestion markers are stored unsorted, the quickest way to perform
+  // Since suggestion markers may overlap, the quickest way to perform
   // this operation is to build a new list with the markers not removed by the
   // shift.
   bool did_shift_marker = false;
@@ -137,9 +140,9 @@ bool SuggestionMarkerListImpl::ShiftMarkersForSuggestionReplacement(
       continue;
     }
 
-    absl::optional<DocumentMarker::MarkerOffsets> result =
+    std::optional<DocumentMarker::MarkerOffsets> result =
         marker->ComputeOffsetsAfterShift(offset, old_length, new_length);
-    if (result == absl::nullopt) {
+    if (result == std::nullopt) {
       did_shift_marker = true;
       continue;
     }
@@ -163,13 +166,13 @@ bool SuggestionMarkerListImpl::ShiftMarkersForNonSuggestionEditingOperation(
     unsigned offset,
     unsigned old_length,
     unsigned new_length) {
-  // Since suggestion markers are stored unsorted, the quickest way to perform
+  // Since suggestion markers may overlap, the quickest way to perform
   // this operation is to build a new list with the markers not removed by the
   // shift.
   bool did_shift_marker = false;
   HeapVector<Member<DocumentMarker>> unremoved_markers;
   for (const Member<DocumentMarker>& marker : markers_) {
-    absl::optional<DocumentMarker::MarkerOffsets> result =
+    std::optional<DocumentMarker::MarkerOffsets> result =
         ComputeOffsetsAfterNonSuggestionEditingOperating(
             *marker, node_text, offset, old_length, new_length);
     if (!result) {
@@ -197,11 +200,13 @@ void SuggestionMarkerListImpl::Trace(Visitor* visitor) const {
 }
 
 bool SuggestionMarkerListImpl::RemoveMarkerByTag(int32_t tag) {
-  for (auto* it = markers_.begin(); it != markers_.end(); it++) {
-    if (To<SuggestionMarker>(it->Get())->Tag() == tag) {
-      markers_.erase(it);
+  wtf_size_t posn = 0;
+  for (DocumentMarker* marker : markers_) {
+    if (To<SuggestionMarker>(marker)->Tag() == tag) {
+      markers_.EraseAt(posn, 1);
       return true;
     }
+    posn++;
   }
 
   return false;
@@ -209,11 +214,13 @@ bool SuggestionMarkerListImpl::RemoveMarkerByTag(int32_t tag) {
 
 bool SuggestionMarkerListImpl::RemoveMarkerByType(
     const SuggestionMarker::SuggestionType& type) {
-  for (auto* it = markers_.begin(); it != markers_.end(); it++) {
-    if (To<SuggestionMarker>(it->Get())->GetSuggestionType() == type) {
-      markers_.erase(it);
+  wtf_size_t posn = 0;
+  for (DocumentMarker* marker : markers_) {
+    if (To<SuggestionMarker>(marker)->GetSuggestionType() == type) {
+      markers_.EraseAt(posn, 1);
       return true;
     }
+    posn++;
   }
 
   return false;

@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_COMMERCE_PRICE_TRACKING_EMAIL_DIALOG_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_COMMERCE_PRICE_TRACKING_EMAIL_DIALOG_VIEW_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 #include "ui/base/interaction/element_identifier.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view_tracker.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -24,6 +26,8 @@ class StyledLabel;
 DECLARE_ELEMENT_IDENTIFIER_VALUE(kPriceTrackingEmailConsentDialogId);
 
 class PriceTrackingEmailDialogView : public LocationBarBubbleDelegateView {
+  METADATA_HEADER(PriceTrackingEmailDialogView, LocationBarBubbleDelegateView)
+
  public:
   PriceTrackingEmailDialogView(View* anchor_view,
                                content::WebContents* web_contents,

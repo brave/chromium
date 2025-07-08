@@ -4,10 +4,10 @@
 
 #include "services/device/generic_sensor/platform_sensor.h"
 
+#include <list>
 #include <utility>
 
 #include "base/check.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/observer_list.h"
@@ -15,17 +15,18 @@
 #include "services/device/generic_sensor/platform_sensor_provider.h"
 #include "services/device/generic_sensor/platform_sensor_util.h"
 #include "services/device/public/cpp/generic_sensor/platform_sensor_configuration.h"
+#include "services/device/public/cpp/generic_sensor/sensor_reading_shared_buffer.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading_shared_buffer_reader.h"
 
 namespace device {
 
 PlatformSensor::PlatformSensor(mojom::SensorType type,
                                SensorReadingSharedBuffer* reading_buffer,
-                               PlatformSensorProvider* provider)
+                               base::WeakPtr<PlatformSensorProvider> provider)
     : main_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
       reading_buffer_(reading_buffer),
       type_(type),
-      provider_(provider),
+      provider_(std::move(provider)),
       is_active_(false) {
   VLOG(1) << "Platform sensor created. Type " << type_ << ".";
 }
@@ -77,8 +78,9 @@ bool PlatformSensor::StopListening(Client* client,
     return false;
 
   auto& config_list = client_entry->second;
-  if (base::Erase(config_list, config) == 0)
+  if (std::erase(config_list, config) == 0) {
     return false;
+  }
 
   return UpdateSensorInternal(config_map_);
 }
@@ -158,8 +160,8 @@ bool PlatformSensor::UpdateSharedBuffer(const SensorReading& reading) {
   // previous value.
   if (GetReportingMode() == mojom::ReportingMode::ON_CHANGE &&
       last_rounded_reading_.has_value() &&
-      base::ranges::equal(rounded_reading.raw.values,
-                          last_rounded_reading_->raw.values)) {
+      std::ranges::equal(rounded_reading.raw.values,
+                         last_rounded_reading_->raw.values)) {
     return false;
   }
   // Save rounded value for next comparison.
@@ -228,7 +230,7 @@ bool PlatformSensor::UpdateSensorInternal(const ConfigMap& configurations) {
     return true;
   }
 
-  // TODO(https://crbug.com/1427302): `is_active_` needs to be set to true
+  // TODO(crbug.com/40261729): `is_active_` needs to be set to true
   // before before calling `StartSensor` because
   // `FakePlatformSensor::StartSensor` calls
   // `PlatformSensor::UpdateSharedBuffer` before returning, which without this
@@ -276,12 +278,12 @@ bool PlatformSensor::IsSignificantlyDifferent(const SensorReading& lhs,
     case mojom::SensorType::ABSOLUTE_ORIENTATION_QUATERNION:
     case mojom::SensorType::RELATIVE_ORIENTATION_QUATERNION:
     case mojom::SensorType::MAGNETOMETER:
-    case mojom::SensorType::PRESSURE:
-    case mojom::SensorType::PROXIMITY:
-      return !base::ranges::equal(lhs.raw.values, rhs.raw.values);
+      return !std::ranges::equal(lhs.raw.values, rhs.raw.values);
   }
-  NOTREACHED();
-  return false;
+}
+
+base::WeakPtr<PlatformSensor> PlatformSensor::AsWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 }  // namespace device

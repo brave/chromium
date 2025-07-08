@@ -56,7 +56,7 @@ class MediaDocumentParser : public RawDataDocumentParser {
       : RawDataDocumentParser(document) {}
 
  private:
-  void AppendBytes(const char*, size_t) override {}
+  void AppendBytes(base::span<const uint8_t>) override {}
   void Finish() override;
 
   void CreateDocumentStructure();
@@ -74,6 +74,7 @@ void MediaDocumentParser::CreateDocumentStructure() {
   did_build_document_structure_ = true;
 
   DCHECK(GetDocument());
+  GetDocument()->SetOverrideSiteForCookiesForCSPMedia(true);
   auto* root_element = MakeGarbageCollected<HTMLHtmlElement>(*GetDocument());
   GetDocument()->AppendChild(root_element);
   root_element->InsertedByParser();
@@ -136,7 +137,7 @@ DocumentParser* MediaDocument::CreateParser() {
 }
 
 void MediaDocument::DefaultEventHandler(Event& event) {
-  Node* target_node = event.target()->ToNode();
+  Node* target_node = event.RawTarget()->ToNode();
   if (!target_node)
     return;
 
@@ -152,7 +153,11 @@ void MediaDocument::DefaultEventHandler(Event& event) {
       // space or media key (play/pause)
       video->TogglePlayState();
       event.SetDefaultHandled();
+      return;
     }
+    // Route the keyboard events directly to the media element
+    video->DispatchEvent(event);
+    return;
   }
 }
 

@@ -29,11 +29,13 @@
 
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_xpath_ns_resolver.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/xml/xpath_evaluator.h"
 #include "third_party/blink/renderer/core/xml/xpath_grammar_generated.h"
 #include "third_party/blink/renderer/core/xml/xpath_path.h"
 #include "third_party/blink/renderer/core/xml/xpath_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
@@ -58,17 +60,17 @@ static XMLCat CharCat(UChar a_char) {
 
   if (a_char == '.' || a_char == '-')
     return kNameCont;
-  WTF::unicode::CharCategory category = WTF::unicode::Category(a_char);
-  if (category &
-      (WTF::unicode::kLetter_Uppercase | WTF::unicode::kLetter_Lowercase |
-       WTF::unicode::kLetter_Other | WTF::unicode::kLetter_Titlecase |
-       WTF::unicode::kNumber_Letter))
+  unicode::CharCategory category = unicode::Category(a_char);
+  if (category & (unicode::kLetter_Uppercase | unicode::kLetter_Lowercase |
+                  unicode::kLetter_Other | unicode::kLetter_Titlecase |
+                  unicode::kNumber_Letter)) {
     return kNameStart;
-  if (category &
-      (WTF::unicode::kMark_NonSpacing | WTF::unicode::kMark_SpacingCombining |
-       WTF::unicode::kMark_Enclosing | WTF::unicode::kLetter_Modifier |
-       WTF::unicode::kNumber_DecimalDigit))
+  }
+  if (category & (unicode::kMark_NonSpacing | unicode::kMark_SpacingCombining |
+                  unicode::kMark_Enclosing | unicode::kLetter_Modifier |
+                  unicode::kNumber_DecimalDigit)) {
     return kNameCont;
+  }
   return kNotPartOfName;
 }
 
@@ -343,6 +345,11 @@ Token Parser::NextTokenInternal() {
       String name;
       if (!LexQName(name))
         return Token(TokenType::kXPathError);
+      // DOM XPath API doesn't support any variables.
+      if (use_counter_) {
+        UseCounter::Count(use_counter_,
+                          WebFeature::kXPathMissingVariableParsed);
+      }
       return Token(TokenType::kVariableReference, name);
     }
   }
@@ -420,7 +427,7 @@ Token Parser::NextToken() {
   return to_ret;
 }
 
-Parser::Parser() {
+Parser::Parser(UseCounter* use_counter) : use_counter_(use_counter) {
   Reset(String());
 }
 

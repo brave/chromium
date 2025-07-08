@@ -11,18 +11,20 @@
  */
 
 import '//resources/cr_elements/cr_shared_style.css.js';
-import '/shared/settings/controls/settings_dropdown_menu.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import '//resources/cr_elements/cr_collapse/cr_collapse.js';
+import '../controls/settings_dropdown_menu.js';
+import '../controls/settings_toggle_button.js';
 import '../settings_shared.css.js';
 
 import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {DropdownMenuOptionList} from '/shared/settings/controls/settings_dropdown_menu.js';
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 
+import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {loadTimeData} from '../i18n_setup.js';
-import {LanguageHelper, LanguagesModel} from '../languages_page/languages_types.js';
+import {getLanguageHelperInstance} from '../languages_page/languages.js';
+import {isTranslateBaseLanguage} from '../languages_page/languages_util.js';
 
 import {getTemplate} from './live_translate_section.html.js';
 
@@ -47,22 +49,6 @@ export class SettingsLiveTranslateElement extends
 
   static get properties() {
     return {
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      /**
-       * Read-only reference to the languages model provided by the
-       * 'settings-languages' instance.
-       */
-      languages: {
-        type: Object,
-        notify: true,
-      },
-
-      languageHelper: Object,
-
       enableLiveTranslateSubtitle_: {
         type: String,
         value: loadTimeData.getString('captionsEnableLiveTranslateSubtitle'),
@@ -80,19 +66,18 @@ export class SettingsLiveTranslateElement extends
     };
   }
 
-  languages: LanguagesModel;
-  languageHelper: LanguageHelper;
-  private enableLiveTranslateSubtitle_: string;
-  private languageOptions_: DropdownMenuOptionList;
-  private translatableLanguages_: DropdownMenuOptionList;
+  declare private enableLiveTranslateSubtitle_: string;
+  declare private languageOptions_: DropdownMenuOptionList;
+  declare private translatableLanguages_: DropdownMenuOptionList;
 
-  override ready() {
-    super.ready();
-    this.languageHelper.whenReady().then(() => {
+  override connectedCallback() {
+    super.connectedCallback();
+    const languageHelper = getLanguageHelperInstance();
+    languageHelper.whenReady().then(() => {
       this.translatableLanguages_ =
-          this.languages?.supported
+          languageHelper.languages!.supported
               .filter(language => {
-                return this.languageHelper.isTranslateBaseLanguage(language);
+                return isTranslateBaseLanguage(language);
               })
               .map(language => {
                 return {value: language.code, name: language.displayName};

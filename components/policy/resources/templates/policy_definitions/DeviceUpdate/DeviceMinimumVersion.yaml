@@ -38,8 +38,7 @@ features:
   dynamic_refresh: true
   per_profile: false
 owners:
-- janagrill@google.com
-- mpolzer@google.com
+- rbock@google.com
 - chromeos-commercial-remote-management@google.com
 schema:
   properties:
@@ -76,3 +75,4 @@ supported_on:
 - chrome_os:86-
 tags: []
 type: dict
+generate_device_proto: False

@@ -7,31 +7,30 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/one_shot_event.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_reader.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_writer.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_base.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
-#include "chrome/browser/apps/app_service/package_id.h"
 #include "chrome/browser/apps/app_service/paused_apps.h"
 #include "chrome/browser/apps/app_service/publisher_host.h"
-#include "chrome/browser/apps/app_service/subscriber_crosapi.h"
-#include "chrome/browser/ash/crosapi/browser_manager.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/cpp/instance_registry.h"
+#include "components/services/app_service/public/cpp/package_id.h"
 #include "components/services/app_service/public/cpp/preferred_app.h"
-#include "components/services/app_service/public/cpp/shortcut/shortcut.h"
 #include "ui/gfx/native_widget_types.h"
 
 // Avoid including this header file directly or referring directly to
@@ -48,6 +47,7 @@ class ImageSkia;
 
 namespace apps {
 
+class AppInstallService;
 class AppPlatformMetrics;
 class AppPlatformMetricsService;
 class InstanceRegistryUpdater;
@@ -56,8 +56,6 @@ class BrowserAppInstanceTracker;
 class PackageId;
 class PromiseAppRegistryCache;
 class PromiseAppService;
-class ShortcutPublisher;
-class ShortcutRegistryCache;
 class UninstallDialog;
 
 struct PromiseApp;
@@ -89,19 +87,33 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   apps::AppPlatformMetrics* AppPlatformMetrics();
   apps::AppPlatformMetricsService* AppPlatformMetricsService();
 
+  // TODO(373972275): Remove BrowserAppInstanceTracker,
+  // BrowserAppInstanceRegistry and InstanceRegistryUpdater.
   apps::BrowserAppInstanceTracker* BrowserAppInstanceTracker();
   apps::BrowserAppInstanceRegistry* BrowserAppInstanceRegistry();
 
-  // Registers `crosapi_subscriber_`.
-  void RegisterCrosApiSubScriber(SubscriberCrosapi* subscriber);
+  // Sets the publisher for `app_type` is unavailable, to allow
+  // AppService to remove apps for `app_type`, and clean up launch requests,
+  // etc. This is used when the app platform is unavailable, e.g. GuestOS
+  // disabled, ARC disabled, etc.
+  //
+  // All apps for `app_type` will be deleted from AppRegistryCache. So this
+  // function should not be called for the normal shutdown process.
+  void SetPublisherUnavailable(AppType app_type);
+
+  apps::AppInstallService& AppInstallService();
 
   // apps::AppServiceProxyBase overrides:
-  void Uninstall(const std::string& app_id,
-                 UninstallSource uninstall_source,
-                 gfx::NativeWindow parent_window) override;
   void OnApps(std::vector<AppPtr> deltas,
               AppType app_type,
               bool should_notify_initialized) override;
+
+  // Uninstalls an app for the given |app_id|. If |parent_window| is specified,
+  // the uninstall dialog will be created as a modal dialog anchored at
+  // |parent_window|. Otherwise, the browser window will be used as the anchor.
+  void Uninstall(const std::string& app_id,
+                 UninstallSource uninstall_source,
+                 gfx::NativeWindow parent_window);
 
   // Pauses apps. |pause_data|'s key is the app_id. |pause_data|'s PauseData
   // is the time limit setting for the app, which is shown in the pause app
@@ -114,11 +126,18 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   // as false directly and removes the paused app icon effect.
   void UnpauseApps(const std::set<std::string>& app_ids);
 
+  // Mark apps as blocked by local settings. Show local block dialog if
+  // `show_block_dialog` is true.
+  void BlockApps(const std::set<std::string>& app_ids,
+                 bool show_block_dialog = false);
+
+  // Remove the local settings block adedd by `BlockApps`.
+  void UnblockApps(const std::set<std::string>& app_ids);
+
   // Set whether resize lock is enabled for the app identified by |app_id|.
   void SetResizeLocked(const std::string& app_id, bool locked);
 
-  // Sets |extension_apps_| and |web_apps_| to observe the ARC apps to set the
-  // badge on the equivalent Chrome app's icon, when ARC is available.
+  // Inform |publisher_host_| that ARC is active.
   void SetArcIsRegistered();
 
   // apps::AppServiceProxyBase overrides:
@@ -164,23 +183,36 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
                        IconEffects icon_effects,
                        apps::LoadIconCallback callback);
 
-  // Registers `publisher` with the App Service as exclusively publishing
-  // shortcut to app type `app_type`. `publisher` must have a lifetime equal to
-  // or longer than this object.
-  void RegisterShortcutPublisher(AppType app_type,
-                                 ShortcutPublisher* publisher);
+  // Load the default icon for a particular app platform. E.g. load a default
+  // icon for guest os app that is not registered in app service.
+  void LoadDefaultIcon(AppType app_type,
+                       int32_t size_in_dip,
+                       IconEffects icon_effects,
+                       IconType icon_type,
+                       LoadIconCallback callback);
 
-  // Update the shortcut with `delta`, which represents some state change of
-  // a shortcut.
-  void UpdateShortcut(ShortcutPtr delta);
-
-  // Get pointer to the Shortcut Registry Cache which holds all shortcuts.
-  // May return a nullptr if this cache doesn't exist.
-  apps::ShortcutRegistryCache* ShortcutRegistryCache();
+  // Sets app locale for an app with the given `app_id`. Empty |locale_tag|
+  // indicates system language being chosen.
+  void SetAppLocale(const std::string& app_id, const std::string& locale_tag);
 
  private:
+  // OnAppsRequest is used to save the parameters of the OnApps calling.
+  struct OnAppsRequest {
+    OnAppsRequest(std::vector<AppPtr> deltas,
+                  AppType app_type,
+                  bool should_notify_initialized);
+    OnAppsRequest(const OnAppsRequest&) = delete;
+    OnAppsRequest& operator=(const OnAppsRequest&) = delete;
+    ~OnAppsRequest();
+
+    std::vector<AppPtr> deltas_;
+    AppType app_type_;
+    bool should_notify_initialized_;
+  };
+
   // For access to Initialize.
   friend class AppServiceProxyFactory;
+  friend class AppServiceProxyTest;
   FRIEND_TEST_ALL_PREFIXES(AppServiceProxyTest, LaunchCallback);
 
   using UninstallDialogs =
@@ -195,6 +227,8 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   static void CreateBlockDialog(const std::string& app_name,
                                 const gfx::ImageSkia& image,
                                 Profile* profile);
+
+  static void CreateLocalBlockDialog(const std::string& app_name);
 
   static void CreatePauseDialog(apps::AppType app_type,
                                 const std::string& app_name,
@@ -223,8 +257,6 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
                                UninstallDialog* uninstall_dialog);
 
   // apps::AppServiceProxyBase overrides:
-  void InitializePreferredAppsForAllSubscribers() override;
-  void OnPreferredAppsChanged(PreferredAppChangesPtr changes) override;
   bool MaybeShowLaunchPreventionDialog(const apps::AppUpdate& update) override;
   void OnLaunched(LaunchCallback callback,
                   LaunchResult&& launch_result) override;
@@ -247,6 +279,9 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   // Invoked when the user clicks the 'OK' button of the pause app dialog.
   // AppService stops the running app and applies the paused app icon effect.
   void OnPauseDialogClosed(apps::AppType app_type, const std::string& app_id);
+
+  bool ShouldExcludeBrowserTabApps(bool exclude_browser_tab_apps,
+                                   WindowMode window_mode) override;
 
   // apps::AppRegistryCache::Observer overrides:
   void OnAppUpdate(const apps::AppUpdate& update) override;
@@ -314,10 +349,10 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
                        LoadIconCallback callback,
                        bool install_success);
 
-  // Invoked when the icon folders for `app_ids` has being deleted. The saved
+  // Invoked when the icon folders for `ids` has being deleted. The saved
   // `ReadIcons` requests in `pending_read_icon_requests_` are run to request
-  // the new raw icon from the app platforms, then load icons for `app_ids`.
-  void PostIconFoldersDeletion(const std::vector<std::string>& app_ids);
+  // the new raw icon from the app platforms, then load icons for `ids`.
+  void PostIconFoldersDeletion(const std::vector<std::string>& ids);
 
   // Returns an instance of `IntentLaunchInfo` created based on `intent`,
   // `filter`, and `update`.
@@ -325,8 +360,6 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
       const apps::IntentPtr& intent,
       const apps::IntentFilterPtr& filter,
       const apps::AppUpdate& update) override;
-
-  raw_ptr<SubscriberCrosapi, ExperimentalAsh> crosapi_subscriber_ = nullptr;
 
   std::unique_ptr<PublisherHost> publisher_host_;
 
@@ -336,13 +369,6 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   bool arc_is_registered_ = false;
 
   apps::InstanceRegistry instance_registry_;
-
-  std::unique_ptr<apps::BrowserAppInstanceTracker>
-      browser_app_instance_tracker_;
-  std::unique_ptr<apps::BrowserAppInstanceRegistry>
-      browser_app_instance_registry_;
-  std::unique_ptr<apps::InstanceRegistryUpdater>
-      browser_app_instance_app_service_updater_;
 
   std::unique_ptr<apps::PromiseAppService> promise_app_service_;
 
@@ -366,10 +392,6 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   std::unique_ptr<apps::AppPlatformMetricsService>
       app_platform_metrics_service_;
 
-  // App service require the Lacros Browser to keep alive for web apps.
-  // TODO(crbug.com/1174246): Support Lacros not keeping alive.
-  std::unique_ptr<crosapi::BrowserManager::ScopedKeepAlive> keep_alive_;
-
   base::ScopedObservation<apps::InstanceRegistry,
                           apps::InstanceRegistry::Observer>
       instance_registry_observer_{this};
@@ -384,9 +406,7 @@ class AppServiceProxyAsh : public AppServiceProxyBase,
   std::list<std::pair<base::RepeatingCallback<bool(void)>, base::OnceClosure>>
       callback_list_;
 
-  base::flat_map<AppType, ShortcutPublisher*> shortcut_publishers_;
-
-  std::unique_ptr<apps::ShortcutRegistryCache> shortcut_registry_cache_;
+  std::unique_ptr<apps::AppInstallService> app_install_service_;
 
   base::WeakPtrFactory<AppServiceProxyAsh> weak_ptr_factory_{this};
 };

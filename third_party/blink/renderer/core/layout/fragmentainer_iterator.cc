@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
 #include "third_party/blink/renderer/core/layout/geometry/writing_mode_converter.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_set.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -14,6 +15,7 @@ FragmentainerIterator::FragmentainerIterator(
     const LayoutFlowThread& flow_thread,
     const PhysicalRect& physical_bounding_box_in_flow_thread)
     : current_fragmentainer_group_index_(0) {
+  DCHECK(!RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled());
   LogicalRect bounds_in_flow_thread =
       flow_thread.CreateWritingModeConverter().ToLogical(
           physical_bounding_box_in_flow_thread);
@@ -50,19 +52,6 @@ void FragmentainerIterator::Advance() {
     if (AtEnd())
       return;
   }
-}
-
-PhysicalOffset FragmentainerIterator::PaginationOffset() const {
-  return CurrentGroup().FlowThreadTranslationAtOffset(
-      FragmentainerLogicalTopInFlowThread(),
-      LayoutBox::kAssociateWithLatterPage, CoordinateSpaceConversion::kVisual);
-}
-
-LayoutUnit FragmentainerIterator::FragmentainerLogicalTopInFlowThread() const {
-  DCHECK(!AtEnd());
-  const auto& group = CurrentGroup();
-  return group.LogicalTopInFlowThread() +
-         current_fragmentainer_index_ * group.ColumnLogicalHeight();
 }
 
 PhysicalRect FragmentainerIterator::ClipRectInFlowThread() const {

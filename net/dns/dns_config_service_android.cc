@@ -7,10 +7,11 @@
 #include <sys/system_properties.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
@@ -26,7 +27,6 @@
 #include "net/dns/dns_config_service.h"
 #include "net/dns/public/dns_protocol.h"
 #include "net/dns/serial_worker.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 namespace internal {
@@ -35,18 +35,6 @@ namespace {
 
 constexpr base::FilePath::CharType kFilePathHosts[] =
     FILE_PATH_LITERAL("/system/etc/hosts");
-
-bool IsVpnPresent() {
-  NetworkInterfaceList networks;
-  if (!GetNetworkList(&networks, INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES))
-    return false;
-
-  for (NetworkInterface network : networks) {
-    if (AddressTrackerLinux::IsTunnelInterfaceName(network.name.c_str()))
-      return true;
-  }
-  return false;
-}
 
 }  // namespace
 
@@ -93,56 +81,17 @@ class DnsConfigServiceAndroid::ConfigReader : public SerialWorker {
       dns_config_.emplace();
       dns_config_->unhandled_options = false;
 
-      if (base::android::BuildInfo::GetInstance()->sdk_int() >=
-          base::android::SDK_VERSION_MARSHMALLOW) {
-        if (!dns_server_getter_.Run(
-                &dns_config_->nameservers, &dns_config_->dns_over_tls_active,
-                &dns_config_->dns_over_tls_hostname, &dns_config_->search)) {
-          dns_config_.reset();
-        }
-        return;
-      }
-
-      if (IsVpnPresent()) {
-        dns_config_->unhandled_options = true;
-      }
-
-      // NOTE(pauljensen): __system_property_get and the net.dns1/2 properties
-      // are not supported APIs, but they're only read on pre-Marshmallow
-      // Android which was released years ago and isn't changing.
-      char property_value[PROP_VALUE_MAX];
-      __system_property_get("net.dns1", property_value);
-      std::string dns1_string = property_value;
-      __system_property_get("net.dns2", property_value);
-      std::string dns2_string = property_value;
-      if (dns1_string.empty() && dns2_string.empty()) {
+      if (!dns_server_getter_.Run(
+              &dns_config_->nameservers, &dns_config_->dns_over_tls_active,
+              &dns_config_->dns_over_tls_hostname, &dns_config_->search)) {
         dns_config_.reset();
-        return;
-      }
-
-      IPAddress dns1_address;
-      IPAddress dns2_address;
-      bool parsed1 = dns1_address.AssignFromIPLiteral(dns1_string);
-      bool parsed2 = dns2_address.AssignFromIPLiteral(dns2_string);
-      if (!parsed1 && !parsed2) {
-        dns_config_.reset();
-        return;
-      }
-
-      if (parsed1) {
-        IPEndPoint dns1(dns1_address, dns_protocol::kDefaultPort);
-        dns_config_->nameservers.push_back(dns1);
-      }
-      if (parsed2) {
-        IPEndPoint dns2(dns2_address, dns_protocol::kDefaultPort);
-        dns_config_->nameservers.push_back(dns2);
       }
     }
 
    private:
     friend class ConfigReader;
     android::DnsServerGetter dns_server_getter_;
-    absl::optional<DnsConfig> dns_config_;
+    std::optional<DnsConfig> dns_config_;
   };
 
   android::DnsServerGetter dns_server_getter_;

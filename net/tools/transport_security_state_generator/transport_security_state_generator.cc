@@ -10,13 +10,13 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "crypto/openssl_util.h"
 #include "net/tools/transport_security_state_generator/input_file_parsers.h"
 #include "net/tools/transport_security_state_generator/pinsets.h"
 #include "net/tools/transport_security_state_generator/preloaded_state_generator.h"
@@ -47,8 +47,8 @@ bool CheckForDuplicatePins(const Pinsets& pinsets) {
     }
     seen_names.insert(pin.first);
 
-    std::string hash =
-        std::string(pin.second.data(), pin.second.data() + pin.second.size());
+    std::string hash = std::string(
+        pin.second.data(), UNSAFE_TODO(pin.second.data() + pin.second.size()));
     auto it = seen_hashes.find(hash);
     if (it != seen_hashes.cend()) {
       LOG(ERROR) << "Duplicate pin hash for " << pin.first
@@ -188,8 +188,6 @@ bool CheckHostnames(const TransportSecurityStateEntries& entries) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  crypto::EnsureOpenSSLInit();
-
   base::AtExitManager at_exit_manager;
   base::CommandLine::Init(argc, argv);
   const base::CommandLine& command_line =

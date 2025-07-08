@@ -6,27 +6,31 @@
 #define ASH_WM_WINDOW_MINI_VIEW_HEADER_VIEW_H_
 
 #include "ash/ash_export.h"
-#include "ash/wm/window_mini_view.h"
 #include "base/memory/raw_ptr.h"
-#include "ui/aura/window.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/layout/box_layout_view.h"
-#include "ui/views/view.h"
+
+namespace aura {
+class Window;
+}  // namespace aura
 
 namespace views {
-class Label;
 class ImageView;
+class Label;
 }  // namespace views
 
 namespace ash {
+
+class WindowMiniView;
 
 // A view that represents the header for the window mini view. It contains an
 // icon and a title label from the source window of the `window_mini_view_` and
 // has a stroke at the bottom of it.
 class ASH_EXPORT WindowMiniViewHeaderView : public views::BoxLayoutView {
- public:
-  METADATA_HEADER(WindowMiniViewHeaderView);
+  METADATA_HEADER(WindowMiniViewHeaderView, views::BoxLayoutView)
 
+ public:
   explicit WindowMiniViewHeaderView(WindowMiniView* window_mini_view);
   WindowMiniViewHeaderView(const WindowMiniViewHeaderView&) = delete;
   WindowMiniViewHeaderView& operator=(const WindowMiniViewHeaderView&) = delete;
@@ -38,18 +42,49 @@ class ASH_EXPORT WindowMiniViewHeaderView : public views::BoxLayoutView {
   void UpdateIconView(aura::Window* window);
   void UpdateTitleLabel(aura::Window* window);
 
+  // Refreshes the rounded corners on `this` by recreating the background view.
+  // Please note that there might be minor pixel difference if the rounded
+  // corner is set on the layer of this since the way to draw the rounded
+  // corners is different which may fail the pixel test
+  // (WmPixelDiffTest.WindowCycleBasic).
+  void RefreshHeaderViewRoundedCorners();
+
+  void SetHeaderViewRoundedCornerRadius(
+      gfx::RoundedCornersF& header_view_rounded_corners);
+
+  // Resets the preset rounded corners values i.e.
+  // `custom_header_view_rounded_corners_`.
+  void ResetRoundedCorners();
+
  private:
+  // views::View:
+  void OnThemeChanged() override;
+
   // The parent view of `this`, which is guaranteed not null during the lifetime
   // of `this`.
-  raw_ptr<WindowMiniView, ExperimentalAsh> window_mini_view_;
+  raw_ptr<WindowMiniView> window_mini_view_;
 
   // A view that wraps up the icon and title label. Owned by the views
   // hierarchy.
-  raw_ptr<views::BoxLayoutView, ExperimentalAsh> icon_label_view_;
+  raw_ptr<views::BoxLayoutView> icon_label_view_;
 
   // Views for the icon and title. Owned by the views hierarchy.
-  raw_ptr<views::Label, ExperimentalAsh> title_label_ = nullptr;
-  raw_ptr<views::ImageView, ExperimentalAsh> icon_view_ = nullptr;
+  raw_ptr<views::Label> title_label_ = nullptr;
+  raw_ptr<views::ImageView> icon_view_ = nullptr;
+
+  // Separator between the header and the overview window.
+  raw_ptr<views::View> separator_ = nullptr;
+
+  // The current rounded corner parameters for this view's background. May be
+  // `nullopt` if a background is not set yet.
+  std::optional<gfx::RoundedCornersF> current_header_view_rounded_corners_;
+
+  // Custom rounded corner parameters specified by the caller via
+  // `SetHeaderViewRoundedCornerRadius()`. If set, this will match
+  // `current_header_view_rounded_corners_`. Otherwise,
+  // `current_header_view_rounded_corners_` will be set to a default value
+  // picked internally.
+  std::optional<gfx::RoundedCornersF> custom_header_view_rounded_corners_;
 };
 
 }  // namespace ash

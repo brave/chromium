@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/strings/string_piece_forward.h"
-#include "components/segmentation_platform/internal/execution/model_execution_status.h"
-#include "components/segmentation_platform/internal/selection/segment_selector_impl.h"
+#include <string_view>
 
 #include "base/run_loop.h"
 #include "base/test/simple_test_clock.h"
@@ -12,11 +10,12 @@
 #include "components/segmentation_platform/internal/database/mock_signal_storage_config.h"
 #include "components/segmentation_platform/internal/database/segment_info_database.h"
 #include "components/segmentation_platform/internal/database/test_segment_info_database.h"
-#include "components/segmentation_platform/internal/execution/default_model_manager.h"
 #include "components/segmentation_platform/internal/execution/mock_model_provider.h"
+#include "components/segmentation_platform/internal/execution/model_execution_status.h"
 #include "components/segmentation_platform/internal/execution/model_executor_impl.h"
 #include "components/segmentation_platform/internal/execution/processing/mock_feature_list_query_processor.h"
 #include "components/segmentation_platform/internal/metadata/metadata_utils.h"
+#include "components/segmentation_platform/internal/selection/segment_selector_impl.h"
 #include "components/segmentation_platform/internal/selection/segmentation_result_prefs.h"
 #include "components/segmentation_platform/public/config.h"
 #include "components/segmentation_platform/public/field_trial_register.h"
@@ -40,11 +39,10 @@ using ::testing::NiceMock;
 class MockFieldTrialRegister : public FieldTrialRegister {
  public:
   MOCK_METHOD2(RegisterFieldTrial,
-               void(base::StringPiece trial_name,
-                    base::StringPiece group_name));
+               void(std::string_view trial_name, std::string_view group_name));
 
   MOCK_METHOD3(RegisterSubsegmentFieldTrialIfNeeded,
-               void(base::StringPiece trial_name,
+               void(std::string_view trial_name,
                     proto::SegmentId segment_id,
                     int subsegment_rank));
 };
@@ -54,6 +52,13 @@ class MockModelManager : public ModelManager {
   MOCK_METHOD(ModelProvider*,
               GetModelProvider,
               (proto::SegmentId segment_id, proto::ModelSource model_source));
+
+  MOCK_METHOD(void, Initialize, ());
+
+  MOCK_METHOD(
+      void,
+      SetSegmentationModelUpdatedCallbackForTesting,
+      (ModelManager::SegmentationModelUpdatedCallback model_updated_callback));
 };
 
 std::unique_ptr<Config> CreateTestConfig() {
@@ -62,6 +67,7 @@ std::unique_ptr<Config> CreateTestConfig() {
   config->segmentation_uma_name = "TestKey";
   config->segment_selection_ttl = base::Days(28);
   config->unknown_selection_ttl = base::Days(14);
+  config->auto_execute_and_cache = true;
   config->AddSegmentId(SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB);
   config->AddSegmentId(SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_SHARE);
   return config;
@@ -78,13 +84,16 @@ class MockTrainingDataCollector : public TrainingDataCollector {
   MOCK_METHOD0(OnModelMetadataUpdated, void());
   MOCK_METHOD0(OnServiceInitialized, void());
   MOCK_METHOD0(ReportCollectedContinuousTrainingData, void());
-  MOCK_METHOD3(OnDecisionTime,
+  MOCK_METHOD5(OnDecisionTime,
                TrainingRequestId(proto::SegmentId id,
                                  scoped_refptr<InputContext> input_context,
-                                 DecisionType type));
-  MOCK_METHOD4(CollectTrainingData,
+                                 DecisionType type,
+                                 std::optional<ModelProvider::Request> inputs,
+                                 bool decision_result_update_trigger));
+  MOCK_METHOD5(CollectTrainingData,
                void(SegmentId segment_id,
                     TrainingRequestId request_id,
+                    ukm::SourceId ukm_source_id,
                     const TrainingLabels& param,
                     SuccessCallback callback));
 };
@@ -97,16 +106,16 @@ class TestSegmentationResultPrefs : public SegmentationResultPrefs {
 
   void SaveSegmentationResultToPref(
       const std::string& result_key,
-      const absl::optional<SelectedSegment>& selected_segment) override {
+      const std::optional<SelectedSegment>& selected_segment) override {
     selection = selected_segment;
   }
 
-  absl::optional<SelectedSegment> ReadSegmentationResultFromPref(
+  std::optional<SelectedSegment> ReadSegmentationResultFromPref(
       const std::string& result_key) override {
     return selection;
   }
 
-  absl::optional<SelectedSegment> selection;
+  std::optional<SelectedSegment> selection;
 };
 
 class SegmentSelectorTest : public testing::Test {
@@ -120,15 +129,13 @@ class SegmentSelectorTest : public testing::Test {
     std::vector<proto::SegmentId> all_segments;
     for (const auto& it : config_->segments)
       all_segments.push_back(it.first);
-    default_manager_ =
-        std::make_unique<DefaultModelManager>(&provider_factory_, all_segments);
     segment_database_ = std::make_unique<test::TestSegmentInfoDatabase>();
     auto prefs_moved = std::make_unique<TestSegmentationResultPrefs>();
     prefs_ = prefs_moved.get();
     segment_selector_ = std::make_unique<SegmentSelectorImpl>(
         segment_database_.get(), &signal_storage_config_,
         std::move(prefs_moved), config_.get(), &field_trial_register_, &clock_,
-        PlatformOptions::CreateDefault(), default_manager_.get());
+        PlatformOptions::CreateDefault());
     segment_selector_->set_training_data_collector_for_testing(
         &training_data_collector_);
     segment_selector_->OnPlatformInitialized(nullptr);
@@ -136,12 +143,12 @@ class SegmentSelectorTest : public testing::Test {
     auto query_processor =
         std::make_unique<processing::MockFeatureListQueryProcessor>();
     mock_query_processor_ = query_processor.get();
-    auto moved_model_manager = std::make_unique<MockModelManager>();
-    mock_execution_manager_ = moved_model_manager.get();
+    mock_model_manager_ = std::make_unique<MockModelManager>();
     execution_service_->InitForTesting(
         std::move(query_processor),
-        std::make_unique<ModelExecutorImpl>(&clock_, mock_query_processor_),
-        nullptr, std::move(moved_model_manager));
+        std::make_unique<ModelExecutorImpl>(&clock_, segment_database_.get(),
+                                            mock_query_processor_),
+        nullptr, mock_model_manager_.get());
   }
 
   void GetSelectedSegment(const SegmentSelectionResult& expected) {
@@ -184,8 +191,8 @@ class SegmentSelectorTest : public testing::Test {
   void ExpectFieldTrials(const std::vector<std::string>& groups) {
     for (const std::string& group : groups) {
       EXPECT_CALL(field_trial_register_,
-                  RegisterFieldTrial(base::StringPiece("Segmentation_TestKey"),
-                                     base::StringPiece(group)));
+                  RegisterFieldTrial(std::string_view("Segmentation_TestKey"),
+                                     std::string_view(group)));
     }
   }
 
@@ -197,14 +204,13 @@ class SegmentSelectorTest : public testing::Test {
   base::SimpleTestClock clock_;
   std::unique_ptr<test::TestSegmentInfoDatabase> segment_database_;
   MockSignalStorageConfig signal_storage_config_;
-  std::unique_ptr<DefaultModelManager> default_manager_;
-  raw_ptr<TestSegmentationResultPrefs, DanglingUntriaged> prefs_;
-  std::unique_ptr<SegmentSelectorImpl> segment_selector_;
-  MockTrainingDataCollector training_data_collector_;
-  raw_ptr<processing::MockFeatureListQueryProcessor, DanglingUntriaged>
-      mock_query_processor_ = nullptr;
-  raw_ptr<MockModelManager, DanglingUntriaged> mock_execution_manager_;
+  std::unique_ptr<MockModelManager> mock_model_manager_;
   std::unique_ptr<ExecutionService> execution_service_;
+  std::unique_ptr<SegmentSelectorImpl> segment_selector_;
+  raw_ptr<TestSegmentationResultPrefs> prefs_;
+  MockTrainingDataCollector training_data_collector_;
+  raw_ptr<processing::MockFeatureListQueryProcessor> mock_query_processor_ =
+      nullptr;
 };
 
 TEST_F(SegmentSelectorTest, FindBestSegmentFlowWithTwoSegments) {
@@ -228,94 +234,6 @@ TEST_F(SegmentSelectorTest, FindBestSegmentFlowWithTwoSegments) {
   task_environment_.RunUntilIdle();
   ASSERT_TRUE(prefs_->selection.has_value());
   ASSERT_EQ(segment_id2, prefs_->selection->segment_id);
-}
-
-TEST_F(SegmentSelectorTest, RunSelectionOnDemand) {
-  auto config = CreateTestConfig();
-  config->auto_execute_and_cache = false;
-  SetUpWithConfig(std::move(config));
-  EXPECT_CALL(signal_storage_config_, MeetsSignalCollectionRequirement(_, _))
-      .WillRepeatedly(Return(true));
-
-  static constexpr SegmentId kSegmentId =
-      SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB;
-  float mapping[][2] = {{0.2, 1}, {0.5, 3}, {0.7, 4}};
-  InitializeMetadataForSegment(kSegmentId, mapping, 3);
-
-  static constexpr SegmentId kSegmentId2 =
-      SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_SHARE;
-  float mapping2[][2] = {{0.3, 1}, {0.4, 4}};
-  InitializeMetadataForSegment(kSegmentId2, mapping2, 2);
-
-  EXPECT_CALL(training_data_collector_, OnDecisionTime(kSegmentId, _, _))
-      .Times(1);
-  EXPECT_CALL(training_data_collector_, OnDecisionTime(kSegmentId2, _, _))
-      .Times(1);
-
-  auto result_provider = std::make_unique<MockResultProvider>();
-  EXPECT_CALL(*result_provider, GetSegmentResult(_))
-      .Times(2)
-      .WillRepeatedly(Invoke(
-          [](std::unique_ptr<SegmentResultProvider::GetResultOptions> options) {
-            EXPECT_TRUE(options->ignore_db_scores);
-            int rank = options->segment_id == kSegmentId ? 3 : 4;
-            auto result =
-                std::make_unique<SegmentResultProvider::SegmentResult>(
-                    SegmentResultProvider::ResultState::kTfliteModelScoreUsed,
-                    proto::PredictionResult(), rank);
-            std::move(options->callback).Run(std::move(result));
-          }));
-  segment_selector_->set_segment_result_provider_for_testing(
-      std::move(result_provider));
-
-  clock_.Advance(base::Days(1));
-  base::RunLoop wait_for_selection;
-  segment_selector_->GetSelectedSegmentOnDemand(
-      /*input_context=*/nullptr,
-      base::BindOnce(
-          [](base::OnceClosure quit, const SegmentSelectionResult& result) {
-            EXPECT_TRUE(result.is_ready);
-            EXPECT_EQ(kSegmentId2, *result.segment);
-            std::move(quit).Run();
-          },
-          wait_for_selection.QuitClosure()));
-  wait_for_selection.Run();
-}
-
-TEST_F(SegmentSelectorTest, RunSelectionOnDemandCallbackInvokedOnFailure) {
-  auto config = CreateTestConfig();
-  config->auto_execute_and_cache = false;
-  SetUpWithConfig(std::move(config));
-  EXPECT_CALL(signal_storage_config_, MeetsSignalCollectionRequirement(_, _))
-      .WillRepeatedly(Return(true));
-
-  auto result_provider = std::make_unique<MockResultProvider>();
-  EXPECT_CALL(*result_provider, GetSegmentResult(_))
-      .Times(1)
-      .WillRepeatedly(Invoke(
-          [](std::unique_ptr<SegmentResultProvider::GetResultOptions> options) {
-            EXPECT_TRUE(options->ignore_db_scores);
-            auto result =
-                std::make_unique<SegmentResultProvider::SegmentResult>(
-                    SegmentResultProvider::ResultState::
-                        kDefaultModelExecutionFailed);
-            std::move(options->callback).Run(std::move(result));
-          }));
-  segment_selector_->set_segment_result_provider_for_testing(
-      std::move(result_provider));
-
-  clock_.Advance(base::Days(1));
-  base::RunLoop wait_for_selection;
-  segment_selector_->GetSelectedSegmentOnDemand(
-      /*input_context=*/nullptr,
-      base::BindOnce(
-          [](base::OnceClosure quit, const SegmentSelectionResult& result) {
-            EXPECT_FALSE(result.is_ready);
-            EXPECT_FALSE(result.segment.has_value());
-            std::move(quit).Run();
-          },
-          wait_for_selection.QuitClosure()));
-  wait_for_selection.Run();
 }
 
 TEST_F(SegmentSelectorTest, NewSegmentResultOverridesThePreviousBest) {
@@ -468,7 +386,7 @@ TEST_F(SegmentSelectorTest,
   segment_selector_ = std::make_unique<SegmentSelectorImpl>(
       segment_database_.get(), &signal_storage_config_, std::move(prefs_moved),
       config_.get(), &field_trial_register_, &clock_,
-      PlatformOptions::CreateDefault(), default_manager_.get());
+      PlatformOptions::CreateDefault());
   segment_selector_->set_training_data_collector_for_testing(
       &training_data_collector_);
   segment_selector_->OnPlatformInitialized(execution_service_.get());
@@ -513,7 +431,7 @@ TEST_F(SegmentSelectorTest, GetSelectedSegmentUpdatedWhenUnused) {
   segment_selector_ = std::make_unique<SegmentSelectorImpl>(
       segment_database_.get(), &signal_storage_config_, std::move(prefs_moved),
       config_.get(), &field_trial_register_, &clock_,
-      PlatformOptions::CreateDefault(), default_manager_.get());
+      PlatformOptions::CreateDefault());
   segment_selector_->set_training_data_collector_for_testing(
       &training_data_collector_);
   segment_selector_->OnPlatformInitialized(execution_service_.get());
@@ -612,8 +530,8 @@ TEST_F(SegmentSelectorTest, SubsegmentRecording) {
   // Previous selection result is not available at this time, so it should
   // record unselected.
   EXPECT_CALL(field_trial_register_,
-              RegisterFieldTrial(base::StringPiece("Segmentation_TestKey"),
-                                 base::StringPiece("Unselected")));
+              RegisterFieldTrial(std::string_view("Segmentation_TestKey"),
+                                 std::string_view("Unselected")));
   SetUpWithConfig(std::move(config));
 
   // Store model metadata, model scores and selection results.
@@ -646,19 +564,19 @@ TEST_F(SegmentSelectorTest, SubsegmentRecording) {
   prefs_->selection = from_history;
 
   EXPECT_CALL(field_trial_register_,
-              RegisterFieldTrial(base::StringPiece("Segmentation_TestKey"),
-                                 base::StringPiece("Share")));
+              RegisterFieldTrial(std::string_view("Segmentation_TestKey"),
+                                 std::string_view("Share")));
 
   // Construct a segment selector. It should read result from last session.
   segment_selector_ = std::make_unique<SegmentSelectorImpl>(
       segment_database_.get(), &signal_storage_config_, std::move(prefs_moved),
       config_.get(), &field_trial_register_, &clock_,
-      PlatformOptions::CreateDefault(), default_manager_.get());
+      PlatformOptions::CreateDefault());
 
   // When segment result is missing, unknown subsegment is recorded, otherwise
   // record metrics based on the subsegment mapping.
   base::RunLoop wait_for_subsegment;
-  std::vector<std::tuple<base::StringPiece, SegmentId, int>> actual_calls;
+  std::vector<std::tuple<std::string_view, SegmentId, int>> actual_calls;
   int call_count = 0;
 
   EXPECT_CALL(field_trial_register_,
@@ -666,7 +584,7 @@ TEST_F(SegmentSelectorTest, SubsegmentRecording) {
       .Times(3)
       .WillRepeatedly(
           Invoke([&wait_for_subsegment, &actual_calls, &call_count](
-                     base::StringPiece trial, SegmentId id, int rank) {
+                     std::string_view trial, SegmentId id, int rank) {
             actual_calls.emplace_back(trial, id, rank);
             call_count++;
             if (call_count == 3)
@@ -680,12 +598,12 @@ TEST_F(SegmentSelectorTest, SubsegmentRecording) {
   EXPECT_THAT(
       actual_calls,
       testing::UnorderedElementsAre(
-          std::make_tuple(base::StringPiece("Segmentation_TestKey_Share"),
+          std::make_tuple(std::string_view("Segmentation_TestKey_Share"),
                           segment_id0, 0),
           std::make_tuple(
-              base::StringPiece("Segmentation_TestKey_NewTab"),
+              std::string_view("Segmentation_TestKey_NewTab"),
               proto::SegmentId::OPTIMIZATION_TARGET_SEGMENTATION_NEW_TAB, 0),
-          std::make_tuple(base::StringPiece("Segmentation_TestKey_FeedUser"),
+          std::make_tuple(std::string_view("Segmentation_TestKey_FeedUser"),
                           kSubsegmentEnabledTarget, 3)));
 }
 

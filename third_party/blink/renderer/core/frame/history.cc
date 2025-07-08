@@ -25,8 +25,15 @@
 
 #include "third_party/blink/renderer/core/frame/history.h"
 
+#include <optional>
+
 #include "base/metrics/histogram_functions.h"
+#include "base/time/time.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_scroll_restoration.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/history_util.h"
@@ -41,28 +48,36 @@
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/bindings/to_v8.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_info.h"
+#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_tracker.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
 
 namespace {
-void ReportURLChange(LocalDOMWindow* window,
-                     ScriptState* script_state,
-                     const String& url) {
-  DCHECK(window);
-  DCHECK(window->GetFrame());
-  if (window->GetFrame()->IsMainFrame() && window->Url() != url) {
-    SoftNavigationHeuristics* heuristics =
-        SoftNavigationHeuristics::From(*window);
-    heuristics->SameDocumentNavigationStarted(script_state);
+
+void MaybeRecordHistoryAdvanceMethodUkm(LocalDOMWindow* window) {
+  if (!window || !window->GetFrame()) {
+    return;
   }
+
+  bool has_sticky_user_activation =
+      window->GetFrame()->HasStickyUserActivation();
+  bool from_ad = window->GetFrame()->IsAdScriptInStack() ||
+                 window->GetFrame()->IsAdFrame();
+
+  ukm::builders::HistoryApi_AdvanceMethod(window->UkmSourceID())
+      .SetHasStickyUserActivation(has_sticky_user_activation)
+      .SetFromAd(from_ad)
+      .Record(window->UkmRecorder());
 }
+
 }  // namespace
 
 History::History(LocalDOMWindow* window)
@@ -86,11 +101,74 @@ unsigned History::length(ExceptionState& exception_state) const {
 
 ScriptValue History::state(ScriptState* script_state,
                            ExceptionState& exception_state) {
+  return StateHelper(script_state, exception_state);
+}
+
+SerializedScriptValue* History::StateInternal() const {
+  if (HistoryItem* history_item = GetHistoryItem())
+    return history_item->StateObject();
+  return nullptr;
+}
+
+void History::setScrollRestoration(const V8ScrollRestoration& value,
+                                   ExceptionState& exception_state) {
+  HistoryItem* item = GetHistoryItem();
+  if (!item) {
+    exception_state.ThrowSecurityError(
+        "May not use a History object associated with a Document that is not "
+        "fully active");
+    return;
+  }
+
+  mojom::blink::ScrollRestorationType scroll_restoration =
+      value.AsEnum() == V8ScrollRestoration::Enum::kManual
+          ? mojom::blink::ScrollRestorationType::kManual
+          : mojom::blink::ScrollRestorationType::kAuto;
+  if (scroll_restoration == ScrollRestorationInternal())
+    return;
+
+  item->SetScrollRestorationType(scroll_restoration);
+  DomWindow()->GetFrame()->Client()->DidUpdateCurrentHistoryItem();
+}
+
+V8ScrollRestoration History::scrollRestoration(
+    ExceptionState& exception_state) {
+  if (!DomWindow()) {
+    exception_state.ThrowSecurityError(
+        "May not use a History object associated with a Document that is not "
+        "fully active");
+    return V8ScrollRestoration(V8ScrollRestoration::Enum::kAuto);
+  }
+  return V8ScrollRestoration(
+      ScrollRestorationInternal() ==
+              mojom::blink::ScrollRestorationType::kManual
+          ? V8ScrollRestoration::Enum::kManual
+          : V8ScrollRestoration::Enum::kAuto);
+}
+
+mojom::blink::ScrollRestorationType History::ScrollRestorationInternal() const {
+  if (HistoryItem* history_item = GetHistoryItem())
+    return history_item->ScrollRestorationType();
+  return mojom::blink::ScrollRestorationType::kAuto;
+}
+
+HistoryItem* History::GetHistoryItem() const {
+  return DomWindow() ? DomWindow()->document()->Loader()->GetHistoryItem()
+                     : nullptr;
+}
+
+bool History::IsSameAsCurrentState(SerializedScriptValue* state) const {
+  return state == StateInternal();
+}
+
+ScriptValue History::StateHelper(ScriptState* script_state,
+                                 ExceptionState& exception_state) {
   v8::Isolate* isolate = script_state->GetIsolate();
   static const V8PrivateProperty::SymbolKey kHistoryStatePrivateProperty;
   auto private_prop =
       V8PrivateProperty::GetSymbol(isolate, kHistoryStatePrivateProperty);
-  v8::Local<v8::Object> v8_history = ToV8(this, script_state).As<v8::Object>();
+  v8::Local<v8::Object> v8_history =
+      ToV8Traits<History>::ToV8(script_state, this).As<v8::Object>();
   v8::Local<v8::Value> v8_state;
 
   // Returns the same V8 value unless the history gets updated.  This
@@ -99,10 +177,12 @@ ScriptValue History::state(ScriptState* script_state,
   // that PopStateEvent.state can also access the same V8 value.
   scoped_refptr<SerializedScriptValue> current_state = StateInternal();
   if (last_state_object_requested_ == current_state) {
-    if (!private_prop.GetOrUndefined(v8_history).ToLocal(&v8_state))
+    if (!private_prop.GetOrUndefined(v8_history).ToLocal(&v8_state)) {
       return ScriptValue::CreateNull(isolate);
-    if (!v8_state->IsUndefined())
+    }
+    if (!v8_state->IsUndefined()) {
       return ScriptValue(isolate, v8_state);
+    }
   }
 
   if (!DomWindow()) {
@@ -122,61 +202,6 @@ ScriptValue History::state(ScriptState* script_state,
   return ScriptValue(isolate, v8_state);
 }
 
-SerializedScriptValue* History::StateInternal() const {
-  if (HistoryItem* history_item = GetHistoryItem())
-    return history_item->StateObject();
-  return nullptr;
-}
-
-void History::setScrollRestoration(const String& value,
-                                   ExceptionState& exception_state) {
-  DCHECK(value == "manual" || value == "auto");
-  HistoryItem* item = GetHistoryItem();
-  if (!item) {
-    exception_state.ThrowSecurityError(
-        "May not use a History object associated with a Document that is not "
-        "fully active");
-    return;
-  }
-
-  mojom::blink::ScrollRestorationType scroll_restoration =
-      value == "manual" ? mojom::blink::ScrollRestorationType::kManual
-                        : mojom::blink::ScrollRestorationType::kAuto;
-  if (scroll_restoration == ScrollRestorationInternal())
-    return;
-
-  item->SetScrollRestorationType(scroll_restoration);
-  DomWindow()->GetFrame()->Client()->DidUpdateCurrentHistoryItem();
-}
-
-String History::scrollRestoration(ExceptionState& exception_state) {
-  if (!DomWindow()) {
-    exception_state.ThrowSecurityError(
-        "May not use a History object associated with a Document that is not "
-        "fully active");
-    return "auto";
-  }
-  return ScrollRestorationInternal() ==
-                 mojom::blink::ScrollRestorationType::kManual
-             ? "manual"
-             : "auto";
-}
-
-mojom::blink::ScrollRestorationType History::ScrollRestorationInternal() const {
-  if (HistoryItem* history_item = GetHistoryItem())
-    return history_item->ScrollRestorationType();
-  return mojom::blink::ScrollRestorationType::kAuto;
-}
-
-HistoryItem* History::GetHistoryItem() const {
-  return DomWindow() ? DomWindow()->document()->Loader()->GetHistoryItem()
-                     : nullptr;
-}
-
-bool History::IsSameAsCurrentState(SerializedScriptValue* state) const {
-  return state == StateInternal();
-}
-
 void History::back(ScriptState* script_state, ExceptionState& exception_state) {
   go(script_state, -1, exception_state);
 }
@@ -189,6 +214,11 @@ void History::forward(ScriptState* script_state,
 void History::go(ScriptState* script_state,
                  int delta,
                  ExceptionState& exception_state) {
+  base::TimeTicks actual_navigation_start = base::TimeTicks::Now();
+  if (delta > 0) {
+    MaybeRecordHistoryAdvanceMethodUkm(DomWindow());
+  }
+
   LocalDOMWindow* window = DomWindow();
   if (!window) {
     exception_state.ThrowSecurityError(
@@ -213,23 +243,17 @@ void History::go(ScriptState* script_state,
     return;
 
   if (delta) {
-    // We don't have the URL here, as it is not available in the renderer just
-    // yet. We initially set it to an empty string, to signal to the
-    // SoftNavigationHeuristics class that it's not yet set. We will
-    // asynchronously set the URL at
-    // DocumentLoader::UpdateForSameDocumentNavigation, once the same document
-    // navigation is committed.
-    ReportURLChange(window, script_state,
-                    /*url=*/String(""));
-    // Pass the current task ID so it'd be set as the parent task for the future
-    // popstate event.
-    auto* tracker = ThreadScheduler::Current()->GetTaskAttributionTracker();
-    absl::optional<scheduler::TaskAttributionId> task_id;
-    if (tracker && script_state->World().IsMainWorld()) {
-      task_id = tracker->RunningTaskAttributionId(script_state);
+    // Set up propagating the current task state to the navigation commit.
+    std::optional<scheduler::TaskAttributionId> soft_navigation_task_id;
+    if (script_state->World().IsMainWorld() && frame->IsOutermostMainFrame()) {
+      if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
+        soft_navigation_task_id =
+            heuristics->AsyncSameDocumentNavigationStarted();
+      }
     }
     DCHECK(frame->Client());
-    if (frame->Client()->NavigateBackForward(delta, task_id)) {
+    if (frame->Client()->NavigateBackForward(delta, actual_navigation_start,
+                                             soft_navigation_task_id)) {
       if (Page* page = frame->GetPage())
         page->HistoryNavigationVirtualTimePauser().PauseVirtualTime();
     }
@@ -247,6 +271,8 @@ void History::pushState(ScriptState* script_state,
                         const String& title,
                         const String& url,
                         ExceptionState& exception_state) {
+  MaybeRecordHistoryAdvanceMethodUkm(DomWindow());
+
   v8::Isolate* isolate = script_state->GetIsolate();
   WebFrameLoadType load_type = WebFrameLoadType::kStandard;
   if (LocalDOMWindow* window = DomWindow()) {
@@ -296,8 +322,11 @@ void History::replaceState(ScriptState* script_state,
 }
 
 KURL History::UrlForState(const String& url_string) {
-  if (url_string.IsNull())
+  if (url_string.IsNull() ||
+      (url_string.empty() &&
+       RuntimeEnabledFeatures::StandardHistoryStateEmptyUrlHandlingEnabled())) {
     return DomWindow()->Url();
+  }
   if (url_string.empty())
     return DomWindow()->BaseURL();
 
@@ -319,7 +348,6 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
   }
 
   KURL full_url = UrlForState(url_string);
-  ReportURLChange(window, script_state, full_url);
   bool can_change = CanChangeToUrlForHistoryApi(
       full_url, window->GetSecurityOrigin(), window->Url());
 
@@ -338,10 +366,10 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     // place: JavaScript already had this URL, b) JavaScript can only access a
     // same-origin History object.
     exception_state.ThrowSecurityError(
-        "A history state object with URL '" + full_url.ElidedString() +
-        "' cannot be created in a document with origin '" +
-        window->GetSecurityOrigin()->ToString() + "' and URL '" +
-        window->Url().ElidedString() + "'.");
+        StrCat({"A history state object with URL '", full_url.ElidedString(),
+                "' cannot be created in a document with origin '",
+                window->GetSecurityOrigin()->ToString(), "' and URL '",
+                window->Url().ElidedString(), "'."}));
     return;
   }
 
@@ -364,9 +392,11 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     return;
   }
 
+  // Adding a history entry might require a screenshot.
+  constexpr bool should_skip_screenshot = false;
   window->document()->Loader()->RunURLAndHistoryUpdateSteps(
       full_url, nullptr, mojom::blink::SameDocumentNavigationType::kHistoryApi,
-      std::move(data), type);
+      std::move(data), type, FirePopstate::kNo, should_skip_screenshot);
 }
 
 }  // namespace blink

@@ -5,14 +5,16 @@
 // clang-format off
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {CrIconButtonElement, LanguageHelper, LanguagesBrowserProxyImpl, SettingsAddLanguagesDialogElement, SettingsTranslatePageElement} from 'chrome://settings/lazy_load.js';
+import type {CrIconButtonElement, LanguageHelper, SettingsAddLanguagesDialogElement, SettingsTranslatePageElement} from 'chrome://settings/lazy_load.js';
+import {LanguagesBrowserProxyImpl} from 'chrome://settings/lazy_load.js';
 import {CrSettingsPrefs} from 'chrome://settings/settings.js';
 import {assertDeepEquals, assertEquals, assertTrue, assertFalse} from 'chrome://webui-test/chai_assert.js';
 import {FakeSettingsPrivate} from 'chrome://webui-test/fake_settings_private.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 import {fakeDataBind} from 'chrome://webui-test/polymer_test_util.js';
 
-import {FakeLanguageSettingsPrivate, getFakeLanguagePrefs} from './fake_language_settings_private.js';
+import type {FakeLanguageSettingsPrivate} from './fake_language_settings_private.js';
+import {getFakeLanguagePrefs} from './fake_language_settings_private.js';
 import {TestLanguagesBrowserProxy} from './test_languages_browser_proxy.js';
 // clang-format on
 
@@ -34,8 +36,7 @@ suite('TranslatePage', function() {
   setup(function() {
     const settingsPrefs = document.createElement('settings-prefs');
     const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs());
-    settingsPrefs.initialize(
-        settingsPrivate as unknown as typeof chrome.settingsPrivate);
+    settingsPrefs.initialize(settingsPrivate);
     document.body.appendChild(settingsPrefs);
     return CrSettingsPrefs.initialized.then(function() {
       // Set up test browser proxy.
@@ -52,14 +53,12 @@ suite('TranslatePage', function() {
       settingsLanguages.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, settingsLanguages, 'prefs');
       document.body.appendChild(settingsLanguages);
+      languageHelper = settingsLanguages;
 
       translatePage = document.createElement('settings-translate-page');
 
       translatePage.prefs = settingsPrefs.prefs;
       fakeDataBind(settingsPrefs, translatePage, 'prefs');
-
-      translatePage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, translatePage, 'language-helper');
 
       translatePage.languages = settingsLanguages.languages;
       fakeDataBind(settingsLanguages, translatePage, 'languages');
@@ -67,8 +66,7 @@ suite('TranslatePage', function() {
       document.body.appendChild(translatePage);
       flush();
 
-      languageHelper = translatePage.languageHelper;
-      return languageHelper.whenReady();
+      return settingsLanguages.whenReady();
     });
   });
 
@@ -268,7 +266,8 @@ suite('TranslatePage', function() {
         dialogClosedResolver = new PromiseResolver();
         dialogClosedObserver = new MutationObserver(onMutation);
         dialogClosedObserver.observe(
-            translatePage.shadowRoot!, {childList: true});
+            translatePage.shadowRoot!.querySelector('settings-section')!,
+            {childList: true});
 
         flush();
       });
@@ -338,7 +337,8 @@ suite('TranslatePage', function() {
         dialogClosedResolver = new PromiseResolver();
         dialogClosedObserver = new MutationObserver(onMutation);
         dialogClosedObserver.observe(
-            translatePage.shadowRoot!, {childList: true});
+            translatePage.shadowRoot!.querySelector('settings-section')!,
+            {childList: true});
 
         flush();
       });

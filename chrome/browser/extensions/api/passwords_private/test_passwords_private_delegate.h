@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_PASSWORDS_PRIVATE_TEST_PASSWORDS_PRIVATE_DELEGATE_H_
 #define CHROME_BROWSER_EXTENSIONS_API_PASSWORDS_PRIVATE_TEST_PASSWORDS_PRIVATE_DELEGATE_H_
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/passwords_private.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 // A test PasswordsPrivateDelegate implementation which uses mock data.
@@ -27,11 +29,8 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   void GetPasswordExceptionsList(ExceptionEntriesCallback callback) override;
   // Fake implementation of `GetUrlCollection`. This returns a value if `url` is
   // not empty.
-  absl::optional<api::passwords_private::UrlCollection> GetUrlCollection(
+  std::optional<api::passwords_private::UrlCollection> GetUrlCollection(
       const std::string& url) override;
-  // Fake implementation. This returns the value set by
-  // `SetIsAccountStoreDefault`.
-  bool IsAccountStoreDefault(content::WebContents* web_contents) override;
   // Fake implementation of AddPassword. This returns true if `url` and
   // `password` aren't empty.
   bool AddPassword(const std::string& url,
@@ -58,6 +57,7 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   void MovePasswordsToAccount(const std::vector<int>& ids,
                               content::WebContents* web_contents) override;
   void FetchFamilyMembers(FetchFamilyResultsCallback callback) override;
+  void SharePassword(int id, const ShareRecipients& recipients) override;
   void ImportPasswords(api::passwords_private::PasswordStoreSet to_store,
                        ImportResultsCallback results_callback,
                        content::WebContents* web_contents) override;
@@ -69,9 +69,10 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
                        content::WebContents* web_contents) override;
   api::passwords_private::ExportProgressStatus GetExportProgressStatus()
       override;
-  bool IsOptedInForAccountStorage() override;
-  void SetAccountStorageOptIn(bool opt_in,
-                              content::WebContents* web_contents) override;
+  bool IsAccountStorageEnabled() override;
+  void SetAccountStorageEnabled(bool enabled,
+                                content::WebContents* web_contents) override;
+  bool ShouldShowAccountStorageSettingToggle() override;
   std::vector<api::passwords_private::PasswordUiEntry> GetInsecureCredentials()
       override;
   std::vector<api::passwords_private::PasswordUiEntryList>
@@ -88,16 +89,32 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   api::passwords_private::PasswordCheckStatus GetPasswordCheckStatus() override;
   password_manager::InsecureCredentialsManager* GetInsecureCredentialsManager()
       override;
-  void ExtendAuthValidity() override;
+  void RestartAuthTimer() override;
   void SwitchBiometricAuthBeforeFillingState(
-      content::WebContents* web_contents) override;
+      content::WebContents* web_contents,
+      AuthenticationCallback callback) override;
   void ShowAddShortcutDialog(content::WebContents* web_contents) override;
   void ShowExportedFileInShell(content::WebContents* web_contents,
                                std::string file_path) override;
+  void ChangePasswordManagerPin(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+  void IsPasswordManagerPinAvailable(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> pin_available_callback) override;
+  void DisconnectCloudAuthenticator(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+  bool IsConnectedToCloudAuthenticator(
+      content::WebContents* web_contents) override;
+  void DeleteAllPasswordManagerData(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+
+  base::WeakPtr<PasswordsPrivateDelegate> AsWeakPtr() override;
 
   void SetProfile(Profile* profile);
-  void SetOptedInForAccountStorage(bool opted_in);
-  void SetIsAccountStoreDefault(bool is_default);
+  void SetAccountStorageEnabled(bool enabled);
   void AddCompromisedCredential(int id);
 
   void ClearSavedPasswordsList() { current_entries_.clear(); }
@@ -109,6 +126,7 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   bool FetchFamilyMembersTriggered() const {
     return fetch_family_members_triggered_;
   }
+  bool SharePasswordTriggered() const { return share_password_triggered_; }
   bool StartPasswordCheckTriggered() const {
     return start_password_check_triggered_;
   }
@@ -133,6 +151,18 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
     return exported_file_shown_in_shell_;
   }
 
+  bool get_change_password_manager_pin_called() const {
+    return change_password_manager_pin_called_;
+  }
+
+  bool get_disconnect_cloud_authenticator_called() const {
+    return disconnect_cloud_authenticator_called_;
+  }
+
+  bool get_delete_all_password_manager_data_called() const {
+    return delete_all_password_manager_data_called_;
+  }
+
  protected:
   ~TestPasswordsPrivateDelegate() override;
 
@@ -150,11 +180,10 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   // Simplified version of an undo manager that only allows undoing and redoing
   // the very last deletion. When the entries are nullopt, this means there is
   // no previous deletion to undo.
-  absl::optional<api::passwords_private::PasswordUiEntry> last_deleted_entry_;
-  absl::optional<api::passwords_private::ExceptionEntry>
-      last_deleted_exception_;
+  std::optional<api::passwords_private::PasswordUiEntry> last_deleted_entry_;
+  std::optional<api::passwords_private::ExceptionEntry> last_deleted_exception_;
 
-  absl::optional<std::u16string> plaintext_password_ = u"plaintext";
+  std::optional<std::u16string> plaintext_password_ = u"plaintext";
 
   api::passwords_private::ImportResults import_results_;
 
@@ -164,11 +193,13 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   std::vector<api::passwords_private::PasswordUiEntry> insecure_credentials_;
   raw_ptr<Profile, DanglingUntriaged> profile_ = nullptr;
 
-  bool is_opted_in_for_account_storage_ = false;
-  bool is_account_store_default_ = false;
+  bool is_account_storage_enabled_ = false;
+
+  bool should_show_account_storage_setting_toggle_ = false;
 
   // Flags for detecting whether password sharing operations have been invoked.
   bool fetch_family_members_triggered_ = false;
+  bool share_password_triggered_ = false;
 
   // Flags for detecting whether import/export operations have been invoked.
   bool import_passwords_triggered_ = false;
@@ -190,8 +221,19 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   // Used to track whether shortcut creation dialog was shown.
   bool add_shortcut_dialog_shown_ = false;
 
-  // used to track whether the exported file was shown in shell.
+  // Used to track whether the exported file was shown in shell.
   bool exported_file_shown_in_shell_ = false;
+
+  // Used for checking whether `ChangePasswordManagerPin` is called.
+  bool change_password_manager_pin_called_ = false;
+
+  // Used to track whether `DisconnectCloudAuthenticator` was called.
+  bool disconnect_cloud_authenticator_called_ = false;
+
+  // Used to track whether `DeleteAllPasswordManagerData` was called.
+  bool delete_all_password_manager_data_called_ = false;
+
+  base::WeakPtrFactory<TestPasswordsPrivateDelegate> weak_ptr_factory_{this};
 };
 }  // namespace extensions
 

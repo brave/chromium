@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/breadcrumb_manager_browser_agent.h"
 
+#include <optional>
+
+#include "base/check_deref.h"
 #include "chrome/browser/breadcrumbs/breadcrumb_manager_keyed_service_factory.h"
 #include "chrome/browser/breadcrumbs/breadcrumb_manager_tab_helper.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/breadcrumbs/core/breadcrumb_manager_keyed_service.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -23,19 +24,19 @@ int GetTabId(const content::WebContents* const web_contents) {
 
 }  // namespace
 
-BreadcrumbManagerBrowserAgent::BreadcrumbManagerBrowserAgent(Browser* browser)
-    : browser_(browser) {
-  browser_->tab_strip_model()->AddObserver(this);
+BreadcrumbManagerBrowserAgent::BreadcrumbManagerBrowserAgent(
+    TabStripModel* tab_strip_model,
+    content::BrowserContext* browser_context)
+    : breadcrumb_manager_(CHECK_DEREF(
+          BreadcrumbManagerKeyedServiceFactory::GetForBrowserContext(
+              browser_context))) {
+  tab_strip_model->AddObserver(this);
 }
 
-BreadcrumbManagerBrowserAgent::~BreadcrumbManagerBrowserAgent() {
-  browser_->tab_strip_model()->RemoveObserver(this);
-}
+BreadcrumbManagerBrowserAgent::~BreadcrumbManagerBrowserAgent() = default;
 
 void BreadcrumbManagerBrowserAgent::PlatformLogEvent(const std::string& event) {
-  BreadcrumbManagerKeyedServiceFactory::GetForBrowserContext(
-      browser_->profile())
-      ->AddEvent(event);
+  breadcrumb_manager_->AddEvent(event);
 }
 
 void BreadcrumbManagerBrowserAgent::OnTabStripModelChanged(
@@ -78,14 +79,14 @@ void BreadcrumbManagerBrowserAgent::OnTabStripModelChanged(
     }
     case TabStripModelChange::kSelectionOnly: {
       if (selection.active_tab_changed()) {
-        absl::optional<int> old_tab_id =
+        std::optional<int> old_tab_id =
             selection.old_contents
-                ? absl::make_optional(GetTabId(selection.old_contents))
-                : absl::nullopt;
-        absl::optional<int> new_tab_id =
+                ? std::make_optional(GetTabId(selection.old_contents))
+                : std::nullopt;
+        std::optional<int> new_tab_id =
             selection.new_contents
-                ? absl::make_optional(GetTabId(selection.new_contents))
-                : absl::nullopt;
+                ? std::make_optional(GetTabId(selection.new_contents))
+                : std::nullopt;
         LogActiveTabChanged(old_tab_id, new_tab_id,
                             selection.new_model.active());
       }

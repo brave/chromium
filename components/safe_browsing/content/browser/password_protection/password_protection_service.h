@@ -36,8 +36,6 @@ using PasswordReuseEvent =
     safe_browsing::LoginReputationClientRequest::PasswordReuseEvent;
 using ReusedPasswordType = safe_browsing::LoginReputationClientRequest::
     PasswordReuseEvent::ReusedPasswordType;
-using SyncAccountType =
-    LoginReputationClientRequest::PasswordReuseEvent::SyncAccountType;
 
 struct PasswordReuseInfo {
   PasswordReuseInfo();
@@ -123,16 +121,8 @@ class PasswordProtectionService : public PasswordProtectionServiceBase {
 
 #if BUILDFLAG(IS_ANDROID)
   // Returns the referring app info that starts the activity.
-  virtual LoginReputationClientRequest::ReferringAppInfo GetReferringAppInfo(
+  virtual ReferringAppInfo GetReferringAppInfo(
       content::WebContents* web_contents) = 0;
-#endif
-
-#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
-  // Binds the |phishing_detector| to the appropriate interface, as provided by
-  // |provider|.
-  virtual void GetPhishingDetector(
-      service_manager::InterfaceProvider* provider,
-      mojo::Remote<mojom::PhishingDetector>* phishing_detector);
 #endif
 
   // Called when a new navigation is starting to create a deferring condition

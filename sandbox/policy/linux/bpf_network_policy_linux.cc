@@ -83,14 +83,19 @@ ResultExpr RestrictGetSockoptForNetworkService() {
   ResultExpr socket_optname_switch =
       Switch(optname).Case(SO_ERROR, Allow()).Default(CrashSIGSYSSockopt());
   ResultExpr ipv6_optname_switch =
-      Switch(optname).Case(IPV6_V6ONLY, Allow()).Default(CrashSIGSYSSockopt());
+      Switch(optname)
+          .Cases({IPV6_V6ONLY, IPV6_TCLASS}, Allow())
+          .Default(CrashSIGSYSSockopt());
   ResultExpr tcp_optname_switch =
       Switch(optname).Case(TCP_INFO, Allow()).Default(CrashSIGSYSSockopt());
+  ResultExpr ip_optname_switch =
+      Switch(optname).Case(IP_TOS, Allow()).Default(CrashSIGSYSSockopt());
 
   return Switch(level)
       .Case(SOL_SOCKET, socket_optname_switch)
       .Case(SOL_IPV6, ipv6_optname_switch)
       .Case(SOL_TCP, tcp_optname_switch)
+      .Case(SOL_IP, ip_optname_switch)
       .Default(CrashSIGSYSSockopt());
 }
 
@@ -104,8 +109,8 @@ ResultExpr RestrictSetSockoptForNetworkService() {
                   SO_SNDBUF, SO_BROADCAST},
                  Allow())
           .Default(CrashSIGSYSSockopt());
-  // glibc's getaddrinfo() needs to enable icmp with IP_RECVERR, for both ipv4
-  // and ipv6.
+  // glibc's getaddrinfo() needs to enable icmp with IP[V6]_RECVERR, for both
+  // ipv4 and ipv6.
   //
   // A number of optnames are for APIs of pepper and extensions. These include:
   // * IP[V6[_MULTICAST_LOOP for UDPSocketPosix::SetMulticastOptions().
@@ -119,16 +124,16 @@ ResultExpr RestrictSetSockoptForNetworkService() {
   // IP_TOS and IPV6_TCLASS are for P2P sockets.
   ResultExpr ipv4_optname_switch =
       Switch(optname)
-          .Cases(
-              {IP_RECVERR, IP_MTU_DISCOVER, IP_MULTICAST_LOOP, IP_MULTICAST_TTL,
-               IP_MULTICAST_IF, IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IP_TOS},
-              Allow())
+          .Cases({IP_RECVERR, IP_MTU_DISCOVER, IP_MULTICAST_LOOP,
+                  IP_MULTICAST_TTL, IP_MULTICAST_IF, IP_ADD_MEMBERSHIP,
+                  IP_DROP_MEMBERSHIP, IP_TOS, IP_RECVTOS},
+                 Allow())
           .Default(CrashSIGSYSSockopt());
   ResultExpr ipv6_optname_switch =
       Switch(optname)
-          .Cases({IP_RECVERR, IPV6_MTU_DISCOVER, IPV6_MULTICAST_LOOP,
+          .Cases({IPV6_RECVERR, IPV6_MTU_DISCOVER, IPV6_MULTICAST_LOOP,
                   IPV6_MULTICAST_HOPS, IPV6_MULTICAST_IF, IPV6_JOIN_GROUP,
-                  IPV6_LEAVE_GROUP, IPV6_TCLASS, IPV6_V6ONLY},
+                  IPV6_LEAVE_GROUP, IPV6_TCLASS, IPV6_V6ONLY, IPV6_RECVTCLASS},
                  Allow())
           .Default(CrashSIGSYSSockopt());
   ResultExpr tcp_optname_switch =
@@ -168,13 +173,13 @@ ResultExpr RestrictSocketForNetworkService() {
 #if BUILDFLAG(IS_LINUX)
   // AddressTrackerLinux is brokered on Linux (depending on the feature flag),
   // but not ChromeOS.
-  // TODO(crbug.com/1312226): once the kill-switch is removed, this check should
-  // be removed along with the DEPS and BUILD.gn modifications to allow
+  // TODO(crbug.com/40220507): once the kill-switch is removed, this check
+  // should be removed along with the DEPS and BUILD.gn modifications to allow
   // depending on net/base/features.h.
   use_netlink_in_network_service = !base::FeatureList::IsEnabled(
       net::features::kAddressTrackerLinuxIsProxied);
 #else   // !BUILDFLAG(IS_LINUX)
-  // TODO(crbug.com/1312226): remove the netlink allowance when
+  // TODO(crbug.com/40220507): remove the netlink allowance when
   // AddressTrackerLinux no longer runs in the network service on ChromeOS.
   use_netlink_in_network_service = true;
 #endif  // !BUILDFLAG(IS_LINUX)
@@ -275,6 +280,8 @@ ResultExpr NetworkProcessPolicy::EvaluateSyscall(int sysno) const {
     case __NR_connect:
     case __NR_bind:
     case __NR_getsockname:
+      // TODO(crbug.com/40052246): restrict sendmmsg() for the network service,
+      // probably with RestrictSockSendFlags().
     case __NR_sendmmsg:
       return Allow();
     case __NR_socket:

@@ -8,15 +8,21 @@
  * methods.
  */
 
+import './os_japanese_dictionary_expand.js';
 import '../settings_shared.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {afterNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {GlobalScrollTargetMixin} from '../common/global_scroll_target_mixin.js';
+import type {JapaneseDictionary} from '../mojom-webui/user_data_japanese_dictionary.mojom-webui.js';
 import {routes} from '../router.js';
 
+import type {DictionaryDeletedCustomEvent} from './os_japanese_dictionary_expand.js';
 import {getTemplate} from './os_japanese_manage_user_dictionary_page.html.js';
+import {UserDataServiceProvider} from './user_data_service_provider.js';
 
 // TODO(b/265559727): Remove I18nMixin if `this.i18n` methods are not being used
 // by this element.
@@ -24,8 +30,8 @@ import {getTemplate} from './os_japanese_manage_user_dictionary_page.html.js';
 const OsSettingsJapaneseManageUserDictionaryPageElementBase =
     GlobalScrollTargetMixin(I18nMixin(PolymerElement));
 
-class OsSettingsJapaneseManageUserDictionaryPageElement extends
-    OsSettingsJapaneseManageUserDictionaryPageElementBase {
+class OsSettingsJapaneseManageUserDictionaryPageElement extends I18nMixin
+(OsSettingsJapaneseManageUserDictionaryPageElementBase) {
   static get is() {
     return 'os-settings-japanese-manage-user-dictionary-page' as const;
   }
@@ -34,9 +40,100 @@ class OsSettingsJapaneseManageUserDictionaryPageElement extends
     return getTemplate();
   }
 
+  static get properties() {
+    return {
+      status: {
+        type: String,
+        value: 'No dictionary call made',
+      },
+    };
+  }
+
+  // Status that is shown on the page for debugging.
+  status: string;
+
   // Internal properties for mixins.
   // From GlobalScrollTargetMixin.
   override subpageRoute = routes.OS_LANGUAGES_JAPANESE_MANAGE_USER_DICTIONARY;
+
+  // All Japanese user dictionary data that is loaded into the app.
+  private dictionaries_: JapaneseDictionary[] = [];
+
+  override ready(): void {
+    super.ready();
+    this.addEventListener('dictionary-saved', this.getDictionaries_);
+    this.addEventListener('dictionary-deleted', this.onDictionaryDeleted_);
+    this.getDictionaries_();
+  }
+
+  // Loads the dictionary objects from IME user data service.
+  private async getDictionaries_(): Promise<void> {
+    const response =
+        (await UserDataServiceProvider.getRemote().fetchJapaneseDictionary())
+            .response;
+    if (response.errorReason !== undefined) {
+      this.status = response.errorReason;
+    }
+
+    if (response.dictionaries !== undefined) {
+      this.dictionaries_ = [...response.dictionaries];
+      this.status = `number of dictionaries=${this.dictionaries_.length}`;
+    }
+  }
+
+  private onDictionaryDeleted_(event: DictionaryDeletedCustomEvent): void {
+    afterNextRender(this, () => {
+      const n = event.detail.dictIndex + 1;
+      const nthElement = this.shadowRoot!.querySelector<HTMLElement>(
+          `os-japanese-dictionary-expand:nth-of-type(${n})`);
+      if (nthElement) {
+        nthElement.shadowRoot!.querySelector<HTMLElement>(
+                                  'cr-expand-button')!.focus();
+      } else {
+        this.shadowRoot!.querySelector<HTMLElement>(
+                            '#addDictionaryButton')!.focus();
+      }
+    });
+  }
+
+  // Adds a new dictionary with the name "New dictionary".
+  private async addDictionary_(): Promise<void> {
+    const resp =
+        (await UserDataServiceProvider.getRemote().createJapaneseDictionary(
+             this.newDictName_()))
+            .status;
+    if (!resp.success) {
+      return;
+    }
+    this.getDictionaries_();
+    afterNextRender(this, () => {
+      this.shadowRoot!
+          .querySelector<HTMLElement>(
+              'os-japanese-dictionary-expand:last-of-type')!.shadowRoot!
+          .querySelector<HTMLElement>('cr-expand-button')!.focus();
+    });
+  }
+
+  // The backend does not let you add the same dictionary name twice. We have to
+  // automatically append an incrementing number to it if there is a clash.
+  private newDictName_(): string {
+    let count = 1;
+    let newName = this.i18n('japaneseDictionaryDefaultName', count);
+    while (this.dictionaries_.some(
+        (dict: JapaneseDictionary) => dict.name === newName)) {
+      count++;
+      newName = this.i18n('japaneseDictionaryDefaultName', count);
+    }
+
+    return newName;
+  }
+
+  // Used to get the last index of the synced entries of each dictionary so that
+  // dictionary components can figure out whether to add or edit entries when
+  // saving to storage.
+  private getLastIndex_(x: Object[]): number {
+    return x.length - 1;
+  }
 }
 
 customElements.define(

@@ -18,7 +18,7 @@
 #include "media/base/channel_mixer.h"
 #include "media/mojo/mojom/audio_data.mojom.h"
 #include "media/mojo/mojom/media_types.mojom.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 
 // Preallocate 500ms worth of buffers when using a ReconfigurableAudioBusPool.
 constexpr base::TimeDelta kAudioBusPoolDuration = base::Milliseconds(500);
@@ -41,7 +41,7 @@ ChromeSpeechRecognitionClient::ChromeSpeechRecognitionClient(
       ->BindSpeechRecognitionBrowserObserver(
           speech_recognition_availability_observer_.BindNewPipeAndPassRemote());
 
-  render_frame->GetBrowserInterfaceBroker()->GetInterface(
+  render_frame->GetBrowserInterfaceBroker().GetInterface(
       std::move(speech_recognition_client_browser_interface_receiver));
 
   add_audio_on_main_sequence_callback_ =
@@ -55,10 +55,12 @@ ChromeSpeechRecognitionClient::ChromeSpeechRecognitionClient(
 ChromeSpeechRecognitionClient::~ChromeSpeechRecognitionClient() = default;
 
 void ChromeSpeechRecognitionClient::AddAudio(
-    scoped_refptr<media::AudioBuffer> buffer) {
+    scoped_refptr<media::AudioBuffer> buffer,
+    std::optional<base::TimeDelta> media_start_pts) {
   DCHECK(buffer);
   send_audio_callback_.Run(
-      ConvertToAudioDataS16(std::move(buffer), is_multichannel_supported_));
+      ConvertToAudioDataS16(std::move(buffer), is_multichannel_supported_),
+      std::move(media_start_pts));
 }
 
 void ChromeSpeechRecognitionClient::AddAudio(const media::AudioBus& audio_bus) {
@@ -165,7 +167,7 @@ void ChromeSpeechRecognitionClient::Initialize() {
   // render frame. The receiver is in the browser.
   mojo::PendingRemote<media::mojom::SpeechRecognitionRecognizerClient>
       speech_recognition_client_remote;
-  render_frame()->GetBrowserInterfaceBroker()->GetInterface(
+  render_frame()->GetBrowserInterfaceBroker().GetInterface(
       speech_recognition_client_remote.InitWithNewPipeAndPassReceiver());
 
   // Create a SpeechRecognitionContext and bind it to the render frame. The
@@ -181,6 +183,7 @@ void ChromeSpeechRecognitionClient::Initialize() {
   options->enable_formatting = true;
   options->recognizer_client_type =
       media::mojom::RecognizerClientType::kLiveCaption;
+  options->skip_continuously_empty_audio = true;
 
   speech_recognition_context_->BindRecognizer(
       speech_recognition_recognizer_.BindNewPipeAndPassReceiver(),
@@ -188,7 +191,7 @@ void ChromeSpeechRecognitionClient::Initialize() {
       base::BindPostTaskToCurrentDefault(
           base::BindOnce(&ChromeSpeechRecognitionClient::OnRecognizerBound,
                          weak_factory_.GetWeakPtr())));
-  render_frame()->GetBrowserInterfaceBroker()->GetInterface(
+  render_frame()->GetBrowserInterfaceBroker().GetInterface(
       std::move(speech_recognition_context_receiver));
 
   // Bind the call to Reset() to the Media thread.
@@ -214,21 +217,23 @@ void ChromeSpeechRecognitionClient::AddAudioBusOnMainSequence(
     media::ChannelLayout channel_layout) {
   DCHECK(audio_bus);
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_checker_);
-  send_audio_callback_.Run(ConvertToAudioDataS16(*audio_bus.get(), sample_rate,
-                                                 channel_layout,
-                                                 is_multichannel_supported_));
+  send_audio_callback_.Run(
+      ConvertToAudioDataS16(*audio_bus.get(), sample_rate, channel_layout,
+                            is_multichannel_supported_),
+      std::nullopt);
 
   if (audio_bus_pool_) {
     audio_bus_pool_->InsertAudioBus(std::move(audio_bus));
   }
 }
 void ChromeSpeechRecognitionClient::SendAudioToSpeechRecognitionService(
-    media::mojom::AudioDataS16Ptr audio_data) {
+    media::mojom::AudioDataS16Ptr audio_data,
+    std::optional<base::TimeDelta> media_start_pts) {
   DCHECK(audio_data);
   if (speech_recognition_recognizer_.is_bound() &&
       IsSpeechRecognitionAvailable()) {
     speech_recognition_recognizer_->SendAudioToSpeechRecognitionService(
-        std::move(audio_data));
+        std::move(audio_data), std::move(media_start_pts));
   }
 }
 

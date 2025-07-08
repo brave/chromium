@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import {sendWithPromise} from 'chrome://resources/js/cr.js';
 // </if>
 
@@ -13,17 +13,19 @@ export interface LifetimeBrowserProxy {
   // Triggers a browser relaunch.
   relaunch(): void;
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   // Indicates whether a relaunch confirmation dialog needs to be shown or not.
-  shouldShowRelaunchConfirmationDialog(): Promise<boolean>;
+  shouldShowRelaunchConfirmationDialog(alwaysShowDialog: boolean):
+      Promise<boolean>;
 
   // Returns the description of the relaunch confirmation dialog.
   // A null value can be returned if the condition to show the relaunch dialog
   // is no longer true.
-  getRelaunchConfirmationDialogDescription(): Promise<string|null>;
+  getRelaunchConfirmationDialogDescription(isVersionUpdate: boolean):
+      Promise<string|null>;
   // </if>
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   // First signs out current user and then performs a restart.
   signOutAndRestart(): void;
 
@@ -44,17 +46,19 @@ export class LifetimeBrowserProxyImpl implements LifetimeBrowserProxy {
     chrome.send('relaunch');
   }
 
-  // <if expr="not chromeos_ash">
-  shouldShowRelaunchConfirmationDialog() {
-    return sendWithPromise('shouldShowRelaunchConfirmationDialog');
+  // <if expr="not is_chromeos">
+  shouldShowRelaunchConfirmationDialog(alwaysShowDialog: boolean) {
+    return sendWithPromise(
+        'shouldShowRelaunchConfirmationDialog', alwaysShowDialog);
   }
 
-  getRelaunchConfirmationDialogDescription() {
-    return sendWithPromise('getRelaunchConfirmationDialogDescription');
+  getRelaunchConfirmationDialogDescription(isVersionUpdate: boolean) {
+    return sendWithPromise(
+        'getRelaunchConfirmationDialogDescription', isVersionUpdate);
   }
   // </if>
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   signOutAndRestart() {
     chrome.send('signOutAndRestart');
   }

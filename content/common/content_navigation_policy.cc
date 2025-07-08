@@ -11,15 +11,10 @@
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "content/common/features.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "net/base/features.h"
-
-namespace features {
-BASE_FEATURE(kBackForwardCache_NoMemoryLimit_Trial,
-             "BackForwardCache_NoMemoryLimit_Trial",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-}
 
 namespace content {
 
@@ -30,9 +25,8 @@ bool DeviceHasEnoughMemoryForBackForwardCache() {
   // It is important to check the base::FeatureList to avoid activating any
   // field trial groups if BFCache is disabled due to memory threshold.
   if (base::FeatureList::IsEnabled(features::kBackForwardCacheMemoryControls)) {
-    // On Android, BackForwardCache is only enabled for 2GB+ high memory
-    // devices. The default threshold value is set to 1700 MB to account for all
-    // 2GB devices which report lower RAM due to carveouts.
+    // On Android, BackForwardCache is enabled for devices with 1200MB memory or
+    // above.
     int default_memory_threshold_mb =
 #if BUILDFLAG(IS_ANDROID)
         1200;
@@ -67,13 +61,6 @@ bool IsBackForwardCacheEnabled() {
   if (!has_enough_memory) {
     // When the device does not have enough memory for BackForwardCache, return
     // false so we won't try to put things in the back/forward cache.
-    // Also, trigger the activation of the BackForwardCache_NoMemoryLimit_Trial
-    // field trial by querying the feature flag. With this, we guarantee that
-    // all devices that do not have enough memory for BackForwardCache will be
-    // included in that field trial. See case #1 in the comment for the
-    // BackForwardCache_NoMemoryLimit_Trial in the header file for more details.
-    base::FeatureList::IsEnabled(
-        features::kBackForwardCache_NoMemoryLimit_Trial);
     return false;
   }
 
@@ -87,79 +74,14 @@ bool IsBackForwardCacheEnabled() {
   // memory for BackForwardCache, and those devices only.
   if (base::FeatureList::IsEnabled(features::kBackForwardCache)) {
     // When the device does have enough memory for BackForwardCache, return
-    // true so we won't try to put things in the back/forward cache. Also,
-    // trigger the activation of the BackForwardCache_NoMemoryLimit_Trial field
-    // trial by querying the feature flag. With this, we guarantee that all
-    // devices that do have enough memory for BackForwardCache and have the
-    // BackForwardCache feature flag enabled will be included in that field
-    // trial. See case #2 in the comment for the
-    // BackForwardCache_NoMemoryLimit_Trial in the header file for more details.
-    base::FeatureList::IsEnabled(
-        features::kBackForwardCache_NoMemoryLimit_Trial);
+    // true so we won't try to put things in the back/forward cache.
     return true;
   }
   return false;
 }
 
 bool CanCrossSiteNavigationsProactivelySwapBrowsingInstances() {
-  return IsProactivelySwapBrowsingInstanceEnabled() ||
-         IsBackForwardCacheEnabled();
-}
-
-const char kProactivelySwapBrowsingInstanceLevelParameterName[] = "level";
-
-constexpr base::FeatureParam<ProactivelySwapBrowsingInstanceLevel>::Option
-    proactively_swap_browsing_instance_levels[] = {
-        {ProactivelySwapBrowsingInstanceLevel::kDisabled, "Disabled"},
-        {ProactivelySwapBrowsingInstanceLevel::kCrossSiteSwapProcess,
-         "CrossSiteSwapProcess"},
-        {ProactivelySwapBrowsingInstanceLevel::kCrossSiteReuseProcess,
-         "CrossSiteReuseProcess"},
-        {ProactivelySwapBrowsingInstanceLevel::kSameSite, "SameSite"}};
-const base::FeatureParam<ProactivelySwapBrowsingInstanceLevel>
-    proactively_swap_browsing_instance_level{
-        &features::kProactivelySwapBrowsingInstance,
-        kProactivelySwapBrowsingInstanceLevelParameterName,
-        ProactivelySwapBrowsingInstanceLevel::kDisabled,
-        &proactively_swap_browsing_instance_levels};
-
-std::string GetProactivelySwapBrowsingInstanceLevelName(
-    ProactivelySwapBrowsingInstanceLevel level) {
-  return proactively_swap_browsing_instance_level.GetName(level);
-}
-
-std::array<std::string,
-           static_cast<size_t>(ProactivelySwapBrowsingInstanceLevel::kMaxValue)>
-ProactivelySwapBrowsingInstanceFeatureEnabledLevelValues() {
-  return {
-      GetProactivelySwapBrowsingInstanceLevelName(
-          ProactivelySwapBrowsingInstanceLevel::kCrossSiteSwapProcess),
-      GetProactivelySwapBrowsingInstanceLevelName(
-          ProactivelySwapBrowsingInstanceLevel::kCrossSiteReuseProcess),
-      GetProactivelySwapBrowsingInstanceLevelName(
-          ProactivelySwapBrowsingInstanceLevel::kSameSite),
-  };
-}
-
-ProactivelySwapBrowsingInstanceLevel GetProactivelySwapBrowsingInstanceLevel() {
-  if (base::FeatureList::IsEnabled(features::kProactivelySwapBrowsingInstance))
-    return proactively_swap_browsing_instance_level.Get();
-  return ProactivelySwapBrowsingInstanceLevel::kDisabled;
-}
-
-bool IsProactivelySwapBrowsingInstanceEnabled() {
-  return GetProactivelySwapBrowsingInstanceLevel() >=
-         ProactivelySwapBrowsingInstanceLevel::kCrossSiteSwapProcess;
-}
-
-bool IsProactivelySwapBrowsingInstanceWithProcessReuseEnabled() {
-  return GetProactivelySwapBrowsingInstanceLevel() >=
-         ProactivelySwapBrowsingInstanceLevel::kCrossSiteReuseProcess;
-}
-
-bool IsProactivelySwapBrowsingInstanceOnSameSiteNavigationEnabled() {
-  return GetProactivelySwapBrowsingInstanceLevel() >=
-         ProactivelySwapBrowsingInstanceLevel::kSameSite;
+  return IsBackForwardCacheEnabled();
 }
 
 const char kRenderDocumentLevelParameterName[] = "level";
@@ -167,11 +89,17 @@ const char kRenderDocumentLevelParameterName[] = "level";
 constexpr base::FeatureParam<RenderDocumentLevel>::Option
     render_document_levels[] = {
         {RenderDocumentLevel::kCrashedFrame, "crashed-frame"},
+        {RenderDocumentLevel::kNonLocalRootSubframe, "non-local-root-subframe"},
         {RenderDocumentLevel::kSubframe, "subframe"},
         {RenderDocumentLevel::kAllFrames, "all-frames"}};
 const base::FeatureParam<RenderDocumentLevel> render_document_level{
     &features::kRenderDocument, kRenderDocumentLevelParameterName,
-    RenderDocumentLevel::kCrashedFrame, &render_document_levels};
+#if BUILDFLAG(IS_ANDROID)
+    RenderDocumentLevel::kAllFrames,
+#else
+    RenderDocumentLevel::kSubframe,
+#endif
+    &render_document_levels};
 
 RenderDocumentLevel GetRenderDocumentLevel() {
   if (base::FeatureList::IsEnabled(features::kRenderDocument))
@@ -183,8 +111,26 @@ std::string GetRenderDocumentLevelName(RenderDocumentLevel level) {
   return render_document_level.GetName(level);
 }
 
-bool ShouldCreateNewHostForSameSiteSubframe() {
-  return GetRenderDocumentLevel() >= RenderDocumentLevel::kSubframe;
+bool ShouldCreateNewRenderFrameHostOnSameSiteNavigation(
+    bool is_main_frame,
+    bool is_local_root,
+    bool has_committed_any_navigation,
+    bool must_be_replaced) {
+  if (must_be_replaced) {
+    return true;
+  }
+  if (!has_committed_any_navigation) {
+    return false;
+  }
+  RenderDocumentLevel level = GetRenderDocumentLevel();
+  if (is_main_frame) {
+    CHECK(is_local_root);
+    return level >= RenderDocumentLevel::kAllFrames;
+  }
+  if (is_local_root) {
+    return level >= RenderDocumentLevel::kSubframe;
+  }
+  return level >= RenderDocumentLevel::kNonLocalRootSubframe;
 }
 
 bool ShouldCreateNewHostForAllFrames() {
@@ -211,9 +157,9 @@ const base::FeatureParam<NavigationQueueingFeatureLevel>
         &kNavigationQueueingFeatureLevels};
 
 NavigationQueueingFeatureLevel GetNavigationQueueingFeatureLevel() {
-  if (ShouldCreateNewHostForSameSiteSubframe()) {
-    // When RenderDocument is enabled with a level of "subframes" or more,
-    // navigation queueing needs to be enabled to, to avoid crashes.
+  if (GetRenderDocumentLevel() >= RenderDocumentLevel::kNonLocalRootSubframe) {
+    // When RenderDocument is enabled with a level of "non-local-root-subframe"
+    // or more, navigation queueing needs to be enabled too, to avoid crashes.
     return NavigationQueueingFeatureLevel::kFull;
   }
   if (base::FeatureList::IsEnabled(
@@ -233,17 +179,13 @@ bool ShouldQueueNavigationsWhenPendingCommitRFHExists() {
          NavigationQueueingFeatureLevel::kFull;
 }
 
-bool ShouldRestrictCanAccessDataForOriginToUIThread() {
-  // Only restrict calls to the UI thread if the feature is enabled, and if the
-  // new blob URL support is enabled.
-  return base::FeatureList::IsEnabled(
-             kRestrictCanAccessDataForOriginToUIThread) &&
-         base::FeatureList::IsEnabled(
-             net::features::kSupportPartitionedBlobUrl);
-}
-
 bool ShouldCreateSiteInstanceForDataUrls() {
   return base::FeatureList::IsEnabled(features::kSiteInstanceGroupsForDataUrls);
+}
+
+bool ShouldUseDefaultSiteInstanceGroup() {
+  return GetContentClient()->ShouldAllowDefaultSiteInstanceGroup() &&
+         base::FeatureList::IsEnabled(features::kDefaultSiteInstanceGroups);
 }
 
 }  // namespace content

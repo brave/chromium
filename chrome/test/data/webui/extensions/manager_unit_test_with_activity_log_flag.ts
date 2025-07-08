@@ -10,8 +10,10 @@
 
 import 'chrome://extensions/extensions.js';
 
-import {ExtensionsManagerElement, navigation, Page, Service} from 'chrome://extensions/extensions.js';
+import type {ExtensionsManagerElement} from 'chrome://extensions/extensions.js';
+import {navigation, Page, Service} from 'chrome://extensions/extensions.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestService} from './test_service.js';
 import {createExtensionInfo} from './test_util.js';
@@ -50,7 +52,7 @@ suite('ExtensionManagerUnitTest', function() {
     });
   }
 
-  test('UpdateFromActivityLog', function() {
+  test('UpdateFromActivityLog', async () => {
     service.testActivities = testActivities;
 
     const extension = createExtensionInfo();
@@ -59,6 +61,7 @@ suite('ExtensionManagerUnitTest', function() {
       id: 'b'.repeat(32),
     });
     simulateExtensionInstall(secondExtension);
+    await microtasksFinished();
 
     assertTrue(manager.showActivityLog);
     navigation.navigateTo({
@@ -66,8 +69,9 @@ suite('ExtensionManagerUnitTest', function() {
       extensionId: extension.id,
     });
 
+    await microtasksFinished();
     const activityLog =
-        manager.shadowRoot!.querySelector('extensions-activity-log');
+        manager.shadowRoot.querySelector('extensions-activity-log');
     assertTrue(!!activityLog);  // View should now be present.
     assertEquals(extension.id, activityLog.extensionInfo.id);
 
@@ -79,6 +83,7 @@ suite('ExtensionManagerUnitTest', function() {
       extensionInfo: secondExtension,
     });
 
+    await microtasksFinished();
     assertEquals(extension.id, activityLog.extensionInfo.id);
   });
 });

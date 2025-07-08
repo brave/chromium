@@ -8,10 +8,6 @@
 #import "ui/base/l10n/l10n_util.h"
 #import "ui/strings/grit/ui_strings.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 @interface AlertCoordinator () {
   // Variable backing a property from Subclassing category.
   UIAlertController* _alertController;
@@ -59,7 +55,7 @@
                   action:actionBlock
                    style:style
                preferred:NO
-                 enabled:YES];
+                 enabled:enabled];
 }
 
 - (void)addItemWithTitle:(NSString*)title
@@ -67,9 +63,7 @@
                    style:(UIAlertActionStyle)style
                preferred:(BOOL)preferred
                  enabled:(BOOL)enabled {
-  if (self.visible) {
-    return;
-  }
+  CHECK(!self.visible);
 
   if (style == UIAlertActionStyleCancel) {
     CHECK(!self.cancelButtonAdded);
@@ -121,14 +115,17 @@
 }
 
 - (void)stop {
-  if (_noInteractionAction) {
-    _noInteractionAction();
-    _noInteractionAction = nil;
-  }
+  ProceduralBlock noInteractionAction = _noInteractionAction;
+  _noInteractionAction = nil;
   [[_alertController presentingViewController]
       dismissViewControllerAnimated:NO
                          completion:nil];
   [self alertDismissed];
+  if (noInteractionAction) {
+    // This callback might deallocate `self`. Nothing should be done after
+    // calling `noInteractionAction()`.
+    noInteractionAction();
+  }
 }
 
 #pragma mark - Property Implementation.

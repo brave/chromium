@@ -5,6 +5,7 @@
 #include "base/memory/raw_ptr.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -25,8 +26,8 @@ namespace {
 
 static constexpr WebExposedIsolationLevel kNotIsolated =
     WebExposedIsolationLevel::kNotIsolated;
-static constexpr WebExposedIsolationLevel kMaybeIsolatedApplication =
-    WebExposedIsolationLevel::kMaybeIsolatedApplication;
+static constexpr WebExposedIsolationLevel kIsolatedApplication =
+    WebExposedIsolationLevel::kIsolatedApplication;
 
 const char kAppHost[] = "app.com";
 const char kNonAppHost[] = "other.com";
@@ -58,7 +59,6 @@ class HttpsBrowserTest : public ContentBrowserTest {
   HttpsBrowserTest() : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ContentBrowserTest::SetUpCommandLine(command_line);
     mock_cert_verifier_.SetUpCommandLine(command_line);
   }
 
@@ -182,8 +182,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedWebAppThrottleBrowserTest,
                        CancelCrossOriginNavigationInApp) {
   GURL app_url = GetAppURL("/cross-origin-isolated.html");
   EXPECT_TRUE(NavigateToURL(web_contents(), app_url));
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            main_rfh()->GetWebExposedIsolationLevel());
+  EXPECT_EQ(kIsolatedApplication, main_rfh()->GetWebExposedIsolationLevel());
 
   TestNavigationObserver navigation_observer(web_contents());
   shell()->LoadURL(GetNonAppURL("/simple_page.html"));
@@ -196,8 +195,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedWebAppThrottleBrowserTest,
                        IframeInitiatedIframeNavigationIntoAppBlocked) {
   GURL app_url = GetAppURL("/cross-origin-isolated.html");
   EXPECT_TRUE(NavigateToURL(web_contents(), app_url));
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            main_rfh()->GetWebExposedIsolationLevel());
+  EXPECT_EQ(kIsolatedApplication, main_rfh()->GetWebExposedIsolationLevel());
 
   RenderFrameHost* iframe =
       CreateChildIframe(main_rfh(), GetNonAppURL("/corp-cross-origin.html"));
@@ -216,8 +214,7 @@ IN_PROC_BROWSER_TEST_F(IsolatedWebAppThrottleBrowserTest,
                        AppInitiatedIframeNavigationIntoAppAllowed) {
   GURL app_url = GetAppURL("/cross-origin-isolated.html");
   EXPECT_TRUE(NavigateToURL(web_contents(), app_url));
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            main_rfh()->GetWebExposedIsolationLevel());
+  EXPECT_EQ(kIsolatedApplication, main_rfh()->GetWebExposedIsolationLevel());
 
   RenderFrameHost* iframe =
       CreateChildIframe(main_rfh(), GetNonAppURL("/corp-cross-origin.html"));

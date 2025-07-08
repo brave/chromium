@@ -5,7 +5,8 @@
 #ifndef COMPONENTS_VARIATIONS_ANDROID_VARIATIONS_SEED_BRIDGE_H_
 #define COMPONENTS_VARIATIONS_ANDROID_VARIATIONS_SEED_BRIDGE_H_
 
-#include <jni.h>
+#include <stdint.h>
+
 #include <memory>
 #include <string>
 
@@ -34,7 +35,7 @@ COMPONENT_EXPORT(VARIATIONS)
 void SetJavaFirstRunPrefsForTesting(const std::string& seed_data,
                                     const std::string& seed_signature,
                                     const std::string& seed_country,
-                                    long response_date,
+                                    int64_t response_date,
                                     bool is_gzip_compressed);
 
 COMPONENT_EXPORT(VARIATIONS) bool HasMarkedPrefsForTesting();

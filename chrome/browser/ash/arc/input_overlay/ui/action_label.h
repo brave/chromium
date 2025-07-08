@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/arc/input_overlay/actions/input_element.h"
 #include "chrome/browser/ash/arc/input_overlay/constants.h"
 #include "chrome/browser/ash/arc/input_overlay/db/proto/app_data.pb.h"
@@ -16,11 +17,13 @@
 
 namespace arc::input_overlay {
 
+class ActionView;
+
 // ActionLabel shows text mapping hint for each action.
 class ActionLabel : public views::LabelButton {
+  METADATA_HEADER(ActionLabel, views::LabelButton)
  public:
-  METADATA_HEADER(ActionLabel);
-  static std::vector<ActionLabel*> Show(
+  static std::vector<raw_ptr<ActionLabel, VectorExperimental>> Show(
       views::View* parent,
       ActionType action_type,
       const InputElement& input_element,
@@ -38,22 +41,17 @@ class ActionLabel : public views::LabelButton {
   void SetTextActionLabel(const std::u16string& text);
   void SetImageActionLabel(MouseAction mouse_action);
   void SetDisplayMode(DisplayMode mode);
-  void ClearFocus();
-  // It is possible that multiple labels are in one ActionView and these labels
-  // are called sibling labels. This label reacts to sibling's focus change.
-  void OnSiblingUpdateFocus(bool sibling_focused);
+  void RemoveNewState();
+
+  ActionView* GetParent();
 
   virtual void UpdateBounds() = 0;
   virtual void UpdateLabelPositionType(TapLabelPosition label_position) = 0;
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   void ChildPreferredSizeChanged(View* child) override;
-  bool OnKeyPressed(const ui::KeyEvent& event) override;
-  void OnMouseEntered(const ui::MouseEvent& event) override;
-  void OnMouseExited(const ui::MouseEvent& event) override;
-  void OnFocus() override;
-  void OnBlur() override;
 
   void set_mouse_action(MouseAction mouse_action) {
     mouse_action_ = mouse_action;
@@ -73,21 +71,15 @@ class ActionLabel : public views::LabelButton {
   gfx::Size touch_point_size_;
 
  private:
+  void OnButtonPressed();
+
   void SetToViewMode();
-  void SetToEditMode();
   // In edit mode without mouse hover or focus.
   void SetToEditDefault();
-  // In edit mode when mouse hovers or not.
-  void SetToEditHover(bool hovered);
-  // In edit mode when this view is focused.
-  void SetToEditFocus();
   // In edit mode when there is edit error.
   void SetToEditError();
   // In edit mode when the input is unbound.
   void SetToEditUnbindInput();
-  // In edit mode of ActionMoveView with four keys, when one label is focused,
-  // the other labels turn to edit inactive visually.
-  void SetToEditInactive();
 
   void SetBackgroundForEdit();
 

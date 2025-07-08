@@ -21,7 +21,6 @@ import static org.hamcrest.Matchers.not;
 
 import static org.chromium.chrome.browser.keyboard_accessory.ManualFillingTestHelper.selectTabWithDescription;
 import static org.chromium.chrome.browser.keyboard_accessory.ManualFillingTestHelper.whenDisplayed;
-import static org.chromium.chrome.browser.keyboard_accessory.tab_layout_component.KeyboardAccessoryTabTestHelper.isKeyboardAccessoryTabLayout;
 
 import android.widget.TextView;
 
@@ -35,24 +34,30 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features;
 import org.chromium.chrome.browser.ChromeWindow;
-import org.chromium.chrome.browser.autofill.AutofillProfile;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.keyboard_accessory.FakeKeyboard;
 import org.chromium.chrome.browser.keyboard_accessory.ManualFillingTestHelper;
 import org.chromium.chrome.browser.keyboard_accessory.R;
+import org.chromium.chrome.browser.keyboard_accessory.button_group_component.KeyboardAccessoryButtonGroupView;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 
 import java.util.concurrent.TimeoutException;
 
-/**
- * Integration tests for address accessory views.
- */
+/** Integration tests for address accessory views. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@Features.DisableFeatures({
+    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
+    ChromeFeatureList.EDGE_TO_EDGE_WEB_OPT_IN
+})
 public class AddressAccessoryIntegrationTest {
     @Rule
     public final ChromeTabbedActivityTestRule mActivityTestRule =
@@ -67,20 +72,25 @@ public class AddressAccessoryIntegrationTest {
 
     private void loadTestPage(ChromeWindow.KeyboardVisibilityDelegateFactory keyboardDelegate)
             throws TimeoutException {
-        mHelper.loadTestPage("/chrome/test/data/autofill/autofill_test_form.html", false, false,
+        mHelper.loadTestPage(
+                "/chrome/test/data/autofill/autofill_test_form.html",
+                false,
+                false,
                 keyboardDelegate);
-        new AutofillTestHelper().setProfile(AutofillProfile.builder()
-                                                    .setFullName("Marcus McSpartangregor")
-                                                    .setCompanyName("Acme Inc")
-                                                    .setStreetAddress("1 Main\nApt A")
-                                                    .setRegion("CA")
-                                                    .setLocality("San Francisco")
-                                                    .setPostalCode("94102")
-                                                    .setCountryCode("US")
-                                                    .setPhoneNumber("(415) 999-0000")
-                                                    .setEmailAddress("marc@acme-mail.inc")
-                                                    .setLanguageCode("en")
-                                                    .build());
+        new AutofillTestHelper()
+                .setProfile(
+                        AutofillProfile.builder()
+                                .setFullName("Marcus McSpartangregor")
+                                .setCompanyName("Acme Inc")
+                                .setStreetAddress("1 Main\nApt A")
+                                .setRegion("CA")
+                                .setLocality("San Francisco")
+                                .setPostalCode("94102")
+                                .setCountryCode("US")
+                                .setPhoneNumber("(415) 999-0000")
+                                .setEmailAddress("marc@acme-mail.inc")
+                                .setLanguageCode("en")
+                                .build());
         DOMUtils.waitForNonZeroNodeBounds(mHelper.getWebContents(), "NAME_FIRST");
     }
 
@@ -89,14 +99,16 @@ public class AddressAccessoryIntegrationTest {
     public void testAddressSheetIsAvailable() {
         mHelper.loadTestPage(false);
 
-        CriteriaHelper.pollUiThread(() -> {
-            return mHelper.getOrCreateAddressAccessorySheet() != null;
-        }, "Address sheet should be bound to accessory sheet.");
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    return mHelper.getOrCreateAddressAccessorySheet() != null;
+                },
+                "Address sheet should be bound to accessory sheet.");
     }
 
     @Test
     @SmallTest
-    public void testDisplaysEmptyStateMessageWithoutSavedPasswords() throws TimeoutException {
+    public void testDisplaysEmptyStateMessageWithoutSavedAddresses() throws TimeoutException {
         mHelper.loadTestPage(false);
 
         // Focus the field to bring up the accessory.
@@ -104,8 +116,10 @@ public class AddressAccessoryIntegrationTest {
         mHelper.waitForKeyboardAccessoryToBeShown();
 
         // Click the tab to show the sheet and hide the keyboard.
-        whenDisplayed(allOf(withContentDescription(R.string.address_accessory_sheet_toggle),
-                              not(isAssignableFrom(TextView.class))))
+        whenDisplayed(
+                        allOf(
+                                withContentDescription(R.string.address_accessory_sheet_toggle),
+                                not(isAssignableFrom(TextView.class))))
                 .perform(click());
         mHelper.waitForKeyboardToDisappear();
         whenDisplayed(withId(R.id.addresses_sheet));
@@ -114,6 +128,7 @@ public class AddressAccessoryIntegrationTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "https://crbug.com/418234086,https://crbug.com/40190628")
     public void testFillsSuggestionOnClick() throws TimeoutException {
         loadTestPage(FakeKeyboard::new);
         mHelper.clickNodeAndShowKeyboard("NAME_FIRST", 1);
@@ -121,8 +136,10 @@ public class AddressAccessoryIntegrationTest {
 
         // Scroll to last element and click the second icon:
         whenDisplayed(withId(R.id.bar_items_view))
-                .perform(scrollTo(isKeyboardAccessoryTabLayout()),
-                        actionOnItem(isKeyboardAccessoryTabLayout(),
+                .perform(
+                        scrollTo(isAssignableFrom(KeyboardAccessoryButtonGroupView.class)),
+                        actionOnItem(
+                                isAssignableFrom(KeyboardAccessoryButtonGroupView.class),
                                 selectTabWithDescription(R.string.address_accessory_sheet_toggle)));
 
         // Wait for the sheet to come up and be stable.
@@ -131,8 +148,9 @@ public class AddressAccessoryIntegrationTest {
         // Click a suggestion.
         whenDisplayed(withText("Marcus McSpartangregor")).perform(click());
 
-        CriteriaHelper.pollInstrumentationThread(() -> {
-            return mHelper.getFieldText("NAME_FIRST").equals("Marcus McSpartangregor");
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                () -> {
+                    return mHelper.getFieldText("NAME_FIRST").equals("Marcus McSpartangregor");
+                });
     }
 }

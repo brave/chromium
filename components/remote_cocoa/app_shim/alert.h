@@ -11,11 +11,6 @@
 #include "components/remote_cocoa/common/alert.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "ui/gfx/text_elider.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class AlertBridgeHelper;
 

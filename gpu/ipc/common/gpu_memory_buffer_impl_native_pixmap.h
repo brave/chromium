@@ -10,8 +10,13 @@
 #include <memory>
 #include <vector>
 
-#include "gpu/gpu_export.h"
+#include "base/functional/callback_helpers.h"
+#include "gpu/ipc/common/gpu_ipc_common_export.h"
 #include "gpu/ipc/common/gpu_memory_buffer_impl.h"
+
+namespace arc {
+class GpuArcVideoEncodeAccelerator;
+}
 
 namespace gfx {
 class ClientNativePixmap;
@@ -20,8 +25,11 @@ class ClientNativePixmapFactory;
 
 namespace gpu {
 
+class ClientSharedImage;
+
 // Implementation of GPU memory buffer based on Ozone native pixmap.
-class GPU_EXPORT GpuMemoryBufferImplNativePixmap : public GpuMemoryBufferImpl {
+class GPU_IPC_COMMON_EXPORT GpuMemoryBufferImplNativePixmap
+    : public GpuMemoryBufferImpl {
  public:
   GpuMemoryBufferImplNativePixmap(const GpuMemoryBufferImplNativePixmap&) =
       delete;
@@ -32,13 +40,17 @@ class GPU_EXPORT GpuMemoryBufferImplNativePixmap : public GpuMemoryBufferImpl {
 
   static constexpr gfx::GpuMemoryBufferType kBufferType = gfx::NATIVE_PIXMAP;
 
-  static std::unique_ptr<GpuMemoryBufferImplNativePixmap> CreateFromHandle(
+  static std::unique_ptr<GpuMemoryBufferImplNativePixmap>
+  CreateFromHandleForTesting(
       gfx::ClientNativePixmapFactory* client_native_pixmap_factory,
       gfx::GpuMemoryBufferHandle handle,
       const gfx::Size& size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage,
-      DestructionCallback callback);
+      DestructionCallback callback) {
+    return CreateFromHandle(client_native_pixmap_factory, std::move(handle),
+                            size, format, usage, std::move(callback));
+  }
 
   static base::OnceClosure AllocateForTesting(
       const gfx::Size& size,
@@ -54,9 +66,37 @@ class GPU_EXPORT GpuMemoryBufferImplNativePixmap : public GpuMemoryBufferImpl {
   gfx::GpuMemoryBufferType GetType() const override;
   gfx::GpuMemoryBufferHandle CloneHandle() const override;
 
+  // Creates a GpuMemoryBufferImpl from the given |handle| for VideoFrames.
+  // |size| and |format| should match what was used to allocate the |handle|.
+  // NOTE: DO NOT ADD ANY USAGES OF THIS METHOD.
+  // TODO(crbug.com/40263579): Remove this method once all usages are
+  // eliminated.
+  static std::unique_ptr<GpuMemoryBufferImplNativePixmap>
+  CreateFromHandleForVideoFrame(
+      gfx::ClientNativePixmapFactory* client_native_pixmap_factory,
+      gfx::GpuMemoryBufferHandle handle,
+      const gfx::Size& size,
+      gfx::BufferFormat format,
+      gfx::BufferUsage usage) {
+    return CreateFromHandle(client_native_pixmap_factory, std::move(handle),
+                            size, format, usage, base::NullCallback());
+  }
+
  private:
+  // TODO(crbug.com/404905709): Eliminate this class' creation of GMBs and
+  // remove this friending.
+  friend class arc::GpuArcVideoEncodeAccelerator;
+  friend class ClientSharedImage;
+
+  static std::unique_ptr<GpuMemoryBufferImplNativePixmap> CreateFromHandle(
+      gfx::ClientNativePixmapFactory* client_native_pixmap_factory,
+      gfx::GpuMemoryBufferHandle handle,
+      const gfx::Size& size,
+      gfx::BufferFormat format,
+      gfx::BufferUsage usage,
+      DestructionCallback callback);
+
   GpuMemoryBufferImplNativePixmap(
-      gfx::GpuMemoryBufferId id,
       const gfx::Size& size,
       gfx::BufferFormat format,
       DestructionCallback callback,

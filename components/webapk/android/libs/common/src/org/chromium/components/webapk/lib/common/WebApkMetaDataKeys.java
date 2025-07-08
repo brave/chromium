@@ -4,9 +4,10 @@
 
 package org.chromium.components.webapk.lib.common;
 
-/**
- * <meta-data> keys for WebAPK Android Manifest.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** <meta-data> keys for WebAPK Android Manifest. */
+@NullMarked
 public final class WebApkMetaDataKeys {
     public static final String SHELL_APK_VERSION = "org.chromium.webapk.shell_apk.shellApkVersion";
     public static final String RUNTIME_HOST = "org.chromium.webapk.shell_apk.runtimeHost";
@@ -17,6 +18,7 @@ public final class WebApkMetaDataKeys {
             "org.chromium.webapk.shell_apk.loggedIntentUrlParam";
     public static final String NAME = "org.chromium.webapk.shell_apk.name";
     public static final String SHORT_NAME = "org.chromium.webapk.shell_apk.shortName";
+    public static final String HAS_CUSTOM_NAME = "org.chromium.webapk.shell_apk.hasCustomName";
     public static final String SCOPE = "org.chromium.webapk.shell_apk.scope";
     public static final String DISPLAY_MODE = "org.chromium.webapk.shell_apk.displayMode";
     public static final String ORIENTATION = "org.chromium.webapk.shell_apk.orientation";
@@ -32,8 +34,7 @@ public final class WebApkMetaDataKeys {
     public static final String SPLASH_ID = "org.chromium.webapk.shell_apk.splashId";
     public static final String IS_SPLASH_ICON_MASKABLE_BOOLEAN_ID =
             "org.chromium.webapk.shell_apk.isSplashIconMaskableBooleanId";
-    public static final String IS_NEW_STYLE_WEBAPK =
-            "org.chromium.webapk.shell_apk.isNewStyleWebApk";
+    public static final String IS_ARC_CHROMEOS = "org.chromium.webapk.shell_apk.isArcChromeOs";
 
     public static final String ICON_URLS_AND_ICON_MURMUR2_HASHES =
             "org.chromium.webapk.shell_apk.iconUrlsAndIconMurmur2Hashes";

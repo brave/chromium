@@ -35,6 +35,7 @@
 #include "components/ntp_tiles/pref_names.h"
 #include "components/ntp_tiles/section_type.h"
 #include "components/ntp_tiles/switches.h"
+#include "components/supervised_user/core/common/buildflags.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/webapps/common/constants.h"
 #include "extensions/buildflags/buildflags.h"
@@ -44,6 +45,10 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#include "components/supervised_user/core/browser/supervised_user_preferences.h"
+#endif
 
 namespace ntp_tiles {
 
@@ -102,8 +107,9 @@ MATCHER_P3(LastTileIs,
            source,
            std::string("last tile ") + PrintTile(title, url, source)) {
   const NTPTilesVector& tiles = arg.at(SectionType::PERSONALIZED);
-  if (tiles.empty())
+  if (tiles.empty()) {
     return false;
+  }
 
   const NTPTile& last = tiles.back();
   return last.title == title && last.url == GURL(url) && last.source == source;
@@ -158,6 +164,7 @@ class MockTopSites : public TopSites {
   MOCK_CONST_METHOD0(loaded, bool());
   MOCK_METHOD0(GetPrepopulatedPages, history::PrepopulatedPageList());
   MOCK_METHOD1(OnNavigationCommitted, void(const GURL& url));
+  MOCK_CONST_METHOD0(NumBlockedSites, int());
 
   // Publicly expose notification to observers, since the implementation cannot
   // be overriden.
@@ -169,8 +176,9 @@ class MockTopSites : public TopSites {
 
 class MockMostVisitedSitesObserver : public MostVisitedSites::Observer {
  public:
-  MOCK_METHOD1(OnURLsAvailable,
-               void(const std::map<SectionType, NTPTilesVector>& sections));
+  MOCK_METHOD2(OnURLsAvailable,
+               void(bool is_user_triggered,
+                    const std::map<SectionType, NTPTilesVector>& sections));
   MOCK_METHOD1(OnIconMadeAvailable, void(const GURL& site_url));
 };
 
@@ -194,14 +202,14 @@ class FakeHomepageClient : public MostVisitedSites::HomepageClient {
 
   void SetHomepageUrl(GURL homepage_url) { homepage_url_ = homepage_url; }
 
-  void SetHomepageTitle(const absl::optional<std::u16string>& homepage_title) {
+  void SetHomepageTitle(const std::optional<std::u16string>& homepage_title) {
     homepage_title_ = homepage_title;
   }
 
  private:
   bool homepage_tile_enabled_;
   GURL homepage_url_;
-  absl::optional<std::u16string> homepage_title_;
+  std::optional<std::u16string> homepage_title_;
 };
 
 class MockIconCacher : public IconCacher {
@@ -220,6 +228,8 @@ class MockCustomLinksManager : public CustomLinksManager {
   MOCK_METHOD0(Uninitialize, void());
   MOCK_CONST_METHOD0(IsInitialized, bool());
   MOCK_CONST_METHOD0(GetLinks, const std::vector<CustomLinksManager::Link>&());
+  MOCK_METHOD3(AddLinkTo,
+               bool(const GURL& url, const std::u16string& title, size_t pos));
   MOCK_METHOD2(AddLink, bool(const GURL& url, const std::u16string& title));
   MOCK_METHOD3(UpdateLink,
                bool(const GURL& url,
@@ -359,24 +369,50 @@ class PopularSitesFactoryForTest {
 
 }  // namespace
 
+TEST(CustomLinksCacheTest, Main) {
+  std::u16string kTestTitle1 = u"Example1: Amazing Website";
+  std::string kTestUrl1 = "https://example1.com/";
+  std::u16string kTestTitle2 = u"Example2; Amazing Website";
+  std::string kTestUrl2 = "https://example2.com/";
+
+  CustomLinksCache cache;
+  EXPECT_TRUE(cache.GetList().empty());
+  EXPECT_FALSE(cache.HasUrl(GURL(kTestUrl1)));
+  EXPECT_FALSE(cache.HasUrl(GURL(kTestUrl2)));
+
+  cache.PushBack(MakeTile(kTestTitle1, kTestUrl1, TileSource::CUSTOM_LINKS));
+  EXPECT_THAT(cache.GetList(),
+              ElementsAre(MatchesTile(kTestTitle1, kTestUrl1,
+                                      TileSource::CUSTOM_LINKS)));
+  EXPECT_TRUE(cache.HasUrl(GURL(kTestUrl1)));
+  EXPECT_FALSE(cache.HasUrl(GURL(kTestUrl2)));
+
+  cache.PushBack(MakeTile(kTestTitle2, kTestUrl2, TileSource::CUSTOM_LINKS));
+  EXPECT_THAT(
+      cache.GetList(),
+      ElementsAre(
+          MatchesTile(kTestTitle1, kTestUrl1, TileSource::CUSTOM_LINKS),
+          MatchesTile(kTestTitle2, kTestUrl2, TileSource::CUSTOM_LINKS)));
+  EXPECT_TRUE(cache.HasUrl(GURL(kTestUrl1)));
+  EXPECT_TRUE(cache.HasUrl(GURL(kTestUrl2)));
+
+  cache.Clear();
+  EXPECT_TRUE(cache.GetList().empty());
+  EXPECT_FALSE(cache.HasUrl(GURL(kTestUrl1)));
+  EXPECT_FALSE(cache.HasUrl(GURL(kTestUrl2)));
+}
+
 // Param specifies whether Popular Sites is enabled via variations.
-class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
+class MostVisitedSitesTest : public ::testing::Test {
  protected:
   using TopSitesCallbackList =
       base::OnceCallbackList<TopSites::GetMostVisitedURLsCallback::RunType>;
 
   MostVisitedSitesTest() {
     MostVisitedSites::RegisterProfilePrefs(pref_service_.registry());
-
-    std::vector<base::test::FeatureRef> enabled_features;
-    // Disable FaviconServer in most tests and override in specific tests.
-    std::vector<base::test::FeatureRef> disabled_features = {
-        kNtpMostLikelyFaviconsFromServerFeature};
-    if (IsPopularSitesFeatureEnabled()) {
-      enabled_features.push_back(kUsePopularSitesSuggestions);
-    } else {
-      disabled_features.push_back(kUsePopularSitesSuggestions);
-    }
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+    supervised_user::RegisterProfilePrefs(pref_service_.registry());
+#endif
 
     // Updating list value in pref with default gmail URL for unit testing.
     // Also adding migration feature to be enabled for unit test.
@@ -385,9 +421,9 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
     pref_service_.registry()->RegisterListPref(
         webapps::kWebAppsMigratedPreinstalledApps, std::move(defaults));
 
-    feature_list_.InitWithFeatures(enabled_features, disabled_features);
-    if (IsPopularSitesFeatureEnabled())
-      popular_sites_factory_.SeedWithSampleData();
+    feature_list_.InitAndDisableFeature(
+        kNtpMostLikelyFaviconsFromServerFeature);
+    popular_sites_factory_.SeedWithSampleData();
 
     RecreateMostVisitedSites();
   }
@@ -401,47 +437,48 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
     // Custom links needs to be nullptr when MostVisitedSites is created, unless
     // the custom links feature is enabled. Custom links is disabled for
     // Android, iOS, and third-party NTPs.
-    std::unique_ptr<StrictMock<MockCustomLinksManager>> mock_custom_links;
+    std::unique_ptr<StrictMock<MockCustomLinksManager>>
+        mock_custom_links_manager;
     if (is_custom_links_enabled_) {
-      mock_custom_links =
+      mock_custom_links_manager =
           std::make_unique<StrictMock<MockCustomLinksManager>>();
-      mock_custom_links_ = mock_custom_links.get();
+      mock_custom_links_manager_ = mock_custom_links_manager.get();
     }
 
-    if (IsPopularSitesFeatureEnabled()) {
-      // Populate Popular Sites' internal cache by mimicking a past usage of
-      // PopularSitesImpl.
-      auto tmp_popular_sites = popular_sites_factory_.New();
-      base::RunLoop loop;
-      bool save_success = false;
-      tmp_popular_sites->MaybeStartFetch(
-          /*force_download=*/true,
-          base::BindOnce(
-              [](bool* save_success, base::RunLoop* loop, bool success) {
-                *save_success = success;
-                loop->Quit();
-              },
-              &save_success, &loop));
-      loop.Run();
-      EXPECT_TRUE(save_success);
+    // Populate Popular Sites' internal cache by mimicking a past usage of
+    // PopularSitesImpl.
+    auto tmp_popular_sites = popular_sites_factory_.New();
+    base::RunLoop loop;
+    bool save_success = false;
+    tmp_popular_sites->MaybeStartFetch(
+        /*force_download=*/true,
+        base::BindOnce(
+            [](bool* save_success, base::RunLoop* loop, bool success) {
+              *save_success = success;
+              loop->Quit();
+            },
+            &save_success, &loop));
+    loop.Run();
+    EXPECT_TRUE(save_success);
 
-      // With PopularSites enabled, blocked urls is exercised.
-      EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
-      // Mock icon cacher never replies, and we also don't verify whether the
-      // code uses it correctly.
-      EXPECT_CALL(*icon_cacher, StartFetchPopularSites(_, _, _))
-          .Times(AtLeast(0));
-    }
+    // With PopularSites enabled, blocked urls is exercised.
+    EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
+    // Mock icon cacher never replies, and we also don't verify whether the
+    // code uses it correctly.
+    EXPECT_CALL(*icon_cacher, StartFetchPopularSites(_, _, _))
+        .Times(AtLeast(0));
 
     EXPECT_CALL(*icon_cacher, StartFetchMostLikely(_, _)).Times(AtLeast(0));
 
     most_visited_sites_ = std::make_unique<MostVisitedSites>(
-        &pref_service_, mock_top_sites_, popular_sites_factory_.New(),
-        std::move(mock_custom_links), std::move(icon_cacher),
-        /*supervisor=*/nullptr, true);
+        &pref_service_, /*identity_manager=*/nullptr,
+        /*supervised_user_service=*/nullptr, mock_top_sites_,
+        popular_sites_factory_.New(), std::move(mock_custom_links_manager),
+        std::move(icon_cacher),
+        /*is_default_chrome_app_migrated=*/true, is_custom_links_mixable_);
   }
 
-  bool IsPopularSitesFeatureEnabled() const { return GetParam(); }
+  bool IsCustomLinkMixingEnabled() const { return is_custom_links_mixable_; }
 
   bool VerifyAndClearExpectations() {
     base::RunLoop().RunUntilIdle();
@@ -449,9 +486,7 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
         Mock::VerifyAndClearExpectations(mock_top_sites_.get()) &&
         Mock::VerifyAndClearExpectations(&mock_observer_);
     // For convenience, restore the expectations for IsBlocked().
-    if (IsPopularSitesFeatureEnabled()) {
-      EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
-    }
+    EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
     return success;
   }
 
@@ -464,7 +499,14 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
 
   void EnableCustomLinks() { is_custom_links_enabled_ = true; }
 
+  void EnableCustomLinkMixing() { is_custom_links_mixable_ = true; }
+
   bool is_custom_links_enabled_ = false;
+#if BUILDFLAG(IS_ANDROID)
+  bool is_custom_links_mixable_ = true;
+#else
+  bool is_custom_links_mixable_ = false;
+#endif
   TopSitesCallbackList top_sites_callbacks_;
 
   base::test::TaskEnvironment task_environment_;
@@ -477,52 +519,56 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
   StrictMock<MockMostVisitedSitesObserver> mock_other_observer_;
   std::unique_ptr<MostVisitedSites> most_visited_sites_;
   base::test::ScopedFeatureList feature_list_;
-  raw_ptr<MockCustomLinksManager> mock_custom_links_;
+  raw_ptr<MockCustomLinksManager> mock_custom_links_manager_;
   raw_ptr<MockIconCacher> icon_cacher_;
 };
 
-TEST_P(MostVisitedSitesTest, ShouldStartNoCallInConstructor) {
+TEST_F(MostVisitedSitesTest, ShouldStartNoCallInConstructor) {
   // No call to mocks expected by the mere fact of instantiating
   // MostVisitedSites.
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldRefreshBackends) {
+TEST_F(MostVisitedSitesTest, ShouldRefreshBackends) {
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   most_visited_sites_->Refresh();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldIncludeTileForHomepage) {
+TEST_F(MostVisitedSitesTest, ShouldIncludeTileForHomepage) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(FirstPersonalizedTileIs(
-                                  u"", kHomepageUrl, TileSource::HOMEPAGE)));
-  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/3);
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageWithoutClient) {
-  EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
-  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Contains(
-                  Pair(SectionType::PERSONALIZED,
-                       Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                                TileSource::HOMEPAGE)))))));
+              OnURLsAvailable(_, FirstPersonalizedTileIs(
+                                     u"", kHomepageUrl, TileSource::HOMEPAGE)));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldIncludeHomeTileWithUrlBeforeQueryingName) {
+TEST_F(MostVisitedSitesTest, ShouldNotIncludeHomepageWithoutClient) {
+  EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
+  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           Not(Contains(MatchesTile(u"", kHomepageUrl,
+                                                    TileSource::HOMEPAGE)))))));
+  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
+                                                  /*max_num_sites=*/3);
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(MostVisitedSitesTest, ShouldIncludeHomeTileWithUrlBeforeQueryingName) {
   // Because the query time for the real name might take a while, provide the
   // home tile with URL as title immediately and update the tiles as soon as the
   // real title was found.
@@ -530,42 +576,48 @@ TEST_P(MostVisitedSitesTest, ShouldIncludeHomeTileWithUrlBeforeQueryingName) {
   homepage_client->SetHomepageTileEnabled(true);
   homepage_client->SetHomepageTitle(kHomepageTitle);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
   {
     testing::Sequence seq;
-    EXPECT_CALL(mock_observer_,
-                OnURLsAvailable(Contains(
-                    Pair(SectionType::PERSONALIZED,
-                         Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                                  TileSource::HOMEPAGE)))))));
-    EXPECT_CALL(mock_observer_,
-                OnURLsAvailable(Contains(
-                    Pair(SectionType::PERSONALIZED,
-                         Not(Contains(MatchesTile(kHomepageTitle, kHomepageUrl,
-                                                  TileSource::HOMEPAGE)))))));
+    EXPECT_CALL(
+        mock_observer_,
+        OnURLsAvailable(
+            _, Contains(Pair(SectionType::PERSONALIZED,
+                             Not(Contains(MatchesTile(
+                                 u"", kHomepageUrl, TileSource::HOMEPAGE)))))));
+    EXPECT_CALL(
+        mock_observer_,
+        OnURLsAvailable(
+            _,
+            Contains(Pair(SectionType::PERSONALIZED,
+                          Not(Contains(MatchesTile(kHomepageTitle, kHomepageUrl,
+                                                   TileSource::HOMEPAGE)))))));
   }
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldUpdateHomepageTileWhenRefreshHomepageTile) {
+TEST_F(MostVisitedSitesTest, ShouldUpdateHomepageTileWhenRefreshHomepageTile) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
 
   // Ensure that home tile is available as usual.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(FirstPersonalizedTileIs(
-                                  u"", kHomepageUrl, TileSource::HOMEPAGE)));
+  EXPECT_CALL(mock_observer_,
+              OnURLsAvailable(_, FirstPersonalizedTileIs(
+                                     u"", kHomepageUrl, TileSource::HOMEPAGE)));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
@@ -574,36 +626,40 @@ TEST_P(MostVisitedSitesTest, ShouldUpdateHomepageTileWhenRefreshHomepageTile) {
   // Disable home page and rebuild _without_ Resync. The tile should be gone.
   homepage_client->SetHomepageTileEnabled(false);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory()).Times(0);
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(Not(FirstPersonalizedTileIs(
-                                  u"", kHomepageUrl, TileSource::HOMEPAGE))));
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(_, Not(FirstPersonalizedTileIs(u"", kHomepageUrl,
+                                                     TileSource::HOMEPAGE))));
   most_visited_sites_->RefreshTiles();
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageIfNoTileRequested) {
+TEST_F(MostVisitedSitesTest, ShouldNotIncludeHomepageIfNoTileRequested) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
   EXPECT_CALL(
       mock_observer_,
-      OnURLsAvailable(Contains(Pair(SectionType::PERSONALIZED, IsEmpty()))));
+      OnURLsAvailable(_, Contains(Pair(SectionType::PERSONALIZED, IsEmpty()))));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/0);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldReturnHomepageIfOneTileRequested) {
+TEST_F(MostVisitedSitesTest, ShouldReturnHomepageIfOneTileRequested) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>((
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>((
           MostVisitedURLList{MakeMostVisitedURL(u"Site 1", "http://site1/")})));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
@@ -611,32 +667,34 @@ TEST_P(MostVisitedSitesTest, ShouldReturnHomepageIfOneTileRequested) {
       .WillRepeatedly(Return(false));
   EXPECT_CALL(
       mock_observer_,
-      OnURLsAvailable(Contains(Pair(
-          SectionType::PERSONALIZED,
-          ElementsAre(MatchesTile(u"", kHomepageUrl, TileSource::HOMEPAGE))))));
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           ElementsAre(MatchesTile(u"", kHomepageUrl,
+                                                   TileSource::HOMEPAGE))))));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/1);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenFull) {
+TEST_F(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenFull) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>((MostVisitedURLList{
-          MakeMostVisitedURL(u"Site 1", "http://site1/"),
-          MakeMostVisitedURL(u"Site 2", "http://site2/"),
-          MakeMostVisitedURL(u"Site 3", "http://site3/"),
-          MakeMostVisitedURL(u"Site 4", "http://site4/"),
-          MakeMostVisitedURL(u"Site 5", "http://site5/"),
-      })));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>((MostVisitedURLList{
+              MakeMostVisitedURL(u"Site 1", "http://site1/"),
+              MakeMostVisitedURL(u"Site 2", "http://site2/"),
+              MakeMostVisitedURL(u"Site 3", "http://site3/"),
+              MakeMostVisitedURL(u"Site 4", "http://site4/"),
+              MakeMostVisitedURL(u"Site 5", "http://site5/"),
+          })));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
   std::map<SectionType, NTPTilesVector> sections;
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/4);
   base::RunLoop().RunUntilIdle();
@@ -650,7 +708,7 @@ TEST_P(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenFull) {
 // The following test exercises behavior with a preinstalled chrome app; this
 // is only relevant if extensions and apps are enabled.
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-TEST_P(MostVisitedSitesTest, ShouldNotContainDefaultPreinstalledApp) {
+TEST_F(MostVisitedSitesTest, ShouldNotContainDefaultPreinstalledApp) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
   const char kGmailUrl[] =
@@ -658,13 +716,13 @@ TEST_P(MostVisitedSitesTest, ShouldNotContainDefaultPreinstalledApp) {
   const char16_t kGmailTitle[] = u"Gmail";
 
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           MostVisitedURLList{MakeMostVisitedURL(kGmailTitle, kGmailUrl),
                              MakeMostVisitedURL(kTestTitle, kTestUrl)}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   std::map<SectionType, NTPTilesVector> sections;
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillRepeatedly(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillRepeatedly(SaveArg<1>(&sections));
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/2);
@@ -678,24 +736,25 @@ TEST_P(MostVisitedSitesTest, ShouldNotContainDefaultPreinstalledApp) {
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
-TEST_P(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenNotFull) {
+TEST_F(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenNotFull) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>((MostVisitedURLList{
-          MakeMostVisitedURL(u"Site 1", "http://site1/"),
-          MakeMostVisitedURL(u"Site 2", "http://site2/"),
-          MakeMostVisitedURL(u"Site 3", "http://site3/"),
-          MakeMostVisitedURL(u"Site 4", "http://site4/"),
-          MakeMostVisitedURL(u"Site 5", "http://site5/"),
-      })));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>((MostVisitedURLList{
+              MakeMostVisitedURL(u"Site 1", "http://site1/"),
+              MakeMostVisitedURL(u"Site 2", "http://site2/"),
+              MakeMostVisitedURL(u"Site 3", "http://site3/"),
+              MakeMostVisitedURL(u"Site 4", "http://site4/"),
+              MakeMostVisitedURL(u"Site 5", "http://site5/"),
+          })));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
   std::map<SectionType, NTPTilesVector> sections;
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/8);
   base::RunLoop().RunUntilIdle();
@@ -706,11 +765,11 @@ TEST_P(MostVisitedSitesTest, ShouldHaveHomepageFirstInListWhenNotFull) {
   EXPECT_THAT(tiles[0], MatchesTile(u"", kHomepageUrl, TileSource::HOMEPAGE));
 }
 
-TEST_P(MostVisitedSitesTest, ShouldDeduplicateHomepageWithTopSites) {
+TEST_F(MostVisitedSitesTest, ShouldDeduplicateHomepageWithTopSites) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           (MostVisitedURLList{MakeMostVisitedURL(u"Site 1", "http://site1/"),
                               MakeMostVisitedURL(u"", kHomepageUrl)})));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
@@ -719,59 +778,65 @@ TEST_P(MostVisitedSitesTest, ShouldDeduplicateHomepageWithTopSites) {
       .WillRepeatedly(Return(false));
   EXPECT_CALL(
       mock_observer_,
-      OnURLsAvailable(Contains(Pair(
-          SectionType::PERSONALIZED,
-          AllOf(Contains(MatchesTile(u"", kHomepageUrl, TileSource::HOMEPAGE)),
-                Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                         TileSource::TOP_SITES))))))));
+      OnURLsAvailable(
+          _, Contains(Pair(
+                 SectionType::PERSONALIZED,
+                 AllOf(Contains(MatchesTile(u"", kHomepageUrl,
+                                            TileSource::HOMEPAGE)),
+                       Not(Contains(MatchesTile(u"", kHomepageUrl,
+                                                TileSource::TOP_SITES))))))));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageIfThereIsNone) {
+TEST_F(MostVisitedSitesTest, ShouldNotIncludeHomepageIfThereIsNone) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(false);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Contains(
-                  Pair(SectionType::PERSONALIZED,
-                       Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                                TileSource::HOMEPAGE)))))));
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           Not(Contains(MatchesTile(u"", kHomepageUrl,
+                                                    TileSource::HOMEPAGE)))))));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageIfEmptyUrl) {
+TEST_F(MostVisitedSitesTest, ShouldNotIncludeHomepageIfEmptyUrl) {
   const std::string kEmptyHomepageUrl;
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   homepage_client->SetHomepageUrl(GURL(kEmptyHomepageUrl));
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(kEmptyHomepageUrl)))
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Not(FirstPersonalizedTileIs(
-                  u"", kEmptyHomepageUrl, TileSource::HOMEPAGE))));
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(_, Not(FirstPersonalizedTileIs(u"", kEmptyHomepageUrl,
+                                                     TileSource::HOMEPAGE))));
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageIfBlocked) {
+TEST_F(MostVisitedSitesTest, ShouldNotIncludeHomepageIfBlocked) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           (MostVisitedURLList{MakeMostVisitedURL(u"", kHomepageUrl)})));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
@@ -781,18 +846,20 @@ TEST_P(MostVisitedSitesTest, ShouldNotIncludeHomepageIfBlocked) {
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AtLeast(1))
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Contains(
-                  Pair(SectionType::PERSONALIZED,
-                       Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                                TileSource::HOMEPAGE)))))));
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           Not(Contains(MatchesTile(u"", kHomepageUrl,
+                                                    TileSource::HOMEPAGE)))))));
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesTest, ShouldPinHomepageAgainIfBlockedUndone) {
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+TEST_F(MostVisitedSitesTest, ShouldPinHomepageAgainIfBlockedUndone) {
   FakeHomepageClient* homepage_client = RegisterNewHomepageClient();
   homepage_client->SetHomepageTileEnabled(true);
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
@@ -802,11 +869,12 @@ TEST_P(MostVisitedSitesTest, ShouldPinHomepageAgainIfBlockedUndone) {
   EXPECT_CALL(*mock_top_sites_, IsBlocked(Eq(GURL(kHomepageUrl))))
       .Times(AtLeast(1))
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Contains(
-                  Pair(SectionType::PERSONALIZED,
-                       Not(Contains(MatchesTile(u"", kHomepageUrl,
-                                                TileSource::HOMEPAGE)))))));
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           Not(Contains(MatchesTile(u"", kHomepageUrl,
+                                                    TileSource::HOMEPAGE)))))));
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/3);
@@ -819,15 +887,18 @@ TEST_P(MostVisitedSitesTest, ShouldPinHomepageAgainIfBlockedUndone) {
       .WillRepeatedly(Return(false));
   EXPECT_CALL(
       mock_observer_,
-      OnURLsAvailable(Contains(Pair(
-          SectionType::PERSONALIZED,
-          Contains(MatchesTile(u"", kHomepageUrl, TileSource::HOMEPAGE))))));
+      OnURLsAvailable(
+          _, Contains(Pair(SectionType::PERSONALIZED,
+                           Contains(MatchesTile(u"", kHomepageUrl,
+                                                TileSource::HOMEPAGE))))));
 
-  most_visited_sites_->OnBlockedSitesChanged();
+  most_visited_sites_->OnURLFilterChanged();
+
   base::RunLoop().RunUntilIdle();
 }
+#endif
 
-TEST_P(MostVisitedSitesTest, ShouldInformSuggestionSourcesWhenBlocked) {
+TEST_F(MostVisitedSitesTest, ShouldInformSuggestionSourcesWhenBlocked) {
   EXPECT_CALL(*mock_top_sites_, AddBlockedUrl(Eq(GURL(kHomepageUrl)))).Times(1);
   most_visited_sites_->AddOrRemoveBlockedUrl(GURL(kHomepageUrl),
                                              /*add_url=*/true);
@@ -837,19 +908,20 @@ TEST_P(MostVisitedSitesTest, ShouldInformSuggestionSourcesWhenBlocked) {
                                              /*add_url=*/false);
 }
 
-TEST_P(MostVisitedSitesTest,
+TEST_F(MostVisitedSitesTest,
        ShouldDeduplicatePopularSitesWithMostVisitedIffHostAndTitleMatches) {
   pref_service_.SetString(prefs::kPopularSitesOverrideCountry, "US");
   RecreateMostVisitedSites();  // Refills cache with ESPN and Google News.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{
-          MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
-          MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
-          MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{
+              MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
+              MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
+              MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   std::map<SectionType, NTPTilesVector> sections;
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/6);
@@ -858,11 +930,9 @@ TEST_P(MostVisitedSitesTest,
   EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
               Contains(MatchesTile(u"Google", "http://www.google.com/",
                                    TileSource::TOP_SITES)));
-  if (IsPopularSitesFeatureEnabled()) {
-    EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
-                Contains(MatchesTile(u"Google News", "http://news.google.com/",
-                                     TileSource::POPULAR)));
-  }
+  EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
+              Contains(MatchesTile(u"Google News", "http://news.google.com/",
+                                   TileSource::POPULAR)));
   EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
               AllOf(Contains(MatchesTile(u"ESPN", "http://espn.com/",
                                          TileSource::TOP_SITES)),
@@ -874,32 +944,26 @@ TEST_P(MostVisitedSitesTest,
                                              TileSource::POPULAR)))));
 }
 
-TEST_P(MostVisitedSitesTest, ShouldHandleTopSitesCacheHit) {
+TEST_F(MostVisitedSitesTest, ShouldHandleTopSitesCacheHit) {
   // If cached, TopSites returns the tiles synchronously, running the callback
   // even before the function returns.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           MostVisitedURLList{MakeMostVisitedURL(u"Site 1", "http://site1/")}));
 
   InSequence seq;
-  if (IsPopularSitesFeatureEnabled()) {
-    EXPECT_CALL(
-        mock_observer_,
-        OnURLsAvailable(Contains(Pair(
-            SectionType::PERSONALIZED,
-            ElementsAre(
-                MatchesTile(u"Site 1", "http://site1/", TileSource::TOP_SITES),
-                MatchesTile(u"PopularSite1", "http://popularsite1/",
-                            TileSource::POPULAR),
-                MatchesTile(u"PopularSite2", "http://popularsite2/",
-                            TileSource::POPULAR))))));
-  } else {
-    EXPECT_CALL(mock_observer_,
-                OnURLsAvailable(Contains(
-                    Pair(SectionType::PERSONALIZED,
-                         ElementsAre(MatchesTile(u"Site 1", "http://site1/",
-                                                 TileSource::TOP_SITES))))));
-  }
+  EXPECT_CALL(
+      mock_observer_,
+      OnURLsAvailable(
+          _,
+          Contains(Pair(
+              SectionType::PERSONALIZED,
+              ElementsAre(MatchesTile(u"Site 1", "http://site1/",
+                                      TileSource::TOP_SITES),
+                          MatchesTile(u"PopularSite1", "http://popularsite1/",
+                                      TileSource::POPULAR),
+                          MatchesTile(u"PopularSite2", "http://popularsite2/",
+                                      TileSource::POPULAR))))));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
@@ -911,26 +975,25 @@ TEST_P(MostVisitedSitesTest, ShouldHandleTopSitesCacheHit) {
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
       .WillOnce(base::test::RunOnceCallback<0>(
           MostVisitedURLList{MakeMostVisitedURL(u"Site 2", "http://site2/")}));
-  if (IsPopularSitesFeatureEnabled()) {
-    EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
-  }
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_));
+  EXPECT_CALL(*mock_top_sites_, IsBlocked(_)).WillRepeatedly(Return(false));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _));
   mock_top_sites_->NotifyTopSitesChanged(
       history::TopSitesObserver::ChangeReason::MOST_VISITED);
   base::RunLoop().RunUntilIdle();
 }
 
 // Tests that multiple observers can be added to the MostVisitedSites.
-TEST_P(MostVisitedSitesTest, MultipleObservers) {
+TEST_F(MostVisitedSitesTest, MultipleObservers) {
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{
-          MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
-          MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
-          MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
+      .WillRepeatedly(
+          base::test::RunOnceCallbackRepeatedly<0>(MostVisitedURLList{
+              MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
+              MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
+              MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
   std::map<SectionType, NTPTilesVector> sections;
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
 
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/2);
@@ -948,10 +1011,10 @@ TEST_P(MostVisitedSitesTest, MultipleObservers) {
   sections.clear();
   std::map<SectionType, NTPTilesVector> sections_other;
   EXPECT_CALL(*mock_top_sites_, SyncWithHistory()).Times(1);
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillRepeatedly(SaveArg<0>(&sections));
-  EXPECT_CALL(mock_other_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections_other));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillRepeatedly(SaveArg<1>(&sections));
+  EXPECT_CALL(mock_other_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections_other));
   most_visited_sites_->RefreshTiles();
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_other_observer_,
                                                   /*max_num_sites=*/2);
@@ -970,11 +1033,7 @@ TEST_P(MostVisitedSitesTest, MultipleObservers) {
                                      TileSource::TOP_SITES)))));
 }
 
-INSTANTIATE_TEST_SUITE_P(MostVisitedSitesTest,
-                         MostVisitedSitesTest,
-                         ::testing::Bool());
-
-TEST(MostVisitedSitesTest, ShouldDeduplicateDomainWithNoWwwDomain) {
+TEST_F(MostVisitedSitesTest, ShouldDeduplicateDomainWithNoWwwDomain) {
   EXPECT_TRUE(MostVisitedSites::IsHostOrMobilePageKnown({"www.mobile.de"},
                                                         "mobile.de"));
   EXPECT_TRUE(MostVisitedSites::IsHostOrMobilePageKnown({"mobile.de"},
@@ -983,7 +1042,7 @@ TEST(MostVisitedSitesTest, ShouldDeduplicateDomainWithNoWwwDomain) {
                                                         "www.mobile.co.uk"));
 }
 
-TEST(MostVisitedSitesTest, ShouldDeduplicateDomainByRemovingMobilePrefixes) {
+TEST_F(MostVisitedSitesTest, ShouldDeduplicateDomainByRemovingMobilePrefixes) {
   EXPECT_TRUE(
       MostVisitedSites::IsHostOrMobilePageKnown({"bbc.co.uk"}, "m.bbc.co.uk"));
   EXPECT_TRUE(
@@ -998,7 +1057,7 @@ TEST(MostVisitedSitesTest, ShouldDeduplicateDomainByRemovingMobilePrefixes) {
       MostVisitedSites::IsHostOrMobilePageKnown({"mobile.cnn.com"}, "cnn.com"));
 }
 
-TEST(MostVisitedSitesTest, ShouldDeduplicateDomainByReplacingMobilePrefixes) {
+TEST_F(MostVisitedSitesTest, ShouldDeduplicateDomainByReplacingMobilePrefixes) {
   EXPECT_TRUE(MostVisitedSites::IsHostOrMobilePageKnown({"www.bbc.co.uk"},
                                                         "m.bbc.co.uk"));
   EXPECT_TRUE(MostVisitedSites::IsHostOrMobilePageKnown({"m.mobile.de"},
@@ -1009,7 +1068,10 @@ TEST(MostVisitedSitesTest, ShouldDeduplicateDomainByReplacingMobilePrefixes) {
                                                         "www.cnn.com"));
 }
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+// TODO(crbug.com/397422358): Adapt MostVisitedSitesWithCustomLinksTest for
+// Android, which will require calling EnableCustomLinkMixing() in the CTOR.
+
+#if !BUILDFLAG(IS_IOS)
 class MostVisitedSitesWithCustomLinksTest : public MostVisitedSitesTest {
  public:
   MostVisitedSitesWithCustomLinksTest() {
@@ -1017,39 +1079,77 @@ class MostVisitedSitesWithCustomLinksTest : public MostVisitedSitesTest {
     RecreateMostVisitedSites();
   }
 
-  void ExpectBuildWithTopSites(
-      const MostVisitedURLList& expected_list,
-      std::map<SectionType, NTPTilesVector>* sections) {
+  void SetUpBuildWithTopSites(const MostVisitedURLList& expected_list,
+                              std::map<SectionType, NTPTilesVector>* sections) {
     EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-        .WillRepeatedly(base::test::RunOnceCallback<0>(expected_list));
+        .WillRepeatedly(
+            base::test::RunOnceCallbackRepeatedly<0>(expected_list));
     EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
-    EXPECT_CALL(*mock_custom_links_, IsInitialized())
+    EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
         .WillRepeatedly(Return(false));
-    EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-        .WillOnce(SaveArg<0>(sections));
+    EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+        .WillOnce(SaveArg<1>(sections));
   }
 
-  void ExpectBuildWithCustomLinks(
+  void SetUpBuildWithCustomLinks(
       const std::vector<CustomLinksManager::Link>& expected_links,
       std::map<SectionType, NTPTilesVector>* sections) {
-    EXPECT_CALL(*mock_custom_links_, IsInitialized())
+    EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
         .WillRepeatedly(Return(true));
-    EXPECT_CALL(*mock_custom_links_, GetLinks())
+    EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
         .WillOnce(ReturnRef(expected_links));
-    EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-        .WillOnce(SaveArg<0>(sections));
+    EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+        .WillOnce(SaveArg<1>(sections));
+  }
+
+  void SetUpBuildWithTopSitesAndCustomLinks(
+      const MostVisitedURLList& expected_list,
+      const std::vector<CustomLinksManager::Link>& expected_links,
+      std::map<SectionType, NTPTilesVector>* sections) {
+    EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
+        .WillRepeatedly(
+            base::test::RunOnceCallbackRepeatedly<0>(expected_list));
+    EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
+    EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
+        .WillOnce(ReturnRef(expected_links));
+    EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+        .WillOnce(SaveArg<1>(sections));
+  }
+
+  // `expected_url` is assumed to be duplicated in the Custom link and the
+  // Top Sites link.
+  void CheckSingleCustomLink(const NTPTilesVector& tiles,
+                             const char16_t* expected_title,
+                             const char* expected_url) {
+    if (IsCustomLinkMixingEnabled()) {
+      // Custom link is mixed with Top Sites and Popular links. `expected_url`
+      // duplicated causes Top Sites link removal.
+      EXPECT_THAT(tiles, ElementsAre(MatchesTile(expected_title, expected_url,
+                                                 TileSource::CUSTOM_LINKS),
+                                     MatchesTile(u"PopularSite1",
+                                                 "http://popularsite1/",
+                                                 TileSource::POPULAR)));
+
+    } else {
+      // Custom Links replaces Top Sites links (no Popular). For both mixing and
+      // non-mixing cases, Top Sites link is replaced.
+      EXPECT_THAT(tiles, ElementsAre(MatchesTile(expected_title, expected_url,
+                                                 TileSource::CUSTOM_LINKS)));
+    }
   }
 };
 
-TEST_P(MostVisitedSitesWithCustomLinksTest, ChangeVisibility) {
+TEST_F(MostVisitedSitesWithCustomLinksTest, ChangeVisibility) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build tiles when custom links is not initialized. Tiles should be Top
   // Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/1);
@@ -1063,7 +1163,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest, ChangeVisibility) {
   EXPECT_TRUE(most_visited_sites_->IsShortcutsVisible());
 
   // Hide shortcuts. Observer should get notified.
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->SetShortcutsVisible(false);
   base::RunLoop().RunUntilIdle();
 
@@ -1071,12 +1171,12 @@ TEST_P(MostVisitedSitesWithCustomLinksTest, ChangeVisibility) {
   EXPECT_FALSE(most_visited_sites_->IsShortcutsVisible());
 
   // Attempt to hide the shortcuts again. This should be ignored.
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(0);
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(0);
   most_visited_sites_->SetShortcutsVisible(false);
   base::RunLoop().RunUntilIdle();
 
   // Make the shortcuts visible. Observer should get notified.
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->SetShortcutsVisible(true);
   base::RunLoop().RunUntilIdle();
 
@@ -1084,7 +1184,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest, ChangeVisibility) {
   EXPECT_TRUE(most_visited_sites_->IsShortcutsVisible());
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        ShouldOnlyBuildCustomLinksWhenInitialized) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
@@ -1094,11 +1194,11 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
 
   // Build tiles when custom links is not initialized. Tiles should be Top
   // Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
+                                                  /*max_num_sites=*/2);
   base::RunLoop().RunUntilIdle();
   NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
   ASSERT_THAT(tiles.size(), Ge(1ul));
@@ -1106,24 +1206,24 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 
   // Initialize custom links and rebuild tiles. Tiles should be custom links.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  ExpectBuildWithCustomLinks(expected_links, &sections);
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  SetUpBuildWithCustomLinks(expected_links, &sections);
   most_visited_sites_->InitializeCustomLinks();
   most_visited_sites_->RefreshTiles();
   base::RunLoop().RunUntilIdle();
-  EXPECT_THAT(
-      sections.at(SectionType::PERSONALIZED),
-      ElementsAre(MatchesTile(kTestTitle, kTestUrl, TileSource::CUSTOM_LINKS)));
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
 
   // Uninitialize custom links and rebuild tiles. Tiles should be Top Sites.
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   most_visited_sites_->UninitializeCustomLinks();
   base::RunLoop().RunUntilIdle();
   tiles = sections.at(SectionType::PERSONALIZED);
@@ -1132,7 +1232,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        ShouldFavorCustomLinksOverTopSites) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
@@ -1142,8 +1242,47 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
 
   // Build tiles when custom links is not initialized. Tiles should be Top
   // Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
+      MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
+  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
+                                                  /*max_num_sites=*/2);
+  base::RunLoop().RunUntilIdle();
+  NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
+  ASSERT_THAT(tiles.size(), Ge(1ul));
+  ASSERT_THAT(tiles[0],
+              MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
+
+  // Initialize custom links and rebuild tiles. Tiles should be custom links.
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  SetUpBuildWithCustomLinks(expected_links, &sections);
+  most_visited_sites_->InitializeCustomLinks();
+  most_visited_sites_->RefreshTiles();
+  base::RunLoop().RunUntilIdle();
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
+
+  // Initiate notification for new Top Sites. This should be ignored.
+  VerifyAndClearExpectations();
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(0);
+  top_sites_callbacks_.Notify(
+      MostVisitedURLList({MakeMostVisitedURL(u"Site 2", "http://site2/")}));
+  base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(MostVisitedSitesWithCustomLinksTest,
+       DisableCustomLinksWhenNotInitialized) {
+  const char kTestUrl[] = "http://site1/";
+  const char16_t kTestTitle[] = u"Site 1";
+  std::vector<CustomLinksManager::Link> expected_links(
+      {CustomLinksManager::Link{GURL(kTestUrl), kTestTitle}});
+  std::map<SectionType, NTPTilesVector> sections;
+
+  // Build tiles when custom links is not initialized. Tiles should be from
+  // Top Sites.
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/1);
@@ -1153,104 +1292,71 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   ASSERT_THAT(tiles[0],
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 
-  // Initialize custom links and rebuild tiles. Tiles should be custom links.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  ExpectBuildWithCustomLinks(expected_links, &sections);
-  most_visited_sites_->InitializeCustomLinks();
-  most_visited_sites_->RefreshTiles();
-  base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      sections.at(SectionType::PERSONALIZED),
-      ElementsAre(MatchesTile(kTestTitle, kTestUrl, TileSource::CUSTOM_LINKS)));
-
-  // Initiate notification for new Top Sites. This should be ignored.
-  VerifyAndClearExpectations();
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(0);
-  top_sites_callbacks_.Notify(
-      MostVisitedURLList({MakeMostVisitedURL(u"Site 2", "http://site2/")}));
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_P(MostVisitedSitesWithCustomLinksTest,
-       DisableCustomLinksWhenNotInitialized) {
-  const char kTestUrl[] = "http://site1/";
-  const char16_t kTestTitle16[] = u"Site 1";
-  std::vector<CustomLinksManager::Link> expected_links(
-      {CustomLinksManager::Link{GURL(kTestUrl), kTestTitle16}});
-  std::map<SectionType, NTPTilesVector> sections;
-
-  // Build tiles when custom links is not initialized. Tiles should be from
-  // Top Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
-      MostVisitedURLList{MakeMostVisitedURL(kTestTitle16, kTestUrl)},
-      &sections);
-  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
-  base::RunLoop().RunUntilIdle();
-  NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
-  ASSERT_THAT(tiles.size(), Ge(1ul));
-  ASSERT_THAT(tiles[0],
-              MatchesTile(kTestTitle16, kTestUrl, TileSource::TOP_SITES));
-
   // Disable custom links. Tiles should rebuild.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
-          MostVisitedURLList{MakeMostVisitedURL(kTestTitle16, kTestUrl)}));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
+          MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->EnableCustomLinks(false);
   base::RunLoop().RunUntilIdle();
 
   // Try to disable custom links again. This should not rebuild the tiles.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_)).Times(0);
-  EXPECT_CALL(*mock_custom_links_, GetLinks()).Times(0);
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks()).Times(0);
   most_visited_sites_->EnableCustomLinks(false);
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest, DisableCustomLinksWhenInitialized) {
+TEST_F(MostVisitedSitesWithCustomLinksTest, DisableCustomLinksWhenInitialized) {
   const char kTestUrl[] = "http://site1/";
-  const char16_t kTestTitle16[] = u"Site 1";
+  const char16_t kTestTitle[] = u"Site 1";
   std::vector<CustomLinksManager::Link> expected_links(
-      {CustomLinksManager::Link{GURL(kTestUrl), kTestTitle16}});
+      {CustomLinksManager::Link{GURL(kTestUrl), kTestTitle}});
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build tiles when custom links is initialized and not disabled. Tiles should
-  // be custom links.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
-  ExpectBuildWithCustomLinks(expected_links, &sections);
+  // contain custom links.
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  if (IsCustomLinkMixingEnabled()) {
+    SetUpBuildWithTopSitesAndCustomLinks(
+        MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)},
+        expected_links, &sections);
+  } else {
+    EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
+    SetUpBuildWithCustomLinks(expected_links, &sections);
+  }
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
+                                                  /*max_num_sites=*/2);
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(sections.at(SectionType::PERSONALIZED),
-              ElementsAre(MatchesTile(kTestTitle16, kTestUrl,
-                                      TileSource::CUSTOM_LINKS)));
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
 
   // Disable custom links. Tiles should rebuild and return Top Sites.
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
-          MostVisitedURLList{MakeMostVisitedURL(kTestTitle16, kTestUrl)}));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
+          MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
+
   most_visited_sites_->EnableCustomLinks(false);
   base::RunLoop().RunUntilIdle();
   EXPECT_THAT(
       sections.at(SectionType::PERSONALIZED),
-      ElementsAre(MatchesTile(kTestTitle16, kTestUrl, TileSource::TOP_SITES)));
+      ElementsAre(MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES),
+                  MatchesTile(u"PopularSite1", "http://popularsite1/",
+                              TileSource::POPULAR)));
 
   // Re-enable custom links. Tiles should rebuild and return custom links.
-  ExpectBuildWithCustomLinks(expected_links, &sections);
+  SetUpBuildWithCustomLinks(expected_links, &sections);
   most_visited_sites_->EnableCustomLinks(true);
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(sections.at(SectionType::PERSONALIZED),
-              ElementsAre(MatchesTile(kTestTitle16, kTestUrl,
-                                      TileSource::CUSTOM_LINKS)));
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        ShouldGenerateShortTitleForTopSites) {
   std::string kTestUrl1 = "https://www.imdb.com/";
   std::u16string kTestTitle1 = u"IMDb - Movies, TV and Celebrities - IMDb";
@@ -1265,8 +1371,8 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build tiles from Top Sites. The tiles should have short titles.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1),
                          MakeMostVisitedURL(kTestTitle2, kTestUrl2),
                          MakeMostVisitedURL(kTestTitle3, kTestUrl3)},
@@ -1293,7 +1399,125 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
           kTestUrl3, TileSource::TOP_SITES));
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+// Test all delimiters
+TEST_F(MostVisitedSitesWithCustomLinksTest,
+       ShouldSplitTitleWithSpaceAfterDelimiter) {
+  // No space before delimiter
+  std::string kTestUrl1 = "https://example1.com/";
+  std::u16string kTestTitle1 = u"Example1: Amazing Website";
+  std::string kTestUrl2 = "https://example2.com/";
+  std::u16string kTestTitle2 = u"Example2; Amazing Website";
+  // Has space before delimiter
+  std::string kTestUrl3 = "https://example3.com/";
+  std::u16string kTestTitle3 = u"Example3 - Amazing Website";
+  std::string kTestUrl4 = "https://example4.com/";
+  std::u16string kTestTitle4 = u"Example4 | Amazing Website";
+  // Repeated delimiter
+  std::string kTestUrl5 = "https://example5.com/";
+  std::u16string kTestTitle5 = u"Example5 :: Amazing Website";
+  // Multiple delimiters
+  std::string kTestUrl6 = "https://example6.com/";
+  std::u16string kTestTitle6 = u"Example6 - Amazing Website - More Title";
+  std::map<SectionType, NTPTilesVector> sections;
+
+  // Build tiles from Top Sites. The tiles should have short titles.
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
+      MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1),
+                         MakeMostVisitedURL(kTestTitle2, kTestUrl2),
+                         MakeMostVisitedURL(kTestTitle3, kTestUrl3),
+                         MakeMostVisitedURL(kTestTitle4, kTestUrl4),
+                         MakeMostVisitedURL(kTestTitle5, kTestUrl5),
+                         MakeMostVisitedURL(kTestTitle6, kTestUrl6)},
+      &sections);
+  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
+                                                  /*max_num_sites=*/6);
+  base::RunLoop().RunUntilIdle();
+
+  NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
+  ASSERT_THAT(tiles.size(), Ge(6ul));
+  ASSERT_THAT(
+      tiles[0],
+      MatchesTile(/* The short title generated by the heuristic */ u"Example1",
+                  kTestUrl1, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[1],
+              MatchesTile(
+                  /* The short title generated by the heuristic */ u"Example2",
+                  kTestUrl2, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[2],
+              MatchesTile(
+                  /* The short title generated by the heuristic */ u"Example3",
+                  kTestUrl3, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[3],
+              MatchesTile(
+                  /* The short title generated by the heuristic */ u"Example4",
+                  kTestUrl4, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[4],
+              MatchesTile(
+                  /* The short title generated by the heuristic */ u"Example5",
+                  kTestUrl5, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[5],
+              MatchesTile(
+                  /* The short title generated by the heuristic */ u"Example6",
+                  kTestUrl6, TileSource::TOP_SITES));
+}
+
+TEST_F(MostVisitedSitesWithCustomLinksTest,
+       ShouldUseFullTitleIfTitleDoesNotContainDelimiterFollowedBySpace) {
+  // No space after delimiter
+  std::string kTestUrl1 = "https://example1.com/";
+  std::u16string kTestTitle1 = u"Example1 Web Services Sign-In";
+  std::string kTestUrl2 = "https://example2.com/";
+  std::u16string kTestTitle2 = u"Example2 Sign-In";
+  // No delimiter
+  std::string kTestUrl3 = "https://example3.com/";
+  std::u16string kTestTitle3 = u"Example3 is an Amazing Website";
+  // Many spaces between words
+  std::string kTestUrl4 = "https://example4.com/";
+  std::u16string kTestTitle4 = u"Example4   Many   Spaces";
+  std::string kTestUrl5 = "https://example5.com/";
+  std::u16string kTestTitle5 = u"   Example5   Padded   With   Spaces  ";
+  // No space after delimiter
+  std::string kTestUrl6 = "https://example6.com/";
+  std::u16string kTestTitle6 = u"This::Is::Fancy::Title";
+  std::string kTestUrl7 = "https://example7.com/";
+  std::u16string kTestTitle7 = u"Example7-Hello";
+  std::map<SectionType, NTPTilesVector> sections;
+
+  // Build tiles from Top Sites. The tiles should have short titles.
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
+      MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1),
+                         MakeMostVisitedURL(kTestTitle2, kTestUrl2),
+                         MakeMostVisitedURL(kTestTitle3, kTestUrl3),
+                         MakeMostVisitedURL(kTestTitle4, kTestUrl4),
+                         MakeMostVisitedURL(kTestTitle5, kTestUrl5),
+                         MakeMostVisitedURL(kTestTitle6, kTestUrl6),
+                         MakeMostVisitedURL(kTestTitle7, kTestUrl7)},
+      &sections);
+  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
+                                                  /*max_num_sites=*/7);
+  base::RunLoop().RunUntilIdle();
+
+  NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
+  ASSERT_THAT(tiles.size(), Ge(7ul));
+  ASSERT_THAT(tiles[0],
+              MatchesTile(kTestTitle1, kTestUrl1, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[1],
+              MatchesTile(kTestTitle2, kTestUrl2, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[2],
+              MatchesTile(kTestTitle3, kTestUrl3, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[3],
+              MatchesTile(kTestTitle4, kTestUrl4, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[4], MatchesTile(u"Example5   Padded   With   Spaces",
+                                    kTestUrl5, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[5],
+              MatchesTile(kTestTitle6, kTestUrl6, TileSource::TOP_SITES));
+  ASSERT_THAT(tiles[6],
+              MatchesTile(kTestTitle7, kTestUrl7, TileSource::TOP_SITES));
+}
+
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        ShouldNotCrashIfReceiveAnEmptyTitle) {
   std::string kTestUrl1 = "https://site1/";
   std::u16string kTestTitle1 = u"";  // Empty title
@@ -1302,8 +1526,8 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build tiles from Top Sites. The tiles should have short titles.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1),
                          MakeMostVisitedURL(kTestTitle2, kTestUrl2)},
       &sections);
@@ -1318,7 +1542,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   ASSERT_THAT(tiles[1], MatchesTile(u"", kTestUrl2, TileSource::TOP_SITES));
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        UninitializeCustomLinksOnUndoAfterFirstAction) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
@@ -1327,11 +1551,11 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build initial tiles with Top Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
+                                                  /*max_num_sites=*/2);
   base::RunLoop().RunUntilIdle();
   NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
   ASSERT_THAT(tiles.size(), Ge(1ul));
@@ -1339,30 +1563,35 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 
   // Initialize custom links and complete a custom link action.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, AddLink(_, _)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, AddLink(_, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_custom_links_, GetLinks())
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
       .WillRepeatedly(ReturnRef(expected_links));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   most_visited_sites_->AddCustomLink(GURL("test.com"), u"test");
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      sections.at(SectionType::PERSONALIZED),
-      ElementsAre(MatchesTile(kTestTitle, kTestUrl, TileSource::CUSTOM_LINKS)));
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
+
+  EXPECT_TRUE(most_visited_sites_->HasCustomLink(GURL(kTestUrl)));
+  EXPECT_FALSE(
+      most_visited_sites_->HasCustomLink(GURL("https://not-added.com")));
 
   // Undo the action. This should uninitialize custom links.
-  EXPECT_CALL(*mock_custom_links_, UndoAction()).Times(0);
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
+  EXPECT_CALL(*mock_custom_links_manager_, UndoAction()).Times(0);
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   most_visited_sites_->UndoCustomLinkAction();
   base::RunLoop().RunUntilIdle();
   tiles = sections.at(SectionType::PERSONALIZED);
@@ -1371,7 +1600,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        DontUninitializeCustomLinksOnUndoAfterMultipleActions) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
@@ -1380,11 +1609,11 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build initial tiles with Top Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
+                                                  /*max_num_sites=*/2);
   base::RunLoop().RunUntilIdle();
   NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
   ASSERT_THAT(tiles.size(), Ge(1ul));
@@ -1392,42 +1621,60 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
               MatchesTile(kTestTitle, kTestUrl, TileSource::TOP_SITES));
 
   // Initialize custom links and complete a custom link action.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, UpdateLink(_, _, _)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, UpdateLink(_, _, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_custom_links_, GetLinks())
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
       .WillRepeatedly(ReturnRef(expected_links));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillRepeatedly(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillRepeatedly(SaveArg<1>(&sections));
   most_visited_sites_->UpdateCustomLink(GURL("test.com"), GURL("test.com"),
                                         u"test");
   base::RunLoop().RunUntilIdle();
-  ASSERT_THAT(
-      sections.at(SectionType::PERSONALIZED),
-      ElementsAre(MatchesTile(kTestTitle, kTestUrl, TileSource::CUSTOM_LINKS)));
+  CheckSingleCustomLink(sections.at(SectionType::PERSONALIZED), kTestTitle,
+                        kTestUrl);
 
   // Complete a second custom link action.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(false));
-  EXPECT_CALL(*mock_custom_links_, DeleteLink(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*mock_custom_links_manager_, DeleteLink(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_custom_links_, GetLinks())
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
       .WillOnce(ReturnRef(expected_links));
   most_visited_sites_->DeleteCustomLink(GURL("test.com"));
   base::RunLoop().RunUntilIdle();
 
   // Undo the second action. This should not uninitialize custom links.
-  EXPECT_CALL(*mock_custom_links_, UndoAction()).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, Uninitialize()).Times(0);
-  EXPECT_CALL(*mock_custom_links_, IsInitialized()).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, GetLinks())
+  EXPECT_CALL(*mock_custom_links_manager_, UndoAction()).WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize()).Times(0);
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
       .WillOnce(ReturnRef(expected_links));
   most_visited_sites_->UndoCustomLinkAction();
   base::RunLoop().RunUntilIdle();
+
+  // Exercise AddCustomLinkTo().
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, AddLinkTo(_, _, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
+      .WillRepeatedly(ReturnRef(expected_links));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
+  most_visited_sites_->AddCustomLinkTo(GURL("test2.com"), u"test2", 0);
+  base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest,
+TEST_F(MostVisitedSitesWithCustomLinksTest,
        UninitializeCustomLinksIfFirstActionFails) {
   const char kTestUrl[] = "http://site1/";
   const char16_t kTestTitle[] = u"Site 1";
@@ -1436,8 +1683,8 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
   std::map<SectionType, NTPTilesVector> sections;
 
   // Build initial tiles with Top Sites.
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_));
-  ExpectBuildWithTopSites(
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_));
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle, kTestUrl)}, &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
                                                   /*max_num_sites=*/1);
@@ -1449,51 +1696,59 @@ TEST_P(MostVisitedSitesWithCustomLinksTest,
 
   // Fail to add a custom link. This should not initialize custom links but
   // notify.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, AddLink(_, _)).WillOnce(Return(false));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, AddLink(_, _))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->AddCustomLink(GURL(kTestUrl), u"test");
   base::RunLoop().RunUntilIdle();
 
   // Fail to edit a custom link. This should not initialize custom links but
   // notify.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, UpdateLink(_, _, _)).WillOnce(Return(false));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, UpdateLink(_, _, _))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->UpdateCustomLink(GURL("test.com"), GURL("test2.com"),
                                         u"test");
   base::RunLoop().RunUntilIdle();
 
   // Fail to reorder a custom link. This should not initialize custom links but
   // notify.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, ReorderLink(_, _)).WillOnce(Return(false));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, ReorderLink(_, _))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->ReorderCustomLink(GURL("test.com"), 1);
   base::RunLoop().RunUntilIdle();
 
   // Fail to delete a custom link. This should not initialize custom links but
   // notify.
-  EXPECT_CALL(*mock_custom_links_, Initialize(_)).WillOnce(Return(true));
-  EXPECT_CALL(*mock_custom_links_, DeleteLink(_)).WillOnce(Return(false));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, Initialize(_))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*mock_custom_links_manager_, DeleteLink(_))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(*mock_custom_links_, Uninitialize());
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_)).Times(1);
+  EXPECT_CALL(*mock_custom_links_manager_, Uninitialize());
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _)).Times(1);
   most_visited_sites_->DeleteCustomLink(GURL("test.com"));
   base::RunLoop().RunUntilIdle();
 }
 
-TEST_P(MostVisitedSitesWithCustomLinksTest, RebuildTilesOnCustomLinksChanged) {
+TEST_F(MostVisitedSitesWithCustomLinksTest, RebuildTilesOnCustomLinksChanged) {
   const char kTestUrl1[] = "http://site1/";
   const char kTestUrl2[] = "http://site2/";
   const char16_t kTestTitle1[] = u"Site 1";
@@ -1504,45 +1759,56 @@ TEST_P(MostVisitedSitesWithCustomLinksTest, RebuildTilesOnCustomLinksChanged) {
 
   // Build initial tiles with Top Sites.
   base::RepeatingClosure custom_links_callback;
-  EXPECT_CALL(*mock_custom_links_, RegisterCallbackForOnChanged(_))
+  EXPECT_CALL(*mock_custom_links_manager_, RegisterCallbackForOnChanged(_))
       .WillOnce(DoAll(SaveArg<0>(&custom_links_callback),
                       Return(ByMove(base::CallbackListSubscription()))));
-  ExpectBuildWithTopSites(
+  SetUpBuildWithTopSites(
       MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1)},
       &sections);
   most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/1);
+                                                  /*max_num_sites=*/2);
   base::RunLoop().RunUntilIdle();
   NTPTilesVector tiles = sections.at(SectionType::PERSONALIZED);
   ASSERT_THAT(tiles.size(), Ge(1ul));
   ASSERT_THAT(tiles[0],
               MatchesTile(kTestTitle1, kTestUrl1, TileSource::TOP_SITES));
 
-  // Notify that there is a new set of custom links. This should replace the
-  // current tiles with custom links.
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  // Notify that there is a new set of custom links.
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_custom_links_, GetLinks())
+  EXPECT_CALL(*mock_custom_links_manager_, GetLinks())
       .WillRepeatedly(ReturnRef(expected_links));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   custom_links_callback.Run();
   base::RunLoop().RunUntilIdle();
-  EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
-              ElementsAre(MatchesTile(kTestTitle2, kTestUrl2,
-                                      TileSource::CUSTOM_LINKS)));
+  // Not using CheckSingleCustomLink(), since URLs in the Custom link and the
+  // Top Sites links are different.
+  if (IsCustomLinkMixingEnabled()) {
+    // Custom links mix with current tiles (different URL).
+    EXPECT_THAT(
+        sections.at(SectionType::PERSONALIZED),
+        ElementsAre(
+            MatchesTile(kTestTitle2, kTestUrl2, TileSource::CUSTOM_LINKS),
+            MatchesTile(kTestTitle1, kTestUrl1, TileSource::TOP_SITES)));
+  } else {
+    // Custom links replace current tiles.
+    EXPECT_THAT(sections.at(SectionType::PERSONALIZED),
+                ElementsAre(MatchesTile(kTestTitle2, kTestUrl2,
+                                        TileSource::CUSTOM_LINKS)));
+  }
 
   // Notify that custom links have been uninitialized. This should rebuild the
   // tiles with Top Sites.
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
   EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<0>(
           MostVisitedURLList{MakeMostVisitedURL(kTestTitle1, kTestUrl1)}));
-  EXPECT_CALL(*mock_custom_links_, IsInitialized())
+  EXPECT_CALL(*mock_custom_links_manager_, IsInitialized())
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(mock_observer_, OnURLsAvailable(_))
-      .WillOnce(SaveArg<0>(&sections));
+  EXPECT_CALL(mock_observer_, OnURLsAvailable(_, _))
+      .WillOnce(SaveArg<1>(&sections));
   custom_links_callback.Run();
   base::RunLoop().RunUntilIdle();
   tiles = sections.at(SectionType::PERSONALIZED);
@@ -1552,10 +1818,7 @@ TEST_P(MostVisitedSitesWithCustomLinksTest, RebuildTilesOnCustomLinksChanged) {
 }
 
 // These exclude Android and iOS.
-INSTANTIATE_TEST_SUITE_P(MostVisitedSitesWithCustomLinksTest,
-                         MostVisitedSitesWithCustomLinksTest,
-                         ::testing::Bool());
-#endif
+#endif  // !BUILDFLAG(IS_IOS)
 
 // This a test for MostVisitedSites::MergeTiles(...) method, and thus has the
 // same scope as the method itself. This tests merging popular sites with

@@ -18,6 +18,7 @@
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/permissions_parser.h"
+#include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "extensions/common/manifest_url_handlers.h"
 #include "extensions/common/permissions/api_permission.h"
 
@@ -65,10 +66,12 @@ bool DevToolsPageHandler::Parse(Extension* extension, std::u16string* error) {
     return false;
   }
   GURL url = extension->GetResourceURL(*devtools_str);
+  // SharedModuleInfo::IsImportedPath() does not require knowledge of data from
+  // extension, so we can call it right here in Parse() and not Validate() and
+  // do not need to specify DevToolsPageHandler::PrerequisiteKeys()
   const bool is_extension_url =
-      url.SchemeIs(kExtensionScheme) && url.host_piece() == extension->id();
-  // TODO(caseq): using http(s) is unsupported and will be disabled in m83.
-  if (!is_extension_url && !url.SchemeIsHTTPOrHTTPS()) {
+      url.is_valid() && !SharedModuleInfo::IsImportedPath(url.path());
+  if (!is_extension_url) {
     *error = errors::kInvalidDevToolsPage;
     return false;
   }
@@ -82,6 +85,23 @@ bool DevToolsPageHandler::Parse(Extension* extension, std::u16string* error) {
 base::span<const char* const> DevToolsPageHandler::Keys() const {
   static constexpr const char* kKeys[] = {keys::kDevToolsPage};
   return kKeys;
+}
+
+bool DevToolsPageHandler::Validate(
+    const Extension& extension,
+    std::string* error,
+    std::vector<InstallWarning>* warnings) const {
+  const GURL& url = chrome_manifest_urls::GetDevToolsPage(&extension);
+  const base::FilePath relative_path =
+      file_util::ExtensionURLToRelativeFilePath(url);
+  const base::FilePath resource_path =
+      extension.GetResource(relative_path).GetFilePath();
+  if (resource_path.empty() || !base::PathExists(resource_path)) {
+    const std::string message = ErrorUtils::FormatErrorMessage(
+        errors::kFileNotFound, relative_path.AsUTF8Unsafe());
+    warnings->emplace_back(message, keys::kDevToolsPage);
+  }
+  return true;
 }
 
 URLOverridesHandler::URLOverridesHandler() = default;
@@ -98,7 +118,7 @@ bool URLOverridesHandler::Parse(Extension* extension, std::u16string* error) {
   auto url_overrides = std::make_unique<URLOverrides>();
   auto property_map =
       std::map<const char*,
-               std::reference_wrapper<const absl::optional<std::string>>>{
+               std::reference_wrapper<const std::optional<std::string>>>{
           {UrlOverrideInfo::kNewtab,
            std::ref(manifest_keys.chrome_url_overrides.newtab)},
           {UrlOverrideInfo::kBookmarks,
@@ -116,7 +136,7 @@ bool URLOverridesHandler::Parse(Extension* extension, std::u16string* error) {
 
     // Replace the entry with a fully qualified chrome-extension:// URL.
     url_overrides->chrome_url_overrides_[property.first] =
-        extension->GetResourceURL(*property.second.get());
+        extension->ResolveExtensionURL(*property.second.get());
 
     // For component extensions, add override URL to extent patterns.
     if (extension->is_legacy_packaged_app() &&
@@ -152,11 +172,11 @@ bool URLOverridesHandler::Parse(Extension* extension, std::u16string* error) {
 }
 
 bool URLOverridesHandler::Validate(
-    const Extension* extension,
+    const Extension& extension,
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
   const URLOverrides::URLOverrideMap& overrides =
-      URLOverrides::GetChromeURLOverrides(extension);
+      URLOverrides::GetChromeURLOverrides(&extension);
   if (overrides.empty())
     return true;
 
@@ -164,7 +184,7 @@ bool URLOverridesHandler::Validate(
     base::FilePath relative_path =
         file_util::ExtensionURLToRelativeFilePath(entry.second);
     base::FilePath resource_path =
-        extension->GetResource(relative_path).GetFilePath();
+        extension.GetResource(relative_path).GetFilePath();
     if (resource_path.empty() || !base::PathExists(resource_path)) {
       *error = ErrorUtils::FormatErrorMessage(errors::kFileNotFound,
                                               relative_path.AsUTF8Unsafe());

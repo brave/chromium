@@ -5,23 +5,24 @@
 #ifndef COMPONENTS_WEBAUTHN_ANDROID_WEBAUTHN_BROWSER_BRIDGE_H_
 #define COMPONENTS_WEBAUTHN_ANDROID_WEBAUTHN_BROWSER_BRIDGE_H_
 
+#include <jni.h>
+
 #include "base/android/scoped_java_ref.h"
 
 namespace webauthn {
 
-class WebAuthnBrowserBridge {
+class WebauthnBrowserBridge {
  public:
-  WebAuthnBrowserBridge(JNIEnv* env,
+  WebauthnBrowserBridge(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& jbridge);
 
-  WebAuthnBrowserBridge(const WebAuthnBrowserBridge&) = delete;
-  WebAuthnBrowserBridge& operator=(const WebAuthnBrowserBridge&) = delete;
+  WebauthnBrowserBridge(const WebauthnBrowserBridge&) = delete;
+  WebauthnBrowserBridge& operator=(const WebauthnBrowserBridge&) = delete;
 
-  ~WebAuthnBrowserBridge();
+  ~WebauthnBrowserBridge();
 
   void OnCredentialsDetailsListReceived(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jobjectArray>& credentials,
       const base::android::JavaParamRef<jobject>& jframe_host,
       jboolean is_conditional_request,
@@ -29,6 +30,10 @@ class WebAuthnBrowserBridge {
       const base::android::JavaParamRef<jobject>& jhybridCallback) const;
 
   void CleanupRequest(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jframe_host) const;
+
+  void CleanupCredManRequest(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jframe_host) const;
 
@@ -52,7 +57,7 @@ class WebAuthnBrowserBridge {
   void Destroy(JNIEnv* env);
 
  private:
-  // Java object that owns this WebAuthnBrowserBridge.
+  // Java object that owns this WebauthnBrowserBridge.
   base::android::ScopedJavaGlobalRef<jobject> owner_;
 };
 

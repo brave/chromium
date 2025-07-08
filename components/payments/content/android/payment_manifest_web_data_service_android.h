@@ -28,7 +28,7 @@ namespace payments {
 class PaymentManifestWebDataServiceAndroid : public WebDataServiceConsumer {
  public:
   PaymentManifestWebDataServiceAndroid(JNIEnv* env,
-                                       jobject obj,
+                                       const jni_zero::JavaRef<jobject>& obj,
                                        content::WebContents* web_contents);
 
   PaymentManifestWebDataServiceAndroid(
@@ -44,28 +44,24 @@ class PaymentManifestWebDataServiceAndroid : public WebDataServiceConsumer {
       std::unique_ptr<WDTypedResult> result) override;
 
   // Destroys this object.
-  void Destroy(JNIEnv* env,
-               const base::android::JavaParamRef<jobject>& unused_obj);
+  void Destroy(JNIEnv* env);
 
   // Adds the supported |japp_package_names| of the |jmethod_name| to the
   // cache.
   void AddPaymentMethodManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& unused_obj,
       const base::android::JavaParamRef<jstring>& jmethod_name,
       const base::android::JavaParamRef<jobjectArray>& japp_package_names);
 
   // Adds the web app |jmanifest_sections|.
   void AddPaymentWebAppManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& unused_obj,
       const base::android::JavaParamRef<jobjectArray>& jmanifest_sections);
 
   // Gets the payment |jmethod_name|'s manifest asynchronously from the web data
   // service. Return true if the result will be returned through |jcallback|.
   bool GetPaymentMethodManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& unused_obj,
       const base::android::JavaParamRef<jstring>& jmethod_name,
       const base::android::JavaParamRef<jobject>& jcallback);
 
@@ -74,17 +70,17 @@ class PaymentManifestWebDataServiceAndroid : public WebDataServiceConsumer {
   // |jcallback|.
   bool GetPaymentWebAppManifest(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& unused_obj,
       const base::android::JavaParamRef<jstring>& japp_package_name,
       const base::android::JavaParamRef<jobject>& jcallback);
 
  private:
   void OnWebAppManifestRequestDone(JNIEnv* env,
                                    WebDataServiceBase::Handle h,
-                                   WDTypedResult* result);
-  void OnPaymentMethodManifestRequestDone(JNIEnv* env,
-                                          WebDataServiceBase::Handle h,
-                                          WDTypedResult* result);
+                                   std::unique_ptr<WDTypedResult> result);
+  void OnPaymentMethodManifestRequestDone(
+      JNIEnv* env,
+      WebDataServiceBase::Handle h,
+      std::unique_ptr<WDTypedResult> result);
   scoped_refptr<PaymentManifestWebDataService>
   GetPaymentManifestWebDataService();
 

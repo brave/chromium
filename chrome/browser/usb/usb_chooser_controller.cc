@@ -5,10 +5,11 @@
 #include "chrome/browser/usb/usb_chooser_controller.h"
 
 #include <stddef.h>
+
+#include <algorithm>
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -21,10 +22,13 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
+#include "content/public/browser/isolated_context_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "services/device/public/cpp/usb/usb_utils.h"
 #include "services/device/public/mojom/usb_enumeration_options.mojom.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -95,8 +99,8 @@ UsbChooserController::UsbChooserController(
           CreateChooserTitle(render_frame_host, IDS_USB_DEVICE_CHOOSER_PROMPT)),
       options_(std::move(options)),
       callback_(std::move(callback)),
-      requesting_frame_(render_frame_host) {
-  RenderFrameHost* main_frame = requesting_frame_->GetMainFrame();
+      render_frame_host_id_(render_frame_host->GetGlobalId()) {
+  RenderFrameHost* main_frame = render_frame_host->GetMainFrame();
   origin_ = main_frame->GetLastCommittedOrigin();
   Profile* profile =
       Profile::FromBrowserContext(main_frame->GetBrowserContext());
@@ -135,7 +139,7 @@ std::u16string UsbChooserController::GetOption(size_t index) const {
   DCHECK_LT(index, devices_.size());
   const std::u16string& device_name = devices_[index].second;
   const auto& it = device_name_map_.find(device_name);
-  DCHECK(it != device_name_map_.end());
+  CHECK(it != device_name_map_.end());
 
   if (it->second == 1)
     return device_name;
@@ -198,12 +202,21 @@ void UsbChooserController::Cancel() {
 void UsbChooserController::Close() {}
 
 void UsbChooserController::OpenHelpCenterUrl() const {
-  WebContents::FromRenderFrameHost(requesting_frame_)
+  content::RenderFrameHost* render_frame_host =
+      content::RenderFrameHost::FromID(render_frame_host_id_);
+  if (!render_frame_host) {
+    // When |render_frame_host| is not valid anymore we don't want to open help
+    // center url.
+    return;
+  }
+
+  WebContents::FromRenderFrameHost(render_frame_host)
       ->OpenURL(content::OpenURLParams(
-          GURL(chrome::kChooserUsbOverviewURL), content::Referrer(),
-          WindowOpenDisposition::NEW_FOREGROUND_TAB,
-          ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
-          false /* is_renderer_initialized */));
+                    GURL(chrome::kChooserUsbOverviewURL), content::Referrer(),
+                    WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                    ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
+                    false /* is_renderer_initialized */),
+                /*navigation_handle_callback=*/{});
 }
 
 void UsbChooserController::OnDeviceAdded(
@@ -261,19 +274,37 @@ void UsbChooserController::GotUsbDeviceList(
 
 bool UsbChooserController::DisplayDevice(
     const device::mojom::UsbDeviceInfo& device_info) const {
+  content::RenderFrameHost* render_frame_host =
+      content::RenderFrameHost::FromID(render_frame_host_id_);
+  if (!render_frame_host) {
+    // When |render_frame_host| is not valid anymore we don't want to display
+    // any device information.
+    return false;
+  }
+
   if (!device::UsbDeviceFilterMatchesAny(options_->filters, device_info)) {
     return false;
   }
 
-  if (base::ranges::any_of(
+  if (std::ranges::any_of(
           options_->exclusion_filters, [&device_info](const auto& filter) {
             return device::UsbDeviceFilterMatches(*filter, device_info);
           })) {
     return false;
   }
 
-  if (UsbBlocklist::Get().IsExcluded(device_info))
+  bool is_usb_unrestricted = false;
+  if (base::FeatureList::IsEnabled(blink::features::kUnrestrictedUsb)) {
+    is_usb_unrestricted =
+        render_frame_host->IsFeatureEnabled(
+            network::mojom::PermissionsPolicyFeature::kUsbUnrestricted) &&
+        content::HasIsolatedContextCapability(render_frame_host);
+  }
+  // Isolated context with permission to access the policy-controlled feature
+  // "usb-unrestricted" can bypass the USB blocklist.
+  if (!is_usb_unrestricted && UsbBlocklist::Get().IsExcluded(device_info)) {
     return false;
+  }
 
   return true;
 }

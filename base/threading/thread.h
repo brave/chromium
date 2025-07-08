@@ -12,6 +12,7 @@
 
 #include "base/base_export.h"
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump_type.h"
@@ -24,6 +25,10 @@
 #include "build/build_config.h"
 
 namespace base {
+
+namespace sequence_manager {
+struct SequenceManagerSettings;
+}
 
 class MessagePump;
 class RunLoop;
@@ -60,7 +65,7 @@ class BASE_EXPORT Thread : PlatformThread::Delegate {
  public:
   class BASE_EXPORT Delegate {
    public:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
 
     virtual scoped_refptr<SingleThreadTaskRunner> GetDefaultTaskRunner() = 0;
 
@@ -110,6 +115,11 @@ class BASE_EXPORT Thread : PlatformThread::Delegate {
     // TODO(gab): allow non-joinable instances to be deleted without causing
     // user-after-frees (proposal @ https://crbug.com/629139#c14)
     bool joinable = true;
+
+    // Custom settings for the SequenceManager created for this thread, if any.
+    // Allows overriding default SequenceManager behavior.
+    std::unique_ptr<base::sequence_manager::SequenceManagerSettings>
+        sequence_manager_settings;
 
     bool IsValid() const { return !moved_from; }
 
@@ -241,7 +251,7 @@ class BASE_EXPORT Thread : PlatformThread::Delegate {
   }
 
   // Returns the name of this thread (for display in debugger too).
-  const std::string& thread_name() const { return name_; }
+  const std::string& thread_name() const LIFETIME_BOUND { return name_; }
 
   // Returns the thread ID.  Should not be called before the first Start*()
   // call.  Keeps on returning the same ID even after a Stop() call. The next
@@ -259,8 +269,9 @@ class BASE_EXPORT Thread : PlatformThread::Delegate {
   // Called just prior to starting the message loop
   virtual void Init() {}
 
-  // Called to start the run loop
-  virtual void Run(RunLoop* run_loop);
+  // Called to start the run loop. Inhibit tail calls to this function so that
+  // the caller will be on the stack for profiling and crash analysis.
+  NOT_TAIL_CALLED virtual void Run(RunLoop* run_loop);
 
   // Called just after the message loop ends
   virtual void CleanUp() {}

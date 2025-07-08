@@ -9,10 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/content_browser_client.h"
 #include "fuchsia_web/webengine/browser/content_directory_loader_factory.h"
-#include "mojo/public/cpp/bindings/binder_map.h"
-#include "services/metrics/public/cpp/ukm_source_id.h"
 
 class WebEngineBrowserMainParts;
 
@@ -34,19 +33,21 @@ class WebEngineContentBrowserClient final
   std::string GetProduct() override;
   std::string GetUserAgent() override;
   blink::UserAgentMetadata GetUserAgentMetadata() override;
-  void OverrideWebkitPrefs(content::WebContents* web_contents,
-                           blink::web_pref::WebPreferences* web_prefs) override;
+  void OverrideWebPreferences(
+      content::WebContents* web_contents,
+      content::SiteInstance& main_frame_site,
+      blink::web_pref::WebPreferences* web_prefs) override;
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* render_frame_host,
       mojo::BinderMapWithContext<content::RenderFrameHost*>* map) override;
-  void RegisterNonNetworkNavigationURLLoaderFactories(
-      int frame_tree_node_id,
-      ukm::SourceIdObj ukm_source_id,
-      NonNetworkURLLoaderFactoryMap* factories) override;
+  mojo::PendingRemote<network::mojom::URLLoaderFactory>
+  CreateNonNetworkNavigationURLLoaderFactory(
+      const std::string& scheme,
+      content::FrameTreeNodeId frame_tree_node_id) override;
   void RegisterNonNetworkSubresourceURLLoaderFactories(
       int render_process_id,
       int render_frame_id,
-      const absl::optional<url::Origin>& request_initiator_origin,
+      const std::optional<url::Origin>& request_initiator_origin,
       NonNetworkURLLoaderFactoryMap* factories) override;
   bool ShouldEnableStrictSiteIsolation() override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
@@ -55,20 +56,21 @@ class WebEngineContentBrowserClient final
   std::string GetAcceptLangs(content::BrowserContext* context) override;
   base::OnceClosure SelectClientCertificate(
       content::BrowserContext* browser_context,
+      int process_id,
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
-  std::vector<std::unique_ptr<content::NavigationThrottle>>
-  CreateThrottlesForNavigation(
-      content::NavigationHandle* navigation_handle) override;
+  void CreateThrottlesForNavigation(
+      content::NavigationThrottleRegistry& registry) override;
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
   CreateURLLoaderThrottles(
       const network::ResourceRequest& request,
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
       content::NavigationUIData* navigation_ui_data,
-      int frame_tree_node_id) override;
+      content::FrameTreeNodeId frame_tree_node_id,
+      std::optional<int64_t> navigation_id) override;
   void ConfigureNetworkContextParams(
       content::BrowserContext* context,
       bool in_memory,
@@ -84,7 +86,7 @@ class WebEngineContentBrowserClient final
   const std::vector<std::string> cors_exempt_headers_;
 
   // Owned by content::BrowserMainLoop.
-  WebEngineBrowserMainParts* main_parts_;
+  raw_ptr<WebEngineBrowserMainParts> main_parts_;
 };
 
 #endif  // FUCHSIA_WEB_WEBENGINE_BROWSER_WEB_ENGINE_CONTENT_BROWSER_CLIENT_H_

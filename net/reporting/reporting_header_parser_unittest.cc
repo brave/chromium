@@ -4,6 +4,7 @@
 
 #include "net/reporting/reporting_header_parser.h"
 
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,13 +20,14 @@
 #include "base/values.h"
 #include "net/base/features.h"
 #include "net/base/isolation_info.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/schemeful_site.h"
 #include "net/reporting/mock_persistent_reporting_store.h"
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_endpoint.h"
+#include "net/reporting/reporting_target_type.h"
 #include "net/reporting/reporting_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -47,11 +49,12 @@ class ReportingHeaderParserTestBase
     policy.max_endpoint_count = 20;
     UsePolicy(policy);
 
-    if (GetParam())
-      store_ = std::make_unique<MockPersistentReportingStore>();
-    else
-      store_ = nullptr;
-    UseStore(store_.get());
+    std::unique_ptr<MockPersistentReportingStore> store;
+    if (GetParam()) {
+      store = std::make_unique<MockPersistentReportingStore>();
+    }
+    store_ = store.get();
+    UseStore(std::move(store));
   }
   ~ReportingHeaderParserTestBase() override = default;
 
@@ -65,7 +68,7 @@ class ReportingHeaderParserTestBase
     }
   }
 
-  MockPersistentReportingStore* mock_store() { return store_.get(); }
+  MockPersistentReportingStore* mock_store() { return store_; }
 
   base::test::ScopedFeatureList feature_list_;
   const GURL kUrl1_ = GURL("https://origin1.test/path");
@@ -88,21 +91,34 @@ class ReportingHeaderParserTestBase
   const GURL kEndpoint3_ = GURL("https://endpoint3.test/");
   const GURL kEndpointPathAbsolute_ =
       GURL("https://origin1.test/path-absolute-url");
+  const GURL kEndpointEmptyPathAbsolute_ = GURL("https://origin1.test/");
   const std::string kGroup1_ = "group1";
   const std::string kGroup2_ = "group2";
   // There are 2^3 = 8 of these to test the different combinations of matching
-  // vs mismatching NIK, origin, and group.
+  // vs mismatching NAK, origin, and group.
   const ReportingEndpointGroupKey kGroupKey11_ =
-      ReportingEndpointGroupKey(kNak_, kOrigin1_, kGroup1_);
+      ReportingEndpointGroupKey(kNak_,
+                                kOrigin1_,
+                                kGroup1_,
+                                ReportingTargetType::kDeveloper);
   const ReportingEndpointGroupKey kGroupKey21_ =
-      ReportingEndpointGroupKey(kNak_, kOrigin2_, kGroup1_);
+      ReportingEndpointGroupKey(kNak_,
+                                kOrigin2_,
+                                kGroup1_,
+                                ReportingTargetType::kDeveloper);
   const ReportingEndpointGroupKey kGroupKey12_ =
-      ReportingEndpointGroupKey(kNak_, kOrigin1_, kGroup2_);
+      ReportingEndpointGroupKey(kNak_,
+                                kOrigin1_,
+                                kGroup2_,
+                                ReportingTargetType::kDeveloper);
   const ReportingEndpointGroupKey kGroupKey22_ =
-      ReportingEndpointGroupKey(kNak_, kOrigin2_, kGroup2_);
+      ReportingEndpointGroupKey(kNak_,
+                                kOrigin2_,
+                                kGroup2_,
+                                ReportingTargetType::kDeveloper);
 
  private:
-  std::unique_ptr<MockPersistentReportingStore> store_;
+  raw_ptr<MockPersistentReportingStore> store_;
 };
 
 // This test is parametrized on a boolean that represents whether to use a
@@ -111,10 +127,10 @@ class ReportingHeaderParserTest : public ReportingHeaderParserTestBase {
  protected:
   ReportingHeaderParserTest() {
     // This is a private API of the reporting service, so no need to test the
-    // case kPartitionNelAndReportingByNetworkIsolationKey is disabled - the
+    // case kPartitionConnectionsByNetworkIsolationKey is disabled - the
     // feature is only applied at the entry points of the service.
     feature_list_.InitAndEnableFeature(
-        features::kPartitionNelAndReportingByNetworkIsolationKey);
+        features::kPartitionConnectionsByNetworkIsolationKey);
   }
 
   ReportingEndpointGroup MakeEndpointGroup(
@@ -124,7 +140,8 @@ class ReportingHeaderParserTest : public ReportingHeaderParserTestBase {
       base::TimeDelta ttl = base::Days(1),
       url::Origin origin = url::Origin()) {
     ReportingEndpointGroupKey group_key(kNak_ /* unused */,
-                                        url::Origin() /* unused */, name);
+                                        url::Origin() /* unused */, name,
+                                        ReportingTargetType::kDeveloper);
     ReportingEndpointGroup group;
     group.group_key = group_key;
     group.include_subdomains = include_subdomains;
@@ -187,8 +204,7 @@ class ReportingHeaderParserTest : public ReportingHeaderParserTestBase {
   void ParseHeader(const NetworkAnonymizationKey& network_anonymization_key,
                    const url::Origin& origin,
                    const std::string& json) {
-    absl::optional<base::Value> value =
-        base::JSONReader::Read("[" + json + "]");
+    std::optional<base::Value> value = base::JSONReader::Read("[" + json + "]");
     if (value) {
       ReportingHeaderParser::ParseReportToHeader(
           context(), network_anonymization_key, origin, value->GetList());
@@ -356,7 +372,8 @@ TEST_P(ReportingHeaderParserTest, PathAbsoluteURLEndpoint) {
 }
 
 TEST_P(ReportingHeaderParserTest, OmittedGroupName) {
-  ReportingEndpointGroupKey kGroupKey(kNak_, kOrigin1_, "default");
+  ReportingEndpointGroupKey kGroupKey(kNak_, kOrigin1_, "default",
+                                      ReportingTargetType::kDeveloper);
   std::vector<ReportingEndpoint::EndpointInfo> endpoints = {{kEndpoint1_}};
   std::string header =
       ConstructHeaderGroupString(MakeEndpointGroup(std::string(), endpoints));
@@ -446,7 +463,8 @@ TEST_P(ReportingHeaderParserTest, IncludeSubdomainsFalse) {
 }
 
 TEST_P(ReportingHeaderParserTest, IncludeSubdomainsEtldRejected) {
-  ReportingEndpointGroupKey kGroupKey(kNak_, kOriginEtld_, kGroup1_);
+  ReportingEndpointGroupKey kGroupKey(kNak_, kOriginEtld_, kGroup1_,
+                                      ReportingTargetType::kDeveloper);
   std::vector<ReportingEndpoint::EndpointInfo> endpoints = {{kEndpoint1_}};
 
   std::string header = ConstructHeaderGroupString(
@@ -461,7 +479,8 @@ TEST_P(ReportingHeaderParserTest, IncludeSubdomainsEtldRejected) {
 }
 
 TEST_P(ReportingHeaderParserTest, NonIncludeSubdomainsEtldAccepted) {
-  ReportingEndpointGroupKey kGroupKey(kNak_, kOriginEtld_, kGroup1_);
+  ReportingEndpointGroupKey kGroupKey(kNak_, kOriginEtld_, kGroup1_,
+                                      ReportingTargetType::kDeveloper);
   std::vector<ReportingEndpoint::EndpointInfo> endpoints = {{kEndpoint1_}};
 
   std::string header = ConstructHeaderGroupString(
@@ -758,7 +777,7 @@ TEST_P(ReportingHeaderParserTest, MultipleHeadersFromDifferentOrigins) {
   }
 }
 
-// Test that each combination of NIK, origin, and group name is considered
+// Test that each combination of NAK, origin, and group name is considered
 // distinct.
 // See also: ReportingCacheTest.ClientsKeyedByEndpointGroupKey
 TEST_P(ReportingHeaderParserTest, EndpointGroupKey) {
@@ -775,14 +794,14 @@ TEST_P(ReportingHeaderParserTest, EndpointGroupKey) {
       ", " +
       ConstructHeaderGroupString(MakeEndpointGroup(kGroup2_, endpoints1));
 
-  const ReportingEndpointGroupKey kOtherGroupKey11 =
-      ReportingEndpointGroupKey(kOtherNak_, kOrigin1_, kGroup1_);
-  const ReportingEndpointGroupKey kOtherGroupKey21 =
-      ReportingEndpointGroupKey(kOtherNak_, kOrigin2_, kGroup1_);
-  const ReportingEndpointGroupKey kOtherGroupKey12 =
-      ReportingEndpointGroupKey(kOtherNak_, kOrigin1_, kGroup2_);
-  const ReportingEndpointGroupKey kOtherGroupKey22 =
-      ReportingEndpointGroupKey(kOtherNak_, kOrigin2_, kGroup2_);
+  const ReportingEndpointGroupKey kOtherGroupKey11 = ReportingEndpointGroupKey(
+      kOtherNak_, kOrigin1_, kGroup1_, ReportingTargetType::kDeveloper);
+  const ReportingEndpointGroupKey kOtherGroupKey21 = ReportingEndpointGroupKey(
+      kOtherNak_, kOrigin2_, kGroup1_, ReportingTargetType::kDeveloper);
+  const ReportingEndpointGroupKey kOtherGroupKey12 = ReportingEndpointGroupKey(
+      kOtherNak_, kOrigin1_, kGroup2_, ReportingTargetType::kDeveloper);
+  const ReportingEndpointGroupKey kOtherGroupKey22 = ReportingEndpointGroupKey(
+      kOtherNak_, kOrigin2_, kGroup2_, ReportingTargetType::kDeveloper);
 
   const struct {
     NetworkAnonymizationKey network_anonymization_key;
@@ -801,7 +820,7 @@ TEST_P(ReportingHeaderParserTest, EndpointGroupKey) {
   MockPersistentReportingStore::CommandList expected_commands;
 
   // Set 2 endpoints in each of 2 groups for each of 2x2 combinations of
-  // (NIK, origin).
+  // (NAK, origin).
   for (const auto& source : kHeaderSources) {
     // Verify pre-parsing state
     EXPECT_FALSE(FindEndpointInCache(source.group1_key, kEndpoint1_));
@@ -1196,11 +1215,16 @@ TEST_P(ReportingHeaderParserTest, OverwriteOldHeader) {
 }
 
 TEST_P(ReportingHeaderParserTest, OverwriteOldHeaderWithCompletelyNew) {
-  ReportingEndpointGroupKey kGroupKey1(kNak_, kOrigin1_, "1");
-  ReportingEndpointGroupKey kGroupKey2(kNak_, kOrigin1_, "2");
-  ReportingEndpointGroupKey kGroupKey3(kNak_, kOrigin1_, "3");
-  ReportingEndpointGroupKey kGroupKey4(kNak_, kOrigin1_, "4");
-  ReportingEndpointGroupKey kGroupKey5(kNak_, kOrigin1_, "5");
+  ReportingEndpointGroupKey kGroupKey1(kNak_, kOrigin1_, "1",
+                                       ReportingTargetType::kDeveloper);
+  ReportingEndpointGroupKey kGroupKey2(kNak_, kOrigin1_, "2",
+                                       ReportingTargetType::kDeveloper);
+  ReportingEndpointGroupKey kGroupKey3(kNak_, kOrigin1_, "3",
+                                       ReportingTargetType::kDeveloper);
+  ReportingEndpointGroupKey kGroupKey4(kNak_, kOrigin1_, "4",
+                                       ReportingTargetType::kDeveloper);
+  ReportingEndpointGroupKey kGroupKey5(kNak_, kOrigin1_, "5",
+                                       ReportingTargetType::kDeveloper);
   std::vector<ReportingEndpoint::EndpointInfo> endpoints1_1 = {{MakeURL(10)},
                                                                {MakeURL(11)}};
   std::vector<ReportingEndpoint::EndpointInfo> endpoints2_1 = {{MakeURL(20)},
@@ -1742,12 +1766,8 @@ class ReportingHeaderParserStructuredHeaderTest
     : public ReportingHeaderParserTestBase {
  protected:
   ReportingHeaderParserStructuredHeaderTest() {
-    // Enable kDocumentReporting to support new StructuredHeader-based
-    // Reporting-Endpoints header.
     feature_list_.InitWithFeatures(
-        {features::kPartitionNelAndReportingByNetworkIsolationKey,
-         features::kDocumentReporting},
-        {});
+        {features::kPartitionConnectionsByNetworkIsolationKey}, {});
   }
 
   ~ReportingHeaderParserStructuredHeaderTest() override = default;
@@ -1757,7 +1777,8 @@ class ReportingHeaderParserStructuredHeaderTest
       const std::vector<ReportingEndpoint::EndpointInfo>& endpoints,
       url::Origin origin = url::Origin()) {
     ReportingEndpointGroupKey group_key(kNak_ /* unused */,
-                                        url::Origin() /* unused */, name);
+                                        url::Origin() /* unused */, name,
+                                        ReportingTargetType::kDeveloper);
     ReportingEndpointGroup group;
     group.group_key = group_key;
     group.include_subdomains = OriginSubdomains::EXCLUDE;
@@ -1783,7 +1804,7 @@ class ReportingHeaderParserStructuredHeaderTest
                    const IsolationInfo& isolation_info,
                    const url::Origin& origin,
                    const std::string& header_string) {
-    absl::optional<base::flat_map<std::string, std::string>> header_map =
+    std::optional<base::flat_map<std::string, std::string>> header_map =
         ParseReportingEndpoints(header_string);
 
     if (header_map) {
@@ -1796,7 +1817,7 @@ class ReportingHeaderParserStructuredHeaderTest
       const base::UnguessableToken& reporting_source,
       const IsolationInfo& isolation_info,
       const url::Origin& origin,
-      const absl::optional<base::flat_map<std::string, std::string>>&
+      const std::optional<base::flat_map<std::string, std::string>>&
           header_map) {
     ReportingHeaderParser::ProcessParsedReportingEndpointsHeader(
         context(), reporting_source, isolation_info,
@@ -1933,6 +1954,40 @@ TEST_P(ReportingHeaderParserStructuredHeaderTest, PathAbsoluteURLEndpoint) {
   EXPECT_EQ(kOrigin1_, endpoint.group_key.origin);
   EXPECT_EQ(kGroup1_, endpoint.group_key.group_name);
   EXPECT_EQ(kEndpointPathAbsolute_, endpoint.info.url);
+  EXPECT_EQ(ReportingEndpoint::EndpointInfo::kDefaultPriority,
+            endpoint.info.priority);
+  EXPECT_EQ(ReportingEndpoint::EndpointInfo::kDefaultWeight,
+            endpoint.info.weight);
+  histograms.ExpectBucketCount(
+      kReportingHeaderTypeHistogram,
+      ReportingHeaderParser::ReportingHeaderType::kReportingEndpoints, 1);
+
+  // Ephemeral endpoints should not be persisted in the store
+  if (mock_store()) {
+    mock_store()->Flush();
+    EXPECT_EQ(0, mock_store()->StoredEndpointsCount());
+    EXPECT_EQ(0, mock_store()->StoredEndpointGroupsCount());
+  }
+}
+
+TEST_P(ReportingHeaderParserStructuredHeaderTest,
+       EmptyPathAbsoluteURLEndpoint) {
+  base::HistogramTester histograms;
+  std::string header = "group1=\"/\"";
+  auto parsed_result = ParseReportingEndpoints(header);
+  ProcessParsedHeader(kReportingSource_, kIsolationInfo_, kOrigin1_,
+                      parsed_result);
+
+  // Ensure that the endpoint was not inserted into the persistent endpoint
+  // groups used for v0 reporting.
+  EXPECT_EQ(0u, cache()->GetEndpointGroupCountForTesting());
+
+  ReportingEndpoint endpoint =
+      cache()->GetV1EndpointForTesting(kReportingSource_, kGroup1_);
+  EXPECT_TRUE(endpoint);
+  EXPECT_EQ(kOrigin1_, endpoint.group_key.origin);
+  EXPECT_EQ(kGroup1_, endpoint.group_key.group_name);
+  EXPECT_EQ(kEndpointEmptyPathAbsolute_, endpoint.info.url);
   EXPECT_EQ(ReportingEndpoint::EndpointInfo::kDefaultPriority,
             endpoint.info.priority);
   EXPECT_EQ(ReportingEndpoint::EndpointInfo::kDefaultWeight,

@@ -4,21 +4,28 @@
 
 #include "ash/system/unified/screen_capture_tray_item_view.h"
 
-#include "ash/multi_capture/multi_capture_service_client.h"
+#include <algorithm>
+
+#include "ash/multi_capture/multi_capture_service.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_provider.h"
 #include "ash/system/tray/tray_constants.h"
+#include "base/check_deref.h"
+#include "base/containers/contains.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/vector_icons/vector_icons.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/views/controls/image_view.h"
+#include "url/origin.h"
 
 namespace {
 constexpr base::TimeDelta kMinimumTimedelta = base::Seconds(6);
@@ -26,6 +33,9 @@ constexpr base::TimeDelta kMinimumTimedelta = base::Seconds(6);
 
 namespace ash {
 
+ScreenCaptureTrayItemView::ScreenCaptureTrayItemMetadata::
+    ScreenCaptureTrayItemMetadata()
+    : ScreenCaptureTrayItemMetadata(base::TimeTicks::Now()) {}
 ScreenCaptureTrayItemView::ScreenCaptureTrayItemMetadata::
     ScreenCaptureTrayItemMetadata(base::TimeTicks time_created)
     : time_created(std::move(time_created)) {}
@@ -42,40 +52,22 @@ ScreenCaptureTrayItemView::ScreenCaptureTrayItemMetadata::
 ScreenCaptureTrayItemView::ScreenCaptureTrayItemView(Shelf* shelf)
     : TrayItemView(shelf) {
   CreateImageView();
-  const gfx::VectorIcon* icon = &kPrivacyIndicatorsScreenShareIcon;
-  if (!chromeos::features::IsJellyEnabled()) {
-    image_view()->SetImage(gfx::CreateVectorIcon(gfx::IconDescription(
-        *icon, kUnifiedTrayIconSize,
-        AshColorProvider::Get()->GetContentLayerColor(
-            AshColorProvider::ContentLayerType::kIconColorPrimary))));
-  }
   UpdateLabelOrImageViewColor(/*active=*/false);
 
-  multi_capture_service_client_observation_.Observe(
-      Shell::Get()->multi_capture_service_client());
+  SetTooltipText(l10n_util::GetStringUTF16(IDS_ASH_ADMIN_SCREEN_CAPTURE));
+
+  multi_capture_observation_.Observe(Shell::Get()->multi_capture_service());
   Refresh();
 }
 
 ScreenCaptureTrayItemView::~ScreenCaptureTrayItemView() = default;
-
-const char* ScreenCaptureTrayItemView::GetClassName() const {
-  return "ScreenCaptureTrayItemView";
-}
 
 views::View* ScreenCaptureTrayItemView::GetTooltipHandlerForPoint(
     const gfx::Point& point) {
   return HitTestPoint(point) ? this : nullptr;
 }
 
-std::u16string ScreenCaptureTrayItemView::GetTooltipText(
-    const gfx::Point& point) const {
-  return l10n_util::GetStringUTF16(IDS_ASH_ADMIN_SCREEN_CAPTURE);
-}
-
 void ScreenCaptureTrayItemView::UpdateLabelOrImageViewColor(bool active) {
-  if (!chromeos::features::IsJellyEnabled()) {
-    return;
-  }
   TrayItemView::UpdateLabelOrImageViewColor(active);
 
   image_view()->SetImage(ui::ImageModel::FromVectorIcon(
@@ -91,14 +83,28 @@ void ScreenCaptureTrayItemView::Refresh() {
 
 void ScreenCaptureTrayItemView::MultiCaptureStarted(const std::string& label,
                                                     const url::Origin& origin) {
-  requests_.emplace(label,
-                    ScreenCaptureTrayItemMetadata(base::TimeTicks::Now()));
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kMultiCaptureReworkedUsageIndicators)) {
+    return;
+  }
+
+  requests_.emplace(label, ScreenCaptureTrayItemMetadata());
   Refresh();
+}
+
+void ScreenCaptureTrayItemView::MultiCaptureStartedFromApp(
+    const std::string& label,
+    const std::string& app_id,
+    const std::string& app_short_name,
+    const url::Origin& app_origin) {
+  MultiCaptureStarted(label, app_origin);
 }
 
 void ScreenCaptureTrayItemView::MultiCaptureStopped(const std::string& label) {
   const auto request = requests_.find(label);
-  DCHECK(request != requests_.end());
+  if (request == requests_.end()) {
+    return;
+  }
 
   ScreenCaptureTrayItemMetadata& metadata = request->second;
   const base::TimeDelta time_already_shown =
@@ -115,7 +121,11 @@ void ScreenCaptureTrayItemView::MultiCaptureStopped(const std::string& label) {
   }
 }
 
-void ScreenCaptureTrayItemView::MultiCaptureServiceClientDestroyed() {
-  multi_capture_service_client_observation_.Reset();
+void ScreenCaptureTrayItemView::MultiCaptureServiceDestroyed() {
+  multi_capture_observation_.Reset();
 }
+
+BEGIN_METADATA(ScreenCaptureTrayItemView)
+END_METADATA
+
 }  // namespace ash

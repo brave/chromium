@@ -5,6 +5,7 @@
 #include "chrome/browser/ash/login/users/avatar/user_image_loader.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -12,6 +13,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_view_util.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "chrome/common/chrome_paths.h"
@@ -25,7 +27,7 @@ namespace {
 
 // Points to a webp file with 3 frames of red, green, blue solid colors,
 // respectively.
-constexpr base::StringPiece kUserAvatarWebpRelativePath =
+constexpr std::string_view kUserAvatarWebpRelativePath =
     "chromeos/avatars/avatar.webp";
 
 }  // namespace
@@ -59,8 +61,9 @@ TEST_F(UserImageLoaderTest, StartWithFilePathAnimated) {
       task_environment_.GetMainThreadTaskRunner(), image_path,
       base::BindLambdaForTesting(
           [&](std::unique_ptr<user_manager::UserImage> user_image) {
-            auto data = user_image->image_bytes()->data();
-            EXPECT_EQ(original_contents, std::string(data.begin(), data.end()));
+            EXPECT_EQ(
+                original_contents,
+                std::string(base::as_string_view(*user_image->image_bytes())));
             EXPECT_EQ(user_manager::UserImage::FORMAT_WEBP,
                       user_image->image_format());
             EXPECT_EQ(16, user_image->image().width());

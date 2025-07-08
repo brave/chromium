@@ -4,7 +4,6 @@
 
 #include "ui/ozone/platform/wayland/host/wayland_output.h"
 
-#include <aura-shell-client-protocol.h>
 #include <chrome-color-management-client-protocol.h>
 #include <xdg-output-unstable-v1-client-protocol.h>
 
@@ -15,7 +14,6 @@
 #include "ui/ozone/platform/wayland/host/dump_util.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
 #include "ui/ozone/platform/wayland/host/wayland_output_manager.h"
-#include "ui/ozone/platform/wayland/host/wayland_zaura_output.h"
 #include "ui/ozone/platform/wayland/host/wayland_zcr_color_management_output.h"
 #include "ui/ozone/platform/wayland/host/wayland_zcr_color_manager.h"
 #include "ui/ozone/platform/wayland/host/xdg_output.h"
@@ -131,12 +129,6 @@ void WaylandOutput::InitializeXdgOutput(
       zxdg_output_manager_v1_get_xdg_output(xdg_output_manager, output_.get()));
 }
 
-void WaylandOutput::InitializeZAuraOutput(zaura_shell* aura_shell) {
-  DCHECK(!aura_output_);
-  aura_output_ = std::make_unique<WaylandZAuraOutput>(
-      zaura_shell_get_aura_output(aura_shell, output_.get()));
-}
-
 void WaylandOutput::InitializeColorManagementOutput(
     WaylandZcrColorManager* zcr_color_manager) {
   DCHECK(!color_management_output_);
@@ -148,18 +140,15 @@ void WaylandOutput::InitializeColorManagementOutput(
 void WaylandOutput::Initialize(Delegate* delegate) {
   DCHECK(!delegate_);
   delegate_ = delegate;
-  static constexpr wl_output_listener output_listener = {
-      &OutputHandleGeometry, &OutputHandleMode, &OutputHandleDone,
-      &OutputHandleScale,    &OutputHandleName, &OutputHandleDescription,
-
+  static constexpr wl_output_listener kOutputListener = {
+      .geometry = &OnGeometry,
+      .mode = &OnMode,
+      .done = &OnDone,
+      .scale = &OnScale,
+      .name = &OnName,
+      .description = &OnDescription,
   };
-  wl_output_add_listener(output_.get(), &output_listener, this);
-}
-
-float WaylandOutput::GetUIScaleFactor() const {
-  return display::Display::HasForceDeviceScaleFactor()
-             ? display::Display::GetForcedDeviceScaleFactor()
-             : scale_factor();
+  wl_output_add_listener(output_.get(), &kOutputListener, this);
 }
 
 const Metrics& WaylandOutput::GetMetrics() const {
@@ -175,26 +164,7 @@ float WaylandOutput::scale_factor() const {
 }
 
 bool WaylandOutput::IsReady() const {
-  // zaura_output_manager is guaranteed to have received all relevant output
-  // metrics before the first wl_output.done event. zaura_output_manager is
-  // responsible for updating `metrics_` in an atomic and consistent way as soon
-  // as it receives all its necessary output metrics events.
-  if (IsUsingZAuraOutputManager()) {
-    // WaylandOutput should be considered ready after the first atomic update to
-    // `metrics_`.
-    return metrics_.output_id == output_id_;
-  }
-
-  // The aura output requires both the logical size and the display ID
-  // to become ready. If a client that uses xdg_output but not aura_output
-  // needs different condition for readiness, this needs to be updated.
-  return is_ready_ &&
-         (!aura_output_ ||
-          (xdg_output_ && xdg_output_->IsReady() && aura_output_->IsReady()));
-}
-
-zaura_output* WaylandOutput::get_zaura_output() {
-  return aura_output_ ? aura_output_->wl_object() : nullptr;
+  return is_ready_;
 }
 
 void WaylandOutput::SetScaleFactorForTesting(float scale_factor) {
@@ -228,31 +198,22 @@ void WaylandOutput::UpdateMetrics() {
 
   if (xdg_output_) {
     xdg_output_->UpdateMetrics(
-        connection_->surface_submission_in_pixel_coordinates() ||
-            connection_->supports_viewporter_surface_scaling(),
-        metrics_);
+        connection_->supports_viewporter_surface_scaling(), metrics_);
   }
-  if (aura_output_) {
-    aura_output_->UpdateMetrics(metrics_);
-  }
-}
-
-bool WaylandOutput::IsUsingZAuraOutputManager() const {
-  return connection_->zaura_output_manager() != nullptr;
 }
 
 // static
-void WaylandOutput::OutputHandleGeometry(void* data,
-                                         wl_output* obj,
-                                         int32_t x,
-                                         int32_t y,
-                                         int32_t physical_width,
-                                         int32_t physical_height,
-                                         int32_t subpixel,
-                                         const char* make,
-                                         const char* model,
-                                         int32_t output_transform) {
-  if (auto* output = static_cast<WaylandOutput*>(data)) {
+void WaylandOutput::OnGeometry(void* data,
+                               wl_output* output,
+                               int32_t x,
+                               int32_t y,
+                               int32_t physical_width,
+                               int32_t physical_height,
+                               int32_t subpixel,
+                               const char* make,
+                               const char* model,
+                               int32_t output_transform) {
+  if (auto* self = static_cast<WaylandOutput*>(data)) {
     // It looks like there is a bug in libffi - only the 8th arg is affected.
     // Possibly it is not following the calling convention of the ABI? Eg. the
     // lib has some off-by-1-error where it's supposed to pass 8 args in regs
@@ -260,73 +221,64 @@ void WaylandOutput::OutputHandleGeometry(void* data,
     // out of our control. Given the output_transform is always correct,
     // unpoison the value to make MSAN happy.
     MSAN_UNPOISON(&output_transform, sizeof(int32_t));
-    output->origin_ = gfx::Point(x, y);
-    output->panel_transform_ = output_transform;
+    self->origin_ = gfx::Point(x, y);
+    self->panel_transform_ = output_transform;
   }
 }
 
 // static
-void WaylandOutput::OutputHandleMode(void* data,
-                                     wl_output* wl_output,
-                                     uint32_t flags,
-                                     int32_t width,
-                                     int32_t height,
-                                     int32_t refresh) {
-  auto* output = static_cast<WaylandOutput*>(data);
-  if (output && (flags & WL_OUTPUT_MODE_CURRENT))
-    output->physical_size_ = gfx::Size(width, height);
+void WaylandOutput::OnMode(void* data,
+                           wl_output* wl_output,
+                           uint32_t flags,
+                           int32_t width,
+                           int32_t height,
+                           int32_t refresh) {
+  auto* self = static_cast<WaylandOutput*>(data);
+  if (self && (flags & WL_OUTPUT_MODE_CURRENT)) {
+    self->physical_size_ = gfx::Size(width, height);
+  }
 }
 
 // static
-void WaylandOutput::OutputHandleDone(void* data, struct wl_output* wl_output) {
-  auto* output = static_cast<WaylandOutput*>(data);
-
-  // zaura_output_manager takes responsibility of keeping `metrics_` up to date
-  // and triggering delegate notifications.
-  if (!output || output->IsUsingZAuraOutputManager()) {
+void WaylandOutput::OnDone(void* data, wl_output* output) {
+  auto* self = static_cast<WaylandOutput*>(data);
+  if (!self) {
     return;
   }
 
-  output->is_ready_ = true;
+  self->is_ready_ = true;
 
-  if (auto& xdg_output = output->xdg_output_) {
-    xdg_output->OnDone();
-  }
-
-  if (auto& aura_output = output->aura_output_) {
-    aura_output->OnDone();
+  if (auto& xdg_output = self->xdg_output_) {
+    xdg_output->HandleDone();
   }
 
   // Once all metrics have been received perform an atomic update on this
   // output's `metrics_`.
-  output->UpdateMetrics();
+  self->UpdateMetrics();
 
-  output->TriggerDelegateNotifications();
+  self->TriggerDelegateNotifications();
 }
 
 // static
-void WaylandOutput::OutputHandleScale(void* data,
-                                      struct wl_output* wl_output,
-                                      int32_t factor) {
-  if (auto* output = static_cast<WaylandOutput*>(data))
-    output->scale_factor_ = factor;
+void WaylandOutput::OnScale(void* data, wl_output* output, int32_t factor) {
+  if (auto* self = static_cast<WaylandOutput*>(data)) {
+    self->scale_factor_ = factor;
+  }
 }
 
 // static
-void WaylandOutput::OutputHandleName(void* data,
-                                     struct wl_output* wl_output,
-                                     const char* name) {
-  if (auto* output = static_cast<WaylandOutput*>(data))
-    output->name_ = name ? std::string(name) : std::string{};
+void WaylandOutput::OnName(void* data, wl_output* output, const char* name) {
+  if (auto* self = static_cast<WaylandOutput*>(data)) {
+    self->name_ = name ? std::string(name) : std::string{};
+  }
 }
 
 // static
-void WaylandOutput::OutputHandleDescription(void* data,
-                                            struct wl_output* wl_output,
-                                            const char* description) {
-  if (auto* output = static_cast<WaylandOutput*>(data)) {
-    output->description_ =
-        description ? std::string(description) : std::string{};
+void WaylandOutput::OnDescription(void* data,
+                                  wl_output* output,
+                                  const char* description) {
+  if (auto* self = static_cast<WaylandOutput*>(data)) {
+    self->description_ = description ? std::string(description) : std::string{};
   }
 }
 

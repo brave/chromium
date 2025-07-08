@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/crash/core/common/crash_keys.h"
 
 #include <deque>
+#include <string_view>
 #include <vector>
 
 #include "base/check_op.h"
@@ -12,7 +18,6 @@
 #include "base/format_macros.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -40,8 +45,8 @@ void SetMetricsClientIdFromGUID(const std::string& metrics_client_guid) {
 #if !BUILDFLAG(USE_CRASHPAD_ANNOTATION)
   std::string stripped_guid(metrics_client_guid);
   // Remove all instance of '-' char from the GUID. So BCD-WXY becomes BCDWXY.
-  base::ReplaceSubstringsAfterOffset(
-      &stripped_guid, 0, "-", base::StringPiece());
+  base::ReplaceSubstringsAfterOffset(&stripped_guid, 0, "-",
+                                     std::string_view());
   if (stripped_guid.empty())
     return;
 
@@ -116,7 +121,8 @@ static PrinterInfoKey printer_info_keys[] = {
     {"prn-info-4", PrinterInfoKey::Tag::kArray},
 };
 
-ScopedPrinterInfo::ScopedPrinterInfo(std::vector<std::string> data) {
+ScopedPrinterInfo::ScopedPrinterInfo(const std::string& printer_name,
+                                     std::vector<std::string> data) {
   CHECK_LE(data.size(), std::size(printer_info_keys));
   for (size_t i = 0; i < std::size(printer_info_keys); ++i) {
     if (i < data.size()) {
@@ -124,6 +130,10 @@ ScopedPrinterInfo::ScopedPrinterInfo(std::vector<std::string> data) {
     } else {
       printer_info_keys[i].Clear();
     }
+  }
+  if (data.empty()) {
+    // No keys were provided.  Just store the printer_name.
+    printer_info_keys[0].Set(printer_name);
   }
 }
 

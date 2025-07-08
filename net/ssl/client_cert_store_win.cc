@@ -9,10 +9,13 @@
 #include <memory>
 #include <string>
 
-#define SECURITY_WIN32  // Needs to be defined before including security.h
 #include <windows.h>
+
+#define SECURITY_WIN32
 #include <security.h>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -121,8 +124,7 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
   }
 
   // Enumerate the client certificates.
-  CERT_CHAIN_FIND_BY_ISSUER_PARA find_by_issuer_para;
-  memset(&find_by_issuer_para, 0, sizeof(find_by_issuer_para));
+  CERT_CHAIN_FIND_BY_ISSUER_PARA find_by_issuer_para = {};
   find_by_issuer_para.cbSize = sizeof(find_by_issuer_para);
   find_by_issuer_para.pszUsageIdentifier = szOID_PKIX_KP_CLIENT_AUTH;
   find_by_issuer_para.cIssuer = static_cast<DWORD>(auth_count);
@@ -147,9 +149,14 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
       break;
     }
 
+    // SAFETY: Per struct description, `cElement` is the number objects in
+    // `rgpElement`.
+    auto certs =
+        UNSAFE_BUFFERS(base::span(chain_context->rgpChain[0]->rgpElement,
+                                  chain_context->rgpChain[0]->cElement));
+
     // Get the leaf certificate.
-    PCCERT_CONTEXT cert_context =
-        chain_context->rgpChain[0]->rgpElement[0]->pCertContext;
+    PCCERT_CONTEXT cert_context = certs[0]->pCertContext;
     // Copy the certificate, so that it is valid after |cert_store| is closed.
     crypto::ScopedPCCERT_CONTEXT cert_context2;
     PCCERT_CONTEXT raw = nullptr;
@@ -157,16 +164,14 @@ ClientCertIdentityList GetClientCertsImpl(HCERTSTORE cert_store,
         nullptr, cert_context, CERT_STORE_ADD_USE_EXISTING, &raw);
     if (!ok) {
       NOTREACHED();
-      continue;
     }
     cert_context2.reset(raw);
 
     // Grab the intermediates, if any.
     std::vector<crypto::ScopedPCCERT_CONTEXT> intermediates_storage;
     std::vector<PCCERT_CONTEXT> intermediates;
-    for (DWORD i = 1; i < chain_context->rgpChain[0]->cElement; ++i) {
-      PCCERT_CONTEXT chain_intermediate =
-          chain_context->rgpChain[0]->rgpElement[i]->pCertContext;
+    for (auto& intermediate : certs.subspan(1u)) {
+      PCCERT_CONTEXT chain_intermediate = intermediate->pCertContext;
       PCCERT_CONTEXT copied_intermediate = nullptr;
       ok = CertAddCertificateContextToStore(nullptr, chain_intermediate,
                                             CERT_STORE_ADD_USE_EXISTING,
@@ -223,20 +228,26 @@ ClientCertStoreWin::ClientCertStoreWin(
 
 ClientCertStoreWin::~ClientCertStoreWin() = default;
 
-void ClientCertStoreWin::GetClientCerts(const SSLCertRequestInfo& request,
-                                        ClientCertListCallback callback) {
+void ClientCertStoreWin::GetClientCerts(
+    scoped_refptr<const SSLCertRequestInfo> request,
+    ClientCertListCallback callback) {
   GetSSLPlatformKeyTaskRunner()->PostTaskAndReplyWithResult(
       FROM_HERE,
-      // Caller is responsible for keeping the |request| alive
-      // until the callback is run, so std::cref is safe.
       base::BindOnce(&ClientCertStoreWin::GetClientCertsWithCertStore,
-                     std::cref(request), cert_store_callback_),
-      std::move(callback));
+                     std::move(request), cert_store_callback_),
+      base::BindOnce(&ClientCertStoreWin::OnClientCertsResponse,
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void ClientCertStoreWin::OnClientCertsResponse(
+    ClientCertListCallback callback,
+    ClientCertIdentityList identities) {
+  std::move(callback).Run(std::move(identities));
 }
 
 // static
 ClientCertIdentityList ClientCertStoreWin::GetClientCertsWithCertStore(
-    const SSLCertRequestInfo& request,
+    scoped_refptr<const SSLCertRequestInfo> request,
     const base::RepeatingCallback<crypto::ScopedHCERTSTORE()>&
         cert_store_callback) {
   ScopedHCERTSTOREWithChecks cert_store;
@@ -255,7 +266,7 @@ ClientCertIdentityList ClientCertStoreWin::GetClientCertsWithCertStore(
     PLOG(ERROR) << "Could not open certificate store: ";
     return ClientCertIdentityList();
   }
-  return GetClientCertsImpl(cert_store.get(), request);
+  return GetClientCertsImpl(cert_store.get(), *request);
 }
 
 bool ClientCertStoreWin::SelectClientCertsForTesting(
@@ -285,8 +296,7 @@ bool ClientCertStoreWin::SelectClientCertsForTesting(
 
     // Add dummy private key data to the certificate - otherwise the certificate
     // would be discarded by the filtering routines.
-    CRYPT_KEY_PROV_INFO private_key_data;
-    memset(&private_key_data, 0, sizeof(private_key_data));
+    CRYPT_KEY_PROV_INFO private_key_data = {};
     if (!CertSetCertificateContextProperty(cert,
                                            CERT_KEY_PROV_INFO_PROP_ID,
                                            0, &private_key_data)) {

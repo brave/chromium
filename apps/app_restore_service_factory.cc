@@ -32,9 +32,10 @@ AppRestoreServiceFactory::AppRestoreServiceFactory()
 
 AppRestoreServiceFactory::~AppRestoreServiceFactory() = default;
 
-KeyedService* AppRestoreServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AppRestoreServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new AppRestoreService(context);
+  return std::make_unique<AppRestoreService>(context);
 }
 
 bool AppRestoreServiceFactory::ServiceIsCreatedWithBrowserContext() const {
@@ -44,7 +45,7 @@ bool AppRestoreServiceFactory::ServiceIsCreatedWithBrowserContext() const {
 content::BrowserContext* AppRestoreServiceFactory::GetBrowserContextToUse(
     content::BrowserContext* context) const {
   return extensions::ExtensionsBrowserClient::Get()
-      ->GetContextRedirectedToOriginal(context, /*force_guest_profile=*/true);
+      ->GetContextRedirectedToOriginal(context);
 }
 
 }  // namespace apps

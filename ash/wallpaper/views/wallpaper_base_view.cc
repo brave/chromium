@@ -11,7 +11,6 @@
 #include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "base/numerics/safe_conversions.h"
 #include "cc/paint/paint_flags.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/canvas.h"
 
@@ -26,15 +25,11 @@ SkColor GetWallpaperShieldColor(const views::Widget* widget) {
 
   auto* controller = Shell::Get()->wallpaper_controller();
   if (controller->IsOobeWallpaper()) {
-    color = chromeos::features::IsJellyrollEnabled()
-                ? cros_tokens::kCrosSysScrim2
-                : static_cast<ui::ColorId>(kColorAshShieldAndBase60);
+    color = cros_tokens::kCrosSysScrim2;
   } else if (Shell::Get()->session_controller()->IsUserSessionBlocked()) {
     color = kColorAshShieldAndBase80;
   } else {
-    color = chromeos::features::IsJellyrollEnabled()
-                ? cros_tokens::kCrosSysScrim2
-                : static_cast<ui::ColorId>(kColorAshShieldAndBase40);
+    color = cros_tokens::kCrosSysScrim2;
   }
 
   DCHECK(widget);
@@ -52,11 +47,10 @@ void WallpaperBaseView::OnPaint(gfx::Canvas* canvas) {
   gfx::ImageSkia wallpaper = controller->GetWallpaper();
   WallpaperLayout layout = controller->GetWallpaperLayout();
 
-  // Wallpapers with png format could be partially transparent. Fill the canvas
-  // with black to make it opaque before painting the wallpaper.
-  canvas->FillRect(GetLocalBounds(), SK_ColorBLACK);
-
   if (wallpaper.isNull()) {
+    // Paint the canvas black if there is no wallpaper present.
+    // See crbug.com/383440913 for why this is necessary.
+    canvas->DrawColor(SK_ColorBLACK);
     return;
   }
 
@@ -107,13 +101,16 @@ void WallpaperBaseView::OnPaint(gfx::Canvas* canvas) {
           centered_layout_image_scale_.y() / image_scale);
       wallpaper_rect.set_x((width() - wallpaper_rect.width()) / 2);
       wallpaper_rect.set_y((height() - wallpaper_rect.height()) / 2);
+      // Fill background with black if wallpaper does not cover the entire view.
+      if (!wallpaper_rect.Contains(GetLocalBounds())) {
+        canvas->FillRect(GetLocalBounds(), SK_ColorBLACK);
+      }
       DrawWallpaper(wallpaper, gfx::Rect(wallpaper.size()), wallpaper_rect,
                     flags, canvas);
       break;
     }
     default: {
       NOTREACHED();
-      break;
     }
   }
 
@@ -137,7 +134,7 @@ void WallpaperBaseView::DrawWallpaper(const gfx::ImageSkia& wallpaper,
                        /*filter=*/true, flags);
 }
 
-BEGIN_METADATA(WallpaperBaseView, views::View)
+BEGIN_METADATA(WallpaperBaseView)
 END_METADATA
 
 }  // namespace ash

@@ -39,7 +39,7 @@ class CSSCursorImageValue : public CSSValue {
   const gfx::Point& HotSpot() const { return hot_spot_; }
   const CSSValue& ImageValue() const { return *image_value_; }
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSCursorImageValue&) const;
 

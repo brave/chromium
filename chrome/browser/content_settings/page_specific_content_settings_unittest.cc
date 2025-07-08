@@ -25,8 +25,7 @@ class PageSpecificContentSettingsTest : public ChromeRenderViewHostTestHarness {
     ChromeRenderViewHostTestHarness::SetUp();
     PageSpecificContentSettings::CreateForWebContents(
         web_contents(),
-        std::make_unique<chrome::PageSpecificContentSettingsDelegate>(
-            web_contents()));
+        std::make_unique<PageSpecificContentSettingsDelegate>(web_contents()));
 
     permissions::PermissionRecoverySuccessRateTracker::CreateForWebContents(
         web_contents());
@@ -80,9 +79,7 @@ TEST_F(PageSpecificContentSettingsTest, HistogramTest) {
   };
 
   histograms.ExpectTotalCount(kMicrophoneHistogramName, 0);
-  content_settings->OnMediaStreamPermissionSet(test_url, microphone_accessed,
-                                               std::string(), std::string(),
-                                               std::string(), std::string());
+  content_settings->OnMediaStreamPermissionSet(test_url, microphone_accessed);
   histograms.ExpectTotalCount(kMicrophoneHistogramName, 1);
   EXPECT_THAT(histograms.GetAllSamples(kMicrophoneHistogramName),
               testing::ElementsAre(base::Bucket(1, 1)));
@@ -92,15 +89,11 @@ TEST_F(PageSpecificContentSettingsTest, HistogramTest) {
   };
 
   histograms.ExpectTotalCount(kCameraHistogramName, 0);
-  content_settings->OnMediaStreamPermissionSet(test_url, mic_camera_accessed,
-                                               std::string(), std::string(),
-                                               std::string(), std::string());
+  content_settings->OnMediaStreamPermissionSet(test_url, mic_camera_accessed);
   histograms.ExpectTotalCount(kCameraHistogramName, 1);
   EXPECT_THAT(histograms.GetAllSamples(kCameraHistogramName),
               testing::ElementsAre(base::Bucket(1, 1)));
-  content_settings->OnMediaStreamPermissionSet(test_url, mic_camera_accessed,
-                                               std::string(), std::string(),
-                                               std::string(), std::string());
+  content_settings->OnMediaStreamPermissionSet(test_url, mic_camera_accessed);
   // Count should stay same even after multiple usage of permission
   histograms.ExpectTotalCount(kMicrophoneHistogramName, 1);
   histograms.ExpectTotalCount(kCameraHistogramName, 1);

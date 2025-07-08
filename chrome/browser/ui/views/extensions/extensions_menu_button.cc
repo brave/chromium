@@ -36,15 +36,19 @@ ExtensionsMenuButton::ExtensionsMenuButton(
 ExtensionsMenuButton::~ExtensionsMenuButton() = default;
 
 void ExtensionsMenuButton::AddedToWidget() {
-  ConfigureBubbleMenuItem(this, 0);
+  if (base::FeatureList::IsEnabled(
+          extensions_features::kExtensionsMenuAccessControl)) {
+    SetFocusRingCornerRadius(
+        views::LayoutProvider::Get()->GetCornerRadiusMetric(
+            views::ShapeContextTokens::kExtensionsMenuButtonRadius));
+    SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  } else {
+    ConfigureBubbleMenuItem(this, 0);
+  }
   UpdateState();
 }
 
 // ToolbarActionViewDelegateViews:
-views::View* ExtensionsMenuButton::GetAsView() {
-  return this;
-}
-
 views::FocusManager* ExtensionsMenuButton::GetFocusManagerForAccelerator() {
   return GetFocusManager();
 }
@@ -91,7 +95,7 @@ void ExtensionsMenuButton::ShowContextMenuAsFallback() {
   // The items in the extensions menu are disabled and unclickable if the
   // primary action cannot be taken; ShowContextMenuAsFallback() should never
   // be called directly.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void ExtensionsMenuButton::ButtonPressed() {
@@ -101,5 +105,5 @@ void ExtensionsMenuButton::ButtonPressed() {
       ToolbarActionViewController::InvocationSource::kMenuEntry);
 }
 
-BEGIN_METADATA(ExtensionsMenuButton, views::LabelButton)
+BEGIN_METADATA(ExtensionsMenuButton)
 END_METADATA

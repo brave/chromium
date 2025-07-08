@@ -8,10 +8,6 @@
 #include "base/mac/mac_util.h"
 #include "ui/base/cocoa/tracking_area.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 NSString* kViewDidBecomeFirstResponder =
     @"Chromium.kViewDidBecomeFirstResponder";
 NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
@@ -23,16 +19,11 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
   NSInteger _pressureEventStage;
 }
 
-- (instancetype)initWithFrame:(NSRect)frame {
+- (instancetype)initWithFrame:(NSRect)frame tracking:(BOOL)tracking {
   if ((self = [super initWithFrame:frame])) {
-    [self enableTracking];
-  }
-  return self;
-}
-
-- (instancetype)initWithCoder:(NSCoder*)decoder {
-  if ((self = [super initWithCoder:decoder])) {
-    [self enableTracking];
+    if (tracking) {
+      [self enableTracking];
+    }
   }
   return self;
 }
@@ -158,14 +149,6 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 }
 
 - (void)mouseExited:(NSEvent*)theEvent {
-  // Suppress spurious mouseExited events that are in the bounds of this view.
-  // For unknown reasons this happens shortly after mouseMoved on the toolbar if
-  // the overlay window is above the NSToolbarFullScreenWindow.
-  NSRect frameInWindow = [self convertRect:self.bounds toView:nil];
-  if (NSPointInRect(theEvent.locationInWindow, frameInWindow)) {
-    return;
-  }
-
   // The tracking area will send an exit event even during a drag, which isn't
   // how the event flow for drags should work. This stores the exit event, and
   // sends it when the drag completes instead.

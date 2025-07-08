@@ -4,6 +4,10 @@
 
 #include "chromeos/ash/components/osauth/public/string_utils.h"
 
+#include <ostream>
+
+#include "chromeos/ash/components/osauth/public/common_types.h"
+
 namespace ash {
 
 std::ostream& operator<<(std::ostream& out, AuthPurpose purpose) {
@@ -32,6 +36,8 @@ std::ostream& operator<<(std::ostream& out, AshAuthFactor factor) {
     PRINT(Recovery)
     PRINT(LegacyPin)
     PRINT(LegacyFingerprint)
+    PRINT(LocalPassword)
+    PRINT(Fingerprint)
 #undef PRINT
   }
 }

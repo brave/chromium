@@ -6,17 +6,21 @@
 
 #include "build/build_config.h"
 #include "components/signin/public/base/signin_metrics.h"
+#include "components/signin/public/base/signin_switches.h"
+#include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/signin/public/identity_manager/tribool.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_id.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/jni_string.h"
 #include "components/signin/public/android/jni_headers/AccountInfo_jni.h"
-#include "components/signin/public/android/jni_headers/CoreAccountId_jni.h"
 #include "components/signin/public/android/jni_headers/CoreAccountInfo_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/image/image_skia.h"
 #endif
+
+using signin::constants::kNoHostedDomainFound;
 
 namespace {
 
@@ -26,11 +30,13 @@ namespace {
 bool UpdateField(std::string* field,
                  const std::string& new_value,
                  const char* default_value) {
-  if (*field == new_value || new_value.empty())
+  if (*field == new_value || new_value.empty()) {
     return false;
+  }
 
-  if (!field->empty() && default_value && new_value == default_value)
+  if (!field->empty() && default_value && new_value == default_value) {
     return false;
+  }
 
   *field = new_value;
   return true;
@@ -41,6 +47,17 @@ bool UpdateField(std::string* field,
 template <typename T>
 bool UpdateField(T* field, T new_value, T default_value) {
   if (*field == new_value || new_value == default_value) {
+    return false;
+  }
+
+  *field = new_value;
+  return true;
+}
+
+// Updates |field| with |new_value| if non-empty. Returns whether |field| was
+// changed.
+bool UpdateField(GaiaId* field, const GaiaId& new_value) {
+  if (*field == new_value || new_value.empty()) {
     return false;
   }
 
@@ -62,9 +79,6 @@ bool UpdateField(signin::Tribool* field, signin::Tribool new_value) {
 }
 
 }  // namespace
-
-// This must be a string which can never be a valid domain.
-const char kNoHostedDomainFound[] = "NO_HOSTED_DOMAIN";
 
 // This must be a string which can never be a valid picture URL.
 const char kNoPictureURLFound[] = "NO_PICTURE_URL";
@@ -108,7 +122,7 @@ bool AccountInfo::IsEmpty() const {
 bool AccountInfo::IsValid() const {
   return !account_id.empty() && !email.empty() && !gaia.empty() &&
          !hosted_domain.empty() && !full_name.empty() && !given_name.empty() &&
-         !locale.empty() && !picture_url.empty();
+         !picture_url.empty();
 }
 
 bool AccountInfo::UpdateWith(const AccountInfo& other) {
@@ -118,7 +132,7 @@ bool AccountInfo::UpdateWith(const AccountInfo& other) {
   }
 
   bool modified = false;
-  modified |= UpdateField(&gaia, other.gaia, nullptr);
+  modified |= UpdateField(&gaia, other.gaia);
   modified |= UpdateField(&email, other.email, nullptr);
   modified |= UpdateField(&full_name, other.full_name, nullptr);
   modified |= UpdateField(&given_name, other.given_name, nullptr);
@@ -128,7 +142,7 @@ bool AccountInfo::UpdateWith(const AccountInfo& other) {
   modified |= UpdateField(&picture_url, other.picture_url, kNoPictureURLFound);
   modified |= UpdateField(&is_child_account, other.is_child_account);
   modified |= UpdateField(&access_point, other.access_point,
-                          signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN);
+                          signin_metrics::AccessPoint::kUnknown);
   modified |= UpdateField(&is_under_advanced_protection,
                           other.is_under_advanced_protection);
   modified |= capabilities.UpdateWith(other.capabilities);
@@ -137,18 +151,29 @@ bool AccountInfo::UpdateWith(const AccountInfo& other) {
 }
 
 // static
-bool AccountInfo::IsManaged(const std::string& hosted_domain) {
-  return !hosted_domain.empty() && hosted_domain != kNoHostedDomainFound;
+signin::Tribool AccountInfo::IsManaged(const std::string& hosted_domain) {
+  return hosted_domain.empty()
+             ? signin::Tribool::kUnknown
+             : signin::TriboolFromBool(hosted_domain != kNoHostedDomainFound);
 }
 
 bool AccountInfo::IsMemberOfFlexOrg() const {
   return capabilities.is_subject_to_enterprise_policies() ==
              signin::Tribool::kTrue &&
-         !IsManaged(hosted_domain);
+         IsManaged(hosted_domain) != signin::Tribool::kTrue;
 }
 
-bool AccountInfo::IsManaged() const {
+signin::Tribool AccountInfo::IsManaged() const {
+  if (base::FeatureList::IsEnabled(
+          kUseAccountCapabilityToDetermineAccountManagement)) {
+    return capabilities.is_subject_to_enterprise_policies();
+  }
   return IsManaged(hosted_domain);
+}
+
+bool AccountInfo::IsEduAccount() const {
+  return capabilities.can_use_edu_features() == signin::Tribool::kTrue &&
+         IsManaged(hosted_domain) == signin::Tribool::kTrue;
 }
 
 bool AccountInfo::CanHaveEmailAddressDisplayed() const {
@@ -163,9 +188,6 @@ bool operator==(const CoreAccountInfo& l, const CoreAccountInfo& r) {
          gaia::AreEmailsSame(l.email, r.email) &&
          l.is_under_advanced_protection == r.is_under_advanced_protection;
 }
-bool operator!=(const CoreAccountInfo& l, const CoreAccountInfo& r) {
-  return !(l == r);
-}
 
 std::ostream& operator<<(std::ostream& os, const CoreAccountInfo& account) {
   os << "account_id: " << account.account_id << ", gaia: " << account.gaia
@@ -178,59 +200,63 @@ std::ostream& operator<<(std::ostream& os, const CoreAccountInfo& account) {
 base::android::ScopedJavaLocalRef<jobject> ConvertToJavaCoreAccountInfo(
     JNIEnv* env,
     const CoreAccountInfo& account_info) {
-  DCHECK(!account_info.IsEmpty());
+  CHECK(!account_info.IsEmpty());
   return signin::Java_CoreAccountInfo_Constructor(
-      env, ConvertToJavaCoreAccountId(env, account_info.account_id),
-      base::android::ConvertUTF8ToJavaString(env, account_info.email),
-      base::android::ConvertUTF8ToJavaString(env, account_info.gaia));
+      env, account_info.account_id, account_info.email, account_info.gaia);
 }
 
 base::android::ScopedJavaLocalRef<jobject> ConvertToJavaAccountInfo(
     JNIEnv* env,
     const AccountInfo& account_info) {
-  DCHECK(!account_info.IsEmpty());
-  gfx::Image avatar_image = account_info.account_image;
-  return signin::Java_AccountInfo_Constructor(
-      env, ConvertToJavaCoreAccountId(env, account_info.account_id),
-      base::android::ConvertUTF8ToJavaString(env, account_info.email),
-      base::android::ConvertUTF8ToJavaString(env, account_info.gaia),
-      base::android::ConvertUTF8ToJavaString(env, account_info.full_name),
-      base::android::ConvertUTF8ToJavaString(env, account_info.given_name),
-      avatar_image.IsEmpty()
+  CHECK(!account_info.IsEmpty());
+  // Empty domain means that the management status is unknown, which is
+  // represented by `null` hostedDomain on the Java side.
+  base::android::ScopedJavaLocalRef<jstring> hosted_domain =
+      account_info.hosted_domain.empty()
           ? nullptr
-          : gfx::ConvertToJavaBitmap(*avatar_image.AsImageSkia().bitmap()),
+          : base::android::ConvertUTF8ToJavaString(env,
+                                                   account_info.hosted_domain);
+  base::android::ScopedJavaLocalRef<jobject> account_image =
+      account_info.account_image.IsEmpty()
+          ? nullptr
+          : gfx::ConvertToJavaBitmap(
+                *account_info.account_image.AsImageSkia().bitmap());
+  return signin::Java_AccountInfo_Constructor(
+      env, account_info.account_id, account_info.email, account_info.gaia,
+      account_info.full_name, account_info.given_name, hosted_domain,
+      account_image,
       account_info.capabilities.ConvertToJavaAccountCapabilities(env));
-}
-
-base::android::ScopedJavaLocalRef<jobject> ConvertToJavaCoreAccountId(
-    JNIEnv* env,
-    const CoreAccountId& account_id) {
-  DCHECK(!account_id.empty());
-  return signin::Java_CoreAccountId_Constructor(
-      env, base::android::ConvertUTF8ToJavaString(env, account_id.ToString()));
 }
 
 CoreAccountInfo ConvertFromJavaCoreAccountInfo(
     JNIEnv* env,
     const base::android::JavaRef<jobject>& j_core_account_info) {
-  DCHECK(j_core_account_info);
+  CHECK(j_core_account_info);
   CoreAccountInfo account;
-  account.account_id = ConvertFromJavaCoreAccountId(
-      env, signin::Java_CoreAccountInfo_getId(env, j_core_account_info));
-  account.gaia = base::android::ConvertJavaStringToUTF8(
-      signin::Java_CoreAccountInfo_getGaiaId(env, j_core_account_info));
-  account.email = base::android::ConvertJavaStringToUTF8(
-      signin::Java_CoreAccountInfo_getEmail(env, j_core_account_info));
+  account.account_id =
+      signin::Java_CoreAccountInfo_getId(env, j_core_account_info);
+  account.gaia =
+      signin::Java_CoreAccountInfo_getGaiaId(env, j_core_account_info);
+  account.email =
+      signin::Java_CoreAccountInfo_getEmail(env, j_core_account_info);
   return account;
 }
 
-CoreAccountId ConvertFromJavaCoreAccountId(
+AccountInfo ConvertFromJavaAccountInfo(
     JNIEnv* env,
-    const base::android::JavaRef<jobject>& j_core_account_id) {
-  DCHECK(j_core_account_id);
-  CoreAccountId id =
-      CoreAccountId::FromString(base::android::ConvertJavaStringToUTF8(
-          signin::Java_CoreAccountId_getId(env, j_core_account_id)));
-  return id;
+    const base::android::JavaRef<jobject>& j_account_info) {
+  CHECK(j_account_info);
+  AccountInfo account;
+  account.account_id = signin::Java_CoreAccountInfo_getId(env, j_account_info);
+  account.gaia = signin::Java_CoreAccountInfo_getGaiaId(env, j_account_info);
+  account.email = signin::Java_CoreAccountInfo_getEmail(env, j_account_info);
+  account.full_name = signin::Java_AccountInfo_getFullName(env, j_account_info);
+  account.given_name =
+      signin::Java_AccountInfo_getGivenName(env, j_account_info);
+  account.hosted_domain = base::android::ConvertJavaStringToUTF8(
+      signin::Java_AccountInfo_getRawHostedDomain(env, j_account_info));
+  // TODO(crbug.com/348373729): Marshal account image & capabilities from Java.
+  return account;
 }
+
 #endif

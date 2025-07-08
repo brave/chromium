@@ -21,7 +21,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
 #include "components/onc/onc_constants.h"
@@ -80,7 +79,7 @@ class NetworkIconImpl {
   void GenerateImage(const NetworkStateProperties* network);
 
   // Gets the color for the icon
-  raw_ptr<const ui::ColorProvider, ExperimentalAsh> color_provider_;
+  raw_ptr<const ui::ColorProvider, DanglingUntriaged> color_provider_;
 
   // Defines color theme and VPN badging
   const IconType icon_type_;
@@ -482,8 +481,7 @@ SkColor GetDefaultColorForIconType(const ui::ColorProvider* color_provider,
                                    IconType icon_type) {
   // If |color_provider| is null, AshColorProvider will be used
   // to fetch the color instead.
-  bool use_color_provider =
-      chromeos::features::IsJellyrollEnabled() && color_provider;
+  const bool use_color_provider = !!color_provider;
 
   auto* ash_color_provider = AshColorProvider::Get();
   switch (icon_type) {
@@ -588,6 +586,14 @@ gfx::ImageSkia GetImageForPSimPendingActivationWhileLoggedOut(
     IconType icon_type) {
   return gfx::CreateVectorIcon(
       kUnifiedMenuCellularUnactivatedIcon,
+      GetDefaultColorForIconType(color_provider, icon_type));
+}
+
+gfx::ImageSkia GetImageForCarrierLockedNetwork(
+    const ui::ColorProvider* color_provider,
+    IconType icon_type) {
+  return gfx::CreateVectorIcon(
+      kCarrierLockedIcon,
       GetDefaultColorForIconType(color_provider, icon_type));
 }
 

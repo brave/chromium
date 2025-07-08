@@ -4,6 +4,7 @@
 
 #include "content/browser/devtools/devtools_background_services_context_impl.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,10 +14,12 @@
 #include "base/time/time.h"
 #include "content/browser/devtools/devtools_background_services.pb.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -111,7 +114,9 @@ class DevToolsBackgroundServicesContextTest
               blink::mojom::kInvalidServiceWorkerRegistrationId);
 
     browser_client_ = std::make_unique<TestBrowserClient>();
-    SetBrowserClientForTesting(browser_client_.get());
+    scoped_content_browser_client_setting_ =
+        std::make_unique<ScopedContentBrowserClientSetting>(
+            browser_client_.get());
 
     SimulateBrowserRestart();
   }
@@ -121,7 +126,7 @@ class DevToolsBackgroundServicesContextTest
   mojo::Remote<storage::mojom::ServiceWorkerStorageControl>& storage_control() {
     return embedded_worker_test_helper_.context()
         ->registry()
-        ->GetRemoteStorageControl();
+        .GetRemoteStorageControl();
   }
 
  protected:
@@ -135,7 +140,7 @@ class DevToolsBackgroundServicesContextTest
     if (context_)
       context_->RemoveObserver(this);
     // Create |context_|.
-    context_ = base::MakeRefCounted<DevToolsBackgroundServicesContextImpl>(
+    context_ = std::make_unique<DevToolsBackgroundServicesContextImpl>(
         &browser_context_, embedded_worker_test_helper_.context_wrapper());
     context_->AddObserver(this);
     ASSERT_TRUE(context_);
@@ -243,7 +248,7 @@ class DevToolsBackgroundServicesContextTest
 
     {
       base::RunLoop run_loop;
-      embedded_worker_test_helper_.context()->registry()->FindRegistrationForId(
+      embedded_worker_test_helper_.context()->registry().FindRegistrationForId(
           service_worker_registration_id, key,
           base::BindOnce(&DidFindServiceWorkerRegistration,
                          &service_worker_registration_,
@@ -264,13 +269,24 @@ class DevToolsBackgroundServicesContextTest
 
   EmbeddedWorkerTestHelper embedded_worker_test_helper_;
   TestBrowserContext browser_context_;
-  scoped_refptr<DevToolsBackgroundServicesContextImpl> context_;
+  std::unique_ptr<DevToolsBackgroundServicesContextImpl> context_;
   scoped_refptr<ServiceWorkerRegistration> service_worker_registration_;
   std::unique_ptr<ContentBrowserClient> browser_client_;
+  std::unique_ptr<ScopedContentBrowserClientSetting>
+      scoped_content_browser_client_setting_;
 };
 
+// Flaky on Fuchsia.
+// TODO(crbug.com/40936408): Reenable test on Fuchsia.
+#if BUILDFLAG(IS_FUCHSIA)
+#define MAYBE_NothingStoredWithRecordingModeOff \
+  DISABLED_NothingStoredWithRecordingModeOff
+#else
+#define MAYBE_NothingStoredWithRecordingModeOff \
+  NothingStoredWithRecordingModeOff
+#endif
 TEST_F(DevToolsBackgroundServicesContextTest,
-       NothingStoredWithRecordingModeOff) {
+       MAYBE_NothingStoredWithRecordingModeOff) {
   // Initially there are no entries.
   EXPECT_TRUE(GetLoggedBackgroundServiceEvents().empty());
 

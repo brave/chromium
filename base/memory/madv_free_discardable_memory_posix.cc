@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/memory/madv_free_discardable_memory_posix.h"
 
 #include <errno.h>
@@ -16,26 +21,20 @@
 #include "base/bits.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/memory/asan_interface.h"
 #include "base/memory/madv_free_discardable_memory_allocator_posix.h"
 #include "base/memory/page_size.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/memory_allocator_dump.h"
+#include "base/trace_event/memory_dump_manager.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include <sys/prctl.h>
 #endif
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/memory_allocator_dump.h"  // no-presubmit-check
-#include "base/trace_event/memory_dump_manager.h"    // no-presubmit-check
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
-
-#if defined(ADDRESS_SANITIZER)
-#include <sanitizer/asan_interface.h>
-#endif  // defined(ADDRESS_SANITIZER)
 
 namespace {
 
@@ -112,20 +111,20 @@ bool MadvFreeDiscardableMemoryPosix::Lock() {
   DFAKE_SCOPED_LOCK(thread_collision_warner_);
   DCHECK(!is_locked_);
   // Locking fails if the memory has been deallocated.
-  if (!data_)
+  if (!data_) {
     return false;
+  }
 
-#if defined(ADDRESS_SANITIZER)
   // We need to unpoison here since locking pages writes to them.
   // Note that even if locking fails, we want to unpoison anyways after
   // deallocation.
   ASAN_UNPOISON_MEMORY_REGION(data_, allocated_pages_ * base::GetPageSize());
-#endif  // defined(ADDRESS_SANITIZER)
 
   size_t page_index;
   for (page_index = 0; page_index < allocated_pages_; ++page_index) {
-    if (!LockPage(page_index))
+    if (!LockPage(page_index)) {
       break;
+    }
   }
 
   if (page_index < allocated_pages_) {
@@ -157,9 +156,7 @@ void MadvFreeDiscardableMemoryPosix::Unlock() {
   }
 #endif
 
-#if defined(ADDRESS_SANITIZER)
   ASAN_POISON_MEMORY_REGION(data_, allocated_pages_ * base::GetPageSize());
-#endif  // defined(ADDRESS_SANITIZER)
 
   is_locked_ = false;
 }
@@ -242,7 +239,6 @@ trace_event::MemoryAllocatorDump*
 MadvFreeDiscardableMemoryPosix::CreateMemoryAllocatorDump(
     const char* name,
     trace_event::ProcessMemoryDump* pmd) const {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   DFAKE_SCOPED_LOCK(thread_collision_warner_);
 
   using base::trace_event::MemoryAllocatorDump;
@@ -287,10 +283,6 @@ MadvFreeDiscardableMemoryPosix::CreateMemoryAllocatorDump(
 
   pmd->AddSuballocation(dump->guid(), allocator_dump_name);
   return dump;
-#else   // BUILDFLAG(ENABLE_BASE_TRACING)
-  NOTREACHED();
-  return nullptr;
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 bool MadvFreeDiscardableMemoryPosix::IsValid() const {
@@ -317,8 +309,9 @@ bool MadvFreeDiscardableMemoryPosix::IsResident() const {
   DPCHECK(retval == 0 || errno == EAGAIN);
 
   for (size_t i = 0; i < allocated_pages_; ++i) {
-    if (!(vec[i] & 1))
+    if (!(vec[i] & 1)) {
       return false;
+    }
   }
   return true;
 }
@@ -330,9 +323,7 @@ bool MadvFreeDiscardableMemoryPosix::IsDiscarded() const {
 bool MadvFreeDiscardableMemoryPosix::Deallocate() {
   DFAKE_SCOPED_RECURSIVE_LOCK(thread_collision_warner_);
   if (data_) {
-#if defined(ADDRESS_SANITIZER)
     ASAN_UNPOISON_MEMORY_REGION(data_, allocated_pages_ * base::GetPageSize());
-#endif  // defined(ADDRESS_SANITIZER)
 
     int retval = munmap(data_, allocated_pages_ * base::GetPageSize());
     PCHECK(!retval);

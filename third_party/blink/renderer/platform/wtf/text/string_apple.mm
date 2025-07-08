@@ -24,11 +24,7 @@
 
 #include "base/apple/bridging.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-namespace WTF {
+namespace blink {
 
 String::String(NSString* str) {
   if (!str) {
@@ -48,15 +44,15 @@ String::String(NSString* str) {
         /*lossByte=*/0, /*isExternalRepresentation=*/false, lchar_buffer.data(),
         size, &used_buf_len);
     if ((converted_size == size) && (used_buf_len == size)) {
-      impl_ = StringImpl::Create(lchar_buffer.data(), size);
+      impl_ = StringImpl::Create(lchar_buffer);
       return;
     }
 
     Vector<UChar, 1024> uchar_buffer(size);
     CFStringGetCharacters(cf_str, CFRangeMake(0, size),
                           reinterpret_cast<UniChar*>(uchar_buffer.data()));
-    impl_ = StringImpl::Create(uchar_buffer.data(), size);
+    impl_ = StringImpl::Create(uchar_buffer);
   }
 }
 
-}  // namespace WTF
+}  // namespace blink

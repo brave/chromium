@@ -35,6 +35,10 @@ mojom("mojo_types") {
           cpp = "::autofill::FormFieldData"
         },
         {
+          mojom = "autofill.mojom.FormFieldData_FillData"
+          cpp = "::autofill::FormFieldData::FillData"
+        },
+        {
           mojom = "autofill.mojom.FormFieldDataPredictions"
           cpp = "::autofill::FormFieldDataPredictions"
         },
@@ -76,6 +80,10 @@ mojom("mojo_types") {
           mojom = "autofill.mojom.PasswordGenerationUIData"
           cpp = "::autofill::password_generation::PasswordGenerationUIData"
         },
+        {
+          mojom = "autofill.mojom.PasswordSuggestionRequest"
+          cpp = "::autofill::PasswordSuggestionRequest"
+        },
       ]
       traits_headers = [ "autofill_types_mojom_traits.h" ]
       traits_sources = [ "autofill_types_mojom_traits.cc" ]
@@ -108,6 +116,7 @@ source_set("unit_tests") {
     "//components/autofill/core/browser:test_support",
     "//components/password_manager/core/common",
     "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/test_support:test_utils",
     "//testing/gtest",
   ]
 }

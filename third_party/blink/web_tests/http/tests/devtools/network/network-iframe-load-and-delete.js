@@ -6,10 +6,12 @@ import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as ProtocolClient from 'devtools/core/protocol_client/protocol_client.js';
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that if iframe is loaded and then deleted, inspector could still show its content. Note that if iframe.src is changed to "javascript:'...some html...'" after loading, then we have different codepath, hence two tests;\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('network');
   await TestRunner.evaluateInPagePromise(`
       var iframe;
@@ -46,7 +48,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
       }
   `);
 
-  ProtocolClient.test.suppressRequestErrors = true;
+  ProtocolClient.InspectorBackend.test.suppressRequestErrors = true;
   NetworkTestRunner.recordNetwork();
   ConsoleTestRunner.addConsoleSniffer(step2);
   TestRunner.evaluateInPage('loadIframe()');
@@ -56,13 +58,13 @@ import {ConsoleTestRunner} from 'console_test_runner';
     var request1 = requests[requests.length - 2];
     TestRunner.addResult(request1.url());
     TestRunner.addResult('resource.type: ' + request1.resourceType());
-    var { content, error, isEncoded } = await request1.requestContent();
+    var { content, error, isEncoded } = await request1.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent);
     TestRunner.addResult('resource.content after requesting content: ' + content);
 
     var request2 = requests[requests.length - 1];
     TestRunner.addResult(request2.url());
     TestRunner.addResult('resource.type: ' + request2.resourceType());
-    var { content, error, isEncoded } = await request2.requestContent();
+    var { content, error, isEncoded } = await request2.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent);
     TestRunner.addResult('resource.content after requesting content: ' + content);
 
     TestRunner.completeTest();

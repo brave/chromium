@@ -5,25 +5,26 @@
 #ifndef UI_GFX_MAC_IO_SURFACE_H_
 #define UI_GFX_MAC_IO_SURFACE_H_
 
-#include <IOKit/IOReturn.h>
 #include <IOSurface/IOSurfaceRef.h>
 #include <mach/mach.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/component_export.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/generic_shared_memory_id.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gfx_export.h"
 
 namespace gfx {
 
 namespace internal {
 
 struct IOSurfaceMachPortTraits {
-  GFX_EXPORT static mach_port_t InvalidValue() { return MACH_PORT_NULL; }
-  GFX_EXPORT static mach_port_t Retain(mach_port_t);
-  GFX_EXPORT static void Release(mach_port_t);
+  COMPONENT_EXPORT(GFX) static mach_port_t InvalidValue() {
+    return MACH_PORT_NULL;
+  }
+  COMPONENT_EXPORT(GFX) static mach_port_t Retain(mach_port_t);
+  COMPONENT_EXPORT(GFX) static void Release(mach_port_t);
 };
 
 struct ScopedInUseIOSurfaceTraits {
@@ -52,7 +53,8 @@ using IOSurfaceId = GenericSharedMemoryId;
 // whereas for non-GL backends (Dawn and Metal) we want the formats to match.
 // TODO(sunnyps): Revisit this when we switch to ANGLE Metal completely since
 // wrapping RGBA_8888 can be implemented with Metal quite easily.
-GFX_EXPORT base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
+COMPONENT_EXPORT(GFX)
+base::apple::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
     const Size& size,
     BufferFormat format,
     bool should_clear = true,
@@ -68,33 +70,37 @@ GFX_EXPORT base::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
 // reference count of the right. On destruction, the reference count is
 // decremented.
 using ScopedRefCountedIOSurfaceMachPort =
-    base::ScopedTypeRef<mach_port_t, internal::IOSurfaceMachPortTraits>;
+    base::apple::ScopedTypeRef<mach_port_t, internal::IOSurfaceMachPortTraits>;
 
 // A scoper for holding a reference to an IOSurface and also incrementing its
 // in-use counter while the scoper exists.
 using ScopedInUseIOSurface =
-    base::ScopedTypeRef<IOSurfaceRef, internal::ScopedInUseIOSurfaceTraits>;
+    base::apple::ScopedTypeRef<IOSurfaceRef,
+                               internal::ScopedInUseIOSurfaceTraits>;
 
 // A scoper for holding a reference to an IOSurface.
-using ScopedIOSurface = base::ScopedCFTypeRef<IOSurfaceRef>;
+using ScopedIOSurface = base::apple::ScopedCFTypeRef<IOSurfaceRef>;
 
 // Return true if there exists a value for IOSurfaceColorSpace or
 // IOSurfaceICCProfile that will make CoreAnimation render using |color_space|.
-GFX_EXPORT bool IOSurfaceCanSetColorSpace(const gfx::ColorSpace& color_space);
+COMPONENT_EXPORT(GFX)
+bool IOSurfaceCanSetColorSpace(const gfx::ColorSpace& color_space);
 
 // Set color space for given IOSurface. IOSurfaceCanSetColorSpace must return
 // true for |color_space| otherwise this does nothing.
-GFX_EXPORT void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
-                                       const gfx::ColorSpace& color_space);
+COMPONENT_EXPORT(GFX)
+void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
+                            const gfx::ColorSpace& color_space);
 
 // Return the expected four character code pixel format for an IOSurface with
 // the specified gfx::BufferFormat.
-GFX_EXPORT uint32_t
-BufferFormatToIOSurfacePixelFormat(gfx::BufferFormat format,
-                                   bool override_rgba_to_bgra = true);
+COMPONENT_EXPORT(GFX)
+uint32_t BufferFormatToIOSurfacePixelFormat(gfx::BufferFormat format,
+                                            bool override_rgba_to_bgra = true);
 
 // Return an IOSurface consuming |io_surface_mach_port|.
-GFX_EXPORT base::ScopedCFTypeRef<IOSurfaceRef> IOSurfaceMachPortToIOSurface(
+COMPONENT_EXPORT(GFX)
+ScopedIOSurface IOSurfaceMachPortToIOSurface(
     ScopedRefCountedIOSurfaceMachPort io_surface_mach_port);
 
 }  // namespace gfx

@@ -19,14 +19,12 @@ web tests and are located at
 Tests that should work across browsers go there. Other directories are for
 Chrome-specific tests only.
 
-*** promo
-Consider running WPTs with [`wptrunner`](web_platform_tests_wptrunner.md), the
-harness developed by the WPT project that Chromium now supports.
-***
-
 Note: if you are looking for a guide for the Web Platform Test, you should read
 ["Web platform tests"](./web_platform_tests.md) (WPT). This document does not
 cover WPT specific features/behaviors.
+
+Note: if you are looking for a guide for running the Web Platform Tests with
+Chrome, Chrome Android or WebView, you should read ["Running Web Platform Tests with run_wpt_tests.py"](./run_web_platform_tests.md).
 
 [TOC]
 
@@ -96,8 +94,7 @@ covered by the smoke tests.
 ***
 
 *** promo
-Similar to Fuchsia's case, the tests listed in [Mac.txt]
-(../../third_party/blink/web_tests/TestLists/Mac.txt)
+Similar to Fuchsia's case, the tests listed in [MacOld.txt](../../third_party/blink/web_tests/TestLists/MacOld.txt)
 are run on older mac version bots. By doing this we reduced the resources needed to run
 the tests. This relies on the fact that the majority of web tests will behavior similarly on
 different mac versions.
@@ -254,7 +251,7 @@ The baselines in this directory override the fallback baselines.
 *** note
 [BUILD.gn](../../BUILD.gn) assumes flag-specific builders always runs on linux bots, so
 flag-specific test expectations and baselines are only downloaded to linux bots.
-If you need run flag-specific builderst-n other platforms, please update
+If you need run flag-specific builders on other platforms, please update
 BUILD.gn to download flag-specific related data to that platform.
 ***
 
@@ -597,10 +594,10 @@ machine?
 
 * Do one of the following:
     * Option A) Run from the `chromium/src` folder:
-      `third_party/blink/tools/run_web_tests.py --additional-driver-flag='--remote-debugging-port=9222' --additional-driver-flag='--debug-devtools' --timeout-ms=6000000`
+      `third_party/blink/tools/run_web_tests.py --additional-driver-flag='--remote-debugging-port=9222' --additional-driver-flag='--remote-allow-origins=*' --additional-driver-flag='--debug-devtools' --timeout-ms=6000000`
     * Option B) If you need to debug an http/tests/inspector test, start httpd
       as described above. Then, run content_shell:
-      `out/Default/content_shell --remote-debugging-port=9222 --additional-driver-flag='--debug-devtools' --run-web-tests http://127.0.0.1:8000/path/to/test.html`
+      `out/Default/content_shell --remote-debugging-port=9222 --additional-driver-flag='--remote-allow-origins=*' --additional-driver-flag='--debug-devtools' --run-web-tests http://127.0.0.1:8000/path/to/test.html`
 * Open `http://localhost:9222` in a stable/beta/canary Chrome, click the single
   link to open the devtools with the test loaded.
 * In the loaded devtools, set any required breakpoints and execute `test()` in
@@ -614,6 +611,27 @@ NOTE: If the test is an html file, this means it's a legacy test so you need to 
   function test() {
     /* TEST CODE */
   }
+  ```
+
+### Reproducing flaky inspector protocol tests
+
+https://crrev.com/c/5318502 implemented logging for inspector-protocol tests.
+With this CL for each test in stderr you should see Chrome DevTools Protocol
+messages that the test and the browser exchanged.
+
+You can use this log to reproduce the failure or timeout locally.
+
+* Prepare a log file and ensure each line contains one protocol message
+in the JSON format. Strip any prefixes or non-protocol messages from the
+original log.
+* Make sure your local test file version matches the version that produced
+the log file.
+* Run the test using the log file:
+
+  ```sh
+  third_party/blink/tools/run_web_tests.py -t Release \
+   --additional-driver-flag="--inspector-protocol-log=/path/to/log.txt" \
+   http/tests/inspector-protocol/network/url-fragment.js
   ```
 
 ## Bisecting Regressions
@@ -665,3 +683,8 @@ for issues related to Blink tools, include the web test runner.
 * If QuickTime is not installed, the plugin tests
   `fast/dom/object-embed-plugin-scripting.html` and
   `plugins/embed-attributes-setting.html` are expected to fail.
+* Fluent scrollbar rendering has some tweaks to geometry and behavior that are
+  just for web tests. These are described in the
+  [Fluent Scrollbars Visual Spec](https://bit.ly/fluent-scrollbars-visual-spec)
+  under "Special rendering - Web tests". We'd like to remove them eventually
+  ([crbug.com/382298324](https://crbug.com/382298324)).

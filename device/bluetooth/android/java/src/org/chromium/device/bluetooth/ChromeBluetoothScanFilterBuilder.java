@@ -7,8 +7,10 @@ package org.chromium.device.bluetooth;
 import android.bluetooth.le.ScanFilter;
 import android.os.ParcelUuid;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+
+import org.chromium.build.annotations.NullMarked;
 
 /**
  * Exposes android.bluetooth.le.ScanFilter.Builder as necessary for C++.
@@ -16,12 +18,11 @@ import org.chromium.base.annotations.JNINamespace;
  * BluetoothAdapterAndroid::CreateAndroidFilter()
  */
 @JNINamespace("device")
+@NullMarked
 final class ChromeBluetoothScanFilterBuilder {
-    private ScanFilter.Builder mBuilder;
+    private final ScanFilter.Builder mBuilder;
 
-    /**
-     * Constructs a ChromeBluetoothScanFilter
-     */
+    /** Constructs a ChromeBluetoothScanFilter */
     public ChromeBluetoothScanFilterBuilder() {
         mBuilder = new ScanFilter.Builder();
     }

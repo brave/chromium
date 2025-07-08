@@ -4,6 +4,8 @@
 
 #include "ios/web/session/session_certificate.h"
 
+#include <string_view>
+
 #include "ios/web/public/session/proto/session.pb.h"
 #include "ios/web/session/hash_util.h"
 #include "net/cert/x509_util.h"
@@ -73,10 +75,8 @@ SessionCertificate::SessionCertificate(
 
 SessionCertificate::SessionCertificate(const proto::CertificateStorage& storage)
     : host_(storage.host()), status_(storage.status()) {
-  const std::string& cert_string = storage.certificate();
   certificate_ = net::X509Certificate::CreateFromBytes(
-      base::make_span(reinterpret_cast<const uint8_t*>(cert_string.data()),
-                      cert_string.size()));
+      base::as_byte_span(storage.certificate()));
 }
 
 SessionCertificate::SessionCertificate(SessionCertificate&&) = default;
@@ -91,7 +91,7 @@ SessionCertificate::~SessionCertificate() = default;
 
 void SessionCertificate::SerializeToProto(
     proto::CertificateStorage& storage) const {
-  const base::StringPiece cert_string =
+  const std::string_view cert_string =
       net::x509_util::CryptoBufferAsStringPiece(certificate_->cert_buffer());
 
   storage.set_certificate(cert_string.data(), cert_string.size());

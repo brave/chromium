@@ -10,17 +10,13 @@
 
 #include "base/memory/weak_ptr.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace ui {
 
 struct BubbleCloser::ObjCStorage {
   id __strong event_tap;
 };
 
-BubbleCloser::BubbleCloser(NSWindow* window,
+BubbleCloser::BubbleCloser(gfx::NativeWindow window,
                            base::RepeatingClosure on_click_outside)
     : on_click_outside_(std::move(on_click_outside)),
       objc_storage_(std::make_unique<ObjCStorage>()) {
@@ -40,15 +36,16 @@ BubbleCloser::BubbleCloser(NSWindow* window,
     // opens a calendar picker window with NSPopUpMenuWindowLevel, and a
     // date selection closes the picker window, but it should not close
     // the bubble.
-    if (event_window.level > window.level) {
+    if (event_window.level > window.GetNativeNSWindow().level) {
       return event;
     }
 
     // If the event is in |window|'s hierarchy, do not close the bubble.
     NSWindow* ancestor = event_window;
     while (ancestor) {
-      if (ancestor == window)
+      if (ancestor == window.GetNativeNSWindow()) {
         return event;
+      }
       ancestor = ancestor.parentWindow;
     }
 

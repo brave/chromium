@@ -4,6 +4,9 @@
 
 #include "chrome/common/google_url_loader_throttle.h"
 
+#include <optional>
+#include <vector>
+
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -16,17 +19,17 @@
 #include "components/safe_search_api/safe_search_util.h"
 #include "net/base/url_util.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/public/mojom/x_frame_options.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension_urls.h"
 #endif
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-#include "chrome/common/bound_session_request_throttled_listener.h"
-#include "components/signin/public/base/signin_switches.h"
+#include "chrome/common/bound_session_request_throttled_handler.h"
 #include "net/cookies/cookie_util.h"
 #endif
 
@@ -35,6 +38,81 @@ namespace {
 const char kCCTClientDataHeader[] = "X-CCT-Client-Data";
 #endif
 
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+using RequestBoundSessionStatus =
+    GoogleURLLoaderThrottle::RequestBoundSessionStatus;
+
+RequestBoundSessionStatus GetRequestSingleBoundSessionStatus(
+    const GURL& request_url,
+    chrome::mojom::BoundSessionThrottlerParams* throttler_params) {
+  CHECK(throttler_params);
+  if (throttler_params->domain.empty()) {
+    return RequestBoundSessionStatus::kNotCovered;
+  }
+
+  // Check if the request requires the short lived cookie.
+  if (!request_url.DomainIs(
+          net::cookie_util::CookieDomainAsHost(throttler_params->domain))) {
+    return RequestBoundSessionStatus::kNotCovered;
+  }
+
+  if (!throttler_params->path.empty() &&
+      !net::cookie_util::IsOnPath(throttler_params->path, request_url.path())) {
+    return RequestBoundSessionStatus::kNotCovered;
+  }
+
+  // Short lived cookie is fresh.
+  if (throttler_params->cookie_expiry_date > base::Time::Now()) {
+    return RequestBoundSessionStatus::kCoveredWithFreshCookie;
+  }
+
+  // Short lived cookie has expired.
+  return RequestBoundSessionStatus::kCoveredWithMissingCookie;
+}
+
+bool IsCoveredRequestBoundSessionStatus(RequestBoundSessionStatus status) {
+  switch (status) {
+    case RequestBoundSessionStatus::kNotCovered:
+      return false;
+    case RequestBoundSessionStatus::kCoveredWithFreshCookie:
+    case RequestBoundSessionStatus::kCoveredWithMissingCookie:
+      return true;
+  }
+}
+
+void RecordBoundSessionStatusMetrics(bool was_deferred,
+                                     bool is_main_frame_navigation,
+                                     bool is_request_succeeded) {
+  UMA_HISTOGRAM_BOOLEAN(
+      "Signin.BoundSessionCredentials.CoveredRequestWasDeferred", was_deferred);
+  if (is_request_succeeded) {
+    UMA_HISTOGRAM_BOOLEAN(
+        "Signin.BoundSessionCredentials.CoveredRequestWasDeferred.Success",
+        was_deferred);
+  } else {
+    UMA_HISTOGRAM_BOOLEAN(
+        "Signin.BoundSessionCredentials.CoveredRequestWasDeferred.Failure",
+        was_deferred);
+  }
+
+  if (is_main_frame_navigation) {
+    UMA_HISTOGRAM_BOOLEAN(
+        "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred",
+        was_deferred);
+    if (is_request_succeeded) {
+      UMA_HISTOGRAM_BOOLEAN(
+          "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred."
+          "Success",
+          was_deferred);
+    } else {
+      UMA_HISTOGRAM_BOOLEAN(
+          "Signin.BoundSessionCredentials.CoveredNavigationRequestWasDeferred."
+          "Failure",
+          was_deferred);
+    }
+  }
+}
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 }  // namespace
 
 // static
@@ -54,8 +132,8 @@ GoogleURLLoaderThrottle::GoogleURLLoaderThrottle(
     const std::string& client_data_header,
 #endif
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-    std::unique_ptr<BoundSessionRequestThrottledListener>
-        bound_session_request_throttled_listener,
+    std::unique_ptr<BoundSessionRequestThrottledHandler>
+        bound_session_request_throttled_handler,
 #endif
     chrome::mojom::DynamicParamsPtr dynamic_params)
     :
@@ -63,13 +141,30 @@ GoogleURLLoaderThrottle::GoogleURLLoaderThrottle(
       client_data_header_(client_data_header),
 #endif
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-      bound_session_request_throttled_listener_(
-          std::move(bound_session_request_throttled_listener)),
+      bound_session_request_throttled_handler_(
+          std::move(bound_session_request_throttled_handler)),
 #endif
       dynamic_params_(std::move(dynamic_params)) {
 }
 
 GoogleURLLoaderThrottle::~GoogleURLLoaderThrottle() = default;
+
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+// static
+RequestBoundSessionStatus GoogleURLLoaderThrottle::GetRequestBoundSessionStatus(
+    const GURL& request_url,
+    const std::vector<chrome::mojom::BoundSessionThrottlerParamsPtr>&
+        bound_session_throttler_params) {
+  RequestBoundSessionStatus status = RequestBoundSessionStatus::kNotCovered;
+
+  for (const auto& throttler_params : bound_session_throttler_params) {
+    status = std::max(status, GetRequestSingleBoundSessionStatus(
+                                  request_url, throttler_params.get()));
+  }
+
+  return status;
+}
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 
 void GoogleURLLoaderThrottle::DetachFromCurrentSequence() {}
 
@@ -111,16 +206,34 @@ void GoogleURLLoaderThrottle::WillStartRequest(
   }
 #endif
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  if (switches::IsBoundSessionCredentialsEnabled() && request->SendsCookies() &&
-      ShouldDeferRequestForBoundSession(request->url)) {
-    CHECK(bound_session_request_throttled_listener_);
-    *defer = true;
-    CHECK(!bound_session_request_throttled_start_time_.has_value());
-    bound_session_request_throttled_start_time_ = base::TimeTicks::Now();
-    bound_session_request_throttled_listener_->OnRequestBlockedOnCookie(
-        base::BindOnce(
-            &GoogleURLLoaderThrottle::OnDeferRequestForBoundSessionCompleted,
-            weak_factory_.GetWeakPtr()));
+  // `network::mojom::RequestDestination::kDocument` means that this is a
+  // navigation request.
+  is_main_frame_navigation_ =
+      request->is_outermost_main_frame &&
+      request->destination == network::mojom::RequestDestination::kDocument;
+  // TODO(crbug.com/372169462): `request->SendsCookies()` cannot be used for now
+  // because it excludes `kSameOrigin` requests.
+  sends_cookies_ =
+      request->credentials_mode == network::mojom::CredentialsMode::kInclude ||
+      request->credentials_mode == network::mojom::CredentialsMode::kSameOrigin;
+  if (sends_cookies_) {
+    RequestBoundSessionStatus status = GetRequestBoundSessionStatus(
+        request->url, dynamic_params_->bound_session_throttler_params);
+    if (IsCoveredRequestBoundSessionStatus(status)) {
+      is_covered_by_bound_session_ = true;
+    }
+    if (status == RequestBoundSessionStatus::kCoveredWithMissingCookie) {
+      CHECK(bound_session_request_throttled_handler_);
+      *defer = true;
+      is_deferred_for_bound_session_ = true;
+      CHECK(!bound_session_request_throttled_start_time_.has_value());
+      bound_session_request_throttled_start_time_ = base::TimeTicks::Now();
+      bound_session_request_throttled_handler_->HandleRequestBlockedOnCookie(
+          request->url,
+          base::BindOnce(
+              &GoogleURLLoaderThrottle::OnDeferRequestForBoundSessionCompleted,
+              weak_factory_.GetWeakPtr()));
+    }
   }
 #endif
 }
@@ -164,28 +277,50 @@ void GoogleURLLoaderThrottle::WillRedirectRequest(
   }
 #endif
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  if (switches::IsBoundSessionCredentialsEnabled() &&
-      ShouldDeferRequestForBoundSession(redirect_info->new_url)) {
-    CHECK(bound_session_request_throttled_listener_);
-    *defer = true;
-    CHECK(!bound_session_request_throttled_start_time_.has_value());
-    bound_session_request_throttled_start_time_ = base::TimeTicks::Now();
-    bound_session_request_throttled_listener_->OnRequestBlockedOnCookie(
-        base::BindOnce(
-            &GoogleURLLoaderThrottle::OnDeferRequestForBoundSessionCompleted,
-            weak_factory_.GetWeakPtr()));
+  if (sends_cookies_) {
+    RequestBoundSessionStatus status = GetRequestBoundSessionStatus(
+        redirect_info->new_url,
+        dynamic_params_->bound_session_throttler_params);
+    if (IsCoveredRequestBoundSessionStatus(status)) {
+      is_covered_by_bound_session_ = true;
+    }
+    if (status == RequestBoundSessionStatus::kCoveredWithMissingCookie) {
+      CHECK(bound_session_request_throttled_handler_);
+      *defer = true;
+      is_deferred_for_bound_session_ = true;
+      CHECK(!bound_session_request_throttled_start_time_.has_value());
+      bound_session_request_throttled_start_time_ = base::TimeTicks::Now();
+      bound_session_request_throttled_handler_->HandleRequestBlockedOnCookie(
+          redirect_info->new_url,
+          base::BindOnce(
+              &GoogleURLLoaderThrottle::OnDeferRequestForBoundSessionCompleted,
+              weak_factory_.GetWeakPtr()));
+    }
   }
 #endif
 }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
 void GoogleURLLoaderThrottle::WillProcessResponse(
     const GURL& response_url,
     network::mojom::URLResponseHead* response_head,
     bool* defer) {
-  // Built-in additional protection for the chrome web store origin by ensuring
-  // that the X-Frame-Options protection mechanism is set to either DENY or
-  // SAMEORIGIN.
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  if (is_covered_by_bound_session_) {
+    RecordBoundSessionStatusMetrics(is_deferred_for_bound_session_,
+                                    is_main_frame_navigation_,
+                                    /*is_request_succeeded=*/true);
+  }
+  if (deferred_request_resume_trigger_) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "Signin.BoundSessionCredentials.DeferredRequestUnblockTrigger.Success",
+        deferred_request_resume_trigger_.value());
+  }
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Built-in additional protection for the chrome web store origin by
+  // ensuring that the X-Frame-Options protection mechanism is set to either
+  // DENY or SAMEORIGIN.
   if (response_url.SchemeIsHTTPOrHTTPS() &&
       extension_urls::IsWebstoreDomain(response_url)) {
     // TODO(mkwst): Consider shifting this to a NavigationThrottle rather than
@@ -200,67 +335,59 @@ void GoogleURLLoaderThrottle::WillProcessResponse(
           network::mojom::XFrameOptionsValue::kSameOrigin;
     }
   }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
-#endif
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-bool GoogleURLLoaderThrottle::ShouldDeferRequestForBoundSession(
-    const GURL& request_url) const {
-  CHECK(switches::IsBoundSessionCredentialsEnabled());
-  const chrome::mojom::BoundSessionParamsPtr& bound_session_params =
-      dynamic_params_->bound_session_params;
-
-  // No bound session.
-  if (bound_session_params.is_null() || bound_session_params->domain.empty()) {
-    return false;
+void GoogleURLLoaderThrottle::WillOnCompleteWithError(
+    const network::URLLoaderCompletionStatus& status) {
+  if (is_covered_by_bound_session_) {
+    RecordBoundSessionStatusMetrics(is_deferred_for_bound_session_,
+                                    is_main_frame_navigation_,
+                                    /*is_request_succeeded=*/false);
   }
-
-  // Short lived Cookie fresh.
-  if (bound_session_params->cookie_expiry_date > base::Time::Now()) {
-    return false;
+  if (deferred_request_resume_trigger_) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "Signin.BoundSessionCredentials.DeferredRequestUnblockTrigger.Failure",
+        *deferred_request_resume_trigger_);
   }
-
-  // Short lived Cookie expired.
-  // Check if the request requires the short lived cookie.
-
-  if (!request_url.DomainIs(bound_session_params->domain)) {
-    return false;
-  }
-
-  if (!bound_session_params->path.empty() &&
-      !net::cookie_util::IsOnPath(bound_session_params->path,
-                                  request_url.path())) {
-    return false;
-  }
-
-  return true;
 }
 
 void GoogleURLLoaderThrottle::OnDeferRequestForBoundSessionCompleted(
-    BoundSessionRequestThrottledListener::UnblockAction unblock_action) {
+    BoundSessionRequestThrottledHandler::UnblockAction unblock_action,
+    chrome::mojom::ResumeBlockedRequestsTrigger resume_trigger) {
   // Use `PostTask` to avoid resuming the request before it has been deferred
   // then the request will hang. This can happen if
-  // `BoundSessionRequestThrottledListener::OnRequestBlockedOnCookie()` calls
-  // the callback synchronously.
+  // `BoundSessionRequestThrottledHandler::HandleRequestBlockedOnCookie()`
+  // calls the callback synchronously.
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&GoogleURLLoaderThrottle::ResumeOrCancelRequest,
-                                weak_factory_.GetWeakPtr(), unblock_action));
+                                weak_factory_.GetWeakPtr(), unblock_action,
+                                resume_trigger));
 }
 
 void GoogleURLLoaderThrottle::ResumeOrCancelRequest(
-    BoundSessionRequestThrottledListener::UnblockAction unblock_action) {
+    BoundSessionRequestThrottledHandler::UnblockAction unblock_action,
+    chrome::mojom::ResumeBlockedRequestsTrigger resume_trigger) {
+  CHECK(is_deferred_for_bound_session_);
   CHECK(bound_session_request_throttled_start_time_.has_value());
   base::TimeDelta duration =
       base::TimeTicks::Now() - *bound_session_request_throttled_start_time_;
-  UMA_HISTOGRAM_MEDIUM_TIMES(
+  DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
       "Signin.BoundSessionCredentials.DeferredRequestDelay", duration);
-  bound_session_request_throttled_start_time_ = absl::nullopt;
+  if (is_main_frame_navigation_) {
+    DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
+        "Signin.BoundSessionCredentials.DeferredNavigationRequestDelay",
+        duration);
+  }
+  bound_session_request_throttled_start_time_ = std::nullopt;
+  deferred_request_resume_trigger_ = resume_trigger;
 
   switch (unblock_action) {
-    case BoundSessionRequestThrottledListener::UnblockAction::kResume:
+    case BoundSessionRequestThrottledHandler::UnblockAction::kResume:
       delegate_->Resume();
       break;
-    case BoundSessionRequestThrottledListener::UnblockAction::kCancel:
+    case BoundSessionRequestThrottledHandler::UnblockAction::kCancel:
       delegate_->CancelWithError(net::ERR_ABORTED);
       break;
   }

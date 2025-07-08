@@ -8,6 +8,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/parse_number.h"
 #include "net/base/url_util.h"
@@ -29,8 +30,8 @@ std::string AddBracketsIfIPv6(const IPAddress& ip_address) {
 // static
 std::unique_ptr<SchemeHostPortMatcherRule>
 SchemeHostPortMatcherRule::FromUntrimmedRawString(
-    base::StringPiece raw_untrimmed) {
-  base::StringPiece raw =
+    std::string_view raw_untrimmed) {
+  std::string_view raw =
       base::TrimWhitespaceASCII(raw_untrimmed, base::TRIM_ALL);
 
   // Extract any scheme-restriction.
@@ -77,9 +78,8 @@ SchemeHostPortMatcherRule::FromUntrimmedRawString(
   std::string::size_type pos_colon = raw.rfind(':');
   port = -1;
   if (pos_colon != std::string::npos) {
-    if (!ParseInt32(
-            base::MakeStringPiece(raw.begin() + pos_colon + 1, raw.end()),
-            ParseIntFormat::NON_NEGATIVE, &port) ||
+    if (!ParseInt32(raw.substr(pos_colon + 1), ParseIntFormat::NON_NEGATIVE,
+                    &port) ||
         port > 0xFFFF) {
       return nullptr;  // Port was invalid.
     }
@@ -89,7 +89,7 @@ SchemeHostPortMatcherRule::FromUntrimmedRawString(
   // Special-case hostnames that begin with a period.
   // For example, we remap ".google.com" --> "*.google.com".
   std::string hostname_pattern;
-  if (base::StartsWith(raw, ".", base::CompareCase::SENSITIVE)) {
+  if (raw.starts_with(".")) {
     hostname_pattern = base::StrCat({"*", raw});
   } else {
     hostname_pattern = std::string(raw);
@@ -102,6 +102,12 @@ SchemeHostPortMatcherRule::FromUntrimmedRawString(
 bool SchemeHostPortMatcherRule::IsHostnamePatternRule() const {
   return false;
 }
+
+#if !BUILDFLAG(CRONET_BUILD)
+size_t SchemeHostPortMatcherRule::EstimateMemoryUsage() const {
+  return 0;
+}
+#endif  // !BUILDFLAG(CRONET_BUILD)
 
 SchemeHostPortMatcherHostnamePatternRule::
     SchemeHostPortMatcherHostnamePatternRule(
@@ -150,7 +156,7 @@ bool SchemeHostPortMatcherHostnamePatternRule::IsHostnamePatternRule() const {
 
 std::unique_ptr<SchemeHostPortMatcherHostnamePatternRule>
 SchemeHostPortMatcherHostnamePatternRule::GenerateSuffixMatchingRule() const {
-  if (!base::StartsWith(hostname_pattern_, "*", base::CompareCase::SENSITIVE)) {
+  if (!hostname_pattern_.starts_with("*")) {
     return std::make_unique<SchemeHostPortMatcherHostnamePatternRule>(
         optional_scheme_, "*" + hostname_pattern_, optional_port_);
   }
@@ -158,6 +164,13 @@ SchemeHostPortMatcherHostnamePatternRule::GenerateSuffixMatchingRule() const {
   return std::make_unique<SchemeHostPortMatcherHostnamePatternRule>(
       optional_scheme_, hostname_pattern_, optional_port_);
 }
+
+#if !BUILDFLAG(CRONET_BUILD)
+size_t SchemeHostPortMatcherHostnamePatternRule::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(optional_scheme_) +
+         base::trace_event::EstimateMemoryUsage(hostname_pattern_);
+}
+#endif  // !BUILDFLAG(CRONET_BUILD)
 
 SchemeHostPortMatcherIPHostRule::SchemeHostPortMatcherIPHostRule(
     const std::string& optional_scheme,
@@ -195,6 +208,13 @@ std::string SchemeHostPortMatcherIPHostRule::ToString() const {
   return str;
 }
 
+#if !BUILDFLAG(CRONET_BUILD)
+size_t SchemeHostPortMatcherIPHostRule::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(optional_scheme_) +
+         base::trace_event::EstimateMemoryUsage(ip_host_);
+}
+#endif  // !BUILDFLAG(CRONET_BUILD)
+
 SchemeHostPortMatcherIPBlockRule::SchemeHostPortMatcherIPBlockRule(
     const std::string& description,
     const std::string& optional_scheme,
@@ -229,5 +249,13 @@ SchemeHostPortMatcherResult SchemeHostPortMatcherIPBlockRule::Evaluate(
 std::string SchemeHostPortMatcherIPBlockRule::ToString() const {
   return description_;
 }
+
+#if !BUILDFLAG(CRONET_BUILD)
+size_t SchemeHostPortMatcherIPBlockRule::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(description_) +
+         base::trace_event::EstimateMemoryUsage(optional_scheme_) +
+         base::trace_event::EstimateMemoryUsage(ip_prefix_);
+}
+#endif  // !BUILDFLAG(CRONET_BUILD)
 
 }  // namespace net

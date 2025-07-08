@@ -9,6 +9,9 @@
 #include <memory>
 #include <string>
 #include <tuple>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "base/cancelable_callback.h"
 #include "base/containers/flat_set.h"
@@ -20,14 +23,27 @@
 #include "base/scoped_observation_traits.h"
 #include "base/sequence_checker.h"
 #include "base/supports_user_data.h"
-#include "base/uuid.h"
 #include "components/commerce/core/account_checker.h"
+#include "components/commerce/core/commerce_info_cache.h"
+#include "components/commerce/core/commerce_types.h"
+#include "components/commerce/core/compare/cluster_manager.h"
+#include "components/commerce/core/product_specifications/product_specifications_cache.h"
+#include "components/commerce/core/product_specifications/product_specifications_service.h"
+#include "components/commerce/core/product_specifications/product_specifications_set.h"
+#include "components/commerce/core/proto/cart_db_content.pb.h"
 #include "components/commerce/core/proto/commerce_subscription_db_content.pb.h"
+#include "components/commerce/core/proto/discount_infos_db_content.pb.h"
+#include "components/commerce/core/proto/discounts_db_content.pb.h"
+#include "components/commerce/core/proto/parcel_tracking_db_content.pb.h"
 #include "components/commerce/core/subscriptions/commerce_subscription.h"
+#include "components/commerce/core/web_extractor.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/optimization_guide/core/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decision.h"
 #include "components/unified_consent/consent_throttle.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
 class GURL;
 class PrefService;
@@ -57,6 +73,10 @@ namespace power_bookmarks {
 class PowerBookmarkService;
 }  // namespace power_bookmarks
 
+namespace sessions {
+class TabRestoreService;
+}  // namespace sessions
+
 namespace signin {
 class IdentityManager;
 }  // namespace signin
@@ -67,28 +87,12 @@ class SyncService;
 
 namespace commerce {
 
-// Open graph keys.
-extern const char kOgImage[];
-extern const char kOgPriceAmount[];
-extern const char kOgPriceCurrency[];
-extern const char kOgProductLink[];
-extern const char kOgTitle[];
-extern const char kOgType[];
-
-// Specific open graph values we're interested in.
-extern const char kOgTypeOgProduct[];
-extern const char kOgTypeProductItem[];
-
-// The conversion multiplier to go from standard currency units to
-// micro-currency units.
-extern const long kToMicroCurrency;
-
 extern const char kImageAvailabilityHistogramName[];
-extern const char kProductInfoJavascriptTime[];
+extern const char kProductInfoLocalExtractionTime[];
 
 // The amount of time to wait after the last "stopped loading" event to run the
 // on-page extraction for product info.
-extern const uint64_t kProductInfoJavascriptDelayMs;
+extern const uint64_t kProductInfoLocalExtractionDelayMs;
 
 // The availability of the product image for an offer. This needs to be kept in
 // sync with the ProductImageAvailability enum in enums.xml.
@@ -114,6 +118,9 @@ class ScheduledMetricsManager;
 }  // namespace metrics
 
 class BookmarkUpdateManager;
+class DiscountInfosStorage;
+class ProductSpecificationsServerProxy;
+class ProductSpecificationsService;
 class ShoppingPowerBookmarkDataProvider;
 class ShoppingBookmarkModelObserver;
 class SubscriptionsManager;
@@ -122,119 +129,81 @@ class WebWrapper;
 enum class SubscriptionType;
 struct CommerceSubscription;
 
-// Information returned by the product info APIs.
-struct ProductInfo {
- public:
-  ProductInfo();
-  ProductInfo(const ProductInfo&);
-  ProductInfo& operator=(const ProductInfo&);
-  ~ProductInfo();
-
-  std::string title;
-  std::string product_cluster_title;
-  GURL image_url;
-  absl::optional<uint64_t> product_cluster_id;
-  absl::optional<uint64_t> offer_id;
-  std::string currency_code;
-  int64_t amount_micros{0};
-  absl::optional<int64_t> previous_amount_micros;
-  std::string country_code;
-
- private:
-  friend class ShoppingService;
-
-  // This is used to track whether the server provided an image with the rest
-  // of the product info. This value being |true| does not necessarily mean an
-  // image is available in the ProductInfo struct (as it is flag gated) and is
-  // primarily used for recording metrics.
-  bool server_image_available{false};
-};
-
-// A struct that keeps track of cached product info related data about a url.
-struct ProductInfoCacheEntry {
- public:
-  ProductInfoCacheEntry();
-  ProductInfoCacheEntry(const ProductInfoCacheEntry&) = delete;
-  ProductInfoCacheEntry& operator=(const ProductInfoCacheEntry&) = delete;
-  ~ProductInfoCacheEntry();
-
-  // The number of pages that have the URL open.
-  size_t pages_with_url_open{0};
-
-  // Whether the fallback javascript needs to run for page.
-  bool needs_javascript_run{false};
-
-  // The time that the javascript execution started. This is primarily used for
-  // metrics.
-  base::Time javascript_execution_start_time;
-
-  std::unique_ptr<base::CancelableOnceClosure> run_javascript_task;
-
-  // The product info associated with the URL.
-  std::unique_ptr<ProductInfo> product_info;
-};
-
-// Information returned by the merchant info APIs.
-struct MerchantInfo {
-  MerchantInfo();
-  MerchantInfo(const MerchantInfo&);
-  MerchantInfo& operator=(const MerchantInfo&);
-  MerchantInfo(MerchantInfo&&);
-  MerchantInfo& operator=(MerchantInfo&&) = default;
-  ~MerchantInfo();
-
-  float star_rating;
-  uint32_t count_rating;
-  GURL details_page_url;
-  bool has_return_policy;
-  float non_personalized_familiarity_score;
-  bool contains_sensitive_content;
-  bool proactive_message_disabled;
-};
-
-// Position of current price with respect to the typical price range.
-enum class PriceBucket {
+// Types of shopping pages from backend.
+enum class ShoppingPageType {
   kUnknown = 0,
-  kLowPrice = 1,
-  kTypicalPrice = 2,
-  kHighPrice = 3,
-  kMaxValue = kHighPrice,
+  kShoppingPage = 1,
+  kMerchantDomainPage = 2,
+  kMultiProductPage = 3,
+  kSingleProductPage = 4,
+  kProductReviewPage = 5,
+  kProductComparisonPage = 6,
+  kProductTopNPage = 7,
+  kSoldOutPage = 8,
+  kBuyingGuidePage = 9,
+  kMaxValue = kBuyingGuidePage,
 };
 
-// Information returned by the price insights APIs.
-struct PriceInsightsInfo {
-  PriceInsightsInfo();
-  PriceInsightsInfo(const PriceInsightsInfo&);
-  PriceInsightsInfo& operator=(const PriceInsightsInfo&);
-  ~PriceInsightsInfo();
-
-  absl::optional<uint64_t> product_cluster_id;
-  std::string currency_code;
-  absl::optional<int64_t> typical_low_price_micros;
-  absl::optional<int64_t> typical_high_price_micros;
-  absl::optional<std::string> catalog_attributes;
-  std::vector<std::tuple<std::string, int64_t>> catalog_history_prices;
-  absl::optional<GURL> jackpot_url;
-  PriceBucket price_bucket;
-  bool has_multiple_catalogs;
-};
-
-// Callbacks for querying a single URL or observing information from all
-// navigated urls.
-using ProductInfoCallback =
-    base::OnceCallback<void(const GURL&, const absl::optional<ProductInfo>&)>;
-using MerchantInfoCallback =
-    base::OnceCallback<void(const GURL&, absl::optional<MerchantInfo>)>;
-using PriceInsightsInfoCallback =
-    base::OnceCallback<void(const GURL&,
-                            const absl::optional<PriceInsightsInfo>&)>;
+using DiscountsPair = std::pair<GURL, std::vector<DiscountInfo>>;
+using DiscountsOptGuideCallback = base::OnceCallback<void(DiscountsPair)>;
+using RepeatingProductInfoCallback =
+    base::RepeatingCallback<void(const GURL&,
+                                 const std::optional<const ProductInfo>&)>;
 
 // A callback for getting updated ProductInfo for a bookmark. This provides the
 // bookmark ID being updated, the URL, and the product info.
 using BookmarkProductInfoUpdatedCallback = base::RepeatingCallback<
-    void(const base::Uuid&, const GURL&, absl::optional<ProductInfo>)>;
+    void(const int64_t, const GURL&, std::optional<ProductInfo>)>;
 
-class ShoppingService : public KeyedService, public base::SupportsUserData {
+using UrlProductIdentifierTuple =
+    std::tuple<const GURL, const std::optional<const uint64_t>>;
+
+using UrlProductIdentifierTupleCallback =
+    base::OnceCallback<void(const UrlProductIdentifierTuple&)>;
+
+// Under Desktop browser test or interactive ui test, use
+// ShoppingServiceFactory::SetTestingFactory to create a
+// MockShoppingService for testing. The test should use
+// BrowserContextDependencyManager to register a callback to create the
+// MockShoppingService when the BrowserContext is created.
+//
+// Example of an InteractiveBrowserTest setup for using a MockShoppingService:
+//
+// clang-format off
+// #include "components/commerce/core/mock_shopping_service.h"
+// #include "components/keyed_service/content/browser_context_dependency_manager.h"
+//
+// class MyTest : public InteractiveBrowserTest {
+//   void SetUpInProcessBrowserTestFixture() override {
+//     create_services_subscription_ =
+//         BrowserContextDependencyManager::GetInstance()
+//             ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
+//                 &MyTest::OnWillCreateBrowserContextServices,
+//                 weak_ptr_factory_.GetWeakPtr()));
+//   }
+//
+//   void OnWillCreateBrowserContextServices(content::BrowserContext* context) {
+//     commerce::ShoppingServiceFactory::GetInstance()->SetTestingFactory(
+//         context, base::BindRepeating([](content::BrowserContext* context) {
+//           return commerce::MockShoppingService::Build();
+//         }));
+//   }
+//
+//  private:
+//   base::CallbackListSubscription create_services_subscription_;
+//   base::WeakPtrFactory<MyTest> weak_ptr_factory_{this};
+// };
+//
+// To get the MockShoppingService:
+// auto* mock_shopping_service = static_cast<commerce::MockShoppingService*>(
+//     commerce::ShoppingServiceFactory::GetForBrowserContext(
+//         browser()->profile()));
+// clang-format on
+
+class ShoppingService : public KeyedService,
+                        public base::SupportsUserData,
+                        public history::HistoryServiceObserver,
+                        public ProductSpecificationsSet::Observer {
  public:
   ShoppingService(
       const std::string& country_on_startup,
@@ -248,11 +217,25 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
       SessionProtoStorage<
           commerce_subscription_db::CommerceSubscriptionContentProto>*
           subscription_proto_db,
-      power_bookmarks::PowerBookmarkService* power_bookmark_service);
+      power_bookmarks::PowerBookmarkService* power_bookmark_service,
+      ProductSpecificationsService* product_specifications_service,
+      SessionProtoStorage<discounts_db::DiscountsContentProto>*
+          discounts_proto_db,
+      SessionProtoStorage<cart_db::ChromeCartContentProto>* cart_proto_db,
+      SessionProtoStorage<discount_infos_db::DiscountInfosContentProto>*
+          discount_infos_db,
+      SessionProtoStorage<parcel_tracking_db::ParcelTrackingContent>*
+          parcel_tracking_proto_db,
+      history::HistoryService* history_service,
+      std::unique_ptr<commerce::WebExtractor> web_extractor,
+      sessions::TabRestoreService* tab_restore_service);
   ~ShoppingService() override;
 
   ShoppingService(const ShoppingService&) = delete;
   ShoppingService& operator=(const ShoppingService&) = delete;
+
+  // Gets an AccountChecker instance to aid in determining feature eligibility.
+  virtual AccountChecker* GetAccountChecker();
 
   // This API retrieves the product information for the provided |url| and
   // passes the payload back to the caller via |callback|. At minimum, this
@@ -261,11 +244,19 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   virtual void GetProductInfoForUrl(const GURL& url,
                                     ProductInfoCallback callback);
 
+  // Attempts to retrieve product info for all of the URLs provided in |urls|.
+  // This API behaves the same as |GetProductInfoForUrl| with the exception of
+  // how on-demand requests are handled - rather than fetching individually,
+  // they are batched. The entire set of info is provided to the callback once
+  // complete.
+  virtual void GetProductInfoForUrls(const std::vector<GURL>& urls,
+                                     ProductInfoBatchCallback callback);
+
   // This API returns whatever product information is currently available for
   // the specified |url|. This method is less reliable than GetProductInfoForUrl
   // above as it may return an empty or partial result prior to the page being
   // processed or information being available from the backend.
-  virtual absl::optional<ProductInfo> GetAvailableProductInfoForUrl(
+  virtual std::optional<ProductInfo> GetAvailableProductInfoForUrl(
       const GURL& url);
 
   // Get updated product info (including price) for the provided list of
@@ -273,7 +264,7 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // repeating callback that provides the bookmark's ID, URL, and product info.
   // Currently this API should only be used in the BookmarkUpdateManager.
   virtual void GetUpdatedProductInfoForBookmarks(
-      const std::vector<base::Uuid>& bookmark_uuids,
+      const std::vector<int64_t>& bookmark_ids,
       BookmarkProductInfoUpdatedCallback info_updated_callback);
 
   // Gets the maximum number of bookmarks that the backend will retrieve per
@@ -294,6 +285,27 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // null if there is none available.
   virtual void GetPriceInsightsInfoForUrl(const GURL& url,
                                           PriceInsightsInfoCallback callback);
+
+  // This API fetches valid discounts information on the provided |url| and
+  // passes the payload back to the caller via |callback|. Call will run after
+  // the fetch is completed.
+  virtual void GetDiscountInfoForUrl(const GURL& url,
+                                     DiscountInfoCallback callback);
+
+  // This API fetches available valid discounts information on the provided
+  // |url| and passes the payload back to the caller via |callback|.
+  // Call will run after the fetch is completed.
+  virtual void GetAvailableDiscountInfoForUrl(const GURL& url,
+                                          DiscountInfoCallback callback);
+
+  virtual void GetProductSpecificationsForUrls(
+      const std::vector<GURL>& urls,
+      ProductSpecificationsCallback callback);
+
+  // This API fetches whether the provided |url| is a shopping-related page and
+  // passes the result back to the caller via |callback|. Call will run after
+  // the fetch is completed.
+  virtual void IsShoppingPage(const GURL& url, IsShoppingPageCallback callback);
 
   // Create new subscriptions in batch if needed, and will notify |callback| if
   // the operation completes successfully.
@@ -345,6 +357,12 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // |bookmark_update_manager_|.
   virtual void ScheduleSavedProductUpdate();
 
+  // Returns whether a feature that is restricted to a specific region and
+  // locale is enabled. This method is a proxy for the utility method by the
+  // same name in commerce_feature_list but provides the country and locale as
+  // determined by this service at startup.
+  bool IsRegionLockedFeatureEnabled(const base::Feature& feature);
+
   // This is a feature check for the "shopping list". This will only return true
   // if the user has the feature flag enabled, is signed-in, has MSBB enabled,
   // has webapp activity enabled, is allowed by enterprise policy, and (if
@@ -361,28 +379,32 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   virtual void WaitForReady(
       base::OnceCallback<void(ShoppingService*)> callback);
 
-  // Check whether a product (based on cluster ID) is explicitly price tracked
-  // by the user.
-  virtual void IsClusterIdTrackedByUser(
-      uint64_t cluster_id,
-      base::OnceCallback<void(bool)> callback);
+  // Returns a list of URLs corresponding to active WebWrappers the shopping
+  // service is keeping track of. This does not map to open tabs across all
+  // platforms. Excludes non-HTTP/HTTPS URLs.
+  virtual const std::vector<UrlInfo> GetUrlInfosForActiveWebWrappers();
 
-  // This is a feature check for the "merchant viewer", which will return true
-  // if the user has the feature flag enabled or (if applicable) is in an
-  // enabled country and locale.
-  virtual bool IsMerchantViewerEnabled();
+  // Returns a list of URL info provided by |GetUrlInfosForActiveWebWrappers|
+  // but filtered by URLs that are associated with products.
+  virtual void GetUrlInfosForWebWrappersWithProducts(
+      base::OnceCallback<void(const std::vector<UrlInfo>)> callback);
 
-  // This is a feature check for the "price tracking", which will return true
-  // if the user has the feature flag enabled or (if applicable) is in an
-  // enabled country and locale.
-  virtual bool IsCommercePriceTrackingEnabled();
+  // Gets a list of URLs from web wrappers that were recently viewed by the
+  // user (ordered by most recent first). This generally aligns with recently
+  // viewed tabs.
+  virtual const std::vector<UrlInfo> GetUrlInfosForRecentlyViewedWebWrappers();
 
-  // This is a feature check for the "price insights", which will return true
-  // if the user has the feature flag enabled, has MSBB enabled, and (if
-  // applicable) is in an eligible country and locale. The value returned by
-  // this method can change at runtime, so it should not be used when deciding
-  // whether to create critical, feature-related infrastructure.
-  virtual bool IsPriceInsightsEligible();
+  virtual ProductSpecificationsService* GetProductSpecificationsService();
+
+  virtual ClusterManager* GetClusterManager();
+
+  // history::HistoryServiceObserver:
+  void OnHistoryDeletions(history::HistoryService* history_service,
+                          const history::DeletionInfo& deletion_info) override;
+
+  // ProductSpecificationsSet::Observer:
+  void OnProductSpecificationsSetRemoved(
+      const ProductSpecificationsSet& set) override;
 
   // Get a weak pointer for this service instance.
   base::WeakPtr<ShoppingService> AsWeakPtr();
@@ -396,6 +418,9 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // Test classes are also friends.
   friend class ShoppingServiceTestBase;
   friend class ShoppingServiceTest;
+  // TODO(b/362316113): Pass HistoryService through handler constructor instead
+  // of having the handler as a friend.
+  friend class ShoppingServiceHandler;
 
   // A notification that a WebWrapper has been created. This typically
   // corresponds to a user creating a tab.
@@ -425,63 +450,95 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // frame.
   void DidFinishLoad(WebWrapper* web);
 
-  // Schedule (or reschedule) the on-page javascript execution. Calling this
-  // sequentially for the same web wrapper with the same URL will cancel the
-  // pending task and schedule a new one. The script will, at most, run once
+  // A notification that the active web wrapper was switched. This signal is
+  // analogous to switching tabs.
+  void OnWebWrapperSwitched(WebWrapper* web);
+
+  // Called to signal that a WebWrapper is viewed. This happens when a new
+  // navigation is committed in a focused tab.
+  void OnWebWrapperViewed(WebWrapper* web);
+
+  // Schedule (or reschedule) the on-page local extraction execution. Calling
+  // this sequentially for the same web wrapper with the same URL will cancel
+  // the pending task and schedule a new one. The script will, at most, run once
   // per unique navigation.
-  void ScheduleProductInfoJavascript(WebWrapper* web);
+  void ScheduleProductInfoLocalExtraction(WebWrapper* web);
 
-  // Run the on-page, javascript info extraction if needed.
-  void TryRunningJavascriptForProductInfo(base::WeakPtr<WebWrapper> web);
+  // Check conditions to decide if the on-page info extraction should be run and
+  // trigger the run if needed.
+  void TryRunningLocalExtractionForProductInfo(base::WeakPtr<WebWrapper> web);
 
-  // Whether APIs like |GetProductInfoForURL| are enabled and allowed to be
-  // used.
-  bool IsProductInfoApiEnabled();
-
-  // Whether the PDP (product details page) state of a page is allowed to be
-  // recorded.
-  bool IsPDPMetricsRecordingEnabled();
+  // Actually run the on-page info extraction if the page is shopping page based
+  // on `is_shopping_page`.
+  void RunLocalExtractionForProductInfoForShoppingPage(
+      base::WeakPtr<WebWrapper> web,
+      const GURL& url,
+      std::optional<bool> is_shopping_page);
 
   // A callback for recording metrics after page navigation and having
   // determined the page is shopping related.
   void PDPMetricsCallback(
       bool is_off_the_record,
       optimization_guide::OptimizationGuideDecision decision,
-      const optimization_guide::OptimizationMetadata& metadata);
+      const optimization_guide::OptimizationMetadata& metadata,
+      const GURL& url);
+
+  // The internal impl that supports the different variations of the public
+  // ProductInfo APIs.
+  void GetProductInfoForUrlInternal(const GURL& url,
+                                    ProductInfoCallback callback,
+                                    bool attempt_on_demand_fetch);
 
   void HandleOptGuideProductInfoResponse(
       const GURL& url,
       WebWrapper* web,
       ProductInfoCallback callback,
+      bool attempt_on_demand,
       optimization_guide::OptimizationGuideDecision decision,
       const optimization_guide::OptimizationMetadata& metadata);
 
   // Handle a response from the optimization guide on-demand API for product
-  // info.
-  void OnProductInfoUpdatedOnDemand(
+  // info, specifically dealing with batch updates for bookmarks.
+  void HandleOnDemandProductInfoResponseForBookmarks(
       BookmarkProductInfoUpdatedCallback callback,
-      std::unordered_map<std::string, base::Uuid> url_to_uuid_map,
+      std::unordered_map<std::string, int64_t> url_to_id_map,
       const GURL& url,
       const base::flat_map<
           optimization_guide::proto::OptimizationType,
           optimization_guide::OptimizationGuideDecisionWithMetadata>&
           decisions);
 
-  // Produce a ProductInfo object given OptimizationGuideMeta. The returned
-  // unique_ptr is owned by the caller and will be empty if conversion failed
-  // or there was no info. The value returned here can change during runtime so
-  // it should not be used when deciding to build infrastructure.
-  std::unique_ptr<ProductInfo> OptGuideResultToProductInfo(
-      const optimization_guide::OptimizationMetadata& metadata);
+  // Handle a generic on-demand request for product info. While this method
+  // accepts a repeating callback, it should only ever be called once.
+  void HandleOnDemandProductInfoResponse(
+      RepeatingProductInfoCallback callback,
+      const GURL& url,
+      const base::flat_map<
+          optimization_guide::proto::OptimizationType,
+          optimization_guide::OptimizationGuideDecisionWithMetadata>&
+          decisions);
 
-  // Handle the result of running the javascript fallback for product info.
-  void OnProductInfoJavascriptResult(const GURL url, base::Value result);
+  // Handles the on-demand part of |GetProductInfoForUrls|, waiting for all
+  // fetches to complete before executing the callback.
+  void DoOnDemandFetchForProductInfoUrlBatch(
+      std::vector<GURL> urls,
+      std::map<GURL, std::optional<ProductInfo>> info_map,
+      ProductInfoBatchCallback callback);
 
-  // Handle the result of JSON parsing obtained from running javascript on the
-  // product info page.
-  void OnProductInfoJsonSanitizationCompleted(
-      const GURL url,
-      data_decoder::DataDecoder::ValueOrError result);
+  // Process the result of an on-demand request for product info and handle any
+  // related cache maintenance.
+  std::optional<ProductInfo> HandleAndStoreProductInfoFromOnDemand(
+      const GURL& url,
+      const base::flat_map<
+          optimization_guide::proto::OptimizationType,
+          optimization_guide::OptimizationGuideDecisionWithMetadata>&
+          decisions);
+
+  // Handle the result of running the local extraction fallback for product
+  // info.
+  void OnProductInfoLocalExtractionResult(const GURL url,
+                                          ukm::SourceId source_id,
+                                          base::Value result);
 
   // Tries to determine whether a page is a PDP only from information in meta
   // tags extracted from the page. If enough information is present to call the
@@ -494,23 +551,11 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   static void MergeProductInfoData(ProductInfo* info,
                                    const base::Value::Dict& on_page_data_map);
 
-  // Check if the shopping list is eligible for use. This not only checks the
-  // feature flag, but whether the feature is allowed by enterprise policy and
-  // whether the user is signed in. The value returned here can change during
-  // runtime so it should not be used when deciding to build infrastructure.
-  static bool IsShoppingListEligible(AccountChecker* account_checker,
-                                     PrefService* prefs,
-                                     const std::string& country_code,
-                                     const std::string& locale);
-
   void HandleOptGuideMerchantInfoResponse(
       const GURL& url,
       MerchantInfoCallback callback,
       optimization_guide::OptimizationGuideDecision decision,
       const optimization_guide::OptimizationMetadata& metadata);
-
-  // Update the cache notifying that a tab is on the specified URL.
-  void UpdateProductInfoCacheForInsertion(const GURL& url);
 
   // Update the data stored in the cache.
   void UpdateProductInfoCache(const GURL& url,
@@ -520,19 +565,51 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // Get the data stored in the cache or nullptr if none exists.
   const ProductInfo* GetFromProductInfoCache(const GURL& url);
 
-  // Update the cache storing product info for a navigation away from the
-  // provided URL or closing of a tab.
-  void UpdateProductInfoCacheForRemoval(const GURL& url);
-
-  // Whether APIs like |GetPriceInsightsInfoForURL| are enabled and allowed to
-  // be used.
-  bool IsPriceInsightsInfoApiEnabled();
-
   void HandleOptGuidePriceInsightsInfoResponse(
       const GURL& url,
       PriceInsightsInfoCallback callback,
       optimization_guide::OptimizationGuideDecision decision,
       const optimization_guide::OptimizationMetadata& metadata);
+
+  std::unique_ptr<PriceInsightsInfo> OptGuideResultToPriceInsightsInfo(
+      const optimization_guide::OptimizationMetadata& metadata);
+
+  // Handle main frame navigation for the price insights info API.
+  void HandleDidNavigatePrimaryMainFrameForPriceInsightsInfo(WebWrapper* web);
+
+  void HandleOptGuideShoppingPageTypesResponse(
+      const GURL& url,
+      IsShoppingPageCallback callback,
+      optimization_guide::OptimizationGuideDecision decision,
+      const optimization_guide::OptimizationMetadata& metadata);
+
+  void GetDiscountInfoFromOptGuide(const GURL& url,
+                                   DiscountInfoCallback callback);
+
+  void HandleOptGuideDiscountInfoResponse(
+      const GURL& url,
+      DiscountInfoCallback callback,
+      optimization_guide::OptimizationGuideDecision decision,
+      const optimization_guide::OptimizationMetadata& metadata);
+
+  std::vector<DiscountInfo> OptGuideResultToDiscountInfos(
+      const optimization_guide::OptimizationMetadata& metadata);
+
+  void OnGetAllDiscountsFromOptGuide(const std::vector<GURL>& urls,
+                                     DiscountInfoCallback callback,
+                                     const std::vector<DiscountsPair>& results);
+
+  void GetProductIdentifierForUrl(const GURL& url,
+                                  UrlProductIdentifierTupleCallback callback);
+
+  void UpdateRecentlyViewedURL(WebWrapper* web);
+
+  // Return all ProductSpecificationsSets from ProductSpecificationsService.
+  virtual const std::vector<ProductSpecificationsSet>
+  GetAllProductSpecificationSets();
+
+  void OnGetOnDemandProductInfo(const GURL& url,
+                                const std::optional<const ProductInfo>& info);
 
   // The two-letter country code as detected on startup.
   std::string country_on_startup_;
@@ -548,13 +625,15 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
 
   raw_ptr<syncer::SyncService> sync_service_;
 
-  raw_ptr<bookmarks::BookmarkModel> bookmark_model_;
+  const raw_ptr<bookmarks::BookmarkModel> bookmark_model_;
 
   std::unique_ptr<AccountChecker> account_checker_;
 
   std::unique_ptr<SubscriptionsManager> subscriptions_manager_;
 
   raw_ptr<power_bookmarks::PowerBookmarkService> power_bookmark_service_;
+
+  raw_ptr<ProductSpecificationsService> product_specifications_service_;
 
   // The service's means of observing the bookmark model which is automatically
   // removed from the model when destroyed. This will be null if no
@@ -565,10 +644,16 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   std::unique_ptr<ShoppingPowerBookmarkDataProvider>
       shopping_power_bookmark_data_provider_;
 
-  // This is a cache that maps URL to a cache entry that may or may not contain
-  // product info.
-  std::unordered_map<std::string, std::unique_ptr<ProductInfoCacheEntry>>
-      product_info_cache_;
+  // The object handling discounts storage.
+  std::unique_ptr<DiscountInfosStorage> discount_infos_storage_;
+
+  // A cache that retains commerce information for a URL as long as at least one
+  // instance of the URL is open in a tab or mainteined by some other subsystem.
+  CommerceInfoCache commerce_info_cache_;
+
+  ProductSpecificationsCache product_specifications_cache_;
+
+  std::unique_ptr<ProductSpecificationsServerProxy> product_specs_server_proxy_;
 
   std::unique_ptr<BookmarkUpdateManager> bookmark_update_manager_;
 
@@ -579,6 +664,41 @@ class ShoppingService : public KeyedService, public base::SupportsUserData {
   // A consent throttle that will hold callbacks until the specific consent is
   // obtained.
   unified_consent::ConsentThrottle bookmark_consent_throttle_;
+
+  // The object for local extractions of commerce information.
+  std::unique_ptr<commerce::WebExtractor> web_extractor_;
+
+  std::unordered_set<WebWrapper*> open_web_wrappers_;
+
+  // A list of UrlInfo ordered by most recently viewed. This is based on
+  // selected tab (not necessarily navigation).
+  std::vector<UrlInfo> recently_visited_tabs_;
+
+  // Class for clustering products.
+  std::unique_ptr<ClusterManager> cluster_manager_;
+
+  // An observer of the ProductSpecificationsService that keeps track of the
+  // URLs contained within each ProductSpecificationsSet. This is used to keep
+  // the commerce info cache up to date.
+  std::unique_ptr<ProductSpecificationsSet::Observer>
+      prod_spec_url_ref_observer_;
+
+  // Map between URL and a list of callbacks that are waiting for product info.
+  // This is used to avoid repeated calls to get product info for the same URL.
+  std::map<GURL, std::vector<ProductInfoCallback>>
+      on_demand_product_info_callbacks_;
+
+  base::ScopedObservation<history::HistoryService,
+                          history::HistoryServiceObserver>
+      history_service_observation_{this};
+
+  const raw_ptr<sessions::TabRestoreService> tab_restore_service_{nullptr};
+
+  base::ScopedObservation<ProductSpecificationsService,
+                          ProductSpecificationsSet::Observer>
+      product_specifications_observation_{this};
+
+  base::CancelableTaskTracker cancelable_task_tracker_;
 
   // Ensure certain functions are being executed on the same thread.
   SEQUENCE_CHECKER(sequence_checker_);

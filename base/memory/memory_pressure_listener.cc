@@ -9,12 +9,11 @@
 #include "base/observer_list.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/interned_args_helper.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/memory_pressure_level_proto.h"
+#include "base/trace_event/trace_event.h"
 #include "base/tracing_buildflags.h"
-
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-#include "base/trace_event/memory_pressure_level_proto.h"  // no-presubmit-check
-#endif
 
 namespace base {
 
@@ -27,7 +26,7 @@ class MemoryPressureObserver {
   ~MemoryPressureObserver() = delete;
 
   void AddObserver(MemoryPressureListener* listener, bool sync) {
-    // TODO(crbug.com/1063868): DCHECK instead of silently failing when a
+    // TODO(crbug.com/40123466): DCHECK instead of silently failing when a
     // MemoryPressureListener is created in a non-sequenced context. Tests will
     // need to be adjusted for that to work.
     if (SequencedTaskRunner::HasCurrentDefault()) {
@@ -51,8 +50,9 @@ class MemoryPressureObserver {
     async_observers_->Notify(FROM_HERE, &MemoryPressureListener::Notify,
                              memory_pressure_level);
     AutoLock lock(sync_observers_lock_);
-    for (auto& observer : sync_observers_)
+    for (auto& observer : sync_observers_) {
       observer.SyncNotify(memory_pressure_level);
+    }
   }
 
  private:
@@ -131,8 +131,9 @@ void MemoryPressureListener::NotifyMemoryPressure(
         data->set_level(
             trace_event::MemoryPressureLevelToTraceEnum(memory_pressure_level));
       });
-  if (AreNotificationsSuppressed())
+  if (AreNotificationsSuppressed()) {
     return;
+  }
   DoNotifyMemoryPressure(memory_pressure_level);
 }
 

@@ -12,12 +12,16 @@
 #include <linux/nbd.h>
 #include <linux/net.h>
 #include <linux/userfaultfd.h>
+#include <sched.h>
+#include <signal.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 
 #include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
+#include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
@@ -38,17 +42,8 @@ using sandbox::bpf_dsl::ResultExpr;
 
 namespace sandbox {
 
-#ifndef SOCK_CLOEXEC
-#define SOCK_CLOEXEC O_CLOEXEC
-#endif
-
-#ifndef SOCK_NONBLOCK
-#define SOCK_NONBLOCK O_NONBLOCK
-#endif
-
 namespace {
 
-#if !defined(__i386__)
 // Restricts the arguments to sys_socket() to AF_UNIX. Returns a BoolExpr that
 // evaluates to true if the syscall should be allowed.
 BoolExpr RestrictSocketArguments(const Arg<int>& domain,
@@ -60,7 +55,6 @@ BoolExpr RestrictSocketArguments(const Arg<int>& domain,
                      (type & ~kSockFlags) == SOCK_STREAM),
                protocol == 0);
 }
-#endif  // !defined(__i386__)
 
 ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
   const Arg<unsigned int> request(1);
@@ -100,7 +94,7 @@ ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
            // Binder.
            kBinderWriteRead32, kBinderWriteRead64, BINDER_SET_MAX_THREADS,
            BINDER_THREAD_EXIT, BINDER_VERSION,
-           BINDER_ENABLE_ONEWAY_SPAM_DETECTION,
+           BINDER_ENABLE_ONEWAY_SPAM_DETECTION, BINDER_GET_EXTENDED_ERROR,
            // incfs read ops.
            INCFS_IOC_READ_FILE_SIGNATURE, INCFS_IOC_GET_FILLED_BLOCKS,
            INCFS_IOC_GET_READ_TIMEOUTS, INCFS_IOC_GET_LAST_READ_ERROR,
@@ -109,7 +103,9 @@ ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
       .Cases(
           {// userfaultfd ART GC (https://crbug.com/1300653).
            UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_COPY,
-           UFFDIO_ZEROPAGE, UFFDIO_CONTINUE},
+           UFFDIO_ZEROPAGE, UFFDIO_CONTINUE,
+           // crbug.com/393204193
+           UFFDIO_MOVE},
           If(BoolConst(allow_userfaultfd_ioctls), Allow())
               .Else(RestrictIoctl()))
       .Cases(
@@ -123,35 +119,37 @@ ResultExpr RestrictAndroidIoctl(bool allow_userfaultfd_ioctls) {
       .Default(RestrictIoctl());
 }
 
-}  // namespace
+ResultExpr RestrictCloneParameters() {
+  const Arg<unsigned long> flags(0);
 
-BaselinePolicyAndroid::BaselinePolicyAndroid() = default;
+  const uint64_t kForkFlags =
+      CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID | SIGCHLD;
+  const uint64_t kPthreadCreateFlags =
+      CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
+      CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID;
 
-BaselinePolicyAndroid::BaselinePolicyAndroid(const RuntimeOptions& options)
-    : options_(options) {}
+  const BoolExpr is_fork_or_pthread =
+      AnyOf(flags == kForkFlags, flags == kPthreadCreateFlags);
+  return If(is_fork_or_pthread, Allow()).Else(CrashSIGSYSClone());
+}
 
-BaselinePolicyAndroid::~BaselinePolicyAndroid() {}
-
-ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
-  bool override_and_allow = false;
+bool IsBaselinePolicyAllowed(int sysno) {
+  // The following syscalls are used in the renderer policy on Android but still
+  // need to be allowed on Android and should not be filtered out of other
+  // processes: mremap, ftruncate, ftruncate64, pwrite64, getcpu, fdatasync,
+  // fsync, getrlimit, ugetrlimit, setrlimit.
 
   switch (sysno) {
-    // TODO(rsesek): restrict clone parameters.
-    case __NR_clone:
     case __NR_epoll_pwait:
     case __NR_fdatasync:
     case __NR_flock:
     case __NR_fsync:
+#if defined(__LP64__)
     case __NR_ftruncate:
-#if defined(__i386__) || defined(__arm__) || \
-    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
-    case __NR_ftruncate64:
-#endif
-#if defined(__x86_64__) || defined(__aarch64__)
     case __NR_newfstatat:
     case __NR_fstatfs:
-#elif defined(__i386__) || defined(__arm__) || \
-    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+#else
+    case __NR_ftruncate64:
     case __NR_fstatat64:
     case __NR_fstatfs64:
 #endif
@@ -160,33 +158,23 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     // //third_party/cpuinfo/ on those chips.
     case __NR_getcpu:
 #endif
-#if defined(__i386__) || defined(__arm__) || defined(__mips__)
-    case __NR_getdents:
-#endif
     case __NR_getdents64:
     case __NR_getpriority:
     case __NR_membarrier:  // https://crbug.com/966433
-    case __NR_mremap:
 #if defined(__i386__)
     // Used on pre-N to initialize threads in ART.
     case __NR_modify_ldt:
 #endif
+    case __NR_mremap:
     case __NR_msync:
-    // File system access cannot be restricted with seccomp-bpf on Android,
-    // since the JVM classloader and other Framework features require file
-    // access. It may be possible to restrict the filesystem with SELinux.
-    // Currently we rely on the app/service UID isolation to create a
-    // filesystem "sandbox".
-#if !defined(ARCH_CPU_ARM64)
-    case __NR_open:
-#endif
+      // File system access cannot be restricted with seccomp-bpf on Android,
+      // since the JVM classloader and other Framework features require file
+      // access. It may be possible to restrict the filesystem with SELinux.
+      // Currently we rely on the app/service UID isolation to create a
+      // filesystem "sandbox".
     case __NR_openat:
     case __NR_pwrite64:
     case __NR_rt_sigtimedwait:
-#if defined(__i386__) || defined(__arm__) || \
-    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
-    case __NR_rt_sigtimedwait_time64:
-#endif
     case __NR_sched_getparam:
     case __NR_sched_getscheduler:
     case __NR_sched_setscheduler:
@@ -196,34 +184,54 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     case __NR_set_thread_area:
 #endif
     case __NR_set_tid_address:
-#if defined(__i386__) || defined(__arm__)
-    case __NR_ugetrlimit:
-#else
+#if defined(__LP64__)
     case __NR_getrlimit:
+#else
+    case __NR_ugetrlimit:
 #endif
-    case __NR_sysinfo:  // https://crbug.com/655277
 
-    // Permit socket operations so that renderers can connect to logd and
-    // debuggerd. The arguments to socket() are further restricted below.
-    // Note that on i386, both of these calls map to __NR_socketcall, which
-    // is demultiplexed below.
-#if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__) || \
-      defined(__mips__)
+      // Permit socket operations so that renderers can connect to logd and
+      // debuggerd. The arguments to socket() are further restricted below.
+      // Note that on i386 (until API level 38), both of these calls mapped
+      // to __NR_socketcall, which is demultiplexed below.
     case __NR_getsockopt:
     case __NR_connect:
-    case __NR_socket:
-#endif
 
-      override_and_allow = true;
-      break;
+      return true;
+    default:
+      return false;
   }
+}
 
+}  // namespace
+
+BaselinePolicyAndroid::BaselinePolicyAndroid() = default;
+
+BaselinePolicyAndroid::BaselinePolicyAndroid(const RuntimeOptions& options)
+    : options_(options) {}
+
+BaselinePolicyAndroid::~BaselinePolicyAndroid() = default;
+
+ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
+  if (sysno == __NR_clone) {
+    if (options_.should_restrict_clone_params) {
+      return RestrictCloneParameters();
+    }
+    return Allow();
+  }
   if (sysno == __NR_sched_setaffinity || sysno == __NR_sched_getaffinity) {
     return Error(EPERM);
   }
 
   if (sysno == __NR_ioctl) {
     return RestrictAndroidIoctl(options_.allow_userfaultfd_ioctls);
+  }
+
+  if (sysno == __NR_madvise) {
+    // Allow MADV_PAGEOUT
+    const Arg<int> advice(2);
+    return If(advice == MADV_PAGEOUT, Allow())
+        .Else(BaselinePolicy::EvaluateSyscall(sysno));
   }
 
   // Ptrace is allowed so the crash reporter can fork in a renderer
@@ -239,14 +247,14 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
            .Else(Error(EPERM));
   }
 
-  // https://crbug.com/655299
-  if (sysno == __NR_clock_getres
-#if defined(__i386__) || defined(__arm__) || \
-    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
-      || sysno == __NR_clock_getres_time64
-#endif
-  ) {
-    return RestrictClockID();
+  if (!options_.should_restrict_renderer_syscalls) {
+    if (sysno == __NR_sysinfo) {
+      return Allow();
+    }
+    // https://crbug.com/655299
+    if (sysno == __NR_clock_getres) {
+      return RestrictClockID();
+    }
   }
 
   // https://crbug.com/826289
@@ -261,11 +269,7 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
   }
 #endif
 
-  // Restrict socket-related operations. On non-i386 platforms, these are
-  // individual syscalls. On i386, the socketcall syscall demultiplexes many
-  // socket operations.
-#if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__) || \
-      defined(__mips__)
+  // Restrict socket-related operations.
   if (sysno == __NR_socket) {
     const Arg<int> domain(0);
     const Arg<int> type(1);
@@ -295,7 +299,12 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
               Allow())
            .Else(BaselinePolicy::EvaluateSyscall(sysno));
   }
-#elif defined(__i386__)
+
+#if defined(__i386__)
+  // On i386 (until API level 38), the socketcall syscall demultiplexes socket
+  // operations and the individual system calls above aren't used.
+  // TODO(crbug.com/40528912): disallow and rewrite socketcall()s if individual
+  // syscalls like socket() are usable in the current environment.
   if (sysno == __NR_socketcall) {
     // The baseline policy allows other socketcall sub-calls.
     const Arg<int> socketcall(0);
@@ -309,8 +318,9 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
   }
 #endif
 
-  if (override_and_allow)
+  if (IsBaselinePolicyAllowed(sysno)) {
     return Allow();
+  }
 
   return BaselinePolicy::EvaluateSyscall(sysno);
 }

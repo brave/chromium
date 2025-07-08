@@ -5,17 +5,22 @@
 import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as Platform from 'devtools/core/platform/platform.js';
+import * as Network from 'devtools/panels/network/network.js';
+import * as SourceFrame from 'devtools/ui/legacy/components/source_frame/source_frame.js';
+import * as UI from 'devtools/ui/legacy/legacy.js';
+
 (async function() {
   TestRunner.addResult(`Tests that resources with JSON MIME types are previewed with the JSON viewer.\n`);
-  await TestRunner.loadLegacyModule('source_frame');
   await TestRunner.showPanel('network');
 
   async function testSearches(view, searches) {
     await new Promise(resolve => setTimeout(resolve, 0));
     for (var search of searches) {
       view.searchInputElement.value = search;
-      view.regexButton.setToggled(false);
-      view.caseSensitiveButton.setToggled(false);
+      view.regexButton.toggled = false;
+      view.caseSensitiveButton.toggled = false;
       view.showSearchField();
       TestRunner.addResult('Should have found and highlighted all: ' + search);
 
@@ -33,7 +38,7 @@ import {NetworkTestRunner} from 'network_test_runner';
   }
 
   async function previewViewHandled(searches, callback, view) {
-    var isSearchable = (view instanceof UI.SearchableView);
+    var isSearchable = (view instanceof UI.SearchableView.SearchableView);
     var compontentView = view;
     var typeName = 'unknown';
     var searchableView = view;
@@ -44,7 +49,7 @@ import {NetworkTestRunner} from 'network_test_runner';
     if (isSearchable)
       compontentView = searchableView.searchProvider;
 
-    if (compontentView instanceof SourceFrame.ResourceSourceFrame) {
+    if (compontentView instanceof SourceFrame.ResourceSourceFrame.ResourceSourceFrame) {
       typeName = 'ResourceSourceFrame';
       compontentView.ensureContentLoaded();
       if (!compontentView.loaded) {
@@ -53,15 +58,15 @@ import {NetworkTestRunner} from 'network_test_runner';
             compontentView, 'setContent', previewViewHandled.bind(this, searches, callback, view));
         return;
       }
-    } else if (compontentView instanceof SourceFrame.XMLView) {
+    } else if (compontentView instanceof SourceFrame.XMLView.XMLView) {
       typeName = 'XMLView';
-    } else if (compontentView instanceof SourceFrame.JSONView) {
+    } else if (compontentView instanceof SourceFrame.JSONView.JSONView) {
       typeName = 'JSONView';
-    } else if (compontentView instanceof Network.RequestHTMLView) {
+    } else if (compontentView instanceof Network.RequestHTMLView.RequestHTMLView) {
       typeName = 'RequestHTMLView';
-    } else if (compontentView instanceof UI.EmptyWidget) {
+    } else if (compontentView instanceof UI.EmptyWidget.EmptyWidget) {
       typeName = 'EmptyWidget';
-    } else if (compontentView instanceof Network.RequestHTMLView) {
+    } else if (compontentView instanceof Network.RequestHTMLView.RequestHTMLView) {
       typeName = 'RequestHTMLView';
     }
 
@@ -76,8 +81,8 @@ import {NetworkTestRunner} from 'network_test_runner';
 
 
   function trySearches(request, searches, callback) {
-    var networkPanel = UI.panels.network;
-    TestRunner.addSniffer(Network.RequestPreviewView.prototype, 'doShowPreview', async function() {
+    var networkPanel = Network.NetworkPanel.NetworkPanel.instance();
+    TestRunner.addSniffer(Network.RequestPreviewView.RequestPreviewView.prototype, 'doShowPreview', async function() {
       previewViewHandled(searches, callback, await this.contentViewPromise);
       networkPanel.hideRequestPanel();
     });
@@ -91,7 +96,7 @@ import {NetworkTestRunner} from 'network_test_runner';
     var url = 'data:' + contentType + ',' + encodeURIComponent(content);
     NetworkTestRunner.makeSimpleXHR('GET', url, true, function() {
       var request = NetworkTestRunner.findRequestsByURLPattern(new RegExp(Platform.StringUtilities.escapeForRegExp(url)))[0];
-      request.setResourceType(Common.resourceTypes.Document);
+      request.setResourceType(Common.ResourceType.resourceTypes.Document);
       trySearches(request, searches, callback);
     });
   }

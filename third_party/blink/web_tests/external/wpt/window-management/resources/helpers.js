@@ -68,7 +68,7 @@ async function poll(condition, interval = 100, duration = 3000) {
 async function openPopupOnScreen(screen, assertPlacement = true) {
   const left = screen.availLeft + Math.floor(screen.availWidth / 2) - 150;
   const top = screen.availTop + Math.floor(screen.availHeight / 2) - 50;
-  const features = `left=${left},top=${top},width=300,height=100`;
+  let features = `left=${left},top=${top},width=300,height=100`;
   log(`Opening a popup with features '${features}' on ${screenLog(screen)}`);
   // Window.open() synchronously returns a Window with estimated screenLeft|Top,
   // which may be clamped to the opener's screen or incompletely initialized.

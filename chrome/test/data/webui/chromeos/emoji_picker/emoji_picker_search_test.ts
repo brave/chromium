@@ -2,22 +2,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {EmojiPicker} from 'chrome://emoji-picker/emoji_picker.js';
-import {EmojiSearch} from 'chrome://emoji-picker/emoji_search.js';
-import {EMOJI_TEXT_BUTTON_CLICK} from 'chrome://emoji-picker/events.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {EmojiPickerApp, EmojiSearch} from 'chrome://emoji-picker/emoji_picker.js';
+import {EMOJI_TEXT_BUTTON_CLICK} from 'chrome://emoji-picker/emoji_picker.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {assertEquals, assertGT} from 'chrome://webui-test/chai_assert.js';
 
 import {initialiseEmojiPickerForTest, waitForCondition, waitWithTimeout} from './emoji_picker_test_util.js';
 
 suite('emoji-search', () => {
-  let emojiPicker: EmojiPicker;
+  let emojiPicker: EmojiPickerApp;
   let emojiSearch: EmojiSearch;
   let findInEmojiPicker: (...path: string[]) => HTMLElement | null;
+  let expectEmojiButton: (text: string, getGroup?: () => HTMLElement | null) =>
+      Promise<HTMLElement>;
+  let expectEmojiButtons:
+      (texts: string[], getGroup?: () => HTMLElement | null) =>
+          Promise<HTMLElement[]>;
+  let clickVariant: (text: string, button: HTMLElement) => Promise<void>;
+  let findSearchGroup: (category: string) => HTMLElement | null;
+  let reload: () => Promise<void>;
+
+  const setSearchQuery = (value: string) => {
+    const emojiSearch = findInEmojiPicker('emoji-search') as EmojiSearch;
+    emojiSearch.setSearchQuery(value);
+  };
+
   setup(async () => {
     const newPicker = initialiseEmojiPickerForTest();
     emojiPicker = newPicker.emojiPicker;
     findInEmojiPicker = newPicker.findInEmojiPicker;
+    expectEmojiButton = newPicker.expectEmojiButton;
+    expectEmojiButtons = newPicker.expectEmojiButtons;
+    clickVariant = newPicker.clickVariant;
+    findSearchGroup = newPicker.findSearchGroup;
+    reload = newPicker.reload;
     await newPicker.readyPromise;
     emojiSearch = findInEmojiPicker('emoji-search') as EmojiSearch;
   });
@@ -115,8 +133,26 @@ suite('emoji-search', () => {
         findInEmojiPicker('emoji-search', 'emoji-group[category="symbol"]')!
             .shadowRoot!.querySelectorAll('.emoji-button');
     assertEquals(
-        emojiResults!.length,
+        emojiResults.length,
         4,  // normal, italic, bold and san-serif bold
     );
+  });
+
+  test(
+      'selecting a variant from search should update preferences', async () => {
+        setSearchQuery('shrug');
+        const searchEmoji =
+            await expectEmojiButton('🤷', () => findSearchGroup('emoji'));
+        await clickVariant('🤷🏿‍♀', searchEmoji);
+        await reload();
+        await expectEmojiButtons(['🤷🏿‍♀', '👍🏿', '🧞‍♀']);
+      });
+
+  test('preferences should be applied in emoji search', async () => {
+    const thumbsUp = await expectEmojiButton('👍');
+    await clickVariant('👍🏿', thumbsUp);
+    await reload();
+    setSearchQuery('shrug');
+    await expectEmojiButton('🤷🏿', () => findSearchGroup('emoji'));
   });
 });

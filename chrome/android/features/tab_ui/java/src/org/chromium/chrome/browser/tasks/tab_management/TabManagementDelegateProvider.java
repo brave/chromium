@@ -4,19 +4,25 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
-/**
- * Provider class for {@link TabManagementDelegate}.
- */
-public class TabManagementDelegateProvider {
-    private static TabManagementDelegateImpl sTabManagementDelegateImpl;
+import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
-    /**
-     * Returns {@link TabManagementDelegate} implementation.
-     */
+/** Provider class for {@link TabManagementDelegate}. */
+@NullMarked
+public class TabManagementDelegateProvider {
+    private static @Nullable TabManagementDelegate sTabManagementDelegate;
+
+    /** Returns {@link TabManagementDelegate} implementation. */
     public static TabManagementDelegate getDelegate() {
-        if (sTabManagementDelegateImpl == null) {
-            sTabManagementDelegateImpl = new TabManagementDelegateImpl();
+        if (sTabManagementDelegate == null) {
+            sTabManagementDelegate = new TabManagementDelegateImpl();
         }
-        return sTabManagementDelegateImpl;
+        return sTabManagementDelegate;
+    }
+
+    static void setTabManagementDelegateForTesting(TabManagementDelegate tabManagmentDelegate) {
+        sTabManagementDelegate = tabManagmentDelegate;
+        ResettersForTesting.register(() -> sTabManagementDelegate = null);
     }
 }

@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '//resources/js/util_ts.js';
+import '//resources/js/util.js';
 import '//resources/cr_elements/cr_button/cr_button.js';
+import '//resources/cr_elements/cr_collapse/cr_collapse.js';
 import '//resources/cr_elements/cr_dialog/cr_dialog.js';
 import '//resources/cr_elements/cr_input/cr_input.js';
 import '//resources/cr_elements/cr_link_row/cr_link_row.js';
@@ -11,50 +12,51 @@ import '//resources/cr_elements/icons.html.js';
 import '//resources/cr_elements/cr_shared_style.css.js';
 import '//resources/cr_elements/cr_shared_vars.css.js';
 import '//resources/cr_elements/cr_expand_button/cr_expand_button.js';
-import '//resources/polymer/v3_0/iron-collapse/iron-collapse.js';
-import '//resources/polymer/v3_0/iron-icon/iron-icon.js';
-import '//resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import './sync_account_control.js';
+import '//resources/cr_elements/cr_icon/cr_icon.js';
+// <if expr="not is_chromeos">
+import '//resources/cr_elements/cr_toast/cr_toast.js';
+// </if>
+
 import './sync_encryption_options.js';
 import '../privacy_page/personalization_options.js';
 import '../settings_shared.css.js';
 import '../settings_vars.css.js';
-// <if expr="not chromeos_ash">
-import '//resources/cr_elements/cr_toast/cr_toast.js';
+// <if expr="not is_chromeos">
+import './sync_account_control.js';
 
 // </if>
 
-import {CrDialogElement} from '//resources/cr_elements/cr_dialog/cr_dialog.js';
-import {CrInputElement} from '//resources/cr_elements/cr_input/cr_input.js';
+import type {CrCollapseElement} from '//resources/cr_elements/cr_collapse/cr_collapse.js';
+import type {CrDialogElement} from '//resources/cr_elements/cr_dialog/cr_dialog.js';
+import type {CrInputElement} from '//resources/cr_elements/cr_input/cr_input.js';
 import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.js';
-import {assert, assertNotReached} from '//resources/js/assert_ts.js';
+import {assert, assertNotReached} from '//resources/js/assert.js';
 import {focusWithoutInk} from '//resources/js/focus_without_ink.js';
-import {IronCollapseElement} from '//resources/polymer/v3_0/iron-collapse/iron-collapse.js';
-import {flush, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {PageStatus, StatusAction, SyncBrowserProxy, SyncBrowserProxyImpl, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {PageStatus, SignedInState, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-// <if expr="chromeos_lacros">
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 
-// </if>
-
-import {FocusConfig} from '../focus_config.js';
+import type {FocusConfig} from '../focus_config.js';
 import {loadTimeData} from '../i18n_setup.js';
-// <if expr="chromeos_ash">
-import {SettingsPersonalizationOptionsElement} from '../privacy_page/personalization_options.js';
+import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
+import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
+// <if expr="is_chromeos">
+import type {SettingsPersonalizationOptionsElement} from '../privacy_page/personalization_options.js';
 // </if>
 
 import {RouteObserverMixin, Router} from '../router.js';
 
-// <if expr="chromeos_ash">
-import {SettingsSyncEncryptionOptionsElement} from './sync_encryption_options.js';
+// <if expr="is_chromeos">
+import type {SettingsSyncEncryptionOptionsElement} from './sync_encryption_options.js';
 // </if>
 
 import {getTemplate} from './sync_page.html.js';
 
 export interface SettingsSyncPageElement {
   $: {
-    encryptionCollapse: IronCollapseElement,
+    encryptionCollapse: CrCollapseElement,
   };
 }
 
@@ -107,14 +109,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
       },
 
       /**
-       * Dictionary defining page visibility.
-       * TODO(dpapad): Restore the type information here
-       * (PrivacyPageVisibility), when this file is no longer shared with
-       * chrome://os-settings.
-       */
-      pageVisibility: Object,
-
-      /**
        * The current sync preferences, supplied by SyncBrowserProxy.
        */
       syncPrefs: Object,
@@ -152,13 +146,13 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         type: Boolean,
         value: false,
         computed: 'computeShowExistingPassphraseBelowAccount_(' +
-            'syncStatus.signedIn, syncPrefs.passphraseRequired)',
+            'syncStatus.signedInState, syncPrefs.passphraseRequired)',
       },
 
       signedIn_: {
         type: Boolean,
         value: true,
-        computed: 'computeSignedIn_(syncStatus.signedIn)',
+        computed: 'computeSignedIn_(syncStatus.signedInState)',
       },
 
       syncDisabledByAdmin_: {
@@ -171,12 +165,12 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         type: Boolean,
         value: false,
         computed: 'computeSyncSectionDisabled_(' +
-            'syncStatus.signedIn, syncStatus.disabled, ' +
+            'syncStatus.signedInState, syncStatus.disabled, ' +
             'syncStatus.hasError, syncStatus.statusAction, ' +
             'syncPrefs.trustedVaultKeysRequired)',
       },
 
-      // <if expr="not chromeos_ash">
+      // <if expr="not is_chromeos">
       showSetupCancelDialog_: {
         type: Boolean,
         value: false,
@@ -195,18 +189,25 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
             'syncPrefs.explicitPassphraseTime)',
       },
 
-      // <if expr="chromeos_lacros">
-      /**
-       * Whether to show the new UI for OS Sync Settings and
-       * Browser Sync Settings  which include sublabel and
-       * Apps toggle shared between Ash and Lacros.
-       */
-      showSyncSettingsRevamp_: {
+      // TODO(crbug.com/324091979): Remove once crbug.com/324091979 launched.
+      enableLinkedServicesSetting_: {
         type: Boolean,
-        value: loadTimeData.getBoolean('showSyncSettingsRevamp'),
-        readOnly: true,
+        value() {
+          return loadTimeData.getBoolean('enableLinkedServicesSetting');
+        },
       },
-      //</if>
+
+      isEeaChoiceCountry_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('isEeaChoiceCountry');
+        },
+      },
+
+      personalizationCollapseExpanded_: {
+        type: Boolean,
+        value: false,
+      },
     };
   }
 
@@ -216,31 +217,34 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     ];
   }
 
-  prefs: {[key: string]: any};
-  focusConfig: FocusConfig;
-  private pageStatus_: PageStatus;
-  syncPrefs?: SyncPrefs;
-  syncStatus: SyncStatus;
-  private dataEncrypted_: boolean;
-  private encryptionExpanded_: boolean;
-  forceEncryptionExpanded: boolean;
-  private existingPassphrase_: string;
-  private signedIn_: boolean;
-  private syncDisabledByAdmin_: boolean;
-  private syncSectionDisabled_: boolean;
+  declare prefs: {[key: string]: any};
+  declare focusConfig: FocusConfig;
+  declare private pageStatus_: PageStatus;
+  declare syncPrefs?: SyncPrefs;
+  declare syncStatus: SyncStatus;
+  declare private dataEncrypted_: boolean;
+  declare private encryptionExpanded_: boolean;
+  declare forceEncryptionExpanded: boolean;
+  declare private existingPassphrase_: string;
+  declare private showExistingPassphraseBelowAccount_: boolean;
+  declare private signedIn_: boolean;
+  declare private syncDisabledByAdmin_: boolean;
+  declare private syncSectionDisabled_: boolean;
+  declare private enableLinkedServicesSetting_: boolean;
+  declare private isEeaChoiceCountry_: boolean;
+  declare private personalizationCollapseExpanded_: boolean;
 
-  // <if expr="chromeos_lacros">
-  private showSyncSettingsRevamp_: boolean;
+  // <if expr="not is_chromeos">
+  declare private showSetupCancelDialog_: boolean;
   // </if>
 
-  // <if expr="not chromeos_ash">
-  private showSetupCancelDialog_: boolean;
-  // </if>
+  declare private enterPassphraseLabel_: TrustedHTML;
+  declare private existingPassphraseLabel_: TrustedHTML;
 
-  private enterPassphraseLabel_: TrustedHTML;
-  private existingPassphraseLabel_: TrustedHTML;
-
-  private browserProxy_: SyncBrowserProxy = SyncBrowserProxyImpl.getInstance();
+  private metricsBrowserProxy_: MetricsBrowserProxy =
+      MetricsBrowserProxyImpl.getInstance();
+  private syncBrowserProxy_: SyncBrowserProxy =
+      SyncBrowserProxyImpl.getInstance();
   private collapsibleSectionsInitialized_: boolean;
   private didAbort_: boolean;
   private setupCancelConfirmed_: boolean;
@@ -318,7 +322,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
   }
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   getEncryptionOptions(): SettingsSyncEncryptionOptionsElement|null {
     return this.shadowRoot!.querySelector('settings-sync-encryption-options');
   }
@@ -328,32 +332,14 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   }
   // </if>
 
-  // <if expr="is_chromeos">
-  private shouldShowLacrosSideBySideWarning_(): boolean {
-    return loadTimeData.getBoolean('shouldShowLacrosSideBySideWarning');
-  }
-  // </if>
-
   private computeSignedIn_(): boolean {
-    return !!this.syncStatus.signedIn;
+    return this.syncStatus.signedInState === SignedInState.SYNCING;
   }
-
-  // <if expr="chromeos_lacros">
-  private onOsSyncSettingsLinkClick_(): void {
-    OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('osSyncSettingsUrl'));
-  }
-
-  private getManageSyncedDataSubtitle_(): string {
-    return this.showSyncSettingsRevamp_ ?
-        this.i18n('manageSyncedDataSubtitle') :
-        '';
-  }
-  // </if>
 
   private computeSyncSectionDisabled_(): boolean {
     return this.syncStatus !== undefined &&
-        (!this.syncStatus.signedIn || !!this.syncStatus.disabled ||
+        (this.syncStatus.signedInState !== SignedInState.SYNCING ||
+         !!this.syncStatus.disabled ||
          (!!this.syncStatus.hasError &&
           this.syncStatus.statusAction !== StatusAction.ENTER_PASSPHRASE &&
           this.syncStatus.statusAction !==
@@ -374,7 +360,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         });
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private onSetupCancelDialogBack_() {
     this.shadowRoot!.querySelector<CrDialogElement>(
                         '#setupCancelDialog')!.cancel();
@@ -417,7 +403,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
       return;
     }
 
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     const userActionCancelsSetup = this.syncStatus &&
         this.syncStatus.firstSetupInProgress && this.didAbort_;
     if (userActionCancelsSetup && !this.setupCancelConfirmed_) {
@@ -431,10 +417,6 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
       requestAnimationFrame(() => {
         router.navigateTo(router.getRoutes().SYNC);
         this.showSetupCancelDialog_ = true;
-        // Flush to make sure that the setup cancel dialog is attached.
-        flush();
-        this.shadowRoot!.querySelector<CrDialogElement>(
-                            '#setupCancelDialog')!.showModal();
       });
       return;
     }
@@ -463,7 +445,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     // Display loading page until the settings have been retrieved.
     this.pageStatus_ = PageStatus.SPINNER;
 
-    this.browserProxy_.didNavigateToSyncPage();
+    this.syncBrowserProxy_.didNavigateToSyncPage();
 
     this.beforeunloadCallback_ = event => {
       // When the user tries to leave the sync setup, show the 'Leave site'
@@ -490,7 +472,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     // search useful content when the page is not visible to the user.
     this.pageStatus_ = PageStatus.CONFIGURE;
 
-    this.browserProxy_.didNavigateAwayFromSyncPage(this.didAbort_);
+    this.syncBrowserProxy_.didNavigateAwayFromSyncPage(this.didAbort_);
 
     window.removeEventListener('beforeunload', this.beforeunloadCallback_);
     this.beforeunloadCallback_ = null;
@@ -511,8 +493,14 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
 
   private onActivityControlsClick_() {
     chrome.metricsPrivate.recordUserAction('Sync_OpenActivityControlsPage');
-    this.browserProxy_.openActivityControlsUrl();
+    this.syncBrowserProxy_.openActivityControlsUrl();
     window.open(loadTimeData.getString('activityControlsUrl'));
+  }
+
+  private onLinkedServicesClick_() {
+    this.metricsBrowserProxy_.recordAction('Sync_OpenLinkedServicesPage');
+    OpenWindowProxyImpl.getInstance().openUrl(
+        loadTimeData.getString('linkedServicesUrl'));
   }
 
   private onSyncDashboardLinkClick_() {
@@ -529,7 +517,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
 
     if (!this.syncPrefs.explicitPassphraseTime) {
-      // TODO(crbug.com/1207432): There's no reason why this dateless label
+      // TODO(crbug.com/40765539): There's no reason why this dateless label
       // shouldn't link to 'syncErrorsHelpUrl' like the other one.
       return this.i18nAdvanced('enterPassphraseLabel');
     }
@@ -587,7 +575,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
       return;
     }
 
-    this.browserProxy_.setDecryptionPassphrase(this.existingPassphrase_)
+    this.syncBrowserProxy_.setDecryptionPassphrase(this.existingPassphrase_)
         .then(
             sucessfullySet => this.handlePageStatusChanged_(
                 this.computePageStatusAfterPassphraseChange_(sucessfullySet)));
@@ -651,19 +639,17 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
   }
 
+  // <if expr="not is_chromeos">
   private shouldShowSyncAccountControl_(): boolean {
-    // <if expr="chromeos_ash">
-    return false;
-    // </if>
-    // <if expr="not chromeos_ash">
     return this.syncStatus !== undefined &&
         !!this.syncStatus.syncSystemEnabled &&
         loadTimeData.getBoolean('signinAllowed');
-    // </if>
   }
+  // </if>
 
   private computeShowExistingPassphraseBelowAccount_(): boolean {
-    return this.syncStatus !== undefined && !!this.syncStatus.signedIn &&
+    return this.syncStatus !== undefined &&
+        this.syncStatus.signedInState === SignedInState.SYNCING &&
         this.syncPrefs !== undefined && !!this.syncPrefs.passphraseRequired;
   }
 

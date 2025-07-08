@@ -7,14 +7,15 @@
 #import <AppKit/AppKit.h>
 #include <Carbon/Carbon.h>
 
+#include "base/apple/foundation_util.h"
 #include "base/check.h"
 #include "base/feature_list.h"
-#include "base/mac/foundation_util.h"
 #include "base/no_destructor.h"
 #include "build/buildflag.h"
 #include "chrome/app/chrome_command_ids.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/platform_accelerator_cocoa.h"
@@ -23,10 +24,6 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -155,6 +152,19 @@ const std::vector<KeyboardShortcutData>& GetShortcutsNotPresentInMainMenu() {
       {true,  true,  false, true,  kVK_ANSI_A,            IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY},
     });
     // clang-format on
+
+    if (tabs::AreTabGroupShortcutsEnabled()) {
+      keys.push_back(
+          {true, false, true, false, kVK_ANSI_C, IDC_ADD_NEW_TAB_TO_GROUP});
+      keys.push_back(
+          {true, false, true, false, kVK_ANSI_P, IDC_CREATE_NEW_TAB_GROUP});
+      keys.push_back(
+          {true, false, true, false, kVK_ANSI_W, IDC_CLOSE_TAB_GROUP});
+      keys.push_back(
+          {true, false, true, false, kVK_ANSI_X, IDC_FOCUS_NEXT_TAB_GROUP});
+      keys.push_back(
+          {true, false, true, false, kVK_ANSI_Z, IDC_FOCUS_PREV_TAB_GROUP});
+    }
 
     if (base::FeatureList::IsEnabled(features::kUIDebugTools)) {
       keys.push_back(

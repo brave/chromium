@@ -17,7 +17,6 @@
 #include "android_webview/browser/metrics/aw_metrics_service_client.h"
 #include "android_webview/browser/metrics/system_state_util.h"
 #include "android_webview/browser/network_service/aw_network_change_notifier_factory.h"
-#include "android_webview/browser/tracing/background_tracing_field_trial.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
 #include "android_webview/common/aw_resource.h"
@@ -27,6 +26,7 @@
 #include "base/android/build_info.h"
 #include "base/android/bundle_utils.h"
 #include "base/android/memory_pressure_listener_android.h"
+#include "base/android/path_utils.h"
 #include "base/base_paths_android.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -37,6 +37,8 @@
 #include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/task/current_thread.h"
+#include "base/task/thread_pool.h"
+#include "base/trace_event/named_trigger.h"
 #include "components/crash/content/browser/child_exit_observer_android.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/embedder_support/android/metrics/memory_metrics_logger.h"
@@ -47,6 +49,7 @@
 #include "components/metrics/content/subprocess_metrics_provider.h"
 #include "components/metrics/metrics_service.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
+#include "components/tracing/common/background_tracing_utils.h"
 #include "components/user_prefs/user_prefs.h"
 #include "components/variations/synthetic_trials.h"
 #include "components/variations/synthetic_trials_active_group_id_provider.h"
@@ -58,6 +61,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/synthetic_trial_syncer.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
@@ -66,6 +70,10 @@
 #include "third_party/blink/public/common/origin_trials/origin_trials_settings_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gl/gl_surface.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/browser_jni_headers/AwBrowserMainParts_jni.h"
+#include "android_webview/browser_jni_headers/AwInterfaceRegistrar_jni.h"
 
 namespace android_webview {
 
@@ -96,12 +104,47 @@ bool Is64bitAccordingToVersionCode(const std::string& version_code) {
   return arch_codes_64bit.count(arch_code) > 0;
 }
 
-bool IsBundleForMixedDeviceAccordingToVersionCode(
+bool IsBundleInterestingAccordingToVersionCode(
     const std::string& version_code) {
-  // See comment in Is64bitAccordingToVersionCode.
+  // Primary bitness of the bundle is encoded in the last digit of the version
+  // code. And the variant (package name) is encoded in the second to last.
+  //
+  // From build/util/android_chrome_version.py:
+  //       'arm': {
+  //          '32': 0,
+  //          '32_64': 1,
+  //          '64_32': 2,
+  //          '64_32_high': 3,
+  //          '64': 4,
+  //      },
+  //      'intel': {
+  //          '32': 6,
+  //          '32_64': 7,
+  //          '64_32': 8,
+  //          '64': 9,
+  //      },
+  //
+  //      _PACKAGE_NAMES = {
+  //          'CHROME': 0,
+  //          'CHROME_MODERN': 10,
+  //          'MONOCHROME': 20,
+  //          'TRICHROME': 30,
+  //          [...]
+
+  if (version_code.length() != 9) {  // Our scheme has exactly 9 digits.
+    return false;
+  }
+
+  // '32' and '64' bundles go on 32bit-only and 64bit-only devices, so exclude
+  // them.
   std::set<char> arch_codes_mixed = {'1', '2', '3', '7', '8'};
   char arch_code = version_code.back();
-  return arch_codes_mixed.count(arch_code) > 0;
+
+  // Only 'TRICHROME' supports 64-bit.
+  constexpr char kTriChromeVariant = '3';
+  char variant = version_code[version_code.length() - 2];
+
+  return arch_codes_mixed.count(arch_code) > 0 && variant == kTriChromeVariant;
 }
 
 }  // namespace
@@ -132,8 +175,7 @@ int AwBrowserMainParts::PreEarlyInitialization() {
         base::MessagePumpType::UI);
   }
 
-  browser_process_ = std::make_unique<AwBrowserProcess>(
-      browser_client_->aw_feature_list_creator());
+  browser_process_ = std::make_unique<AwBrowserProcess>(browser_client_);
 
   auto* origin_trials_settings_storage =
       browser_process_->GetOriginTrialsSettingsStorage();
@@ -141,6 +183,14 @@ int AwBrowserMainParts::PreEarlyInitialization() {
       browser_process_->local_state(), origin_trials_settings_storage);
   blink::OriginTrialsSettingsProvider::Get()->SetSettings(
       origin_trials_settings_storage->GetSettings());
+
+  if (base::FeatureList::IsEnabled(
+          features::kWebViewCacheSizeLimitDerivedFromAppCacheQuota)) {
+    base::ThreadPool::PostTask(
+        FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+        base::BindOnce(&AwBrowserProcess::FetchHostAppCacheQuota,
+                       base::Unretained(browser_process_.get())));
+  }
 
   return content::RESULT_CODE_NORMAL_EXIT;
 }
@@ -188,10 +238,13 @@ int AwBrowserMainParts::PreCreateThreads() {
 void AwBrowserMainParts::RegisterSyntheticTrials() {
   metrics::MetricsService* metrics =
       AwMetricsServiceClient::GetInstance()->GetMetricsService();
-  metrics->GetSyntheticTrialRegistry()->AddSyntheticTrialObserver(
+  metrics->GetSyntheticTrialRegistry()->AddObserver(
       variations::VariationsIdsProvider::GetInstance());
-  metrics->GetSyntheticTrialRegistry()->AddSyntheticTrialObserver(
+  metrics->GetSyntheticTrialRegistry()->AddObserver(
       variations::SyntheticTrialsActiveGroupIdProvider::GetInstance());
+
+  synthetic_trial_syncer_ = content::SyntheticTrialSyncer::Create(
+      metrics->GetSyntheticTrialRegistry());
 
   static constexpr char kWebViewApkTypeTrial[] = "WebViewApkType";
   ApkType apk_type = AwBrowserProcess::GetApkType();
@@ -222,6 +275,15 @@ void AwBrowserMainParts::RegisterSyntheticTrials() {
   //    filter out).
   // 3) Mixed 32-/64-bit devices, as non-mixed devices are forced to use
   //    a particular bitness, thus don't participate in the experiment.
+  // 4) Version code ends with 31/32/33/37/38. 3x represents Trichrome and the
+  //    last digit represents mixed device (which streghtens the filter #3). In
+  //    reality Stable is mostly represented by 31 and 33.
+  //    (TMI, but Beta is a tad more complicated. What UMA sees as Beta
+  //    includes, as expected, Chrome Beta channel and, less expected, Chrome
+  //    Stable channel distributed via the Play Beta track. The latter is
+  //    represented mainly by version codes ending with 41 and 42, which
+  //    dominate, but we want to filter them out nonetheless because it's harder
+  //    to set up experiment for them.)
   std::string version_code =
       base::android::BuildInfo::GetInstance()->package_version_code();
   size_t ram_mb = base::SysInfo::AmountOfPhysicalMemoryMB();
@@ -232,7 +294,7 @@ void AwBrowserMainParts::RegisterSyntheticTrials() {
       (GetMultipleUserProfilesState() ==
        MultipleUserProfilesState::kSingleProfile) &&
       (cpu_abi_bitness_support == metrics::CpuAbiBitnessSupport::k32And64bit) &&
-      IsBundleForMixedDeviceAccordingToVersionCode(version_code);
+      IsBundleInterestingAccordingToVersionCode(version_code);
   if (is_device_of_interest) {
     std::string trial_group;
     // We can't use defined(ARCH_CPU_64_BITS) on WebView, because bitness of
@@ -252,23 +314,37 @@ void AwBrowserMainParts::RegisterSyntheticTrials() {
         std::string(PRODUCT_VERSION) + "_" + trial_group,
         variations::SyntheticTrialAnnotationMode::kCurrentLog);
   }
+  JNIEnv* env = base::android::AttachCurrentThread();
+  bool use_webview_context = Java_AwBrowserMainParts_getUseWebViewContext(env);
+  bool partitioned_cookies_enablement_state =
+      Java_AwBrowserMainParts_getPartitionedCookiesDefaultState(env);
+  bool webview_startup_tasks_experiment_enabled =
+      isWebViewStartupTasksExperimentEnabled();
+  AwMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      metrics, "WebViewSeparateResourceContextMetrics",
+      use_webview_context ? "Enabled" : "Control",
+      variations::SyntheticTrialAnnotationMode::kCurrentLog);
+  AwMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      metrics, "WebViewPartitionedCookiesMetrics",
+      partitioned_cookies_enablement_state ? "Control" : "Disabled",
+      variations::SyntheticTrialAnnotationMode::kCurrentLog);
+  AwMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+      metrics, "WebViewStartupTasksMetrics",
+      webview_startup_tasks_experiment_enabled ? "Enabled" : "Control",
+      variations::SyntheticTrialAnnotationMode::kCurrentLog);
 }
 
 int AwBrowserMainParts::PreMainMessageLoopRun() {
   TRACE_EVENT0("startup", "AwBrowserMainParts::PreMainMessageLoopRun");
   AwBrowserProcess::GetInstance()->PreMainMessageLoopRun();
-  browser_client_->InitBrowserContext();
+  browser_client_->InitBrowserContextStore();
   content::WebUIControllerFactory::RegisterFactory(
       AwWebUIControllerFactory::GetInstance());
   content::RenderFrameHost::AllowInjectingJavaScript();
   metrics_logger_ = std::make_unique<metrics::MemoryMetricsLogger>();
 
-  // Requesting the |OriginTrialsControllerDelegate| will initialize
-  // it if the feature is enabled.
-  //
-  // This should be done as soon as possible in the start-up process, in order
-  // to load the database from disk.
-  AwBrowserContext::GetDefault()->GetOriginTrialsControllerDelegate();
+  Java_AwInterfaceRegistrar_registerMojoInterfaces(
+      base::android::AttachCurrentThread());
 
   return content::RESULT_CODE_NORMAL_EXIT;
 }
@@ -283,7 +359,25 @@ void AwBrowserMainParts::PostCreateThreads() {
   if (mode != heap_profiling::Mode::kNone)
     heap_profiling::Supervisor::GetInstance()->Start(base::NullCallback());
 
-  MaybeSetupSystemTracing();
+  tracing::SetupSystemTracingFromFieldTrial();
+  tracing::SetupBackgroundTracingFromCommandLine();
+  tracing::SetupPresetTracingFromFieldTrial();
+  base::trace_event::EmitNamedTrigger(
+      base::trace_event::kStartupTracingTriggerName);
+}
+
+bool AwBrowserMainParts::isWebViewStartupTasksExperimentEnabled() {
+  return Java_AwBrowserMainParts_isWebViewStartupTasksLogicEnabled(
+             base::android::AttachCurrentThread()) ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kWebViewUseStartupTasksLogic);
+}
+
+bool AwBrowserMainParts::isWebViewStartupTasksExperimentEnabledP2() {
+  return Java_AwBrowserMainParts_isWebViewStartupTasksExperimentEnabledP2(
+             base::android::AttachCurrentThread()) ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kWebViewUseStartupTasksLogicP2);
 }
 
 }  // namespace android_webview

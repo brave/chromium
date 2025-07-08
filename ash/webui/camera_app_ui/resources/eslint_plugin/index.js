@@ -13,13 +13,13 @@
 
 const parameterCommentFormatRule = {
   create: (context) => {
-    const sourceCode = context.getSourceCode();
+    const {sourceCode} = context;
     return {
       /* eslint-disable-next-line @typescript-eslint/naming-convention */
       CallExpression(node) {
         for (const arg of node.arguments) {
-          const comments = sourceCode.getComments(arg);
-          for (const comment of comments.leading) {
+          const comments = sourceCode.getCommentsBefore(arg);
+          for (const comment of comments) {
             const {type, value} = comment;
             if (type !== 'Block') {
               continue;
@@ -91,7 +91,7 @@ const todoFormatRule = {
       return !/TODO(?!\((b\/\d+|crbug\.com\/\d+|[a-z]+)\))/g.test(comment);
     }
 
-    const sourceCode = context.getSourceCode();
+    const {sourceCode} = context;
     return {
       /* eslint-disable-next-line @typescript-eslint/naming-convention */
       Program: function() {
@@ -101,7 +101,8 @@ const todoFormatRule = {
           if (!verifyTodo(commentValue)) {
             context.report({
               node: comment,
-              message: `Use: TODO(ldap) / TODO(b/123) / TODO(crbug.com/123)`,
+              message: `Use: TODO(ldap) / TODO(b/123456789) /` +
+                  ` TODO(crbug.com/123456789)`,
             });
           }
         }
@@ -143,12 +144,10 @@ const stringEnumOrder = {
 
 /* global module */
 module.exports = {
-  /* eslint-disable @typescript-eslint/naming-convention */
   rules: {
     'parameter-comment-format': parameterCommentFormatRule,
     'generic-parameter-on-declaration-type': genericParameterOnDeclarationType,
     'todo-format': todoFormatRule,
     'string-enum-order': stringEnumOrder,
   },
-  /* eslint-enable @typescript-eslint/naming-convention */
 };

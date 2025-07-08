@@ -1,10 +1,13 @@
 {
   "$build/chromium_orchestrator": {
     "compilator": "linux-rel-compilator",
-    "compilator_watcher_git_revision": "e6d08be3fd589d4f222dae5d18dbc972e6117b23"
+    "compilator_watcher_git_revision": "27c191f304c8d7329a393d8a69020fc14032c3c3"
   },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/linux-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -23,11 +26,13 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
-                  "use_clang_coverage"
+                  "use_clang_coverage",
+                  "chromium_with_telemetry_dependencies"
                 ],
                 "config": "chromium"
               }
@@ -49,11 +54,13 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
-                  "use_clang_coverage"
+                  "use_clang_coverage",
+                  "chromium_with_telemetry_dependencies"
                 ],
                 "config": "chromium"
               }
@@ -75,7 +82,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
@@ -106,7 +114,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
@@ -147,9 +156,7 @@
           "project": "chromium"
         }
       ],
-      "rts_config": {
-        "condition": "QUICK_RUN_ONLY"
-      }
+      "targets_spec_directory": "src/infra/config/generated/builders/try/linux-rel/targets"
     }
   },
   "$build/code_coverage": {
@@ -160,7 +167,22 @@
     "use_clang_coverage": true
   },
   "$build/flakiness": {
-    "check_for_flakiness": true
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
+    "metrics_project": "chromium-reclient-metrics",
+    "output_local_strategy": "minimum",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

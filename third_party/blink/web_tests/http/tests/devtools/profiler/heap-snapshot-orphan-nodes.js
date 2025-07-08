@@ -5,10 +5,12 @@
 import {TestRunner} from 'test_runner';
 import {HeapProfilerTestRunner} from 'heap_profiler_test_runner';
 
+import * as ProfilerModule from 'devtools/panels/profiler/profiler.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that weak references are ignored when dominators are calculated and that weak references won't affect object's retained size.\n`);
-  await TestRunner.showPanel('heap_profiler');
+  await TestRunner.showPanel('heap-profiler');
   await TestRunner.loadHTML(`
       <pre></pre>
     `);
@@ -48,13 +50,13 @@ import {HeapProfilerTestRunner} from 'heap_profiler_test_runner';
       return builder.generateSnapshot();
     }
 
-    TestRunner.addSniffer(Profiler.HeapSnapshotView.prototype, 'retrieveStatistics', checkStatistics);
+    TestRunner.addSniffer(ProfilerModule.HeapSnapshotView.HeapSnapshotView.prototype, 'retrieveStatistics', checkStatistics);
     HeapProfilerTestRunner.takeAndOpenSnapshot(createHeapSnapshot, step1);
 
     async function checkStatistics(arg, result) {
       var statistics = await result;
       TestRunner.assertEquals(4610, statistics.total);
-      TestRunner.assertEquals(4610, statistics.v8heap);
+      TestRunner.assertEquals(4610, statistics.v8heap.total);
       TestRunner.addResult('SUCCESS: total size is correct.');
     }
 

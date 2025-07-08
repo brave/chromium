@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "base/check.h"
 #include "base/feature_list.h"
@@ -17,24 +18,26 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "base/unguessable_token.h"
 #include "media/base/audio_codecs.h"
+#include "media/base/cdm_capability.h"
 #include "media/base/content_decryption_module.h"
 #include "media/base/encryption_scheme.h"
+#include "media/base/key_system_capability.h"
 #include "media/base/key_systems.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
-#include "media/cdm/cdm_capability.h"
 #include "media/cdm/win/media_foundation_cdm_module.h"
 #include "media/cdm/win/media_foundation_cdm_util.h"
 #include "media/media_buildflags.h"
 #include "media/mojo/mojom/interface_factory.mojom.h"
 #include "media/mojo/mojom/key_system_support.mojom.h"
 #include "media/mojo/services/interface_factory_impl.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -61,6 +64,15 @@ const char kEncryptionIvQueryName[] = "encryption-iv-size";
 const char kSwSecureRobustness[] = "SW_SECURE_DECODE";
 const char kHwSecureRobustness[] = "HW_SECURE_ALL";
 
+const char kPlayReadyKeySystemRecommendationHwSecure[] =
+    "com.microsoft.playready.recommendation.3000";
+// We need this char array to query the Windows Media Foundation API
+// to know which codecs have the clear lead fix enabled on the computer.
+// We do not check cbcs-clearlead because clearlead fix itself should be
+// orthogonal to encryption scheme support.
+// https://docs.microsoft.com/en-us/windows/win32/api/mfmediaengine/nf-mfmediaengine-imfextendeddrmtypesupport-istypesupportedex
+const char kClearLeadEncryptionScheme[] = "cenc-clearlead";
+
 // The followings define the supported codecs and encryption schemes that we try
 // to query.
 constexpr VideoCodec kAllVideoCodecs[] = {
@@ -79,16 +91,23 @@ constexpr AudioCodec kAllAudioCodecs[] = {
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     AudioCodec::kAAC,
 #if BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
-    AudioCodec::kEAC3, AudioCodec::kAC3,
+    AudioCodec::kEAC3,       AudioCodec::kAC3,
 #endif  // BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+#if BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+    AudioCodec::kAC4,
+#endif  // BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
 #if BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
     AudioCodec::kMpegHAudio,
 #endif  // BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
-    AudioCodec::kVorbis, AudioCodec::kFLAC, AudioCodec::kOpus};
+    AudioCodec::kVorbis,     AudioCodec::kFLAC, AudioCodec::kOpus};
 
 constexpr EncryptionScheme kAllEncryptionSchemes[] = {EncryptionScheme::kCenc,
                                                       EncryptionScheme::kCbcs};
+
+using IsTypeSupportedCallback =
+    base::RepeatingCallback<bool(bool is_hw_secure,
+                                 const std::string& content_type)>;
 
 bool IsTypeSupportedInternal(
     ComPtr<IMFContentDecryptionModuleFactory> cdm_factory,
@@ -114,6 +133,29 @@ bool IsTypeSupportedInternal(
   return supported;
 }
 
+bool IsTypeSupportedInternalEx(
+    ComPtr<IMFExtendedDRMTypeSupport> mf_type_support,
+    const std::string& key_system,
+    bool is_hw_secure,
+    const std::string& content_type) {
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+  bool supported = IsMediaFoundationContentTypeSupported(
+      mf_type_support, key_system, content_type);
+  // The above function may take seconds to run. Report UMA to understand the
+  // actual performance impact. Report UMA only for success cases.
+  if (supported) {
+    auto uma_name = "Media.EME.MediaFoundationService." +
+                    GetKeySystemNameForUMA(key_system, is_hw_secure) +
+                    ".IsTypeSupportedEx";
+    base::UmaHistogramTimes(uma_name, base::TimeTicks::Now() - start_time);
+  }
+
+  DVLOG(3) << __func__ << " " << (supported ? "[yes]" : "[no]") << ": "
+           << key_system << ", " << content_type;
+
+  return supported;
+}
+
 std::string GetFourCCString(VideoCodec codec) {
   switch (codec) {
     case VideoCodec::kH264:
@@ -130,7 +172,6 @@ std::string GetFourCCString(VideoCodec codec) {
           << "This video codec is not supported by MediaFoundationCDM. codec="
           << GetCodecName(codec);
   }
-  return "";
 }
 
 // Returns an "ext-profile" feature query (with ending comma) for a video codec.
@@ -156,6 +197,8 @@ std::string GetFourCCString(AudioCodec codec) {
       return "ec-3";
     case AudioCodec::kAC3:
       return "ac-3";
+    case AudioCodec::kAC4:
+      return "ac-4";
     case AudioCodec::kMpegHAudio:
       return "mhm1";
     default:
@@ -163,7 +206,6 @@ std::string GetFourCCString(AudioCodec codec) {
           << "This audio codec is not supported by MediaFoundationCDM. codec="
           << GetCodecName(codec);
   }
-  return "";
 }
 
 std::string GetName(EncryptionScheme scheme) {
@@ -175,7 +217,6 @@ std::string GetName(EncryptionScheme scheme) {
     default:
       NOTREACHED() << "Only cenc and cbcs are supported";
   }
-  return "";
 }
 
 // According to the common encryption spec, both 8 and 16 bytes IV are allowed
@@ -192,7 +233,6 @@ int GetIvSize(EncryptionScheme scheme) {
     default:
       NOTREACHED() << "Only cenc and cbcs are supported";
   }
-  return 0;
 }
 
 // Feature name:value mapping.
@@ -201,7 +241,7 @@ using FeatureMap = std::map<std::string, std::string>;
 // Construct the query type string based on `video_codec`, optional
 // `audio_codec`, `kDefaultFeatures` and `extra_features`.
 std::string GetTypeString(VideoCodec video_codec,
-                          absl::optional<AudioCodec> audio_codec,
+                          std::optional<AudioCodec> audio_codec,
                           const FeatureMap& extra_features) {
   auto codec_string = GetFourCCString(video_codec);
   if (audio_codec.has_value())
@@ -219,36 +259,27 @@ std::string GetTypeString(VideoCodec video_codec,
       /*offsets=*/nullptr);
 }
 
-// Consolidates the information to construct the type string in only one place.
-// This will help us avoid errors in faulty creation of the type string, and
-// centralize from where we call IsTypeSupportedInternal()
-bool IsTypeSupported(VideoCodec video_codec,
-                     absl::optional<AudioCodec> audio_codec,
-                     const FeatureMap& extra_features,
-                     ComPtr<IMFContentDecryptionModuleFactory> cdm_factory,
-                     const std::string& key_system,
-                     bool is_hw_secure) {
-  auto type = GetTypeString(video_codec, audio_codec, extra_features);
-
-  return IsTypeSupportedInternal(cdm_factory, key_system, is_hw_secure, type);
-}
-
 base::flat_set<EncryptionScheme> GetSupportedEncryptionSchemes(
-    ComPtr<IMFContentDecryptionModuleFactory> cdm_factory,
-    const std::string& key_system,
     bool is_hw_secure,
     VideoCodec video_codec,
-    const std::string& robustness) {
+    const std::string& robustness,
+    IsTypeSupportedCallback is_type_supported_cb,
+    const base::flat_set<EncryptionScheme>& schemes_to_query) {
   base::flat_set<EncryptionScheme> supported_schemes;
-  for (const auto scheme : kAllEncryptionSchemes) {
-    const FeatureMap extra_features = {
-        {kEncryptionSchemeQueryName, GetName(scheme)},
-        {kEncryptionIvQueryName, base::NumberToString(GetIvSize(scheme))},
-        {kRobustnessQueryName, robustness.c_str()}};
 
-    if (IsTypeSupported(video_codec, /*audio_codec=*/absl::nullopt,
-                        extra_features, cdm_factory, key_system,
-                        is_hw_secure)) {
+  for (const auto scheme : schemes_to_query) {
+    FeatureMap extra_features = {
+        {kEncryptionSchemeQueryName, GetName(scheme)},
+        {kEncryptionIvQueryName, base::NumberToString(GetIvSize(scheme))}};
+
+    if (!robustness.empty()) {
+      extra_features.insert({kRobustnessQueryName, robustness});
+    }
+
+    if (is_type_supported_cb.Run(
+            is_hw_secure,
+            GetTypeString(video_codec, /*audio_codec=*/std::nullopt,
+                          extra_features))) {
       supported_schemes.insert(scheme);
     }
   }
@@ -257,7 +288,8 @@ base::flat_set<EncryptionScheme> GetSupportedEncryptionSchemes(
 
 HRESULT CreateDummyMediaFoundationCdm(
     ComPtr<IMFContentDecryptionModuleFactory> cdm_factory,
-    const std::string& key_system) {
+    const std::string& key_system,
+    bool is_os_cdm) {
   // Set `use_hw_secure_codecs` to indicate this for hardware secure mode,
   // which typically requires identifier and persistent storage.
   CdmConfig cdm_config = {key_system, /*allow_distinctive_identifier=*/true,
@@ -272,15 +304,20 @@ HRESULT CreateDummyMediaFoundationCdm(
   //   C:\Users\<user>\AppData\Local\Packages\cr.sb.cdm<...>\AC\Temp
   // This folder is specifically for the CDM app container, so there's no need
   // to set ACL explicitly.
+  // Use a short name for the store path to help avoid hitting the MAX_PATH
+  // limitation. Note, this won't fix all scenarios since the path is still
+  // dependent on the username length.
+  // Use a different root path for OS and non-OS CDM so that the deletion
+  // operation doesn't affect each other's dummy CDM store folder.
   base::FilePath temp_dir;
   base::PathService::Get(base::DIR_TEMP, &temp_dir);
-  const char kDummyCdmStore[] = "DummyMediaFoundationCdmStore";
-  auto dummy_cdm_store_path_root = temp_dir.AppendASCII(kDummyCdmStore);
+  auto dummy_cdm_store_path_root =
+      temp_dir.AppendASCII(is_os_cdm ? "DummyOsCdm" : "DummyCdm");
 
   // Create the dummy CDM.
   Microsoft::WRL::ComPtr<IMFContentDecryptionModule> mf_cdm;
   auto hr = CreateMediaFoundationCdm(cdm_factory, cdm_config, cdm_origin_id,
-                                     /*cdm_client_token=*/absl::nullopt,
+                                     /*cdm_client_token=*/std::nullopt,
                                      dummy_cdm_store_path_root, mf_cdm);
   DLOG_IF(ERROR, FAILED(hr)) << __func__ << ": Failed for " << key_system;
   mf_cdm.Reset();
@@ -297,25 +334,78 @@ HRESULT CreateDummyMediaFoundationCdm(
   return hr;
 }
 
-absl::optional<CdmCapability> GetCdmCapability(
+// Reports the HRESULT of the CDM capability query status.
+void ReportCapabilityQueryStatusHresultUMA(const std::string& key_system,
+                                           const std::string& uma_name_postfix,
+                                           HRESULT hresult) {
+  auto uma_prefix =
+      "Media.EME." + media::GetKeySystemNameForUMA(key_system, std::nullopt);
+  base::UmaHistogramSparse(
+      uma_prefix + ".CdmCapabilityQueryStatus." + uma_name_postfix, hresult);
+}
+
+CdmCapabilityOrStatus GetCdmCapability(
     ComPtr<IMFContentDecryptionModuleFactory> cdm_factory,
     const std::string& key_system,
-    bool is_hw_secure) {
-  DVLOG(2) << __func__ << ", is_hw_secure=" << is_hw_secure;
+    bool is_hw_secure,
+    bool is_os_cdm,
+    IsTypeSupportedCallback is_type_supported_cb) {
+  DVLOG(2) << __func__ << ": key_system=" << key_system
+           << ", is_hw_secure=" << is_hw_secure;
+
+  const auto start_time = base::TimeTicks::Now();
 
   // For hardware secure decryption, even when IsTypeSupportedInternal() says
   // it's supported, CDM creation could fail immediately. Therefore, create a
   // dummy CDM instance to detect this case.
-  if (is_hw_secure &&
-      FAILED(CreateDummyMediaFoundationCdm(cdm_factory, key_system))) {
-    return absl::nullopt;
+  HRESULT hresult = S_OK;
+  if (is_hw_secure && FAILED(hresult = CreateDummyMediaFoundationCdm(
+                                 cdm_factory, key_system, is_os_cdm))) {
+    DVLOG(1) << __func__
+             << ": CreateDummyMediaFoundationCdm() failed with hresult="
+             << hresult;
+    ReportCapabilityQueryStatusHresultUMA(
+        key_system, kCreateDummyMediaFoundationCdmHresultUmaPostfix, hresult);
+    return base::unexpected(
+        CdmCapabilityQueryStatus::kCreateDummyMediaFoundationCdmFailed);
   }
 
-  // TODO(hmchen): make this generic for more key systems.
-  const std::string robustness =
-      is_hw_secure ? kHwSecureRobustness : kSwSecureRobustness;
+  std::string robustness;
+  FeatureMap extra_features = {};
+
+  if (!is_os_cdm) {
+    robustness = is_hw_secure ? kHwSecureRobustness : kSwSecureRobustness;
+
+    // encryption-robustness is not a supported for PlayReady key systems.
+    extra_features.insert({{kRobustnessQueryName, robustness}});
+  }
 
   CdmCapability capability;
+
+  // Check for clear lead support for hardware security and OS CDMs, as we
+  // only support codecs that support clear lead for OS CDMs in HW security.
+  // Software security always supports clear lead, and non OS CDMs for
+  // hardware security always does NOT support clear lead.
+  bool checking_clear_lead = is_hw_secure && is_os_cdm;
+
+  // For Audio Codecs:
+  // The contract of the API is such that the encryption scheme is applied
+  // to both audio and video. In terms of the current implementation, the
+  // encryption type is essentially ignored for audio, but that's because
+  // all encryption types should be supported for audio.
+  // `cenc-clearlead` and `cenc` are equivalent for audio in all cases.
+  // Software vs Hardware Clearlead Codec Enforcement:
+  // SWDRM and HWDRM are enforced the same for cenc-clearlead checking,
+  // which can cause issues since clear lead should always be supported
+  // for SWDRM. So for the OS_CDM, if the CDM is software secure, do not
+  // pass in the cenc-clearlead because the codec checking might result in
+  // an unsupported value, which is an oversight in the current PR impl.
+  if (checking_clear_lead) {
+    extra_features.insert(
+        {{kEncryptionSchemeQueryName, kClearLeadEncryptionScheme},
+         {kEncryptionIvQueryName,
+          base::NumberToString(GetIvSize(EncryptionScheme::kCenc))}});
+  }
 
   // Query video codecs.
   for (const auto video_codec : kAllVideoCodecs) {
@@ -335,18 +425,31 @@ absl::optional<CdmCapability> GetCdmCapability(
     }
 #endif
 
-    const FeatureMap extra_features = {{kRobustnessQueryName, robustness}};
+    if (is_os_cdm && is_hw_secure) {
+      // Remove VP9 from the OS CDM capabilities check since it does
+      // not support clearlead. Remove AV1 from the hardware secure
+      // OS CDM capabilities check if the feature is disabled.
+      if (video_codec == VideoCodec::kVP9 ||
+          (video_codec == VideoCodec::kAV1 &&
+           !base::FeatureList::IsEnabled(kHardwareSecureDecryptionAv1))) {
+        continue;
+      }
+    }
 
-    if (IsTypeSupported(video_codec, /*audio_codec=*/absl::nullopt,
-                        extra_features, cdm_factory, key_system,
-                        is_hw_secure)) {
+    if (is_type_supported_cb.Run(
+            is_hw_secure,
+            GetTypeString(video_codec, /*audio_codec=*/std::nullopt,
+                          extra_features))) {
       // IsTypeSupported() does not support querying profiling, in general
       // assume all relevant profiles are supported.
       VideoCodecInfo video_codec_info;
 
-      // `supports_clear_lead` should be set to false until detection for clear
-      // lead support is fixed and the query works as expected.
-      video_codec_info.supports_clear_lead = false;
+      // Software security always supports clear lead.
+      // Non-OS CDMs for hardware security always do NOT support clear lead.
+      // For hardware secure OS CDMs, we query for clear lead support as part
+      // of the video codec querying, so if is_type_supported cb returns true,
+      // we support clear lead.
+      video_codec_info.supports_clear_lead = !is_hw_secure || is_os_cdm;
 
 #if BUILDFLAG(ENABLE_PLATFORM_DOLBY_VISION)
       // Dolby Vision on Windows only support profile 4/5/8 now. But profile 4
@@ -359,14 +462,6 @@ absl::optional<CdmCapability> GetCdmCapability(
       }
 #endif
 
-      // We check for `!is_hw_secure` because clear lead should always be
-      // supported for software security. When clear lead is supported
-      // for hardware security (b/219818166), we will add a query to
-      // set supports_clear_lead.
-      if (!is_hw_secure) {
-        video_codec_info.supports_clear_lead = true;
-      }
-
       capability.video_codecs.emplace(video_codec, video_codec_info);
     }
   }
@@ -375,7 +470,7 @@ absl::optional<CdmCapability> GetCdmCapability(
   // codecs are supported.
   if (capability.video_codecs.empty()) {
     DVLOG(2) << "No video codecs supported for is_hw_secure=" << is_hw_secure;
-    return absl::nullopt;
+    return base::unexpected(CdmCapabilityQueryStatus::kNoSupportedVideoCodec);
   }
 
   // Query audio codecs.
@@ -383,10 +478,10 @@ absl::optional<CdmCapability> GetCdmCapability(
   // supported video codecs> + <audio codec> to query the audio capability.
   for (const auto audio_codec : kAllAudioCodecs) {
     const auto& video_codec = capability.video_codecs.begin()->first;
-    const FeatureMap extra_features = {{kRobustnessQueryName, robustness}};
 
-    if (IsTypeSupported(video_codec, audio_codec, extra_features, cdm_factory,
-                        key_system, is_hw_secure)) {
+    if (is_type_supported_cb.Run(
+            is_hw_secure,
+            GetTypeString(video_codec, audio_codec, extra_features))) {
       capability.audio_codecs.emplace(audio_codec);
     }
   }
@@ -400,16 +495,39 @@ absl::optional<CdmCapability> GetCdmCapability(
   // of the encryption schemes which work for all codecs.
   base::flat_set<EncryptionScheme> intersection(
       std::begin(kAllEncryptionSchemes), std::end(kAllEncryptionSchemes));
-  for (const auto& [video_codec, _] : capability.video_codecs) {
-    const auto schemes = GetSupportedEncryptionSchemes(
-        cdm_factory, key_system, is_hw_secure, video_codec, robustness);
-    intersection = base::STLSetIntersection<base::flat_set<EncryptionScheme>>(
-        intersection, schemes);
-  }
 
-  if (intersection.empty()) {
-    // Fail if no supported encryption scheme.
-    return absl::nullopt;
+  for (const auto& [video_codec, codec_info] : capability.video_codecs) {
+    base::flat_set<EncryptionScheme> schemes_to_query = intersection;
+    base::flat_set<EncryptionScheme> supported_schemes;
+
+    // If this codec supports cenc-clearlead (we check only for OS HW secure
+    // CDMs), we know it supports cenc without querying and only need to query
+    // for the CBCS encryption scheme.
+    if (checking_clear_lead && codec_info.supports_clear_lead) {
+      supported_schemes.insert(EncryptionScheme::kCenc);
+      schemes_to_query.erase(EncryptionScheme::kCenc);
+    }
+
+    // This stores all the schemes that are supported via the IsTypeSupportedEx
+    // query. We then insert it into the supported schemes, which may or may not
+    // have been populated previously depending if we are querying for clearlead
+    // support on hardware secure OS CDMs.
+    const auto queried_schemes =
+        GetSupportedEncryptionSchemes(is_hw_secure, video_codec, robustness,
+                                      is_type_supported_cb, schemes_to_query);
+    supported_schemes.insert(queried_schemes.begin(), queried_schemes.end());
+
+    intersection = base::STLSetIntersection<base::flat_set<EncryptionScheme>>(
+        intersection, supported_schemes);
+
+    // Check after every codec's intersection for encryption scheme is computed.
+    // If the intersection is empty for one codec, do not loop and check
+    // encryption scheme support for all other codecs, and return early.
+    if (intersection.empty()) {
+      // Fail if no supported encryption scheme.
+      return base::unexpected(
+          CdmCapabilityQueryStatus::kNoSupportedEncryptionScheme);
+    }
   }
 
   capability.encryption_schemes = intersection;
@@ -418,14 +536,20 @@ absl::optional<CdmCapability> GetCdmCapability(
   // session which is required by EME spec.
   capability.session_types.insert(CdmSessionType::kTemporary);
 
-  return capability;
+  auto uma_name = "Media.EME.MediaFoundationService." +
+                  GetKeySystemNameForUMA(key_system, is_hw_secure) +
+                  ".GetCdmCapability";
+  base::UmaHistogramTimes(uma_name, base::TimeTicks::Now() - start_time);
+
+  return std::move(capability);
 }
 
 }  // namespace
 
 MediaFoundationService::MediaFoundationService(
+    bool is_os_cdm,
     mojo::PendingReceiver<mojom::MediaFoundationService> receiver)
-    : receiver_(this, std::move(receiver)) {
+    : receiver_(this, std::move(receiver)), is_os_cdm_(is_os_cdm) {
   DVLOG(1) << __func__;
   mojo_media_client_.Initialize();
 }
@@ -437,36 +561,89 @@ MediaFoundationService::~MediaFoundationService() {
 void MediaFoundationService::IsKeySystemSupported(
     const std::string& key_system,
     IsKeySystemSupportedCallback callback) {
-  DVLOG(2) << __func__ << ", key_system=" << key_system;
+  DVLOG(1) << __func__ << ": key_system=" << key_system;
 
   SCOPED_UMA_HISTOGRAM_TIMER(
       "Media.EME.MediaFoundationService.IsKeySystemSupported");
 
   ComPtr<IMFContentDecryptionModuleFactory> cdm_factory;
-  HRESULT hr = MediaFoundationCdmModule::GetInstance()->GetCdmFactory(
+  HRESULT hresult = MediaFoundationCdmModule::GetInstance()->GetCdmFactory(
       key_system, cdm_factory);
 
-  if (FAILED(hr)) {
-    DLOG(ERROR) << "Failed to GetCdmFactory.";
-    std::move(callback).Run(false, nullptr);
+  if (FAILED(hresult)) {
+    DLOG(ERROR) << __func__
+                << ": Failed to GetCdmFactory with hresult=" << hresult;
+    ReportCapabilityQueryStatusHresultUMA(
+        key_system, kMediaFoundationGetCdmFactoryHresultUmaPostfix, hresult);
+    std::move(callback).Run(
+        false,
+        KeySystemCapability(
+            base::unexpected(
+                CdmCapabilityQueryStatus::kMediaFoundationGetCdmFactoryFailed),
+            base::unexpected(CdmCapabilityQueryStatus::
+                                 kMediaFoundationGetCdmFactoryFailed)));
     return;
   }
 
-  absl::optional<CdmCapability> sw_secure_capability =
-      GetCdmCapability(cdm_factory, key_system, /*is_hw_secure=*/false);
-  absl::optional<CdmCapability> hw_secure_capability =
-      GetCdmCapability(cdm_factory, key_system, /*is_hw_secure=*/true);
+  IsTypeSupportedCallback is_type_supported_cb;
 
-  if (!sw_secure_capability && !hw_secure_capability) {
-    DVLOG(2) << "Get empty CdmCapability.";
-    std::move(callback).Run(false, nullptr);
+  if (is_os_cdm_) {
+    // `IMFContentDecryptionModuleFactory::IsTypeSupported()` returns
+    // 'supported' for OS PlayReady backed implementation regardless of the
+    // value passed in for the `contentType` parameter. Use
+    // IMFExtendedDRMTypeSupport::IsTypeSupportedEx() instead.
+    ComPtr<IMFExtendedDRMTypeSupport> mf_type_support;
+    HRESULT hr =
+        CoCreateInstance(CLSID_MFMediaEngineClassFactory, nullptr,
+                         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&mf_type_support));
+    if (FAILED(hr)) {
+      DLOG(ERROR) << __func__
+                  << ": Failed to create class factory for "
+                     "IMFExtendedDRMTypeSupport::IsTypeSupportedEx. hr="
+                  << hr;
+      std::move(callback).Run(
+          false, KeySystemCapability(
+                     base::unexpected(
+                         CdmCapabilityQueryStatus::
+                             kMediaFoundationGetExtendedDRMTypeSupportFailed),
+                     base::unexpected(
+                         CdmCapabilityQueryStatus::
+                             kMediaFoundationGetExtendedDRMTypeSupportFailed)));
+      return;
+    }
+
+    // Force the use of the hardware based PlayReady key system.
+    is_type_supported_cb =
+        base::BindRepeating(&IsTypeSupportedInternalEx, mf_type_support,
+                            kPlayReadyKeySystemRecommendationHwSecure);
+  } else {
+    is_type_supported_cb =
+        base::BindRepeating(&IsTypeSupportedInternal, cdm_factory, key_system);
+  }
+
+  // Use empty software secure capability as it is not used.
+  auto sw_cdm_capability_or_status =
+      base::unexpected(CdmCapabilityQueryStatus::kNoSupportedVideoCodec);
+  auto hw_cdm_capability_or_status =
+      GetCdmCapability(cdm_factory, key_system, /*is_hw_secure=*/true,
+                       is_os_cdm_, is_type_supported_cb);
+  auto key_system_capability = KeySystemCapability(sw_cdm_capability_or_status,
+                                                   hw_cdm_capability_or_status);
+  if (!key_system_capability.sw_cdm_capability_or_status.has_value() &&
+      !key_system_capability.hw_cdm_capability_or_status.has_value()) {
+    DVLOG(2)
+        << __func__
+        << ": Get empty CdmCapability. sw_cdm_capability_or_status.error()="
+        << CdmCapabilityQueryStatusToString(
+               key_system_capability.sw_cdm_capability_or_status.error())
+        << ", hw_cdm_capability_or_status.error()="
+        << CdmCapabilityQueryStatusToString(
+               key_system_capability.hw_cdm_capability_or_status.error());
+    std::move(callback).Run(false, std::move(key_system_capability));
     return;
   }
 
-  auto capability = media::mojom::KeySystemCapability::New();
-  capability->sw_secure_capability = sw_secure_capability;
-  capability->hw_secure_capability = hw_secure_capability;
-  std::move(callback).Run(true, std::move(capability));
+  std::move(callback).Run(true, std::move(key_system_capability));
 }
 
 void MediaFoundationService::CreateInterfaceFactory(

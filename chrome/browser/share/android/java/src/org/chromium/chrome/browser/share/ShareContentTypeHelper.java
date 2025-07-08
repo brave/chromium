@@ -7,8 +7,9 @@ package org.chromium.chrome.browser.share;
 import android.text.TextUtils;
 
 import androidx.annotation.IntDef;
-
 import androidx.annotation.VisibleForTesting;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.share.ChromeShareExtras.DetailedContentType;
 import org.chromium.components.browser_ui.share.ShareParams;
 
@@ -19,18 +20,33 @@ import java.util.HashSet;
 import java.util.Set;
 
 /** Content type used by sharing related code. */
+@NullMarked
 public class ShareContentTypeHelper {
     private static final String IMAGE_TYPE = "image/";
 
     @VisibleForTesting
-    public static final HashSet<Integer> ALL_CONTENT_TYPES_FOR_TEST = new HashSet<>(
-            Arrays.asList(ContentType.LINK_PAGE_VISIBLE, ContentType.LINK_PAGE_NOT_VISIBLE,
-                    ContentType.TEXT, ContentType.HIGHLIGHTED_TEXT, ContentType.LINK_AND_TEXT,
-                    ContentType.IMAGE, ContentType.OTHER_FILE_TYPE, ContentType.IMAGE_AND_LINK));
+    public static final HashSet<Integer> ALL_CONTENT_TYPES_FOR_TEST =
+            new HashSet<>(
+                    Arrays.asList(
+                            ContentType.LINK_PAGE_VISIBLE,
+                            ContentType.LINK_PAGE_NOT_VISIBLE,
+                            ContentType.TEXT,
+                            ContentType.HIGHLIGHTED_TEXT,
+                            ContentType.LINK_AND_TEXT,
+                            ContentType.IMAGE,
+                            ContentType.OTHER_FILE_TYPE,
+                            ContentType.IMAGE_AND_LINK));
 
-    @IntDef({ContentType.LINK_PAGE_VISIBLE, ContentType.LINK_PAGE_NOT_VISIBLE, ContentType.TEXT,
-            ContentType.HIGHLIGHTED_TEXT, ContentType.LINK_AND_TEXT, ContentType.IMAGE,
-            ContentType.OTHER_FILE_TYPE, ContentType.IMAGE_AND_LINK})
+    @IntDef({
+        ContentType.LINK_PAGE_VISIBLE,
+        ContentType.LINK_PAGE_NOT_VISIBLE,
+        ContentType.TEXT,
+        ContentType.HIGHLIGHTED_TEXT,
+        ContentType.LINK_AND_TEXT,
+        ContentType.IMAGE,
+        ContentType.OTHER_FILE_TYPE,
+        ContentType.IMAGE_AND_LINK
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ContentType {
         int LINK_PAGE_VISIBLE = 0;

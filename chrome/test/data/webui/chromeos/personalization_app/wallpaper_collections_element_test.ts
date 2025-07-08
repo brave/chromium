@@ -3,24 +3,24 @@
 // found in the LICENSE file.
 
 import 'chrome://personalization/strings.m.js';
-import 'chrome://webui-test/mojo_webui_test_support.js';
 
-import {emptyState, GooglePhotosEnablementState, kDefaultImageSymbol, PersonalizationRouter, WallpaperActionName, WallpaperCollection, WallpaperCollections, WallpaperGridItem, WallpaperImage} from 'chrome://personalization/js/personalization_app.js';
+import type {WallpaperCollection, WallpaperImage} from 'chrome://personalization/js/personalization_app.js';
+import {emptyState, GooglePhotosEnablementState, kDefaultImageSymbol, Paths, PersonalizationRouterElement, WallpaperActionName, WallpaperCollectionsElement, WallpaperGridItemElement} from 'chrome://personalization/js/personalization_app.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertGE, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {TestMock} from 'chrome://webui-test/test_mock.js';
 
 import {baseSetup, createSvgDataUrl, initElement, teardownElement} from './personalization_app_test_utils.js';
-import {TestPersonalizationStore} from './test_personalization_store.js';
-import {TestWallpaperProvider} from './test_wallpaper_interface_provider.js';
+import type {TestPersonalizationStore} from './test_personalization_store.js';
+import type {TestWallpaperProvider} from './test_wallpaper_interface_provider.js';
 
-suite('WallpaperCollectionsTest', function() {
-  let wallpaperCollectionsElement: WallpaperCollections|null = null;
+suite('WallpaperCollectionsElementTest', function() {
+  let wallpaperCollectionsElement: WallpaperCollectionsElement|null = null;
   let wallpaperProvider: TestWallpaperProvider;
   let personalizationStore: TestPersonalizationStore;
-  const routerOriginal = PersonalizationRouter.instance;
-  const routerMock = TestMock.fromClass(PersonalizationRouter);
+  const routerOriginal = PersonalizationRouterElement.instance;
+  const routerMock = TestMock.fromClass(PersonalizationRouterElement);
 
   // A simplified representation of WallpaperCollectionElement tile for
   // testing.
@@ -36,22 +36,50 @@ suite('WallpaperCollectionsTest', function() {
         .tiles_.map(({id, type}: Tile) => ({id, type}));
   }
 
+  async function loadWallpapers(isTimeOfDayWallpaperEnabled: boolean) {
+    personalizationStore.data.wallpaper.backdrop.collections =
+        wallpaperProvider.collections;
+    if (!isTimeOfDayWallpaperEnabled) {
+      personalizationStore.data.wallpaper.backdrop.collections =
+          personalizationStore.data.wallpaper.backdrop.collections!.filter(
+              collection => collection.id !==
+                  loadTimeData.getString('timeOfDayWallpaperCollectionId'));
+    }
+    personalizationStore.data.wallpaper.backdrop.images =
+        personalizationStore.data.wallpaper.backdrop.collections!.reduce(
+            (result, next) => {
+              result[next.id] = wallpaperProvider.images;
+              return result;
+            },
+            {} as Record<string, WallpaperImage[]|null>);
+    personalizationStore.data.wallpaper.loading.collections = false;
+    personalizationStore.data.wallpaper.loading.images =
+        personalizationStore.data.wallpaper.backdrop.collections!.reduce(
+            (result, next) => {
+              result[next.id] = false;
+              return result;
+            },
+            {} as Record<string, boolean>);
+    personalizationStore.notifyObservers();
+    await waitAfterNextRender(wallpaperCollectionsElement!);
+  }
+
   setup(function() {
     loadTimeData.overrideValues({isGooglePhotosIntegrationEnabled: true});
     const mocks = baseSetup();
     wallpaperProvider = mocks.wallpaperProvider;
     personalizationStore = mocks.personalizationStore;
-    PersonalizationRouter.instance = () => routerMock;
+    PersonalizationRouterElement.instance = () => routerMock;
   });
 
   teardown(async () => {
     await teardownElement(wallpaperCollectionsElement);
     wallpaperCollectionsElement = null;
-    PersonalizationRouter.instance = routerOriginal;
+    PersonalizationRouterElement.instance = routerOriginal;
   });
 
   test('shows error when fails to load', async () => {
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
 
     // No error displayed while loading.
     let error = wallpaperCollectionsElement.shadowRoot!.querySelector(
@@ -85,7 +113,7 @@ suite('WallpaperCollectionsTest', function() {
     personalizationStore.expectAction(
         WallpaperActionName.SET_IMAGES_FOR_COLLECTION);
 
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
 
     await personalizationStore.waitForAction(
         WallpaperActionName.SET_IMAGES_FOR_COLLECTION);
@@ -103,8 +131,8 @@ suite('WallpaperCollectionsTest', function() {
         personalizationStore.data.wallpaper.backdrop,
         'expected backdrop data is set',
     );
-    assertDeepEquals(
-        {
+    assertEquals(
+        JSON.stringify({
           ...emptyState().wallpaper.loading,
           collections: false,
           images: {
@@ -120,14 +148,14 @@ suite('WallpaperCollectionsTest', function() {
             },
             images: false,
           },
-        },
-        personalizationStore.data.wallpaper.loading,
+        }),
+        JSON.stringify(personalizationStore.data.wallpaper.loading),
         'expected loading state is set',
     );
   });
 
   test('sets aria label on main', async () => {
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     assertEquals(
@@ -138,12 +166,12 @@ suite('WallpaperCollectionsTest', function() {
   });
 
   test('displays no_images.svg when no local images', async () => {
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const localTile = wallpaperCollectionsElement.shadowRoot!
-                          .querySelector<WallpaperGridItem>(
-                              `${WallpaperGridItem.is}[collage]`);
+                          .querySelector<WallpaperGridItemElement>(
+                              `${WallpaperGridItemElement.is}[collage]`);
 
     assertTrue(!!localTile, 'local tile is present');
 
@@ -158,8 +186,8 @@ suite('WallpaperCollectionsTest', function() {
     assertEquals(
         loadTimeData.getString('zeroImages'),
         wallpaperCollectionsElement.shadowRoot!
-            .querySelector<WallpaperGridItem>(
-                `${WallpaperGridItem.is}[collage]`)
+            .querySelector<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[collage]`)
             ?.secondaryText,
         'no images text is displayed');
   });
@@ -170,12 +198,12 @@ suite('WallpaperCollectionsTest', function() {
       [kDefaultImageSymbol]: {url: 'data:image/png;base64,qqqq'},
     };
 
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const localTile = wallpaperCollectionsElement.shadowRoot!
-                          .querySelector<WallpaperGridItem>(
-                              `${WallpaperGridItem.is}[collage]`);
+                          .querySelector<WallpaperGridItemElement>(
+                              `${WallpaperGridItemElement.is}[collage]`);
 
     assertTrue(!!localTile, 'local tile is present');
 
@@ -198,12 +226,12 @@ suite('WallpaperCollectionsTest', function() {
       '/qwer': false,
     };
 
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const localTile = wallpaperCollectionsElement.shadowRoot!
-                          .querySelector<WallpaperGridItem>(
-                              `${WallpaperGridItem.is}[collage]`);
+                          .querySelector<WallpaperGridItemElement>(
+                              `${WallpaperGridItemElement.is}[collage]`);
 
     assertTrue(!!localTile, 'local tile is present');
 
@@ -218,13 +246,13 @@ suite('WallpaperCollectionsTest', function() {
 
   test('no Google Photos tile for ineligible users', async () => {
     loadTimeData.overrideValues({isGooglePhotosIntegrationEnabled: false});
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const googlePhotosTile =
         wallpaperCollectionsElement.shadowRoot!
-            .querySelector<WallpaperGridItem>(
-                `${WallpaperGridItem.is}[data-google-photos]`);
+            .querySelector<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-google-photos]`);
     assertFalse(!!googlePhotosTile, 'google photos tile is not present');
   });
 
@@ -233,13 +261,13 @@ suite('WallpaperCollectionsTest', function() {
 
     personalizationStore.data.wallpaper.googlePhotos.enabled =
         GooglePhotosEnablementState.kEnabled;
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const googlePhotosTile =
         wallpaperCollectionsElement.shadowRoot!
-            .querySelector<WallpaperGridItem>(
-                `${WallpaperGridItem.is}[data-google-photos]`);
+            .querySelector<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-google-photos]`);
     assertTrue(!!googlePhotosTile, 'google photos tile is present');
     assertEquals(
         null, googlePhotosTile.querySelector(managedIconSelector),
@@ -287,12 +315,12 @@ suite('WallpaperCollectionsTest', function() {
       asdf: false,
       qwerty: false,
     };
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
     await waitAfterNextRender(wallpaperCollectionsElement);
 
     const onlineTiles = wallpaperCollectionsElement.shadowRoot!
-                            .querySelectorAll<WallpaperGridItem>(
-                                `${WallpaperGridItem.is}[data-online]`);
+                            .querySelectorAll<WallpaperGridItemElement>(
+                                `${WallpaperGridItemElement.is}[data-online]`);
 
     assertEquals(2, onlineTiles.length);
     assertDeepEquals(
@@ -303,7 +331,11 @@ suite('WallpaperCollectionsTest', function() {
 
   for (const isTimeOfDayWallpaperEnabled of [false, true]) {
     test(`tile order time of day ${isTimeOfDayWallpaperEnabled}`, async () => {
-      loadTimeData.overrideValues({isTimeOfDayWallpaperEnabled});
+      loadTimeData.overrideValues({
+        isTimeOfDayWallpaperEnabled: isTimeOfDayWallpaperEnabled,
+        // SeaPen tile is tested seperately in later tests
+        isSeaPenEnabled: false,
+      });
       const timeOfDayCollectionId =
           loadTimeData.getString('timeOfDayWallpaperCollectionId');
 
@@ -311,7 +343,7 @@ suite('WallpaperCollectionsTest', function() {
       // Local images are still loading.
       personalizationStore.data.wallpaper.loading.local.images = true;
 
-      wallpaperCollectionsElement = initElement(WallpaperCollections);
+      wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
       await waitAfterNextRender(wallpaperCollectionsElement);
 
       let tiles = getTiles();
@@ -354,33 +386,7 @@ suite('WallpaperCollectionsTest', function() {
           expectedTiles, tiles,
           'first special tiles should match and all loading after that');
 
-      personalizationStore.data.wallpaper.backdrop.collections =
-          wallpaperProvider.collections;
-
-      if (!isTimeOfDayWallpaperEnabled) {
-        personalizationStore.data.wallpaper.backdrop.collections =
-            personalizationStore.data.wallpaper.backdrop.collections!.filter(
-                collection => collection.id !==
-                    loadTimeData.getString('timeOfDayWallpaperCollectionId'));
-      }
-
-      personalizationStore.data.wallpaper.backdrop.images =
-          personalizationStore.data.wallpaper.backdrop.collections!.reduce(
-              (result, next) => {
-                result[next.id] = wallpaperProvider.images;
-                return result;
-              },
-              {} as Record<string, WallpaperImage[]|null>);
-      personalizationStore.data.wallpaper.loading.collections = false;
-      personalizationStore.data.wallpaper.loading.images =
-          personalizationStore.data.wallpaper.backdrop.collections!.reduce(
-              (result, next) => {
-                result[next.id] = false;
-                return result;
-              },
-              {} as Record<string, boolean>);
-      personalizationStore.notifyObservers();
-      await waitAfterNextRender(wallpaperCollectionsElement);
+      await loadWallpapers(isTimeOfDayWallpaperEnabled);
 
       tiles = getTiles();
       expectedTiles = [];
@@ -435,7 +441,7 @@ suite('WallpaperCollectionsTest', function() {
     personalizationStore.expectAction(
         WallpaperActionName.SET_IMAGES_FOR_COLLECTION);
 
-    wallpaperCollectionsElement = initElement(WallpaperCollections);
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
 
     await personalizationStore.waitForAction(
         WallpaperActionName.SET_IMAGES_FOR_COLLECTION);
@@ -461,8 +467,8 @@ suite('WallpaperCollectionsTest', function() {
     // Do not use initElement because it flushes startup tasks, but test
     // needs to verify an initial state.
     wallpaperCollectionsElement =
-        document.createElement(WallpaperCollections.is) as
-            WallpaperCollections &
+        document.createElement(WallpaperCollectionsElement.is) as
+            WallpaperCollectionsElement &
         HTMLElement;
 
     // Sets up loading tiles again.
@@ -490,4 +496,211 @@ suite('WallpaperCollectionsTest', function() {
         expectedTilesAfterLoading, getTiles(),
         'expected tiles match the second time');
   });
+
+  test('no SeaPen tile for ineligible users', async () => {
+    loadTimeData.overrideValues({isSeaPenEnabled: false});
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    const seaPenTile = wallpaperCollectionsElement.shadowRoot!
+                           .querySelector<WallpaperGridItemElement>(
+                               `${WallpaperGridItemElement.is}[data-sea-pen]`);
+    assertFalse(!!seaPenTile, 'SeaPen tile is not present');
+  });
+
+  test('shows SeaPen tile for eligible users', async () => {
+    loadTimeData.overrideValues({isSeaPenEnabled: true});
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    const seaPenTile = wallpaperCollectionsElement.shadowRoot!
+                           .querySelector<WallpaperGridItemElement>(
+                               `${WallpaperGridItemElement.is}[data-sea-pen]`);
+    assertTrue(!!seaPenTile, 'SeaPen tile is present');
+  });
+
+  test('click on SeaPen tile navigates to SeaPen page', async () => {
+    loadTimeData.overrideValues({isSeaPenEnabled: true});
+
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ true);
+    wallpaperCollectionsElement.shadowRoot!
+        .querySelector<WallpaperGridItemElement>(
+            `${WallpaperGridItemElement.is}[data-sea-pen]`)
+        ?.click();
+    const path = await routerMock.whenCalled('goToRoute');
+    assertEquals(Paths.SEA_PEN_COLLECTION, path, 'navigates to SeaPen page');
+  });
+
+  test('shows promoted tiles section with SeaPen', async () => {
+    loadTimeData.overrideValues({
+      isSeaPenEnabled: true,
+      isSeaPenTextInputEnabled: false,
+      isTimeOfDayWallpaperEnabled: true,
+    });
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    const loadingTiles =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelectorAll<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+    assertEquals(2, loadingTiles.length, 'two tiles are loading');
+
+    await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ true);
+
+    const promotedTiles =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelectorAll<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+    assertEquals(2, promotedTiles.length, 'two tiles are promoted');
+    assertTrue(
+        promotedTiles[0]!.hasAttribute('data-sea-pen'),
+        'sea pen is in promoted tiles');
+    assertTrue(
+        promotedTiles[1]!.hasAttribute('data-is-time-of-day-collection'),
+        'time of day is in promoted tiles');
+  });
+
+  test('shows single promoted tile section for SeaPen', async () => {
+    loadTimeData.overrideValues({
+      isSeaPenEnabled: true,
+      isSeaPenTextInputEnabled: false,
+      isTimeOfDayWallpaperEnabled: false,
+    });
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    const loadingTiles =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelectorAll<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+    assertEquals(1, loadingTiles.length, 'expected single loading tile');
+
+    await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ false);
+
+    const promotedTiles =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelectorAll<WallpaperGridItemElement>(
+                `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+    assertEquals(1, promotedTiles.length, 'expected single promoted tile');
+    assertTrue(
+        promotedTiles[0]!.hasAttribute('data-sea-pen'),
+        'expected sea pen promoted tile');
+
+    const templatesTileTag =
+        wallpaperCollectionsElement.shadowRoot!.getElementById(
+            'templatesTileTag');
+    assertTrue(
+        !!templatesTileTag, 'expected tile tag for Sea Pen templates tile');
+  });
+
+  test(
+      'shows two promoted tiles for SeaPen prompting and templates',
+      async () => {
+        loadTimeData.overrideValues({
+          isSeaPenEnabled: true,
+          isSeaPenTextInputEnabled: true,
+          isTimeOfDayWallpaperEnabled: false,
+        });
+        wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+        await waitAfterNextRender(wallpaperCollectionsElement);
+
+        const loadingTiles =
+            wallpaperCollectionsElement.shadowRoot!
+                .querySelectorAll<WallpaperGridItemElement>(
+                    `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+        assertEquals(
+            2, loadingTiles.length, 'expected two Sea Pen loading tiles');
+
+        await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ false);
+
+        const promotedTiles =
+            wallpaperCollectionsElement.shadowRoot!
+                .querySelectorAll<WallpaperGridItemElement>(
+                    `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+        assertEquals(2, promotedTiles.length, 'expected two promoted tiles');
+        assertTrue(
+            promotedTiles[0]!.hasAttribute('data-sea-pen-freeform'),
+            'expected 1st tile a sea pen freeform promoted tile');
+        assertTrue(
+            promotedTiles[1]!.hasAttribute('data-sea-pen'),
+            'expected 2nd tile a sea pen templates promoted tile');
+      });
+
+  test('shows time of day tile once', async () => {
+    loadTimeData.overrideValues(
+        {isSeaPenEnabled: true, isTimeOfDayWallpaperEnabled: true});
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ true);
+
+    const timeOfDayTile =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelectorAll<WallpaperGridItemElement>(`${
+                WallpaperGridItemElement.is}[data-is-time-of-day-collection]`);
+
+    assertEquals(1, timeOfDayTile.length, 'time of day only appears once');
+  });
+
+  test('no promoted tiles section when SeaPen is disabled', async () => {
+    loadTimeData.overrideValues(
+        {isSeaPenEnabled: false, isTimeOfDayWallpaperEnabled: true});
+    wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+    await waitAfterNextRender(wallpaperCollectionsElement);
+
+    const promotedTiles =
+        wallpaperCollectionsElement.shadowRoot!.querySelector<HTMLElement>(
+            `#promoted`);
+    assertFalse(!!promotedTiles, 'promoted tiles are hidden');
+
+    await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ true);
+
+    const timeOfDayTile =
+        wallpaperCollectionsElement.shadowRoot!
+            .querySelector<WallpaperGridItemElement>(`${
+                WallpaperGridItemElement.is}[data-is-time-of-day-collection]`);
+    assertTrue(!!timeOfDayTile, 'time of day tile is shown');
+
+    const templatesTileTag =
+        wallpaperCollectionsElement.shadowRoot!.getElementById(
+            'templatesTileTag');
+    assertFalse(!!templatesTileTag, 'no templates tile tag displayed');
+  });
+
+  test(
+      'disables Sea Pen promoted tile for managed users with policy disabled',
+      async () => {
+        loadTimeData.overrideValues({
+          isSeaPenEnabled: true,
+          isSeaPenTextInputEnabled: false,
+          isManagedSeaPenEnabled: false,
+          isTimeOfDayWallpaperEnabled: false,
+        });
+        wallpaperCollectionsElement = initElement(WallpaperCollectionsElement);
+        await waitAfterNextRender(wallpaperCollectionsElement);
+
+        const loadingTiles =
+            wallpaperCollectionsElement.shadowRoot!
+                .querySelectorAll<WallpaperGridItemElement>(
+                    `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+        assertEquals(1, loadingTiles.length, 'expected single loading tile');
+
+        await loadWallpapers(/* isTimeOfDayWallpaperEnabled= */ false);
+
+        const promotedTiles =
+            wallpaperCollectionsElement.shadowRoot!
+                .querySelectorAll<WallpaperGridItemElement>(
+                    `${WallpaperGridItemElement.is}[data-is-promoted-tile]`);
+        assertEquals(1, promotedTiles.length, 'expected single promoted tile');
+        assertTrue(
+            promotedTiles[0]!.hasAttribute('data-sea-pen'),
+            'expected sea pen promoted tile');
+        assertEquals(
+            'true', promotedTiles[0]!.getAttribute('aria-disabled'),
+            'expected sea pen promoted tile is disabled');
+      });
 });

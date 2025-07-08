@@ -4,18 +4,18 @@
 
 #include "extensions/renderer/extension_throttle_manager.h"
 
+#include <map>
 #include <utility>
 
-#include "base/containers/cxx20_erase.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_util.h"
 #include "extensions/common/constants.h"
 #include "extensions/renderer/extension_url_loader_throttle.h"
 #include "net/base/url_util.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/platform/web_url.h"
-#include "third_party/blink/public/platform/web_url_request.h"
 
 namespace extensions {
 
@@ -38,13 +38,14 @@ ExtensionThrottleManager::~ExtensionThrottleManager() {
 
 std::unique_ptr<blink::URLLoaderThrottle>
 ExtensionThrottleManager::MaybeCreateURLLoaderThrottle(
-    const blink::WebURLRequest& request) {
-  // TODO(https://crbug.com/1039700): This relies on the extension scheme
+    const network::ResourceRequest& request) {
+  // TODO(crbug.com/40113701): This relies on the extension scheme
   // getting special handling via ShouldTreatURLSchemeAsFirstPartyWhenTopLevel,
   // which has problems. Once that's removed this should probably look at top
   // level directly instead.
-  if (request.SiteForCookies().scheme() != extensions::kExtensionScheme)
+  if (request.site_for_cookies.scheme() != extensions::kExtensionScheme) {
     return nullptr;
+  }
   return std::make_unique<ExtensionURLLoaderThrottle>(this);
 }
 
@@ -65,8 +66,9 @@ ExtensionThrottleEntry* ExtensionThrottleManager::RegisterRequestUrl(
   // start with a fresh entry so that we possibly back off a bit less
   // aggressively (i.e. this resets the error count when the entry's URL
   // hasn't been requested in long enough).
-  if (entry && entry->IsEntryOutdated())
+  if (entry && entry->IsEntryOutdated()) {
     entry.reset();
+  }
 
   // Create the entry if needed.
   if (!entry) {
@@ -104,8 +106,9 @@ bool ExtensionThrottleManager::ShouldRejectRedirect(
     // before use.
     base::AutoLock auto_lock(lock_);
     auto it = url_entries_.find(GetIdFromUrl(request_url));
-    if (it != url_entries_.end())
+    if (it != url_entries_.end()) {
       it->second->UpdateWithResponse(redirect_info.status_code);
+    }
   }
   return ShouldRejectRequest(redirect_info.new_url);
 }
@@ -118,8 +121,9 @@ void ExtensionThrottleManager::WillProcessResponse(
     // before use.
     base::AutoLock auto_lock(lock_);
     auto it = url_entries_.find(GetIdFromUrl(response_url));
-    if (it != url_entries_.end())
+    if (it != url_entries_.end()) {
       it->second->UpdateWithResponse(response_head.headers->response_code());
+    }
   }
 }
 
@@ -167,8 +171,9 @@ void ExtensionThrottleManager::SetOnline(bool is_online) {
 }
 
 std::string ExtensionThrottleManager::GetIdFromUrl(const GURL& url) const {
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return url.possibly_invalid_spec();
+  }
 
   GURL id = url.ReplaceComponents(url_id_replacements_);
   return base::ToLowerASCII(id.spec());
@@ -176,15 +181,16 @@ std::string ExtensionThrottleManager::GetIdFromUrl(const GURL& url) const {
 
 void ExtensionThrottleManager::GarbageCollectEntriesIfNecessary() {
   requests_since_last_gc_++;
-  if (requests_since_last_gc_ < kRequestsBetweenCollecting)
+  if (requests_since_last_gc_ < kRequestsBetweenCollecting) {
     return;
+  }
   requests_since_last_gc_ = 0;
 
   GarbageCollectEntries();
 }
 
 void ExtensionThrottleManager::GarbageCollectEntries() {
-  base::EraseIf(url_entries_, [](const auto& entry) {
+  std::erase_if(url_entries_, [](const auto& entry) {
     return entry.second->IsEntryOutdated();
   });
 

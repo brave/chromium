@@ -6,17 +6,13 @@
 
 #include <ostream>
 #include <string>
+#include <string_view>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/check.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/sys_string_conversions.h"
 #include "net/base/net_string_util.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace net {
 
@@ -41,14 +37,14 @@ bool CharsetToCFStringEncoding(const char* charset,
 // by base::kCodepageLatin1 (which is const char[]) in net_string_util_icu.cc.
 const char* const kCharsetLatin1 = "ISO-8859-1";
 
-bool ConvertToUtf8(base::StringPiece text,
+bool ConvertToUtf8(std::string_view text,
                    const char* charset,
                    std::string* output) {
   CFStringEncoding encoding;
   if (!CharsetToCFStringEncoding(charset, &encoding))
     return false;
 
-  base::ScopedCFTypeRef<CFStringRef> cfstring(CFStringCreateWithBytes(
+  base::apple::ScopedCFTypeRef<CFStringRef> cfstring(CFStringCreateWithBytes(
       kCFAllocatorDefault, reinterpret_cast<const UInt8*>(text.data()),
       base::checked_cast<CFIndex>(text.length()), encoding,
       /*isExternalRepresentation=*/false));
@@ -59,31 +55,31 @@ bool ConvertToUtf8(base::StringPiece text,
   return true;
 }
 
-bool ConvertToUtf8AndNormalize(base::StringPiece text,
+bool ConvertToUtf8AndNormalize(std::string_view text,
                                const char* charset,
                                std::string* output) {
   DCHECK(false) << "Not implemented yet.";
   return false;
 }
 
-bool ConvertToUTF16(base::StringPiece text,
+bool ConvertToUTF16(std::string_view text,
                     const char* charset,
                     std::u16string* output) {
   DCHECK(false) << "Not implemented yet.";
   return false;
 }
 
-bool ConvertToUTF16WithSubstitutions(base::StringPiece text,
+bool ConvertToUTF16WithSubstitutions(std::string_view text,
                                      const char* charset,
                                      std::u16string* output) {
   DCHECK(false) << "Not implemented yet.";
   return false;
 }
 
-bool ToUpper(base::StringPiece16 str, std::u16string* output) {
-  base::ScopedCFTypeRef<CFStringRef> cfstring =
+bool ToUpper(std::u16string_view str, std::u16string* output) {
+  base::apple::ScopedCFTypeRef<CFStringRef> cfstring =
       base::SysUTF16ToCFStringRef(str);
-  base::ScopedCFTypeRef<CFMutableStringRef> mutable_cfstring(
+  base::apple::ScopedCFTypeRef<CFMutableStringRef> mutable_cfstring(
       CFStringCreateMutableCopy(kCFAllocatorDefault, /*maxLength=*/0,
                                 cfstring.get()));
   CFStringUppercase(mutable_cfstring.get(), /*locale=*/nullptr);

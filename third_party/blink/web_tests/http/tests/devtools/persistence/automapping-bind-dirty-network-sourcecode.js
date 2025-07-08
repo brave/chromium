@@ -5,13 +5,16 @@
 import {TestRunner} from 'test_runner';
 import {BindingsTestRunner} from 'bindings_test_runner';
 
+import * as TextUtils from 'devtools/models/text_utils/text_utils.js';
+import * as Workspace from 'devtools/models/workspace/workspace.js';
+
 (async function() {
   TestRunner.addResult(`Verify that dirty network uiSourceCodes are bound to filesystem.\n`);
   BindingsTestRunner.overrideNetworkModificationTime(
       {'http://127.0.0.1:8000/devtools/persistence/resources/foo.js': null});
   TestRunner.addScriptTag('resources/foo.js');
-  var networkUISourceCode = await TestRunner.waitForUISourceCode('foo.js', Workspace.projectTypes.Network);
-  var { content } = await networkUISourceCode.requestContent();
+  var networkUISourceCode = await TestRunner.waitForUISourceCode('foo.js', Workspace.Workspace.projectTypes.Network);
+  var { content } = await networkUISourceCode.requestContentData().then(TextUtils.ContentData.ContentData.asDeferredContent);
   content = content.replace(/foo/g, 'bar');
   networkUISourceCode.setWorkingCopy(content);
 

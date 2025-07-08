@@ -34,7 +34,7 @@ class Text;
 
 #define AppleInterchangeNewline "Apple-interchange-newline"
 
-String ConvertHTMLTextToInterchangeFormat(const String&, const Text&);
+WTF::String ConvertHTMLTextToInterchangeFormat(const WTF::String&, const Text&);
 
 }  // namespace blink
 

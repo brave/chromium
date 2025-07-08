@@ -8,9 +8,11 @@
 #include <memory>
 #include <unordered_set>
 
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 
 class Profile;
+class KeyedServiceBaseFactory;
 
 namespace base {
 class FilePath;
@@ -36,19 +38,16 @@ class ExtensionsManager {
 
   virtual std::unordered_set<base::FilePath> GetIsolatedStoragePaths();
 
-  // Returns ExtensionsPref::kStorageGarbageCollect which indicates possibly
-  // deleted Storage Partitions on disk requiring garbage collection.
-  // TODO(crbug.com/1463825): Delete ExtensionsPref::kStorageGarbageCollect.
-  virtual bool ShouldGarbageCollectStoragePartitions();
-
   // Creates an ExtensionInstallerGate which registers itself on
   // ExtensionService to delay Extension installs.
   virtual std::unique_ptr<ExtensionInstallGate>
   RegisterGarbageCollectionInstallGate();
 
+  static KeyedServiceBaseFactory* GetExtensionSystemSharedFactory();
+
  private:
-  base::raw_ptr<Profile> profile_;
-  base::raw_ptr<extensions::ExtensionRegistry> registry_;
+  raw_ptr<Profile> profile_ = nullptr;
+  raw_ptr<extensions::ExtensionRegistry> registry_ = nullptr;
 };
 
 }  // namespace web_app

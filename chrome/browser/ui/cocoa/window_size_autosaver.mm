@@ -10,10 +10,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 // If the window width stored in the prefs is smaller than this, the size is
 // not restored but instead cleared from the profile -- to protect users from
 // accidentally making their windows very small and then not finding them again.
@@ -83,10 +79,10 @@ const int kMinWindowHeight = 17;
   // Get the positioning information.
   const base::Value::Dict& windowPrefs = _prefService->GetDict(_path);
   if ([_window styleMask] & NSWindowStyleMaskResizable) {
-    absl::optional<int> x1 = windowPrefs.FindInt("left");
-    absl::optional<int> x2 = windowPrefs.FindInt("right");
-    absl::optional<int> y1 = windowPrefs.FindInt("top");
-    absl::optional<int> y2 = windowPrefs.FindInt("bottom");
+    std::optional<int> x1 = windowPrefs.FindInt("left");
+    std::optional<int> x2 = windowPrefs.FindInt("right");
+    std::optional<int> y1 = windowPrefs.FindInt("top");
+    std::optional<int> y2 = windowPrefs.FindInt("bottom");
     if (!x1.has_value() || !x2.has_value() || !y1.has_value() ||
         !y2.has_value()) {
       return;
@@ -110,10 +106,11 @@ const int kMinWindowHeight = 17;
       [_window cascadeTopLeftFromPoint:NSZeroPoint];
     }
   } else {
-    absl::optional<int> x = windowPrefs.FindInt("x");
-    absl::optional<int> y = windowPrefs.FindInt("y");
-    if (!x.has_value() || !y.has_value())
+    std::optional<int> x = windowPrefs.FindInt("x");
+    std::optional<int> y = windowPrefs.FindInt("y");
+    if (!x.has_value() || !y.has_value()) {
       return;  // Nothing stored.
+    }
     // Turn the origin (lower-left) into an upper-left window point.
     NSPoint upperLeft =
         NSMakePoint(x.value(), y.value() + NSHeight([_window frame]));

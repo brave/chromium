@@ -4,29 +4,14 @@
 
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_feature_list.h"
 #include "components/exo/wayland/clients/blur.h"
 #include "components/exo/wayland/clients/simple.h"
 #include "components/exo/wayland/clients/test/wayland_client_test.h"
-#include "components/viz/common/features.h"
 #include "testing/perf/perf_result_reporter.h"
 
 namespace {
 
-class WaylandClientPerfTests : public exo::WaylandClientTest {
- public:
-  WaylandClientPerfTests();
-  ~WaylandClientPerfTests() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-WaylandClientPerfTests::WaylandClientPerfTests() {
-  // TODO(crbug.com/1399591): Figure out the missing/misordered
-  // PresentationFeedback when using this feature.
-  scoped_feature_list_.InitAndDisableFeature(features::kOnBeginFrameAcks);
-}
+using WaylandClientPerfTests = exo::WaylandClientTest;
 
 constexpr char kMetricPrefixWaylandClient[] = "WaylandClient.";
 constexpr char kMetricFramerate[] = "framerate";
@@ -42,8 +27,16 @@ perf_test::PerfResultReporter SetUpReporter(const std::string& story) {
   return reporter;
 }
 
+// TODO(crbug.com/335313263): Flaky on Linux/ChromeOS ASAN.
+#if BUILDFLAG(IS_LINUX) && defined(ADDRESS_SANITIZER)
+#define MAYBE_Simple DISABLED_Simple
+#elif BUILDFLAG(IS_CHROMEOS) && defined(ADDRESS_SANITIZER)
+#define MAYBE_Simple DISABLED_Simple
+#else
+#define MAYBE_Simple Simple
+#endif
 // Test simple double-buffered client performance.
-TEST_F(WaylandClientPerfTests, Simple) {
+TEST_F(WaylandClientPerfTests, MAYBE_Simple) {
   const int kWarmUpFrames = 20;
   const int kTestFrames = 600;
 

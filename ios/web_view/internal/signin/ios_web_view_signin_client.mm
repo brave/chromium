@@ -4,16 +4,13 @@
 
 #import "ios/web_view/internal/signin/ios_web_view_signin_client.h"
 
-#import "components/signin/core/browser/cookie_settings_util.h"
+#import "base/notimplemented.h"
 #import "components/signin/ios/browser/wait_for_network_callback_helper_ios.h"
+#import "components/signin/public/identity_manager/primary_account_change_event.h"
 #import "components/version_info/channel.h"
 #import "ios/web_view/internal/signin/web_view_gaia_auth_fetcher.h"
 #import "ios/web_view/internal/web_view_browser_state.h"
 #import "services/network/public/cpp/shared_url_loader_factory.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 IOSWebViewSigninClient::IOSWebViewSigninClient(
     PrefService* pref_service,
@@ -23,8 +20,7 @@ IOSWebViewSigninClient::IOSWebViewSigninClient(
       pref_service_(pref_service),
       browser_state_(browser_state) {}
 
-IOSWebViewSigninClient::~IOSWebViewSigninClient() {
-}
+IOSWebViewSigninClient::~IOSWebViewSigninClient() {}
 
 void IOSWebViewSigninClient::Shutdown() {
   network_callback_helper_.reset();
@@ -41,6 +37,10 @@ IOSWebViewSigninClient::GetURLLoaderFactory() {
 
 network::mojom::CookieManager* IOSWebViewSigninClient::GetCookieManager() {
   return browser_state_->GetCookieManager();
+}
+
+network::mojom::NetworkContext* IOSWebViewSigninClient::GetNetworkContext() {
+  return browser_state_->GetNetworkContext();
 }
 
 void IOSWebViewSigninClient::DoFinalInit() {}
@@ -86,7 +86,10 @@ std::unique_ptr<GaiaAuthFetcher> IOSWebViewSigninClient::CreateGaiaAuthFetcher(
 }
 
 version_info::Channel IOSWebViewSigninClient::GetClientChannel() {
-  // TODO(crbug.com/1299888): pass the correct channel information once
+  // TODO(crbug.com/40216038): pass the correct channel information once
   // implemented.
   return version_info::Channel::STABLE;
 }
+
+void IOSWebViewSigninClient::OnPrimaryAccountChanged(
+    signin::PrimaryAccountChangeEvent event_details) {}

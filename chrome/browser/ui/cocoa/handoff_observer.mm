@@ -12,10 +12,6 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 HandoffObserver::HandoffObserver(NSObject<HandoffObserverDelegate>* delegate)
     : delegate_(delegate) {
   DCHECK(delegate_);
@@ -34,8 +30,9 @@ void HandoffObserver::OnBrowserSetLastActive(Browser* browser) {
 }
 
 void HandoffObserver::OnBrowserRemoved(Browser* removed_browser) {
-  if (active_browser_ != removed_browser)
+  if (active_browser_ != removed_browser) {
     return;
+  }
 
   SetActiveBrowser(chrome::FindLastActive());
   [delegate_ handoffContentsChanged:GetActiveWebContents()];
@@ -45,8 +42,9 @@ void HandoffObserver::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
-  if (tab_strip_model->empty() || !selection.active_tab_changed())
+  if (tab_strip_model->empty() || !selection.active_tab_changed()) {
     return;
+  }
 
   StartObservingWebContents(selection.new_contents);
   [delegate_ handoffContentsChanged:GetActiveWebContents()];
@@ -61,8 +59,9 @@ void HandoffObserver::TitleWasSet(content::NavigationEntry* entry) {
 }
 
 void HandoffObserver::SetActiveBrowser(Browser* active_browser) {
-  if (active_browser == active_browser_)
+  if (active_browser == active_browser_) {
     return;
+  }
 
   if (active_browser_) {
     active_browser_->tab_strip_model()->RemoveObserver(this);
@@ -74,8 +73,9 @@ void HandoffObserver::SetActiveBrowser(Browser* active_browser) {
   if (active_browser_) {
     active_browser_->tab_strip_model()->AddObserver(this);
     content::WebContents* web_contents = GetActiveWebContents();
-    if (web_contents)
+    if (web_contents) {
       StartObservingWebContents(web_contents);
+    }
   }
 }
 
@@ -90,8 +90,9 @@ void HandoffObserver::StopObservingWebContents() {
 }
 
 content::WebContents* HandoffObserver::GetActiveWebContents() {
-  if (!active_browser_)
+  if (!active_browser_) {
     return nullptr;
+  }
 
   return active_browser_->tab_strip_model()->GetActiveWebContents();
 }

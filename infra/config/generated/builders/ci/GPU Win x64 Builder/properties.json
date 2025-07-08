@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/GPU Win x64 Builder/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -24,6 +27,7 @@
               },
               "legacy_gclient_config": {
                 "apply_configs": [
+                  "chromium_with_telemetry_dependencies",
                   "use_clang_coverage"
                 ],
                 "config": "chromium"
@@ -82,19 +86,22 @@
         {
           "builder": "win-rel",
           "group": "tryserver.chromium.win"
-        },
-        {
-          "builder": "win10_chromium_inverse_fieldtrials_x64_fyi_rel_ng",
-          "group": "tryserver.chromium.win"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/GPU Win x64 Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "jobs": 80,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-trusted",
+    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -104,6 +111,9 @@
     ]
   },
   "builder_group": "chromium.gpu",
+  "gardener_rotations": [
+    "chromium.gpu"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium.gpu"

@@ -170,7 +170,7 @@ class SpellingMenuObserverTest : public InProcessBrowserTest {
 #if BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 SpellingMenuObserverTest::SpellingMenuObserverTest() {
   feature_list_.InitWithFeatures(
-      /*enabled_features=*/{spellcheck::kWinRetrieveSuggestionsOnlyOnDemand},
+      /*enabled_features=*/{},
       /*disabled_features=*/{spellcheck::kWinDelaySpellcheckServiceInit});
 }
 #else
@@ -181,8 +181,16 @@ SpellingMenuObserverTest::~SpellingMenuObserverTest() = default;
 
 }  // namespace
 
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
 // Tests that right-clicking a correct word does not add any items.
-IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest, InitMenuWithCorrectWord) {
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_InitMenuWithCorrectWord DISABLED_InitMenuWithCorrectWord
+#else
+#define MAYBE_InitMenuWithCorrectWord InitMenuWithCorrectWord
+#endif
+IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
+                       MAYBE_InitMenuWithCorrectWord) {
   InitMenu("", nullptr);
   EXPECT_EQ(static_cast<size_t>(0), menu()->GetMenuSize());
 }
@@ -305,8 +313,20 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
   InitMenu("wtree", "wee");
   EXPECT_EQ(7U, menu()->GetMenuSize());
 
+  std::set<std::u16string> suggestions(
+      {u"tree", u"twee", u"wee", u"ware", u"were"});
+  bool wee_suggested = false;
+  for (unsigned int i = 1; i < menu()->GetMenuSize(); i++) {
+    MockRenderViewContextMenu::MockMenuItem item;
+    menu()->GetMenuItem(i, &item);
+    if (!item.title.compare(u"wee")) {
+      wee_suggested = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(wee_suggested);
   // Read all the context-menu items added by this test and verify they are
-  // expected ones.
+  // among the expected possibilities.
   MockRenderViewContextMenu::MockMenuItem item;
   // First separator.
   menu()->GetMenuItem(0, &item);
@@ -318,21 +338,19 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
   EXPECT_EQ(IDC_SPELLCHECK_SUGGESTION_0, item.command_id);
   EXPECT_TRUE(item.enabled);
   EXPECT_FALSE(item.hidden);
-  EXPECT_EQ(u"tree", item.title);
+  EXPECT_TRUE(suggestions.contains(item.title));
   // Second suggestion.
   menu()->GetMenuItem(2, &item);
   EXPECT_EQ(IDC_SPELLCHECK_SUGGESTION_0 + 1, item.command_id);
   EXPECT_TRUE(item.enabled);
   EXPECT_FALSE(item.hidden);
-  EXPECT_EQ(u"wee", item.title);
+  EXPECT_TRUE(suggestions.contains(item.title));
   // Third suggestion.
   menu()->GetMenuItem(3, &item);
   EXPECT_EQ(IDC_SPELLCHECK_SUGGESTION_0 + 2, item.command_id);
   EXPECT_TRUE(item.enabled);
   EXPECT_FALSE(item.hidden);
-  // Some versions of Windows spell checker return "ware", some "were".
-  // Just verify that it starts with "w".
-  EXPECT_TRUE(base::StartsWith(item.title, u"w"));
+  EXPECT_TRUE(suggestions.contains(item.title));
   // Second separator.
   menu()->GetMenuItem(4, &item);
   EXPECT_EQ(-1, item.command_id);
@@ -370,7 +388,15 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
 // integration to verify an item "Use enhanced spell check" is checked. (This
 // test does not actually send JSON-RPC requests to the service because it makes
 // this test flaky.)
-IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest, EnableSpellingService) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_EnableSpellingService DISABLED_EnableSpellingService
+#else
+#define MAYBE_EnableSpellingService EnableSpellingService
+#endif
+IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
+                       MAYBE_EnableSpellingService) {
   menu()->GetPrefs()->SetBoolean(
       spellcheck::prefs::kSpellCheckUseSpellingService, true);
   base::Value::List dictionary;

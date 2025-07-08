@@ -5,9 +5,11 @@
 #include "services/network/chunked_data_pipe_upload_data_stream.h"
 
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mojo/public/c/system/types.h"
 #include "net/base/io_buffer.h"
@@ -81,8 +83,8 @@ int ChunkedDataPipeUploadDataStream::InitInternal(
 
 int ChunkedDataPipeUploadDataStream::ReadInternal(net::IOBuffer* buf,
                                                   int buf_len) {
-  DCHECK(!buf_);
-  DCHECK(buf);
+  CHECK(!buf_);
+  CHECK(buf);
   DCHECK_GT(buf_len, 0);
 
   // If there was an error either passed to the ReadCallback or as a result of
@@ -113,11 +115,11 @@ int ChunkedDataPipeUploadDataStream::ReadInternal(net::IOBuffer* buf,
                             base::Unretained(this)));
   }
 
-  uint32_t num_bytes = buf_len;
+  size_t num_bytes = base::checked_cast<size_t>(buf_len);
   if (size_ && num_bytes > *size_ - bytes_read_)
     num_bytes = *size_ - bytes_read_;
-  MojoResult rv =
-      data_pipe_->ReadData(buf->data(), &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+  MojoResult rv = data_pipe_->ReadData(MOJO_READ_DATA_FLAG_NONE,
+                                       buf->first(num_bytes), num_bytes);
   if (rv == MOJO_RESULT_OK) {
     bytes_read_ += num_bytes;
     // Not needed for correctness, but this allows the consumer to send the
@@ -206,6 +208,9 @@ void ChunkedDataPipeUploadDataStream::OnSizeReceived(int32_t status,
     buf_len_ = 0;
     chunked_data_pipe_getter_.reset();
 
+    if (status_ < net::ERR_IO_PENDING) {
+      LOG(ERROR) << "OnSizeReceived failed with Error: " << status_;
+    }
     OnReadCompleted(status_);
 
     // |this| may have been deleted at this point.
@@ -213,7 +218,7 @@ void ChunkedDataPipeUploadDataStream::OnSizeReceived(int32_t status,
 }
 
 void ChunkedDataPipeUploadDataStream::OnHandleReadable(MojoResult result) {
-  DCHECK(buf_);
+  CHECK(buf_);
 
   // Final result of the Read() call, to be passed to the consumer.
   // Swap out |buf_| and |buf_len_|
@@ -223,8 +228,12 @@ void ChunkedDataPipeUploadDataStream::OnHandleReadable(MojoResult result) {
 
   int rv = ReadInternal(buf.get(), buf_len);
 
-  if (rv != net::ERR_IO_PENDING)
+  if (rv != net::ERR_IO_PENDING) {
+    if (rv < net::ERR_IO_PENDING) {
+      LOG(ERROR) << "OnHandleReadable failed with Error: " << rv;
+    }
     OnReadCompleted(rv);
+  }
 
   // |this| may have been deleted at this point.
 }
@@ -246,7 +255,7 @@ void ChunkedDataPipeUploadDataStream::EnableCache(size_t dst_window_size) {
 }
 
 void ChunkedDataPipeUploadDataStream::WriteToCacheIfNeeded(net::IOBuffer* buf,
-                                                           uint32_t num_bytes) {
+                                                           size_t num_bytes) {
   if (cache_state_ != CacheState::kActive)
     return;
 
@@ -264,7 +273,8 @@ void ChunkedDataPipeUploadDataStream::WriteToCacheIfNeeded(net::IOBuffer* buf,
     cache_state_ = CacheState::kExhausted;
     return;
   }
-  cache_.insert(cache_.end(), buf->data(), buf->data() + num_bytes);
+  auto to_write = buf->first(num_bytes);
+  cache_.insert(cache_.end(), to_write.begin(), to_write.end());
 }
 
 int ChunkedDataPipeUploadDataStream::ReadFromCacheIfNeeded(net::IOBuffer* buf,
@@ -276,8 +286,8 @@ int ChunkedDataPipeUploadDataStream::ReadFromCacheIfNeeded(net::IOBuffer* buf,
 
   int read_size =
       std::min(static_cast<int>(cache_.size() - bytes_read_), buf_len);
-  DCHECK_GT(read_size, 0);
-  memcpy(buf->data(), &cache_[bytes_read_], read_size);
+  buf->span().copy_prefix_from(base::as_byte_span(cache_).subspan(
+      bytes_read_, base::checked_cast<size_t>(read_size)));
   bytes_read_ += read_size;
   return read_size;
 }

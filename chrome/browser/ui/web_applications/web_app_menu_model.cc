@@ -8,19 +8,19 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/strings/grit/components_strings.h"
@@ -32,12 +32,28 @@
 #include "ui/base/ui_base_features.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "chromeos/ui/frame/desks/move_to_desks_menu_delegate.h"
 #include "chromeos/ui/frame/desks/move_to_desks_menu_model.h"
 #include "ui/views/widget/widget.h"
 #endif
+
+namespace {
+
+bool ShouldAllowOpenInChrome(Browser* browser) {
+  // Isolated Web Apps shouldn't be opened in Chrome.
+  const bool is_isolated_web_app =
+      browser->app_controller() &&
+      browser->app_controller()->IsIsolatedWebApp();
+  // Web Apps with enabled prevent close shouldn't be opened in Chrome.
+  const bool prevent_close_enabled =
+      browser->app_controller() &&
+      browser->app_controller()->IsPreventCloseEnabled();
+  return !is_isolated_web_app && !prevent_close_enabled;
+}
+
+}  // namespace
 
 constexpr int WebAppMenuModel::kUninstallAppCommandId;
 constexpr int WebAppMenuModel::kExtensionsMenuCommandId;
@@ -56,8 +72,16 @@ bool WebAppMenuModel::IsCommandIdEnabled(int command_id) const {
       return base::FeatureList::IsEnabled(
                  features::kDesktopPWAsElidedExtensionsMenu) &&
              browser()->window()->GetExtensionsContainer() &&
-             browser()->window()->GetExtensionsContainer()->HasAnyExtensions();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+             browser()
+                 ->window()
+                 ->GetExtensionsContainer()
+                 ->HasAnyExtensions() &&
+             // Extensions are not supported inside Isolated Web Apps.
+             !browser()->app_controller()->IsIsolatedWebApp();
+    case IDC_OPEN_IN_CHROME: {
+      return ShouldAllowOpenInChrome(browser());
+    }
+#if BUILDFLAG(IS_CHROMEOS)
     case chromeos::MoveToDesksMenuModel::kMenuCommandId:
       return chromeos::MoveToDesksMenuDelegate::ShouldShowMoveToDesksMenu(
           browser()->window()->GetNativeWindow());
@@ -68,13 +92,17 @@ bool WebAppMenuModel::IsCommandIdEnabled(int command_id) const {
 }
 
 bool WebAppMenuModel::IsCommandIdVisible(int command_id) const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (command_id == chromeos::MoveToDesksMenuModel::kMenuCommandId) {
-    return chromeos::MoveToDesksMenuDelegate::ShouldShowMoveToDesksMenu(
-        browser()->window()->GetNativeWindow());
-  }
+  switch (command_id) {
+    case IDC_OPEN_IN_CHROME:
+      return ShouldAllowOpenInChrome(browser());
+#if BUILDFLAG(IS_CHROMEOS)
+    case chromeos::MoveToDesksMenuModel::kMenuCommandId:
+      return chromeos::MoveToDesksMenuDelegate::ShouldShowMoveToDesksMenu(
+          browser()->window()->GetNativeWindow());
 #endif
-  return AppMenuModel::IsCommandIdVisible(command_id);
+    default:
+      return AppMenuModel::IsCommandIdVisible(command_id);
+  }
 }
 
 void WebAppMenuModel::ExecuteCommand(int command_id, int event_flags) {
@@ -86,6 +114,11 @@ void WebAppMenuModel::ExecuteCommand(int command_id, int event_flags) {
       break;
     case kExtensionsMenuCommandId:
       browser()->window()->GetExtensionsContainer()->ToggleExtensionsMenu();
+      break;
+    case IDC_OPEN_IN_CHROME:
+      if (ShouldAllowOpenInChrome(browser())) {
+        AppMenuModel::ExecuteCommand(command_id, event_flags);
+      }
       break;
     default:
       AppMenuModel::ExecuteCommand(command_id, event_flags);
@@ -122,33 +155,27 @@ void WebAppMenuModel::Build() {
     SetMinorText(app_info_index, display_text);
   }
 
-  if (!features::IsChromeRefresh2023()) {
-    SetMinorIcon(app_info_index,
-                 ui::ImageModel::FromVectorIcon(
-                     browser()->location_bar_model()->GetVectorIcon()));
-  } else {
-    SetIcon(app_info_index,
-            ui::ImageModel::FromVectorIcon(
-                browser()->location_bar_model()->GetVectorIcon()));
-  }
+  SetIcon(app_info_index,
+          ui::ImageModel::FromVectorIcon(
+              browser()->GetFeatures().location_bar_model()->GetVectorIcon()));
 
   AddSeparator(ui::NORMAL_SEPARATOR);
 
-  if (IsCommandIdEnabled(kExtensionsMenuCommandId))
+  if (IsCommandIdEnabled(kExtensionsMenuCommandId)) {
     AddItemWithStringId(kExtensionsMenuCommandId, IDS_SHOW_EXTENSIONS);
+    AddSeparator(ui::NORMAL_SEPARATOR);
+  }
 
   if (browser()->app_controller() &&
-      browser()->app_controller()->has_tab_strip()) {
-    AddSeparator(ui::NORMAL_SEPARATOR);
+      browser()->app_controller()->has_tab_strip() &&
+      !browser()->app_controller()->ShouldHideNewTabButton()) {
     AddItemWithStringId(IDC_NEW_TAB, IDS_NEW_TAB);
   }
   AddItemWithStringId(IDC_COPY_URL, IDS_COPY_URL);
 
-  // Isolated Web Apps shouldn't be opened in Chrome.
-  if (!is_isolated_web_app)
-    AddItemWithStringId(IDC_OPEN_IN_CHROME, IDS_OPEN_IN_CHROME);
+  AddItemWithStringId(IDC_OPEN_IN_CHROME, IDS_OPEN_IN_CHROME);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (chromeos::MoveToDesksMenuDelegate::ShouldShowMoveToDesksMenu(
           browser()->window()->GetNativeWindow())) {
     AddSeparator(ui::NORMAL_SEPARATOR);
@@ -175,33 +202,24 @@ void WebAppMenuModel::Build() {
                     browser()->app_controller()->GetAppShortName())));
   }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
-  AddSeparator(features::IsChromeRefresh2023() ? ui::NORMAL_SEPARATOR
-                                               : ui::LOWER_SEPARATOR);
+  AddSeparator(ui::NORMAL_SEPARATOR);
   CreateZoomMenu();
-  AddSeparator(features::IsChromeRefresh2023() ? ui::NORMAL_SEPARATOR
-                                               : ui::UPPER_SEPARATOR);
+  AddSeparator(ui::NORMAL_SEPARATOR);
   AddItemWithStringId(IDC_PRINT, IDS_PRINT);
-  if (!features::IsChromeRefresh2023()) {
-    AddItemWithStringId(IDC_FIND, IDS_FIND);
-  } else {
-    CreateFindAndEditSubMenu();
-  }
-  if (media_router::MediaRouterEnabled(browser()->profile()))
+  CreateFindAndEditSubMenu();
+
+  if (media_router::MediaRouterEnabled(browser()->profile())) {
     AddItemWithStringId(IDC_ROUTE_MEDIA, IDS_MEDIA_ROUTER_MENU_ITEM_TITLE);
-  if (!features::IsChromeRefresh2023()) {
-    AddSeparator(ui::LOWER_SEPARATOR);
-    CreateCutCopyPasteMenu();
   }
-  if (features::IsChromeRefresh2023()) {
-    SetCommandIcon(this, kExtensionsMenuCommandId,
-                   vector_icons::kExtensionChromeRefreshIcon);
-    SetCommandIcon(this, kUninstallAppCommandId, kTrashCanRefreshIcon);
-    SetCommandIcon(this, IDC_NEW_TAB, kNewTabRefreshIcon);
-    SetCommandIcon(this, IDC_COPY_URL, kLinkChromeRefreshIcon);
-    SetCommandIcon(this, IDC_OPEN_IN_CHROME, kBrowserLogoIcon);
-    SetCommandIcon(this, IDC_ZOOM_MENU, kZoomInIcon);
-    SetCommandIcon(this, IDC_PRINT, kPrintMenuIcon);
-    SetCommandIcon(this, IDC_FIND_AND_EDIT_MENU, kSearchMenuIcon);
-    SetCommandIcon(this, IDC_ROUTE_MEDIA, kCastChromeRefreshIcon);
-  }
+
+  SetCommandIcon(this, kExtensionsMenuCommandId,
+                 vector_icons::kExtensionChromeRefreshIcon);
+  SetCommandIcon(this, kUninstallAppCommandId, kTrashCanRefreshIcon);
+  SetCommandIcon(this, IDC_NEW_TAB, kNewTabRefreshIcon);
+  SetCommandIcon(this, IDC_COPY_URL, kLinkChromeRefreshIcon);
+  SetCommandIcon(this, IDC_OPEN_IN_CHROME, kBrowserLogoIcon);
+  SetCommandIcon(this, IDC_ZOOM_MENU, kZoomInIcon);
+  SetCommandIcon(this, IDC_PRINT, kPrintMenuIcon);
+  SetCommandIcon(this, IDC_FIND_AND_EDIT_MENU, kSearchMenuIcon);
+  SetCommandIcon(this, IDC_ROUTE_MEDIA, kCastChromeRefreshIcon);
 }

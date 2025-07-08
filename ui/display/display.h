@@ -7,8 +7,11 @@
 
 #include <stdint.h>
 
+#include <optional>
+
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display_export.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/display_color_spaces.h"
@@ -109,7 +112,7 @@ class DISPLAY_EXPORT Display final {
 
   // Converts the given angle to its corresponding Rotation. The angle is in
   // degrees, and the only valid values are 0, 90, 180, and 270.
-  // TODO(crbug.com/840189): we should never need to convert degrees to a
+  // TODO(crbug.com/41387359): we should never need to convert degrees to a
   // Rotation if we were to Rotations internally and only converted to numeric
   // values when required.
   static Rotation DegreesToRotation(int degrees);
@@ -167,6 +170,9 @@ class DISPLAY_EXPORT Display final {
   // Utility functions that just return the size of display and work area.
   const gfx::Size& size() const { return bounds_.size(); }
   const gfx::Size& work_area_size() const { return work_area_.size(); }
+
+  // Returns the work area relative to this display's origin.
+  gfx::Rect GetLocalWorkArea() const;
 
   // Returns the work area insets.
   gfx::Insets GetWorkAreaInsets() const;
@@ -231,9 +237,8 @@ class DISPLAY_EXPORT Display final {
   }
 
   // The color spaces used by the display.
-  // TODO(b/226163383): Rename to SetColorSpaces
-  const gfx::DisplayColorSpaces& color_spaces() const { return color_spaces_; }
-  void set_color_spaces(const gfx::DisplayColorSpaces& color_spaces);
+  const gfx::DisplayColorSpaces& GetColorSpaces() const;
+  void SetColorSpaces(const gfx::DisplayColorSpaces& color_spaces);
 
   // Return true if the display orientation is landscape.
   bool is_landscape() const { return bounds_.width() >= bounds_.height(); }
@@ -266,8 +271,8 @@ class DISPLAY_EXPORT Display final {
   void set_is_monochrome(bool is_monochrome) { is_monochrome_ = is_monochrome; }
 
   // The display frequency of the monitor.
-  int display_frequency() const { return display_frequency_; }
-  void set_display_frequency(int display_frequency) {
+  float display_frequency() const { return display_frequency_; }
+  void set_display_frequency(float display_frequency) {
     display_frequency_ = display_frequency;
   }
 
@@ -281,19 +286,39 @@ class DISPLAY_EXPORT Display final {
   void set_label(const std::string& label) { label_ = label; }
 
   bool operator==(const Display& rhs) const;
-  bool operator!=(const Display& rhs) const { return !(*this == rhs); }
-
-  const DrmFormatsAndModifiers& GetDRMFormatsAndModifiers() const {
-    return drm_formats_and_modifiers_;
-  }
-
-  void SetDRMFormatsAndModifiers(
-      const DrmFormatsAndModifiers& drm_formats_and_modifiers) {
-    drm_formats_and_modifiers_ = drm_formats_and_modifiers;
-  }
+  static bool EqualExceptForHdrHeadroom(const Display& lhs, const Display& rhs);
 
  private:
   friend struct mojo::StructTraits<mojom::DisplayDataView, Display>;
+
+  // A ref counted object to avoid copying DisplayColorSpaces.
+  class DisplayColorSpacesRef
+      : public base::RefCountedThreadSafe<DisplayColorSpacesRef> {
+   public:
+    DisplayColorSpacesRef() = default;
+    explicit DisplayColorSpacesRef(const gfx::DisplayColorSpaces& color_spaces)
+        : color_spaces_(color_spaces) {}
+    DisplayColorSpacesRef(const DisplayColorSpacesRef& color_spaces) = delete;
+    const DisplayColorSpacesRef& operator=(const DisplayColorSpacesRef) =
+        delete;
+
+    const gfx::DisplayColorSpaces& color_spaces() const {
+      return color_spaces_;
+    }
+
+   private:
+    friend class base::RefCountedThreadSafe<DisplayColorSpacesRef>;
+
+    ~DisplayColorSpacesRef() = default;
+    const gfx::DisplayColorSpaces color_spaces_;
+  };
+
+  void SetDisplayColorSpacesRef(
+      scoped_refptr<const DisplayColorSpacesRef> color_spaces);
+
+  // Returns the default value of the DisplayColorSpaces.
+  static scoped_refptr<const DisplayColorSpacesRef>
+  GetDefaultDisplayColorSpacesRef();
 
   int64_t id_ = kInvalidDisplayId;
   gfx::Rect bounds_;
@@ -304,19 +329,18 @@ class DISPLAY_EXPORT Display final {
   gfx::Rect work_area_;
   float device_scale_factor_;
   Rotation rotation_ = ROTATE_0;
-  absl::optional<Rotation> panel_rotation_;
+  std::optional<Rotation> panel_rotation_;
   TouchSupport touch_support_ = TouchSupport::UNKNOWN;
   AccelerometerSupport accelerometer_support_ = AccelerometerSupport::UNKNOWN;
   gfx::Size maximum_cursor_size_;
-  gfx::DisplayColorSpaces color_spaces_;
+  scoped_refptr<const DisplayColorSpacesRef> color_spaces_;
   int color_depth_;
   int depth_per_component_;
   bool is_monochrome_ = false;
   bool detected_ = true;
-  int display_frequency_ = 0;
+  float display_frequency_ = 0;
   std::string label_;
   uint32_t audio_formats_ = 0;
-  DrmFormatsAndModifiers drm_formats_and_modifiers_;
 };
 
 }  // namespace display

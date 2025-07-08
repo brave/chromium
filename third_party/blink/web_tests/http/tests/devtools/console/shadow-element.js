@@ -6,10 +6,11 @@ import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 import {ElementsTestRunner} from 'elements_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+import * as Elements from 'devtools/panels/elements/elements.js';
+
 (async function() {
   TestRunner.addResult(`Tests that $0 works with shadow dom.\n`);
-  await TestRunner.loadLegacyModule('console');
-  await TestRunner.loadLegacyModule('elements');
   await TestRunner.showPanel('console');
   await TestRunner.loadHTML(`
       <div><div><div id="host"></div></div></div>
@@ -20,7 +21,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
         sr.innerHTML = "<div><div><div id='shadow'><input id='user-agent-host' type='range'></div></div></div>";
     `);
 
-  Common.settingForTest('showUAShadowDOM').set(true);
+  Common.Settings.settingForTest('show-ua-shadow-dom').set(true);
   ElementsTestRunner.selectNodeWithId('shadow', step1);
 
   function step1() {
@@ -32,7 +33,7 @@ import {ElementsTestRunner} from 'elements_test_runner';
   }
 
   function step4(node) {
-    UI.panels.elements.revealAndSelectNode(node.shadowRoots()[0]);
+    Elements.ElementsPanel.ElementsPanel.instance().revealAndSelectNode(node.shadowRoots()[0]);
     ConsoleTestRunner.evaluateInConsoleAndDump('\'User agent shadow host: \' + $0.id', step5);
   }
 

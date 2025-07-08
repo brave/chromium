@@ -4,12 +4,13 @@
 
 package org.chromium.chrome.browser.share.send_tab_to_self;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -22,7 +23,8 @@ import java.util.regex.PatternSyntaxException;
  * the version should be incremented and the new serialization format should be incorporated along
  * with all previous versions.
  */
-public class NotificationSharedPrefManager {
+@NullMarked
+class NotificationSharedPrefManager {
     // Any time the serialization of the ActiveNotification needs to change, increment this version.
     private static final int VERSION = 1;
 
@@ -31,7 +33,7 @@ public class NotificationSharedPrefManager {
      *         this id hits close to the INT_MAX_VALUE (unlikely), gets reset to 0.
      */
     static int getNextNotificationId() {
-        SharedPreferencesManager prefs = SharedPreferencesManager.getInstance();
+        SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
         int nextId = prefs.readInt(ChromePreferenceKeys.SEND_TAB_TO_SELF_NEXT_NOTIFICATION_ID, -1);
         // Reset the counter when it gets close to max value
         if (nextId >= Integer.MAX_VALUE - 1) {
@@ -48,17 +50,16 @@ public class NotificationSharedPrefManager {
      */
     static class ActiveNotification {
         public final int notificationId;
-        @NonNull
         public final String guid;
         public final int version;
 
-        ActiveNotification(int version, int notificationId, @NonNull String guid) {
+        ActiveNotification(int version, int notificationId, String guid) {
             this.notificationId = notificationId;
             this.guid = guid;
             this.version = version;
         }
 
-        ActiveNotification(int notificationId, @NonNull String guid) {
+        ActiveNotification(int notificationId, String guid) {
             this(VERSION, notificationId, guid);
         }
 
@@ -68,7 +69,8 @@ public class NotificationSharedPrefManager {
                 return false;
             }
             ActiveNotification other = (ActiveNotification) obj;
-            return this.notificationId == other.notificationId && this.guid.equals(other.guid)
+            return this.notificationId == other.notificationId
+                    && this.guid.equals(other.guid)
                     && this.version == other.version;
         }
     }
@@ -81,7 +83,7 @@ public class NotificationSharedPrefManager {
      * @return the deserialized version or null on failure.
      */
     @VisibleForTesting
-    static ActiveNotification deserializeNotification(String notificationString) {
+    static @Nullable ActiveNotification deserializeNotification(String notificationString) {
         try {
             String[] tokens = notificationString.split("_");
             if (tokens.length != 3) {
@@ -99,13 +101,7 @@ public class NotificationSharedPrefManager {
     /** @return Serialized version of the fields in version_notificationId_guid string format */
     @VisibleForTesting
     static String serializeNotification(ActiveNotification notification) {
-        return new StringBuilder()
-                .append(notification.version)
-                .append("_")
-                .append(notification.notificationId)
-                .append("_")
-                .append(notification.guid)
-                .toString();
+        return notification.version + "_" + notification.notificationId + "_" + notification.guid;
     }
 
     /**
@@ -114,15 +110,15 @@ public class NotificationSharedPrefManager {
      * @param prefs The SharedPreferences to retrieve the set of strings from.
      * @param prefName The name of the preference to retrieve.
      * @return Existing set of strings associated with the prefName. If none exists, creates a new
-     *         set.
+     *     set.
      */
-    private static @NonNull Set<String> getMutableStringSetPreference(
+    private static Set<String> getMutableStringSetPreference(
             SharedPreferencesManager prefs, String prefName) {
         Set<String> prefValue = prefs.readStringSet(prefName, null);
         if (prefValue == null) {
-            return new HashSet<String>();
+            return new HashSet<>();
         }
-        return new HashSet<String>(prefValue);
+        return new HashSet<>(prefValue);
     }
 
     /**
@@ -131,12 +127,14 @@ public class NotificationSharedPrefManager {
      * @param notification Notification to be inserted into the active set.
      */
     static void addActiveNotification(ActiveNotification notification) {
-        SharedPreferencesManager prefs = SharedPreferencesManager.getInstance();
-        Set<String> activeNotifications = getMutableStringSetPreference(
-                prefs, ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS);
+        SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
+        Set<String> activeNotifications =
+                getMutableStringSetPreference(
+                        prefs, ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS);
         boolean added = activeNotifications.add(serializeNotification(notification));
         if (added) {
-            prefs.writeStringSet(ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS,
+            prefs.writeStringSet(
+                    ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS,
                     activeNotifications);
         }
     }
@@ -151,18 +149,20 @@ public class NotificationSharedPrefManager {
         if (guid == null) {
             return false;
         }
-        SharedPreferencesManager prefs = SharedPreferencesManager.getInstance();
+        SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
         ActiveNotification notification = findActiveNotification(guid);
         if (notification == null) {
             return false;
         }
 
-        Set<String> activeNotifications = getMutableStringSetPreference(
-                prefs, ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS);
+        Set<String> activeNotifications =
+                getMutableStringSetPreference(
+                        prefs, ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS);
         boolean removed = activeNotifications.remove(serializeNotification(notification));
 
         if (removed) {
-            prefs.writeStringSet(ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS,
+            prefs.writeStringSet(
+                    ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS,
                     activeNotifications);
         }
         return removed;
@@ -179,16 +179,17 @@ public class NotificationSharedPrefManager {
         if (guid == null) {
             return null;
         }
-        SharedPreferencesManager prefs = SharedPreferencesManager.getInstance();
-        Set<String> activeNotifications = prefs.readStringSet(
-                ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS, null);
+        SharedPreferencesManager prefs = ChromeSharedPreferences.getInstance();
+        Set<String> activeNotifications =
+                prefs.readStringSet(
+                        ChromePreferenceKeys.SEND_TAB_TO_SELF_ACTIVE_NOTIFICATIONS, null);
         if (activeNotifications == null) {
             return null;
         }
 
         for (String serialized : activeNotifications) {
             ActiveNotification activeNotification = deserializeNotification(serialized);
-            if ((activeNotification != null) && (guid.equals(activeNotification.guid))) {
+            if ((activeNotification != null) && guid.equals(activeNotification.guid)) {
                 return activeNotification;
             }
         }

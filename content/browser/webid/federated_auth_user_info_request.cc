@@ -7,6 +7,7 @@
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/webid/federated_auth_request_page_data.h"
 #include "content/browser/webid/flags.h"
 #include "content/browser/webid/webid_utils.h"
 #include "content/public/browser/federated_identity_api_permission_context_delegate.h"
@@ -14,6 +15,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/blink/public/mojom/webid/federated_auth_request.mojom.h"
+#include "url/origin.h"
 #include "url/url_constants.h"
 
 namespace content {
@@ -57,7 +59,6 @@ std::string GetConsoleErrorMessage(FederatedAuthUserInfoRequestResult error) {
     case FederatedAuthUserInfoRequestResult::kUnhandledRequest:
     case FederatedAuthUserInfoRequestResult::kSuccess: {
       NOTREACHED();
-      return "";
     }
   }
 }
@@ -73,14 +74,14 @@ std::unique_ptr<FederatedAuthUserInfoRequest>
 FederatedAuthUserInfoRequest::Create(
     std::unique_ptr<IdpNetworkRequestManager> network_manager,
     FederatedIdentityPermissionContextDelegate* permission_delegate,
+    FederatedIdentityApiPermissionContextDelegate* api_permission_delegate,
     RenderFrameHost* render_frame_host,
-    FedCmMetrics* metrics,
     blink::mojom::IdentityProviderConfigPtr provider) {
   std::unique_ptr<FederatedAuthUserInfoRequest> request =
       base::WrapUnique<FederatedAuthUserInfoRequest>(
           new FederatedAuthUserInfoRequest(
               std::move(network_manager), permission_delegate,
-              render_frame_host, metrics, std::move(provider)));
+              api_permission_delegate, render_frame_host, std::move(provider)));
   return request;
 }
 
@@ -91,12 +92,12 @@ FederatedAuthUserInfoRequest::~FederatedAuthUserInfoRequest() {
 FederatedAuthUserInfoRequest::FederatedAuthUserInfoRequest(
     std::unique_ptr<IdpNetworkRequestManager> network_manager,
     FederatedIdentityPermissionContextDelegate* permission_delegate,
+    FederatedIdentityApiPermissionContextDelegate* api_permission_delegate,
     RenderFrameHost* render_frame_host,
-    FedCmMetrics* metrics,
     blink::mojom::IdentityProviderConfigPtr provider)
     : network_manager_(std::move(network_manager)),
       permission_delegate_(permission_delegate),
-      metrics_(metrics),
+      api_permission_delegate_(api_permission_delegate),
       render_frame_host_(render_frame_host),
       client_id_(provider->client_id),
       idp_config_url_(provider->config_url),
@@ -111,8 +112,7 @@ FederatedAuthUserInfoRequest::FederatedAuthUserInfoRequest(
 }
 
 void FederatedAuthUserInfoRequest::SetCallbackAndStart(
-    blink::mojom::FederatedAuthRequest::RequestUserInfoCallback callback,
-    FederatedIdentityApiPermissionContextDelegate* api_permission_delegate) {
+    blink::mojom::FederatedAuthRequest::RequestUserInfoCallback callback) {
   callback_ = std::move(callback);
 
   request_start_time_ = base::TimeTicks::Now();
@@ -130,53 +130,57 @@ void FederatedAuthUserInfoRequest::SetCallbackAndStart(
     return;
   }
 
-  if (!network::IsOriginPotentiallyTrustworthy(
-          url::Origin::Create(idp_config_url_))) {
+  url::Origin idp_origin = url::Origin::Create(idp_config_url_);
+  if (!network::IsOriginPotentiallyTrustworthy(idp_origin)) {
     CompleteWithError(
         FederatedAuthUserInfoRequestResult::kNotPotentiallyTrustworthy);
     return;
   }
 
   FederatedApiPermissionStatus permission_status =
-      api_permission_delegate->GetApiPermissionStatus(embedding_origin_);
+      api_permission_delegate_->GetApiPermissionStatus(embedding_origin_);
   if (permission_status != FederatedApiPermissionStatus::GRANTED) {
     CompleteWithError(FederatedAuthUserInfoRequestResult::kNoApiPermission);
     return;
   }
 
   if (webid::ShouldFailAccountsEndpointRequestBecauseNotSignedInWithIdp(
-          *render_frame_host_, idp_config_url_, permission_delegate_) &&
-      webid::GetIdpSigninStatusMode(*render_frame_host_) ==
-          FedCmIdpSigninStatusMode::ENABLED) {
+          *render_frame_host_, idp_config_url_, permission_delegate_)) {
     CompleteWithError(FederatedAuthUserInfoRequestResult::kNotSignedInWithIdp);
     return;
   }
 
-  if (!permission_delegate_->HasSharingPermission(
-          parent_frame_origin_, embedding_origin_,
-          url::Origin::Create(idp_config_url_), /*account_id=*/absl::nullopt)) {
-    // If there is no sharing permission, we can abort before performing any
-    // fetch.
+  if (!webid::HasSharingPermissionOrIdpHasThirdPartyCookiesAccess(
+          *render_frame_host_, idp_config_url_, embedding_origin_,
+          parent_frame_origin_, /*account_id=*/std::nullopt,
+          permission_delegate_, api_permission_delegate_)) {
+    // If there is no sharing permission or the IdP does not have third party
+    // cookies access, we can abort before performing any fetch.
     CompleteWithError(
         FederatedAuthUserInfoRequestResult::kNoAccountSharingPermission);
     return;
   }
 
-  // FederatedProviderFetcher is stored as a member so that
-  // FederatedProviderFetcher is destroyed when FederatedAuthRequestImpl is
-  // destroyed.
-  provider_fetcher_ =
-      std::make_unique<FederatedProviderFetcher>(network_manager_.get());
-  provider_fetcher_->Start(
-      {idp_config_url_}, /*icon_ideal_size=*/0, /*icon_minimum_size=*/0,
+  // FedCmConfigFetcher is stored as a member so that it is destroyed when
+  // FederatedAuthRequestImpl is destroyed.
+  config_fetcher_ = std::make_unique<FedCmConfigFetcher>(
+      *render_frame_host_, network_manager_.get());
+  // TODO(crbug.com/390626180): It seems ok to ignore the well-known checks in
+  // all cases here. However, keeping this unchanged for now when the IDP
+  // registration API is not enabled since we only really need this for that
+  // case.
+  config_fetcher_->Start(
+      {{idp_config_url_, IsFedCmIdPRegistrationEnabled()}},
+      blink::mojom::RpMode::kPassive, /*icon_ideal_size=*/0,
+      /*icon_minimum_size=*/0,
       base::BindOnce(
           &FederatedAuthUserInfoRequest::OnAllConfigAndWellKnownFetched,
           weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FederatedAuthUserInfoRequest::OnAllConfigAndWellKnownFetched(
-    std::vector<FederatedProviderFetcher::FetchResult> fetch_results) {
-  provider_fetcher_.reset();
+    std::vector<FedCmConfigFetcher::FetchResult> fetch_results) {
+  config_fetcher_.reset();
 
   if (fetch_results.size() != 1u) {
     // This could happen when the user info request was sent from a compromised
@@ -197,25 +201,24 @@ void FederatedAuthUserInfoRequest::OnAllConfigAndWellKnownFetched(
   does_idp_have_failing_signin_status_ =
       webid::ShouldFailAccountsEndpointRequestBecauseNotSignedInWithIdp(
           *render_frame_host_, idp_config_url_, permission_delegate_);
-  if (does_idp_have_failing_signin_status_ &&
-      webid::GetIdpSigninStatusMode(*render_frame_host_) ==
-          FedCmIdpSigninStatusMode::ENABLED) {
+  if (does_idp_have_failing_signin_status_) {
     CompleteWithError(FederatedAuthUserInfoRequestResult::kNotSignedInWithIdp);
     return;
   }
 
   network_manager_->SendAccountsRequest(
-      fetch_results[0].endpoints.accounts, client_id_,
+      url::Origin::Create(idp_config_url_), fetch_results[0].endpoints.accounts,
+      client_id_,
       base::BindOnce(&FederatedAuthUserInfoRequest::OnAccountsResponseReceived,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FederatedAuthUserInfoRequest::OnAccountsResponseReceived(
     IdpNetworkRequestManager::FetchStatus fetch_status,
-    IdpNetworkRequestManager::AccountList accounts) {
+    std::vector<IdentityRequestAccountPtr> accounts) {
   webid::UpdateIdpSigninStatusForAccountsEndpointResponse(
       *render_frame_host_, idp_config_url_, fetch_status,
-      does_idp_have_failing_signin_status_, permission_delegate_, metrics_);
+      does_idp_have_failing_signin_status_, permission_delegate_);
 
   if (fetch_status.parse_status !=
       IdpNetworkRequestManager::ParseStatus::kSuccess) {
@@ -223,16 +226,35 @@ void FederatedAuthUserInfoRequest::OnAccountsResponseReceived(
         FederatedAuthUserInfoRequestResult::kInvalidAccountsResponse);
     return;
   }
+
+  webid::GetPageData(render_frame_host_->GetPage())
+      ->SetUserInfoAccountsResponseTime(idp_config_url_,
+                                        base::TimeTicks::Now());
+
+  // Populate the accounts' login state based on browser stored permission
+  // grants.
+  for (auto& account : accounts) {
+    LoginState login_state = LoginState::kSignUp;
+    // Consider this a sign-in if we have seen a successful sign-up for
+    // this account before.
+    if (permission_delegate_->GetLastUsedTimestamp(
+            parent_frame_origin_, embedding_origin_,
+            url::Origin::Create(idp_config_url_), account->id)) {
+      login_state = LoginState::kSignIn;
+    }
+    account->browser_trusted_login_state = login_state;
+  }
+
   MaybeReturnAccounts(std::move(accounts));
 }
 
 void FederatedAuthUserInfoRequest::MaybeReturnAccounts(
-    const IdpNetworkRequestManager::AccountList& accounts) {
+    const std::vector<IdentityRequestAccountPtr>& accounts) {
   DCHECK(!accounts.empty());
 
   bool has_returning_accounts = false;
   for (const auto& account : accounts) {
-    if (IsReturningAccount(account)) {
+    if (IsReturningAccount(*account)) {
       has_returning_accounts = true;
       break;
     }
@@ -258,14 +280,14 @@ void FederatedAuthUserInfoRequest::MaybeReturnAccounts(
   std::vector<blink::mojom::IdentityUserInfoPtr> user_info;
   std::vector<blink::mojom::IdentityUserInfoPtr> not_returning_accounts;
   for (const auto& account : accounts) {
-    if (IsReturningAccount(account)) {
+    if (IsReturningAccount(*account)) {
       user_info.push_back(blink::mojom::IdentityUserInfo::New(
-          account.email, account.given_name, account.name,
-          account.picture.spec()));
+          account->email, account->given_name, account->name,
+          account->picture.spec()));
     } else {
       not_returning_accounts.push_back(blink::mojom::IdentityUserInfo::New(
-          account.email, account.given_name, account.name,
-          account.picture.spec()));
+          account->email, account->given_name, account->name,
+          account->picture.spec()));
     }
   }
   user_info.insert(user_info.end(),
@@ -277,24 +299,29 @@ void FederatedAuthUserInfoRequest::MaybeReturnAccounts(
 
 bool FederatedAuthUserInfoRequest::IsReturningAccount(
     const IdentityRequestAccount& account) {
-  // The |login_state| will only be |kSignUp| if IDP provides an
+  // The |idp_claimed_login_state| will be std::nullopt if the IDP doesn't
+  // provide an |approved_clients| list and the |browser_trusted_login_state|
+  // will be |kSignUp| if there are no browser stored permission grants. The
+  // |idp_claimed_login_state| will be |kSignUp| if IDP provides an
   // |approved_clients| AND the client id is NOT on the |approved_clients|
   // list, in which case we trust the IDP that we should treat the user as a
   // new user and shouldn't return the user info. This should override browser
   // local stored permission since a user can revoke their account out of
   // band.
-  if (account.login_state == LoginState::kSignUp) {
+  if (account.idp_claimed_login_state.value_or(
+          account.browser_trusted_login_state) == LoginState::kSignUp) {
     return false;
   }
 
-  return permission_delegate_->HasSharingPermission(
-      parent_frame_origin_, embedding_origin_,
-      url::Origin::Create(idp_config_url_), account.id);
+  return webid::HasSharingPermissionOrIdpHasThirdPartyCookiesAccess(
+      *render_frame_host_, idp_config_url_, embedding_origin_,
+      parent_frame_origin_, account.id, permission_delegate_,
+      api_permission_delegate_);
 }
 
 void FederatedAuthUserInfoRequest::Complete(
     blink::mojom::RequestUserInfoStatus status,
-    absl::optional<std::vector<blink::mojom::IdentityUserInfoPtr>> user_info,
+    std::optional<std::vector<blink::mojom::IdentityUserInfoPtr>> user_info,
     FederatedAuthUserInfoRequestResult request_status) {
   if (!callback_) {
     return;
@@ -315,7 +342,7 @@ void FederatedAuthUserInfoRequest::CompleteWithError(
         GetConsoleErrorMessage(error));
     AddDevToolsIssue(error);
   }
-  Complete(blink::mojom::RequestUserInfoStatus::kError, absl::nullopt, error);
+  Complete(blink::mojom::RequestUserInfoStatus::kError, std::nullopt, error);
 }
 
 void FederatedAuthUserInfoRequest::AddDevToolsIssue(

@@ -22,7 +22,6 @@ class IntersectionObserverDelegate
  public:
   ~IntersectionObserverDelegate() override = default;
 
-  virtual LocalFrameUkmAggregator::MetricId GetUkmMetricId() const = 0;
   virtual IntersectionObserver::DeliveryBehavior GetDeliveryBehavior()
       const = 0;
 
@@ -34,7 +33,7 @@ class IntersectionObserverDelegate
                        IntersectionObserver&) = 0;
   virtual ExecutionContext* GetExecutionContext() const = 0;
   virtual void Trace(Visitor* visitor) const {}
-  const char* NameInHeapSnapshot() const override {
+  const char* GetHumanReadableName() const override {
     return "IntersectionObserverDelegate";
   }
 };

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This binary generates two C arrays of useful information related to top
 // domains, which we embed directly into
 // the final Chrome binary.  The input is a list of the top domains. The first
@@ -19,7 +24,7 @@
 // IMPORTANT: This binary asserts that there are at least enough sites in the
 // input file to generate 500 skeletons and 500 keywords.
 
-#include <cctype>
+#include <algorithm>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -31,7 +36,6 @@
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -59,7 +63,7 @@ const size_t kMaxKeywords = 500;
 const size_t kMinKeywordLength = 3;
 
 void PrintHelp() {
-  std::cout << "make_top_domain_list_for_edit_distance <input-file>"
+  std::cout << "make_top_domain_list_variables <input-file>"
             << " <namespace-name> <output-file> [--v=1]" << std::endl;
 }
 
@@ -75,7 +79,7 @@ std::string GetSkeleton(const std::string& domain,
 }
 
 bool ContainsOnlyDigits(const std::string& text) {
-  return base::ranges::all_of(text.begin(), text.end(), ::isdigit);
+  return std::ranges::all_of(text.begin(), text.end(), ::isdigit);
 }
 
 }  // namespace
@@ -176,9 +180,6 @@ int main(int argc, char* argv[]) {
   std::vector<std::string> sorted_skeletons(skeletons.begin(), skeletons.end());
   std::sort(sorted_skeletons.begin(), sorted_skeletons.end());
 
-  std::vector<std::string> sorted_keywords(keywords.begin(), keywords.end());
-  std::sort(sorted_keywords.begin(), sorted_keywords.end());
-
   std::ostringstream output_stream;
   output_stream
       << R"(#include "components/url_formatter/spoof_checks/top_domains/)"
@@ -196,21 +197,8 @@ const char* const kTopBucketEditDistanceSkeletons[] = {
   constexpr size_t kNumTopBucketEditDistanceSkeletons = )"
                 << sorted_skeletons.size() << R"(;
 
-const char* const kTopKeywords[] = {
+  } // namespace
 )";
-
-  for (const std::string& keyword : sorted_keywords) {
-    output_stream << ("\"" + keyword + "\"");
-    output_stream << ",\n";
-  }
-  output_stream << R"(};
-)";
-  output_stream <<
-      R"(
-constexpr size_t kNumTopKeywords = )"
-                << sorted_keywords.size() << R"(;
-}  // namespace )"
-                << namespace_str;
 
   std::string output = output_stream.str();
 

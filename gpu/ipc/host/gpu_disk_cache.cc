@@ -18,6 +18,11 @@
 #include "net/base/net_errors.h"
 
 namespace gpu {
+namespace {
+
+constexpr int kCacheIndex = 1;
+
+}
 
 // GpuDiskCacheEntry handles the work of caching/updating the cached
 // blobs.
@@ -41,9 +46,13 @@ class GpuDiskCacheEntry {
     OPEN_ENTRY,
     WRITE_DATA,
     CREATE_ENTRY,
+    REOPEN_ENTRY,
   };
 
+  int OpenEntry();
+
   int OpenCallback(int rv);
+  int ReopenCallback(int rv);
   int WriteCallback(int rv);
   int IOComplete(int rv);
 
@@ -147,7 +156,7 @@ GpuDiskCacheEntry::~GpuDiskCacheEntry() {
     entry_->Close();
 }
 
-void GpuDiskCacheEntry::Cache() {
+int GpuDiskCacheEntry::OpenEntry() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   auto callback = base::BindOnce(&GpuDiskCacheEntry::OnEntryOpenComplete,
@@ -155,8 +164,15 @@ void GpuDiskCacheEntry::Cache() {
 
   disk_cache::EntryResult result =
       cache_->backend()->OpenEntry(key_, net::HIGHEST, std::move(callback));
-  if (result.net_error() != net::ERR_IO_PENDING)
+  int rv = result.net_error();
+  if (rv != net::ERR_IO_PENDING) {
     OnEntryOpenComplete(std::move(result));
+  }
+  return rv;
+}
+
+void GpuDiskCacheEntry::Cache() {
+  OpenEntry();
 }
 
 void GpuDiskCacheEntry::OnOpComplete(int rv) {
@@ -176,6 +192,9 @@ void GpuDiskCacheEntry::OnOpComplete(int rv) {
       case WRITE_DATA:
         rv = IOComplete(rv);
         break;
+      case REOPEN_ENTRY:
+        rv = ReopenCallback(rv);
+        break;
     }
   } while (rv != net::ERR_IO_PENDING && weak_ptr);
   if (weak_ptr)
@@ -191,6 +210,14 @@ void GpuDiskCacheEntry::OnEntryOpenComplete(disk_cache::EntryResult result) {
 int GpuDiskCacheEntry::OpenCallback(int rv) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (rv == net::OK) {
+    size_t existing_size =
+        base::checked_cast<size_t>(entry_->GetDataSize(kCacheIndex));
+    if (existing_size != blob_.size()) {
+      // The blob has changed.
+      return WriteCallback(net::OK);
+    }
+
+    // The blob is unchanged.
     cache_->backend()->OnExternalCacheHit(key_);
     cache_->EntryComplete(this);
     return rv;
@@ -210,20 +237,38 @@ int GpuDiskCacheEntry::OpenCallback(int rv) {
   return rv;
 }
 
+int GpuDiskCacheEntry::ReopenCallback(int rv) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (rv == net::OK) {
+    cache_->backend()->OnExternalCacheHit(key_);
+  } else {
+    LOG(ERROR) << "Failed retry to open blob cache entry: " << rv;
+  }
+  cache_->EntryComplete(this);
+  return rv;
+}
+
 int GpuDiskCacheEntry::WriteCallback(int rv) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (rv != net::OK) {
-    LOG(ERROR) << "Failed to create blob cache entry: " << rv;
-    cache_->EntryComplete(this);
-    return rv;
+    // We might have failed to create the entry because another create on the
+    // same key happened before. To verify, try re-opening the entry.
+    if (rv == net::ERR_FAILED) {
+      op_type_ = REOPEN_ENTRY;
+      return OpenEntry();
+    } else {
+      LOG(ERROR) << "Failed to create blob cache entry: " << rv;
+      cache_->EntryComplete(this);
+      return rv;
+    }
   }
 
   op_type_ = WRITE_DATA;
   auto io_buf = base::MakeRefCounted<net::StringIOBuffer>(blob_);
-  return entry_->WriteData(1, 0, io_buf.get(), blob_.length(),
+  return entry_->WriteData(kCacheIndex, 0, io_buf.get(), blob_.length(),
                            base::BindOnce(&GpuDiskCacheEntry::OnOpComplete,
                                           weak_ptr_factory_.GetWeakPtr()),
-                           false);
+                           /*truncate=*/true);
 }
 
 int GpuDiskCacheEntry::IOComplete(int rv) {
@@ -439,6 +484,9 @@ GpuDiskCacheHandle GpuDiskCacheFactory::GetCacheHandle(
     case GpuDiskCacheType::kDawnWebGPU:
       handle = GpuDiskCacheDawnWebGPUHandle(raw_handle);
       break;
+    case GpuDiskCacheType::kDawnGraphite:
+      handle = GpuDiskCacheDawnGraphiteHandle(raw_handle);
+      break;
   }
   handle_to_path_map_[handle] = path;
   path_to_handle_map_[path] = handle;
@@ -450,7 +498,7 @@ GpuDiskCacheHandle GpuDiskCacheFactory::GetCacheHandle(
 void GpuDiskCacheFactory::ReleaseCacheHandle(GpuDiskCache* cache) {
   // Get the handle related to the cache via the path.
   auto it = path_to_handle_map_.find(cache->cache_path_);
-  DCHECK(it != path_to_handle_map_.end());
+  CHECK(it != path_to_handle_map_.end());
   const base::FilePath& path = it->first;
   const GpuDiskCacheHandle& handle = it->second;
 
@@ -476,7 +524,7 @@ scoped_refptr<GpuDiskCache> GpuDiskCacheFactory::Get(
   if (handle_it != handle_to_path_map_.end()) {
     auto path_it = gpu_cache_map_.find(handle_it->second);
     if (path_it != gpu_cache_map_.end()) {
-      return path_it->second;
+      return path_it->second.get();
     }
   }
   return nullptr;
@@ -505,7 +553,7 @@ scoped_refptr<GpuDiskCache> GpuDiskCacheFactory::GetOrCreateByPath(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   auto iter = gpu_cache_map_.find(path);
   if (iter != gpu_cache_map_.end())
-    return iter->second;
+    return iter->second.get();
 
   auto cache = base::WrapRefCounted(new GpuDiskCache(
       this, path, blob_loaded_cb, std::move(cache_destroyed_cb)));
@@ -572,7 +620,8 @@ void GpuDiskCacheFactory::ClearByPath(const base::FilePath& path,
     return;
   }
 
-  ClearByCache(iter->second, delete_begin, delete_end, std::move(callback));
+  ClearByCache(iter->second.get(), delete_begin, delete_end,
+               std::move(callback));
 }
 
 void GpuDiskCacheFactory::CacheCleared(GpuDiskCache* cache) {
@@ -618,7 +667,6 @@ GpuDiskCache::~GpuDiskCache() {
 void GpuDiskCache::Init() {
   if (is_initialized_) {
     NOTREACHED();  // can't initialize disk cache twice.
-    return;
   }
   is_initialized_ = true;
 
@@ -631,7 +679,6 @@ void GpuDiskCache::Init() {
 
   if (rv.net_error == net::OK) {
     NOTREACHED();  // This shouldn't actually happen with a non-memory backend.
-    backend_ = std::move(rv.backend);
   }
 }
 
@@ -658,10 +705,11 @@ int GpuDiskCache::Clear(base::Time begin_time,
   return rv;
 }
 
-int32_t GpuDiskCache::Size() {
-  if (!cache_available_)
-    return -1;
-  return backend_->GetEntryCount();
+int32_t GpuDiskCache::Size(net::CompletionOnceCallback callback) {
+  if (!cache_available_) {
+    return net::ERR_FAILED;
+  }
+  return backend_->GetEntryCount(std::move(callback));
 }
 
 int GpuDiskCache::SetAvailableCallback(net::CompletionOnceCallback callback) {

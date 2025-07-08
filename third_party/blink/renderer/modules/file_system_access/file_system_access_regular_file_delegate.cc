@@ -10,8 +10,8 @@
 #include "base/numerics/checked_math.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "third_party/blink/public/mojom/file_system_access/file_system_access_capacity_allocation_host.mojom-blink.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_file_handle.mojom-blink.h"
+#include "third_party/blink/public/mojom/file_system_access/file_system_access_file_modification_host.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_access_capacity_tracker.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -23,12 +23,12 @@ FileSystemAccessFileDelegate* FileSystemAccessFileDelegate::Create(
     mojom::blink::FileSystemAccessRegularFilePtr regular_file) {
   base::File backing_file = std::move(regular_file->os_file);
   int64_t backing_file_size = regular_file->file_size;
-  mojo::PendingRemote<mojom::blink::FileSystemAccessCapacityAllocationHost>
-      capacity_allocation_host_remote =
-          std::move(regular_file->capacity_allocation_host);
+  mojo::PendingRemote<mojom::blink::FileSystemAccessFileModificationHost>
+      file_modification_host_remote =
+          std::move(regular_file->file_modification_host);
   return MakeGarbageCollected<FileSystemAccessRegularFileDelegate>(
       context, std::move(backing_file), backing_file_size,
-      std::move(capacity_allocation_host_remote),
+      std::move(file_modification_host_remote),
       base::PassKey<FileSystemAccessFileDelegate>());
 }
 
@@ -36,13 +36,13 @@ FileSystemAccessRegularFileDelegate::FileSystemAccessRegularFileDelegate(
     ExecutionContext* context,
     base::File backing_file,
     int64_t backing_file_size,
-    mojo::PendingRemote<mojom::blink::FileSystemAccessCapacityAllocationHost>
-        capacity_allocation_host_remote,
+    mojo::PendingRemote<mojom::blink::FileSystemAccessFileModificationHost>
+        file_modification_host_remote,
     base::PassKey<FileSystemAccessFileDelegate>)
     : backing_file_(std::move(backing_file)),
       capacity_tracker_(MakeGarbageCollected<FileSystemAccessCapacityTracker>(
           context,
-          std::move(capacity_allocation_host_remote),
+          std::move(file_modification_host_remote),
           backing_file_size,
           base::PassKey<FileSystemAccessRegularFileDelegate>())),
       task_runner_(context->GetTaskRunner(TaskType::kStorage)) {}
@@ -54,8 +54,8 @@ base::FileErrorOr<int> FileSystemAccessRegularFileDelegate::Read(
   CHECK_GE(offset, 0);
 
   int size = base::checked_cast<int>(data.size());
-  int result =
-      backing_file_.Read(offset, reinterpret_cast<char*>(data.data()), size);
+  int result = UNSAFE_TODO(
+      backing_file_.Read(offset, reinterpret_cast<char*>(data.data()), size));
   if (result >= 0) {
     return result;
   }
@@ -64,7 +64,7 @@ base::FileErrorOr<int> FileSystemAccessRegularFileDelegate::Read(
 
 base::FileErrorOr<int> FileSystemAccessRegularFileDelegate::Write(
     int64_t offset,
-    const base::span<uint8_t> data) {
+    base::span<const uint8_t> data) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_GE(offset, 0);
 
@@ -83,13 +83,13 @@ base::FileErrorOr<int> FileSystemAccessRegularFileDelegate::Write(
       return base::unexpected(base::File::FILE_ERROR_NO_SPACE);
   }
 
-  int result = backing_file_.Write(offset, reinterpret_cast<char*>(data.data()),
-                                   write_size);
+  int result = UNSAFE_TODO(backing_file_.Write(
+      offset, reinterpret_cast<const char*>(data.data()), write_size));
   // The file size may not have changed after the write operation. `CheckAdd()`
   // is not needed here since `result` is guaranteed to be no more than
   // `write_size`.
   int64_t new_file_size = std::max(file_size_before, offset + result);
-  capacity_tracker_->CommitFileSizeChange(new_file_size);
+  capacity_tracker_->OnFileContentsModified(new_file_size);
 
   // Only return an error if no bytes were written. Partial writes should return
   // the number of bytes written.
@@ -113,7 +113,7 @@ base::FileErrorOr<bool> FileSystemAccessRegularFileDelegate::SetLength(
     return base::unexpected(base::File::FILE_ERROR_NO_SPACE);
 
   if (backing_file_.SetLength(new_length)) {
-    capacity_tracker_->CommitFileSizeChange(new_length);
+    capacity_tracker_->OnFileContentsModified(new_length);
     return true;
   }
   return base::unexpected(base::File::GetLastFileError());

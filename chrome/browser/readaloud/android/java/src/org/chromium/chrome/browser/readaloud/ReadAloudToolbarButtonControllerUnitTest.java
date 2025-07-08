@@ -17,41 +17,33 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ButtonData;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
 
 /** Unit tests for {@link ReadAloudToolbarButtonController} */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures({ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2})
-
+@EnableFeatures(ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2)
 public class ReadAloudToolbarButtonControllerUnitTest {
-    @Rule
-    public TestRule mProcessor = new Features.JUnitProcessor();
 
-    @Mock
-    private Tab mTab;
-    @Mock
-    private Drawable mDrawable;
-    @Mock
-    private Tracker mTracker;
-    @Mock
-    private ReadAloudController mReadAloudController;
-    @Mock
-    private Context mContext;
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @Mock private Tab mTab;
+    @Mock private Drawable mDrawable;
+    @Mock private Tracker mTracker;
+    @Mock private ReadAloudController mReadAloudController;
+    @Mock private Context mContext;
 
     private UserActionTester mActionTester;
 
@@ -59,15 +51,19 @@ public class ReadAloudToolbarButtonControllerUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mActionTester = new UserActionTester();
 
         when(mContext.getString(anyInt())).thenReturn("String");
         when(mTab.getContext()).thenReturn(mContext);
         when(mReadAloudController.isReadable(mTab)).thenReturn(true);
 
-        mButtonController = new ReadAloudToolbarButtonController(
-                mContext, () -> mTab, mDrawable, () -> mReadAloudController, () -> mTracker);
+        mButtonController =
+                new ReadAloudToolbarButtonController(
+                        mContext,
+                        () -> mTab,
+                        mDrawable,
+                        () -> mReadAloudController,
+                        () -> mTracker);
     }
 
     @After
@@ -91,8 +87,9 @@ public class ReadAloudToolbarButtonControllerUnitTest {
 
     @Test
     public void shouldShowButton_noReadAloudController() {
-        mButtonController = new ReadAloudToolbarButtonController(
-                mContext, () -> mTab, mDrawable, () -> null, () -> mTracker);
+        mButtonController =
+                new ReadAloudToolbarButtonController(
+                        mContext, () -> mTab, mDrawable, () -> null, () -> mTracker);
 
         Assert.assertFalse(mButtonController.shouldShowButton(mTab));
     }
@@ -116,14 +113,15 @@ public class ReadAloudToolbarButtonControllerUnitTest {
         mButtonController.onClick(null);
 
         Assert.assertEquals(1, mActionTester.getActionCount("MobileTopToolbarReadAloudButton"));
-        verify(mTracker).notifyEvent(
-                EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_READ_ALOUD_CLICKED);
+        verify(mTracker)
+                .notifyEvent(EventConstants.ADAPTIVE_TOOLBAR_CUSTOMIZATION_READ_ALOUD_CLICKED);
     }
 
     @Test
     public void onClick_readAloudControllerMissing() {
-        mButtonController = new ReadAloudToolbarButtonController(
-                mContext, () -> mTab, mDrawable, () -> null, () -> mTracker);
+        mButtonController =
+                new ReadAloudToolbarButtonController(
+                        mContext, () -> mTab, mDrawable, () -> null, () -> mTracker);
         mButtonController.onClick(null);
 
         Assert.assertEquals(0, mActionTester.getActionCount("MobileTopToolbarReadAloudButton"));
@@ -133,8 +131,9 @@ public class ReadAloudToolbarButtonControllerUnitTest {
 
     @Test
     public void onClick_trackerMissing() {
-        mButtonController = new ReadAloudToolbarButtonController(
-                mContext, () -> mTab, mDrawable, () -> mReadAloudController, () -> null);
+        mButtonController =
+                new ReadAloudToolbarButtonController(
+                        mContext, () -> mTab, mDrawable, () -> mReadAloudController, () -> null);
         mButtonController.onClick(null);
 
         Assert.assertEquals(1, mActionTester.getActionCount("MobileTopToolbarReadAloudButton"));

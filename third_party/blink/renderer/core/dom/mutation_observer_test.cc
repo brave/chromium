@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
@@ -39,13 +40,15 @@ class EmptyMutationCallback : public MutationObserver::Delegate {
 }  // namespace
 
 TEST(MutationObserverTest, DisconnectCrash) {
+  test::TaskEnvironment task_environment;
   ScopedNullExecutionContext execution_context;
   Persistent<Document> document =
       HTMLDocument::CreateForTest(execution_context.GetExecutionContext());
   auto* root =
       To<HTMLElement>(document->CreateRawElement(html_names::kHTMLTag));
   document->AppendChild(root);
-  root->setInnerHTML("<head><title>\n</title></head><body></body>");
+  root->SetInnerHTMLWithoutTrustedTypes(
+      "<head><title>\n</title></head><body></body>");
   Node* head = root->firstChild()->firstChild();
   DCHECK(head);
   Persistent<MutationObserver> observer = MutationObserver::Create(

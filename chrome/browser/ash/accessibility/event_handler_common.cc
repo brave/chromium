@@ -8,6 +8,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "extensions/browser/api/offscreen/offscreen_document_manager.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
@@ -37,6 +38,36 @@ extensions::ExtensionHost* GetAccessibilityExtensionHost(
   return host;
 }
 
+extensions::OffscreenDocumentHost* GetAccessibilityOffscreenDocumentHost(
+    const std::string& extension_id) {
+  if (!AccessibilityManager::Get()) {
+    return nullptr;
+  }
+
+  content::BrowserContext* context = ProfileManager::GetActiveUserProfile();
+  if (!context) {
+    return nullptr;
+  }
+
+  const extensions::Extension* extension =
+      extensions::ExtensionRegistry::Get(context)->enabled_extensions().GetByID(
+          extension_id);
+  if (!extension) {
+    return nullptr;
+  }
+
+  extensions::OffscreenDocumentManager* manager =
+      extensions::OffscreenDocumentManager::Get(context);
+  if (!manager) {
+    return nullptr;
+  }
+
+  extensions::OffscreenDocumentHost* host =
+      manager->GetOffscreenDocumentForExtension(*extension);
+
+  return host;
+}
+
 void ForwardKeyToExtension(const ui::KeyEvent& key_event,
                            extensions::ExtensionHost* host) {
   if (!host) {
@@ -47,7 +78,7 @@ void ForwardKeyToExtension(const ui::KeyEvent& key_event,
   content::RenderFrameHost* main_frame = host->main_frame_host();
   DCHECK(main_frame);
 
-  const content::NativeWebKeyboardEvent web_event(key_event);
+  const input::NativeWebKeyboardEvent web_event(key_event);
   // Don't forward latency info, as these are getting forwarded to an extension.
   main_frame->GetRenderWidgetHost()->ForwardKeyboardEvent(web_event);
 }
@@ -62,7 +93,7 @@ void ForwardMouseToExtension(const ui::MouseEvent& mouse_event,
   content::RenderFrameHost* main_frame = host->main_frame_host();
   DCHECK(main_frame);
 
-  if (mouse_event.type() == ui::ET_MOUSE_EXITED) {
+  if (mouse_event.type() == ui::EventType::kMouseExited) {
     VLOG(3) << "Couldn't forward unsupported mouse event to extension";
     return;
   }

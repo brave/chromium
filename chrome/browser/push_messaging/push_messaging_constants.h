@@ -8,6 +8,13 @@
 #include "base/time/time.h"
 
 extern const char kPushMessagingGcmEndpoint[];
+// Endpoint to replace the GcmEndpoint in the future through feature rollout.
+extern const char kPushMessagingWebpushEndpoint[];
+
+// The GCM endpoint to use on non-Stable channels.
+extern const char kPushMessagingStagingGcmEndpoint[];
+// Endpoint to replace the StagingGcmEndpoint in the future through feature rollout.
+extern const char kPushMessagingStagingWebpushEndpoint[];
 
 // The tag of the notification that will be automatically shown if a webapp
 // receives a push message then fails to show a notification.
@@ -16,10 +23,11 @@ extern const char kPushMessagingForcedNotificationTag[];
 // Chrome decided cadence on subscription refreshes. According to the standards:
 // https://w3c.github.io/push-api/#dfn-subscription-expiration-time it is
 // optional and set by the browser.
-constexpr base::TimeDelta kPushSubscriptionExpirationPeriodTimeDelta =
+inline constexpr base::TimeDelta kPushSubscriptionExpirationPeriodTimeDelta =
     base::Days(90);
 
 // TimeDelta for subscription refreshes to keep old subscriptions alive
-constexpr base::TimeDelta kPushSubscriptionRefreshTimeDelta = base::Minutes(2);
+inline constexpr base::TimeDelta kPushSubscriptionRefreshTimeDelta =
+    base::Minutes(2);
 
 #endif  // CHROME_BROWSER_PUSH_MESSAGING_PUSH_MESSAGING_CONSTANTS_H_

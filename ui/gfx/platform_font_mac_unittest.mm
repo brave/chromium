@@ -9,14 +9,10 @@
 #include <stddef.h>
 
 #include "base/apple/bridging.h"
-#import "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#import "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/font.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace gfx {
 
@@ -40,18 +36,18 @@ TEST(PlatformFontMacTest, DeriveFont) {
       }
     }
 
-    return base::mac::GetValueFromDictionary<CFNumberRef>(dict, key);
+    return base::apple::GetValueFromDictionary<CFNumberRef>(dict, key);
   };
 
   // |weight_tri| is either -1, 0, or 1 meaning "light", "normal", or "bold".
   auto CheckExpected = [GetValueFromDictionaryAndWorkAroundMacOS13Bug](
                            const Font& font, int weight_tri, bool isItalic) {
-    base::ScopedCFTypeRef<CFDictionaryRef> traits(
+    base::apple::ScopedCFTypeRef<CFDictionaryRef> traits(
         CTFontCopyTraits(font.GetCTFont()));
     DCHECK(traits);
 
     CFNumberRef cf_slant = GetValueFromDictionaryAndWorkAroundMacOS13Bug(
-        traits, kCTFontSlantTrait);
+        traits.get(), kCTFontSlantTrait);
     CGFloat slant;
     CFNumberGetValue(cf_slant, kCFNumberCGFloatType, &slant);
     if (isItalic)
@@ -60,7 +56,7 @@ TEST(PlatformFontMacTest, DeriveFont) {
       EXPECT_EQ(slant, 0);
 
     CFNumberRef cf_weight = GetValueFromDictionaryAndWorkAroundMacOS13Bug(
-        traits, kCTFontWeightTrait);
+        traits.get(), kCTFontWeightTrait);
     CGFloat weight;
     CFNumberGetValue(cf_weight, kCFNumberCGFloatType, &weight);
     if (weight_tri < 0)

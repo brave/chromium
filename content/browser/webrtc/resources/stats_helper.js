@@ -32,7 +32,9 @@ export function generateStatsLabel(report) {
   let labels = [];
   if (['outbound-rtp', 'remote-outbound-rtp', 'inbound-rtp',
       'remote-inbound-rtp'].includes(report.type) && report.stats.values) {
-    labels = ['kind', 'mid', 'rid', 'ssrc', 'scalabilityMode',
+    labels = ['kind', 'mid', 'rid', 'ssrc', 'rtxSsrc', 'fecSsrc',
+      'frameHeight', 'contentType',
+      'scalabilityMode',
       'encoderImplementation', 'decoderImplementation',
       'powerEfficientEncoder', 'powerEfficientDecoder',
       '[codec]'];
@@ -46,6 +48,8 @@ export function generateStatsLabel(report) {
     labels = ['state'];
   } else if (report.type === 'transport') {
     labels = ['iceState', 'dtlsState'];
+  } else if (report.type === 'data-channel') {
+    labels = ['label', 'state'];
   }
   labels = labels
     .map(stat => generateLabel(stat, report.stats.values))

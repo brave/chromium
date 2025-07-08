@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//media/media_options.gni")
+import("//third_party/libgav1/options.gni")
 
 source_set("muxers") {
   # Do not expand the visibility here without double-checking with OWNERS, this
@@ -17,6 +18,8 @@ source_set("muxers") {
     "file_webm_muxer_delegate.h",
     "live_webm_muxer_delegate.cc",
     "live_webm_muxer_delegate.h",
+    "memory_webm_muxer_delegate.cc",
+    "memory_webm_muxer_delegate.h",
     "mp4_box_writer.cc",
     "mp4_box_writer.h",
     "mp4_fragment_box_writer.cc",
@@ -29,10 +32,14 @@ source_set("muxers") {
     "mp4_muxer_context.h",
     "mp4_muxer_delegate.cc",
     "mp4_muxer_delegate.h",
+    "mp4_muxer_delegate_fragment.cc",
+    "mp4_muxer_delegate_fragment.h",
     "mp4_type_conversion.cc",
     "mp4_type_conversion.h",
     "muxer.cc",
     "muxer.h",
+    "muxer_timestamp_adapter.cc",
+    "muxer_timestamp_adapter.h",
     "output_position_tracker.cc",
     "output_position_tracker.h",
     "webm_muxer.cc",
@@ -48,6 +55,9 @@ source_set("muxers") {
     "//ui/gfx/geometry",
   ]
 
+  assert(use_libgav1_parser)
+  deps += [ "//third_party/libgav1:libgav1_parser" ]
+
   configs += [ "//media:subcomponent_config" ]
 }
 
@@ -58,7 +68,9 @@ source_set("unit_tests") {
     "mp4_muxer_box_writer_unittest.cc",
     "mp4_muxer_context_unittest.cc",
     "mp4_muxer_delegate_unittest.cc",
+    "mp4_muxer_unittest.cc",
     "mp4_type_conversion_unittest.cc",
+    "muxer_timestamp_adapter_unittest.cc",
     "output_position_tracker_unittest.cc",
     "webm_muxer_unittest.cc",
   ]

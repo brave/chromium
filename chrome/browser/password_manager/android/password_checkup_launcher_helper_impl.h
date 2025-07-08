@@ -23,24 +23,37 @@ class PasswordCheckupLauncherHelperImpl : public PasswordCheckupLauncherHelper {
 
   ~PasswordCheckupLauncherHelperImpl() override;
 
-  // Launch the bulk password check in the Google Account
-  void LaunchCheckupInAccountWithWindowAndroid(
+  // Launch the bulk password check in passwords.google.com
+  void LaunchCheckupOnlineWithWindowAndroid(
       JNIEnv* env,
-      const base::android::JavaRef<jstring>& checkupUrl,
+      std::string& checkupUrl,
       const base::android::JavaRef<jobject>& windowAndroid) override;
 
-  // Launch the bulk password check locally
-  void LaunchLocalCheckup(JNIEnv* env,
-                          ui::WindowAndroid* window_android,
-                          password_manager::PasswordCheckReferrerAndroid
-                              passwordCheckReferrer) override;
-
-  // Launch the bulk password check in the Google Account using an activity
-  // rather than a WindowAndroid
-  void LaunchCheckupInAccountWithActivity(
+  // Launch the bulk password check on device.
+  // If the user is syncing passwords, |account_email| is the email of the
+  // account syncing passwords. |account_email| is an empty string if the user
+  // isn't syncing passwords.
+  void LaunchCheckupOnDevice(
       JNIEnv* env,
-      const base::android::JavaRef<jstring>& checkupUrl,
+      Profile* profile,
+      ui::WindowAndroid* window_android,
+      password_manager::PasswordCheckReferrerAndroid passwordCheckReferrer,
+      std::string account_email) override;
+
+  // Launch the bulk password check in passwords.google.com using an activity
+  // rather than a WindowAndroid
+  void LaunchCheckupOnlineWithActivity(
+      JNIEnv* env,
+      std::string& checkupUrl,
       const base::android::JavaRef<jobject>& activity) override;
+
+  // Opens the old safety check UI in Chrome Settings.
+  void LaunchSafetyCheck(JNIEnv* env,
+                         ui::WindowAndroid* windowAndroid) override;
+
+  // Opens the new safety check UI (also known as Safety Hub) in Chrome
+  // Settings.
+  void LaunchSafetyHub(JNIEnv* env, ui::WindowAndroid* windowAndroid) override;
 };
 
 #endif  // CHROME_BROWSER_PASSWORD_MANAGER_ANDROID_PASSWORD_CHECKUP_LAUNCHER_HELPER_IMPL_H_

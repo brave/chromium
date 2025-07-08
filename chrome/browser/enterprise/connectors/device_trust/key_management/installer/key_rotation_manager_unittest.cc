@@ -5,6 +5,7 @@
 #include "chrome/browser/enterprise/connectors/device_trust/key_management/installer/key_rotation_manager.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -22,11 +23,10 @@
 #include "chrome/browser/enterprise/connectors/device_trust/key_management/installer/key_rotation_types.h"
 #include "chrome/browser/enterprise/connectors/device_trust/key_management/installer/metrics_util.h"
 #include "components/policy/proto/device_management_backend.pb.h"
-#include "crypto/scoped_mock_unexportable_key_provider.h"
+#include "crypto/scoped_fake_unexportable_key_provider.h"
 #include "crypto/unexportable_key.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 using BPKUR = enterprise_management::BrowserPublicKeyUploadRequest;
@@ -98,7 +98,7 @@ constexpr std::array<
 class KeyRotationManagerTest : public testing::Test {
  protected:
   KeyRotationManagerTest()
-      : key_provider_(crypto::GetUnexportableKeyProvider()) {
+      : key_provider_(crypto::GetUnexportableKeyProvider(/*config=*/{})) {
     ResetHistograms();
     auto mock_network_delegate =
         std::make_unique<StrictMock<MockKeyNetworkDelegate>>();
@@ -133,11 +133,13 @@ class KeyRotationManagerTest : public testing::Test {
     if (exists) {
       old_key_pair_ = base::MakeRefCounted<SigningKeyPair>(
           CreateHardwareKey(), BPKUR::CHROME_BROWSER_HW_KEY);
-      EXPECT_CALL(*mock_persistence_delegate_, LoadKeyPair())
+      EXPECT_CALL(*mock_persistence_delegate_,
+                  LoadKeyPair(KeyStorageType::kPermanent, _))
           .WillOnce(Return(old_key_pair_));
     } else {
       old_key_pair_.reset();
-      EXPECT_CALL(*mock_persistence_delegate_, LoadKeyPair())
+      EXPECT_CALL(*mock_persistence_delegate_,
+                  LoadKeyPair(KeyStorageType::kPermanent, _))
           .WillOnce(Invoke([]() { return nullptr; }));
     }
   }
@@ -200,9 +202,8 @@ class KeyRotationManagerTest : public testing::Test {
     histogram_tester_ = std::make_unique<base::HistogramTester>();
   }
 
-  //   test::ScopedKeyPersistenceDelegateFactory scoped_factory_;
   base::test::TaskEnvironment task_environment_;
-  crypto::ScopedMockUnexportableKeyProvider scoped_key_provider_;
+  crypto::ScopedFakeUnexportableKeyProvider scoped_key_provider_;
   std::unique_ptr<base::HistogramTester> histogram_tester_;
   std::unique_ptr<crypto::UnexportableKeyProvider> key_provider_;
 
@@ -213,7 +214,7 @@ class KeyRotationManagerTest : public testing::Test {
 
   scoped_refptr<SigningKeyPair> old_key_pair_;
   scoped_refptr<SigningKeyPair> new_key_pair_;
-  absl::optional<std::string> captured_upload_body_;
+  std::optional<std::string> captured_upload_body_;
 
   std::unique_ptr<KeyRotationManager> key_rotation_manager_;
 };

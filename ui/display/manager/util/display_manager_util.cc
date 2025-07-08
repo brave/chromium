@@ -5,8 +5,10 @@
 #include "ui/display/manager/util/display_manager_util.h"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <cmath>
 #include <set>
 #include <sstream>
@@ -14,9 +16,12 @@
 
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
-#include "build/chromeos_buildflags.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
+#include "chromeos/ash/components/system/statistics_provider.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display_switches.h"
 #include "ui/display/manager/managed_display_info.h"
@@ -25,13 +30,8 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/ash/components/system/statistics_provider.h"
-#endif
-
 namespace display {
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 std::string DisplayPowerStateToString(chromeos::DisplayPowerState state) {
   switch (state) {
     case chromeos::DISPLAY_POWER_ALL_ON:
@@ -47,21 +47,27 @@ std::string DisplayPowerStateToString(chromeos::DisplayPowerState state) {
   }
 }
 
-std::string RefreshRateThrottleStateToString(RefreshRateThrottleState state) {
-  switch (state) {
-    case kRefreshRateThrottleEnabled:
-      return "THROTTLE_ENABLED";
-    case kRefreshRateThrottleDisabled:
-      return "THROTTLE_DISABLED";
+std::string VrrStateToString(const base::flat_set<int64_t>& state) {
+  std::vector<std::string> entries;
+  for (const int64_t id : state) {
+    entries.push_back(base::NumberToString(id));
   }
-  NOTREACHED();
-  return "unknown refresh rate throttle state (" + base::NumberToString(state) +
-         ")";
+  return "{" + base::JoinString(entries, ", ") + "}";
 }
 
-int GetDisplayPower(const std::vector<DisplaySnapshot*>& displays,
-                    chromeos::DisplayPowerState state,
-                    std::vector<bool>* display_power) {
+std::string RefreshRateOverrideToString(
+    const std::unordered_map<int64_t, float>& refresh_rate_override) {
+  std::vector<std::string> entries;
+  for (const auto& [id, refresh_rate] : refresh_rate_override) {
+    entries.push_back(base::StringPrintf("%" PRId64 ": %f", id, refresh_rate));
+  }
+  return "{" + base::JoinString(entries, ", ") + "}";
+}
+
+int GetDisplayPower(
+    const std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>& displays,
+    chromeos::DisplayPowerState state,
+    std::vector<bool>* display_power) {
   int num_on_displays = 0;
   if (display_power) {
     display_power->resize(displays.size());
@@ -84,42 +90,6 @@ int GetDisplayPower(const std::vector<DisplaySnapshot*>& displays,
   return num_on_displays;
 }
 
-std::vector<const DisplayMode*> GetSeamlessRefreshRateModes(
-    const DisplaySnapshot& display,
-    const DisplayMode& matching_mode) {
-  const float kMinRefreshRate = 60.f;
-  const float kEpsilon = 0.01f;
-
-  std::vector<const DisplayMode*> matching_modes;
-  for (const std::unique_ptr<const display::DisplayMode>& mode :
-       display.modes()) {
-    if (matching_mode.is_interlaced() != mode->is_interlaced()) {
-      continue;
-    }
-    // Filter out modes that are less than 60 Hz. Account for floating point
-    // inaccuracies so we don't filter out 59.997 mistakenly.
-    if (mode->refresh_rate() < (kMinRefreshRate - kEpsilon)) {
-      continue;
-    }
-
-    // Filter out modes whose refresh rate is quicker than the preferred mode.
-    if (display.native_mode()->refresh_rate() < mode->refresh_rate()) {
-      continue;
-    }
-
-    if (matching_mode.size() == mode->size()) {
-      matching_modes.push_back(mode.get());
-    }
-  }
-  auto refresh_lt = [](const DisplayMode* a, const DisplayMode* b) -> bool {
-    return a->refresh_rate() < b->refresh_rate();
-  };
-  std::sort(matching_modes.begin(), matching_modes.end(), refresh_lt);
-  return matching_modes;
-}
-
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
 bool WithinEpsilon(float a, float b) {
   return std::abs(a - b) < std::numeric_limits<float>::epsilon();
 }
@@ -138,7 +108,6 @@ std::string MultipleDisplayStateToString(MultipleDisplayState state) {
       return "MULTI_EXTENDED";
   }
   NOTREACHED() << "Unknown state " << state;
-  return "INVALID";
 }
 
 bool GetContentProtectionMethods(DisplayConnectionType type,
@@ -191,12 +160,16 @@ std::vector<float> GetDisplayZoomFactors(const ManagedDisplayMode& mode) {
   const int effective_width = std::round(
       static_cast<float>(std::max(mode.size().width(), mode.size().height())) /
       mode.device_scale_factor());
+  return GetDisplayZoomFactorsByDisplayWidth(effective_width);
+}
 
+std::vector<float> GetDisplayZoomFactorsByDisplayWidth(
+    const int display_width) {
   std::size_t index = kZoomListBuckets.size() - 1;
-  while (index > 0 && effective_width < kZoomListBuckets[index].first) {
+  while (index > 0 && display_width < kZoomListBuckets[index].first) {
     index--;
   }
-  DCHECK_GE(effective_width, kZoomListBuckets[index].first);
+  DCHECK_GE(display_width, kZoomListBuckets[index].first);
 
   const auto& zoom_array = kZoomListBuckets[index].second;
   return std::vector<float>(zoom_array.begin(), zoom_array.end());
@@ -212,7 +185,6 @@ std::vector<float> GetDisplayZoomFactorForDsf(float dsf) {
     }
   }
   NOTREACHED() << "Received a DSF not on the list: " << dsf;
-  return {1.f / dsf, 1.f};
 }
 
 ManagedDisplayInfo::ManagedDisplayModeList CreateInternalManagedDisplayModeList(
@@ -255,18 +227,14 @@ ManagedDisplayInfo::ManagedDisplayModeList CreateUnifiedManagedDisplayModeList(
 
 bool ForceFirstDisplayInternal() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  bool ret = command_line->HasSwitch(::switches::kUseFirstDisplayAsInternal);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Touch view mode is only available to internal display. We force the
   // display as internal for emulator to test touch view mode.
   // However, display mode change is only available to external display. To run
   // tests on a different display mode from default we will need to set the flag
   // --drm-virtual-connector-is-external.
-  ret = ret ||
-        (ash::system::StatisticsProvider::GetInstance()->IsRunningOnVm() &&
-         !command_line->HasSwitch(switches::kDRMVirtualConnectorIsExternal));
-#endif
-  return ret;
+  return command_line->HasSwitch(::switches::kUseFirstDisplayAsInternal) ||
+         (ash::system::StatisticsProvider::GetInstance()->IsRunningOnVm() &&
+          !command_line->HasSwitch(switches::kDRMVirtualConnectorIsExternal));
 }
 
 bool ComputeBoundary(const gfx::Rect& a_bounds,

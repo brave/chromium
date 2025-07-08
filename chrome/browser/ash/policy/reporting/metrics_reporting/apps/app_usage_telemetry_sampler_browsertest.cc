@@ -10,12 +10,12 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics_utils.h"
 #include "chrome/browser/ash/login/test/cryptohome_mixin.h"
+#include "chrome/browser/ash/login/test/user_auth_config.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_mixin.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_test_helper.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
@@ -31,12 +31,10 @@
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/user_display_mode.h"
-#include "chrome/browser/web_applications/web_app_id.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chromeos/ash/components/login/session/session_termination_manager.h"
 #include "chromeos/dbus/missive/missive_client_test_observer.h"
 #include "components/app_constants/constants.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/reporting/proto/synced/metric_data.pb.h"
 #include "components/reporting/proto/synced/record.pb.h"
@@ -45,6 +43,7 @@
 #include "components/services/app_service/public/protos/app_types.pb.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_launcher.h"
@@ -82,7 +81,7 @@ constexpr base::TimeDelta kAppUsageUKMReportingInterval = base::Hours(2);
 
 // Additional webapp usage buffer period before the browser is actually closed.
 // Used when validating reported app usage data.
-constexpr base::TimeDelta kWebAppUsageBufferPeriod = base::Seconds(5);
+constexpr base::TimeDelta kWebAppUsageBufferPeriod = base::Seconds(10);
 
 void AssertRecordData(Priority priority, const Record& record) {
   EXPECT_THAT(priority, Eq(Priority::MANUAL_BATCH));
@@ -114,6 +113,9 @@ class AppUsageTelemetrySamplerBrowserTest
     // Initialize the MockClock.
     test::MockClock::Get();
     crypto_home_mixin_.MarkUserAsExisting(affiliation_mixin_.account_id());
+    crypto_home_mixin_.ApplyAuthConfig(
+        affiliation_mixin_.account_id(),
+        ash::test::UserAuthConfig::Create(ash::test::kDefaultAuthSetup));
     ::policy::SetDMTokenForTesting(
         ::policy::DMToken::CreateValidToken(kDMToken));
   }
@@ -140,16 +142,10 @@ class AppUsageTelemetrySamplerBrowserTest
     test_ukm_recorder_ = std::make_unique<::ukm::TestAutoSetUkmRecorder>();
   }
 
-  void SetUpInProcessBrowserTestFixture() override {
-    ::policy::DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
-    create_sync_service_subscription_ =
-        BrowserContextDependencyManager::GetInstance()
-            ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
-                &AppUsageTelemetrySamplerBrowserTest::SetUpSyncService,
-                base::Unretained(this)));
-  }
-
-  void SetUpSyncService(::content::BrowserContext* context) {
+  void SetUpBrowserContextKeyedServices(
+      ::content::BrowserContext* context) override {
+    ::policy::DevicePolicyCrosBrowserTest::SetUpBrowserContextKeyedServices(
+        context);
     SyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
         context, base::BindRepeating([](::content::BrowserContext* context)
                                          -> std::unique_ptr<KeyedService> {
@@ -158,9 +154,9 @@ class AppUsageTelemetrySamplerBrowserTest
   }
 
   // Helper that installs a standalone webapp with the specified start url.
-  ::web_app::AppId InstallStandaloneWebApp(const GURL& start_url) {
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = start_url;
+  ::webapps::AppId InstallStandaloneWebApp(const GURL& start_url) {
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     web_app_info->scope = start_url.GetWithoutFilename();
     web_app_info->display_mode = ::blink::mojom::DisplayMode::kStandalone;
     web_app_info->user_display_mode =
@@ -169,7 +165,7 @@ class AppUsageTelemetrySamplerBrowserTest
   }
 
   // Helper that simulates app usage for the specified app and usage duration.
-  void SimulateAppUsage(const ::web_app::AppId& app_id,
+  void SimulateAppUsage(const ::webapps::AppId& app_id,
                         const base::TimeDelta& running_time) {
     // Launch web app and simulate web app usage before closing the browser
     // window to prevent further usage tracking.
@@ -216,7 +212,7 @@ class AppUsageTelemetrySamplerBrowserTest
     const auto entries =
         test_ukm_recorder_->GetEntriesByName(kAppUsageUKMEntryName);
     int usage_time = 0;
-    for (const auto* entry : entries) {
+    for (const ukm::mojom::UkmEntry* entry : entries) {
       const ::ukm::UkmSource* source =
           test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (!source || source->url() != GURL(kWebAppUrl)) {
@@ -269,13 +265,12 @@ class AppUsageTelemetrySamplerBrowserTest
   ::policy::AffiliationMixin affiliation_mixin_{&mixin_host_, &test_helper_};
   ::ash::CryptohomeMixin crypto_home_mixin_{&mixin_host_};
 
-  base::CallbackListSubscription create_sync_service_subscription_;
   std::unique_ptr<::ukm::TestAutoSetUkmRecorder> test_ukm_recorder_;
 };
 
 IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
                        PRE_ReportUsageData) {
-  // Dummy case that sets up the affiliated user through SetUpOnMainThread
+  // Simple case that sets up the affiliated user through SetUpOnMainThread
   // PRE-condition.
 }
 
@@ -322,14 +317,13 @@ IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest, ReportUsageData) {
 
 IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
                        PRE_ReportUsageDataWhenSyncDisabled) {
-  // Dummy case that sets up the affiliated user through SetUpOnMainThread
+  // Simple case that sets up the affiliated user through SetUpOnMainThread
   // PRE-condition.
 }
 
 IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
                        ReportUsageDataWhenSyncDisabled) {
-  sync_service()->SetDisableReasons(
-      {::syncer::SyncService::DISABLE_REASON_ENTERPRISE_POLICY});
+  sync_service()->SetAllowedByEnterprisePolicy(false);
 
   // Install web app and simulate its usage.
   const auto& app_id = InstallStandaloneWebApp(GURL(kWebAppUrl));
@@ -366,7 +360,7 @@ IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
                        PRE_ReportUsageDataWhenPolicyDisabled) {
-  // Dummy case that sets up the affiliated user through SetUpOnMainThread
+  // Simple case that sets up the affiliated user through SetUpOnMainThread
   // PRE-condition.
 }
 
@@ -387,12 +381,12 @@ IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
   test::MockClock::Get().Advance(
       metrics::kDefaultAppUsageTelemetryCollectionRate);
   ::content::RunAllTasksUntilIdle();
-  ASSERT_FALSE(missive_observer.HasNewEnqueuedRecords());
+  ASSERT_FALSE(missive_observer.HasNewEnqueuedRecord());
 }
 
 IN_PROC_BROWSER_TEST_F(AppUsageTelemetrySamplerBrowserTest,
                        PRE_ReportUsageDataOnSessionTermination) {
-  // Dummy case that sets up the affiliated user through SetUpOnMainThread
+  // Simple case that sets up the affiliated user through SetUpOnMainThread
   // PRE-condition.
 }
 

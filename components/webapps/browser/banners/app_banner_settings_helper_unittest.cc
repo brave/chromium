@@ -5,12 +5,13 @@
 #include "components/webapps/browser/banners/app_banner_settings_helper.h"
 
 #include "base/auto_reset.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "components/permissions/test/test_permissions_client.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/site_engagement/content/site_engagement_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "components/webapps/browser/banners/app_banner_metrics.h"
+#include "components/webapps/browser/features.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/test_renderer_host.h"
 
@@ -25,52 +26,29 @@ const char kSameOriginTestURL2[] = "https://www.google.com/foo2.html";
 const char kTestPackageName[] = "test.package";
 
 base::Time GetReferenceTime() {
-  base::Time::Exploded exploded_reference_time;
-  exploded_reference_time.year = 2015;
-  exploded_reference_time.month = 1;
-  exploded_reference_time.day_of_month = 30;
-  exploded_reference_time.day_of_week = 5;
-  exploded_reference_time.hour = 11;
-  exploded_reference_time.minute = 0;
-  exploded_reference_time.second = 0;
-  exploded_reference_time.millisecond = 0;
-
+  static constexpr base::Time::Exploded kReferenceTime = {.year = 2015,
+                                                          .month = 1,
+                                                          .day_of_week = 5,
+                                                          .day_of_month = 30,
+                                                          .hour = 11};
   base::Time out_time;
-  EXPECT_TRUE(
-      base::Time::FromLocalExploded(exploded_reference_time, &out_time));
+  EXPECT_TRUE(base::Time::FromLocalExploded(kReferenceTime, &out_time));
   return out_time;
 }
 
-class AppBannerSettingsHelperTest
-    : public content::RenderViewHostTestHarness,
-      public site_engagement::SiteEngagementService::ServiceProvider {
+class AppBannerSettingsHelperTest : public content::RenderViewHostTestHarness {
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
     user_prefs::UserPrefs::Set(browser_context(), &prefs_);
-    site_engagement_service_ =
-        std::make_unique<site_engagement::SiteEngagementService>(
-            browser_context());
-    site_engagement::SiteEngagementService::RegisterProfilePrefs(
-        prefs_.registry());
-    site_engagement::SiteEngagementService::SetServiceProvider(this);
   }
 
   void TearDown() override {
-    site_engagement::SiteEngagementService::ClearServiceProvider(this);
     content::RenderViewHostTestHarness::TearDown();
-  }
-
-  // site_engagement::SiteEngagementService::ServiceProvider:
-  site_engagement::SiteEngagementService* GetSiteEngagementService(
-      content::BrowserContext* browser_context) override {
-    return site_engagement_service_.get();
   }
 
  private:
   TestingPrefServiceSimple prefs_;
   permissions::TestPermissionsClient permissions_client_;
-  std::unique_ptr<site_engagement::SiteEngagementService>
-      site_engagement_service_;
 };
 
 }  // namespace
@@ -84,7 +62,7 @@ TEST_F(AppBannerSettingsHelperTest, SingleEvents) {
   for (int event = AppBannerSettingsHelper::APP_BANNER_EVENT_COULD_SHOW;
        event < AppBannerSettingsHelper::APP_BANNER_EVENT_NUM_EVENTS; ++event) {
     // Check that by default, there is no event.
-    absl::optional<base::Time> event_time =
+    std::optional<base::Time> event_time =
         AppBannerSettingsHelper::GetSingleBannerEvent(
             web_contents(), url, kTestPackageName,
             AppBannerSettingsHelper::AppBannerEvent(event));
@@ -115,26 +93,6 @@ TEST_F(AppBannerSettingsHelperTest, SingleEvents) {
     else
       EXPECT_EQ(other_time, *event_time);
   }
-}
-
-TEST_F(AppBannerSettingsHelperTest, ShouldShowFromEngagement) {
-  GURL url(kTestURL);
-  site_engagement::SiteEngagementService* service =
-      site_engagement::SiteEngagementService::Get(browser_context());
-
-  // By default the banner should not be shown.
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  // Add 1 engagement, it still should not be shown.
-  service->ResetBaseScoreForURL(url, 1);
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  // Add 1 more engagement; now it should be shown.
-  service->ResetBaseScoreForURL(url, 2);
-  EXPECT_TRUE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ReportsWhetherBannerWasRecentlyBlocked) {
@@ -205,22 +163,6 @@ TEST_F(AppBannerSettingsHelperTest, OperatesOnOrigins) {
   GURL url(kTestURL);
   GURL otherURL(kSameOriginTestURL);
 
-  site_engagement::SiteEngagementService* service =
-      site_engagement::SiteEngagementService::Get(browser_context());
-
-  // By default the banner should not be shown.
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  // Add engagement such that the banner should show.
-  service->ResetBaseScoreForURL(url, 4);
-  EXPECT_TRUE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  // The banner should show as settings are per-origin.
-  EXPECT_TRUE(AppBannerSettingsHelper::HasSufficientEngagement(
-      service->GetScore(otherURL)));
-
   base::Time reference_time = GetReferenceTime();
   base::Time one_week_ago = reference_time - base::Days(5);
 
@@ -243,39 +185,6 @@ TEST_F(AppBannerSettingsHelperTest, OperatesOnOrigins) {
       web_contents(), otherURL, kTestPackageName, reference_time));
 }
 
-TEST_F(AppBannerSettingsHelperTest, ShouldShowWithHigherTotal) {
-  base::AutoReset<double> total_engagement =
-      AppBannerSettingsHelper::ScopeTotalEngagementForTesting(10);
-  GURL url(kTestURL);
-  site_engagement::SiteEngagementService* service =
-      site_engagement::SiteEngagementService::Get(browser_context());
-
-  // By default the banner should not be shown.
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  // Add engagement such that the banner should show.
-  service->ResetBaseScoreForURL(url, 2);
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  service->ResetBaseScoreForURL(url, 4);
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  service->ResetBaseScoreForURL(url, 6);
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  service->ResetBaseScoreForURL(url, 8);
-  EXPECT_FALSE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-
-  service->ResetBaseScoreForURL(url, 10);
-  EXPECT_TRUE(
-      AppBannerSettingsHelper::HasSufficientEngagement(service->GetScore(url)));
-}
-
 TEST_F(AppBannerSettingsHelperTest, NulloptSingleBannerEvent) {
   GURL url(kTestURL);
   std::string url_same_origin1(kSameOriginTestURL);
@@ -295,7 +204,7 @@ TEST_F(AppBannerSettingsHelperTest, NulloptSingleBannerEvent) {
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, url_same_origin2,
       AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW, one_day_ago);
-  absl::optional<base::Time> event_time =
+  std::optional<base::Time> event_time =
       AppBannerSettingsHelper::GetSingleBannerEvent(
           web_contents(), url, url_same_origin2,
           AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW);

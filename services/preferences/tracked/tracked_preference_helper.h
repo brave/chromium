@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <string>
+#include <string_view>
 
 #include "services/preferences/tracked/pref_hash_filter.h"
 #include "services/preferences/tracked/pref_hash_store_transaction.h"
@@ -19,9 +20,18 @@ class TrackedPreferenceHelper {
  public:
   enum ResetAction {
     DONT_RESET,
+    // Indicates that a pref should be reset to its default state
+    // using the 'legacy' or fallback resetting mechanism.
+    DO_RESET_LEGACY,
+    // Specifies that a pref, which is known to be encrypted, should be reset.
+    DO_RESET_ENCRYPTED,
     // WANTED_RESET is reported when DO_RESET would have been reported but the
     // current |enforcement_level| doesn't allow a reset for the detected state.
     WANTED_RESET,
+    // A reset was wanted through the encryption fallback verifiction.
+    WANTED_RESET_LEGACY,
+    // A reset was wanted through the encryption verification.
+    WANTED_RESET_ENCRYPTED,
     DO_RESET,
   };
 
@@ -51,7 +61,7 @@ class TrackedPreferenceHelper {
   // |validation_type_suffix| is appended to the reported histogram's name.
   void ReportValidationResult(
       prefs::mojom::TrackedPreferenceValidationDelegate::ValueState value_state,
-      base::StringPiece validation_type_suffix) const;
+      std::string_view validation_type_suffix) const;
 
   // Reports |reset_action| via UMA under |reporting_id_|.
   void ReportAction(ResetAction reset_action) const;

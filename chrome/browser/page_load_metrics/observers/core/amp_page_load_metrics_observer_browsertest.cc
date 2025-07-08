@@ -38,10 +38,10 @@ class AmpPageLoadMetricsBrowserTest : public InProcessBrowserTest,
   AmpPageLoadMetricsBrowserTest& operator=(
       const AmpPageLoadMetricsBrowserTest&) = delete;
 
-  ~AmpPageLoadMetricsBrowserTest() override {}
+  ~AmpPageLoadMetricsBrowserTest() override = default;
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     InProcessBrowserTest::SetUp();
   }
 
@@ -75,7 +75,7 @@ class AmpPageLoadMetricsBrowserTest : public InProcessBrowserTest,
   void ExpectMetricValueForUrl(const GURL& url,
                                const char* metric_name,
                                const int expected_value) {
-    for (auto* entry :
+    for (const ukm::mojom::UkmEntry* entry :
          test_ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url) {
@@ -89,7 +89,7 @@ class AmpPageLoadMetricsBrowserTest : public InProcessBrowserTest,
                                const char* metric_name,
                                const int expected_count) {
     int count = 0;
-    for (auto* entry :
+    for (const ukm::mojom::UkmEntry* entry :
          test_ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url &&
@@ -158,7 +158,13 @@ IN_PROC_BROWSER_TEST_P(AmpPageLoadMetricsBrowserTest, AmpMainFrame) {
   ExpectMetricCountForUrl(url, "SubFrameAmpPageLoad", 0);
 }
 
-IN_PROC_BROWSER_TEST_P(AmpPageLoadMetricsBrowserTest, AmpSubframe) {
+// TODO(crbug.com/428095827): Test is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_AmpSubframe DISABLED_AmpSubframe
+#else
+#define MAYBE_AmpSubframe AmpSubframe
+#endif
+IN_PROC_BROWSER_TEST_P(AmpPageLoadMetricsBrowserTest, MAYBE_AmpSubframe) {
   // Navigate to an empty page to inject SpeculationRules if prerendered case.
   GURL empty_url = https_test_server()->GetURL("/empty.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), empty_url));
@@ -195,7 +201,7 @@ class AmpPageLoadMetricsFencedFrameBrowserTest
 };
 
 // Currently, prerendering doesn't support FencedFrames.
-// TODO(crbug.com/1335481): Add a test with prerendering.
+// TODO(crbug.com/40228553): Add a test with prerendering.
 IN_PROC_BROWSER_TEST_F(AmpPageLoadMetricsFencedFrameBrowserTest,
                        AmpFencedFrame) {
   GURL url = https_test_server()->GetURL("/english_page.html");

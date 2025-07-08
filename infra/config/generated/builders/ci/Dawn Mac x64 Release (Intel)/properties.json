@@ -19,6 +19,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -47,6 +48,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -75,7 +77,8 @@
           "builder": "mac-dawn-rel",
           "group": "tryserver.chromium.dawn"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Dawn Mac x64 Release (Intel)/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -86,6 +89,10 @@
     ]
   },
   "builder_group": "chromium.dawn",
+  "dawn_ref": "refs/heads/main",
+  "gardener_rotations": [
+    "dawn"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "dawn"

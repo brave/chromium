@@ -7,11 +7,12 @@
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
 #include "components/page_load_metrics/browser/observers/page_load_metrics_observer_content_test_harness.h"
+#include "content/public/common/content_features.h"
+#include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/prerender_test_util.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
-#include "net/base/load_timing_info.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace page_load_metrics {
@@ -80,7 +81,7 @@ class TestPageLoadMetricsObserver final : public PageLoadMetricsObserver {
   void OnRenderFrameDeleted(content::RenderFrameHost* rfh) override {
     events_->render_frame_deleted_count++;
   }
-  void OnSubFrameDeleted(int frame_tree_node_id) override {
+  void OnSubFrameDeleted(content::FrameTreeNodeId frame_tree_node_id) override {
     events_->sub_frame_deleted_count++;
   }
   void DidActivatePrerenderedPage(
@@ -154,11 +155,6 @@ TEST_F(PageLoadTrackerTest, PrimaryPageType) {
   EXPECT_FALSE(GetEvents().was_prerender_started);
   EXPECT_TRUE(GetEvents().was_committed);
 
-  // Check metrics.
-  tester()->histogram_tester().ExpectUniqueSample(
-      internal::kPageLoadTrackerPageType,
-      internal::PageLoadTrackerPageType::kPrimaryPage, 1);
-
   // Navigate out.
   tester()->NavigateToUntrackedUrl();
 
@@ -167,6 +163,19 @@ TEST_F(PageLoadTrackerTest, PrimaryPageType) {
 
   // Check ukm::SourceId.
   EXPECT_NE(ukm::kInvalidSourceId, GetObservedUkmSourceIdFor(kTestUrl));
+}
+
+TEST_F(PageLoadTrackerTest, PrimaryPageTypeDataScheme) {
+  // ScopedPrerenderWebContentsDelegate web_contents_delegate(*web_contents());
+  // Target URL to monitor the tracker via the test observer.
+  SetTargetUrl("data:text/html,Hello world");
+
+  // Navigate in.
+  NavigateAndCommit(GURL("data:text/html,Hello world"));
+
+  // Check observer behaviors.
+  EXPECT_TRUE(GetEvents().was_started);
+  EXPECT_FALSE(GetEvents().was_committed);
 }
 
 TEST_F(PageLoadTrackerTest, EventForwarding) {
@@ -197,6 +206,12 @@ TEST_F(PageLoadTrackerTest, EventForwarding) {
         GURL(kURL), rfh_b);
     ASSERT_NE(nullptr, simulator);
     simulator->Commit();
+
+    // The current RenderFrameHost might have changed after the navigation,
+    // so update `rfh_b` accordingly.
+    rfh_b =
+        content::test::FencedFrameTestHelper::GetMostRecentlyAddedFencedFrame(
+            web_contents()->GetPrimaryMainFrame());
   }
 
   // Check observer behaviors.
@@ -209,12 +224,11 @@ TEST_F(PageLoadTrackerTest, EventForwarding) {
   EXPECT_EQ(1u, GetEvents().sub_frame_navigation_count);
   // MetricsWebContentsObserver::RenderFrameDeleted is called in the first
   // navigation for iframes but not for fenced frames.
-  // TODO(https://crbug.com/1301880): Make a reason clear.
+  // TODO(crbug.com/40216775): Make a reason clear.
   EXPECT_EQ(0u, GetEvents().render_frame_deleted_count);
   EXPECT_EQ(0u, GetEvents().sub_frame_deleted_count);
 
   // B: Navigate out.
-  content::RenderFrameHost* rfh_b_last = nullptr;
   {
     const char kURL[] = "https://b.test/fenced_frames";
     auto simulator = content::NavigationSimulator::CreateRendererInitiated(
@@ -222,24 +236,37 @@ TEST_F(PageLoadTrackerTest, EventForwarding) {
     ASSERT_NE(nullptr, simulator);
     simulator->Commit();
 
-    rfh_b_last = simulator->GetFinalRenderFrameHost();
+    rfh_b =
+        content::test::FencedFrameTestHelper::GetMostRecentlyAddedFencedFrame(
+            web_contents()->GetPrimaryMainFrame());
   }
 
   // Note that deletion of RenderFrameHost depends on some conditions, e.g. Site
   // Isolation and Back/Forward Cache. In unit tests, NavigationSimulator does
-  // delete them when a navigation commits. On Android, the two RenderFrameHost
-  // has same SiteInstance and the old one will be not deleted.
+  // delete them when a navigation commits. On Android, when RenderFrameHost is
+  // disabled, the same RenderFrameHost will be reused and not be deleted.
+
 #if BUILDFLAG(IS_ANDROID)
-  EXPECT_EQ(0u, GetEvents().render_frame_deleted_count);
+  // With default SiteInstanceGroup enabled, the navigations are all
+  // cross-SiteInstance, so there will be as many RenderFrameHost deletions as
+  // in the (non-Android) Site Isolation cases, which is possibly more than the
+  // RenderDocument cases. (Applies here and below.)
+  if (content::WillSameSiteNavigationChangeRenderFrameHosts(
+          /*is_main_frame=*/true) ||
+      base::FeatureList::IsEnabled(features::kDefaultSiteInstanceGroups)) {
+    EXPECT_EQ(1u, GetEvents().render_frame_deleted_count);
+  } else {
+    EXPECT_EQ(0u, GetEvents().render_frame_deleted_count);
+  }
 #else
   EXPECT_EQ(1u, GetEvents().render_frame_deleted_count);
 #endif
+
   EXPECT_EQ(0u, GetEvents().sub_frame_deleted_count);
 
   // C: Add and navigate in.
   content::RenderFrameHost* rfh_c =
-      content::RenderFrameHostTester::For(rfh_b_last)->AppendChild("c");
-  content::RenderFrameHost* rfh_c_last = nullptr;
+      content::RenderFrameHostTester::For(rfh_b)->AppendChild("c");
   {
     const char kURL[] = "https://a.test/iframe";
     auto simulator = content::NavigationSimulator::CreateRendererInitiated(
@@ -247,34 +274,59 @@ TEST_F(PageLoadTrackerTest, EventForwarding) {
     ASSERT_NE(nullptr, simulator);
     simulator->Commit();
 
-    rfh_c_last = simulator->GetFinalRenderFrameHost();
+    rfh_c = simulator->GetFinalRenderFrameHost();
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  EXPECT_EQ(0u, GetEvents().render_frame_deleted_count);
+  if (content::WillSameSiteNavigationChangeRenderFrameHosts(
+          /*is_main_frame=*/true)) {
+    EXPECT_EQ(1u, GetEvents().render_frame_deleted_count);
+  } else if (base::FeatureList::IsEnabled(
+                 features::kDefaultSiteInstanceGroups)) {
+    EXPECT_EQ(2u, GetEvents().render_frame_deleted_count);
+  } else {
+    EXPECT_EQ(0u, GetEvents().render_frame_deleted_count);
+  }
 #else
   EXPECT_EQ(2u, GetEvents().render_frame_deleted_count);
 #endif
+
   EXPECT_EQ(0u, GetEvents().sub_frame_deleted_count);
 
   // Remove C.
-  content::RenderFrameHostTester::For(rfh_c_last)->Detach();
+  content::RenderFrameHostTester::For(rfh_c)->Detach();
 
 #if BUILDFLAG(IS_ANDROID)
-  EXPECT_EQ(1u, GetEvents().render_frame_deleted_count);
+  if (content::WillSameSiteNavigationChangeRenderFrameHosts(
+          /*is_main_frame=*/true)) {
+    EXPECT_EQ(2u, GetEvents().render_frame_deleted_count);
+  } else if (base::FeatureList::IsEnabled(
+                 features::kDefaultSiteInstanceGroups)) {
+    EXPECT_EQ(3u, GetEvents().render_frame_deleted_count);
+  } else {
+    EXPECT_EQ(1u, GetEvents().render_frame_deleted_count);
+  }
 #else
   EXPECT_EQ(3u, GetEvents().render_frame_deleted_count);
 #endif
-  EXPECT_EQ(1u, GetEvents().sub_frame_deleted_count);
 
   // Remove B.
-  content::RenderFrameHostTester::For(rfh_b_last)->Detach();
+  content::RenderFrameHostTester::For(rfh_b)->Detach();
 
 #if BUILDFLAG(IS_ANDROID)
-  EXPECT_EQ(2u, GetEvents().render_frame_deleted_count);
+  if (content::WillSameSiteNavigationChangeRenderFrameHosts(
+          /*is_main_frame=*/true)) {
+    EXPECT_EQ(3u, GetEvents().render_frame_deleted_count);
+  } else if (base::FeatureList::IsEnabled(
+                 features::kDefaultSiteInstanceGroups)) {
+    EXPECT_EQ(4u, GetEvents().render_frame_deleted_count);
+  } else {
+    EXPECT_EQ(2u, GetEvents().render_frame_deleted_count);
+  }
 #else
   EXPECT_EQ(4u, GetEvents().render_frame_deleted_count);
 #endif
+
   // "2" may look good, but it is wrong, indeed. "1" is correct.
   //
   // When deleting a FF root node, methods of MetricsWebContentsObserver will be
@@ -286,7 +338,7 @@ TEST_F(PageLoadTrackerTest, EventForwarding) {
   // comment of the method. (This behavior can be observerved by putting printf
   // in PageLoadTracker::FrameTreeNodeDeleted and inspecting forwarding doesn't
   // occur.)
-  // TODO(https://crbug.com/1301880): Fix
+  // TODO(crbug.com/40216775): Fix
   // MetricsWebContentsObserver::GetPageLoadTracker
   EXPECT_EQ(2u, GetEvents().sub_frame_deleted_count);
 }
@@ -310,14 +362,6 @@ TEST_F(PageLoadTrackerTest, PrerenderPageType) {
   EXPECT_FALSE(GetEvents().was_fenced_frames_started);
   EXPECT_TRUE(GetEvents().was_prerender_started);
   EXPECT_TRUE(GetEvents().was_committed);
-
-  // Check metrics.
-  tester()->histogram_tester().ExpectBucketCount(
-      internal::kPageLoadTrackerPageType,
-      internal::PageLoadTrackerPageType::kPrimaryPage, 1);
-  tester()->histogram_tester().ExpectBucketCount(
-      internal::kPageLoadTrackerPageType,
-      internal::PageLoadTrackerPageType::kPrerenderPage, 1);
 
   // Check ukm::SourceId.
   EXPECT_NE(ukm::kInvalidSourceId, GetObservedUkmSourceIdFor(kTestUrl));
@@ -345,20 +389,11 @@ TEST_F(PageLoadTrackerTest, FencedFramesPageType) {
     simulator->Commit();
   }
 
-  // Check observer
-  // behaviors.
+  // Check observer behaviors.
   EXPECT_FALSE(GetEvents().was_started);
   EXPECT_TRUE(GetEvents().was_fenced_frames_started);
   EXPECT_FALSE(GetEvents().was_prerender_started);
   EXPECT_TRUE(GetEvents().was_committed);
-
-  // Check metrics.
-  tester()->histogram_tester().ExpectBucketCount(
-      internal::kPageLoadTrackerPageType,
-      internal::PageLoadTrackerPageType::kPrimaryPage, 1);
-  tester()->histogram_tester().ExpectBucketCount(
-      internal::kPageLoadTrackerPageType,
-      internal::PageLoadTrackerPageType::kFencedFramesPage, 1);
 
   // Check ukm::SourceId.
   EXPECT_NE(ukm::kInvalidSourceId, GetObservedUkmSourceIdFor(kTestUrl));
@@ -368,13 +403,25 @@ TEST_F(PageLoadTrackerTest, FencedFramesPageType) {
   // Navigate out.
   {
     auto simulator = content::NavigationSimulator::CreateRendererInitiated(
-        GURL(kTestUrl), fenced_frame_root);
+        GURL(kTestUrl),
+        content::test::FencedFrameTestHelper::GetMostRecentlyAddedFencedFrame(
+            web_contents()->GetPrimaryMainFrame()));
     ASSERT_NE(nullptr, simulator);
     simulator->Commit();
   }
 
   // Check observer behaviors.
-  EXPECT_EQ(1u, GetEvents().ready_to_commit_next_navigation_count);
+  if (content::WillSameSiteNavigationChangeRenderFrameHosts(
+          /*is_main_frame=*/true)) {
+    // The PageLoadTracker is per-RenderFrameHost, and is created after the
+    // navigation finishes committing the RenderFrameHost. Since this
+    // navigation commits in a new RenderFrameHost, the "ReadyToCommit" count
+    // (which is recorded before the navigation commits) was not recorded in
+    // its PageLoadTracker.
+    EXPECT_EQ(0u, GetEvents().ready_to_commit_next_navigation_count);
+  } else {
+    EXPECT_EQ(1u, GetEvents().ready_to_commit_next_navigation_count);
+  }
 }
 
 TEST_F(PageLoadTrackerTest, StopObservingOnPrerender) {
@@ -453,233 +500,6 @@ TEST_F(PageLoadTrackerTest, ResumeOnPrerenderActivation) {
 
   EXPECT_TRUE(GetEvents().was_prerendered_page_activated);
 }
-
-TEST_F(PageLoadTrackerTest, LargestImageIncorrectLoadTimings) {
-  // Construct page load timing to be used in SimulateTimingUpdate.
-  page_load_metrics::mojom::PageLoadTiming timing;
-  page_load_metrics::InitPageLoadTimingForTest(&timing);
-  timing.navigation_start = base::Time::Now();
-
-  timing.paint_timing->largest_contentful_paint->largest_image_load_start =
-      base::Milliseconds(56);
-  timing.paint_timing->largest_contentful_paint->largest_image_load_end =
-      base::Milliseconds(45);
-  timing.paint_timing->largest_contentful_paint->largest_image_paint =
-      base::Milliseconds(34);
-
-  SetTargetUrl(kTestUrl);
-  auto navigation_simulator =
-      content::NavigationSimulator::CreateBrowserInitiated(GURL(kTestUrl),
-                                                           web_contents());
-  ASSERT_NE(nullptr, navigation_simulator);
-
-  navigation_simulator->Commit();
-
-  base::TimeTicks reference_time =
-      tester()->GetDelegateForCommittedLoad().GetNavigationStart();
-
-  // Construct ExtraRequestCompleteInfo object to be used in
-  // SimulateLoadedResource.
-  net::LoadTimingInfo load_timing_info;
-  load_timing_info.receive_headers_start =
-      reference_time + base::Milliseconds(65);
-
-  ExtraRequestCompleteInfo request_info(
-      /*final_url=*/url::SchemeHostPort(GURL(kTestUrl)),
-      /*remote_endpoint=*/net::IPEndPoint(),
-      /*frame_tree_node_id=*/-1, /*was_cached=*/false, /*raw_body_bytes=*/0,
-      /*original_network_content_length=*/0,
-      /*request_destination=*/network::mojom::RequestDestination::kDocument,
-      /*net_error=*/0,
-      /*load_timing_info=*/
-      std::make_unique<net::LoadTimingInfo>(load_timing_info));
-
-  // Set main frame document receive_headers_start. This field should be set
-  // only once.
-  const auto request_id = navigation_simulator->GetGlobalRequestID();
-  tester()->SimulateLoadedResource(request_info, request_id);
-
-  // Simulate the invocation of PageLoadTracker::OnLoadedResource() again with
-  // a ttfb earlier than the image load start and a request destination that is
-  // not of type Document. This should not overwrite the
-  // receive_headers_start that is already set.
-  load_timing_info.receive_headers_start =
-      reference_time + base::Milliseconds(29);
-
-  ExtraRequestCompleteInfo request_info1(
-      /*final_url=*/url::SchemeHostPort(GURL(kTestUrl)),
-      /*remote_endpoint=*/net::IPEndPoint(),
-      /*frame_tree_node_id=*/-1, /*was_cached=*/false, /*raw_body_bytes=*/0,
-      /*original_network_content_length=*/0,
-      /*request_destination=*/network::mojom::RequestDestination::kFrame,
-      /*net_error=*/0,
-      /*load_timing_info=*/
-      std::make_unique<net::LoadTimingInfo>(load_timing_info));
-
-  tester()->SimulateLoadedResource(request_info1, request_id);
-
-  // Set largest contentful paint timings.
-  tester()->SimulateTimingUpdate(timing);
-
-  EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
-                  "PageLoad.PaintTiming.NavigationToLargestContentfulPaint."
-                  "ImageLoadStartLessThanDocumentTTFB"),
-              testing::ElementsAre(base::Bucket(true, 1)));
-
-  EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
-                  "PageLoad.PaintTiming.NavigationToLargestContentfulPaint."
-                  "ImageLoadEndLessThanLoadStart"),
-              testing::ElementsAre(base::Bucket(true, 1)));
-
-  EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
-                  "PageLoad.PaintTiming.NavigationToLargestContentfulPaint."
-                  "ImageLCPLessThanLoadEnd"),
-              testing::ElementsAre(base::Bucket(true, 1)));
-  EXPECT_THAT(
-      tester()->histogram_tester().GetAllSamples(
-          "PageLoad.PaintTiming.NavigationToLargestContentfulPaint."
-          "ImageLoadStartLessThanDocumentTtfbCauses"),
-      testing::ElementsAre(base::Bucket(
-          internal::ImageLoadStartLessThanDocumentTtfbCause::kUnknown, 1)));
-}
-
-class IrregularLcpPageLoadTrackerTest
-    : public PageLoadTrackerTest,
-      public testing::WithParamInterface<
-          internal::ImageLoadStartLessThanDocumentTtfbCause> {
- public:
-  void SetUp() override {
-    PageLoadMetricsObserverContentTestHarness::SetUp();
-    cause_ = GetParam();
-  }
-  // Construct page load timing to be used in SimulateTimingUpdate based on the
-  // params.
-  page_load_metrics::mojom::PageLoadTimingPtr CreatePageLoadTiming() {
-    page_load_metrics::mojom::PageLoadTiming timing;
-    page_load_metrics::InitPageLoadTimingForTest(&timing);
-    timing.navigation_start = base::Time::Now();
-
-    timing.paint_timing->largest_contentful_paint->largest_image_load_start =
-        base::Milliseconds(56);
-    timing.paint_timing->largest_contentful_paint->largest_image_load_end =
-        base::Milliseconds(45);
-    timing.paint_timing->largest_contentful_paint->largest_image_paint =
-        base::Milliseconds(34);
-
-    switch (cause_) {
-      case internal::ImageLoadStartLessThanDocumentTtfbCause::
-          kLoadedFromMemoryCache:
-        timing.paint_timing->largest_contentful_paint
-            ->is_loaded_from_memory_cache = true;
-        break;
-
-      case internal::ImageLoadStartLessThanDocumentTtfbCause::
-          kPreloadedWithEarlyHints:
-        timing.paint_timing->largest_contentful_paint
-            ->is_preloaded_with_early_hints = true;
-        break;
-
-      case internal::ImageLoadStartLessThanDocumentTtfbCause::
-          kLoadedFromMemoryCacheAndPreloadedWithEarlyHints:
-        timing.paint_timing->largest_contentful_paint
-            ->is_loaded_from_memory_cache = true;
-        timing.paint_timing->largest_contentful_paint
-            ->is_preloaded_with_early_hints = true;
-        break;
-
-      case internal::ImageLoadStartLessThanDocumentTtfbCause::kUnknown:
-        break;
-    }
-    return timing.Clone();
-  }
-
- protected:
-  internal::ImageLoadStartLessThanDocumentTtfbCause GetCause() {
-    return cause_;
-  }
-
- private:
-  internal::ImageLoadStartLessThanDocumentTtfbCause cause_;
-};
-
-TEST_P(IrregularLcpPageLoadTrackerTest, LargestImageIncorrectLoadTimingCauses) {
-  auto timing = CreatePageLoadTiming();
-
-  SetTargetUrl(kTestUrl);
-  auto navigation_simulator =
-      content::NavigationSimulator::CreateBrowserInitiated(GURL(kTestUrl),
-                                                           web_contents());
-  ASSERT_NE(nullptr, navigation_simulator);
-
-  navigation_simulator->Commit();
-
-  // Construct ExtraRequestCompleteInfo object to be used in
-  // SimulateLoadedResource.
-  base::TimeTicks reference_time =
-      tester()->GetDelegateForCommittedLoad().GetNavigationStart();
-
-  net::LoadTimingInfo load_timing_info;
-  load_timing_info.receive_headers_start =
-      reference_time + base::Milliseconds(65);
-
-  ExtraRequestCompleteInfo request_info(
-      /*final_url=*/url::SchemeHostPort(GURL(kTestUrl)),
-      /*remote_endpoint=*/net::IPEndPoint(),
-      /*frame_tree_node_id=*/-1,
-      /*was_cached=*/false,
-      /*raw_body_bytes=*/0,
-      /*original_network_content_length=*/0,
-      /*request_destination=*/network::mojom::RequestDestination::kDocument,
-      /*net_error=*/0,
-      /*load_timing_info=*/
-      std::make_unique<net::LoadTimingInfo>(load_timing_info));
-
-  // Set document receive_headers_start.
-  const auto request_id = navigation_simulator->GetGlobalRequestID();
-  tester()->SimulateLoadedResource(request_info, request_id);
-
-  // Set largest contentful paint timings.
-  tester()->SimulateTimingUpdate(*timing);
-
-  EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
-                  "PageLoad.PaintTiming.NavigationToLargestContentfulPaint."
-                  "ImageLoadStartLessThanDocumentTtfbCauses"),
-              testing::ElementsAre(base::Bucket(GetCause(), 1)));
-}
-
-std::string PrintImageLoadStartLessThanDocumentTtfbCause(
-    ::testing::TestParamInfo<internal::ImageLoadStartLessThanDocumentTtfbCause>
-        info) {
-  switch (info.param) {
-    case internal::ImageLoadStartLessThanDocumentTtfbCause::
-        kLoadedFromMemoryCache:
-      return "is_loaded_from_memory_cache";
-
-    case internal::ImageLoadStartLessThanDocumentTtfbCause::
-        kPreloadedWithEarlyHints:
-      return "is_preloaded_with_early_hints";
-
-    case internal::ImageLoadStartLessThanDocumentTtfbCause::
-        kLoadedFromMemoryCacheAndPreloadedWithEarlyHints:
-      return "is_loaded_from_memory_cache_and_is_preloaded_with_early_hints";
-
-    case internal::ImageLoadStartLessThanDocumentTtfbCause::kUnknown:
-      return "unknown";
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    ,
-    IrregularLcpPageLoadTrackerTest,
-    ::testing::Values(
-        internal::ImageLoadStartLessThanDocumentTtfbCause::
-            kLoadedFromMemoryCache,
-        internal::ImageLoadStartLessThanDocumentTtfbCause::
-            kLoadedFromMemoryCacheAndPreloadedWithEarlyHints,
-        internal::ImageLoadStartLessThanDocumentTtfbCause::
-            kPreloadedWithEarlyHints,
-        internal::ImageLoadStartLessThanDocumentTtfbCause::kUnknown),
-    PrintImageLoadStartLessThanDocumentTtfbCause);
 }  // namespace
 
 }  // namespace page_load_metrics

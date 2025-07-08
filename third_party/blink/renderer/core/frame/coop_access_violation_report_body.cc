@@ -8,11 +8,11 @@
 namespace blink {
 
 CoopAccessViolationReportBody::CoopAccessViolationReportBody(
-    std::unique_ptr<SourceLocation> source_location,
+    SourceLocation* source_location,
     network::mojom::blink::CoopAccessReportType type,
     const String& property,
     const String& reported_url)
-    : LocationReportBody(std::move(source_location)),
+    : LocationReportBody(source_location),
       type_(type),
       property_(property),
       reported_url_(reported_url) {}
@@ -30,7 +30,6 @@ String CoopAccessViolationReportBody::openeeURL() const {
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOpenee:
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOther:
       NOTREACHED();
-      [[fallthrough]];
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOpener:
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOther:
       return String();
@@ -46,7 +45,6 @@ String CoopAccessViolationReportBody::openerURL() const {
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOpenee:
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOther:
       NOTREACHED();
-      [[fallthrough]];
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOpenee:
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOther:
       return String();
@@ -62,7 +60,6 @@ String CoopAccessViolationReportBody::otherDocumentURL() const {
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOpenee:
     case network::mojom::CoopAccessReportType::kAccessToCoopPageFromOther:
       NOTREACHED();
-      [[fallthrough]];
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOpenee:
     case network::mojom::CoopAccessReportType::kAccessFromCoopPageToOpener:
       return String();

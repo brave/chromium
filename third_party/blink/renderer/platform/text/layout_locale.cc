@@ -4,33 +4,63 @@
 
 #include "third_party/blink/renderer/platform/text/layout_locale.h"
 
+#include <hb.h>
+#include <unicode/locid.h>
+#include <unicode/ulocdata.h>
+
+#include <array>
+
 #include "base/compiler_specific.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/text/hyphenation.h"
 #include "third_party/blink/renderer/platform/text/icu_error.h"
 #include "third_party/blink/renderer/platform/text/locale_to_script_mapping.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/case_folding_hash.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
 
-#include <hb.h>
-#include <unicode/locid.h>
-#include <unicode/ulocdata.h>
-
 namespace blink {
 
 namespace {
+
+using CaseFoldingHashSet = HashSet<String, CaseFoldingHashTraits<String>>;
+
+CaseFoldingHashSet CreateMacrolanguageChineseLanguageTags() {
+  // This list is from the IANA language-subtag-registry:
+  // https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry
+  // where "Type: language" and "Macrolanguage: zh".
+  return CaseFoldingHashSet{"cdo", "cjy", "cmn", "cnp", "cpx", "csp", "czh",
+                            "czo", "gan", "hak", "hnm", "hsn", "luh", "lzh",
+                            "mnp", "nan", "sjc", "wuu", "yue", "zh"};
+}
+
+CaseFoldingHashSet MacrolanguageChineseLanguageTags() {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(CaseFoldingHashSet, tags,
+                                  (CreateMacrolanguageChineseLanguageTags()));
+  return tags;
+}
+
+bool ComputeIsMacrolanguageChinese(const String& value) {
+  const wtf_size_t separater = value.find('-');
+  if (separater == kNotFound) {
+    return MacrolanguageChineseLanguageTags().Contains(value);
+  }
+  const StringView language{value, 0, separater};
+  return MacrolanguageChineseLanguageTags().Contains(language.ToString());
+}
 
 struct PerThreadData {
   HashMap<AtomicString,
           scoped_refptr<LayoutLocale>,
           CaseFoldingHashTraits<AtomicString>>
       locale_map;
-  const LayoutLocale* default_locale = nullptr;
-  const LayoutLocale* system_locale = nullptr;
-  const LayoutLocale* default_locale_for_han = nullptr;
+  raw_ptr<const LayoutLocale> default_locale = nullptr;
+  raw_ptr<const LayoutLocale> system_locale = nullptr;
+  raw_ptr<const LayoutLocale> default_locale_for_han = nullptr;
   bool default_locale_for_han_computed = false;
   String current_accept_languages;
 };
@@ -42,7 +72,7 @@ PerThreadData& GetPerThreadData() {
 
 struct DelimiterConfig {
   ULocaleDataDelimiterType type;
-  UChar* result;
+  raw_ptr<UChar> result;
 };
 // Use  ICU ulocdata to find quote delimiters for an ICU locale
 // https://unicode-org.github.io/icu-docs/apidoc/dev/icu4c/ulocdata_8h.html#a0bf1fdd1a86918871ae2c84b5ce8421f
@@ -56,15 +86,14 @@ scoped_refptr<QuotesData> GetQuotesDataForLanguage(const char* locale) {
     ulocdata_close(uld);
     return nullptr;
   }
-  UChar open1[ucharDelimMaxLength], close1[ucharDelimMaxLength],
-      open2[ucharDelimMaxLength], close2[ucharDelimMaxLength];
+  std::array<UChar, ucharDelimMaxLength> open1, close1, open2, close2;
 
   int32_t delimResultLength;
   struct DelimiterConfig delimiters[] = {
-      {ULOCDATA_QUOTATION_START, open1},
-      {ULOCDATA_QUOTATION_END, close1},
-      {ULOCDATA_ALT_QUOTATION_START, open2},
-      {ULOCDATA_ALT_QUOTATION_END, close2},
+      {ULOCDATA_QUOTATION_START, open1.data()},
+      {ULOCDATA_QUOTATION_END, close1.data()},
+      {ULOCDATA_ALT_QUOTATION_START, open2.data()},
+      {ULOCDATA_ALT_QUOTATION_END, close2.data()},
   };
   for (DelimiterConfig delim : delimiters) {
     delimResultLength = ulocdata_getDelimiter(uld, delim.type, delim.result,
@@ -93,7 +122,6 @@ inline const char* LbValueFromStrictness(LineBreakStrictness strictness) {
       return "loose";
   }
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace
@@ -176,7 +204,7 @@ const LayoutLocale* LayoutLocale::LocaleForHan(
     return content_locale;
 
   PerThreadData& data = GetPerThreadData();
-  if (UNLIKELY(!data.default_locale_for_han_computed)) {
+  if (!data.default_locale_for_han_computed) [[unlikely]] {
     // Use the first acceptLanguages that can disambiguate.
     Vector<String> languages;
     data.current_accept_languages.Split(',', languages);
@@ -209,6 +237,12 @@ const char* LayoutLocale::LocaleForHanForSkFontMgr() const {
   return locale;
 }
 
+bool LayoutLocale::IsMacrolanguageChineseSlow() const {
+  is_macrolanguage_chinese_computed_ = true;
+  is_macrolanguage_chinese_ = ComputeIsMacrolanguageChinese(string_);
+  return is_macrolanguage_chinese_;
+}
+
 void LayoutLocale::ComputeCaseMapLocale() const {
   DCHECK(!case_map_computed_);
   case_map_computed_ = true;
@@ -218,12 +252,7 @@ void LayoutLocale::ComputeCaseMapLocale() const {
 LayoutLocale::LayoutLocale(const AtomicString& locale)
     : string_(locale),
       harfbuzz_language_(ToHarfbuzLanguage(locale)),
-      script_(LocaleToScriptCodeForFontSelection(locale)),
-      script_for_han_(USCRIPT_COMMON),
-      has_script_for_han_(false),
-      hyphenation_computed_(false),
-      quotes_data_computed_(false),
-      case_map_computed_(false) {}
+      script_(LocaleToScriptCodeForFontSelection(locale)) {}
 
 // static
 const LayoutLocale* LayoutLocale::Get(const AtomicString& locale) {
@@ -239,7 +268,7 @@ const LayoutLocale* LayoutLocale::Get(const AtomicString& locale) {
 // static
 const LayoutLocale& LayoutLocale::GetDefault() {
   PerThreadData& data = GetPerThreadData();
-  if (UNLIKELY(!data.default_locale)) {
+  if (!data.default_locale) [[unlikely]] {
     AtomicString language = DefaultLanguage();
     data.default_locale =
         LayoutLocale::Get(!language.empty() ? language : AtomicString("en"));
@@ -250,7 +279,7 @@ const LayoutLocale& LayoutLocale::GetDefault() {
 // static
 const LayoutLocale& LayoutLocale::GetSystem() {
   PerThreadData& data = GetPerThreadData();
-  if (UNLIKELY(!data.system_locale)) {
+  if (!data.system_locale) [[unlikely]] {
     // Platforms such as Windows can give more information than the default
     // locale, such as "en-JP" for English speakers in Japan.
     String name = icu::Locale::getDefault().getName();
@@ -361,13 +390,14 @@ AtomicString LayoutLocale::LocaleWithBreakKeyword(
         : length_(base::saturated_cast<wtf_size_t>(utf8_locale.length())),
           buffer_(length_ + kMaxKeywordsLen + 1, 0) {
       // The `buffer_` is initialized to 0 above.
-      memcpy(buffer_.data(), utf8_locale.c_str(), length_);
+      base::span(buffer_).copy_prefix_from(
+          base::span(utf8_locale).first(length_));
     }
     explicit ULocaleKeywordBuilder(const String& locale)
         : ULocaleKeywordBuilder(locale.Utf8()) {}
 
     AtomicString ToAtomicString() const {
-      return AtomicString::FromUTF8(buffer_.data(), length_);
+      return AtomicString::FromUTF8(base::as_byte_span(buffer_).first(length_));
     }
 
     bool SetStrictness(LineBreakStrictness strictness) {
@@ -400,7 +430,6 @@ AtomicString LayoutLocale::LocaleWithBreakKeyword(
     return builder.ToAtomicString();
   }
   NOTREACHED();
-  return string_;
 }
 
 // static

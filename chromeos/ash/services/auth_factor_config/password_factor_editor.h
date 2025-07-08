@@ -20,29 +20,83 @@ class AuthFactorConfig;
 
 class PasswordFactorEditor : public mojom::PasswordFactorEditor {
  public:
-  PasswordFactorEditor(AuthFactorConfig* auth_factor_config,
-                       QuickUnlockStorageDelegate* storage);
+  explicit PasswordFactorEditor(AuthFactorConfig* auth_factor_config);
   ~PasswordFactorEditor() override;
 
   PasswordFactorEditor(const mojom::PasswordFactorEditor&) = delete;
   PasswordFactorEditor& operator=(const PasswordFactorEditor&) = delete;
+
+  void UpdateOrSetLocalPassword(
+      const std::string& auth_token,
+      const std::string& new_password,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback) override;
+
+  void UpdateOrSetOnlinePassword(
+      const std::string& auth_token,
+      const std::string& new_password,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback) override;
 
   void SetLocalPassword(
       const std::string& auth_token,
       const std::string& new_password,
       base::OnceCallback<void(mojom::ConfigureResult)> callback) override;
 
+  void SetOnlinePassword(
+      const std::string& auth_token,
+      const std::string& new_password,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback) override;
+
+  void CheckLocalPasswordComplexity(
+      const std::string& password,
+      base::OnceCallback<void(mojom::PasswordComplexity)> callback) override;
+
+  void RemovePassword(
+      const std::string& auth_token,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback) override;
+
   void BindReceiver(
       mojo::PendingReceiver<mojom::PasswordFactorEditor> receiver);
 
  private:
+  void UpdatePasswordWithContext(
+      const std::string& auth_token,
+      const std::string& new_password,
+      const cryptohome::KeyLabel& label,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      std::unique_ptr<UserContext> user_context);
+
+  void SetPasswordWithContext(
+      const std::string& auth_token,
+      const std::string& new_password,
+      const cryptohome::KeyLabel& label,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      std::unique_ptr<UserContext> user_context);
+
+  void UpdateOrSetPasswordWithContext(
+      const std::string& auth_token,
+      const std::string& new_password,
+      const cryptohome::KeyLabel& label,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      std::unique_ptr<UserContext> user_context);
+
   void OnPasswordConfigured(
       base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      const std::string& auth_token,
       std::unique_ptr<UserContext> context,
-      absl::optional<AuthenticationError> error);
+      std::optional<AuthenticationError> error);
 
-  base::raw_ptr<AuthFactorConfig> auth_factor_config_;
-  base::raw_ptr<QuickUnlockStorageDelegate> quick_unlock_storage_;
+  void RemovePasswordWithContext(
+      const std::string& auth_token,
+      base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      std::unique_ptr<UserContext> user_context);
+
+  void OnPasswordRemoved(
+      base::OnceCallback<void(mojom::ConfigureResult)> callback,
+      const std::string& auth_token,
+      std::unique_ptr<UserContext> context,
+      std::optional<AuthenticationError> error);
+
+  raw_ptr<AuthFactorConfig> auth_factor_config_;
   mojo::ReceiverSet<mojom::PasswordFactorEditor> receivers_;
   AuthFactorEditor auth_factor_editor_;
   base::WeakPtrFactory<PasswordFactorEditor> weak_factory_{this};

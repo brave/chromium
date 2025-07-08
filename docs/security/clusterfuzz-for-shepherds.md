@@ -9,16 +9,20 @@ This page has instructions for [Security Shepherds](shepherd.md) in how best to 
 
 [https://clusterfuzz.com/upload-testcase](https://clusterfuzz.com/upload-testcase)
 allows you to upload files to reproduce crashes on various platforms and will
-identify revision ranges when the regression was introduced. If a test case
-requires multiple files, they can be uploaded together in a zip or tar
-archive: the main file needs to contain the words `run`, `fuzz-` `index.` or
-`crash.`.
+identify revision ranges when the regression was introduced.
 
-Please *do* specify the crbug number when uploading the test case. This will allow
+Prefer using the "Quick upload" flow for simple cases. If you choose to use
+"Upload" instead, you will have to pick which [job](#useful-jobs) to run.
+
+Note that ClusterFuzz only supports running untrusted inputs on Linux. The UI
+will warn you of that.
+
+If a test case requires multiple files, they can be uploaded together in a zip
+or tar archive: the main file needs to contain the words `run`, `fuzz-` `index.`
+or `crash.`.
+
+Please *do* specify the crbug number when uploading the test case. This allows
 ClusterFuzz to keep the crbug updated with progress.
-
-Please *don't* upload test cases unless they're obviously harmless. Currently
-ClusterFuzz does not support untrusted workloads.
 
 ## Useful jobs
 
@@ -28,8 +32,9 @@ test:
 * repro.html [linux_asan_chrome_mp](https://clusterfuzz.com/upload-testcase?upload=true&job=linux_asan_chrome_mp)
   or [windows_asan_chrome](https://clusterfuzz.com/upload-testcase?upload=true&job=windows_asan_chrome)
 * repro.js [linux_asan_d8](https://clusterfuzz.com/upload-testcase?upload=true&job=linux_asan_d8)
-* repro.pdf [libfuzzer_pdfium_asan / pdfium_fuzzer](https://clusterfuzz.com/upload-testcase?upload=true&job=libfuzzer_pdfium_asan&target=pdfium_fuzzer)
-  or [libfuzzer_pdfium_asan / pdfium_xfa_fuzzer](https://clusterfuzz.com/upload-testcase?upload=true&job=libfuzzer_pdfium_asan&target=pdfium_xfa_fuzzer)
+* repro.pdf [libfuzzer_chrome_asan / pdfium_xfa_fuzzer](https://clusterfuzz.com/upload-testcase?upload=true&job=libfuzzer_chrome_asan&target=pdfium_xfa_fuzzer)
+* repro.js for V8 sandbox bypass / violation: linux_asan_d8_sandbox_testing /
+  linux_asan_chrome_v8_sandbox_testing
 
 ## MojoJS
 
@@ -74,3 +79,14 @@ gestures if the UI actions can be achieved purely using keystrokes. The relevant
 ClusterFuzz [code is in
 gesture_handler.py](https://github.com/google/clusterfuzz/blob/master/src/clusterfuzz/_internal/fuzzing/gesture_handler.py#L22)
 to figure out the languages for other platforms.
+
+## HTTP(S) headers
+
+If you need to reproduce a test case that involves specific HTTP headers, do this:
+
+1. Make a copy of [page_load_in_process_fuzzer_seed_corpus/network.textproto](https://source.chromium.org/chromium/chromium/src/+/main:chrome/test/fuzzing/page_load_in_process_fuzzer_seed_corpus/network.textproto)
+2. Edit as necessary to give the headers you need
+3. Go to the ClusterFuzz [upload page](https://clusterfuzz.com/upload-testcase)
+4. Select `libfuzzer_chrome_asan` for the job
+5. Select `page_load_in_process_fuzzer` for the fuzzer
+6. Upload `network.textproto` as the test case.

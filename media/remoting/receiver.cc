@@ -8,6 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -90,7 +91,7 @@ void Receiver::SetCdm(CdmContext* cdm_context, CdmAttachedCB cdm_attached_cb) {
 }
 
 // No-op. Controlled by sender via RPC calls instead.
-void Receiver::SetLatencyHint(absl::optional<base::TimeDelta> latency_hint) {}
+void Receiver::SetLatencyHint(std::optional<base::TimeDelta> latency_hint) {}
 
 // No-op. Controlled by sender via RPC calls instead.
 void Receiver::Flush(base::OnceClosure flush_cb) {}
@@ -303,7 +304,7 @@ void Receiver::OnVideoOpacityChange(bool opaque) {
   SendRpcMessageOnMainThread(std::move(rpc));
 }
 
-void Receiver::OnVideoFrameRateChange(absl::optional<int>) {}
+void Receiver::OnVideoFrameRateChange(std::optional<int>) {}
 
 }  // namespace remoting
 }  // namespace media

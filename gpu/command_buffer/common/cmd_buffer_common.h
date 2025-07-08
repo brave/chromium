@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This file contains the common parts of command buffer formats.
 
 #ifndef GPU_COMMAND_BUFFER_COMMON_CMD_BUFFER_COMMON_H_
@@ -11,7 +16,7 @@
 #include <stdint.h>
 
 #include "base/check_op.h"
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/common/gpu_command_buffer_common_export.h"
 
 namespace gpu {
 
@@ -43,7 +48,8 @@ struct CommandHeader {
   uint32_t size:21;
   uint32_t command:11;
 
-  GPU_EXPORT static const int32_t kMaxSize = (1 << 21) - 1;
+  GPU_COMMAND_BUFFER_COMMON_EXPORT static const int32_t kMaxSize =
+      (1 << 21) - 1;
 
   void Init(uint32_t _command, int32_t _size) {
     DCHECK_LE(_size, kMaxSize);
@@ -192,7 +198,7 @@ enum CommandId {
 
 static_assert(kNumCommands - 1 <= kLastCommonId, "too many commands");
 
-const char* GetCommandName(CommandId id);
+GPU_COMMAND_BUFFER_COMMON_EXPORT const char* GetCommandName(CommandId id);
 
 // A Noop command.
 struct Noop {

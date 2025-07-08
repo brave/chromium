@@ -18,24 +18,25 @@
 #include "base/one_shot_event.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/syslog_logging.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_tracker.h"
-#include "chrome/browser/extensions/pending_extension_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_file_task_runner.h"
+#include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_features.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/file_util.h"
 
 namespace extensions {
@@ -49,7 +50,7 @@ constexpr base::TimeDelta kGarbageCollectRetryDelay = base::Seconds(30);
 // garbage collected.
 constexpr base::TimeDelta kGarbageCollectStartupDelay = base::Seconds(30);
 
-typedef std::multimap<std::string, base::FilePath> ExtensionPathsMultimap;
+using ExtensionPathsMultimap = std::multimap<ExtensionId, base::FilePath>;
 
 void CheckExtensionDirectory(const base::FilePath& path,
                              const ExtensionPathsMultimap& extension_paths) {
@@ -62,7 +63,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
   }
 
   // Parse directory name as a potential extension ID.
-  std::string extension_id;
+  ExtensionId extension_id;
   if (base::IsStringASCII(basename.value())) {
     extension_id = base::UTF16ToASCII(basename.LossyDisplayName());
     if (!crx_file::id_util::IdIsValid(extension_id))
@@ -143,7 +144,7 @@ ExtensionGarbageCollector::ExtensionGarbageCollector(
   InstallTracker::Get(context_)->AddObserver(this);
 }
 
-ExtensionGarbageCollector::~ExtensionGarbageCollector() {}
+ExtensionGarbageCollector::~ExtensionGarbageCollector() = default;
 
 // static
 ExtensionGarbageCollector* ExtensionGarbageCollector::Get(
@@ -178,6 +179,10 @@ void ExtensionGarbageCollector::GarbageCollectExtensionsOnFileThread(
     unpacked ? CheckUnpackedExtensionDirectory(extension_path, extension_paths)
              : CheckExtensionDirectory(extension_path, extension_paths);
   }
+  // TODO(crbug.com/379867155) Remove this after chrome app kiosk crash recovery
+  // is independent of extensions garbage collection.
+  SYSLOG(INFO)
+      << "Garbage collection for extensions on file thread is complete.";
 }
 
 void ExtensionGarbageCollector::GarbageCollectExtensions() {
@@ -201,7 +206,7 @@ void ExtensionGarbageCollector::GarbageCollectExtensions() {
     return;
   }
 
-  // TODO(crbug.com/1378775): Since the GC recursively deletes, insert a check
+  // TODO(crbug.com/40875193): Since the GC recursively deletes, insert a check
   // so that we can't attempt to delete outside the profile directory. The
   // problem is that in extension_garbage_collector_unittest.cc the directory
   // containing the extension installs is not a direct subdir of the profile
@@ -209,7 +214,7 @@ void ExtensionGarbageCollector::GarbageCollectExtensions() {
   // like that to ensure we're inside the profile directory.
   ExtensionPrefs::ExtensionsInfo extensions_info =
       extension_prefs->GetInstalledExtensionsInfo();
-  std::multimap<std::string, base::FilePath> extension_paths;
+  std::multimap<ExtensionId, base::FilePath> extension_paths;
   for (const auto& info : extensions_info) {
     extension_paths.insert(
         std::make_pair(info.extension_id, info.extension_path));
@@ -221,22 +226,17 @@ void ExtensionGarbageCollector::GarbageCollectExtensions() {
         std::make_pair(info.extension_id, info.extension_path));
   }
 
-  ExtensionService* service =
-      ExtensionSystem::Get(context_)->extension_service();
+  ExtensionRegistrar* registrar = ExtensionRegistrar::Get(context_);
   if (!GetExtensionFileTaskRunner()->PostTask(
           FROM_HERE, base::BindOnce(&GarbageCollectExtensionsOnFileThread,
-                                    service->install_directory(),
+                                    registrar->install_directory(),
                                     extension_paths, /*unpacked=*/false))) {
     NOTREACHED();
   }
 
-  if (!base::FeatureList::IsEnabled(
-          extensions_features::kExtensionsZipFileInstalledInProfileDir)) {
-    return;
-  }
   if (!GetExtensionFileTaskRunner()->PostTask(
           FROM_HERE, base::BindOnce(&GarbageCollectExtensionsOnFileThread,
-                                    service->unpacked_install_directory(),
+                                    registrar->unpacked_install_directory(),
                                     extension_paths, /*unpacked=*/true))) {
     NOTREACHED();
   }
@@ -244,21 +244,21 @@ void ExtensionGarbageCollector::GarbageCollectExtensions() {
 
 void ExtensionGarbageCollector::OnBeginCrxInstall(
     content::BrowserContext* context,
-    const CrxInstaller& installer,
-    const std::string& extension_id) {
+    const ExtensionId& extension_id) {
   crx_installs_in_progress_++;
 }
 
 void ExtensionGarbageCollector::OnFinishCrxInstall(
     content::BrowserContext* context,
-    const CrxInstaller& installer,
-    const std::string& extension_id,
+    const base::FilePath& source_file,
+    const ExtensionId& extension_id,
+    const Extension* extension,
     bool success) {
   crx_installs_in_progress_--;
   if (crx_installs_in_progress_ < 0) {
     // This can only happen if there is a mismatch in our begin/finish
     // accounting.
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED();
 
     // Don't let the count go negative to avoid garbage collecting when
     // an install is actually in progress.

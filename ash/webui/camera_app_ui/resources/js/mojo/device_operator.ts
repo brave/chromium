@@ -3,13 +3,14 @@
 // found in the LICENSE file.
 
 import {assert, assertExists, assertNotReached} from '../assert.js';
-import {AsyncJobQueue} from '../async_job_queue.js';
+import {AsyncJobWithResultQueue} from '../async_job_queue.js';
 import {reportError} from '../error.js';
 import {Point} from '../geometry.js';
 import {isLocalDev} from '../models/load_time_data.js';
 import * as state from '../state.js';
 import {
   CameraSuspendError,
+  CropRegionRect,
   ErrorLevel,
   ErrorType,
   Facing,
@@ -39,6 +40,7 @@ import {
   GetCameraAppDeviceStatus,
   MojoBlob,
   PointF,
+  PortraitModeSegResult,
   ResultMetadataObserverCallbackRouter,
   StillCaptureResultObserverCallbackRouter,
   StreamType,
@@ -102,7 +104,14 @@ function getMetadataData(
     return [];
   }
   for (let i = 0; i < metadata.entryCount; i++) {
-    const entry = metadata.entries[i];
+    // Disabling check because this code assumes that metadata.entries is
+    // either undefined or defined, but at runtime Mojo will always set this
+    // to null or defined.
+    // TODO(crbug.com/40267104): If this function only handles data
+    // from Mojo, the assertion above should be changed to null and the
+    // null error suppression can be removed.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const entry = metadata.entries![i];
     if (entry.tag === tag) {
       return parseMetadata(entry);
     }
@@ -121,7 +130,7 @@ let instance: DeviceOperator|null|undefined = undefined;
 /**
  * Job queue to sequentialize devices operations.
  */
-const operationQueue = new AsyncJobQueue();
+const operationQueue = new AsyncJobWithResultQueue();
 
 /**
  * Operates video capture device through CrOS Camera App Mojo interface.
@@ -230,7 +239,7 @@ export class DeviceOperator {
         assert(this.deviceProvider !== null);
         const {device, status} =
             await this.deviceProvider.getCameraAppDevice(deviceId);
-        if (status === GetCameraAppDeviceStatus.ERROR_INVALID_ID) {
+        if (status === GetCameraAppDeviceStatus.kErrorInvalidId) {
           throw new Error(`Invalid device id`);
         }
         if (device === null) {
@@ -615,16 +624,11 @@ export class DeviceOperator {
    *     operation is not supported.
    */
   async takePortraitModePhoto(deviceId: string): Promise<Array<Promise<Blob>>> {
-    // TODO(b/244503017): Add definitions for the portrait mode segmentation
-    // result in the mojom file.
-    const PORTRAIT_SUCCESS = 0;
-    const PORTRAIT_NO_FACES = 3;
-
     const normalCapture = new CancelableEvent<Blob>();
     const portraitCapture = new CancelableEvent<Blob>();
     const portraitEvents = new Map([
-      [Effect.NO_EFFECT, normalCapture],
-      [Effect.PORTRAIT_MODE, portraitCapture],
+      [Effect.kNoEffect, normalCapture],
+      [Effect.kPortraitMode, portraitCapture],
     ]);
     const callbacks = [normalCapture.wait(), portraitCapture.wait()];
 
@@ -637,11 +641,12 @@ export class DeviceOperator {
             event.signalError(new Error(`Capture failed.`));
             return;
           }
-          if (effect === Effect.PORTRAIT_MODE && status !== PORTRAIT_SUCCESS) {
+          if (effect === Effect.kPortraitMode &&
+              status !== PortraitModeSegResult.kSuccess) {
             // We only appends the blob result to the output when the status
-            // code is `PORTRAIT_SUCCESS`. For any other status code, the blob
+            // code is `kSuccess`. For any other status code, the blob
             // will be the original photo and will not be shown to the user.
-            if (status === PORTRAIT_NO_FACES) {
+            if (status === PortraitModeSegResult.kNoFaces) {
               event.signalError(new PortraitErrorNoFaceDetected());
               return;
             }
@@ -661,13 +666,14 @@ export class DeviceOperator {
         }
       }
     }
-    state.addOneTimeObserver(state.State.SUSPEND, suspendObserver);
+    state.addObserver(state.State.SUSPEND, suspendObserver);
 
     const device = await this.getDevice(deviceId);
     await device.takePortraitModePhoto(
         listenerCallbacksRouter.$.bindNewPipeAndPassRemote());
 
-    Promise.allSettled(callbacks).then(() => {
+    // This is for cleanup after all effects are settled.
+    void Promise.allSettled(callbacks).then(() => {
       state.removeObserver(state.State.SUSPEND, suspendObserver);
       closeEndpoint(listenerCallbacksRouter);
     });
@@ -713,34 +719,6 @@ export class DeviceOperator {
       closeEndpoint(device);
       this.removeDevice(deviceId);
     }
-  }
-
-  /**
-   * Enables/Disables virtual device on target camera device. The extra
-   * stream will be reported as virtual video device from
-   * navigator.mediaDevices.enumerateDevices().
-   *
-   * @param deviceId The id of target camera device.
-   * @param enabled True for enabling virtual device.
-   */
-  async setVirtualDeviceEnabled(deviceId: string, enabled: boolean):
-      Promise<void> {
-    assert(this.deviceProvider !== null);
-    // TODO(pihsun): Check if there's actually case that deviceId is empty
-    // string here.
-    if (deviceId !== '') {
-      await this.deviceProvider.setVirtualDeviceEnabled(deviceId, enabled);
-    }
-  }
-
-  /**
-   * Enables/Disables the multiple streams feature for video recording on the
-   * target camera device.
-   */
-  async setMultipleStreamsEnabled(deviceId: string, enabled: boolean):
-      Promise<void> {
-    const device = await this.getDevice(deviceId);
-    await device.setMultipleStreamsEnabled(enabled);
   }
 
   /**
@@ -814,6 +792,44 @@ export class DeviceOperator {
       AndroidInfoSupportedHardwareLevel.ANDROID_INFO_SUPPORTED_HARDWARE_LEVEL_3,
     ];
     return supportedLevel.includes(level);
+  }
+
+  /**
+   * Sets the crop region for the configured stream on camera with |deviceId|.
+   */
+  async setCropRegion(deviceId: string, cropRegion: CropRegionRect):
+      Promise<void> {
+    const device = await this.getDevice(deviceId);
+    await device.setCropRegion(cropRegion);
+  }
+
+  /**
+   * Resets the crop region for the camera with |deviceId| to let the camera
+   * stream back to full frame.
+   */
+  async resetCropRegion(deviceId: string): Promise<void> {
+    const device = await this.getDevice(deviceId);
+    await device.resetCropRegion();
+  }
+
+  /**
+   * Returns whether digital zoom is supported in the camera.
+   */
+  async isDigitalZoomSupported(deviceId: string): Promise<boolean> {
+    // Checks if the device can do zoom through the stream manipulator.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const digitalZoomTag = 0x80070000 as CameraMetadataTag;
+    const digitalZoomData =
+        await this.getStaticMetadata(deviceId, digitalZoomTag);
+
+    // Some devices can do zoom given the crop region in their HALs. This
+    // ability can be checked with AVAILABLE_MAX_DIGITAL_ZOOM value being
+    // greater than 1.
+    const maxZoomRatio = await this.getStaticMetadata(
+        deviceId, CameraMetadataTag.ANDROID_SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+    const hasInternalZoom = maxZoomRatio.length > 0 && maxZoomRatio[0] > 1;
+
+    return digitalZoomData.length > 0 || hasInternalZoom;
   }
 
   /**

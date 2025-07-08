@@ -4,30 +4,34 @@
 
 package org.chromium.content.browser;
 
-import androidx.annotation.Nullable;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 
 import org.chromium.base.UnguessableToken;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.AdditionalNavigationParams;
 
-/**
- * Interface which provides native access to an AdditionalNavigationParams instance.
- */
+/** Interface which provides native access to an AdditionalNavigationParams instance. */
 @JNINamespace("content")
+@NullMarked
 public class AdditionalNavigationParamsUtils {
     private AdditionalNavigationParamsUtils() {}
 
     @CalledByNative
-    private static AdditionalNavigationParams create(UnguessableToken initiatorFrameToken,
-            int initiatorProcessId, @Nullable UnguessableToken attributionSrcToken,
-            long attributionRuntimeFeatures) {
-        return new AdditionalNavigationParams(initiatorFrameToken, initiatorProcessId,
-                attributionSrcToken, attributionRuntimeFeatures);
+    private static AdditionalNavigationParams create(
+            @JniType("base::UnguessableToken") UnguessableToken initiatorFrameToken,
+            int initiatorProcessId,
+            @JniType("std::optional<base::UnguessableToken>") @Nullable
+                    UnguessableToken attributionSrcToken) {
+        return new AdditionalNavigationParams(
+                initiatorFrameToken, initiatorProcessId, attributionSrcToken);
     }
 
     @CalledByNative
-    private static UnguessableToken getInitiatorFrameToken(AdditionalNavigationParams params) {
+    private static @JniType("std::optional<base::UnguessableToken>") UnguessableToken
+            getInitiatorFrameToken(AdditionalNavigationParams params) {
         return params.getInitiatorFrameToken();
     }
 
@@ -37,12 +41,8 @@ public class AdditionalNavigationParamsUtils {
     }
 
     @CalledByNative
-    private static UnguessableToken getAttributionSrcToken(AdditionalNavigationParams params) {
+    private static @JniType("std::optional<base::UnguessableToken>") @Nullable UnguessableToken
+            getAttributionSrcToken(AdditionalNavigationParams params) {
         return params.getAttributionSrcToken();
-    }
-
-    @CalledByNative
-    private static long getAttributionRuntimeFeatures(AdditionalNavigationParams params) {
-        return params.getAttributionRuntimeFeatures();
     }
 }

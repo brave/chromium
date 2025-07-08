@@ -30,6 +30,7 @@ namespace crostini {
 // scripts in
 // https://plx.corp.google.com/home2/home/collections/c16e3c1474497b821
 // and CrostiniResultString in crostini_simple_types.cc.
+// LINT.IfChange
 enum class CrostiniResult {
   SUCCESS = 0,
   // DBUS_ERROR = 1,
@@ -111,10 +112,21 @@ enum class CrostiniResult {
   STOP_VM_NO_RESPONSE = 76,
   SIGNAL_NOT_CONNECTED = 77,
   INSTALL_TERMINA_CANCELLED = 78,
-  kMaxValue = INSTALL_TERMINA_CANCELLED,
+  START_TIMED_OUT = 79,
+  DISK_IMAGE_NO_RESPONSE = 80,
+  DISK_IMAGE_IN_PROGRESS = 81,
+  DISK_IMAGE_FAILED = 82,
+  DISK_IMAGE_FAILED_NO_SPACE = 83,
+  DISK_IMAGE_CANCELLED = 84,
+  START_BAGUETTE_VM_TIMED_OUT = 85,
+  UNINSTALL_BAGUETTE_FAILED = 86,
+  INSTALL_BAGUETTE_CANCELLED = 87,
+  DOWNLOAD_BAGUETTE_FAILED = 88,
+  kMaxValue = DOWNLOAD_BAGUETTE_FAILED,
   // When adding a new value, check you've followed the steps in the comment at
   // the top of this enum.
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/crostini/enums.xml,crostini_simple_types.cc)
 
 // Returns the string name of the CrostiniResult.
 const char* CrostiniResultString(const CrostiniResult res);
@@ -147,6 +159,11 @@ enum class UninstallPackageProgressStatus {
   UNINSTALLING,  // In progress
 };
 
+enum class DiskImageProgressStatus {
+  IN_PROGRESS,
+  FAILURE_SPACE,
+};
+
 enum class ImportContainerProgressStatus {
   UPLOAD,
   UNPACK,
@@ -165,6 +182,7 @@ enum class ContainerVersion {
   STRETCH,
   BUSTER,
   BULLSEYE,
+  BOOKWORM,
 };
 
 struct VmInfo {
@@ -283,7 +301,8 @@ enum class ContainerOsVersion {
   kDebianOther = 3,
   kOtherOs = 4,
   kDebianBullseye = 5,
-  kMaxValue = kDebianBullseye,
+  kDebianBookworm = 6,
+  kMaxValue = kDebianBookworm,
 };
 
 #endif  // CHROME_BROWSER_ASH_CROSTINI_CROSTINI_SIMPLE_TYPES_H_

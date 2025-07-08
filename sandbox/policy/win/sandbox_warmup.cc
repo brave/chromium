@@ -4,62 +4,61 @@
 
 #include "sandbox/policy/win/sandbox_warmup.h"
 
-#include "base/feature_list.h"
-#include "sandbox/policy/features.h"
-
 #include <windows.h>
 
-// Note: do not copy this to add new uses of RtlGenRandom.
-// Prefer: crypto::RandBytes, base::RandBytes or bcryptprimitives!ProcessPrng.
-// #define needed to link in RtlGenRandom(), a.k.a. SystemFunction036.  See the
-// "Community Additions" comment on MSDN here:
-// http://msdn.microsoft.com/en-us/library/windows/desktop/aa387694.aspx
-#define SystemFunction036 NTAPI SystemFunction036
-#include <NTSecAPI.h>
-#undef SystemFunction036
-
-// Prototype for ProcessPrng.
-// See: https://learn.microsoft.com/en-us/windows/win32/seccng/processprng
-extern "C" {
-BOOL WINAPI ProcessPrng(PBYTE pbData, SIZE_T cbData);
-}
+#include "base/check.h"
+#include "base/no_destructor.h"
+#include "sandbox/policy/win/hook_util/hook_util.h"
+#include "sandbox/win/src/win_utils.h"
 
 namespace sandbox::policy {
 
 namespace {
 
-// Import bcryptprimitives!ProcessPrng rather than cryptbase!RtlGenRandom to
-// avoid opening a handle to \\Device\KsecDD in the renderer.
-decltype(&ProcessPrng) GetProcessPrng() {
-  HMODULE hmod = LoadLibraryW(L"bcryptprimitives.dll");
-  CHECK(hmod);
-  decltype(&ProcessPrng) process_prng_fn =
-      reinterpret_cast<decltype(&ProcessPrng)>(
-          GetProcAddress(hmod, "ProcessPrng"));
-  CHECK(process_prng_fn);
-  return process_prng_fn;
+// Stores the default lcid.
+LCID g_user_default_lcid = 0;
+
+// Returns the lcid seen at startup.
+LCID HookedGetUserDefaultLCID() {
+  return g_user_default_lcid;
 }
 
 }  // namespace
 
 void WarmupRandomnessInfrastructure() {
-  BYTE data[1];
+  sandbox::WarmupRandomnessInfrastructure();
+}
 
-  if (base::FeatureList::IsEnabled(
-          sandbox::policy::features::kWinSboxWarmupProcessPrng)) {
-    // TODO(crbug.com/74242) Call a warmup function exposed by boringssl.
-    static decltype(&ProcessPrng) process_prng_fn = GetProcessPrng();
-    BOOL success = process_prng_fn(data, sizeof(data));
-    // ProcessPrng is documented to always return TRUE.
-    CHECK(success);
-  } else {
-    // This loads advapi!SystemFunction036 which is forwarded to
-    // cryptbase!SystemFunction036. This allows boringsll and Chrome to call
-    // RtlGenRandom from within the sandbox. This has the unfortunate side
-    // effect of opening a handle to \\Device\KsecDD which we will later close
-    // in processes that do not need this.
-    RtlGenRandom(data, sizeof(data));
+bool HookDwriteGetUserDefaultLCID() {
+  // Should not be called twice.
+  static bool first_call = true;
+  CHECK(first_call);
+  first_call = false;
+
+  // In Chrome dwrite.dll should be loaded as it is an import of chrome.dll.
+  HMODULE h_dwrite = ::GetModuleHandleW(L"dwrite.dll");
+  if (!h_dwrite) {
+    return false;
   }
+
+  // Store this for our hook to return if it is called.
+  g_user_default_lcid = GetUserDefaultLCID();
+
+  // We never call the original version of GetUserDefaultLCID and never unhook.
+  static base::NoDestructor<sandbox::policy::IATHook> dwrite_hook;
+
+  // dwrite.dll imports 1-2-1 in Windows 10 10240 & 1-2-0 in Windows 11 22631.
+  const char* apisets[] = {"api-ms-win-core-localization-l1-2-0.dll",
+                           "api-ms-win-core-localization-l1-2-1.dll",
+                           "api-ms-win-core-localization-l1-2-2.dll"};
+  for (const char* apiset : apisets) {
+    if (NO_ERROR ==
+        dwrite_hook->Hook(h_dwrite, apiset, "GetUserDefaultLCID",
+                          reinterpret_cast<void*>(HookedGetUserDefaultLCID))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace sandbox::policy

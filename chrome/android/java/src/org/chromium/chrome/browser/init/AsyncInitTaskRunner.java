@@ -8,16 +8,15 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.base.version_info.VersionInfo;
 import org.chromium.chrome.browser.ChromeActivitySessionTracker;
-import org.chromium.chrome.browser.flags.CachedFeatureFlags;
 import org.chromium.components.variations.firstrun.VariationsSeedFetcher;
-import org.chromium.components.version_info.VersionInfo;
 import org.chromium.content_public.browser.ChildProcessLauncherHelper;
 
 import java.util.concurrent.Executor;
@@ -42,11 +41,6 @@ public abstract class AsyncInitTaskRunner {
         return VersionInfo.isOfficialBuild();
     }
 
-    @VisibleForTesting
-    void prefetchLibrary() {
-        LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
-    }
-
     private class FetchSeedTask implements Runnable {
         private final String mRestrictMode;
         private final String mMilestone;
@@ -61,12 +55,14 @@ public abstract class AsyncInitTaskRunner {
         @Override
         public void run() {
             VariationsSeedFetcher.get().fetchSeed(mRestrictMode, mMilestone, mChannel);
-            PostTask.postTask(TaskTraits.UI_DEFAULT, new Runnable() {
-                @Override
-                public void run() {
-                    tasksPossiblyComplete(null);
-                }
-            });
+            PostTask.postTask(
+                    TaskTraits.UI_DEFAULT,
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            tasksPossiblyComplete(null);
+                        }
+                    });
         }
 
         private String getChannelString() {
@@ -74,6 +70,11 @@ public abstract class AsyncInitTaskRunner {
                 return "canary";
             }
             if (VersionInfo.isDevBuild()) {
+                return "dev";
+            }
+            // TODO(crbug.com/389565104): Remove this if block when ready to move desktop to stable
+            // builds.
+            if (VersionInfo.isStableBuild() && DeviceInfo.isDesktop()) {
                 return "dev";
             }
             if (VersionInfo.isBetaBuild()) {
@@ -103,13 +104,14 @@ public abstract class AsyncInitTaskRunner {
 
             ChromeActivitySessionTracker sessionTracker =
                     ChromeActivitySessionTracker.getInstance();
-            sessionTracker.getVariationsRestrictModeValue(new Callback<String>() {
-                @Override
-                public void onResult(String restrictMode) {
-                    mFetchSeedTask = new FetchSeedTask(restrictMode);
-                    PostTask.postTask(TaskTraits.USER_BLOCKING, mFetchSeedTask);
-                }
-            });
+            sessionTracker.getVariationsRestrictModeValue(
+                    new Callback<>() {
+                        @Override
+                        public void onResult(String restrictMode) {
+                            mFetchSeedTask = new FetchSeedTask(restrictMode);
+                            PostTask.postTask(TaskTraits.USER_BLOCKING, mFetchSeedTask);
+                        }
+                    });
         }
 
         // Remember to allocate child connection once library loading completes. We do it after
@@ -121,10 +123,15 @@ public abstract class AsyncInitTaskRunner {
         // because the latter would be throttled, and this task is on the critical path of the
         // browser initialization.
         ++mNumPendingSuccesses;
-        getTaskPerThreadExecutor().execute(() -> {
-            final ProcessInitException libraryLoadException = loadNativeLibrary();
-            ThreadUtils.postOnUiThread(() -> { tasksPossiblyComplete(libraryLoadException); });
-        });
+        getTaskPerThreadExecutor()
+                .execute(
+                        () -> {
+                            final ProcessInitException libraryLoadException = loadNativeLibrary();
+                            ThreadUtils.postOnUiThread(
+                                    () -> {
+                                        tasksPossiblyComplete(libraryLoadException);
+                                    });
+                        });
     }
 
     /**
@@ -136,17 +143,6 @@ public abstract class AsyncInitTaskRunner {
         try {
             LibraryLoader.getInstance().getMediator().ensureInitializedInMainProcess();
             LibraryLoader.getInstance().ensureInitialized();
-            // The prefetch is done after the library load for two reasons:
-            // - It is easier to know the library location after it has
-            // been loaded.
-            // - Testing has shown that this gives the best compromise,
-            // by avoiding performance regression on any tested
-            // device, and providing performance improvement on
-            // some. Doing it earlier delays UI inflation and more
-            // generally startup on some devices, most likely by
-            // competing for IO.
-            // For experimental results, see http://crbug.com/460438.
-            prefetchLibrary();
         } catch (ProcessInitException e) {
             return e;
         }
@@ -167,11 +163,9 @@ public abstract class AsyncInitTaskRunner {
             --mNumPendingSuccesses;
             if (mNumPendingSuccesses == 0) {
                 // All tasks succeeded: Finish tasks, call onSuccess(), and reach terminal state.
-                if (CachedFeatureFlags.isNetworkServiceWarmUpEnabled()) {
-                    ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext(), false);
-                }
                 if (mAllocateChildConnection) {
-                    ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext(), true);
+                    ChildProcessLauncherHelper.warmUpOnAnyThread(
+                            ContextUtils.getApplicationContext());
                 }
                 onSuccess();
                 mNumPendingSuccesses = -1;
@@ -189,9 +183,7 @@ public abstract class AsyncInitTaskRunner {
         return runnable -> new Thread(runnable).start();
     }
 
-    /**
-     * Handle successful completion of the Async initialization tasks.
-     */
+    /** Handle successful completion of the Async initialization tasks. */
     protected abstract void onSuccess();
 
     /**

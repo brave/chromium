@@ -25,13 +25,18 @@ void AddEventInfoFromEventMetricsList(
 
     auto* scroll_update_metrics = event_metrics->AsScrollUpdate();
     DCHECK(scroll_update_metrics);
+    if (scroll_update_metrics->scroll_type() !=
+        ScrollEventMetrics::ScrollType::kTouchscreen) {
+      continue;
+    }
+
     event_infos->emplace_back(
         scroll_update_metrics->delta(),
         scroll_update_metrics->predicted_delta(),
         scroll_update_metrics->last_timestamp(),
         type == EventMetrics::EventType::kFirstGestureScrollUpdate
-            ? AverageLagTracker::EventType::ScrollBegin
-            : AverageLagTracker::EventType::ScrollUpdate);
+            ? AverageLagTracker::EventType::kScrollbegin
+            : AverageLagTracker::EventType::kScrollupdate);
   }
 }
 
@@ -60,6 +65,8 @@ void AverageLagTrackingManager::CollectScrollEventsFromFrame(
   AddEventInfoFromEventMetricsList(events_metrics.main_event_metrics,
                                    &event_infos);
   AddEventInfoFromEventMetricsList(events_metrics.impl_event_metrics,
+                                   &event_infos);
+  AddEventInfoFromEventMetricsList(events_metrics.raster_event_metrics,
                                    &event_infos);
 
   if (event_infos.size() > 0)

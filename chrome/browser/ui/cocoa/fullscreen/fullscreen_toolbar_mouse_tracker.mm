@@ -10,10 +10,6 @@
 #include "chrome/browser/ui/cocoa/scoped_menu_bar_lock.h"
 #import "ui/base/cocoa/tracking_area.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // Additional height threshold added at the toolbar's bottom. This is to mimic
@@ -70,8 +66,9 @@ const CGFloat kTrackingAreaAdditionalThreshold = 50;
 
   if (_trackingArea) {
     // If |trackingArea_|'s rect matches |trackingAreaFrame_|, quit early.
-    if (NSEqualRects(_trackingAreaFrame, [_trackingArea rect]))
+    if (NSEqualRects(_trackingAreaFrame, [_trackingArea rect])) {
       return;
+    }
 
     [self removeTrackingArea];
   }
@@ -98,8 +95,9 @@ const CGFloat kTrackingAreaAdditionalThreshold = 50;
 }
 
 - (void)removeTrackingArea {
-  if (!_trackingArea)
+  if (!_trackingArea) {
     return;
+  }
 
   // TODO(https://crbug.com/1063417, https://crbug.com/1064911): This DCHECK
   // is hit when closing a fullscreen window using the traffic lights. This is

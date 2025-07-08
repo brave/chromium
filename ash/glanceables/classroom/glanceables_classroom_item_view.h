@@ -17,9 +17,9 @@ struct GlanceablesClassroomAssignment;
 // A view which shows information about a single assignment in the classroom
 // glanceable.
 class ASH_EXPORT GlanceablesClassroomItemView : public views::Button {
- public:
-  METADATA_HEADER(GlanceablesClassroomItemView);
+  METADATA_HEADER(GlanceablesClassroomItemView, views::Button)
 
+ public:
   GlanceablesClassroomItemView(const GlanceablesClassroomAssignment* assignment,
                                base::RepeatingClosure pressed_callback);
 
@@ -27,6 +27,13 @@ class ASH_EXPORT GlanceablesClassroomItemView : public views::Button {
   GlanceablesClassroomItemView& operator=(const GlanceablesClassroomItemView&) =
       delete;
   ~GlanceablesClassroomItemView() override;
+
+  // views::Button:
+  void Layout(PassKey) override;
+  void OnEnabledChanged() override;
+
+ private:
+  void UpdateAccessibleDefaultAction();
 };
 
 }  // namespace ash

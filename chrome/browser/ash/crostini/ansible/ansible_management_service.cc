@@ -10,9 +10,9 @@
 #include "base/check_op.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "chrome/browser/ash/crostini/ansible/ansible_management_service_factory.h"
 #include "chrome/browser/ash/crostini/crostini_pref_names.h"
 #include "chrome/browser/ash/crostini/crostini_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -42,12 +42,7 @@ AnsibleConfiguration::AnsibleConfiguration(
     base::OnceCallback<void(bool success)> callback)
     : AnsibleConfiguration("", path, std::move(callback)) {}
 
-AnsibleConfiguration::~AnsibleConfiguration() {}
-
-AnsibleManagementService* AnsibleManagementService::GetForProfile(
-    Profile* profile) {
-  return AnsibleManagementServiceFactory::GetForProfile(profile);
-}
+AnsibleConfiguration::~AnsibleConfiguration() = default;
 
 AnsibleManagementService::AnsibleManagementService(Profile* profile)
     : profile_(profile), weak_ptr_factory_(this) {}
@@ -242,7 +237,7 @@ void AnsibleManagementService::ApplyAnsiblePlaybook(
 
 void AnsibleManagementService::OnApplyAnsiblePlaybook(
     const guest_os::GuestId& container_id,
-    absl::optional<vm_tools::cicerone::ApplyAnsiblePlaybookResponse> response) {
+    std::optional<vm_tools::cicerone::ApplyAnsiblePlaybookResponse> response) {
   // Check if cancelled.
   if (IsCancelled(container_id)) {
     return;

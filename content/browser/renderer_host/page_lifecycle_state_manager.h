@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PAGE_LIFECYCLE_STATE_MANAGER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PAGE_LIFECYCLE_STATE_MANAGER_H_
 
+#include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -47,7 +48,11 @@ class CONTENT_EXPORT PageLifecycleStateManager {
   void SetIsInBackForwardCache(
       bool is_in_back_forward_cache,
       blink::mojom::PageRestoreParamsPtr page_restore_params);
-  bool IsInBackForwardCache() const { return is_in_back_forward_cache_; }
+  // Returns true if the page is entering or has fully entered
+  // back/forward-cache.
+  bool IsInBackForwardCache() const {
+    return back_forward_cache_entered_ != BackForwardCacheEntered::kNo;
+  }
 
   // Called when we're committing main-frame same-site navigations where we did
   // a proactive BrowsingInstance swap and we're reusing the old page's renderer
@@ -74,8 +79,9 @@ class CONTENT_EXPORT PageLifecycleStateManager {
 
   void SetIsLeavingBackForwardCache(base::OnceClosure done_cb);
 
+  // Returns true if the page has fully entered back/foward-cache
   bool DidReceiveBackForwardCacheAck() const {
-    return did_receive_back_forward_cache_ack_;
+    return back_forward_cache_entered_ == BackForwardCacheEntered::kEntered;
   }
 
   // Whether the renderer is expected to send channel associated IPCs related to
@@ -92,7 +98,16 @@ class CONTENT_EXPORT PageLifecycleStateManager {
       blink::mojom::PageRestoreParamsPtr page_restore_params,
       base::OnceClosure done_cb);
 
-  void OnPageLifecycleChangedAck(
+  // TODO(https://crbug.com/427316606): Remove this.
+  void DumpWithoutCrashForBug427316606();
+
+  // Called when a new acknowledged state is available. This new state can come
+  // from several paths.
+  void OnPageLifecycleStateChanged(
+      blink::mojom::PageLifecycleStatePtr acknowledged_state,
+      // TODO(https://crbug.com/427316606): Remove this.
+      bool set_page_lifecycle_state_response);
+  void OnSetPageLifecycleStateResponse(
       blink::mojom::PageLifecycleStatePtr acknowledged_state,
       base::OnceClosure done_cb);
   void OnBackForwardCacheTimeout();
@@ -100,13 +115,26 @@ class CONTENT_EXPORT PageLifecycleStateManager {
   // This represents the frozen state set by |SetIsFrozen|, which corresponds to
   // WebContents::SetPageFrozen.  Effective frozen state, i.e. per-page frozen
   // state is computed based on |is_in_back_forward_cache_| and
-  // |is_set_frozen_called_|.
-  bool is_set_frozen_called_ = false;
+  // |frozen_explicitly_|.
+  bool frozen_explicitly_ = false;
 
-  bool is_in_back_forward_cache_ = false;
+  enum class BackForwardCacheEntered {
+    kNo,
+    kEntering,
+    kEntered,
+  };
+  friend std::ostream& operator<<(std::ostream&,
+                                  const BackForwardCacheEntered&);
+
+  // TODO(https://crbug.com/427316606): Remove `context_for_bug_427316606` after
+  // debugging.
+  void SetBackForwardCacheEntered(BackForwardCacheEntered entered,
+                                  char context_for_bug_427316606);
+
+  BackForwardCacheEntered back_forward_cache_entered_ =
+      BackForwardCacheEntered::kNo;
+
   bool eviction_enabled_ = false;
-
-  bool did_receive_back_forward_cache_ack_ = false;
 
   // This represents the frame tree visibility (same as web contents visibility
   // state for primary frame tree, hidden for prerendering frame tree) which is
@@ -121,7 +149,7 @@ class CONTENT_EXPORT PageLifecycleStateManager {
   const raw_ptr<RenderViewHostImpl> render_view_host_impl_;
 
   // This is the per-page state computed based on web contents / tab lifecycle
-  // states, i.e. |is_set_frozen_called_|, |is_in_back_forward_cache_| and
+  // states, i.e. |frozen_explicitly_|, |is_in_back_forward_cache_| and
   // |frame_tree_visibility_|.
   blink::mojom::PageLifecycleStatePtr last_acknowledged_state_;
 
@@ -132,9 +160,16 @@ class CONTENT_EXPORT PageLifecycleStateManager {
 
   raw_ptr<TestDelegate> test_delegate_{nullptr};
 
+  // TODO(https://crbug.com/427316606): Remove this after debugging.
+  std::string back_forward_cache_state_tracker_;
+
   // NOTE: This must be the last member.
   base::WeakPtrFactory<PageLifecycleStateManager> weak_ptr_factory_{this};
 };
+
+std::ostream& operator<<(
+    std::ostream& o,
+    const PageLifecycleStateManager::BackForwardCacheEntered& s);
 
 }  // namespace content
 

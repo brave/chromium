@@ -4,7 +4,8 @@
 
 #include "net/http/http_vary_data.h"
 
-#include <stdlib.h>
+#include <array>
+#include <string_view>
 
 #include "base/pickle.h"
 #include "base/strings/string_util.h"
@@ -15,12 +16,15 @@
 
 namespace net {
 
+crypto::obsolete::Md5 MakeMd5HasherForHttpVaryData() {
+  return {};
+}
+
 HttpVaryData::HttpVaryData() = default;
 
 bool HttpVaryData::Init(const HttpRequestInfo& request_info,
                         const HttpResponseHeaders& response_headers) {
-  base::MD5Context ctx;
-  base::MD5Init(&ctx);
+  auto ctx = MakeMd5HasherForHttpVaryData();
 
   is_valid_ = false;
   bool processed_header = false;
@@ -34,30 +38,32 @@ bool HttpVaryData::Init(const HttpRequestInfo& request_info,
   // us handle this case. See section 4.1 of RFC 7234.
   //
   size_t iter = 0;
-  std::string name = "vary", request_header;
-  while (response_headers.EnumerateHeader(&iter, name, &request_header)) {
-    if (request_header == "*") {
+  constexpr std::string_view name = "vary";
+  std::optional<std::string_view> request_header;
+  while ((request_header = response_headers.EnumerateHeader(&iter, name))) {
+    if (*request_header == "*") {
       // What's in request_digest_ will never be looked at, but make it
       // deterministic so we don't serialize out uninitialized memory content.
-      memset(&request_digest_, 0, sizeof(request_digest_));
+      request_digest_.fill(0u);
       return is_valid_ = true;
     }
-    AddField(request_info, request_header, &ctx);
+    AddField(request_info, *request_header, ctx);
     processed_header = true;
   }
 
   if (!processed_header)
     return false;
 
-  base::MD5Final(&request_digest_, &ctx);
+  ctx.Finish(request_digest_);
   return is_valid_ = true;
 }
 
 bool HttpVaryData::InitFromPickle(base::PickleIterator* iter) {
   is_valid_ = false;
-  const char* data;
-  if (iter->ReadBytes(&data, sizeof(request_digest_))) {
-    memcpy(&request_digest_, data, sizeof(request_digest_));
+  std::optional<base::span<const uint8_t>> bytes =
+      iter->ReadBytes(sizeof(request_digest_));
+  if (bytes) {
+    base::span(request_digest_).copy_from(*bytes);
     return is_valid_ = true;
   }
   return false;
@@ -65,7 +71,7 @@ bool HttpVaryData::InitFromPickle(base::PickleIterator* iter) {
 
 void HttpVaryData::Persist(base::Pickle* pickle) const {
   DCHECK(is_valid());
-  pickle->WriteBytes(&request_digest_, sizeof(request_digest_));
+  pickle->WriteBytes(request_digest_);
 }
 
 bool HttpVaryData::MatchesRequest(
@@ -81,30 +87,16 @@ bool HttpVaryData::MatchesRequest(
     // by a build before crbug.com/469675 was fixed.
     return false;
   }
-  return memcmp(&new_vary_data.request_digest_, &request_digest_,
-                sizeof(request_digest_)) == 0;
-}
-
-// static
-std::string HttpVaryData::GetRequestValue(
-    const HttpRequestInfo& request_info,
-    const std::string& request_header) {
-  // Unfortunately, we do not have access to all of the request headers at this
-  // point.  Most notably, we do not have access to an Authorization header if
-  // one will be added to the request.
-
-  std::string result;
-  if (request_info.extra_headers.GetHeader(request_header, &result))
-    return result;
-
-  return std::string();
+  return new_vary_data.request_digest_ == request_digest_;
 }
 
 // static
 void HttpVaryData::AddField(const HttpRequestInfo& request_info,
-                            const std::string& request_header,
-                            base::MD5Context* ctx) {
-  std::string request_value = GetRequestValue(request_info, request_header);
+                            std::string_view request_header,
+                            crypto::obsolete::Md5& context) {
+  std::string request_value =
+      request_info.extra_headers.GetHeader(request_header)
+          .value_or(std::string());
 
   // Append a character that cannot appear in the request header line so that we
   // protect against case where the concatenation of two request headers could
@@ -112,7 +104,7 @@ void HttpVaryData::AddField(const HttpRequestInfo& request_info,
   // For example, "foo: 12\nbar: 3" looks like "foo: 1\nbar: 23" otherwise.
   request_value.append(1, '\n');
 
-  base::MD5Update(ctx, request_value);
+  context.Update(request_value);
 }
 
 }  // namespace net

@@ -7,10 +7,8 @@
 #include <map>
 #include <vector>
 
-#include "base/containers/cxx20_erase.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
-#include "third_party/skia/include/core/SkDrawLooper.h"
 #include "third_party/skia/include/core/SkRRect.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
@@ -144,7 +142,7 @@ const ShadowDetails& ShadowDetails::Get(int radius,
   }
 
   // Evict the details whose ninebox image does not have any shadow owners.
-  base::EraseIf(g_shadow_cache.Get(), [](auto& pair) {
+  std::erase_if(g_shadow_cache.Get(), [](auto& pair) {
     return pair.second.nine_patch_image.IsUniquelyOwned();
   });
 

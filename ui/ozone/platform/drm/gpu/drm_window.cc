@@ -65,7 +65,7 @@ void DrmWindow::SetBounds(const gfx::Rect& bounds) {
 }
 
 void DrmWindow::SetCursor(const std::vector<SkBitmap>& bitmaps,
-                          const absl::optional<gfx::Point>& location,
+                          const std::optional<gfx::Point>& location,
                           base::TimeDelta frame_delay) {
   cursor_bitmaps_ = bitmaps;
   if (location.has_value()) {
@@ -118,7 +118,7 @@ void DrmWindow::SchedulePageFlip(
 
   last_submitted_planes_ = DrmOverlayPlane::Clone(planes);
 
-  if (!controller_) {
+  if (!controller_ || !controller_->GetDrmDevice()->has_master()) {
     std::move(submission_callback)
         .Run(gfx::SwapResult::SWAP_ACK,
              /*release_fence=*/gfx::GpuFenceHandle());

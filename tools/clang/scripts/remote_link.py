@@ -3,7 +3,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# Linker wrapper that performs distributed ThinLTO on Goma or Reclient.
+# Linker wrapper that performs distributed ThinLTO on Reclient.
 #
 # Usage: Pass the original link command as parameters to this script.
 # E.g. original: lld-link -out:foo foo.obj
@@ -165,7 +165,7 @@ class RemoteLinkBase(object):
   Base class used by RemoteLinkUnix and RemoteLinkWindows.
   """
   # Defaults.
-  wrapper = 'gomacc'
+  wrapper = 'rewrapper'
   jobs = None
 
   # These constants should work across platforms.
@@ -223,6 +223,11 @@ class RemoteLinkBase(object):
         and not param.startswith('-fwhole-program')):
       return [param]
     if param.startswith('-g'):
+      return [param]
+    if param.startswith('-m'):
+      # Note: -mllvm is handled separately above.
+      return [param]
+    if param.startswith('--target'):
       return [param]
     return None
 

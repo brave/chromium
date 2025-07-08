@@ -20,7 +20,6 @@
 #include <fuchsia/sysmem/cpp/fidl.h>
 #include <fuchsia/tracing/provider/cpp/fidl.h>
 #include <fuchsia/ui/composition/cpp/fidl.h>
-#include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <fuchsia/web/cpp/fidl.h>
 #include <lib/vfs/cpp/pseudo_dir.h>
 #include <lib/vfs/cpp/remote_dir.h>
@@ -36,6 +35,7 @@
 #include "media/fuchsia/audio/fake_audio_device_enumerator_local_component.h"
 
 using ::component_testing::ChildRef;
+using ::component_testing::Dictionary;
 using ::component_testing::Directory;
 using ::component_testing::DirectoryContents;
 using ::component_testing::FrameworkRef;
@@ -71,10 +71,9 @@ class TestProxyLocalComponent : public component_testing::LocalComponentImpl {
             kDynamicComponentCapabilitiesName);
     fidl::InterfaceHandle<fuchsia::io::Directory> services;
     zx_status_t status =
-        capability_dir->Serve(fuchsia::io::OpenFlags::RIGHT_READABLE |
-                                  fuchsia::io::OpenFlags::RIGHT_WRITABLE |
-                                  fuchsia::io::OpenFlags::DIRECTORY,
-                              services.NewRequest().TakeChannel());
+        capability_dir->Serve(fuchsia_io::wire::kPermReadable,
+                              fidl::ServerEnd<fuchsia_io::Directory>(
+                                  services.NewRequest().TakeChannel()));
     ZX_CHECK(status == ZX_OK, status) << "Serve()";
 
     // Bind that Directory capability under the same path of this virtual
@@ -107,12 +106,11 @@ CastRunnerLauncher::CastRunnerLauncher(CastRunnerFeatures runner_features) {
   FakeFeedbackService::RouteToChild(realm_builder, kCastRunnerComponentName);
 
   AddSyslogRoutesFromParent(realm_builder, kCastRunnerComponentName);
-  AddVulkanRoutesFromParent(realm_builder, kCastRunnerComponentName);
 
-  // Run an isolated font service for cast_runner.
+  // Run an isolated font service and route it to cast_runner.
   AddFontService(realm_builder, kCastRunnerComponentName);
 
-  // Run the test-ui-stack and route the protocols needed by cast_runner to it.
+  // Run the test-ui-stack and route it to cast_runner.
   AddTestUiStack(realm_builder, kCastRunnerComponentName);
 
   realm_builder.AddRoute(Route{
@@ -128,15 +126,28 @@ CastRunnerLauncher::CastRunnerLauncher(CastRunnerFeatures runner_features) {
                         .as = "config-data-for-web-instance",
                         .subdir = "web_engine"},
               Directory{.name = "root-ssl-certificates"},
+              Directory{.name = "tzdata-icu"},
+
+              // fuchsia.web/Context required and recommended protocols.
               Protocol{fuchsia::buildinfo::Provider::Name_},
-              Protocol{fuchsia::kernel::VmexResource::Name_},
+              Protocol{"fuchsia.device.NameProvider"},
+              // "fuchsia.fonts.Provider" is provided above.
+              Protocol{"fuchsia.hwinfo.Product"},
               Protocol{fuchsia::intl::PropertyProvider::Name_},
+              Protocol{fuchsia::kernel::VmexResource::Name_},
+              Dictionary{"diagnostics"},
               Protocol{fuchsia::media::ProfileProvider::Name_},
+              Protocol{"fuchsia.scheduler.RoleManager"},
               Protocol{fuchsia::memorypressure::Provider::Name_},
-              Protocol{fuchsia::net::interfaces::State::Name_},
-              Protocol{"fuchsia.posix.socket.Provider"},
               Protocol{"fuchsia.process.Launcher"},
-              Protocol{fuchsia::settings::Display::Name_},
+              Protocol{"fuchsia.sysmem.Allocator"},
+              Protocol{"fuchsia.sysmem2.Allocator"},
+
+              // CastRunner sets ContextFeatureFlags::NETWORK by default.
+              Protocol{fuchsia::net::interfaces::State::Name_},
+              Protocol{"fuchsia.net.name.Lookup"},
+              Protocol{"fuchsia.posix.socket.Provider"},
+
               Storage{.name = "cache", .path = "/cache"},
           },
       .source = ParentRef(),
@@ -163,6 +174,16 @@ CastRunnerLauncher::CastRunnerLauncher(CastRunnerFeatures runner_features) {
             .source = ChildRef{kFakeCastAgentName},
             .targets = {ChildRef{kCastRunnerComponentName}}});
 
+  if (!(runner_features & kCastRunnerFeaturesHeadless)) {
+    // CastRunner sets ThemeType::DEFAULT when not headless.
+    AddRouteFromParent(realm_builder, kCastRunnerComponentName,
+                       fuchsia::settings::Display::Name_);
+  }
+
+  if (runner_features & kCastRunnerFeaturesVulkan) {
+    AddVulkanRoutesFromParent(realm_builder, kCastRunnerComponentName);
+  }
+
   // Either route the fake AudioDeviceEnumerator or the system one.
   if (runner_features & kCastRunnerFeaturesFakeAudioDeviceEnumerator) {
     static constexpr char kAudioDeviceEnumerator[] =
@@ -176,12 +197,17 @@ CastRunnerLauncher::CastRunnerLauncher(CastRunnerFeatures runner_features) {
               .source = ChildRef{kAudioDeviceEnumerator},
               .targets = {ChildRef{kCastRunnerComponentName}}});
   } else {
-    realm_builder.AddRoute(
-        Route{.capabilities = {Protocol{
-                  fuchsia::media::AudioDeviceEnumerator::Name_}},
-              .source = ParentRef(),
-              .targets = {ChildRef{kCastRunnerComponentName}}});
+    AddRouteFromParent(realm_builder, kCastRunnerComponentName,
+                       fuchsia::media::AudioDeviceEnumerator::Name_);
   }
+
+  // Always offer tracing to CastRunner to suppress log spam. See its CML file.
+  AddRouteFromParent(realm_builder, kCastRunnerComponentName,
+                     "fuchsia.tracing.provider.Registry");
+
+  // TODO(crbug.com/42050521) Remove once not needed to avoid log spam.
+  AddRouteFromParent(realm_builder, kCastRunnerComponentName,
+                     "fuchsia.tracing.perfetto.ProducerConnector");
 
   // Route capabilities from the cast_runner back up to the test.
   realm_builder.AddRoute(
@@ -243,7 +269,7 @@ CastRunnerLauncher::CastRunnerLauncher(CastRunnerFeatures runner_features) {
         fuchsia::component::decl::Capability::WithDirectory(std::move(
             fuchsia::component::decl::Directory()
                 .set_name(kDynamicComponentCapabilitiesName)
-                .set_rights(fuchsia::io::RW_STAR_DIR)
+                .set_rights(fuchsia::io::R_STAR_DIR)
                 .set_source_path(kDynamicComponentCapabilitiesPath))));
 
     test_proxy_decl.mutable_exposes()->emplace_back(

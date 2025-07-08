@@ -5,10 +5,13 @@
 #include "third_party/blink/renderer/modules/credentialmanagement/credential.h"
 
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
 namespace {
+constexpr char kDigitalCredentialType[] = "digital";
 constexpr char kFederatedCredentialType[] = "federated";
 constexpr char kIdentityCredentialType[] = "identity";
 constexpr char kOtpCredentialType[] = "otp";
@@ -18,8 +21,9 @@ Credential::~Credential() = default;
 
 Credential::Credential(const String& id, const String& type)
     : id_(id), type_(type) {
-  DCHECK(!id_.empty() || type == kOtpCredentialType ||
-         type == kFederatedCredentialType || type == kIdentityCredentialType);
+  DCHECK(!id_.empty() || type == kDigitalCredentialType ||
+         type == kFederatedCredentialType || type == kIdentityCredentialType ||
+         type == kOtpCredentialType);
   DCHECK(!type_.empty());
 }
 
@@ -29,8 +33,9 @@ KURL Credential::ParseStringAsURLOrThrow(const String& url,
     return KURL();
   KURL parsed_url = KURL(NullURL(), url);
   if (!parsed_url.IsValid()) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
-                                      "'" + url + "' is not a valid URL.");
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kSyntaxError,
+        StrCat({"'", url, "' is not a valid URL."}));
   }
   return parsed_url;
 }

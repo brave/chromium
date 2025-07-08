@@ -4,9 +4,12 @@
 
 #include "ui/linux/fallback_linux_ui.h"
 
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/events/keycodes/dom/dom_keyboard_layout_map.h"
+#include "ui/gfx/font_render_params.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/platform_font.h"
@@ -17,15 +20,7 @@
 
 namespace ui {
 
-FallbackLinuxUi::FallbackLinuxUi() {
-  gfx::FontRenderParamsQuery query;
-  query.pixel_size = gfx::PlatformFont::kDefaultBaseFontSize;
-  query.style = gfx::Font::NORMAL;
-  query.weight = gfx::Font::Weight::NORMAL;
-  query.device_scale_factor = display_config().primary_scale;
-  default_font_render_params_ =
-      gfx::GetFontRenderParams(query, &default_font_family_);
-}
+FallbackLinuxUi::FallbackLinuxUi() = default;
 
 FallbackLinuxUi::~FallbackLinuxUi() = default;
 
@@ -36,21 +31,11 @@ FallbackLinuxUi::CreateInputMethodContext(
   return nullptr;
 }
 
-gfx::FontRenderParams FallbackLinuxUi::GetDefaultFontRenderParams() const {
-  return default_font_render_params_;
-}
-
-void FallbackLinuxUi::GetDefaultFontDescription(
-    std::string* family_out,
-    int* size_pixels_out,
-    int* style_out,
-    int* weight_out,
-    gfx::FontRenderParams* params_out) const {
-  *family_out = default_font_family_;
-  *size_pixels_out = gfx::PlatformFont::kDefaultBaseFontSize;
-  *style_out = gfx::Font::NORMAL;
-  *weight_out = static_cast<int>(gfx::Font::Weight::NORMAL);
-  *params_out = GetDefaultFontRenderParams();
+gfx::FontRenderParams FallbackLinuxUi::GetDefaultFontRenderParams() {
+  if (!default_font_render_params_.has_value()) {
+    InitializeFontSettings();
+  }
+  return *default_font_render_params_;
 }
 
 ui::SelectFileDialog* FallbackLinuxUi::CreateSelectFileDialog(
@@ -65,6 +50,28 @@ ui::SelectFileDialog* FallbackLinuxUi::CreateSelectFileDialog(
 
 bool FallbackLinuxUi::Initialize() {
   return true;
+}
+
+void FallbackLinuxUi::InitializeFontSettings() {
+  gfx::FontRenderParamsQuery query;
+  query.pixel_size = gfx::PlatformFont::kDefaultBaseFontSize;
+  query.style = gfx::Font::NORMAL;
+  query.weight = gfx::Font::Weight::NORMAL;
+  query.device_scale_factor = display_config().primary_scale;
+  std::string default_font_family;
+  // gfx::GetFontRenderParams() calls GetDefaultFontRenderParams(), so
+  // initialize `default_font_render_params_`.  This is intended to use
+  // the FontConfig settings when there's no toolkit to obtain font
+  // settings from.
+  default_font_render_params_ = gfx::FontRenderParams();
+  default_font_render_params_ =
+      gfx::GetFontRenderParams(query, &default_font_family);
+  set_default_font_settings(FontSettings{
+      .family = std::move(default_font_family),
+      .size_pixels = query.pixel_size,
+      .style = query.style,
+      .weight = static_cast<int>(query.weight),
+  });
 }
 
 bool FallbackLinuxUi::GetColor(int id,
@@ -111,6 +118,10 @@ LinuxUi::WindowFrameAction FallbackLinuxUi::GetWindowFrameAction(
   }
 }
 
+std::vector<std::string> FallbackLinuxUi::GetCmdLineFlagsForCopy() const {
+  return {std::string(switches::kUiToolkitFlag) + "=fallback"};
+}
+
 bool FallbackLinuxUi::PreferDarkTheme() const {
   return theme_is_dark_;
 }
@@ -118,6 +129,8 @@ bool FallbackLinuxUi::PreferDarkTheme() const {
 void FallbackLinuxUi::SetDarkTheme(bool dark) {
   theme_is_dark_ = dark;
 }
+
+void FallbackLinuxUi::SetAccentColor(std::optional<SkColor> accent_color) {}
 
 bool FallbackLinuxUi::AnimationsEnabled() const {
   return true;
@@ -135,7 +148,9 @@ FallbackLinuxUi::CreateNavButtonProvider() {
 }
 
 ui::WindowFrameProvider* FallbackLinuxUi::GetWindowFrameProvider(
-    bool solid_frame) {
+    bool solid_frame,
+    bool tiled,
+    bool maximized) {
   return nullptr;
 }
 
@@ -160,10 +175,10 @@ ui::NativeTheme* FallbackLinuxUi::GetNativeTheme() const {
   return ui::NativeTheme::GetInstanceForNativeUi();
 }
 
-bool FallbackLinuxUi::GetTextEditCommandsForEvent(
+ui::TextEditCommand FallbackLinuxUi::GetTextEditCommandForEvent(
     const ui::Event& event,
-    std::vector<ui::TextEditCommandAuraLinux>* commands) {
-  return false;
+    int text_flags) {
+  return ui::TextEditCommand::INVALID_COMMAND;
 }
 
 #if BUILDFLAG(ENABLE_PRINTING)

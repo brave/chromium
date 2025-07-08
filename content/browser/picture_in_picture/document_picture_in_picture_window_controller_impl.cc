@@ -7,6 +7,7 @@
 #include <set>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "content/browser/media/media_web_contents_observer.h"
 #include "content/browser/media/session/media_session_impl.h"
@@ -19,6 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_client.h"
+#include "media/base/media_switches.h"
 
 namespace content {
 
@@ -28,22 +30,6 @@ PictureInPictureWindowController::GetOrCreateDocumentPictureInPictureController(
     WebContents* web_contents) {
   return DocumentPictureInPictureWindowControllerImpl::
       GetOrCreateForWebContents(web_contents);
-}
-
-// static
-DocumentPictureInPictureWindowControllerImpl*
-DocumentPictureInPictureWindowControllerImpl::GetOrCreateForWebContents(
-    WebContents* web_contents) {
-  DCHECK(web_contents);
-
-  // This is a no-op if the controller already exists.
-  CreateForWebContents(web_contents);
-  auto* controller = FromWebContents(web_contents);
-  // The controller must not have pre-existing web content. It's supposed
-  // to have been destroyed by NotifyClosedAndStopObserving() if it's being
-  // reused.
-  DCHECK(!controller->GetChildWebContents());
-  return controller;
 }
 
 DocumentPictureInPictureWindowControllerImpl::
@@ -107,8 +93,8 @@ void DocumentPictureInPictureWindowControllerImpl::Close(
 }
 
 void DocumentPictureInPictureWindowControllerImpl::CloseAndFocusInitiator() {
-  Close(false /* should_pause_video */);
   FocusInitiator();
+  Close(false /* should_pause_video */);
 }
 
 void DocumentPictureInPictureWindowControllerImpl::OnWindowDestroyed(
@@ -121,6 +107,11 @@ WebContents* DocumentPictureInPictureWindowControllerImpl::GetWebContents() {
   return web_contents();
 }
 
+std::optional<url::Origin>
+DocumentPictureInPictureWindowControllerImpl::GetOrigin() {
+  return std::nullopt;
+}
+
 void DocumentPictureInPictureWindowControllerImpl::WebContentsDestroyed() {
   // The opener web contents are being destroyed. Stop observing, and forget
   // `opener_web_contents_`. This will also prevent `NotifyAndStopObserving`
@@ -131,10 +122,10 @@ void DocumentPictureInPictureWindowControllerImpl::WebContentsDestroyed() {
   Close(/*should_pause_video=*/true);
 }
 
-absl::optional<gfx::Rect>
+std::optional<gfx::Rect>
 DocumentPictureInPictureWindowControllerImpl::GetWindowBounds() {
   if (!child_contents_)
-    return absl::nullopt;
+    return std::nullopt;
   return child_contents_->GetContainerBounds();
 }
 
@@ -173,7 +164,7 @@ void DocumentPictureInPictureWindowControllerImpl::NotifyClosedAndStopObserving(
   // user explicitly closed the window and any active media should be paused.
   // If false, the user used a "return to tab" feature with the expectation
   // that any active media will continue playing in the parent tab.
-  // TODO(https://crbug.com/1382958): connect this to the requestPictureInPicture
+  // TODO(crbug.com/40877557): connect this to the requestPictureInPicture
   // API and/or onleavepictureinpicture event once that's implemented.
   GetWebContentsImpl()->ExitPictureInPicture();
   Observe(/*web_contents=*/nullptr);
@@ -220,6 +211,12 @@ void DocumentPictureInPictureWindowControllerImpl::ChildContentsObserver::
     return;
   }
 
+  // Allow a command-line flag to opt-out of navigation throttling.
+  if (base::FeatureList::IsEnabled(
+          media::kDocumentPictureInPictureNavigation)) {
+    return;
+  }
+
   // We allow the synchronous about:blank commit to succeed, since that is part
   // of most initial navigations. Subsequent navigations to about:blank are
   // treated like other navigations and close the window.
@@ -233,8 +230,7 @@ void DocumentPictureInPictureWindowControllerImpl::ChildContentsObserver::
 
   // Don't run `force_close_cb` from within the observer, since closing
   // `web_contents` is not allowed during an observer callback.
-  content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
-                                               std::move(force_close_cb_));
+  GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(force_close_cb_));
 }
 
 void DocumentPictureInPictureWindowControllerImpl::ChildContentsObserver::

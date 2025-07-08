@@ -4,51 +4,75 @@
 
 #include "chrome/browser/ash/accessibility/select_to_speak_test_utils.h"
 
+#include <string>
+
 #include "ash/constants/ash_pref_names.h"
+#include "base/strings/stringprintf.h"
+#include "base/threading/thread_restrictions.h"
+#include "base/values.h"
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ash/accessibility/automation_test_utils.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/browsertest_util.h"
 #include "extensions/browser/extension_host_test_helper.h"
+#include "extensions/browser/extension_registry_test_helper.h"
 #include "ui/events/test/event_generator.h"
 
 namespace ash {
 namespace sts_test_utils {
 
-void TurnOnSelectToSpeakForTest(Browser* browser) {
+void TurnOnSelectToSpeakForTest(Profile* profile) {
   // Pretend that enhanced network voices dialog has been accepted so that the
   // dialog does not block.
-  browser->profile()->GetPrefs()->SetBoolean(
+  profile->GetPrefs()->SetBoolean(
       prefs::kAccessibilitySelectToSpeakEnhancedVoicesDialogShown, true);
+
+  // Watch events from an MV2 extension which runs in a background page.
   extensions::ExtensionHostTestHelper host_helper(
-      browser->profile(), extension_misc::kSelectToSpeakExtensionId);
+      profile, extension_misc::kSelectToSpeakExtensionId);
+  // Watch events from an MV3 extension which runs in a service worker.
+  extensions::ExtensionRegistryTestHelper observer(
+      extension_misc::kSelectToSpeakExtensionId, profile);
+
   AccessibilityManager::Get()->SetSelectToSpeakEnabled(true);
-  host_helper.WaitForHostCompletedFirstLoad();
+  if (observer.WaitForManifestVersion() == 3) {
+    observer.WaitForServiceWorkerStart();
+  } else {
+    host_helper.WaitForHostCompletedFirstLoad();
+  }
+
   base::ScopedAllowBlockingForTesting allow_blocking;
+
   std::string script = base::StringPrintf(R"JS(
       (async function() {
-        let module = await import('./select_to_speak_main.js');
-        module.selectToSpeak.setOnLoadDesktopCallbackForTest(() => {
+       const testImports = TestImportManager.getImports();
+       await testImports.selectToSpeak.readyForTestingPromise;
+       testImports.selectToSpeak.setOnLoadDesktopCallbackForTest(() => {
             chrome.test.sendScriptResult('ready');
           });
         // Set enhanced network voices dialog as shown, because the pref
         // change takes some time to propagate.
-        module.selectToSpeak.prefsManager_.enhancedVoicesDialogShown_ = true;
+        testImports.selectToSpeak.prefsManager_.enhancedVoicesDialogShown_ = true;
       })();
     )JS");
+
   base::Value result =
       extensions::browsertest_util::ExecuteScriptInBackgroundPage(
-          browser->profile(), extension_misc::kSelectToSpeakExtensionId,
-          script);
+          profile, extension_misc::kSelectToSpeakExtensionId, script);
   CHECK_EQ("ready", result);
 }
 
-void StartSelectToSpeakInBrowserWindow(Browser* browser,
-                                       ui::test::EventGenerator* generator) {
-  gfx::Rect bounds = browser->window()->GetBounds();
-  bounds.Inset(gfx::Insets::TLBR(8, 8, 8, 75));
+void StartSelectToSpeakInBrowserWithUrl(const std::string& url,
+                                        AutomationTestUtils* test_utils,
+                                        ui::test::EventGenerator* generator) {
+  gfx::Rect bounds = test_utils->GetBoundsOfRootWebArea(url);
+  StartSelectToSpeakWithBounds(bounds, generator);
+}
+
+void StartSelectToSpeakWithBounds(const gfx::Rect& bounds,
+                                  ui::test::EventGenerator* generator) {
   generator->PressKey(ui::VKEY_LWIN, 0 /* flags */);
   generator->MoveMouseTo(bounds.x(), bounds.y());
   generator->PressLeftButton();

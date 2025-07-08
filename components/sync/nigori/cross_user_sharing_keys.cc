@@ -4,11 +4,12 @@
 
 #include "components/sync/nigori/cross_user_sharing_keys.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/notreached.h"
+#include "base/metrics/histogram_functions.h"
 #include "components/sync/protocol/nigori_local_data.pb.h"
 
 namespace syncer {
@@ -27,7 +28,7 @@ sync_pb::CrossUserSharingPrivateKey KeyPairToPrivateKeyProto(
 
 CrossUserSharingPublicPrivateKeyPair CloneKeyPair(
     const CrossUserSharingPublicPrivateKeyPair& key_pair) {
-  absl::optional<CrossUserSharingPublicPrivateKeyPair> clone =
+  std::optional<CrossUserSharingPublicPrivateKeyPair> clone =
       CrossUserSharingPublicPrivateKeyPair::CreateByImport(
           key_pair.GetRawPrivateKey());
   CHECK(clone.has_value());
@@ -47,12 +48,16 @@ CrossUserSharingKeys CrossUserSharingKeys::CreateFromProto(
   CrossUserSharingKeys output;
   for (const sync_pb::CrossUserSharingPrivateKey& key : proto.private_key()) {
     if (!output.AddKeyPairFromProto(key)) {
-      DLOG(WARNING) << "Could not add PrivateKey protocol buffer message.";
+      // TODO(crbug.com/40267990): consider re-downloading Nigori node in this
+      // case.
+      LOG(ERROR) << "Could not add PrivateKey protocol buffer message.";
     }
   }
 
   return output;
 }
+
+CrossUserSharingKeys::CrossUserSharingKeys() = default;
 
 CrossUserSharingKeys::CrossUserSharingKeys(CrossUserSharingKeys&& other) =
     default;
@@ -70,7 +75,9 @@ sync_pb::CrossUserSharingKeys CrossUserSharingKeys::ToProto() const {
 
 CrossUserSharingKeys CrossUserSharingKeys::Clone() const {
   CrossUserSharingKeys copy;
-  copy.AddAllUnknownKeysFrom(*this);
+  for (const auto& [version, key_pair] : key_pairs_map_) {
+    copy.SetKeyPair(CloneKeyPair(key_pair), version);
+  }
   return copy;
 }
 
@@ -82,32 +89,25 @@ bool CrossUserSharingKeys::HasKeyPair(uint32_t key_pair_version) const {
   return key_pairs_map_.contains(key_pair_version);
 }
 
-void CrossUserSharingKeys::AddAllUnknownKeysFrom(
-    const CrossUserSharingKeys& other) {
-  for (const auto& [public_key, key_pair] : other.key_pairs_map_) {
-    key_pairs_map_.emplace(public_key, CloneKeyPair(key_pair));
-  }
-}
-
 bool CrossUserSharingKeys::AddKeyPairFromProto(
     const sync_pb::CrossUserSharingPrivateKey& key) {
   std::vector<uint8_t> private_key(key.x25519_private_key().begin(),
                                    key.x25519_private_key().end());
-  absl::optional<CrossUserSharingPublicPrivateKeyPair> key_pair =
+  std::optional<CrossUserSharingPublicPrivateKeyPair> key_pair =
       CrossUserSharingPublicPrivateKeyPair::CreateByImport(private_key);
 
   if (!key_pair.has_value()) {
     return false;
   }
 
-  AddKeyPair(std::move(key_pair.value()), key.version());
+  SetKeyPair(std::move(key_pair.value()), key.version());
   return true;
 }
 
-void CrossUserSharingKeys::AddKeyPair(
+void CrossUserSharingKeys::SetKeyPair(
     CrossUserSharingPublicPrivateKeyPair key_pair,
     uint32_t version) {
-  key_pairs_map_.emplace(version, std::move(key_pair));
+  key_pairs_map_.insert_or_assign(version, std::move(key_pair));
 }
 
 const CrossUserSharingPublicPrivateKeyPair& CrossUserSharingKeys::GetKeyPair(
@@ -115,7 +115,5 @@ const CrossUserSharingPublicPrivateKeyPair& CrossUserSharingKeys::GetKeyPair(
   CHECK(HasKeyPair(version));
   return key_pairs_map_.at(version);
 }
-
-CrossUserSharingKeys::CrossUserSharingKeys() = default;
 
 }  // namespace syncer

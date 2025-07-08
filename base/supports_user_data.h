@@ -11,8 +11,6 @@
 #include "base/base_export.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
-#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace base {
 
@@ -64,15 +62,14 @@ class BASE_EXPORT SupportsUserData {
   // needs to provide reset functionality.
   void ClearAllUserData();
 
- private:
-  // Currently a variant for A/B testing purposes.
-  using DataMap = std::map<const void*, std::unique_ptr<Data>>;
-  using FlatDataMap = absl::flat_hash_map<const void*, std::unique_ptr<Data>>;
-  using MapVariants = absl::variant<DataMap, FlatDataMap>;
+  // Returns the number of Data objects attached to this object.
+  size_t UserDataCount() const;
 
-  // Externally-defined data accessible by key.
-  MapVariants user_data_;
-  // Guards usage of |user_data_|
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  bool in_clear_ = false;
+  // Guards usage of |impl_|
   SEQUENCE_CHECKER(sequence_checker_);
 };
 
@@ -83,7 +80,7 @@ class UserDataAdapter : public SupportsUserData::Data {
  public:
   static T* Get(const SupportsUserData* supports_user_data, const void* key) {
     UserDataAdapter* data =
-      static_cast<UserDataAdapter*>(supports_user_data->GetUserData(key));
+        static_cast<UserDataAdapter*>(supports_user_data->GetUserData(key));
     return data ? static_cast<T*>(data->object_.get()) : nullptr;
   }
 

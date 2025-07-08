@@ -15,8 +15,10 @@
 #include "content/browser/xr/service/vr_service_impl.h"
 #include "content/public/browser/browser_xr_runtime.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/xr_integration_client.h"
 #include "device/vr/public/mojom/isolated_xr_service.mojom.h"
 #include "device/vr/public/mojom/vr_service.mojom-forward.h"
+#include "device/vr/public/mojom/xr_device.mojom-forward.h"
 #include "device/vr/public/mojom/xr_session.mojom-forward.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -26,9 +28,7 @@ struct CHROME_LUID;
 
 namespace content {
 class XrInstallHelper;
-}  // namespace content
 
-namespace content {
 // This class wraps a physical device's interfaces, and registers for events.
 // There is one BrowserXRRuntimeImpl per physical device runtime. It manages
 // browser-side handling of state, like which VRServiceImpl is listening for
@@ -58,8 +58,7 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
   // Methods called by VRServiceImpl to interact with the runtime's device.
   void OnServiceAdded(VRServiceImpl* service);
   void OnServiceRemoved(VRServiceImpl* service);
-  void ExitPresent(VRServiceImpl* service,
-                   VRServiceImpl::ExitPresentCallback on_exited);
+  void ExitPresent(VRServiceImpl* service);
   void SetFramesThrottled(const VRServiceImpl* service, bool throttled);
 
   // Both of these will forward the RequestSession call onto the runtime, the
@@ -88,7 +87,7 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
   device::mojom::XRDeviceId GetId() const { return id_; }
 
 #if BUILDFLAG(IS_WIN)
-  absl::optional<CHROME_LUID> GetLuid() const;
+  std::optional<CHROME_LUID> GetLuid() const;
 #endif
 
   // BrowserXRRuntime
@@ -99,13 +98,15 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
   // is removed.
   void BeforeRuntimeRemoved();
 
+  std::vector<device::mojom::XRSessionFeature> GetSupportedFeatures();
+
  private:
   // device::XRRuntimeEventListener
   void OnExitPresent() override;
   void OnVisibilityStateChanged(
       device::mojom::XRVisibilityState visibility_state) override;
 
-  void StopImmersiveSession(VRServiceImpl::ExitPresentCallback on_exited);
+  void StopImmersiveSession();
   void OnRequestSessionResult(
       base::WeakPtr<VRServiceImpl> service,
       device::mojom::XRRuntimeSessionOptionsPtr options,
@@ -113,6 +114,7 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
       device::mojom::XRRuntimeSessionResultPtr session_result);
   void OnImmersiveSessionError();
   void OnInstallFinished(bool succeeded);
+  void ShutdownRuntime();
 
   device::mojom::XRDeviceId id_;
   device::mojom::XRDeviceDataPtr device_data_;
@@ -121,7 +123,7 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
       immersive_session_controller_;
   bool immersive_session_has_camera_access_ = false;
 
-  std::set<VRServiceImpl*> services_;
+  std::set<raw_ptr<VRServiceImpl, SetExperimental>> services_;
 
   raw_ptr<VRServiceImpl> presenting_service_ = nullptr;
 
@@ -129,8 +131,9 @@ class BrowserXRRuntimeImpl : public content::BrowserXRRuntime,
       this};
 
   base::ObserverList<Observer> observers_;
-  std::unique_ptr<content::XrInstallHelper> install_helper_;
-  std::unique_ptr<content::BrowserXRRuntime::Observer> runtime_observer_;
+  std::unique_ptr<XrInstallHelper> install_helper_;
+  std::unique_ptr<BrowserXRRuntime::Observer> runtime_observer_;
+  std::unique_ptr<VrUiHost> vr_ui_host_;
   base::OnceCallback<void(bool)> install_finished_callback_;
   bool has_pending_immersive_session_request_ = false;
 

@@ -17,6 +17,8 @@ class DisplayOverlayController;
 
 // InputMappingView shows all the input mappings.
 class InputMappingView : public views::View, public TouchInjectorObserver {
+  METADATA_HEADER(InputMappingView, views::View)
+
  public:
   explicit InputMappingView(
       DisplayOverlayController* display_overlay_controller);
@@ -27,8 +29,6 @@ class InputMappingView : public views::View, public TouchInjectorObserver {
   void SetDisplayMode(const DisplayMode mode);
 
  private:
-  void ProcessPressedEvent(const ui::LocatedEvent& event);
-
   // Reorder the child views to have focus order as:
   // If the window aspect-ratio > 1
   // - First, focus the views on the left half of the window from top to bottom.
@@ -37,9 +37,8 @@ class InputMappingView : public views::View, public TouchInjectorObserver {
   // - Focus from top to bottom.
   void SortChildren();
 
-  // ui::EventHandler:
-  void OnMouseEvent(ui::MouseEvent* event) override;
-  void OnGestureEvent(ui::GestureEvent* event) override;
+  // Adds the action without opening the ButtonOptionsMenu.
+  void OnActionAddedInternal(Action& action);
 
   // TouchInjectorObserver:
   void OnActionAdded(Action& action) override;
@@ -47,6 +46,7 @@ class InputMappingView : public views::View, public TouchInjectorObserver {
   void OnActionTypeChanged(Action* action, Action* new_action) override;
   void OnActionInputBindingUpdated(const Action& action) override;
   void OnContentBoundsSizeChanged() override;
+  void OnActionNewStateRemoved(const Action& action) override;
 
   const raw_ptr<DisplayOverlayController> controller_ = nullptr;
   DisplayMode current_display_mode_ = DisplayMode::kNone;

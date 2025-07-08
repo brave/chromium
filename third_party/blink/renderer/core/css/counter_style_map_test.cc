@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -14,7 +15,7 @@ class CounterStyleMapTest : public PageTestBase {
  public:
   ShadowRoot& AttachShadowTo(const char* host_id) {
     Element* host = GetElementById(host_id);
-    return host->AttachShadowRootInternal(ShadowRootType::kOpen);
+    return host->AttachShadowRootForTesting(ShadowRootMode::kOpen);
   }
 
   const CounterStyle& GetCounterStyle(const TreeScope& scope,
@@ -53,7 +54,7 @@ TEST_F(CounterStyleMapTest, ExtendsParentScopeStyle) {
     <div id=host></div>
   )HTML");
   ShadowRoot& shadow = AttachShadowTo("host");
-  shadow.setInnerHTML(
+  shadow.SetInnerHTMLWithoutTrustedTypes(
       "<style>@counter-style bar { system: extends foo; }</style>");
   UpdateAllLifecyclePhasesForTest();
 
@@ -175,7 +176,7 @@ TEST_F(CounterStyleMapTest, UpdateReferencesInChildScope) {
     <div id=host></div>
   )HTML");
   ShadowRoot& shadow = AttachShadowTo("host");
-  shadow.setInnerHTML(
+  shadow.SetInnerHTMLWithoutTrustedTypes(
       "<style>@counter-style bar { system: extends foo; }</style>");
   UpdateAllLifecyclePhasesForTest();
 

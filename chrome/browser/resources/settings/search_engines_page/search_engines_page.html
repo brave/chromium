@@ -1,8 +1,12 @@
-    <style include="cr-shared-style settings-shared iron-flex">
-      settings-omnibox-extension-entry {
-        border-top: var(--cr-separator-line);
-      }
-    </style>
+  <style include="cr-shared-style settings-shared">
+    settings-omnibox-extension-entry {
+      border-top: var(--cr-separator-line);
+    }
+  </style>
+  <settings-subpage
+      page-title="$i18n{searchEnginesManageSiteSearch}"
+      search-label="$i18n{searchEnginesSearch}"
+      search-term="{{filter_}}">
     <div class="cr-row first">
       <div class="secondary">$i18n{searchEnginesPageExplanation}</div>
     </div>
@@ -44,8 +48,7 @@
       </div>
     </div>
     <settings-search-engines-list hidden="[[!matchingDefaultEngines_.length]]"
-        engines="[[matchingDefaultEngines_]]"
-        show-shortcut name-column-header="$i18n{searchEnginesSearchEngine}">
+        engines="[[matchingDefaultEngines_]]" show-shortcut>
     </settings-search-engines-list>
 
     <div class="no-search-results list-frame"
@@ -62,7 +65,7 @@
     <template is="dom-if" if="[[showDeleteConfirmationDialog_]]" restamp>
       <settings-simple-confirmation-dialog id="deleteConfirmDialog"
           title-text="$i18n{searchEnginesDeleteConfirmationTitle}"
-          body-text="$i18n{searchEnginesDeleteConfirmationDescription}"
+          body-text="[[getDeleteConfirmationBodyText_(dialogModel_)]]"
           confirm-text="$i18n{delete}"
           on-close="onCloseDeleteConfirmationDialog_">
       </settings-simple-confirmation-dialog>
@@ -74,6 +77,7 @@
           <div class="secondary">$i18n{searchEnginesSiteSearchExplanation}</div>
         </div>
         <cr-button class="secondary-button header-aligned-button"
+                   aria-label="$i18n{searchEnginesAddButtonAriaLabel}"
                    on-click="onAddSearchEngineClick_" id="addSearchEngine">
           $i18n{add}
         </cr-button>
@@ -92,8 +96,7 @@
         engines="[[matchingActiveEngines_]]"
         scroll-target="[[subpageScrollTarget]]"
         show-shortcut collapse-list
-        expand-list-text="$i18n{searchEnginesAdditionalSites}"
-        name-column-header="$i18n{searchEnginesSiteOrPage}">
+        expand-list-text="$i18n{searchEnginesAdditionalSites}">
     </settings-search-engines-list>
 
     <div class="cr-row first">
@@ -104,8 +107,7 @@
         engines="[[matchingOtherEngines_]]"
         scroll-target="[[subpageScrollTarget]]"
         show-query-url collapse-list
-        expand-list-text="$i18n{searchEnginesAdditionalInactiveSites}"
-        name-column-header="$i18n{searchEnginesSiteOrPage}">
+        expand-list-text="$i18n{searchEnginesAdditionalInactiveSites}">
     </settings-search-engines-list>
 
     <div id="noOtherEngines" class="list-frame"
@@ -141,3 +143,4 @@
         </template>
       </iron-list>
     </template>
+  </settings-subpage>

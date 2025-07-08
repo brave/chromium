@@ -2,30 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service.h"
+
 #include <stdint.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/components/arc/test/arc_util_test_support.h"
 #include "ash/constants/ash_switches.h"
 #include "base/base64.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
-#include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service.h"
-#include "chrome/browser/ash/arc/keymaster/arc_keymaster_bridge.h"
-#include "chrome/browser/ash/arc/keymint/arc_keymint_bridge.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/test/bind.h"
+#include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service_factory.h"
 #include "chrome/browser/ash/arc/session/arc_service_launcher.h"
 #include "chrome/browser/ash/login/test/cryptohome_mixin.h"
+#include "chrome/browser/ash/login/test/user_auth_config.h"
 #include "chrome/browser/ash/platform_keys/key_permissions/key_permissions_service_factory.h"
 #include "chrome/browser/ash/platform_keys/platform_keys_service_factory.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_mixin.h"
@@ -40,11 +44,17 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/net/x509_certificate_model_nss.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/services/keymaster/public/mojom/cert_store.mojom.h"
-#include "chrome/services/keymint/public/mojom/cert_store.mojom.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/network/network_cert_loader.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/keymaster/arc_keymaster_bridge.h"
+#include "chromeos/ash/experiences/arc/keymint/arc_keymint_bridge.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
+#include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
+#include "chromeos/ash/services/keymaster/public/mojom/cert_store.mojom.h"
+#include "chromeos/ash/services/keymint/public/mojom/cert_store.mojom.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -109,9 +119,7 @@ struct InstalledTestCert {
 std::string GetDerCert64(CERTCertificate* cert) {
   std::string der_cert;
   EXPECT_TRUE(net::x509_util::GetDEREncoded(cert, &der_cert));
-  std::string der_cert64;
-  base::Base64Encode(der_cert, &der_cert64);
-  return der_cert64;
+  return base::Base64Encode(der_cert);
 }
 
 class FakeArcCertInstaller : public ArcCertInstaller {
@@ -148,8 +156,9 @@ class FakeArcCertInstaller : public ArcCertInstaller {
   }
 
   void Stop() {
-    if (run_loop_)
+    if (run_loop_) {
       run_loop_->QuitWhenIdle();
+    }
   }
 
   std::map<std::string, std::string> certs() const { return certs_; }
@@ -185,7 +194,7 @@ class FakeArcKeymasterBridge : public ArcKeymasterBridge {
   std::vector<keymaster::mojom::ChromeOsKeyPtr> keys_;
 };
 
-std::unique_ptr<KeyedService> BuildFakeArcKeymasterBridge(
+std::unique_ptr<FakeArcKeymasterBridge> BuildFakeArcKeymasterBridge(
     content::BrowserContext* profile) {
   return std::make_unique<FakeArcKeymasterBridge>(profile);
 }
@@ -211,15 +220,9 @@ class FakeArcKeyMintBridge : public ArcKeyMintBridge {
   std::vector<keymint::mojom::ChromeOsKeyPtr> keys_;
 };
 
-std::unique_ptr<KeyedService> BuildFakeArcKeyMintBridge(
+std::unique_ptr<FakeArcKeyMintBridge> BuildFakeArcKeyMintBridge(
     content::BrowserContext* profile) {
   return std::make_unique<FakeArcKeyMintBridge>(profile);
-}
-
-std::unique_ptr<KeyedService> BuildCertStoreService(
-    std::unique_ptr<FakeArcCertInstaller> installer,
-    content::BrowserContext* profile) {
-  return std::make_unique<CertStoreService>(profile, std::move(installer));
 }
 
 // The following series of functions related to IsSystemSlotAvailable use the
@@ -277,7 +280,7 @@ void IsSystemSlotAvailableWithDbGetterOnIO(
   }
 }
 
-// Returns trus if the test system slot was setup correctly and is available.
+// Returns true if the test system slot was setup correctly and is available.
 bool IsSystemSlotAvailable(Profile* profile) {
   // |profile| must be accessed on the UI thread.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -296,7 +299,7 @@ bool IsSystemSlotAvailable(Profile* profile) {
 
 // Returns the number of corporate usage certs in |test_certs|.
 size_t CountCorporateUsage(const std::vector<TestCertData>& test_certs) {
-  return base::ranges::count_if(test_certs, &TestCertData::is_corporate_usage);
+  return std::ranges::count_if(test_certs, &TestCertData::is_corporate_usage);
 }
 
 // Deletes the given |cert| from |cert_db|.
@@ -325,10 +328,13 @@ void RegisterCorporateKeyWithService(
   std::vector<uint8_t> client_cert_spki(
       cert->derPublicKey.data,
       cert->derPublicKey.data + cert->derPublicKey.len);
+
+  // Mimics the behaviour of the ExtensionPlatformKeysService, which sets the
+  // one-time signing permission when the key is registered for corporate usage.
+  service->RegisterOneTimeSigningPermissionForKey(client_cert_spki);
   service->RegisterKeyForCorporateUsage(
-      std::move(client_cert_spki),
-      base::BindOnce(&OnKeyRegisteredForCorporateUsage,
-                     std::move(done_callback)));
+      client_cert_spki, base::BindOnce(&OnKeyRegisteredForCorporateUsage,
+                                       std::move(done_callback)));
 }
 
 }  // namespace
@@ -375,7 +381,7 @@ class CertStoreServiceTest
   Profile* profile();
 
   // Owned by the CertStoreService instance.
-  raw_ptr<FakeArcCertInstaller, ExperimentalAsh> installer_;
+  raw_ptr<FakeArcCertInstaller, DanglingUntriaged> installer_;
 
   std::vector<InstalledTestCert> installed_certs_;
 
@@ -415,8 +421,8 @@ class CertStoreServiceTest
   std::unique_ptr<crypto::ScopedTestSystemNSSKeySlot> test_system_slot_;
 
   // Owned by the CertStoreService instance.
-  raw_ptr<FakeArcKeymasterBridge, ExperimentalAsh> keymaster_bridge_;
-  raw_ptr<FakeArcKeyMintBridge, ExperimentalAsh> keymint_bridge_;
+  raw_ptr<FakeArcKeymasterBridge, DanglingUntriaged> keymaster_bridge_;
+  raw_ptr<FakeArcKeyMintBridge, DanglingUntriaged> keymint_bridge_;
 
   ash::CryptohomeMixin cryptohome_mixin_{&mixin_host_};
 
@@ -425,6 +431,9 @@ class CertStoreServiceTest
 
 CertStoreServiceTest::CertStoreServiceTest() : test_data_(GetParam()) {
   cryptohome_mixin_.MarkUserAsExisting(affiliation_mixin_.account_id());
+  cryptohome_mixin_.ApplyAuthConfig(
+      affiliation_mixin_.account_id(),
+      ash::test::UserAuthConfig::Create(ash::test::kDefaultAuthSetup));
 }
 
 void CertStoreServiceTest::SetUp() {
@@ -432,7 +441,6 @@ void CertStoreServiceTest::SetUp() {
     base::SysInfo::SetChromeOSVersionInfoForTest(
         "CHROMEOS_ARC_ANDROID_SDK_VERSION=33",  // TM
         base::SysInfo::GetLsbReleaseTime());
-    feature_list_.InitAndEnableFeature(arc::kSwitchToKeyMintOnT);
   } else {
     base::SysInfo::SetChromeOSVersionInfoForTest(
         "CHROMEOS_ARC_ANDROID_SDK_VERSION=30",  // RVC
@@ -462,33 +470,40 @@ void CertStoreServiceTest::SetUpOnMainThread() {
   MixinBasedInProcessBrowserTest::SetUpOnMainThread();
 
   // Pre tests need no further setup.
-  if (content::IsPreTest())
+  if (content::IsPreTest()) {
     return;
+  }
 
   policy::AffiliationTestHelper::LoginUser(affiliation_mixin_.account_id());
 
   if (test_data_.should_use_arc_keymint) {
     // Use fake ArcKeyMintBridge.
-    ArcKeyMintBridge::GetFactory()->SetTestingFactoryAndUse(
-        profile(), base::BindRepeating(&BuildFakeArcKeyMintBridge));
-    auto* keymint_bridge = ArcKeyMintBridge::GetForBrowserContext(profile());
-    keymint_bridge_ = static_cast<FakeArcKeyMintBridge*>(keymint_bridge);
+    keymint_bridge_ =
+        ArcKeyMintBridge::GetFactory()->SetTestingSubclassFactoryAndUse(
+            profile(), base::BindOnce(&BuildFakeArcKeyMintBridge));
   } else {
     // Use fake ArcKeymasterBridge.
-    ArcKeymasterBridge::GetFactory()->SetTestingFactoryAndUse(
-        profile(), base::BindRepeating(&BuildFakeArcKeymasterBridge));
-    auto* keymaster_bridge =
-        ArcKeymasterBridge::GetForBrowserContext(profile());
-    keymaster_bridge_ = static_cast<FakeArcKeymasterBridge*>(keymaster_bridge);
+    keymaster_bridge_ =
+        ArcKeymasterBridge::GetFactory()->SetTestingSubclassFactoryAndUse(
+            profile(), base::BindOnce(&BuildFakeArcKeymasterBridge));
   }
 
   // Use fake ArcCertInstaller in CertStoreService.
-  auto installer = std::make_unique<FakeArcCertInstaller>(
-      profile(), std::make_unique<policy::RemoteCommandsQueue>());
-  installer_ = installer.get();
-  CertStoreService::GetFactory()->SetTestingFactoryAndUse(
-      profile(), base::BindRepeating(&BuildCertStoreService,
-                                     base::Passed(std::move(installer))));
+  CertStoreServiceFactory::GetInstance()->SetTestingSubclassFactoryAndUse(
+      profile(),
+      base::BindOnce(
+          [](raw_ptr<FakeArcCertInstaller, DanglingUntriaged>* out_installer,
+             content::BrowserContext* context) {
+            Profile* profile = Profile::FromBrowserContext(context);
+            auto installer = std::make_unique<FakeArcCertInstaller>(
+                profile, std::make_unique<policy::RemoteCommandsQueue>());
+            CHECK(out_installer);
+            CHECK(!*out_installer);
+            *out_installer = installer.get();
+            return std::make_unique<CertStoreService>(profile,
+                                                      std::move(installer));
+          },
+          base::Unretained(&installer_)));
 
   ASSERT_TRUE(IsSystemSlotAvailable(profile()));
 }
@@ -532,8 +547,9 @@ void CertStoreServiceTest::SetUpCerts(
   for (size_t i = initial_size; i < installed_certs_.size(); ++i) {
     const InstalledTestCert& cert = installed_certs_[i];
     // Register cert for corporate usage if needed.
-    if (cert.test_data.is_corporate_usage)
+    if (cert.test_data.is_corporate_usage) {
       RegisterCorporateKey(cert.nss_cert.get());
+    }
     // Import cert to NSS cert database.
     base::RunLoop loop;
     NssServiceFactory::GetForContext(profile())
@@ -587,8 +603,9 @@ void CertStoreServiceTest::CheckInstalledCerts(
 
   // Verify |test_certs| and |installed_certs_| have matching elements.
   ASSERT_EQ(test_certs.size(), installed_certs_.size());
-  for (size_t i = 0; i < installed_certs_.size(); ++i)
+  for (size_t i = 0; i < installed_certs_.size(); ++i) {
     EXPECT_EQ(test_certs[i], installed_certs_[i].test_data);
+  }
 
   for (const auto& cert_name : service->get_required_cert_names()) {
     bool found = false;
@@ -599,8 +616,9 @@ void CertStoreServiceTest::CheckInstalledCerts(
       const net::ScopedCERTCertificate& nss_cert = cert.nss_cert;
 
       // Skip until |cert| corresponds to the current |cert_name|.
-      if (GetDerCert64(nss_cert.get()) != installer_->certs()[cert_name])
+      if (GetDerCert64(nss_cert.get()) != installer_->certs()[cert_name]) {
         continue;
+      }
 
       // Check nickname.
       EXPECT_EQ(x509_certificate_model::GetCertNameOrNickname(nss_cert.get()),
@@ -609,8 +627,7 @@ void CertStoreServiceTest::CheckInstalledCerts(
       std::string cert_id = installer_->cert_ids()[cert_name];
       // Check CKA_ID and slot.
       int slot_id;
-      std::string hex_encoded_id =
-          base::HexEncode(cert_id.data(), cert_id.size());
+      std::string hex_encoded_id = base::HexEncode(cert_id);
       EXPECT_EQ(hex_encoded_id,
                 ash::NetworkCertLoader::GetPkcs11IdAndSlotForCert(
                     nss_cert.get(), &slot_id));
@@ -688,8 +705,9 @@ void CertStoreServiceTest::SetUpTestSystemSlot() {
 }
 
 void CertStoreServiceTest::TearDownTestSystemSlot() {
-  if (!test_system_slot_)
+  if (!test_system_slot_) {
     return;
+  }
 
   base::RunLoop loop;
   content::GetIOThreadTaskRunner({})->PostTaskAndReply(
@@ -710,7 +728,8 @@ IN_PROC_BROWSER_TEST_P(CertStoreServiceTest, PRE_HandlesCorporateUsageCerts) {
 }
 
 IN_PROC_BROWSER_TEST_P(CertStoreServiceTest, HandlesCorporateUsageCerts) {
-  CertStoreService* service = CertStoreService::GetForBrowserContext(profile());
+  CertStoreService* service =
+      CertStoreServiceFactory::GetForBrowserContext(profile());
   ASSERT_TRUE(service);
 
   // Install all certs from parameter at once.
@@ -727,7 +746,8 @@ IN_PROC_BROWSER_TEST_P(CertStoreServiceTest,
 
 IN_PROC_BROWSER_TEST_P(CertStoreServiceTest,
                        InstallsAndDeletesCorporateUsageCerts) {
-  CertStoreService* service = CertStoreService::GetForBrowserContext(profile());
+  CertStoreService* service =
+      CertStoreServiceFactory::GetForBrowserContext(profile());
   ASSERT_TRUE(service);
 
   // Install certs from parameter one by one.

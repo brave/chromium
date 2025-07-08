@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -119,7 +120,7 @@ class SanitizedImageSource : public content::URLDataSource {
     GURL image_url = GURL();
     bool static_encode = false;
     EncodeType encode_type = EncodeType::kPng;
-    absl::optional<signin::AccessTokenInfo> access_token_info;
+    std::optional<signin::AccessTokenInfo> access_token_info;
   };
 
   void StartImageDownload(RequestAttributes request_attributes,

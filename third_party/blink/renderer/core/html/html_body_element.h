@@ -58,7 +58,7 @@ class CORE_EXPORT HTMLBodyElement final : public HTMLElement,
   void CollectStyleForPresentationAttribute(
       const QualifiedName&,
       const AtomicString&,
-      MutableCSSPropertyValueSet*) override;
+      HeapVector<CSSPropertyValue, 8>&) override;
 
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
@@ -66,9 +66,6 @@ class CORE_EXPORT HTMLBodyElement final : public HTMLElement,
 
   bool IsURLAttribute(const Attribute&) const override;
   bool HasLegalLinkAttribute(const QualifiedName&) const override;
-  const QualifiedName& SubResourceAttributeName() const override;
-
-  bool SupportsFocus() const override;
 
   Document& GetDocumentForWindowEventHandler() const override {
     return GetDocument();

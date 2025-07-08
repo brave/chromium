@@ -5,14 +5,13 @@
 #ifndef CHROME_CREDENTIAL_PROVIDER_GAIACP_GAIA_CREDENTIAL_BASE_H_
 #define CHROME_CREDENTIAL_PROVIDER_GAIACP_GAIA_CREDENTIAL_BASE_H_
 
-#include "chrome/credential_provider/gaiacp/stdafx.h"
-
 #include <wrl/client.h>
 
 #include <memory>
 #include <string>
 
 #include "base/values.h"
+#include "base/win/atl.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_process_information.h"
 #include "chrome/credential_provider/gaiacp/associated_user_validator.h"
@@ -93,7 +92,7 @@ class ATL_NO_VTABLE CGaiaCredentialBase
   const CComBSTR& get_current_windows_password() const {
     return current_windows_password_;
   }
-  const absl::optional<base::Value::Dict>& get_authentication_results() const {
+  const std::optional<base::Value::Dict>& get_authentication_results() const {
     return authentication_results_;
   }
 
@@ -326,7 +325,7 @@ class ATL_NO_VTABLE CGaiaCredentialBase
 
   // Contains the information about the Gaia account that signed in.  See the
   // kKeyXXX constants for the data that is stored here.
-  absl::optional<base::Value::Dict> authentication_results_;
+  std::optional<base::Value::Dict> authentication_results_;
 
   // Holds information about the success or failure of the sign in.
   NTSTATUS result_status_ = STATUS_SUCCESS;

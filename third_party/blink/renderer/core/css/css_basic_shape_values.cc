@@ -97,9 +97,8 @@ static CSSValuePair* BuildSerializablePositionOffset(CSSValue* offset,
     if ((side == CSSValueID::kRight || side == CSSValueID::kBottom) &&
         amount->IsPercentage()) {
       side = default_side;
-      amount = CSSNumericLiteralValue::Create(
-          100 - amount->GetFloatValue(),
-          CSSPrimitiveValue::UnitType::kPercentage);
+      amount =
+          amount->SubtractFrom(100, CSSPrimitiveValue::UnitType::kPercentage);
     }
   } else {
     amount = To<CSSPrimitiveValue>(offset);
@@ -109,7 +108,8 @@ static CSSValuePair* BuildSerializablePositionOffset(CSSValue* offset,
     side = default_side;
     amount = CSSNumericLiteralValue::Create(
         50, CSSPrimitiveValue::UnitType::kPercentage);
-  } else if (!amount || (amount->IsLength() && amount->IsZero())) {
+  } else if (!amount ||
+             (amount->IsLength() && amount->GetValueIfKnown() == 0.0)) {
     if (side == CSSValueID::kRight || side == CSSValueID::kBottom) {
       amount = CSSNumericLiteralValue::Create(
           100, CSSPrimitiveValue::UnitType::kPercentage);
@@ -301,7 +301,8 @@ String CSSBasicShapePolygonValue::CustomCSSText() const {
 
 bool CSSBasicShapePolygonValue::Equals(
     const CSSBasicShapePolygonValue& other) const {
-  return CompareCSSValueVector(values_, other.values_);
+  return wind_rule_ == other.wind_rule_ &&
+         CompareCSSValueVector(values_, other.values_);
 }
 
 void CSSBasicShapePolygonValue::TraceAfterDispatch(
@@ -653,9 +654,16 @@ void CSSBasicShapeXYWHValue::Validate() const {
   DCHECK(x_);
   DCHECK(y_);
   DCHECK(width_);
-  DCHECK_GT(width_->GetFloatValue(), 0);
   DCHECK(height_);
-  DCHECK_GT(height_->GetFloatValue(), 0);
+
+  // The spec requires non-negative width and height but we can only validate
+  // numeric literals here.
+  if (width_->IsNumericLiteralValue()) {
+    DCHECK_GE(To<CSSNumericLiteralValue>(*width_).ClampedDoubleValue(), 0);
+  }
+  if (height_->IsNumericLiteralValue()) {
+    DCHECK_GE(To<CSSNumericLiteralValue>(*height_).ClampedDoubleValue(), 0);
+  }
 }
 
 }  // namespace cssvalue

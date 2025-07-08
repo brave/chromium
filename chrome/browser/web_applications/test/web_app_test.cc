@@ -16,12 +16,21 @@ WebAppTest::~WebAppTest() = default;
 void WebAppTest::SetUp() {
   ASSERT_TRUE(testing_profile_manager_.SetUp());
   profile_ = testing_profile_manager_.CreateTestingProfile(
-      TestingProfile::kDefaultProfileUserName, /*is_main_profile=*/true,
+      TestingProfile::kDefaultProfileUserName, /*testing_factories=*/{},
       shared_url_loader_factory_);
   content::RenderViewHostTestHarness::SetUp();
 }
 
 void WebAppTest::TearDown() {
+  // Manually shut down the provider and subsystems so that async tasks are
+  // stopped. Without this, async tasks may still be holding onto WebContents
+  // instances, which is checked for in
+  // `content::RenderViewHostTestHarness::TearDown()`. Note:
+  // `DeleteAllTestingProfiles` doesn't actually destruct profiles and therefore
+  // doesn't Shutdown keyed services like the provider.
+  fake_provider().Shutdown();
+
+  os_integration_test_override_.reset();
   if (testing::Test::HasFailure()) {
     base::TimeDelta log_time = base::TimeTicks::Now() - start_time_;
     web_app::test::LogDebugInfoToConsole(
@@ -43,6 +52,15 @@ content::BrowserContext* WebAppTest::GetBrowserContext() {
   return profile();
 }
 
-web_app::FakeWebAppProvider& WebAppTest::fake_provider() {
+web_app::WebAppProvider& WebAppTest::provider() const {
+  return *web_app::WebAppProvider::GetForWebApps(profile());
+}
+
+web_app::FakeWebAppProvider& WebAppTest::fake_provider() const {
   return *web_app::FakeWebAppProvider::Get(profile());
+}
+
+web_app::OsIntegrationTestOverrideImpl& WebAppTest::fake_os_integration()
+    const {
+  return os_integration_test_override_->test_override();
 }

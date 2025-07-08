@@ -4,8 +4,10 @@
 
 #include "components/dom_distiller/content/browser/dom_distiller_viewer_source.h"
 
+#include <deque>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -84,7 +86,7 @@ class DomDistillerViewerSource::RequestViewerHandle
 
   // Temporary store of pending JavaScript if the page isn't ready to receive
   // data from distillation.
-  std::string buffer_;
+  std::deque<std::string> buffers_;
 };
 
 DomDistillerViewerSource::RequestViewerHandle::RequestViewerHandle(
@@ -105,9 +107,9 @@ DomDistillerViewerSource::RequestViewerHandle::~RequestViewerHandle() {
 void DomDistillerViewerSource::RequestViewerHandle::SendJavaScript(
     const std::string& buffer) {
   if (waiting_for_page_ready_) {
-    buffer_ += buffer;
+    buffers_.push_back(buffer);
   } else {
-    DCHECK(buffer_.empty());
+    DCHECK(buffers_.empty());
     if (web_contents()) {
       RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer);
     }
@@ -173,22 +175,15 @@ void DomDistillerViewerSource::RequestViewerHandle::DOMContentLoaded(
     return;
   }
 
-  int64_t start_time_ms = url_utils::GetTimeFromDistillerUrl(
-      render_frame_host->GetLastCommittedURL());
-  if (start_time_ms > 0) {
-    base::TimeTicks start_time =
-        base::Milliseconds(start_time_ms) + base::TimeTicks();
-    base::TimeDelta latency = base::TimeTicks::Now() - start_time;
-
-    UMA_HISTOGRAM_TIMES("DomDistiller.Time.ViewerLoading", latency);
+  // Execute the scripts in buffer_ one-by-one, starting from the front of the
+  // list.
+  while (!buffers_.empty()) {
+    RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(),
+                          buffers_.front());
+    buffers_.pop_front();
   }
-
   // No SendJavaScript() calls allowed before |buffer_| is run and cleared.
   waiting_for_page_ready_ = false;
-  if (!buffer_.empty()) {
-    RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer_);
-    buffer_.clear();
-  }
   // No need to Cancel() here.
 }
 
@@ -207,7 +202,7 @@ void DomDistillerViewerSource::StartDataRequest(
     const GURL& url,
     const content::WebContents::Getter& wc_getter,
     content::URLDataSource::GotDataCallback callback) {
-  // TODO(crbug/1009127): simplify path matching.
+  // TODO(crbug.com/40050262): simplify path matching.
   const std::string path = URLDataSource::URLToRequestPath(url);
   content::WebContents* web_contents = wc_getter.Run();
   if (!web_contents)
@@ -231,11 +226,10 @@ void DomDistillerViewerSource::StartDataRequest(
         base::MakeRefCounted<base::RefCountedString>(std::move(image)));
     return;
   }
-  if (base::StartsWith(path, kViewerSaveFontScalingPath,
-                       base::CompareCase::SENSITIVE)) {
+  auto remainder = base::RemovePrefix(path, kViewerSaveFontScalingPath);
+  if (remainder) {
     double scale = 1.0;
-    if (base::StringToDouble(path.substr(strlen(kViewerSaveFontScalingPath)),
-                             &scale)) {
+    if (base::StringToDouble(*remainder, &scale)) {
       dom_distiller_service_->GetDistilledPagePrefs()->SetFontScaling(scale);
     }
   }
@@ -243,7 +237,7 @@ void DomDistillerViewerSource::StartDataRequest(
   // We need the host part to validate the parameter, but it's not available
   // from |URLDataSource|. |web_contents| is the most convenient place to
   // obtain the full URL.
-  // TODO(crbug.com/991888): pass GURL in URLDataSource::StartDataRequest().
+  // TODO(crbug.com/40095934): pass GURL in URLDataSource::StartDataRequest().
   const std::string query = GURL("https://host/" + path).query();
   GURL request_url = web_contents->GetVisibleURL();
   // The query should match what's seen in |web_contents|.
@@ -265,7 +259,7 @@ void DomDistillerViewerSource::StartDataRequest(
   std::string unsafe_page_html = viewer::GetArticleTemplateHtml(
       dom_distiller_service_->GetDistilledPagePrefs()->GetTheme(),
       dom_distiller_service_->GetDistilledPagePrefs()->GetFontFamily(),
-      std::string());
+      std::string(), /*use_offline_data=*/false);
 
   if (viewer_handle) {
     // The service returned a |ViewerHandle| and guarantees it will call
@@ -283,7 +277,7 @@ void DomDistillerViewerSource::StartDataRequest(
 }
 
 std::string DomDistillerViewerSource::GetMimeType(const GURL& url) {
-  const base::StringPiece path = url.path_piece().substr(1);
+  const std::string_view path = url.path_piece().substr(1);
   if (kViewerCssPath == path)
     return "text/css";
   if (kViewerLoadingImagePath == path)

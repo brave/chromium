@@ -19,16 +19,15 @@
 #include "content/public/browser/session_storage_usage_info.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/storage_usage_info.h"
+#include "content/public/common/content_features.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/cookies/cookie_util.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
-#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -48,7 +47,7 @@ SiteDataCountingHelper::SiteDataCountingHelper(
       completion_callback_(std::move(completion_callback)),
       tasks_(0) {}
 
-SiteDataCountingHelper::~SiteDataCountingHelper() {}
+SiteDataCountingHelper::~SiteDataCountingHelper() = default;
 
 void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   content::StoragePartition* partition = profile_->GetDefaultStoragePartition();
@@ -65,21 +64,16 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
 
   storage::QuotaManager* quota_manager = partition->GetQuotaManager();
   if (quota_manager) {
-    // Count storage keys with filesystem, websql, indexeddb, serviceworkers,
-    // cachestorage, and medialicense using quota manager.
+    // Count storage keys with filesystem, indexeddb, serviceworkers,
+    // and cachestorage using quota manager.
     auto buckets_callback =
         base::BindRepeating(&SiteDataCountingHelper::GetQuotaBucketsCallback,
                             base::Unretained(this));
-    const blink::mojom::StorageType types[] = {
-        blink::mojom::StorageType::kTemporary,
-        blink::mojom::StorageType::kSyncable};
-    for (auto type : types) {
-      tasks_ += 1;
-      content::GetIOThreadTaskRunner({})->PostTask(
-          FROM_HERE,
-          base::BindOnce(&storage::QuotaManager::GetBucketsModifiedBetween,
-                         quota_manager, type, begin_, end_, buckets_callback));
-    }
+    tasks_ += 1;
+    content::GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&storage::QuotaManager::GetBucketsModifiedBetween,
+                       quota_manager, begin_, end_, buckets_callback));
   }
 
   // Count origins with local storage or session storage.
@@ -90,7 +84,8 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
         &SiteDataCountingHelper::GetLocalStorageUsageInfoCallback,
         base::Unretained(this), special_storage_policy);
     dom_storage->GetLocalStorageUsage(std::move(local_callback));
-    // TODO(772337): Enable session storage counting when deletion is fixed.
+    // TODO(crbug.com/41348517): Enable session storage counting when deletion
+    // is fixed.
   }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -99,6 +94,14 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   Done(cdm::MediaDrmStorageImpl::GetOriginsModifiedBetween(profile_->GetPrefs(),
                                                            begin_, end_));
 #endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  tasks_ += 1;
+  auto cdm_storage_callback = base::BindOnce(
+      &SiteDataCountingHelper::GetCdmStorageCallback, base::Unretained(this));
+  partition->GetCdmStorageDataModel()->GetUsagePerAllStorageKeys(
+      std::move(cdm_storage_callback), begin_, end_);
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
   // Counting site usage data and durable permissions.
   auto* hcsm = HostContentSettingsMapFactory::GetForProfile(profile_);
@@ -144,13 +147,24 @@ void SiteDataCountingHelper::GetCookiesCallback(
   for (const net::CanonicalCookie& cookie : cookies) {
     if (cookie.CreationDate() >= begin_ && cookie.CreationDate() < end_) {
       GURL url = net::cookie_util::CookieOriginToURL(cookie.Domain(),
-                                                     cookie.IsSecure());
+                                                     cookie.SecureAttribute());
       origins.push_back(url);
     }
   }
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&SiteDataCountingHelper::Done,
                                 base::Unretained(this), origins));
+}
+
+void SiteDataCountingHelper::GetCdmStorageCallback(
+    const CdmStorageKeyUsageSize& usage_per_storage_keys) {
+  std::vector<GURL> urls;
+
+  for (auto const& [key, _] : usage_per_storage_keys) {
+    urls.emplace_back(key.origin().GetURL());
+  }
+
+  Done(urls);
 }
 
 void SiteDataCountingHelper::GetQuotaBucketsCallback(

@@ -27,16 +27,20 @@ NotifierStateTrackerFactory::NotifierStateTrackerFactory()
           "NotifierStateTracker",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(PermissionManagerFactory::GetInstance());
 }
 
 NotifierStateTrackerFactory::~NotifierStateTrackerFactory() = default;
 
-KeyedService* NotifierStateTrackerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+NotifierStateTrackerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* profile) const {
-  return new NotifierStateTracker(static_cast<Profile*>(profile));
+  return std::make_unique<NotifierStateTracker>(static_cast<Profile*>(profile));
 }

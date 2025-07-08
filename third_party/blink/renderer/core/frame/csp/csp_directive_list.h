@@ -7,6 +7,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/platform/crypto.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/reporting_disposition.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -27,7 +28,7 @@ bool CSPDirectiveListIsReportOnly(
     const network::mojom::blink::ContentSecurityPolicy& csp);
 
 CORE_EXPORT
-bool CSPDirectiveListAllowFromSource(
+CSPCheckResult CSPDirectiveListAllowFromSource(
     const network::mojom::blink::ContentSecurityPolicy& csp,
     ContentSecurityPolicy* policy,
     CSPDirectiveName type,
@@ -36,7 +37,7 @@ bool CSPDirectiveListAllowFromSource(
     ResourceRequest::RedirectStatus redirect_status,
     ReportingDisposition reporting_disposition,
     const String& nonce = String(),
-    const IntegrityMetadataSet& hashes = IntegrityMetadataSet(),
+    const IntegrityMetadataSet& integrity_metadata = IntegrityMetadataSet(),
     ParserDisposition parser_disposition = kParserInserted);
 
 CORE_EXPORT
@@ -46,7 +47,7 @@ bool CSPDirectiveListAllowTrustedTypeAssignmentFailure(
     const String& message,
     const String& sample,
     const String& sample_prefix,
-    absl::optional<base::UnguessableToken> issue_id);
+    std::optional<base::UnguessableToken> issue_id);
 
 CORE_EXPORT
 bool CSPDirectiveListAllowTrustedTypePolicy(
@@ -55,10 +56,14 @@ bool CSPDirectiveListAllowTrustedTypePolicy(
     const String& policy_name,
     bool is_duplicate,
     ContentSecurityPolicy::AllowTrustedTypePolicyDetails& violation_details,
-    absl::optional<base::UnguessableToken> issue_id);
+    std::optional<base::UnguessableToken> issue_id);
 
 CORE_EXPORT
 bool CSPDirectiveListRequiresTrustedTypes(
+    const network::mojom::blink::ContentSecurityPolicy& csp);
+
+CORE_EXPORT
+std::optional<HashAlgorithm> CSPDirectiveListHashToReport(
     const network::mojom::blink::ContentSecurityPolicy& csp);
 
 CORE_EXPORT
@@ -85,7 +90,8 @@ bool CSPDirectiveListAllowEval(
     ContentSecurityPolicy* policy,
     ReportingDisposition reporting_disposition,
     ContentSecurityPolicy::ExceptionStatus exception_status,
-    const String& content);
+    const String& content,
+    const Vector<network::mojom::blink::CSPHashSourcePtr>& script_hash_values);
 
 CORE_EXPORT
 bool CSPDirectiveListAllowWasmCodeGeneration(
@@ -120,6 +126,11 @@ bool CSPDirectiveListAllowHash(
     const network::mojom::blink::ContentSecurityPolicy& csp,
     const network::mojom::blink::CSPHashSource& hash_value,
     const ContentSecurityPolicy::InlineType inline_type);
+
+CORE_EXPORT
+bool CSPDirectiveListAllowEvalHash(
+    const Vector<network::mojom::blink::CSPHashSourcePtr>& script_hash_values,
+    CSPOperativeDirective directive);
 
 // We consider `object-src` restrictions to be reasonable iff they're
 // equivalent to `object-src 'none'`.
@@ -156,6 +167,11 @@ CORE_EXPORT
 CSPOperativeDirective CSPDirectiveListOperativeDirective(
     const network::mojom::blink::ContentSecurityPolicy& csp,
     CSPDirectiveName type);
+
+void FillInCSPHashValues(
+    const String& source,
+    const WTF::HashSet<IntegrityAlgorithm>& hash_algorithms_used,
+    Vector<network::mojom::blink::CSPHashSourcePtr>& csp_hash_values);
 
 }  // namespace blink
 

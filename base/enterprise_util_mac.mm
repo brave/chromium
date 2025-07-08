@@ -7,18 +7,15 @@
 #import <OpenDirectory/OpenDirectory.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "base/apple/foundation_util.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
 #include "base/process/launch.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace base {
 
@@ -64,9 +61,9 @@ MacDeviceManagementState IsDeviceRegisteredWithManagement() {
     bool mdm_enrollment_user_approved = false;
 
     for (const auto& property_state : property_states) {
-      StringPiece property =
+      std::string_view property =
           TrimString(property_state.first, kWhitespaceASCII, TRIM_ALL);
-      StringPiece state =
+      std::string_view state =
           TrimString(property_state.second, kWhitespaceASCII, TRIM_ALL);
 
       if (property == "Enrolled via DEP") {
@@ -116,7 +113,8 @@ MacDeviceManagementState IsDeviceRegisteredWithManagement() {
 
 DeviceUserDomainJoinState AreDeviceAndUserJoinedToDomain() {
   static DeviceUserDomainJoinState state = [] {
-    DeviceUserDomainJoinState state{false, false};
+    DeviceUserDomainJoinState state{.device_joined = false,
+                                    .user_joined = false};
 
     @autoreleasepool {
       ODSession* session = [ODSession defaultSession];
@@ -125,27 +123,23 @@ DeviceUserDomainJoinState AreDeviceAndUserJoinedToDomain() {
         return state;
       }
 
+      // Machines that are domain-joined have nodes under "/LDAPv3" or "/Active
+      // Directory". See https://stackoverflow.com/questions/32470557/ and
+      // https://stackoverflow.com/questions/69093499/, respectively, for
+      // examples.
       NSError* error = nil;
-
-      NSArray<NSString*>* all_node_names =
-          [session nodeNamesAndReturnError:&error];
-      if (!all_node_names) {
+      NSArray<NSString*>* node_names = [session nodeNamesAndReturnError:&error];
+      if (!node_names) {
         DLOG(WARNING) << "ODSession failed to give node names: "
                       << error.localizedDescription.UTF8String;
         return state;
       }
 
-      NSUInteger num_nodes = all_node_names.count;
-      if (num_nodes < 3) {
-        DLOG(WARNING) << "ODSession returned too few node names: "
-                      << all_node_names.description.UTF8String;
-        return state;
-      }
-
-      if (num_nodes > 3) {
-        // Non-enterprise machines have:"/Search", "/Search/Contacts",
-        // "/Local/Default". Everything else would be enterprise management.
-        state.device_joined = true;
+      for (NSString* node_name in node_names) {
+        if ([node_name hasPrefix:@"/LDAPv3"] ||
+            [node_name hasPrefix:@"/Active Directory"]) {
+          state.device_joined = true;
+        }
       }
 
       ODNode* node = [ODNode nodeWithSession:session
@@ -185,12 +179,13 @@ DeviceUserDomainJoinState AreDeviceAndUserJoinedToDomain() {
       }
 
       for (id element in results) {
-        ODRecord* record = mac::ObjCCastStrict<ODRecord>(element);
+        ODRecord* record = base::apple::ObjCCastStrict<ODRecord>(element);
         NSArray* attributes =
             [record valuesForAttribute:kODAttributeTypeMetaRecordName
                                  error:nil];
         for (id attribute in attributes) {
-          NSString* attribute_value = mac::ObjCCastStrict<NSString>(attribute);
+          NSString* attribute_value =
+              base::apple::ObjCCastStrict<NSString>(attribute);
           // Example: "uid=johnsmith,ou=People,dc=chromium,dc=org
           NSRange domain_controller =
               [attribute_value rangeOfString:@"(^|,)\\s*dc="
@@ -205,7 +200,8 @@ DeviceUserDomainJoinState AreDeviceAndUserJoinedToDomain() {
             [record valuesForAttribute:kODAttributeTypeAltSecurityIdentities
                                  error:nil];
         for (id attribute in attributes) {
-          NSString* attribute_value = mac::ObjCCastStrict<NSString>(attribute);
+          NSString* attribute_value =
+              base::apple::ObjCCastStrict<NSString>(attribute);
           NSRange icloud =
               [attribute_value rangeOfString:@"CN=com.apple.idms.appleid.prd"
                                      options:NSCaseInsensitiveSearch];

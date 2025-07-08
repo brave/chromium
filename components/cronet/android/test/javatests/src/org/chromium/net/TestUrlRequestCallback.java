@@ -5,6 +5,7 @@
 package org.chromium.net;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.junit.Assert.fail;
 
@@ -19,13 +20,13 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Callback that tracks information from different callbacks and and has a
- * method to block thread until the request completes on another thread.
- * Allows to cancel, block request or throw an exception from an arbitrary step.
+ * Callback that tracks information from different callbacks and and has a method to block thread
+ * until the request completes on another thread. Allows to cancel, block request or throw an
+ * exception from an arbitrary step.
  */
 public class TestUrlRequestCallback extends UrlRequest.Callback {
-    public ArrayList<UrlResponseInfo> mRedirectResponseInfoList = new ArrayList<UrlResponseInfo>();
-    public ArrayList<String> mRedirectUrlList = new ArrayList<String>();
+    public ArrayList<UrlResponseInfo> mRedirectResponseInfoList = new ArrayList<>();
+    public ArrayList<String> mRedirectUrlList = new ArrayList<>();
     private UrlResponseInfo mResponseInfo;
     public CronetException mError;
 
@@ -51,7 +52,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
 
     // The executor thread will block on this after reaching a terminal method.
     // Terminal methods are (onSucceeded, onFailed or onCancelled)
-    private ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
+    private final ConditionVariable mBlockOnTerminalState = new ConditionVariable(true);
 
     // Conditionally fail on certain steps.
     private FailureType mFailureType = FailureType.NONE;
@@ -73,22 +74,24 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
     private static class ExecutorThreadFactory implements ThreadFactory {
         @Override
         public Thread newThread(final Runnable r) {
-            return new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    StrictMode.ThreadPolicy threadPolicy = StrictMode.getThreadPolicy();
-                    try {
-                        StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
-                                                           .detectNetwork()
-                                                           .penaltyLog()
-                                                           .penaltyDeath()
-                                                           .build());
-                        r.run();
-                    } finally {
-                        StrictMode.setThreadPolicy(threadPolicy);
-                    }
-                }
-            });
+            return new Thread(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            StrictMode.ThreadPolicy threadPolicy = StrictMode.getThreadPolicy();
+                            try {
+                                StrictMode.setThreadPolicy(
+                                        new StrictMode.ThreadPolicy.Builder()
+                                                .detectNetwork()
+                                                .penaltyLog()
+                                                .penaltyDeath()
+                                                .build());
+                                r.run();
+                            } finally {
+                                StrictMode.setThreadPolicy(threadPolicy);
+                            }
+                        }
+                    });
         }
     }
 
@@ -112,21 +115,18 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
         THROW_SYNC
     }
 
-    /**
-     * Set {@code mExecutorThread}.
-     */
+    /** Set {@code mExecutorThread}. */
     private void fillInExecutorThread() {
-        mExecutorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                mExecutorThread = Thread.currentThread();
-            }
-        });
+        mExecutorService.execute(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        mExecutorThread = Thread.currentThread();
+                    }
+                });
     }
 
-    /**
-     * Create a {@link TestUrlRequestCallback} with a new single-threaded executor.
-     */
+    /** Create a {@link TestUrlRequestCallback} with a new single-threaded executor. */
     public TestUrlRequestCallback() {
         this(Executors.newSingleThreadExecutor(new ExecutorThreadFactory()));
     }
@@ -171,6 +171,10 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
         mDone.block();
     }
 
+    public void blockForDone(long timeoutMs) {
+        assertWithMessage("Request didn't terminate in time").that(mDone.block(timeoutMs)).isTrue();
+    }
+
     public void waitForNextStep() {
         mStepBlock.block();
         mStepBlock.close();
@@ -194,7 +198,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
             // Termination shouldn't take long. Use 1 min which should be more than enough.
             mExecutorService.awaitTermination(1, TimeUnit.MINUTES);
         } catch (InterruptedException e) {
-            fail("ExecutorService is interrupted while waiting for termination");
+            throw new RuntimeException(e);
         }
         assertThat(mExecutorService.isTerminated()).isTrue();
     }
@@ -288,13 +292,14 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
         // Shouldn't happen after success.
         assertThat(mResponseStep).isNotEqualTo(ResponseStep.ON_SUCCEEDED);
         // Should happen at most once for a single request.
+        assertThat(mError).isNull();
         assertThat(mOnErrorCalled).isFalse();
         assertThat(mOnCanceledCalled).isFalse();
-        assertThat(mError).isNull();
         if (mCallbackExceptionThrown) {
             assertThat(error).isInstanceOf(CallbackException.class);
-            assertThat(error).hasMessageThat().contains(
-                    "Exception received from UrlRequest.Callback");
+            assertThat(error)
+                    .hasMessageThat()
+                    .contains("Exception received from UrlRequest.Callback");
             assertThat(error).hasCauseThat().isInstanceOf(IllegalStateException.class);
             assertThat(error).hasCauseThat().hasMessageThat().contains("Listener Exception.");
         }
@@ -317,6 +322,7 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
         assertThat(mError).isNull();
 
         mResponseStep = ResponseStep.ON_CANCELED;
+        mResponseInfo = info;
         mOnCanceledCalled = true;
         openDone();
         mBlockOnTerminalState.block();
@@ -388,12 +394,13 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
             mCallbackExceptionThrown = true;
             throw new IllegalStateException("Listener Exception.");
         }
-        Runnable task = new Runnable() {
-            @Override
-            public void run() {
-                request.cancel();
-            }
-        };
+        Runnable task =
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        request.cancel();
+                    }
+                };
         if (mFailureType == FailureType.CANCEL_ASYNC
                 || mFailureType == FailureType.CANCEL_ASYNC_WITHOUT_PAUSE) {
             getExecutor().execute(task);
@@ -401,5 +408,54 @@ public class TestUrlRequestCallback extends UrlRequest.Callback {
             task.run();
         }
         return mFailureType != FailureType.CANCEL_ASYNC_WITHOUT_PAUSE;
+    }
+
+    /**
+     * A simple callback for a succeeding non-redirected request. Fails when other callback methods
+     * that should not be executed are called.
+     */
+    public static class SimpleSucceedingCallback extends UrlRequest.Callback {
+        public final ConditionVariable done = new ConditionVariable();
+        private final ExecutorService mExecutor;
+
+        public SimpleSucceedingCallback() {
+            mExecutor = Executors.newSingleThreadExecutor();
+        }
+
+        @Override
+        public void onRedirectReceived(UrlRequest request, UrlResponseInfo info, String location) {
+            fail();
+        }
+
+        @Override
+        public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
+            request.read(ByteBuffer.allocateDirect(32 * 1024));
+        }
+
+        @Override
+        public void onReadCompleted(
+                UrlRequest request, UrlResponseInfo info, ByteBuffer byteBuffer) {
+            byteBuffer.clear(); // we don't care about the data
+            request.read(byteBuffer);
+        }
+
+        @Override
+        public void onSucceeded(UrlRequest request, UrlResponseInfo info) {
+            done.open();
+        }
+
+        @Override
+        public void onCanceled(UrlRequest request, UrlResponseInfo info) {
+            fail();
+        }
+
+        @Override
+        public void onFailed(UrlRequest request, UrlResponseInfo info, CronetException e) {
+            fail(e.getMessage());
+        }
+
+        public ExecutorService getExecutor() {
+            return mExecutor;
+        }
     }
 }

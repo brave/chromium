@@ -26,9 +26,9 @@ class NoStatePrefetchLinkManagerFactory : public ProfileKeyedServiceFactory {
   friend base::NoDestructor<NoStatePrefetchLinkManagerFactory>;
 
   NoStatePrefetchLinkManagerFactory();
-  ~NoStatePrefetchLinkManagerFactory() override {}
+  ~NoStatePrefetchLinkManagerFactory() override = default;
 
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 

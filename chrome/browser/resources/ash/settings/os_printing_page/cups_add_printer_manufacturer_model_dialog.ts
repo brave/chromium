@@ -7,9 +7,9 @@
  * 'add-printer-manufacturer-model-dialog' is a dialog in which the user can
  *   manually select the manufacture and model of the new printer.
  */
-import 'chrome://resources/cr_components/localized_link/localized_link.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
 import './cups_add_printer_dialog.js';
 import './cups_printer_dialog_error.js';
 import './cups_printer_shared.css.js';
@@ -20,7 +20,8 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 
 import {getTemplate} from './cups_add_printer_manufacturer_model_dialog.html.js';
 import {getBaseName, getErrorText, isPPDInfoValid} from './cups_printer_dialog_util.js';
-import {CupsPrinterInfo, CupsPrintersBrowserProxy, CupsPrintersBrowserProxyImpl, ManufacturersInfo, ModelsInfo, PrinterSetupResult} from './cups_printers_browser_proxy.js';
+import type {CupsPrinterInfo, CupsPrintersBrowserProxy, ManufacturersInfo, ModelsInfo, PrinterSetupResult} from './cups_printers_browser_proxy.js';
+import {CupsPrintersBrowserProxyImpl} from './cups_printers_browser_proxy.js';
 
 export class AddPrinterManufacturerModelDialogElement extends PolymerElement {
   static get is() {
@@ -107,6 +108,8 @@ export class AddPrinterManufacturerModelDialogElement extends PolymerElement {
   private errorText_: string;
   private eulaUrl_: string;
   private invalidPPD_: boolean;
+  private isManufacturerInvalid_: boolean;
+  private isModelInvalid_: boolean;
   private newUserPPD_: string;
 
   constructor() {
@@ -127,6 +130,7 @@ export class AddPrinterManufacturerModelDialogElement extends PolymerElement {
   }
 
   private onPrinterAddedSucceeded_(result: PrinterSetupResult): void {
+    this.recordAddPrinterResult(/*success=*/ true);
     const showCupsPrinterToastEvent =
         new CustomEvent('show-cups-printer-toast', {
           bubbles: true,
@@ -142,6 +146,7 @@ export class AddPrinterManufacturerModelDialogElement extends PolymerElement {
    * Handler for addCupsPrinter failure.
    */
   private onPrinterAddedFailed_(result: PrinterSetupResult): void {
+    this.recordAddPrinterResult(/*success=*/ false);
     this.addPrinterInProgress_ = false;
     this.errorText_ = getErrorText(result);
   }
@@ -249,6 +254,11 @@ export class AddPrinterManufacturerModelDialogElement extends PolymerElement {
     return !addPrinterInProgress &&
         isPPDInfoValid(ppdManufacturer, ppdModel, printerPPDPath) &&
         !isManufacturerInvalid && !isModelInvalid;
+  }
+
+  private recordAddPrinterResult(success: boolean): void {
+    chrome.metricsPrivate.recordBoolean(
+        'Printing.CUPS.AddPrinterManuallyResult', success);
   }
 }
 

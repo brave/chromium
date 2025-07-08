@@ -10,7 +10,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -21,11 +20,11 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/prerender_test_util.h"
@@ -212,8 +211,7 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest,
   // original bug to reproduce.
   {
     GURL url = embedded_test_server()->GetURL("a.com", "/title1.html");
-    ui_test_utils::UrlLoadObserver load_complete(
-        url, content::NotificationService::AllSources());
+    ui_test_utils::UrlLoadObserver load_complete(url);
     EXPECT_TRUE(
         content::ExecJs(browser()->tab_strip_model()->GetActiveWebContents(),
                         "window.open('" + url.spec() + "');"));
@@ -232,8 +230,7 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest,
   // Navigate back in session history to ensure view-source mode is still
   // active.
   {
-    ui_test_utils::UrlLoadObserver load_complete(
-        url_viewsource, content::NotificationService::AllSources());
+    ui_test_utils::UrlLoadObserver load_complete(url_viewsource);
     chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
     load_complete.Wait();
   }
@@ -274,8 +271,8 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest, CrossSiteSubframe) {
   if (content::AreAllSitesIsolatedForTesting()) {
     EXPECT_NE(original_main_frame->GetSiteInstance(),
               original_child_frame->GetSiteInstance());
-    EXPECT_NE(original_main_frame->GetProcess()->GetID(),
-              original_child_frame->GetProcess()->GetID());
+    EXPECT_NE(original_main_frame->GetProcess()->GetDeprecatedID(),
+              original_child_frame->GetProcess()->GetDeprecatedID());
   }
 
   // Open view-source mode tab for the subframe.  This tries to mimic the
@@ -475,9 +472,15 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest,
   GURL view_source_url(content::kViewSourceScheme + std::string(":") +
                        url.spec());
   EXPECT_EQ(view_source_url, view_source_contents->GetLastCommittedURL());
+  // Make sure that the navigation type reported is "back_forward" on the
+  // duplicated tab.
+  EXPECT_EQ(
+      "back_forward",
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      "performance.getEntriesByType('navigation')[0].type"));
 
   // Verify the request for the view-source tab had the correct IsolationInfo.
-  absl::optional<network::ResourceRequest> request =
+  std::optional<network::ResourceRequest> request =
       loader_monitor.GetRequestInfo(url);
   ASSERT_TRUE(request);
   ASSERT_TRUE(request->trusted_params);
@@ -485,8 +488,7 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest,
   EXPECT_TRUE(request->trusted_params->isolation_info.IsEqualForTesting(
       net::IsolationInfo::Create(net::IsolationInfo::RequestType::kMainFrame,
                                  origin, origin,
-                                 net::SiteForCookies::FromOrigin(origin),
-                                 std::set<net::SchemefulSite>())));
+                                 net::SiteForCookies::FromOrigin(origin))));
 }
 
 class ViewSourceWithSplitCacheTest
@@ -648,7 +650,8 @@ IN_PROC_BROWSER_TEST_P(ViewSourceWithSplitCacheEnabledTest,
         subframe_url.c_str());
     content::TestNavigationObserver navigation_observer(original_contents);
     original_contents->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
-        base::ASCIIToUTF16(create_frame_script), base::NullCallback());
+        base::ASCIIToUTF16(create_frame_script), base::NullCallback(),
+        content::ISOLATED_WORLD_ID_GLOBAL);
     navigation_observer.Wait();
   }
 
@@ -781,7 +784,8 @@ class ViewSourcePrerenderTest : public ViewSourceTest {
   void set_target(content::WebContents* target) { target_ = target; }
 
   void SetUp() override {
-    prerender_test_helper().SetUp(embedded_test_server());
+    prerender_test_helper().RegisterServerRequestMonitor(
+        embedded_test_server());
     ViewSourceTest::SetUp();
   }
 
@@ -806,7 +810,8 @@ IN_PROC_BROWSER_TEST_F(ViewSourcePrerenderTest, ViewSourceForPrerender) {
   set_target(content::WebContents::FromRenderFrameHost(referrer_frame));
 
   prerender_test_helper().AddPrerender(prerender_url);
-  int host_id = prerender_test_helper().GetHostForUrl(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_test_helper().GetHostForUrl(prerender_url);
   content::RenderFrameHost* prerender_frame =
       prerender_test_helper().GetPrerenderedMainFrameHost(host_id);
   EXPECT_TRUE(prerender_frame);

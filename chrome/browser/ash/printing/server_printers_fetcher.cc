@@ -5,20 +5,22 @@
 #include "chrome/browser/ash/printing/server_printers_fetcher.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 
-#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/device_event_log/device_event_log.h"
+#include "crypto/obsolete/md5.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -31,6 +33,16 @@
 #include "url/gurl.h"
 
 namespace ash {
+
+namespace printing {
+
+// Not in namespace {} so it can be friended by crypto/obsolete/md5.
+std::string ServerPrinterId(const std::string& url) {
+  return "server-" +
+         base::ToLowerASCII(base::HexEncode(crypto::obsolete::Md5::Hash(url)));
+}
+
+}  // namespace printing
 
 namespace {
 
@@ -59,15 +71,6 @@ constexpr net::NetworkTrafficAnnotationTag kServerPrintersFetcherNetworkTag =
         }
       }
     })");
-
-std::string ServerPrinterId(const std::string& url) {
-  base::MD5Context ctx;
-  base::MD5Init(&ctx);
-  base::MD5Update(&ctx, url);
-  base::MD5Digest digest;
-  base::MD5Final(&digest, &ctx);
-  return "server-" + base::MD5DigestToBase16(digest);
-}
 
 }  // namespace
 
@@ -105,7 +108,7 @@ class ServerPrintersFetcher::PrivateImplementation
   void Delete() { task_runner_->DeleteSoon(FROM_HERE, this); }
 
   // Implementation of network::SimpleURLLoaderStreamConsumer.
-  void OnDataReceived(base::StringPiece part_of_payload,
+  void OnDataReceived(std::string_view part_of_payload,
                       base::OnceClosure resume) override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     response_.insert(response_.end(), part_of_payload.begin(),
@@ -255,10 +258,10 @@ class ServerPrintersFetcher::PrivateImplementation
     // Complete building the printer's URI.
     url.SetPath({"printers", name});
     printer->SetUri(url);
-    printer->set_id(ServerPrinterId(url.GetNormalized()));
+    printer->set_id(printing::ServerPrinterId(url.GetNormalized()));
   }
 
-  raw_ptr<const ServerPrintersFetcher, ExperimentalAsh> owner_;
+  raw_ptr<const ServerPrintersFetcher, DanglingUntriaged> owner_;
   const GURL server_url_;
   const std::string server_name_;
 

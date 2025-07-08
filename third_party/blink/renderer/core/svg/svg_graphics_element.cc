@@ -21,14 +21,15 @@
 
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
 
-#include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
-#include "third_party/blink/renderer/core/svg/svg_animated_transform_list.h"
-#include "third_party/blink/renderer/core/svg/svg_element_rare_data.h"
+#include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
+#include "third_party/blink/renderer/core/svg/svg_foreign_object_element.h"
+#include "third_party/blink/renderer/core/svg/svg_image_element.h"
 #include "third_party/blink/renderer/core/svg/svg_matrix_tear_off.h"
 #include "third_party/blink/renderer/core/svg/svg_rect_tear_off.h"
-#include "third_party/blink/renderer/core/svg_names.h"
+#include "third_party/blink/renderer/core/svg/svg_svg_element.h"
+#include "third_party/blink/renderer/core/svg/svg_symbol_element.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
@@ -38,19 +39,34 @@ namespace blink {
 SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tag_name,
                                        Document& document,
                                        ConstructionType construction_type)
-    : SVGElement(tag_name, document, construction_type),
-      SVGTests(this),
-      transform_(MakeGarbageCollected<SVGAnimatedTransformList>(
-          this,
-          svg_names::kTransformAttr,
-          CSSPropertyID::kTransform)) {}
+    : SVGTransformableElement(tag_name, document, construction_type),
+      SVGTests(this) {}
 
 SVGGraphicsElement::~SVGGraphicsElement() = default;
 
 void SVGGraphicsElement::Trace(Visitor* visitor) const {
-  visitor->Trace(transform_);
-  SVGElement::Trace(visitor);
+  SVGTransformableElement::Trace(visitor);
   SVGTests::Trace(visitor);
+}
+
+// TODO : This function performs an upward traversal of the layout tree to check
+// if the element is inside a `LayoutSVGHiddenContainer`, this is not very
+// efficient. Consider using a cache based system where each svg element (or its
+// corresponding layout object) has a flag that indicates if it is inside a
+// `LayoutSVGHiddenContainer`.
+bool SVGGraphicsElement::IsNonRendered(const LayoutObject* object) const {
+  for (; object; object = object->Parent()) {
+    // Check if the Element's LayoutObject or any ancestor is a
+    // LayoutSVGHiddenContainer
+    if (object->IsSVGHiddenContainer()) {
+      return true;
+    }
+
+    if (IsA<LayoutSVGRoot>(*object)) {
+      break;
+    }
+  }
+  return false;
 }
 
 static bool IsViewportElement(const Element& element) {
@@ -105,52 +121,16 @@ SVGMatrixTearOff* SVGGraphicsElement::getScreenCTM() {
   return MakeGarbageCollected<SVGMatrixTearOff>(ComputeCTM(kScreenScope));
 }
 
-void SVGGraphicsElement::CollectStyleForPresentationAttribute(
-    const QualifiedName& name,
-    const AtomicString& value,
-    MutableCSSPropertyValueSet* style) {
-  if (name == svg_names::kTransformAttr) {
-    AddPropertyToPresentationAttributeStyle(
-        style, CSSPropertyID::kTransform,
-        *transform_->CurrentValue()->CssValue());
-    return;
-  }
-  SVGElement::CollectStyleForPresentationAttribute(name, value, style);
-}
-
-AffineTransform SVGGraphicsElement::LocalCoordinateSpaceTransform(
-    CTMScope) const {
-  return CalculateTransform(kIncludeMotionTransform);
-}
-
-AffineTransform* SVGGraphicsElement::AnimateMotionTransform() {
-  return EnsureSVGRareData()->AnimateMotionTransform();
-}
-
 void SVGGraphicsElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   const QualifiedName& attr_name = params.name;
   // Reattach so the isValid() check will be run again during layoutObject
   // creation.
   if (SVGTests::IsKnownAttribute(attr_name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     SetForceReattachLayoutTree();
     return;
   }
-
-  if (attr_name == svg_names::kTransformAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
-    InvalidateSVGPresentationAttributeStyle();
-    // TODO(fs): The InvalidationGuard will make sure all instances are
-    // invalidated, but the style recalc will propagate to instances too. So
-    // there is some redundant operations being performed here. Could we get
-    // away with removing the InvalidationGuard?
-    SetNeedsStyleRecalc(kLocalStyleChange,
-                        StyleChangeReasonForTracing::FromAttribute(attr_name));
-    return;
-  }
-
-  SVGElement::SvgAttributeChanged(params);
+  SVGTransformableElement::SvgAttributeChanged(params);
 }
 
 SVGElement* SVGGraphicsElement::nearestViewportElement() const {
@@ -196,33 +176,17 @@ SVGRectTearOff* SVGGraphicsElement::getBBoxFromJavascript() {
 
 SVGAnimatedPropertyBase* SVGGraphicsElement::PropertyFromAttribute(
     const QualifiedName& attribute_name) const {
-  if (attribute_name == svg_names::kTransformAttr) {
-    return transform_.Get();
-  } else {
-    SVGAnimatedPropertyBase* ret =
-        SVGTests::PropertyFromAttribute(attribute_name);
-    if (ret) {
-      return ret;
-    }
-    return SVGElement::PropertyFromAttribute(attribute_name);
+  SVGAnimatedPropertyBase* ret =
+      SVGTests::PropertyFromAttribute(attribute_name);
+  if (ret) {
+    return ret;
   }
+  return SVGTransformableElement::PropertyFromAttribute(attribute_name);
 }
 
 void SVGGraphicsElement::SynchronizeAllSVGAttributes() const {
-  SVGAnimatedPropertyBase* attrs[]{transform_.Get()};
-  SynchronizeListOfSVGAttributes(attrs);
   SVGTests::SynchronizeAllSVGAttributes();
-  SVGElement::SynchronizeAllSVGAttributes();
-}
-
-void SVGGraphicsElement::CollectExtraStyleForPresentationAttribute(
-    MutableCSSPropertyValueSet* style) {
-  DCHECK(transform_->HasPresentationAttributeMapping());
-  if (transform_->IsAnimating()) {
-    CollectStyleForPresentationAttribute(svg_names::kTransformAttr,
-                                         g_empty_atom, style);
-  }
-  SVGElement::CollectExtraStyleForPresentationAttribute(style);
+  SVGTransformableElement::SynchronizeAllSVGAttributes();
 }
 
 }  // namespace blink

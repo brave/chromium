@@ -2,12 +2,21 @@
 
 The tests are designed to be run from your local computer.
 
+# Install WPT
+
+If you haven't already, clone the web-platform-tests repository:
+
+```bash
+git clone https://github.com/web-platform-tests/wpt.git
+cd wpt
+```
+
 ## System Setup
 
 Running the tests requires `python` and `pip` as well as updating the
 system `hosts` file.
 
-WPT requires Python 3.7 or higher.
+WPT requires Python 3.8 or higher.
 
 The required setup is different depending on your operating system.
 
@@ -164,6 +173,7 @@ here](command-line-arguments.html#run).
   android_webview
   safari
   webkitgtk_minibrowser
+  wpewebkit_minibrowser
 ```
 
 ### Running in parallel
@@ -180,7 +190,9 @@ a single process (the default), so there may be more noise in the test results.
 ### Output formats
 
 By default, `./wpt run` outputs test results and a summary in a human readable
-format. For debugging, `--log-mach` can give more verbose output. For example:
+format. For debugging, `--log-mach` can give more verbose output. (In particular,
+it will show the console output from the browser and driver;
+by default, those are not shown) For example:
 
     ./wpt run --log-mach=- --log-mach-level=info firefox dom/
 

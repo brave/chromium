@@ -7,13 +7,15 @@
 
 #include <string>
 
-
 class GURL;
 
+// TODO(https://crbug.com/421202274): This is duplicative of
+// chrome/browser/shortcuts/shortcut_icon_generator.h which also shortens a
+// string to an initial letter; figure out how to be less redundant.
 namespace favicon {
 
 // Returns a very short string (e.g., capitalized first letter in a domain's
-// name) to represent |url|.
+// name) to represent `url`.
 std::u16string GetFallbackIconText(const GURL& url);
 
 }  // namespace favicon

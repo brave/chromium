@@ -21,6 +21,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/in_memory_pref_store.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_factory.h"
@@ -41,12 +42,6 @@ namespace safe_browsing {
 // installs or other tests.
 class PlatformStateStoreTestBase : public ::testing::Test {
  protected:
-  PlatformStateStoreTestBase() {}
-
-  PlatformStateStoreTestBase(const PlatformStateStoreTestBase&) = delete;
-  PlatformStateStoreTestBase& operator=(const PlatformStateStoreTestBase&) =
-      delete;
-
   void SetUp() override {
     ::testing::Test::SetUp();
     ASSERT_NO_FATAL_FAILURE(
@@ -121,6 +116,7 @@ class StateStoreTest : public PlatformStateStoreTestBase {
     // Create the testing profile with a file-backed user pref store.
     sync_preferences::PrefServiceSyncableFactory factory;
     factory.SetUserPrefsFile(GetPrefsPath(), task_runner_.get());
+    factory.SetAccountPrefStore(base::MakeRefCounted<InMemoryPrefStore>());
     user_prefs::PrefRegistrySyncable* pref_registry =
         new user_prefs::PrefRegistrySyncable();
     RegisterUserProfilePrefs(pref_registry);

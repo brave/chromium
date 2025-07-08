@@ -1,4 +1,4 @@
-(async function(testRunner) {
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
   const {page, session, dp} = await testRunner.startBlank(
       'Test that Page.setPrerenderingAllowed disables prerendering');
 
@@ -9,7 +9,7 @@
   page.navigate('resources/simple-prerender.html');
 
   const event = await dp.Preload.oncePrerenderStatusUpdated();
-  testRunner.log(event, null, ['loaderId', 'sessionId']);
+  testRunner.log(event);
 
   testRunner.completeTest();
 });

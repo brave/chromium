@@ -20,7 +20,7 @@ FastPairBluetoothConfigDelegate::FastPairBluetoothConfigDelegate(
 
 FastPairBluetoothConfigDelegate::~FastPairBluetoothConfigDelegate() = default;
 
-absl::optional<bluetooth_config::DeviceImageInfo>
+std::optional<bluetooth_config::DeviceImageInfo>
 FastPairBluetoothConfigDelegate::GetDeviceImageInfo(
     const std::string& mac_address) {
   return FastPairRepository::Get()->GetImagesForDevice(mac_address);

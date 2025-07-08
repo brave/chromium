@@ -7,15 +7,17 @@
 
 #include <memory>
 
+#include "base/containers/lru_cache.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
+#include "base/types/id_type.h"
+#include "media/base/frame_buffer_pool.h"
 #include "media/base/supported_video_decoder_config.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
-#include "media/filters/frame_buffer_pool.h"
 
 struct AVCodecContext;
 struct AVFrame;
@@ -94,6 +96,9 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
   bool decode_nalus_ = false;
 
   bool force_allocation_error_ = false;
+
+  // More specific error code to surface after an error occurs during decoding.
+  DecoderStatus::Codes error_status_ = DecoderStatus::Codes::kFailed;
 
   std::unique_ptr<FFmpegDecodingLoop> decoding_loop_;
 };

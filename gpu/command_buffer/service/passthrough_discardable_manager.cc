@@ -4,6 +4,9 @@
 
 #include "gpu/command_buffer/service/passthrough_discardable_manager.h"
 
+#include <inttypes.h>
+
+#include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_passthrough.h"
@@ -54,7 +57,7 @@ bool PassthroughDiscardableManager::OnMemoryDump(
   using base::trace_event::MemoryAllocatorDump;
   using base::trace_event::MemoryDumpLevelOfDetail;
 
-  if (args.level_of_detail == MemoryDumpLevelOfDetail::BACKGROUND) {
+  if (args.level_of_detail == MemoryDumpLevelOfDetail::kBackground) {
     std::string dump_name =
         base::StringPrintf("gpu/discardable_cache/cache_0x%" PRIXPTR,
                            reinterpret_cast<uintptr_t>(this));
@@ -222,7 +225,7 @@ bool PassthroughDiscardableManager::IsEntryLockedForTesting(
     uint32_t client_id,
     const gles2::ContextGroup* context_group) const {
   auto iter = cache_.Peek({client_id, context_group});
-  DCHECK(iter != cache_.end());
+  CHECK(iter != cache_.end());
   return iter->second.unlocked_texture == nullptr;
 }
 
@@ -237,7 +240,7 @@ PassthroughDiscardableManager::UnlockedTextureForTesting(
     uint32_t client_id,
     const gles2::ContextGroup* context_group) const {
   auto iter = cache_.Peek({client_id, context_group});
-  DCHECK(iter != cache_.end());
+  CHECK(iter != cache_.end());
   return iter->second.unlocked_texture;
 }
 

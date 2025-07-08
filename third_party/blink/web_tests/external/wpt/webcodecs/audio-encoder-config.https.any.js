@@ -57,6 +57,15 @@ const invalidConfigs = [
     },
   },
   {
+    comment: 'Bit rate present but equal to zero',
+    config: {
+      codec: 'opus',
+      sampleRate: 8000,
+      numberOfChannels: 2,
+      bitrate: 0,
+    },
+  },
+  {
     comment: 'Opus complexity too big',
     config: {
       codec: 'opus',
@@ -111,6 +120,15 @@ const invalidConfigs = [
       },
     },
   },
+  {
+    comment: 'Bitrate is too low for Opus',
+    config: {
+      codec: 'opus',
+      sampleRate: 48000,
+      numberOfChannels: 2,
+      bitrate: 1,
+    },
+  },
 ];
 
 invalidConfigs.forEach(entry => {
@@ -137,15 +155,6 @@ invalidConfigs.forEach(entry => {
 });
 
 const validButUnsupportedConfigs = [
-  {
-    comment: 'Bitrate is too low',
-    config: {
-      codec: 'opus',
-      sampleRate: 48000,
-      numberOfChannels: 2,
-      bitrate: 1,
-    },
-  },
   {
     comment: 'Unrecognized codec',
     config: {
@@ -195,6 +204,14 @@ const validButUnsupportedConfigs = [
       numberOfChannels: 2,
     }
   },
+  {
+    comment: 'codec with spaces',
+    config: {
+      codec: '  opus  ',
+      sampleRate: 48000,
+      numberOfChannels: 2,
+    }
+  },
 ];
 
 validButUnsupportedConfigs.forEach(entry => {
@@ -213,13 +230,27 @@ validButUnsupportedConfigs.forEach(entry => {
 });
 
 validButUnsupportedConfigs.forEach(entry => {
-  async_test(
+  promise_test(
       t => {
-        let codec = new AudioEncoder(getDefaultCodecInit(t));
-        assert_throws_dom('NotSupportedError', () => {
-          codec.configure(entry.config);
+        let isErrorCallbackCalled = false;
+        let codec = new AudioEncoder({
+          output: t.unreached_func('unexpected output'),
+          error: t.step_func_done(e => {
+            isErrorCallbackCalled = true;
+            assert_true(e instanceof DOMException);
+            assert_equals(e.name, 'NotSupportedError');
+            assert_equals(codec.state, 'closed', 'state');
+          })
         });
-        t.done();
+        codec.configure(entry.config);
+        return codec.flush()
+            .then(t.unreached_func('flush succeeded unexpectedly'))
+            .catch(t.step_func(e => {
+              assert_true(isErrorCallbackCalled, "isErrorCallbackCalled");
+              assert_true(e instanceof DOMException);
+              assert_equals(e.name, 'NotSupportedError');
+              assert_equals(codec.state, 'closed', 'state');
+            }));
       },
       'Test that AudioEncoder.configure() doesn\'t support config: ' +
           entry.comment);
@@ -241,6 +272,15 @@ const validConfigs = [
     sampleRate: 48000,
     numberOfChannels: 2,
     bitrate: 128000,
+    bitrateMode: "constant",
+    bogus: 123
+  },
+  {
+    codec: 'opus',
+    sampleRate: 48000,
+    numberOfChannels: 2,
+    bitrate: 128000,
+    bitrateMode: "variable",
     bogus: 123
   },
   {
@@ -249,6 +289,8 @@ const validConfigs = [
     numberOfChannels: 2,
     opus: {
       complexity: 5,
+      signal: 'music',
+      application: 'audio',
       frameDuration: 20000,
       packetlossperc: 10,
       useinbandfec: true,
@@ -260,6 +302,8 @@ const validConfigs = [
     numberOfChannels: 2,
     opus: {
       format: 'opus',
+      signal: 'voice',
+      application: 'lowdelay',
       complexity: 10,
       frameDuration: 60000,
       packetlossperc: 20,  // Irrelevant without useinbandfec, but still valid.

@@ -7,8 +7,8 @@
  * Printers.
  */
 
-import 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import '../settings_shared.css.js';
@@ -16,52 +16,36 @@ import './cups_printer_types.js';
 import './cups_printers_browser_proxy.js';
 import './cups_printers_entry.js';
 
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {addWebUiListener} from 'chrome://resources/js/cr.js';
+import type {IronListElement} from 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {recordSettingChange} from '../metrics_recorder.js';
+import {Setting} from '../mojom-webui/setting.mojom-webui.js';
 
 import {matchesSearchTerm, sortPrinters} from './cups_printer_dialog_util.js';
-import {PrinterListEntry} from './cups_printer_types.js';
+import type {PrinterListEntry} from './cups_printer_types.js';
 import {PrinterSettingsUserAction, recordPrinterSettingsUserAction} from './cups_printers.js';
-import {CupsPrinterInfo, CupsPrintersBrowserProxy, CupsPrintersBrowserProxyImpl} from './cups_printers_browser_proxy.js';
+import type {CupsPrinterInfo, CupsPrintersBrowserProxy} from './cups_printers_browser_proxy.js';
+import {CupsPrintersBrowserProxyImpl} from './cups_printers_browser_proxy.js';
 import {CupsPrintersEntryListMixin} from './cups_printers_entry_list_mixin.js';
 import {getTemplate} from './cups_saved_printers.html.js';
-import {getStatusReasonFromPrinterStatus, PrinterStatus, PrinterStatusReason} from './printer_status.js';
+import type {PrinterStatus, PrinterStatusReason} from './printer_status.js';
+import {getStatusReasonFromPrinterStatus} from './printer_status.js';
 
 /**
  * If the Show more button is visible, the minimum number of printers we show
  * is 3.
  */
-const MIN_VISIBLE_PRINTERS: number = 3;
-
-/**
- * The amount of time Printer settings is open until it switches to a longer
- * delay between each printer status query.
- */
-const PRINTER_STATUS_QUERY_SHORT_DELAY_DURATION_MS: number = 120000;
-
-/**
- * The inclusive range for the delay between printer status queries. This
- * shorter interval is used when Printer settings initially opens. This will
- * capture changes when the user will most likely be interacting with the
- * printer.
- */
-export const PRINTER_STATUS_QUERY_SHORT_DELAY_RANGE_MS: number[] =
-    [15000, 25000];
-
-/**
- * The inclusive range of the delay between printer status queries.
- */
-const PRINTER_STATUS_QUERY_LONG_DELAY_RANGE_MS: number[] = [60000, 80000];
+const MIN_VISIBLE_PRINTERS = 3;
 
 /**
  * Move a printer's position in |printerArr| from |fromIndex| to |toIndex|.
  */
 function moveEntryInPrinters(
-    printerArr: PrinterListEntry[], fromIndex: number, toIndex: number) {
+    printerArr: PrinterListEntry[], fromIndex: number, toIndex: number): void {
   const element = printerArr[fromIndex];
   printerArr.splice(fromIndex, 1);
   printerArr.splice(toIndex, 0, element);
@@ -72,7 +56,7 @@ const SettingsCupsSavedPrintersElementBase =
 
 export class SettingsCupsSavedPrintersElement extends
     SettingsCupsSavedPrintersElementBase {
-  static get is(): string {
+  static get is() {
     return 'settings-cups-saved-printers';
   }
 
@@ -153,40 +137,6 @@ export class SettingsCupsSavedPrintersElement extends
           return new Map();
         },
       },
-
-      /**
-       * Determines whether to use the short or long delay between printer
-       * status queries.
-       */
-      useShortDelayInterval_: {
-        type: Boolean,
-        value: true,
-      },
-
-      /**
-       * True when the "printer-settings-printer-status" feature flag is
-       * enabled.
-       */
-      isPrinterSettingsPrinterStatusEnabled_: {
-        type: Boolean,
-        value: () => {
-          return loadTimeData.getBoolean(
-              'isPrinterSettingsPrinterStatusEnabled');
-        },
-        readOnly: true,
-      },
-
-      /**
-       * True when the "printer-settings-revamp" feature flag is enabled.
-       */
-      isPrinterSettingsRevampEnabled_: {
-        type: Boolean,
-        value: () => {
-          return loadTimeData.getBoolean('isPrinterSettingsRevampEnabled');
-        },
-        readOnly: true,
-        reflectToAttribute: true,
-      },
     };
   }
 
@@ -194,7 +144,7 @@ export class SettingsCupsSavedPrintersElement extends
     return [
       'onSearchOrPrintersChanged_(savedPrinters.*, searchTerm,' +
           'hasShowMoreBeenTapped_, newPrinters_.*)',
-      'fetchPrinterStatuses_(savedPrinters.splices)',
+      'fetchAllPrinterStatuses_(savedPrinters.splices)',
     ];
   }
 
@@ -211,8 +161,6 @@ export class SettingsCupsSavedPrintersElement extends
   private newPrinters_: PrinterListEntry[];
   private visiblePrinterCounter_: number;
   private printerStatusReasonCache_: Map<string, PrinterStatusReason>;
-  private useShortDelayInterval_: boolean;
-  private isPrinterSettingsPrinterStatusEnabled_: boolean;
 
   constructor() {
     super();
@@ -223,6 +171,11 @@ export class SettingsCupsSavedPrintersElement extends
     // MIN_VISIBLE_PRINTERS is the default value and we never show fewer
     // printers if the Show more button is visible.
     this.visiblePrinterCounter_ = MIN_VISIBLE_PRINTERS;
+
+    addWebUiListener(
+        'local-printers-updated',
+        (printers: CupsPrinterInfo[]) => printers.forEach(
+            printer => this.onPrinterStatusReceived_(printer.printerStatus)));
   }
 
   override ready(): void {
@@ -233,16 +186,6 @@ export class SettingsCupsSavedPrintersElement extends
         (event: CustomEvent<{target: HTMLElement, item: PrinterListEntry}>) => {
           this.onOpenActionMenu_(event);
         });
-
-    if (this.isPrinterSettingsPrinterStatusEnabled_) {
-      this.startPrinterStatusQueryTimer_();
-
-      // After Printer settings is open for a set amount of time, switch to the
-      // longer printer status delay.
-      setTimeout(
-          () => this.useShortDelayInterval_ = false,
-          PRINTER_STATUS_QUERY_SHORT_DELAY_DURATION_MS);
-    }
   }
 
   /**
@@ -259,10 +202,17 @@ export class SettingsCupsSavedPrintersElement extends
         'filteredPrinters_',
         (printer: PrinterListEntry) => printer.printerInfo.printerId,
         updatedPrinters);
+
+    // Trigger a resize to display additional printers when the list size
+    // increases.
+    const printerEntryList =
+        this.shadowRoot!.querySelector<IronListElement>('#printerEntryList');
+    assert(printerEntryList);
+    printerEntryList.notifyResize();
   }
 
   private onOpenActionMenu_(
-      e: CustomEvent<{target: HTMLElement, item: PrinterListEntry}>) {
+      e: CustomEvent<{target: HTMLElement, item: PrinterListEntry}>): void {
     const item = e.detail.item;
     this.activePrinterListEntryIndex_ = this.savedPrinters.findIndex(
         (printer: PrinterListEntry) =>
@@ -293,10 +243,10 @@ export class SettingsCupsSavedPrintersElement extends
     this.printerStatusReasonCache_.delete(this.activePrinter!.printerId);
     this.browserProxy_.removeCupsPrinter(
         this.activePrinter!.printerId, this.activePrinter!.printerName);
-    recordSettingChange();
     this.activePrinter = null;
     this.activePrinterListEntryIndex_ = -1;
     this.closeActionMenu_();
+    recordSettingChange(Setting.kRemovePrinter);
     recordPrinterSettingsUserAction(PrinterSettingsUserAction.REMOVE_PRINTER);
   }
 
@@ -343,7 +293,7 @@ export class SettingsCupsSavedPrintersElement extends
     return !!this.searchTerm && !this.filteredPrinters_.length;
   }
 
-  override onSavedPrintersAdded(addedPrinters: PrinterListEntry[]) {
+  override onSavedPrintersAdded(addedPrinters: PrinterListEntry[]): void {
     const currArr = this.newPrinters_.slice();
     for (const printer of addedPrinters) {
       this.visiblePrinterCounter_++;
@@ -353,7 +303,7 @@ export class SettingsCupsSavedPrintersElement extends
     this.set('newPrinters_', currArr);
   }
 
-  override onSavedPrintersRemoved(removedPrinters: PrinterListEntry[]) {
+  override onSavedPrintersRemoved(removedPrinters: PrinterListEntry[]): void {
     const currArr = this.newPrinters_.slice();
     for (const printer of removedPrinters) {
       const newPrinterRemovedIdx = currArr.findIndex(
@@ -404,7 +354,7 @@ export class SettingsCupsSavedPrintersElement extends
    * printer list.
    */
   private moveNewlyAddedPrinters_(
-      printerArr: PrinterListEntry[], toIndex: number) {
+      printerArr: PrinterListEntry[], toIndex: number): void {
     if (!this.newPrinters_.length) {
       return;
     }
@@ -424,25 +374,25 @@ export class SettingsCupsSavedPrintersElement extends
   }
 
   /** Query each saved printer for its printer status. */
-  private fetchPrinterStatuses_(): void {
-    if (!this.isPrinterSettingsPrinterStatusEnabled_) {
-      return;
-    }
-
+  private fetchAllPrinterStatuses_(): void {
     this.savedPrinters.forEach(printer => {
-      this.browserProxy_
-          .requestPrinterStatusUpdate(printer.printerInfo.printerId)
-          .then(printerStatus => this.onPrinterStatusReceived_(printerStatus));
+      this.fetchPrinterStatus_(printer.printerInfo.printerId);
     });
+  }
+
+  /** Sends a printer status request for `printerId`. */
+  private fetchPrinterStatus_(printerId: string): void {
+    this.browserProxy_.requestPrinterStatusUpdate(printerId).then(
+        printerStatus => this.onPrinterStatusReceived_(printerStatus));
   }
 
   /**
    * For each printer status received, add it to the printer status cache then
    * notify its respective printer entry to update its status.
    */
-  private onPrinterStatusReceived_(printerStatus: PrinterStatus): void {
-    assert(this.isPrinterSettingsPrinterStatusEnabled_);
-    if (!printerStatus) {
+  private onPrinterStatusReceived_(printerStatus: PrinterStatus|
+                                   undefined): void {
+    if (!printerStatus?.printerId) {
       return;
     }
 
@@ -459,43 +409,6 @@ export class SettingsCupsSavedPrintersElement extends
     }
 
     this.notifyPath(`filteredPrinters_.${filteredIndex}.printerInfo.printerId`);
-  }
-
-  /**
-   * Starts the printer status query timer which continually resets itself
-   * until the page is closed.
-   */
-  private startPrinterStatusQueryTimer_(): void {
-    assert(this.isPrinterSettingsPrinterStatusEnabled_);
-
-    // Chooses a random number between the delay interval.
-    const minDelay = this.useShortDelayInterval_ ?
-        PRINTER_STATUS_QUERY_SHORT_DELAY_RANGE_MS[0] :
-        PRINTER_STATUS_QUERY_LONG_DELAY_RANGE_MS[0];
-    const maxDelay = this.useShortDelayInterval_ ?
-        PRINTER_STATUS_QUERY_SHORT_DELAY_RANGE_MS[1] :
-        PRINTER_STATUS_QUERY_LONG_DELAY_RANGE_MS[1];
-    const randomizedDelayMs =
-        (Math.random() * (maxDelay - minDelay)) + minDelay;
-    setTimeout(
-        () => this.onPrinterStatusQueryTimerComplete_(), randomizedDelayMs);
-  }
-
-  /**
-   * Invoked once the timer is elapsed. Starts the printer status queries then
-   * resets the timer.
-   */
-  private onPrinterStatusQueryTimerComplete_(): void {
-    assert(this.isPrinterSettingsPrinterStatusEnabled_);
-
-    this.fetchPrinterStatuses_();
-
-    // Restart the printer status query timer.
-    this.startPrinterStatusQueryTimer_();
-  }
-
-  startPrinterStatusQueryTimerForTesting(): void {
-    this.startPrinterStatusQueryTimer_();
   }
 
   getPrinterStatusReasonCacheForTesting(): Map<string, PrinterStatusReason> {

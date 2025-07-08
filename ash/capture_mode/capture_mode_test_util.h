@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "ash/annotator/annotator_test_util.h"
 #include "ash/capture_mode/capture_mode_camera_controller.h"
 #include "ash/capture_mode/capture_mode_controller.h"
 #include "ash/capture_mode/capture_mode_types.h"
@@ -15,8 +16,8 @@
 #include "ash/public/cpp/test/mock_projector_client.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/time/time.h"
 #include "ui/events/event_constants.h"
-#include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/message_center/public/cpp/notification.h"
@@ -48,6 +49,7 @@ class PillButton;
 class IconButton;
 class CaptureModeController;
 class CaptureModeBarView;
+class TabSliderButton;
 
 // Fake camera info used for testing.
 constexpr char kDefaultCameraDeviceId[] = "/dev/videoX";
@@ -82,12 +84,6 @@ base::FilePath CreateCustomFolderInUserDownloadsPath(
 // Creates and returns the custom folder path on driveFS. The custom folder is
 // created in the root folder with given `custom_folder_name`.
 base::FilePath CreateFolderOnDriveFS(const std::string& custom_folder_name);
-
-// Sends a press release key combo `count` times.
-void SendKey(ui::KeyboardCode key_code,
-             ui::test::EventGenerator* event_generator,
-             int flags = ui::EF_NONE,
-             int count = 1);
 
 // Wait for a specific `seconds`.
 void WaitForSeconds(int seconds);
@@ -144,11 +140,11 @@ void PressAndReleaseKeyOnVK(ui::test::EventGenerator* event_generator,
 gfx::Image ReadAndDecodeImageFile(const base::FilePath& image_path);
 
 // Gets the buttons inside the capture bar view.
-IconButton* GetImageToggleButton();
-IconButton* GetVideoToggleButton();
-IconButton* GetFullscreenToggleButton();
-IconButton* GetRegionToggleButton();
-IconButton* GetWindowToggleButton();
+TabSliderButton* GetImageToggleButton();
+TabSliderButton* GetVideoToggleButton();
+TabSliderButton* GetFullscreenToggleButton();
+TabSliderButton* GetRegionToggleButton();
+TabSliderButton* GetWindowToggleButton();
 PillButton* GetStartRecordingButton();
 IconButton* GetSettingsButton();
 IconButton* GetCloseButton();
@@ -157,7 +153,7 @@ IconButton* GetCloseButton();
 const message_center::Notification* GetPreviewNotification();
 
 // Clicks on the area in the notification specified by the `button_index`.
-void ClickOnNotification(absl::optional<int> button_index);
+void ClickOnNotification(std::optional<int> button_index);
 
 // Test util APIs to simulate the camera adding and removing operations.
 void AddFakeCamera(
@@ -168,6 +164,21 @@ void AddFakeCamera(
 void RemoveFakeCamera(const std::string& device_id);
 void AddDefaultCamera();
 void RemoveDefaultCamera();
+
+// Waits until at least one camera becomes available, up to the specified
+// `time_out`. Returns the number of available cameras, or 0 if none are
+// found within the time limit.
+size_t WaitForCameraAvailabilityWithTimeout(base::TimeDelta time_out);
+
+// Selects a region by pressing and dragging the mouse. If `verify_region` is
+// true, verifies the user capture region.
+void SelectCaptureModeRegion(ui::test::EventGenerator* event_generator,
+                             const gfx::Rect& region_in_screen,
+                             bool release_mouse = true,
+                             bool verify_region = true);
+
+// Verifies that capture mode session is active and has behavior of `type`.
+void VerifyActiveBehavior(BehaviorType type);
 
 // Defines a helper class to allow setting up and testing the Projector feature
 // in multiple test fixtures. Note that this helper initializes the Projector-
@@ -197,6 +208,7 @@ class ProjectorCaptureModeIntegrationHelper {
 
  private:
   MockProjectorClient projector_client_;
+  AnnotatorIntegrationHelper annotator_helper_;
 };
 
 // Defines a waiter to observe the visibility change of the view.
@@ -212,10 +224,11 @@ class ViewVisibilityChangeWaiter : public views::ViewObserver {
 
   // views::ViewObserver:
   void OnViewVisibilityChanged(views::View* observed_view,
-                               views::View* starting_view) override;
+                               views::View* starting_view,
+                               bool visible) override;
 
  private:
-  const raw_ptr<views::View, ExperimentalAsh> view_;
+  const raw_ptr<views::View> view_;
   base::RunLoop wait_loop_;
 };
 

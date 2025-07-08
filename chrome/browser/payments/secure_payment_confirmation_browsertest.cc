@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,7 +22,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/autofill/core/browser/test_event_waiter.h"
+#include "components/autofill/core/browser/test_utils/test_event_waiter.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/core/error_strings.h"
@@ -32,7 +33,6 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/payments/payment_handler_host.mojom.h"
 
 namespace payments {
@@ -303,6 +303,28 @@ IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationTest,
                         "securePaymentConfirmationHasEnrolledInstrument()"));
 }
 
+// canMakePayment() and hasEnrolledInstrument() should return true on platforms
+// with a compatible authenticator regardless of the value of the
+// "prefs.can_make_payment_enabled" pref.
+IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationTest,
+                       CanMakePayment_CanMakePaymentEnabledPref) {
+  test_controller()->SetHasAuthenticator(true);
+  test_controller()->SetCanMakePaymentEnabledPref(false);
+
+  NavigateTo("a.com", "/secure_payment_confirmation.html");
+
+  EXPECT_EQ("true",
+            content::EvalJs(GetActiveWebContents(),
+                            "securePaymentConfirmationCanMakePayment()"));
+  EXPECT_EQ("true",
+            content::EvalJs(GetActiveWebContents(),
+                            "securePaymentConfirmationCanMakePaymentTwice()"));
+  EXPECT_EQ("true", content::EvalJs(
+                        GetActiveWebContents(),
+                        "securePaymentConfirmationHasEnrolledInstrument()"));
+}
+
+#if !BUILDFLAG(IS_ANDROID)
 // Intentionally do not enable the "SecurePaymentConfirmation" Blink runtime
 // feature or the browser-side Finch flag.
 class SecurePaymentConfirmationDisabledTest
@@ -390,29 +412,24 @@ IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationDisabledByFinchTest,
                          GetActiveWebContents(),
                          "securePaymentConfirmationHasEnrolledInstrument()"));
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
-// Test that the SecurePaymentConfirmationAllowOneActivationlessShow feature
-// allows one call to show() without a user activation.
-// TODO(crbug.com/1440453): Not yet implemented on Android.
-#if BUILDFLAG(IS_ANDROID)
-#define MAYBE_SecurePaymentConfirmationActivationlessShowTest \
-  DISABLED_SecurePaymentConfirmationActivationlessShowTest
-#else
-#define MAYBE_SecurePaymentConfirmationActivationlessShowTest \
-  SecurePaymentConfirmationActivationlessShowTest
-#endif  // BUILDFLAG(IS_ANDROID)
-class MAYBE_SecurePaymentConfirmationActivationlessShowTest
+// Test that Secure Payment Confirmation allows one call to show() without a
+// user activation.
+class SecurePaymentConfirmationActivationlessShowTest
     : public SecurePaymentConfirmationTest {
  public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    PaymentRequestPlatformBrowserTestBase::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII(
-        switches::kEnableBlinkFeatures,
-        "SecurePaymentConfirmationAllowOneActivationlessShow");
+  void ExpectEvent2(JourneyLogger::Event2 event, bool expected) {
+    std::vector<base::Bucket> buckets =
+        histogram_tester_.GetAllSamples("PaymentRequest.Events2");
+    EXPECT_EQ(expected, (buckets[0].min & static_cast<int>(event)) != 0);
   }
+
+ private:
+  base::HistogramTester histogram_tester_;
 };
 
-IN_PROC_BROWSER_TEST_F(MAYBE_SecurePaymentConfirmationActivationlessShowTest,
+IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationActivationlessShowTest,
                        ActivationlessShow) {
   test_controller()->SetHasAuthenticator(true);
 
@@ -442,30 +459,18 @@ IN_PROC_BROWSER_TEST_F(MAYBE_SecurePaymentConfirmationActivationlessShowTest,
                       content::EvalJsOptions::EXECUTE_SCRIPT_NO_USER_GESTURE)
           .ExtractString(),
       ::testing::HasSubstr(errors::kCannotShowWithoutUserActivation));
-
-  // A following call to show() with a user gesture succeeds.
-  ResetEventWaiterForSingleEvent(TestEvent::kUIDisplayed);
-  ExecuteScriptAsync(GetActiveWebContents(),
-                     "getSecurePaymentConfirmationStatus()");
-  WaitForObservedEvent();
-  test_controller()->CloseDialog();
+  ExpectEvent2(Event2::kActivationlessShow, true);
 }
 
-// Test that activationless show() call is not allowed with the
-// SecurePaymentConfirmationAllowOneActivationlessShow feature disabled.
-class SecurePaymentConfirmationActivationlessShowDisabledTest
-    : public SecurePaymentConfirmationTest {
- public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    PaymentRequestPlatformBrowserTestBase::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII(
-        switches::kDisableBlinkFeatures,
-        "SecurePaymentConfirmationAllowOneActivationlessShow");
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationActivationlessShowDisabledTest,
-                       ActivationlessShow) {
+// TODO(crbug.com/40266119): This test does not work on Android as it is
+// difficult to wait for the bottom sheet to finish showing.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ShowAfterActivationlessShow DISABLED_ShowAfterActivationlessShow
+#else
+#define MAYBE_ShowAfterActivationlessShow ShowAfterActivationlessShow
+#endif  // BUILDFLAG(IS_ANDROID)
+IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationActivationlessShowTest,
+                       MAYBE_ShowAfterActivationlessShow) {
   test_controller()->SetHasAuthenticator(true);
 
   NavigateTo("a.com", "/secure_payment_confirmation.html");
@@ -480,17 +485,19 @@ IN_PROC_BROWSER_TEST_F(SecurePaymentConfirmationActivationlessShowDisabledTest,
                   std::move(credential_id), "a.com", std::move(user_id)),
               /*consumer=*/this);
 
-  // The error message with activationless show enabled has changed, so the old
-  // error message is hard coded below and will be removed post launch.
-  EXPECT_THAT(
-      content::EvalJs(GetActiveWebContents(),
-                      "getSecurePaymentConfirmationStatus()",
-                      content::EvalJsOptions::EXECUTE_SCRIPT_NO_USER_GESTURE)
-          .ExtractString(),
-      ::testing::HasSubstr(
-          "Failed to execute 'show' on 'PaymentRequest': PaymentRequest.show() "
-          "requires either transient user activation or delegated payment "
-          "request capability"));
+  // The first call to show() without a user gesture succeeds.
+  ResetEventWaiterForSingleEvent(TestEvent::kUIDisplayed);
+  ExecuteScriptAsyncWithoutUserGesture(GetActiveWebContents(),
+                                       "getSecurePaymentConfirmationStatus()");
+  WaitForObservedEvent();
+  test_controller()->CloseDialog();
+
+  // A following call to show() with a user gesture succeeds.
+  ResetEventWaiterForSingleEvent(TestEvent::kUIDisplayed);
+  ExecuteScriptAsync(GetActiveWebContents(),
+                     "getSecurePaymentConfirmationStatus()");
+  WaitForObservedEvent();
+  test_controller()->CloseDialog();
 }
 
 }  // namespace

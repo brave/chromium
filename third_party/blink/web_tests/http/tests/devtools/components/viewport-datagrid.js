@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {DataGridTestRunner} from 'data_grid_test_runner';
 
+import * as DataGrid from 'devtools/ui/legacy/components/data_grid/data_grid.js';
+
 (async function() {
   TestRunner.addResult(`Tests ViewportDataGrid.\n`);
-  await TestRunner.loadLegacyModule('data_grid');
 
   function attach(parent, child, index) {
     var parentName = parent === root ? 'root' : parent.data.id;
@@ -60,14 +61,14 @@ import {DataGridTestRunner} from 'data_grid_test_runner';
       TestRunner.addResult(node.data.id);
   }
 
-  var columns = [{id: 'id', title: 'ID column', width: '250px'}];
-  var dataGrid = new DataGrid.ViewportDataGrid({displayName: 'Test', columns});
-  var a = new DataGrid.ViewportDataGridNode({id: 'a'});
-  var aa = new DataGrid.ViewportDataGridNode({id: 'aa'});
-  var aaa = new DataGrid.ViewportDataGridNode({id: 'aaa'});
-  var aab = new DataGrid.ViewportDataGridNode({id: 'aab'});
-  var ab = new DataGrid.ViewportDataGridNode({id: 'ab'});
-  var b = new DataGrid.ViewportDataGridNode({id: 'b'});
+  var columns = [{id: 'id', width: '250px', sortable: false}];
+  var dataGrid = new DataGrid.ViewportDataGrid.ViewportDataGrid({displayName: 'Test', columns});
+  var a = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'a'});
+  var aa = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'aa'});
+  var aaa = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'aaa'});
+  var aab = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'aab'});
+  var ab = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'ab'});
+  var b = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'b'});
 
   var root = dataGrid.rootNode();
   var widget = dataGrid.asWidget();
@@ -118,7 +119,7 @@ import {DataGridTestRunner} from 'data_grid_test_runner';
   dumpNodes();
   attach(aa, aaa);
   attach(aa, aab);
-  var aac = new DataGrid.ViewportDataGridNode({id: 'aac'});
+  var aac = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'aac'});
   attach(aa, aac);
   dumpNodes();
   attach(aa, aac, 0);
@@ -148,9 +149,11 @@ import {DataGridTestRunner} from 'data_grid_test_runner';
   dumpNodes();
 
   // crbug.com/542553 -- the below should not produce exceptions.
-  dataGrid.setStickToBottom(true);
+  // TODO(crbug.com/377763109): clean it up once crrev.com/c/6001603 lands
+  dataGrid.setStickToBottom?.(true);
+  dataGrid.setEnableAutoScrollToBottom?.(true);
   for (var i = 0; i < 500; ++i) {
-    var xn = new DataGrid.ViewportDataGridNode({id: 'x' + i});
+    var xn = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'x' + i});
     root.appendChild(xn);
     if (i + 1 === 500) {
       dataGrid.updateInstantly();
@@ -163,11 +166,13 @@ import {DataGridTestRunner} from 'data_grid_test_runner';
 
   // The below should not crash either.
   for (var i = 0; i < 40; ++i) {
-    var xn = new DataGrid.ViewportDataGridNode({id: 'x' + i});
+    var xn = new DataGrid.ViewportDataGrid.ViewportDataGridNode({id: 'x' + i});
     root.appendChild(xn);
   }
   dataGrid.updateInstantly();
-  dataGrid.setStickToBottom(false);
+  // TODO(crbug.com/377763109): clean it up once crrev.com/c/6001603 lands
+  dataGrid.setStickToBottom?.(false);
+  dataGrid.setEnableAutoScrollToBottom?.(false);
   var children = root.children.slice();
   root.removeChildren();
   // Assure wheelTarget is anything but null, otherwise it happily bypasses crashing code.

@@ -6,9 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "content/common/mac/system_policy.h"
 
 namespace content {
 
@@ -30,6 +28,8 @@ void InitializeMac() {
     // https://crbug.com/871235.
     @"NSAppSleepDisabled" : @YES,
   }];
+
+  SetSystemPolicyCrashKeys();
 }
 
 }  // namespace content

@@ -8,50 +8,46 @@
  */
 
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+// <if expr="_google_chrome or not is_macosx">
+import 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
+// </if>
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/cr_elements/policy/cr_policy_pref_indicator.js';
+import '/shared/settings/controls/cr_policy_pref_indicator.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/js/action_link.js';
 import 'chrome://resources/cr_elements/action_link.css.js';
-// <if expr="_google_chrome or not is_macosx">
-import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
-// </if>
-import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import '/shared/settings/controls/controlled_radio_button.js';
-import '/shared/settings/controls/settings_radio_group.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
+import '../controls/controlled_radio_button.js';
+import '../controls/settings_radio_group.js';
+import '../controls/settings_toggle_button.js';
 import '../icons.html.js';
-import '../settings_page/settings_animated_pages.js';
-import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
 import '../settings_vars.css.js';
-// <if expr="not is_macosx">
-import './edit_dictionary_page.js';
 
-// </if>
-
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
-import {DomRepeatEvent, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
-import {FocusConfig} from '../focus_config.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {routes} from '../route.js';
 import {Router} from '../router.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
-import {LanguageSettingsActionType, LanguageSettingsMetricsProxy, LanguageSettingsMetricsProxyImpl} from './languages_settings_metrics_proxy.js';
-import {LanguageHelper, LanguagesModel, LanguageState, SpellCheckLanguageState} from './languages_types.js';
+import {getLanguageHelperInstance} from './languages.js';
+import type {LanguageSettingsMetricsProxy} from './languages_settings_metrics_proxy.js';
+import {LanguageSettingsActionType, LanguageSettingsMetricsProxyImpl} from './languages_settings_metrics_proxy.js';
+import type {LanguageHelper, LanguagesModel, LanguageState, SpellCheckLanguageState} from './languages_types.js';
 import {getTemplate} from './spell_check_page.html.js';
 
 const SettingsSpellCheckPageElementBase =
-    I18nMixin(PrefsMixin(BaseMixin(PolymerElement)));
+    SettingsViewMixin(I18nMixin(PrefsMixin(BaseMixin(PolymerElement))));
 
 export class SettingsSpellCheckPageElement extends
     SettingsSpellCheckPageElementBase {
@@ -66,23 +62,10 @@ export class SettingsSpellCheckPageElement extends
   static get properties() {
     return {
       /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      /**
        * Read-only reference to the languages model provided by the
        * 'settings-languages' instance.
        */
-      languages: {
-        type: Object,
-        notify: true,
-      },
-
-      languageHelper: Object,
+      languages: Object,
 
       // <if expr="not is_macosx">
       spellCheckLanguages_: {
@@ -97,19 +80,6 @@ export class SettingsSpellCheckPageElement extends
         type: Boolean,
         value: false,
       },
-
-      focusConfig_: {
-        type: Object,
-        value() {
-          const map = new Map();
-          // <if expr="not is_macosx">
-          if (routes.EDIT_DICTIONARY) {
-            map.set(routes.EDIT_DICTIONARY.path, '#spellCheckSubpageTrigger');
-          }
-          // </if>
-          return map;
-        },
-      },
     };
   }
 
@@ -123,26 +93,34 @@ export class SettingsSpellCheckPageElement extends
   }
   // </if>
 
-  languages?: LanguagesModel;
-  languageHelper: LanguageHelper;
-  private spellCheckLanguages_: Array<LanguageState|SpellCheckLanguageState>;
-  private hideSpellCheckLanguages_: boolean;
-  private focusConfig_: FocusConfig;
+  declare languages?: LanguagesModel;
+  // <if expr="not is_macosx">
+  declare private spellCheckLanguages_:
+      Array<LanguageState|SpellCheckLanguageState>;
+  // </if>
+  declare private hideSpellCheckLanguages_: boolean;
+  private languageHelper_: LanguageHelper;
   private languageSettingsMetricsProxy_: LanguageSettingsMetricsProxy =
       LanguageSettingsMetricsProxyImpl.getInstance();
 
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this.languageHelper_ = getLanguageHelperInstance();
+  }
+
   private onSpellCheckToggleChange_(e: Event) {
     this.languageSettingsMetricsProxy_.recordSettingsMetric(
-      (e.target as SettingsToggleButtonElement).checked ?
-          LanguageSettingsActionType.ENABLE_SPELL_CHECK_GLOBALLY :
-          LanguageSettingsActionType.DISABLE_SPELL_CHECK_GLOBALLY);
+        (e.target as SettingsToggleButtonElement).checked ?
+            LanguageSettingsActionType.ENABLE_SPELL_CHECK_GLOBALLY :
+            LanguageSettingsActionType.DISABLE_SPELL_CHECK_GLOBALLY);
   }
 
   private onSelectedSpellingServiceChange_() {
     this.languageSettingsMetricsProxy_.recordSettingsMetric(
-      this.prefs.spellcheck.use_spelling_service.value ?
-          LanguageSettingsActionType.SELECT_ENHANCED_SPELL_CHECK :
-          LanguageSettingsActionType.SELECT_BASIC_SPELL_CHECK);
+        this.prefs.spellcheck.use_spelling_service.value ?
+            LanguageSettingsActionType.SELECT_ENHANCED_SPELL_CHECK :
+            LanguageSettingsActionType.SELECT_BASIC_SPELL_CHECK);
   }
 
   // <if expr="not is_macosx">
@@ -224,7 +202,7 @@ export class SettingsSpellCheckPageElement extends
       // Hide list of spell check languages if there is only 1 language
       // and we don't need to display any errors for that language
 
-      // TODO(crbug/1124888): Make hideSpellCheckLanugages_ a computed property
+      // TODO(crbug.com/40147587): Make hideSpellCheckLanugages_ a computed property
       this.hideSpellCheckLanguages_ = !singleLanguage.isManaged &&
           singleLanguage.downloadDictionaryFailureCount === 0;
     } else {
@@ -243,7 +221,7 @@ export class SettingsSpellCheckPageElement extends
     // `browser.enable_spellchecking` as the toggle for the 1 language as
     // well.
     if (this.spellCheckLanguages_.length === 1) {
-      this.languageHelper.toggleSpellCheck(
+      this.languageHelper_.toggleSpellCheck(
           this.spellCheckLanguages_[0].language.code,
           !!this.getPref('browser.enable_spellchecking').value);
     }
@@ -266,13 +244,13 @@ export class SettingsSpellCheckPageElement extends
       return;
     }
 
-    this.languageHelper.toggleSpellCheck(
+    this.languageHelper_.toggleSpellCheck(
         item.language.code, !item.spellCheckEnabled);
 
     this.languageSettingsMetricsProxy_.recordSettingsMetric(
-      item.spellCheckEnabled ?
-          LanguageSettingsActionType.ENABLE_SPELL_CHECK_FOR_LANGUAGE :
-          LanguageSettingsActionType.DISABLE_SPELL_CHECK_FOR_LANGUAGE);
+        item.spellCheckEnabled ?
+            LanguageSettingsActionType.ENABLE_SPELL_CHECK_FOR_LANGUAGE :
+            LanguageSettingsActionType.DISABLE_SPELL_CHECK_FOR_LANGUAGE);
   }
 
   /**
@@ -283,7 +261,7 @@ export class SettingsSpellCheckPageElement extends
       e: DomRepeatEvent<LanguageState|SpellCheckLanguageState>) {
     assert(this.errorsGreaterThan_(
         e.model.item.downloadDictionaryFailureCount, 0));
-    this.languageHelper.retryDownloadDictionary(e.model.item.language.code);
+    this.languageHelper_.retryDownloadDictionary(e.model.item.language.code);
   }
 
   /**
@@ -334,6 +312,26 @@ export class SettingsSpellCheckPageElement extends
     assert(expandButton);
     expandButton.expanded = !expandButton.expanded;
     focusWithoutInk(expandButton);
+  }
+
+  // <if expr="not is_macosx">
+  // SettingsViewMixin implementation.
+  override getFocusConfig() {
+    const map = new Map();
+    if (routes.EDIT_DICTIONARY) {
+      map.set(routes.EDIT_DICTIONARY.path, '#spellCheckSubpageTrigger');
+    }
+    return map;
+  }
+  // </if>
+
+  // SettingsViewMixin implementation.
+  override getAssociatedControlFor(childViewId: string): HTMLElement {
+    assert(childViewId === 'editDictionary');
+    const control = this.shadowRoot!.querySelector<HTMLElement>(
+        '#spellCheckSubpageTrigger');
+    assert(control);
+    return control;
   }
 }
 

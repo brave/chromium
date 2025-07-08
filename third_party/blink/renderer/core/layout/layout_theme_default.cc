@@ -79,19 +79,11 @@ String LayoutThemeDefault::ExtraDefaultStyleSheet() {
           ? UncompressResourceAsASCIIString(
                 IDR_UASTYLE_THEME_INPUT_MULTIPLE_FIELDS_CSS)
           : String();
-  String multiple_fields_inline_flex_style_sheet =
-      RuntimeEnabledFeatures::InputMultipleFieldsUIEnabled() &&
-              !RuntimeEnabledFeatures::DateInputInlineBlockEnabled()
-          ? UncompressResourceAsASCIIString(
-                IDR_UASTYLE_THEME_INPUT_MULTIPLE_FIELDS_INLINE_FLEX_CSS)
-          : String();
   StringBuilder builder;
   builder.ReserveCapacity(extra_style_sheet.length() +
-                          multiple_fields_style_sheet.length() +
-                          multiple_fields_inline_flex_style_sheet.length());
+                          multiple_fields_style_sheet.length());
   builder.Append(extra_style_sheet);
   builder.Append(multiple_fields_style_sheet);
-  builder.Append(multiple_fields_inline_flex_style_sheet);
   return builder.ToString();
 }
 
@@ -161,10 +153,12 @@ void LayoutThemeDefault::AdjustSliderThumbSize(
       WebThemeEngine::kPartSliderThumb);
 
   float zoom_level = builder.EffectiveZoom();
-  if (builder.EffectiveAppearance() == kSliderThumbHorizontalPart) {
+  if (builder.EffectiveAppearance() ==
+      AppearanceValue::kSliderThumbHorizontal) {
     builder.SetWidth(Length::Fixed(size.width() * zoom_level));
     builder.SetHeight(Length::Fixed(size.height() * zoom_level));
-  } else if (builder.EffectiveAppearance() == kSliderThumbVerticalPart) {
+  } else if (builder.EffectiveAppearance() ==
+             AppearanceValue::kSliderThumbVertical) {
     builder.SetWidth(Length::Fixed(size.height() * zoom_level));
     builder.SetHeight(Length::Fixed(size.width() * zoom_level));
   }
@@ -209,8 +203,9 @@ Color LayoutThemeDefault::PlatformFocusRingColor() const {
 void LayoutThemeDefault::AdjustButtonStyle(
     ComputedStyleBuilder& builder) const {
   // Ignore line-height.
-  if (builder.EffectiveAppearance() == kPushButtonPart)
+  if (builder.EffectiveAppearance() == AppearanceValue::kPushButton) {
     builder.SetLineHeight(ComputedStyleInitialValues::InitialLineHeight());
+  }
 }
 
 void LayoutThemeDefault::AdjustSearchFieldCancelButtonStyle(

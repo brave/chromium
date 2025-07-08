@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "tools/ipc_fuzzer/fuzzer/fuzzer.h"
+
 #include <iostream>
 #include <iterator>
 #include <set>
@@ -23,6 +25,8 @@
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
+#include "gpu/command_buffer/common/mailbox_holder.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/ipc/common/gpu_param_traits_macros.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_utils.h"
@@ -36,11 +40,18 @@
 #include "third_party/blink/public/common/page_state/page_state.h"
 #include "third_party/blink/public/mojom/widget/device_emulation_params.mojom-shared.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "tools/ipc_fuzzer/fuzzer/fuzzer.h"
 #include "tools/ipc_fuzzer/fuzzer/rand_util.h"
 #include "tools/ipc_fuzzer/message_lib/message_cracker.h"
 #include "tools/ipc_fuzzer/message_lib/message_file.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/size_f.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/range/range.h"
 #include "ui/gl/gpu_preference.h"
 #include "ui/latency/latency_info.h"
@@ -436,9 +447,9 @@ struct FuzzTraits<base::File::Error> {
 template <>
 struct FuzzTraits<base::File::Info> {
   static bool Fuzz(base::File::Info* p, Fuzzer* fuzzer) {
-    double last_modified = p->last_modified.ToDoubleT();
-    double last_accessed = p->last_accessed.ToDoubleT();
-    double creation_time = p->creation_time.ToDoubleT();
+    double last_modified = p->last_modified.InSecondsFSinceUnixEpoch();
+    double last_accessed = p->last_accessed.InSecondsFSinceUnixEpoch();
+    double creation_time = p->creation_time.InSecondsFSinceUnixEpoch();
     if (!FuzzParam(&p->size, fuzzer))
       return false;
     if (!FuzzParam(&p->is_directory, fuzzer))
@@ -449,9 +460,9 @@ struct FuzzTraits<base::File::Info> {
       return false;
     if (!FuzzParam(&creation_time, fuzzer))
       return false;
-    p->last_modified = base::Time::FromDoubleT(last_modified);
-    p->last_accessed = base::Time::FromDoubleT(last_accessed);
-    p->creation_time = base::Time::FromDoubleT(creation_time);
+    p->last_modified = base::Time::FromSecondsSinceUnixEpoch(last_modified);
+    p->last_accessed = base::Time::FromSecondsSinceUnixEpoch(last_accessed);
+    p->creation_time = base::Time::FromSecondsSinceUnixEpoch(creation_time);
     return true;
   }
 };
@@ -533,7 +544,7 @@ struct FuzzTraits<base::Value> {
           size_t bin_length = RandInRange(sizeof(tmp));
           fuzzer->FuzzData(tmp, bin_length);
           random_value =
-              base::Value(base::as_bytes(base::make_span(tmp, bin_length)));
+              base::Value(base::as_bytes(base::span(tmp, bin_length)));
           break;
         }
         case base::Value::Type::STRING: {
@@ -755,11 +766,35 @@ struct FuzzTraits<gfx::GpuMemoryBufferHandle> {
     int type;
     if (!FuzzParam(&type, fuzzer))
       return false;
+    auto buffer_type = static_cast<gfx::GpuMemoryBufferType>(type);
+    switch (buffer_type) {
+      case gfx::SHARED_MEMORY_BUFFER: {
+        base::UnsafeSharedMemoryRegion region;
+        if (!FuzzParam(&region, fuzzer)) {
+          return false;
+        }
+        *p = gfx::GpuMemoryBufferHandle(std::move(region));
+        break;
+      }
+#if BUILDFLAG(IS_WIN)
+      case gfx::DXGI_SHARED_HANDLE: {
+        gfx::DXGIHandle dxgi_handle = gfx::DXGIHandle::CreateFakeForTest();
+        base::UnsafeSharedMemoryRegion region;
+        if (!FuzzParam(&region, fuzzer)) {
+          return false;
+        }
+        *p = gfx::GpuMemoryBufferHandle(
+            dxgi_handle.CloneWithRegion(std::move(region)));
+        break;
+      }
+#endif
+      default:
+        p->type = buffer_type;
+        break;
+    }
     if (!FuzzParam(&p->offset, fuzzer))
       return false;
     if (!FuzzParam(&p->stride, fuzzer))
-      return false;
-    if (!FuzzParam(&p->region, fuzzer))
       return false;
     p->type = static_cast<gfx::GpuMemoryBufferType>(type);
     return true;
@@ -963,15 +998,6 @@ struct FuzzTraits<gl::GpuPreference> {
 };
 
 template <>
-struct FuzzTraits<gpu::ColorSpace> {
-  static bool Fuzz(gpu::ColorSpace* p, Fuzzer* fuzzer) {
-    int color_space = RandInRange(gpu::ColorSpace::COLOR_SPACE_LAST + 1);
-    *p = static_cast<gpu::ColorSpace>(color_space);
-    return true;
-  }
-};
-
-template <>
 struct FuzzTraits<gpu::CommandBuffer::State> {
   static bool Fuzz(gpu::CommandBuffer::State* p, Fuzzer* fuzzer) {
     if (!FuzzParam(&p->get_offset, fuzzer))
@@ -1008,8 +1034,6 @@ struct FuzzTraits<gpu::ContextCreationAttribs> {
     if (!FuzzParam(&p->gpu_preference, fuzzer))
       return false;
     if (!FuzzParam(&p->context_type, fuzzer))
-      return false;
-    if (!FuzzParam(&p->color_space, fuzzer))
       return false;
     return true;
   }
@@ -1297,7 +1321,7 @@ struct FuzzTraits<net::IPAddress> {
     std::vector<uint8_t> bytes = p->CopyBytesToVector();
     if (!FuzzParam(&bytes, fuzzer))
       return false;
-    net::IPAddress ip_address(bytes.data(), bytes.size());
+    net::IPAddress ip_address(bytes);
     *p = ip_address;
     return true;
   }
@@ -1534,12 +1558,12 @@ struct FuzzTraits<url::Origin> {
     if (!FuzzParam(&port, fuzzer))
       return false;
 
-    absl::optional<url::Origin> origin;
+    std::optional<url::Origin> origin;
     if (!opaque) {
       origin = url::Origin::UnsafelyCreateTupleOriginWithoutNormalization(
           scheme, host, port);
     } else {
-      absl::optional<base::UnguessableToken> token;
+      std::optional<base::UnguessableToken> token;
       if (auto* nonce = p->GetNonceForSerialization()) {
         token = *nonce;
       } else {
@@ -1574,18 +1598,6 @@ struct FuzzTraits<url::Origin> {
     return true;
   }
 };
-
-// Redefine macros to generate generating from traits declarations.
-// STRUCT declarations cause corresponding STRUCT_TRAITS declarations to occur.
-#undef IPC_STRUCT_BEGIN
-#undef IPC_STRUCT_BEGIN_WITH_PARENT
-#undef IPC_STRUCT_MEMBER
-#undef IPC_STRUCT_END
-#define IPC_STRUCT_BEGIN_WITH_PARENT(struct_name, parent) \
-  IPC_STRUCT_BEGIN(struct_name)
-#define IPC_STRUCT_BEGIN(struct_name) IPC_STRUCT_TRAITS_BEGIN(struct_name)
-#define IPC_STRUCT_MEMBER(type, name, ...) IPC_STRUCT_TRAITS_MEMBER(name)
-#define IPC_STRUCT_END() IPC_STRUCT_TRAITS_END()
 
 // Set up so next include will generate generate trait classes.
 #undef IPC_STRUCT_TRAITS_BEGIN

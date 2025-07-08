@@ -4,17 +4,15 @@
 
 #import "ios/web/public/session/crw_session_certificate_policy_cache_storage.h"
 
-#import "base/mac/foundation_util.h"
+#import <string_view>
+
+#import "base/apple/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "ios/web/public/session/proto/session.pb.h"
 #import "ios/web/session/hash_util.h"
 #import "net/base/hash_value.h"
 #import "net/cert/x509_certificate.h"
 #import "net/cert/x509_util.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -34,7 +32,7 @@ typedef NS_ENUM(NSInteger, DeprecatedSerializationIndices) {
 
 // Converts `certificate` to NSData for serialization.
 NSData* CertificateToNSData(net::X509Certificate* certificate) {
-  base::StringPiece cert_string =
+  std::string_view cert_string =
       net::x509_util::CryptoBufferAsStringPiece(certificate->cert_buffer());
   return [NSData dataWithBytes:cert_string.data() length:cert_string.length()];
 }
@@ -42,7 +40,7 @@ NSData* CertificateToNSData(net::X509Certificate* certificate) {
 // Converts serialized NSData to a certificate.
 scoped_refptr<net::X509Certificate> NSDataToCertificate(NSData* data) {
   return net::X509Certificate::CreateFromBytes(
-      base::make_span(static_cast<const uint8_t*>(data.bytes), data.length));
+      base::span(static_cast<const uint8_t*>(data.bytes), size_t{data.length}));
 }
 
 }  // namespace
@@ -106,9 +104,7 @@ size_t GetCertPolicyBytesEncoded() {
 - (instancetype)initWithProto:(const web::proto::CertificateStorage&)storage {
   const std::string& certString = storage.certificate();
   scoped_refptr<net::X509Certificate> cert =
-      net::X509Certificate::CreateFromBytes(
-          base::make_span(reinterpret_cast<const uint8_t*>(certString.data()),
-                          certString.size()));
+      net::X509Certificate::CreateFromBytes(base::as_byte_span(certString));
 
   // Return nil if the cert cannot be decoded or the host is empty.
   if (!cert || storage.host().empty()) {
@@ -121,7 +117,7 @@ size_t GetCertPolicyBytesEncoded() {
 }
 
 - (void)serializeToProto:(web::proto::CertificateStorage&)storage {
-  const base::StringPiece certString =
+  const std::string_view certString =
       net::x509_util::CryptoBufferAsStringPiece(_certificate->cert_buffer());
 
   storage.set_certificate(certString.data(), certString.size());
@@ -137,7 +133,7 @@ size_t GetCertPolicyBytesEncoded() {
 
 - (BOOL)isEqual:(NSObject*)object {
   CRWSessionCertificateStorage* other =
-      base::mac::ObjCCast<CRWSessionCertificateStorage>(object);
+      base::apple::ObjCCast<CRWSessionCertificateStorage>(object);
 
   return [other cr_isEqualSameClass:self];
 }
@@ -178,15 +174,17 @@ size_t GetCertPolicyBytesEncoded() {
                       certStatus:(NSNumber*)certStatus {
   scoped_refptr<net::X509Certificate> cert = NSDataToCertificate(certData);
   std::string host = base::SysNSStringToUTF8(hostName);
-  if (!cert || !host.length() || !certStatus)
+  if (!cert || !host.length() || !certStatus) {
     return nil;
+  }
   net::CertStatus status = certStatus.unsignedIntegerValue;
   return [self initWithCertificate:cert host:host status:status];
 }
 
 - (instancetype)initWithDeprecatedSerialization:(NSArray*)serialization {
-  if (serialization.count != DeprecatedSerializationIndexCount)
+  if (serialization.count != DeprecatedSerializationIndexCount) {
     return nil;
+  }
   return [self initWithCertData:serialization[CertificateDataIndex]
                        hostName:serialization[HostStringIndex]
                      certStatus:serialization[StatusIndex]];
@@ -241,7 +239,7 @@ size_t GetCertPolicyBytesEncoded() {
 
 - (BOOL)isEqual:(NSObject*)object {
   CRWSessionCertificatePolicyCacheStorage* other =
-      base::mac::ObjCCast<CRWSessionCertificatePolicyCacheStorage>(object);
+      base::apple::ObjCCast<CRWSessionCertificatePolicyCacheStorage>(object);
 
   return [other cr_isEqualSameClass:self];
 }
@@ -262,8 +260,9 @@ size_t GetCertPolicyBytesEncoded() {
         CRWSessionCertificateStorage* certificatePolicyStorage =
             [[CRWSessionCertificateStorage alloc]
                 initWithDeprecatedSerialization:serialiazation];
-        if (certificatePolicyStorage)
+        if (certificatePolicyStorage) {
           [certificateStorages addObject:certificatePolicyStorage];
+        }
       }
       _certificateStorages = certificateStorages;
     }

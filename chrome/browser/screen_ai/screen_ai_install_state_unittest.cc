@@ -53,11 +53,12 @@ class ScreenAIInstallStateTest : public testing::Test,
   bool ComponentDownloadedReceived() { return component_downloaded_received_; }
 
  private:
+  TestScreenAIInstallState test_install_state_;
+
   base::ScopedObservation<screen_ai::ScreenAIInstallState,
                           ScreenAIInstallState::Observer>
       component_downloaded_observer_{this};
 
-  TestScreenAIInstallState test_install_state_;
   bool component_downloaded_received_ = false;
 };
 
@@ -74,7 +75,7 @@ TEST_F(ScreenAIInstallStateTest, DownloadedBeforeObservation) {
 
 TEST_F(ScreenAIInstallStateTest, ObservationAfterFailure) {
   ScreenAIInstallState::GetInstance()->SetStateForTesting(
-      screen_ai::ScreenAIInstallState::State::kFailed);
+      screen_ai::ScreenAIInstallState::State::kDownloadFailed);
   StartObservation();
   EXPECT_TRUE(ComponentDownloadedReceived());
 }

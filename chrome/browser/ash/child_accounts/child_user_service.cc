@@ -7,6 +7,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -56,14 +57,6 @@ ChildUserService::TimeLimitPolicyType GetTimeLimitPolicyType(
 }
 }  // namespace
 
-// static
-const char ChildUserService::kFamilyLinkHelperAppPackageName[] =
-    "com.google.android.apps.kids.familylinkhelper";
-// static
-const char ChildUserService::kFamilyLinkHelperAppPlayStoreURL[] =
-    "https://play.google.com/store/apps/"
-    "details?id=com.google.android.apps.kids.familylinkhelper";
-
 ChildUserService::TestApi::TestApi(ChildUserService* service)
     : service_(service) {}
 
@@ -105,11 +98,11 @@ void ChildUserService::ResumeWebActivity(const std::string& app_service_id) {
   NOTIMPLEMENTED();
 }
 
-absl::optional<base::TimeDelta> ChildUserService::GetTimeLimitForApp(
+std::optional<base::TimeDelta> ChildUserService::GetTimeLimitForApp(
     const std::string& app_service_id,
     apps::AppType app_type) {
   if (!app_time_controller_)
-    return absl::nullopt;
+    return std::nullopt;
 
   return app_time_controller_->GetTimeLimitForApp(app_service_id, app_type);
 }

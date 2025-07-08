@@ -33,12 +33,8 @@ class FileTypePoliciesComponentInstallerPolicy
       const FileTypePoliciesComponentInstallerPolicy&) = delete;
   FileTypePoliciesComponentInstallerPolicy& operator=(
       const FileTypePoliciesComponentInstallerPolicy&) = delete;
-  ~FileTypePoliciesComponentInstallerPolicy() override = default;
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(FileTypePoliciesComponentInstallerTest,
-                           VerifyAttributes);
-
   // The following methods override ComponentInstallerPolicy.
   bool SupportsGroupPolicyEnabledComponentUpdates() const override;
   bool RequiresNetworkEncryption() const override;

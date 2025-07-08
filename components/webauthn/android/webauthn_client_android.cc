@@ -5,8 +5,11 @@
 #include "components/webauthn/android/webauthn_client_android.h"
 
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "base/check.h"
+#include "base/functional/callback.h"
 #include "components/webauthn/android/webauthn_cred_man_delegate.h"
 #include "components/webauthn/android/webauthn_cred_man_delegate_factory.h"
 #include "content/public/browser/web_contents.h"
@@ -54,6 +57,17 @@ void WebAuthnClientAndroid::OnCredManUiClosed(
               ->GetRequestDelegate(render_frame_host)) {
     cred_man_delegate->OnCredManUiClosed(success);
   }
+}
+
+void WebAuthnClientAndroid::CleanupCredManRequest(
+    content::RenderFrameHost* frame_host) {
+  if (webauthn::WebAuthnCredManDelegate* credman_delegate =
+          webauthn::WebAuthnCredManDelegateFactory::GetFactory(
+              content::WebContents::FromRenderFrameHost(frame_host))
+              ->GetRequestDelegate(frame_host)) {
+    credman_delegate->CleanUpConditionalRequest();
+  }
+  return;
 }
 
 void WebAuthnClientAndroid::OnPasswordCredentialReceived(

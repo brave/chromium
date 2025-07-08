@@ -4,9 +4,12 @@
 
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
+#include <array>
+#include <memory>
 #include <tuple>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
@@ -14,17 +17,26 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/threading/thread.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
 #include "net/base/elements_upload_data_stream.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/proxy_chain.h"
+#include "net/base/proxy_server.h"
 #include "net/base/test_completion_callback.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
 #include "net/log/net_log_source.h"
+#include "net/proxy_resolution/configured_proxy_resolution_service.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/stream_socket.h"
 #include "net/test/embedded_test_server/embedded_test_server_connection_listener.h"
@@ -116,13 +128,27 @@ class TestConnectionListener
 struct EmbeddedTestServerConfig {
   EmbeddedTestServer::Type type;
   HttpConnection::Protocol protocol;
+  std::optional<EmbeddedTestServer::Type> proxy_type;
 };
 
 std::vector<EmbeddedTestServerConfig> EmbeddedTestServerConfigs() {
   return {
-      {EmbeddedTestServer::TYPE_HTTP, HttpConnection::Protocol::kHttp1},
-      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp1},
-      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp2},
+      {EmbeddedTestServer::TYPE_HTTP, HttpConnection::Protocol::kHttp1,
+       /*proxy_type=*/std::nullopt},
+      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp1,
+       /*proxy_type=*/std::nullopt},
+      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp2,
+       /*proxy_type=*/std::nullopt},
+
+      // Proxy is HTTP/1.x CONNECT only, so can't be used with HTTP and proxy
+      // itself can't use HTTP/2. Testing all combinations of proxy server and
+      // destination server protocol seems not useful, so test HTTP/1.x server
+      // with HTTP proxy, and HTTP/2 server with HTTPS proxy, but each
+      // non-HTTP destination server type should work with the other proxy type.
+      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp1,
+       /*proxy_type=*/EmbeddedTestServer::TYPE_HTTP},
+      {EmbeddedTestServer::TYPE_HTTPS, HttpConnection::Protocol::kHttp2,
+       /*proxy_type=*/EmbeddedTestServer::TYPE_HTTPS},
   };
 }
 
@@ -130,19 +156,68 @@ class EmbeddedTestServerTest
     : public testing::TestWithParam<EmbeddedTestServerConfig>,
       public WithTaskEnvironment {
  public:
-  EmbeddedTestServerTest()
-      : context_(CreateTestURLRequestContextBuilder()->Build()) {}
-
-  void SetUp() override {
+  EmbeddedTestServerTest() {
     server_ = std::make_unique<EmbeddedTestServer>(GetParam().type,
                                                    GetParam().protocol);
     server_->AddDefaultHandlers();
     server_->SetConnectionListener(&connection_listener_);
   }
 
-  void TearDown() override {
-    if (server_->Started())
-      ASSERT_TRUE(server_->ShutdownAndWaitUntilComplete());
+  ~EmbeddedTestServerTest() override {
+    if (server_->Started()) {
+      EXPECT_TRUE(server_->ShutdownAndWaitUntilComplete());
+    }
+    if (proxy_server_ && proxy_server_->Started()) {
+      EXPECT_TRUE(proxy_server_->ShutdownAndWaitUntilComplete());
+    }
+  }
+
+  // Helper to start `server_`, `proxy_server_` (if needed), and populate
+  // `context_`. This is need because the proxy server needs the server to be
+  // started, but starting the server (or even just creating the listen socket)
+  // prevents modifying the server in certain ways, so some individual tests
+  // have to configure the server before any of this can happen.
+  //
+  // `disable_proxy_destination_restrictions` remove the destination
+  // restrictions on the connect proxy, which normally restrict connections to
+  // be only to `server_->host_port_pair()`.
+  testing::AssertionResult StartServerAndSetUpContext(
+      std::optional<base::span<const HostPortPair>> proxied_destinations =
+          std::nullopt) {
+    // Only start the server if not already done. Some tests need to start the
+    // server before calling this method, so they can provide a list of proxied
+    // destinations.
+    if (!server_->Started() && !server_->Start()) {
+      return testing::AssertionFailure() << "Failed to start server.";
+    }
+
+    auto builder = CreateTestURLRequestContextBuilder();
+    if (GetParam().proxy_type) {
+      proxy_server_ =
+          std::make_unique<EmbeddedTestServer>(*GetParam().proxy_type);
+      proxy_server_->EnableConnectProxy(proxied_destinations.value_or(
+          base::span<const HostPortPair>{server_->host_port_pair()}));
+      if (!proxy_server_->Start()) {
+        return testing::AssertionFailure() << "Failed to start proxy.";
+      }
+
+      // Set up the URLRequestContext to use the proxy server.
+      ProxyConfig proxy_config;
+      proxy_config.proxy_rules().ParseFromString(
+          proxy_server_->GetOrigin().Serialize());
+      // Need this to avoid default bypass rules to not use proxy for localhost.
+      proxy_config.proxy_rules().bypass_rules.AddRulesToSubtractImplicit();
+      ProxyConfigWithAnnotation annotated_config(proxy_config,
+                                                 TRAFFIC_ANNOTATION_FOR_TESTS);
+      builder->set_proxy_resolution_service(
+          ConfiguredProxyResolutionService::CreateWithoutProxyResolver(
+              std::make_unique<ProxyConfigServiceFixed>(
+                  std::move(annotated_config)),
+              /*net_log=*/nullptr));
+    }
+
+    context_ = builder->Build();
+    return testing::AssertionSuccess();
   }
 
   // Handles |request| sent to |path| and returns the response per |content|,
@@ -166,17 +241,30 @@ class EmbeddedTestServerTest
     return nullptr;
   }
 
+  // The ProxyChain requests are expected to use.
+  ProxyChain ExpectedProxyChain() const {
+    if (GetParam().proxy_type) {
+      return ProxyChain(GetParam().proxy_type == EmbeddedTestServer::TYPE_HTTP
+                            ? ProxyServer::SCHEME_HTTP
+                            : ProxyServer::SCHEME_HTTPS,
+                        proxy_server_->host_port_pair());
+    } else {
+      return ProxyChain::Direct();
+    }
+  }
+
  protected:
   std::string request_relative_url_;
   GURL request_absolute_url_;
   std::unique_ptr<URLRequestContext> context_;
   TestConnectionListener connection_listener_;
   std::unique_ptr<EmbeddedTestServer> server_;
+  std::unique_ptr<EmbeddedTestServer> proxy_server_;
   base::OnceClosure quit_run_loop_;
 };
 
 TEST_P(EmbeddedTestServerTest, GetBaseURL) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
   if (GetParam().type == EmbeddedTestServer::TYPE_HTTPS) {
     EXPECT_EQ(base::StringPrintf("https://127.0.0.1:%u/", server_->port()),
               server_->base_url().spec());
@@ -187,7 +275,7 @@ TEST_P(EmbeddedTestServerTest, GetBaseURL) {
 }
 
 TEST_P(EmbeddedTestServerTest, GetURL) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
   if (GetParam().type == EmbeddedTestServer::TYPE_HTTPS) {
     EXPECT_EQ(base::StringPrintf("https://127.0.0.1:%u/path?query=foo",
                                  server_->port()),
@@ -200,7 +288,7 @@ TEST_P(EmbeddedTestServerTest, GetURL) {
 }
 
 TEST_P(EmbeddedTestServerTest, GetURLWithHostname) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
   if (GetParam().type == EmbeddedTestServer::TYPE_HTTPS) {
     EXPECT_EQ(base::StringPrintf("https://foo.com:%d/path?query=foo",
                                  server_->port()),
@@ -216,7 +304,7 @@ TEST_P(EmbeddedTestServerTest, RegisterRequestHandler) {
   server_->RegisterRequestHandler(base::BindRepeating(
       &EmbeddedTestServerTest::HandleRequest, base::Unretained(this), "/test",
       "<b>Worked!</b>", "text/html", HTTP_OK));
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(
@@ -230,10 +318,9 @@ TEST_P(EmbeddedTestServerTest, RegisterRequestHandler) {
   ASSERT_TRUE(request->response_headers());
   EXPECT_EQ(HTTP_OK, request->response_headers()->response_code());
   EXPECT_EQ("<b>Worked!</b>", delegate.data_received());
-  std::string content_type;
-  ASSERT_TRUE(request->response_headers()->GetNormalizedHeader("Content-Type",
-                                                               &content_type));
-  EXPECT_EQ("text/html", content_type);
+  EXPECT_EQ(request->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/html");
+  EXPECT_EQ(request->proxy_chain(), ExpectedProxyChain());
 
   EXPECT_EQ("/test?q=foo", request_relative_url_);
   EXPECT_EQ(server_->GetURL("/test?q=foo"), request_absolute_url_);
@@ -241,10 +328,10 @@ TEST_P(EmbeddedTestServerTest, RegisterRequestHandler) {
 
 TEST_P(EmbeddedTestServerTest, ServeFilesFromDirectory) {
   base::FilePath src_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_dir));
   server_->ServeFilesFromDirectory(
       src_dir.AppendASCII("net").AppendASCII("data"));
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(
@@ -258,10 +345,9 @@ TEST_P(EmbeddedTestServerTest, ServeFilesFromDirectory) {
   ASSERT_TRUE(request->response_headers());
   EXPECT_EQ(HTTP_OK, request->response_headers()->response_code());
   EXPECT_EQ("<p>Hello World!</p>", delegate.data_received());
-  std::string content_type;
-  ASSERT_TRUE(request->response_headers()->GetNormalizedHeader("Content-Type",
-                                                               &content_type));
-  EXPECT_EQ("text/html", content_type);
+  EXPECT_EQ(request->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/html");
+  EXPECT_EQ(request->proxy_chain(), ExpectedProxyChain());
 }
 
 TEST_P(EmbeddedTestServerTest, MockHeadersWithoutCRLF) {
@@ -270,11 +356,11 @@ TEST_P(EmbeddedTestServerTest, MockHeadersWithoutCRLF) {
     return;
 
   base::FilePath src_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_dir));
   server_->ServeFilesFromDirectory(
       src_dir.AppendASCII("net").AppendASCII("data").AppendASCII(
           "embedded_test_server"));
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(context_->CreateRequest(
@@ -288,14 +374,13 @@ TEST_P(EmbeddedTestServerTest, MockHeadersWithoutCRLF) {
   ASSERT_TRUE(request->response_headers());
   EXPECT_EQ(HTTP_OK, request->response_headers()->response_code());
   EXPECT_EQ("<p>Hello World!</p>", delegate.data_received());
-  std::string content_type;
-  ASSERT_TRUE(request->response_headers()->GetNormalizedHeader("Content-Type",
-                                                               &content_type));
-  EXPECT_EQ("text/html", content_type);
+  EXPECT_EQ(request->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/html");
+  EXPECT_EQ(request->proxy_chain(), ExpectedProxyChain());
 }
 
 TEST_P(EmbeddedTestServerTest, DefaultNotFoundResponse) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(context_->CreateRequest(
@@ -308,10 +393,11 @@ TEST_P(EmbeddedTestServerTest, DefaultNotFoundResponse) {
   EXPECT_EQ(net::OK, delegate.request_status());
   ASSERT_TRUE(request->response_headers());
   EXPECT_EQ(HTTP_NOT_FOUND, request->response_headers()->response_code());
+  EXPECT_EQ(request->proxy_chain(), ExpectedProxyChain());
 }
 
 TEST_P(EmbeddedTestServerTest, ConnectionListenerAccept) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   net::AddressList address_list;
   EXPECT_TRUE(server_->GetAddressList(&address_list));
@@ -330,7 +416,7 @@ TEST_P(EmbeddedTestServerTest, ConnectionListenerAccept) {
 }
 
 TEST_P(EmbeddedTestServerTest, ConnectionListenerRead) {
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(context_->CreateRequest(
@@ -342,6 +428,263 @@ TEST_P(EmbeddedTestServerTest, ConnectionListenerRead) {
 
   EXPECT_EQ(1u, connection_listener_.SocketAcceptedCount());
   EXPECT_TRUE(connection_listener_.DidReadFromSocket());
+}
+
+TEST_P(EmbeddedTestServerTest,
+       UpgradeRequestHandlerEvalContinuesOnKNotHandled) {
+  if (GetParam().protocol == HttpConnection::Protocol::kHttp2 ||
+      GetParam().proxy_type) {
+    GTEST_SKIP() << "This test is not supported on HTTP/2 or with proxies";
+  }
+
+  const std::string websocket_upgrade_path = "/websocket_upgrade_path";
+
+  base::AtomicFlag first_handler_called, second_handler_called;
+  server_->RegisterUpgradeRequestHandler(base::BindLambdaForTesting(
+      [&](const HttpRequest& request, HttpConnection* connection)
+          -> EmbeddedTestServer::UpgradeResultOrHttpResponse {
+        first_handler_called.Set();
+        if (request.relative_url == websocket_upgrade_path) {
+          return UpgradeResult::kUpgraded;
+        }
+        return UpgradeResult::kNotHandled;
+      }));
+  server_->RegisterUpgradeRequestHandler(base::BindLambdaForTesting(
+      [&](const HttpRequest& request, HttpConnection* connection)
+          -> EmbeddedTestServer::UpgradeResultOrHttpResponse {
+        second_handler_called.Set();
+        if (request.relative_url == websocket_upgrade_path) {
+          return UpgradeResult::kUpgraded;
+        }
+        return UpgradeResult::kNotHandled;
+      }));
+
+  auto server_handle = server_->StartAndReturnHandle();
+  ASSERT_TRUE(server_handle);
+
+  // Have to manually create the context, since proxy setup code isn't
+  // compatible with EmbeddedTestServer::StartAndReturnHandle()
+  context_ = CreateTestURLRequestContextBuilder()->Build();
+
+  GURL a_different_url = server_->GetURL("/a_different_path");
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request(
+      context_->CreateRequest(a_different_url, DEFAULT_PRIORITY, &delegate,
+                              TRAFFIC_ANNOTATION_FOR_TESTS));
+
+  request->Start();
+  delegate.RunUntilComplete();
+
+  EXPECT_TRUE(first_handler_called.IsSet());
+  EXPECT_TRUE(second_handler_called.IsSet());
+}
+
+// Tests the case of a connection failure after the destination server has been
+// shut down. Primarily intended to test the CONNECT proxy case.
+TEST_P(EmbeddedTestServerTest, ConnectionFailure) {
+  ASSERT_TRUE(StartServerAndSetUpContext());
+
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request(
+      context_->CreateRequest(server_->GetURL("/"), DEFAULT_PRIORITY, &delegate,
+                              TRAFFIC_ANNOTATION_FOR_TESTS));
+
+  // A recently closed socket should be blocked from reuse for some time, so the
+  // closed socket should not be reopened by some other app in the small windows
+  // before this test tries to connect to it.
+  EXPECT_TRUE(server_->ShutdownAndWaitUntilComplete());
+
+  request->Start();
+  delegate.RunUntilComplete();
+
+  if (GetParam().proxy_type) {
+    EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, delegate.request_status());
+  } else {
+    EXPECT_EQ(ERR_CONNECTION_REFUSED, delegate.request_status());
+  }
+}
+
+// Tests the of using an incorrect destination port with an EmbeddedTestServer
+// CONNECT proxy.
+TEST_P(EmbeddedTestServerTest, ConnectProxyWrongPort) {
+  if (!GetParam().proxy_type) {
+    GTEST_SKIP() << "This test only makes sense with a proxy";
+  }
+
+  ASSERT_TRUE(StartServerAndSetUpContext(/*proxied_destinations=*/{}));
+
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request(
+      context_->CreateRequest(server_->GetURL("/"), DEFAULT_PRIORITY, &delegate,
+                              TRAFFIC_ANNOTATION_FOR_TESTS));
+
+  // A recently closed socket should be blocked from reuse for some time, so the
+  // closed socket should not be reopened by some other app in the small windows
+  // before this test tries to connect to it.
+  EXPECT_TRUE(server_->ShutdownAndWaitUntilComplete());
+
+  request->Start();
+  delegate.RunUntilComplete();
+
+  EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, delegate.request_status());
+}
+
+// Tests the of using multiple allowed destination ports with an
+// EmbeddedTestServer CONNECT proxy.
+TEST_P(EmbeddedTestServerTest, ConnectProxyMultipleHostPortPairs) {
+  if (!GetParam().proxy_type) {
+    GTEST_SKIP() << "This test only makes sense with a proxy";
+  }
+
+  // This will be allowed for one server, but not the other.
+  const char kHostname[] = "a.test";
+
+  // Start `server_` with the default configuration.
+  ASSERT_TRUE(server_->Start());
+
+  // `server2` uses CERT_TEST_NAMES, which allows it to handle requests for
+  // "a.test", but not 127.0.0.1.
+  EmbeddedTestServer server2(GetParam().type, GetParam().protocol);
+  server2.SetSSLConfig(EmbeddedTestServer::CERT_TEST_NAMES);
+  server2.AddDefaultHandlers();
+  ASSERT_TRUE(server2.Start());
+
+  // Set up CONNECT support for `server_` using 127.0.0.1 as the hostname, and
+  // for `server2` using only kHostname.
+  ASSERT_TRUE(StartServerAndSetUpContext(
+      {{server_->host_port_pair(),
+        HostPortPair::FromURL(server2.GetURL(kHostname, "/"))}}));
+
+  struct TestCase {
+    GURL dest;
+    bool expect_success;
+  };
+  auto kTestCases = std::to_array<TestCase>({
+      // Check that each server's port is proxied only when using the right
+      // hostname. If the wrong hostname:port combination is
+      // proxied, the result will be a different error, since the SSL certs are
+      // specific to the destination hostname.
+      {server_->GetURL("/echo"), true},
+      {server2.GetURL("/echo"), false},
+      {server_->GetURL(kHostname, "/echo"), false},
+      {server2.GetURL(kHostname, "/echo"), true},
+
+      // As an added check, trying connecting to `server2` using a hostname its
+      // cert supports, but a hostname that the proxy is not configured
+      // to forward. This should fail.
+      {server2.GetURL("b.test", "/echo"), false},
+  });
+
+  for (size_t i = 0; i < kTestCases.size(); ++i) {
+    SCOPED_TRACE(i);
+    const auto& test_case = kTestCases[i];
+    TestDelegate delegate;
+    std::unique_ptr<URLRequest> request(
+        context_->CreateRequest(test_case.dest, DEFAULT_PRIORITY, &delegate,
+                                TRAFFIC_ANNOTATION_FOR_TESTS));
+    request->Start();
+    delegate.RunUntilComplete();
+    if (test_case.expect_success) {
+      EXPECT_EQ(OK, delegate.request_status());
+      EXPECT_EQ("Echo", delegate.data_received());
+    } else {
+      EXPECT_EQ(ERR_TUNNEL_CONNECTION_FAILED, delegate.request_status());
+    }
+  }
+}
+
+TEST_P(EmbeddedTestServerTest, UpgradeRequestHandlerTransfersSocket) {
+  if (GetParam().protocol == HttpConnection::Protocol::kHttp2 ||
+      GetParam().proxy_type) {
+    GTEST_SKIP() << "This test is not supported on HTTP/2 or with proxies";
+  }
+
+  const std::string websocket_upgrade_path = "/websocket_upgrade_path";
+
+  base::AtomicFlag handler_called;
+  server_->RegisterUpgradeRequestHandler(base::BindLambdaForTesting(
+      [&](const HttpRequest& request, HttpConnection* connection)
+          -> EmbeddedTestServer::UpgradeResultOrHttpResponse {
+        handler_called.Set();
+        if (request.relative_url == websocket_upgrade_path) {
+          auto socket = connection->TakeSocket();
+          EXPECT_TRUE(socket);
+          return UpgradeResult::kUpgraded;
+        }
+        return UpgradeResult::kNotHandled;
+      }));
+
+  auto server_handle = server_->StartAndReturnHandle();
+  ASSERT_TRUE(server_handle);
+
+  // Have to manually create the context, since proxy setup code isn't
+  // compatible with EmbeddedTestServer::StartAndReturnHandle()
+  context_ = CreateTestURLRequestContextBuilder()->Build();
+
+  GURL websocket_upgrade_url = server_->GetURL(websocket_upgrade_path);
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request(
+      context_->CreateRequest(websocket_upgrade_url, DEFAULT_PRIORITY,
+                              &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+
+  request->Start();
+  delegate.RunUntilComplete();
+  EXPECT_TRUE(handler_called.IsSet());
+}
+
+TEST_P(EmbeddedTestServerTest, UpgradeRequestHandlerEvalStopsOnErrorResponse) {
+  if (GetParam().protocol == HttpConnection::Protocol::kHttp2 ||
+      GetParam().proxy_type) {
+    GTEST_SKIP() << "This test is not supported on HTTP/2 or with proxies";
+  }
+
+  const std::string websocket_upgrade_path = "/websocket_upgrade_path";
+
+  base::AtomicFlag first_handler_called;
+  base::AtomicFlag second_handler_called;
+  server_->RegisterUpgradeRequestHandler(base::BindLambdaForTesting(
+      [&](const HttpRequest& request, HttpConnection* connection)
+          -> EmbeddedTestServer::UpgradeResultOrHttpResponse {
+        first_handler_called.Set();
+        if (request.relative_url == websocket_upgrade_path) {
+          auto error_response = std::make_unique<BasicHttpResponse>();
+          error_response->set_code(HttpStatusCode::HTTP_INTERNAL_SERVER_ERROR);
+          error_response->set_content("Internal Server Error");
+          error_response->set_content_type("text/plain");
+          return base::unexpected(std::move(error_response));
+        }
+        return UpgradeResult::kNotHandled;
+      }));
+
+  server_->RegisterUpgradeRequestHandler(base::BindLambdaForTesting(
+      [&](const HttpRequest& request, HttpConnection* connection)
+          -> EmbeddedTestServer::UpgradeResultOrHttpResponse {
+        second_handler_called.Set();
+        return UpgradeResult::kNotHandled;
+      }));
+
+  auto server_handle = server_->StartAndReturnHandle();
+  ASSERT_TRUE(server_handle);
+
+  // Have to manually create the context, since proxy setup code isn't
+  // compatible with EmbeddedTestServer::StartAndReturnHandle()
+  context_ = CreateTestURLRequestContextBuilder()->Build();
+
+  GURL websocket_upgrade_url = server_->GetURL(websocket_upgrade_path);
+  TestDelegate delegate;
+  std::unique_ptr<URLRequest> request(
+      context_->CreateRequest(websocket_upgrade_url, DEFAULT_PRIORITY,
+                              &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+
+  request->Start();
+  delegate.RunUntilComplete();
+
+  EXPECT_TRUE(first_handler_called.IsSet());
+  EXPECT_EQ(net::OK, delegate.request_status());
+  ASSERT_TRUE(request->response_headers());
+  EXPECT_EQ(HTTP_INTERNAL_SERVER_ERROR,
+            request->response_headers()->response_code());
+  EXPECT_FALSE(second_handler_called.IsSet());
 }
 
 // TODO(http://crbug.com/1166868): Flaky on ChromeOS.
@@ -357,7 +700,7 @@ TEST_P(EmbeddedTestServerTest, MAYBE_ConnectionListenerComplete) {
   if (GetParam().protocol == HttpConnection::Protocol::kHttp2)
     return;
 
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   // Need to send a Keep-Alive response header since the EmbeddedTestServer only
@@ -389,7 +732,7 @@ TEST_P(EmbeddedTestServerTest, ConcurrentFetches) {
   server_->RegisterRequestHandler(base::BindRepeating(
       &EmbeddedTestServerTest::HandleRequest, base::Unretained(this), "/test3",
       "No chocolates", "text/plain", HTTP_NOT_FOUND));
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate1;
   std::unique_ptr<URLRequest> request1(
@@ -424,28 +767,22 @@ TEST_P(EmbeddedTestServerTest, ConcurrentFetches) {
   ASSERT_TRUE(request1->response_headers());
   EXPECT_EQ(HTTP_OK, request1->response_headers()->response_code());
   EXPECT_EQ("Raspberry chocolate", delegate1.data_received());
-  std::string content_type1;
-  ASSERT_TRUE(request1->response_headers()->GetNormalizedHeader(
-      "Content-Type", &content_type1));
-  EXPECT_EQ("text/html", content_type1);
+  EXPECT_EQ(request1->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/html");
 
   EXPECT_EQ(net::OK, delegate2.request_status());
   ASSERT_TRUE(request2->response_headers());
   EXPECT_EQ(HTTP_OK, request2->response_headers()->response_code());
   EXPECT_EQ("Vanilla chocolate", delegate2.data_received());
-  std::string content_type2;
-  ASSERT_TRUE(request2->response_headers()->GetNormalizedHeader(
-      "Content-Type", &content_type2));
-  EXPECT_EQ("text/html", content_type2);
+  EXPECT_EQ(request2->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/html");
 
   EXPECT_EQ(net::OK, delegate3.request_status());
   ASSERT_TRUE(request3->response_headers());
   EXPECT_EQ(HTTP_NOT_FOUND, request3->response_headers()->response_code());
   EXPECT_EQ("No chocolates", delegate3.data_received());
-  std::string content_type3;
-  ASSERT_TRUE(request3->response_headers()->GetNormalizedHeader(
-      "Content-Type", &content_type3));
-  EXPECT_EQ("text/plain", content_type3);
+  EXPECT_EQ(request3->response_headers()->GetNormalizedHeader("Content-Type"),
+            "text/plain");
 }
 
 namespace {
@@ -486,7 +823,16 @@ class InfiniteResponse : public BasicHttpResponse {
 
  private:
   void SendInfinite(base::WeakPtr<HttpResponseDelegate> delegate) {
-    delegate->SendContents("echo", base::DoNothing());
+    if (!delegate) {
+      return;
+    }
+
+    delegate->SendContents(
+        "echo", base::BindOnce(&InfiniteResponse::OnSendDone,
+                               weak_ptr_factory_.GetWeakPtr(), delegate));
+  }
+
+  void OnSendDone(base::WeakPtr<HttpResponseDelegate> delegate) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&InfiniteResponse::SendInfinite,
                                   weak_ptr_factory_.GetWeakPtr(), delegate));
@@ -512,7 +858,7 @@ TEST_P(EmbeddedTestServerTest, CloseDuringWrite) {
   server_->RegisterRequestHandler(
       base::BindRepeating(&HandlePrefixedRequest, "/infinite",
                           base::BindRepeating(&HandleInfiniteRequest)));
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   std::unique_ptr<URLRequest> request =
       context_->CreateRequest(server_->GetURL("/infinite"), DEFAULT_PRIORITY,
@@ -562,7 +908,7 @@ TEST_P(EmbeddedTestServerTest, AcceptCHFrame) {
   server_->SetAlpsAcceptCH("", "foo");
   server_->SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
 
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request_a(context_->CreateRequest(
@@ -583,15 +929,25 @@ TEST_P(EmbeddedTestServerTest, AcceptCHFrameDifferentOrigins) {
   server_->SetAlpsAcceptCH("a.test", "a");
   server_->SetAlpsAcceptCH("b.test", "b");
   server_->SetAlpsAcceptCH("c.b.test", "c");
-  server_->SetSSLConfig(net::EmbeddedTestServer::CERT_TEST_NAMES);
-
+  server_->SetSSLConfig(EmbeddedTestServer::CERT_TEST_NAMES);
   ASSERT_TRUE(server_->Start());
+
+  // Need to configure proxying for each destination used in this test, if
+  // proxying is enabled. Passing in HostPortPairs to proxy is harmess if
+  // proxying is disabled for this test case.
+  GURL a_url = server_->GetURL("a.test", "/non-existent");
+  GURL b_url = server_->GetURL("b.test", "/non-existent");
+  GURL cb_url = server_->GetURL("c.b.test", "/non-existent");
+  ASSERT_TRUE(StartServerAndSetUpContext({{
+      HostPortPair::FromURL(a_url),
+      HostPortPair::FromURL(b_url),
+      HostPortPair::FromURL(cb_url),
+  }}));
 
   {
     TestDelegate delegate;
     std::unique_ptr<URLRequest> request_a(context_->CreateRequest(
-        server_->GetURL("a.test", "/non-existent"), DEFAULT_PRIORITY, &delegate,
-        TRAFFIC_ANNOTATION_FOR_TESTS));
+        a_url, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request_a->Start();
     delegate.RunUntilComplete();
 
@@ -602,8 +958,7 @@ TEST_P(EmbeddedTestServerTest, AcceptCHFrameDifferentOrigins) {
   {
     TestDelegate delegate;
     std::unique_ptr<URLRequest> request_a(context_->CreateRequest(
-        server_->GetURL("b.test", "/non-existent"), DEFAULT_PRIORITY, &delegate,
-        TRAFFIC_ANNOTATION_FOR_TESTS));
+        b_url, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request_a->Start();
     delegate.RunUntilComplete();
 
@@ -614,8 +969,7 @@ TEST_P(EmbeddedTestServerTest, AcceptCHFrameDifferentOrigins) {
   {
     TestDelegate delegate;
     std::unique_ptr<URLRequest> request_a(context_->CreateRequest(
-        server_->GetURL("c.b.test", "/non-existent"), DEFAULT_PRIORITY,
-        &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+        cb_url, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request_a->Start();
     delegate.RunUntilComplete();
 
@@ -636,12 +990,11 @@ TEST_P(EmbeddedTestServerTest, LargePost) {
       }));
 
   server_->SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
-  ASSERT_TRUE(server_->Start());
+  ASSERT_TRUE(StartServerAndSetUpContext());
 
   auto reader = std::make_unique<UploadBytesElementReader>(
-      large_post_body.data(), large_post_body.size());
-  auto stream = ElementsUploadDataStream::CreateWithReader(std::move(reader),
-                                                           /*identifier=*/0);
+      base::as_byte_span(large_post_body));
+  auto stream = ElementsUploadDataStream::CreateWithReader(std::move(reader));
 
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(
@@ -694,7 +1047,7 @@ class EmbeddedTestServerThreadingTestDelegate
     // Create the test server instance.
     EmbeddedTestServer server(type_, protocol_);
     base::FilePath src_dir;
-    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
+    ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_dir));
     ASSERT_TRUE(server.Start());
 
     // Make a request and wait for the reply.

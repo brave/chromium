@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/router/discovery/access_code/access_code_media_sink_util.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
@@ -104,9 +105,12 @@ TEST_F(AccessCodeMediaSinkUtilTest, MissingPort) {
   media_router::MediaSinkInternal expected_sink_internal;
   media_router::CastSinkExtraData expected_extra_data;
 
-  expected_extra_data.capabilities =
-      cast_channel::VIDEO_OUT | cast_channel::VIDEO_IN |
-      cast_channel::AUDIO_OUT | cast_channel::AUDIO_IN | cast_channel::DEV_MODE;
+  expected_extra_data.capabilities = {
+      cast_channel::CastDeviceCapability::kVideoOut,
+      cast_channel::CastDeviceCapability::kVideoIn,
+      cast_channel::CastDeviceCapability::kAudioOut,
+      cast_channel::CastDeviceCapability::kAudioIn,
+      cast_channel::CastDeviceCapability::kDevMode};
   net::IPAddress expected_ip;
 
   // Must use equality to bypass `warn_unused_result`.
@@ -128,7 +132,7 @@ TEST_F(AccessCodeMediaSinkUtilTest, MissingPort) {
   expected_sink_internal.set_sink(expected_sink);
   expected_sink_internal.set_cast_data(expected_extra_data);
 
-  std::pair<absl::optional<MediaSinkInternal>, CreateCastMediaSinkResult>
+  std::pair<std::optional<MediaSinkInternal>, CreateCastMediaSinkResult>
       constructed_pair = CreateAccessCodeMediaSink(discovery_device_proto);
 
   EXPECT_EQ(constructed_pair.second, CreateCastMediaSinkResult::kOk);
@@ -157,9 +161,12 @@ TEST_F(AccessCodeMediaSinkUtilTest, MediaSinkCreatedCorrectly) {
   media_router::MediaSinkInternal expected_sink_internal;
   media_router::CastSinkExtraData expected_extra_data;
 
-  expected_extra_data.capabilities =
-      cast_channel::VIDEO_OUT | cast_channel::VIDEO_IN |
-      cast_channel::AUDIO_OUT | cast_channel::AUDIO_IN | cast_channel::DEV_MODE;
+  expected_extra_data.capabilities = {
+      cast_channel::CastDeviceCapability::kVideoOut,
+      cast_channel::CastDeviceCapability::kVideoIn,
+      cast_channel::CastDeviceCapability::kAudioOut,
+      cast_channel::CastDeviceCapability::kAudioIn,
+      cast_channel::CastDeviceCapability::kDevMode};
   net::IPAddress expected_ip;
 
   // Must use equality to bypass `warn_unused_result`.
@@ -180,7 +187,7 @@ TEST_F(AccessCodeMediaSinkUtilTest, MediaSinkCreatedCorrectly) {
   expected_sink_internal.set_sink(expected_sink);
   expected_sink_internal.set_cast_data(expected_extra_data);
 
-  std::pair<absl::optional<MediaSinkInternal>, CreateCastMediaSinkResult>
+  std::pair<std::optional<MediaSinkInternal>, CreateCastMediaSinkResult>
       constructed_pair = CreateAccessCodeMediaSink(discovery_device_proto);
 
   EXPECT_EQ(constructed_pair.second, CreateCastMediaSinkResult::kOk);

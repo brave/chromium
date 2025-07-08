@@ -4,8 +4,12 @@
 
 package org.chromium.chrome.browser.modules;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
@@ -18,11 +22,12 @@ import org.chromium.ui.widget.Toast;
  * UI informing the user about the status of installing a dynamic feature module. The UI consists of
  * toast for install start and success UI and an infobar in the failure case.
  */
+@NullMarked
 public class ModuleInstallUi {
     private final Delegate mDelegate;
     private final int mModuleTitleStringId;
     private final FailureUiListener mFailureUiListener;
-    private Toast mInstallStartToast;
+    private @Nullable Toast mInstallStartToast;
 
     /**
      * Delegate holding methods getting the {@link WindowAndroid} and {@link Context} used to
@@ -30,6 +35,7 @@ public class ModuleInstallUi {
      */
     public interface Delegate {
         WindowAndroid getWindowAndroid();
+
         Context getContext();
     }
 
@@ -43,7 +49,7 @@ public class ModuleInstallUi {
         void onFailureUiResponse(boolean retry);
     }
 
-    /*
+    /**
      * Creates new UI.
      *
      * @param delegate Delegate providing the WindowAndroid and Context to display the UI.
@@ -61,10 +67,13 @@ public class ModuleInstallUi {
     public void showInstallStartUi() {
         Context context = mDelegate.getContext();
         if (context == null) return;
-        mInstallStartToast = Toast.makeText(context,
-                context.getString(R.string.module_install_start_text,
-                        context.getString(mModuleTitleStringId)),
-                Toast.LENGTH_SHORT);
+        mInstallStartToast =
+                Toast.makeText(
+                        context,
+                        context.getString(
+                                R.string.module_install_start_text,
+                                context.getString(mModuleTitleStringId)),
+                        Toast.LENGTH_SHORT);
         mInstallStartToast.show();
     }
 
@@ -97,27 +106,35 @@ public class ModuleInstallUi {
             return;
         }
 
-        String text = String.format(context.getString(R.string.module_install_failure_text),
-                context.getResources().getString(mModuleTitleStringId));
-        Snackbar snackbar = Snackbar.make(text, new SnackbarController() {
-            @Override
-            public void onAction(Object actionData) {
-                if (mFailureUiListener != null) {
-                    mFailureUiListener.onFailureUiResponse(true);
-                }
-            }
+        String text =
+                String.format(
+                        context.getString(R.string.module_install_failure_text),
+                        context.getString(mModuleTitleStringId));
+        Snackbar snackbar =
+                Snackbar.make(
+                        text,
+                        new SnackbarController() {
+                            @Override
+                            public void onAction(@Nullable Object actionData) {
+                                if (mFailureUiListener != null) {
+                                    mFailureUiListener.onFailureUiResponse(true);
+                                }
+                            }
 
-            @Override
-            public void onDismissNoAction(Object actionData) {
-                if (mFailureUiListener != null) {
-                    mFailureUiListener.onFailureUiResponse(false);
-                }
-            }
-        }, Snackbar.TYPE_ACTION, Snackbar.UMA_MODULE_INSTALL_FAILURE);
+                            @Override
+                            public void onDismissNoAction(@Nullable Object actionData) {
+                                if (mFailureUiListener != null) {
+                                    mFailureUiListener.onFailureUiResponse(false);
+                                }
+                            }
+                        },
+                        Snackbar.TYPE_ACTION,
+                        Snackbar.UMA_MODULE_INSTALL_FAILURE);
         snackbar.setAction(context.getString(R.string.try_again), null);
         snackbar.setSingleLine(false);
         snackbar.setDuration(SnackbarManager.DEFAULT_SNACKBAR_DURATION_LONG_MS);
         SnackbarManager snackbarManager = SnackbarManagerProvider.from(windowAndroid);
+        assumeNonNull(snackbarManager);
         snackbarManager.showSnackbar(snackbar);
     }
 }

@@ -35,6 +35,13 @@ class MockCertVerifier : public CertVerifier {
              CompletionOnceCallback callback,
              std::unique_ptr<Request>* out_req,
              const NetLogWithSource& net_log) override;
+  void Verify2QwacBinding(
+      const std::string& binding,
+      const std::string& hostname,
+      const scoped_refptr<net::X509Certificate>& tls_cert,
+      base::OnceCallback<void(const scoped_refptr<net::X509Certificate>&)>
+          callback,
+      const net::NetLogWithSource& net_log) override;
   void SetConfig(const Config& config) override {}
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
@@ -83,6 +90,25 @@ class MockCertVerifier : public CertVerifier {
 
   base::OnceClosureList request_list_;
   base::ObserverList<Observer> observers_;
+};
+
+// A MockCertVerifier that also records the RequestParams received for each
+// verification attempt.
+class ParamRecordingMockCertVerifier : public MockCertVerifier {
+ public:
+  ParamRecordingMockCertVerifier();
+  ~ParamRecordingMockCertVerifier() override;
+
+  int Verify(const RequestParams& params,
+             CertVerifyResult* verify_result,
+             CompletionOnceCallback callback,
+             std::unique_ptr<Request>* out_req,
+             const NetLogWithSource& net_log) override;
+
+  const std::vector<RequestParams>& GetVerifyParams() const { return params_; }
+
+ private:
+  std::vector<RequestParams> params_;
 };
 
 class CertVerifierObserverCounter : public CertVerifier::Observer {

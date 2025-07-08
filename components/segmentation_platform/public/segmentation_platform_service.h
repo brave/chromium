@@ -13,11 +13,13 @@
 #include "base/types/id_type.h"
 #include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/segmentation_platform/public/database_client.h"
 #include "components/segmentation_platform/public/input_context.h"
 #include "components/segmentation_platform/public/prediction_options.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "components/segmentation_platform/public/result.h"
 #include "components/segmentation_platform/public/trigger.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/jni_android.h"
@@ -42,8 +44,10 @@ struct TrainingLabels {
   ~TrainingLabels();
 
   // Name and sample of the output metric to be collected as training data.
-  absl::optional<std::pair<std::string, base::HistogramBase::Sample>>
+  std::optional<std::pair<std::string, base::HistogramBase::Sample32>>
       output_metric;
+
+  TrainingLabels(const TrainingLabels& other);
 };
 
 // The core class of segmentation platform that integrates all the required
@@ -110,17 +114,25 @@ class SegmentationPlatformService : public KeyedService,
   virtual SegmentSelectionResult GetCachedSegmentResult(
       const std::string& segmentation_key) = 0;
 
-  // Given a client and a set of inputs, runs the required models on demand and
-  // returns the result in the supplied callback.
-  virtual void GetSelectedSegmentOnDemand(
-      const std::string& segmentation_key,
-      scoped_refptr<InputContext> input_context,
-      SegmentSelectionCallback callback) = 0;
+  // Get the set of input keys required for the model execution for
+  // `segmentation_key`.
+  virtual void GetInputKeysForModel(const std::string& segmentation_key,
+                                    InputContextKeysCallback callback) = 0;
 
   // Called to trigger training data collection for a given request ID. Request
-  // IDs are given when |GetClassificationResult| is called.
+  // IDs are given when |GetClassificationResult| is called. `param` is used to
+  // pass one additional output feature to be uploaded as training data. It is
+  // recommended that the additional feature is also recorded as UMA histogram.
+  // Optionally set `ukm_source_id` to attach the training data to the right
+  // URL. The source ID should be created by the caller. If the ID is invalid,
+  // the data will be uploaded with a no-URL UKM source.
   virtual void CollectTrainingData(proto::SegmentId segment_id,
                                    TrainingRequestId request_id,
+                                   const TrainingLabels& param,
+                                   SuccessCallback callback) = 0;
+  virtual void CollectTrainingData(proto::SegmentId segment_id,
+                                   TrainingRequestId request_id,
+                                   ukm::SourceId ukm_source_id,
                                    const TrainingLabels& param,
                                    SuccessCallback callback) = 0;
 
@@ -130,6 +142,14 @@ class SegmentationPlatformService : public KeyedService,
 
   // Called to get the proxy that is used for debugging purpose.
   virtual ServiceProxy* GetServiceProxy();
+
+  // Get access to the segmentation databases using the client.
+  // WARNING: This will return nullptr till `IsPlatformInitialized()` is false.
+  // You can observe ServiceProxy to get notified when platform is initialized.
+  // TODO(ssid): Remove the initialization requirement by handling waiting for
+  // init internally.
+  // TODO(ssid): Add a Java version of this API.
+  virtual DatabaseClient* GetDatabaseClient();
 
   // Returns true when platform finished initializing, and can execute models.
   // The `GetSelectedSegment()` calls work without full platform initialization

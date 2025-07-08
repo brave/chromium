@@ -5,17 +5,16 @@
 #import <UIKit/UIKit.h>
 
 #import "base/ios/ios_util.h"
-#import "components/password_manager/core/common/password_manager_features.h"
+#import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_earl_grey.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/password_settings_app_interface.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/passwords_table_view_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_earl_grey.h"
-#import "ios/chrome/browser/ui/settings/password/password_settings/password_settings_constants.h"
-#import "ios/chrome/browser/ui/settings/password/passwords_table_view_constants.h"
-#import "ios/chrome/browser/ui/settings/settings_root_table_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
-#import "ios/chrome/test/earl_grey/chrome_earl_grey_app_interface.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
@@ -23,10 +22,6 @@
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/web/common/features.h"
 #import "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Test case to verify that EarlGrey tests can be launched and perform basic
 // UI interactions.
@@ -41,7 +36,7 @@
   [ChromeEarlGreyUI openToolsMenu];
 
   // Open new tab.
-  // TODO(crbug.com/917114): Calling the string directly is temporary while we
+  // TODO(crbug.com/41432876): Calling the string directly is temporary while we
   // roll out a solution to access constants across the code base for EG2.
   id<GREYMatcher> newTabButtonMatcher =
       grey_accessibilityID(@"kToolsMenuNewTabId");
@@ -63,11 +58,14 @@
 - (void)testToggleSettingsSwitch {
   AppLaunchConfiguration config = [self appConfigurationForTestCase];
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.features_enabled.push_back(
-      password_manager::features::kIOSPasswordUISplit);
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 
   [ChromeEarlGreyUI openSettingsMenu];
+
+  // Mock successful reauth when opening the Password Manager.
+  [PasswordSettingsAppInterface setUpMockReauthenticationModule];
+  [PasswordSettingsAppInterface mockReauthenticationModuleExpectedResult:
+                                    ReauthenticationResult::kSuccess];
   [ChromeEarlGreyUI
       tapSettingsMenuButton:chrome_test_util::SettingsMenuPasswordsButton()];
 
@@ -92,9 +90,13 @@
                                    chrome_test_util::SettingsDoneButton(),
                                    grey_sufficientlyVisible(), nil)]
       performAction:grey_tap()];
+
   // Close Password Manager.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
       performAction:grey_tap()];
+
+  // Remove mock to keep the app in the same state as before running the test.
+  [PasswordSettingsAppInterface removeMockReauthenticationModule];
 }
 
 // Tests that helpers from chrome_earl_grey.h are available for use in tests.
@@ -145,8 +147,8 @@
 
 // Tests bookmark converted helpers in chrome_earl_grey.h.
 - (void)testBookmarkHelpers {
-  [BookmarkEarlGrey waitForBookmarkModelsLoaded];
-  [ChromeEarlGrey clearBookmarks];
+  [BookmarkEarlGrey waitForBookmarkModelLoaded];
+  [BookmarkEarlGrey clearBookmarks];
 }
 
 // Tests helpers involving fake sync servers and autofill profiles in
@@ -165,7 +167,7 @@
 
 // Tests waitForSufficientlyVisibleElementWithMatcher in chrome_earl_grey.h
 - (void)testWaitForSufficientlyVisibleElementWithMatcher {
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       performAction:grey_tap()];
   [ChromeEarlGrey
       waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
@@ -197,6 +199,9 @@
 // Tests enabling/disabling features through [AppLaunchManager
 // ensureAppLaunchedWithFeaturesEnabled]
 - (void)testAppLaunchManagerLaunchWithFeatures {
+  if ([ChromeTestCase forceRestartAndWipe]) {
+    EARL_GREY_TEST_SKIPPED(@"NoForceRelaunchAndResetState being removed.");
+  }
   [[AppLaunchManager sharedManager]
       ensureAppLaunchedWithFeaturesEnabled:{kTestFeature}
                                   disabled:{}
@@ -255,8 +260,7 @@
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithFeaturesEnabled:{}
       disabled:{}
       relaunchPolicy:ForceRelaunchByCleanShutdown];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
+  [ChromeEarlGrey waitForMainTabCount:1];
 }
 
 // Tests hard kill(crash) through AppLaunchManager.
@@ -265,17 +269,19 @@
   [ChromeEarlGrey openNewIncognitoTab];
   [ChromeEarlGrey openNewTab];
   [ChromeEarlGrey loadURL:GURL("chrome://about")];
+  [ChromeEarlGrey saveSessionImmediately];
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithFeaturesEnabled:{}
       disabled:{}
       relaunchPolicy:ForceRelaunchByKilling];
   [ChromeEarlGrey waitForMainTabCount:2];
   [ChromeEarlGrey waitForIncognitoTabCount:1];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
 }
 
 // Tests running resets after relaunch through AppLaunchManager.
 - (void)testAppLaunchManagerNoForceRelaunchAndResetState {
+  if ([ChromeTestCase forceRestartAndWipe]) {
+    EARL_GREY_TEST_SKIPPED(@"NoForceRelaunchAndResetState being removed.");
+  }
   [self disableMockAuthentication];
   [ChromeEarlGrey openNewTab];
   [[AppLaunchManager sharedManager]
@@ -283,11 +289,14 @@
                                   disabled:{}
                             relaunchPolicy:NoForceRelaunchAndResetState];
   [ChromeEarlGrey waitForMainTabCount:1];
-  DCHECK([ChromeEarlGreyAppInterface isFakeSyncServerSetUp]);
+  DCHECK([ChromeEarlGrey isFakeSyncServerSetUp]);
 }
 
 // Tests no force relaunch.
 - (void)testAppLaunchManagerNoForceRelaunchAndKeepState {
+  if ([ChromeTestCase forceRestartAndWipe]) {
+    EARL_GREY_TEST_SKIPPED(@"NoForceRelaunchAndKeepState being removed.");
+  }
   [self disableMockAuthentication];
   [ChromeEarlGrey openNewTab];
   // No relauch when feature list isn't changed.
@@ -297,8 +306,6 @@
                                   disabled:config.features_disabled
                             relaunchPolicy:NoForceRelaunchAndKeepState];
   [ChromeEarlGrey waitForMainTabCount:2];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
 }
 
 // Tests backgrounding app and moving app back through AppLaunchManager.
@@ -323,8 +330,7 @@
 - (void)testGetPrefs {
   // The actual pref names and values below are irrelevant, but the calls
   // themselves should return data without crashing or asserting.
-  [ChromeEarlGrey localStateIntegerPref:prefs::kBrowserStatesNumCreated];
-  [ChromeEarlGrey localStateStringPref:prefs::kBrowserStateLastUsed];
+  [ChromeEarlGrey localStateBooleanPref:prefs::kAppStoreRatingPolicyEnabled];
 
   [ChromeEarlGrey userBooleanPref:prefs::kIosBookmarkPromoAlreadySeen];
   [ChromeEarlGrey userIntegerPref:prefs::kIosBookmarkCachedTopMostRow];

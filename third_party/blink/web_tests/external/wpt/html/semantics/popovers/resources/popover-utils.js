@@ -2,14 +2,14 @@ function waitForRender() {
   return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
-function waitForTick() {
-  return new Promise(resolve => step_timeout(resolve, 0));
-}
-
 async function clickOn(element) {
-  const actions = new test_driver.Actions();
   await waitForRender();
-  await actions.pointerMove(0, 0, {origin: element})
+  let rect = element.getBoundingClientRect();
+  let actions = new test_driver.Actions();
+  // FIXME: Switch to pointerMove(0, 0, {origin: element}) once
+  // https://github.com/web-platform-tests/wpt/issues/41257 is fixed.
+  await actions
+      .pointerMove(Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2), {})
       .pointerDown({button: actions.ButtonType.LEFT})
       .pointerUp({button: actions.ButtonType.LEFT})
       .send();
@@ -18,7 +18,7 @@ async function clickOn(element) {
 async function sendTab() {
   await waitForRender();
   const kTab = '\uE004';
-  await new test_driver.send_keys(document.documentElement,kTab);
+  await test_driver.send_keys(document.activeElement || document.documentElement, kTab);
   await waitForRender();
 }
 async function sendShiftTab() {
@@ -35,79 +35,22 @@ async function sendShiftTab() {
 }
 async function sendEscape() {
   await waitForRender();
-  await new test_driver.send_keys(document.documentElement,'\uE00C'); // Escape
+  await test_driver.send_keys(document.activeElement || document.documentElement,'\uE00C'); // Escape
   await waitForRender();
 }
 async function sendEnter() {
   await waitForRender();
-  await new test_driver.send_keys(document.documentElement,'\uE007'); // Enter
+  await test_driver.send_keys(document.activeElement || document.documentElement,'\uE007'); // Enter
   await waitForRender();
 }
 function isElementVisible(el) {
   return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
 }
-function isTopLayer(el) {
-  // A bit of a hack. Just test a few properties of the ::backdrop pseudo
-  // element that change when in the top layer.
-  const properties = ['right','background'];
-  const testEl = document.createElement('div');
-  document.body.appendChild(testEl);
-  const computedStyle = getComputedStyle(testEl, '::backdrop');
-  const nonTopLayerValues = properties.map(p => computedStyle[p]);
-  testEl.remove();
-  for(let i=0;i<properties.length;++i) {
-    if (getComputedStyle(el,'::backdrop')[properties[i]] !== nonTopLayerValues[i]) {
-      return true;
-    }
-  }
-  return false;
-}
 async function finishAnimations(popover) {
   popover.getAnimations({subtree: true}).forEach(animation => animation.finish());
   await waitForRender();
 }
-let mousemoveInfo;
-function mouseOver(element) {
-  mousemoveInfo?.controller?.abort();
-  const controller = new AbortController();
-  mousemoveInfo = {element, controller, moved: false, started: performance.now()};
-  return (new test_driver.Actions())
-    .pointerMove(0, 0, {origin: element})
-    .send()
-    .then(() => {
-      document.addEventListener("mousemove", (e) => {mousemoveInfo.moved = true;}, {signal: controller.signal});
-    })
-}
-function msSinceMouseOver() {
-  return performance.now() - mousemoveInfo.started;
-}
-function assertMouseStillOver(element) {
-  assert_equals(mousemoveInfo.element, element, 'Broken test harness');
-  assert_false(mousemoveInfo.moved,'Broken test harness');
-}
-async function waitForHoverTime(hoverWaitTimeMs) {
-  await new Promise(resolve => step_timeout(resolve,hoverWaitTimeMs));
-  await waitForRender();
-};
-async function mouseHover(element,hoverWaitTimeMs) {
-  await mouseOver(element);
-  await waitForHoverTime(hoverWaitTimeMs);
-  assertMouseStillOver(element);
-}
 
-async function blessTopLayer(visibleElement) {
-  // The normal "bless" function doesn't work well when there are top layer
-  // elements blocking clicks. Additionally, since the normal test_driver.bless
-  // function just adds a button to the main document and clicks it, we can't
-  // call that in the presence of open popovers, since that click will close them.
-  const button = document.createElement('button');
-  button.innerHTML = "Click me to activate";
-  visibleElement.appendChild(button);
-  let wait_click = new Promise(resolve => button.addEventListener("click", resolve, {once: true}));
-  await test_driver.click(button);
-  await wait_click;
-  button.remove();
-}
 // This is a "polyfill" of sorts for the `defaultopen` attribute.
 // It can be called before window.load is complete, and it will
 // show defaultopen popovers according to the rules previously part
@@ -141,13 +84,6 @@ function showDefaultopenPopoversOnLoad() {
   } else {
     window.addEventListener('load',show,{once:true});
   }
-}
-function popoverHintSupported() {
-  // TODO(crbug.com/1416284): This function should be removed, and
-  // any calls replaced with `true`, once popover=hint ships.
-  const testElement = document.createElement('div');
-  testElement.popover = 'hint';
-  return testElement.popover === 'hint';
 }
 
 function assertPopoverVisibility(popover, isPopover, expectedVisibility, message) {
@@ -202,4 +138,18 @@ function assertNotAPopover(nonPopover) {
   assertPopoverVisibility(nonPopover, /*isPopover*/false, expectVisible, 'Calling hidePopover on a non-popover should leave it visible');
   assert_throws_dom("NotSupportedError",() => nonPopover.togglePopover(),'Calling togglePopover on a non-popover should throw NotSupported');
   assertPopoverVisibility(nonPopover, /*isPopover*/false, expectVisible, 'Calling togglePopover on a non-popover should leave it visible');
+}
+
+async function verifyFocusOrder(order,description) {
+  order[0].focus();
+  for(let i=0;i<order.length;++i) {
+    const control = order[i];
+    assert_equals(document.activeElement,control,`${description}: Step ${i+1}`);
+    await sendTab();
+  }
+  for(let i=order.length-1;i>=0;--i) {
+    const control = order[i];
+    await sendShiftTab();
+    assert_equals(document.activeElement,control,`${description}: Step ${i+1} (backwards)`);
+  }
 }

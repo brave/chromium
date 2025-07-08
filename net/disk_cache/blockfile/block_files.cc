@@ -4,10 +4,13 @@
 
 #include "net/disk_cache/blockfile/block_files.h"
 
+#include <array>
 #include <atomic>
 #include <limits>
 #include <memory>
+#include <optional>
 
+#include "base/containers/heap_array.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_util.h"
@@ -17,7 +20,6 @@
 #include "net/disk_cache/blockfile/file_lock.h"
 #include "net/disk_cache/blockfile/stress_support.h"
 #include "net/disk_cache/cache_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using base::TimeTicks;
 
@@ -27,7 +29,9 @@ const char kBlockName[] = "data_";
 
 // This array is used to perform a fast lookup of the nibble bit pattern to the
 // type of entry that can be stored there (number of consecutive blocks).
-const char s_types[16] = {4, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+const std::array<char, 16> s_types = {
+    4, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+};
 
 // Returns the type of block (number of consecutive blocks that can be stored)
 // for a given nibble of the bitmap.
@@ -114,10 +118,9 @@ bool BlockHeader::CreateMapBlock(int size, int* index) {
 void BlockHeader::DeleteMapBlock(int index, int size) {
   if (size < 0 || size > kMaxNumBlocks) {
     NOTREACHED();
-    return;
   }
   int byte_index = index / 8;
-  uint8_t* byte_map = reinterpret_cast<uint8_t*>(header_->allocation_map);
+  auto byte_map = base::as_writable_byte_span(header_->allocation_map);
   uint8_t map_block = byte_map[byte_index];
 
   if (index % 8 >= 4)
@@ -153,7 +156,7 @@ bool BlockHeader::UsedMapBlock(int index, int size) {
     return false;
 
   int byte_index = index / 8;
-  uint8_t* byte_map = reinterpret_cast<uint8_t*>(header_->allocation_map);
+  auto byte_map = base::as_byte_span(header_->allocation_map);
 
   STRESS_DCHECK((((1 << size) - 1) << (index % 8)) < 0x100);
   uint8_t to_clear = ((1 << size) - 1) << (index % 8);
@@ -348,9 +351,9 @@ void BlockFiles::DeleteBlock(Addr address, bool deep) {
   size_t offset = address.start_block() * address.BlockSize() +
                   kBlockHeaderSize;
   if (deep)
-    file->Write(zero_buffer_.data(), size, offset);
+    file->Write(base::as_byte_span(zero_buffer_).first(size), offset);
 
-  absl::optional<FileType> type_to_delete;
+  std::optional<FileType> type_to_delete;
   {
     // Block Header can't outlive file's buffer.
     BlockHeader file_header(file);
@@ -396,12 +399,12 @@ bool BlockFiles::IsValid(Addr address) {
 
   static bool read_contents = false;
   if (read_contents) {
-    auto buffer =
-        std::make_unique<char[]>(Addr::BlockSizeForFileType(BLOCK_4K) * 4);
+    auto buffer = base::HeapArray<uint8_t>::Uninit(
+        Addr::BlockSizeForFileType(BLOCK_4K) * 4);
     size_t size = address.BlockSize() * address.num_blocks();
     size_t offset = address.start_block() * address.BlockSize() +
                     kBlockHeaderSize;
-    bool ok = file->Read(buffer.get(), size, offset);
+    bool ok = file->Read(buffer.as_span().first(size), offset);
     DCHECK(ok);
   }
 
@@ -419,14 +422,13 @@ bool BlockFiles::CreateBlockFile(int index, FileType file_type, bool force) {
     return false;
 
   BlockFileHeader header;
-  memset(&header, 0, sizeof(header));
   header.magic = kBlockMagic;
   header.version = kBlockVersion2;
   header.entry_size = Addr::BlockSizeForFileType(file_type);
   header.this_file = static_cast<int16_t>(index);
   DCHECK(index <= std::numeric_limits<int16_t>::max() && index >= 0);
 
-  return file->Write(&header, sizeof(header), 0);
+  return file->Write(base::byte_span_from_ref(header), 0);
 }
 
 bool BlockFiles::OpenBlockFile(int index) {

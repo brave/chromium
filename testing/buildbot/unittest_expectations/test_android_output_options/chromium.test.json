@@ -19,27 +19,16 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "device_os": "KTU84P",
-              "device_os_type": "userdebug",
-              "device_type": "hammerhead",
-              "integrity": "high",
-              "os": "Android"
-            }
-          ],
-          "expiration": 120,
-          "output_links": [
-            {
-              "link": [
-                "https://luci-logdog.appspot.com/v/?s",
-                "=android%2Fswarming%2Flogcats%2F",
-                "${TASK_ID}%2F%2B%2Funified_logcats"
-              ],
-              "name": "shard #${SHARD_INDEX} logcats"
-            }
-          ]
+          "dimensions": {
+            "device_os": "KTU84P",
+            "device_os_type": "userdebug",
+            "device_type": "hammerhead",
+            "integrity": "high",
+            "os": "Android"
+          },
+          "expiration": 120
         },
         "test": "foo_test"
       }
@@ -55,16 +44,15 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "device_os": "LMY41U",
-              "device_os_type": "user",
-              "device_type": "hammerhead",
-              "integrity": "high",
-              "os": "Android"
-            }
-          ],
+          "dimensions": {
+            "device_os": "LMY41U",
+            "device_os_type": "user",
+            "device_type": "hammerhead",
+            "integrity": "high",
+            "os": "Android"
+          },
           "expiration": 120
         },
         "test": "foo_test"
@@ -74,6 +62,7 @@
   "Fake Android M Tester": {
     "gtest_tests": [
       {
+        "name": "foo_test",
         "test": "foo_test"
       }
     ]

@@ -7,12 +7,15 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/string_split.h"
+#include "base/test/task_environment.h"
 #include "base/values.h"
 #include "components/prefs/pref_name_set.h"
 #include "components/prefs/testing_pref_service.h"
@@ -42,16 +45,18 @@ const char kPreviouslyProtectedPrefValue[] = "previously_protected_value";
 
 // A simple InterceptablePrefFilter which doesn't do anything but hand the prefs
 // back downstream in FinalizeFilterOnLoad.
-class SimpleInterceptablePrefFilter : public InterceptablePrefFilter {
+class SimpleInterceptablePrefFilter final : public InterceptablePrefFilter {
  public:
   // PrefFilter remaining implementation.
-  void FilterUpdate(const std::string& path) override { ADD_FAILURE(); }
+  void FilterUpdate(std::string_view path) override { ADD_FAILURE(); }
   OnWriteCallbackPair FilterSerializeData(
       base::Value::Dict& pref_store_contents) override {
     ADD_FAILURE();
     return std::make_pair(base::OnceClosure(),
                           base::OnceCallback<void(bool success)>());
   }
+
+  void SetPrefService(PrefService* pref_service) override {}
 
  private:
   // InterceptablePrefFilter implementation.
@@ -62,6 +67,14 @@ class SimpleInterceptablePrefFilter : public InterceptablePrefFilter {
     std::move(post_filter_on_load_callback)
         .Run(std::move(pref_store_contents), prefs_altered);
   }
+
+  void OnEncryptorReceived(os_crypt_async::Encryptor encryptor) override {}
+
+  base::WeakPtr<InterceptablePrefFilter> AsWeakPtr() override {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+  base::WeakPtrFactory<InterceptablePrefFilter> weak_ptr_factory_{this};
 };
 
 // A test fixture designed to be used like this:
@@ -77,6 +90,9 @@ class TrackedPreferencesMigrationTest : public testing::Test {
     MOCK_UNPROTECTED_PREF_STORE,
     MOCK_PROTECTED_PREF_STORE,
   };
+
+  base::test::TaskEnvironment task_environment_{
+      base::test::TaskEnvironment::MainThreadType::UI};
 
   TrackedPreferencesMigrationTest()
       : unprotected_prefs_(new base::Value::Dict),
@@ -123,10 +139,8 @@ class TrackedPreferencesMigrationTest : public testing::Test {
         base::BindRepeating(
             &TrackedPreferencesMigrationTest::RegisterSuccessfulWriteClosure,
             base::Unretained(this), MOCK_PROTECTED_PREF_STORE),
-        std::unique_ptr<PrefHashStore>(
-            new PrefHashStoreImpl(kSeed, kDeviceId, false)),
-        std::unique_ptr<PrefHashStore>(
-            new PrefHashStoreImpl(kSeed, kDeviceId, true)),
+        std::unique_ptr<PrefHashStore>(new PrefHashStoreImpl(kSeed, false)),
+        std::unique_ptr<PrefHashStore>(new PrefHashStoreImpl(kSeed, true)),
         &mock_unprotected_pref_filter_, &mock_protected_pref_filter_);
 
     // Verify initial expectations are met.
@@ -158,13 +172,11 @@ class TrackedPreferencesMigrationTest : public testing::Test {
     switch (store_id) {
       case MOCK_UNPROTECTED_PREF_STORE:
         store = unprotected_prefs_.get();
-        pref_hash_store =
-            std::make_unique<PrefHashStoreImpl>(kSeed, kDeviceId, false);
+        pref_hash_store = std::make_unique<PrefHashStoreImpl>(kSeed, false);
         break;
       case MOCK_PROTECTED_PREF_STORE:
         store = protected_prefs_.get();
-        pref_hash_store =
-            std::make_unique<PrefHashStoreImpl>(kSeed, kDeviceId, true);
+        pref_hash_store = std::make_unique<PrefHashStoreImpl>(kSeed, true);
         break;
     }
     DCHECK(store);
@@ -184,7 +196,6 @@ class TrackedPreferencesMigrationTest : public testing::Test {
         return !unprotected_store_successful_write_callback_.is_null();
     }
     NOTREACHED();
-    return false;
   }
 
   // Verifies that the (key, value) pairs in |expected_prefs_in_store| are found
@@ -263,7 +274,6 @@ class TrackedPreferencesMigrationTest : public testing::Test {
         return !!protected_prefs_;
     }
     NOTREACHED();
-    return false;
   }
 
   bool StoreModifiedByMigration(MockPrefStoreID store_id) {
@@ -274,7 +284,6 @@ class TrackedPreferencesMigrationTest : public testing::Test {
         return migration_modified_protected_store_;
     }
     NOTREACHED();
-    return false;
   }
 
   bool MigrationCompleted() {
@@ -369,7 +378,6 @@ class TrackedPreferencesMigrationTest : public testing::Test {
   }
 
   static const char kSeed[];
-  static const char kDeviceId[];
 
   std::unique_ptr<base::Value::Dict> unprotected_prefs_;
   std::unique_ptr<base::Value::Dict> protected_prefs_;
@@ -391,9 +399,6 @@ class TrackedPreferencesMigrationTest : public testing::Test {
 
 // static
 const char TrackedPreferencesMigrationTest::kSeed[] = "seed";
-
-// static
-const char TrackedPreferencesMigrationTest::kDeviceId[] = "device-id";
 
 }  // namespace
 

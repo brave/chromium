@@ -5,29 +5,33 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TEXT_DECORATION_INFO_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TEXT_DECORATION_INFO_H_
 
+#include <optional>
+
 #include "base/types/strong_alias.h"
 #include "cc/paint/paint_record.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
+#include "third_party/blink/renderer/core/paint/decoration_line_painter.h"
+#include "third_party/blink/renderer/core/paint/line_relative_rect.h"
 #include "third_party/blink/renderer/core/paint/text_paint_style.h"
 #include "third_party/blink/renderer/core/style/applied_text_decoration.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/fonts/font_baseline.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
-#include "third_party/blink/renderer/platform/graphics/path.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
+#include "third_party/blink/renderer/platform/graphics/styled_stroke_data.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
+
 namespace blink {
 
 class ComputedStyle;
+class DecoratingBox;
 class Font;
-class NGDecoratingBox;
-class NGInlinePaintContext;
+class InlinePaintContext;
 class SimpleFontData;
-class TextDecorationOffsetBase;
+class TextDecorationOffset;
 
 enum class ResolvedUnderlinePosition {
   kNearAlphabeticBaselineAuto,
@@ -46,11 +50,12 @@ class CORE_EXPORT TextDecorationInfo {
 
  public:
   TextDecorationInfo(
-      PhysicalOffset local_origin,
+      LineRelativeOffset local_origin,
       LayoutUnit width,
       const ComputedStyle& target_style,
-      const NGInlinePaintContext* inline_context,
-      const absl::optional<AppliedTextDecoration> selection_text_decoration,
+      const InlinePaintContext* inline_context,
+      const TextDecorationLine selection_decoration_line,
+      const Color selection_decoration_color,
       const AppliedTextDecoration* decoration_override = nullptr,
       const Font* font_override = nullptr,
       MinimumThickness1 minimum_thickness1 = MinimumThickness1(true),
@@ -100,75 +105,58 @@ class CORE_EXPORT TextDecorationInfo {
   // through. Must be called before trying to paint or compute bounds
   // for a line.
   void SetLineData(TextDecorationLine line, float line_offset);
-  void SetUnderlineLineData(const TextDecorationOffsetBase& decoration_offset);
-  void SetOverlineLineData(const TextDecorationOffsetBase& decoration_offset);
+  void SetUnderlineLineData(const TextDecorationOffset& decoration_offset);
+  void SetOverlineLineData(const TextDecorationOffset& decoration_offset);
   void SetLineThroughLineData();
-  void SetSpellingOrGrammarErrorLineData(const TextDecorationOffsetBase&);
+  void SetSpellingOrGrammarErrorLineData(const TextDecorationOffset&);
 
   // These methods do not depend on |SetDecorationIndex|.
-  LayoutUnit Width() const { return width_; }
   const ComputedStyle& TargetStyle() const { return target_style_; }
-  float TargetAscent() const { return target_ascent_; }
   // Returns the scaling factor for the decoration.
-  // It can be different from NGFragmentItem::SvgScalingFactor() if the
+  // It can be different from FragmentItem::SvgScalingFactor() if the
   // text works as a resource.
   float ScalingFactor() const { return scaling_factor_; }
-  float InkSkipClipUpper(float bounds_upper) const {
-    return -TargetAscent() + bounds_upper - local_origin_.top.ToFloat();
+  float BaselineForInkSkip() const {
+    return local_origin_.line_over.ToFloat() + target_ascent_;
   }
 
   // |SetDecorationIndex| may change the results of these methods.
-  float ComputedFontSize() const { return computed_font_size_; }
   const SimpleFontData* FontData() const { return font_data_; }
+  Color LineColor() const;
+
+  // SetLineData must be called before using the remaining methods.
+  const DecorationGeometry& GetGeometry() const { return line_geometry_; }
+
+  // Compute bounds for the given line and the current decoration.
+  gfx::RectF Bounds() const;
+
+  // Overrides the line color with the given topmost active highlight ‘color’
+  // (for originating decorations being painted in highlight overlays), or the
+  // highlight ‘text-decoration-color’ resolved with the correct ‘currentColor’
+  // (for decorations introduced by highlight pseudos).
+  void SetHighlightOverrideColor(const std::optional<Color>&);
+
+ private:
+  LayoutUnit OffsetFromDecoratingBox() const;
+  float ComputeThickness() const;
+  float ComputeUnderlineThickness(
+      const TextDecorationThickness& applied_decoration_thickness) const;
+
+  void UpdateForDecorationIndex();
+
+  // These methods do not depend on |SetDecorationIndex|.
+  LayoutUnit Width() const { return width_; }
+
+  // |SetDecorationIndex| may change the results of these methods.
+  float ComputedFontSize() const { return computed_font_size_; }
   float Ascent() const { return ascent_; }
-  ETextDecorationStyle DecorationStyle() const;
   ResolvedUnderlinePosition FlippedUnderlinePosition() const {
     return flipped_underline_position_;
   }
   ResolvedUnderlinePosition OriginalUnderlinePosition() const {
     return original_underline_position_;
   }
-  Color LineColor() const;
   float ResolvedThickness() const { return resolved_thickness_; }
-  enum StrokeStyle StrokeStyle() const;
-
-  // SetLineData must be called before using the remaining methods.
-  gfx::PointF StartPoint() const;
-  float DoubleOffset() const;
-  bool ShouldAntialias() const;
-
-  // Compute bounds for the given line and the current decoration.
-  gfx::RectF Bounds() const;
-
-  // Returns tile record and coordinates for wavy decorations.
-  cc::PaintRecord WavyTileRecord() const;
-  gfx::RectF WavyPaintRect() const;
-  gfx::RectF WavyTileRect() const;
-
-  // Overrides the line color with the given topmost active highlight ‘color’
-  // (for originating decorations being painted in highlight overlays), or the
-  // highlight ‘text-decoration-color’ resolved with the correct ‘currentColor’
-  // (for decorations introduced by highlight pseudos).
-  void SetHighlightOverrideColor(const absl::optional<Color>&);
-
- private:
-  LayoutUnit OffsetFromDecoratingBox() const;
-  float ComputeThickness() const;
-  float ComputeUnderlineThickness(
-      const TextDecorationThickness& applied_decoration_thickness,
-      const ComputedStyle* decorating_box_style) const;
-  void ComputeWavyLineData(gfx::RectF& pattern_rect,
-                           cc::PaintRecord& tile_record) const;
-
-  gfx::RectF BoundsForDottedOrDashed() const;
-  gfx::RectF BoundsForWavy() const;
-  Path PrepareDottedOrDashedStrokePath() const;
-  bool IsSpellingOrGrammarError() const {
-    return line_data_.line == TextDecorationLine::kSpellingError ||
-           line_data_.line == TextDecorationLine::kGrammarError;
-  }
-
-  void UpdateForDecorationIndex();
 
   // The |ComputedStyle| of the target text/box to paint decorations for.
   const ComputedStyle& target_style_;
@@ -178,10 +166,12 @@ class CORE_EXPORT TextDecorationInfo {
   const ComputedStyle* decorating_box_style_ = nullptr;
 
   // Decorating box properties for the current |decoration_index_|.
-  const NGInlinePaintContext* const inline_context_ = nullptr;
-  const NGDecoratingBox* decorating_box_ = nullptr;
+  const InlinePaintContext* const inline_context_ = nullptr;
+  const DecoratingBox* decorating_box_ = nullptr;
   const AppliedTextDecoration* applied_text_decoration_ = nullptr;
-  const absl::optional<AppliedTextDecoration> selection_text_decoration_;
+  const TextDecorationLine selection_decoration_line_ =
+      TextDecorationLine::kNone;
+  const Color selection_decoration_color_;
   const Font* font_ = nullptr;
   const SimpleFontData* font_data_ = nullptr;
 
@@ -192,15 +182,15 @@ class CORE_EXPORT TextDecorationInfo {
   const Font* const font_override_ = nullptr;
 
   // Geometry of the target text/box.
-  const PhysicalOffset local_origin_;
+  const LineRelativeOffset local_origin_;
   const LayoutUnit width_;
+  const float target_ascent_ = 0.f;
+  const float scaling_factor_;
 
   // Cached properties for the current |decoration_index_|.
-  const float target_ascent_ = 0.f;
   float ascent_ = 0.f;
   float computed_font_size_ = 0.f;
   float resolved_thickness_ = 0.f;
-  const float scaling_factor_;
 
   int decoration_index_ = 0;
 
@@ -224,24 +214,8 @@ class CORE_EXPORT TextDecorationInfo {
   const bool minimum_thickness_is_one_ = false;
   bool antialias_ = false;
 
-  struct LineData {
-    STACK_ALLOCATED();
-
-   public:
-    TextDecorationLine line;
-    float line_offset;
-    float double_offset;
-
-    // Only used for kDotted and kDashed lines.
-    absl::optional<Path> stroke_path;
-
-    // Only used for kWavy lines.
-    int wavy_offset_factor;
-    gfx::RectF wavy_pattern_rect;
-    cc::PaintRecord wavy_tile_record;
-  };
-  LineData line_data_;
-  absl::optional<Color> highlight_override_;
+  DecorationGeometry line_geometry_;
+  std::optional<Color> highlight_override_;
 };
 
 }  // namespace blink

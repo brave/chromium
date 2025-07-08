@@ -6,10 +6,10 @@
 
 #include <Security/Security.h>
 
+#include "base/apple/osstatus_logging.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/mac/mac_logging.h"
 #include "base/notreached.h"
 #include "base/process/process_handle.h"
 #include "net/base/network_notification_thread_mac.h"
@@ -57,7 +57,6 @@ OSStatus Notifier::KeychainCallback(SecKeychainEvent keychain_event,
                                     void* context) {
   if (info->version > SEC_KEYCHAIN_SETTINGS_VERS1) {
     NOTREACHED();
-    return errSecWrongSecVersion;
   }
 
   if (info->pid == base::GetCurrentProcId()) {

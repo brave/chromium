@@ -32,6 +32,8 @@
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/crl_set.h"
+#include "net/cert/ct_verifier.h"
+#include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util_nss.h"
@@ -207,10 +209,6 @@ class CertDatabaseNSSTest : public TestWithTaskEnvironment {
 
   std::unique_ptr<NSSCertDatabase> cert_db_;
   std::unique_ptr<MockNSSCertDatabaseObserver> observer_;
-  // When building with libstdc++, |empty_cert_list_| does not have a default
-  // constructor.  Initialize it explicitly so that CertDatabaseNSSTest gets a
-  // default constructor.
-  const CertificateList empty_cert_list_ = CertificateList();
   crypto::ScopedTestNSSDB test_nssdb_;
   crypto::ScopedPK11Slot public_slot_;
   scoped_refptr<CRLSet> crl_set_;
@@ -852,14 +850,18 @@ TEST_F(CertDatabaseNSSTest, ImportServerCert) {
       x509_util::CreateX509CertificateFromCERTCertificate(found_server_cert);
   ASSERT_TRUE(x509_found_server_cert);
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_found_server_cert.get(), "127.0.0.1",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_found_server_cert.get(), "127.0.0.1",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
 
@@ -890,14 +892,18 @@ TEST_F(CertDatabaseNSSTest, ImportServerCert_SelfSigned) {
       x509_util::CreateX509CertificateFromCERTCertificate(puny_cert);
   ASSERT_TRUE(x509_puny_cert);
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_puny_cert.get(), "xn--wgv71a119e.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_puny_cert.get(), "xn--wgv71a119e.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
 
@@ -929,21 +935,20 @@ TEST_F(CertDatabaseNSSTest, ImportServerCert_SelfSigned_Trusted) {
       x509_util::CreateX509CertificateFromCERTCertificate(puny_cert);
   ASSERT_TRUE(x509_puny_cert);
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_puny_cert.get(), "xn--wgv71a119e.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
-  if (base::FeatureList::IsEnabled(features::kTrustStoreTrustedLeafSupport)) {
-    EXPECT_THAT(error, IsOk());
-    EXPECT_EQ(0U, verify_result.cert_status);
-  } else {
-    EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
-    EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
-  }
+  int error = verify_proc->Verify(x509_puny_cert.get(), "xn--wgv71a119e.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
+  EXPECT_THAT(error, IsOk());
+  EXPECT_EQ(0U, verify_result.cert_status);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, observer_->client_cert_store_changes());
@@ -978,14 +983,18 @@ TEST_F(CertDatabaseNSSTest, ImportCaAndServerCert) {
       x509_util::CreateX509CertificateFromCERTCertificate(certs[0].get());
   ASSERT_TRUE(x509_server_cert);
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "127.0.0.1",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "127.0.0.1",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_EQ(0U, verify_result.cert_status);
 }
@@ -1021,14 +1030,18 @@ TEST_F(CertDatabaseNSSTest, ImportCaAndServerCert_DistrustServer) {
       x509_util::CreateX509CertificateFromCERTCertificate(certs[0].get());
   ASSERT_TRUE(x509_server_cert);
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "127.0.0.1",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "127.0.0.1",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
 }
@@ -1080,14 +1093,18 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa) {
 
   // Server cert should verify.
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "www.example.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_EQ(0U, verify_result.cert_status);
 
@@ -1110,11 +1127,10 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa) {
 
   // Server cert should fail to verify.
   CertVerifyResult verify_result2;
-  error =
-      verify_proc->Verify(x509_server_cert.get(), "www.example.com",
-                          /*ocsp_response=*/std::string(),
-                          /*sct_list=*/std::string(), flags, empty_cert_list_,
-                          &verify_result2, NetLogWithSource());
+  error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                              /*ocsp_response=*/std::string(),
+                              /*sct_list=*/std::string(), flags,
+                              &verify_result2, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result2.cert_status);
 }
@@ -1147,14 +1163,18 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa2) {
 
   // Server cert should verify.
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "www.example.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_EQ(0U, verify_result.cert_status);
 
@@ -1164,11 +1184,10 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa2) {
 
   // Server cert should fail to verify.
   CertVerifyResult verify_result2;
-  error =
-      verify_proc->Verify(x509_server_cert.get(), "www.example.com",
-                          /*ocsp_response=*/std::string(),
-                          /*sct_list=*/std::string(), flags, empty_cert_list_,
-                          &verify_result2, NetLogWithSource());
+  error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                              /*ocsp_response=*/std::string(),
+                              /*sct_list=*/std::string(), flags,
+                              &verify_result2, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result2.cert_status);
 }
@@ -1212,14 +1231,18 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa3) {
 
   // Server cert should verify.
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "www.example.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_EQ(0U, verify_result.cert_status);
 
@@ -1229,11 +1252,10 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa3) {
 
   // Server cert should fail to verify.
   CertVerifyResult verify_result2;
-  error =
-      verify_proc->Verify(x509_server_cert.get(), "www.example.com",
-                          /*ocsp_response=*/std::string(),
-                          /*sct_list=*/std::string(), flags, empty_cert_list_,
-                          &verify_result2, NetLogWithSource());
+  error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                              /*ocsp_response=*/std::string(),
+                              /*sct_list=*/std::string(), flags,
+                              &verify_result2, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result2.cert_status);
 }
@@ -1277,14 +1299,18 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa4) {
 
   // Server cert should not verify.
   scoped_refptr<CertVerifyProc> verify_proc(
-      CertVerifyProc::CreateBuiltinVerifyProc(/*cert_net_fetcher=*/nullptr,
-                                              crl_set_));
+      CertVerifyProc::CreateBuiltinWithChromeRootStore(
+          /*cert_net_fetcher=*/nullptr, crl_set_,
+          std::make_unique<DoNothingCTVerifier>(),
+          base::MakeRefCounted<DefaultCTPolicyEnforcer>(),
+          /*root_store_data=*/nullptr,
+          /*instance_params=*/{}, std::nullopt));
   int flags = 0;
   CertVerifyResult verify_result;
-  int error = verify_proc->Verify(
-      x509_server_cert.get(), "www.example.com",
-      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      empty_cert_list_, &verify_result, NetLogWithSource());
+  int error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string(), flags,
+                                  &verify_result, NetLogWithSource());
   EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
   EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, verify_result.cert_status);
 
@@ -1294,11 +1320,10 @@ TEST_F(CertDatabaseNSSTest, TrustIntermediateCa4) {
 
   // Server cert should verify.
   CertVerifyResult verify_result2;
-  error =
-      verify_proc->Verify(x509_server_cert.get(), "www.example.com",
-                          /*ocsp_response=*/std::string(),
-                          /*sct_list=*/std::string(), flags, empty_cert_list_,
-                          &verify_result2, NetLogWithSource());
+  error = verify_proc->Verify(x509_server_cert.get(), "www.example.com",
+                              /*ocsp_response=*/std::string(),
+                              /*sct_list=*/std::string(), flags,
+                              &verify_result2, NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_EQ(0U, verify_result2.cert_status);
 }

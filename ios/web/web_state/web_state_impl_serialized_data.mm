@@ -6,18 +6,12 @@
 
 #import "base/strings/string_util.h"
 #import "base/strings/utf_string_conversions.h"
+#import "ios/web/public/navigation/navigation_util.h"
 #import "ios/web/public/navigation/web_state_policy_decider.h"
 #import "ios/web/public/session/proto/metadata.pb.h"
 #import "ios/web/public/session/proto/proto_util.h"
+#import "ios/web/public/session/proto/storage.pb.h"
 #import "ios/web/public/web_state_observer.h"
-
-// To get access to UseSessionSerializationOptimizations().
-// TODO(crbug.com/1383087): remove once the feature is fully launched.
-#import "ios/web/common/features.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace web {
 
@@ -25,7 +19,7 @@ WebStateImpl::SerializedData::SerializedData(
     WebStateImpl* owner,
     BrowserState* browser_state,
     NSString* stable_identifier,
-    SessionID unique_identifier,
+    WebStateID unique_identifier,
     proto::WebStateMetadataStorage metadata,
     WebStateStorageLoader storage_loader,
     NativeSessionFetcher session_fetcher)
@@ -47,30 +41,67 @@ WebStateImpl::SerializedData::SerializedData(
 WebStateImpl::SerializedData::~SerializedData() = default;
 
 void WebStateImpl::SerializedData::TearDown() {
-  for (auto& observer : observers())
+  for (auto& observer : observers()) {
     observer.WebStateDestroyed(owner_);
-  for (auto& observer : policy_deciders())
+  }
+  for (auto& observer : policy_deciders()) {
     observer.WebStateDestroyed();
-  for (auto& observer : policy_deciders())
+  }
+  for (auto& observer : policy_deciders()) {
     observer.ResetWebState();
+  }
 }
 
 CRWSessionStorage* WebStateImpl::SerializedData::GetSessionStorage() const {
-  DCHECK(!features::UseSessionSerializationOptimizations());
   DCHECK(session_storage_);
   return session_storage_;
 }
 
 void WebStateImpl::SerializedData::SetSessionStorage(
     CRWSessionStorage* storage) {
-  DCHECK(!features::UseSessionSerializationOptimizations());
   session_storage_ = storage;
   DCHECK(session_storage_);
 }
 
-WebState::WebStateStorageLoader
-WebStateImpl::SerializedData::TakeStorageLoader() {
-  return std::move(storage_loader_);
+void WebStateImpl::SerializedData::SerializeMetadataToProto(
+    proto::WebStateMetadataStorage& storage) const {
+  storage.set_navigation_item_count(navigation_item_count_);
+  SerializeTimeToProto(creation_time_, *storage.mutable_creation_time());
+  SerializeTimeToProto(last_active_time_, *storage.mutable_last_active_time());
+
+  if (page_visible_url_.is_valid() || !page_title_.empty()) {
+    proto::PageMetadataStorage& page_storage = *storage.mutable_active_page();
+    if (page_visible_url_.is_valid()) {
+      page_storage.set_page_url(page_visible_url_.spec());
+    }
+    if (!page_title_.empty()) {
+      page_storage.set_page_title(base::UTF16ToUTF8(page_title_));
+    }
+  }
+}
+
+proto::WebStateStorage WebStateImpl::SerializedData::LoadStorage() {
+  if (std::optional<proto::WebStateStorage> storage =
+          std::move(storage_loader_).Run()) {
+    return std::move(storage).value();
+  }
+
+  // If the visible URL is valid but the data cannot be loade from disk,
+  // create a WebStateStorage as if it contained a single navigation to
+  // that URL. The full navigation history will be lost, but at least
+  // the tab won't be fully lost.
+  if (page_visible_url_.is_valid()) {
+    const bool created_with_opener = false;
+    return CreateWebStateStorage(
+        NavigationManager::WebLoadParams(page_visible_url_), page_title_,
+        created_with_opener, UserAgentType::AUTOMATIC, creation_time_);
+  }
+
+  // Return an empty WebStateStorage. This will leave the tab blank,
+  // which will be weird, but there is not much that can be done if
+  // the data cannot be loaded and the visible URL from the metadata
+  // is invalid.
+  return proto::WebStateStorage();
 }
 
 WebState::NativeSessionFetcher
@@ -94,7 +125,7 @@ NSString* WebStateImpl::SerializedData::GetStableIdentifier() const {
   return stable_identifier_;
 }
 
-SessionID WebStateImpl::SerializedData::GetUniqueIdentifier() const {
+WebStateID WebStateImpl::SerializedData::GetUniqueIdentifier() const {
   return unique_identifier_;
 }
 

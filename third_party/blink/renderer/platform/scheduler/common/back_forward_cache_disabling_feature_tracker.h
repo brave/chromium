@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/platform/scheduler/common/tracing_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
@@ -52,15 +53,14 @@ class PLATFORM_EXPORT BackForwardCacheDisablingFeatureTracker {
   // |feature| should be a non-sticky feature.
   void AddNonStickyFeature(
       SchedulingPolicy::Feature feature,
-      std::unique_ptr<SourceLocation> source_location = nullptr,
+      SourceLocation* source_location = nullptr,
       FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle* handle =
           nullptr);
 
   // Called when a usage of |feature| is added.
   // |feature| should be a sticky feature.
-  void AddStickyFeature(
-      SchedulingPolicy::Feature feature,
-      std::unique_ptr<SourceLocation> source_location = nullptr);
+  void AddStickyFeature(SchedulingPolicy::Feature feature,
+                        SourceLocation* source_location = nullptr);
 
   // Called when one usage of feature is removed.
   void Remove(FeatureAndJSLocationBlockingBFCache feature_and_js_location);
@@ -104,7 +104,7 @@ class PLATFORM_EXPORT BackForwardCacheDisablingFeatureTracker {
   // TODO(crbug.com/1366675): Remove back_forward_cache_disabling_features_.
   std::bitset<static_cast<size_t>(SchedulingPolicy::Feature::kMaxValue) + 1>
       back_forward_cache_disabling_features_{};
-  TraceableState<bool, TracingCategory::kInfo>
+  TraceableState<bool, TRACE_DISABLED_BY_DEFAULT("renderer.scheduler")>
       opted_out_from_back_forward_cache_;
 
   // The last set of features passed to FrameOrWorkerScheduler::Delegate::
@@ -118,8 +118,8 @@ class PLATFORM_EXPORT BackForwardCacheDisablingFeatureTracker {
   BFCacheBlockingFeatureAndLocations non_sticky_features_and_js_locations_;
   BFCacheBlockingFeatureAndLocations sticky_features_and_js_locations_;
 
-  FrameOrWorkerScheduler::Delegate* delegate_ = nullptr;
-  ThreadSchedulerBase* scheduler_;
+  base::WeakPtr<FrameOrWorkerScheduler::Delegate> delegate_ = nullptr;
+  raw_ptr<ThreadSchedulerBase, DanglingUntriaged> scheduler_;
 
   base::WeakPtrFactory<BackForwardCacheDisablingFeatureTracker> weak_factory_{
       this};

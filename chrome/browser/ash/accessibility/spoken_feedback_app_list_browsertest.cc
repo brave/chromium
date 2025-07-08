@@ -13,9 +13,12 @@
 #include "ash/public/cpp/test/shell_test_api.h"
 #include "ash/shell.h"
 #include "base/memory/raw_ptr_exclusion.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "chrome/browser/ash/accessibility/accessibility_test_utils.h"
+#include "chrome/browser/ash/accessibility/chromevox_test_utils.h"
 #include "chrome/browser/ash/accessibility/spoken_feedback_browsertest.h"
 #include "chrome/browser/ash/app_list/app_list_client_impl.h"
 #include "chrome/browser/ash/app_list/chrome_app_list_model_updater.h"
@@ -29,26 +32,33 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "components/user_manager/user_names.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/browsertest_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/test/event_generator.h"
+
+using SpokenFeedbackTestVariant = ash::SpokenFeedbackTestVariant;
+using SpokenFeedbackTestConfig = ::ash::SpokenFeedbackTestConfig;
 
 namespace ash {
 
 namespace {
 
-void SendKeyPressWithShiftAndControl(ui::KeyboardCode key) {
-  ASSERT_NO_FATAL_FAILURE(ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
-      nullptr, key, true, true, false, false)));
+void SendKeyPressWithShiftAndControl(ui::test::EventGenerator* generator,
+                                     ui::KeyboardCode key) {
+  const int flags = ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN;
+  generator->PressAndReleaseKeyAndModifierKeys(key, flags);
 }
 
 class TestSearchResult : public ChromeSearchResult {
@@ -62,7 +72,7 @@ class TestSearchResult : public ChromeSearchResult {
   TestSearchResult(const TestSearchResult&) = delete;
   TestSearchResult& operator=(const TestSearchResult&) = delete;
 
-  ~TestSearchResult() override {}
+  ~TestSearchResult() override = default;
 
   // ChromeSearchResult overrides:
   void Open(int event_flags) override {}
@@ -73,8 +83,10 @@ class TestSearchProvider : public app_list::SearchProvider {
   TestSearchProvider(const std::string& prefix,
                      ChromeSearchResult::DisplayType display_type,
                      ChromeSearchResult::Category category,
-                     ChromeSearchResult::ResultType result_type)
-      : prefix_(prefix),
+                     ChromeSearchResult::ResultType result_type,
+                     app_list::SearchCategory search_category)
+      : SearchProvider(search_category),
+        prefix_(prefix),
         display_type_(display_type),
         category_(category),
         result_type_(result_type) {}
@@ -82,7 +94,7 @@ class TestSearchProvider : public app_list::SearchProvider {
   TestSearchProvider(const TestSearchProvider&) = delete;
   TestSearchProvider& operator=(const TestSearchProvider&) = delete;
 
-  ~TestSearchProvider() override {}
+  ~TestSearchProvider() override = default;
 
   // SearchProvider overrides:
   void Start(const std::u16string& query) override {
@@ -136,14 +148,15 @@ class TestSearchProvider : public app_list::SearchProvider {
 // through `apps_provder_ptr` and `web_provider_ptr`.
 void InitializeTestSearchProviders(
     app_list::SearchController* search_controller,
-    TestSearchProvider** apps_provider_ptr,
-    TestSearchProvider** web_provider_ptr,
-    TestSearchProvider** image_provider_ptr) {
+    raw_ptr<TestSearchProvider>* apps_provider_ptr,
+    raw_ptr<TestSearchProvider>* web_provider_ptr,
+    raw_ptr<TestSearchProvider>* image_provider_ptr) {
   std::unique_ptr<TestSearchProvider> apps_provider =
       std::make_unique<TestSearchProvider>(
           "app", ChromeSearchResult::DisplayType::kList,
           ChromeSearchResult::Category::kApps,
-          ChromeSearchResult::ResultType::kInstalledApp);
+          ChromeSearchResult::ResultType::kInstalledApp,
+          app_list::SearchCategory::kApps);
   *apps_provider_ptr = apps_provider.get();
   search_controller->AddProvider(std::move(apps_provider));
 
@@ -151,7 +164,8 @@ void InitializeTestSearchProviders(
       std::make_unique<TestSearchProvider>(
           "item", ChromeSearchResult::DisplayType::kList,
           ChromeSearchResult::Category::kWeb,
-          ChromeSearchResult::ResultType::kOmnibox);
+          ChromeSearchResult::ResultType::kOmnibox,
+          app_list::SearchCategory::kWeb);
   *web_provider_ptr = web_provider.get();
   search_controller->AddProvider(std::move(web_provider));
 
@@ -159,19 +173,17 @@ void InitializeTestSearchProviders(
       std::make_unique<TestSearchProvider>(
           "image", ChromeSearchResult::DisplayType::kImage,
           ChromeSearchResult::Category::kFiles,
-          ChromeSearchResult::ResultType::kImageSearch);
+          ChromeSearchResult::ResultType::kImageSearch,
+          app_list::SearchCategory::kImages);
   *image_provider_ptr = image_provider.get();
   search_controller->AddProvider(std::move(image_provider));
 }
 
 }  // namespace
 
-enum SpokenFeedbackAppListTestVariant { kTestAsNormalUser, kTestAsGuestUser };
-
 class SpokenFeedbackAppListBaseTest : public LoggedInSpokenFeedbackTest {
  public:
-  explicit SpokenFeedbackAppListBaseTest(
-      SpokenFeedbackAppListTestVariant variant)
+  explicit SpokenFeedbackAppListBaseTest(SpokenFeedbackTestVariant variant)
       : variant_(variant) {}
   ~SpokenFeedbackAppListBaseTest() override = default;
 
@@ -185,9 +197,13 @@ class SpokenFeedbackAppListBaseTest : public LoggedInSpokenFeedbackTest {
 
     // Disable the app list nudge in the spoken feedback app list test.
     AppListTestApi().DisableAppListNudge(true);
+    AppListControllerImpl::SetSunfishNudgeDisabledForTest(true);
 
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kProductivityLauncherImageSearch);
+    scoped_feature_list_.InitWithFeatures(
+        {features::kLauncherSearchControl,
+         features::kFeatureManagementLocalImageSearch},
+        {features::kScannerDogfood, features::kSunfishFeature,
+         ash::assistant::features::kEnableNewEntryPoint});
 
     LoggedInSpokenFeedbackTest::SetUp();
   }
@@ -223,21 +239,21 @@ class SpokenFeedbackAppListBaseTest : public LoggedInSpokenFeedbackTest {
   // Returns the index of that item.
   int MoveToFirstTestApp() {
     // Focus the shelf. This selects the launcher button.
-    sm_.Call([this]() {
+    sm()->Call([this]() {
       EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
     });
-    sm_.ExpectSpeechPattern("Launcher");
-    sm_.ExpectSpeech("Button");
-    sm_.ExpectSpeech("Shelf");
-    sm_.ExpectSpeech("Tool bar");
+    sm()->ExpectSpeechPattern("Launcher");
+    sm()->ExpectSpeech("Button");
+    sm()->ExpectSpeech("Shelf");
+    sm()->ExpectSpeech("Tool bar");
 
     // Activate the launcher button. This opens bubble launcher.
-    sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
-    sm_.ExpectSpeechPattern("Search your *");
-    sm_.ExpectSpeech("Edit text");
+    sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+    sm()->ExpectSpeechPattern("Search your *");
+    sm()->ExpectSpeech("Edit text");
 
-    sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
-    sm_.ExpectSpeech("Button");
+    sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
+    sm()->ExpectSpeech("Button");
 
     int test_item_index = 0;
     AppListItem* test_item = FindItemByName("app 0", &test_item_index);
@@ -246,10 +262,10 @@ class SpokenFeedbackAppListBaseTest : public LoggedInSpokenFeedbackTest {
     // Skip over apps that were installed before the test item.
     // This selects the first app installed by the test.
     for (int i = 0; i < test_item_index; ++i) {
-      sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
+      sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
     }
-    sm_.ExpectSpeech("app 0");
-    sm_.ExpectSpeech("Button");
+    sm()->ExpectSpeech("app 0");
+    sm()->ExpectSpeech("Button");
 
     return test_item_index;
   }
@@ -269,33 +285,33 @@ class SpokenFeedbackAppListBaseTest : public LoggedInSpokenFeedbackTest {
   }
 
   void ReadWindowTitle() {
-    extensions::browsertest_util::ExecuteScriptInBackgroundPageNoWait(
-        browser()->profile(), extension_misc::kChromeVoxExtensionId,
-        "import('/chromevox/background/"
-        "command_handler_interface.js').then(module => "
-        "module.CommandHandlerInterface.instance.onCommand('readCurrentTitle'))"
-        ";");
+    chromevox_test_utils()->ExecuteCommandHandlerCommand("readCurrentTitle");
   }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
-  const SpokenFeedbackAppListTestVariant variant_;
+  const SpokenFeedbackTestVariant variant_;
   std::unique_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
 };
 
-class SpokenFeedbackAppListTest
-    : public SpokenFeedbackAppListBaseTest,
-      public ::testing::WithParamInterface<SpokenFeedbackAppListTestVariant> {
+class SpokenFeedbackAppListTest : public SpokenFeedbackAppListBaseTest {
  public:
   SpokenFeedbackAppListTest()
-      : SpokenFeedbackAppListBaseTest(/*variant=*/GetParam()) {}
+      : SpokenFeedbackAppListBaseTest(GetParam().variant().value()) {}
   ~SpokenFeedbackAppListTest() override = default;
 };
 
-INSTANTIATE_TEST_SUITE_P(TestAsNormalAndGuestUser,
-                         SpokenFeedbackAppListTest,
-                         ::testing::Values(kTestAsNormalUser,
-                                           kTestAsGuestUser));
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2NormalUser,
+    SpokenFeedbackAppListTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsNormalUser)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2GuestUser,
+    SpokenFeedbackAppListTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser)));
 
 class NotificationSpokenFeedbackAppListTest : public SpokenFeedbackAppListTest {
  protected:
@@ -308,19 +324,23 @@ class NotificationSpokenFeedbackAppListTest : public SpokenFeedbackAppListTest {
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(TestAsNormalAndGuestUser,
-                         NotificationSpokenFeedbackAppListTest,
-                         ::testing::Values(kTestAsNormalUser,
-                                           kTestAsGuestUser));
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2NormalUser,
+    NotificationSpokenFeedbackAppListTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsNormalUser)));
 
-class SpokenFeedbackAppListSearchTest
-    : public SpokenFeedbackAppListBaseTest,
-      public ::testing::WithParamInterface<
-          std::tuple<SpokenFeedbackAppListTestVariant, bool /*tablet_mode*/>> {
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2GuestUser,
+    NotificationSpokenFeedbackAppListTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser)));
+
+class SpokenFeedbackAppListSearchTest : public SpokenFeedbackAppListBaseTest {
  public:
   SpokenFeedbackAppListSearchTest()
-      : SpokenFeedbackAppListBaseTest(/*variant=*/std::get<0>(GetParam())),
-        tablet_mode_(std::get<1>(GetParam())) {}
+      : SpokenFeedbackAppListBaseTest(GetParam().variant().value()),
+        tablet_mode_(GetParam().tablet_mode().value()) {}
   ~SpokenFeedbackAppListSearchTest() override = default;
 
   // SpokenFeedbackAppListTest:
@@ -334,7 +354,7 @@ class SpokenFeedbackAppListSearchTest
     std::unique_ptr<app_list::SearchController> search_controller =
         std::make_unique<app_list::SearchController>(
             app_list_client->GetModelUpdaterForTest(), app_list_client, nullptr,
-            browser()->profile(), nullptr);
+            browser()->profile());
     search_controller->Initialize();
     // Disable ranking, which may override the explicitly set relevance scores
     // and best match status of results.
@@ -350,6 +370,9 @@ class SpokenFeedbackAppListSearchTest
   }
 
   void TearDownOnMainThread() override {
+    apps_provider_ = nullptr;
+    web_provider_ = nullptr;
+    image_provider_ = nullptr;
     AppListClientImpl::GetInstance()->SetSearchControllerForTest(nullptr);
     SpokenFeedbackAppListBaseTest::TearDownOnMainThread();
   }
@@ -357,18 +380,18 @@ class SpokenFeedbackAppListSearchTest
   void ShowAppList() {
     if (tablet_mode_) {
       // Minimize the test window to transition to tablet mode home screen.
-      sm_.Call([this]() { browser()->window()->Minimize(); });
+      sm()->Call([this]() { browser()->window()->Minimize(); });
     } else {
       // Focus the home button and press it to open the bubble launcher.
-      sm_.Call([this]() {
+      sm()->Call([this]() {
         EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
       });
-      sm_.ExpectSpeechPattern("Launcher");
-      sm_.ExpectSpeech("Button");
-      sm_.ExpectSpeech("Shelf");
-      sm_.ExpectSpeech("Tool bar");
+      sm()->ExpectSpeechPattern("Launcher");
+      sm()->ExpectSpeech("Button");
+      sm()->ExpectSpeech("Shelf");
+      sm()->ExpectSpeech("Tool bar");
 
-      sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+      sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
     }
   }
 
@@ -376,23 +399,38 @@ class SpokenFeedbackAppListSearchTest
   // Whether the test runs in tablet mode.
   const bool tablet_mode_;
 
-  // This field is not a raw_ptr<> because it was filtered by the rewriter
-  // for: #addr-of
-  RAW_PTR_EXCLUSION TestSearchProvider* apps_provider_ = nullptr;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter
-  // for: #addr-of
-  RAW_PTR_EXCLUSION TestSearchProvider* web_provider_ = nullptr;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter
-  // for: #addr-of
-  RAW_PTR_EXCLUSION TestSearchProvider* image_provider_ = nullptr;
+  raw_ptr<TestSearchProvider> apps_provider_ = nullptr;
+  raw_ptr<TestSearchProvider> web_provider_ = nullptr;
+  raw_ptr<TestSearchProvider> image_provider_ = nullptr;
 };
 
-// Instantiate test by user variant and tablet mode state.
-INSTANTIATE_TEST_SUITE_P(TestAsNormalAndGuestUserInTabletAndClamshell,
-                         SpokenFeedbackAppListSearchTest,
-                         ::testing::Combine(::testing::Values(kTestAsNormalUser,
-                                                              kTestAsGuestUser),
-                                            ::testing::Bool()));
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2NormalUserTabletMode,
+    SpokenFeedbackAppListSearchTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsNormalUser,
+                                               /*tablet_mode=*/true)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2GuestUserTabletMode,
+    SpokenFeedbackAppListSearchTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser,
+                                               /*tablet_mode=*/true)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2NormalUserDesktopMode,
+    SpokenFeedbackAppListSearchTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsNormalUser,
+                                               /*tablet_mode=*/false)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV2GuestUserDesktopMode,
+    SpokenFeedbackAppListSearchTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser,
+                                               /*tablet_mode=*/false)));
 
 // Checks that when an app list item with a notification badge is focused, an
 // announcement is made that the item requests your attention.
@@ -405,32 +443,32 @@ IN_PROC_BROWSER_TEST_P(NotificationSpokenFeedbackAppListTest,
   ASSERT_TRUE(test_item);
   test_item->UpdateNotificationBadgeForTesting(true);
 
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
   // Focus the shelf. This selects the launcher button.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
   });
-  sm_.ExpectSpeechPattern("Launcher");
-  sm_.ExpectSpeech("Button");
-  sm_.ExpectSpeech("Shelf");
-  sm_.ExpectSpeech("Tool bar");
+  sm()->ExpectSpeechPattern("Launcher");
+  sm()->ExpectSpeech("Button");
+  sm()->ExpectSpeech("Shelf");
+  sm()->ExpectSpeech("Tool bar");
 
   // Activate the launcher button. This opens bubble launcher.
-  sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
 
   // Skip over apps that were installed before the test item.
-  sm_.Call([this, &test_item_index]() {
+  sm()->Call([this, &test_item_index]() {
     for (int i = 0; i < test_item_index + 1; ++i) {
       SendKeyPressWithSearch(ui::VKEY_RIGHT);
     }
   });
 
   // Check that the announcement for items with a notification badge occurs.
-  sm_.ExpectSpeech("app 0 requests your attention.");
-  sm_.Replay();
+  sm()->ExpectSpeech("app 0 requests your attention.");
+  sm()->Replay();
 }
 
 // Checks that when a paused app list item is focused, an announcement 'Paused'
@@ -444,33 +482,33 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
   ASSERT_TRUE(test_item);
   test_item->UpdateAppStatusForTesting(AppStatus::kPaused);
 
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
   // Focus the shelf. This selects the launcher button.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
   });
-  sm_.ExpectSpeechPattern("Launcher");
-  sm_.ExpectSpeech("Button");
-  sm_.ExpectSpeech("Shelf");
-  sm_.ExpectSpeech("Tool bar");
+  sm()->ExpectSpeechPattern("Launcher");
+  sm()->ExpectSpeech("Button");
+  sm()->ExpectSpeech("Shelf");
+  sm()->ExpectSpeech("Tool bar");
 
   // Activate the launcher button. This opens bubble launcher.
-  sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
 
   // Skip over apps that were installed before the test item.
-  sm_.Call([this, &test_item_index]() {
+  sm()->Call([this, &test_item_index]() {
     for (int i = 0; i < test_item_index + 1; ++i) {
       SendKeyPressWithSearch(ui::VKEY_RIGHT);
     }
   });
 
   // Check that the announcement for items with a pause badge occurs.
-  sm_.ExpectSpeech("app 0");
-  sm_.ExpectSpeech("Paused");
-  sm_.Replay();
+  sm()->ExpectSpeech("app 0");
+  sm()->ExpectSpeech("Paused");
+  sm()->Replay();
 }
 
 // Checks that when a blocked app list item is focused, an announcement
@@ -484,33 +522,33 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
   ASSERT_TRUE(test_item);
   test_item->UpdateAppStatusForTesting(AppStatus::kBlocked);
 
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
   // Focus the shelf. This selects the launcher button.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
   });
-  sm_.ExpectSpeechPattern("Launcher");
-  sm_.ExpectSpeech("Button");
-  sm_.ExpectSpeech("Shelf");
-  sm_.ExpectSpeech("Tool bar");
+  sm()->ExpectSpeechPattern("Launcher");
+  sm()->ExpectSpeech("Button");
+  sm()->ExpectSpeech("Shelf");
+  sm()->ExpectSpeech("Tool bar");
 
   // Activate the launcher button. This opens bubble launcher.
-  sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
 
   // Skip over apps that were installed before the test item.
-  sm_.Call([this, &test_item_index]() {
+  sm()->Call([this, &test_item_index]() {
     for (int i = 0; i < test_item_index + 1; ++i) {
       SendKeyPressWithSearch(ui::VKEY_RIGHT);
     }
   });
 
   // Check that the announcement for items with a block badge occurs.
-  sm_.ExpectSpeech("app 0");
-  sm_.ExpectSpeech("Blocked");
-  sm_.Replay();
+  sm()->ExpectSpeech("app 0");
+  sm()->ExpectSpeech("Blocked");
+  sm()->Replay();
 }
 
 // Checks that entering and exiting tablet mode with a browser window open does
@@ -518,13 +556,13 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
 IN_PROC_BROWSER_TEST_P(
     SpokenFeedbackAppListTest,
     HiddenAppListDoesNotCreateAccessibilityEventWhenTransitioningToTabletMode) {
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
-  sm_.Call([]() { ShellTestApi().SetTabletModeEnabledForTest(true); });
-  sm_.ExpectNextSpeechIsNot("Launcher, all apps");
-  sm_.Call([]() { ShellTestApi().SetTabletModeEnabledForTest(false); });
-  sm_.ExpectNextSpeechIsNot("Launcher, all apps");
-  sm_.Replay();
+  sm()->Call([]() { ShellTestApi().SetTabletModeEnabledForTest(true); });
+  sm()->ExpectNextSpeechIsNot("Launcher, all apps");
+  sm()->Call([]() { ShellTestApi().SetTabletModeEnabledForTest(false); });
+  sm()->ExpectNextSpeechIsNot("Launcher, all apps");
+  sm()->Replay();
 }
 
 // Checks that rotating the display in tablet mode does not generate an
@@ -534,26 +572,26 @@ IN_PROC_BROWSER_TEST_P(
     LauncherAppListScreenRotationDoesNotCreateAccessibilityEvent) {
   display::DisplayManager* display_manager = Shell::Get()->display_manager();
   const int display_id = display_manager->GetDisplayAt(0).id();
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
-  sm_.Call([]() { ShellTestApi().SetTabletModeEnabledForTest(true); });
+  sm()->Call([]() { ShellTestApi().SetTabletModeEnabledForTest(true); });
 
-  sm_.Call([this]() { browser()->window()->Minimize(); });
+  sm()->Call([this]() { browser()->window()->Minimize(); });
   // Set screen rotation to 90 degrees. No ChromeVox event should be created.
-  sm_.Call([&, display_manager, display_id]() {
+  sm()->Call([&, display_manager, display_id]() {
     display_manager->SetDisplayRotation(display_id, display::Display::ROTATE_90,
                                         display::Display::RotationSource::USER);
   });
-  sm_.ExpectNextSpeechIsNot("Launcher, all apps");
+  sm()->ExpectNextSpeechIsNot("Launcher, all apps");
 
   // Set screen rotation to 0 degrees. No ChromeVox event should be created.
-  sm_.Call([&, display_manager, display_id]() {
+  sm()->Call([&, display_manager, display_id]() {
     display_manager->SetDisplayRotation(display_id, display::Display::ROTATE_0,
                                         display::Display::RotationSource::USER);
   });
-  sm_.ExpectNextSpeechIsNot("Launcher, all apps");
+  sm()->ExpectNextSpeechIsNot("Launcher, all apps");
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 // TODO(https://crbug.com/1393235): Update this browser test to test recent
@@ -565,45 +603,44 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest, ClamshellLauncher) {
   AppListItem* test_item = FindItemByName("app 0", &test_item_index);
   ASSERT_TRUE(test_item);
 
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
 
   // Focus the shelf. This selects the launcher button.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     EXPECT_TRUE(PerformAcceleratorAction(AcceleratorAction::kFocusShelf));
   });
-  sm_.ExpectSpeechPattern("Launcher");
-  sm_.ExpectSpeech("Button");
-  sm_.ExpectSpeech("Shelf");
-  sm_.ExpectSpeech("Tool bar");
+  sm()->ExpectSpeechPattern("Launcher");
+  sm()->ExpectSpeech("Button");
+  sm()->ExpectSpeech("Shelf");
+  sm()->ExpectSpeech("Tool bar");
 
   // Activate the launcher button. This opens bubble launcher.
-  sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
-  sm_.ExpectSpeech("Launcher, all apps");
-  sm_.Call([this]() { ReadWindowTitle(); });
-  sm_.ExpectSpeech("Launcher");
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_SPACE); });
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
+  sm()->ExpectSpeech("Launcher, all apps");
+  sm()->Call([this]() { ReadWindowTitle(); });
+  sm()->ExpectSpeech("Launcher");
 
-  sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
-  sm_.ExpectSpeech("Button");
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
+  sm()->ExpectSpeech("Button");
 
   // Skip over apps that were installed before the test item.
   // This selects the first app installed by the test.
   for (int i = 0; i < test_item_index; ++i) {
-    sm_.Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
+    sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_RIGHT); });
   }
-  sm_.ExpectSpeech("app 0");
-  sm_.ExpectSpeech("Button");
+  sm()->ExpectSpeech("app 0");
+  sm()->ExpectSpeech("Button");
 
   // Move the focused item to the right. The announcement does not include a
   // page because the bubble launcher apps grid is scrollable, not paged.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_RIGHT); });
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_RIGHT); });
 
-  std::string expected_text;
-  sm_.ExpectSpeech(base::SStringPrintf(
-      &expected_text, "Moved to row 1, column %d.", test_item_index + 2));
+  sm()->ExpectSpeech(
+      base::StringPrintf("Moved to row 1, column %d.", test_item_index + 2));
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 // Checks that app list keyboard reordering is announced.
@@ -614,7 +651,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest, ClamshellLauncher) {
 // accessible name describe its position. (See crbug.com/1098495)
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest, AppListReordering) {
   PopulateApps(22);
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   const int test_item_index = MoveToFirstTestApp();
 
   // The default column of app 0.
@@ -624,114 +661,116 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest, AppListReordering) {
   const int column_after_horizontal_move = original_column + 1;
 
   // Move the first item to the right.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_RIGHT); });
-  sm_.ExpectNextSpeechIsNot("Alert");
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_RIGHT); });
+  sm()->ExpectNextSpeechIsNot("Alert");
 
-  std::string expected_text;
-  sm_.ExpectSpeech(base::SStringPrintf(&expected_text,
-                                       "Moved to row 1, column %d.",
-                                       column_after_horizontal_move));
+  sm()->ExpectSpeech(base::StringPrintf("Moved to row 1, column %d.",
+                                        column_after_horizontal_move));
 
   // Move the focused item down.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech(base::SStringPrintf(&expected_text,
-                                       "Moved to row 2, column %d.",
-                                       column_after_horizontal_move));
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech(base::StringPrintf("Moved to row 2, column %d.",
+                                        column_after_horizontal_move));
 
   // Move the focused item down.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech(base::SStringPrintf(&expected_text,
-                                       "Moved to row 3, column %d.",
-                                       column_after_horizontal_move));
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech(base::StringPrintf("Moved to row 3, column %d.",
+                                        column_after_horizontal_move));
 
   // Move the focused item down.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech(base::SStringPrintf(&expected_text,
-                                       "Moved to row 4, column %d.",
-                                       column_after_horizontal_move));
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_DOWN); });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech(base::StringPrintf("Moved to row 4, column %d.",
+                                        column_after_horizontal_move));
 
   // Move the focused item left.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_LEFT); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech(base::SStringPrintf(
-      &expected_text, "Moved to row 4, column %d.", original_column));
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_LEFT); });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech(
+      base::StringPrintf("Moved to row 4, column %d.", original_column));
 
   // Move the focused item back up.
-  sm_.Call([this]() { SendKeyPressWithControl(ui::VKEY_UP); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech(base::SStringPrintf(
-      &expected_text, "Moved to row 3, column %d.", original_column));
+  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_UP); });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech(
+      base::StringPrintf("Moved to row 3, column %d.", original_column));
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest, AppListFoldering) {
   // Add 3 apps and move to the first one.
   PopulateApps(3);
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   const int test_item_index = MoveToFirstTestApp();
 
+  auto* generator_ptr = event_generator();
   // Combine items and create a new folder.
-  sm_.Call([]() { SendKeyPressWithShiftAndControl(ui::VKEY_RIGHT); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech("Folder Unnamed");
-  sm_.ExpectSpeech("Expanded");
-  sm_.ExpectSpeech("app 0 combined with app 1 to create new folder.");
+  sm()->Call([generator_ptr]() {
+    SendKeyPressWithShiftAndControl(generator_ptr, ui::VKEY_RIGHT);
+  });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech("Folder Unnamed");
+  sm()->ExpectSpeech("Expanded");
+  sm()->ExpectSpeech("app 0 combined with app 1 to create new folder.");
 
   // Move focus to the first item in folder.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-  sm_.ExpectSpeech("app 1");
-  sm_.ExpectSpeech("Button");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("app 1");
+  sm()->ExpectSpeech("Button");
 
   // Remove the first item from the folder back to the top level app list.
-  sm_.Call([]() { SendKeyPressWithShiftAndControl(ui::VKEY_LEFT); });
+  sm()->Call([generator_ptr]() {
+    SendKeyPressWithShiftAndControl(generator_ptr, ui::VKEY_LEFT);
+  });
 
-  sm_.ExpectSpeech("app 1");
-  sm_.ExpectSpeech("Button");
-  sm_.ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech("app 1");
+  sm()->ExpectSpeech("Button");
+  sm()->ExpectNextSpeechIsNot("Alert");
 
-  std::string expected_text;
-  sm_.ExpectSpeech(base::SStringPrintf(
-      &expected_text, "Moved to row 1, column %d.", test_item_index + 1));
+  sm()->ExpectSpeech(
+      base::StringPrintf("Moved to row 1, column %d.", test_item_index + 1));
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
                        CloseFolderMakesA11yAnnouncement) {
   // Add 3 apps and move to the first one.
   PopulateApps(3);
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   MoveToFirstTestApp();
 
   // Combine items and create a new folder.
-  sm_.Call([]() { SendKeyPressWithShiftAndControl(ui::VKEY_RIGHT); });
-  sm_.ExpectNextSpeechIsNot("Alert");
-  sm_.ExpectSpeech("Folder Unnamed");
-  sm_.ExpectSpeech("Expanded");
-  sm_.ExpectSpeech("app 0 combined with app 1 to create new folder.");
+  auto* generator_ptr = event_generator();
+  sm()->Call([generator_ptr]() {
+    SendKeyPressWithShiftAndControl(generator_ptr, ui::VKEY_RIGHT);
+  });
+  sm()->ExpectNextSpeechIsNot("Alert");
+  sm()->ExpectSpeech("Folder Unnamed");
+  sm()->ExpectSpeech("Expanded");
+  sm()->ExpectSpeech("app 0 combined with app 1 to create new folder.");
 
   // Move focus to the first item in folder.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-  sm_.ExpectSpeech("app 1");
-  sm_.ExpectSpeech("Button");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("app 1");
+  sm()->ExpectSpeech("Button");
 
   // Press Escape to close the folder. ChromeVox should announce that the
   // folder has been closed.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_ESCAPE); });
-  sm_.ExpectSpeech("Close folder");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_ESCAPE); });
+  sm()->ExpectSpeech("Close folder");
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
                        SortAppsMakesA11yAnnouncement) {
   // Add 3 apps and move to the first one.
   PopulateApps(3);
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   MoveToFirstTestApp();
 
   // The AppListTestApi's ReorderByMouseClickAtToplevelAppsGridMenu times out
@@ -740,58 +779,58 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListTest,
   // work here manually.
 
   // Show the context menu for the AppsGridView.
-  sm_.Call([]() {
+  sm()->Call([]() {
     AppsGridView* grid_view = AppListTestApi().GetTopLevelAppsGridView();
     EXPECT_TRUE(grid_view);
     grid_view->ShowContextMenu(grid_view->GetBoundsInScreen().CenterPoint(),
-                               ui::MENU_SOURCE_KEYBOARD);
+                               ui::mojom::MenuSourceType::kKeyboard);
   });
-  sm_.ExpectSpeech("menu opened");
+  sm()->ExpectSpeech("menu opened");
 
   // Press N to activate sort by name. This will result in focus being moved
   // to a button to undo the sort just completed.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_N); });
-  sm_.ExpectSpeech("Apps are sorted by name");
-  sm_.ExpectSpeech("Undo sort order by name");
-  sm_.ExpectSpeech("Button");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_N); });
+  sm()->ExpectSpeech("Apps are sorted by name");
+  sm()->ExpectSpeech("Undo sort order by name");
+  sm()->ExpectSpeech("Button");
 
   // Press the undo button.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_SPACE); });
-  sm_.ExpectSpeech("Sort undo successful");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_SPACE); });
+  sm()->ExpectSpeech("Sort undo successful");
 
   // Show the context menu for the AppsGridView.
-  sm_.Call([]() {
+  sm()->Call([]() {
     AppsGridView* grid_view = AppListTestApi().GetTopLevelAppsGridView();
     EXPECT_TRUE(grid_view);
     grid_view->ShowContextMenu(grid_view->GetBoundsInScreen().CenterPoint(),
-                               ui::MENU_SOURCE_KEYBOARD);
+                               ui::mojom::MenuSourceType::kKeyboard);
   });
-  sm_.ExpectSpeech("menu opened");
+  sm()->ExpectSpeech("menu opened");
 
   // Press C to activate sort by color. This will result in focus being moved
   // to a button to undo the sort just completed.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_C); });
-  sm_.ExpectSpeech("Apps are sorted by color");
-  sm_.ExpectSpeech("Undo sort order by color");
-  sm_.ExpectSpeech("Button");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_C); });
+  sm()->ExpectSpeech("Apps are sorted by color");
+  sm()->ExpectSpeech("Undo sort order by color");
+  sm()->ExpectSpeech("Button");
 
   // Press the undo button.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_SPACE); });
-  sm_.ExpectSpeech("Sort undo successful");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_SPACE); });
+  sm()->ExpectSpeech("Sort undo successful");
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest, LauncherSearch) {
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   ShowAppList();
 
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
-  sm_.Call([this]() { ReadWindowTitle(); });
-  sm_.ExpectSpeech("Launcher");
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
+  sm()->Call([this]() { ReadWindowTitle(); });
+  sm()->ExpectSpeech("Launcher");
 
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     apps_provider_->set_best_match_count(2);
     apps_provider_->set_count(3);
     web_provider_->set_count(4);
@@ -799,61 +838,70 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest, LauncherSearch) {
     SendKeyPress(ui::VKEY_G);
   });
 
-  sm_.ExpectSpeech("G");
-  sm_.ExpectSpeech("app 0");
-  sm_.ExpectSpeech("List item 1 of 2");
-  sm_.ExpectSpeech("Best Match");
-  sm_.ExpectSpeech("List box");
+  sm()->ExpectSpeech("G");
+  sm()->ExpectSpeech("app 0");
+  sm()->ExpectSpeech("List item 1 of 2");
+  sm()->ExpectSpeech("Best Match");
+  sm()->ExpectSpeech("List box");
 
   // Traverse best match results;
   for (int i = 1; i < 2; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("app %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("app %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
   }
 
   // Traverse image results.
   for (int i = 0; i < 3; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("image %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("image %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
     if (i == 0) {
-      sm_.ExpectSpeech("List box");
+      sm()->ExpectSpeech("List box");
     }
   }
 
   // Traverse non-best-match app results.
   for (int i = 2; i < 5; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("app %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 3", (i - 2) % 3 + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("app %d", i));
+    sm()->ExpectSpeech(
+        base::StringPrintf("List item %d of 3", (i - 2) % 3 + 1));
     if (i == 2) {
-      sm_.ExpectSpeech("Apps");
-      sm_.ExpectSpeech("List box");
+      sm()->ExpectSpeech("Apps");
+      sm()->ExpectSpeech("List box");
     }
   }
 
   // Traverse omnibox results.
   for (int i = 0; i < 3; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("item %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("item %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
     if (i == 0) {
-      sm_.ExpectSpeech("Websites");
-      sm_.ExpectSpeech("List box");
+      sm()->ExpectSpeech("Websites");
+      sm()->ExpectSpeech("List box");
     }
   }
 
-  // Cycle focus to the close button.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-  sm_.ExpectSpeech("Clear searchbox text");
+  // Cycle focus to the filter button.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Toggle search result categories");
+
+  // Move focus to the close button.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Clear searchbox text");
+
+  // Move focus back to the filter button.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_UP); });
+  sm()->ExpectSpeech("Toggle search result categories");
 
   // Go back to the last result.
-  sm_.Call([this]() { SendKeyPress(ui::VKEY_UP); });
-  sm_.ExpectSpeech("item 2");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_UP); });
+  sm()->ExpectSpeech("item 2");
 
   // Update the query, to initiate new search.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     apps_provider_->set_best_match_count(0);
     apps_provider_->set_count(3);
     web_provider_->set_count(2);
@@ -861,122 +909,175 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest, LauncherSearch) {
     SendKeyPress(ui::VKEY_A);
   });
 
-  sm_.ExpectSpeech("A");
-  sm_.ExpectSpeech("image 0");
-  sm_.ExpectSpeech("List item 1 of 2");
-  sm_.ExpectSpeech("List box");
+  sm()->ExpectSpeech("A");
+  sm()->ExpectSpeech("image 0");
+  sm()->ExpectSpeech("List item 1 of 2");
+  sm()->ExpectSpeech("List box");
 
   // Traverse image results.
   for (int i = 1; i < 2; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("image %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("image %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
   }
 
   // Verify traversal works after result change.
   for (int i = 0; i < 3; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("app %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("app %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 3", i + 1));
   }
 
   for (int i = 0; i < 2; ++i) {
-    sm_.Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
-    sm_.ExpectSpeech(base::StringPrintf("item %d", i));
-    sm_.ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
+    sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+    sm()->ExpectSpeech(base::StringPrintf("item %d", i));
+    sm()->ExpectSpeech(base::StringPrintf("List item %d of 2", i + 1));
     if (i == 0) {
-      sm_.ExpectSpeech("Websites");
-      sm_.ExpectSpeech("List box");
+      sm()->ExpectSpeech("Websites");
+      sm()->ExpectSpeech("List box");
     }
   }
 
-  sm_.Replay();
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest,
                        TouchExploreLauncherSearchResult) {
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   ShowAppList();
 
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
 
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     apps_provider_->set_best_match_count(2);
     apps_provider_->set_count(3);
     web_provider_->set_count(4);
     SendKeyPress(ui::VKEY_G);
   });
 
-  sm_.ExpectSpeech("G");
-  sm_.ExpectSpeech("Displaying 8 results for g");
+  sm()->ExpectSpeech("G");
+  sm()->ExpectSpeech("Displaying 8 results for g");
 
   base::SimpleTestTickClock clock;
   clock.SetNowTicks(base::TimeTicks::Now());
   auto* clock_ptr = &clock;
   ui::SetEventTickClockForTesting(clock_ptr);
 
-  auto* root_window = Shell::Get()->GetPrimaryRootWindow();
-  ui::test::EventGenerator generator(root_window);
-  auto* generator_ptr = &generator;
+  auto* generator_ptr = event_generator();
 
   // Start touch exploration, and go to the third result in the UI (expected to
   // be "app 2").
-  sm_.Call([clock_ptr, generator_ptr]() {
+  sm()->Call([clock_ptr, generator_ptr]() {
     views::View* target_view =
         AppListTestApi().GetVisibleSearchResultView(/*index=*/2);
     ASSERT_TRUE(target_view);
 
     gfx::Point touch_point = target_view->GetBoundsInScreen().CenterPoint();
     ui::TouchEvent touch_press(
-        ui::ET_TOUCH_PRESSED, touch_point, base::TimeTicks::Now(),
+        ui::EventType::kTouchPressed, touch_point, base::TimeTicks::Now(),
         ui::PointerDetails(ui::EventPointerType::kTouch, 0));
     generator_ptr->Dispatch(&touch_press);
 
     clock_ptr->Advance(base::Seconds(1));
 
     ui::TouchEvent touch_move(
-        ui::ET_TOUCH_MOVED, touch_point, base::TimeTicks::Now(),
+        ui::EventType::kTouchMoved, touch_point, base::TimeTicks::Now(),
         ui::PointerDetails(ui::EventPointerType::kTouch, 0));
     generator_ptr->Dispatch(&touch_move);
   });
 
   // The result under touch pointer should be announced.
-  sm_.ExpectSpeech("app 2");
-  sm_.ExpectSpeech("List item 1 of 3");
-  sm_.ExpectSpeech("Apps");
-  sm_.Replay();
+  sm()->ExpectSpeech("app 2");
+  sm()->ExpectSpeech("List item 1 of 3");
+  sm()->ExpectSpeech("Apps");
+  sm()->Replay();
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest, VocalizeResultCount) {
-  EnableChromeVox();
+  chromevox_test_utils()->EnableChromeVox();
   ShowAppList();
 
-  sm_.ExpectSpeechPattern("Search your *");
-  sm_.ExpectSpeech("Edit text");
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
 
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     apps_provider_->set_best_match_count(2);
     apps_provider_->set_count(3);
     web_provider_->set_count(4);
     SendKeyPress(ui::VKEY_G);
   });
 
-  sm_.ExpectSpeech("G");
-  sm_.ExpectSpeech("Displaying 8 results for g");
+  sm()->ExpectSpeech("G");
+  sm()->ExpectSpeech("Displaying 8 results for g");
 
   // Update the query, to initiate new search.
-  sm_.Call([this]() {
+  sm()->Call([this]() {
     apps_provider_->set_best_match_count(0);
     apps_provider_->set_count(3);
     web_provider_->set_count(2);
     SendKeyPress(ui::VKEY_A);
   });
 
-  sm_.ExpectSpeech("A");
-  sm_.ExpectSpeech("Displaying 5 results for ga");
+  sm()->ExpectSpeech("A");
+  sm()->ExpectSpeech("Displaying 5 results for ga");
 
-  sm_.Replay();
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackAppListSearchTest, SearchCategoryFilter) {
+  chromevox_test_utils()->EnableChromeVox();
+  ShowAppList();
+
+  sm()->ExpectSpeechPattern("Search your *");
+  sm()->ExpectSpeech("Edit text");
+
+  sm()->Call([this]() {
+    apps_provider_->set_best_match_count(2);
+    apps_provider_->set_count(3);
+    web_provider_->set_count(4);
+    SendKeyPress(ui::VKEY_G);
+  });
+
+  sm()->ExpectSpeech("G");
+  sm()->ExpectSpeech("Displaying 8 results for g");
+
+  // Move focus to the close button.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_UP); });
+  sm()->ExpectSpeech("Clear searchbox text");
+
+  // Move focus to the filter button.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_UP); });
+  sm()->ExpectSpeech("Toggle search result categories");
+
+  // Open the filter menu.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_RETURN); });
+  sm()->ExpectSpeech("menu opened");
+
+  // Move focus to the category options.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Apps");
+  sm()->ExpectSpeech("Checked");
+  sm()->ExpectSpeech("Your installed apps");
+
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Images");
+  sm()->ExpectSpeech("Checked");
+  sm()->ExpectSpeech("Image search by content and image previews");
+
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Websites");
+  sm()->ExpectSpeech("Checked");
+  sm()->ExpectSpeech("Websites including pages you've visited and open pages");
+
+  // Toggle the websites search category.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_RETURN); });
+  sm()->ExpectSpeech("Websites");
+  sm()->ExpectSpeech("Not checked");
+  sm()->ExpectSpeech("Websites including pages you've visited and open pages");
+
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_ESCAPE); });
+  sm()->Replay();
 }
 
 }  // namespace ash

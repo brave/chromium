@@ -74,7 +74,7 @@ class PLATFORM_EXPORT MediaStreamDescriptor final
                         const MediaStreamComponentVector& audio_components,
                         const MediaStreamComponentVector& video_components);
 
-  MediaStreamDescriptorClient* Client() const { return client_; }
+  MediaStreamDescriptorClient* Client() const { return client_.Get(); }
   void SetClient(MediaStreamDescriptorClient* client) { client_ = client; }
 
   // This is the same as the id of the |MediaStream|. It is unique in most
@@ -110,6 +110,8 @@ class PLATFORM_EXPORT MediaStreamDescriptor final
   bool Active() const { return active_; }
   void SetActive(bool active);
 
+  void NotifyEnabledStateChangeForWebRtcAudio(bool enabled);
+
   void AddObserver(WebMediaStreamObserver*);
   void RemoveObserver(WebMediaStreamObserver*);
 
@@ -125,7 +127,9 @@ class PLATFORM_EXPORT MediaStreamDescriptor final
   bool active_;
 };
 
-typedef HeapVector<Member<MediaStreamDescriptor>> MediaStreamDescriptorVector;
+using MediaStreamDescriptorVector = HeapVector<Member<MediaStreamDescriptor>>;
+using GCedMediaStreamDescriptorVector =
+    GCedHeapVector<Member<MediaStreamDescriptor>>;
 
 }  // namespace blink
 

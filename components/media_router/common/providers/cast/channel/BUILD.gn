@@ -4,8 +4,13 @@
 
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//third_party/libprotobuf-mutator/fuzzable_proto_library.gni")
-import("//third_party/openscreen/src/build/config/data_headers_template.gni")
+import("//third_party/openscreen/src/build_overrides/data_headers_template.gni")
 import("//third_party/protobuf/proto_library.gni")
+
+source_set("capability") {
+  public = [ "cast_device_capability.h" ]
+  deps = [ "//base" ]
+}
 
 static_library("channel") {
   sources = [
@@ -39,8 +44,8 @@ static_library("channel") {
     "mojo_data_pump.h",
   ]
   deps = [
+    ":capability",
     "//base",
-    "//build:chromeos_buildflags",
     "//components/keyed_service/content",
     "//components/keyed_service/core",
     "//components/media_router/common/providers/cast/certificate",
@@ -56,8 +61,10 @@ static_library("channel") {
   ]
   public_deps = [
     "//services/data_decoder/public/cpp",
+    "//services/network/public/cpp",
     "//services/network/public/mojom",
   ]
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
 }
 
 static_library("test_support") {
@@ -137,7 +144,7 @@ if (use_fuzzing_engine) {
       "//third_party/openscreen/src/cast/common/certificate/proto",
       "//third_party/openscreen/src/cast/common/channel/proto",
     ]
-    link_deps = [
+    deps = [
       "//third_party/openscreen/src/cast/common/certificate/proto:certificate_proto",
       "//third_party/openscreen/src/cast/common/channel/proto:channel_proto",
     ]

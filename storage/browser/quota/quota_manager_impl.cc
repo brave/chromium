@@ -24,11 +24,15 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
+#include "base/functional/concurrent_callbacks.h"
+#include "base/functional/concurrent_closures.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
+#include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/sequence_checker.h"
@@ -63,6 +67,7 @@
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/quota/quota_override_handle.h"
 #include "storage/browser/quota/quota_temporary_storage_evictor.h"
+#include "storage/browser/quota/storage_directory_util.h"
 #include "storage/browser/quota/usage_tracker.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom-shared.h"
@@ -70,7 +75,6 @@
 #include "url/origin.h"
 
 using ::blink::StorageKey;
-using ::blink::mojom::StorageType;
 
 namespace storage {
 
@@ -95,20 +99,10 @@ constexpr double kStoragePressureThresholdRatio = 0.02;
 constexpr base::TimeDelta kStoragePressureCheckDiskStatsInterval =
     base::Minutes(5);
 
-// Modifies a given value by a uniformly random amount from
-// -percent to +percent.
-int64_t RandomizeByPercent(int64_t value, int percent) {
-  double random_percent = (base::RandDouble() - 0.5) * percent * 2;
-  return value * (1 + (random_percent / 100.0));
-}
-
-bool IsSupportedType(StorageType type) {
-  return type == StorageType::kTemporary || type == StorageType::kSyncable;
-}
-
-bool IsSupportedIncognitoType(StorageType type) {
-  return type == StorageType::kTemporary;
-}
+// The path where media license data is persisted on disk, relative to the path
+// for the respective storage bucket.
+constexpr base::FilePath::CharType kMediaLicenseDirectory[] =
+    FILE_PATH_LITERAL("Media Licenses");
 
 void ReportDatabaseDisabledReason(DatabaseDisabledReason reason) {
   base::UmaHistogramEnumeration("Quota.QuotaDatabaseDisabled", reason);
@@ -135,6 +129,29 @@ void DidGetUsageAndQuotaStripOverride(
   std::move(callback).Run(status, usage, quota, std::move(usage_breakdown));
 }
 
+base::FilePath CreateMediaLicenseBucketPath(const base::FilePath& profile_path,
+                                            const BucketLocator& bucket) {
+  base::FilePath bucket_directory = CreateBucketPath(profile_path, bucket);
+  return bucket_directory.Append(kMediaLicenseDirectory);
+}
+
+int64_t CalculateReportedQuota(int64_t total_space_bytes, int64_t usage_bytes) {
+  base::ClampedNumeric<int64_t> clamped_total_space_bytes(total_space_bytes);
+  base::ClampedNumeric<int64_t> clamped_usage_bytes(usage_bytes);
+  if (clamped_total_space_bytes >= 10 * QuotaManagerImpl::kGBytes) {
+    return clamped_usage_bytes + 10 * QuotaManagerImpl::kGBytes;
+  }
+
+  // Generally, we report a quota value of 10 GiB. However, if there is less
+  // than 10 GiB of disk space, the quota value we report is disk space rounded
+  // up to the nearest 1 GiB.
+  base::ClampedNumeric<int64_t> rounded_total_space_gib =
+      (clamped_total_space_bytes / QuotaManagerImpl::kGBytes) +
+      (clamped_total_space_bytes % QuotaManagerImpl::kGBytes != 0);
+  return clamped_usage_bytes +
+         rounded_total_space_gib * QuotaManagerImpl::kGBytes;
+}
+
 }  // namespace
 
 // Heuristics: assuming average cloud server allows a few Gigs storage
@@ -143,46 +160,35 @@ void DidGetUsageAndQuotaStripOverride(
 int64_t QuotaManagerImpl::kSyncableStorageDefaultStorageKeyQuota =
     500 * kMBytes;
 
-constexpr int64_t QuotaManagerImpl::kGBytes;
-constexpr int64_t QuotaManagerImpl::kNoLimit;
-constexpr int QuotaManagerImpl::kEvictionIntervalInMilliSeconds;
-constexpr int QuotaManagerImpl::kThresholdOfErrorsToBeDenylisted;
-constexpr int QuotaManagerImpl::kThresholdRandomizationPercent;
-constexpr char QuotaManagerImpl::kDatabaseName[];
-constexpr char QuotaManagerImpl::kEvictedBucketAccessedCountHistogram[];
-constexpr char QuotaManagerImpl::kEvictedBucketDaysSinceAccessHistogram[];
-
 QuotaManagerImpl::QuotaOverride::QuotaOverride() = default;
 QuotaManagerImpl::QuotaOverride::~QuotaOverride() = default;
 
 class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
  public:
-  UsageAndQuotaInfoGatherer(QuotaManagerImpl* manager,
-                            const StorageKey& storage_key,
-                            StorageType type,
-                            bool is_incognito,
-                            UsageAndQuotaForDevtoolsCallback callback)
+  UsageAndQuotaInfoGatherer(
+      QuotaManagerImpl* manager,
+      const StorageKey& storage_key,
+      bool is_incognito,
+      UsageAndQuotaWithBreakdownAndOverrideFlagCallback callback)
       : QuotaTask(manager),
         storage_key_(storage_key),
         callback_(std::move(callback)),
-        type_(type),
-        is_unlimited_(manager->IsStorageUnlimited(storage_key_, type_)),
+        is_unlimited_(manager->IsStorageUnlimited(storage_key_)),
         is_incognito_(is_incognito) {
     DCHECK(manager);
     DCHECK(callback_);
   }
 
-  UsageAndQuotaInfoGatherer(QuotaManagerImpl* manager,
-                            const BucketInfo& bucket_info,
-                            bool is_incognito,
-                            UsageAndQuotaForDevtoolsCallback callback)
+  UsageAndQuotaInfoGatherer(
+      QuotaManagerImpl* manager,
+      const BucketInfo& bucket_info,
+      bool is_incognito,
+      UsageAndQuotaWithBreakdownAndOverrideFlagCallback callback)
       : UsageAndQuotaInfoGatherer(manager,
                                   bucket_info.storage_key,
-                                  bucket_info.type,
                                   is_incognito,
                                   std::move(callback)) {
     bucket_info_ = bucket_info;
-    DCHECK_EQ(StorageType::kTemporary, type_);
   }
 
  protected:
@@ -192,37 +198,37 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
     // Gather info before computing an answer:
     // settings, host_usage, storage_key_quota and device_storage_capacity if
     // unlimited.
-    int callback_count = is_unlimited_ ? 3 : 2;
-    base::RepeatingClosure barrier = base::BarrierClosure(
-        callback_count,
-        base::BindOnce(&UsageAndQuotaInfoGatherer::OnBarrierComplete,
-                       weak_factory_.GetWeakPtr()));
-
+    base::ConcurrentClosures concurrent;
     manager()->GetQuotaSettings(
         base::BindOnce(&UsageAndQuotaInfoGatherer::OnGotSettings,
-                       weak_factory_.GetWeakPtr(), barrier));
+                       weak_factory_.GetWeakPtr(), concurrent.CreateClosure()));
 
     if (bucket_info_) {
       manager()->GetBucketUsageWithBreakdown(
           bucket_info_->ToBucketLocator(),
           base::BindOnce(&UsageAndQuotaInfoGatherer::OnGotUsage,
-                         weak_factory_.GetWeakPtr(), barrier));
+                         weak_factory_.GetWeakPtr(),
+                         concurrent.CreateClosure()));
     } else {
       manager()->GetStorageKeyUsageWithBreakdown(
-          storage_key_, type_,
-          base::BindOnce(&UsageAndQuotaInfoGatherer::OnGotUsage,
-                         weak_factory_.GetWeakPtr(), barrier));
+          storage_key_, base::BindOnce(&UsageAndQuotaInfoGatherer::OnGotUsage,
+                                       weak_factory_.GetWeakPtr(),
+                                       concurrent.CreateClosure()));
     }
 
     // Determine storage_key_quota differently depending on type.
     if (is_unlimited_) {
       SetDesiredStorageKeyQuota(kNoLimit);
-      manager()->GetStorageCapacity(
-          base::BindOnce(&UsageAndQuotaInfoGatherer::OnGotCapacity,
-                         weak_factory_.GetWeakPtr(), barrier));
+      manager()->GetStorageCapacity(base::BindOnce(
+          &UsageAndQuotaInfoGatherer::OnGotCapacity, weak_factory_.GetWeakPtr(),
+          concurrent.CreateClosure()));
     } else {
       // For limited storage,  OnGotSettings will set the host quota.
     }
+
+    std::move(concurrent)
+        .Done(base::BindOnce(&UsageAndQuotaInfoGatherer::CallCompleted,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void Aborted() override {
@@ -241,7 +247,7 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
     weak_factory_.InvalidateWeakPtrs();
 
     int64_t quota = desired_storage_key_quota_;
-    absl::optional<int64_t> quota_override_size =
+    std::optional<int64_t> quota_override_size =
         manager()->GetQuotaOverrideForStorageKey(storage_key_);
     if (quota_override_size) {
       quota = *quota_override_size;
@@ -267,8 +273,7 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
                                  : blink::mojom::QuotaStatusCode::kUnknown,
                              usage_, quota, quota_override_size.has_value(),
                              std::move(usage_breakdown_));
-    if (type_ == StorageType::kTemporary && !is_incognito_ && !is_unlimited_ &&
-        !bucket_info_) {
+    if (!is_incognito_ && !is_unlimited_ && !bucket_info_) {
       UMA_HISTOGRAM_MBYTES("Quota.QuotaForOrigin", quota);
       UMA_HISTOGRAM_MBYTES("Quota.UsageByOrigin", usage_);
       if (quota > 0) {
@@ -286,39 +291,39 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
     return static_cast<QuotaManagerImpl*>(observer());
   }
 
-  void OnGotSettings(base::RepeatingClosure barrier_closure,
+  void OnGotSettings(base::OnceClosure callback,
                      const QuotaSettings& settings) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    DCHECK(barrier_closure);
+    DCHECK(callback);
 
     settings_ = settings;
     const int64_t quota =
-        manager()->GetQuotaForStorageKey(storage_key_, type_, settings);
+        manager()->GetQuotaForStorageKey(storage_key_, settings);
     if (quota != kNoLimit) {
       SetDesiredStorageKeyQuota(quota);
     }
 
-    barrier_closure.Run();
+    std::move(callback).Run();
   }
 
-  void OnGotCapacity(base::OnceClosure barrier_closure,
+  void OnGotCapacity(base::OnceClosure callback,
                      int64_t total_space,
                      int64_t available_space) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    DCHECK(barrier_closure);
+    DCHECK(callback);
     DCHECK_GE(total_space, 0);
     DCHECK_GE(available_space, 0);
 
     total_space_ = total_space;
     available_space_ = available_space;
-    std::move(barrier_closure).Run();
+    std::move(callback).Run();
   }
 
-  void OnGotUsage(base::OnceClosure barrier_closure,
+  void OnGotUsage(base::OnceClosure callback,
                   int64_t usage,
                   blink::mojom::UsageBreakdownPtr usage_breakdown) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    DCHECK(barrier_closure);
+    DCHECK(callback);
     DCHECK_GE(usage, -1);
     DCHECK(usage_breakdown);
     DCHECK_GE(usage_breakdown->backgroundFetch, 0);
@@ -330,7 +335,7 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
 
     usage_ = usage;
     usage_breakdown_ = std::move(usage_breakdown);
-    std::move(barrier_closure).Run();
+    std::move(callback).Run();
   }
 
   void SetDesiredStorageKeyQuota(int64_t quota) {
@@ -340,15 +345,12 @@ class QuotaManagerImpl::UsageAndQuotaInfoGatherer : public QuotaTask {
     desired_storage_key_quota_ = quota;
   }
 
-  void OnBarrierComplete() { CallCompleted(); }
-
   // These fields are passed at construction time.
   const StorageKey storage_key_;
   // Non-null iff usage info is to be gathered for an individual bucket. If
   // null, usage is gathered for all buckets in the given host/StorageKey.
-  absl::optional<BucketInfo> bucket_info_;
-  QuotaManagerImpl::UsageAndQuotaForDevtoolsCallback callback_;
-  const StorageType type_;
+  std::optional<BucketInfo> bucket_info_;
+  QuotaManagerImpl::UsageAndQuotaWithBreakdownAndOverrideFlagCallback callback_;
   const bool is_unlimited_;
   const bool is_incognito_;
 
@@ -442,14 +444,12 @@ class QuotaManagerImpl::EvictionRoundInfoHelper {
     if (consumed_space < settings_.pool_size &&
         available_space_ > settings_.should_remain_available) {
       DCHECK(!global_usage_is_complete_);
-      global_usage_ =
-          manager_->GetUsageTracker(StorageType::kTemporary)->GetCachedUsage();
+      global_usage_ = manager_->GetUsageTracker()->GetCachedUsage();
       // `this` may be deleted during this Complete() call.
       Completed();
       return;
     }
     manager_->GetGlobalUsage(
-        StorageType::kTemporary,
         base::BindOnce(&EvictionRoundInfoHelper::OnGotGlobalUsage,
                        weak_factory_.GetWeakPtr()));
   }
@@ -488,18 +488,9 @@ class QuotaManagerImpl::GetUsageInfoTask : public QuotaTask {
 
  protected:
   void Run() override {
-    remaining_trackers_ = 2;
     // This will populate cached hosts and usage info.
-    manager()
-        ->GetUsageTracker(StorageType::kTemporary)
-        ->GetGlobalUsage(base::BindOnce(&GetUsageInfoTask::DidGetGlobalUsage,
-                                        weak_factory_.GetWeakPtr(),
-                                        StorageType::kTemporary));
-    manager()
-        ->GetUsageTracker(StorageType::kSyncable)
-        ->GetGlobalUsage(base::BindOnce(&GetUsageInfoTask::DidGetGlobalUsage,
-                                        weak_factory_.GetWeakPtr(),
-                                        StorageType::kSyncable));
+    manager()->GetUsageTracker()->GetGlobalUsage(base::BindOnce(
+        &GetUsageInfoTask::DidGetGlobalUsage, weak_factory_.GetWeakPtr()));
   }
 
   void Completed() override {
@@ -508,21 +499,18 @@ class QuotaManagerImpl::GetUsageInfoTask : public QuotaTask {
   }
 
  private:
-  void AddEntries(StorageType type, UsageTracker& tracker) {
+  void AddEntries(UsageTracker& tracker) {
     std::map<std::string, int64_t> host_usage = tracker.GetCachedHostsUsage();
     for (const auto& host_usage_pair : host_usage) {
-      entries_.emplace_back(host_usage_pair.first, type,
-                            host_usage_pair.second);
+      entries_.emplace_back(host_usage_pair.first, host_usage_pair.second);
     }
-    if (--remaining_trackers_ == 0) {
-      CallCompleted();
-    }
+    CallCompleted();
   }
 
-  void DidGetGlobalUsage(StorageType type, int64_t, int64_t) {
-    UsageTracker* tracker = manager()->GetUsageTracker(type);
+  void DidGetGlobalUsage(int64_t, int64_t) {
+    UsageTracker* tracker = manager()->GetUsageTracker();
     DCHECK(tracker);
-    AddEntries(type, *tracker);
+    AddEntries(*tracker);
   }
 
   QuotaManagerImpl* manager() const {
@@ -531,14 +519,14 @@ class QuotaManagerImpl::GetUsageInfoTask : public QuotaTask {
 
   GetUsageInfoCallback callback_;
   UsageInfoEntries entries_;
-  int remaining_trackers_;
   base::WeakPtrFactory<GetUsageInfoTask> weak_factory_{this};
 };
 
 class QuotaManagerImpl::StorageKeyGathererTask {
  public:
-  StorageKeyGathererTask(QuotaManagerImpl* manager,
-                         base::OnceCallback<void(StorageKeysByType)> callback)
+  StorageKeyGathererTask(
+      QuotaManagerImpl* manager,
+      base::OnceCallback<void(std::set<StorageKey>)> callback)
       : manager_(manager), callback_(std::move(callback)) {
     DCHECK(manager_);
     DCHECK(callback_);
@@ -551,49 +539,25 @@ class QuotaManagerImpl::StorageKeyGathererTask {
     run_called_ = true;
 #endif  // DCHECK_IS_ON()
 
-    size_t client_call_count = 0;
+    base::ConcurrentClosures concurrent;
     for (const auto& client_and_type : manager_->client_types_) {
-      client_call_count += client_and_type.second.size();
+      client_and_type.first->GetDefaultStorageKeys(base::BindOnce(
+          &StorageKeyGathererTask::DidGetStorageKeys,
+          weak_factory_.GetWeakPtr(), concurrent.CreateClosure()));
     }
-
-    // Registered clients can be empty in tests.
-    if (!client_call_count) {
-      Completed();
-      return;
-    }
-
-    base::RepeatingClosure barrier = base::BarrierClosure(
-        client_call_count,
-        base::BindOnce(&QuotaManagerImpl::StorageKeyGathererTask::Completed,
-                       weak_factory_.GetWeakPtr()));
-
-    GetStorageKeysForType(StorageType::kTemporary, barrier);
-    GetStorageKeysForType(StorageType::kSyncable, barrier);
+    std::move(concurrent)
+        .Done(
+            base::BindOnce(&QuotaManagerImpl::StorageKeyGathererTask::Completed,
+                           weak_factory_.GetWeakPtr()));
   }
 
  private:
-  void GetStorageKeysForType(StorageType type, base::RepeatingClosure barrier) {
-    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    auto client_map_it = manager_->client_types_.find(type);
-    DCHECK(client_map_it != manager_->client_types_.end());
-    DCHECK(barrier);
-
-    for (const auto& client_and_type : client_map_it->second) {
-      client_and_type.first->GetStorageKeysForType(
-          type, base::BindOnce(&StorageKeyGathererTask::DidGetStorageKeys,
-                               weak_factory_.GetWeakPtr(), type, barrier));
-    }
-  }
-
-  void DidGetStorageKeys(StorageType type,
-                         base::OnceClosure barrier,
+  void DidGetStorageKeys(base::OnceClosure callback,
                          const std::vector<StorageKey>& storage_keys) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    DCHECK(barrier);
-
-    storage_keys_by_type_[type].insert(storage_keys.begin(),
-                                       storage_keys.end());
-    std::move(barrier).Run();
+    DCHECK(callback);
+    storage_keys_.insert(storage_keys.begin(), storage_keys.end());
+    std::move(callback).Run();
   }
 
   void Completed() {
@@ -604,14 +568,14 @@ class QuotaManagerImpl::StorageKeyGathererTask {
 #endif  // DCHECK_IS_ON()
 
     // Deletes `this`.
-    std::move(callback_).Run(storage_keys_by_type_);
+    std::move(callback_).Run(storage_keys_);
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
   raw_ptr<QuotaManagerImpl> manager_ GUARDED_BY_CONTEXT(sequence_checker_);
-  base::OnceCallback<void(StorageKeysByType)> callback_
+  base::OnceCallback<void(std::set<StorageKey>)> callback_
       GUARDED_BY_CONTEXT(sequence_checker_);
-  StorageKeysByType storage_keys_by_type_ GUARDED_BY_CONTEXT(sequence_checker_);
+  std::set<StorageKey> storage_keys_ GUARDED_BY_CONTEXT(sequence_checker_);
 
 #if DCHECK_IS_ON()
   bool run_called_ = false;
@@ -647,7 +611,8 @@ class QuotaManagerImpl::BucketDataDeleter {
         commit_immediately_(commit_immediately),
         callback_(std::move(callback)) {
     DCHECK(manager_);
-    // TODO(crbug/1292216): Convert back into DCHECKs once issue is resolved.
+    // TODO(crbug.com/40058632): Convert back into DCHECKs once issue is
+    // resolved.
     CHECK(callback_);
   }
 
@@ -662,17 +627,16 @@ class QuotaManagerImpl::BucketDataDeleter {
   void Run() {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 #if DCHECK_IS_ON()
-    // TODO(crbug/1292216): Convert back into DCHECK once issue is resolved.
+    // TODO(crbug.com/40058632): Convert back into DCHECK once issue is
+    // resolved.
     CHECK(!run_called_) << __func__ << " already called";
     run_called_ = true;
 #endif  // DCHECK_IS_ON()
 
-    DCHECK(manager_->client_types_.contains(bucket_.type));
+    remaining_clients_ = manager_->client_types_.size();
+    UsageTracker* usage_tracker = manager_->GetUsageTracker();
 
-    remaining_clients_ = manager_->client_types_[bucket_.type].size();
-    UsageTracker* usage_tracker = manager_->GetUsageTracker(bucket_.type);
-
-    for (const auto& client_and_type : manager_->client_types_[bucket_.type]) {
+    for (const auto& client_and_type : manager_->client_types_) {
       mojom::QuotaClient* client = client_and_type.first;
       QuotaClientType client_type = client_and_type.second;
       if (quota_client_types_.contains(client_type)) {
@@ -725,7 +689,8 @@ class QuotaManagerImpl::BucketDataDeleter {
 
   void FinishDeletion() {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    // TODO(crbug/1292216): Convert back into DCHECKs once issue is resolved.
+    // TODO(crbug.com/40058632): Convert back into DCHECKs once issue is
+    // resolved.
     CHECK_EQ(remaining_clients_, 0u);
     CHECK(callback_) << __func__ << " called after Complete";
 
@@ -753,7 +718,8 @@ class QuotaManagerImpl::BucketDataDeleter {
 
   void Complete(QuotaErrorOr<mojom::BucketTableEntryPtr> result) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    // TODO(crbug/1292216): Convert back into DCHECKs once issue is resolved.
+    // TODO(crbug.com/40058632): Convert back into DCHECKs once issue is
+    // resolved.
     CHECK_EQ(remaining_clients_, 0u);
     CHECK(callback_);
 
@@ -841,14 +807,14 @@ class QuotaManagerImpl::BucketSetDataDeleter {
   void ScheduleBucketsDeletion() {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     for (const auto& bucket : buckets_) {
-      // base::Unretained() is safe here because `this` is guaranteed to outlive
-      // the callback, thanks to an indirect ownership chain. `this` owns the
-      // BucketDataDeleter created here, which guarantees it will only use the
-      // callback when it's alive.
+      // Weak pointer is used here because the callback will be invoked when
+      // `bucket_deleters_` is being destroyed during `BucketSetDataDeleter`
+      // destruction. In this case, we don't need `DidDeleteBucketData` to be
+      // called. See crbug.com/373754859
       auto bucket_deleter = std::make_unique<BucketDataDeleter>(
           manager_, bucket, AllQuotaClientTypes(), /*commit_immediately=*/false,
           base::BindOnce(&BucketSetDataDeleter::DidDeleteBucketData,
-                         base::Unretained(this)));
+                         weak_factory_.GetWeakPtr()));
       auto* bucket_deleter_ptr = bucket_deleter.get();
       bucket_deleters_[bucket_deleter_ptr] = std::move(bucket_deleter);
       bucket_deleter_ptr->Run();
@@ -903,37 +869,28 @@ class QuotaManagerImpl::BucketSetDataDeleter {
 class QuotaManagerImpl::StorageCleanupHelper : public QuotaTask {
  public:
   StorageCleanupHelper(QuotaManagerImpl* manager,
-                       StorageType type,
                        QuotaClientTypes quota_client_types,
                        base::OnceClosure callback)
       : QuotaTask(manager),
-        type_(type),
         quota_client_types_(std::move(quota_client_types)),
         callback_(std::move(callback)) {
     DCHECK(manager);
-    DCHECK(manager->client_types_.contains(type_));
     DCHECK(callback_);
   }
 
  protected:
   void Run() override {
-    DCHECK(manager()->client_types_.contains(type_));
-    base::RepeatingClosure barrier = base::BarrierClosure(
-        manager()->client_types_[type_].size(),
-        base::BindOnce(&StorageCleanupHelper::CallCompleted,
-                       weak_factory_.GetWeakPtr()));
-
-    // This may synchronously trigger |callback_| at the end of the for loop,
-    // make sure we do nothing after this block.
-    for (const auto& client_and_type : manager()->client_types_[type_]) {
+    base::ConcurrentClosures concurrent;
+    for (const auto& client_and_type : manager()->client_types_) {
       mojom::QuotaClient* client = client_and_type.first;
       QuotaClientType client_type = client_and_type.second;
       if (quota_client_types_.contains(client_type)) {
-        client->PerformStorageCleanup(type_, barrier);
-      } else {
-        barrier.Run();
+        client->PerformStorageCleanup(concurrent.CreateClosure());
       }
     }
+    std::move(concurrent)
+        .Done(base::BindOnce(&StorageCleanupHelper::CallCompleted,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void Aborted() override {
@@ -953,7 +910,6 @@ class QuotaManagerImpl::StorageCleanupHelper : public QuotaTask {
     return static_cast<QuotaManagerImpl*>(observer());
   }
 
-  const StorageType type_;
   const QuotaClientTypes quota_client_types_;
   base::OnceClosure callback_;
   base::WeakPtrFactory<StorageCleanupHelper> weak_factory_{this};
@@ -1000,7 +956,6 @@ QuotaManagerImpl::QuotaManagerImpl(
     bool is_incognito,
     const base::FilePath& profile_path,
     scoped_refptr<base::SingleThreadTaskRunner> io_thread,
-    base::RepeatingClosure quota_change_callback,
     scoped_refptr<SpecialStoragePolicy> special_storage_policy,
     const GetQuotaSettingsFunc& get_settings_function)
     : RefCountedDeleteOnSequence<QuotaManagerImpl>(io_thread),
@@ -1014,7 +969,6 @@ QuotaManagerImpl::QuotaManagerImpl(
           {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
            base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
       get_settings_function_(get_settings_function),
-      quota_change_callback_(std::move(quota_change_callback)),
       special_storage_policy_(std::move(special_storage_policy)),
       get_volume_info_fn_(&QuotaManagerImpl::GetVolumeInfo) {
   DCHECK_EQ(settings_.refresh_interval, base::TimeDelta::Max());
@@ -1076,35 +1030,9 @@ void QuotaManagerImpl::UpdateOrCreateBucket(
                      std::move(callback)));
 }
 
-void QuotaManagerImpl::GetOrCreateBucketDeprecated(
-    const BucketInitParams& bucket_params,
-    blink::mojom::StorageType storage_type,
-    base::OnceCallback<void(QuotaErrorOr<BucketInfo>)> callback) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(callback);
-  EnsureDatabaseOpened();
-
-  if (db_disabled_) {
-    std::move(callback).Run(base::unexpected(QuotaError::kDatabaseDisabled));
-    return;
-  }
-  PostTaskAndReplyWithResultForDBThread(
-      base::BindOnce(
-          [](const BucketInitParams& params,
-             blink::mojom::StorageType storage_type, QuotaDatabase* database) {
-            DCHECK(database);
-            return database->GetOrCreateBucketDeprecated(params, storage_type);
-          },
-          bucket_params, storage_type),
-      base::BindOnce(&QuotaManagerImpl::DidGetBucket,
-                     weak_factory_.GetWeakPtr(),
-                     /*notify_update_bucket=*/true, std::move(callback)));
-}
-
 void QuotaManagerImpl::CreateBucketForTesting(
     const StorageKey& storage_key,
     const std::string& bucket_name,
-    blink::mojom::StorageType storage_type,
     base::OnceCallback<void(QuotaErrorOr<BucketInfo>)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
@@ -1117,12 +1045,12 @@ void QuotaManagerImpl::CreateBucketForTesting(
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
           [](const StorageKey& storage_key, const std::string& bucket_name,
-             blink::mojom::StorageType storage_type, QuotaDatabase* database) {
+             QuotaDatabase* database) {
             DCHECK(database);
             return database->CreateBucketForTesting(  // IN-TEST
-                storage_key, bucket_name, storage_type);
+                storage_key, bucket_name);
           },
-          storage_key, bucket_name, storage_type),
+          storage_key, bucket_name),
       base::BindOnce(&QuotaManagerImpl::DidGetBucket,
                      weak_factory_.GetWeakPtr(), /*notify_update_bucket=*/true,
                      std::move(callback)));
@@ -1131,7 +1059,6 @@ void QuotaManagerImpl::CreateBucketForTesting(
 void QuotaManagerImpl::GetBucketByNameUnsafe(
     const StorageKey& storage_key,
     const std::string& bucket_name,
-    blink::mojom::StorageType type,
     base::OnceCallback<void(QuotaErrorOr<BucketInfo>)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
@@ -1144,11 +1071,11 @@ void QuotaManagerImpl::GetBucketByNameUnsafe(
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
           [](const StorageKey& storage_key, const std::string& bucket_name,
-             blink::mojom::StorageType type, QuotaDatabase* database) {
+             QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucket(storage_key, bucket_name, type);
+            return database->GetBucket(storage_key, bucket_name);
           },
-          storage_key, bucket_name, type),
+          storage_key, bucket_name),
       base::BindOnce(&QuotaManagerImpl::DidGetBucket,
                      weak_factory_.GetWeakPtr(), /*notify_update_bucket=*/false,
                      std::move(callback)));
@@ -1177,8 +1104,7 @@ void QuotaManagerImpl::GetBucketById(
                      std::move(callback)));
 }
 
-void QuotaManagerImpl::GetStorageKeysForType(blink::mojom::StorageType type,
-                                             GetStorageKeysCallback callback) {
+void QuotaManagerImpl::GetAllStorageKeys(GetStorageKeysCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   EnsureDatabaseOpened();
@@ -1188,18 +1114,15 @@ void QuotaManagerImpl::GetStorageKeysForType(blink::mojom::StorageType type,
     return;
   }
   PostTaskAndReplyWithResultForDBThread(
-      base::BindOnce(
-          [](blink::mojom::StorageType type, QuotaDatabase* database) {
-            DCHECK(database);
-            return database->GetStorageKeysForType(type);
-          },
-          type),
+      base::BindOnce([](QuotaDatabase* database) {
+        DCHECK(database);
+        return database->GetAllStorageKeys();
+      }),
       base::BindOnce(&QuotaManagerImpl::DidGetStorageKeys,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void QuotaManagerImpl::GetBucketsForType(
-    blink::mojom::StorageType type,
+void QuotaManagerImpl::GetAllBuckets(
     base::OnceCallback<void(QuotaErrorOr<std::set<BucketInfo>>)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
@@ -1210,19 +1133,16 @@ void QuotaManagerImpl::GetBucketsForType(
     return;
   }
   PostTaskAndReplyWithResultForDBThread(
-      base::BindOnce(
-          [](StorageType type, QuotaDatabase* database) {
-            DCHECK(database);
-            return database->GetBucketsForType(type);
-          },
-          type),
+      base::BindOnce([](QuotaDatabase* database) {
+        DCHECK(database);
+        return database->GetAllBuckets();
+      }),
       base::BindOnce(&QuotaManagerImpl::DidGetBuckets,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void QuotaManagerImpl::GetBucketsForHost(
     const std::string& host,
-    blink::mojom::StorageType type,
     base::OnceCallback<void(QuotaErrorOr<std::set<BucketInfo>>)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
@@ -1234,19 +1154,17 @@ void QuotaManagerImpl::GetBucketsForHost(
   }
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
-          [](const std::string& host, StorageType type,
-             QuotaDatabase* database) {
+          [](const std::string& host, QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucketsForHost(host, type);
+            return database->GetBucketsForHost(host);
           },
-          host, type),
+          host),
       base::BindOnce(&QuotaManagerImpl::DidGetBuckets,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void QuotaManagerImpl::GetBucketsForStorageKey(
     const StorageKey& storage_key,
-    blink::mojom::StorageType type,
     base::OnceCallback<void(QuotaErrorOr<std::set<BucketInfo>>)> callback,
     bool delete_expired) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -1269,12 +1187,11 @@ void QuotaManagerImpl::GetBucketsForStorageKey(
 
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
-          [](const StorageKey& storage_key, StorageType type,
-             QuotaDatabase* database) {
+          [](const StorageKey& storage_key, QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucketsForStorageKey(storage_key, type);
+            return database->GetBucketsForStorageKey(storage_key);
           },
-          storage_key, type),
+          storage_key),
       std::move(reply));
 }
 
@@ -1290,58 +1207,103 @@ void QuotaManagerImpl::GetUsageInfo(GetUsageInfoCallback callback) {
 
 void QuotaManagerImpl::GetUsageAndQuotaForWebApps(
     const StorageKey& storage_key,
-    StorageType type,
     UsageAndQuotaCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
 
   GetUsageAndQuotaWithBreakdown(
-      storage_key, type,
+      storage_key,
       base::BindOnce(&DidGetUsageAndQuotaStripBreakdown, std::move(callback)));
 }
 
 void QuotaManagerImpl::GetUsageAndQuotaWithBreakdown(
     const StorageKey& storage_key,
-    StorageType type,
     UsageAndQuotaWithBreakdownCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
 
-  GetUsageAndQuotaForDevtools(
-      storage_key, type,
+  HandleGetUsageAndQuotaRequest(
+      storage_key,
+      base::BindOnce(&DidGetUsageAndQuotaStripOverride, std::move(callback)));
+}
+
+void QuotaManagerImpl::GetUsageAndReportedQuotaWithBreakdown(
+    const StorageKey& storage_key,
+    UsageAndQuotaWithBreakdownCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(callback);
+
+  if (base::FeatureList::IsEnabled(storage::features::kStaticStorageQuota) &&
+      !IsStorageUnlimited(storage_key)) {
+    HandleGetUsageAndQuotaRequest(
+        storage_key,
+        base::BindOnce(
+            [](base::WeakPtr<QuotaManagerImpl> weak_this,
+               UsageAndQuotaWithBreakdownCallback callback,
+               blink::mojom::QuotaStatusCode status, int64_t usage,
+               int64_t quota, bool is_override_enabled,
+               blink::mojom::UsageBreakdownPtr usage_breakdown) {
+              DCHECK(callback);
+              if (!weak_this) {
+                std::move(callback).Run(blink::mojom::QuotaStatusCode::kUnknown,
+                                        0, 0, std::move(usage_breakdown));
+                return;
+              }
+              if (status != blink::mojom::QuotaStatusCode::kOk) {
+                std::move(callback).Run(status, 0, 0,
+                                        std::move(usage_breakdown));
+                return;
+              }
+              weak_this->GetDiskAvailabilityAndTempPoolSize(base::BindOnce(
+                  [](UsageAndQuotaWithBreakdownCallback callback,
+                     blink::mojom::QuotaStatusCode status, int64_t usage,
+                     blink::mojom::UsageBreakdownPtr usage_breakdown,
+                     int64_t total_space, int64_t available_space,
+                     int64_t temp_pool_size) {
+                    int64_t reported_quota =
+                        CalculateReportedQuota(total_space, usage);
+
+                    std::move(callback).Run(status, usage, reported_quota,
+                                            std::move(usage_breakdown));
+                  },
+                  std::move(callback), status, usage,
+                  std::move(usage_breakdown)));
+            },
+            weak_factory_.GetWeakPtr(), std::move(callback)));
+    return;
+  }
+
+  HandleGetUsageAndQuotaRequest(
+      storage_key,
       base::BindOnce(&DidGetUsageAndQuotaStripOverride, std::move(callback)));
 }
 
 void QuotaManagerImpl::GetUsageAndQuotaForDevtools(
     const StorageKey& storage_key,
-    StorageType type,
-    UsageAndQuotaForDevtoolsCallback callback) {
+    UsageAndQuotaWithBreakdownAndOverrideFlagCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
+  HandleGetUsageAndQuotaRequest(storage_key, std::move(callback));
+}
 
-  if (!IsSupportedType(type) ||
-      (is_incognito_ && !IsSupportedIncognitoType(type))) {
-    std::move(callback).Run(blink::mojom::QuotaStatusCode::kErrorNotSupported,
-                            /*usage=*/0,
-                            /*quota=*/0,
-                            /*is_override_enabled=*/false,
-                            /*usage_breakdown=*/nullptr);
-    return;
-  }
+void QuotaManagerImpl::HandleGetUsageAndQuotaRequest(
+    const StorageKey& storage_key,
+    UsageAndQuotaWithBreakdownAndOverrideFlagCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(callback);
   EnsureDatabaseOpened();
 
   UsageAndQuotaInfoGatherer* helper = new UsageAndQuotaInfoGatherer(
-      this, storage_key, type, is_incognito_, std::move(callback));
+      this, storage_key, is_incognito_, std::move(callback));
   helper->Start();
 }
 
 void QuotaManagerImpl::GetUsageAndQuota(const StorageKey& storage_key,
-                                        StorageType type,
                                         UsageAndQuotaCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
 
-  if (IsStorageUnlimited(storage_key, type)) {
+  if (IsStorageUnlimited(storage_key)) {
     // TODO(michaeln): This seems like a non-obvious odd behavior, probably for
     // apps/extensions, but it would be good to eliminate this special case.
     std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk, 0, kNoLimit);
@@ -1349,7 +1311,7 @@ void QuotaManagerImpl::GetUsageAndQuota(const StorageKey& storage_key,
   }
 
   GetUsageAndQuotaWithBreakdown(
-      storage_key, type,
+      storage_key,
       base::BindOnce(&DidGetUsageAndQuotaStripBreakdown, std::move(callback)));
 }
 
@@ -1362,15 +1324,100 @@ void QuotaManagerImpl::GetBucketUsageAndQuota(BucketId id,
                          weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
+void QuotaManagerImpl::GetBucketUsageAndReportedQuota(
+    BucketId id,
+    UsageAndQuotaCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (base::FeatureList::IsEnabled(storage::features::kStaticStorageQuota)) {
+    GetBucketById(
+        id,
+        base::BindOnce(
+            [](base::WeakPtr<QuotaManagerImpl> weak_this,
+               UsageAndQuotaCallback callback,
+               QuotaErrorOr<BucketInfo> result) {
+              if (!weak_this || !result.has_value()) {
+                std::move(callback).Run(blink::mojom::QuotaStatusCode::kUnknown,
+                                        0, 0);
+                return;
+              }
+
+              const BucketInfo& bucket = result.value();
+              bool is_storage_unlimited =
+                  weak_this->IsStorageUnlimited(bucket.storage_key);
+
+              UsageAndQuotaInfoGatherer* helper = new UsageAndQuotaInfoGatherer(
+                  weak_this.get(), bucket, weak_this->is_incognito_,
+                  base::BindOnce(
+                      [](base::WeakPtr<QuotaManagerImpl> weak_this,
+                         UsageAndQuotaCallback callback,
+                         const BucketInfo& bucket, bool is_storage_unlimited,
+                         blink::mojom::QuotaStatusCode status, int64_t usage,
+                         int64_t quota, bool is_override_enabled,
+                         blink::mojom::UsageBreakdownPtr usage_breakdown) {
+                        DCHECK(callback);
+
+                        if (!weak_this) {
+                          std::move(callback).Run(
+                              blink::mojom::QuotaStatusCode::kUnknown, 0, 0);
+                          return;
+                        }
+
+                        // If storage is unlimited, return the real quota value.
+                        if (is_storage_unlimited) {
+                          std::move(callback).Run(status, usage, quota);
+                          return;
+                        }
+
+                        // If there was a requested bucket quota, return that
+                        // value regardless of whether it was capped at the
+                        // StorageKey quota or not.
+                        if (bucket.quota > 0) {
+                          std::move(callback).Run(status, usage, bucket.quota);
+                          return;
+                        }
+
+                        if (status != blink::mojom::QuotaStatusCode::kOk) {
+                          std::move(callback).Run(status, 0, 0);
+                          return;
+                        }
+
+                        weak_this->GetDiskAvailabilityAndTempPoolSize(
+                            base::BindOnce(
+                                [](UsageAndQuotaCallback callback,
+                                   blink::mojom::QuotaStatusCode status,
+                                   int64_t usage, int64_t total_space,
+                                   int64_t available_space,
+                                   int64_t temp_pool_size) {
+                                  int64_t reported_quota =
+                                      CalculateReportedQuota(total_space,
+                                                             usage);
+
+                                  std::move(callback).Run(status, usage,
+                                                          reported_quota);
+                                },
+                                std::move(callback), status, usage));
+                      },
+                      weak_this, std::move(callback), bucket,
+                      is_storage_unlimited));
+              helper->Start();
+            },
+            weak_factory_.GetWeakPtr(), std::move(callback)));
+    return;
+  }
+
+  GetBucketUsageAndQuota(id, std::move(callback));
+}
+
 void QuotaManagerImpl::GetBucketSpaceRemaining(
     const BucketLocator& bucket,
     base::OnceCallback<void(QuotaErrorOr<int64_t>)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // This barrier is run once with each space restriction --- the StorageKey
-  // usage/quota and the bucket's usage/quota (if it exists). The final value is
-  // the more restrictive of the two.
-  auto barrier_aggregator = base::BindOnce(
+  // ConcurrentCallbacks is run once with each space restriction --- the
+  // StorageKey usage/quota and the bucket's usage/quota (if it exists). The
+  // final value is the more restrictive of the two.
+  auto aggregator = base::BindOnce(
       [](base::OnceCallback<void(QuotaErrorOr<int64_t>)> final_space_remaining,
          std::vector<int64_t> space_checks) {
         int64_t space_left =
@@ -1383,13 +1430,11 @@ void QuotaManagerImpl::GetBucketSpaceRemaining(
         }
       },
       std::move(callback));
-  auto barrier = base::BarrierCallback<int64_t>(
-      /*num_callbacks=*/bucket.is_default ? 1 : 2,
-      std::move(barrier_aggregator));
+  base::ConcurrentCallbacks<int64_t> concurrent;
 
-  // Translates a UsageAndQuota result into a single number for the barrier.
-  auto on_got_usage = base::BindRepeating(
-      [](base::RepeatingCallback<void(int64_t)> report_space_remaining,
+  // Translates a UsageAndQuota result into a single number for the aggregator.
+  auto on_got_usage =
+      [](base::OnceCallback<void(int64_t)> report_space_remaining,
          blink::mojom::QuotaStatusCode code, int64_t usage, int64_t quota) {
         // Report the amount of allocated space remaining, or min() for an
         // error, or max() if there's no limit.
@@ -1402,17 +1447,19 @@ void QuotaManagerImpl::GetBucketSpaceRemaining(
           leftover_space = quota - usage;
         }
         std::move(report_space_remaining).Run(leftover_space);
-      },
-      barrier);
+      };
 
   // Check the usage for the whole StorageKey.
-  GetUsageAndQuota(bucket.storage_key, bucket.type, on_got_usage);
+  GetUsageAndQuota(bucket.storage_key,
+                   base::BindOnce(on_got_usage, concurrent.CreateCallback()));
 
   // If this is the default bucket, we're done. Otherwise, additionally check
   // the usage of the specific bucket against its quota.
   if (!bucket.is_default) {
-    GetBucketUsageAndQuota(bucket.id, on_got_usage);
+    GetBucketUsageAndQuota(
+        bucket.id, base::BindOnce(on_got_usage, concurrent.CreateCallback()));
   }
+  std::move(concurrent).Done(std::move(aggregator));
 }
 
 void QuotaManagerImpl::OnClientWriteFailed(const StorageKey& storage_key) {
@@ -1422,12 +1469,11 @@ void QuotaManagerImpl::OnClientWriteFailed(const StorageKey& storage_key) {
 
 void QuotaManagerImpl::SetUsageCacheEnabled(QuotaClientType client_id,
                                             const StorageKey& storage_key,
-                                            StorageType type,
                                             bool enabled) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   EnsureDatabaseOpened();
 
-  UsageTracker* usage_tracker = GetUsageTracker(type);
+  UsageTracker* usage_tracker = GetUsageTracker();
   DCHECK(usage_tracker);
 
   usage_tracker->SetUsageCacheEnabled(client_id, storage_key, enabled);
@@ -1465,11 +1511,11 @@ void QuotaManagerImpl::FindAndDeleteBucketData(const StorageKey& storage_key,
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
           [](const StorageKey& storage_key, const std::string& bucket_name,
-             blink::mojom::StorageType type, QuotaDatabase* database) {
+             QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucket(storage_key, bucket_name, type);
+            return database->GetBucket(storage_key, bucket_name);
           },
-          storage_key, bucket_name, StorageType::kTemporary),
+          storage_key, bucket_name),
       base::BindOnce(&QuotaManagerImpl::DidGetBucketForDeletion,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
@@ -1524,25 +1570,22 @@ void QuotaManagerImpl::UpdateBucketPersistence(
 }
 
 void QuotaManagerImpl::PerformStorageCleanup(
-    StorageType type,
     QuotaClientTypes quota_client_types,
     base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   StorageCleanupHelper* deleter = new StorageCleanupHelper(
-      this, type, std::move(quota_client_types), std::move(callback));
+      this, std::move(quota_client_types), std::move(callback));
   deleter->Start();
 }
 
 void QuotaManagerImpl::DeleteHostData(const std::string& host,
-                                      StorageType type,
                                       StatusCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   EnsureDatabaseOpened();
 
-  DCHECK(client_types_.contains(type));
-  if (host.empty() || client_types_[type].empty()) {
+  if (host.empty() || client_types_.empty()) {
     std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk);
     return;
   }
@@ -1551,19 +1594,17 @@ void QuotaManagerImpl::DeleteHostData(const std::string& host,
                            weak_factory_.GetWeakPtr(), std::move(callback)));
   auto* buckets_deleter_ptr = buckets_deleter.get();
   bucket_set_data_deleters_[buckets_deleter_ptr] = std::move(buckets_deleter);
-  GetBucketsForHost(host, type,
-                    buckets_deleter_ptr->GetBucketDeletionCallback());
+  GetBucketsForHost(host, buckets_deleter_ptr->GetBucketDeletionCallback());
 }
 
 void QuotaManagerImpl::DeleteStorageKeyData(
     const blink::StorageKey& storage_key,
-    blink::mojom::StorageType type,
     StatusCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   EnsureDatabaseOpened();
 
-  DCHECK(client_types_.contains(type));
-  if (client_types_[type].empty()) {
+  if (client_types_.empty()) {
+    std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk);
     return;
   }
   auto buckets_deleter = std::make_unique<BucketSetDataDeleter>(
@@ -1571,7 +1612,7 @@ void QuotaManagerImpl::DeleteStorageKeyData(
                            weak_factory_.GetWeakPtr(), std::move(callback)));
   auto* buckets_deleter_ptr = buckets_deleter.get();
   bucket_set_data_deleters_[buckets_deleter_ptr] = std::move(buckets_deleter);
-  GetBucketsForStorageKey(storage_key, type,
+  GetBucketsForStorageKey(storage_key,
                           buckets_deleter_ptr->GetBucketDeletionCallback());
 }
 
@@ -1677,37 +1718,34 @@ void QuotaManagerImpl::GetStatistics(GetStatisticsCallback callback) {
   std::move(callback).Run(statistics);
 }
 
-void QuotaManagerImpl::GetGlobalUsage(StorageType type,
-                                      UsageCallback callback) {
+void QuotaManagerImpl::GetGlobalUsage(UsageCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   EnsureDatabaseOpened();
 
-  UsageTracker* usage_tracker = GetUsageTracker(type);
+  UsageTracker* usage_tracker = GetUsageTracker();
   DCHECK(usage_tracker);
   usage_tracker->GetGlobalUsage(std::move(callback));
 }
 
 void QuotaManagerImpl::GetGlobalUsageForInternals(
-    blink::mojom::StorageType storage_type,
     GetGlobalUsageForInternalsCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   EnsureDatabaseOpened();
 
-  UsageTracker* usage_tracker = GetUsageTracker(storage_type);
+  UsageTracker* usage_tracker = GetUsageTracker();
   DCHECK(usage_tracker);
   usage_tracker->GetGlobalUsage(std::move(callback));
 }
 
 void QuotaManagerImpl::GetStorageKeyUsageWithBreakdown(
     const blink::StorageKey& storage_key,
-    StorageType type,
     UsageWithBreakdownCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   EnsureDatabaseOpened();
 
-  UsageTracker* usage_tracker = GetUsageTracker(type);
+  UsageTracker* usage_tracker = GetUsageTracker();
   DCHECK(usage_tracker);
   usage_tracker->GetStorageKeyUsageWithBreakdown(storage_key,
                                                  std::move(callback));
@@ -1719,23 +1757,13 @@ void QuotaManagerImpl::GetBucketUsageWithBreakdown(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   EnsureDatabaseOpened();
 
-  UsageTracker* usage_tracker = GetUsageTracker(bucket.type);
+  UsageTracker* usage_tracker = GetUsageTracker();
   DCHECK(usage_tracker);
   usage_tracker->GetBucketUsageWithBreakdown(bucket, std::move(callback));
 }
 
-bool QuotaManagerImpl::IsStorageUnlimited(const StorageKey& storage_key,
-                                          StorageType type) const {
+bool QuotaManagerImpl::IsStorageUnlimited(const StorageKey& storage_key) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  // For syncable storage we should always enforce quota (since the
-  // quota must be capped by the server limit).
-  if (type == StorageType::kSyncable) {
-    return false;
-  }
-  if (type == StorageType::kDeprecatedQuotaNotManaged) {
-    return true;
-  }
   return special_storage_policy_.get() &&
          special_storage_policy_->IsStorageUnlimited(
              storage_key.origin().GetURL());
@@ -1743,27 +1771,20 @@ bool QuotaManagerImpl::IsStorageUnlimited(const StorageKey& storage_key,
 
 int64_t QuotaManagerImpl::GetQuotaForStorageKey(
     const StorageKey& storage_key,
-    StorageType type,
     const QuotaSettings& settings) const {
-  if (IsStorageUnlimited(storage_key, type)) {
+  if (IsStorageUnlimited(storage_key)) {
     return kNoLimit;
   }
 
-  if (type == StorageType::kSyncable) {
-    return kSyncableStorageDefaultStorageKeyQuota;
-  }
-
-  if (type == StorageType::kTemporary && special_storage_policy_ &&
-      special_storage_policy_->IsStorageSessionOnly(
-          storage_key.origin().GetURL())) {
+  if (special_storage_policy_ && special_storage_policy_->IsStorageSessionOnly(
+                                     storage_key.origin().GetURL())) {
     return settings.session_only_per_storage_key_quota;
   }
 
   return settings.per_storage_key_quota;
 }
 
-void QuotaManagerImpl::GetBucketsModifiedBetween(StorageType type,
-                                                 base::Time begin,
+void QuotaManagerImpl::GetBucketsModifiedBetween(base::Time begin,
                                                  base::Time end,
                                                  GetBucketsCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -1777,37 +1798,26 @@ void QuotaManagerImpl::GetBucketsModifiedBetween(StorageType type,
 
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
-          [](blink::mojom::StorageType type, base::Time begin, base::Time end,
-             QuotaDatabase* database) {
+          [](base::Time begin, base::Time end, QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucketsModifiedBetween(type, begin, end);
+            return database->GetBucketsModifiedBetween(begin, end);
           },
-          type, begin, end),
+          begin, end),
       base::BindOnce(&QuotaManagerImpl::DidGetModifiedBetween,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-bool QuotaManagerImpl::ResetUsageTracker(StorageType type) {
+bool QuotaManagerImpl::ResetUsageTracker() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  UsageTracker* previous_usage_tracker = GetUsageTracker(type);
+  UsageTracker* previous_usage_tracker = GetUsageTracker();
   DCHECK(previous_usage_tracker);
   if (previous_usage_tracker->IsWorking()) {
     return false;
   }
 
-  auto usage_tracker = std::make_unique<UsageTracker>(
-      this, client_types_[type], type, special_storage_policy_.get());
-  switch (type) {
-    case StorageType::kTemporary:
-      temporary_usage_tracker_ = std::move(usage_tracker);
-      return true;
-    case StorageType::kSyncable:
-      syncable_usage_tracker_ = std::move(usage_tracker);
-      return true;
-    default:
-      NOTREACHED();
-  }
+  usage_tracker_ = std::make_unique<UsageTracker>(
+      this, client_types_, special_storage_policy_.get());
   return true;
 }
 
@@ -1839,12 +1849,8 @@ void QuotaManagerImpl::EnsureDatabaseOpened() {
       base::BindPostTaskToCurrentDefault(base::BindRepeating(
           &QuotaManagerImpl::OnDbError, weak_factory_.GetWeakPtr())));
 
-  temporary_usage_tracker_ = std::make_unique<UsageTracker>(
-      this, client_types_[StorageType::kTemporary], StorageType::kTemporary,
-      special_storage_policy_.get());
-  syncable_usage_tracker_ = std::make_unique<UsageTracker>(
-      this, client_types_[StorageType::kSyncable], StorageType::kSyncable,
-      special_storage_policy_.get());
+  usage_tracker_ = std::make_unique<UsageTracker>(
+      this, client_types_, special_storage_policy_.get());
 
   if (!is_incognito_) {
     histogram_timer_.Start(FROM_HERE,
@@ -1857,6 +1863,39 @@ void QuotaManagerImpl::EnsureDatabaseOpened() {
   }
 
   MaybeBootstrapDatabase();
+  MaybeRemoveMediaLicenseDatabases();
+}
+
+void QuotaManagerImpl::MaybeRemoveMediaLicenseDatabases() {
+  db_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE,
+      base::BindOnce(&QuotaDatabase::IsMediaLicenseDatabaseRemoved,
+                     base::Unretained(database_.get())),
+      base::BindOnce(&QuotaManagerImpl::DidGetMediaLicenseDatabaseRemovalFlag,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void QuotaManagerImpl::DidGetMediaLicenseDatabaseRemovalFlag(
+    bool is_media_license_database_removed) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!is_media_license_database_removed) {
+    RemoveMediaLicenseDatabases();
+  }
+}
+
+void QuotaManagerImpl::RemoveMediaLicenseDatabases() {
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&QuotaManagerImpl::DeleteMediaLicenseDatabase,
+                     weak_factory_.GetWeakPtr()),
+      kMinutesAfterStartupToBeginMediaLicenseDatabaseDeletion);
+
+  PostTaskAndReplyWithResultForDBThread(
+      base::BindOnce([](QuotaDatabase* database) {
+        DCHECK(database);
+        return database->SetIsMediaLicenseDatabaseRemoved(true);
+      }),
+      base::DoNothing(), FROM_HERE);
 }
 
 void QuotaManagerImpl::MaybeBootstrapDatabase() {
@@ -1878,7 +1917,11 @@ void QuotaManagerImpl::DidGetBootstrapFlag(bool is_database_bootstrapped) {
   }
   is_bootstrapping_database_ = false;
   RunDatabaseCallbacks();
-  StartEviction();
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&QuotaManagerImpl::StartEviction,
+                     weak_factory_.GetWeakPtr()),
+      kMinutesAfterStartupToBeginEviction);
 }
 
 void QuotaManagerImpl::BootstrapDatabase() {
@@ -1891,21 +1934,19 @@ void QuotaManagerImpl::BootstrapDatabase() {
 }
 
 void QuotaManagerImpl::DidGetStorageKeysForBootstrap(
-    StorageKeysByType storage_keys_by_type) {
+    std::set<StorageKey> storage_keys) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(storage_key_gatherer_);
   storage_key_gatherer_.reset();
 
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
-          [](base::flat_map<StorageType, std::set<StorageKey>>
-                 storage_keys_by_type,
-             QuotaDatabase* database) {
+          [](std::set<StorageKey> storage_keys, QuotaDatabase* database) {
             DCHECK(database);
             return database->RegisterInitialStorageKeyInfo(
-                std::move(storage_keys_by_type));
+                std::move(storage_keys));
           },
-          std::move(storage_keys_by_type)),
+          std::move(storage_keys)),
       base::BindOnce(&QuotaManagerImpl::DidBootstrapDatabase,
                      weak_factory_.GetWeakPtr()),
       FROM_HERE,
@@ -1946,7 +1987,18 @@ void QuotaManagerImpl::DidSetDatabaseBootstrapped(QuotaError error) {
   }
 
   RunDatabaseCallbacks();
-  StartEviction();
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&QuotaManagerImpl::StartEviction,
+                     weak_factory_.GetWeakPtr()),
+      kMinutesAfterStartupToBeginEviction);
+
+  // Schedule the MediaLicenseDatabase deletion task.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&QuotaManagerImpl::DeleteMediaLicenseDatabase,
+                     weak_factory_.GetWeakPtr()),
+      kMinutesAfterStartupToBeginMediaLicenseDatabaseDeletion);
 }
 
 void QuotaManagerImpl::RunDatabaseCallbacks() {
@@ -1958,34 +2010,19 @@ void QuotaManagerImpl::RunDatabaseCallbacks() {
 
 void QuotaManagerImpl::RegisterClient(
     mojo::PendingRemote<mojom::QuotaClient> client,
-    QuotaClientType client_type,
-    const std::vector<blink::mojom::StorageType>& storage_types) {
+    QuotaClientType client_type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!database_.get())
       << "All clients must be registered before the database is initialized";
 
   clients_for_ownership_.emplace_back(std::move(client));
   mojom::QuotaClient* client_ptr = clients_for_ownership_.back().get();
-
-  for (blink::mojom::StorageType storage_type : storage_types) {
-    client_types_[storage_type].insert({client_ptr, client_type});
-  }
+  client_types_.insert({client_ptr, client_type});
 }
 
-UsageTracker* QuotaManagerImpl::GetUsageTracker(StorageType type) const {
+UsageTracker* QuotaManagerImpl::GetUsageTracker() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  switch (type) {
-    case StorageType::kTemporary:
-      return temporary_usage_tracker_.get();
-    case StorageType::kSyncable:
-      return syncable_usage_tracker_.get();
-    case StorageType::kDeprecatedQuotaNotManaged:
-      return nullptr;
-    case StorageType::kDeprecatedPersistent:
-    case StorageType::kUnknown:
-      NOTREACHED();
-  }
-  return nullptr;
+  return usage_tracker_.get();
 }
 
 void QuotaManagerImpl::NotifyBucketAccessed(const BucketLocator& bucket,
@@ -2007,8 +2044,8 @@ void QuotaManagerImpl::NotifyBucketAccessed(const BucketLocator& bucket,
              QuotaDatabase* database) {
             DCHECK(database);
             if (bucket.is_default) {
-              return database->SetStorageKeyLastAccessTime(
-                  bucket.storage_key, bucket.type, accessed_time);
+              return database->SetStorageKeyLastAccessTime(bucket.storage_key,
+                                                           accessed_time);
             } else {
               return database->SetBucketLastAccessTime(bucket.id,
                                                        accessed_time);
@@ -2020,27 +2057,38 @@ void QuotaManagerImpl::NotifyBucketAccessed(const BucketLocator& bucket,
 
 void QuotaManagerImpl::NotifyBucketModified(QuotaClientType client_id,
                                             const BucketLocator& bucket,
-                                            int64_t delta,
+                                            std::optional<int64_t> delta,
                                             base::Time modification_time,
                                             base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
   EnsureDatabaseOpened();
 
+  GetUsageTracker()->UpdateBucketUsageCache(client_id, bucket, delta);
+  // Return once usage cache is updated for callers waiting for quota changes to
+  // be reflected before querying for usage.
+  std::move(callback).Run();
+
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
-          [](BucketLocator bucket, QuotaDatabase* database) {
+          [](BucketLocator bucket, base::Time modification_time,
+             QuotaDatabase* database) {
             DCHECK(database);
-            if (bucket.is_default) {
-              return database->GetBucket(bucket.storage_key, kDefaultBucketName,
-                                         bucket.type);
+            BucketId id = bucket.id;
+            if (!id) {
+              CHECK(bucket.is_default);
+              QuotaErrorOr<BucketInfo> result =
+                  database->GetBucket(bucket.storage_key, kDefaultBucketName);
+              if (!result.has_value()) {
+                return QuotaError::kNotFound;
+              }
+
+              id = result->id;
             }
-            return database->GetBucketById(bucket.id);
+            return database->SetBucketLastModifiedTime(id, modification_time);
           },
-          bucket),
-      base::BindOnce(&QuotaManagerImpl::DidGetBucketForUsage,
-                     weak_factory_.GetWeakPtr(), client_id, delta,
-                     modification_time, std::move(callback)));
+          bucket, modification_time),
+      base::DoNothing());
 }
 
 void QuotaManagerImpl::DumpBucketTable(DumpBucketTableCallback callback) {
@@ -2080,19 +2128,10 @@ void QuotaManagerImpl::RetrieveBucketUsageForBucketTable(
     BucketTableEntries entries) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  base::RepeatingCallback<void(mojom::BucketTableEntryPtr)> barrier =
-      base::BarrierCallback<mojom::BucketTableEntryPtr>(entries.size(),
-                                                        std::move(callback));
+  base::ConcurrentCallbacks<mojom::BucketTableEntryPtr> concurrent;
 
   for (auto& entry : entries) {
-    StorageType type = static_cast<StorageType>(entry->type);
-    // TODO(crbug.com/1175113): Change to DCHECK once persistent type is removed
-    // from QuotaDatabase.
-    if (!IsSupportedType(type)) {
-      continue;
-    }
-
-    absl::optional<StorageKey> storage_key =
+    std::optional<StorageKey> storage_key =
         StorageKey::Deserialize(entry->storage_key);
     // If the serialization format changes keys may not deserialize.
     if (!storage_key) {
@@ -2102,26 +2141,28 @@ void QuotaManagerImpl::RetrieveBucketUsageForBucketTable(
     BucketId bucket_id = BucketId(entry->bucket_id);
 
     BucketLocator bucket_locator =
-        BucketLocator(bucket_id, std::move(storage_key).value(), type,
+        BucketLocator(bucket_id, std::move(storage_key).value(),
                       entry->name == kDefaultBucketName);
 
     GetBucketUsageWithBreakdown(
         bucket_locator,
         base::BindOnce(&QuotaManagerImpl::AddBucketTableEntry,
-                       weak_factory_.GetWeakPtr(), std::move(entry), barrier));
+                       weak_factory_.GetWeakPtr(), std::move(entry),
+                       concurrent.CreateCallback()));
   }
+  std::move(concurrent).Done(std::move(callback));
 }
 
 void QuotaManagerImpl::AddBucketTableEntry(
     mojom::BucketTableEntryPtr entry,
-    base::OnceCallback<void(mojom::BucketTableEntryPtr)> barrier_callback,
+    base::OnceCallback<void(mojom::BucketTableEntryPtr)> callback,
     int64_t usage,
     blink::mojom::UsageBreakdownPtr bucket_usage_breakdown) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   entry->usage = usage;
 
-  std::move(barrier_callback).Run(std::move(entry));
+  std::move(callback).Run(std::move(entry));
 }
 
 void QuotaManagerImpl::OnDbError(int error_code) {
@@ -2132,7 +2173,7 @@ void QuotaManagerImpl::OnDbError(int error_code) {
   // Start the storage eviction routine on a full disk error.
   if (static_cast<sql::SqliteErrorCode>(error_code) ==
       sql::SqliteErrorCode::kFullDisk) {
-    OnFullDiskError(absl::nullopt);
+    OnFullDiskError(std::nullopt);
     return;
   }
 
@@ -2171,7 +2212,7 @@ void QuotaManagerImpl::OnDbError(int error_code) {
                      weak_factory_.GetWeakPtr()));
 }
 
-void QuotaManagerImpl::OnFullDiskError(absl::optional<StorageKey> storage_key) {
+void QuotaManagerImpl::OnFullDiskError(std::optional<StorageKey> storage_key) {
   if ((base::TimeTicks::Now() - last_full_disk_eviction_time_) >
       base::Minutes(15)) {
     last_full_disk_eviction_time_ = base::TimeTicks::Now();
@@ -2215,10 +2256,42 @@ void QuotaManagerImpl::StartEviction() {
     return;
   }
   if (!temporary_storage_evictor_) {
-    temporary_storage_evictor_ = std::make_unique<QuotaTemporaryStorageEvictor>(
-        this, kEvictionIntervalInMilliSeconds);
+    temporary_storage_evictor_ =
+        std::make_unique<QuotaTemporaryStorageEvictor>(this, kEvictionInterval);
   }
   temporary_storage_evictor_->Start();
+}
+
+void QuotaManagerImpl::DeleteMediaLicenseDatabase() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  GetBucketsModifiedBetween(
+      base::Time::Min(), base::Time::Max(),
+      base::BindOnce(&QuotaManagerImpl::DidGetBucketsForMediaLicenseDeletion,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void QuotaManagerImpl::DidGetBucketsForMediaLicenseDeletion(
+    const std::set<BucketLocator>& buckets) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  std::vector<base::FilePath> media_license_dir_paths;
+
+  for (const BucketLocator& bucket : buckets) {
+    if (bucket.storage_key.IsFirstPartyContext()) {
+      media_license_dir_paths.push_back(
+          CreateMediaLicenseBucketPath(profile_path_, bucket));
+    }
+  }
+
+  db_runner_->PostTask(FROM_HERE,
+                       base::BindOnce(
+                           [](std::vector<base::FilePath> file_paths) {
+                             for (base::FilePath& path : file_paths) {
+                               base::DeletePathRecursively(path);
+                             }
+                           },
+                           std::move(media_license_dir_paths)));
 }
 
 void QuotaManagerImpl::DeleteBucketFromDatabase(
@@ -2338,7 +2411,7 @@ void QuotaManagerImpl::MaybeRunStoragePressureCallback(
   DCHECK_GE(total_space, 0);
   DCHECK_GE(available_space, 0);
 
-  // TODO(https://crbug.com/1059560): Figure out what 0 total_space means
+  // TODO(crbug.com/40121667): Figure out what 0 total_space means
   // and how to handle the storage pressure callback in these cases.
   if (total_space == 0) {
     return;
@@ -2377,27 +2450,6 @@ void QuotaManagerImpl::IsSimulateStoragePressureAvailable(
   std::move(callback).Run(!storage_pressure_callback_.is_null());
 }
 
-void QuotaManagerImpl::DetermineStoragePressure(int64_t total_space,
-                                                int64_t free_space) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_GE(total_space, 0);
-  DCHECK_GE(free_space, 0);
-
-  if (!base::FeatureList::IsEnabled(features::kStoragePressureEvent)) {
-    return;
-  }
-  int64_t threshold_bytes =
-      RandomizeByPercent(kGBytes, kThresholdRandomizationPercent);
-  int64_t threshold = RandomizeByPercent(
-      static_cast<int64_t>(total_space *
-                           (kThresholdRandomizationPercent / 100.0)),
-      kThresholdRandomizationPercent);
-  threshold = std::min(threshold_bytes, threshold);
-  if (free_space < threshold && !quota_change_callback_.is_null()) {
-    quota_change_callback_.Run();
-  }
-}
-
 void QuotaManagerImpl::SetStoragePressureCallback(
     base::RepeatingCallback<void(const StorageKey&)>
         storage_pressure_callback) {
@@ -2405,7 +2457,7 @@ void QuotaManagerImpl::SetStoragePressureCallback(
   if (storage_key_for_pending_storage_pressure_callback_.has_value()) {
     storage_pressure_callback_.Run(
         std::move(storage_key_for_pending_storage_pressure_callback_.value()));
-    storage_key_for_pending_storage_pressure_callback_ = absl::nullopt;
+    storage_key_for_pending_storage_pressure_callback_ = std::nullopt;
   }
 }
 
@@ -2417,7 +2469,7 @@ int QuotaManagerImpl::GetOverrideHandleId() {
 void QuotaManagerImpl::OverrideQuotaForStorageKey(
     int handle_id,
     const StorageKey& storage_key,
-    absl::optional<int64_t> quota_size) {
+    std::optional<int64_t> quota_size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_GE(quota_size.value_or(0), 0)
       << "negative quota override: " << quota_size.value_or(0);
@@ -2453,19 +2505,13 @@ void QuotaManagerImpl::WithdrawOverridesForHandle(int handle_id) {
   }
 }
 
-absl::optional<int64_t> QuotaManagerImpl::GetQuotaOverrideForStorageKey(
+std::optional<int64_t> QuotaManagerImpl::GetQuotaOverrideForStorageKey(
     const StorageKey& storage_key) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!base::Contains(devtools_overrides_, storage_key)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return devtools_overrides_[storage_key].quota_size;
-}
-
-void QuotaManagerImpl::SetQuotaChangeCallbackForTesting(
-    base::RepeatingClosure storage_pressure_event_callback) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  quota_change_callback_ = std::move(storage_pressure_event_callback);
 }
 
 void QuotaManagerImpl::CorruptDatabaseForTesting(
@@ -2487,14 +2533,12 @@ void QuotaManagerImpl::ReportHistogram() {
   DCHECK(!is_incognito_);
 
   GetGlobalUsage(
-      StorageType::kTemporary,
-      base::BindOnce(&QuotaManagerImpl::DidGetTemporaryGlobalUsageForHistogram,
+      base::BindOnce(&QuotaManagerImpl::DidGetGlobalUsageForHistogram,
                      weak_factory_.GetWeakPtr()));
 }
 
-void QuotaManagerImpl::DidGetTemporaryGlobalUsageForHistogram(
-    int64_t usage,
-    int64_t unlimited_usage) {
+void QuotaManagerImpl::DidGetGlobalUsageForHistogram(int64_t usage,
+                                                     int64_t unlimited_usage) {
   DCHECK_GE(usage, -1);
   DCHECK_GE(unlimited_usage, -1);
 
@@ -2534,25 +2578,15 @@ void QuotaManagerImpl::DidDumpBucketTableForHistogram(
 
   base::UmaHistogramCounts100000("Quota.TotalBucketCount", entries.size());
 
-  int nonce_count = 0;
   std::map<StorageKey, int64_t> usage_map =
-      GetUsageTracker(StorageType::kTemporary)->GetCachedStorageKeysUsage();
+      GetUsageTracker()->GetCachedStorageKeysUsage();
   base::Time now = QuotaDatabase::GetNow();
   for (const auto& info : entries) {
-    if (info->type != blink::mojom::StorageType::kTemporary) {
-      continue;
-    }
-
-    absl::optional<StorageKey> storage_key =
+    std::optional<StorageKey> storage_key =
         StorageKey::Deserialize(info->storage_key);
     if (!storage_key.has_value()) {
       continue;
     }
-
-    if (storage_key.value().nonce().has_value()) {
-      nonce_count += 1;
-    }
-
     auto it = usage_map.find(*storage_key);
     if (it == usage_map.end() || it->second == 0) {
       continue;
@@ -2567,7 +2601,6 @@ void QuotaManagerImpl::DidDumpBucketTableForHistogram(
                                 base::HistogramBase::kUmaTargetedHistogramFlag)
         ->AddCount(age.InDays(), base::saturated_cast<int>(kilobytes));
   }
-  base::UmaHistogramCounts100000("Quota.StorageKeyNonceCount", nonce_count);
 }
 
 std::set<BucketId> QuotaManagerImpl::GetEvictionBucketExceptions() {
@@ -2620,11 +2653,8 @@ void QuotaManagerImpl::GetEvictionBuckets(int64_t target_usage,
 
   // The usage map should have been cached recently due to
   // `GetEvictionRoundInfo()`.
-  std::map<BucketLocator, int64_t> usage_map;
-  if (base::FeatureList::IsEnabled(features::kNewQuotaEvictionRoutine)) {
-    usage_map =
-        GetUsageTracker(StorageType::kTemporary)->GetCachedBucketsUsage();
-  }
+  std::map<BucketLocator, int64_t> usage_map =
+      GetUsageTracker()->GetCachedBucketsUsage();
 
   GetBucketsForEvictionFromDatabase(
       target_usage, std::move(usage_map),
@@ -2649,10 +2679,12 @@ void QuotaManagerImpl::EvictExpiredBuckets(StatusCallback done) {
   bucket_set_data_deleters_[buckets_deleter_ptr] = std::move(buckets_deleter);
 
   PostTaskAndReplyWithResultForDBThread(
-      base::BindOnce([](QuotaDatabase* database) {
-        DCHECK(database);
-        return database->GetExpiredBuckets();
-      }),
+      base::BindOnce(
+          [](SpecialStoragePolicy* policy, QuotaDatabase* database) {
+            DCHECK(database);
+            return database->GetExpiredBuckets(policy);
+          },
+          base::RetainedRef(special_storage_policy_)),
       buckets_deleter_ptr->GetBucketDeletionCallback());
 }
 
@@ -2719,9 +2751,8 @@ void QuotaManagerImpl::GetBucketsForEvictionFromDatabase(
              const std::set<BucketId>& bucket_exceptions,
              SpecialStoragePolicy* policy, QuotaDatabase* database) {
             DCHECK(database);
-            return database->GetBucketsForEviction(
-                blink::mojom::StorageType::kTemporary, target_usage, usage_map,
-                bucket_exceptions, policy);
+            return database->GetBucketsForEviction(target_usage, usage_map,
+                                                   bucket_exceptions, policy);
           },
           target_usage, std::move(usage_map), GetEvictionBucketExceptions(),
           base::RetainedRef(special_storage_policy_)),
@@ -2766,7 +2797,7 @@ void QuotaManagerImpl::GetQuotaSettings(QuotaSettingsCallback callback) {
                                             weak_factory_.GetWeakPtr()))));
 }
 
-void QuotaManagerImpl::DidGetSettings(absl::optional<QuotaSettings> settings) {
+void QuotaManagerImpl::DidGetSettings(std::optional<QuotaSettings> settings) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!settings) {
@@ -2805,7 +2836,7 @@ void QuotaManagerImpl::ContinueIncognitoGetStorageCapacity(
     const QuotaSettings& settings) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  auto* temporary_usage_tracker = GetUsageTracker(StorageType::kTemporary);
+  auto* temporary_usage_tracker = GetUsageTracker();
   int64_t temporary_usage = temporary_usage_tracker == nullptr
                                 ? 0
                                 : temporary_usage_tracker->GetCachedUsage();
@@ -2829,7 +2860,6 @@ void QuotaManagerImpl::DidGetStorageCapacity(
   cached_disk_stats_for_storage_pressure_ =
       std::make_tuple(base::TimeTicks::Now(), total_space, available_space);
   storage_capacity_callbacks_.Run(total_space, available_space);
-  DetermineStoragePressure(total_space, available_space);
 }
 
 void QuotaManagerImpl::DidRecoverOrRazeForReBootstrap(bool success) {
@@ -2865,16 +2895,13 @@ void QuotaManagerImpl::OnBucketDeleted(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (result.has_value()) {
     const mojom::BucketTableEntryPtr& entry = result.value();
-    StorageType type = static_cast<StorageType>(entry->type);
-    if (IsSupportedType(type)) {
-      auto storage_key = blink::StorageKey::Deserialize(entry->storage_key);
-      if (storage_key) {
-        storage::BucketLocator bucket_locator(
-            BucketId(entry->bucket_id), storage_key.value(), type,
-            entry->name == kDefaultBucketName);
-        for (auto& observer : observers_) {
-          observer->OnDeleteBucket(bucket_locator);
-        }
+    auto storage_key = blink::StorageKey::Deserialize(entry->storage_key);
+    if (storage_key) {
+      storage::BucketLocator bucket_locator(BucketId(entry->bucket_id),
+                                            storage_key.value(),
+                                            entry->name == kDefaultBucketName);
+      for (auto& observer : observers_) {
+        observer->OnDeleteBucket(bucket_locator);
       }
     }
   }
@@ -2885,11 +2912,10 @@ void QuotaManagerImpl::DidGetQuotaSettingsForBucketCreation(
     const BucketInitParams& bucket_params,
     base::OnceCallback<void(QuotaErrorOr<BucketInfo>)> callback,
     const QuotaSettings& settings) {
-  const int64_t quota = GetQuotaForStorageKey(
-      bucket_params.storage_key, StorageType::kTemporary, settings);
+  const int64_t quota =
+      GetQuotaForStorageKey(bucket_params.storage_key, settings);
   int64_t max_buckets = (quota == kNoLimit) ? 0 : (quota / kTypicalBucketUsage);
-  DCHECK_EQ(max_buckets == 0, IsStorageUnlimited(bucket_params.storage_key,
-                                                 StorageType::kTemporary));
+  DCHECK_EQ(max_buckets == 0, IsStorageUnlimited(bucket_params.storage_key));
 
   PostTaskAndReplyWithResultForDBThread(
       base::BindOnce(
@@ -2966,40 +2992,6 @@ void QuotaManagerImpl::DidGetBucketForDeletion(
   return;
 }
 
-void QuotaManagerImpl::DidGetBucketForUsage(QuotaClientType client_type,
-                                            int64_t delta,
-                                            base::Time modification_time,
-                                            base::OnceClosure callback,
-                                            QuotaErrorOr<BucketInfo> result) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(callback);
-
-  if (!result.has_value()) {
-    std::move(callback).Run();
-    return;
-  }
-
-  BucketLocator bucket(result->id, result->storage_key, result->type,
-                       result->is_default());
-  GetUsageTracker(bucket.type)
-      ->UpdateBucketUsageCache(client_type, bucket, delta);
-
-  // Return once usage cache is updated for callers waiting for quota changes to
-  // be reflected before querying for usage.
-  std::move(callback).Run();
-
-  PostTaskAndReplyWithResultForDBThread(
-      base::BindOnce(
-          [](BucketId bucket_id, base::Time modified_time,
-             QuotaDatabase* database) {
-            DCHECK(database);
-            return database->SetBucketLastModifiedTime(bucket_id,
-                                                       modified_time);
-          },
-          bucket.id, modification_time),
-      base::DoNothing());
-}
-
 void QuotaManagerImpl::DidGetBucketForUsageAndQuota(
     UsageAndQuotaCallback callback,
     QuotaErrorOr<BucketInfo> result) {
@@ -3065,12 +3057,9 @@ void QuotaManagerImpl::DidGetBucketsCheckExpiration(
       base::BarrierClosure(buckets_to_delete.size(),
                            base::BindOnce(std::move(callback), kept_buckets));
   for (const BucketInfo& bucket : buckets_to_delete) {
-    auto on_delete_done = base::BindOnce(
-        [](base::RepeatingClosure barrier,
-           QuotaErrorOr<mojom::BucketTableEntryPtr>) { barrier.Run(); },
-        barrier);
-    DeleteBucketDataInternal(bucket.ToBucketLocator(), AllQuotaClientTypes(),
-                             std::move(on_delete_done));
+    DeleteBucketDataInternal(
+        bucket.ToBucketLocator(), AllQuotaClientTypes(),
+        base::IgnoreArgs<QuotaErrorOr<mojom::BucketTableEntryPtr>>(barrier));
   }
 }
 

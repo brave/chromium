@@ -15,9 +15,7 @@ namespace ash {
 namespace attestation {
 namespace {
 std::string Base64EncodeStr(const std::string& str) {
-  std::string result;
-  base::Base64Encode(str, &result);
-  return result;
+  return base::Base64Encode(str);
 }
 }  // namespace
 
@@ -160,25 +158,12 @@ const char* TpmChallengeKeyResult::GetErrorMessage() const {
     case TpmChallengeKeyResultCode::kSuccess:
       // Not an error message.
       NOTREACHED();
-      return "";
   }
   NOTREACHED() << static_cast<int>(result_code);
 }
 
 bool TpmChallengeKeyResult::IsSuccess() const {
   return result_code == TpmChallengeKeyResultCode::kSuccess;
-}
-
-bool TpmChallengeKeyResult::operator==(
-    const TpmChallengeKeyResult& other) const {
-  return ((result_code == other.result_code) &&
-          (public_key == other.public_key) &&
-          (challenge_response == other.challenge_response));
-}
-
-bool TpmChallengeKeyResult::operator!=(
-    const TpmChallengeKeyResult& other) const {
-  return !(*this == other);
 }
 
 std::ostream& operator<<(std::ostream& os,

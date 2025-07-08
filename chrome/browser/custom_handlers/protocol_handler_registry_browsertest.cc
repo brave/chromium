@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/custom_handlers/protocol_handler_registry.h"
+
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/scoped_observation.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/gmock_expected_support.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/content_settings/page_specific_content_settings_delegate.h"
@@ -15,10 +21,12 @@
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/custom_handlers/protocol_handler.h"
-#include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/permissions/permission_request_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -28,6 +36,7 @@
 #include "content/public/test/fenced_frame_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom.h"
+#include "url/url_util.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "chrome/test/base/launchservices_utils_mac.h"
@@ -116,8 +125,7 @@ class ChromeRegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
     ASSERT_TRUE(registry->IsHandledProtocol(protocol));
   }
 
-  void RemoveProtocolHandler(const std::string& protocol,
-                             const GURL& url) {
+  void RemoveProtocolHandler(const std::string& protocol, const GURL& url) {
     ProtocolHandler handler =
         ProtocolHandler::CreateProtocolHandler(protocol, url);
     ProtocolHandlerRegistry* registry =
@@ -208,8 +216,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRegisterProtocolHandlerBrowserTest,
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   auto* content_settings =
-      chrome::PageSpecificContentSettingsDelegate::FromWebContents(
-          web_contents);
+      PageSpecificContentSettingsDelegate::FromWebContents(web_contents);
 
   // Ensure the registry is currently empty.
   GURL url("web+search:testing");
@@ -333,7 +340,7 @@ class ChromeRegisterProtocolHandlerAndServiceWorkerInterceptor
   }
 };
 
-// TODO(crbug.com/1204127): Fix flakiness.
+// TODO(crbug.com/40763886): Fix flakiness.
 IN_PROC_BROWSER_TEST_F(ChromeRegisterProtocolHandlerAndServiceWorkerInterceptor,
                        DISABLED_RegisterFetchListenerForHTMLHandler) {
   WebContents* web_contents =
@@ -358,4 +365,39 @@ IN_PROC_BROWSER_TEST_F(ChromeRegisterProtocolHandlerAndServiceWorkerInterceptor,
   EXPECT_EQ(true,
             content::EvalJs(web_contents,
                             "pageWithCustomSchemeHandledByServiceWorker();"));
+}
+
+using ChromeRegisterProtocolHandlerIsolatedWebAppsTest =
+    web_app::IsolatedWebAppBrowserTestHarness;
+
+IN_PROC_BROWSER_TEST_F(ChromeRegisterProtocolHandlerIsolatedWebAppsTest,
+                       NotAllowedFromIWA) {
+  std::unique_ptr<web_app::ScopedBundledIsolatedWebApp> app =
+      web_app::IsolatedWebAppBuilder(web_app::ManifestBuilder()).BuildBundle();
+  ASSERT_OK_AND_ASSIGN(web_app::IsolatedWebAppUrlInfo url_info,
+                       app->Install(profile()));
+
+  Browser* browser = LaunchWebAppBrowserAndWait(url_info.app_id());
+  content::WebContents* web_contents =
+      browser->tab_strip_model()->GetActiveWebContents();
+
+  GURL protocol_url =
+      url_info.origin().GetURL().Resolve("/index.html?params=%s");
+  static constexpr std::string_view kRegisterProtocolScript = R"(
+    navigator.registerProtocolHandler("web+meow", "%s");
+  )";
+  ASSERT_THAT(EvalJs(web_contents, base::StringPrintf(kRegisterProtocolScript,
+                                                      protocol_url.spec()))
+                  .error,
+              testing::HasSubstr("Isolated Web Apps do not support "
+                                 "registering/unregistering protocol"));
+
+  static constexpr std::string_view kUnegisterProtocolScript = R"(
+    navigator.unregisterProtocolHandler("web+meow", "%s");
+  )";
+  ASSERT_THAT(EvalJs(web_contents, base::StringPrintf(kUnegisterProtocolScript,
+                                                      protocol_url.spec()))
+                  .error,
+              testing::HasSubstr("Isolated Web Apps do not support "
+                                 "registering/unregistering protocol"));
 }

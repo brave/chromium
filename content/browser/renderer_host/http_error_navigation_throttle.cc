@@ -12,18 +12,19 @@
 namespace content {
 
 // static
-std::unique_ptr<NavigationThrottle>
-HttpErrorNavigationThrottle::MaybeCreateThrottleFor(
-    NavigationHandle& navigation_handle) {
+void HttpErrorNavigationThrottle::MaybeCreateAndAdd(
+    NavigationThrottleRegistry& registry) {
   // We only care about primary main frame navigations.
-  if (!navigation_handle.IsInPrimaryMainFrame())
-    return nullptr;
-  return base::WrapUnique(new HttpErrorNavigationThrottle(navigation_handle));
+  if (!registry.GetNavigationHandle().IsInPrimaryMainFrame()) {
+    return;
+  }
+  registry.AddThrottle(
+      base::WrapUnique(new HttpErrorNavigationThrottle(registry)));
 }
 
 HttpErrorNavigationThrottle::HttpErrorNavigationThrottle(
-    NavigationHandle& navigation_handle)
-    : NavigationThrottle(&navigation_handle),
+    NavigationThrottleRegistry& registry)
+    : NavigationThrottle(registry),
       task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       body_consumer_watcher_(FROM_HERE,
                              mojo::SimpleWatcher::ArmingPolicy::MANUAL,
@@ -44,8 +45,9 @@ HttpErrorNavigationThrottle::WillProcessResponse() {
   const network::mojom::URLResponseHead* response =
       NavigationRequest::From(navigation_handle())->response();
   DCHECK(response);
-  if (!response->headers)
+  if (!response->headers) {
     return PROCEED;
+  }
   int response_code = response->headers->response_code();
   if (response_code < 400 ||
       !GetContentClient()->browser()->HasErrorPage(response_code)) {
@@ -68,9 +70,9 @@ void HttpErrorNavigationThrottle::OnBodyReadable(MojoResult) {
       NavigationRequest::From(navigation_handle())->response_body();
   // See how many bytes are in the body, without consuming anything from the
   // response body data pipe.
-  uint32_t num_bytes = 0;
-  MojoResult result =
-      body.ReadData(nullptr, &num_bytes, MOJO_READ_DATA_FLAG_QUERY);
+  size_t num_bytes = 0;
+  MojoResult result = body.ReadData(MOJO_READ_DATA_FLAG_QUERY,
+                                    base::span<uint8_t>(), num_bytes);
 
   switch (result) {
     case MOJO_RESULT_OK:
@@ -86,7 +88,6 @@ void HttpErrorNavigationThrottle::OnBodyReadable(MojoResult) {
       return;
     default:
       NOTREACHED();
-      return;
   }
 
   // Stop watching for signals.

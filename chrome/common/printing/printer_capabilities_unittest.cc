@@ -11,7 +11,7 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/common/printing/printing_buildflags.h"
 #include "content/public/test/browser_task_environment.h"
 #include "printing/backend/test_print_backend.h"
@@ -44,13 +44,28 @@ void VerifyPaper(const base::Value& paper_dict,
   const std::string* vendor = paper_dict.GetDict().FindString("vendor_id");
   ASSERT_TRUE(vendor);
   EXPECT_EQ(expected_vendor, *vendor);
-  absl::optional<int> width = paper_dict.GetDict().FindInt("width_microns");
+  std::optional<int> width = paper_dict.GetDict().FindInt("width_microns");
   ASSERT_TRUE(width.has_value());
   EXPECT_EQ(expected_size.width(), width.value());
-  absl::optional<int> height = paper_dict.GetDict().FindInt("height_microns");
+  std::optional<int> height = paper_dict.GetDict().FindInt("height_microns");
   ASSERT_TRUE(height.has_value());
   EXPECT_EQ(expected_size.height(), height.value());
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+void VerifyMediaType(const base::Value& media_type_dict,
+                     const std::string& expected_name,
+                     const std::string& expected_vendor) {
+  ASSERT_TRUE(media_type_dict.is_dict());
+  const std::string* name =
+      media_type_dict.GetDict().FindString("custom_display_name");
+  ASSERT_TRUE(name);
+  EXPECT_EQ(expected_name, *name);
+  const std::string* vendor = media_type_dict.GetDict().FindString("vendor_id");
+  ASSERT_TRUE(vendor);
+  EXPECT_EQ(expected_vendor, *vendor);
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -303,7 +318,53 @@ TEST_F(PrinterCapabilitiesTest, PaperLocalizationsApplied) {
 }
 #endif  // BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+TEST_F(PrinterCapabilitiesTest, MediaTypeLocalizationsApplied) {
+  std::string printer_name = "test_printer";
+  PrinterBasicInfo basic_info;
+
+  // Set a capability and add a valid printer.
+  auto caps = std::make_unique<PrinterSemanticCapsAndDefaults>();
+  caps->papers.push_back({"na letter", "na_letter_8.5x11in", {215900, 279400}});
+
+  // Add some media types.
+  caps->media_types.push_back({"stationery display name", "stationery"});
+  caps->media_types.push_back({"custom 1 display name", "custom-1"});
+  caps->media_types.push_back({"photo display name", "photographic"});
+  caps->media_types.push_back({"custom 2 display name", "custom-2"});
+
+  caps->dpis = {{600, 600}};
+  print_backend()->AddValidPrinter(
+      printer_name, std::move(caps),
+      std::make_unique<printing::PrinterBasicInfo>(basic_info));
+
+  base::Value::Dict settings_dictionary =
+      GetSettingsOnBlockingTaskRunnerAndWaitForResults(printer_name, basic_info,
+                                                       {});
+
+  // Verify settings were created.
+  ASSERT_FALSE(settings_dictionary.empty());
+
+  // Verify there is a CDD with a printer entry.
+  const base::Value::Dict* cdd =
+      settings_dictionary.FindDict(kSettingCapabilities);
+  ASSERT_TRUE(cdd);
+  const base::Value::Dict* printer = cdd->FindDict(kPrinter);
+  ASSERT_TRUE(printer);
+
+  // Verify there are 4 media types.
+  const base::Value::Dict* media_type = printer->FindDict("media_type");
+  ASSERT_TRUE(media_type);
+  const base::Value::List* media_type_option = media_type->FindList("option");
+  ASSERT_TRUE(media_type_option);
+  ASSERT_EQ(4U, media_type_option->size());
+
+  VerifyMediaType((*media_type_option)[0], "Paper (Plain)", "stationery");
+  VerifyMediaType((*media_type_option)[1], "custom 1 display name", "custom-1");
+  VerifyMediaType((*media_type_option)[2], "Photo", "photographic");
+  VerifyMediaType((*media_type_option)[3], "custom 2 display name", "custom-2");
+}
+
 TEST_F(PrinterCapabilitiesTest, HasNotSecureProtocol) {
   std::string printer_name = "test_printer";
   PrinterBasicInfo basic_info;
@@ -333,10 +394,10 @@ TEST_F(PrinterCapabilitiesTest, HasNotSecureProtocol) {
   // Verify that pin is not supported.
   const base::Value::Dict* pin = printer->FindDict("pin");
   ASSERT_TRUE(pin);
-  absl::optional<bool> pin_supported = pin->FindBool("supported");
+  std::optional<bool> pin_supported = pin->FindBool("supported");
   ASSERT_TRUE(pin_supported.has_value());
   ASSERT_FALSE(pin_supported.value());
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace printing

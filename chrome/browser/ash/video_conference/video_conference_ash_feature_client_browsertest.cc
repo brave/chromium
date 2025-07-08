@@ -29,6 +29,7 @@
 #include "chromeos/crosapi/mojom/video_conference.mojom.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
+#include "testing/gmock/include/gmock/gmock.h"
 
 namespace ash {
 
@@ -38,9 +39,11 @@ constexpr char kBorealisId[] = "Borealis";
 
 class VideoConferenceAshfeatureClientTest : public InProcessBrowserTest {
  public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(
-        ::ash::switches::kCameraEffectsSupportedByHardware);
+  void SetUp() override {
+    scoped_feature_list_.InitAndEnableFeature(
+        ash::features::kFeatureManagementVideoConference);
+
+    InProcessBrowserTest::SetUp();
   }
 
   // Update the permission of current `app_id`.
@@ -89,8 +92,7 @@ class VideoConferenceAshfeatureClientTest : public InProcessBrowserTest {
   }
 
  protected:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      ash::features::kVideoConference};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(VideoConferenceAshfeatureClientTest, GetMediaApps) {
@@ -113,7 +115,7 @@ IN_PROC_BROWSER_TEST_F(VideoConferenceAshfeatureClientTest, GetMediaApps) {
             /*is_capturing_microphone=*/true,
             /*is_capturing_screen=*/false,
             /*title=*/base::UTF8ToUTF16(std::string(kCrostiniVmId)),
-            /*url=*/absl::nullopt,
+            /*url=*/std::nullopt,
             /*app_type=*/crosapi::mojom::VideoConferenceAppType::kCrostiniVm);
 
     EXPECT_TRUE(media_app_info[0].Equals(expected_media_app_info));
@@ -148,7 +150,7 @@ IN_PROC_BROWSER_TEST_F(VideoConferenceAshfeatureClientTest, GetMediaApps) {
             /*is_capturing_microphone=*/true,
             /*is_capturing_screen=*/false,
             /*title=*/base::UTF8ToUTF16(std::string(kPluginVmId)),
-            /*url=*/absl::nullopt,
+            /*url=*/std::nullopt,
             /*app_type=*/crosapi::mojom::VideoConferenceAppType::kPluginVm);
 
     EXPECT_TRUE(media_app_info[0].Equals(expected_media_app_info));

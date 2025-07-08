@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "extensions/common/extension_id.h"
 #include "gin/wrappable.h"
 #include "v8/include/v8.h"
 
@@ -16,12 +17,13 @@ class APIBindingHooks;
 // An object that serves as a bridge between the current JS-centric bindings and
 // the new native bindings system. This basically needs to conform to the public
 // methods of the Binding prototype in binding.js.
-class APIBindingBridge final : public gin::Wrappable<APIBindingBridge> {
+class APIBindingBridge final
+    : public gin::DeprecatedWrappable<APIBindingBridge> {
  public:
   APIBindingBridge(APIBindingHooks* hooks,
                    v8::Local<v8::Context> context,
                    v8::Local<v8::Value> api_object,
-                   const std::string& extension_id,
+                   const ExtensionId& extension_id,
                    const std::string& context_type);
 
   APIBindingBridge(const APIBindingBridge&) = delete;
@@ -29,9 +31,9 @@ class APIBindingBridge final : public gin::Wrappable<APIBindingBridge> {
 
   ~APIBindingBridge() override;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
-  // gin::Wrappable:
+  // gin::DeprecatedWrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) final;
 
@@ -48,7 +50,7 @@ class APIBindingBridge final : public gin::Wrappable<APIBindingBridge> {
                           v8::Local<v8::Function> function);
 
   // The id of the extension that owns the context this belongs to.
-  std::string extension_id_;
+  ExtensionId extension_id_;
 
   // The type of context this belongs to.
   std::string context_type_;

@@ -4,14 +4,16 @@
 
 #include "chromeos/ash/components/network/cellular_utils.h"
 
+#include <algorithm>
+
 #include "ash/constants/ash_features.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/logging.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chromeos/ash/components/cryptohome/system_salt_getter.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_euicc_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_manager_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_profile_client.h"
@@ -19,19 +21,30 @@
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_profile.h"
 #include "chromeos/ash/components/network/network_profile_handler.h"
+#include "crypto/sha2.h"
 
 namespace ash {
 
+namespace cellular_utils {
+
+const char kSmdsGsma[] = "1$lpa.ds.gsma.com$";
+const char kSmdsStork[] = "1$prod.smds.rsp.goog$";
+const char kSmdsAndroidProduction[] = "1$lpa.live.esimdiscovery.com$";
+const char kSmdsAndroidStaging[] = "1$lpa.live.esimdiscovery.dev$";
+
+}  // namespace cellular_utils
+
 namespace {
-
-// The activation code for the GSM Association SM-DS server.
-constexpr char kSmdsGsma[] = "1$lpa.ds.gsma.com$";
-// The activation code for the Stork SM-DS server.
-constexpr char kSmdsStork[] = "1$prod.smds.rsp.goog$";
-// The activation code for the Android staging SM-DS server.
-constexpr char kSmdsAndroidStaging[] = "1$lpa.live.esimdiscovery.dev$";
-
 const char kNonShillCellularNetworkPathPrefix[] = "/non-shill-cellular/";
+
+std::string GetLogSafeEid(const std::string& eid) {
+  const SystemSaltGetter::RawSalt* salt = SystemSaltGetter::Get()->GetRawSalt();
+  if (!salt) {
+    return std::string();
+  }
+  return crypto::SHA256HashString(
+      eid + SystemSaltGetter::ConvertRawSaltToHexString(*salt));
+}
 
 }  // namespace
 
@@ -39,19 +52,8 @@ base::flat_set<dbus::ObjectPath> GetProfilePathsFromEuicc(
     HermesEuiccClient::Properties* euicc_properties) {
   base::flat_set<dbus::ObjectPath> profile_paths;
 
-  if (features::IsSmdsDbusMigrationEnabled()) {
-    for (const dbus::ObjectPath& path : euicc_properties->profiles().value()) {
-      profile_paths.insert(path);
-    }
-  } else {
-    for (const dbus::ObjectPath& path :
-         euicc_properties->installed_carrier_profiles().value()) {
-      profile_paths.insert(path);
-    }
-    for (const dbus::ObjectPath& path :
-         euicc_properties->pending_carrier_profiles().value()) {
-      profile_paths.insert(path);
-    }
+  for (const dbus::ObjectPath& path : euicc_properties->profiles().value()) {
+    profile_paths.insert(path);
   }
 
   return profile_paths;
@@ -67,7 +69,6 @@ CellularESimProfile::State FromProfileState(hermes::profile::State state) {
       return CellularESimProfile::State::kActive;
     default:
       NOTREACHED() << "Unexpected Hermes profile state: " << state;
-      return CellularESimProfile::State::kInactive;
   }
 }
 
@@ -101,12 +102,18 @@ std::vector<CellularESimProfile> GenerateProfilesFromEuicc(
 
 const base::flat_map<int32_t, std::string> GetESimSlotToEidMap() {
   base::flat_map<int32_t, std::string> esim_slot_to_eid;
-  for (auto& euicc_path : HermesManagerClient::Get()->GetAvailableEuiccs()) {
+  const std::vector<dbus::ObjectPath>& available_euiccs =
+      HermesManagerClient::Get()->GetAvailableEuiccs();
+  VLOG(1) << "GetESimSlotToEidMap(): Num available EUICCs: "
+          << available_euiccs.size();
+  for (auto& euicc_path : available_euiccs) {
     HermesEuiccClient::Properties* properties =
         HermesEuiccClient::Get()->GetProperties(euicc_path);
     int32_t slot_id = properties->physical_slot().value();
     std::string eid = properties->eid().value();
     esim_slot_to_eid.emplace(slot_id, eid);
+    VLOG(1) << "EUICC: " << euicc_path.value() << ", slot id: " << slot_id
+            << ", eid: " << GetLogSafeEid(eid);
   }
   return esim_slot_to_eid;
 }
@@ -120,7 +127,7 @@ std::vector<CellularESimProfile> GenerateProfilesFromHermes() {
        HermesManagerClient::Get()->GetAvailableEuiccs()) {
     std::vector<CellularESimProfile> profiles_from_euicc =
         GenerateProfilesFromEuicc(euicc_path);
-    base::ranges::copy(profiles_from_euicc, std::back_inserter(profiles));
+    std::ranges::copy(profiles_from_euicc, std::back_inserter(profiles));
   }
 
   return profiles;
@@ -132,8 +139,12 @@ const DeviceState::CellularSIMSlotInfos GetSimSlotInfosWithUpdatedEid(
       GetESimSlotToEidMap();
 
   DeviceState::CellularSIMSlotInfos sim_slot_infos = device->GetSimSlotInfos();
+  VLOG(1) << "GetSimSlotInfosWithUpdatedEid(): Num SIM slot infos: "
+          << sim_slot_infos.size();
   for (auto& sim_slot_info : sim_slot_infos) {
     const std::string shill_provided_eid = sim_slot_info.eid;
+    VLOG(1) << "SIM slot id: " << sim_slot_info.slot_id
+            << ", Shill provided eid: " << GetLogSafeEid(shill_provided_eid);
 
     // If there is no associated |slot_id| in the map, the SIM slot info refers
     // to a pSIM, and the Hermes provided data is irrelevant.
@@ -178,14 +189,14 @@ bool IsStubCellularServicePath(const std::string& service_path) {
   return base::StartsWith(service_path, kNonShillCellularNetworkPathPrefix);
 }
 
-absl::optional<dbus::ObjectPath> GetCurrentEuiccPath() {
+std::optional<dbus::ObjectPath> GetCurrentEuiccPath() {
   // Always use the first Euicc if Hermes only exposes one Euicc.
   // If useSecondEuicc flag is set and there are two Euicc available,
   // use the second available Euicc.
   const std::vector<dbus::ObjectPath>& euicc_paths =
       HermesManagerClient::Get()->GetAvailableEuiccs();
   if (euicc_paths.empty())
-    return absl::nullopt;
+    return std::nullopt;
 
   if (euicc_paths.size() == 1)
     return euicc_paths[0];
@@ -198,13 +209,16 @@ absl::optional<dbus::ObjectPath> GetCurrentEuiccPath() {
 std::vector<std::string> GetSmdsActivationCodes() {
   std::vector<std::string> activation_codes;
   if (features::ShouldUseStorkSmds()) {
-    activation_codes.push_back(kSmdsStork);
+    activation_codes.emplace_back(kSmdsStork);
   }
   if (features::ShouldUseAndroidStagingSmds()) {
-    activation_codes.push_back(kSmdsAndroidStaging);
+    activation_codes.emplace_back(kSmdsAndroidStaging);
   }
   if (activation_codes.empty()) {
-    activation_codes.push_back(kSmdsGsma);
+    activation_codes = {
+        kSmdsAndroidProduction,
+        kSmdsGsma,
+    };
   }
   return activation_codes;
 }

@@ -57,6 +57,13 @@ class COMPONENT_EXPORT(DLP) DlpClient {
       base::RepeatingCallback<void(const dlp::RequestFileAccessRequest,
                                    RequestFileAccessCallback)>;
 
+  using CheckFilesTransferCall =
+      base::RepeatingCallback<void(const dlp::CheckFilesTransferRequest,
+                                   CheckFilesTransferCallback)>;
+
+  using GetDatabaseEntriesCallback =
+      base::OnceCallback<void(const dlp::GetDatabaseEntriesResponse response)>;
+
   // Interface with testing functionality. Accessed through
   // GetTestInterface(), only implemented in the fake implementation.
   class TestInterface {
@@ -91,6 +98,9 @@ class COMPONENT_EXPORT(DLP) DlpClient {
     // Sets `mock` used in RequestFileAccess calls.
     virtual void SetRequestFileAccessMock(RequestFileAccessCall mock) = 0;
 
+    // Sets `mock` used in CheckFilesTransfer calls.
+    virtual void SetCheckFilesTransferMock(CheckFilesTransferCall mock) = 0;
+
    protected:
     virtual ~TestInterface() = default;
   };
@@ -123,6 +133,7 @@ class COMPONENT_EXPORT(DLP) DlpClient {
                                   CheckFilesTransferCallback callback) = 0;
   virtual void RequestFileAccess(const dlp::RequestFileAccessRequest request,
                                  RequestFileAccessCallback callback) = 0;
+  virtual void GetDatabaseEntries(GetDatabaseEntriesCallback callback) = 0;
 
   virtual bool IsAlive() const = 0;
 

@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_MANAGER_H_
 #define CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_MANAGER_H_
 
+#include <optional>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
@@ -13,7 +14,11 @@
 #include "content/public/browser/attribution_data_model.h"
 #include "content/public/browser/storage_partition.h"
 #include "services/network/public/mojom/attribution.mojom-forward.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+
+namespace attribution_reporting {
+class SuitableOrigin;
+struct RegistrationHeaderError;
+}  // namespace attribution_reporting
 
 namespace base {
 class Time;
@@ -41,7 +46,8 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
 
   static AttributionManager* FromBrowserContext(BrowserContext*);
 
-  static network::mojom::AttributionSupport GetSupport();
+  static network::mojom::AttributionSupport GetAttributionSupport(
+      bool client_os_disabled);
 
   ~AttributionManager() override = default;
 
@@ -62,9 +68,9 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
   virtual void HandleTrigger(AttributionTrigger trigger,
                              GlobalRenderFrameHostId render_frame_id) = 0;
 
-  virtual void HandleOsRegistration(
-      OsRegistration,
-      GlobalRenderFrameHostId render_frame_id) = 0;
+  virtual void HandleOsRegistration(OsRegistration) = 0;
+
+  virtual void UpdateLastNavigationTime(base::Time navigation_time) = 0;
 
   // Get all sources that are currently stored in this partition. Used for
   // populating WebUI.
@@ -77,11 +83,9 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
       int limit,
       base::OnceCallback<void(std::vector<AttributionReport>)> callback) = 0;
 
-  // Sends the given reports immediately, and runs |done| once they have all
-  // been sent.
-  virtual void SendReportsForWebUI(
-      const std::vector<AttributionReport::Id>& ids,
-      base::OnceClosure done) = 0;
+  // Sends the given report immediately, and runs |done| once it has been sent.
+  virtual void SendReportForWebUI(AttributionReport::Id,
+                                  base::OnceClosure done) = 0;
 
   // Deletes all data in storage for storage keys matching `filter`, between
   // `delete_begin` and `delete_end` time.
@@ -103,10 +107,18 @@ class CONTENT_EXPORT AttributionManager : public AttributionDataModel {
                          base::OnceClosure done) = 0;
 
   // If debug mode is enabled, noise and delays are disabled to facilitate
-  // testing, whether automated or manual. If `enabled` is `absl::nullopt`,
+  // testing, whether automated or manual. If `enabled` is `std::nullopt`,
   // falls back to `switches::kAttributionReportingDebugMode`.
-  virtual void SetDebugMode(absl::optional<bool> enabled,
+  virtual void SetDebugMode(std::optional<bool> enabled,
                             base::OnceClosure done) = 0;
+
+  // Report errors from header validation.
+  virtual void ReportRegistrationHeaderError(
+      attribution_reporting::SuitableOrigin reporting_origin,
+      attribution_reporting::RegistrationHeaderError,
+      const attribution_reporting::SuitableOrigin& context_origin,
+      bool is_within_fenced_frame,
+      GlobalRenderFrameHostId render_frame_id) = 0;
 };
 
 }  // namespace content

@@ -15,6 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/i18n/time_formatting.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -60,7 +61,7 @@ const size_t kZoneIdentifierLength = sizeof(":Zone.Identifier") - 1;
 // Map of download path reservations. Each reserved path is associated with a
 // ReservationKey=DownloadItem*. This object is destroyed in |Revoke()| when
 // there are no more reservations.
-ReservationMap* g_reservation_map = NULL;
+ReservationMap* g_reservation_map = nullptr;
 
 base::LazyThreadPoolSequencedTaskRunner g_sequenced_task_runner =
     LAZY_THREAD_POOL_SEQUENCED_TASK_RUNNER_INITIALIZER(
@@ -161,20 +162,15 @@ bool CreateUniqueFilename(int max_path_component_length,
        uniquifier <= DownloadPathReservationTracker::kMaxUniqueFiles + 1;
        ++uniquifier) {
     // Append uniquifier.
-    std::string suffix(base::StringPrintf(" (%d)", uniquifier));
-
-    // After we've tried all the unique numeric indices, make one attempt using
-    // the timestamp.
-    if (uniquifier > DownloadPathReservationTracker::kMaxUniqueFiles) {
-      // Generate an ISO8601 compliant local timestamp suffix that avoids
-      // reserved characters that are forbidden on some OSes like Windows.
-      base::Time::Exploded exploded;
-      download_start_time.LocalExplode(&exploded);
-      suffix = base::StringPrintf(
-          " - %04d-%02d-%02dT%02d%02d%02d.%03d", exploded.year, exploded.month,
-          exploded.day_of_month, exploded.hour, exploded.minute,
-          exploded.second, exploded.millisecond);
-    }
+    std::string suffix =
+        (uniquifier > DownloadPathReservationTracker::kMaxUniqueFiles)
+            ? base::UnlocalizedTimeFormatWithPattern(
+                  download_start_time,
+                  // ISO8601-compliant local timestamp suffix that avoids
+                  // reserved characters that are forbidden on some OSes like
+                  // Windows.
+                  " - yyyy-MM-dd'T'HHmmss.SSS")
+            : base::StringPrintf(" (%d)", uniquifier);
 
     base::FilePath path_to_check(*path);
     // If the name length limit is available (max_length != -1), and the
@@ -252,7 +248,6 @@ PathValidationResult ResolveReservationConflicts(
       return PathValidationResult::CONFLICT;
   }
   NOTREACHED();
-  return PathValidationResult::SUCCESS;
 }
 
 // Verify that |target_path| can be written to and also resolve any conflicts if
@@ -320,8 +315,9 @@ PathValidationResult CreateReservation(const CreateReservationInfo& info,
                                        base::FilePath* reserved_path) {
   // Create a reservation map if one doesn't exist. It will be automatically
   // deleted when all the reservations are revoked.
-  if (g_reservation_map == NULL)
+  if (g_reservation_map == nullptr) {
     g_reservation_map = new ReservationMap;
+  }
 
   // Erase the reservation if it already exists. This can happen during
   // automatic resumption where a new target determination request may be issued
@@ -376,7 +372,7 @@ PathValidationResult CreateReservation(const CreateReservationInfo& info,
 // Called on a background thread to update the path of the reservation
 // associated with |key| to |new_path|.
 void UpdateReservation(ReservationKey key, const base::FilePath& new_path) {
-  DCHECK(g_reservation_map != NULL);
+  DCHECK(g_reservation_map != nullptr);
   auto iter = g_reservation_map->find(key);
   if (iter != g_reservation_map->end()) {
     bool use_download_collection = false;
@@ -400,13 +396,13 @@ void UpdateReservation(ReservationKey key, const base::FilePath& new_path) {
 // Called on the FILE thread to remove the path reservation associated with
 // |key|.
 void RevokeReservation(ReservationKey key) {
-  DCHECK(g_reservation_map != NULL);
+  DCHECK(g_reservation_map != nullptr);
   DCHECK(base::Contains(*g_reservation_map, key));
   g_reservation_map->erase(key);
   if (g_reservation_map->size() == 0) {
     // No more reservations. Delete map.
     delete g_reservation_map;
-    g_reservation_map = NULL;
+    g_reservation_map = nullptr;
   }
 }
 
@@ -486,9 +482,6 @@ void DownloadItemObserver::OnDownloadUpdated(DownloadItem* download) {
 void DownloadItemObserver::OnDownloadDestroyed(DownloadItem* download) {
   // Items should be COMPLETE/INTERRUPTED/CANCELLED before being destroyed.
   NOTREACHED();
-  DownloadPathReservationTracker::GetTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&RevokeReservation,
-                                reinterpret_cast<ReservationKey>(download)));
 }
 
 // static

@@ -28,12 +28,10 @@ enum class CrostiniResult;
 struct LinuxPackageInfo;
 }  // namespace crostini
 
-namespace file_manager {
-namespace util {
+namespace file_manager::util {
 struct EntryDefinition;
-typedef std::vector<EntryDefinition> EntryDefinitionList;
-}  // namespace util
-}  // namespace file_manager
+using EntryDefinitionList = std::vector<EntryDefinition>;
+}  // namespace file_manager::util
 
 namespace extensions {
 
@@ -116,16 +114,15 @@ class FileManagerPrivateOpenSettingsSubpageFunction : public ExtensionFunction {
 };
 
 // Implements the chrome.fileManagerPrivate.getMimeType method.
-class FileManagerPrivateInternalGetMimeTypeFunction
-    : public LoggedExtensionFunction {
+class FileManagerPrivateGetMimeTypeFunction : public LoggedExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.getMimeType",
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.getMimeType",
                              FILEMANAGERPRIVATEINTERNAL_GETMIMETYPE)
 
-  FileManagerPrivateInternalGetMimeTypeFunction();
+  FileManagerPrivateGetMimeTypeFunction();
 
  protected:
-  ~FileManagerPrivateInternalGetMimeTypeFunction() override;
+  ~FileManagerPrivateGetMimeTypeFunction() override;
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
@@ -437,19 +434,6 @@ class FileManagerPrivateIsTabletModeEnabledFunction : public ExtensionFunction {
   ResponseAction Run() override;
 };
 
-// Implements the chrome.fileManagerPrivate.openURL method.
-class FileManagerPrivateOpenURLFunction : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.openURL",
-                             FILEMANAGERPRIVATE_OPENURL)
-
- protected:
-  ~FileManagerPrivateOpenURLFunction() override = default;
-
- private:
-  ResponseAction Run() override;
-};
-
 // Implements the chrome.fileManagerPrivate.openWindow method.
 class FileManagerPrivateOpenWindowFunction : public LoggedExtensionFunction {
  public:
@@ -473,6 +457,19 @@ class FileManagerPrivateSendFeedbackFunction : public ExtensionFunction {
   ~FileManagerPrivateSendFeedbackFunction() override = default;
 
  private:
+  ResponseAction Run() override;
+};
+
+// Implements the chrome.fileManagerPrivate.getDeviceConnectionState method.
+class FileManagerPrivateGetDeviceConnectionStateFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.getDeviceConnectionState",
+                             FILEMANAGERPRIVATE_GETDEVICECONNECTIONSTATE)
+
+ protected:
+  ~FileManagerPrivateGetDeviceConnectionStateFunction() override = default;
+
   ResponseAction Run() override;
 };
 

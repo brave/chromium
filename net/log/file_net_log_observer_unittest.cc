@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -21,8 +22,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/threading/thread.h"
 #include "base/types/expected.h"
+#include "base/types/expected_macros.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "net/base/test_completion_callback.h"
@@ -124,11 +127,8 @@ base::expected<void, std::string> ParsedNetLog::InitFromFileContents(
     return base::unexpected("input is empty");
   }
 
-  auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(input);
-  if (!parsed_json.has_value()) {
-    return base::unexpected(parsed_json.error().message);
-  }
-  root = std::move(*parsed_json);
+  ASSIGN_OR_RETURN(root, base::JSONReader::ReadAndReturnValueWithError(input),
+                   &base::JSONReader::Error::message);
 
   const base::Value::Dict* dict = root.GetIfDict();
   if (!dict) {
@@ -171,11 +171,7 @@ base::expected<std::unique_ptr<ParsedNetLog>, std::string> ReadNetLogFromDisk(
 
   std::unique_ptr<ParsedNetLog> result = std::make_unique<ParsedNetLog>();
 
-  base::expected<void, std::string> init_result =
-      result->InitFromFileContents(input);
-  if (!init_result.has_value()) {
-    return base::unexpected(init_result.error());
-  }
+  RETURN_IF_ERROR(result->InitFromFileContents(input));
   return result;
 }
 
@@ -198,7 +194,7 @@ void VerifyEventsInLog(const ParsedNetLog* log,
 
     size_t expected_source_id = num_events_emitted - num_events_saved + i;
 
-    absl::optional<int> id_value = event->FindIntByDottedPath("source.id");
+    std::optional<int> id_value = event->FindIntByDottedPath("source.id");
     ASSERT_EQ(static_cast<int>(expected_source_id), id_value);
   }
 }
@@ -245,6 +241,22 @@ class FileNetLogObserverTest : public ::testing::TestWithParam<bool>,
     logger_->StartObserving(NetLog::Get());
   }
 
+  void CreateAndStartObservingBoundedFile(
+      int max_file_size,
+      std::unique_ptr<base::Value::Dict> constants) {
+    base::File file(log_path_,
+                    base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+    EXPECT_TRUE(file.IsValid());
+    // Stick in some nonsense to make sure the file gets cleared properly
+    file.WriteAtCurrentPos(base::as_byte_span("not json"));
+
+    logger_ = FileNetLogObserver::CreateBoundedFile(
+        std::move(file), max_file_size, NetLogCaptureMode::kDefault,
+        std::move(constants));
+
+    logger_->StartObserving(NetLog::Get());
+  }
+
   void CreateAndStartObservingPreExisting(
       std::unique_ptr<base::Value::Dict> constants) {
     ASSERT_TRUE(scratch_dir_.CreateUniqueTempDir());
@@ -253,7 +265,7 @@ class FileNetLogObserverTest : public ::testing::TestWithParam<bool>,
                     base::File::FLAG_CREATE | base::File::FLAG_WRITE);
     EXPECT_TRUE(file.IsValid());
     // Stick in some nonsense to make sure the file gets cleared properly
-    file.Write(0, "not json", 8);
+    file.WriteAtCurrentPos(base::as_byte_span("not json"));
 
     if (IsBounded()) {
       logger_ = FileNetLogObserver::CreateBoundedPreExisting(
@@ -435,10 +447,9 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithNoEvents) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(0u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(0u, log->events->size());
 }
 
 TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEvent) {
@@ -454,10 +465,9 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEvent) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(1u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(1u, log->events->size());
 }
 
 TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEventPreExisting) {
@@ -473,10 +483,90 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEventPreExisting) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(1u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(1u, log->events->size());
+}
+
+TEST_P(FileNetLogObserverTest,
+       GeneratesValidJSONWithNoEventsCreateBoundedFile) {
+  TestClosure closure;
+
+  CreateAndStartObservingBoundedFile(kLargeFileSize, nullptr);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(0u, log->events->size());
+}
+
+TEST_P(FileNetLogObserverTest,
+       GeneratesValidJSONWithOneEventCreateBoundedFile) {
+  TestClosure closure;
+
+  CreateAndStartObservingBoundedFile(kLargeFileSize, nullptr);
+
+  // Send dummy event.
+  AddEntries(logger_.get(), 1, kDummyEventSize);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(1u, log->events->size());
+}
+
+// Sends exactly enough events to the observer to completely fill the file.
+TEST_P(FileNetLogObserverTest, BoundedFileFillsFile) {
+  const int kTotalFileSize = 10000;
+  const int kEventSize = 200;
+  const int kFileSize = kTotalFileSize;
+  const int kNumEvents = kFileSize / kEventSize;
+  TestClosure closure;
+
+  CreateAndStartObservingBoundedFile(kTotalFileSize, nullptr);
+
+  // Send dummy events.
+  AddEntries(logger_.get(), kNumEvents, kEventSize);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
+}
+
+// Sends twice as many events as will fill the file to the observer
+TEST_P(FileNetLogObserverTest, BoundedFileTruncatesEventsAfterLimit) {
+  const int kTotalFileSize = 10000;
+  const int kEventSize = 200;
+  const int kFileSize = kTotalFileSize;
+  const int kNumEvents = kFileSize / kEventSize;
+  TestClosure closure;
+
+  CreateAndStartObservingBoundedFile(kTotalFileSize, nullptr);
+
+  // Send dummy events.
+  AddEntries(logger_.get(), kNumEvents * 2, kEventSize);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
 }
 
 TEST_P(FileNetLogObserverTest, PreExistingFileBroken) {
@@ -517,12 +607,11 @@ TEST_P(FileNetLogObserverTest, CustomConstants) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
 
   // Check that custom constant was correctly printed.
-  ExpectDictionaryContainsProperty(*(*log)->constants, kConstantKey,
+  ExpectDictionaryContainsProperty(*log->constants, kConstantKey,
                                    kConstantString);
 }
 
@@ -545,14 +634,13 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithPolledData) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(0u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(0u, log->events->size());
 
   // Make sure additional information is present and validate it.
-  ASSERT_TRUE((*log)->polled_data);
-  ExpectDictionaryContainsProperty(*(*log)->polled_data, kDummyPolledDataPath,
+  ASSERT_TRUE(log->polled_data);
+  ExpectDictionaryContainsProperty(*log->polled_data, kDummyPolledDataPath,
                                    kDummyPolledDataString);
 }
 
@@ -571,10 +659,9 @@ TEST_P(FileNetLogObserverTest, LogModeRecorded) {
     CreateAndStartObserving(nullptr, test_case.capture_mode);
     logger_->StopObserving(nullptr, closure.closure());
     closure.WaitForResult();
-    base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-        ReadNetLogFromDisk(log_path_);
-    ASSERT_TRUE(log.has_value());
-    ExpectDictionaryContainsProperty(*(*log)->constants, "logCaptureMode",
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                         ReadNetLogFromDisk(log_path_));
+    ExpectDictionaryContainsProperty(*log->constants, "logCaptureMode",
                                      test_case.expected_value);
   }
 }
@@ -586,7 +673,7 @@ TEST_P(FileNetLogObserverTest, AddEventsFromMultipleThreads) {
   std::vector<std::unique_ptr<base::Thread>> threads(kNumThreads);
 
 #if BUILDFLAG(IS_FUCHSIA)
-  // TODO(https://crbug.com/959245): Diagnosting logging to determine where
+  // TODO(crbug.com/40625862): Diagnosting logging to determine where
   // this test sometimes hangs.
   LOG(ERROR) << "Create and start threads.";
 #endif
@@ -640,11 +727,10 @@ TEST_P(FileNetLogObserverTest, AddEventsFromMultipleThreads) {
 #endif
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
   // Check that the expected number of events were written to disk.
-  EXPECT_EQ(kNumEventsAddedPerThread * kNumThreads, (*log)->events->size());
+  EXPECT_EQ(kNumEventsAddedPerThread * kNumThreads, log->events->size());
 
 #if BUILDFLAG(IS_FUCHSIA)
   LOG(ERROR) << "Teardown.";
@@ -669,10 +755,9 @@ TEST_F(FileNetLogObserverBoundedTest, EqualToOneFile) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents, kNumEvents);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
 }
 
 // Sends enough events to fill one file, and partially fill a second file.
@@ -697,10 +782,9 @@ TEST_F(FileNetLogObserverBoundedTest, OneEventOverOneFile) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents, kNumEvents);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
 }
 
 // Sends enough events to the observer to completely fill two files.
@@ -721,10 +805,9 @@ TEST_F(FileNetLogObserverBoundedTest, EqualToTwoFiles) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents, kNumEvents);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
 }
 
 // Sends exactly enough events to the observer to completely fill all files,
@@ -748,10 +831,9 @@ TEST_F(FileNetLogObserverBoundedTest, FillAllFilesNoOverwriting) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents, kNumEvents);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents, kNumEvents);
 }
 
 // Sends more events to the observer than will fill the WriteQueue, forcing the
@@ -776,11 +858,10 @@ TEST_F(FileNetLogObserverBoundedTest, DropOldEventsFromWriteQueue) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
   VerifyEventsInLog(
-      log->get(), kNumEvents,
+      log.get(), kNumEvents,
       static_cast<size_t>(kTotalNumFiles * ((kFileSize - 1) / kEventSize + 1)));
 }
 
@@ -816,10 +897,9 @@ TEST_F(FileNetLogObserverBoundedTest, OverwriteAllFiles) {
       (kTotalNumFiles - 1) * events_per_file + events_in_last_file;
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents,
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents,
                     static_cast<size_t>(num_events_in_files));
 }
 
@@ -857,10 +937,9 @@ TEST_F(FileNetLogObserverBoundedTest, PartiallyOverwriteFiles) {
       (kTotalNumFiles - 1) * events_per_file + events_in_last_file;
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  VerifyEventsInLog(log->get(), kNumEvents,
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  VerifyEventsInLog(log.get(), kNumEvents,
                     static_cast<size_t>(num_events_in_files));
 }
 
@@ -963,10 +1042,9 @@ TEST_F(FileNetLogObserverBoundedTest, BlockEventsFile0) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(0u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(0u, log->events->size());
 }
 
 // Make sure that when using bounded mode with a pre-existing output file,
@@ -979,7 +1057,7 @@ TEST_F(FileNetLogObserverBoundedTest, PreExistingUsesSpecifiedDir) {
   ASSERT_TRUE(file.IsValid());
 
   // Stick in some nonsense to make sure the file gets cleared properly
-  file.Write(0, "not json", 8);
+  file.WriteAtCurrentPos(base::as_byte_span("not json"));
 
   logger_ = FileNetLogObserver::CreateBoundedPreExisting(
       scratch_dir.GetPath(), std::move(file), kLargeFileSize,
@@ -1024,10 +1102,9 @@ TEST_F(FileNetLogObserverBoundedTest, LargeWriteQueueSize) {
   closure.WaitForResult();
 
   // Verify the written log.
-  base::expected<std::unique_ptr<ParsedNetLog>, std::string> log =
-      ReadNetLogFromDisk(log_path_);
-  ASSERT_TRUE(log.has_value());
-  ASSERT_EQ(3u, (*log)->events->size());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ParsedNetLog> log,
+                       ReadNetLogFromDisk(log_path_));
+  ASSERT_EQ(3u, log->events->size());
 }
 
 void AddEntriesViaNetLog(NetLog* net_log, int num_entries) {

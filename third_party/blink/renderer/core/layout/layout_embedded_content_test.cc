@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/layout/layout_iframe.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 
 namespace blink {
@@ -24,13 +25,13 @@ class LayoutFreezableIFrame : public LayoutIFrame {
   }
 
  protected:
-  const absl::optional<PhysicalSize> FrozenFrameSize() const override {
+  const std::optional<PhysicalSize> FrozenFrameSize() const override {
     NOT_DESTROYED();
     return frozen_size_;
   }
 
  private:
-  absl::optional<PhysicalSize> frozen_size_;
+  std::optional<PhysicalSize> frozen_size_;
 };
 
 class HTMLFreezableIFrameElement : public HTMLIFrameElement {

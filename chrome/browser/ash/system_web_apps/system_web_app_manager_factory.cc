@@ -5,7 +5,6 @@
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager_factory.h"
 
 #include "ash/constants/ash_pref_names.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -48,12 +47,14 @@ SystemWebAppManagerFactory::SystemWebAppManagerFactory()
 
 SystemWebAppManagerFactory::~SystemWebAppManagerFactory() = default;
 
-KeyedService* SystemWebAppManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+SystemWebAppManagerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
   DCHECK(web_app::WebAppProviderFactory::IsServiceCreatedForProfile(profile));
 
-  SystemWebAppManager* swa_manager = new SystemWebAppManager(profile);
+  std::unique_ptr<SystemWebAppManager> swa_manager =
+      std::make_unique<SystemWebAppManager>(profile);
   swa_manager->ScheduleStart();
 
   return swa_manager;
@@ -65,15 +66,7 @@ bool SystemWebAppManagerFactory::ServiceIsCreatedWithBrowserContext() const {
 
 content::BrowserContext* SystemWebAppManagerFactory::GetBrowserContextToUse(
     content::BrowserContext* context) const {
-  if (ash::ProfileHelper::IsLockScreenAppProfile(
-          Profile::FromBrowserContext(context))) {
-    return nullptr;
-  }
-
-  // SWAM is not supported in Kiosk mode. We want to use WebAppProvider to
-  // install web apps in Kiosk without enabling SWAM.
-  if (base::FeatureList::IsEnabled(features::kKioskEnableAppService) &&
-      chromeos::IsKioskSession()) {
+  if (chromeos::IsKioskSession()) {
     return nullptr;
   }
 

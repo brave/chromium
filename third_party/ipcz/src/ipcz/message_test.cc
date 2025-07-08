@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/393091624): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ipcz/message.h"
 
 #include <cstdint>
@@ -12,6 +17,7 @@
 #include "ipcz/driver_object.h"
 #include "ipcz/driver_transport.h"
 #include "ipcz/ipcz.h"
+#include "ipcz/message_test_types.h"
 #include "ipcz/node.h"
 #include "ipcz/test_messages.h"
 #include "test/mock_driver.h"
@@ -142,11 +148,11 @@ TEST_F(MessageTest, BasicMessage) {
   EXPECT_EQ(0u, in.header().reserved0[4]);
   EXPECT_EQ(SequenceNumber(0), in.header().sequence_number);
   EXPECT_EQ(0u, in.header().size % 8u);
-  EXPECT_EQ(0u, in.params().foo);
-  EXPECT_EQ(0u, in.params().bar);
+  EXPECT_EQ(0u, in.v0()->foo);
+  EXPECT_EQ(0u, in.v0()->bar);
   EXPECT_EQ(0u, in.header().reserved1);
-  in.params().foo = 5;
-  in.params().bar = 7;
+  in.v0()->foo = 5;
+  in.v0()->bar = 7;
 
   EXPECT_EQ(0u, GetReceivedMessageCount());
   transport().Transmit(in);
@@ -155,15 +161,33 @@ TEST_F(MessageTest, BasicMessage) {
   test::msg::BasicTestMessage out;
   ReceivedMessage serialized = TakeNextReceivedMessage();
   EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
-  EXPECT_EQ(5u, out.params().foo);
-  EXPECT_EQ(7u, out.params().bar);
+  EXPECT_EQ(5u, out.v0()->foo);
+  EXPECT_EQ(7u, out.v0()->bar);
+}
+
+TEST_F(MessageTest, Enums) {
+  test::msg::MessageWithEnums in;
+  EXPECT_GE(sizeof(internal::MessageHeaderV0), in.header().size);
+  EXPECT_EQ(0u, in.header().version);
+  in.v0()->foo.v = test::TestEnum8::Value::kB;
+  in.v0()->bar = test::TestEnum32::kTwo;
+
+  EXPECT_EQ(0u, GetReceivedMessageCount());
+  transport().Transmit(in);
+  EXPECT_EQ(1u, GetReceivedMessageCount());
+
+  test::msg::MessageWithEnums out;
+  ReceivedMessage serialized = TakeNextReceivedMessage();
+  EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
+  EXPECT_EQ(test::TestEnum8::Value::kB, out.v0()->foo.v);
+  EXPECT_EQ(test::TestEnum32::kTwo, out.v0()->bar);
 }
 
 TEST_F(MessageTest, DataArray) {
   test::msg::MessageWithDataArray in;
-  in.params().values = in.AllocateArray<uint64_t>(3);
+  in.v0()->values = in.AllocateArray<uint64_t>(3);
 
-  absl::Span<uint64_t> values = in.GetArrayView<uint64_t>(in.params().values);
+  absl::Span<uint64_t> values = in.GetArrayView<uint64_t>(in.v0()->values);
   values[0] = 11;
   values[1] = 13;
   values[2] = 17;
@@ -174,7 +198,7 @@ TEST_F(MessageTest, DataArray) {
   ReceivedMessage serialized = TakeNextReceivedMessage();
   EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
 
-  values = out.GetArrayView<uint64_t>(out.params().values);
+  values = out.GetArrayView<uint64_t>(out.v0()->values);
   ASSERT_EQ(3u, values.size());
   EXPECT_EQ(11u, values[0]);
   EXPECT_EQ(13u, values[1]);
@@ -185,7 +209,7 @@ TEST_F(MessageTest, DriverObject) {
   constexpr IpczDriverHandle kObjectHandle = 0x12345678;
 
   test::msg::MessageWithDriverObject in;
-  in.params().object =
+  in.v0()->object =
       in.AppendDriverObject(DriverObject(test::kMockDriver, kObjectHandle));
 
   transport().Transmit(in);
@@ -194,7 +218,7 @@ TEST_F(MessageTest, DriverObject) {
   ReceivedMessage serialized = TakeNextReceivedMessage();
   EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
 
-  DriverObject object = out.TakeDriverObject(out.params().object);
+  DriverObject object = out.TakeDriverObject(out.v0()->object);
   EXPECT_EQ(kObjectHandle, object.release());
 }
 
@@ -207,7 +231,7 @@ TEST_F(MessageTest, DriverObjectArray) {
   }
 
   test::msg::MessageWithDriverObjectArray in;
-  in.params().objects = in.AppendDriverObjects(in_objects);
+  in.v0()->objects = in.AppendDriverObjects(in_objects);
 
   transport().Transmit(in);
 
@@ -215,7 +239,7 @@ TEST_F(MessageTest, DriverObjectArray) {
   ReceivedMessage serialized = TakeNextReceivedMessage();
   EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
 
-  auto objects = out.GetDriverObjectArrayView(out.params().objects);
+  auto objects = out.GetDriverObjectArrayView(out.v0()->objects);
   EXPECT_EQ(3u, objects.size());
   for (size_t i = 0; i < objects.size(); ++i) {
     EXPECT_EQ(kObjectHandles[i], objects[i].release());
@@ -246,7 +270,7 @@ TEST_F(MessageTest, ShortParamsHeader) {
       transport()));
 }
 
-TEST_F(MessageTest, ShortPrams) {
+TEST_F(MessageTest, ShortParams) {
   test::msg::BasicTestMessage m;
   m.params().header.size = 1;
   EXPECT_FALSE(m.Deserialize({m.data_view(), {}}, transport()));
@@ -260,24 +284,24 @@ TEST_F(MessageTest, ParamsOverflow) {
 
 TEST_F(MessageTest, ArrayOffsetOverflow) {
   test::msg::MessageWithDataArray m;
-  m.params().values = 10000000;
+  m.v0()->values = 10000000;
   EXPECT_FALSE(m.Deserialize({m.data_view(), {}}, transport()));
 }
 
 TEST_F(MessageTest, ArraySizeOverflow) {
   test::msg::MessageWithDataArray m;
-  m.params().values = m.AllocateArray<uint64_t>(10);
+  m.v0()->values = m.AllocateArray<uint64_t>(10);
 
-  auto& header = m.GetValueAt<internal::ArrayHeader>(m.params().values);
+  auto& header = m.GetValueAt<internal::ArrayHeader>(m.v0()->values);
   header.num_bytes = 1000000;
   EXPECT_FALSE(m.Deserialize({m.data_view(), {}}, transport()));
 }
 
 TEST_F(MessageTest, ArrayElementsOverflow) {
   test::msg::MessageWithDataArray m;
-  m.params().values = m.AllocateArray<uint64_t>(10);
+  m.v0()->values = m.AllocateArray<uint64_t>(10);
 
-  auto& header = m.GetValueAt<internal::ArrayHeader>(m.params().values);
+  auto& header = m.GetValueAt<internal::ArrayHeader>(m.v0()->values);
   header.num_elements = 1000000;
   EXPECT_FALSE(m.Deserialize({m.data_view(), {}}, transport()));
 }
@@ -285,7 +309,7 @@ TEST_F(MessageTest, ArrayElementsOverflow) {
 TEST_F(MessageTest, MalformedDriverObject) {
   constexpr IpczDriverHandle kObjectHandle = 0x12345678;
   test::msg::MessageWithDriverObject in;
-  in.params().object =
+  in.v0()->object =
       in.AppendDriverObject(DriverObject(test::kMockDriver, kObjectHandle));
 
   // Force driver object deserialization to fail. This must result in failure of
@@ -311,11 +335,11 @@ TEST_F(MessageTest, DriverObjectClaimedTwice) {
   }
 
   test::msg::MessageWithDriverArrayAndExtraObject in;
-  in.params().objects = in.AppendDriverObjects(in_objects);
+  in.v0()->objects = in.AppendDriverObjects(in_objects);
 
   // Assign the `extra_object` parameter a DriverObject which has already been
   // claimed by the second element of the `objects` parameter.
-  in.params().extra_object = 1;
+  in.v0()->extra_object = 1;
 
   transport().Transmit(in);
 
@@ -339,7 +363,7 @@ TEST_F(MessageTest, UnclaimedDriverObjects) {
   constexpr IpczDriverHandle kObjectHandle2 = 0xabcdef90;
   constexpr IpczDriverHandle kObjectHandle3 = 0x5a5a5a5a;
   test::msg::MessageWithDriverObject in;
-  in.params().object =
+  in.v0()->object =
       in.AppendDriverObject(DriverObject(test::kMockDriver, kObjectHandle1));
 
   // Append two more objects with no references to them in the message.
@@ -359,6 +383,192 @@ TEST_F(MessageTest, UnclaimedDriverObjects) {
   EXPECT_EQ(kObjectHandle1, out.driver_objects()[0].release());
   EXPECT_EQ(kObjectHandle2, out.driver_objects()[1].release());
   EXPECT_EQ(kObjectHandle3, out.driver_objects()[2].release());
+}
+
+TEST_F(MessageTest, BadEnums) {
+  // Out of range enum values should be rejected.
+  test::msg::MessageWithEnums m1;
+  m1.v0()->foo.v = test::TestEnum8::Value::kB;
+  m1.v0()->bar = static_cast<test::TestEnum32>(32);
+
+  EXPECT_FALSE(m1.Deserialize({m1.data_view(), {}}, transport()));
+
+  test::msg::MessageWithEnums m2;
+  m2.v0()->foo.v = static_cast<test::TestEnum8::Value>(99);
+  m2.v0()->bar = test::TestEnum32::kFour;
+
+  EXPECT_FALSE(m2.Deserialize({m2.data_view(), {}}, transport()));
+}
+
+TEST_F(MessageTest, AcceptOldVersions) {
+  using Msg = test::msg::MessageWithMultipleVersions;
+  Msg in;
+  in.v0()->a = 2;
+  in.v0()->b = 3;
+  in.v1()->c = 5;
+  in.v1()->d = 7;
+
+  const uint32_t e_offset = in.AllocateArray<uint32_t>(3);
+  const auto e_data = in.GetArrayView<uint32_t>(e_offset);
+  in.v2()->e = e_offset;
+  e_data[0] = 11;
+  e_data[1] = 13;
+  e_data[2] = 17;
+
+  // Serialize and deserialize the full V2 message.
+  {
+    transport().Transmit(in);
+    ReceivedMessage serialized = TakeNextReceivedMessage();
+    Msg out;
+    EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
+    EXPECT_EQ(2u, out.v0()->a);
+    EXPECT_EQ(3u, out.v0()->b);
+    EXPECT_EQ(5u, out.v1()->c);
+    EXPECT_EQ(7u, out.v1()->d);
+    const auto data = out.GetArrayView<uint32_t>(out.v2()->e);
+    EXPECT_EQ(3u, data.size());
+    EXPECT_EQ(11u, data[0]);
+    EXPECT_EQ(13u, data[1]);
+    EXPECT_EQ(17u, data[2]);
+  }
+
+  // Now serialize and deserialize again, forcing the message to look like a
+  // V1 message.
+  {
+    in.params().header.size -= Msg::kVersions[2].size;
+    transport().Transmit(in);
+    ReceivedMessage serialized = TakeNextReceivedMessage();
+    Msg out;
+    EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
+    EXPECT_EQ(2u, out.v0()->a);
+    EXPECT_EQ(3u, out.v0()->b);
+    EXPECT_EQ(5u, out.v1()->c);
+    EXPECT_EQ(7u, out.v1()->d);
+    EXPECT_EQ(nullptr, out.v2());
+  }
+
+  // Finally, do it for V0.
+  {
+    in.params().header.size -= Msg::kVersions[1].size;
+    transport().Transmit(in);
+    ReceivedMessage serialized = TakeNextReceivedMessage();
+    Msg out;
+    EXPECT_TRUE(out.Deserialize(serialized.AsTransportMessage(), transport()));
+    EXPECT_EQ(2u, out.v0()->a);
+    EXPECT_EQ(3u, out.v0()->b);
+    EXPECT_EQ(nullptr, out.v1());
+    EXPECT_EQ(nullptr, out.v2());
+  }
+}
+
+// Golden messages to validate changes to wire protocol and layout.
+TEST_F(MessageTest, GoldenBasicTestMessage) {
+  test::msg::BasicTestMessage m;
+
+  std::vector<uint8_t> empty_basic_message = {
+      0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+
+  EXPECT_TRUE(m.Deserialize({empty_basic_message, {}}, transport()));
+  EXPECT_EQ(m.v0()->foo, 0u);
+  EXPECT_EQ(m.v0()->bar, 0u);
+
+  std::vector<uint8_t> filled_basic_message = {
+      0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x66, 0x01, 0x10, 0x44, 0x04, 0x03, 0x02, 0x01,
+  };
+
+  EXPECT_TRUE(m.Deserialize({filled_basic_message, {}}, transport()));
+  EXPECT_EQ(m.v0()->foo, 0x44100166u);
+  EXPECT_EQ(m.v0()->bar, 0x01020304u);
+}
+
+TEST_F(MessageTest, GoldenMessageWithDataArray) {
+  test::msg::MessageWithDataArray m;
+
+  std::vector<uint8_t> empty_array_message = {
+      0x18, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  EXPECT_TRUE(m.Deserialize({empty_array_message, {}}, transport()));
+  auto empty_values = m.GetArrayView<uint64_t>(m.v0()->values);
+  EXPECT_EQ(empty_values.size(), 0u);
+
+  std::vector<uint8_t> array_with_values_message = {
+      0x18, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+      0x11, 0x00, 0x00, 0x11, 0x11, 0x00, 0x00, 0x11, 0x47, 0x46, 0x45, 0x44,
+      0x14, 0x13, 0x12, 0x11, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee};
+  EXPECT_TRUE(m.Deserialize({array_with_values_message, {}}, transport()));
+  auto some_values = m.GetArrayView<uint64_t>(m.v0()->values);
+  EXPECT_EQ(some_values.size(), 3u);
+  EXPECT_EQ(some_values[0], 0x1100001111000011u);
+  EXPECT_EQ(some_values[1], 0x1112131444454647u);
+  EXPECT_EQ(some_values[2], 0xeeeeeeeeeeeeeeeeu);
+}
+
+TEST_F(MessageTest, GoldenMessageWithMultipleVersions) {
+  using Msg = test::msg::MessageWithMultipleVersions;
+  Msg m;
+
+  std::vector<uint8_t> empty_v1_message = {
+      0x18, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x11, 0x11, 0x00, 0x00, 0x11,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  EXPECT_TRUE(m.Deserialize({empty_v1_message, {}}, transport()));
+  EXPECT_EQ(m.v1()->c, 0x1100001111000011u);
+  EXPECT_EQ(m.v2(), nullptr);
+}
+
+TEST_F(MessageTest, GoldenMessageWithDriverArrayAndExtraObject) {
+  test::msg::MessageWithDriverArrayAndExtraObject m;
+
+  // Note: handle representation is provided by the fake transport above, and is
+  // not related to the OS the test is running on.
+  constexpr IpczDriverHandle kObjectHandles[] = {0x12345678, 0x5a5aa5a5,
+                                                 0x42425555};
+
+  ReceivedMessage as_received_data = {
+      .data =
+          {
+              0x18, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+              0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x60, 0x00,
+              0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x70, 0x00, 0x00, 0x00, 0x02,
+              0x00, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+              0x34, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+              0x00, 0x02, 0x00, 0x00, 0x00, 0x5a, 0x5a, 0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x42,
+              0x42, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+          },
+      .handles =
+          {
+              0x5678,
+              0xa5a5,
+              0x5555,
+          },
+  };
+
+  EXPECT_TRUE(
+      m.Deserialize(as_received_data.AsTransportMessage(), transport()));
+
+  EXPECT_CALL(driver(), Close(kObjectHandles[0], _, _));
+  EXPECT_CALL(driver(), Close(kObjectHandles[1], _, _));
+  EXPECT_CALL(driver(), Close(kObjectHandles[2], _, _));
 }
 
 }  // namespace

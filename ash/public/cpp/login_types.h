@@ -95,6 +95,9 @@ enum class OobeDialogState {
 
   // CHILD SETUP step for user creation screen.
   SETUP_CHILD = 23,
+
+  // ENROLL TRIAGE step for user creation screen.
+  ENROLL_TRIAGE = 24,
 };
 
 // Modes of the managed device, which is used to update the visibility of
@@ -122,6 +125,10 @@ enum class FingerprintState {
   // should be displayed for 3 seconds before getting back to AVAILABLE_DEFAULT
   // state.
   AVAILABLE_WITH_TOUCH_SENSOR_WARNING,
+  // Fingerprint can be used to unlock the device but the user has a failed
+  // attempt. The failed attempt feedback should be displayed for a short
+  // amount of times before getting back to AVAILABLE_DEFAULT state.
+  AVAILABLE_WITH_FAILED_ATTEMPT,
   // There have been too many attempts, so now fingerprint is disabled.
   DISABLED_FROM_ATTEMPTS,
   // It has been too long since the device was last used.
@@ -136,12 +143,8 @@ struct ASH_PUBLIC_EXPORT DeviceEnterpriseInfo {
   // The name of the entity that manages the device and current account user.
   //       For standard Dasher domains, this will be the domain name (foo.com).
   //       For FlexOrgs, this will be the admin's email (user@foo.com).
-  //       For Active Directory or not enterprise enrolled, this will be an
-  //       empty string.
+  //       For non enterprise enrolled devices, this will be an empty string.
   std::string enterprise_domain_manager;
-
-  // Whether this is an Active Directory managed enterprise device.
-  bool active_directory_managed = false;
 
   // Which mode a managed device is enrolled in.
   ManagementDeviceMode management_device_mode = ManagementDeviceMode::kNone;
@@ -189,7 +192,7 @@ struct ASH_PUBLIC_EXPORT LocaleItem {
   std::string title;
 
   // Group name of the locale.
-  absl::optional<std::string> group_name;
+  std::optional<std::string> group_name;
 };
 
 // Information about a public account user.
@@ -205,7 +208,7 @@ struct ASH_PUBLIC_EXPORT PublicAccountInfo {
   // The name of the device manager displayed in the login screen UI for
   // device-level management. May be either a domain (foo.com) or an email
   // address (user@foo.com).
-  absl::optional<std::string> device_enterprise_manager;
+  std::optional<std::string> device_enterprise_manager;
 
   // A list of available user locales.
   std::vector<LocaleItem> available_locales;
@@ -281,10 +284,10 @@ struct ASH_PUBLIC_EXPORT LoginUserInfo {
   // login screen UI for user-level management. Will be either a domain name
   // (foo.com) or the email address of the admin (some_user@foo.com).
   // This is only set if the relevant user is managed.
-  absl::optional<std::string> user_account_manager;
+  std::optional<std::string> user_account_manager;
 
   // Contains the public account information if user type is PUBLIC_ACCOUNT.
-  absl::optional<PublicAccountInfo> public_account_info;
+  std::optional<PublicAccountInfo> public_account_info;
 
   // True if this user chooses to use 24 hour clock in preference.
   bool use_24hour_clock = false;

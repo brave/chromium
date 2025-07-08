@@ -32,18 +32,25 @@ class Profile;
 
 namespace crostini {
 
-extern const char kCrostiniImageAliasPattern[];
-extern const char kCrostiniContainerDefaultVersion[];
-extern const char kCrostiniContainerFlag[];
+inline constexpr char kCrostiniImageAliasPattern[] = "debian/%s";
+inline constexpr char kCrostiniContainerDefaultVersion[] = "bookworm";
+inline constexpr char kCrostiniContainerFlag[] =
+    "crostini-container-install-version";
 
-extern const guest_os::VmType kCrostiniDefaultVmType;
-extern const char kCrostiniDefaultVmName[];
-extern const char kCrostiniDefaultContainerName[];
-extern const char kCrostiniDefaultUsername[];
-extern const char kCrostiniDefaultImageServerUrl[];
-extern const char kCrostiniDlcName[];
+inline constexpr guest_os::VmType kCrostiniDefaultVmType =
+    guest_os::VmType::TERMINA;
+inline constexpr guest_os::VmType kBaguetteDefaultVmType =
+    guest_os::VmType::BAGUETTE;
+inline constexpr char kCrostiniDefaultVmName[] = "termina";
+inline constexpr char kCrostiniDefaultContainerName[] = "penguin";
+inline constexpr char kCrostiniDefaultUsername[] = "emperor";
+inline constexpr char kCrostiniDefaultImageServerUrl[] =
+    "https://storage.googleapis.com/cros-containers/%d";
+inline constexpr char kCrostiniDlcName[] = "termina-dlc";
+inline constexpr char kToolsDlcName[] = "termina-tools-dlc";
 
-extern const base::FilePath::CharType kHomeDirectory[];
+inline constexpr base::FilePath::CharType kHomeDirectory[] =
+    FILE_PATH_LITERAL("/home/chronos/user");
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -137,6 +144,7 @@ bool IsContainerVersionExpired(Profile* profile,
                                const guest_os::GuestId& container_id);
 
 const guest_os::GuestId& DefaultContainerId();
+const guest_os::GuestId& DefaultBaguetteContainerId();
 
 bool IsCrostiniWindow(const aura::Window* window);
 

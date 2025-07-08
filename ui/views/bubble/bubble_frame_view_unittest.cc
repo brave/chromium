@@ -14,6 +14,9 @@
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/insets.h"
@@ -21,6 +24,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/text_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/footnote_container_view.h"
@@ -31,6 +35,7 @@
 #include "ui/views/test/test_views.h"
 #include "ui/views/test/view_metadata_test_utils.h"
 #include "ui/views/test/views_test_base.h"
+#include "ui/views/test/views_test_utils.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -54,53 +59,14 @@ gfx::Size AddAdditionalSize(gfx::Size size) {
   return size;
 }
 
-class TestBubbleFrameViewWidgetDelegate : public WidgetDelegate {
- public:
-  explicit TestBubbleFrameViewWidgetDelegate(Widget* widget)
-      : widget_(widget) {}
-
-  ~TestBubbleFrameViewWidgetDelegate() override = default;
-
-  // WidgetDelegate:
-  Widget* GetWidget() override { return widget_; }
-  const Widget* GetWidget() const override { return widget_; }
-  View* GetContentsView() override {
-    if (!contents_view_) {
-      StaticSizedView* contents_view =
-          new StaticSizedView(kPreferredClientSize);
-      contents_view->set_minimum_size(kMinimumClientSize);
-      contents_view->set_maximum_size(kMaximumClientSize);
-      contents_view_ = contents_view;
-    }
-    return contents_view_;
-  }
-  bool ShouldShowCloseButton() const override { return should_show_close_; }
-
-  void SetShouldShowCloseButton(bool should_show_close) {
-    should_show_close_ = should_show_close;
-  }
-
- private:
-  const raw_ptr<Widget, DanglingUntriaged> widget_;
-  raw_ptr<View, DanglingUntriaged> contents_view_ =
-      nullptr;  // Owned by |widget_|.
-  bool should_show_close_ = false;
-};
-
 class TestBubbleFrameView : public BubbleFrameView {
+  METADATA_HEADER(TestBubbleFrameView, BubbleFrameView)
+
  public:
-  explicit TestBubbleFrameView(ViewsTestBase* test_base)
-      : BubbleFrameView(gfx::Insets(), gfx::Insets(kMargin)) {
+  explicit TestBubbleFrameView(Widget* widget)
+      : BubbleFrameView(gfx::Insets(), gfx::Insets(kMargin)), widget_(widget) {
     SetBubbleBorder(
         std::make_unique<BubbleBorder>(kArrow, BubbleBorder::STANDARD_SHADOW));
-    widget_ = std::make_unique<Widget>();
-    widget_delegate_ =
-        std::make_unique<TestBubbleFrameViewWidgetDelegate>(widget_.get());
-    Widget::InitParams params =
-        test_base->CreateParams(Widget::InitParams::TYPE_BUBBLE);
-    params.delegate = widget_delegate_.get();
-    params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-    widget_->Init(std::move(params));
   }
 
   TestBubbleFrameView(const TestBubbleFrameView&) = delete;
@@ -119,9 +85,8 @@ class TestBubbleFrameView : public BubbleFrameView {
   gfx::Insets GetBorderInsets() const { return bubble_border()->GetInsets(); }
 
   // BubbleFrameView:
-  Widget* GetWidget() override { return widget_.get(); }
-
-  const Widget* GetWidget() const override { return widget_.get(); }
+  Widget* GetWidget() override { return widget_; }
+  const Widget* GetWidget() const override { return widget_; }
 
   gfx::Rect GetAvailableScreenBounds(const gfx::Rect& rect) const override {
     return available_bounds_;
@@ -131,17 +96,14 @@ class TestBubbleFrameView : public BubbleFrameView {
     return available_anchor_window_bounds_;
   }
 
-  TestBubbleFrameViewWidgetDelegate* widget_delegate() {
-    return widget_delegate_.get();
-  }
-
  private:
   const gfx::Rect available_bounds_ = gfx::Rect(0, 0, 1000, 1000);
   gfx::Rect available_anchor_window_bounds_;
-
-  std::unique_ptr<TestBubbleFrameViewWidgetDelegate> widget_delegate_;
-  std::unique_ptr<Widget> widget_;
+  raw_ptr<Widget> widget_;
 };
+
+BEGIN_METADATA(TestBubbleFrameView)
+END_METADATA
 
 }  // namespace
 
@@ -155,55 +117,88 @@ class BubbleFrameViewTest : public ViewsTestBase {
   BubbleFrameViewTest& operator=(const BubbleFrameViewTest&) = delete;
 
   ~BubbleFrameViewTest() override = default;
+
+  void SetUp() override {
+    ViewsTestBase::SetUp();
+    provider_ = std::make_unique<test::TestLayoutProvider>();
+
+    auto contents = std::make_unique<StaticSizedView>(kPreferredClientSize);
+    contents->set_minimum_size(kMinimumClientSize);
+    contents->set_maximum_size(kMaximumClientSize);
+    widget_delegate_.SetContentsView(std::move(contents));
+    widget_delegate_.SetShowCloseButton(false);
+
+    widget_ = std::make_unique<Widget>();
+    Widget::InitParams params =
+        CreateParams(Widget::InitParams::CLIENT_OWNS_WIDGET,
+                     Widget::InitParams::TYPE_BUBBLE);
+    params.delegate = &widget_delegate_;
+    widget_->Init(std::move(params));
+
+    frame_ = std::make_unique<TestBubbleFrameView>(widget_.get());
+  }
+
+  test::TestLayoutProvider& provider() { return *provider_; }
+  TestBubbleFrameView* frame() { return frame_.get(); }
+  views::WidgetDelegate* widget_delegate() { return &widget_delegate_; }
+
+  void TearDown() override {
+    frame_ = nullptr;
+    widget_->CloseNow();
+    ViewsTestBase::TearDown();
+  }
+
+ private:
+  std::unique_ptr<test::TestLayoutProvider> provider_;
+
+  views::WidgetDelegate widget_delegate_;
+  std::unique_ptr<views::Widget> widget_;
+  std::unique_ptr<TestBubbleFrameView> frame_;
 };
 
 TEST_F(BubbleFrameViewTest, GetBoundsForClientView) {
-  TestBubbleFrameView frame(this);
-  EXPECT_EQ(kArrow, frame.GetBorderArrow());
+  EXPECT_EQ(kArrow, frame()->GetBorderArrow());
 
-  const gfx::Insets content_margins = frame.GetContentMargins();
-  const gfx::Insets insets = frame.GetBorderInsets();
-  const gfx::Rect client_view_bounds = frame.GetBoundsForClientView();
+  const gfx::Insets content_margins = frame()->GetContentMargins();
+  const gfx::Insets insets = frame()->GetBorderInsets();
+  const gfx::Rect client_view_bounds = frame()->GetBoundsForClientView();
   EXPECT_EQ(insets.left() + content_margins.left(), client_view_bounds.x());
   EXPECT_EQ(insets.top() + content_margins.top(), client_view_bounds.y());
 }
 
 TEST_F(BubbleFrameViewTest, GetBoundsForClientViewWithClose) {
-  TestBubbleFrameView frame(this);
-  frame.widget_delegate()->SetShouldShowCloseButton(true);
-  frame.ResetWindowControls();
-  EXPECT_EQ(kArrow, frame.GetBorderArrow());
+  widget_delegate()->SetShowCloseButton(true);
+  frame()->ResetWindowControls();
+  EXPECT_EQ(kArrow, frame()->GetBorderArrow());
 
-  const gfx::Insets content_margins = frame.GetContentMargins();
-  const gfx::Insets insets = frame.GetBorderInsets();
+  const gfx::Insets content_margins = frame()->GetContentMargins();
+  const gfx::Insets insets = frame()->GetBorderInsets();
   const int close_margin =
-      frame.close_button()->height() +
+      frame()->close_button()->height() +
       LayoutProvider::Get()->GetDistanceMetric(DISTANCE_CLOSE_BUTTON_MARGIN);
-  const gfx::Rect client_view_bounds = frame.GetBoundsForClientView();
+  const gfx::Rect client_view_bounds = frame()->GetBoundsForClientView();
   EXPECT_EQ(insets.left() + content_margins.left(), client_view_bounds.x());
   EXPECT_EQ(insets.top() + content_margins.top() + close_margin,
             client_view_bounds.y());
 }
 
 TEST_F(BubbleFrameViewTest, RemoveFootnoteView) {
-  TestBubbleFrameView frame(this);
-  EXPECT_EQ(nullptr, frame.footnote_container_.get());
+  EXPECT_EQ(nullptr, frame()->footnote_container_.get());
   auto footnote = std::make_unique<StaticSizedView>(gfx::Size(200, 200));
   View* footnote_dummy_view = footnote.get();
-  frame.SetFootnoteView(std::move(footnote));
-  EXPECT_EQ(footnote_dummy_view->parent(), frame.footnote_container_);
-  frame.SetFootnoteView(nullptr);
-  EXPECT_EQ(nullptr, frame.footnote_container_.get());
+  frame()->SetFootnoteView(std::move(footnote));
+  EXPECT_EQ(footnote_dummy_view->parent(), frame()->footnote_container_);
+  frame()->SetFootnoteView(nullptr);
+  EXPECT_EQ(nullptr, frame()->footnote_container_.get());
 }
 
 TEST_F(BubbleFrameViewTest,
        FootnoteContainerViewShouldMatchVisibilityOfFirstChild) {
-  TestBubbleFrameView frame(this);
   std::unique_ptr<View> footnote =
       std::make_unique<StaticSizedView>(gfx::Size(200, 200));
   footnote->SetVisible(false);
   View* footnote_dummy_view = footnote.get();
-  frame.SetFootnoteView(std::move(footnote));
+  frame()->SetFootnoteView(std::move(footnote));
   View* footnote_container_view = footnote_dummy_view->parent();
   EXPECT_FALSE(footnote_container_view->GetVisible());
   footnote_dummy_view->SetVisible(true);
@@ -214,109 +209,108 @@ TEST_F(BubbleFrameViewTest,
 
 // Tests that the arrow is mirrored as needed to better fit the screen.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBounds) {
-  TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the info bubble displays normally when it fits.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 100, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on left.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 100, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(500, 500),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on left or top.
-  frame.SetArrow(BubbleBorder::BOTTOM_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 100, 0, 0),          // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_RIGHT,  // |delegate_arrow|
       gfx::Size(500, 500),                // |client_size|
       true);                              // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on top.
-  frame.SetArrow(BubbleBorder::BOTTOM_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 100, 0, 0),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on top and right.
-  frame.SetArrow(BubbleBorder::BOTTOM_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 100, 0, 0),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 900);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on right.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 100, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 900);
   EXPECT_EQ(window_bounds.y(), 100);
 
   // Test bubble not fitting on bottom and right.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 900, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 900);
   EXPECT_EQ(window_bounds.bottom(), 900);
 
   // Test bubble not fitting at the bottom.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 900, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(500, 500),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.bottom(), 900);
 
   // Test bubble not fitting at the bottom and left.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 900, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(500, 500),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.x(), 100);
   EXPECT_EQ(window_bounds.bottom(), 900);
@@ -325,68 +319,64 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBounds) {
 // Tests that the arrow is not moved when the info-bubble does not fit the
 // screen but moving it would make matter worse.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsMirroringFails) {
-  TestBubbleFrameView frame(this);
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  frame()->GetUpdatedWindowBounds(
       gfx::Rect(400, 100, 50, 50),    // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(500, 700),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
 }
 
 TEST_F(BubbleFrameViewTest, TestMirroringForCenteredArrow) {
-  TestBubbleFrameView frame(this);
-
   // Test bubble not fitting above the anchor.
-  frame.SetArrow(BubbleBorder::BOTTOM_CENTER);
-  frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_CENTER);
+  frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 100, 50, 50),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_CENTER,  // |delegate_arrow|
       gfx::Size(500, 700),                 // |client_size|
       true);                               // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_CENTER, frame()->GetBorderArrow());
 
   // Test bubble not fitting below the anchor.
-  frame.SetArrow(BubbleBorder::TOP_CENTER);
-  frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_CENTER);
+  frame()->GetUpdatedWindowBounds(
       gfx::Rect(300, 800, 50, 50),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_CENTER,  // |delegate_arrow|
       gfx::Size(500, 200),              // |client_size|
       true);                            // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame()->GetBorderArrow());
 
   // Test bubble not fitting to the right of the anchor.
-  frame.SetArrow(BubbleBorder::LEFT_CENTER);
-  frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::LEFT_CENTER);
+  frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 300, 50, 50),       // |anchor_rect|
       BubbleBorder::Arrow::LEFT_CENTER,  // |delegate_arrow|
       gfx::Size(200, 500),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::RIGHT_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::RIGHT_CENTER, frame()->GetBorderArrow());
 
   // Test bubble not fitting to the left of the anchor.
-  frame.SetArrow(BubbleBorder::RIGHT_CENTER);
-  frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::RIGHT_CENTER);
+  frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 300, 50, 50),        // |anchor_rect|
       BubbleBorder::Arrow::RIGHT_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),                // |client_size|
       true);                              // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::LEFT_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::LEFT_CENTER, frame()->GetBorderArrow());
 }
 
 // Test that the arrow will not be mirrored when
 // |adjust_to_fit_available_bounds| is false.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsDontTryMirror) {
-  TestBubbleFrameView frame(this);
-  frame.SetBubbleBorder(std::make_unique<BubbleBorder>(
+  frame()->SetBubbleBorder(std::make_unique<BubbleBorder>(
       BubbleBorder::TOP_RIGHT, BubbleBorder::NO_SHADOW));
-  gfx::Rect window_bounds = frame.GetUpdatedWindowBounds(
+  gfx::Rect window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 900, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(500, 500),             // |client_size|
       false);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   // The coordinates should be pointing to anchor_rect from TOP_RIGHT.
   EXPECT_EQ(window_bounds.right(), 100);
   EXPECT_EQ(window_bounds.y(), 900);
@@ -394,10 +384,9 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsDontTryMirror) {
 
 // Test that the center arrow is moved as needed to fit the screen.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsCenterArrows) {
-  TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Some of these tests may go away once --secondary-ui-md becomes the
@@ -406,169 +395,168 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsCenterArrows) {
   // added for MD mode.
 
   // Test that the bubble displays normally when it fits.
-  frame.SetArrow(BubbleBorder::BOTTOM_CENTER);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_CENTER);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(500, 900, 50, 50),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),                 // |client_size|
       true);                               // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x() + window_bounds.width() / 2, 525);
 
-  frame.SetArrow(BubbleBorder::LEFT_CENTER);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::LEFT_CENTER);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 400, 50, 50),       // |anchor_rect|
       BubbleBorder::Arrow::LEFT_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::LEFT_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::LEFT_CENTER, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.y() + window_bounds.height() / 2, 425);
 
-  frame.SetArrow(BubbleBorder::RIGHT_CENTER);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::RIGHT_CENTER);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 400, 50, 50),        // |anchor_rect|
       BubbleBorder::Arrow::RIGHT_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),                // |client_size|
       true);                              // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::RIGHT_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::RIGHT_CENTER, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.y() + window_bounds.height() / 2, 425);
 
   // Test bubble not fitting left screen edge.
-  frame.SetArrow(BubbleBorder::BOTTOM_CENTER);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_CENTER);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(100, 900, 50, 50),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),                 // |client_size|
       true);                               // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 0);
 
   // Test bubble not fitting right screen edge.
-  frame.SetArrow(BubbleBorder::BOTTOM_CENTER);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_CENTER);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 900, 50, 50),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_CENTER,  // |delegate_arrow|
       gfx::Size(500, 500),                 // |client_size|
       true);                               // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_CENTER, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 1000);
 }
 
 // Tests that the arrow is mirrored as needed to better fit the anchor window's
 // bounds.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleWithAnchorWindow) {
-  TestBubbleFrameView frame(this);
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(100, 100, 500, 500));
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(100, 100, 500, 500));
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble displays normally when it fits.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on left for anchor window displays left aligned
   // with the left side of the anchor rect.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(250, 250),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on left or top displays left and top aligned
   // with the left and bottom sides of the anchor rect.
-  frame.SetArrow(BubbleBorder::BOTTOM_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),          // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_RIGHT,  // |delegate_arrow|
       gfx::Size(250, 250),                // |client_size|
       true);                              // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on top displays top aligned with the bottom side of
   // the anchor rect.
-  frame.SetArrow(BubbleBorder::BOTTOM_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on top and right displays right and top aligned
   // with the right and bottom sides of the anchor rect.
-  frame.SetArrow(BubbleBorder::BOTTOM_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::BOTTOM_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(500, 200, 0, 0),         // |anchor_rect|
       BubbleBorder::Arrow::BOTTOM_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 500);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on right display in line with the right edge of
   // the anchor rect.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(500, 200, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 500);
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test bubble not fitting on bottom and right displays in line with the right
   // edge of the anchor rect and the bottom in line with the top of the anchor
   // rect.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(500, 500, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 500);
   EXPECT_EQ(window_bounds.bottom(), 500);
 
   // Test bubble not fitting at the bottom displays line with the top of the
   // anchor rect.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 500, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.bottom(), 500);
 
   // Test bubble not fitting at the bottom and left displays right aligned with
   // the anchor rect and the bottom in line with the top of the anchor rect.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 500, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(250, 250),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
   EXPECT_EQ(window_bounds.bottom(), 500);
 }
@@ -576,10 +564,9 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleWithAnchorWindow) {
 // Tests that the arrow is mirrored as needed to better fit the screen.
 TEST_F(BubbleFrameViewTest,
        GetUpdatedWindowBoundsForBubbleWithAnchorWindowExitingScreen) {
-  TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test bubble fitting anchor window and not fitting screen on right.
@@ -590,14 +577,14 @@ TEST_F(BubbleFrameViewTest,
   //    |      |             |_______|      |
   //    |      |_________________|__________|
   //    |________________________|
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 300, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.right(), 800);
   EXPECT_EQ(window_bounds.y(), 300);
@@ -611,14 +598,14 @@ TEST_F(BubbleFrameViewTest,
   //    |______|_____________|bubble |      |
   //           |             |_______|      |
   //           |____________________________|
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 700, 400, 400));
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(700, 700, 400, 400));
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 800, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.right(), 800);
   EXPECT_EQ(window_bounds.bottom(), 800);
@@ -632,14 +619,14 @@ TEST_F(BubbleFrameViewTest,
   //    |      |_____________|bubble |______|
   //    |                    |_______|
   //    |________________________|
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 500, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::BOTTOM_RIGHT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.right(), 800);
   EXPECT_EQ(window_bounds.bottom(), 500);
@@ -648,10 +635,9 @@ TEST_F(BubbleFrameViewTest,
 // Tests that bubbles with `use_anchor_window_bounds_` set to false will not
 // apply an offset to try to make them fit inside the anchor window bounds.
 TEST_F(BubbleFrameViewTest, BubbleNotUsingAnchorWindowBounds) {
-  TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test bubble not fitting anchor window on bottom and not fitting screen on
@@ -664,10 +650,10 @@ TEST_F(BubbleFrameViewTest, BubbleNotUsingAnchorWindowBounds) {
   //    |                    |_______|
   //    |________________________|
 
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
-  frame.set_use_anchor_window_bounds(false);
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
+  frame()->set_use_anchor_window_bounds(false);
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 500, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
@@ -677,40 +663,39 @@ TEST_F(BubbleFrameViewTest, BubbleNotUsingAnchorWindowBounds) {
   EXPECT_EQ(window_bounds.right(), 800);
 
   // Bubble will not try to fit inside the anchor window.
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_GT(window_bounds.bottom(), 500);
 }
 
 // Tests that the arrow is mirrored as needed to better fit the anchor window's
 // bounds.
 TEST_F(BubbleFrameViewTest, MirroringNotStickyForGetUpdatedWindowBounds) {
-  TestBubbleFrameView frame(this);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test bubble fitting anchor window and not fitting screen on right.
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(700, 200, 400, 400));
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(800, 300, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.right(), 800);
   EXPECT_EQ(window_bounds.y(), 300);
 
   // Test that the bubble mirrors again if it can fit on screen with its
   // original anchor.
-  window_bounds = frame.GetUpdatedWindowBounds(
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(700, 300, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   // The window should be right aligned with the anchor_rect.
   EXPECT_EQ(window_bounds.x(), 700);
   EXPECT_EQ(window_bounds.y(), 300);
@@ -718,57 +703,56 @@ TEST_F(BubbleFrameViewTest, MirroringNotStickyForGetUpdatedWindowBounds) {
 
 // Tests that the arrow is offset as needed to better fit the window.
 TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleSetToOffset) {
-  TestBubbleFrameView frame(this);
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(100, 100, 500, 500));
-  frame.SetPreferredArrowAdjustment(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(100, 100, 500, 500));
+  frame()->SetPreferredArrowAdjustment(
       BubbleFrameView::PreferredArrowAdjustment::kOffset);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble displays normally when it fits.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
 
   // Test bubble not fitting left window edge displayed against left window
   // edge.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(200, 200, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(250, 250),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 100);
 
   // Test bubble not fitting right window edge displays against the right edge
   // of the anchor window.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(500, 200, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 600);
 
   // Test bubble fitting anchor window and not fitting screen on right displays
   // against the right edge of the screen.
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(800, 300, 500, 500));
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(800, 300, 500, 500));
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(900, 500, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(250, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.right(), 1000);
 }
 
@@ -776,68 +760,66 @@ TEST_F(BubbleFrameViewTest, GetUpdatedWindowBoundsForBubbleSetToOffset) {
 // windows larger than the available bounds.
 TEST_F(BubbleFrameViewTest,
        GetUpdatedWindowBoundsForBubbleSetToOffsetLargerThanAvailableBounds) {
-  TestBubbleFrameView frame(this);
-  frame.SetAvailableAnchorWindowBounds(gfx::Rect(200, 200, 500, 500));
-  frame.SetPreferredArrowAdjustment(
+  frame()->SetAvailableAnchorWindowBounds(gfx::Rect(200, 200, 500, 500));
+  frame()->SetPreferredArrowAdjustment(
       BubbleFrameView::PreferredArrowAdjustment::kOffset);
   gfx::Rect window_bounds;
 
-  frame.SetBubbleBorder(
+  frame()->SetBubbleBorder(
       std::make_unique<BubbleBorder>(kArrow, BubbleBorder::NO_SHADOW));
 
   // Test that the bubble exiting right side of anchor window displays against
   // left edge of anchor window bounds if larger than anchor window.
-  frame.SetArrow(BubbleBorder::TOP_LEFT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_LEFT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(300, 300, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::TOP_LEFT,  // |delegate_arrow|
       gfx::Size(600, 250),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_LEFT, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.x(), 200);
 
   // Test that the bubble exiting left side of anchor window displays against
   // right edge of anchor window bounds if larger than anchor window.
-  frame.SetArrow(BubbleBorder::TOP_RIGHT);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::TOP_RIGHT);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(300, 300, 0, 0),       // |anchor_rect|
       BubbleBorder::Arrow::TOP_RIGHT,  // |delegate_arrow|
       gfx::Size(600, 250),             // |client_size|
       true);                           // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::TOP_RIGHT, frame()->GetBorderArrow());
   // Check that the right edge of the bubble equals the right edge of the
   // anchor window.
   EXPECT_EQ(window_bounds.right(), 700);
 
   // Test that the bubble exiting bottom side of anchor window displays against
   // top edge of anchor window bounds if larger than anchor window.
-  frame.SetArrow(BubbleBorder::LEFT_TOP);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::LEFT_TOP);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(400, 400, 0, 0),      // |anchor_rect|
       BubbleBorder::Arrow::LEFT_TOP,  // |delegate_arrow|
       gfx::Size(250, 600),            // |client_size|
       true);                          // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::LEFT_TOP, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::LEFT_TOP, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.y(), 200);
 
   // Test that the bubble exiting top side of anchor window displays against
   // bottom edge of anchor window bounds if larger than anchor window.
-  frame.SetArrow(BubbleBorder::LEFT_BOTTOM);
-  window_bounds = frame.GetUpdatedWindowBounds(
+  frame()->SetArrow(BubbleBorder::LEFT_BOTTOM);
+  window_bounds = frame()->GetUpdatedWindowBounds(
       gfx::Rect(300, 300, 0, 0),         // |anchor_rect|
       BubbleBorder::Arrow::LEFT_BOTTOM,  // |delegate_arrow|
       gfx::Size(250, 600),               // |client_size|
       true);                             // |adjust_to_fit_available_bounds|
-  EXPECT_EQ(BubbleBorder::LEFT_BOTTOM, frame.GetBorderArrow());
+  EXPECT_EQ(BubbleBorder::LEFT_BOTTOM, frame()->GetBorderArrow());
   EXPECT_EQ(window_bounds.bottom(), 700);
 }
 
 TEST_F(BubbleFrameViewTest, GetPreferredSize) {
   // Test border/insets.
-  TestBubbleFrameView frame(this);
-  gfx::Rect preferred_rect(frame.GetPreferredSize());
+  gfx::Rect preferred_rect(frame()->GetPreferredSize({}));
   // Expect that a border has been added to the preferred size.
-  preferred_rect.Inset(frame.GetBorderInsets());
+  preferred_rect.Inset(frame()->GetBorderInsets());
 
   gfx::Size expected_size = AddAdditionalSize(kPreferredClientSize);
   EXPECT_EQ(expected_size, preferred_rect.size());
@@ -846,47 +828,43 @@ TEST_F(BubbleFrameViewTest, GetPreferredSize) {
 TEST_F(BubbleFrameViewTest, GetPreferredSizeWithFootnote) {
   // Test footnote view: adding a footnote should increase the preferred size,
   // but only when the footnote is visible.
-  TestBubbleFrameView frame(this);
-
   constexpr int kFootnoteHeight = 20;
-  const gfx::Size no_footnote_size = frame.GetPreferredSize();
+  const gfx::Size no_footnote_size = frame()->GetPreferredSize({});
   std::unique_ptr<View> footnote =
       std::make_unique<StaticSizedView>(gfx::Size(10, kFootnoteHeight));
   footnote->SetVisible(false);
   View* footnote_dummy_view = footnote.get();
-  frame.SetFootnoteView(std::move(footnote));
-  EXPECT_EQ(no_footnote_size, frame.GetPreferredSize());  // No change.
+  frame()->SetFootnoteView(std::move(footnote));
+  EXPECT_EQ(no_footnote_size, frame()->GetPreferredSize({}));  // No change.
 
   footnote_dummy_view->SetVisible(true);
   gfx::Size with_footnote_size = no_footnote_size;
   constexpr int kFootnoteTopBorderThickness = 1;
   with_footnote_size.Enlarge(0, kFootnoteHeight + kFootnoteTopBorderThickness +
-                                    frame.GetContentMargins().height());
-  EXPECT_EQ(with_footnote_size, frame.GetPreferredSize());
+                                    frame()->GetContentMargins().height());
+  EXPECT_EQ(with_footnote_size, frame()->GetPreferredSize({}));
 
   footnote_dummy_view->SetVisible(false);
-  EXPECT_EQ(no_footnote_size, frame.GetPreferredSize());
+  EXPECT_EQ(no_footnote_size, frame()->GetPreferredSize({}));
 }
 
 TEST_F(BubbleFrameViewTest, GetMinimumSize) {
-  TestBubbleFrameView frame(this);
-  gfx::Rect minimum_rect(frame.GetMinimumSize());
+  gfx::Rect minimum_rect(frame()->GetMinimumSize());
   // Expect that a border has been added to the minimum size.
-  minimum_rect.Inset(frame.GetBorderInsets());
+  minimum_rect.Inset(frame()->GetBorderInsets());
 
   gfx::Size expected_size = AddAdditionalSize(kMinimumClientSize);
   EXPECT_EQ(expected_size, minimum_rect.size());
 }
 
 TEST_F(BubbleFrameViewTest, GetMaximumSize) {
-  TestBubbleFrameView frame(this);
-  gfx::Rect maximum_rect(frame.GetMaximumSize());
+  gfx::Rect maximum_rect(frame()->GetMaximumSize());
 #if BUILDFLAG(IS_WIN)
   // On Windows, GetMaximumSize causes problems with DWM, so it should just be 0
   // (unlimited). See http://crbug.com/506206.
   EXPECT_EQ(gfx::Size(), maximum_rect.size());
 #else
-  maximum_rect.Inset(frame.GetBorderInsets());
+  maximum_rect.Inset(frame()->GetBorderInsets());
 
   // Should ignore the contents view's maximum size and use the preferred size.
   gfx::Size expected_size = AddAdditionalSize(kPreferredClientSize);
@@ -897,98 +875,99 @@ TEST_F(BubbleFrameViewTest, GetMaximumSize) {
 TEST_F(BubbleFrameViewTest, LayoutWithHeader) {
   // Test header view: adding a header should increase the preferred size, but
   // only when the header is visible.
-  TestBubbleFrameView frame(this);
-
   constexpr int kHeaderHeight = 20;
-  const gfx::Size no_header_size = frame.GetPreferredSize();
+  const gfx::Size no_header_size = frame()->GetPreferredSize({});
   std::unique_ptr<View> header =
       std::make_unique<StaticSizedView>(gfx::Size(10, kHeaderHeight));
   header->SetVisible(false);
   View* header_raw_pointer = header.get();
-  frame.SetHeaderView(std::move(header));
-  EXPECT_EQ(no_header_size, frame.GetPreferredSize());  // No change.
+  frame()->SetHeaderView(std::move(header));
+  EXPECT_EQ(no_header_size, frame()->GetPreferredSize({}));  // No change.
 
   header_raw_pointer->SetVisible(true);
   gfx::Size with_header_size = no_header_size;
   with_header_size.Enlarge(0, kHeaderHeight);
-  EXPECT_EQ(with_header_size, frame.GetPreferredSize());
+  EXPECT_EQ(with_header_size, frame()->GetPreferredSize({}));
 
   header_raw_pointer->SetVisible(false);
-  EXPECT_EQ(no_header_size, frame.GetPreferredSize());
+  EXPECT_EQ(no_header_size, frame()->GetPreferredSize({}));
 }
 
 TEST_F(BubbleFrameViewTest, LayoutWithHeaderAndCloseButton) {
   // Test header view with close button: the client bounds should be positioned
   // below the header and close button, whichever is further down.
-  TestBubbleFrameView frame(this);
-  frame.widget_delegate()->SetShouldShowCloseButton(true);
+  widget_delegate()->SetShowCloseButton(true);
 
   const int close_margin =
-      frame.close_button()->height() +
+      frame()->close_button()->height() +
       LayoutProvider::Get()->GetDistanceMetric(DISTANCE_CLOSE_BUTTON_MARGIN);
-  const gfx::Insets content_margins = frame.GetContentMargins();
-  const gfx::Insets insets = frame.GetBorderInsets();
+  const gfx::Insets content_margins = frame()->GetContentMargins();
+  const gfx::Insets insets = frame()->GetBorderInsets();
 
   // Header is smaller than close button + margin, expect bounds to be below the
   // close button.
-  frame.SetHeaderView(
+  frame()->SetHeaderView(
       std::make_unique<StaticSizedView>(gfx::Size(10, close_margin - 1)));
 
-  gfx::Rect client_view_bounds = frame.GetBoundsForClientView();
+  gfx::Rect client_view_bounds = frame()->GetBoundsForClientView();
   EXPECT_EQ(insets.top() + content_margins.top() + close_margin,
             client_view_bounds.y());
 
   // Header is larger than close button + margin, expect bounds to be below the
   // header view.
-  frame.SetHeaderView(
+  frame()->SetHeaderView(
       std::make_unique<StaticSizedView>(gfx::Size(10, close_margin + 1)));
 
-  client_view_bounds = frame.GetBoundsForClientView();
+  client_view_bounds = frame()->GetBoundsForClientView();
   EXPECT_EQ(insets.top() + content_margins.top() + close_margin + 1,
             client_view_bounds.y());
 }
 
 TEST_F(BubbleFrameViewTest, MetadataTest) {
-  TestBubbleFrameView frame(this);
-  TestBubbleFrameView* frame_pointer = &frame;
-  test::TestViewMetadata(frame_pointer);
+  test::TestViewMetadata(frame());
 }
 
-namespace {
+class FrameViewTestBubbleDialogDelegateView : public BubbleDialogDelegateView {
+  METADATA_HEADER(FrameViewTestBubbleDialogDelegateView,
+                  BubbleDialogDelegateView)
 
-class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
  public:
-  TestBubbleDialogDelegateView()
-      : BubbleDialogDelegateView(nullptr, BubbleBorder::NONE) {
-    set_shadow(BubbleBorder::NO_SHADOW);
+  FrameViewTestBubbleDialogDelegateView()
+      : BubbleDialogDelegateView(nullptr,
+                                 BubbleBorder::NONE,
+                                 BubbleBorder::NO_SHADOW,
+                                 true) {
     SetAnchorRect(gfx::Rect());
-    DialogDelegate::SetButtons(ui::DIALOG_BUTTON_OK);
+    DialogDelegate::SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   }
 
-  TestBubbleDialogDelegateView(const TestBubbleDialogDelegateView&) = delete;
-  TestBubbleDialogDelegateView& operator=(const TestBubbleDialogDelegateView&) =
-      delete;
+  FrameViewTestBubbleDialogDelegateView(
+      const FrameViewTestBubbleDialogDelegateView&) = delete;
+  FrameViewTestBubbleDialogDelegateView& operator=(
+      const FrameViewTestBubbleDialogDelegateView&) = delete;
 
-  ~TestBubbleDialogDelegateView() override = default;
+  ~FrameViewTestBubbleDialogDelegateView() override = default;
 
   void ChangeTitle(const std::u16string& title) {
     title_ = title;
-    // Note UpdateWindowTitle() always does a layout, which will be invalid if
-    // the Widget needs to change size. But also SizeToContents() _only_ does a
-    // layout if the size is actually changing.
+    // UpdateWindowTitle() will lead to an invalidation if the title's string or
+    // visibility changes.
     GetWidget()->UpdateWindowTitle();
-    SizeToContents();
+
+    // UpdateWindowTitle() will trigger an asynchronous autosize task.
+    views::test::RunScheduledLayout(GetWidget());
   }
 
   void ChangeSubtitle(const std::u16string& subtitle) {
     subtitle_ = subtitle;
     GetBubbleFrameView()->UpdateSubtitle();
-    SizeToContents();
+
+    // UpdateSubtitle() will trigger an asynchronous autosize task.
+    views::test::RunScheduledLayout(GetWidget());
   }
 
   // BubbleDialogDelegateView:
   using BubbleDialogDelegateView::SetAnchorView;
-  using BubbleDialogDelegateView::SizeToContents;
   std::u16string GetWindowTitle() const override { return title_; }
   std::u16string GetSubtitle() const override { return subtitle_; }
   bool ShouldShowWindowTitle() const override { return !title_.empty(); }
@@ -997,7 +976,8 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
     should_show_close_ = should_show_close;
   }
 
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& /*available_size*/) const override {
     return gfx::Size(200, 200);
   }
 
@@ -1012,10 +992,15 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
   bool should_show_close_ = false;
 };
 
+BEGIN_METADATA(FrameViewTestBubbleDialogDelegateView)
+END_METADATA
+
+namespace {
+
 class TestAnchor {
  public:
   explicit TestAnchor(Widget::InitParams params) {
-    params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+    params.ownership = Widget::InitParams::CLIENT_OWNS_WIDGET;
     widget_.Init(std::move(params));
     widget_.Show();
   }
@@ -1030,11 +1015,14 @@ class TestAnchor {
 };
 
 // BubbleDialogDelegate with no margins to test width snapping.
-class TestWidthSnapDelegate : public TestBubbleDialogDelegateView {
+class TestWidthSnapDelegate : public FrameViewTestBubbleDialogDelegateView {
+  METADATA_HEADER(TestWidthSnapDelegate, FrameViewTestBubbleDialogDelegateView)
+
  public:
   TestWidthSnapDelegate(TestAnchor* anchor, bool should_snap) {
-    DialogDelegate::SetButtons(should_snap ? ui::DIALOG_BUTTON_OK
-                                            : ui::DIALOG_BUTTON_NONE);
+    DialogDelegate::SetButtons(
+        should_snap ? static_cast<int>(ui::mojom::DialogButton::kOk)
+                    : static_cast<int>(ui::mojom::DialogButton::kNone));
     SetAnchorView(anchor->widget().GetContentsView());
     set_margins(gfx::Insets());
     BubbleDialogDelegateView::CreateBubble(this);
@@ -1045,24 +1033,26 @@ class TestWidthSnapDelegate : public TestBubbleDialogDelegateView {
   TestWidthSnapDelegate& operator=(const TestWidthSnapDelegate&) = delete;
 };
 
+BEGIN_METADATA(TestWidthSnapDelegate)
+END_METADATA
+
 }  // namespace
 
 // This test ensures that if the installed LayoutProvider snaps dialog widths,
 // BubbleFrameView correctly sizes itself to that width.
 TEST_F(BubbleFrameViewTest, WidthSnaps) {
-  test::TestLayoutProvider provider;
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
 
   {
     TestWidthSnapDelegate* const delegate =
         new TestWidthSnapDelegate(&anchor, true);
     WidgetAutoclosePtr widget(delegate->GetWidget());
-    EXPECT_EQ(delegate->GetPreferredSize().width(),
+    EXPECT_EQ(delegate->GetPreferredSize({}).width(),
               delegate->GetWidget()->GetWindowBoundsInScreen().width());
   }
 
   constexpr int kTestWidth = 300;
-  provider.SetSnappedDialogWidth(kTestWidth);
+  provider().SetSnappedDialogWidth(kTestWidth);
 
   {
     TestWidthSnapDelegate* const delegate =
@@ -1079,7 +1069,7 @@ TEST_F(BubbleFrameViewTest, WidthSnaps) {
     TestWidthSnapDelegate* const delegate =
         new TestWidthSnapDelegate(&anchor, false);
     WidgetAutoclosePtr widget(delegate->GetWidget());
-    EXPECT_EQ(delegate->GetPreferredSize().width(),
+    EXPECT_EQ(delegate->GetPreferredSize({}).width(),
               delegate->GetWidget()->GetWindowBoundsInScreen().width());
   }
 }
@@ -1087,11 +1077,11 @@ TEST_F(BubbleFrameViewTest, WidthSnaps) {
 // Tests edge cases when the frame's title view starts to wrap text. This is to
 // ensure that the calculations BubbleFrameView does to determine the Widget
 // size for a given client view are consistent with the eventual size that the
-// client view takes after Layout().
+// client view takes after layout.
 TEST_F(BubbleFrameViewTest, LayoutEdgeCases) {
-  test::TestLayoutProvider provider;
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
 
@@ -1102,24 +1092,25 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCases) {
   // Even though the bubble has default margins, the dialog view should have
   // been given its preferred size.
   EXPECT_FALSE(delegate->margins().IsEmpty());
-  EXPECT_EQ(delegate->size(), delegate->GetPreferredSize());
+  EXPECT_EQ(delegate->size(), delegate->GetPreferredSize({}));
 
   // Starting with a short title.
   std::u16string title(1, 'i');
   delegate->ChangeTitle(title);
   const int min_bubble_height = bubble->GetWindowBoundsInScreen().height();
-  EXPECT_LT(delegate->GetPreferredSize().height(), min_bubble_height);
+  EXPECT_LT(delegate->GetPreferredSize({}).height(), min_bubble_height);
 
   // Grow the title incrementally until word wrap is required. There should
   // never be a point where the BubbleFrameView over- or under-estimates the
-  // size required for the title. If it did, it would cause SizeToContents() to
-  // Widget size requiring the subsequent Layout() to fill the remaining client
-  // area with something other than |delegate|'s preferred size.
+  // size required for the title. If it did, it would automatically resizes the
+  // Widget based on autosize, requiring the subsequent Layout() to fill the
+  // remaining client area with something other than |delegate|'s preferred
+  // size.
   while (bubble->GetWindowBoundsInScreen().height() == min_bubble_height) {
     title += ' ';
     title += 'i';
     delegate->ChangeTitle(title);
-    EXPECT_EQ(delegate->GetPreferredSize(), delegate->size()) << title;
+    EXPECT_EQ(delegate->GetPreferredSize({}), delegate->size()) << title;
   }
 
   // Sanity check that something interesting happened. The bubble should have
@@ -1133,17 +1124,22 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCases) {
   EXPECT_GT(80u, title.size());
 
   // Now add dialog snapping.
-  provider.SetSnappedDialogWidth(300);
-  delegate->SizeToContents();
+  provider().SetSnappedDialogWidth(300);
+  // Only test::TestLayoutProvider has a setter(SetSnappedDialogWidth()), it
+  // can not invalidate the exact view. So it only actively InvalidateLayout()
+  // after SetSnappedDialogWidth() in the test code.
+  delegate->InvalidateLayout();
 
+  // InvalidateLayout() will trigger an asynchronous autosize task.
+  views::test::RunScheduledLayout(bubble);
   // Height should go back to |min_bubble_height| since the window is wider:
   // word wrapping should no longer happen.
   EXPECT_EQ(min_bubble_height, bubble->GetWindowBoundsInScreen().height());
   EXPECT_EQ(300, bubble->GetWindowBoundsInScreen().width());
 
   // Now we are allowed to diverge from the client view width, but not height.
-  EXPECT_EQ(delegate->GetPreferredSize().height(), delegate->height());
-  EXPECT_LT(delegate->GetPreferredSize().width(), delegate->width());
+  EXPECT_EQ(delegate->GetPreferredSize({}).height(), delegate->height());
+  EXPECT_LT(delegate->GetPreferredSize({}).width(), delegate->width());
   EXPECT_GT(300, delegate->width());  // Greater, since there are margins.
 
   const gfx::Size snapped_size = delegate->size();
@@ -1169,9 +1165,9 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCases) {
 // header view is set. This is to ensure the title leaves enough space for the
 // close button when there is a header or not.
 TEST_F(BubbleFrameViewTest, LayoutEdgeCasesWithHeader) {
-  test::TestLayoutProvider provider;
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   delegate->SetShouldShowCloseButton(true);
@@ -1211,8 +1207,9 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCasesWithHeader) {
   // to grow below the close button.
   frame->SetHeaderView(
       std::make_unique<StaticSizedView>(gfx::Size(10, close_margin)));
-  delegate->SizeToContents();
 
+  // SetHeaderView() will trigger an asynchronous autosize task.
+  views::test::RunScheduledLayout(bubble);
   // Height should go back to |min_bubble_height| + 1 since the window is wider:
   // word wrapping should no longer happen, the 1 dip extra height is caused by
   // growing the header view.
@@ -1224,11 +1221,12 @@ TEST_F(BubbleFrameViewTest, LayoutEdgeCasesWithHeader) {
 // Layout tests with Subtitle label.
 // This will test adding a Subtitle and wrap-around case for Subtitle.
 TEST_F(BubbleFrameViewTest, LayoutSubtitleEdgeCases) {
-  test::TestLayoutProvider provider;
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
+  delegate->SetSubtitleAllowCharacterBreak(true);
 
   Widget* bubble =
       BubbleDialogDelegateView::CreateBubble(std::move(delegate_unique));
@@ -1237,13 +1235,13 @@ TEST_F(BubbleFrameViewTest, LayoutSubtitleEdgeCases) {
   // Even though the bubble has default margins, the dialog view should have
   // been given its preferred size.
   EXPECT_FALSE(delegate->margins().IsEmpty());
-  EXPECT_EQ(delegate->size(), delegate->GetPreferredSize());
+  EXPECT_EQ(delegate->size(), delegate->GetPreferredSize({}));
 
   // Add title to bubble frame view.
   delegate->ChangeTitle(u"This is a title");
 
   int min_bubble_height = bubble->GetWindowBoundsInScreen().height();
-  EXPECT_LT(delegate->GetPreferredSize().height(), min_bubble_height);
+  EXPECT_LT(delegate->GetPreferredSize({}).height(), min_bubble_height);
 
   // Add a short subtitle to guarantee a one-line addition.
   // Line height can vary depending on the platform so check
@@ -1258,9 +1256,10 @@ TEST_F(BubbleFrameViewTest, LayoutSubtitleEdgeCases) {
 
   // Set the new min bubble height with a Subtitle added.
   min_bubble_height = bubble->GetWindowBoundsInScreen().height();
-  // Grow the subtitle incrementally until word wrap is required.
+  // Grow the subtitle incrementally until a wrap is required.
   while (bubble->GetWindowBoundsInScreen().height() == min_bubble_height) {
-    subtitle += u" j";
+    // Use a single character to check that character breaks are enabled.
+    subtitle += u"j";
     delegate->ChangeSubtitle(subtitle);
   }
 
@@ -1269,11 +1268,21 @@ TEST_F(BubbleFrameViewTest, LayoutSubtitleEdgeCases) {
       bubble->GetWindowBoundsInScreen().height() - min_bubble_height;
   EXPECT_GT(line_height_diff, 12);
   EXPECT_LT(line_height_diff, 18);
+
+  // Turn off character breaks and confirm the height has returned to the single
+  // line height.
+  delegate->SetSubtitleAllowCharacterBreak(false);
+
+  // SetSubtitleAllowCharacterBreak() will trigger an asynchronous autosize
+  // task.
+  views::test::RunScheduledLayout(bubble);
+  EXPECT_EQ(bubble->GetWindowBoundsInScreen().height(), min_bubble_height);
 }
 
 TEST_F(BubbleFrameViewTest, LayoutWithIcon) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   SkBitmap bitmap;
@@ -1304,9 +1313,9 @@ TEST_F(BubbleFrameViewTest, LayoutWithIcon) {
 // Test the size of the bubble allows a |gfx::NO_ELIDE| title to fit, even if
 // there is no content.
 TEST_F(BubbleFrameViewTest, NoElideTitle) {
-  test::TestLayoutProvider provider;
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
 
@@ -1330,34 +1339,61 @@ TEST_F(BubbleFrameViewTest, NoElideTitle) {
   // very narrow.
   EXPECT_EQ(gfx::ELIDE_TAIL, title_label->GetElideBehavior());
   EXPECT_TRUE(title_label->GetMultiLine());
-  EXPECT_GT(empty_bubble_width, title_label->size().width());
+  EXPECT_GT(empty_bubble_width, title_label->width());
   EXPECT_EQ(empty_bubble_width, bubble->GetClientAreaBoundsInScreen().width());
 
   // Set the title to a non-eliding label.
   title_label->SetElideBehavior(gfx::NO_ELIDE);
   title_label->SetMultiLine(false);
 
-  // Update the bubble size now that some properties of the title have changed.
-  delegate->SizeToContents();
-
+  // SetMultiLine() will trigger an asynchronous autosize task.
+  views::test::RunScheduledLayout(bubble);
   // The title/bubble should now be bigger than in multiline tail-eliding mode.
-  EXPECT_LT(empty_bubble_width, title_label->size().width());
+  EXPECT_LT(empty_bubble_width, title_label->width());
   EXPECT_LT(empty_bubble_width, bubble->GetClientAreaBoundsInScreen().width());
 
   // Make sure the bubble is wide enough to fit the title's full size. Frame
   // sizing is done off the title label's minimum size. But since that label is
   // set to NO_ELIDE, the minimum size should match the preferred size.
   EXPECT_GE(bubble->GetClientAreaBoundsInScreen().width(),
-            title_label->GetPreferredSize().width());
-  EXPECT_LE(title_label->GetPreferredSize().width(),
-            title_label->size().width());
+            title_label->GetPreferredSize({title_label->width(), {}}).width());
+  EXPECT_LE(title_label->GetPreferredSize({title_label->width(), {}}).width(),
+            title_label->width());
   EXPECT_EQ(title, title_label->GetDisplayTextForTesting());
+}
+
+TEST_F(BubbleFrameViewTest, LabelWithHeadingLevel) {
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
+  delegate->SetAnchorView(anchor.widget().GetContentsView());
+  delegate->SetSubtitleAllowCharacterBreak(true);
+
+  Widget* bubble =
+      BubbleDialogDelegateView::CreateBubble(std::move(delegate_unique));
+  bubble->Show();
+
+  std::u16string title = u"This is a title string";
+  delegate->ChangeTitle(title);
+  Label* title_label =
+      static_cast<Label*>(delegate->GetBubbleFrameView()->title());
+  EXPECT_EQ(title, title_label->GetDisplayTextForTesting());
+
+  ui::AXNodeData node_data;
+  title_label->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+  EXPECT_TRUE(
+      node_data.HasIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel));
+  EXPECT_EQ(
+      node_data.GetIntAttribute(ax::mojom::IntAttribute::kHierarchicalLevel),
+      1);
 }
 
 // Ensures that clicks are ignored for short time after view has been shown.
 TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksClose) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   delegate->SetShouldShowCloseButton(true);
@@ -1367,14 +1403,14 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksClose) {
 
   BubbleFrameView* frame = delegate->GetBubbleFrameView();
   test::ButtonTestApi(frame->close_)
-      .NotifyClick(ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::Point(),
+      .NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(),
                                   gfx::Point(), ui::EventTimeForNow(),
                                   ui::EF_NONE, ui::EF_NONE));
   EXPECT_FALSE(bubble->IsClosed());
 
   test::ButtonTestApi(frame->close_)
       .NotifyClick(ui::MouseEvent(
-          ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+          ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
           ui::EventTimeForNow() + base::Milliseconds(GetDoubleClickInterval()),
           ui::EF_NONE, ui::EF_NONE));
   EXPECT_TRUE(bubble->IsClosed());
@@ -1382,8 +1418,9 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksClose) {
 
 // Ensures that clicks are ignored for short time after view has been shown.
 TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksMinimize) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   delegate->SetCanMinimize(true);
@@ -1393,7 +1430,7 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksMinimize) {
 
   BubbleFrameView* frame = delegate->GetBubbleFrameView();
   test::ButtonTestApi(frame->minimize_)
-      .NotifyClick(ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::Point(),
+      .NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(),
                                   gfx::Point(), ui::EventTimeForNow(),
                                   ui::EF_NONE, ui::EF_NONE));
   EXPECT_FALSE(bubble->IsClosed());
@@ -1403,7 +1440,7 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksMinimize) {
       true);
   test::ButtonTestApi(frame->minimize_)
       .NotifyClick(ui::MouseEvent(
-          ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+          ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
           ui::EventTimeForNow() + base::Milliseconds(GetDoubleClickInterval()),
           ui::EF_NONE, ui::EF_NONE));
   EXPECT_TRUE(minimize_waiter.Wait());
@@ -1413,16 +1450,18 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksMinimize) {
 // Ensures that clicks are ignored for short time after anchor view bounds
 // changed.
 TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksAnchorBoundsChanged) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   delegate->SetCanMinimize(true);
   Widget* bubble =
       BubbleDialogDelegateView::CreateBubble(std::move(delegate_unique));
   bubble->Show();
-  ui::MouseEvent mouse_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                             ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+  ui::MouseEvent mouse_event(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), ui::EventTimeForNow(), ui::EF_NONE,
+                             ui::EF_NONE);
   BubbleFrameView* frame = delegate->GetBubbleFrameView();
   test::ButtonTestApi(frame->minimize_).NotifyClick(mouse_event);
   auto* widget = delegate->GetWidget();
@@ -1436,15 +1475,16 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksAnchorBoundsChanged) {
       base::Milliseconds(GetDoubleClickInterval()));
   anchor.widget().SetBounds(gfx::Rect(10, 10, 100, 100));
 
-  ui::MouseEvent mouse_event_1(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                               ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+  ui::MouseEvent mouse_event_1(ui::EventType::kMousePressed, gfx::Point(),
+                               gfx::Point(), ui::EventTimeForNow(), ui::EF_NONE,
+                               ui::EF_NONE);
   test::ButtonTestApi(ok_button).NotifyClick(mouse_event_1);
   test::ButtonTestApi(frame->minimize_).NotifyClick(mouse_event_1);
   EXPECT_FALSE(widget->IsClosed());
   EXPECT_FALSE(bubble->IsMinimized());
 
   test::ButtonTestApi(ok_button).NotifyClick(ui::MouseEvent(
-      ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+      ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
       ui::EventTimeForNow() + base::Milliseconds(GetDoubleClickInterval()),
       ui::EF_NONE, ui::EF_NONE));
   EXPECT_TRUE(widget->IsClosed());
@@ -1452,8 +1492,9 @@ TEST_F(BubbleFrameViewTest, IgnorePossiblyUnintendedClicksAnchorBoundsChanged) {
 
 // Ensures that layout is correct when the progress indicator is visible.
 TEST_F(BubbleFrameViewTest, LayoutWithProgressIndicator) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   Widget* bubble =
@@ -1474,8 +1515,9 @@ TEST_F(BubbleFrameViewTest, LayoutWithProgressIndicator) {
 
 // Close should be the next element after minimize.
 TEST_F(BubbleFrameViewTest, MinimizeBeforeClose) {
-  auto delegate_unique = std::make_unique<TestBubbleDialogDelegateView>();
-  TestBubbleDialogDelegateView* const delegate = delegate_unique.get();
+  auto delegate_unique =
+      std::make_unique<FrameViewTestBubbleDialogDelegateView>();
+  FrameViewTestBubbleDialogDelegateView* const delegate = delegate_unique.get();
   TestAnchor anchor(CreateParams(Widget::InitParams::TYPE_WINDOW));
   delegate->SetAnchorView(anchor.widget().GetContentsView());
   delegate->SetShouldShowCloseButton(true);

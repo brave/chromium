@@ -6,8 +6,8 @@ package org.chromium.device.bluetooth;
 
 import android.bluetooth.le.ScanFilter;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
 
 import java.util.List;
 
@@ -17,11 +17,9 @@ import java.util.List;
  */
 @JNINamespace("device")
 final class ChromeBluetoothScanFilter {
-    private ScanFilter mScanFilter;
+    private final ScanFilter mScanFilter;
 
-    /**
-     * Constructs a ChromeBluetoothScanFilter
-     */
+    /** Constructs a ChromeBluetoothScanFilter */
     public ChromeBluetoothScanFilter(ScanFilter filter) {
         mScanFilter = filter;
     }

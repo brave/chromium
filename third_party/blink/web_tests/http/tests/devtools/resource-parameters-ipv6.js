@@ -5,6 +5,8 @@
 import {TestRunner} from 'test_runner';
 import {NetworkTestRunner} from 'network_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests that resources panel shows form data parameters.\n`);
   await TestRunner.navigatePromise('http://[::1]:8000/devtools/resources/inspected-page.html');
@@ -32,7 +34,7 @@ import {NetworkTestRunner} from 'network_test_runner';
       return;
     TestRunner.addResult(request.url());
     TestRunner.addObject(
-        await NetworkTestRunner.buildHARLogEntry(request),
+        await NetworkTestRunner.buildHARLogEntry(request, {sanitize: false}),
         NetworkTestRunner.HARPropertyFormattersWithSize);
     TestRunner.completeTest();
   }

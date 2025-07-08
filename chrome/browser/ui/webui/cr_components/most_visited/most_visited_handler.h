@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "chrome/browser/preloading/new_tab_page_preload/new_tab_page_preload_pipeline_manager.h"
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
 #include "chrome/common/search/ntp_logging_events.h"
@@ -64,6 +65,9 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
                              UpdateMostVisitedTileCallback callback) override;
   void PrerenderMostVisitedTile(most_visited::mojom::MostVisitedTilePtr tile,
                                 bool is_hover_trigger) override;
+  void PreconnectMostVisitedTile(
+      most_visited::mojom::MostVisitedTilePtr tile) override;
+  void CancelPrerender() override;
   void OnMostVisitedTilesRendered(
       std::vector<most_visited::mojom::MostVisitedTilePtr> tiles,
       double time) override;
@@ -78,6 +82,7 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
  private:
   // ntp_tiles::MostVisitedSites::Observer:
   void OnURLsAvailable(
+      bool is_user_triggered,
       const std::map<ntp_tiles::SectionType, ntp_tiles::NTPTilesVector>&
           sections) override;
   void OnIconMadeAvailable(const GURL& site_url) override;
@@ -100,6 +105,7 @@ class MostVisitedHandler : public most_visited::mojom::MostVisitedPageHandler,
                           web_app::PreinstalledWebAppManager::Observer>
       preinstalled_web_app_observer_{this};
 
+  base::WeakPtr<NewTabPagePreloadPipelineManager> new_tab_page_preload_manager_;
   base::WeakPtrFactory<MostVisitedHandler> weak_ptr_factory_{this};
 };
 

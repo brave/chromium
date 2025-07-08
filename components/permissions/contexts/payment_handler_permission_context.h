@@ -5,13 +5,7 @@
 #ifndef COMPONENTS_PERMISSIONS_CONTEXTS_PAYMENT_HANDLER_PERMISSION_CONTEXT_H_
 #define COMPONENTS_PERMISSIONS_CONTEXTS_PAYMENT_HANDLER_PERMISSION_CONTEXT_H_
 
-#include "components/permissions/permission_context_base.h"
-
-class GURL;
-
-namespace permissions {
-class PermissionRequestID;
-}
+#include "components/permissions/content_setting_permission_context_base.h"
 
 namespace content {
 class WebContents;
@@ -20,7 +14,7 @@ class WebContents;
 namespace payments {
 
 class PaymentHandlerPermissionContext
-    : public permissions::PermissionContextBase {
+    : public permissions::ContentSettingPermissionContextBase {
  public:
   explicit PaymentHandlerPermissionContext(
       content::BrowserContext* browser_context);
@@ -35,10 +29,7 @@ class PaymentHandlerPermissionContext
  private:
   // PermissionContextBase
   void DecidePermission(
-      const permissions::PermissionRequestID& id,
-      const GURL& requesting_origin,
-      const GURL& embedding_origin,
-      bool user_gesture,
+      std::unique_ptr<permissions::PermissionRequestData> request_data,
       permissions::BrowserPermissionCallback callback) override;
 };
 

@@ -25,14 +25,14 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/dwrite_font_file_util_win.h"
-#include "content/public/common/content_features.h"
+#include "content/common/features.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
-#include "third_party/abseil-cpp/absl/utility/utility.h"
 #include "third_party/blink/public/common/font_unique_name_lookup/font_unique_name_table.pb.h"
 #include "third_party/blink/public/common/font_unique_name_lookup/icu_fold_case_util.h"
 #include "ui/gfx/win/direct_write.h"
@@ -46,9 +46,9 @@ namespace {
 
 // These are the fonts that Blink tries to load in getLastResortFallbackFont,
 // and will crash if none can be loaded.
-const wchar_t* kLastResortFontNames[] = {
-    L"Sans",     L"Arial",   L"MS UI Gothic",    L"Microsoft Sans Serif",
-    L"Segoe UI", L"Calibri", L"Times New Roman", L"Courier New"};
+constexpr auto kLastResortFontNames = std::to_array<const wchar_t*>(
+    {L"Sans", L"Arial", L"MS UI Gothic", L"Microsoft Sans Serif", L"Segoe UI",
+     L"Calibri", L"Times New Roman", L"Courier New"});
 
 struct RequiredFontStyle {
   const char16_t* family_name;
@@ -282,7 +282,7 @@ void DWriteFontProxyImpl::GetFamilyNames(UINT32 family_index,
     }
     CHECK_EQ(L'\0', name[length - 1]);
 
-    family_names.emplace_back(absl::in_place, base::WideToUTF16(locale.data()),
+    family_names.emplace_back(std::in_place, base::WideToUTF16(locale.data()),
                               base::WideToUTF16(name.data()));
   }
   std::move(callback).Run(std::move(family_names));
@@ -298,6 +298,8 @@ void DWriteFontProxyImpl::GetFontFileHandles(
   if (!collection_)
     return;
 
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   mswr::ComPtr<IDWriteFontFamily> family;
   HRESULT hr = collection_->GetFontFamily(family_index, &family);
   if (FAILED(hr)) {
@@ -323,9 +325,6 @@ void DWriteFontProxyImpl::GetFontFileHandles(
   std::vector<base::File> file_handles;
   // We pass handles for every path as the sandbox blocks direct access to font
   // files in the renderer.
-  // TODO(jam): if kDWriteFontProxyOnIO is removed also remove the exception
-  // for this class from thread_restrictions.h
-  base::ScopedAllowBlocking allow_io;
   for (const auto& font_path : path_set) {
     // Specify FLAG_WIN_EXCLUSIVE_WRITE to prevent base::File from opening the
     // file with FILE_SHARE_WRITE access. FLAG_WIN_EXCLUSIVE_WRITE doesn't
@@ -576,11 +575,10 @@ void DWriteFontProxyImpl::InitializeDirectWrite() {
   }
 
   // Temp code to help track down crbug.com/561873
-  for (size_t font = 0; font < std::size(kLastResortFontNames); font++) {
+  for (const wchar_t* font : kLastResortFontNames) {
     uint32_t font_index = 0;
     BOOL exists = FALSE;
-    if (SUCCEEDED(collection_->FindFamilyName(kLastResortFontNames[font],
-                                              &font_index, &exists)) &&
+    if (SUCCEEDED(collection_->FindFamilyName(font, &font_index, &exists)) &&
         exists && font_index != UINT32_MAX) {
       last_resort_fonts_.push_back(font_index);
     }

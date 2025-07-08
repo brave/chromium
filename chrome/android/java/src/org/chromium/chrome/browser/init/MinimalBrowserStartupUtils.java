@@ -4,9 +4,10 @@
 
 package org.chromium.chrome.browser.init;
 
-/**
- * Helper class for features that can be run in the minimal browser mode.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** Helper class for features that can be run in the minimal browser mode. */
+@NullMarked
 public class MinimalBrowserStartupUtils {
     public static final String TASK_TAG = "Servicification Startup Task";
 }

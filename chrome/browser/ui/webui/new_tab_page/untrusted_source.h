@@ -78,6 +78,8 @@ class UntrustedSource : public content::URLDataSource,
                             const std::string& position_y,
                             const std::string& scrim_display,
                             content::URLDataSource::GotDataCallback callback);
+  bool IsURLAllowed(const GURL& url);
+  bool IsURLBlockedByPolicy(const GURL& url);
 
   std::vector<content::URLDataSource::GotDataCallback>
       one_google_bar_callbacks_;
@@ -87,7 +89,7 @@ class UntrustedSource : public content::URLDataSource,
   raw_ptr<OneGoogleBarService, FlakyDanglingUntriaged> one_google_bar_service_;
   base::ScopedObservation<OneGoogleBarService, OneGoogleBarServiceObserver>
       one_google_bar_service_observation_{this};
-  absl::optional<base::TimeTicks> one_google_bar_load_start_time_;
+  std::optional<base::TimeTicks> one_google_bar_load_start_time_;
   raw_ptr<Profile, FlakyDanglingUntriaged> profile_;
 };
 

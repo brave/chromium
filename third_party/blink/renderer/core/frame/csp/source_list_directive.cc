@@ -4,20 +4,13 @@
 
 #include "third_party/blink/renderer/core/frame/csp/source_list_directive.h"
 
+#include "base/feature_list.h"
+#include "services/network/public/mojom/content_security_policy.mojom-blink.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/csp/csp_source.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-
-namespace {
-
-struct SupportedPrefixesStruct {
-  const char* prefix;
-  network::mojom::blink::CSPHashAlgorithm type;
-};
-
-}  // namespace
 
 namespace blink {
 
@@ -38,6 +31,7 @@ bool HasSourceMatchInList(
 
 bool IsScriptDirective(CSPDirectiveName directive_type) {
   return (directive_type == CSPDirectiveName::ScriptSrc ||
+          directive_type == CSPDirectiveName::ScriptSrcV2 ||
           directive_type == CSPDirectiveName::ScriptSrcAttr ||
           directive_type == CSPDirectiveName::ScriptSrcElem ||
           directive_type == CSPDirectiveName::DefaultSrc);
@@ -52,7 +46,7 @@ bool IsStyleDirective(CSPDirectiveName directive_type) {
 
 }  // namespace
 
-bool CSPSourceListAllows(
+CSPCheckResult CSPSourceListAllows(
     const network::mojom::blink::CSPSourceList& source_list,
     const network::mojom::blink::CSPSource& self_source,
     const KURL& url,
@@ -63,21 +57,29 @@ bool CSPSourceListAllows(
   // schemes, including custom schemes, must be explicitly listed in a source
   // list.
   if (source_list.allow_star) {
-    if (url.ProtocolIsInHTTPFamily() || url.ProtocolIs("ftp") ||
-        url.ProtocolIs("ws") || url.ProtocolIs("wss") ||
+    if (url.ProtocolIsInHTTPFamily() ||
         (!url.Protocol().empty() &&
-         EqualIgnoringASCIICase(url.Protocol(), self_source.scheme)))
-      return true;
-
-    return HasSourceMatchInList(source_list.sources, self_source.scheme, url,
-                                redirect_status);
+         EqualIgnoringASCIICase(url.Protocol(), self_source.scheme))) {
+      return CSPCheckResult::Allowed();
+    }
   }
+
   if (source_list.allow_self && CSPSourceMatchesAsSelf(self_source, url)) {
-    return true;
+    return CSPCheckResult::Allowed();
   }
 
-  return HasSourceMatchInList(source_list.sources, self_source.scheme, url,
-                              redirect_status);
+  if (HasSourceMatchInList(source_list.sources, self_source.scheme, url,
+                           redirect_status)) {
+    return CSPCheckResult::Allowed();
+  }
+
+  if (source_list.allow_star) {
+    if (url.ProtocolIs("ws") || url.ProtocolIs("wss")) {
+      return CSPCheckResult::AllowedOnlyIfWildcardMatchesWs();
+    }
+  }
+
+  return CSPCheckResult::Blocked();
 }
 
 bool CSPSourceListAllowNonce(
@@ -95,6 +97,30 @@ bool CSPSourceListAllowHash(
        source_list.hashes) {
     if (*hash == hash_value)
       return true;
+  }
+  return false;
+}
+
+bool CSPSourceListAllowEvalHash(
+    const network::mojom::blink::CSPSourceList& source_list,
+    const network::mojom::blink::CSPHashSource& hash_value) {
+  for (const network::mojom::blink::CSPHashSourcePtr& hash :
+       source_list.eval_hashes) {
+    if (*hash == hash_value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CSPSourceListAllowUrlHash(
+    const network::mojom::blink::CSPSourceList& source_list,
+    const network::mojom::blink::CSPHashSource& url_hash_value) {
+  for (const network::mojom::blink::CSPHashSourcePtr& url_hash :
+       source_list.url_hashes) {
+    if (*url_hash == url_hash_value) {
+      return true;
+    }
   }
   return false;
 }
@@ -122,6 +148,11 @@ bool CSPSourceListIsSelf(
 bool CSPSourceListIsHashOrNoncePresent(
     const network::mojom::blink::CSPSourceList& source_list) {
   return !source_list.nonces.empty() || !source_list.hashes.empty();
+}
+
+bool CSPSourceListIsEvalHashPresent(
+    const network::mojom::blink::CSPSourceList& source_list) {
+  return !source_list.eval_hashes.empty();
 }
 
 bool CSPSourceListAllowsURLBasedMatching(

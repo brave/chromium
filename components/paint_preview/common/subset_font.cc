@@ -18,6 +18,8 @@
 #include "base/functional/callback.h"
 #include "base/numerics/safe_conversions.h"
 #include "components/crash/core/common/crash_key.h"
+#include "skia/ext/font_utils.h"
+#include "third_party/skia/include/core/SkFontMgr.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 
@@ -134,19 +136,20 @@ sk_sp<SkData> SubsetFont(SkTypeface* typeface, const GlyphUsage& usage) {
   // Ensure the data is in SkTypeface format so it will deserialize when
   // embedded in an SkPicture. This is *not* a validation/sanitation and the
   // inner workings may vary by platform.
-  auto sk_subset_typeface = SkTypeface::MakeFromData(sk_data, final_ttc_index);
+  sk_sp<SkFontMgr> mgr = skia::DefaultFontMgr();
+  sk_sp<SkTypeface> sk_subset_typeface =
+      mgr->makeFromData(sk_data, final_ttc_index);
   if (!sk_subset_typeface) {
     return nullptr;
   }
 
   // For fonts with variations we need to force the right variant of SkTypeface
   // post subset.
-  const int axis_count = typeface->getVariationDesignPosition(nullptr, 0);
+  const int axis_count = typeface->getVariationDesignPosition({});
   if (axis_count > 0) {
     std::vector<SkFontArguments::VariationPosition::Coordinate> typeface_axis;
     typeface_axis.resize(axis_count);
-    if (typeface->getVariationDesignPosition(typeface_axis.data(),
-                                             typeface_axis.size()) > 0) {
+    if (typeface->getVariationDesignPosition(typeface_axis) > 0) {
       SkFontArguments::VariationPosition variation;
       variation.coordinates = typeface_axis.data();
       variation.coordinateCount = typeface_axis.size();
@@ -159,7 +162,7 @@ sk_sp<SkData> SubsetFont(SkTypeface* typeface, const GlyphUsage& usage) {
     }
   }
 
-  // TODO(crbug/1249178): Even after forcing the right variation,
+  // TODO(crbug.com/40197502): Even after forcing the right variation,
   // `sk_subset_typeface` may have the wrong SkFontStyle as there is no way to
   // manipulate the style while loading the font from data.
   return sk_subset_typeface->serialize(

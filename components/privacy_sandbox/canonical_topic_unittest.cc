@@ -22,9 +22,9 @@ using Topic = browsing_topics::Topic;
 constexpr int kAvailableTaxonomyVersion = 1;
 constexpr Topic kLowestTopicID = Topic(1);
 constexpr Topic kHighestTopicID = Topic(629);
-
-constexpr char kInvalidTopicLocalizedHistogramName[] =
-    "Settings.PrivacySandbox.InvalidTopicIdLocalized";
+constexpr Topic kNoFirstLevelTopicID = Topic(500);
+constexpr Topic kWithMoreChildrenTopicID = Topic(207);
+constexpr Topic kWithOneChildTopicID = Topic(250);
 
 }  // namespace
 
@@ -43,9 +43,6 @@ TEST_F(CanonicalTopicTest, LocalizedRepresentation) {
   EXPECT_EQ(l10n_util::GetStringUTF16(
                 IDS_PRIVACY_SANDBOX_TOPICS_TAXONOMY_V2_TOPIC_ID_629),
             last_topic.GetLocalizedRepresentation());
-
-  // Successful localizations should not result in any metrics being recorded.
-  histogram_tester.ExpectTotalCount(kInvalidTopicLocalizedHistogramName, 0);
 }
 
 TEST_F(CanonicalTopicTest, InvalidTopicIdLocalized) {
@@ -66,14 +63,6 @@ TEST_F(CanonicalTopicTest, InvalidTopicIdLocalized) {
         l10n_util::GetStringUTF16(IDS_PRIVACY_SANDBOX_TOPICS_INVALID_TOPIC),
         topic.GetLocalizedRepresentation());
   }
-
-  histogram_tester.ExpectTotalCount(kInvalidTopicLocalizedHistogramName, 3);
-  histogram_tester.ExpectBucketCount(kInvalidTopicLocalizedHistogramName,
-                                     too_low_id.topic_id().value(), 1);
-  histogram_tester.ExpectBucketCount(kInvalidTopicLocalizedHistogramName,
-                                     negative_id.topic_id().value(), 1);
-  histogram_tester.ExpectBucketCount(kInvalidTopicLocalizedHistogramName,
-                                     too_high_id.topic_id().value(), 1);
 }
 
 TEST_F(CanonicalTopicTest, ValueConversion) {
@@ -91,6 +80,26 @@ TEST_F(CanonicalTopicTest, ValueConversion) {
   converted_topic =
       CanonicalTopic::FromValue(base::Value(std::move(invalid_value)));
   EXPECT_FALSE(converted_topic);
+}
+
+TEST_F(CanonicalTopicTest, LocalizedDescription) {
+  CanonicalTopic empty_topic(kNoFirstLevelTopicID, kAvailableTaxonomyVersion);
+  CanonicalTopic topic_with_one_child(kWithOneChildTopicID,
+                                      kAvailableTaxonomyVersion);
+  CanonicalTopic topic_with_more_children(kWithMoreChildrenTopicID,
+                                          kAvailableTaxonomyVersion);
+
+  EXPECT_EQ(u"", empty_topic.GetLocalizedDescription());
+  EXPECT_EQ(l10n_util::GetStringUTF16(
+                IDS_PRIVACY_SANDBOX_TOPICS_TAXONOMY_V1_TOPIC_ID_253),
+            topic_with_one_child.GetLocalizedDescription());
+  EXPECT_EQ(l10n_util::GetStringFUTF16(
+                IDS_SETTINGS_TOPICS_PAGE_FIRST_LEVEL_TOPIC_DESCRIPTOR,
+                l10n_util::GetStringUTF16(
+                    IDS_PRIVACY_SANDBOX_TOPICS_TAXONOMY_V2_TOPIC_ID_482),
+                l10n_util::GetStringUTF16(
+                    IDS_PRIVACY_SANDBOX_TOPICS_TAXONOMY_V2_TOPIC_ID_519)),
+            topic_with_more_children.GetLocalizedDescription());
 }
 
 }  // namespace privacy_sandbox

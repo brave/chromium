@@ -6,11 +6,13 @@
 #define CHROME_BROWSER_ASH_ARC_INPUT_OVERLAY_UI_ACTION_VIEW_H_
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/arc/input_overlay/constants.h"
 #include "chrome/browser/ash/arc/input_overlay/db/proto/app_data.pb.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/views/view.h"
@@ -26,10 +28,12 @@ class RepositionController;
 class TouchPoint;
 
 // Represents the default label index. Default -1 means all the index.
-constexpr int kDefaultLabelIndex = -1;
+inline constexpr int kDefaultLabelIndex = -1;
 
 // ActionView is the view for each action.
 class ActionView : public views::View {
+  METADATA_HEADER(ActionView, views::View)
+
  public:
   ActionView(Action* action,
              DisplayOverlayController* display_overlay_controller);
@@ -39,9 +43,6 @@ class ActionView : public views::View {
 
   // Each type of the actions sets view content differently.
   virtual void SetViewContent(BindingOption binding_option) = 0;
-  // Each type of the actions acts differently on key binding change.
-  virtual void OnKeyBindingChange(ActionLabel* action_label,
-                                  ui::DomCode code) = 0;
   virtual void OnBindingToKeyboard() = 0;
   virtual void OnBindingToMouse(std::string mouse_action) = 0;
   // Each type of the actions shows different edit menu.
@@ -53,39 +54,25 @@ class ActionView : public views::View {
   void OnContentBoundsSizeChanged();
 
   // TODO(cuicuiruan): Remove virtual for post MVP once edit menu is ready for
-  // |ActionMove|.
-  // If |editing_label| == nullptr, set display mode for all the |ActionLabel|
-  // child views, otherwise, only set the display mode for |editing_label|.
+  // `ActionMove`.
+  // If `editing_label` == nullptr, set display mode for all the `ActionLabel`
+  // child views, otherwise, only set the display mode for `editing_label`.
   virtual void SetDisplayMode(const DisplayMode mode,
                               ActionLabel* editing_label = nullptr);
 
   // Set position from its center position.
   void SetPositionFromCenterPosition(const gfx::PointF& center_position);
-  // Show error message for action. If |ax_annouce| is true, ChromeVox
-  // annouces the |message| directly. Otherwise, |message| is added as the
-  // description of |editing_label|.
-  void ShowErrorMsg(const base::StringPiece& message,
-                    ActionLabel* editing_label,
-                    bool ax_annouce);
-  // Show info/edu message.
-  void ShowInfoMsg(const base::StringPiece& message,
-                   ActionLabel* editing_label);
-  void ShowFocusInfoMsg(const base::StringPiece& message, views::View* view);
+  void ShowFocusInfoMsg(std::string_view message, views::View* view);
   void RemoveMessage();
-  // Change binding for |action| binding to |input_element| and set
-  // |kEditedSuccess| on |action_label| if |action_label| is not nullptr.
-  // Otherwise, set |kEditedSuccess| to all |ActionLabel|.
+  // Change binding for `action` binding to `input_element` and set
+  // `kEditedSuccess` on `action_label` if `action_label` is not nullptr.
+  // Otherwise, set `kEditedSuccess` to all `ActionLabel`.
   void ChangeInputBinding(Action* action,
                           ActionLabel* action_label,
                           std::unique_ptr<InputElement> input_element);
-  // Reset binding to its previous binding before entering to the edit mode.
-  void OnResetBinding();
-  // Return true if it needs to show error message and also shows error message.
-  // Otherwise, don't show any error message and return false.
-  bool ShouldShowErrorMsg(ui::DomCode code,
-                          ActionLabel* editing_label = nullptr);
-  // Reacts to child label focus change.
-  void OnChildLabelUpdateFocus(ActionLabel* child, bool focus);
+
+  // Set the action view to be not new, for the action label.
+  void RemoveNewState();
 
   void ApplyMousePressed(const ui::MouseEvent& event);
   void ApplyMouseDragged(const ui::MouseEvent& event);
@@ -93,6 +80,8 @@ class ActionView : public views::View {
   void ApplyGestureEvent(ui::GestureEvent* event);
   bool ApplyKeyPressed(const ui::KeyEvent& event);
   bool ApplyKeyReleased(const ui::KeyEvent& event);
+
+  void ShowButtonOptionsMenu();
 
   // Callbacks related to reposition operations.
   void OnDraggingCallback();
@@ -106,7 +95,7 @@ class ActionView : public views::View {
 
   // Returns the `attached_view` position and update the attached_view.
   gfx::Point CalculateAttachViewPositionInRootWindow(
-      const gfx::Rect& root_window_bounds,
+      const gfx::Rect& available_bounds,
       const gfx::Point& window_content_origin,
       ArrowContainer* attached_view) const;
 
@@ -114,7 +103,9 @@ class ActionView : public views::View {
   void AddedToWidget() override;
 
   Action* action() { return action_; }
-  const std::vector<ActionLabel*>& labels() const { return labels_; }
+  const std::vector<raw_ptr<ActionLabel, VectorExperimental>>& labels() const {
+    return labels_;
+  }
   TouchPoint* touch_point() { return touch_point_; }
   DisplayOverlayController* display_overlay_controller() {
     return display_overlay_controller_;
@@ -124,7 +115,7 @@ class ActionView : public views::View {
   }
   int unbind_label_index() { return unbind_label_index_; }
 
-  absl::optional<gfx::Point> touch_point_center() const {
+  std::optional<gfx::Point> touch_point_center() const {
     return touch_point_center_;
   }
 
@@ -138,23 +129,21 @@ class ActionView : public views::View {
   // Reference to the owner class.
   const raw_ptr<DisplayOverlayController> display_overlay_controller_ = nullptr;
   // Labels for mapping hints.
-  std::vector<ActionLabel*> labels_;
+  std::vector<raw_ptr<ActionLabel, VectorExperimental>> labels_;
   // Current display mode.
   DisplayMode current_display_mode_ = DisplayMode::kNone;
   // Local center position of the touch point view.
-  absl::optional<gfx::Point> touch_point_center_;
+  std::optional<gfx::Point> touch_point_center_;
 
   // Touch point only shows up in the edit mode for users to align the position.
-  // This view owns the touch point as one of its children and |touch_point_|
+  // This view owns the touch point as one of its children and `touch_point_`
   // is for quick access.
   raw_ptr<TouchPoint, DanglingUntriaged> touch_point_ = nullptr;
   DisplayMode display_mode_ = DisplayMode::kView;
 
  private:
   friend class ActionViewTest;
-  friend class ViewTestBase;
-
-  void ShowButtonOptionsMenu();
+  friend class OverlayViewTestBase;
 
   void RemoveTouchPoint();
 

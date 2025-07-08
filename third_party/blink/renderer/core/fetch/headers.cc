@@ -12,6 +12,8 @@
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -96,15 +98,17 @@ void Headers::append(ScriptState* script_state,
     return;
   }
   // UseCounter for usages of "set-cookie" in kRequestGuard'ed Headers.
-  if (guard_ == kRequestGuard && name.LowerASCII() == "set-cookie") {
+  if (guard_ == kRequestGuard && EqualIgnoringASCIICase(name, "set-cookie")) {
     ExecutionContext* execution_context = ExecutionContext::From(script_state);
     UseCounter::Count(execution_context,
                       WebFeature::kFetchSetCookieInRequestGuardedHeaders);
   }
   // "4. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
-  if (guard_ == kRequestGuard && cors::IsForbiddenRequestHeader(name, value))
+  if (guard_ == kRequestGuard && !bypass_request_forbidden_header_check_ &&
+      cors::IsForbiddenRequestHeader(name, value)) {
     return;
+  }
   // 5. Otherwise, if guard is |request-no-cors|:
   if (guard_ == kRequestNoCorsGuard) {
     // Let |temporaryValue| be the result of getting name from |headers|’s
@@ -118,7 +122,7 @@ void Headers::append(ScriptState* script_state,
     if (temp.IsNull()) {
       temp = normalized_value;
     } else {
-      temp = temp + ", " + normalized_value;
+      temp = StrCat({temp, ", ", normalized_value});
     }
 
     // If |name|/|temporaryValue| is not a no-CORS-safelisted request-header,
@@ -159,7 +163,7 @@ void Headers::remove(ScriptState* script_state,
     return;
   }
   // UseCounter for usages of "set-cookie" in kRequestGuard'ed Headers.
-  if (guard_ == kRequestGuard && name.LowerASCII() == "set-cookie") {
+  if (guard_ == kRequestGuard && EqualIgnoringASCIICase(name, "set-cookie")) {
     ExecutionContext* execution_context = ExecutionContext::From(script_state);
     UseCounter::Count(execution_context,
                       WebFeature::kFetchSetCookieInRequestGuardedHeaders);
@@ -251,7 +255,7 @@ void Headers::set(ScriptState* script_state,
     return;
   }
   // UseCounter for usages of "set-cookie" in kRequestGuard'ed Headers.
-  if (guard_ == kRequestGuard && name.LowerASCII() == "set-cookie") {
+  if (guard_ == kRequestGuard && EqualIgnoringASCIICase(name, "set-cookie")) {
     ExecutionContext* execution_context = ExecutionContext::From(script_state);
     UseCounter::Count(execution_context,
                       WebFeature::kFetchSetCookieInRequestGuardedHeaders);

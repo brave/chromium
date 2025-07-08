@@ -4,8 +4,11 @@
 
 #include "components/custom_handlers/protocol_handler.h"
 
+#include <string_view>
+
 #include "base/json/values_util.h"
 #include "base/strings/escape.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
@@ -119,12 +122,12 @@ ProtocolHandler ProtocolHandler::CreateProtocolHandler(
     protocol = *protocol_in;
   if (const std::string* url_in = value.FindString("url"))
     url = *url_in;
-  absl::optional<base::Time> time_value =
+  std::optional<base::Time> time_value =
       base::ValueToTime(value.Find("last_modified"));
   // Treat invalid times as the default value.
   if (time_value)
     time = *time_value;
-  absl::optional<int> security_level_value = value.FindInt("security_level");
+  std::optional<int> security_level_value = value.FindInt("security_level");
   if (security_level_value) {
     security_level =
         blink::ProtocolHandlerSecurityLevelFrom(*security_level_value);
@@ -143,7 +146,7 @@ ProtocolHandler ProtocolHandler::CreateProtocolHandler(
 GURL ProtocolHandler::TranslateUrl(const GURL& url) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::string clean_url;
-  base::StringPiece url_spec(url.spec());
+  std::string_view url_spec(url.spec());
 
   // Remove credentials from the url if present, in order to mitigate the risk
   // of credential leakage

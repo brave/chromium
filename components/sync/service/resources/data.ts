@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {addWebUiListener, removeWebUiListener, WebUiListener} from 'chrome://resources/js/cr.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import type {WebUiListener} from 'chrome://resources/js/cr.js';
+import {addWebUiListener, removeWebUiListener} from 'chrome://resources/js/cr.js';
 
 import {aboutInfo} from './about.js';
-import {getAllNodes, requestIncludeSpecificsInitialState, requestListOfTypes, SyncNode, SyncNodeMap} from './chrome_sync.js';
+import type {SyncNode, SyncNodeMap} from './chrome_sync.js';
+import {getAllNodes, requestIncludeSpecificsInitialState, requestListOfTypes} from './chrome_sync.js';
 import {log} from './sync_log.js';
 
 const dumpToTextButton = document.querySelector<HTMLElement>('#dump-to-text');
@@ -45,7 +47,7 @@ const allFields = [
   'SERVER_PARENT_ID',
   'IS_DEL',
   'SERVER_IS_DEL',
-  'modelType',
+  'dataType',
   'SERVER_SPECIFICS',
   'SPECIFICS',
 ];
@@ -95,7 +97,7 @@ function serializeNode(node: SyncNode): string[] {
 }
 
 /**
- * @param type The name of a sync model type.
+ * @param type The name of a sync data type.
  * @return True if the type's checkbox is selected.
  */
 function isSelectedDatatype(type: string): boolean {
@@ -138,7 +140,7 @@ function makeDateUserAgentHeader() {
 /**
  * Builds a summary of current state and exports it as a downloaded file.
  *
- * @param nodesMap Summary of local state by model type.
+ * @param nodesMap Summary of local state by data type.
  */
 function triggerDataDownload(nodesMap: SyncNodeMap) {
   // Prepend a header with ISO date and useragent.

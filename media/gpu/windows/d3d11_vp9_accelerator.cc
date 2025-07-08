@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/windows/d3d11_vp9_accelerator.h"
 
 #include <string>
@@ -15,18 +20,11 @@ namespace media {
 
 using DecodeStatus = VP9Decoder::VP9Accelerator::Status;
 
-#define RETURN_ON_HR_FAILURE(expr_name, expr, code) \
-  do {                                              \
-    HRESULT expr_value = (expr);                    \
-    if (FAILED(expr_value)) {                       \
-      RecordFailure(#expr_name, code, expr_value);  \
-      return false;                                 \
-    }                                               \
-  } while (0)
-
 D3D11VP9Accelerator::D3D11VP9Accelerator(D3D11VideoDecoderClient* client,
                                          MediaLog* media_log)
-    : D3DAccelerator(client, media_log), status_feedback_(0) {}
+    : media_log_(media_log->Clone()), client_(client), status_feedback_(0) {
+  DCHECK(client_);
+}
 
 D3D11VP9Accelerator::~D3D11VP9Accelerator() = default;
 
@@ -38,7 +36,7 @@ scoped_refptr<VP9Picture> D3D11VP9Accelerator::CreateVP9Picture() {
 }
 
 bool D3D11VP9Accelerator::BeginFrame(const D3D11VP9Picture& pic) {
-  return video_decoder_wrapper_->WaitForFrameBegins(pic.picture_buffer());
+  return client_->GetWrapper()->WaitForFrameBegins(pic.picture_buffer());
 }
 
 void D3D11VP9Accelerator::CopyFrameParams(const D3D11VP9Picture& pic,
@@ -206,10 +204,10 @@ bool D3D11VP9Accelerator::SubmitDecoderBuffer(
     const DXVA_PicParams_VP9& pic_params,
     const D3D11VP9Picture& pic) {
   auto pic_params_buffer =
-      video_decoder_wrapper_->GetPictureParametersBuffer(sizeof(pic_params));
+      client_->GetWrapper()->GetPictureParametersBuffer(sizeof(pic_params));
   if (pic_params_buffer.size() < sizeof(pic_params)) {
-    RecordFailure("Insufficient picture parameter buffer size",
-                  D3D11StatusCode::kGetPicParamBufferFailed);
+    MEDIA_LOG(ERROR, media_log_)
+        << "Insufficient picture parameter buffer size";
     return false;
   }
 
@@ -220,19 +218,18 @@ bool D3D11VP9Accelerator::SubmitDecoderBuffer(
   }
 
   bool ok =
-      video_decoder_wrapper_
+      client_->GetWrapper()
           ->AppendBitstreamAndSliceDataWithStartCode<DXVA_Slice_VPx_Short>(
-              {pic.frame_hdr->data, pic.frame_hdr->frame_size});
+              pic.frame_hdr->data);
 
-  return ok && video_decoder_wrapper_->SubmitSlice();
+  return ok && client_->GetWrapper()->SubmitSlice();
 }
 
 DecodeStatus D3D11VP9Accelerator::SubmitDecode(
     scoped_refptr<VP9Picture> picture,
     const Vp9SegmentationParams& segmentation_params,
     const Vp9LoopFilterParams& loop_filter_params,
-    const Vp9ReferenceFrameVector& reference_frames,
-    base::OnceClosure on_finished_cb) {
+    const Vp9ReferenceFrameVector& reference_frames) {
   D3D11VP9Picture* pic = static_cast<D3D11VP9Picture*>(picture.get());
 
   if (!BeginFrame(*pic))
@@ -250,27 +247,16 @@ DecodeStatus D3D11VP9Accelerator::SubmitDecode(
   if (!SubmitDecoderBuffer(pic_params, *pic))
     return DecodeStatus::kFail;
 
-  if (!video_decoder_wrapper_->SubmitDecode()) {
+  if (!client_->GetWrapper()->SubmitDecode()) {
     return DecodeStatus::kFail;
   }
 
-  if (on_finished_cb)
-    std::move(on_finished_cb).Run();
   return DecodeStatus::kOk;
 }
 
 bool D3D11VP9Accelerator::OutputPicture(scoped_refptr<VP9Picture> picture) {
   D3D11VP9Picture* pic = static_cast<D3D11VP9Picture*>(picture.get());
   return client_->OutputResult(picture.get(), pic->picture_buffer());
-}
-
-bool D3D11VP9Accelerator::NeedsCompressedHeaderParsed() const {
-  return false;
-}
-
-bool D3D11VP9Accelerator::GetFrameContext(scoped_refptr<VP9Picture> picture,
-                                          Vp9FrameContext* frame_context) {
-  return false;
 }
 
 }  // namespace media

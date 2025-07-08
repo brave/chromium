@@ -16,10 +16,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/uuid.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/notification/download_notification_manager.h"
@@ -43,9 +42,12 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/apps/app_service/app_service_test.h"
 #include "chrome/common/pref_names.h"
+#include "components/services/app_service/public/cpp/app_types.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #endif
 
@@ -57,13 +59,8 @@ using testing::ValuesIn;
 
 namespace {
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-constexpr char kGalleryAppPdfEditNotificationTextParamName[] = "text";
-constexpr char kGalleryAppPdfEditNotificationTextParamValue[] =
-    "testCommandLabel";
-#endif
-
-const base::FilePath kTestPdfFilePath("test.pdf");
+const char kPdfMimeType[] = "application/pdf";
+const char kMp3MimeType[] = "audio/mpeg";
 
 const base::FilePath::CharType kDownloadItemTargetPathString[] =
     FILE_PATH_LITERAL("/tmp/TITLE.bin");
@@ -171,7 +168,24 @@ class DownloadItemNotificationTest : public testing::Test {
     return download_item_notification_->GetCommandLabel(command);
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_;
+#if BUILDFLAG(IS_CHROMEOS)
+  void InstallChromeApp(const std::string& app_id) {
+    apps::AppServiceProxy* proxy =
+        apps::AppServiceProxyFactory::GetForProfile(profile_);
+    WaitForAppServiceProxyReady(proxy);
+
+    std::vector<apps::AppPtr> apps;
+    apps::AppPtr app =
+        std::make_unique<apps::App>(apps::AppType::kChromeApp, app_id);
+    app->readiness = apps::Readiness::kReady;
+    app->policy_ids = {app_id};
+    apps.push_back(std::move(app));
+
+    proxy->OnApps(std::move(apps), apps::AppType::kChromeApp,
+                  /*should_notify_initialized=*/false);
+  }
+#endif
+
   content::BrowserTaskEnvironment task_environment_;
 
   std::unique_ptr<TestingProfileManager> profile_manager_;
@@ -241,13 +255,13 @@ TEST_F(DownloadItemNotificationTest, PauseAndResumeNotification) {
   // Pauses and makes sure the DownloadItem::Pause() is called.
   EXPECT_CALL(*download_item_, Pause()).Times(1);
   EXPECT_CALL(*download_item_, IsPaused()).WillRepeatedly(Return(true));
-  download_item_notification_->Click(0, absl::nullopt);
+  download_item_notification_->Click(0, std::nullopt);
   download_item_->NotifyObserversDownloadUpdated();
 
   // Resumes and makes sure the DownloadItem::Resume() is called.
   EXPECT_CALL(*download_item_, Resume(true)).Times(1);
   EXPECT_CALL(*download_item_, IsPaused()).WillRepeatedly(Return(false));
-  download_item_notification_->Click(0, absl::nullopt);
+  download_item_notification_->Click(0, std::nullopt);
   download_item_->NotifyObserversDownloadUpdated();
 }
 
@@ -264,7 +278,7 @@ TEST_F(DownloadItemNotificationTest, OpenDownload) {
   // Clicks and confirms that the OpenDownload() is called.
   EXPECT_CALL(*download_item_, OpenDownload()).Times(1);
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(_)).Times(0);
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 }
 
 TEST_F(DownloadItemNotificationTest, OpenWhenComplete) {
@@ -278,7 +292,7 @@ TEST_F(DownloadItemNotificationTest, OpenWhenComplete) {
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(true))
       .Times(1)
       .WillOnce(Return());
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
   EXPECT_CALL(*download_item_, GetOpenWhenComplete())
       .WillRepeatedly(Return(true));
 
@@ -286,7 +300,7 @@ TEST_F(DownloadItemNotificationTest, OpenWhenComplete) {
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(false))
       .Times(1)
       .WillOnce(Return());
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
   EXPECT_CALL(*download_item_, GetOpenWhenComplete())
       .WillRepeatedly(Return(false));
 
@@ -294,7 +308,7 @@ TEST_F(DownloadItemNotificationTest, OpenWhenComplete) {
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(true))
       .Times(1)
       .WillOnce(Return());
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
   EXPECT_CALL(*download_item_, GetOpenWhenComplete())
       .WillRepeatedly(Return(true));
 
@@ -353,7 +367,7 @@ TEST_F(DownloadItemNotificationTest, DeepScanning) {
   EXPECT_CALL(*download_item_, OpenDownload()).Times(0);
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(true)).Times(1);
   EXPECT_EQ(u"TITLE.bin is being scanned.", GetStatusString());
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 
   // Can be opened while scanning.
   enterprise_connectors::test::SetAnalysisConnector(
@@ -367,7 +381,7 @@ TEST_F(DownloadItemNotificationTest, DeepScanning) {
       )");
   EXPECT_CALL(*download_item_, OpenDownload()).Times(1);
   EXPECT_EQ(u"TITLE.bin is being scanned.", GetStatusString());
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 
   // Scanning finished, warning.
   EXPECT_CALL(*download_item_, IsDangerous()).WillRepeatedly(Return(true));
@@ -376,7 +390,7 @@ TEST_F(DownloadItemNotificationTest, DeepScanning) {
           Return(download::DOWNLOAD_DANGER_TYPE_SENSITIVE_CONTENT_WARNING));
   EXPECT_CALL(*download_item_, OpenDownload()).Times(0);
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(true)).Times(0);
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 
   // Scanning finished, blocked.
   EXPECT_CALL(*download_item_, IsDangerous()).WillRepeatedly(Return(true));
@@ -385,7 +399,7 @@ TEST_F(DownloadItemNotificationTest, DeepScanning) {
           Return(download::DOWNLOAD_DANGER_TYPE_SENSITIVE_CONTENT_BLOCK));
   EXPECT_CALL(*download_item_, OpenDownload()).Times(0);
   EXPECT_CALL(*download_item_, SetOpenWhenComplete(true)).Times(0);
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 
   // Scanning finished, safe.
   EXPECT_CALL(*download_item_, IsDangerous()).WillRepeatedly(Return(false));
@@ -394,70 +408,46 @@ TEST_F(DownloadItemNotificationTest, DeepScanning) {
   EXPECT_CALL(*download_item_, GetState())
       .WillRepeatedly(Return(download::DownloadItem::COMPLETE));
   EXPECT_CALL(*download_item_, OpenDownload()).Times(1);
-  download_item_notification_->Click(absl::nullopt, absl::nullopt);
+  download_item_notification_->Click(std::nullopt, std::nullopt);
 }
 
-// Test that PLATFORM_ACTION is added for pdf file if
-// kGalleryAppPdfEditNotification flag is enabled on CHROMEOS_ASH. It should not
-// be added for other build configs.
-TEST_F(DownloadItemNotificationTest, GalleryAppPdfEditNotification) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      ash::features::kGalleryAppPdfEditNotification,
-      {{kGalleryAppPdfEditNotificationTextParamName,
-        kGalleryAppPdfEditNotificationTextParamValue}});
-#endif
-
+// Test that EDIT_WITH_MEDIA_APP is added for pdf file on CHROMEOS.
+// It should not be added for other build configs.
+TEST_F(DownloadItemNotificationTest, NotificationActionsForPdf) {
   ON_CALL(*download_item_, GetState)
       .WillByDefault(Return(download::DownloadItem::COMPLETE));
   ON_CALL(*download_item_, IsDone).WillByDefault(Return(true));
-  ON_CALL(*download_item_, GetTargetFilePath)
-      .WillByDefault(testing::ReturnRef(kTestPdfFilePath));
+  ON_CALL(*download_item_, GetMimeType).WillByDefault(Return(kPdfMimeType));
 
   CreateDownloadItemNotification();
   auto actions = GetExtraActions();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  EXPECT_TRUE(base::Contains(*actions, DownloadCommands::PLATFORM_OPEN));
-  EXPECT_EQ(u"testCommandLabel",
-            GetCommandLabel(DownloadCommands::PLATFORM_OPEN));
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_TRUE(base::Contains(*actions, DownloadCommands::EDIT_WITH_MEDIA_APP));
+  EXPECT_EQ(u"Open and edit",
+            GetCommandLabel(DownloadCommands::EDIT_WITH_MEDIA_APP));
 #else
-  EXPECT_FALSE(base::Contains(*actions, DownloadCommands::PLATFORM_OPEN));
+  EXPECT_FALSE(base::Contains(*actions, DownloadCommands::EDIT_WITH_MEDIA_APP));
 #endif
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// Test that PLATFORM_OPEN is not added if a user's default app for pdf file is
-// not the Gallery app.
-TEST_F(DownloadItemNotificationTest,
-       GalleryAppPdfEditNotificationDefaultNonGallery) {
-  constexpr char kNonGalleryAppTaskId[] = "non-gallery-app|app|open";
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      ash::features::kGalleryAppPdfEditNotification,
-      {{kGalleryAppPdfEditNotificationTextParamName,
-        kGalleryAppPdfEditNotificationTextParamValue}});
-
-  base::Value::Dict suffix_dict;
-  suffix_dict.Set(".pdf", kNonGalleryAppTaskId);
-  profile_->GetTestingPrefService()->SetDict(prefs::kDefaultTasksBySuffix,
-                                             std::move(suffix_dict));
-  base::Value::Dict mime_dict;
-  mime_dict.Set("application/pdf", kNonGalleryAppTaskId);
-  profile_->GetTestingPrefService()->SetDict(prefs::kDefaultTasksByMimeType,
-                                             std::move(mime_dict));
-
+// Test that OPEN_WITH_MEDIA_APP is added for audio file on CHROMEOS.
+// It should not be added for other build configs.
+TEST_F(DownloadItemNotificationTest, NotificationActionsForAudio) {
   ON_CALL(*download_item_, GetState)
       .WillByDefault(Return(download::DownloadItem::COMPLETE));
   ON_CALL(*download_item_, IsDone).WillByDefault(Return(true));
-  ON_CALL(*download_item_, GetTargetFilePath)
-      .WillByDefault(testing::ReturnRef(kTestPdfFilePath));
+  ON_CALL(*download_item_, GetMimeType).WillByDefault(Return(kMp3MimeType));
 
   CreateDownloadItemNotification();
   auto actions = GetExtraActions();
-  EXPECT_FALSE(base::Contains(*actions, DownloadCommands::PLATFORM_OPEN));
-}
+
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_TRUE(base::Contains(*actions, DownloadCommands::OPEN_WITH_MEDIA_APP));
+  EXPECT_EQ(u"Open", GetCommandLabel(DownloadCommands::OPEN_WITH_MEDIA_APP));
+#else
+  EXPECT_FALSE(base::Contains(*actions, DownloadCommands::OPEN_WITH_MEDIA_APP));
 #endif
+}
+
 }  // namespace test

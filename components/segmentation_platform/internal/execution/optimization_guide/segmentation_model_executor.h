@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-#include "components/optimization_guide/core/base_model_executor.h"
+#include "components/optimization_guide/core/inference/base_model_executor.h"
 #include "components/segmentation_platform/public/model_provider.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 
@@ -40,7 +40,7 @@ class SegmentationModelExecutor : public optimization_guide::BaseModelExecutor<
   // optimization_guide::BaseModelExecutor overrides.
   bool Preprocess(const std::vector<TfLiteTensor*>& input_tensors,
                   const ModelProvider::Request& input) override;
-  absl::optional<ModelProvider::Response> Postprocess(
+  std::optional<ModelProvider::Response> Postprocess(
       const std::vector<const TfLiteTensor*>& output_tensors) override;
 };
 

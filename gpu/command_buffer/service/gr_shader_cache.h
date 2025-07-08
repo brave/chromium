@@ -16,7 +16,7 @@
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "gpu/raster_export.h"
-#include "third_party/skia/include/gpu/GrContextOptions.h"
+#include "third_party/skia/include/gpu/ganesh/GrContextOptions.h"
 
 class GrDirectContext;
 
@@ -115,7 +115,7 @@ class RASTER_EXPORT GrShaderCache
 
   Store::iterator AddToCache(CacheKey key, CacheData data);
   template <typename Iterator>
-  void EraseFromCache(Iterator it, bool overwriting);
+  void EraseFromCache(Iterator it);
 
   void WriteToDisk(const CacheKey& key, CacheData* data);
 

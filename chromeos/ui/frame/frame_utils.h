@@ -6,7 +6,9 @@
 #define CHROMEOS_UI_FRAME_FRAME_UTILS_H_
 
 #include "base/component_export.h"
+#include "chromeos/ui/base/window_state_type.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/widget/widget.h"
 
 namespace gfx {
@@ -36,15 +38,13 @@ bool ShouldUseRestoreFrame(const views::Widget* widget);
 // right/bottom. Takes into account the orientation of the display.
 SnapDirection GetSnapDirectionForWindow(aura::Window* window, bool left_top);
 
-// Returns the corner radius of frame based on the state of the `native_window`
-// associated with the frame.
+// Returns the radii of the window's corners.
 COMPONENT_EXPORT(CHROMEOS_UI_FRAME)
-int GetFrameCornerRadius(const aura::Window* native_window);
+gfx::RoundedCornersF GetWindowRoundedCorners();
 
-// Returns true if the ClassProperty associated with native_window of the frame
-// can effect the radius of the frame.
+// Returns true if the ClassProperty can effect the radii of the window.
 COMPONENT_EXPORT(CHROMEOS_UI_FRAME)
-bool CanPropertyEffectFrameRadius(const void* class_property_key);
+bool CanPropertyEffectWindowRoundedCorners(const void* class_property_key);
 
 }  // namespace chromeos
 

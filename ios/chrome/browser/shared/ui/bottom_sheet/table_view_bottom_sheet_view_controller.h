@@ -5,46 +5,34 @@
 #ifndef IOS_CHROME_BROWSER_SHARED_UI_BOTTOM_SHEET_TABLE_VIEW_BOTTOM_SHEET_VIEW_CONTROLLER_H_
 #define IOS_CHROME_BROWSER_SHARED_UI_BOTTOM_SHEET_TABLE_VIEW_BOTTOM_SHEET_VIEW_CONTROLLER_H_
 
-#import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_view_controller.h"
+#import "ios/chrome/browser/shared/ui/bottom_sheet/bottom_sheet_view_controller.h"
 
 // UI Base class for Bottom Sheets with a table view, such as Password or
 // Payments bottom sheets.
 @interface TableViewBottomSheetViewController
-    : ConfirmationAlertViewController <UITableViewDelegate>
+    : BottomSheetViewController <UITableViewDelegate>
 
-// Creates the table view which will display suggestions on the bottom sheet.
-- (UITableView*)createTableView;
+// Height of the parent view controller.
+@property(nonatomic, assign) CGFloat parentViewControllerHeight;
 
-// Performs the expand bottom sheet animation.
-- (void)expand:(NSInteger)numberOfRows;
-
-// Returns the estimated height of the bottom sheet.
-- (CGFloat)bottomSheetEstimatedHeight;
-
-// Returns the estimated height of a single row in the table view.
-- (CGFloat)tableViewEstimatedRowHeight;
+// Request to relaod data from the table view's data source.
+- (void)reloadTableViewData;
 
 // Returns the currently selected row.
 - (NSInteger)selectedRow;
 
-// Return the height of the table view.
-- (CGFloat)tableViewHeight;
+// Returns the width of the table view.
+- (CGFloat)tableViewWidth;
 
-// Select the first row in the table view.
-- (void)selectFirstRow;
+// Returns the cell's separator inset for the provided index path.
+- (UIEdgeInsets)separatorInsetForTableViewWidth:(CGFloat)tableViewWidth
+                                    atIndexPath:(NSIndexPath*)indexPath;
 
-// Returns the initial height of the bottom sheet while showing a single row.
-- (CGFloat)initialHeight;
+// Returns the cell's accessory type for the provided index path.
+- (UITableViewCellAccessoryType)accessoryType:(NSIndexPath*)indexPath;
 
-// Returns the desired height for the bottom sheet (can be larger than the
-// screen).
-- (CGFloat)fullHeight:(NSInteger)numberOfRows;
-
-// Enables scrolling of the table view.
-- (void)setTableViewScrollEnabled:(BOOL)enabled;
-
-// Returns the initial number of cells the user sees.
-- (CGFloat)initialNumberOfVisibleCells;
+// Sets appropriate margin sizes for password and payment autofill bottom sheets
+- (void)adjustTransactionsPrimaryActionButtonHorizontalConstraints;
 
 @end
 

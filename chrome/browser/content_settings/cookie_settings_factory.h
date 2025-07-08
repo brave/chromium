@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_CONTENT_SETTINGS_COOKIE_SETTINGS_FACTORY_H_
 #define CHROME_BROWSER_CONTENT_SETTINGS_COOKIE_SETTINGS_FACTORY_H_
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
 #include "chrome/browser/profiles/refcounted_profile_keyed_service_factory.h"
 
@@ -35,8 +35,6 @@ class CookieSettingsFactory : public RefcountedProfileKeyedServiceFactory {
   ~CookieSettingsFactory() override;
 
   // |RefcountedBrowserContextKeyedServiceFactory| methods:
-  void RegisterProfilePrefs(
-      user_prefs::PrefRegistrySyncable* registry) override;
   scoped_refptr<RefcountedKeyedService> BuildServiceInstanceFor(
       content::BrowserContext* context) const override;
 };

@@ -4,8 +4,6 @@
 
 #include "content/browser/scheduler/browser_task_queues.h"
 
-#include <array>
-#include <cstdint>
 #include <iterator>
 
 #include "base/check.h"
@@ -23,12 +21,6 @@
 namespace content {
 namespace {
 
-// (crbug/1375174): Make kServiceWorkerStorageControlResponse queue use high
-// priority.
-BASE_FEATURE(kServiceWorkerStorageControlResponseUseHighPriority,
-             "ServiceWorkerStorageControlResponseUseHighPriority",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 using BrowserTaskPriority = ::content::internal::BrowserTaskPriority;
 using QueueName = ::perfetto::protos::pbzero::SequenceManagerTask::QueueName;
 using InsertFencePosition =
@@ -45,7 +37,6 @@ QueueName GetControlTaskQueueName(BrowserThread::ID thread_id) {
       break;
   }
   NOTREACHED();
-  return QueueName::UNKNOWN_TQ;
 }
 
 QueueName GetRunAllPendingTaskQueueName(BrowserThread::ID thread_id) {
@@ -58,7 +49,6 @@ QueueName GetRunAllPendingTaskQueueName(BrowserThread::ID thread_id) {
       break;
   }
   NOTREACHED();
-  return QueueName::UNKNOWN_TQ;
 }
 
 QueueName GetUITaskQueueName(BrowserTaskQueues::QueueType queue_type) {
@@ -67,8 +57,6 @@ QueueName GetUITaskQueueName(BrowserTaskQueues::QueueType queue_type) {
       return QueueName::UI_BEST_EFFORT_TQ;
     case BrowserTaskQueues::QueueType::kDefault:
       return QueueName::UI_DEFAULT_TQ;
-    case BrowserTaskQueues::QueueType::kDeferrableUserBlocking:
-      return QueueName::UI_USER_BLOCKING_DEFERRABLE_TQ;
     case BrowserTaskQueues::QueueType::kUserBlocking:
       return QueueName::UI_USER_BLOCKING_TQ;
     case BrowserTaskQueues::QueueType::kUserVisible:
@@ -81,6 +69,8 @@ QueueName GetUITaskQueueName(BrowserTaskQueues::QueueType queue_type) {
       return QueueName::UI_SERVICE_WORKER_STORAGE_CONTROL_RESPONSE_TQ;
     case BrowserTaskQueues::QueueType::kBeforeUnloadBrowserResponse:
       return QueueName::UI_BEFORE_UNLOAD_BROWSER_RESPONSE_TQ;
+    case BrowserTaskQueues::QueueType::kStartup:
+      return QueueName::UI_STARTUP_TQ;
   }
 }
 
@@ -90,8 +80,6 @@ QueueName GetIOTaskQueueName(BrowserTaskQueues::QueueType queue_type) {
       return QueueName::IO_BEST_EFFORT_TQ;
     case BrowserTaskQueues::QueueType::kDefault:
       return QueueName::IO_DEFAULT_TQ;
-    case BrowserTaskQueues::QueueType::kDeferrableUserBlocking:
-      return QueueName::IO_USER_BLOCKING_DEFERRABLE_TQ;
     case BrowserTaskQueues::QueueType::kUserBlocking:
       return QueueName::IO_USER_BLOCKING_TQ;
     case BrowserTaskQueues::QueueType::kUserVisible:
@@ -104,6 +92,8 @@ QueueName GetIOTaskQueueName(BrowserTaskQueues::QueueType queue_type) {
       return QueueName::IO_SERVICE_WORKER_STORAGE_CONTROL_RESPONSE_TQ;
     case BrowserTaskQueues::QueueType::kBeforeUnloadBrowserResponse:
       return QueueName::IO_BEFORE_UNLOAD_BROWSER_RESPONSE_TQ;
+    case BrowserTaskQueues::QueueType::kStartup:
+      return QueueName::IO_STARTUP_TQ;
   }
 }
 
@@ -118,7 +108,6 @@ QueueName GetTaskQueueName(BrowserThread::ID thread_id,
       break;
   }
   NOTREACHED();
-  return QueueName::UNKNOWN_TQ;
 }
 
 }  // namespace
@@ -149,6 +138,12 @@ void BrowserTaskQueues::Handle::EnableAllExceptBestEffortQueues() {
                      base::Unretained(outer_)));
 }
 
+void BrowserTaskQueues::Handle::EnableTaskQueue(QueueType type) {
+  control_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&BrowserTaskQueues::EnableTaskQueue,
+                                base::Unretained(outer_), type));
+}
+
 void BrowserTaskQueues::Handle::ScheduleRunAllPendingTasksForTesting(
     base::OnceClosure on_pending_task_ran) {
   control_task_runner_->PostTask(
@@ -167,9 +162,7 @@ BrowserTaskQueues::BrowserTaskQueues(
         base::sequence_manager::TaskQueue::Spec(
             GetTaskQueueName(thread_id, static_cast<QueueType>(i))));
     queue_data_[i].voter = queue_data_[i].task_queue->CreateQueueEnabledVoter();
-    if (static_cast<QueueType>(i) != QueueType::kDefault) {
-      queue_data_[i].voter->SetVoteToEnable(false);
-    }
+    queue_data_[i].voter->SetVoteToEnable(false);
   }
 
   GetBrowserTaskQueue(QueueType::kUserVisible)
@@ -210,10 +203,10 @@ BrowserTaskQueues::BrowserTaskQueues(
 
 BrowserTaskQueues::~BrowserTaskQueues() {
   for (auto& queue : queue_data_) {
-    queue.task_queue->ShutdownTaskQueue();
+    queue.task_queue.reset();
   }
-  control_queue_->ShutdownTaskQueue();
-  run_all_pending_tasks_queue_->ShutdownTaskQueue();
+  control_queue_.reset();
+  run_all_pending_tasks_queue_.reset();
   handle_->OnTaskQueuesDestroyed();
 }
 
@@ -226,16 +219,6 @@ BrowserTaskQueues::CreateBrowserTaskRunners() const {
     task_runners[i] = queue_data_[i].task_queue->task_runner();
   }
   return task_runners;
-}
-
-std::array<std::unique_ptr<QueueEnabledVoter>,
-           BrowserTaskQueues::kNumQueueTypes>
-BrowserTaskQueues::CreateQueueEnabledVoters() const {
-  std::array<std::unique_ptr<QueueEnabledVoter>, kNumQueueTypes> voters;
-  for (size_t i = 0; i < voters.size(); ++i) {
-    voters[i] = queue_data_[i].task_queue->CreateQueueEnabledVoter();
-  }
-  return voters;
 }
 
 void BrowserTaskQueues::OnStartupComplete() {
@@ -251,11 +234,11 @@ void BrowserTaskQueues::OnStartupComplete() {
               ->GetQueuePriority()),
       BrowserTaskPriority::kHighestPriority);
   GetBrowserTaskQueue(QueueType::kServiceWorkerStorageControlResponse)
-      ->SetQueuePriority(
-          base::FeatureList::IsEnabled(
-              kServiceWorkerStorageControlResponseUseHighPriority)
-              ? BrowserTaskPriority::kHighPriority
-              : BrowserTaskPriority::kNormalPriority);
+      ->SetQueuePriority(BrowserTaskPriority::kHighPriority);
+}
+
+void BrowserTaskQueues::EnableTaskQueue(QueueType type) {
+  queue_data_[static_cast<size_t>(type)].voter->SetVoteToEnable(true);
 }
 
 void BrowserTaskQueues::EnableAllExceptBestEffortQueues() {
@@ -296,6 +279,13 @@ void BrowserTaskQueues::EndRunAllPendingTasksForTesting(
     for (const auto& queue : queue_data_) {
       queue.task_queue->RemoveFence();
     }
+  }
+}
+
+void BrowserTaskQueues::SetOnTaskCompletedHandler(
+    base::sequence_manager::TaskQueue::OnTaskCompletedHandler handler) {
+  for (auto& queue : queue_data_) {
+    queue.task_queue->SetOnTaskCompletedHandler(handler);
   }
 }
 

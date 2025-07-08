@@ -13,18 +13,26 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/webdata/autocomplete_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_profile_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_table.h"
-#include "components/autofill/core/browser/webdata/autofill_wallet_credential_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_wallet_metadata_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_wallet_offer_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_wallet_sync_bridge.h"
-#include "components/autofill/core/browser/webdata/autofill_wallet_usage_data_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/addresses/address_autofill_table.h"
+#include "components/autofill/core/browser/webdata/addresses/autofill_profile_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/addresses/contact_info_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/autocomplete/autocomplete_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/autocomplete/autocomplete_table.h"
+#include "components/autofill/core/browser/webdata/autofill_ai/entity_table.h"
+#include "components/autofill/core/browser/webdata/autofill_sync_metadata_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "components/autofill/core/browser/webdata/contact_info_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/autofill_wallet_credential_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/autofill_wallet_metadata_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/autofill_wallet_offer_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/autofill_wallet_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/autofill_wallet_usage_data_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/payments/payments_autofill_table.h"
+#include "components/autofill/core/browser/webdata/valuables/valuable_sync_bridge.h"
+#include "components/autofill/core/browser/webdata/valuables/valuables_table.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
+#include "components/plus_addresses/webdata/plus_address_table.h"
+#include "components/plus_addresses/webdata/plus_address_webdata_service.h"
 #include "components/search_engines/keyword_table.h"
 #include "components/search_engines/keyword_web_data_service.h"
 #include "components/signin/public/webdata/token_service_table.h"
@@ -45,7 +53,6 @@ void InitAutofillSyncBridgesOnDBSequence(
     scoped_refptr<base::SequencedTaskRunner> db_task_runner,
     const scoped_refptr<autofill::AutofillWebDataService>& autofill_web_data,
     const std::string& app_locale,
-    bool enable_contact_info_sync,
     autofill::AutofillWebDataBackend* autofill_backend) {
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 
@@ -53,10 +60,8 @@ void InitAutofillSyncBridgesOnDBSequence(
       autofill_web_data.get(), autofill_backend);
   autofill::AutofillProfileSyncBridge::CreateForWebDataServiceAndBackend(
       app_locale, autofill_backend, autofill_web_data.get());
-  if (enable_contact_info_sync) {
-    autofill::ContactInfoSyncBridge::CreateForWebDataServiceAndBackend(
-        autofill_backend, autofill_web_data.get());
-  }
+  autofill::ContactInfoSyncBridge::CreateForWebDataServiceAndBackend(
+      autofill_backend, autofill_web_data.get());
 }
 
 void InitWalletSyncBridgesOnDBSequence(
@@ -81,6 +86,16 @@ void InitWalletOfferSyncBridgeOnDBSequence(
       autofill_backend, autofill_web_data.get());
 }
 
+#if !BUILDFLAG(IS_IOS)
+void InitValuableSyncBridgeOnDBSequence(
+    scoped_refptr<base::SequencedTaskRunner> db_task_runner,
+    const scoped_refptr<autofill::AutofillWebDataService>& autofill_web_data,
+    autofill::AutofillWebDataBackend* autofill_backend) {
+  DCHECK(db_task_runner->RunsTasksInCurrentSequence());
+  autofill::ValuableSyncBridge::CreateForWebDataServiceAndBackend(
+      autofill_backend, autofill_web_data.get());
+}
+
 void InitWalletUsageDataSyncBridgeOnDBSequence(
     scoped_refptr<base::SequencedTaskRunner> db_task_runner,
     const scoped_refptr<autofill::AutofillWebDataService>& autofill_web_data,
@@ -90,6 +105,7 @@ void InitWalletUsageDataSyncBridgeOnDBSequence(
       CreateForWebDataServiceAndBackend(autofill_backend,
                                         autofill_web_data.get());
 }
+#endif
 
 void InitWalletCredentialSyncBridgeOnDBSequence(
     scoped_refptr<base::SequencedTaskRunner> db_task_runner,
@@ -103,23 +119,33 @@ void InitWalletCredentialSyncBridgeOnDBSequence(
 
 }  // namespace
 
-WebDataServiceWrapper::WebDataServiceWrapper() {}
+WebDataServiceWrapper::WebDataServiceWrapper() = default;
 
 WebDataServiceWrapper::WebDataServiceWrapper(
     const base::FilePath& context_path,
     const std::string& application_locale,
     const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
-    const ShowErrorCallback& show_error_callback) {
+    const ShowErrorCallback& show_error_callback,
+    os_crypt_async::OSCryptAsync* os_crypt,
+    bool use_in_memory_autofill_account_database) {
   base::FilePath path = context_path.Append(kWebDataFilename);
-  auto db_task_runner = base::ThreadPool::CreateSequencedTaskRunner(
+  auto db_task_runner = base::ThreadPool::CreateSequencedTaskRunnerForResource(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
-       base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      path);
   profile_database_ = base::MakeRefCounted<WebDatabaseService>(
       path, ui_task_runner, db_task_runner);
 
   // All tables objects that participate in managing the database must
   // be added here.
-  profile_database_->AddTable(std::make_unique<autofill::AutofillTable>());
+  profile_database_->AddTable(
+      std::make_unique<autofill::AddressAutofillTable>());
+  profile_database_->AddTable(std::make_unique<autofill::AutocompleteTable>());
+  profile_database_->AddTable(
+      std::make_unique<autofill::AutofillSyncMetadataTable>());
+  profile_database_->AddTable(
+      std::make_unique<autofill::PaymentsAutofillTable>());
+  profile_database_->AddTable(std::make_unique<autofill::EntityTable>());
   profile_database_->AddTable(std::make_unique<KeywordTable>());
   profile_database_->AddTable(std::make_unique<TokenServiceTable>());
 #if BUILDFLAG(USE_BLINK)
@@ -128,11 +154,13 @@ WebDataServiceWrapper::WebDataServiceWrapper(
   profile_database_->AddTable(
       std::make_unique<payments::WebAppManifestSectionTable>());
 #endif
-  profile_database_->LoadDatabase();
+  profile_database_->AddTable(
+      std::make_unique<plus_addresses::PlusAddressTable>());
+  profile_database_->LoadDatabase(os_crypt);
 
   profile_autofill_web_data_ =
-      base::MakeRefCounted<autofill::AutofillWebDataService>(
-          profile_database_, ui_task_runner, db_task_runner);
+      base::MakeRefCounted<autofill::AutofillWebDataService>(profile_database_,
+                                                             ui_task_runner);
   profile_autofill_web_data_->Init(
       base::BindOnce(show_error_callback, ERROR_LOADING_AUTOFILL));
 
@@ -141,8 +169,14 @@ WebDataServiceWrapper::WebDataServiceWrapper(
   keyword_web_data_->Init(
       base::BindOnce(show_error_callback, ERROR_LOADING_KEYWORD));
 
-  token_web_data_ = base::MakeRefCounted<TokenWebData>(
-      profile_database_, ui_task_runner, db_task_runner);
+  plus_address_web_data_ =
+      base::MakeRefCounted<plus_addresses::PlusAddressWebDataService>(
+          profile_database_, ui_task_runner);
+  plus_address_web_data_->Init(
+      base::BindOnce(show_error_callback, ERROR_LOADING_PLUS_ADDRESS));
+
+  token_web_data_ =
+      base::MakeRefCounted<TokenWebData>(profile_database_, ui_task_runner);
   token_web_data_->Init(
       base::BindOnce(show_error_callback, ERROR_LOADING_TOKEN));
 
@@ -154,43 +188,50 @@ WebDataServiceWrapper::WebDataServiceWrapper(
       base::BindOnce(show_error_callback, ERROR_LOADING_PAYMENT_MANIFEST));
 #endif
 
-  profile_autofill_web_data_->GetAutofillBackend(base::BindOnce(
-      &InitAutofillSyncBridgesOnDBSequence, db_task_runner,
-      profile_autofill_web_data_, application_locale,
-      base::FeatureList::IsEnabled(syncer::kSyncEnableContactInfoDataType)));
+  profile_autofill_web_data_->GetAutofillBackend(
+      base::BindOnce(&InitAutofillSyncBridgesOnDBSequence, db_task_runner,
+                     profile_autofill_web_data_, application_locale));
   profile_autofill_web_data_->GetAutofillBackend(
       base::BindOnce(&InitWalletSyncBridgesOnDBSequence, db_task_runner,
                      profile_autofill_web_data_, application_locale));
   profile_autofill_web_data_->GetAutofillBackend(
       base::BindOnce(&InitWalletOfferSyncBridgeOnDBSequence, db_task_runner,
                      profile_autofill_web_data_));
-  if (base::FeatureList::IsEnabled(syncer::kSyncAutofillWalletUsageData)) {
-    profile_autofill_web_data_->GetAutofillBackend(
-        base::BindOnce(&InitWalletUsageDataSyncBridgeOnDBSequence,
-                       db_task_runner, profile_autofill_web_data_));
-  }
+#if !BUILDFLAG(IS_IOS)
+  profile_autofill_web_data_->GetAutofillBackend(
+      base::BindOnce(&InitWalletUsageDataSyncBridgeOnDBSequence, db_task_runner,
+                     profile_autofill_web_data_));
+#endif
+
   if (base::FeatureList::IsEnabled(syncer::kSyncAutofillWalletCredentialData)) {
     profile_autofill_web_data_->GetAutofillBackend(
         base::BindOnce(&InitWalletCredentialSyncBridgeOnDBSequence,
                        db_task_runner, profile_autofill_web_data_));
   }
 
-  base::FilePath account_storage_path;
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-  // On Android and iOS, the account storage is persisted on disk.
-  account_storage_path = context_path.Append(kAccountWebDataFilename);
-#else
-  // On other (desktop) platforms, the account storage is in-memory.
-  account_storage_path = base::FilePath(WebDatabase::kInMemoryPath);
-#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+  const base::FilePath account_storage_path =
+      use_in_memory_autofill_account_database
+          ? base::FilePath(WebDatabase::kInMemoryPath)
+          : context_path.Append(kAccountWebDataFilename);
+
+  // Account database must run backend on same sequence as profile database. See
+  // comment in ChromeSyncClient::CreateDataTypeControllers.
   account_database_ = base::MakeRefCounted<WebDatabaseService>(
       account_storage_path, ui_task_runner, db_task_runner);
-  account_database_->AddTable(std::make_unique<autofill::AutofillTable>());
-  account_database_->LoadDatabase();
+  account_database_->AddTable(
+      std::make_unique<autofill::AutofillSyncMetadataTable>());
+  account_database_->AddTable(
+      std::make_unique<autofill::PaymentsAutofillTable>());
+#if !BUILDFLAG(IS_IOS)
+  if (base::FeatureList::IsEnabled(syncer::kSyncAutofillLoyaltyCard)) {
+    account_database_->AddTable(std::make_unique<autofill::ValuablesTable>());
+  }
+#endif
+  account_database_->LoadDatabase(os_crypt);
 
   account_autofill_web_data_ =
-      base::MakeRefCounted<autofill::AutofillWebDataService>(
-          account_database_, ui_task_runner, db_task_runner);
+      base::MakeRefCounted<autofill::AutofillWebDataService>(account_database_,
+                                                             ui_task_runner);
   account_autofill_web_data_->Init(
       base::BindOnce(show_error_callback, ERROR_LOADING_ACCOUNT_AUTOFILL));
   account_autofill_web_data_->GetAutofillBackend(
@@ -199,11 +240,17 @@ WebDataServiceWrapper::WebDataServiceWrapper(
   account_autofill_web_data_->GetAutofillBackend(
       base::BindOnce(&InitWalletOfferSyncBridgeOnDBSequence, db_task_runner,
                      account_autofill_web_data_));
-  if (base::FeatureList::IsEnabled(syncer::kSyncAutofillWalletUsageData)) {
+#if !BUILDFLAG(IS_IOS)
+  if (base::FeatureList::IsEnabled(syncer::kSyncAutofillLoyaltyCard)) {
     account_autofill_web_data_->GetAutofillBackend(
-        base::BindOnce(&InitWalletUsageDataSyncBridgeOnDBSequence,
-                       db_task_runner, account_autofill_web_data_));
+        base::BindOnce(&InitValuableSyncBridgeOnDBSequence, db_task_runner,
+                       account_autofill_web_data_));
   }
+  account_autofill_web_data_->GetAutofillBackend(
+      base::BindOnce(&InitWalletUsageDataSyncBridgeOnDBSequence, db_task_runner,
+                     account_autofill_web_data_));
+#endif
+
   if (base::FeatureList::IsEnabled(syncer::kSyncAutofillWalletCredentialData)) {
     account_autofill_web_data_->GetAutofillBackend(
         base::BindOnce(&InitWalletCredentialSyncBridgeOnDBSequence,
@@ -229,26 +276,31 @@ void WebDataServiceWrapper::Shutdown() {
 
 scoped_refptr<autofill::AutofillWebDataService>
 WebDataServiceWrapper::GetProfileAutofillWebData() {
-  return profile_autofill_web_data_.get();
+  return profile_autofill_web_data_;
 }
 
 scoped_refptr<autofill::AutofillWebDataService>
 WebDataServiceWrapper::GetAccountAutofillWebData() {
-  return account_autofill_web_data_.get();
+  return account_autofill_web_data_;
 }
 
 scoped_refptr<KeywordWebDataService>
 WebDataServiceWrapper::GetKeywordWebData() {
-  return keyword_web_data_.get();
+  return keyword_web_data_;
+}
+
+scoped_refptr<plus_addresses::PlusAddressWebDataService>
+WebDataServiceWrapper::GetPlusAddressWebData() {
+  return plus_address_web_data_;
 }
 
 scoped_refptr<TokenWebData> WebDataServiceWrapper::GetTokenWebData() {
-  return token_web_data_.get();
+  return token_web_data_;
 }
 
 #if BUILDFLAG(USE_BLINK)
 scoped_refptr<payments::PaymentManifestWebDataService>
 WebDataServiceWrapper::GetPaymentManifestWebData() {
-  return payment_manifest_web_data_.get();
+  return payment_manifest_web_data_;
 }
 #endif

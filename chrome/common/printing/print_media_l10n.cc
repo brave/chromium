@@ -5,6 +5,7 @@
 #include "chrome/common/printing/print_media_l10n.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
@@ -12,7 +13,6 @@
 #include "base/i18n/string_compare.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/strings/grit/components_strings.h"
@@ -30,13 +30,13 @@ namespace {
 // translated media names - see print_media_resources.grd.
 MediaSizeInfo InfoForStandardSize(const gfx::Size& size) {
   struct RegisteredMediaInfo {
-    base::StringPiece vendor_id;
+    std::string_view vendor_id;
     int l10n_id;
     MediaSizeGroup sort_group;
   };
 
-  static constexpr auto kMediaMap = base::MakeFixedFlatMapSorted<
-      gfx::Size, RegisteredMediaInfo>(
+  static constexpr auto kMediaMap = base::MakeFixedFlatMap<gfx::Size,
+                                                           RegisteredMediaInfo>(
       {
           {{2600, 3700},
            {"iso_a10_26x37mm", PRINT_PREVIEW_MEDIA_ISO_A10_26X37MM,
@@ -720,7 +720,7 @@ MediaSizeInfo InfoForStandardSize(const gfx::Size& size) {
         return result < 0;
       });
 
-  auto* it = kMediaMap.find(
+  auto it = kMediaMap.find(
       {size.width() / kMicronsPerPwgUnit, size.height() / kMicronsPerPwgUnit});
   return it != kMediaMap.end()
              ? MediaSizeInfo{std::string(it->second.vendor_id),

@@ -140,9 +140,9 @@ class HungPagesTableModel : public ui::TableModel,
 // renderer process.
 class HungRendererDialogView : public views::DialogDelegateView,
                                public HungPagesTableModel::Delegate {
- public:
-  METADATA_HEADER(HungRendererDialogView);
+  METADATA_HEADER(HungRendererDialogView, views::DialogDelegateView)
 
+ public:
   HungRendererDialogView(const HungRendererDialogView&) = delete;
   HungRendererDialogView& operator=(const HungRendererDialogView&) = delete;
 
@@ -189,6 +189,18 @@ class HungRendererDialogView : public views::DialogDelegateView,
   void ShowDialog(content::RenderWidgetHost* render_widget_host,
                   base::RepeatingClosure hang_monitor_restarter);
   void EndDialog(content::RenderWidgetHost* render_widget_host);
+
+  // Called when the dialog is accepted (i.e. the user clicked the "Wait"
+  // button).
+  void OnDialogAccepted();
+
+  // Called when the dialog is cancelled (i.e. the user clicked the "Exit Page"
+  // button).
+  void OnDialogCancelled();
+
+  // Called when the dialog is closed (i.e. the user closed the dialog without
+  // clicking any of the buttons, e.g. by pressing the ESC key).
+  void OnDialogClosed();
 
   // Restart the hang timer, giving the page more time.
   void RestartHangTimer();

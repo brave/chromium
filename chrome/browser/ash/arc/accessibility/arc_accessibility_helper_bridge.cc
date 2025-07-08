@@ -6,10 +6,6 @@
 
 #include <utility>
 
-#include "ash/components/arc/arc_browser_context_keyed_service_factory_base.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/components/arc/session/arc_service_manager.h"
-#include "ash/public/cpp/external_arc/message_center/arc_notification_surface.h"
 #include "ash/public/cpp/window_properties.h"
 #include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
@@ -23,11 +19,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/accessibility_private.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/ash/experiences/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "chromeos/ash/experiences/arc/message_center/arc_notification_surface.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
+#include "chromeos/ash/experiences/arc/session/arc_service_manager.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
-#include "components/language/core/browser/pref_names.h"
-#include "components/live_caption/pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/event_router.h"
@@ -143,65 +141,7 @@ class ArcAccessibilityHelperBridgeFactory
   ~ArcAccessibilityHelperBridgeFactory() override = default;
 };
 
-static constexpr const char* kTextShadowRaised =
-    "-2px -2px 4px rgba(0, 0, 0, 0.5)";
-static constexpr const char* kTextShadowDepressed =
-    "2px 2px 4px rgba(0, 0, 0, 0.5)";
-static constexpr const char* kTextShadowUniform =
-    "-1px 0px 0px black, 0px -1px 0px black, 1px 0px 0px black, 0px  1px 0px "
-    "black";
-static constexpr const char* kTextShadowDropShadow =
-    "0px 0px 2px rgba(0, 0, 0, 0.5), 2px 2px 2px black";
-
-std::string GetARGBFromPrefs(PrefService* prefs,
-                             const char* color_pref_name,
-                             const char* opacity_pref_name) {
-  const std::string color = prefs->GetString(color_pref_name);
-  if (color.empty()) {
-    return "";
-  }
-  const int opacity = prefs->GetInteger(opacity_pref_name);
-  return base::StringPrintf("rgba(%s,%s)", color.c_str(),
-                            base::NumberToString(opacity / 100.0).c_str());
-}
-
 }  // namespace
-
-ax::android::mojom::CaptionStylePtr GetCaptionStyleFromPrefs(
-    PrefService* prefs) {
-  DCHECK(prefs);
-
-  ax::android::mojom::CaptionStylePtr style =
-      ax::android::mojom::CaptionStyle::New();
-
-  style->text_size = prefs->GetString(prefs::kAccessibilityCaptionsTextSize);
-  style->text_color =
-      GetARGBFromPrefs(prefs, prefs::kAccessibilityCaptionsTextColor,
-                       prefs::kAccessibilityCaptionsTextOpacity);
-  style->background_color =
-      GetARGBFromPrefs(prefs, prefs::kAccessibilityCaptionsBackgroundColor,
-                       prefs::kAccessibilityCaptionsBackgroundOpacity);
-  style->user_locale = prefs->GetString(language::prefs::kApplicationLocale);
-
-  const std::string test_shadow =
-      prefs->GetString(prefs::kAccessibilityCaptionsTextShadow);
-  if (test_shadow == kTextShadowRaised) {
-    style->text_shadow_type = ax::android::mojom::CaptionTextShadowType::RAISED;
-  } else if (test_shadow == kTextShadowDepressed) {
-    style->text_shadow_type =
-        ax::android::mojom::CaptionTextShadowType::DEPRESSED;
-  } else if (test_shadow == kTextShadowUniform) {
-    style->text_shadow_type =
-        ax::android::mojom::CaptionTextShadowType::UNIFORM;
-  } else if (test_shadow == kTextShadowDropShadow) {
-    style->text_shadow_type =
-        ax::android::mojom::CaptionTextShadowType::DROP_SHADOW;
-  } else {
-    style->text_shadow_type = ax::android::mojom::CaptionTextShadowType::NONE;
-  }
-
-  return style;
-}
 
 // static
 void ArcAccessibilityHelperBridge::CreateFactory() {
@@ -214,17 +154,6 @@ ArcAccessibilityHelperBridge::GetForBrowserContext(
     content::BrowserContext* context) {
   return ArcAccessibilityHelperBridgeFactory::GetForBrowserContext(context);
 }
-
-// The list of prefs we want to observe.
-const char* const kCaptionStylePrefsToObserve[] = {
-    prefs::kAccessibilityCaptionsTextSize,
-    prefs::kAccessibilityCaptionsTextFont,
-    prefs::kAccessibilityCaptionsTextColor,
-    prefs::kAccessibilityCaptionsTextOpacity,
-    prefs::kAccessibilityCaptionsBackgroundColor,
-    prefs::kAccessibilityCaptionsTextShadow,
-    prefs::kAccessibilityCaptionsBackgroundOpacity,
-    language::prefs::kApplicationLocale};
 
 ArcAccessibilityHelperBridge::ArcAccessibilityHelperBridge(
     content::BrowserContext* browser_context,
@@ -239,13 +168,6 @@ ArcAccessibilityHelperBridge::ArcAccessibilityHelperBridge(
   pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
   pref_change_registrar_->Init(
       Profile::FromBrowserContext(browser_context)->GetPrefs());
-
-  for (const char* const pref_name : kCaptionStylePrefsToObserve) {
-    pref_change_registrar_->Add(
-        pref_name, base::BindRepeating(
-                       &ArcAccessibilityHelperBridge::UpdateCaptionSettings,
-                       base::Unretained(this)));
-  }
 
   arc_bridge_service_->accessibility_helper()->SetHost(this);
   arc_bridge_service_->accessibility_helper()->AddObserver(this);
@@ -278,7 +200,6 @@ void ArcAccessibilityHelperBridge::Shutdown() {
 
 void ArcAccessibilityHelperBridge::OnConnectionReady() {
   UpdateEnabledFeature();
-  UpdateCaptionSettings();
 
   AccessibilityManager* accessibility_manager = AccessibilityManager::Get();
   if (accessibility_manager) {
@@ -305,7 +226,6 @@ void ArcAccessibilityHelperBridge::OnAccessibilityEvent(
       break;
     case ax::android::mojom::AccessibilityFilterType::INVALID_ENUM_VALUE:
       NOTREACHED();
-      break;
   }
 }
 
@@ -330,11 +250,11 @@ void ArcAccessibilityHelperBridge::OnAction(
   if (!tree_source)
     return;
 
-  absl::optional<int32_t> window_id = tree_source->window_id();
+  std::optional<int32_t> window_id = tree_source->window_id();
   if (!window_id)
     return;
 
-  const absl::optional<ax::android::mojom::AccessibilityActionType> action =
+  const std::optional<ax::android::mojom::AccessibilityActionType> action =
       ax::android::ConvertToAndroidAction(data.action);
   if (!action.has_value())
     return;
@@ -422,7 +342,6 @@ void ArcAccessibilityHelperBridge::PopulateActionParameters(
       break;
     case ax::android::mojom::AccessibilityActionType::INVALID_ENUM_VALUE:
       NOTREACHED();
-      break;
   }
 }
 
@@ -475,16 +394,6 @@ ArcAccessibilityHelperBridge::GetFilterType() {
   return ax::android::mojom::AccessibilityFilterType::OFF;
 }
 
-void ArcAccessibilityHelperBridge::UpdateCaptionSettings() const {
-  ax::android::mojom::CaptionStylePtr caption_style =
-      GetCaptionStyleFromPrefs(profile_->GetPrefs());
-
-  if (!caption_style)
-    return;
-
-  accessibility_helper_instance_.SetCaptionStyle(std::move(caption_style));
-}
-
 void ArcAccessibilityHelperBridge::OnActionResult(const ui::AXActionData& data,
                                                   bool result) const {
   ax::android::AXTreeSourceAndroid* tree_source =
@@ -498,7 +407,7 @@ void ArcAccessibilityHelperBridge::OnActionResult(const ui::AXActionData& data,
 
 void ArcAccessibilityHelperBridge::OnGetTextLocationDataResult(
     const ui::AXActionData& data,
-    const absl::optional<gfx::Rect>& result_rect) const {
+    const std::optional<gfx::Rect>& result_rect) const {
   ax::android::AXTreeSourceAndroid* tree_source =
       tree_tracker_.GetFromTreeId(data.target_tree_id);
 
@@ -510,21 +419,21 @@ void ArcAccessibilityHelperBridge::OnGetTextLocationDataResult(
       OnGetTextLocationDataResultInternal(data.target_tree_id, result_rect));
 }
 
-absl::optional<gfx::Rect>
+std::optional<gfx::Rect>
 ArcAccessibilityHelperBridge::OnGetTextLocationDataResultInternal(
     const ui::AXTreeID& ax_tree_id,
-    const absl::optional<gfx::Rect>& result_rect) const {
+    const std::optional<gfx::Rect>& result_rect) const {
   if (!result_rect)
-    return absl::nullopt;
+    return std::nullopt;
 
   ax::android::AXTreeSourceAndroid* tree_source =
       tree_tracker_.GetFromTreeId(ax_tree_id);
   if (!tree_source)
-    return absl::nullopt;
+    return std::nullopt;
 
   aura::Window* window = tree_source->window();
   if (!window)
-    return absl::nullopt;
+    return std::nullopt;
 
   const gfx::RectF& rect_f =
       ScaleAndroidPxToChromePx(result_rect.value(), window);
@@ -614,8 +523,8 @@ void ArcAccessibilityHelperBridge::HandleFilterTypeAllEvent(
     if (surface_manager) {
       ash::ArcNotificationSurface* surface =
           surface_manager->GetArcSurface(event_data->notification_key.value());
-      if (surface) {
-        surface->GetAttachedHost()->NotifyAccessibilityEvent(
+      if (surface && surface->IsAttached()) {
+        surface->GetAttachedHost()->NotifyAccessibilityEventDeprecated(
             ax::mojom::Event::kTextSelectionChanged, true);
       }
     }

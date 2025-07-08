@@ -6,16 +6,12 @@
 
 #import <Foundation/Foundation.h>
 
+#import "base/apple/foundation_util.h"
 #import "base/feature_list.h"
-#import "base/mac/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/crash/core/app/crashpad.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/common/crash_report/chrome_crash_reporter_client.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace crash_helper {
 namespace common {
@@ -34,10 +30,6 @@ void SetUserEnabledUploading(bool enabled) {
       setBool:enabled ? YES : NO
        forKey:base::SysUTF8ToNSString(
                   common::kCrashReportsUploadingEnabledKey)];
-  // TODO(crbug.com/1260646) Remove old deprecated Breakpad key, remove this
-  // after a few milestones.
-  [app_group::GetGroupUserDefaults()
-      removeObjectForKey:@"CrashpadStartOnNextRun"];
 }
 
 base::FilePath CrashpadDumpLocation() {
@@ -46,10 +38,10 @@ base::FilePath CrashpadDumpLocation() {
     NSArray* cachesDirectories = NSSearchPathForDirectoriesInDomains(
         NSCachesDirectory, NSUserDomainMask, YES);
     NSString* cachePath = [cachesDirectories objectAtIndex:0];
-    return base::mac::NSStringToFilePath(cachePath).Append(
+    return base::apple::NSStringToFilePath(cachePath).Append(
         kCrashpadNoAppGroupFolder);
   }
-  return base::mac::NSStringToFilePath(path);
+  return base::apple::NSStringToFilePath(path);
 }
 
 bool StartCrashpad() {

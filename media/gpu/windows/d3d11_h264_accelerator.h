@@ -14,8 +14,7 @@
 #include "media/base/win/mf_helpers.h"
 #include "media/gpu/h264_decoder.h"
 #include "media/gpu/h264_dpb.h"
-#include "media/gpu/windows/d3d_accelerator.h"
-#include "media/video/picture.h"
+#include "media/gpu/windows/d3d11_video_decoder_client.h"
 #include "third_party/angle/include/EGL/egl.h"
 #include "third_party/angle/include/EGL/eglext.h"
 
@@ -25,8 +24,7 @@ constexpr int kRefFrameMaxCount = 16;
 
 class MediaLog;
 
-class D3D11H264Accelerator : public D3DAccelerator,
-                             public H264Decoder::H264Accelerator {
+class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
  public:
   D3D11H264Accelerator(D3D11VideoDecoderClient* client, MediaLog* media_log);
 
@@ -55,6 +53,8 @@ class D3D11H264Accelerator : public D3DAccelerator,
   Status SubmitDecode(scoped_refptr<H264Picture> pic) override;
   void Reset() override;
   bool OutputPicture(scoped_refptr<H264Picture> pic) override;
+  Status SetStream(base::span<const uint8_t> stream,
+                   const DecryptConfig* decrypt_config) override;
 
  private:
   // Gets a pic params struct with the constant fields set.
@@ -74,6 +74,9 @@ class D3D11H264Accelerator : public D3DAccelerator,
 
   void PicParamsFromPic(DXVA_PicParams_H264* pic_param, D3D11H264Picture* pic);
 
+  std::unique_ptr<MediaLog> media_log_;
+  raw_ptr<D3D11VideoDecoderClient> client_;
+
   // This information set at the beginning of a frame and saved for processing
   // all the slices.
   DXVA_PicEntry_H264 ref_frame_list_[kRefFrameMaxCount];
@@ -82,6 +85,8 @@ class D3D11H264Accelerator : public D3DAccelerator,
   USHORT frame_num_list_[kRefFrameMaxCount];
   UINT used_for_reference_flags_;
   USHORT non_existing_frame_flags_;
+
+  uint32_t current_frame_size_ = 0;
 };
 
 }  // namespace media

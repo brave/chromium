@@ -11,7 +11,6 @@
 #include "ash/system/accessibility/switch_access/switch_access_menu_view.h"
 #include "ash/system/tray/tray_background_view.h"
 #include "ash/system/tray/tray_constants.h"
-#include "ash/system/unified/unified_system_tray_view.h"
 #include "ash/wm/collision_detection/collision_detection_utils.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/compositor/layer.h"
@@ -56,7 +55,7 @@ void SwitchAccessMenuBubbleController::ShowMenu(
 
     menu_view_ = new SwitchAccessMenuView();
     menu_view_->SetBorder(views::CreateEmptyBorder(kBubbleMenuPadding));
-    bubble_view_->AddChildView(menu_view_.get());
+    bubble_view_->AddChildViewRaw(menu_view_.get());
 
     widget_ = views::BubbleDialogDelegateView::CreateBubble(bubble_view_);
     TrayBackgroundView::InitializeBubbleAnimations(widget_);
@@ -88,8 +87,8 @@ void SwitchAccessMenuBubbleController::ShowMenu(
 
   widget_->SetBounds(resting_bounds);
   widget_->Show();
-  bubble_view_->NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged,
-                                         true);
+  bubble_view_->NotifyAccessibilityEventDeprecated(
+      ax::mojom::Event::kChildrenChanged, true);
 
   // The resting bounds includes padding on each side of the menu.
   // Remove that before passing to the back button controller so the back button
@@ -113,14 +112,20 @@ void SwitchAccessMenuBubbleController::HideMenuBubble() {
   if (widget_)
     widget_->Hide();
   if (bubble_view_)
-    bubble_view_->NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged,
-                                           true);
+    bubble_view_->NotifyAccessibilityEventDeprecated(
+        ax::mojom::Event::kChildrenChanged, true);
 }
 
 void SwitchAccessMenuBubbleController::BubbleViewDestroyed() {
   bubble_view_ = nullptr;
   menu_view_ = nullptr;
   widget_ = nullptr;
+}
+
+void SwitchAccessMenuBubbleController::HideBubble(
+    const TrayBubbleView* bubble_view) {
+  // This function is currently not unused for bubbles of type
+  // `kAccessibilityBubble`, so can leave this empty.
 }
 
 }  // namespace ash

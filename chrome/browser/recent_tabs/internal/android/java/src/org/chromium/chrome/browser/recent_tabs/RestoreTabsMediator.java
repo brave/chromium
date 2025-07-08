@@ -4,8 +4,13 @@
 
 package org.chromium.chrome.browser.recent_tabs;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.recent_tabs.ForeignSessionHelper.ForeignSession;
@@ -34,59 +39,68 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Contains the logic to set the state of the model and react to events like clicks.
- */
+/** Contains the logic to set the state of the model and react to events like clicks. */
+@NullMarked
 public class RestoreTabsMediator {
-    private RestoreTabsControllerDelegate mDelegate;
+    // These fields are all effectively final and are set in initialize().
     private PropertyModel mModel;
-    private ForeignSessionHelper mForeignSessionHelper;
+    private Profile mProfile;
     private TabCreatorManager mTabCreatorManager;
     private BottomSheetController mBottomSheetController;
     private BottomSheetObserver mBottomSheetDismissedObserver;
-    private Profile mProfile;
-    private ForeignSession mDefaultSelectedSession;
 
-    public void initialize(PropertyModel model, Profile profile,
-            TabCreatorManager tabCreatorManager, BottomSheetController bottomSheetController) {
+    private @Nullable RestoreTabsControllerDelegate mDelegate;
+    private @Nullable ForeignSessionHelper mForeignSessionHelper;
+    private @Nullable ForeignSession mDefaultSelectedSession;
+
+    @Initializer
+    public void initialize(
+            PropertyModel model,
+            Profile profile,
+            TabCreatorManager tabCreatorManager,
+            BottomSheetController bottomSheetController) {
+        mModel = model;
+        mProfile = profile;
         mTabCreatorManager = tabCreatorManager;
         mBottomSheetController = bottomSheetController;
-        mProfile = profile;
-        mModel = model;
+
         mModel.set(RestoreTabsProperties.HOME_SCREEN_DELEGATE, createHomeScreenDelegate());
-        mModel.set(RestoreTabsProperties.DETAIL_SCREEN_BACK_CLICK_HANDLER, () -> {
-            setCurrentScreen(RestoreTabsProperties.ScreenType.HOME_SCREEN);
-            RestoreTabsMetricsHelper.recordBackPressTypeMetrics(
-                    RestoreTabsOnFREBackPressType.BACK_BUTTON);
-        });
+        mModel.set(
+                RestoreTabsProperties.DETAIL_SCREEN_BACK_CLICK_HANDLER,
+                () -> {
+                    setCurrentScreen(RestoreTabsProperties.ScreenType.HOME_SCREEN);
+                    RestoreTabsMetricsHelper.recordBackPressTypeMetrics(
+                            RestoreTabsOnFREBackPressType.BACK_BUTTON);
+                });
 
-        mBottomSheetDismissedObserver = new EmptyBottomSheetObserver() {
-            @Override
-            public void onSheetClosed(@BottomSheetController.StateChangeReason int reason) {
-                super.onSheetClosed(reason);
-                dismiss();
-                mBottomSheetController.removeObserver(mBottomSheetDismissedObserver);
+        mBottomSheetDismissedObserver =
+                new EmptyBottomSheetObserver() {
+                    @Override
+                    public void onSheetClosed(@BottomSheetController.StateChangeReason int reason) {
+                        super.onSheetClosed(reason);
+                        dismiss();
+                        mBottomSheetController.removeObserver(mBottomSheetDismissedObserver);
 
-                switch (reason) {
-                    case BottomSheetController.StateChangeReason.SWIPE:
-                        RestoreTabsMetricsHelper.recordResultActionHistogram(
-                                RestoreTabsOnFREResultAction.DISMISSED_SWIPE);
-                        RestoreTabsMetricsHelper.recordResultActionMetrics(
-                                RestoreTabsOnFREResultAction.DISMISSED_SWIPE);
-                        RestoreTabsMetricsHelper.recordRestoredTabsResultHistogram(
-                                RestoreTabsOnFRERestoredTabsResult.NONE);
-                        break;
-                    case BottomSheetController.StateChangeReason.TAP_SCRIM:
-                        RestoreTabsMetricsHelper.recordResultActionHistogram(
-                                RestoreTabsOnFREResultAction.DISMISSED_SCRIM);
-                        RestoreTabsMetricsHelper.recordResultActionMetrics(
-                                RestoreTabsOnFREResultAction.DISMISSED_SCRIM);
-                        RestoreTabsMetricsHelper.recordRestoredTabsResultHistogram(
-                                RestoreTabsOnFRERestoredTabsResult.NONE);
-                        break;
-                }
-            }
-        };
+                        switch (reason) {
+                            case BottomSheetController.StateChangeReason.SWIPE:
+                                RestoreTabsMetricsHelper.recordResultActionHistogram(
+                                        RestoreTabsOnFREResultAction.DISMISSED_SWIPE);
+                                RestoreTabsMetricsHelper.recordResultActionMetrics(
+                                        RestoreTabsOnFREResultAction.DISMISSED_SWIPE);
+                                RestoreTabsMetricsHelper.recordRestoredTabsResultHistogram(
+                                        RestoreTabsOnFRERestoredTabsResult.NONE);
+                                break;
+                            case BottomSheetController.StateChangeReason.TAP_SCRIM:
+                                RestoreTabsMetricsHelper.recordResultActionHistogram(
+                                        RestoreTabsOnFREResultAction.DISMISSED_SCRIM);
+                                RestoreTabsMetricsHelper.recordResultActionMetrics(
+                                        RestoreTabsOnFREResultAction.DISMISSED_SCRIM);
+                                RestoreTabsMetricsHelper.recordRestoredTabsResultHistogram(
+                                        RestoreTabsOnFRERestoredTabsResult.NONE);
+                                break;
+                        }
+                    }
+                };
     }
 
     public void destroy() {
@@ -106,7 +120,7 @@ public class RestoreTabsMediator {
             public void onAllTabsChosen() {
                 restoreChosenTabs();
                 RestoreTabsMetricsHelper.recordRestoredViaPromoScreenMetrics();
-            };
+            }
 
             @Override
             public void onReviewTabsChosen() {
@@ -116,16 +130,18 @@ public class RestoreTabsMediator {
         };
     }
 
-    public void showHomeScreen(ForeignSessionHelper foreignSessionHelper,
-            List<ForeignSession> sessions, RestoreTabsControllerDelegate delegate) {
+    public void showHomeScreen(
+            ForeignSessionHelper foreignSessionHelper,
+            List<ForeignSession> sessions,
+            RestoreTabsControllerDelegate delegate) {
         if (mModel.get(RestoreTabsProperties.CURRENT_SCREEN)
                 == RestoreTabsProperties.ScreenType.HOME_SCREEN) {
             return;
         }
 
         assert foreignSessionHelper != null && delegate != null && sessions.size() != 0;
-        mForeignSessionHelper = foreignSessionHelper;
         mDelegate = delegate;
+        mForeignSessionHelper = foreignSessionHelper;
         setDeviceListItems(sessions);
         setTabListItems();
 
@@ -186,9 +202,10 @@ public class RestoreTabsMediator {
         ForeignSession previousSelection = mModel.get(RestoreTabsProperties.SELECTED_DEVICE);
 
         // Sort the incoming list of foreign sessions by the most recent modified time.
-        Collections.sort(sessions,
-                (ForeignSession s1,
-                        ForeignSession s2) -> Long.compare(s2.modifiedTime, s1.modifiedTime));
+        Collections.sort(
+                sessions,
+                (ForeignSession s1, ForeignSession s2) ->
+                        Long.compare(s2.modifiedTime, s1.modifiedTime));
         ForeignSession newSelection = sessions.get(0);
         // Set the default selected session for metrics collection to the last used session.
         mDefaultSelectedSession = sessions.get(0);
@@ -200,15 +217,19 @@ public class RestoreTabsMediator {
             if (previousSelection != null && session.tag.equals(previousSelection.tag)) {
                 newSelection = session;
             }
-            PropertyModel model = ForeignSessionItemProperties.create(
-                    /*session=*/session, /*isSelected=*/false, /*onClickListener=*/() -> {
-                        setSelectedDeviceItem(session);
-                        setCurrentScreen(RestoreTabsProperties.ScreenType.HOME_SCREEN);
+            PropertyModel model =
+                    ForeignSessionItemProperties.create(
+                            /* session= */ session,
+                            /* isSelected= */ false,
+                            /* onClickListener= */ () -> {
+                                setSelectedDeviceItem(session);
+                                setCurrentScreen(RestoreTabsProperties.ScreenType.HOME_SCREEN);
 
-                        if (session != mDefaultSelectedSession) {
-                            RestoreTabsMetricsHelper.recordNonDefaultDeviceSelectionMetrics();
-                        }
-                    });
+                                if (session != mDefaultSelectedSession) {
+                                    RestoreTabsMetricsHelper
+                                            .recordNonDefaultDeviceSelectionMetrics();
+                                }
+                            });
             sessionItems.add(new ListItem(DetailItemType.DEVICE, model));
         }
 
@@ -227,8 +248,9 @@ public class RestoreTabsMediator {
 
         ModelList allItems = mModel.get(RestoreTabsProperties.DEVICE_MODEL_LIST);
         for (ListItem item : allItems) {
-            boolean isSelected = selectedSession.equals(
-                    item.model.get(ForeignSessionItemProperties.SESSION_PROFILE));
+            boolean isSelected =
+                    selectedSession.equals(
+                            item.model.get(ForeignSessionItemProperties.SESSION_PROFILE));
             item.model.set(ForeignSessionItemProperties.IS_SELECTED, isSelected);
         }
 
@@ -238,12 +260,12 @@ public class RestoreTabsMediator {
     }
 
     /**
-     * Sets the tab items and creates the corresponding models for the
-     * tab item entries on the tab list page. All tabs will be selected by default.
+     * Sets the tab items and creates the corresponding models for the tab item entries on the tab
+     * list page. All tabs will be selected by default.
      */
     @VisibleForTesting
     public void setTabListItems() {
-        // TODO(crbug.com/1429406): Refactor ForeignSessionHelper to retrieve only the
+        // TODO(crbug.com/40262659): Refactor ForeignSessionHelper to retrieve only the
         // necessary data instead of preloading all the sessions.
         ForeignSession session = mModel.get(RestoreTabsProperties.SELECTED_DEVICE);
         assert session != null;
@@ -260,9 +282,12 @@ public class RestoreTabsMediator {
         ModelList tabItems = mModel.get(RestoreTabsProperties.REVIEW_TABS_MODEL_LIST);
         tabItems.clear();
         for (ForeignSessionTab tab : tabs) {
-            PropertyModel model = TabItemProperties.create(/*tab=*/tab, /*isSelected=*/true);
+            PropertyModel model = TabItemProperties.create(/* tab= */ tab, /* isSelected= */ true);
             model.set(
-                    TabItemProperties.ON_CLICK_LISTENER, () -> { toggleTabSelectedState(model); });
+                    TabItemProperties.ON_CLICK_LISTENER,
+                    () -> {
+                        toggleTabSelectedState(model);
+                    });
             tabItems.add(new ListItem(DetailItemType.TAB, model));
         }
     }
@@ -299,17 +324,22 @@ public class RestoreTabsMediator {
     @VisibleForTesting
     public void setCurrentScreen(int screenType) {
         if (screenType == RestoreTabsProperties.ScreenType.DEVICE_SCREEN) {
-            mModel.set(RestoreTabsProperties.DETAIL_SCREEN_MODEL_LIST,
+            mModel.set(
+                    RestoreTabsProperties.DETAIL_SCREEN_MODEL_LIST,
                     mModel.get(RestoreTabsProperties.DEVICE_MODEL_LIST));
-            mModel.set(RestoreTabsProperties.DETAIL_SCREEN_TITLE,
+            mModel.set(
+                    RestoreTabsProperties.DETAIL_SCREEN_TITLE,
                     R.string.restore_tabs_device_screen_sheet_title);
             mModel.set(RestoreTabsProperties.REVIEW_TABS_SCREEN_DELEGATE, null);
         } else if (screenType == RestoreTabsProperties.ScreenType.REVIEW_TABS_SCREEN) {
-            mModel.set(RestoreTabsProperties.DETAIL_SCREEN_MODEL_LIST,
+            mModel.set(
+                    RestoreTabsProperties.DETAIL_SCREEN_MODEL_LIST,
                     mModel.get(RestoreTabsProperties.REVIEW_TABS_MODEL_LIST));
-            mModel.set(RestoreTabsProperties.DETAIL_SCREEN_TITLE,
+            mModel.set(
+                    RestoreTabsProperties.DETAIL_SCREEN_TITLE,
                     R.string.restore_tabs_review_tabs_screen_sheet_title);
-            mModel.set(RestoreTabsProperties.REVIEW_TABS_SCREEN_DELEGATE,
+            mModel.set(
+                    RestoreTabsProperties.REVIEW_TABS_SCREEN_DELEGATE,
                     createReviewTabsScreenDelegate());
         } else {
             mModel.set(RestoreTabsProperties.DETAIL_SCREEN_MODEL_LIST, null);
@@ -344,7 +374,7 @@ public class RestoreTabsMediator {
             public void onSelectedTabsChosen() {
                 restoreChosenTabs();
                 RestoreTabsMetricsHelper.recordRestoredViaReviewTabsScreenMetrics();
-            };
+            }
         };
     }
 
@@ -361,19 +391,24 @@ public class RestoreTabsMediator {
             }
         }
 
-        // TODO(crbug.com/1426921): Consider adding a spinner if restoring the tabs becomes
+        // Get the tab switcher's current tab list model size.
+        assumeNonNull(mDelegate);
+        int currentGTSTabListModelSize = mDelegate.getGTSTabListModelSize();
+
+        // TODO(crbug.com/40261552): Consider adding a spinner if restoring the tabs becomes
         // a batched process.
         assert tabs.size() > 0 && mForeignSessionHelper != null;
         mForeignSessionHelper.openForeignSessionTabsAsBackgroundTabs(
                 tabs, mModel.get(RestoreTabsProperties.SELECTED_DEVICE), mTabCreatorManager);
 
-        if (!mDelegate.getSkipFeatureEngagementParam().getValue()) {
-            TrackerFactory.getTrackerForProfile(mProfile).notifyEvent(
-                    EventConstants.RESTORE_TABS_PROMO_USED);
-        }
+        TrackerFactory.getTrackerForProfile(mProfile)
+                .notifyEvent(EventConstants.RESTORE_TABS_PROMO_USED);
 
         recordTabRestorationMetrics(tabs, selectedTabs);
         mModel.set(RestoreTabsProperties.VISIBLE, false);
+
+        // After restoration scroll GTS to the first restored tab in the tab list.
+        mDelegate.scrollGTSToRestoredTabs(currentGTSTabListModelSize);
     }
 
     private void recordTabRestorationMetrics(List<ForeignSessionTab> tabs, ModelList selectedTabs) {

@@ -9,15 +9,16 @@
 #include <memory>
 
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/policy/messaging_layer/util/reporting_server_connector.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
+#include "components/reporting/util/statusor.h"
 #include "services/network/test/test_url_loader_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 namespace ash::system {
 class ScopedFakeStatisticsProvider;
 
@@ -26,7 +27,7 @@ class ScopedFakeStatisticsProvider;
 
 namespace reporting {
 
-constexpr char kFakeDmToken[] = "FAKE_DM_TOKEN";
+inline constexpr char kFakeDmToken[] = "FAKE_DM_TOKEN";
 
 class EncryptedReportingClient;
 
@@ -45,9 +46,8 @@ class ReportingServerConnector::TestEnvironment {
 
   void SimulateResponseForRequest(size_t index);
 
-  void SimulateCustomResponseForRequest(
-      size_t index,
-      absl::optional<base::Value::Dict> response);
+  void SimulateCustomResponseForRequest(size_t index,
+                                        StatusOr<base::Value::Dict> response);
 
   void SetDMToken(const std::string& dm_token) const;
 
@@ -55,7 +55,7 @@ class ReportingServerConnector::TestEnvironment {
       std::unique_ptr<EncryptedReportingClient> encrypted_reporting_client);
 
  private:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<ash::system::ScopedFakeStatisticsProvider>
       fake_statistics_provider_;
 #endif

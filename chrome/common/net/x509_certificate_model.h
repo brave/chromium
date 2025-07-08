@@ -6,13 +6,15 @@
 #define CHROME_COMMON_NET_X509_CERTIFICATE_MODEL_H_
 
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/time/time.h"
-#include "net/cert/pki/parse_certificate.h"
-#include "net/cert/pki/parse_name.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
+#include "third_party/boringssl/src/pki/parse_certificate.h"
+#include "third_party/boringssl/src/pki/parse_name.h"
 
 // This namespace defines a set of functions to be used in UI-related bits of
 // X509 certificates.
@@ -23,17 +25,15 @@ struct Extension {
   std::string value;
 };
 
-struct NotPresent : absl::monostate {};
-struct Error : absl::monostate {};
-using OptionalStringOrError = absl::variant<Error, NotPresent, std::string>;
+struct NotPresent : std::monostate {};
+struct Error : std::monostate {};
+using OptionalStringOrError = std::variant<Error, NotPresent, std::string>;
 
 class X509CertificateModel {
  public:
   // Construct an X509CertificateModel from |cert_data|, which must must not be
-  // nullptr.  |nickname| may optionally be provided as a platform-specific
-  // nickname for the certificate, if available.
-  X509CertificateModel(bssl::UniquePtr<CRYPTO_BUFFER> cert_data,
-                       std::string nickname);
+  // nullptr.
+  explicit X509CertificateModel(bssl::UniquePtr<CRYPTO_BUFFER> cert_data);
   X509CertificateModel(X509CertificateModel&& other);
   X509CertificateModel& operator=(X509CertificateModel&& other) = default;
   ~X509CertificateModel();
@@ -42,18 +42,11 @@ class X509CertificateModel {
   // These methods are always safe to call even if |cert_data| could not be
   // parsed.
 
-  // Returns hex SHA256 hash of the certificate data.
+  // Returns lower case hex SHA256 hash of the certificate data.
   std::string HashCertSHA256() const;
-  // Returns space-separated and line wrapped hex SHA256 hash of the
-  // certificate data.
-  std::string HashCertSHA256WithSeparators() const;
-  // Returns space-separated and line wrapped hex SHA1 hash of the certificate
-  // data.
-  std::string HashCertSHA1WithSeparators() const;
 
   // Get something that can be used as a title for the certificate, using the
   // following priority:
-  //   |nickname| passed to constructor
   //   subject commonName
   //   full subject
   //   dnsName or email address from subjectAltNames
@@ -66,6 +59,9 @@ class X509CertificateModel {
 
   // ---------------------------------------------------------------------------
   // The rest of the methods should only be called if |is_valid()| returns true.
+
+  // Returns lower case hex SHA256 hash of the SPKI.
+  std::string HashSpkiSHA256() const;
 
   std::string GetVersion() const;
   std::string GetSerialNumberHexified() const;
@@ -100,8 +96,8 @@ class X509CertificateModel {
   // extension.value fields to describe extensions that are critical or
   // non-critical.
   std::vector<Extension> GetExtensions(
-      base::StringPiece critical_label,
-      base::StringPiece non_critical_label) const;
+      std::string_view critical_label,
+      std::string_view non_critical_label) const;
 
   std::string ProcessSecAlgorithmSignature() const;
   std::string ProcessSecAlgorithmSubjectPublicKey() const;
@@ -112,29 +108,26 @@ class X509CertificateModel {
   std::string ProcessRawBitsSignatureWrap() const;
 
  private:
-  bool ParseExtensions(const net::der::Input& extensions_tlv);
-  std::string ProcessExtension(base::StringPiece critical_label,
-                               base::StringPiece non_critical_label,
-                               const net::ParsedExtension& extension) const;
-  absl::optional<std::string> ProcessExtensionData(
-      const net::ParsedExtension& extension) const;
-
-  // Externally provided "nickname" for the cert.
-  std::string nickname_;
+  bool ParseExtensions(const bssl::der::Input& extensions_tlv);
+  std::string ProcessExtension(std::string_view critical_label,
+                               std::string_view non_critical_label,
+                               const bssl::ParsedExtension& extension) const;
+  std::optional<std::string> ProcessExtensionData(
+      const bssl::ParsedExtension& extension) const;
 
   bool parsed_successfully_ = false;
   bssl::UniquePtr<CRYPTO_BUFFER> cert_data_;
-  net::der::Input tbs_certificate_tlv_;
-  net::der::Input signature_algorithm_tlv_;
-  net::der::BitString signature_value_;
-  net::ParsedTbsCertificate tbs_;
+  bssl::der::Input tbs_certificate_tlv_;
+  bssl::der::Input signature_algorithm_tlv_;
+  bssl::der::BitString signature_value_;
+  bssl::ParsedTbsCertificate tbs_;
 
-  net::RDNSequence subject_rdns_;
-  net::RDNSequence issuer_rdns_;
-  std::vector<net::ParsedExtension> extensions_;
+  bssl::RDNSequence subject_rdns_;
+  bssl::RDNSequence issuer_rdns_;
+  std::vector<bssl::ParsedExtension> extensions_;
 
   // Parsed SubjectAltName extension.
-  std::unique_ptr<net::GeneralNames> subject_alt_names_;
+  std::unique_ptr<bssl::GeneralNames> subject_alt_names_;
 };
 
 // For host values, if they contain IDN Punycode-encoded A-labels, this will

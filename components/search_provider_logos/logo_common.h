@@ -8,13 +8,13 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
 
@@ -178,7 +178,7 @@ struct EncodedLogo {
 };
 using EncodedLogoCallback =
     base::OnceCallback<void(LogoCallbackReason type,
-                            const absl::optional<EncodedLogo>& logo)>;
+                            const std::optional<EncodedLogo>& logo)>;
 
 struct Logo {
   Logo();
@@ -192,7 +192,7 @@ struct Logo {
   LogoMetadata metadata;
 };
 using LogoCallback = base::OnceCallback<void(LogoCallbackReason type,
-                                             const absl::optional<Logo>& logo)>;
+                                             const std::optional<Logo>& logo)>;
 
 struct LogoCallbacks {
   EncodedLogoCallback on_cached_encoded_logo_available;
@@ -209,7 +209,7 @@ struct LogoCallbacks {
 // Parses the response from the server and returns it as an EncodedLogo. Returns
 // null if the response is invalid.
 using ParseLogoResponse = base::RepeatingCallback<std::unique_ptr<EncodedLogo>(
-    std::unique_ptr<std::string> response,
+    std::string response,
     base::Time response_time,
     bool* parsing_failed)>;
 

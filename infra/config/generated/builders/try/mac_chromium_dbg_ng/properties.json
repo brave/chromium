@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/mac_chromium_dbg_ng/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,6 +22,7 @@
                 ],
                 "build_config": "Debug",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -30,7 +34,7 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Mac13 Tests (dbg)",
+              "builder": "mac15-tests-dbg",
               "project": "chromium"
             },
             "builder_spec": {
@@ -43,6 +47,7 @@
                 ],
                 "build_config": "Debug",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -68,17 +73,24 @@
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
-          "builder": "Mac13 Tests (dbg)",
+          "builder": "mac15-tests-dbg",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/mac_chromium_dbg_ng/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 150,
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": 150
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

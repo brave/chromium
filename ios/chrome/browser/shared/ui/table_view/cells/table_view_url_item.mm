@@ -4,12 +4,13 @@
 
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_url_item.h"
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/url_formatter/elide_url.h"
-#import "ios/chrome/browser/net/crurl.h"
+#import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/shared/ui/table_view/chrome_table_view_styler.h"
+#import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/chrome/browser/shared/ui/table_view/legacy_chrome_table_view_styler.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/favicon/favicon_container_view.h"
@@ -18,14 +19,18 @@
 #import "ios/chrome/common/ui/table_view/table_view_url_cell_favicon_badge_view.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
+
 // Default delimiter to use between the hostname and the supplemental URL text
 // if text is specified but not the delimiter.
 const char kDefaultSupplementalURLTextDelimiter[] = "•";
+
+// The max number of lines for the cell title label.
+const int kMaxNumberOfLinesForCellTitleLabel = 2;
+
+// Point size for the symbol that's replacing the cell favicon.
+constexpr CGFloat kFaviconReplacementSymbolPointSize = 18;
+
 }  // namespace
 
 #pragma mark - TableViewURLItem
@@ -45,7 +50,7 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
   [super configureCell:tableCell withStyler:styler];
 
   TableViewURLCell* cell =
-      base::mac::ObjCCastStrict<TableViewURLCell>(tableCell);
+      base::apple::ObjCCastStrict<TableViewURLCell>(tableCell);
   cell.titleLabel.text = [self titleLabelText];
   cell.URLLabel.text = [self URLLabelText];
   cell.thirdRowLabel.text = self.thirdRowText;
@@ -152,6 +157,11 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
   // Constraint defining the distance between the metadata label and the
   // metadata image views.
   NSLayoutConstraint* _metadataViewsSpacingConstraint;
+  // UIImageView for the symbol replacing the favicon. Stays nil if no
+  // replacement symbol is ever set.
+  UIImageView* _faviconReplacementSymbolImageView;
+  // Vertical stack view that holds the title, URL, and third row labels.
+  UIStackView* _labelStackView;
 }
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style
@@ -171,10 +181,14 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
     // Set font sizes using dynamic type.
     _titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     _titleLabel.adjustsFontForContentSizeCategory = YES;
+    // Sometimes a very long url is used as the cell title, so be sure it will
+    // not stretch the cell to an unlimited number of lines.
+    _titleLabel.numberOfLines = kMaxNumberOfLinesForCellTitleLabel;
     _URLLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     _URLLabel.adjustsFontForContentSizeCategory = YES;
     _URLLabel.textColor = [UIColor colorNamed:kTextSecondaryColor];
     _URLLabel.hidden = YES;
+    _URLLabel.numberOfLines = 0;
     _thirdRowLabel.font =
         [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     _thirdRowLabel.adjustsFontForContentSizeCategory = YES;
@@ -191,9 +205,9 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
     _metadataImage.accessibilityIdentifier = kTableViewURLCellMetadataImageID;
 
     // Use stack views to layout the subviews except for the favicon.
-    UIStackView* verticalStack = [[UIStackView alloc]
+    _labelStackView = [[UIStackView alloc]
         initWithArrangedSubviews:@[ _titleLabel, _URLLabel, _thirdRowLabel ]];
-    verticalStack.axis = UILayoutConstraintAxisVertical;
+    _labelStackView.axis = UILayoutConstraintAxisVertical;
     [_metadataLabel setContentHuggingPriority:UILayoutPriorityDefaultHigh
                                       forAxis:UILayoutConstraintAxisHorizontal];
     [_metadataLabel
@@ -209,7 +223,7 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
 
     // Horizontal view holds vertical stack view and metadata views.
     UIView* horizontalView = [[UIView alloc] init];
-    [horizontalView addSubview:verticalStack];
+    [horizontalView addSubview:_labelStackView];
     [horizontalView addSubview:_metadataImage];
     [horizontalView addSubview:_metadataLabel];
 
@@ -217,7 +231,7 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
     _faviconContainerView.translatesAutoresizingMaskIntoConstraints = NO;
     _faviconBadgeView.translatesAutoresizingMaskIntoConstraints = NO;
     horizontalView.translatesAutoresizingMaskIntoConstraints = NO;
-    verticalStack.translatesAutoresizingMaskIntoConstraints = NO;
+    _labelStackView.translatesAutoresizingMaskIntoConstraints = NO;
     _metadataImage.translatesAutoresizingMaskIntoConstraints = NO;
     _metadataLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [contentView addSubview:_faviconContainerView];
@@ -231,7 +245,7 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
     heightConstraint.priority = UILayoutPriorityRequired - 1;
 
     _titleMetadataImageSpacingConstraint = [_metadataImage.leadingAnchor
-        constraintEqualToAnchor:verticalStack.trailingAnchor
+        constraintEqualToAnchor:_labelStackView.trailingAnchor
                        constant:0];
     _metadataViewsSpacingConstraint = [_metadataLabel.leadingAnchor
         constraintEqualToAnchor:_metadataImage.trailingAnchor
@@ -261,18 +275,18 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
                          constant:-kTableViewHorizontalSpacing],
       [horizontalView.centerYAnchor
           constraintEqualToAnchor:self.contentView.centerYAnchor],
-      [verticalStack.topAnchor
+      [_labelStackView.topAnchor
           constraintEqualToAnchor:horizontalView.topAnchor],
-      [verticalStack.bottomAnchor
+      [_labelStackView.bottomAnchor
           constraintEqualToAnchor:horizontalView.bottomAnchor],
-      [verticalStack.leadingAnchor
+      [_labelStackView.leadingAnchor
           constraintEqualToAnchor:horizontalView.leadingAnchor],
       [_metadataImage.centerYAnchor
           constraintEqualToAnchor:horizontalView.centerYAnchor],
       [_metadataImage.heightAnchor
           constraintLessThanOrEqualToAnchor:horizontalView.heightAnchor],
       [_metadataLabel.firstBaselineAnchor
-          constraintEqualToAnchor:verticalStack.firstBaselineAnchor],
+          constraintEqualToAnchor:_labelStackView.firstBaselineAnchor],
       [_metadataLabel.trailingAnchor
           constraintEqualToAnchor:horizontalView.trailingAnchor],
       [_metadataLabel.heightAnchor
@@ -300,8 +314,10 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
   [self.faviconContainerView setFaviconBackgroundColor:backgroundColor];
 }
 
-- (void)setFaviconContainerBorderColor:(UIColor*)borderColor {
-  [self.faviconContainerView setFaviconBorderColor:borderColor];
+- (void)setLabelSpacing:(CGFloat)spacing {
+  _labelSpacing = spacing;
+  _labelStackView.spacing = _labelSpacing;
+  [self.contentView setNeedsLayout];
 }
 
 // Hide or show the metadata and URL labels depending on the presence of text.
@@ -341,12 +357,81 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
   [super prepareForReuse];
   [self.faviconView configureWithAttributes:nil];
   [self setFaviconContainerBackgroundColor:nil];
-  [self setFaviconContainerBorderColor:nil];
   self.faviconBadgeView.image = nil;
   self.metadataLabel.hidden = YES;
   self.metadataImage.image = nil;
   self.URLLabel.hidden = YES;
   self.thirdRowLabel.hidden = YES;
+  [_faviconReplacementSymbolImageView removeFromSuperview];
+  _faviconReplacementSymbolImageView = nil;
+}
+
+- (void)startAnimatingActivityIndicator {
+  // It may be an edge case if the activity indicator is spinning when we don't
+  // expect it. But it's okay to leave indicator spinning instead of crashing.
+  if (self.activityIndicatorView != nil) {
+    return;
+  }
+
+  self.activityIndicatorView = [[UIActivityIndicatorView alloc] init];
+  UIActivityIndicatorView* activityView = self.activityIndicatorView;
+  activityView.translatesAutoresizingMaskIntoConstraints = NO;
+  [self.faviconContainerView addSubview:activityView];
+  [NSLayoutConstraint activateConstraints:@[
+    [activityView.centerXAnchor
+        constraintEqualToAnchor:self.faviconContainerView.centerXAnchor],
+    [activityView.centerYAnchor
+        constraintEqualToAnchor:self.faviconContainerView.centerYAnchor],
+  ]];
+  [activityView startAnimating];
+  activityView.backgroundColor = self.faviconContainerView.backgroundColor;
+}
+
+- (void)stopAnimatingActivityIndicator {
+  [self.activityIndicatorView stopAnimating];
+  [self.activityIndicatorView removeFromSuperview];
+  self.activityIndicatorView = nil;
+}
+
+- (void)replaceFaviconWithSymbol:(NSString*)symbolName {
+  if (!symbolName) {
+    return;
+  }
+
+  // Make sure the activity indicator isn't running.
+  [self stopAnimatingActivityIndicator];
+
+  UIImage* symbol =
+      SymbolWithPalette(DefaultSymbolWithPointSize(
+                            symbolName, kFaviconReplacementSymbolPointSize),
+                        @[ [UIColor colorNamed:kTextPrimaryColor] ]);
+  symbol.accessibilityIdentifier = symbolName;
+  UIImageView* symbolImageView = [[UIImageView alloc] initWithImage:symbol];
+  symbolImageView.translatesAutoresizingMaskIntoConstraints = NO;
+  symbolImageView.backgroundColor = self.backgroundColor;
+
+  [self setFaviconContainerBackgroundColor:self.backgroundColor];
+  [self.faviconContainerView addSubview:symbolImageView];
+  [NSLayoutConstraint activateConstraints:@[
+    [symbolImageView.centerXAnchor
+        constraintEqualToAnchor:self.faviconContainerView.centerXAnchor],
+    [symbolImageView.centerYAnchor
+        constraintEqualToAnchor:self.faviconContainerView.centerYAnchor],
+  ]];
+
+  _faviconReplacementSymbolImageView = symbolImageView;
+}
+
+#pragma mark - UIAccessibilityIdentification
+
+- (NSString*)accessibilityIdentifier {
+  return self.titleLabel.text;
+}
+
+#pragma mark - UIAccessibility
+
+- (BOOL)isAccessibilityElement {
+  return YES;
 }
 
 - (void)setAccessibilityLabel:(NSString*)accessibilityLabel {
@@ -384,41 +469,6 @@ const char kDefaultSupplementalURLTextDelimiter[] = "•";
   }
 
   return userInputLabels;
-}
-
-- (NSString*)accessibilityIdentifier {
-  return self.titleLabel.text;
-}
-
-- (BOOL)isAccessibilityElement {
-  return YES;
-}
-
-- (void)startAnimatingActivityIndicator {
-  // It may be an edge case if the activity indicator is spinning when we don't
-  // expect it. But it's okay to leave indicator spinning instead of crashing.
-  if (self.activityIndicatorView != nil) {
-    return;
-  }
-
-  self.activityIndicatorView = [[UIActivityIndicatorView alloc] init];
-  UIActivityIndicatorView* activityView = self.activityIndicatorView;
-  activityView.translatesAutoresizingMaskIntoConstraints = NO;
-  [self.faviconContainerView addSubview:activityView];
-  [NSLayoutConstraint activateConstraints:@[
-    [activityView.centerXAnchor
-        constraintEqualToAnchor:self.faviconContainerView.centerXAnchor],
-    [activityView.centerYAnchor
-        constraintEqualToAnchor:self.faviconContainerView.centerYAnchor],
-  ]];
-  [activityView startAnimating];
-  activityView.backgroundColor = self.faviconContainerView.backgroundColor;
-}
-
-- (void)stopAnimatingActivityIndicator {
-  [self.activityIndicatorView stopAnimating];
-  [self.activityIndicatorView removeFromSuperview];
-  self.activityIndicatorView = nil;
 }
 
 @end

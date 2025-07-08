@@ -11,7 +11,8 @@
 #include "chrome/browser/ui/views/extensions/extensions_menu_handler.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/permissions_manager.h"
-#include "ui/views/view_observer.h"
+#include "extensions/common/extension.h"
+#include "ui/views/view_tracker.h"
 
 namespace views {
 class BubbleDialogDelegate;
@@ -28,8 +29,7 @@ class ExtensionsMenuViewController
     : public ExtensionsMenuHandler,
       public TabStripModelObserver,
       public ToolbarActionsModel::Observer,
-      public extensions::PermissionsManager::Observer,
-      public views::ViewObserver {
+      public extensions::PermissionsManager::Observer {
  public:
   ExtensionsMenuViewController(Browser* browser,
                                ExtensionsContainer* extensions_container,
@@ -88,11 +88,16 @@ class ExtensionsMenuViewController
   void OnShowAccessRequestsInToolbarChanged(
       const extensions::ExtensionId& extension_id,
       bool can_show_requests) override;
-  void OnExtensionDismissedRequests(const extensions::ExtensionId& extension_id,
-                                    const url::Origin& origin) override;
-
-  // views::ViewObserver
-  void OnViewIsDeleting(views::View* observed_view) override;
+  void OnHostAccessRequestAdded(const extensions::ExtensionId& extension_id,
+                                int tab_id) override;
+  void OnHostAccessRequestUpdated(const extensions::ExtensionId& extension_id,
+                                  int tab_id) override;
+  void OnHostAccessRequestRemoved(const extensions::ExtensionId& extension_id,
+                                  int tab_id) override;
+  void OnHostAccessRequestsCleared(int tab_id) override;
+  void OnHostAccessRequestDismissedByUser(
+      const extensions::ExtensionId& extension_id,
+      const url::Origin& origin) override;
 
   // Accessors used by tests:
   // Returns the main page iff it's the `current_page_` one.
@@ -124,13 +129,21 @@ class ExtensionsMenuViewController
                               const extensions::ExtensionId& extension_id,
                               int index);
 
+  // Adds or updates a request access entry for `extension_id` in `main_page` at
+  // `index`.
+  void AddOrUpdateExtensionRequestingAccess(
+      ExtensionsMenuMainPageView* main_page,
+      const extensions::ExtensionId& extension_id,
+      int index,
+      content::WebContents* web_contents);
+
   // Returns the currently active web contents.
   content::WebContents* GetActiveWebContents() const;
 
   const raw_ptr<Browser> browser_;
   const raw_ptr<ExtensionsContainer> extensions_container_;
   const raw_ptr<views::View> bubble_contents_;
-  // TODO(crbug.com/1425522) There are no guarantee this pointer is safe
+  // TODO(crbug.com/40260941) There are no guarantee this pointer is safe
   // to be used. In practice its lifetime is probably always shorter than
   // `this`. This has to be fixed.
   const raw_ptr<views::BubbleDialogDelegate, DisableDanglingPtrDetection>
@@ -145,7 +158,7 @@ class ExtensionsMenuViewController
       permissions_manager_observation_{this};
 
   // The current page visible in `bubble_contents_`.
-  raw_ptr<views::View> current_page_ = nullptr;
+  views::ViewTracker current_page_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_MENU_VIEW_CONTROLLER_H_

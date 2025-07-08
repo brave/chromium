@@ -5,10 +5,14 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_REQUEST_ACCESS_BUTTON_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_REQUEST_ACCESS_BUTTON_H_
 
+#include <optional>
+
+#include "base/memory/raw_ptr.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_button.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_chip_button.h"
 #include "extensions/common/extension_id.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "url/origin.h"
 
 namespace content {
@@ -21,7 +25,10 @@ class ExtensionsRequestAccessHoverCardCoordinator;
 
 // Button in the toolbar bar that displays the extensions that requests
 // access, and are allowed to do so, and grants them access.
-class ExtensionsRequestAccessButton : public ToolbarButton {
+class ExtensionsRequestAccessButton : public ToolbarChipButton,
+                                      public TabStripModelObserver {
+  METADATA_HEADER(ExtensionsRequestAccessButton, ToolbarChipButton)
+
  public:
   explicit ExtensionsRequestAccessButton(
       Browser* browser,
@@ -50,8 +57,16 @@ class ExtensionsRequestAccessButton : public ToolbarButton {
   size_t GetExtensionsCount() const;
 
   // ToolbarButton:
-  std::u16string GetTooltipText(const gfx::Point& p) const override;
   bool ShouldShowInkdropAfterIphInteraction() override;
+
+  // TabStripModelObserver:
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
+  void TabChangedAt(content::WebContents* contents,
+                    int index,
+                    TabChangeType change_type) override;
 
   // Accessors used by tests:
   std::vector<extensions::ExtensionId> GetExtensionIdsForTesting() {
@@ -66,6 +81,8 @@ class ExtensionsRequestAccessButton : public ToolbarButton {
   }
 
  private:
+  void UpdateTooltipText();
+
   // Grants one-time site access to `extension_ids` and shows a confirmation
   // message on the button.
   void OnButtonPressed();
@@ -83,7 +100,7 @@ class ExtensionsRequestAccessButton : public ToolbarButton {
 
   // The origin for which the button is displaying a confirmation message, if
   // any.
-  absl::optional<url::Origin> confirmation_origin_;
+  std::optional<url::Origin> confirmation_origin_;
 
   // A timer used to collapse the button after showing a confirmation message.
   base::OneShotTimer collapse_timer_;

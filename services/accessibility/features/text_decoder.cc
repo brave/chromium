@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/accessibility/features/text_decoder.h"
 
 #include <memory>
 
 #include "base/logging.h"
+#include "base/types/fixed_array.h"
 #include "gin/arguments.h"
 #include "gin/converter.h"
 #include "gin/data_object_builder.h"
@@ -19,7 +25,8 @@
 namespace ax {
 
 // static
-gin::WrapperInfo TextDecoder::kWrapperInfo = {gin::kEmbedderNativeGin};
+gin::DeprecatedWrapperInfo TextDecoder::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 // static
 gin::Handle<TextDecoder> TextDecoder::Create(v8::Local<v8::Context> context) {
@@ -28,7 +35,8 @@ gin::Handle<TextDecoder> TextDecoder::Create(v8::Local<v8::Context> context) {
 
 gin::ObjectTemplateBuilder TextDecoder::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<TextDecoder>::GetObjectTemplateBuilder(isolate)
+  return gin::DeprecatedWrappable<TextDecoder>::GetObjectTemplateBuilder(
+             isolate)
       .SetMethod("decode", &TextDecoder::Decode);
 }
 
@@ -38,30 +46,24 @@ void TextDecoder::Decode(gin::Arguments* arguments) {
   CHECK(isolate);
   v8::HandleScope handle_scope(isolate);
 
-  std::vector<v8::Local<v8::Value>> args = arguments->GetAll();
+  v8::LocalVector<v8::Value> args = arguments->GetAll();
   // Note: We do not support a TextDecoderOptions parameter.
   CHECK_GT(args.size(), 0u);
   CHECK(args[0]->IsArrayBuffer() || args[0]->IsArrayBufferView());
-  void* bytes = nullptr;
-  size_t num_bytes = 0;
+
+  v8::Local<v8::ArrayBufferView> view;
   if (args[0]->IsArrayBuffer()) {
     v8::Local<v8::ArrayBuffer> array = args[0].As<v8::ArrayBuffer>();
-    bytes = array->Data();
-    num_bytes = array->ByteLength();
+    view = v8::DataView::New(array, 0, array->ByteLength());
   } else {
-    v8::Local<v8::ArrayBufferView> view = args[0].As<v8::ArrayBufferView>();
-    num_bytes = view->ByteLength();
-    void* bites[num_bytes];
-    view->CopyContents(bites, num_bytes);
-    bytes = bites;
+    view = args[0].As<v8::ArrayBufferView>();
   }
-  char result[num_bytes + 1];
-  for (size_t i = 0; i < num_bytes; i++) {
-    result[i] = *(static_cast<char*>(bytes) + i);
-  }
-  result[num_bytes] = 0;
 
-  arguments->Return(std::string(result));
+  base::FixedArray<char> bytes(view->ByteLength() + 1);
+  view->CopyContents(bytes.data(), view->ByteLength());
+  bytes[view->ByteLength()] = 0;
+
+  arguments->Return(std::string(bytes.data()));
 }
 
 TextDecoder::TextDecoder(v8::Local<v8::Context> context)

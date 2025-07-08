@@ -8,17 +8,13 @@
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
 
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace mac_notifications {
 
@@ -31,7 +27,7 @@ namespace mac_notifications {
 class NotificationCategoryManager {
  public:
   using Button = std::pair</*title*/ std::u16string,
-                           /*placeholder*/ absl::optional<std::u16string>>;
+                           /*placeholder*/ std::optional<std::u16string>>;
   using Buttons = std::vector<Button>;
 
   explicit NotificationCategoryManager(

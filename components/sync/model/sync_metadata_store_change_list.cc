@@ -7,71 +7,74 @@
 #include <utility>
 
 #include "base/location.h"
+#include "components/sync/protocol/data_type_state.pb.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
-#include "components/sync/protocol/model_type_state.pb.h"
 
 namespace syncer {
 
 SyncMetadataStoreChangeList::SyncMetadataStoreChangeList(
     SyncMetadataStore* store,
-    syncer::ModelType type,
+    syncer::DataType type,
     ErrorCallback error_callback)
     : store_(store), type_(type), error_callback_(std::move(error_callback)) {
   if (!store_) {
-    SetError(ModelError(FROM_HERE, "Invalid SyncMetadataStore"));
+    SetError(ModelError(
+        FROM_HERE, ModelError::Type::kSyncMetadataStoreChangeListInvalidStore));
   }
 }
 
 SyncMetadataStoreChangeList::~SyncMetadataStoreChangeList() = default;
 
-void SyncMetadataStoreChangeList::UpdateModelTypeState(
-    const sync_pb::ModelTypeState& model_type_state) {
-  if (error_) {
+void SyncMetadataStoreChangeList::UpdateDataTypeState(
+    const sync_pb::DataTypeState& data_type_state) {
+  if (error_encountered_) {
     return;
   }
 
-  if (!store_->UpdateModelTypeState(type_, model_type_state)) {
-    SetError(ModelError(FROM_HERE, "Failed to update ModelTypeState."));
+  if (!store_->UpdateDataTypeState(type_, data_type_state)) {
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreUpdateDataTypeStateFailed));
   }
 }
 
-void SyncMetadataStoreChangeList::ClearModelTypeState() {
-  if (error_) {
+void SyncMetadataStoreChangeList::ClearDataTypeState() {
+  if (error_encountered_) {
     return;
   }
 
-  if (!store_->ClearModelTypeState(type_)) {
-    SetError(ModelError(FROM_HERE, "Failed to clear ModelTypeState."));
+  if (!store_->ClearDataTypeState(type_)) {
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreClearDataTypeStateFailed));
   }
 }
 
 void SyncMetadataStoreChangeList::UpdateMetadata(
     const std::string& storage_key,
     const sync_pb::EntityMetadata& metadata) {
-  if (error_) {
+  if (error_encountered_) {
     return;
   }
 
   if (!store_->UpdateEntityMetadata(type_, storage_key, metadata)) {
-    SetError(ModelError(FROM_HERE, "Failed to update entity metadata."));
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreUpdateEntityMetadataFailed));
   }
 }
 
 void SyncMetadataStoreChangeList::ClearMetadata(
     const std::string& storage_key) {
-  if (error_) {
+  if (error_encountered_) {
     return;
   }
 
   if (!store_->ClearEntityMetadata(type_, storage_key)) {
-    SetError(ModelError(FROM_HERE, "Failed to clear entity metadata."));
+    SetError(ModelError(
+        FROM_HERE,
+        ModelError::Type::kSyncMetadataStoreClearEntityMetadataFailed));
   }
-}
-
-absl::optional<ModelError> SyncMetadataStoreChangeList::TakeError() {
-  absl::optional<ModelError> temp = error_;
-  error_.reset();
-  return temp;
 }
 
 const SyncMetadataStore*
@@ -80,9 +83,9 @@ SyncMetadataStoreChangeList::GetMetadataStoreForTesting() const {
 }
 
 void SyncMetadataStoreChangeList::SetError(ModelError error) {
-  if (!error_) {
-    error_ = std::move(error);
-    error_callback_.Run(*error_);
+  if (!error_encountered_) {
+    error_encountered_ = true;
+    error_callback_.Run(error);
   }
 }
 

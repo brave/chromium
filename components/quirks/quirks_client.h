@@ -29,7 +29,8 @@ using RequestFinishedCallback =
 class QuirksClient {
  public:
   QuirksClient(int64_t product_id,
-               const std::string& display_name,
+               std::string display_name,
+               std::string api_key,
                RequestFinishedCallback on_request_finished,
                QuirksManager* manager);
 
@@ -60,11 +61,14 @@ class QuirksClient {
   // Human-readable name to send to Quirks Server.
   const std::string display_name_;
 
+  // Google API key.
+  const std::string api_key_;
+
   // Callback supplied by caller.
   RequestFinishedCallback on_request_finished_;
 
   // Weak pointer owned by manager, guaranteed to outlive this client object.
-  raw_ptr<QuirksManager, ExperimentalAsh> manager_;
+  raw_ptr<QuirksManager> manager_;
 
   // Full path to icc file.
   const base::FilePath icc_path_;

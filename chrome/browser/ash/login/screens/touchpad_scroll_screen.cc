@@ -58,12 +58,14 @@ bool CheckNoTouchpadDeviceExist() {
 
 // static
 std::string TouchpadScrollScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::kNext:
       return "Next";
     case Result::kNotApplicable:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 TouchpadScrollScreen::TouchpadScrollScreen(
@@ -81,7 +83,7 @@ bool TouchpadScrollScreen::ShouldBeSkipped(const WizardContext& context) const {
     return true;
   }
 
-  if (chrome_user_manager_util::IsPublicSessionOrEphemeralLogin()) {
+  if (chrome_user_manager_util::IsManagedGuestSessionOrEphemeralLogin()) {
     return true;
   }
 
@@ -92,9 +94,9 @@ bool TouchpadScrollScreen::ShouldBeSkipped(const WizardContext& context) const {
   if (features::IsOobeTouchpadScrollEnabled()) {
     auto* choobe_controller =
         WizardController::default_controller()->choobe_flow_controller();
-    if (choobe_controller) {
-      return choobe_controller->ShouldScreenBeSkipped(
-          TouchpadScrollScreenView::kScreenId);
+    if (choobe_controller && choobe_controller->ShouldScreenBeSkipped(
+                                 TouchpadScrollScreenView::kScreenId)) {
+      return true;
     }
   }
 
@@ -178,9 +180,7 @@ void TouchpadScrollScreen::OnUserAction(const base::Value::List& args) {
   }
 
   if (action_id == kUserActionReturn) {
-    LoginDisplayHost::default_host()
-        ->GetWizardContext()
-        ->return_to_choobe_screen = true;
+    context()->return_to_choobe_screen = true;
     ReportScreenCompletedToChoobe(
         WizardController::default_controller()->choobe_flow_controller());
     RecordSettingChangedMetric(initial_pref_value_,

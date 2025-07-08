@@ -10,6 +10,7 @@
 
 #import <Foundation/Foundation.h>
 #include <stdint.h>
+#include "base/time/time.h"
 
 #include <string>
 
@@ -19,10 +20,6 @@
 #import "media/capture/video/apple/video_capture_device_avfoundation.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video_capture_types.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -78,9 +75,12 @@ class CAPTURE_EXPORT VideoCaptureDeviceApple
                     int aspect_numerator,
                     int aspect_denominator,
                     base::TimeDelta timestamp,
+                    std::optional<base::TimeTicks> capture_begin_time,
                     int rotation) override;
-  void ReceiveExternalGpuMemoryBufferFrame(CapturedExternalVideoBuffer frame,
-                                           base::TimeDelta timestamp) override;
+  void ReceiveExternalGpuMemoryBufferFrame(
+      CapturedExternalVideoBuffer frame,
+      base::TimeDelta timestamp,
+      std::optional<base::TimeTicks> capture_begin_time) override;
   void OnPhotoTaken(const uint8_t* image_data,
                     size_t image_length,
                     const std::string& mime_type) override;
@@ -89,6 +89,7 @@ class CAPTURE_EXPORT VideoCaptureDeviceApple
                     const base::Location& from_here,
                     const std::string& reason) override;
   void ReceiveCaptureConfigurationChanged() override;
+  void OnLog(const std::string& message) override;
 
   // Forwarder to VideoCaptureDevice::Client::OnLog().
   void LogMessage(const std::string& message);
@@ -109,6 +110,8 @@ class CAPTURE_EXPORT VideoCaptureDeviceApple
                      const std::string& reason);
   bool UpdateCaptureResolution();
   void OnCaptureConfigurationChanged();
+
+  VideoFrameMetadata GetVideoFrameMetadata();
 
   // Flag indicating the internal state.
   enum InternalState { kNotInitialized, kIdle, kCapturing, kError };

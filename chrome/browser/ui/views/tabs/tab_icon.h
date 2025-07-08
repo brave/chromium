@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_TAB_ICON_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_ICON_H_
 
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/tabs/tab_network_state.h"
 #include "components/performance_manager/public/features.h"
+#include "ui/base/interaction/element_tracker.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/animation/linear_animation.h"
@@ -24,6 +26,8 @@ class TickClock;
 
 struct TabRendererData;
 
+DECLARE_CUSTOM_ELEMENT_EVENT_TYPE(kDiscardAnimationFinishes);
+
 // View that displays the favicon, sad tab, throbber, and attention indicator
 // in a tab.
 //
@@ -33,9 +37,9 @@ struct TabRendererData;
 // bottom of the enclosing view (this is so the crashed tab can animate out of
 // the bottom).
 class TabIcon : public views::View, public views::AnimationDelegateViews {
- public:
-  METADATA_HEADER(TabIcon);
+  METADATA_HEADER(TabIcon, views::View)
 
+ public:
   // Attention indicator types (use as a bitmask). There is only one visual
   // representation, but the state of each of these is tracked separately and
   // the indicator is shown as long as one is enabled.
@@ -62,6 +66,7 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
 
   bool GetShowingLoadingAnimation() const;
   bool GetShowingAttentionIndicator() const;
+  bool GetShowingDiscardIndicator() const;
 
   // Sets whether this object can paint to a layer. When the loading animation
   // is running, painting to a layer saves painting overhead. But if the tab is
@@ -70,28 +75,32 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
   void SetCanPaintToLayer(bool can_paint_to_layer);
 
   // The loading animation only steps when this function is called. The
-  // |elapsed_time| parameter is expected to be the same among all tabs in a tab
+  // `elapsed_time` parameter is expected to be the same among all tabs in a tab
   // strip in order to keep the throbbers in sync.
   void StepLoadingAnimation(const base::TimeDelta& elapsed_time);
 
-  gfx::LinearAnimation* GetTabDiscardAnimationForTesting();
   gfx::ImageSkia GetThemedIconForTesting() { return themed_favicon_; }
   bool GetActiveStateForTesting() { return is_active_tab_; }
+
+  void EnlargeDiscardIndicatorRadius(int radius);
+  void SetShouldShowDiscardIndicator(bool enabled);
 
  private:
   class CrashAnimation;
   friend CrashAnimation;
   friend class TabTest;
+  FRIEND_TEST_ALL_PREFIXES(TabTest, DiscardIndicatorResponsiveness);
 
   // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
+  views::PaintInfo::ScaleType GetPaintScaleType() const override;
   void OnThemeChanged() override;
 
   // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
 
-  // Paints the attention indicator and |favicon_| at the given location.
+  // Paints the attention indicator and `favicon_` at the given location.
   void PaintAttentionIndicatorAndIcon(gfx::Canvas* canvas,
                                       const gfx::ImageSkia& icon,
                                       const gfx::Rect& bounds);
@@ -154,9 +163,6 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
   // The point in time when the tab icon was first painted in the loading state.
   base::TimeTicks loading_animation_start_time_;
 
-  // Paint state for the loading animation after the most recent waiting paint.
-  gfx::ThrobberWaitingState waiting_state_;
-
   // When the favicon_ has theming applied to it, the themed version will be
   // cached here. If this isNull(), then there is no theming and favicon_
   // should be used.
@@ -183,14 +189,14 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
   // fade out
   gfx::LinearAnimation tab_discard_animation_;
 
+  // The discard indicator will be shown only if the tab is discarded and the
+  // discard ring treatment pref is enabled. Keep track of both of the component
+  // booleans, in order to determine if the discard indicator is shown/unshown
+  // due to a change in the discard status or a change to the pref, because
+  // we don't want to animate the discard ring in the latter case.
+  bool is_discarded_ = false;
+  bool should_show_discard_indicator_ = true;
   bool was_discard_indicator_shown_ = false;
-
-  performance_manager::features::DiscardTabTreatmentOptions
-      discard_tab_treatment_option_ =
-          performance_manager::features::DiscardTabTreatmentOptions::kNone;
-
-  // Favicon opacity after the discard animation completes
-  double discard_tab_icon_final_opacity_ = 1.0;
 
   // Crash animation (in place of favicon). Lazily created since most of the
   // time it will be unneeded.
@@ -203,6 +209,8 @@ class TabIcon : public views::View, public views::AnimationDelegateViews {
   bool is_active_tab_ = false;
 
   bool is_monochrome_favicon_ = false;
+
+  int increased_discard_indicator_radius_ = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_ICON_H_

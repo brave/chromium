@@ -21,11 +21,13 @@ using ::attribution_reporting::mojom::SourceType;
 
 CommonSourceInfo::CommonSourceInfo(SuitableOrigin source_origin,
                                    SuitableOrigin reporting_origin,
-                                   SourceType source_type)
+                                   SourceType source_type,
+                                   bool cookie_based_debug_allowed)
     : source_site_(net::SchemefulSite(source_origin)),
       source_origin_(std::move(source_origin)),
       reporting_origin_(std::move(reporting_origin)),
-      source_type_(source_type) {}
+      source_type_(source_type),
+      cookie_based_debug_allowed_(cookie_based_debug_allowed) {}
 
 CommonSourceInfo::~CommonSourceInfo() = default;
 

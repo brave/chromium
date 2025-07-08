@@ -4,11 +4,13 @@
 
 #include "android_webview/browser/gfx/begin_frame_source_webview.h"
 
-#include "android_webview/browser_jni_headers/RootBeginFrameSourceWebView_jni.h"
 #include "base/auto_reset.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/trace_event/trace_event.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/browser_jni_headers/RootBeginFrameSourceWebView_jni.h"
 
 namespace android_webview {
 
@@ -125,7 +127,7 @@ RootBeginFrameSourceWebView::RootBeginFrameSourceWebView()
                           60.0f,
                           /*requires_align_with_java=*/true),
       j_object_(Java_RootBeginFrameSourceWebView_Constructor(
-          base::android::AttachCurrentThread(),
+          jni_zero::AttachCurrentThread(),
           reinterpret_cast<jlong>(this))) {
   ObserveBeginFrameSource(&begin_frame_source_);
 }
@@ -134,7 +136,6 @@ RootBeginFrameSourceWebView::~RootBeginFrameSourceWebView() = default;
 
 void RootBeginFrameSourceWebView::OnUpdateRefreshRate(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     float refresh_rate) {
   begin_frame_source_.UpdateRefreshRate(refresh_rate);
 }

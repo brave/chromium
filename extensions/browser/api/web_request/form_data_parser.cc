@@ -6,15 +6,17 @@
 
 #include <stddef.h>
 
+#include <string_view>
 #include <vector>
 
 #include "base/check.h"
+#include "base/containers/to_vector.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/escape.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "base/types/optional_util.h"
 #include "base/values.h"
 #include "net/http/http_request_headers.h"
 #include "third_party/re2/src/re2/re2.h"
@@ -69,7 +71,7 @@ Patterns::Patterns()
 
 base::LazyInstance<Patterns>::Leaky g_patterns = LAZY_INSTANCE_INITIALIZER;
 
-bool ConsumePrefix(re2::StringPiece* str, re2::StringPiece prefix) {
+bool ConsumePrefix(std::string_view* str, std::string_view prefix) {
   if (!str->starts_with(prefix)) {
     return false;
   }
@@ -93,7 +95,7 @@ class FormDataParserUrlEncoded : public FormDataParser {
   // Implementation of FormDataParser.
   bool AllDataReadOK() override;
   bool GetNextNameValue(Result* result) override;
-  bool SetSource(base::StringPiece source) override;
+  bool SetSource(std::string_view source) override;
 
  private:
   // Returns the pattern to match a single name-value pair. This could be even
@@ -107,7 +109,7 @@ class FormDataParserUrlEncoded : public FormDataParser {
   // name-value pairs (one for name, one for value).
   static const size_t args_size_ = 2u;
 
-  re2::StringPiece source_;
+  std::string_view source_;
   bool source_set_;
   bool source_malformed_;
 
@@ -116,7 +118,7 @@ class FormDataParserUrlEncoded : public FormDataParser {
   std::string value_;
   const RE2::Arg arg_name_;
   const RE2::Arg arg_value_;
-  const RE2::Arg* args_[args_size_];
+  std::array<const RE2::Arg*, args_size_> args_;
 
   // Caching the pointer to g_patterns.Get().
   raw_ptr<const Patterns> patterns_;
@@ -205,7 +207,7 @@ class FormDataParserMultipart : public FormDataParser {
   // Implementation of FormDataParser.
   bool AllDataReadOK() override;
   bool GetNextNameValue(Result* result) override;
-  bool SetSource(base::StringPiece source) override;
+  bool SetSource(std::string_view source) override;
 
  private:
   enum State {
@@ -217,8 +219,7 @@ class FormDataParserMultipart : public FormDataParser {
   };
 
   // Tests whether |input| has a prefix matching |pattern|.
-  static bool StartsWithPattern(const re2::StringPiece& input,
-                                const RE2& pattern);
+  static bool StartsWithPattern(std::string_view input, const RE2& pattern);
 
   // If |source_| starts with a header, seeks |source_| beyond the header. If
   // the header is Content-Disposition, extracts |name| from "name=" and
@@ -227,8 +228,8 @@ class FormDataParserMultipart : public FormDataParser {
   // Returns true iff |source_| is seeked forward. Sets |value_assigned|
   // to true iff |value| has been assigned to. Sets |value_is_binary| to true if
   // header has content-type: application/octet-stream.
-  bool TryReadHeader(base::StringPiece* name,
-                     base::StringPiece* value,
+  bool TryReadHeader(std::string_view* name,
+                     std::string_view* value,
                      bool* value_assigned,
                      bool* value_is_binary);
 
@@ -236,7 +237,7 @@ class FormDataParserMultipart : public FormDataParser {
   // portion of a body part. An attempt is made to read the input until the end
   // of that body part. If |data| is not NULL, it is set to contain the data
   // portion. Returns true iff the reading was successful.
-  bool FinishReadingPart(base::StringPiece* data);
+  bool FinishReadingPart(std::string_view* data);
 
   // These methods could be even static, but then we would have to spend more
   // code on initializing the cached pointer to g_patterns.Get().
@@ -276,7 +277,7 @@ class FormDataParserMultipart : public FormDataParser {
 
   // The parsed message can be split into multiple sources which we read
   // sequentially.
-  re2::StringPiece source_;
+  std::string_view source_;
 
   // Caching the pointer to g_patterns.Get().
   raw_ptr<const Patterns> patterns_;
@@ -285,9 +286,8 @@ class FormDataParserMultipart : public FormDataParser {
 FormDataParser::Result::Result() = default;
 FormDataParser::Result::~Result() = default;
 
-void FormDataParser::Result::SetBinaryValue(base::StringPiece str) {
-  value_ = base::Value(
-      base::Value::BlobStorage(str.data(), str.data() + str.size()));
+void FormDataParser::Result::SetBinaryValue(std::string_view str) {
+  value_ = base::Value(base::ToVector(str));
 }
 
 void FormDataParser::Result::SetStringValue(std::string str) {
@@ -299,10 +299,8 @@ FormDataParser::~FormDataParser() = default;
 // static
 std::unique_ptr<FormDataParser> FormDataParser::Create(
     const net::HttpRequestHeaders& request_headers) {
-  std::string value;
-  const bool found =
-      request_headers.GetHeader(net::HttpRequestHeaders::kContentType, &value);
-  return CreateFromContentTypeHeader(found ? &value : nullptr);
+  return CreateFromContentTypeHeader(base::OptionalToPtr(
+      request_headers.GetHeader(net::HttpRequestHeaders::kContentType)));
 }
 
 // static
@@ -332,8 +330,9 @@ std::unique_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
       offset += sizeof(kBoundaryString) - 1;
       boundary = content_type_header->substr(
           offset, content_type_header->find(';', offset));
-      if (!boundary.empty())
+      if (!boundary.empty()) {
         choice = MULTIPART;
+      }
     }
   }
   // Other cases are unparseable, including when |content_type| is "text/plain".
@@ -348,7 +347,6 @@ std::unique_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
       return nullptr;
   }
   NOTREACHED();  // Some compilers do not believe this is unreachable.
-  return nullptr;
 }
 
 FormDataParser::FormDataParser() = default;
@@ -371,10 +369,11 @@ bool FormDataParserUrlEncoded::AllDataReadOK() {
 }
 
 bool FormDataParserUrlEncoded::GetNextNameValue(Result* result) {
-  if (!source_set_ || source_malformed_)
+  if (!source_set_ || source_malformed_) {
     return false;
+  }
 
-  bool success = RE2::ConsumeN(&source_, pattern(), args_, args_size_);
+  bool success = RE2::ConsumeN(&source_, pattern(), args_.data(), args_size_);
   if (success) {
     const base::UnescapeRule::Type kUnescapeRules =
         base::UnescapeRule::REPLACE_PLUS_WITH_SPACE;
@@ -391,17 +390,19 @@ bool FormDataParserUrlEncoded::GetNextNameValue(Result* result) {
     }
   }
   if (source_.length() > 0) {
-    if (source_[0] == '&')
+    if (source_[0] == '&') {
       source_.remove_prefix(1);  // Remove the leading '&'.
-    else
+    } else {
       source_malformed_ = true;  // '&' missing between two name-value pairs.
+    }
   }
   return success && !source_malformed_;
 }
 
-bool FormDataParserUrlEncoded::SetSource(base::StringPiece source) {
-  if (source_set_)
+bool FormDataParserUrlEncoded::SetSource(std::string_view source) {
+  if (source_set_) {
     return false;  // We do not allow multiple sources for this parser.
+  }
   source_ = source;
   source_set_ = true;
   source_malformed_ = false;
@@ -409,7 +410,7 @@ bool FormDataParserUrlEncoded::SetSource(base::StringPiece source) {
 }
 
 // static
-bool FormDataParserMultipart::StartsWithPattern(const re2::StringPiece& input,
+bool FormDataParserMultipart::StartsWithPattern(std::string_view input,
                                                 const RE2& pattern) {
   return pattern.Match(input, 0, input.size(), RE2::ANCHOR_START, nullptr, 0);
 }
@@ -426,8 +427,8 @@ bool FormDataParserMultipart::AllDataReadOK() {
   return state_ == STATE_FINISHED;
 }
 
-bool FormDataParserMultipart::FinishReadingPart(base::StringPiece* data) {
-  re2::StringPiece orig = source_;
+bool FormDataParserMultipart::FinishReadingPart(std::string_view* data) {
+  std::string_view orig = source_;
   while (!source_.starts_with(dash_boundary_separator_)) {
     if (!RE2::Consume(&source_, crlf_free_pattern()) ||
         !ConsumePrefix(&source_, kCRLF)) {
@@ -465,12 +466,13 @@ bool FormDataParserMultipart::FinishReadingPart(base::StringPiece* data) {
 }
 
 bool FormDataParserMultipart::GetNextNameValue(Result* result) {
-  if (source_.empty() || state_ != STATE_READY)
+  if (source_.empty() || state_ != STATE_READY) {
     return false;
+  }
 
   // 1. Read body-part headers.
-  base::StringPiece name;
-  base::StringPiece value;
+  std::string_view name;
+  std::string_view value;
   bool value_assigned = false;
   bool value_is_binary = false;
   bool value_assigned_temp;
@@ -514,9 +516,10 @@ bool FormDataParserMultipart::GetNextNameValue(Result* result) {
   return return_value;
 }
 
-bool FormDataParserMultipart::SetSource(base::StringPiece source) {
-  if (source.data() == nullptr || !source_.empty())
+bool FormDataParserMultipart::SetSource(std::string_view source) {
+  if (source.data() == nullptr || !source_.empty()) {
     return false;
+  }
   source_ = source;
 
   switch (state_) {
@@ -549,8 +552,8 @@ bool FormDataParserMultipart::SetSource(base::StringPiece source) {
   return state_ != STATE_ERROR;
 }
 
-bool FormDataParserMultipart::TryReadHeader(base::StringPiece* name,
-                                            base::StringPiece* value,
+bool FormDataParserMultipart::TryReadHeader(std::string_view* name,
+                                            std::string_view* value,
                                             bool* value_assigned,
                                             bool* value_is_binary) {
   *value_assigned = false;
@@ -562,17 +565,19 @@ bool FormDataParserMultipart::TryReadHeader(base::StringPiece* name,
     return true;
   }
   const char* header_start = source_.data();
-  if (!RE2::Consume(&source_, header_pattern()))
+  if (!RE2::Consume(&source_, header_pattern())) {
     return false;
+  }
   // (*) After this point we must return true, because we consumed one header.
 
   // Subtract 2 for the trailing "\r\n".
-  re2::StringPiece header(header_start, source_.data() - header_start - 2);
+  std::string_view header(header_start, source_.data() - header_start - 2);
 
-  if (!StartsWithPattern(header, content_disposition_pattern()))
+  if (!StartsWithPattern(header, content_disposition_pattern())) {
     return true;  // Skip headers that don't describe the content-disposition.
+  }
 
-  re2::StringPiece groups[2];
+  std::string_view groups[2];
 
   if (!name_pattern().Match(header,
                             kContentDispositionLength, header.size(),

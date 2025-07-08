@@ -59,14 +59,14 @@ class MEDIA_EXPORT AudioDeviceStatsReporter {
 
   static AggregateLogCallback CreateAggregateCallback(
       const std::string& stat_name,
-      media::AudioLatency::LatencyType latency,
+      media::AudioLatency::Type latency,
       int max_value,
       size_t bucket_count,
       Type type);
 
   static RealtimeLogCallback CreateRealtimeCallback(
       const std::string& stat_name,
-      media::AudioLatency::LatencyType latency,
+      media::AudioLatency::Type latency,
       int max_value,
       size_t bucket_count,
       Type type);
@@ -94,4 +94,4 @@ class MEDIA_EXPORT AudioDeviceStatsReporter {
 
 }  // namespace media
 
-#endif
+#endif  // MEDIA_AUDIO_AUDIO_DEVICE_STATS_REPORTER_H_

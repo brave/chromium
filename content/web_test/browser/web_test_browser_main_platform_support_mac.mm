@@ -4,15 +4,15 @@
 
 #include "content/web_test/browser/web_test_browser_main_platform_support.h"
 
-#include <AppKit/AppKit.h>
 #include <Foundation/Foundation.h>
 
-#include "content/browser/renderer_host/popup_menu_helper_mac.h"
 #include "content/browser/sandbox_parameters_mac.h"
+#include "content/public/browser/popup_menu.h"
 #include "net/test/test_data_directory.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
+// This file is also used in iOS, so we skip including AppKit.h in the iOS port.
+#if BUILDFLAG(IS_MAC)
+#include <AppKit/AppKit.h>
 #endif
 
 namespace content {
@@ -36,7 +36,7 @@ void SetDefaultsToWebTestValues() {
                forKey:@"AppleHighlightColor"];
   [defaults setObject:@"0.500000 0.500000 0.500000"
                forKey:@"AppleOtherHighlightColor"];
-  [defaults setObject:[NSArray arrayWithObject:@"en"] forKey:@"AppleLanguages"];
+  [defaults setObject:@[ @"en" ] forKey:@"AppleLanguages"];
   [defaults setBool:NO forKey:@"NSScrollAnimationEnabled"];
   [defaults setObject:@"Always" forKey:@"AppleShowScrollBars"];
 
@@ -50,11 +50,13 @@ void SetDefaultsToWebTestValues() {
 void WebTestBrowserPlatformInitialize() {
   SetDefaultsToWebTestValues();
 
-  PopupMenuHelper::DontShowPopupMenuForTesting();
+  DontShowPopupMenus();
 
+#if BUILDFLAG(IS_MAC)
   // Expand the network service sandbox to allow reading the test TLS
   // certificates.
   SetNetworkTestCertsDirectoryForTesting(net::GetTestCertsDirectory());
+#endif
 }
 
 }  // namespace content

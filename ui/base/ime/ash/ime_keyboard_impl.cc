@@ -4,7 +4,9 @@
 
 #include "ui/base/ime/ash/ime_keyboard_impl.h"
 
+#include "base/functional/callback_forward.h"
 #include "base/time/time.h"
+#include "ui/base/ime/ash/ime_keyboard.h"
 #include "ui/ozone/public/input_controller.h"
 
 namespace ash {
@@ -15,11 +17,17 @@ ImeKeyboardImpl::ImeKeyboardImpl(ui::InputController* input_controller)
 
 ImeKeyboardImpl::~ImeKeyboardImpl() = default;
 
-bool ImeKeyboardImpl::SetCurrentKeyboardLayoutByName(
-    const std::string& layout_name) {
-  ImeKeyboard::SetCurrentKeyboardLayoutByName(layout_name);
-  input_controller_->SetCurrentLayoutByName(layout_name);
-  return true;
+void ImeKeyboardImpl::SetCurrentKeyboardLayoutByName(
+    const std::string& layout_name,
+    base::OnceCallback<void(bool)> callback) {
+  const bool result =
+      ImeKeyboard::SetCurrentKeyboardLayoutByNameImpl(layout_name);
+  if (!result) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  input_controller_->SetCurrentLayoutByName(layout_name, std::move(callback));
 }
 
 bool ImeKeyboardImpl::SetAutoRepeatRate(const AutoRepeatRate& rate) {
@@ -34,6 +42,18 @@ void ImeKeyboardImpl::SetAutoRepeatEnabled(bool enabled) {
 
 bool ImeKeyboardImpl::GetAutoRepeatEnabled() {
   return input_controller_->IsAutoRepeatEnabled();
+}
+
+void ImeKeyboardImpl::SetSlowKeysEnabled(bool enabled) {
+  input_controller_->SetSlowKeysEnabled(enabled);
+}
+
+bool ImeKeyboardImpl::IsSlowKeysEnabled() const {
+  return input_controller_->IsSlowKeysEnabled();
+}
+
+void ImeKeyboardImpl::SetSlowKeysDelay(base::TimeDelta delay) {
+  input_controller_->SetSlowKeysDelay(delay);
 }
 
 void ImeKeyboardImpl::SetCapsLockEnabled(bool enable_caps_lock) {

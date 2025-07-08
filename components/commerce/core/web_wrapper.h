@@ -9,6 +9,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -25,7 +26,10 @@ class WebWrapper {
   virtual ~WebWrapper();
 
   // Get the URL that is currently being displayed for the page.
-  virtual const GURL& GetLastCommittedURL() = 0;
+  virtual const GURL& GetLastCommittedURL() const = 0;
+
+  // Gets the title for the current page.
+  virtual const std::u16string& GetTitle() = 0;
 
   // Whether the first load after a navigation has completed. This is useful
   // for determining if it is safe to run javascript and whether a navigation
@@ -40,6 +44,9 @@ class WebWrapper {
   virtual void RunJavascript(
       const std::u16string& script,
       base::OnceCallback<void(const base::Value)> callback) = 0;
+
+  // Get the source ID for the current page.
+  virtual ukm::SourceId GetPageUkmSourceId() = 0;
 
   // Gets a weak pointer for use in callbacks.
   base::WeakPtr<WebWrapper> GetWeakPtr();

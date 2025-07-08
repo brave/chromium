@@ -5,9 +5,10 @@
 import {TestRunner} from 'test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as Common from 'devtools/core/common/common.js';
+
 (async function() {
   TestRunner.addResult(`Tests that uncaught promise rejections happenned in workers are logged into console.\n`);
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('console');
   await TestRunner.evaluateInPagePromise(`
       var worker;
@@ -25,7 +26,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
   function checkConsoleMessages() {
     var count = ConsoleTestRunner.consoleMessagesCount();
     if (count === 2)
-      Common.console.showPromise().then(expand);
+      Common.Console.Console.instance().showPromise().then(expand);
   }
 
   function expand() {

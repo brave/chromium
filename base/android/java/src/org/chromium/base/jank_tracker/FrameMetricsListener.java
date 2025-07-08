@@ -4,79 +4,111 @@
 
 package org.chromium.base.jank_tracker;
 
+import android.content.Context;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.DisplayManager.DisplayListener;
 import android.os.Build.VERSION_CODES;
-import android.os.SystemClock;
+import android.view.Display;
 import android.view.FrameMetrics;
 import android.view.Window;
 import android.view.Window.OnFrameMetricsAvailableListener;
 
 import androidx.annotation.RequiresApi;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.ContextUtils;
+import org.chromium.base.TimeUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * This class receives OnFrameMetricsAvailableListener.onFrameMetricsAvailable() callbacks and
  * records frame durations in a FrameMetricsStore instance.
  */
+@NullMarked
 @RequiresApi(api = VERSION_CODES.N)
 public class FrameMetricsListener implements OnFrameMetricsAvailableListener {
+    private class DisplayListenerBackend implements DisplayListener {
+        public void startListening() {
+            Context appCtx = ContextUtils.getApplicationContext();
+            DisplayManager displayManager =
+                    (DisplayManager) appCtx.getSystemService(Context.DISPLAY_SERVICE);
+            displayManager.registerDisplayListener(this, /* handler= */ null);
+        }
+
+        @Override
+        public void onDisplayAdded(int sdkDisplayId) {}
+
+        @Override
+        public void onDisplayRemoved(int sdkDisplayId) {}
+
+        @Override
+        public void onDisplayChanged(int sdkDisplayId) {
+            maybeUpdateRefreshRate();
+        }
+    }
+
+    private final DisplayListenerBackend mBackend = new DisplayListenerBackend();
+
     private final FrameMetricsStore mFrameMetricsStore;
-    private boolean mIsRecording;
-
-    // The reporting interval start and duration are passed to the reporting code and used in the
-    // 'JankMetricsReportingInterval' trace event.
-    private long mReportingIntervalStartTime;
-    private long mReportingIntervalDurationMillis;
-
-    private final ThreadUtils.ThreadChecker mThreadChecker = new ThreadUtils.ThreadChecker();
+    private final AtomicBoolean mIsRecording = new AtomicBoolean(false);
+    // Microseconds between each frame.
+    private long mVsyncInterval;
 
     public FrameMetricsListener(FrameMetricsStore frameMetricsStore) {
         mFrameMetricsStore = frameMetricsStore;
+        mBackend.startListening();
+        maybeUpdateRefreshRate();
+    }
+
+    private void maybeUpdateRefreshRate() {
+        Context appCtx = ContextUtils.getApplicationContext();
+        DisplayManager displayManager =
+                (DisplayManager) appCtx.getSystemService(Context.DISPLAY_SERVICE);
+        Display display = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        if (display == null) {
+            return;
+        }
+        float refreshRate = display.getRefreshRate();
+        final long kMicrosecondsPerSecond = 1000_000L;
+        mVsyncInterval = kMicrosecondsPerSecond / ((long) refreshRate);
+        TraceEvent.instant(
+                "FrameMetricsListener.maybeUpdateRefreshRate", Long.toString(mVsyncInterval));
     }
 
     /**
      * Toggles recording into FrameMetricsStore. When recording is stopped, reports accumulated
      * metrics.
-     * @param isRecording
      */
     public void setIsListenerRecording(boolean isRecording) {
-        mThreadChecker.assertOnValidThread();
-        mIsRecording = isRecording;
-        if (isRecording && mReportingIntervalStartTime == 0) {
-            mReportingIntervalStartTime = SystemClock.uptimeMillis();
-        } else if (!isRecording) {
-            if (mReportingIntervalStartTime != 0) {
-                mReportingIntervalDurationMillis =
-                        SystemClock.uptimeMillis() - mReportingIntervalStartTime;
-            }
-            reportMetrics();
-        }
+        mIsRecording.set(isRecording);
     }
 
     @RequiresApi(api = VERSION_CODES.N)
     @Override
     public void onFrameMetricsAvailable(
             Window window, FrameMetrics frameMetrics, int dropCountSinceLastInvocation) {
-        mThreadChecker.assertOnValidThread();
-        if (!mIsRecording) {
+        if (!mIsRecording.get()) {
             return;
         }
 
         long frameTotalDurationNs = frameMetrics.getMetric(FrameMetrics.TOTAL_DURATION);
+        long frame_start_vsync_ts = frameMetrics.getMetric(FrameMetrics.VSYNC_TIMESTAMP);
 
-        try (TraceEvent e = TraceEvent.scoped(
-                     "onFrameMetricsAvailable", Long.toString(frameTotalDurationNs))) {
+        try (TraceEvent e =
+                TraceEvent.scoped("onFrameMetricsAvailable", Long.toString(frameTotalDurationNs))) {
+            // FrameMetrics.DEADLINE was added in API level 31(S).
+            // TODO(b/311139161): Update RequiresApi level to Android S.
             long deadlineNs = frameMetrics.getMetric(FrameMetrics.DEADLINE);
-            boolean isJanky = frameTotalDurationNs >= deadlineNs;
-            mFrameMetricsStore.addFrameMeasurement(frameTotalDurationNs, isJanky);
+            int missedVsyncs = 0;
+            if (frameTotalDurationNs >= deadlineNs) {
+                long frameDeadlineDeltaUs =
+                        (frameTotalDurationNs - deadlineNs) / TimeUtils.NANOSECONDS_PER_MICROSECOND;
+                missedVsyncs = (int) ((frameDeadlineDeltaUs + mVsyncInterval) / mVsyncInterval);
+            }
+            mFrameMetricsStore.addFrameMeasurement(
+                    frameTotalDurationNs, missedVsyncs, frame_start_vsync_ts);
         }
-    }
-
-    private void reportMetrics() {
-        JankMetricUMARecorder.recordJankMetricsToUMA(mFrameMetricsStore.takeMetrics(),
-                mReportingIntervalStartTime, mReportingIntervalDurationMillis);
-        mReportingIntervalStartTime = 0;
-        mReportingIntervalDurationMillis = 0;
     }
 }

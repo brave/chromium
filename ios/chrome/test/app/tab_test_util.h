@@ -19,9 +19,6 @@ void OpenNewTab();
 // Simulates opening `URL` from another application.
 void SimulateExternalAppURLOpeningWithURL(NSURL* URL);
 
-// Simulates opening the add account sign-in flow from the web.
-void SimulateAddAccountFromWeb();
-
 // Opens a new incognito tab, and does not wait for animations to complete.
 void OpenNewIncognitoTab();
 
@@ -46,6 +43,9 @@ web::WebState* GetWebStateAtIndexInCurrentMode(int index);
 
 // Closes current tab.
 void CloseCurrentTab();
+
+// Pins current tab.
+void PinCurrentTab();
 
 // Closes tab with the given index in current mode (incognito or normal).
 void CloseTabAtIndex(NSUInteger index);

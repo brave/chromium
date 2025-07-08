@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ash/login/saml/password_change_success_notification.h"
 
+#include <optional>
+#include <string>
+
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/test/base/testing_profile.h"
@@ -21,7 +24,7 @@ inline std::u16string utf16(const char* ascii) {
 
 class PasswordChangeSuccessNotificationTest : public testing::Test {
  protected:
-  absl::optional<Notification> Notification() {
+  std::optional<Notification> Notification() {
     return NotificationDisplayServiceTester::Get()->GetNotification(
         "saml.password-change-success-notification");
   }

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/windows/d3d11_h264_accelerator.h"
 
 #include <type_traits>
@@ -52,7 +57,9 @@ D3D11H264Picture::~D3D11H264Picture() {
 
 D3D11H264Accelerator::D3D11H264Accelerator(D3D11VideoDecoderClient* client,
                                            MediaLog* media_log)
-    : D3DAccelerator(client, media_log) {}
+    : media_log_(media_log->Clone()), client_(client) {
+  DCHECK(client_);
+}
 
 D3D11H264Accelerator::~D3D11H264Accelerator() {}
 
@@ -77,7 +84,7 @@ H264DecoderStatus D3D11H264Accelerator::SubmitFrameMetadata(
     return H264DecoderStatus::kFail;
   }
 
-  if (!video_decoder_wrapper_->WaitForFrameBegins(d3d11_pic->picture.get())) {
+  if (!client_->GetWrapper()->WaitForFrameBegins(d3d11_pic->picture.get())) {
     return H264DecoderStatus::kFail;
   }
 
@@ -258,7 +265,7 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
     const uint8_t* data,
     size_t size,
     const std::vector<SubsampleEntry>& subsamples) {
-  if (!video_decoder_wrapper_->HasPendingBuffer(
+  if (!client_->GetWrapper()->HasPendingBuffer(
           D3DVideoDecoderWrapper::BufferType::kPictureParameters)) {
     DXVA_PicParams_H264 pic_param = {};
     FillPicParamsWithConstants(&pic_param);
@@ -287,10 +294,10 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
     pic_param.NonExistingFrameFlags = non_existing_frame_flags_;
 
     auto params_buffer =
-        video_decoder_wrapper_->GetPictureParametersBuffer(sizeof(pic_param));
+        client_->GetWrapper()->GetPictureParametersBuffer(sizeof(pic_param));
     if (params_buffer.size() < sizeof(pic_param)) {
-      RecordFailure("Insufficient picture parameter buffer size",
-                    D3D11StatusCode::kGetPicParamBufferFailed);
+      MEDIA_LOG(ERROR, media_log_)
+          << "Insufficient picture parameter buffer size";
       return H264DecoderStatus::kFail;
     }
 
@@ -301,7 +308,7 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
     }
   }
 
-  if (!video_decoder_wrapper_->HasPendingBuffer(
+  if (!client_->GetWrapper()->HasPendingBuffer(
           D3DVideoDecoderWrapper::BufferType::kInverseQuantizationMatrix)) {
     DXVA_Qmatrix_H264 iq_matrix = {};
 
@@ -331,11 +338,10 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
            sizeof(iq_matrix.bScalingLists8x8));
 
     auto iq_matrix_buffer =
-        video_decoder_wrapper_->GetInverseQuantizationMatrixBuffer(
+        client_->GetWrapper()->GetInverseQuantizationMatrixBuffer(
             sizeof(iq_matrix));
     if (iq_matrix_buffer.size() < sizeof(iq_matrix)) {
-      RecordFailure("Insufficient quant buffer size",
-                    D3D11StatusCode::kGetQuantBufferFailed);
+      MEDIA_LOG(ERROR, media_log_) << "Insufficient quant buffer size";
       return H264DecoderStatus::kFail;
     }
 
@@ -346,9 +352,19 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
     }
   }
 
+  // GetBitstreamBuffer() will create the buffer with the given size and return
+  // the buffer if it does not exist. Calling it here is to make sure it creates
+  // one with a large enough size |current_frame_size_| for D3D12 video decoder.
+  // D3D12 video decoder don't accept chopped bitstream buffer, so we need to
+  // reserve the buffer with the size large enough to contain the whole frame
+  // before the following call jumps into the base class who don't know this
+  // size.
+  CHECK_GT(current_frame_size_, 0u);
+  client_->GetWrapper()->GetBitstreamBuffer(current_frame_size_);
+
   constexpr uint8_t kStartCode[] = {0, 0, 1};
   bool ok =
-      video_decoder_wrapper_
+      client_->GetWrapper()
           ->AppendBitstreamAndSliceDataWithStartCode<DXVA_Slice_H264_Short>(
               {data, size}, kStartCode);
 
@@ -357,21 +373,29 @@ H264DecoderStatus D3D11H264Accelerator::SubmitSlice(
 
 H264DecoderStatus D3D11H264Accelerator::SubmitDecode(
     scoped_refptr<H264Picture> pic) {
-  return video_decoder_wrapper_->SubmitSlice() &&
-                 video_decoder_wrapper_->SubmitDecode()
+  return client_->GetWrapper()->SubmitSlice() &&
+                 client_->GetWrapper()->SubmitDecode()
              ? H264DecoderStatus::kOk
              : H264DecoderStatus::kFail;
 }
 
 void D3D11H264Accelerator::Reset() {
-  if (video_decoder_wrapper_) {
-    video_decoder_wrapper_->Reset();
+  current_frame_size_ = 0;
+  if (client_->GetWrapper()) {
+    client_->GetWrapper()->Reset();
   }
 }
 
 bool D3D11H264Accelerator::OutputPicture(scoped_refptr<H264Picture> pic) {
   D3D11H264Picture* our_pic = pic->AsD3D11H264Picture();
   return our_pic && client_->OutputResult(our_pic, our_pic->picture);
+}
+
+H264Decoder::H264Accelerator::Status D3D11H264Accelerator::SetStream(
+    base::span<const uint8_t> stream,
+    const DecryptConfig* decrypt_config) {
+  current_frame_size_ = stream.size();
+  return H264Accelerator::SetStream(stream, decrypt_config);
 }
 
 }  // namespace media

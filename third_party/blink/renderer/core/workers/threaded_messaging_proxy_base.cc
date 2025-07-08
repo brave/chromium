@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/devtools_agent.h"
-#include "third_party/blink/renderer/core/inspector/worker_devtools_params.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
@@ -39,13 +38,7 @@ ThreadedMessagingProxyBase::ThreadedMessagingProxyBase(
       parent_agent_group_task_runner_(parent_agent_group_task_runner),
       terminate_sync_load_event_(
           base::WaitableEvent::ResetPolicy::MANUAL,
-          base::WaitableEvent::InitialState::NOT_SIGNALED),
-      feature_handle_for_scheduler_(
-          !execution_context
-              ? FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle()
-              : execution_context->GetScheduler()->RegisterFeature(
-                    SchedulingPolicy::Feature::kDedicatedWorkerOrWorklet,
-                    {SchedulingPolicy::DisableBackForwardCache()})) {
+          base::WaitableEvent::InitialState::NOT_SIGNALED) {
   DCHECK((parent_execution_context_task_runners_ &&
           !parent_agent_group_task_runner_) ||
          (!parent_execution_context_task_runners_ &&
@@ -67,11 +60,26 @@ void ThreadedMessagingProxyBase::Trace(Visitor* visitor) const {
   visitor->Trace(execution_context_);
 }
 
-void ThreadedMessagingProxyBase::InitializeWorkerThread(
+bool ThreadedMessagingProxyBase::InitializeWorkerThread(
     std::unique_ptr<GlobalScopeCreationParams> global_scope_creation_params,
-    const absl::optional<WorkerBackingThreadStartupData>& thread_startup_data,
-    const absl::optional<const blink::DedicatedWorkerToken>& token) {
+    const std::optional<WorkerBackingThreadStartupData>& thread_startup_data,
+    const std::optional<const blink::DedicatedWorkerToken>& token,
+    std::unique_ptr<WorkerDevToolsParams> client_provided_devtools_params) {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // This is used only if kWorkerThreadRespectTermRequest is enabled,
+  // and is dedicated worker.
+  WorkerGlobalScope* worker_scope = nullptr;
+  if (base::FeatureList::IsEnabled(
+          blink::features::kWorkerThreadRespectTermRequest)) {
+    worker_scope = DynamicTo<WorkerGlobalScope>(execution_context_.Get());
+  }
+
+  // Quickly returns if the current thread has already been terminated.
+  if (worker_scope && worker_scope->GetThread()->IsRequestedToTerminate()) {
+    return false;
+  }
 
   KURL script_url = global_scope_creation_params->script_url;
 
@@ -81,20 +89,31 @@ void ThreadedMessagingProxyBase::InitializeWorkerThread(
   }
 
   worker_thread_ = CreateWorkerThread();
+  // The thread is shutting down. We cannot add a new thread.
+  if (worker_scope &&
+      !worker_scope->GetThread()->ChildThreadStartedOnWorkerThread(
+          worker_thread_.get())) {
+    worker_thread_.reset();
+    return false;
+  }
 
-  auto devtools_params = DevToolsAgent::WorkerThreadCreated(
-      execution_context_.Get(), worker_thread_.get(), script_url,
-      global_scope_creation_params->global_scope_name, token);
+  auto devtools_params =
+      client_provided_devtools_params
+          ? std::move(client_provided_devtools_params)
+          : DevToolsAgent::WorkerThreadCreated(
+                execution_context_.Get(), worker_thread_.get(), script_url,
+                global_scope_creation_params->global_scope_name, token);
 
   worker_thread_->Start(std::move(global_scope_creation_params),
                         thread_startup_data, std::move(devtools_params));
 
-  if (execution_context_) {
-    if (auto* scope = DynamicTo<WorkerGlobalScope>(*execution_context_)) {
-      scope->GetThread()->ChildThreadStartedOnWorkerThread(
+  if (!worker_scope) {
+    if (auto* scope = DynamicTo<WorkerGlobalScope>(execution_context_.Get())) {
+      scope->GetThread()->ChildThreadStartedOnWorkerThreadLegacy(
           worker_thread_.get());
     }
   }
+  return true;
 }
 
 void ThreadedMessagingProxyBase::CountFeature(WebFeature feature) {
@@ -102,20 +121,30 @@ void ThreadedMessagingProxyBase::CountFeature(WebFeature feature) {
   UseCounter::Count(execution_context_, feature);
 }
 
+void ThreadedMessagingProxyBase::CountWebDXFeature(
+    mojom::blink::WebDXFeature feature) {
+  DCHECK(IsParentContextThread());
+  UseCounter::CountWebDXFeature(execution_context_, feature);
+}
+
 void ThreadedMessagingProxyBase::ReportConsoleMessage(
     mojom::ConsoleMessageSource source,
     mojom::ConsoleMessageLevel level,
     const String& message,
-    std::unique_ptr<SourceLocation> location) {
+    const CrossThreadSourceLocation& cross_thread_location) {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (asked_to_terminate_)
     return;
+
+  SourceLocation* location = cross_thread_location.CreateSourceLocation();
   execution_context_->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-      level, message, std::move(location), worker_thread_.get()));
+      level, message, location, worker_thread_.get()));
 }
 
 void ThreadedMessagingProxyBase::ParentObjectDestroyed() {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (worker_thread_) {
     // Request to terminate the global scope. This will eventually call
     // WorkerThreadTerminated().
@@ -127,6 +156,7 @@ void ThreadedMessagingProxyBase::ParentObjectDestroyed() {
 
 void ThreadedMessagingProxyBase::WorkerThreadTerminated() {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // This method is always the last to be performed, so the proxy is not
   // needed for communication in either side any more. However, the parent
@@ -157,12 +187,11 @@ void ThreadedMessagingProxyBase::WorkerThreadTerminated() {
 
 void ThreadedMessagingProxyBase::TerminateGlobalScope() {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (asked_to_terminate_)
     return;
   asked_to_terminate_ = true;
-
-  feature_handle_for_scheduler_.reset();
 
   terminate_sync_load_event_.Signal();
 
@@ -179,7 +208,7 @@ void ThreadedMessagingProxyBase::TerminateGlobalScope() {
 
 ExecutionContext* ThreadedMessagingProxyBase::GetExecutionContext() const {
   DCHECK(IsParentContextThread());
-  return execution_context_;
+  return execution_context_.Get();
 }
 
 ParentExecutionContextTaskRunners*
@@ -196,6 +225,7 @@ ThreadedMessagingProxyBase::GetParentAgentGroupTaskRunner() const {
 
 WorkerThread* ThreadedMessagingProxyBase::GetWorkerThread() const {
   DCHECK(IsParentContextThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return worker_thread_.get();
 }
 

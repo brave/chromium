@@ -6,16 +6,17 @@
 #define COMPONENTS_POLICY_CORE_COMMON_MANAGEMENT_MANAGEMENT_SERVICE_H_
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/functional/callback.h"
+#include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "components/policy/policy_export.h"
 #include "components/prefs/persistent_pref_store.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 // For more imformation about this file please read
 // //components/policy/core/common/management/management_service.md
@@ -23,10 +24,22 @@
 class PrefService;
 class PrefRegistrySimple;
 
+namespace gfx {
+class Image;
+}
+
+namespace ui {
+class ImageModel;
+}
+
 namespace policy {
 
 class ManagementService;
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(ManagementAuthorityTrustworthiness)
 enum class ManagementAuthorityTrustworthiness {
   NONE = 0,           // No management authority found
   LOW = 1,            // Local device management authority
@@ -35,12 +48,13 @@ enum class ManagementAuthorityTrustworthiness {
                       // ChromeOS
   kMaxValue = FULLY_TRUSTED
 };
+// LINT.ThenChange(//tools/metrics/histograms/enums.xml:ManagementAuthorityTrustworthiness)
 
 enum EnterpriseManagementAuthority : int {
   NONE = 0,
   COMPUTER_LOCAL =
       1 << 0,  // local GPO or registry, /etc files, local root profile
-  DOMAIN_LOCAL = 1 << 1,  // AD joined, puppet
+  DOMAIN_LOCAL = 1 << 1,  // AD joined
   CLOUD = 1 << 2,         // MDM, GSuite user
   CLOUD_DOMAIN = 1 << 3   // Azure AD, CBCM, CrosEnrolled
 };
@@ -81,7 +95,7 @@ class POLICY_EXPORT ManagementStatusProvider {
   const std::string& cache_pref_name() const { return cache_pref_name_; }
 
  private:
-  absl::variant<PrefService*, scoped_refptr<PersistentPrefStore>> cache_ =
+  std::variant<PrefService*, scoped_refptr<PersistentPrefStore>> cache_ =
       nullptr;
   const std::string cache_pref_name_;
 };
@@ -90,6 +104,13 @@ class POLICY_EXPORT ManagementStatusProvider {
 // This class must be used on the main thread at all times.
 class POLICY_EXPORT ManagementService {
  public:
+  // Observers observing updates to the enterprise custom or default work label.
+  class POLICY_EXPORT Observer : public base::CheckedObserver {
+   public:
+    virtual void OnEnterpriseLabelUpdated() {}
+    virtual void OnEnterpriseLogoUpdatedForBrowser() {}
+  };
+
   explicit ManagementService(
       std::vector<std::unique_ptr<ManagementStatusProvider>> providers);
   virtual ~ManagementService();
@@ -107,6 +128,9 @@ class POLICY_EXPORT ManagementService {
   // until `callback` is called.
   virtual void RefreshCache(CacheRefreshCallback callback);
 
+  virtual ui::ImageModel* GetManagementIconForProfile();
+  virtual gfx::Image* GetManagementIconForBrowser();
+
   // Returns true if `authority` is are actively managed.
   bool HasManagementAuthority(EnterpriseManagementAuthority authority);
 
@@ -116,14 +140,29 @@ class POLICY_EXPORT ManagementService {
   // Returns whether there is any management authority at all.
   bool IsManaged();
 
-  const absl::optional<int>& management_authorities_for_testing() {
+  // Returns whether the profile is managed because the signed in account is a
+  // managed account.
+  bool IsAccountManaged();
+
+  // Returns whether the profile is managed because the whole browser is
+  // managed.
+  bool IsBrowserManaged();
+
+  const std::optional<int>& management_authorities_for_testing() {
     return management_authorities_for_testing_;
   }
+
+  // Add / remove observers.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
   void SetManagementAuthoritiesForTesting(int management_authorities);
   void ClearManagementAuthoritiesForTesting();
   void SetManagementStatusProviderForTesting(
       std::vector<std::unique_ptr<ManagementStatusProvider>> providers);
+  virtual void TriggerPolicyStatusChangedForTesting() {}
+  virtual void SetBrowserManagementIconForTesting(
+      const gfx::Image& management_icon) {}
 
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
@@ -135,6 +174,9 @@ class POLICY_EXPORT ManagementService {
   void AddManagementStatusProvider(
       std::unique_ptr<ManagementStatusProvider> provider);
 
+  void NotifyEnterpriseLabelUpdated();
+  void NotifyEnterpriseLogoForBrowserUpdated();
+
   const std::vector<std::unique_ptr<ManagementStatusProvider>>&
   management_status_providers() {
     return management_status_providers_;
@@ -145,7 +187,8 @@ class POLICY_EXPORT ManagementService {
   // managed entity.
   int GetManagementAuthorities();
 
-  absl::optional<int> management_authorities_for_testing_;
+  base::ObserverList<ManagementService::Observer> observers_;
+  std::optional<int> management_authorities_for_testing_;
   std::vector<std::unique_ptr<ManagementStatusProvider>>
       management_status_providers_;
 

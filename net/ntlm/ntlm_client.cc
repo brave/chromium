@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/numerics/safe_math.h"
@@ -217,7 +218,7 @@ std::vector<uint8_t> NtlmClient::GenerateAuthenticateMessage(
 
   // Response fields only for NTLMv2
   std::vector<uint8_t> updated_target_info;
-  std::vector<uint8_t> v2_proof_input;
+  std::array<uint8_t, kProofInputLenV2> v2_proof_input;
   uint8_t v2_proof[kNtlmProofLenV2];
   uint8_t v2_session_key[kSessionKeyLenV2];
 
@@ -233,7 +234,7 @@ std::vector<uint8_t> NtlmClient::GenerateAuthenticateMessage(
         GenerateUpdatedTargetInfo(IsMicEnabled(), IsEpaEnabled(),
                                   channel_bindings, spn, av_pairs, &timestamp);
 
-    memset(lm_response, 0, kResponseLenV1);
+    UNSAFE_TODO(memset(lm_response, 0, kResponseLenV1));
     if (timestamp == UINT64_MAX) {
       // If the server didn't send a time, then use the clients time.
       timestamp = client_time;
@@ -242,8 +243,7 @@ std::vector<uint8_t> NtlmClient::GenerateAuthenticateMessage(
     uint8_t v2_hash[kNtlmHashLen];
     GenerateNtlmHashV2(domain, username, password, v2_hash);
     v2_proof_input = GenerateProofInputV2(timestamp, client_challenge);
-    GenerateNtlmProofV2(v2_hash, server_challenge,
-                        base::make_span<kProofInputLenV2>(v2_proof_input),
+    GenerateNtlmProofV2(v2_hash, server_challenge, v2_proof_input,
                         updated_target_info, v2_proof);
     GenerateSessionBaseKeyV2(v2_hash, v2_proof, v2_session_key);
   } else {
@@ -336,8 +336,7 @@ std::vector<uint8_t> NtlmClient::GenerateAuthenticateMessage(
     // set to zeros.
     DCHECK_LT(kMicOffsetV2 + kMicLenV2, authenticate_message_len);
 
-    base::span<uint8_t, kMicLenV2> mic(
-        const_cast<uint8_t*>(auth_msg.data()) + kMicOffsetV2, kMicLenV2);
+    auto mic = base::span(auth_msg).subspan<kMicOffsetV2, kMicLenV2>();
     GenerateMicV2(v2_session_key, negotiate_message_, server_challenge_message,
                   auth_msg, mic);
   }

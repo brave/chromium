@@ -74,8 +74,12 @@ class CORE_EXPORT Headers final : public ScriptWrappable,
   // https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
   void RemovePrivilegedNoCorsRequestHeaders();
 
-  FetchHeaderList* HeaderList() const { return header_list_; }
+  FetchHeaderList* HeaderList() const { return header_list_.Get(); }
   void Trace(Visitor*) const override;
+
+  void SetBypassRequestForbiddenHeaderCheck(bool bypass) {
+    bypass_request_forbidden_header_check_ = bypass;
+  }
 
  private:
   class HeadersIterationSource final
@@ -111,6 +115,8 @@ class CORE_EXPORT Headers final : public ScriptWrappable,
 
   Member<FetchHeaderList> header_list_;
   Guard guard_;
+  // Allow setting forbidden headers on fetch() requests.
+  bool bypass_request_forbidden_header_check_ = false;
 
   IterationSource* CreateIterationSource(ScriptState*,
                                          ExceptionState&) override;

@@ -4,22 +4,29 @@
 
 #include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
 
+#include <algorithm>
+
 #include "base/functional/callback.h"
 #include "base/trace_event/typed_macros.h"
+#include "base/types/pass_key.h"
 #include "components/shared_highlighting/core/common/disabled_sites.h"
 #include "components/shared_highlighting/core/common/shared_highlighting_features.h"
+#include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_generator.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
 #include "third_party/blink/renderer/core/annotation/annotation_selector.h"
+#include "third_party/blink/renderer/core/annotation/node_annotation_selector.h"
 #include "third_party/blink/renderer/core/annotation/text_annotation_selector.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/visible_selection.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
 #include "third_party/blink/renderer/core/fragment_directive/text_fragment_handler.h"
 #include "third_party/blink/renderer/core/fragment_directive/text_fragment_selector.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -32,6 +39,17 @@ const char* ToString(mojom::blink::AnnotationType type) {
       return "UserNote";
     case mojom::blink::AnnotationType::kTextFinder:
       return "TextFinder";
+    case mojom::blink::AnnotationType::kGlic:
+      return "Glic";
+  }
+}
+
+String ToString(const mojom::blink::Selector& selector) {
+  switch (selector.which()) {
+    case mojom::blink::Selector::Tag::kSerializedSelector:
+      return selector.get_serialized_selector();
+    case mojom::blink::Selector::Tag::kNodeId:
+      return String::Number(selector.get_node_id());
   }
 }
 }  // namespace
@@ -77,6 +95,22 @@ void AnnotationAgentContainerImpl::BindReceiver(
     mojo::PendingReceiver<mojom::blink::AnnotationAgentContainer> receiver) {
   DCHECK(frame);
   DCHECK(frame->GetDocument());
+
+  // If the current frame embeds a plugin, and that plugin supports annotation,
+  // allow the plugin to bind the receiver.
+  // TODO(crbug.com/427455182): Support embedded plugins.
+  if (frame->View()->Plugins().size() == 1u) {
+    WebPluginContainerImpl* web_plugin_container =
+        *frame->View()->Plugins().begin();
+    CHECK(web_plugin_container);
+    WebPlugin* plugin = web_plugin_container->Plugin();
+    CHECK(plugin);
+    if (plugin->SupportsAnnotation()) {
+      plugin->BindAnnotationAgentContainer(std::move(receiver));
+      return;
+    }
+  }
+
   Document& document = *frame->GetDocument();
 
   auto* container = AnnotationAgentContainerImpl::CreateIfNeeded(document);
@@ -142,9 +176,10 @@ void AnnotationAgentContainerImpl::PerformInitialAttachments() {
 
 AnnotationAgentImpl* AnnotationAgentContainerImpl::CreateUnboundAgent(
     mojom::blink::AnnotationType type,
-    AnnotationSelector& selector) {
+    AnnotationSelector& selector,
+    std::optional<DOMNodeId> search_range_start_node_id) {
   auto* agent_impl = MakeGarbageCollected<AnnotationAgentImpl>(
-      *this, type, selector, PassKey());
+      *this, type, selector, search_range_start_node_id, PassKey());
   agents_.push_back(agent_impl);
 
   // Attachment will happen as part of the document lifecycle in a new frame.
@@ -153,8 +188,8 @@ AnnotationAgentImpl* AnnotationAgentContainerImpl::CreateUnboundAgent(
   return agent_impl;
 }
 
-void AnnotationAgentContainerImpl::RemoveAgent(AnnotationAgentImpl& agent,
-                                               AnnotationAgentImpl::PassKey) {
+void AnnotationAgentContainerImpl::RemoveAgent(AnnotationAgentImpl& agent) {
+  agent.Reset(PassKey());
   DCHECK(!agent.IsAttached());
   wtf_size_t index = agents_.Find(&agent);
   DCHECK_NE(index, kNotFound);
@@ -177,24 +212,34 @@ void AnnotationAgentContainerImpl::CreateAgent(
     mojo::PendingRemote<mojom::blink::AnnotationAgentHost> host_remote,
     mojo::PendingReceiver<mojom::blink::AnnotationAgent> agent_receiver,
     mojom::blink::AnnotationType type,
-    const String& serialized_selector) {
+    mojom::blink::SelectorPtr selector,
+    std::optional<DOMNodeId> search_range_start_node_id) {
   TRACE_EVENT("blink", "AnnotationAgentContainerImpl::CreateAgent", "type",
-              ToString(type), "selector", serialized_selector);
+              ToString(type), "selector", ToString(*selector));
   DCHECK(GetSupplementable());
 
-  AnnotationSelector* selector =
-      AnnotationSelector::Deserialize(serialized_selector);
-
-  // If the selector was invalid, we should drop the bindings which the host
-  // will see as a disconnect.
-  // TODO(bokan): We could support more graceful fallback/error reporting by
-  // calling an error method on the host.
-  if (!selector) {
-    TRACE_EVENT_INSTANT("blink", "Failed to deserialize selector");
-    return;
+  AnnotationSelector* annotation_selector;
+  switch (selector->which()) {
+    case mojom::blink::Selector::Tag::kSerializedSelector:
+      annotation_selector =
+          AnnotationSelector::Deserialize(selector->get_serialized_selector());
+      // If the selector was invalid, we should drop the bindings which the host
+      // will see as a disconnect.
+      // TODO(bokan): We could support more graceful fallback/error reporting by
+      // calling an error method on the host.
+      if (!annotation_selector) {
+        TRACE_EVENT_INSTANT("blink", "Failed to deserialize selector");
+        return;
+      }
+      break;
+    case mojom::blink::Selector::Tag::kNodeId:
+      annotation_selector =
+          MakeGarbageCollected<NodeAnnotationSelector>(selector->get_node_id());
+      break;
   }
 
-  auto* agent_impl = CreateUnboundAgent(type, *selector);
+  auto* agent_impl = CreateUnboundAgent(type, *annotation_selector,
+                                        search_range_start_node_id);
   agent_impl->Bind(std::move(host_remote), std::move(agent_receiver));
 }
 
@@ -208,6 +253,21 @@ void AnnotationAgentContainerImpl::CreateAgentFromSelection(
       type,
       WTF::BindOnce(&AnnotationAgentContainerImpl::DidFinishSelectorGeneration,
                     WrapWeakPersistent(this), std::move(callback)));
+}
+
+void AnnotationAgentContainerImpl::RemoveAgentsOfType(
+    mojom::blink::AnnotationType type) {
+  TRACE_EVENT("blink", "AnnotationAgentContainerImpl::RemoveAgentsOfType",
+              "type", ToString(type));
+  auto it = std::remove_if(agents_.begin(), agents_.end(),
+                           [type](AnnotationAgentImpl* agent) {
+                             if (agent->GetType() != type) {
+                               return false;
+                             }
+                             agent->Reset(PassKey());
+                             return true;
+                           });
+  agents_.erase(it, agents_.end());
 }
 
 // TODO(cheickcisse@): Move shared highlighting enums, also used in user note to
@@ -263,8 +323,8 @@ void AnnotationAgentContainerImpl::DidFinishSelectorGeneration(
   std::move(callback).Run(std::move(selector_creation_result), error,
                           ready_status);
 
-  AnnotationAgentImpl* agent_impl =
-      CreateUnboundAgent(type, *annotation_selector);
+  AnnotationAgentImpl* agent_impl = CreateUnboundAgent(
+      type, *annotation_selector, /*search_range_start_node_id=*/std::nullopt);
   agent_impl->Bind(std::move(pending_host_remote),
                    std::move(pending_agent_receiver));
 }

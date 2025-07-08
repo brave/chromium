@@ -31,6 +31,35 @@ namespace segmentation_platform::processing {
 
 namespace {
 
+GURL GetLocalTabURL(const TabFetcher::Tab& tab) {
+  if (tab.webcontents) {
+    return tab.webcontents->GetURL();
+  }
+#if BUILDFLAG(IS_ANDROID)
+  if (tab.tab_android) {
+    return tab.tab_android->GetURL();
+  }
+#endif
+  return GURL();
+}
+
+// Returns the time since last time the tab was modified.
+base::TimeDelta GetLocalTimeSinceModified(const TabFetcher::Tab& tab) {
+  base::Time last_modified_timestamp;
+  if (tab.webcontents) {
+    auto* last_entry = tab.webcontents->GetController().GetLastCommittedEntry();
+    if (last_entry) {
+      last_modified_timestamp = last_entry->GetTimestamp();
+    }
+  }
+#if BUILDFLAG(IS_ANDROID)
+  if (tab.tab_android) {
+    last_modified_timestamp = tab.tab_android->GetLastShownTimestamp();
+  }
+#endif
+  return base::Time::Now() - last_modified_timestamp;
+}
+
 #if BUILDFLAG(IS_ANDROID)
 
 // Returns a list of all tabs from tab model.
@@ -40,7 +69,9 @@ std::vector<TabFetcher::TabEntry> FetchTabs(const Profile* profile) {
     if (model->GetProfile() != profile) {
       continue;
     }
-    for (int i = 0; i < model->GetTabCount(); ++i) {
+    // Store count in local variable since it makes expensive JNI call.
+    int count = model->GetTabCount();
+    for (int i = 0; i < count; ++i) {
       auto* web_contents = model->GetWebContentsAt(i);
       auto* tab_android = model->GetTabAt(i);
       auto tab_id = tab_android->GetSyncedTabDelegate()->GetSessionId();
@@ -48,6 +79,31 @@ std::vector<TabFetcher::TabEntry> FetchTabs(const Profile* profile) {
     }
   }
   return tabs;
+}
+
+TabFetcher::Tab FindLocalTabAndroid(const Profile* profile,
+                                    const TabFetcher::TabEntry& entry) {
+  for (const TabModel* model : TabModelList::models()) {
+    if (model->GetProfile() != profile) {
+      continue;
+    }
+    // Store count in local variable since it makes expensive JNI call.
+    int count = model->GetTabCount();
+    for (int i = 0; i < count; ++i) {
+      auto* tab_android = model->GetTabAt(i);
+      SessionID id = tab_android->GetSyncedTabDelegate()->GetSessionId();
+      if (id != entry.tab_id) {
+        continue;
+      }
+      TabFetcher::Tab result;
+      result.webcontents = model->GetWebContentsAt(i);
+      result.tab_android = tab_android;
+      result.time_since_modified = GetLocalTimeSinceModified(result);
+      result.tab_url = GetLocalTabURL(result);
+      return result;
+    }
+  }
+  return TabFetcher::Tab();
 }
 
 #else  // BUILDFLAG(IS_ANDROID)
@@ -72,23 +128,6 @@ std::vector<TabFetcher::TabEntry> FetchTabs(const Profile* profile) {
 
 #endif  // BUILDFLAG(IS_ANDROID)
 
-// Returns the time since last time the tab was modified.
-base::TimeDelta GetLocalTimeSinceModified(const TabFetcher::Tab& tab) {
-  base::Time last_modified_timestamp;
-  if (tab.webcontents) {
-    auto* last_entry = tab.webcontents->GetController().GetLastCommittedEntry();
-    if (last_entry) {
-      last_modified_timestamp = last_entry->GetTimestamp();
-    }
-  }
-#if BUILDFLAG(IS_ANDROID)
-  if (tab.tab_android) {
-    last_modified_timestamp = tab.tab_android->GetLastShownTimestamp();
-  }
-#endif
-  return base::Time::Now() - last_modified_timestamp;
-}
-
 }  // namespace
 
 LocalTabHandler::LocalTabHandler(
@@ -105,6 +144,9 @@ bool LocalTabHandler::FillAllLocalTabsFromTabModel(
 }
 
 TabFetcher::Tab LocalTabHandler::FindLocalTab(const TabEntry& entry) {
+#if BUILDFLAG(IS_ANDROID)
+  return FindLocalTabAndroid(profile_, entry);
+#else
   TabFetcher::Tab result;
   // Fetch all tabs and verify if the `entry` is still valid.
   auto all_local_tabs = FetchTabs(profile_);
@@ -114,15 +156,13 @@ TabFetcher::Tab LocalTabHandler::FindLocalTab(const TabEntry& entry) {
           reinterpret_cast<content::WebContents*>(tab.web_contents_data.get());
       result.tab_android =
           reinterpret_cast<TabAndroid*>(tab.tab_android_data.get());
+      result.time_since_modified = GetLocalTimeSinceModified(result);
+      result.tab_url = GetLocalTabURL(result);
       break;
     }
   }
   return result;
-}
-
-base::TimeDelta LocalTabHandler::GetLocalTabTimeSinceModified(
-    const TabFetcher::Tab& tab) {
-  return GetLocalTimeSinceModified(tab);
+#endif
 }
 
 LocalTabSource::LocalTabSource(
@@ -134,10 +174,11 @@ LocalTabSource::~LocalTabSource() = default;
 
 void LocalTabSource::AddLocalTabInfo(
     const TabFetcher::Tab& tab,
-    const FeatureProcessorState& feature_processor_state,
+    FeatureProcessorState& feature_processor_state,
     Tensor& inputs) {
   inputs[TabSessionSource::kInputLocalTabTimeSinceModified] =
-      ProcessedValue::FromFloat(GetLocalTimeSinceModified(tab).InSeconds());
+      ProcessedValue::FromFloat(
+          BucketizeExp(GetLocalTimeSinceModified(tab).InSeconds(), /*max_buckets*/50));
 }
 
 }  // namespace segmentation_platform::processing

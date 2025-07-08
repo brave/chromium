@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/base64.h"
 #include "base/containers/span.h"
@@ -61,11 +63,8 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
   }
 
   std::string CreateNtlmAuthHeader(base::span<const uint8_t> buffer) {
-    std::string output;
-    base::Base64Encode(
-        base::StringPiece(reinterpret_cast<const char*>(buffer.data()),
-                          buffer.size()),
-        &output);
+    std::string output = base::Base64Encode(std::string_view(
+        reinterpret_cast<const char*>(buffer.data()), buffer.size()));
 
     return "NTLM " + output;
   }
@@ -73,12 +72,12 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
 
   HttpAuth::AuthorizationResult HandleAnotherChallenge(
       const std::string& challenge) {
-    HttpAuthChallengeTokenizer tokenizer(challenge.begin(), challenge.end());
+    HttpAuthChallengeTokenizer tokenizer(challenge);
     return GetAuthHandler()->HandleAnotherChallenge(&tokenizer);
   }
 
   bool DecodeChallenge(const std::string& challenge, std::string* decoded) {
-    HttpAuthChallengeTokenizer tokenizer(challenge.begin(), challenge.end());
+    HttpAuthChallengeTokenizer tokenizer(challenge);
     return base::Base64Decode(tokenizer.base64_param(), decoded);
   }
 
@@ -87,52 +86,6 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
     HttpRequestInfo request_info;
     return callback.GetResult(GetAuthHandler()->GenerateAuthToken(
         GetCreds(), &request_info, callback.callback(), token));
-  }
-
-  bool ReadBytesPayload(ntlm::NtlmBufferReader* reader,
-                        base::span<uint8_t> buffer) {
-    ntlm::SecurityBuffer sec_buf;
-    return reader->ReadSecurityBuffer(&sec_buf) &&
-           (sec_buf.length == buffer.size()) &&
-           reader->ReadBytesFrom(sec_buf, buffer);
-  }
-
-  // Reads bytes from a payload and assigns them to a string. This makes
-  // no assumptions about the underlying encoding.
-  bool ReadStringPayload(ntlm::NtlmBufferReader* reader, std::string* str) {
-    ntlm::SecurityBuffer sec_buf;
-    if (!reader->ReadSecurityBuffer(&sec_buf))
-      return false;
-
-    if (!reader->ReadBytesFrom(
-            sec_buf,
-            base::as_writable_bytes(base::make_span(
-                base::WriteInto(str, sec_buf.length + 1), sec_buf.length)))) {
-      return false;
-    }
-
-    return true;
-  }
-
-  // Reads bytes from a payload and assigns them to a string16. This makes
-  // no assumptions about the underlying encoding. This will fail if there
-  // are an odd number of bytes in the payload.
-  void ReadString16Payload(ntlm::NtlmBufferReader* reader,
-                           std::u16string* str) {
-    ntlm::SecurityBuffer sec_buf;
-    EXPECT_TRUE(reader->ReadSecurityBuffer(&sec_buf));
-    EXPECT_EQ(0, sec_buf.length % 2);
-
-    std::vector<uint8_t> raw(sec_buf.length);
-    EXPECT_TRUE(reader->ReadBytesFrom(sec_buf, raw));
-
-#if defined(ARCH_CPU_BIG_ENDIAN)
-    for (size_t i = 0; i < raw.size(); i += 2) {
-      std::swap(raw[i], raw[i + 1]);
-    }
-#endif
-
-    str->assign(reinterpret_cast<const char16_t*>(raw.data()), raw.size() / 2);
   }
 
   int GetGenerateAuthTokenResult() {
@@ -146,10 +99,10 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
     return static_cast<HttpAuthHandlerNTLM*>(auth_handler_.get());
   }
 
-  static void MockRandom(uint8_t* output, size_t n) {
+  static void MockRandom(base::span<uint8_t> output) {
     // This is set to 0xaa because the client challenge for testing in
     // [MS-NLMP] Section 4.2.1 is 8 bytes of 0xaa.
-    memset(output, 0xaa, n);
+    std::ranges::fill(output, 0xaa);
   }
 
   static uint64_t MockGetMSTime() {
@@ -236,9 +189,9 @@ TEST_F(HttpAuthHandlerNtlmPortableTest, NtlmV1AuthenticationSuccess) {
   ASSERT_TRUE(DecodeChallenge(token, &decoded));
   ASSERT_EQ(std::size(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1),
             decoded.size());
-  ASSERT_EQ(0, memcmp(decoded.data(),
-                      ntlm::test::kExpectedAuthenticateMsgSpecResponseV1,
-                      decoded.size()));
+  ASSERT_EQ(
+      base::as_byte_span(decoded),
+      base::as_byte_span(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1));
 }
 
 }  // namespace net

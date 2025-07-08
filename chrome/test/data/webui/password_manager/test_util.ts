@@ -27,7 +27,7 @@ export function makeFamilyFetchResults(
     chrome.passwordsPrivate.FamilyFetchResults {
   return {
     status: status || chrome.passwordsPrivate.FamilyFetchStatus.SUCCESS,
-    members: members || [],
+    familyMembers: members || [],
   };
 }
 
@@ -48,11 +48,13 @@ export interface PasswordEntryParams {
   username?: string;
   displayName?: string;
   password?: string;
+  backupPassword?: string;
   federationText?: string;
   id?: number;
   inAccountStore?: boolean;
   inProfileStore?: boolean;
   note?: string;
+  changePasswordUrl?: string;
   affiliatedDomains?: chrome.passwordsPrivate.DomainInfo[];
 }
 
@@ -96,8 +98,11 @@ export function createPasswordEntry(params?: PasswordEntryParams):
     id: id,
     storedIn: storeType,
     note: note,
+    changePasswordUrl: params.changePasswordUrl,
+    backupPassword: params.backupPassword,
     password: params.password || '',
     affiliatedDomains: params.affiliatedDomains || [domain],
+    creationTime: params.isPasskey ? 1000000000 : undefined,
   };
 }
 
@@ -148,6 +153,11 @@ export function makePasswordManagerPrefs() {
       type: chrome.settingsPrivate.PrefType.BOOLEAN,
       value: true,
     },
+    credentials_enable_automatic_passkey_upgrades: {
+      key: 'credentials_enable_automatic_passkey_upgrades',
+      type: chrome.settingsPrivate.PrefType.BOOLEAN,
+      value: true,
+    },
     profile: {
       password_dismiss_compromised_alert: {
         key: 'profile.password_dismiss_compromised_alert',
@@ -155,15 +165,20 @@ export function makePasswordManagerPrefs() {
         value: true,
       },
     },
-    // <if expr="is_win or is_macosx">
     password_manager: {
+      // <if expr="is_win or is_macosx or is_chromeos">
       biometric_authentication_filling: {
         key: 'password_manager.biometric_authentication_filling',
         type: chrome.settingsPrivate.PrefType.BOOLEAN,
         value: true,
       },
+      // </if>
+      password_sharing_enabled: {
+        key: 'password_manager.password_sharing_enabled',
+        type: chrome.settingsPrivate.PrefType.BOOLEAN,
+        value: true,
+      },
     },
-    // </if>
   };
 }
 
@@ -209,6 +224,7 @@ export function makeInsecureCredential(params: InsecureCredentialsParams):
     password: params.password,
     note: '',
     compromisedInfo: types.length ? compromisedInfo : undefined,
+    creationTime: undefined,
   };
 }
 

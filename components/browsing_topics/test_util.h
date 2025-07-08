@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_BROWSING_TOPICS_TEST_UTIL_H_
 #define COMPONENTS_BROWSING_TOPICS_TEST_UTIL_H_
 
-#include "base/containers/queue.h"
+#include <optional>
 
+#include "base/callback_list.h"
+#include "base/containers/queue.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/browsing_topics/annotator.h"
@@ -14,7 +16,6 @@
 #include "components/browsing_topics/browsing_topics_service.h"
 #include "components/browsing_topics/mojom/browsing_topics_internals.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/browsing_topics/browsing_topics.mojom.h"
 
 namespace ukm {
@@ -24,7 +25,7 @@ class TestAutoSetUkmRecorder;
 namespace browsing_topics {
 
 struct ApiResultUkmMetrics {
-  ApiResultUkmMetrics(absl::optional<ApiAccessResult> failure_reason,
+  ApiResultUkmMetrics(std::optional<ApiAccessResult> failure_reason,
                       CandidateTopic topic0,
                       CandidateTopic topic1,
                       CandidateTopic topic2)
@@ -33,7 +34,7 @@ struct ApiResultUkmMetrics {
         topic1(std::move(topic1)),
         topic2(std::move(topic2)) {}
 
-  absl::optional<ApiAccessResult> failure_reason;
+  std::optional<ApiAccessResult> failure_reason;
   CandidateTopic topic0;
   CandidateTopic topic1;
   CandidateTopic topic2;
@@ -59,6 +60,8 @@ class TesterBrowsingTopicsCalculator : public BrowsingTopicsCalculator {
       history::HistoryService* history_service,
       content::BrowsingTopicsSiteDataManager* site_data_manager,
       Annotator* annotator,
+      int previous_timeout_count,
+      base::Time session_start_time,
       const base::circular_deque<EpochTopics>& epochs,
       CalculateCompletedCallback callback,
       base::queue<uint64_t> rand_uint64_queue);
@@ -69,6 +72,8 @@ class TesterBrowsingTopicsCalculator : public BrowsingTopicsCalculator {
       history::HistoryService* history_service,
       content::BrowsingTopicsSiteDataManager* site_data_manager,
       Annotator* annotator,
+      int previous_timeout_count,
+      base::Time session_start_time,
       CalculateCompletedCallback callback,
       EpochTopics mock_result,
       base::TimeDelta mock_result_delay);
@@ -128,6 +133,7 @@ class MockBrowsingTopicsService : public BrowsingTopicsService {
               GetTopTopicsForDisplay,
               (),
               (const override));
+  MOCK_METHOD(void, ValidateCalculationSchedule, (), (override));
   MOCK_METHOD(Annotator*, GetAnnotator, (), (override));
   MOCK_METHOD(void,
               ClearTopic,
@@ -149,18 +155,34 @@ class TestAnnotator : public Annotator {
 
   // Used in calls to |GetBrowsingTopicsModelInfo|.
   void UseModelInfo(
-      const absl::optional<optimization_guide::ModelInfo>& model_info);
+      const std::optional<optimization_guide::ModelInfo>& model_info);
+
+  // If setting to true when it had been false, all callbacks that have been
+  // passed to |NotifyWhenModelAvailable| will be ran.
+  void SetModelAvailable(bool is_available);
 
   // Annotator:
   void BatchAnnotate(BatchAnnotationCallback callback,
                      const std::vector<std::string>& inputs) override;
   void NotifyWhenModelAvailable(base::OnceClosure callback) override;
-  absl::optional<optimization_guide::ModelInfo> GetBrowsingTopicsModelInfo()
+  std::optional<optimization_guide::ModelInfo> GetBrowsingTopicsModelInfo()
       const override;
+
+  void SetModelRequestDelay(base::TimeDelta model_request_delay) {
+    model_request_delay_ = model_request_delay;
+  }
+
+  void SetAnnotationRequestDelay(base::TimeDelta annotation_request_delay) {
+    annotation_request_delay_ = annotation_request_delay;
+  }
 
  private:
   std::map<std::string, std::set<int32_t>> annotations_;
-  absl::optional<optimization_guide::ModelInfo> model_info_;
+  std::optional<optimization_guide::ModelInfo> model_info_;
+  bool model_available_ = true;
+  base::TimeDelta model_request_delay_;
+  base::TimeDelta annotation_request_delay_;
+  base::OnceClosureList model_available_callbacks_;
 };
 
 }  // namespace browsing_topics

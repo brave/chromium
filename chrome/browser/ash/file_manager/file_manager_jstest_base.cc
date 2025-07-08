@@ -4,17 +4,22 @@
 
 #include "chrome/browser/ash/file_manager/file_manager_jstest_base.h"
 
+#include "ash/webui/common/trusted_types_util.h"
 #include "ash/webui/file_manager/resource_loader.h"
 #include "ash/webui/file_manager/resources/grit/file_manager_swa_resources_map.h"
 #include "ash/webui/file_manager/url_constants.h"
+#include "base/check_deref.h"
 #include "base/lazy_instance.h"
 #include "base/path_service.h"
 #include "chrome/browser/ash/file_manager/file_manager_string_util.h"
 #include "chrome/browser/ash/file_manager/file_manager_test_util.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -49,17 +54,20 @@ class TestWebUIProvider
         content::WebUIDataSource::CreateAndAdd(
             profile, ash::file_manager::kChromeUIFileManagerHost);
 
-    files_swa_source->AddResourcePaths(base::make_span(
-        kFileManagerSwaResources, kFileManagerSwaResourcesSize));
+    files_swa_source->AddResourcePaths(base::span(kFileManagerSwaResources));
 
-    ash::file_manager::AddFilesAppResources(
-        files_swa_source, kFileManagerResources, kFileManagerResourcesSize);
     ash::file_manager::AddFilesAppResources(files_swa_source,
-                                            kFileManagerGenResources,
-                                            kFileManagerGenResourcesSize);
+                                            kFileManagerResources);
+    ash::file_manager::AddFilesAppResources(files_swa_source,
+                                            kFileManagerGenResources);
 
-    dict_ = GetFileManagerStrings();
-    AddFileManagerFeatureStrings("en-US", Profile::FromWebUI(web_ui), &dict_);
+    const std::string& application_locale =
+        g_browser_process->GetFeatures()->application_locale_storage()->Get();
+    dict_ = GetFileManagerStrings(application_locale);
+    AddFileManagerFeatureStrings(
+        "en-US", application_locale,
+        CHECK_DEREF(g_browser_process->variations_service()),
+        Profile::FromWebUI(web_ui), &dict_);
     files_swa_source->AddLocalizedStrings(dict_);
     files_swa_source->UseStringsJs();
 
@@ -67,6 +75,8 @@ class TestWebUIProvider
   }
 
   void DataSourceOverrides(content::WebUIDataSource* source) override {
+    ash::EnableTrustedTypesCSP(source);
+
     // Add 'unsafe-inline' to CSP to allow the inline <script> in the
     // generated HTML to run see js_test_gen_html.py.
     source->OverrideContentSecurityPolicy(
@@ -84,10 +94,6 @@ class TestWebUIProvider
             " "
             "'self' chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj "
             "chrome-extension://pmfjbimdmchhbnneeidfognadeopoehp ; ");
-
-    // TODO(crbug.com/1098685): Trusted Type remaining WebUI.
-    source->DisableTrustedTypesCSP();
-
     DCHECK(!dict_.empty()) << "The translation should be fully loaded";
     source->AddLocalizedStrings(dict_);
     source->UseStringsJs();
@@ -141,8 +147,8 @@ void FileManagerJsTestBase::RunTestURL(const std::string& file) {
   if (coverage_handler_ && coverage_handler_->CoverageEnabled()) {
     auto* const test_info =
         ::testing::UnitTest::GetInstance()->current_test_info();
-    const std::string& full_test_name = base::StrCat(
-        {test_info->test_suite_name(), test_info->test_case_name()});
+    const std::string& full_test_name =
+        base::StrCat({test_info->test_suite_name(), "_", test_info->name()});
     coverage_handler_->CollectCoverage(full_test_name);
   }
 

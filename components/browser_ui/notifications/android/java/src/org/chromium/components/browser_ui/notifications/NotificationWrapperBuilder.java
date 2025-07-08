@@ -13,22 +13,29 @@ import android.os.Bundle;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.widget.RemoteViews;
 
+import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 
-/**
- * Abstraction over Notification.Builder and NotificationCompat.Builder interfaces.
- */
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
+/** Abstraction over Notification.Builder and NotificationCompat.Builder interfaces. */
+@NullMarked
 public interface NotificationWrapperBuilder {
+    // Android strips images > ~5mb (crbug.com/390677997), so resize bitmaps to be smaller than
+    // this to reduce memory and to avoid them from getting stripped.
+    public static final int BIG_PICTURE_BITMAP_MAX_SIZE_IN_KB = 4500;
+
     NotificationWrapperBuilder setAutoCancel(boolean autoCancel);
 
     @Deprecated
-    NotificationWrapperBuilder setContentIntent(PendingIntent contentIntent);
+    NotificationWrapperBuilder setContentIntent(@Nullable PendingIntent contentIntent);
 
-    NotificationWrapperBuilder setContentIntent(PendingIntentProvider contentIntent);
+    NotificationWrapperBuilder setContentIntent(@Nullable PendingIntentProvider contentIntent);
 
-    NotificationWrapperBuilder setContentTitle(CharSequence title);
+    NotificationWrapperBuilder setContentTitle(@Nullable CharSequence title);
 
-    NotificationWrapperBuilder setContentText(CharSequence text);
+    NotificationWrapperBuilder setContentText(@Nullable CharSequence text);
 
     NotificationWrapperBuilder setSmallIcon(int icon);
 
@@ -36,7 +43,7 @@ public interface NotificationWrapperBuilder {
 
     NotificationWrapperBuilder setColor(int argb);
 
-    NotificationWrapperBuilder setTicker(CharSequence text);
+    NotificationWrapperBuilder setTicker(@Nullable CharSequence text);
 
     NotificationWrapperBuilder setLocalOnly(boolean localOnly);
 
@@ -55,34 +62,31 @@ public interface NotificationWrapperBuilder {
     @Deprecated
     NotificationWrapperBuilder addAction(int icon, CharSequence title, PendingIntent intent);
 
-    /**
-     * @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}.
-     */
+    /** @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}. */
     NotificationWrapperBuilder addAction(
             int icon, CharSequence title, PendingIntentProvider intent, int actionType);
 
     @Deprecated
     NotificationWrapperBuilder addAction(Notification.Action action);
 
-    /**
-     * @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}.
-     */
+    /** @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}. */
     NotificationWrapperBuilder addAction(
             Notification.Action action, int flags, int actionType, int requestCode);
 
     @Deprecated
     NotificationWrapperBuilder addAction(NotificationCompat.Action action);
 
-    /**
-     * @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}.
-     */
+    /** @param actionType is for UMA. In Chrome, this is {@link NotificationUmaTracker.ActionType}. */
     NotificationWrapperBuilder addAction(
             NotificationCompat.Action action, int flags, int actionType, int requestCode);
 
     @Deprecated
-    NotificationWrapperBuilder setDeleteIntent(PendingIntent intent);
+    NotificationWrapperBuilder setDeleteIntent(@Nullable PendingIntent intent);
 
-    NotificationWrapperBuilder setDeleteIntent(PendingIntentProvider intent);
+    NotificationWrapperBuilder setDeleteIntent(@Nullable PendingIntentProvider intent);
+
+    NotificationWrapperBuilder setDeleteIntent(
+            @Nullable PendingIntentProvider intent, int actionType);
 
     /**
      * Sets the priority of single notification on Android versions prior to Oreo.
@@ -92,15 +96,15 @@ public interface NotificationWrapperBuilder {
 
     NotificationWrapperBuilder setProgress(int max, int percentage, boolean indeterminate);
 
-    NotificationWrapperBuilder setSubText(CharSequence text);
+    NotificationWrapperBuilder setSubText(@Nullable CharSequence text);
 
     NotificationWrapperBuilder setWhen(long time);
 
-    NotificationWrapperBuilder setLargeIcon(Bitmap icon);
+    NotificationWrapperBuilder setLargeIcon(@Nullable Bitmap icon);
 
     NotificationWrapperBuilder setVibrate(long[] vibratePattern);
 
-    NotificationWrapperBuilder setSound(Uri sound);
+    NotificationWrapperBuilder setSound(@Nullable Uri sound);
 
     NotificationWrapperBuilder setSilent(boolean silent);
 
@@ -108,21 +112,20 @@ public interface NotificationWrapperBuilder {
 
     NotificationWrapperBuilder setOnlyAlertOnce(boolean onlyAlertOnce);
 
-    NotificationWrapperBuilder setPublicVersion(Notification publicNotification);
+    NotificationWrapperBuilder setPublicVersion(@Nullable Notification publicNotification);
 
     NotificationWrapperBuilder setContent(RemoteViews views);
 
-    NotificationWrapperBuilder setBigPictureStyle(Bitmap bigPicture, CharSequence summaryText);
+    NotificationWrapperBuilder setBigPictureStyle(
+            @NonNull Bitmap bigPicture, @Nullable CharSequence summaryText);
 
-    NotificationWrapperBuilder setBigTextStyle(CharSequence bigText);
+    NotificationWrapperBuilder setBigTextStyle(@Nullable CharSequence bigText);
 
     NotificationWrapperBuilder setMediaStyle(MediaSessionCompat session, int[] actions);
 
     NotificationWrapperBuilder setCategory(String category);
 
-    /**
-     * Sets the lifetime of a notification. Does nothing prior to Oreo.
-     */
+    /** Sets the lifetime of a notification. Does nothing prior to Oreo. */
     NotificationWrapperBuilder setTimeoutAfter(long ms);
 
     NotificationWrapper buildWithBigContentView(RemoteViews bigView);
@@ -130,6 +133,7 @@ public interface NotificationWrapperBuilder {
     NotificationWrapper buildWithBigTextStyle(String bigText);
 
     @Deprecated
+    @Nullable
     Notification build();
 
     NotificationWrapper buildNotificationWrapper();

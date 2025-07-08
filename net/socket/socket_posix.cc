@@ -6,11 +6,13 @@
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <sys/socket.h>
 
 #include <memory>
 #include <utility>
 
+#include "base/debug/alias.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -142,7 +144,7 @@ int SocketPosix::Bind(const SockaddrStorage& address) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
 
-  int rv = bind(socket_fd_, address.addr, address.addr_len);
+  int rv = bind(socket_fd_, address.addr(), address.addr_len);
   if (rv < 0) {
     PLOG(ERROR) << "bind() failed";
     return MapSystemError(errno);
@@ -365,8 +367,9 @@ int SocketPosix::GetLocalAddress(SockaddrStorage* address) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(address);
 
-  if (getsockname(socket_fd_, address->addr, &address->addr_len) < 0)
+  if (getsockname(socket_fd_, address->addr(), &address->addr_len) < 0) {
     return MapSystemError(errno);
+  }
   return OK;
 }
 
@@ -431,9 +434,8 @@ void SocketPosix::OnFileCanWriteWithoutBlocking(int fd) {
 
 int SocketPosix::DoAccept(std::unique_ptr<SocketPosix>* socket) {
   SockaddrStorage new_peer_address;
-  int new_socket = HANDLE_EINTR(accept(socket_fd_,
-                                       new_peer_address.addr,
-                                       &new_peer_address.addr_len));
+  int new_socket = HANDLE_EINTR(
+      accept(socket_fd_, new_peer_address.addr(), &new_peer_address.addr_len));
   if (new_socket < 0)
     return MapAcceptError(errno);
 
@@ -459,9 +461,8 @@ void SocketPosix::AcceptCompleted() {
 }
 
 int SocketPosix::DoConnect() {
-  int rv = HANDLE_EINTR(connect(socket_fd_,
-                                peer_address_->addr,
-                                peer_address_->addr_len));
+  int rv = HANDLE_EINTR(
+      connect(socket_fd_, peer_address_->addr(), peer_address_->addr_len));
   DCHECK_GE(0, rv);
   return rv == 0 ? OK : MapConnectError(errno);
 }
@@ -516,15 +517,23 @@ void SocketPosix::ReadCompleted() {
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  // Disable SIGPIPE for this write. Although Chromium globally disables
-  // SIGPIPE, the net stack may be used in other consumers which do not do
-  // this. MSG_NOSIGNAL is a Linux-only API. On OS X, this is a setsockopt on
-  // socket creation.
-  int rv = HANDLE_EINTR(send(socket_fd_, buf->data(), buf_len, MSG_NOSIGNAL));
-#else
-  int rv = HANDLE_EINTR(write(socket_fd_, buf->data(), buf_len));
-#endif
+  const char* data = buf->data();
+  const int flags = MSG_NOSIGNAL;
+
+  // TODO(crbug.com/40064248): Remove this once the crash is resolved.
+  char debug3[128];
+  snprintf(debug3, sizeof(debug3),
+           "socket_fd_=%d,data=%p,buf_len=%d,flags=0x%x", socket_fd_, data,
+           buf_len, flags);
+  base::debug::Alias(debug3);
+
+  int rv = HANDLE_EINTR(send(socket_fd_, buf->data(), buf_len, flags));
+
+  // TODO(crbug.com/40064248): Remove this once the crash is resolved.
+  char debug4[64];
+  snprintf(debug4, sizeof(debug4), "rv=%d,errno=%d", rv, rv < 0 ? errno : 0);
+  base::debug::Alias(debug4);
+
   if (rv >= 0) {
     CHECK_LE(rv, buf_len);
   }

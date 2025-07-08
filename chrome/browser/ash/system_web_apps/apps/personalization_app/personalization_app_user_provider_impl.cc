@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_user_provider_impl.h"
 
 #include "ash/public/cpp/default_user_image.h"
@@ -16,20 +21,20 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "chrome/browser/ash/camera_presence_notifier.h"
 #include "chrome/browser/ash/login/users/avatar/user_image_file_selector.h"
-#include "chrome/browser/ash/login/users/avatar/user_image_manager.h"
+#include "chrome/browser/ash/login/users/avatar/user_image_manager_impl.h"
+#include "chrome/browser/ash/login/users/avatar/user_image_manager_registry.h"
 #include "chrome/browser/ash/login/users/avatar/user_image_prefs.h"
-#include "chrome/browser/ash/login/users/chrome_user_manager.h"
 #include "chrome/browser/ash/login/users/default_user_image/default_user_images.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_manager.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_manager_factory.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chromeos/ash/components/camera_presence_notifier/camera_presence_notifier.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_manager/user.h"
 #include "components/user_manager/user_image/user_image.h"
-#include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/web_ui.h"
 #include "mojo/public/cpp/base/big_buffer.h"
@@ -55,11 +60,11 @@ std::vector<unsigned char> ImageSkiaToPngBytes(const gfx::ImageSkia& image) {
   }
 
   // Encode the image as png.
-  std::vector<unsigned char> output;
-  if (gfx::PNGCodec::EncodeBGRASkBitmap(*image.bitmap(),
-                                        /*discard_transparency=*/false,
-                                        &output)) {
-    return output;
+  std::optional<std::vector<uint8_t>> output =
+      gfx::PNGCodec::EncodeBGRASkBitmap(*image.bitmap(),
+                                        /*discard_transparency=*/false);
+  if (output) {
+    return output.value();
   }
 
   // Return empty vector if case encoding failed.
@@ -92,9 +97,8 @@ PersonalizationAppUserProviderImpl::PersonalizationAppUserProviderImpl(
       image_encoding_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::TaskPriority::USER_VISIBLE,
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})) {
-  ash::UserImageManager* user_image_manager =
-      ash::ChromeUserManager::Get()->GetUserImageManager(
-          GetAccountId(profile_));
+  auto* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
   user_image_manager->DownloadProfileImage();
   user_image_file_selector_ =
       std::make_unique<ash::UserImageFileSelector>(web_ui);
@@ -137,9 +141,8 @@ void PersonalizationAppUserProviderImpl::SetUserImageObserver(
   // Call observers manually the first time to initialize state.
   OnUserImageChanged(*user);
 
-  ash::UserImageManager* user_image_manager =
-      ash::ChromeUserManager::Get()->GetUserImageManager(
-          GetAccountId(profile_));
+  ash::UserImageManagerImpl* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
   const gfx::ImageSkia& profile_image =
       user_image_manager->DownloadedProfileImage();
   OnUserProfileImageUpdated(*user, profile_image);
@@ -182,12 +185,12 @@ void PersonalizationAppUserProviderImpl::SelectDefaultImage(int index) {
   }
 
   if (GetUser(profile_)->image_index() != index) {
-    ash::UserImageManager::RecordUserImageChanged(
-        ash::UserImageManager::ImageIndexToHistogramIndex(index));
+    ash::UserImageManagerImpl::RecordUserImageChanged(
+        ash::UserImageManagerImpl::ImageIndexToHistogramIndex(index));
   }
 
-  auto* user_image_manager = ash::ChromeUserManager::Get()->GetUserImageManager(
-      GetAccountId(profile_));
+  auto* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
 
   user_image_manager->SaveUserDefaultImageIndex(index);
 }
@@ -199,14 +202,13 @@ void PersonalizationAppUserProviderImpl::SelectProfileImage() {
   }
 
   if (GetUser(profile_)->image_index() !=
-      user_manager::User::USER_IMAGE_PROFILE) {
-    ash::UserImageManager::RecordUserImageChanged(
+      user_manager::UserImage::Type::kProfile) {
+    ash::UserImageManagerImpl::RecordUserImageChanged(
         ash::default_user_image::kHistogramImageFromProfile);
   }
 
-  ash::UserImageManager* user_image_manager =
-      ash::ChromeUserManager::Get()->GetUserImageManager(
-          GetAccountId(profile_));
+  ash::UserImageManagerImpl* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
 
   user_image_manager->SaveUserImageFromProfileImage();
 }
@@ -218,10 +220,9 @@ void PersonalizationAppUserProviderImpl::SelectCameraImage(
     return;
   }
   // Make a copy of the data.
-  auto ref_counted =
-      base::MakeRefCounted<base::RefCountedBytes>(data.data(), data.size());
+  auto ref_counted = base::MakeRefCounted<base::RefCountedBytes>(data);
   // Get a view of the same data copied above.
-  auto as_span = base::make_span(ref_counted->front(), ref_counted->size());
+  auto as_span = base::span(*ref_counted);
 
   camera_image_decoder_->DecodeCameraImage(
       as_span,
@@ -243,14 +244,13 @@ void PersonalizationAppUserProviderImpl::SelectLastExternalUserImage() {
   }
 
   if (GetUser(profile_)->image_index() !=
-      user_manager::User::USER_IMAGE_EXTERNAL) {
-    ash::UserImageManager::RecordUserImageChanged(
+      user_manager::UserImage::Type::kExternal) {
+    ash::UserImageManagerImpl::RecordUserImageChanged(
         ash::default_user_image::kHistogramImageExternal);
   }
 
-  ash::UserImageManager* user_image_manager =
-      ash::ChromeUserManager::Get()->GetUserImageManager(
-          GetAccountId(profile_));
+  ash::UserImageManagerImpl* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
 
   user_image_manager->SaveUserImage(std::move(last_external_user_image_));
 }
@@ -259,12 +259,11 @@ void PersonalizationAppUserProviderImpl::OnFileSelected(
     const base::FilePath& path) {
   // No way to tell if this is a different external image than last time, so
   // always record it.
-  ash::UserImageManager::RecordUserImageChanged(
+  ash::UserImageManagerImpl::RecordUserImageChanged(
       ash::default_user_image::kHistogramImageExternal);
 
-  ash::UserImageManager* user_image_manager =
-      ash::ChromeUserManager::Get()->GetUserImageManager(
-          GetAccountId(profile_));
+  ash::UserImageManagerImpl* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
 
   user_image_manager->SaveUserImageFromFile(path);
 }
@@ -284,13 +283,13 @@ void PersonalizationAppUserProviderImpl::OnUserImageChanged(
 
   int image_index = desired_user->image_index();
   switch (image_index) {
-    case user_manager::User::USER_IMAGE_INVALID: {
+    case user_manager::UserImage::Type::kInvalid: {
       UpdateUserImageObserver(
           ash::personalization_app::mojom::UserImage::NewInvalidImage(
               ash::personalization_app::mojom::InvalidImage::New()));
       break;
     }
-    case user_manager::User::USER_IMAGE_EXTERNAL: {
+    case user_manager::UserImage::Type::kExternal: {
       if (desired_user->image_format() == user_manager::UserImage::FORMAT_PNG &&
           desired_user->has_image_bytes()) {
         last_external_user_image_ = std::make_unique<user_manager::UserImage>(
@@ -301,8 +300,7 @@ void PersonalizationAppUserProviderImpl::OnUserImageChanged(
         auto image_bytes = desired_user->image_bytes();
         UpdateUserImageObserver(
             ash::personalization_app::mojom::UserImage::NewExternalImage(
-                mojo_base::BigBuffer(base::make_span(image_bytes->front(),
-                                                     image_bytes->size()))));
+                mojo_base::BigBuffer(base::span(*image_bytes))));
       } else {
         // Defer saving |last_external_user_image| until it has been encoded to
         // png bytes.
@@ -317,7 +315,7 @@ void PersonalizationAppUserProviderImpl::OnUserImageChanged(
       }
       break;
     }
-    case user_manager::User::USER_IMAGE_PROFILE: {
+    case user_manager::UserImage::Type::kProfile: {
       UpdateUserImageObserver(
           ash::personalization_app::mojom::UserImage::NewProfileImage(
               ash::personalization_app::mojom::ProfileImage::New()));
@@ -378,7 +376,7 @@ void PersonalizationAppUserProviderImpl::OnCameraImageDecoded(
 
   // Every time we decode a camera image it is new, so always record a metric
   // here.
-  ash::UserImageManager::RecordUserImageChanged(
+  ash::UserImageManagerImpl::RecordUserImageChanged(
       ash::default_user_image::kHistogramImageFromCamera);
 
   auto user_image = std::make_unique<user_manager::UserImage>(
@@ -387,8 +385,8 @@ void PersonalizationAppUserProviderImpl::OnCameraImageDecoded(
   // Image was successfully decoded so it is valid png data.
   user_image->MarkAsSafe();
 
-  auto* user_image_manager = ash::ChromeUserManager::Get()->GetUserImageManager(
-      GetAccountId(profile_));
+  auto* user_image_manager =
+      ash::UserImageManagerRegistry::Get()->GetManager(GetAccountId(profile_));
 
   user_image_manager->SaveUserImage(std::move(user_image));
 }
@@ -410,7 +408,8 @@ void PersonalizationAppUserProviderImpl::OnExternalUserImageEncoded(
 }
 
 bool PersonalizationAppUserProviderImpl::IsCustomizationSelectorsPrefEnabled() {
-  return user_image::prefs::IsCustomizationSelectorsPrefEnabled(profile_);
+  return user_image::prefs::IsCustomizationSelectorsPrefEnabled(
+      profile_->GetPrefs());
 }
 
 void PersonalizationAppUserProviderImpl::UpdateUserImageObserver(

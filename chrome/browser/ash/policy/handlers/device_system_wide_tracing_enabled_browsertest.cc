@@ -4,11 +4,11 @@
 
 #include "ash/constants/ash_pref_names.h"
 #include "base/run_loop.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/chrome_tracing_delegate.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/pref_observer.h"
 #include "components/prefs/pref_service.h"
@@ -76,8 +76,7 @@ class DeviceSystemWideTracingEnabledPolicyConsumerOwnedTest
 // device.
 IN_PROC_BROWSER_TEST_F(DeviceSystemWideTracingEnabledPolicyConsumerOwnedTest,
                        DefaultEnabled) {
-  auto tracing_delegate = std::make_unique<ChromeTracingDelegate>();
-  ASSERT_TRUE(tracing_delegate->IsSystemWideTracingEnabled());
+  ASSERT_TRUE(ChromeTracingDelegate::IsSystemWideTracingEnabled());
 }
 
 class DeviceSystemWideTracingEnabledPolicyEnterpriseManagedTest
@@ -98,16 +97,15 @@ class DeviceSystemWideTracingEnabledPolicyEnterpriseManagedTest
 IN_PROC_BROWSER_TEST_F(
     DeviceSystemWideTracingEnabledPolicyEnterpriseManagedTest,
     PolicyApplied) {
-  auto tracing_delegate = std::make_unique<ChromeTracingDelegate>();
-  ASSERT_FALSE(tracing_delegate->IsSystemWideTracingEnabled());
+  ASSERT_FALSE(ChromeTracingDelegate::IsSystemWideTracingEnabled());
 
   UpdatePolicy(true);
   SyncRefreshDevicePolicy();
-  ASSERT_TRUE(tracing_delegate->IsSystemWideTracingEnabled());
+  ASSERT_TRUE(ChromeTracingDelegate::IsSystemWideTracingEnabled());
 
   UpdatePolicy(false);
   SyncRefreshDevicePolicy();
-  ASSERT_FALSE(tracing_delegate->IsSystemWideTracingEnabled());
+  ASSERT_FALSE(ChromeTracingDelegate::IsSystemWideTracingEnabled());
 }
 
 }  // namespace policy

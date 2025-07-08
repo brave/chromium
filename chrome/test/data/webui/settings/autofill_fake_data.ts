@@ -3,23 +3,29 @@
 // found in the LICENSE file.
 
 // clang-format off
-import {AutofillManagerProxy, PaymentsManagerProxy, PersonalDataChangedListener} from 'chrome://settings/lazy_load.js';
-import {assertEquals} from 'chrome://webui-test/chai_assert.js';
+import type {AutofillManagerProxy, PaymentsManagerProxy, PersonalDataChangedListener} from 'chrome://settings/lazy_load.js';
+import {assertEquals, assertFalse} from 'chrome://webui-test/chai_assert.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 // clang-format on
+
+const FieldType = chrome.autofillPrivate.FieldType;
 
 export const STUB_USER_ACCOUNT_INFO: chrome.autofillPrivate.AccountInfo = {
   email: 'stub-user@example.com',
   isSyncEnabledForAutofillProfiles: false,
   isEligibleForAddressAccountStorage: false,
+  isAutofillSyncToggleAvailable: false,
+  isAutofillSyncToggleEnabled: false,
 };
 
 /**
  * Creates a new fake address entry for testing.
  */
 export function createEmptyAddressEntry(): chrome.autofillPrivate.AddressEntry {
-  return {};
+  return {
+    fields: [],
+  };
 }
 
 /**
@@ -30,15 +36,29 @@ export function createAddressEntry(): chrome.autofillPrivate.AddressEntry {
   const addressLines = patternMaker('xxxx Main St', 10);
   return {
     guid: makeGuid(),
-    fullName: fullName,
-    companyName: 'Google',
-    addressLines: addressLines,
-    addressLevel1: 'CA',
-    addressLevel2: 'Venice',
-    postalCode: patternMaker('xxxxx', 10),
-    countryCode: 'US',
-    phoneNumber: patternMaker('(xxx) xxx-xxxx', 10),
-    emailAddress: patternMaker('userxxxx@gmail.com', 16),
+    fields: [
+      {type: FieldType.NAME_FULL, value: fullName},
+      {type: FieldType.COMPANY_NAME, value: 'Google'},
+      {
+        type: FieldType.ADDRESS_HOME_STREET_ADDRESS,
+        value: addressLines,
+      },
+      {type: FieldType.ADDRESS_HOME_STATE, value: 'CA'},
+      {type: FieldType.ADDRESS_HOME_CITY, value: 'Venice'},
+      {
+        type: FieldType.ADDRESS_HOME_ZIP,
+        value: patternMaker('xxxxx', 10),
+      },
+      {type: FieldType.ADDRESS_HOME_COUNTRY, value: 'US'},
+      {
+        type: FieldType.PHONE_HOME_WHOLE_NUMBER,
+        value: patternMaker('(xxx) xxx-xxxx', 10),
+      },
+      {
+        type: FieldType.EMAIL_ADDRESS,
+        value: patternMaker('userxxxx@gmail.com', 16),
+      },
+    ],
     languageCode: 'EN-US',
     metadata: {
       isLocal: true,
@@ -64,24 +84,30 @@ export function createEmptyCreditCardEntry():
 /**
  * Creates a new random credit card entry for testing.
  */
-export function createCreditCardEntry():
-    chrome.autofillPrivate.CreditCardEntry {
+export function createCreditCardEntry(
+    isNewFopDisplay: boolean = true,
+    hasIdentifier: boolean = false): chrome.autofillPrivate.CreditCardEntry {
   const cards = ['Visa', 'Mastercard', 'Discover', 'Card'];
   const card = cards[Math.floor(Math.random() * cards.length)];
-  const cardNumber = patternMaker('xxxx xxxx xxxx xxxx', 10);
+  const cardNumber = appendLuhnCheckBit(patternMaker('xxxxxxxxxxxxxxx', 10));
+  const now = new Date();
+  const networkAndLastFour = card + ' ' +
+      '****' + cardNumber.substr(-4);
   return {
     guid: makeGuid(),
     name: 'Jane Doe',
     cardNumber: cardNumber,
     expirationMonth: Math.ceil(Math.random() * 11).toString(),
-    expirationYear: (2016 + Math.floor(Math.random() * 5)).toString(),
+    expirationYear:
+        (now.getFullYear() + Math.floor(Math.random() * 5) + 1).toString(),
     network: `${card}_network`,
     imageSrc: 'chrome://theme/IDR_AUTOFILL_CC_GENERIC',
     metadata: {
       isLocal: true,
-      summaryLabel: card + ' ' +
-          '****' + cardNumber.substr(-4),
-      summarySublabel: 'Jane Doe',
+      summaryLabel: hasIdentifier ? `My Credit Card` : networkAndLastFour,
+      summarySublabel: isNewFopDisplay ?
+          (hasIdentifier ? networkAndLastFour : '') :
+          'Jane Doe',
     },
   };
 }
@@ -106,6 +132,20 @@ export function createIbanEntry(
 }
 
 /**
+ * Creates a new valid Pay Over Time entry for testing.
+ */
+export function createPayOverTimeIssuerEntry():
+    chrome.autofillPrivate.PayOverTimeIssuerEntry {
+  return {
+    issuerId: 'issuer1',
+    instrumentId: '123456',
+    displayName: 'Issuer1',
+    imageSrc: 'chrome://theme/IDR_AUTOFILL_METADATA_BNPL_GENERIC',
+    imageSrcDark: 'chrome://theme/IDR_AUTOFILL_METADATA_BNPL_GENERIC',
+  };
+}
+
+/**
  * Creates a new random GUID for testing.
  */
 export function makeGuid(): string {
@@ -121,6 +161,31 @@ function patternMaker(pattern: string, base: number): string {
   return pattern.replace(/x/g, function() {
     return Math.floor(Math.random() * base).toString(base);
   });
+}
+
+/**
+ * Calculates and appends a Luhn check bit for the given card number.
+ * https://en.wikipedia.org/wiki/Luhn_algorithm
+ * @param cardNumber The card number to calculate a check bit for
+ */
+function appendLuhnCheckBit(cardNumber: string): string {
+  const digitsInReverse = cardNumber.split('').reverse();
+  let sum = 0;
+  let doubleDigit = true;
+  for (const digit of digitsInReverse) {
+    let intDigit = Number(digit);
+    assertFalse(Number.isNaN(intDigit));
+    if (doubleDigit) {
+      intDigit *= 2;
+      sum += Math.floor(intDigit / 10) + (intDigit % 10);
+    } else {
+      sum += intDigit;
+    }
+    doubleDigit = !doubleDigit;
+  }
+
+  const checkDigit = (10 - (sum % 10)) % 10;
+  return cardNumber + checkDigit.toString();
 }
 
 /**
@@ -175,6 +240,7 @@ export class TestAutofillManager extends TestBrowserProxy implements
       'removeAddress',
       'removePersonalDataManagerListener',
       'setPersonalDataManagerListener',
+      'setAutofillSyncToggleEnabled',
     ]);
 
     // Set these to have non-empty data.
@@ -184,6 +250,8 @@ export class TestAutofillManager extends TestBrowserProxy implements
         email: 'stub-user@example.com',
         isSyncEnabledForAutofillProfiles: true,
         isEligibleForAddressAccountStorage: false,
+        isAutofillSyncToggleAvailable: false,
+        isAutofillSyncToggleEnabled: false,
       },
     };
 
@@ -218,6 +286,10 @@ export class TestAutofillManager extends TestBrowserProxy implements
     this.methodCalled('removeAddress');
   }
 
+  setAutofillSyncToggleEnabled(_enabled: boolean) {
+    this.methodCalled('setAutofillSyncToggleEnabled');
+  }
+
   /**
    * Verifies expectations.
    */
@@ -236,15 +308,15 @@ export class TestAutofillManager extends TestBrowserProxy implements
 export class PaymentsManagerExpectations {
   requestedCreditCards: number = 0;
   listeningCreditCards: number = 0;
-  requestedUpiIds: number = 0;
   removedCreditCards: number = 0;
-  clearedCachedCreditCards: number = 0;
   addedVirtualCards: number = 0;
   requestedIbans: number = 0;
   removedIbans: number = 0;
   isValidIban: number = 0;
+  requestedPayOverTimeIssuers: number = 0;
   authenticateUserAndFlipMandatoryAuthToggle: number = 0;
-  authenticateUserToEditLocalCard: number = 0;
+  getLocalCard: number = 0;
+  bulkDeleteAllCvcs: number = 0;
 }
 
 /**
@@ -252,12 +324,16 @@ export class PaymentsManagerExpectations {
  */
 export class TestPaymentsManager extends TestBrowserProxy implements
     PaymentsManagerProxy {
+  private isValidIbanResult_: boolean = true;
   private isUserVerifyingPlatformAuthenticatorAvailable_: boolean|null = null;
+  // <if expr="is_win or is_macosx">
+  private isDeviceAuthAvailable_: boolean = false;
+  // </if>
 
   data: {
     creditCards: chrome.autofillPrivate.CreditCardEntry[],
     ibans: chrome.autofillPrivate.IbanEntry[],
-    upiIds: string[],
+    payOverTimeIssuers: chrome.autofillPrivate.PayOverTimeIssuerEntry[],
   };
 
   lastCallback:
@@ -265,25 +341,25 @@ export class TestPaymentsManager extends TestBrowserProxy implements
 
   constructor() {
     super([
-      'setPersonalDataManagerListener',
-      'removePersonalDataManagerListener',
+      'addVirtualCard',
+      'authenticateUserAndFlipMandatoryAuthToggle',
+      'bulkDeleteAllCvcs',
       'getCreditCardList',
       'getIbanList',
-      'getUpiIdList',
-      'clearCachedCreditCard',
+      'getLocalCard',
+      'isValidIban',
       'removeCreditCard',
       'removeIban',
-      'addVirtualCard',
-      'isValidIban',
-      'authenticateUserAndFlipMandatoryAuthToggle',
-      'authenticateUserToEditLocalCard',
+      'getPayOverTimeIssuerList',
+      'removePersonalDataManagerListener',
+      'setPersonalDataManagerListener',
     ]);
 
     // Set these to have non-empty data.
     this.data = {
       creditCards: [],
       ibans: [],
-      upiIds: [],
+      payOverTimeIssuers: [],
     };
 
     // Holds the last callbacks so they can be called when needed.
@@ -306,26 +382,15 @@ export class TestPaymentsManager extends TestBrowserProxy implements
     return Promise.resolve(this.data.creditCards);
   }
 
-  getUpiIdList() {
-    this.methodCalled('getUpiIdList');
-    return Promise.resolve(this.data.upiIds);
-  }
-
-  clearCachedCreditCard(_guid: string) {
-    this.methodCalled('clearCachedCreditCard');
-  }
-
   logServerCardLinkClicked() {}
 
-  migrateCreditCards() {}
+  logServerIbanLinkClicked() {}
 
   removeCreditCard(_guid: string) {
     this.methodCalled('removeCreditCard');
   }
 
   saveCreditCard(_creditCard: chrome.autofillPrivate.CreditCardEntry) {}
-
-  setCreditCardFidoAuthEnabledState(_enabled: boolean) {}
 
   addVirtualCard(_cardId: string) {
     this.methodCalled('addVirtualCard');
@@ -344,11 +409,19 @@ export class TestPaymentsManager extends TestBrowserProxy implements
     return Promise.resolve(this.data.ibans);
   }
 
-  isValidIban(_ibanValue: string) {
-    this.methodCalled('isValidIban');
-    return Promise.resolve(true);
+  setIsValidIban(isValidIbanResult: boolean) {
+    this.isValidIbanResult_ = isValidIbanResult;
   }
 
+  isValidIban(_ibanValue: string) {
+    this.methodCalled('isValidIban');
+    return Promise.resolve(this.isValidIbanResult_);
+  }
+
+  getPayOverTimeIssuerList() {
+    this.methodCalled('getPayOverTimeIssuerList');
+    return Promise.resolve(structuredClone(this.data.payOverTimeIssuers));
+  }
 
   setIsUserVerifyingPlatformAuthenticatorAvailable(available: boolean|null) {
     this.isUserVerifyingPlatformAuthenticatorAvailable_ = available;
@@ -362,9 +435,28 @@ export class TestPaymentsManager extends TestBrowserProxy implements
     this.methodCalled('authenticateUserAndFlipMandatoryAuthToggle');
   }
 
-  authenticateUserToEditLocalCard() {
-    this.methodCalled('authenticateUserToEditLocalCard');
-    return Promise.resolve(true);
+  getLocalCard(_guid: string) {
+    this.methodCalled('getLocalCard');
+    const card =
+        this.data.creditCards.find(creditCard => creditCard.guid === _guid);
+    if (card !== undefined) {
+      return Promise.resolve(card);
+    }
+    return Promise.resolve(null);
+  }
+
+  // <if expr="is_win or is_macosx">
+  setIsDeviceAuthAvailable(available: boolean) {
+    this.isDeviceAuthAvailable_ = available;
+  }
+
+  checkIfDeviceAuthAvailable() {
+    return Promise.resolve(this.isDeviceAuthAvailable_);
+  }
+  // </if>
+
+  bulkDeleteAllCvcs() {
+    this.methodCalled('bulkDeleteAllCvcs');
   }
 
   /**
@@ -383,10 +475,6 @@ export class TestPaymentsManager extends TestBrowserProxy implements
         expected.removedCreditCards, this.getCallCount('removeCreditCard'),
         'removedCreditCards mismatch');
     assertEquals(
-        expected.clearedCachedCreditCards,
-        this.getCallCount('clearCachedCreditCard'),
-        'clearedCachedCreditCards mismatch');
-    assertEquals(
         expected.addedVirtualCards, this.getCallCount('addVirtualCard'),
         'addedVirtualCards mismatch');
     assertEquals(
@@ -396,12 +484,18 @@ export class TestPaymentsManager extends TestBrowserProxy implements
         expected.removedIbans, this.getCallCount('removeIban'),
         'removedIbans mismatch');
     assertEquals(
+        expected.requestedPayOverTimeIssuers,
+        this.getCallCount('getPayOverTimeIssuerList'),
+        'requestedPayOverTimeIssuers mismatch');
+    assertEquals(
         expected.authenticateUserAndFlipMandatoryAuthToggle,
         this.getCallCount('authenticateUserAndFlipMandatoryAuthToggle'),
         'authenticateUserAndFlipMandatoryAuthToggle mismatch');
     assertEquals(
-        expected.authenticateUserToEditLocalCard,
-        this.getCallCount('authenticateUserToEditLocalCard'),
-        'authenticateUserToEditLocalCard mismatch');
+        expected.getLocalCard, this.getCallCount('getLocalCard'),
+        'getLocalCard mismatch');
+    assertEquals(
+        expected.bulkDeleteAllCvcs, this.getCallCount('bulkDeleteAllCvcs'),
+        'bulkDeleteAllCvcs mismatch');
   }
 }

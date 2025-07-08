@@ -4,9 +4,7 @@
 
 package org.chromium.build.gtest_apk;
 
-/**
- * Extras for intent sent by NativeTestInstrumentationTestRunner.
- */
+/** Extras for intent sent by NativeTestInstrumentationTestRunner. */
 public class NativeTestIntent {
     public static final String EXTRA_COMMAND_LINE_FILE =
             "org.chromium.native_test.NativeTest.CommandLineFile";
@@ -19,4 +17,9 @@ public class NativeTestIntent {
     public static final String EXTRA_STDOUT_FILE = "org.chromium.native_test.NativeTest.StdoutFile";
     public static final String EXTRA_COVERAGE_DEVICE_FILE =
             "org.chromium.native_test.NativeTest.CoverageDeviceFile";
+    // An extra to indicate if the user data dir should be kept before running
+    // the given native test shard.
+    // This is different from the one in NativeTestInstrumentationTestRunner.java
+    public static final String EXTRA_KEEP_USER_DATA_DIR =
+            "org.chromium.native_test.NativeTest.KeepUserDataDir";
 }

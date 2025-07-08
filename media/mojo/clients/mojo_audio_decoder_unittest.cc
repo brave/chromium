@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/mojo/clients/mojo_audio_decoder.h"
+
 #include <memory>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/gmock_callback_support.h"
@@ -20,7 +23,6 @@
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
 #include "media/base/waiting.h"
-#include "media/mojo/clients/mojo_audio_decoder.h"
 #include "media/mojo/mojom/audio_decoder.mojom.h"
 #include "media/mojo/services/mojo_audio_decoder_service.h"
 #include "media/mojo/services/mojo_cdm_service_context.h"
@@ -31,6 +33,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::base::test::RunOnceCallback;
+using ::base::test::RunOnceCallbackRepeatedly;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -146,8 +149,9 @@ class MojoAudioDecoderTest : public ::testing::Test {
     DCHECK(service_task_runner_->BelongsToCurrentThread());
 
     EXPECT_CALL(*mock_audio_decoder_, Initialize_(_, _, _, _, _))
-        .WillRepeatedly(DoAll(SaveArg<3>(&output_cb_), SaveArg<4>(&waiting_cb_),
-                              RunOnceCallback<2>(DecoderStatus::Codes::kOk)));
+        .WillRepeatedly(
+            DoAll(SaveArg<3>(&output_cb_), SaveArg<4>(&waiting_cb_),
+                  RunOnceCallbackRepeatedly<2>(DecoderStatus::Codes::kOk)));
     EXPECT_CALL(*mock_audio_decoder_, Decode(_, _))
         .WillRepeatedly([&](scoped_refptr<DecoderBuffer> buffer,
                             AudioDecoder::DecodeCB decode_cb) {
@@ -155,7 +159,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
           std::move(decode_cb).Run(DecoderStatus::Codes::kOk);
         });
     EXPECT_CALL(*mock_audio_decoder_, Reset_(_))
-        .WillRepeatedly(RunOnceCallback<0>());
+        .WillRepeatedly(RunOnceCallbackRepeatedly<0>());
 
     mojo::MakeSelfOwnedReceiver(
         std::make_unique<MojoAudioDecoderService>(&mojo_media_client_,
@@ -192,7 +196,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
   void Initialize() { InitializeAndExpect(DecoderStatus::Codes::kOk); }
 
   void Decode() {
-    scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(100));
+    auto buffer = base::MakeRefCounted<DecoderBuffer>(100);
     mojo_audio_decoder_->Decode(
         buffer, base::BindRepeating(&MojoAudioDecoderTest::OnDecoded,
                                     base::Unretained(this)));

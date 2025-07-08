@@ -4,6 +4,7 @@
 
 #include "ui/accessibility/ax_tree_update_util.h"
 
+#include "base/metrics/histogram_macros.h"
 #include "ui/accessibility/ax_tree_update.h"
 
 namespace ui {
@@ -13,20 +14,39 @@ namespace ui {
 // doesn't have a new root id - in other words the second tree
 // update consists of only changes to nodes.
 bool AXTreeUpdatesCanBeMerged(const AXTreeUpdate& u1, const AXTreeUpdate& u2) {
-  if (u2.node_id_to_clear)
+  if (u1.node_id_to_clear != kInvalidAXNodeID ||
+      u2.node_id_to_clear != kInvalidAXNodeID) {
     return false;
+  }
 
-  if (u2.has_tree_data && u2.tree_data != u1.tree_data)
+  if (u2.has_tree_data && u2.tree_data != u1.tree_data) {
     return false;
+  }
 
-  if (u2.root_id != u1.root_id)
+  if (u2.root_id != u1.root_id) {
     return false;
+  }
+
+  if (u1.event_from != u2.event_from) {
+    return false;
+  }
+
+  if (u1.event_from_action != u2.event_from_action) {
+    return false;
+  }
+
+  if (u1.event_intents != u2.event_intents) {
+    return false;
+  }
 
   return true;
 }
 
-bool MergeAXTreeUpdates(const std::vector<AXTreeUpdate>& src,
+bool MergeAXTreeUpdates(std::vector<AXTreeUpdate>& src,
                         std::vector<AXTreeUpdate>* dst) {
+  SCOPED_UMA_HISTOGRAM_TIMER_MICROS(
+      "Accessibility.Performance.MergeAXTreeUpdates");
+
   size_t merge_count = 0;
   for (size_t i = 1; i < src.size(); i++) {
     if (AXTreeUpdatesCanBeMerged(src[i - 1], src[i]))
@@ -41,13 +61,17 @@ bool MergeAXTreeUpdates(const std::vector<AXTreeUpdate>& src,
     return false;
 
   dst->resize(src.size() - merge_count);
-  (*dst)[0] = src[0];
+  (*dst)[0] = std::move(src[0]);
   size_t dst_index = 0;
   for (size_t i = 1; i < src.size(); i++) {
-    if (AXTreeUpdatesCanBeMerged(src[i - 1], src[i])) {
+    // Use (*dst)[dst_index] over src[i-1] for the merge because src[i-1] may
+    // be in an undetermined state after being merged.
+    if (AXTreeUpdatesCanBeMerged((*dst)[dst_index], src[i])) {
       std::vector<AXNodeData>& dst_nodes = (*dst)[dst_index].nodes;
-      const std::vector<AXNodeData>& src_nodes = src[i].nodes;
-      dst_nodes.insert(dst_nodes.end(), src_nodes.begin(), src_nodes.end());
+      std::vector<AXNodeData>& src_nodes = src[i].nodes;
+      for (auto& src_node : src_nodes) {
+        dst_nodes.emplace_back(src_node);
+      }
     } else {
       dst_index++;
       (*dst)[dst_index] = src[i];

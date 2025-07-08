@@ -11,6 +11,7 @@
 #include "ash/style/style_viewer/system_ui_components_grid_view.h"
 #include "base/functional/bind.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/events/event.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/scroll_view.h"
@@ -119,13 +120,14 @@ class PaginationTestScrollView : public views::ScrollView,
   ~PaginationTestScrollView() override = default;
 
   // views::ScrollView:
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
     return gfx::Size(kPageWidth, kPageHeight);
   }
 
-  void Layout() override {
+  void Layout(PassKey) override {
     page_container_->SizeToPreferredSize();
-    views::ScrollView::Layout();
+    LayoutSuperclass<views::ScrollView>(this);
   }
 
   // PaginationModelObserver:

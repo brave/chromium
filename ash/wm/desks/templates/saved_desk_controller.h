@@ -13,6 +13,7 @@
 #include "base/containers/flat_map.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/timer/timer.h"
 #include "base/uuid.h"
@@ -116,4 +117,4 @@ class ASH_EXPORT SavedDeskController {
 
 }  // namespace ash
 
-#endif
+#endif  // ASH_WM_DESKS_TEMPLATES_SAVED_DESK_CONTROLLER_H_

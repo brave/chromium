@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "components/services/quarantine/test_support.h"
@@ -23,6 +25,7 @@
 #include "content/public/test/file_system_chooser_test_helpers.h"
 #include "content/shell/browser/shell.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/select_file_dialog_factory.h"
 #include "ui/shell_dialogs/select_file_policy.h"
@@ -37,6 +40,11 @@ namespace content {
 // FileSystemAccessFileWriterImpl.
 class FileSystemAccessFileWriterBrowserTest : public ContentBrowserTest {
  public:
+  FileSystemAccessFileWriterBrowserTest() {
+    scoped_features_.InitAndEnableFeature(
+        blink::features::kFileSystemAccessLocal);
+  }
+
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
@@ -111,6 +119,9 @@ class FileSystemAccessFileWriterBrowserTest : public ContentBrowserTest {
  protected:
   base::ScopedTempDir temp_dir_;
   GURL test_url_;
+
+ private:
+  base::test::ScopedFeatureList scoped_features_;
 };
 
 IN_PROC_BROWSER_TEST_F(FileSystemAccessFileWriterBrowserTest,
@@ -361,8 +372,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileWriterBrowserTest,
       "{create:false});"
       "return (await self.swapFile.createWritable());"
       "})()");
-  EXPECT_TRUE(result.error.find("modifications are not allowed.") !=
-              std::string::npos)
+  EXPECT_TRUE(base::Contains(result.error, "modifications are not allowed."))
       << result.error;
 
   auto close_result = EvalJs(shell(),
@@ -372,7 +382,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileWriterBrowserTest,
   EXPECT_TRUE(close_result.error.empty()) << close_result.error;
 }
 
-// TODO(https://crbug.com/992089): Files are only quarantined on windows in
+// TODO(crbug.com/40639570): Files are only quarantined on windows in
 // browsertests unfortunately. Change this when more platforms are enabled.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_FileAnnotated FileAnnotated
@@ -421,8 +431,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileWriterBrowserTest,
   auto result = EvalJs(shell(),
                        "(async () => {"
                        "  return (await self.entry.createWritable()); })()");
-  EXPECT_TRUE(result.error.find("Cannot write to a read-only file.") !=
-              std::string::npos)
+  EXPECT_TRUE(base::Contains(result.error, "Cannot write to a read-only file."))
       << result.error;
 }
 #endif  // BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_WIN)

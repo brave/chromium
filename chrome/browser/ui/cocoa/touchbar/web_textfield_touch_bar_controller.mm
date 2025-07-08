@@ -4,18 +4,13 @@
 
 #import "chrome/browser/ui/cocoa/touchbar/web_textfield_touch_bar_controller.h"
 
-#include "base/debug/stack_trace.h"
-#include "chrome/browser/ui/autofill/autofill_popup_controller.h"
+#include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
 #import "chrome/browser/ui/cocoa/touchbar/browser_window_touch_bar_controller.h"
 #import "chrome/browser/ui/cocoa/touchbar/credit_card_autofill_touch_bar_controller.h"
 #include "chrome/browser/ui/views/frame/browser_frame_mac.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "content/public/browser/web_contents.h"
 #import "ui/base/cocoa/touch_bar_util.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @implementation WebTextfieldTouchBarController {
   BrowserWindowTouchBarController* __weak _controller;
@@ -24,7 +19,7 @@
 
 + (WebTextfieldTouchBarController*)controllerForWindow:(NSWindow*)window {
   BrowserView* browser_view =
-      BrowserView::GetBrowserViewForNativeWindow(window);
+      BrowserView::GetBrowserViewForNativeWindow(gfx::NativeWindow(window));
   if (!browser_view) {
     return nil;
   }

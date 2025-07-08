@@ -14,6 +14,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/select_file_policy.h"
+#include "ui/shell_dialogs/selected_file_info.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
@@ -40,15 +41,17 @@ class FakeFolderSelectionDialog : public ui::SelectFileDialog {
 
   void AcceptPath(const base::FilePath& path) {
     DCHECK(dialog_widget_);
-    if (listener_)
-      listener_->FileSelected(path, /*index=*/0, /*params=*/nullptr);
+    if (listener_) {
+      listener_->FileSelected(ui::SelectedFileInfo(path), /*index=*/0);
+    }
     DismissDialog();
   }
 
   void CancelDialog() {
     DCHECK(dialog_widget_);
-    if (listener_)
-      listener_->FileSelectionCanceled(/*params=*/nullptr);
+    if (listener_) {
+      listener_->FileSelectionCanceled();
+    }
     DismissDialog();
   }
 
@@ -73,10 +76,10 @@ class FakeFolderSelectionDialog : public ui::SelectFileDialog {
                       int file_type_index,
                       const base::FilePath::StringType& default_extension,
                       gfx::NativeWindow owning_window,
-                      void* params,
                       const GURL* caller) override {
     dialog_widget_ = views::UniqueWidgetPtr(std::make_unique<views::Widget>());
     views::Widget::InitParams widget_params(
+        views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
         views::Widget::InitParams::TYPE_POPUP);
     widget_params.parent = owning_window;
     widget_params.bounds = owning_window->GetRootWindow()->bounds();

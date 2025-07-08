@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -17,7 +18,6 @@
 #include "components/browsing_topics/common/common_types.h"
 #include "content/common/content_export.h"
 #include "sql/meta_table.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace sql {
 class Database;

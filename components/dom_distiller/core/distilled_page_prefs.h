@@ -9,6 +9,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "components/dom_distiller/core/mojom/distilled_page_prefs.mojom.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class PrefService;
 
@@ -21,7 +22,7 @@ namespace dom_distiller {
 // Interface for preferences used for distilled page.
 class DistilledPagePrefs {
  public:
-  class Observer {
+  class Observer : public base::CheckedObserver {
    public:
     virtual void OnChangeFontFamily(mojom::FontFamily font) = 0;
     virtual void OnChangeTheme(mojom::Theme theme) = 0;
@@ -57,14 +58,15 @@ class DistilledPagePrefs {
 
  private:
   // Notifies all Observers of new font family.
-  void NotifyOnChangeFontFamily(mojom::FontFamily font_family);
+  void NotifyOnChangeFontFamily();
   // Notifies all Observers of new theme.
-  void NotifyOnChangeTheme(mojom::Theme theme);
+  void NotifyOnChangeTheme();
   // Notifies all Observers of new font scaling.
-  void NotifyOnChangeFontScaling(float scaling);
+  void NotifyOnChangeFontScaling();
 
   raw_ptr<PrefService> pref_service_;
-  base::ObserverList<Observer>::Unchecked observers_;
+  PrefChangeRegistrar pref_change_registrar_;
+  base::ObserverList<Observer> observers_;
 
   base::WeakPtrFactory<DistilledPagePrefs> weak_ptr_factory_{this};
 };

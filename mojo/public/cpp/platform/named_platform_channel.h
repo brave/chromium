@@ -6,10 +6,10 @@
 #define MOJO_PUBLIC_CPP_PLATFORM_NAMED_PLATFORM_CHANNEL_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/command_line.h"
 #include "base/component_export.h"
-#include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/platform/platform_channel_endpoint.h"
 #include "mojo/public/cpp/platform/platform_channel_server_endpoint.h"
@@ -68,20 +68,25 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) NamedPlatformChannel {
 
   NamedPlatformChannel(const Options& options);
   NamedPlatformChannel(NamedPlatformChannel&& other);
-
-  NamedPlatformChannel(const NamedPlatformChannel&) = delete;
-  NamedPlatformChannel& operator=(const NamedPlatformChannel&) = delete;
-
-  ~NamedPlatformChannel();
-
   NamedPlatformChannel& operator=(NamedPlatformChannel&& other);
+  ~NamedPlatformChannel();
 
   const PlatformChannelServerEndpoint& server_endpoint() const {
     return server_endpoint_;
   }
 
   // Helper to create a ServerName from a UTF8 string regardless of platform.
-  static ServerName ServerNameFromUTF8(base::StringPiece name);
+  static ServerName ServerNameFromUTF8(std::string_view name);
+
+#if BUILDFLAG(IS_WIN)
+  static ServerName GenerateRandomServerName();
+
+  // Returns an OS name for the pipe based on `server_name`. If `is_local_pipe` is true, the
+  // name will contain "LOCAL", which will allow the pipe to be created in an AppContainer
+  // sandbox but won't be cross-version compatible with pipes that lack this naming scheme.
+  static std::wstring GetPipeNameFromServerName(const ServerName& server_name,
+                                                bool is_local_pipe = false);
+#endif
 
   // Passes the local server endpoint for the channel. On Windows, this is a
   // named pipe server; on POSIX it's a bound, listening domain socket. In each

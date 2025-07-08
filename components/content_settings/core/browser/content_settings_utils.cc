@@ -6,14 +6,18 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <vector>
 
+#include "base/containers/contains.h"
 #include "base/notreached.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/browser/permission_settings_info.h"
+#include "components/content_settings/core/browser/permission_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
@@ -27,14 +31,15 @@ struct ContentSettingsStringMapping {
   ContentSetting content_setting;
   const char* content_setting_str;
 };
-const ContentSettingsStringMapping kContentSettingsStringMapping[] = {
-    {CONTENT_SETTING_DEFAULT, "default"},
-    {CONTENT_SETTING_ALLOW, "allow"},
-    {CONTENT_SETTING_BLOCK, "block"},
-    {CONTENT_SETTING_ASK, "ask"},
-    {CONTENT_SETTING_SESSION_ONLY, "session_only"},
-    {CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, "detect_important_content"},
-};
+const auto kContentSettingsStringMapping =
+    std::to_array<ContentSettingsStringMapping>({
+        {CONTENT_SETTING_DEFAULT, "default"},
+        {CONTENT_SETTING_ALLOW, "allow"},
+        {CONTENT_SETTING_BLOCK, "block"},
+        {CONTENT_SETTING_ASK, "ask"},
+        {CONTENT_SETTING_SESSION_ONLY, "session_only"},
+        {CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, "detect_important_content"},
+    });
 static_assert(std::size(kContentSettingsStringMapping) ==
                   CONTENT_SETTING_NUM_SETTINGS,
               "kContentSettingsToFromString should have "
@@ -53,6 +58,15 @@ const ContentSetting kContentSettingOrder[] = {
     CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
     CONTENT_SETTING_ASK,
     CONTENT_SETTING_BLOCK
+    // clang-format on
+};
+
+// PermissionOptions sorted from most to least permissive.
+const PermissionOption kPermissionOptionOrder[] = {
+    // clang-format off
+    PermissionOption::kAllowed,
+    PermissionOption::kAsk,
+    PermissionOption::kDenied,
     // clang-format on
 };
 
@@ -122,68 +136,73 @@ PatternPair ParsePatternString(const std::string& pattern_str) {
 
 void GetRendererContentSettingRules(const HostContentSettingsMap* map,
                                     RendererContentSettingRules* rules) {
-#if !BUILDFLAG(IS_ANDROID)
-  rules->image_rules = map->GetSettingsForOneType(ContentSettingsType::IMAGES);
+#if !BUILDFLAG(IS_IOS)
   rules->mixed_content_rules =
       map->GetSettingsForOneType(ContentSettingsType::MIXEDSCRIPT);
-  // Auto dark web content settings is available only for Android, so ALLOW rule
-  // is added for all origins.
-  rules->auto_dark_content_rules.push_back(ContentSettingPatternSource(
-      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      ContentSettingToValue(CONTENT_SETTING_ALLOW), std::string(),
-      map->IsOffTheRecord()));
 #else
-  // Android doesn't use image content settings, so ALLOW rule is added for
-  // all origins.
-  rules->image_rules.push_back(ContentSettingPatternSource(
-      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      ContentSettingToValue(CONTENT_SETTING_ALLOW), std::string(),
-      map->IsOffTheRecord()));
   // In Android active mixed content is hard blocked, with no option to allow
   // it.
   rules->mixed_content_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      ContentSettingToValue(CONTENT_SETTING_BLOCK), std::string(),
+      ContentSettingToValue(CONTENT_SETTING_BLOCK), ProviderType::kNone,
       map->IsOffTheRecord()));
-  rules->auto_dark_content_rules =
-      map->GetSettingsForOneType(ContentSettingsType::AUTO_DARK_WEB_CONTENT);
 #endif
-  rules->script_rules =
-      map->GetSettingsForOneType(ContentSettingsType::JAVASCRIPT);
-  rules->popup_redirect_rules =
-      map->GetSettingsForOneType(ContentSettingsType::POPUPS);
 }
 
 bool IsMorePermissive(ContentSetting a, ContentSetting b) {
   // Check whether |a| or |b| is reached first in kContentSettingOrder.
   // If |a| is first, it means that |a| is more permissive than |b|.
   for (ContentSetting setting : kContentSettingOrder) {
-    if (setting == b)
+    if (setting == b) {
       return false;
-    if (setting == a)
+    }
+    if (setting == a) {
       return true;
+    }
   }
   NOTREACHED();
-  return true;
 }
 
-// Currently only SessionModel::Durable constraints need to be persistent
+bool IsMorePermissive(PermissionOption a, PermissionOption b) {
+  // Check whether |a| or |b| is reached first in
+  // kPermissionOptionOrder. If |a| is first, it means that |a| is more
+  // permissive than |b|.
+  for (PermissionOption setting : kPermissionOptionOrder) {
+    if (setting == b) {
+      return false;
+    }
+    if (setting == a) {
+      return true;
+    }
+  }
+  NOTREACHED();
+}
+
+// Currently only mojom::SessionModel::DURABLE constraints need to be persistent
 // as they are only bounded by time and can persist through multiple browser
 // sessions.
 bool IsConstraintPersistent(const ContentSettingConstraints& constraints) {
-  return constraints.session_model() == SessionModel::Durable;
+  return constraints.session_model() == mojom::SessionModel::DURABLE;
 }
 
 bool CanTrackLastVisit(ContentSettingsType type) {
   // Last visit is not tracked for notification permission as it shouldn't be
   // auto-revoked.
-  if (type == ContentSettingsType::NOTIFICATIONS)
+  if (type == ContentSettingsType::NOTIFICATIONS) {
     return false;
+  }
 
   // Protocol handler don't actually use their content setting and don't have
   // a valid "initial default" value.
-  if (type == ContentSettingsType::PROTOCOL_HANDLERS)
+  if (type == ContentSettingsType::PROTOCOL_HANDLERS) {
     return false;
+  }
+
+  // Chooser based content settings will not be tracked by default.
+  // Only allowlisted ones should be tracked.
+  if (IsChooserPermissionEligibleForAutoRevocation(type)) {
+    return true;
+  }
 
   auto* info =
       content_settings::ContentSettingsRegistry::GetInstance()->Get(type);
@@ -205,27 +224,108 @@ base::TimeDelta GetCoarseVisitedTimePrecision() {
 }
 
 bool CanBeAutoRevoked(ContentSettingsType type,
-                      ContentSetting setting,
+                      const base::Value& value,
                       bool is_one_time) {
   // The Permissions module in Safety check will revoke permissions after
   // a finite amount of time.
-  // We're only interested in expiring permissions that:
-  // 1. Are ALLOWed.
-  // 2. Fall back to ASK.
-  // 3. Are not already a one-time grant.
-  if (setting != CONTENT_SETTING_ALLOW) {
-    return false;
+  // We're only interested in expiring permissions that are either
+  // A. permission settings (= PermissionSettingsRegistry-based), which
+  //    1. query the delegate.
+  // B. regular permissions (= ContentSettingsRegistry-based), which
+  //    1. Are ALLOWed.
+  //    2. Fall back to ASK.
+  //    3. Are not already a one-time grant.
+  // C. chooser permissions (= WebsiteSettingsRegistry-based), which
+  //    1. Are allowlisted.
+  //    2. Have a non-empty value.
+  auto* permission_settings_info =
+      content_settings::PermissionSettingsRegistry::GetInstance()->Get(type);
+  if (permission_settings_info) {
+    auto setting = permission_settings_info->delegate().FromValue(value);
+    DCHECK(setting);
+    if (!setting.has_value()) {
+      return false;
+    }
+    return permission_settings_info->delegate().CanBeAutoRevoked(
+        setting.value(), is_one_time);
+  } else {
+    // TODO(crbug.com/425642101): Migrate to using the
+    // |PermissionSettingsInfo::Delegate| once content settings are migrated to
+    // the PermissionSettingsRegistry.
+    auto* info =
+        content_settings::ContentSettingsRegistry::GetInstance()->Get(type);
+    if (info) {
+      return !is_one_time &&
+             ValueToContentSetting(value) == CONTENT_SETTING_ALLOW &&
+             CanTrackLastVisit(type);
+    } else {
+      // If the value is already empty, no need to revoke the permission.
+      return IsChooserPermissionEligibleForAutoRevocation(type) &&
+             !value.is_none();
+    }
   }
+}
 
-  if (!CanTrackLastVisit(type)) {
-    return false;
-  }
+bool IsChooserPermissionEligibleForAutoRevocation(ContentSettingsType type) {
+  // Currently, only File System Access is allowlisted for auto-revoking unused
+  // site permissions among chooser-based permissions.
+  return type == ContentSettingsType::FILE_SYSTEM_ACCESS_CHOOSER_DATA;
+}
 
-  if (is_one_time) {
-    return false;
-  }
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrants() {
+  static base::NoDestructor<const std::vector<ContentSettingsType>> types{{
+#if !BUILDFLAG(IS_ANDROID)
+      ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+      ContentSettingsType::CAPTURED_SURFACE_CONTROL,
+#endif
+      ContentSettingsType::KEYBOARD_LOCK,
+      ContentSettingsType::GEOLOCATION,
+      ContentSettingsType::MEDIASTREAM_MIC,
+      ContentSettingsType::MEDIASTREAM_CAMERA,
+      ContentSettingsType::HAND_TRACKING,
+      ContentSettingsType::SMART_CARD_DATA,
+      ContentSettingsType::AR,
+      ContentSettingsType::VR,
+  }};
+  return *types;
+}
 
-  return true;
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrantsInHcsm() {
+  static base::NoDestructor<const std::vector<ContentSettingsType>> types{{
+#if !BUILDFLAG(IS_ANDROID)
+      ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+      ContentSettingsType::CAPTURED_SURFACE_CONTROL,
+#endif
+      ContentSettingsType::KEYBOARD_LOCK,
+      ContentSettingsType::GEOLOCATION,
+      ContentSettingsType::MEDIASTREAM_MIC,
+      ContentSettingsType::MEDIASTREAM_CAMERA,
+      ContentSettingsType::HAND_TRACKING,
+      ContentSettingsType::AR,
+      ContentSettingsType::VR,
+  }};
+  return *types;
+}
+
+bool ShouldTypeExpireActively(ContentSettingsType type) {
+  return base::FeatureList::IsEnabled(
+             content_settings::features::kActiveContentSettingExpiry) &&
+         base::Contains(GetTypesWithTemporaryGrantsInHcsm(), type);
+}
+
+PermissionSetting ValueToPermissionSetting(const PermissionSettingsInfo* info,
+                                           const base::Value& value) {
+  auto setting = info->delegate().FromValue(value);
+  DCHECK(setting.has_value()) << value.DebugString();
+  DCHECK(info->delegate().IsValid(*setting)) << value.DebugString();
+  return setting.value_or(info->GetInitialDefaultSetting());
+}
+
+base::Value PermissionSettingToValue(const PermissionSettingsInfo* info,
+                                     const PermissionSetting& setting) {
+  DCHECK(info->delegate().IsValid(setting));
+  auto value = info->delegate().ToValue(setting);
+  return value;
 }
 
 }  // namespace content_settings

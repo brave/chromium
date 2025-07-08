@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/webui/diagnostics_ui/backend/input/input_data_provider_keyboard.h"
+
 #include <algorithm>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -11,12 +14,11 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/webui/diagnostics_ui/backend/input/input_data_provider.h"
-#include "ash/webui/diagnostics_ui/backend/input/input_data_provider_keyboard.h"
 #include "ash/webui/diagnostics_ui/mojom/input_data_provider.mojom-forward.h"
 #include "ash/webui/diagnostics_ui/mojom/input_data_provider.mojom-shared.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/strings/stringprintf.h"
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
 #include "chromeos/ash/components/test/ash_test_suite.h"
 #include "content/public/test/browser_task_environment.h"
@@ -65,10 +67,10 @@ enum VivaldiTopRowScanCode {
 };
 
 // xkb layout ids for both turkish Q-Type and F-Type layouts.
-constexpr base::StringPiece kTurkishKeyboardLayoutId = "xkb:tr::tur";
-constexpr base::StringPiece kTurkishKeyboardFLayoutId = "xkb:tr:f:tur";
-constexpr base::StringPiece kTurkeyRegionCode = "tr";
-constexpr base::StringPiece kTurkeyFLayoutRegionCode = "tr.f";
+constexpr std::string_view kTurkishKeyboardLayoutId = "xkb:tr::tur";
+constexpr std::string_view kTurkishKeyboardFLayoutId = "xkb:tr:f:tur";
+constexpr std::string_view kTurkeyRegionCode = "tr";
+constexpr std::string_view kTurkeyFLayoutRegionCode = "tr.f";
 
 ui::InputDevice InputDeviceFromCapabilities(
     int device_id,
@@ -166,6 +168,11 @@ class VivaldiKeyboardTestBase : public InputDataProviderKeyboardTest {
         ui::KeyboardCapability::DeviceType::kDeviceInternalKeyboard;
     device_information.keyboard_top_row_layout =
         ui::KeyboardCapability::KeyboardTopRowLayout::kKbdTopRowLayoutCustom;
+    device_information.bottom_left_layout =
+        mojom::BottomLeftLayout::kBottomLeft4Keys;
+    device_information.bottom_right_layout =
+        mojom::BottomRightLayout::kBottomRight2Keys;
+    device_information.numpad_layout = mojom::NumpadLayout::kUnknown;
   }
 
   void TearDown() override {
@@ -448,6 +455,18 @@ TEST_F(HasNumpadTest, SwitchDisabled) {
 
   EXPECT_EQ(mojom::NumberPadPresence::kNotPresent,
             keyboard_info_->number_pad_present);
+}
+
+class SplitModifierKeyboardTest : public VivaldiKeyboardTestBase {};
+TEST_F(SplitModifierKeyboardTest, CheckConfig) {
+  keyboard_info_ = input_data_provider_keyboard_->ConstructKeyboard(
+      &device_information, &aux_data_);
+
+  EXPECT_EQ(mojom::BottomLeftLayout::kBottomLeft4Keys,
+            keyboard_info_->bottom_left_layout);
+  EXPECT_EQ(mojom::BottomRightLayout::kBottomRight2Keys,
+            keyboard_info_->bottom_right_layout);
+  EXPECT_EQ(mojom::NumpadLayout::kUnknown, keyboard_info_->numpad_layout);
 }
 
 class RevenBoardTest : public VivaldiKeyboardTestBase {};

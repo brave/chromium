@@ -5,15 +5,18 @@
 #include "chrome/browser/ash/policy/dlp/files_policy_notification_manager.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 
+#include "ash/webui/file_manager/file_manager_ui.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/test/gmock_callback_support.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router.h"
@@ -22,19 +25,21 @@
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/io_task.h"
 #include "chrome/browser/ash/policy/dlp/dialogs/files_policy_dialog.h"
+#include "chrome/browser/ash/policy/dlp/dialogs/files_policy_error_dialog.h"
+#include "chrome/browser/ash/policy/dlp/dialogs/files_policy_warn_dialog.h"
 #include "chrome/browser/ash/policy/dlp/files_policy_notification_manager.h"
 #include "chrome/browser/ash/policy/dlp/files_policy_notification_manager_factory.h"
-#include "chrome/browser/ash/policy/dlp/files_policy_notification_manager_test_utils.h"
-#include "chrome/browser/ash/policy/dlp/mock_dlp_files_controller_ash.h"
+#include "chrome/browser/ash/policy/dlp/test/files_policy_notification_manager_test_utils.h"
+#include "chrome/browser/ash/policy/dlp/test/mock_dlp_files_controller_ash.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/chromeos/policy/dlp/dialogs/policy_dialog_base.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_confidential_file.h"
-#include "chrome/browser/chromeos/policy/dlp/dlp_files_controller.h"
+#include "chrome/browser/chromeos/policy/dlp/dlp_file_destination.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_files_utils.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_policy_constants.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager.h"
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager_factory.h"
-#include "chrome/browser/chromeos/policy/dlp/mock_dlp_rules_manager.h"
-#include "chrome/browser/enterprise/data_controls/component.h"
+#include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/notifications/notification_display_service_impl.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
@@ -42,16 +47,19 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/enterprise/data_controls/core/browser/dlp_histogram_helper.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/test/browser_test.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/message_center/public/cpp/notification.h"
 
 namespace policy {
@@ -63,7 +71,6 @@ using testing::Field;
 using policy::AddCopyOrMoveIOTask;
 using policy::kNotificationId;
 
-constexpr char kExampleUrl[] = "https://example1.com";
 const file_manager::io_task::IOTaskId kTaskId1 = 1u;
 const file_manager::io_task::IOTaskId kTaskId2 = 2u;
 constexpr char kNotificationId1[] = "swa-file-operation-1";
@@ -73,32 +80,52 @@ constexpr base::TimeDelta kWarningTimeout = base::Minutes(5);
 
 }  // namespace
 
-class FilesPolicyNotificationManagerBrowserTest : public InProcessBrowserTest {
- public:
-  FilesPolicyNotificationManagerBrowserTest() = default;
-  FilesPolicyNotificationManagerBrowserTest(
-      const FilesPolicyNotificationManagerBrowserTest&) = delete;
-  FilesPolicyNotificationManagerBrowserTest& operator=(
-      const FilesPolicyNotificationManagerBrowserTest&) = delete;
-  ~FilesPolicyNotificationManagerBrowserTest() override = default;
-};
-
-using BlockedFilesMap = std::map<DlpConfidentialFile, Policy>;
+using DialogInfoMap =
+    std::map<FilesPolicyDialog::BlockReason, FilesPolicyDialog::Info>;
 
 class MockFilesPolicyDialogFactory : public FilesPolicyDialogFactory {
  public:
+  MockFilesPolicyDialogFactory() {
+    ON_CALL(*this, CreateWarnDialog)
+        .WillByDefault([](WarningWithJustificationCallback callback,
+                          dlp::FileAction file_action,
+                          gfx::NativeWindow modal_parent,
+                          std::optional<DlpFileDestination> destination,
+                          FilesPolicyDialog::Info dialog_info) {
+          views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
+              std::make_unique<FilesPolicyWarnDialog>(
+                  std::move(callback), file_action, modal_parent, destination,
+                  std::move(dialog_info)),
+              /*context=*/nullptr, modal_parent);
+          widget->Show();
+          return widget;
+        });
+
+    ON_CALL(*this, CreateErrorDialog)
+        .WillByDefault([](const DialogInfoMap& dialog_info_map,
+                          dlp::FileAction action,
+                          gfx::NativeWindow modal_parent) {
+          views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
+              std::make_unique<FilesPolicyErrorDialog>(dialog_info_map, action,
+                                                       modal_parent),
+              /*context=*/nullptr, modal_parent);
+          widget->Show();
+          return widget;
+        });
+  }
+
   MOCK_METHOD(views::Widget*,
               CreateWarnDialog,
-              (OnDlpRestrictionCheckedCallback callback,
-               const std::vector<DlpConfidentialFile>&,
+              (WarningWithJustificationCallback,
                dlp::FileAction,
                gfx::NativeWindow,
-               absl::optional<DlpFileDestination>),
+               std::optional<DlpFileDestination>,
+               FilesPolicyDialog::Info),
               (override));
 
   MOCK_METHOD(views::Widget*,
               CreateErrorDialog,
-              (const BlockedFilesMap&, dlp::FileAction, gfx::NativeWindow),
+              (const DialogInfoMap&, dlp::FileAction, gfx::NativeWindow),
               (override));
 };
 
@@ -130,24 +157,24 @@ class TestNotificationPlatformBridgeDelegator
     std::move(callback).Run(ids_, /*supports_sync=*/true);
   }
 
-  absl::optional<message_center::Notification> GetDisplayedNotification(
+  std::optional<message_center::Notification> GetDisplayedNotification(
       const std::string& notification_id) {
     auto it = notifications_.find(notification_id);
     if (it != notifications_.end()) {
       return it->second;
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // If a notification with `notification_id` is displayed, simulates clicking
   // on that notification with `button_index` button.
   void Click(const std::string& notification_id,
-             absl::optional<int> button_index) {
+             std::optional<int> button_index) {
     auto it = notifications_.find(notification_id);
     if (it == notifications_.end()) {
       return;
     }
-    it->second.delegate()->Click(button_index, absl::nullopt);
+    it->second.delegate()->Click(button_index, std::nullopt);
   }
 
  private:
@@ -155,11 +182,19 @@ class TestNotificationPlatformBridgeDelegator
   std::set<std::string> ids_;
 };
 
-class OnNotificationClickedTest
-    : public FilesPolicyNotificationManagerBrowserTest {
+class FilesPolicyNotificationManagerBrowserTest : public InProcessBrowserTest {
  public:
+  FilesPolicyNotificationManagerBrowserTest() {
+    scoped_feature_list_.InitAndEnableFeature(features::kNewFilesPolicyUX);
+  }
+  FilesPolicyNotificationManagerBrowserTest(
+      const FilesPolicyNotificationManagerBrowserTest&) = delete;
+  FilesPolicyNotificationManagerBrowserTest& operator=(
+      const FilesPolicyNotificationManagerBrowserTest&) = delete;
+  ~FilesPolicyNotificationManagerBrowserTest() override = default;
+
   void SetUpOnMainThread() override {
-    FilesPolicyNotificationManagerBrowserTest::SetUpOnMainThread();
+    InProcessBrowserTest::SetUpOnMainThread();
 
     // Needed to check that Files app was/wasn't opened.
     ash::SystemWebAppManager::GetForTest(browser()->profile())
@@ -178,8 +213,9 @@ class OnNotificationClickedTest
     factory_ = std::make_unique<MockFilesPolicyDialogFactory>();
     FilesPolicyDialog::SetFactory(factory_.get());
 
-    DlpFilesController::SetNewFilesPolicyUXEnabledForTesting(
-        /*is_enabled=*/true);
+    fpnm_ = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
+        browser()->profile());
+    ASSERT_TRUE(fpnm_);
   }
 
  protected:
@@ -191,91 +227,118 @@ class OnNotificationClickedTest
                                    ash::SystemWebAppType::FILE_MANAGER);
   }
 
-  raw_ptr<NotificationDisplayServiceImpl, ExperimentalAsh> display_service_;
-  raw_ptr<TestNotificationPlatformBridgeDelegator, ExperimentalAsh> bridge_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  base::HistogramTester histogram_tester_;
+  raw_ptr<NotificationDisplayServiceImpl, DanglingUntriaged> display_service_;
+  raw_ptr<TestNotificationPlatformBridgeDelegator, DanglingUntriaged> bridge_;
   std::unique_ptr<MockFilesPolicyDialogFactory> factory_;
+  raw_ptr<policy::FilesPolicyNotificationManager, DanglingUntriaged> fpnm_ =
+      nullptr;
 };
 
-class OnDlpWarningNotificationClickedTest
-    : public OnNotificationClickedTest,
-      public ::testing::WithParamInterface<
-          std::tuple<dlp::FileAction, DlpFileDestination>> {};
+class NonIOWarningBrowserTest
+    : public FilesPolicyNotificationManagerBrowserTest,
+      public ::testing::WithParamInterface<dlp::FileAction> {};
 
 // Tests that clicking on the warning notification, but no button is ignored.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
-                       SingleFileNoButtonIgnored) {
-  auto [action, destination] = GetParam();
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
+// Timing out the warning closes the notification and cancels the task.
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest, SingleFileNoButtonIgnored) {
+  auto action = GetParam();
+
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  fpnm->SetTaskRunnerForTesting(task_runner);
+  fpnm_->SetTaskRunnerForTesting(task_runner);
 
   // The callback is not invoked.
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
+  base::MockCallback<WarningWithJustificationCallback> cb;
   EXPECT_CALL(cb, Run).Times(0);
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt,
-                       {base::FilePath("file1.txt")}, destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt,
+                        {base::FilePath("file1.txt")}, DlpFileDestination(),
+                        action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
-  bridge_->Click(kNotificationId, /*button_index=*/absl::nullopt);
+  bridge_->Click(kNotificationId, /*button_index=*/std::nullopt);
   // The notification shouldn't be closed.
   EXPECT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
 
   // Skip the warning timeout. The callback is only invoked when the warning
   // times out.
   testing::Mock::VerifyAndClearExpectations(&cb);
-  EXPECT_CALL(cb, Run(/*should_proceed=*/false));
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/false));
   task_runner->FastForwardBy(kWarningTimeout);
   // The warning notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
-  // TODO(b/292491068): The warning timeout notification should be shown.
+  // The warning timeout notification should be shown.
+  EXPECT_TRUE(bridge_->GetDisplayedNotification("dlp_files_1").has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(1, 1)},
+                         /*action_timedout_buckets=*/{base::Bucket(action, 1)});
 }
 
 // Tests that closing the warning notification (e.g. by X or Dismiss all)
 // invokes the Cancel callback.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
-                       SingleFileCloseCancels) {
-  auto [action, destination] = GetParam();
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest, SingleFileCloseCancels) {
+  auto action = GetParam();
 
   // The task is cancelled.
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
-  EXPECT_CALL(cb, Run(/*should_proceed=*/false)).Times(1);
+  base::MockCallback<WarningWithJustificationCallback> cb;
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/false))
+      .Times(1);
 
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt,
-                       {base::FilePath("file1.txt")}, destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt,
+                        {base::FilePath("file1.txt")}, DlpFileDestination(),
+                        action);
 
   auto notification = bridge_->GetDisplayedNotification(kNotificationId);
   ASSERT_TRUE(notification.has_value());
   notification->delegate()->Close(
       /*by_user=*/true);  // parameter doesn't matter
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(1, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
 // Tests that clicking the OK button on a warning notification for a single
 // file continues the action without showing the dialog.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
-                       SingleFileOKContinues) {
-  auto [action, destination] = GetParam();
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest, SingleFileOKContinues) {
+  auto action = GetParam();
   EXPECT_CALL(*factory_, CreateWarnDialog).Times(0);
   // No Files app opened.
   ASSERT_FALSE(FindSystemWebAppBrowser(browser()->profile(),
                                        ash::SystemWebAppType::FILE_MANAGER));
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   // The callback is invoked directly from the notification.
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
-  EXPECT_CALL(cb, Run(/*should_proceed=*/true)).Times(1);
+  base::MockCallback<WarningWithJustificationCallback> cb;
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/true))
+      .Times(1);
 
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt,
-                       {base::FilePath("file1.txt")}, destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt,
+                        {base::FilePath("file1.txt")}, DlpFileDestination(),
+                        action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::OK);
@@ -286,52 +349,76 @@ IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(1, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
-// Tests that clicking the OK button on a warning notification for multiple
-// files shows a dialog instead of continuing the action.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
-                       MultiFileOKShowsDialog) {
-  auto [action, destination] = GetParam();
+// This is a test for b/277594200. Tests that clicking the OK button on a
+// warning notification for multiple files shows a dialog instead of continuing
+// the action and always opens the Files app. Timing out the warning closes the
+// dialogs and cancels the task.
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest, MultiFileOKShowsDialog) {
+  auto action = GetParam();
   std::vector<base::FilePath> warning_files;
   warning_files.emplace_back("file1.txt");
   warning_files.emplace_back("file2.txt");
-  EXPECT_CALL(
-      *factory_,
-      CreateWarnDialog(base::test::IsNotNullCallback(),
-                       std::vector<DlpConfidentialFile>(
-                           {warning_files.begin(), warning_files.end()}),
-                       action, testing::NotNull(), testing::Eq(absl::nullopt)))
-      .Times(2);
+  EXPECT_CALL(*factory_,
+              CreateWarnDialog(
+                  base::test::IsNotNullCallback(), action, testing::NotNull(),
+                  testing::Eq(std::nullopt),
+                  FilesPolicyDialog::Info::Warn(
+                      FilesPolicyDialog::BlockReason::kDlp, warning_files)))
+      .Times(2)
+      .WillRepeatedly(
+          [](WarningWithJustificationCallback callback,
+             dlp::FileAction file_action, gfx::NativeWindow modal_parent,
+             std::optional<DlpFileDestination> destination,
+             FilesPolicyDialog::Info dialog_info) {
+            views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
+                std::make_unique<FilesPolicyWarnDialog>(
+                    std::move(callback), file_action, modal_parent, destination,
+                    std::move(dialog_info)),
+                /*context=*/nullptr, modal_parent);
+            widget->Show();
+            return widget;
+          });
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  fpnm->SetTaskRunnerForTesting(task_runner);
+  fpnm_->SetTaskRunnerForTesting(task_runner);
 
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
+  base::MockCallback<WarningWithJustificationCallback> cb;
   EXPECT_CALL(cb, Run).Times(0);
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt, warning_files,
-                       destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt, warning_files,
+                        DlpFileDestination(), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::OK);
 
   // Check that a new Files app is opened.
-  Browser* first_app = ui_test_utils::WaitForBrowserToOpen();
-  ASSERT_EQ(first_app, FindFilesApp());
+  ui_test_utils::WaitForBrowserToOpen();
+  ASSERT_EQ(ash::file_manager::FileManagerUI::GetNumInstances(), 1);
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
 
   // Show another notification and dialog. Another app should be opened.
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt, warning_files,
-                       destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt, warning_files,
+                        DlpFileDestination(), action);
 
   const std::string second_notification = "dlp_files_1";
   ASSERT_TRUE(
@@ -339,50 +426,65 @@ IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
   bridge_->Click(second_notification, NotificationButton::OK);
 
   // Check that a new Files app is opened.
-  Browser* second_app = ui_test_utils::WaitForBrowserToOpen();
-  ASSERT_EQ(second_app, FindFilesApp());
-  EXPECT_NE(first_app, second_app);
+  ui_test_utils::WaitForBrowserToOpen();
+  ASSERT_EQ(ash::file_manager::FileManagerUI::GetNumInstances(), 2);
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 2);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
 
   // Skip the warning timeout. The callback will only be invoked when the
   // warnings time out.
   testing::Mock::VerifyAndClearExpectations(&cb);
-  EXPECT_CALL(cb, Run(/*should_proceed=*/false)).Times(2);
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/false))
+      .Times(2);
   task_runner->FastForwardBy(kWarningTimeout);
+  // The warning timeout notifications should be shown.
+  ASSERT_TRUE(bridge_->GetDisplayedNotification("dlp_files_2").has_value());
+  ASSERT_TRUE(bridge_->GetDisplayedNotification("dlp_files_3").has_value());
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 2)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 2)},
+                         /*action_timedout_buckets=*/{base::Bucket(action, 2)});
 }
 
 // Tests that clicking the OK button on a warning notification for multiple
 // files shows a system modal dialog when Files app doesn't launch before
-// timeout.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
+// timeout. Proceeding the warning from the dialog continues the task and closes
+// the dialog, and the warning timeout is then ignored.
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest,
                        MultiFileOKShowsDialog_Timeout) {
-  auto [action, destination] = GetParam();
+  auto action = GetParam();
   std::vector<base::FilePath> warning_files;
   warning_files.emplace_back("file1.txt");
   warning_files.emplace_back("file2.txt");
-  // Null modal parent means the dialog is a system modal.
-  EXPECT_CALL(
-      *factory_,
-      CreateWarnDialog(base::test::IsNotNullCallback(),
-                       std::vector<DlpConfidentialFile>(
-                           {warning_files.begin(), warning_files.end()}),
-                       action, testing::IsNull(), testing::Eq(absl::nullopt)))
+
+  EXPECT_CALL(*factory_,
+              CreateWarnDialog(
+                  base::test::IsNotNullCallback(), action, testing::IsNull(),
+                  // Null modal parent means the dialog is a system modal.
+                  testing::Eq(std::nullopt),
+                  FilesPolicyDialog::Info::Warn(
+                      FilesPolicyDialog::BlockReason::kDlp, warning_files)))
       .Times(1);
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  fpnm->SetTaskRunnerForTesting(task_runner);
+  fpnm_->SetTaskRunnerForTesting(task_runner);
 
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
+  base::MockCallback<WarningWithJustificationCallback> cb;
   EXPECT_CALL(cb, Run).Times(0);
-  fpnm->ShowDlpWarning(cb.Get(), /*task_id=*/absl::nullopt, warning_files,
-                       destination, action);
+  fpnm_->ShowDlpWarning(cb.Get(), /*task_id=*/std::nullopt, warning_files,
+                        DlpFileDestination(), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::OK);
@@ -396,35 +498,52 @@ IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
 
-  // Skip the warning timeout. The callback will only be invoked when the
-  // warning times out.
+  // Accept the warning.
   testing::Mock::VerifyAndClearExpectations(&cb);
-  EXPECT_CALL(cb, Run(/*should_proceed=*/false));
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/true));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
+      browser(), ui::VKEY_RETURN, /*control=*/false,
+      /*shift=*/false, /*alt=*/false, /*command=*/false));
+
+  // Skip the warning timeout. Shouldn't do anything.
+  testing::Mock::VerifyAndClearExpectations(&cb);
+  EXPECT_CALL(cb, Run).Times(0);
   task_runner->FastForwardBy(kWarningTimeout);
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 1);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
 // Tests that clicking the Cancel button on a warning notification cancels the
 // action without showing the dialog.
-IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
-                       CancelShowsNoDialog) {
-  auto [action, destination] = GetParam();
+IN_PROC_BROWSER_TEST_P(NonIOWarningBrowserTest, CancelShowsNoDialog) {
+  auto action = GetParam();
   EXPECT_CALL(*factory_, CreateWarnDialog).Times(0);
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   // The callback is invoked directly from the notification.
-  base::MockCallback<OnDlpRestrictionCheckedCallback> cb;
-  EXPECT_CALL(cb, Run(/*should_proceed=*/false)).Times(1);
+  base::MockCallback<WarningWithJustificationCallback> cb;
+  EXPECT_CALL(cb, Run(/*user_justification=*/std::optional<std::u16string>(),
+                      /*should_proceed=*/false))
+      .Times(1);
 
-  fpnm->ShowDlpWarning(
-      cb.Get(), /*task_id=*/absl::nullopt,
-      {base::FilePath("file1.txt"), base::FilePath("file2.txt")}, destination,
-      action);
+  fpnm_->ShowDlpWarning(
+      cb.Get(), /*task_id=*/std::nullopt,
+      {base::FilePath("file1.txt"), base::FilePath("file2.txt")},
+      DlpFileDestination(), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::CANCEL);
@@ -434,45 +553,53 @@ IN_PROC_BROWSER_TEST_P(OnDlpWarningNotificationClickedTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    FPNM,
-    OnDlpWarningNotificationClickedTest,
-    ::testing::Values(
-        std::make_tuple(dlp::FileAction::kUpload,
-                        DlpFileDestination(kExampleUrl)),
-        std::make_tuple(dlp::FileAction::kMove,
-                        DlpFileDestination(data_controls::Component::kDrive))));
+INSTANTIATE_TEST_SUITE_P(FPNM,
+                         NonIOWarningBrowserTest,
+                         ::testing::Values(dlp::FileAction::kUpload,
+                                           dlp::FileAction::kMove));
 
-class OnDlpErrorNotificationClickedTest
-    : public OnNotificationClickedTest,
-      public ::testing::WithParamInterface<
-          std::tuple<dlp::FileAction, DlpFileDestination>> {};
+class NonIOErrorBrowserTest
+    : public FilesPolicyNotificationManagerBrowserTest,
+      public ::testing::WithParamInterface<dlp::FileAction> {};
 
 // Tests that clicking the OK button on an error notification for multiple-
 // files shows a dialog.
-IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
-                       MultiFileOKShowsDialog) {
-  auto [action, destination] = GetParam();
-  BlockedFilesMap blocked_map;
-  blocked_map.emplace(base::FilePath("file1.txt"), Policy::kDlp);
-  blocked_map.emplace(base::FilePath("file2.txt"), Policy::kDlp);
+IN_PROC_BROWSER_TEST_P(NonIOErrorBrowserTest, MultiFileOKShowsDialog) {
+  auto action = GetParam();
+
+  DialogInfoMap dialog_info_map;
+  const std::vector<base::FilePath> paths = {base::FilePath("file1.txt"),
+                                             base::FilePath("file2.txt")};
+  auto dialog_info = FilesPolicyDialog::Info::Error(
+      FilesPolicyDialog::BlockReason::kDlp, paths);
+  dialog_info_map.insert({FilesPolicyDialog::BlockReason::kDlp, dialog_info});
+
   EXPECT_CALL(*factory_,
-              CreateErrorDialog(blocked_map, action, testing::NotNull()))
+              CreateErrorDialog(dialog_info_map, action, testing::NotNull()))
       .Times(1);
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   std::vector<base::FilePath> blocked_files;
   blocked_files.emplace_back("file1.txt");
   blocked_files.emplace_back("file2.txt");
-  fpnm->ShowDlpBlockedFiles(absl::nullopt, std::move(blocked_files), action);
+  fpnm_->ShowDlpBlockedFiles(std::nullopt, std::move(blocked_files), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::OK);
@@ -482,78 +609,121 @@ IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 1);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
 // Tests that clicking on the error notification, but no button is ignored.
-IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
-                       MultiFileNoButtonIgnored) {
-  auto [action, destination] = GetParam();
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
+IN_PROC_BROWSER_TEST_P(NonIOErrorBrowserTest, MultiFileNoButtonIgnored) {
+  auto action = GetParam();
   std::vector<base::FilePath> blocked_files;
   blocked_files.emplace_back("file1.txt");
   blocked_files.emplace_back("file2.txt");
-  fpnm->ShowDlpBlockedFiles(absl::nullopt, std::move(blocked_files), action);
+  fpnm_->ShowDlpBlockedFiles(std::nullopt, std::move(blocked_files), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
-  bridge_->Click(kNotificationId, /*button_index=*/absl::nullopt);
+  bridge_->Click(kNotificationId, /*button_index=*/std::nullopt);
   // The notification shouldn't be closed.
   EXPECT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
 // Tests that closing the error notification (e.g. by X or Dismiss all)
 // correctly closes it.
-IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
-                       MultiFileCloseCancels) {
-  auto [action, destination] = GetParam();
-
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
+IN_PROC_BROWSER_TEST_P(NonIOErrorBrowserTest, MultiFileCloseCancels) {
+  auto action = GetParam();
 
   std::vector<base::FilePath> blocked_files;
   blocked_files.emplace_back("file1.txt");
   blocked_files.emplace_back("file2.txt");
-  fpnm->ShowDlpBlockedFiles(absl::nullopt, std::move(blocked_files), action);
+  fpnm_->ShowDlpBlockedFiles(std::nullopt, std::move(blocked_files), action);
 
   auto notification = bridge_->GetDisplayedNotification(kNotificationId);
   ASSERT_TRUE(notification.has_value());
   notification->delegate()->Close(
       /*by_user=*/false);  // parameter doesn't matter
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
 // Tests that clicking the OK button on an error notification for multiple
 // files shows a system modal dialog when Files app doesn't launch before
 // timeout.
-IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
-                       MultiFileOKShowsDialog_Timeout) {
-  auto [action, destination] = GetParam();
-  BlockedFilesMap blocked_map;
-  blocked_map.emplace(base::FilePath("file1.txt"), Policy::kDlp);
-  blocked_map.emplace(base::FilePath("file2.txt"), Policy::kDlp);
-  // Null modal parent means the dialog is a system modal.
-  EXPECT_CALL(*factory_,
-              CreateErrorDialog(blocked_map, action, testing::IsNull()))
+IN_PROC_BROWSER_TEST_P(NonIOErrorBrowserTest, MultiFileOKShowsDialog_Timeout) {
+  auto action = GetParam();
+
+  DialogInfoMap dialog_info_map;
+  const std::vector<base::FilePath> paths = {base::FilePath("file1.txt"),
+                                             base::FilePath("file2.txt")};
+  dialog_info_map.insert({FilesPolicyDialog::BlockReason::kDlp,
+                          FilesPolicyDialog::Info::Error(
+                              FilesPolicyDialog::BlockReason::kDlp, paths)});
+
+  EXPECT_CALL(
+      *factory_,
+      CreateErrorDialog(dialog_info_map, action,
+                        // Null modal parent means the dialog is a system modal.
+                        testing::IsNull()))
       .Times(1);
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  fpnm->SetTaskRunnerForTesting(task_runner);
+  fpnm_->SetTaskRunnerForTesting(task_runner);
 
   std::vector<base::FilePath> blocked_files;
   blocked_files.emplace_back("file1.txt");
   blocked_files.emplace_back("file2.txt");
-  fpnm->ShowDlpBlockedFiles(absl::nullopt, std::move(blocked_files), action);
+  fpnm_->ShowDlpBlockedFiles(std::nullopt, std::move(blocked_files), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::OK);
@@ -565,25 +735,42 @@ IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 1);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockReviewedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
 // Tests that clicking the Cancel button on an error notification dismisses
 // the notification without showing the dialog.
-IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest, CancelDismisses) {
-  auto [action, destination] = GetParam();
+IN_PROC_BROWSER_TEST_P(NonIOErrorBrowserTest, CancelDismisses) {
+  auto action = GetParam();
   EXPECT_CALL(*factory_, CreateErrorDialog).Times(0);
 
   // No Files app opened.
   ASSERT_FALSE(FindFilesApp());
 
-  auto* fpnm = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-      browser()->profile());
-  ASSERT_TRUE(fpnm);
-
   std::vector<base::FilePath> blocked_files;
   blocked_files.emplace_back("file1.txt");
   blocked_files.emplace_back("file2.txt");
-  fpnm->ShowDlpBlockedFiles(absl::nullopt, std::move(blocked_files), action);
+  fpnm_->ShowDlpBlockedFiles(std::nullopt, std::move(blocked_files), action);
 
   ASSERT_TRUE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
   bridge_->Click(kNotificationId, NotificationButton::CANCEL);
@@ -593,24 +780,37 @@ IN_PROC_BROWSER_TEST_P(OnDlpErrorNotificationClickedTest, CancelDismisses) {
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    FPNM,
-    OnDlpErrorNotificationClickedTest,
-    ::testing::Values(
-        std::make_tuple(dlp::FileAction::kOpen,
-                        DlpFileDestination(kExampleUrl)),
-        std::make_tuple(dlp::FileAction::kDownload,
-                        DlpFileDestination(data_controls::Component::kUsb))));
+INSTANTIATE_TEST_SUITE_P(FPNM,
+                         NonIOErrorBrowserTest,
+                         ::testing::Values(dlp::FileAction::kOpen,
+                                           dlp::FileAction::kDownload));
 
 class IOTaskBrowserTest
-    : public OnNotificationClickedTest,
+    : public FilesPolicyNotificationManagerBrowserTest,
       public ::testing::WithParamInterface<
           std::tuple<file_manager::io_task::OperationType, dlp::FileAction>> {
  protected:
   void SetUpOnMainThread() override {
-    OnNotificationClickedTest::SetUpOnMainThread();
+    FilesPolicyNotificationManagerBrowserTest::SetUpOnMainThread();
 
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     file_system_context_ = file_manager::util::GetFileManagerFileSystemContext(
@@ -624,22 +824,28 @@ class IOTaskBrowserTest
     ASSERT_NE(policy::DlpRulesManagerFactory::GetForPrimaryProfile()
                   ->GetDlpFilesController(),
               nullptr);
-    fpnm_ = FilesPolicyNotificationManagerFactory::GetForBrowserContext(
-        browser()->profile());
-    ASSERT_TRUE(fpnm_);
+  }
+
+  void TearDownOnMainThread() override {
+    // The files controller must be destroyed before the profile since it's
+    // holding a pointer to it.
+    files_controller_.reset();
+    mock_rules_manager_ = nullptr;
+    FilesPolicyNotificationManagerBrowserTest::TearDownOnMainThread();
   }
 
   std::unique_ptr<KeyedService> SetDlpRulesManager(
       content::BrowserContext* context) {
     auto dlp_rules_manager =
-        std::make_unique<testing::NiceMock<policy::MockDlpRulesManager>>();
+        std::make_unique<testing::NiceMock<policy::MockDlpRulesManager>>(
+            Profile::FromBrowserContext(context));
     mock_rules_manager_ = dlp_rules_manager.get();
     ON_CALL(*mock_rules_manager_, IsFilesPolicyEnabled)
         .WillByDefault(testing::Return(true));
 
     files_controller_ =
         std::make_unique<testing::NiceMock<policy::MockDlpFilesControllerAsh>>(
-            *mock_rules_manager_);
+            *mock_rules_manager_, Profile::FromBrowserContext(context));
 
     ON_CALL(*mock_rules_manager_, GetDlpFilesController())
         .WillByDefault(::testing::Return(files_controller_.get()));
@@ -653,28 +859,53 @@ class IOTaskBrowserTest
       const file_manager::io_task::IOTaskId task_id,
       const dlp::FileAction action,
       const bool expected_should_proceed,
-      const std::vector<base::FilePath>& warning_files) {
-    bool is_move = (action == dlp::FileAction::kMove) ? true : false;
+      const std::vector<base::FilePath>& warning_files,
+      Policy type = Policy::kDlp) {
+    bool is_move = action == dlp::FileAction::kMove;
     auto warn_on_check =
-        [=](absl::optional<file_manager::io_task::IOTaskId> task_id,
-            const std::vector<storage::FileSystemURL>& transferred_files,
-            storage::FileSystemURL destination, bool is_move,
-            DlpFilesControllerAsh::CheckIfTransferAllowedCallback
-                result_callback) {
+        [=, this](std::optional<file_manager::io_task::IOTaskId> task_id,
+                  const std::vector<storage::FileSystemURL>& transferred_files,
+                  storage::FileSystemURL destination, bool is_move,
+                  DlpFilesControllerAsh::CheckIfTransferAllowedCallback
+                      result_callback) {
           auto warn_cb = base::BindOnce(
               [](DlpFilesControllerAsh::CheckIfTransferAllowedCallback cb,
-                 const bool expected_should_proceed, bool should_proceed) {
+                 const bool expected_should_proceed,
+                 const std::vector<storage::FileSystemURL>& transferred_files,
+                 std::optional<std::u16string> user_justification,
+                 bool should_proceed) {
                 EXPECT_EQ(should_proceed, expected_should_proceed);
-                // No file is blocked.
-                std::move(cb).Run({});
+                if (should_proceed) {
+                  std::move(cb).Run({});
+                } else {
+                  std::move(cb).Run({transferred_files});
+                }
               },
-              std::move(result_callback), expected_should_proceed);
-          fpnm_->ShowDlpWarning(std::move(warn_cb), task_id.value(),
-                                warning_files, DlpFileDestination(""), action);
+              std::move(result_callback), expected_should_proceed,
+              transferred_files);
+          if (type == Policy::kDlp) {
+            fpnm_->ShowDlpWarning(std::move(warn_cb), task_id.value(),
+                                  warning_files, DlpFileDestination(), action);
+          } else {
+            // Enterprise connectors file transfer currently support warning
+            // mode only for sensitive data.
+            auto dialog_info = FilesPolicyDialog::Info::Warn(
+                FilesPolicyDialog::BlockReason::
+                    kEnterpriseConnectorsSensitiveData,
+                warning_files);
+
+            // Override default dialog settings.
+            dialog_info.SetMessage(u"Custom warning message");
+            dialog_info.SetLearnMoreURL(GURL("https://learnmore.com"));
+            dialog_info.SetBypassRequiresJustification(true);
+
+            fpnm_->ShowConnectorsWarning(std::move(warn_cb), task_id.value(),
+                                         action, std::move(dialog_info));
+          }
         };
 
     EXPECT_CALL(*files_controller_,
-                CheckIfTransferAllowed(absl::make_optional(task_id), testing::_,
+                CheckIfTransferAllowed(std::make_optional(task_id), testing::_,
                                        testing::_, is_move, testing::_))
         .WillOnce(testing::Invoke(warn_on_check));
   }
@@ -687,18 +918,18 @@ class IOTaskBrowserTest
       const std::vector<base::FilePath>& blocked_files) {
     bool is_move = (action == dlp::FileAction::kMove) ? true : false;
     auto block_on_check =
-        [=](absl::optional<file_manager::io_task::IOTaskId> task_id,
-            const std::vector<storage::FileSystemURL>& transferred_files,
-            storage::FileSystemURL destination, bool is_move,
-            DlpFilesControllerAsh::CheckIfTransferAllowedCallback
-                result_callback) {
+        [=, this](std::optional<file_manager::io_task::IOTaskId> task_id,
+                  const std::vector<storage::FileSystemURL>& transferred_files,
+                  storage::FileSystemURL destination, bool is_move,
+                  DlpFilesControllerAsh::CheckIfTransferAllowedCallback
+                      result_callback) {
           fpnm_->ShowDlpBlockedFiles(task_id.value(), blocked_files, action);
           // Return transferred files as blocked.
           std::move(result_callback).Run(transferred_files);
         };
 
     EXPECT_CALL(*files_controller_,
-                CheckIfTransferAllowed(absl::make_optional(task_id), testing::_,
+                CheckIfTransferAllowed(std::make_optional(task_id), testing::_,
                                        testing::_, is_move, testing::_))
         .WillOnce(testing::Invoke(block_on_check));
   }
@@ -714,15 +945,17 @@ class IOTaskBrowserTest
       const std::vector<base::FilePath>& blocked_files) {
     bool is_move = (action == dlp::FileAction::kMove) ? true : false;
     auto warn_on_check =
-        [=](absl::optional<file_manager::io_task::IOTaskId> task_id,
-            const std::vector<storage::FileSystemURL>& transferred_files,
-            storage::FileSystemURL destination, bool is_move,
-            DlpFilesControllerAsh::CheckIfTransferAllowedCallback
-                result_callback) {
+        [=, this](std::optional<file_manager::io_task::IOTaskId> task_id,
+                  const std::vector<storage::FileSystemURL>& transferred_files,
+                  storage::FileSystemURL destination, bool is_move,
+                  DlpFilesControllerAsh::CheckIfTransferAllowedCallback
+                      result_callback) {
           auto warn_cb = base::BindOnce(
               [](DlpFilesControllerAsh::CheckIfTransferAllowedCallback cb,
                  const std::vector<storage::FileSystemURL>& transferred_files,
-                 const bool expected_should_proceed, bool should_proceed) {
+                 const bool expected_should_proceed,
+                 std::optional<std::u16string> user_justification,
+                 bool should_proceed) {
                 EXPECT_EQ(should_proceed, expected_should_proceed);
                 // Return transferred files as blocked.
                 std::move(cb).Run(transferred_files);
@@ -730,11 +963,11 @@ class IOTaskBrowserTest
               std::move(result_callback), transferred_files,
               expected_should_proceed);
           fpnm_->ShowDlpWarning(std::move(warn_cb), task_id.value(),
-                                warning_files, DlpFileDestination(""), action);
+                                warning_files, DlpFileDestination(), action);
         };
 
     EXPECT_CALL(*files_controller_,
-                CheckIfTransferAllowed(absl::make_optional(task_id), testing::_,
+                CheckIfTransferAllowed(std::make_optional(task_id), testing::_,
                                        testing::_, is_move, testing::_))
         .WillOnce(testing::Invoke(warn_on_check));
     fpnm_->ShowDlpBlockedFiles(task_id, blocked_files, action);
@@ -749,25 +982,27 @@ class IOTaskBrowserTest
       const std::vector<base::FilePath>& warning_files) {
     bool is_move = (action == dlp::FileAction::kMove) ? true : false;
     auto warn_on_check =
-        [=](absl::optional<file_manager::io_task::IOTaskId> task_id,
-            const std::vector<storage::FileSystemURL>& transferred_files,
-            storage::FileSystemURL destination, bool is_move,
-            DlpFilesControllerAsh::CheckIfTransferAllowedCallback
-                result_callback) {
+        [=, this](std::optional<file_manager::io_task::IOTaskId> task_id,
+                  const std::vector<storage::FileSystemURL>& transferred_files,
+                  storage::FileSystemURL destination, bool is_move,
+                  DlpFilesControllerAsh::CheckIfTransferAllowedCallback
+                      result_callback) {
           auto warn_cb = base::BindOnce(
               [](DlpFilesControllerAsh::CheckIfTransferAllowedCallback cb,
                  const std::vector<storage::FileSystemURL>& transferred_files,
-                 const bool expected_should_proceed, bool should_proceed) {
+                 const bool expected_should_proceed,
+                 std::optional<std::u16string> user_justification,
+                 bool should_proceed) {
                 EXPECT_EQ(should_proceed, expected_should_proceed);
               },
               std::move(result_callback), transferred_files,
               expected_should_proceed);
           fpnm_->ShowDlpWarning(std::move(warn_cb), task_id.value(),
-                                warning_files, DlpFileDestination(""), action);
+                                warning_files, DlpFileDestination(), action);
         };
 
     EXPECT_CALL(*files_controller_,
-                CheckIfTransferAllowed(absl::make_optional(task_id), testing::_,
+                CheckIfTransferAllowed(std::make_optional(task_id), testing::_,
                                        testing::_, is_move, testing::_))
         .WillOnce(testing::Invoke(warn_on_check));
   }
@@ -777,11 +1012,9 @@ class IOTaskBrowserTest
   const blink::StorageKey kTestStorageKey =
       blink::StorageKey::CreateFromStringForTesting("chrome://abc");
 
-  raw_ptr<policy::MockDlpRulesManager, ExperimentalAsh> mock_rules_manager_ =
+  raw_ptr<policy::MockDlpRulesManager, DanglingUntriaged> mock_rules_manager_ =
       nullptr;
   std::unique_ptr<policy::MockDlpFilesControllerAsh> files_controller_;
-  raw_ptr<policy::FilesPolicyNotificationManager, ExperimentalAsh> fpnm_ =
-      nullptr;
 };
 
 // Tests that warning an IO task with multiple warning files shows a desktop
@@ -826,6 +1059,8 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
 
   // Skip the warning timeout.
   task_runner->FastForwardBy(kWarningTimeout);
+  // Wait till IO task is complete.
+  base::RunLoop().RunUntilIdle();
 
   const std::u16string timeout_title =
       action == dlp::FileAction::kCopy
@@ -834,8 +1069,24 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
   notification1 = bridge_->GetDisplayedNotification(kNotificationId1);
   ASSERT_TRUE(notification1.has_value());
   EXPECT_EQ(notification1->title(), timeout_title);
-
   EXPECT_FALSE(fpnm_->HasIOTask(kTaskId1));
+  // Dismiss the notification.
+  bridge_->Click(kNotificationId1, std::nullopt);
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 1)},
+                         /*action_timedout_buckets=*/{base::Bucket(action, 1)});
+
+  EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId1).has_value());
 }
 
 // Tests that clicking the OK button on a warning notification shown for copy or
@@ -849,20 +1100,23 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
   std::vector<base::FilePath> warning_files;
   warning_files.emplace_back("file1.txt");
   warning_files.emplace_back("file2.txt");
-  EXPECT_CALL(
-      *factory_,
-      CreateWarnDialog(base::test::IsNotNullCallback(),
-                       std::vector<DlpConfidentialFile>(
-                           {warning_files.begin(), warning_files.end()}),
-                       action, testing::NotNull(), testing::Eq(absl::nullopt)))
+
+  auto dialog_info = FilesPolicyDialog::Info::Warn(
+      FilesPolicyDialog::BlockReason::kDlp, warning_files);
+
+  EXPECT_CALL(*factory_,
+              CreateWarnDialog(base::test::IsNotNullCallback(), action,
+                               testing::NotNull(), testing::Eq(std::nullopt),
+                               std::move(dialog_info)))
       .Times(2)
-      .WillRepeatedly([](OnDlpRestrictionCheckedCallback callback,
-                         std::vector<DlpConfidentialFile> files,
+      .WillRepeatedly([](WarningWithJustificationCallback callback,
                          dlp::FileAction file_action,
                          gfx::NativeWindow modal_parent,
-                         absl::optional<DlpFileDestination> destination) {
+                         std::optional<DlpFileDestination> destination,
+                         FilesPolicyDialog::Info dialog_info) {
         // Cancel the task so it's deleted properly.
-        std::move(callback).Run(/*should_proceed=*/false);
+        std::move(callback).Run(/*user_justification=*/std::nullopt,
+                                /*should_proceed=*/false);
         return nullptr;
       });
 
@@ -930,6 +1184,19 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId2).has_value());
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 1);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 2)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 2)},
+                         /*action_timedout_buckets=*/{});
 }
 
 // Tests that clicking the Cancel button on a warning notification shown for
@@ -971,6 +1238,19 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest, MultiFileDismissCancels_Warning) {
 
   // Task info is removed when the task is cancelled.
   EXPECT_FALSE(fpnm_->HasIOTask(kTaskId1));
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(2, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
 // Tests that clicking the OK button on a warning notification shown for
@@ -1014,6 +1294,19 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest, SingleFileOkProceeds_Warning) {
 
   // Task info should be cleared because there's not any blocked file.
   ASSERT_FALSE(fpnm_->HasIOTask(kTaskId1));
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 0);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(1, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
 // Tests that clicking the OK button on an error notification shown for copy or
@@ -1023,11 +1316,15 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
                        MultiFileOKShowsDialogOverFilesApp_Error) {
   auto [type, action] = GetParam();
 
-  BlockedFilesMap blocked_map;
-  blocked_map.emplace(base::FilePath("file1.txt"), Policy::kDlp);
-  blocked_map.emplace(base::FilePath("file2.txt"), Policy::kDlp);
+  DialogInfoMap dialog_info_map;
+  const std::vector<base::FilePath> paths = {base::FilePath("file1.txt"),
+                                             base::FilePath("file2.txt")};
+  auto dialog_info = FilesPolicyDialog::Info::Error(
+      FilesPolicyDialog::BlockReason::kDlp, paths);
+  dialog_info_map.insert({FilesPolicyDialog::BlockReason::kDlp, dialog_info});
+
   EXPECT_CALL(*factory_,
-              CreateErrorDialog(blocked_map, action, testing::NotNull()))
+              CreateErrorDialog(dialog_info_map, action, testing::NotNull()))
       .Times(2);
 
   // No Files app opened.
@@ -1038,12 +1335,8 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
   // notify FPNM with the error status and trigger the notification. Do this
   // before any Files App is opened so that we are sure we show system
   // notifications.
-  ExpectCheckIfTransferAllowedToBlock(
-      kTaskId1, action,
-      {base::FilePath("file1.txt"), base::FilePath("file2.txt")});
-  ExpectCheckIfTransferAllowedToBlock(
-      kTaskId2, action,
-      {base::FilePath("file1.txt"), base::FilePath("file2.txt")});
+  ExpectCheckIfTransferAllowedToBlock(kTaskId1, action, paths);
+  ExpectCheckIfTransferAllowedToBlock(kTaskId2, action, paths);
 
   // Add the tasks.
   {
@@ -1099,6 +1392,23 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
   ASSERT_EQ(first_app, FindFilesApp());
   // Task info is removed after the dialog is shown.
   EXPECT_FALSE(fpnm_->HasIOTask(kTaskId2));
+
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      false, 1);
+  histogram_tester_.ExpectBucketCount(
+      data_controls::GetDlpHistogramPrefix() +
+          data_controls::dlp::kFilesAppOpenTimedOutUMA,
+      true, 0);
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 2)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 2)));
 }
 
 // Tests that the IO task info for copy or move with multiple blocked files will
@@ -1143,6 +1453,15 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest, MultiFileDismissRemovesIOInfo_Error) {
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId1).has_value());
+
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(2, 1)));
 }
 
 // Tests that the IO task info for copy or move with single blocked file will
@@ -1193,6 +1512,15 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest,
 
   // The notification should be closed.
   EXPECT_FALSE(bridge_->GetDisplayedNotification(kNotificationId1).has_value());
+
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(1, 1)));
 }
 
 // Tests that clicking the OK button on a warning notification shown for
@@ -1247,6 +1575,19 @@ IN_PROC_BROWSER_TEST_P(IOTaskBrowserTest, SingleFileOkProceeds_Mix) {
   notification = bridge_->GetDisplayedNotification(kNotificationId1);
   ASSERT_TRUE(notification.has_value());
   EXPECT_EQ(notification->title(), title2);
+
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  std::string(data_controls::dlp::kFileActionBlockedUMA)),
+              base::BucketsAre(base::Bucket(action, 1)));
+  EXPECT_THAT(histogram_tester_.GetAllSamples(
+                  data_controls::GetDlpHistogramPrefix() +
+                  data_controls::dlp::kFilesBlockedCountUMA),
+              testing::ElementsAre(base::Bucket(1, 1)));
+  VerifyFilesWarningUMAs(histogram_tester_,
+                         /*action_warned_buckets=*/{base::Bucket(action, 1)},
+                         /*warning_count_buckets=*/{base::Bucket(1, 1)},
+                         /*action_timedout_buckets=*/{});
 }
 
 INSTANTIATE_TEST_SUITE_P(

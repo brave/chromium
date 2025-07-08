@@ -18,7 +18,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
@@ -29,7 +28,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/range/range.h"
 
-class LocationBarModel;
 class OmniboxController;
 class OmniboxEditModel;
 class OmniboxViewMacTest;
@@ -81,15 +79,18 @@ class OmniboxView {
   // closed, there is no input in progress, and there's a URL displayed) (e.g.
   // the secure page lock). `color_vectors` is used for vector icons e.g. the
   // history clock or bookmark star. `color_bright_vectors` is used for special
-  // vector icons e.g. the history cluster squiggle. Favicons aren't
-  // custom-colored. `dark_mode` returns the dark_mode version of an icon. This
-  // should usually be handled by `color_current_page_icon` but in cases where
-  // the icon has hardcoded colors this can be used to return a different icon.
-  // E.g., the SuperGIcon will return different icons in dark and light modes.
+  // vector icons e.g. the history cluster squiggle.
+  // `color_vectors_with_background` is used for vector icons that are drawn
+  // atop a background e.g. action suggestions. Favicons aren't custom-colored.
+  // `dark_mode` returns the dark_mode version of an icon. This should usually
+  // be handled by `color_current_page_icon` but in cases where the icon has
+  // hardcoded colors this can be used to return a different icon. E.g., the
+  // SuperGIcon will return different icons in dark and light modes.
   ui::ImageModel GetIcon(int dip_size,
                          SkColor color_current_page_icon,
                          SkColor color_vectors,
                          SkColor color_bright_vectors,
+                         SkColor color_vectors_with_background,
                          IconFetchedCallback on_icon_fetched,
                          bool dark_mode) const;
 
@@ -125,11 +126,6 @@ class OmniboxView {
   // directed.  If there is no selection, |start| and |end| will both be equal
   // to the current cursor position.
   virtual void GetSelectionBounds(size_t* start, size_t* end) const = 0;
-
-  // Returns the sum of all selections' lengths. This is used to detect when
-  // the user has deleted text, and therefore, their input should not be
-  // autocompleted.
-  virtual size_t GetAllSelectionsLength() const = 0;
 
   // Selects all the text in the edit.  Use this in place of SetSelAll() to
   // avoid selecting the "phantom newline" at the end of the edit.
@@ -174,17 +170,10 @@ class OmniboxView {
                                            bool notify_text_changed) = 0;
 
   // Called when the inline autocomplete text in the model may have changed.
-  // `display_text` is the new text to show. `selection` indicates the
-  // autocompleted portions which should be selected. `*_autocompletion`
-  // represents the appropriate autocompletion.
-  // TODO(manukh) The last 3 parameters are redundant except when split
-  //  autocompletion is enabled. Once we've cleaned up split autocompletion
-  //  (it's unlikely to launch but still useful for experimenting), `selections`
-  //  should be removed.
+  // `user_text` is the portion of omnibox text the user typed.
+  // `inline`_autocompletion` is the autocompleted part.
   virtual void OnInlineAutocompleteTextMaybeChanged(
-      const std::u16string& display_text,
-      std::vector<gfx::Range> selections,
-      const std::u16string& prefix_autocompletion,
+      const std::u16string& user_text,
       const std::u16string& inline_autocompletion) = 0;
 
   // Called when the inline autocomplete text in the model has been cleared.
@@ -200,10 +189,15 @@ class OmniboxView {
   // user-initiated edit actions that trigger autocomplete, but *not* for
   // automatic changes to the textfield that should not affect autocomplete.
   virtual void OnBeforePossibleChange() = 0;
+
   // OnAfterPossibleChange() returns true if there was a change that caused it
   // to call UpdatePopup().  If |allow_keyword_ui_change| is false, we
   // prevent alterations to the keyword UI state (enabled vs. disabled).
   virtual bool OnAfterPossibleChange(bool allow_keyword_ui_change) = 0;
+
+  // Called when the placeholder text displayed when the user is in keyword mode
+  // has changed.
+  virtual void OnKeywordPlaceholderTextChange() {}
 
   // Returns the gfx::NativeView of the edit view.
   virtual gfx::NativeView GetNativeView() const = 0;
@@ -234,27 +228,6 @@ class OmniboxView {
   // only ever return true on mobile ports.
   virtual bool IsIndicatingQueryRefinement() const;
 
-  // Returns |text| with any leading javascript schemas stripped.
-  static std::u16string StripJavascriptSchemas(const std::u16string& text);
-
-  // Automatically collapses internal whitespace as follows:
-  // * Leading and trailing whitespace are often copied accidentally and rarely
-  //   affect behavior, so they are stripped.  If this collapses the whole
-  //   string, returns a space, since pasting nothing feels broken.
-  // * Internal whitespace sequences not containing CR/LF may be integral to the
-  //   meaning of the string and are preserved exactly.  The presence of any of
-  //   these also suggests the input is more likely a search than a navigation,
-  //   which affects the next bullet.
-  // * Internal whitespace sequences containing CR/LF have likely been split
-  //   across lines by terminals, email programs, etc., and are collapsed.  If
-  //   there are any internal non-CR/LF whitespace sequences, the input is more
-  //   likely search data (e.g. street addresses), so collapse these to a single
-  //   space.  If not, the input might be a navigation (e.g. a line-broken URL),
-  //   so collapse these away entirely.
-  //
-  // Finally, calls StripJavascriptSchemas() on the resulting string.
-  static std::u16string SanitizeTextForPaste(const std::u16string& text);
-
  protected:
   // Tracks important state that may change between OnBeforePossibleChange() and
   // OnAfterPossibleChange().
@@ -264,15 +237,9 @@ class OmniboxView {
     bool is_keyword_selected;
     size_t sel_start;
     size_t sel_end;
-    size_t all_sel_length;
-
-    State();
-    State(const State& state);
   };
 
   explicit OmniboxView(std::unique_ptr<OmniboxClient> client);
-
-  const LocationBarModel* GetLocationBarModel() const;
 
   // Fills |state| with the current text state.
   void GetState(State* state);

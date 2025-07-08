@@ -4,8 +4,9 @@
 
 #include <stdio.h>
 
+#include <string_view>
+
 #include "base/run_loop.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/ash/printing/printers_sync_bridge.h"
 #include "chrome/browser/sync/test/integration/printers_helper.h"
@@ -237,7 +238,6 @@ IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest, SimpleMerge) {
 
 IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest, MakeAndModelMigration) {
   ASSERT_TRUE(SetupClients());
-  base::HistogramTester histograms;
   const char kMake[] = "make";
   const char kModel[] = "model";
 
@@ -251,7 +251,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest, MakeAndModelMigration) {
   bridge->AddPrinter(std::move(printer));
 
   // Confirm that the bridge is not migrated.
-  absl::optional<sync_pb::PrinterSpecifics> spec_printer =
+  std::optional<sync_pb::PrinterSpecifics> spec_printer =
       bridge->GetPrinter(spec_printer_id);
   ASSERT_TRUE(spec_printer);
   ASSERT_THAT(spec_printer->make_and_model(), IsEmpty());
@@ -260,12 +260,10 @@ IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest, MakeAndModelMigration) {
   spec_printer = bridge->GetPrinter(spec_printer_id);
   ASSERT_TRUE(spec_printer);
 
-  base::StringPiece make_and_model = spec_printer->make_and_model();
+  std::string_view make_and_model = spec_printer->make_and_model();
   EXPECT_THAT(make_and_model, Not(IsEmpty()));
   EXPECT_THAT(make_and_model, StartsWith(kMake));
   EXPECT_THAT(make_and_model, EndsWith(kModel));
-  histograms.ExpectBucketCount("Printing.CUPS.MigratedMakeAndModel",
-                               1 /* kMigrated */, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest,
@@ -286,7 +284,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientPrintersSyncTest,
   bridge->AddPrinter(std::move(printer));
 
   // Confirm that the bridge is not migrated.
-  absl::optional<sync_pb::PrinterSpecifics> spec_printer =
+  std::optional<sync_pb::PrinterSpecifics> spec_printer =
       bridge->GetPrinter(spec_printer_id);
   ASSERT_TRUE(spec_printer);
   ASSERT_TRUE(spec_printer->has_ppd_reference());

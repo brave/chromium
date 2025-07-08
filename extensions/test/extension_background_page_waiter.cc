@@ -11,8 +11,9 @@
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_test_helper.h"
 #include "extensions/browser/lazy_context_id.h"
+#include "extensions/browser/lazy_context_task_queue.h"
 #include "extensions/browser/process_manager.h"
-#include "extensions/browser/service_worker_task_queue.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
@@ -72,21 +73,26 @@ void ExtensionBackgroundPageWaiter::WaitForBackgroundInitialized() {
 }
 
 void ExtensionBackgroundPageWaiter::WaitForBackgroundWorkerInitialized() {
-  // TODO(https://crbug.com/1284799): Currently, we request the content layer
-  // start the worker each time an event comes in (even if the worker is
-  // already running), and don't check first if it's active / ready. As a
-  // result, we have no good way of *just* checking if it's ready (because
-  // ServiceWorkerTaskQueue resets state right after tasks run). Instead, we
-  // just have to queue up a task. Luckily, it's easy.
+  const auto context_id =
+      LazyContextId::ForExtension(browser_context_, extension_.get());
+  LazyContextTaskQueue* task_queue = context_id.GetTaskQueue();
+
+  // If the worker is already active and ready to run tasks, we're done.
+  if (base::FeatureList::IsEnabled(
+          extensions_features::kOptimizeServiceWorkerStartRequests) &&
+      task_queue->IsReadyToRunTasks(browser_context_, extension_.get())) {
+    return;
+  }
+
+  // The worker isn't ready. Queue a no-op task. When the task executes,
+  // the worker will be ready to receive events.
   base::RunLoop run_loop;
   auto quit_loop_adapter =
       [&run_loop](std::unique_ptr<LazyContextTaskQueue::ContextInfo>) {
         run_loop.QuitWhenIdle();
       };
-  ServiceWorkerTaskQueue::Get(browser_context_)
-      ->AddPendingTask(
-          LazyContextId(browser_context_, extension_->id(), extension_->url()),
-          base::BindLambdaForTesting(quit_loop_adapter));
+  task_queue->AddPendingTask(context_id,
+                             base::BindLambdaForTesting(quit_loop_adapter));
   run_loop.Run();
 }
 

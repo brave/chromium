@@ -8,10 +8,14 @@
 #include <string>
 
 #include "base/functional/callback.h"
-#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list_types.h"
 #include "base/run_loop.h"
 #include "ui/views/views_export.h"
+
+namespace breadcrumbs {
+class ApplicationBreadcrumbsLogger;
+}
 
 namespace views {
 
@@ -121,6 +125,11 @@ class VIEWS_EXPORT AnyWidgetObserver : public base::CheckedObserver {
     closing_callback_ = callback;
   }
 
+  // This sets the callback for when the widget becomes active.
+  void set_activated_callback(const AnyWidgetCallback& callback) {
+    activated_callback_ = callback;
+  }
+
   // These two methods deliberately don't exist:
   //   void set_created_callback(...)
   //   void set_destroyed_callback(...)
@@ -142,11 +151,13 @@ class VIEWS_EXPORT AnyWidgetObserver : public base::CheckedObserver {
   void OnAnyWidgetShown(Widget* widget);
   void OnAnyWidgetHidden(Widget* widget);
   void OnAnyWidgetClosing(Widget* widget);
+  void OnAnyWidgetActivated(Widget* widget);
 
   AnyWidgetCallback initialized_callback_;
   AnyWidgetCallback shown_callback_;
   AnyWidgetCallback hidden_callback_;
   AnyWidgetCallback closing_callback_;
+  AnyWidgetCallback activated_callback_;
 };
 
 // NamedWidgetShownWaiter provides a more ergonomic way to do the most common
@@ -183,18 +194,19 @@ class VIEWS_EXPORT NamedWidgetShownWaiter {
   void OnAnyWidgetShown(Widget* widget);
 
   AnyWidgetObserver observer_;
-  raw_ptr<Widget, AcrossTasksDanglingUntriaged> widget_ = nullptr;
+  base::WeakPtr<Widget> widget_;
   base::RunLoop run_loop_;
   const std::string name_;
 };
 
 class AnyWidgetPasskey {
  private:
-  AnyWidgetPasskey();  // NOLINT
+  AnyWidgetPasskey() = default;  // NOLINT
 
   // Add friend classes here that are allowed to use AnyWidgetObserver in
   // production code.
   friend class NamedWidgetShownWaiter;
+  friend class breadcrumbs::ApplicationBreadcrumbsLogger;
 };
 
 namespace test {

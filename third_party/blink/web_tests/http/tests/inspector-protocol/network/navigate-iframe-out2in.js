@@ -1,4 +1,4 @@
-(async function(testRunner) {
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
   const {page, session, dp} = await testRunner.startBlank(
       `Verifies that navigating from a OOPIF to in-process iframe sets the right sessionId.\n`);
 
@@ -25,14 +25,14 @@
       return;
     }
     const requestId = obj.params.requestId;
-    eventsByRequestId[requestId] = eventsByRequestId[requestId] || [];
-    for (const existingEvent of eventsByRequestId[requestId]) {
+    eventsByRequestId[requestId] = eventsByRequestId[requestId] || new Map();
+    for (const existingEvent of eventsByRequestId[requestId].values()) {
       if (existingEvent.sessionId !== obj.sessionId) {
         testRunner.log(`Session ID mismatch between ${
             JSON.stringify(existingEvent)} and ${message}`);
       }
     }
-    eventsByRequestId[requestId].push(obj);
+    eventsByRequestId[requestId].set(obj.method, obj);
     for (const listener of networkListeners) listener(obj);
   };
 
@@ -40,7 +40,7 @@
     let numPendingRequests = numRequests;
     return new Promise((resolve) => {
       const listener = (event) => {
-        if (eventsByRequestId[event.params.requestId].length ==
+        if (eventsByRequestId[event.params.requestId].size ==
             NETWORK_REQUEST_EVENTS.length) {
           delete eventsByRequestId[event.params.requestId];
           --numPendingRequests;

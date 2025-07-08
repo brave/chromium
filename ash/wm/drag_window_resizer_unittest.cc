@@ -3,7 +3,8 @@
 // found in the LICENSE file.
 
 #include "ash/wm/drag_window_resizer.h"
-#include "base/memory/raw_ptr.h"
+
+#include <optional>
 
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/public/cpp/shelf_config.h"
@@ -16,9 +17,9 @@
 #include "ash/wm/drag_window_controller.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_shape_client.h"
 #include "ui/aura/env.h"
@@ -26,6 +27,7 @@
 #include "ui/aura/window.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
@@ -108,7 +110,7 @@ class DragWindowResizerTest : public AshTestBase {
     system_modal_window_ = std::make_unique<aura::Window>(&delegate3_);
     system_modal_window_->SetType(aura::client::WINDOW_TYPE_NORMAL);
     system_modal_window_->SetProperty(aura::client::kModalKey,
-                                      ui::MODAL_TYPE_SYSTEM);
+                                      ui::mojom::ModalType::kSystem);
     system_modal_window_->Init(ui::LAYER_NOT_DRAWN);
     ParentWindowInPrimaryRootWindow(system_modal_window_.get());
     system_modal_window_->SetId(3);
@@ -173,7 +175,7 @@ class DragWindowResizerTest : public AshTestBase {
   std::unique_ptr<aura::Window> window_;
   std::unique_ptr<aura::Window> always_on_top_window_;
   std::unique_ptr<aura::Window> system_modal_window_;
-  raw_ptr<aura::Window, ExperimentalAsh> transient_child_;
+  raw_ptr<aura::Window, DanglingUntriaged> transient_child_;
   std::unique_ptr<aura::Window> transient_parent_;
 };
 
@@ -206,8 +208,8 @@ TEST_F(DragWindowResizerTest, WindowDragWithMultiDisplays) {
     ASSERT_TRUE(resizer.get());
     // Drag the pointer to the right. Once it reaches the right edge of the
     // primary display, it warps to the secondary.
-    // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
-    // without having to call |CursorManager::SetDisplay|.
+    // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse
+    // input without having to call |CursorManager::SetDisplay|.
     Shell::Get()->cursor_manager()->SetDisplay(
         display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[1]));
     resizer->Drag(CalculateDragPoint(*resizer, 800, 10), 0);
@@ -226,8 +228,8 @@ TEST_F(DragWindowResizerTest, WindowDragWithMultiDisplays) {
     std::unique_ptr<WindowResizer> resizer(
         CreateDragWindowResizer(window_.get(), gfx::Point(), HTCAPTION));
     ASSERT_TRUE(resizer.get());
-    // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
-    // without having to call |CursorManager::SetDisplay|.
+    // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse
+    // input without having to call |CursorManager::SetDisplay|.
     Shell::Get()->cursor_manager()->SetDisplay(
         display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[0]));
     resizer->Drag(CalculateDragPoint(*resizer, 795, 10), 0);
@@ -250,8 +252,8 @@ TEST_F(DragWindowResizerTest, WindowDragWithMultiDisplays) {
     std::unique_ptr<WindowResizer> resizer(
         CreateDragWindowResizer(window_.get(), gfx::Point(49, 0), HTCAPTION));
     ASSERT_TRUE(resizer.get());
-    // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
-    // without having to call |CursorManager::SetDisplay|.
+    // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse
+    // input without having to call |CursorManager::SetDisplay|.
     Shell::Get()->cursor_manager()->SetDisplay(
         display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[1]));
     resizer->Drag(CalculateDragPoint(*resizer, 751, 10), ui::EF_CONTROL_DOWN);
@@ -350,8 +352,8 @@ TEST_F(DragWindowResizerTest, WindowDragWithMultiDisplaysActiveRoot) {
     ASSERT_TRUE(resizer.get());
     // Drag the pointer to the right. Once it reaches the right edge of the
     // primary display, it warps to the secondary.
-    // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
-    // without having to call |CursorManager::SetDisplay|.
+    // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse
+    // input without having to call |CursorManager::SetDisplay|.
     Shell::Get()->cursor_manager()->SetDisplay(
         display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[1]));
     resizer->Drag(CalculateDragPoint(*resizer, 800, 10), 0);
@@ -453,8 +455,8 @@ TEST_F(DragWindowResizerTest, DragWindowController) {
     EXPECT_GT(1.0f, drag_layer->opacity());
 
     // Enter the pointer to the secondary display.
-    // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
-    // without having to call |CursorManager::SetDisplay|.
+    // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse
+    // input without having to call |CursorManager::SetDisplay|.
     Shell::Get()->cursor_manager()->SetDisplay(
         display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[1]));
     resizer->Drag(CalculateDragPoint(*resizer, 775, 10), 0);
@@ -525,7 +527,7 @@ TEST_F(DragWindowResizerTest, DragWindowControllerAcrossThreeDisplays) {
   DragWindowResizer* drag_resizer = DragWindowResizer::instance_;
   ASSERT_TRUE(drag_resizer);
   EXPECT_FALSE(drag_resizer->drag_window_controller_.get());
-  // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
+  // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse input
   // without having to call |CursorManager::SetDisplay|.
   Shell::Get()->cursor_manager()->SetDisplay(
       display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[1]));
@@ -560,7 +562,7 @@ TEST_F(DragWindowResizerTest, DragWindowControllerAcrossThreeDisplays) {
   EXPECT_GT(1.0f, drag_layer0->opacity());
   EXPECT_GT(1.0f, drag_layer1->opacity());
 
-  // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
+  // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse input
   // without having to call |CursorManager::SetDisplay|.
   Shell::Get()->cursor_manager()->SetDisplay(
       display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[0]));
@@ -581,7 +583,7 @@ TEST_F(DragWindowResizerTest, DragWindowControllerAcrossThreeDisplays) {
 
   // Enter the pointer to the 3rd. Since it's bottom, the window snaps and
   // no drag windwos are created.
-  // TODO(crbug.com/990589): Unit tests should be able to simulate mouse input
+  // TODO(crbug.com/40638870): Unit tests should be able to simulate mouse input
   // without having to call |CursorManager::SetDisplay|.
   Shell::Get()->cursor_manager()->SetDisplay(
       display::Screen::GetScreen()->GetDisplayNearestWindow(root_windows[2]));
@@ -598,77 +600,6 @@ TEST_F(DragWindowResizerTest, DragWindowControllerAcrossThreeDisplays) {
   resizer->CompleteDrag();
   EXPECT_EQ(root_windows[2], window_->GetRootWindow());
   EXPECT_FLOAT_EQ(1.0f, window_->layer()->opacity());
-}
-
-TEST_F(DragWindowResizerTest, DragWindowControllerWithCustomShadowBounds) {
-  UpdateDisplay("400x600,400x600,800x600");
-  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-
-  // Layout so that all three displays touch each other.
-  display::DisplayIdList list = display_manager()->GetConnectedDisplayIdList();
-  ASSERT_EQ(3u, list.size());
-  ASSERT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().id(), list[0]);
-  display::DisplayLayoutBuilder builder(list[0]);
-  builder.AddDisplayPlacement(list[1], list[0],
-                              display::DisplayPlacement::RIGHT, 0);
-  builder.AddDisplayPlacement(list[2], list[0],
-                              display::DisplayPlacement::BOTTOM, 0);
-  display_manager()->SetLayoutForCurrentDisplays(builder.Build());
-  const display::Display& display0 =
-      display_manager()->GetDisplayForId(list[0]);
-  const display::Display& display1 =
-      display_manager()->GetDisplayForId(list[1]);
-  const display::Display& display2 =
-      display_manager()->GetDisplayForId(list[2]);
-  // Sanity check.
-  ASSERT_EQ(gfx::Rect(0, 000, 400, 600), display0.bounds());
-  ASSERT_EQ(gfx::Rect(400, 0, 400, 600), display1.bounds());
-  ASSERT_EQ(gfx::Rect(0, 600, 800, 600), display2.bounds());
-
-  const gfx::Rect shadow_bounds(10, 10, 200, 200);
-  const auto update_controller_and_check_root_and_shadow =
-      [&shadow_bounds](DragWindowController* controller,
-                       aura::Window* root_window) {
-        controller->Update();
-        ASSERT_EQ(1, controller->GetDragWindowsCountForTest());
-        EXPECT_EQ(root_window,
-                  controller->GetDragWindowForTest(0)->GetRootWindow());
-        const ui::Shadow* shadow = controller->GetDragWindowShadowForTest(0);
-        ASSERT_TRUE(shadow);
-        ASSERT_TRUE(shadow->layer());
-        EXPECT_TRUE(shadow->layer()->visible());
-        EXPECT_EQ(shadow_bounds, shadow->content_bounds());
-      };
-  // Test mouse dragging.
-  {
-    wm::CursorManager* cursor_manager = Shell::Get()->cursor_manager();
-    // Start on |display1|.
-    cursor_manager->SetDisplay(display1);
-    window_->SetBoundsInScreen(gfx::Rect(420, 20, 100, 100), display1);
-    DragWindowController controller(window_.get(), /*is_touch_dragging=*/false,
-                                    absl::make_optional(shadow_bounds));
-    // Move to |display0|.
-    cursor_manager->SetDisplay(display0);
-    window_->SetBoundsInScreen(gfx::Rect(20, 20, 100, 100), display0);
-    update_controller_and_check_root_and_shadow(&controller, root_windows[0]);
-    // Move to |display2|.
-    cursor_manager->SetDisplay(display2);
-    window_->SetBoundsInScreen(gfx::Rect(20, 620, 100, 100), display2);
-    update_controller_and_check_root_and_shadow(&controller, root_windows[2]);
-  }
-  // Test touch dragging.
-  {
-    // Start on |display0|.
-    window_->SetBoundsInScreen(gfx::Rect(20, 20, 100, 100), display0);
-    DragWindowController controller(window_.get(), /*is_touch_dragging=*/true,
-                                    absl::make_optional(shadow_bounds));
-    // Move the window so some is visible on |display1|.
-    window_->SetBoundsInScreen(gfx::Rect(380, 20, 100, 100), display0);
-    update_controller_and_check_root_and_shadow(&controller, root_windows[1]);
-    // Move the window so some is visible on |display2|.
-    window_->SetBoundsInScreen(gfx::Rect(20, 580, 100, 100), display0);
-    update_controller_and_check_root_and_shadow(&controller, root_windows[2]);
-  }
 }
 
 // Verifies if the resizer sets and resets

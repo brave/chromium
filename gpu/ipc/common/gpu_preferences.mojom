@@ -38,6 +38,7 @@ enum WebGPUPowerPreference {
 
 // Corresponds to gpu::GrContextType.
 enum GrContextType {
+  kNone,
   kGL,  // Ganesh
   kVulkan,  // Ganesh
   kGraphiteDawn,
@@ -77,7 +78,6 @@ struct GpuPreferences {
   bool enable_gpu_driver_debug_logging;
   bool disable_gpu_program_cache;
   bool enforce_gl_minimums;
-  uint32 force_gpu_mem_available_bytes;
   uint32 force_gpu_mem_discardable_limit_bytes;
   uint32 force_max_texture_size;
   uint32 gpu_program_cache_size;
@@ -85,11 +85,10 @@ struct GpuPreferences {
   bool enable_threaded_texture_mailboxes;
   bool gl_shader_interm_output;
   bool enable_android_surface_control;
+  bool perform_graphite_precompilation;
   bool enable_gpu_service_logging;
   bool enable_gpu_service_tracing;
   bool use_passthrough_cmd_decoder;
-  bool disable_biplanar_gpu_memory_buffers_for_video_frames;
-  array<gfx.mojom.BufferUsageAndFormat> texture_target_exception_list;
 
   bool ignore_gpu_blocklist;
   bool watchdog_starts_backgrounded;
@@ -103,22 +102,20 @@ struct GpuPreferences {
   bool enable_gpu_benchmarking_extension;
   bool enable_webgpu;
   bool enable_unsafe_webgpu;
+  bool enable_webgpu_developer_features;
+  bool enable_webgpu_experimental_features;
   WebGPUAdapterName use_webgpu_adapter;
   WebGPUPowerPreference use_webgpu_power_preference;
   bool force_webgpu_compat;
   DawnBackendValidationLevel enable_dawn_backend_validation;
   array<string> enabled_dawn_features_list;
   array<string> disabled_dawn_features_list;
-  bool enable_gpu_blocked_time_metric;
   bool enable_perf_data_collection;
 
   [EnableIf=use_ozone]
   mojo_base.mojom.MessagePumpType message_pump_type;
 
   bool enable_native_gpu_memory_buffers;
-
-  [EnableIf=is_chromeos]
-  bool enable_chromeos_direct_video_decoder;
 
   bool force_separate_egl_display_for_webgl_testing;
 };

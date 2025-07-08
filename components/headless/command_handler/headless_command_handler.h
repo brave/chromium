@@ -61,8 +61,6 @@ class HeadlessCommandHandler : public content::WebContentsObserver {
       scoped_refptr<base::SequencedTaskRunner> io_task_runner);
   ~HeadlessCommandHandler() override;
 
-  void ExecuteCommands();
-
   // content::WebContentsObserver implementation:
   void DocumentOnLoadCompletedInPrimaryMainFrame() override;
   void WebContentsDestroyed() override;
@@ -74,6 +72,7 @@ class HeadlessCommandHandler : public content::WebContentsObserver {
   void WriteFile(base::FilePath file_path, std::string base64_file_data);
   void OnWriteFileDone(bool success);
 
+  void PostDone();
   void Done();
 
   SimpleDevToolsProtocolClient devtools_client_;

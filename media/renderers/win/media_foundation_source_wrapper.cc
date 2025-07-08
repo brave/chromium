@@ -40,12 +40,6 @@ HRESULT MediaFoundationSourceWrapper::RuntimeClassInitialize(
     MediaLog* media_log,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   DVLOG_FUNC(1);
-
-  if (media_resource->GetType() != MediaResource::Type::STREAM) {
-    DLOG(ERROR) << "MediaResource is not of Type STREAM";
-    return E_INVALIDARG;
-  }
-
   task_runner_ = task_runner;
 
   auto demuxer_streams = media_resource->GetAllStreams();
@@ -59,7 +53,7 @@ HRESULT MediaFoundationSourceWrapper::RuntimeClassInitialize(
   }
   int stream_id = 0;
   for (DemuxerStream* demuxer_stream : demuxer_streams) {
-    // TODO(crbug.com/1453682): MediaFoundationRenderer playback won't end
+    // TODO(crbug.com/40272014): MediaFoundationRenderer playback won't end
     // after hitting the end of the video stream if no audio device. If any
     // video stream is available but no audio device, do not create an instance
     // of the MediaFoundationStreamWrapper so that the video playback can end

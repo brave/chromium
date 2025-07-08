@@ -15,11 +15,11 @@
 #include "base/scoped_observation.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
-#include "chrome/browser/ash/borealis/borealis_disk_manager_impl.h"
 #include "chrome/browser/ash/borealis/borealis_engagement_metrics.h"
 #include "chrome/browser/ash/borealis/borealis_metrics.h"
 #include "chrome/browser/ash/borealis/borealis_power_controller.h"
 #include "chrome/browser/ash/borealis/borealis_service.h"
+#include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/borealis/borealis_shutdown_monitor.h"
 #include "chrome/browser/ash/borealis/borealis_window_manager.h"
 #include "chrome/browser/ash/guest_os/guest_os_stability_monitor.h"
@@ -55,14 +55,15 @@ class BorealisLifetimeObserver
   explicit BorealisLifetimeObserver(BorealisContext* context)
       : context_(context), observation_(this), weak_factory_(this) {
     observation_.Observe(
-        &BorealisService::GetForProfile(context_->profile())->WindowManager());
+        &BorealisServiceFactory::GetForProfile(context_->profile())
+             ->WindowManager());
   }
 
   // BorealisWindowManager::AppWindowLifetimeObserver overrides.
   void OnSessionStarted() override {
     if (!context_->launch_options().auto_shutdown)
       return;
-    BorealisService::GetForProfile(context_->profile())
+    BorealisServiceFactory::GetForProfile(context_->profile())
         ->ShutdownMonitor()
         .CancelDelayedShutdown();
   }
@@ -70,7 +71,7 @@ class BorealisLifetimeObserver
   void OnSessionFinished() override {
     if (!context_->launch_options().auto_shutdown)
       return;
-    BorealisService::GetForProfile(context_->profile())
+    BorealisServiceFactory::GetForProfile(context_->profile())
         ->ShutdownMonitor()
         .ShutdownWithDelay();
   }
@@ -85,7 +86,7 @@ class BorealisLifetimeObserver
   }
 
  private:
-  const raw_ptr<BorealisContext, ExperimentalAsh> context_;
+  const raw_ptr<BorealisContext> context_;
   base::ScopedObservation<BorealisWindowManager,
                           BorealisWindowManager::AppWindowLifetimeObserver>
       observation_;
@@ -96,11 +97,6 @@ class BorealisLifetimeObserver
 };
 
 BorealisContext::~BorealisContext() = default;
-
-void BorealisContext::SetDiskManagerForTesting(
-    std::unique_ptr<BorealisDiskManager> disk_manager) {
-  disk_manager_ = std::move(disk_manager);
-}
 
 void BorealisContext::NotifyUnexpectedVmShutdown() {
   guest_os_stability_monitor_->LogUnexpectedVmShutdown();
@@ -113,7 +109,6 @@ BorealisContext::BorealisContext(Profile* profile)
           std::make_unique<guest_os::GuestOsStabilityMonitor>(
               kBorealisStabilityHistogram)),
       engagement_metrics_(std::make_unique<BorealisEngagementMetrics>(profile)),
-      disk_manager_(std::make_unique<BorealisDiskManagerImpl>(this)),
       power_controller_(std::make_unique<BorealisPowerController>(profile)) {}
 
 std::unique_ptr<BorealisContext>

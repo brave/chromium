@@ -3,17 +3,24 @@
 // found in the LICENSE file.
 
 #include "media/gpu/android/codec_output_buffer_renderer.h"
+
 #include <string.h>
+
+#include <optional>
 
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/functional/callback_helpers.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/scoped_make_current.h"
 
 namespace media {
+namespace {
+BASE_FEATURE(kHandleUpdateTexImageFailures,
+             "HandleUpdateTexImageFailures",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+}
 
 CodecOutputBufferRenderer::CodecOutputBufferRenderer(
     std::unique_ptr<CodecOutputBuffer> output_buffer,
@@ -82,8 +89,11 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer() {
       codec_buffer_wait_coordinator_->WaitForFrameAvailable();
 
       // We must call update tex image if we did get OnFrameAvailable, otherwise
-      // we will stop receiving callbacks (see https://crbug.com/c/1113203)
-      codec_buffer_wait_coordinator_->texture_owner()->UpdateTexImage();
+      // we will stop receiving callbacks (see https://crbug.com/c/1113203).
+      // Note, that we don't early out here if this didn't succeed, as we only
+      // need to attempt getting the buffer for callbacks to work.
+      codec_buffer_wait_coordinator_->texture_owner()->UpdateTexImage(
+          /*discard=*/true);
     }
     if (!RenderToTextureOwnerBackBuffer()) {
       // RenderTotextureOwnerBackBuffer can fail now only if ReleaseToSurface
@@ -98,7 +108,12 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer() {
   if (codec_buffer_wait_coordinator_->IsExpectingFrameAvailable())
     codec_buffer_wait_coordinator_->WaitForFrameAvailable();
 
-  codec_buffer_wait_coordinator_->texture_owner()->UpdateTexImage();
+  if (!codec_buffer_wait_coordinator_->texture_owner()->UpdateTexImage(
+          /*discard=*/false)) {
+    if (base::FeatureList::IsEnabled(kHandleUpdateTexImageFailures)) {
+      return false;
+    }
+  }
 
   if (frame_info_callback_) {
     gfx::Size coded_size;
@@ -107,7 +122,7 @@ bool CodecOutputBufferRenderer::RenderToTextureOwnerFrontBuffer() {
                                size(), &coded_size, &visible_rect)) {
       std::move(frame_info_callback_).Run(coded_size, visible_rect);
     } else {
-      std::move(frame_info_callback_).Run(absl::nullopt, absl::nullopt);
+      std::move(frame_info_callback_).Run(std::nullopt, std::nullopt);
     }
   }
 
@@ -140,7 +155,7 @@ bool CodecOutputBufferRenderer::RenderToFrontBuffer() {
 void CodecOutputBufferRenderer::Invalidate() {
   phase_ = Phase::kInvalidated;
   if (frame_info_callback_) {
-    std::move(frame_info_callback_).Run(absl::nullopt, absl::nullopt);
+    std::move(frame_info_callback_).Run(std::nullopt, std::nullopt);
   }
 }
 

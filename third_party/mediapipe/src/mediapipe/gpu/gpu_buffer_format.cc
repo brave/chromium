@@ -18,6 +18,9 @@
 #include "absl/log/absl_check.h"
 #include "mediapipe/framework/deps/no_destructor.h"
 #include "mediapipe/framework/port/logging.h"
+#if !MEDIAPIPE_DISABLE_GPU
+#include "mediapipe/gpu/gl_base.h"
+#endif
 
 namespace mediapipe {
 
@@ -34,6 +37,10 @@ namespace mediapipe {
 #define GL_HALF_FLOAT_OES 0x8D61
 #endif  // GL_HALF_FLOAT_OES
 #endif  // __EMSCRIPTEN__
+
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif  // GL_RGBA8
 
 #if !MEDIAPIPE_DISABLE_GPU
 #ifdef GL_ES_VERSION_2_0
@@ -75,6 +82,10 @@ const GlTextureInfo& GlTextureInfoForGpuBufferFormat(GpuBufferFormat format,
   static const mediapipe::NoDestructor<
       absl::flat_hash_map<GpuBufferFormat, std::vector<GlTextureInfo>>>
       gles3_format_info{{
+          {GpuBufferFormat::kRGBA32,
+           {
+               {GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 1},
+           }},
           {GpuBufferFormat::kBGRA32,
            {
   // internal_format, format, type, downscale
@@ -163,6 +174,14 @@ const GlTextureInfo& GlTextureInfoForGpuBufferFormat(GpuBufferFormat format,
            {
                {GL_RGBA32F, GL_RGBA, GL_FLOAT, 1},
            }},
+          {GpuBufferFormat::kImmutableRGBAFloat128,
+           {
+               {GL_RGBA32F, GL_RGBA, GL_FLOAT, 1, true /* immutable */},
+           }},
+          {GpuBufferFormat::kImmutableRGBA32,
+           {
+               {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 1, true /* immutable */},
+           }},
       }};
 
   static const auto* gles2_format_info = ([] {
@@ -190,7 +209,7 @@ const GlTextureInfo& GlTextureInfoForGpuBufferFormat(GpuBufferFormat format,
   }
 
   auto iter = format_info->find(format);
-  CHECK(iter != format_info->end())
+  ABSL_CHECK(iter != format_info->end())
       << "unsupported format: "
       << static_cast<std::underlying_type_t<decltype(format)>>(format);
   const auto& planes = iter->second;
@@ -206,6 +225,7 @@ const GlTextureInfo& GlTextureInfoForGpuBufferFormat(GpuBufferFormat format,
 
 ImageFormat::Format ImageFormatForGpuBufferFormat(GpuBufferFormat format) {
   switch (format) {
+    case GpuBufferFormat::kImmutableRGBA32:
     case GpuBufferFormat::kBGRA32:
       // TODO: verify we are handling order of channels correctly.
       return ImageFormat::SRGBA;
@@ -221,10 +241,11 @@ ImageFormat::Format ImageFormatForGpuBufferFormat(GpuBufferFormat format) {
       return ImageFormat::SRGB;
     case GpuBufferFormat::kTwoComponentFloat32:
       return ImageFormat::VEC32F2;
+    case GpuBufferFormat::kImmutableRGBAFloat128:
     case GpuBufferFormat::kRGBAFloat128:
       return ImageFormat::VEC32F4;
     case GpuBufferFormat::kRGBA32:
-      // TODO: this likely maps to ImageFormat::SRGBA
+      return ImageFormat::SRGBA;
     case GpuBufferFormat::kGrayHalf16:
     case GpuBufferFormat::kOneComponent8Alpha:
     case GpuBufferFormat::kOneComponent8Red:

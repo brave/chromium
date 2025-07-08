@@ -12,6 +12,7 @@ MockWidget::~MockWidget() = default;
 
 mojo::PendingAssociatedRemote<blink::mojom::Widget> MockWidget::GetNewRemote() {
   blink_widget_.reset();
+  input_receiver_.reset();
   return blink_widget_.BindNewEndpointAndPassDedicatedRemote();
 }
 
@@ -37,17 +38,18 @@ void MockWidget::ClearScreenRects() {
   screen_rects_.clear();
 }
 
-void MockWidget::ForceRedraw(ForceRedrawCallback callback) {}
-
 void MockWidget::GetWidgetInputHandler(
     mojo::PendingReceiver<blink::mojom::WidgetInputHandler> request,
-    mojo::PendingRemote<blink::mojom::WidgetInputHandlerHost> host) {
+    mojo::PendingRemote<blink::mojom::WidgetInputHandlerHost> host,
+    bool from_viz) {
   // Some tests try to reinitialize a host against same MockWidget multiple
   // times. We assume this happens against the same host and avoid changing the
   // binding.
   if (!input_handler_host_.is_bound())
     input_handler_host_.Bind(std::move(host));
 }
+
+void MockWidget::ForceRedraw(ForceRedrawCallback callback) {}
 
 void MockWidget::SetTouchActionFromMain(cc::TouchAction touch_action) {
   input_handler_host_->SetTouchActionFromMain(touch_action);
@@ -84,5 +86,11 @@ void MockWidget::RequestSuccessfulPresentationTimeForNextFrame(
     blink::mojom::RecordContentToVisibleTimeRequestPtr visible_time_request) {}
 
 void MockWidget::CancelSuccessfulPresentationTimeRequest() {}
+
+void MockWidget::SetupBrowserRenderInputRouterConnections(
+    mojo::PendingReceiver<blink::mojom::RenderInputRouterClient>
+        browser_request) {
+  input_receiver_.Bind(std::move(browser_request));
+}
 
 }  // namespace content

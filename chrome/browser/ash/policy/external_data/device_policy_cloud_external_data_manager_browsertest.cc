@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ash/policy/external_data/device_policy_cloud_external_data_manager.h"
+
 #include <memory>
 #include <string>
 
@@ -20,16 +22,15 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
 #include "chrome/browser/ash/policy/external_data/cloud_external_data_manager_base.h"
 #include "chrome/browser/ash/policy/external_data/cloud_external_data_manager_base_test_util.h"
-#include "chrome/browser/ash/policy/external_data/device_policy_cloud_external_data_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "components/policy/core/common/external_data_fetcher.h"
@@ -81,7 +82,7 @@ class DevicePolicyCloudExternalDataManagerTest
     policy_change_registrar_ = std::make_unique<PolicyChangeRegistrar>(
         policy_service_, PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
     policy_change_registrar_->Observe(
-        kPolicyName, policy_changed_repeating_future_.GetCallback());
+        kPolicyName, policy_changed_repeating_future_.GetRepeatingCallback());
   }
 
   void TearDownOnMainThread() override {
@@ -148,9 +149,9 @@ class DevicePolicyCloudExternalDataManagerTest
   }
 
  private:
-  raw_ptr<PolicyService, ExperimentalAsh> policy_service_ = nullptr;
+  raw_ptr<PolicyService, DanglingUntriaged> policy_service_ = nullptr;
   std::unique_ptr<PolicyChangeRegistrar> policy_change_registrar_;
-  base::test::RepeatingTestFuture<const base::Value*, const base::Value*>
+  base::test::TestFuture<const base::Value*, const base::Value*>
       policy_changed_repeating_future_;
 };
 

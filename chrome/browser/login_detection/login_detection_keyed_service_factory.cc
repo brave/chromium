@@ -20,8 +20,12 @@ ProfileSelections BuildLoginDetectionProfileSelection() {
 
   return ProfileSelections::Builder()
       .WithRegular(ProfileSelection::kOriginalOnly)
-      // TODO(crbug.com/1418376): Check if this service is needed in Guest mode.
+      // TODO(crbug.com/40257657): Check if this service is needed in Guest
+      // mode.
       .WithGuest(ProfileSelection::kOriginalOnly)
+      // TODO(crbug.com/41488885): Check if this service is needed for
+      // Ash Internals.
+      .WithAshInternals(ProfileSelection::kOriginalOnly)
       .Build();
 }
 
@@ -48,9 +52,11 @@ LoginDetectionKeyedServiceFactory::LoginDetectionKeyedServiceFactory()
 LoginDetectionKeyedServiceFactory::~LoginDetectionKeyedServiceFactory() =
     default;
 
-KeyedService* LoginDetectionKeyedServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+LoginDetectionKeyedServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new LoginDetectionKeyedService(Profile::FromBrowserContext(context));
+  return std::make_unique<LoginDetectionKeyedService>(
+      Profile::FromBrowserContext(context));
 }
 
 bool LoginDetectionKeyedServiceFactory::ServiceIsCreatedWithBrowserContext()

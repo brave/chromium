@@ -22,18 +22,19 @@ source_set("public") {
   deps = [
     "//build:blink_buildflags",
     "//components/sessions:session_id",
-    "//ios/third_party/webkit",
     "//ios/web/common",
     "//ios/web/common:user_agent",
-    "//ios/web/public/deprecated",
   ]
 
   sources = [
     "browser_state.h",
+    "browser_state_utils.h",
+    "lazy_web_state_user_data.h",
     "web_client.h",
     "web_state.h",
     "web_state_delegate.h",
     "web_state_delegate_bridge.h",
+    "web_state_id.h",
     "web_state_observer_bridge.h",
     "web_state_user_data.h",
   ]

@@ -2,102 +2,105 @@
   :host {
     display: flex;
     flex-direction: column;
-    pointer-events:none;
-  }
-
-  .tile-container {
-    align-items: stretch;
-    display: flex;
-    gap: 13px;
-    justify-content: space-between;
-    width: 100%;
-  }
-
-  .tile {
-    flex: 1;
-  }
-
-  .module {
-    height: fit-content;
-    margin-bottom: 24px;
   }
 
   .box {
     background-color: var(--cr-card-background-color);
     border-radius: var(--cr-card-border-radius);
     box-shadow: var(--cr-card-shadow);
-    padding: 16px 16px 18px 16px;
+  }
+
+  .card-container {
+    align-items: stretch;
     display: flex;
-    flex: 1;
+    gap: 16px;
+    justify-content: space-between;
+    width: 100%;
   }
 
-  .tile-header {
-    /* Should be 12px when html font-size is 16px */
-    font-size: 0.75rem;
+  .card:hover {
+    background-color: var(--cr-hover-background-color);
+    cursor: pointer;
   }
 
-  .tile-subheader {
-    /* Should be 11px when html font-size is 16px */
-    font-size: 0.6875rem;
+  .module {
+    height: fit-content;
+    margin-bottom: 16px;
+    padding: 12px 20px;
   }
 
   .section-header {
-    /* Should be 13px when html font-size is 16px */
-    font-size: 0.8125rem;
-    margin: 16px 0px;
-    width: 100%;
+    color: var(--cr-primary-text-color);
     flex: 1;
+    /* Should be 13px when html font-size is 16px */
+    font-size: 108%;
+    font-weight: 400;
+    letter-spacing: .25px;
+    margin-bottom: 16px;
+    margin-top: 30px;
+    width: 100%;
+    user-select: none;
   }
 
-  .tile iron-icon {
-    padding-inline-end: 8px;
-    height: 20px;
-    margin-top: 2px;
-    width: 20px;
+  .section-header.first{
+    margin-top: 0px;
   }
 </style>
 
-<div class="section-header cr-secondary-text">
+<h2 class="section-header cr-secondary-text first">
   $i18n{safetyHubPageCardSectionHeader}
+</h2>
+<div class="card-container">
+  <settings-safety-hub-card id="passwords" class="card box"
+      data="[[passwordCardData_]]" on-click="onPasswordsClick_"
+      tabindex="0" on-keydown="onPasswordsKeyPress_" role="link"
+      aria-description="$i18n{safetyHubPasswordNavigationAriaLabel}">
+  </settings-safety-hub-card>
+  <settings-safety-hub-card id="version" class="card box"
+      data="[[versionCardData_]]" on-click="onVersionClick_"
+      tabindex="0" on-keydown="onVersionKeyPress_" role="[[versionCardRole_]]"
+      aria-description="[[versionCardAriaDescription_]]">
+  </settings-safety-hub-card>
+  <settings-safety-hub-card id="safeBrowsing" class="card box"
+      data="[[safeBrowsingCardData_]]" on-click="onSafeBrowsingClick_"
+      tabindex="0" on-keydown="onSafeBrowsingKeyPress_" role="link"
+      aria-description="$i18n{safetyHubSBNavigationAriaLabel}">
+  </settings-safety-hub-card>
 </div>
-<div class="tile-container">
-  <div class="tile box">
-    <iron-icon icon="cr:info"></iron-icon>
-    <div class="header-container">
-      <div class="tile-header">[[passwordStateHeader_]]</div>
-      <div class="tile-subheader cr-secondary-text">
-        [[passwordStateSubheader_]]
-      </div>
-    </div>
-  </div>
-  <div class="tile box">
-    <iron-icon icon="cr:info"></iron-icon>
-    <div class="header-container">
-      <div class="tile-header">[[versionStateHeader_]]</div>
-      <div class="tile-subheader cr-secondary-text">
-        [[versionStateSubheader_]]
-      </div>
-    </div>
-  </div>
-  <div class="tile box">
-    <iron-icon icon="cr:info"></iron-icon>
-    <div class="header-container">
-      <div class="tile-header">[[safeBrowsingHeader_]]</div>
-      <div class="tile-subheader cr-secondary-text">
-        [[safeBrowsingSubheader_]]
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="section-header cr-secondary-text">
+<h2 class="section-header cr-secondary-text">
   $i18n{safetyHubPageModuleSectionHeader}
-</div>
+</h2>
+<template is="dom-if" if="[[showNotificationPermissions_]]">
+  <settings-safety-hub-notification-permissions-module class="module box">
+  </settings-safety-hub-notification-permissions-module>
+</template>
 <template is="dom-if" if="[[showUnusedSitePermissions_]]">
   <settings-safety-hub-unused-site-permissions class="module box">
   </settings-safety-hub-unused-site-permissions>
 </template>
-
-<div class="section-header cr-secondary-text">
-  $i18n{safetyHubPageUserEduSectionHeader}
-</div>
+<template is="dom-if" if="[[showExtensions_]]">
+  <settings-safety-hub-extensions-module class="module box">
+  </settings-safety-hub-extensions-module>
+</template>
+<template is="dom-if" if="[[showNoRecommendationsState_]]">
+  <settings-safety-hub-module id="emptyStateModule" class="module box"
+      header="$i18n{safetyHubEmptyStateModuleHeader}"
+      subheader="$i18n{safetyHubEmptyStateModuleSubheader}"
+      header-icon="cr:check">
+  </settings-safety-hub-module>
+  <settings-safety-hub-module
+      id="userEducationModule"
+      on-sh-module-item-link-click="onEducationLinkClick_"
+      class="module box"
+      header="$i18n{safetyHubUserEduModuleHeader}"
+      header-icon="settings20:lightbulb"
+      sites="[[userEducationItemList_]]">
+  </settings-safety-hub-module>
+</template>
+<if expr="not is_chromeos">
+  <template is="dom-if" if="[[shouldShowRelaunchDialog]]" restamp>
+    <relaunch-confirmation-dialog restart-type="[[restartTypeEnum.RELAUNCH]]"
+        on-close="onRelaunchDialogClose" is-version-update>
+    </relaunch-confirmation-dialog>
+  </template>
+</if>

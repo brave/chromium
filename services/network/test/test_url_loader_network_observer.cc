@@ -5,6 +5,7 @@
 #include "services/network/test/test_url_loader_network_observer.h"
 
 #include "net/base/net_errors.h"
+#include "services/network/public/mojom/shared_storage.mojom.h"
 
 namespace network {
 
@@ -32,14 +33,14 @@ void TestURLLoaderNetworkObserver::OnSSLCertificateError(
 }
 
 void TestURLLoaderNetworkObserver::OnCertificateRequested(
-    const absl::optional<base::UnguessableToken>& window_id,
+    const std::optional<base::UnguessableToken>& window_id,
     const scoped_refptr<net::SSLCertRequestInfo>& cert_info,
     mojo::PendingRemote<mojom::ClientCertificateResponder>
         client_cert_responder) {}
 
 void TestURLLoaderNetworkObserver::OnAuthRequired(
-    const absl::optional<base::UnguessableToken>& window_id,
-    uint32_t request_id,
+    const std::optional<base::UnguessableToken>& window_id,
+    int32_t request_id,
     const GURL& url,
     bool first_auth_attempt,
     const net::AuthChallengeInfo& auth_info,
@@ -50,9 +51,14 @@ void TestURLLoaderNetworkObserver::OnAuthRequired(
 void TestURLLoaderNetworkObserver::OnPrivateNetworkAccessPermissionRequired(
     const GURL& url,
     const net::IPAddress& ip_address,
-    const std::string& private_network_device_id,
-    const std::string& private_network_device_name,
+    const std::optional<std::string>& private_network_device_id,
+    const std::optional<std::string>& private_network_device_name,
     OnPrivateNetworkAccessPermissionRequiredCallback callback) {
+  std::move(callback).Run(false);
+}
+
+void TestURLLoaderNetworkObserver::OnLocalNetworkAccessPermissionRequired(
+    OnLocalNetworkAccessPermissionRequiredCallback callback) {
   std::move(callback).Run(false);
 }
 
@@ -60,7 +66,7 @@ void TestURLLoaderNetworkObserver::OnClearSiteData(
     const GURL& url,
     const std::string& header_value,
     int32_t load_flags,
-    const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
+    const std::optional<net::CookiePartitionKey>& cookie_partition_key,
     bool partitioned_state_allowed_only,
     OnClearSiteDataCallback callback) {
   std::move(callback).Run();
@@ -79,14 +85,29 @@ void TestURLLoaderNetworkObserver::OnDataUseUpdate(
 
 void TestURLLoaderNetworkObserver::OnSharedStorageHeaderReceived(
     const url::Origin& request_origin,
-    std::vector<network::mojom::SharedStorageOperationPtr> operations,
+    std::vector<network::mojom::SharedStorageModifierMethodWithOptionsPtr>
+        methods_with_options,
+    const std::optional<std::string>& with_lock,
     OnSharedStorageHeaderReceivedCallback callback) {
   std::move(callback).Run();
 }
+
+void TestURLLoaderNetworkObserver::OnAdAuctionEventRecordHeaderReceived(
+    network::AdAuctionEventRecord event_record,
+    const std::optional<url::Origin>& top_frame_origin) {}
 
 void TestURLLoaderNetworkObserver::Clone(
     mojo::PendingReceiver<URLLoaderNetworkServiceObserver> observer) {
   receivers_.Add(this, std::move(observer));
 }
+
+void TestURLLoaderNetworkObserver::OnWebSocketConnectedToPrivateNetwork(
+    network::mojom::IPAddressSpace ip_address_space) {}
+
+void TestURLLoaderNetworkObserver::OnUrlLoaderConnectedToPrivateNetwork(
+    const GURL& request_url,
+    network::mojom::IPAddressSpace response_address_space,
+    network::mojom::IPAddressSpace client_address_space,
+    network::mojom::IPAddressSpace target_address_space) {}
 
 }  // namespace network

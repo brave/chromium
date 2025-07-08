@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -20,6 +21,7 @@
 #include "base/version.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_types.h"
+#include "chrome/credential_provider/gaiacp/internet_availability_checker.h"
 #include "chrome/credential_provider/gaiacp/scoped_lsa_policy.h"
 #include "chrome/credential_provider/gaiacp/win_http_url_fetcher.h"
 #include "url/gurl.h"
@@ -43,23 +45,25 @@ class FilePath;
 namespace credential_provider {
 
 // Windows supports a maximum of 20 characters plus null in username.
-constexpr int kWindowsUsernameBufferLength = 21;
+inline constexpr int kWindowsUsernameBufferLength = 21;
+
+inline constexpr int kWindowsPasswordBufferLength = 32;
 
 // Maximum domain length is 256 characters including null.
 // https://support.microsoft.com/en-ca/help/909264/naming-conventions-in-active-directory-for-computers-domains-sites-and
-constexpr int kWindowsDomainBufferLength = 256;
+inline constexpr int kWindowsDomainBufferLength = 256;
 
 // According to:
 // https://stackoverflow.com/questions/1140528/what-is-the-maximum-length-of-a-sid-in-sddl-format
-constexpr int kWindowsSidBufferLength = 184;
+inline constexpr int kWindowsSidBufferLength = 184;
 
 // Max number of attempts to find a new username when a user already exists
 // with the same username.
-constexpr int kMaxUsernameAttempts = 10;
+inline constexpr int kMaxUsernameAttempts = 10;
 
 // First index to append to a username when another user with the same name
 // already exists.
-constexpr int kInitialDuplicateUsernameIndex = 2;
+inline constexpr int kInitialDuplicateUsernameIndex = 2;
 
 // Default extension used as a fallback if the picture_url returned from gaia
 // does not have a file extension.
@@ -301,7 +305,7 @@ std::string GetDictStringUTF8(const base::Value::Dict& dict, const char* name);
 // by providing the |path| as {"key1", "key2", "key3"}.
 std::string SearchForKeyInStringDictUTF8(
     const std::string& json_string,
-    const std::initializer_list<base::StringPiece>& path);
+    const std::initializer_list<std::string_view>& path);
 
 // Perform a recursive search on a nested dictionary object. Note that the
 // names provided in the input should be in order. Below is an example : Lets
@@ -313,7 +317,7 @@ std::string SearchForKeyInStringDictUTF8(
 HRESULT SearchForListInStringDictUTF8(
     const std::string& list_key,
     const std::string& json_string,
-    const std::initializer_list<base::StringPiece>& path,
+    const std::initializer_list<std::string_view>& path,
     std::vector<std::string>* output);
 
 // Returns the major build version of Windows by reading the registry.
@@ -337,6 +341,8 @@ struct FakesForTesting {
   raw_ptr<OSUserManager> os_user_manager_for_testing = nullptr;
   raw_ptr<OSProcessManager> os_process_manager_for_testing = nullptr;
   WinHttpUrlFetcher::CreatorCallback fake_win_http_url_fetcher_creator;
+  raw_ptr<InternetAvailabilityChecker>
+      internet_availability_checker_for_testing = nullptr;
 };
 
 // DLL entrypoint signature for settings testing fakes.  This is used by

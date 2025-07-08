@@ -47,15 +47,17 @@ class WidgetFadeAnimatorTest : public test::WidgetTest {
  public:
   void SetUp() override {
     test::WidgetTest::SetUp();
-    widget_ = CreateTestWidget(Widget::InitParams::Type::TYPE_WINDOW);
+    widget_ = CreateTestWidget(Widget::InitParams::CLIENT_OWNS_WIDGET,
+                               Widget::InitParams::Type::TYPE_WINDOW);
     delegate_ = std::make_unique<TestWidgetFadeAnimator>(widget_.get());
     delegate_->set_fade_in_duration(kFadeDuration);
     delegate_->set_fade_out_duration(kFadeDuration);
   }
 
   void TearDown() override {
-    if (widget_ && !widget_->IsClosed())
+    if (widget_ && !widget_->IsClosed()) {
       widget_->CloseNow();
+    }
     test::WidgetTest::TearDown();
   }
 
@@ -270,6 +272,34 @@ TEST_F(WidgetFadeAnimatorTest, FadeOutCallback) {
   delegate_->test_api()->IncrementTime(kHalfFadeDuration);
   EXPECT_EQ(1, called_count);
   EXPECT_EQ(WidgetFadeAnimator::FadeType::kFadeOut, anim_type);
+}
+
+TEST_F(WidgetFadeAnimatorTest, FadeInDefaultIsShowActive) {
+  EXPECT_FALSE(widget_->IsVisible());
+  delegate_->FadeIn();
+
+  // Widget should be shown and active.
+  EXPECT_TRUE(widget_->IsVisible());
+  EXPECT_TRUE(widget_->IsActive());
+}
+
+TEST_F(WidgetFadeAnimatorTest, FadeInShowTypeShowInactive) {
+  EXPECT_FALSE(widget_->IsVisible());
+  delegate_->set_show_type(WidgetFadeAnimator::WidgetShowType::kShowInactive);
+  delegate_->FadeIn();
+
+  // Widget should be shown and inactive.
+  EXPECT_TRUE(widget_->IsVisible());
+  EXPECT_FALSE(widget_->IsActive());
+}
+
+TEST_F(WidgetFadeAnimatorTest, FadeInShowTypeNone) {
+  EXPECT_FALSE(widget_->IsVisible());
+  delegate_->set_show_type(WidgetFadeAnimator::WidgetShowType::kNone);
+  delegate_->FadeIn();
+
+  // Widget should not be shown.
+  EXPECT_FALSE(widget_->IsVisible());
 }
 
 }  // namespace views

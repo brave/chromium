@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/win_optional_gpu_tests_rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,12 +22,10 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "win"
               },
               "legacy_gclient_config": {
-                "apply_configs": [
-                  "angle_internal"
-                ],
                 "config": "chromium"
               }
             }
@@ -38,14 +39,27 @@
           "project": "chromium"
         }
       ],
-      "retry_failed_shards": false
+      "retry_failed_shards": false,
+      "targets_spec_directory": "src/infra/config/generated/builders/try/win_optional_gpu_tests_rel/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "jobs": 150,
+  "$build/flakiness": {
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "output_local_strategy": "greedy",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

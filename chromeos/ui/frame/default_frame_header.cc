@@ -4,15 +4,13 @@
 
 #include "chromeos/ui/frame/default_frame_header.h"
 
-#include "ash/constants/app_types.h"
 #include "base/check.h"
-#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/ui/base/app_types.h"
 #include "chromeos/ui/base/chromeos_ui_constants.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "chromeos/ui/wm/window_util.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "ui/aura/client/aura_constants.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
@@ -56,13 +54,8 @@ void TileRoundRect(gfx::Canvas* canvas,
 // For now, we should only apply dynamic color to the default frame header if
 // the window is a system web app.
 bool ShouldApplyDynamicColor(aura::Window* window) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (window->GetProperty(aura::client::kAppType) !=
-      static_cast<int>(ash::AppType::SYSTEM_APP)) {
-    return false;
-  }
-#endif
-  return true;
+  return window->GetProperty(chromeos::kAppTypeKey) ==
+         chromeos::AppType::SYSTEM_APP;
 }
 
 }  // namespace
@@ -92,6 +85,13 @@ void DefaultFrameHeader::SetWidthInPixels(int width_in_pixels) {
 
 void DefaultFrameHeader::UpdateFrameColors() {
   aura::Window* target_window = GetTargetWindow();
+  if (!target_window) {
+    // b/302708285: This codepath is run during Widget teardown. In that
+    // situation, `target_window` might be null and we won't display the
+    // updated colors anyway.
+    return;
+  }
+
   const SkColor active_frame_color =
       target_window->GetProperty(kFrameActiveColorKey);
   const SkColor inactive_frame_color =
@@ -112,13 +112,12 @@ void DefaultFrameHeader::UpdateFrameColors() {
     StartTransitionAnimation(kDefaultFrameColorChangeAnimationDuration);
   }
 
-  if (::features::IsChromeRefresh2023() &&
-      ShouldApplyDynamicColor(GetTargetWindow())) {
+  if (ShouldApplyDynamicColor(GetTargetWindow())) {
     UpdateCaptionButtonColors(mode() == MODE_ACTIVE
                                   ? ui::kColorSysPrimary
                                   : ui::kColorFrameCaptionButtonUnfocused);
   } else {
-    UpdateCaptionButtonColors(absl::nullopt);
+    UpdateCaptionButtonColors(std::nullopt);
   }
 }
 
@@ -128,8 +127,7 @@ void DefaultFrameHeader::UpdateFrameColors() {
 void DefaultFrameHeader::DoPaintHeader(gfx::Canvas* canvas) {
   cc::PaintFlags flags;
 
-  if (features::IsJellyrollEnabled() &&
-      ShouldApplyDynamicColor(GetTargetWindow())) {
+  if (ShouldApplyDynamicColor(GetTargetWindow())) {
     flags.setColor(target_widget()->GetColorProvider()->GetColor(
         GetColorIdForCurrentMode()));
   } else {
@@ -182,10 +180,6 @@ aura::Window* DefaultFrameHeader::GetTargetWindow() {
 
 SkColor DefaultFrameHeader::GetCurrentFrameColor() const {
   return mode() == MODE_ACTIVE ? active_frame_color_ : inactive_frame_color_;
-}
-
-SkColor DefaultFrameHeader::GetActiveFrameColorForPaintForTest() {
-  return active_frame_color_;
 }
 
 }  // namespace chromeos

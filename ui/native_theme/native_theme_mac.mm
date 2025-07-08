@@ -4,16 +4,19 @@
 
 #include "ui/native_theme/native_theme_mac.h"
 
+#import <Accessibility/Accessibility.h>
 #import <Cocoa/Cocoa.h>
 #include <MediaAccessibility/MediaAccessibility.h>
 #include <stddef.h>
 
+#include <variant>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/mac/mac_util.h"
 #include "base/no_destructor.h"
 #include "cc/paint/paint_shader.h"
+#include "ui/base/cocoa/defaults_utils.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/color/color_provider.h"
@@ -23,13 +26,9 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/skia_conversions.h"
-#include "ui/native_theme/common_theme.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_aura.h"
-#include "ui/native_theme/native_theme_features.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/native_theme/native_theme_utils.h"
 
 namespace {
 
@@ -49,6 +48,11 @@ bool PrefersReducedTransparency() {
 bool IsHighContrast() {
   return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast;
 }
+
+bool InvertedColors() {
+  return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldInvertColors;
+}
+
 }  // namespace
 
 // Helper object to respond to light mode/dark mode changeovers.
@@ -138,43 +142,51 @@ void NativeThemeMac::Paint(cc::PaintCanvas* canvas,
                            const gfx::Rect& rect,
                            const ExtraParams& extra,
                            ColorScheme color_scheme,
-                           const absl::optional<SkColor>& accent_color) const {
+                           bool in_forced_colors,
+                           const std::optional<SkColor>& accent_color) const {
   ColorScheme color_scheme_updated = color_scheme;
-  if (color_scheme_updated == ColorScheme::kDefault)
+  if (color_scheme_updated == ColorScheme::kDefault) {
     color_scheme_updated = GetDefaultSystemColorScheme();
+  }
 
-  if (rect.IsEmpty())
+  if (rect.IsEmpty()) {
     return;
+  }
 
   switch (part) {
     case kScrollbarHorizontalThumb:
     case kScrollbarVerticalThumb:
-      PaintMacScrollbarThumb(canvas, part, state, rect, extra.scrollbar_extra,
+      PaintMacScrollbarThumb(canvas, part, state, rect,
+                             std::get<ScrollbarExtraParams>(extra),
                              color_scheme_updated);
       break;
     case kScrollbarHorizontalTrack:
     case kScrollbarVerticalTrack:
-      PaintMacScrollBarTrackOrCorner(canvas, part, state, extra.scrollbar_extra,
+      PaintMacScrollBarTrackOrCorner(canvas, part, state,
+                                     std::get<ScrollbarExtraParams>(extra),
                                      rect, color_scheme_updated, false);
       break;
     case kScrollbarCorner:
-      PaintMacScrollBarTrackOrCorner(canvas, part, state, extra.scrollbar_extra,
+      PaintMacScrollBarTrackOrCorner(canvas, part, state,
+                                     std::get<ScrollbarExtraParams>(extra),
                                      rect, color_scheme_updated, true);
       break;
     default:
       NativeThemeBase::Paint(canvas, color_provider, part, state, rect, extra,
-                             color_scheme, accent_color);
+                             color_scheme, in_forced_colors, accent_color);
       break;
   }
 }
 
 void ConstrainInsets(int old_width, int min_width, int* left, int* right) {
   int requested_total_inset = *left + *right;
-  if (requested_total_inset == 0)
+  if (requested_total_inset == 0) {
     return;
+  }
   int max_total_inset = old_width - min_width;
-  if (requested_total_inset < max_total_inset)
+  if (requested_total_inset < max_total_inset) {
     return;
+  }
   if (max_total_inset < 0) {
     *left = *right = 0;
     return;
@@ -210,8 +222,9 @@ void NativeThemeMac::PaintMacScrollBarTrackOrCorner(
     const gfx::Rect& rect,
     ColorScheme color_scheme,
     bool is_corner) const {
-  if (is_corner && extra_params.is_overlay)
+  if (is_corner && extra_params.is_overlay) {
     return;
+  }
   PaintScrollBarTrackGradient(canvas, rect, extra_params, is_corner,
                               color_scheme);
   PaintScrollbarTrackInnerBorder(canvas, rect, extra_params, is_corner,
@@ -276,7 +289,7 @@ void NativeThemeMac::PaintScrollBarTrackGradient(
 
   // And draw.
   cc::PaintFlags flags;
-  absl::optional<SkColor> track_color =
+  std::optional<SkColor> track_color =
       GetScrollbarColor(ScrollbarPart::kTrack, color_scheme, extra_params);
   if (track_color.has_value()) {
     flags.setAntiAlias(true);
@@ -300,17 +313,20 @@ void NativeThemeMac::PaintScrollbarTrackInnerBorder(
 
   // Compute the rect for the border.
   gfx::Rect inner_border(rect);
-  if (extra_params.orientation == ScrollbarOrientation::kVerticalOnLeft)
+  if (extra_params.orientation == ScrollbarOrientation::kVerticalOnLeft) {
     inner_border.set_x(rect.right() -
                        ScrollbarTrackBorderWidth(extra_params.scale_from_dip));
+  }
   if (is_corner ||
-      extra_params.orientation == ScrollbarOrientation::kHorizontal)
+      extra_params.orientation == ScrollbarOrientation::kHorizontal) {
     inner_border.set_height(
         ScrollbarTrackBorderWidth(extra_params.scale_from_dip));
+  }
   if (is_corner ||
-      extra_params.orientation != ScrollbarOrientation::kHorizontal)
+      extra_params.orientation != ScrollbarOrientation::kHorizontal) {
     inner_border.set_width(
         ScrollbarTrackBorderWidth(extra_params.scale_from_dip));
+  }
 
   // And draw.
   cc::PaintFlags flags;
@@ -353,14 +369,15 @@ void NativeThemeMac::PaintScrollbarTrackOuterBorder(
     gfx::Rect outer_border(rect);
     outer_border.set_width(
         ScrollbarTrackBorderWidth(extra_params.scale_from_dip));
-    if (extra_params.orientation == ScrollbarOrientation::kVerticalOnRight)
+    if (extra_params.orientation == ScrollbarOrientation::kVerticalOnRight) {
       outer_border.set_x(rect.right() - ScrollbarTrackBorderWidth(
                                             extra_params.scale_from_dip));
+    }
     paint_canvas.DrawRect(outer_border, flags);
   }
 }
 
-gfx::Size NativeThemeMac::GetThumbMinSize(bool vertical, float scale) const {
+gfx::Size NativeThemeMac::GetThumbMinSize(bool vertical, float scale) {
   const int kLength = 18 * scale;
   const int kGirth = 6 * scale;
 
@@ -414,7 +431,7 @@ void NativeThemeMac::PaintMacScrollbarThumb(
   paint_canvas.DrawRoundRect(bounds, radius, flags);
 }
 
-absl::optional<SkColor> NativeThemeMac::GetScrollbarColor(
+std::optional<SkColor> NativeThemeMac::GetScrollbarColor(
     ScrollbarPart part,
     ColorScheme color_scheme,
     const ScrollbarExtraParams& extra_params) const {
@@ -426,13 +443,15 @@ absl::optional<SkColor> NativeThemeMac::GetScrollbarColor(
     if (extra_params.thumb_color.has_value()) {
       return extra_params.thumb_color.value();
     }
-    if (extra_params.is_overlay)
+    if (extra_params.is_overlay) {
       return dark_mode ? SkColorSetARGB(0x80, 0xFF, 0xFF, 0xFF)
                        : SkColorSetARGB(0x80, 0, 0, 0);
+    }
 
-    if (dark_mode)
+    if (dark_mode) {
       return extra_params.is_hovering ? SkColorSetRGB(0x93, 0x93, 0x93)
                                       : SkColorSetRGB(0x6B, 0x6B, 0x6B);
+    }
 
     return extra_params.is_hovering ? SkColorSetARGB(0x80, 0, 0, 0)
                                     : SkColorSetARGB(0x3A, 0, 0, 0);
@@ -441,9 +460,10 @@ absl::optional<SkColor> NativeThemeMac::GetScrollbarColor(
       return extra_params.track_color.value();
     }
 
-    if (extra_params.is_overlay)
+    if (extra_params.is_overlay) {
       return dark_mode ? SkColorSetARGB(0x33, 0xE5, 0xE5, 0xE5)
                        : SkColorSetARGB(0xF9, 0xDF, 0xDF, 0xDF);
+    }
 
     return dark_mode ? SkColorSetRGB(0x3D, 0x3D, 0x3D)
                      : SkColorSetRGB(0xE8, 0xE8, 0xE8);
@@ -451,9 +471,10 @@ absl::optional<SkColor> NativeThemeMac::GetScrollbarColor(
     if (extra_params.track_color.has_value()) {
       return extra_params.track_color.value();
     }
-    if (extra_params.is_overlay)
+    if (extra_params.is_overlay) {
       return dark_mode ? SkColorSetARGB(0x28, 0xD8, 0xD8, 0xD8)
                        : SkColorSetARGB(0xC6, 0xE8, 0xE8, 0xE8);
+    }
 
     return dark_mode ? SkColorSetRGB(0x51, 0x51, 0x51)
                      : SkColorSetRGB(0xED, 0xED, 0xED);
@@ -463,7 +484,7 @@ absl::optional<SkColor> NativeThemeMac::GetScrollbarColor(
     }
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 SkColor NativeThemeMac::GetSystemButtonPressedColor(SkColor base_color) const {
@@ -507,7 +528,6 @@ void NativeThemeMac::PaintMenuItemBackground(
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -523,10 +543,12 @@ static void CaptionSettingsChangedNotificationCallback(CFNotificationCenterRef,
 NativeThemeMac::NativeThemeMac(bool configure_web_instance,
                                bool should_only_use_dark_colors)
     : NativeThemeBase(should_only_use_dark_colors) {
-  if (!should_only_use_dark_colors)
+  if (!should_only_use_dark_colors) {
     InitializeDarkModeStateAndObserver();
+  }
 
   set_prefers_reduced_transparency(PrefersReducedTransparency());
+  set_inverted_colors(InvertedColors());
   if (!IsForcedHighContrast()) {
     SetPreferredContrast(CalculatePreferredContrast());
   }
@@ -543,16 +565,55 @@ NativeThemeMac::NativeThemeMac(bool configure_web_instance,
                     }
                     theme->set_prefers_reduced_transparency(
                         PrefersReducedTransparency());
+                    theme->set_inverted_colors(InvertedColors());
                     theme->NotifyOnNativeThemeUpdated();
                   }];
+  if (@available(macOS 15.0, *)) {
+    non_blinking_cursor_token_ = [[NSNotificationCenter defaultCenter]
+        addObserverForName:
+            AXPrefersNonBlinkingTextInsertionIndicatorDidChangeNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification* notification) {
+                  theme->NotifyOnNativeThemeUpdated();
+                }];
+  }
 
-  if (configure_web_instance)
+  if (configure_web_instance) {
     ConfigureWebInstance();
+  }
 }
 
 NativeThemeMac::~NativeThemeMac() {
   [NSNotificationCenter.defaultCenter
       removeObserver:display_accessibility_notification_token_];
+  if (@available(macOS 15.0, *)) {
+    [NSNotificationCenter.defaultCenter
+        removeObserver:non_blinking_cursor_token_];
+  }
+}
+
+bool NativeThemeMac::PrefersNonBlinkingCursor() const {
+  if (prefers_non_blinking_cursor_for_testing_) {
+    return true;
+  }
+  if (@available(macOS 15.0, *)) {
+    return AXPrefersNonBlinkingTextInsertionIndicator();
+  }
+  return false;
+}
+
+std::optional<base::TimeDelta> NativeThemeMac::GetPlatformCaretBlinkInterval()
+    const {
+  // MacOS 15 introduces a new setting that allows users to enable a
+  // non-blinking cursor. When this setting is enabled, we always show the
+  // cursor. In Blink/Views this is signaled by a blink period of 0.
+  if (PrefersNonBlinkingCursor()) {
+    return base::TimeDelta();
+  }
+  // If there's insertion point flash rate info in NSUserDefaults, use the
+  // blink period derived from that.
+  return ui::TextInsertionCaretBlinkPeriodFromDefaults();
 }
 
 void NativeThemeMac::PaintSelectedMenuItem(
@@ -588,6 +649,7 @@ void NativeThemeMac::ConfigureWebInstance() {
   web_instance->set_preferred_color_scheme(CalculatePreferredColorScheme());
   web_instance->SetPreferredContrast(CalculatePreferredContrast());
   web_instance->set_prefers_reduced_transparency(PrefersReducedTransparency());
+  web_instance->set_inverted_colors(InvertedColors());
 
   // Add the web native theme as an observer to stay in sync with color scheme
   // changes.
@@ -605,7 +667,9 @@ void NativeThemeMac::ConfigureWebInstance() {
 }
 
 NativeThemeMacWeb::NativeThemeMacWeb()
-    : NativeThemeAura(IsOverlayScrollbarEnabled(), false) {}
+    : NativeThemeAura(
+          /*use_overlay_scrollbars=*/CalculateUseOverlayScrollbar(),
+          /*should_only_use_dark_colors=*/false) {}
 
 // static
 NativeThemeMacWeb* NativeThemeMacWeb::instance() {

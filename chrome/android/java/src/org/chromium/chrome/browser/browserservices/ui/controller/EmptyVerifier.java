@@ -4,19 +4,13 @@
 
 package org.chromium.chrome.browser.browserservices.ui.controller;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Promise;
-import org.chromium.chrome.browser.dependency_injection.ActivityScope;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
-import javax.inject.Inject;
-
-/**
- * Empty {@link Verifier} implementation.
- */
-@ActivityScope
+/** Empty {@link Verifier} implementation. */
+@NullMarked
 public class EmptyVerifier implements Verifier {
-    @Inject
     public EmptyVerifier() {}
 
     @Override
@@ -29,9 +23,8 @@ public class EmptyVerifier implements Verifier {
         return false;
     }
 
-    @Nullable
     @Override
-    public String getVerifiedScope(String url) {
+    public @Nullable String getVerifiedScope(String url) {
         return url;
     }
 

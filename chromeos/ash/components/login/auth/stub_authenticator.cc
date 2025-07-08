@@ -9,6 +9,8 @@
 #include "base/location.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
+#include "chromeos/ash/components/cryptohome/constants.h"
 #include "chromeos/ash/components/login/auth/public/auth_failure.h"
 #include "chromeos/ash/components/login/auth/public/cryptohome_key_constants.h"
 
@@ -31,8 +33,9 @@ StubAuthenticator::StubAuthenticator(AuthStatusConsumer* consumer,
 void StubAuthenticator::CompleteLogin(
     bool ephemeral,
     std::unique_ptr<UserContext> user_context) {
-  if (expected_user_context_ != *user_context)
+  if (expected_user_context_ != *user_context) {
     NOTREACHED();
+  }
   OnAuthSuccess();
 }
 
@@ -114,6 +117,7 @@ void StubAuthenticator::LoginOffTheRecord() {
 void StubAuthenticator::LoginAsPublicSession(const UserContext& user_context) {
   UserContext logged_in_user_context = user_context;
   logged_in_user_context.SetIsUsingOAuth(false);
+  logged_in_user_context.SetMountState(UserContext::MountState::kEphemeral);
   logged_in_user_context.SetUserIDHash(
       logged_in_user_context.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
   logged_in_user_context.GetKey()->Transform(
@@ -124,72 +128,37 @@ void StubAuthenticator::LoginAsPublicSession(const UserContext& user_context) {
 void StubAuthenticator::LoginAsKioskAccount(
     const AccountId& /* app_account_id */,
     bool /* ephemeral */) {
-  UserContext user_context(user_manager::UserType::USER_TYPE_KIOSK_APP,
-                           expected_user_context_.GetAccountId());
-  user_context.SetIsUsingOAuth(false);
-  user_context.SetUserIDHash(
-      expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
-  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
-                                   "some-salt");
-  consumer_->OnAuthSuccess(user_context);
-}
-
-void StubAuthenticator::LoginAsArcKioskAccount(
-    const AccountId& /* app_account_id */,
-    bool /* ephemeral */) {
-  UserContext user_context(user_manager::USER_TYPE_ARC_KIOSK_APP,
-                           expected_user_context_.GetAccountId());
-  user_context.SetIsUsingOAuth(false);
-  user_context.SetUserIDHash(
-      expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
-  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
-                                   "some-salt");
-  consumer_->OnAuthSuccess(user_context);
+  LoginAsKioskAccountStub(user_manager::UserType::kKioskChromeApp);
 }
 
 void StubAuthenticator::LoginAsWebKioskAccount(
     const AccountId& /* app_account_id */,
     bool /* ephemeral */) {
-  UserContext user_context(user_manager::USER_TYPE_WEB_KIOSK_APP,
-                           expected_user_context_.GetAccountId());
-  user_context.SetIsUsingOAuth(false);
-  user_context.SetUserIDHash(
-      expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
-  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
-                                   "some-salt");
-  consumer_->OnAuthSuccess(user_context);
+  LoginAsKioskAccountStub(user_manager::UserType::kKioskWebApp);
+}
+
+void StubAuthenticator::LoginAsIwaKioskAccount(
+    const AccountId& /* app_account_id */,
+    bool /* ephemeral */) {
+  LoginAsKioskAccountStub(user_manager::UserType::kKioskIWA);
+}
+
+void StubAuthenticator::LoginAsArcvmKioskAccount(
+    const AccountId& /* app_account_id */,
+    bool /* ephemeral */) {
+  LoginAsKioskAccountStub(user_manager::UserType::kKioskArcvmApp);
 }
 
 void StubAuthenticator::OnAuthSuccess() {
   // If we want to be more like the real thing, we could save the user ID
   // in AuthenticateToLogin, but there's not much of a point.
   UserContext user_context = ExpectedUserContextWithTransformedKey();
+  user_context.SetMountState(UserContext::MountState::kExistingPersistent);
   consumer_->OnAuthSuccess(user_context);
 }
 
 void StubAuthenticator::OnAuthFailure(const AuthFailure& failure) {
   consumer_->OnAuthFailure(failure);
-}
-
-void StubAuthenticator::RecoverEncryptedData(
-    std::unique_ptr<UserContext> user_context,
-    const std::string& old_password) {
-  if (old_password_ != old_password) {
-    task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&StubAuthenticator::OnPasswordChangeDetected, this));
-    return;
-  }
-
-  task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&StubAuthenticator::OnAuthSuccess, this));
-}
-
-void StubAuthenticator::ResyncEncryptedData(
-    bool ephemeral,
-    std::unique_ptr<UserContext> user_context) {
-  task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&StubAuthenticator::OnAuthSuccess, this));
 }
 
 void StubAuthenticator::LoginAuthenticated(
@@ -208,8 +177,9 @@ UserContext StubAuthenticator::ExpectedUserContextWithTransformedKey() const {
   UserContext user_context(expected_user_context_);
   user_context.SetUserIDHash(
       expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
-  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
-                                   "some-salt");
+  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_PBKDF2_AES256_1234,
+                                   "pin-salt");
+  user_context.GetKey()->SetLabel("pin");
   cryptohome::AuthFactorsSet factors;
   factors.Put(cryptohome::AuthFactorType::kPassword);
   factors.Put(cryptohome::AuthFactorType::kPin);
@@ -219,17 +189,15 @@ UserContext StubAuthenticator::ExpectedUserContextWithTransformedKey() const {
   cryptohome::AuthFactor password(ref, cryptohome::AuthFactorCommonMetadata());
   user_context.SetAuthFactorsConfiguration(
       AuthFactorsConfiguration{{password}, factors});
-  user_context.SetAuthSessionId("someauthsessionid");
+  user_context.SetAuthSessionIds("someauthsessionid", "broadcast");
+  user_context.SetSessionLifetime(base::Time::Now() +
+                                  cryptohome::kAuthsessionInitialLifetime);
   return user_context;
 }
 
 void StubAuthenticator::OnPasswordChangeDetected() {
-  if (ash::features::IsCryptohomeRecoveryEnabled()) {
-    consumer_->OnPasswordChangeDetected(
-        std::make_unique<UserContext>(expected_user_context_));
-  } else {
-    consumer_->OnPasswordChangeDetectedLegacy(expected_user_context_);
-  }
+  consumer_->OnOnlinePasswordUnusable(
+      std::make_unique<UserContext>(expected_user_context_), true);
 }
 
 void StubAuthenticator::OnOldEncryptionDetected() {
@@ -238,6 +206,18 @@ void StubAuthenticator::OnOldEncryptionDetected() {
   consumer_->OnOldEncryptionDetected(
       std::make_unique<UserContext>(user_context),
       has_incomplete_encryption_migration_);
+}
+
+void StubAuthenticator::LoginAsKioskAccountStub(
+    user_manager::UserType kiosk_type) {
+  UserContext user_context(kiosk_type, expected_user_context_.GetAccountId());
+  user_context.SetIsUsingOAuth(false);
+  user_context.SetMountState(UserContext::MountState::kExistingPersistent);
+  user_context.SetUserIDHash(
+      expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
+  user_context.GetKey()->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
+                                   "some-salt");
+  consumer_->OnAuthSuccess(user_context);
 }
 
 }  // namespace ash

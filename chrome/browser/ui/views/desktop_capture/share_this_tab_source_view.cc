@@ -2,22 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/desktop_capture/share_this_tab_source_view.h"
 
 #include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_utils.h"
-#include "chrome/browser/ui/views/desktop_capture/rounded_corner_image_view.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "media/base/video_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/layout_provider.h"
 
 namespace {
 
@@ -33,7 +39,7 @@ constexpr gfx::Rect kPreviewRect(kPadding,
                                  kPadding,
                                  kPreviewWidth,
                                  kPreviewHeight);
-// TODO(crbug.com/1447461): Align favicon height properly with label.
+// TODO(crbug.com/40268977): Align favicon height properly with label.
 constexpr gfx::Rect kFaviconRect(kPadding,
                                  kPreviewRect.bottom() + kPadding,
                                  kFaviconWidth,
@@ -46,17 +52,17 @@ constexpr gfx::Rect kTabTitleMaxRect(kFaviconRect.right() + kPadding,
 constexpr base::TimeDelta kUpdatePeriodMs = base::Milliseconds(250);
 
 void HandleCapturedBitmap(
-    base::OnceCallback<void(uint32_t, const absl::optional<gfx::ImageSkia>&)>
+    base::OnceCallback<void(uint32_t, const std::optional<gfx::ImageSkia>&)>
         reply,
-    absl::optional<uint32_t> last_hash,
+    std::optional<uint32_t> last_hash,
     gfx::Size thumbnail_size,
     const SkBitmap& bitmap) {
   CHECK(!thumbnail_size.IsEmpty());
 
-  absl::optional<gfx::ImageSkia> image;
+  std::optional<gfx::ImageSkia> image;
 
   // Only scale and update if the frame appears to be new.
-  const uint32_t hash = base::FastHash(base::make_span(
+  const uint32_t hash = base::FastHash(base::span(
       static_cast<uint8_t*>(bitmap.getPixels()), bitmap.computeByteSize()));
   if (!last_hash.has_value() || hash != last_hash.value()) {
     image = ScaleBitmap(bitmap, thumbnail_size);
@@ -85,7 +91,11 @@ ShareThisTabSourceView::ShareThisTabSourceView(
   throbber_->SetBoundsRect(kThrobberRect);
   throbber_->Start();
 
-  image_view_ = AddChildView(std::make_unique<RoundedCornerImageView>());
+  image_view_ = AddChildView(std::make_unique<views::ImageView>());
+  image_view_->SetCanProcessEventsWithinSubtree(false);
+  image_view_->SetCornerRadius(
+      views::LayoutProvider::Get()->GetCornerRadiusMetric(
+          views::Emphasis::kMedium));
   image_view_->SetVisible(false);
   image_view_->SetBoundsRect(kPreviewRect);
 
@@ -118,9 +128,10 @@ void ShareThisTabSourceView::StopRefreshing() {
   refreshing_ = false;
 }
 
-gfx::Size ShareThisTabSourceView::CalculatePreferredSize() const {
+gfx::Size ShareThisTabSourceView::CalculatePreferredSize(
+    const views::SizeBounds& /*available_size*/) const {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  // TODO(crbug.com/1428878): Use distances from LayoutProvider
+  // TODO(crbug.com/40262420): Use distances from LayoutProvider
   return gfx::Size(kPreviewWidth + 2 * kPadding,
                    kTabTitleMaxRect.bottom() + kPadding);
 }
@@ -168,7 +179,7 @@ void ShareThisTabSourceView::Refresh() {
 
 void ShareThisTabSourceView::OnCaptureHandled(
     uint32_t hash,
-    const absl::optional<gfx::ImageSkia>& image) {
+    const std::optional<gfx::ImageSkia>& image) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   CHECK((hash != last_hash_) == image.has_value());  // Only new frames passed.
 
@@ -176,7 +187,7 @@ void ShareThisTabSourceView::OnCaptureHandled(
 
   if (hash != last_hash_) {
     last_hash_ = hash;
-    image_view_->SetImage(image.value());
+    image_view_->SetImage(ui::ImageModel::FromImageSkia(image.value()));
   }
 
   content::GetUIThreadTaskRunner({})->PostDelayedTask(
@@ -185,3 +196,6 @@ void ShareThisTabSourceView::OnCaptureHandled(
                      weak_factory_.GetWeakPtr()),
       kUpdatePeriodMs);
 }
+
+BEGIN_METADATA(ShareThisTabSourceView)
+END_METADATA

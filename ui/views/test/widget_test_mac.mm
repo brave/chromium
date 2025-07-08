@@ -6,16 +6,13 @@
 
 #include <Cocoa/Cocoa.h>
 
-#import "base/mac/scoped_objc_class_swizzler.h"
+#import "base/apple/scoped_objc_class_swizzler.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/root_view.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace views::test {
 
@@ -63,11 +60,13 @@ bool WidgetTest::IsWindowStackedAbove(Widget* above, Widget* below) {
   NSWindow* second = below->GetNativeWindow().GetNativeNSWindow();
 
   for (NSWindow* window in NSApp.orderedWindows) {
-    if (window == second)
+    if (window == second) {
       return !first;
+    }
 
-    if (window == first)
+    if (window == first) {
       first = nil;
+    }
   }
   return false;
 }
@@ -104,8 +103,10 @@ bool WidgetTest::WidgetHasInProcessShadow(Widget* widget) {
 Widget::Widgets WidgetTest::GetAllWidgets() {
   Widget::Widgets all_widgets;
   for (NSWindow* window : [NSApp windows]) {
-    if (Widget* widget = Widget::GetWidgetForNativeWindow(window))
+    if (Widget* widget =
+            Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window))) {
       all_widgets.insert(widget);
+    }
   }
   return all_widgets;
 }

@@ -181,7 +181,7 @@ class TestCommandLine(unittest.TestCase):
             '--identity',
             'G',
             '--notarize',
-            'nowait',
+            'wait-nostaple',
             '--notary-arg=--key',
             '--notary-arg',
             '/path/to/key',
@@ -192,7 +192,8 @@ class TestCommandLine(unittest.TestCase):
         ])
         self.assertEquals(1, sign_all.call_count)
         config = sign_all.call_args.args[1]
-        self.assertEquals(model.NotarizeAndStapleLevel.NOWAIT, config.notarize)
+        self.assertEquals(model.NotarizeAndStapleLevel.WAIT_NOSTAPLE,
+                          config.notarize)
         self.assertEquals(
             ['--key', '/path/to/key', '--key-id=KeyId', '--issuer', 'Issuer'],
             config.invoker.notarizer.notary_args)
@@ -211,52 +212,4 @@ class TestCommandLine(unittest.TestCase):
         self.assertEquals(1, sign_all.call_count)
         config = sign_all.call_args.args[1]
         self.assertEquals(model.NotarizeAndStapleLevel.STAPLE, config.notarize)
-        self.assertEquals([], config.invoker.notarizer.notary_args)
-
-    def test_notarize_legacy_args_user(self, sign_all, **kwargs):
-        driver.main([
-            '--input',
-            '/input',
-            '--output',
-            '/output',
-            '--identity',
-            'G',
-            '--notarize',
-            '--notary-user',
-            'Notary-User',
-        ])
-        self.assertEquals(1, sign_all.call_count)
-        config = sign_all.call_args.args[1]
-        self.assertEquals([], config.invoker.notarizer.notary_args)
-
-    def test_notarize_legacy_args_password(self, sign_all, **kwargs):
-        driver.main([
-            '--input',
-            '/input',
-            '--output',
-            '/output',
-            '--identity',
-            'G',
-            '--notarize',
-            '--notary-password',
-            '@env:PASSWORD',
-        ])
-        self.assertEquals(1, sign_all.call_count)
-        config = sign_all.call_args.args[1]
-        self.assertEquals([], config.invoker.notarizer.notary_args)
-
-    def test_notarize_legacy_args_team_id(self, sign_all, **kwargs):
-        driver.main([
-            '--input',
-            '/input',
-            '--output',
-            '/output',
-            '--identity',
-            'G',
-            '--notarize',
-            '--notary-team-id',
-            'TeamId',
-        ])
-        self.assertEquals(1, sign_all.call_count)
-        config = sign_all.call_args.args[1]
         self.assertEquals([], config.invoker.notarizer.notary_args)

@@ -60,18 +60,19 @@ void ManifestFetcher::DidReceiveResponse(uint64_t,
   response_ = response;
 }
 
-void ManifestFetcher::DidReceiveData(const char* data, unsigned length) {
-  if (!length)
+void ManifestFetcher::DidReceiveData(base::span<const char> data) {
+  if (data.empty()) {
     return;
+  }
 
   if (!decoder_) {
     String encoding = response_.TextEncodingName();
     decoder_ = std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         TextResourceDecoderOptions::kPlainTextContent,
-        encoding.empty() ? UTF8Encoding() : WTF::TextEncoding(encoding)));
+        encoding.empty() ? Utf8Encoding() : TextEncoding(encoding)));
   }
 
-  data_.Append(decoder_->Decode(data, length));
+  data_.Append(decoder_->Decode(data));
 }
 
 void ManifestFetcher::DidFinishLoading(uint64_t) {

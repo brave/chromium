@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "ash/constants/ash_switches.h"
 #include "base/command_line.h"
@@ -20,7 +21,6 @@
 #include "chrome/browser/ash/login/session/user_session_manager_test_api.h"
 #include "chrome/browser/ash/login/startup_utils.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_paths.h"
@@ -30,6 +30,7 @@
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
 #include "chromeos/ash/components/login/auth/public/key.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "chromeos/dbus/constants/dbus_paths.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
@@ -40,6 +41,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "crypto/rsa_private_key.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -49,8 +51,9 @@ namespace {
 // Creates policy key file for the user specified in |user_policy|.
 void SetUserKeys(const UserPolicyBuilder& user_policy) {
   base::FilePath user_data_dir;
-  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
     chromeos::dbus_paths::RegisterStubPathOverrides(user_data_dir);
+  }
 
   const AccountId account_id =
       AccountId::FromUserEmail(user_policy.policy_data().username());
@@ -74,7 +77,8 @@ constexpr char AffiliationTestHelper::kFakeRefreshToken[] =
     "fake-refresh-token";
 constexpr char AffiliationTestHelper::kEnterpriseUserEmail[] =
     "testuser@example.com";
-constexpr char AffiliationTestHelper::kEnterpriseUserGaiaId[] = "01234567890";
+constexpr GaiaId::Literal AffiliationTestHelper::kEnterpriseUserGaiaId(
+    "01234567890");
 
 // static
 AffiliationTestHelper AffiliationTestHelper::CreateForCloud(
@@ -97,7 +101,7 @@ void AffiliationTestHelper::CheckPreconditions() {
 
 void AffiliationTestHelper::SetDeviceAffiliationIDs(
     DevicePolicyCrosTestHelper* test_helper,
-    const base::span<const base::StringPiece>& device_affiliation_ids) {
+    const base::span<const std::string_view>& device_affiliation_ids) {
   ASSERT_NO_FATAL_FAILURE(CheckPreconditions());
 
   DevicePolicyBuilder* device_policy = test_helper->device_policy();
@@ -116,11 +120,12 @@ void AffiliationTestHelper::SetDeviceAffiliationIDs(
 void AffiliationTestHelper::SetUserAffiliationIDs(
     UserPolicyBuilder* user_policy,
     const AccountId& user_account_id,
-    const base::span<const base::StringPiece>& user_affiliation_ids) {
+    const base::span<const std::string_view>& user_affiliation_ids) {
   ASSERT_NO_FATAL_FAILURE(CheckPreconditions());
 
   user_policy->policy_data().set_username(user_account_id.GetUserEmail());
-  user_policy->policy_data().set_gaia_id(user_account_id.GetGaiaId());
+  user_policy->policy_data().set_gaia_id(
+      user_account_id.GetGaiaId().ToString());
   ASSERT_NO_FATAL_FAILURE(SetUserKeys(*user_policy));
   for (const auto& user_affiliation_id : user_affiliation_ids) {
     user_policy->policy_data().add_user_affiliation_ids(
@@ -138,8 +143,9 @@ void AffiliationTestHelper::PreLoginUser(const AccountId& account_id) {
   ScopedListPrefUpdate users_pref(g_browser_process->local_state(),
                                   "LoggedInUsers");
   base::Value email_value(account_id.GetUserEmail());
-  if (!base::Contains(users_pref.Get(), email_value))
+  if (!base::Contains(users_pref.Get(), email_value)) {
     users_pref->Append(std::move(email_value));
+  }
 
   user_manager::KnownUser(g_browser_process->local_state())
       .SaveKnownUser(account_id);
@@ -153,12 +159,7 @@ void AffiliationTestHelper::LoginUser(const AccountId& account_id) {
       ash::UserSessionManager::GetInstance());
   session_manager_test_api.SetShouldObtainTokenHandleInTests(false);
 
-  const bool is_active_directory =
-      account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY;
-  const user_manager::UserType user_type =
-      is_active_directory ? user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY
-                          : user_manager::UserType::USER_TYPE_REGULAR;
-  ash::UserContext user_context(user_type, account_id);
+  ash::UserContext user_context(user_manager::UserType::kRegular, account_id);
   user_context.SetKey(ash::Key("password"));
   if (account_id.GetUserEmail() == kEnterpriseUserEmail) {
     user_context.SetRefreshToken(kFakeRefreshToken);
@@ -172,8 +173,9 @@ void AffiliationTestHelper::LoginUser(const AccountId& account_id) {
       user_manager::UserManager::Get()->GetLoggedInUsers();
   for (user_manager::UserList::const_iterator it = logged_users.begin();
        it != logged_users.end(); ++it) {
-    if ((*it)->GetAccountId() == user_context.GetAccountId())
+    if ((*it)->GetAccountId() == user_context.GetAccountId()) {
       return;
+    }
   }
   ADD_FAILURE() << account_id.Serialize()
                 << " was not added via PreLoginUser()";

@@ -19,7 +19,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_msan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "chromeos"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
@@ -45,7 +46,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium_msan",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "chromeos"
               },
               "legacy_gclient_config": {
                 "apply_configs": [
@@ -74,7 +76,9 @@
           "builder": "linux_chromium_chromeos_msan_rel_ng",
           "group": "tryserver.chromium.linux"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Linux ChromiumOS MSan Tests/targets"
     }
   },
   "$recipe_engine/resultdb/test_presentation": {
@@ -85,6 +89,9 @@
     ]
   },
   "builder_group": "chromium.memory",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

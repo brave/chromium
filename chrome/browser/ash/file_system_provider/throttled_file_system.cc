@@ -14,8 +14,7 @@
 #include "base/functional/bind.h"
 #include "chrome/browser/ash/file_system_provider/queue.h"
 
-namespace ash {
-namespace file_system_provider {
+namespace ash::file_system_provider {
 
 ThrottledFileSystem::ThrottledFileSystem(
     std::unique_ptr<ProvidedFileSystemInterface> file_system)
@@ -27,8 +26,7 @@ ThrottledFileSystem::ThrottledFileSystem(
                         : new Queue(std::numeric_limits<size_t>::max()));
 }
 
-ThrottledFileSystem::~ThrottledFileSystem() {
-}
+ThrottledFileSystem::~ThrottledFileSystem() = default;
 
 AbortCallback ThrottledFileSystem::RequestUnmount(
     storage::AsyncFileUtil::StatusCallback callback) {
@@ -228,10 +226,12 @@ void ThrottledFileSystem::Abort(int queue_token) {
   open_queue_->Abort(queue_token);
 }
 
-void ThrottledFileSystem::OnOpenFileCompleted(int queue_token,
-                                              OpenFileCallback callback,
-                                              int file_handle,
-                                              base::File::Error result) {
+void ThrottledFileSystem::OnOpenFileCompleted(
+    int queue_token,
+    OpenFileCallback callback,
+    int file_handle,
+    base::File::Error result,
+    std::unique_ptr<EntryMetadata> metadata) {
   // If the file is opened successfully then hold the queue token until the file
   // is closed.
   if (result == base::File::FILE_OK)
@@ -239,7 +239,7 @@ void ThrottledFileSystem::OnOpenFileCompleted(int queue_token,
   else
     open_queue_->Complete(queue_token);
 
-  std::move(callback).Run(file_handle, result);
+  std::move(callback).Run(file_handle, result, std::move(metadata));
 }
 
 void ThrottledFileSystem::OnCloseFileCompleted(
@@ -259,5 +259,4 @@ void ThrottledFileSystem::OnCloseFileCompleted(
   std::move(callback).Run(result);
 }
 
-}  // namespace file_system_provider
-}  // namespace ash
+}  // namespace ash::file_system_provider

@@ -4,13 +4,6 @@
 
 #include "chrome/browser/ash/arc/notification/arc_vm_data_migration_notifier.h"
 
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/arc_prefs.h"
-#include "ash/components/arc/arc_util.h"
-#include "ash/components/arc/session/arc_session_runner.h"
-#include "ash/components/arc/session/arc_vm_data_migration_status.h"
-#include "ash/components/arc/test/fake_arc_session.h"
-#include "ash/test/ash_test_base.h"
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/scoped_feature_list.h"
@@ -20,12 +13,20 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#include "chromeos/ash/experiences/arc/session/arc_session_runner.h"
+#include "chromeos/ash/experiences/arc/session/arc_vm_data_migration_status.h"
+#include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_task_environment.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace arc {
@@ -33,15 +34,13 @@ namespace arc {
 namespace {
 
 constexpr char kProfileName[] = "user@gmail.com";
-constexpr char kGaiaId[] = "1234567890";
+constexpr GaiaId::Literal kGaiaId("1234567890");
 
 constexpr char kNotificationId[] = "arc_vm_data_migration_notification";
 
-class ArcVmDataMigrationNotifierTest : public ash::AshTestBase {
+class ArcVmDataMigrationNotifierTest : public ChromeAshTestBase {
  public:
-  ArcVmDataMigrationNotifierTest()
-      : ash::AshTestBase(std::unique_ptr<base::test::TaskEnvironment>(
-            std::make_unique<content::BrowserTaskEnvironment>())) {
+  ArcVmDataMigrationNotifierTest() {
     base::CommandLine::ForCurrentProcess()->InitFromArgv(
         {"", "--arc-availability=officially-supported", "--enable-arcvm"});
   }
@@ -54,24 +53,22 @@ class ArcVmDataMigrationNotifierTest : public ash::AshTestBase {
       const ArcVmDataMigrationNotifierTest&) = delete;
 
   void SetUp() override {
-    ash::AshTestBase::SetUp();
+    ChromeAshTestBase::SetUp();
     ash::ConciergeClient::InitializeFake();
     ArcSessionManager::SetUiEnabledForTesting(false);
     arc_session_manager_ =
         CreateTestArcSessionManager(std::make_unique<ArcSessionRunner>(
             base::BindRepeating(FakeArcSession::Create)));
 
+    fake_user_manager_.Reset(std::make_unique<ash::FakeChromeUserManager>());
     profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(profile_manager_->SetUp());
     testing_profile_ = profile_manager_->CreateTestingProfile(kProfileName);
     const AccountId account_id = AccountId::FromUserEmailGaiaId(
         testing_profile_->GetProfileUserName(), kGaiaId);
-    auto fake_user_manager = std::make_unique<ash::FakeChromeUserManager>();
-    fake_user_manager->AddUser(account_id);
-    fake_user_manager->LoginUser(account_id);
-    user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-        std::move(fake_user_manager));
+    fake_user_manager_->AddUser(account_id);
+    fake_user_manager_->LoginUser(account_id);
     DCHECK(ash::ProfileHelper::IsPrimaryProfile(testing_profile_));
 
     notification_tester_ =
@@ -86,14 +83,14 @@ class ArcVmDataMigrationNotifierTest : public ash::AshTestBase {
   void TearDown() override {
     arc_session_manager_->Shutdown();
     notification_tester_.reset();
-    user_manager_.reset();
     profile_manager_->DeleteTestingProfile(kProfileName);
     testing_profile_ = nullptr;
     profile_manager_.reset();
+    fake_user_manager_.Reset();
     arc_vm_data_migration_notifier_.reset();
     arc_session_manager_.reset();
     ash::ConciergeClient::Shutdown();
-    ash::AshTestBase::TearDown();
+    ChromeAshTestBase::TearDown();
   }
 
   ArcSessionManager* arc_session_manager() {
@@ -109,10 +106,11 @@ class ArcVmDataMigrationNotifierTest : public ash::AshTestBase {
  private:
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
   std::unique_ptr<ArcVmDataMigrationNotifier> arc_vm_data_migration_notifier_;
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
-  raw_ptr<TestingProfile, ExperimentalAsh> testing_profile_ =
+  raw_ptr<TestingProfile, DanglingUntriaged> testing_profile_ =
       nullptr;  // Owned by |profile_manager_|.
-  std::unique_ptr<user_manager::ScopedUserManager> user_manager_;
   std::unique_ptr<NotificationDisplayServiceTester> notification_tester_;
 };
 

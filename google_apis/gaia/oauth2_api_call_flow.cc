@@ -9,7 +9,7 @@
 
 #include "base/functional/bind.h"
 #include "base/strings/escape.h"
-#include "base/strings/stringprintf.h"
+#include "base/strings/strcat.h"
 #include "google_apis/credentials_mode.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -20,14 +20,6 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-
-namespace {
-static const char kAuthorizationValueFormat[] = "Bearer %s";
-
-static std::string MakeAuthorizationValue(const std::string& auth_token) {
-  return base::StringPrintf(kAuthorizationValueFormat, auth_token.c_str());
-}
-}  // namespace
 
 OAuth2ApiCallFlow::OAuth2ApiCallFlow() : state_(INITIAL) {
 }
@@ -51,7 +43,12 @@ net::HttpRequestHeaders OAuth2ApiCallFlow::CreateApiCallHeaders() {
   return net::HttpRequestHeaders();
 }
 
-void OAuth2ApiCallFlow::EndApiCall(std::unique_ptr<std::string> body) {
+std::string OAuth2ApiCallFlow::CreateAuthorizationHeaderValue(
+    const std::string& access_token) {
+  return base::StrCat({"Bearer ", access_token});
+}
+
+void OAuth2ApiCallFlow::EndApiCall(std::optional<std::string> body) {
   CHECK_EQ(API_CALL_STARTED, state_);
   std::unique_ptr<network::SimpleURLLoader> source = std::move(url_loader_);
 
@@ -72,7 +69,7 @@ std::string OAuth2ApiCallFlow::CreateApiCallBodyContentType() {
   return "application/x-www-form-urlencoded";
 }
 
-std::string OAuth2ApiCallFlow::GetRequestTypeForBody(const std::string& body) {
+std::string OAuth2ApiCallFlow::GetRequestTypeForBody(std::string_view body) {
   return body.empty() ? "GET" : "POST";
 }
 
@@ -80,7 +77,7 @@ bool OAuth2ApiCallFlow::IsExpectedSuccessCode(int code) const {
   return code == net::HTTP_OK || code == net::HTTP_NO_CONTENT;
 }
 
-void OAuth2ApiCallFlow::OnURLLoadComplete(std::unique_ptr<std::string> body) {
+void OAuth2ApiCallFlow::OnURLLoadComplete(std::optional<std::string> body) {
   CHECK_EQ(API_CALL_STARTED, state_);
   EndApiCall(std::move(body));
 }
@@ -103,7 +100,7 @@ std::unique_ptr<network::SimpleURLLoader> OAuth2ApiCallFlow::CreateURLLoader(
       google_apis::GetOmitCredentialsModeForGaiaRequests();
   request->headers = CreateApiCallHeaders();
   request->headers.SetHeader("Authorization",
-                             MakeAuthorizationValue(access_token));
+                             CreateAuthorizationHeaderValue(access_token));
 
   std::unique_ptr<network::SimpleURLLoader> result =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);

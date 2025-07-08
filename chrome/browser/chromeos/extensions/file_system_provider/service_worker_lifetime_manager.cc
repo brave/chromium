@@ -131,9 +131,10 @@ ServiceWorkerLifetimeManagerFactory::ServiceWorkerLifetimeManagerFactory()
           "ServiceWorkerLifetimeManagerFactory",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(extensions::ProcessManagerFactory::GetInstance());
 }
@@ -141,9 +142,10 @@ ServiceWorkerLifetimeManagerFactory::ServiceWorkerLifetimeManagerFactory()
 ServiceWorkerLifetimeManagerFactory::~ServiceWorkerLifetimeManagerFactory() =
     default;
 
-KeyedService* ServiceWorkerLifetimeManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+ServiceWorkerLifetimeManagerFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new ServiceWorkerLifetimeManager(context);
+  return std::make_unique<ServiceWorkerLifetimeManager>(context);
 }
 
 }  // namespace extensions::file_system_provider

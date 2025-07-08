@@ -9,66 +9,96 @@
 #include <string>
 #include <vector>
 
-#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
+#include "base/scoped_observation.h"
+#include "build/build_config.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/service/sync_prefs.h"
-#include "components/sync/service/sync_type_preference_provider.h"
 #include "components/sync/service/sync_user_settings.h"
 
 namespace syncer {
 
 class SyncServiceCrypto;
 
-class SyncUserSettingsImpl : public SyncUserSettings {
+class SyncUserSettingsImpl : public SyncUserSettings, public SyncPrefObserver {
  public:
-  // Both |crypto| and |prefs| must not be null, and must outlive this object.
-  // |preference_provider| can be null, but must outlive this object if not
-  // null.
-  SyncUserSettingsImpl(
-      SyncServiceCrypto* crypto,
-      SyncPrefs* prefs,
-      const SyncTypePreferenceProvider* preference_provider,
-      ModelTypeSet registered_types,
-      base::RepeatingCallback<SyncPrefs::SyncAccountState()>
-          sync_account_state_for_prefs_callback,
-      base::RepeatingCallback<CoreAccountInfo()> sync_account_info_callback);
+  class Delegate {
+   public:
+    Delegate() = default;
+    virtual ~Delegate() = default;
+
+    virtual bool IsCustomPassphraseAllowed() const = 0;
+    virtual SyncPrefs::SyncAccountState GetSyncAccountStateForPrefs() const = 0;
+    virtual CoreAccountInfo GetSyncAccountInfoForPrefs() const = 0;
+
+    // Observer-like notifications.
+    virtual void OnSyncClientDisabledByPolicyChanged() = 0;
+    virtual void OnSelectedTypesChanged() = 0;
+#if BUILDFLAG(IS_CHROMEOS)
+    virtual void OnSyncFeatureDisabledViaDashboardCleared() = 0;
+#else   // BUILDFLAG(IS_CHROMEOS)
+    virtual void OnInitialSyncFeatureSetupCompleted() = 0;
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  };
+
+  // `delegate`, `crypto` and `prefs` must not be null and must outlive this
+  // object.
+  SyncUserSettingsImpl(Delegate* delegate,
+                       SyncServiceCrypto* crypto,
+                       SyncPrefs* prefs,
+                       DataTypeSet registered_types);
   ~SyncUserSettingsImpl() override;
+
+  DataTypeSet GetPreferredDataTypes() const;
+  bool IsEncryptedDatatypePreferred() const;
+  // The encryption bootstrap token is used for explicit passphrase users
+  // (usually custom passphrase) and represents a user-entered passphrase.
+  std::string GetEncryptionBootstrapToken() const;
+  void SetEncryptionBootstrapToken(const std::string& token);
+  bool IsSyncClientDisabledByPolicy() const;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  void SetSyncFeatureDisabledViaDashboard();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // SyncUserSettings implementation.
   bool IsInitialSyncFeatureSetupComplete() const override;
+#if !BUILDFLAG(IS_CHROMEOS)
   void SetInitialSyncFeatureSetupComplete(
       SyncFirstSetupCompleteSource source) override;
+#endif  // !BUILDFLAG(IS_CHROMEOS)
   bool IsSyncEverythingEnabled() const override;
+  // TODO(b/321217859): On Android, temporarily remove kPasswords from the
+  // selected types while the local UPM migration is ongoing. This was
+  // previously implemented via GetPreconditionState() but that only affects
+  // the "active" state of the data type, not the "enabled" one.
   UserSelectableTypeSet GetSelectedTypes() const override;
   bool IsTypeManagedByPolicy(UserSelectableType type) const override;
   bool IsTypeManagedByCustodian(UserSelectableType type) const override;
+  SyncUserSettings::UserSelectableTypePrefState GetTypePrefStateForAccount(
+      UserSelectableType type) const override;
   void SetSelectedTypes(bool sync_everything,
                         UserSelectableTypeSet types) override;
   void SetSelectedType(UserSelectableType type, bool is_type_on) override;
+  void ResetSelectedType(UserSelectableType type) override;
   void KeepAccountSettingsPrefsOnlyForUsers(
-      const std::vector<signin::GaiaIdHash>& available_gaia_ids) override;
-#if BUILDFLAG(IS_IOS)
-  void SetBookmarksAndReadingListAccountStorageOptIn(bool value) override;
-#endif  // BUILDFLAG(IS_IOS)
+      const std::vector<GaiaId>& available_gaia_ids) override;
   UserSelectableTypeSet GetRegisteredSelectableTypes() const override;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+  bool IsSyncFeatureDisabledViaDashboard() const override;
+  void ClearSyncFeatureDisabledViaDashboard() override;
   bool IsSyncAllOsTypesEnabled() const override;
   UserSelectableOsTypeSet GetSelectedOsTypes() const override;
   bool IsOsTypeManagedByPolicy(UserSelectableOsType type) const override;
   void SetSelectedOsTypes(bool sync_all_os_types,
                           UserSelectableOsTypeSet types) override;
   UserSelectableOsTypeSet GetRegisteredSelectableOsTypes() const override;
-#endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  void SetAppsSyncEnabledByOs(bool apps_sync_enabled) override;
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
   bool IsCustomPassphraseAllowed() const override;
   bool IsEncryptEverythingEnabled() const override;
-  ModelTypeSet GetEncryptedDataTypes() const override;
+  DataTypeSet GetAllEncryptedDataTypes() const override;
   bool IsPassphraseRequired() const override;
   bool IsPassphraseRequiredForPreferredDataTypes() const override;
   bool IsPassphrasePromptMutedForCurrentProductVersion() const override;
@@ -78,25 +108,24 @@ class SyncUserSettingsImpl : public SyncUserSettings {
   bool IsTrustedVaultRecoverabilityDegraded() const override;
   bool IsUsingExplicitPassphrase() const override;
   base::Time GetExplicitPassphraseTime() const override;
-  absl::optional<PassphraseType> GetPassphraseType() const override;
+  std::optional<PassphraseType> GetPassphraseType() const override;
   void SetEncryptionPassphrase(const std::string& passphrase) override;
   bool SetDecryptionPassphrase(const std::string& passphrase) override;
-  void SetDecryptionNigoriKey(std::unique_ptr<Nigori> nigori) override;
-  std::unique_ptr<Nigori> GetDecryptionNigoriKey() const override;
+  void SetExplicitPassphraseDecryptionNigoriKey(
+      std::unique_ptr<Nigori> nigori) override;
+  std::unique_ptr<Nigori> GetExplicitPassphraseDecryptionNigoriKey()
+      const override;
 
-  ModelTypeSet GetPreferredDataTypes() const;
-  bool IsEncryptedDatatypeEnabled() const;
+  // SyncPrefObserver implementation.
+  void OnSyncManagedPrefChange(bool is_sync_managed) override;
+  void OnSelectedTypesPrefChange() override;
 
  private:
-  bool ShouldUsePerAccountPrefs() const;
-
+  const raw_ptr<Delegate> delegate_;
   const raw_ptr<SyncServiceCrypto> crypto_;
   const raw_ptr<SyncPrefs> prefs_;
-  const raw_ptr<const SyncTypePreferenceProvider> preference_provider_;
-  const ModelTypeSet registered_model_types_;
-  base::RepeatingCallback<SyncPrefs::SyncAccountState()>
-      sync_account_state_for_prefs_callback_;
-  base::RepeatingCallback<CoreAccountInfo()> sync_account_info_callback_;
+  const DataTypeSet registered_data_types_;
+  base::ScopedObservation<SyncPrefs, SyncPrefObserver> prefs_observation_{this};
 };
 
 }  // namespace syncer

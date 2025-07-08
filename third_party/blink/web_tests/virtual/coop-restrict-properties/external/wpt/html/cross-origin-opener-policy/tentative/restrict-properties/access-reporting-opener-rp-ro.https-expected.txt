@@ -1,4 +1,0 @@
-This is a testharness.js-based test.
-PASS access-reporting-opener-rp-ro
-Harness: the test ran to completion.
-

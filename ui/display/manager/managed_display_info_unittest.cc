@@ -5,7 +5,6 @@
 #include "ui/display/manager/managed_display_info.h"
 
 #include "base/test/gtest_util.h"
-#include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/display_switches.h"
 #include "ui/display/manager/display_change_observer.h"
@@ -14,9 +13,7 @@
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ui/display/manager/touch_device_manager.h"
-#endif
 
 namespace display {
 
@@ -162,7 +159,9 @@ TEST_F(DisplayInfoTest, TestToStringFormat) {
             "device-scale=1, display-zoom=1, overscan=x:0,0 y:0,0, rotation=0, "
             "touchscreen=unknown, "
             "panel_corners_radii=0.000000,0.000000,0.000000,0.000000, "
-            "panel_orientation=Normal, detected=true");
+            "panel_orientation=Normal, detected=true, "
+            "color_space="
+            "{primaries:BT709, transfer:SRGB, matrix:RGB, range:FULL}");
 
   EXPECT_EQ(info.ToFullString(),
             "ManagedDisplayInfo[10] port_display_id=10, edid_display_id=20, "
@@ -171,6 +170,8 @@ TEST_F(DisplayInfoTest, TestToStringFormat) {
             "touchscreen=unknown, "
             "panel_corners_radii=0.000000,0.000000,0.000000,0.000000, "
             "panel_orientation=Normal, detected=true, "
+            "color_space="
+            "{primaries:BT709, transfer:SRGB, matrix:RGB, range:FULL}, "
             "display_modes==(200x100@60P(N) 1)");
 }
 

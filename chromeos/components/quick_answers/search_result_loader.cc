@@ -4,6 +4,7 @@
 
 #include "chromeos/components/quick_answers/search_result_loader.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -47,14 +48,14 @@ using base::Value;
 //     "language_context": DICT
 //       "language_code": STRING
 
-constexpr base::StringPiece kQueryKey = "query";
-constexpr base::StringPiece kRawQueryKey = "rawQuery";
-constexpr base::StringPiece kClientTypeKey = "clientType";
-constexpr base::StringPiece kClientIdKey = "clientId";
-constexpr base::StringPiece kClientType = "QUICK_ANSWERS_CROS";
-constexpr base::StringPiece kLanguageCodeKey = "languageCode";
-constexpr base::StringPiece kLanguageContextKey = "languageContext";
-constexpr base::StringPiece kRequestContextKey = "requestContext";
+constexpr std::string_view kQueryKey = "query";
+constexpr std::string_view kRawQueryKey = "rawQuery";
+constexpr std::string_view kClientTypeKey = "clientType";
+constexpr std::string_view kClientIdKey = "clientId";
+constexpr std::string_view kClientType = "QUICK_ANSWERS_CROS";
+constexpr std::string_view kLanguageCodeKey = "languageCode";
+constexpr std::string_view kLanguageContextKey = "languageContext";
+constexpr std::string_view kRequestContextKey = "requestContext";
 
 std::string BuildSearchRequestPayload(const std::string& selected_text,
                                       const std::string& device_language) {
@@ -104,16 +105,18 @@ void SearchResultLoader::BuildRequest(
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
+  resource_request->site_for_cookies =
+      net::SiteForCookies::FromUrl(resource_request->url);
   std::move(callback).Run(std::move(resource_request), std::string());
 }
 
 void SearchResultLoader::ProcessResponse(
     const PreprocessedOutput& preprocessed_output,
-    std::unique_ptr<std::string> response_body,
+    std::optional<std::string> response_body,
     ResponseParserCallback complete_callback) {
   search_response_parser_ =
       std::make_unique<SearchResponseParser>(std::move(complete_callback));
-  search_response_parser_->ProcessResponse(std::move(response_body));
+  search_response_parser_->ProcessResponse(*response_body);
 }
 
 }  // namespace quick_answers

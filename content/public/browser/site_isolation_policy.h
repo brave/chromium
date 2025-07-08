@@ -60,6 +60,11 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // Returns true if the OriginAgentCluster header will be respected.
   static bool IsOriginAgentClusterEnabled();
 
+  // Returns true if the feature OriginKeyedProcessesByDefault is enabled, and
+  // StrictSiteIsolation is also enabled (the latter will default to false on
+  // Android).
+  static bool AreOriginKeyedProcessesEnabledByDefault();
+
   // Returns whether defaulting to origin-keyed agent cluster (without
   // necessarily an origin-keyed process) is enabled.
   // OriginAgentClusters are enabled by default if kOriginIsolationHeader and
@@ -97,6 +102,10 @@ class CONTENT_EXPORT SiteIsolationPolicy {
   // Returns true when process-isolation of fenced frames from their embedders
   // is enabled.
   static bool IsProcessIsolationForFencedFramesEnabled();
+
+  // Returns true if site isolation is enabled and is at least as strict as
+  // site-per-process.
+  static bool IsSitePerProcessOrStricter();
 
  private:
   SiteIsolationPolicy();  // Not instantiable.

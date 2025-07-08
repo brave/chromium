@@ -6,8 +6,10 @@
 #define CHROME_BROWSER_PRINTING_PRINTER_QUERY_OOP_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/functional/callback.h"
+#include "base/types/expected.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/printing/print_backend_service_manager.h"
@@ -18,7 +20,6 @@
 #include "printing/mojom/print.mojom.h"
 #include "printing/print_settings.h"
 #include "printing/printing_context.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace printing {
 
@@ -41,11 +42,11 @@ class PrinterQueryOop : public PrinterQuery {
   // wrappers are virtual to support testing.
   virtual void OnDidUseDefaultSettings(
       SettingsCallback callback,
-      mojom::PrintSettingsResultPtr print_settings);
+      base::expected<PrintSettings, mojom::ResultCode> print_settings);
 #if BUILDFLAG(ENABLE_OOP_BASIC_PRINT_DIALOG)
   virtual void OnDidAskUserForSettings(
       SettingsCallback callback,
-      mojom::PrintSettingsResultPtr print_settings);
+      base::expected<PrintSettings, mojom::ResultCode> print_settings);
 #else
   virtual void OnDidAskUserForSettings(
       SettingsCallback callback,
@@ -55,7 +56,7 @@ class PrinterQueryOop : public PrinterQuery {
   virtual void OnDidUpdatePrintSettings(
       const std::string& device_name,
       SettingsCallback callback,
-      mojom::PrintSettingsResultPtr print_settings);
+      base::expected<PrintSettings, mojom::ResultCode> print_settings);
 #if BUILDFLAG(IS_WIN)
   void OnDidGetPaperPrintableArea(PrintSettings* print_settings,
                                   OnDidUpdatePrintableAreaCallback callback,
@@ -86,27 +87,26 @@ class PrinterQueryOop : public PrinterQuery {
 #endif
 
   // Used by `TransferContextToNewWorker()`.  Virtual to support testing.
-  virtual std::unique_ptr<PrintJobWorkerOop> CreatePrintJobWorker(
+  virtual std::unique_ptr<PrintJobWorkerOop> CreatePrintJobWorkerOop(
       PrintJob* print_job);
 
-  const absl::optional<PrintBackendServiceManager::ClientId>&
+  const std::optional<PrintBackendServiceManager::ClientId>&
   print_document_client_id() const {
     return print_document_client_id_;
   }
 
   bool print_from_system_dialog() const { return print_from_system_dialog_; }
 
-  const absl::optional<PrintBackendServiceManager::ContextId>& context_id()
+  const std::optional<PrintBackendServiceManager::ContextId>& context_id()
       const {
     return context_id_;
   }
 
  private:
   bool print_from_system_dialog_ = false;
-  absl::optional<PrintBackendServiceManager::ClientId> query_with_ui_client_id_;
-  absl::optional<PrintBackendServiceManager::ClientId>
-      print_document_client_id_;
-  absl::optional<PrintBackendServiceManager::ContextId> context_id_;
+  std::optional<PrintBackendServiceManager::ClientId> query_with_ui_client_id_;
+  std::optional<PrintBackendServiceManager::ClientId> print_document_client_id_;
+  std::optional<PrintBackendServiceManager::ContextId> context_id_;
 
   base::WeakPtrFactory<PrinterQueryOop> weak_factory_{this};
 };

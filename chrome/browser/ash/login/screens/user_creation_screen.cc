@@ -6,13 +6,12 @@
 
 #include "ash/public/cpp/login_screen.h"
 #include "chrome/browser/ash/login/error_screens_histogram_helper.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_context.h"
-#include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/webui_login_view.h"
 #include "chrome/browser/ui/webui/ash/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
+#include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/network/network_state.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 
@@ -39,6 +38,7 @@ UserCreationScreen::UserCreationScreenExitTestDelegate* test_exit_delegate =
 
 // static
 std::string UserCreationScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::SIGNIN:
       return "SignIn";
@@ -46,12 +46,12 @@ std::string UserCreationScreen::GetResultString(Result result) {
       return "SignInTriage";
     case Result::ADD_CHILD:
       return "AddChild";
-    case Result::ENTERPRISE_ENROLL:
-      return "EnterpriseEnroll";
+    case Result::ENTERPRISE_ENROLL_TRIAGE:
+      return "EnterpriseEnrollTriage";
+    case Result::ENTERPRISE_ENROLL_SHORTCUT:
+      return "EnterpriseEnrollShortcut";
     case Result::KIOSK_ENTERPRISE_ENROLL:
       return "KioskEnterpriseEnroll";
-    case Result::CONTINUE_QUICK_START_FLOW:
-      return "ContinueQuickStartFlow";
     case Result::CANCEL:
       return "Cancel";
     case Result::SIGNIN_SCHOOL:
@@ -59,6 +59,7 @@ std::string UserCreationScreen::GetResultString(Result result) {
     case Result::SKIPPED:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 UserCreationScreen::UserCreationScreen(base::WeakPtr<UserCreationView> view,
@@ -83,30 +84,18 @@ void UserCreationScreen::SetUserCreationScreenExitTestDelegate(
 }
 
 bool UserCreationScreen::MaybeSkip(WizardContext& context) {
-  if (g_browser_process->platform_part()
-          ->browser_policy_connector_ash()
-          ->IsDeviceEnterpriseManaged() ||
-      context.skip_to_login_for_tests) {
-    context.is_user_creation_enabled = false;
+  const bool is_managed = ash::InstallAttributes::Get()->IsEnterpriseManaged();
+  context.is_user_creation_enabled = !is_managed;
+  if (context.skip_to_login_for_tests || is_managed) {
     RunExitCallback(Result::SKIPPED);
     return true;
   }
-  context.is_user_creation_enabled = true;
   return false;
 }
 
 void UserCreationScreen::ShowImpl() {
   if (!view_)
     return;
-
-  // Maybe continue QuickStart flow is there is an ongoing setup.
-  const auto quick_start_setup_ongoig = LoginDisplayHost::default_host()
-                                            ->GetWizardContext()
-                                            ->quick_start_setup_ongoing;
-  if (quick_start_setup_ongoig) {
-    RunExitCallback(Result::CONTINUE_QUICK_START_FLOW);
-    return;
-  }
 
   scoped_observation_.Observe(network_state_informer_.get());
 
@@ -151,7 +140,7 @@ void UserCreationScreen::OnUserAction(const base::Value::List& args) {
     context()->is_user_creation_enabled = false;
     RunExitCallback(Result::CANCEL);
   } else if (action_id == kUserActionEnroll) {
-    RunExitCallback(Result::ENTERPRISE_ENROLL);
+    RunExitCallback(Result::ENTERPRISE_ENROLL_TRIAGE);
   } else if (action_id == kUserActionTriage) {
     if (context()->is_add_person_flow) {
       RunExitCallback(Result::SIGNIN);
@@ -171,14 +160,23 @@ void UserCreationScreen::OnUserAction(const base::Value::List& args) {
 
 bool UserCreationScreen::HandleAccelerator(LoginAcceleratorAction action) {
   if (action == LoginAcceleratorAction::kStartEnrollment) {
-    RunExitCallback(Result::ENTERPRISE_ENROLL);
+    LoginDisplayHost::default_host()->GetWebUILoginView()->RequestFocus();
+    RunExitCallback(Result::ENTERPRISE_ENROLL_SHORTCUT);
     return true;
   }
   if (action == LoginAcceleratorAction::kStartKioskEnrollment) {
+    LoginDisplayHost::default_host()->GetWebUILoginView()->RequestFocus();
     RunExitCallback(Result::KIOSK_ENTERPRISE_ENROLL);
     return true;
   }
   return false;
+}
+
+void UserCreationScreen::SetDefaultStep() {
+  if (!view_) {
+    return;
+  }
+  view_->SetDefaultStep();
 }
 
 void UserCreationScreen::UpdateState(NetworkError::ErrorReason reason) {

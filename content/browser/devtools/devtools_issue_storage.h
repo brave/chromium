@@ -19,13 +19,21 @@ class InspectorIssue;
 }  // namespace Audits
 }  // namespace protocol
 
-// TODO(crbug.com/1063007): Attribute issues to ongoing navigations correctly.
+// TODO(crbug.com/40051801): Attribute issues to ongoing navigations correctly.
 class DevToolsIssueStorage
     : public content::PageUserData<DevToolsIssueStorage> {
  public:
   ~DevToolsIssueStorage() override;
 
-  void AddInspectorIssue(
+  // Adds the given `issue` to the storage, associating it with the provided
+  // `render_frame_host`.
+  //
+  // Ownership of `issue` is transferred to the storage.
+  //
+  // Returns a const reference to the stored issue.
+  // WARNING: The returned reference is only valid as long as the issue remains
+  // in the DevToolsIssueStorage.
+  const protocol::Audits::InspectorIssue& AddInspectorIssue(
       RenderFrameHost* render_frame_host,
       std::unique_ptr<protocol::Audits::InspectorIssue> issue);
   std::vector<const protocol::Audits::InspectorIssue*> FindIssuesForAgentOf(

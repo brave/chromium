@@ -6,11 +6,18 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_SHARING_PASSWORD_RECEIVER_SERVICE_IMPL_H_
 
 #include <memory>
+#include <vector>
 
+#include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "components/password_manager/core/browser/password_store_consumer.h"
+#include "components/password_manager/core/browser/password_form.h"
+#include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 #include "components/password_manager/core/browser/sharing/password_receiver_service.h"
-#include "components/password_manager/core/browser/sharing/sharing_invitations.h"
+#include "components/sync/protocol/password_sharing_invitation_specifics.pb.h"
+#include "components/sync/service/sync_service_observer.h"
+
+class PrefService;
 
 namespace password_manager {
 
@@ -19,7 +26,7 @@ class IncomingPasswordSharingInvitationSyncBridge;
 
 // A class that represents an in-flight task that processes an incoming password
 // sharing invitation. This is necessary since communication with the password
-// store is async. This object caches the incoming invtation till getting the
+// store is async. This object caches the incoming credentials till getting the
 // response from the password store regarding stored credentials such that it
 // can process the incoming invitation accordingly.
 class ProcessIncomingSharingInvitationTask : public PasswordStoreConsumer {
@@ -27,7 +34,7 @@ class ProcessIncomingSharingInvitationTask : public PasswordStoreConsumer {
   // `done_callback` is invoked when the task is completed passing the value of
   // `this` informing the embedder which task has completed.
   ProcessIncomingSharingInvitationTask(
-      IncomingSharingInvitation invitation,
+      PasswordForm incoming_credentials,
       PasswordStoreInterface* password_store,
       base::OnceCallback<void(ProcessIncomingSharingInvitationTask*)>
           done_callback);
@@ -42,8 +49,8 @@ class ProcessIncomingSharingInvitationTask : public PasswordStoreConsumer {
   void OnGetPasswordStoreResults(
       std::vector<std::unique_ptr<PasswordForm>> results) override;
 
-  // The invitation that is being processed by this task.
-  IncomingSharingInvitation invitation_;
+  // The incoming credentials that are being processed by this task.
+  PasswordForm incoming_credentials_;
 
   raw_ptr<PasswordStoreInterface> password_store_;
 
@@ -54,12 +61,19 @@ class ProcessIncomingSharingInvitationTask : public PasswordStoreConsumer {
       this};
 };
 
-class PasswordReceiverServiceImpl : public PasswordReceiverService {
+class PasswordReceiverServiceImpl : public PasswordReceiverService,
+                                    public syncer::SyncServiceObserver {
  public:
-  // |sync_bridge| may be null in tests.
+  // Due to the dependency of keyed servivces, the SyncService is only
+  // constructed *after* the construction of the PasswordReceiverService, and
+  // hence SyncService is provided later in OnSyncServiceInitialized().
+  // `sync_bridge`, `profile_password_store` and `account_password_store` may be
+  // nullptr in tests.
   explicit PasswordReceiverServiceImpl(
+      const PrefService* pref_service,
       std::unique_ptr<IncomingPasswordSharingInvitationSyncBridge> sync_bridge,
-      PasswordStoreInterface* password_store);
+      PasswordStoreInterface* profile_password_store,
+      PasswordStoreInterface* account_password_store);
   PasswordReceiverServiceImpl(const PasswordReceiverServiceImpl&) = delete;
   PasswordReceiverServiceImpl& operator=(const PasswordReceiverServiceImpl&) =
       delete;
@@ -67,16 +81,26 @@ class PasswordReceiverServiceImpl : public PasswordReceiverService {
 
   // PasswordReceiverService implementation:
   void ProcessIncomingSharingInvitation(
-      IncomingSharingInvitation invitation) override;
-  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetControllerDelegate()
+      sync_pb::IncomingPasswordSharingInvitationSpecifics invitation) override;
+  base::WeakPtr<syncer::DataTypeControllerDelegate> GetControllerDelegate()
       override;
+  void OnSyncServiceInitialized(syncer::SyncService* service) override;
+
+  // syncer::SyncServiceObserver overrides.
+  void OnSyncShutdown(syncer::SyncService* service) override;
 
  private:
   void RemoveTaskFromTasksList(ProcessIncomingSharingInvitationTask* task);
 
+  const raw_ptr<const PrefService> pref_service_;
+
+  raw_ptr<syncer::SyncService> sync_service_ = nullptr;
+
   std::unique_ptr<IncomingPasswordSharingInvitationSyncBridge> sync_bridge_;
 
-  raw_ptr<PasswordStoreInterface> password_store_;
+  // Both stores can be nullptr in tests.
+  raw_ptr<PasswordStoreInterface> profile_password_store_;
+  raw_ptr<PasswordStoreInterface> account_password_store_;
 
   // Used to keep track of the currently in-flight tasks processing the incoming
   // password sharing invitations. Once a task is completed it gets removed from

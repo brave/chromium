@@ -6,6 +6,7 @@ import * as animate from './animation.js';
 import {assertEnumVariant, assertInstanceof} from './assert.js';
 import * as dom from './dom.js';
 import {I18nString} from './i18n_string.js';
+import * as localDev from './local_dev.js';
 import * as loadTimeData from './models/load_time_data.js';
 import * as state from './state.js';
 import {AspectRatioSet, Facing, FpsRange, Resolution} from './type.js';
@@ -177,14 +178,6 @@ export function setupI18nElements(rootElement: DocumentFragment|Element): void {
     }
     element.append(getMessage(element, 'i18n-text'));
   }
-  for (const element of getElements('i18n-tooltip-true')) {
-    element.setAttribute(
-        'tooltip-true', getMessage(element, 'i18n-tooltip-true'));
-  }
-  for (const element of getElements('i18n-tooltip-false')) {
-    element.setAttribute(
-        'tooltip-false', getMessage(element, 'i18n-tooltip-false'));
-  }
   for (const attribute of ['i18n-aria', 'i18n-label']) {
     for (const element of getElements(attribute)) {
       setAriaLabel(element, attribute);
@@ -205,10 +198,31 @@ export function blobToImage(blob: Blob): Promise<HTMLImageElement> {
 }
 
 /**
- * Gets default facing according to device mode.
+ * Gets the facing preference according to device mode and lid state. The lower
+ * the index, the more preferred.
  */
-export function getDefaultFacing(): Facing {
-  return state.get(state.State.TABLET) ? Facing.ENVIRONMENT : Facing.USER;
+export function getFacingPreference(): Facing[] {
+  if (isLidClosed()) {
+    return [Facing.EXTERNAL, Facing.ENVIRONMENT, Facing.USER];
+  }
+  if (state.get(state.State.TABLET)) {
+    return [Facing.ENVIRONMENT, Facing.USER, Facing.EXTERNAL];
+  }
+  return [Facing.USER, Facing.ENVIRONMENT, Facing.EXTERNAL];
+}
+
+/**
+ * Checks if the lid is closed or not.
+ */
+export function isLidClosed(): boolean {
+  return state.get(state.State.LID_CLOSED);
+}
+
+/**
+ * Checks if the sw privacy switch is on.
+ */
+export function isSWPrivacySwitchOn(): boolean {
+  return state.get(state.State.SW_PRIVACY_SWITCH_ON);
 }
 
 /**
@@ -247,7 +261,7 @@ export function setInkdropEffect(el: HTMLElement): void {
   const ripple =
       assertInstanceof(tpl.querySelector('.inkdrop-ripple'), HTMLElement);
   el.appendChild(tpl);
-  el.addEventListener('click', async (e) => {
+  el.addEventListener('click', (e) => {
     const tRect =
         assertInstanceof(e.target, HTMLElement).getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
@@ -259,7 +273,7 @@ export function setInkdropEffect(el: HTMLElement): void {
     el.style.setProperty('--drop-x', `${dropX}px`);
     el.style.setProperty('--drop-y', `${dropY}px`);
     el.style.setProperty('--drop-radius', `${radius}px`);
-    await animate.play(ripple);
+    animate.play(ripple);
   });
 }
 
@@ -391,7 +405,7 @@ export function extractBackgroundImageValueUrl(element: HTMLElement): string|
   if (imageValue === null || imageValue === undefined) {
     return null;
   }
-  const match = imageValue.toString().match(/url\(['"](.*)['"]\)/);
+  const match = /url\(['"](.*)['"]\)/.exec(imageValue.toString());
   return match?.[1] ?? null;
 }
 
@@ -418,7 +432,7 @@ export async function loadImage(
  * value and value to name, which most of the time isn't what we want.
  */
 export function getNumberEnumMapping<T extends number>(
-    enumType: {[key: string]: T|string}): {[key: string]: T} {
+    enumType: Record<string, T|string>): Record<string, T> {
   return Object.fromEntries(Object.entries(enumType).flatMap(([k, v]) => {
     if (typeof v === 'string') {
       return [];
@@ -504,4 +518,25 @@ export function isFileSystemFileHandle(handle: FileSystemHandle):
 export function isFileSystemDirectoryHandle(handle: FileSystemHandle):
     handle is FileSystemDirectoryHandle {
   return handle.kind === 'directory';
+}
+
+/**
+ * Expands a path to full absolute path.
+ *
+ * This is a no-op for CCA on CrOS, but is needed for local dev since it might
+ * be served in a subpath.
+ */
+export const expandPath = localDev.overridableFunction((path: string) => path);
+
+/**
+ * Lazily initialize a singleton.
+ */
+export function lazySingleton<T>(fn: () => T): () => T {
+  let val: T|null = null;
+  return () => {
+    if (val === null) {
+      val = fn();
+    }
+    return val;
+  };
 }

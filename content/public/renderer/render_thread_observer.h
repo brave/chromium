@@ -5,14 +5,11 @@
 #ifndef CONTENT_PUBLIC_RENDERER_RENDER_THREAD_OBSERVER_H_
 #define CONTENT_PUBLIC_RENDERER_RENDER_THREAD_OBSERVER_H_
 
+#include "content/common/buildflags.h"
 #include "content/common/content_export.h"
 
 namespace blink {
 class AssociatedInterfaceRegistry;
-}
-
-namespace IPC {
-class Message;
 }
 
 namespace content {
@@ -33,9 +30,6 @@ class CONTENT_EXPORT RenderThreadObserver {
       blink::AssociatedInterfaceRegistry* associated_interfaces) {}
   virtual void UnregisterMojoInterfaces(
       blink::AssociatedInterfaceRegistry* associated_interfaces) {}
-
-  // Allows filtering of control messages.
-  virtual bool OnControlMessageReceived(const IPC::Message& message);
 
   // Called when the renderer cache of the plugin list has changed.
   virtual void PluginListChanged() {}

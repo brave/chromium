@@ -6,16 +6,12 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "skia/ext/skia_utils_ios.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace gfx {
 
@@ -39,6 +35,14 @@ gfx::ImageSkiaRep ImageSkiaRepOfScaleFromUIImage(UIImage* image, float scale) {
   SkBitmap bitmap(skia::CGImageToSkBitmap(image.CGImage,
                                           desired_size_for_scale,
                                           false));
+
+  // Resizing the image can fail.
+  // https://crbug.com/1184688, https://crbug.com/41495327
+  if (bitmap.empty()) {
+    return gfx::ImageSkiaRep();
+  }
+  CHECK_EQ(bitmap.colorType(), kN32_SkColorType);
+
   return gfx::ImageSkiaRep(bitmap, scale);
 }
 
@@ -52,10 +56,10 @@ UIImage* UIImageFromImageSkiaRep(const gfx::ImageSkiaRep& image_skia_rep) {
     return nil;
 
   float scale = image_skia_rep.scale();
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
       CGColorSpaceCreateDeviceRGB());
   return skia::SkBitmapToUIImageWithColorSpace(image_skia_rep.GetBitmap(),
-                                               scale, color_space);
+                                               scale, color_space.get());
 }
 
 }  // namespace gfx

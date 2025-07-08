@@ -10,17 +10,14 @@ symbol files.
 """
 
 import io
-import optparse
 import os
 import struct
 import sys
-import tempfile
 import unittest
 
 import extract_unwind_tables
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "gyp"))
-from util import build_utils
 
 
 class TestExtractUnwindTables(unittest.TestCase):
@@ -29,8 +26,7 @@ class TestExtractUnwindTables(unittest.TestCase):
 MODULE Linux arm CDE12FE1DF2B37A9C6560B4CBEE056420 lib_chrome.so
 INFO CODE_ID E12FE1CD2BDFA937C6560B4CBEE05642
 FILE 0 ../../base/allocator/allocator_check.cc
-FILE 1 ../../base/allocator/allocator_extension.cc
-FILE 2 ../../base/allocator/allocator_shim.cc
+FILE 1 ../../base/allocator/allocator_shim.cc
 FUNC 1adcb60 54 0 i2d_name_canon
 1adcb60 1a 509 17054
 3b94c70 2 69 40
@@ -63,10 +59,9 @@ STACK CFI 3b92118 .cfa: r7 16 + .ra: .cfa -20 + ^
 STACK CFI INIT 3b93214 fffff .cfa: sp 0 + .ra: lr
 STACK CFI 3b93218 .cfa: r7 16 + .ra: .cfa -4 + ^
 """.splitlines()
-    cfi_data = extract_unwind_tables._GetAllCfiRows(
-        [l.encode('utf8') for l in test_data_lines])
+    cfi_data = extract_unwind_tables.GetAllCfiRows(test_data_lines)
     out_file = io.BytesIO()
-    extract_unwind_tables._WriteCfiData(cfi_data, out_file)
+    extract_unwind_tables.WriteCfiData(cfi_data, out_file)
 
     expected_cfi_data = {
         0xe1a1e4: [0x2, 0x11, 0x4, 0x50],

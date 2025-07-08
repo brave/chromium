@@ -2,28 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/dns/dns_response.h"
+
+#include <fuzzer/FuzzedDataProvider.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <fuzzer/FuzzedDataProvider.h>
+#include <optional>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "net/base/io_buffer.h"
 #include "net/dns/dns_names_util.h"
 #include "net/dns/dns_query.h"
-#include "net/dns/dns_response.h"
 #include "net/dns/dns_util.h"
 #include "net/dns/public/dns_protocol.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
-void ValidateParsedResponse(
-    net::DnsResponse& response,
-    const net::IOBufferWithSize& packet,
-    absl::optional<net::DnsQuery> query = absl::nullopt) {
+void ValidateParsedResponse(net::DnsResponse& response,
+                            const net::IOBufferWithSize& packet,
+                            std::optional<net::DnsQuery> query = std::nullopt) {
   CHECK_EQ(response.io_buffer(), &packet);
   CHECK_EQ(static_cast<int>(response.io_buffer_size()), packet.size());
 
@@ -64,7 +64,7 @@ void ValidateParsedResponse(
     if (query) {
       CHECK_EQ(response.question_count(), 1u);
       CHECK_EQ(response.id().value(), query->id());
-      absl::optional<std::string> dotted_qname =
+      std::optional<std::string> dotted_qname =
           net::dns_names_util::NetworkToDottedName(query->qname(),
                                                    /*require_complete=*/true);
       CHECK(dotted_qname.has_value());
@@ -83,8 +83,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   auto response_packet =
       base::MakeRefCounted<net::IOBufferWithSize>(response_string.size());
-  memcpy(response_packet->data(), response_string.data(),
-         response_string.size());
+  UNSAFE_TODO(memcpy(response_packet->data(), response_string.data(),
+                     response_string.size()));
 
   net::DnsResponse received_response(response_packet, response_string.size());
   received_response.InitParseWithoutQuery(response_string.size());

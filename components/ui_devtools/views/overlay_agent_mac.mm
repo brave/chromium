@@ -8,10 +8,7 @@
 
 #include "components/ui_devtools/views/view_element.h"
 #include "components/ui_devtools/views/widget_element.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/native_widget_types.h"
 
 namespace ui_devtools {
 
@@ -29,7 +26,7 @@ void OverlayAgentMac::InstallPreTargetHandler() {
   is_pretarget_handler_ = true;
   for (NSWindow* window in [NSApp windows]) {
     InstallPreTargetHandlerOnWidget(
-        views::Widget::GetWidgetForNativeWindow(window));
+        views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window)));
   }
 }
 
@@ -37,7 +34,8 @@ void OverlayAgentMac::RemovePreTargetHandler() {
   DCHECK(is_pretarget_handler_);
   is_pretarget_handler_ = false;
   for (NSWindow* window in [NSApp windows]) {
-    views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window);
+    views::Widget* widget =
+        views::Widget::GetWidgetForNativeWindow(gfx::NativeWindow(window));
     RemovePreTargetHandlerOnWidget(widget);
   }
 }
@@ -84,7 +82,9 @@ void OverlayAgentMac::InstallPreTargetHandlerOnWidget(views::Widget* widget) {
     return;
   widget->GetRootView()->AddPreTargetHandler(
       this, ui::EventTarget::Priority::kSystem);
-  widget->AddObserver(this);
+  if (!widget->HasObserver(this)) {
+    widget->AddObserver(this);
+  }
 }
 void OverlayAgentMac::RemovePreTargetHandlerOnWidget(views::Widget* widget) {
   if (!widget)

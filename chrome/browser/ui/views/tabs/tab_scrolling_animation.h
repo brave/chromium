@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_TAB_SCROLLING_ANIMATION_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_SCROLLING_ANIMATION_H_
 
+#include "base/memory/raw_ptr.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/linear_animation.h"
 #include "ui/gfx/geometry/rect.h"
@@ -17,7 +18,6 @@ class TabScrollingAnimation : public gfx::LinearAnimation,
   explicit TabScrollingAnimation(
       views::View* contents_view,
       gfx::AnimationContainer* bounds_animator_container,
-      base::TimeDelta duration,
       const gfx::Rect start_visible_rect,
       const gfx::Rect end_visible_rect);
 

@@ -3,18 +3,19 @@
 // found in the LICENSE file.
 
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import {LanguageHelper, LanguagesBrowserProxyImpl, LanguageSettingsActionType, LanguageSettingsMetricsProxyImpl, SettingsTranslatePageElement} from 'chrome://settings/lazy_load.js';
+import type {SettingsTranslatePageElement} from 'chrome://settings/lazy_load.js';
+import {LanguagesBrowserProxyImpl, LanguageSettingsActionType, LanguageSettingsMetricsProxyImpl} from 'chrome://settings/lazy_load.js';
 import {CrSettingsPrefs} from 'chrome://settings/settings.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {FakeSettingsPrivate} from 'chrome://webui-test/fake_settings_private.js';
 import {fakeDataBind} from 'chrome://webui-test/polymer_test_util.js';
 
-import {FakeLanguageSettingsPrivate, getFakeLanguagePrefs} from './fake_language_settings_private.js';
+import type {FakeLanguageSettingsPrivate} from './fake_language_settings_private.js';
+import {getFakeLanguagePrefs} from './fake_language_settings_private.js';
 import {TestLanguagesBrowserProxy} from './test_languages_browser_proxy.js';
 import {TestLanguageSettingsMetricsProxy} from './test_languages_settings_metrics_proxy.js';
 
 suite('TranslatePageMetricsBrowser', function() {
-  let languageHelper: LanguageHelper;
   let translatePage: SettingsTranslatePageElement;
   let browserProxy: TestLanguagesBrowserProxy;
   let languageSettingsMetricsProxy: TestLanguageSettingsMetricsProxy;
@@ -26,8 +27,7 @@ suite('TranslatePageMetricsBrowser', function() {
   setup(function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     const settingsPrefs = document.createElement('settings-prefs');
-    const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs()) as
-        unknown as typeof chrome.settingsPrivate;
+    const settingsPrivate = new FakeSettingsPrivate(getFakeLanguagePrefs());
     settingsPrefs.initialize(settingsPrivate);
     document.body.appendChild(settingsPrefs);
     return CrSettingsPrefs.initialized.then(function() {
@@ -56,15 +56,11 @@ suite('TranslatePageMetricsBrowser', function() {
       translatePage.prefs = settingsLanguages.prefs;
       fakeDataBind(settingsLanguages, translatePage, 'prefs');
 
-      translatePage.languageHelper = settingsLanguages.languageHelper;
-      fakeDataBind(settingsLanguages, translatePage, 'language-helper');
-
       translatePage.languages = settingsLanguages.languages;
       fakeDataBind(settingsLanguages, translatePage, 'languages');
 
       document.body.appendChild(translatePage);
-      languageHelper = translatePage.languageHelper;
-      return languageHelper.whenReady();
+      return settingsLanguages.whenReady();
     });
   });
 

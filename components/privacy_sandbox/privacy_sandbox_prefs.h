@@ -48,45 +48,6 @@ inline constexpr char kPrivacySandboxM1AdMeasurementEnabled[] =
 inline constexpr char kPrivacySandboxM1Restricted[] =
     "privacy_sandbox.m1.restricted";
 
-// Un-synced boolean pref indicating if the Privacy Sandbox was ever indicated
-// as unrestricted by account capabilities.
-// TODO(crbug.com/1428506): Deprecate this preference
-inline constexpr char kPrivacySandboxM1Unrestricted[] =
-    "privacy_sandbox.m1.unrestricted";
-
-// Synced boolean pref. Privacy Sandbox APIs may only be enabled when this is
-// enabled, but each API will respect its own enabling logic if this pref is
-// true. When this pref is false ALL Privacy Sandbox APIs are disabled.
-// TODO(crbug.com/1292898): Deprecate this preference once all users have been
-// migrated to the V2 pref.
-inline constexpr char kPrivacySandboxApisEnabled[] =
-    "privacy_sandbox.apis_enabled";
-
-// Un-synced boolean pref. This is a replacement for the synced preference
-// above. It performs the exact same functionality, but is unsynced. This
-// preference is only consulted when the kPrivacySandboxSettings3 feature is
-// enabled.
-inline constexpr char kPrivacySandboxApisEnabledV2[] =
-    "privacy_sandbox.apis_enabled_v2";
-
-// Synced boolean that indicates if a user has manually toggled the settings
-// associated with the PrivacySandboxSettings feature.
-// TODO(crbug.com/1292898): Deprecate this preference once all users have been
-// migrated to the V2 pref.
-inline constexpr char kPrivacySandboxManuallyControlled[] =
-    "privacy_sandbox.manually_controlled";
-
-// Un-synced boolean pref. This is a replacement for the synced preference
-// above. It it set to true when the user manually toggles the setting on the
-// updated settings page.
-inline constexpr char kPrivacySandboxManuallyControlledV2[] =
-    "privacy_sandbox.manually_controlled_v2";
-
-// Boolean that indicates whether the privacy sandbox desktop page at
-// chrome://settings/privacySandbox has been viewed.
-inline constexpr char kPrivacySandboxPageViewed[] =
-    "privacy_sandbox.page_viewed";
-
 // The point in time from which history is eligible to be used when calculating
 // a user's Topics API topics.
 inline constexpr char kPrivacySandboxTopicsDataAccessibleSince[] =
@@ -145,17 +106,21 @@ inline constexpr char kPrivacySandboxNoConfirmationManuallyControlled[] =
 inline constexpr char kPrivacySandboxDisabledInsufficientConfirmation[] =
     "privacy_sandbox.disabled_insufficient_confirmation";
 
-// Boolean that indicates the user's FPS data access preference has been init,
+// Boolean that indicates the user's RWS data access preference has been init,
 // so named because of the user intent it intends to represent. Currently there
-// is no distinction between FPS for data access, and FPS for other purposes, so
-// this init is applied to the first_party_sets.enabled pref.
+// is no distinction between RWS for data access, and RWS for other purposes, so
+// this init is applied to the "privacy_sandbox.first_party_sets_enabled" pref.
+// "first_party_sets" in the string name is kept for historic reasons to avoid
+// migration of a synced Pref.
 inline constexpr char
-    kPrivacySandboxFirstPartySetsDataAccessAllowedInitialized[] =
+    kPrivacySandboxRelatedWebsiteSetsDataAccessAllowedInitialized[] =
         "privacy_sandbox.first_party_sets_data_access_allowed_initialized";
 
-// Boolean that indicates whether First-Party Sets is enabled. Exposed to the
-// user via Chrome UI, and to enterprises via enterprise policy.
-inline constexpr char kPrivacySandboxFirstPartySetsEnabled[] =
+// Boolean that indicates whether Related Website Sets is enabled. Exposed to
+// the user via Chrome UI, and to enterprises via enterprise policy.
+// "first_party_sets" in the string name is kept for historic reasons to avoid
+// migration of a synced Pref.
+inline constexpr char kPrivacySandboxRelatedWebsiteSetsEnabled[] =
     "privacy_sandbox.first_party_sets_enabled";
 
 // Boolean that stores the users Topics consent status, true when the user has
@@ -180,10 +145,13 @@ inline constexpr char kPrivacySandboxTopicsConsentLastUpdateReason[] =
 inline constexpr char kPrivacySandboxTopicsConsentTextAtLastUpdate[] =
     "privacy_sandbox.topics_consent.text_at_last_update";
 
-// Boolean that indicates whether the user's anti-abuse preference has been
-// initialized.
-inline constexpr char kPrivacySandboxAntiAbuseInitialized[] =
-    "privacy_sandbox.anti_abuse_initialized";
+// Pref which contains a list of the activity type from recent chrome launches.
+// Version 2 after enum values changed.
+inline constexpr char kPrivacySandboxActivityTypeRecord2[] =
+    "privacy_sandbox.activity_type.record2";
+
+inline constexpr char kPrivacySandboxAllowNoticeFor3PCBlockedTrial[] =
+    "privacy_sandbox.allow_notice_for_3PC_blocked_trial";
 
 }  // namespace prefs
 

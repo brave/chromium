@@ -5,13 +5,15 @@
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder_builder.h"
 
 #include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
-static const WTF::TextEncoding DefaultEncodingForUrlAndContentType(
+static const TextEncoding DefaultEncodingForUrlAndContentType(
     const char* url,
     const char* content_type) {
   auto page_holder = std::make_unique<DummyPageHolder>(gfx::Size(0, 0));
@@ -22,27 +24,30 @@ static const WTF::TextEncoding DefaultEncodingForUrlAndContentType(
       ->Encoding();
 }
 
-static const WTF::TextEncoding DefaultEncodingForURL(const char* url) {
+static const TextEncoding DefaultEncodingForURL(const char* url) {
   return DefaultEncodingForUrlAndContentType(url, "text/html");
 }
 
 TEST(TextResourceDecoderBuilderTest, defaultEncodingForJsonIsUTF8) {
-  EXPECT_EQ(WTF::TextEncoding("UTF-8"),
+  test::TaskEnvironment task_environment;
+  EXPECT_EQ(TextEncoding("UTF-8"),
             DefaultEncodingForUrlAndContentType(
                 "https://udarenieru.ru/1.2/dealers/", "application/json"));
 }
 
 TEST(TextResourceDecoderBuilderTest, defaultEncodingComesFromTopLevelDomain) {
-  EXPECT_EQ(WTF::TextEncoding("Shift_JIS"),
+  test::TaskEnvironment task_environment;
+  EXPECT_EQ(TextEncoding("Shift_JIS"),
             DefaultEncodingForURL("http://tsubotaa.la.coocan.jp"));
-  EXPECT_EQ(WTF::TextEncoding("windows-1251"),
+  EXPECT_EQ(TextEncoding("windows-1251"),
             DefaultEncodingForURL("http://udarenieru.ru/index.php"));
 }
 
 TEST(TextResourceDecoderBuilderTest,
      NoCountryDomainURLDefaultsToLatin1Encoding) {
+  test::TaskEnvironment task_environment;
   // Latin1 encoding is set in |TextResourceDecoder::defaultEncoding()|.
-  EXPECT_EQ(WTF::Latin1Encoding(),
+  EXPECT_EQ(Latin1Encoding(),
             DefaultEncodingForURL("http://arstechnica.com/about-us"));
 }
 

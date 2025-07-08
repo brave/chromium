@@ -31,7 +31,6 @@ const char* LogSeverityToString(logging::LogSeverity level) {
   }
 
   NOTREACHED();
-  return "Unknown Log Severity";
 }
 
 }  // namespace
@@ -60,7 +59,7 @@ void Log(logging::LogSeverity severity,
                                                  what.c_str()));
 
   // Log to console if the severity is at or above the min level.
-  // LOG_VERBOSE logs are also output if the verbosity of this module
+  // LOGGING_VERBOSE logs are also output if the verbosity of this module
   // (sync_file_system/logger) is >= 1.
   // TODO(kinuko,calvinlo): Reconsider this logging hack, it's not recommended
   // to directly use LogMessage.

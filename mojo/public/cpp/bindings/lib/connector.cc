@@ -8,17 +8,15 @@
 
 #include <memory>
 
+#include "base/check.h"
 #include "base/check_op.h"
-#include "base/compiler_specific.h"
 #include "base/debug/alias.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ptr_exclusion.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/rand_util.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -80,15 +78,9 @@ class Connector::ActiveDispatchTracker {
 
  private:
   const base::WeakPtr<Connector> connector_;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION RunLoopNestingObserver* const nesting_observer_;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION ActiveDispatchTracker* outer_tracker_ = nullptr;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION ActiveDispatchTracker* inner_tracker_ = nullptr;
+  const raw_ptr<RunLoopNestingObserver> nesting_observer_;
+  raw_ptr<ActiveDispatchTracker> outer_tracker_ = nullptr;
+  raw_ptr<ActiveDispatchTracker> inner_tracker_ = nullptr;
 };
 
 // Watches the MessageLoop on the current thread. Notifies the current chain of
@@ -321,16 +313,22 @@ bool Connector::PrefersSerializedMessages() {
 }
 
 bool Connector::Accept(Message* message) {
+  MojoResult result = AcceptAndGetResult(message);
+  return result == MOJO_RESULT_OK;
+}
+
+MojoResult Connector::AcceptAndGetResult(Message* message) {
   if (!lock_ && task_runner_)
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (error_)
-    return false;
+  if (TS_UNCHECKED_READ(error_)) {
+    return MOJO_RESULT_UNKNOWN;
+  }
 
   internal::MayAutoLock locker(&lock_);
 
   if (!message_pipe_.is_valid() || drop_writes_)
-    return true;
+    return MOJO_RESULT_OK;
 
 #if defined(ENABLE_IPC_FUZZER)
   if (message_dumper_ && message->is_serialized()) {
@@ -365,6 +363,7 @@ bool Connector::Accept(Message* message) {
       // from the caller since we'd like them to continue consuming any backlog
       // of incoming messages before regarding the message pipe as closed.
       drop_writes_ = true;
+      rv = MOJO_RESULT_OK;
       break;
     case MOJO_RESULT_BUSY:
       // We'd get a "busy" result if one of the message's handles is:
@@ -377,14 +376,13 @@ bool Connector::Accept(Message* message) {
       // TODO(vtl): I wonder if this should be a |DCHECK()|. (But, until
       // crbug.com/389666, etc. are resolved, this will make tests fail quickly
       // rather than hanging.)
-      CHECK(false) << "Race condition or other bug detected";
-      return false;
+      NOTREACHED() << "Race condition or other bug detected";
     default:
       // This particular write was rejected, presumably because of bad input.
       // The pipe is not necessarily in a bad state.
-      return false;
+      break;
   }
-  return true;
+  return rv;
 }
 
 void Connector::AllowWokenUpBySyncWatchOnSameThread() {
@@ -405,6 +403,7 @@ void Connector::OverrideDefaultSerializationBehaviorForTesting(
 }
 
 bool Connector::SimulateReadMessage(ScopedMessageHandle message) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return DispatchMessage(std::move(message));
 }
 
@@ -521,7 +520,7 @@ bool Connector::DispatchMessage(ScopedMessageHandle handle) {
   }
 
   base::WeakPtr<Connector> weak_self = weak_self_;
-  absl::optional<ActiveDispatchTracker> dispatch_tracker;
+  std::optional<ActiveDispatchTracker> dispatch_tracker;
   if (!is_dispatching_ && nesting_observer_) {
     is_dispatching_ = true;
     dispatch_tracker.emplace(weak_self);
@@ -548,7 +547,8 @@ bool Connector::DispatchMessage(ScopedMessageHandle handle) {
             interface_name_);
 
         static const uint8_t* flow_enabled =
-            TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED("toplevel.flow");
+            TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(
+                "toplevel.flow,mojom.flow");
         if (!*flow_enabled)
           return;
 
@@ -583,6 +583,7 @@ void Connector::PostDispatchNextMessageFromPipe() {
 }
 
 void Connector::CallDispatchNextMessageFromPipe() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_GT(num_pending_dispatch_tasks_, 0u);
   --num_pending_dispatch_tasks_;
   ReadAllAvailableMessages();

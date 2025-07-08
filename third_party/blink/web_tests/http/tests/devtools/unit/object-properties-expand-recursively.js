@@ -4,9 +4,11 @@
 
 import {TestRunner} from 'test_runner';
 
+import * as ObjectUI from 'devtools/ui/legacy/components/object_ui/object_ui.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Test that ObjectPropertiesSection expands recursively.\n`);
-  await TestRunner.loadLegacyModule('ui/legacy/components/object_ui');
 
   var object = {
     "foo": {
@@ -27,8 +29,8 @@ import {TestRunner} from 'test_runner';
     }
   }
 
-  var localObject = SDK.RemoteObject.fromLocalObject(object);
-  var propertiesSection = new ObjectUI.ObjectPropertiesSection(localObject, 'JSON');
+  var localObject = SDK.RemoteObject.RemoteObject.fromLocalObject(object);
+  var propertiesSection = new ObjectUI.ObjectPropertiesSection.ObjectPropertiesSection(localObject, 'JSON');
   await propertiesSection.objectTreeElement().expandRecursively();
 
   TestRunner.addResult(TestRunner.textContentWithLineBreaks(propertiesSection.element));

@@ -117,10 +117,9 @@ void ServiceWorkerGlobalScopeProxy::CountFeature(WebFeature feature) {
   Client().CountFeature(feature);
 }
 
-void ServiceWorkerGlobalScopeProxy::ReportException(
-    const String& error_message,
-    std::unique_ptr<SourceLocation> location,
-    int exception_id) {
+void ServiceWorkerGlobalScopeProxy::ReportException(const String& error_message,
+                                                    SourceLocation* location,
+                                                    int exception_id) {
   DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
   Client().ReportException(error_message, location->LineNumber(),
                            location->ColumnNumber(), location->Url());
@@ -212,7 +211,7 @@ void ServiceWorkerGlobalScopeProxy::DidCloseWorkerGlobalScope() {
   PostCrossThreadTask(
       *parent_thread_default_task_runner_, FROM_HERE,
       CrossThreadBindOnce(&WebEmbeddedWorkerImpl::TerminateWorkerContext,
-                          CrossThreadUnretained(embedded_worker_)));
+                          CrossThreadUnretained(embedded_worker_.get())));
 
   // NOTE: WorkerThread calls WillDestroyWorkerGlobalScope() synchronously after
   // this function returns, since it calls DidCloseWorkerGlobalScope() then
@@ -297,9 +296,36 @@ void ServiceWorkerGlobalScopeProxy::ResumeEvaluation() {
   WorkerGlobalScope()->ResumeEvaluation();
 }
 
+void ServiceWorkerGlobalScopeProxy::DeferPrepareForEvaluation() {
+  WorkerGlobalScope()->DeferPrepareForEvaluation();
+}
+
+void ServiceWorkerGlobalScopeProxy::RunDeferredPrepareForEvaluation() {
+  WorkerGlobalScope()->RunDeferredPrepareForEvaluation();
+}
+
 mojom::blink::ServiceWorkerFetchHandlerType
 ServiceWorkerGlobalScopeProxy::FetchHandlerType() {
   return WorkerGlobalScope()->FetchHandlerType();
+}
+
+bool ServiceWorkerGlobalScopeProxy::HasHidEventHandlers() {
+  return WorkerGlobalScope()->HasHidEventHandlers();
+}
+
+bool ServiceWorkerGlobalScopeProxy::HasUsbEventHandlers() {
+  return WorkerGlobalScope()->HasUsbEventHandlers();
+}
+
+void ServiceWorkerGlobalScopeProxy::GetRemoteAssociatedInterface(
+    const WebString& name,
+    mojo::ScopedInterfaceEndpointHandle handle) {
+  WorkerGlobalScope()->GetRemoteAssociatedInterface(name, std::move(handle));
+}
+
+blink::AssociatedInterfaceRegistry&
+ServiceWorkerGlobalScopeProxy::GetAssociatedInterfaceRegistry() {
+  return WorkerGlobalScope()->GetAssociatedInterfaceRegistry();
 }
 
 WebServiceWorkerContextClient& ServiceWorkerGlobalScopeProxy::Client() const {

@@ -12,12 +12,12 @@ import static org.chromium.chrome.browser.password_manager.PasswordManagerDialog
 
 import android.view.View;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * Class responsible for binding the model and the view.
- */
+/** Class responsible for binding the model and the view. */
+@NullMarked
 class PasswordManagerDialogViewBinder {
     static void bind(PropertyModel model, View view, PropertyKey propertyKey) {
         PasswordManagerDialogView dialogView = (PasswordManagerDialogView) view;
@@ -28,12 +28,6 @@ class PasswordManagerDialogViewBinder {
         } else if (ILLUSTRATION_VISIBLE == propertyKey) {
             dialogView.updateIllustrationVisibility(model.get(ILLUSTRATION_VISIBLE));
             dialogView.updateHelpIcon(!model.get(ILLUSTRATION_VISIBLE));
-            // TODO(crbug.com/1271552): Cropping was needed for previous image version.
-            // Depending on feature status, remove this or inline the cropping into
-            // password_manager_dialog_with_help_button.xml.
-            if (!PasswordManagerHelper.usesUnifiedPasswordManagerBranding()) {
-                dialogView.cropImageToText();
-            }
         } else if (TITLE == propertyKey) {
             dialogView.setTitle(model.get(TITLE));
         } else if (DETAILS == propertyKey) {

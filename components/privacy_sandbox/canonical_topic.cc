@@ -20,7 +20,7 @@ std::u16string GetLocalizedRepresentationInternal(
     browsing_topics::Topic topic_id) {
   browsing_topics::SemanticTree semantic_tree;
 
-  absl::optional<int> localized_name_message_id =
+  std::optional<int> localized_name_message_id =
       semantic_tree.GetLatestLocalizedNameMessageId(topic_id);
 
   // Topic IDs  are provided by a categorization model shipped over the network,
@@ -29,12 +29,37 @@ std::u16string GetLocalizedRepresentationInternal(
   // gracefully handled. To ensure we are made aware of any issues, UMA metrics
   // are logged in this failure case.
   if (!localized_name_message_id.has_value()) {
-    base::UmaHistogramSparse("Settings.PrivacySandbox.InvalidTopicIdLocalized",
-                             topic_id.value());
     return l10n_util::GetStringUTF16(IDS_PRIVACY_SANDBOX_TOPICS_INVALID_TOPIC);
   }
 
   return l10n_util::GetStringUTF16(localized_name_message_id.value());
+}
+
+std::u16string GetLocalizedDescriptionInternal(
+    browsing_topics::Topic topic_id) {
+  browsing_topics::SemanticTree semantic_tree;
+
+  auto children =
+      semantic_tree.GetAtMostTwoRepresentativesInCurrentTaxonomy(topic_id);
+
+  if (children.size() == 0 || children.size() > 2) {
+    return std::u16string();
+  }
+
+  if (children.size() == 1) {
+    return l10n_util::GetStringUTF16(
+        semantic_tree.GetLatestLocalizedNameMessageId(children[0]).value());
+  }
+
+  std::optional<int> message_id_1 =
+      semantic_tree.GetLatestLocalizedNameMessageId(children[0]);
+  std::optional<int> message_id_2 =
+      semantic_tree.GetLatestLocalizedNameMessageId(children[1]);
+
+  return l10n_util::GetStringFUTF16(
+      IDS_SETTINGS_TOPICS_PAGE_FIRST_LEVEL_TOPIC_DESCRIPTOR,
+      l10n_util::GetStringUTF16(message_id_1.value()),
+      l10n_util::GetStringUTF16(message_id_2.value()));
 }
 
 }  // namespace
@@ -49,26 +74,30 @@ std::u16string CanonicalTopic::GetLocalizedRepresentation() const {
   return GetLocalizedRepresentationInternal(topic_id_);
 }
 
+std::u16string CanonicalTopic::GetLocalizedDescription() const {
+  return GetLocalizedDescriptionInternal(topic_id_);
+}
+
 base::Value CanonicalTopic::ToValue() const {
   return base::Value(base::Value::Dict()
                          .Set(kTopicId, topic_id_.value())
                          .Set(kTaxonomyVersion, taxonomy_version_));
 }
 
-/*static*/ absl::optional<CanonicalTopic> CanonicalTopic::FromValue(
+/*static*/ std::optional<CanonicalTopic> CanonicalTopic::FromValue(
     const base::Value& value) {
   if (!value.is_dict()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   auto topic_id = value.GetDict().FindInt(kTopicId);
   if (!topic_id) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   auto taxonomy_version = value.GetDict().FindInt(kTaxonomyVersion);
   if (!taxonomy_version) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return CanonicalTopic(browsing_topics::Topic(*topic_id), *taxonomy_version);

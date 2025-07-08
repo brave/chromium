@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/file_system_provider/fileapi/file_stream_writer.h"
 
 #include <stddef.h>
@@ -38,8 +43,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
-namespace ash {
-namespace file_system_provider {
+namespace ash::file_system_provider {
 namespace {
 
 const char kExtensionId[] = "mbflcebpggnecokmikipoihdbecnjfoj";
@@ -68,8 +72,8 @@ storage::FileSystemURL CreateFileSystemURL(const std::string& mount_point_name,
 
 class FileSystemProviderFileStreamWriter : public testing::Test {
  protected:
-  FileSystemProviderFileStreamWriter() {}
-  ~FileSystemProviderFileStreamWriter() override {}
+  FileSystemProviderFileStreamWriter() = default;
+  ~FileSystemProviderFileStreamWriter() override = default;
 
   void SetUp() override {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
@@ -131,10 +135,8 @@ class FileSystemProviderFileStreamWriter : public testing::Test {
   content::BrowserTaskEnvironment task_environment_;
   base::ScopedTempDir data_dir_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
-  raw_ptr<TestingProfile, ExperimentalAsh>
-      profile_;  // Owned by TestingProfileManager.
-  raw_ptr<FakeProvidedFileSystem, ExperimentalAsh>
-      provided_file_system_;  // Owned by Service.
+  raw_ptr<TestingProfile> profile_;  // Owned by TestingProfileManager.
+  raw_ptr<FakeProvidedFileSystem> provided_file_system_;  // Owned by Service.
   storage::FileSystemURL file_url_;
   storage::FileSystemURL wrong_file_url_;
 };
@@ -333,5 +335,4 @@ TEST_F(FileSystemProviderFileStreamWriter, Write_Append) {
   EXPECT_EQ(expected_contents, entry->contents);
 }
 
-}  // namespace file_system_provider
-}  // namespace ash
+}  // namespace ash::file_system_provider

@@ -12,164 +12,50 @@
       "permission:os.diagnostics"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
-  },
-  "os.diagnostics.runBluetoothPowerRoutine": {
-    "dependencies": [
-      "permission:os.diagnostics.runBluetoothPowerRoutine"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
   },
   "os.events": {
     "dependencies": [
       "permission:os.events"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
   },
-  "os.events.onTouchpadButtonEvent": {
+  "os.management": {
+    // Right now Management API is limited to audio control.
     "dependencies": [
-      "permission:os.events"
+      "permission:os.management.audio"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
+    "platforms": ["chromeos"],
+    "channel": "stable"
   },
-  "os.events.onTouchpadTouchEvent": {
+  "os.management.setAudioGain": {
     "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
+      "permission:os.management.audio"
+    ]
   },
-  "os.events.onTouchpadConnectedEvent": {
+  "os.management.setAudioVolume": {
     "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
-  },
-  "os.events.onStylusGarageEvent": {
-    "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
-  },
-  "os.events.onExternalDisplayEvent": {
-    "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
-  },
-  "os.events.onStylusTouchEvent": {
-    "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
-  },
-  "os.events.onStylusConnectedEvent": {
-    "dependencies": [
-      "permission:os.events"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
+      "permission:os.management.audio"
+    ]
   },
   "os.telemetry": {
     "dependencies": [
       "permission:os.telemetry"
     ],
     "contexts": [
-      "blessed_extension"
+      "privileged_extension"
     ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
+    "platforms": ["chromeos"],
     "channel": "stable"
-  },
-  "os.telemetry.getDisplayInfo": {
-    "dependencies": [
-      "permission:os.telemetry"
-    ],
-    "contexts": [
-      "blessed_extension"
-    ],
-    "platforms": [
-      "chromeos",
-      "lacros"
-    ],
-    "channel": "stable",
-    "feature_flag": "TelemetryExtensionPendingApprovalApi"
   }
 }

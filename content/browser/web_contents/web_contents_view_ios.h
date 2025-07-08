@@ -63,7 +63,6 @@ class WebContentsViewIOS : public WebContentsView,
   void SetOverscrollControllerEnabled(bool enabled) override;
   void OnCapturerCountChanged() override;
   void FullscreenStateChanged(bool is_fullscreen) override;
-  void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) override;
   int GetTopControlsHeight() const override;
   int GetTopControlsMinHeight() const override;
   int GetBottomControlsHeight() const override;
@@ -71,16 +70,20 @@ class WebContentsViewIOS : public WebContentsView,
   bool ShouldAnimateBrowserControlsHeightChanges() const override;
   bool DoBrowserControlsShrinkRendererSize() const override;
   bool OnlyExpandTopControlsAtPageTop() const override;
+  BackForwardTransitionAnimationManager*
+  GetBackForwardTransitionAnimationManager() override;
+  void DestroyBackForwardTransitionAnimationManager() override;
 
   // RenderViewHostDelegateView:
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
+  void ShowContextMenu(RenderFrameHost& render_frame_host,
+                       const ContextMenuParams& params) override;
 
   void ShowPopupMenu(
       RenderFrameHost* render_frame_host,
       mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
       const gfx::Rect& bounds,
-      int item_height,
       double item_font_size,
       int selected_item,
       std::vector<blink::mojom::MenuItemPtr> menu_items,

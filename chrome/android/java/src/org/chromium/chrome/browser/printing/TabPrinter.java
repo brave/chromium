@@ -6,12 +6,16 @@ package org.chromium.chrome.browser.printing;
 
 import android.text.TextUtils;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.pdf.PdfPage;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.printing.Printable;
@@ -21,10 +25,11 @@ import java.lang.ref.WeakReference;
 /**
  * Wraps printing related functionality of a {@link Tab} object.
  *
- * This class doesn't have any lifetime expectations with regards to Tab, since we keep a weak
+ * <p>This class doesn't have any lifetime expectations with regards to Tab, since we keep a weak
  * reference.
  */
 @JNINamespace("printing")
+@NullMarked
 public class TabPrinter implements Printable {
     private static final String TAG = "printing";
 
@@ -38,7 +43,7 @@ public class TabPrinter implements Printable {
     }
 
     public TabPrinter(Tab tab) {
-        mTab = new WeakReference<Tab>(tab);
+        mTab = new WeakReference<>(tab);
         mDefaultTitle = ContextUtils.getApplicationContext().getString(R.string.menu_print);
         mErrorMessage =
                 ContextUtils.getApplicationContext().getString(R.string.error_printing_failed);
@@ -69,7 +74,7 @@ public class TabPrinter implements Printable {
     @Override
     public boolean canPrint() {
         Tab tab = mTab.get();
-        if (tab == null || !tab.isInitialized()) {
+        if (tab == null || !tab.isInitialized() || tab.isHidden()) {
             // Tab.isInitialized() will be false if tab is in destroy process.
             Log.d(TAG, "Tab is not avaliable for printing.");
             return false;
@@ -82,8 +87,21 @@ public class TabPrinter implements Printable {
         return mErrorMessage;
     }
 
+    @Override
+    public @Nullable String getPdfFilePath() {
+        Tab tab = mTab.get();
+        if (tab == null || !tab.isInitialized()) {
+            return null;
+        }
+        if (tab.isNativePage() && tab.getNativePage() instanceof PdfPage) {
+            return tab.getNativePage().getCanonicalFilepath();
+        } else {
+            return null;
+        }
+    }
+
     @NativeMethods
     interface Natives {
-        boolean print(WebContents webContents, int renderProcessId, int renderFrameId);
+        boolean print(@Nullable WebContents webContents, int renderProcessId, int renderFrameId);
     }
 }

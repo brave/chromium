@@ -8,14 +8,17 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/containers/cxx20_erase.h"
+#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_view_util.h"
 #include "content/browser/devtools/auction_worklet_devtools_agent_host.h"
+#include "content/browser/devtools/dedicated_worker_devtools_agent_host.h"
 #include "content/browser/devtools/devtools_http_handler.h"
 #include "content/browser/devtools/devtools_manager.h"
 #include "content/browser/devtools/devtools_pipe_handler.h"
@@ -25,9 +28,11 @@
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
+#include "content/browser/devtools/shared_storage_worklet_devtools_manager.h"
 #include "content/browser/devtools/shared_worker_devtools_agent_host.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
 #include "content/browser/devtools/web_contents_devtools_agent_host.h"
+#include "content/browser/devtools/worker_or_worklet_devtools_agent_host.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -38,9 +43,10 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 
 #if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
 #include <fcntl.h>
 #include <io.h>
-#include <windows.h>
 #endif
 
 namespace content {
@@ -128,6 +134,9 @@ const char DevToolsAgentHost::kTypeFrame[] = "iframe";
 const char DevToolsAgentHost::kTypeDedicatedWorker[] = "worker";
 const char DevToolsAgentHost::kTypeSharedWorker[] = "shared_worker";
 const char DevToolsAgentHost::kTypeServiceWorker[] = "service_worker";
+const char DevToolsAgentHost::kTypeWorklet[] = "worklet";
+const char DevToolsAgentHost::kTypeSharedStorageWorklet[] =
+    "shared_storage_worklet";
 const char DevToolsAgentHost::kTypeBrowser[] = "browser";
 const char DevToolsAgentHost::kTypeGuest[] = "webview";
 const char DevToolsAgentHost::kTypeOther[] = "other";
@@ -171,8 +180,9 @@ DevToolsAgentHost::List DevToolsAgentHost::GetOrCreateAll() {
   for (const auto& host : service_list)
     result.push_back(host);
 
-  // TODO(dgozman): we should add dedicated workers here, but clients are not
-  // ready.
+  SharedStorageWorkletDevToolsManager::GetInstance()->AddAllAgentHosts(&result);
+
+  DedicatedWorkerDevToolsAgentHost::AddAllAgentHosts(&result);
   RenderFrameDevToolsAgentHost::AddAllAgentHosts(&result);
   WebContentsDevToolsAgentHost::AddAllAgentHosts(&result);
 
@@ -182,8 +192,7 @@ DevToolsAgentHost::List DevToolsAgentHost::GetOrCreateAll() {
 #if DCHECK_IS_ON()
   for (auto it : result) {
     DevToolsAgentHostImpl* host = static_cast<DevToolsAgentHostImpl*>(it.get());
-    DCHECK(GetDevtoolsInstances().find(host->id_) !=
-           GetDevtoolsInstances().end());
+    DCHECK(base::Contains(GetDevtoolsInstances(), host->id_));
   }
 #endif
 
@@ -285,21 +294,15 @@ DevToolsSession* DevToolsAgentHostImpl::SessionByClient(
 
 bool DevToolsAgentHostImpl::AttachInternal(
     std::unique_ptr<DevToolsSession> session_owned) {
-  return AttachInternal(std::move(session_owned), true);
-}
-
-bool DevToolsAgentHostImpl::AttachInternal(
-    std::unique_ptr<DevToolsSession> session_owned,
-    bool acquire_wake_lock) {
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
   DevToolsSession* session = session_owned.get();
   session->SetAgentHost(this);
-  if (!AttachSession(session, acquire_wake_lock))
+  if (!AttachSession(session)) {
     return false;
+  }
   renderer_channel_.AttachSession(session);
   sessions_.push_back(session);
-  DCHECK(session_by_client_.find(session->GetClient()) ==
-         session_by_client_.end());
+  DCHECK(!base::Contains(session_by_client_, session->GetClient()));
   session_by_client_.emplace(session->GetClient(), std::move(session_owned));
   if (sessions_.size() == 1)
     NotifyAttached();
@@ -313,17 +316,7 @@ bool DevToolsAgentHostImpl::AttachClient(DevToolsAgentHostClient* client) {
   if (SessionByClient(client))
     return false;
   return AttachInternal(
-      std::make_unique<DevToolsSession>(client, GetSessionMode()),
-      /*acquire_wake_lock=*/true);
-}
-
-bool DevToolsAgentHostImpl::AttachClientWithoutWakeLock(
-    content::DevToolsAgentHostClient* client) {
-  if (SessionByClient(client))
-    return false;
-  return AttachInternal(
-      std::make_unique<DevToolsSession>(client, GetSessionMode()),
-      /*acquire_wake_lock=*/false);
+      std::make_unique<DevToolsSession>(client, GetSessionMode()));
 }
 
 bool DevToolsAgentHostImpl::DetachClient(DevToolsAgentHostClient* client) {
@@ -349,7 +342,7 @@ void DevToolsAgentHostImpl::DetachInternal(DevToolsSession* session) {
   DCHECK_EQ(session, session_owned.get());
   // Make sure we dispose session prior to reporting it to the host.
   session->Dispose();
-  base::Erase(sessions_, session);
+  std::erase(sessions_, session);
   session_by_client_.erase(session->GetClient());
   DetachSession(session);
   DevToolsManager* manager = DevToolsManager::GetInstance();
@@ -369,12 +362,6 @@ void DevToolsAgentHostImpl::InspectElement(RenderFrameHost* frame_host,
                                            int x,
                                            int y) {}
 
-void DevToolsAgentHostImpl::GetUniqueFormControlId(
-    int node_id,
-    GetUniqueFormControlIdCallback callback) {
-  NOTREACHED();
-}
-
 std::string DevToolsAgentHostImpl::GetId() {
   return id_;
 }
@@ -383,8 +370,7 @@ std::string DevToolsAgentHostImpl::CreateIOStreamFromData(
     scoped_refptr<base::RefCountedMemory> data) {
   scoped_refptr<DevToolsStreamFile> stream =
       DevToolsStreamFile::Create(GetIOContext(), true /* binary */);
-  std::string text(reinterpret_cast<const char*>(data->front()), data->size());
-  stream->Append(std::make_unique<std::string>(text));
+  stream->Append(std::make_unique<std::string>(base::as_string_view(*data)));
   return stream->handle();
 }
 
@@ -462,6 +448,9 @@ DevToolsAgentHostImpl::ForceDetachAllSessionsImpl() {
   return retain_this;
 }
 
+void DevToolsAgentHostImpl::MainThreadDebuggerPaused() {}
+void DevToolsAgentHostImpl::MainThreadDebuggerResumed() {}
+
 void DevToolsAgentHostImpl::ForceDetachRestrictedSessions(
     const std::vector<DevToolsSession*>& restricted_sessions) {
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
@@ -473,8 +462,7 @@ void DevToolsAgentHostImpl::ForceDetachRestrictedSessions(
   }
 }
 
-bool DevToolsAgentHostImpl::AttachSession(DevToolsSession* session,
-                                          bool acquire_wake_lock) {
+bool DevToolsAgentHostImpl::AttachSession(DevToolsSession* session) {
   return false;
 }
 
@@ -527,7 +515,7 @@ std::string DevToolsAgentHostImpl::GetSubtype() {
 }
 
 void DevToolsAgentHostImpl::NotifyCreated() {
-  DCHECK(GetDevtoolsInstances().find(id_) == GetDevtoolsInstances().end());
+  DCHECK(!base::Contains(GetDevtoolsInstances(), id_));
   GetDevtoolsInstances()[id_] = this;
   for (auto& observer : GetDevtoolsObservers())
     observer.DevToolsAgentHostCreated(this);
@@ -554,7 +542,7 @@ void DevToolsAgentHostImpl::NotifyCrashed(base::TerminationStatus status) {
 }
 
 void DevToolsAgentHostImpl::NotifyDestroyed() {
-  DCHECK(GetDevtoolsInstances().find(id_) != GetDevtoolsInstances().end());
+  DCHECK(base::Contains(GetDevtoolsInstances(), id_));
   for (auto& observer : GetDevtoolsObservers())
     observer.DevToolsAgentHostDestroyed(this);
   GetDevtoolsInstances().erase(id_);
@@ -609,19 +597,19 @@ RenderProcessHost* DevToolsAgentHostImpl::GetProcessHost() {
   return nullptr;
 }
 
-absl::optional<network::CrossOriginEmbedderPolicy>
+std::optional<network::CrossOriginEmbedderPolicy>
 DevToolsAgentHostImpl::cross_origin_embedder_policy(const std::string& id) {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<network::CrossOriginOpenerPolicy>
+std::optional<network::CrossOriginOpenerPolicy>
 DevToolsAgentHostImpl::cross_origin_opener_policy(const std::string& id) {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<std::vector<network::mojom::ContentSecurityPolicyHeader>>
+std::optional<std::vector<network::mojom::ContentSecurityPolicyHeader>>
 DevToolsAgentHostImpl::content_security_policy(const std::string& id) {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 protocol::TargetAutoAttacher* DevToolsAgentHostImpl::auto_attacher() {

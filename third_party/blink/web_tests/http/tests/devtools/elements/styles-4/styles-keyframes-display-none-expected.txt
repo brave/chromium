@@ -15,10 +15,14 @@ element.style { ()
         animation-fill-mode: ;
         animation-play-state: ;
         animation-name: ;
+        animation-timeline: ;
+        animation-range-start: ;
+        animation-range-end: ;
 
 [expanded] 
 div { (user agent stylesheet)
     display: block;
+    unicode-bidi: isolate;
 
 ======== @keyframes animName ========
 [expanded] 
@@ -52,6 +56,7 @@ element.style { ()
 [expanded] 
 div { (user agent stylesheet)
 /-- overloaded --/     display: block;
+    unicode-bidi: isolate;
 
 ======== @keyframes animName ========
 [expanded] 

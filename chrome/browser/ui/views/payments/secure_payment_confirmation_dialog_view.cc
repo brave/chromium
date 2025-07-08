@@ -5,23 +5,30 @@
 #include "chrome/browser/ui/views/payments/secure_payment_confirmation_dialog_view.h"
 
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/extensions/security_dialog_tracker.h"
 #include "chrome/browser/ui/views/payments/payment_request_views_util.h"
 #include "chrome/browser/ui/views/payments/secure_payment_confirmation_views_util.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/payments/content/payment_ui_observer.h"
 #include "components/payments/content/secure_payment_confirmation_model.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/sizes.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/border.h"
+#include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
-#include "ui/views/controls/progress_bar.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/layout_provider.h"
@@ -29,21 +36,13 @@
 #include "ui/views/style/typography.h"
 
 namespace payments {
+
 namespace {
 
-// Records UMA metric for the authentication dialog result.
-void RecordAuthenticationDialogResult(
-    const SecurePaymentConfirmationAuthenticationDialogResult result) {
-  base::UmaHistogramEnumeration(
-      "PaymentRequest.SecurePaymentConfirmation.Funnel."
-      "AuthenticationDialogResult",
-      result);
-}
-
 class BorderedRowView : public views::View {
- public:
-  METADATA_HEADER(BorderedRowView);
+  METADATA_HEADER(BorderedRowView, views::View)
 
+ public:
   void OnThemeChanged() override {
     View::OnThemeChanged();
     SetBorder(views::CreateSolidSidedBorder(
@@ -52,8 +51,26 @@ class BorderedRowView : public views::View {
   }
 };
 
-BEGIN_METADATA(BorderedRowView, views::View)
+BEGIN_METADATA(BorderedRowView)
 END_METADATA
+
+std::unique_ptr<views::View> CreateSpacer(
+    views::DistanceMetric vertical_distance) {
+  return views::Builder<views::View>()
+      .SetPreferredSize(gfx::Size(
+          /*width=*/1,
+          views::LayoutProvider::Get()->GetDistanceMetric(vertical_distance)))
+      .Build();
+}
+
+void UpdateProgressBarVisiblity(views::BubbleFrameView* bubble_frame_view,
+                                bool visible) {
+  if (bubble_frame_view) {
+    // -1 indicates an infinitely animating progress
+    bubble_frame_view->SetProgress(visible ? std::optional<double>(-1)
+                                           : std::nullopt);
+  }
+}
 
 }  // namespace
 
@@ -111,20 +128,26 @@ void SecurePaymentConfirmationDialogView::ShowDialog(
       base::BindOnce(&SecurePaymentConfirmationDialogView::OnDialogClosed,
                      weak_ptr_factory_.GetWeakPtr()));
 
-  SetModalType(ui::MODAL_TYPE_CHILD);
+  SetModalType(ui::mojom::ModalType::kChild);
 
-  constrained_window::ShowWebModalDialogViews(this, web_contents);
+  views::Widget* widget =
+      constrained_window::ShowWebModalDialogViews(this, web_contents);
+  extensions::SecurityDialogTracker::GetInstance()->AddSecurityDialog(widget);
+  occlusion_observation_.Observe(widget);
+
+  // The progress bar doesn't exist until after ShowWebModalDialogViews, so we
+  // have to update it here in case it starts visible.
+  UpdateProgressBarVisiblity(GetBubbleFrameView(),
+                             model_->progress_bar_visible());
 
   // ui_observer_for_test_ is used in platform browsertests.
-  if (ui_observer_for_test_)
+  if (ui_observer_for_test_) {
     ui_observer_for_test_->OnUIDisplayed();
+  }
 }
 
 void SecurePaymentConfirmationDialogView::OnDialogAccepted() {
   std::move(verify_callback_).Run();
-  RecordAuthenticationDialogResult(
-      SecurePaymentConfirmationAuthenticationDialogResult::kAccepted);
-
   if (observer_for_test_) {
     observer_for_test_->OnConfirmButtonPressed();
     observer_for_test_->OnDialogClosed();
@@ -133,9 +156,6 @@ void SecurePaymentConfirmationDialogView::OnDialogAccepted() {
 
 void SecurePaymentConfirmationDialogView::OnDialogCancelled() {
   std::move(cancel_callback_).Run();
-  RecordAuthenticationDialogResult(
-      SecurePaymentConfirmationAuthenticationDialogResult::kCanceled);
-
   if (observer_for_test_) {
     observer_for_test_->OnCancelButtonPressed();
     observer_for_test_->OnDialogClosed();
@@ -149,8 +169,6 @@ void SecurePaymentConfirmationDialogView::OnDialogClosed() {
   // in the latter the opt-out callback will trigger from OnOptOutClicked.
   if (!model_->opt_out_clicked()) {
     std::move(cancel_callback_).Run();
-    RecordAuthenticationDialogResult(
-        SecurePaymentConfirmationAuthenticationDialogResult::kClosed);
   }
 
   if (observer_for_test_) {
@@ -162,22 +180,20 @@ void SecurePaymentConfirmationDialogView::OnOptOutClicked() {
   if (observer_for_test_) {
     observer_for_test_->OnOptOutClicked();
   }
-
   std::move(opt_out_callback_).Run();
-  RecordAuthenticationDialogResult(
-      SecurePaymentConfirmationAuthenticationDialogResult::kOptOut);
 }
 
 void SecurePaymentConfirmationDialogView::OnModelUpdated() {
-  views::View* progress_bar =
-      GetViewByID(static_cast<int>(DialogViewID::PROGRESS_BAR));
-  if (progress_bar)
-    progress_bar->SetVisible(model_->progress_bar_visible());
+  UpdateProgressBarVisiblity(GetBubbleFrameView(),
+                             model_->progress_bar_visible());
 
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, model_->verify_button_label());
-  SetButtonEnabled(ui::DIALOG_BUTTON_OK, model_->verify_button_enabled());
-  SetButtonLabel(ui::DIALOG_BUTTON_CANCEL, model_->cancel_button_label());
-  SetButtonEnabled(ui::DIALOG_BUTTON_CANCEL, model_->cancel_button_enabled());
+  SetButtonLabel(ui::mojom::DialogButton::kOk, model_->verify_button_label());
+  SetButtonEnabled(ui::mojom::DialogButton::kOk,
+                   model_->verify_button_enabled());
+  SetButtonLabel(ui::mojom::DialogButton::kCancel,
+                 model_->cancel_button_label());
+  SetButtonEnabled(ui::mojom::DialogButton::kCancel,
+                   model_->cancel_button_enabled());
 
   SetAccessibleTitle(model_->title());
   UpdateLabelView(DialogViewID::TITLE, model_->title());
@@ -200,12 +216,12 @@ void SecurePaymentConfirmationDialogView::OnModelUpdated() {
       gfx::ImageSkia image =
           gfx::ImageSkia::CreateFrom1xBitmap(*model_->instrument_icon())
               .DeepCopy();
-      image_view->SetImage(image);
+      image_view->SetImage(ui::ImageModel::FromImageSkia(image));
     }
     if (model_->instrument_icon()->drawsNothing()) {
       image_view->SetImage(ui::ImageModel::FromVectorIcon(
           kCreditCardIcon, ui::kColorDialogForeground,
-          kSecurePaymentConfirmationInstrumentIconDefaultWidthPx));
+          kSecurePaymentConfirmationIconDefaultWidthPx));
     }
   }
 
@@ -224,13 +240,15 @@ void SecurePaymentConfirmationDialogView::UpdateLabelView(
 }
 
 void SecurePaymentConfirmationDialogView::HideDialog() {
-  if (GetWidget())
+  if (GetWidget()) {
     GetWidget()->Close();
+  }
 }
 
 bool SecurePaymentConfirmationDialogView::ClickOptOutForTesting() {
-  if (!model_->opt_out_visible())
+  if (!model_->opt_out_visible()) {
     return false;
+  }
   OnOptOutClicked();
   return true;
 }
@@ -246,7 +264,7 @@ bool SecurePaymentConfirmationDialogView::Accept() {
   // WebAuthn dialog is showing over the SPC one. If opt-out support wasn't
   // requested by the SPC caller, it won't be visible and doesn't need disabled.
   //
-  // TODO(crbug.com/1325854): Even disabled this link still looks clickable
+  // TODO(crbug.com/40225659): Even disabled this link still looks clickable
   // (underline disappears, but color doesn't change). Force style the color?
   if (opt_out_view_->GetVisible()) {
     opt_out_view_->SetEnabled(false);
@@ -269,8 +287,7 @@ void SecurePaymentConfirmationDialogView::InitChildViews() {
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
 
-  AddChildView(CreateSecurePaymentConfirmationHeaderView(
-      static_cast<int>(DialogViewID::PROGRESS_BAR),
+  AddChildView(CreateSecurePaymentConfirmationHeaderIcon(
       static_cast<int>(DialogViewID::HEADER_ICON)));
 
   AddChildView(CreateBodyView());
@@ -312,6 +329,9 @@ SecurePaymentConfirmationDialogView::CreateBodyView() {
       CreateSecurePaymentConfirmationTitleLabel(model_->title());
   title_text->SetID(static_cast<int>(DialogViewID::TITLE));
   body_view->AddChildView(std::move(title_text));
+
+  body_view->AddChildView(
+      CreateSpacer(views::DISTANCE_RELATED_CONTROL_VERTICAL));
 
   body_view->AddChildView(CreateRowView(
       model_->merchant_label(), DialogViewID::MERCHANT_LABEL,
@@ -363,7 +383,7 @@ std::unique_ptr<views::View> SecurePaymentConfirmationDialogView::CreateRowView(
         views::TableLayout::kFixedSize,
         views::TableLayout::ColumnSize::kUsePreferred,
         /*fixed_width=*/0,
-        /*min_width=*/kSecurePaymentConfirmationInstrumentIconDefaultWidthPx);
+        /*min_width=*/kSecurePaymentConfirmationIconDefaultWidthPx);
     layout->AddPaddingColumn(views::TableLayout::kFixedSize,
                              ChromeLayoutProvider::Get()->GetDistanceMetric(
                                  views::DISTANCE_RELATED_LABEL_HORIZONTAL));
@@ -385,26 +405,34 @@ std::unique_ptr<views::View> SecurePaymentConfirmationDialogView::CreateRowView(
   row->AddChildView(std::move(label_text));
 
   if (icon) {
-    instrument_icon_ = model_->instrument_icon();
-    instrument_icon_generation_id_ =
-        model_->instrument_icon()->getGenerationID();
+    gfx::ImageSkia skia_icon;
 
-    std::unique_ptr<views::ImageView> icon_view;
-    // The instrument icon may be empty, if it couldn't be downloaded/decoded
-    // and iconMustBeShown was set to false. In that case, use a default icon.
-    // The actual display color is set based on the theme in OnThemeChanged.
-    if (instrument_icon_->drawsNothing()) {
-      icon_view = CreateSecurePaymentConfirmationInstrumentIconView(
-          gfx::CreateVectorIcon(
-              kCreditCardIcon,
-              kSecurePaymentConfirmationInstrumentIconDefaultWidthPx,
-              gfx::kPlaceholderColor));
+    // TODO(crbug.com/333945861): CreateRowView shouldn't need to know to do
+    // clever things with the instrument icon. The empty icon should be resolved
+    // before calling this method.
+    if (icon_id == DialogViewID::INSTRUMENT_ICON) {
+      instrument_icon_ = model_->instrument_icon();
+      instrument_icon_generation_id_ =
+          model_->instrument_icon()->getGenerationID();
+
+      // The instrument icon may be empty, if it couldn't be downloaded/decoded
+      // and iconMustBeShown was set to false. In that case, use a default icon.
+      // The actual display color is set based on the theme in OnThemeChanged.
+      if (instrument_icon_->drawsNothing()) {
+        skia_icon = gfx::CreateVectorIcon(
+            kCreditCardIcon, kSecurePaymentConfirmationIconDefaultWidthPx,
+            gfx::kPlaceholderColor);
+      } else {
+        skia_icon =
+            gfx::ImageSkia::CreateFrom1xBitmap(*model_->instrument_icon())
+                .DeepCopy();
+      }
     } else {
-      icon_view = CreateSecurePaymentConfirmationInstrumentIconView(
-          gfx::ImageSkia::CreateFrom1xBitmap(*model_->instrument_icon())
-              .DeepCopy());
+      skia_icon = gfx::ImageSkia::CreateFrom1xBitmap(*icon).DeepCopy();
     }
 
+    std::unique_ptr<views::ImageView> icon_view =
+        CreateSecurePaymentConfirmationIconView(std::move(skia_icon));
     icon_view->SetID(static_cast<int>(icon_id));
     row->AddChildView(std::move(icon_view));
   }
@@ -420,7 +448,18 @@ std::unique_ptr<views::View> SecurePaymentConfirmationDialogView::CreateRowView(
   return row;
 }
 
-BEGIN_METADATA(SecurePaymentConfirmationDialogView, views::DialogDelegateView)
+void SecurePaymentConfirmationDialogView::OnOcclusionStateChanged(
+    bool occluded) {
+  if (occluded) {
+    SetEnabled(false);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&SecurePaymentConfirmationDialogView::HideDialog,
+                       weak_ptr_factory_.GetWeakPtr()));
+  }
+}
+
+BEGIN_METADATA(SecurePaymentConfirmationDialogView)
 END_METADATA
 
 }  // namespace payments

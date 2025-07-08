@@ -4,11 +4,15 @@
 
 package org.chromium.components.browser_ui.photo_picker;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+
 import android.content.ContentResolver;
 import android.net.Uri;
 
 import androidx.activity.OnBackPressedCallback;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.widget.FullscreenAlertDialog;
 import org.chromium.ui.base.PhotoPicker;
 import org.chromium.ui.base.PhotoPickerListener;
@@ -17,19 +21,18 @@ import org.chromium.ui.base.WindowAndroid;
 import java.util.List;
 
 /**
- * UI for the photo chooser that shows on the Android platform as a result of
- * &lt;input type=file accept=image &gt; form element.
+ * UI for the photo chooser that shows on the Android platform as a result of &lt;input type=file
+ * accept=image &gt; form element.
  */
+@NullMarked
 public class PhotoPickerDialog extends FullscreenAlertDialog
         implements PhotoPickerToolbar.PhotoPickerToolbarDelegate, PhotoPicker {
-    // Our window.
-    private WindowAndroid mWindowAndroid;
 
     // The category we're showing photos for.
-    private PickerCategoryView mCategoryView;
+    private final PickerCategoryView mCategoryView;
 
     // A wrapper around the listener object, watching to see if an external intent is launched.
-    private PhotoPickerListenerWrapper mListenerWrapper;
+    private final PhotoPickerListenerWrapper mListenerWrapper;
 
     // Whether the wait for an external intent launch is over.
     private boolean mDoneWaitingForExternalIntent;
@@ -40,21 +43,20 @@ public class PhotoPickerDialog extends FullscreenAlertDialog
      */
     private static class PhotoPickerListenerWrapper implements PhotoPickerListener {
         // The {@link PhotoPickerListener} to forward the events to.
-        PhotoPickerListener mListener;
+        final PhotoPickerListener mListener;
 
         // Whether the user selected to launch an external intent.
         private boolean mExternalIntentSelected;
 
-        /**
-         * The constructor, supplying the {@link PhotoPickerListener} object to encapsulate.
-         */
+        /** The constructor, supplying the {@link PhotoPickerListener} object to encapsulate. */
         public PhotoPickerListenerWrapper(PhotoPickerListener listener) {
             mListener = listener;
         }
 
         // PhotoPickerListener:
         @Override
-        public void onPhotoPickerUserAction(@PhotoPickerAction int action, Uri[] photos) {
+        public void onPhotoPickerUserAction(
+                @PhotoPickerAction int action, Uri @Nullable [] photos) {
             mExternalIntentSelected = false;
             if (action == PhotoPickerAction.LAUNCH_GALLERY
                     || action == PhotoPickerAction.LAUNCH_CAMERA) {
@@ -69,9 +71,7 @@ public class PhotoPickerDialog extends FullscreenAlertDialog
             mListener.onPhotoPickerDismissed();
         }
 
-        /**
-         * Returns whether the user picked an external intent to launch.
-         */
+        /** Returns whether the user picked an external intent to launch. */
         public boolean externalIntentSelected() {
             return mExternalIntentSelected;
         }
@@ -79,18 +79,23 @@ public class PhotoPickerDialog extends FullscreenAlertDialog
 
     /**
      * The PhotoPickerDialog constructor.
+     *
      * @param windowAndroid The window of the hosting Activity.
      * @param contentResolver The ContentResolver to use to retrieve image metadata from disk.
      * @param listener The listener object that gets notified when an action is taken.
      * @param multiSelectionAllowed Whether the photo picker should allow multiple items to be
-     *                              selected.
+     *     selected.
      * @param mimeTypes A list of mime types to show in the dialog.
      */
-    public PhotoPickerDialog(WindowAndroid windowAndroid, ContentResolver contentResolver,
-            PhotoPickerListener listener, boolean multiSelectionAllowed, List<String> mimeTypes) {
-        super(windowAndroid.getContext().get());
+    public PhotoPickerDialog(
+            WindowAndroid windowAndroid,
+            ContentResolver contentResolver,
+            PhotoPickerListener listener,
+            boolean multiSelectionAllowed,
+            List<String> mimeTypes,
+            boolean shouldPadForContent) {
+        super(assertNonNull(windowAndroid.getContext().get()), shouldPadForContent);
 
-        mWindowAndroid = windowAndroid;
         mListenerWrapper = new PhotoPickerListenerWrapper(listener);
 
         // Initialize the main content view.
@@ -98,17 +103,20 @@ public class PhotoPickerDialog extends FullscreenAlertDialog
                 new PickerCategoryView(windowAndroid, contentResolver, multiSelectionAllowed, this);
         mCategoryView.initialize(this, mListenerWrapper, mimeTypes);
         setView(mCategoryView);
-        getOnBackPressedDispatcher().addCallback(new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                // Pressing Back when a video is playing, should only end the video playback.
-                boolean videoWasStopped = mCategoryView.closeVideoPlayer();
-                if (!videoWasStopped) {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
-                }
-            }
-        });
+        getOnBackPressedDispatcher()
+                .addCallback(
+                        new OnBackPressedCallback(true) {
+                            @Override
+                            public void handleOnBackPressed() {
+                                // Pressing Back when a video is playing, should only end the video
+                                // playback.
+                                boolean videoWasStopped = mCategoryView.closeVideoPlayer();
+                                if (!videoWasStopped) {
+                                    setEnabled(false);
+                                    getOnBackPressedDispatcher().onBackPressed();
+                                }
+                            }
+                        });
     }
 
     @Override
@@ -120,9 +128,7 @@ public class PhotoPickerDialog extends FullscreenAlertDialog
         }
     }
 
-    /**
-     * Cancels the dialog in response to a back navigation.
-     */
+    /** Cancels the dialog in response to a back navigation. */
     @Override
     public void onNavigationBackCallback() {
         cancel();

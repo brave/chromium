@@ -17,4 +17,8 @@ enum RendererEvictionReason {
   kNetworkRequestTimeout,
   // Network request buffers too much data.
   kNetworkExceedsBufferLimit,
+  // Broadcast channel in back/forward cache received a message.
+  kBroadcastChannelOnMessage,
+  // Message from SharedWorker to a page in BFCache.
+  kSharedWorkerMessage,
 };

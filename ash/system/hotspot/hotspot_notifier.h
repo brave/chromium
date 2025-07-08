@@ -34,7 +34,6 @@ class ASH_EXPORT HotspotNotifier
   HotspotNotifier& operator=(const HotspotNotifier&) = delete;
   ~HotspotNotifier() override;
 
-  static const char kWiFiTurnedOffNotificationId[];
   static const char kAdminRestrictedNotificationId[];
   static const char kWiFiTurnedOnNotificationId[];
   static const char kAutoDisabledNotificationId[];
@@ -45,7 +44,7 @@ class ASH_EXPORT HotspotNotifier
   friend class HotspotNotifierTest;
 
   // HotspotEnabledStateObserver:
-  void OnHotspotTurnedOn(bool wifi_turned_off) override;
+  void OnHotspotTurnedOn() override;
   void OnHotspotTurnedOff(
       hotspot_config::mojom::DisableReason disable_reason) override;
 
@@ -62,18 +61,18 @@ class ASH_EXPORT HotspotNotifier
   void OnGetHotspotInfo(hotspot_config::mojom::HotspotInfoPtr hotspot_info);
 
   void DisableHotspotHandler(const char* notification_id,
-                             absl::optional<int> index);
+                             std::optional<int> index);
 
   std::unique_ptr<message_center::Notification> CreateNotification(
       const std::u16string& title_id,
       const std::u16string& message_id,
       const char* notification_id,
+      const bool use_hotspot_icon,
       scoped_refptr<message_center::NotificationDelegate> delegate);
 
   void EnableHotspotHandler(const char* notification_id,
-                            absl::optional<int> index);
-  void EnableWiFiHandler(const char* notification_id,
-                         absl::optional<int> index);
+                            std::optional<int> index);
+  void EnableWiFiHandler(const char* notification_id, std::optional<int> index);
 
   mojo::Remote<hotspot_config::mojom::CrosHotspotConfig>
       remote_cros_hotspot_config_;
@@ -85,6 +84,9 @@ class ASH_EXPORT HotspotNotifier
       hotspot_enabled_state_observer_receiver_{this};
   mojo::Receiver<hotspot_config::mojom::CrosHotspotConfigObserver>
       hotspot_config_observer_receiver_{this};
+
+  hotspot_config::mojom::HotspotAllowStatus allow_status_ =
+      hotspot_config::mojom::HotspotAllowStatus::kDisallowedNoMobileData;
 
   base::WeakPtrFactory<HotspotNotifier> weak_ptr_factory_{this};
 };

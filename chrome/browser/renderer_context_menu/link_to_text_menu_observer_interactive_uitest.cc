@@ -2,31 +2,44 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/renderer_context_menu/link_to_text_menu_observer.h"
-
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/enterprise/data_controls/desktop_data_controls_dialog_test_helper.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/renderer_context_menu/link_to_text_menu_observer.h"
 #include "chrome/browser/renderer_context_menu/mock_render_view_context_menu.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/toasts/toast_controller.h"
+#include "chrome/browser/ui/toasts/toast_features.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/enterprise/data_controls/core/browser/test_utils.h"
 #include "components/shared_highlighting/core/common/shared_highlighting_features.h"
 #include "components/shared_highlighting/core/common/shared_highlighting_metrics.h"
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/process_manager.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom-shared.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom-test-utils.h"
 #include "ui/base/clipboard/clipboard.h"
 
 class MockLinkToTextMenuObserver : public LinkToTextMenuObserver {
  public:
   static std::unique_ptr<MockLinkToTextMenuObserver> Create(
       RenderViewContextMenuProxy* proxy,
-      content::GlobalRenderFrameHostId render_frame_host_id) {
+      content::GlobalRenderFrameHostId render_frame_host_id,
+      ToastController* toast_controller) {
     // WebContents can be null in tests.
     content::WebContents* web_contents = proxy->GetWebContents();
     if (web_contents && extensions::ProcessManager::Get(
@@ -36,13 +49,14 @@ class MockLinkToTextMenuObserver : public LinkToTextMenuObserver {
       return nullptr;
     }
 
-    return base::WrapUnique(
-        new MockLinkToTextMenuObserver(proxy, render_frame_host_id));
+    return base::WrapUnique(new MockLinkToTextMenuObserver(
+        proxy, render_frame_host_id, toast_controller));
   }
   MockLinkToTextMenuObserver(
       RenderViewContextMenuProxy* proxy,
-      content::GlobalRenderFrameHostId render_frame_host_id)
-      : LinkToTextMenuObserver(proxy, render_frame_host_id) {}
+      content::GlobalRenderFrameHostId render_frame_host_id,
+      ToastController* toast_controller)
+      : LinkToTextMenuObserver(proxy, render_frame_host_id, toast_controller) {}
 
   void SetGenerationResults(
       std::string selector,
@@ -73,11 +87,54 @@ class MockLinkToTextMenuObserver : public LinkToTextMenuObserver {
   }
 };
 
+class MockAnnotationAgentContainer
+    : public blink::mojom::AnnotationAgentContainerInterceptorForTesting {
+ public:
+  MockAnnotationAgentContainer() : receiver_(this) {}
+
+  // Creates and returns a MockAnnotationAgentContainer instance and installs a
+  // binder to the new instance in `rfh`'s InterfaceProvider (overwriting the
+  // previous binder).
+  static std::unique_ptr<MockAnnotationAgentContainer>
+  InstallMockAnnotationAgentContainer(content::RenderFrameHost* rfh) {
+    service_manager::InterfaceProvider::TestApi test_api(
+        rfh->GetRemoteInterfaces());
+    auto mock = std::make_unique<MockAnnotationAgentContainer>();
+    test_api.SetBinderForName(
+        blink::mojom::AnnotationAgentContainer::Name_,
+        base::BindRepeating(&MockAnnotationAgentContainer::Bind,
+                            base::Unretained(mock.get())));
+    return mock;
+  }
+
+  void Bind(mojo::ScopedMessagePipeHandle handle) {
+    receiver_.Bind(
+        mojo::PendingReceiver<blink::mojom::AnnotationAgentContainer>(
+            std::move(handle)));
+  }
+
+  void FlushForTesting() { receiver_.FlushForTesting(); }
+
+  // blink::mojom::AnnotationAgentContainer overrides
+  MOCK_METHOD(void, RemoveAgentsOfType, (blink::mojom::AnnotationType));
+
+  // blink::mojom::AnnotationAgentContainerInterceptorForTesting overrides
+  blink::mojom::AnnotationAgentContainer* GetForwardingInterface() override {
+    NOTREACHED();
+  }
+
+ private:
+  mojo::Receiver<blink::mojom::AnnotationAgentContainer> receiver_;
+};
+
 namespace {
 
 class LinkToTextMenuObserverTest : public extensions::ExtensionBrowserTest {
  public:
-  LinkToTextMenuObserverTest();
+  LinkToTextMenuObserverTest() {
+    scoped_features_.InitWithFeatures(
+        {toast_features::kLinkToHighlightCopiedToast}, {});
+  }
 
   void SetUpOnMainThread() override {
     extensions::ExtensionBrowserTest::SetUpOnMainThread();
@@ -102,8 +159,9 @@ class LinkToTextMenuObserverTest : public extensions::ExtensionBrowserTest {
 
   void Reset(bool incognito) {
     menu_ = std::make_unique<MockRenderViewContextMenu>(incognito);
-    observer_ =
-        MockLinkToTextMenuObserver::Create(menu_.get(), getRenderFrameHostId());
+    observer_ = MockLinkToTextMenuObserver::Create(
+        menu_.get(), getRenderFrameHostId(),
+        browser()->GetFeatures().toast_controller());
     menu_->SetObserver(observer_.get());
   }
 
@@ -125,16 +183,23 @@ class LinkToTextMenuObserverTest : public extensions::ExtensionBrowserTest {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_features_;
   std::unique_ptr<MockLinkToTextMenuObserver> observer_;
   std::unique_ptr<MockRenderViewContextMenu> menu_;
 };
 
-LinkToTextMenuObserverTest::LinkToTextMenuObserverTest() = default;
 LinkToTextMenuObserverTest::~LinkToTextMenuObserverTest() = default;
 
 }  // namespace
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, AddsCopyMenuItem) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_AddsCopyMenuItem DISABLED_AddsCopyMenuItem
+#else
+#define MAYBE_AddsCopyMenuItem AddsCopyMenuItem
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, MAYBE_AddsCopyMenuItem) {
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/");
   params.selection_text = u"hello world";
@@ -151,10 +216,18 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, AddsCopyMenuItem) {
   EXPECT_FALSE(item.enabled);
 }
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, AddsCopyAndRemoveMenuItems) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_AddsCopyAndRemoveMenuItems DISABLED_AddsCopyAndRemoveMenuItems
+#else
+#define MAYBE_AddsCopyAndRemoveMenuItems AddsCopyAndRemoveMenuItems
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_AddsCopyAndRemoveMenuItems) {
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/");
-  params.opened_from_highlight = true;
+  params.annotation_type = blink::mojom::AnnotationType::kSharedHighlight;
   observer()->SetGenerationResults(
       std::string(), shared_highlighting::LinkGenerationError::kEmptySelection,
       shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
@@ -194,7 +267,14 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, CopiesLinkToText) {
   EXPECT_EQ(u"http://foo.com/#:~:text=hello%20world", text);
 }
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, CopiesLinkForEmptySelector) {
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_CopiesLinkForEmptySelector DISABLED_CopiesLinkForEmptySelector
+#else
+#define MAYBE_CopiesLinkForEmptySelector CopiesLinkForEmptySelector
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_CopiesLinkForEmptySelector) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/");
@@ -207,7 +287,14 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, CopiesLinkForEmptySelector) {
   EXPECT_FALSE(menu()->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT));
 }
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, ReplacesRefInURL) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ReplacesRefInURL DISABLED_ReplacesRefInURL
+#else
+#define MAYBE_ReplacesRefInURL ReplacesRefInURL
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, MAYBE_ReplacesRefInURL) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/#:~:text=hello%20world");
@@ -258,11 +345,20 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, HiddenForExtensions) {
   menu()->set_web_contents(web_contents);
 
   std::unique_ptr<MockLinkToTextMenuObserver> observer =
-      MockLinkToTextMenuObserver::Create(menu(), getRenderFrameHostId());
+      MockLinkToTextMenuObserver::Create(
+          menu(), getRenderFrameHostId(),
+          browser()->GetFeatures().toast_controller());
   EXPECT_EQ(nullptr, observer);
 }
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, Blocklist) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_Blocklist DISABLED_Blocklist
+#else
+#define MAYBE_Blocklist Blocklist
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, MAYBE_Blocklist) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://facebook.com/my-profile");
@@ -272,13 +368,23 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, Blocklist) {
   EXPECT_FALSE(menu()->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT));
 }
 
-IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       SelectionOverlappingHighlightCopiesNewLinkToText) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_SelectionOverlappingHighlightCopiesNewLinkToText \
+  DISABLED_SelectionOverlappingHighlightCopiesNewLinkToText
+#else
+#define MAYBE_SelectionOverlappingHighlightCopiesNewLinkToText \
+  SelectionOverlappingHighlightCopiesNewLinkToText
+#endif
+IN_PROC_BROWSER_TEST_F(
+    LinkToTextMenuObserverTest,
+    MAYBE_SelectionOverlappingHighlightCopiesNewLinkToText) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/");
   params.selection_text = u"hello world";
-  params.opened_from_highlight = true;
+  params.annotation_type = blink::mojom::AnnotationType::kSharedHighlight;
   observer()->SetGenerationResults(
       "hello%20world", shared_highlighting::LinkGenerationError::kNone,
       shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
@@ -315,15 +421,23 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
       1);
 }
 
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_LinkGenerationCopiedLinkTypeMetric_ReShare \
+  DISABLED_LinkGenerationCopiedLinkTypeMetric_ReShare
+#else
+#define MAYBE_LinkGenerationCopiedLinkTypeMetric_ReShare \
+  LinkGenerationCopiedLinkTypeMetric_ReShare
+#endif
 IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       LinkGenerationCopiedLinkTypeMetric_ReShare) {
+                       MAYBE_LinkGenerationCopiedLinkTypeMetric_ReShare) {
   base::HistogramTester histogram_tester;
 
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/#:~:text=hello%20world");
   params.selection_text = u"";
-  params.opened_from_highlight = true;
+  params.annotation_type = blink::mojom::AnnotationType::kSharedHighlight;
   observer()->SetReshareSelector("hello%20world");
   InitMenu(params);
   menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_RESHARELINKTOTEXT, 0);
@@ -338,8 +452,15 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
       1);
 }
 
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_LinkGenerationRequestedMetric_Success_NoDelay DISABLED_LinkGenerationRequestedMetric_Success_NoDelay
+#else
+#define MAYBE_LinkGenerationRequestedMetric_Success_NoDelay LinkGenerationRequestedMetric_Success_NoDelay
+#endif
 IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       LinkGenerationRequestedMetric_Success_NoDelay) {
+                       MAYBE_LinkGenerationRequestedMetric_Success_NoDelay) {
   base::HistogramTester histogram_tester;
 
   content::BrowserTestClipboardScope test_clipboard_scope;
@@ -364,8 +485,16 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
       "SharedHighlights.LinkGenerated.RequestedBeforeReady", 0);
 }
 
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_LinkGenerationRequestedMetric_Success_WithDelay \
+  DISABLED_LinkGenerationRequestedMetric_Success_WithDelay
+#else
+#define MAYBE_LinkGenerationRequestedMetric_Success_WithDelay \
+  LinkGenerationRequestedMetric_Success_WithDelay
+#endif
 IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       LinkGenerationRequestedMetric_Success_WithDelay) {
+                       MAYBE_LinkGenerationRequestedMetric_Success_WithDelay) {
   base::HistogramTester histogram_tester;
 
   content::BrowserTestClipboardScope test_clipboard_scope;
@@ -416,8 +545,16 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
       "SharedHighlights.LinkGenerated.RequestedBeforeReady", 0);
 }
 
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_LinkGenerationRequestedMetric_Failure_WithDelay \
+  DISABLED_LinkGenerationRequestedMetric_Failure_WithDelay
+#else
+#define MAYBE_LinkGenerationRequestedMetric_Failure_WithDelay \
+  LinkGenerationRequestedMetric_Failure_WithDelay
+#endif
 IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       LinkGenerationRequestedMetric_Failure_WithDelay) {
+                       MAYBE_LinkGenerationRequestedMetric_Failure_WithDelay) {
   base::HistogramTester histogram_tester;
 
   content::BrowserTestClipboardScope test_clipboard_scope;
@@ -442,8 +579,16 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
       "SharedHighlights.LinkGenerated.RequestedAfterReady", 0);
 }
 
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_CopiesLinkToTextWithExistingFragments \
+  DISABLED_CopiesLinkToTextWithExistingFragments
+#else
+#define MAYBE_CopiesLinkToTextWithExistingFragments \
+  CopiesLinkToTextWithExistingFragments
+#endif
 IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
-                       CopiesLinkToTextWithExistingFragments) {
+                       MAYBE_CopiesLinkToTextWithExistingFragments) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/#bar");
@@ -478,9 +623,17 @@ IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
   EXPECT_EQ(u"http://foo.com/#bar:~:text=hello%20world", text);
 }
 
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections \
+  DISABLED_CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections
+#else
+#define MAYBE_CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections \
+  CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections
+#endif
 IN_PROC_BROWSER_TEST_F(
     LinkToTextMenuObserverTest,
-    CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections) {
+    MAYBE_CopiesLinkToTextWithExistingFragmentsWithMultipleTextSelections) {
   content::BrowserTestClipboardScope test_clipboard_scope;
   content::ContextMenuParams params;
   params.page_url = GURL("http://foo.com/#bar:~:text=baz&text=qux");
@@ -516,4 +669,238 @@ IN_PROC_BROWSER_TEST_F(
   clipboard->ReadText(ui::ClipboardBuffer::kCopyPaste, nullptr, &text);
   EXPECT_EQ(u"http://foo.com/#bar:~:baz=keep&baz=keep2&text=hello%20world",
             text);
+}
+
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_BlocksCopyingLinkToText DISABLED_BlocksCopyingLinkToText
+#else
+#define MAYBE_BlocksCopyingLinkToText BlocksCopyingLinkToText
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_BlocksCopyingLinkToText) {
+  data_controls::SetDataControls(browser()->profile()->GetPrefs(), {R"({
+                                   "name": "rule_name",
+                                   "rule_id": "rule_id",
+                                   "sources": {
+                                     "urls": ["*"]
+                                   },
+                                   "restrictions": [
+                                     {"class": "CLIPBOARD", "level": "BLOCK"}
+                                   ]
+                                 })"});
+  data_controls::DesktopDataControlsDialogTestHelper helper(
+      data_controls::DataControlsDialog::Type::kClipboardCopyBlock);
+
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.selection_text = u"hello world";
+  observer()->SetGenerationResults(
+      "hello%20world", shared_highlighting::LinkGenerationError::kNone,
+      shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
+  InitMenu(params);
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT, 0);
+
+  helper.WaitForDialogToInitialize();
+  helper.CloseDialogWithoutBypass();
+  helper.WaitForDialogToClose();
+
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  std::u16string text;
+  clipboard->ReadText(ui::ClipboardBuffer::kCopyPaste, nullptr, &text);
+  EXPECT_TRUE(text.empty());
+}
+
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_WarnsCopyingLinkToTextAndCancel DISABLED_WarnsCopyingLinkToTextAndCancel
+#else
+#define MAYBE_WarnsCopyingLinkToTextAndCancel WarnsCopyingLinkToTextAndCancel
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_WarnsCopyingLinkToTextAndCancel) {
+  data_controls::SetDataControls(browser()->profile()->GetPrefs(), {R"({
+                                   "name": "rule_name",
+                                   "rule_id": "rule_id",
+                                   "sources": {
+                                     "urls": ["*"]
+                                   },
+                                   "restrictions": [
+                                     {"class": "CLIPBOARD", "level": "WARN"}
+                                   ]
+                                 })"});
+  data_controls::DesktopDataControlsDialogTestHelper helper(
+      data_controls::DataControlsDialog::Type::kClipboardCopyWarn);
+
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.selection_text = u"hello world";
+  observer()->SetGenerationResults(
+      "hello%20world", shared_highlighting::LinkGenerationError::kNone,
+      shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
+  InitMenu(params);
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT, 0);
+
+  helper.WaitForDialogToInitialize();
+  helper.CloseDialogWithoutBypass();
+  helper.WaitForDialogToClose();
+
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  std::u16string text;
+  clipboard->ReadText(ui::ClipboardBuffer::kCopyPaste, nullptr, &text);
+  EXPECT_TRUE(text.empty());
+}
+
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_WarnsCopyingLinkToTextAndBypass \
+  DISABLED_WarnsCopyingLinkToTextAndBypass
+#else
+#define MAYBE_WarnsCopyingLinkToTextAndBypass WarnsCopyingLinkToTextAndBypass
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_WarnsCopyingLinkToTextAndBypass) {
+  data_controls::SetDataControls(browser()->profile()->GetPrefs(), {R"({
+                                   "name": "rule_name",
+                                   "rule_id": "rule_id",
+                                   "sources": {
+                                     "urls": ["*"]
+                                   },
+                                   "restrictions": [
+                                     {"class": "CLIPBOARD", "level": "WARN"}
+                                   ]
+                                 })"});
+  data_controls::DesktopDataControlsDialogTestHelper helper(
+      data_controls::DataControlsDialog::Type::kClipboardCopyWarn);
+
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.selection_text = u"hello world";
+  observer()->SetGenerationResults(
+      "hello%20world", shared_highlighting::LinkGenerationError::kNone,
+      shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
+  InitMenu(params);
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT, 0);
+
+  helper.WaitForDialogToInitialize();
+  helper.BypassWarning();
+  helper.WaitForDialogToClose();
+
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  std::u16string text;
+  clipboard->ReadText(ui::ClipboardBuffer::kCopyPaste, nullptr, &text);
+  EXPECT_EQ(u"http://foo.com/#:~:text=hello%20world", text);
+}
+
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ReplacesCopyingLinkToText DISABLED_ReplacesCopyingLinkToText
+#else
+#define MAYBE_ReplacesCopyingLinkToText ReplacesCopyingLinkToText
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_ReplacesCopyingLinkToText) {
+  data_controls::SetDataControls(browser()->profile()->GetPrefs(), {R"({
+                                   "name": "rule_name",
+                                   "rule_id": "rule_id",
+                                   "destinations": {
+                                     "os_clipboard": true
+                                   },
+                                   "restrictions": [
+                                     {"class": "CLIPBOARD", "level": "BLOCK"}
+                                   ]
+                                 })"});
+
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.selection_text = u"hello world";
+  observer()->SetGenerationResults(
+      "hello%20world", shared_highlighting::LinkGenerationError::kNone,
+      shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
+  InitMenu(params);
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT, 0);
+
+  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+  std::u16string text;
+  clipboard->ReadText(ui::ClipboardBuffer::kCopyPaste, nullptr, &text);
+  EXPECT_EQ(u"Pasting this content here is blocked by your administrator.",
+            text);
+}
+
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ShowsToastOnCopyingLink DISABLED_ShowsToastOnCopyingLink
+#else
+#define MAYBE_ShowsToastOnCopyingLink ShowsToastOnCopyingLink
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, MAYBE_ShowsToastOnCopyingLink) {
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.selection_text = u"hello world";
+  params.annotation_type = blink::mojom::AnnotationType::kSharedHighlight;
+  observer()->SetGenerationResults(
+      "hello%20world", shared_highlighting::LinkGenerationError::kNone,
+      shared_highlighting::LinkGenerationReadyStatus::kRequestedAfterReady);
+  InitMenu(params);
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_COPYLINKTOTEXT, 0);
+
+  EXPECT_TRUE(browser()->GetFeatures().toast_controller()->IsShowingToast());
+}
+
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_AddsRemoveMenuItemForGlicHighlight \
+  DISABLED_AddsRemoveMenuItemForGlicHighlight
+#else
+#define MAYBE_AddsRemoveMenuItemForGlicHighlight \
+  AddsRemoveMenuItemForGlicHighlight
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest,
+                       MAYBE_AddsRemoveMenuItemForGlicHighlight) {
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.annotation_type = blink::mojom::AnnotationType::kGlic;
+  InitMenu(params);
+  EXPECT_EQ(1u, menu()->GetMenuSize());
+  MockRenderViewContextMenu::MockMenuItem item;
+
+  // Check Remove item.
+  menu()->GetMenuItem(0, &item);
+  EXPECT_EQ(IDC_CONTENT_CONTEXT_REMOVELINKTOTEXT, item.command_id);
+  EXPECT_FALSE(item.checked);
+  EXPECT_FALSE(item.hidden);
+  EXPECT_TRUE(item.enabled);
+}
+
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_RemovesGlicHighlight DISABLED_RemovesGlicHighlight
+#else
+#define MAYBE_RemovesGlicHighlight RemovesGlicHighlight
+#endif
+IN_PROC_BROWSER_TEST_F(LinkToTextMenuObserverTest, MAYBE_RemovesGlicHighlight) {
+  content::BrowserTestClipboardScope test_clipboard_scope;
+  content::ContextMenuParams params;
+  params.page_url = GURL("http://foo.com/");
+  params.annotation_type = blink::mojom::AnnotationType::kGlic;
+  InitMenu(params);
+  std::unique_ptr<MockAnnotationAgentContainer>
+      mock_annotation_agent_container =
+          MockAnnotationAgentContainer::InstallMockAnnotationAgentContainer(
+              browser()
+                  ->tab_strip_model()
+                  ->GetActiveWebContents()
+                  ->GetPrimaryMainFrame());
+  EXPECT_CALL(*mock_annotation_agent_container,
+              RemoveAgentsOfType(blink::mojom::AnnotationType::kGlic));
+  menu()->ExecuteCommand(IDC_CONTENT_CONTEXT_REMOVELINKTOTEXT, 0);
+  mock_annotation_agent_container->FlushForTesting();
 }

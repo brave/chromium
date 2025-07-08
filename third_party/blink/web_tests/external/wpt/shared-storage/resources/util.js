@@ -2,87 +2,65 @@
 // META: script=/fenced-frame/resources/utils.js
 'use strict';
 
-async function IsSharedStorageSelectUrlAllowedByPermissionsPolicy() {
-  const errorMessage = 'The \"shared-storage-select-url\" Permissions Policy denied the usage of window.sharedStorage.selectURL().';
-  let allowedByPermissionsPolicy = true;
+async function IsSharedStorageSelectUrlAllowed() {
+  let allowed = true;
   try {
-    // Run selectURL() with without addModule() and this should always fail.
-    // Check the error message to distinguish between the permissions policy
-    // error and the missing addModule() error.
     await sharedStorage.selectURL("operation", [{url: "1.html"}]);
-    assert_unreached("did not fail");
   } catch (e) {
-    if (e.message === errorMessage) {
-      allowedByPermissionsPolicy = false;
-    }
+    allowed = false;
   }
 
-  return allowedByPermissionsPolicy;
+  return allowed;
 }
 
-// Execute all shared storage methods and capture their errors. Return true if
-// the permissions policy allows all of them; return false if the permissions
-// policy disallows all of them. Precondition: only these two outcomes are
-// possible.
-async function AreSharedStorageMethodsAllowedByPermissionsPolicy() {
-  let permissionsPolicyDeniedCount = 0;
-  const errorMessage = 'The \"shared-storage\" Permissions Policy denied the method on window.sharedStorage.';
+// Execute all shared storage methods (excluding createWorklet).
+// and capture their errors. Return true if all methods succeed.
+async function AreRegularSharedStorageMethodsAllowed() {
+  let deniedCount = 0;
 
   try {
     await window.sharedStorage.worklet.addModule('/shared-storage/resources/simple-module.js');
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
   try {
-    await window.sharedStorage.run('operation');
+    await window.sharedStorage.run('operation', {keepAlive: true});
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
   try {
-    // Run selectURL() with without addModule() and this should always fail.
-    // Check the error message to distinguish between the permissions policy
-    // error and the missing addModule() error.
-    await sharedStorage.selectURL("operation", [{url: "1.html"}]);
-    assert_unreached("did not fail");
+    await sharedStorage.selectURL("operation", [{url: "1.html"}], {keepAlive: true});
   } catch (e) {
-    if (e.message === errorMessage) {
-      ++permissionsPolicyDeniedCount;
-    }
+    ++deniedCount;
   }
 
   try {
     await window.sharedStorage.set('a', 'b');
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
   try {
     await window.sharedStorage.append('a', 'b');
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
   try {
     await window.sharedStorage.clear();
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
   try {
     await window.sharedStorage.delete('a');
   } catch (e) {
-    assert_equals(e.message, errorMessage);
-    ++permissionsPolicyDeniedCount;
+    ++deniedCount;
   }
 
-  if (permissionsPolicyDeniedCount === 0)
+  if (deniedCount === 0)
     return true;
 
   return false;
@@ -152,7 +130,7 @@ async function verifyKeyValueForOrigin(key, value, origin) {
       '/shared-storage/resources/verify-key-value.https.html',
       [outerKey, innerKey]);
   iframeUrl = updateUrlToUseNewOrigin(iframeUrl, origin);
-  appendExpectedKeyAndValue(iframeUrl, key, value);
+  iframeUrl = appendExpectedKeyAndValue(iframeUrl, key, value);
 
   attachIFrame(iframeUrl);
   const result = await nextValueFromServer(outerKey);
@@ -166,7 +144,7 @@ async function verifyKeyNotFoundForOrigin(key, origin) {
       '/shared-storage/resources/verify-key-not-found.https.html',
       [outerKey, innerKey]);
   iframeUrl = updateUrlToUseNewOrigin(iframeUrl, origin);
-  appendExpectedKey(iframeUrl, key);
+  iframeUrl = appendExpectedKey(iframeUrl, key);
 
   attachIFrame(iframeUrl);
   const result = await nextValueFromServer(outerKey);
@@ -178,9 +156,62 @@ async function setKeyValueForOrigin(key, value, origin) {
   let setIframeUrl = generateURL(
       '/shared-storage/resources/set-key-value.https.html', [outerKey]);
   setIframeUrl = updateUrlToUseNewOrigin(setIframeUrl, origin);
-  appendExpectedKeyAndValue(setIframeUrl, key, value);
+  setIframeUrl = appendExpectedKeyAndValue(setIframeUrl, key, value);
 
   attachIFrame(setIframeUrl);
   const result = await nextValueFromServer(outerKey);
   assert_equals(result, 'set_key_value_loaded');
+}
+
+async function deleteKeyForOrigin(key, origin) {
+  const outerKey = token();
+  let deleteIframeUrl = generateURL(
+      '/shared-storage/resources/delete-key.https.html', [outerKey]);
+  deleteIframeUrl = updateUrlToUseNewOrigin(deleteIframeUrl, origin);
+  deleteIframeUrl = appendExpectedKey(deleteIframeUrl, key);
+
+  attachIFrame(deleteIframeUrl);
+  const result = await nextValueFromServer(outerKey);
+  assert_equals(result, 'delete_key_loaded');
+}
+
+function getFetchedUrls(worker) {
+  return new Promise(function(resolve) {
+    var channel = new MessageChannel();
+    channel.port1.onmessage = function(msg) {
+      resolve(msg);
+    };
+    worker.postMessage({port: channel.port2}, [channel.port2]);
+  });
+}
+
+function checkInterceptedUrls(worker, expectedRequests) {
+  return getFetchedUrls(worker).then(function(msg) {
+    let actualRequests = msg.data.requests;
+    assert_equals(actualRequests.length, expectedRequests.length);
+    assert_equals(
+        JSON.stringify(actualRequests), JSON.stringify(expectedRequests));
+  });
+}
+
+function attachIFrameWithEventListenerForSelectURLStatus(url) {
+  const frame = document.createElement('iframe');
+  frame.src = url;
+
+  const promise = new Promise((resolve, reject) => {
+    window.addEventListener('message', async function handler(evt) {
+      if (evt.source === frame.contentWindow && evt.data.selectURLStatus) {
+        document.body.removeChild(frame);
+        window.removeEventListener('message', handler);
+        if (evt.data.selectURLStatus === 'success') {
+          resolve(evt.data);
+        } else {
+          reject(new Error(JSON.stringify(evt.data)));
+        }
+      }
+    });
+  });
+
+  document.body.appendChild(frame);
+  return promise;
 }

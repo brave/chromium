@@ -15,11 +15,9 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "components/component_updater/component_updater_paths.h"
+#include "components/optimization_guide/core/filters/optimization_hints_component_update_listener.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_hints_component_update_listener.h"
-
-using component_updater::ComponentUpdateService;
 
 namespace component_updater {
 
@@ -120,8 +118,9 @@ OptimizationHintsComponentInstallerPolicy::GetInstallerAttributes() const {
 }
 
 void RegisterOptimizationHintsComponent(ComponentUpdateService* cus) {
-  if (!optimization_guide::features::IsOptimizationHintsEnabled())
+  if (!optimization_guide::features::IsOptimizationHintsEnabled()) {
     return;
+  }
 
   auto installer = base::MakeRefCounted<ComponentInstaller>(
       std::make_unique<OptimizationHintsComponentInstallerPolicy>());

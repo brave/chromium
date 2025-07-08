@@ -7,17 +7,17 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/values.h"
-#include "chrome/browser/ash/app_mode/arc/arc_kiosk_app_manager.h"
 #include "chrome/browser/ash/login/existing_user_controller.h"
-#include "chrome/browser/ash/login/ui/mock_login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/ash/policy/core/device_local_account.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
+#include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/ui/ash/login/mock_login_display_host.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/login/auth/auth_events_recorder.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "components/ownership/mock_owner_key_util.h"
 #include "components/session_manager/core/session_manager.h"
@@ -45,32 +45,31 @@ class ExistingUserControllerAutoLoginTest : public ::testing::Test {
  protected:
   ExistingUserControllerAutoLoginTest()
       : local_state_(TestingBrowserProcess::GetGlobal()),
-        scoped_user_manager_(std::make_unique<FakeChromeUserManager>()) {
+        fake_user_manager_(std::make_unique<FakeChromeUserManager>()) {
     auth_events_recorder_ = ash::AuthEventsRecorder::CreateForTesting();
   }
 
   void SetUp() override {
-    arc_kiosk_app_manager_ = std::make_unique<ArcKioskAppManager>();
     existing_user_controller_ = std::make_unique<ExistingUserController>();
     mock_login_display_host_ = std::make_unique<MockLoginDisplayHost>();
 
     ON_CALL(*mock_login_display_host_, GetExistingUserController())
         .WillByDefault(Return(existing_user_controller_.get()));
 
-    auto* user_manager =
-        static_cast<FakeChromeUserManager*>(user_manager::UserManager::Get());
-    user_manager->AddPublicAccountUser(auto_login_account_id_);
+    fake_user_manager_->AddPublicAccountUser(auto_login_account_id_);
 
     settings_helper_.ReplaceDeviceSettingsProviderWithStub();
 
-    DeviceSettingsService::Get()->SetSessionManager(
+    DeviceSettingsService::Get()->StartProcessing(
+        TestingBrowserProcess::GetGlobal()->local_state(),
         FakeSessionManagerClient::Get(), new ownership::MockOwnerKeyUtil());
     DeviceSettingsService::Get()->Load();
 
     base::Value::Dict account;
     account.Set(kAccountsPrefDeviceLocalAccountsKeyId, auto_login_user_id_);
-    account.Set(kAccountsPrefDeviceLocalAccountsKeyType,
-                policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION);
+    account.Set(
+        kAccountsPrefDeviceLocalAccountsKeyType,
+        static_cast<int>(policy::DeviceLocalAccountType::kPublicSession));
     base::Value::List accounts;
     accounts.Append(std::move(account));
     settings_helper_.Set(kAccountsPrefDeviceLocalAccounts,
@@ -133,7 +132,7 @@ class ExistingUserControllerAutoLoginTest : public ::testing::Test {
   const AccountId auto_login_account_id_ =
       AccountId::FromUserEmail(policy::GenerateDeviceLocalAccountUserId(
           auto_login_user_id_,
-          policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION));
+          policy::DeviceLocalAccountType::kPublicSession));
 
  private:
   std::unique_ptr<MockLoginDisplayHost> mock_login_display_host_;
@@ -143,8 +142,8 @@ class ExistingUserControllerAutoLoginTest : public ::testing::Test {
   // Required by ExistingUserController:
   FakeSessionManagerClient fake_session_manager_client_;
   ScopedCrosSettingsTestHelper settings_helper_;
-  user_manager::ScopedUserManager scoped_user_manager_;
-  std::unique_ptr<ArcKioskAppManager> arc_kiosk_app_manager_;
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_;
 
   session_manager::SessionManager session_manager_;
 

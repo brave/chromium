@@ -1,4 +1,4 @@
-<style include="app-management-cros-shared-style settings-shared">
+<style include="app-management-cros-shared-style">
   #disabledExplanationText {
     align-items: center;
     display: flex;
@@ -20,11 +20,33 @@
     margin-block-start: -12px;
     margin-inline-start: 36px;
   }
+
+  .list-frame {
+    display: block;
+    padding-block-end: 0;
+    padding-block-start: 0;
+    padding-inline-end: var(--cr-section-padding);
+    padding-inline-start: var(--cr-section-indent-padding);
+  }
+
+  cr-radio-group {
+    width: 100%;
+  }
+
+  iron-icon {
+    flex-shrink: 0;  /* Prevent distortion of icons in cramped UI.*/
+  }
+
+  /* This increases the height on chrome://app-settings/, so this is
+  /* only applied on ChromeOS. */
+  cr-radio-button {
+    min-height: var(--cr-section-min-height);
+  }
 </style>
 <div class="permission-section-header">
   <localized-link id="heading" class="header-text"
       on-link-clicked="launchDialog_"
-      localized-string="$i18n{appManagementIntentSettingsTitle}">
+      localized-string="[[i18nAdvanced('appManagementIntentSettingsTitle')]]">
   </localized-link>
 </div>
 <template is="dom-if" if="[[disabled_]]">
@@ -48,7 +70,7 @@
     <cr-radio-button
         id="browserRadioButton"
         name="browser"
-        label="$i18n{appManagementIntentSharingOpenBrowserLabel}">
+        label="[[i18n('appManagementIntentSharingOpenBrowserLabel')]]">
     </cr-radio-button>
     <template is="dom-if" if="[[showOverlappingAppsWarning_]]">
       <div id="overlapWarning">
@@ -66,6 +88,7 @@
   <app-management-supported-links-overlapping-apps-dialog
       id="overlapDialog"
       app="[[app]]"
+      apps="[[apps]]"
       on-close="onOverlappingDialogClosed_"
       overlapping-app-ids="[[overlappingAppIds_]]">
   </app-management-supported-links-overlapping-apps-dialog>

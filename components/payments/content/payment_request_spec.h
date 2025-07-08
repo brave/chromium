@@ -96,10 +96,10 @@ class PaymentRequestSpec : public PaymentOptionsProvider,
 
   // Gets the display string for the shipping address error for the given
   // |type|.
-  std::u16string GetShippingAddressError(autofill::ServerFieldType type);
+  std::u16string GetShippingAddressError(autofill::FieldType type);
 
   // Gets the display string for the payer error for the given |type|.
-  std::u16string GetPayerError(autofill::ServerFieldType type);
+  std::u16string GetPayerError(autofill::FieldType type);
 
   // Returns whether there is a shipping address error message set by merchant.
   bool has_shipping_address_error() const;
@@ -194,11 +194,6 @@ class PaymentRequestSpec : public PaymentOptionsProvider,
   // Returns true if one of the payment methods being requested is an app store
   // billing method, such as "https://play.google.com/billing".
   bool IsAppStoreBillingAlsoRequested() const;
-
-#if !BUILDFLAG(IS_ANDROID)
-  // Returns true if the PaymentHandlerMinimalHeaderUX feature is enabled.
-  bool IsPaymentHandlerMinimalHeaderUXEnabled() const;
-#endif
 
   base::WeakPtr<PaymentRequestSpec> AsWeakPtr();
 

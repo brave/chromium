@@ -2,16 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/public/provider/chrome/browser/mailto_handler/mailto_handler_api.h"
-
 #import <UIKit/UIKit.h>
 
 #import "base/functional/callback_helpers.h"
-#import "ios/chrome/browser/mailto_handler/mailto_handler_service.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/chrome/browser/mailto_handler/model/mailto_handler_service.h"
+#import "ios/public/provider/chrome/browser/mailto_handler/mailto_handler_api.h"
 
 namespace ios {
 namespace provider {

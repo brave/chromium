@@ -4,11 +4,8 @@
 
 #include "ui/views/test/desktop_test_views_delegate.h"
 
+#include "base/notimplemented.h"
 #include "ui/views/widget/native_widget_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace views {
 
@@ -21,8 +18,9 @@ void DesktopTestViewsDelegate::OnBeforeWidgetInit(
     internal::NativeWidgetDelegate* delegate) {
   // If we already have a native_widget, we don't have to try to come
   // up with one.
-  if (params->native_widget)
+  if (params->native_widget) {
     return;
+  }
 
   if (params->parent && params->type != views::Widget::InitParams::TYPE_MENU) {
     params->native_widget = new NativeWidgetMac(delegate);

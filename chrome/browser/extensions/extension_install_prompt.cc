@@ -4,10 +4,12 @@
 
 #include "chrome/browser/extensions/extension_install_prompt.h"
 
+#include <optional>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -17,7 +19,7 @@
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/extensions/extension_install_ui_factory.h"
+#include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
@@ -28,17 +30,16 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
-#include "extensions/browser/install/extension_install_ui.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
-#include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_resource.h"
+#include "extensions/common/icons/extension_icon_set.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/permissions/permission_set.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/base/ui_base_types.h"
@@ -87,8 +88,7 @@ ExtensionInstallPrompt::Prompt::Prompt(PromptType type)
   DCHECK_NE(type_, NUM_PROMPT_TYPES);
 }
 
-ExtensionInstallPrompt::Prompt::~Prompt() {
-}
+ExtensionInstallPrompt::Prompt::~Prompt() = default;
 
 void ExtensionInstallPrompt::Prompt::AddPermissionSet(
     const PermissionSet& permissions) {
@@ -109,12 +109,14 @@ void ExtensionInstallPrompt::Prompt::SetWebstoreData(
     const std::string& localized_user_count,
     bool show_user_count,
     double average_rating,
-    int rating_count) {
+    int rating_count,
+    const std::string& localized_rating_count) {
   CHECK(AllowWebstoreData(type_));
   localized_user_count_ = localized_user_count;
   show_user_count_ = show_user_count;
   average_rating_ = average_rating;
   rating_count_ = rating_count;
+  localized_rating_count_ = localized_rating_count;
   has_webstore_data_ = true;
 }
 
@@ -144,12 +146,6 @@ std::u16string ExtensionInstallPrompt::Prompt::GetDialogTitle() const {
     case REPAIR_PROMPT:
       id = IDS_EXTENSION_REPAIR_PROMPT_TITLE;
       break;
-    case DELEGATED_PERMISSIONS_PROMPT:
-      // Special case: need to include the delegated username.
-      return l10n_util::GetStringFUTF16(
-          IDS_EXTENSION_DELEGATED_INSTALL_PROMPT_TITLE,
-          base::UTF8ToUTF16(extension_->name()),
-          base::UTF8ToUTF16(delegated_username_));
     case EXTENSION_REQUEST_PROMPT:
       id = IDS_EXTENSION_REQUEST_PROMPT_TITLE;
       break;
@@ -161,30 +157,28 @@ std::u16string ExtensionInstallPrompt::Prompt::GetDialogTitle() const {
       NOTREACHED();
   }
 
-  return l10n_util::GetStringFUTF16(id, base::UTF8ToUTF16(extension_->name()));
+  return l10n_util::GetStringFUTF16(
+      id,
+      extensions::util::GetFixupExtensionNameForUIDisplay(extension_->name()));
 }
 
 int ExtensionInstallPrompt::Prompt::GetDialogButtons() const {
   // Extension pending request dialog doesn't have confirm button because there
   // is no user action required.
   if (type_ == EXTENSION_PENDING_REQUEST_PROMPT)
-    return ui::DIALOG_BUTTON_CANCEL;
+    return static_cast<int>(ui::mojom::DialogButton::kCancel);
 
-  return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
+  return static_cast<int>(ui::mojom::DialogButton::kOk) |
+         static_cast<int>(ui::mojom::DialogButton::kCancel);
 }
 
 std::u16string ExtensionInstallPrompt::Prompt::GetAcceptButtonLabel() const {
   int id = -1;
   switch (type_) {
     case INSTALL_PROMPT:
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
-      if (requires_parent_permission())
+      if (requires_parent_permission()) {
         id = IDS_EXTENSION_INSTALL_PROMPT_ASK_A_PARENT_BUTTON;
-      else
-#endif
-          // NOTE: strange indentation formatting is due to intervening
-          // BUILDFLAG above.
-          if (extension_->is_app()) {
+      } else if (extension_->is_app()) {
         id = IDS_EXTENSION_INSTALL_PROMPT_ACCEPT_BUTTON_APP;
       } else if (extension_->is_theme()) {
         id = IDS_EXTENSION_INSTALL_PROMPT_ACCEPT_BUTTON_THEME;
@@ -218,9 +212,6 @@ std::u16string ExtensionInstallPrompt::Prompt::GetAcceptButtonLabel() const {
       else
         id = IDS_EXTENSION_PROMPT_REPAIR_BUTTON_EXTENSION;
       break;
-    case DELEGATED_PERMISSIONS_PROMPT:
-      id = IDS_EXTENSION_PROMPT_INSTALL_BUTTON;
-      break;
     case EXTENSION_REQUEST_PROMPT:
       id = IDS_EXTENSION_INSTALL_PROMPT_REQUEST_BUTTON;
       break;
@@ -242,7 +233,6 @@ std::u16string ExtensionInstallPrompt::Prompt::GetAbortButtonLabel() const {
     case RE_ENABLE_PROMPT:
     case REMOTE_INSTALL_PROMPT:
     case REPAIR_PROMPT:
-    case DELEGATED_PERMISSIONS_PROMPT:
     case EXTENSION_REQUEST_PROMPT:
       id = IDS_CANCEL;
       break;
@@ -269,7 +259,6 @@ std::u16string ExtensionInstallPrompt::Prompt::GetPermissionsHeading() const {
     case INSTALL_PROMPT:
     case EXTERNAL_INSTALL_PROMPT:
     case REMOTE_INSTALL_PROMPT:
-    case DELEGATED_PERMISSIONS_PROMPT:
     case EXTENSION_REQUEST_PROMPT:
     case EXTENSION_PENDING_REQUEST_PROMPT:
       id = IDS_EXTENSION_PROMPT_WILL_HAVE_ACCESS_TO;
@@ -322,7 +311,7 @@ void ExtensionInstallPrompt::Prompt::AppendRatingStars(
 std::u16string ExtensionInstallPrompt::Prompt::GetRatingCount() const {
   CHECK(AllowWebstoreData(type_));
   return l10n_util::GetStringFUTF16(IDS_EXTENSION_RATING_COUNT,
-                                    base::NumberToString16(rating_count_));
+                                    base::UTF8ToUTF16(localized_rating_count_));
 }
 
 std::u16string ExtensionInstallPrompt::Prompt::GetUserCount() const {
@@ -416,7 +405,7 @@ ExtensionInstallPrompt::GetLocalizedExtensionForDisplay(
     const std::string& localized_name,
     const std::string& localized_description,
     std::string* error) {
-  absl::optional<base::Value::Dict> localized_manifest;
+  std::optional<base::Value::Dict> localized_manifest;
   if (!localized_name.empty() || !localized_description.empty()) {
     localized_manifest = manifest.Clone();
     if (!localized_name.empty()) {
@@ -438,7 +427,7 @@ ExtensionInstallPrompt::ExtensionInstallPrompt(content::WebContents* contents)
                    ? Profile::FromBrowserContext(contents->GetBrowserContext())
                    : nullptr),
       extension_(nullptr),
-      install_ui_(extensions::CreateExtensionInstallUI(profile_)),
+      install_ui_(ExtensionInstallUI::Create(profile_)),
       show_params_(new ExtensionInstallPromptShowParams(contents)),
       did_call_show_dialog_(false) {}
 
@@ -446,13 +435,12 @@ ExtensionInstallPrompt::ExtensionInstallPrompt(Profile* profile,
                                                gfx::NativeWindow native_window)
     : profile_(profile),
       extension_(nullptr),
-      install_ui_(extensions::CreateExtensionInstallUI(profile)),
+      install_ui_(ExtensionInstallUI::Create(profile_)),
       show_params_(
           new ExtensionInstallPromptShowParams(profile, native_window)),
       did_call_show_dialog_(false) {}
 
-ExtensionInstallPrompt::~ExtensionInstallPrompt() {
-}
+ExtensionInstallPrompt::~ExtensionInstallPrompt() = default;
 
 void ExtensionInstallPrompt::ShowDialog(
     DoneCallback done_callback,
@@ -551,7 +539,7 @@ void ExtensionInstallPrompt::LoadImageIfNeeded() {
 
   extensions::ExtensionResource image = extensions::IconsInfo::GetIconResource(
       extension_.get(), extension_misc::EXTENSION_ICON_LARGE,
-      ExtensionIconSet::MATCH_BIGGER);
+      ExtensionIconSet::Match::kBigger);
 
   // Load the image asynchronously. The response will be sent to OnImageLoaded.
   extensions::ImageLoader* loader = extensions::ImageLoader::Get(profile_);
@@ -571,13 +559,9 @@ void ExtensionInstallPrompt::ShowConfirmation() {
   if (custom_permissions_.get()) {
     permissions_to_display = custom_permissions_->Clone();
   } else if (extension_) {
-    // For delegated installs, all optional permissions are pre-approved by the
-    // person who triggers the install, so add them to the list.
-    bool include_optional_permissions =
-        prompt_->type() == DELEGATED_PERMISSIONS_PROMPT;
     permissions_to_display =
         extensions::util::GetInstallPromptPermissionSetForExtension(
-            extension_.get(), profile_, include_optional_permissions);
+            extension_.get(), profile_);
   }
 
   prompt_->set_extension(extension_.get());
@@ -604,7 +588,7 @@ void ExtensionInstallPrompt::ShowConfirmation() {
 
   if (show_dialog_callback_.is_null())
     show_dialog_callback_ = GetDefaultShowDialogCallback();
-  // TODO(https://crbug.com/957713): Use OnceCallback and eliminate the need for
+  // TODO(crbug.com/40625151): Use OnceCallback and eliminate the need for
   // a callback on the stack.
   auto cb = std::move(done_callback_);
   std::move(show_dialog_callback_)
@@ -621,8 +605,7 @@ bool ExtensionInstallPrompt::AutoConfirmPromptIfEnabled() {
     // the real implementations it's highly likely the message loop will be
     // pumping a few times before the user clicks accept or cancel.
     case extensions::ScopedTestDialogAutoConfirm::ACCEPT:
-    case extensions::ScopedTestDialogAutoConfirm::ACCEPT_AND_OPTION:
-    case extensions::ScopedTestDialogAutoConfirm::ACCEPT_AND_REMEMBER_OPTION: {
+    case extensions::ScopedTestDialogAutoConfirm::ACCEPT_AND_OPTION: {
       // Permissions are withheld at installation when the prompt specifies it
       // and option wasn't selected (which grants permissions when selected).
       auto result =
@@ -650,5 +633,25 @@ bool ExtensionInstallPrompt::AutoConfirmPromptIfEnabled() {
   }
 
   NOTREACHED();
-  return false;
 }
+
+#if BUILDFLAG(IS_ANDROID)
+// TODO(crbug.com/397754565): Implement a real dialog. This function always
+// accepts the install. On other platforms the implementation lives in the
+// directory //chrome/browser/ui/views/extensions.
+void AlwaysAcceptDialogCallback(
+    std::unique_ptr<ExtensionInstallPromptShowParams> show_params,
+    ExtensionInstallPrompt::DoneCallback done_callback,
+    std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt) {
+  NOTIMPLEMENTED() << "AlwaysAcceptDialogCallback";
+  std::move(done_callback)
+      .Run(ExtensionInstallPrompt::DoneCallbackPayload(
+          ExtensionInstallPrompt::Result::ACCEPTED));
+}
+
+// static
+ExtensionInstallPrompt::ShowDialogCallback
+ExtensionInstallPrompt::GetDefaultShowDialogCallback() {
+  return base::BindRepeating(&AlwaysAcceptDialogCallback);
+}
+#endif

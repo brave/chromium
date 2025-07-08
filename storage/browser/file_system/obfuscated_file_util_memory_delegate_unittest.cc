@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "storage/browser/file_system/obfuscated_file_util_memory_delegate.h"
 
 #include <memory>
@@ -344,8 +349,8 @@ TEST_F(ObfuscatedFileUtilMemoryDelegateTest, CopyForeignFile) {
                 FileSystemOperation::CopyOrMoveOptionSet(), sync));
   EXPECT_TRUE(FileExists(valid_to_file));
   EXPECT_EQ(test_data_len, GetSize(valid_to_file));
-  scoped_refptr<net::IOBuffer> content =
-      base::MakeRefCounted<net::IOBuffer>(static_cast<size_t>(test_data_len));
+  auto content = base::MakeRefCounted<net::IOBufferWithSize>(
+      static_cast<size_t>(test_data_len));
   EXPECT_EQ(test_data_len, file_util()->ReadFile(valid_to_file, 0,
                                                  content.get(), test_data_len));
   EXPECT_EQ(std::string(test_data),

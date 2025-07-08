@@ -4,6 +4,8 @@
 
 #include "chrome/browser/signin/bound_session_credentials/fake_bound_session_refresh_cookie_fetcher.h"
 
+#include <optional>
+
 #include "base/check.h"
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
@@ -16,25 +18,31 @@
 #include "net/cookies/canonical_cookie.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 FakeBoundSessionRefreshCookieFetcher::FakeBoundSessionRefreshCookieFetcher(
-    SigninClient* client,
+    network::mojom::CookieManager* cookie_manager,
     const GURL& url,
     base::flat_set<std::string> cookie_names,
-    absl::optional<base::TimeDelta> unlock_automatically_in)
-    : client_(client),
+    Trigger trigger,
+    std::optional<base::TimeDelta> unlock_automatically_in)
+    : cookie_manager_(cookie_manager),
       url_(url),
       cookie_names_(std::move(cookie_names)),
-      unlock_automatically_in_(unlock_automatically_in) {}
+      trigger_(trigger),
+      non_refreshed_cookie_names_(cookie_names_),
+      unlock_automatically_in_(unlock_automatically_in) {
+  CHECK(cookie_manager_);
+}
 
 FakeBoundSessionRefreshCookieFetcher::~FakeBoundSessionRefreshCookieFetcher() =
     default;
 
 void FakeBoundSessionRefreshCookieFetcher::Start(
-    RefreshCookieCompleteCallback callback) {
+    RefreshCookieCompleteCallback callback,
+    std::optional<std::string> sec_session_challenge_response) {
   DCHECK(!callback_);
   callback_ = std::move(callback);
+  sec_session_challenge_response_ = std::move(sec_session_challenge_response);
 
   if (unlock_automatically_in_.has_value()) {
     const base::TimeDelta kMaxAge = base::Minutes(10);
@@ -49,9 +57,36 @@ void FakeBoundSessionRefreshCookieFetcher::Start(
   }
 }
 
+bool FakeBoundSessionRefreshCookieFetcher::IsChallengeReceived() const {
+  return false;
+}
+
+std::optional<std::string>
+FakeBoundSessionRefreshCookieFetcher::TakeSecSessionChallengeResponseIfAny() {
+  std::optional<std::string> response =
+      std::move(sec_session_challenge_response_);
+  sec_session_challenge_response_.reset();
+  return response;
+}
+
+base::flat_set<std::string>
+FakeBoundSessionRefreshCookieFetcher::GetNonRefreshedCookieNames() {
+  return non_refreshed_cookie_names_;
+}
+
+BoundSessionRefreshCookieFetcher::Trigger
+FakeBoundSessionRefreshCookieFetcher::GetTrigger() const {
+  return trigger_;
+}
+
+void FakeBoundSessionRefreshCookieFetcher::set_sec_session_challenge_response(
+    std::string sec_session_challenge_response) {
+  sec_session_challenge_response_ = std::move(sec_session_challenge_response);
+}
+
 void FakeBoundSessionRefreshCookieFetcher::SimulateCompleteRefreshRequest(
     BoundSessionRefreshCookieFetcher::Result result,
-    absl::optional<base::Time> cookie_expiration) {
+    std::optional<base::Time> cookie_expiration) {
   if (result == BoundSessionRefreshCookieFetcher::Result::kSuccess) {
     CHECK(cookie_expiration);
     // Synchronous since tests use `BoundSessionTestCookieManager`.
@@ -70,13 +105,14 @@ void FakeBoundSessionRefreshCookieFetcher::OnRefreshCookieCompleted(
     std::vector<std::unique_ptr<net::CanonicalCookie>> cookies) {
   ResetCallbackCounter();
   for (auto& cookie : cookies) {
+    non_refreshed_cookie_names_.erase(cookie->Name());
     InsertCookieInCookieJar(std::move(cookie));
   }
 }
 
 void FakeBoundSessionRefreshCookieFetcher::InsertCookieInCookieJar(
     std::unique_ptr<net::CanonicalCookie> cookie) {
-  DCHECK(client_);
+  DCHECK(cookie_manager_);
   base::OnceCallback<void(net::CookieAccessResult)> callback =
       base::BindOnce(&FakeBoundSessionRefreshCookieFetcher::OnCookieSet,
                      weak_ptr_factory_.GetWeakPtr());
@@ -85,12 +121,14 @@ void FakeBoundSessionRefreshCookieFetcher::InsertCookieInCookieJar(
   // Permit it to set a SameSite cookie if it wants to.
   options.set_same_site_cookie_context(
       net::CookieOptions::SameSiteCookieContext::MakeInclusive());
-  client_->GetCookieManager()->SetCanonicalCookie(
+  cookie_manager_->SetCanonicalCookie(
       *cookie, url_, options,
       mojo::WrapCallbackWithDefaultInvokeIfNotRun(
           std::move(callback),
-          net::CookieAccessResult(net::CookieInclusionStatus(
-              net::CookieInclusionStatus::EXCLUDE_UNKNOWN_ERROR))));
+          net::CookieAccessResult(
+              net::CookieInclusionStatus::MakeFromReasonsForTesting(
+                  /*exclusions=*/{net::CookieInclusionStatus::ExclusionReason::
+                                      EXCLUDE_UNKNOWN_ERROR}))));
 }
 
 void FakeBoundSessionRefreshCookieFetcher::OnCookieSet(
@@ -132,7 +170,7 @@ FakeBoundSessionRefreshCookieFetcher::CreateFakeCookie(
           /*last_access_time=*/now, /*secure=*/true,
           /*http_only=*/true, net::CookieSameSite::UNSPECIFIED,
           net::CookiePriority::COOKIE_PRIORITY_HIGH,
-          /*same_party=*/true, /*partition_key=*/absl::nullopt);
+          /*partition_key=*/std::nullopt, /*status=*/nullptr);
 
   DCHECK(new_cookie);
   return new_cookie;

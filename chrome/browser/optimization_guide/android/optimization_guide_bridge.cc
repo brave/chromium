@@ -5,24 +5,27 @@
 #include "chrome/browser/optimization_guide/android/optimization_guide_bridge.h"
 
 #include <jni.h>
+
 #include <string>
+#include <typeinfo>
 #include <vector>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/optimization_guide/android/jni_headers/OptimizationGuideBridge_jni.h"
 #include "chrome/browser/optimization_guide/chrome_hints_manager.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "components/optimization_guide/core/hint_cache.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
-#include "components/optimization_guide/core/optimization_guide_store.h"
-#include "components/optimization_guide/core/push_notification_manager.h"
+#include "components/optimization_guide/core/hints/hint_cache.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_store.h"
+#include "components/optimization_guide/core/hints/push_notification_manager.h"
+#include "components/optimization_guide/proto/hints.pb.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/optimization_guide/android/jni_headers/OptimizationGuideBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
@@ -191,28 +194,21 @@ void OptimizationGuideBridge::OnDeferredStartup(JNIEnv* env) {
   optimization_guide_keyed_service_->GetHintsManager()->OnDeferredStartup();
 }
 
-static jlong JNI_OptimizationGuideBridge_Init(JNIEnv* env) {
-  // TODO(sophiechang): Figure out how to separate factory to avoid circular
-  // deps when getting last used profile is no longer allowed.
-  Profile* profile = ProfileManager::GetLastUsedProfile();
-  if (!profile)
-    return 0;
-  OptimizationGuideKeyedService* optimization_guide_keyed_service =
-      OptimizationGuideKeyedServiceFactory::GetForProfile(profile);
-  if (!optimization_guide_keyed_service)
-    return 0;
-  return reinterpret_cast<intptr_t>(
-      new OptimizationGuideBridge(optimization_guide_keyed_service));
-}
-
 OptimizationGuideBridge::OptimizationGuideBridge(
     OptimizationGuideKeyedService* optimization_guide_keyed_service)
     : optimization_guide_keyed_service_(optimization_guide_keyed_service) {
   DCHECK(optimization_guide_keyed_service_);
 }
 
-void OptimizationGuideBridge::Destroy(JNIEnv* env) {
-  delete this;
+OptimizationGuideBridge::~OptimizationGuideBridge() = default;
+
+ScopedJavaLocalRef<jobject> OptimizationGuideBridge::GetJavaObject() {
+  JNIEnv* env = AttachCurrentThread();
+  if (!java_ref_) {
+    java_ref_.Reset(Java_OptimizationGuideBridge_Constructor(
+        env, reinterpret_cast<intptr_t>(this)));
+  }
+  return ScopedJavaLocalRef<jobject>(java_ref_);
 }
 
 void OptimizationGuideBridge::RegisterOptimizationTypes(
@@ -226,32 +222,57 @@ void OptimizationGuideBridge::RegisterOptimizationTypes(
 
 void OptimizationGuideBridge::CanApplyOptimization(
     JNIEnv* env,
-    const JavaParamRef<jobject>& java_gurl,
+    GURL& url,
     jint optimization_type,
     const JavaParamRef<jobject>& java_callback) {
   optimization_guide_keyed_service_->CanApplyOptimization(
-      *url::GURLAndroid::ToNativeGURL(env, java_gurl),
+      url,
       static_cast<optimization_guide::proto::OptimizationType>(
           optimization_type),
       base::BindOnce(&OnOptimizationGuideDecision,
                      ScopedJavaGlobalRef<jobject>(env, java_callback)));
 }
 
+base::android::ScopedJavaLocalRef<jobject>
+OptimizationGuideBridge::CanApplyOptimizationSync(JNIEnv* env,
+                                                  GURL& url,
+                                                  jint optimization_type) {
+  optimization_guide::OptimizationMetadata metadata;
+
+  auto decision = optimization_guide_keyed_service_->CanApplyOptimization(
+      url,
+      static_cast<optimization_guide::proto::OptimizationType>(
+          optimization_type),
+      /* optimization_metadata = */ &metadata);
+
+  return Java_OptimizationGuideBridge_createDecisionWithMetadata(
+      env, static_cast<int>(decision),
+      ToJavaSerializedAnyMetadata(env, metadata));
+}
+
 void OptimizationGuideBridge::CanApplyOptimizationOnDemand(
     JNIEnv* env,
-    const JavaParamRef<jobjectArray>& java_gurls,
+    std::vector<GURL>& urls,
     const JavaParamRef<jintArray>& optimization_types,
     jint request_context,
-    const JavaParamRef<jobject>& java_callback) {
-  // Convert GURLs to native.
-  std::vector<GURL> urls;
-  url::GURLAndroid::JavaGURLArrayToGURLVector(env, java_gurls, &urls);
+    const JavaParamRef<jobject>& java_callback,
+    jni_zero::ByteArrayView& request_context_metadata_serialized) {
+  proto::RequestContextMetadata request_context_metadata_deserialized;
+  request_context_metadata_deserialized.ParseFromArray(
+      request_context_metadata_serialized.data(),
+      request_context_metadata_serialized.size());
+  std::optional<optimization_guide::proto::RequestContextMetadata>
+      request_context_metadata =
+          request_context_metadata_serialized.empty()
+              ? std::nullopt
+              : std::make_optional(request_context_metadata_deserialized);
 
   optimization_guide_keyed_service_->CanApplyOptimizationOnDemand(
       urls, JavaIntArrayToOptTypesSet(env, optimization_types),
       static_cast<proto::RequestContext>(request_context),
       base::BindRepeating(&OnOnDemandOptimizationGuideDecision,
-                          ScopedJavaGlobalRef<jobject>(env, java_callback)));
+                          ScopedJavaGlobalRef<jobject>(env, java_callback)),
+      request_context_metadata);
 }
 
 void OptimizationGuideBridge::OnNewPushNotification(

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/core/html/media/html_media_element.h"
-
 #include <algorithm>
 #include <memory>
 
@@ -18,6 +16,7 @@
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
+#include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/media/media_controls.h"
 #include "third_party/blink/renderer/core/html/media/media_custom_controls_fullscreen_detector.h"
@@ -27,9 +26,9 @@
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
+#include "third_party/blink/renderer/platform/media/media_player_client.h"
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/testing/empty_web_media_player.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
@@ -46,7 +45,9 @@ class FakeWebMediaPlayer final : public EmptyWebMediaPlayer {
   FakeWebMediaPlayer(WebMediaPlayerClient* client,
                      ExecutionContext* context,
                      double duration)
-      : client_(client), context_(context), duration_(duration) {}
+      : client_(static_cast<MediaPlayerClient*>(client)),
+        context_(context),
+        duration_(duration) {}
 
   MOCK_METHOD1(SetIsEffectivelyFullscreen,
                void(blink::WebFullscreenVideoStatus));
@@ -59,9 +60,7 @@ class FakeWebMediaPlayer final : public EmptyWebMediaPlayer {
   double Duration() const override { return duration_; }
 
   WebTimeRanges Seekable() const override {
-    WebTimeRange single_range[] = {WebTimeRange(0, Duration())};
-
-    return WebTimeRanges(single_range, 1);
+    return WebTimeRanges(0, Duration());
   }
 
   void Seek(double seconds) override { last_seek_time_ = seconds; }
@@ -70,7 +69,7 @@ class FakeWebMediaPlayer final : public EmptyWebMediaPlayer {
     playing_ = true;
     ScheduleTimeIncrement();
   }
-  void Pause() override { playing_ = false; }
+  void Pause(PauseReason pause_reason) override { playing_ = false; }
   bool Paused() const override { return !playing_; }
   bool IsEnded() const override { return current_time_ == duration_; }
 
@@ -84,7 +83,7 @@ class FakeWebMediaPlayer final : public EmptyWebMediaPlayer {
       ScheduleTimeIncrement();
   }
 
-  void SetAutoIncrementTimeDelta(absl::optional<base::TimeDelta> delta) {
+  void SetAutoIncrementTimeDelta(std::optional<base::TimeDelta> delta) {
     auto_time_increment_delta_ = delta;
     ScheduleTimeIncrement();
   }
@@ -128,11 +127,11 @@ class FakeWebMediaPlayer final : public EmptyWebMediaPlayer {
     context_->GetAgent()->event_loop()->PerformMicrotaskCheckpoint();
   }
 
-  WebMediaPlayerClient* client_;
+  MediaPlayerClient* client_;
   WeakPersistent<ExecutionContext> context_;
   mutable double current_time_ = 0;
   bool playing_ = false;
-  absl::optional<base::TimeDelta> auto_time_increment_delta_ =
+  std::optional<base::TimeDelta> auto_time_increment_delta_ =
       base::Milliseconds(33);
   bool scheduled_time_increment_ = false;
   double last_seek_time_ = -1;
@@ -165,6 +164,10 @@ using testing::Return;
 
 class HTMLMediaElementEventListenersTest : public PageTestBase {
  protected:
+  HTMLMediaElementEventListenersTest() = default;
+  HTMLMediaElementEventListenersTest(
+      base::test::TaskEnvironment::TimeSource time_source)
+      : PageTestBase(time_source) {}
   void SetUp() override {
     SetupPageWithClients(nullptr,
                          MakeGarbageCollected<MediaStubLocalFrameClient>());
@@ -200,13 +203,14 @@ class HTMLMediaElementEventListenersTest : public PageTestBase {
   }
 
   MediaCustomControlsFullscreenDetector* FullscreenDetector() {
-    return Video()->custom_controls_fullscreen_detector_;
+    return Video()->custom_controls_fullscreen_detector_.Get();
   }
 };
 
 TEST_F(HTMLMediaElementEventListenersTest, RemovingFromDocumentCollectsAll) {
   EXPECT_EQ(Video(), nullptr);
-  GetDocument().body()->setInnerHTML("<video controls></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<video controls></video>");
   EXPECT_NE(Video(), nullptr);
   EXPECT_TRUE(Video()->HasEventListeners());
   EXPECT_NE(Controls(), nullptr);
@@ -216,7 +220,7 @@ TEST_F(HTMLMediaElementEventListenersTest, RemovingFromDocumentCollectsAll) {
   WeakPersistent<MediaControls> weak_persistent_controls = Controls();
   {
     Persistent<HTMLVideoElement> persistent_video = Video();
-    GetDocument().body()->setInnerHTML("");
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("");
 
     // When removed from the document, the event listeners should have been
     // dropped.
@@ -238,7 +242,8 @@ TEST_F(HTMLMediaElementEventListenersTest, RemovingFromDocumentCollectsAll) {
 TEST_F(HTMLMediaElementEventListenersTest,
        ReInsertingInDocumentCollectsControls) {
   EXPECT_EQ(Video(), nullptr);
-  GetDocument().body()->setInnerHTML("<video controls></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<video controls></video>");
   EXPECT_NE(Video(), nullptr);
   EXPECT_TRUE(Video()->HasEventListeners());
   EXPECT_NE(Controls(), nullptr);
@@ -267,7 +272,7 @@ TEST_F(HTMLMediaElementEventListenersTest,
 TEST_F(HTMLMediaElementEventListenersTest,
        FullscreenDetectorTimerCancelledOnContextDestroy) {
   EXPECT_EQ(Video(), nullptr);
-  GetDocument().body()->setInnerHTML("<video></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<video></video>");
   Video()->SetSrc(AtomicString("http://example.com"));
 
   test::RunPendingTasks();
@@ -320,20 +325,24 @@ static const base::TickClock* s_platform_clock_;
 class HTMLMediaElementWithMockSchedulerTest
     : public HTMLMediaElementEventListenersTest {
  protected:
+  // We want total control over when to advance the clock. This also allows
+  // us to call platform()->RunUntilIdle() to run all pending tasks without
+  // fear of looping forever.
+  HTMLMediaElementWithMockSchedulerTest()
+      : HTMLMediaElementEventListenersTest(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
+
   void SetUp() override {
     EnablePlatform();
-    // We want total control over when to advance the clock. This also allows
-    // us to call platform()->RunUntilIdle() to run all pending tasks without
-    // fear of looping forever.
-    platform()->SetAutoAdvanceNowToPendingTasks(false);
-
-    // DocumentParserTiming has DCHECKS to make sure time > 0.0.
-    platform()->AdvanceClockSeconds(1);
 
     s_platform_clock_ = GetTickClock();
 
-    time_overrides_ = std::make_unique<base::subtle::ScopedTimeClockOverrides>(
-        nullptr, &HTMLMediaElementWithMockSchedulerTest::Now, nullptr);
+    // DocumentParserTiming has DCHECKS to make sure time > 0.0.
+    AdvanceClock(base::Seconds(1));
+    // Tests rely on start time being a multiple of 250ms.
+    auto start = base::TimeTicks::Now().SnappedToNextTick(base::TimeTicks(),
+                                                          base::Seconds(1));
+    AdvanceClock(start - base::TimeTicks::Now());
 
     HTMLMediaElementEventListenersTest::SetUp();
   }
@@ -346,7 +355,7 @@ class HTMLMediaElementWithMockSchedulerTest
 
 TEST_F(HTMLMediaElementWithMockSchedulerTest, OneTimeupdatePerSeek) {
   testing::InSequence dummy;
-  GetDocument().body()->setInnerHTML("<video></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<video></video>");
 
   // Set a src to trigger WebMediaPlayer creation.
   Video()->SetSrc(AtomicString("http://example.com"));
@@ -356,6 +365,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, OneTimeupdatePerSeek) {
 
   auto* timeupdate_handler = MakeGarbageCollected<MockEventListener>();
   Video()->addEventListener(event_type_names::kTimeupdate, timeupdate_handler);
+  testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
   // Simulate conditions where playback is possible.
   SimulateNetworkState(HTMLMediaElement::kNetworkIdle);
@@ -368,14 +378,14 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, OneTimeupdatePerSeek) {
   // While playing, timeupdate should fire every 250 ms -> 4x per second as long
   // as media player's CurrentTime continues to advance.
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(4);
-  platform()->RunForPeriodSeconds(1);
+  FastForwardBy(base::Seconds(1));
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
   // If media playback time is fixed, periodic timeupdate's should not continue
   // to fire.
-  WebMediaPlayer()->SetAutoIncrementTimeDelta(absl::nullopt);
+  WebMediaPlayer()->SetAutoIncrementTimeDelta(std::nullopt);
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(0);
-  platform()->RunForPeriodSeconds(1);
+  FastForwardBy(base::Seconds(1));
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
   // Per spec, pausing should fire `timeupdate`
@@ -403,7 +413,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, OneTimeupdatePerSeek) {
 
 TEST_F(HTMLMediaElementWithMockSchedulerTest, PeriodicTimeupdateAfterSeek) {
   testing::InSequence dummy;
-  GetDocument().body()->setInnerHTML("<video></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<video></video>");
 
   // Set a src to trigger WebMediaPlayer creation.
   Video()->SetSrc(AtomicString("http://example.com"));
@@ -425,7 +435,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, PeriodicTimeupdateAfterSeek) {
   // Advance a full periodic timeupdate interval (250 ms) and expect a single
   // timeupdate.
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(1);
-  platform()->RunForPeriodSeconds(.250);
+  FastForwardBy(base::Seconds(.250));
   // The event is scheduled, but needs one more scheduler cycle to fire.
   platform()->RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
@@ -433,7 +443,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, PeriodicTimeupdateAfterSeek) {
   // Now advance 125 ms to reach the middle of the periodic timeupdate interval.
   // no additional timeupdate should trigger.
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(0);
-  platform()->RunForPeriodSeconds(.125);
+  FastForwardBy(base::Seconds(.125));
   platform()->RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
@@ -450,14 +460,14 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, PeriodicTimeupdateAfterSeek) {
   // exactly every 250ms from the last timeupdate, and the seek's timeupdate
   // should reset that 250ms ms countdown.
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(0);
-  platform()->RunForPeriodSeconds(.125);
+  FastForwardBy(base::Seconds(.125));
   platform()->RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
   // Advancing another 125ms, we should expect a new timeupdate because we are
   // now 250ms from the seek's timeupdate.
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(1);
-  platform()->RunForPeriodSeconds(.125);
+  FastForwardBy(base::Seconds(.125));
   platform()->RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 
@@ -465,7 +475,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, PeriodicTimeupdateAfterSeek) {
   // this represents a full periodic timeupdate interval with no interruptions
   // (e.g. no-seeks).
   EXPECT_CALL(*timeupdate_handler, Invoke(_, _)).Times(1);
-  platform()->RunForPeriodSeconds(.250);
+  FastForwardBy(base::Seconds(.250));
   platform()->RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(timeupdate_handler);
 }
@@ -477,7 +487,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, ShowPosterFlag_FalseAfterLoop) {
   SetMediaDuration(10.0);
 
   // Create a looping video with a source
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<video loop src=\"http://example.com\"></video>");
   platform()->RunUntilIdle();
   EXPECT_NE(WebMediaPlayer(), nullptr);
@@ -496,7 +506,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, ShowPosterFlag_FalseAfterLoop) {
   auto* seeking_handler = MakeGarbageCollected<MockEventListener>();
   EXPECT_CALL(*seeking_handler, Invoke(_, _)).Times(1);
   Video()->addEventListener(event_type_names::kSeeking, seeking_handler);
-  platform()->RunForPeriodSeconds(15);
+  FastForwardBy(base::Seconds(15));
   testing::Mock::VerifyAndClearExpectations(seeking_handler);
 
   auto* seeked_handler = MakeGarbageCollected<MockEventListener>();
@@ -517,7 +527,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, ShowPosterFlag_FalseAfterEnded) {
   SetMediaDuration(10.0);
 
   // Create a video with a source
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<video src=\"http://example.com\"></video>");
   platform()->RunUntilIdle();
   EXPECT_NE(WebMediaPlayer(), nullptr);
@@ -535,7 +545,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, ShowPosterFlag_FalseAfterEnded) {
   Video()->addEventListener(event_type_names::kEnded, ended_handler);
 
   EXPECT_CALL(*ended_handler, Invoke(_, _)).Times(1);
-  platform()->RunForPeriodSeconds(15);
+  FastForwardBy(base::Seconds(15));
   testing::Mock::VerifyAndClearExpectations(ended_handler);
 
   // ShowPosterFlag should be false even after ending
@@ -604,12 +614,12 @@ class CueEventListener final : public NativeEventListener {
     // The difference between when the cue was scheduled to begin and when the
     // |kEnter| event was fired. The optional will be empty if the |kEnter|
     // event was never fired.
-    absl::optional<base::TimeDelta> enter_time_delta;
+    std::optional<base::TimeDelta> enter_time_delta;
 
     // The difference between when the cue was scheduled to end and when the
     // |kExit| event fired. The optional will be empty if the |kExit| event
     // was never fired.
-    absl::optional<base::TimeDelta> exit_time_delta;
+    std::optional<base::TimeDelta> exit_time_delta;
   };
 
   void OnCueEnter(HTMLMediaElement* media_element, VTTCue* cue) {
@@ -639,7 +649,7 @@ class CueEventListener final : public NativeEventListener {
 
 TEST_F(HTMLMediaElementWithMockSchedulerTest, CueEnterExitEventLatency) {
   testing::InSequence dummy;
-  GetDocument().body()->setInnerHTML("<video></video>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<video></video>");
 
   // Set a src to trigger WebMediaPlayer creation.
   Video()->SetSrc(AtomicString("http://example.com"));
@@ -649,8 +659,8 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, CueEnterExitEventLatency) {
 
   // Create a text track, and fill it with cue data
   auto* text_track =
-      Video()->addTextTrack(AtomicString("subtitles"), g_empty_atom,
-                            g_empty_atom, ASSERT_NO_EXCEPTION);
+      Video()->addTextTrack(V8TextTrackKind(V8TextTrackKind::Enum::kSubtitles),
+                            g_empty_atom, g_empty_atom, ASSERT_NO_EXCEPTION);
 
   auto* listener = MakeGarbageCollected<CueEventListener>();
   for (auto cue_data : kTestCueData) {
@@ -669,7 +679,7 @@ TEST_F(HTMLMediaElementWithMockSchedulerTest, CueEnterExitEventLatency) {
   WebMediaPlayer()->SetAutoIncrementTimeDelta(base::Milliseconds(8));
   Video()->Play();
 
-  platform()->RunForPeriod(kTestCueDataLength);
+  FastForwardBy(kTestCueDataLength);
   platform()->RunUntilIdle();
 
   // Ensure all cue events fired when expected with a 20ms tolerance

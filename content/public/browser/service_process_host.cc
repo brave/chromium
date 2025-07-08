@@ -6,6 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/common/content_client.h"
+#include "media/media_buildflags.h"
 
 namespace content {
 
@@ -66,13 +67,15 @@ ServiceProcessHost::Options::WithPreloadedLibraries(
   preload_libraries = std::move(preloads);
   return *this;
 }
+#endif  // #if BUILDFLAG(IS_WIN)
 
-ServiceProcessHost::Options& ServiceProcessHost::Options::WithPinUser32(
-    base::PassKey<ServiceProcessHostPinUser32> passkey) {
-  pin_user32 = true;
+ServiceProcessHost::Options& ServiceProcessHost::Options::WithGpuClient(
+    base::PassKey<ServiceProcessHostGpuClient> passkey) {
+#if BUILDFLAG(ENABLE_GPU_CHANNEL_MEDIA_CAPTURE)
+  allow_gpu_client = true;
+#endif  // BUILDFLAG(ENABLE_GPU_CHANNEL_MEDIA_CAPTURE)
   return *this;
 }
-#endif  // #if BUILDFLAG(IS_WIN)
 
 ServiceProcessHost::Options ServiceProcessHost::Options::Pass() {
   return std::move(*this);

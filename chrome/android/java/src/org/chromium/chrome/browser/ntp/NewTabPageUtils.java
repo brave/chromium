@@ -6,12 +6,12 @@ package org.chromium.chrome.browser.ntp;
 
 import android.net.Uri;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 
-/**
- * Collection of util methods for help launching a NewTabPage.
- */
+/** Collection of util methods for help launching a NewTabPage. */
+@NullMarked
 public class NewTabPageUtils {
     private static final String ORIGIN_PARAMETER_KEY = "origin";
     private static final String WEB_FEED_PARAMETER = "web-feed";
@@ -36,7 +36,7 @@ public class NewTabPageUtils {
      * @return The {@link NewTabPageLaunchOrigin} decoded from the NTP url.
      */
     public static @NewTabPageLaunchOrigin int decodeOriginFromNtpUrl(String url) {
-        if (!UrlUtilities.isNTPUrl(url)) {
+        if (!UrlUtilities.isNtpUrl(url)) {
             return NewTabPageLaunchOrigin.UNKNOWN;
         }
         Uri uri = Uri.parse(url);

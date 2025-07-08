@@ -9,8 +9,9 @@
  * user action recording.
  */
 
-import {Setting} from './mojom-webui/setting.mojom-webui.js';
-import {SettingChangeValue, UserActionRecorder, UserActionRecorderInterface} from './mojom-webui/user_action_recorder.mojom-webui.js';
+import type {Setting} from './mojom-webui/setting.mojom-webui.js';
+import type {SettingChangeValue, UserActionRecorderInterface} from './mojom-webui/user_action_recorder.mojom-webui.js';
+import {UserActionRecorder} from './mojom-webui/user_action_recorder.mojom-webui.js';
 
 let userActionRecorder: UserActionRecorderInterface|null = null;
 
@@ -49,16 +50,18 @@ export function recordSearch(): void {
 }
 
 /**
- * All new code should pass a value for |setting| and, if applicable, |value|.
- * The zero-parameter version of this function is reserved for
- * legacy code which has not yet been converted.
- * TODO(b/263414450): make |setting| non-optional when migration is complete.
+ * This function is reserved only for pref-based setting changes that have no
+ * corresponding entry in `metrics_utils.ts`. This function should not be used
+ * in any new code.
+ */
+export function recordSettingChangeForUnmappedPref(): void {
+  getRecorder().recordSettingChange();
+}
+
+/**
+ * Records when a `setting` is changed and, if applicable, its updated `value`.
  */
 export function recordSettingChange(
-    setting?: Setting, value?: SettingChangeValue) {
-  if (setting === undefined) {
-    getRecorder().recordSettingChange();
-  } else {
-    getRecorder().recordSettingChangeWithDetails(setting, value || null);
-  }
+    setting: Setting, value?: SettingChangeValue): void {
+  getRecorder().recordSettingChangeWithDetails(setting, value || null);
 }

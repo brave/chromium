@@ -34,10 +34,7 @@
 #include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -223,6 +220,12 @@ TEST_F(LocaleMacTest, formatDate) {
 }
 
 TEST_F(LocaleMacTest, formatTime) {
+#if BUILDFLAG(IS_MAC)
+  if (base::mac::MacOSMajorVersion() == 15) {
+    GTEST_SKIP() << "Disabled on macOS Sequoia.";
+  }
+#endif
+
   EXPECT_EQ("1:23 PM", FormatTime("en_US", 13, 23, 00, 000, true));
   EXPECT_EQ("13:23", FormatTime("fr_FR", 13, 23, 00, 000, true));
   EXPECT_EQ("13:23", FormatTime("ja_JP", 13, 23, 00, 000, true));

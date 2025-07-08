@@ -2,9 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
-
-assert(is_chromeos_ash, "Non-ChromeOS builds cannot depend on //ash")
+assert(is_chromeos, "Non-ChromeOS builds cannot depend on //ash")
 
 static_library("common") {
 }
@@ -16,6 +14,39 @@ static_library("keyboard_diagram_strings") {
   ]
 
   deps = [
+    "//chromeos/strings/",
+    "//content/public/browser",
+    "//ui/base",
+  ]
+}
+
+static_library("shortcut_input_key_strings") {
+  sources = [
+    "shortcut_input_key_strings.cc",
+    "shortcut_input_key_strings.h",
+  ]
+
+  deps = [
+    "//ash",
+    "//chromeos/strings/",
+    "//content/public/browser",
+    "//ui/base",
+    "//ui/events/ash:ash",
+  ]
+}
+
+source_set("sea_pen") {
+  sources = [
+    "sea_pen_provider.h",
+    "sea_pen_resources.cc",
+    "sea_pen_resources.h",
+    "sea_pen_resources_generated.cc",
+    "sea_pen_resources_generated.h",
+  ]
+
+  deps = [
+    "//ash/constants",
+    "//ash/webui/common/mojom:sea_pen",
     "//chromeos/strings/",
     "//content/public/browser",
     "//ui/base",

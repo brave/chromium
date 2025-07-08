@@ -4,24 +4,28 @@
 import './app_details_item.js';
 import './permission_heading.js';
 import './pin_to_shelf_item.js';
-import './supported_links_item.js';
 import './sub_apps_item.js';
 import './app_management_cros_shared_style.css.js';
-import 'chrome://resources/cr_components/app_management/file_handling_item.js';
-import 'chrome://resources/cr_components/app_management/icons.html.js';
-import 'chrome://resources/cr_components/app_management/more_permissions_item.js';
-import 'chrome://resources/cr_components/app_management/permission_item.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import './file_handling_item.js';
+import '../../app_management_icons.html.js';
+import './more_permissions_item.js';
+import './permission_item.js';
+import './supported_links_item.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
 
-import {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {App} from 'chrome://resources/cr_components/app_management/app_management.mojom-webui.js';
+import type {AppMap} from 'chrome://resources/cr_components/app_management/constants.js';
 import {getSelectedApp} from 'chrome://resources/cr_components/app_management/util.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import {AppManagementStoreMixin} from '../../common/app_management/store_mixin.js';
+import type {PrefsState} from '../../common/types.js';
+
 import {getTemplate} from './pwa_detail_view.html.js';
-import {AppManagementStoreMixin} from './store_mixin.js';
 
 const AppManagementPwaDetailViewElementBase =
-    AppManagementStoreMixin(PolymerElement);
+    AppManagementStoreMixin(I18nMixin(PolymerElement));
 
 export class AppManagementPwaDetailViewElement extends
     AppManagementPwaDetailViewElementBase {
@@ -35,16 +39,25 @@ export class AppManagementPwaDetailViewElement extends
 
   static get properties() {
     return {
+      prefs: {
+        type: Object,
+        notify: true,
+      },
+
       app_: Object,
+      apps_: Object,
     };
   }
 
+  prefs: PrefsState;
   private app_: App;
+  private apps_: AppMap;
 
   override connectedCallback(): void {
     super.connectedCallback();
 
     this.watch('app_', state => getSelectedApp(state));
+    this.watch('apps_', state => state.apps);
     this.updateFromStore();
   }
 }

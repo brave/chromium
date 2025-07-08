@@ -5,6 +5,7 @@
 #include "ash/quick_pair/repository/fast_pair/device_metadata_fetcher.h"
 
 #include <memory>
+#include <optional>
 
 #include "ash/quick_pair/common/account_key_failure.h"
 #include "ash/quick_pair/common/device.h"
@@ -27,7 +28,6 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -95,7 +95,7 @@ class DeviceMetadataFetcherTest : public testing::Test {
   base::test::TaskEnvironment task_environment;
   base::HistogramTester histogram_tester_;
   std::unique_ptr<DeviceMetadataFetcher> device_metadata_fetcher_;
-  raw_ptr<MockHttpFetcher, ExperimentalAsh> mock_http_fetcher_;
+  raw_ptr<MockHttpFetcher> mock_http_fetcher_;
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
 };
 
@@ -107,14 +107,13 @@ TEST_F(DeviceMetadataFetcherTest, ValidResponse) {
                       "https://nearbydevices-pa.googleapis.com/v1/device/123"));
         std::string decoded;
         base::Base64Decode(kValidResponseEncoded, &decoded);
-        std::move(callback).Run(
-            std::make_unique<std::string>(decoded),
-            std::make_unique<FastPairHttpResult>(net::Error::OK, nullptr));
+        std::move(callback).Run(decoded, std::make_unique<FastPairHttpResult>(
+                                             net::Error::OK, nullptr));
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
-      .WillOnce([](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+      .WillOnce([](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                        response,
                    bool has_retryable_error) {
         ASSERT_EQ("Pixel Buds", response->device().name());
@@ -144,16 +143,15 @@ TEST_F(DeviceMetadataFetcherTest, InvalidResponse) {
         ASSERT_EQ(0u,
                   url.spec().find(
                       "https://nearbydevices-pa.googleapis.com/v1/device/123"));
-        std::move(callback).Run(std::make_unique<std::string>(kInvalidResponse),
-                                nullptr);
+        std::move(callback).Run(kInvalidResponse, nullptr);
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
       .WillOnce(
-          [](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+          [](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                  response,
-             bool has_retryable_error) { ASSERT_EQ(absl::nullopt, response); });
+             bool has_retryable_error) { ASSERT_EQ(std::nullopt, response); });
 
   device_metadata_fetcher_->LookupDeviceId(kDeviceId, callback.Get());
   task_environment.RunUntilIdle();
@@ -165,16 +163,15 @@ TEST_F(DeviceMetadataFetcherTest, EmptyResponse) {
         ASSERT_EQ(0u,
                   url.spec().find(
                       "https://nearbydevices-pa.googleapis.com/v1/device/123"));
-        std::move(callback).Run(std::make_unique<std::string>(kEmptyResponse),
-                                nullptr);
+        std::move(callback).Run(kEmptyResponse, nullptr);
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
       .WillOnce(
-          [](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+          [](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                  response,
-             bool has_retryable_error) { ASSERT_EQ(absl::nullopt, response); });
+             bool has_retryable_error) { ASSERT_EQ(std::nullopt, response); });
 
   device_metadata_fetcher_->LookupDeviceId(kDeviceId, callback.Get());
   task_environment.RunUntilIdle();
@@ -186,15 +183,15 @@ TEST_F(DeviceMetadataFetcherTest, NoResponse) {
         ASSERT_EQ(0u,
                   url.spec().find(
                       "https://nearbydevices-pa.googleapis.com/v1/device/123"));
-        std::move(callback).Run(nullptr, nullptr);
+        std::move(callback).Run(std::nullopt, nullptr);
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
       .WillOnce(
-          [](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+          [](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                  response,
-             bool has_retryable_error) { ASSERT_EQ(absl::nullopt, response); });
+             bool has_retryable_error) { ASSERT_EQ(std::nullopt, response); });
 
   device_metadata_fetcher_->LookupDeviceId(kDeviceId, callback.Get());
   task_environment.RunUntilIdle();
@@ -216,16 +213,15 @@ TEST_F(DeviceMetadataFetcherTest, RecordNetError) {
                 /*head=*/network::CreateURLResponseHead(
                     net::HttpStatusCode::HTTP_NOT_FOUND)
                     .get());
-        std::move(callback).Run(std::make_unique<std::string>(kInvalidResponse),
-                                std::move(http_result));
+        std::move(callback).Run(kInvalidResponse, std::move(http_result));
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
       .WillOnce(
-          [](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+          [](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                  response,
-             bool has_retryable_error) { ASSERT_EQ(absl::nullopt, response); });
+             bool has_retryable_error) { ASSERT_EQ(std::nullopt, response); });
 
   device_metadata_fetcher_->LookupDeviceId(kDeviceId, callback.Get());
   task_environment.RunUntilIdle();
@@ -251,16 +247,15 @@ TEST_F(DeviceMetadataFetcherTest, RecordHttpError) {
                 /*head=*/network::CreateURLResponseHead(
                     net::HttpStatusCode::HTTP_NOT_FOUND)
                     .get());
-        std::move(callback).Run(std::make_unique<std::string>(kInvalidResponse),
-                                std::move(http_result));
+        std::move(callback).Run(kInvalidResponse, std::move(http_result));
       });
 
   base::MockCallback<GetObservedDeviceCallback> callback;
   EXPECT_CALL(callback, Run)
       .WillOnce(
-          [](absl::optional<nearby::fastpair::GetObservedDeviceResponse>
+          [](std::optional<nearby::fastpair::GetObservedDeviceResponse>
                  response,
-             bool has_retryable_error) { ASSERT_EQ(absl::nullopt, response); });
+             bool has_retryable_error) { ASSERT_EQ(std::nullopt, response); });
 
   device_metadata_fetcher_->LookupDeviceId(kDeviceId, callback.Get());
   task_environment.RunUntilIdle();

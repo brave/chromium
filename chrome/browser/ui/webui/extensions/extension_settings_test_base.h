@@ -12,6 +12,15 @@
 #include "chrome/test/base/web_ui_mocha_browser_test.h"
 #include "extensions/browser/scoped_ignore_content_verifier_for_test.h"
 
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_WIN)
+#include "base/base_paths_win.h"
+#include "base/test/scoped_path_override.h"
+#endif  // BUILDFLAG(IS_WIN)
+
 namespace extensions {
 class Extension;
 class ScopedTestDialogAutoConfirm;
@@ -61,6 +70,14 @@ class ExtensionSettingsTestBase : public WebUIMochaBrowserTest {
 
   const base::FilePath test_data_dir_;
 
+#if BUILDFLAG(IS_WIN)
+  // This is needed to stop tests creating a shortcut in the Windows start menu.
+  // The override needs to last until the test is destroyed, because Windows
+  // shortcut tasks which create the shortcut can run after the test body
+  // returns.
+  base::ScopedPathOverride override_start_dir{base::DIR_START_MENU};
+#endif  // BUILDFLAG(IS_WIN)
+
   // Disable extension content verification.
   extensions::ScopedIgnoreContentVerifierForTest ignore_content_verification_;
 
@@ -69,6 +86,11 @@ class ExtensionSettingsTestBase : public WebUIMochaBrowserTest {
 
   std::unique_ptr<extensions::ScopedTestDialogAutoConfirm>
       uninstall_auto_confirm_;
+
+#if !BUILDFLAG(IS_ANDROID)
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler_;
+#endif  // BUILDFLAG(IS_ANDROID)
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_SETTINGS_TEST_BASE_H_

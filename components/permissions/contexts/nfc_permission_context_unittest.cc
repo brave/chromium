@@ -51,7 +51,7 @@ class NfcPermissionContextTests : public content::RenderViewHostTestHarness {
                             bool user_gesture);
 
   void PermissionResponse(const PermissionRequestID& id,
-                          ContentSetting content_setting);
+                          blink::mojom::PermissionStatus permission_status);
   void CheckPermissionMessageSent(int request_id, bool allowed);
   void CheckPermissionMessageSentInternal(MockRenderProcessHost* process,
                                           int request_id,
@@ -92,7 +92,8 @@ void NfcPermissionContextTests::RequestNfcPermission(
     const GURL& requesting_frame,
     bool user_gesture) {
   nfc_permission_context_->RequestPermission(
-      id, requesting_frame, user_gesture,
+      std::make_unique<PermissionRequestData>(nfc_permission_context_, id,
+                                              user_gesture, requesting_frame),
       base::BindOnce(&NfcPermissionContextTests::PermissionResponse,
                      base::Unretained(this), id));
   content::RunAllTasksUntilIdle();
@@ -100,10 +101,10 @@ void NfcPermissionContextTests::RequestNfcPermission(
 
 void NfcPermissionContextTests::PermissionResponse(
     const PermissionRequestID& id,
-    ContentSetting content_setting) {
+    PermissionStatus permission_status) {
   responses_[id.global_render_frame_host_id().child_id] =
       std::make_pair(id.request_local_id_for_testing(),
-                     content_setting == CONTENT_SETTING_ALLOW);
+                     permission_status == PermissionStatus::GRANTED);
 }
 
 void NfcPermissionContextTests::CheckPermissionMessageSent(int request_id,
@@ -115,11 +116,11 @@ void NfcPermissionContextTests::CheckPermissionMessageSentInternal(
     MockRenderProcessHost* process,
     int request_id,
     bool allowed) {
-  ASSERT_EQ(responses_.count(process->GetID()), 1U);
+  ASSERT_EQ(responses_.count(process->GetDeprecatedID()), 1U);
   EXPECT_EQ(permissions::PermissionRequestID::RequestLocalId(request_id),
-            responses_[process->GetID()].first);
-  EXPECT_EQ(allowed, responses_[process->GetID()].second);
-  responses_.erase(process->GetID());
+            responses_[process->GetDeprecatedID()].first);
+  EXPECT_EQ(allowed, responses_[process->GetDeprecatedID()].second);
+  responses_.erase(process->GetDeprecatedID());
 }
 
 void NfcPermissionContextTests::SetUp() {

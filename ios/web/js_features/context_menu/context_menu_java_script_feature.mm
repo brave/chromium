@@ -14,10 +14,6 @@
 #import "ios/web/public/js_messaging/script_message.h"
 #import "ios/web/public/js_messaging/web_frames_manager.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 const char kContextMenuJavaScriptFeatureKeyName[] =
     "context_menu_java_script_feature";
@@ -26,7 +22,7 @@ const char kAllFramesContextMenuScript[] = "all_frames_context_menu";
 const char kMainFrameContextMenuScript[] = "main_frame_context_menu";
 
 const char kFindElementResultHandlerName[] = "FindElementResultHandler";
-}
+}  // namespace
 
 namespace web {
 
@@ -64,7 +60,6 @@ void ContextMenuJavaScriptFeature::GetElementAtPoint(
     WebState* web_state,
     std::string requestID,
     CGPoint point,
-    CGSize web_content_size,
     ElementDetailsCallback callback) {
   callbacks_[requestID] = std::move(callback);
 
@@ -73,13 +68,11 @@ void ContextMenuJavaScriptFeature::GetElementAtPoint(
   parameters.Append(requestID);
   parameters.Append(point.x);
   parameters.Append(point.y);
-  parameters.Append(web_content_size.width);
-  parameters.Append(web_content_size.height);
   CallJavaScriptFunction(main_frame, "contextMenu.findElementAtPoint",
                          parameters);
 }
 
-absl::optional<std::string>
+std::optional<std::string>
 ContextMenuJavaScriptFeature::GetScriptMessageHandlerName() const {
   return kFindElementResultHandlerName;
 }

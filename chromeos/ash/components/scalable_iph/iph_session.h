@@ -5,7 +5,9 @@
 #ifndef CHROMEOS_ASH_COMPONENTS_SCALABLE_IPH_IPH_SESSION_H_
 #define CHROMEOS_ASH_COMPONENTS_SCALABLE_IPH_IPH_SESSION_H_
 
+#include "base/component_export.h"
 #include "base/feature_list.h"
+#include "base/memory/raw_ref.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph_constants.h"
 #include "components/feature_engagement/public/tracker.h"
 
@@ -16,7 +18,7 @@ namespace scalable_iph {
 // with ScalableIph framework via `IphSession` object which is passed from the
 // service. UI code should not query/interact directly with `ScalableIph` keyed
 // service.
-class IphSession {
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_SCALABLE_IPH) IphSession {
  public:
   class Delegate {
    public:
@@ -38,7 +40,7 @@ class IphSession {
  private:
   // This is an IPH feature which is tied to this IPH session. See
   // //components/feature_engagement/README.md for details about an IPH feature.
-  const base::Feature& feature_;
+  const raw_ref<const base::Feature> feature_;
   const raw_ptr<feature_engagement::Tracker> tracker_;
   const raw_ptr<Delegate> delegate_;
 };

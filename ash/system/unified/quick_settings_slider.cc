@@ -4,11 +4,14 @@
 
 #include "ash/system/unified/quick_settings_slider.h"
 
-#include "ash/constants/ash_features.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_provider.h"
 #include "ash/style/color_util.h"
 #include "base/notreached.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "cc/paint/paint_flags.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_id.h"
@@ -16,6 +19,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/slider.h"
 
 namespace ash {
@@ -80,13 +84,22 @@ float GetSliderWidth(Style slider_style) {
 QuickSettingsSlider::QuickSettingsSlider(views::SliderListener* listener,
                                          Style slider_style)
     : views::Slider(listener), slider_style_(slider_style) {
-  if (!features::IsQsRevampEnabled())
-    return;
   SetValueIndicatorRadius(kFullSliderRoundedRadius);
   SetFocusBehavior(FocusBehavior::ALWAYS);
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kSlider);
+  GetViewAccessibility().AddAction(ax::mojom::Action::kIncrement);
+  GetViewAccessibility().AddAction(ax::mojom::Action::kDecrement);
 }
 
 QuickSettingsSlider::~QuickSettingsSlider() = default;
+
+// By not calling the superclass's AddedToWidget, the QuickSettingsSlider
+// ensures that only its own custom behavior is executed, avoiding any
+// redundant accessibility events getting triggered.
+void QuickSettingsSlider::AddedToWidget() {
+  UpdateAccessibleValue();
+}
 
 void QuickSettingsSlider::SetSliderStyle(Style style) {
   if (slider_style_ == style)
@@ -97,6 +110,7 @@ void QuickSettingsSlider::SetSliderStyle(Style style) {
   if (slider_style_ == Style::kRadioInactive)
     SetFocusBehavior(FocusBehavior::NEVER);
 
+  UpdateAccessibleValue();
   SchedulePaint();
 }
 
@@ -113,16 +127,31 @@ int QuickSettingsSlider::GetInactiveRadioSliderRoundedCornerRadius() {
   return kInactiveRadioSliderRoundedRadius + kFocusOffset;
 }
 
-SkColor QuickSettingsSlider::GetThumbColor() const {
-  // TODO(b/256705775): Updates the color when QsRevamp is disabled but Jelly is
-  // enabled.
-  if (!features::IsQsRevampEnabled()) {
-    using Type = AshColorProvider::ContentLayerType;
-    return AshColorProvider::Get()->GetContentLayerColor(
-        (style() == RenderingStyle::kMinimalStyle) ? Type::kSliderColorInactive
-                                                   : Type::kSliderColorActive);
-  }
+void QuickSettingsSlider::UpdateAccessibleValue() {
+  std::u16string volume_level = base::UTF8ToUTF16(
+      base::StringPrintf("%d%%", static_cast<int>(GetValue() * 100 + 0.5)));
+  views::ScopedAccessibilityEventBlocker scoped_event_blocker(
+      GetViewAccessibility());
+  if (is_toggleable_volume_slider_) {
+    std::u16string message = l10n_util::GetStringFUTF16(
+        slider_style_ == Style::kDefaultMuted
+            ? IDS_ASH_STATUS_TRAY_VOLUME_SLIDER_MUTED_ACCESSIBILITY_ANNOUNCEMENT
+            : IDS_ASH_STATUS_TRAY_VOLUME_SLIDER_ACCESSIBILITY_ANNOUNCEMENT,
+        volume_level);
 
+    GetViewAccessibility().SetValue(message);
+  } else {
+    GetViewAccessibility().SetValue(volume_level);
+  }
+}
+
+void QuickSettingsSlider::SetIsToggleableVolumeSlider(
+    bool is_toggleable_volume_slider) {
+  is_toggleable_volume_slider_ = is_toggleable_volume_slider;
+  UpdateAccessibleValue();
+}
+
+SkColor QuickSettingsSlider::GetThumbColor() const {
   switch (slider_style_) {
     case Style::kDefault:
     case Style::kRadioActive:
@@ -141,11 +170,6 @@ SkColor QuickSettingsSlider::GetThumbColor() const {
 }
 
 SkColor QuickSettingsSlider::GetTroughColor() const {
-  // TODO(b/256705775): Updates the color when QsRevamp is disabled but Jelly is
-  // enabled.
-  if (!features::IsQsRevampEnabled())
-    return ColorUtil::GetSecondToneColor(GetThumbColor());
-
   switch (slider_style_) {
     case Style::kDefault:
       return GetColorProvider()->GetColor(
@@ -164,13 +188,6 @@ SkColor QuickSettingsSlider::GetTroughColor() const {
 }
 
 void QuickSettingsSlider::OnPaint(gfx::Canvas* canvas) {
-  // Paints the `QuickSettingsSlider`. If the feature is not enabled, use
-  // `Slider::OnPaint()`.
-  if (!ash::features::IsQsRevampEnabled()) {
-    views::Slider::OnPaint(canvas);
-    return;
-  }
-
   const gfx::Rect content = GetContentsBounds();
   const float slider_width = GetSliderWidth(slider_style_);
   const float slider_radius = GetSliderRoundedCornerRadius(slider_style_);
@@ -249,10 +266,10 @@ bool ReadOnlySlider::CanAcceptEvent(const ui::Event& event) {
   return false;
 }
 
-BEGIN_METADATA(QuickSettingsSlider, views::View)
+BEGIN_METADATA(QuickSettingsSlider)
 END_METADATA
 
-BEGIN_METADATA(ReadOnlySlider, views::View)
+BEGIN_METADATA(ReadOnlySlider)
 END_METADATA
 
 }  // namespace ash

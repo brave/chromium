@@ -27,16 +27,6 @@ class TransformHelper {
   // resolve against the reference box.
   static bool DependsOnReferenceBox(const ComputedStyle&);
 
-  // Computes and updates reference box related state for the
-  // LayoutObject. Returns true if the LayoutObject has a transform that needs
-  // to resolve against the reference box.
-  static bool UpdateReferenceBoxDependency(LayoutObject&);
-
-  // Subset of the above that updates the LayoutObject's viewport dependency
-  // flag based on the stated reference box usage and style.
-  static void UpdateReferenceBoxDependency(LayoutObject&,
-                                           bool transform_uses_reference_box);
-
   // Check if ComputedStyle has changed in a way that could be reflected in the
   // transform reference box.
   static bool CheckReferenceBoxDependencies(const ComputedStyle& old_style,
@@ -70,7 +60,7 @@ class TransformHelper {
 };
 
 // The following enumeration is used to optimize cases where the scale is known
-// to be invariant (see: LayoutSVGContainer::UpdateLayout and
+// to be invariant (see: LayoutSVGContainer::UpdateSVGLayout and
 // LayoutSVGRoot). The value 'Full' can be used in the general case when the
 // scale change is unknown, or known to have changed.
 enum class SVGTransformChange {

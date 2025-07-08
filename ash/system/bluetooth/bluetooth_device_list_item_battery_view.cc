@@ -11,7 +11,6 @@
 #include "ash/system/tray/unfocusable_label.h"
 #include "base/check.h"
 #include "base/strings/string_number_conversions.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -72,20 +71,14 @@ void BluetoothDeviceListItemBatteryView::UpdateBatteryInfo(
   }
 
   ui::ColorId color_id;
-  if (chromeos::features::IsJellyEnabled()) {
     color_id = new_battery_percentage >= kPositiveBatteryPercentageCutoff
                    ? cros_tokens::kCrosSysPositive
                    : cros_tokens::kCrosSysError;
-  } else {
-    color_id = new_battery_percentage >= kPositiveBatteryPercentageCutoff
-                   ? kColorAshTextColorSecondary
-                   : kColorAshTextColorAlert;
-  }
 
   label_->SetText(l10n_util::GetStringFUTF16(
       message_id, base::NumberToString16(new_battery_percentage)));
   label_->SetAutoColorReadabilityEnabled(false);
-  label_->SetEnabledColorId(color_id);
+  label_->SetEnabledColor(color_id);
 
   if (last_shown_battery_percentage_ &&
       ApproximatelyEqual(last_shown_battery_percentage_.value(),
@@ -99,8 +92,8 @@ void BluetoothDeviceListItemBatteryView::UpdateBatteryInfo(
       GetColorProvider()->GetColor(color_id));
   battery_image_info.charge_percent = new_battery_percentage;
 
-  icon_->SetImage(PowerStatus::GetBatteryImage(
-      battery_image_info, kUnifiedTraySubIconSize, GetColorProvider()));
+  icon_->SetImage(PowerStatus::GetBatteryImageModel(battery_image_info,
+                                                    kUnifiedTraySubIconSize));
 }
 
 bool BluetoothDeviceListItemBatteryView::ApproximatelyEqual(
@@ -129,7 +122,7 @@ bool BluetoothDeviceListItemBatteryView::ApproximatelyEqual(
   return max - min < kBatteryPercentageChangeThreshold;
 }
 
-BEGIN_METADATA(BluetoothDeviceListItemBatteryView, views::View)
+BEGIN_METADATA(BluetoothDeviceListItemBatteryView)
 END_METADATA
 
 }  // namespace ash

@@ -7,23 +7,33 @@
 #include <utility>
 
 #include "ash/constants/ash_features.h"
+#include "ash/lobster/lobster_controller.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/ash/input_method/assistive_suggester_client_filter.h"
 #include "chrome/browser/ash/input_method/assistive_suggester_switch.h"
 #include "chrome/browser/ash/input_method/autocorrect_manager.h"
-#include "chrome/browser/ash/input_method/editor_mediator.h"
+#include "chrome/browser/ash/input_method/editor_mediator_factory.h"
 #include "chrome/browser/ash/input_method/get_current_window_properties.h"
 #include "chrome/browser/ash/input_method/grammar_service_client.h"
 #include "chrome/browser/ash/input_method/native_input_method_engine_observer.h"
 #include "chrome/browser/ash/input_method/suggestions_service_client.h"
-#include "chrome/browser/ash/input_method/ui/input_method_menu_manager.h"
+#include "chrome/browser/ash/lobster/lobster_event_sink.h"
+#include "chrome/browser/ash/lobster/lobster_service_provider.h"
+#include "chrome/browser/ui/ash/input_method/input_method_menu_manager.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/ime/ash/input_method_manager.h"
 
 namespace ash {
 
 namespace input_method {
+namespace {
+bool ShouldRouteToFirstPartyVietnameseInput(std::string_view engine_id) {
+  return base::FeatureList::IsEnabled(features::kFirstPartyVietnameseInput) &&
+         (engine_id == "vkd_vi_vni" || engine_id == "vkd_vi_telex");
+}
+}  // namespace
 
 NativeInputMethodEngine::NativeInputMethodEngine()
     : NativeInputMethodEngine(/*use_ime_service=*/true) {}
@@ -48,7 +58,7 @@ void NativeInputMethodEngine::Initialize(
     std::unique_ptr<InputMethodEngineObserver> observer,
     const char* extension_id,
     Profile* profile) {
-  // TODO(crbug/1141231): refactor the mix of unique and raw ptr here.
+  // TODO(crbug.com/40154142): refactor the mix of unique and raw ptr here.
   std::unique_ptr<AssistiveSuggester> assistive_suggester =
       std::make_unique<AssistiveSuggester>(
           this, profile,
@@ -74,7 +84,14 @@ void NativeInputMethodEngine::Initialize(
           : nullptr;
 
   EditorMediator* editor_event_sink =
-      features::IsOrcaEnabled() ? EditorMediator::Get() : nullptr;
+      chromeos::features::IsOrcaEnabled()
+          ? EditorMediatorFactory::GetInstance()->GetForProfile(profile)
+          : nullptr;
+
+  LobsterEventSink* lobster_event_sink =
+      ash::features::IsLobsterEnabled()
+          ? LobsterServiceProvider::GetForProfile(profile)
+          : nullptr;
 
   chrome_keyboard_controller_client_observer_.Observe(
       ChromeKeyboardControllerClient::Get());
@@ -82,9 +99,9 @@ void NativeInputMethodEngine::Initialize(
   // Wrap the given observer in our observer that will decide whether to call
   // Mojo directly or forward to the extension.
   auto native_observer = std::make_unique<NativeInputMethodEngineObserver>(
-      profile->GetPrefs(), editor_event_sink, std::move(observer),
-      std::move(assistive_suggester), std::move(autocorrect_manager),
-      std::move(suggestions_collector),
+      profile->GetPrefs(), editor_event_sink, lobster_event_sink,
+      std::move(observer), std::move(assistive_suggester),
+      std::move(autocorrect_manager), std::move(suggestions_collector),
       std::make_unique<GrammarManager>(
           profile, std::make_unique<GrammarServiceClient>(), this),
       use_ime_service_);
@@ -166,7 +183,8 @@ bool NativeInputMethodEngine::UpdateMenuItems(
 }
 
 void NativeInputMethodEngine::OnInputMethodOptionsChanged() {
-  if (ShouldRouteToNativeMojoEngine(GetActiveComponentId())) {
+  if (ShouldRouteToNativeMojoEngine(GetActiveComponentId()) ||
+      ShouldRouteToFirstPartyVietnameseInput(GetActiveComponentId())) {
     Enable(GetActiveComponentId());
   } else {
     InputMethodEngine::OnInputMethodOptionsChanged();

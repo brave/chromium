@@ -5,12 +5,13 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_QUOTA_MANAGER_BRIDGE_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_QUOTA_MANAGER_BRIDGE_H_
 
+#include <jni.h>
 #include <stdint.h>
 
 #include <string>
 #include <vector>
 
-#include "base/android/jni_weak_ref.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -28,8 +29,13 @@ namespace android_webview {
 
 class AwBrowserContext;
 
-// TODO(crbug.com/1215208): Change the functions in this class to reference
+// TODO(crbug.com/40184305): Change the functions in this class to reference
 // StorageKey instead of Origin.
+//
+// This object is owned by the native AwBrowserContext, and the Java peer is
+// owned by the Java AwBrowserContext.
+//
+// Lifetime: Profile
 class AwQuotaManagerBridge
     : public base::RefCountedThreadSafe<AwQuotaManagerBridge> {
  public:
@@ -39,19 +45,31 @@ class AwQuotaManagerBridge
   static scoped_refptr<AwQuotaManagerBridge> Create(
       AwBrowserContext* browser_context);
 
-  // Called by Java.
-  void Init(JNIEnv* env, const base::android::JavaParamRef<jobject>& object);
-  void DeleteAllData(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& object);
-  void DeleteOrigin(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& object,
-                    const base::android::JavaParamRef<jstring>& origin);
+  // Delete all browsing data stored by the profile this bridge is attached to.
+  void DeleteBrowsingData(JNIEnv* env,
+                          const base::android::JavaParamRef<jobject>& callback);
+  // Delete all browsing data stored by the profile this bridge is attached to,
+  // for the specified eTLD+1 (site). The `domain` parameter can contain a
+  // subdomain. Any subdomains will be ignored, and the actual site domain used
+  // for deletion is returned.
+  std::string DeleteBrowsingDataForSite(
+      JNIEnv* env,
+      std::string& domain,
+      const base::android::JavaParamRef<jobject>& callback);
+
+  // http://crbug.com/373826557 does not actually delete all data, preserved for
+  // Android Framework implementation.
+  void DeleteAllDataFramework(JNIEnv* env);
+  // http://crbug.com/373826557 does not actually delete all data, preserved for
+  // Android Framework implementation.
+  void DeleteOriginFramework(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& origin);
   void GetOrigins(JNIEnv* env,
                   const base::android::JavaParamRef<jobject>& object,
                   const base::android::JavaParamRef<jobject>& callback);
   void GetUsageAndQuotaForOrigin(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& object,
       const base::android::JavaParamRef<jstring>& origin,
       const base::android::JavaParamRef<jobject>& callback,
       bool is_quota);
@@ -73,7 +91,6 @@ class AwQuotaManagerBridge
   storage::QuotaManager* GetQuotaManager() const;
 
   raw_ptr<AwBrowserContext> browser_context_;
-  JavaObjectWeakGlobalRef java_ref_;
 
   base::WeakPtrFactory<AwQuotaManagerBridge> weak_factory_{this};
 };

@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/page_load_metrics/observers/foreground_duration_ukm_observer.h"
+#include <string_view>
 
+#include "chrome/browser/page_load_metrics/observers/foreground_duration_ukm_observer.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -43,12 +44,12 @@ constexpr char kShopifyPageLoad[] = "ShopifyPageLoad";
 constexpr char kSquarespacePageLoad[] = "SquarespacePageLoad";
 constexpr char kWixPageLoad[] = "WixPageLoad";
 constexpr char kWordPressPageLoad[] = "WordPressPageLoad";
-const std::vector<base::StringPiece> all_frameworks = {
+const std::vector<std::string_view> all_frameworks = {
     kGatsbyJsPageLoad, kNextJsPageLoad,  kNuxtJsPageLoad, kSapperPageLoad,
     kVuePressPageLoad, kAngularPageLoad, kPreactPageLoad, kReactPageLoad,
     kSveltePageLoad,   kVuePageLoad,
 };
-const std::vector<base::StringPiece> all_content_management_systems = {
+const std::vector<std::string_view> all_content_management_systems = {
     kDrupalPageLoad,      kJoomlaPageLoad, kShopifyPageLoad,
     kSquarespacePageLoad, kWixPageLoad,    kWordPressPageLoad,
 };
@@ -80,11 +81,12 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
   void ExpectFrameworkMetricValueForUrl(
       const GURL& url,
-      base::StringPiece metric_name,
+      std::string_view metric_name,
       const int expected_value,
-      base::StringPiece entry_name =
+      std::string_view entry_name =
           ukm::builders::JavascriptFrameworkPageLoad::kEntryName) {
-    for (auto* entry : test_ukm_recorder_->GetEntriesByName(entry_name)) {
+    for (const ukm::mojom::UkmEntry* entry :
+         test_ukm_recorder_->GetEntriesByName(entry_name)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url) {
         test_ukm_recorder_->EntryHasMetric(entry, metric_name);
@@ -95,12 +97,13 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
   void ExpectFrameworkMetricCountForUrl(
       const GURL& url,
-      base::StringPiece metric_name,
+      std::string_view metric_name,
       const int expected_count,
-      base::StringPiece entry_name =
+      std::string_view entry_name =
           ukm::builders::JavascriptFrameworkPageLoad::kEntryName) {
     int count = 0;
-    for (auto* entry : test_ukm_recorder_->GetEntriesByName(entry_name)) {
+    for (const ukm::mojom::UkmEntry* entry :
+         test_ukm_recorder_->GetEntriesByName(entry_name)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url &&
           test_ukm_recorder_->EntryHasMetric(entry, metric_name)) {
@@ -111,11 +114,12 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
   void ExpectContentManagementSystemMetricValueForUrl(
       const GURL& url,
-      base::StringPiece metric_name,
+      std::string_view metric_name,
       const int expected_value,
-      base::StringPiece entry_name =
+      std::string_view entry_name =
           ukm::builders::ContentManagementSystemPageLoad::kEntryName) {
-    for (auto* entry : test_ukm_recorder_->GetEntriesByName(entry_name)) {
+    for (const ukm::mojom::UkmEntry* entry :
+         test_ukm_recorder_->GetEntriesByName(entry_name)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url) {
         test_ukm_recorder_->EntryHasMetric(entry, metric_name);
@@ -126,12 +130,13 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
   void ExpectContentManagementSystemMetricCountForUrl(
       const GURL& url,
-      base::StringPiece metric_name,
+      std::string_view metric_name,
       const int expected_count,
-      base::StringPiece entry_name =
+      std::string_view entry_name =
           ukm::builders::ContentManagementSystemPageLoad::kEntryName) {
     int count = 0;
-    for (auto* entry : test_ukm_recorder_->GetEntriesByName(entry_name)) {
+    for (const ukm::mojom::UkmEntry* entry :
+         test_ukm_recorder_->GetEntriesByName(entry_name)) {
       auto* source = test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
       if (source && source->url() == url &&
           test_ukm_recorder_->EntryHasMetric(entry, metric_name)) {
@@ -152,7 +157,7 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
 
   void RunSingleFrameworkDetectionTest(const std::string& test_url,
-                                       base::StringPiece framework_name) {
+                                       std::string_view framework_name) {
     page_load_metrics::PageLoadMetricsTestWaiter waiter(
         browser()->tab_strip_model()->GetActiveWebContents());
     waiter.AddPageExpectation(
@@ -167,7 +172,7 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
 
   void RunSingleContentManagementSystemDetectionTest(
       const std::string& test_url,
-      base::StringPiece cms_name) {
+      std::string_view cms_name) {
     page_load_metrics::PageLoadMetricsTestWaiter waiter(
         browser()->tab_strip_model()->GetActiveWebContents());
     waiter.AddPageExpectation(
@@ -183,8 +188,8 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
 
   void RunSingleFrameworkVersionDetectionTest(
       const std::string& test_url,
-      base::StringPiece framework,
-      absl::optional<std::pair<int, int>> expected_version) {
+      std::string_view framework,
+      std::optional<std::pair<int, int>> expected_version) {
     page_load_metrics::PageLoadMetricsTestWaiter waiter(
         browser()->tab_strip_model()->GetActiveWebContents());
     waiter.AddPageExpectation(
@@ -208,8 +213,8 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
 
   void RunSingleContentManagementSystemVersionDetectionTest(
       const std::string& test_url,
-      base::StringPiece cms,
-      absl::optional<std::pair<int, int>> expected_version) {
+      std::string_view cms,
+      std::optional<std::pair<int, int>> expected_version) {
     page_load_metrics::PageLoadMetricsTestWaiter waiter(
         browser()->tab_strip_model()->GetActiveWebContents());
     waiter.AddPageExpectation(
@@ -271,22 +276,22 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
     CloseAllTabs();
 
     // No frameworks should be detected.
-    for (base::StringPiece framework : all_frameworks) {
+    for (std::string_view framework : all_frameworks) {
       ExpectFrameworkMetricCountForUrl(mainframe_url, framework, 1);
       ExpectFrameworkMetricValueForUrl(mainframe_url, framework, false);
     }
     // No CMSs should be detected.
-    for (base::StringPiece cms : all_content_management_systems) {
+    for (std::string_view cms : all_content_management_systems) {
       ExpectContentManagementSystemMetricCountForUrl(mainframe_url, cms, 1);
       ExpectContentManagementSystemMetricValueForUrl(mainframe_url, cms, false);
     }
   }
 
  private:
-  void RunFrameworkDetection(const std::vector<base::StringPiece>& frameworks,
-                             base::StringPiece framework_name,
+  void RunFrameworkDetection(const std::vector<std::string_view>& frameworks,
+                             std::string_view framework_name,
                              const GURL& url) {
-    for (base::StringPiece framework : frameworks) {
+    for (std::string_view framework : frameworks) {
       ExpectFrameworkMetricCountForUrl(url, framework, 1);
       if (framework.compare(framework_name) == 0) {
         ExpectFrameworkMetricValueForUrl(url, framework, true);
@@ -297,10 +302,10 @@ class JavascriptFrameworksUkmObserverBrowserTest : public InProcessBrowserTest {
   }
 
   void RunContentManagementSystemDetection(
-      const std::vector<base::StringPiece>& content_management_systems,
-      base::StringPiece cms_name,
+      const std::vector<std::string_view>& content_management_systems,
+      std::string_view cms_name,
       const GURL& url) {
-    for (base::StringPiece cms : content_management_systems) {
+    for (std::string_view cms : content_management_systems) {
       ExpectContentManagementSystemMetricCountForUrl(url, cms, 1);
       if (cms.compare(cms_name) == 0) {
         ExpectContentManagementSystemMetricValueForUrl(url, cms, true);
@@ -325,11 +330,11 @@ IN_PROC_BROWSER_TEST_F(JavascriptFrameworksUkmObserverBrowserTest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   waiter.Wait();
   CloseAllTabs();
-  for (base::StringPiece framework : all_frameworks) {
+  for (std::string_view framework : all_frameworks) {
     ExpectFrameworkMetricCountForUrl(url, framework, 1);
     ExpectFrameworkMetricValueForUrl(url, framework, false);
   }
-  for (base::StringPiece cms : all_content_management_systems) {
+  for (std::string_view cms : all_content_management_systems) {
     ExpectContentManagementSystemMetricCountForUrl(url, cms, 1);
     ExpectContentManagementSystemMetricValueForUrl(url, cms, false);
   }
@@ -378,7 +383,7 @@ IN_PROC_BROWSER_TEST_F(JavascriptFrameworksUkmObserverBrowserTest,
   waiter.Wait();
   CloseAllTabs();
   struct {
-    base::StringPiece name;
+    std::string_view name;
     const bool in_page;
   } expected_frameworks[] = {{kGatsbyJsPageLoad, true},
                              {kNextJsPageLoad, true},

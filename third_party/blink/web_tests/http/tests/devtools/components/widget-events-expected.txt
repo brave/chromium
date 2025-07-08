@@ -9,14 +9,6 @@ Widget.show()
 Widget.detach()
   Widget.willHide()
 
-Running: testAppendViaDOM
-Widget()
-Error: Attempt to add widget via regular DOM operation.
-
-Running: testInsertViaDOM
-Widget()
-Error: Attempt to add widget via regular DOM operation.
-
 Running: testAttachToOrphanNode
 Widget()
 Widget.show()
@@ -83,57 +75,6 @@ Child.detach()
   Child.willHide()
 Parent.detach()
   Parent.willHide()
-
-Running: testWidgetCounter
-Parent()
-Parent.show()
-  Parent.wasShown()
-  Parent.onResize()
-Child()
-Child.show()
-  Child.wasShown()
-  Child.onResize()
-  widget counter: 1
-Child 2()
-Child 2.show()
-  Child 2.wasShown()
-  Child 2.onResize()
-  widget counter: 2
-Child.detach()
-  Child.willHide()
-  widget counter: 1
-Child 2.detach()
-  Child 2.willHide()
-  widget counter: 0
-
-Running: testRemoveChild
-Parent()
-Parent.show()
-  Parent.wasShown()
-  Parent.onResize()
-Child()
-Child.show()
-  Child.wasShown()
-  Child.onResize()
-Error: Attempt to remove element containing widget via regular DOM operation
-
-Running: testImplicitRemoveChild
-Parent()
-Child()
-Child.show()
-Error: Attempt to remove element containing widget via regular DOM operation
-
-Running: testRemoveChildren
-Parent()
-Child()
-Child.show()
-Error: Attempt to remove element containing widget via regular DOM operation
-
-Running: testImplicitRemoveChildren
-Parent()
-Child()
-Child.show()
-Error: Attempt to remove element containing widget via regular DOM operation
 
 Running: testShowOnWasShown
 Parent()

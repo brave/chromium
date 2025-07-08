@@ -30,10 +30,11 @@
  *   this.$.viewSelector.route = 'view-two';
  */
 
-// TODO(crbug.com/992795) Merge with cr-view-manager.
-import {assert} from 'chrome://resources/js/assert_ts.js';
+// TODO(crbug.com/40639916) Merge with cr-view-manager.
+import {assert} from 'chrome://resources/js/assert.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
-import {PolymerElement, TemplateInstanceBase, templatize} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {TemplateInstanceBase} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement, templatize} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './dom_switch.html.js';
 
@@ -122,7 +123,7 @@ export class AppManagementDomSwitchElement extends PolymerElement {
     }
 
     if (this.route) {
-      // TODO(crbug.com/999523): Add test coverage for this case.
+      // TODO(crbug.com/40642847): Add test coverage for this case.
       // If attached is called after the route has been set.
       this.onRouteChanged_(this.route);
     }

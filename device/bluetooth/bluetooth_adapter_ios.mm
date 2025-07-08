@@ -4,10 +4,6 @@
 
 #include "device/bluetooth/bluetooth_adapter_ios.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace device {
 
 // static
@@ -41,6 +37,10 @@ base::WeakPtr<BluetoothAdapter> BluetoothAdapterIOS::GetWeakPtr() {
 base::WeakPtr<BluetoothLowEnergyAdapterApple>
 BluetoothAdapterIOS::GetLowEnergyWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
+}
+
+void BluetoothAdapterIOS::TriggerSystemPermissionPrompt() {
+  // TODO(crbug.com/346409873): Find the system API to trigger prompt for iOS.
 }
 
 }  // namespace device

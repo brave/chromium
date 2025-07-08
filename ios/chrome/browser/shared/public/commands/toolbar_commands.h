@@ -10,10 +10,9 @@
 
 // Triggers a slide-in animation for the toolbar(s).
 - (void)triggerToolbarSlideInAnimation;
-// Set the in-product-help highlighted state of the tab grid button.
-- (void)setTabGridButtonIPHHighlighted:(BOOL)iphHighlighted;
-// Set the in-product-help Help highlighted state of the new tab button.
-- (void)setNewTabButtonIPHHighlighted:(BOOL)iphHighlighted;
+
+// Visually indicates a Lens Overlay visibility change.
+- (void)indicateLensOverlayVisible:(BOOL)lensOverlayVisible;
 
 @end
 

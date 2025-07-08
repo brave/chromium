@@ -53,7 +53,7 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
    public:
     RegisterDictionaryResult(
         int64_t primary_key_in_database,
-        absl::optional<base::UnguessableToken> replaced_disk_cache_key_token,
+        std::optional<base::UnguessableToken> replaced_disk_cache_key_token,
         std::set<base::UnguessableToken> evicted_disk_cache_key_tokens,
         uint64_t total_dictionary_size,
         uint64_t total_dictionary_count);
@@ -65,8 +65,8 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
     RegisterDictionaryResult& operator=(RegisterDictionaryResult&& other);
 
     int64_t primary_key_in_database() const { return primary_key_in_database_; }
-    const absl::optional<base::UnguessableToken>&
-    replaced_disk_cache_key_token() const {
+    const std::optional<base::UnguessableToken>& replaced_disk_cache_key_token()
+        const {
       return replaced_disk_cache_key_token_;
     }
     const std::set<base::UnguessableToken>& evicted_disk_cache_key_tokens()
@@ -78,7 +78,7 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
 
    private:
     int64_t primary_key_in_database_;
-    absl::optional<base::UnguessableToken> replaced_disk_cache_key_token_;
+    std::optional<base::UnguessableToken> replaced_disk_cache_key_token_;
     std::set<base::UnguessableToken> evicted_disk_cache_key_tokens_;
     uint64_t total_dictionary_size_;
     uint64_t total_dictionary_count_;
@@ -126,7 +126,8 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
   void GetOriginsBetween(const base::Time start_time,
                          const base::Time end_time,
                          base::OnceCallback<void(OriginListOrError)> callback);
-  void ClearAllDictionaries(base::OnceCallback<void(Error)> callback);
+  void ClearAllDictionaries(
+      base::OnceCallback<void(UnguessableTokenSetOrError)> callback);
   void ClearDictionaries(
       const base::Time start_time,
       const base::Time end_time,
@@ -154,6 +155,9 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
   void DeleteDictionariesByDiskCacheKeyTokens(
       std::set<base::UnguessableToken> disk_cache_key_tokens,
       base::OnceCallback<void(Error)> callback);
+  void UpdateDictionaryLastFetchTime(const int64_t primary_key_in_database,
+                                     const base::Time last_fetch_time,
+                                     base::OnceCallback<void(Error)> callback);
   void UpdateDictionaryLastUsedTime(int64_t primary_key_in_database,
                                     base::Time last_used_time);
 
@@ -172,4 +176,4 @@ class COMPONENT_EXPORT(NET_EXTRAS) SQLitePersistentSharedDictionaryStore {
 
 }  // namespace net
 
-#endif  // NET_EXTRAS_SQLITE_SQLITE_PERSISTENT_REPORTING_AND_NEL_STORE_H_
+#endif  // NET_EXTRAS_SQLITE_SQLITE_PERSISTENT_SHARED_DICTIONARY_STORE_H_

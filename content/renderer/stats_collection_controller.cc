@@ -13,7 +13,7 @@
 #include "content/renderer/render_thread_impl.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
-#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "v8/include/v8-context.h"
@@ -21,13 +21,12 @@
 namespace content {
 
 // static
-gin::WrapperInfo StatsCollectionController::kWrapperInfo = {
-    gin::kEmbedderNativeGin
-};
+gin::DeprecatedWrapperInfo StatsCollectionController::kWrapperInfo = {
+    gin::kEmbedderNativeGin};
 
 // static
 void StatsCollectionController::Install(blink::WebLocalFrame* frame) {
-  v8::Isolate* isolate = blink::MainThreadIsolate();
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = frame->MainWorldScriptContext();
   if (context.IsEmpty())
@@ -52,8 +51,8 @@ StatsCollectionController::~StatsCollectionController() {}
 
 gin::ObjectTemplateBuilder StatsCollectionController::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
-  return gin::Wrappable<StatsCollectionController>::GetObjectTemplateBuilder(
-             isolate)
+  return gin::DeprecatedWrappable<
+             StatsCollectionController>::GetObjectTemplateBuilder(isolate)
       .SetMethod("getHistogram", &StatsCollectionController::GetHistogram)
       .SetMethod("getBrowserHistogram",
                  &StatsCollectionController::GetBrowserHistogram);

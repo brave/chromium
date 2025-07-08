@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ash/policy/core/device_attributes_impl.h"
+#include <optional>
 
 #include "base/run_loop.h"
-
+#include "base/test/test_future.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
+#include "chrome/browser/ash/policy/core/device_attributes_impl.h"
 #include "chrome/browser/ash/policy/core/device_cloud_policy_manager_ash.h"
 #include "chrome/browser/ash/policy/core/device_cloud_policy_store_ash.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
@@ -25,7 +24,6 @@
 #include "content/public/test/browser_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using testing::InvokeWithoutArgs;
 
@@ -65,7 +63,6 @@ class DeviceAttributesTest : public DevicePolicyCrosBrowserTest {
 
   DeviceAttributesImpl attributes_;
   ash::ScopedStubInstallAttributes install_attributes_;
-  ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
   ash::system::ScopedFakeStatisticsProvider fake_statistics_provider_;
 };
 
@@ -78,7 +75,7 @@ IN_PROC_BROWSER_TEST_F(DeviceAttributesTest, ReturnsAttributes) {
   EXPECT_EQ("", attributes_.GetDeviceSerialNumber());
   EXPECT_EQ("", attributes_.GetMachineName());
   EXPECT_EQ("", attributes_.GetDeviceAnnotatedLocation());
-  EXPECT_EQ(absl::nullopt, attributes_.GetDeviceHostname());
+  EXPECT_EQ(std::nullopt, attributes_.GetDeviceHostname());
   EXPECT_EQ("", attributes_.GetDirectoryApiID());
   EXPECT_EQ("", attributes_.GetObfuscatedCustomerID());
   EXPECT_EQ("", attributes_.GetCustomerLogoURL());
@@ -98,12 +95,21 @@ IN_PROC_BROWSER_TEST_F(DeviceAttributesTest, ReturnsAttributes) {
       kFakeLogoURL);
   device_policy()->policy_data().set_market_segment(
       enterprise_management::PolicyData_MarketSegment_ENROLLED_ENTERPRISE);
-  scoped_testing_cros_settings_.device_settings()->Set(
-      ash::kDeviceHostnameTemplate, base::Value(kFakeHostname));
+  device_policy()
+      ->payload()
+      .mutable_network_hostname()
+      ->set_device_hostname_template(kFakeHostname);
+
   policy_helper()->RefreshPolicyAndWaitUntilDeviceCloudPolicyUpdated();
 
-  fake_statistics_provider_.SetMachineStatistic(
-      ash::system::kSerialNumberKeyForTest, kFakeSerialNumber);
+  fake_statistics_provider_.SetMachineStatistic(ash::system::kSerialNumberKey,
+                                                kFakeSerialNumber);
+
+  // Wait for the completion of pending tasks.
+  base::test::TestFuture<void> waiter;
+  fake_statistics_provider_.ScheduleOnMachineStatisticsLoaded(
+      waiter.GetCallback());
+  ASSERT_TRUE(waiter.Wait());
 
   // Verify returned attributes correspond to what was set.
   EXPECT_EQ(kFakeDomain, attributes_.GetEnterpriseEnrollmentDomain());

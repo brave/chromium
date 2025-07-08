@@ -83,8 +83,9 @@ struct COMPONENT_EXPORT(DISPLAY_SHARED_MOJOM_TRAITS)
     return display.maximum_cursor_size();
   }
 
-  static gfx::DisplayColorSpaces color_spaces(const display::Display& display) {
-    return display.color_spaces();
+  static const gfx::DisplayColorSpaces& color_spaces(
+      const display::Display& display) {
+    return display.GetColorSpaces();
   }
 
   static int32_t color_depth(const display::Display& display) {
@@ -99,16 +100,11 @@ struct COMPONENT_EXPORT(DISPLAY_SHARED_MOJOM_TRAITS)
     return display.is_monochrome();
   }
 
-  static int32_t display_frequency(const display::Display& display) {
+  static float display_frequency(const display::Display& display) {
     return display.display_frequency();
   }
   static const std::string& label(const display::Display& display) {
     return display.label();
-  }
-
-  static const display::DrmFormatsAndModifiers& drm_formats_and_modifiers(
-      const display::Display& display) {
-    return display.GetDRMFormatsAndModifiers();
   }
 
   static bool Read(display::mojom::DisplayDataView data, display::Display* out);

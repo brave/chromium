@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_auto_img/cr_auto_img.js';
 import 'chrome://resources/cr_elements/policy/cr_tooltip_icon.js';
 import 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
 import '../shared_style.css.js';
 
-import {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
+import type {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './share_password_recipient.html.js';
@@ -46,9 +47,9 @@ export class SharePasswordRecipientElement extends PolymerElement {
       },
     };
   }
-  disabled: boolean;
-  selected: boolean;
-  recipient: chrome.passwordsPrivate.RecipientInfo;
+  declare disabled: boolean;
+  declare selected: boolean;
+  declare recipient: chrome.passwordsPrivate.RecipientInfo;
 
   override ready() {
     super.ready();

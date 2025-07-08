@@ -10,19 +10,19 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ptr_exclusion.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/run_until.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_browsertest_util.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/test_launcher_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -59,6 +59,7 @@
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/ime_text_span.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/ozone_buildflags.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/rect.h"
@@ -69,10 +70,6 @@
 #include "ui/base/test/scoped_fake_nswindow_fullscreen.h"
 #endif
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ui/ozone/buildflags.h"
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
-
 using extensions::AppWindow;
 using extensions::ExtensionsAPIClient;
 using guest_view::GuestViewBase;
@@ -80,15 +77,7 @@ using guest_view::GuestViewManager;
 using guest_view::TestGuestViewManager;
 using guest_view::TestGuestViewManagerFactory;
 
-// The build flag OZONE_PLATFORM_WAYLAND is only available on
-// Linux or ChromeOS, so this simplifies the next set of ifdefs.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
-#if BUILDFLAG(OZONE_PLATFORM_WAYLAND)
-#define OZONE_PLATFORM_WAYLAND
-#endif  // BUILDFLAG(OZONE_PLATFORM_WAYLAND)
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
-
-#if !defined(OZONE_PLATFORM_WAYLAND)
+#if !BUILDFLAG(IS_OZONE_WAYLAND)
 // Some test helpers, like ui_test_utils::SendMouseMoveSync, don't work properly
 // on some platforms. Tests that require these helpers need to be skipped for
 // these cases.
@@ -96,20 +85,16 @@ using guest_view::TestGuestViewManagerFactory;
 #endif
 
 #if BUILDFLAG(IS_MAC)
-// This class observes the RenderWidgetHostViewCocoa corresponding to the outer
-// most WebContents provided for newly added subviews. The added subview
-// corresponds to a NSPopUpButtonCell which will be removed shortly after being
-// shown.
-class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
+class PopupShowAttemptObserver : content::RenderWidgetHostViewCocoaObserver {
  public:
-  explicit NewSubViewAddedObserver(content::WebContents* web_contents)
+  explicit PopupShowAttemptObserver(content::WebContents* web_contents)
       : content::RenderWidgetHostViewCocoaObserver(web_contents) {}
 
-  NewSubViewAddedObserver(const NewSubViewAddedObserver&) = delete;
-  NewSubViewAddedObserver& operator=(const NewSubViewAddedObserver&) = delete;
-  ~NewSubViewAddedObserver() override {}
+  PopupShowAttemptObserver(const PopupShowAttemptObserver&) = delete;
+  PopupShowAttemptObserver& operator=(const PopupShowAttemptObserver&) = delete;
+  ~PopupShowAttemptObserver() override = default;
 
-  void WaitForNextSubView() {
+  void WaitForPopup() {
     if (did_receive_rect_)
       return;
 
@@ -120,12 +105,13 @@ class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
   const gfx::Rect& view_bounds_in_screen() const { return bounds_; }
 
  private:
-  void DidAddSubviewWillBeDismissed(
-      const gfx::Rect& bounds_in_root_view) override {
+  void DidAttemptToShowPopup(const gfx::Rect& bounds,
+                             int selected_item) override {
     did_receive_rect_ = true;
-    bounds_ = bounds_in_root_view;
-    if (run_loop_)
+    bounds_ = bounds;
+    if (run_loop_) {
       run_loop_->Quit();
+    }
   }
 
   bool did_receive_rect_ = false;
@@ -137,11 +123,7 @@ class NewSubViewAddedObserver : content::RenderWidgetHostViewCocoaObserver {
 class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
  public:
   WebViewInteractiveTest()
-      : guest_view_(nullptr),
-        embedder_web_contents_(nullptr),
-        corner_(gfx::Point()),
-        mouse_click_result_(false),
-        first_click_(true) {}
+      : guest_view_(nullptr), embedder_web_contents_(nullptr) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     extensions::PlatformAppBrowserTest::SetUpCommandLine(command_line);
@@ -333,6 +315,26 @@ class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
     corner_ = offset.origin();
   }
 
+  void SetupTextSelectionTest(const std::string& app_name,
+                              const std::string& guest_url_spec) {
+    ASSERT_TRUE(StartEmbeddedTestServer());
+
+    LoadAndLaunchPlatformApp(app_name.c_str(), "launched");
+    // Start the test using the guest_url_spec.
+    SendMessageToEmbedder(guest_url_spec);
+    ExtensionTestMessageListener listener("connected");
+    ASSERT_TRUE(listener.WaitUntilSatisfied());
+
+    guest_view_ = GetGuestViewManager()->WaitForSingleGuestViewCreated();
+    ASSERT_TRUE(
+        guest_view_->GetGuestMainFrame()->GetProcess()->IsForGuestsOnly());
+
+    embedder_web_contents_ = guest_view_->embedder_web_contents();
+
+    gfx::Rect offset = embedder_web_contents_->GetContainerBounds();
+    corner_ = offset.origin();
+  }
+
   content::WebContents* DeprecatedGuestWebContents() {
     return guest_view_->web_contents();
   }
@@ -431,10 +433,7 @@ class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
     }
 
     size_t initial_widget_count_ = 0;
-    // This field is not a raw_ptr<> because it was filtered by the rewriter
-    // for: #constexpr-ctor-field-initializer
-    RAW_PTR_EXCLUSION content::RenderWidgetHost* last_render_widget_host_ =
-        nullptr;
+    raw_ptr<content::RenderWidgetHost> last_render_widget_host_ = nullptr;
     std::unique_ptr<base::RunLoop> run_loop_;
   };
 
@@ -505,8 +504,8 @@ class WebViewInteractiveTest : public extensions::PlatformAppBrowserTest {
       embedder_web_contents_;
 
   gfx::Point corner_;
-  bool mouse_click_result_;
-  bool first_click_;
+  bool mouse_click_result_ = false;
+  bool first_click_ = true;
 };
 
 class WebViewImeInteractiveTest : public WebViewInteractiveTest {
@@ -551,7 +550,7 @@ class WebViewImeInteractiveTest : public WebViewInteractiveTest {
 
     content::TextInputManagerTester tester_;
     std::unique_ptr<base::RunLoop> run_loop_;
-    absl::optional<uint32_t> last_composition_range_length_;
+    std::optional<uint32_t> last_composition_range_length_;
     uint32_t expected_length_ = 0;
   };
 };
@@ -567,7 +566,7 @@ class DISABLED_WebViewPopupInteractiveTest : public WebViewInteractiveTest {};
 
 // Timeouts flakily: crbug.com/1003345
 #if defined(SUPPORTS_SYNC_MOUSE_UTILS) && !BUILDFLAG(IS_CHROMEOS) && \
-    !BUILDFLAG(IS_MAC) && defined(NDEBUG)
+    !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN) && defined(NDEBUG)
 #define MAYBE_PointerLock PointerLock
 #else
 #define MAYBE_PointerLock DISABLED_PointerLock
@@ -666,8 +665,14 @@ IN_PROC_BROWSER_TEST_F(WebViewPointerLockInteractiveTest,
 
 // Tests that if a <webview> is focused before navigation then the guest starts
 // off focused.
+// TODO(crbug.com/346863842): Flaky on linux-rel.
+#if BUILDFLAG(IS_LINUX) && defined(NDEBUG)
+#define MAYBE_Focus_FocusBeforeNavigation DISABLED_Focus_FocusBeforeNavigation
+#else
+#define MAYBE_Focus_FocusBeforeNavigation Focus_FocusBeforeNavigation
+#endif
 IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
-                       Focus_FocusBeforeNavigation) {
+                       MAYBE_Focus_FocusBeforeNavigation) {
   TestHelper("testFocusBeforeNavigation", "web_view/focus", NO_TEST_SERVER);
 }
 
@@ -676,7 +681,14 @@ IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest, Focus_FocusEvent) {
   TestHelper("testFocusEvent", "web_view/focus", NO_TEST_SERVER);
 }
 
-IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest, Focus_FocusTakeFocus) {
+// TODO(crbug.com/334045674): Flaky timeouts on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_Focus_FocusTakeFocus DISABLED_Focus_FocusTakeFocus
+#else
+#define MAYBE_Focus_FocusTakeFocus Focus_FocusTakeFocus
+#endif
+IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
+                       MAYBE_Focus_FocusTakeFocus) {
   TestHelper("testFocusTakeFocus", "web_view/focus", NO_TEST_SERVER);
   ASSERT_TRUE(GetGuestRenderFrameHost());
 
@@ -783,8 +795,14 @@ IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest, Focus_BlurEvent) {
 }
 
 // Tests that a <webview> can't steal focus from the embedder.
+// TODO(crbug.com/349299938): Flaky on mac14-arm64-rel
+#if BUILDFLAG(IS_MAC) && defined(NDEBUG)
+#define MAYBE_FrameInGuestWontStealFocus DISABLED_FrameInGuestWontStealFocus
+#else
+#define MAYBE_FrameInGuestWontStealFocus FrameInGuestWontStealFocus
+#endif
 IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
-                       FrameInGuestWontStealFocus) {
+                       MAYBE_FrameInGuestWontStealFocus) {
   LoadAndLaunchPlatformApp("web_view/simple", "WebViewTest.LAUNCHED");
 
   content::WebContents* embedder_web_contents = GetFirstAppWindowWebContents();
@@ -929,8 +947,8 @@ IN_PROC_BROWSER_TEST_F(DISABLED_WebViewPopupInteractiveTest,
 }
 
 // Flaky on ChromeOS and Linux: http://crbug.com/526886
-// TODO(crbug.com/807446): Flaky on Mac.
-// TODO(crbug.com/809383): Flaky on Windows.
+// TODO(crbug.com/40560638): Flaky on Mac.
+// TODO(crbug.com/41369000): Flaky on Windows.
 // Tests that moving browser plugin (without resize/UpdateRects) correctly
 // repositions popup.
 IN_PROC_BROWSER_TEST_F(DISABLED_WebViewPopupInteractiveTest,
@@ -1163,15 +1181,16 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, MAYBE_Focus_InputMethod) {
 #endif
 
 #if BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)  // TODO(https://crbug.com/801552): Flaky.
+    BUILDFLAG(IS_CHROMEOS)  // TODO(crbug.com/41364503): Flaky.
 #define MAYBE_LongPressSelection DISABLED_LongPressSelection
 #else
 #define MAYBE_LongPressSelection LongPressSelection
 #endif
 #if !BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, MAYBE_LongPressSelection) {
-  SetupTest("web_view/text_selection",
-            "/extensions/platform_apps/web_view/text_selection/guest.html");
+  SetupTextSelectionTest(
+      "web_view/text_selection",
+      "/extensions/platform_apps/web_view/text_selection/guest.html");
   ASSERT_TRUE(GetGuestView());
   ASSERT_TRUE(embedder_web_contents());
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(GetPlatformAppWindow()));
@@ -1222,8 +1241,9 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, MAYBE_LongPressSelection) {
 
 #if BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, TextSelection) {
-  SetupTest("web_view/text_selection",
-            "/extensions/platform_apps/web_view/text_selection/guest.html");
+  SetupTextSelectionTest(
+      "web_view/text_selection",
+      "/extensions/platform_apps/web_view/text_selection/guest.html");
   ASSERT_TRUE(GetGuestView());
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
       GetPlatformAppWindow()));
@@ -1248,8 +1268,9 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, TextSelection) {
 // Verifies that asking for a word lookup from a guest will lead to a returned
 // mojo callback from the renderer containing the right selected word.
 IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, WordLookup) {
-  SetupTest("web_view/text_selection",
-            "/extensions/platform_apps/web_view/text_selection/guest.html");
+  SetupTextSelectionTest(
+      "web_view/text_selection",
+      "/extensions/platform_apps/web_view/text_selection/guest.html");
   ASSERT_TRUE(GetGuestView());
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(GetPlatformAppWindow()));
 
@@ -1262,6 +1283,30 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, WordLookup) {
   // showing the context menu.
   SimulateRWHMouseClick(GetGuestRenderFrameHost()->GetRenderWidgetHost(),
                         blink::WebMouseEvent::Button::kRight, 20, 20);
+  // Wait for the response form the guest renderer.
+  text_input_local_frame.WaitForGetStringForRange();
+
+  // Sanity check.
+  ASSERT_EQ("AAAA", text_input_local_frame.GetStringFromRange().substr(0, 4));
+}
+
+// Same test as above, but with a selection living inside shadow DOM.
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, WordLookupShadowDom) {
+  SetupTextSelectionTest(
+      "web_view/text_selection",
+      "/extensions/platform_apps/web_view/text_selection/guest_shadow.html");
+  ASSERT_TRUE(GetGuestView());
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(GetPlatformAppWindow()));
+
+  content::TextInputTestLocalFrame text_input_local_frame;
+  text_input_local_frame.SetUp(GetGuestRenderFrameHost());
+
+  // Lookup some string through context menu.
+  ContextMenuNotificationObserver menu_observer(IDC_CONTENT_CONTEXT_LOOK_UP);
+  // Simulating a mouse click at a position to highlight text in guest and
+  // showing the context menu.
+  SimulateRWHMouseClick(GetGuestRenderFrameHost()->GetRenderWidgetHost(),
+                        blink::WebMouseEvent::Button::kRight, 50, 50);
   // Wait for the response form the guest renderer.
   text_input_local_frame.WaitForGetStringForRange();
 
@@ -1339,12 +1384,8 @@ IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest, MAYBE_FocusAndVisibility) {
 
 // Flaky timeouts on Linux. https://crbug.com/709202
 // Flaky timeouts on Win. https://crbug.com/846695
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
-#define MAYBE_KeyboardFocusSimple DISABLED_KeyboardFocusSimple
-#else
-#define MAYBE_KeyboardFocusSimple KeyboardFocusSimple
-#endif
-IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, MAYBE_KeyboardFocusSimple) {
+// Flaky timeouts on Mac. https://crbug.com/1520415
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, DISABLED_KeyboardFocusSimple) {
   TestHelper("testKeyboardFocusSimple", "web_view/focus", NO_TEST_SERVER);
 
   EXPECT_EQ(embedder_web_contents()->GetFocusedFrame(),
@@ -1585,7 +1626,7 @@ IN_PROC_BROWSER_TEST_F(WebViewImeInteractiveTest, CompositionRangeUpdates) {
 // This test verifies that drop-down lists appear correctly inside OOPIF-based
 // webviews which have offset inside embedder. This is a test for all guest
 // views as the logic for showing such popups is inside content/ layer. For more
-// context see https://crbug.com/772840.
+// context see https://crbug.com/41348804.
 IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
                        DropDownPopupInCorrectPosition) {
   TestHelper("testSelectPopupPositionInMac", "web_view/shim", NO_TEST_SERVER);
@@ -1596,28 +1637,25 @@ IN_PROC_BROWSER_TEST_F(WebViewFocusInteractiveTest,
   // Verify that the view is offset inside root view as expected.
   content::RenderWidgetHostView* guest_rwhv =
       GetGuestRenderFrameHost()->GetView();
-  while (guest_rwhv->TransformPointToRootCoordSpace(gfx::Point())
-             .OffsetFromOrigin()
-             .Length() < distance_from_root_view_origin) {
-    base::RunLoop run_loop;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
-    run_loop.Run();
-  }
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return guest_rwhv->TransformPointToRootCoordSpace(gfx::Point())
+               .OffsetFromOrigin()
+               .Length() >= distance_from_root_view_origin;
+  }));
 
-  // Now trigger the popup and wait until it is displayed. The popup will get
-  // dismissed after being shown.
-  NewSubViewAddedObserver popup_observer(embedder_web_contents_);
+  // Now trigger the popup and wait for the callback that indicates that it
+  // would have been displayed.
+  PopupShowAttemptObserver popup_observer(embedder_web_contents_);
   // Now send a mouse click and wait until the <select> tag is focused.
   SimulateRWHMouseClick(guest_rwhv->GetRenderWidgetHost(),
                         blink::WebMouseEvent::Button::kLeft, 5, 5);
-  popup_observer.WaitForNextSubView();
+  popup_observer.WaitForPopup();
 
-  // Verify the popup bounds intersect with those of the guest. Since the popup
-  // is relatively small (the width is determined by the <select> element's
-  // width and the hight is a factor of font-size and number of items), the
-  // intersection alone is a good indication the popup is shown properly inside
-  // the screen.
+  // Verify that the popup bounds (where it would have been displayed) intersect
+  // with the bounds of the guest. Since the popup is relatively small (the
+  // width is determined by the <select> element's width and the height is a
+  // factor of font-size and number of items), the intersection alone is a good
+  // indication the popup is shown properly inside the screen.
   gfx::Rect guest_bounds_in_embedder(
       guest_rwhv->TransformPointToRootCoordSpace(gfx::Point()),
       guest_rwhv->GetViewBounds().size());
@@ -1654,6 +1692,7 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest,
 
   // Wait for guest's document to consider itself focused. This avoids
   // flakiness on some platforms.
+  // TODO(crbug.com/41492111): `base::test::RunUntil` times out on mac.
   while (!content::EvalJs(guest_rfh, "document.hasFocus()").ExtractBool()) {
     base::RunLoop run_loop;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -1679,4 +1718,8 @@ IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest,
       content::IsRenderWidgetHostFocused(guest_rfh2->GetRenderWidgetHost()));
   EXPECT_EQ(true, content::EvalJs(guest_rfh2, "document.hasFocus()"));
   EXPECT_EQ(guest_rfh2, embedder_web_contents->GetFocusedFrame());
+}
+
+IN_PROC_BROWSER_TEST_F(WebViewInteractiveTest, CannotLockKeyboard) {
+  TestHelper("testCannotLockKeyboard", "web_view/shim", NEEDS_TEST_SERVER);
 }

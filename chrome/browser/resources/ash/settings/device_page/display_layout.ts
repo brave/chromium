@@ -8,19 +8,24 @@
  * more displays and allows them to be arranged.
  */
 
-import 'chrome://resources/polymer/v3_0/paper-styles/shadow.js';
 import '../settings_shared.css.js';
 
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import type {I18nMixinInterface} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {strictQuery} from 'chrome://resources/ash/common/typescript_utils/strict_query.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {IronResizableBehavior} from 'chrome://resources/polymer/v3_0/iron-resizable-behavior/iron-resizable-behavior.js';
 import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
-import {Constructor} from '../common/types.js';
+import type {Constructor} from '../common/types.js';
 
-import {DevicePageBrowserProxy, DevicePageBrowserProxyImpl} from './device_page_browser_proxy.js';
+import type {DevicePageBrowserProxy} from './device_page_browser_proxy.js';
+import {DevicePageBrowserProxyImpl} from './device_page_browser_proxy.js';
 import {getTemplate} from './display_layout.html.js';
-import {LayoutMixin, LayoutMixinInterface, Position} from './layout_mixin.js';
+import type {LayoutMixinInterface, Position} from './layout_mixin.js';
+import {LayoutMixin} from './layout_mixin.js';
 
 import Bounds = chrome.system.display.Bounds;
 import DisplayLayout = chrome.system.display.DisplayLayout;
@@ -44,17 +49,18 @@ interface DisplaySelectEvent {
 
 const MIN_VISUAL_SCALE = .01;
 
-interface DisplayLayoutElement {
+export interface DisplayLayoutElement {
   $: {
     displayArea: HTMLElement,
   };
 }
 
 const DisplayLayoutElementBase =
-    mixinBehaviors([IronResizableBehavior], LayoutMixin(PolymerElement)) as
-    Constructor<PolymerElement&LayoutMixinInterface>;
+    mixinBehaviors(
+        [IronResizableBehavior], LayoutMixin(I18nMixin(PolymerElement))) as
+    Constructor<PolymerElement&I18nMixinInterface&LayoutMixinInterface>;
 
-class DisplayLayoutElement extends DisplayLayoutElementBase {
+export class DisplayLayoutElement extends DisplayLayoutElementBase {
   static get is() {
     return 'display-layout';
   }
@@ -122,7 +128,7 @@ class DisplayLayoutElement extends DisplayLayoutElementBase {
     this.mirroringDestinationIds_ = [];
   }
 
-  override disconnectedCallback() {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
 
     this.initializeDrag(false);
@@ -134,7 +140,7 @@ class DisplayLayoutElement extends DisplayLayoutElementBase {
    */
   updateDisplays(
       displays: DisplayUnitInfo[], layouts: DisplayLayout[],
-      mirroringDestinationIds: string[]) {
+      mirroringDestinationIds: string[]): void {
     this.displays = displays;
     this.layouts = layouts;
     this.mirroringDestinationIds_ = mirroringDestinationIds;
@@ -143,7 +149,7 @@ class DisplayLayoutElement extends DisplayLayoutElementBase {
 
     const self = this;
     const retry = 100;  // ms
-    function tryCalcVisualScale() {
+    function tryCalcVisualScale(): void {
       if (!self.calculateVisualScale_()) {
         setTimeout(tryCalcVisualScale, retry);
       }
@@ -259,24 +265,54 @@ class DisplayLayoutElement extends DisplayLayoutElementBase {
     return display.id === selectedDisplay.id;
   }
 
-  private dispatchSelectDisplayEvent_(displayId: DisplayUnitInfo['id']) {
+  private dispatchSelectDisplayEvent_(displayId: DisplayUnitInfo['id']): void {
     const selectDisplayEvent =
         new CustomEvent('select-display', {composed: true, detail: displayId});
     this.dispatchEvent(selectDisplayEvent);
   }
 
-  private onSelectDisplayClick_(e: DisplaySelectEvent) {
+  private onSelectDisplayClick_(e: DisplaySelectEvent): void {
     this.dispatchSelectDisplayEvent_(e.model.item.id);
     // Keep focused display in-sync with clicked display
     e.target.focus();
   }
 
-  private onFocus_(e: DisplaySelectEvent) {
+  private onFocus_(e: DisplaySelectEvent): void {
     this.dispatchSelectDisplayEvent_(e.model.item.id);
     e.target.focus();
   }
 
-  private onDrag_(id: string, amount: Position|null) {
+  // Gets the display window position change announcement for a11y.
+  private getPositionChangeAnnouncement_(deltaX: number, deltaY: number):
+      string {
+    let description = '';
+    // Position was moved in both X and Y direction.
+    if (deltaX !== 0 && deltaY !== 0) {
+      if (deltaY > 0 && deltaX > 0) {
+        description = 'displayPositionDownAndRight';
+      } else if (deltaY > 0 && deltaX < 0) {
+        description = 'displayPositionDownAndLeft';
+      } else if (deltaY < 0 && deltaX > 0) {
+        description = 'displayPositionUpAndRight';
+      } else if (deltaY < 0 && deltaX < 0) {
+        description = 'displayPositionUpAndLeft';
+      }
+    } else {
+      // Position was moved in only one direction, either X or Y.
+      if (deltaY > 0) {
+        description = 'displayPositionDown';
+      } else if (deltaY < 0) {
+        description = 'displayPositionUp';
+      } else if (deltaX > 0) {
+        description = 'displayPositionRight';
+      } else if (deltaX < 0) {
+        description = 'displayPositionLeft';
+      }
+    }
+    return this.i18n(description);
+  }
+
+  private onDrag_(id: string, amount: Position|null): void {
     id = id.substr(1);  // Skip prefix
 
     let newBounds: Bounds;
@@ -302,26 +338,35 @@ class DisplayLayoutElement extends DisplayLayoutElementBase {
         newBounds = this.updateDisplayBounds(id, newBounds);
       }
 
-      if (this.allowDisplayAlignmentApi_) {
-        if (!this.lastDragCoordinates_) {
-          this.hasDragStarted_ = true;
-          this.lastDragCoordinates_ = {
-            x: calculatedBounds.left,
-            y: calculatedBounds.top,
-          };
-        }
+      if (!this.lastDragCoordinates_) {
+        this.hasDragStarted_ = true;
+        this.lastDragCoordinates_ = {
+          x: calculatedBounds.left,
+          y: calculatedBounds.top,
+        };
+      }
 
-        const deltaX = newBounds.left - this.lastDragCoordinates_.x;
-        const deltaY = newBounds.top - this.lastDragCoordinates_.y;
+      const deltaX = newBounds.left - this.lastDragCoordinates_.x;
+      const deltaY = newBounds.top - this.lastDragCoordinates_.y;
 
-        this.lastDragCoordinates_.x = newBounds.left;
-        this.lastDragCoordinates_.y = newBounds.top;
+      this.lastDragCoordinates_.x = newBounds.left;
+      this.lastDragCoordinates_.y = newBounds.top;
 
-        // Only call dragDisplayDelta() when there is a change in position.
-        if (deltaX !== 0 || deltaY !== 0) {
+      // Only call dragDisplayDelta() when there is a change in position.
+      if (deltaX !== 0 || deltaY !== 0) {
+        if (this.allowDisplayAlignmentApi_) {
           this.browserProxy_.dragDisplayDelta(
               id, Math.round(deltaX), Math.round(deltaY));
         }
+
+        // Add ChromeVox announcement.
+        const announcer = getAnnouncerInstance(this.$.displayArea);
+        // Remove "role = alert" to avoid chromevox announcing "alert" before
+        // message.
+        strictQuery('#messages', announcer.shadowRoot, HTMLDivElement)
+            .removeAttribute('role');
+        // Announce the messages.
+        announcer.announce(this.getPositionChangeAnnouncement_(deltaX, deltaY));
       }
     }
 

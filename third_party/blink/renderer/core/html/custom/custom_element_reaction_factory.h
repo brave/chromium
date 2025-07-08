@@ -27,6 +27,8 @@ class CustomElementReactionFactory {
       CustomElementDefinition& definition);
   static CustomElementReaction& CreateDisconnected(
       CustomElementDefinition& definition);
+  static CustomElementReaction& CreateConnectedMove(
+      CustomElementDefinition& definition);
   static CustomElementReaction& CreateAdopted(
       CustomElementDefinition& definition,
       Document& old_owner,
@@ -47,7 +49,7 @@ class CustomElementReactionFactory {
   static CustomElementReaction& CreateFormStateRestore(
       CustomElementDefinition& definition,
       const V8ControlValue* value,
-      const String& mode);
+      const WTF::String& mode);
 };
 
 }  // namespace blink

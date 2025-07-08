@@ -5,20 +5,21 @@
 #include "components/feature_engagement/public/android/wrapping_test_tracker.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/android/jni_string.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/feature_engagement/public/jni_headers/CppWrappedTestTracker_jni.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feature_engagement {
 
 WrappingTestTracker::WrappingTestTracker(
     const base::android::JavaRef<jobject>& jtracker)
     : java_tracker_(jtracker) {}
-WrappingTestTracker::~WrappingTestTracker() {}
+WrappingTestTracker::~WrappingTestTracker() = default;
 
 void WrappingTestTracker::NotifyEvent(const std::string& event) {
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -32,7 +33,7 @@ bool WrappingTestTracker::ShouldTriggerHelpUI(const base::Feature& feature) {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jstring> jfeature(
       base::android::ConvertUTF8ToJavaString(env, feature.name));
-  return Java_CppWrappedTestTracker_shouldTriggerHelpUI(
+  return Java_CppWrappedTestTracker_shouldTriggerHelpUi(
       base::android::AttachCurrentThread(), java_tracker_, jfeature);
 }
 
@@ -46,7 +47,7 @@ bool WrappingTestTracker::WouldTriggerHelpUI(
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jstring> jfeature(
       base::android::ConvertUTF8ToJavaString(env, feature.name));
-  return Java_CppWrappedTestTracker_wouldTriggerHelpUI(
+  return Java_CppWrappedTestTracker_wouldTriggerHelpUi(
       base::android::AttachCurrentThread(), java_tracker_, jfeature);
 }
 
@@ -80,7 +81,7 @@ void WrappingTestTracker::Dismissed(const base::Feature& feature) {
 
 void WrappingTestTracker::DismissedWithSnooze(
     const base::Feature& feature,
-    absl::optional<SnoozeAction> snooze_action) {
+    std::optional<SnoozeAction> snooze_action) {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jstring> jfeature(
       base::android::ConvertUTF8ToJavaString(env, feature.name));
@@ -96,9 +97,9 @@ std::unique_ptr<DisplayLockHandle> WrappingTestTracker::AcquireDisplayLock() {
 void WrappingTestTracker::SetPriorityNotification(
     const base::Feature& feature) {}
 
-absl::optional<std::string>
+std::optional<std::string>
 WrappingTestTracker::GetPendingPriorityNotification() {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void WrappingTestTracker::RegisterPriorityNotificationHandler(
@@ -122,6 +123,15 @@ void WrappingTestTracker::AddOnInitializedCallback(
 const Configuration* WrappingTestTracker::GetConfigurationForTesting() const {
   NOTIMPLEMENTED();
   return nullptr;
+}
+
+void WrappingTestTracker::SetClockForTesting(const base::Clock& clock,
+                                             base::Time initial_time) {
+  NOTIMPLEMENTED();
+}
+
+bool WrappingTestTracker::IsInFeatureTestMode() const {
+  return false;
 }
 
 }  // namespace feature_engagement

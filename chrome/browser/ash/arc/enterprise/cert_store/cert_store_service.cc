@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/components/arc/arc_browser_context_keyed_service_factory_base.h"
-#include "ash/components/arc/arc_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
@@ -20,8 +24,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/ash/arc/enterprise/cert_store/arc_cert_installer_utils.h"
-#include "chrome/browser/ash/arc/keymaster/arc_keymaster_bridge.h"
-#include "chrome/browser/ash/arc/keymint/arc_keymint_bridge.h"
 #include "chrome/browser/ash/arc/policy/arc_policy_bridge.h"
 #include "chrome/browser/ash/platform_keys/key_permissions/key_permissions_service_factory.h"
 #include "chrome/browser/ash/platform_keys/key_permissions/key_permissions_service_impl.h"
@@ -34,7 +36,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_keyed_service_factory.h"
 #include "chrome/common/net/x509_certificate_model_nss.h"
-#include "chrome/services/keymaster/public/mojom/cert_store.mojom.h"
+#include "chromeos/ash/experiences/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
+#include "chromeos/ash/experiences/arc/keymaster/arc_keymaster_bridge.h"
+#include "chromeos/ash/experiences/arc/keymint/arc_keymint_bridge.h"
+#include "chromeos/ash/services/keymaster/public/mojom/cert_store.mojom.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "content/public/browser/browser_context.h"
@@ -42,7 +48,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "crypto/rsa_private_key.h"
 #include "net/cert/x509_util_nss.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // Enable VLOG level 1.
 #undef ENABLED_VLOG_LEVEL
@@ -51,44 +56,6 @@
 namespace arc {
 
 namespace {
-
-// Singleton factory for CertStoreService.
-class CertStoreServiceFactory : public ProfileKeyedServiceFactory {
- public:
-  static CertStoreService* GetForBrowserContext(
-      content::BrowserContext* context) {
-    return static_cast<CertStoreService*>(
-        GetInstance()->GetServiceForBrowserContext(context, true));
-  }
-
-  static CertStoreServiceFactory* GetInstance() {
-    return base::Singleton<CertStoreServiceFactory>::get();
-  }
-
-  CertStoreServiceFactory(const CertStoreServiceFactory&) = delete;
-  CertStoreServiceFactory& operator=(const CertStoreServiceFactory&) = delete;
-
- private:
-  friend base::DefaultSingletonTraits<CertStoreServiceFactory>;
-  CertStoreServiceFactory()
-      : ProfileKeyedServiceFactory(
-            "CertStoreService",
-            ProfileSelections::Builder()
-                .WithRegular(ProfileSelection::kOwnInstance)
-                // TODO(crbug.com/1418376): Check if this service is needed in
-                // Guest mode.
-                .WithGuest(ProfileSelection::kOwnInstance)
-                .Build()) {
-    DependsOn(NssServiceFactory::GetInstance());
-  }
-
-  bool ServiceIsNULLWhileTesting() const override { return true; }
-
-  KeyedService* BuildServiceInstanceFor(
-      content::BrowserContext* context) const override {
-    return new CertStoreService(context);
-  }
-};
 
 // The following series of functions related to ListCerts make use of the
 // NSSCertDatabase to fulfill its goal of listing certificates. The cert
@@ -234,7 +201,7 @@ using IsCertificateAllowedCallback = base::OnceCallback<void(bool allowed)>;
 
 void CheckCorporateFlag(
     IsCertificateAllowedCallback callback,
-    absl::optional<bool> corporate_key,
+    std::optional<bool> corporate_key,
     chromeos::platform_keys::Status is_corporate_key_status) {
   if (is_corporate_key_status != chromeos::platform_keys::Status::kSuccess) {
     LOG(ERROR) << "Error checking whether key is corporate. Will not install "
@@ -260,15 +227,15 @@ void IsCertificateAllowed(IsCertificateAllowedCallback callback,
   ash::platform_keys::KeyPermissionsServiceFactory::GetForBrowserContext(
       context)
       ->IsCorporateKey(
-          chromeos::platform_keys::GetSubjectPublicKeyInfoBlob(cert),
+          chromeos::platform_keys::GetSubjectPublicKeyInfo(cert),
           base::BindOnce(&CheckCorporateFlag, std::move(callback)));
 }
 
 // Creates a |CertDescription| for the given |nss_cert| known to be stored in
-// |slot|. May return |absl::nullopt| if some cert metadata can't be found, e.g.
+// |slot|. May return |std::nullopt| if some cert metadata can't be found, e.g.
 // when the cert private key is deleted while we still keep a valid pointer to
 // |nss_cert|.
-absl::optional<CertDescription> BuildCertDescritionOnWorkerThread(
+std::optional<CertDescription> BuildCertDescritionOnWorkerThread(
     net::ScopedCERTCertificate nss_cert,
     keymanagement::mojom::ChapsSlot slot) {
   // Direct NSS calls must be made on a worker thread (not the IO/UI threads).
@@ -277,7 +244,7 @@ absl::optional<CertDescription> BuildCertDescritionOnWorkerThread(
 
   // NSS cert must be non null.
   if (!nss_cert)
-    return absl::nullopt;
+    return std::nullopt;
 
   // TODO(b/193771095) Use a valid wincx.
   // Must have a private key in order to access label and ID.
@@ -285,20 +252,20 @@ absl::optional<CertDescription> BuildCertDescritionOnWorkerThread(
       PK11_FindKeyByAnyCert(nss_cert.get(), nullptr /* wincx */);
   // TODO(b/193771180) Investigate race condition with null private keys.
   if (!private_key)
-    return absl::nullopt;
+    return std::nullopt;
   crypto::ScopedSECKEYPrivateKey priv_key_destroyer(private_key);
 
   // Must have a nickname (PKCS#11 CKA_LABEL).
   char* nickname = PK11_GetPrivateKeyNickname(private_key);
   if (!nickname)
-    return absl::nullopt;
+    return std::nullopt;
   std::string pkcs11_label(nickname);
   PORT_Free(nickname);
 
   // Finally, must have an ID item (PKCS#11 CKA_ID).
   SECItem* id_item = PK11_GetLowLevelKeyIDForPrivateKey(private_key);
   if (!id_item)
-    return absl::nullopt;
+    return std::nullopt;
   crypto::ScopedSECItem sec_item_destroyer(id_item);
   std::string pkcs11_id(id_item->data, id_item->data + id_item->len);
 
@@ -312,7 +279,7 @@ absl::optional<CertDescription> BuildCertDescritionOnWorkerThread(
 }
 
 using BuildCertDescritionCallback =
-    base::OnceCallback<void(absl::optional<CertDescription> populated_cert)>;
+    base::OnceCallback<void(std::optional<CertDescription> populated_cert)>;
 
 // Tries to asynchronously create a |CertDescription| for the given |nss_cert|
 // known to be stored in |slot| in a worker thread. Note direct NSS calls must
@@ -377,17 +344,6 @@ std::vector<keymint::mojom::ChromeOsKeyPtr> PrepareChromeOsKeysForKeyMint(
 }
 
 }  // namespace
-
-// static
-CertStoreService* CertStoreService::GetForBrowserContext(
-    content::BrowserContext* context) {
-  return CertStoreServiceFactory::GetForBrowserContext(context);
-}
-
-// static
-BrowserContextKeyedServiceFactory* CertStoreService::GetFactory() {
-  return CertStoreServiceFactory::GetInstance();
-}
 
 CertStoreService::CertStoreService(content::BrowserContext* context)
     : CertStoreService(context, std::make_unique<ArcCertInstaller>(context)) {}
@@ -497,7 +453,7 @@ void CertStoreService::AppendCertDescriptionAndRecurse(
     keymanagement::mojom::ChapsSlot slot,
     base::queue<net::ScopedCERTCertificate> cert_queue,
     std::vector<CertDescription> allowed_certs,
-    absl::optional<CertDescription> cert_description) const {
+    std::optional<CertDescription> cert_description) const {
   if (cert_description.has_value())
     allowed_certs.emplace_back(std::move(cert_description.value()));
 
@@ -626,11 +582,6 @@ void CertStoreService::OnArcCertsInstalled(bool need_policy_update,
                                      policy::PolicyMap(), policy::PolicyMap());
     }
   }
-}
-
-// static
-void CertStoreService::EnsureFactoryBuilt() {
-  CertStoreServiceFactory::GetInstance();
 }
 
 }  // namespace arc

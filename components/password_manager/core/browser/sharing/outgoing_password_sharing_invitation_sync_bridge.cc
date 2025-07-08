@@ -4,15 +4,17 @@
 
 #include "components/password_manager/core/browser/sharing/outgoing_password_sharing_invitation_sync_bridge.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/sharing/password_sender_service.h"
-#include "components/sync/model/dummy_metadata_change_list.h"
+#include "components/sync/model/data_type_local_change_processor.h"
+#include "components/sync/model/empty_metadata_change_list.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/metadata_change_list.h"
-#include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/mutable_data_batch.h"
+#include "components/sync/protocol/password_sharing_invitation_specifics.pb.h"
 
 namespace password_manager {
 
@@ -31,51 +33,45 @@ std::string GetStorageKeyFromSpecifics(
 
 sync_pb::OutgoingPasswordSharingInvitationSpecifics
 CreateOutgoingPasswordSharingInvitationSpecifics(
-    const PasswordForm& password_form,
+    const std::vector<PasswordForm>& passwords,
     const PasswordRecipient& recipient) {
+  CHECK(!passwords.empty());
   sync_pb::OutgoingPasswordSharingInvitationSpecifics specifics;
   specifics.set_guid(base::Uuid::GenerateRandomV4().AsLowercaseString());
   specifics.set_recipient_user_id(recipient.user_id);
 
-  sync_pb::PasswordSharingInvitationData::PasswordData* password_data =
-      specifics.mutable_client_only_unencrypted_data()->mutable_password_data();
-  password_data->set_password_value(
-      base::UTF16ToUTF8(password_form.password_value));
-  password_data->set_scheme(static_cast<int>(password_form.scheme));
-  password_data->set_signon_realm(password_form.signon_realm);
-  password_data->set_origin(
-      password_form.url.is_valid() ? password_form.url.spec() : "");
-  password_data->set_username_element(
-      base::UTF16ToUTF8(password_form.username_element));
-  password_data->set_password_element(
-      base::UTF16ToUTF8(password_form.password_element));
-  password_data->set_username_value(
-      base::UTF16ToUTF8(password_form.username_value));
-  password_data->set_display_name(
-      base::UTF16ToUTF8(password_form.display_name));
-  password_data->set_avatar_url(
-      password_form.icon_url.is_valid() ? password_form.icon_url.spec() : "");
+  sync_pb::PasswordSharingInvitationData::PasswordGroupData*
+      password_group_data = specifics.mutable_client_only_unencrypted_data()
+                                ->mutable_password_group_data();
+  password_group_data->set_username_value(
+      base::UTF16ToUTF8(passwords[0].username_value));
+  password_group_data->set_password_value(
+      base::UTF16ToUTF8(passwords[0].password_value));
 
+  for (const PasswordForm& password : passwords) {
+    sync_pb::PasswordSharingInvitationData::PasswordGroupElementData*
+        element_data = password_group_data->add_element_data();
+    element_data->set_scheme(static_cast<int>(password.scheme));
+    element_data->set_signon_realm(password.signon_realm);
+    element_data->set_origin(password.url.is_valid() ? password.url.spec()
+                                                     : "");
+    element_data->set_username_element(
+        base::UTF16ToUTF8(password.username_element));
+    element_data->set_password_element(
+        base::UTF16ToUTF8(password.password_element));
+    element_data->set_display_name(base::UTF16ToUTF8(password.display_name));
+    element_data->set_avatar_url(
+        password.icon_url.is_valid() ? password.icon_url.spec() : "");
+  }
   return specifics;
-}
-
-std::unique_ptr<syncer::EntityData> ConvertToEntityData(
-    const sync_pb::OutgoingPasswordSharingInvitationSpecifics& specifics) {
-  auto entity_data = std::make_unique<syncer::EntityData>();
-  entity_data->name = specifics.guid();
-  entity_data->client_tag_hash =
-      GetClientTagHashFromStorageKey(GetStorageKeyFromSpecifics(specifics));
-  entity_data->specifics.mutable_outgoing_password_sharing_invitation()
-      ->CopyFrom(specifics);
-  return entity_data;
 }
 
 }  // namespace
 
 OutgoingPasswordSharingInvitationSyncBridge::
     OutgoingPasswordSharingInvitationSyncBridge(
-        std::unique_ptr<syncer::ModelTypeChangeProcessor> change_processor)
-    : syncer::ModelTypeSyncBridge(std::move(change_processor)) {
+        std::unique_ptr<syncer::DataTypeLocalChangeProcessor> change_processor)
+    : syncer::DataTypeSyncBridge(std::move(change_processor)) {
   // Current data type doesn't have persistent storage so it's ready to sync
   // immediately.
   this->change_processor()->ModelReadyToSync(
@@ -92,40 +88,57 @@ OutgoingPasswordSharingInvitationSyncBridge::CreateMetadataChangeList() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // The data type intentionally doesn't persist the data on disk, so metadata
   // is just ignored.
-  return std::make_unique<syncer::DummyMetadataChangeList>();
+  return std::make_unique<syncer::EmptyMetadataChangeList>();
 }
 
-void OutgoingPasswordSharingInvitationSyncBridge::SendPassword(
-    const PasswordForm& password,
+void OutgoingPasswordSharingInvitationSyncBridge::SendPasswordGroup(
+    const std::vector<PasswordForm>& passwords,
     const PasswordRecipient& recipient) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  CHECK(!passwords.empty());
+  // All `passwords` are expected to belong to the same group and hence have the
+  // same `username_value` and `password_value`.
+  CHECK_EQ(std::ranges::count(passwords, passwords[0].username_value,
+                              &PasswordForm::username_value),
+           static_cast<int>(passwords.size()));
+  CHECK_EQ(std::ranges::count(passwords, passwords[0].password_value,
+                              &PasswordForm::password_value),
+           static_cast<int>(passwords.size()));
+
   if (!change_processor()->IsTrackingMetadata()) {
     return;
   }
 
   sync_pb::OutgoingPasswordSharingInvitationSpecifics specifics =
-      CreateOutgoingPasswordSharingInvitationSpecifics(password, recipient);
-  std::string storage_key = GetStorageKeyFromSpecifics(specifics);
+      CreateOutgoingPasswordSharingInvitationSpecifics(passwords, recipient);
+  const std::string storage_key = GetStorageKeyFromSpecifics(specifics);
+
+  outgoing_invitations_in_flight_.emplace(
+      GetClientTagHashFromStorageKey(storage_key),
+      OutgoingInvitationWithEncryptionKey{std::move(specifics),
+                                          recipient.public_key});
 
   std::unique_ptr<syncer::MetadataChangeList> metadata_change_list =
       CreateMetadataChangeList();
-  change_processor()->Put(storage_key, ConvertToEntityData(specifics),
-                          metadata_change_list.get());
-
-  storage_key_to_outgoing_invitations_in_flight_.emplace(std::move(storage_key),
-                                                         std::move(specifics));
+  change_processor()->Put(
+      storage_key,
+      ConvertToEntityData(
+          outgoing_invitations_in_flight_[GetClientTagHashFromStorageKey(
+              storage_key)]),
+      metadata_change_list.get());
 }
 
-absl::optional<syncer::ModelError>
+std::optional<syncer::ModelError>
 OutgoingPasswordSharingInvitationSyncBridge::MergeFullSyncData(
     std::unique_ptr<syncer::MetadataChangeList> metadata_change_list,
     syncer::EntityChangeList entity_data) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(entity_data.empty());
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<syncer::ModelError>
+std::optional<syncer::ModelError>
 OutgoingPasswordSharingInvitationSyncBridge::ApplyIncrementalSyncChanges(
     std::unique_ptr<syncer::MetadataChangeList> metadata_change_list,
     syncer::EntityChangeList entity_changes) {
@@ -135,50 +148,58 @@ OutgoingPasswordSharingInvitationSyncBridge::ApplyIncrementalSyncChanges(
     // For commit-only data type only |ACTION_DELETE| is expected.
     CHECK_EQ(syncer::EntityChange::ACTION_DELETE, change->type());
 
-    storage_key_to_outgoing_invitations_in_flight_.erase(change->storage_key());
+    outgoing_invitations_in_flight_.erase(
+        GetClientTagHashFromStorageKey(change->storage_key()));
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-void OutgoingPasswordSharingInvitationSyncBridge::GetData(
-    StorageKeyList storage_keys,
-    DataCallback callback) {
+std::unique_ptr<syncer::DataBatch>
+OutgoingPasswordSharingInvitationSyncBridge::GetDataForCommit(
+    StorageKeyList storage_keys) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto batch = std::make_unique<syncer::MutableDataBatch>();
   for (const std::string& storage_key : storage_keys) {
-    if (auto iter =
-            storage_key_to_outgoing_invitations_in_flight_.find(storage_key);
-        iter != storage_key_to_outgoing_invitations_in_flight_.end()) {
+    if (auto iter = outgoing_invitations_in_flight_.find(
+            GetClientTagHashFromStorageKey(storage_key));
+        iter != outgoing_invitations_in_flight_.end()) {
       batch->Put(storage_key, ConvertToEntityData(iter->second));
     }
   }
-  std::move(callback).Run(std::move(batch));
+  return batch;
 }
 
-void OutgoingPasswordSharingInvitationSyncBridge::GetAllDataForDebugging(
-    DataCallback callback) {
+std::unique_ptr<syncer::DataBatch>
+OutgoingPasswordSharingInvitationSyncBridge::GetAllDataForDebugging() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto batch = std::make_unique<syncer::MutableDataBatch>();
-  for (const auto& storage_key_and_outgoing_invitation :
-       storage_key_to_outgoing_invitations_in_flight_) {
-    batch->Put(storage_key_and_outgoing_invitation.first,
-               ConvertToEntityData(storage_key_and_outgoing_invitation.second));
+  for (const auto& [client_tag_hash, outgoing_invitation] :
+       outgoing_invitations_in_flight_) {
+    batch->Put(GetStorageKeyFromSpecifics(outgoing_invitation.specifics),
+               ConvertToEntityData(outgoing_invitation));
   }
-  std::move(callback).Run(std::move(batch));
+  return batch;
 }
 
 std::string OutgoingPasswordSharingInvitationSyncBridge::GetClientTag(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return GetStorageKey(entity_data);
 }
 
 std::string OutgoingPasswordSharingInvitationSyncBridge::GetStorageKey(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return GetStorageKeyFromSpecifics(
       entity_data.specifics.outgoing_password_sharing_invitation());
+}
+
+bool OutgoingPasswordSharingInvitationSyncBridge::IsEntityDataValid(
+    const syncer::EntityData& entity_data) const {
+  // OUTGOING_PASSWORD_SHARING_INVITATION is a commit only data type so
+  // this method is not called.
+  NOTREACHED();
 }
 
 bool OutgoingPasswordSharingInvitationSyncBridge::SupportsGetClientTag() const {
@@ -196,7 +217,71 @@ void OutgoingPasswordSharingInvitationSyncBridge::ApplyDisableSyncChanges(
     std::unique_ptr<syncer::MetadataChangeList> delete_metadata_change_list) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  storage_key_to_outgoing_invitations_in_flight_.clear();
+  outgoing_invitations_in_flight_.clear();
+}
+
+void OutgoingPasswordSharingInvitationSyncBridge::OnCommitAttemptErrors(
+    const syncer::FailedCommitResponseDataList& error_response_list) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // Do not retry invalid messages and just remove them.
+  for (const syncer::FailedCommitResponseData& error_response :
+       error_response_list) {
+    if (error_response.response_type ==
+        sync_pb::CommitResponse::INVALID_MESSAGE) {
+      if (error_response.datatype_specific_error
+              .has_outgoing_password_sharing_invitation_error()) {
+        base::UmaHistogramExactLinear(
+            "Sync.OutgoingPassordSharingInvitation.CommitError",
+            error_response.datatype_specific_error
+                .outgoing_password_sharing_invitation_error()
+                .error_code(),
+            sync_pb::OutgoingPasswordSharingInvitationCommitError::
+                ErrorCode_ARRAYSIZE);
+      }
+      change_processor()->UntrackEntityForClientTagHash(
+          error_response.client_tag_hash);
+      outgoing_invitations_in_flight_.erase(error_response.client_tag_hash);
+    }
+  }
+}
+
+syncer::DataTypeSyncBridge::CommitAttemptFailedBehavior
+OutgoingPasswordSharingInvitationSyncBridge::OnCommitAttemptFailed(
+    syncer::SyncCommitError commit_error) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  switch (commit_error) {
+    case syncer::SyncCommitError::kNetworkError:
+    case syncer::SyncCommitError::kAuthError:
+      // Ignore the auth error because it may be a temporary error and the
+      // message will be sent on the second attempt.
+      return CommitAttemptFailedBehavior::kShouldRetryOnNextCycle;
+    case syncer::SyncCommitError::kServerError:
+    case syncer::SyncCommitError::kBadServerResponse:
+      return CommitAttemptFailedBehavior::kDontRetryOnNextCycle;
+  }
+}
+
+// static
+syncer::ClientTagHash OutgoingPasswordSharingInvitationSyncBridge::
+    GetClientTagHashFromStorageKeyForTest(const std::string& storage_key) {
+  return GetClientTagHashFromStorageKey(storage_key);
+}
+
+// static
+std::unique_ptr<syncer::EntityData>
+OutgoingPasswordSharingInvitationSyncBridge::ConvertToEntityData(
+    const OutgoingInvitationWithEncryptionKey& invitation_with_encryption_key) {
+  auto entity_data = std::make_unique<syncer::EntityData>();
+  entity_data->name = invitation_with_encryption_key.specifics.guid();
+  entity_data->client_tag_hash = GetClientTagHashFromStorageKey(
+      GetStorageKeyFromSpecifics(invitation_with_encryption_key.specifics));
+  entity_data->specifics.mutable_outgoing_password_sharing_invitation()
+      ->CopyFrom(invitation_with_encryption_key.specifics);
+  entity_data->recipient_public_key.CopyFrom(
+      invitation_with_encryption_key.recipient_public_key.ToProto());
+  return entity_data;
 }
 
 }  // namespace password_manager

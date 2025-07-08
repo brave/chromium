@@ -7,26 +7,21 @@
 #include <atomic>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <tuple>
 #include <utility>
 
 #include "base/check.h"
+#include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/third_party/nspr/prtime.h"
 #include "base/time/time_override.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
 namespace {
-
-const char kWeekdayName[7][4] = {"Sun", "Mon", "Tue", "Wed",
-                                 "Thu", "Fri", "Sat"};
-
-const char kMonthName[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 TimeTicks g_shared_time_ticks_at_unix_epoch;
 
@@ -43,6 +38,10 @@ std::atomic<TimeNowFunction> g_time_now_from_system_time_function{
 std::atomic<TimeTicksNowFunction> g_time_ticks_now_function{
     &subtle::TimeTicksNowIgnoringOverride};
 
+std::atomic<TimeTicksLowResolutionNowFunction>
+    g_time_ticks_low_resolution_now_function{
+        &subtle::TimeTicksLowResolutionNowIgnoringOverride};
+
 std::atomic<LiveTicksNowFunction> g_live_ticks_now_function{
     &subtle::LiveTicksNowIgnoringOverride};
 
@@ -54,18 +53,21 @@ std::atomic<ThreadTicksNowFunction> g_thread_ticks_now_function{
 // TimeDelta ------------------------------------------------------------------
 
 TimeDelta TimeDelta::CeilToMultiple(TimeDelta interval) const {
-  if (is_inf() || interval.is_zero())
+  if (is_inf() || interval.is_zero()) {
     return *this;
+  }
   const TimeDelta remainder = *this % interval;
-  if (delta_ < 0)
+  if (delta_ < 0) {
     return *this - remainder;
+  }
   return remainder.is_zero() ? *this
                              : (*this - remainder + interval.magnitude());
 }
 
 TimeDelta TimeDelta::FloorToMultiple(TimeDelta interval) const {
-  if (is_inf() || interval.is_zero())
+  if (is_inf() || interval.is_zero()) {
     return *this;
+  }
   const TimeDelta remainder = *this % interval;
   if (delta_ < 0) {
     return remainder.is_zero() ? *this
@@ -75,10 +77,12 @@ TimeDelta TimeDelta::FloorToMultiple(TimeDelta interval) const {
 }
 
 TimeDelta TimeDelta::RoundToMultiple(TimeDelta interval) const {
-  if (is_inf() || interval.is_zero())
+  if (is_inf() || interval.is_zero()) {
     return *this;
-  if (interval.is_inf())
+  }
+  if (interval.is_inf()) {
     return TimeDelta();
+  }
   const TimeDelta half = interval.magnitude() / 2;
   return (delta_ < 0) ? (*this - half).CeilToMultiple(interval)
                       : (*this + half).FloorToMultiple(interval);
@@ -110,8 +114,9 @@ Time Time::Midnight(bool is_local) const {
   exploded.second = 0;
   exploded.millisecond = 0;
   Time out_time;
-  if (FromExploded(is_local, exploded, &out_time))
+  if (FromExploded(is_local, exploded, &out_time)) {
     return out_time;
+  }
 
   // Reaching here means 00:00:00am of the current day does not exist (due to
   // Daylight Saving Time in some countries where clocks are shifted at
@@ -120,8 +125,8 @@ Time Time::Midnight(bool is_local) const {
   exploded.hour = 1;
   [[maybe_unused]] const bool result =
       FromExploded(is_local, exploded, &out_time);
-#if BUILDFLAG(IS_CHROMEOS_ASH) && defined(ARCH_CPU_ARM_FAMILY)
-  // TODO(crbug.com/1263873): DCHECKs have limited coverage during automated
+#if BUILDFLAG(IS_CHROMEOS) && defined(ARCH_CPU_ARM_FAMILY)
+  // TODO(crbug.com/40800460): DCHECKs have limited coverage during automated
   // testing on CrOS and this check failed when tested on an experimental
   // builder. Testing for ARCH_CPU_ARM_FAMILY prevents regressing coverage on
   // x86_64, which is already enabled. See go/chrome-dcheck-on-cros or
@@ -139,15 +144,16 @@ bool Time::FromStringInternal(const char* time_string,
   DCHECK(time_string);
   DCHECK(parsed_time);
 
-  if (time_string[0] == '\0')
+  if (time_string[0] == '\0') {
     return false;
+  }
 
   PRTime result_time = 0;
-  PRStatus result = PR_ParseTimeString(time_string,
-                                       is_local ? PR_FALSE : PR_TRUE,
-                                       &result_time);
-  if (result != PR_SUCCESS)
+  PRStatus result = PR_ParseTimeString(
+      time_string, is_local ? PR_FALSE : PR_TRUE, &result_time);
+  if (result != PR_SUCCESS) {
     return false;
+  }
 
   *parsed_time = UnixEpoch() + Microseconds(result_time);
   return true;
@@ -193,15 +199,18 @@ int64_t Time::ToRoundedDownMillisecondsSinceUnixEpoch() const {
 std::ostream& operator<<(std::ostream& os, Time time) {
   Time::Exploded exploded;
   time.UTCExplode(&exploded);
-  // Use StringPrintf because iostreams formatting is painful.
-  return os << StringPrintf("%04d-%02d-%02d %02d:%02d:%02d.%03d UTC",
-                            exploded.year,
-                            exploded.month,
-                            exploded.day_of_month,
-                            exploded.hour,
-                            exploded.minute,
-                            exploded.second,
-                            exploded.millisecond);
+  // Can't call `UnlocalizedTimeFormatWithPattern()`/`TimeFormatAsIso8601()`
+  // since `//base` can't depend on `//base:i18n`.
+  //
+  // TODO(pkasting): Consider whether `operator<<()` should move to
+  // `base/i18n/time_formatting.h` -- would let us implement in terms of
+  // existing time formatting, but might be confusing.
+  return os << StringPrintf("%04d-%02d-%02d %02d:%02d:%02d.%06" PRId64 " UTC",
+                            exploded.year, exploded.month,
+                            exploded.day_of_month, exploded.hour,
+                            exploded.minute, exploded.second,
+                            time.ToDeltaSinceWindowsEpoch().InMicroseconds() %
+                                Time::kMicrosecondsPerSecond);
 }
 
 // TimeTicks ------------------------------------------------------------------
@@ -209,6 +218,12 @@ std::ostream& operator<<(std::ostream& os, Time time) {
 // static
 TimeTicks TimeTicks::Now() {
   return internal::g_time_ticks_now_function.load(std::memory_order_relaxed)();
+}
+
+// static
+TimeTicks TimeTicks::LowResolutionNow() {
+  return internal::g_time_ticks_low_resolution_now_function.load(
+      std::memory_order_relaxed)();
 }
 
 // static
@@ -248,8 +263,9 @@ TimeTicks TimeTicks::SnappedToNextTick(TimeTicks tick_phase,
   // If |this| is exactly on the interval (i.e. offset==0), don't adjust.
   // Otherwise, if |tick_phase| was in the past, adjust forward to the next
   // tick after |this|.
-  if (!interval_offset.is_zero() && tick_phase < *this)
+  if (!interval_offset.is_zero() && tick_phase < *this) {
     interval_offset += tick_interval;
+  }
   return *this + interval_offset;
 }
 
@@ -282,6 +298,11 @@ LiveTicks LiveTicksNowIgnoringOverride() {
 
 #endif
 
+std::ostream& operator<<(std::ostream& os, LiveTicks live_ticks) {
+  const TimeDelta as_time_delta = live_ticks - LiveTicks();
+  return os << as_time_delta.InMicroseconds() << " bogo-live-microseconds";
+}
+
 // ThreadTicks ----------------------------------------------------------------
 
 // static
@@ -307,15 +328,6 @@ bool Time::Exploded::HasValidValues() const {
          (0 <= second) && (second <= 60) &&
          (0 <= millisecond) && (millisecond <= 999);
   // clang-format on
-}
-
-std::string TimeFormatHTTP(base::Time time) {
-  base::Time::Exploded exploded;
-  time.UTCExplode(&exploded);
-  return base::StringPrintf(
-      "%s, %02d %s %04d %02d:%02d:%02d GMT", kWeekdayName[exploded.day_of_week],
-      exploded.day_of_month, kMonthName[exploded.month - 1], exploded.year,
-      exploded.hour, exploded.minute, exploded.second);
 }
 
 }  // namespace base

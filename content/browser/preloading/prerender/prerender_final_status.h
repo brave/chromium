@@ -23,6 +23,8 @@ namespace content {
 // https://docs.google.com/document/d/1PnrfowsZMt62PX1EvvTp2Nqs3ji1zrklrAEe1JYbkTk
 // to ensure failure reasons are correctly shown in the DevTools
 // frontend.
+//
+// LINT.IfChange
 enum class PrerenderFinalStatus {
   kActivated = 0,
   kDestroyed = 1,
@@ -32,10 +34,10 @@ enum class PrerenderFinalStatus {
   // kCrossOriginNavigation = 4,
   kInvalidSchemeRedirect = 5,
   kInvalidSchemeNavigation = 6,
-  kInProgressNavigation = 7,
+  // kInProgressNavigation = 7,  // No longer used.
   // kNavigationRequestFailure = 8,  // No longer used.
   kNavigationRequestBlockedByCsp = 9,
-  kMainFrameNavigation = 10,
+  // kMainFrameNavigation = 10, // No longer used.
   kMojoBinderPolicy = 11,
   // kPlugin = 12,  // No longer used.
   kRendererProcessCrashed = 13,
@@ -46,7 +48,9 @@ enum class PrerenderFinalStatus {
   kNavigationBadHttpStatus = 18,
   kClientCertRequested = 19,
   kNavigationRequestNetworkError = 20,
-  kMaxNumOfRunningPrerendersExceeded = 21,
+  // This is split into
+  // kMaxNumOfRunning(Eager|NonEager|Embedder)PrerendersExceeded
+  // kMaxNumOfRunningPrerendersExceeded = 21,
   kCancelAllHostsForTesting = 22,
   kDidFailLoad = 23,
   kStop = 24,
@@ -71,9 +75,12 @@ enum class PrerenderFinalStatus {
   // metric's name includes trigger type.
   // kEmbedderTriggeredAndDestroyed = 35,
   kMemoryLimitExceeded = 36,
-  kFailToGetMemoryUsage = 37,
+
+  // Deprecated. Failure on query of current memory consumption is ignored.
+  // kFailToGetMemoryUsage = 37,
+
   kDataSaverEnabled = 38,
-  kHasEffectiveUrl = 39,
+  kTriggerUrlHasEffectiveUrl = 39,
   kActivatedBeforeStarted = 40,
   kInactivePageRestriction = 41,
   kStartFailed = 42,
@@ -96,9 +103,9 @@ enum class PrerenderFinalStatus {
   // from the initial prerendering navigation so Prerender fails to activate it.
   kActivationNavigationParameterMismatch = 50,
   kActivatedInBackground = 51,
-  kEmbedderHostDisallowed = 52,
+  // kEmbedderHostDisallowed = 52, // No longer used.
   // Called when encounter failures during synchronous activation.
-  // TODO(https://crbug.com/1363550): Remove this reason if no sample is
+  // TODO(crbug.com/40238737): Remove this reason if no sample is
   // recorded in stable, or look into the reason if there are.
   kActivationNavigationDestroyedBeforeSuccess = 53,
   // See comments on WebContents::kTabClosedWithoutUserGesture for the
@@ -127,7 +134,8 @@ enum class PrerenderFinalStatus {
   // Different from kBlockedByClient, which tracks the failure caused by main
   // frame navigation, this status indicates that clients block some resource
   // loading.
-  kResourceLoadBlockedByClient = 70,
+  // Eliminated per crrev.com/c/4891929.
+  // kResourceLoadBlockedByClient = 70,
 
   // A trigger page removed a corresponding prerender rule from
   // <script type="speculationrules">.
@@ -139,8 +147,40 @@ enum class PrerenderFinalStatus {
   // status is specified.
   kActivatedWithAuxiliaryBrowsingContexts = 72,
 
-  kMaxValue = kActivatedWithAuxiliaryBrowsingContexts,
+  kMaxNumOfRunningImmediatePrerendersExceeded = 73,
+  kMaxNumOfRunningNonImmediatePrerendersExceeded = 74,
+  kMaxNumOfRunningEmbedderPrerendersExceeded = 75,
+
+  kPrerenderingUrlHasEffectiveUrl = 76,
+  kRedirectedPrerenderingUrlHasEffectiveUrl = 77,
+  kActivationUrlHasEffectiveUrl = 78,
+
+  kJavaScriptInterfaceAdded = 79,
+  kJavaScriptInterfaceRemoved = 80,
+
+  kAllPrerenderingCanceled = 81,
+
+  // Cancelled by window.close() from renderer side.
+  kWindowClosed = 82,
+
+  kSlowNetwork = 83,
+  kOtherPrerenderedPageActivated = 84,
+
+  // When the V8 optimizer is disabled by the site settings, prerendering a page
+  // that has the COOP crashes (see https://crbug.com/40076091 for details). To
+  // avoid it, prerendering is disabled in that case.
+  // kV8OptimizerDisabled = 85,
+
+  // Prefetch ahead of prerender failed. Precise reason is recorded as UMA
+  // `Prerender.Experimental.PrefetchAheadOfPrerenderFailed.PrefetchStatus{PreloadingTriggerType}`
+  kPrerenderFailedDuringPrefetch = 86,
+
+  // Prerendering canceled by clearing cache from browsing data removal.
+  kBrowsingDataRemoved = 87,
+
+  kMaxValue = kBrowsingDataRemoved,
 };
+// LINT.ThenChange(//third_party/blink/public/devtools_protocol/browser_protocol.pdl)
 
 // Helper method to convert PrerenderFinalStatus to PreloadingFailureReason.
 PreloadingFailureReason CONTENT_EXPORT

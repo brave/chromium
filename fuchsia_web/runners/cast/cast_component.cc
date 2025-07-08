@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "fuchsia_web/runners/cast/cast_component.h"
 
+#include <fuchsia/ui/views/cpp/fidl.h>
 #include <lib/async/default.h>
 #include <lib/fidl/cpp/binding.h>
 #include <lib/trace/event.h>
-#include <lib/ui/scenic/cpp/view_ref_pair.h>
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -32,18 +38,18 @@ constexpr int kBindingsFailureExitCode = 129;
 constexpr int kRewriteRulesProviderDisconnectExitCode = 130;
 
 fuchsia::web::ConsoleLogLevel SeverityToConsoleLogLevel(
-    fuchsia::diagnostics::Severity severity) {
+    fuchsia::diagnostics::types::Severity severity) {
   switch (severity) {
-    case fuchsia::diagnostics::Severity::TRACE:
-    case fuchsia::diagnostics::Severity::DEBUG:
+    case fuchsia::diagnostics::types::Severity::TRACE:
+    case fuchsia::diagnostics::types::Severity::DEBUG:
       return fuchsia::web::ConsoleLogLevel::DEBUG;
-    case fuchsia::diagnostics::Severity::INFO:
+    case fuchsia::diagnostics::types::Severity::INFO:
       return fuchsia::web::ConsoleLogLevel::INFO;
-    case fuchsia::diagnostics::Severity::WARN:
+    case fuchsia::diagnostics::types::Severity::WARN:
       return fuchsia::web::ConsoleLogLevel::WARN;
-    case fuchsia::diagnostics::Severity::ERROR:
+    case fuchsia::diagnostics::types::Severity::ERROR:
       return fuchsia::web::ConsoleLogLevel::ERROR;
-    case fuchsia::diagnostics::Severity::FATAL:
+    case fuchsia::diagnostics::types::Severity::FATAL:
       // FATAL means none per the FIDL definition.
       return fuchsia::web::ConsoleLogLevel::NONE;
   }
@@ -70,7 +76,7 @@ bool CastComponent::Params::AreComplete() const {
   return true;
 }
 
-CastComponent::CastComponent(base::StringPiece debug_name,
+CastComponent::CastComponent(std::string_view debug_name,
                              WebContentRunner* runner,
                              CastComponent::Params params,
                              bool is_headless)
@@ -124,7 +130,7 @@ void CastComponent::StartComponent() {
   }
 
   if (IsAppConfigForCastStreaming(application_config_)) {
-    // TODO(crbug.com/1082821): Remove this once the Cast Streaming Receiver
+    // TODO(crbug.com/40131115): Remove this once the Cast Streaming Receiver
     // component has been implemented.
 
     // Register the MessagePort for the Cast Streaming Receiver.
@@ -163,7 +169,7 @@ void CastComponent::StartComponent() {
 
   // Apply application-specific web permissions to the fuchsia.web.Frame.
   if (application_config_.has_permissions()) {
-    // TODO(crbug.com/1136994): Replace this with the PermissionManager API
+    // TODO(crbug.com/40724536): Replace this with the PermissionManager API
     // when available.
     const std::string origin =
         GURL(application_config_.web_url()).DeprecatedGetOriginAsURL().spec();
@@ -311,6 +317,11 @@ void CastComponent::Stop() {
   constexpr base::TimeDelta kStopTimeout = base::Minutes(1u);
   frame()->Close(std::move(fuchsia::web::FrameCloseRequest().set_timeout(
       kStopTimeout.ToZxDuration())));
+}
+
+void CastComponent::handle_unknown_method(uint64_t ordinal,
+                                          bool method_has_response) {
+  LOG(ERROR) << "Unknown method called on CastComponent. Ordinal: " << ordinal;
 }
 
 void CastComponent::OnZxHandleSignalled(zx_handle_t handle,

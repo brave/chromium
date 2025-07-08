@@ -4,16 +4,13 @@
 
 #include "content/web_test/browser/web_test_shell_platform_delegate.h"
 
+#import "base/apple/foundation_util.h"
 #include "base/containers/contains.h"
-#import "base/mac/foundation_util.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/shell/browser/shell.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace content {
 
@@ -54,7 +51,6 @@ gfx::NativeWindow WebTestShellPlatformDelegate::GetNativeWindow(Shell* shell) {
     return ShellPlatformDelegate::GetNativeWindow(shell);
 
   NOTREACHED();
-  return {};
 }
 
 void WebTestShellPlatformDelegate::CleanUp(Shell* shell) {
@@ -204,7 +200,7 @@ void WebTestShellPlatformDelegate::DidNavigatePrimaryMainFramePostCommit(
 bool WebTestShellPlatformDelegate::HandleKeyboardEvent(
     Shell* shell,
     WebContents* source,
-    const NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   if (IsHeadless())
     return false;
   return ShellPlatformDelegate::HandleKeyboardEvent(shell, source, event);

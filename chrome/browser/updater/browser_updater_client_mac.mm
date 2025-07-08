@@ -7,40 +7,37 @@
 #include <string>
 
 #include "base/apple/bundle_locations.h"
-#include "base/mac/foundation_util.h"
-#include "base/strings/strcat.h"
+#include "base/apple/foundation_util.h"
+#include "base/files/file_path.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/updater/browser_updater_client_util.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/version_info.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-namespace {
-
-std::string GetTag() {
-  std::string contents;
-  base::ReadFileToString(
-      base::apple::OuterBundlePath().Append(".want_full_installer"), &contents);
-  return base::StrCat(
-      {chrome::GetChannelName(chrome::WithExtendedStable(true)),
-       contents == version_info::GetVersionNumber() ? "-full" : ""});
+std::string BrowserUpdaterClient::GetAppId() {
+  return std::string(base::apple::BaseBundleID());
 }
 
-}  // namespace
-
-std::string BrowserUpdaterClient::GetAppId() {
-  return base::mac::BaseBundleID();
+base::FilePath BrowserUpdaterClient::GetExpectedEcp() {
+  return base::apple::OuterBundlePath();
 }
 
 updater::RegistrationRequest BrowserUpdaterClient::GetRegistrationRequest() {
+  base::FilePath bundle = base::apple::OuterBundlePath();
   updater::RegistrationRequest req;
   req.app_id = GetAppId();
   google_brand::GetBrand(&req.brand_code);
   req.version = base::Version(version_info::GetVersionNumber());
-  req.ap = GetTag();
-  req.existence_checker_path = base::apple::OuterBundlePath();
+  req.version_path = bundle.AppendASCII("Contents").AppendASCII("Info.plist");
+  req.version_key = "KSVersion";
+  req.ap = chrome::GetChannelName(chrome::WithExtendedStable(true));
+  req.existence_checker_path = bundle;
   return req;
+}
+
+bool BrowserUpdaterClient::AppMatches(
+    const updater::UpdateService::AppState& app) {
+  return base::EqualsCaseInsensitiveASCII(app.app_id, GetAppId()) &&
+         app.ecp == GetExpectedEcp();
 }

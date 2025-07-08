@@ -6,12 +6,12 @@
 #define COMPONENTS_OPENSCREEN_PLATFORM_MESSAGE_PORT_TLS_CONNECTION_H_
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
 #include "components/cast/message_port/message_port.h"
 #include "third_party/openscreen/src/platform/api/tls_connection.h"
 #include "third_party/openscreen/src/platform/base/ip_address.h"
@@ -28,8 +28,7 @@ namespace openscreen_platform {
 // to the MessagePort.
 class MessagePortTlsConnection final
     : public openscreen::TlsConnection,
-      public cast_api_bindings::MessagePort::Receiver,
-      public base::SupportsWeakPtr<MessagePortTlsConnection> {
+      public cast_api_bindings::MessagePort::Receiver {
  public:
   MessagePortTlsConnection(
       std::unique_ptr<cast_api_bindings::MessagePort> message_port,
@@ -39,13 +38,13 @@ class MessagePortTlsConnection final
 
   // TlsConnection overrides.
   void SetClient(TlsConnection::Client* client) final;
-  bool Send(const void* data, size_t len) final;
+  bool Send(openscreen::ByteView data) final;
   openscreen::IPEndpoint GetRemoteEndpoint() const final;
 
  private:
   // MessagePort::Receiver overrides.
   bool OnMessage(
-      base::StringPiece message,
+      std::string_view message,
       std::vector<std::unique_ptr<cast_api_bindings::MessagePort>> ports) final;
   void OnPipeError() final;
 
@@ -53,6 +52,8 @@ class MessagePortTlsConnection final
   const raw_ref<openscreen::TaskRunner> task_runner_;
 
   raw_ptr<TlsConnection::Client> client_ = nullptr;
+
+  base::WeakPtrFactory<MessagePortTlsConnection> weak_ptr_factory_{this};
 };
 
 }  // namespace openscreen_platform

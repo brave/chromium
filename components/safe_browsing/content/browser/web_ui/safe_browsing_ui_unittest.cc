@@ -4,7 +4,7 @@
 
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "base/test/values_test_util.h"
-#include "components/safe_browsing/core/common/proto/safebrowsingv5_alpha1.pb.h"
+#include "components/safe_browsing/core/common/proto/safebrowsingv5.pb.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_web_ui.h"
@@ -14,7 +14,7 @@ namespace safe_browsing {
 
 class SafeBrowsingUITest : public testing::Test {
  public:
-  SafeBrowsingUITest() {}
+  SafeBrowsingUITest() = default;
 
   void SetUp() override {}
 
@@ -25,7 +25,7 @@ class SafeBrowsingUITest : public testing::Test {
 
   SafeBrowsingUIHandler* RegisterNewHandler() {
     auto handler_unique =
-        std::make_unique<SafeBrowsingUIHandler>(&browser_context_);
+        std::make_unique<SafeBrowsingUIHandler>(&browser_context_, nullptr);
 
     SafeBrowsingUIHandler* handler = handler_unique.get();
     handler->SetWebUIForTesting(&web_ui_);
@@ -78,7 +78,7 @@ TEST_F(SafeBrowsingUITest, TestHPRTLookups) {
   std::string relay_url_spec = "testing_relay_url_spec";
   std::string ohttp_key = "testing_ohttp_key";
   // Add request to pings.
-  absl::optional<int> token =
+  std::optional<int> token =
       WebUIInfoSingleton::GetInstance()->AddToHPRTLookupPings(
           inner_request.get(), relay_url_spec, ohttp_key);
   // Validate request call_data.
@@ -92,7 +92,6 @@ TEST_F(SafeBrowsingUITest, TestHPRTLookups) {
   EXPECT_EQ(base::test::ParseJson(request_data[1].GetString()),
             base::test::ParseJson(R"!({
    "inner_request": {
-      "filter": "",
       "hash_prefixes (base64)": [ "aGFzaF9wcmVmaXhfMQ==", "aGFzaF9wcmVmaXhfMg==" ]
    },
    "ohttp_public_key (base64)": "dGVzdGluZ19vaHR0cF9rZXk=",
@@ -138,20 +137,18 @@ TEST_F(SafeBrowsingUITest, TestHPRTLookups) {
   EXPECT_EQ(base::test::ParseJson(response_data[1].GetString()),
             base::test::ParseJson(R"!({
    "cache_duration": {
-      "nanos": 30.0,
-      "seconds": 123.0
+      "nanos": 30,
+      "seconds": "123"
    },
    "full_hashes": [ {
-      "full_hash (base64)": "ZnVsbF9oYXNoXzE=",
+      "full_hash": "ZnVsbF9oYXNoXzE=",
       "full_hash_details": [ {
-         "attributes": [  ],
          "threat_type": "SOCIAL_ENGINEERING"
       }, {
-         "attributes": [  ],
          "threat_type": "MALWARE"
       } ]
    }, {
-      "full_hash (base64)": "ZnVsbF9oYXNoXzI=",
+      "full_hash": "ZnVsbF9oYXNoXzI=",
       "full_hash_details": [ {
          "attributes": [ "CANARY", "FRAME_ONLY" ],
          "threat_type": "MALWARE"

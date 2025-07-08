@@ -38,7 +38,7 @@ class FakeTask : public Task {
 
   int GetChildProcessUniqueID() const override { return 0; }
 
-  const Task* GetParentTask() const override { return nullptr; }
+  base::WeakPtr<Task> GetParentTask() const override { return nullptr; }
 
   SessionID GetTabId() const override { return SessionID::InvalidValue(); }
 
@@ -74,9 +74,6 @@ class TaskGroupTest : public testing::Test {
         base::BindRepeating(&TaskGroupTest::OnBackgroundCalculationsDone,
                             base::Unretained(this)),
         new SharedSampler(io_task_runner_),
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-        /*crosapi_task_provider=*/nullptr,
-#endif
         io_task_runner_);
     // Refresh() is only valid on non-empty TaskGroups, so add a fake Task.
     fake_task_ = std::make_unique<FakeTask>(base::Process::Current().Pid(),
@@ -152,29 +149,6 @@ TEST_F(TaskGroupTest, SharedAsyncRefresh) {
   run_loop_->Run();
 
   EXPECT_TRUE(background_refresh_complete_);
-
-  EXPECT_TRUE(task_group_->AreBackgroundCalculationsDone());
-}
-
-// Ensure that if NaCl is enabled then calling Refresh with a NaCl Task active
-// results in asynchronous completion. Also verifies that if NaCl is disabled
-// then completion is synchronous.
-TEST_F(TaskGroupTest, NaclRefreshWithTask) {
-  CreateTaskGroup(false);
-  FakeTask fake_task(base::Process::Current().Pid(), Task::NACL,
-                     false /* is_running_in_vm */);
-  task_group_->AddTask(&fake_task);
-
-  task_group_->Refresh(gpu::VideoMemoryUsageStats(), base::TimeDelta(),
-                       REFRESH_TYPE_NACL);
-#if BUILDFLAG(ENABLE_NACL)
-  EXPECT_FALSE(task_group_->AreBackgroundCalculationsDone());
-
-  ASSERT_FALSE(background_refresh_complete_);
-  run_loop_->Run();
-
-  EXPECT_TRUE(background_refresh_complete_);
-#endif  // BUILDFLAG(ENABLE_NACL)
 
   EXPECT_TRUE(task_group_->AreBackgroundCalculationsDone());
 }

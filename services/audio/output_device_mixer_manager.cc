@@ -43,6 +43,40 @@ enum class StreamCreation {
 
 namespace audio {
 
+class OutputDeviceMixerReferenceProvider : public ReferenceSignalProvider {
+ public:
+  OutputDeviceMixerReferenceProvider(
+      OutputDeviceMixerManager* output_device_mixer_manager)
+      : output_device_mixer_manager_(output_device_mixer_manager) {}
+
+  ReferenceOpenOutcome StartListening(ReferenceOutput::Listener* listener,
+                                      const std::string& device_id) final {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
+    output_device_mixer_manager_->StartListening(listener, device_id);
+    return ReferenceOpenOutcome::SUCCESS;
+  }
+
+  void StopListening(ReferenceOutput::Listener* listener) final {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
+    output_device_mixer_manager_->StopListening(listener);
+  }
+
+ private:
+  SEQUENCE_CHECKER(owning_sequence_);
+
+  // Ownership of the OutputDeviceMixerReferenceProvider goes:
+  // StreamFactory -> InputStream -> InputController -> OutputTapper ->
+  // ReferenceSignalProvider
+  //
+  // Ownership of the OutputDeviceMixerManager goes:
+  // StreamFactory -> OutputDeviceMixerManager
+  //
+  // Since input_streams_ is destroyed before output_device_mixer_manager_ in
+  // services/audio/stream_factory.h, this pointer will never be dangling.
+  const raw_ptr<OutputDeviceMixerManager> output_device_mixer_manager_
+      GUARDED_BY_CONTEXT(owning_sequence_);
+};
+
 OutputDeviceMixerManager::OutputDeviceMixerManager(
     media::AudioManager* audio_manager,
     OutputDeviceMixer::CreateCallback create_mixer_callback)
@@ -134,6 +168,12 @@ void OutputDeviceMixerManager::StartNewListener(
     return;
 
   mixer->StartListening(listener);
+}
+
+std::unique_ptr<ReferenceSignalProvider>
+OutputDeviceMixerManager::GetReferenceSignalProvider() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
+  return std::make_unique<OutputDeviceMixerReferenceProvider>(this);
 }
 
 void OutputDeviceMixerManager::StartListening(
@@ -244,8 +284,8 @@ OutputDeviceMixer* OutputDeviceMixerManager::AddMixer(
   output_params.set_frames_per_buffer(media::AudioLatency::GetRtcBufferSize(
       output_params.sample_rate(), output_params.frames_per_buffer()));
 
-  // TODO(crbug/1295658): Temporary work around. Mix all audio as stereo and
-  // rely on the system channel mapping.
+  // TODO(crbug.com/40214421): Temporary work around. Mix all audio as stereo
+  // and rely on the system channel mapping.
   if (output_params.channel_layout() == media::CHANNEL_LAYOUT_DISCRETE &&
       output_params.channels() >= 2) {
     output_params.Reset(

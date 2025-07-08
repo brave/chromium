@@ -14,6 +14,7 @@
 
 namespace content {
 
+class BackForwardTransitionAnimationManager;
 class RenderViewHost;
 class RenderViewHostDelegateView;
 class RenderWidgetHost;
@@ -67,7 +68,7 @@ class WebContentsView {
   // Returns the current drop data, if any.
   virtual DropData* GetDropData() const = 0;
 
-  // Get the bounds of the View, relative to the parent.
+  // Get the bounds of the View in the global screen position.
   virtual gfx::Rect GetViewBounds() const = 0;
 
   virtual void CreateView(gfx::NativeView context) = 0;
@@ -115,10 +116,14 @@ class WebContentsView {
 
   virtual void FullscreenStateChanged(bool is_fullscreen) = 0;
 
-  // Intended for desktop PWAs with manifest entry of window-controls-overlay,
-  // this informs the view of which area at the top of the view is available for
-  // web contents.
-  virtual void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect) = 0;
+  // Returns an animation manager that displays a preview of the history page
+  // during a session history navigation gesture. Only non-null if
+  // `features::kBackForwardTransitions` is enabled for the supported platform.
+  virtual BackForwardTransitionAnimationManager*
+  GetBackForwardTransitionAnimationManager() = 0;
+
+  // Reset the above animation manager.
+  virtual void DestroyBackForwardTransitionAnimationManager() = 0;
 };
 
 // Factory function to create `WebContentsView`s. Implemented in the platform

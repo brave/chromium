@@ -88,11 +88,6 @@ bool operator==(const MockPersistentReportingStore::Command& lhs,
   return equal;
 }
 
-bool operator!=(const MockPersistentReportingStore::Command& lhs,
-                const MockPersistentReportingStore::Command& rhs) {
-  return !(lhs == rhs);
-}
-
 std::ostream& operator<<(std::ostream& out,
                          const MockPersistentReportingStore::Command& cmd) {
   switch (cmd.type) {
@@ -105,7 +100,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ", "
                  << "endpoint=" << cmd.url << ")";
     case MockPersistentReportingStore::Command::Type::
@@ -114,7 +109,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ", "
                  << "endpoint=" << cmd.url << ")";
     case MockPersistentReportingStore::Command::Type::DELETE_REPORTING_ENDPOINT:
@@ -122,7 +117,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ", "
                  << "endpoint=" << cmd.url << ")";
     case MockPersistentReportingStore::Command::Type::
@@ -131,7 +126,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ")";
     case MockPersistentReportingStore::Command::Type::
         UPDATE_REPORTING_ENDPOINT_GROUP_ACCESS_TIME:
@@ -139,7 +134,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ")";
     case MockPersistentReportingStore::Command::Type::
         UPDATE_REPORTING_ENDPOINT_GROUP_DETAILS:
@@ -147,7 +142,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ")";
     case MockPersistentReportingStore::Command::Type::
         DELETE_REPORTING_ENDPOINT_GROUP:
@@ -155,7 +150,7 @@ std::ostream& operator<<(std::ostream& out,
                  << "NAK="
                  << cmd.group_key.network_anonymization_key.ToDebugString()
                  << ", "
-                 << "origin=" << cmd.group_key.origin << ", "
+                 << "origin=" << cmd.group_key.origin.value() << ", "
                  << "group=" << cmd.group_key.group_name << ")";
   }
 }

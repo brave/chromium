@@ -8,7 +8,7 @@
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_ink_overflow.h"
+#include "third_party/blink/renderer/core/layout/ink_overflow.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/paint/paint_property_tree_builder_test.h"
@@ -16,6 +16,9 @@
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
+#include "third_party/skia/include/core/SkRRect.h"
+#include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 
 namespace blink {
 
@@ -32,49 +35,6 @@ class PaintPropertyTreeUpdateTest : public PaintPropertyTreeBuilderTest {
 INSTANTIATE_TEST_SUITE_P(All,
                          PaintPropertyTreeUpdateTest,
                          ::testing::Values(0, kUnderInvalidationChecking));
-
-TEST_P(PaintPropertyTreeUpdateTest,
-       ThreadedScrollingDisabledMainThreadScrollReason) {
-  SetBodyInnerHTML(R"HTML(
-    <style>
-      #overflowA {
-        position: absolute;
-        overflow: scroll;
-        width: 20px;
-        height: 20px;
-      }
-      .forceScroll {
-        height: 4000px;
-      }
-    </style>
-    <div id='overflowA'>
-      <div class='forceScroll'></div>
-    </div>
-    <div class='forceScroll'></div>
-  )HTML");
-  Element* overflow_a = GetDocument().getElementById(AtomicString("overflowA"));
-  EXPECT_FALSE(DocScroll()->ThreadedScrollingDisabled());
-  EXPECT_FALSE(overflow_a->GetLayoutObject()
-                   ->FirstFragment()
-                   .PaintProperties()
-                   ->ScrollTranslation()
-                   ->ScrollNode()
-                   ->ThreadedScrollingDisabled());
-
-  GetDocument().GetSettings()->SetThreadedScrollingEnabled(false);
-  // TODO(pdr): The main thread scrolling setting should invalidate properties.
-  GetDocument().View()->SetNeedsPaintPropertyUpdate();
-  overflow_a->GetLayoutObject()->SetNeedsPaintPropertyUpdate();
-  UpdateAllLifecyclePhasesForTest();
-
-  EXPECT_TRUE(DocScroll()->ThreadedScrollingDisabled());
-  EXPECT_TRUE(overflow_a->GetLayoutObject()
-                  ->FirstFragment()
-                  .PaintProperties()
-                  ->ScrollTranslation()
-                  ->ScrollNode()
-                  ->ThreadedScrollingDisabled());
-}
 
 TEST_P(PaintPropertyTreeUpdateTest,
        BackgroundAttachmentFixedMainThreadScrollReasonsWithNestedScrollers) {
@@ -111,54 +71,54 @@ TEST_P(PaintPropertyTreeUpdateTest,
   Element* overflow_a = GetDocument().getElementById(AtomicString("overflowA"));
   Element* overflow_b = GetDocument().getElementById(AtomicString("overflowB"));
 
-  EXPECT_TRUE(DocScroll()->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(DocScroll()->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_TRUE(overflow_a->GetLayoutObject()
                   ->FirstFragment()
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_TRUE(overflow_b->GetLayoutObject()
                   ->FirstFragment()
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Removing a main thread scrolling reason should update the entire tree.
   overflow_b->removeAttribute(html_names::kClassAttr);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(DocScroll()->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_FALSE(DocScroll()->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_FALSE(overflow_a->GetLayoutObject()
                    ->FirstFragment()
                    .PaintProperties()
                    ->ScrollTranslation()
                    ->ScrollNode()
-                   ->HasBackgroundAttachmentFixedDescendants());
+                   ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_FALSE(overflow_b->GetLayoutObject()
                    ->FirstFragment()
                    .PaintProperties()
                    ->ScrollTranslation()
                    ->ScrollNode()
-                   ->HasBackgroundAttachmentFixedDescendants());
+                   ->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Adding a main thread scrolling reason should update the entire tree.
   overflow_b->setAttribute(html_names::kClassAttr,
                            AtomicString("backgroundAttachmentFixed"));
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(DocScroll()->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(DocScroll()->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_TRUE(overflow_a->GetLayoutObject()
                   ->FirstFragment()
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_TRUE(overflow_b->GetLayoutObject()
                   ->FirstFragment()
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, ParentFrameMainThreadScrollReasons) {
@@ -179,24 +139,30 @@ TEST_P(PaintPropertyTreeUpdateTest, ParentFrameMainThreadScrollReasons) {
       "<div id='forceScroll' style='height: 8888px;'></div>");
   UpdateAllLifecyclePhasesForTest();
   Document* parent = &GetDocument();
-  EXPECT_TRUE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
   Document* child = &ChildDocument();
-  EXPECT_TRUE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Removing a main thread scrolling reason should update the entire tree.
   auto* fixed_background =
       GetDocument().getElementById(AtomicString("fixedBackground"));
   fixed_background->removeAttribute(html_names::kClassAttr);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
-  EXPECT_FALSE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_FALSE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
+  EXPECT_FALSE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Adding a main thread scrolling reason should update the entire tree.
   fixed_background->setAttribute(html_names::kClassAttr,
                                  AtomicString("fixedBackground"));
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
-  EXPECT_TRUE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
+  EXPECT_TRUE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, ChildFrameMainThreadScrollReasons) {
@@ -219,24 +185,30 @@ TEST_P(PaintPropertyTreeUpdateTest, ChildFrameMainThreadScrollReasons) {
   UpdateAllLifecyclePhasesForTest();
 
   Document* parent = &GetDocument();
-  EXPECT_FALSE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_FALSE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
   Document* child = &ChildDocument();
-  EXPECT_TRUE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_TRUE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Removing a main thread scrolling reason should update the entire tree.
   auto* fixed_background =
       ChildDocument().getElementById(AtomicString("fixedBackground"));
   fixed_background->removeAttribute(html_names::kClassAttr);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
-  EXPECT_FALSE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_FALSE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
+  EXPECT_FALSE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 
   // Adding a main thread scrolling reason should update the entire tree.
   fixed_background->setAttribute(html_names::kClassAttr,
                                  AtomicString("fixedBackground"));
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(DocScroll(parent)->HasBackgroundAttachmentFixedDescendants());
-  EXPECT_TRUE(DocScroll(child)->HasBackgroundAttachmentFixedDescendants());
+  EXPECT_FALSE(
+      DocScroll(parent)->RequiresMainThreadForBackgroundAttachmentFixed());
+  EXPECT_TRUE(
+      DocScroll(child)->RequiresMainThreadForBackgroundAttachmentFixed());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest,
@@ -281,7 +253,7 @@ TEST_P(PaintPropertyTreeUpdateTest,
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
   // This could be false since it's fixed with respect to the layout viewport.
   // However, it would be simpler to avoid the main thread by doing this check
   // on the compositor thread. https://crbug.com/985127.
@@ -290,7 +262,7 @@ TEST_P(PaintPropertyTreeUpdateTest,
                   .PaintProperties()
                   ->ScrollTranslation()
                   ->ScrollNode()
-                  ->HasBackgroundAttachmentFixedDescendants());
+                  ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_EQ(DocScroll(), overflow_b->GetLayoutObject()
                              ->FirstFragment()
                              .PaintProperties()
@@ -306,20 +278,20 @@ TEST_P(PaintPropertyTreeUpdateTest,
                    .PaintProperties()
                    ->ScrollTranslation()
                    ->ScrollNode()
-                   ->HasBackgroundAttachmentFixedDescendants());
+                   ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_FALSE(overflow_b->GetLayoutObject()
                    ->FirstFragment()
                    .PaintProperties()
                    ->ScrollTranslation()
                    ->ScrollNode()
-                   ->HasBackgroundAttachmentFixedDescendants());
+                   ->RequiresMainThreadForBackgroundAttachmentFixed());
   EXPECT_FALSE(overflow_b->GetLayoutObject()
                    ->FirstFragment()
                    .PaintProperties()
                    ->ScrollTranslation()
                    ->ScrollNode()
                    ->Parent()
-                   ->HasBackgroundAttachmentFixedDescendants());
+                   ->RequiresMainThreadForBackgroundAttachmentFixed());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, DescendantNeedsUpdateAcrossFrames) {
@@ -476,7 +448,7 @@ TEST_P(PaintPropertyTreeUpdateTest, BuildingStopsAtThrottledFrames) {
   EXPECT_TRUE(iframe_transform->ShouldCheckForPaintInvalidation());
 
   // Run a force-unthrottled lifecycle update. All flags should be cleared.
-  GetDocument().View()->UpdateLifecycleToPrePaintClean(
+  GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint(
       DocumentUpdateReason::kTest);
   EXPECT_FALSE(
       GetDocument().GetLayoutView()->DescendantNeedsPaintPropertyUpdate());
@@ -1690,16 +1662,19 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   // Change of animation status should update PaintArtifactCompositor.
   auto* paint_artifact_compositor =
       GetDocument().View()->GetPaintArtifactCompositor();
-  EXPECT_TRUE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kFull);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 
   // Simulates changing transform and transform-origin during an animation.
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
   builder = ComputedStyleBuilder(target->StyleRef());
   TransformOperations transform;
   transform.Operations().push_back(
-      RotateTransformOperation::Create(10, TransformOperation::kRotate));
+      MakeGarbageCollected<RotateTransformOperation>(
+          10, TransformOperation::kRotate));
   builder.SetTransform(transform);
   builder.SetTransformOrigin(
       TransformOrigin(Length::Fixed(70), Length::Fixed(30), 0));
@@ -1710,7 +1685,7 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
 #if DCHECK_IS_ON()
     // TODO(crbug.com/1201670): This should not be needed, but DCHECK hits.
     // Needs more investigations.
-    NGInkOverflow::ReadUnsetAsNoneScope read_unset_as_none;
+    InkOverflow::ReadUnsetAsNoneScope read_unset_as_none;
 #endif
     UpdateAllLifecyclePhasesExceptPaint();
   }
@@ -1723,7 +1698,8 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   EXPECT_TRUE(transform_node->BackfaceVisibilitySameAsParent());
   // Changing only transform or transform-origin values during a composited
   // animation should not schedule a PaintArtifactCompositor update.
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 
   // Simulates changing backface visibility during animation.
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
@@ -1743,7 +1719,8 @@ TEST_P(PaintPropertyTreeUpdateTest, ChangeDuringAnimation) {
   // Only transform and transform-origin value changes during composited
   // animation should not schedule PaintArtifactCompositor update. Backface
   // visibility changes should schedule an update.
-  EXPECT_TRUE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kFull);
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, BackfaceVisibilityInvalidatesProperties) {
@@ -1796,8 +1773,11 @@ TEST_P(PaintPropertyTreeUpdateTest, InlineFilterReferenceBoxChange) {
   const auto* properties = PaintPropertiesForElement("span");
   ASSERT_TRUE(properties);
   ASSERT_TRUE(properties->Filter());
+  ASSERT_TRUE(properties->Filter()->Filter());
   EXPECT_EQ(gfx::PointF(0, 20),
-            properties->Filter()->Filter().ReferenceBox().origin());
+            properties->Filter()->Filter()->ReferenceBox().origin());
+  EXPECT_EQ(gfx::Point(-3, 17),
+            properties->Filter()->FilterOutputBounds().origin());
 
   GetDocument()
       .getElementById(AtomicString("spacer"))
@@ -1806,7 +1786,9 @@ TEST_P(PaintPropertyTreeUpdateTest, InlineFilterReferenceBoxChange) {
   UpdateAllLifecyclePhasesForTest();
   ASSERT_EQ(properties, PaintPropertiesForElement("span"));
   EXPECT_EQ(gfx::PointF(0, 100),
-            properties->Filter()->Filter().ReferenceBox().origin());
+            properties->Filter()->Filter()->ReferenceBox().origin());
+  EXPECT_EQ(gfx::Point(-3, 97),
+            properties->Filter()->FilterOutputBounds().origin());
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, StartSVGAnimation) {
@@ -1848,15 +1830,18 @@ TEST_P(PaintPropertyTreeUpdateTest, ScrollNonStackingContextContainingStacked) {
   auto* paint_artifact_compositor =
       GetDocument().View()->GetPaintArtifactCompositor();
   ASSERT_TRUE(paint_artifact_compositor);
-  ASSERT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 
   // We need PaintArtifactCompositor update on scroll because the scroller is
   // not a stacking context but contains stacked descendants.
   scroller->setScrollTop(100);
   UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 
   // Remove "position:relative" from |content|.
   content->setAttribute(html_names::kStyleAttr, g_empty_atom);
@@ -1866,9 +1851,11 @@ TEST_P(PaintPropertyTreeUpdateTest, ScrollNonStackingContextContainingStacked) {
   // has stacked descendants.
   scroller->setScrollTop(110);
   UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 
   // Make scroller a stacking context with stacked contents.
   scroller->setAttribute(
@@ -1882,9 +1869,11 @@ TEST_P(PaintPropertyTreeUpdateTest, ScrollNonStackingContextContainingStacked) {
   // stacking context.
   scroller->setScrollTop(120);
   UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(paint_artifact_compositor->NeedsUpdate());
+  EXPECT_EQ(paint_artifact_compositor->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, ScrollOriginChange) {
@@ -2138,15 +2127,16 @@ TEST_P(PaintPropertyTreeUpdateTest, BackdropFilterBounds) {
   auto* properties = PaintPropertiesForElement("target");
   ASSERT_TRUE(properties);
   ASSERT_TRUE(properties->Effect());
-  EXPECT_EQ(gfx::RRectF(0, 0, 100, 100, 0),
-            properties->Effect()->BackdropFilterBounds());
+  SkRect bounds;
+  EXPECT_TRUE(properties->Effect()->BackdropFilterBounds().isRect(&bounds));
+  EXPECT_EQ(SkRect::MakeXYWH(0, 0, 100, 100), bounds);
 
   GetDocument()
       .getElementById(AtomicString("target"))
       ->SetInlineStyleProperty(CSSPropertyID::kWidth, "200px");
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_EQ(gfx::RRectF(0, 0, 200, 100, 0),
-            properties->Effect()->BackdropFilterBounds());
+  EXPECT_TRUE(properties->Effect()->BackdropFilterBounds().isRect(&bounds));
+  EXPECT_EQ(SkRect::MakeXYWH(0, 0, 200, 100), bounds);
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, UpdatesInLockedDisplayHandledCorrectly) {
@@ -2174,21 +2164,19 @@ TEST_P(PaintPropertyTreeUpdateTest, UpdatesInLockedDisplayHandledCorrectly) {
       ->setAttribute(html_names::kStyleAttr, AtomicString("background:purple"));
   GetDocument()
       .getElementById(AtomicString("locked_display_inner"))
-      ->getBoundingClientRect();
+      ->GetBoundingClientRect();
   EXPECT_TRUE(fast_path_div->GetLayoutObject()->NeedsPaintPropertyUpdate());
   GetDocument().ElementFromPoint(1, 1);
   EXPECT_NEAR(0.8, div_properties->Effect()->Opacity(), 0.001);
 }
 
 TEST_P(PaintPropertyTreeUpdateTest, AnchorPositioningScrollUpdate) {
-  ScopedCSSAnchorPositioningForTest enabled(true);
-
   SetBodyInnerHTML(R"HTML(
     <div id="spacer" style="height: 1000px"></div>
     <div id="anchor" style="
         anchor-name: --a; width: 100px; height: 100px"></div>
     <div id="target" style="
-        position: fixed; anchor-default: --a;
+        position: fixed; position-anchor: --a;
         width: 100px; height: 100px; bottom: anchor(--a top)"></div>
   )HTML");
 
@@ -2208,7 +2196,149 @@ TEST_P(PaintPropertyTreeUpdateTest, AnchorPositioningScrollUpdate) {
             gfx::Vector2dF(0, -300));
 
   // Anchor positioning scroll update should not require main thread commits.
-  EXPECT_FALSE(GetFrame().View()->GetPaintArtifactCompositor()->NeedsUpdate());
+  EXPECT_EQ(GetFrame().View()->GetPaintArtifactCompositor()->NeedsUpdate(),
+            PaintArtifactCompositor::UpdateType::kNone);
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, ElementCaptureUpdate) {
+  ScopedElementCaptureForTest scoped_element_capture(true);
+
+  SetBodyInnerHTML(R"HTML(
+   <style>
+      div {
+        height: 100px;
+      }
+      .stacking {
+        opacity: 0.9;
+      }
+      #container {
+        columns:4;
+        column-fill:auto;
+      }
+      .fragmentize {
+        height: 50px;
+      }
+      #target {
+        background: linear-gradient(red, blue);
+      }
+    </style>
+
+    <div id='container'>
+      <div id='target' class='stacking'></div>
+    </div>
+  )HTML");
+
+  /// Does not have an effect without a restriction target.
+  Element* element = GetDocument().getElementById(AtomicString("target"));
+  const ObjectPaintProperties* paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_FALSE(paint_properties && paint_properties->ElementCaptureEffect());
+
+  // Ensure we have an effect once we have a restriction target token.
+  element->SetRestrictionTargetId(
+      std::make_unique<RestrictionTargetId>(base::Token::CreateRandom()));
+  EXPECT_TRUE(element->GetLayoutObject()->NeedsPaintPropertyUpdate());
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(element->GetLayoutObject()->NeedsPaintPropertyUpdate());
+  paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_TRUE(paint_properties && paint_properties->ElementCaptureEffect());
+
+  // Should not have an effect if `#target`'s stacking context is removed.
+  element->setAttribute(html_names::kClassAttr, AtomicString(""));
+  UpdateAllLifecyclePhasesForTest();
+  paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_FALSE(paint_properties && paint_properties->ElementCaptureEffect());
+
+  // Should have an effect if `#target` gets a stacking context.
+  element->setAttribute(html_names::kClassAttr, AtomicString("stacking"));
+  UpdateAllLifecyclePhasesForTest();
+  paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_TRUE(paint_properties && paint_properties->ElementCaptureEffect());
+
+  // Should not have an effect if `#target` becomes fragmented. This is done
+  // indirectly by resizing the parent.
+  Element* container = GetDocument().getElementById(AtomicString("container"));
+  container->setAttribute(html_names::kClassAttr, AtomicString("fragmentize"));
+  UpdateAllLifecyclePhasesForTest();
+  paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_FALSE(paint_properties && paint_properties->ElementCaptureEffect());
+
+  // Should have an effect if `#target`'s becomes unfragmented again.
+  container->setAttribute(html_names::kClassAttr, AtomicString(""));
+  UpdateAllLifecyclePhasesForTest();
+  paint_properties =
+      element->GetLayoutObject()->FirstFragment().PaintProperties();
+  EXPECT_TRUE(paint_properties && paint_properties->ElementCaptureEffect());
+}
+
+TEST_P(PaintPropertyTreeUpdateTest, BorderShapeChangesUpdateOverflowClip) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      body { margin: 0; }
+      #div { overflow:hidden; width: 100px; height: 100px; border-radius: 10px; }
+      .stroke-10 { stroke-width: 10px; stroke: black; }
+    </style>
+    <div id=div></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  auto* div = GetDocument().getElementById(AtomicString("div"));
+  auto* clip_properties = div->GetLayoutObject()
+                              ->FirstFragment()
+                              .PaintProperties()
+                              ->InnerBorderShapeClip();
+  EXPECT_FALSE(clip_properties);
+  EXPECT_TRUE(div->GetLayoutObject()
+                  ->FirstFragment()
+                  .PaintProperties()
+                  ->InnerBorderRadiusClip());
+  div->setAttribute(html_names::kStyleAttr,
+                    AtomicString("border-shape: circle()"));
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(div->GetLayoutObject()
+                   ->FirstFragment()
+                   .PaintProperties()
+                   ->InnerBorderRadiusClip());
+  clip_properties = div->GetLayoutObject()
+                        ->FirstFragment()
+                        .PaintProperties()
+                        ->InnerBorderShapeClip();
+  EXPECT_TRUE(clip_properties);
+  EXPECT_TRUE(clip_properties->ClipPath());
+  EXPECT_FALSE(clip_properties->ClipPath()->GetSkPath().isRect(nullptr));
+  div->setAttribute(html_names::kStyleAttr,
+                    AtomicString("border-shape: inset(30px)"));
+  UpdateAllLifecyclePhasesForTest();
+  clip_properties = div->GetLayoutObject()
+                        ->FirstFragment()
+                        .PaintProperties()
+                        ->InnerBorderShapeClip();
+  SkRect rect;
+  EXPECT_TRUE(clip_properties->ClipPath()->GetSkPath().isRect(&rect));
+  EXPECT_EQ(rect, SkRect::MakeLTRB(30, 30, 70, 70))
+      << rect.dumpToString(/*asHex=*/false).c_str();
+  div->classList().Add(AtomicString("stroke-10"));
+  UpdateAllLifecyclePhasesForTest();
+  clip_properties = div->GetLayoutObject()
+                        ->FirstFragment()
+                        .PaintProperties()
+                        ->InnerBorderShapeClip();
+  EXPECT_TRUE(clip_properties->ClipPath()->GetSkPath().isRect(&rect));
+  EXPECT_EQ(rect, SkRect::MakeLTRB(35, 35, 65, 65))
+      << rect.dumpToString(/*asHex=*/false).c_str();
+  div->removeAttribute(html_names::kStyleAttr);
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(div->GetLayoutObject()
+                  ->FirstFragment()
+                  .PaintProperties()
+                  ->InnerBorderRadiusClip());
+  EXPECT_FALSE(div->GetLayoutObject()
+                   ->FirstFragment()
+                   .PaintProperties()
+                   ->InnerBorderShapeClip());
 }
 
 }  // namespace blink

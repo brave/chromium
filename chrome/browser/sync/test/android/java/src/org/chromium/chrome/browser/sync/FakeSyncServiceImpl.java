@@ -11,22 +11,24 @@ import org.json.JSONArray;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GoogleServiceAuthError;
+import org.chromium.components.sync.LocalDataDescription;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.SyncServiceImpl;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.components.sync.UserSelectableType;
+import org.chromium.google_apis.gaia.GoogleServiceAuthError;
+import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
 
-import java.util.Date;
+import java.util.HashMap;
 import java.util.Set;
 
 /**
  * Fake some SyncService methods for testing.
  *
- * Only what has been needed for tests so far has been faked.
+ * <p>Only what has been needed for tests so far has been faked.
  */
-public class FakeSyncServiceImpl extends SyncService {
+public class FakeSyncServiceImpl implements SyncService {
     private final SyncService mDelegate;
 
     private boolean mEngineInitialized;
@@ -36,12 +38,12 @@ public class FakeSyncServiceImpl extends SyncService {
     private boolean mTrustedVaultRecoverabilityDegraded;
     private boolean mEncryptEverythingEnabled;
     private boolean mRequiresClientUpgrade;
-    private boolean mCanSyncFeatureStart;
-    @GoogleServiceAuthError.State
-    private int mAuthError;
+    private GoogleServiceAuthError mAuthError =
+            new GoogleServiceAuthError(GoogleServiceAuthErrorState.NONE);
+    private Set<Integer> mTypesWithUnsyncedData = Set.of();
 
     public FakeSyncServiceImpl() {
-        mDelegate = SyncServiceFactory.getForProfile(Profile.getLastUsedRegularProfile());
+        mDelegate = SyncServiceFactory.getForProfile(ProfileManager.getLastUsedRegularProfile());
     }
 
     @Override
@@ -52,24 +54,26 @@ public class FakeSyncServiceImpl extends SyncService {
 
     @AnyThread
     public void setEngineInitialized(boolean engineInitialized) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mEngineInitialized = engineInitialized;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mEngineInitialized = engineInitialized;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
-    public @GoogleServiceAuthError.State int getAuthError() {
+    public GoogleServiceAuthError getAuthError() {
         ThreadUtils.assertOnUiThread();
         return mAuthError;
     }
 
     @AnyThread
-    public void setAuthError(@GoogleServiceAuthError.State int authError) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mAuthError = authError;
-            notifySyncStateChanged();
-        });
+    public void setAuthError(GoogleServiceAuthError authError) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mAuthError = authError;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
@@ -87,10 +91,12 @@ public class FakeSyncServiceImpl extends SyncService {
     @AnyThread
     public void setPassphraseRequiredForPreferredDataTypes(
             boolean passphraseRequiredForPreferredDataTypes) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mPassphraseRequiredForPreferredDataTypes = passphraseRequiredForPreferredDataTypes;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mPassphraseRequiredForPreferredDataTypes =
+                            passphraseRequiredForPreferredDataTypes;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
@@ -101,10 +107,11 @@ public class FakeSyncServiceImpl extends SyncService {
 
     @AnyThread
     public void setTrustedVaultKeyRequired(boolean trustedVaultKeyRequired) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mTrustedVaultKeyRequired = trustedVaultKeyRequired;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mTrustedVaultKeyRequired = trustedVaultKeyRequired;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
@@ -116,11 +123,12 @@ public class FakeSyncServiceImpl extends SyncService {
     @AnyThread
     public void setTrustedVaultKeyRequiredForPreferredDataTypes(
             boolean trustedVaultKeyRequiredForPreferredDataTypes) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mTrustedVaultKeyRequiredForPreferredDataTypes =
-                    trustedVaultKeyRequiredForPreferredDataTypes;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mTrustedVaultKeyRequiredForPreferredDataTypes =
+                            trustedVaultKeyRequiredForPreferredDataTypes;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
@@ -131,30 +139,17 @@ public class FakeSyncServiceImpl extends SyncService {
 
     @AnyThread
     public void setTrustedVaultRecoverabilityDegraded(boolean recoverabilityDegraded) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mTrustedVaultRecoverabilityDegraded = recoverabilityDegraded;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mTrustedVaultRecoverabilityDegraded = recoverabilityDegraded;
+                    notifySyncStateChanged();
+                });
     }
 
     @Override
     public boolean isEncryptEverythingEnabled() {
         ThreadUtils.assertOnUiThread();
         return mEncryptEverythingEnabled;
-    }
-
-    @Override
-    public boolean canSyncFeatureStart() {
-        ThreadUtils.assertOnUiThread();
-        return mCanSyncFeatureStart;
-    }
-
-    @AnyThread
-    public void setCanSyncFeatureStart(boolean canSyncFeatureStart) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mCanSyncFeatureStart = canSyncFeatureStart;
-            notifySyncStateChanged();
-        });
     }
 
     @Override
@@ -165,25 +160,37 @@ public class FakeSyncServiceImpl extends SyncService {
 
     @AnyThread
     public void setRequiresClientUpgrade(boolean requiresClientUpgrade) {
-        TestThreadUtils.runOnUiThreadBlocking(() -> {
-            mRequiresClientUpgrade = requiresClientUpgrade;
-            notifySyncStateChanged();
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mRequiresClientUpgrade = requiresClientUpgrade;
+                    notifySyncStateChanged();
+                });
     }
 
     @AnyThread
     public void setEncryptEverythingEnabled(boolean encryptEverythingEnabled) {
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> { mEncryptEverythingEnabled = encryptEverythingEnabled; });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mEncryptEverythingEnabled = encryptEverythingEnabled;
+                });
+    }
+
+    @Override
+    public void getTypesWithUnsyncedData(Callback<Set<Integer>> callback) {
+        ThreadUtils.assertOnUiThread();
+        callback.onResult(mTypesWithUnsyncedData);
+    }
+
+    @AnyThread
+    public void setTypesWithUnsyncedData(Set<Integer> typesWithUnsyncedData) {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mTypesWithUnsyncedData = typesWithUnsyncedData;
+                });
     }
 
     private void notifySyncStateChanged() {
         ((SyncServiceImpl) mDelegate).syncStateChanged();
-    }
-
-    @Override
-    public boolean isTransportStateActive() {
-        return mDelegate.isTransportStateActive();
     }
 
     @Override
@@ -228,6 +235,17 @@ public class FakeSyncServiceImpl extends SyncService {
     }
 
     @Override
+    public void getLocalDataDescriptions(
+            Set<Integer> types, Callback<HashMap<Integer, LocalDataDescription>> callback) {
+        mDelegate.getLocalDataDescriptions(types, callback);
+    }
+
+    @Override
+    public void triggerLocalDataMigration(Set<Integer> types) {
+        mDelegate.triggerLocalDataMigration(types);
+    }
+
+    @Override
     public boolean hasKeepEverythingSynced() {
         return mDelegate.hasKeepEverythingSynced();
     }
@@ -248,6 +266,11 @@ public class FakeSyncServiceImpl extends SyncService {
     }
 
     @Override
+    public void setSelectedType(@UserSelectableType int type, boolean isTypeOn) {
+        mDelegate.setSelectedType(type, isTypeOn);
+    }
+
+    @Override
     public void setInitialSyncFeatureSetupComplete(int syncFirstSetupCompleteSource) {
         mDelegate.setInitialSyncFeatureSetupComplete(syncFirstSetupCompleteSource);
     }
@@ -255,11 +278,6 @@ public class FakeSyncServiceImpl extends SyncService {
     @Override
     public boolean isInitialSyncFeatureSetupComplete() {
         return mDelegate.isInitialSyncFeatureSetupComplete();
-    }
-
-    @Override
-    public void setSyncRequested() {
-        mDelegate.setSyncRequested();
     }
 
     @Override
@@ -282,10 +300,9 @@ public class FakeSyncServiceImpl extends SyncService {
         return mDelegate.getPassphraseType();
     }
 
-    @Nullable
     @Override
-    public Date getExplicitPassphraseTime() {
-        return mDelegate.getExplicitPassphraseTime();
+    public int getTransportState() {
+        return mDelegate.getTransportState();
     }
 
     @Override
@@ -321,6 +338,11 @@ public class FakeSyncServiceImpl extends SyncService {
     @Override
     public boolean isSyncingUnencryptedUrls() {
         return mDelegate.isSyncingUnencryptedUrls();
+    }
+
+    @Override
+    public long getNativeSyncServiceAndroidBridge() {
+        return mDelegate.getNativeSyncServiceAndroidBridge();
     }
 
     @Override

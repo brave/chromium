@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -18,8 +19,8 @@
 #include "cc/mojo_embedder/mojo_embedder_export.h"
 #include "cc/trees/layer_tree_frame_sink.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
+#include "components/viz/common/frame_timing_details.h"
 #include "components/viz/common/frame_timing_details_map.h"
-#include "components/viz/common/gpu/raster_context_provider.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "gpu/ipc/client/client_shared_image_interface.h"
@@ -31,11 +32,15 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+
+namespace viz {
+class RasterContextProvider;
+}  // namespace viz
 
 namespace cc {
 
-class RasterContextProviderWrapper;
+class LayerContext;
+class LayerTreeHostImpl;
 
 namespace mojo_embedder {
 
@@ -69,7 +74,6 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
     ~InitParams();
 
     scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner;
-    raw_ptr<gpu::GpuMemoryBufferManager> gpu_memory_buffer_manager = nullptr;
     std::unique_ptr<viz::SyntheticBeginFrameSource>
         synthetic_begin_frame_source;
     UnboundMessagePipes pipes;
@@ -86,14 +90,30 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
     // If |true|, presentation feedback will be used on every begin frame to
     // update the vsync parameters of the |synthetic_begin_frame_source|.
     bool use_begin_frame_presentation_feedback = false;
+
+    // If `true`, SetNeedsBeginFrame(true) IPCs are omitted. Instead, the client
+    // relies on unsolicited compositor frame submission to notify the server
+    // side to start sending BeginFrame requests.
+    //
+    // Note: SetNeedsBeginFrame(false) IPCs are sent regardless what value
+    // `auto_needs_begin_frame` is.
+    bool auto_needs_begin_frame = false;
+
+    // If it has value(n), internal begin frame source will be used when n
+    // consecutive "did not produce frame" are observed. It will stop using
+    // internal begin frame source when there's a submitted compositor frame.
+    // This should be mutually exclusive from synthetic_begin_frame_source.
+    // And `auto_needs_begin_frame` will be true if this is set.
+    std::optional<int>
+        num_did_not_produce_frame_before_internal_begin_frame_source;
   };
 
   AsyncLayerTreeFrameSink(
       scoped_refptr<viz::RasterContextProvider> context_provider,
-      scoped_refptr<RasterContextProviderWrapper>
-          worker_context_provider_wrapper,
-      std::unique_ptr<gpu::ClientSharedImageInterface> shared_image_interface,
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider,
+      scoped_refptr<gpu::ClientSharedImageInterface> shared_image_interface,
       InitParams* params);
+
   AsyncLayerTreeFrameSink(const AsyncLayerTreeFrameSink&) = delete;
   ~AsyncLayerTreeFrameSink() override;
 
@@ -109,6 +129,9 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
     return last_submitted_size_in_pixels_;
   }
 
+  bool auto_needs_begin_frame() const { return auto_needs_begin_frame_; }
+  bool needs_begin_frames() const { return needs_begin_frames_; }
+
   // LayerTreeFrameSink implementation.
   bool BindToClient(LayerTreeFrameSinkClient* client) override;
   void DetachFromClient() override;
@@ -117,32 +140,47 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
                              bool hit_test_data_changed) override;
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           FrameSkippedReason reason) override;
-  void DidAllocateSharedBitmap(base::ReadOnlySharedMemoryRegion region,
-                               const viz::SharedBitmapId& id) override;
-  void DidDeleteSharedBitmap(const viz::SharedBitmapId& id) override;
+  void ExportFrameTiming() override;
+  std::unique_ptr<LayerContext> CreateLayerContext(
+      LayerTreeHostImpl& host_impl) override;
 
   const viz::HitTestRegionList& get_last_hit_test_data_for_testing() const {
     return last_hit_test_data_;
   }
 
+  bool use_internal_begin_frame_source_for_testing() const {
+    return use_internal_begin_frame_source_;
+  }
+
+  void SetTimeSourceOfInternalBeginFrameForTesting(
+      std::unique_ptr<viz::DelayBasedTimeSource> source);
+
  private:
+  friend class AsyncLayerTreeFrameSinkSimpleTest;
+
   // mojom::CompositorFrameSinkClient implementation:
   void DidReceiveCompositorFrameAck(
       std::vector<viz::ReturnedResource> resources) override;
   void OnBeginFrame(const viz::BeginFrameArgs& begin_frame_args,
                     const viz::FrameTimingDetailsMap& timing_details,
-                    bool frame_ack,
                     std::vector<viz::ReturnedResource> resources) override;
   void OnBeginFramePausedChanged(bool paused) override;
   void ReclaimResources(std::vector<viz::ReturnedResource> resources) override;
   void OnCompositorFrameTransitionDirectiveProcessed(
       uint32_t sequence_id) override;
+  void OnSurfaceEvicted(const viz::LocalSurfaceId& local_surface_id) override;
+
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
 
   // ExternalBeginFrameSourceClient implementation.
   void OnNeedsBeginFrames(bool needs_begin_frames) override;
 
   void OnMojoConnectionError(uint32_t custom_reason,
                              const std::string& description);
+
+  void UpdateNeedsBeginFramesInternal(bool needs_begin_frames);
+
+  void UpdateInternalBeginFrameSource(bool use_internal_source);
 
   const bool use_direct_client_receiver_;
   bool begin_frames_paused_ = false;
@@ -170,11 +208,14 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
   using ClientReceiver = mojo::Receiver<viz::mojom::CompositorFrameSinkClient>;
   using DirectClientReceiver =
       mojo::DirectReceiver<viz::mojom::CompositorFrameSinkClient>;
-  absl::variant<absl::monostate, ClientReceiver, DirectClientReceiver>
+  std::variant<std::monostate, ClientReceiver, DirectClientReceiver>
       client_receiver_;
 
   THREAD_CHECKER(thread_checker_);
   const bool wants_animate_only_begin_frames_;
+
+  // Please see comment of `InitParams::auto_needs_begin_frame`.
+  const bool auto_needs_begin_frame_;
 
   viz::HitTestRegionList last_hit_test_data_;
 
@@ -183,6 +224,15 @@ class CC_MOJO_EMBEDDER_EXPORT AsyncLayerTreeFrameSink
   gfx::Size last_submitted_size_in_pixels_;
 
   bool use_begin_frame_presentation_feedback_ = false;
+  viz::FrameTimingDetailsMap timing_details_;
+
+  // Use internal delay based begin frame source when there're many undrawn
+  // frames recently.
+  std::optional<int>
+      num_did_not_produce_frame_before_internal_begin_frame_source_;
+  uint64_t num_did_not_produce_frame_since_last_submit_ = 0;
+  bool use_internal_begin_frame_source_ = false;
+  std::unique_ptr<viz::DelayBasedBeginFrameSource> internal_begin_frame_source_;
 
   base::WeakPtrFactory<AsyncLayerTreeFrameSink> weak_factory_{this};
 };

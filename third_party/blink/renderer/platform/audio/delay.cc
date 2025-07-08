@@ -23,6 +23,11 @@
  * DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/audio/delay.h"
 
 #include <cmath>
@@ -135,7 +140,7 @@ int Delay::ProcessARateScalar(unsigned start,
   const float* delay_times = delay_times_.Data();
 
   for (unsigned i = start; i < frames_to_process; ++i) {
-    double delay_time = delay_times[i];
+    double delay_time = std::fmax(delay_times[i], 0);
     double desired_delay_frames = delay_time * sample_rate;
 
     double read_position = w_index + buffer_length - desired_delay_frames;

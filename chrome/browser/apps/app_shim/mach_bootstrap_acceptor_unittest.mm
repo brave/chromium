@@ -4,15 +4,13 @@
 
 #include "chrome/browser/apps/app_shim/mach_bootstrap_acceptor.h"
 
+#include <bsm/libbsm.h>
+
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "chrome/app_shim/app_shim_controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace apps {
 
@@ -44,9 +42,9 @@ class TestMachBootstrapAcceptorDelegate
       : quit_closure_(std::move(quit_closure)) {}
 
   void OnClientConnected(mojo::PlatformChannelEndpoint endpoint,
-                         base::ProcessId pid) override {
+                         audit_token_t audit_token) override {
     endpoint_ = std::move(endpoint);
-    pid_ = pid;
+    pid_ = audit_token_to_pid(audit_token);
     std::move(quit_closure_).Run();
   }
 

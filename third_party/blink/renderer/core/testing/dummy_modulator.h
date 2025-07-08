@@ -46,6 +46,7 @@ class DummyModulator : public Modulator {
                  const ScriptFetchOptions&,
                  ModuleScriptCustomFetchType,
                  ModuleTreeClient*,
+                 v8::ModuleImportPhase,
                  String referrer) override;
   void FetchSingle(const ModuleScriptFetchRequest&,
                    ResourceFetcher*,
@@ -60,10 +61,12 @@ class DummyModulator : public Modulator {
       ModuleTreeClient*) override;
   ModuleScript* GetFetchedModuleScript(const KURL&, ModuleType) override;
   KURL ResolveModuleSpecifier(const String&, const KURL&, String*) override;
+  String GetIntegrityMetadataString(const KURL&) const override;
+  IntegrityMetadataSet GetIntegrityMetadata(const KURL&) const override;
   bool HasValidContext() override;
   void ResolveDynamically(const ModuleRequest& module_request,
                           const ReferrerScriptInfo&,
-                          ScriptPromiseResolver*) override;
+                          ScriptPromiseResolver<IDLAny>*) override;
   ModuleImportMeta HostGetImportMetaProperties(
       v8::Local<v8::Module>) const override;
   ModuleType ModuleTypeFromRequest(

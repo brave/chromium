@@ -28,17 +28,6 @@ bool IsRestricted(UserActivationNotificationType notification_type) {
 
 }  // namespace
 
-#if defined(MEMORY_SANITIZER)
-// MSan runs can be very slow, so don't time out user gestures quickly.  See
-// https://crbug.com/1433572 for one example.
-constexpr base::TimeDelta kActivationLifespan = base::Seconds(60);
-#else
-// The expiry time should be long enough to allow network round trips even in a
-// very slow connection (to support xhr-like calls with user activation), yet
-// not too long to make an "unattended" page feel activated.
-constexpr base::TimeDelta kActivationLifespan = base::Seconds(5);
-#endif
-
 UserActivationState::UserActivationState()
     : first_notification_type_(UserActivationNotificationType::kNone),
       last_notification_type_(UserActivationNotificationType::kNone) {}
@@ -56,6 +45,10 @@ void UserActivationState::Activate(
   last_notification_type_ = notification_type;
   if (notification_type == UserActivationNotificationType::kInteraction)
     transient_state_expiry_time_for_interaction_ = transient_state_expiry_time_;
+}
+
+void UserActivationState::SetHasBeenActive() {
+  has_been_active_ = true;
 }
 
 void UserActivationState::Clear() {

@@ -8,16 +8,18 @@ import android.content.Context;
 import android.net.Uri;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.google.common.primitives.UnsignedLongs;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import org.jni_zero.CalledByNative;
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.annotations.CalledByNative;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.commerce.PriceUtils;
 import org.chromium.chrome.browser.price_tracking.PriceDropNotifier.ActionData;
@@ -27,6 +29,7 @@ import org.chromium.chrome.browser.price_tracking.proto.Notifications.ChromeNoti
 import org.chromium.chrome.browser.price_tracking.proto.Notifications.ChromeNotification.NotificationDataType;
 import org.chromium.chrome.browser.price_tracking.proto.Notifications.ExpandedView;
 import org.chromium.chrome.browser.price_tracking.proto.Notifications.PriceDropNotificationPayload;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.commerce.PriceTracking.ProductPrice;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.optimization_guide.proto.CommonTypesProto.Any;
@@ -38,33 +41,36 @@ import java.util.List;
  * Class to show a price tracking notification. The Java object is owned by the native side
  * PriceTrackingNotificationBridge object through JNI bridge.
  */
+@NullMarked
 public class PriceTrackingNotificationBridge {
     private static final String TAG = "PriceTrackNotif";
-    private final long mNativePriceTrackingNotificationBridge;
     private final PriceDropNotifier mNotifier;
     private final PriceDropNotificationManager mPriceDropNotificationManager;
 
     /**
      * Construct a {@link PriceTrackingNotificationBridge} object from native code.
+     *
      * @param nativePriceTrackingNotificationBridge The native JNI object pointer.
      * @param notifier {@link PriceDropNotifier} used to create the actual notification in tray.
      * @param notificationManager {@link PriceDropNotificationManager} used to check price drop
-     *         notification channel.
+     *     notification channel.
      */
     @VisibleForTesting
-    PriceTrackingNotificationBridge(long nativePriceTrackingNotificationBridge,
-            PriceDropNotifier notifier, PriceDropNotificationManager notificationManager) {
-        mNativePriceTrackingNotificationBridge = nativePriceTrackingNotificationBridge;
+    PriceTrackingNotificationBridge(
+            long nativePriceTrackingNotificationBridge,
+            PriceDropNotifier notifier,
+            PriceDropNotificationManager notificationManager) {
         mNotifier = notifier;
         mPriceDropNotificationManager = notificationManager;
     }
 
     @CalledByNative
     private static PriceTrackingNotificationBridge create(
-            long nativePriceTrackingNotificationBridge) {
-        return new PriceTrackingNotificationBridge(nativePriceTrackingNotificationBridge,
-                PriceDropNotifier.create(ContextUtils.getApplicationContext()),
-                PriceDropNotificationManagerFactory.create());
+            long nativePriceTrackingNotificationBridge, Profile profile) {
+        return new PriceTrackingNotificationBridge(
+                nativePriceTrackingNotificationBridge,
+                new PriceDropNotifier(profile),
+                PriceDropNotificationManagerFactory.create(profile));
     }
 
     @VisibleForTesting
@@ -72,8 +78,15 @@ public class PriceTrackingNotificationBridge {
     void showNotification(byte[] payload) {
         // Price drop notification channel is created after the alert card UI is shown. If that
         // didn't happen, don't show the notification.
-        if (!mPriceDropNotificationManager.canPostNotification()) return;
+        mPriceDropNotificationManager.canPostNotification(
+                (canPost) -> {
+                    if (canPost) {
+                        showNotificationInternal(payload);
+                    }
+                });
+    }
 
+    private void showNotificationInternal(byte[] payload) {
         ChromeNotification chromeNotification = parseAndValidateChromeNotification(payload);
         if (chromeNotification == null) {
             Log.e(TAG, "Invalid ChromeNotification proto.");
@@ -98,16 +111,22 @@ public class PriceTrackingNotificationBridge {
         }
 
         Context context = ContextUtils.getApplicationContext();
-        String title = context.getString(R.string.price_drop_popup_content_title, priceDrop,
-                priceDropPayload.getProductName());
+        String title =
+                context.getString(
+                        R.string.price_drop_popup_content_title,
+                        priceDrop,
+                        priceDropPayload.getProductName());
 
         Uri productUrl = Uri.parse(priceDropPayload.getDestinationUrl());
         if (productUrl.getHost() == null) {
             Log.e(TAG, "Failed to parse destination URL host.");
             return;
         }
-        String text = context.getString(R.string.price_drop_popup_content_text,
-                buildDisplayPrice(priceDropPayload.getCurrentPrice()), productUrl.getHost());
+        String text =
+                context.getString(
+                        R.string.price_drop_popup_content_text,
+                        buildDisplayPrice(priceDropPayload.getCurrentPrice()),
+                        productUrl.getHost());
 
         // Use UnsignedLongs to convert OfferId to avoid overflow.
         String offerId = UnsignedLongs.toString(priceDropPayload.getOfferId());
@@ -117,14 +136,18 @@ public class PriceTrackingNotificationBridge {
         }
         ChromeMessage chromeMessage = chromeNotification.getChromeMessage();
         PriceDropNotifier.NotificationData notificationData =
-                new PriceDropNotifier.NotificationData(title, text,
+                new PriceDropNotifier.NotificationData(
+                        title,
+                        text,
                         chromeMessage.hasIconImageUrl() ? chromeMessage.getIconImageUrl() : null,
-                        priceDropPayload.getDestinationUrl(), offerId, clusterId,
+                        priceDropPayload.getDestinationUrl(),
+                        offerId,
+                        clusterId,
                         parseActions(chromeNotification));
         mNotifier.showNotification(notificationData);
     }
 
-    private static ChromeNotification parseAndValidateChromeNotification(byte[] payload) {
+    private static @Nullable ChromeNotification parseAndValidateChromeNotification(byte[] payload) {
         ChromeNotification chromeNotification;
         try {
             chromeNotification = ChromeNotification.parseFrom(payload);
@@ -148,8 +171,9 @@ public class PriceTrackingNotificationBridge {
         return chromeNotification;
     }
 
-    private static PriceDropNotificationPayload parseAndValidatePriceDropNotificationPayload(
-            ByteString payload) {
+    private static @Nullable
+            PriceDropNotificationPayload parseAndValidatePriceDropNotificationPayload(
+                    ByteString payload) {
         // notification_data field is an any.proto.
         Any any = null;
         try {
@@ -171,7 +195,8 @@ public class PriceTrackingNotificationBridge {
         if (priceDropPayload == null) return null;
 
         // Current price must be smaller than previous price, or it's not a price drop.
-        if (!priceDropPayload.hasCurrentPrice() || !priceDropPayload.hasPreviousPrice()
+        if (!priceDropPayload.hasCurrentPrice()
+                || !priceDropPayload.hasPreviousPrice()
                 || (priceDropPayload.getCurrentPrice().getAmountMicros()
                         >= priceDropPayload.getPreviousPrice().getAmountMicros())) {
             return null;
@@ -223,9 +248,11 @@ public class PriceTrackingNotificationBridge {
         return null;
     }
 
-    private static String getPriceDropAmount(PriceDropNotificationPayload priceDropPayload) {
-        long dropAmount = priceDropPayload.getPreviousPrice().getAmountMicros()
-                - priceDropPayload.getCurrentPrice().getAmountMicros();
+    private static @Nullable String getPriceDropAmount(
+            PriceDropNotificationPayload priceDropPayload) {
+        long dropAmount =
+                priceDropPayload.getPreviousPrice().getAmountMicros()
+                        - priceDropPayload.getCurrentPrice().getAmountMicros();
         assert dropAmount > 0;
         return buildDisplayPrice(
                 ProductPrice.newBuilder()
@@ -234,7 +261,7 @@ public class PriceTrackingNotificationBridge {
                         .build());
     }
 
-    private static String buildDisplayPrice(ProductPrice productPrice) {
+    private static @Nullable String buildDisplayPrice(ProductPrice productPrice) {
         return PriceUtils.formatPrice(
                 productPrice.getCurrencyCode(), productPrice.getAmountMicros());
     }

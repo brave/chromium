@@ -2,19 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef SANDBOX_WIN_SRC_SANDBOX_NT_UTIL_H_
 #define SANDBOX_WIN_SRC_SANDBOX_NT_UTIL_H_
 
 #include <intrin.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include <memory>
+#include <optional>
 
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "sandbox/win/src/nt_internals.h"
 #include "sandbox/win/src/sandbox_nt_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // Placement new and delete to be used from ntdll interception code.
 void* __cdecl operator new(size_t size,
@@ -105,7 +111,7 @@ void* GetGlobalIPCMemory();
 void* GetGlobalPolicyMemoryForTesting();
 
 // Returns a view of the shared delegate data, or nullopt if none was provided.
-absl::optional<base::span<const uint8_t>> GetGlobalDelegateData();
+std::optional<base::span<const uint8_t>> GetGlobalDelegateData();
 
 // Returns a reference to imported NT functions.
 const NtExports* GetNtExports();
@@ -184,10 +190,6 @@ bool IsValidImageSection(HANDLE section,
 // Converts an ansi string to an UNICODE_STRING.
 UNICODE_STRING* AnsiToUnicode(const char* string);
 
-// Resolves a handle to an nt path. Returns true if the handle can be resolved.
-bool NtGetPathFromHandle(HANDLE handle,
-                         std::unique_ptr<wchar_t, NtAllocDeleter>* path);
-
 // Provides a simple way to temporarily change the protection of a memory page.
 class AutoProtectMemory {
  public:
@@ -207,8 +209,7 @@ class AutoProtectMemory {
 
  private:
   bool changed_;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #addr-of
+  // RAW_PTR_EXCLUSION: not managed by PartitionAlloc.
   RAW_PTR_EXCLUSION void* address_;
   size_t bytes_;
   ULONG old_protect_;
@@ -222,6 +223,14 @@ bool IsSupportedRenameCall(FILE_RENAME_INFORMATION* file_info,
 
 // Get the CLIENT_ID from the current TEB.
 CLIENT_ID GetCurrentClientId();
+
+// Version of memset that can be called before the CRT is initialized.
+__forceinline void Memset(void* ptr, int value, size_t num_bytes) {
+  unsigned char* byte_ptr = static_cast<unsigned char*>(ptr);
+  while (num_bytes--) {
+    *byte_ptr++ = static_cast<unsigned char>(value);
+  }
+}
 
 }  // namespace sandbox
 

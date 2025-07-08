@@ -4,15 +4,11 @@
 
 #include "chrome/common/printing/printer_capabilities_mac.h"
 
+#include "base/apple/foundation_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/mac/foundation_util.h"
 #include "base/path_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/rect.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace printing {
 
@@ -22,7 +18,7 @@ base::FilePath WriteOutCustomPapersPlist(const base::FilePath& dir,
                                          const char* name,
                                          NSDictionary* dict) {
   base::FilePath path = dir.Append(name);
-  if (![dict writeToURL:base::mac::FilePathToNSURL(path) error:nil]) {
+  if (![dict writeToURL:base::apple::FilePathToNSURL(path) error:nil]) {
     path.clear();
   }
   return path;
@@ -192,7 +188,7 @@ TEST(PrinterCapabilitiesMacTest, GetMacCustomPaperSizesFromFile) {
 
 TEST(PrinterCapabilitiesMacTest, SortMacCustomPaperSizes) {
   base::FilePath unsorted_plist;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &unsorted_plist);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &unsorted_plist);
   unsorted_plist = unsorted_plist.AppendASCII("components")
                        .AppendASCII("test")
                        .AppendASCII("data")

@@ -7,14 +7,13 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "name": "foo_test",
         "swarming": {
-          "dimension_sets": [
-            {
-              "iama": "mixin",
-              "integrity": "high",
-              "os": "Linux"
-            }
-          ],
+          "dimensions": {
+            "iama": "mixin",
+            "integrity": "high",
+            "os": "Linux"
+          },
           "expiration": 120,
           "value": "test"
         },

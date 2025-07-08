@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_ENTERPRISE_REPORTING_REPORT_SCHEDULER_ANDROID_H_
 #define CHROME_BROWSER_ENTERPRISE_REPORTING_REPORT_SCHEDULER_ANDROID_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/enterprise/browser/reporting/report_scheduler.h"
 
 class Profile;
@@ -23,10 +24,14 @@ class ReportSchedulerAndroid : public ReportScheduler::Delegate {
 
   // ReportScheduler::Delegate implementation.
   PrefService* GetPrefService() override;
+  void OnInitializationCompleted() override;
   void StartWatchingUpdatesIfNeeded(base::Time last_upload,
                                     base::TimeDelta upload_interval) override;
   void StopWatchingUpdates() override;
   void OnBrowserVersionUploaded() override;
+  bool AreSecurityReportsEnabled() override;
+  bool UseCookiesInUploads() override;
+  void OnSecuritySignalsUploaded() override;
   policy::DMToken GetProfileDMToken() override;
   std::string GetProfileClientId() override;
 

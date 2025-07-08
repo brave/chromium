@@ -16,7 +16,9 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,7 +44,6 @@
 #include "services/network/public/cpp/network_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -128,9 +129,9 @@ class FakeRealm {
               delegate->OnChildInstanceCreated(name);
             }));
 
-    child.instances.Serve(fuchsia::io::OpenFlags::RIGHT_READABLE |
-                              fuchsia::io::OpenFlags::RIGHT_WRITABLE,
-                          exposed_dir.TakeChannel());
+    child.instances.Serve(
+        fuchsia_io::wire::kPermReadable,
+        fidl::ServerEnd<fuchsia_io::Directory>(exposed_dir.TakeChannel()));
   }
 
   // Destroys the child and runs the `on_empty_callback` if none remain.
@@ -221,8 +222,8 @@ MATCHER_P2(HasDynamicDirectoryOffer, name, rights, "") {
 // context.
 fuchsia::web::CreateContextParams BuildCreateContextParams() {
   fuchsia::web::CreateContextParams output;
-  zx_status_t result = fdio_service_connect(
-      base::kServiceDirectoryPath,
+  zx_status_t result = fdio_open3(
+      base::kServiceDirectoryPath, uint64_t{fuchsia::io::PERM_READABLE},
       output.mutable_service_directory()->NewRequest().TakeChannel().release());
   EXPECT_EQ(result, ZX_OK) << "Failed to open /svc";
   return output;
@@ -231,9 +232,10 @@ fuchsia::web::CreateContextParams BuildCreateContextParams() {
 // Returns a handle to the test component's `/cache` directory.
 fidl::InterfaceHandle<fuchsia::io::Directory> OpenCacheDirectory() {
   fidl::InterfaceHandle<fuchsia::io::Directory> cache_handle;
-  zx_status_t result =
-      fdio_service_connect(base::kPersistedCacheDirectoryPath,
-                           cache_handle.NewRequest().TakeChannel().release());
+  zx_status_t result = fdio_open3(
+      base::kPersistedCacheDirectoryPath,
+      uint64_t{fuchsia::io::PERM_READABLE | fuchsia::io::PERM_WRITABLE},
+      cache_handle.NewRequest().TakeChannel().release());
   EXPECT_EQ(result, ZX_OK) << "Failed to open /cache";
   return cache_handle;
 }
@@ -445,7 +447,7 @@ class ContextProviderImplTest : public ::testing::Test {
   // A mock fuchsia::component/Realm used to bridge to `fake_realm_`.
   ::testing::StrictMock<fuchsia_component_support::MockRealm> mock_realm_;
   fidl::BindingSet<fuchsia::web::ContextProvider> bindings_;
-  absl::optional<ContextProviderImpl> provider_;
+  std::optional<ContextProviderImpl> provider_;
   fuchsia::web::ContextProviderPtr provider_ptr_;
 };
 
@@ -467,11 +469,8 @@ TEST_F(ContextProviderImplTest, CanCreateContextWithServiceDirectory) {
   const auto& create_child_args = GetInstanceArgs(instance_name);
 
   ASSERT_THAT(child, UrlIs("#meta/web_instance_with_svc_directory.cm"));
-  ASSERT_THAT(
-      create_child_args,
-      HasDynamicDirectoryOffer("svc", fuchsia::io::Operations::CONNECT |
-                                          fuchsia::io::Operations::ENUMERATE |
-                                          fuchsia::io::Operations::TRAVERSE));
+  ASSERT_THAT(create_child_args,
+              HasDynamicDirectoryOffer("svc", fuchsia::io::R_STAR_DIR));
   ASSERT_PRED1(base::PathExists,
                GetInstanceDirectory(instance_name).AppendASCII("svc"));
 }
@@ -545,11 +544,8 @@ TEST_F(ContextProviderImplTest, CreateHeadlessDrmWithoutVulkan) {
   ASSERT_THAT(child, UrlIs("#meta/web_instance_with_svc_directory.cm"));
   ASSERT_THAT(create_child_args,
               HasDynamicDirectoryOffer("cdm_data", fuchsia::io::RW_STAR_DIR));
-  ASSERT_THAT(
-      create_child_args,
-      HasDynamicDirectoryOffer("svc", fuchsia::io::Operations::CONNECT |
-                                          fuchsia::io::Operations::ENUMERATE |
-                                          fuchsia::io::Operations::TRAVERSE));
+  ASSERT_THAT(create_child_args,
+              HasDynamicDirectoryOffer("svc", fuchsia::io::R_STAR_DIR));
   ASSERT_PRED1(base::PathExists,
                GetInstanceDirectory(instance_name).AppendASCII("cdm_data"));
   ASSERT_PRED1(base::PathExists,
@@ -596,7 +592,7 @@ TEST_F(ContextProviderImplTest, WithProfileDir) {
   ASSERT_TRUE(profile_temp_dir.CreateUniqueTempDir());
   ASSERT_TRUE(
       base::WriteFile(profile_temp_dir.GetPath().AppendASCII(kTestDataFileIn),
-                      base::StringPiece()));
+                      std::string_view()));
 
   fidl::InterfaceRequest<fuchsia::component::Binder> binder_request;
   fidl::InterfaceRequest<fuchsia::web::Context> context_request;
@@ -633,7 +629,7 @@ TEST_F(ContextProviderImplTest, WithProfileDir) {
 
   // Make sure that the mapped dir can be written to.
   ASSERT_TRUE(base::WriteFile(data_dir.AppendASCII(kTestDataFileOut),
-                              base::StringPiece()));
+                              std::string_view()));
   ASSERT_PRED1(base::PathExists,
                profile_temp_dir.GetPath().AppendASCII(kTestDataFileOut));
 }

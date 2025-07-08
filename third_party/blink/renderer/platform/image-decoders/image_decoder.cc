@@ -18,34 +18,41 @@
  *
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 
+#include <algorithm>
 #include <memory>
 
+#include "base/containers/heap_array.h"
 #include "base/logging.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/sys_byteorder.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/media_buildflags.h"
 #include "skia/ext/cicp.h"
 #include "third_party/blink/public/common/buildflags.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/image-decoders/bmp/bmp_image_decoder.h"
-#include "third_party/blink/renderer/platform/image-decoders/exif_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/fast_shared_buffer_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/gif/gif_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/ico/ico_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/jpeg/jpeg_image_decoder.h"
-#include "third_party/blink/renderer/platform/image-decoders/png/png_image_decoder.h"
+#include "third_party/blink/renderer/platform/image-decoders/png/png_decoder_factory.h"
 #include "third_party/blink/renderer/platform/image-decoders/webp/webp_image_decoder.h"
-#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
-#include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
+#include "third_party/skia/include/private/SkExif.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
 #if BUILDFLAG(ENABLE_AV1_DECODER)
-#include "third_party/blink/renderer/platform/image-decoders/avif/avif_image_decoder.h"
+#include "third_party/blink/renderer/platform/image-decoders/avif/crabbyavif_image_decoder.h"
 #endif
 
 namespace blink {
@@ -81,11 +88,10 @@ cc::ImageType FileExtensionToImageType(String image_extension) {
 
 wtf_size_t CalculateMaxDecodedBytes(
     ImageDecoder::HighBitDepthDecodingOption high_bit_depth_decoding_option,
-    const SkISize& desired_size) {
+    const SkISize& desired_size,
+    size_t platform_max_decoded_bytes) {
   const wtf_size_t max_decoded_bytes =
-      Platform::Current()
-          ? static_cast<wtf_size_t>(Platform::Current()->MaxDecodedImageBytes())
-          : ImageDecoder::kNoDecodedImageByteLimit;
+      base::saturated_cast<wtf_size_t>(platform_max_decoded_bytes);
   if (desired_size.isEmpty()) {
     return max_decoded_bytes;
   }
@@ -101,26 +107,28 @@ wtf_size_t CalculateMaxDecodedBytes(
 
 // Compute the density corrected size based on |metadata| and the physical size
 // of the associated image.
-gfx::Size ExtractDensityCorrectedSize(const DecodedImageMetaData& metadata,
+gfx::Size ExtractDensityCorrectedSize(const SkExif::Metadata& metadata,
                                       const gfx::Size& physical_size) {
   const unsigned kDefaultResolution = 72;
   const unsigned kResolutionUnitDpi = 2;
 
-  if (metadata.resolution_unit != kResolutionUnitDpi ||
-      metadata.resolution.IsEmpty() || metadata.size.IsEmpty()) {
+  gfx::SizeF resolution(metadata.fXResolution.value_or(0),
+                        metadata.fYResolution.value_or(0));
+  gfx::Size size(metadata.fPixelXDimension.value_or(0),
+                 metadata.fPixelYDimension.value_or(0));
+  if (metadata.fResolutionUnit != kResolutionUnitDpi || resolution.IsEmpty() ||
+      size.IsEmpty()) {
     return physical_size;
   }
-  CHECK(!metadata.resolution.IsEmpty());
 
   // Division by zero is not possible since we check for empty resolution
   // earlier.
   gfx::SizeF size_from_resolution(
-      physical_size.width() * kDefaultResolution / metadata.resolution.width(),
-      physical_size.height() * kDefaultResolution /
-          metadata.resolution.height());
+      physical_size.width() * kDefaultResolution / resolution.width(),
+      physical_size.height() * kDefaultResolution / resolution.height());
 
-  if (gfx::ToRoundedSize(size_from_resolution) == metadata.size) {
-    return metadata.size;
+  if (gfx::ToRoundedSize(size_from_resolution) == size) {
+    return size;
   }
 
   return physical_size;
@@ -189,12 +197,33 @@ String SniffMimeTypeInternal(scoped_refptr<SegmentReader> reader) {
     return "image/bmp";
   }
 #if BUILDFLAG(ENABLE_AV1_DECODER)
-  if (AVIFImageDecoder::MatchesAVIFSignature(fast_reader)) {
+  if (CrabbyAVIFImageDecoder::MatchesAVIFSignature(fast_reader)) {
     return "image/avif";
   }
 #endif
 
   return String();
+}
+
+// Checks to see if a mime type is an image type with lossy compression, whose
+// size will be restricted via the 'lossy-images-max-bpp' document
+// policy. (JPEG)
+bool IsLossyImageMIMEType(const String& mime_type) {
+  return EqualIgnoringASCIICase(mime_type, "image/jpeg") ||
+         EqualIgnoringASCIICase(mime_type, "image/jpg") ||
+         EqualIgnoringASCIICase(mime_type, "image/pjpeg");
+}
+
+// Checks to see if a mime type is an image type with lossless (or no)
+// compression, whose size may be restricted via the
+// 'lossless-images-max-bpp' document policy. (BMP, GIF, PNG, WEBP)
+bool IsLosslessImageMIMEType(const String& mime_type) {
+  return EqualIgnoringASCIICase(mime_type, "image/bmp") ||
+         EqualIgnoringASCIICase(mime_type, "image/gif") ||
+         EqualIgnoringASCIICase(mime_type, "image/png") ||
+         EqualIgnoringASCIICase(mime_type, "image/webp") ||
+         EqualIgnoringASCIICase(mime_type, "image/x-xbitmap") ||
+         EqualIgnoringASCIICase(mime_type, "image/x-png");
 }
 
 }  // namespace
@@ -203,18 +232,17 @@ ImageDecoder::ImageDecoder(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
     wtf_size_t max_decoded_bytes)
     : premultiply_alpha_(alpha_option == kAlphaPremultiplied),
       high_bit_depth_decoding_option_(high_bit_depth_decoding_option),
       color_behavior_(color_behavior),
+      aux_image_(aux_image),
       max_decoded_bytes_(max_decoded_bytes),
       allow_decode_to_yuv_(false),
       purge_aggressively_(false) {}
 
 ImageDecoder::~ImageDecoder() = default;
-
-const wtf_size_t ImageDecoder::kNoDecodedImageByteLimit =
-    static_cast<wtf_size_t>(-1);
 
 std::unique_ptr<ImageDecoder> ImageDecoder::Create(
     scoped_refptr<SegmentReader> data,
@@ -222,6 +250,8 @@ std::unique_ptr<ImageDecoder> ImageDecoder::Create(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
+    size_t platform_max_decoded_bytes,
     const SkISize& desired_size,
     AnimationOption animation_option) {
   auto type = SniffMimeTypeInternal(data);
@@ -231,7 +261,8 @@ std::unique_ptr<ImageDecoder> ImageDecoder::Create(
 
   return CreateByMimeType(type, std::move(data), data_complete, alpha_option,
                           high_bit_depth_decoding_option, color_behavior,
-                          desired_size, animation_option);
+                          aux_image, platform_max_decoded_bytes, desired_size,
+                          animation_option);
 }
 
 std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
@@ -241,10 +272,12 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
     AlphaOption alpha_option,
     HighBitDepthDecodingOption high_bit_depth_decoding_option,
     ColorBehavior color_behavior,
+    cc::AuxImage aux_image,
+    size_t platform_max_decoded_bytes,
     const SkISize& desired_size,
     AnimationOption animation_option) {
-  const wtf_size_t max_decoded_bytes =
-      CalculateMaxDecodedBytes(high_bit_depth_decoding_option, desired_size);
+  const wtf_size_t max_decoded_bytes = CalculateMaxDecodedBytes(
+      high_bit_depth_decoding_option, desired_size, platform_max_decoded_bytes);
 
   // Note: The mime types below should match those supported by
   // MimeUtil::IsSupportedImageMimeType() (which forces lowercase).
@@ -253,12 +286,12 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
   if (mime_type == "image/jpeg" || mime_type == "image/pjpeg" ||
       mime_type == "image/jpg") {
     decoder = std::make_unique<JPEGImageDecoder>(alpha_option, color_behavior,
-                                                 max_decoded_bytes);
+                                                 aux_image, max_decoded_bytes);
   } else if (mime_type == "image/png" || mime_type == "image/x-png" ||
              mime_type == "image/apng") {
-    decoder = std::make_unique<PNGImageDecoder>(
-        alpha_option, high_bit_depth_decoding_option, color_behavior,
-        max_decoded_bytes);
+    decoder =
+        CreatePngImageDecoder(alpha_option, high_bit_depth_decoding_option,
+                              color_behavior, max_decoded_bytes);
   } else if (mime_type == "image/gif") {
     decoder = std::make_unique<GIFImageDecoder>(alpha_option, color_behavior,
                                                 max_decoded_bytes);
@@ -274,8 +307,8 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
                                                 max_decoded_bytes);
 #if BUILDFLAG(ENABLE_AV1_DECODER)
   } else if (mime_type == "image/avif") {
-    decoder = std::make_unique<AVIFImageDecoder>(
-        alpha_option, high_bit_depth_decoding_option, color_behavior,
+    decoder = std::make_unique<CrabbyAVIFImageDecoder>(
+        alpha_option, high_bit_depth_decoding_option, color_behavior, aux_image,
         max_decoded_bytes, animation_option);
 #endif
   }
@@ -307,17 +340,16 @@ bool ImageDecoder::HasSufficientDataToSniffMimeType(const SharedBuffer& data) {
     // The first eight bytes would be a big-endian 32-bit unsigned integer
     // 'size' and a four-byte 'type'.
     struct {
-      uint32_t size;  // unsigned int(32) size;
-      char type[4];   // unsigned int(32) type = boxtype;
+      uint8_t size[4];  // unsigned int(32) size;
+      char type[4];     // unsigned int(32) type = boxtype;
     } box;
     static_assert(sizeof(box) == 8, "");
     static_assert(8 <= kLongestSignatureLength, "");
-    bool ok = data.GetBytes(&box, 8u);
+    bool ok = data.GetBytes(base::byte_span_from_ref(box));
     DCHECK(ok);
-    if (memcmp(box.type, "ftyp", 4) == 0) {
+    if (base::span(box.type) == base::span<const char>({'f', 't', 'y', 'p'})) {
       // Returns whether we have received the File Type Box in its entirety.
-      box.size = base::NetToHost32(box.size);
-      return box.size <= data.size();
+      return base::U32FromBigEndian(box.size) <= data.size();
     }
   }
 #endif
@@ -373,9 +405,10 @@ ImageDecoder::CompressionFormat ImageDecoder::GetCompressionFormat(
     if (!memcmp(contents, "WEBPVP8X", 8)) {
       // Extended WebP format; more content will need to be sniffed to make a
       // determination.
-      std::unique_ptr<char[]> long_buffer(new char[available_data]);
-      contents = reinterpret_cast<const unsigned char*>(
-          fast_reader.GetConsecutiveData(0, available_data, long_buffer.get()));
+      auto long_buffer = base::HeapArray<char>::Uninit(available_data);
+      contents =
+          reinterpret_cast<const unsigned char*>(fast_reader.GetConsecutiveData(
+              0, available_data, long_buffer.data()));
       WebPBitstreamFeatures webp_features{};
       VP8StatusCode status =
           WebPGetFeatures(contents, available_data, &webp_features);
@@ -405,10 +438,10 @@ ImageDecoder::CompressionFormat ImageDecoder::GetCompressionFormat(
   }
 #endif
 
-  if (MIMETypeRegistry::IsLossyImageMIMEType(mime_type)) {
+  if (IsLossyImageMIMEType(mime_type)) {
     return kLossyFormat;
   }
-  if (MIMETypeRegistry::IsLosslessImageMIMEType(mime_type)) {
+  if (IsLosslessImageMIMEType(mime_type)) {
     return kLosslessFormat;
   }
 
@@ -471,25 +504,30 @@ cc::YUVSubsampling ImageDecoder::GetYUVSubsampling() const {
 
 gfx::Size ImageDecoder::DecodedYUVSize(cc::YUVIndex) const {
   NOTREACHED();
-  return gfx::Size();
 }
 
 wtf_size_t ImageDecoder::DecodedYUVWidthBytes(cc::YUVIndex) const {
   NOTREACHED();
-  return 0;
 }
 
 SkYUVColorSpace ImageDecoder::GetYUVColorSpace() const {
   NOTREACHED();
-  return SkYUVColorSpace::kIdentity_SkYUVColorSpace;
 }
 
 uint8_t ImageDecoder::GetYUVBitDepth() const {
   return 8;
 }
 
-absl::optional<gfx::HDRMetadata> ImageDecoder::GetHDRMetadata() const {
-  return absl::nullopt;
+std::optional<gfx::HDRMetadata> ImageDecoder::GetHDRMetadata() const {
+  return std::nullopt;
+}
+
+bool ImageDecoder::HasC2PAManifest() const {
+  return false;
+}
+
+gfx::Size ImageDecoder::FrameSizeAtIndex(wtf_size_t) const {
+  return Size();
 }
 
 cc::ImageHeaderMetadata ImageDecoder::MakeMetadataForDecodeAcceleration()
@@ -569,9 +607,9 @@ bool ImageDecoder::FrameIsDecodedAtIndex(wtf_size_t index) const {
          frame_buffer_cache_[index].GetStatus() == ImageFrame::kFrameComplete;
 }
 
-absl::optional<base::TimeDelta> ImageDecoder::FrameTimestampAtIndex(
+std::optional<base::TimeDelta> ImageDecoder::FrameTimestampAtIndex(
     wtf_size_t) const {
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 base::TimeDelta ImageDecoder::FrameDurationAtIndex(wtf_size_t) const {
@@ -934,34 +972,33 @@ wtf_size_t ImageDecoder::FindRequiredPreviousFrame(wtf_size_t frame_index,
     case ImageFrame::kDisposeOverwritePrevious:
     default:
       NOTREACHED();
-      return kNotFound;
   }
 }
 
-void ImageDecoder::ApplyMetadata(const DecodedImageMetaData& metadata,
-                                 const gfx::Size& physical_size) {
+void ImageDecoder::ApplyExifMetadata(const SkData* exif_data,
+                                     const gfx::Size& physical_size) {
   DCHECK(IsDecodedSizeAvailable());
-  orientation_ = metadata.orientation;
+  SkExif::Metadata metadata;
+  SkExif::Parse(metadata, exif_data);
+
+  orientation_ = static_cast<ImageOrientationEnum>(
+      metadata.fOrigin.value_or(kTopLeft_SkEncodedOrigin));
   density_corrected_size_ =
       ExtractDensityCorrectedSize(metadata, physical_size);
 }
 
 ImagePlanes::ImagePlanes() {
-  color_type_ = kUnknown_SkColorType;
-  for (int i = 0; i < cc::kNumYUVPlanes; ++i) {
-    planes_[i] = nullptr;
-    row_bytes_[i] = 0;
-  }
+  std::ranges::fill(planes_, nullptr);
+  std::ranges::fill(row_bytes_, 0);
 }
 
-ImagePlanes::ImagePlanes(void* planes[cc::kNumYUVPlanes],
-                         const wtf_size_t row_bytes[cc::kNumYUVPlanes],
-                         SkColorType color_type)
+ImagePlanes::ImagePlanes(
+    base::span<void*, cc::kNumYUVPlanes> planes,
+    base::span<const wtf_size_t, cc::kNumYUVPlanes> row_bytes,
+    SkColorType color_type)
     : color_type_(color_type) {
-  for (int i = 0; i < cc::kNumYUVPlanes; ++i) {
-    planes_[i] = planes[i];
-    row_bytes_[i] = row_bytes[i];
-  }
+  base::span(planes_).copy_from(planes);
+  base::span(row_bytes_).copy_from(row_bytes);
 }
 
 void* ImagePlanes::Plane(cc::YUVIndex index) {
@@ -973,19 +1010,18 @@ wtf_size_t ImagePlanes::RowBytes(cc::YUVIndex index) const {
 }
 
 ColorProfile::ColorProfile(const skcms_ICCProfile& profile,
-                           std::unique_ptr<uint8_t[]> buffer)
+                           base::HeapArray<uint8_t> buffer)
     : profile_(profile), buffer_(std::move(buffer)) {}
 
 ColorProfile::~ColorProfile() = default;
 
-std::unique_ptr<ColorProfile> ColorProfile::Create(const void* buffer,
-                                                   size_t size) {
+std::unique_ptr<ColorProfile> ColorProfile::Create(
+    base::span<const uint8_t> buffer) {
   // After skcms_Parse, profile will have pointers into the passed buffer,
   // so we need to copy first, then parse.
-  std::unique_ptr<uint8_t[]> owned_buffer(new uint8_t[size]);
-  memcpy(owned_buffer.get(), buffer, size);
+  auto owned_buffer = base::HeapArray<uint8_t>::CopiedFrom(buffer);
   skcms_ICCProfile profile;
-  if (skcms_Parse(owned_buffer.get(), size, &profile)) {
+  if (skcms_Parse(owned_buffer.data(), owned_buffer.size(), &profile)) {
     return std::make_unique<ColorProfile>(profile, std::move(owned_buffer));
   }
   return nullptr;
@@ -1021,6 +1057,8 @@ ColorProfileTransform* ImageDecoder::ColorTransform() {
   UpdateSkImageColorSpaceAndTransform();
   return embedded_to_sk_image_transform_.get();
 }
+
+ColorProfileTransform::~ColorProfileTransform() = default;
 
 sk_sp<SkColorSpace> ImageDecoder::ColorSpaceForSkImages() {
   UpdateSkImageColorSpaceAndTransform();

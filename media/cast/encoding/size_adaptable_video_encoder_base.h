@@ -19,7 +19,7 @@
 
 namespace media {
 
-class MojoVideoEncoderMetricsProvider;
+class VideoEncoderMetricsProvider;
 
 namespace cast {
 
@@ -30,12 +30,28 @@ struct SenderEncodedFrame;
 // SizeAdaptableVideoEncoderBase acts as a proxy to automatically detect when
 // the owned instance should be replaced with one that can handle the new frame
 // size.
+//
+// The status returned to `status_change_cb` is expected to work like this:
+//
+// Step 1: In the SizeAdaptableVideoEncoderBase ctor, we post a task to the
+//         main thread that updates the status to STATUS_INITIALIZED. This is
+//         how the consumer knows that it can post its first frame.
+// Step 2: The consumer posts the first video frame.
+// Step 3: Since the first video frame has a valid size, we now can spin up a
+//         backing encoder instance in TrySpawningReplacementEncoder(). This is
+//         "replacing" the nullptr encoder that was set on initialization.
+// Step 4: Status changes to STATUS_CODEC_REINIT_PENDING while we are spawning
+//         the replacement. Frames should not be sent for encoding during this
+//         time.
+// Step 5: Once the replacement `encoder_` has been initialized, it calls
+//        OnEncoderStatusChange() with STATUS_INITIALIZED, which is passed to
+//        `status_change_cb_`.
 class SizeAdaptableVideoEncoderBase : public VideoEncoder {
  public:
   SizeAdaptableVideoEncoderBase(
       const scoped_refptr<CastEnvironment>& cast_environment,
       const FrameSenderConfig& video_config,
-      std::unique_ptr<MojoVideoEncoderMetricsProvider> metrics_provider,
+      std::unique_ptr<VideoEncoderMetricsProvider> metrics_provider,
       StatusChangeCallback status_change_cb);
 
   SizeAdaptableVideoEncoderBase(const SizeAdaptableVideoEncoderBase&) = delete;
@@ -50,8 +66,6 @@ class SizeAdaptableVideoEncoderBase : public VideoEncoder {
                         FrameEncodedCallback frame_encoded_callback) final;
   void SetBitRate(int new_bit_rate) final;
   void GenerateKeyFrame() final;
-  std::unique_ptr<VideoFrameFactory> CreateVideoFrameFactory() final;
-  void EmitFrames() final;
 
  protected:
   // Accessors for subclasses.
@@ -59,7 +73,7 @@ class SizeAdaptableVideoEncoderBase : public VideoEncoder {
   const FrameSenderConfig& video_config() const { return video_config_; }
   const gfx::Size& frame_size() const { return frame_size_; }
   FrameId next_frame_id() const { return next_frame_id_; }
-  MojoVideoEncoderMetricsProvider& metrics_provider() const {
+  VideoEncoderMetricsProvider& metrics_provider() const {
     return *metrics_provider_.get();
   }
 
@@ -100,7 +114,7 @@ class SizeAdaptableVideoEncoderBase : public VideoEncoder {
   // SetBitRate(), for when a replacement encoder is spawned.
   FrameSenderConfig video_config_;
 
-  const std::unique_ptr<MojoVideoEncoderMetricsProvider> metrics_provider_;
+  const std::unique_ptr<VideoEncoderMetricsProvider> metrics_provider_;
 
   // Run whenever the underlying encoder reports a status change.
   const StatusChangeCallback status_change_cb_;

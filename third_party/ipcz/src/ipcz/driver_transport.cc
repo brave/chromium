@@ -19,13 +19,14 @@ namespace ipcz {
 
 namespace {
 
-IpczResult IPCZ_API NotifyTransport(IpczHandle listener,
-                                    const void* data,
-                                    size_t num_bytes,
-                                    const IpczDriverHandle* driver_handles,
-                                    size_t num_driver_handles,
-                                    IpczTransportActivityFlags flags,
-                                    const void* options) {
+IpczResult IPCZ_API
+NotifyTransport(IpczHandle listener,
+                const void* data,
+                size_t num_bytes,
+                const IpczDriverHandle* driver_handles,
+                size_t num_driver_handles,
+                IpczTransportActivityFlags flags,
+                const struct IpczTransportActivityOptions* options) {
   DriverTransport* t = DriverTransport::FromHandle(listener);
   if (!t) {
     return IPCZ_RESULT_INVALID_ARGUMENT;
@@ -44,7 +45,8 @@ IpczResult IPCZ_API NotifyTransport(IpczHandle listener,
   }
 
   if (!t->Notify({absl::MakeSpan(static_cast<const uint8_t*>(data), num_bytes),
-                  absl::MakeSpan(driver_handles, num_driver_handles)})) {
+                  absl::MakeSpan(driver_handles, num_driver_handles)},
+                 options ? options->envelope : IPCZ_INVALID_DRIVER_HANDLE)) {
     return IPCZ_RESULT_INVALID_ARGUMENT;
   }
 
@@ -68,23 +70,19 @@ DriverTransport::Pair DriverTransport::CreatePair(
   IpczDriverHandle target_transport0 = IPCZ_INVALID_DRIVER_HANDLE;
   IpczDriverHandle target_transport1 = IPCZ_INVALID_DRIVER_HANDLE;
   if (transport0) {
-    ABSL_ASSERT(transport1);
+    ABSL_HARDENING_ASSERT(transport1);
     target_transport0 = transport0->driver_object().handle();
     target_transport1 = transport1->driver_object().handle();
   }
   IpczResult result = driver.CreateTransports(
       target_transport0, target_transport1, IPCZ_NO_FLAGS, nullptr,
       &new_transport0, &new_transport1);
-  ABSL_ASSERT(result == IPCZ_RESULT_OK);
+  ABSL_HARDENING_ASSERT(result == IPCZ_RESULT_OK);
   auto first =
       MakeRefCounted<DriverTransport>(DriverObject(driver, new_transport0));
   auto second =
       MakeRefCounted<DriverTransport>(DriverObject(driver, new_transport1));
   return {std::move(first), std::move(second)};
-}
-
-IpczDriverHandle DriverTransport::Release() {
-  return transport_.release();
 }
 
 IpczResult DriverTransport::Activate() {
@@ -96,6 +94,10 @@ IpczResult DriverTransport::Activate() {
 }
 
 IpczResult DriverTransport::Deactivate() {
+  if (!transport_.is_valid()) {
+    // The transport is already deactivated. Avoids a null dereference.
+    return IPCZ_RESULT_FAILED_PRECONDITION;
+  }
   return transport_.driver()->DeactivateTransport(transport_.handle(),
                                                   IPCZ_NO_FLAGS, nullptr);
 }
@@ -117,13 +119,14 @@ IpczResult DriverTransport::Transmit(Message& message) {
                                        handles.size(), IPCZ_NO_FLAGS, nullptr);
 }
 
-bool DriverTransport::Notify(const RawMessage& message) {
+bool DriverTransport::Notify(const RawMessage& message,
+                             IpczDriverHandle envelope) {
   ABSL_ASSERT(listener_);
   // Listener methods may set a new Listener on this DriverTransport, and that
   // may drop their own last reference. Keep a reference here to ensure this
   // Listener remains alive through the extent of its notification.
   Ref<Listener> listener = listener_;
-  return listener->OnTransportMessage(message, *this);
+  return listener->OnTransportMessage(message, *this, envelope);
 }
 
 void DriverTransport::NotifyError() {

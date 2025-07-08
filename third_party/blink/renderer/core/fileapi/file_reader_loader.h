@@ -81,7 +81,7 @@ class CORE_EXPORT FileReaderLoader : public GarbageCollected<FileReaderLoader>,
 
   // Before OnCalculatedSize() is called: Returns nullopt.
   // After OnCalculatedSize() is called: Returns the size of the resource.
-  absl::optional<uint64_t> TotalBytes() const { return total_bytes_; }
+  std::optional<uint64_t> TotalBytes() const { return total_bytes_; }
 
   FileErrorCode GetErrorCode() const { return error_code_; }
 
@@ -96,8 +96,27 @@ class CORE_EXPORT FileReaderLoader : public GarbageCollected<FileReaderLoader>,
 
  private:
   void StartInternal(scoped_refptr<BlobDataHandle>, bool is_sync);
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class FailureType {
+    kMojoPipeCreation = 0,
+    kSyncDataNotAllLoaded = 1,
+    kSyncOnCompleteNotReceived = 2,
+    kBackendReadError = 3,
+    kReadSizesIncorrect = 4,
+    kDataPipeNotReadableWithBytesLeft = 5,
+    kMojoPipeClosedEarly = 6,
+    // Any MojoResult error we aren't expecting during data pipe reading falls
+    // into this bucket. If there are a large number of errors reported here,
+    // then there can be a new enumeration reported for mojo pipe errors.
+    kMojoPipeUnexpectedReadError = 7,
+    kClientFailure = 8,
+    kMaxValue = kClientFailure,
+  };
+
   void Cleanup();
-  void Failed(FileErrorCode);
+  void Failed(FileErrorCode, FailureType type);
 
   bool IsSyncLoad() { return is_sync_; }
 
@@ -116,7 +135,7 @@ class CORE_EXPORT FileReaderLoader : public GarbageCollected<FileReaderLoader>,
   // total_bytes_ is set to the total size of the blob being loaded as soon as
   // it is known, and  the buffer for receiving data of total_bytes_ is
   // allocated and never grow even when extra data is appended.
-  absl::optional<uint64_t> total_bytes_;
+  std::optional<uint64_t> total_bytes_;
 
   int32_t net_error_ = 0;  // net::OK
   FileErrorCode error_code_ = FileErrorCode::kOK;

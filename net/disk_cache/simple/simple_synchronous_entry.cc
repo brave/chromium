@@ -4,11 +4,14 @@
 
 #include "net/disk_cache/simple/simple_synchronous_entry.h"
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <optional>
 
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/hash/hash.h"
 #include "base/location.h"
@@ -19,11 +22,10 @@
 #include "base/metrics/histogram_macros_local.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/elapsed_timer.h"
-#include "crypto/secure_hash.h"
+#include "crypto/hash.h"
 #include "net/base/hash_value.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -91,14 +93,6 @@ bool TruncatePath(const FilePath& filename_to_truncate,
   return true;
 }
 
-void CalculateSHA256OfKey(const std::string& key,
-                          net::SHA256HashValue* out_hash_value) {
-  std::unique_ptr<crypto::SecureHash> hash(
-      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-  hash->Update(key.data(), key.size());
-  hash->Finish(out_hash_value, sizeof(*out_hash_value));
-}
-
 SimpleFileTracker::SubFile SubFileForFileIndex(int file_index) {
   DCHECK_GT(kSimpleEntryNormalFileCount, file_index);
   return file_index == 0 ? SimpleFileTracker::SubFile::FILE_0
@@ -115,14 +109,14 @@ int FileIndexForSubFile(SimpleFileTracker::SubFile sub_file) {
 // Helper class to track a range of data prefetched from a file.
 class SimpleSynchronousEntry::PrefetchData final {
  public:
-  explicit PrefetchData(size_t file_size)
+  explicit PrefetchData(uint64_t file_size)
       : file_size_(file_size), earliest_requested_offset_(file_size) {}
 
   // Returns true if the specified range within the file has been completely
   // prefetched.  Returns false if any part of the range has not been
   // prefetched.
-  bool HasData(size_t offset, size_t length) {
-    size_t end = 0;
+  bool HasData(uint64_t offset, size_t length) {
+    uint64_t end = 0;
     if (!base::CheckAdd(offset, length).AssignIfValid(&end))
       return false;
     UpdateEarliestOffset(offset);
@@ -134,30 +128,32 @@ class SimpleSynchronousEntry::PrefetchData final {
   // destination buffer.  If the range is not wholely contained within
   // the prefetch buffer than no data will be written to the target
   // buffer.  Returns true if the range has been copied.
-  bool ReadData(size_t offset, size_t length, char* dest) {
-    DCHECK(dest);
+  bool ReadData(uint64_t offset, size_t length, base::span<uint8_t> dest) {
     if (!length)
       return true;
     if (!HasData(offset, length))
       return false;
     DCHECK(offset >= offset_in_file_);
-    size_t buffer_offset = offset - offset_in_file_;
-    memcpy(dest, buffer_.data() + buffer_offset, length);
+    // `offset` could be larger than size_t but `buffer_offset` must be within
+    // size_t range.
+    size_t buffer_offset = base::checked_cast<size_t>(offset - offset_in_file_);
+    dest.copy_prefix_from(
+        base::as_byte_span(buffer_).subspan(buffer_offset, length));
     return true;
   }
 
   // Populate the prefetch buffer from the given file and range.  Returns
   // true if the data is successfully read.
   bool PrefetchFromFile(SimpleFileTracker::FileHandle* file,
-                        size_t offset,
+                        uint64_t offset,
                         size_t length) {
     DCHECK(file);
     if (!buffer_.empty()) {
       return false;
     }
     buffer_.resize(length);
-    if (file->get()->Read(offset, buffer_.data(), length) !=
-        static_cast<int>(length)) {
+    if (!file->get()->ReadAndCheck(offset,
+                                   base::as_writable_byte_span(buffer_))) {
       buffer_.resize(0);
       return false;
     }
@@ -168,26 +164,28 @@ class SimpleSynchronousEntry::PrefetchData final {
   // Return how much trailing data has been requested via HasData() or
   // ReadData().  The intent is that this value can be used to tune
   // future prefetching behavior.
-  size_t GetDesiredTrailerPrefetchSize() const {
-    return file_size_ - earliest_requested_offset_;
+  uint32_t GetDesiredTrailerPrefetchSize() const {
+    // Trailer prefetch size must be within uint32_t.
+    return std::min<uint32_t>(std::numeric_limits<uint32_t>::max(),
+                              (file_size_ - earliest_requested_offset_));
   }
 
  private:
   // Track the earliest offset requested in order to return an optimal trailer
   // prefetch amount in GetDesiredTrailerPrefetchSize().
-  void UpdateEarliestOffset(size_t offset) {
+  void UpdateEarliestOffset(uint64_t offset) {
     DCHECK_LE(earliest_requested_offset_, file_size_);
     earliest_requested_offset_ = std::min(earliest_requested_offset_, offset);
   }
 
-  const size_t file_size_;
+  const uint64_t file_size_;
 
   // Prefer to read the prefetch data into a stack buffer to minimize
   // memory pressure on the OS disk cache.
   absl::InlinedVector<char, 1024> buffer_;
-  size_t offset_in_file_ = 0;
+  uint64_t offset_in_file_ = 0;
 
-  size_t earliest_requested_offset_;
+  uint64_t earliest_requested_offset_;
 };
 
 class SimpleSynchronousEntry::ScopedFileOperationsBinding final {
@@ -230,25 +228,23 @@ constexpr base::FeatureParam<int> kSimpleCacheTrailerPrefetchSpeculativeBytes{
     &kSimpleCachePrefetchExperiment,
     kSimpleCacheTrailerPrefetchSpeculativeBytesParam, 0};
 
-int GetSimpleCacheFullPrefetchSize() {
+uint32_t GetSimpleCacheFullPrefetchSize() {
   return kSimpleCacheFullPrefetchSize.Get();
 }
 
-int GetSimpleCacheTrailerPrefetchSize(int hint_size) {
+uint32_t GetSimpleCacheTrailerPrefetchSize(int hint_size) {
   if (hint_size > 0)
     return hint_size;
   return kSimpleCacheTrailerPrefetchSpeculativeBytes.Get();
 }
 
-SimpleEntryStat::SimpleEntryStat(base::Time last_used,
-                                 base::Time last_modified,
-                                 const int32_t data_size[],
-                                 const int32_t sparse_data_size)
+SimpleEntryStat::SimpleEntryStat(
+    base::Time last_used,
+    const std::array<int32_t, kSimpleEntryStreamCount>& data_size,
+    const uint64_t sparse_data_size)
     : last_used_(last_used),
-      last_modified_(last_modified),
-      sparse_data_size_(sparse_data_size) {
-  memcpy(data_size_, data_size, sizeof(data_size_));
-}
+      data_size_(data_size),
+      sparse_data_size_(sparse_data_size) {}
 
 // These size methods all assume the presence of the SHA256 on stream zero,
 // since this version of the cache always writes it. In the read case, it may
@@ -333,19 +329,19 @@ SimpleSynchronousEntry::WriteRequest::WriteRequest(int index_p,
       doomed(doomed_p),
       request_update_crc(request_update_crc_p) {}
 
-SimpleSynchronousEntry::SparseRequest::SparseRequest(int64_t sparse_offset_p,
-                                                     int buf_len_p)
+SimpleSynchronousEntry::SparseRequest::SparseRequest(uint64_t sparse_offset_p,
+                                                     size_t buf_len_p)
     : sparse_offset(sparse_offset_p), buf_len(buf_len_p) {}
 
 // static
 void SimpleSynchronousEntry::OpenEntry(
     net::CacheType cache_type,
     const FilePath& path,
-    const std::string& key,
+    const std::optional<std::string>& key,
     const uint64_t entry_hash,
     SimpleFileTracker* file_tracker,
     std::unique_ptr<UnboundBackendFileOperations> file_operations,
-    int32_t trailer_prefetch_size,
+    uint32_t trailer_prefetch_size,
     SimpleEntryCreationResults* out_results) {
   base::TimeTicks start_sync_open_entry = base::TimeTicks::Now();
 
@@ -391,7 +387,7 @@ void SimpleSynchronousEntry::CreateEntry(
 
   auto sync_entry = std::make_unique<SimpleSynchronousEntry>(
       cache_type, path, key, entry_hash, file_tracker,
-      std::move(file_operations), -1);
+      std::move(file_operations), /*trailer_prefetch_size=*/0);
   {
     BackendFileOperations* bound_file_operations = nullptr;
     ScopedFileOperationsBinding binding(sync_entry.get(),
@@ -424,7 +420,7 @@ void SimpleSynchronousEntry::OpenOrCreateEntry(
     bool optimistic_create,
     SimpleFileTracker* file_tracker,
     std::unique_ptr<UnboundBackendFileOperations> file_operations,
-    int32_t trailer_prefetch_size,
+    uint32_t trailer_prefetch_size,
     SimpleEntryCreationResults* out_results) {
   base::TimeTicks start = base::TimeTicks::Now();
   if (index_state == INDEX_MISS) {
@@ -579,7 +575,7 @@ int SimpleSynchronousEntry::DeleteEntrySetFiles(
     std::unique_ptr<UnboundBackendFileOperations> unbound_file_operations) {
   auto file_operations = unbound_file_operations->Bind(
       base::SequencedTaskRunner::GetCurrentDefault());
-  const size_t did_delete_count = base::ranges::count_if(
+  const size_t did_delete_count = std::ranges::count_if(
       *key_hashes, [&path, &file_operations](const uint64_t& key_hash) {
         return SimpleSynchronousEntry::DeleteFilesForEntryHash(
             path, key_hash, file_operations.get());
@@ -607,22 +603,23 @@ void SimpleSynchronousEntry::ReadData(const ReadRequest& in_entry_op,
     return;
   }
   const int64_t file_offset = entry_stat->GetOffsetInFile(
-      key_.size(), in_entry_op.offset, in_entry_op.index);
+      key_->size(), in_entry_op.offset, in_entry_op.index);
   // Zero-length reads and reads to the empty streams of omitted files should
   // be handled in the SimpleEntryImpl.
   DCHECK_GT(in_entry_op.buf_len, 0);
   DCHECK(!empty_file_omitted_[file_index]);
-  int bytes_read =
-      file->Read(file_offset, out_buf->data(), in_entry_op.buf_len);
-  if (bytes_read > 0) {
+  std::optional<size_t> bytes_read = file->Read(
+      file_offset,
+      out_buf->first(base::checked_cast<size_t>(in_entry_op.buf_len)));
+  if (bytes_read.value_or(0) > 0) {
     entry_stat->set_last_used(Time::Now());
     if (in_entry_op.request_update_crc) {
       out_result->updated_crc32 = simple_util::IncrementalCrc32(
-          in_entry_op.previous_crc32, out_buf->data(), bytes_read);
+          in_entry_op.previous_crc32, out_buf->data(), *bytes_read);
       out_result->crc_updated = true;
       // Verify checksum after last read, if we've been asked to.
       if (in_entry_op.request_verify_crc &&
-          in_entry_op.offset + bytes_read ==
+          in_entry_op.offset + base::checked_cast<int64_t>(*bytes_read) ==
               entry_stat->data_size(in_entry_op.index)) {
         int checksum_result =
             CheckEOFRecord(file_operations, file.get(), in_entry_op.index,
@@ -634,8 +631,8 @@ void SimpleSynchronousEntry::ReadData(const ReadRequest& in_entry_op,
       }
     }
   }
-  if (bytes_read >= 0) {
-    out_result->result = bytes_read;
+  if (bytes_read.has_value()) {
+    out_result->result = *bytes_read;
   } else {
     out_result->result = net::ERR_CACHE_READ_FAILURE;
     DoomInternal(file_operations);
@@ -667,8 +664,9 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   int buf_len = in_entry_op.buf_len;
   bool truncate = in_entry_op.truncate;
   bool doomed = in_entry_op.doomed;
+  size_t key_size = key_->size();
   const int64_t file_offset = out_entry_stat->GetOffsetInFile(
-      key_.size(), in_entry_op.offset, in_entry_op.index);
+      key_size, in_entry_op.offset, in_entry_op.index);
   bool extending_by_write = offset + buf_len > out_entry_stat->data_size(index);
 
   if (empty_file_omitted_[file_index]) {
@@ -711,7 +709,7 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   if (extending_by_write) {
     // The EOF record and the eventual stream afterward need to be zeroed out.
     const int64_t file_eof_offset =
-        out_entry_stat->GetEOFOffsetInFile(key_.size(), index);
+        out_entry_stat->GetEOFOffsetInFile(key_size, index);
     if (!file->SetLength(file_eof_offset)) {
       RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_PRETRUNCATE_FAILURE);
       DoomInternal(file_operations);
@@ -720,7 +718,8 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
     }
   }
   if (buf_len > 0) {
-    if (file->Write(file_offset, in_buf->data(), buf_len) != buf_len) {
+    if (!file->WriteAndCheck(
+            file_offset, in_buf->first(base::checked_cast<size_t>(buf_len)))) {
       RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_WRITE_FAILURE);
       DoomInternal(file_operations);
       out_write_result->result = net::ERR_CACHE_WRITE_FAILURE;
@@ -733,7 +732,7 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   } else {
     out_entry_stat->set_data_size(index, offset + buf_len);
     int file_eof_offset =
-        out_entry_stat->GetLastEOFOffsetInFile(key_.size(), index);
+        out_entry_stat->GetLastEOFOffsetInFile(key_size, index);
     if (!file->SetLength(file_eof_offset)) {
       RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_TRUNCATE_FAILURE);
       DoomInternal(file_operations);
@@ -753,7 +752,6 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_SUCCESS);
   base::Time modification_time = Time::Now();
   out_entry_stat->set_last_used(modification_time);
-  out_entry_stat->set_last_modified(modification_time);
   out_write_result->result = buf_len;
 }
 
@@ -764,13 +762,12 @@ void SimpleSynchronousEntry::ReadSparseData(const SparseRequest& in_entry_op,
   DCHECK(initialized_);
   BackendFileOperations* file_operations = nullptr;
   ScopedFileOperationsBinding binding(this, &file_operations);
-  int64_t offset = in_entry_op.sparse_offset;
-  int buf_len = in_entry_op.buf_len;
+  uint64_t offset = in_entry_op.sparse_offset;
+  size_t buf_len = in_entry_op.buf_len;
 
-  char* buf = out_buf->data();
-  int read_so_far = 0;
+  base::span<uint8_t> buf = out_buf->span();
 
-  if (!sparse_file_open()) {
+  if (!sparse_file_open() || !buf_len) {
     *out_result = 0;
     return;
   }
@@ -783,6 +780,8 @@ void SimpleSynchronousEntry::ReadSparseData(const SparseRequest& in_entry_op,
     return;
   }
 
+  size_t read_so_far = 0;
+
   // Find the first sparse range at or after the requested offset.
   auto it = sparse_ranges_.lower_bound(offset);
 
@@ -790,20 +789,18 @@ void SimpleSynchronousEntry::ReadSparseData(const SparseRequest& in_entry_op,
     // Hop back one range and read the one overlapping with the start.
     --it;
     SparseRange* found_range = &it->second;
-    DCHECK_EQ(it->first, found_range->offset);
-    if (found_range->offset + found_range->length > offset) {
-      DCHECK_GE(found_range->length, 0);
-      DCHECK_LE(found_range->length, std::numeric_limits<int32_t>::max());
-      DCHECK_GE(offset - found_range->offset, 0);
-      DCHECK_LE(offset - found_range->offset,
-                std::numeric_limits<int32_t>::max());
-      int net_offset = static_cast<int>(offset - found_range->offset);
-      int range_len_after_offset =
-          static_cast<int>(found_range->length - net_offset);
-      DCHECK_GE(range_len_after_offset, 0);
+    CHECK_EQ(it->first, found_range->offset);
 
-      int len_to_read = std::min(buf_len, range_len_after_offset);
-      if (!ReadSparseRange(sparse_file.get(), found_range, net_offset,
+    CHECK(base::CheckAdd(found_range->offset, found_range->length).IsValid());
+    if (found_range->offset + found_range->length > offset) {
+      CHECK_LE(offset - found_range->offset,
+               std::numeric_limits<size_t>::max());
+      size_t offset_in_range =
+          base::checked_cast<size_t>(offset - found_range->offset);
+      size_t range_len_after_offset = found_range->length - offset_in_range;
+
+      size_t len_to_read = std::min(buf_len, range_len_after_offset);
+      if (!ReadSparseRange(sparse_file.get(), found_range, offset_in_range,
                            len_to_read, buf)) {
         DoomInternal(file_operations);
         *out_result = net::ERR_CACHE_READ_FAILURE;
@@ -816,24 +813,27 @@ void SimpleSynchronousEntry::ReadSparseData(const SparseRequest& in_entry_op,
 
   // Keep reading until the buffer is full or there is not another contiguous
   // range.
-  while (read_so_far < buf_len &&
-         it != sparse_ranges_.end() &&
+  while (read_so_far < buf_len && it != sparse_ranges_.end() &&
          it->second.offset == offset + read_so_far) {
     SparseRange* found_range = &it->second;
-    DCHECK_EQ(it->first, found_range->offset);
-    int range_len = base::saturated_cast<int>(found_range->length);
-    int len_to_read = std::min(buf_len - read_so_far, range_len);
+    CHECK_EQ(it->first, found_range->offset);
+    size_t range_len = found_range->length;
+    size_t len_to_read = std::min(buf_len - read_so_far, range_len);
     if (!ReadSparseRange(sparse_file.get(), found_range, 0, len_to_read,
-                         buf + read_so_far)) {
+                         buf.subspan(read_so_far))) {
       DoomInternal(file_operations);
       *out_result = net::ERR_CACHE_READ_FAILURE;
       return;
     }
+
     read_so_far += len_to_read;
+
     ++it;
   }
 
-  *out_result = read_so_far;
+  // The length to read is limited to each sparse data which is far smaller than
+  // int max.
+  *out_result = base::checked_cast<int>(read_so_far);
 }
 
 void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
@@ -844,12 +844,10 @@ void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
   DCHECK(initialized_);
   BackendFileOperations* file_operations = nullptr;
   ScopedFileOperationsBinding binding(this, &file_operations);
-  int64_t offset = in_entry_op.sparse_offset;
-  int buf_len = in_entry_op.buf_len;
+  uint64_t offset = in_entry_op.sparse_offset;
+  size_t buf_len = in_entry_op.buf_len;
 
-  const char* buf = in_buf->data();
-  int written_so_far = 0;
-  int appended_so_far = 0;
+  base::span<const uint8_t> buf = in_buf->span();
 
   if (!sparse_file_open() && !CreateSparseFile(file_operations)) {
     DoomInternal(file_operations);
@@ -864,42 +862,42 @@ void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
     return;
   }
 
-  int32_t sparse_data_size = out_entry_stat->sparse_data_size();
-  int32_t future_sparse_data_size;
+  uint64_t sparse_data_size = out_entry_stat->sparse_data_size();
+  uint64_t future_sparse_data_size;
   if (!base::CheckAdd(sparse_data_size, buf_len)
-           .AssignIfValid(&future_sparse_data_size) ||
-      future_sparse_data_size < 0) {
+           .AssignIfValid(&future_sparse_data_size)) {
     DoomInternal(file_operations);
     *out_result = net::ERR_CACHE_WRITE_FAILURE;
     return;
   }
   // This is a pessimistic estimate; it assumes the entire buffer is going to
   // be appended as a new range, not written over existing ranges.
-  if (static_cast<uint64_t>(future_sparse_data_size) > max_sparse_data_size) {
+  if (future_sparse_data_size > max_sparse_data_size) {
     DVLOG(1) << "Truncating sparse data file (" << sparse_data_size << " + "
              << buf_len << " > " << max_sparse_data_size << ")";
     TruncateSparseFile(sparse_file.get());
-    out_entry_stat->set_sparse_data_size(0);
+    out_entry_stat->set_sparse_data_size(0u);
   }
+
+  size_t written_so_far = 0;
+  size_t appended_so_far = 0;
 
   auto it = sparse_ranges_.lower_bound(offset);
 
   if (it != sparse_ranges_.begin()) {
     --it;
     SparseRange* found_range = &it->second;
-    if (found_range->offset + found_range->length > offset) {
-      DCHECK_GE(found_range->length, 0);
-      DCHECK_LE(found_range->length, std::numeric_limits<int32_t>::max());
-      DCHECK_GE(offset - found_range->offset, 0);
-      DCHECK_LE(offset - found_range->offset,
-                std::numeric_limits<int32_t>::max());
-      int net_offset = static_cast<int>(offset - found_range->offset);
-      int range_len_after_offset =
-          static_cast<int>(found_range->length - net_offset);
-      DCHECK_GE(range_len_after_offset, 0);
 
-      int len_to_write = std::min(buf_len, range_len_after_offset);
-      if (!WriteSparseRange(sparse_file.get(), found_range, net_offset,
+    CHECK(base::CheckAdd(found_range->offset, found_range->length).IsValid());
+    if (found_range->offset + found_range->length > offset) {
+      CHECK_LE(offset - found_range->offset,
+               std::numeric_limits<size_t>::max());
+      size_t offset_in_range =
+          static_cast<size_t>(offset - found_range->offset);
+      size_t range_len_after_offset = found_range->length - offset_in_range;
+
+      size_t len_to_write = std::min(buf_len, range_len_after_offset);
+      if (!WriteSparseRange(sparse_file.get(), found_range, offset_in_range,
                             len_to_write, buf)) {
         DoomInternal(file_operations);
         *out_result = net::ERR_CACHE_WRITE_FAILURE;
@@ -910,38 +908,40 @@ void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
     ++it;
   }
 
-  while (written_so_far < buf_len &&
-         it != sparse_ranges_.end() &&
+  while (written_so_far < buf_len && it != sparse_ranges_.end() &&
          it->second.offset < offset + buf_len) {
     SparseRange* found_range = &it->second;
     if (offset + written_so_far < found_range->offset) {
-      int len_to_append =
-          static_cast<int>(found_range->offset - (offset + written_so_far));
+      size_t len_to_append =
+          static_cast<size_t>(found_range->offset - (offset + written_so_far));
       if (!AppendSparseRange(sparse_file.get(), offset + written_so_far,
-                             len_to_append, buf + written_so_far)) {
+                             len_to_append, buf.subspan(written_so_far))) {
         DoomInternal(file_operations);
         *out_result = net::ERR_CACHE_WRITE_FAILURE;
         return;
       }
+
       written_so_far += len_to_append;
       appended_so_far += len_to_append;
     }
-    int range_len = base::saturated_cast<int>(found_range->length);
-    int len_to_write = std::min(buf_len - written_so_far, range_len);
+
+    size_t len_to_write =
+        std::min(buf_len - written_so_far, found_range->length);
     if (!WriteSparseRange(sparse_file.get(), found_range, 0, len_to_write,
-                          buf + written_so_far)) {
+                          buf.subspan(written_so_far))) {
       DoomInternal(file_operations);
       *out_result = net::ERR_CACHE_WRITE_FAILURE;
       return;
     }
+
     written_so_far += len_to_write;
     ++it;
   }
 
   if (written_so_far < buf_len) {
-    int len_to_append = buf_len - written_so_far;
+    size_t len_to_append = buf_len - written_so_far;
     if (!AppendSparseRange(sparse_file.get(), offset + written_so_far,
-                           len_to_append, buf + written_so_far)) {
+                           len_to_append, buf.subspan(written_so_far))) {
       DoomInternal(file_operations);
       *out_result = net::ERR_CACHE_WRITE_FAILURE;
       return;
@@ -950,29 +950,32 @@ void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
     appended_so_far += len_to_append;
   }
 
-  DCHECK_EQ(buf_len, written_so_far);
+  CHECK_EQ(buf_len, written_so_far);
 
   base::Time modification_time = Time::Now();
   out_entry_stat->set_last_used(modification_time);
-  out_entry_stat->set_last_modified(modification_time);
-  int32_t old_sparse_data_size = out_entry_stat->sparse_data_size();
+  uint64_t old_sparse_data_size = out_entry_stat->sparse_data_size();
   out_entry_stat->set_sparse_data_size(old_sparse_data_size + appended_so_far);
-  *out_result = written_so_far;
+
+  // The length to read is limited to each sparse data which is far smaller than
+  // int max.
+  *out_result = base::checked_cast<int>(written_so_far);
 }
 
 void SimpleSynchronousEntry::GetAvailableRange(const SparseRequest& in_entry_op,
                                                RangeResult* out_result) {
   DCHECK(initialized_);
-  int64_t offset = in_entry_op.sparse_offset;
-  int len = in_entry_op.buf_len;
+  uint64_t offset = in_entry_op.sparse_offset;
+  size_t len = in_entry_op.buf_len;
 
   auto it = sparse_ranges_.lower_bound(offset);
 
-  int64_t start = offset;
-  int64_t avail_so_far = 0;
+  uint64_t start = offset;
+  uint64_t avail_so_far = 0;
 
-  if (it != sparse_ranges_.end() && it->second.offset < offset + len)
+  if (it != sparse_ranges_.end() && it->second.offset < offset + len) {
     start = it->second.offset;
+  }
 
   if ((it == sparse_ranges_.end() || it->second.offset > offset) &&
       it != sparse_ranges_.begin()) {
@@ -991,9 +994,13 @@ void SimpleSynchronousEntry::GetAvailableRange(const SparseRequest& in_entry_op,
     ++it;
   }
 
-  int64_t len_from_start = len - (start - offset);
-  *out_result = RangeResult(
-      start, static_cast<int>(std::min(avail_so_far, len_from_start)));
+  // `range_len` must fit in size_t since it's guaranteed to be same or smaller
+  // than `len - (start - offset)` where `len` is within size_t range and
+  // `start` is same or larger than `offset`.
+  size_t range_len = base::checked_cast<size_t>(
+      std::min(avail_so_far, len - (start - offset)));
+
+  *out_result = RangeResult(start, range_len);
 }
 
 int SimpleSynchronousEntry::CheckEOFRecord(
@@ -1004,7 +1011,7 @@ int SimpleSynchronousEntry::CheckEOFRecord(
     uint32_t expected_crc32) {
   DCHECK(initialized_);
   SimpleFileEOF eof_record;
-  int file_offset = entry_stat.GetEOFOffsetInFile(key_.size(), stream_index);
+  int file_offset = entry_stat.GetEOFOffsetInFile(key_->size(), stream_index);
   int file_index = GetFileIndexFromStreamIndex(stream_index);
   int rv =
       GetEOFRecordData(file, nullptr, file_index, file_offset, &eof_record);
@@ -1038,10 +1045,11 @@ int SimpleSynchronousEntry::PreReadStreamPayload(
   int read_size = stream_size + extra_size;
   out->data = base::MakeRefCounted<net::GrowableIOBuffer>();
   out->data->SetCapacity(read_size);
-  int file_offset = entry_stat.GetOffsetInFile(key_.size(), 0, stream_index);
+  int file_offset = entry_stat.GetOffsetInFile(key_->size(), 0, stream_index);
   if (!ReadFromFileOrPrefetched(file, prefetch_data, 0, file_offset, read_size,
-                                out->data->data()))
+                                out->data->span())) {
     return net::ERR_FAILED;
+  }
 
   // Check the CRC32.
   uint32_t expected_crc32 = simple_util::Crc32(out->data->data(), stream_size);
@@ -1068,6 +1076,7 @@ void SimpleSynchronousEntry::Close(
   unbound_file_operations_ = nullptr;
   base::ElapsedTimer close_time;
   DCHECK(stream_0_data);
+  const std::string& key = *key_;
 
   for (auto& crc_record : *crc32s_to_write) {
     const int stream_index = crc_record.index;
@@ -1085,18 +1094,17 @@ void SimpleSynchronousEntry::Close(
 
     if (stream_index == 0) {
       // Write stream 0 data.
-      int stream_0_offset = entry_stat.GetOffsetInFile(key_.size(), 0, 0);
-      if (file->Write(stream_0_offset, stream_0_data->data(),
-                      entry_stat.data_size(0)) != entry_stat.data_size(0)) {
+      int stream_0_offset = entry_stat.GetOffsetInFile(key.size(), 0, 0);
+      if (!file->WriteAndCheck(stream_0_offset,
+                               stream_0_data->first(base::checked_cast<size_t>(
+                                   entry_stat.data_size(0))))) {
         RecordCloseResult(cache_type_, CLOSE_RESULT_WRITE_FAILURE);
         DVLOG(1) << "Could not write stream 0 data.";
         DoomInternal(file_operations.get());
       }
-      net::SHA256HashValue hash_value;
-      CalculateSHA256OfKey(key_, &hash_value);
-      if (file->Write(stream_0_offset + entry_stat.data_size(0),
-                      reinterpret_cast<char*>(hash_value.data),
-                      sizeof(hash_value)) != sizeof(hash_value)) {
+      auto hash_value = crypto::hash::Sha256(key);
+      if (!file->WriteAndCheck(stream_0_offset + entry_stat.data_size(0),
+                               hash_value)) {
         RecordCloseResult(cache_type_, CLOSE_RESULT_WRITE_FAILURE);
         DVLOG(1) << "Could not write stream 0 data.";
         DoomInternal(file_operations.get());
@@ -1124,7 +1132,7 @@ void SimpleSynchronousEntry::Close(
     if (stream_index == 0)
       eof_record.flags |= SimpleFileEOF::FLAG_HAS_KEY_SHA256;
     eof_record.data_crc32 = crc_record.data_crc32;
-    int eof_offset = entry_stat.GetEOFOffsetInFile(key_.size(), stream_index);
+    int eof_offset = entry_stat.GetEOFOffsetInFile(key.size(), stream_index);
     // If stream 0 changed size, the file needs to be resized, otherwise the
     // next open will yield wrong stream sizes. On stream 1 and stream 2 proper
     // resizing of the file is handled in SimpleSynchronousEntry::WriteData().
@@ -1134,8 +1142,8 @@ void SimpleSynchronousEntry::Close(
       DoomInternal(file_operations.get());
       break;
     }
-    if (file->Write(eof_offset, reinterpret_cast<const char*>(&eof_record),
-                    sizeof(eof_record)) != sizeof(eof_record)) {
+    if (!file->WriteAndCheck(eof_offset,
+                             base::byte_span_from_ref(eof_record))) {
       RecordCloseResult(cache_type_, CLOSE_RESULT_WRITE_FAILURE);
       DVLOG(1) << "Could not write eof record.";
       DoomInternal(file_operations.get());
@@ -1169,11 +1177,11 @@ void SimpleSynchronousEntry::Close(
 SimpleSynchronousEntry::SimpleSynchronousEntry(
     net::CacheType cache_type,
     const FilePath& path,
-    const std::string& key,
+    const std::optional<std::string>& key,
     const uint64_t entry_hash,
     SimpleFileTracker* file_tracker,
     std::unique_ptr<UnboundBackendFileOperations> unbound_file_operations,
-    int32_t trailer_prefetch_size)
+    uint32_t trailer_prefetch_size)
     : cache_type_(cache_type),
       path_(path),
       entry_file_key_(entry_hash),
@@ -1290,7 +1298,6 @@ bool SimpleSynchronousEntry::OpenFiles(BackendFileOperations* file_operations,
       continue;
     }
     out_entry_stat->set_last_used(file_info.last_accessed);
-    out_entry_stat->set_last_modified(file_info.last_modified);
 
     // Two things prevent from knowing the right values for |data_size|:
     // 1) The key might not be known, hence its length might be unknown.
@@ -1331,7 +1338,6 @@ bool SimpleSynchronousEntry::CreateFiles(BackendFileOperations* file_operations,
   have_open_files_ = true;
 
   base::Time creation_time = Time::Now();
-  out_entry_stat->set_last_modified(creation_time);
   out_entry_stat->set_last_used(creation_time);
   for (int i = 0; i < kSimpleEntryNormalFileCount; ++i)
     out_entry_stat->set_data_size(i, 0);
@@ -1370,19 +1376,25 @@ void SimpleSynchronousEntry::CloseFiles() {
 
 bool SimpleSynchronousEntry::CheckHeaderAndKey(base::File* file,
                                                int file_index) {
-  std::vector<char> header_data(key_.empty() ? kInitialHeaderRead
-                                             : GetHeaderSize(key_.size()));
-  int bytes_read = file->Read(0, header_data.data(), header_data.size());
-  const SimpleFileHeader* header =
-      reinterpret_cast<const SimpleFileHeader*>(header_data.data());
+  std::vector<char> header_data(
+      !key_.has_value() ? kInitialHeaderRead : GetHeaderSize(key_->size()));
+  std::optional<size_t> maybe_bytes_read =
+      file->Read(0, base::as_writable_byte_span(header_data));
 
-  if (bytes_read == -1 || static_cast<size_t>(bytes_read) < sizeof(*header)) {
+  if (maybe_bytes_read.value_or(0) < sizeof(SimpleFileHeader)) {
     RecordSyncOpenResult(cache_type_, OPEN_ENTRY_CANT_READ_HEADER);
     return false;
   }
+
+  size_t bytes_read = *maybe_bytes_read;
+  // SAFETY: Above check ensured that we've read at least SimpleFileHeader
+  // bytes, and as its a base of an array it should also be aligned properly.
+  const SimpleFileHeader* header = UNSAFE_BUFFERS(
+      reinterpret_cast<const SimpleFileHeader*>(header_data.data()));
+
   // This resize will not invalidate iterators since it does not enlarge the
   // header_data.
-  DCHECK_LE(static_cast<size_t>(bytes_read), header_data.size());
+  DCHECK_LE(bytes_read, header_data.size());
   header_data.resize(bytes_read);
 
   if (header->initial_magic_number != kSimpleInitialMagicNumber) {
@@ -1398,29 +1410,33 @@ bool SimpleSynchronousEntry::CheckHeaderAndKey(base::File* file,
   size_t expected_header_size = GetHeaderSize(header->key_length);
   if (header_data.size() < expected_header_size) {
     size_t old_size = header_data.size();
-    int bytes_to_read = expected_header_size - old_size;
+    size_t bytes_to_read = expected_header_size - old_size;
     // This resize will invalidate iterators, since it is enlarging header_data.
     header_data.resize(expected_header_size);
-    int read_result =
-        file->Read(old_size, header_data.data() + old_size, bytes_to_read);
-    if (read_result != bytes_to_read) {
+    if (!file->ReadAndCheck(old_size, base::as_writable_byte_span(header_data)
+                                          .subspan(old_size, bytes_to_read))) {
       RecordSyncOpenResult(cache_type_, OPEN_ENTRY_CANT_READ_KEY);
       return false;
     }
-    header = reinterpret_cast<const SimpleFileHeader*>(header_data.data());
+
+    // SAFETY: `header_data` has enough data and right alignment since the
+    // first read.
+    header = UNSAFE_BUFFERS(
+        reinterpret_cast<const SimpleFileHeader*>(header_data.data()));
   }
 
-  char* key_data = header_data.data() + sizeof(*header);
-  if (base::PersistentHash(key_data, header->key_length) != header->key_hash) {
+  base::span key_span(base::as_byte_span(header_data)
+                          .subspan(sizeof(*header), header->key_length));
+  if (base::PersistentHash(key_span) != header->key_hash) {
     RecordSyncOpenResult(cache_type_, OPEN_ENTRY_KEY_HASH_MISMATCH);
     return false;
   }
 
-  std::string key_from_header(key_data, header->key_length);
-  if (key_.empty()) {
-    key_.swap(key_from_header);
+  std::string key_from_header(base::as_string_view(key_span));
+  if (!key_.has_value()) {
+    key_.emplace(std::move(key_from_header));
   } else {
-    if (key_ != key_from_header) {
+    if (*key_ != key_from_header) {
       RecordSyncOpenResult(cache_type_, OPEN_ENTRY_KEY_MISMATCH);
       return false;
     }
@@ -1433,7 +1449,7 @@ bool SimpleSynchronousEntry::CheckHeaderAndKey(base::File* file,
 int SimpleSynchronousEntry::InitializeForOpen(
     BackendFileOperations* file_operations,
     SimpleEntryStat* out_entry_stat,
-    SimpleStreamPrefetchData stream_prefetch_data[2]) {
+    std::array<SimpleStreamPrefetchData, 2>& stream_prefetch_data) {
   DCHECK(!initialized_);
   if (!OpenFiles(file_operations, out_entry_stat)) {
     DLOG(WARNING) << "Could not open platform files for entry.";
@@ -1443,7 +1459,7 @@ int SimpleSynchronousEntry::InitializeForOpen(
     if (empty_file_omitted_[i])
       continue;
 
-    if (key_.empty()) {
+    if (!key_.has_value()) {
       SimpleFileTracker::FileHandle file =
           file_tracker_->Acquire(file_operations, this, SubFileForFileIndex(i));
       // If |key_| is empty, we were opened via the iterator interface, without
@@ -1460,6 +1476,7 @@ int SimpleSynchronousEntry::InitializeForOpen(
       // start reading in the data, depending on stream # and format revision.
       header_and_key_check_needed_[i] = true;
     }
+    size_t key_size = key_->size();
 
     if (i == 0) {
       // File size for stream 0 has been stored temporarily in data_size[1].
@@ -1470,8 +1487,7 @@ int SimpleSynchronousEntry::InitializeForOpen(
         return ret_value_stream_0;
     } else {
       out_entry_stat->set_data_size(
-          2,
-          GetDataSizeFromFileSize(key_.size(), out_entry_stat->data_size(2)));
+          2, GetDataSizeFromFileSize(key_size, out_entry_stat->data_size(2)));
       const int32_t data_size_2 = out_entry_stat->data_size(2);
       int ret_value_stream_2 = net::OK;
       if (data_size_2 < 0) {
@@ -1483,7 +1499,7 @@ int SimpleSynchronousEntry::InitializeForOpen(
         SimpleFileTracker::FileHandle file = file_tracker_->Acquire(
             file_operations, this, SubFileForFileIndex(i));
         int file_offset =
-            out_entry_stat->GetEOFOffsetInFile(key_.size(), 2 /*stream index*/);
+            out_entry_stat->GetEOFOffsetInFile(key_size, 2 /*stream index*/);
         ret_value_stream_2 =
             GetEOFRecordData(file.get(), nullptr, i, file_offset, &eof_record);
       }
@@ -1499,7 +1515,7 @@ int SimpleSynchronousEntry::InitializeForOpen(
     }
   }
 
-  int32_t sparse_data_size = 0;
+  uint64_t sparse_data_size = 0u;
   if (!OpenSparseFileIfExists(file_operations, &sparse_data_size)) {
     RecordSyncOpenResult(cache_type_, OPEN_ENTRY_SPARSE_OPEN_FAILED);
     return net::ERR_FAILED;
@@ -1528,22 +1544,22 @@ bool SimpleSynchronousEntry::InitializeCreatedFile(
       file_operations, this, SubFileForFileIndex(file_index));
   if (!file.IsOK())
     return false;
+  const std::string& key = *key_;
 
   SimpleFileHeader header;
   header.initial_magic_number = kSimpleInitialMagicNumber;
   header.version = kSimpleEntryVersionOnDisk;
 
-  header.key_length = key_.size();
-  header.key_hash = base::PersistentHash(key_);
+  header.key_length = key.size();
+  header.key_hash = base::PersistentHash(key);
 
-  int bytes_written =
-      file->Write(0, reinterpret_cast<char*>(&header), sizeof(header));
-  if (bytes_written != sizeof(header))
+  if (!file->WriteAndCheck(0, base::byte_span_from_ref(header))) {
     return false;
+  }
 
-  bytes_written = file->Write(sizeof(header), key_.data(), key_.size());
-  if (bytes_written != base::checked_cast<int>(key_.size()))
+  if (!file->WriteAndCheck(sizeof(header), base::as_byte_span(key))) {
     return false;
+  }
 
   return true;
 }
@@ -1571,11 +1587,14 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
     BackendFileOperations* file_operations,
     int file_size,
     SimpleEntryStat* out_entry_stat,
-    SimpleStreamPrefetchData stream_prefetch_data[2]) {
+    std::array<SimpleStreamPrefetchData, 2>& stream_prefetch_data) {
   SimpleFileTracker::FileHandle file =
       file_tracker_->Acquire(file_operations, this, SubFileForFileIndex(0));
   if (!file.IsOK())
     return net::ERR_FAILED;
+
+  // `file_size` must be a non-negative value.
+  size_t u_file_size = base::checked_cast<size_t>(file_size);
 
   // We may prefetch data from file in a couple cases:
   //  1) If the file is small enough we may prefetch it entirely.
@@ -1591,28 +1610,31 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
   // Determine a threshold for fully prefetching the entire entry file.  If
   // the entry file is less than or equal to this number of bytes it will
   // be fully prefetched.
-  int full_prefetch_size = GetSimpleCacheFullPrefetchSize();
+  uint32_t full_prefetch_size = GetSimpleCacheFullPrefetchSize();
 
   // Determine how much trailer data to prefetch.  If the full file prefetch
   // does not trigger then this is the number of bytes to read from the end
   // of the file in a single file operation.  Ideally the trailer prefetch
   // will contain at least stream 0 and its EOF record.
-  int trailer_prefetch_size =
+  uint32_t trailer_prefetch_size =
       GetSimpleCacheTrailerPrefetchSize(trailer_prefetch_size_);
 
   OpenPrefetchMode prefetch_mode = OPEN_PREFETCH_NONE;
-  if (file_size <= full_prefetch_size || file_size <= trailer_prefetch_size) {
+  if (u_file_size <= full_prefetch_size ||
+      u_file_size <= trailer_prefetch_size) {
     // Prefetch the entire file.
     prefetch_mode = OPEN_PREFETCH_FULL;
     RecordOpenPrefetchMode(cache_type_, prefetch_mode);
-    if (!prefetch_data.PrefetchFromFile(&file, 0, file_size))
+    if (!prefetch_data.PrefetchFromFile(&file, 0, u_file_size)) {
       return net::ERR_FAILED;
+    }
   } else if (trailer_prefetch_size > 0) {
     // Prefetch trailer data from the end of the file.
     prefetch_mode = OPEN_PREFETCH_TRAILER;
     RecordOpenPrefetchMode(cache_type_, prefetch_mode);
-    size_t length = std::min(trailer_prefetch_size, file_size);
-    size_t offset = file_size - length;
+    size_t length =
+        std::min(static_cast<size_t>(trailer_prefetch_size), u_file_size);
+    uint64_t offset = file_size - length;
     if (!prefetch_data.PrefetchFromFile(&file, offset, length))
       return net::ERR_FAILED;
   } else {
@@ -1625,7 +1647,7 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
   SimpleFileEOF stream_0_eof;
   int rv = GetEOFRecordData(
       file.get(), &prefetch_data, /* file_index = */ 0,
-      /* file_offset = */ file_size - sizeof(SimpleFileEOF), &stream_0_eof);
+      /* file_offset = */ u_file_size - sizeof(SimpleFileEOF), &stream_0_eof);
   if (rv != net::OK)
     return rv;
 
@@ -1643,8 +1665,9 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
   if (has_key_sha256)
     extra_post_stream_0_read += sizeof(net::SHA256HashValue);
 
+  const std::string& key = *key_;
   int32_t stream1_size = file_size - 2 * sizeof(SimpleFileEOF) - stream_0_size -
-                         sizeof(SimpleFileHeader) - key_.size() -
+                         sizeof(SimpleFileHeader) - key.size() -
                          extra_post_stream_0_read;
   if (stream1_size < 0 || stream1_size > file_size)
     return net::ERR_FAILED;
@@ -1667,14 +1690,14 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
   // If prefetch buffer is available, and we have sha256(key) (so we don't need
   // to look at the header), extract out stream 1 info as well.
   int stream_1_offset = out_entry_stat->GetOffsetInFile(
-      key_.size(), /* offset= */ 0, /* stream_index = */ 1);
+      key.size(), /* offset= */ 0, /* stream_index = */ 1);
   int stream_1_read_size =
       sizeof(SimpleFileEOF) + out_entry_stat->data_size(/* stream_index = */ 1);
   if (has_key_sha256 &&
       prefetch_data.HasData(stream_1_offset, stream_1_read_size)) {
     SimpleFileEOF stream_1_eof;
     int stream_1_eof_offset =
-        out_entry_stat->GetEOFOffsetInFile(key_.size(), /* stream_index = */ 1);
+        out_entry_stat->GetEOFOffsetInFile(key.size(), /* stream_index = */ 1);
     rv = GetEOFRecordData(file.get(), &prefetch_data, /* file_index = */ 0,
                           stream_1_eof_offset, &stream_1_eof);
     if (rv != net::OK)
@@ -1690,22 +1713,22 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
 
   // If present, check the key SHA256.
   if (has_key_sha256) {
-    net::SHA256HashValue hash_value;
-    CalculateSHA256OfKey(key_, &hash_value);
-    bool matched =
-        std::memcmp(&hash_value,
-                    stream_prefetch_data[0].data->data() + stream_0_size,
-                    sizeof(hash_value)) == 0;
-    if (!matched)
+    auto hash_value = crypto::hash::Sha256(key);
+    if (base::byte_span_from_ref(hash_value) !=
+        stream_prefetch_data[0].data->span().subspan(
+            static_cast<uint32_t>(stream_0_size), sizeof(hash_value))) {
       return net::ERR_FAILED;
+    }
 
     // Elide header check if we verified sha256(key) via footer.
     header_and_key_check_needed_[0] = false;
   }
 
   // Ensure the key is validated before completion.
-  if (!has_key_sha256 && header_and_key_check_needed_[0])
-    CheckHeaderAndKey(file.get(), 0);
+  if (!has_key_sha256 && header_and_key_check_needed_[0] &&
+      !CheckHeaderAndKey(file.get(), 0)) {
+    return net::ERR_FAILED;
+  }
 
   return net::OK;
 }
@@ -1716,7 +1739,7 @@ bool SimpleSynchronousEntry::ReadFromFileOrPrefetched(
     int file_index,
     int offset,
     int size,
-    char* dest) {
+    base::span<uint8_t> dest) {
   if (offset < 0 || size < 0)
     return false;
   if (size == 0)
@@ -1739,7 +1762,7 @@ bool SimpleSynchronousEntry::ReadFromFileOrPrefetched(
   }
 
   // If we have not prefetched the range then we must read it from disk.
-  return file->Read(start_numeric, dest, length_numeric) == size;
+  return file->ReadAndCheck(start_numeric, dest.first(length_numeric));
 }
 
 int SimpleSynchronousEntry::GetEOFRecordData(base::File* file,
@@ -1749,7 +1772,7 @@ int SimpleSynchronousEntry::GetEOFRecordData(base::File* file,
                                              SimpleFileEOF* eof_record) {
   if (!ReadFromFileOrPrefetched(file, prefetch_data, file_index, file_offset,
                                 sizeof(SimpleFileEOF),
-                                reinterpret_cast<char*>(eof_record))) {
+                                base::byte_span_from_ref(*eof_record))) {
     RecordCheckEOFResult(cache_type_, CHECK_EOF_RESULT_READ_FAILURE);
     return net::ERR_CACHE_CHECKSUM_READ_FAILURE;
   }
@@ -1832,7 +1855,7 @@ base::FilePath SimpleSynchronousEntry::GetFilenameForSubfile(
 
 bool SimpleSynchronousEntry::OpenSparseFileIfExists(
     BackendFileOperations* file_operations,
-    int32_t* out_sparse_data_size) {
+    uint64_t* out_sparse_data_size) {
   DCHECK(!sparse_file_open());
 
   FilePath filename =
@@ -1889,7 +1912,7 @@ void SimpleSynchronousEntry::CloseSparseFile(
 bool SimpleSynchronousEntry::TruncateSparseFile(base::File* sparse_file) {
   DCHECK(sparse_file_open());
 
-  int64_t header_and_key_length = sizeof(SimpleFileHeader) + key_.size();
+  uint64_t header_and_key_length = sizeof(SimpleFileHeader) + key_->size();
   if (!sparse_file->SetLength(header_and_key_length)) {
     DLOG(WARNING) << "Could not truncate sparse file";
     return false;
@@ -1904,38 +1927,33 @@ bool SimpleSynchronousEntry::TruncateSparseFile(base::File* sparse_file) {
 bool SimpleSynchronousEntry::InitializeSparseFile(base::File* sparse_file) {
   SimpleFileHeader header;
   header.initial_magic_number = kSimpleInitialMagicNumber;
-  header.version = kSimpleVersion;
-  header.key_length = key_.size();
-  header.key_hash = base::PersistentHash(key_);
+  header.version = kSimpleSparseEntryVersion;
+  const std::string& key = *key_;
+  header.key_length = key.size();
+  header.key_hash = base::PersistentHash(key);
 
-  int header_write_result =
-      sparse_file->Write(0, reinterpret_cast<char*>(&header), sizeof(header));
-  if (header_write_result != sizeof(header)) {
+  if (!sparse_file->WriteAndCheck(0, base::byte_span_from_ref(header))) {
     DLOG(WARNING) << "Could not write sparse file header";
     return false;
   }
 
-  int key_write_result =
-      sparse_file->Write(sizeof(header), key_.data(), key_.size());
-  if (key_write_result != base::checked_cast<int>(key_.size())) {
+  if (!sparse_file->WriteAndCheck(sizeof(header), base::as_byte_span(key))) {
     DLOG(WARNING) << "Could not write sparse file key";
     return false;
   }
 
   sparse_ranges_.clear();
-  sparse_tail_offset_ = sizeof(header) + key_.size();
+  sparse_tail_offset_ = sizeof(header) + key.size();
 
   return true;
 }
 
 bool SimpleSynchronousEntry::ScanSparseFile(base::File* sparse_file,
-                                            int32_t* out_sparse_data_size) {
-  int64_t sparse_data_size = 0;
+                                            uint64_t* out_sparse_data_size) {
+  uint64_t sparse_data_size = 0;
 
   SimpleFileHeader header;
-  int header_read_result =
-      sparse_file->Read(0, reinterpret_cast<char*>(&header), sizeof(header));
-  if (header_read_result != sizeof(header)) {
+  if (!sparse_file->ReadAndCheck(0, base::byte_span_from_ref(header))) {
     DLOG(WARNING) << "Could not read header from sparse file.";
     return false;
   }
@@ -1945,23 +1963,23 @@ bool SimpleSynchronousEntry::ScanSparseFile(base::File* sparse_file,
     return false;
   }
 
-  if (header.version < kLastCompatSparseVersion ||
-      header.version > kSimpleVersion) {
+  if (header.version != kSimpleSparseEntryVersion) {
     DLOG(WARNING) << "Sparse file unreadable version.";
     return false;
   }
 
   sparse_ranges_.clear();
 
-  int64_t range_header_offset = sizeof(header) + key_.size();
+  uint64_t range_header_offset = sizeof(header) + key_->size();
   while (true) {
     SimpleFileSparseRangeHeader range_header;
-    int range_header_read_result = sparse_file->Read(
-        range_header_offset, reinterpret_cast<char*>(&range_header),
-        sizeof(range_header));
-    if (range_header_read_result == 0)
+    std::optional<size_t> range_header_read_result = sparse_file->Read(
+        range_header_offset, base::byte_span_from_ref(range_header));
+    if (range_header_read_result.has_value() &&
+        *range_header_read_result == 0) {
       break;
-    if (range_header_read_result != sizeof(range_header)) {
+    }
+    if (range_header_read_result.value_or(0) != sizeof(range_header)) {
       DLOG(WARNING) << "Could not read sparse range header.";
       return false;
     }
@@ -1972,20 +1990,29 @@ bool SimpleSynchronousEntry::ScanSparseFile(base::File* sparse_file,
       return false;
     }
 
+    if (range_header.length > std::numeric_limits<size_t>::max()) {
+      DLOG(WARNING) << "Too long sparse range length.";
+      return false;
+    }
+
+    if (!base::CheckAdd(range_header.offset, range_header.length).IsValid()) {
+      DLOG(WARNING) << "Too large sparse range tail.";
+      return false;
+    }
+
     SparseRange range;
     range.offset = range_header.offset;
-    range.length = range_header.length;
+    range.length = static_cast<size_t>(range_header.length);
     range.data_crc32 = range_header.data_crc32;
     range.file_offset = range_header_offset + sizeof(range_header);
-    sparse_ranges_.insert(std::make_pair(range.offset, range));
+    sparse_ranges_.emplace(range.offset, range);
 
     range_header_offset += sizeof(range_header) + range.length;
 
-    DCHECK_GE(sparse_data_size + range.length, sparse_data_size);
     sparse_data_size += range.length;
   }
 
-  *out_sparse_data_size = static_cast<int32_t>(sparse_data_size);
+  *out_sparse_data_size = sparse_data_size;
   sparse_tail_offset_ = range_header_offset;
 
   return true;
@@ -1993,23 +2020,24 @@ bool SimpleSynchronousEntry::ScanSparseFile(base::File* sparse_file,
 
 bool SimpleSynchronousEntry::ReadSparseRange(base::File* sparse_file,
                                              const SparseRange* range,
-                                             int offset,
-                                             int len,
-                                             char* buf) {
-  DCHECK(range);
-  DCHECK(buf);
-  DCHECK_LE(offset, range->length);
-  DCHECK_LE(offset + len, range->length);
+                                             size_t offset_in_range,
+                                             size_t len,
+                                             base::span<uint8_t> buf) {
+  CHECK(range);
+  CHECK_LE(offset_in_range, range->length);
+  CHECK_LE(offset_in_range + len, range->length);
 
-  int bytes_read = sparse_file->Read(range->file_offset + offset, buf, len);
-  if (bytes_read < len) {
+  bool bytes_read_ok =
+      sparse_file->ReadAndCheck(range->file_offset + offset_in_range,
+                                buf.first(base::checked_cast<size_t>(len)));
+  if (!bytes_read_ok) {
     DLOG(WARNING) << "Could not read sparse range.";
     return false;
   }
 
   // If we read the whole range and we have a crc32, check it.
-  if (offset == 0 && len == range->length && range->data_crc32 != 0) {
-    if (simple_util::Crc32(buf, len) != range->data_crc32) {
+  if (offset_in_range == 0 && len == range->length && range->data_crc32 != 0) {
+    if (simple_util::Crc32(buf.first(len)) != range->data_crc32) {
       DLOG(WARNING) << "Sparse range crc32 mismatch.";
       return false;
     }
@@ -2021,17 +2049,16 @@ bool SimpleSynchronousEntry::ReadSparseRange(base::File* sparse_file,
 
 bool SimpleSynchronousEntry::WriteSparseRange(base::File* sparse_file,
                                               SparseRange* range,
-                                              int offset,
-                                              int len,
-                                              const char* buf) {
-  DCHECK(range);
-  DCHECK(buf);
-  DCHECK_LE(offset, range->length);
-  DCHECK_LE(offset + len, range->length);
+                                              size_t offset_in_range,
+                                              size_t len,
+                                              base::span<const uint8_t> buf) {
+  CHECK(range);
+  CHECK_LE(offset_in_range, range->length);
+  CHECK_LE(offset_in_range + len, range->length);
 
   uint32_t new_crc32 = 0;
-  if (offset == 0 && len == range->length) {
-    new_crc32 = simple_util::Crc32(buf, len);
+  if (offset_in_range == 0 && len == range->length) {
+    new_crc32 = simple_util::Crc32(buf.first(len));
   }
 
   if (new_crc32 != range->data_crc32) {
@@ -2043,17 +2070,17 @@ bool SimpleSynchronousEntry::WriteSparseRange(base::File* sparse_file,
     header.length = range->length;
     header.data_crc32 = range->data_crc32;
 
-    int bytes_written =
-        sparse_file->Write(range->file_offset - sizeof(header),
-                           reinterpret_cast<char*>(&header), sizeof(header));
-    if (bytes_written != base::checked_cast<int>(sizeof(header))) {
+    bool bytes_written_ok = sparse_file->WriteAndCheck(
+        range->file_offset - sizeof(header), base::byte_span_from_ref(header));
+    if (!bytes_written_ok) {
       DLOG(WARNING) << "Could not rewrite sparse range header.";
       return false;
     }
   }
 
-  int bytes_written = sparse_file->Write(range->file_offset + offset, buf, len);
-  if (bytes_written < len) {
+  bool bytes_written_ok = sparse_file->WriteAndCheck(
+      range->file_offset + offset_in_range, buf.first(len));
+  if (!bytes_written_ok) {
     DLOG(WARNING) << "Could not write sparse range.";
     return false;
   }
@@ -2062,14 +2089,12 @@ bool SimpleSynchronousEntry::WriteSparseRange(base::File* sparse_file,
 }
 
 bool SimpleSynchronousEntry::AppendSparseRange(base::File* sparse_file,
-                                               int64_t offset,
-                                               int len,
-                                               const char* buf) {
-  DCHECK_GE(offset, 0);
-  DCHECK_GT(len, 0);
-  DCHECK(buf);
+                                               uint64_t offset,
+                                               size_t len,
+                                               base::span<const uint8_t> buf) {
+  DCHECK_NE(len, 0u);
 
-  uint32_t data_crc32 = simple_util::Crc32(buf, len);
+  uint32_t data_crc32 = simple_util::Crc32(buf.first(len));
 
   SimpleFileSparseRangeHeader header;
   header.sparse_range_magic_number = kSimpleSparseRangeMagicNumber;
@@ -2077,28 +2102,28 @@ bool SimpleSynchronousEntry::AppendSparseRange(base::File* sparse_file,
   header.length = len;
   header.data_crc32 = data_crc32;
 
-  int bytes_written = sparse_file->Write(
-      sparse_tail_offset_, reinterpret_cast<char*>(&header), sizeof(header));
-  if (bytes_written != base::checked_cast<int>(sizeof(header))) {
+  std::optional<size_t> bytes_written =
+      sparse_file->Write(sparse_tail_offset_, base::byte_span_from_ref(header));
+  if (!bytes_written.has_value()) {
     DLOG(WARNING) << "Could not append sparse range header.";
     return false;
   }
-  sparse_tail_offset_ += bytes_written;
+  sparse_tail_offset_ += *bytes_written;
 
-  bytes_written = sparse_file->Write(sparse_tail_offset_, buf, len);
-  if (bytes_written < len) {
+  bytes_written = sparse_file->Write(sparse_tail_offset_, buf.first(len));
+  if (!bytes_written.has_value()) {
     DLOG(WARNING) << "Could not append sparse range data.";
     return false;
   }
-  int64_t data_file_offset = sparse_tail_offset_;
-  sparse_tail_offset_ += bytes_written;
+  uint64_t data_file_offset = sparse_tail_offset_;
+  sparse_tail_offset_ += *bytes_written;
 
   SparseRange range;
   range.offset = offset;
   range.length = len;
   range.data_crc32 = data_crc32;
   range.file_offset = data_file_offset;
-  sparse_ranges_.insert(std::make_pair(offset, range));
+  sparse_ranges_.emplace(offset, range);
 
   return true;
 }

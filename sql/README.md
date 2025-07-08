@@ -427,10 +427,11 @@ advantage of SQLite's rowid optimizations.
 primary key reuse would be unacceptable.
 
 
-### Discouraged features
+### Sophisticated features
 
-SQLite exposes a vast array of functionality via SQL statements. The following
-features are not a good match for SQL statements used by Chrome feature code.
+SQLite exposes a vast array of functionality via SQL statements, many of which
+are not a good match for average Chrome feature code. Use them with care and if
+you know what you're doing.
 
 #### PRAGMA statements {#no-pragmas}
 
@@ -442,38 +443,6 @@ Direct `PRAGMA` use limits our ability to customize and secure our SQLite build.
 `PRAGMA` statements may turn on code paths with less testing / fuzzing coverage.
 Furthermore, some `PRAGMA` statements invalidate previously compiled queries,
 reducing the efficiency of Chrome's compiled query cache.
-
-#### Virtual tables {#no-virtual-tables}
-
-[`CREATE VIRTUAL TABLE` statements](https://www.sqlite.org/vtab.html) should not
-be used. The desired functionality should be implemented in C++, and access
-storage using standard SQL statements.
-
-Virtual tables are [SQLite's module system](https://www.sqlite.org/vtab.html).
-SQL statements on virtual tables are essentially running arbitrary code, which
-makes them very difficult to reason about and maintain. Furthermore, the virtual
-table implementations don't receive the same level of fuzzing coverage as the
-SQLite core.
-
-Access to virtual tables is disabled by default for SQLite databases opened with
-Chrome's `sql::Database` infrastructure. This is intended to steer feature
-developers away from the discouraged feature.
-
-Chrome's SQLite build has virtual table functionality reduced to the minimum
-needed to support [FTS3](https://www.sqlite.org/fts3.html) in WebSQL, and an
-internal feature.
-[SQLite's run-time loading mechanism](https://www.sqlite.org/loadext.html) is
-disabled, and most
-[built-in virtual tables](https://www.sqlite.org/vtablist.html) are disabled as
-well.
-
-Ideally we would disable SQLite's virtual table support using
-[SQLITE_OMIT_VIRTUALTABLE](https://sqlite.org/compile.html#omit_virtualtable)
-once [WebSQL](https://www.w3.org/TR/webdatabase/) is removed from Chrome, but
-virtual table support is required to use SQLite's [built-in corruption recovery
-module](https://www.sqlite.org/recovery.html). The [SQLITE_DBPAGE virtual
-table](https://www.sqlite.org/dbpage.html) is also enabled only for corruption
-recovery and should not be used in Chrome.
 
 #### Foreign key constraints {#no-foreign-keys}
 
@@ -507,20 +476,24 @@ After
 to disable SQLite's CHECK constraint support using
 [SQLITE_OMIT_CHECK](https://sqlite.org/compile.html#omit_check).
 
-#### Triggers {#no-triggers}
+#### Triggers {#triggers}
 
-[SQL triggers](https://sqlite.org/lang_createtrigger.html) should not be used.
+[SQL triggers](https://sqlite.org/lang_createtrigger.html) should be used
+thoughtfully.
 
-Triggers significantly increase the difficulty of reviewing and maintaining
-Chrome features that use them.
+Use triggers only if they *increase* legibility and *reduce* query complexity.
+The vast majority of Chrome features should not need triggers as their SQL
+queries are typically very simple, and triggers can obfuscate behavior by
+introducing an easy-to-miss side effect to certain queries. It's generally
+preferred to "manually" execute a second query with the desired effect.
 
-Triggers are not executed on SQLite databases opened with Chrome's
-`sql::Database` infrastructure. This is intended to steer feature developers
-away from the discouraged feature.
+There are exceptions to this rule, such as when the follow-up query would itself
+be much more complex than the trigger, and/or a single trigger can take the
+place of multiple queries.
 
-After [WebSQL](https://www.w3.org/TR/webdatabase/) is removed from Chrome, we
-plan to disable SQLite's trigger support using
-[SQLITE_OMIT_TRIGGER](https://sqlite.org/compile.html#omit_trigger).
+Triggers are disabled by default, with hopes that this will encourage feature
+authors to carefully weigh their use against the alternatives, but can be
+enabled via `DatabaseOptions::set_triggers_enabled()`.
 
 #### Common Table Expressions {#no-ctes}
 
@@ -566,13 +539,7 @@ Double-quoted string literals are non-standard SQL syntax. The SQLite authors
 [currently consider this be a misfeature](https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted).
 
 SQLite support for double-quoted string literals is disabled for databases
-opened with Chrome's `sql::Database` infrastructure. This is intended to steer
-feature developers away from this discouraged feature.
-
-After
-[WebSQL](https://www.w3.org/TR/webdatabase/) is removed from Chrome, we plan
-to disable SQLite's support for double-quoted string literals using
-[SQLITE_DQS=0](https://www.sqlite.org/compile.html#dqs).
+opened with Chrome's `sql::Database` infrastructure.
 
 #### Compound SELECT statements {#no-compound-queries}
 
@@ -619,15 +586,12 @@ reading / before writing the data.
 [Window functions](https://sqlite.org/windowfunctions.html#biwinfunc) are
 disabled in Chrome's SQLite build.
 
-#### ATTACH DATABASE statements {#no-attach}
+#### ATTACH DATABASE statements
 
 [`ATTACH DATABASE` statements](https://www.sqlite.org/lang_attach.html) should
-not be used. Each Chrome feature should store its data in a single database.
+be used thoughtfully. Each Chrome feature should store its data in a single database.
 Chrome code should not assume that transactions across multiple databases are
 atomic.
-
-We plan to remove all existing `ATTACH DATABASE` use from Chrome.
-
 
 ### Disabled features
 
@@ -673,3 +637,30 @@ model of query performance.
 We currently think that this maintenance overhead of window functions exceeds
 any convenience and performance benefits (compared to simpler queries
 coordinated in C++).
+
+#### Virtual tables {#no-virtual-tables}
+
+[`CREATE VIRTUAL TABLE` statements](https://www.sqlite.org/vtab.html) are
+disabled. The desired functionality should be implemented in C++, and access
+storage using standard SQL statements.
+
+Virtual tables are [SQLite's module system](https://www.sqlite.org/vtab.html).
+SQL statements on virtual tables are essentially running arbitrary code, which
+makes them very difficult to reason about and maintain. Furthermore, the virtual
+table implementations don't receive the same level of fuzzing coverage as the
+SQLite core.
+
+Chrome's SQLite build has virtual table functionality reduced to the minimum
+needed to support an internal feature.
+[SQLite's run-time loading mechanism](https://www.sqlite.org/loadext.html) is
+disabled, and most
+[built-in virtual tables](https://www.sqlite.org/vtablist.html) are disabled as
+well.
+
+Ideally we would disable SQLite's virtual table support using
+[SQLITE_OMIT_VIRTUALTABLE](https://sqlite.org/compile.html#omit_virtualtable)
+now that [WebSQL](https://www.w3.org/TR/webdatabase/) has been removed from
+Chrome, but virtual table support is required to use SQLite's
+[built-in corruption recovery module](https://www.sqlite.org/recovery.html). The
+[SQLITE_DBPAGE virtual table](https://www.sqlite.org/dbpage.html) is also
+enabled only for corruption recovery and should not be used in Chrome.

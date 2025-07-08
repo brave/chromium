@@ -5,13 +5,14 @@
 #include "net/tools/transport_security_state_generator/cert_util.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/base64.h"
 #include "base/files/file_util.h"
 #include "base/numerics/clamped_math.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "crypto/evp.h"
 #include "net/tools/transport_security_state_generator/spki_hash.h"
 #include "third_party/boringssl/src/include/openssl/crypto.h"
 
@@ -26,8 +27,8 @@ static const char kPEMEndBlock[] = "-----END %s-----";
 // for the block type in |expected_block_type|. Only attempts the locate the
 // first matching block. Other blocks are ignored. Returns true on success and
 // copies the der structure to |*der_output|. Returns false on error.
-bool ParsePEM(base::StringPiece pem_input,
-              base::StringPiece expected_block_type,
+bool ParsePEM(std::string_view pem_input,
+              std::string_view expected_block_type,
               std::string* der_output) {
   const std::string& block_start =
       base::StringPrintf(kPEMBeginBlock, expected_block_type.data());
@@ -43,7 +44,7 @@ bool ParsePEM(base::StringPiece pem_input,
   if (block_end_pos == std::string::npos)
     return false;
 
-  base::StringPiece base64_encoded =
+  std::string_view base64_encoded =
       pem_input.substr(base64_start_pos, block_end_pos - base64_start_pos);
 
   if (!base::Base64Decode(base::CollapseWhitespaceASCII(base64_encoded, true),
@@ -82,7 +83,7 @@ bool ExtractFieldFromX509Name(X509_NAME* name, int nid, std::string* field) {
 
 }  // namespace
 
-bssl::UniquePtr<X509> GetX509CertificateFromPEM(base::StringPiece pem_data) {
+bssl::UniquePtr<X509> GetX509CertificateFromPEM(std::string_view pem_data) {
   std::string der;
   if (!ParsePEM(pem_data, "CERTIFICATE", &der)) {
     return bssl::UniquePtr<X509>();
@@ -129,28 +130,18 @@ bool CalculateSPKIHashFromCertificate(X509* certificate, SPKIHash* out_hash) {
     return false;
   }
 
-  uint8_t* spki_der;
-  size_t spki_der_len;
-  bssl::ScopedCBB cbb;
-  if (!CBB_init(cbb.get(), 0) ||
-      !EVP_marshal_public_key(cbb.get(), key.get()) ||
-      !CBB_finish(cbb.get(), &spki_der, &spki_der_len)) {
-    return false;
-  }
-
-  out_hash->CalculateFromBytes(spki_der, spki_der_len);
-  OPENSSL_free(spki_der);
+  std::vector<uint8_t> spki_der = crypto::evp::PublicKeyToBytes(key.get());
+  out_hash->CalculateFromBytes(spki_der);
   return true;
 }
 
-bool CalculateSPKIHashFromKey(base::StringPiece pem_key, SPKIHash* out_hash) {
+bool CalculateSPKIHashFromKey(std::string_view pem_key, SPKIHash* out_hash) {
   std::string der;
   bool result = ParsePEM(pem_key, "PUBLIC KEY", &der);
   if (!result) {
     return false;
   }
 
-  out_hash->CalculateFromBytes(reinterpret_cast<const uint8_t*>(der.data()),
-                               der.size());
+  out_hash->CalculateFromBytes(base::as_byte_span(der));
   return true;
 }

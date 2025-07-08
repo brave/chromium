@@ -18,7 +18,6 @@
 #include "storage/browser/file_system/file_observers.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_operation_runner.h"
-#include "storage/browser/file_system/file_system_util.h"
 #include "storage/browser/file_system/memory_file_stream_writer.h"
 #include "storage/browser/file_system/obfuscated_file_util_memory_delegate.h"
 #include "storage/browser/file_system/sandbox_file_system_backend_delegate.h"
@@ -169,7 +168,6 @@ void SandboxFileStreamWriter::DidCreateSnapshotFile(
 
   BucketLocator bucket = url_.bucket().value_or(
       BucketLocator::ForDefaultBucket(url_.storage_key()));
-  bucket.type = FileSystemTypeToQuotaStorageType(url_.type());
 
   DCHECK(quota_manager_proxy);
   quota_manager_proxy->GetBucketSpaceRemaining(
@@ -215,7 +213,7 @@ void SandboxFileStreamWriter::DidWrite(int write_response) {
   has_pending_operation_ = false;
 
   if (write_response <= 0) {
-    // TODO(crbug.com/1091792): Consider listening explicitly for out
+    // TODO(crbug.com/40134326): Consider listening explicitly for out
     // of space errors instead of surfacing all write errors to quota.
     const scoped_refptr<QuotaManagerProxy>& quota_manager_proxy =
         file_system_context_->quota_manager_proxy();

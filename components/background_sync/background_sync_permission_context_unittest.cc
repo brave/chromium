@@ -13,6 +13,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permissions_client.h"
 #include "components/permissions/test/test_permissions_client.h"
@@ -46,7 +47,9 @@ class BackgroundSyncPermissionContextTest
         web_contents()->GetPrimaryMainFrame()->GetGlobalId(),
         permissions::PermissionRequestID::RequestLocalId());
     permission_context->RequestPermission(
-        id, url, /* user_gesture= */ false,
+        std::make_unique<permissions::PermissionRequestData>(
+            permission_context, id,
+            /*user_gesture=*/false, url),
         base::BindOnce(
             &BackgroundSyncPermissionContextTest::TrackPermissionDecision,
             base::Unretained(this), run_loop.QuitClosure()));
@@ -55,8 +58,8 @@ class BackgroundSyncPermissionContextTest
   }
 
   void TrackPermissionDecision(base::RepeatingClosure done_closure,
-                               ContentSetting content_setting) {
-    permission_granted_ = content_setting == CONTENT_SETTING_ALLOW;
+                               PermissionStatus permission_status) {
+    permission_granted_ = permission_status == PermissionStatus::GRANTED;
     std::move(done_closure).Run();
   }
 

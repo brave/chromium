@@ -72,3 +72,25 @@ export function getBrowserVersion(): string {
 export function isLocalDev(): boolean {
   return getBoard() === 'local-dev';
 }
+
+/**
+ * Returns if the CCA capability is disallowed by the policy.
+ */
+export function isCCADisallowed(): boolean {
+  return loadTimeData.getBoolean('cca_disallowed');
+}
+
+/**
+ * Returns the OS version string.
+ */
+export function getOsVersion(): string {
+  return loadTimeData.getString('os_version');
+}
+
+
+/**
+ * Returns if BigBuffer can be used.
+ */
+export function getCanUseBigBuffer(): boolean {
+  return loadTimeData.getBoolean('can_use_big_buffer');
+}

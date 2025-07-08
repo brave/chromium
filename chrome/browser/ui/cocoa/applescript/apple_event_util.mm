@@ -15,10 +15,6 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace chrome::mac {
 
 namespace {
@@ -63,8 +59,8 @@ NSAppleEventDescriptor* ValueToAppleEventDescriptor(const base::Value& value) {
 
   switch (value.type()) {
     case base::Value::Type::NONE:
-      descriptor = [NSAppleEventDescriptor
-          descriptorWithTypeCode:cMissingValue];
+      descriptor =
+          [NSAppleEventDescriptor descriptorWithTypeCode:cMissingValue];
       break;
 
     case base::Value::Type::BOOLEAN: {
@@ -95,7 +91,6 @@ NSAppleEventDescriptor* ValueToAppleEventDescriptor(const base::Value& value) {
 
     case base::Value::Type::BINARY:
       NOTREACHED();
-      break;
 
     case base::Value::Type::DICT: {
       NSAppleEventDescriptor* keyValuePairs =

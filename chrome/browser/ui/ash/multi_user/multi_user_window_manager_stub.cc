@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_stub.h"
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "components/account_id/account_id.h"
 
-MultiUserWindowManagerStub::MultiUserWindowManagerStub() {}
+MultiUserWindowManagerStub::MultiUserWindowManagerStub() = default;
 
-MultiUserWindowManagerStub::~MultiUserWindowManagerStub() {}
+MultiUserWindowManagerStub::~MultiUserWindowManagerStub() = default;
 
 void MultiUserWindowManagerStub::SetWindowOwner(aura::Window* window,
                                                 const AccountId& account_id) {

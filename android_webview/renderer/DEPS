@@ -6,6 +6,7 @@ include_rules = [
 
   "+components/android_system_error_page",
   "+components/autofill/content/renderer",
+  "+components/autofill/core/common",
   "+components/cdm/renderer",
   "+components/network_hints/renderer",
   "+components/page_load_metrics/renderer",
@@ -37,5 +38,4 @@ include_rules = [
   "+third_party/blink/public/web",
 
   "+ui/gfx",
-  "+ui/gl/gpu_memory_buffer.h",
 ]

@@ -5,6 +5,7 @@
 #ifndef IOS_WEB_PUBLIC_TEST_FAKES_FAKE_WEB_STATE_OBSERVER_H_
 #define IOS_WEB_PUBLIC_TEST_FAKES_FAKE_WEB_STATE_OBSERVER_H_
 
+#import "base/memory/raw_ptr.h"
 #include "ios/web/public/test/fakes/fake_web_state_observer_util.h"
 #include "ios/web/public/web_state_observer.h"
 
@@ -14,7 +15,7 @@ class WebState;
 
 // Test observer to check that the WebStateObserver methods are called as
 // expected. Can only observe a single WebState.
-// TODO(crbug.com/775684): fix this to allow observing multiple WebStates.
+// TODO(crbug.com/41350286): fix this to allow observing multiple WebStates.
 class FakeWebStateObserver : public WebStateObserver {
  public:
   FakeWebStateObserver(WebState* web_state);
@@ -93,7 +94,7 @@ class FakeWebStateObserver : public WebStateObserver {
 
   // The WebState this instance is observing. Will be null after
   // WebStateDestroyed has been called.
-  web::WebState* web_state_ = nullptr;
+  raw_ptr<web::WebState> web_state_ = nullptr;
 
   std::unique_ptr<web::TestWasShownInfo> was_shown_info_;
   std::unique_ptr<web::TestWasHiddenInfo> was_hidden_info_;

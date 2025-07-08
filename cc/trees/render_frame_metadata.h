@@ -5,12 +5,13 @@
 #ifndef CC_TREES_RENDER_FRAME_METADATA_H_
 #define CC_TREES_RENDER_FRAME_METADATA_H_
 
+#include <optional>
+
 #include "build/build_config.h"
 #include "cc/cc_export.h"
 #include "components/viz/common/quads/selection.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/vertical_scroll_direction.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_f.h"
@@ -66,7 +67,7 @@ class CC_EXPORT RenderFrameMetadata {
   SkColor4f root_background_color = SkColors::kWhite;
 
   // Scroll offset of the root layer.
-  absl::optional<gfx::PointF> root_scroll_offset;
+  std::optional<gfx::PointF> root_scroll_offset;
 
   // Selection region relative to the current viewport. If the selection is
   // empty or otherwise unused, the bound types will indicate such.
@@ -84,7 +85,7 @@ class CC_EXPORT RenderFrameMetadata {
   // information to be used in making the forwarding decision. It exists the
   // entire time points could be forwarded, and forwarding must stop as soon as
   // it is null.
-  absl::optional<DelegatedInkBrowserMetadata> delegated_ink_metadata;
+  std::optional<DelegatedInkBrowserMetadata> delegated_ink_metadata;
 
   // The device scale factor used to generate a CompositorFrame.
   float device_scale_factor = 1.f;
@@ -94,7 +95,7 @@ class CC_EXPORT RenderFrameMetadata {
   gfx::Size viewport_size_in_pixels;
 
   // The last viz::LocalSurfaceId used to submit a CompositorFrame.
-  absl::optional<viz::LocalSurfaceId> local_surface_id;
+  std::optional<viz::LocalSurfaceId> local_surface_id;
 
   // Page scale factor (always 1.f for sub-frame renderers).
   float page_scale_factor = 1.f;
@@ -113,6 +114,12 @@ class CC_EXPORT RenderFrameMetadata {
   // consider the second scroll event to have caused a change in direction.
   viz::VerticalScrollDirection new_vertical_scroll_direction =
       viz::VerticalScrollDirection::kNull;
+
+  // Indicates that this frame is submitted after the primary main frame
+  // navigating to a session history item, identified by this item sequence
+  // number.
+  static constexpr int64_t kInvalidItemSequenceNumber = -1;
+  int64_t primary_main_frame_item_sequence_number = kInvalidItemSequenceNumber;
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   // Used to position Android bottom bar, whose position is computed by the
@@ -137,6 +144,8 @@ class CC_EXPORT RenderFrameMetadata {
   // Returns whether the root RenderPass of the CompositorFrame has a
   // transparent background color.
   bool has_transparent_background = false;
+
+  bool has_offset_tag = false;
 #endif
 };
 

@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/installer/util/lzma_util.h"
 
-#include <ntstatus.h>
 #include <windows.h>
 
+#include <ntstatus.h>
 #include <stddef.h>
 
 #include <set>
@@ -27,7 +32,7 @@ class SevenZipDelegateImpl : public seven_zip::Delegate {
   SevenZipDelegateImpl(const SevenZipDelegateImpl&) = delete;
   SevenZipDelegateImpl& operator=(const SevenZipDelegateImpl&) = delete;
 
-  absl::optional<DWORD> error_code() const { return error_code_; }
+  std::optional<DWORD> error_code() const { return error_code_; }
   UnPackStatus unpack_error() const { return unpack_error_; }
 
   // seven_zip::Delegate implementation:
@@ -46,9 +51,9 @@ class SevenZipDelegateImpl : public seven_zip::Delegate {
   const raw_ptr<base::FilePath> output_file_;
 
   std::set<base::FilePath> directories_created_;
-  absl::optional<DWORD> error_code_;
+  std::optional<DWORD> error_code_;
   base::File current_file_;
-  absl::optional<base::MemoryMappedFile> mapped_file_;
+  std::optional<base::MemoryMappedFile> mapped_file_;
   UnPackStatus unpack_error_ = UNPACK_NO_ERROR;
 };
 
@@ -88,8 +93,8 @@ void SevenZipDelegateImpl::OnOpenError(seven_zip::Result result) {
     case seven_zip::Result::kSuccess:
     case seven_zip::Result::kMemoryMappingFailed:
     case seven_zip::Result::kNoFilename:
+    case seven_zip::Result::kEncryptedHeaders:
       NOTREACHED();
-      return;
   }
 }
 
@@ -196,7 +201,6 @@ bool SevenZipDelegateImpl::EntryDone(seven_zip::Result result,
     switch (result) {
       case seven_zip::Result::kSuccess:
         NOTREACHED();
-        break;
       case seven_zip::Result::kFailedToAllocate:
         unpack_error_ = UNPACK_ALLOCATE_ERROR;
         break;
@@ -215,6 +219,7 @@ bool SevenZipDelegateImpl::EntryDone(seven_zip::Result result,
       case seven_zip::Result::kMemoryMappingFailed:
       case seven_zip::Result::kMalformedArchive:
       case seven_zip::Result::kUnsupported:
+      case seven_zip::Result::kEncryptedHeaders:
         unpack_error_ = UNPACK_EXTRACT_ERROR;
         break;
     }
@@ -269,7 +274,7 @@ UnPackStatus UnPackArchive(const base::FilePath& archive,
   }
 
   if (status != UNPACK_NO_ERROR) {
-    absl::optional<DWORD> error_code = lzma_util.GetErrorCode();
+    std::optional<DWORD> error_code = lzma_util.GetErrorCode();
     if (error_code.value_or(ERROR_SUCCESS) == ERROR_DISK_FULL)
       return UNPACK_DISK_FULL;
     if (error_code.value_or(ERROR_SUCCESS) == ERROR_IO_DEVICE)
@@ -318,5 +323,5 @@ UnPackStatus LzmaUtilImpl::UnPack(const base::FilePath& location,
 
 void LzmaUtilImpl::CloseArchive() {
   archive_file_.Close();
-  error_code_ = absl::nullopt;
+  error_code_ = std::nullopt;
 }

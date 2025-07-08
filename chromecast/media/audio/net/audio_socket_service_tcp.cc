@@ -2,11 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chromecast/media/audio/net/audio_socket_service.h"
-
 #include "base/logging.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
+#include "chromecast/media/audio/net/audio_socket_service.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -51,7 +50,7 @@ AudioSocketService::AudioSocketService(const std::string& endpoint,
                                                           net::NetLogSource());
   int result = listen_socket_->Listen(
       net::IPEndPoint(net::IPAddress::IPv4Localhost(), port), kListenBacklog,
-      /*ipv6_only=*/absl::nullopt);
+      /*ipv6_only=*/std::nullopt);
 
   if (result != net::OK) {
     LOG(ERROR) << "Listen failed: " << net::ErrorToString(result);

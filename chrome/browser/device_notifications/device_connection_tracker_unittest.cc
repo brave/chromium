@@ -8,8 +8,11 @@
 
 #include "chrome/browser/device_notifications/device_system_tray_icon.h"
 #include "chrome/browser/device_notifications/device_system_tray_icon_renderer.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "extensions/browser/extension_registrar.h"
 
 namespace {
 
@@ -87,7 +90,7 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
                        OriginState(1, t1, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
 
-  // Two origins are removed 5 seconds apart.
+  // Two origins are removed 1 seconds apart.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()))
@@ -104,8 +107,8 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
                        OriginState(1, t1, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
 
-  task_environment()->FastForwardBy(base::Seconds(5));
-  auto t6 = TimeTicks::Now();
+  task_environment()->FastForwardBy(base::Seconds(1));
+  auto t2 = TimeTicks::Now();
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()));
@@ -117,24 +120,24 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
                   Pair(origin_name_pairs[0].first,
                        OriginState(0, t1, origin_name_pairs[0].second)),
                   Pair(origin_name_pairs[1].first,
-                       OriginState(0, t6, origin_name_pairs[1].second))));
+                       OriginState(0, t2, origin_name_pairs[1].second))));
 
-  // The first origin is removed at t11.
+  // The first origin is removed at t4.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()));
   }
-  task_environment()->FastForwardBy(base::Seconds(5));
-  auto t11 = TimeTicks::Now();
+  task_environment()->FastForwardBy(base::Seconds(2));
+  auto t4 = TimeTicks::Now();
   EXPECT_EQ(connection_tracker->total_connection_count(), 0);
   EXPECT_THAT(connection_tracker->origins(),
               UnorderedElementsAre(
                   Pair(origin_name_pairs[1].first,
-                       OriginState(0, t6, origin_name_pairs[1].second))));
+                       OriginState(0, t2, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
 
-  // New connection on the second origin comes in at t11, so it won't be
-  // removed at t16.
+  // New connection on the second origin comes in at t4, so it won't be
+  // removed at t5.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()));
@@ -144,11 +147,11 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
   EXPECT_THAT(connection_tracker->origins(),
               UnorderedElementsAre(
                   Pair(origin_name_pairs[1].first,
-                       OriginState(1, t11, origin_name_pairs[1].second))));
+                       OriginState(1, t4, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
-  task_environment()->FastForwardBy(base::Seconds(5));
-  auto t16 = TimeTicks::Now();
-  // Scheduled CleanUpOrigin is no-op at t16.
+  task_environment()->FastForwardBy(base::Seconds(1));
+  auto t5 = TimeTicks::Now();
+  // Scheduled CleanUpOrigin is no-op at t5.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()))
@@ -161,10 +164,10 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
   EXPECT_THAT(connection_tracker->origins(),
               UnorderedElementsAre(
                   Pair(origin_name_pairs[1].first,
-                       OriginState(1, t11, origin_name_pairs[1].second))));
+                       OriginState(1, t4, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
 
-  // The last connection of the second origin is gone at t16.
+  // The last connection of the second origin is gone at t5.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 NotifyConnectionCountUpdated(profile()));
@@ -174,17 +177,61 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnection(
   EXPECT_THAT(connection_tracker->origins(),
               UnorderedElementsAre(
                   Pair(origin_name_pairs[1].first,
-                       OriginState(0, t16, origin_name_pairs[1].second))));
+                       OriginState(0, t5, origin_name_pairs[1].second))));
   testing::Mock::VerifyAndClearExpectations(&connection_tracker);
 
-  // The second origin is removed at time t26, and the profile is removed from
+  // The second origin is removed at time t8, and the profile is removed from
   // the system tray icon because there are no active origins on this profile.
   if (has_system_tray_icon) {
     EXPECT_CALL(*mock_device_system_tray_icon,
                 UnstageProfile(profile(), /*immediate=*/true))
         .Times(1);
   }
-  task_environment()->FastForwardBy(base::Seconds(10));
+  task_environment()->FastForwardBy(base::Seconds(3));
+  EXPECT_EQ(connection_tracker->total_connection_count(), 0);
+  EXPECT_TRUE(connection_tracker->origins().empty());
+}
+
+void DeviceConnectionTrackerTestBase::TestWhitelistedOrigin(
+    const std::pair<url::Origin, std::string> whitelisted_origin,
+    const std::pair<url::Origin, std::string> non_whitelisted_origin) {
+  auto t0 = TimeTicks::Now();
+  MockDeviceSystemTrayIcon* mock_device_system_tray_icon =
+      GetMockDeviceSystemTrayIcon();
+  auto* connection_tracker = GetDeviceConnectionTracker(profile(), true);
+
+  EXPECT_CALL(*mock_device_system_tray_icon, StageProfile(profile())).Times(0);
+  connection_tracker->IncrementConnectionCount(whitelisted_origin.first);
+  EXPECT_EQ(connection_tracker->total_connection_count(), 0);
+  testing::Mock::VerifyAndClearExpectations(&connection_tracker);
+
+  EXPECT_CALL(*mock_device_system_tray_icon, StageProfile(profile()));
+  connection_tracker->IncrementConnectionCount(non_whitelisted_origin.first);
+  EXPECT_EQ(connection_tracker->total_connection_count(), 1);
+  EXPECT_THAT(connection_tracker->origins(),
+              UnorderedElementsAre(
+                  Pair(non_whitelisted_origin.first,
+                       OriginState(1, t0, non_whitelisted_origin.second))));
+  testing::Mock::VerifyAndClearExpectations(&connection_tracker);
+
+  EXPECT_CALL(*mock_device_system_tray_icon,
+              UnstageProfile(profile(), /*immediate=*/true))
+      .Times(0);
+  connection_tracker->DecrementConnectionCount(whitelisted_origin.first);
+  EXPECT_EQ(connection_tracker->total_connection_count(), 1);
+  EXPECT_THAT(connection_tracker->origins(),
+              UnorderedElementsAre(
+                  Pair(non_whitelisted_origin.first,
+                       OriginState(1, t0, non_whitelisted_origin.second))));
+
+  EXPECT_CALL(*mock_device_system_tray_icon,
+              NotifyConnectionCountUpdated(profile()));
+
+  connection_tracker->DecrementConnectionCount(non_whitelisted_origin.first);
+  EXPECT_CALL(*mock_device_system_tray_icon,
+              UnstageProfile(profile(), /*immediate=*/true));
+
+  task_environment()->FastForwardBy(base::Seconds(3));
   EXPECT_EQ(connection_tracker->total_connection_count(), 0);
   EXPECT_TRUE(connection_tracker->origins().empty());
 }
@@ -208,6 +255,26 @@ DeviceConnectionTrackerTestBase::CreateExtensionWithName(
   return extension;
 }
 
+scoped_refptr<const extensions::Extension>
+DeviceConnectionTrackerTestBase::CreateExtensionWithNameAndId(
+    const std::string& extension_name,
+    const std::string& extension_id) {
+  auto manifest = base::Value::Dict()
+                      .Set("name", extension_name)
+                      .Set("description", "For testing.")
+                      .Set("version", "0.1")
+                      .Set("manifest_version", 2)
+                      .Set("web_accessible_resources",
+                           base::Value::List().Append("index.html"));
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::ExtensionBuilder(/*name=*/extension_name)
+          .SetID(extension_id)
+          .MergeManifest(std::move(manifest))
+          .Build();
+  DCHECK(extension);
+  return extension;
+}
+
 void DeviceConnectionTrackerTestBase::AddExtensionToProfile(
     Profile* profile,
     const extensions::Extension* extension) {
@@ -217,11 +284,11 @@ void DeviceConnectionTrackerTestBase::AddExtensionToProfile(
   extensions::ExtensionService* extension_service =
       extension_system->extension_service();
   if (!extension_service) {
-    extension_service = extension_system->CreateExtensionService(
+    extension_system->CreateExtensionService(
         base::CommandLine::ForCurrentProcess(), base::FilePath(),
         /*autoupdate_enabled=*/false);
   }
-  extension_service->AddExtension(extension);
+  extensions::ExtensionRegistrar::Get(profile)->AddExtension(extension);
 }
 
 void DeviceConnectionTrackerTestBase::TestDeviceConnectionExtensionOrigins(
@@ -233,6 +300,19 @@ void DeviceConnectionTrackerTestBase::TestDeviceConnectionExtensionOrigins(
   TestDeviceConnection(has_system_tray_icon,
                        {{extension1->origin(), extension1->name()},
                         {extension2->origin(), extension2->name()}});
+}
+
+void DeviceConnectionTrackerTestBase::TestSingleProfileWhitelistedExtension(
+    std::string whitelisted_extension_name,
+    std::string whitelisted_extension_id) {
+  auto whitelisted_extension = CreateExtensionWithNameAndId(
+      whitelisted_extension_name, whitelisted_extension_id);
+  auto extension2 = CreateExtensionWithName("Test Extension 2");
+  AddExtensionToProfile(profile(), whitelisted_extension.get());
+  AddExtensionToProfile(profile(), extension2.get());
+  TestWhitelistedOrigin(
+      {whitelisted_extension->origin(), whitelisted_extension->name()},
+      {extension2->origin(), extension2->name()});
 }
 
 void DeviceConnectionTrackerTestBase::TestProfileDestroyedExtensionOrigin() {
@@ -265,8 +345,8 @@ void DeviceConnectionTrackerTestBase::TestProfileDestroyedExtensionOrigin() {
       UnorderedElementsAre(Pair(origin, OriginState(0, t0, "Test Extension"))));
   testing::Mock::VerifyAndClearExpectations(&device_connection_tracker);
 
-  // The profile is destroyed at t5.
-  task_environment()->FastForwardBy(base::Seconds(5));
+  // The profile is destroyed at t2.
+  task_environment()->FastForwardBy(base::Seconds(2));
   EXPECT_CALL(*mock_device_system_tray_icon,
               UnstageProfile(profile_to_be_destroyed, /*immediate=*/true))
       .Times(1);
@@ -274,11 +354,11 @@ void DeviceConnectionTrackerTestBase::TestProfileDestroyedExtensionOrigin() {
   testing::Mock::VerifyAndClearExpectations(&device_connection_tracker);
 
   // The connection tracker is destroyed when the profile is destroyed. No
-  // UnstageProfile is sent to the system tray icon at time t10.
+  // UnstageProfile is sent to the system tray icon at time t3.
   EXPECT_CALL(*mock_device_system_tray_icon,
               UnstageProfile(profile_to_be_destroyed, /*immediate=*/true))
       .Times(0);
-  task_environment()->FastForwardBy(base::Seconds(10));
+  task_environment()->FastForwardBy(base::Seconds(1));
 }
 
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)

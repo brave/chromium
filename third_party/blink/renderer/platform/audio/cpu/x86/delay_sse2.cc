@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/audio/delay.h"
 
 #include <xmmintrin.h>
+
+#include <array>
 
 namespace blink {
 
@@ -56,10 +63,10 @@ std::tuple<unsigned, int> Delay::ProcessARateVector(
 
   const float sample_rate = sample_rate_;
   const float* delay_times = delay_times_.Data();
-
   int w_index = write_index_;
 
   const __m128 v_sample_rate = _mm_set1_ps(sample_rate);
+  const __m128 v_all_zeros = _mm_setzero_ps();
 
   // The buffer length as a float and as an int so we don't need to constant
   // convert from one to the other.
@@ -70,8 +77,8 @@ std::tuple<unsigned, int> Delay::ProcessARateVector(
   const __m128i v_incr = _mm_set1_epi32(4);
 
   // Temp arrays for storing the samples needed for interpolation
-  float sample1[4] __attribute((aligned(16)));
-  float sample2[4] __attribute((aligned(16)));
+  std::array<float, 4> sample1 __attribute((aligned(16)));
+  std::array<float, 4> sample2 __attribute((aligned(16)));
 
   // Initialize the write index vector, and  wrap the values if needed.
   __m128i v_write_index =
@@ -82,7 +89,10 @@ std::tuple<unsigned, int> Delay::ProcessARateVector(
   int k = 0;
 
   for (int n = 0; n < number_of_loops; ++n, k += 4) {
-    const __m128 v_delay_time = _mm_loadu_ps(delay_times + k);
+    // It's possible that `delay_time` contains negative values. Make sure
+    // they are greater than zero.
+    const __m128 v_delay_time = _mm_max_ps(_mm_loadu_ps(delay_times + k),
+                                           v_all_zeros);
     const __m128 v_desired_delay_frames =
         _mm_mul_ps(v_delay_time, v_sample_rate);
 
@@ -95,7 +105,8 @@ std::tuple<unsigned, int> Delay::ProcessARateVector(
         WrapPositionVector(v_read_position, v_buffer_length_float);
 
     // Get indices into the buffer for the samples we need for interpolation.
-    const __m128i v_read_index1 = _mm_cvttps_epi32(v_read_position);
+    const __m128i v_read_index1 = WrapIndexVector(
+        _mm_cvttps_epi32(v_read_position), v_buffer_length_int);
     const __m128i v_read_index2 = WrapIndexVector(
         _mm_add_epi32(v_read_index1, _mm_set1_epi32(1)), v_buffer_length_int);
 
@@ -112,8 +123,8 @@ std::tuple<unsigned, int> Delay::ProcessARateVector(
       sample2[m] = buffer[read_index2[m]];
     }
 
-    const __m128 v_sample1 = _mm_load_ps(sample1);
-    const __m128 v_sample2 = _mm_load_ps(sample2);
+    const __m128 v_sample1 = _mm_load_ps(sample1.data());
+    const __m128 v_sample2 = _mm_load_ps(sample2.data());
 
     v_write_index = _mm_add_epi32(v_write_index, v_incr);
     v_write_index = WrapIndexVector(v_write_index, v_buffer_length_int);

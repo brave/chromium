@@ -30,7 +30,6 @@ bool ScopeToPrefName(ChromeSettingScope scope, std::string* result) {
       break;
   }
   NOTREACHED();
-  return false;
 }
 
 const char kPrefPreferences[] = "preferences";

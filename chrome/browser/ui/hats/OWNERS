@@ -1,4 +1,5 @@
-feuunk@chromium.org
+fjacky@chromium.org
 msramek@chromium.org
-sauski@google.com
-eokoyomon@chromium.org
+
+per-file survey_config.cc=set noparent
+per-file survey_config.cc=file://chrome/browser/ui/hats/HATS_PRIVACY_OWNERS

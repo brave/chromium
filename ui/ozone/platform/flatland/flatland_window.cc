@@ -7,7 +7,6 @@
 #include <fidl/fuchsia.ui.pointer/cpp/hlcpp_conversion.h>
 #include <fidl/fuchsia.ui.views/cpp/hlcpp_conversion.h>
 #include <lib/async/default.h>
-#include <lib/ui/scenic/cpp/view_identity.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -21,6 +20,7 @@
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "ui/base/cursor/platform_cursor.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/events/event.h"
@@ -207,7 +207,7 @@ void FlatlandWindow::SetBoundsInPixels(const gfx::Rect& bounds) {
 }
 
 gfx::Rect FlatlandWindow::GetBoundsInDIP() const {
-  // TODO(crbug.com/1382849): Remove the hardcoded values and return
+  // TODO(crbug.com/42050542): Remove the hardcoded values and return
   // |logical_size_|.
   return platform_window_delegate_->ConvertRectToDIP(bounds_);
 }
@@ -292,7 +292,7 @@ PlatformWindowState FlatlandWindow::GetPlatformWindowState() const {
   if (!is_view_attached_)
     return PlatformWindowState::kMinimized;
 
-  // TODO(crbug.com/1241868): We cannot tell what portion of the screen is
+  // TODO(crbug.com/42050332): We cannot tell what portion of the screen is
   // occupied by the View, so report is as maximized to reduce the space used
   // by any browser chrome.
   return PlatformWindowState::kMaximized;

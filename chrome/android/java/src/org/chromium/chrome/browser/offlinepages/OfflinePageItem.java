@@ -4,9 +4,10 @@
 
 package org.chromium.chrome.browser.offlinepages;
 
-/**
- * Simple object representing an offline page.
- */
+import org.chromium.build.annotations.NullMarked;
+
+/** Simple object representing an offline page. */
+@NullMarked
 public class OfflinePageItem {
     private final String mUrl;
     private final long mOfflineId;
@@ -19,9 +20,18 @@ public class OfflinePageItem {
     private final long mLastAccessTimeMs;
     private final String mRequestOrigin;
 
-    public OfflinePageItem(String url, long offlineId, String clientNamespace, String clientId,
-            String title, String filePath, long fileSize, long creationTimeMs, int accessCount,
-            long lastAccessTimeMs, String requestOrigin) {
+    public OfflinePageItem(
+            String url,
+            long offlineId,
+            String clientNamespace,
+            String clientId,
+            String title,
+            String filePath,
+            long fileSize,
+            long creationTimeMs,
+            int accessCount,
+            long lastAccessTimeMs,
+            String requestOrigin) {
         mUrl = url;
         mOfflineId = offlineId;
         mClientId = new ClientId(clientNamespace, clientId);

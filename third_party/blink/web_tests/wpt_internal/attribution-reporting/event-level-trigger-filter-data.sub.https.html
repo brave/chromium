@@ -7,6 +7,7 @@
 <meta name="variant" content="?input=filters_single_filter_with_multiple_values">
 <meta name="variant" content="?input=filters_multiple_filters">
 <meta name="variant" content="?input=filters_no_matching">
+<meta name="variant" content="?input=filters_lookback_window">
 <meta name="variant" content="?input=not_filters_implicit_matching_event_source_type">
 <meta name="variant" content="?input=not_filters_implicit_matching_navigation_source_type">
 <meta name="variant" content="?input=not_filters_empty_filter_data">
@@ -33,19 +34,22 @@ attribution_reporting_promise_test(async t => {
     destination: 'https://{{host}}',
     filter_data: inputJSON.source_filter_data,
   };
-  await registerAttributionSrc({
+  registerAttributionSrc({
     source,
     method: inputJSON.method === undefined ? 'open' : inputJSON.method,
-    cookie: attributionDebugCookie,
   });
   await waitForSourceToBeRegistered(source.source_event_id);
 
-  await registerAttributionSrc({
+  // We wait 2s to test that a trigger with a 1s lookback_window is not going
+  // to match.
+  if (input === 'filters_lookback_window') {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  registerAttributionSrc({
     trigger: {
       event_trigger_data: inputJSON.event_trigger_data,
       debug_reporting: inputJSON.debug_reporting,
     },
-    cookie: inputJSON.cookie,
   });
 
   if (inputJSON.expected_trigger_data) {

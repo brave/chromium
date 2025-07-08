@@ -29,12 +29,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
 
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component_impl.h"
+#include "third_party/blink/renderer/platform/webrtc/peer_connection_remote_audio_source.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
@@ -120,6 +126,19 @@ void MediaStreamDescriptor::SetActive(bool active) {
     observer->ActiveStateChanged(active_);
 }
 
+void MediaStreamDescriptor::NotifyEnabledStateChangeForWebRtcAudio(
+    bool enabled) {
+  CHECK(
+      base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack));
+  // We don't store the enabled state here, instead only the 'WebMediaPlayerMS'
+  // will have the state.
+  // Iterate over a copy of |observers_| to avoid re-entrancy issues.
+  Vector<WebMediaStreamObserver*> observers = observers_;
+  for (auto*& observer : observers) {
+    observer->EnabledStateChangedForWebRtcAudio(enabled);
+  }
+}
+
 void MediaStreamDescriptor::AddObserver(WebMediaStreamObserver* observer) {
   DCHECK_EQ(observers_.Find(observer), kNotFound);
   observers_.push_back(observer);
@@ -134,7 +153,7 @@ void MediaStreamDescriptor::RemoveObserver(WebMediaStreamObserver* observer) {
 MediaStreamDescriptor::MediaStreamDescriptor(
     const MediaStreamComponentVector& audio_components,
     const MediaStreamComponentVector& video_components)
-    : MediaStreamDescriptor(WTF::CreateCanonicalUUIDString(),
+    : MediaStreamDescriptor(CreateCanonicalUUIDString(),
                             audio_components,
                             video_components) {}
 

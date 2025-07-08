@@ -28,8 +28,8 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/metrics_service.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/spare_render_process_host_manager.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/back_forward_cache_util.h"
@@ -65,7 +65,7 @@ class TestMemoryDetails : public MetricsMemoryDetails {
   void StartFetchAndWait() {
     uma_ = std::make_unique<base::HistogramTester>();
     StartFetch();
-    content::RunMessageLoop();
+    loop_.Run();
   }
 
   // Returns a HistogramTester which observed the most recent call to
@@ -97,15 +97,16 @@ class TestMemoryDetails : public MetricsMemoryDetails {
   }
 
  private:
-  ~TestMemoryDetails() override {}
+  ~TestMemoryDetails() override = default;
 
   void OnDetailsAvailable() override {
     MetricsMemoryDetails::OnDetailsAvailable();
     // Exit the loop initiated by StartFetchAndWait().
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    loop_.QuitWhenIdle();
   }
 
   std::unique_ptr<base::HistogramTester> uma_;
+  base::RunLoop loop_;
 };
 
 // This matcher takes three other matchers as arguments, and applies one of them
@@ -170,12 +171,12 @@ void PrintTo(const SampleMatcherP2<P1, P2>& matcher, std::ostream* os) {
 
 class SiteDetailsBrowserTest : public extensions::ExtensionBrowserTest {
  public:
-  SiteDetailsBrowserTest() {}
+  SiteDetailsBrowserTest() = default;
 
   SiteDetailsBrowserTest(const SiteDetailsBrowserTest&) = delete;
   SiteDetailsBrowserTest& operator=(const SiteDetailsBrowserTest&) = delete;
 
-  ~SiteDetailsBrowserTest() override {}
+  ~SiteDetailsBrowserTest() override = default;
 
   void SetUpOnMainThread() override {
     extensions::ExtensionBrowserTest::SetUpOnMainThread();
@@ -183,7 +184,8 @@ class SiteDetailsBrowserTest : public extensions::ExtensionBrowserTest {
 
     // Add content/test/data so we can use cross_site_iframe_factory.html
     base::FilePath test_data_dir;
-    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+    ASSERT_TRUE(
+        base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir));
     embedded_test_server()->ServeFilesFromDirectory(
         test_data_dir.AppendASCII("content/test/data/"));
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -270,15 +272,14 @@ class SiteDetailsBrowserTest : public extensions::ExtensionBrowserTest {
   }
 
   int GetRenderProcessCountFromUma(base::HistogramTester* uma) {
-    auto buckets = uma->GetAllSamples("Memory.RenderProcessHost.Count.All");
+    auto buckets = uma->GetAllSamples("Memory.RenderProcessHost.Count2.All");
     EXPECT_EQ(buckets.size(), 1u);
     int rph_count = buckets[0].min;
 
-    // Memory.RenderProcessHost.Count.All includes the spare process. If a
-    // spare is present, subtract it from total count since the tests below
-    // assume no spare.
-    if (content::RenderProcessHost::GetSpareRenderProcessHostForTesting())
-      rph_count--;
+    // Memory.RenderProcessHost.Count2.All includes all spare processes.
+    // Subtract them from total count since the tests below assume no spare.
+    rph_count -=
+        content::SpareRenderProcessHostManager::Get().GetSpares().size();
 
     return rph_count;
   }
@@ -409,8 +410,7 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_ManyIframes) {
   // four processes already in the BrowsingInstance.
   GURL dcbae_url = embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?d(c(b(a(e))))");
-  ui_test_utils::UrlLoadObserver load_complete(
-      dcbae_url, content::NotificationService::AllSources());
+  ui_test_utils::UrlLoadObserver load_complete(dcbae_url);
   ASSERT_EQ(3, browser()->tab_strip_model()->count());
   ASSERT_TRUE(
       content::ExecJs(browser()->tab_strip_model()->GetActiveWebContents(),
@@ -438,7 +438,7 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_ManyIframes) {
                   ElementsAre(Bucket(12, 1), Bucket(29, 1), Bucket(68, 1))));
 }
 
-// TODO(crbug.com/671891): This test is flaky.
+// TODO(crbug.com/40496888): This test is flaky.
 IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_IsolateExtensions) {
   // We start on "about:blank", which should be credited with a process in this
   // case.
@@ -480,8 +480,8 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_IsolateExtensions) {
   // Tab1 navigates its first iframe to a resource of extension1. This shouldn't
   // result in a new extension process (it should share with extension1's
   // background page).
-  content::NavigateIframeToURL(
-      tab1, "child-0", extension1->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab1, "child-0",
+                               extension1->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_EQ(GetRenderProcessCountFromUma(details->uma()),
@@ -493,8 +493,8 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_IsolateExtensions) {
   // Tab2 navigates its first iframe to a resource of extension1. This also
   // shouldn't result in a new extension process (it should share with the
   // background page and the other iframe).
-  content::NavigateIframeToURL(
-      tab2, "child-0", extension1->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab2, "child-0",
+                               extension1->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_EQ(GetRenderProcessCountFromUma(details->uma()),
@@ -505,8 +505,8 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_IsolateExtensions) {
 
   // Tab1 navigates its second iframe to a resource of extension2. This SHOULD
   // result in a new process since extension2 had no existing process.
-  content::NavigateIframeToURL(
-      tab1, "child-1", extension2->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab1, "child-1",
+                               extension2->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_EQ(GetRenderProcessCountFromUma(details->uma()),
@@ -517,8 +517,8 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, DISABLED_IsolateExtensions) {
 
   // Tab2 navigates its second iframe to a resource of extension2. This should
   // share the existing extension2 process.
-  content::NavigateIframeToURL(
-      tab2, "child-1", extension2->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab2, "child-1",
+                               extension2->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_EQ(GetRenderProcessCountFromUma(details->uma()),
@@ -605,7 +605,7 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest, ExtensionWithTwoWebIframes) {
   const Extension* extension = CreateExtension("Test Extension", false);
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("/two_http_iframes.html")));
+      browser(), extension->GetResourceURL("two_http_iframes.html")));
 
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
@@ -707,8 +707,7 @@ IN_PROC_BROWSER_TEST_F(SiteDetailsBrowserTest,
   // BrowsingInstance.
   GURL dcbae_url = embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?d(c(b(j(k))))");
-  ui_test_utils::UrlLoadObserver load_complete(
-      dcbae_url, content::NotificationService::AllSources());
+  ui_test_utils::UrlLoadObserver load_complete(dcbae_url);
   ASSERT_EQ(1, browser()->tab_strip_model()->count());
   ASSERT_TRUE(
       content::ExecJs(browser()->tab_strip_model()->GetActiveWebContents(),
@@ -778,8 +777,8 @@ IN_PROC_BROWSER_TEST_F(
   // Navigate the tab's first iframe to a resource of the extension. The
   // extension iframe will be put in the same BrowsingInstance as it is part
   // of the frame tree.
-  content::NavigateIframeToURL(
-      tab, "child-0", extension1->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab, "child-0",
+                               extension1->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_THAT(details->uma()->GetAllSamples(
@@ -799,8 +798,8 @@ IN_PROC_BROWSER_TEST_F(
 
   // Navigate the second iframe of the tab to the second extension. It should
   // stay in the same BrowsingInstance as the page.
-  content::NavigateIframeToURL(
-      tab, "child-1", extension2->GetResourceURL("/blank_iframe.html"));
+  content::NavigateIframeToURL(tab, "child-1",
+                               extension2->GetResourceURL("blank_iframe.html"));
   details = new TestMemoryDetails();
   details->StartFetchAndWait();
   EXPECT_THAT(details->uma()->GetAllSamples(
@@ -824,7 +823,7 @@ class PrerenderSiteDetailsBrowserTest : public InProcessBrowserTest {
       const PrerenderSiteDetailsBrowserTest&) = delete;
 
   void SetUp() override {
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
     InProcessBrowserTest::SetUp();
   }
   void SetUpOnMainThread() override {
@@ -846,7 +845,8 @@ IN_PROC_BROWSER_TEST_F(PrerenderSiteDetailsBrowserTest,
 
   // Load a page in the prerender.
   GURL prerender_url = embedded_test_server()->GetURL("/title2.html");
-  int host_id = prerender_helper_.AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper_.AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*web_contents(), host_id);
   EXPECT_FALSE(host_observer.was_activated());
 

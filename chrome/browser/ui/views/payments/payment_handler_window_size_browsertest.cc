@@ -7,7 +7,8 @@
 #include "chrome/browser/ui/views/payments/payment_request_browsertest_base.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view_ids.h"
 #include "chrome/browser/ui/views/payments/payment_request_views_util.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,7 +33,9 @@ class PaymentHandlerWindowSizeTest : public PaymentRequestBrowserTestBase {
     NavigateTo("/payment_handler.html");
   }
 
-  gfx::Size DialogViewSize() { return dialog_view()->CalculatePreferredSize(); }
+  gfx::Size DialogViewSize() {
+    return dialog_view()->CalculatePreferredSize({});
+  }
 
   const gfx::Size expected_payment_request_dialog_size_;
 };
@@ -74,10 +77,10 @@ IN_PROC_BROWSER_TEST_F(PaymentHandlerWindowSizeTest, ValidateDialogSize) {
   ClickOnDialogViewAndWait(DialogViewID::PAY_BUTTON, dialog_view());
   EXPECT_EQ(expected_payment_handler_dialog_size, DialogViewSize());
 
-  // Check that dialog size resets after back navigation from payment handler
-  // window.
-  ClickOnBackArrow();
-  EXPECT_EQ(expected_payment_request_dialog_size_, DialogViewSize());
+  // The test flakily hangs if we don't close the payment handler dialog.
+  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
+  ClickOnDialogViewAndWait(DialogViewID::CANCEL_BUTTON,
+                           /*wait_for_animation=*/false);
 }
 
 }  // namespace payments

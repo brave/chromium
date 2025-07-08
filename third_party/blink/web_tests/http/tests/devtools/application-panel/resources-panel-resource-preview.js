@@ -6,14 +6,17 @@ import {TestRunner} from 'test_runner';
 import {ApplicationTestRunner} from 'application_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as Application from 'devtools/panels/application/application.js';
+import * as Common from 'devtools/core/common/common.js';
+import * as SourceFrame from 'devtools/ui/legacy/components/source_frame/source_frame.js';
+import * as UI from 'devtools/ui/legacy/legacy.js';
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(`Tests Application Panel preview for resources of different types.\n`);
-  await TestRunner.loadLegacyModule('console');
     // Note: every test that uses a storage API must manually clean-up state from previous tests.
   await ApplicationTestRunner.resetState();
 
-  await TestRunner.loadLegacyModule('console');
-  await TestRunner.loadLegacyModule('source_frame');
   await TestRunner.showPanel('resources');
   await TestRunner.loadHTML(`
       <img src="../resources/image.png">
@@ -34,14 +37,16 @@ import {ConsoleTestRunner} from 'console_test_runner';
 
   function dumpCurrentState(label) {
     var types = new Map([
-      [SourceFrame.ResourceSourceFrame, 'source'], [SourceFrame.ImageView, 'image'], [SourceFrame.JSONView, 'json']
+      [SourceFrame.ResourceSourceFrame.ResourceSourceFrame, 'source'],
+      [SourceFrame.ImageView.ImageView, 'image'],
+      [SourceFrame.JSONView.JSONView, 'json']
     ]);
 
-    var view = UI.panels.resources;
+    var view = Application.ResourcesPanel.ResourcesPanel.instance();
     TestRunner.addResult(label);
     dump(view.sidebar.sidebarTree.rootElement(), '');
     var visibleView = view.visibleView;
-    if (visibleView instanceof UI.SearchableView)
+    if (visibleView instanceof UI.SearchableView.SearchableView)
       visibleView = visibleView.children()[0];
     var typeLabel = 'unknown';
     for (var type of types) {
@@ -54,8 +59,8 @@ import {ConsoleTestRunner} from 'console_test_runner';
   }
 
   async function revealResourceWithDisplayName(name) {
-    var target = SDK.targetManager.primaryPageTarget();
-    var model = target.model(SDK.ResourceTreeModel);
+    var target = SDK.TargetManager.TargetManager.instance().primaryPageTarget();
+    var model = target.model(SDK.ResourceTreeModel.ResourceTreeModel);
     var resource = null;
     for (var r of model.mainFrame.resources()) {
       if (r.displayName !== name)
@@ -72,7 +77,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
     dumpCurrentState('Revealed ' + name + ':');
   }
 
-  await UI.viewManager.showView('resources');
+  await UI.ViewManager.ViewManager.instance().showView('resources');
   dumpCurrentState('Initial state:');
   await revealResourceWithDisplayName('json-value.js');
   await revealResourceWithDisplayName('image.png');

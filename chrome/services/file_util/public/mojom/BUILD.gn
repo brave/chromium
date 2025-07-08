@@ -14,7 +14,9 @@ mojom("mojom") {
 
   if (safe_browsing_mode == 1) {
     sources += [ "safe_archive_analyzer.mojom" ]
-    enabled_features += [ "full_safe_browsing" ]
+
+    # This is equivalent to SAFE_BROWSING_DOWNLOAD_PROTECTION && !IS_ANDROID.
+    enabled_features += [ "safe_browsing_desktop_download_protection" ]
   }
 
   public_deps = [
@@ -22,7 +24,7 @@ mojom("mojom") {
     "//sandbox/policy/mojom",
   ]
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [ "zip_file_creator.mojom" ]
     public_deps += [ "//components/services/filesystem/public/mojom" ]
   }
@@ -33,18 +35,6 @@ mojom("mojom") {
       "single_file_extractor.mojom",
     ]
     enabled_features += [ "extractors" ]
-  }
-
-  if (safe_browsing_mode == 1 && enable_maldoca) {
-    sources += [
-      "document_analysis_service.mojom",
-      "safe_document_analyzer.mojom",
-    ]
-    enabled_features += [ "enable_maldoca" ]
-    public_deps += [
-      "//components/services/filesystem/public/mojom",
-      "//sandbox/policy/mojom",
-    ]
   }
 
   cpp_typemaps = []
@@ -67,26 +57,6 @@ mojom("mojom") {
           "//components/safe_browsing:buildflags",
           "//components/safe_browsing/core/common/proto:csd_proto",
           "//ipc:protobuf_support",
-        ]
-      },
-    ]
-  }
-
-  if (safe_browsing_mode == 1 && enable_maldoca) {
-    cpp_typemaps += [
-      {
-        types = [
-          {
-            mojom = "chrome.mojom.SafeDocumentAnalyzerResults"
-            cpp = "::safe_browsing::DocumentAnalyzerResults"
-          },
-        ]
-        traits_headers = [ "safe_document_analyzer_mojom_traits.h" ]
-        traits_sources = [ "safe_document_analyzer_mojom_traits.cc" ]
-        traits_public_deps = [
-          "//chrome/common/safe_browsing:proto",
-          "//components/safe_browsing:buildflags",
-          "//components/safe_browsing/core/common/proto:csd_proto",
         ]
       },
     ]

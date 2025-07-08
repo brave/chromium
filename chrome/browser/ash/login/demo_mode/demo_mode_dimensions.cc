@@ -3,11 +3,15 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ash/login/demo_mode/demo_mode_dimensions.h"
+
 #include "ash/constants/ash_features.h"
+#include "ash/constants/ash_pref_names.h"
+#include "base/strings/string_util.h"
+#include "base/version.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/login/demo_mode/demo_setup_controller.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/common/pref_names.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/prefs/pref_service.h"
 
@@ -15,12 +19,22 @@ namespace ash {
 namespace demo_mode {
 
 bool AreDemoDimensionsAccessible() {
-  return DemoSession::IsDeviceInDemoMode() ||
+  return IsDeviceInDemoMode() ||
          DemoSetupController::IsOobeDemoSetupFlowInProgress();
 }
 
 std::string Country() {
   DCHECK(AreDemoDimensionsAccessible());
+  // TODO(b/328305607): Remove this conversion part once all
+  // prefs::kDemoModeCountry are converted.
+  const std::string country =
+      g_browser_process->local_state()->GetString(prefs::kDemoModeCountry);
+  std::string country_uppercase = base::ToUpperASCII(country);
+  // if country is in lowercase, convert it to uppercase.
+  if (country_uppercase != country) {
+    g_browser_process->local_state()->SetString(prefs::kDemoModeCountry,
+                                                country_uppercase);
+  }
   return g_browser_process->local_state()->GetString(prefs::kDemoModeCountry);
 }
 
@@ -43,6 +57,18 @@ bool IsCloudGamingDevice() {
 bool IsFeatureAwareDevice() {
   DCHECK(AreDemoDimensionsAccessible());
   return ash::features::IsFeatureAwareDeviceDemoModeEnabled();
+}
+
+base::Version AppVersion() {
+  DCHECK(AreDemoDimensionsAccessible());
+  return base::Version(
+      g_browser_process->local_state()->GetString(prefs::kDemoModeAppVersion));
+}
+
+base::Version ResourcesVersion() {
+  DCHECK(AreDemoDimensionsAccessible());
+  return base::Version(g_browser_process->local_state()->GetString(
+      prefs::kDemoModeResourcesVersion));
 }
 
 enterprise_management::DemoModeDimensions GetDemoModeDimensions() {

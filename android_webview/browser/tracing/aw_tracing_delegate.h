@@ -5,14 +5,14 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_TRACING_AW_TRACING_DELEGATE_H_
 #define ANDROID_WEBVIEW_BROWSER_TRACING_AW_TRACING_DELEGATE_H_
 
+#include <memory>
+
 #include "content/public/browser/tracing_delegate.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class PrefRegistrySimple;
-
-namespace base {
-class Value;
-}  // namespace base
+namespace tracing {
+class BackgroundTracingStateManager;
+}
 
 namespace android_webview {
 
@@ -24,13 +24,13 @@ class AwTracingDelegate : public content::TracingDelegate {
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // content::TracingDelegate implementation:
-  bool IsAllowedToBeginBackgroundScenario(const std::string& scenario_name,
-                                          bool requires_anonymized_data,
-                                          bool is_crash_scenario) override;
-  bool IsAllowedToEndBackgroundScenario(const std::string& scenario_name,
-                                        bool requires_anonymized_data,
-                                        bool is_crash_scenario) override;
-  absl::optional<base::Value::Dict> GenerateMetadataDict() override;
+  bool IsRecordingAllowed(bool requires_anonymized_data,
+                          base::TimeTicks session_start) const override;
+  std::unique_ptr<tracing::BackgroundTracingStateManager> CreateStateManager()
+      override;
+  std::string RecordSerializedSystemProfileMetrics() const override;
+  tracing::MetadataDataSource::BundleRecorder
+  CreateSystemProfileMetadataRecorder() const override;
 };
 
 }  // namespace android_webview

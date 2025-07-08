@@ -7,14 +7,10 @@
 #import "base/strings/sys_string_conversions.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/components/webui/web_ui_url_constants.h"
-#import "net/base/mac/url_conversions.h"
+#import "net/base/apple/url_conversions.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "url/gurl.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -27,6 +23,15 @@ TEST_F(ChromeURLUtilTest, TestIsExternalFileReference) {
   EXPECT_TRUE(UrlIsExternalFileReference(external_url));
   EXPECT_FALSE(UrlIsExternalFileReference(not_external_url));
   EXPECT_FALSE(UrlIsExternalFileReference(still_not_external_url));
+}
+
+TEST_F(ChromeURLUtilTest, TestUrlIsDownloadedFile) {
+  GURL downloaded_file_url("chrome://downloads/fileName");
+  GURL external_file_url("chrome://external-file/fileName");
+  GURL not_downloaded_file_url("http://downloads/fileName");
+  EXPECT_TRUE(UrlIsDownloadedFile(downloaded_file_url));
+  EXPECT_FALSE(UrlIsDownloadedFile(external_file_url));
+  EXPECT_FALSE(UrlIsDownloadedFile(not_downloaded_file_url));
 }
 
 const char* kSchemeTestData[] = {

@@ -3,29 +3,23 @@
 // found in the LICENSE file.
 
 import 'chrome://resources/cr_components/managed_footnote/managed_footnote.js';
-import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
-import 'chrome://resources/cr_elements/cr_icons.css.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
-import 'chrome://resources/cr_elements/cr_nav_menu_item_style.css.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
-import 'chrome://resources/polymer/v3_0/paper-styles/color.js';
 import './shared_icons.html.js';
 import './shared_vars.css.js';
-import './strings.m.js';
+import '/strings.m.js';
 
-import {BrowserProxyImpl} from 'chrome://resources/cr_components/history_clusters/browser_proxy.js';
-import {MetricsProxyImpl} from 'chrome://resources/cr_components/history_clusters/metrics_proxy.js';
-import {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
+import type {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {PaperRippleElement} from 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
-import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
 import {BrowserServiceImpl} from './browser_service.js';
 import {Page, TABBED_PAGES} from './router.js';
-import {getTemplate} from './side_bar.html.js';
+import {getCss} from './side_bar.css.js';
+import {getHtml} from './side_bar.html.js';
 
 export interface FooterInfo {
   managed: boolean;
@@ -34,29 +28,30 @@ export interface FooterInfo {
 
 export interface HistorySideBarElement {
   $: {
-    'cbd-ripple': PaperRippleElement,
     'history': HTMLAnchorElement,
     'menu': CrMenuSelector,
-    'thc-ripple': PaperRippleElement,
-    'toggle-history-clusters': HTMLElement,
     'syncedTabs': HTMLElement,
   };
 }
 
-export class HistorySideBarElement extends PolymerElement {
+export class HistorySideBarElement extends CrLitElement {
   static get is() {
     return 'history-side-bar';
   }
 
-  static get template() {
-    return getTemplate();
+  static override get styles() {
+    return getCss();
   }
 
-  static get properties() {
-    return {
-      footerInfo: Object,
+  override render() {
+    return getHtml.bind(this)();
+  }
 
-      historyClustersEnabled: Boolean,
+  static override get properties() {
+    return {
+      footerInfo: {type: Object},
+
+      historyClustersEnabled: {type: Boolean},
 
       historyClustersVisible: {
         type: Boolean,
@@ -75,52 +70,47 @@ export class HistorySideBarElement extends PolymerElement {
         notify: true,
       },
 
-      guestSession_: Boolean,
+      guestSession_: {type: Boolean},
 
-      historyClustersVisibleManagedByPolicy_: {
-        type: Boolean,
-        value: () => {
-          return loadTimeData.getBoolean(
-              'isHistoryClustersVisibleManagedByPolicy');
-        },
-      },
+      historyClustersVisibleManagedByPolicy_: {type: Boolean},
 
       /**
        * Used to display notices for profile sign-in status and managed status.
        */
-      showFooter_: {
-        type: Boolean,
-        computed: 'computeShowFooter_(' +
-            'footerInfo.otherFormsOfHistory, footerInfo.managed)',
-      },
+      showFooter_: {type: Boolean},
 
-      showHistoryClusters_: {
-        type: Boolean,
-        computed: 'computeShowHistoryClusters_(' +
-            'historyClustersEnabled, historyClustersVisible)',
-      },
-
-      showToggleHistoryClusters_: {
-        type: Boolean,
-        computed: 'computeShowToggleHistoryClusters_(' +
-            'historyClustersEnabled, historyClustersVisibleManagedByPolicy_)',
-      },
+      showHistoryClusters_: {type: Boolean},
     };
   }
 
-  footerInfo: FooterInfo;
-  historyClustersEnabled: boolean;
-  historyClustersVisible: boolean;
-  selectedPage: Page;
-  selectedTab: number;
-  private guestSession_ = loadTimeData.getBoolean('isGuestSession');
-  private historyClustersVisibleManagedByPolicy_: boolean;
-  private showFooter_: boolean;
-  private showHistoryClusters_: boolean;
+  accessor footerInfo: FooterInfo;
+  accessor historyClustersEnabled: boolean = false;
+  accessor historyClustersVisible: boolean = false;
+  accessor selectedPage: string;
+  accessor selectedTab: number;
+  protected accessor guestSession_ = loadTimeData.getBoolean('isGuestSession');
+  private accessor historyClustersVisibleManagedByPolicy_: boolean =
+      loadTimeData.getBoolean('isHistoryClustersVisibleManagedByPolicy');
+  protected accessor showFooter_: boolean = false;
+  private accessor showHistoryClusters_: boolean = false;
 
-  override ready() {
-    super.ready();
+  override connectedCallback() {
+    super.connectedCallback();
     this.addEventListener('keydown', e => this.onKeydown_(e));
+  }
+
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    super.willUpdate(changedProperties);
+
+    if (changedProperties.has('footerInfo')) {
+      this.showFooter_ =
+          this.footerInfo.otherFormsOfHistory || this.footerInfo.managed;
+    }
+    if (changedProperties.has('historyClustersEnabled') ||
+        changedProperties.has('historyClustersVisible')) {
+      this.showHistoryClusters_ =
+          this.historyClustersEnabled && this.historyClustersVisible;
+    }
   }
 
   private onKeydown_(e: KeyboardEvent) {
@@ -129,31 +119,29 @@ export class HistorySideBarElement extends PolymerElement {
     }
   }
 
-  private onSelectorActivate_() {
-    this.dispatchEvent(new CustomEvent(
-        'history-close-drawer', {bubbles: true, composed: true}));
+  protected onSelectorActivate_() {
+    this.fire('history-close-drawer');
+  }
+
+  protected onSelectorSelectedChanged_(e: CustomEvent<{value: string}>) {
+    this.selectedPage = e.detail.value;
   }
 
   /**
    * Relocates the user to the clear browsing data section of the settings page.
    */
-  private onClearBrowsingDataClick_(e: Event) {
+  protected onClearBrowsingDataClick_(e: Event) {
     const browserService = BrowserServiceImpl.getInstance();
     browserService.recordAction('InitClearBrowsingData');
-    browserService.openClearBrowsingData();
-    this.$['cbd-ripple'].upAction();
+    browserService.handler.openClearBrowsingDataDialog();
     e.preventDefault();
-  }
-
-  private computeClearBrowsingDataTabIndex_(): string {
-    return this.guestSession_ ? '-1' : '';
   }
 
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
-   * accessibility purposes, taps are handled separately by <iron-selector>.
+   * accessibility purposes, taps are handled separately.
    */
-  private onItemClick_(e: Event) {
+  protected onItemClick_(e: Event) {
     e.preventDefault();
   }
 
@@ -161,7 +149,7 @@ export class HistorySideBarElement extends PolymerElement {
    * @returns The url to navigate to when the history menu item is clicked. It
    *     reflects the currently selected tab.
    */
-  private getHistoryItemHref_(): string {
+  protected getHistoryItemHref_(): string {
     return this.showHistoryClusters_ &&
             TABBED_PAGES[this.selectedTab] === Page.HISTORY_CLUSTERS ?
         '/' + Page.HISTORY_CLUSTERS :
@@ -172,64 +160,16 @@ export class HistorySideBarElement extends PolymerElement {
    * @returns The path that determines if the history menu item is selected. It
    *     reflects the currently selected tab.
    */
-  private getHistoryItemPath_(): string {
+  protected getHistoryItemPath_(): string {
     return this.showHistoryClusters_ &&
             TABBED_PAGES[this.selectedTab] === Page.HISTORY_CLUSTERS ?
         Page.HISTORY_CLUSTERS :
         Page.HISTORY;
   }
-
-  private getToggleHistoryClustersItemIcon_(): string {
-    return `history:journeys-${this.historyClustersVisible ? 'off' : 'on'}`;
-  }
-
-  private getToggleHistoryClustersItemLabel_(): string {
-    return loadTimeData.getString(
-        this.historyClustersVisible ? 'disableHistoryClusters' :
-                                      'enableHistoryClusters');
-  }
-
-  private onToggleHistoryClustersClick_() {
-    MetricsProxyImpl.getInstance().recordToggledVisibility(
-        !this.historyClustersVisible);
-    BrowserProxyImpl.getInstance()
-        .handler.toggleVisibility(!this.historyClustersVisible)
-        .then(({visible}) => {
-          this.historyClustersVisible = visible;
-          this.selectedTab = TABBED_PAGES.indexOf(
-              visible ? Page.HISTORY_CLUSTERS : Page.HISTORY);
-        });
-
-    this.$['thc-ripple'].upAction();
-  }
-
-  private onToggleHistoryClustersKeydown_(e: KeyboardEvent) {
-    // Handle 'Enter' keypress because the menu item is missing href attribute.
-    if (e.key === 'Enter') {
-      this.onToggleHistoryClustersClick_();
-    }
-  }
-
-  private onToggleHistoryClustersMousedown_(e: MouseEvent) {
-    // The menu item steals the focus on mousedown event because it is given a
-    // tabindex="0" so that it is focusable in sequential keyboard navigation.
-    e.preventDefault();
-  }
-
-  private computeShowFooter_(
-      includeOtherFormsOfBrowsingHistory: boolean, managed: boolean): boolean {
-    return includeOtherFormsOfBrowsingHistory || managed;
-  }
-
-  private computeShowHistoryClusters_(): boolean {
-    return this.historyClustersEnabled && this.historyClustersVisible;
-  }
-
-  private computeShowToggleHistoryClusters_(): boolean {
-    return this.historyClustersEnabled &&
-        !this.historyClustersVisibleManagedByPolicy_;
-  }
 }
+
+// Exported to be used in the autogenerated Lit template file
+export type SideBarElement = HistorySideBarElement;
 
 declare global {
   interface HTMLElementTagNameMap {

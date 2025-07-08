@@ -7,29 +7,32 @@
 
 #include "base/containers/flat_set.h"
 #include "base/functional/function_ref.h"
-#include "components/performance_manager/graph/frame_node_impl.h"
-#include "components/performance_manager/graph/page_node_impl.h"
+#include "base/memory/raw_ptr.h"
 
 namespace performance_manager {
 
+class FrameNodeImpl;
+class PageNodeImpl;
 class ProcessNodeImpl;
+class WorkerNodeImpl;
 
 // A collection of utilities for performing common queries and traversals on a
 // graph.
 struct GraphImplOperations {
   using FrameNodeImplVisitor = base::FunctionRef<bool(FrameNodeImpl*)>;
+  using WorkerNodeImplVisitor = base::FunctionRef<bool(WorkerNodeImpl*)>;
 
   // Returns the collection of page nodes that are associated with the given
   // |process|. A page is associated with a process if the page's frame tree
   // contains 1 or more frames hosted in the given |process|.
-  static base::flat_set<PageNodeImpl*> GetAssociatedPageNodes(
-      const ProcessNodeImpl* process);
+  static base::flat_set<raw_ptr<PageNodeImpl, CtnExperimental>>
+  GetAssociatedPageNodes(const ProcessNodeImpl* process);
 
   // Returns the collection of process nodes associated with the given |page|.
   // A |process| is associated with a page if the page's frame tree contains 1
   // or more frames hosted in that |process|.
-  static base::flat_set<ProcessNodeImpl*> GetAssociatedProcessNodes(
-      const PageNodeImpl* page);
+  static base::flat_set<raw_ptr<ProcessNodeImpl, CtnExperimental>>
+  GetAssociatedProcessNodes(const PageNodeImpl* page);
 
   // Returns the collection of frame nodes associated with a page. This is
   // returned in level order, with main frames first (level 0), main frame
@@ -59,6 +62,14 @@ struct GraphImplOperations {
   // Returns true if the given |frame| is in the frame tree associated with the
   // given |page|.
   static bool HasFrame(const PageNodeImpl* page, FrameNodeImpl* frame);
+
+  // Recursively visits all frames and workers that are clients of the given
+  // `worker`. Each client will only be visited once. If the visitor returns
+  // false then the iteration is halted. Returns true if all calls to the
+  // visitor returned true, false otherwise.
+  static bool VisitAllWorkerClients(const WorkerNodeImpl* worker,
+                                    FrameNodeImplVisitor frame_visitor,
+                                    WorkerNodeImplVisitor worker_visitor);
 };
 
 }  // namespace performance_manager

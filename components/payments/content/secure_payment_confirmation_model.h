@@ -5,11 +5,11 @@
 #ifndef COMPONENTS_PAYMENTS_CONTENT_SECURE_PAYMENT_CONFIRMATION_MODEL_H_
 #define COMPONENTS_PAYMENTS_CONTENT_SECURE_PAYMENT_CONFIRMATION_MODEL_H_
 
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace payments {
@@ -38,19 +38,19 @@ class SecurePaymentConfirmationModel {
   }
 
   // Label for the merchant name, e.g. "Merchant"
-  const absl::optional<std::u16string>& merchant_name() const {
+  const std::optional<std::u16string>& merchant_name() const {
     return merchant_name_;
   }
-  void set_merchant_name(const absl::optional<std::u16string>& merchant_name) {
+  void set_merchant_name(const std::optional<std::u16string>& merchant_name) {
     merchant_name_ = merchant_name;
   }
 
   // Label for the merchant origin, e.g. "merchant.com"
-  const absl::optional<std::u16string>& merchant_origin() const {
+  const std::optional<std::u16string>& merchant_origin() const {
     return merchant_origin_;
   }
   void set_merchant_origin(
-      const absl::optional<std::u16string>& merchant_origin) {
+      const std::optional<std::u16string>& merchant_origin) {
     merchant_origin_ = merchant_origin;
   }
 
@@ -60,7 +60,7 @@ class SecurePaymentConfirmationModel {
     instrument_label_ = instrument_label;
   }
 
-  // Label for the instrument row value, e.g. "Mastercard ****4444"
+  // Label for the instrument row value, e.g. "****4444"
   const std::u16string& instrument_value() const { return instrument_value_; }
   void set_instrument_value(const std::u16string& instrument_value) {
     instrument_value_ = instrument_value;
@@ -160,14 +160,15 @@ class SecurePaymentConfirmationModel {
 
  private:
   std::u16string title_;
+  std::u16string description_;
 
   std::u16string merchant_label_;
-  absl::optional<std::u16string> merchant_name_;
-  absl::optional<std::u16string> merchant_origin_;
+  std::optional<std::u16string> merchant_name_;
+  std::optional<std::u16string> merchant_origin_;
 
   std::u16string instrument_label_;
   std::u16string instrument_value_;
-  raw_ptr<const SkBitmap, DanglingUntriaged> instrument_icon_ = nullptr;
+  raw_ptr<const SkBitmap> instrument_icon_ = nullptr;
 
   std::u16string total_label_;
   std::u16string total_value_;

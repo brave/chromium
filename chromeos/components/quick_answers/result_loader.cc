@@ -86,9 +86,9 @@ void ResultLoader::Fetch(const PreprocessedOutput& preprocessed_output) {
   DCHECK(url_loader_factory_);
   DCHECK(!preprocessed_output.query.empty());
 
-  // Fail-safe for a fetch request if `consent_status` is not `kAccepted`.
-  CHECK(QuickAnswersState::Get()->consent_status() ==
-        quick_answers::prefs::ConsentStatus::kAccepted);
+  CHECK_EQ(QuickAnswersState::GetConsentStatus(),
+           quick_answers::prefs::ConsentStatus::kAccepted)
+      << "Consent status must be kAccepted for making a request";
 
   // Load the resource.
   BuildRequest(preprocessed_output,
@@ -120,10 +120,10 @@ void ResultLoader::OnBuildRequestComplete(
 
 void ResultLoader::OnSimpleURLLoaderComplete(
     const PreprocessedOutput& preprocessed_output,
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   base::TimeDelta duration = base::TimeTicks::Now() - fetch_start_time_;
 
-  if (!response_body || loader_->NetError() != net::OK ||
+  if (!response_body.has_value() || loader_->NetError() != net::OK ||
       !loader_->ResponseInfo() || !loader_->ResponseInfo()->headers) {
     int response_code = -1;
     if (loader_->ResponseInfo() && loader_->ResponseInfo()->headers) {

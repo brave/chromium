@@ -5,6 +5,7 @@
 #include "chrome/browser/speech/speech_recognition_recognizer_client_impl.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "ash/constants/ash_features.h"
@@ -36,7 +37,7 @@ static constexpr int kAudioSampleRate = 16000;
 static constexpr int kPollingTimesPerSecond = 10;
 
 media::AudioParameters GetAudioParameters(
-    const absl::optional<media::AudioParameters>& params,
+    const std::optional<media::AudioParameters>& params,
     bool is_multichannel_supported) {
   if (params) {
     media::AudioParameters result = params.value();
@@ -131,7 +132,7 @@ SpeechRecognitionRecognizerClientImpl::GetServerBasedRecognitionAvailability(
   }
 
   static constexpr auto kSupportedLanguagesAndLocales =
-      base::MakeFixedFlatSet<base::StringPiece>({
+      base::MakeFixedFlatSet<std::string_view>({
           "de",              // German
           "de-AT",           // German (Austria)
           "de-CH",           // German (Switzerland)
@@ -266,7 +267,7 @@ void SpeechRecognitionRecognizerClientImpl::OnSpeechRecognitionError() {
 
 void SpeechRecognitionRecognizerClientImpl::OnLanguageIdentificationEvent(
     media::mojom::LanguageIdentificationEventPtr event) {
-  // Do nothing.
+  delegate()->OnLanguageIdentificationEvent(std::move(event));
 }
 
 void SpeechRecognitionRecognizerClientImpl::OnSpeechRecognitionStopped() {
@@ -285,7 +286,7 @@ void SpeechRecognitionRecognizerClientImpl::OnRecognizerDisconnected() {
 }
 
 void SpeechRecognitionRecognizerClientImpl::StartFetchingOnInputDeviceInfo(
-    const absl::optional<media::AudioParameters>& params) {
+    const std::optional<media::AudioParameters>& params) {
   // waiting_for_params_ was set before requesting audio params from the
   // AudioSystem, which returns here asynchronously. If this has changed, then
   // we shouldn't start up any more.

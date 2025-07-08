@@ -10,6 +10,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/public/browser/content_index_provider.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
@@ -208,14 +209,13 @@ class ContentIndexDatabaseTest : public ::testing::Test {
       const std::string& description_id) {
     base::RunLoop run_loop;
     std::unique_ptr<ContentIndexEntry> out_entry;
-    database_->GetEntry(service_worker_registration_id_, description_id,
-                        base::BindLambdaForTesting(
-                            [&](absl::optional<ContentIndexEntry> entry) {
-                              if (entry)
-                                out_entry = std::make_unique<ContentIndexEntry>(
-                                    std::move(*entry));
-                              run_loop.Quit();
-                            }));
+    database_->GetEntry(
+        service_worker_registration_id_, description_id,
+        base::BindLambdaForTesting([&](std::optional<ContentIndexEntry> entry) {
+          if (entry)
+            out_entry = std::make_unique<ContentIndexEntry>(std::move(*entry));
+          run_loop.Quit();
+        }));
     run_loop.Run();
     return out_entry;
   }
@@ -271,7 +271,7 @@ class ContentIndexDatabaseTest : public ::testing::Test {
 
     {
       base::RunLoop run_loop;
-      embedded_worker_test_helper_.context()->registry()->FindRegistrationForId(
+      embedded_worker_test_helper_.context()->registry().FindRegistrationForId(
           service_worker_registration_id,
           blink::StorageKey::CreateFirstParty(origin),
           base::BindOnce(&DidFindServiceWorkerRegistration,

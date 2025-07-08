@@ -25,15 +25,19 @@ CaptivePortalServiceFactory::CaptivePortalServiceFactory()
           "captive_portal::CaptivePortalService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {}
 
 CaptivePortalServiceFactory::~CaptivePortalServiceFactory() = default;
 
-KeyedService* CaptivePortalServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+CaptivePortalServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* profile) const {
-  return new captive_portal::CaptivePortalService(
+  return std::make_unique<captive_portal::CaptivePortalService>(
       profile, static_cast<Profile*>(profile)->GetPrefs());
 }

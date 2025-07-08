@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ash/login/saml/password_expiry_notification.h"
 
+#include <optional>
+#include <string>
+
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
@@ -26,7 +29,7 @@ inline std::u16string GetTitleText(base::TimeDelta time_until_expiry) {
 
 class PasswordExpiryNotificationTest : public testing::Test {
  protected:
-  absl::optional<Notification> Notification() {
+  std::optional<Notification> Notification() {
     return NotificationDisplayServiceTester::Get()->GetNotification(
         "saml.password-expiry-notification");
   }

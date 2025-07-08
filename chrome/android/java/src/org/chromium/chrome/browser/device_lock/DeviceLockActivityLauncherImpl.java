@@ -7,20 +7,21 @@ package org.chromium.chrome.browser.device_lock;
 import android.content.Context;
 import android.content.Intent;
 
-import org.chromium.chrome.browser.ui.signin.DeviceLockActivityLauncher;
+import androidx.annotation.Nullable;
+
+import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
+import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher.Source;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
- * DeviceLockActivityLauncher creates the proper intent and then launches the
- * {@link DeviceLockActivity} in different scenarios.
+ * DeviceLockActivityLauncher creates the proper intent and then launches the {@link
+ * DeviceLockActivity} in different scenarios.
  */
 public class DeviceLockActivityLauncherImpl implements DeviceLockActivityLauncher {
-    private static DeviceLockActivityLauncherImpl sLauncher;
+    private static DeviceLockActivityLauncher sLauncher;
 
-    /**
-     * Singleton instance getter
-     */
-    public static DeviceLockActivityLauncherImpl get() {
+    /** Singleton instance getter */
+    public static DeviceLockActivityLauncher get() {
         if (sLauncher == null) {
             sLauncher = new DeviceLockActivityLauncherImpl();
         }
@@ -30,10 +31,20 @@ public class DeviceLockActivityLauncherImpl implements DeviceLockActivityLaunche
     private DeviceLockActivityLauncherImpl() {}
 
     @Override
-    public void launchDeviceLockActivity(Context context, boolean inSignInFlow,
-            String selectedAccount, WindowAndroid windowAndroid,
-            WindowAndroid.IntentCallback callback) {
-        Intent intent = DeviceLockActivity.createIntent(context, inSignInFlow, selectedAccount);
+    public void launchDeviceLockActivity(
+            Context context,
+            @Nullable String selectedAccount,
+            boolean requireDeviceLockReauthentication,
+            WindowAndroid windowAndroid,
+            WindowAndroid.IntentCallback callback,
+            @Source String source) {
+        Intent intent =
+                DeviceLockActivity.createIntent(
+                        context, selectedAccount, requireDeviceLockReauthentication, source);
         windowAndroid.showIntent(intent, callback, null);
+    }
+
+    public static void setInstanceForTesting(DeviceLockActivityLauncher launcher) {
+        sLauncher = launcher;
     }
 }

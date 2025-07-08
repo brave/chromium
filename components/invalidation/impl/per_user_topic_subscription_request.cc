@@ -12,7 +12,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "components/sync/base/model_type.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
@@ -64,18 +63,18 @@ void RecordRequestStatus(SubscriptionStatus status,
                          int net_error = net::OK,
                          int response_code = 200) {
   switch (type) {
-    case PerUserTopicSubscriptionRequest::SUBSCRIBE: {
+    case PerUserTopicSubscriptionRequest::RequestType::kSubscribe: {
       base::UmaHistogramEnumeration(
           "FCMInvalidations.SubscriptionRequestStatus", status);
       break;
     }
-    case PerUserTopicSubscriptionRequest::UNSUBSCRIBE: {
+    case PerUserTopicSubscriptionRequest::RequestType::kUnsubscribe: {
       base::UmaHistogramEnumeration(
           "FCMInvalidations.UnsubscriptionRequestStatus", status);
       break;
     }
   }
-  if (type != PerUserTopicSubscriptionRequest::SUBSCRIBE) {
+  if (type != PerUserTopicSubscriptionRequest::RequestType::kSubscribe) {
     return;
   }
 
@@ -89,17 +88,6 @@ void RecordRequestStatus(SubscriptionStatus status,
     // Log a histogram to track response success vs. failure rates.
     base::UmaHistogramSparse("FCMInvalidations.SubscriptionResponseCode",
                              response_code);
-    // If the topic corresponds to a Sync ModelType, use that as the histogram
-    // suffix. Otherwise (e.g. Drive or Policy), just use "OTHER" for now.
-    // TODO(crbug.com/1029698): Depending on sync is a layering violation.
-    // Eventually the "whitelisted for metrics" bit should be part of a Topic.
-    syncer::ModelType model_type;  // Unused.
-    std::string suffix =
-        syncer::NotificationTypeToRealModelType(topic, &model_type) ? topic
-                                                                    : "OTHER";
-    base::UmaHistogramSparse(
-        "FCMInvalidations.SubscriptionResponseCodeForTopic." + suffix,
-        response_code);
   }
 }
 
@@ -162,7 +150,7 @@ void PerUserTopicSubscriptionRequest::OnURLFetchCompleteInternal(
     return;
   }
 
-  if (type_ == UNSUBSCRIBE) {
+  if (type_ == RequestType::kUnsubscribe) {
     // No response body expected for DELETE requests.
     RecordRequestStatus(SubscriptionStatus::kSuccess, type_, topic_, net_error,
                         response_code);
@@ -222,12 +210,12 @@ PerUserTopicSubscriptionRequest::Builder::Build() const {
 
   std::string url;
   switch (type_) {
-    case SUBSCRIBE:
+    case RequestType::kSubscribe:
       url = base::StringPrintf(
           "%s/v1/perusertopics/%s/rel/topics/?subscriber_token=%s",
           scope_.c_str(), project_id_.c_str(), instance_id_token_.c_str());
       break;
-    case UNSUBSCRIBE:
+    case RequestType::kUnsubscribe:
       std::string public_param;
       if (topic_is_public_) {
         public_param = "subscription.is_public=true&";
@@ -247,8 +235,9 @@ PerUserTopicSubscriptionRequest::Builder::Build() const {
   request->topic_ = topic_;
 
   std::string body;
-  if (type_ == SUBSCRIBE)
+  if (type_ == RequestType::kSubscribe) {
     body = BuildBody();
+  }
   net::HttpRequestHeaders headers = BuildHeaders();
   request->simple_loader_ = BuildURLFetcher(headers, body, full_url);
 
@@ -338,12 +327,10 @@ PerUserTopicSubscriptionRequest::Builder::BuildURLFetcher(
                                           R"(
         semantics {
           sender:
-            "Subscribe the Sync client for listening to the specific topic"
+            "Subscribe for listening to the specific user topic"
           description:
-            "Chromium can receive Sync invalidations via FCM messages."
-            "This request subscribes the client for receiving messages for the"
-            "concrete topic. In case of Chrome Sync topic is a ModelType,"
-            "e.g. BOOKMARK"
+            "This request subscribes the client for receiving FCM messages for"
+            "the concrete user topic."
           trigger:
             "Subscription takes place only once per profile per topic. "
           data:
@@ -354,20 +341,17 @@ PerUserTopicSubscriptionRequest::Builder::BuildURLFetcher(
           cookies_allowed: NO
           setting:
             "This feature can not be disabled by settings now"
-          chrome_policy: {
-             SyncDisabled {
-               policy_options {mode: MANDATORY}
-               SyncDisabled: false
-             }
-          }
+          policy_exception_justification:
+            "This feature is required to deliver core user experiences and "
+            "cannot be disabled by policy."
         })");
 
   auto request = std::make_unique<network::ResourceRequest>();
   switch (type_) {
-    case SUBSCRIBE:
+    case PerUserTopicSubscriptionRequest::RequestType::kSubscribe:
       request->method = "POST";
       break;
-    case UNSUBSCRIBE:
+    case PerUserTopicSubscriptionRequest::RequestType::kUnsubscribe:
       request->method = "DELETE";
       break;
   }

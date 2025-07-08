@@ -4,14 +4,16 @@
 
 #include "chrome/browser/ash/system_web_apps/apps/terminal_source.h"
 
+#include <optional>
+#include <string_view>
+
 #include "ash/constants/ash_features.h"
-#include "base/containers/flat_map.h"
+#include "base/containers/fixed_flat_map.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/no_destructor.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/task/task_traits.h"
@@ -32,13 +34,13 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/prefs/pref_service.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/version_info/channel.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/mime_util.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/zlib/google/compression_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/webui/webui_allowlist.h"
@@ -62,7 +64,7 @@ class TerminalFileSystemProvider
                 .multiple_mounts = true,
                 .source = extensions::FileSystemProviderSource::SOURCE_NETWORK},
             l10n_util::GetStringUTF8(IDS_CROSTINI_TERMINAL_APP_NAME),
-            /*icon_set=*/absl::nullopt) {}
+            /*icon_set=*/std::nullopt) {}
   bool RequestMount(
       Profile* profile,
       ash::file_system_provider::RequestMountCallback callback) override {
@@ -107,15 +109,15 @@ void ReadFile(const base::FilePath downloads,
   // Terminal gets files from /usr/share/chromeos-assets/crosh-builtin.
   // In chromium tests, these files don't exist, so we serve dummy values.
   if (!result) {
-    static const base::NoDestructor<base::flat_map<std::string, std::string>>
-        kTestFiles({
+    static constexpr auto kTestFiles =
+        base::MakeFixedFlatMap<std::string_view, std::string_view>({
             {"html/crosh.html", ""},
             {"html/terminal.html", "<script src='/js/terminal.js'></script>"},
             {"js/terminal.js",
              "chrome.terminalPrivate.openVmshellProcess([], () => {})"},
         });
-    auto it = kTestFiles->find(relative_path);
-    if (it != kTestFiles->end()) {
+    auto it = kTestFiles.find(relative_path);
+    if (it != kTestFiles.end()) {
       content = it->second;
       result = true;
     }
@@ -155,13 +157,12 @@ TerminalSource::TerminalSource(Profile* profile,
   auto* webui_allowlist = WebUIAllowlist::GetOrCreate(profile);
   const url::Origin terminal_origin = url::Origin::Create(GURL(source));
   CHECK(!terminal_origin.opaque());
-  for (auto permission :
-       {ContentSettingsType::CLIPBOARD_READ_WRITE, ContentSettingsType::COOKIES,
-        ContentSettingsType::IMAGES, ContentSettingsType::JAVASCRIPT,
-        ContentSettingsType::NOTIFICATIONS, ContentSettingsType::POPUPS,
-        ContentSettingsType::SOUND}) {
-    webui_allowlist->RegisterAutoGrantedPermission(terminal_origin, permission);
-  }
+  webui_allowlist->RegisterAutoGrantedPermissions(
+      terminal_origin,
+      {ContentSettingsType::CLIPBOARD_READ_WRITE, ContentSettingsType::COOKIES,
+       ContentSettingsType::IMAGES, ContentSettingsType::JAVASCRIPT,
+       ContentSettingsType::NOTIFICATIONS, ContentSettingsType::POPUPS,
+       ContentSettingsType::SOUND});
   webui_allowlist->RegisterAutoGrantedThirdPartyCookies(
       terminal_origin, {ContentSettingsPattern::Wildcard()});
 }
@@ -185,7 +186,7 @@ void TerminalSource::StartDataRequest(
   // Refresh the $i8n{themeColor} replacement for css files.
   if (base::EndsWith(path, ".css", base::CompareCase::INSENSITIVE_ASCII)) {
     GURL contents_url;
-    absl::optional<SkColor> opener_background_color;
+    std::optional<SkColor> opener_background_color;
     content::WebContents* contents = wc_getter.Run();
     if (contents) {
       contents_url = contents->GetVisibleURL();
@@ -193,10 +194,11 @@ void TerminalSource::StartDataRequest(
       int tab_index;
       extensions::ExtensionTabUtil::GetTabStripModel(contents, &tab_strip,
                                                      &tab_index);
-      content::WebContents* opener =
-          tab_strip->GetOpenerOfWebContentsAt(tab_index);
-      if (opener) {
-        opener_background_color = opener->GetBackgroundColor();
+      tabs::TabInterface* opener_tab = tab_strip->GetOpenerOfTabAt(tab_index);
+      if (opener_tab) {
+        CHECK(opener_tab->GetContents());
+        opener_background_color =
+            opener_tab->GetContents()->GetBackgroundColor();
       }
     }
     replacements_["themeColor"] =
@@ -210,11 +212,12 @@ void TerminalSource::StartDataRequest(
 }
 
 std::string TerminalSource::GetMimeType(const GURL& url) {
-  std::string mime_type(kDefaultMime);
-  std::string ext = base::FilePath(url.path_piece()).Extension();
-  if (!ext.empty()) {
-    net::GetWellKnownMimeTypeFromExtension(ext.substr(1), &mime_type);
+  std::string mime_type;
+  if (!net::GetWellKnownMimeTypeFromFile(base::FilePath(url.path_piece()),
+                                         &mime_type)) {
+    return kDefaultMime;
   }
+
   return mime_type;
 }
 
@@ -259,7 +262,7 @@ std::string TerminalSource::GetContentSecurityPolicy(
     case network::mojom::CSPDirectiveName::RequireTrustedTypesFor:
       [[fallthrough]];
     case network::mojom::CSPDirectiveName::TrustedTypes:
-      // TODO(crbug.com/1098685): Trusted Type remaining WebUI
+      // TODO(crbug.com/40137141): Trusted Type remaining WebUI
       // This removes require-trusted-types-for and trusted-types directives
       // from the CSP header.
       return std::string();

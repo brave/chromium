@@ -6,6 +6,7 @@
 
 #include <math.h>
 
+#include <algorithm>
 #include <memory>
 
 #include "base/check_op.h"
@@ -16,7 +17,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
@@ -43,8 +43,13 @@
 #include "ui/wm/core/wm_core_switches.h"
 #include "ui/wm/public/animation_host.h"
 
+DEFINE_UI_CLASS_PROPERTY_TYPE(wm::WindowVisibilityAnimationCallback*)
+
 namespace wm {
 namespace {
+
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(wm::WindowVisibilityAnimationCallback,
+                                   kWindowVisibilityCustomAnimationKey)
 
 // A base class for hiding animation observer which has two roles:
 // 1) Notifies AnimationHost at the end of hiding animation.
@@ -102,8 +107,8 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
     if (window_->parent()) {
       const aura::Window::Windows& transient_children =
           GetTransientChildren(window_);
-      auto iter = base::ranges::find(window_->parent()->children(), window_);
-      DCHECK(iter != window_->parent()->children().end());
+      auto iter = std::ranges::find(window_->parent()->children(), window_);
+      CHECK(iter != window_->parent()->children().end());
       aura::Window* topmost_transient_child = nullptr;
       for (++iter; iter != window_->parent()->children().end(); ++iter) {
         if (base::Contains(transient_children, *iter))
@@ -150,7 +155,7 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
   std::unique_ptr<ui::LayerTreeOwner> layer_owner_;
 };
 
-// TODO(crbug.com/1021774): Find a better home and merge with
+// TODO(crbug.com/40657251): Find a better home and merge with
 //     ash::metris_util::ForSmoothness.
 using SmoothnessCallback = base::RepeatingCallback<void(int smoothness)>;
 ui::AnimationThroughputReporter::ReportCallback ForSmoothness(
@@ -158,8 +163,9 @@ ui::AnimationThroughputReporter::ReportCallback ForSmoothness(
   return base::BindRepeating(
       [](SmoothnessCallback callback,
          const cc::FrameSequenceMetrics::CustomReportData& data) {
-        const int smoothness =
-            std::floor(100.0f * data.frames_produced / data.frames_expected);
+        const int smoothness = std::floor(
+            100.0f * (data.frames_expected_v3 - data.frames_dropped_v3) /
+            data.frames_expected_v3);
         callback.Run(smoothness);
       },
       std::move(callback));
@@ -554,6 +560,12 @@ bool AnimateShowWindow(aura::Window* window) {
     case WINDOW_VISIBILITY_ANIMATION_TYPE_ROTATE:
       AnimateShowWindow_Rotate(window);
       return true;
+    case WINDOW_VISIBILITY_ANIMATION_TYPE_CUSTOM: {
+      auto* callback = window->GetProperty(kWindowVisibilityCustomAnimationKey);
+      CHECK(callback);
+      (*callback).Run(window, /*visible=*/true);
+    }
+      return true;
     default:
       return false;
   }
@@ -583,6 +595,12 @@ bool AnimateHideWindow(aura::Window* window) {
     case WINDOW_VISIBILITY_ANIMATION_TYPE_ROTATE:
       AnimateHideWindow_Rotate(window);
       return true;
+    case WINDOW_VISIBILITY_ANIMATION_TYPE_CUSTOM: {
+      auto* callback = window->GetProperty(kWindowVisibilityCustomAnimationKey);
+      CHECK(callback);
+      (*callback).Run(window, /*visible=*/false);
+      return true;
+    }
     default:
       return false;
   }
@@ -628,6 +646,15 @@ void SetWindowVisibilityAnimationType(aura::Window* window, int type) {
 
 int GetWindowVisibilityAnimationType(aura::Window* window) {
   return window->GetProperty(kWindowVisibilityAnimationTypeKey);
+}
+
+void SetWindowVisibilityCustomAnimation(
+    aura::Window* window,
+    WindowVisibilityAnimationCallback callback) {
+  SetWindowVisibilityAnimationType(
+      window,
+      WindowVisibilityAnimationType::WINDOW_VISIBILITY_ANIMATION_TYPE_CUSTOM);
+  window->SetProperty(kWindowVisibilityCustomAnimationKey, callback);
 }
 
 void SetWindowVisibilityAnimationTransition(
@@ -676,7 +703,6 @@ bool AnimateWindow(aura::Window* window, WindowAnimationType type) {
     return true;
   default:
     NOTREACHED();
-    return false;
   }
 }
 

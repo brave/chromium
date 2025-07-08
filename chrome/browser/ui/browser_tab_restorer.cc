@@ -62,8 +62,9 @@ BrowserTabRestorer::~BrowserTabRestorer() {
 // static
 void BrowserTabRestorer::CreateIfNecessary(Browser* browser) {
   DCHECK(browser);
-  if (browser->profile()->GetUserData(kBrowserTabRestorerKey))
+  if (browser->profile()->GetUserData(kBrowserTabRestorerKey)) {
     return;  // Only allow one restore for a given profile at a time.
+  }
 
   // BrowserTabRestorer is deleted at the appropriate time.
   new BrowserTabRestorer(browser);
@@ -104,8 +105,9 @@ void RestoreTab(Browser* browser) {
 
   sessions::TabRestoreService* service =
       TabRestoreServiceFactory::GetForProfile(browser->profile());
-  if (!service)
+  if (!service) {
     return;
+  }
 
   if (service->IsLoaded()) {
     service->RestoreMostRecentEntry(browser->live_tab_context());

@@ -5,16 +5,19 @@
 #ifndef CONTENT_BROWSER_MEDIA_MEDIA_INTERNALS_H_
 #define CONTENT_BROWSER_MEDIA_MEDIA_INTERNALS_H_
 
+#include <array>
 #include <list>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
 #include "base/scoped_multi_source_observation.h"
 #include "base/synchronization/lock.h"
+#include "base/types/cxx23_to_underlying.h"
 #include "base/values.h"
 #include "content/browser/media/media_internals_audio_focus_helper.h"
 #include "content/browser/media/media_internals_cdm_helper.h"
@@ -43,7 +46,7 @@ enum class AudioFocusType;
 namespace content {
 
 // This class stores information about currently active media.
-// TODO(crbug.com/812557): Remove inheritance from media::AudioLogFactory once
+// TODO(crbug.com/40563083): Remove inheritance from media::AudioLogFactory once
 // the creation of the AudioManager instance moves to the audio service.
 class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
                                       public RenderProcessHostCreationObserver,
@@ -162,8 +165,8 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
     UPDATE_AND_DELETE,  // Deletes an existing AudioLog cache entry.
   };
   void UpdateAudioLog(AudioLogUpdateType type,
-                      base::StringPiece cache_key,
-                      base::StringPiece function,
+                      std::string_view cache_key,
+                      std::string_view function,
                       const base::Value::Dict& value);
 
   std::unique_ptr<AudioLogImpl> CreateAudioLogImpl(AudioComponent component,
@@ -192,7 +195,10 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
   base::Lock lock_;
   bool can_update_ = false;
   base::Value::Dict audio_streams_cached_data_;
-  int owner_ids_[media::AudioLogFactory::AUDIO_COMPONENT_MAX] = {};
+  std::array<int,
+             base::to_underlying(
+                 media::AudioLogFactory::AudioComponent::kAudiocomponentMax)>
+      owner_ids_ = {};
 };
 
 }  // namespace content

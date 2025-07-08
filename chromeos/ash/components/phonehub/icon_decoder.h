@@ -10,8 +10,7 @@
 #include "chromeos/ash/components/phonehub/notification.h"
 #include "ui/gfx/image/image.h"
 
-namespace ash {
-namespace phonehub {
+namespace ash::phonehub {
 
 // Decodes icons in batches.
 // TODO(b/233279034): There are three decoders now: `CameraRollThumbnailDecoder`
@@ -25,7 +24,7 @@ class IconDecoder {
     DecodingData(unsigned long id, const std::string& input_data);
 
     const unsigned long id;
-    const raw_ref<const std::string, ExperimentalAsh> input_data;
+    const raw_ref<const std::string> input_data;
     gfx::Image result;
   };
 
@@ -49,7 +48,6 @@ class IconDecoder {
   IconDecoder() = default;
 };
 
-}  // namespace phonehub
-}  // namespace ash
+}  // namespace ash::phonehub
 
 #endif  // CHROMEOS_ASH_COMPONENTS_PHONEHUB_ICON_DECODER_H_

@@ -5,6 +5,7 @@
 #ifndef CHROME_COMMON_EXTENSIONS_API_STORAGE_STORAGE_SCHEMA_MANIFEST_HANDLER_H_
 #define CHROME_COMMON_EXTENSIONS_API_STORAGE_STORAGE_SCHEMA_MANIFEST_HANDLER_H_
 
+#include "base/types/expected.h"
 #include "extensions/common/manifest_handler.h"
 
 namespace policy {
@@ -28,13 +29,13 @@ class StorageSchemaManifestHandler : public ManifestHandler {
   // If the schema is invalid then the Schema returned is invalid too, and
   // the failure reason is stored in |error|.
   // This function does file I/O and must be called on a thread that allows I/O.
-  static policy::Schema GetSchema(const Extension* extension,
-                                  std::string* error);
+  static base::expected<policy::Schema, std::string> GetSchema(
+      const Extension* extension);
 
  private:
   // ManifestHandler implementation:
   bool Parse(Extension* extension, std::u16string* error) override;
-  bool Validate(const Extension* extension,
+  bool Validate(const Extension& extension,
                 std::string* error,
                 std::vector<InstallWarning>* warnings) const override;
   base::span<const char* const> Keys() const override;

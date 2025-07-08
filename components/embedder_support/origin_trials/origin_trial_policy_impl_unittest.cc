@@ -9,7 +9,6 @@
 
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/embedder_support/origin_trials/features.h"
@@ -254,6 +253,17 @@ TEST_F(OriginTrialPolicyImplTest, DisableThreeTokens) {
   EXPECT_TRUE(manager()->IsTokenDisabled(token3_signature_));
 }
 
+TEST_F(OriginTrialPolicyImplTest, AllNonDeprecationTrialsAreDisabledByFlag) {
+  const char kFrobulateThirdPartyTrialName[] = "FrobulateThirdParty";
+  const char kFrobulateDeprecationTrialName[] = "FrobulateDeprecation";
+  EXPECT_FALSE(manager()->GetAllowOnlyDeprecationTrials());
+  EXPECT_FALSE(manager()->IsFeatureDisabled(kFrobulateThirdPartyTrialName));
+  EXPECT_FALSE(manager()->IsFeatureDisabled(kFrobulateDeprecationTrialName));
+  manager()->SetAllowOnlyDeprecationTrials(true);
+  EXPECT_TRUE(manager()->IsFeatureDisabled(kFrobulateThirdPartyTrialName));
+  EXPECT_FALSE(manager()->IsFeatureDisabled(kFrobulateDeprecationTrialName));
+}
+
 TEST_F(OriginTrialPolicyImplTest, DisableFeatureForUser) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(
@@ -282,7 +292,7 @@ TEST_F(OriginTrialPolicyImplTest, DisableFeatureForUserAfterCheck) {
 class OriginTrialPolicyImplInitializationTest
     : public OriginTrialPolicyImplTest {
  protected:
-  OriginTrialPolicyImplInitializationTest() {}
+  OriginTrialPolicyImplInitializationTest() = default;
 
   OriginTrialPolicyImpl* initialized_manager() {
     return initialized_manager_.get();

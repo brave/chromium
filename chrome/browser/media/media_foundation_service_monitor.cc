@@ -13,7 +13,6 @@
 #include "base/json/values_util.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/power_monitor/moving_average.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -278,13 +277,25 @@ bool MediaFoundationServiceMonitor::IsHardwareSecureDecryptionDisabledByPref() {
 bool MediaFoundationServiceMonitor::IsHardwareSecureDecryptionAllowedForSite(
     const GURL& site) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  static bool allow_per_site_uma_logged = false;
 
   auto earliest_enable_time =
       GetEarliestEnableTime(GetDisabledTimesPerSite(site));
   DVLOG(1) << __func__ << ": site='" << site
            << "' earliest_enable_time=" << earliest_enable_time;
 
-  return base::Time::Now() > earliest_enable_time;
+  bool result = base::Time::Now() > earliest_enable_time;
+
+  // Note: This UMA gets reported once per browser session. It is possible that
+  // multiple sites report different result. However, only the first visited
+  // site will record UMA until the browser session restarts.
+  if (!allow_per_site_uma_logged) {
+    base::UmaHistogramBoolean(
+        "Media.EME.Widevine.HardwareSecure.AllowedForSite", result);
+    allow_per_site_uma_logged = true;
+  }
+
+  return result;
 }
 
 // static
@@ -301,7 +312,7 @@ void MediaFoundationServiceMonitor::Initialize() {
     AddGlobalSample(kSignificantPlayback, base::Time::Now());
 
   content::ServiceProcessHost::AddObserver(this);
-  base::PowerMonitor::AddPowerSuspendObserver(this);
+  base::PowerMonitor::GetInstance()->AddPowerSuspendObserver(this);
   display::Screen::GetScreen()->AddObserver(this);
 }
 
@@ -335,8 +346,7 @@ void MediaFoundationServiceMonitor::OnServiceProcessCrashed(
                             HasRecentPowerOrDisplayChange());
 
   // Site should always be set when launching MediaFoundationService, but it
-  // could be empty, e.g. during capability checking or when
-  // `media::kCdmProcessSiteIsolation` is disabled.
+  // could be empty, e.g. during capability checking.
   DVLOG(1) << __func__ << ": MediaFoundationService process ("
            << info.site().value() << ") crashed!";
 
@@ -356,7 +366,8 @@ void MediaFoundationServiceMonitor::OnDisplayAdded(
     const display::Display& /*new_display*/) {
   OnPowerOrDisplayChange();
 }
-void MediaFoundationServiceMonitor::OnDidRemoveDisplays() {
+void MediaFoundationServiceMonitor::OnDisplaysRemoved(
+    const display::Displays& /*removed_displays*/) {
   OnPowerOrDisplayChange();
 }
 void MediaFoundationServiceMonitor::OnDisplayMetricsChanged(
@@ -432,7 +443,7 @@ void MediaFoundationServiceMonitor::AddSample(const GURL& site,
 
   // When the max average failure score is reached, update the Pref with
   // the new disabled time.
-  if (moving_average.GetUnroundedAverage() >= kMaxAverageFailureScore) {
+  if (moving_average.Mean<double>() >= kMaxAverageFailureScore) {
     AddDisabledTimePerSite(site, time);
   }
 }
@@ -444,7 +455,7 @@ void MediaFoundationServiceMonitor::AddGlobalSample(int failure_score,
   // When the max average failure score is reached, always update the local
   // state with the new disabled time, but only actually disable hardware secure
   // decryption globally when fallback is allowed (by the feature).
-  if (global_samples_.GetUnroundedAverage() >= kMaxAverageFailureScore) {
+  if (global_samples_.Mean<double>() >= kMaxAverageFailureScore) {
     AddDisabledTimeGlobal(time);
     if (base::FeatureList::IsEnabled(
             media::kHardwareSecureDecryptionFallback) &&

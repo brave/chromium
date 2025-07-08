@@ -3,11 +3,8 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/common/ui/table_view/table_view_cells_constants.h"
-#import "ios/chrome/common/ui/util/device_util.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/chrome/common/ui/util/device_util.h"
 
 const CGFloat kTableViewHeaderFooterViewHeight = 48.0;
 const CGFloat kChromeTableViewCellHeight = 48.0;
@@ -24,6 +21,7 @@ const CGFloat kTableViewAccessoryWidth = 40;
 const CGFloat kTableViewIconImageSize = 30;
 const CGFloat kTableViewImagePadding = 14;
 const CGFloat kTableViewTrailingContentPadding = 6;
+const CGFloat kTopLargePadding = 60.;
 
 NSString* const kMaskedPassword = @"••••••••";
 NSString* const kTableViewCellInfoButtonViewId =
@@ -44,7 +42,8 @@ NSString* const kTableViewActivityIndicatorHeaderFooterViewId =
     @"TableViewActivityIndicatorHeaderFooterViewId";
 
 CGFloat HorizontalPadding() {
-  if (!IsSmallDevice())
+  if (!IsSmallDevice()) {
     return 0;
+  }
   return kTableViewHorizontalSpacing;
 }

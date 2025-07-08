@@ -8,11 +8,13 @@
 #include <map>
 
 #include "base/memory/weak_ptr.h"
+#include "content/common/gin_java_bridge.mojom.h"
 #include "content/renderer/java/gin_java_bridge_dispatcher.h"
 #include "gin/handle.h"
 #include "gin/interceptor.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "v8/include/v8-util.h"
 
 namespace blink {
@@ -21,17 +23,18 @@ class WebLocalFrame;
 
 namespace content {
 
-class GinJavaBridgeObject : public gin::Wrappable<GinJavaBridgeObject>,
-                            public gin::NamedPropertyInterceptor {
+class GinJavaBridgeObject
+    : public gin::DeprecatedWrappableWithNamedPropertyInterceptor<
+          GinJavaBridgeObject> {
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static gin::DeprecatedWrapperInfo kWrapperInfo;
 
   GinJavaBridgeObject(const GinJavaBridgeObject&) = delete;
   GinJavaBridgeObject& operator=(const GinJavaBridgeObject&) = delete;
 
   GinJavaBridgeDispatcher::ObjectID object_id() const { return object_id_; }
 
-  // gin::Wrappable.
+  // gin::DeprecatedWrappable.
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override;
 
@@ -47,8 +50,12 @@ class GinJavaBridgeObject : public gin::Wrappable<GinJavaBridgeObject>,
       const std::string& object_name,
       GinJavaBridgeDispatcher::ObjectID object_id);
   static GinJavaBridgeObject* InjectAnonymous(
+      blink::WebLocalFrame* frame,
       const base::WeakPtr<GinJavaBridgeDispatcher>& dispatcher,
       GinJavaBridgeDispatcher::ObjectID object_id);
+
+  // Returns the bound remote object, nullptr if mojo is disabled.
+  mojom::GinJavaBridgeRemoteObject* GetRemote();
 
  private:
   GinJavaBridgeObject(v8::Isolate* isolate,
@@ -61,9 +68,9 @@ class GinJavaBridgeObject : public gin::Wrappable<GinJavaBridgeObject>,
 
   base::WeakPtr<GinJavaBridgeDispatcher> dispatcher_;
   GinJavaBridgeDispatcher::ObjectID object_id_;
-  int frame_routing_id_;
   std::map<std::string, bool> known_methods_;
   v8::StdGlobalValueMap<std::string, v8::FunctionTemplate> template_cache_;
+  mojo::Remote<mojom::GinJavaBridgeRemoteObject> remote_;
 };
 
 }  // namespace content

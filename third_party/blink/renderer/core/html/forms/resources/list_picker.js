@@ -3,7 +3,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-var global = {argumentsReceived: false, params: null, picker: null};
+/**
+ * @type {Object}
+ */
+const global = {
+  argumentsReceived: false,
+  params: null,
+  picker: null
+};
+
+const DELAYED_LAYOUT_THRESHOLD = 1000;
 
 /**
  * @param {Event} event
@@ -35,7 +44,11 @@ function handleArgumentsTimeout() {
  * @param {!Array} optionBounds
  */
 function buildOptionBoundsArray(parent, optionBounds) {
-  for (let i = 0; i < parent.children.length; i++) {
+  // The optionBounds.length check prevents us from doing so many
+  // getBoundingClientRect() calls that the picker hangs for 10+ seconds.
+  for (let i = 0; i < parent.children.length &&
+       optionBounds.length < DELAYED_LAYOUT_THRESHOLD;
+       i++) {
     const child = parent.children[i];
     if (child.tagName === 'OPTION') {
       optionBounds[child.index] = child.getBoundingClientRect();
@@ -153,7 +166,7 @@ class ListPicker extends Picker {
     if (event.target.tagName !== 'OPTION')
       return;
     window.pagePopupController.setValueAndClosePopup(
-        0, this.selectElement_.value);
+        0, this.selectElement_.value, /* is_keyboard_event= */ false);
   }
 
   handleTouchStart_(event) {
@@ -204,7 +217,7 @@ class ListPicker extends Picker {
     const target = document.elementFromPoint(touch.clientX, touch.clientY);
     if (target.tagName === 'OPTION' && !target.disabled)
       window.pagePopupController.setValueAndClosePopup(
-          0, this.selectElement_.value);
+          0, this.selectElement_.value, /* is_keyboard_event= */ false);
     this.exitTouchSelectMode_();
   }
 
@@ -238,7 +251,7 @@ class ListPicker extends Picker {
       event.preventDefault();
     } else if (key === 'Tab' || key === 'Enter') {
       window.pagePopupController.setValueAndClosePopup(
-          0, this.selectElement_.value);
+          0, this.selectElement_.value, /* is_keyboard_event= */ true);
       event.preventDefault();
     } else if (event.altKey && (key === 'ArrowDown' || key === 'ArrowUp')) {
       // We need to add a delay here because, if we do it immediately the key
@@ -328,6 +341,13 @@ class ListPicker extends Picker {
     this.selectElement_.style.fontVariant = this.config_.baseStyle.fontVariant;
     if (this.config_.baseStyle.textAlign)
       this.selectElement_.style.textAlign = this.config_.baseStyle.textAlign;
+
+    // updateChildren_ takes longer when there are existing elements, so remove
+    // them to make it faster.
+    // TODO(crbug.com/388557894): Remove this after improving the performance
+    // of updateChildren_.
+    this.selectElement_.innerHTML = '';
+
     this.updateChildren_(this.selectElement_, this.config_);
     this.setMenuListOptionsBoundsInAXTree_();
   }
@@ -353,9 +373,9 @@ class ListPicker extends Picker {
     this.dispatchEvent('didUpdate');
   }
 
-  static DELAYED_LAYOUT_THRESHOLD = 1000;
-
   /**
+   * TODO(crbug.com/388557894): Make this faster in the case that `parent` has
+   * a large number of children.
    * @param {!Element} parent Select element or optgroup element.
    * @param {!Object} config
    */
@@ -420,7 +440,7 @@ class ListPicker extends Picker {
     this.selectElement_.appendChild(fragment);
     this.selectElement_.classList.add('wrap');
     this.delayedChildrenConfig_ = null;
-    this.setMenuListOptionsBoundsInAXTree_();
+    this.setMenuListOptionsBoundsInAXTree_(true);
   }
 
   findReusableItem_(parent, config, startIndex) {
@@ -515,10 +535,11 @@ class ListPicker extends Picker {
     this.applyItemStyle_(element, config.style);
   }
 
-  setMenuListOptionsBoundsInAXTree_() {
-    var optionBounds = [];
+  setMenuListOptionsBoundsInAXTree_(childrenUpdated = false) {
+    let optionBounds = [];
     buildOptionBoundsArray(this.selectElement_, optionBounds);
-    window.pagePopupController.setMenuListOptionsBoundsInAXTree(optionBounds);
+    window.pagePopupController.setMenuListOptionsBoundsInAXTree(
+        optionBounds, childrenUpdated);
   }
 }
 
@@ -528,3 +549,6 @@ if (window.dialogArguments) {
   window.addEventListener('message', handleMessage);
   window.setTimeout(handleArgumentsTimeout, 1000);
 }
+
+// Necessary for some web tests.
+window.global = global;

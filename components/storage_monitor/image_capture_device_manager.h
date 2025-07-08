@@ -9,11 +9,8 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "components/storage_monitor/storage_monitor.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 class MTPDeviceDelegateImplMacTest;
 
@@ -28,7 +25,7 @@ namespace storage_monitor {
 // ImageCapture API. Notifies clients of the presence of such devices
 // (i.e. cameras,  USB cards) using the SystemMonitor and makes them
 // available using |deviceForUUID|.
-class ImageCaptureDeviceManager {
+class COMPONENT_EXPORT(STORAGE_MONITOR) ImageCaptureDeviceManager {
  public:
   ImageCaptureDeviceManager();
   ~ImageCaptureDeviceManager();

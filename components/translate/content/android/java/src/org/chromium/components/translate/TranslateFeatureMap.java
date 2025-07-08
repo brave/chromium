@@ -4,9 +4,11 @@
 
 package org.chromium.components.translate;
 
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.FeatureMap;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.chromium.build.annotations.NullMarked;
 
 /**
  * Java accessor for translate base::Features.
@@ -15,9 +17,11 @@ import org.chromium.base.annotations.NativeMethods;
  * //components/translate/content/android/translate_feature_map.cc
  */
 @JNINamespace("translate::android")
+@NullMarked
 public final class TranslateFeatureMap extends FeatureMap {
     /** Alphabetical: */
     public static final String CONTENT_LANGUAGES_DISABLE_OBSERVERS_PARAM = "disable_observers";
+
     public static final String CONTENT_LANGUAGES_IN_LANGUAGE_PICKER =
             "ContentLanguagesInLanguagePicker";
     private static final TranslateFeatureMap sInstance = new TranslateFeatureMap();
@@ -25,16 +29,12 @@ public final class TranslateFeatureMap extends FeatureMap {
     // Do not instantiate this class.
     private TranslateFeatureMap() {}
 
-    /**
-     * @return the singleton TranslateFeatureMap.
-     */
+    /** @return the singleton TranslateFeatureMap. */
     public static TranslateFeatureMap getInstance() {
         return sInstance;
     }
 
-    /**
-     * Convenience method to call {@link #isEnabledInNative(String)} statically.
-     */
+    /** Convenience method to call {@link #isEnabledInNative(String)} statically. */
     public static boolean isEnabled(String featureName) {
         return getInstance().isEnabledInNative(featureName);
     }

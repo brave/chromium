@@ -37,7 +37,6 @@
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_param_handler.h"
-#include "third_party/blink/renderer/modules/webaudio/audio_param_timeline.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_summing_junction.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
 #include "third_party/blink/renderer/modules/webaudio/inspector_helper_mixin.h"
@@ -48,6 +47,7 @@
 namespace blink {
 
 class AudioNodeOutput;
+class V8AutomationRate;
 
 // AudioParam class represents web-exposed AudioParam interface.
 class AudioParam final : public ScriptWrappable, public InspectorHelperMixin {
@@ -79,7 +79,7 @@ class AudioParam final : public ScriptWrappable, public InspectorHelperMixin {
   // `Handler()` always returns a valid object.
   AudioParamHandler& Handler() const { return *handler_; }
   // `Context()` always returns a valid object.
-  BaseAudioContext* Context() const { return context_; }
+  BaseAudioContext* Context() const { return context_.Get(); }
 
   AudioParamHandler::AudioParamType GetParamType() const {
     return Handler().GetParamType();
@@ -92,8 +92,8 @@ class AudioParam final : public ScriptWrappable, public InspectorHelperMixin {
   void setValue(float, ExceptionState&);
   void setValue(float);
 
-  String automationRate() const;
-  void setAutomationRate(const String&, ExceptionState&);
+  V8AutomationRate automationRate() const;
+  void setAutomationRate(const V8AutomationRate&, ExceptionState&);
 
   float defaultValue() const;
 

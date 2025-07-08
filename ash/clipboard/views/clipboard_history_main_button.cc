@@ -8,7 +8,6 @@
 #include "ash/style/ash_color_id.h"
 #include "ash/style/style_util.h"
 #include "base/functional/bind.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_provider.h"
@@ -31,9 +30,9 @@ ClipboardHistoryMainButton::ClipboardHistoryMainButton(
   views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::ON);
 
   // Let the parent handle accessibility features.
-  GetViewAccessibility().OverrideIsIgnored(/*value=*/true);
+  GetViewAccessibility().SetIsIgnored(true);
 
-  // TODO(crbug.com/1205227): Revisit if this comment makes sense still. It was
+  // TODO(crbug.com/40764470): Revisit if this comment makes sense still. It was
   // attached to CreateInkDrop() but sounds more about talking about a null
   // CreateInkDropHighlight(), but at the time of writing the class inherited
   // from Button and had no other InkDrop-related override than CreateInkDrop().
@@ -90,16 +89,12 @@ void ClipboardHistoryMainButton::PaintButtonContents(gfx::Canvas* canvas) {
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
 
-  const auto color_id =
-      chromeos::features::IsJellyEnabled()
-          ? static_cast<ui::ColorId>(cros_tokens::kCrosSysHoverOnSubtle)
-          : kColorAshInkDrop;
-  flags.setColor(GetColorProvider()->GetColor(color_id));
+  flags.setColor(GetColorProvider()->GetColor(cros_tokens::kCrosSysHoverOnSubtle));
   flags.setStyle(cc::PaintFlags::kFill_Style);
   canvas->DrawRect(GetLocalBounds(), flags);
 }
 
-BEGIN_METADATA(ClipboardHistoryMainButton, views::Button)
+BEGIN_METADATA(ClipboardHistoryMainButton)
 END_METADATA
 
 }  // namespace ash

@@ -20,8 +20,9 @@ InputEventActivationProtector::~InputEventActivationProtector() {
 }
 
 void InputEventActivationProtector::VisibilityChanged(bool is_visible) {
-  if (is_visible)
+  if (is_visible) {
     view_protected_time_stamp_ = base::TimeTicks::Now();
+  }
 }
 
 void InputEventActivationProtector::MaybeUpdateViewProtectedTimeStamp(
@@ -35,9 +36,11 @@ void InputEventActivationProtector::MaybeUpdateViewProtectedTimeStamp(
 }
 
 bool InputEventActivationProtector::IsPossiblyUnintendedInteraction(
-    const ui::Event& event) {
-  if (UNLIKELY(base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableInputEventActivationProtectionForTesting))) {
+    const ui::Event& event,
+    bool allow_key_events) {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableInputEventActivationProtectionForTesting))
+      [[unlikely]] {
     return false;
   }
 
@@ -52,8 +55,11 @@ bool InputEventActivationProtector::IsPossiblyUnintendedInteraction(
     return true;
   }
 
-  if (!event.IsMouseEvent() && !event.IsTouchEvent()) {
-    return false;
+  if (!event.IsMouseEvent() && !event.IsTouchEvent() &&
+      !event.IsGestureEvent()) {
+    if (allow_key_events || !event.IsKeyEvent()) {
+      return false;
+    }
   }
 
   const base::TimeDelta kShortInterval =

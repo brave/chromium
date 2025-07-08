@@ -4,42 +4,19 @@
 
 #include "gpu/command_buffer/service/dxgi_shared_handle_manager.h"
 
-#include <d3d11_1.h>
 #include <windows.h>
+
+#include <d3d11_1.h>
 
 #include "base/atomic_ref_count.h"
 #include "base/logging.h"
+#include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "ui/gl/gl_angle_util_win.h"
 
 namespace gpu {
 
 namespace {
-
-bool IsSameHandle(HANDLE handle, HANDLE other) {
-  using PFN_COMPARE_OBJECT_HANDLES =
-      BOOL(WINAPI*)(HANDLE hFirstObjectHandle, HANDLE hSecondObjectHandle);
-  static PFN_COMPARE_OBJECT_HANDLES compare_object_handles_fn =
-      []() -> PFN_COMPARE_OBJECT_HANDLES {
-    HMODULE kernelbase_module = ::GetModuleHandle(L"kernelbase.dll");
-    if (!kernelbase_module) {
-      DVLOG(1) << "kernelbase.dll not found";
-      return nullptr;
-    }
-    PFN_COMPARE_OBJECT_HANDLES fn =
-        reinterpret_cast<PFN_COMPARE_OBJECT_HANDLES>(
-            ::GetProcAddress(kernelbase_module, "CompareObjectHandles"));
-    if (!fn)
-      DVLOG(1) << "CompareObjectHandles not found";
-    return fn;
-  }();
-  if (compare_object_handles_fn)
-    return compare_object_handles_fn(handle, other);
-  // CompareObjectHandles isn't available before Windows 10. Return true in that
-  // case since there's no other way to check if the handles refer to the same
-  // D3D11 texture and IsSameHandle is only used as a sanity test.
-  return true;
-}
 
 Microsoft::WRL::ComPtr<ID3D11Texture2D> OpenSharedHandleTexture(
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device,
@@ -62,6 +39,13 @@ Microsoft::WRL::ComPtr<ID3D11Texture2D> OpenSharedHandleTexture(
   }
 
   return d3d11_texture;
+}
+
+bool HasKeyedMutex(Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11_texture) {
+  CHECK(d3d11_texture);
+  D3D11_TEXTURE2D_DESC desc;
+  d3d11_texture->GetDesc(&desc);
+  return desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 }
 
 }  // namespace
@@ -90,32 +74,23 @@ DXGISharedHandleState::DXGISharedHandleState(
           base::subtle::GetRefCountPreference<DXGISharedHandleState>()),
       manager_(std::move(manager)),
       token_(std::move(token)),
-      shared_handle_(std::move(shared_handle)) {
+      shared_handle_(std::move(shared_handle)),
+      has_keyed_mutex_(HasKeyedMutex(d3d11_texture)) {
   CHECK(d3d11_texture);
   Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
   d3d11_texture->GetDevice(&d3d11_device);
   CHECK(d3d11_device);
 
   D3D11TextureState texture_state(std::move(d3d11_texture));
-  has_keyed_mutex_ = !!texture_state.dxgi_keyed_mutex;
   d3d11_texture_state_map_.emplace(d3d11_device, std::move(texture_state));
 }
 
 DXGISharedHandleState::~DXGISharedHandleState() {
-  for (auto& [_, d3d11_state] : d3d11_texture_state_map_) {
-    if (d3d11_state.keyed_mutex_acquired_count > 0) {
-      CHECK(d3d11_state.dxgi_keyed_mutex);
-      const HRESULT hr =
-          d3d11_state.dxgi_keyed_mutex->ReleaseSync(kDXGIKeyedMutexAcquireKey);
-      if (FAILED(hr)) {
-        LOG(ERROR) << "Unable to release the keyed mutex " << std::hex << hr;
-      }
-    }
-  }
+  CHECK(!keyed_mutex_acquired_);
 }
 
 void DXGISharedHandleState::AddRef() const {
-  base::subtle::RefCountedThreadSafeBase::AddRef();
+  base::subtle::RefCountedThreadSafeBase::AddRefWithCheck();
 }
 
 void DXGISharedHandleState::Release() const {
@@ -138,6 +113,7 @@ void DXGISharedHandleState::Release() const {
 Microsoft::WRL::ComPtr<ID3D11Texture2D>
 DXGISharedHandleState::GetOrCreateD3D11Texture(
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device) {
+  base::AutoLock auto_lock(lock_);
   auto it = d3d11_texture_state_map_.find(d3d11_device);
   if (it == d3d11_texture_state_map_.end()) {
     auto d3d11_texture =
@@ -154,30 +130,32 @@ DXGISharedHandleState::GetOrCreateD3D11Texture(
   return it->second.d3d11_texture;
 }
 
-bool DXGISharedHandleState::BeginAccessD3D11(
+bool DXGISharedHandleState::AcquireKeyedMutex(
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device) {
   if (!has_keyed_mutex_) {
     return true;
   }
+  TRACE_EVENT0("gpu", "DXGISharedHandleState::AcquireKeyedMutex");
+  base::AutoLock auto_lock(lock_);
   auto& d3d11_state = d3d11_texture_state_map_.at(d3d11_device);
   CHECK(d3d11_state.dxgi_keyed_mutex);
   CHECK_GE(d3d11_state.keyed_mutex_acquired_count, 0);
 
   // Keyed mutex is acquired on |d3d11_device|. Simply increment acquired count.
   if (d3d11_state.keyed_mutex_acquired_count > 0) {
+    CHECK(keyed_mutex_acquired_);
     d3d11_state.keyed_mutex_acquired_count++;
     return true;
   }
 
-  // Keyed mutex is acquired on another device which is not permitted.
-  if (keyed_mutex_acquired_) {
-    LOG(ERROR) << "Concurrent keyed mutex access not supported";
-    return false;
-  }
+  // Keyed mutex is acquired on another device which is not allowed.
+  CHECK(!keyed_mutex_acquired_) << "Concurrent keyed mutex access not allowed";
 
   const HRESULT hr = d3d11_state.dxgi_keyed_mutex->AcquireSync(
       kDXGIKeyedMutexAcquireKey, INFINITE);
-  if (FAILED(hr)) {
+  // Can't check for FAILED(hr) because AcquireSync may return e.g.
+  // WAIT_ABANDONED.
+  if (hr != S_OK) {
     LOG(ERROR) << "Unable to acquire the keyed mutex " << std::hex << hr;
     return false;
   }
@@ -186,11 +164,12 @@ bool DXGISharedHandleState::BeginAccessD3D11(
   return true;
 }
 
-void DXGISharedHandleState::EndAccessD3D11(
+void DXGISharedHandleState::ReleaseKeyedMutex(
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device) {
   if (!has_keyed_mutex_) {
     return;
   }
+  base::AutoLock auto_lock(lock_);
   CHECK(keyed_mutex_acquired_);
 
   auto& d3d11_state = d3d11_texture_state_map_.at(d3d11_device);
@@ -202,33 +181,38 @@ void DXGISharedHandleState::EndAccessD3D11(
   if (d3d11_state.keyed_mutex_acquired_count == 0) {
     const HRESULT hr =
         d3d11_state.dxgi_keyed_mutex->ReleaseSync(kDXGIKeyedMutexAcquireKey);
-    if (SUCCEEDED(hr)) {
-      keyed_mutex_acquired_ = false;
-    } else {
+    if (FAILED(hr)) {
       LOG(ERROR) << "Unable to release the keyed mutex " << std::hex << hr;
     }
+    keyed_mutex_acquired_ = false;
   }
 }
 
-bool DXGISharedHandleState::BeginAccessDawn() {
-  if (!has_keyed_mutex_) {
-    return true;
+wgpu::SharedTextureMemory DXGISharedHandleState::GetSharedTextureMemory(
+    const wgpu::Device& device) {
+  base::AutoLock auto_lock(lock_);
+  auto iter = dawn_shared_texture_memory_cache_.find(device.Get());
+  if (iter == dawn_shared_texture_memory_cache_.end()) {
+    return nullptr;
   }
-  // Keyed mutex is acquired on another device which is not permitted.
-  if (keyed_mutex_acquired_) {
-    LOG(ERROR) << "Concurrent keyed mutex access not supported";
-    return false;
-  }
-  keyed_mutex_acquired_ = true;
-  return true;
+  return iter->second;
 }
 
-void DXGISharedHandleState::EndAccessDawn() {
-  if (!has_keyed_mutex_) {
-    return;
-  }
-  CHECK(keyed_mutex_acquired_);
-  keyed_mutex_acquired_ = false;
+void DXGISharedHandleState::MaybeCacheSharedTextureMemory(
+    const wgpu::Device& device,
+    wgpu::SharedTextureMemory memory) {
+  base::AutoLock auto_lock(lock_);
+  CHECK(memory);
+  auto [iter, _] =
+      dawn_shared_texture_memory_cache_.try_emplace(device.Get(), memory);
+  CHECK_EQ(memory.Get(), iter->second.Get());
+}
+
+void DXGISharedHandleState::EraseDawnSharedTextureMemory(
+    const wgpu::Device& device) {
+  base::AutoLock auto_lock(lock_);
+  CHECK(dawn_shared_texture_memory_cache_.at(device.Get()).IsDeviceLost());
+  dawn_shared_texture_memory_cache_.erase(device.Get());
 }
 
 DXGISharedHandleManager::DXGISharedHandleManager() = default;
@@ -242,7 +226,7 @@ DXGISharedHandleManager::~DXGISharedHandleManager() {
 
 scoped_refptr<DXGISharedHandleState>
 DXGISharedHandleManager::GetOrCreateSharedHandleState(
-    gfx::DXGIHandleToken token,
+    const gfx::DXGIHandleToken& token,
     base::win::ScopedHandle shared_handle,
     Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device) {
   DCHECK(shared_handle.IsValid());
@@ -255,7 +239,7 @@ DXGISharedHandleManager::GetOrCreateSharedHandleState(
     DCHECK(state);
     // If there's already a shared handle associated with the token, it should
     // refer to the same D3D11 texture (or kernel object).
-    if (!IsSameHandle(shared_handle.Get(), state->GetSharedHandle())) {
+    if (!CompareObjectHandles(shared_handle.Get(), state->GetSharedHandle())) {
       LOG(ERROR) << "Existing shared handle for token doesn't match";
       return nullptr;
     }
@@ -273,8 +257,7 @@ DXGISharedHandleManager::GetOrCreateSharedHandleState(
       base::PassKey<DXGISharedHandleManager>(), base::WrapRefCounted(this),
       token, std::move(shared_handle), std::move(d3d11_texture));
 
-  shared_handle_state_map_.insert(
-      std::make_pair(std::move(token), state.get()));
+  shared_handle_state_map_.insert({token, state.get()});
 
   return state;
 }

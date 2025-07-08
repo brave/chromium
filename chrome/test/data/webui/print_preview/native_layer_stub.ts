@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {CapabilitiesResponse, ExtensionDestinationInfo, GooglePromotedDestinationId, LocalDestinationInfo, NativeInitialSettings, NativeLayer, PageLayoutInfo, PrinterType} from 'chrome://print/print_preview.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {CapabilitiesResponse, ExtensionDestinationInfo, LocalDestinationInfo, NativeInitialSettings, NativeLayer, PageLayoutInfo} from 'chrome://print/print_preview.js';
+import {GooglePromotedDestinationId, PrinterType} from 'chrome://print/print_preview.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
+import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {getCddTemplate, getPdfPrinter} from './print_preview_test_utils.js';
 
@@ -53,6 +55,12 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
 
   private pageLayoutInfo_: PageLayoutInfo|null = null;
 
+  /**
+   * Rejects the promise for getPrinters() to simulate getting no response or a
+   * a slow response from the backend.
+   */
+  private simulateNoResponseForGetPrinters_: boolean = false;
+
   constructor() {
     super([
       'dialogClose',
@@ -84,6 +92,10 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
   }
 
   getPrinters(type: PrinterType) {
+    if (this.simulateNoResponseForGetPrinters_) {
+      return Promise.reject();
+    }
+
     this.methodCalled('getPrinters', type);
     if (this.multipleGetPrintersPromise_) {
       this.multipleGetPrintersCount_--;
@@ -107,7 +119,7 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
     return Promise.resolve();
   }
 
-  getPreview(printTicket: string) {
+  async getPreview(printTicket: string) {
     this.methodCalled('getPreview', {printTicket: printTicket});
     const printTicketParsed = JSON.parse(printTicket);
     if (printTicketParsed.deviceName === this.badPrinterId_) {
@@ -122,6 +134,7 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
     if (pageRanges.length === 0) {  // assume full length document, 1 page.
       webUIListenerCallback(
           'page-count-ready', this.pageCount_, requestId, 100);
+      await microtasksFinished();
       for (let i = 0; i < this.pageCount_; i++) {
         webUIListenerCallback('page-preview-ready', i, 0, requestId);
       }
@@ -136,11 +149,12 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
           []);
       webUIListenerCallback(
           'page-count-ready', this.pageCount_, requestId, 100);
+      await microtasksFinished();
       pages.forEach(function(page: number) {
         webUIListenerCallback('page-preview-ready', page - 1, 0, requestId);
       });
     }
-    return Promise.resolve(requestId);
+    return requestId;
   }
 
   getPrinterCapabilities(printerId: string, type: PrinterType) {
@@ -157,11 +171,6 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
     if (printerId === GooglePromotedDestinationId.SAVE_AS_PDF) {
       return Promise.resolve(getPdfPrinter());
     }
-    // <if expr="is_chromeos">
-    if (printerId === GooglePromotedDestinationId.SAVE_TO_DRIVE_CROS) {
-      return Promise.resolve(getPdfPrinter());
-    }
-    // </if>
     if (type !== PrinterType.LOCAL_PRINTER) {
       return Promise.reject();
     }
@@ -275,5 +284,10 @@ export class NativeLayerStub extends TestBrowserProxy implements NativeLayer {
     this.multipleGetPrintersCount_ = count;
     this.multipleGetPrintersPromise_ = new PromiseResolver();
     return this.multipleGetPrintersPromise_.promise;
+  }
+
+  setSimulateNoResponseForGetPrinters(simulateNoResponseForGetPrinters:
+                                          boolean) {
+    this.simulateNoResponseForGetPrinters_ = simulateNoResponseForGetPrinters;
   }
 }

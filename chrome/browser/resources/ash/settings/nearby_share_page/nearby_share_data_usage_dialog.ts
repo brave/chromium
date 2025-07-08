@@ -8,16 +8,17 @@
  * when using Nearby Share.
  */
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_radio_button/cr_radio_button.js';
-import 'chrome://resources/cr_elements/cr_radio_group/cr_radio_group.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_button/cr_radio_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_radio_group/cr_radio_group.js';
 import '../settings_shared.css.js';
 
 import {getNearbyShareSettings} from '/shared/nearby_share_settings.js';
-import {NearbySettings} from '/shared/nearby_share_settings_mixin.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import type {NearbySettings} from '/shared/nearby_share_settings_mixin.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {DataUsage} from 'chrome://resources/mojo/chromeos/ash/services/nearby/public/mojom/nearby_share_settings.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './nearby_share_data_usage_dialog.html.js';
@@ -44,7 +45,7 @@ class NearbyShareDataUsageDialogElement extends
   static get properties() {
     return {
       /** Mirroring the enum to allow usage in Polymer HTML bindings. */
-      NearbyShareDataUsage: {
+      NearbyShareDataUsageEnum_: {
         type: Object,
         value: NearbyShareDataUsage,
       },
@@ -57,8 +58,6 @@ class NearbyShareDataUsageDialogElement extends
   }
 
   settings: NearbySettings;
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  NearbyShareDataUsage: NearbyShareDataUsage;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -88,12 +87,13 @@ class NearbyShareDataUsageDialogElement extends
     this.close();
   }
 
-  private selectedDataUsage_(dataUsageValue: NearbySettings['dataUsage']) {
-    if (dataUsageValue === NearbyShareDataUsage.UNKNOWN) {
+  private selectedDataUsage_(dataUsageValue: NearbySettings['dataUsage']):
+      NearbyShareDataUsage {
+    if (dataUsageValue === DataUsage.kUnknown) {
       return NearbyShareDataUsage.WIFI_ONLY;
     }
 
-    return dataUsageValue;
+    return dataUsageValue as unknown as NearbyShareDataUsage;
   }
 }
 

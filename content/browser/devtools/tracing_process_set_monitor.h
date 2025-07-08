@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/process/process_handle.h"
 #include "base/scoped_observation.h"
@@ -54,16 +55,16 @@ class TracingProcessSetMonitor : public DevToolsSession::ChildObserver,
 
   void MaybeAddProcess(DevToolsAgentHost* host);
 
-  base::raw_ref<DevToolsSession> const root_session_;
+  raw_ref<DevToolsSession> const root_session_;
   base::ScopedObservation<DevToolsSession, DevToolsSession::ChildObserver>
       session_observation_{this};
   const ProcessAddedCallback process_added_callback_;
 
   bool in_init_{false};
-  std::unordered_set<const DevToolsAgentHost*> hosts_;
+  std::unordered_set<raw_ptr<const DevToolsAgentHost, CtnExperimental>> hosts_;
   std::unordered_set<base::ProcessId> known_pids_;
 };
 
 }  // namespace content
 
-#endif  // #define CONTENT_BROWSER_DEVTOOLS_TRACING_PROCESS_SET_MONITOR_H_
+#endif  // CONTENT_BROWSER_DEVTOOLS_TRACING_PROCESS_SET_MONITOR_H_

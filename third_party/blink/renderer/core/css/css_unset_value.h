@@ -23,7 +23,7 @@ class CORE_EXPORT CSSUnsetValue : public CSSValue {
 
   explicit CSSUnsetValue(base::PassKey<CSSValuePool>) : CSSValue(kUnsetClass) {}
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSUnsetValue&) const { return true; }
 

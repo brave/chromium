@@ -1953,11 +1953,6 @@ void GLES2TraceImplementation::MemoryBarrierByRegion(GLbitfield barriers) {
   gl_->MemoryBarrierByRegion(barriers);
 }
 
-void GLES2TraceImplementation::SwapBuffers(GLuint64 swap_id, GLbitfield flags) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::SwapBuffers");
-  gl_->SwapBuffers(swap_id, flags);
-}
-
 GLuint GLES2TraceImplementation::GetMaxValueInBufferCHROMIUM(GLuint buffer_id,
                                                              GLsizei count,
                                                              GLenum type,
@@ -2035,15 +2030,6 @@ void GLES2TraceImplementation::UnmapTexSubImage2DCHROMIUM(const void* mem) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "GLES2Trace::UnmapTexSubImage2DCHROMIUM");
   gl_->UnmapTexSubImage2DCHROMIUM(mem);
-}
-
-void GLES2TraceImplementation::ResizeCHROMIUM(GLuint width,
-                                              GLuint height,
-                                              GLfloat scale_factor,
-                                              GLcolorSpace color_space,
-                                              GLboolean alpha) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::ResizeCHROMIUM");
-  gl_->ResizeCHROMIUM(width, height, scale_factor, color_space, alpha);
 }
 
 const GLchar* GLES2TraceImplementation::GetRequestableExtensionsCHROMIUM() {
@@ -2195,20 +2181,6 @@ void GLES2TraceImplementation::VertexAttribDivisorANGLE(GLuint index,
   gl_->VertexAttribDivisorANGLE(index, divisor);
 }
 
-void GLES2TraceImplementation::ProduceTextureDirectCHROMIUM(GLuint texture,
-                                                            GLbyte* mailbox) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::ProduceTextureDirectCHROMIUM");
-  gl_->ProduceTextureDirectCHROMIUM(texture, mailbox);
-}
-
-GLuint GLES2TraceImplementation::CreateAndConsumeTextureCHROMIUM(
-    const GLbyte* mailbox) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::CreateAndConsumeTextureCHROMIUM");
-  return gl_->CreateAndConsumeTextureCHROMIUM(mailbox);
-}
-
 void GLES2TraceImplementation::BindUniformLocationCHROMIUM(GLuint program,
                                                            GLint location,
                                                            const char* name) {
@@ -2246,11 +2218,6 @@ void GLES2TraceImplementation::DrawBuffersEXT(GLsizei count,
                                               const GLenum* bufs) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::DrawBuffersEXT");
   gl_->DrawBuffersEXT(count, bufs);
-}
-
-void GLES2TraceImplementation::DiscardBackbufferCHROMIUM() {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::DiscardBackbufferCHROMIUM");
-  gl_->DiscardBackbufferCHROMIUM();
 }
 
 void GLES2TraceImplementation::FlushDriverCachesCHROMIUM() {
@@ -2406,28 +2373,6 @@ void GLES2TraceImplementation::EndSharedImageAccessDirectCHROMIUM(
   gl_->EndSharedImageAccessDirectCHROMIUM(texture);
 }
 
-void GLES2TraceImplementation::ConvertRGBAToYUVAMailboxesINTERNAL(
-    GLenum planes_yuv_color_space,
-    GLenum plane_config,
-    GLenum subsampling,
-    const GLbyte* mailboxes) {
-  TRACE_EVENT_BINARY_EFFICIENT0(
-      "gpu", "GLES2Trace::ConvertRGBAToYUVAMailboxesINTERNAL");
-  gl_->ConvertRGBAToYUVAMailboxesINTERNAL(planes_yuv_color_space, plane_config,
-                                          subsampling, mailboxes);
-}
-
-void GLES2TraceImplementation::ConvertYUVAMailboxesToRGBINTERNAL(
-    GLenum planes_yuv_color_space,
-    GLenum plane_config,
-    GLenum subsampling,
-    const GLbyte* mailboxes) {
-  TRACE_EVENT_BINARY_EFFICIENT0(
-      "gpu", "GLES2Trace::ConvertYUVAMailboxesToRGBINTERNAL");
-  gl_->ConvertYUVAMailboxesToRGBINTERNAL(planes_yuv_color_space, plane_config,
-                                         subsampling, mailboxes);
-}
-
 void GLES2TraceImplementation::CopySharedImageINTERNAL(
     GLint xoffset,
     GLint yoffset,
@@ -2435,11 +2380,10 @@ void GLES2TraceImplementation::CopySharedImageINTERNAL(
     GLint y,
     GLsizei width,
     GLsizei height,
-    GLboolean unpack_flip_y,
     const GLbyte* mailboxes) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::CopySharedImageINTERNAL");
   gl_->CopySharedImageINTERNAL(xoffset, yoffset, x, y, width, height,
-                               unpack_flip_y, mailboxes);
+                               mailboxes);
 }
 
 void GLES2TraceImplementation::CopySharedImageToTextureINTERNAL(
@@ -2451,16 +2395,16 @@ void GLES2TraceImplementation::CopySharedImageToTextureINTERNAL(
     GLint src_y,
     GLsizei width,
     GLsizei height,
-    GLboolean flip_y,
+    GLboolean is_dst_origin_top_left,
     const GLbyte* src_mailbox) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "GLES2Trace::CopySharedImageToTextureINTERNAL");
   gl_->CopySharedImageToTextureINTERNAL(texture, target, internal_format, type,
-                                        src_x, src_y, width, height, flip_y,
-                                        src_mailbox);
+                                        src_x, src_y, width, height,
+                                        is_dst_origin_top_left, src_mailbox);
 }
 
-void GLES2TraceImplementation::ReadbackARGBImagePixelsINTERNAL(
+GLboolean GLES2TraceImplementation::ReadbackARGBImagePixelsINTERNAL(
     const GLbyte* mailbox,
     const void* dst_color_space,
     GLuint dst_color_space_size,
@@ -2476,7 +2420,7 @@ void GLES2TraceImplementation::ReadbackARGBImagePixelsINTERNAL(
     void* pixels) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "GLES2Trace::ReadbackARGBImagePixelsINTERNAL");
-  gl_->ReadbackARGBImagePixelsINTERNAL(
+  return gl_->ReadbackARGBImagePixelsINTERNAL(
       mailbox, dst_color_space, dst_color_space_size, dst_size, dst_width,
       dst_height, dst_color_type, dst_alpha_type, dst_row_bytes, src_x, src_y,
       plane_index, pixels);
@@ -2659,6 +2603,23 @@ void GLES2TraceImplementation::GetFramebufferPixelLocalStorageParameterivANGLE(
   TRACE_EVENT_BINARY_EFFICIENT0(
       "gpu", "GLES2Trace::GetFramebufferPixelLocalStorageParameterivANGLE");
   gl_->GetFramebufferPixelLocalStorageParameterivANGLE(plane, pname, params);
+}
+
+void GLES2TraceImplementation::ClipControlEXT(GLenum origin, GLenum depth) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::ClipControlEXT");
+  gl_->ClipControlEXT(origin, depth);
+}
+
+void GLES2TraceImplementation::PolygonModeANGLE(GLenum face, GLenum mode) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::PolygonModeANGLE");
+  gl_->PolygonModeANGLE(face, mode);
+}
+
+void GLES2TraceImplementation::PolygonOffsetClampEXT(GLfloat factor,
+                                                     GLfloat units,
+                                                     GLfloat clamp) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::PolygonOffsetClampEXT");
+  gl_->PolygonOffsetClampEXT(factor, units, clamp);
 }
 
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_TRACE_IMPLEMENTATION_IMPL_AUTOGEN_H_

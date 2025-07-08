@@ -4,46 +4,66 @@
 
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_frame_delegate.h"
 
+#include <optional>
 #include <utility>
 
+#include "base/time/time.h"
+#include "base/types/expected.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
+#include "third_party/blink/renderer/modules/peerconnection/peer_connection_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
+#include "third_party/blink/renderer/platform/peerconnection/webrtc_util.h"
 #include "third_party/webrtc/api/frame_transformer_factory.h"
+#include "third_party/webrtc/api/frame_transformer_interface.h"
+#include "third_party/webrtc/api/units/time_delta.h"
+#include "third_party/webrtc/api/units/timestamp.h"
 
 namespace blink {
+
+static constexpr char kRTCEncodedAudioFrameDetachKey[] = "RTCEncodedAudioFrame";
+static constexpr int kAcceptableCaptureTimeDeltaMs = 1;
 
 const void* RTCEncodedAudioFramesAttachment::kAttachmentKey;
 
 RTCEncodedAudioFrameDelegate::RTCEncodedAudioFrameDelegate(
     std::unique_ptr<webrtc::TransformableAudioFrameInterface> webrtc_frame,
-    rtc::ArrayView<const unsigned int> contributing_sources,
-    absl::optional<uint16_t> sequence_number)
+    webrtc::ArrayView<const unsigned int> contributing_sources,
+    std::optional<uint16_t> sequence_number)
     : webrtc_frame_(std::move(webrtc_frame)),
-      sequence_number_(sequence_number) {
-  contributing_sources_.assign(contributing_sources);
-}
+      contributing_sources_(contributing_sources),
+      sequence_number_(sequence_number) {}
 
-uint32_t RTCEncodedAudioFrameDelegate::Timestamp() const {
+uint32_t RTCEncodedAudioFrameDelegate::RtpTimestamp() const {
   base::AutoLock lock(lock_);
   return webrtc_frame_ ? webrtc_frame_->GetTimestamp() : 0;
 }
 
-DOMArrayBuffer* RTCEncodedAudioFrameDelegate::CreateDataBuffer() const {
+DOMArrayBuffer* RTCEncodedAudioFrameDelegate::CreateDataBuffer(
+    v8::Isolate* isolate) const {
   ArrayBufferContents contents;
   {
     base::AutoLock lock(lock_);
     if (!webrtc_frame_) {
-      return nullptr;
+      // WebRTC frame already passed, return a detached ArrayBuffer.
+      DOMArrayBuffer* buffer = DOMArrayBuffer::Create(
+          /*num_elements=*/static_cast<size_t>(0), /*element_byte_size=*/1);
+      ArrayBufferContents contents_to_drop;
+      NonThrowableExceptionState exception_state;
+      buffer->Transfer(isolate,
+                       V8AtomicString(isolate, kRTCEncodedAudioFrameDetachKey),
+                       contents_to_drop, exception_state);
+      return buffer;
     }
 
     auto data = webrtc_frame_->GetData();
-    contents =
-        ArrayBufferContents(data.size(), 1, ArrayBufferContents::kNotShared,
-                            ArrayBufferContents::kDontInitialize);
-    if (UNLIKELY(!contents.Data())) {
-      OOM_CRASH(data.size());
-    }
-    memcpy(contents.Data(), data.data(), data.size());
+    contents = ArrayBufferContents(
+        data.size(), 1, ArrayBufferContents::kNotShared,
+        ArrayBufferContents::kDontInitialize,
+        ArrayBufferContents::AllocationFailureBehavior::kCrash);
+    CHECK(contents.IsValid());
+    contents.ByteSpan().copy_from(data);
   }
   return DOMArrayBuffer::Create(std::move(contents));
 }
@@ -51,58 +71,168 @@ DOMArrayBuffer* RTCEncodedAudioFrameDelegate::CreateDataBuffer() const {
 void RTCEncodedAudioFrameDelegate::SetData(const DOMArrayBuffer* data) {
   base::AutoLock lock(lock_);
   if (webrtc_frame_ && data) {
-    webrtc_frame_->SetData(rtc::ArrayView<const uint8_t>(
+    webrtc_frame_->SetData(webrtc::ArrayView<const uint8_t>(
         static_cast<const uint8_t*>(data->Data()), data->ByteLength()));
   }
 }
 
-void RTCEncodedAudioFrameDelegate::SetTimestamp(
-    uint32_t timestamp,
-    ExceptionState& exception_state) {
+base::expected<void, String>
+RTCEncodedAudioFrameDelegate::SetWebRtcFrameMetadata(
+    ExecutionContext* context,
+    const RTCEncodedAudioFrameMetadata* metadata) {
   base::AutoLock lock(lock_);
-  if (webrtc_frame_) {
-    webrtc_frame_->SetRTPTimestamp(timestamp);
-  } else {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
-                                      "Underlying webrtc frame doesn't exist.");
+  if (!webrtc_frame_) {
+    return base::unexpected("Underlying webrtc frame doesn't exist.");
   }
+
+  // Payload type always has a current value. The new metadata must match it if
+  // SetPayloadType is not supported.
+  if (metadata->hasPayloadType()) {
+    if (metadata->payloadType() != webrtc_frame_->GetPayloadType() &&
+        !webrtc_frame_->CanSetPayloadType()) {
+      return base::unexpected("payloadType cannot be modified");
+    }
+    // Payload types must be in the [0,127] range, but values in the [64,95]
+    // range are reserved for RCTP. For additional details, see
+    // https://tools.ietf.org/html/rfc5761#section-4
+    if ((metadata->payloadType() >= 64u && metadata->payloadType() <= 95u) ||
+        metadata->payloadType() > 127u) {
+      return base::unexpected("invalid payloadType value");
+    }
+  }
+
+  std::optional<uint8_t> audio_level_dbov;
+  if (metadata->hasAudioLevel()) {
+    audio_level_dbov = FromLinearAudioLevel(metadata->audioLevel());
+  }
+  if (audio_level_dbov != webrtc_frame_->AudioLevel() &&
+      !webrtc_frame_->CanSetAudioLevel()) {
+    return base::unexpected("audioLevel cannot be modified");
+  }
+
+  std::optional<webrtc::Timestamp> capture_time;
+  if (metadata->hasCaptureTime()) {
+    CaptureTimeInfo::ClockType clock_type;
+    switch (webrtc_frame_->GetDirection()) {
+      case webrtc::TransformableFrameInterface::Direction::kReceiver:
+        clock_type = CaptureTimeInfo::ClockType::kNtpRealClock;
+        break;
+      case webrtc::TransformableFrameInterface::Direction::kSender:
+        clock_type = CaptureTimeInfo::ClockType::kTimeTicks;
+        break;
+      case webrtc::TransformableFrameInterface::Direction::kUnknown:
+        return base::unexpected("captureTime not supported for this frame");
+    }
+    base::TimeDelta capture_time_delta = RTCEncodedFrameTimestampToCaptureTime(
+        context, metadata->captureTime(), clock_type);
+    capture_time =
+        webrtc::Timestamp::Micros(capture_time_delta.InMicroseconds());
+  }
+
+  bool capture_time_is_different = false;
+  if (!webrtc_frame_->CanSetCaptureTime() && capture_time.has_value()) {
+    if (!webrtc_frame_->CaptureTime().has_value()) {
+      capture_time_is_different = true;
+    } else {
+      // Ignore small differences in capture time.
+      webrtc::TimeDelta delta = *capture_time - *webrtc_frame_->CaptureTime();
+      if (delta.Abs() >
+          webrtc::TimeDelta::Millis(kAcceptableCaptureTimeDeltaMs)) {
+        capture_time_is_different = true;
+      }
+    }
+  }
+
+  if (capture_time_is_different && !webrtc_frame_->CanSetCaptureTime()) {
+    return base::unexpected("captureTime cannot be modified");
+  }
+
+  webrtc_frame_->SetRTPTimestamp(metadata->rtpTimestamp());
+  if (metadata->hasPayloadType() && webrtc_frame_->CanSetPayloadType()) {
+    webrtc_frame_->SetPayloadType(metadata->payloadType());
+  }
+  if (webrtc_frame_->CanSetCaptureTime()) {
+    webrtc_frame_->SetCaptureTime(capture_time);
+  }
+  if (webrtc_frame_->CanSetAudioLevel()) {
+    webrtc_frame_->SetAudioLevel(audio_level_dbov);
+  }
+
+  return base::ok();
 }
 
-absl::optional<uint32_t> RTCEncodedAudioFrameDelegate::Ssrc() const {
+std::optional<uint32_t> RTCEncodedAudioFrameDelegate::Ssrc() const {
   base::AutoLock lock(lock_);
-  return webrtc_frame_ ? absl::make_optional(webrtc_frame_->GetSsrc())
-                       : absl::nullopt;
+  return webrtc_frame_ ? std::make_optional(webrtc_frame_->GetSsrc())
+                       : std::nullopt;
 }
 
-absl::optional<uint8_t> RTCEncodedAudioFrameDelegate::PayloadType() const {
+std::optional<uint8_t> RTCEncodedAudioFrameDelegate::PayloadType() const {
   base::AutoLock lock(lock_);
-  return webrtc_frame_ ? absl::make_optional(webrtc_frame_->GetPayloadType())
-                       : absl::nullopt;
+  return webrtc_frame_ ? std::make_optional(webrtc_frame_->GetPayloadType())
+                       : std::nullopt;
 }
 
-absl::optional<uint16_t> RTCEncodedAudioFrameDelegate::SequenceNumber() const {
+std::optional<std::string> RTCEncodedAudioFrameDelegate::MimeType() const {
   base::AutoLock lock(lock_);
+  return webrtc_frame_ ? std::make_optional(webrtc_frame_->GetMimeType())
+                       : std::nullopt;
+}
+
+std::optional<uint16_t> RTCEncodedAudioFrameDelegate::SequenceNumber() const {
   return sequence_number_;
 }
 
 Vector<uint32_t> RTCEncodedAudioFrameDelegate::ContributingSources() const {
-  base::AutoLock lock(lock_);
   return contributing_sources_;
 }
 
-absl::optional<uint64_t> RTCEncodedAudioFrameDelegate::AbsCaptureTime() const {
+std::optional<base::TimeTicks> RTCEncodedAudioFrameDelegate::ReceiveTime()
+    const {
   base::AutoLock lock(lock_);
-  if (webrtc_frame_ &&
-      webrtc_frame_->GetDirection() ==
-          webrtc::TransformableFrameInterface::Direction::kReceiver) {
-    webrtc::TransformableAudioFrameInterface* incoming_audio_frame =
-        static_cast<webrtc::TransformableAudioFrameInterface*>(
-            webrtc_frame_.get());
-
-    return incoming_audio_frame->AbsoluteCaptureTimestamp();
+  if (!webrtc_frame_) {
+    return std::nullopt;
   }
+  return ConvertToOptionalTimeTicks(webrtc_frame_->ReceiveTime());
+}
 
-  return absl::nullopt;
+std::optional<CaptureTimeInfo> RTCEncodedAudioFrameDelegate::CaptureTime()
+    const {
+  base::AutoLock lock(lock_);
+  if (!webrtc_frame_ || !webrtc_frame_->CaptureTime()) {
+    return std::nullopt;
+  }
+  CaptureTimeInfo::ClockType clock_type;
+  switch (webrtc_frame_->GetDirection()) {
+    case webrtc::TransformableFrameInterface::Direction::kReceiver:
+      clock_type = CaptureTimeInfo::ClockType::kNtpRealClock;
+      break;
+    case webrtc::TransformableFrameInterface::Direction::kSender:
+      clock_type = CaptureTimeInfo::ClockType::kTimeTicks;
+      break;
+    case webrtc::TransformableFrameInterface::Direction::kUnknown:
+      return std::nullopt;
+  }
+  return CaptureTimeInfo(
+      {.capture_time = base::Microseconds(webrtc_frame_->CaptureTime()->us()),
+       .clock_type = clock_type});
+}
+
+std::optional<base::TimeDelta>
+RTCEncodedAudioFrameDelegate::SenderCaptureTimeOffset() const {
+  base::AutoLock lock(lock_);
+  if (!webrtc_frame_) {
+    return std::nullopt;
+  }
+  return ConvertToOptionalTimeDelta(webrtc_frame_->SenderCaptureTimeOffset());
+}
+
+std::optional<double> RTCEncodedAudioFrameDelegate::AudioLevel() const {
+  base::AutoLock lock(lock_);
+  return webrtc_frame_ && webrtc_frame_->AudioLevel()
+             ? std::make_optional(
+                   ToLinearAudioLevel(*webrtc_frame_->AudioLevel()))
+             : std::nullopt;
 }
 
 std::unique_ptr<webrtc::TransformableAudioFrameInterface>
@@ -114,6 +244,9 @@ RTCEncodedAudioFrameDelegate::PassWebRtcFrame() {
 std::unique_ptr<webrtc::TransformableAudioFrameInterface>
 RTCEncodedAudioFrameDelegate::CloneWebRtcFrame() {
   base::AutoLock lock(lock_);
+  if (!webrtc_frame_) {
+    return nullptr;
+  }
   return webrtc::CloneAudioFrame(webrtc_frame_.get());
 }
 

@@ -36,8 +36,11 @@ class ASH_EXPORT UnifiedKeyboardBrightnessSliderController
                           views::SliderChangeReason reason) override;
 
  private:
-  const raw_ptr<UnifiedSystemTrayModel, ExperimentalAsh> model_;
-  raw_ptr<UnifiedSliderView, ExperimentalAsh> slider_ = nullptr;
+  const raw_ptr<UnifiedSystemTrayModel> model_;
+
+#if DCHECK_IS_ON()
+  bool created_view_ = false;
+#endif
 };
 
 }  // namespace ash

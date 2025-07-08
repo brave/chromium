@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/bind.h"
 #include "storage/browser/file_system/copy_or_move_hook_delegate.h"
@@ -221,7 +222,7 @@ TEST_P(CopyOrMoveHookDelegateCompositeTest, OnErrorP) {
   TestSimpleMethod(
       base::BindLambdaForTesting([&](CopyOrMoveHookDelegate* delegate) {
         delegate->OnError(source_url_, destination_url_,
-                          base::File::FILE_ERROR_FAILED);
+                          base::File::FILE_ERROR_FAILED, base::DoNothing());
       }),
       base::BindRepeating([](MockCopyOrMoveHookDelegate* hook) {
         EXPECT_CALL(*hook, OnError).Times(1);

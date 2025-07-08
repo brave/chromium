@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,19 @@
 
 #include <memory>
 
+#include "ash/test/ash_test_helper.h"
+#include "base/check_deref.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/ash/floating_workspace/floating_workspace_dialog.h"
+#include "chrome/browser/ui/webui/ash/floating_workspace/floating_workspace_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -22,6 +28,9 @@
 #include "chromeos/ash/components/network/network_state.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/proxy/proxy_config_handler.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/constants/pref_names.h"
+#include "components/account_id/account_id.h"
 #include "components/captive_portal/core/captive_portal_detector.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -30,8 +39,11 @@
 #include "components/proxy_config/proxy_prefs.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/user.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/test_web_contents_factory.h"
+#include "content/public/test/test_web_ui.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
@@ -43,29 +55,51 @@ constexpr char kTestPortalUrl[] = "http://www.gstatic.com/generate_204";
 
 class TestSigninController : public NetworkPortalSigninController {
  public:
-  TestSigninController() = default;
+  explicit TestSigninController(PrefService& local_state)
+      : NetworkPortalSigninController(local_state) {}
   TestSigninController(const TestSigninController&) = delete;
   TestSigninController& operator=(const TestSigninController&) = delete;
   ~TestSigninController() override = default;
 
   // NetworkPortalSigninController
-  void ShowDialog(Profile* profile, const GURL& url) override {
-    profile_ = profile;
-    dialog_url_ = url.spec();
+  void ShowSigninDialog(const GURL& url) override {
+    signin_dialog_url_ = url.spec();
+    WaitForHistograms();
+  }
+  void ShowSigninWindow(const GURL& url) override {
+    signin_window_url_ = url.spec();
+    WaitForHistograms();
   }
   void ShowTab(Profile* profile, const GURL& url) override {
-    profile_ = profile;
+    incognito_ = profile && profile->IsOffTheRecord();
     tab_url_ = url.spec();
+    WaitForHistograms();
+  }
+  void ShowActiveProfileTab(const GURL& url) override {
+    incognito_ = false;
+    tab_url_ = url.spec();
+    WaitForHistograms();
   }
 
-  Profile* profile() const { return profile_; }
-  const std::string& dialog_url() const { return dialog_url_; }
+  const std::string& signin_dialog_url() const { return signin_dialog_url_; }
+  const std::string& signin_window_url() const { return signin_window_url_; }
   const std::string& tab_url() const { return tab_url_; }
+  bool incognito() const { return incognito_; }
 
  private:
-  raw_ptr<Profile, ExperimentalAsh> profile_ = nullptr;
-  std::string dialog_url_;
+  void WaitForHistograms() {
+    // Create a delay simulating opening a window for histograms which use 1 ms
+    // buckets.
+    base::RunLoop run_loop;
+    content::GetUIThreadTaskRunner({})->PostDelayedTask(
+        FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(2));
+    run_loop.Run();
+  }
+
+  std::string signin_dialog_url_;
+  std::string signin_window_url_;
   std::string tab_url_;
+  bool incognito_ = false;
 };
 
 }  // namespace
@@ -80,8 +114,12 @@ class NetworkPortalSigninControllerTest : public testing::Test {
   ~NetworkPortalSigninControllerTest() override = default;
 
   void SetUp() override {
+    // AshTestHelper is needed to call webui in one of the tests.
+    ash::AshTestHelper::InitParams params;
+    ash_test_helper_.SetUp(std::move(params));
     network_helper_ = std::make_unique<NetworkHandlerTestHelper>();
-    controller_ = std::make_unique<TestSigninController>();
+    controller_ = std::make_unique<TestSigninController>(
+        CHECK_DEREF(TestingBrowserProcess::GetGlobal()->local_state()));
 
     CHECK(test_profile_manager_.SetUp());
     user_manager_ = std::make_unique<FakeChromeUserManager>();
@@ -89,7 +127,7 @@ class NetworkPortalSigninControllerTest : public testing::Test {
     task_environment_.RunUntilIdle();
 
     // Initialize ProfileHelper.
-    // TODO(crbug.com/1325210): Migrate it into BrowserContextHelper.
+    // TODO(crbug.com/40225390): Migrate it into BrowserContextHelper.
     ProfileHelper::Get();
 
     // Set ethernet to idle.
@@ -104,14 +142,18 @@ class NetworkPortalSigninControllerTest : public testing::Test {
   }
 
   void TearDown() override {
+    controller_.reset();
+    test_profile_manager_.DeleteAllTestingProfiles();
     user_manager_->Shutdown();
     user_manager_->Destroy();
+    ash_test_helper_.TearDown();
     user_manager_.reset();
-    test_profile_manager_.DeleteAllTestingProfiles();
     network_helper_.reset();
   }
 
  protected:
+  using SigninMode = NetworkPortalSigninController::SigninMode;
+
   void SimulateLogin() {
     const AccountId test_account_id(
         AccountId::FromUserEmail("test_user@gmail.com"));
@@ -122,15 +164,34 @@ class NetworkPortalSigninControllerTest : public testing::Test {
     user_manager_->SwitchActiveUser(test_account_id);
   }
 
+  void SimulateLoginAsUser(user_manager::User* user) {
+    const AccountId account_id = user->GetAccountId();
+    Profile* profile =
+        test_profile_manager_.CreateTestingProfile(account_id.GetUserEmail());
+    ProfileHelper::Get()->SetUserToProfileMappingForTesting(user, profile);
+    user_manager_->LoginUser(account_id);
+    user_manager_->SwitchActiveUser(account_id);
+    task_environment_.RunUntilIdle();
+  }
+
   void SimulateLoginAsGuest() {
     user_manager::User* user = user_manager_->AddGuestUser();
-    Profile* profile = test_profile_manager_.CreateTestingProfile(
-        user->GetAccountId().GetUserEmail());
+    SimulateLoginAsUser(user);
+  }
 
-    ProfileHelper::Get()->SetUserToProfileMappingForTesting(user, profile);
-    user_manager_->LoginUser(user->GetAccountId());
-    user_manager_->SwitchActiveUser(user->GetAccountId());
-    task_environment_.RunUntilIdle();
+  void SimulateLoginAsKioskApp() {
+    const AccountId account_id(
+        AccountId::FromUserEmail("kiosk_app_user@gmail.com"));
+    user_manager::User* user = user_manager_->AddKioskChromeAppUser(account_id);
+    SimulateLoginAsUser(user);
+  }
+
+  void SimulateLoginAsChild() {
+    const AccountId account_id(
+        AccountId::FromUserEmail("child_user@gmail.com"));
+    user_manager::User* user = user_manager_->AddChildUser(account_id);
+    SimulateLoginAsUser(user);
+    user_manager_->set_current_user_child(true);
   }
 
   PrefService* GetPrefs() {
@@ -184,30 +245,40 @@ class NetworkPortalSigninControllerTest : public testing::Test {
     controller_->ShowSignin(source);
   }
 
+  bool IsWindowForSigninDefault(const std::string& url) {
+    return controller_->signin_window_url() == url;
+  }
+
+  const std::string& DefaultUrl() { return controller_->signin_window_url(); }
+
+  SigninMode GetSigninMode() {
+    return controller_->GetSigninMode(GetDefaultNetwork().portal_state());
+  }
+
   content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<NetworkHandlerTestHelper> network_helper_;
   std::unique_ptr<TestSigninController> controller_;
   std::unique_ptr<FakeChromeUserManager> user_manager_;
   TestingProfileManager test_profile_manager_{
       TestingBrowserProcess::GetGlobal()};
+  base::test::ScopedFeatureList feature_list_;
+  AshTestHelper ash_test_helper_;
 };
 
 TEST_F(NetworkPortalSigninControllerTest, LoginScreen) {
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDialog);
   ShowSignin();
-  EXPECT_FALSE(controller_->dialog_url().empty());
+  EXPECT_FALSE(controller_->signin_dialog_url().empty());
 }
 
 TEST_F(NetworkPortalSigninControllerTest, KioskMode) {
-  SimulateLogin();
-  const user_manager::User* user = user_manager_->AddKioskAppUser(
-      AccountId::FromUserEmail("fake_user@test"));
-  user_manager_->LoginUser(user->GetAccountId());
+  SimulateLoginAsKioskApp();
 
+  SetNetworkProxy();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDialog);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_FALSE(controller_->signin_dialog_url().empty());
 }
 
 TEST_F(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyTrue) {
@@ -215,69 +286,75 @@ TEST_F(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyTrue) {
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
   // kCaptivePortalAuthenticationIgnoresProxy defaults to true
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, AuthenticationIgnoresProxyFalse) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
-  GetPrefs()->SetBoolean(prefs::kCaptivePortalAuthenticationIgnoresProxy,
-                         false);
+  GetPrefs()->SetBoolean(
+      chromeos::prefs::kCaptivePortalAuthenticationIgnoresProxy, false);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kNormalTab);
   ShowSignin();
   EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_FALSE(controller_->profile()->IsOffTheRecord());
+  EXPECT_FALSE(controller_->incognito());
 }
 
 TEST_F(NetworkPortalSigninControllerTest, ProbeUrl) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, NoProbeUrl) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(std::string());
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
+  EXPECT_EQ(DefaultUrl(), expected_url);
 }
 
 TEST_F(NetworkPortalSigninControllerTest, NoProxy) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, ProxyDirect) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxyDirect();
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
-TEST_F(NetworkPortalSigninControllerTest,
-       AuthenticationIgnoresProxyFalseOTRDisabled) {
+TEST_F(NetworkPortalSigninControllerTest, IncognitoDisabledByPolicy) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
   SetNetworkProxy();
   IncognitoModePrefs::SetAvailability(
       GetPrefs(), policy::IncognitoModeAvailability::kDisabled);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kIncognitoDisabledByPolicy);
   ShowSignin();
   EXPECT_EQ(controller_->tab_url(), expected_url);
-  EXPECT_FALSE(controller_->profile()->IsOffTheRecord());
+  EXPECT_FALSE(controller_->incognito());
+}
+
+TEST_F(NetworkPortalSigninControllerTest,
+       IncognitoDisabledByParentialControls) {
+  SimulateLoginAsChild();
+  std::string expected_url = SetProbeUrl(kTestPortalUrl);
+  SetNetworkProxy();
+  EXPECT_EQ(GetSigninMode(), SigninMode::kIncognitoDisabledByParentalControls);
+  ShowSignin();
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, ProxyPref) {
@@ -287,34 +364,47 @@ TEST_F(NetworkPortalSigninControllerTest, ProxyPref) {
   proxy_config.Set("mode", ProxyPrefs::kPacScriptProxyModeName);
   proxy_config.Set("pac_url", "http://proxy");
   GetPrefs()->SetDict(::proxy_config::prefs::kProxy, std::move(proxy_config));
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
-}
-
-TEST_F(NetworkPortalSigninControllerTest, IsNewOTRProfile) {
-  SimulateLogin();
-  std::string expected_url = SetProbeUrl(kTestPortalUrl);
-  ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  Profile* profile = ProfileManager::GetActiveUserProfile();
-  Profile* default_otr_profile =
-      profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
-  EXPECT_NE(profile, default_otr_profile);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_NE(controller_->profile(), profile);
-  EXPECT_NE(controller_->profile(), default_otr_profile);
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, GuestLogin) {
   SimulateLoginAsGuest();
   std::string expected_url = SetProbeUrl(kTestPortalUrl);
+  EXPECT_EQ(GetSigninMode(), SigninMode::kSigninDefault);
   ShowSignin();
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
+}
+
+TEST_F(NetworkPortalSigninControllerTest, FloatingWorkspaceDialog) {
+  // We need |profile| for this test, so we cannot reuse SimulateLogin().
+  const AccountId test_account_id(
+      AccountId::FromUserEmail("test_user@gmail.com"));
+  Profile* profile =
+      test_profile_manager_.CreateTestingProfile("test_user@gmail.com");
+  user_manager_->AddUser(test_account_id);
+  user_manager_->LoginUser(test_account_id);
+  user_manager_->SwitchActiveUser(test_account_id);
+
+  // Set up web ui for testing.
+  auto web_contents_factory_ =
+      std::make_unique<content::TestWebContentsFactory>();
+  auto test_web_ui_ = std::make_unique<content::TestWebUI>();
+  test_web_ui_->set_web_contents(
+      web_contents_factory_->CreateWebContents(profile));
+  auto ui = std::make_unique<FloatingWorkspaceUI>(test_web_ui_.get());
+  test_web_ui_->SetController(std::move(ui));
+
+  ash::FloatingWorkspaceDialog::ShowNetworkScreen();
+  EXPECT_EQ(GetSigninMode(), SigninMode::kFloatingWorkspaceDialog);
+  ShowSignin();
+  EXPECT_FALSE(controller_->signin_dialog_url().empty());
+
+  // Wait until the dialog is closed so the test doesn't crash.
+  ash::FloatingWorkspaceDialog::Close();
+  EXPECT_TRUE(base::test::RunUntil(
+      []() { return !FloatingWorkspaceDialog::IsShown(); }));
 }
 
 TEST_F(NetworkPortalSigninControllerTest, NoNetwork) {
@@ -324,7 +414,7 @@ TEST_F(NetworkPortalSigninControllerTest, NoNetwork) {
                                       shill::kStateProperty,
                                       base::Value(shill::kStateIdle));
   ShowSignin();
-  EXPECT_TRUE(controller_->tab_url().empty());
+  EXPECT_TRUE(DefaultUrl().empty());
 }
 
 TEST_F(NetworkPortalSigninControllerTest, NotInPortalState) {
@@ -334,7 +424,7 @@ TEST_F(NetworkPortalSigninControllerTest, NotInPortalState) {
                                       shill::kStateProperty,
                                       base::Value(shill::kStateOnline));
   ShowSignin();
-  EXPECT_TRUE(controller_->tab_url().empty());
+  EXPECT_TRUE(DefaultUrl().empty());
 }
 
 TEST_F(NetworkPortalSigninControllerTest, Metrics) {
@@ -342,18 +432,41 @@ TEST_F(NetworkPortalSigninControllerTest, Metrics) {
   SimulateLogin();
   std::string expected_url = SetProbeUrl(std::string());
   ShowSignin(NetworkPortalSigninController::SigninSource::kSettings);
-  EXPECT_EQ(controller_->tab_url(), expected_url);
-  ASSERT_TRUE(controller_->profile());
-  EXPECT_TRUE(controller_->profile()->IsOffTheRecord());
+  EXPECT_TRUE(IsWindowForSigninDefault(expected_url));
 
   histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninMode", 1);
   histogram_tester.ExpectUniqueSample(
       "Network.NetworkPortalSigninMode",
-      NetworkPortalSigninController::SigninMode::kIncognitoTab, 1);
+      NetworkPortalSigninController::SigninMode::kSigninDefault, 1);
   histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninSource", 1);
   histogram_tester.ExpectUniqueSample(
       "Network.NetworkPortalSigninSource",
       NetworkPortalSigninController::SigninSource::kSettings, 1);
+  histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninTime", 0);
+
+  // Set WiFi to online
+  std::string wifi_path = GetDefaultNetwork().path();
+  network_helper_->SetServiceProperty(wifi_path, shill::kStateProperty,
+                                      base::Value(shill::kStateOnline));
+  histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninTime", 1);
+  // Entry should not be in the 0 bucket.
+  histogram_tester.ExpectTimeBucketCount("Network.NetworkPortalSigninTime",
+                                         base::TimeDelta(), 0);
+  // Set WiFi to idle, no additional SigninTime metric should occur.
+  network_helper_->SetServiceProperty(wifi_path, shill::kStateProperty,
+                                      base::Value(shill::kStateIdle));
+  histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninTime", 1);
+
+  // Set WiFi to portal, show the signin page, than set it to idle.
+  // An entry in the 0 bucket should occur.
+  network_helper_->SetServiceProperty(wifi_path, shill::kStateProperty,
+                                      base::Value(shill::kStateRedirectFound));
+  ShowSignin(NetworkPortalSigninController::SigninSource::kSettings);
+  network_helper_->SetServiceProperty(wifi_path, shill::kStateProperty,
+                                      base::Value(shill::kStateIdle));
+  histogram_tester.ExpectTotalCount("Network.NetworkPortalSigninTime", 2);
+  histogram_tester.ExpectTimeBucketCount("Network.NetworkPortalSigninTime",
+                                         base::TimeDelta(), 1);
 }
 
 }  // namespace ash

@@ -12,28 +12,19 @@
 
 namespace trusted_vault {
 
-// Whether the periodic degraded recoverability polling is enabled.
-BASE_DECLARE_FEATURE(kSyncTrustedVaultPeriodicDegradedRecoverabilityPolling);
-inline constexpr base::FeatureParam<base::TimeDelta>
-    kSyncTrustedVaultLongPeriodDegradedRecoverabilityPolling{
-        &kSyncTrustedVaultPeriodicDegradedRecoverabilityPolling,
-        "kSyncTrustedVaultLongPeriodDegradedRecoverabilityPolling",
-        base::Days(7)};
-inline constexpr base::FeatureParam<base::TimeDelta>
-    kSyncTrustedVaultShortPeriodDegradedRecoverabilityPolling{
-        &kSyncTrustedVaultPeriodicDegradedRecoverabilityPolling,
-        "kSyncTrustedVaultShortPeriodDegradedRecoverabilityPolling",
-        base::Hours(1)};
-
-// Enables logging a UMA metric that requires first communicating with the
-// trusted vault server, in order to verify that the local notion of the device
-// being registered is consistent with the server-side state.
-BASE_DECLARE_FEATURE(kSyncTrustedVaultVerifyDeviceRegistration);
-
 #if !BUILDFLAG(IS_ANDROID)
 // Enables the chrome.setClientEncryptionKeys() JS API.
 BASE_DECLARE_FEATURE(kSetClientEncryptionKeysJsApi);
 #endif
+
+#if BUILDFLAG(IS_MAC)
+BASE_DECLARE_FEATURE(kEnableICloudKeychainRecoveryFactor);
+#endif
+
+BASE_DECLARE_FEATURE(kEnableRegistrationStateSecurityDomainFiltering);
+
+// TODO(crug.com/425990763): Complete MD5 -> SHA256 migration.
+BASE_DECLARE_FEATURE(kEnableTrustedVaultSHA256);
 
 }  // namespace trusted_vault
 

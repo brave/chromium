@@ -5,6 +5,7 @@
 #include "ash/accelerometer/accel_gyro_samples_observer.h"
 
 #include <utility>
+#include <vector>
 
 #include "ash/accelerometer/accelerometer_constants.h"
 #include "base/functional/bind.h"
@@ -17,7 +18,7 @@ constexpr int kTimeoutToleranceInMilliseconds = 500;
 
 }  // namespace
 
-AccelGryoSamplesObserver::AccelGryoSamplesObserver(
+AccelGyroSamplesObserver::AccelGyroSamplesObserver(
     int iio_device_id,
     mojo::Remote<chromeos::sensors::mojom::SensorDevice> sensor_device_remote,
     float scale,
@@ -34,13 +35,14 @@ AccelGryoSamplesObserver::AccelGryoSamplesObserver(
   DCHECK(sensor_device_remote_.is_bound());
   DCHECK(device_type_ == chromeos::sensors::mojom::DeviceType::ACCEL||
          device_type_ == chromeos::sensors::mojom::DeviceType::ANGLVEL);
-  sensor_device_remote_->GetAllChannelIds(base::BindOnce(
-      &AccelGryoSamplesObserver::GetAllChannelIdsCallback, weak_factory_.GetWeakPtr()));
+  sensor_device_remote_->GetAllChannelIds(
+      base::BindOnce(&AccelGyroSamplesObserver::GetAllChannelIdsCallback,
+                     weak_factory_.GetWeakPtr()));
 }
 
-AccelGryoSamplesObserver::~AccelGryoSamplesObserver() = default;
+AccelGyroSamplesObserver::~AccelGyroSamplesObserver() = default;
 
-void AccelGryoSamplesObserver::SetEnabled(bool enabled) {
+void AccelGyroSamplesObserver::SetEnabled(bool enabled) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (enabled_ == enabled)
@@ -51,7 +53,7 @@ void AccelGryoSamplesObserver::SetEnabled(bool enabled) {
   UpdateSensorDeviceFrequency();
 }
 
-void AccelGryoSamplesObserver::OnSampleUpdated(
+void AccelGyroSamplesObserver::OnSampleUpdated(
     const base::flat_map<int32_t, int64_t>& sample) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -83,7 +85,7 @@ void AccelGryoSamplesObserver::OnSampleUpdated(
   on_sample_updated_callback_.Run(iio_device_id_, output_sample);
 }
 
-void AccelGryoSamplesObserver::OnErrorOccurred(
+void AccelGyroSamplesObserver::OnErrorOccurred(
     chromeos::sensors::mojom::ObserverErrorType type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -109,11 +111,12 @@ void AccelGryoSamplesObserver::OnErrorOccurred(
                  << ": Observer started with no channels enabled";
       if (sensor_device_remote_.is_bound()) {
         sensor_device_remote_->SetChannelsEnabled(
-            std::vector<int32_t>(channel_indices_,
-                                 channel_indices_ + kNumberOfAxes),
+            std::vector<int32_t>(channel_indices_.begin(),
+                                 channel_indices_.end()),
             /*enable=*/true,
-            base::BindOnce(&AccelGryoSamplesObserver::SetChannelsEnabledCallback,
-                           weak_factory_.GetWeakPtr()));
+            base::BindOnce(
+                &AccelGyroSamplesObserver::SetChannelsEnabledCallback,
+                weak_factory_.GetWeakPtr()));
       }
 
       break;
@@ -143,7 +146,7 @@ void AccelGryoSamplesObserver::OnErrorOccurred(
   }
 }
 
-void AccelGryoSamplesObserver::Reset() {
+void AccelGyroSamplesObserver::Reset() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   LOG(ERROR) << "Resetting SamplesObserver: " << iio_device_id_;
@@ -151,7 +154,7 @@ void AccelGryoSamplesObserver::Reset() {
   sensor_device_remote_.reset();
 }
 
-void AccelGryoSamplesObserver::GetAllChannelIdsCallback(
+void AccelGyroSamplesObserver::GetAllChannelIdsCallback(
     const std::vector<std::string>& iio_channel_ids) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(sensor_device_remote_.is_bound());
@@ -186,15 +189,15 @@ void AccelGryoSamplesObserver::GetAllChannelIdsCallback(
   }
 
   sensor_device_remote_->SetChannelsEnabled(
-      std::vector<int32_t>(channel_indices_, channel_indices_ + kNumberOfAxes),
+      std::vector<int32_t>(channel_indices_.begin(), channel_indices_.end()),
       /*enable=*/true,
-      base::BindOnce(&AccelGryoSamplesObserver::SetChannelsEnabledCallback,
+      base::BindOnce(&AccelGyroSamplesObserver::SetChannelsEnabledCallback,
                      weak_factory_.GetWeakPtr()));
 
   StartReading();
 }
 
-void AccelGryoSamplesObserver::StartReading() {
+void AccelGyroSamplesObserver::StartReading() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(sensor_device_remote_.is_bound());
 
@@ -203,7 +206,7 @@ void AccelGryoSamplesObserver::StartReading() {
   sensor_device_remote_->StartReadingSamples(GetPendingRemote());
 }
 
-void AccelGryoSamplesObserver::UpdateSensorDeviceFrequency() {
+void AccelGyroSamplesObserver::UpdateSensorDeviceFrequency() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!sensor_device_remote_.is_bound())
@@ -211,22 +214,23 @@ void AccelGryoSamplesObserver::UpdateSensorDeviceFrequency() {
 
   sensor_device_remote_->SetFrequency(
       enabled_ ? frequency_ : 0.0,
-      base::BindOnce(&AccelGryoSamplesObserver::SetFrequencyCallback,
+      base::BindOnce(&AccelGyroSamplesObserver::SetFrequencyCallback,
                      weak_factory_.GetWeakPtr(), enabled_));
 }
 
 mojo::PendingRemote<chromeos::sensors::mojom::SensorDeviceSamplesObserver>
-AccelGryoSamplesObserver::GetPendingRemote() {
+AccelGyroSamplesObserver::GetPendingRemote() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto pending_remote = receiver_.BindNewPipeAndPassRemote();
 
-  receiver_.set_disconnect_handler(base::BindOnce(
-      &AccelGryoSamplesObserver::OnObserverDisconnect, weak_factory_.GetWeakPtr()));
+  receiver_.set_disconnect_handler(
+      base::BindOnce(&AccelGyroSamplesObserver::OnObserverDisconnect,
+                     weak_factory_.GetWeakPtr()));
   return pending_remote;
 }
 
-void AccelGryoSamplesObserver::OnObserverDisconnect() {
+void AccelGyroSamplesObserver::OnObserverDisconnect() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   LOG(ERROR) << "OnObserverDisconnect error, assuming IIO Service crashes and "
@@ -236,8 +240,8 @@ void AccelGryoSamplesObserver::OnObserverDisconnect() {
   receiver_.reset();
 }
 
-void AccelGryoSamplesObserver::SetFrequencyCallback(bool enabled,
-                                           double result_frequency) {
+void AccelGyroSamplesObserver::SetFrequencyCallback(bool enabled,
+                                                    double result_frequency) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (enabled != enabled_) {
@@ -257,7 +261,7 @@ void AccelGryoSamplesObserver::SetFrequencyCallback(bool enabled,
   Reset();
 }
 
-void AccelGryoSamplesObserver::SetChannelsEnabledCallback(
+void AccelGyroSamplesObserver::SetChannelsEnabledCallback(
     const std::vector<int32_t>& failed_indices) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 

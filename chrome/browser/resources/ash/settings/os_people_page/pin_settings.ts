@@ -5,18 +5,19 @@
 import './setup_pin_dialog.js';
 import './pin_autosubmit_dialog.js';
 
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
 import {LockScreenProgress, recordLockScreenProgress} from 'chrome://resources/ash/common/quick_unlock/lock_screen_constants.js';
 import {fireAuthTokenInvalidEvent} from 'chrome://resources/ash/common/quick_unlock/utils.js';
-import {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {CrActionMenuElement} from 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
+import {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {CrIconButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {AuthFactor, AuthFactorConfig, ConfigureResult, FactorObserverReceiver, PinFactorEditor} from 'chrome://resources/mojo/chromeos/ash/services/auth_factor_config/public/mojom/auth_factor_config.mojom-webui.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 
 import {getTemplate} from './pin_settings.html.js';
 
@@ -65,16 +66,16 @@ export class SettingsPinSettingsElement extends SettingsPinSettingsElementBase {
   }
 
   authToken: string|null;
-  /* eslint-disable @typescript-eslint/naming-convention */
   private hasPin_: boolean;
   private showSetPinDialog_: boolean;
   private showPinAutosubmitDialog_: boolean;
   private quickUnlockDisabledByPolicy_: boolean;
+  private hasPassword_: boolean;
 
   override ready(): void {
     super.ready();
     // Register observer for auth factor updates.
-    // TODO(crbug/1321440): Are we leaking |this| here because we never remove
+    // TODO(crbug.com/40223898): Are we leaking |this| here because we never remove
     // the observer? We could close the pipe with |$.close()|, but not clear
     // whether that removes all references to |receiver| and then eventually to
     // |this|.
@@ -96,12 +97,23 @@ export class SettingsPinSettingsElement extends SettingsPinSettingsElementBase {
 
   onFactorChanged(factor: AuthFactor): void {
     switch (factor) {
-      case AuthFactor.kPin:
+      case AuthFactor.kPrefBasedPin:
+      case AuthFactor.kCryptohomePin:
+      case AuthFactor.kCryptohomePinV2:
+      case AuthFactor.kGaiaPassword:
+      case AuthFactor.kLocalPassword:
         this.updatePinState_();
         break;
       default:
         return;
     }
+  }
+
+  // Remove pin is disabled when pin is the only factor available, or
+  // in other words, when there is no password available.
+  // Remove can also be disabled by then the QuickUnlock policy disallows it.
+  private removeDisabled_(): boolean {
+    return !this.hasPassword_ || this.quickUnlockDisabledByPolicy_;
   }
 
   private moreButton_(): CrIconButtonElement {
@@ -134,16 +146,34 @@ export class SettingsPinSettingsElement extends SettingsPinSettingsElementBase {
 
   /**
    * Fetches the state of the pin factor and updates the corresponding
-   * property.
+   * property. It also updates the fact that there is another knowledge factor
+   * present or not. This will help with logic of removal.
    */
   private async updatePinState_(): Promise<void> {
+    if (!this.authToken) {
+      return;
+    }
+
     if (typeof this.authToken !== 'string') {
       return;
     }
 
-    const pfe = AuthFactorConfig.getRemote();
-    this.hasPin_ =
-        (await pfe.isConfigured(this.authToken, AuthFactor.kPin)).configured;
+    const authToken = this.authToken;
+
+    const afc = AuthFactorConfig.getRemote();
+    const pfe = PinFactorEditor.getRemote();
+    // clang-format off
+    const [{configured: hasGaiaPassword},
+      {configured: hasLocalPassword},
+      {pinFactor}] =
+        await Promise.all([
+          afc.isConfigured(authToken, AuthFactor.kGaiaPassword),
+          afc.isConfigured(authToken, AuthFactor.kLocalPassword),
+          pfe.getConfiguredPinFactor(authToken),
+        ]);
+    // clang-format off
+    this.hasPin_ = pinFactor !== null;
+    this.hasPassword_ = hasGaiaPassword || hasLocalPassword;
   }
 
   private onSetPinButtonClicked_(): void {

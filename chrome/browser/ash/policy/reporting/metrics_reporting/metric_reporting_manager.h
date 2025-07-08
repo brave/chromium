@@ -10,7 +10,9 @@
 #include <string_view>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/feature_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
@@ -21,13 +23,15 @@
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/cros_reporting_settings.h"
 #include "chrome/browser/ash/policy/status_collector/managed_session_service.h"
 #include "chrome/browser/ash/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/reporting/local_state_reporting_settings.h"
 #include "chrome/browser/chromeos/reporting/metric_reporting_manager_delegate_base.h"
 #include "chrome/browser/chromeos/reporting/user_reporting_settings.h"
+#include "chrome/browser/chromeos/reporting/websites/website_usage_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/ash/services/cros_healthd/public/mojom/cros_healthd_probe.mojom.h"
 #include "components/reporting/metrics/event_driven_telemetry_collector_pool.h"
 #include "components/reporting/metrics/periodic_event_collector.h"
-#include "components/reporting/proto/synced/record_constants.pb.h"
+#include "components/reporting/proto/synced/metric_data.pb.h"
 
 namespace reporting {
 
@@ -36,8 +40,11 @@ class MetricEventObserverManager;
 class MetricReportQueue;
 class CollectorBase;
 class Sampler;
+class FatalCrashEventsObserver;
+class ChromeFatalCrashEventsObserver;
 
-BASE_DECLARE_FEATURE(kEnableAppEventsObserver);
+BASE_DECLARE_FEATURE(kEnableFatalCrashEventsObserver);
+BASE_DECLARE_FEATURE(kEnableChromeFatalCrashEventsObserver);
 
 // Class to initialize and start info, event, and telemetry collection and
 // reporting.
@@ -56,7 +63,7 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
 
     ~Delegate() override = default;
 
-    bool IsAffiliated(Profile* profile) const override;
+    bool IsUserAffiliated(Profile& profile) const override;
 
     virtual bool IsDeprovisioned() const;
 
@@ -72,10 +79,6 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
   static std::unique_ptr<MetricReportingManager> Create(
       policy::ManagedSessionService* managed_session_service);
 
-  static std::unique_ptr<MetricReportingManager> CreateForTesting(
-      std::unique_ptr<Delegate> delegate,
-      policy::ManagedSessionService* managed_session_service);
-
   ~MetricReportingManager() override;
 
   // ManagedSessionService::Observer:
@@ -85,22 +88,42 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
   void DeviceSettingsUpdated() override;
 
   // EventDrivenTelemetryCollectorPool:
-  std::vector<CollectorBase*> GetTelemetryCollectors(
-      MetricEventType event_type) override;
+  std::vector<raw_ptr<CollectorBase, VectorExperimental>>
+  GetTelemetryCollectors(MetricEventType event_type) override;
+
+  // Can be nullptr of the feature flag is not enabled.
+  FatalCrashEventsObserver* fatal_crash_events_observer();
+
+  // Accessor to actual delegate.
+  Delegate* delegate() const;
+
+ protected:
+  // Constructor is overridden for testing.
+  explicit MetricReportingManager(std::unique_ptr<Delegate> delegate);
+
+  // Init collectors that need to start on startup after a delay, should
+  // only be scheduled once on construction.
+  void DelayedInit(policy::ManagedSessionService* managed_session_service);
+
+  // Queues are declared protected for testing purposes.
+  std::unique_ptr<MetricReportQueue> info_report_queue_;
+  std::unique_ptr<MetricReportQueue> telemetry_report_queue_;
+  std::unique_ptr<MetricReportQueue> user_telemetry_report_queue_;
+  std::unique_ptr<MetricReportQueue> event_report_queue_;
+  std::unique_ptr<MetricReportQueue> crash_event_report_queue_;
+  std::unique_ptr<MetricReportQueue> chrome_crash_event_report_queue_;
+  std::unique_ptr<MetricReportQueue> user_event_report_queue_;
+  std::unique_ptr<MetricReportQueue> app_event_report_queue_;
+  std::unique_ptr<MetricReportQueue> website_event_report_queue_;
+  std::unique_ptr<MetricReportQueue>
+      user_peripheral_events_and_telemetry_report_queue_;
+  std::unique_ptr<MetricReportQueue> kiosk_heartbeat_telemetry_report_queue_;
 
  private:
-  MetricReportingManager(
-      std::unique_ptr<Delegate> delegate,
-      policy::ManagedSessionService* managed_session_service);
-
   void Shutdown();
 
   // Init telemetry samplers that it is allowed to be used even before login.
   void InitDeviceTelemetrySamplers();
-
-  // Init collectors that need to start on startup after a delay, should
-  // only be scheduled once on construction.
-  void DelayedInit();
 
   // Init samplers, collectors and event observers that need to start after an
   // affiliated user login with no delay, should only be called once on login.
@@ -267,19 +290,29 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
 
   void InitBootPerformanceCollector();
 
+  void InitFatalCrashCollectors();
+
   void InitPeripheralsCollectors();
+
+  void InitRuntimeCountersCollectors();
+
+  void InitWebsiteMetricCollectors(Profile* profile);
 
   void InitDisplayCollectors();
 
   // Initializes a periodic collector that collects device activity state.
   void InitDeviceActivityCollector();
 
+  // Initializes a periodic collector that sends out heartbeat signals.
+  void InitKioskHeartbeatTelemetryCollector();
+
   base::TimeDelta GetUploadDelay() const;
 
-  std::vector<CollectorBase*> GetTelemetryCollectorsFromSetting(
-      std::string_view setting_name);
+  std::vector<raw_ptr<CollectorBase, VectorExperimental>>
+  GetTelemetryCollectorsFromSetting(std::string_view setting_name);
 
   CrosReportingSettings reporting_settings_;
+  LocalStateReportingSettings local_state_reporting_settings_;
   std::unique_ptr<UserReportingSettings> user_reporting_settings_;
 
   SEQUENCE_CHECKER(sequence_checker_);
@@ -292,15 +325,6 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
   // instance.
   std::vector<std::unique_ptr<Sampler>> samplers_
       GUARDED_BY_CONTEXT(sequence_checker_);
-
-  std::unique_ptr<MetricReportQueue> info_report_queue_;
-  std::unique_ptr<MetricReportQueue> telemetry_report_queue_;
-  std::unique_ptr<MetricReportQueue> user_telemetry_report_queue_;
-  std::unique_ptr<MetricReportQueue> event_report_queue_;
-  std::unique_ptr<MetricReportQueue> user_event_report_queue_;
-  std::unique_ptr<MetricReportQueue> app_event_report_queue_;
-  std::unique_ptr<MetricReportQueue>
-      user_peripheral_events_and_telemetry_report_queue_;
 
   base::ScopedObservation<policy::ManagedSessionService,
                           policy::ManagedSessionService::Observer>
@@ -325,15 +349,24 @@ class MetricReportingManager : public policy::ManagedSessionService::Observer,
 
   std::vector<std::unique_ptr<MetricEventObserverManager>>
       event_observer_managers_ GUARDED_BY_CONTEXT(sequence_checker_);
+  // Fatal crash event observer. Life time of this object is owned by
+  // `event_observer_managers_`.
+  raw_ptr<FatalCrashEventsObserver, DisableDanglingPtrDetection>
+      fatal_crash_events_observer_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   // App usage observer used to observe and collect app usage reports from the
   // `AppPlatformMetrics` component.
   std::unique_ptr<AppUsageObserver> app_usage_observer_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
+  // Website usage observer used to observe and collect website usage reports
+  // from the `WebsiteMetrics` component.
+  std::unique_ptr<WebsiteUsageObserver> website_usage_observer_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
+  // Delegate used - must be the last in the class.
   std::unique_ptr<Delegate> delegate_;
 };
-
 }  // namespace reporting
 
 #endif  // CHROME_BROWSER_ASH_POLICY_REPORTING_METRICS_REPORTING_METRIC_REPORTING_MANAGER_H_

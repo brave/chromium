@@ -27,10 +27,6 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/strings/grit/ui_strings.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 using remote_cocoa::mojom::AlertDisposition;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -63,11 +59,6 @@ JavaScriptAppModalDialogCocoa::GetAlertParams() {
       remote_cocoa::mojom::AlertBridgeInitParams::New();
   params->title = controller_->title();
   params->message_text = controller_->message_text();
-
-  // Set a blank icon for dialogs with text provided by the page.
-  // "onbeforeunload" dialogs don't have text provided by the page, so it's
-  // OK to use the app icon.
-  params->hide_application_icon = !controller_->is_before_unload_dialog();
 
   // Determine the names of the dialog buttons based on the flags. "Default"
   // is the OK button. "Other" is the cancel button. We don't use the
@@ -115,8 +106,9 @@ void JavaScriptAppModalDialogCocoa::OnAlertFinished(
     case AlertDisposition::SECONDARY_BUTTON:
       // If the user wants to stay on this page, stop quitting (if a quit is in
       // progress).
-      if (controller_->is_before_unload_dialog())
+      if (controller_->is_before_unload_dialog()) {
         chrome_browser_application_mac::CancelTerminate();
+      }
       controller_->OnCancel(check_box_value);
       break;
     case AlertDisposition::CLOSE:

@@ -12,15 +12,14 @@
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
-#include "chrome/browser/ash/login/ui/oobe_dialog_size_utils.h"
 #include "chrome/browser/ash/multidevice_setup/multidevice_setup_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/login/oobe_dialog_size_utils.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/webui/ash/multidevice_setup/multidevice_setup_handler.h"
 #include "chrome/browser/ui/webui/ash/multidevice_setup/multidevice_setup_localized_strings_provider.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -28,7 +27,6 @@
 #include "chrome/grit/multidevice_setup_resources_map.h"
 #include "chromeos/ash/services/multidevice_setup/multidevice_setup_service.h"
 #include "chromeos/ash/services/multidevice_setup/public/cpp/url_provider.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -36,6 +34,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
+#include "ui/webui/webui_util.h"
 #include "ui/wm/core/shadow_types.h"
 
 namespace ash::multidevice_setup {
@@ -88,8 +87,9 @@ MultiDeviceSetupDialog::MultiDeviceSetupDialog()
                               std::u16string()) {}
 
 MultiDeviceSetupDialog::~MultiDeviceSetupDialog() {
-  for (auto& callback : on_close_callbacks_)
+  for (auto& callback : on_close_callbacks_) {
     std::move(callback).Run();
+  }
 }
 
 void MultiDeviceSetupDialog::GetDialogSize(gfx::Size* size) const {
@@ -121,12 +121,9 @@ MultiDeviceSetupDialogUI::MultiDeviceSetupDialogUI(content::WebUI* web_ui)
 
   AddLocalizedStrings(source);
   source->UseStringsJs();
-  source->AddBoolean("isJellyEnabled", chromeos::features::IsJellyEnabled());
 
   webui::SetupWebUIDataSource(
-      source,
-      base::make_span(kMultideviceSetupResources,
-                      kMultideviceSetupResourcesSize),
+      source, kMultideviceSetupResources,
       IDR_MULTIDEVICE_SETUP_MULTIDEVICE_SETUP_DIALOG_HTML);
   // Enabling trusted types via trusted_types_util must be done after
   // webui::SetupWebUIDataSource to override the trusted type CSP with correct
@@ -144,8 +141,9 @@ void MultiDeviceSetupDialogUI::BindInterface(
   MultiDeviceSetupService* service =
       MultiDeviceSetupServiceFactory::GetForProfile(
           Profile::FromWebUI(web_ui()));
-  if (service)
+  if (service) {
     service->BindMultiDeviceSetup(std::move(receiver));
+  }
 }
 
 void MultiDeviceSetupDialogUI::BindInterface(

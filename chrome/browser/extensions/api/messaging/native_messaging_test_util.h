@@ -6,15 +6,21 @@
 #define CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGING_TEST_UTIL_H_
 
 #include <memory>
+#include <string_view>
 
 #include "base/files/scoped_temp_dir.h"
 #include "build/build_config.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "base/test/test_reg_util_win.h"
 #else
 #include "base/test/scoped_path_override.h"
 #endif
+
+// This class does not work yet on desktop Android because it relies on running
+// a python executable on the test device.
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS));
 
 namespace extensions {
 
@@ -47,9 +53,8 @@ class ScopedTestNativeMessagingHost {
 
   void RegisterTestHost(bool user_level);
 #if BUILDFLAG(IS_WIN)
-  // Register the Windows-only |native_messaging_test_echo_host.exe| Native
-  // Host.
-  void RegisterTestExeHost(bool user_level);
+  // Register the Windows-only Native Host exe.
+  void RegisterTestExeHost(std::string_view filename, bool user_level);
 #endif
 
   const base::FilePath& temp_dir() { return temp_dir_.GetPath(); }

@@ -6,62 +6,47 @@
 
 #include <string.h>
 
+#include <array>
+#include <string_view>
+
 #include "base/check_op.h"
-#include "base/hash/md5.h"
-#include "base/hash/sha1.h"
-#include "base/sys_byteorder.h"
+#include "base/containers/span.h"
+#include "base/numerics/byte_conversions.h"
+#include "third_party/boringssl/src/include/openssl/md5.h"
+#include "third_party/boringssl/src/include/openssl/sha.h"
 
 namespace base {
-namespace {
-
-// Converts the 8-byte prefix of an MD5 hash into a uint64_t value.
-inline uint64_t DigestToUInt64(const base::MD5Digest& digest) {
-  uint64_t value;
-  DCHECK_GE(sizeof(digest.a), sizeof(value));
-  memcpy(&value, digest.a, sizeof(value));
-  return base::NetToHost64(value);
-}
-
-// Converts the 4-byte prefix of an MD5 hash into a uint32_t value.
-inline uint32_t DigestToUInt32(const base::MD5Digest& digest) {
-  uint32_t value;
-  DCHECK_GE(sizeof(digest.a), sizeof(value));
-  memcpy(&value, digest.a, sizeof(value));
-  return base::NetToHost32(value);
-}
-
-}  // namespace
-
-uint64_t HashMetricName(base::StringPiece name) {
+uint64_t HashMetricName(std::string_view name) {
   // Corresponding Python code for quick look up:
   //
   //   import struct
   //   import hashlib
   //   struct.unpack('>Q', hashlib.md5(name.encode('utf-8')).digest()[:8])[0]
   //
-  base::MD5Digest digest;
-  base::MD5Sum(name.data(), name.size(), &digest);
-  return DigestToUInt64(digest);
+  std::array<uint8_t, MD5_DIGEST_LENGTH> hash;
+  ::MD5(reinterpret_cast<const uint8_t*>(name.data()), name.size(),
+        hash.data());
+  return U64FromBigEndian(base::span(hash).first<8>());
 }
 
-uint32_t HashMetricNameAs32Bits(base::StringPiece name) {
-  base::MD5Digest digest;
-  base::MD5Sum(name.data(), name.size(), &digest);
-  return DigestToUInt32(digest);
+uint32_t HashMetricNameAs32Bits(std::string_view name) {
+  std::array<uint8_t, MD5_DIGEST_LENGTH> hash;
+  ::MD5(reinterpret_cast<const uint8_t*>(name.data()), name.size(),
+        hash.data());
+  return U32FromBigEndian(base::span(hash).first<4>());
 }
 
-uint32_t HashName(base::StringPiece name) {
+uint32_t ParseMetricHashTo32Bits(uint64_t hash) {
+  return (hash >> 32);
+}
+
+uint32_t HashFieldTrialName(std::string_view name) {
   // SHA-1 is designed to produce a uniformly random spread in its output space,
   // even for nearly-identical inputs.
-  unsigned char sha1_hash[base::kSHA1Length];
-  base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(name.data()),
-                      name.size(), sha1_hash);
-
-  uint32_t bits;
-  static_assert(sizeof(bits) < sizeof(sha1_hash), "more data required");
-  memcpy(&bits, sha1_hash, sizeof(bits));
-
-  return base::ByteSwapToLE32(bits);
+  std::array<uint8_t, SHA_DIGEST_LENGTH> hash;
+  ::SHA1(reinterpret_cast<const uint8_t*>(name.data()), name.size(),
+         hash.data());
+  return U32FromLittleEndian(base::span(hash).first<4>());
 }
 
 }  // namespace base

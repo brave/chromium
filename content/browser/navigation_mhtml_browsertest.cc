@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
@@ -17,6 +18,7 @@
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/content_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -198,7 +200,7 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeNotFound) {
   // have enough information to make that determination. On the renderer side,
   // there's no existing way to turn `CommitNavigation()` into
   // `CommitFailedNavigation()`.
-  // TODO(https://crbug.com/1112965): Fix this by implementing a MHTML
+  // TODO(crbug.com/40143262): Fix this by implementing a MHTML
   // URLLoaderFactory; then failure to find the resource can use the standard
   // error handling path.
   EXPECT_TRUE(iframe_navigation_observer.has_committed());
@@ -209,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeNotFound) {
 
 // An MHTML document with an iframe using a data-URL. The data-URL is not
 // defined in the MHTML archive.
-// TODO(https://crbug.com/967307): Enable this test. It currently reaches a
+// TODO(crbug.com/40629273): Enable this test. It currently reaches a
 // DCHECK or timeout in release mode.
 IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeDataUrlNotFound) {
   MhtmlArchive mhtml_archive;
@@ -395,6 +397,10 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeAboutBlankFound) {
 // An MHTML document with an iframe trying to load a javascript URL.
 IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest,
                        IframeJavascriptUrlNotFound) {
+  // JS is allowed to execute when this feature is enabled.
+  if (base::FeatureList::IsEnabled(blink::features::kMHTML_Improvements)) {
+    return;
+  }
   MhtmlArchive mhtml_archive;
   mhtml_archive.AddHtmlDocument(
       GURL("http://example.com"),
@@ -424,6 +430,10 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest,
 
 // An MHTML document with an iframe trying to load a javascript URL. The
 IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeJavascriptUrlFound) {
+  // JS is allowed to execute when this feature is enabled.
+  if (base::FeatureList::IsEnabled(blink::features::kMHTML_Improvements)) {
+    return;
+  }
   MhtmlArchive mhtml_archive;
   mhtml_archive.AddHtmlDocument(
       GURL("http://example.com"),
@@ -511,7 +521,7 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, IframeContentIdNotFound) {
   // have enough information to make that determination. On the renderer side,
   // there's no existing way to turn `CommitNavigation()` into
   // `CommitFailedNavigation()`.
-  // TODO(https://crbug.com/1112965): Fix this by implementing a MHTML
+  // TODO(crbug.com/40143262): Fix this by implementing a MHTML
   // URLLoaderFactory; then failure to find the resource can use the standard
   // error handling path.
   EXPECT_EQ(GURL("cid:iframe"), sub_document->GetLastCommittedURL());
@@ -576,7 +586,7 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, CSPEmbeddedEnforcement) {
   EXPECT_FALSE(rfh_1->IsErrorDocument());
 
   // Cross-origin without Allow-CSP-From:* => response blocked;
-  // TODO(https://crbug.com/1112965) Add support for CSPEE in MHTML documents.
+  // TODO(crbug.com/40143262) Add support for CSPEE in MHTML documents.
   // An error page should be displayed here.
   EXPECT_FALSE(rfh_2->IsErrorDocument());
 
@@ -586,6 +596,13 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, CSPEmbeddedEnforcement) {
 
 IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest,
                        SameDocumentNavigationWhileLoading) {
+  if (ShouldCreateNewHostForAllFrames() &&
+      ShouldQueueNavigationsWhenPendingCommitRFHExists()) {
+    GTEST_SKIP() << "When RenderDocument + navigation queueing is enabled, the "
+                    "same-document navigation won't cancel the cross-document "
+                    "navigation";
+  }
+
   // Load a MHTML archive normally so there's a renderer process for file://.
   MhtmlArchive mhtml_archive;
   mhtml_archive.AddHtmlDocument(GURL("http://example.com/main"),
@@ -726,6 +743,9 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, SandboxedIframe) {
       ~network::mojom::WebSandboxFlags::kPopups &
       ~network::mojom::WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts;
 
+  if (base::FeatureList::IsEnabled(blink::features::kMHTML_Improvements)) {
+    default_mhtml_sandbox &= ~network::mojom::WebSandboxFlags::kScripts;
+  }
   EXPECT_EQ(default_mhtml_sandbox, rfh_main->active_sandbox_flags());
   EXPECT_EQ(default_mhtml_sandbox, rfh_unsandboxed->active_sandbox_flags());
   EXPECT_EQ(strict_sandbox, rfh_sandboxed->active_sandbox_flags());
@@ -811,6 +831,58 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, ErrorBaseURL) {
   EXPECT_NE(PAGE_TYPE_ERROR, controller.GetLastCommittedEntry()->GetPageType());
 }
 
+class NavigationMhtmlFragmentBrowserTest : public NavigationMhtmlBrowserTest {
+ public:
+  NavigationMhtmlFragmentBrowserTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        blink::features::kTreatMhtmlInitialDocumentLoadsAsCrossDocument);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Verifies that the first navigation to about:blank#fragment inside an MHTML
+// iframe is cross-document (RFH swap / opaque origin) and that a subsequent
+// fragment navigation is same-document (no RFH swap, origin unchanged).
+IN_PROC_BROWSER_TEST_F(NavigationMhtmlFragmentBrowserTest,
+                       MhtmlAboutBlankFragment_FirstIsCrossDoc_RestAreSameDoc) {
+  MhtmlArchive mhtml;
+  mhtml.AddHtmlDocument(GURL("http://example.com"),
+                        "<iframe src=\"about:blank#foo\"></iframe>");
+  const GURL mhtml_url = mhtml.Write("index.mhtml");
+
+  NavigationHandleObserver first_nav(web_contents(), GURL("about:blank#foo"));
+  ASSERT_TRUE(NavigateToURL(shell(), mhtml_url));
+
+  RenderFrameHostImpl* main_rfh = main_frame_host();
+  ASSERT_EQ(1u, main_rfh->child_count());
+  base::WeakPtr<RenderFrameHostImpl> child_rfh =
+      main_rfh->child_at(0)->current_frame_host()->GetWeakPtr();
+  ASSERT_TRUE(child_rfh);
+  const url::Origin first_origin = child_rfh->GetLastCommittedOrigin();
+
+  // The initial nav must be cross-document since it uses a new opaque origin.
+  EXPECT_TRUE(first_nav.has_committed());
+  EXPECT_FALSE(first_nav.is_same_document());
+  EXPECT_TRUE(first_origin.opaque());
+
+  // Same document fragment navigation.
+  NavigationHandleObserver second_nav(web_contents(), GURL("about:blank#bar"));
+  EXPECT_TRUE(ExecJs(child_rfh, "location.href = 'about:blank#bar';"));
+  ASSERT_TRUE(WaitForLoadStop(web_contents()));
+
+  base::WeakPtr<RenderFrameHostImpl> after_rfh =
+      main_rfh->child_at(0)->current_frame_host()->GetWeakPtr();
+  ASSERT_TRUE(after_rfh);
+
+  // The second fragment navigation is same-document and doesn't change RFH.
+  EXPECT_EQ(child_rfh.get(), after_rfh.get());
+  EXPECT_TRUE(second_nav.has_committed());
+  EXPECT_TRUE(second_nav.is_same_document());
+  EXPECT_EQ(first_origin, after_rfh->GetLastCommittedOrigin());
+}
+
 class NavigationMhtmlFencedFrameBrowserTest
     : public NavigationMhtmlBrowserTest {
  public:
@@ -840,7 +912,7 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlFencedFrameBrowserTest,
   // Ensure nothing was created for the fencedframe element. Only a single
   // RenderFrameHost, the `main_document`, should exist.
   int num_documents = 0;
-  main_document->ForEachRenderFrameHost(
+  main_document->ForEachRenderFrameHostImpl(
       [&](RenderFrameHostImpl* rfh) { num_documents++; });
   EXPECT_EQ(1, num_documents);
 }

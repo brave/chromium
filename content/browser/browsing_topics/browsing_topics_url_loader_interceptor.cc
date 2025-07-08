@@ -4,6 +4,8 @@
 
 #include "content/browser/browsing_topics/browsing_topics_url_loader_interceptor.h"
 
+#include "base/metrics/histogram_functions.h"
+#include "components/browsing_topics/common/common_types.h"
 #include "content/browser/browsing_topics/header_util.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/content_browser_client.h"
@@ -14,6 +16,39 @@
 #include "third_party/blink/public/mojom/browsing_topics/browsing_topics.mojom.h"
 
 namespace content {
+
+namespace {
+
+// The topics header outcome for the fetch initial request or redirect.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class BrowsingTopicsFetchRequestOrRedirectResult {
+  kSuccess = 0,
+  kDisallowedByContentClient = 1,
+  kNoInitiatorFrame = 2,
+  kFromFencedFrame = 3,
+  kFromNonPrimaryPage = 4,
+  kOpaqueCallerOrigin = 5,
+  kNonSecureCallerOrigin = 6,
+  kDisallowedByPermissionsPolicy = 7,
+
+  kMaxValue = kDisallowedByPermissionsPolicy,
+};
+
+void RecordFetchRequestResultUma(
+    BrowsingTopicsFetchRequestOrRedirectResult result,
+    bool is_redirect) {
+  if (is_redirect) {
+    base::UmaHistogramEnumeration(
+        "BrowsingTopics.Fetch.RedirectedUrlRequest.Result", result);
+  } else {
+    base::UmaHistogramEnumeration(
+        "BrowsingTopics.Fetch.InitialUrlRequest.Result", result);
+  }
+}
+
+}  // namespace
 
 BrowsingTopicsURLLoaderInterceptor::BrowsingTopicsURLLoaderInterceptor(
     WeakDocumentPtr document,
@@ -29,19 +64,20 @@ BrowsingTopicsURLLoaderInterceptor::~BrowsingTopicsURLLoaderInterceptor() =
 
 void BrowsingTopicsURLLoaderInterceptor::WillStartRequest(
     net::HttpRequestHeaders& headers) {
-  PopulateRequestOrRedirectHeaders(headers,
+  PopulateRequestOrRedirectHeaders(/*is_redirect=*/false, headers,
                                    /*removed_headers=*/nullptr);
 }
 
 void BrowsingTopicsURLLoaderInterceptor::WillFollowRedirect(
-    const absl::optional<GURL>& new_url,
+    const std::optional<GURL>& new_url,
     std::vector<std::string>& removed_headers,
     net::HttpRequestHeaders& modified_headers) {
   if (new_url) {
     url_ = new_url.value();
   }
 
-  PopulateRequestOrRedirectHeaders(modified_headers, &removed_headers);
+  PopulateRequestOrRedirectHeaders(/*is_redirect=*/true, modified_headers,
+                                   &removed_headers);
 }
 
 void BrowsingTopicsURLLoaderInterceptor::OnReceiveRedirect(
@@ -58,8 +94,10 @@ void BrowsingTopicsURLLoaderInterceptor::OnReceiveResponse(
 }
 
 void BrowsingTopicsURLLoaderInterceptor::PopulateRequestOrRedirectHeaders(
+    bool is_redirect,
     net::HttpRequestHeaders& headers,
     std::vector<std::string>* removed_headers) {
+  DCHECK(resource_request_->browsing_topics);
   topics_eligible_ = false;
 
   if (removed_headers) {
@@ -70,11 +108,13 @@ void BrowsingTopicsURLLoaderInterceptor::PopulateRequestOrRedirectHeaders(
   // request may arrive before the commit confirmation is received (i.e.
   // NavigationRequest::DidCommitNavigation()), or after the document is
   // destroyed. We consider those cases to be ineligible for topics.
-  //
-  // TODO(yaoxia): measure how often this happens.
   RenderFrameHost* request_initiator_frame =
       document_.AsRenderFrameHostIfValid();
+
   if (!request_initiator_frame) {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kNoInitiatorFrame,
+        is_redirect);
     return;
   }
 
@@ -82,23 +122,24 @@ void BrowsingTopicsURLLoaderInterceptor::PopulateRequestOrRedirectHeaders(
   // function return false regardless, but adding this check to be more
   // explicit.
   if (request_initiator_frame->IsNestedWithinFencedFrame()) {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kFromFencedFrame,
+        is_redirect);
     return;
   }
 
   if (!request_initiator_frame->GetPage().IsPrimary()) {
-    return;
-  }
-
-  // TODO(crbug.com/1244137): IsPrimary() doesn't actually detect portals yet.
-  // Remove this when it does.
-  if (!static_cast<RenderFrameHostImpl*>(
-           request_initiator_frame->GetMainFrame())
-           ->IsOutermostMainFrame()) {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kFromNonPrimaryPage,
+        is_redirect);
     return;
   }
 
   url::Origin origin = url::Origin::Create(url_);
   if (origin.opaque()) {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kOpaqueCallerOrigin,
+        is_redirect);
     return;
   }
 
@@ -106,36 +147,52 @@ void BrowsingTopicsURLLoaderInterceptor::PopulateRequestOrRedirectHeaders(
   // fetch initiator context must be secure. Does it imply that the requested
   // `origin` is always potentially trustworthy?
   if (!network::IsOriginPotentiallyTrustworthy(origin)) {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kNonSecureCallerOrigin,
+        is_redirect);
     return;
   }
 
-  const blink::PermissionsPolicy* permissions_policy =
-      static_cast<RenderFrameHostImpl*>(request_initiator_frame)
-          ->permissions_policy();
+  const network::PermissionsPolicy* permissions_policy =
+      request_initiator_frame->GetPermissionsPolicy();
 
-  if (!permissions_policy->IsFeatureEnabledForSubresourceRequest(
-          blink::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin,
-          *resource_request_) ||
-      !permissions_policy->IsFeatureEnabledForSubresourceRequest(
-          blink::mojom::PermissionsPolicyFeature::
+  if (!permissions_policy->IsFeatureEnabledForOrigin(
+          network::mojom::PermissionsPolicyFeature::kBrowsingTopics, origin,
+          /*override_default_policy_to_all=*/true) ||
+      !permissions_policy->IsFeatureEnabledForOrigin(
+          network::mojom::PermissionsPolicyFeature::
               kBrowsingTopicsBackwardCompatible,
-          origin, *resource_request_)) {
+          origin, /*override_default_policy_to_all=*/true)) {
+    RecordFetchRequestResultUma(BrowsingTopicsFetchRequestOrRedirectResult::
+                                    kDisallowedByPermissionsPolicy,
+                                is_redirect);
     return;
   }
 
   std::vector<blink::mojom::EpochTopicPtr> topics;
   topics_eligible_ = GetContentClient()->browser()->HandleTopicsWebApi(
       origin, request_initiator_frame->GetMainFrame(),
-      browsing_topics::ApiCallerSource::kFetch,
+      resource_request_->is_fetch_like_api
+          ? browsing_topics::ApiCallerSource::kFetch
+          : browsing_topics::ApiCallerSource::kImgAttribute,
       /*get_topics=*/true,
       /*observe=*/false, topics);
 
+  const int num_versions_in_epochs =
+      topics_eligible_
+          ? GetContentClient()->browser()->NumVersionsInTopicsEpochs(
+                request_initiator_frame->GetMainFrame())
+          : 0;
+  headers.SetHeader(kBrowsingTopicsRequestHeaderKey,
+                    DeriveTopicsHeaderValue(topics, num_versions_in_epochs));
+
   if (topics_eligible_) {
-    int num_versions_in_epochs =
-        GetContentClient()->browser()->NumVersionsInTopicsEpochs(
-            request_initiator_frame->GetMainFrame());
-    headers.SetHeader(kBrowsingTopicsRequestHeaderKey,
-                      DeriveTopicsHeaderValue(topics, num_versions_in_epochs));
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kSuccess, is_redirect);
+  } else {
+    RecordFetchRequestResultUma(
+        BrowsingTopicsFetchRequestOrRedirectResult::kDisallowedByContentClient,
+        is_redirect);
   }
 }
 
@@ -147,9 +204,11 @@ void BrowsingTopicsURLLoaderInterceptor::ProcessRedirectOrResponseHeaders(
       return;
     }
 
-    HandleTopicsEligibleResponse(head->parsed_headers,
-                                 url::Origin::Create(url_), *rfh,
-                                 browsing_topics::ApiCallerSource::kFetch);
+    HandleTopicsEligibleResponse(
+        head->parsed_headers, url::Origin::Create(url_), *rfh,
+        resource_request_->is_fetch_like_api
+            ? browsing_topics::ApiCallerSource::kFetch
+            : browsing_topics::ApiCallerSource::kImgAttribute);
 
     topics_eligible_ = false;
   }

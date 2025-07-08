@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/editing/surrounding_text.h"
 
 #include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/range.h"
@@ -15,10 +16,12 @@
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
-class SurroundingTextTest : public testing::Test {
+class SurroundingTextTest : public PageTestBase {
  protected:
   Document& GetDocument() const { return dummy_page_holder_->GetDocument(); }
   void SetHTML(const String&);
@@ -36,7 +39,7 @@ void SurroundingTextTest::SetUp() {
 }
 
 void SurroundingTextTest::SetHTML(const String& content) {
-  GetDocument().body()->setInnerHTML(content);
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(content);
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 }
 

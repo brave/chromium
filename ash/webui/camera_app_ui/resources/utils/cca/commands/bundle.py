@@ -89,6 +89,9 @@ def cmd(board: str) -> int:
 
     to_output_files.add("js/lib/ffmpeg.wasm")
 
+    # TODO(pihsun): Include all mwc / cros_component into the bundle.
+    to_output_files.add("chrome_stub/resources/mwc/lit/index.js")
+
     def write_response_to(response: bytes, path: str):
         output_path = os.path.join(output_folder, path)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -113,7 +116,7 @@ def cmd(board: str) -> int:
                 to_output_files.remove(path)
 
     if to_output_files:
-        logging.warn(
+        logging.warning(
             f"Some files are not covered by route: {to_output_files}.")
 
     return 0

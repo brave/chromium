@@ -1,16 +1,19 @@
 {
   "$build/chromium_orchestrator": {
     "compilator": "android-arm64-rel-compilator",
-    "compilator_watcher_git_revision": "e6d08be3fd589d4f222dae5d18dbc972e6117b23"
+    "compilator_watcher_git_revision": "27c191f304c8d7329a393d8a69020fc14032c3c3"
   },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/android-arm64-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Android Release (Nexus 5X)",
+              "builder": "Android Release (Pixel 2)",
               "project": "chromium"
             },
             "builder_spec": {
@@ -18,15 +21,16 @@
               "builder_group": "chromium.gpu",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_android_config": {
-                "config": "main_builder"
+                "config": "base_config"
               },
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "download_vr_test_apks",
+                  "download_xr_test_apks",
                   "mb"
                 ],
                 "build_config": "Release",
-                "config": "android",
+                "config": "main_builder",
+                "target_arch": "arm",
                 "target_bits": 64,
                 "target_platform": "android"
               },
@@ -41,7 +45,7 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "android-pie-arm64-rel",
+              "builder": "android-14-arm64-rel",
               "project": "chromium"
             },
             "builder_spec": {
@@ -49,15 +53,16 @@
               "builder_group": "chromium.android",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_android_config": {
-                "config": "main_builder"
+                "config": "base_config"
               },
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "download_vr_test_apks",
+                  "download_xr_test_apks",
                   "mb"
                 ],
                 "build_config": "Release",
-                "config": "android",
+                "config": "main_builder",
+                "target_arch": "arm",
                 "target_bits": 64,
                 "target_platform": "android"
               },
@@ -74,18 +79,16 @@
       "builder_ids": [
         {
           "bucket": "ci",
-          "builder": "Android Release (Nexus 5X)",
+          "builder": "Android Release (Pixel 2)",
           "project": "chromium"
         },
         {
           "bucket": "ci",
-          "builder": "android-pie-arm64-rel",
+          "builder": "android-14-arm64-rel",
           "project": "chromium"
         }
       ],
-      "rts_config": {
-        "condition": "QUICK_RUN_ONLY"
-      }
+      "targets_spec_directory": "src/infra/config/generated/builders/try/android-arm64-rel/targets"
     }
   },
   "$build/code_coverage": {
@@ -96,7 +99,22 @@
     "use_clang_coverage": true
   },
   "$build/flakiness": {
-    "check_for_flakiness": true
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
+    "metrics_project": "chromium-reclient-metrics",
+    "output_local_strategy": "greedy",
+    "project": "rbe-chromium-untrusted",
+    "remote_jobs": -1
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// TODO(crbug.com/1057510): Move TerminalSource to chromeos/components
+// TODO(crbug.com/40677452): Move TerminalSource to chromeos/components
 
 #ifndef CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_TERMINAL_SOURCE_H_
 #define CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_TERMINAL_SOURCE_H_
@@ -47,7 +47,7 @@ class TerminalSource : public content::URLDataSource {
   std::string GetCrossOriginOpenerPolicy() override;
   std::string GetCrossOriginEmbedderPolicy() override;
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;
+  raw_ptr<Profile> profile_;
   std::string source_;
   std::string default_file_;
   const bool ssh_allowed_;

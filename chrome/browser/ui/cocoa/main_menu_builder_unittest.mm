@@ -6,16 +6,12 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -115,6 +111,26 @@ TEST(MainMenuBuilderTest, Disabled) {
 TEST(MainMenuBuilderTest, Hidden) {
   NSMenuItem* item = MenuItemBuilder(IDS_NEW_TAB_MAC).set_hidden(true).Build();
   EXPECT_EQ(true, [item isHidden]);
+}
+
+TEST(MainMenuBuilderTest, CloseWindowKeyEquivalentApp) {
+  // Close Window shortcut for browser mode.
+  NSMenu* mainMenu = chrome::BuildMainMenu(nil, nil, u"", /* is_pwa */ false);
+
+  // First comes the App menu, then the File menu.
+  const int kFileMenuItemIndex = 1;
+
+  NSMenuItem* fileMenuItem = [mainMenu itemArray][kFileMenuItemIndex];
+  NSMenuItem* closeWindowMenuItem =
+      [[fileMenuItem submenu] itemWithTag:IDC_CLOSE_WINDOW];
+  EXPECT_TRUE([@"W" isEqualToString:closeWindowMenuItem.keyEquivalent]);
+
+  // Close Window shortcut for PWAs.
+  mainMenu = chrome::BuildMainMenu(nil, nil, u"", /* is_pwa */ true);
+
+  fileMenuItem = [mainMenu itemArray][kFileMenuItemIndex];
+  closeWindowMenuItem = [[fileMenuItem submenu] itemWithTag:IDC_CLOSE_WINDOW];
+  EXPECT_TRUE([@"w" isEqualToString:closeWindowMenuItem.keyEquivalent]);
 }
 
 }  // namespace

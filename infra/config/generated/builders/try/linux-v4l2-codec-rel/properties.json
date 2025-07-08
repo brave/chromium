@@ -1,6 +1,9 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/linux-v4l2-codec-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -19,7 +22,8 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
-                "target_bits": 64
+                "target_bits": 64,
+                "target_platform": "linux"
               },
               "legacy_gclient_config": {
                 "config": "chromium"
@@ -34,13 +38,26 @@
           "builder": "linux-v4l2-codec-rel",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/try/linux-v4l2-codec-rel/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
+  "$build/flakiness": {
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
+  },
+  "$build/siso": {
+    "configs": [
+      "builder",
+      "remote-link"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
     "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+    "output_local_strategy": "minimum",
+    "project": "rbe-chromium-untrusted"
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -50,5 +67,6 @@
     ]
   },
   "builder_group": "tryserver.chromium.linux",
+  "cq": "path-based",
   "recipe": "chromium_trybot"
 }

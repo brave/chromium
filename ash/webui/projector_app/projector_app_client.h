@@ -27,8 +27,6 @@ class IdentityManager;
 
 namespace ash {
 
-class UntrustedAnnotatorPageHandlerImpl;
-struct AnnotatorTool;
 struct NewScreencastPrecondition;
 
 // Defines interface to access Browser side functionalities for the
@@ -112,24 +110,8 @@ class ProjectorAppClient {
   // gain access to link-shared files. Since the `resource_key` is currently
   // only used by Googlers, the `resource_key` might be empty.
   virtual void GetVideo(const std::string& video_file_id,
-                        const absl::optional<std::string>& resource_key,
+                        const std::optional<std::string>& resource_key,
                         OnGetVideoCallback callback) const = 0;
-
-  // Registers the AnnotatorPageHandlerImpl that is owned by the WebUI that
-  // contains the Projector annotator.
-  virtual void SetAnnotatorPageHandler(
-      UntrustedAnnotatorPageHandlerImpl* handler) = 0;
-
-  // Resets the stored AnnotatorPageHandlerImpl if it matches the one that is
-  // passed in.
-  virtual void ResetAnnotatorPageHandler(
-      UntrustedAnnotatorPageHandlerImpl* handler) = 0;
-
-  // Sets the tool inside the annotator WebUI.
-  virtual void SetTool(const AnnotatorTool& tool) = 0;
-
-  // Clears the contents of the annotator canvas.
-  virtual void Clear() = 0;
 
   // Called with true by the initiation and false by the destruction of
   // projector trusted UI .

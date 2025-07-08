@@ -4,18 +4,20 @@
 
 import 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import 'chrome://resources/cr_elements/cr_nav_menu_item_style.css.js';
+import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import './icons.html.js';
 
 import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
-import {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {CrMenuSelector} from 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {CredentialsChangedListener, PasswordManagerImpl} from './password_manager_proxy.js';
-import {Page, Route, RouteObserverMixin, Router, UrlParam} from './router.js';
+import type {CredentialsChangedListener} from './password_manager_proxy.js';
+import {PasswordManagerImpl} from './password_manager_proxy.js';
+import type {Route} from './router.js';
+import {Page, RouteObserverMixin, Router, UrlParam} from './router.js';
 import {getTemplate} from './side_bar.html.js';
 
 /**
@@ -71,8 +73,8 @@ export class PasswordManagerSideBarElement extends
     };
   }
 
-  private selectedPage_: Page;
-  private compromisedPasswords_: number;
+  declare private selectedPage_: Page;
+  declare private compromisedPasswords_: number;
   private insecureCredentialsChangedListener_: CredentialsChangedListener|null =
       null;
 
@@ -141,7 +143,7 @@ export class PasswordManagerSideBarElement extends
 
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
-   * accessibility purposes, taps are handled separately by <iron-selector>.
+   * accessibility purposes, taps are handled separately.
    */
   private onItemClick_(e: Event) {
     e.preventDefault();

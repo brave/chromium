@@ -200,20 +200,14 @@ class IntegrationTest(unittest.TestCase):
       output_directory = _TEST_OUTPUT_DIR if use_output_directory else None
 
       def iter_specs():
-        pak_spec = None
-        if use_pak or use_apk or use_minimal_apks:
-          pak_spec = archive.PakSpec()
-          if use_pak:
-            pak_spec.pak_paths = [_TEST_APK_LOCALE_PAK_PATH, _TEST_APK_PAK_PATH]
-            pak_spec.pak_info_path = _TEST_PAK_INFO_PATH
-          else:
-            pak_spec.apk_pak_paths = [
-                _TEST_APK_LOCALE_PAK_SUBPATH, _TEST_APK_PAK_SUBPATH
-            ]
-
         native_spec = archive.NativeSpec()
+        pak_spec = None
+        if use_pak:
+          pak_spec = archive.PakSpec()
+          pak_spec.pak_paths = [_TEST_APK_LOCALE_PAK_PATH, _TEST_APK_PAK_PATH]
+          pak_spec.pak_info_path = _TEST_PAK_INFO_PATH
 
-        # TODO(crbug.com/1193507): Remove when we implement string literal
+        # TODO(crbug.com/40757867): Remove when we implement string literal
         #     tracking without map files.
         if ignore_linker_map:
           native_spec.track_string_literals = False
@@ -230,8 +224,6 @@ class IntegrationTest(unittest.TestCase):
           apk_spec.path_defaults = _TEST_PATH_DEFAULTS
           apk_spec.ignore_apk_paths.update(
               ['classes.dex', _TEST_APK_SO_PATH, _TEST_APK_SMALL_SO_PATH])
-          if pak_spec and pak_spec.apk_pak_paths:
-            apk_spec.ignore_apk_paths.update(pak_spec.apk_pak_paths)
           if output_directory:
             orig_path = _TEST_APK_PATH
             if use_minimal_apks:
@@ -239,6 +231,13 @@ class IntegrationTest(unittest.TestCase):
                   '.minimal.apks', '.aab')
             apk_spec.size_info_prefix = os.path.join(
                 output_directory, 'size-info', os.path.basename(orig_path))
+
+          pak_spec = archive.PakSpec()
+          pak_spec.apk_pak_paths = [
+              _TEST_APK_LOCALE_PAK_SUBPATH, _TEST_APK_PAK_SUBPATH
+          ]
+          pak_spec.pak_info_path = apk_spec.size_info_prefix + '.pak.info'
+          apk_spec.ignore_apk_paths.update(pak_spec.apk_pak_paths)
 
           native_spec.apk_so_path = _TEST_APK_SO_PATH
           small_native_spec = archive.NativeSpec(
@@ -323,8 +322,7 @@ class IntegrationTest(unittest.TestCase):
                  use_pak=False,
                  use_aux_elf=None,
                  ignore_linker_map=False,
-                 debug_measures=False,
-                 include_padding=False):
+                 debug_measures=False):
     args = [
         archive_path,
         '--source-directory',
@@ -363,8 +361,6 @@ class IntegrationTest(unittest.TestCase):
 
     if use_aux_elf:
       args += ['--aux-elf-file', _TEST_ELF_PATH]
-    if include_padding:
-      args += ['--include-padding']
 
     _RunApp('archive', args, debug_measures=debug_measures)
 
@@ -393,8 +389,7 @@ class IntegrationTest(unittest.TestCase):
                      use_pak=False,
                      use_aux_elf=False,
                      ignore_linker_map=False,
-                     debug_measures=False,
-                     include_padding=False):
+                     debug_measures=False):
     with tempfile.NamedTemporaryFile(suffix='.size') as temp_file:
       self._DoArchive(temp_file.name,
                       use_output_directory=use_output_directory,
@@ -405,8 +400,7 @@ class IntegrationTest(unittest.TestCase):
                       use_pak=use_pak,
                       use_aux_elf=use_aux_elf,
                       ignore_linker_map=ignore_linker_map,
-                      debug_measures=debug_measures,
-                      include_padding=include_padding)
+                      debug_measures=debug_measures)
       size_info = archive.LoadAndPostProcessSizeInfo(temp_file.name)
     # Check that saving & loading is the same as directly parsing.
     expected_size_info = self._CloneSizeInfo(
@@ -470,12 +464,6 @@ class IntegrationTest(unittest.TestCase):
   def test_Archive_Elf_DebugMeasures(self):
     return self._DoArchiveTest(use_elf=True, debug_measures=True)
 
-  @_CompareWithGolden(name='Archive_Apk')
-  def test_ArchiveSparse(self):
-    return self._DoArchiveTest(use_apk=True,
-                               use_aux_elf=True,
-                               include_padding=True)
-
   def test_SaveDeltaSizeInfo(self):
     # Check that saving & loading is the same as directly parsing.
     orig_info1 = self._CloneSizeInfo(use_apk=True, use_aux_elf=True)
@@ -489,10 +477,6 @@ class IntegrationTest(unittest.TestCase):
       new_info1, new_info2 = archive.LoadAndPostProcessDeltaSizeInfo(
           sizediff_file.name)
     new_delta = diff.Diff(new_info1, new_info2)
-
-    # File format discards unchanged symbols.
-    orig_delta.raw_symbols = orig_delta.raw_symbols.WhereDiffStatusIs(
-        models.DIFF_STATUS_UNCHANGED).Inverted()
 
     self.assertEqual(list(describe.GenerateLines(orig_delta, verbose=True)),
                      list(describe.GenerateLines(new_delta, verbose=True)))

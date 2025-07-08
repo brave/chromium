@@ -5,7 +5,11 @@
 #include "third_party/blink/renderer/platform/webrtc/webrtc_video_utils.h"
 
 #include "base/logging.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/webrtc/api/video_codecs/h264_profile_level_id.h"
+#if BUILDFLAG(RTC_USE_H265)
+#include "third_party/webrtc/api/video_codecs/h265_profile_tier_level.h"
+#endif  // BUILDFLAG(RTC_USE_H265)
 #include "third_party/webrtc/api/video_codecs/video_codec.h"
 #include "third_party/webrtc/api/video_codecs/vp9_profile.h"
 
@@ -36,6 +40,10 @@ media::VideoCodec WebRtcToMediaVideoCodec(webrtc::VideoCodecType codec) {
       return media::VideoCodec::kVP9;
     case webrtc::kVideoCodecH264:
       return media::VideoCodec::kH264;
+#if BUILDFLAG(RTC_USE_H265)
+    case webrtc::kVideoCodecH265:
+      return media::VideoCodec::kHEVC;
+#endif  // BUILDFLAG(RTC_USE_H265)
     default:
       return media::VideoCodec::kUnknown;
   }
@@ -51,9 +59,9 @@ media::VideoCodecProfile WebRtcVideoFormatToMediaVideoCodecProfile(
     case webrtc::kVideoCodecVP8:
       return media::VP8PROFILE_ANY;
     case webrtc::kVideoCodecVP9: {
-      const absl::optional<webrtc::VP9Profile> vp9_profile =
+      const std::optional<webrtc::VP9Profile> vp9_profile =
           webrtc::ParseSdpForVP9Profile(format.parameters);
-      // The return value is absl::nullopt if the profile-id is specified
+      // The return value is std::nullopt if the profile-id is specified
       // but its value is invalid.
       if (!vp9_profile) {
         return media::VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -69,9 +77,9 @@ media::VideoCodecProfile WebRtcVideoFormatToMediaVideoCodecProfile(
       }
     }
     case webrtc::kVideoCodecH264: {
-      const absl::optional<webrtc::H264ProfileLevelId> h264_profile_level_id =
+      const std::optional<webrtc::H264ProfileLevelId> h264_profile_level_id =
           webrtc::ParseSdpForH264ProfileLevelId(format.parameters);
-      // The return value is absl::nullopt if the profile-level-id is specified
+      // The return value is std::nullopt if the profile-level-id is specified
       // but its value is invalid.
       if (!h264_profile_level_id) {
         return media::VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -88,6 +96,23 @@ media::VideoCodecProfile WebRtcVideoFormatToMediaVideoCodecProfile(
           return media::H264PROFILE_BASELINE;
       }
     }
+#if BUILDFLAG(RTC_USE_H265)
+    case webrtc::kVideoCodecH265: {
+      const std::optional<webrtc::H265ProfileTierLevel> h265_ptl =
+          webrtc::ParseSdpForH265ProfileTierLevel(format.parameters);
+      if (!h265_ptl) {
+        return media::VIDEO_CODEC_PROFILE_UNKNOWN;
+      }
+      switch (h265_ptl->profile) {
+        case webrtc::H265Profile::kProfileMain:
+          return media::HEVCPROFILE_MAIN;
+        case webrtc::H265Profile::kProfileMain10:
+          return media::HEVCPROFILE_MAIN10;
+        default:
+          return media::VIDEO_CODEC_PROFILE_UNKNOWN;
+      }
+    }
+#endif
     default:
       return media::VIDEO_CODEC_PROFILE_UNKNOWN;
   }
@@ -128,7 +153,7 @@ gfx::ColorSpace WebRtcToGfxColorSpace(const webrtc::ColorSpace& color_space) {
       primaries = gfx::ColorSpace::PrimaryID::P3;
       break;
     case webrtc::ColorSpace::PrimaryID::kJEDECP22:
-      primaries = gfx::ColorSpace::PrimaryID::INVALID;
+      primaries = gfx::ColorSpace::PrimaryID::EBU_3213_E;
       break;
     default:
       break;
@@ -192,7 +217,9 @@ gfx::ColorSpace WebRtcToGfxColorSpace(const webrtc::ColorSpace& color_space) {
   gfx::ColorSpace::MatrixID matrix = gfx::ColorSpace::MatrixID::INVALID;
   switch (color_space.matrix()) {
     case webrtc::ColorSpace::MatrixID::kRGB:
-      matrix = gfx::ColorSpace::MatrixID::RGB;
+      // RGB-encoded video actually puts the green in the Y channel,
+      // the blue in the Cb (U) channel and the red in the Cr (V) channel.
+      matrix = gfx::ColorSpace::MatrixID::GBR;
       break;
     case webrtc::ColorSpace::MatrixID::kBT709:
     case webrtc::ColorSpace::MatrixID::kUnspecified:
@@ -215,9 +242,6 @@ gfx::ColorSpace WebRtcToGfxColorSpace(const webrtc::ColorSpace& color_space) {
       break;
     case webrtc::ColorSpace::MatrixID::kBT2020_NCL:
       matrix = gfx::ColorSpace::MatrixID::BT2020_NCL;
-      break;
-    case webrtc::ColorSpace::MatrixID::kBT2020_CL:
-      matrix = gfx::ColorSpace::MatrixID::BT2020_CL;
       break;
     case webrtc::ColorSpace::MatrixID::kSMPTE2085:
       matrix = gfx::ColorSpace::MatrixID::YDZDX;
@@ -274,6 +298,9 @@ webrtc::ColorSpace GfxToWebRtcColorSpace(const gfx::ColorSpace& color_space) {
       break;
     case gfx::ColorSpace::PrimaryID::P3:
       primaries = webrtc::ColorSpace::PrimaryID::kSMPTEST432;
+      break;
+    case gfx::ColorSpace::PrimaryID::EBU_3213_E:
+      primaries = webrtc::ColorSpace::PrimaryID::kJEDECP22;
       break;
     default:
       DVLOG(1) << "Unsupported color primaries.";
@@ -362,9 +389,6 @@ webrtc::ColorSpace GfxToWebRtcColorSpace(const gfx::ColorSpace& color_space) {
       break;
     case gfx::ColorSpace::MatrixID::BT2020_NCL:
       matrix = webrtc::ColorSpace::MatrixID::kBT2020_NCL;
-      break;
-    case gfx::ColorSpace::MatrixID::BT2020_CL:
-      matrix = webrtc::ColorSpace::MatrixID::kBT2020_CL;
       break;
     case gfx::ColorSpace::MatrixID::YDZDX:
       matrix = webrtc::ColorSpace::MatrixID::kSMPTE2085;

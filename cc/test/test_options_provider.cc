@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "cc/test/test_options_provider.h"
 
 #include <limits>
@@ -70,12 +75,11 @@ TestOptionsProvider::TestOptionsProvider()
                          can_use_lcd_text_,
                          context_supports_distance_field_text_,
                          max_texture_size_),
-      deserialize_options_(this,
-                           &service_paint_cache_,
-                           &strike_client_,
-                           &scratch_buffer_,
-                           true,
-                           nullptr) {}
+      deserialize_options_{.transfer_cache = this,
+                           .paint_cache = &service_paint_cache_,
+                           .strike_client = &strike_client_,
+                           .scratch_buffer = scratch_buffer_,
+                           .is_privileged = true} {}
 
 TestOptionsProvider::~TestOptionsProvider() = default;
 
@@ -111,10 +115,9 @@ ImageProvider::ScopedResult TestOptionsProvider::GetRasterContent(
       SkBitmap::kZeroPixels_AllocFlag);
 
   // Create a transfer cache entry for this image.
-  TargetColorParams target_color_params;
   ClientImageTransferCacheEntry cache_entry(
       ClientImageTransferCacheEntry::Image(&bitmap.pixmap()),
-      false /* needs_mips */, target_color_params);
+      false /* needs_mips */, std::nullopt);
   const uint32_t data_size = cache_entry.SerializedSize();
   auto data = PaintOpWriter::AllocateAlignedBuffer<uint8_t>(data_size);
   if (!cache_entry.Serialize(base::span<uint8_t>(data.get(), data_size))) {

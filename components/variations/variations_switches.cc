@@ -21,8 +21,11 @@ const char kDisableVariationsSeedFetchThrottling[] =
     "disable-variations-seed-fetch-throttling";
 
 // TODO(asvitkine): Consider removing or renaming this functionality.
-// Enables the benchmarking extensions.
+// See flag_descriptions.cc for more details.
 const char kEnableBenchmarking[] = "enable-benchmarking";
+
+// Enables the benchmarking JavaScript API.
+const char kEnableBenchmarkingApi[] = "enable-benchmarking-api";
 
 // Enable field trial tests configured in fieldtrial_testing_config.json. If the
 // "disable_fieldtrial_testing_config" GN flag is set to true, then this switch
@@ -60,6 +63,9 @@ const char kForceVariationIds[] = "force-variation-ids";
 // prefixed with the character "t" will be treated as Trigger Variation Ids.
 const char kForceDisableVariationIds[] = "force-disable-variation-ids";
 
+// Used to share variations seed version with child processes.
+const char kVariationsSeedVersion[] = "variations-seed-version";
+
 // Allows overriding the country used for evaluating variations. This is similar
 // to the "Override Variations Country" entry on chrome://translate-internals,
 // but is exposed as a command-line flag to allow testing First Run scenarios.
@@ -70,7 +76,7 @@ const char kVariationsOverrideCountry[] = "variations-override-country";
 // Specifies the location of a seed file for Local State's seed to be
 // populated from. The seed file must be in json format with the keys
 // |kVariationsCompressedSeed| and |kVariationsSeedSignature|.
-const char kVariationsTestSeedPath[] = "variations-test-seed-path";
+const char kVariationsTestSeedJsonPath[] = "variations-test-seed-path";
 
 // Specifies a custom URL for the server which reports variation data to the
 // client. Specifying this switch enables the Variations service on
@@ -95,6 +101,17 @@ const char kEnableFinchSeedDeltaCompression[] =
 // testing purposes.
 const char kAcceptEmptySeedSignatureForTesting[] =
     "accept-empty-variations-seed-signature";
+
+// Use features defined in the value. Use this flag to reproduce experiments
+// related issues.
+// Copy 'Command-line Variations' value from chrome://version page. Save it
+// to a file and pass it via this flag.
+// The value is a base64 encoded JSON format produced by
+// `variations::VariationsCommandLine::WriteToString`.
+const char kVariationsStateFile[] = "variations-state-file";
+
+// Disable fetching of variations seed from the server for testing.
+const char kDisableVariationsSeedFetch[] = "disable-variations-seed-fetch";
 
 }  // namespace switches
 }  // namespace variations

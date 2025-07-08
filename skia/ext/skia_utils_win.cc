@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "skia/ext/skia_utils_win.h"
 
-#include <stddef.h>
 #include <windows.h>
+
+#include <stddef.h>
 
 #include "base/check_op.h"
 #include "base/debug/gdi_debug_util_win.h"
@@ -252,11 +258,11 @@ HGLOBAL CreateHGlobalForByteArray(
     return nullptr;
   }
   base::win::ScopedHGlobal<uint8_t*> global_mem(hglobal);
-  if (!global_mem.get()) {
+  if (!global_mem.data()) {
     ::GlobalFree(hglobal);
     return nullptr;
   }
-  memcpy(global_mem.get(), byte_array.data(), byte_array.size());
+  memcpy(global_mem.data(), byte_array.data(), byte_array.size());
 
   return hglobal;
 }
@@ -291,14 +297,14 @@ HGLOBAL CreateDIBV5ImageDataFromN32SkBitmap(const SkBitmap& bitmap) {
     return nullptr;
 
   base::win::ScopedHGlobal<BITMAPV5HEADER*> header(hglobal);
-  if (!header.get()) {
+  if (!header.data()) {
     ::GlobalFree(hglobal);
     return nullptr;
   }
 
-  CreateBitmapV5HeaderForARGB8888(width, height, bytes, header.get());
+  CreateBitmapV5HeaderForARGB8888(width, height, bytes, header.data());
   auto* dst_pixels =
-      reinterpret_cast<uint8_t*>(header.get()) + sizeof(BITMAPV5HEADER);
+      reinterpret_cast<uint8_t*>(header.data()) + sizeof(BITMAPV5HEADER);
 
   // CreateBitmapV5HeaderForARGB8888 creates a bitmap with a positive height as
   // stated in the image's header. Having a positive value implies that the
@@ -322,7 +328,8 @@ HGLOBAL CreateDIBV5ImageDataFromN32SkBitmap(const SkBitmap& bitmap) {
   return hglobal;
 }
 
-base::win::ScopedBitmap CreateHBitmapFromN32SkBitmap(const SkBitmap& bitmap) {
+base::win::ScopedGDIObject<HBITMAP> CreateHBitmapFromN32SkBitmap(
+    const SkBitmap& bitmap) {
   BITMAPINFOHEADER header;
   CreateBitmapHeaderForN32SkBitmap(bitmap, &header);
 
@@ -355,7 +362,7 @@ base::win::ScopedBitmap CreateHBitmapFromN32SkBitmap(const SkBitmap& bitmap) {
     base::debug::CollectGDIUsageAndDie(&header, nullptr);
   }
 
-  return base::win::ScopedBitmap(hbitmap);
+  return base::win::ScopedGDIObject<HBITMAP>(hbitmap);
 }
 
 void CreateBitmapHeaderForXRGB888(int width,
@@ -364,10 +371,10 @@ void CreateBitmapHeaderForXRGB888(int width,
   CreateBitmapHeaderWithColorDepth(width, height, 32, hdr);
 }
 
-base::win::ScopedBitmap CreateHBitmapXRGB8888(int width,
-                                              int height,
-                                              HANDLE shared_section,
-                                              void** data) {
+base::win::ScopedGDIObject<HBITMAP> CreateHBitmapXRGB8888(int width,
+                                                          int height,
+                                                          HANDLE shared_section,
+                                                          void** data) {
   // CreateDIBSection fails to allocate anything if we try to create an empty
   // bitmap, so just create a minimal bitmap.
   if ((width == 0) || (height == 0)) {
@@ -385,8 +392,7 @@ base::win::ScopedBitmap CreateHBitmapXRGB8888(int width,
   if (!hbitmap)
     base::debug::CollectGDIUsageAndDie(&hdr, shared_section);
 
-  return base::win::ScopedBitmap(hbitmap);
+  return base::win::ScopedGDIObject<HBITMAP>(hbitmap);
 }
 
 }  // namespace skia
-

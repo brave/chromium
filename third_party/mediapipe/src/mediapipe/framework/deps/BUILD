@@ -15,8 +15,8 @@
 # Description:
 #   The dependencies of mediapipe.
 
-load("//mediapipe/framework/port:build_config.bzl", "mediapipe_proto_library")
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//mediapipe/framework/port:build_config.bzl", "mediapipe_proto_library")
 
 licenses(["notice"])
 
@@ -77,8 +77,9 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "//mediapipe/framework/port:logging",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
@@ -110,12 +111,51 @@ cc_library(
 )
 
 cc_library(
+    name = "platform_strings",
+    srcs = ["platform_strings.cc"],
+    hdrs = ["platform_strings.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "mmapped_file",
+    hdrs = ["mmapped_file.h"],
+    deps = [
+        "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
     name = "file_helpers",
     srcs = ["file_helpers.cc"],
     hdrs = ["file_helpers.h"],
+    visibility = ["//visibility:public"],
     deps = [
         ":file_path",
+        ":mmapped_file",
+        ":platform_strings",
         "//mediapipe/framework/port:status",
+        "@com_google_absl//absl/base:config",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ] + select({
+        "//mediapipe:windows": [],
+        "//conditions:default": ["//mediapipe/framework/formats:unique_fd"],
+    }),
+)
+
+cc_library(
+    name = "mlock_helpers",
+    srcs = ["mlock_helpers.cc"],
+    hdrs = ["mlock_helpers.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":platform_strings",
+        "//mediapipe/framework/port:status",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -130,8 +170,9 @@ cc_library(
     deps = [
         "//mediapipe/framework/port",
         "//mediapipe/framework/port:integral_types",
-        "//mediapipe/framework/port:logging",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
     ],
 )
 
@@ -149,7 +190,10 @@ cc_library(
 
     # Use this library through "mediapipe/framework/port:map_util".
     visibility = ["//mediapipe/framework/port:__pkg__"],
-    deps = ["//mediapipe/framework/port:logging"],
+    deps = [
+        "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/log:absl_check",
+    ],
 )
 
 cc_library(
@@ -160,7 +204,7 @@ cc_library(
     ],
     deps = [
         "//mediapipe/framework/port:integral_types",
-        "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/log:absl_check",
     ],
 )
 
@@ -225,15 +269,17 @@ cc_library(
     hdrs = ["registration.h"],
     visibility = [
         "mediapipe_internal",
+        "//buzz/diffractor/mediapipe:__pkg__",
     ],
     deps = [
         ":registration_token",
-        "//mediapipe/framework/port:logging",
         "//mediapipe/framework/port:status",
         "//mediapipe/framework/port:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
@@ -276,8 +322,8 @@ cc_library(
     visibility = ["//mediapipe/framework/port:__pkg__"],
     deps = [
         ":source_location",
-        "//mediapipe/framework/port:logging",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -293,7 +339,7 @@ cc_library(
 
 cc_library(
     name = "status_matchers",
-    testonly = 1,
+    testonly = True,
     hdrs = ["status_matchers.h"],
 
     # Use this library through "mediapipe/framework/port:gtest_main".
@@ -344,6 +390,8 @@ cc_library(
     deps = [
         ":thread_options",
         "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
     ],
@@ -358,6 +406,8 @@ cc_library(
     visibility = ["//mediapipe/framework/port:__pkg__"],
     deps = [
         "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:absl_log",
     ],
 )
 
@@ -369,7 +419,7 @@ cc_library(
     visibility = ["//mediapipe/framework/port:__pkg__"],
     deps = [
         "//mediapipe/framework/port:integral_types",
-        "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/utility",
     ],
 )
@@ -415,10 +465,10 @@ cc_test(
         ":clock",
         "//mediapipe/framework/port:gtest_main",
         "//mediapipe/framework/port:integral_types",
-        "//mediapipe/framework/port:logging",
         "//mediapipe/framework/port:threadpool",
         "//mediapipe/framework/tool:simulation_clock",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",

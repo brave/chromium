@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/bluetooth/floss/floss_admin_client.h"
 
 #include <map>
@@ -62,6 +67,10 @@ class FlossAdminClientTest : public testing::Test,
  public:
   FlossAdminClientTest() = default;
 
+  base::Version GetCurrVersion() {
+    return floss::version::GetMaximalSupportedVersion();
+  }
+
   void SetUp() override {
     ::dbus::Bus::Options options;
     options.bus_type = ::dbus::Bus::BusType::SYSTEM;
@@ -88,7 +97,7 @@ class FlossAdminClientTest : public testing::Test,
   // AdminClientObserver overrides
   void DevicePolicyEffectChanged(
       const FlossDeviceId& device_id,
-      const absl::optional<PolicyEffect>& effect) override {
+      const std::optional<PolicyEffect>& effect) override {
     fake_device_policy_effect_info_ = {device_id, effect};
   }
 
@@ -145,12 +154,26 @@ class FlossAdminClientTest : public testing::Test,
         });
     ASSERT_FALSE(IsClientRegistered());
     client_->Init(bus_.get(), kAdapterInterface, adapter_index_,
-                  base::DoNothing());
+                  GetCurrVersion(), base::DoNothing());
 
     // Test exported callbacks are correctly parsed
     ASSERT_TRUE(!!method_handler_on_device_policy_effect_changed);
     ASSERT_TRUE(!!method_handler_on_service_allowlist_changed);
     ASSERT_TRUE(IsClientRegistered());
+
+    // Expected call to UnregisterAdminCallback when client is destroyed
+    EXPECT_CALL(*object_proxy_.get(),
+                DoCallMethodWithErrorResponse(
+                    HasMemberOf(admin::kUnregisterCallback), _, _))
+        .WillOnce([](::dbus::MethodCall* method_call, int timeout_ms,
+                     ::dbus::ObjectProxy::ResponseOrErrorCallback* cb) {
+          dbus::MessageReader msg(method_call);
+          // D-Bus method call should have 1 parameter.
+          uint32_t param1;
+          ASSERT_TRUE(FlossDBusClient::ReadAllDBusParams(&msg, &param1));
+          EXPECT_EQ(kTestCallbackId, param1);
+          EXPECT_FALSE(msg.HasMoreData());
+        });
   }
 
   void TestSetServiceAllowlist() {
@@ -187,6 +210,30 @@ class FlossAdminClientTest : public testing::Test,
         base::BindLambdaForTesting([](DBusResult<Void> ret) {}), kTestUuidStr);
   }
 
+  void TestSetSimpleSecurePairingEnabled() {
+    // Expected call to SetSimpleSecurePairingEnabled
+    EXPECT_CALL(*object_proxy_.get(),
+                DoCallMethodWithErrorResponse(
+                    HasMemberOf(admin::kSetSimpleSecurePairingEnabled), _, _))
+        .WillOnce([](::dbus::MethodCall* method_call, int timeout_ms,
+                     ::dbus::ObjectProxy::ResponseOrErrorCallback* cb) {
+          dbus::MessageReader reader(method_call);
+          bool enable;
+
+          EXPECT_TRUE(reader.PopBool(&enable));
+          EXPECT_TRUE(enable);
+
+          // Create a fake response with uint32_t return value.
+          auto response = ::dbus::Response::CreateEmpty();
+          dbus::MessageWriter writer(response.get());
+          writer.AppendUint32(kTestCallbackId);
+          std::move(*cb).Run(response.get(), /*err=*/nullptr);
+        });
+
+    client_->SetSimpleSecurePairingEnabled(
+        base::BindLambdaForTesting([](DBusResult<Void> ret) {}), true);
+  }
+
   int adapter_index_ = 5;
   dbus::ObjectPath admin_path_;
   dbus::ObjectPath callback_path_;
@@ -196,7 +243,7 @@ class FlossAdminClientTest : public testing::Test,
   std::unique_ptr<FlossAdminClient> client_;
 
   // For observer test inspections.
-  absl::optional<std::tuple<FlossDeviceId, absl::optional<PolicyEffect>>>
+  std::optional<std::tuple<FlossDeviceId, std::optional<PolicyEffect>>>
       fake_device_policy_effect_info_;
   std::vector<device::BluetoothUUID> fake_service_allowlist_info_;
 
@@ -216,5 +263,22 @@ TEST_F(FlossAdminClientTest, TestSetServiceAllowlistBeforeInit) {
 TEST_F(FlossAdminClientTest, TestSetServiceAllowlistAfterInit) {
   TestInit();
   TestSetServiceAllowlist();
+}
+
+TEST_F(FlossAdminClientTest, TestSetSimpleSecurePairingEnabledAfterInit) {
+  TestInit();
+  TestSetSimpleSecurePairingEnabled();
+}
+
+TEST_F(FlossAdminClientTest, TestSetMultiplePolicyAfterInit) {
+  TestInit();
+  TestSetServiceAllowlist();
+  TestSetSimpleSecurePairingEnabled();
+}
+
+TEST_F(FlossAdminClientTest, TestSetMultiplePolicyBeforeInit) {
+  TestSetServiceAllowlist();
+  TestSetSimpleSecurePairingEnabled();
+  TestInit();
 }
 }  // namespace floss

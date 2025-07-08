@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#import "base/mac/foundation_util.h"
+#import "base/apple/foundation_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/sys_string_conversions.h"
@@ -32,10 +32,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @interface WindowAppleScript ()
 
@@ -234,8 +230,7 @@
 
     TabAppleScript* tab =
         [[TabAppleScript alloc] initWithWebContents:webContents];
-    [tab setContainer:self
-             property:AppleScript::kTabsProperty];
+    [tab setContainer:self property:AppleScript::kTabsProperty];
     [tabs addObject:tab];
   }
   return tabs;

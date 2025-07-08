@@ -45,9 +45,6 @@ class VIEWS_EXPORT WindowEventFilterLinux : public ui::EventHandler {
   // Called when the user clicked the caption area.
   void OnClickedCaption(ui::MouseEvent* event, int previous_click_component);
 
-  // Called when the user clicked the maximize button.
-  void OnClickedMaximizeButton(ui::MouseEvent* event);
-
   void MaybeToggleMaximizedState(aura::Window* window);
 
   // Dispatches a message to the window manager to tell it to act as if a border
@@ -63,13 +60,12 @@ class VIEWS_EXPORT WindowEventFilterLinux : public ui::EventHandler {
   // ui::EventHandler overrides:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  const raw_ptr<DesktopWindowTreeHostPlatform, DanglingUntriaged>
-      desktop_window_tree_host_;
+  const raw_ptr<DesktopWindowTreeHostPlatform> desktop_window_tree_host_;
 
   // A handler, which is used for interactive move/resize events if set and
   // unless MaybeDispatchHostWindowDragMovement is overridden by a derived
   // class.
-  const raw_ptr<ui::WmMoveResizeHandler, DanglingUntriaged> handler_;
+  const raw_ptr<ui::WmMoveResizeHandler> handler_;
 
   // The non-client component for the target of a MouseEvent. Mouse events can
   // be destructive to the window tree, which can cause the component of a

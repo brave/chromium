@@ -4,6 +4,11 @@
     "args": ["--enable-features=BackForwardCache"]
   },
   {
+    "name": "background-resource-fetch",
+    "args": ["--enable-features=BackgroundResourceFetch"],
+    "smoke_file": "TestLists/background-resource-fetch"
+  },
+  {
     "name": "chrome-for-testing",
     "args": [],
     "comments": [
@@ -20,12 +25,12 @@
     "args": ["--disable-site-isolation-trials"]
   },
   {
-    "name": "enable-blink-heap-concurrent-marking",
-    "args": ["--enable-features=BlinkHeapConcurrentMarking"]
+    "name": "disable-third-party-cookie",
+    "args": ["--test-third-party-cookie-phaseout"]
   },
   {
-    "name": "enable-percent-based-scrolling",
-    "args": ["--enable-features=PercentBasedScrolling"]
+    "name": "enable-blink-heap-concurrent-marking",
+    "args": ["--enable-features=BlinkHeapConcurrentMarking"]
   },
   {
     "name": "force-renderer-accessibility",
@@ -53,6 +58,13 @@
           "--disable-vulkan-fallback-to-gl-for-testing"
     ],
     "smoke_file": "TestLists/skia-vulkan-swiftshader"
+  },
+  {
+    "name": "trees-in-viz",
+    "args": [
+          "--enable-features=TreesInViz"
+    ],
+    "smoke_file": "TestLists/trees-in-viz"
   },
   {
     "name": "webgpu",
@@ -188,6 +200,33 @@
           "tests are using GPU rather than CPU",
           "--use-webgpu-power-preference=default-high-performance indicates",
           "it uses high-performance gpu when not explicitly specified"
+    ]
+  },
+  {
+    "name": "enable-skia-graphite",
+    "args": [
+      "--enable-skia-graphite"
+    ],
+    "comments": [
+      "Used to test Chrome with Skia Graphite."
+    ]
+  },
+  {
+    "name": "disable-skia-graphite",
+    "args": [
+      "--disable-skia-graphite"
+    ],
+    "comments": [
+      "Used to test Chrome with Skia Ganesh."
+    ]
+  },
+  {
+    "name": "ComputePressureOwnContributionEstimate",
+    "args": [
+      "--enable-features=ComputePressureOwnContributionEstimate"
+    ],
+    "comments": [
+      "Enable experimental attribute onwContributionEstimate."
     ]
   }
 ]

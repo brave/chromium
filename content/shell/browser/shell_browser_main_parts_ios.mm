@@ -4,20 +4,18 @@
 
 #include "content/shell/browser/shell_browser_main_parts.h"
 
-#include "services/device/public/cpp/geolocation/system_geolocation_source_mac.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "services/device/public/cpp/geolocation/system_geolocation_source_apple.h"
 
 namespace content {
 
-device::GeolocationManager* ShellBrowserMainParts::GetGeolocationManager() {
-  if (!device::GeolocationManager::GetInstance()) {
-    device::GeolocationManager::SetInstance(
-        device::SystemGeolocationSourceMac::CreateGeolocationManagerOnMac());
+device::GeolocationSystemPermissionManager*
+ShellBrowserMainParts::GetGeolocationSystemPermissionManager() {
+  if (!device::GeolocationSystemPermissionManager::GetInstance()) {
+    device::GeolocationSystemPermissionManager::SetInstance(
+        device::SystemGeolocationSourceApple::
+            CreateGeolocationSystemPermissionManager());
   }
-  return device::GeolocationManager::GetInstance();
+  return device::GeolocationSystemPermissionManager::GetInstance();
 }
 
 }  // namespace content

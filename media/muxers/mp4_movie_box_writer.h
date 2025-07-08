@@ -11,6 +11,8 @@
 // The file contains the box writer of `moov` and its children.
 namespace media {
 
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4FileTypeBoxWriter,
+                             mp4::writable_boxes::FileType);
 DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieBoxWriter, mp4::writable_boxes::Movie);
 DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieHeaderBoxWriter,
                              mp4::writable_boxes::MovieHeader);
@@ -45,20 +47,33 @@ DECLARE_MP4_BOX_WRITER_CLASS_NO_DATA(Mp4MovieSampleToChunkBoxWriter);
 DECLARE_MP4_BOX_WRITER_CLASS_NO_DATA(Mp4MovieDecodingTimeToSampleBoxWriter);
 DECLARE_MP4_BOX_WRITER_CLASS_NO_DATA(Mp4MovieSampleSizeBoxWriter);
 DECLARE_MP4_BOX_WRITER_CLASS_NO_DATA(Mp4MovieSampleChunkOffsetBoxWriter);
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieVisualSampleEntryBoxWriter,
-                             mp4::writable_boxes::VisualSampleEntry);
-DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieAVCDecoderConfigurationBoxWriter,
-                             mp4::writable_boxes::AVCDecoderConfiguration);
 DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieAudioSampleEntryBoxWriter,
                              mp4::writable_boxes::AudioSampleEntry);
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieVisualSampleEntryBoxWriter,
+                             mp4::writable_boxes::VisualSampleEntry);
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieOpusSpecificBoxWriter,
+                             mp4::writable_boxes::OpusSpecificBox);
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieVPCodecConfigurationBoxWriter,
+                             mp4::writable_boxes::VPCodecConfiguration);
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieAV1CodecConfigurationBoxWriter,
+                             mp4::writable_boxes::AV1CodecConfiguration);
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieAVCDecoderConfigurationBoxWriter,
+                             mp4::writable_boxes::AVCDecoderConfiguration);
 DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieElementaryStreamDescriptorBoxWriter,
                              mp4::writable_boxes::ElementaryStreamDescriptor);
 #endif
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieHEVCDecoderConfigurationBoxWriter,
+                             mp4::writable_boxes::HEVCDecoderConfiguration);
+#endif
+
 DECLARE_MP4_BOX_WRITER_CLASS_NO_DATA(Mp4MoviePixelAspectRatioBoxBoxWriter);
 DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieBitRateBoxWriter,
                              mp4::writable_boxes::BitRate);
 
+DECLARE_MP4_BOX_WRITER_CLASS(Mp4MovieColorInformationBoxWriter,
+                             mp4::writable_boxes::ColorInformation);
 }  // namespace media
 
 #endif  // MEDIA_MUXERS_MP4_MOVIE_BOX_WRITER_H_

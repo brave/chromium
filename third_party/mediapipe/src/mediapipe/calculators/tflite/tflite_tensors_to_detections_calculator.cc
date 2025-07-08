@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "mediapipe/calculators/tflite/tflite_tensors_to_detections_calculator.pb.h"
@@ -115,7 +116,7 @@ void ConvertAnchorsToRawValues(const std::vector<Anchor>& anchors,
 //               tensors can have 2 or 3 tensors. First tensor is the predicted
 //               raw boxes/keypoints. The size of the values must be (num_boxes
 //               * num_predicted_values). Second tensor is the score tensor. The
-//               size of the valuse must be (num_boxes * num_classes). It's
+//               size of the values must be (num_boxes * num_classes). It's
 //               optional to pass in a third tensor for anchors (e.g. for SSD
 //               models) depend on the outputs of the detection model. The size
 //               of anchor tensor must be (num_boxes * 4).
@@ -310,7 +311,7 @@ absl::Status TfLiteTensorsToDetectionsCalculator::ProcessCPU(
         const float* raw_anchors = anchor_tensor->data.f;
         ConvertRawValuesToAnchors(raw_anchors, num_boxes_, &anchors_);
       } else if (side_packet_anchors_) {
-        CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
+        ABSL_CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
         anchors_ =
             cc->InputSidePackets().Tag("ANCHORS").Get<std::vector<Anchor>>();
       } else {
@@ -410,7 +411,7 @@ absl::Status TfLiteTensorsToDetectionsCalculator::ProcessGPU(
         CopyBuffer(input_tensors[1], gpu_data_->raw_scores_buffer));
     if (!anchors_init_) {
       if (side_packet_anchors_) {
-        CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
+        ABSL_CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
         const auto& anchors =
             cc->InputSidePackets().Tag("ANCHORS").Get<std::vector<Anchor>>();
         std::vector<float> raw_anchors(num_boxes_ * kNumCoordsPerBox);
@@ -478,7 +479,7 @@ absl::Status TfLiteTensorsToDetectionsCalculator::ProcessGPU(
                     commandBuffer:[gpu_helper_ commandBuffer]];
   if (!anchors_init_) {
     if (side_packet_anchors_) {
-      CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
+      ABSL_CHECK(!cc->InputSidePackets().Tag("ANCHORS").IsEmpty());
       const auto& anchors =
           cc->InputSidePackets().Tag("ANCHORS").Get<std::vector<Anchor>>();
       std::vector<float> raw_anchors(num_boxes_ * kNumCoordsPerBox);
@@ -542,7 +543,7 @@ absl::Status TfLiteTensorsToDetectionsCalculator::ProcessGPU(
                                          output_detections));
 
 #else
-  LOG(ERROR) << "GPU input on non-Android not supported yet.";
+  ABSL_LOG(ERROR) << "GPU input on non-Android not supported yet.";
 #endif  // MEDIAPIPE_TFLITE_GL_INFERENCE
   return absl::OkStatus();
 }

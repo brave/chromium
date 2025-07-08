@@ -4,23 +4,23 @@
 
 package org.chromium.content.browser.accessibility.captioning;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.content_public.browser.WebContents;
 
-/**
- *  Sends notification when platform closed caption settings have changed.
- */
+/** Sends notification when platform closed caption settings have changed. */
 @JNINamespace("content")
+@NullMarked
 public class CaptioningController implements SystemCaptioningBridge.SystemCaptioningBridgeListener {
-    private SystemCaptioningBridge mSystemCaptioningBridge;
+    private final SystemCaptioningBridge mSystemCaptioningBridge;
     private long mNativeCaptioningController;
 
     public CaptioningController(WebContents webContents) {
         mSystemCaptioningBridge = CaptioningBridge.getInstance();
-        mNativeCaptioningController =
-                CaptioningControllerJni.get().init(CaptioningController.this, webContents);
+        mNativeCaptioningController = CaptioningControllerJni.get().init(this, webContents);
     }
 
     @SuppressWarnings("unused")
@@ -39,12 +39,17 @@ public class CaptioningController implements SystemCaptioningBridge.SystemCaptio
     @Override
     public void onSystemCaptioningChanged(TextTrackSettings settings) {
         if (mNativeCaptioningController == 0) return;
-        CaptioningControllerJni.get().setTextTrackSettings(mNativeCaptioningController,
-                CaptioningController.this, settings.getTextTracksEnabled(),
-                settings.getTextTrackBackgroundColor(), settings.getTextTrackFontFamily(),
-                settings.getTextTrackFontStyle(), settings.getTextTrackFontVariant(),
-                settings.getTextTrackTextColor(), settings.getTextTrackTextShadow(),
-                settings.getTextTrackTextSize());
+        CaptioningControllerJni.get()
+                .setTextTrackSettings(
+                        mNativeCaptioningController,
+                        settings.getTextTracksEnabled(),
+                        settings.getTextTrackBackgroundColor(),
+                        settings.getTextTrackFontFamily(),
+                        settings.getTextTrackFontStyle(),
+                        settings.getTextTrackFontVariant(),
+                        settings.getTextTrackTextColor(),
+                        settings.getTextTrackTextShadow(),
+                        settings.getTextTrackTextSize());
     }
 
     public void startListening() {
@@ -57,10 +62,17 @@ public class CaptioningController implements SystemCaptioningBridge.SystemCaptio
 
     @NativeMethods
     interface Natives {
-        long init(CaptioningController caller, WebContents webContents);
-        void setTextTrackSettings(long nativeCaptioningController, CaptioningController caller,
-                boolean textTracksEnabled, String textTrackBackgroundColor,
-                String textTrackFontFamily, String textTrackFontStyle, String textTrackFontVariant,
-                String textTrackTextColor, String textTrackTextShadow, String textTrackTextSize);
+        long init(CaptioningController self, WebContents webContents);
+
+        void setTextTrackSettings(
+                long nativeCaptioningController,
+                boolean textTracksEnabled,
+                String textTrackBackgroundColor,
+                String textTrackFontFamily,
+                String textTrackFontStyle,
+                String textTrackFontVariant,
+                String textTrackTextColor,
+                String textTrackTextShadow,
+                String textTrackTextSize);
     }
 }

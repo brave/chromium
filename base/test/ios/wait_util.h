@@ -32,7 +32,7 @@ constexpr TimeDelta kWaitForActionTimeout = Seconds(10);
 
 // Constant for timeout while waiting for clear browsing data. It seems this
 // can take a very long time on the bots when running simulators in parallel.
-// TODO(crbug.com/993513): Investigate why this is sometimes very slow.
+// TODO(crbug.com/41475878): Investigate why this is sometimes very slow.
 constexpr TimeDelta kWaitForClearBrowsingDataTimeout = Seconds(45);
 
 // Constant for timeout while waiting for cookies operations to complete.
@@ -43,9 +43,8 @@ constexpr TimeDelta kWaitForFileOperationTimeout = Seconds(2);
 
 // Returns true when condition() becomes true, otherwise returns false after
 // |timeout|. Repetitively runs the current NSRunLoop and the current
-// MessageLoop (if |run_message_loop| is true).
-// TODO(crbug.com/1462320): Investigate whether we can always run the
-// message loop.
+// MessageLoop (if |run_message_loop| is true). Passing |run_message_loop| true
+// only makes sense in unit tests.
 [[nodiscard]] bool WaitUntilConditionOrTimeout(TimeDelta timeout,
                                                bool run_message_loop,
                                                ConditionBlock condition);

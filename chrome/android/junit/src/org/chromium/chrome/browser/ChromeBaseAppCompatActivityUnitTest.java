@@ -22,15 +22,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.ui.display.DisplayUtil;
+import org.chromium.ui.util.XrUtils;
 
-/**
- * Unit tests for {@link ChromeBaseAppCompatActivity}.
- */
+/** Unit tests for {@link ChromeBaseAppCompatActivity}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class ChromeBaseAppCompatActivityUnitTest {
     private static final float MOCK_REAL_DISPLAY_DENSITY = 1.0f;
@@ -38,37 +39,42 @@ public class ChromeBaseAppCompatActivityUnitTest {
     private static final int MOCK_REAL_DISPLAY_WIDTH_PIXELS = 600;
     private static final int MOCK_REAL_DISPLAY_HEIGHT_PIXELS = 300;
 
-    @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock
-    private Context mContext;
-    @Mock
-    private WindowManager mWindowManager;
-    @Mock
-    private Display mDisplay;
+    @Rule
+    public OverrideContextWrapperTestRule mAutomotiveContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
+
+    @Mock private Context mContext;
+    @Mock private WindowManager mWindowManager;
+    @Mock private Display mDisplay;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         when(mContext.getSystemService(eq(Context.WINDOW_SERVICE))).thenReturn(mWindowManager);
+        when(mContext.getResources())
+                .thenReturn(ContextUtils.getApplicationContext().getResources());
         when(mWindowManager.getDefaultDisplay()).thenReturn(mDisplay);
-        doAnswer((invocation) -> {
-            DisplayMetrics realDisplayMetrics = invocation.getArgument(0);
-            realDisplayMetrics.density = MOCK_REAL_DISPLAY_DENSITY;
-            realDisplayMetrics.densityDpi = MOCK_REAL_DISPLAY_DENSITY_DPI;
-            realDisplayMetrics.widthPixels = MOCK_REAL_DISPLAY_WIDTH_PIXELS;
-            realDisplayMetrics.heightPixels = MOCK_REAL_DISPLAY_HEIGHT_PIXELS;
-            return null;
-        })
+        doAnswer(
+                        (invocation) -> {
+                            DisplayMetrics realDisplayMetrics = invocation.getArgument(0);
+                            realDisplayMetrics.density = MOCK_REAL_DISPLAY_DENSITY;
+                            realDisplayMetrics.densityDpi = MOCK_REAL_DISPLAY_DENSITY_DPI;
+                            realDisplayMetrics.widthPixels = MOCK_REAL_DISPLAY_WIDTH_PIXELS;
+                            realDisplayMetrics.heightPixels = MOCK_REAL_DISPLAY_HEIGHT_PIXELS;
+                            return null;
+                        })
                 .when(mDisplay)
                 .getRealMetrics(any());
     }
 
+    // Verifies that Clank's internal scaling works.
     @Test
     @MediumTest
-    public void testApplyOverridesForAutomotive_onAutomotiveDevice_scaleUpUI() {
+    public void testApplyOverridesForAutomotive_onAutomotiveDevice_scaleUpUi() {
+        DisplayUtil.setCarmaPhase1Version2ComplianceForTesting(true);
+        DisplayUtil.setIsDisplayCompatAppForTesting(false);
+
         mAutomotiveContextWrapperTestRule.setIsAutomotive(true);
 
         Configuration config = new Configuration();
@@ -78,26 +84,32 @@ public class ChromeBaseAppCompatActivityUnitTest {
         config.smallestScreenWidthDp = 0;
         ChromeBaseAppCompatActivity.applyOverridesForAutomotive(mContext, config);
 
-        float automotiveScaleUpFactor = DisplayUtil.getUiScalingFactorForAutomotive();
-        assertEquals("Density dpi should be scaled up from the real display metric "
-                        + "on automotive.",
-                (int) (MOCK_REAL_DISPLAY_DENSITY_DPI * automotiveScaleUpFactor), config.densityDpi);
-        assertEquals("Screen width in density pixels should be scaled down from the "
+        float automotiveScaleUpFactor =
+                (float) DisplayMetrics.DENSITY_220 / (float) MOCK_REAL_DISPLAY_DENSITY_DPI;
+        assertEquals(
+                "Density dpi should be scaled up from the real display metric " + "on automotive.",
+                DisplayMetrics.DENSITY_220,
+                config.densityDpi);
+        assertEquals(
+                "Screen width in density pixels should be scaled down from the "
                         + "real display metric on automotive.",
                 (int) (MOCK_REAL_DISPLAY_WIDTH_PIXELS / automotiveScaleUpFactor),
                 config.screenWidthDp);
-        assertEquals("Screen height in density pixels should be scaled down from the "
+        assertEquals(
+                "Screen height in density pixels should be scaled down from the "
                         + "real display metric on automotive.",
                 (int) (MOCK_REAL_DISPLAY_HEIGHT_PIXELS / automotiveScaleUpFactor),
                 config.screenHeightDp);
-        assertEquals("Smallest screen width should be overridden to match the screen height, "
+        assertEquals(
+                "Smallest screen width should be overridden to match the screen height, "
                         + "as it is lower than the screen width.",
-                config.screenHeightDp, config.smallestScreenWidthDp);
+                config.screenHeightDp,
+                config.smallestScreenWidthDp);
     }
 
     @Test
     @MediumTest
-    public void testApplyOverridesForAutomotive_onNonAutomotiveDevice_noUIScaleUp() {
+    public void testApplyOverridesForAutomotive_onNonAutomotiveDevice_noUiScaleUp() {
         Configuration config = new Configuration();
         config.densityDpi = MOCK_REAL_DISPLAY_DENSITY_DPI;
         config.screenWidthDp = MOCK_REAL_DISPLAY_WIDTH_PIXELS;
@@ -105,15 +117,90 @@ public class ChromeBaseAppCompatActivityUnitTest {
         config.smallestScreenWidthDp = 0;
         ChromeBaseAppCompatActivity.applyOverridesForAutomotive(mContext, config);
 
-        assertEquals("Density dpi should not be scaled up from the real display metric "
+        assertEquals(
+                "Density dpi should not be scaled up from the real display metric "
                         + "on non-automotive devices.",
-                MOCK_REAL_DISPLAY_DENSITY_DPI, config.densityDpi);
-        assertEquals("Screen width in density pixels should not be scaled down from the "
+                MOCK_REAL_DISPLAY_DENSITY_DPI,
+                config.densityDpi);
+        assertEquals(
+                "Screen width in density pixels should not be scaled down from the "
                         + "real display metric on non-automotive devices.",
-                MOCK_REAL_DISPLAY_WIDTH_PIXELS, config.screenWidthDp);
-        assertEquals("Screen height in density pixels should not be scaled down from the "
+                MOCK_REAL_DISPLAY_WIDTH_PIXELS,
+                config.screenWidthDp);
+        assertEquals(
+                "Screen height in density pixels should not be scaled down from the "
                         + "real display metric on non-automotive devices.",
-                MOCK_REAL_DISPLAY_HEIGHT_PIXELS, config.screenHeightDp);
+                MOCK_REAL_DISPLAY_HEIGHT_PIXELS,
+                config.screenHeightDp);
+        assertEquals(
+                "Smallest screen width should not have changed.", 0, config.smallestScreenWidthDp);
+    }
+
+    @Test
+    @MediumTest
+    public void testApplyOverridesForXr_onXrDevice_uiScalesUp() {
+        Configuration config = new Configuration();
+        config.densityDpi = MOCK_REAL_DISPLAY_DENSITY_DPI;
+        config.screenWidthDp = MOCK_REAL_DISPLAY_WIDTH_PIXELS;
+        config.screenHeightDp = MOCK_REAL_DISPLAY_HEIGHT_PIXELS;
+        config.smallestScreenWidthDp = 0;
+
+        // Set XR environment.
+        XrUtils.setXrDeviceForTesting(true);
+        ChromeBaseAppCompatActivity.applyOverridesForXr(mContext, config);
+
+        float xrScaleUpFactor =
+                (float) DisplayUtil.getUiDensityForXr(mContext, MOCK_REAL_DISPLAY_DENSITY_DPI)
+                        / (float) MOCK_REAL_DISPLAY_DENSITY_DPI;
+        assertEquals(
+                "Screen width in density pixels should be scaled down from the real display metric"
+                        + " on XR.",
+                Math.round((float) MOCK_REAL_DISPLAY_WIDTH_PIXELS / xrScaleUpFactor),
+                config.screenWidthDp);
+        assertEquals(
+                "Screen height in density pixels should be scaled down from the real display metric"
+                        + " on XR.",
+                Math.round((float) MOCK_REAL_DISPLAY_HEIGHT_PIXELS / xrScaleUpFactor),
+                config.screenHeightDp);
+        assertEquals(
+                "Smallest screen width should be overridden to match the screen height, as it is"
+                        + " smaller than the screen width.",
+                config.screenHeightDp,
+                config.smallestScreenWidthDp);
+        assertEquals(
+                "Density dpi should be scaled up from the real display metric on XR device.",
+                DisplayUtil.getUiDensityForXr(mContext, MOCK_REAL_DISPLAY_DENSITY_DPI),
+                config.densityDpi);
+    }
+
+    @Test
+    @MediumTest
+    public void testApplyOverridesForXr_onNonXrDevice_noUiScaleUp() {
+        Configuration config = new Configuration();
+        config.densityDpi = MOCK_REAL_DISPLAY_DENSITY_DPI;
+        config.screenWidthDp = MOCK_REAL_DISPLAY_WIDTH_PIXELS;
+        config.screenHeightDp = MOCK_REAL_DISPLAY_HEIGHT_PIXELS;
+        config.smallestScreenWidthDp = 0;
+
+        // Set XR environment.
+        XrUtils.setXrDeviceForTesting(false);
+        ChromeBaseAppCompatActivity.applyOverridesForXr(mContext, config);
+
+        assertEquals(
+                "Density dpi should not be scaled up from the real display metric "
+                        + "on non-Xr devices.",
+                MOCK_REAL_DISPLAY_DENSITY_DPI,
+                config.densityDpi);
+        assertEquals(
+                "Screen width in density pixels should not be scaled down from the "
+                        + "real display metric on non-Xr devices.",
+                MOCK_REAL_DISPLAY_WIDTH_PIXELS,
+                config.screenWidthDp);
+        assertEquals(
+                "Screen height in density pixels should not be scaled down from the "
+                        + "real display metric on non-Xr devices.",
+                MOCK_REAL_DISPLAY_HEIGHT_PIXELS,
+                config.screenHeightDp);
         assertEquals(
                 "Smallest screen width should not have changed.", 0, config.smallestScreenWidthDp);
     }

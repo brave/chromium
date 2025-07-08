@@ -17,12 +17,16 @@ class ImageButton;
 namespace ash {
 class PulsingBlockView;
 class SearchResultImageListView;
+class SearchResultImageViewDelegate;
 
 // Displays a search result in the form of an unlabeled image.
 class ASH_EXPORT SearchResultImageView : public SearchResultBaseView {
+  METADATA_HEADER(SearchResultImageView, SearchResultBaseView)
+
  public:
-  METADATA_HEADER(SearchResultImageView);
-  SearchResultImageView(int index, SearchResultImageListView* list_view);
+  SearchResultImageView(int index,
+                        SearchResultImageListView* list_view,
+                        SearchResultImageViewDelegate* image_view_delegate);
   SearchResultImageView(const SearchResultImageView&) = delete;
   SearchResultImageView& operator=(const SearchResultImageView&) = delete;
   ~SearchResultImageView() override;
@@ -30,9 +34,8 @@ class ASH_EXPORT SearchResultImageView : public SearchResultBaseView {
   void OnImageViewPressed(const ui::Event& event);
 
   // Overridden from views::View:
-  void OnGestureEvent(ui::GestureEvent* event) override;
-  void OnMouseEvent(ui::MouseEvent* event) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
   // Updates `preferred_width_`.
   void ConfigureLayoutForAvailableWidth(int width);
@@ -45,6 +48,9 @@ class ASH_EXPORT SearchResultImageView : public SearchResultBaseView {
 
   // Returns true if the image view has a valid result and icon.
   bool HasValidResultIcon();
+
+  // Creates the image skia that is used for dragged image view.
+  gfx::ImageSkia CreateDragImage();
 
   SearchResultImageListView* list_view() { return list_view_; }
 
@@ -64,10 +70,10 @@ class ASH_EXPORT SearchResultImageView : public SearchResultBaseView {
   raw_ptr<views::ImageButton> result_image_ = nullptr;
 
   // Parent list view. Owned by views hierarchy.
-  raw_ptr<SearchResultImageListView, ExperimentalAsh> const list_view_;
+  raw_ptr<SearchResultImageListView> const list_view_;
 
   // Child pulsing block view that is used as a placeholder.
-  raw_ptr<PulsingBlockView, ExperimentalAsh> pulsing_block_view_ = nullptr;
+  raw_ptr<PulsingBlockView, DanglingUntriaged> pulsing_block_view_ = nullptr;
 
   // The preferred width of the image view which is used to calculate the
   // preferred size. This is set by the parent container view so that the image
@@ -77,4 +83,4 @@ class ASH_EXPORT SearchResultImageView : public SearchResultBaseView {
 
 }  // namespace ash
 
-#endif  // ASH_APP_LIST_VIEWS_SEARCH_RESULT_INLINE_ICON_VIEW_H_
+#endif  // ASH_APP_LIST_VIEWS_SEARCH_RESULT_IMAGE_VIEW_H_

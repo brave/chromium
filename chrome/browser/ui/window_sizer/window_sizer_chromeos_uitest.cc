@@ -9,7 +9,6 @@
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -69,7 +68,7 @@ class WindowSizerTest : public InProcessBrowserTest {
       ui::ScopedAnimationDurationScaleMode::ZERO_DURATION};
 };
 
-// TODO(crbug.com/1038342): Test is flaky on sanitizers.
+// TODO(crbug.com/40113148): Test is flaky on sanitizers.
 #if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
 #define MAYBE_OpenBrowserUsingShelfItem DISABLED_OpenBrowserUsingShelfItem
 #else

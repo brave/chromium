@@ -29,6 +29,7 @@
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
+#include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/cpp/intent_util.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
@@ -41,7 +42,7 @@ struct PermissionInfo {
   const char* pref_name;
 };
 
-// TODO(crbug.com/1198390): Update to use a switch to map between two enum.
+// TODO(crbug.com/40760689): Update to use a switch to map between two enum.
 constexpr PermissionInfo permission_infos[] = {
     {apps::PermissionType::kPrinting,
      plugin_vm::prefs::kPluginVmPrintersAllowed},
@@ -87,8 +88,7 @@ apps::AppPtr CreatePluginVmApp(Profile* profile, bool allowed) {
       apps::InstallReason::kUser, apps::InstallSource::kUnknown);
 
   app->icon_key =
-      apps::IconKey(apps::IconKey::kDoesNotChangeOverTime,
-                    IDR_LOGO_PLUGIN_VM_DEFAULT_192, apps::IconEffects::kNone);
+      apps::IconKey(IDR_LOGO_PLUGIN_VM_DEFAULT_192, apps::IconEffects::kNone);
 
   app->permissions = CreatePermissions(profile);
 
@@ -96,7 +96,7 @@ apps::AppPtr CreatePluginVmApp(Profile* profile, bool allowed) {
 
   // Show when installed, even if disabled by policy, to give users the choice
   // to uninstall and free up space.
-  app->show_in_management =
+  app->show_in_management = app->allow_uninstall =
       plugin_vm::PluginVmFeatures::Get()->IsConfigured(profile);
   return app;
 }
@@ -113,8 +113,8 @@ apps::IntentFilters CreateIntentFilterForPluginVm(
   apps::IntentFilters intent_filters;
   intent_filters.push_back(apps_util::CreateFileFilter(
       {apps_util::kIntentActionView}, /*mime_types=*/{}, extension_types,
-      // TODO(crbug/1349974): Remove activity_name when default file handling
-      // preferences for Files App are migrated.
+      // TODO(crbug.com/40233967): Remove activity_name when default file
+      // handling preferences for Files App are migrated.
       /*activity_name=*/apps_util::kGuestOsActivityName));
 
   return intent_filters;
@@ -124,11 +124,11 @@ apps::LaunchResult ConvertPluginVmResultToLaunchResult(
     plugin_vm::LaunchPluginVmAppResult plugin_vm_result) {
   switch (plugin_vm_result) {
     case plugin_vm::LaunchPluginVmAppResult::SUCCESS:
-      return apps::LaunchResult(apps::State::SUCCESS);
+      return apps::LaunchResult(apps::State::kSuccess);
     case plugin_vm::LaunchPluginVmAppResult::FAILED_DIRECTORY_NOT_SHARED:
-      return apps::LaunchResult(apps::State::FAILED_DIRECTORY_NOT_SHARED);
+      return apps::LaunchResult(apps::State::kFailedDirectoryNotShared);
     case plugin_vm::LaunchPluginVmAppResult::FAILED:
-      return apps::LaunchResult(apps::State::FAILED);
+      return apps::LaunchResult(apps::State::kFailed);
   }
 }
 
@@ -249,7 +249,7 @@ void PluginVmApps::LaunchAppWithParams(AppLaunchParams&& params,
                                        LaunchCallback callback) {
   Launch(params.app_id, ui::EF_NONE, LaunchSource::kUnknown, nullptr);
 
-  // TODO(crbug.com/1244506): Add launch return value.
+  // TODO(crbug.com/40787924): Add launch return value.
   std::move(callback).Run(LaunchResult());
 }
 
@@ -339,8 +339,7 @@ AppPtr PluginVmApps::CreateApp(
       registration.Name(), InstallReason::kUser, apps::InstallSource::kUnknown);
 
   if (generate_new_icon_key) {
-    app->icon_key = std::move(
-        *icon_key_factory_.CreateIconKey(IconEffects::kCrOsStandardIcon));
+    app->icon_key = IconKey(IconEffects::kCrOsStandardIcon);
   }
 
   app->last_launch_time = registration.LastLaunchTime();
@@ -351,6 +350,7 @@ AppPtr PluginVmApps::CreateApp(
   app->show_in_shelf = false;
   app->show_in_management = false;
   app->allow_uninstall = false;
+  app->allow_close = true;
   app->handles_intents = true;
   app->intent_filters = CreateIntentFilterForPluginVm(registration);
   return app;
@@ -365,7 +365,7 @@ void PluginVmApps::OnPluginVmAvailabilityChanged(bool is_allowed,
   auto app =
       std::make_unique<App>(AppType::kPluginVm, plugin_vm::kPluginVmShelfAppId);
   SetAppAllowed(is_allowed, *app);
-  app->show_in_management = is_configured;
+  app->show_in_management = app->allow_uninstall = is_configured;
   AppPublisher::Publish(std::move(app));
 }
 

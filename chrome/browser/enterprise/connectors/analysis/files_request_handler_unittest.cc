@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "chrome/browser/enterprise/connectors/analysis/files_request_handler.h"
 
 #include <map>
@@ -9,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -16,11 +18,15 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "build/build_config.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
@@ -37,6 +43,7 @@
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/file_access/test/mock_scoped_file_access_delegate.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
@@ -49,6 +56,7 @@ namespace {
 constexpr char kDmToken[] = "dm_token";
 constexpr char kUserActionId[] = "123";
 constexpr char kTabTitle[] = "tab_title";
+constexpr char kContentTransferMethod[] = "content_transfer_method";
 constexpr char kTestUrl[] = "http://example.com/";
 base::TimeDelta kResponseDelay = base::Seconds(0);
 
@@ -128,7 +136,7 @@ class BaseTest : public testing::Test {
     for (const auto& file_name : file_names) {
       base::FilePath path = temp_dir_.GetPath().Append(file_name);
       base::File file(path, base::File::FLAG_CREATE | base::File::FLAG_WRITE);
-      file.WriteAtCurrentPos(content.data(), content.size());
+      file.WriteAtCurrentPos(base::as_byte_span(content));
       paths.emplace_back(path);
     }
     return paths;
@@ -153,6 +161,56 @@ MATCHER_P3(MatchesRequestHandlerResult, complies, final_result, tag, "") {
   return complies_matches && final_result_matches && tag_matches;
 }
 
+class TestContentAnalysisInfo : public ContentAnalysisInfo {
+ public:
+  explicit TestContentAnalysisInfo(
+      const enterprise_connectors::AnalysisSettings& settings,
+      int user_action_requests_count)
+      : settings_(settings),
+        user_action_requests_count_(user_action_requests_count) {}
+
+  const AnalysisSettings& settings() const override { return settings_.get(); }
+
+  signin::IdentityManager* identity_manager() const override { return nullptr; }
+
+  // These methods correspond to fields in `BinaryUploadService::Request`.
+  int user_action_requests_count() const override {
+    return user_action_requests_count_;
+  }
+
+  std::string tab_title() const override { return kTabTitle; }
+
+  std::string user_action_id() const override { return kUserActionId; }
+
+  std::string email() const override { return "test@user.com"; }
+
+  std::string url() const override { return kTestUrl; }
+
+  const GURL& tab_url() const override {
+    static GURL url(kTestUrl);
+    return url;
+  }
+
+  ContentAnalysisRequest::Reason reason() const override {
+    return ContentAnalysisRequest::FILE_PICKER_DIALOG;
+  }
+
+  google::protobuf::RepeatedPtrField<::safe_browsing::ReferrerChainEntry>
+  referrer_chain() const override {
+    return google::protobuf::RepeatedPtrField<
+        ::safe_browsing::ReferrerChainEntry>();
+  }
+
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain()
+      const override {
+    return {};
+  }
+
+ private:
+  const raw_ref<const enterprise_connectors::AnalysisSettings> settings_;
+  int user_action_requests_count_ = 0;
+};
+
 }  // namespace
 
 // Make a RequestHandlerResult show nicely in google tests.
@@ -162,7 +220,7 @@ MATCHER_P3(MatchesRequestHandlerResult, complies, final_result, tag, "") {
 void PrintTo(const RequestHandlerResult& request_handler_result,
              std::ostream* os) {
   *os << "RequestHandlerResult: (";
-  *os << "complies: " << (request_handler_result.complies ? "true" : "false")
+  *os << "complies: " << base::ToString(request_handler_result.complies)
       << ", ";
 
   *os << "final_result: "
@@ -170,6 +228,9 @@ void PrintTo(const RequestHandlerResult& request_handler_result,
   switch (request_handler_result.final_result) {
     case FinalContentAnalysisResult::FAILURE:
       *os << "FAILURE";
+      break;
+    case FinalContentAnalysisResult::FAIL_CLOSED:
+      *os << "FAIL_CLOSED";
       break;
     case FinalContentAnalysisResult::LARGE_FILES:
       *os << "LARGE_FILES";
@@ -192,20 +253,21 @@ class FilesRequestHandlerTest : public BaseTest {
   FilesRequestHandlerTest() = default;
 
  protected:
-  absl::optional<std::vector<RequestHandlerResult>> ScanUpload(
+  std::optional<std::vector<RequestHandlerResult>> ScanUpload(
       const std::vector<base::FilePath>& paths) {
     // The settings need to exist until the "scanning" has completed, we can
     // thus not pass it into test::FakeFilesRequestHandler as a rvalue
     // reference.
-    absl::optional<AnalysisSettings> settings = GetSettings();
+    std::optional<AnalysisSettings> settings = GetSettings();
     if (!settings.has_value()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     using ResultFuture =
         base::test::TestFuture<std::vector<RequestHandlerResult>>;
     ResultFuture future;
 
+    TestContentAnalysisInfo info(*settings, paths.size());
     // The access point is only used for metrics, so its value doesn't affect
     // the tests in this file and can always be the same.
     fake_files_request_handler_ =
@@ -214,9 +276,9 @@ class FilesRequestHandlerTest : public BaseTest {
                 &FilesRequestHandlerTest::FakeFileUploadCallback,
                 weak_ptr_factory_.GetWeakPtr(),
                 settings->cloud_or_local_settings.is_cloud_analysis()),
-            /*upload_service=*/nullptr, profile_, *settings, GURL(kTestUrl), "",
-            "", kUserActionId, kTabTitle,
-            safe_browsing::DeepScanAccessPoint::UPLOAD, paths,
+            /*content_analysis_info=*/&info,
+            /*upload_service=*/nullptr, profile_, GURL(kTestUrl), "", "",
+            kContentTransferMethod, DeepScanAccessPoint::UPLOAD, paths,
             future.GetCallback());
 
     fake_files_request_handler_->UploadData();
@@ -234,14 +296,14 @@ class FilesRequestHandlerTest : public BaseTest {
     return future.Take();
   }
 
-  absl::optional<enterprise_connectors::AnalysisSettings> GetSettings() {
+  std::optional<enterprise_connectors::AnalysisSettings> GetSettings() {
     auto* service =
         enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
             profile());
     // If the corresponding Connector policy isn't set, no scans can be
     // performed.
     if (!service) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     EXPECT_TRUE(service->IsConnectorEnabled(AnalysisConnector::FILE_ATTACHED));
 
@@ -293,6 +355,9 @@ class FilesRequestHandlerTest : public BaseTest {
     enterprise_connectors::test::SetAnalysisConnector(
         profile_->GetPrefs(), AnalysisConnector::FILE_ATTACHED,
         kBlockingScansForDlpAndMalware);
+
+    scoped_feature_list_.InitAndEnableFeature(
+        safe_browsing::kEnhancedFieldsForSecOps);
   }
 
   void FakeFileUploadCallback(
@@ -311,11 +376,12 @@ class FilesRequestHandlerTest : public BaseTest {
       EXPECT_EQ(request->tab_title(), kTabTitle);
     }
 
+    upload_performed_ = true;
+
     // Simulate a response.
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
-        base::BindOnce(std::move(callback), path,
-                       safe_browsing::BinaryUploadService::Result::SUCCESS,
+        base::BindOnce(std::move(callback), path, result,
                        ConnectorStatusCallback(path)),
         kResponseDelay);
   }
@@ -346,6 +412,8 @@ class FilesRequestHandlerTest : public BaseTest {
     return response;
   }
 
+  bool was_upload_performed() { return upload_performed_; }
+
  private:
   ScopedSetDMToken scoped_dm_token_{
       policy::DMToken::CreateValidToken(kDmToken)};
@@ -357,11 +425,13 @@ class FilesRequestHandlerTest : public BaseTest {
   std::map<base::FilePath, ContentAnalysisResponse> failures_;
 
   // DLP response to ovewrite in the callback if present.
-  absl::optional<ContentAnalysisResponse> dlp_response_ = absl::nullopt;
+  std::optional<ContentAnalysisResponse> dlp_response_ = std::nullopt;
 
   // To verify user action requests count in local content analysis request is
   // set correctly.
   uint64_t expected_user_action_requests_count_ = 0;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  bool upload_performed_ = false;
 
   base::WeakPtrFactory<FilesRequestHandlerTest> weak_ptr_factory_{this};
 };
@@ -476,6 +546,7 @@ TEST_F(FilesRequestHandlerTest, FileIsEncrypted) {
   EXPECT_THAT((*results)[0],
               MatchesRequestHandlerResult(
                   false, FinalContentAnalysisResult::ENCRYPTED_FILES, ""));
+  EXPECT_FALSE(was_upload_performed());
 }
 
 // With a local service provider, a scan should not terminate early due to
@@ -540,6 +611,47 @@ TEST_F(FilesRequestHandlerTest, FileIsEncrypted_PolicyAllows) {
   EXPECT_THAT((*results)[0],
               MatchesRequestHandlerResult(
                   true, FinalContentAnalysisResult::SUCCESS, ""));
+  // When the resumable upload protocol is in use and the policy does not block
+  // encrypted files by default, the file's metadata is uploaded for scanning.
+  EXPECT_TRUE(was_upload_performed());
+}
+
+TEST_F(FilesRequestHandlerTest, FileIsLarge) {
+  content::InProcessUtilityThreadHelper in_process_utility_thread_helper;
+
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), AnalysisConnector::FILE_ATTACHED,
+      R"(
+    {
+      "service_provider": "google",
+      "enable": [
+        {
+          "url_list": ["*"],
+          "tags": ["dlp", "malware"]
+        }
+      ],
+      "block_until_verdict": 1,
+      "block_large_files": true
+    })");
+  GURL url(kTestUrl);
+  std::vector<base::FilePath> paths;
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  base::FilePath file_path = temp_dir.GetPath().AppendASCII("large.doc");
+  std::string contents(
+      safe_browsing::BinaryUploadService::kMaxUploadSizeBytes + 1, 'a');
+  base::WriteFile(file_path, contents);
+  paths.emplace_back(file_path);
+  SetExpectedUserActionRequestsCount(1);
+
+  auto results = ScanUpload(paths);
+  ASSERT_TRUE(results.has_value());
+  EXPECT_EQ(1u, results->size());
+  EXPECT_THAT((*results)[0],
+              MatchesRequestHandlerResult(
+                  false, FinalContentAnalysisResult::LARGE_FILES, ""));
+  EXPECT_FALSE(was_upload_performed());
 }
 
 // With a local service provider, a scan should not terminate early due to
@@ -571,6 +683,46 @@ TEST_F(FilesRequestHandlerTest, FileIsLarge_LocalAnalysis) {
                   true, FinalContentAnalysisResult::SUCCESS, ""));
 }
 #endif  // BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
+
+TEST_F(FilesRequestHandlerTest, FileIsLarge_PolicyAllows) {
+  content::InProcessUtilityThreadHelper in_process_utility_thread_helper;
+
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), AnalysisConnector::FILE_ATTACHED,
+      R"(
+    {
+      "service_provider": "google",
+      "enable": [
+        {
+          "url_list": ["*"],
+          "tags": ["dlp", "malware"]
+        }
+      ],
+      "block_until_verdict": 1,
+      "block_large_files": false
+    })");
+  GURL url(kTestUrl);
+  std::vector<base::FilePath> paths;
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  base::FilePath file_path = temp_dir.GetPath().AppendASCII("large.doc");
+  std::string contents(
+      safe_browsing::BinaryUploadService::kMaxUploadSizeBytes + 1, 'a');
+  base::WriteFile(file_path, contents);
+  paths.emplace_back(file_path);
+  SetExpectedUserActionRequestsCount(1);
+
+  auto results = ScanUpload(paths);
+  ASSERT_TRUE(results.has_value());
+  EXPECT_EQ(1u, results->size());
+  EXPECT_THAT((*results)[0],
+              MatchesRequestHandlerResult(
+                  true, FinalContentAnalysisResult::SUCCESS, ""));
+  // When the resumable upload protocol is in use and the policy does not block
+  // large files by default, the file's metadata is uploaded for scanning.
+  EXPECT_TRUE(was_upload_performed());
+}
 
 // With a local service provider, multiple file uploads should result in
 // multiple analysis requests.

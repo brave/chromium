@@ -4,19 +4,32 @@
 
 #include "chrome/browser/ash/login/saml/fake_saml_idp_mixin.h"
 
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <string>
+
 #include "base/base64.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/notreached.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/values.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
+#include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chromeos/ash/components/dbus/attestation/attestation_client.h"
 #include "net/base/url_util.h"
+#include "net/http/http_status_code.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ash {
@@ -78,7 +91,7 @@ std::string GetTpmResponse() {
 
 std::string GetTpmResponseBase64() {
   const std::string response = GetTpmResponse();
-  return base::Base64Encode(base::as_bytes(base::make_span(response)));
+  return base::Base64Encode(base::as_byte_span(response));
 }
 
 // Returns relay state from http get/post requests.
@@ -173,7 +186,7 @@ void FakeSamlIdpMixin::SetSamlResponseFile(const std::string& xml_file) {
   base::ScopedAllowBlockingForTesting allow_io;
   EXPECT_TRUE(base::ReadFileToString(saml_response_dir_.Append(xml_file),
                                      &saml_response_));
-  base::Base64Encode(saml_response_, &saml_response_);
+  saml_response_ = base::Base64Encode(saml_response_);
 }
 
 bool FakeSamlIdpMixin::DeviceTrustHeaderRecieved() const {
@@ -278,7 +291,6 @@ std::unique_ptr<net::test_server::HttpResponse> FakeSamlIdpMixin::HandleRequest(
       return BuildResponseForLinkedPage(request, request_url);
     case RequestType::kUnknown:
       NOTREACHED();
-      return nullptr;
   }
 }
 
@@ -437,19 +449,19 @@ FakeSamlIdpMixin::BuildHTMLResponse(const std::string& response_html) const {
 }
 
 void FakeSamlIdpMixin::SaveChallengeResponse(const std::string& response) {
-  EXPECT_EQ(challenge_response_, absl::nullopt);
-  auto parsed_value = base::JSONReader::Read(
+  EXPECT_EQ(challenge_response_, std::nullopt);
+  auto parsed_value = base::JSONReader::ReadDict(
       response, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS);
 
-  if (!parsed_value || !parsed_value->is_dict()) {
+  if (!parsed_value) {
     // Most likely given a V1, no need to try parsing the values out.
     challenge_response_ = response;
     return;
   }
 
   const std::string* challenge_response_string =
-      parsed_value->GetDict().FindString("challengeResponse");
-  const std::string* error_string = parsed_value->GetDict().FindString("error");
+      parsed_value->FindString("challengeResponse");
+  const std::string* error_string = parsed_value->FindString("error");
 
   // Only one of those values should be set.
   EXPECT_NE(!!challenge_response_string, !!error_string);

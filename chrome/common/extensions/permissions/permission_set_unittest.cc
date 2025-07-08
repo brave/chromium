@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/common/permissions/permission_set.h"
+
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -11,6 +14,7 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_paths.h"
@@ -26,7 +30,6 @@
 #include "extensions/common/permissions/permission_message_provider.h"
 #include "extensions/common/permissions/permission_message_test_util.h"
 #include "extensions/common/permissions/permission_message_util.h"
-#include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/permissions/permissions_info.h"
 #include "extensions/common/permissions/socket_permission.h"
@@ -115,7 +118,7 @@ testing::AssertionResult PermissionSetProducesMessage(
 // Tests GetByID.
 TEST(PermissionsTest, GetByID) {
   PermissionsInfo* info = PermissionsInfo::GetInstance();
-  APIPermissionSet apis = info->GetAll();
+  APIPermissionSet apis = info->GetAllForTest();
   for (const auto* api : apis)
     EXPECT_EQ(api->id(), api->info()->id());
 }
@@ -131,7 +134,7 @@ TEST(PermissionsTest, GetByName) {
 TEST(PermissionsTest, GetAll) {
   size_t count = 0;
   PermissionsInfo* info = PermissionsInfo::GetInstance();
-  APIPermissionSet apis = info->GetAll();
+  APIPermissionSet apis = info->GetAllForTest();
   for (const auto* api : apis) {
     // Make sure only the valid permission IDs get returned.
     EXPECT_NE(APIPermissionID::kInvalid, api->id());
@@ -158,7 +161,7 @@ TEST(PermissionsTest, GetAllByName) {
   expected.insert(APIPermissionID::kTab);
 
   EXPECT_EQ(expected,
-            PermissionsInfo::GetInstance()->GetAllByName(names));
+            PermissionsInfo::GetInstance()->GetAllByNameForTest(names));
 }
 
 // Tests that the aliases are properly mapped.
@@ -654,10 +657,11 @@ TEST(PermissionsTest, CreateDifference) {
 }
 
 TEST(PermissionsTest, IsPrivilegeIncrease) {
-  const struct {
+  struct Tests {
     const char* base_name;
     bool expect_increase;
-  } kTests[] = {
+  };
+  const auto kTests = std::to_array<Tests>({
       {"allhosts1", false},     // all -> all
       {"allhosts2", false},     // all -> one
       {"allhosts3", true},      // one -> all
@@ -694,7 +698,7 @@ TEST(PermissionsTest, IsPrivilegeIncrease) {
       {"sockets1", true},           // none -> tcp:*:*
       {"sockets2", false},          // tcp:*:* -> tcp:*:*
       {"sockets3", true},           // tcp:a.com:80 -> tcp:*:*
-  };
+  });
 
   for (size_t i = 0; i < std::size(kTests); ++i) {
     scoped_refptr<Extension> old_extension(
@@ -800,6 +804,7 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kProxy);
   skip.insert(APIPermissionID::kScripting);
   skip.insert(APIPermissionID::kTabCapture);
+  skip.insert(APIPermissionID::kUserScripts);
   skip.insert(APIPermissionID::kWebRequest);
   skip.insert(APIPermissionID::kWebRequestBlocking);
   skip.insert(APIPermissionID::kWebRequestAuthProvider);
@@ -817,11 +822,22 @@ TEST(PermissionsTest, PermissionMessages) {
   // to warn you further.
   skip.insert(APIPermissionID::kExperimental);
 
+  // The Experimental AI Data API is gated on commandline switches, in
+  // addition to the permission in the manifest. If you've turned on the
+  // experimental AI Data command-line flag, we don't need to warn you further.
+  skip.insert(APIPermissionID::kExperimentalAiData);
+
+  // The Experimental Actor API is gated on commandline switches, in
+  // addition to the permission in the manifest. If you've turned on the
+  // experimental Actor command-line flag, we don't need to warn you further.
+  skip.insert(APIPermissionID::kExperimentalActor);
+
   // The Identity API has its own server-driven permission prompts.
   skip.insert(APIPermissionID::kIdentity);
 
   // These are private.
   skip.insert(APIPermissionID::kAccessibilityPrivate);
+  skip.insert(APIPermissionID::kAccessibilityServicePrivate);
   skip.insert(APIPermissionID::kArcAppsPrivate);
   skip.insert(APIPermissionID::kAutoTestPrivate);
   skip.insert(APIPermissionID::kBrailleDisplayPrivate);
@@ -835,7 +851,7 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kFeedbackPrivate);
   skip.insert(APIPermissionID::kFileManagerPrivate);
   skip.insert(APIPermissionID::kFirstRunPrivate);
-  skip.insert(APIPermissionID::kSharedStoragePrivate);
+  skip.insert(APIPermissionID::kImageLoaderPrivate);
   skip.insert(APIPermissionID::kInputMethodPrivate);
   skip.insert(APIPermissionID::kLanguageSettingsPrivate);
   skip.insert(APIPermissionID::kLockWindowFullscreenPrivate);
@@ -845,7 +861,6 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kPdfViewerPrivate);
   skip.insert(APIPermissionID::kImageWriterPrivate);
   skip.insert(APIPermissionID::kResourcesPrivate);
-  skip.insert(APIPermissionID::kRtcPrivate);
   skip.insert(APIPermissionID::kSafeBrowsingPrivate);
   skip.insert(APIPermissionID::kSmartCardProviderPrivate);
   skip.insert(APIPermissionID::kSystemPrivate);
@@ -859,6 +874,7 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kWebstorePrivate);
   skip.insert(APIPermissionID::kWmDesksPrivate);
   skip.insert(APIPermissionID::kSystemLog);
+  skip.insert(APIPermissionID::kOdfsConfigPrivate);
 
   // Warned as part of host permissions.
   skip.insert(APIPermissionID::kDevtools);
@@ -875,16 +891,12 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermissionID::kUsb);
   skip.insert(APIPermissionID::kVirtualKeyboard);
 
-  // The lock screen apps are set by user through settings, no need to warn at
-  // installation time.
-  skip.insert(APIPermissionID::kLockScreen);
-
   // We already have a generic message for declaring externally_connectable.
   skip.insert(APIPermissionID::kDeprecated_ExternallyConnectableAllUrls);
 
   const PermissionMessageProvider* provider = PermissionMessageProvider::Get();
   PermissionsInfo* info = PermissionsInfo::GetInstance();
-  APIPermissionSet permissions = info->GetAll();
+  APIPermissionSet permissions = info->GetAllForTest();
   for (const auto* permission : permissions) {
     const APIPermissionInfo* permission_info = permission->info();
     EXPECT_TRUE(permission_info);
@@ -1026,9 +1038,9 @@ TEST(PermissionsTest, AccessToDevicesMessages) {
     PermissionSet permissions(std::move(api_permissions),
                               ManifestPermissionSet(), URLPatternSet(),
                               URLPatternSet());
-    VerifyOnePermissionMessage(
+    EXPECT_TRUE(VerifyOnePermissionMessage(
         permissions, Manifest::TYPE_EXTENSION,
-        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_SERIAL));
+        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_SERIAL)));
   }
   {
     // Testing that multiple permissions will show the one message.
@@ -1038,25 +1050,25 @@ TEST(PermissionsTest, AccessToDevicesMessages) {
     PermissionSet permissions(std::move(api_permissions),
                               ManifestPermissionSet(), URLPatternSet(),
                               URLPatternSet());
-    VerifyOnePermissionMessage(
+    EXPECT_TRUE(VerifyOnePermissionMessage(
         permissions, Manifest::TYPE_EXTENSION,
-        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_SERIAL));
+        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_SERIAL)));
   }
   {
     scoped_refptr<Extension> extension =
         LoadManifest("permissions", "access_to_devices_bluetooth.json");
     PermissionSet& set = const_cast<PermissionSet&>(
         extension->permissions_data()->active_permissions());
-    VerifyOnePermissionMessage(
+    EXPECT_TRUE(VerifyOnePermissionMessage(
         set, extension->GetType(),
-        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_BLUETOOTH));
+        l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_BLUETOOTH)));
 
     // Test Bluetooth and Serial
     set.apis_.insert(APIPermissionID::kSerial);
-    VerifyOnePermissionMessage(
+    EXPECT_TRUE(VerifyOnePermissionMessage(
         set, extension->GetType(),
         l10n_util::GetStringUTF16(
-            IDS_EXTENSION_PROMPT_WARNING_BLUETOOTH_SERIAL));
+            IDS_EXTENSION_PROMPT_WARNING_BLUETOOTH_SERIAL)));
   }
 }
 
@@ -1307,7 +1319,7 @@ TEST(PermissionsTest, GetWarningMessages_PlatformAppHosts) {
 
 testing::AssertionResult ShowsAllHostsWarning(const std::string& pattern) {
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("TLDWildCardTest").AddPermission(pattern).Build();
+      ExtensionBuilder("TLDWildCardTest").AddHostPermission(pattern).Build();
 
   return VerifyHasPermissionMessage(
       extension->permissions_data(),
@@ -1578,7 +1590,7 @@ TEST(PermissionsTest, GetDistinctHosts_FirstInListIs4thBestRcd) {
 }
 
 TEST(PermissionsTest, IsHostPrivilegeIncrease) {
-  const struct {
+  struct TestCases {
     struct host_spec {
       int schemes;
       std::string pattern;
@@ -1588,7 +1600,8 @@ TEST(PermissionsTest, IsHostPrivilegeIncrease) {
     Manifest::Type type;
     bool is_increase;
     bool reverse_is_increase;
-  } test_cases[] = {
+  };
+  const auto test_cases = std::to_array<TestCases>({
       // Order doesn't matter.
       {{{URLPattern::SCHEME_HTTP, "http://www.google.com.hk/path"},
         {URLPattern::SCHEME_HTTP, "http://www.google.com/path"}},
@@ -1669,13 +1682,13 @@ TEST(PermissionsTest, IsHostPrivilegeIncrease) {
        false,
        true},
       // Test expanding from any .com host to any host in any TLD.
-      // TODO(crbug.com/849906): Should this really be a permissions increase?
+      // TODO(crbug.com/40579475): Should this really be a permissions increase?
       {{{URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS, "*://*.com/*"}},
        {{URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS, "*://*/*"}},
        Manifest::TYPE_EXTENSION,
        true,
        false},
-  };
+  });
   const PermissionMessageProvider* provider = PermissionMessageProvider::Get();
   for (size_t i = 0; i < std::size(test_cases); ++i) {
     URLPatternSet explicit_hosts1;
@@ -1718,7 +1731,7 @@ TEST(PermissionsTest, GetAPIsAsStrings) {
   // and we can convert it back to the id set.
   EXPECT_EQ(4u, api_names.size());
   EXPECT_EQ(apis,
-            PermissionsInfo::GetInstance()->GetAllByName(api_names));
+            PermissionsInfo::GetInstance()->GetAllByNameForTest(api_names));
 }
 
 TEST(PermissionsTest, IsEmpty) {

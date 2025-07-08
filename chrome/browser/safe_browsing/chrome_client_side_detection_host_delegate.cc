@@ -8,6 +8,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/chrome_user_population_helper.h"
+#include "chrome/browser/safe_browsing/client_side_detection_intelligent_scan_delegate_factory.h"
 #include "chrome/browser/safe_browsing/client_side_detection_service_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -38,6 +39,7 @@ ChromeClientSideDetectionHostDelegate::CreateHost(content::WebContents* tab) {
   Profile* profile = Profile::FromBrowserContext(browser_context);
   return ClientSideDetectionHost::Create(
       tab, std::make_unique<ChromeClientSideDetectionHostDelegate>(tab),
+      ClientSideDetectionIntelligentScanDelegateFactory::GetForProfile(profile),
       profile->GetPrefs(),
       std::make_unique<SafeBrowsingPrimaryAccountTokenFetcher>(
           IdentityManagerFactory::GetForProfile(profile)),
@@ -144,6 +146,20 @@ ChromeClientSideDetectionHostDelegate::GetUserPopulation() {
   Profile* profile =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext());
   return ::safe_browsing::GetUserPopulationForProfile(profile);
+}
+
+void ChromeClientSideDetectionHostDelegate::GetInnerText(
+    HostInnerTextCallback callback) {
+  content_extraction::GetInnerText(
+      *web_contents_->GetPrimaryMainFrame(), std::nullopt,
+      base::BindOnce(&ChromeClientSideDetectionHostDelegate::OnInnerTextResult,
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void ChromeClientSideDetectionHostDelegate::OnInnerTextResult(
+    HostInnerTextCallback callback,
+    std::unique_ptr<content_extraction::InnerTextResult> result) {
+  std::move(callback).Run(result ? result->inner_text : "");
 }
 
 }  // namespace safe_browsing

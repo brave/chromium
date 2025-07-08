@@ -18,7 +18,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/capture/video/linux/scoped_v4l2_device_fd.h"
 #include "media/capture/video/linux/v4l2_capture_device_impl.h"
 #include "media/capture/video/video_capture_device.h"
@@ -88,9 +87,6 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
       int control_id,
       const base::RepeatingCallback<int(int, void*)>& do_ioctl);
 
-  void SetGPUEnvironmentForTesting(
-      std::unique_ptr<gpu::GpuMemoryBufferSupport> gmb_support);
-
  private:
   friend class V4L2CaptureDelegateTest;
 
@@ -133,6 +129,16 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
                      const base::Location& from_here,
                      const std::string& reason);
 
+#if BUILDFLAG(IS_LINUX)
+  // Systems which describe a "color space" usually map that to one or more of
+  // {primary, matrix, transfer, range}. BuildColorSpaceFromv4l2() will use the
+  // matched value as first priority. Otherwise, if there is no best matching
+  // value, it will be a value with a different name but no essential
+  // difference and add a corresponding comments like: "SRGB and BT709 use the
+  // same transform".
+  gfx::ColorSpace BuildColorSpaceFromv4l2();
+#endif
+
   const raw_ptr<V4L2CaptureDevice> v4l2_;
   const scoped_refptr<base::SingleThreadTaskRunner> v4l2_task_runner_;
   const VideoCaptureDeviceDescriptor device_descriptor_;
@@ -162,8 +168,6 @@ class CAPTURE_EXPORT V4L2CaptureDelegate final {
   bool use_gpu_buffer_;
   std::unique_ptr<V4L2CaptureDelegateGpuHelper> v4l2_gpu_helper_;
 #endif  // BUILDFLAG(IS_LINUX)
-  // For GPU Environment Testing.
-  std::unique_ptr<gpu::GpuMemoryBufferSupport> gmb_support_test_;
 
   base::WeakPtrFactory<V4L2CaptureDelegate> weak_factory_{this};
 };

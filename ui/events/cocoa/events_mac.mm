@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/events/event_utils.h"
-
 #include <Cocoa/Cocoa.h>
 #include <Foundation/Foundation.h>
 #include <stdint.h>
 
 #include "base/check_op.h"
 #import "base/mac/mac_util.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/events/base_event_utils.h"
@@ -18,12 +16,9 @@
 #include "ui/events/event_utils.h"
 #import "ui/events/keycodes/keyboard_code_conversion_mac.h"
 #include "ui/events/platform_event.h"
+#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/vector2d.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace ui {
 
@@ -31,35 +26,38 @@ EventType EventTypeFromNative(const PlatformEvent& platform_event) {
   NSEvent* event = platform_event.Get();
   NSEventType type = event.type;
   switch (type) {
+    // Standard types, handled.
     case NSEventTypeKeyDown:
     case NSEventTypeKeyUp:
     case NSEventTypeFlagsChanged:
-      return IsKeyUpEvent(event) ? ET_KEY_RELEASED : ET_KEY_PRESSED;
+      return IsKeyUpEvent(event) ? EventType::kKeyReleased
+                                 : EventType::kKeyPressed;
     case NSEventTypeLeftMouseDown:
     case NSEventTypeRightMouseDown:
     case NSEventTypeOtherMouseDown:
-      return ET_MOUSE_PRESSED;
+      return EventType::kMousePressed;
     case NSEventTypeLeftMouseUp:
     case NSEventTypeRightMouseUp:
     case NSEventTypeOtherMouseUp:
-      return ET_MOUSE_RELEASED;
+      return EventType::kMouseReleased;
     case NSEventTypeLeftMouseDragged:
     case NSEventTypeRightMouseDragged:
     case NSEventTypeOtherMouseDragged:
-      return ET_MOUSE_DRAGGED;
+      return EventType::kMouseDragged;
     case NSEventTypeMouseMoved:
-      return ET_MOUSE_MOVED;
+      return EventType::kMouseMoved;
     case NSEventTypeScrollWheel:
-      return ET_SCROLL;
+      return EventType::kScroll;
     case NSEventTypeMouseEntered:
-      return ET_MOUSE_ENTERED;
+      return EventType::kMouseEntered;
     case NSEventTypeMouseExited:
-      return ET_MOUSE_EXITED;
+      return EventType::kMouseExited;
     case NSEventTypeSwipe:
-      return ET_SCROLL_FLING_START;
+      return EventType::kScrollFlingStart;
+
+    // Standard types, not handled.
     case NSEventTypeAppKitDefined:
     case NSEventTypeSystemDefined:
-      return ET_UNKNOWN;
     case NSEventTypeApplicationDefined:
     case NSEventTypePeriodic:
     case NSEventTypeCursorUpdate:
@@ -70,13 +68,26 @@ EventType EventTypeFromNative(const PlatformEvent& platform_event) {
     case NSEventTypeRotate:
     case NSEventTypeBeginGesture:
     case NSEventTypeEndGesture:
+    case NSEventTypeSmartMagnify:
+    case NSEventTypeQuickLook:
     case NSEventTypePressure:
-      break;
+    case NSEventTypeDirectTouch:
+    case NSEventTypeChangeMode:
+      return EventType::kUnknown;
+
+    // Non-standard types.
+    case 36:
+      // This is some kind of gesture event, seen during pinch-zooms, but seems
+      // to be distinct from NSEventTypeMagnify. When sent the -description
+      // message, it returns that it has type "Reserved", it has phases
+      // (Began/Changed/Ended), and it has a "translation", printed as an
+      // NSPoint, but with values from -deltaX and -deltaY.
+      return EventType::kUnknown;
+
     default:
       NOTIMPLEMENTED() << type;
-      break;
+      return EventType::kUnknown;
   }
-  return ET_UNKNOWN;
 }
 
 int EventFlagsFromNative(const PlatformEvent& platform_event) {

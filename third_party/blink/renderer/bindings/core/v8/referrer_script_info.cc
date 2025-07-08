@@ -73,12 +73,12 @@ ReferrerScriptInfo ReferrerScriptInfo::FromV8HostDefinedOptions(
     return Default(script_origin_resource_name);
   }
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Primitive> base_url_value =
       host_defined_options->Get(isolate, kBaseURL);
   SECURITY_CHECK(base_url_value->IsString());
   String base_url_string =
-      ToCoreString(v8::Local<v8::String>::Cast(base_url_value));
+      ToCoreString(isolate, v8::Local<v8::String>::Cast(base_url_value));
   KURL base_url = base_url_string.empty() ? KURL() : KURL(base_url_string);
   DCHECK(base_url.IsNull() || base_url.IsValid());
   if (base_url.IsNull()) {
@@ -95,7 +95,8 @@ ReferrerScriptInfo ReferrerScriptInfo::FromV8HostDefinedOptions(
   v8::Local<v8::Primitive> nonce_value =
       host_defined_options->Get(isolate, kNonce);
   SECURITY_CHECK(nonce_value->IsString());
-  String nonce = ToCoreString(v8::Local<v8::String>::Cast(nonce_value));
+  String nonce =
+      ToCoreString(isolate, v8::Local<v8::String>::Cast(nonce_value));
 
   v8::Local<v8::Primitive> parser_state_value =
       host_defined_options->Get(isolate, kParserState);

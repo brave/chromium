@@ -50,14 +50,13 @@ def fake_sys(platform_str='darwin', windows_version_tuple=None):
 
 def fake_platform(mac_version_string='12.3.1',
                   release_string='bar',
-                  linux_version='trusty',
                   win_version_string=None):
     class FakePlatformModule(object):
         def mac_ver(self):
             return tuple([mac_version_string, tuple(['', '', '']), 'i386'])
 
         def linux_distribution(self):
-            return tuple([None, None, linux_version])
+            return 'unknown'
 
         def platform(self):
             return 'foo'
@@ -147,38 +146,20 @@ class TestPlatformInfo(unittest.TestCase):
             self.make_info(fake_sys('vms'))
 
     def test_os_version(self):
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.10.0'))
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.11.0'))
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.12.0'))
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.13.0'))
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.14.0'))
-        with self.assertRaises(AssertionError):
-            self.make_info(fake_sys('darwin'), fake_platform('10.16.0'))
-        self.assertEqual(
-            self.make_info(fake_sys('darwin'),
-                           fake_platform('10.15.0')).os_version, 'mac10.15')
-        self.assertEqual(
-            self.make_info(fake_sys('darwin'),
-                           fake_platform('11.0.0')).os_version, 'mac11')
         self.assertEqual(
             self.make_info(fake_sys('darwin'),
                            fake_platform('12.0.0')).os_version, 'mac12')
         self.assertEqual(
             self.make_info(fake_sys('darwin'),
                            fake_platform('13.0.0')).os_version, 'mac13')
+        self.assertEqual(
+            self.make_info(fake_sys('darwin'),
+                           fake_platform('14.0.0')).os_version, 'mac14')
+        self.assertEqual(
+            self.make_info(fake_sys('darwin'),
+                           fake_platform('15.0.0')).os_version, 'mac15')
         with self.assertRaises(AssertionError):
             self.make_info(fake_sys('darwin'), fake_platform('10.20.0'))
-
-        self.assertEqual(
-            self.make_info(fake_sys('linux2')).os_version, 'trusty')
-        info = self.make_info(
-            fake_sys('linux2'), fake_platform(linux_version='utopic'))
-        self.assertEqual(info.os_version, 'trusty')
 
         self.assertEqual(
             self.make_info(

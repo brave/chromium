@@ -2,10 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/apple/mobile_config.gni")
+import("//build/config/ios/config.gni")
 import("//build/config/ios/ios_sdk.gni")
 import("//build/toolchain/apple/toolchain.gni")
-import("//build/toolchain/goma.gni")
 import("//build/toolchain/rbe.gni")
+import("//build/toolchain/siso.gni")
 import("//build/toolchain/toolchain.gni")
 import("//build_overrides/build.gni")
 
@@ -24,6 +26,8 @@ config("compiler") {
     triplet_cpu = "armv7"
   } else if (current_cpu == "arm64") {
     triplet_cpu = "arm64"
+  } else if (current_cpu == "arm64e") {
+    triplet_cpu = "arm64e"
   } else {
     assert(false, "unsupported cpu: $current_cpu")
   }
@@ -40,7 +44,11 @@ config("compiler") {
   }
 
   # OS.
-  triplet_os = "apple-ios"
+  if (target_platform == "iphoneos") {
+    triplet_os = "apple-ios"
+  } else if (target_platform == "tvos") {
+    triplet_os = "apple-tvos"
+  }
 
   # Set target.
   common_flags = [
@@ -59,14 +67,10 @@ config("compiler") {
 
   swiftflags += [
     "-swift-version",
-    "5",
+    "6",
   ]
 
   cflags_objcc = [
-    # Without this, the constructors and destructors of a C++ object inside
-    # an Objective C struct won't be called, which is very bad.
-    "-fobjc-call-cxx-cdtors",
-
     # When using -std=c++20 or higher, clang automatically returns true for
     # `__has_feature(modules)` as it enables cxx modules. This is problematic
     # because Objective-C code uses this to detect whether `@import` can be
@@ -78,6 +82,9 @@ config("compiler") {
     "-Xclang",
     "-fno-cxx-modules",
   ]
+  if (ios_chrome_generate_order_file) {
+    cflags_objcc += [ "-fsanitize-coverage=func,trace-pc-guard" ]
+  }
 
   ldflags = common_flags
 
@@ -91,6 +98,7 @@ config("compiler") {
 
   if (ios_is_app_extension) {
     ldflags += [ "-fapplication-extension" ]
+    cflags += [ "-fapplication-extension" ]
   }
 }
 
@@ -99,12 +107,12 @@ config("compiler") {
 # that is iOS-only. Please see that target for advice on what should go in
 # :runtime_library vs. :compiler.
 config("runtime_library") {
-  # The variable ios_sdk_path is relative to root_build_dir when using Goma RBE
-  # and system Xcode (since Goma RBE only supports paths relative to source).
+  # The variable ios_sdk_path is relative to root_build_dir when using RBE
+  # and system Xcode (since RBE only supports paths relative to source).
   # Rebase the value in that case since gn does not convert paths in compiler
   # flags (since it is not aware they are paths).
   _sdk_root = ios_sdk_path
-  if (use_system_xcode && (use_goma || use_remoteexec)) {
+  if (ios_use_xcode_symlinks) {
     _sdk_root = rebase_path(ios_sdk_path, root_build_dir)
   }
 
@@ -148,6 +156,11 @@ config("ios_executable_flags") {
   }
 
   ldflags += [ "-Wl,-rpath,@executable_path/Frameworks" ]
+
+  # TODO(crbug.com/424634516): Remove once Apple fixes the issue.
+  if (xcode_version_int >= 2600) {
+    framework_dirs = [ "$ios_sdk_path/System/Library/SubFrameworks" ]
+  }
 }
 
 config("ios_extension_executable_flags") {
@@ -165,6 +178,11 @@ config("ios_extension_executable_flags") {
   }
 
   ldflags += [ "-Wl,-rpath,@executable_path/../../Frameworks" ]
+
+  # TODO(crbug.com/424634516): Remove once Apple fixes the issue.
+  if (xcode_version_int >= 2600) {
+    framework_dirs = [ "$ios_sdk_path/System/Library/SubFrameworks" ]
+  }
 }
 
 config("ios_dynamic_flags") {
@@ -217,6 +235,11 @@ config("ios_shared_library_flags") {
     "-Wl,-rpath,@executable_path/Frameworks",
     "-Wl,-rpath,@loader_path/Frameworks",
   ]
+
+  # TODO(crbug.com/424634516): Remove once Apple fixes the issue.
+  if (xcode_version_int >= 2600) {
+    framework_dirs = [ "$ios_sdk_path/System/Library/SubFrameworks" ]
+  }
 }
 
 config("xctest_config") {
@@ -240,9 +263,14 @@ config("xctest_config") {
     "Foundation.framework",
     "XCTest.framework",
   ]
+
+  # TODO(crbug.com/424634516): Remove once Apple fixes the issue.
+  if (xcode_version_int >= 2600) {
+    framework_dirs = [ "$ios_sdk_path/System/Library/SubFrameworks" ]
+  }
 }
 
-# TODO(crbug.com/1444308): any target that uses this config will miscompile.
+# TODO(crbug.com/40911785): any target that uses this config will miscompile.
 # This needs to be fixed if we want to use Swift - C++ interop.
 config("enable_swift_cxx_interop") {
   swiftflags = [ "-enable-experimental-cxx-interop" ]
@@ -255,7 +283,7 @@ group("xctest") {
 _xctrunner_path =
     "$ios_sdk_platform_path/Developer/Library/Xcode/Agents/XCTRunner.app"
 
-# When building with Goma RBE, $ios_sdk_platform_path corresponds to a symlink
+# When building with RBE, $ios_sdk_platform_path corresponds to a symlink
 # below $root_build_dir that points to the real SDK to use. Because the files
 # are below $root_build_dir, it is not possible to list them as a target input
 # without gn complaining (as it can't find a target creating those files).
@@ -267,7 +295,7 @@ _xctrunner_path =
 #
 # To workaround this, add a target that pretends to create those files
 # (but does nothing). See https://crbug.com/1061487 for why this is needed.
-if (use_system_xcode && (use_goma || use_remoteexec)) {
+if (ios_use_xcode_symlinks) {
   action("copy_xctrunner_app") {
     testonly = true
     script = "//build/noop.py"
@@ -299,7 +327,7 @@ action("xctest_runner_without_arm64e") {
   # When running under ASan, the ASan runtime library must be packaged alongside
   # the test runner binary.
   deps = [ "//build/config/sanitizers:deps" ]
-  if (use_system_xcode && (use_goma || use_remoteexec)) {
+  if (ios_use_xcode_symlinks) {
     deps += [ ":copy_xctrunner_app" ]
   }
 }

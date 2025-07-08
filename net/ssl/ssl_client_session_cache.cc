@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "net/ssl/ssl_client_session_cache.h"
 
 #include <tuple>
@@ -19,7 +20,8 @@ namespace {
 // Returns a tuple of references to fields of |key|, for comparison purposes.
 auto TieKeyFields(const SSLClientSessionCache::Key& key) {
   return std::tie(key.server, key.dest_ip_addr, key.network_anonymization_key,
-                  key.privacy_mode, key.disable_legacy_crypto);
+                  key.privacy_mode, key.session_usage, key.proxy_chain,
+                  key.proxy_chain_index);
 }
 
 }  // namespace

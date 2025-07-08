@@ -5,14 +5,19 @@
 #ifndef MEDIA_CAPTURE_VIDEO_CHROMEOS_CAMERA_DEVICE_DELEGATE_H_
 #define MEDIA_CAPTURE_VIDEO_CHROMEOS_CAMERA_DEVICE_DELEGATE_H_
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <queue>
 
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/threading/sequence_bound.h"
+#include "media/capture/video/chromeos/camera_auto_framing_state_observer.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
+#include "media/capture/video/chromeos/camera_effects_observer.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
 #include "media/capture/video/chromeos/capture_metadata_dispatcher.h"
 #include "media/capture/video/chromeos/mojom/camera3.mojom.h"
@@ -22,7 +27,6 @@
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video_capture_types.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/range/range.h"
 
@@ -39,6 +43,9 @@ enum class StreamType : uint64_t {
   kRecordingOutput = 3,
   kUnknown = 4,
 };
+
+// TODO(b/130774415): Get the keys from VendorTagOps by names instead.
+inline constexpr uint32_t kCrosDigitalZoomRequestedVendorKey = 0x80070001;
 
 // A map to know that each StreamType belongs to which ClientType.
 // The index is StreamType value.
@@ -71,21 +78,21 @@ struct ResultMetadata {
   ResultMetadata();
   ~ResultMetadata();
 
-  absl::optional<uint8_t> ae_mode;
-  absl::optional<int32_t> ae_compensation;
-  absl::optional<uint8_t> af_mode;
-  absl::optional<uint8_t> awb_mode;
-  absl::optional<int32_t> brightness;
-  absl::optional<int32_t> contrast;
-  absl::optional<int64_t> exposure_time;
-  absl::optional<float> focus_distance;
-  absl::optional<int32_t> pan;
-  absl::optional<int32_t> saturation;
-  absl::optional<int32_t> sensitivity;
-  absl::optional<int32_t> sharpness;
-  absl::optional<int32_t> tilt;
-  absl::optional<int32_t> zoom;
-  absl::optional<gfx::Rect> scaler_crop_region;
+  std::optional<uint8_t> ae_mode;
+  std::optional<int32_t> ae_compensation;
+  std::optional<uint8_t> af_mode;
+  std::optional<uint8_t> awb_mode;
+  std::optional<int32_t> brightness;
+  std::optional<int32_t> contrast;
+  std::optional<int64_t> exposure_time;
+  std::optional<float> focus_distance;
+  std::optional<int32_t> pan;
+  std::optional<int32_t> saturation;
+  std::optional<int32_t> sensitivity;
+  std::optional<int32_t> sharpness;
+  std::optional<int32_t> tilt;
+  std::optional<int32_t> zoom;
+  std::optional<gfx::Rect> scaler_crop_region;
 };
 
 StreamType StreamIdToStreamType(uint64_t stream_id);
@@ -113,6 +120,13 @@ class CAPTURE_EXPORT StreamCaptureInterface {
       cros::mojom::Camera3CaptureRequestPtr request,
       base::OnceCallback<void(int32_t)> callback) = 0;
 
+  // Registers a new buffer in the camera HAL buffer object pool.
+  virtual void OnNewBuffer(ClientType client_type,
+                           cros::mojom::CameraBufferHandlePtr buffer) = 0;
+
+  // Retires a buffer from the camera HAL buffer object pool.
+  virtual void OnBufferRetired(ClientType client_type, uint64_t buffer_id) = 0;
+
   // Send flush to cancel all pending requests to the camera HAL.
   virtual void Flush(base::OnceCallback<void(int32_t)> callback) = 0;
 };
@@ -127,15 +141,15 @@ class CAPTURE_EXPORT StreamCaptureInterface {
 // second client for recording stream.
 // The second client will be a virtual camera device which is only used in CCA.
 class CAPTURE_EXPORT CameraDeviceDelegate final
-    : public CaptureMetadataDispatcher::ResultMetadataObserver,
-      public media::CameraEffectObserver {
+    : public CaptureMetadataDispatcher::ResultMetadataObserver {
  public:
   CameraDeviceDelegate() = delete;
 
   CameraDeviceDelegate(
       VideoCaptureDeviceDescriptor device_descriptor,
       CameraHalDelegate* camera_hal_delegate,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
 
   CameraDeviceDelegate(const CameraDeviceDelegate&) = delete;
   CameraDeviceDelegate& operator=(const CameraDeviceDelegate&) = delete;
@@ -160,7 +174,20 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // frames.
   void SetRotation(int rotation);
 
+  // Receives the buffer update message from video capture buffer pool and
+  // notifies the camera HAL to synchronize the maintained buffer pool.
+  void OnNewBuffer(ClientType client_type,
+                   cros::mojom::CameraBufferHandlePtr buffer);
+  void OnBufferRetired(ClientType client_type, uint64_t buffer_id);
+  void OnAllBufferRetired(ClientType client_type);
+  void OnNewBufferResult(ClientType client_type,
+                         uint64_t buffer_id,
+                         int32_t ret);
+
   base::WeakPtr<CameraDeviceDelegate> GetWeakPtr();
+
+  void OnCameraEffectsChanged(cros::mojom::EffectsConfigPtr new_effects);
+  void OnAutoFramingStateChanged(cros::mojom::CameraAutoFramingState state);
 
  private:
   class StreamCaptureInterfaceImpl;
@@ -180,7 +207,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
 
   // Reconfigure streams for picture taking and recording.
   void OnFlushed(bool require_photo,
-                 absl::optional<gfx::Size> new_blob_resolution,
+                 std::optional<gfx::Size> new_blob_resolution,
                  int32_t result);
 
   // Callback method for the Close Mojo IPC call.  This method resets the Mojo
@@ -206,7 +233,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // |client_| the capture has started by calling OnStarted, and proceeds to
   // ConstructDefaultRequestSettings.
   void ConfigureStreams(bool require_photo,
-                        absl::optional<gfx::Size> new_blob_resolution);
+                        std::optional<gfx::Size> new_blob_resolution);
   void OnConfiguredStreams(
       gfx::Size blob_resolution,
       int32_t result,
@@ -222,13 +249,14 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // OnConstructDefaultStillCaptureRequestSettings triggers
   // |request_manager_| to request a still capture.
   void OnConstructedDefaultStillCaptureRequestSettings(
+      cros::mojom::Camera3RequestTemplate requset_template,
       cros::mojom::CameraMetadataPtr settings);
   // OnConstructedDefaultPortraitModeRequestSettings triggers
   // |request_manager_| to request portrait mode still captures.
   void OnConstructedDefaultPortraitModeRequestSettings(
       cros::mojom::CameraMetadataPtr settings);
 
-  gfx::Size GetBlobResolution(absl::optional<gfx::Size> new_blob_resolution);
+  gfx::Size GetBlobResolution(std::optional<gfx::Size> new_blob_resolution);
 
   // StreamCaptureInterface implementations.  These methods are called by
   // |stream_buffer_manager_| on |ipc_task_runner_|.
@@ -243,7 +271,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // metadata by |range_name| and current value of |current|.
   mojom::RangePtr GetControlRangeByVendorTagName(
       const std::string& range_name,
-      const absl::optional<int32_t>& current);
+      const std::optional<int32_t>& current);
 
   bool ShouldUseBlobVideoSnapshot();
 
@@ -252,20 +280,17 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
       uint32_t frame_number,
       const cros::mojom::CameraMetadataPtr& result_metadata) final;
 
-  // media::CameraEffectObserver AddObserver callback.
-  void OnCameraEffectObserverAdded(
-      cros::mojom::EffectsConfigPtr current_effects);
-
-  // media::CameraEffectObserver implementation.
-  void OnCameraEffectChanged(
-      const cros::mojom::EffectsConfigPtr& new_effects) final;
-
   void DoGetPhotoState(VideoCaptureDevice::GetPhotoStateCallback callback);
 
   // Gets the target frame rate range as std::pair<min, max>.
   // Returns 0 for min or max or both fps when fps range is not valid,
   // caller should handle that accordingly.
   std::pair<int32_t, int32_t> GetFrameRateRange();
+
+  // Configures the session_parameters to configure the streams to handle
+  // digital zoom in the stream manipulator.
+  void SetDigitalZoomSessionParameters(
+      cros::mojom::CameraMetadataPtr* session_parameters);
 
   // Configures the session_parameters with initial values for the keys
   // found in ANDROID_REQUEST_AVAILABLE_SESSION_KEYS.
@@ -277,28 +302,36 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   // Current configured resolution of BLOB stream.
   gfx::Size current_blob_resolution_;
 
-  raw_ptr<CameraHalDelegate, ExperimentalAsh> camera_hal_delegate_;
+  raw_ptr<CameraHalDelegate> camera_hal_delegate_;
 
   // Map client type to video capture parameter.
   base::flat_map<ClientType, VideoCaptureParams> chrome_capture_params_;
 
-  raw_ptr<CameraDeviceContext, ExperimentalAsh> device_context_;
+  raw_ptr<CameraDeviceContext> device_context_;
 
   std::queue<VideoCaptureDevice::TakePhotoCallback> take_photo_callbacks_;
 
-  absl::optional<PortraitModeCallbacks> take_portrait_photo_callbacks_;
+  std::optional<PortraitModeCallbacks> take_portrait_photo_callbacks_;
 
   std::unique_ptr<RequestManager> request_manager_;
+
+  // A map for client type and VCD buffer ids known by camera HAL.
+  base::flat_map<ClientType, base::flat_set<uint64_t>> buffer_ids_known_by_hal_;
+  // Stores the pending retire buffer id which are underway to register
+  // to HAL but haven't complete.
+  base::flat_set<uint64_t> pending_retire_ids_;
 
   std::unique_ptr<Camera3AController> camera_3a_controller_;
 
   // Stores the static camera characteristics of the camera device. E.g. the
-  // supported formats and resolution, various available exposure and apeture
+  // supported formats and resolution, various available exposure and aperture
   // settings, etc.
   cros::mojom::CameraMetadataPtr static_metadata_;
 
   // Records current effects that is applied to camera hal server.
   cros::mojom::EffectsConfigPtr current_effects_;
+  std::optional<cros::mojom::CameraAutoFramingState>
+      current_auto_framing_state_;
 
   mojo::Remote<cros::mojom::Camera3DeviceOps> device_ops_;
 
@@ -325,9 +358,6 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   bool is_set_tilt_;
   bool is_set_zoom_;
 
-  // Whether |this| is added to camera effect observer list.
-  bool camera_effect_observer_added_;
-
   std::vector<base::OnceClosure> get_photo_state_queue_;
   bool use_digital_zoom_;
   float ae_compensation_step_;
@@ -342,6 +372,10 @@ class CAPTURE_EXPORT CameraDeviceDelegate final
   uint32_t result_metadata_frame_number_;
   ResultMetadata result_metadata_;
   gfx::Rect active_array_size_;
+
+  base::SequenceBound<CrosCameraEffectsObserver> camera_effects_observer_;
+  base::SequenceBound<CrosCameraAutoFramingStateObserver>
+      auto_framing_state_observer_;
 
   base::WeakPtrFactory<CameraDeviceDelegate> weak_ptr_factory_{this};
 };

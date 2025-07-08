@@ -27,37 +27,16 @@ public class ContextualSearchCaptionControl extends OverlayPanelTextViewInflater
     private static final float ANIMATION_PERCENTAGE_ZERO = 0.f;
     private static final float ANIMATION_PERCENTAGE_COMPLETE = 1.f;
 
-    /**
-     * The caption View.
-     */
+    /** The caption View. */
     private TextView mCaption;
 
-    /**
-     * The text for the caption when the Bar is peeking.
-     */
-    private String mPeekingCaptionText;
-
-    /**
-     * Whether there is a caption when the Bar is peeking.
-     */
+    /** Whether there is a caption when the Bar is peeking. */
     private boolean mHasPeekingCaption;
 
-    /**
-     * Whether the caption for the expanded Bar is showing.
-     */
+    /** Whether the caption for the expanded Bar is showing. */
     private boolean mShowingExpandedCaption;
 
-    /**
-     * Whether the expanded caption should be shown.
-     */
-    private final boolean mShouldShowExpandedCaption;
-
-    /** The {@link ContextualSearchPanel} that this class belongs to. */
-    private final ContextualSearchPanel mPanel;
-
-    /**
-     * The caption visibility.
-     */
+    /** The caption visibility. */
     private boolean mIsVisible;
 
     /**
@@ -77,30 +56,34 @@ public class ContextualSearchCaptionControl extends OverlayPanelTextViewInflater
     private boolean mDidCapture;
 
     /**
-     * @param panel                     The panel.
-     * @param context                   The Android Context used to inflate the View.
-     * @param container                 The container View used to inflate the View.
-     * @param resourceLoader            The resource loader that will handle the snapshot capturing.
-     * @param shouldShowExpandedCaption Whether the "Open in new tab" caption should be shown
-     *                                  when the panel is expanded.
+     * @param panel The panel.
+     * @param context The Android Context used to inflate the View.
+     * @param container The container View used to inflate the View.
+     * @param resourceLoader The resource loader that will handle the snapshot capturing.
      */
-    public ContextualSearchCaptionControl(ContextualSearchPanel panel, Context context,
-            ViewGroup container, DynamicResourceLoader resourceLoader,
-            boolean shouldShowExpandedCaption) {
-        super(panel, R.layout.contextual_search_caption_view, R.id.contextual_search_caption_view,
-                context, container, resourceLoader, R.dimen.contextual_search_end_padding,
+    public ContextualSearchCaptionControl(
+            ContextualSearchPanel panel,
+            Context context,
+            ViewGroup container,
+            DynamicResourceLoader resourceLoader) {
+        super(
+                panel,
+                R.layout.contextual_search_caption_view,
+                R.id.contextual_search_caption_view,
+                context,
+                container,
+                resourceLoader,
+                R.dimen.contextual_search_end_padding,
                 R.dimen.contextual_search_padded_button_width);
-        mShouldShowExpandedCaption = shouldShowExpandedCaption;
-        mPanel = panel;
     }
 
     /**
      * Sets the caption to display in the bottom of the control.
-     * @param caption The string displayed as a caption to help explain results,
-     *        e.g. a Quick Answer.
+     *
+     * @param caption The string displayed as a caption to help explain results, e.g. a Quick
+     *     Answer.
      */
     public void setCaption(String caption) {
-        mPeekingCaptionText = sanitizeText(caption);
         mHasPeekingCaption = true;
 
         if (mShowingExpandedCaption) return;
@@ -128,18 +111,14 @@ public class ContextualSearchCaptionControl extends OverlayPanelTextViewInflater
         }
     }
 
-    /**
-     * Hides the caption.
-     */
+    /** Hides the caption. */
     public void hide() {
         mIsVisible = false;
         mAnimationPercentage = ANIMATION_PERCENTAGE_ZERO;
         mHasPeekingCaption = false;
     }
 
-    /**
-     * Shows the caption.
-     */
+    /** Shows the caption. */
     private void show() {
         mIsVisible = true;
     }
@@ -179,31 +158,33 @@ public class ContextualSearchCaptionControl extends OverlayPanelTextViewInflater
         return getIsVisible() && !TextUtils.isEmpty(getCaptionText());
     }
 
-    /** @return the caption's TextView height if it is visible. */
+    /**
+     * @return the caption's TextView height if it is visible.
+     */
     @Px
     int getTextViewHeight() {
         return getIsVisible() ? mCaption.getHeight() : 0;
     }
 
-    //========================================================================================
+    // ========================================================================================
     // OverlayPanelTextViewInflater overrides
-    //========================================================================================
+    // ========================================================================================
 
     @Override
     protected TextView getTextView() {
         return mCaption;
     }
 
-    //========================================================================================
+    // ========================================================================================
     // OverlayPanelInflater overrides
-    //========================================================================================
+    // ========================================================================================
 
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
 
         View view = getView();
-        mCaption = (TextView) view.findViewById(R.id.contextual_search_caption);
+        mCaption = view.findViewById(R.id.contextual_search_caption);
     }
 
     @Override
@@ -220,9 +201,13 @@ public class ContextualSearchCaptionControl extends OverlayPanelTextViewInflater
     // ============================================================================================
 
     private void animateTransitionIn() {
-        mTransitionAnimator = CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(),
-                ANIMATION_PERCENTAGE_ZERO, ANIMATION_PERCENTAGE_COMPLETE,
-                OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
+        mTransitionAnimator =
+                CompositorAnimator.ofFloat(
+                        mOverlayPanel.getAnimationHandler(),
+                        ANIMATION_PERCENTAGE_ZERO,
+                        ANIMATION_PERCENTAGE_COMPLETE,
+                        OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS,
+                        null);
         mTransitionAnimator.addUpdateListener(
                 animator -> mAnimationPercentage = animator.getAnimatedValue());
         mTransitionAnimator.setInterpolator(Interpolators.FAST_OUT_SLOW_IN_INTERPOLATOR);

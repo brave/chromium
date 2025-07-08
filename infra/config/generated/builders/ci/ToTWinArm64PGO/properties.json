@@ -1,6 +1,12 @@
 {
+  "$build/chromium": {
+    "fail_build_on_clang_warnings": true
+  },
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/ToTWinArm64PGO/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
@@ -39,8 +45,20 @@
           "builder": "ToTWinArm64PGO",
           "project": "chromium"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/ToTWinArm64PGO/targets"
     }
+  },
+  "$build/siso": {
+    "configs": [
+      "builder"
+    ],
+    "enable_cloud_monitoring": true,
+    "enable_cloud_profiler": true,
+    "enable_cloud_trace": true,
+    "experiments": [],
+    "metrics_project": "chromium-reclient-metrics",
+    "project": "rbe-chromium-trusted"
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],

@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "device/fido/cable/fido_cable_discovery.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -14,16 +20,19 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
+#include "base/notimplemented.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
+#include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
 #include "device/bluetooth/bluetooth_discovery_session.h"
 #include "device/bluetooth/public/cpp/bluetooth_uuid.h"
+#include "device/fido/cable/fido_ble_connection.h"
 #include "device/fido/cable/fido_ble_uuids.h"
 #include "device/fido/cable/fido_cable_device.h"
 #include "device/fido/cable/fido_cable_handshake_handler.h"
@@ -34,6 +43,11 @@
 #if BUILDFLAG(IS_MAC)
 #include "device/fido/mac/util.h"
 #endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "device/bluetooth/bluetooth_low_energy_scan_filter.h"
+#include "device/bluetooth/floss/floss_features.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace device {
 
@@ -98,7 +112,7 @@ std::unique_ptr<BluetoothAdvertisement::Data> ConstructAdvertisementData(
   // bit of the flag byte.
   service_data_value[0] = kCableFlags;
   service_data_value[1] = 1 /* version */;
-  base::ranges::copy(client_eid, service_data_value.begin() + 2);
+  std::ranges::copy(client_eid, service_data_value.begin() + 2);
   service_data.emplace(kGoogleCableUUID128, std::move(service_data_value));
   advertisement_data->set_service_data(std::move(service_data));
 #endif
@@ -121,7 +135,7 @@ FidoCableDiscovery::FidoCableDiscovery(
       discovery_data_(std::move(discovery_data)) {
 // Windows currently does not support multiple EIDs, thus we ignore any extra
 // discovery data.
-// TODO(https://crbug.com/837088): Add support for multiple EIDs on Windows.
+// TODO(crbug.com/40573698): Add support for multiple EIDs on Windows.
 #if BUILDFLAG(IS_WIN)
   if (discovery_data_.size() > 1u) {
     FIDO_LOG(ERROR) << "discovery_data_.size()=" << discovery_data_.size()
@@ -148,7 +162,7 @@ FidoCableDiscovery::~FidoCableDiscovery() {
     adapter_->RemoveObserver(this);
 }
 
-std::unique_ptr<FidoDeviceDiscovery::EventStream<base::span<const uint8_t, 20>>>
+std::unique_ptr<FidoDiscoveryBase::EventStream<base::span<const uint8_t, 20>>>
 FidoCableDiscovery::GetV2AdvertStream() {
   DCHECK(!advert_callback_);
 
@@ -178,8 +192,7 @@ FidoCableDiscovery::CreateV1HandshakeHandler(
 
     case CableDiscoveryData::Version::V2:
     case CableDiscoveryData::Version::INVALID:
-      CHECK(false);
-      return nullptr;
+      NOTREACHED();
   }
 }
 
@@ -214,24 +227,16 @@ void FidoCableDiscovery::OnGetAdapter(scoped_refptr<BluetoothAdapter> adapter) {
   DCHECK(!adapter_);
   adapter_ = std::move(adapter);
   DCHECK(adapter_);
-  FIDO_LOG(DEBUG) << "BLE adapter address " << adapter_->GetAddress();
 
   adapter_->AddObserver(this);
-  if (adapter_->IsPowered()) {
-    OnSetPowered();
-  }
-
+  BluetoothAdapter::PermissionStatus bluetooth_permission =
+      BluetoothAdapter::PermissionStatus::kAllowed;
 #if BUILDFLAG(IS_MAC)
-  // TODO(crbug.com/1314404): turn this into a user-visible UI if we believe
-  // that it's a good signal.
   switch (fido::mac::ProcessIsSigned()) {
     case fido::mac::CodeSigningState::kSigned:
+      bluetooth_permission = adapter_->GetOsPermissionStatus();
       FIDO_LOG(DEBUG) << "Bluetooth authorized: "
-                      << static_cast<int>(adapter_->GetOsPermissionStatus());
-      if (adapter_->GetOsPermissionStatus() ==
-          BluetoothAdapter::PermissionStatus::kDenied) {
-        observer()->BleDenied();
-      }
+                      << static_cast<int>(bluetooth_permission);
       break;
     case fido::mac::CodeSigningState::kNotSigned:
       FIDO_LOG(DEBUG)
@@ -239,6 +244,13 @@ void FidoCableDiscovery::OnGetAdapter(scoped_refptr<BluetoothAdapter> adapter) {
       break;
   }
 #endif
+
+  if (bluetooth_permission == BluetoothAdapter::PermissionStatus::kAllowed) {
+    FIDO_LOG(DEBUG) << "BLE adapter address " << adapter_->GetAddress();
+    if (adapter_->IsPowered()) {
+      OnSetPowered();
+    }
+  }
 
   // FidoCableDiscovery blocks its transport availability callback on the
   // DiscoveryStarted() calls of all instantiated discoveries. Hence, this call
@@ -303,8 +315,8 @@ void FidoCableDiscovery::AdapterPoweredChanged(BluetoothAdapter* adapter,
   // the adapter, such that one of the WinRT API calls inside
   // BluetoothAdapter::StartDiscoverySessionWithFilter() can fail with "Device
   // not ready for use". So wait for things to actually be ready.
-  // TODO(crbug/1046140): Remove this delay once the Bluetooth layer handles
-  // the spurious failure.
+  // TODO(crbug.com/40670639): Remove this delay once the Bluetooth layer
+  // handles the spurious failure.
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&FidoCableDiscovery::StartCableDiscovery,
@@ -326,7 +338,81 @@ void FidoCableDiscovery::AdapterDiscoveringChanged(BluetoothAdapter* adapter,
   }
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+void FidoCableDiscovery::OnDeviceFound(
+    device::BluetoothLowEnergyScanSession* scan_session,
+    device::BluetoothDevice* device) {
+  DeviceAdded(adapter_.get(), device);
+}
+
+void FidoCableDiscovery::OnDeviceLost(
+    device::BluetoothLowEnergyScanSession* scan_session,
+    device::BluetoothDevice* device) {
+  DeviceRemoved(adapter_.get(), device);
+}
+
+void FidoCableDiscovery::OnSessionStarted(
+    device::BluetoothLowEnergyScanSession* scan_session,
+    std::optional<device::BluetoothLowEnergyScanSession::ErrorCode>
+        error_code) {
+  if (error_code) {
+    FIDO_LOG(ERROR) << "Failed to start caBLE LE scan session, error_code = "
+                    << static_cast<int>(error_code.value());
+    le_scan_session_.reset();
+    return;
+  }
+
+  FIDO_LOG(DEBUG) << "LE scan session started.";
+
+  // Advertising is delayed by 500ms to ensure that any UI has a chance to
+  // appear as we don't want to start broadcasting without the user being
+  // aware.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&FidoCableDiscovery::StartAdvertisement,
+                     weak_factory_.GetWeakPtr()),
+      base::Milliseconds(500));
+}
+
+void FidoCableDiscovery::OnSessionInvalidated(
+    device::BluetoothLowEnergyScanSession* scan_session) {
+  FIDO_LOG(EVENT) << "LE scan session invalidated";
+  le_scan_session_.reset();
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 void FidoCableDiscovery::StartCableDiscovery() {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (floss::features::IsFlossEnabled()) {
+    device::BluetoothLowEnergyScanFilter::Pattern google_pattern(
+        /*start_position=*/0,
+        device::BluetoothLowEnergyScanFilter::AdvertisementDataType::
+            kServiceData,
+        /* kServiceData takes the 16-bit UUID as a little endian byte vector. */
+        std::vector<uint8_t>{kGoogleCableUUID[3], kGoogleCableUUID[2]});
+    device::BluetoothLowEnergyScanFilter::Pattern fido_pattern(
+        /*start_position=*/0,
+        device::BluetoothLowEnergyScanFilter::AdvertisementDataType::
+            kServiceData,
+        std::vector<uint8_t>{kFIDOCableUUID[3], kFIDOCableUUID[2]});
+    auto filter = device::BluetoothLowEnergyScanFilter::Create(
+        device::BluetoothLowEnergyScanFilter::Range::kFar,
+        /*device_found_timeout=*/base::Seconds(1),
+        /*device_lost_timeout=*/base::Seconds(7),
+        {google_pattern, fido_pattern},
+        /*rssi_sampling_period=*/base::Seconds(1));
+    if (!filter) {
+      FIDO_LOG(ERROR)
+          << "Failed to start LE scanning due to failure to create filter.";
+      return;
+    }
+
+    le_scan_session_ = adapter_->StartLowEnergyScanSession(
+        std::move(filter), weak_factory_.GetWeakPtr());
+    return;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
   adapter()->StartDiscoverySessionWithFilter(
       std::make_unique<BluetoothDiscoveryFilter>(
           BluetoothTransport::BLUETOOTH_TRANSPORT_LE),
@@ -424,8 +510,7 @@ void FidoCableDiscovery::CableDeviceFound(BluetoothAdapter* adapter,
     return;
   }
 
-  absl::optional<V1DiscoveryDataAndEID> v1_match =
-      GetCableDiscoveryData(device);
+  std::optional<V1DiscoveryDataAndEID> v1_match = GetCableDiscoveryData(device);
   if (!v1_match) {
     return;
   }
@@ -475,7 +560,7 @@ void FidoCableDiscovery::ConductEncryptionHandshake(
 void FidoCableDiscovery::ValidateAuthenticatorHandshakeMessage(
     CableDiscoveryData::Version cable_version,
     FidoCableHandshakeHandler* handshake_handler,
-    absl::optional<std::vector<uint8_t>> handshake_response) {
+    std::optional<std::vector<uint8_t>> handshake_response) {
   const bool ok = handshake_response.has_value() &&
                   handshake_handler->ValidateAuthenticatorHandshakeMessage(
                       *handshake_response);
@@ -503,14 +588,14 @@ void FidoCableDiscovery::ValidateAuthenticatorHandshakeMessage(
   }
 }
 
-absl::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>
+std::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>
 FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
   const std::vector<uint8_t>* service_data =
       device->GetServiceDataForUUID(GoogleCableUUID());
   if (!service_data) {
     service_data = device->GetServiceDataForUUID(FIDOCableUUID());
   }
-  absl::optional<CableEidArray> maybe_eid_from_service_data =
+  std::optional<CableEidArray> maybe_eid_from_service_data =
       MaybeGetEidFromServiceData(device);
   std::vector<CableEidArray> uuids = GetUUIDs(device);
 
@@ -522,7 +607,7 @@ FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
     if (maybe_eid_from_service_data == data->service_data &&
         uuids == data->uuids) {
       // Duplicate data. Ignore.
-      return absl::nullopt;
+      return std::nullopt;
     }
   }
 
@@ -534,7 +619,7 @@ FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
     FIDO_LOG(DEBUG) << "New caBLE device " << address << ":";
   }
 
-  absl::optional<FidoCableDiscovery::V1DiscoveryDataAndEID> result;
+  std::optional<FidoCableDiscovery::V1DiscoveryDataAndEID> result;
   if (maybe_eid_from_service_data.has_value()) {
     result =
         GetCableDiscoveryDataFromAuthenticatorEid(*maybe_eid_from_service_data);
@@ -573,24 +658,24 @@ FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
 }
 
 // static
-absl::optional<CableEidArray> FidoCableDiscovery::MaybeGetEidFromServiceData(
+std::optional<CableEidArray> FidoCableDiscovery::MaybeGetEidFromServiceData(
     const BluetoothDevice* device) {
   const std::vector<uint8_t>* service_data =
       device->GetServiceDataForUUID(GoogleCableUUID());
   if (!service_data) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Received service data from authenticator must have a flag that signals that
   // the service data includes Cable EID.
   if (service_data->empty() || !(service_data->at(0) >> 5 & 1u))
-    return absl::nullopt;
+    return std::nullopt;
 
   CableEidArray received_authenticator_eid;
   bool extract_success = fido_parsing_utils::ExtractArray(
       *service_data, 2, &received_authenticator_eid);
   if (!extract_success)
-    return absl::nullopt;
+    return std::nullopt;
   return received_authenticator_eid;
 }
 
@@ -613,7 +698,7 @@ std::vector<CableEidArray> FidoCableDiscovery::GetUUIDs(
   return ret;
 }
 
-absl::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>
+std::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>
 FidoCableDiscovery::GetCableDiscoveryDataFromAuthenticatorEid(
     CableEidArray authenticator_eid) {
   for (const auto& candidate : discovery_data_) {
@@ -623,7 +708,7 @@ FidoCableDiscovery::GetCableDiscoveryDataFromAuthenticatorEid(
     }
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void FidoCableDiscovery::StartInternal() {
@@ -634,7 +719,7 @@ void FidoCableDiscovery::StartInternal() {
 // static
 std::string FidoCableDiscovery::ResultDebugString(
     const CableEidArray& eid,
-    const absl::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>& result) {
+    const std::optional<FidoCableDiscovery::V1DiscoveryDataAndEID>& result) {
   static const uint8_t kAppleContinuity[16] = {
       0xd0, 0x61, 0x1e, 0x78, 0xbb, 0xb4, 0x45, 0x91,
       0xa5, 0xf8, 0x48, 0x79, 0x10, 0xae, 0x43, 0x66,

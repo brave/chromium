@@ -34,9 +34,6 @@ struct SameSizeAsCSSRule : public GarbageCollected<SameSizeAsCSSRule>,
   ~SameSizeAsCSSRule() override;
   unsigned char bitfields;
   Member<ScriptWrappable> member;
-  static_assert(kBlinkMemberGCHasDebugChecks ||
-                    sizeof(Member<ScriptWrappable>) <= sizeof(void*),
-                "Member<ScriptWrappable> should stay small");
 };
 
 ASSERT_SIZE(CSSRule, SameSizeAsCSSRule);
@@ -77,11 +74,11 @@ void CSSRule::Trace(Visitor* visitor) const {
 }
 
 bool CSSRule::VerifyParentIsCSSRule() const {
-  return !parent_ || parent_->GetWrapperTypeInfo()->IsSubclass(
+  return !parent_ || ToWrapperTypeInfo(parent_)->IsSubclass(
                          CSSRule::GetStaticWrapperTypeInfo());
 }
 bool CSSRule::VerifyParentIsCSSStyleSheet() const {
-  return !parent_ || parent_->GetWrapperTypeInfo()->IsSubclass(
+  return !parent_ || ToWrapperTypeInfo(parent_)->IsSubclass(
                          CSSStyleSheet::GetStaticWrapperTypeInfo());
 }
 

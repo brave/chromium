@@ -9,7 +9,7 @@
 
 namespace {
 
-void CallMeMaybe(int *number) {
+void CallMeMaybe(int* number) {
   (*number)++;
 }
 
@@ -64,7 +64,7 @@ TEST(MockOneShotTimerTest, FireNow) {
   EXPECT_EQ(1, calls);
 }
 
-class HasWeakPtr : public base::SupportsWeakPtr<HasWeakPtr> {
+class HasWeakPtr {
  public:
   HasWeakPtr() = default;
 
@@ -72,10 +72,17 @@ class HasWeakPtr : public base::SupportsWeakPtr<HasWeakPtr> {
   HasWeakPtr& operator=(const HasWeakPtr&) = delete;
 
   virtual ~HasWeakPtr() = default;
+
+  base::WeakPtr<HasWeakPtr> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
+  base::WeakPtrFactory<HasWeakPtr> weak_ptr_factory_{this};
 };
 
 TEST(MockTimerTest, DoesNotRetainClosure) {
-  HasWeakPtr *has_weak_ptr = new HasWeakPtr();
+  HasWeakPtr* has_weak_ptr = new HasWeakPtr();
   base::WeakPtr<HasWeakPtr> weak_ptr(has_weak_ptr->AsWeakPtr());
   base::MockOneShotTimer timer;
   base::TimeDelta delay = base::Seconds(2);

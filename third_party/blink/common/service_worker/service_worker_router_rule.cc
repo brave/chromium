@@ -3,8 +3,7 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/public/common/service_worker/service_worker_router_rule.h"
-
-#include "base/notreached.h"
+#include "services/network/public/mojom/service_worker_router_info.mojom-shared.h"
 
 namespace blink {
 
@@ -14,19 +13,40 @@ bool ServiceWorkerRouterRequestCondition::operator==(
          destination == other.destination;
 }
 
+bool ServiceWorkerRouterOrCondition::operator==(
+    const ServiceWorkerRouterOrCondition& other) const {
+  return conditions == other.conditions;
+}
+
+ServiceWorkerRouterNotCondition::ServiceWorkerRouterNotCondition() = default;
+ServiceWorkerRouterNotCondition::~ServiceWorkerRouterNotCondition() = default;
+ServiceWorkerRouterNotCondition::ServiceWorkerRouterNotCondition(
+    const ServiceWorkerRouterNotCondition& other) {
+  *this = other;
+}
+ServiceWorkerRouterNotCondition::ServiceWorkerRouterNotCondition(
+    ServiceWorkerRouterNotCondition&&) = default;
+
+ServiceWorkerRouterNotCondition& ServiceWorkerRouterNotCondition::operator=(
+    const ServiceWorkerRouterNotCondition& other) {
+  if (other.condition) {
+    condition =
+        std::make_unique<ServiceWorkerRouterCondition>(*other.condition);
+  }
+  return *this;
+}
+ServiceWorkerRouterNotCondition& ServiceWorkerRouterNotCondition::operator=(
+    ServiceWorkerRouterNotCondition&&) = default;
+
+bool ServiceWorkerRouterNotCondition::operator==(
+    const ServiceWorkerRouterNotCondition& other) const {
+  // Returns false unless both have their value.
+  return condition && other.condition && *condition == *other.condition;
+}
+
 bool ServiceWorkerRouterCondition::operator==(
     const ServiceWorkerRouterCondition& other) const {
-  if (type != other.type) {
-    return false;
-  }
-  switch (type) {
-    case ConditionType::kUrlPattern:
-      return url_pattern == other.url_pattern;
-    case ConditionType::kRequest:
-      return request == other.request;
-    case ConditionType::kRunningStatus:
-      return running_status == other.running_status;
-  }
+  return get() == other.get();
 }
 
 bool ServiceWorkerRouterSource::operator==(
@@ -35,12 +55,19 @@ bool ServiceWorkerRouterSource::operator==(
     return false;
   }
   switch (type) {
-    case SourceType::kNetwork:
+    case network::mojom::ServiceWorkerRouterSourceType::kNetwork:
       return network_source == other.network_source;
-    case SourceType::kRace:
-      return race_source == other.race_source;
-    case SourceType::kFetchEvent:
+    case network::mojom::ServiceWorkerRouterSourceType::
+        kRaceNetworkAndFetchEvent:
+      return race_network_and_fetch_event_source ==
+             other.race_network_and_fetch_event_source;
+    case network::mojom::ServiceWorkerRouterSourceType::kFetchEvent:
       return fetch_event_source == other.fetch_event_source;
+    case network::mojom::ServiceWorkerRouterSourceType::kCache:
+      return cache_source == other.cache_source;
+    case network::mojom::ServiceWorkerRouterSourceType::kRaceNetworkAndCache:
+      return race_network_and_cache_source ==
+             other.race_network_and_cache_source;
   }
 }
 

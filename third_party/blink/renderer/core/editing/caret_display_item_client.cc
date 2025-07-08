@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/editing/caret_display_item_client.h"
 
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/local_caret_rect.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
@@ -32,12 +33,13 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
+#include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/object_paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/dark_mode_filter.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
@@ -102,7 +104,8 @@ PhysicalRect MapCaretRectToCaretPainter(const LayoutBlock* caret_block,
 
 CaretDisplayItemClient::CaretRectAndPainterBlock
 CaretDisplayItemClient::ComputeCaretRectAndPainterBlock(
-    const PositionWithAffinity& caret_position) {
+    const PositionWithAffinity& caret_position,
+    CaretShape caret_shape) {
   if (caret_position.IsNull())
     return {};
 
@@ -110,15 +113,32 @@ CaretDisplayItemClient::ComputeCaretRectAndPainterBlock(
     return {};
 
   // First compute a rect local to the layoutObject at the selection start.
-  const LocalCaretRect& caret_rect =
-      LocalCaretRectOfPosition(caret_position, kCannotCrossEditingBoundary);
+  const LocalCaretRect& caret_rect = LocalCaretRectOfPosition(
+      caret_position, caret_shape, kCannotCrossEditingBoundary);
   if (!caret_rect.layout_object)
     return {};
 
   // Get the layoutObject that will be responsible for painting the caret
   // (which is either the layoutObject we just found, or one of its containers).
-  LayoutBlock* caret_block =
-      CaretLayoutBlock(caret_position.AnchorNode(), caret_rect.layout_object);
+  LayoutBlock* caret_block;
+  if (caret_rect.root_box_fragment) {
+    caret_block =
+        To<LayoutBlock>(caret_rect.root_box_fragment->GetMutableLayoutObject());
+    // The root box fragment's layout object should always match the one we'd
+    // get from CaretLayoutBlock, except for atomic inline-level LayoutBlocks
+    // (i.e. display: inline-block). In those cases, the layout object should be
+    // either the caret rect's layout block, or its containing block.
+    if (!(caret_rect.layout_object->IsLayoutBlock() &&
+          caret_rect.layout_object->IsAtomicInlineLevel())) {
+      DCHECK_EQ(caret_block, CaretLayoutBlock(caret_position.AnchorNode(),
+                                              caret_rect.layout_object));
+    } else if (caret_block != caret_rect.layout_object) {
+      DCHECK_EQ(caret_block, caret_rect.layout_object->ContainingBlock());
+    }
+  } else {
+    caret_block =
+        CaretLayoutBlock(caret_position.AnchorNode(), caret_rect.layout_object);
+  }
   return {MapCaretRectToCaretPainter(caret_block, caret_rect), caret_block,
           caret_rect.root_box_fragment};
 }
@@ -132,7 +152,7 @@ void CaretDisplayItemClient::LayoutBlockWillBeDestroyed(
 }
 
 bool CaretDisplayItemClient::ShouldPaintCaret(
-    const NGPhysicalBoxFragment& box_fragment) const {
+    const PhysicalBoxFragment& box_fragment) const {
   const auto* const block =
       DynamicTo<LayoutBlock>(box_fragment.GetLayoutObject());
   if (!block)
@@ -153,8 +173,17 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
   if (!previous_layout_block_)
     previous_layout_block_ = layout_block_.Get();
 
+  CaretShape caret_shape = CaretShape::kBar;
+  bool is_caret_color_auto = false;
+  if (caret_position.AnchorNode() && IsEditable(*caret_position.AnchorNode())) {
+    const ComputedStyle* style =
+        GetComputedStyleForElementOrLayoutObject(*caret_position.AnchorNode());
+    is_caret_color_auto = style->IsCaretColorAuto();
+    caret_shape = GetCaretShapeFromComputedStyle(*style);
+  }
+
   CaretRectAndPainterBlock rect_and_block =
-      ComputeCaretRectAndPainterBlock(caret_position);
+      ComputeCaretRectAndPainterBlock(caret_position, caret_shape);
   LayoutBlock* new_layout_block = rect_and_block.painter_block;
   if (new_layout_block != layout_block_) {
     if (layout_block_)
@@ -174,7 +203,7 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
     return;
   }
 
-  const NGPhysicalBoxFragment* const new_box_fragment =
+  const PhysicalBoxFragment* const new_box_fragment =
       rect_and_block.box_fragment;
   if (new_box_fragment != box_fragment_) {
     // The caret property tree space may have changed.
@@ -195,6 +224,15 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
     color_ = new_color;
   }
 
+  // TODO(https://crbug.com/353713061):
+  // https://drafts.csswg.org/css-ui/#caret-color When caret-shape is block,
+  // ensuring good visibility and contrast is best achieved with a
+  // UA-determined color other than currentColor.
+  if (is_caret_color_auto && caret_shape == CaretShape::kBlock) {
+    // Temporarily set opacity to 0.5.
+    color_.SetAlpha(0.5);
+  }
+
   auto new_local_rect = rect_and_block.caret_rect;
   // TODO(crbug.com/1123630): Avoid paint invalidation on caret movement.
   if (new_local_rect != local_rect_) {
@@ -211,6 +249,16 @@ void CaretDisplayItemClient::SetActive(bool active) {
     return;
   is_active_ = active;
   needs_paint_invalidation_ = true;
+}
+
+void CaretDisplayItemClient::EnsureInvalidationOfPreviousLayoutBlock() {
+  if (!previous_layout_block_ || previous_layout_block_ == layout_block_) {
+    return;
+  }
+
+  PaintInvalidatorContext context;
+  context.painting_layer = previous_layout_block_->PaintingLayer();
+  InvalidatePaintInPreviousLayoutBlock(context);
 }
 
 void CaretDisplayItemClient::InvalidatePaint(
@@ -266,8 +314,8 @@ void CaretDisplayItemClient::PaintCaret(
 
   // When caret is in text-combine box with scaling, |context| is already
   // associated to drawing record to apply affine transform.
-  absl::optional<DrawingRecorder> recorder;
-  if (LIKELY(!context.InDrawingRecorder())) {
+  std::optional<DrawingRecorder> recorder;
+  if (!context.InDrawingRecorder()) [[likely]] {
     if (DrawingRecorder::UseCachedDrawingIfPossible(context, *this,
                                                     display_item_type))
       return;
@@ -291,7 +339,7 @@ void CaretDisplayItemClient::RecordSelection(GraphicsContext& context,
   // For the caret, the start and end selection bounds are recorded as
   // the same edges, with the type marked as CENTER or HIDDEN.
   PaintedSelectionBound start = {type, paint_rect.origin(),
-                                 paint_rect.bottom_left(), false};
+                                 paint_rect.bottom_left()};
   PaintedSelectionBound end = start;
 
   // Get real world data to help debug crbug.com/1441243.

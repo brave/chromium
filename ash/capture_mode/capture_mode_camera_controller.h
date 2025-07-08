@@ -163,6 +163,9 @@ class ASH_EXPORT CaptureModeCameraController
   bool is_camera_preview_collapsed() const {
     return is_camera_preview_collapsed_;
   }
+  bool did_user_ever_change_camera() const {
+    return did_user_ever_change_camera_;
+  }
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -185,8 +188,9 @@ class ASH_EXPORT CaptureModeCameraController
 
   // Sets the currently selected camera to the whose ID is the given
   // `camera_id`. If `camera_id` is invalid (see CameraId::is_valid()), this
-  // clears the selected camera.
-  void SetSelectedCamera(CameraId camera_id);
+  // clears the selected camera. `by_user` is true if the selection was made
+  // explicitly by the user, false otherwise.
+  void SetSelectedCamera(CameraId camera_id, bool by_user = false);
 
   // Sets `should_show_preview_` to the given `value`, and refreshes the state
   // of the camera preview.
@@ -284,6 +288,7 @@ class ASH_EXPORT CaptureModeCameraController
   using RequestId = size_t;
   void OnCameraDevicesReceived(
       RequestId request_id,
+      video_capture::mojom::VideoSourceProvider::GetSourceInfosResult,
       const std::vector<media::VideoCaptureDeviceInfo>& devices);
 
   // Shows or hides a preview of the currently selected camera depending on
@@ -338,7 +343,7 @@ class ASH_EXPORT CaptureModeCameraController
 
   // Owned by CaptureModeController and guaranteed to be not null and to outlive
   // `this`.
-  const raw_ptr<CaptureModeDelegate, ExperimentalAsh> delegate_;
+  const raw_ptr<CaptureModeDelegate> delegate_;
 
   // The remote end to the video source provider that exists in the video
   // capture service.
@@ -362,7 +367,7 @@ class ASH_EXPORT CaptureModeCameraController
 
   // The camera preview widget and its contents view.
   views::UniqueWidgetPtr camera_preview_widget_;
-  raw_ptr<CameraPreviewView, ExperimentalAsh> camera_preview_view_ = nullptr;
+  raw_ptr<CameraPreviewView> camera_preview_view_ = nullptr;
 
   // A timer used to give a `selected_camera_` that got disconnected a grace
   // period, so if it reconnects again within this period, its ID is kept around
@@ -410,7 +415,7 @@ class ASH_EXPORT CaptureModeCameraController
 
   // Valid only during recording to track the number of camera disconnections
   // while recording is in progress.
-  absl::optional<int> in_recording_camera_disconnections_;
+  std::optional<int> in_recording_camera_disconnections_;
 
   // Will be set to true the first time the number of connected cameras is
   // reported.
@@ -425,6 +430,10 @@ class ASH_EXPORT CaptureModeCameraController
   // `MaybeRevertAutoCameraSelection()` was called to revert back this automatic
   // selection.
   bool did_make_camera_auto_selection_ = false;
+
+  // True if the user ever made an explicit camera selection (i.e. from the
+  // capture mode settings menu).
+  bool did_user_ever_change_camera_ = false;
 
   base::WeakPtrFactory<CaptureModeCameraController> weak_ptr_factory_{this};
 };

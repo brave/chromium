@@ -11,7 +11,6 @@ import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/win/control_flow_guard.gni")
 import("//build/config/win/visual_studio_version.gni")
 import("//build/timestamp.gni")
-import("//build/toolchain/goma.gni")
 import("//build/toolchain/rbe.gni")
 import("//build/toolchain/toolchain.gni")
 
@@ -84,11 +83,6 @@ config("compiler") {
   cflags_c = [ "/TC" ]
   cflags_cc = [ "/TP" ]
 
-  cflags += [
-    # Work around crbug.com/526851, bug in VS 2015 RTM compiler.
-    "/Zc:sizedDealloc-",
-  ]
-
   if (is_clang) {
     # Required to make the 19041 SDK compatible with clang-cl.
     # See https://crbug.com/1089996 issue #2 for details.
@@ -132,8 +126,8 @@ config("compiler") {
 
     # Enable ANSI escape codes if something emulating them is around (cmd.exe
     # doesn't understand ANSI escape codes by default). Make sure to not enable
-    # this if goma/remoteexec is in use, because this will lower cache hits.
-    if (!use_goma && !use_remoteexec &&
+    # this if remoteexec is in use, because this will lower cache hits.
+    if (!use_remoteexec &&
         exec_script("//build/win/use_ansi_codes.py", [], "trim string") ==
         "True") {
       cflags += [ "-fansi-escape-codes" ]
@@ -144,8 +138,7 @@ config("compiler") {
     }
   }
 
-  # Disabled with cc_wrapper because of https://github.com/mozilla/sccache/issues/264
-  if (use_lld && !use_thin_lto && (is_clang || !use_goma) && cc_wrapper == "") {
+  if (use_lld && !use_thin_lto) {
     # /Brepro lets the compiler not write the mtime field in the .obj output.
     # link.exe /incremental relies on this field to work correctly, but lld
     # never looks at this timestamp, so it's safe to pass this flag with
@@ -176,7 +169,13 @@ config("compiler") {
   # block maps.
   # This flag requires lld-link.exe or link.exe from VS 2022 or later to create
   # the PDBs, and tools from circa 22H2 or later to consume the PDBs.
-  ldflags += [ "/pdbpagesize:8192" ]
+  # Debug component builds can generate PDBs that exceed 8 GiB, so use an
+  # even larger page size, allowing up to 16 GiB PDBs.
+  if (is_debug && !is_component_build) {
+    ldflags += [ "/pdbpagesize:16384" ]
+  } else {
+    ldflags += [ "/pdbpagesize:8192" ]
+  }
 
   if (!is_debug && !is_component_build) {
     # Enable standard linker optimizations like GC (/OPT:REF) and ICF in static
@@ -290,7 +289,7 @@ config("runtime_library") {
 # manually override this config for their compiles.
 config("winver") {
   defines = [
-    "NTDDI_VERSION=NTDDI_WIN10_NI",
+    "NTDDI_VERSION=NTDDI_WIN11_GE",
 
     # We can't say `=_WIN32_WINNT_WIN10` here because some files do
     # `#if WINVER < 0x0600` without including windows.h before,
@@ -405,29 +404,36 @@ config("cfi_linker") {
 # tests with the full browser.
 config("delayloads") {
   ldflags = [
+    "/DELAYLOAD:api-ms-win-core-synch-l1-2-0.dll",
     "/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-0.dll",
     "/DELAYLOAD:api-ms-win-core-winrt-l1-1-0.dll",
     "/DELAYLOAD:api-ms-win-core-winrt-string-l1-1-0.dll",
     "/DELAYLOAD:advapi32.dll",
+    "/DELAYLOAD:bcryptprimitives.dll",
     "/DELAYLOAD:comctl32.dll",
     "/DELAYLOAD:comdlg32.dll",
     "/DELAYLOAD:credui.dll",
     "/DELAYLOAD:cryptui.dll",
     "/DELAYLOAD:d3d11.dll",
+    "/DELAYLOAD:d3d12.dll",
     "/DELAYLOAD:d3d9.dll",
+    "/DELAYLOAD:dcomp.dll",
     "/DELAYLOAD:dwmapi.dll",
     "/DELAYLOAD:dxgi.dll",
     "/DELAYLOAD:dxva2.dll",
     "/DELAYLOAD:esent.dll",
+    "/DELAYLOAD:fontsub.dll",
     "/DELAYLOAD:gdi32.dll",
     "/DELAYLOAD:hid.dll",
     "/DELAYLOAD:imagehlp.dll",
     "/DELAYLOAD:imm32.dll",
+    "/DELAYLOAD:mmdevapi.dll",
     "/DELAYLOAD:msi.dll",
     "/DELAYLOAD:netapi32.dll",
     "/DELAYLOAD:ncrypt.dll",
     "/DELAYLOAD:ole32.dll",
     "/DELAYLOAD:oleacc.dll",
+    "/DELAYLOAD:pdh.dll",
     "/DELAYLOAD:propsys.dll",
     "/DELAYLOAD:psapi.dll",
     "/DELAYLOAD:rpcrt4.dll",
@@ -469,6 +475,29 @@ config("delayloads_not_for_child_dll") {
   ]
 }
 
+# ACLs are placed on the filesystem in order to allow chrome to launch
+# sandboxed processes in an app container when run from the out directory.
+group("maybe_set_appcontainer_acls") {
+  # Exclude setting ACLs when build is not happening on chromium, or with a different toolchain.
+  if (build_with_chromium && current_cpu == target_cpu && host_os == "win") {
+    deps = [ ":set_appcontainer_acls" ]
+  }
+}
+
+if (build_with_chromium && current_cpu == target_cpu && host_os == "win") {
+  action("set_appcontainer_acls") {
+    script = "//build/win/set_appcontainer_acls.py"
+    stamp_file = "$target_out_dir/acls.stamp"
+    inputs = [ script ]
+    outputs = [ stamp_file ]
+
+    args = [
+      "--stamp=" + rebase_path(stamp_file, root_out_dir),
+      "--dir=" + rebase_path(root_out_dir, root_out_dir),
+    ]
+  }
+}
+
 # CRT --------------------------------------------------------------------------
 
 # Configures how the runtime library (CRT) is going to be used.
@@ -501,15 +530,9 @@ config("release_crt") {
   if (is_component_build) {
     cflags = [ "/MD" ]
 
-    if (rust_prebuilt_stdlib) {
-      rustflags = [ "-Ctarget-feature=-crt-static" ]
-    } else {
-      # /MD specifies msvcrt.lib as the CRT library. Rust needs to agree, so
-      # we specify it explicitly. Once
-      # https://github.com/rust-lang/rust/issues/39016 is resolved we should
-      # instead tell rustc which CRT to use (static/dynamic + release/debug).
-      rustflags = [ "-Clink-arg=msvcrt.lib" ]
-    }
+    # /MD specifies msvcrt.lib as the CRT library, which is the dynamic+release
+    # version. Rust needs to agree, and its default mode is dynamic+release, so
+    # we do nothing here. See https://github.com/rust-lang/rust/issues/39016.
 
     if (use_custom_libcxx) {
       # On Windows, including libcpmt[d]/msvcprt[d] explicitly links the C++
@@ -519,15 +542,10 @@ config("release_crt") {
   } else {
     cflags = [ "/MT" ]
 
-    if (rust_prebuilt_stdlib) {
-      rustflags = [ "-Ctarget-feature=+crt-static" ]
-    } else {
-      # /MT specifies libcmt.lib as the CRT library. Rust needs to agree, so
-      # we specify it explicitly. Once
-      # https://github.com/rust-lang/rust/issues/39016 is resolved we should
-      # instead tell rustc which CRT to use (static/dynamic + release/debug).
-      rustflags = [ "-Clink-arg=libcmt.lib" ]
-    }
+    # /MT specifies libcmt.lib as the CRT library, which is the static+release
+    # version. Rust needs to agree, so we tell it to use the static+release CRT
+    # as well. See https://github.com/rust-lang/rust/issues/39016.
+    rustflags = [ "-Ctarget-feature=+crt-static" ]
 
     if (use_custom_libcxx) {
       ldflags = [ "/DEFAULTLIB:libcpmt.lib" ]
@@ -540,12 +558,14 @@ config("dynamic_crt") {
     # This pulls in the DLL debug CRT and defines _DEBUG
     cflags = [ "/MDd" ]
 
-    # /MDd specifies msvcrtd.lib as the CRT library. Rust needs to agree, so
-    # we specify it explicitly.
-    # Once https://github.com/rust-lang/rust/issues/39016 is resolved we should
-    # instead tell rustc which CRT to use (static/dynamic + release/debug). We
-    # can't support prebuilt stdlib in this path until then.
-    rustflags = [ "-Clink-arg=msvcrtd.lib" ]
+    # /MDd specifies msvcrtd.lib as the CRT library. Rust needs to agree, so we
+    # specify it explicitly. Rust defaults to the dynamic+release library, which
+    # we remove here, and then replace. See
+    # https://github.com/rust-lang/rust/issues/39016.
+    rustflags = [
+      "-Clink-arg=/nodefaultlib:msvcrt.lib",
+      "-Clink-arg=msvcrtd.lib",
+    ]
 
     if (use_custom_libcxx) {
       ldflags = [ "/DEFAULTLIB:msvcprtd.lib" ]
@@ -553,16 +573,9 @@ config("dynamic_crt") {
   } else {
     cflags = [ "/MD" ]
 
-    if (rust_prebuilt_stdlib) {
-      rustflags = [ "-Ctarget-feature=-crt-static" ]
-    } else {
-      # /MD specifies msvcrt.lib as the CRT library. Rust needs to agree, so
-      # we specify it explicitly.
-      # Once https://github.com/rust-lang/rust/issues/39016 is resolved we
-      # should instead tell rustc which CRT to use (static/dynamic +
-      # release/debug).
-      rustflags = [ "-Clink-arg=msvcrt.lib" ]
-    }
+    # /MD specifies msvcrt.lib as the CRT library, which is the dynamic+release
+    # version. Rust needs to agree, and its default mode is dynamic+release, so
+    # we do nothing here. See https://github.com/rust-lang/rust/issues/39016.
 
     if (use_custom_libcxx) {
       ldflags = [ "/DEFAULTLIB:msvcprt.lib" ]
@@ -575,12 +588,15 @@ config("static_crt") {
     # This pulls in the static debug CRT and defines _DEBUG
     cflags = [ "/MTd" ]
 
-    # /MTd specifies libcmtd.lib as the CRT library. Rust needs to agree, so
-    # we specify it explicitly.
-    # Once https://github.com/rust-lang/rust/issues/39016 is resolved we should
-    # instead tell rustc which CRT to use (static/dynamic + release/debug). We
-    # can't support prebuilt stdlib in this path until then.
-    rustflags = [ "-Clink-arg=libcmtd.lib" ]
+    # /MTd specifies libcmtd.lib as the CRT library. Rust needs to agree, so we
+    # specify it explicitly. We tell Rust that we're using the static CRT but
+    # remove the release library that it chooses, and replace with the debug
+    # library. See https://github.com/rust-lang/rust/issues/39016.
+    rustflags = [
+      "-Ctarget-feature=+crt-static",
+      "-Clink-arg=/nodefaultlib:libcmt.lib",
+      "-Clink-arg=libcmtd.lib",
+    ]
 
     if (use_custom_libcxx) {
       ldflags = [ "/DEFAULTLIB:libcpmtd.lib" ]
@@ -588,16 +604,10 @@ config("static_crt") {
   } else {
     cflags = [ "/MT" ]
 
-    if (rust_prebuilt_stdlib) {
-      rustflags = [ "-Ctarget-feature=+crt-static" ]
-    } else {
-      # /MT specifies libcmt.lib as the CRT library. Rust needs to agree, so
-      # we specify it explicitly.
-      # Once https://github.com/rust-lang/rust/issues/39016 is resolved we
-      # should instead tell rustc which CRT to use (static/dynamic +
-      # release/debug).
-      rustflags = [ "-Clink-arg=libcmt.lib" ]
-    }
+    # /MT specifies libcmt.lib as the CRT library, which is the static+release
+    # version. Rust needs to agree, so we tell it to use the static+release CRT
+    # as well. See https://github.com/rust-lang/rust/issues/39016.
+    rustflags = [ "-Ctarget-feature=+crt-static" ]
 
     if (use_custom_libcxx) {
       ldflags = [ "/DEFAULTLIB:libcpmt.lib" ]
@@ -608,17 +618,9 @@ config("static_crt") {
 # Subsystem --------------------------------------------------------------------
 
 # This is appended to the subsystem to specify a minimum version.
-if (current_cpu == "x64") {
-  # The number after the comma is the minimum required OS version.
-  # 5.02 = Windows Server 2003.
-  subsystem_version_suffix = ",5.02"
-} else if (current_cpu == "arm64") {
-  # Windows ARM64 requires Windows 10.
-  subsystem_version_suffix = ",10.0"
-} else {
-  # 5.01 = Windows XP.
-  subsystem_version_suffix = ",5.01"
-}
+# The number after the comma is the minimum required OS version.
+# Set to 10.0 since we only support >= Win10 since M110.
+subsystem_version_suffix = ",10.0"
 
 config("console") {
   ldflags = [ "/SUBSYSTEM:CONSOLE$subsystem_version_suffix" ]
@@ -645,7 +647,7 @@ config("default_incremental_linking") {
       # lld.
       ldflags += [ "/OPT:NOREF" ]
 
-      # TODO(crbug.com/1444129): Mixing incrememntal and icf produces an error
+      # TODO(crbug.com/40267564): Mixing incrememntal and icf produces an error
       # in lld-link.
       ldflags += [ "/OPT:NOICF" ]
     }

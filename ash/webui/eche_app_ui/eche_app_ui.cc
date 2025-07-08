@@ -60,25 +60,26 @@ EcheAppUI::EcheAppUI(content::WebUI* web_ui, EcheAppManager* manager)
   std::string csp = std::string("frame-src ") + kChromeUIEcheAppGuestURL + ";";
   html_source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::FrameSrc, csp);
+  html_source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ScriptSrc,
+      "script-src chrome://resources chrome://webui-test 'self';");
 
   // Add ability to request chrome-untrusted: URLs.
   web_ui->AddRequestableScheme(content::kChromeUIUntrustedScheme);
 
   // Register common permissions for chrome-untrusted:// pages.
-  // TODO(https://crbug.com/1113568): Remove this after common permissions are
+  // TODO(crbug.com/40710326): Remove this after common permissions are
   // granted by default.
   auto* webui_allowlist = WebUIAllowlist::GetOrCreate(browser_context);
   const url::Origin untrusted_eche_app_origin =
       url::Origin::Create(GURL(kChromeUIEcheAppGuestURL));
-  for (const auto& permission : {
-           ContentSettingsType::COOKIES,
-           ContentSettingsType::JAVASCRIPT,
-           ContentSettingsType::IMAGES,
-           ContentSettingsType::SOUND,
-       }) {
-    webui_allowlist->RegisterAutoGrantedPermission(untrusted_eche_app_origin,
-                                                   permission);
-  }
+  webui_allowlist->RegisterAutoGrantedPermissions(
+      untrusted_eche_app_origin, {
+                                     ContentSettingsType::COOKIES,
+                                     ContentSettingsType::JAVASCRIPT,
+                                     ContentSettingsType::IMAGES,
+                                     ContentSettingsType::SOUND,
+                                 });
 
   // Set untrusted URL of Eche app in WebApp scope for allowing AutoPlay.
   auto* web_contents = web_ui->GetWebContents();
@@ -142,6 +143,13 @@ void EcheAppUI::BindInterface(
     mojo::PendingReceiver<mojom::ConnectionStatusObserver> receiver) {
   if (manager_) {
     manager_->BindConnectionStatusObserverInterface(std::move(receiver));
+  }
+}
+
+void EcheAppUI::BindInterface(
+    mojo::PendingReceiver<mojom::KeyboardLayoutHandler> receiver) {
+  if (manager_) {
+    manager_->BindKeyboardLayoutHandlerInterface(std::move(receiver));
   }
 }
 

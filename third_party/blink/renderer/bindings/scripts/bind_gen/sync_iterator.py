@@ -1,4 +1,4 @@
-# Copyright 2022 The Chromium Authors. All rights reserved.
+# Copyright 2022 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -46,18 +46,19 @@ def make_constructors(cg_context):
     return decls, None
 
 
-def generate_sync_iterator_blink_impl_class(sync_iterator=None,
+def generate_sync_iterator_blink_impl_class(iterator_class_like=None,
                                             api_component=None,
                                             for_testing=None,
                                             header_blink_ns=None,
                                             source_blink_ns=None):
-    assert sync_iterator is not None
+    assert isinstance(iterator_class_like, web_idl.SyncIterator)
     assert api_component is not None
     assert for_testing is not None
     assert header_blink_ns is not None
     assert source_blink_ns is not None
 
     # SyncIterator<InterfaceClass> (ScriptWrappable) definition
+    sync_iterator = iterator_class_like
     cg_context = CodeGenContext(sync_iterator=sync_iterator,
                                 class_name=blink_class_name(sync_iterator),
                                 base_class_name="bindings::SyncIteratorBase")
@@ -74,9 +75,13 @@ def generate_sync_iterator_blink_impl_class(sync_iterator=None,
     value_type = sync_iterator.value_type.unwrap(typedef=True)
     key_value_type_list = tuple(filter(None, [key_type, value_type]))
 
-    (header_forward_decls, header_include_headers, source_forward_decls,
-     source_include_headers
-     ) = collect_forward_decls_and_include_headers(key_value_type_list)
+    (
+        header_forward_decls,
+        header_include_headers,
+        header_stdcpp_include_headers,
+        source_forward_decls,
+        source_include_headers,
+    ) = collect_forward_decls_and_include_headers(key_value_type_list)
     class_def.accumulate(
         CodeGenAccumulator.require_class_decls(
             set.union(header_forward_decls, source_forward_decls)))
@@ -89,6 +94,9 @@ def generate_sync_iterator_blink_impl_class(sync_iterator=None,
             headers.add(
                 "third_party/blink/renderer/bindings/core/v8/idl_types.h")
     class_def.accumulate(CodeGenAccumulator.require_include_headers(headers))
+    class_def.accumulate(
+        CodeGenAccumulator.require_stdcpp_include_headers(
+            header_stdcpp_include_headers))
 
     ctor_decls, ctor_defs = make_constructors(cg_context)
 
@@ -124,7 +132,7 @@ def generate_sync_iterator(sync_iterator_identifier):
     sync_iterator = web_idl_database.find(sync_iterator_identifier)
 
     generate_class_like(sync_iterator,
-                        generate_sync_iterator_blink_impl_class_callback=(
+                        generate_iterator_blink_impl_class_callback=(
                             generate_sync_iterator_blink_impl_class))
 
 

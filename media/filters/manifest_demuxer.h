@@ -5,10 +5,13 @@
 #ifndef MEDIA_FILTERS_MANIFEST_DEMUXER_H_
 #define MEDIA_FILTERS_MANIFEST_DEMUXER_H_
 
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include "base/cancelable_callback.h"
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_bound.h"
@@ -22,7 +25,7 @@
 #include "media/base/pipeline_status.h"
 #include "media/filters/chunk_demuxer.h"
 #include "media/filters/hls_data_source_provider.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "media/filters/stream_parser_factory.h"
 
 namespace media {
 
@@ -37,55 +40,57 @@ class MEDIA_EXPORT ManifestDemuxerEngineHost {
   virtual ~ManifestDemuxerEngineHost() {}
 
   // Adds a new role to the chunk demuxer, and returns true if it succeeded.
-  virtual bool AddRole(base::StringPiece role,
-                       std::string container,
-                       std::string codec) = 0;
+  virtual bool AddRole(std::string_view role,
+                       RelaxedParserSupportedType mime) = 0;
 
   // Removes a role (on the media thread) to ensure that there are no
   // media-thread-bound weak references.
-  virtual void RemoveRole(base::StringPiece role) = 0;
+  virtual void RemoveRole(std::string_view role) = 0;
 
   // Sets the sequence mode flag for a |role| which has been created with
   // `AddRole`
-  virtual void SetSequenceMode(base::StringPiece role, bool sequence_mode) = 0;
+  virtual void SetSequenceMode(std::string_view role, bool sequence_mode) = 0;
 
   // Sets the chunk demuxer duration.
   virtual void SetDuration(double duration) = 0;
 
   // Get the ranges that chunk demuxer has loaded, which allow seeking to avoid
   // fetching new data, if the seek is into a loaded range already.
-  virtual Ranges<base::TimeDelta> GetBufferedRanges(base::StringPiece role) = 0;
+  virtual Ranges<base::TimeDelta> GetBufferedRanges(std::string_view role) = 0;
 
   // Removes all data from the chunk demuxer between `start` and `end`.
-  virtual void Remove(base::StringPiece role,
+  virtual void Remove(std::string_view role,
                       base::TimeDelta start,
                       base::TimeDelta end) = 0;
 
   // Removes all data from the chunk demuxer between |start| and |end| for a
   // given role, and resets the parser state while updating the parse offset.
-  virtual void RemoveAndReset(base::StringPiece role,
+  virtual void RemoveAndReset(std::string_view role,
                               base::TimeDelta start,
                               base::TimeDelta end,
                               base::TimeDelta* offset) = 0;
 
   // Checks to see if we're parsing a media segment and if it is the case, then
   // resets the group start timestamp.
-  virtual void SetGroupStartIfParsingAndSequenceMode(base::StringPiece role,
+  virtual void SetGroupStartIfParsingAndSequenceMode(std::string_view role,
                                                      base::TimeDelta start) = 0;
 
   // Evicts frames from chunk demuxer.
-  virtual void EvictCodedFrames(base::StringPiece role,
+  virtual void EvictCodedFrames(std::string_view role,
                                 base::TimeDelta time,
                                 size_t data_size) = 0;
 
   // Appends data to the chunk demuxer, parses it, and returns true if the new
   // data was parsed successfully.
-  virtual bool AppendAndParseData(base::StringPiece role,
-                                  base::TimeDelta start,
+  virtual bool AppendAndParseData(std::string_view role,
                                   base::TimeDelta end,
                                   base::TimeDelta* offset,
-                                  const uint8_t* data,
-                                  size_t data_size) = 0;
+                                  base::span<const uint8_t> data) = 0;
+
+  // Reset the parser state in chunk demuxer.
+  virtual void ResetParserState(std::string_view role,
+                                base::TimeDelta end,
+                                base::TimeDelta* offset) = 0;
 
   // Allow seeking from within an implementation.
   virtual void RequestSeek(base::TimeDelta time) = 0;
@@ -93,8 +98,11 @@ class MEDIA_EXPORT ManifestDemuxerEngineHost {
   // Handle errors.
   virtual void OnError(PipelineStatus error) = 0;
 
-  virtual void SetGroupStartTimestamp(base::StringPiece role,
+  virtual void SetGroupStartTimestamp(std::string_view role,
                                       base::TimeDelta time) = 0;
+
+  virtual void SetEndOfStream() = 0;
+  virtual void UnsetEndOfStream() = 0;
 };
 
 // A Demuxer designed to allow implementation of media demuxers which don't
@@ -105,6 +113,18 @@ class MEDIA_EXPORT ManifestDemuxerEngineHost {
 class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
  public:
   using DelayCallback = base::OnceCallback<void(base::TimeDelta)>;
+
+  // Seeks respond with either:
+  //  - an error
+  //  - kIsReady: buffers are full and chunk demuxer can seek normally.
+  //  - kNeedsData: buffers are empty and need more data before chunk demuxer
+  //                would otherwise finish seeking.
+  enum class SeekState {
+    kIsReady,
+    kNeedsData,
+  };
+  using SeekResponse = PipelineStatus::Or<SeekState>;
+  using SeekCallback = base::OnceCallback<void(SeekResponse)>;
 
   class Engine {
    public:
@@ -128,24 +148,30 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
 
     // A synchronous seek, mostly intended to reset parts of the chunk
     // demuxer. returns whether the chunk demuxer needs more data.
-    virtual bool Seek(base::TimeDelta time) = 0;
+    virtual void Seek(base::TimeDelta time, SeekCallback cb) = 0;
 
     // Start waiting for seek, usually means canceling outstanding events
     // and network fetches.
     virtual void StartWaitingForSeek() = 0;
 
-    // Abort any pending reads, parses, or network requests.
-    virtual void AbortPendingReads() = 0;
+    // Abort any pending reads, parses, or network requests. calls CB when
+    // finished.
+    virtual void AbortPendingReads(base::OnceClosure cb) = 0;
 
     // Returns whether this engine supports seeking. Some live stream content
     // can't be seeked.
-    virtual bool IsSeekable() = 0;
+    virtual bool IsSeekable() const = 0;
 
     // Gets the memory usage of the engine.
     virtual int64_t GetMemoryUsage() const = 0;
 
     // Stop demuxing and clean up pending CBs.
     virtual void Stop() = 0;
+
+    // Handle track changes. Only one audio or video track is allowed to be
+    // enabled at once.
+    virtual void SelectVideoVariant(const MediaTrack::Id&) = 0;
+    virtual void SelectAudioRendition(const MediaTrack::Id&) = 0;
   };
 
   // ManifestDemuxer takes and keeps ownership of `impl` for the lifetime of
@@ -172,47 +198,45 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
   base::Time GetTimelineOffset() const override;
   int64_t GetMemoryUsage() const override;
   void SetPlaybackRate(double rate) override;
-  absl::optional<container_names::MediaContainerName> GetContainerForMetrics()
+  std::optional<container_names::MediaContainerName> GetContainerForMetrics()
       const override;
 
-  void OnEnabledAudioTracksChanged(const std::vector<MediaTrack::Id>& track_ids,
-                                   base::TimeDelta curr_time,
-                                   TrackChangeCB change_completed_cb) override;
-  void OnSelectedVideoTrackChanged(const std::vector<MediaTrack::Id>& track_ids,
-                                   base::TimeDelta curr_time,
-                                   TrackChangeCB change_completed_cb) override;
+  void OnTracksChanged(DemuxerStream::Type track_type,
+                       std::optional<MediaTrack::Id> track_id,
+                       base::TimeDelta curr_time,
+                       TrackChangeCB change_completed_cb) override;
 
   // `ManifestDemuxerEngineHost` implementation
-  bool AddRole(base::StringPiece role,
-               std::string container,
-               std::string codec) override;
-  void RemoveRole(base::StringPiece role) override;
-  void SetSequenceMode(base::StringPiece role, bool sequence_mode) override;
+  bool AddRole(std::string_view role, RelaxedParserSupportedType mime) override;
+  void RemoveRole(std::string_view role) override;
+  void SetSequenceMode(std::string_view role, bool sequence_mode) override;
   void SetDuration(double duration) override;
-  Ranges<base::TimeDelta> GetBufferedRanges(base::StringPiece role) override;
-  void Remove(base::StringPiece role,
+  Ranges<base::TimeDelta> GetBufferedRanges(std::string_view role) override;
+  void Remove(std::string_view role,
               base::TimeDelta start,
               base::TimeDelta end) override;
-  void RemoveAndReset(base::StringPiece role,
+  void RemoveAndReset(std::string_view role,
                       base::TimeDelta start,
                       base::TimeDelta end,
                       base::TimeDelta* offset) override;
-  void SetGroupStartIfParsingAndSequenceMode(base::StringPiece role,
+  void SetGroupStartIfParsingAndSequenceMode(std::string_view role,
                                              base::TimeDelta start) override;
-  void EvictCodedFrames(base::StringPiece role,
+  void EvictCodedFrames(std::string_view role,
                         base::TimeDelta time,
                         size_t data_size) override;
-  bool AppendAndParseData(base::StringPiece role,
-                          base::TimeDelta start,
+  bool AppendAndParseData(std::string_view role,
                           base::TimeDelta end,
                           base::TimeDelta* offset,
-                          const uint8_t* data,
-                          size_t data_size) override;
+                          base::span<const uint8_t> data) override;
+  void ResetParserState(std::string_view role,
+                        base::TimeDelta end,
+                        base::TimeDelta* offset) override;
   void OnError(PipelineStatus status) override;
   void RequestSeek(base::TimeDelta time) override;
-
-  void SetGroupStartTimestamp(base::StringPiece role,
+  void SetGroupStartTimestamp(std::string_view role,
                               base::TimeDelta time) override;
+  void SetEndOfStream() override;
+  void UnsetEndOfStream() override;
 
   // Allow unit tests to grab the chunk demuxer.
   ChunkDemuxer* GetChunkDemuxerForTesting();
@@ -248,14 +272,20 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
     raw_ptr<DemuxerStream> stream_;
   };
 
+  void OnChunkDemuxerTracksChangeComplete(
+      DemuxerStream::Type type,
+      std::optional<MediaTrack::Id> track_id,
+      TrackChangeCB change_completed_cb,
+      DemuxerStream* stream);
+
   void OnChunkDemuxerInitialized(PipelineStatus init_status);
   void OnChunkDemuxerOpened();
   void OnProgress();
   void OnEncryptedMediaData(EmeInitDataType type,
                             const std::vector<uint8_t>& data);
-  void OnChunkDemuxerParseWarning(base::StringPiece role,
+  void OnChunkDemuxerParseWarning(std::string role,
                                   SourceBufferParseWarning warning);
-  void OnChunkDemuxerTracksChanged(base::StringPiece role,
+  void OnChunkDemuxerTracksChanged(std::string role,
                                    std::unique_ptr<MediaTracks> tracks);
 
   void OnDemuxerStreamRead(DemuxerStream::ReadCB wrapped_read_cb,
@@ -265,9 +295,9 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
   // Helper for the `Seek` call, so that returning from an event when a seek
   // is pending can continue the seek process.
   void SeekInternal();
+  void OnEngineSeeked(SeekResponse seek_status);
   void OnChunkDemuxerSeeked(PipelineStatus seek_status);
-  void OnEngineSeekComplete(base::TimeDelta delay_time);
-  void TryCompletePendingSeek();
+  void OnSeekBuffered(base::TimeDelta delay_time);
 
   // Allows for both the chunk demuxer and the engine to be required for
   // initialization.
@@ -314,13 +344,14 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
   bool demuxer_opened_ = false;
   bool engine_impl_ready_ = false;
 
-  // Flag for the two-cb wait for finishing a seek.
-  bool seek_waiting_on_engine_ = false;
-  bool seek_waiting_on_demuxer_ = false;
+  bool can_complete_seek_ = true;
 
   // Pending an event. Don't trigger a new event chain while one is in
   // progress.
   bool has_pending_event_ = false;
+
+  std::optional<MediaTrack::Id> internal_video_track_id_;
+  std::optional<MediaTrack::Id> internal_audio_track_id_;
 
   // A pending "next event" callback, which can be canceled in the case of a
   // seek or a playback rate change.

@@ -5,6 +5,7 @@
 package org.chromium.content_public.browser;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
@@ -14,16 +15,16 @@ import android.view.View;
 
 import androidx.annotation.AttrRes;
 import androidx.annotation.IdRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.appcompat.content.res.AppCompatResources;
 
-import java.util.PriorityQueue;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 
-/**
- * Data class representing an item in the text selection menu.
- */
+import java.util.SortedSet;
+
+/** Data class representing an item in the text selection menu. */
+@NullMarked
 public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
     private final @AttrRes int mIconAttr;
     private final @Nullable Drawable mIcon;
@@ -34,15 +35,25 @@ public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
     public final int orderInCategory;
     public final int showAsActionFlags;
     public final @Nullable CharSequence contentDescription;
-    public final @Nullable View.OnClickListener clickListener;
+    public final View.@Nullable OnClickListener clickListener;
+    public final @Nullable Intent intent;
     public final boolean isEnabled;
     public final boolean isIconTintable;
 
-    private SelectionMenuItem(@IdRes int id, @AttrRes int iconAttr, @Nullable Drawable icon,
-            @StringRes int titleRes, @Nullable CharSequence title,
-            @Nullable Character alphabeticShortcut, int orderInCategory, int showAsActionFlags,
-            @Nullable CharSequence contentDescription, @Nullable View.OnClickListener clickListener,
-            boolean isEnabled, boolean isIconTintable) {
+    private SelectionMenuItem(
+            @IdRes int id,
+            @AttrRes int iconAttr,
+            @Nullable Drawable icon,
+            @StringRes int titleRes,
+            @Nullable CharSequence title,
+            @Nullable Character alphabeticShortcut,
+            int orderInCategory,
+            int showAsActionFlags,
+            @Nullable CharSequence contentDescription,
+            View.@Nullable OnClickListener clickListener,
+            @Nullable Intent intent,
+            boolean isEnabled,
+            boolean isIconTintable) {
         mIconAttr = iconAttr;
         mIcon = icon;
         mTitleRes = titleRes;
@@ -53,26 +64,21 @@ public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
         this.showAsActionFlags = showAsActionFlags;
         this.contentDescription = contentDescription;
         this.clickListener = clickListener;
+        this.intent = intent;
         this.isEnabled = isEnabled;
         this.isIconTintable = isIconTintable;
     }
 
-    /**
-     * Convenience method to return the title.
-     */
-    @Nullable
-    public CharSequence getTitle(Context context) {
+    /** Convenience method to return the title. */
+    public @Nullable CharSequence getTitle(Context context) {
         if (mTitleRes != 0) {
             return context.getString(mTitleRes);
         }
         return mTitle;
     }
 
-    /**
-     * Convenience method to return the icon, if any.
-     */
-    @Nullable
-    public Drawable getIcon(Context context) {
+    /** Convenience method to return the icon, if any. */
+    public @Nullable Drawable getIcon(Context context) {
         if (mIconAttr != 0) {
             try {
                 TypedArray a = context.obtainStyledAttributes(new int[] {mIconAttr});
@@ -88,43 +94,36 @@ public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
         return mIcon;
     }
 
-    /**
-     * For comparison. Mainly to be enable {@link PriorityQueue} sorting by order.
-     */
+    /** For comparison. Mainly to be enable {@link SortedSet} sorting by order. */
     @Override
     public int compareTo(SelectionMenuItem otherItem) {
         return orderInCategory - otherItem.orderInCategory;
     }
 
-    /**
-     * The builder class for {@link SelectionMenuItem}.
-     */
+    /** The builder class for {@link SelectionMenuItem}. */
     public static class Builder {
         private final @StringRes int mTitleRes;
         private final @Nullable CharSequence mTitle;
-        private @IdRes int mId;
+        public @IdRes int mId;
         private @AttrRes int mIconAttr;
         private @Nullable Drawable mIcon;
         private @Nullable Character mAlphabeticShortcut;
         private int mOrderInCategory;
         private int mShowAsActionFlags;
         private @Nullable CharSequence mContentDescription;
-        private @Nullable View.OnClickListener mClickListener;
+        private View.@Nullable OnClickListener mClickListener;
+        private @Nullable Intent mIntent;
         private boolean mIsEnabled;
         private boolean mIsIconTintable;
 
-        /**
-         * Pass in a non-null title.
-         */
-        public Builder(@NonNull CharSequence title) {
+        /** Pass in a non-null title. */
+        public Builder(@Nullable CharSequence title) {
             mTitle = title;
             mTitleRes = 0;
             initDefaults();
         }
 
-        /**
-         * Pass in a valid string res.
-         */
+        /** Pass in a valid string res. */
         public Builder(@StringRes int titleRes) {
             mTitleRes = titleRes;
             mTitle = null;
@@ -144,37 +143,30 @@ public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
             mShowAsActionFlags = Menu.NONE;
             mContentDescription = null;
             mClickListener = null;
+            mIntent = null;
             mIsEnabled = true;
             mIsIconTintable = false;
         }
 
-        /**
-         * The id of the menu item.
-         */
+        /** The id of the menu item. */
         public Builder setId(@IdRes int id) {
             mId = id;
             return this;
         }
 
-        /**
-         * The attribute resource for the icon. Pass 0 for none.
-         */
+        /** The attribute resource for the icon. Pass 0 for none. */
         public Builder setIconAttr(@AttrRes int iconAttr) {
             mIconAttr = iconAttr;
             return this;
         }
 
-        /**
-         * The drawable icon.
-         */
+        /** The drawable icon. */
         public Builder setIcon(@Nullable Drawable icon) {
             mIcon = icon;
             return this;
         }
 
-        /**
-         * The character keyboard shortcut. Default modifier is Ctrl.
-         */
+        /** The character keyboard shortcut. Default modifier is Ctrl. */
         public Builder setAlphabeticShortcut(@Nullable Character alphabeticShortcut) {
             mAlphabeticShortcut = alphabeticShortcut;
             return this;
@@ -200,45 +192,52 @@ public final class SelectionMenuItem implements Comparable<SelectionMenuItem> {
             return this;
         }
 
-        /**
-         * Content description for a11y.
-         */
+        /** Content description for a11y. */
         public Builder setContentDescription(@Nullable CharSequence contentDescription) {
             mContentDescription = contentDescription;
             return this;
         }
 
-        /**
-         * Click listener for when the menu item is clicked.
-         */
-        public Builder setClickListener(@Nullable View.OnClickListener clickListener) {
+        /** Click listener for when the menu item is clicked. */
+        public Builder setClickListener(View.@Nullable OnClickListener clickListener) {
             mClickListener = clickListener;
             return this;
         }
 
-        /**
-         * Pass in true if the item is enabled. Otherwise false.
-         */
+        /** The {@link Intent} for the menu item. */
+        public Builder setIntent(@Nullable Intent intent) {
+            mIntent = intent;
+            return this;
+        }
+
+        /** Pass in true if the item is enabled. Otherwise false. */
         public Builder setIsEnabled(boolean isEnabled) {
             mIsEnabled = isEnabled;
             return this;
         }
 
-        /**
-         * Pass in true if the icon can be safely tinted. Defaults to false.
-         */
+        /** Pass in true if the icon can be safely tinted. Defaults to false. */
         public Builder setIsIconTintable(boolean isIconTintable) {
             mIsIconTintable = isIconTintable;
             return this;
         }
 
-        /**
-         * Builds the menu item.
-         */
+        /** Builds the menu item. */
         public SelectionMenuItem build() {
-            return new SelectionMenuItem(mId, mIconAttr, mIcon, mTitleRes, mTitle,
-                    mAlphabeticShortcut, mOrderInCategory, mShowAsActionFlags, mContentDescription,
-                    mClickListener, mIsEnabled, mIsIconTintable);
+            return new SelectionMenuItem(
+                    mId,
+                    mIconAttr,
+                    mIcon,
+                    mTitleRes,
+                    mTitle,
+                    mAlphabeticShortcut,
+                    mOrderInCategory,
+                    mShowAsActionFlags,
+                    mContentDescription,
+                    mClickListener,
+                    mIntent,
+                    mIsEnabled,
+                    mIsIconTintable);
         }
     }
 }

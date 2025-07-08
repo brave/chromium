@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_ASH_CROSTINI_CROSTINI_EXPORT_IMPORT_STATUS_TRACKER_H_
 #define CHROME_BROWSER_ASH_CROSTINI_CROSTINI_EXPORT_IMPORT_STATUS_TRACKER_H_
 
+#include <stdint.h>
+
 #include <memory>
 #include <string>
 
@@ -57,6 +59,7 @@ class CrostiniExportImportStatusTracker {
       const std::string& architecture_container,
       const std::string& architecture_device);
   void SetStatusFailedInsufficientSpace(uint64_t additional_required_space);
+  void SetStatusFailedInsufficientSpaceUnknownAmount();
   void SetStatusFailedConcurrentOperation(
       ExportImportType in_progress_operation_type);
 

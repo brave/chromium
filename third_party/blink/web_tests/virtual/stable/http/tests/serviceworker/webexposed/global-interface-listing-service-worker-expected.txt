@@ -19,6 +19,16 @@ interface AbortSignal : EventTarget
     method constructor
     method throwIfAborted
     setter onabort
+interface AsyncDisposableStack
+    attribute @@toStringTag
+    getter disposed
+    method Symbol(Symbol.asyncDispose)
+    method adopt
+    method constructor
+    method defer
+    method disposeAsync
+    method move
+    method use
 interface BackgroundFetchEvent : ExtendableEvent
     attribute @@toStringTag
     getter registration
@@ -162,6 +172,11 @@ interface CountQueuingStrategy
     getter highWaterMark
     getter size
     method constructor
+interface CreateMonitor : EventTarget
+    attribute @@toStringTag
+    getter ondownloadprogress
+    method constructor
+    setter ondownloadprogress
 interface CropTarget
     attribute @@toStringTag
     method constructor
@@ -387,6 +402,16 @@ interface DecompressionStream
     getter readable
     getter writable
     method constructor
+interface DisposableStack
+    attribute @@toStringTag
+    getter disposed
+    method Symbol(Symbol.dispose)
+    method adopt
+    method constructor
+    method defer
+    method dispose
+    method move
+    method use
 interface ErrorEvent : Event
     attribute @@toStringTag
     getter colno
@@ -443,6 +468,7 @@ interface EventTarget
     method constructor
     method dispatchEvent
     method removeEventListener
+    method when
 interface ExtendableCookieChangeEvent : ExtendableEvent
     attribute @@toStringTag
     getter changed
@@ -537,10 +563,14 @@ interface FileSystemHandle
     method requestPermission
 interface FileSystemWritableFileStream : WritableStream
     attribute @@toStringTag
+    getter mode
     method constructor
     method seek
     method truncate
     method write
+interface Float16Array : TypedArray
+    attribute BYTES_PER_ELEMENT
+    method constructor
 interface FontFace
     attribute @@toStringTag
     getter ascentOverride
@@ -585,6 +615,326 @@ interface FormData
     method keys
     method set
     method values
+interface GPU
+    attribute @@toStringTag
+    getter wgslLanguageFeatures
+    method constructor
+    method getPreferredCanvasFormat
+    method requestAdapter
+interface GPUAdapter
+    attribute @@toStringTag
+    getter features
+    getter info
+    getter limits
+    method constructor
+    method requestDevice
+interface GPUAdapterInfo
+    attribute @@toStringTag
+    getter architecture
+    getter description
+    getter device
+    getter isFallbackAdapter
+    getter subgroupMaxSize
+    getter subgroupMinSize
+    getter vendor
+    method constructor
+interface GPUBindGroup
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUBindGroupLayout
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUBuffer
+    attribute @@toStringTag
+    getter label
+    getter mapState
+    getter size
+    getter usage
+    method constructor
+    method destroy
+    method getMappedRange
+    method mapAsync
+    method unmap
+    setter label
+interface GPUCanvasContext
+    attribute @@toStringTag
+    getter canvas
+    method configure
+    method constructor
+    method getConfiguration
+    method getCurrentTexture
+    method unconfigure
+interface GPUCommandBuffer
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUCommandEncoder
+    attribute @@toStringTag
+    getter label
+    method beginComputePass
+    method beginRenderPass
+    method clearBuffer
+    method constructor
+    method copyBufferToBuffer
+    method copyBufferToTexture
+    method copyTextureToBuffer
+    method copyTextureToTexture
+    method finish
+    method insertDebugMarker
+    method popDebugGroup
+    method pushDebugGroup
+    method resolveQuerySet
+    setter label
+interface GPUCompilationInfo
+    attribute @@toStringTag
+    getter messages
+    method constructor
+interface GPUCompilationMessage
+    attribute @@toStringTag
+    getter length
+    getter lineNum
+    getter linePos
+    getter message
+    getter offset
+    getter type
+    method constructor
+interface GPUComputePassEncoder
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method dispatchWorkgroups
+    method dispatchWorkgroupsIndirect
+    method end
+    method insertDebugMarker
+    method popDebugGroup
+    method pushDebugGroup
+    method setBindGroup
+    method setPipeline
+    method writeTimestamp
+    setter label
+interface GPUComputePipeline
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method getBindGroupLayout
+    setter label
+interface GPUDevice : EventTarget
+    attribute @@toStringTag
+    getter adapterInfo
+    getter features
+    getter label
+    getter limits
+    getter lost
+    getter onuncapturederror
+    getter queue
+    method constructor
+    method createBindGroup
+    method createBindGroupLayout
+    method createBuffer
+    method createCommandEncoder
+    method createComputePipeline
+    method createComputePipelineAsync
+    method createPipelineLayout
+    method createQuerySet
+    method createRenderBundleEncoder
+    method createRenderPipeline
+    method createRenderPipelineAsync
+    method createSampler
+    method createShaderModule
+    method createTexture
+    method destroy
+    method importExternalTexture
+    method popErrorScope
+    method pushErrorScope
+    setter label
+    setter onuncapturederror
+interface GPUDeviceLostInfo
+    attribute @@toStringTag
+    getter message
+    getter reason
+    method constructor
+interface GPUError
+    attribute @@toStringTag
+    getter message
+    method constructor
+interface GPUExternalTexture
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUInternalError : GPUError
+    attribute @@toStringTag
+    method constructor
+interface GPUOutOfMemoryError : GPUError
+    attribute @@toStringTag
+    method constructor
+interface GPUPipelineError : DOMException
+    attribute @@toStringTag
+    getter reason
+    method constructor
+interface GPUPipelineLayout
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUQuerySet
+    attribute @@toStringTag
+    getter count
+    getter label
+    getter type
+    method constructor
+    method destroy
+    setter label
+interface GPUQueue
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method copyExternalImageToTexture
+    method onSubmittedWorkDone
+    method submit
+    method writeBuffer
+    method writeTexture
+    setter label
+interface GPURenderBundle
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPURenderBundleEncoder
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method draw
+    method drawIndexed
+    method drawIndexedIndirect
+    method drawIndirect
+    method finish
+    method insertDebugMarker
+    method popDebugGroup
+    method pushDebugGroup
+    method setBindGroup
+    method setIndexBuffer
+    method setPipeline
+    method setVertexBuffer
+    setter label
+interface GPURenderPassEncoder
+    attribute @@toStringTag
+    getter label
+    method beginOcclusionQuery
+    method constructor
+    method draw
+    method drawIndexed
+    method drawIndexedIndirect
+    method drawIndirect
+    method end
+    method endOcclusionQuery
+    method executeBundles
+    method insertDebugMarker
+    method popDebugGroup
+    method pushDebugGroup
+    method setBindGroup
+    method setBlendConstant
+    method setIndexBuffer
+    method setPipeline
+    method setScissorRect
+    method setStencilReference
+    method setVertexBuffer
+    method setViewport
+    method writeTimestamp
+    setter label
+interface GPURenderPipeline
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method getBindGroupLayout
+    setter label
+interface GPUSampler
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUShaderModule
+    attribute @@toStringTag
+    getter label
+    method constructor
+    method getCompilationInfo
+    setter label
+interface GPUSupportedFeatures
+    attribute @@toStringTag
+    getter size
+    method @@iterator
+    method constructor
+    method entries
+    method forEach
+    method has
+    method keys
+    method values
+interface GPUSupportedLimits
+    attribute @@toStringTag
+    getter maxBindGroups
+    getter maxBindGroupsPlusVertexBuffers
+    getter maxBindingsPerBindGroup
+    getter maxBufferSize
+    getter maxColorAttachmentBytesPerSample
+    getter maxColorAttachments
+    getter maxComputeInvocationsPerWorkgroup
+    getter maxComputeWorkgroupSizeX
+    getter maxComputeWorkgroupSizeY
+    getter maxComputeWorkgroupSizeZ
+    getter maxComputeWorkgroupStorageSize
+    getter maxComputeWorkgroupsPerDimension
+    getter maxDynamicStorageBuffersPerPipelineLayout
+    getter maxDynamicUniformBuffersPerPipelineLayout
+    getter maxInterStageShaderVariables
+    getter maxSampledTexturesPerShaderStage
+    getter maxSamplersPerShaderStage
+    getter maxStorageBufferBindingSize
+    getter maxStorageBuffersPerShaderStage
+    getter maxStorageTexturesPerShaderStage
+    getter maxTextureArrayLayers
+    getter maxTextureDimension1D
+    getter maxTextureDimension2D
+    getter maxTextureDimension3D
+    getter maxUniformBufferBindingSize
+    getter maxUniformBuffersPerShaderStage
+    getter maxVertexAttributes
+    getter maxVertexBufferArrayStride
+    getter maxVertexBuffers
+    getter minStorageBufferOffsetAlignment
+    getter minUniformBufferOffsetAlignment
+    method constructor
+interface GPUTexture
+    attribute @@toStringTag
+    getter depthOrArrayLayers
+    getter dimension
+    getter format
+    getter height
+    getter label
+    getter mipLevelCount
+    getter sampleCount
+    getter usage
+    getter width
+    method constructor
+    method createView
+    method destroy
+    setter label
+interface GPUTextureView
+    attribute @@toStringTag
+    getter label
+    method constructor
+    setter label
+interface GPUUncapturedErrorEvent : Event
+    attribute @@toStringTag
+    getter error
+    method constructor
+interface GPUValidationError : GPUError
+    attribute @@toStringTag
+    method constructor
 interface Headers
     attribute @@toStringTag
     method @@iterator
@@ -751,10 +1101,12 @@ interface ImageData
     getter colorSpace
     getter data
     getter height
+    getter pixelFormat
     getter width
     method constructor
 interface InstallEvent : ExtendableEvent
     attribute @@toStringTag
+    method addRoutes
     method constructor
 interface Lock
     attribute @@toStringTag
@@ -854,6 +1206,29 @@ interface NotificationEvent : ExtendableEvent
     getter notification
     getter reply
     method constructor
+interface Observable
+    static method from
+    attribute @@toStringTag
+    method catch
+    method constructor
+    method drop
+    method every
+    method filter
+    method finally
+    method find
+    method first
+    method flatMap
+    method forEach
+    method inspect
+    method last
+    method map
+    method reduce
+    method some
+    method subscribe
+    method switchMap
+    method take
+    method takeUntil
+    method toArray
 interface OffscreenCanvas : EventTarget
     attribute @@toStringTag
     getter height
@@ -882,6 +1257,7 @@ interface OffscreenCanvasRenderingContext2D
     getter globalCompositeOperation
     getter imageSmoothingEnabled
     getter imageSmoothingQuality
+    getter lang
     getter letterSpacing
     getter lineCap
     getter lineDashOffset
@@ -915,6 +1291,7 @@ interface OffscreenCanvasRenderingContext2D
     method fill
     method fillRect
     method fillText
+    method getContextAttributes
     method getImageData
     method getLineDash
     method getTransform
@@ -952,6 +1329,7 @@ interface OffscreenCanvasRenderingContext2D
     setter globalCompositeOperation
     setter imageSmoothingEnabled
     setter imageSmoothingQuality
+    setter lang
     setter letterSpacing
     setter lineCap
     setter lineDashOffset
@@ -1054,6 +1432,7 @@ interface PerformanceResourceTiming : PerformanceEntry
     getter domainLookupStart
     getter encodedBodySize
     getter fetchStart
+    getter finalResponseHeadersStart
     getter firstInterimResponseStart
     getter initiatorType
     getter nextHopProtocol
@@ -1118,6 +1497,7 @@ interface PushMessageData
     attribute @@toStringTag
     method arrayBuffer
     method blob
+    method bytes
     method constructor
     method json
     method text
@@ -1130,10 +1510,20 @@ interface PushSubscription
     method getKey
     method toJSON
     method unsubscribe
+interface PushSubscriptionChangeEvent : ExtendableEvent
+    attribute @@toStringTag
+    getter newSubscription
+    getter oldSubscription
+    method constructor
 interface PushSubscriptionOptions
     attribute @@toStringTag
     getter applicationServerKey
     getter userVisibleOnly
+    method constructor
+interface QuotaExceededError : DOMException
+    attribute @@toStringTag
+    getter quota
+    getter requested
     method constructor
 interface ReadableByteStreamController
     attribute @@toStringTag
@@ -1146,12 +1536,14 @@ interface ReadableByteStreamController
 interface ReadableStream
     attribute @@toStringTag
     getter locked
+    method @@asyncIterator
     method cancel
     method constructor
     method getReader
     method pipeThrough
     method pipeTo
     method tee
+    method values
 interface ReadableStreamBYOBReader
     attribute @@toStringTag
     getter closed
@@ -1179,6 +1571,10 @@ interface ReadableStreamDefaultReader
     method constructor
     method read
     method releaseLock
+interface ReportBody
+    attribute @@toStringTag
+    method constructor
+    method toJSON
 interface ReportingObserver
     attribute @@toStringTag
     method constructor
@@ -1192,6 +1588,7 @@ interface Request
     getter cache
     getter credentials
     getter destination
+    getter duplex
     getter headers
     getter integrity
     getter isHistoryNavigation
@@ -1205,6 +1602,7 @@ interface Request
     getter url
     method arrayBuffer
     method blob
+    method bytes
     method clone
     method constructor
     method formData
@@ -1225,15 +1623,20 @@ interface Response
     getter url
     method arrayBuffer
     method blob
+    method bytes
     method clone
     method constructor
     method formData
     method json
     method text
+interface RestrictionTarget
+    attribute @@toStringTag
+    method constructor
 interface Scheduler
     attribute @@toStringTag
     method constructor
     method postTask
+    method yield
 interface SecurityPolicyViolationEvent : Event
     attribute @@toStringTag
     getter blockedURI
@@ -1283,12 +1686,38 @@ interface ServiceWorkerRegistration : EventTarget
     method unregister
     method update
     setter onupdatefound
-interface StorageManager : EventTarget
+interface StorageBucket
+    attribute @@toStringTag
+    getter caches
+    getter indexedDB
+    getter name
+    method constructor
+    method estimate
+    method expires
+    method getDirectory
+    method persisted
+    method setExpires
+interface StorageBucketManager
+    attribute @@toStringTag
+    method constructor
+    method delete
+    method keys
+    method open
+interface StorageManager
     attribute @@toStringTag
     method constructor
     method estimate
     method getDirectory
     method persisted
+interface Subscriber
+    attribute @@toStringTag
+    getter active
+    getter signal
+    method addTeardown
+    method complete
+    method constructor
+    method error
+    method next
 interface SubtleCrypto
     attribute @@toStringTag
     method constructor
@@ -1304,6 +1733,10 @@ interface SubtleCrypto
     method unwrapKey
     method verify
     method wrapKey
+interface SuppressedError : Error
+    attribute message
+    attribute name
+    method constructor
 interface SyncEvent : ExtendableEvent
     attribute @@toStringTag
     getter lastChance
@@ -1361,8 +1794,11 @@ interface TextMetrics
     getter actualBoundingBoxDescent
     getter actualBoundingBoxLeft
     getter actualBoundingBoxRight
+    getter alphabeticBaseline
     getter fontBoundingBoxAscent
     getter fontBoundingBoxDescent
+    getter hangingBaseline
+    getter ideographicBaseline
     getter width
     method constructor
 interface TransformStream
@@ -1413,6 +1849,8 @@ interface TrustedTypePolicyFactory : EventTarget
     method isScript
     method isScriptURL
 interface URL
+    static method canParse
+    static method parse
     attribute @@toStringTag
     getter hash
     getter host
@@ -1441,6 +1879,7 @@ interface URL
     setter username
 interface URLPattern
     attribute @@toStringTag
+    getter hasRegExpGroups
     getter hash
     getter hostname
     getter password
@@ -1474,6 +1913,16 @@ interface UserActivation
     getter hasBeenActive
     getter isActive
     method constructor
+interface WGSLLanguageFeatures
+    attribute @@toStringTag
+    getter size
+    method @@iterator
+    method constructor
+    method entries
+    method forEach
+    method has
+    method keys
+    method values
 interface WebGL2RenderingContext
     attribute @@toStringTag
     attribute ACTIVE_ATTRIBUTES
@@ -2037,6 +2486,7 @@ interface WebGL2RenderingContext
     attribute ZERO
     getter canvas
     getter drawingBufferColorSpace
+    getter drawingBufferFormat
     getter drawingBufferHeight
     getter drawingBufferWidth
     getter unpackColorSpace
@@ -2117,6 +2567,7 @@ interface WebGL2RenderingContext
     method drawElements
     method drawElementsInstanced
     method drawRangeElements
+    method drawingBufferStorage
     method enable
     method enableVertexAttribArray
     method endQuery
@@ -2274,23 +2725,26 @@ interface WebGLActiveInfo
     getter size
     getter type
     method constructor
-interface WebGLBuffer
+interface WebGLBuffer : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLContextEvent : Event
     attribute @@toStringTag
     getter statusMessage
     method constructor
-interface WebGLFramebuffer
+interface WebGLFramebuffer : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLProgram
+interface WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLQuery
+interface WebGLProgram : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLRenderbuffer
+interface WebGLQuery : WebGLObject
+    attribute @@toStringTag
+    method constructor
+interface WebGLRenderbuffer : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLRenderingContext
@@ -2477,8 +2931,10 @@ interface WebGLRenderingContext
     attribute RGB
     attribute RGB565
     attribute RGB5_A1
+    attribute RGB8
     attribute RGBA
     attribute RGBA4
+    attribute RGBA8
     attribute SAMPLER_2D
     attribute SAMPLER_CUBE
     attribute SAMPLES
@@ -2593,6 +3049,7 @@ interface WebGLRenderingContext
     attribute ZERO
     getter canvas
     getter drawingBufferColorSpace
+    getter drawingBufferFormat
     getter drawingBufferHeight
     getter drawingBufferWidth
     getter unpackColorSpace
@@ -2643,6 +3100,7 @@ interface WebGLRenderingContext
     method disableVertexAttribArray
     method drawArrays
     method drawElements
+    method drawingBufferStorage
     method enable
     method enableVertexAttribArray
     method finish
@@ -2736,10 +3194,10 @@ interface WebGLRenderingContext
     method viewport
     setter drawingBufferColorSpace
     setter unpackColorSpace
-interface WebGLSampler
+interface WebGLSampler : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLShader
+interface WebGLShader : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLShaderPrecisionFormat
@@ -2748,19 +3206,19 @@ interface WebGLShaderPrecisionFormat
     getter rangeMax
     getter rangeMin
     method constructor
-interface WebGLSync
+interface WebGLSync : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLTexture
+interface WebGLTexture : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLTransformFeedback
+interface WebGLTransformFeedback : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLUniformLocation
     attribute @@toStringTag
     method constructor
-interface WebGLVertexArrayObject
+interface WebGLVertexArrayObject : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebSocket : EventTarget
@@ -2787,6 +3245,18 @@ interface WebSocket : EventTarget
     setter onerror
     setter onmessage
     setter onopen
+interface WebSocketError : DOMException
+    attribute @@toStringTag
+    getter closeCode
+    getter reason
+    method constructor
+interface WebSocketStream
+    attribute @@toStringTag
+    getter closed
+    getter opened
+    getter url
+    method close
+    method constructor
 interface WebTransport
     attribute @@toStringTag
     getter closed
@@ -2888,6 +3358,7 @@ interface WorkerNavigator
     getter appVersion
     getter connection
     getter deviceMemory
+    getter gpu
     getter hardwareConcurrency
     getter language
     getter languages
@@ -2898,6 +3369,7 @@ interface WorkerNavigator
     getter platform
     getter product
     getter storage
+    getter storageBuckets
     getter userAgent
     getter userAgentData
     method clearAppBadge
@@ -2926,6 +3398,41 @@ interface WritableStreamDefaultWriter
     method releaseLock
     method write
 [NAMESPACES]
+namespace GPUBufferUsage
+    attribute @@toStringTag
+    attribute COPY_DST
+    attribute COPY_SRC
+    attribute INDEX
+    attribute INDIRECT
+    attribute MAP_READ
+    attribute MAP_WRITE
+    attribute QUERY_RESOLVE
+    attribute STORAGE
+    attribute UNIFORM
+    attribute VERTEX
+namespace GPUColorWrite
+    attribute @@toStringTag
+    attribute ALL
+    attribute ALPHA
+    attribute BLUE
+    attribute GREEN
+    attribute RED
+namespace GPUMapMode
+    attribute @@toStringTag
+    attribute READ
+    attribute WRITE
+namespace GPUShaderStage
+    attribute @@toStringTag
+    attribute COMPUTE
+    attribute FRAGMENT
+    attribute VERTEX
+namespace GPUTextureUsage
+    attribute @@toStringTag
+    attribute COPY_DST
+    attribute COPY_SRC
+    attribute RENDER_ATTACHMENT
+    attribute STORAGE_BINDING
+    attribute TEXTURE_BINDING
 namespace console
     attribute @@toStringTag
     method assert
@@ -2974,6 +3481,7 @@ namespace console
     getter onpaymentrequest
     getter onperiodicsync
     getter onpush
+    getter onpushsubscriptionchange
     getter onsync
     getter registration
     getter serviceWorker
@@ -2996,6 +3504,7 @@ namespace console
     setter onpaymentrequest
     setter onperiodicsync
     setter onpush
+    setter onpushsubscriptionchange
     setter onsync
 PASS Verify the interface of ServiceWorkerGlobalScope
 PASS successfullyParsed is true

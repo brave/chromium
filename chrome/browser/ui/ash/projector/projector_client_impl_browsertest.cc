@@ -23,10 +23,12 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/drivefs_test_support.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/projector/projector_app_client_impl.h"
 #include "chrome/browser/ui/ash/projector/projector_utils.h"
@@ -36,7 +38,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
-#include "chrome/browser/web_applications/web_app_id.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -46,6 +47,7 @@
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/icon_types.h"
+#include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
@@ -61,16 +63,6 @@ namespace {
 
 apps::AppServiceProxy* GetAppServiceProxy(Profile* profile) {
   return apps::AppServiceProxyFactory::GetForProfile(profile);
-}
-
-// Returns the account id for logging in.
-absl::optional<AccountId> GetPrimaryAccountId(bool is_managed) {
-  if (is_managed) {
-    return AccountId::FromUserEmailGaiaId(
-        FakeGaiaMixin::kEnterpriseUser1, FakeGaiaMixin::kEnterpriseUser1GaiaId);
-  }
-  // Use the default FakeGaiaMixin::kFakeUserEmail consumer test account id.
-  return absl::nullopt;
 }
 
 }  // namespace
@@ -115,7 +107,7 @@ class DriveFsMountStatusWaiter : public ProjectorAppClient::Observer {
 
  private:
   base::OnceClosure quit_closure_;
-  raw_ptr<drive::DriveIntegrationService, ExperimentalAsh> service_;
+  raw_ptr<drive::DriveIntegrationService> service_;
 };
 
 class ProjectorClientTest : public InProcessBrowserTest {
@@ -161,7 +153,8 @@ class ProjectorClientTest : public InProcessBrowserTest {
         std::make_unique<drive::FakeDriveFsHelper>(profile, mount_path);
     // The integration service is owned by `KeyedServiceFactory`.
     auto* integration_service = new drive::DriveIntegrationService(
-        profile, /*test_mount_point_name=*/std::string(), mount_path,
+        g_browser_process->local_state(), profile,
+        /*test_mount_point_name=*/std::string(), mount_path,
         fake_drivefs_helpers_[profile]->CreateFakeDriveFsListenerFactory());
     return integration_service;
   }
@@ -183,7 +176,6 @@ class ProjectorClientTest : public InProcessBrowserTest {
 // URLs are valid.
 IN_PROC_BROWSER_TEST_F(ProjectorClientTest, AppUrlsValid) {
   VerifyUrlValid(kChromeUIUntrustedProjectorUrl);
-  VerifyUrlValid(kChromeUIUntrustedAnnotatorUrl);
 }
 
 IN_PROC_BROWSER_TEST_F(ProjectorClientTest, OpenProjectorApp) {
@@ -342,17 +334,16 @@ class ProjectorClientManagedTest
 
   bool is_child() const { return GetParam(); }
 
-  bool is_managed() const { return !is_child(); }
-
   ProjectorClient* client() { return ProjectorClient::Get(); }
 
   std::string GetPolicy() {
-    if (is_child())
+    if (is_child()) {
       return prefs::kProjectorDogfoodForFamilyLinkEnabled;
+    }
     return prefs::kProjectorAllowByPolicy;
   }
 
-  apps::Readiness GetAppReadiness(const web_app::AppId& app_id) {
+  apps::Readiness GetAppReadiness(const webapps::AppId& app_id) {
     apps::Readiness readiness;
     bool app_found =
         GetAppServiceProxy(browser()->profile())
@@ -364,8 +355,8 @@ class ProjectorClientManagedTest
     return readiness;
   }
 
-  absl::optional<apps::IconKey> GetAppIconKey(const web_app::AppId& app_id) {
-    absl::optional<apps::IconKey> icon_key;
+  std::optional<apps::IconKey> GetAppIconKey(const webapps::AppId& app_id) {
+    std::optional<apps::IconKey> icon_key;
     bool app_found =
         GetAppServiceProxy(browser()->profile())
             ->AppRegistryCache()
@@ -380,13 +371,9 @@ class ProjectorClientManagedTest
   DeviceStateMixin device_state_{
       &mixin_host_, DeviceStateMixin::State::OOBE_COMPLETED_CONSUMER_OWNED};
   LoggedInUserMixin logged_in_user_mixin_{
-      &mixin_host_,
+      &mixin_host_, /*test_base=*/this, embedded_test_server(),
       is_child() ? LoggedInUserMixin::LogInType::kChild
-                 : LoggedInUserMixin::LogInType::kRegular,
-      embedded_test_server(),
-      this,
-      /*should_launch_browser=*/true,
-      GetPrimaryAccountId(is_managed())};
+                 : LoggedInUserMixin::LogInType::kManaged};
 };
 
 IN_PROC_BROWSER_TEST_P(ProjectorClientManagedTest,
@@ -397,8 +384,9 @@ IN_PROC_BROWSER_TEST_P(ProjectorClientManagedTest,
   ui_test_utils::BrowserChangeObserver browser_opened(
       nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
   client()->OpenProjectorApp();
-  if (!is_child())
+  if (!is_child()) {
     browser_opened.Wait();
+  }
 
   // Verify that Projector App is opened.
   Browser* app_browser =

@@ -16,7 +16,6 @@
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/renderers/paint_canvas_video_renderer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 
@@ -161,7 +160,8 @@ void DevToolsVideoConsumer::OnFrameCaptured(
     DLOG(ERROR) << "Shared memory mapping failed.";
     return;
   }
-  if (mapping.size() <
+  base::span<const uint8_t> mapping_memory(mapping);
+  if (mapping_memory.size() <
       media::VideoFrame::AllocationSize(info->pixel_format, info->coded_size)) {
     DLOG(ERROR) << "Shared memory size was less than expected.";
     return;
@@ -178,8 +178,7 @@ void DevToolsVideoConsumer::OnFrameCaptured(
   // portion of the frame that contains content is used.
   scoped_refptr<media::VideoFrame> frame = media::VideoFrame::WrapExternalData(
       info->pixel_format, info->coded_size, content_rect, content_rect.size(),
-      static_cast<const uint8_t*>(mapping.memory()), mapping.size(),
-      info->timestamp);
+      mapping_memory, info->timestamp);
   if (!frame) {
     DLOG(ERROR) << "Unable to create VideoFrame wrapper around the shmem.";
     return;

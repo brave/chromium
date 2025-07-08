@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/constants/ash_features.h"
 #include "ash/system/network/network_feature_pod_controller.h"
+#include "ash/system/tray/tray_constants.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/system/unified/unified_system_tray_bubble.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/pixel/ash_pixel_differ.h"
 #include "ash/test/pixel/ash_pixel_test_init_params.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/strings/stringprintf.h"
 #include "chromeos/ash/components/network/network_state_test_helper.h"
 #include "chromeos/ash/services/network_config/public/cpp/cros_network_config_test_helper.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "ui/chromeos/styles/cros_tokens_color_mappings.h"
+#include "ui/views/layout/flex_layout_types.h"
 #include "ui/views/view.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -37,15 +40,25 @@ constexpr char kServicePatternEthernet[] = R"({
 constexpr char kServicePatternWiFi[] = R"({
     "GUID": "%s", "Type": "wifi", "State": "online",
     "Strength": 100, "SecurityClass": "%s"})";
+
+// Configures a `Feature Tile` base to follow Quick Settings sizing standards.
+void ConfigureQSFeatureTile(FeatureTile* tile) {
+  // Quick Settings Feature Tiles set a fixed size for their feature tiles.
+  tile->SetPreferredSize(
+      gfx::Size(kPrimaryFeatureTileWidth, kFeatureTileHeight));
+  tile->SetProperty(
+      views::kFlexBehaviorKey,
+      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
+                               views::MaximumFlexSizeRule::kPreferred,
+                               /*adjust_height_for_width=*/false));
+}
+
 }  // namespace
 
 // Pixel test for the quick settings network feature tile view.
 class NetworkFeatureTilePixelTest : public AshTestBase {
  public:
-  NetworkFeatureTilePixelTest() {
-    feature_list_.InitWithFeatures(
-        {features::kQsRevamp, chromeos::features::kJelly}, {});
-  }
+  NetworkFeatureTilePixelTest() = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -60,7 +73,20 @@ class NetworkFeatureTilePixelTest : public AshTestBase {
     widget_ = CreateFramelessTestWidget();
     widget_->SetFullscreen(true);
 
-    feature_tile_ = widget_->SetContentsView(std::move(feature_tile));
+    auto* contents =
+        widget_->SetContentsView(std::make_unique<views::BoxLayoutView>());
+    contents->SetMainAxisAlignment(
+        views::BoxLayout::MainAxisAlignment::kCenter);
+    contents->SetCrossAxisAlignment(
+        views::BoxLayout::CrossAxisAlignment::kCenter);
+    // The tile colors have transparency, so set a background color so they
+    // render like in production.
+    contents->SetBackground(
+        views::CreateSolidBackground(cros_tokens::kCrosSysSystemBaseElevated));
+
+    feature_tile_ =
+        widget_->GetContentsView()->AddChildView(std::move(feature_tile));
+    ConfigureQSFeatureTile(feature_tile_);
 
     // Add the non-default cellular and ethernet devices to Shill.
     network_state_helper()->manager_test()->AddTechnology(shill::kTypeCellular,
@@ -82,7 +108,7 @@ class NetworkFeatureTilePixelTest : public AshTestBase {
   }
 
   // AshTestBase:
-  absl::optional<pixel_test::InitParams> CreatePixelTestInitParams()
+  std::optional<pixel_test::InitParams> CreatePixelTestInitParams()
       const override {
     return pixel_test::InitParams();
   }
@@ -130,7 +156,6 @@ class NetworkFeatureTilePixelTest : public AshTestBase {
     return network_state_helper()->ConfigureService(shill_json_string);
   }
 
-  base::test::ScopedFeatureList feature_list_;
   std::string cellular_path_;
   std::string ethernet_path_;
   std::string wifi_path_;
@@ -138,7 +163,7 @@ class NetworkFeatureTilePixelTest : public AshTestBase {
   std::unique_ptr<NetworkFeaturePodController> network_feature_pod_controller_;
   network_config::CrosNetworkConfigTestHelper network_config_helper_;
   // Owned by `widget_`.
-  raw_ptr<FeatureTile, ExperimentalAsh> feature_tile_ = nullptr;
+  raw_ptr<FeatureTile, DanglingUntriaged> feature_tile_ = nullptr;
 };
 
 TEST_F(NetworkFeatureTilePixelTest, NoNetworks) {
@@ -146,7 +171,7 @@ TEST_F(NetworkFeatureTilePixelTest, NoNetworks) {
   ASSERT_TRUE(tile_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "check_tile_view",
-      /*revision_number=*/2, tile_view));
+      /*revision_number=*/4, tile_view));
 }
 
 TEST_F(NetworkFeatureTilePixelTest, Ethernet) {
@@ -158,7 +183,7 @@ TEST_F(NetworkFeatureTilePixelTest, Ethernet) {
   ASSERT_TRUE(tile_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "check_tile_view",
-      /*revision_number=*/1, tile_view));
+      /*revision_number=*/3, tile_view));
 }
 
 TEST_F(NetworkFeatureTilePixelTest, Wifi) {
@@ -170,7 +195,7 @@ TEST_F(NetworkFeatureTilePixelTest, Wifi) {
   ASSERT_TRUE(tile_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "check_tile_view",
-      /*revision_number=*/1, tile_view));
+      /*revision_number=*/3, tile_view));
 }
 
 TEST_F(NetworkFeatureTilePixelTest, WifiSecurity) {
@@ -182,7 +207,7 @@ TEST_F(NetworkFeatureTilePixelTest, WifiSecurity) {
   ASSERT_TRUE(tile_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "check_tile_view",
-      /*revision_number=*/0, tile_view));
+      /*revision_number=*/2, tile_view));
 }
 
 TEST_F(NetworkFeatureTilePixelTest, Cellular) {
@@ -194,7 +219,7 @@ TEST_F(NetworkFeatureTilePixelTest, Cellular) {
   ASSERT_TRUE(tile_view);
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "check_tile_view",
-      /*revision_number=*/1, tile_view));
+      /*revision_number=*/3, tile_view));
 }
 
 }  // namespace ash

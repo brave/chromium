@@ -4,6 +4,9 @@
 
 #include "content/public/browser/navigation_throttle.h"
 
+#include <utility>
+
+#include "base/check_deref.h"
 #include "content/browser/renderer_host/navigation_request.h"
 
 namespace content {
@@ -25,7 +28,6 @@ net::Error DefaultNetErrorCode(NavigationThrottle::ThrottleAction action) {
       return net::ERR_BLOCKED_BY_RESPONSE;
     default:
       NOTREACHED();
-      return net::ERR_UNEXPECTED;
   }
 }
 
@@ -35,30 +37,30 @@ NavigationThrottle::ThrottleCheckResult::ThrottleCheckResult(
     NavigationThrottle::ThrottleAction action)
     : NavigationThrottle::ThrottleCheckResult(action,
                                               DefaultNetErrorCode(action),
-                                              absl::nullopt) {}
+                                              std::nullopt) {}
 
 NavigationThrottle::ThrottleCheckResult::ThrottleCheckResult(
     NavigationThrottle::ThrottleAction action,
     net::Error net_error_code)
     : NavigationThrottle::ThrottleCheckResult(action,
                                               net_error_code,
-                                              absl::nullopt) {}
+                                              std::nullopt) {}
 
 NavigationThrottle::ThrottleCheckResult::ThrottleCheckResult(
     NavigationThrottle::ThrottleAction action,
     net::Error net_error_code,
-    absl::optional<std::string> error_page_content)
+    std::optional<std::string> error_page_content)
     : action_(action),
       net_error_code_(net_error_code),
-      error_page_content_(error_page_content) {}
+      error_page_content_(std::move(error_page_content)) {}
 
 NavigationThrottle::ThrottleCheckResult::ThrottleCheckResult(
     const ThrottleCheckResult& other) = default;
 
 NavigationThrottle::ThrottleCheckResult::~ThrottleCheckResult() {}
 
-NavigationThrottle::NavigationThrottle(NavigationHandle* navigation_handle)
-    : navigation_handle_(navigation_handle) {}
+NavigationThrottle::NavigationThrottle(NavigationThrottleRegistry& registry)
+    : registry_(registry) {}
 
 NavigationThrottle::~NavigationThrottle() {}
 
@@ -90,7 +92,7 @@ void NavigationThrottle::Resume() {
     resume_callback_.Run();
     return;
   }
-  NavigationRequest::From(navigation_handle_)->Resume(this);
+  NavigationRequest::From(&registry_->GetNavigationHandle())->Resume(this);
 }
 
 void NavigationThrottle::CancelDeferredNavigation(
@@ -99,7 +101,7 @@ void NavigationThrottle::CancelDeferredNavigation(
     cancel_deferred_navigation_callback_.Run(result);
     return;
   }
-  NavigationRequest::From(navigation_handle_)
+  NavigationRequest::From(&registry_->GetNavigationHandle())
       ->CancelDeferredNavigation(this, result);
 }
 

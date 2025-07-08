@@ -5,12 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "net/proxy_resolution/proxy_list.h"
 
 // Entry point for LibFuzzer.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::ProxyList list;
-  std::string input(data, data + size);
+  std::string input(data, UNSAFE_TODO(data + size));
   list.SetFromPacString(input);
   return 0;
 }

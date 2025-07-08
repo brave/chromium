@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ash/video_conference/video_conference_app_service_client.h"
 
+#include <variant>
+
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/containers/contains.h"
@@ -37,12 +39,10 @@ crosapi::mojom::VideoConferenceAppType ToVideoConferenceAppType(
     case apps::AppType::kArc:
       return crosapi::mojom::VideoConferenceAppType::kArcApp;
     case apps::AppType::kChromeApp:
-    case apps::AppType::kStandaloneBrowserChromeApp:
       return crosapi::mojom::VideoConferenceAppType::kChromeApp;
     case apps::AppType::kWeb:
       return crosapi::mojom::VideoConferenceAppType::kWebApp;
     case apps::AppType::kExtension:
-    case apps::AppType::kStandaloneBrowserExtension:
       return crosapi::mojom::VideoConferenceAppType::kChromeExtension;
     default:
       return crosapi::mojom::VideoConferenceAppType::kAppServiceUnknown;
@@ -50,8 +50,8 @@ crosapi::mojom::VideoConferenceAppType ToVideoConferenceAppType(
 }
 
 bool IsPermissionAsked(const apps::PermissionPtr& permission) {
-  return absl::holds_alternative<apps::TriState>(permission->value) &&
-         absl::get<apps::TriState>(permission->value) == apps::TriState::kAsk;
+  return std::holds_alternative<apps::TriState>(permission->value) &&
+         std::get<apps::TriState>(permission->value) == apps::TriState::kAsk;
 }
 
 }  // namespace
@@ -108,7 +108,7 @@ void VideoConferenceAppServiceClient::GetMediaApps(
         /*is_capturing_microphone=*/app_state.is_capturing_microphone,
         /*is_capturing_screen=*/false,
         /*title=*/base::UTF8ToUTF16(app_name),
-        /*url=*/absl::nullopt,
+        /*url=*/std::nullopt,
         /*app_type=*/ToVideoConferenceAppType(GetAppType(app_id))));
   }
 
@@ -137,7 +137,8 @@ void VideoConferenceAppServiceClient::ReturnToApp(
     return;
   }
 
-  for (auto* instance : instance_registry_->GetInstances(app_id)) {
+  for (const apps::Instance* instance :
+       instance_registry_->GetInstances(app_id)) {
     // This is required in unit tests to reactivate an app.
     instance->Window()->Show();
     // This is required in virtual desktop to reactivate an arc++ app.

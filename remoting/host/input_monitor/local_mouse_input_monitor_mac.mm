@@ -8,11 +8,11 @@
 
 #include <utility>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
@@ -20,10 +20,6 @@
 #import "base/task/single_thread_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace remoting {
 namespace {
@@ -63,8 +59,8 @@ class LocalMouseInputMonitorMac : public LocalPointerInputMonitor {
 
 @interface LocalInputMonitorManager : NSObject {
  @private
-  base::ScopedCFTypeRef<CFRunLoopSourceRef> _mouseRunLoopSource;
-  base::ScopedCFTypeRef<CFMachPortRef> _mouseMachPort;
+  base::apple::ScopedCFTypeRef<CFRunLoopSourceRef> _mouseRunLoopSource;
+  base::apple::ScopedCFTypeRef<CFMachPortRef> _mouseMachPort;
   raw_ptr<remoting::LocalMouseInputMonitorMac::EventHandler> _monitor;
 }
 
@@ -105,8 +101,8 @@ static CGEventRef LocalMouseMoved(CGEventTapProxy proxy,
         1 << kCGEventMouseMoved, LocalMouseMoved, (__bridge void*)self));
     if (_mouseMachPort) {
       _mouseRunLoopSource.reset(
-          CFMachPortCreateRunLoopSource(nullptr, _mouseMachPort, 0));
-      CFRunLoopAddSource(CFRunLoopGetMain(), _mouseRunLoopSource,
+          CFMachPortCreateRunLoopSource(nullptr, _mouseMachPort.get(), 0));
+      CFRunLoopAddSource(CFRunLoopGetMain(), _mouseRunLoopSource.get(),
                          kCFRunLoopCommonModes);
     } else {
       LOG(ERROR) << "CGEventTapCreate failed.";
@@ -123,8 +119,8 @@ static CGEventRef LocalMouseMoved(CGEventTapProxy proxy,
 
 - (void)invalidate {
   if (_mouseRunLoopSource) {
-    CFMachPortInvalidate(_mouseMachPort);
-    CFRunLoopRemoveSource(CFRunLoopGetMain(), _mouseRunLoopSource,
+    CFMachPortInvalidate(_mouseMachPort.get());
+    CFRunLoopRemoveSource(CFRunLoopGetMain(), _mouseRunLoopSource.get(),
                           kCFRunLoopCommonModes);
     _mouseMachPort.reset();
     _mouseRunLoopSource.reset();
@@ -239,7 +235,8 @@ void LocalMouseInputMonitorMac::Core::OnLocalMouseMoved(
   mouse_position_ = position;
 
   caller_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(on_mouse_move_, position, ui::ET_MOUSE_MOVED));
+      FROM_HERE,
+      base::BindOnce(on_mouse_move_, position, ui::EventType::kMouseMoved));
 }
 
 }  // namespace

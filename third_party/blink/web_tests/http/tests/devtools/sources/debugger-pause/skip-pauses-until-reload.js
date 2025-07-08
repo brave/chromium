@@ -7,17 +7,17 @@ import {ElementsTestRunner} from 'elements_test_runner';
 import {SourcesTestRunner} from 'sources_test_runner';
 import {ConsoleTestRunner} from 'console_test_runner';
 
+import * as SDK from 'devtools/core/sdk/sdk.js';
+
 (async function() {
   TestRunner.addResult(
       `Tests that 'skip all pauses' mode blocks breakpoint and gets cancelled right at page reload.`);
-  await TestRunner.loadLegacyModule('elements');
-  await TestRunner.loadLegacyModule('sources'); await TestRunner.loadLegacyModule('panels/browser_debugger');
-  await TestRunner.loadLegacyModule('console');
   await TestRunner.showPanel('sources');
 
   await TestRunner.navigatePromise('resources/skip-pauses-until-reload.html')
 
   SourcesTestRunner.startDebuggerTest(step1);
+  SourcesTestRunner.setQuiet(true);
 
   function step1() {
     SourcesTestRunner.showScriptSource(
@@ -64,6 +64,7 @@ import {ConsoleTestRunner} from 'console_test_runner';
 
   async function didPause(callFrames) {
     testRunner.logToStderr('didPause');
+    TestRunner.addResult('Script execution paused.');
     await SourcesTestRunner.captureStackTrace(callFrames);
     TestRunner.DebuggerAgent.setSkipAllPauses(true).then(didSetSkipAllPauses);
   }
@@ -97,7 +98,6 @@ import {ConsoleTestRunner} from 'console_test_runner';
 
   function completeTest() {
     testRunner.logToStderr('completeTest');
-    SourcesTestRunner.setEventListenerBreakpoint('listener:click', false);
-    SourcesTestRunner.completeDebuggerTest();
+    TestRunner.completeTest();
   }
 })();

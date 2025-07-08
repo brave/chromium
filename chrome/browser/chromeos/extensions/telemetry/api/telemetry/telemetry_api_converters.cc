@@ -17,7 +17,7 @@
 #include "chromeos/services/network_config/public/mojom/network_types.mojom.h"
 #include "chromeos/services/network_health/public/mojom/network_health_types.mojom.h"
 
-namespace chromeos::converters {
+namespace chromeos::converters::telemetry {
 
 namespace {
 
@@ -410,10 +410,10 @@ cx_telem::DisplayInfo UncheckedConvertPtr(crosapi::ProbeDisplayInfoPtr input) {
   cx_telem::DisplayInfo result;
 
   result.embedded_display =
-      converters::ConvertPtr(std::move(input->embedded_display));
+      converters::telemetry::ConvertPtr(std::move(input->embedded_display));
   if (input->external_displays.has_value()) {
     result.external_displays =
-        converters::ConvertPtrVector<cx_telem::ExternalDisplayInfo>(
+        converters::telemetry::ConvertPtrVector<cx_telem::ExternalDisplayInfo>(
             std::move(input->external_displays.value()));
   }
 
@@ -433,7 +433,8 @@ cx_telem::EmbeddedDisplayInfo UncheckedConvertPtr(
   result.refresh_rate = std::move(input->refresh_rate);
   result.manufacturer = std::move(input->manufacturer);
   result.model_id = std::move(input->model_id);
-  result.serial_number = std::move(input->serial_number);
+  // Not reporting serial_number for now until we get Privacy's approval.
+  // result.serial_number = std::move(input->serial_number);
   result.manufacture_week = std::move(input->manufacture_week);
   result.manufacture_year = std::move(input->manufacture_year);
   result.edid_version = std::move(input->edid_version);
@@ -454,12 +455,34 @@ cx_telem::ExternalDisplayInfo UncheckedConvertPtr(
   result.refresh_rate = std::move(input->refresh_rate);
   result.manufacturer = std::move(input->manufacturer);
   result.model_id = std::move(input->model_id);
-  result.serial_number = std::move(input->serial_number);
+  // Not reporting serial_number for now until we get Privacy's approval.
+  // result.serial_number = std::move(input->serial_number);
   result.manufacture_week = std::move(input->manufacture_week);
   result.manufacture_year = std::move(input->manufacture_year);
   result.edid_version = std::move(input->edid_version);
   result.input_type = Convert(input->input_type);
   result.display_name = std::move(input->display_name);
+
+  return result;
+}
+
+cx_telem::ThermalInfo UncheckedConvertPtr(crosapi::ProbeThermalInfoPtr input) {
+  cx_telem::ThermalInfo result;
+
+  result.thermal_sensors =
+      converters::telemetry::ConvertPtrVector<cx_telem::ThermalSensorInfo>(
+          std::move(input->thermal_sensors));
+
+  return result;
+}
+
+cx_telem::ThermalSensorInfo UncheckedConvertPtr(
+    crosapi::ProbeThermalSensorInfoPtr input) {
+  cx_telem::ThermalSensorInfo result;
+
+  result.name = input->name;
+  result.temperature_celsius = input->temperature_celsius;
+  result.source = Convert(input->source);
 
   return result;
 }
@@ -620,4 +643,16 @@ cx_telem::DisplayInputType Convert(crosapi::ProbeDisplayInputType input) {
   NOTREACHED();
 }
 
-}  // namespace chromeos::converters
+cx_telem::ThermalSensorSource Convert(crosapi::ProbeThermalSensorSource input) {
+  switch (input) {
+    case crosapi::ProbeThermalSensorSource::kUnmappedEnumField:
+      return cx_telem::ThermalSensorSource::kUnknown;
+    case crosapi::ProbeThermalSensorSource::kEc:
+      return cx_telem::ThermalSensorSource::kEc;
+    case crosapi::ProbeThermalSensorSource::kSysFs:
+      return cx_telem::ThermalSensorSource::kSysFs;
+  }
+  NOTREACHED();
+}
+
+}  // namespace chromeos::converters::telemetry

@@ -44,6 +44,7 @@
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
+#include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -97,7 +98,6 @@ bool StyleCommands::ApplyCommandToFrame(LocalFrame& frame,
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 bool StyleCommands::ExecuteApplyStyle(LocalFrame& frame,
@@ -152,11 +152,13 @@ bool StyleCommands::ExecuteFontSize(LocalFrame& frame,
                                     Event*,
                                     EditorCommandSource source,
                                     const String& value) {
-  CSSValueID size;
-  if (!HTMLFontElement::CssValueFromFontSizeNumber(value, size))
+  std::optional<CSSValueID> size =
+      HTMLFontElement::CssValueFromFontSizeNumber(value);
+  if (!size) {
     return false;
+  }
   return ExecuteApplyStyle(frame, source, InputEvent::InputType::kNone,
-                           CSSPropertyID::kFontSize, size);
+                           CSSPropertyID::kFontSize, *size);
 }
 
 bool StyleCommands::ExecuteFontSizeDelta(LocalFrame& frame,
@@ -374,6 +376,10 @@ bool StyleCommands::ExecuteUseCSS(LocalFrame& frame,
 EditingTriState StyleCommands::StateStyle(LocalFrame& frame,
                                           CSSPropertyID property_id,
                                           const char* desired_value) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return EditingTriState::kFalse;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
   if (frame.GetEditor().Behavior().ShouldToggleStyleBasedOnStartOfSelection()) {
     return SelectionStartHasStyle(frame, property_id, desired_value)
@@ -397,6 +403,10 @@ EditingTriState StyleCommands::StateStrikethrough(LocalFrame& frame, Event*) {
 }
 
 EditingTriState StyleCommands::StateStyleWithCSS(LocalFrame& frame, Event*) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return EditingTriState::kFalse;
+  }
+
   return frame.GetEditor().ShouldStyleWithCSS() ? EditingTriState::kTrue
                                                 : EditingTriState::kFalse;
 }
@@ -538,6 +548,10 @@ mojo_base::mojom::blink::TextDirection StyleCommands::TextDirectionForSelection(
 EditingTriState StyleCommands::StateTextWritingDirection(
     LocalFrame& frame,
     mojo_base::mojom::blink::TextDirection direction) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return EditingTriState::kFalse;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   bool has_nested_or_multiple_embeddings;
@@ -596,6 +610,10 @@ String StyleCommands::SelectionStartCSSPropertyValue(
 }
 
 String StyleCommands::ValueStyle(LocalFrame& frame, CSSPropertyID property_id) {
+  if (frame.GetInputMethodController().GetActiveEditContext()) {
+    return g_empty_string;
+  }
+
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   // TODO(editing-dev): Rather than retrieving the style at the start of the

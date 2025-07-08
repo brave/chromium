@@ -4,10 +4,10 @@
 
 #include "chrome/browser/devtools/protocol/system_info_handler.h"
 
-#include "chrome/browser/dips/dips_features.h"
-#include "chrome/browser/dips/dips_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/btm_utils.h"
+#include "content/public/common/content_features.h"
 
 SystemInfoHandler::SystemInfoHandler(protocol::UberDispatcher* dispatcher) {
   protocol::SystemInfo::Dispatcher::wire(dispatcher, this);
@@ -19,10 +19,9 @@ protocol::Response SystemInfoHandler::GetFeatureState(
     const std::string& in_featureState,
     bool* featureEnabled) {
   if (in_featureState == "DIPS") {
-    *featureEnabled =
-        base::FeatureList::IsEnabled(dips::kFeature) &&
-        dips::kDeletionEnabled.Get() &&
-        (dips::kTriggeringAction.Get() != DIPSTriggeringAction::kNone);
+    *featureEnabled = base::FeatureList::IsEnabled(features::kBtm) &&
+                      (features::kBtmTriggeringAction.Get() !=
+                       content::BtmTriggeringAction::kNone);
     return protocol::Response::Success();
   }
 

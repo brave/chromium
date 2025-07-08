@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_CAST_STREAMING_BROWSER_RECEIVER_SESSION_IMPL_H_
 #define COMPONENTS_CAST_STREAMING_BROWSER_RECEIVER_SESSION_IMPL_H_
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -17,7 +19,6 @@
 #include "media/mojo/mojom/media_types.mojom.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace cast_streaming {
 
@@ -78,22 +79,19 @@ class ReceiverSessionImpl final
   // Callback for mojom::DemuxerConnector::EnableReceiver()
   void OnReceiverEnabled();
 
-  // Informs the client of updated configs.
-  void InformClientOfConfigChange();
-
   // cast_streaming::CastStreamingSession::Client implementation.
   void OnSessionInitialization(
       StreamingInitializationInfo initialization_info,
-      absl::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
-      absl::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer)
+      std::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
+      std::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer)
       override;
   void OnAudioBufferReceived(media::mojom::DecoderBufferPtr buffer) override;
   void OnVideoBufferReceived(media::mojom::DecoderBufferPtr buffer) override;
   void OnSessionReinitializationPending() override;
   void OnSessionReinitialization(
       StreamingInitializationInfo initialization_info,
-      absl::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
-      absl::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer)
+      std::optional<mojo::ScopedDataPipeConsumerHandle> audio_pipe_consumer,
+      std::optional<mojo::ScopedDataPipeConsumerHandle> video_pipe_consumer)
       override;
   void OnSessionEnded() override;
 
@@ -110,9 +108,9 @@ class ReceiverSessionImpl final
   std::unique_ptr<VideoDemuxerStreamDataProvider>
       video_demuxer_stream_data_provider_;
 
-  const raw_ptr<ReceiverSession::Client> client_;
+  raw_ptr<ReceiverSession::Client> client_;
   std::unique_ptr<RendererControllerImpl> external_renderer_controls_;
-  absl::optional<RendererControllerConfig> renderer_control_config_;
+  std::optional<RendererControllerConfig> renderer_control_config_;
 
   base::WeakPtrFactory<ReceiverSessionImpl> weak_factory_;
 };

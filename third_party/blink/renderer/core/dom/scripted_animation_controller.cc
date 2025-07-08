@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
 namespace blink {
@@ -44,14 +45,14 @@ namespace blink {
 bool ScriptedAnimationController::InsertToPerFrameEventsMap(
     const Event* event) {
   HashSet<const StringImpl*>& set =
-      per_frame_events_.insert(event->target(), HashSet<const StringImpl*>())
+      per_frame_events_.insert(event->RawTarget(), HashSet<const StringImpl*>())
           .stored_value->value;
   return set.insert(event->type().Impl()).is_new_entry;
 }
 
 void ScriptedAnimationController::EraseFromPerFrameEventsMap(
     const Event* event) {
-  EventTarget* target = event->target();
+  EventTarget* target = event->RawTarget();
   PerFrameEventsMap::iterator it = per_frame_events_.find(target);
   if (it != per_frame_events_.end()) {
     HashSet<const StringImpl*>& set = it->value;
@@ -83,10 +84,10 @@ void ScriptedAnimationController::ContextLifecycleStateChanged(
 }
 
 void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
-  DispatchEvents([](const Event* event) {
+  DispatchEvents(WTF::BindRepeating([](Event* event) {
     return event->InterfaceName() ==
            event_interface_names::kMediaQueryListEvent;
-  });
+  }));
   CallMediaQueryListListeners();
 }
 
@@ -98,6 +99,10 @@ void ScriptedAnimationController::ScheduleVideoFrameCallbacksExecution(
 
 ScriptedAnimationController::CallbackId
 ScriptedAnimationController::RegisterFrameCallback(FrameCallback* callback) {
+  // If we no longer have a context, there is no need to register the callback.
+  if (!GetExecutionContext()) {
+    return 0;
+  }
   CallbackId id = callback_collection_.RegisterFrameCallback(callback);
   ScheduleAnimationIfNeeded();
   return id;
@@ -119,15 +124,15 @@ void ScriptedAnimationController::RunTasks() {
     std::move(task).Run();
 }
 
-void ScriptedAnimationController::DispatchEvents(const DispatchFilter& filter) {
+bool ScriptedAnimationController::DispatchEvents(DispatchFilter filter) {
   HeapVector<Member<Event>> events;
-  if (!filter.has_value()) {
+  if (filter.is_null()) {
     events.swap(event_queue_);
     per_frame_events_.clear();
   } else {
     HeapVector<Member<Event>> remaining;
     for (auto& event : event_queue_) {
-      if (event && filter.value()(event)) {
+      if (event && filter.Run(event)) {
         EraseFromPerFrameEventsMap(event.Get());
         events.push_back(event.Release());
       } else {
@@ -137,8 +142,11 @@ void ScriptedAnimationController::DispatchEvents(const DispatchFilter& filter) {
     remaining.swap(event_queue_);
   }
 
+  bool did_dispatch = false;
+
   for (const auto& event : events) {
-    EventTarget* event_target = event->target();
+    did_dispatch = true;
+    EventTarget* event_target = event->RawTarget();
     // FIXME: we should figure out how to make dispatchEvent properly virtual to
     // avoid special casting window.
     // FIXME: We should not fire events for nodes that are no longer in the
@@ -150,6 +158,8 @@ void ScriptedAnimationController::DispatchEvents(const DispatchFilter& filter) {
     else
       event_target->DispatchEvent(*event);
   }
+
+  return did_dispatch;
 }
 
 void ScriptedAnimationController::ExecuteVideoFrameCallbacks() {
@@ -201,8 +211,8 @@ void ScriptedAnimationController::EnqueueTask(base::OnceClosure task) {
 }
 
 void ScriptedAnimationController::EnqueueEvent(Event* event) {
-  event->async_task_context()->Schedule(event->target()->GetExecutionContext(),
-                                        event->type());
+  event->async_task_context()->Schedule(
+      event->RawTarget()->GetExecutionContext(), event->type());
   event_queue_.push_back(event);
   ScheduleAnimationIfNeeded();
 }

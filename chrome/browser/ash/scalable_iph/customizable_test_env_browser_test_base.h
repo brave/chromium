@@ -8,7 +8,7 @@
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/guest_session_mixin.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -23,7 +23,8 @@ class CustomizableTestEnvBrowserTestBase
     kChildOwner,
     kRegular,
     kRegularNonOwner,
-    kManaged
+    kManaged,
+    kRegularWithOobe
   };
 
   class TestEnvironment {
@@ -49,17 +50,19 @@ class CustomizableTestEnvBrowserTestBase
 
   // MixinBasedInProcessBrowserTest:
   void SetUp() override;
+  void SetUpInProcessBrowserTestFixture() override;
   void SetUpOnMainThread() override;
 
  protected:
   void SetTestEnvironment(const TestEnvironment& test_environment);
+  LoginManagerMixin* GetLoginManagerMixin();
+  const TestEnvironment& test_environment() const { return test_environment_; }
 
  private:
   std::string owner_user_email_;
   std::unique_ptr<ash::GuestSessionMixin> guest_session_mixin_;
   std::unique_ptr<ash::LoggedInUserMixin> logged_in_user_mixin_;
   std::unique_ptr<ash::DeviceStateMixin> device_state_mixin_;
-  ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 
   // This is initialized to a regular account on a consumer owned device. A
   // subclass can overwrite this by calling `SetTestEnvironment` before `SetUp`

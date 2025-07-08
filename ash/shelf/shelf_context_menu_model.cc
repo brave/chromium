@@ -12,7 +12,6 @@
 #include "ash/app_list/app_list_metrics.h"
 #include "ash/app_list/app_list_model_provider.h"
 #include "ash/app_list/model/app_list_model.h"
-#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/personalization_entry_point.h"
 #include "ash/public/cpp/app_menu_constants.h"
@@ -27,7 +26,6 @@
 #include "ash/shelf/shelf_metrics.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/numerics/safe_conversions.h"
@@ -96,7 +94,7 @@ void ShelfContextMenuModel::ExecuteCommand(int command_id, int event_flags) {
     return;
 
   // Clamshell mode only options should not activate in tablet mode.
-  const bool is_tablet_mode = shell->tablet_mode_controller()->InTabletMode();
+  const bool is_tablet_mode = display::Screen::GetScreen()->InTabletMode();
   switch (command_id) {
     case MENU_AUTO_HIDE:
       SetShelfAutoHideBehaviorPref(
@@ -191,8 +189,7 @@ void ShelfContextMenuModel::AddShelfAndWallpaperItems() {
   // (regular or Family Link user). In tablet mode, the shelf alignment option
   // is not shown.
   LoginStatus status = Shell::Get()->session_controller()->login_status();
-  const bool in_tablet_mode =
-      Shell::Get()->tablet_mode_controller()->InTabletMode();
+  const bool in_tablet_mode = display::Screen::GetScreen()->InTabletMode();
   if ((status == LoginStatus::USER || status == LoginStatus::CHILD) &&
       !in_tablet_mode &&
       prefs->FindPreference(prefs::kShelfAlignmentLocal)->IsUserModifiable()) {
@@ -220,8 +217,7 @@ void ShelfContextMenuModel::AddShelfAndWallpaperItems() {
 
   // Only add the desk button items if the context menu was spawned on the
   // shelf, tablet mode is not enabled, and full screen is not enabled.
-  if (features::IsDeskButtonEnabled() && !in_tablet_mode && menu_in_shelf_ &&
-      !is_fullscreen) {
+  if (!in_tablet_mode && menu_in_shelf_ && !is_fullscreen) {
     // If the button is visible for any reason, show the option to hide it
     // manually. If it isn't visible show the option to show it.
     if (GetDeskButtonVisibility(prefs)) {

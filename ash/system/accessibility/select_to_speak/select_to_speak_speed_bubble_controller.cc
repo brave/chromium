@@ -4,7 +4,9 @@
 
 #include "ash/system/accessibility/select_to_speak/select_to_speak_speed_bubble_controller.h"
 
-#include "ash/accessibility/accessibility_controller_impl.h"
+#include <string>
+
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/bubble/bubble_constants.h"
 #include "ash/public/cpp/accessibility_controller_enums.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -15,7 +17,7 @@
 #include "ash/system/accessibility/select_to_speak/select_to_speak_speed_view.h"
 #include "ash/system/tray/tray_background_view.h"
 #include "ash/system/tray/tray_constants.h"
-#include "ash/system/unified/unified_system_tray_view.h"
+#include "base/metrics/histogram_functions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/wm/public/activation_client.h"
@@ -39,6 +41,7 @@ SelectToSpeakSpeedBubbleController::~SelectToSpeakSpeedBubbleController() {
   Shell::Get()->activation_client()->RemoveObserver(this);
   if (bubble_widget_ && !bubble_widget_->IsClosed())
     bubble_widget_->CloseNow();
+  MaybeRecordDurationHistogram();
 }
 
 void SelectToSpeakSpeedBubbleController::Show(views::View* anchor_view,
@@ -62,15 +65,15 @@ void SelectToSpeakSpeedBubbleController::Show(views::View* anchor_view,
     bubble_view_ = new TrayBubbleView(init_params);
     bubble_view_->SetArrow(views::BubbleBorder::BOTTOM_RIGHT);
     bubble_view_->SetCanActivate(true);
-    bubble_view_->SetFocusBehavior(ActionableView::FocusBehavior::ALWAYS);
+    bubble_view_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
 
     speed_view_ = new SelectToSpeakSpeedView(this, speech_rate);
-    bubble_view_->AddChildView(speed_view_.get());
+    bubble_view_->AddChildViewRaw(speed_view_.get());
 
     bubble_widget_ =
         views::BubbleDialogDelegateView::CreateBubble(bubble_view_);
     bubble_widget_->GetNativeView()->SetName(
-        kSelectToSpeakSpeedBubbleWindowName);
+        std::string(kSelectToSpeakSpeedBubbleWindowName));
     TrayBackgroundView::InitializeBubbleAnimations(bubble_widget_);
     bubble_view_->InitializeAndShowBubble();
   } else {
@@ -79,12 +82,26 @@ void SelectToSpeakSpeedBubbleController::Show(views::View* anchor_view,
 
   bubble_view_->ChangeAnchorView(anchor_view);
   bubble_widget_->Show();
+  if (last_show_time_ == base::Time()) {
+    last_show_time_ = base::Time::Now();
+  }
 }
 
 void SelectToSpeakSpeedBubbleController::Hide() {
   if (!bubble_widget_)
     return;
   bubble_widget_->Hide();
+  MaybeRecordDurationHistogram();
+}
+
+void SelectToSpeakSpeedBubbleController::MaybeRecordDurationHistogram() {
+  if (last_show_time_ == base::Time()) {
+    return;
+  }
+  base::UmaHistogramTimes(
+      "Accessibility.CrosSelectToSpeak.SpeedBubbleVisibleDuration",
+      base::Time::Now() - last_show_time_);
+  last_show_time_ = base::Time();
 }
 
 bool SelectToSpeakSpeedBubbleController::IsVisible() const {
@@ -100,6 +117,9 @@ void SelectToSpeakSpeedBubbleController::BubbleViewDestroyed() {
   bubble_view_ = nullptr;
   bubble_widget_ = nullptr;
 }
+
+void SelectToSpeakSpeedBubbleController::HideBubble(
+    const TrayBubbleView* bubble_view) {}
 
 void SelectToSpeakSpeedBubbleController::OnWindowActivated(
     ActivationReason reason,

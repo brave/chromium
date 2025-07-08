@@ -4,21 +4,26 @@
 
 package org.chromium.content.browser.input;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.UserData;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content.browser.PopupController;
 import org.chromium.content.browser.PopupController.HideablePopup;
 import org.chromium.content.browser.WindowEventObserver;
 import org.chromium.content.browser.WindowEventObserverManager;
 import org.chromium.content.browser.webcontents.WebContentsImpl;
-import org.chromium.content.browser.webcontents.WebContentsImpl.UserDataFactory;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContents.UserDataFactory;
 import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
 
@@ -28,6 +33,7 @@ import org.chromium.ui.base.WindowAndroid;
  * the commands in that menu (by calling back to the C++ class).
  */
 @JNINamespace("content")
+@NullMarked
 public class TextSuggestionHost implements WindowEventObserver, HideablePopup, UserData {
     private long mNativeTextSuggestionHost;
     private final WebContentsImpl mWebContents;
@@ -35,25 +41,29 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
     private final ViewAndroidDelegate mViewDelegate;
 
     private boolean mIsAttachedToWindow;
-    private WindowAndroid mWindowAndroid;
+    private @Nullable WindowAndroid mWindowAndroid;
 
-    private SpellCheckPopupWindow mSpellCheckPopupWindow;
-    private TextSuggestionsPopupWindow mTextSuggestionsPopupWindow;
+    private @Nullable SpellCheckPopupWindow mSpellCheckPopupWindow;
+    private @Nullable TextSuggestionsPopupWindow mTextSuggestionsPopupWindow;
 
     private static final class UserDataFactoryLazyHolder {
         private static final UserDataFactory<TextSuggestionHost> INSTANCE = TextSuggestionHost::new;
     }
 
     /**
-     * Get {@link TextSuggestionHost} object used for the give WebContents.
-     * {@link #create()} should precede any calls to this.
+     * Get {@link TextSuggestionHost} object used for the give WebContents. {@link #create()} should
+     * precede any calls to this.
+     *
      * @param webContents {@link WebContents} object.
      * @return {@link TextSuggestionHost} object.
      */
     @VisibleForTesting
     static TextSuggestionHost fromWebContents(WebContents webContents) {
-        return ((WebContentsImpl) webContents)
-                .getOrSetUserData(TextSuggestionHost.class, UserDataFactoryLazyHolder.INSTANCE);
+        TextSuggestionHost ret =
+                webContents.getOrSetUserData(
+                        TextSuggestionHost.class, UserDataFactoryLazyHolder.INSTANCE);
+        assert ret != null;
+        return ret;
     }
 
     @CalledByNative
@@ -69,10 +79,14 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
      */
     public TextSuggestionHost(WebContents webContents) {
         mWebContents = (WebContentsImpl) webContents;
-        mContext = mWebContents.getContext();
+        Context context = mWebContents.getContext();
+        assert context != null;
+        mContext = context;
         mWindowAndroid = mWebContents.getTopLevelNativeWindow();
-        mViewDelegate = mWebContents.getViewAndroidDelegate();
-        assert mViewDelegate != null;
+
+        ViewAndroidDelegate viewDelegate = mWebContents.getViewAndroidDelegate();
+        assert viewDelegate != null;
+        mViewDelegate = viewDelegate;
         PopupController.register(mWebContents, this);
         WindowEventObserverManager.from(mWebContents).addObserver(this);
     }
@@ -88,7 +102,7 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
     // WindowEventObserver
 
     @Override
-    public void onWindowAndroidChanged(WindowAndroid newWindowAndroid) {
+    public void onWindowAndroidChanged(@Nullable WindowAndroid newWindowAndroid) {
         mWindowAndroid = newWindowAndroid;
         if (mSpellCheckPopupWindow != null) {
             mSpellCheckPopupWindow.updateWindowAndroid(mWindowAndroid);
@@ -130,8 +144,12 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
         }
 
         hidePopups();
-        mSpellCheckPopupWindow = new SpellCheckPopupWindow(
-                mContext, this, mWindowAndroid, mViewDelegate.getContainerView());
+        mSpellCheckPopupWindow =
+                new SpellCheckPopupWindow(
+                        mContext,
+                        this,
+                        mWindowAndroid,
+                        assumeNonNull(mViewDelegate.getContainerView()));
 
         mSpellCheckPopupWindow.show(
                 caretXPx, caretYPx + getContentOffsetYPix(), markedText, suggestions);
@@ -148,16 +166,18 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
         }
 
         hidePopups();
-        mTextSuggestionsPopupWindow = new TextSuggestionsPopupWindow(
-                mContext, this, mWindowAndroid, mViewDelegate.getContainerView());
+        mTextSuggestionsPopupWindow =
+                new TextSuggestionsPopupWindow(
+                        mContext,
+                        this,
+                        mWindowAndroid,
+                        assumeNonNull(mViewDelegate.getContainerView()));
 
         mTextSuggestionsPopupWindow.show(
                 caretXPx, caretYPx + getContentOffsetYPix(), markedText, suggestions);
     }
 
-    /**
-     * Hides the text suggestion menu (and informs Blink that it was closed).
-     */
+    /** Hides the text suggestion menu (and informs Blink that it was closed). */
     @CalledByNative
     public void hidePopups() {
         if (mTextSuggestionsPopupWindow != null && mTextSuggestionsPopupWindow.isShowing()) {
@@ -171,12 +191,10 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
         }
     }
 
-    /**
-     * Tells Blink to replace the active suggestion range with the specified replacement.
-     */
+    /** Tells Blink to replace the active suggestion range with the specified replacement. */
     public void applySpellCheckSuggestion(String suggestion) {
-        TextSuggestionHostJni.get().applySpellCheckSuggestion(
-                mNativeTextSuggestionHost, TextSuggestionHost.this, suggestion);
+        TextSuggestionHostJni.get()
+                .applySpellCheckSuggestion(mNativeTextSuggestionHost, suggestion);
     }
 
     /**
@@ -184,24 +202,18 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
      * specified marker.
      */
     public void applyTextSuggestion(int markerTag, int suggestionIndex) {
-        TextSuggestionHostJni.get().applyTextSuggestion(
-                mNativeTextSuggestionHost, TextSuggestionHost.this, markerTag, suggestionIndex);
+        TextSuggestionHostJni.get()
+                .applyTextSuggestion(mNativeTextSuggestionHost, markerTag, suggestionIndex);
     }
 
-    /**
-     * Tells Blink to delete the active suggestion range.
-     */
+    /** Tells Blink to delete the active suggestion range. */
     public void deleteActiveSuggestionRange() {
-        TextSuggestionHostJni.get().deleteActiveSuggestionRange(
-                mNativeTextSuggestionHost, TextSuggestionHost.this);
+        TextSuggestionHostJni.get().deleteActiveSuggestionRange(mNativeTextSuggestionHost);
     }
 
-    /**
-     * Tells Blink to remove spelling markers under all instances of the specified word.
-     */
-    public void onNewWordAddedToDictionary(String word) {
-        TextSuggestionHostJni.get().onNewWordAddedToDictionary(
-                mNativeTextSuggestionHost, TextSuggestionHost.this, word);
+    /** Tells Blink to remove spelling markers under all instances of the specified word. */
+    public void onNewWordAddedToDictionary(@Nullable String word) {
+        TextSuggestionHostJni.get().onNewWordAddedToDictionary(mNativeTextSuggestionHost, word);
     }
 
     /**
@@ -210,8 +222,7 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
      */
     public void onSuggestionMenuClosed(boolean dismissedByItemTap) {
         if (!dismissedByItemTap) {
-            TextSuggestionHostJni.get().onSuggestionMenuClosed(
-                    mNativeTextSuggestionHost, TextSuggestionHost.this);
+            TextSuggestionHostJni.get().onSuggestionMenuClosed(mNativeTextSuggestionHost);
         }
         mSpellCheckPopupWindow = null;
         mTextSuggestionsPopupWindow = null;
@@ -226,28 +237,29 @@ public class TextSuggestionHost implements WindowEventObserver, HideablePopup, U
     /**
      * @return The TextSuggestionsPopupWindow, if one exists.
      */
-    public SuggestionsPopupWindow getTextSuggestionsPopupWindowForTesting() {
+    public @Nullable SuggestionsPopupWindow getTextSuggestionsPopupWindowForTesting() {
         return mTextSuggestionsPopupWindow;
     }
 
     /**
      * @return The SpellCheckPopupWindow, if one exists.
      */
-    public SuggestionsPopupWindow getSpellCheckPopupWindowForTesting() {
+    public @Nullable SuggestionsPopupWindow getSpellCheckPopupWindowForTesting() {
         return mSpellCheckPopupWindow;
     }
 
     @NativeMethods
     interface Natives {
-        void applySpellCheckSuggestion(
-                long nativeTextSuggestionHostAndroid, TextSuggestionHost caller, String suggestion);
-        void applyTextSuggestion(long nativeTextSuggestionHostAndroid, TextSuggestionHost caller,
-                int markerTag, int suggestionIndex);
-        void deleteActiveSuggestionRange(
-                long nativeTextSuggestionHostAndroid, TextSuggestionHost caller);
+        void applySpellCheckSuggestion(long nativeTextSuggestionHostAndroid, String suggestion);
+
+        void applyTextSuggestion(
+                long nativeTextSuggestionHostAndroid, int markerTag, int suggestionIndex);
+
+        void deleteActiveSuggestionRange(long nativeTextSuggestionHostAndroid);
+
         void onNewWordAddedToDictionary(
-                long nativeTextSuggestionHostAndroid, TextSuggestionHost caller, String word);
-        void onSuggestionMenuClosed(
-                long nativeTextSuggestionHostAndroid, TextSuggestionHost caller);
+                long nativeTextSuggestionHostAndroid, @Nullable String word);
+
+        void onSuggestionMenuClosed(long nativeTextSuggestionHostAndroid);
     }
 }

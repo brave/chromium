@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {assert, assertNotReached} from '//resources/js/assert.js';
 
-import {App, Permission, PermissionType, TriState} from './app_management.mojom-webui.js';
+import type {App, Permission} from './app_management.mojom-webui.js';
+import {PermissionType, TriState} from './app_management.mojom-webui.js';
 import {BrowserProxy} from './browser_proxy.js';
-import {AppManagementUserAction, AppType, OptionalBool} from './constants.js';
-import {PermissionTypeIndex} from './permission_constants.js';
+import {AppManagementUserAction, AppType} from './constants.js';
+import type {PermissionTypeIndex} from './permission_constants.js';
 import {isBoolValue, isPermissionEnabled, isTriStateValue} from './permission_util.js';
 
 /**
@@ -86,7 +87,7 @@ export function getPermission(
 
 export function getSelectedApp(state: AppManagementPageState): App|null {
   const selectedAppId = state.selectedAppId;
-  return selectedAppId ? state.apps[selectedAppId] : null;
+  return selectedAppId ? state.apps[selectedAppId]! : null;
 }
 
 /**
@@ -103,35 +104,22 @@ export function getSubAppsOfSelectedApp(state: AppManagementPageState): App[] {
 }
 
 /**
+ * Returns the selected app's parent app or null.
+ */
+export function getParentApp(state: AppManagementPageState): App|null {
+  const selectedAppId = state.selectedAppId;
+  if (selectedAppId) {
+    const parentAppId = state.subAppToParentAppId[selectedAppId];
+    return parentAppId ? state.apps[parentAppId]! : null;
+  }
+  return null;
+}
+
+/**
  * A comparator function to sort strings alphabetically.
  */
 export function alphabeticalSort(a: string, b: string) {
   return a.localeCompare(b);
-}
-
-/**
- * Toggles an OptionalBool
- */
-export function toggleOptionalBool(bool: OptionalBool): OptionalBool {
-  switch (bool) {
-    case OptionalBool.kFalse:
-      return OptionalBool.kTrue;
-    case OptionalBool.kTrue:
-      return OptionalBool.kFalse;
-    default:
-      assertNotReached();
-  }
-}
-
-export function convertOptionalBoolToBool(optionalBool: OptionalBool): boolean {
-  switch (optionalBool) {
-    case OptionalBool.kTrue:
-      return true;
-    case OptionalBool.kFalse:
-      return false;
-    default:
-      assertNotReached();
-  }
 }
 
 function getUserActionHistogramNameForAppType(appType: AppType): string {
@@ -139,10 +127,6 @@ function getUserActionHistogramNameForAppType(appType: AppType): string {
     case AppType.kArc:
       return 'AppManagement.AppDetailViews.ArcApp';
     case AppType.kChromeApp:
-    case AppType.kStandaloneBrowser:
-    case AppType.kStandaloneBrowserChromeApp:
-      // TODO(https://crbug.com/1225848): Figure out appropriate behavior for
-      // Lacros-hosted chrome-apps.
       return 'AppManagement.AppDetailViews.ChromeApp';
     case AppType.kWeb:
       return 'AppManagement.AppDetailViews.WebApp';
@@ -161,4 +145,24 @@ export function recordAppManagementUserAction(
   const enumLength = Object.keys(AppManagementUserAction).length;
   BrowserProxy.getInstance().recordEnumerationValue(
       histogram, userAction, enumLength);
+}
+
+/**
+ * @param arg An argument to check for existence.
+ * @throws If |arg| is undefined or null.
+ */
+export function assertExists<T>(
+    arg: T, message: string = `Expected ${arg} to be defined.`):
+    asserts arg is NonNullable<T> {
+  assert(arg !== undefined && arg !== null, message);
+}
+
+/**
+ * @param arg A argument to check for existence.
+ * @return |arg| with the type narrowed as non-nullable.
+ * @throws If |arg| is undefined or null.
+ */
+export function castExists<T>(arg: T, message?: string): NonNullable<T> {
+  assertExists(arg, message);
+  return arg;
 }

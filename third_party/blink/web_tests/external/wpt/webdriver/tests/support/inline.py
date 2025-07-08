@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 BOILERPLATES = {
     "html": "<!doctype html>\n<meta charset={charset}>\n{src}",
+    "html_quirks": "{src}",
     "xhtml": """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
     "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
@@ -18,18 +19,21 @@ BOILERPLATES = {
   </body>
 </html>""",
     "xml": """<?xml version="1.0" encoding="{charset}"?>\n{src}""",
+    "js": "",
 }
 MIME_TYPES = {
     "html": "text/html",
+    "html_quirks": "text/html",
     "xhtml": "application/xhtml+xml",
     "xml": "text/xml",
+    "js": "text/javascript",
 }
 
 
 def build_inline(build_url, src,
                  doctype: str = "html",
                  mime: Optional[str] = None, charset: Optional[str] = None,
-                 parameters = None, **kwargs):
+                 parameters=None, **kwargs):
     if mime is None:
         mime = MIME_TYPES[doctype]
     if charset is None:

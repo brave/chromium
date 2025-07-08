@@ -4,7 +4,9 @@
 
 #include "chromeos/ash/components/sync_wifi/local_network_collector_impl.h"
 
+#include "ash/constants/ash_features.h"
 #include "base/barrier_closure.h"
+#include "base/feature_list.h"
 #include "base/uuid.h"
 #include "chromeos/ash/components/dbus/shill/shill_service_client.h"
 #include "chromeos/ash/components/network/network_event_log.h"
@@ -143,7 +145,7 @@ void LocalNetworkCollectorImpl::GetSyncableNetwork(const std::string& guid,
   }
 
   if (!network) {
-    std::move(callback).Run(absl::nullopt);
+    std::move(callback).Run(std::nullopt);
     return;
   }
 
@@ -153,7 +155,7 @@ void LocalNetworkCollectorImpl::GetSyncableNetwork(const std::string& guid,
   StartGetNetworkDetails(network, request_guid);
 }
 
-absl::optional<NetworkIdentifier>
+std::optional<NetworkIdentifier>
 LocalNetworkCollectorImpl::GetNetworkIdentifierFromGuid(
     const std::string& guid) {
   for (const network_config::mojom::NetworkStatePropertiesPtr& network :
@@ -162,7 +164,7 @@ LocalNetworkCollectorImpl::GetNetworkIdentifierFromGuid(
       return NetworkIdentifier::FromMojoNetwork(network);
     }
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void LocalNetworkCollectorImpl::SetNetworkMetadataStore(
@@ -225,13 +227,15 @@ void LocalNetworkCollectorImpl::OnGetManagedPropertiesResult(
   // TODO(crbug/1128692): Restore support for the metered property when mojo
   // networks track the "Automatic" state.
 
-  bool is_proxy_modified =
-      network_metadata_store_->GetIsFieldExternallyModified(
-          properties->guid, shill::kProxyConfigProperty);
-  sync_pb::WifiConfigurationSpecifics_ProxyConfiguration proxy_config =
-      ProxyConfigurationProtoFromMojo(properties->proxy_settings,
-                                      /*is_unspecified=*/is_proxy_modified);
-  proto.mutable_proxy_configuration()->CopyFrom(proxy_config);
+  if (base::FeatureList::IsEnabled(features::kWifiSyncUploadProxyConfigs)) {
+    bool is_proxy_modified =
+        network_metadata_store_->GetIsFieldExternallyModified(
+            properties->guid, shill::kProxyConfigProperty);
+    sync_pb::WifiConfigurationSpecifics_ProxyConfiguration proxy_config =
+        ProxyConfigurationProtoFromMojo(properties->proxy_settings,
+                                        /*is_unspecified=*/is_proxy_modified);
+    proto.mutable_proxy_configuration()->CopyFrom(proxy_config);
+  }
 
   bool is_dns_externally_modified =
       network_metadata_store_->GetIsFieldExternallyModified(
@@ -303,7 +307,7 @@ void LocalNetworkCollectorImpl::OnRequestFinished(
     std::vector<sync_pb::WifiConfigurationSpecifics>& list =
         request_guid_to_complete_protos_[request_guid];
     DCHECK(list.size() <= 1);
-    absl::optional<sync_pb::WifiConfigurationSpecifics> result;
+    std::optional<sync_pb::WifiConfigurationSpecifics> result;
     if (list.size() == 1) {
       result = list[0];
     }

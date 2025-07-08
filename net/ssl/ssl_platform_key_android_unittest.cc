@@ -12,7 +12,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "net/android/keystore.h"
-#include "net/android/net_tests_jni/AndroidKeyStoreTestUtil_jni.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_private_key.h"
 #include "net/ssl/ssl_private_key_test_util.h"
@@ -21,6 +20,9 @@
 #include "net/test/test_with_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "net/android/net_tests_jni/AndroidKeyStoreTestUtil_jni.h"
 
 namespace net {
 
@@ -38,10 +40,8 @@ bool ReadTestFile(const char* filename, std::string* pkcs8) {
 ScopedJava GetPKCS8PrivateKeyJava(android::PrivateKeyType key_type,
                                   const std::string& pkcs8_key) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  base::android::ScopedJavaLocalRef<jbyteArray> bytes(
-      base::android::ToJavaByteArray(
-          env, reinterpret_cast<const uint8_t*>(pkcs8_key.data()),
-          pkcs8_key.size()));
+  base::android::ScopedJavaLocalRef<jbyteArray> bytes =
+      base::android::ToJavaByteArray(env, pkcs8_key);
 
   ScopedJava key(Java_AndroidKeyStoreTestUtil_createPrivateKeyFromPKCS8(
       env, key_type, bytes));

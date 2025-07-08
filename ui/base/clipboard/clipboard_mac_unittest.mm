@@ -2,42 +2,36 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ui/base/clipboard/clipboard_mac.h"
-#include "base/test/test_future.h"
 
 #import <AppKit/AppKit.h>
+#import <PDFKit/PDFKit.h>
 
 #include <vector>
 
-#include "base/feature_list.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/memory/free_deleter.h"
 #include "base/memory/ref_counted.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "testing/platform_test.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/clipboard/clipboard_buffer.h"
+#include "ui/base/clipboard/clipboard_monitor.h"
+#include "ui/base/clipboard/clipboard_observer.h"
 #include "ui/base/clipboard/clipboard_util_mac.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/skia_util.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
-@interface RedView : NSView
-@end
-@implementation RedView
-- (void)drawRect:(NSRect)dirtyRect {
-  [NSColor.redColor setFill];
-  NSRectFill(dirtyRect);
-  [super drawRect:dirtyRect];
-}
-@end
 
 namespace ui {
 
@@ -49,20 +43,30 @@ void CreateImageBufferReleaser(void* info, const void* data, size_t size) {
   free(info);
 }
 
+class TestClipboardObserver : public ClipboardObserver {
+ public:
+  TestClipboardObserver() {
+    ClipboardMonitor::GetInstance()->AddObserver(this);
+  }
+
+  ~TestClipboardObserver() override {
+    ClipboardMonitor::GetInstance()->RemoveObserver(this);
+  }
+
+  void OnClipboardDataChanged() override { ++data_changed_count_; }
+
+  int data_changed_count() const { return data_changed_count_; }
+
+ private:
+  int data_changed_count_ = 0;
+};
+
 }  // namespace
 
-class ClipboardMacTest : public PlatformTest,
-                         public testing::WithParamInterface<bool> {
+class ClipboardMacTest : public PlatformTest {
  public:
   ClipboardMacTest()
       : task_environment_(base::test::TaskEnvironment::MainThreadType::IO) {}
-
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(
-        features::kMacClipboardWriteImageWithPng, ShouldWriteImageWithPng());
-
-    PlatformTest::SetUp();
-  }
 
   NSImage* CreateImage(int32_t width, int32_t height, bool retina) {
     int32_t pixel_width = retina ? width * 2 : width;
@@ -74,21 +78,19 @@ class ClipboardMacTest : public PlatformTest,
     // loses its "retina-ness".
     uint8_t* buffer =
         static_cast<uint8_t*>(calloc(pixel_width * pixel_height, 4));
-    base::ScopedCFTypeRef<CGDataProviderRef> provider(
+    base::apple::ScopedCFTypeRef<CGDataProviderRef> provider(
         CGDataProviderCreateWithData(buffer, buffer,
                                      (pixel_width * pixel_height * 4),
                                      &CreateImageBufferReleaser));
-    base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+    base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
         CGColorSpaceCreateWithName(kCGColorSpaceSRGB));
-    base::ScopedCFTypeRef<CGImageRef> image_ref(
+    base::apple::ScopedCFTypeRef<CGImageRef> image_ref(
         CGImageCreate(pixel_width, pixel_height, 8, 32, 4 * pixel_width,
-                      color_space.get(), kCGBitmapByteOrderDefault,
-                      provider.get(), nullptr, NO, kCGRenderingIntentDefault));
+                      color_space.get(), kCGImageAlphaLast, provider.get(),
+                      nullptr, NO, kCGRenderingIntentDefault));
     return [[NSImage alloc] initWithCGImage:image_ref.get()
                                        size:NSMakeSize(width, height)];
   }
-
-  bool ShouldWriteImageWithPng() const { return GetParam(); }
 
   std::vector<uint8_t> ReadPngSync(ClipboardMac* clipboard_mac,
                                    NSPasteboard* pasteboard) {
@@ -105,12 +107,32 @@ class ClipboardMacTest : public PlatformTest,
     clipboard_mac->WriteBitmapInternal(bitmap, pasteboard);
   }
 
+  std::optional<DataTransferEndpoint> GetSource(
+      const ClipboardMac* clipboard_mac,
+      NSPasteboard* pasteboard) {
+    return clipboard_mac->GetSourceInternal(ClipboardBuffer::kCopyPaste,
+                                            pasteboard);
+  }
+
+  void Clear(ClipboardMac* clipboard_mac, NSPasteboard* pasteboard) {
+    clipboard_mac->ClearInternal(ClipboardBuffer::kCopyPaste, pasteboard);
+  }
+
+  void WritePortableAndPlatformRepresentations(
+      ClipboardMac* clipboard_mac,
+      std::unique_ptr<DataTransferEndpoint> data_src,
+      NSPasteboard* pasteboard) {
+    clipboard_mac->WritePortableAndPlatformRepresentationsInternal(
+        ClipboardBuffer::kCopyPaste, /*objects=*/{}, /*raw_objects=*/{},
+        /*platform_representations=*/{}, std::move(data_src), pasteboard,
+        /*privacy_types=*/0);
+  }
+
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
   base::test::TaskEnvironment task_environment_;
 };
 
-TEST_P(ClipboardMacTest, ReadImageRetina) {
+TEST_F(ClipboardMacTest, ReadImageRetina) {
   int32_t width = 99;
   int32_t height = 101;
   scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
@@ -120,13 +142,13 @@ TEST_P(ClipboardMacTest, ReadImageRetina) {
   ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
 
   std::vector<uint8_t> png_data = ReadPngSync(clipboard_mac, pasteboard->get());
-  SkBitmap bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &bitmap);
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data);
+  ASSERT_FALSE(bitmap.isNull());
   EXPECT_EQ(2 * width, bitmap.width());
   EXPECT_EQ(2 * height, bitmap.height());
 }
 
-TEST_P(ClipboardMacTest, ReadImageNonRetina) {
+TEST_F(ClipboardMacTest, ReadImageNonRetina) {
   int32_t width = 99;
   int32_t height = 101;
   scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
@@ -136,13 +158,13 @@ TEST_P(ClipboardMacTest, ReadImageNonRetina) {
   ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
 
   std::vector<uint8_t> png_data = ReadPngSync(clipboard_mac, pasteboard->get());
-  SkBitmap bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &bitmap);
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data);
+  ASSERT_FALSE(bitmap.isNull());
   EXPECT_EQ(width, bitmap.width());
   EXPECT_EQ(height, bitmap.height());
 }
 
-TEST_P(ClipboardMacTest, EmptyImage) {
+TEST_F(ClipboardMacTest, EmptyImage) {
   NSImage* image = [[NSImage alloc] init];
   scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
   [pasteboard->get() writeObjects:@[ image ]];
@@ -151,37 +173,34 @@ TEST_P(ClipboardMacTest, EmptyImage) {
   ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
 
   std::vector<uint8_t> png_data = ReadPngSync(clipboard_mac, pasteboard->get());
-  SkBitmap bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &bitmap);
-  EXPECT_EQ(0, bitmap.width());
-  EXPECT_EQ(0, bitmap.height());
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data);
+  ASSERT_TRUE(bitmap.isNull());
 }
 
-TEST_P(ClipboardMacTest, PDFImage) {
+TEST_F(ClipboardMacTest, PDFImage) {
   int32_t width = 99;
   int32_t height = 101;
-  NSRect frame = NSMakeRect(0, 0, width, height);
-
-  // This seems like a round-about way of getting a NSPDFImageRep to shove into
-  // an NSPasteboard. However, I haven't found any other way of generating a
-  // "PDF" image that makes NSPasteboard happy.
-  NSView* v = [[RedView alloc] initWithFrame:frame];
-  NSData* data = [v dataWithPDFInsideRect:frame];
+  PDFPage* page = [[PDFPage alloc] init];
+  [page setBounds:NSMakeRect(0, 0, width, height)
+           forBox:kPDFDisplayBoxMediaBox];
+  PDFDocument* pdf_document = [[PDFDocument alloc] init];
+  [pdf_document insertPage:page atIndex:0];
+  NSData* pdf_data = [pdf_document dataRepresentation];
 
   scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
-  [pasteboard->get() setData:data forType:NSPasteboardTypePDF];
+  [pasteboard->get() setData:pdf_data forType:NSPasteboardTypePDF];
 
   Clipboard* clipboard = Clipboard::GetForCurrentThread();
   ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
 
   std::vector<uint8_t> png_data = ReadPngSync(clipboard_mac, pasteboard->get());
-  SkBitmap bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &bitmap);
+  SkBitmap bitmap = gfx::PNGCodec::Decode(png_data);
+  ASSERT_FALSE(bitmap.isNull());
   EXPECT_EQ(width, bitmap.width());
   EXPECT_EQ(height, bitmap.height());
 }
 
-TEST_P(ClipboardMacTest, WriteBitmapAddsPNGToClipboard) {
+TEST_F(ClipboardMacTest, WriteBitmapAddsPNGToClipboard) {
   int32_t width = 99;
   int32_t height = 101;
   scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
@@ -195,24 +214,96 @@ TEST_P(ClipboardMacTest, WriteBitmapAddsPNGToClipboard) {
   WriteBitmap(clipboard_mac, bitmap, pasteboard->get());
 
   NSData* data = [pasteboard->get() dataForType:NSPasteboardTypePNG];
-
-  if (!ShouldWriteImageWithPng()) {
-    ASSERT_FALSE(data);
-    return;
-  }
-
   ASSERT_TRUE(data);
   const uint8_t* bytes = static_cast<const uint8_t*>(data.bytes);
   std::vector<uint8_t> png_data(bytes, bytes + data.length);
 
-  SkBitmap result_bitmap;
-  gfx::PNGCodec::Decode(png_data.data(), png_data.size(), &result_bitmap);
+  SkBitmap result_bitmap = gfx::PNGCodec::Decode(png_data);
+  ASSERT_FALSE(result_bitmap.isNull());
   EXPECT_TRUE(gfx::BitmapsAreEqual(bitmap, result_bitmap));
 }
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         ClipboardMacTest,
-                         // Is the kMacClipboardWriteImageWithPng flag enabled?
-                         ::testing::Bool());
+TEST_F(ClipboardMacTest, SourceTracking) {
+  TestClipboardObserver observer;
+  scoped_refptr<UniquePasteboard> pasteboard = new UniquePasteboard;
+
+  Clipboard* clipboard = Clipboard::GetForCurrentThread();
+  ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
+
+  GURL google_url = GURL("https://www.google.com");
+  WritePortableAndPlatformRepresentations(
+      clipboard_mac, std::make_unique<DataTransferEndpoint>(google_url),
+      pasteboard->get());
+  ASSERT_EQ(observer.data_changed_count(), 1);
+
+  auto source = GetSource(clipboard_mac, pasteboard->get());
+  ASSERT_TRUE(source);
+  ASSERT_TRUE(source->IsUrlType());
+  ASSERT_EQ(*source->GetURL(), google_url);
+
+  GURL chromium_url = GURL("https://chromium.org");
+  WritePortableAndPlatformRepresentations(
+      clipboard_mac, std::make_unique<DataTransferEndpoint>(chromium_url),
+      pasteboard->get());
+  ASSERT_EQ(observer.data_changed_count(), 2);
+
+  source = GetSource(clipboard_mac, pasteboard->get());
+  ASSERT_TRUE(source);
+  ASSERT_TRUE(source->IsUrlType());
+  ASSERT_EQ(*source->GetURL(), chromium_url);
+
+  Clear(clipboard_mac, pasteboard->get());
+  ASSERT_FALSE(GetSource(clipboard_mac, pasteboard->get()));
+}
+
+TEST_F(ClipboardMacTest, ClipboardChangeAPI_BrowserTriggered) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(features::kClipboardChangeEvent);
+
+  TestClipboardObserver observer;
+
+  // Note that general pasteboard is used since the clipboard monitoring
+  // is performed on the general pasteboard in ClipboardMac.
+  NSPasteboard* nspasteboard = NSPasteboard.generalPasteboard;
+
+  Clipboard* clipboard = Clipboard::GetForCurrentThread();
+  ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
+
+  ASSERT_EQ(observer.data_changed_count(), 0);
+
+  GURL google_url = GURL("https://www.google.com");
+  WritePortableAndPlatformRepresentations(
+      clipboard_mac, std::make_unique<DataTransferEndpoint>(google_url),
+      nspasteboard);
+
+  ASSERT_TRUE(base::test::RunUntil([&observer]() {
+    return observer.data_changed_count() == 1;
+  })) << "Timeout waiting for the clipboardMonitor to be notified";
+
+  Clear(clipboard_mac, nspasteboard);
+}
+
+TEST_F(ClipboardMacTest, ClipboardChangeAPI_ExternallyTriggered) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(features::kClipboardChangeEvent);
+
+  TestClipboardObserver observer;
+
+  Clipboard* clipboard = Clipboard::GetForCurrentThread();
+  ClipboardMac* clipboard_mac = static_cast<ClipboardMac*>(clipboard);
+
+  ASSERT_EQ(observer.data_changed_count(), 0);
+
+  NSPasteboard* nspasteboard = NSPasteboard.generalPasteboard;
+  NSString* text = @"Hello, Clipboard!";
+  [nspasteboard clearContents];
+  [nspasteboard setString:text forType:NSPasteboardTypeString];
+
+  ASSERT_TRUE(base::test::RunUntil([&observer]() {
+    return observer.data_changed_count() == 1;
+  })) << "Timeout waiting for the clipboardMonitor to be notified";
+
+  Clear(clipboard_mac, nspasteboard);
+}
 
 }  // namespace ui

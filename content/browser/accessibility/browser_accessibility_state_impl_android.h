@@ -10,24 +10,23 @@
 
 namespace content {
 
-class BrowserContext;
-
 class BrowserAccessibilityStateImplAndroid
     : public BrowserAccessibilityStateImpl,
-      public ui::AccessibilityState::Delegate {
+      public ui::AccessibilityState::AccessibilityStateDelegate {
  public:
   BrowserAccessibilityStateImplAndroid();
   ~BrowserAccessibilityStateImplAndroid() override;
 
-  // ui::AccessibilityState::Delegate overrides
+  // ui::AccessibilityState::AccessibilityStateDelegate overrides
   void OnAnimatorDurationScaleChanged() override;
+  void OnDisplayInversionEnabledChanged(bool enabled) override;
+  void OnContrastLevelChanged(bool highContrastEnabled) override;
   void RecordAccessibilityServiceInfoHistograms() override;
 
+  // BrowserAccessibilityStateImpl implementation.
+  void RefreshAssistiveTech() override;
+
  protected:
-  void UpdateHistogramsOnOtherThread() override;
-  void UpdateUniqueUserHistograms() override;
-  void SetImageLabelsModeForProfile(bool enabled,
-                                    BrowserContext* profile) override;
   void RecordAccessibilityServiceStatsHistogram(int event_type_mask,
                                                 int feedback_type_mask,
                                                 int flags_mask,

@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "extensions/browser/app_window/native_app_window.h"
-
 #import <Cocoa/Cocoa.h>
 
 #include <memory>
 
+#import "base/apple/foundation_util.h"
+#import "base/apple/scoped_cftyperef.h"
 #include "base/functional/callback_helpers.h"
-#import "base/mac/foundation_util.h"
-#import "base/mac/scoped_cftyperef.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -26,8 +24,10 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/app_window/app_window_registry.h"
+#include "extensions/browser/app_window/native_app_window.h"
 #include "extensions/common/constants.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -37,10 +37,6 @@
 #include "ui/base/test/scoped_fake_nswindow_fullscreen.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
 #include "ui/views/widget/widget_interactive_uitest_utils.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 using extensions::AppWindow;
 using extensions::PlatformAppBrowserTest;
@@ -636,7 +632,7 @@ NSBitmapImageRep* ScreenshotNSWindow(NSWindow* window) {
 
 // Test that the colored frames have the correct color when active and inactive.
 // Disabled; https://crbug.com/1322741.
-IN_PROC_BROWSER_TEST_F(NativeAppWindowCocoaBrowserTest, FrameColor) {
+IN_PROC_BROWSER_TEST_F(NativeAppWindowCocoaBrowserTest, DISABLED_FrameColor) {
   EXPECT_EQ(NSApp.activationPolicy, NSApplicationActivationPolicyAccessory);
 
   // The hex values indicate an RGB color. When we get the NSColor later, the

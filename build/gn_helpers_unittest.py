@@ -315,6 +315,29 @@ class UnitTest(unittest.TestCase):
           textwrap.dedent('import("some/relative/args/file.gni")'))
       parser.ReplaceImports()
 
+    if sys.platform.startswith('win32'):
+      parser = gn_helpers.GNValueParser(
+          textwrap.dedent("""
+          some_arg1 = "val1"
+          import("/c:/some/args/file.gni")
+          some_arg2 = "val2"
+          """))
+      with mock.patch(open_fun, mock.mock_open(read_data=fake_import)):
+        parser.ReplaceImports()
+      self.assertEqual(
+          parser.input,
+          textwrap.dedent("""
+          some_arg1 = "val1"
+          some_imported_arg = "imported_val"
+          some_arg2 = "val2"
+          """))
+
+      # A path that's not source absolute should raise an exception.
+      with self.assertRaises(gn_helpers.GNError):
+        parser = gn_helpers.GNValueParser(
+            textwrap.dedent('import("c:/some/args/file.gni")'))
+        parser.ReplaceImports()
+
   def test_CreateBuildCommand(self):
     with tempfile.TemporaryDirectory() as temp_dir:
       suffix = '.bat' if sys.platform.startswith('win32') else ''
@@ -323,12 +346,12 @@ class UnitTest(unittest.TestCase):
 
       siso_deps = pathlib.Path(temp_dir) / '.siso_deps'
       siso_deps.touch()
-      self.assertEqual(f'autosiso{suffix}',
+      self.assertEqual(f'autoninja{suffix}',
                        gn_helpers.CreateBuildCommand(temp_dir)[0])
 
       with mock.patch('shutil.which', lambda x: None):
         cmd = gn_helpers.CreateBuildCommand(temp_dir)
-        self.assertIn('depot_tools', cmd[0])
+        self.assertIn('third_party', cmd[0])
         self.assertIn(f'{os.sep}siso', cmd[0])
         self.assertEqual(['ninja', '-C', temp_dir], cmd[1:])
 
@@ -344,7 +367,7 @@ class UnitTest(unittest.TestCase):
 
       with mock.patch('shutil.which', lambda x: None):
         cmd = gn_helpers.CreateBuildCommand(temp_dir)
-        self.assertIn('depot_tools', cmd[0])
+        self.assertIn('third_party', cmd[0])
         self.assertIn(f'{os.sep}ninja', cmd[0])
         self.assertEqual(['-C', temp_dir], cmd[1:])
 

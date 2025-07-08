@@ -22,21 +22,21 @@
  *    </pin-keyboard>
  */
 
-import 'chrome://resources/cr_elements/chromeos/cros_color_overrides.css.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
-import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/polymer/v3_0/paper-styles/color.js';
+import 'chrome://resources/ash/common/cr_elements/cros_color_overrides.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/ash/common/cr_elements/icons.html.js';
+import 'chrome://resources/ash/common/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import './pin_keyboard_icons.html.js';
 
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert, assertInstanceof} from 'chrome://resources/js/assert_ts.js';
+import {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {CrInputElement} from 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
+import {assert, assertInstanceof} from 'chrome://resources/js/assert.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './pin_keyboard.html.js';
@@ -67,6 +67,7 @@ const INITIAL_BACKSPACE_DELAY_MS = 500;
 const PIN_INPUT_ALLOWED_NON_NUMBER_KEY_CODES = new Set([
   8,   // backspace
   9,   // tab
+  27,  // escape
   37,  // left
   39,  // right
   // We don't allow back or forward.
@@ -190,6 +191,22 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
       },
 
       /**
+       * Enables the visibility icon for showing/hiding the PIN.
+       */
+      enableVisibilityIcon: {
+        type: Boolean,
+        value: false,
+      },
+
+      /**
+       * Controls the visibility icon logic.
+       */
+      isPinVisible_: {
+        type: Boolean,
+        value: false,
+      },
+
+      /**
        * The aria label to be used for the input element.
        */
       ariaLabel: {
@@ -205,10 +222,12 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
   passwordElement: HTMLElement|undefined;
   value: string;
   enablePlaceholder: boolean;
+  enableVisibilityIcon: boolean;
 
   private repeatBackspaceIntervalId_: number;
   private startAutoBackspaceId_: number;
   private focused_: boolean;
+  private isPinVisible_: boolean;
 
   override ready(): void {
     super.ready();
@@ -271,8 +290,17 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
   focusInputSynchronously(selectionStart?: number, selectionEnd?: number):
       void {
     this.passwordElement_().focus();
-    this.selectionStart_ = selectionStart || 0;
-    this.selectionEnd_ = selectionEnd || 0;
+    if (selectionStart !== undefined) {
+      this.selectionStart_ = selectionStart;
+    }
+    if (selectionEnd !== undefined) {
+      this.selectionEnd_ = selectionEnd;
+    }
+  }
+
+  // Set the visibility of the input field back to hidden.
+  resetPinVisibility(): void {
+    this.isPinVisible_ = false;
   }
 
   /**
@@ -444,6 +472,11 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
       return true;
     }
 
+    // Valid if the key is a numpad number, and shift is not pressed.
+    if ((event.keyCode >= 96 && event.keyCode <= 105) && !event.shiftKey) {
+      return true;
+    }
+
     // Valid if the key is one of the selected special keys defined in
     // |PIN_INPUT_ALLOWED_NON_NUMBER_KEY_CODES|.
     if (PIN_INPUT_ALLOWED_NON_NUMBER_KEY_CODES.has(event.keyCode)) {
@@ -479,18 +512,19 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
   /**
    * Called when a key event is pressed while the input element has focus.
    */
-  private onInputKeyDown_(event: Event): void {
+  private onInputKeyDown_(event: KeyboardEvent): void {
     assertInstanceof(event, KeyboardEvent);
 
     // Up/down pressed, swallow the event to prevent the input value from
     // being incremented or decremented.
-    if (event.keyCode === 38 || event.keyCode === 40) {
+    if (event.keyCode === 38 || event.keyCode === 40 ||
+        event.code === 'ArrowUp' || event.code === 'ArrowDown') {
       event.preventDefault();
       return;
     }
 
     // Enter pressed.
-    if (event.keyCode === 13) {
+    if (event.keyCode === 13 || event.code === 'Enter') {
       this.firePinSubmitEvent_();
       event.preventDefault();
       return;
@@ -533,6 +567,24 @@ export class PinKeyboardElement extends PinKeyboardElementBase {
 
     return enablePassword ? this.i18n('pinKeyboardPlaceholderPinPassword') :
                             this.i18n('pinKeyboardPlaceholderPin');
+  }
+
+  private getShowHideButtonLabel(isVisible: boolean): string {
+    return isVisible ? loadTimeData.getString('hidePin') :
+                       loadTimeData.getString('showPin');
+  }
+
+  private getShowHideButtonIcon(isVisible: boolean): string {
+    return isVisible ? 'pin-keyboard:visibility-off' :
+                       'pin-keyboard:visibility';
+  }
+
+  private onPinShowHideButtonClick() {
+    this.isPinVisible_ = !this.isPinVisible_;
+  }
+
+  private getPinInputType(isVisible: boolean): string {
+    return isVisible ? 'text' : 'password';
   }
 
   /**

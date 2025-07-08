@@ -10,20 +10,23 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/queue.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "media/base/decoder_buffer.h"
+#include "media/base/supported_video_decoder_config.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
 #include "media/gpu/codec_picture.h"
-#include "media/gpu/mac/video_toolbox_decompression_interface.h"
+#include "media/gpu/mac/video_toolbox_decompression_session_manager.h"
 #include "media/gpu/mac/video_toolbox_frame_converter.h"
 #include "media/gpu/mac/video_toolbox_output_queue.h"
 #include "media/gpu/media_gpu_export.h"
@@ -37,6 +40,7 @@ namespace media {
 class AcceleratedVideoDecoder;
 class MediaLog;
 struct VideoToolboxDecodeMetadata;
+struct VideoToolboxDecompressionSessionMetadata;
 
 class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
  public:
@@ -46,6 +50,7 @@ class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
   VideoToolboxVideoDecoder(
       scoped_refptr<base::SequencedTaskRunner> task_runner,
       std::unique_ptr<MediaLog> media_log,
+      const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
       scoped_refptr<base::SequencedTaskRunner> gpu_task_runner,
       GetCommandBufferStubCB get_stub_cb);
 
@@ -64,6 +69,10 @@ class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
   int GetMaxDecodeRequests() const override;
   VideoDecoderType GetDecoderType() const override;
 
+  static std::vector<SupportedVideoDecoderConfig>
+  GetSupportedVideoDecoderConfigs(
+      const gpu::GpuDriverBugWorkarounds& gpu_workarounds);
+
  private:
   // Shut down and enter a permanent error state.
   void NotifyError(DecoderStatus status);
@@ -75,13 +84,15 @@ class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
   void ReleaseDecodeCallbacks();
 
   // |accelerator_| callbacks.
-  void OnAcceleratorDecode(base::ScopedCFTypeRef<CMSampleBufferRef> sample,
-                           scoped_refptr<CodecPicture> picture);
+  void OnAcceleratorDecode(
+      base::apple::ScopedCFTypeRef<CMSampleBufferRef> sample,
+      VideoToolboxDecompressionSessionMetadata session_metadata,
+      scoped_refptr<CodecPicture> picture);
   void OnAcceleratorOutput(scoped_refptr<CodecPicture> picture);
 
   // |video_toolbox_| callbacks.
   void OnVideoToolboxOutput(
-      base::ScopedCFTypeRef<CVImageBufferRef> image,
+      base::apple::ScopedCFTypeRef<CVImageBufferRef> image,
       std::unique_ptr<VideoToolboxDecodeMetadata> metadata);
   void OnVideoToolboxError(DecoderStatus status);
 
@@ -91,13 +102,14 @@ class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   std::unique_ptr<MediaLog> media_log_;
+  gpu::GpuDriverBugWorkarounds gpu_workarounds_;
   scoped_refptr<base::SequencedTaskRunner> gpu_task_runner_;
   GetCommandBufferStubCB get_stub_cb_;
 
   bool has_error_ = false;
 
   std::unique_ptr<AcceleratedVideoDecoder> accelerator_;
-  VideoToolboxDecompressionInterface video_toolbox_;
+  VideoToolboxDecompressionSessionManager video_toolbox_;
   scoped_refptr<VideoToolboxFrameConverter> converter_;
   VideoToolboxOutputQueue output_queue_;
 
@@ -105,6 +117,10 @@ class MEDIA_GPU_EXPORT VideoToolboxVideoDecoder : public VideoDecoder {
 
   // Used to link re-entrant OnAcceleratorDecode() callbacks to Decode() calls.
   scoped_refptr<DecoderBuffer> active_decode_;
+
+  // Accounts for frames that have been decoded but not yet converted. These
+  // contribute to backpressure.
+  size_t num_conversions_ = 0;
 
   // Decode callbacks, which are released in decode order. There is no mapping
   // to decode requests or frames, it is simply a backpressure mechanism.

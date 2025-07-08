@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/enterprise/connectors/analysis/file_transfer_analysis_delegate.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -25,10 +32,12 @@
 #include "chrome/browser/enterprise/connectors/analysis/source_destination_test_util.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
+#include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client_factory.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 #include "chrome/browser/enterprise/connectors/test/fake_content_analysis_delegate.h"
 #include "chrome/browser/enterprise/connectors/test/fake_files_request_handler.h"
+#include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router_factory.h"
 #include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
@@ -58,6 +67,9 @@ namespace {
 constexpr char kUserName[] = "test@chromium.org";
 
 constexpr char kDmToken[] = "dm_token";
+
+constexpr char16_t kUserJustification[] = u"User justification";
+
 base::TimeDelta kResponseDelay = base::Seconds(0);
 
 storage::FileSystemURL GetEmptyTestSrcUrl() {
@@ -182,20 +194,20 @@ class ScopedSetDMToken {
 using VolumeInfo = SourceDestinationTestingHelper::VolumeInfo;
 
 constexpr std::initializer_list<VolumeInfo> kVolumeInfos{
-    {file_manager::VOLUME_TYPE_TESTING, absl::nullopt, "TESTING"},
-    {file_manager::VOLUME_TYPE_GOOGLE_DRIVE, absl::nullopt, "GOOGLE_DRIVE"},
-    {file_manager::VOLUME_TYPE_DOWNLOADS_DIRECTORY, absl::nullopt, "MY_FILES"},
-    {file_manager::VOLUME_TYPE_REMOVABLE_DISK_PARTITION, absl::nullopt,
+    {file_manager::VOLUME_TYPE_TESTING, std::nullopt, "TESTING"},
+    {file_manager::VOLUME_TYPE_GOOGLE_DRIVE, std::nullopt, "GOOGLE_DRIVE"},
+    {file_manager::VOLUME_TYPE_DOWNLOADS_DIRECTORY, std::nullopt, "MY_FILES"},
+    {file_manager::VOLUME_TYPE_REMOVABLE_DISK_PARTITION, std::nullopt,
      "REMOVABLE"},
-    {file_manager::VOLUME_TYPE_MOUNTED_ARCHIVE_FILE, absl::nullopt, "TESTING"},
-    {file_manager::VOLUME_TYPE_PROVIDED, absl::nullopt, "PROVIDED"},
-    {file_manager::VOLUME_TYPE_MTP, absl::nullopt, "DEVICE_MEDIA_STORAGE"},
-    {file_manager::VOLUME_TYPE_MEDIA_VIEW, absl::nullopt, "ARC"},
-    {file_manager::VOLUME_TYPE_CROSTINI, absl::nullopt, "CROSTINI"},
-    {file_manager::VOLUME_TYPE_ANDROID_FILES, absl::nullopt, "ARC"},
-    {file_manager::VOLUME_TYPE_DOCUMENTS_PROVIDER, absl::nullopt, "ARC"},
-    {file_manager::VOLUME_TYPE_SMB, absl::nullopt, "SMB"},
-    {file_manager::VOLUME_TYPE_SYSTEM_INTERNAL, absl::nullopt, "UNKNOWN"},
+    {file_manager::VOLUME_TYPE_MOUNTED_ARCHIVE_FILE, std::nullopt, "TESTING"},
+    {file_manager::VOLUME_TYPE_PROVIDED, std::nullopt, "PROVIDED"},
+    {file_manager::VOLUME_TYPE_MTP, std::nullopt, "DEVICE_MEDIA_STORAGE"},
+    {file_manager::VOLUME_TYPE_MEDIA_VIEW, std::nullopt, "ARC"},
+    {file_manager::VOLUME_TYPE_CROSTINI, std::nullopt, "CROSTINI"},
+    {file_manager::VOLUME_TYPE_ANDROID_FILES, std::nullopt, "ARC"},
+    {file_manager::VOLUME_TYPE_DOCUMENTS_PROVIDER, std::nullopt, "ARC"},
+    {file_manager::VOLUME_TYPE_SMB, std::nullopt, "SMB"},
+    {file_manager::VOLUME_TYPE_SYSTEM_INTERNAL, std::nullopt, "UNKNOWN"},
     {file_manager::VOLUME_TYPE_GUEST_OS, guest_os::VmType::TERMINA, "CROSTINI"},
     {file_manager::VOLUME_TYPE_GUEST_OS, guest_os::VmType::PLUGIN_VM,
      "PLUGIN_VM"},
@@ -205,7 +217,7 @@ constexpr std::initializer_list<VolumeInfo> kVolumeInfos{
      "BRUSCHETTA"},
     {file_manager::VOLUME_TYPE_GUEST_OS, guest_os::VmType::UNKNOWN,
      "UNKNOWN_VM"},
-    {file_manager::VOLUME_TYPE_GUEST_OS, absl::nullopt, "UNKNOWN_VM"},
+    {file_manager::VOLUME_TYPE_GUEST_OS, std::nullopt, "UNKNOWN_VM"},
     {file_manager::VOLUME_TYPE_GUEST_OS, guest_os::VmType::ARCVM, "ARC"},
 };
 
@@ -760,8 +772,8 @@ class FileTransferAnalysisDelegateAuditOnlyTest : public BaseTest {
     // The access point is only used for metrics, so its value doesn't affect
     // the tests in this file and can always be the same.
     file_transfer_analysis_delegate_ = FileTransferAnalysisDelegate::Create(
-        safe_browsing::DeepScanAccessPoint::FILE_TRANSFER, source_url,
-        destination_url, profile_, file_system_context_.get(), GetSettings());
+        DeepScanAccessPoint::FILE_TRANSFER, source_url, destination_url,
+        profile_, file_system_context_.get(), GetSettings());
 
     base::test::TestFuture<void> future;
     file_transfer_analysis_delegate_->UploadData(future.GetCallback());
@@ -850,7 +862,7 @@ class FileTransferAnalysisDelegateAuditOnlyTest : public BaseTest {
         base::CreateDirectory(path.DirName());
       }
       base::File file(path, base::File::FLAG_CREATE | base::File::FLAG_WRITE);
-      file.WriteAtCurrentPos(content.data(), content.size());
+      file.WriteAtCurrentPos(base::as_byte_span(content));
       paths.emplace_back(path);
     }
     return paths;
@@ -867,9 +879,9 @@ class FileTransferAnalysisDelegateAuditOnlyTest : public BaseTest {
   storage::FileSystemURL source_directory_url_;
   storage::FileSystemURL destination_directory_url_;
   VolumeInfo kSourceVolumeInfo{file_manager::VOLUME_TYPE_DOWNLOADS_DIRECTORY,
-                               absl::nullopt, "MY_FILES"};
+                               std::nullopt, "MY_FILES"};
   VolumeInfo kDestinationVolumeInfo{
-      file_manager::VOLUME_TYPE_REMOVABLE_DISK_PARTITION, absl::nullopt,
+      file_manager::VOLUME_TYPE_REMOVABLE_DISK_PARTITION, std::nullopt,
       "REMOVABLE"};
 
  private:
@@ -886,7 +898,7 @@ class FileTransferAnalysisDelegateAuditOnlyTest : public BaseTest {
   std::map<base::FilePath, ContentAnalysisResponse> failures_;
 
   // DLP response to ovewrite in the callback if present.
-  absl::optional<ContentAnalysisResponse> dlp_response_ = absl::nullopt;
+  std::optional<ContentAnalysisResponse> dlp_response_ = std::nullopt;
 
   // URLs to verify source and destination.
   storage::FileSystemURL source_url_;
@@ -902,9 +914,9 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, InvalidPath) {
 
   ScanUpload(source_url, destination_url);
 
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsUnknown());
   // Checks that there was an early return.
   EXPECT_FALSE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -920,9 +932,9 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, NonExistingFile) {
   ScanUpload(source_url, destination_directory_url_);
 
   // Directories should always be unknown!
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsUnknown());
   // Checks that there was an early return.
   EXPECT_FALSE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -935,9 +947,9 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, EmptyDirectory) {
   ScanUpload(source_directory_url_, destination_directory_url_);
 
   // Directories should always be unknown!
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
   // Checks that there was an early return.
   EXPECT_FALSE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -954,12 +966,12 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowed) {
 
   ScanUpload(source_url, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_ALLOWED,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsAllowed());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -985,6 +997,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileBlockedDlp) {
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvent(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filename*/ "foo.doc",
@@ -997,22 +1010,293 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileBlockedDlp) {
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_id*/ scan_id);
+      /*scan_id*/ scan_id,
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_url, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_BLOCKED,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsBlocked());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
+}
+
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileWarnDlp) {
+  std::vector<base::FilePath> paths = CreateFilesForTest(
+      {FILE_PATH_LITERAL("foo.doc")}, source_directory_url_.path());
+
+  // Mark all files and text with failed scans.
+  std::string scan_id = "scan_id";
+  ContentAnalysisResponse response =
+      test::FakeContentAnalysisDelegate::DlpResponse(
+          ContentAnalysisResponse::Result::SUCCESS, "rule",
+          TriggeredRule::WARN);
+  response.set_request_token(scan_id);
+
+  SetDLPResponse(response);
+
+  storage::FileSystemURL source_url = PathToFileSystemURL(paths[0]);
+
+  {
+    // Check reporting.
+    test::EventReportValidator validator(cloud_policy_client());
+    validator.ExpectSensitiveDataEvent(
+        /*url*/ "",
+        /*tab_url*/ "",
+        /*source*/ kSourceVolumeInfo.fs_config_string,
+        /*destination*/ kDestinationVolumeInfo.fs_config_string,
+        /*filename*/ "foo.doc",
+        // printf "content" | sha256sum  |  tr '[:lower:]' '[:upper:]'
+        /*sha*/
+        "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73",
+        /*trigger*/
+        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
+        /*dlp_verdict*/ response.results()[0],
+        /*mimetype*/ DocMimeTypes(),
+        /*size*/ std::string("content").size(),
+        /*result*/
+        EventResultToString(EventResult::WARNED),
+        /*username*/ kUserName,
+        /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+        /*scan_id*/ scan_id,
+        /*content_transfer_method*/ std::nullopt,
+        /*user_justification*/ std::nullopt);
+
+    ScanUpload(source_url, destination_directory_url_);
+  }
+
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+
+  // AnalysisResult should be blocked as the warning isn't bypassed.
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsBlocked());
+  // Checks that some scanning was performed.
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
+
+  auto warned_files = file_transfer_analysis_delegate_->GetWarnedFiles();
+  ASSERT_EQ(warned_files.size(), 1ul);
+  EXPECT_EQ(paths[0], warned_files[0].path());
+}
+
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileWarnDlpBypassed) {
+  std::vector<base::FilePath> paths = CreateFilesForTest(
+      {FILE_PATH_LITERAL("foo.doc")}, source_directory_url_.path());
+
+  // Mark all files and text with failed scans.
+  std::string scan_id = "scan_id";
+  ContentAnalysisResponse response =
+      test::FakeContentAnalysisDelegate::DlpResponse(
+          ContentAnalysisResponse::Result::SUCCESS, "rule",
+          TriggeredRule::WARN);
+  response.set_request_token(scan_id);
+
+  SetDLPResponse(response);
+
+  storage::FileSystemURL source_url = PathToFileSystemURL(paths[0]);
+
+  {
+    // Check reporting.
+    test::EventReportValidator validator(cloud_policy_client());
+    validator.ExpectSensitiveDataEvent(
+        /*url*/ "",
+        /*tab_url*/ "",
+        /*source*/ kSourceVolumeInfo.fs_config_string,
+        /*destination*/ kDestinationVolumeInfo.fs_config_string,
+        /*filename*/ "foo.doc",
+        // printf "content" | sha256sum  |  tr '[:lower:]' '[:upper:]'
+        /*sha*/
+        "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73",
+        /*trigger*/
+        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
+        /*dlp_verdict*/ response.results()[0],
+        /*mimetype*/ DocMimeTypes(),
+        /*size*/ std::string("content").size(),
+        /*result*/
+        EventResultToString(EventResult::WARNED),
+        /*username*/ kUserName,
+        /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+        /*scan_id*/ scan_id,
+        /*content_transfer_method*/ std::nullopt,
+        /*user_justification*/ std::nullopt);
+
+    ScanUpload(source_url, destination_directory_url_);
+  }
+
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+
+  // Checks that some scanning was performed.
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
+
+  auto warned_files = file_transfer_analysis_delegate_->GetWarnedFiles();
+  ASSERT_EQ(warned_files.size(), 1ul);
+  EXPECT_EQ(paths[0], warned_files[0].path());
+
+  {
+    // Check reporting of bypass.
+    test::EventReportValidator validator(cloud_policy_client());
+    validator.ExpectSensitiveDataEvent(
+        /*url*/ "",
+        /*tab_url*/ "",
+        /*source*/ kSourceVolumeInfo.fs_config_string,
+        /*destination*/ kDestinationVolumeInfo.fs_config_string,
+        /*filename*/ "foo.doc",
+        // printf "content" | sha256sum  |  tr '[:lower:]' '[:upper:]'
+        /*sha*/
+        "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73",
+        /*trigger*/
+        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
+        /*dlp_verdict*/ response.results()[0],
+        /*mimetype*/ DocMimeTypes(),
+        /*size*/ std::string("content").size(),
+        /*result*/
+        EventResultToString(EventResult::BYPASSED),
+        /*username*/ kUserName,
+        /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+        /*scan_id*/ scan_id,
+        /*content_transfer_method*/ std::nullopt,
+        /*user_justification*/ kUserJustification);
+
+    file_transfer_analysis_delegate_->BypassWarnings(kUserJustification);
+  }
+}
+
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, CustomWarningSettingsUnset) {
+  // By default the custom warning message and the learn more URL are not set,
+  // and a user justification is not required to bypass a warning.
+  std::vector<base::FilePath> paths = CreateFilesForTest(
+      {FILE_PATH_LITERAL("foo.doc")}, source_directory_url_.path());
+
+  // Mark all files and text with failed scans.
+  std::string scan_id = "scan_id";
+  ContentAnalysisResponse response =
+      test::FakeContentAnalysisDelegate::DlpResponse(
+          ContentAnalysisResponse::Result::SUCCESS, "rule",
+          TriggeredRule::WARN);
+  response.set_request_token(scan_id);
+
+  SetDLPResponse(response);
+
+  storage::FileSystemURL source_url = PathToFileSystemURL(paths[0]);
+  ScanUpload(source_url, destination_directory_url_);
+
+  ASSERT_EQ(
+      file_transfer_analysis_delegate_->BypassRequiresJustification(kDlpTag),
+      false);
+  ASSERT_FALSE(
+      file_transfer_analysis_delegate_->GetCustomMessage(kDlpTag).has_value());
+  ASSERT_FALSE(file_transfer_analysis_delegate_->GetCustomLearnMoreUrl(kDlpTag)
+                   .has_value());
+
+  ASSERT_EQ(file_transfer_analysis_delegate_->BypassRequiresJustification(
+                kMalwareTag),
+            false);
+  ASSERT_FALSE(file_transfer_analysis_delegate_->GetCustomMessage(kMalwareTag)
+                   .has_value());
+  ASSERT_FALSE(
+      file_transfer_analysis_delegate_->GetCustomLearnMoreUrl(kMalwareTag)
+          .has_value());
+}
+
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, CustomWarningSettingsSet) {
+  std::vector<base::FilePath> paths = CreateFilesForTest(
+      {FILE_PATH_LITERAL("foo.doc")}, source_directory_url_.path());
+
+  // Setup a policy that sets the custom warning message, the learn more URL,
+  // and requires a user justification to bypass warnings.
+  enterprise_connectors::test::SetAnalysisConnector(
+      profile_->GetPrefs(), enterprise_connectors::FILE_TRANSFER,
+      R"(
+        {
+          "service_provider": "google",
+          "enable": [
+            {
+              "source_destination_list": [
+                {
+                  "sources": [{
+                    "file_system_type": "*"
+                  }],
+                  "destinations": [{
+                    "file_system_type": "*"
+                  }]
+                }
+              ],
+              "tags": ["dlp", "malware"]
+            }
+          ],
+          "block_until_verdict": 1,
+          "custom_messages" : [
+            {
+              "learn_more_url": "https://learnmore-dlp.com",
+              "message": "Custom message dlp",
+              "tag": "dlp"
+            }, {
+              "learn_more_url": "https://learnmore-malware.com",
+              "message": "Custom message malware",
+              "tag": "malware"
+            }
+          ],
+          "require_justification_tags": [
+            "dlp",
+            "malware"
+          ]
+        }
+      )");
+
+  // Mark all files and text with failed scans.
+  std::string scan_id = "scan_id";
+  ContentAnalysisResponse response =
+      test::FakeContentAnalysisDelegate::DlpResponse(
+          ContentAnalysisResponse::Result::SUCCESS, "rule",
+          TriggeredRule::WARN);
+  response.set_request_token(scan_id);
+
+  SetDLPResponse(response);
+
+  storage::FileSystemURL source_url = PathToFileSystemURL(paths[0]);
+  ScanUpload(source_url, destination_directory_url_);
+
+  ASSERT_EQ(
+      file_transfer_analysis_delegate_->BypassRequiresJustification(kDlpTag),
+      true);
+  ASSERT_EQ(file_transfer_analysis_delegate_->GetCustomMessage(kDlpTag),
+            u"Custom message dlp");
+  ASSERT_EQ(file_transfer_analysis_delegate_->GetCustomLearnMoreUrl(kDlpTag),
+            std::optional<GURL>("https://learnmore-dlp.com"));
+
+  ASSERT_EQ(file_transfer_analysis_delegate_->BypassRequiresJustification(
+                kMalwareTag),
+            true);
+  ASSERT_EQ(file_transfer_analysis_delegate_->GetCustomMessage(kMalwareTag),
+            u"Custom message malware");
+  ASSERT_EQ(
+      file_transfer_analysis_delegate_->GetCustomLearnMoreUrl(kMalwareTag),
+      std::optional<GURL>("https://learnmore-malware.com"));
+
+  const std::string wrong_tag = "wrong-tag";
+  ASSERT_EQ(
+      file_transfer_analysis_delegate_->BypassRequiresJustification(wrong_tag),
+      false);
+  ASSERT_FALSE(file_transfer_analysis_delegate_->GetCustomMessage(wrong_tag)
+                   .has_value());
+  ASSERT_FALSE(
+      file_transfer_analysis_delegate_->GetCustomLearnMoreUrl(wrong_tag)
+          .has_value());
 }
 
 TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
@@ -1044,6 +1328,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvent(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filename*/ "foo.doc",
@@ -1056,10 +1341,12 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::ALLOWED),
+      EventResultToString(EventResult::ALLOWED),
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_id*/ scan_id);
+      /*scan_id*/ scan_id,
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_url, destination_url);
 
@@ -1096,6 +1383,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileBlockedMalware) {
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectDangerousDeepScanningResult(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filename*/ "foo.doc",
@@ -1108,25 +1396,25 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileBlockedMalware) {
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
       /*scan_id*/ scan_id);
 
   ScanUpload(source_url, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_BLOCKED,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsBlocked());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
 }
 
-TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowedEncrypted) {
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowedEncryptedd) {
   // UtilityThreadHelper needed to verify that the file is encrypted.
   content::InProcessUtilityThreadHelper in_process_utility_thread_helper;
 
@@ -1138,12 +1426,12 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowedEncrypted) {
   base::FilePath path = source_directory_url_.path().Append("encrypted.zip");
   base::CopyFile(test_zip, path);
 
-  // Mark all files and text with failed scans.
+  // Mark all files and text with successful scans.
   std::string scan_id = "scan_id";
   ContentAnalysisResponse response =
       test::FakeContentAnalysisDelegate::DlpResponse(
           ContentAnalysisResponse::Result::SUCCESS, "rule",
-          TriggeredRule::BLOCK);
+          TriggeredRule::REPORT_ONLY);
   response.set_request_token(scan_id);
 
   SetDLPResponse(response);
@@ -1152,8 +1440,11 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowedEncrypted) {
 
   // Check reporting.
   test::EventReportValidator validator(cloud_policy_client());
-  validator.ExpectUnscannedFileEvent(
+  // When resumable upload is in use and the policy does not block encrypted
+  // files by default, the file's metadata is uploaded for scanning.
+  validator.ExpectSensitiveDataEvent(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filename*/ "encrypted.zip",
@@ -1162,22 +1453,25 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, SingleFileAllowedEncrypted) {
       "701FCEA8B2112FFAB257A8A8DFD3382ABCF047689AB028D42903E3B3AA488D9A",
       /*trigger*/
       extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
-      /*reason*/ "FILE_PASSWORD_PROTECTED",
+      /*dlp_verdict*/ response.results()[0],
       /*mimetype*/ ZipMimeTypes(),
       /*size*/ 20015,
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::ALLOWED),
+      EventResultToString(EventResult::ALLOWED),
       /*username*/ kUserName,
-      /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe());
+      /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+      /*scan_id*/ scan_id,
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_url, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_ALLOWED,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsAllowed());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -1195,12 +1489,12 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(
-      FileTransferAnalysisDelegate::RESULT_ALLOWED,
-      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(source_url)
+          .IsAllowed());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -1224,6 +1518,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvent(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filename*/ "foo.doc",
@@ -1236,19 +1531,21 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
+      EventResultToString(EventResult::BLOCKED),
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_id*/ scan_id);
+      /*scan_id*/ scan_id,
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_BLOCKED,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                PathToFileSystemURL(paths[0])));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(PathToFileSystemURL(paths[0]))
+                  .IsBlocked());
   // Checks that some scanning was performed.
   EXPECT_TRUE(
       file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
@@ -1266,13 +1563,13 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
   for (const auto& path : paths) {
-    EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_ALLOWED,
-              file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                  PathToFileSystemURL(path)));
+    EXPECT_TRUE(file_transfer_analysis_delegate_
+                    ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                    .IsAllowed());
   }
   // Checks that some scanning was performed.
   EXPECT_TRUE(
@@ -1300,6 +1597,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvents(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filenames*/ {"foo.doc", "baa.doc", "blub.doc"},
@@ -1315,22 +1613,24 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      {safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
-       safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
-       safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED)},
+      {EventResultToString(EventResult::BLOCKED),
+       EventResultToString(EventResult::BLOCKED),
+       EventResultToString(EventResult::BLOCKED)},
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_ids*/ {scan_id, scan_id, scan_id});
+      /*scan_ids*/ {scan_id, scan_id, scan_id},
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
   for (const auto& path : paths) {
-    EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_BLOCKED,
-              file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                  PathToFileSystemURL(path)));
+    EXPECT_TRUE(file_transfer_analysis_delegate_
+                    ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                    .IsBlocked());
   }
   // Checks that some scanning was performed.
   EXPECT_TRUE(
@@ -1365,6 +1665,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvents(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filenames*/ {"bad1.doc", "bad2.doc"},
@@ -1379,26 +1680,28 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
       /*mimetype*/ DocMimeTypes(),
       /*size*/ std::string("content").size(),
       /*result*/
-      {safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED),
-       safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED)},
+      {EventResultToString(EventResult::BLOCKED),
+       EventResultToString(EventResult::BLOCKED)},
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_ids*/ {scan_id, scan_id});
+      /*scan_ids*/ {scan_id, scan_id},
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
   for (const auto& path : paths) {
     if (path.value().find("bad") != std::string::npos) {
-      EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_BLOCKED,
-                file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                    PathToFileSystemURL(path)));
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsBlocked());
     } else {
-      EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_ALLOWED,
-                file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                    PathToFileSystemURL(path)));
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsAllowed());
     }
   }
 
@@ -1442,8 +1745,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, DirectoryTreeSomeBlocked) {
       expected_shas.push_back(
           "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73");
       expected_dlp_verdicts.push_back(response.results()[0]);
-      expected_results.push_back(safe_browsing::EventResultToString(
-          safe_browsing::EventResult::BLOCKED));
+      expected_results.push_back(EventResultToString(EventResult::BLOCKED));
       expected_scan_ids.push_back(request_token);
     }
   }
@@ -1453,6 +1755,7 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, DirectoryTreeSomeBlocked) {
   test::EventReportValidator validator(cloud_policy_client());
   validator.ExpectSensitiveDataEvents(
       /*url*/ "",
+      /*tab_url*/ "",
       /*source*/ kSourceVolumeInfo.fs_config_string,
       /*destination*/ kDestinationVolumeInfo.fs_config_string,
       /*filenames*/ expected_filenames,
@@ -1469,22 +1772,210 @@ TEST_F(FileTransferAnalysisDelegateAuditOnlyTest, DirectoryTreeSomeBlocked) {
       expected_results,
       /*username*/ kUserName,
       /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
-      /*scan_ids*/ expected_scan_ids);
+      /*scan_ids*/ expected_scan_ids,
+      /*content_transfer_method*/ std::nullopt,
+      /*user_justification*/ std::nullopt);
 
   ScanUpload(source_directory_url_, destination_directory_url_);
 
-  EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_UNKNOWN,
-            file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                source_directory_url_));
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
   for (const auto& path : paths) {
     if (path.value().find("bad") != std::string::npos) {
-      EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_BLOCKED,
-                file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                    PathToFileSystemURL(path)));
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsBlocked());
     } else {
-      EXPECT_EQ(FileTransferAnalysisDelegate::RESULT_ALLOWED,
-                file_transfer_analysis_delegate_->GetAnalysisResultAfterScan(
-                    PathToFileSystemURL(path)));
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsAllowed());
+    }
+  }
+  // Checks that some scanning was performed.
+  EXPECT_TRUE(
+      file_transfer_analysis_delegate_->GetFilesRequestHandlerForTesting());
+}
+
+TEST_F(FileTransferAnalysisDelegateAuditOnlyTest,
+       DirectoryTreeSomeBlockedSomeWarned) {
+  std::vector<base::FilePath> paths = CreateFilesForTest(
+      {FILE_PATH_LITERAL("good1.doc"), FILE_PATH_LITERAL("good2.doc"),
+       FILE_PATH_LITERAL("bad1.doc"), FILE_PATH_LITERAL("bad2.doc"),
+       FILE_PATH_LITERAL("warn1.doc"), FILE_PATH_LITERAL("warn2.doc"),
+       FILE_PATH_LITERAL("a_good1.doc"), FILE_PATH_LITERAL("a/good1.doc"),
+       FILE_PATH_LITERAL("a/a_good1.doc"), FILE_PATH_LITERAL("a/e/bad2b.doc"),
+       FILE_PATH_LITERAL("a/e/a_good1.doc"),
+       FILE_PATH_LITERAL("a/e/a_bad1.doc"),
+       FILE_PATH_LITERAL("a/e/a_warn1.doc"),
+       FILE_PATH_LITERAL("a/e/a_warn2.doc"), FILE_PATH_LITERAL("b/good2.doc"),
+       FILE_PATH_LITERAL("b/bad1b.doc")},
+      source_directory_url_.path());
+
+  std::vector<storage::FileSystemURL> expected_warned_files;
+
+  {
+    std::vector<std::string> expected_filenames;
+    std::vector<std::string> expected_shas;
+    std::vector<ContentAnalysisResponse::Result> expected_dlp_verdicts;
+    std::vector<std::string> expected_results;
+    std::vector<std::string> expected_scan_ids;
+
+    // Mark all files and text with failed scans.
+    for (size_t i = 0; i < paths.size(); ++i) {
+      auto&& path = paths[i];
+      bool should_block = path.value().find("bad") != std::string::npos;
+      bool should_warn = path.value().find("warn") != std::string::npos;
+      if (should_block || should_warn) {
+        ContentAnalysisResponse response =
+            test::FakeContentAnalysisDelegate::DlpResponse(
+                ContentAnalysisResponse::Result::SUCCESS,
+                base::StrCat({"rule", base::NumberToString(i)}),
+                should_block ? TriggeredRule::BLOCK : TriggeredRule::WARN);
+        std::string request_token =
+            base::StrCat({"scan_id", base::NumberToString(i)});
+        response.set_request_token(request_token);
+        PathFailsDeepScan(path, response);
+
+        expected_filenames.push_back(path.BaseName().AsUTF8Unsafe());
+        expected_shas.push_back(
+            "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73");
+        expected_dlp_verdicts.push_back(response.results()[0]);
+        if (should_block) {
+          expected_results.push_back(EventResultToString(EventResult::BLOCKED));
+        } else {
+          ASSERT_TRUE(should_warn);
+          expected_results.push_back(EventResultToString(EventResult::WARNED));
+        }
+        expected_scan_ids.push_back(request_token);
+      }
+
+      if (should_warn) {
+        expected_warned_files.emplace_back(PathToFileSystemURL(path));
+      }
+    }
+
+    test::EventReportValidator validator(cloud_policy_client());
+    validator.ExpectSensitiveDataEvents(
+        /*url*/ "",
+        /*tab_url*/ "",
+        /*source*/ kSourceVolumeInfo.fs_config_string,
+        /*destination*/ kDestinationVolumeInfo.fs_config_string,
+        /*filenames*/ expected_filenames,
+        // printf "content" | sha256sum  |  tr '[:lower:]' '[:upper:]'
+        /*sha256s*/
+        expected_shas,
+        /*trigger*/
+        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
+        /*dlp_verdicts*/
+        expected_dlp_verdicts,
+        /*mimetype*/ DocMimeTypes(),
+        /*size*/ std::string("content").size(),
+        /*result*/
+        expected_results,
+        /*username*/ kUserName,
+        /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+        /*scan_ids*/ expected_scan_ids,
+        /*content_transfer_method*/ std::nullopt,
+        /*user_justification*/ std::nullopt);
+
+    ScanUpload(source_directory_url_, destination_directory_url_);
+  }
+
+  auto warned_files = file_transfer_analysis_delegate_->GetWarnedFiles();
+  EXPECT_THAT(warned_files,
+              ::testing::UnorderedElementsAreArray(expected_warned_files));
+
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  for (const auto& path : paths) {
+    bool should_block = path.value().find("bad") != std::string::npos;
+    bool should_warn = path.value().find("warn") != std::string::npos;
+    if (should_block || should_warn) {
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsBlocked());
+    } else {
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsAllowed());
+    }
+  }
+
+  {
+    std::vector<std::string> expected_filenames;
+    std::vector<std::string> expected_shas;
+    std::vector<ContentAnalysisResponse::Result> expected_dlp_verdicts;
+    std::vector<std::string> expected_results;
+    std::vector<std::string> expected_scan_ids;
+
+    // Mark all files and text with failed scans.
+    for (size_t i = 0; i < paths.size(); ++i) {
+      auto&& path = paths[i];
+      bool should_warn = path.value().find("warn") != std::string::npos;
+      if (should_warn) {
+        ContentAnalysisResponse response =
+            test::FakeContentAnalysisDelegate::DlpResponse(
+                ContentAnalysisResponse::Result::SUCCESS,
+                base::StrCat({"rule", base::NumberToString(i)}),
+                TriggeredRule::WARN);
+        std::string request_token =
+            base::StrCat({"scan_id", base::NumberToString(i)});
+        response.set_request_token(request_token);
+
+        expected_filenames.push_back(path.BaseName().AsUTF8Unsafe());
+        expected_shas.push_back(
+            "ED7002B439E9AC845F22357D822BAC1444730FBDB6016D3EC9432297B9EC9F73");
+        expected_dlp_verdicts.push_back(response.results()[0]);
+
+        expected_results.push_back(EventResultToString(EventResult::BYPASSED));
+
+        expected_scan_ids.push_back(request_token);
+      }
+    }
+
+    test::EventReportValidator validator(cloud_policy_client());
+    validator.ExpectSensitiveDataEvents(
+        /*url*/ "",
+        /*tab_url*/ "",
+        /*source*/ kSourceVolumeInfo.fs_config_string,
+        /*destination*/ kDestinationVolumeInfo.fs_config_string,
+        /*filenames*/ expected_filenames,
+        // printf "content" | sha256sum  |  tr '[:lower:]' '[:upper:]'
+        /*sha256s*/
+        expected_shas,
+        /*trigger*/
+        extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer,
+        /*dlp_verdicts*/
+        expected_dlp_verdicts,
+        /*mimetype*/ DocMimeTypes(),
+        /*size*/ std::string("content").size(),
+        /*result*/
+        expected_results,
+        /*username*/ kUserName,
+        /*profile_identifier*/ profile_->GetPath().AsUTF8Unsafe(),
+        /*scan_ids*/ expected_scan_ids,
+        /*content_transfer_method*/ std::nullopt,
+        /*user_justification*/ kUserJustification);
+
+    file_transfer_analysis_delegate_->BypassWarnings(kUserJustification);
+  }
+
+  // Should now no longer block bypassed files.
+  EXPECT_TRUE(file_transfer_analysis_delegate_
+                  ->GetAnalysisResultAfterScan(source_directory_url_)
+                  .IsUnknown());
+  for (const auto& path : paths) {
+    bool should_block = path.value().find("bad") != std::string::npos;
+    if (should_block) {
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsBlocked());
+    } else {
+      EXPECT_TRUE(file_transfer_analysis_delegate_
+                      ->GetAnalysisResultAfterScan(PathToFileSystemURL(path))
+                      .IsAllowed());
     }
   }
 

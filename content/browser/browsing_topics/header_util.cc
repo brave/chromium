@@ -5,6 +5,7 @@
 #include "content/browser/browsing_topics/header_util.h"
 
 #include "base/strings/strcat.h"
+#include "components/browsing_topics/common/common_types.h"
 #include "components/browsing_topics/common/semantic_tree.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/content_browser_client.h"
@@ -46,7 +47,7 @@ std::string DeriveTopicsHeaderValue(
     const std::vector<blink::mojom::EpochTopicPtr>& topics,
     int num_versions_in_epochs) {
   net::structured_headers::List header_list;
-  absl::optional<std::string> last_version;
+  std::optional<std::string> last_version;
   std::vector<net::structured_headers::ParameterizedItem> cur_topics;
 
   // Build up the header without the padding parameter.
@@ -135,7 +136,7 @@ std::string DeriveTopicsHeaderValue(
                  base::StrCat({"P", std::string(padding_needed, '0')}),
                  net::structured_headers::Item::kTokenType)}}));
 
-  absl::optional<std::string> serialized_header =
+  std::optional<std::string> serialized_header =
       net::structured_headers::SerializeList(header_list);
   CHECK(serialized_header);
 
@@ -148,7 +149,8 @@ void HandleTopicsEligibleResponse(
     RenderFrameHost& request_initiator_frame,
     browsing_topics::ApiCallerSource caller_source) {
   DCHECK(caller_source == browsing_topics::ApiCallerSource::kFetch ||
-         caller_source == browsing_topics::ApiCallerSource::kIframeAttribute);
+         caller_source == browsing_topics::ApiCallerSource::kIframeAttribute ||
+         caller_source == browsing_topics::ApiCallerSource::kImgAttribute);
 
   if (!parsed_headers || !parsed_headers->observe_browsing_topics) {
     return;
@@ -157,14 +159,6 @@ void HandleTopicsEligibleResponse(
   // Check the page's IsPrimary() status again in case it has changed since the
   // request time.
   if (!request_initiator_frame.GetPage().IsPrimary()) {
-    return;
-  }
-
-  // TODO(crbug.com/1244137): IsPrimary() doesn't actually detect portals yet.
-  // Remove this when it does.
-  if (!static_cast<const RenderFrameHostImpl*>(
-           request_initiator_frame.GetMainFrame())
-           ->IsOutermostMainFrame()) {
     return;
   }
 

@@ -6,64 +6,53 @@
 
 #include "base/check.h"
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 
 namespace media {
 
-OffsetByteQueue::OffsetByteQueue() : buf_(nullptr), size_(0), head_(0) {}
+OffsetByteQueue::OffsetByteQueue() = default;
 OffsetByteQueue::~OffsetByteQueue() = default;
 
 void OffsetByteQueue::Reset() {
   queue_.Reset();
-  buf_ = nullptr;
-  size_ = 0;
   head_ = 0;
 }
 
-bool OffsetByteQueue::Push(const uint8_t* buf, int size) {
-  if (!queue_.Push(buf, size)) {
-    DVLOG(4) << "Failed to push buf of size " << size;
-    Sync();
+bool OffsetByteQueue::Push(base::span<const uint8_t> buf) {
+  if (!queue_.Push(buf)) {
+    DVLOG(4) << "Failed to push buf of size " << buf.size();
     return false;
   }
-  Sync();
   DVLOG(4) << "Buffer pushed. head=" << head() << " tail=" << tail();
   return true;
 }
 
-void OffsetByteQueue::Peek(const uint8_t** buf, int* size) {
-  *buf = size_ > 0 ? buf_ : nullptr;
-  *size = size_;
+base::span<const uint8_t> OffsetByteQueue::Data() {
+  return queue_.Data().empty() ? base::span<const uint8_t>() : queue_.Data();
 }
 
 void OffsetByteQueue::Pop(int count) {
   queue_.Pop(count);
   head_ += count;
-  Sync();
 }
 
-void OffsetByteQueue::PeekAt(int64_t offset, const uint8_t** buf, int* size) {
-  DCHECK(offset >= head());
+base::span<const uint8_t> OffsetByteQueue::DataAt(int64_t offset) {
   if (offset < head() || offset >= tail()) {
-    *buf = nullptr;
-    *size = 0;
-    return;
+    return {};
   }
-  *buf = &buf_[offset - head()];
-  *size = tail() - offset;
+  auto offset_span =
+      queue_.Data().subspan(base::checked_cast<size_t>(offset - head()));
+  return offset_span.empty() ? base::span<const uint8_t>() : offset_span;
 }
 
 bool OffsetByteQueue::Trim(int64_t max_offset) {
   if (max_offset < head_) return true;
   if (max_offset > tail()) {
-    Pop(size_);
+    Pop(queue_.Data().size());
     return false;
   }
   Pop(max_offset - head_);
   return true;
-}
-
-void OffsetByteQueue::Sync() {
-  queue_.Peek(&buf_, &size_);
 }
 
 }  // namespace media

@@ -10,12 +10,16 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/containers/adapters.h"
 #include "base/dcheck_is_on.h"
+#include "base/memory/raw_ptr.h"
 #include "services/accessibility/android/accessibility_node_info_data_wrapper.h"
 #include "services/accessibility/android/accessibility_window_info_data_wrapper.h"
 #include "services/accessibility/android/android_accessibility_util.h"
 #include "services/accessibility/android/auto_complete_handler.h"
 #include "services/accessibility/android/drawer_layout_handler.h"
+#include "services/accessibility/android/pane_title_handler.h"
+#include "services/accessibility/android/public/mojom/accessibility_helper.mojom-shared.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_tree_source_checker.h"
 #include "ui/gfx/geometry/rect.h"
@@ -72,7 +76,7 @@ void AXTreeSourceAndroid::NotifyActionResult(const ui::AXActionData& data,
 
 void AXTreeSourceAndroid::NotifyGetTextLocationDataResult(
     const ui::AXActionData& data,
-    const absl::optional<gfx::Rect>& rect) {
+    const std::optional<gfx::Rect>& rect) {
   GetAutomationEventRouter()->DispatchGetTextLocationDataResult(data, rect);
 }
 
@@ -104,6 +108,21 @@ bool AXTreeSourceAndroid::IsRootOfNodeTree(int32_t id) const {
   return !parent_tree_it->second->IsNode();
 }
 
+void AXTreeSourceAndroid::SetVirtualNode(
+    int32_t parent_id,
+    std::unique_ptr<AccessibilityInfoDataWrapper> child) {
+  auto* parent_node = GetFromId(parent_id);
+  // TODO support any node as a parent, not limiting to a window.
+  CHECK(parent_node);
+  CHECK(parent_node->GetWindow());
+
+  int32_t node_id = child->GetId();
+  tree_map_[node_id] = std::move(child);
+  parent_map_[node_id] = parent_node->GetId();
+  static_cast<AccessibilityWindowInfoDataWrapper*>(parent_node)
+      ->AddVirtualChild(node_id);
+}
+
 AccessibilityInfoDataWrapper* AXTreeSourceAndroid::GetFirstImportantAncestor(
     AccessibilityInfoDataWrapper* info_data) const {
   AccessibilityInfoDataWrapper* parent = GetParent(info_data);
@@ -111,6 +130,16 @@ AccessibilityInfoDataWrapper* AXTreeSourceAndroid::GetFirstImportantAncestor(
     parent = GetParent(parent);
   }
   return parent;
+}
+
+AccessibilityInfoDataWrapper*
+AXTreeSourceAndroid::GetFirstAccessibilityFocusableAncestor(
+    AccessibilityInfoDataWrapper* info_data) const {
+  AccessibilityInfoDataWrapper* node = info_data;
+  while (node && !node->IsAccessibilityFocusableContainer()) {
+    node = GetParent(node);
+  }
+  return node;
 }
 
 bool AXTreeSourceAndroid::GetTreeData(ui::AXTreeData* data) const {
@@ -159,27 +188,14 @@ void AXTreeSourceAndroid::SerializeNode(AccessibilityInfoDataWrapper* info_data,
   }
 }
 
-void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
-    const AXEventData& event_data) {
-  if (window_id_ != event_data.window_id) {
-    // Root window id is changed. Resetting variables that depends on id.
-    android_focused_id_.reset();
-    hooks_.clear();
-    window_id_ = event_data.window_id;
-  }
-  is_notification_ = event_data.notification_key.has_value();
-  if (is_notification_) {
-    notification_key_ = event_data.notification_key;
-  }
-  is_input_method_window_ = event_data.is_input_method_window;
-
+void AXTreeSourceAndroid::BuildNodeMap(const AXEventData& event_data) {
   // Prepare the wrapper objects of mojom data from Android.
   CHECK(event_data.window_data);
   root_id_ = event_data.window_data->at(0)->window_id;
-  for (size_t i = 0; i < event_data.window_data->size(); ++i) {
-    int32_t window_id = event_data.window_data->at(i)->window_id;
-    int32_t root_node_id = event_data.window_data->at(i)->root_node_id;
-    AXWindowInfoData* window = event_data.window_data->at(i).get();
+  for (const auto& window_ptr : *event_data.window_data) {
+    int32_t window_id = window_ptr->window_id;
+    int32_t root_node_id = window_ptr->root_node_id;
+    AXWindowInfoData* window = window_ptr.get();
     if (root_node_id) {
       parent_map_[root_node_id] = window_id;
     }
@@ -197,20 +213,37 @@ void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
     }
   }
 
-  for (size_t i = 0; i < event_data.node_data.size(); ++i) {
-    int32_t node_id = event_data.node_data[i]->id;
-    AXNodeInfoData* node = event_data.node_data[i].get();
+  for (const auto& node_ptr : event_data.node_data) {
+    int32_t node_id = node_ptr->id;
+    AXNodeInfoData* node = node_ptr.get();
     tree_map_[node_id] =
         std::make_unique<AccessibilityNodeInfoDataWrapper>(this, node);
 
     std::vector<int32_t> children;
-    if (GetProperty(event_data.node_data[i].get()->int_list_properties,
+    if (GetProperty(node_ptr.get()->int_list_properties,
                     AXIntListProperty::CHILD_NODE_IDS, &children)) {
       for (const int32_t child : children) {
         parent_map_[child] = node_id;
       }
     }
   }
+}
+
+void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
+    const AXEventData& event_data) {
+  if (window_id_ != event_data.window_id) {
+    // Root window id is changed. Resetting variables that depends on id.
+    android_focused_id_.reset();
+    hooks_.clear();
+    window_id_ = event_data.window_id;
+  }
+  is_notification_ = event_data.notification_key.has_value();
+  if (is_notification_) {
+    notification_key_ = event_data.notification_key;
+  }
+  is_input_method_window_ = event_data.is_input_method_window;
+
+  BuildNodeMap(event_data);
 
   // Compute each node's bounds, based on its descendants.
   // Assuming |nodeData| is in pre-order, compute cached bounds in post-order to
@@ -230,6 +263,9 @@ void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
     return;
   }
 
+  AccessibilityInfoDataWrapper* const source_node =
+      GetFromId(event_data.source_id);
+
   std::vector<int32_t> update_ids = ProcessHooksOnEvent(event_data);
 
   // Prep the event and send it to automation.
@@ -237,8 +273,8 @@ void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
       android_focused_id_.has_value() ? GetFromId(*android_focused_id_)
                                       : nullptr;
   std::vector<ui::AXEvent> events;
-  const absl::optional<ax::mojom::Event> event_type = ToAXEvent(
-      event_data.event_type, GetFromId(event_data.source_id), focused_node);
+  const std::optional<ax::mojom::Event> event_type =
+      ToAXEvent(event_data.event_type, source_node, focused_node);
   if (event_type) {
     ui::AXEvent event;
     event.event_type = event_type.value();
@@ -257,24 +293,37 @@ void AXTreeSourceAndroid::NotifyAccessibilityEventInternal(
     events.push_back(std::move(event));
   }
 
-  // On event type of WINDOW_STATE_CHANGED, update the entire tree so that
-  // window location is correctly calculated.
-  int32_t node_id_to_clear =
-      (event_data.event_type == AXEventType::WINDOW_STATE_CHANGED)
-          ? *root_id_
-          : event_data.source_id;
-
-  update_ids.push_back(node_id_to_clear);
-
-  for (const int32_t update_id : update_ids) {
-    current_tree_serializer_->MarkSubtreeDirty(GetFromId(update_id));
+  if (event_data.event_type == AXEventType::WINDOW_STATE_CHANGED) {
+    // On event type of WINDOW_STATE_CHANGED, update the entire tree so that
+    // window location is correctly calculated.
+    update_ids.push_back(*root_id_);
+  } else if (!UseFullFocusMode()) {
+    update_ids.push_back(event_data.source_id);
+  } else {
+    // Otherwise, update subtree under the event source.
+    // If the event source is ignored, it's possible that the name is used by
+    // ancestor.
+    AccessibilityInfoDataWrapper* parent =
+        GetFirstAccessibilityFocusableAncestor(source_node);
+    update_ids.push_back(parent ? parent->GetId() : event_data.source_id);
   }
 
-  std::vector<ui::AXTreeUpdate> updates;
   for (const int32_t update_id : update_ids) {
+    current_tree_serializer_->MarkSubtreeDirty(update_id);
+  }
+
+  // Serialize updates in the reverse order of |update_ids|.
+  // Updates from Android event first as this contains the entire tree
+  // information, including focus.
+  std::vector<ui::AXTreeUpdate> updates;
+  for (const int32_t update_id : base::Reversed(update_ids)) {
+    AccessibilityInfoDataWrapper* update_root = GetFromId(update_id);
+    if (!update_root) {
+      LOG(ERROR) << "Update root node doesn't exist, id=" << update_id;
+      continue;
+    }
     ui::AXTreeUpdate update;
-    if (!current_tree_serializer_->SerializeChanges(GetFromId(update_id),
-                                                    &update)) {
+    if (!current_tree_serializer_->SerializeChanges(update_root, &update)) {
       std::string error_string;
       ui::AXTreeSourceChecker<AccessibilityInfoDataWrapper*> checker(this);
       checker.CheckAndGetErrorString(&error_string);
@@ -333,7 +382,8 @@ void AXTreeSourceAndroid::ComputeEnclosingBoundsInternal(
 
   // NOTE: |AXTreeSourceAndroid::GetChildren| depends on ComputeEnclosingBounds.
   // To get children, directly call wrapper's GetChildren here.
-  std::vector<AccessibilityInfoDataWrapper*> children;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>
+      children;
   info_data->GetChildren(&children);
   for (AccessibilityInfoDataWrapper* child : children) {
     ComputeEnclosingBoundsInternal(child, computed_bounds);
@@ -410,7 +460,7 @@ bool AXTreeSourceAndroid::UpdateAndroidFocusedId(
     }
   } else if (event_data.event_type == AXEventType::VIEW_SELECTED) {
     // In Android, VIEW_SELECTED event is dispatched in the two cases below:
-    // 1. Changing a value in ProgressBar or TimePicker in ARC P.
+    // 1. Changing a value in ProgressBar or TimePicker in Android P.
     // 2. Selecting an item in the context of an AdapterView.
     if (!source_node || !source_node->IsNode()) {
       return false;
@@ -477,12 +527,15 @@ bool AXTreeSourceAndroid::UpdateAndroidFocusedId(
                                       : nullptr;
 
   // Ensure that the focused node correctly gets focus.
-  while (focused_node && !focused_node->IsImportantInAndroid()) {
+  while (focused_node && focused_node->IsIgnored()) {
     AccessibilityInfoDataWrapper* parent = GetParent(focused_node);
     if (parent) {
       android_focused_id_ = parent->GetId();
       focused_node = parent;
     } else {
+      // Unable to find the appropriate focus. Removing the focused node.
+      android_focused_id_.reset();
+      focused_node = nullptr;
       break;
     }
   }
@@ -493,7 +546,7 @@ bool AXTreeSourceAndroid::UpdateAndroidFocusedId(
 std::vector<int32_t> AXTreeSourceAndroid::ProcessHooksOnEvent(
     const AXEventData& event_data) {
   base::EraseIf(hooks_, [this](const auto& it) {
-    return this->GetFromId(it.first) == nullptr;
+    return it.second->ShouldDestroy(this);
   });
 
   std::vector<int32_t> serialization_needed_ids;
@@ -516,6 +569,11 @@ std::vector<int32_t> AXTreeSourceAndroid::ProcessHooksOnEvent(
     if (hooks_.count(modifier.first) == 0) {
       hooks_.insert(std::move(modifier));
     }
+  }
+
+  auto pane_title_hook = PaneTitleHandler::CreateIfNecessary(this, event_data);
+  if (pane_title_hook) {
+    hooks_.insert(std::move(*pane_title_hook));
   }
 
   return serialization_needed_ids;
@@ -649,7 +707,8 @@ void AXTreeSourceAndroid::PerformAction(const ui::AXActionData& data) {
   delegate_->OnAction(data);
 }
 
-std::vector<AccessibilityInfoDataWrapper*>& AXTreeSourceAndroid::GetChildren(
+std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>&
+AXTreeSourceAndroid::GetChildren(
     AccessibilityInfoDataWrapper* info_data) const {
   DCHECK(info_data);
   ComputeAndCacheChildren(info_data);
@@ -662,8 +721,8 @@ void AXTreeSourceAndroid::ComputeAndCacheChildren(
     return;
   }
 
-  std::vector<AccessibilityInfoDataWrapper*>& children =
-      info_data->cached_children_.emplace();
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>&
+      children = info_data->cached_children_.emplace();
 
   info_data->GetChildren(&children);
   if (children.size() < 2) {

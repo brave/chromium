@@ -4,7 +4,10 @@
 
 #import "ios/chrome/app/spotlight/open_tabs_spotlight_manager.h"
 
-#import "base/test/task_environment.h"
+#import "base/apple/foundation_util.h"
+#import "base/containers/span.h"
+#import "base/memory/raw_ptr.h"
+#import "base/test/ios/wait_util.h"
 #import "components/favicon/core/large_icon_service_impl.h"
 #import "components/favicon/core/test/mock_favicon_service.h"
 #import "ios/chrome/app/spotlight/fake_searchable_item_factory.h"
@@ -13,20 +16,19 @@
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
+#import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 #import "third_party/skia/include/core/SkBitmap.h"
 #import "ui/base/test/ios/ui_image_test_utils.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
+using base::test::ios::kWaitForActionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 using testing::_;
 using ui::test::uiimage_utils::UIImageWithSizeAndSolidColor;
 
@@ -43,8 +45,8 @@ favicon_base::FaviconRawBitmapResult CreateTestBitmap(int w, int h) {
   CGSize size = CGSizeMake(w, h);
   UIImage* favicon = UIImageWithSizeAndSolidColor(size, [UIColor redColor]);
   NSData* png = UIImagePNGRepresentation(favicon);
-  scoped_refptr<base::RefCountedBytes> data(new base::RefCountedBytes(
-      static_cast<const unsigned char*>([png bytes]), [png length]));
+  scoped_refptr<base::RefCountedBytes> data(
+      new base::RefCountedBytes(base::apple::NSDataToSpan(png)));
 
   result.bitmap_data = data;
   result.pixel_size = gfx::Size(w, h);
@@ -78,8 +80,8 @@ class OpenTabsSpotlightManagerTest : public PlatformTest {
  public:
   OpenTabsSpotlightManagerTest() {
     CreateMockLargeIconService();
-    TestChromeBrowserState::Builder test_cbs_builder;
-    test_chrome_browser_state_ = test_cbs_builder.Build();
+    TestProfileIOS::Builder builder;
+    test_profile_ = std::move(builder).Build();
     searchableItemFactory_ = [[FakeSearchableItemFactory alloc]
         initWithDomain:spotlight::DOMAIN_OPEN_TABS];
   }
@@ -95,26 +97,25 @@ class OpenTabsSpotlightManagerTest : public PlatformTest {
               spotlightInterface:fakeSpotlightInterface_
            searchableItemFactory:searchableItemFactory_];
 
-    browser_ = std::make_unique<TestBrowser>(test_chrome_browser_state_.get());
+    browser_ = std::make_unique<TestBrowser>(test_profile_.get());
   }
 
   void TearDown() override { [manager_ shutdown]; }
 
  protected:
   BrowserList* CreateBrowserList() {
-    return BrowserListFactory::GetForBrowserState(
-        test_chrome_browser_state_.get());
+    return BrowserListFactory::GetForProfile(test_profile_.get());
   }
 
   FakeWebState* CreateWebState(WebStateList* web_state_list) {
     auto test_web_state = std::make_unique<FakeWebState>();
-    test_web_state->SetBrowserState(test_chrome_browser_state_.get());
+    test_web_state->SetBrowserState(test_profile_.get());
     test_web_state->SetNavigationManager(
         std::make_unique<web::FakeNavigationManager>());
     FakeWebState* test_web_state_ptr = test_web_state.get();
-    web_state_list->InsertWebState(0, std::move(test_web_state),
-                                   WebStateList::INSERT_ACTIVATE,
-                                   WebStateOpener());
+    web_state_list->InsertWebState(
+        std::move(test_web_state),
+        WebStateList::InsertionParams::Automatic().Activate());
     return test_web_state_ptr;
   }
 
@@ -137,13 +138,13 @@ class OpenTabsSpotlightManagerTest : public PlatformTest {
         });
   }
 
-  base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<ChromeBrowserState> test_chrome_browser_state_;
+  web::WebTaskEnvironment task_environment_;
+  std::unique_ptr<ProfileIOS> test_profile_;
   FakeSearchableItemFactory* searchableItemFactory_;
   testing::StrictMock<favicon::MockFaviconService> mock_favicon_service_;
   std::unique_ptr<favicon::LargeIconServiceImpl> large_icon_service_;
   OpenTabsSpotlightManager* manager_;
-  BrowserList* browserList_;
+  raw_ptr<BrowserList> browserList_;
   FakeSpotlightInterface* fakeSpotlightInterface_;
   std::unique_ptr<TestBrowser> browser_;
 };
@@ -167,6 +168,12 @@ TEST_F(OpenTabsSpotlightManagerTest, TestClearAndReindexOpenTabs) {
       fakeSpotlightInterface_.indexSearchableItemsCallsCount;
 
   [manager_ clearAndReindexOpenTabs];
+
+  // Wait for indexing to complete.
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
+    return fakeSpotlightInterface_.indexSearchableItemsCallsCount ==
+           currentIndexedItemCount + 2;
+  }));
 
   // Current indexed items should be deleted.
   EXPECT_EQ(fakeSpotlightInterface_
@@ -295,4 +302,54 @@ TEST_F(OpenTabsSpotlightManagerTest, TestCloseTab) {
   EXPECT_EQ(
       fakeSpotlightInterface_.deleteSearchableItemsWithIdentifiersCallsCount,
       1u);
+}
+
+// Tests that when the app is in background, any model updates don't cause an
+// immediate effect.
+TEST_F(OpenTabsSpotlightManagerTest, TestBackgroundUpdatesPostponed) {
+  browserList_->AddBrowser(browser_.get());
+
+  FakeWebState* tab1 = CreateWebState(browser_.get()->GetWebStateList());
+  tab1->LoadURL(GURL(kDummyHttpURL1));
+  FakeWebState* tab2 = CreateWebState(browser_.get()->GetWebStateList());
+  tab2->LoadURL(GURL(kDummyHttpURL2));
+
+  // We expect that we will index the added tabs.
+  EXPECT_EQ(fakeSpotlightInterface_.indexSearchableItemsCallsCount, 2u);
+
+  // Enter background
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationDidEnterBackgroundNotification
+                    object:nil
+                  userInfo:nil];
+
+  // Close a tab.
+  browser_.get()->GetWebStateList()->CloseWebStateAt(
+      0, WebStateList::CLOSE_USER_ACTION);
+
+  // We expect to NOT delete the closed tab (since it was the unique tab that
+  // has the loaded url).
+  EXPECT_EQ(
+      fakeSpotlightInterface_.deleteSearchableItemsWithIdentifiersCallsCount,
+      0u);
+
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:UIApplicationWillEnterForegroundNotification
+                    object:nil
+                  userInfo:nil];
+
+  // Since we're expecting the manager to treat any model updates in background
+  // as impossible to process immediately, the individual item should not be
+  // deleted by ID.
+  EXPECT_EQ(
+      fakeSpotlightInterface_.deleteSearchableItemsWithIdentifiersCallsCount,
+      0u);
+  // The manager instead removes everything in its domain.
+  EXPECT_EQ(fakeSpotlightInterface_
+                .deleteSearchableItemsWithDomainIdentifiersCallsCount,
+            1u);
+  // Now the manager schedules a reindexing of the only remaining open tab.
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
+    return fakeSpotlightInterface_.indexSearchableItemsCallsCount == 3;
+  }));
 }

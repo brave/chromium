@@ -9,13 +9,14 @@
 
 #include <memory>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/functional/callback.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/service/sequence_id.h"
 #include "gpu/ipc/service/command_buffer_stub.h"
 #include "media/base/video_frame.h"
@@ -50,7 +51,7 @@ class VideoToolboxFrameConverter
       std::unique_ptr<MediaLog> media_log,
       GetCommandBufferStubCB get_stub_cb);
 
-  void Convert(base::ScopedCFTypeRef<CVImageBufferRef> image,
+  void Convert(base::apple::ScopedCFTypeRef<CVImageBufferRef> image,
                std::unique_ptr<VideoToolboxDecodeMetadata> metadata,
                OutputCB output_cb);
 
@@ -67,8 +68,8 @@ class VideoToolboxFrameConverter
   void DestroyStub();
 
   void OnVideoFrameReleased(
-      base::OnceCallback<void(const gpu::SyncToken&)> destroy_shared_image_cb,
-      base::ScopedCFTypeRef<CVImageBufferRef> image,
+      scoped_refptr<gpu::ClientSharedImage> client_shared_image,
+      base::apple::ScopedCFTypeRef<CVImageBufferRef> image,
       const gpu::SyncToken& sync_token);
 
   scoped_refptr<base::SequencedTaskRunner> gpu_task_runner_;
@@ -79,7 +80,6 @@ class VideoToolboxFrameConverter
   raw_ptr<gpu::CommandBufferStub> stub_ = nullptr;
   gpu::SequenceId wait_sequence_id_;
   raw_ptr<gpu::SharedImageStub> sis_ = nullptr;
-  bool texture_rectangle_ = false;
 };
 
 }  // namespace media

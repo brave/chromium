@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PUSH_MESSAGING_PUSH_MESSAGING_FEATURES_H_
 
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 namespace features {
 
@@ -16,16 +17,12 @@ BASE_DECLARE_FEATURE(kPushMessagingDisallowSenderIDs);
 // /chrome/browser/push_messaging/push_messaging_constants.h
 BASE_DECLARE_FEATURE(kPushSubscriptionWithExpirationTime);
 
-#if BUILDFLAG(IS_ANDROID)
-// Feature flag to revoke site-level Notifications permissions and FCM
-// registration.
-BASE_DECLARE_FEATURE(kRevokeNotificationsPermissionIfDisabledOnAppLevel);
+// Feature flag to control which environment |kPushMessagingGcmEndpoint|
+// corresponds to.
+BASE_DECLARE_FEATURE(kPushMessagingGcmEndpointEnvironment);
 
-// Name of the variation parameter that represents the grace period that will be
-// applied before site-level Notifications permissions will be revoked and FCM
-// unsubscribed. The default value is 3.
-extern const char kNotificationRevocationGracePeriodInDays[];
-#endif
+// Feature flag to control use of new /wp/ path based Webpush endpoints.
+BASE_DECLARE_FEATURE(kPushMessagingGcmEndpointWebpushPath);
 
 }  // namespace features
 

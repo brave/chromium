@@ -24,6 +24,7 @@ void ChromeStorageImpl::Put(const std::string& key, std::string* data) {
   DCHECK(data);
   backing_store_->SetValue(key, base::Value(*data),
                            WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
+  delete data;
 }
 
 void ChromeStorageImpl::Get(const std::string& key,
@@ -31,8 +32,6 @@ void ChromeStorageImpl::Get(const std::string& key,
   // |Get()| should not be const, so this is just a thunk that fixes that.
   const_cast<ChromeStorageImpl*>(this)->DoGet(key, data_ready);
 }
-
-void ChromeStorageImpl::OnPrefValueChanged(const std::string& key) {}
 
 void ChromeStorageImpl::OnInitializationCompleted(bool succeeded) {
   for (const auto& request : outstanding_requests_)

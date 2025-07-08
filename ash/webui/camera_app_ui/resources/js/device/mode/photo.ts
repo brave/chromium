@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import {assert} from '../../assert.js';
-import * as state from '../../state.js';
+import {PerfLogger} from '../../perf.js';
 import {
   CanceledError,
   Facing,
@@ -44,6 +44,11 @@ export interface PhotoHandler {
   onPhotoError(): void;
 
   onPhotoCaptureDone(pendingPhotoResult: Promise<PhotoResult>): Promise<void>;
+
+  /**
+   * Whether the photo taking should be done by using preview frame as photo.
+   */
+  shouldUsePreviewAsPhoto(): boolean;
 }
 
 /**
@@ -66,7 +71,8 @@ export class Photo extends ModeBase {
 
   async start(): Promise<[Promise<void>]> {
     const timestamp = Date.now();
-    state.set(PerfEvent.PHOTO_CAPTURE_SHUTTER, true);
+    const perfLogger = PerfLogger.getInstance();
+    perfLogger.start(PerfEvent.PHOTO_CAPTURE_SHUTTER);
     const {blob, metadata} = await (async () => {
       let hasError = false;
       try {
@@ -76,9 +82,8 @@ export class Photo extends ModeBase {
         this.handler.onPhotoError();
         throw e;
       } finally {
-        state.set(
-            PerfEvent.PHOTO_CAPTURE_SHUTTER, false,
-            hasError ? {hasError} : {facing: this.facing});
+        perfLogger.stop(
+            PerfEvent.PHOTO_CAPTURE_SHUTTER, {hasError, facing: this.facing});
       }
     })();
 
@@ -104,7 +109,11 @@ export class Photo extends ModeBase {
       const callbackId = videoEl.requestVideoFrameCallback(() => {
         onReady.signal(true);
       });
-      (async () => {
+      // This is indirectly waited by onReady.wait().
+      // TODO(pihsun): To avoid memory leak, we should have a callback list for
+      // things need to be done when video.onExpired, and remove the callback
+      // after onReady.wait().
+      void (async () => {
         await this.video.onExpired.wait();
         videoEl.cancelVideoFrameCallback(callbackId);
         onReady.signal(false);
@@ -130,9 +139,7 @@ export class Photo extends ModeBase {
     track.addEventListener('ended', stopTakingPhoto, {once: true});
 
     (async () => {
-      if (state.get(state.State.ENABLE_PTZ)) {
-        // Workaround for b/184089334 on PTZ camera to use preview frame as
-        // photo result.
+      if (this.handler.shouldUsePreviewAsPhoto()) {
         const blob = await this.getImageCapture().grabJpegFrame();
         this.handler.playShutterEffect();
         photoResult.signal({

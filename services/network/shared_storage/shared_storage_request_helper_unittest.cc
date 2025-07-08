@@ -5,6 +5,7 @@
 #include "services/network/shared_storage/shared_storage_request_helper.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/dns/mock_host_resolver.h"
@@ -23,13 +25,15 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/shared_storage_utils.h"
+#include "services/network/public/mojom/shared_storage.mojom.h"
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom.h"
 #include "services/network/shared_storage/shared_storage_header_utils.h"
 #include "services/network/shared_storage/shared_storage_test_url_loader_network_observer.h"
 #include "services/network/shared_storage/shared_storage_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -123,9 +127,9 @@ class SharedStorageRequestHelperTest : public net::TestWithTaskEnvironment {
 
   net::URLRequestContext& context() { return *context_; }
 
-  void CreateSharedStorageRequestHelper(bool shared_storage_writable) {
+  void CreateSharedStorageRequestHelper(bool shared_storage_writable_eligible) {
     helper_ = std::make_unique<SharedStorageRequestHelper>(
-        shared_storage_writable, observer_.get());
+        shared_storage_writable_eligible, observer_.get());
   }
 
   [[nodiscard]] mojom::URLLoaderNetworkServiceObserver* MaybeGetHeaderObserver(
@@ -194,18 +198,13 @@ class SharedStorageRequestHelperTest : public net::TestWithTaskEnvironment {
     }
   }
 
-  [[nodiscard]] bool HasSharedStorageWriteResponseHeader(
-      net::URLRequest* request,
-      const std::string& expected_value) {
-    std::string actual_value;
-    bool has_header = request->response_headers() &&
-                      request->response_headers()->GetNormalizedHeader(
-                          kSharedStorageWriteHeader, &actual_value);
-    if (has_header && actual_value != expected_value) {
-      LOG(ERROR) << "actual header value: " << actual_value;
-      LOG(ERROR) << "expected header value: " << expected_value;
+  [[nodiscard]] std::optional<std::string> GetSharedStorageWriteResponseHeader(
+      net::URLRequest* request) {
+    if (!request->response_headers()) {
+      return std::nullopt;
     }
-    return has_header && (actual_value == expected_value);
+    return request->response_headers()->GetNormalizedHeader(
+        kSharedStorageWriteHeader);
   }
 
  protected:
@@ -222,50 +221,100 @@ class SharedStorageRequestHelperTest : public net::TestWithTaskEnvironment {
 TEST_F(SharedStorageRequestHelperTest,
        SharedStorageWritableHeaderRemoved_EligibityRemoved) {
   GURL request_url = GetHttpsRequestURL();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/true);
-  EXPECT_TRUE(helper_->shared_storage_writable());
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/true);
+  EXPECT_TRUE(helper_->shared_storage_writable_eligible());
 
   std::vector<std::string> removed_headers(
-      {std::string(kSharedStorageWritableHeader.data(),
-                   kSharedStorageWritableHeader.size())});
-  helper_->RemoveEligibilityIfSharedStorageWritableRemoved(removed_headers);
-  EXPECT_FALSE(helper_->shared_storage_writable());
+      {std::string(kSecSharedStorageWritableHeader.data(),
+                   kSecSharedStorageWritableHeader.size())});
+  helper_->UpdateSharedStorageWritableEligible(removed_headers,
+                                               /*modified_headers=*/{});
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
 }
 
 TEST_F(SharedStorageRequestHelperTest,
        SharedStorageWritableHeaderNotRemoved_EligibityNotRemoved) {
   GURL request_url = GetHttpsRequestURL();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/true);
-  EXPECT_TRUE(helper_->shared_storage_writable());
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/true);
+  EXPECT_TRUE(helper_->shared_storage_writable_eligible());
 
-  std::vector<std::string> removed_headers;
-  helper_->RemoveEligibilityIfSharedStorageWritableRemoved(removed_headers);
-  EXPECT_TRUE(helper_->shared_storage_writable());
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               /*modified_headers=*/{});
+  EXPECT_TRUE(helper_->shared_storage_writable_eligible());
+}
+
+TEST_F(SharedStorageRequestHelperTest,
+       SharedStorageWritableHeaderAdded_EligibityRestored) {
+  GURL request_url = GetHttpsRequestURL();
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+
+  net::HttpRequestHeaders modified_headers;
+  modified_headers.SetHeader(kSecSharedStorageWritableHeader, "?1");
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               modified_headers);
+  EXPECT_TRUE(helper_->shared_storage_writable_eligible());
+}
+
+TEST_F(SharedStorageRequestHelperTest,
+       SharedStorageWritableHeaderNotAdded_EligibityNotRestored) {
+  GURL request_url = GetHttpsRequestURL();
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               /*modified_headers=*/{});
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+}
+
+TEST_F(SharedStorageRequestHelperTest,
+       IncorrectSharedStorageWritableHeaderAdded_EligibityNotRestored) {
+  GURL request_url = GetHttpsRequestURL();
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+
+  net::HttpRequestHeaders modified_headers;
+  // Unparsable.
+  modified_headers.SetHeader(kSecSharedStorageWritableHeader, "can=not=parse");
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               modified_headers);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+
+  // Parses to a token item instead of a boolean item.
+  modified_headers.SetHeader(kSecSharedStorageWritableHeader, "hello");
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               modified_headers);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
+
+  // Wrong boolean value.
+  modified_headers.SetHeader(kSecSharedStorageWritableHeader, "?0");
+  helper_->UpdateSharedStorageWritableEligible(/*removed_headers=*/{},
+                                               modified_headers);
+  EXPECT_FALSE(helper_->shared_storage_writable_eligible());
 }
 
 TEST_F(SharedStorageRequestHelperTest,
        ProcessOutgoingRequest_Eligible_RequestHeaderAdded) {
   GURL request_url = GetHttpsRequestURL();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/true);
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/true);
   std::unique_ptr<net::URLRequest> request = CreateTestUrlRequest(request_url);
   RunProcessOutgoingRequest(request.get());
 
-  std::string value;
-  EXPECT_TRUE(request->extra_request_headers().GetHeader(
-      kSharedStorageWritableHeader, &value));
-  EXPECT_EQ(value, kSharedStorageWritableValue);
+  EXPECT_THAT(request->extra_request_headers().GetHeader(
+                  kSecSharedStorageWritableHeader),
+              testing::Optional((kSecSharedStorageWritableValue)));
 }
 
 TEST_F(SharedStorageRequestHelperTest,
        ProcessOutgoingRequest_NotEligible_RequestHeaderNotAdded) {
   GURL request_url = GetHttpsRequestURL();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/false);
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
   std::unique_ptr<net::URLRequest> request = CreateTestUrlRequest(request_url);
   RunProcessOutgoingRequest(request.get());
 
-  std::string value;
-  EXPECT_FALSE(request->extra_request_headers().GetHeader(
-      kSharedStorageWritableHeader, &value));
+  EXPECT_EQ(request->extra_request_headers().GetHeader(
+                kSecSharedStorageWritableHeader),
+            std::nullopt);
 }
 
 TEST_F(SharedStorageRequestHelperTest,
@@ -275,13 +324,13 @@ TEST_F(SharedStorageRequestHelperTest,
   RegisterSharedStorageHandlerAndStartServer(kHeader);
 
   const GURL kUrl = GetRequestURLFromServer();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/false);
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
   auto r = CreateTestUrlRequest(kUrl);
   r->Start();
   EXPECT_TRUE(r->is_pending());
 
   test_delegate_.WaitUntilResponseStarted();
-  EXPECT_FALSE(HasSharedStorageWriteResponseHeader(r.get(), kHeader));
+  EXPECT_FALSE(GetSharedStorageWriteResponseHeader(r.get()));
 
   RunProcessIncomingResponse(r.get(), /*expect_success=*/false);
   test_delegate_.ResumeOnResponseStarted();
@@ -298,13 +347,13 @@ TEST_F(SharedStorageRequestHelperTest,
   RegisterSharedStorageHandlerAndStartServer(kHeader);
 
   const GURL kUrl = GetRequestURLFromServer();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/true);
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/true);
   auto r = CreateTestUrlRequest(kUrl);
   r->Start();
   EXPECT_TRUE(r->is_pending());
 
   test_delegate_.WaitUntilResponseStarted();
-  EXPECT_FALSE(HasSharedStorageWriteResponseHeader(r.get(), kHeader));
+  EXPECT_FALSE(GetSharedStorageWriteResponseHeader(r.get()));
 
   RunProcessIncomingResponse(r.get(), /*expect_success=*/false);
   test_delegate_.ResumeOnResponseStarted();
@@ -323,18 +372,18 @@ TEST_F(SharedStorageRequestHelperTest,
   // Get a request whose response will have the Shared-Storage-Write header even
   // though we don't have a helper.
   const GURL kUrl = GetSharedStorageBypassRequestURLFromServer();
-  CreateSharedStorageRequestHelper(/*shared_storage_writable=*/false);
+  CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/false);
   auto r = CreateTestUrlRequest(kUrl);
   r->Start();
   EXPECT_TRUE(r->is_pending());
 
   test_delegate_.WaitUntilResponseStarted();
-  EXPECT_TRUE(HasSharedStorageWriteResponseHeader(r.get(), kHeader));
+  EXPECT_EQ(GetSharedStorageWriteResponseHeader(r.get()), kHeader);
 
   RunProcessIncomingResponse(r.get(), /*expect_success=*/false);
 
   // Header has been removed.
-  EXPECT_FALSE(HasSharedStorageWriteResponseHeader(r.get(), kHeader));
+  EXPECT_FALSE(GetSharedStorageWriteResponseHeader(r.get()));
   test_delegate_.ResumeOnResponseStarted();
 
   EXPECT_EQ(1, test_delegate_.response_started_count());
@@ -348,17 +397,21 @@ namespace {
 class SharedStorageRequestHelperProcessHeaderTest
     : public SharedStorageRequestHelperTest {
  public:
+  SharedStorageRequestHelperProcessHeaderTest() {
+    transactional_batch_update_feature_.InitAndEnableFeature(
+        network::features::kSharedStorageTransactionalBatchUpdate);
+  }
+
   [[nodiscard]] std::unique_ptr<net::URLRequest> CreateSharedStorageRequest() {
-    CreateSharedStorageRequestHelper(/*shared_storage_writable=*/true);
+    CreateSharedStorageRequestHelper(/*shared_storage_writable_eligible=*/true);
     GURL request_url = GetRequestURLFromServer();
     request_origin_ = url::Origin::Create(request_url);
     auto request = CreateTestUrlRequest(request_url);
     RunProcessOutgoingRequest(request.get());
 
-    std::string value;
-    EXPECT_TRUE(request->extra_request_headers().GetHeader(
-        kSharedStorageWritableHeader, &value));
-    EXPECT_EQ(value, kSharedStorageWritableValue);
+    EXPECT_THAT(request->extra_request_headers().GetHeader(
+                    kSecSharedStorageWritableHeader),
+                testing::Optional(kSecSharedStorageWritableValue));
     return request;
   }
 
@@ -369,11 +422,11 @@ class SharedStorageRequestHelperProcessHeaderTest
     request->Start();
     DCHECK(request->is_pending());
     test_delegate_.WaitUntilResponseStarted();
-    EXPECT_TRUE(HasSharedStorageWriteResponseHeader(request, expected_header));
+    EXPECT_EQ(GetSharedStorageWriteResponseHeader(request), expected_header);
     RunProcessIncomingResponse(request, expect_success);
 
     // Header has been parsed and removed.
-    EXPECT_FALSE(HasSharedStorageWriteResponseHeader(request, expected_header));
+    EXPECT_FALSE(GetSharedStorageWriteResponseHeader(request));
     test_delegate_.ResumeOnResponseStarted();
 
     EXPECT_EQ(test_delegate_.response_started_count(), expected_response_count);
@@ -386,9 +439,25 @@ class SharedStorageRequestHelperProcessHeaderTest
 
  protected:
   url::Origin request_origin_;
+  base::test::ScopedFeatureList transactional_batch_update_feature_;
 };
 
 }  // namespace
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest, EmptyHeader) {
+  const std::string kHeader = "";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+  EXPECT_TRUE(observer_->headers_received().front().methods.empty());
+}
 
 TEST_F(SharedStorageRequestHelperProcessHeaderTest,
        ClearSetAppendDelete_TokensStringsBytes_HeaderReceived) {
@@ -402,22 +471,17 @@ TEST_F(SharedStorageRequestHelperProcessHeaderTest,
   WaitForHeadersReceived(1);
 
   EXPECT_EQ(observer_->headers_received().size(), 1u);
-  EXPECT_EQ(observer_->headers_received().front().first, request_origin_);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
   EXPECT_THAT(
-      observer_->headers_received().front().second,
+      observer_->headers_received().front().methods,
       ElementsAre(
-          std::make_tuple(mojom::SharedStorageOperationType::kClear,
-                          /*key=*/absl::nullopt, /*value=*/absl::nullopt,
-                          /*ignore_if_present=*/absl::nullopt),
-          std::make_tuple(mojom::SharedStorageOperationType::kSet,
-                          /*key=*/"a", /*value=*/"val",
-                          /*ignore_if_present=*/true),
-          std::make_tuple(mojom::SharedStorageOperationType::kAppend,
-                          /*key=*/"a", /*value=*/"hello",
-                          /*ignore_if_present=*/absl::nullopt),
-          std::make_tuple(mojom::SharedStorageOperationType::kDelete,
-                          /*key=*/"a", /*value=*/absl::nullopt,
-                          /*ignore_if_present=*/absl::nullopt)));
+          SharedStorageMethodWrapper(MojomClearMethod()),
+          SharedStorageMethodWrapper(MojomSetMethod(
+              /*key=*/u"a", /*value=*/u"val", /*ignore_if_present=*/true)),
+          SharedStorageMethodWrapper(
+              MojomAppendMethod(/*key=*/u"a", /*value=*/u"hello")),
+          SharedStorageMethodWrapper(MojomDeleteMethod(/*key=*/u"a"))));
 }
 
 TEST_F(SharedStorageRequestHelperProcessHeaderTest,
@@ -435,35 +499,228 @@ TEST_F(SharedStorageRequestHelperProcessHeaderTest,
   WaitForHeadersReceived(1);
 
   // The token, "will/skip;unknown=1", parses to a valid Structured Header
-  // Parameterized List Item, but does not yield a valid operation type. The
-  // `SharedStorageRequestHelper` skips over it and sends the other valid
-  // operations it finds.
+  // Parameterized List Item, but does not yield a valid modifier method type.
+  // The `SharedStorageRequestHelper` skips over it and sends the valid methods
+  // it finds.
   EXPECT_EQ(observer_->headers_received().size(), 1u);
-  EXPECT_EQ(observer_->headers_received().front().first, request_origin_);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(
+                  // The superfluous parameter `key` is omitted.
+                  SharedStorageMethodWrapper(MojomClearMethod()),
+                  // The unrecognized parameter `unknown` is omitted.
+                  SharedStorageMethodWrapper(
+                      MojomSetMethod(/*key=*/u"a", /*value=*/u"new value",
+                                     /*ignore_if_present=*/true)),
+                  // The second instance of `key` parameter is used.
+                  SharedStorageMethodWrapper(MojomAppendMethod(
+                      /*key=*/u"extra/key", /*value=*/u"hello")),
+                  SharedStorageMethodWrapper(MojomDeleteMethod(/*key=*/u"a")),
+                  SharedStorageMethodWrapper(MojomClearMethod())));
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest,
+       KeyLengthInvalid_ItemSkipped) {
+  const std::string kHeader =
+      "set;key=\"\";value=v, append;key=\"\";value=v, delete;key=\"\", "
+      "set;key=k;value=v";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(SharedStorageMethodWrapper(
+                  MojomSetMethod(/*key=*/u"k", /*value=*/u"v",
+                                 /*ignore_if_present=*/false))));
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest, BatchOptionsWithLock) {
+  const std::string kHeader =
+      "set;key=k;value=v, append;key=k;value=v, options;with_lock=lock2";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(SharedStorageMethodWrapper(MojomSetMethod(
+                              /*key=*/u"k", /*value=*/u"v",
+                              /*ignore_if_present=*/false)),
+                          SharedStorageMethodWrapper(MojomAppendMethod(
+                              /*key=*/u"k", /*value=*/u"v"))));
+
+  EXPECT_EQ(observer_->headers_received().front().with_lock, "lock2");
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest,
+       BatchOptionsWithLock_ReservedName) {
+  const std::string kHeader =
+      "set;key=k;value=v, append;key=k;value=v, options;with_lock=\"-lock2\"";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(SharedStorageMethodWrapper(MojomSetMethod(
+                              /*key=*/u"k", /*value=*/u"v",
+                              /*ignore_if_present=*/false)),
+                          SharedStorageMethodWrapper(MojomAppendMethod(
+                              /*key=*/u"k", /*value=*/u"v"))));
+
+  // Expect no with_lock option for the batch.
+  EXPECT_EQ(observer_->headers_received().front().with_lock, std::nullopt);
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest,
+       BatchOptionsWithLock_OverridePreviousOptions) {
+  const std::string kHeader =
+      "set;key=k;value=v, append;key=k;value=v, options;with_lock=lock2, "
+      "options;abc=def";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(SharedStorageMethodWrapper(MojomSetMethod(
+                              /*key=*/u"k", /*value=*/u"v",
+                              /*ignore_if_present=*/false)),
+                          SharedStorageMethodWrapper(MojomAppendMethod(
+                              /*key=*/u"k", /*value=*/u"v"))));
+
+  EXPECT_EQ(observer_->headers_received().front().with_lock, std::nullopt);
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest,
+       BatchOptionsWithLock_InTheMiddle) {
+  const std::string kHeader =
+      "set;key=k;value=v, options;abc=def;with_lock=lock2, "
+      "append;key=k;value=v";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(observer_->headers_received().front().methods,
+              ElementsAre(SharedStorageMethodWrapper(MojomSetMethod(
+                              /*key=*/u"k", /*value=*/u"v",
+                              /*ignore_if_present=*/false)),
+                          SharedStorageMethodWrapper(MojomAppendMethod(
+                              /*key=*/u"k", /*value=*/u"v"))));
+
+  EXPECT_EQ(observer_->headers_received().front().with_lock, "lock2");
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderTest,
+       HasInnerMethodLock_HeaderIgnored) {
+  const std::string kHeader =
+      "set;key=k;value=v;with_lock=lock1, append;key=k;value=v";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader, /*expected_response_count=*/1,
+                               /*expect_success=*/false);
+}
+
+class SharedStorageRequestHelperProcessHeaderLegacyBatchUpdateTest
+    : public SharedStorageRequestHelperProcessHeaderTest {
+ public:
+  SharedStorageRequestHelperProcessHeaderLegacyBatchUpdateTest() {
+    transactional_batch_update_feature_.Reset();
+    transactional_batch_update_feature_.InitAndDisableFeature(
+        network::features::kSharedStorageTransactionalBatchUpdate);
+  }
+};
+
+TEST_F(SharedStorageRequestHelperProcessHeaderLegacyBatchUpdateTest,
+       IndividualMethodWithLock) {
+  const std::string kHeader =
+      "set;key=k;value=v;with_lock=lock1, append;key=k;value=v;with_lock=\"\", "
+      "delete;key=k, clear;with_lock=lock2";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
 
   EXPECT_THAT(
-      observer_->headers_received().front().second,
+      observer_->headers_received().front().methods,
       ElementsAre(
-          // Recognized but superfluous parameters are included in the mojom
-          // struct, e.g. `key` for the first call to `clear`. They will be
-          // ignored in the browser process.
-          std::make_tuple(mojom::SharedStorageOperationType::kClear,
-                          /*key=*/"b", /*value=*/absl::nullopt,
-                          /*ignore_if_present=*/absl::nullopt),
-          // The unrecognized parameter `unknown` is omitted.
-          std::make_tuple(mojom::SharedStorageOperationType::kSet,
-                          /*key=*/"a", /*value=*/"new value",
-                          /*ignore_if_present=*/true),
-          // The second instance of `key` parameter is used.
-          std::make_tuple(mojom::SharedStorageOperationType::kAppend,
-                          /*key=*/"extra/key", /*value=*/"hello",
-                          /*ignore_if_present=*/absl::nullopt),
-          std::make_tuple(mojom::SharedStorageOperationType::kDelete,
-                          /*key=*/"a", /*value=*/absl::nullopt,
-                          /*ignore_if_present=*/false),
-          std::make_tuple(mojom::SharedStorageOperationType::kClear,
-                          /*key=*/absl::nullopt, /*value=*/absl::nullopt,
-                          /*ignore_if_present=*/absl::nullopt)));
+          SharedStorageMethodWrapper(MojomSetMethod(
+              /*key=*/u"k", /*value=*/u"v",
+              /*ignore_if_present=*/false, /*with_lock=*/"lock1")),
+          SharedStorageMethodWrapper(MojomAppendMethod(
+              /*key=*/u"k", /*value=*/u"v", /*with_lock=*/"")),
+          SharedStorageMethodWrapper(MojomDeleteMethod(/*key=*/u"k")),
+          SharedStorageMethodWrapper(MojomClearMethod(/*with_lock=*/"lock2"))));
+
+  // Expect no with_lock option for the batch.
+  EXPECT_EQ(observer_->headers_received().front().with_lock, std::nullopt);
+}
+
+TEST_F(SharedStorageRequestHelperProcessHeaderLegacyBatchUpdateTest,
+       ReservedLockNameSkipped) {
+  const std::string kHeader =
+      "set;key=k;value=v;with_lock=\"-lock1\", "
+      "append;key=k;value=v;with_lock=\"lock2\"";
+
+  RegisterSharedStorageHandlerAndStartServer(kHeader);
+
+  auto r = CreateSharedStorageRequest();
+  StartRequestAndProcessHeader(r.get(), kHeader);
+  WaitForHeadersReceived(1);
+
+  EXPECT_EQ(observer_->headers_received().size(), 1u);
+  EXPECT_EQ(observer_->headers_received().front().request_origin,
+            request_origin_);
+
+  EXPECT_THAT(
+      observer_->headers_received().front().methods,
+      ElementsAre(SharedStorageMethodWrapper(MojomSetMethod(
+                      /*key=*/u"k", /*value=*/u"v",
+                      /*ignore_if_present=*/false, /*with_lock=*/std::nullopt)),
+                  SharedStorageMethodWrapper(MojomAppendMethod(
+                      /*key=*/u"k", /*value=*/u"v", /*with_lock=*/"lock2"))));
 }
 
 namespace {
@@ -482,7 +739,6 @@ TEST_F(SharedStorageRequestHelperProcessHeaderMultiConnectionTest,
       "clear, invalid?item",       // Unparsable item
       "append;key=key=a;value=b",  // Unparsable parameter
       "set=a/dict, delete=a/key",  // Dictionary
-      "",                          // Empty header
   });
 
   RegisterSharedStorageMultipleHandlerAndStartServer(invalid_headers);
@@ -529,16 +785,14 @@ TEST_F(SharedStorageRequestHelperProcessHeaderMultiConnectionTest,
     WaitForHeadersReceived(i + 1);
 
     EXPECT_EQ(observer_->headers_received().size(), i + 1);
-    EXPECT_EQ(observer_->headers_received()[i].first, request_origin_);
+    EXPECT_EQ(observer_->headers_received()[i].request_origin, request_origin_);
 
     EXPECT_THAT(
-        observer_->headers_received()[i].second,
-        ElementsAre(std::make_tuple(mojom::SharedStorageOperationType::kSet,
-                                    /*key=*/"x", /*value=*/"y",
-                                    /*ignore_if_present=*/absl::nullopt),
-                    std::make_tuple(mojom::SharedStorageOperationType::kDelete,
-                                    /*key=*/"z", /*value=*/absl::nullopt,
-                                    /*ignore_if_present=*/absl::nullopt)));
+        observer_->headers_received()[i].methods,
+        ElementsAre(
+            SharedStorageMethodWrapper(MojomSetMethod(
+                /*key=*/u"x", /*value=*/u"y", /*ignore_if_present=*/false)),
+            SharedStorageMethodWrapper(MojomDeleteMethod(/*key=*/u"z"))));
   }
 }
 

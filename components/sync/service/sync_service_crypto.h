@@ -14,10 +14,11 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/engine/nigori/key_derivation_params.h"
 #include "components/sync/engine/sync_encryption_handler.h"
 #include "components/sync/engine/sync_engine.h"
+#include "components/sync/protocol/encryption.pb.h"
 #include "components/sync/service/data_type_encryption_handler.h"
 #include "components/trusted_vault/trusted_vault_client.h"
 
@@ -36,14 +37,14 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
     virtual void CryptoStateChanged() = 0;
     virtual void CryptoRequiredUserActionChanged() = 0;
     virtual void ReconfigureDataTypesDueToCrypto() = 0;
-    virtual void SetPassphraseType(PassphraseType passphrase_type) = 0;
-    virtual absl::optional<PassphraseType> GetPassphraseType() const = 0;
+    virtual void PassphraseTypeChanged(PassphraseType passphrase_type) = 0;
+    virtual std::optional<PassphraseType> GetPassphraseType() const = 0;
     virtual void SetEncryptionBootstrapToken(
         const std::string& bootstrap_token) = 0;
     virtual std::string GetEncryptionBootstrapToken() const = 0;
   };
 
-  // |delegate| and |trusted_vault_client| must not be null and must outlive
+  // `delegate` and `trusted_vault_client` must not be null and must outlive
   // this object.
   SyncServiceCrypto(Delegate* delegate,
                     trusted_vault::TrustedVaultClient* trusted_vault_client);
@@ -64,8 +65,8 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   bool IsEncryptEverythingEnabled() const;
   void SetEncryptionPassphrase(const std::string& passphrase);
   bool SetDecryptionPassphrase(const std::string& passphrase);
-  void SetDecryptionNigoriKey(std::unique_ptr<Nigori> nigori);
-  std::unique_ptr<Nigori> GetDecryptionNigoriKey() const;
+  void SetExplicitPassphraseDecryptionNigoriKey(std::unique_ptr<Nigori> nigori);
+  std::unique_ptr<Nigori> GetExplicitPassphraseDecryptionNigoriKey() const;
 
   // Returns whether it's already possible to determine whether trusted vault
   // key required (e.g. engine didn't start yet or silent fetch attempt is in
@@ -73,9 +74,11 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   bool IsTrustedVaultKeyRequiredStateKnown() const;
 
   // Returns the actual passphrase type being used for encryption.
-  absl::optional<PassphraseType> GetPassphraseType() const;
+  std::optional<PassphraseType> GetPassphraseType() const;
 
-  // Used to provide the engine when it is initialized.
+  // Used to provide the engine when it is initialized, `engine` must not be
+  // null and must outlive the `this` or the Reset() call. Should not be called
+  // second time, unless Reset() is called first.
   void SetSyncEngine(const CoreAccountInfo& account_info, SyncEngine* engine);
 
   // Creates a proxy observer object that will post calls to this thread.
@@ -88,7 +91,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   void OnPassphraseAccepted() override;
   void OnTrustedVaultKeyRequired() override;
   void OnTrustedVaultKeyAccepted() override;
-  void OnEncryptedTypesChanged(ModelTypeSet encrypted_types,
+  void OnEncryptedTypesChanged(DataTypeSet encrypted_types,
                                bool encrypt_everything) override;
   void OnCryptographerStateChanged(Cryptographer* cryptographer,
                                    bool has_pending_keys) override;
@@ -97,7 +100,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
 
   // DataTypeEncryptionHandler implementation.
   bool HasCryptoError() const override;
-  ModelTypeSet GetEncryptedDataTypes() const override;
+  DataTypeSet GetAllEncryptedDataTypes() const override;
 
   // TrustedVaultClient::Observer implementation.
   void OnTrustedVaultKeysChanged() override;
@@ -127,7 +130,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   void FetchTrustedVaultKeys(bool is_second_fetch_attempt);
 
   // Called at various stages of asynchronously fetching and processing trusted
-  // vault encryption keys. |is_second_fetch_attempt| is useful for the case
+  // vault encryption keys. `is_second_fetch_attempt` is useful for the case
   // where multiple passes (up to two) are needed to fetch the keys from the
   // client.
   void TrustedVaultKeysFetchedFromClient(
@@ -138,7 +141,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   void FetchTrustedVaultKeysCompletedButInsufficient();
 
   // Updates required user action and notifies observers via
-  // |notify_required_user_action_changed_|.
+  // `notify_required_user_action_changed_`.
   void UpdateRequiredUserActionAndNotify(
       RequiredUserAction new_required_user_action);
 
@@ -149,9 +152,9 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
   // TrustedVaultClient::GetIsRecoverabilityDegraded().
   void GetIsRecoverabilityDegradedCompleted(bool is_recoverability_degraded);
 
-  // Attempts decryption of |cached_pending_keys| with a |nigori| and, if
+  // Attempts decryption of `cached_pending_keys` with a `nigori` and, if
   // successful, resolves the kPassphraseRequired state and populates the
-  // |nigori| to engine. Should never be called when there is no cached pending
+  // `nigori` to engine. Should never be called when there is no cached pending
   // keys. Returns true if successful. Doesn't update bootstrap token.
   bool SetDecryptionKeyWithoutUpdatingBootstrapToken(
       std::unique_ptr<Nigori> nigori);
@@ -175,7 +178,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
     State& operator=(State&& other) = default;
 
     // Not-null when the engine is initialized.
-    raw_ptr<SyncEngine, DanglingUntriaged> engine = nullptr;
+    raw_ptr<SyncEngine> engine = nullptr;
 
     // Populated when the engine is initialized.
     CoreAccountInfo account_info;
@@ -187,7 +190,7 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
 
     // The current set of encrypted types. Always a superset of
     // AlwaysEncryptedUserTypes().
-    ModelTypeSet encrypted_types = AlwaysEncryptedUserTypes();
+    DataTypeSet encrypted_types = AlwaysEncryptedUserTypes();
 
     // Whether we want to encrypt everything.
     bool encrypt_everything = false;
@@ -208,7 +211,8 @@ class SyncServiceCrypto : public SyncEncryptionHandler::Observer,
     // want to be able to synchronously do that from the UI thread. For
     // passphrase types other than CUSTOM_PASSPHRASE, their key derivation
     // method will always be PBKDF2.
-    KeyDerivationParams passphrase_key_derivation_params;
+    KeyDerivationParams passphrase_key_derivation_params =
+        KeyDerivationParams::CreateForPbkdf2();
 
     // If an explicit passphrase is in use, the time at which the passphrase was
     // first set (if available).

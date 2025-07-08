@@ -7,27 +7,24 @@ package org.chromium.chrome.browser.suggestions.tile;
 import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.HORIZONTAL_EDGE_PADDINGS;
 import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.HORIZONTAL_INTERVAL_PADDINGS;
 import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.IS_CONTAINER_VISIBLE;
-import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.IS_MULTI_COLUMN_FEED_ON_TABLET_ENABLED;
 import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.IS_MVT_LAYOUT_VISIBLE;
 import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.PLACEHOLDER_VIEW;
-import static org.chromium.chrome.browser.suggestions.tile.MostVisitedTilesProperties.UPDATE_INTERVAL_PADDINGS_TABLET;
 
 import android.view.View;
-import android.view.ViewGroup;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Model-to-View binder for most visited list. Handles view manipulations. */
+@NullMarked
 final class MostVisitedTilesViewBinder {
-    /**
-     * The view holder holds the most visited container layout and most visited tiles layout.
-     */
+    /** The view holder holds the most visited container layout and most visited tiles layout. */
     public static class ViewHolder {
         public final View mvContainerLayout;
-        public final ViewGroup mvTilesLayout;
+        public final MostVisitedTilesLayout mvTilesLayout;
 
-        ViewHolder(View mvContainerLayout, ViewGroup mvTilesLayout) {
+        ViewHolder(View mvContainerLayout, MostVisitedTilesLayout mvTilesLayout) {
             this.mvContainerLayout = mvContainerLayout;
             this.mvTilesLayout = mvTilesLayout;
         }
@@ -44,21 +41,9 @@ final class MostVisitedTilesViewBinder {
             model.get(PLACEHOLDER_VIEW)
                     .setVisibility(model.get(IS_MVT_LAYOUT_VISIBLE) ? View.GONE : View.VISIBLE);
         } else if (HORIZONTAL_INTERVAL_PADDINGS == propertyKey) {
-            assert viewHolder.mvTilesLayout instanceof MostVisitedTilesCarouselLayout;
-            ((MostVisitedTilesCarouselLayout) viewHolder.mvTilesLayout)
-                    .setIntervalPaddings(model.get(HORIZONTAL_INTERVAL_PADDINGS));
+            viewHolder.mvTilesLayout.setIntervalMargins(model.get(HORIZONTAL_INTERVAL_PADDINGS));
         } else if (HORIZONTAL_EDGE_PADDINGS == propertyKey) {
-            assert viewHolder.mvTilesLayout instanceof MostVisitedTilesCarouselLayout;
-            ((MostVisitedTilesCarouselLayout) viewHolder.mvTilesLayout)
-                    .setEdgePaddings(model.get(HORIZONTAL_EDGE_PADDINGS));
-        } else if (IS_MULTI_COLUMN_FEED_ON_TABLET_ENABLED == propertyKey) {
-            ((MostVisitedTilesLayout) viewHolder.mvTilesLayout)
-                    .setIsMultiColumnFeedOnTabletEnabled(
-                            model.get(IS_MULTI_COLUMN_FEED_ON_TABLET_ENABLED));
-        } else if (UPDATE_INTERVAL_PADDINGS_TABLET == propertyKey) {
-            assert viewHolder.mvTilesLayout instanceof MostVisitedTilesCarouselLayout;
-            ((MostVisitedTilesCarouselLayout) viewHolder.mvTilesLayout)
-                    .updateIntervalPaddingsTablet(model.get(UPDATE_INTERVAL_PADDINGS_TABLET));
+            viewHolder.mvTilesLayout.setEdgeMargins(model.get(HORIZONTAL_EDGE_PADDINGS));
         }
     }
 }

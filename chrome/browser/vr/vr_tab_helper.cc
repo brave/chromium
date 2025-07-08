@@ -26,11 +26,12 @@ namespace vr {
 VrTabHelper::VrTabHelper(content::WebContents* contents)
     : content::WebContentsUserData<VrTabHelper>(*contents) {}
 
-VrTabHelper::~VrTabHelper() {}
+VrTabHelper::~VrTabHelper() = default;
 
 void VrTabHelper::SetIsInVr(bool is_in_vr) {
-  if (is_in_vr_ == is_in_vr)
+  if (is_in_vr_ == is_in_vr) {
     return;
+  }
 
   is_in_vr_ = is_in_vr;
 
@@ -81,7 +82,7 @@ void VrTabHelper::SetIsContentDisplayedInHeadset(content::WebContents* contents,
   vr_tab_helper->SetIsContentDisplayedInHeadset(state);
   if (old_state != state) {
 #if !BUILDFLAG(IS_ANDROID)
-    Browser* browser = chrome::FindBrowserWithWebContents(contents);
+    Browser* browser = chrome::FindBrowserWithTab(contents);
     if (browser) {
       TabStripModel* tab_strip_model = browser->tab_strip_model();
       if (tab_strip_model) {
@@ -103,6 +104,15 @@ void VrTabHelper::ExitVrPresentation() {
 
 void VrTabHelper::SetIsContentDisplayedInHeadset(bool state) {
   is_content_displayed_in_headset_ = state;
+  observers_.Notify(&Observer::OnIsContentDisplayedInHeadsetChanged, state);
+}
+
+void VrTabHelper::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void VrTabHelper::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(VrTabHelper);

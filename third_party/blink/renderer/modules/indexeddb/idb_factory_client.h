@@ -31,16 +31,14 @@
 
 #include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
-#include "third_party/blink/public/common/indexeddb/web_idb_types.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
-#include "third_party/blink/renderer/core/probe/async_task_context.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
-class IDBRequest;
+class IDBOpenDBRequest;
 struct IDBDatabaseMetadata;
 
 class MODULES_EXPORT IDBFactoryClient final
@@ -48,21 +46,16 @@ class MODULES_EXPORT IDBFactoryClient final
   USING_FAST_MALLOC(IDBFactoryClient);
 
  public:
-  // |kNoTransaction| is used as the default transaction ID when instantiating
-  // an IDBFactoryClient instance.  See web_idb_factory_impl.cc for those
-  // cases.
-  enum : int64_t { kNoTransaction = -1 };
-
-  explicit IDBFactoryClient(IDBRequest*);
+  explicit IDBFactoryClient(IDBOpenDBRequest* request);
   ~IDBFactoryClient() override;
 
   void DetachRequest();
 
   void Error(mojom::blink::IDBException code, const String& message) override;
-  void SuccessDatabase(
+  void OpenSuccess(
       mojo::PendingAssociatedRemote<mojom::blink::IDBDatabase> pending_database,
       const IDBDatabaseMetadata& metadata) override;
-  void SuccessInteger(int64_t) override;
+  void DeleteSuccess(int64_t) override;
   void Blocked(int64_t old_version) override;
   void UpgradeNeeded(
       mojo::PendingAssociatedRemote<mojom::blink::IDBDatabase> pending_database,
@@ -75,8 +68,7 @@ class MODULES_EXPORT IDBFactoryClient final
   void Detach();
   void DetachFromRequest();
 
-  Persistent<IDBRequest> request_;
-  probe::AsyncTaskContext async_task_context_;
+  Persistent<IDBOpenDBRequest> request_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
 

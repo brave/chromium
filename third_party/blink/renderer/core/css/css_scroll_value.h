@@ -17,10 +17,10 @@ class CORE_EXPORT CSSScrollValue : public CSSValue {
  public:
   CSSScrollValue(const CSSValue* scroller, const CSSValue* axis);
 
-  const CSSValue* Scroller() const { return scroller_; }
-  const CSSValue* Axis() const { return axis_; }
+  const CSSValue* Scroller() const { return scroller_.Get(); }
+  const CSSValue* Axis() const { return axis_.Get(); }
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
   bool Equals(const CSSScrollValue&) const;
   void TraceAfterDispatch(blink::Visitor*) const;
 

@@ -3,17 +3,17 @@
 // found in the LICENSE file.
 
 import 'chrome://shortcut-customization/js/accelerator_row.js';
-import 'chrome://webui-test/mojo_webui_test_support.js';
+import 'chrome://webui-test/chromeos/mojo_webui_test_support.js';
 
+import {CrIconButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import type {ShortcutInputKeyElement} from 'chrome://resources/ash/common/shortcut_input_ui/shortcut_input_key.js';
 import {strictQuery} from 'chrome://resources/ash/common/typescript_utils/strict_query.js';
-import {CrIconButtonElement} from 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {stringToMojoString16} from 'chrome://resources/js/mojo_type_util.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {AcceleratorLookupManager} from 'chrome://shortcut-customization/js/accelerator_lookup_manager.js';
-import {AcceleratorRowElement} from 'chrome://shortcut-customization/js/accelerator_row.js';
+import type {AcceleratorRowElement} from 'chrome://shortcut-customization/js/accelerator_row.js';
 import {fakeAcceleratorConfig, fakeLayoutInfo} from 'chrome://shortcut-customization/js/fake_data.js';
-import {InputKeyElement} from 'chrome://shortcut-customization/js/input_key.js';
-import {stringToMojoString16} from 'chrome://shortcut-customization/js/mojo_utils.js';
 import {AcceleratorSource, AcceleratorState, LayoutStyle, Modifier, TextAcceleratorPartType} from 'chrome://shortcut-customization/js/shortcut_types.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
@@ -21,10 +21,12 @@ import {isVisible} from 'chrome://webui-test/test_util.js';
 
 import {createTextAcceleratorInfo, createUserAcceleratorInfo} from './shortcut_customization_test_util.js';
 
-export function initAcceleratorRowElement(): AcceleratorRowElement {
+export function initAcceleratorRowElement(layoutStyle: LayoutStyle):
+    AcceleratorRowElement {
   const element = document.createElement('accelerator-row');
   document.body.appendChild(element);
   flush();
+  element.layoutStyle = layoutStyle;
   return element;
 }
 
@@ -50,8 +52,8 @@ suite('acceleratorRowTest', function() {
   });
 
   test('LoadsBasicRow', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: true});
-    rowElement = initAcceleratorRowElement();
+    loadTimeData.overrideValues({isCustomizationAllowed: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
     const acceleratorInfo1 = createUserAcceleratorInfo(
         Modifier.CONTROL | Modifier.SHIFT,
         /*key=*/ 71,
@@ -67,18 +69,18 @@ suite('acceleratorRowTest', function() {
 
     rowElement.acceleratorInfos = accelerators;
     rowElement.description = description;
-    rowElement.layoutStyle = LayoutStyle.kDefault;
     await flush();
     const acceleratorElements =
-        rowElement!.shadowRoot!.querySelectorAll('accelerator-view');
+        rowElement.shadowRoot!.querySelectorAll('accelerator-view');
     assertEquals(2, acceleratorElements.length);
     assertEquals(
         description,
-        rowElement!.shadowRoot!.querySelector(
-                                   '#descriptionText')!.textContent!.trim());
+        rowElement.shadowRoot!.querySelector(
+                                  '#descriptionText')!.textContent!.trim());
 
-    const keys1: NodeListOf<InputKeyElement> =
-        acceleratorElements[0]!.shadowRoot!.querySelectorAll('input-key');
+    const keys1: NodeListOf<ShortcutInputKeyElement> =
+        acceleratorElements[0]!.shadowRoot!.querySelectorAll(
+            'shortcut-input-key');
     // SHIFT + CONTROL + g
     assertEquals(3, keys1.length);
     assertEquals(
@@ -90,8 +92,8 @@ suite('acceleratorRowTest', function() {
     assertEquals(
         'g', keys1[2]!.shadowRoot!.querySelector('#key')!.textContent!.trim());
 
-    const keys2 =
-        acceleratorElements[1]!.shadowRoot!.querySelectorAll('input-key');
+    const keys2 = acceleratorElements[1]!.shadowRoot!.querySelectorAll(
+        'shortcut-input-key');
     // CONTROL + c
     assertEquals(2, keys2.length);
     assertEquals(
@@ -102,8 +104,8 @@ suite('acceleratorRowTest', function() {
   });
 
   test('ShowDialogOnClickWhenCustomizationEnabled', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: true});
-    rowElement = initAcceleratorRowElement();
+    loadTimeData.overrideValues({isCustomizationAllowed: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
     waitAfterNextRender(rowElement);
 
     const acceleratorInfo1 = createUserAcceleratorInfo(
@@ -118,7 +120,6 @@ suite('acceleratorRowTest', function() {
     rowElement.description = description;
     rowElement.source = AcceleratorSource.kAsh;
     rowElement.action = 0;
-    rowElement.layoutStyle = LayoutStyle.kDefault;
 
     let showDialogListenerCalled = false;
     rowElement.addEventListener('show-edit-dialog', () => {
@@ -128,7 +129,7 @@ suite('acceleratorRowTest', function() {
     await flushTasks();
 
     const acceleratorViewElement =
-        rowElement!.shadowRoot!.querySelectorAll('accelerator-view');
+        rowElement.shadowRoot!.querySelectorAll('accelerator-view');
     assertEquals(1, acceleratorViewElement.length);
     const editButton = strictQuery(
         '.edit-button', acceleratorViewElement[0]!.shadowRoot,
@@ -142,8 +143,8 @@ suite('acceleratorRowTest', function() {
   });
 
   test('EditIconHiddenWhenCustomizationDisabled', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: false});
-    rowElement = initAcceleratorRowElement();
+    loadTimeData.overrideValues({isCustomizationAllowed: false});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
     waitAfterNextRender(rowElement);
 
     const acceleratorInfo1 = createUserAcceleratorInfo(
@@ -158,12 +159,11 @@ suite('acceleratorRowTest', function() {
     rowElement.description = description;
     rowElement.source = AcceleratorSource.kAsh;
     rowElement.action = 0;
-    rowElement.layoutStyle = LayoutStyle.kDefault;
 
     await flushTasks();
 
     const acceleratorViewElement =
-        rowElement!.shadowRoot!.querySelectorAll('accelerator-view');
+        rowElement.shadowRoot!.querySelectorAll('accelerator-view');
     assertEquals(1, acceleratorViewElement.length);
 
     const editIconContainerElement = strictQuery(
@@ -175,8 +175,8 @@ suite('acceleratorRowTest', function() {
   });
 
   test('ShowTextAccelerator', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: true});
-    rowElement = initAcceleratorRowElement();
+    loadTimeData.overrideValues({isCustomizationAllowed: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kText);
 
     const accelerators = [createTextAcceleratorInfo([{
       text: stringToMojoString16('ctrl'),
@@ -184,27 +184,26 @@ suite('acceleratorRowTest', function() {
     }])];
 
     rowElement.acceleratorInfos = accelerators;
-    rowElement.layoutStyle = LayoutStyle.kText;
     await flush();
 
     const acceleratorElements =
-        rowElement!.shadowRoot!.querySelectorAll('accelerator-view');
+        rowElement.shadowRoot!.querySelectorAll('accelerator-view');
     // Because rowElement.layoutStyle is kText, we don't expect there to be any
     // 'accelerator-view' elements shown. Instead, 'text-accelerator' elements
     // will be shown.
     assertEquals(0, acceleratorElements.length);
 
     const textAccelElement =
-        rowElement!.shadowRoot!.querySelector('text-accelerator');
+        rowElement.shadowRoot!.querySelector('text-accelerator');
     assertTrue(!!textAccelElement);
-    const textWrapper = textAccelElement!.shadowRoot!.querySelector(
-                            '#text-wrapper') as HTMLDivElement;
+    const textWrapper = textAccelElement.shadowRoot!.querySelector<HTMLElement>(
+        '#text-wrapper');
     assertTrue(!!textWrapper);
   });
 
   test('LoadBasicRowEvenWhenAccelTextIsPresent', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: true});
-    rowElement = initAcceleratorRowElement();
+    loadTimeData.overrideValues({isCustomizationAllowed: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
     const acceleratorInfo1 = createUserAcceleratorInfo(
         Modifier.CONTROL | Modifier.SHIFT,
         /*key=*/ 71,
@@ -220,72 +219,115 @@ suite('acceleratorRowTest', function() {
 
     rowElement.acceleratorInfos = accelerators;
     rowElement.description = description;
-    rowElement.layoutStyle = LayoutStyle.kDefault;
     await flush();
 
     const acceleratorElements =
-        rowElement!.shadowRoot!.querySelectorAll('accelerator-view');
+        rowElement.shadowRoot!.querySelectorAll('accelerator-view');
     assertEquals(2, acceleratorElements.length);
     assertEquals(
         description,
-        rowElement!.shadowRoot!.querySelector(
-                                   '#descriptionText')!.textContent!.trim());
+        rowElement.shadowRoot!.querySelector(
+                                  '#descriptionText')!.textContent!.trim());
 
     // Because rowElement.layoutStyle is kDefault, we don't expect any
     // 'text-accelerator' elements to be shown, even though the property
     // rowElement.acceleratorText is set.
     const textAccelElement =
-        rowElement!.shadowRoot!.querySelector('text-accelerator');
+        rowElement.shadowRoot!.querySelector('text-accelerator');
     assertFalse(!!textAccelElement);
 
-    const keys1: NodeListOf<InputKeyElement> =
-        acceleratorElements[0]!.shadowRoot!.querySelectorAll('input-key');
+    const keys1: NodeListOf<ShortcutInputKeyElement> =
+        acceleratorElements[0]!.shadowRoot!.querySelectorAll(
+            'shortcut-input-key');
     // SHIFT + CONTROL + g
     assertEquals(3, keys1.length);
 
-    const keys2 =
-        acceleratorElements[1]!.shadowRoot!.querySelectorAll('input-key');
+    const keys2 = acceleratorElements[1]!.shadowRoot!.querySelectorAll(
+        'shortcut-input-key');
     // CONTROL + c
     assertEquals(2, keys2.length);
   });
 
-  test('ElementFocusableWhenCustomizationEnabled', async () => {
+  test('GetAriaLabelForStandardRow', async () => {
     loadTimeData.overrideValues({isCustomizationEnabled: true});
-    rowElement = initAcceleratorRowElement();
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
 
     const acceleratorInfo = createUserAcceleratorInfo(
         Modifier.CONTROL,
         /*key=*/ 67,
         /*keyDisplay=*/ 'c');
     acceleratorInfo.state = AcceleratorState.kEnabled;
-
     rowElement.acceleratorInfos = [acceleratorInfo];
-    rowElement.description = 'test shortcut';
-    rowElement.layoutStyle = LayoutStyle.kDefault;
-    await flush();
+    rowElement.description = 'Open notifications';
 
-    const containerElement =
-        strictQuery('#container', rowElement.shadowRoot, HTMLTableRowElement);
-    assertEquals(0, containerElement.tabIndex);
+    await flush();
+    assertEquals(
+        'Open notifications, ctrl c, editable.',
+        rowElement.shadowRoot!.querySelector('#container')!.getAttribute(
+            'aria-label'));
   });
 
-  test('ElementFocusableWhenCustomizationDisabled', async () => {
-    loadTimeData.overrideValues({isCustomizationEnabled: false});
-    rowElement = initAcceleratorRowElement();
+  test('GetAriaLabelForStandardRowWithMultipleAccelerators', async () => {
+    loadTimeData.overrideValues({isCustomizationEnabled: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kDefault);
 
-    const acceleratorInfo = createUserAcceleratorInfo(
+    const acceleratorInfo1 = createUserAcceleratorInfo(
         Modifier.CONTROL,
         /*key=*/ 67,
         /*keyDisplay=*/ 'c');
-    acceleratorInfo.state = AcceleratorState.kEnabled;
+    const acceleratorInfo2 = createUserAcceleratorInfo(
+        Modifier.CONTROL,
+        /*key=*/ 68,
+        /*keyDisplay=*/ 'd');
 
-    rowElement.acceleratorInfos = [acceleratorInfo];
-    rowElement.description = 'test shortcut';
-    rowElement.layoutStyle = LayoutStyle.kDefault;
+    const accelerators = [acceleratorInfo1, acceleratorInfo2];
+    const description = 'Open Calculator app';
+    rowElement.acceleratorInfos = accelerators;
+    rowElement.description = description;
+
     await flush();
+    assertEquals(
+        'Open Calculator app, ctrl c or ctrl d, editable.',
+        rowElement.shadowRoot!.querySelector('#container')!.getAttribute(
+            'aria-label'));
+  });
 
-    const containerElement =
-        strictQuery('#container', rowElement.shadowRoot, HTMLTableRowElement);
-    assertEquals(-1, containerElement.tabIndex);
+  test('GetAriaLabelForTextAcceleratorRow', async () => {
+    loadTimeData.overrideValues({isCustomizationEnabled: true});
+    rowElement = initAcceleratorRowElement(LayoutStyle.kText);
+
+    const accelerators = [createTextAcceleratorInfo(
+        [
+          {
+            text: stringToMojoString16('ctrl'),
+            type: TextAcceleratorPartType.kModifier,
+          },
+          {
+            text: stringToMojoString16(' + '),
+            type: TextAcceleratorPartType.kDelimiter,
+          },
+          {
+            text: stringToMojoString16('1 '),
+            type: TextAcceleratorPartType.kKey,
+          },
+          {
+            text: stringToMojoString16('through '),
+            type: TextAcceleratorPartType.kPlainText,
+          },
+          {
+            text: stringToMojoString16('8'),
+            type: TextAcceleratorPartType.kKey,
+          },
+        ],
+        )];
+
+    const description = 'Go through tabs 1 to 8';
+    rowElement.acceleratorInfos = accelerators;
+    rowElement.description = description;
+    await flush();
+    assertEquals(
+        'Go through tabs 1 to 8, ctrl + 1 through 8, locked.',
+        rowElement.shadowRoot!.querySelector('#container')!.getAttribute(
+            'aria-label'));
   });
 });

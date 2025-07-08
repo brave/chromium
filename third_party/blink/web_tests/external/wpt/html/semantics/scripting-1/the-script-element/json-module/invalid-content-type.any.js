@@ -7,11 +7,17 @@ const content_types = [
   "text/json+blah",
   "application/blahjson",
   "image/json",
+  "text+json",
+  "json+json",
+  "text/json/json+json",
+  "text/html;+json",
+  "text/html+json+xml",
+  "text/json/json",
 ];
 for (const content_type of content_types) {
   promise_test(async test => {
     await promise_rejects_js(test, TypeError,
-      import(`./module.json?pipe=header(Content-Type,${content_type})`, { assert: { type: "json"} }),
+      import(`./module.json?pipe=header(Content-Type,${encodeURIComponent(content_type)})`, { with: { type: "json"} }),
       `Import of a JSON module with MIME type ${content_type} should fail`);
   }, `Try importing JSON module with MIME type ${content_type}`);
 }

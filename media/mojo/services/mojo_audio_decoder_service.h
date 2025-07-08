@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
@@ -19,7 +20,6 @@
 #include "media/mojo/services/media_mojo_export.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -45,11 +45,12 @@ class MEDIA_MOJO_EXPORT MojoAudioDecoderService final
   ~MojoAudioDecoderService() final;
 
   // mojom::AudioDecoder implementation
+  void GetSupportedConfigs(GetSupportedConfigsCallback callback) final;
   void Construct(
       mojo::PendingAssociatedRemote<mojom::AudioDecoderClient> client,
       mojo::PendingRemote<mojom::MediaLog> media_log) final;
   void Initialize(const AudioDecoderConfig& config,
-                  const absl::optional<base::UnguessableToken>& cdm_id,
+                  const std::optional<base::UnguessableToken>& cdm_id,
                   InitializeCallback callback) final;
 
   void SetDataSource(mojo::ScopedDataPipeConsumerHandle receive_pipe) final;
@@ -63,7 +64,9 @@ class MEDIA_MOJO_EXPORT MojoAudioDecoderService final
   void OnInitialized(InitializeCallback callback, DecoderStatus status);
 
   // Called by |mojo_decoder_buffer_reader_| when read is finished.
-  void OnReadDone(DecodeCallback callback, scoped_refptr<DecoderBuffer> buffer);
+  void OnReadDone(mojo::ReportBadMessageCallback bad_message_callback,
+                  DecodeCallback callback,
+                  scoped_refptr<DecoderBuffer> buffer);
 
   // Called by |mojo_decoder_buffer_reader_| when reset is finished.
   void OnReaderFlushDone(ResetCallback callback);
@@ -93,7 +96,7 @@ class MEDIA_MOJO_EXPORT MojoAudioDecoderService final
 
   // The CDM ID and the corresponding CdmContextRef, which must be held to keep
   // the CdmContext alive for the lifetime of the |decoder_|.
-  absl::optional<base::UnguessableToken> cdm_id_;
+  std::optional<base::UnguessableToken> cdm_id_;
   std::unique_ptr<CdmContextRef> cdm_context_ref_;
 
   // The AudioDecoder that does actual decoding work.

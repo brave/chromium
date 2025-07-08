@@ -11,7 +11,6 @@
 #include "base/memory/raw_ptr.h"
 #include "content/common/content_export.h"
 #include "content/public/common/drop_data.h"
-#include "url/gurl.h"
 
 namespace content {
 struct DropData;
@@ -21,6 +20,10 @@ namespace remote_cocoa::mojom {
 class WebContentsNSViewHost;
 }  // namespace remote_cocoa::mojom
 
+namespace url {
+class Origin;
+}
+
 // A class that handles managing the data for drags from the
 // WebContentsViewCocoa.
 CONTENT_EXPORT
@@ -29,6 +32,7 @@ CONTENT_EXPORT
 // Initialize a WebDragSource object for a drag.
 - (instancetype)initWithHost:(remote_cocoa::mojom::WebContentsNSViewHost*)host
                     dropData:(const content::DropData&)dropData
+                sourceOrigin:(const url::Origin&)sourceOrigin
                 isPrivileged:(BOOL)privileged;
 
 // Call when the WebContents is gone.

@@ -97,7 +97,7 @@ class ChromeFeaturesServiceProvider
       dbus::ExportedObject::ResponseSender response_sender);
   void IsDnsProxyEnabled(dbus::MethodCall* method_call,
                          dbus::ExportedObject::ResponseSender response_sender);
-  void IsSuspendToDiskEnabled(
+  void IsRootNsDnsProxyEnabled(
       dbus::MethodCall* method_call,
       dbus::ExportedObject::ResponseSender response_sender);
 

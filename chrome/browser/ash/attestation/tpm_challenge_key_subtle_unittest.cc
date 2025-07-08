@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "base/functional/bind.h"
@@ -32,13 +34,15 @@
 #include "chromeos/ash/components/dbus/attestation/fake_attestation_client.h"
 #include "chromeos/ash/components/dbus/attestation/interface.pb.h"
 #include "chromeos/ash/components/dbus/constants/attestation_constants.h"
-#include "chromeos/ash/components/login/login_state/login_state.h"
+#include "chromeos/components/kiosk/kiosk_test_utils.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_task_environment.h"
+#include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using base::test::RunOnceCallback;
 using testing::_;
@@ -50,7 +54,7 @@ namespace attestation {
 namespace {
 
 constexpr char kTestUserEmail[] = "test@google.com";
-constexpr char kTestUserGaiaId[] = "test_gaia_id";
+constexpr GaiaId::Literal kTestUserGaiaId("test_gaia_id");
 constexpr char kEmptyKeyName[] = "";
 constexpr char kNonDefaultKeyName[] = "key_name_123";
 constexpr char kFakeCertificate[] = "fake_cert";
@@ -115,7 +119,7 @@ class CallbackObserver {
   }
 
   base::RunLoop loop_;
-  absl::optional<TpmChallengeKeyResult> result_;
+  std::optional<TpmChallengeKeyResult> result_;
 };
 
 template <typename T>
@@ -148,7 +152,7 @@ class MockableFakeAttestationFlow : public MockAttestationFlow {
       bool /*force_new_key*/,
       ::attestation::KeyType /*key_crypto_type*/,
       const std::string& key_name,
-      const absl::optional<AttestationFlow::CertProfileSpecificData>&
+      const std::optional<AttestationFlow::CertProfileSpecificData>&
           profile_specific_data,
       CertificateCallback callback) {
     std::string certificate;
@@ -180,7 +184,9 @@ enum class TestProfileChoice {
   // Pass the Profile of a managed, unaffiliated user.
   kUnaffiliatedProfile,
   // Pass the Profile of an affiliated user.
-  kAffiliatedProfile
+  kAffiliatedProfile,
+  // Pass the Profile of signed-in kiosk user.
+  kKioskProfile
 };
 
 class TpmChallengeKeySubtleTestBase : public ::testing::Test {
@@ -193,9 +199,11 @@ class TpmChallengeKeySubtleTestBase : public ::testing::Test {
   void SetUp() override;
 
   TestingProfile* CreateUserProfile(bool is_managed, bool is_affiliated);
+  virtual TestingProfile* CreateKioskProfile();
   TestingProfile* GetProfile();
   ScopedCrosSettingsTestHelper* GetCrosSettingsHelper();
   StubInstallAttributes* GetInstallAttributes();
+  std::string GetTestingProfileDomainName();
 
   // Runs StartPrepareKeyStep and checks that the result is equal to
   // |public_key|.
@@ -236,11 +244,12 @@ class TpmChallengeKeySubtleTestBase : public ::testing::Test {
   std::unique_ptr<TpmChallengeKeySubtle> challenge_key_subtle_;
 
   TestingProfileManager testing_profile_manager_;
-  FakeChromeUserManager fake_user_manager_;
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
   // A sign-in Profile is always created in SetUp().
-  raw_ptr<TestingProfile, ExperimentalAsh> signin_profile_ = nullptr;
+  raw_ptr<TestingProfile> signin_profile_ = nullptr;
   // The profile that will be passed to TpmChallengeKeySubtle - can be nullptr.
-  raw_ptr<TestingProfile, ExperimentalAsh> testing_profile_ = nullptr;
+  raw_ptr<TestingProfile> testing_profile_ = nullptr;
 };
 
 TpmChallengeKeySubtleTestBase::TpmChallengeKeySubtleTestBase(
@@ -256,7 +265,7 @@ TpmChallengeKeySubtleTestBase::TpmChallengeKeySubtleTestBase(
 
   // By default make it reply that the certificate is already uploaded.
   ON_CALL(mock_cert_uploader_, WaitForUploadComplete)
-      .WillByDefault(RunOnceCallback<0>(true));
+      .WillByDefault(base::test::RunOnceCallbackRepeatedly<0>(true));
 }
 
 TpmChallengeKeySubtleTestBase::~TpmChallengeKeySubtleTestBase() {
@@ -285,9 +294,14 @@ void TpmChallengeKeySubtleTestBase::SetUp() {
     case TestProfileChoice::kAffiliatedProfile:
       testing_profile_ =
           CreateUserProfile(/*is_managed=*/true, /*is_affiliated=*/true);
+      break;
+    case TestProfileChoice::kKioskProfile:
+      testing_profile_ = CreateKioskProfile();
+      break;
   }
 
-  GetInstallAttributes()->SetCloudManaged("google.com", "device_id");
+  GetInstallAttributes()->SetCloudManaged(GetTestingProfileDomainName(),
+                                          "device_id");
 
   system_token_key_permissions_manager_ =
       std::make_unique<platform_keys::MockKeyPermissionsManager>();
@@ -322,9 +336,13 @@ TestingProfile* TpmChallengeKeySubtleTestBase::CreateUserProfile(
 
   auto test_account =
       AccountId::FromUserEmailGaiaId(kTestUserEmail, kTestUserGaiaId);
-  fake_user_manager_.AddUserWithAffiliation(test_account, is_affiliated);
+  fake_user_manager_->AddUserWithAffiliation(test_account, is_affiliated);
 
   return testing_profile;
+}
+
+TestingProfile* TpmChallengeKeySubtleTestBase::CreateKioskProfile() {
+  return nullptr;
 }
 
 TestingProfile* TpmChallengeKeySubtleTestBase::GetProfile() {
@@ -340,6 +358,15 @@ StubInstallAttributes* TpmChallengeKeySubtleTestBase::GetInstallAttributes() {
   return GetCrosSettingsHelper()->InstallAttributes();
 }
 
+std::string TpmChallengeKeySubtleTestBase::GetTestingProfileDomainName() {
+  if (!testing_profile_ || testing_profile_ == signin_profile_) {
+    // Fallback to the constant domain if there is no `testing_profile_` or
+    // a default `signin_profile_` only.
+    return "fake.domain";
+  }
+  return gaia::ExtractDomainName(testing_profile_->GetProfileUserName());
+}
+
 ::attestation::KeyType TpmChallengeKeySubtleTestBase::KeyCryptoType() {
   return ::attestation::KEY_TYPE_RSA;
 }
@@ -352,7 +379,7 @@ void TpmChallengeKeySubtleTestBase::RunOneStepAndExpect(
   CallbackObserver callback_observer;
   challenge_key_subtle_->StartPrepareKeyStep(
       flow_type, will_register_key, KeyCryptoType(), key_name, GetProfile(),
-      callback_observer.GetCallback(), /*signals=*/absl::nullopt);
+      callback_observer.GetCallback(), /*signals=*/std::nullopt);
   callback_observer.WaitForCallback();
 
   EXPECT_EQ(callback_observer.GetResult(), public_key);
@@ -451,20 +478,26 @@ class UnaffiliatedUserTpmChallengeKeySubtleTest
 class KioskTpmChallengeKeySubtleTest : public TpmChallengeKeySubtleTestBase {
  public:
   KioskTpmChallengeKeySubtleTest()
-      : TpmChallengeKeySubtleTestBase(TestProfileChoice::kAffiliatedProfile) {}
+      : TpmChallengeKeySubtleTestBase(TestProfileChoice::kKioskProfile) {}
   ~KioskTpmChallengeKeySubtleTest() override = default;
 
-  void SetUp() override {
-    TpmChallengeKeySubtleTestBase::SetUp();
-    LoginState::Initialize();
-    LoginState::Get()->SetLoggedInState(LoginState::LOGGED_IN_ACTIVE,
-                                        LoginState::LOGGED_IN_USER_KIOSK);
+  TestingProfile* CreateKioskProfile() override {
+    chromeos::SetUpFakeKioskSession();
+    auto* user = fake_user_manager_->GetActiveUser();
+    kiosk_user_email_ = user->GetAccountId().GetUserEmail();
+    auto* testing_profile =
+        testing_profile_manager_.CreateTestingProfile(kiosk_user_email_);
+    testing_profile->GetProfilePolicyConnector()->OverrideIsManagedForTesting(
+        true);
+    fake_user_manager_->AddUserWithAffiliation(user->GetAccountId(),
+                                               /* is_affiliated= */ true);
+    return testing_profile;
   }
 
-  void TearDown() override {
-    LoginState::Shutdown();
-    TpmChallengeKeySubtleTestBase::TearDown();
-  }
+  const std::string& kiosk_user_email() const { return kiosk_user_email_; }
+
+ private:
+  std::string kiosk_user_email_;
 };
 
 TEST_P(DeviceKeysAccessTpmChallengeKeySubtleTest,
@@ -900,7 +933,7 @@ TEST_F(AffiliatedUserTpmChallengeKeySubtleTest, WaitForCertificateUploaded) {
       ::attestation::ENTERPRISE_MACHINE, /*will_register_key=*/true,
       ::attestation::KEY_TYPE_RSA, key_name, GetProfile(),
       callback_observer.GetCallback(),
-      /*signals=*/absl::nullopt);
+      /*signals=*/std::nullopt);
 
   // |challenge_key_subtle_| should wait until the certificate is uploaded.
   task_environment_.FastForwardBy(base::Minutes(10));
@@ -941,9 +974,9 @@ TEST_F(KioskTpmChallengeKeySubtleTest, IncludesCustomerId) {
               GetCertificate(_, _, _, _, _, key_name, _, _));
 
   ::attestation::SignEnterpriseChallengeRequest expected_request;
-  expected_request.set_username(kTestUserEmail);
+  expected_request.set_username(kiosk_user_email());
   expected_request.set_key_label(GetDefaultKeyName(flow_type));
-  expected_request.set_domain(kTestUserEmail);
+  expected_request.set_domain(kiosk_user_email());
   expected_request.set_device_id(GetInstallAttributes()->GetDeviceId());
   expected_request.set_include_customer_id(true);
   expected_request.set_flow_type(::attestation::ENTERPRISE_USER);

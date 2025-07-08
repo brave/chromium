@@ -23,6 +23,8 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.blink.mojom.StylusWritingGestureAction;
 import org.chromium.blink.mojom.StylusWritingGestureData;
 import org.chromium.blink.mojom.StylusWritingGestureGranularity;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.gfx.mojom.Rect;
 import org.chromium.mojo_base.mojom.String16;
 
@@ -33,17 +35,27 @@ import java.lang.annotation.RetentionPolicy;
  * Converts stylus rich gestures from their Android representation to their Blink representation.
  */
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+@NullMarked
 public class StylusGestureConverter {
     // Should be kept in sync with StylusHandwritingGesture in tools/metrics/histograms/enums.xml.
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
     // Entries with the DW prefix are used by Samsung's DirectWriting service. All other entries are
     // used by Android stylus handwriting.
-    @IntDef({UmaGestureType.DW_DELETE_TEXT, UmaGestureType.DW_ADD_SPACE_OR_TEXT,
-            UmaGestureType.DW_REMOVE_SPACES, UmaGestureType.DW_SPLIT_OR_MERGE,
-            UmaGestureType.SELECT, UmaGestureType.INSERT, UmaGestureType.DELETE,
-            UmaGestureType.REMOVE_SPACE, UmaGestureType.JOIN_OR_SPLIT, UmaGestureType.SELECT_RANGE,
-            UmaGestureType.DELETE_RANGE, UmaGestureType.NUM_ENTRIES})
+    @IntDef({
+        UmaGestureType.DW_DELETE_TEXT,
+        UmaGestureType.DW_ADD_SPACE_OR_TEXT,
+        UmaGestureType.DW_REMOVE_SPACES,
+        UmaGestureType.DW_SPLIT_OR_MERGE,
+        UmaGestureType.SELECT,
+        UmaGestureType.INSERT,
+        UmaGestureType.DELETE,
+        UmaGestureType.REMOVE_SPACE,
+        UmaGestureType.JOIN_OR_SPLIT,
+        UmaGestureType.SELECT_RANGE,
+        UmaGestureType.DELETE_RANGE,
+        UmaGestureType.NUM_ENTRIES
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UmaGestureType {
         int DW_DELETE_TEXT = 0;
@@ -65,7 +77,7 @@ public class StylusGestureConverter {
                 "InputMethod.StylusHandwriting.Gesture", gestureType, UmaGestureType.NUM_ENTRIES);
     }
 
-    public static StylusWritingGestureData createGestureData(HandwritingGesture gesture) {
+    public static @Nullable StylusWritingGestureData createGestureData(HandwritingGesture gesture) {
         if (gesture instanceof SelectGesture) {
             logGestureType(UmaGestureType.SELECT);
             return createGestureData((SelectGesture) gesture);
@@ -99,9 +111,10 @@ public class StylusGestureConverter {
     private static StylusWritingGestureData createGestureData(SelectGesture gesture) {
         StylusWritingGestureData gestureData = new StylusWritingGestureData();
         gestureData.action = StylusWritingGestureAction.SELECT_TEXT;
-        gestureData.granularity = gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
-                ? StylusWritingGestureGranularity.WORD
-                : StylusWritingGestureGranularity.CHARACTER;
+        gestureData.granularity =
+                gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
+                        ? StylusWritingGestureGranularity.WORD
+                        : StylusWritingGestureGranularity.CHARACTER;
         gestureData.textAlternative = toMojoString(gesture.getFallbackText());
         Rect[] areas = toTwoMojoRects(gesture.getSelectionArea());
         gestureData.startRect = areas[0];
@@ -132,9 +145,10 @@ public class StylusGestureConverter {
     private static StylusWritingGestureData createGestureData(DeleteGesture gesture) {
         StylusWritingGestureData gestureData = new StylusWritingGestureData();
         gestureData.action = StylusWritingGestureAction.DELETE_TEXT;
-        gestureData.granularity = gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
-                ? StylusWritingGestureGranularity.WORD
-                : StylusWritingGestureGranularity.CHARACTER;
+        gestureData.granularity =
+                gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
+                        ? StylusWritingGestureGranularity.WORD
+                        : StylusWritingGestureGranularity.CHARACTER;
         gestureData.textAlternative = toMojoString(gesture.getFallbackText());
         Rect[] areas = toTwoMojoRects(gesture.getDeletionArea());
         gestureData.startRect = areas[0];
@@ -179,9 +193,10 @@ public class StylusGestureConverter {
     private static StylusWritingGestureData createGestureData(SelectRangeGesture gesture) {
         StylusWritingGestureData gestureData = new StylusWritingGestureData();
         gestureData.action = StylusWritingGestureAction.SELECT_TEXT;
-        gestureData.granularity = gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
-                ? StylusWritingGestureGranularity.WORD
-                : StylusWritingGestureGranularity.CHARACTER;
+        gestureData.granularity =
+                gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
+                        ? StylusWritingGestureGranularity.WORD
+                        : StylusWritingGestureGranularity.CHARACTER;
         gestureData.textAlternative = toMojoString(gesture.getFallbackText());
         gestureData.startRect = toMojoRect(gesture.getSelectionStartArea());
         gestureData.endRect = toMojoRect(gesture.getSelectionEndArea());
@@ -196,9 +211,10 @@ public class StylusGestureConverter {
     private static StylusWritingGestureData createGestureData(DeleteRangeGesture gesture) {
         StylusWritingGestureData gestureData = new StylusWritingGestureData();
         gestureData.action = StylusWritingGestureAction.DELETE_TEXT;
-        gestureData.granularity = gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
-                ? StylusWritingGestureGranularity.WORD
-                : StylusWritingGestureGranularity.CHARACTER;
+        gestureData.granularity =
+                gesture.getGranularity() == HandwritingGesture.GRANULARITY_WORD
+                        ? StylusWritingGestureGranularity.WORD
+                        : StylusWritingGestureGranularity.CHARACTER;
         gestureData.textAlternative = toMojoString(gesture.getFallbackText());
         gestureData.startRect = toMojoRect(gesture.getDeletionStartArea());
         gestureData.endRect = toMojoRect(gesture.getDeletionEndArea());
@@ -256,9 +272,13 @@ public class StylusGestureConverter {
      * @return A String16 object which wraps an array of short integers for each character in the
      * string.
      */
-    private static String16 toMojoString(String string) {
-        short[] data = new short[string.length()];
-        for (int i = 0; i < data.length; i++) {
+    private static String16 toMojoString(@Nullable String string) {
+        if (string == null) {
+            string = "";
+        }
+        int len = string.length();
+        short[] data = new short[len];
+        for (int i = 0; i < len; i++) {
             data[i] = (short) string.charAt(i);
         }
         String16 mojoString = new String16();

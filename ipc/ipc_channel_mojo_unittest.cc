@@ -2,16 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "ipc/ipc_channel_mojo.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/base_paths.h"
 #include "base/containers/queue.h"
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
@@ -26,16 +35,19 @@
 #include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/pickle.h"
+#include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_io_thread.h"
 #include "base/test/test_shared_memory_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "ipc/ipc_channel_mojo_unittest.test-mojom.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_mojo_handle_attachment.h"
@@ -43,23 +55,27 @@
 #include "ipc/ipc_mojo_param_traits.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message.h"
-#include "ipc/ipc_test.mojom.h"
+#include "ipc/ipc_test.test-mojom.h"
 #include "ipc/ipc_test_base.h"
 #include "ipc/ipc_test_channel_listener.h"
+#include "ipc/urgent_message_observer.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/features.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
+#include "mojo/public/cpp/bindings/urgent_message_scope.h"
 #include "mojo/public/cpp/system/functions.h"
 #include "mojo/public/cpp/system/wait.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include "base/file_descriptor_posix.h"
 #include "ipc/ipc_platform_file_attachment_posix.h"
 #endif
 
+namespace ipc_channel_mojo_unittest {
 namespace {
 
 void SendString(IPC::Sender* sender, const std::string& str) {
@@ -149,13 +165,14 @@ TEST_F(IPCChannelMojoTest, ConnectedFromClient) {
 
   // Set up IPC channel and start client.
   TestChannelListenerWithExtraExpectations listener;
+  base::RunLoop loop;
+  listener.set_quit_closure(loop.QuitWhenIdleClosure());
   CreateChannel(&listener);
   listener.Init(sender());
   ASSERT_TRUE(ConnectChannel());
 
   IPC::TestChannelListener::SendOneMessage(sender(), "hello from parent");
-
-  base::RunLoop().Run();
+  loop.Run();
 
   channel()->Close();
 
@@ -173,7 +190,9 @@ DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(IPCChannelMojoTestClient) {
   listener.Init(channel());
 
   IPC::TestChannelListener::SendOneMessage(channel(), "hello from child");
-  base::RunLoop().Run();
+  base::RunLoop loop;
+  listener.set_quit_closure(loop.QuitWhenIdleClosure());
+  loop.Run();
   EXPECT_TRUE(listener.is_connected_called());
   EXPECT_TRUE(listener.HasSentAll());
 
@@ -343,8 +362,8 @@ TEST_F(IPCChannelMojoTest, NoImplicitChannelClosure) {
 
   // NOTE: We can't create a RunLoop before Init() is called, but we have to set
   // the default ProcessErrorCallback (which we want to reference the RunLoop)
-  // before Init() launches a child process. Hence the absl::optional here.
-  absl::optional<base::RunLoop> wait_for_error_loop;
+  // before Init() launches a child process. Hence the std::optional here.
+  std::optional<base::RunLoop> wait_for_error_loop;
   bool process_error_received = false;
   mojo::SetDefaultProcessErrorHandler(
       base::BindLambdaForTesting([&](const std::string&) {
@@ -420,8 +439,7 @@ class HandleSendingHelper {
   }
 
   static void WriteFile(IPC::Message* message, base::File& file) {
-    std::string content = GetSendingFileContent();
-    file.WriteAtCurrentPos(content.data(), content.size());
+    file.WriteAtCurrentPos(base::as_byte_span(GetSendingFileContent()));
     file.Flush();
     message->WriteAttachment(new IPC::internal::PlatformFileAttachment(
         base::ScopedFD(file.TakePlatformFile())));
@@ -455,7 +473,7 @@ class HandleSendingHelper {
         static_cast<IPC::internal::PlatformFileAttachment*>(attachment.get())
             ->TakePlatformFile());
     std::string content(GetSendingFileContent().size(), ' ');
-    file.Read(0, &content[0], content.size());
+    file.Read(0, base::as_writable_byte_span(content));
     EXPECT_EQ(content, GetSendingFileContent());
   }
 #endif
@@ -660,129 +678,6 @@ DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(IPCChannelMojoTestSendOkClient) {
   Close();
 }
 
-class ListenerWithSimpleAssociatedInterface
-    : public IPC::Listener,
-      public IPC::mojom::SimpleTestDriver {
- public:
-  static const int kNumMessages;
-
-  explicit ListenerWithSimpleAssociatedInterface(base::OnceClosure quit_closure)
-      : quit_closure_(std::move(quit_closure)) {}
-
-  ~ListenerWithSimpleAssociatedInterface() override = default;
-
-  bool OnMessageReceived(const IPC::Message& message) override {
-    base::PickleIterator iter(message);
-    int32_t should_be_expected;
-    EXPECT_TRUE(iter.ReadInt(&should_be_expected));
-    EXPECT_EQ(should_be_expected, next_expected_value_);
-    num_messages_received_++;
-    return true;
-  }
-
-  void OnChannelError() override { CHECK(!quit_closure_); }
-
-  void RegisterInterfaceFactory(IPC::Channel* channel) {
-    channel->GetAssociatedInterfaceSupport()->AddAssociatedInterface(
-        base::BindRepeating(
-            &ListenerWithSimpleAssociatedInterface::BindReceiver,
-            base::Unretained(this)));
-  }
-
- private:
-  // IPC::mojom::SimpleTestDriver:
-  void ExpectValue(int32_t value) override {
-    next_expected_value_ = value;
-  }
-
-  void GetExpectedValue(GetExpectedValueCallback callback) override {
-    NOTREACHED();
-  }
-
-  void RequestValue(RequestValueCallback callback) override { NOTREACHED(); }
-
-  void RequestQuit(RequestQuitCallback callback) override {
-    EXPECT_EQ(kNumMessages, num_messages_received_);
-    std::move(callback).Run();
-    std::move(quit_closure_).Run();
-  }
-
-  void BindReceiver(
-      mojo::PendingAssociatedReceiver<IPC::mojom::SimpleTestDriver> receiver) {
-    DCHECK(!receiver_.is_bound());
-    receiver_.Bind(std::move(receiver));
-  }
-
-  int32_t next_expected_value_ = 0;
-  int num_messages_received_ = 0;
-  base::OnceClosure quit_closure_;
-
-  mojo::AssociatedReceiver<IPC::mojom::SimpleTestDriver> receiver_{this};
-};
-
-const int ListenerWithSimpleAssociatedInterface::kNumMessages = 1000;
-
-class ListenerSendingAssociatedMessages : public IPC::Listener {
- public:
-  explicit ListenerSendingAssociatedMessages(base::OnceClosure quit_closure)
-      : quit_closure_(std::move(quit_closure)) {}
-
-  bool OnMessageReceived(const IPC::Message& message) override { return true; }
-
-  void OnChannelConnected(int32_t peer_pid) override {
-    DCHECK(channel_);
-    channel_->GetAssociatedInterfaceSupport()->GetRemoteAssociatedInterface(
-        driver_.BindNewEndpointAndPassReceiver());
-
-    // Send a bunch of interleaved messages, alternating between the associated
-    // interface and a legacy IPC::Message.
-    for (int i = 0; i < ListenerWithSimpleAssociatedInterface::kNumMessages;
-         ++i) {
-      driver_->ExpectValue(i);
-      SendValue(channel_, i);
-    }
-    driver_->RequestQuit(base::BindOnce(
-        &ListenerSendingAssociatedMessages::OnQuitAck, base::Unretained(this)));
-  }
-
-  void set_channel(IPC::Channel* channel) { channel_ = channel; }
-
- private:
-  void OnQuitAck() { std::move(quit_closure_).Run(); }
-
-  raw_ptr<IPC::Channel> channel_ = nullptr;
-  mojo::AssociatedRemote<IPC::mojom::SimpleTestDriver> driver_;
-  base::OnceClosure quit_closure_;
-};
-
-TEST_F(IPCChannelMojoTest, SimpleAssociatedInterface) {
-  Init("SimpleAssociatedInterfaceClient");
-
-  base::RunLoop run_loop;
-  ListenerWithSimpleAssociatedInterface listener(run_loop.QuitClosure());
-  CreateChannel(&listener);
-  ASSERT_TRUE(ConnectChannel());
-
-  listener.RegisterInterfaceFactory(channel());
-
-  run_loop.Run();
-  channel()->Close();
-
-  EXPECT_TRUE(WaitForClientShutdown());
-  DestroyChannel();
-}
-
-DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(SimpleAssociatedInterfaceClient) {
-  base::RunLoop run_loop;
-  ListenerSendingAssociatedMessages listener(run_loop.QuitClosure());
-  Connect(&listener);
-  listener.set_channel(channel());
-
-  run_loop.Run();
-
-  Close();
-}
-
 class ChannelProxyRunner {
  public:
   ChannelProxyRunner(mojo::ScopedMessagePipeHandle handle,
@@ -797,12 +692,15 @@ class ChannelProxyRunner {
   ChannelProxyRunner(const ChannelProxyRunner&) = delete;
   ChannelProxyRunner& operator=(const ChannelProxyRunner&) = delete;
 
-  void CreateProxy(IPC::Listener* listener) {
+  void CreateProxy(
+      IPC::Listener* listener,
+      IPC::UrgentMessageObserver* urgent_message_observer = nullptr) {
     io_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0));
     proxy_ = IPC::SyncChannel::Create(
         listener, io_thread_.task_runner(),
         base::SingleThreadTaskRunner::GetCurrentDefault(), &never_signaled_);
+    proxy_->SetUrgentMessageObserver(urgent_message_observer);
   }
 
   void RunProxy() {
@@ -836,10 +734,17 @@ class IPCChannelProxyMojoTest : public IPCChannelMojoTestBase {
     IPCChannelMojoTestBase::Init(client_name);
     runner_ = std::make_unique<ChannelProxyRunner>(TakeHandle(), true);
   }
-  void CreateProxy(IPC::Listener* listener) { runner_->CreateProxy(listener); }
+
+  void CreateProxy(
+      IPC::Listener* listener,
+      IPC::UrgentMessageObserver* urgent_message_observer = nullptr) {
+    runner_->CreateProxy(listener, urgent_message_observer);
+  }
+
   void RunProxy() {
     runner_->RunProxy();
   }
+
   void DestroyProxy() {
     runner_.reset();
     base::RunLoop().RunUntilIdle();
@@ -1238,7 +1143,9 @@ class SimpleTestClientImpl : public IPC::mojom::SimpleTestClient,
   void set_driver(IPC::mojom::SimpleTestDriver* driver) { driver_ = driver; }
   void set_sync_sender(IPC::Sender* sync_sender) { sync_sender_ = sync_sender; }
 
-  void WaitForValueRequest() {
+  void WaitForValueRequest() { Run(); }
+
+  void Run() {
     run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
   }
@@ -1265,6 +1172,32 @@ class SimpleTestClientImpl : public IPC::mojom::SimpleTestClient,
 
     DCHECK(run_loop_);
     run_loop_->Quit();
+  }
+
+  // No implementation needed. Only called on an endpoint which never binds its
+  // receiver.
+  void BindSync(
+      mojo::PendingAssociatedReceiver<IPC::mojom::SimpleTestClient> receiver,
+      BindSyncCallback callback) override {
+    NOTREACHED();
+  }
+
+  void GetReceiverWithQueuedSyncMessage(
+      GetReceiverWithQueuedSyncMessageCallback callback) override {
+    // Immediately send back a sync IPC over the new pipe and expect the call to
+    // be interrupted without a reply. Note that we also reply *before* issuing
+    // the sync call to allow the main test process to make progress.
+    mojo::AssociatedRemote<IPC::mojom::SimpleTestClient> remote;
+    mojo::PendingAssociatedReceiver<IPC::mojom::SimpleTestClient>
+        queued_receiver;
+    {
+      // The nested receiver we send will already know its peer is closed when
+      // it arrives.
+      mojo::AssociatedRemote<IPC::mojom::SimpleTestClient> unused;
+      queued_receiver = unused.BindNewEndpointAndPassReceiver();
+    }
+    std::move(callback).Run(remote.BindNewEndpointAndPassReceiver());
+    EXPECT_FALSE(remote->BindSync(std::move(queued_receiver)));
   }
 
   // IPC::Listener:
@@ -1334,6 +1267,159 @@ DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT_WITH_CUSTOM_FIXTURE(SyncAssociatedInterface,
   client_impl.UseSyncSenderForRequest(false);
   client_impl.WaitForValueRequest();
 
+  DestroyProxy();
+}
+
+class ListenerWithClumsyBinder : public IPC::Listener {
+ public:
+  ListenerWithClumsyBinder() = default;
+  ~ListenerWithClumsyBinder() override = default;
+
+  void RunUntilClientQuit() { run_loop_.Run(); }
+
+ private:
+  // IPC::Listener:
+  bool OnMessageReceived(const IPC::Message& message) override {
+    run_loop_.Quit();
+    return true;
+  }
+
+  void OnAssociatedInterfaceRequest(
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle handle) override {
+    // Ignore and drop the endpoint so it's closed.
+  }
+
+  base::RunLoop run_loop_;
+};
+
+TEST_F(IPCChannelProxyMojoTest, DropAssociatedReceiverWithSyncCallInFlight) {
+  // Regression test for https://crbug.com/331636067. Verifies that endpoint
+  // lifetime is properly managed when associated endpoints are serialized into
+  // a message that gets dropped before transmission.
+
+  Init("SyncCallToDroppedReceiver");
+  ListenerWithClumsyBinder listener;
+  CreateProxy(&listener);
+  RunProxy();
+  listener.RunUntilClientQuit();
+  EXPECT_TRUE(WaitForClientShutdown());
+  DestroyProxy();
+}
+
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT_WITH_CUSTOM_FIXTURE(
+    SyncCallToDroppedReceiver,
+    ChannelProxyClient) {
+  DummyListener listener;
+  CreateProxy(&listener);
+  RunProxy();
+
+  mojo::AssociatedRemote<mojom::Binder> binder;
+  proxy()->GetRemoteAssociatedInterface(
+      binder.BindNewEndpointAndPassReceiver());
+
+  // Wait for disconnection to be observed. This way we know any subsequent
+  // outgoing messages on `binder` will not be sent.
+  base::RunLoop loop;
+  binder.set_disconnect_handler(loop.QuitClosure());
+  loop.Run();
+
+  // Send another endpoint over. This receiver will be dropped, and the remote
+  // should be properly notified of peer closure to terminate the sync call. The
+  // call should return false (because no reply), but shouldn't hang.
+  mojo::AssociatedRemote<mojom::Binder> another_binder;
+  binder->Bind(another_binder.BindNewEndpointAndPassReceiver());
+  EXPECT_FALSE(another_binder->Ping());
+
+  SendString(proxy(), "ok bye");
+  DestroyProxy();
+}
+
+// TODO(crbug.com/40940810): Disabled for flaky behavior of forced
+// process termination. Will be re-enabled with a fix.
+TEST_F(IPCChannelProxyMojoTest, DISABLED_SyncAssociatedInterfacePipeError) {
+  // Regression test for https://crbug.com/1494461.
+
+  Init("SyncAssociatedInterfacePipeError");
+
+  ListenerWithSyncAssociatedInterface listener;
+  CreateProxy(&listener);
+  listener.set_sync_sender(proxy());
+  RunProxy();
+
+  mojo::AssociatedRemote<IPC::mojom::SimpleTestClient> client;
+  proxy()->GetRemoteAssociatedInterface(
+      client.BindNewEndpointAndPassReceiver());
+
+  mojo::AssociatedRemote<IPC::mojom::Terminator> terminator;
+  proxy()->GetRemoteAssociatedInterface(
+      terminator.BindNewEndpointAndPassReceiver());
+
+  // The setup here is to have the client process add a new associated endpoint
+  // with a sync message queued on it, towards us. As soon as we receive the
+  // endpoint we close it, but its state (including its inbound sync message
+  // queue) isn't actually destroyed until the peer is closed too.
+  //
+  // Note that the client creates the endpoint rather than us, because client
+  // endpoints are assigned lower interface IDs and will thus elicit the
+  // necessary endpoint ordering to trigger https://crbug.com/1494461 below.
+  {
+    base::RunLoop loop;
+    client->GetReceiverWithQueuedSyncMessage(base::BindLambdaForTesting(
+        [&loop](mojo::PendingAssociatedReceiver<IPC::mojom::SimpleTestClient>
+                    receiver) { loop.Quit(); }));
+    loop.Run();
+  }
+
+  // If https://crbug.com/1494461 is present, it should be hit within this call,
+  // as soon as client termination signals a local pipe error and marks the
+  // above endpoint's peer as closed.
+  EXPECT_FALSE(terminator->Terminate());
+
+#if BUILDFLAG(IS_ANDROID)
+  // NOTE: On Android, the client's forced termination will look like an error,
+  // but it is not.
+  WaitForClientShutdown();
+#else
+  EXPECT_TRUE(WaitForClientShutdown());
+#endif
+
+  DestroyProxy();
+}
+
+class TerminatorImpl : public IPC::mojom::Terminator {
+ public:
+  TerminatorImpl() = default;
+  ~TerminatorImpl() override = default;
+
+  static void Create(
+      mojo::PendingAssociatedReceiver<IPC::mojom::Terminator> receiver) {
+    mojo::MakeSelfOwnedAssociatedReceiver(std::make_unique<TerminatorImpl>(),
+                                          std::move(receiver));
+  }
+
+  // IPC::mojom::Terminator:
+  void Terminate(TerminateCallback callback) override {
+    base::Process::TerminateCurrentProcessImmediately(0);
+  }
+};
+
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT_WITH_CUSTOM_FIXTURE(
+    SyncAssociatedInterfacePipeError,
+    ChannelProxyClient) {
+  SimpleTestClientImpl client_impl;
+  CreateProxy(&client_impl);
+
+  // Let the IO thread receive a message to self-terminate this process. This
+  // is used to forcibly shut down the client on the test's request. Without
+  // doing this (and doing a clean shutdown instead) the client will clean up
+  // interfaces and make it impossible to trigger the regression path for
+  // https://crbug.com/1494461.
+  proxy()->AddAssociatedInterfaceForIOThread(
+      base::BindRepeating(&TerminatorImpl::Create));
+
+  RunProxy();
+  client_impl.Run();
   DestroyProxy();
 }
 
@@ -1727,10 +1813,7 @@ class ListenerThatVerifiesPeerPid : public TestListenerBase {
     RunQuitClosure();
   }
 
-  bool OnMessageReceived(const IPC::Message& message) override {
-    NOTREACHED();
-    return true;
-  }
+  bool OnMessageReceived(const IPC::Message& message) override { NOTREACHED(); }
 };
 
 // The global PID is only used on systems that use the zygote. Hence, this
@@ -1764,4 +1847,166 @@ DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(IPCChannelMojoTestVerifyGlobalPidClient) {
 
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
+class ListenerWithUrgentMessageAssociatedInterface
+    : public IPC::mojom::InterfaceWithUrgentMethod,
+      public IPC::Listener,
+      public IPC::UrgentMessageObserver {
+ public:
+  explicit ListenerWithUrgentMessageAssociatedInterface(
+      base::OnceClosure quit_closure)
+      : quit_closure_(std::move(quit_closure)) {}
+
+  ListenerWithUrgentMessageAssociatedInterface(
+      const ListenerWithUrgentMessageAssociatedInterface&) = delete;
+  ListenerWithUrgentMessageAssociatedInterface& operator=(
+      const ListenerWithUrgentMessageAssociatedInterface&) = delete;
+
+  ~ListenerWithUrgentMessageAssociatedInterface() override = default;
+
+  uint32_t num_maybe_urgent_messages_received() const {
+    return num_maybe_urgent_messages_received_;
+  }
+
+  uint32_t num_urgent_messages_received() const {
+    return num_urgent_messages_received_;
+  }
+
+  uint32_t num_non_urgent_messages_received() const {
+    return num_non_urgent_messages_received_;
+  }
+
+  uint32_t num_observer_urgent_messages_received() const {
+    return num_observer_urgent_messages_received_.load(
+        std::memory_order_relaxed);
+  }
+
+  uint32_t num_observer_urgent_messages_processed() const {
+    return num_observer_urgent_messages_processed_.load(
+        std::memory_order_relaxed);
+  }
+
+  bool was_process_callback_pending_during_ipc_dispatch() const {
+    return was_process_callback_pending_during_ipc_dispatch_;
+  }
+
+ private:
+  // IPC::mojom::InterfaceWithUrgentMethod:
+  void MaybeUrgentMessage(bool is_urgent) override {
+    ++num_maybe_urgent_messages_received_;
+    if (!is_urgent) {
+      return;
+    }
+    ++num_urgent_messages_received_;
+    uint32_t received =
+        num_observer_urgent_messages_received_.load(std::memory_order_relaxed);
+    uint32_t processed =
+        num_observer_urgent_messages_processed_.load(std::memory_order_relaxed);
+    // The "processed" observer callback should run after the IPC is dispatched,
+    // so there should always be at least one less processed callback here.
+    was_process_callback_pending_during_ipc_dispatch_ =
+        was_process_callback_pending_during_ipc_dispatch_ &&
+        (processed < received);
+  }
+
+  void NonUrgentMessage() override { ++num_non_urgent_messages_received_; }
+
+  void RequestQuit(RequestQuitCallback callback) override {
+    std::move(quit_closure_).Run();
+    std::move(callback).Run();
+  }
+
+  // IPC::Listener:
+  bool OnMessageReceived(const IPC::Message& message) override { return true; }
+
+  void OnAssociatedInterfaceRequest(
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle handle) override {
+    CHECK(!receiver_.is_bound());
+    CHECK_EQ(interface_name, IPC::mojom::InterfaceWithUrgentMethod::Name_);
+    receiver_.Bind(
+        mojo::PendingAssociatedReceiver<IPC::mojom::InterfaceWithUrgentMethod>(
+            std::move(handle)));
+  }
+
+  // IPC::UrgentMessageObserver:
+  void OnUrgentMessageReceived() override {
+    std::atomic_fetch_add_explicit(&num_observer_urgent_messages_received_,
+                                   uint32_t(1), std::memory_order_relaxed);
+  }
+
+  void OnUrgentMessageProcessed() override {
+    std::atomic_fetch_add_explicit(&num_observer_urgent_messages_processed_,
+                                   uint32_t(1), std::memory_order_relaxed);
+  }
+
+  base::OnceClosure quit_closure_;
+  mojo::AssociatedReceiver<IPC::mojom::InterfaceWithUrgentMethod> receiver_{
+      this};
+  uint32_t num_maybe_urgent_messages_received_{0};
+  uint32_t num_urgent_messages_received_{0};
+  uint32_t num_non_urgent_messages_received_{0};
+  std::atomic<uint32_t> num_observer_urgent_messages_received_{0};
+  std::atomic<uint32_t> num_observer_urgent_messages_processed_{0};
+  bool was_process_callback_pending_during_ipc_dispatch_{true};
+};
+
+TEST_F(IPCChannelProxyMojoTest, UrgentMessageObserver) {
+  Init("UrgentMessageObserverClient");
+
+  base::RunLoop run_loop;
+  ListenerWithUrgentMessageAssociatedInterface listener(run_loop.QuitClosure());
+  CreateProxy(&listener, /*urgent_message_observer=*/&listener);
+  RunProxy();
+
+  run_loop.Run();
+
+  EXPECT_TRUE(WaitForClientShutdown());
+
+  EXPECT_EQ(listener.num_maybe_urgent_messages_received(), 5u);
+  EXPECT_EQ(listener.num_urgent_messages_received(), 3u);
+  EXPECT_EQ(listener.num_non_urgent_messages_received(), 2u);
+
+  EXPECT_EQ(listener.num_observer_urgent_messages_received(), 3u);
+  EXPECT_EQ(listener.num_observer_urgent_messages_processed(), 3u);
+  EXPECT_TRUE(listener.was_process_callback_pending_during_ipc_dispatch());
+
+  DestroyProxy();
+}
+
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT_WITH_CUSTOM_FIXTURE(
+    UrgentMessageObserverClient,
+    ChannelProxyClient) {
+  DummyListener listener;
+  CreateProxy(&listener);
+  RunProxy();
+
+  mojo::AssociatedRemote<IPC::mojom::InterfaceWithUrgentMethod> remote;
+  proxy()->GetRemoteAssociatedInterface(
+      remote.BindNewEndpointAndPassReceiver());
+
+  {
+    mojo::UrgentMessageScope scope;
+    remote->MaybeUrgentMessage(/*is_urgent=*/true);
+  }
+  remote->NonUrgentMessage();
+  remote->MaybeUrgentMessage(/*is_urgent=*/false);
+  {
+    mojo::UrgentMessageScope scope;
+    remote->MaybeUrgentMessage(/*is_urgent=*/true);
+  }
+  remote->NonUrgentMessage();
+  remote->MaybeUrgentMessage(/*is_urgent=*/false);
+  {
+    mojo::UrgentMessageScope scope;
+    remote->MaybeUrgentMessage(/*is_urgent=*/true);
+  }
+
+  base::RunLoop run_loop;
+  remote->RequestQuit(run_loop.QuitClosure());
+  run_loop.Run();
+
+  DestroyProxy();
+}
+
 }  // namespace
+}  // namespace ipc_channel_mojo_unittest

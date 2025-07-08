@@ -79,10 +79,10 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
   // DataTransferItemList support.
   uint32_t length() const;
   DataObjectItem* Item(uint32_t index);
-  // TODO: Implement V8DataTransferItemList::indexedPropertyDeleter to get this
-  // called.
   void DeleteItem(uint32_t index);
   void ClearAll();
+  // Removes all the items from |item_list_| whose |kind_| is kStringKind.
+  void ClearStringItems();
   // Returns null if an item already exists with the provided type.
   DataObjectItem* Add(const String& data, const String& type);
   DataObjectItem* Add(File*);
@@ -99,6 +99,7 @@ class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
   void SetURLAndTitle(const String& url, const String& title);
   void HtmlAndBaseURL(String& html, KURL& base_url) const;
   void SetHTMLAndBaseURL(const String& html, const KURL& base_url);
+  Vector<String> Urls() const;
 
   // Used for dragging in files from the desktop.
   bool ContainsFilenames() const;

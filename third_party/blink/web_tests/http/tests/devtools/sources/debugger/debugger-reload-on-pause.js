@@ -7,7 +7,6 @@ import {SourcesTestRunner} from 'sources_test_runner';
 
 (async function() {
   TestRunner.addResult(`Tests "reload" from within inspector window while on pause.\n`);
-  await TestRunner.loadLegacyModule('sources');
   await TestRunner.showPanel('sources');
   await TestRunner.evaluateInPagePromise(`
       function testFunction()
@@ -17,16 +16,18 @@ import {SourcesTestRunner} from 'sources_test_runner';
   `);
 
   SourcesTestRunner.startDebuggerTest(step1);
+  SourcesTestRunner.setQuiet(true);
 
   function step1() {
     SourcesTestRunner.runTestFunctionAndWaitUntilPaused(step2);
   }
 
   function step2() {
+    TestRunner.addResult('Script execution paused.');
     TestRunner.reloadPage(step3);
   }
 
   function step3() {
-    SourcesTestRunner.completeDebuggerTest();
+    TestRunner.completeTest();
   }
 })();

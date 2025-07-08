@@ -5,11 +5,18 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_INSTALL_OBSERVER_H_
 #define CHROME_BROWSER_EXTENSIONS_INSTALL_OBSERVER_H_
 
+#include <optional>
 #include <string>
 
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/image/image_skia.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
+namespace base {
+class FilePath;
+}
 
 namespace content {
 class BrowserContext;
@@ -17,7 +24,6 @@ class BrowserContext;
 
 namespace extensions {
 
-class CrxInstaller;
 class Extension;
 
 // An InstallObserver observes extension installation events coming from an InstallTracker.
@@ -64,27 +70,29 @@ class InstallObserver {
   // Called when the necessary downloads have completed, and the crx
   // installation is due to start.
   virtual void OnBeginCrxInstall(content::BrowserContext* context,
-                                 const CrxInstaller& installer,
                                  const std::string& extension_id) {}
 
   // Called when installation of a crx has completed (either successfully or
-  // not).
+  // not). `source_file` is the source of the install. If the installation
+  // failed `extension` will be null but `extension_id` may be valid (it will
+  // have the ID we expected the extension to have).
   virtual void OnFinishCrxInstall(content::BrowserContext* context,
-                                  const CrxInstaller& installer,
+                                  const base::FilePath& source_file,
                                   const std::string& extension_id,
+                                  const Extension* extension,
                                   bool success) {}
 
-  // Called when the app list is reordered. If |extension_id| is set, it
+  // Called when the app list is reordered. If `extension_id` is set, it
   // indicates the extension ID that was re-ordered.
-  virtual void OnAppsReordered(
-      content::BrowserContext* context,
-      const absl::optional<ExtensionId>& extension_id) {}
+  virtual void OnAppsReordered(content::BrowserContext* context,
+                               const std::optional<ExtensionId>& extension_id) {
+  }
 
   // Notifies observers that the observed object is going away.
   virtual void OnShutdown() {}
 
  protected:
-  virtual ~InstallObserver() {}
+  virtual ~InstallObserver() = default;
 };
 
 }  // namespace extensions

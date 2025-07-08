@@ -63,7 +63,7 @@ class PlatformKeysServiceFactory : public ProfileKeyedServiceFactory {
   ~PlatformKeysServiceFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
   void BrowserContextShutdown(content::BrowserContext* context) override;
 
@@ -74,10 +74,11 @@ class PlatformKeysServiceFactory : public ProfileKeyedServiceFactory {
   // Initialized lazily.
   std::unique_ptr<PlatformKeysService> device_wide_service_;
 
-  raw_ptr<PlatformKeysService, ExperimentalAsh>
+  raw_ptr<PlatformKeysService, DanglingUntriaged>
       device_wide_service_for_testing_ = nullptr;
 
   bool map_to_softoken_attrs_for_testing_ = false;
+  bool allow_alternative_params_for_testing_ = false;
 };
 }  // namespace platform_keys
 }  // namespace ash

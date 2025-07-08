@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <limits>
+#include <memory>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -10,11 +11,11 @@
 #include "base/cpu.h"
 #include "base/files/file_util.h"
 #include "base/functional/callback_helpers.h"
-#include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/test/bind.h"
+#include "base/test/launcher/unit_test_launcher.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/encryption_scheme.h"
@@ -24,105 +25,37 @@
 #include "media/base/video_decoder_config.h"
 #include "media/base/video_transformation.h"
 #include "media/filters/dav1d_video_decoder.h"
-#include "media/gpu/chromeos/platform_video_frame_pool.h"
 #include "media/gpu/test/video_bitstream.h"
+#include "media/gpu/test/video_decode_accelerator_test_suite.h"
 #include "media/gpu/test/video_frame_file_writer.h"
 #include "media/gpu/test/video_frame_validator.h"
 #include "media/gpu/test/video_player/decoder_listener.h"
 #include "media/gpu/test/video_player/decoder_wrapper.h"
 #include "media/gpu/test/video_player/frame_renderer_dummy.h"
+#include "media/gpu/test/video_player/mappable_video_frame_converter.h"
 #include "media/gpu/test/video_player/video_player_test_environment.h"
 #include "media/gpu/test/video_test_helpers.h"
 #include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 #include "media/gpu/chromeos/video_decoder_pipeline.h"
-#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+#include "media/gpu/chromeos/platform_video_frame_pool.h"
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(USE_V4L2_CODEC)
+#include "media/gpu/v4l2/v4l2_utils.h"
+#endif  // BUILDFLAG(USE_V4L2_CODEC)
 
 namespace media {
 namespace test {
 
 namespace {
 
-// Video decoder tests usage message. Make sure to also update the documentation
-// under docs/media/gpu/video_decoder_test_usage.md when making changes here.
-constexpr const char* usage_msg =
-    R"(usage: video_decode_accelerator_tests
-           [-v=<level>] [--vmodule=<config>]
-           [--validator_type=(none|md5|ssim)]
-           [--output_frames=(all|corrupt)] [--output_format=(png|yuv)]
-           [--output_limit=<number>] [--output_folder=<folder>]
-           [--linear_output] ([--use-legacy]|[--use_vd_vda])
-           [--use-gl=<backend>] [--ozone-platform=<platform>]
-           [--disable_vaapi_lock]
-           [--gtest_help] [--help]
-           [<video path>] [<video metadata path>]
-)";
-
-// Video decoder tests help message.
-const std::string help_msg =
-    std::string(
-        R"""(Run the video decode accelerator tests on the video specified by
-<video path>. If no <video path> is given the default
-"test-25fps.h264" video will be used.
-
-The <video metadata path> should specify the location of a json file
-containing the video's metadata, such as frame checksums. By default
-<video path>.json will be used.
-
-The following arguments are supported:
-   -v                   enable verbose mode, e.g. -v=2.
-  --vmodule             enable verbose mode for the specified module,
-                        e.g. --vmodule=*media/gpu*=2.
-
-  --validator_type      validate decoded frames, possible values are
-                        md5 (default, compare against md5hash of expected
-                        frames), ssim (compute SSIM against expected
-                        frames, currently allowed for AV1 streams only)
-                        and none (disable frame validation).
-  --use-legacy          use the legacy VDA-based video decoders.
-  --use_vd_vda          use the new VD-based video decoders with a
-                        wrapper that translates to the VDA interface,
-                        used to test interaction with older components
-  --linear_output       use linear buffers as the final output of the
-                        decoder which may require the use of an image
-                        processor internally. This flag only works in
-                        conjunction with --use_vd_vda.
-                        Disabled by default.
-  --output_frames       write the selected video frames to disk, possible
-                        values are "all|corrupt".
-  --output_format       set the format of frames saved to disk, supported
-                        formats are "png" (default) and "yuv".
-  --output_limit        limit the number of frames saved to disk.
-  --output_folder       set the folder used to store frames, defaults to
-                        "<testname>".
-  --use-gl              specify which GPU backend to use, possible values
-                        include desktop (GLX), egl (GLES w/ ANGLE), and
-                        swiftshader (software rendering)
-  --ozone-platform      specify which Ozone platform to use, possible values
-                        depend on build configuration but normally include
-                        x11, drm, wayland, and headless
-  --disable_vaapi_lock  disable the global VA-API lock if applicable,
-                        i.e., only on devices that use the VA-API with a libva
-                        backend that's known to be thread-safe and only in
-                        portions of the Chrome stack that should be able to
-                        deal with the absence of the lock
-                        (not the VaapiVideoDecodeAccelerator).)""") +
-#if defined(ARCH_CPU_ARM_FAMILY)
-    R"""(
-  --disable-libyuv      use hw format conversion instead of libYUV.
-                        libYUV will be used by default, unless the
-                        video decoder format is not supported;
-                        in that case the code will try to use the
-                        v4l2 image processor.)""" +
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
-    R"""(
-  --gtest_help          display the gtest help and exit.
-  --help                display this help and exit.
-)""";
-
-media::test::VideoPlayerTestEnvironment* g_env;
+media::test::VideoDecodeAcceleratorTestSuite* g_env;
 
 // Video decode test class. Performs setup and teardown for each single test.
 class VideoDecoderTest : public ::testing::Test {
@@ -187,10 +120,14 @@ class VideoDecoderTest : public ::testing::Test {
       }
     }
 
+// Set the frame rate for the decoder. This is required for the
+// VideoDecoderPipeline to work.
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
     base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
     command_line.AppendSwitchASCII(
         switches::kHardwareVideoDecodeFrameRate,
         base::NumberToString(g_env->Video()->FrameRate()));
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
     config.implementation = g_env->GetDecoderImplementation();
     config.linear_output = g_env->ShouldOutputLinearBuffers();
@@ -209,25 +146,30 @@ class VideoDecoderTest : public ::testing::Test {
 
     // Increase the time out if
     // (1) video frames are output, or
-    // (2) on Intel GLK, where mapping is very slow.
+    // (2) on Intel GLK, where mapping is very slow, or
+    // (3) with V4L2 VISL driver where execution is very slow on ARM64 VM.
     if (g_env->GetFrameOutputMode() != FrameOutputMode::kNone ||
-        IsSlowMappingDevice()) {
+        IsSlowMappingDevice() || g_env->IsV4L2VirtualDriver()) {
       video_player->SetEventWaitTimeout(
           std::max(kDefaultEventWaitTimeout, g_env->Video()->Duration() * 10));
     }
+
     return video_player;
   }
 
   bool InitializeDecoderWithConfig(VideoDecoderConfig& decoder_config) {
+    // TODO(https://crbugs.com/350994517): Enable this test for Windows once
+    // PlatformVideoFramePool is implemented for that.
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
     auto frame_pool = std::make_unique<PlatformVideoFramePool>();
     std::unique_ptr<VideoDecoder> decoder = VideoDecoderPipeline::Create(
         gpu::GpuDriverBugWorkarounds(),
         base::SingleThreadTaskRunner::GetCurrentDefault(),
-        std::move(frame_pool),
-        /*frame_converter=*/nullptr,
+        std::move(frame_pool), MappableVideoFrameConverter::CreateForTesting(),
         VideoDecoderPipeline::DefaultPreferredRenderableFourccs(),
         std::make_unique<NullMediaLog>(),
-        /*oop_video_decoder=*/{});
+        /*oop_video_decoder=*/{},
+        /*in_video_decoder_process=*/true);
 
     bool init_result = false;
     VideoDecoder::InitCB init_cb = base::BindLambdaForTesting(
@@ -238,17 +180,26 @@ class VideoDecoderTest : public ::testing::Test {
                                             base::Unretained(this)),
                         /*waiting_cb=*/base::NullCallback());
     return init_result;
+#else
+    return false;
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   }
 
  private:
   bool IsSlowMappingDevice() const {
-    static const base::NoDestructor<base::CPU> cpuid;
-    constexpr int kPentiumAndLaterFamily = 0x06;
-    constexpr int kGeminiLakeModelId = 0x7A;
-    static const bool is_glk_device =
-        cpuid->family() == kPentiumAndLaterFamily &&
-        cpuid->model() == kGeminiLakeModelId;
-    return is_glk_device;
+    static const bool is_slow_mapping_device = []() {
+      const base::CPU& cpuid = base::CPU::GetInstanceNoAllocation();
+      constexpr int kPentiumAndLaterFamily = 0x06;
+      constexpr int kGeminiLakeModelId = 0x7A;
+      constexpr int kApolloLakeModelId = 0x5c;
+      const bool is_glk_device = cpuid.family() == kPentiumAndLaterFamily &&
+                                 cpuid.model() == kGeminiLakeModelId;
+      const bool is_apl_device = cpuid.family() == kPentiumAndLaterFamily &&
+                                 cpuid.model() == kApolloLakeModelId;
+      return is_glk_device || is_apl_device;
+    }();
+
+    return is_slow_mapping_device;
   }
 
   // TODO(hiroh): Move this to Video class or video_frame_helpers.h.
@@ -260,7 +211,7 @@ class VideoDecoderTest : public ::testing::Test {
     }
 
     Dav1dVideoDecoder decoder(
-        /*media_log=*/nullptr,
+        std::make_unique<NullMediaLog>(),
         OffloadableVideoDecoder::OffloadState::kOffloaded);
     VideoDecoderConfig decoder_config(
         video->Codec(), video->Profile(),
@@ -282,7 +233,7 @@ class VideoDecoderTest : public ::testing::Test {
     if (!init_success)
       return false;
     auto encoded_data_helper =
-        std::make_unique<EncodedDataHelper>(video->Data(), video->Codec());
+        EncodedDataHelper::Create(video->Data(), video->Codec());
     DCHECK(encoded_data_helper);
     while (!encoded_data_helper->ReachEndOfStream()) {
       bool decode_success = false;
@@ -324,7 +275,7 @@ class VideoDecoderTest : public ::testing::Test {
 
 }  // namespace
 
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 TEST_F(VideoDecoderTest, GetSupportedConfigs) {
   if (g_env->GetDecoderImplementation() != DecoderImplementation::kVD) {
     GTEST_SKIP() << "Re-initialization is only supported by the "
@@ -351,7 +302,7 @@ TEST_F(VideoDecoderTest, GetSupportedConfigs) {
   // Every hardware video decoder in ChromeOS supports some kind of H.264.
   EXPECT_TRUE(contains_h264);
 }
-#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
 // Test initializing the video decoder for the specified video. Initialization
 // will be successful if the video decoder is capable of decoding the test
@@ -431,19 +382,26 @@ TEST_F(VideoDecoderTest, Decode) {
                                 /*times=*/kNumDecodeBuffers));
 }
 
-// This test case sends all the frames and expects them to be fully decoded
-// (as in, VideoDecoder::OutputCB should be called). Most of them should be
-// decoded as well, but since this test doesn't exercise an End-of-Stream
-// (a.k.a. "a flush"), some will likely be held onto by the VideoDecoder/driver
-// as part of its decoding pipeline. We don't know how many (it depends also on
-// the ImageProcessor, if any), so it's not a good idea to set expectations on
-// the number of kFrameDecoded events.
-TEST_F(VideoDecoderTest, DecodeAndOutputAllFrames) {
+// This test case sends all the frames and expects them to be accepted for
+// decoding (as in, VideoDecoder::OutputCB should be called). Most of them
+// should be decoded as well, but since this test doesn't exercise an
+// End-of-Stream (a.k.a. "a flush"), some will likely be held onto by the
+// VideoDecoder/driver as part of its decoding pipeline. We don't know how
+// many (it depends also on the ImageProcessor, if any), so it's not a good
+// idea to set expectations on the number of kFrameDecoded events.
+TEST_F(VideoDecoderTest, AllDecoderBuffersAcceptedForDecoding) {
   auto tvp = CreateDecoderListener(g_env->Video());
 
   tvp->Play();
   EXPECT_TRUE(tvp->WaitForEvent(DecoderListener::Event::kDecoderBufferAccepted,
                                 /*times=*/g_env->Video()->NumFrames()));
+
+  // This is a hack to allow Qualcomm devices (e.g. trogdor) to flush the pipes
+  // after the last resolution change event that comes out when running the
+  // resolution_change_500frames.vp9.ivf sequence. It should be fixed but since
+  // a new V4L2StatefulVideoDecoder backend is in the making, let's just leave
+  // the hack. See b/294611425.
+  base::PlatformThread::Sleep(base::Milliseconds(100));
 }
 #endif
 
@@ -469,6 +427,41 @@ TEST_F(VideoDecoderTest, FlushAtEndOfStream) {
   EXPECT_EQ(tvp->GetFrameDecodedCount(), g_env->Video()->NumFrames());
   EXPECT_TRUE(tvp->WaitForFrameProcessors());
 }
+
+#if BUILDFLAG(USE_V4L2_CODEC)
+// Flush the decoder somewhere mid-stream, then continue as normal. This is a
+// contrived use case to exercise important V4L2 stateful areas.
+TEST_F(VideoDecoderTest, DISABLED_FlushMidStream) {
+  auto tvp = CreateDecoderListener(g_env->Video());
+
+  tvp->Play();
+  const size_t flush_location_in_frames =
+      std::min(static_cast<size_t>(10), g_env->Video()->NumFrames() / 2);
+  EXPECT_TRUE(tvp->WaitForFrameDecoded(flush_location_in_frames));
+  tvp->Flush();
+  EXPECT_TRUE(tvp->WaitForFlushDone());
+  // GetFrameDecodedCount() is likely larger than |flush_location_in_frames|
+  // because there are likely submitted encoded chunks ready to be decoded at
+  // the time of Flush().
+  EXPECT_GE(tvp->GetFrameDecodedCount(), flush_location_in_frames);
+  tvp->Play();
+  EXPECT_TRUE(tvp->WaitForFlushDone());
+
+  // Total flush count must be two: once mid-stream and once at the end.
+  EXPECT_EQ(tvp->GetFlushDoneCount(), 2u);
+
+  // The H264 bitstreams in our test set have B-frames; by Flush()ing carelessly
+  // like we do here in this test, we're likely to lose needed references that
+  // later B-frames will need. Those B-frames will be discarded.
+  // TODO(mcasas): Flush at an IDR frame.
+  const bool has_b_frames = g_env->Video()->Codec() == VideoCodec::kH264;
+  if (!has_b_frames)
+    EXPECT_EQ(tvp->GetFrameDecodedCount(), g_env->Video()->NumFrames());
+  else
+    EXPECT_LE(tvp->GetFrameDecodedCount(), g_env->Video()->NumFrames());
+  EXPECT_TRUE(tvp->WaitForFrameProcessors());
+}
+#endif
 
 // Flush the decoder immediately after initialization.
 TEST_F(VideoDecoderTest, FlushAfterInitialize) {
@@ -594,6 +587,7 @@ TEST_F(VideoDecoderTest, ResolutionChangeAbortedByReset) {
 
   auto tvp = CreateDecoderListener(g_env->Video());
 
+  // kNewBuffersRequested is a specific kVDVDA event.
   tvp->PlayUntil(DecoderListener::Event::kNewBuffersRequested);
   EXPECT_TRUE(tvp->WaitForEvent(DecoderListener::Event::kNewBuffersRequested));
 
@@ -642,9 +636,10 @@ TEST_F(VideoDecoderTest, FlushAtEndOfStream_MultipleConcurrentDecodes) {
 
   for (size_t i = 0; i < kMinSupportedConcurrentDecoders; ++i) {
     EXPECT_TRUE(tvps[i]->WaitForFlushDone());
-    EXPECT_EQ(tvps[i]->GetFlushDoneCount(), 1u);
-    EXPECT_EQ(tvps[i]->GetFrameDecodedCount(), g_env->Video()->NumFrames());
-    EXPECT_TRUE(tvps[i]->WaitForFrameProcessors());
+    EXPECT_EQ(tvps[i]->GetFlushDoneCount(), 1u) << "Decoder #" << i;
+    EXPECT_EQ(tvps[i]->GetFrameDecodedCount(), g_env->Video()->NumFrames())
+        << "Decoder #" << i;
+    EXPECT_TRUE(tvps[i]->WaitForFrameProcessors()) << "Decoder #" << i;
   }
 }
 
@@ -664,167 +659,15 @@ TEST_F(VideoDecoderTest, InitializeWithNonSupportedConfig) {
 }  // namespace media
 
 int main(int argc, char** argv) {
-  // Set the default test data path.
-  media::test::VideoBitstream::SetTestDataPath(media::GetTestDataPath());
-
-  // Print the help message if requested. This needs to be done before
-  // initializing gtest, to overwrite the default gtest help message.
-  base::CommandLine::Init(argc, argv);
-  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  LOG_ASSERT(cmd_line);
-  if (cmd_line->HasSwitch("help")) {
-    std::cout << media::test::usage_msg << "\n" << media::test::help_msg;
-    return 0;
-  }
-
-  // Check if a video was specified on the command line.
-  base::CommandLine::StringVector args = cmd_line->GetArgs();
-  base::FilePath video_path =
-      (args.size() >= 1) ? base::FilePath(args[0]) : base::FilePath();
-  base::FilePath video_metadata_path =
-      (args.size() >= 2) ? base::FilePath(args[1]) : base::FilePath();
-
-  // Parse command line arguments.
-  auto validator_type =
-      media::test::VideoPlayerTestEnvironment::ValidatorType::kMD5;
-  media::test::FrameOutputConfig frame_output_config;
-  base::FilePath::StringType output_folder = base::FilePath::kCurrentDirectory;
-  bool use_legacy = false;
-  bool use_vd_vda = false;
-  bool linear_output = false;
-  std::vector<base::test::FeatureRef> disabled_features;
-  std::vector<base::test::FeatureRef> enabled_features;
-
-  media::test::DecoderImplementation implementation =
-      media::test::DecoderImplementation::kVD;
-  base::CommandLine::SwitchMap switches = cmd_line->GetSwitches();
-  for (base::CommandLine::SwitchMap::const_iterator it = switches.begin();
-       it != switches.end(); ++it) {
-    if (it->first.find("gtest_") == 0 ||  // Handled by GoogleTest
-                                          // Options below are handled by Chrome
-        it->first == "ozone-platform" || it->first == "use-gl" ||
-        it->first == "v" || it->first == "vmodule" ||
-        it->first == "enable-features" || it->first == "disable-features") {
-      continue;
-    }
-
-    if (it->first == "validator_type") {
-      if (it->second == "none") {
-        validator_type =
-            media::test::VideoPlayerTestEnvironment::ValidatorType::kNone;
-      } else if (it->second == "md5") {
-        validator_type =
-            media::test::VideoPlayerTestEnvironment::ValidatorType::kMD5;
-      } else if (it->second == "ssim") {
-        validator_type =
-            media::test::VideoPlayerTestEnvironment::ValidatorType::kSSIM;
-      } else {
-        std::cout << "unknown validator type \"" << it->second
-                  << "\", possible values are \"none|md5|ssim\"\n";
-        return EXIT_FAILURE;
-      }
-    } else if (it->first == "output_frames") {
-      if (it->second == "all") {
-        frame_output_config.output_mode = media::test::FrameOutputMode::kAll;
-      } else if (it->second == "corrupt") {
-        frame_output_config.output_mode =
-            media::test::FrameOutputMode::kCorrupt;
-      } else {
-        std::cout << "unknown frame output mode \"" << it->second
-                  << "\", possible values are \"all|corrupt\"\n";
-        return EXIT_FAILURE;
-      }
-    } else if (it->first == "output_format") {
-      if (it->second == "png") {
-        frame_output_config.output_format =
-            media::test::VideoFrameFileWriter::OutputFormat::kPNG;
-      } else if (it->second == "yuv") {
-        frame_output_config.output_format =
-            media::test::VideoFrameFileWriter::OutputFormat::kYUV;
-      } else {
-        std::cout << "unknown frame output format \"" << it->second
-                  << "\", possible values are \"png|yuv\"\n";
-        return EXIT_FAILURE;
-      }
-    } else if (it->first == "output_limit") {
-      if (!base::StringToUint64(it->second,
-                                &frame_output_config.output_limit)) {
-        std::cout << "invalid number \"" << it->second << "\n";
-        return EXIT_FAILURE;
-      }
-    } else if (it->first == "output_folder") {
-      output_folder = it->second;
-    } else if (it->first == "use-legacy") {
-      use_legacy = true;
-      implementation = media::test::DecoderImplementation::kVDA;
-    } else if (it->first == "use_vd_vda") {
-      use_vd_vda = true;
-      implementation = media::test::DecoderImplementation::kVDVDA;
-    } else if (it->first == "linear_output") {
-      linear_output = true;
-    } else if (it->first == "disable_vaapi_lock") {
-      disabled_features.push_back(media::kGlobalVaapiLock);
-#if defined(ARCH_CPU_ARM_FAMILY)
-    } else if (it->first == "disable-libyuv") {
-      enabled_features.clear();
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
-    } else {
-      std::cout << "unknown option: --" << it->first << "\n"
-                << media::test::usage_msg;
-      return EXIT_FAILURE;
-    }
-  }
-
-  if (use_legacy && use_vd_vda) {
-    std::cout << "--use-legacy and --use_vd_vda cannot be enabled together.\n"
-              << media::test::usage_msg;
-    return EXIT_FAILURE;
-  }
-  if (linear_output && !use_vd_vda) {
-    std::cout << "--linear_output must be used with the VDVDA (--use_vd_vda)\n"
-                 "implementation.\n"
-              << media::test::usage_msg;
+  media::test::g_env =
+      media::test::VideoDecodeAcceleratorTestSuite::Create(argc, argv);
+  if (!media::test::g_env || !media::test::g_env->ValidVideoTestEnv()) {
+    LOG(ERROR) << "Invalid video test environment";
     return EXIT_FAILURE;
   }
 
-  testing::InitGoogleTest(&argc, argv);
-
-  // Add the command line flag for HEVC testing which will be checked by the
-  // video decoder to allow clear HEVC decoding.
-  cmd_line->AppendSwitch("enable-clear-hevc-for-testing");
-
-#if defined(ARCH_CPU_ARM_FAMILY)
-  // On some platforms bandwidth compression is fully opaque and can not be
-  // read by the cpu.  This prevents MD5 computation as that is done by the
-  // cpu.
-  cmd_line->AppendSwitch("disable-buffer-bw-compression");
-#endif
-
-#if BUILDFLAG(USE_V4L2_CODEC)
-  std::unique_ptr<base::FeatureList> feature_list =
-      std::make_unique<base::FeatureList>();
-  feature_list->InitializeFromCommandLine(
-      cmd_line->GetSwitchValueASCII(switches::kEnableFeatures),
-      cmd_line->GetSwitchValueASCII(switches::kDisableFeatures));
-  if (feature_list->IsFeatureOverridden("V4L2FlatStatelessVideoDecoder")) {
-    enabled_features.push_back(media::kV4L2FlatStatelessVideoDecoder);
-  }
-  if (feature_list->IsFeatureOverridden("V4L2FlatStatefulVideoDecoder")) {
-    enabled_features.push_back(media::kV4L2FlatStatefulVideoDecoder);
-  }
-#endif
-
-  // Set up our test environment.
-  media::test::VideoPlayerTestEnvironment* test_environment =
-      media::test::VideoPlayerTestEnvironment::Create(
-          video_path, video_metadata_path, validator_type, implementation,
-          linear_output, base::FilePath(output_folder), frame_output_config,
-          enabled_features, disabled_features);
-  if (!test_environment)
-    return EXIT_FAILURE;
-
-  media::test::g_env = static_cast<media::test::VideoPlayerTestEnvironment*>(
-      testing::AddGlobalTestEnvironment(test_environment));
-
-  return RUN_ALL_TESTS();
+  return base::LaunchUnitTests(
+      argc, argv,
+      base::BindOnce(&media::test::VideoDecodeAcceleratorTestSuite::Run,
+                     base::Unretained(media::test::g_env)));
 }

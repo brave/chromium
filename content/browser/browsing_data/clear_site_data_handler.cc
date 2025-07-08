@@ -4,6 +4,9 @@
 
 #include "content/browser/browsing_data/clear_site_data_handler.h"
 
+#include <optional>
+
+#include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_split.h"
@@ -11,12 +14,12 @@
 #include "base/strings/stringprintf.h"
 #include "content/browser/buckets/bucket_utils.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_contents.h"
-#include "net/base/features.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/clear_site_data.h"
-#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/features_generated.h"
 
 namespace content {
@@ -35,7 +38,9 @@ enum LoggableEventMask {
   CLEAR_SITE_DATA_CACHE = 1 << 2,
   CLEAR_SITE_DATA_BUCKETS = 1 << 3,
   CLEAR_SITE_DATA_CLIENT_HINTS = 1 << 4,
-  CLEAR_SITE_DATA_MAX_VALUE = 1 << 5,
+  CLEAR_SITE_DATA_PREFETCH_CACHE = 1 << 5,
+  CLEAR_SITE_DATA_PRERENDER_CACHE = 1 << 6,
+  CLEAR_SITE_DATA_MAX_VALUE = 1 << 7,
 };
 
 void LogEvent(int event) {
@@ -59,10 +64,14 @@ int ParametersMask(const ClearSiteDataTypeSet clear_site_data_types,
   if (has_buckets) {
     mask = mask | CLEAR_SITE_DATA_BUCKETS;
   }
-  if (clear_site_data_types.Has(ClearSiteDataType::kClientHints) &&
-      base::FeatureList::IsEnabled(
-          network::features::kClearSiteDataClientHintsSupport)) {
+  if (clear_site_data_types.Has(ClearSiteDataType::kClientHints)) {
     mask = mask | CLEAR_SITE_DATA_CLIENT_HINTS;
+  }
+  if (clear_site_data_types.Has(ClearSiteDataType::kPrefetchCache)) {
+    mask = mask | CLEAR_SITE_DATA_PREFETCH_CACHE;
+  }
+  if (clear_site_data_types.Has(ClearSiteDataType::kPrerenderCache)) {
+    mask = mask | CLEAR_SITE_DATA_PRERENDER_CACHE;
   }
   return mask;
 }
@@ -95,16 +104,14 @@ void ClearSiteDataHandler::ConsoleMessagesDelegate::AddMessage(
 }
 
 void ClearSiteDataHandler::ConsoleMessagesDelegate::OutputMessages(
-    const base::RepeatingCallback<WebContents*()>& web_contents_getter) {
+    base::WeakPtr<WebContents> web_contents) {
   if (messages_.empty())
     return;
-
-  WebContents* web_contents = web_contents_getter.Run();
 
   for (const auto& message : messages_) {
     // Prefix each message with |kConsoleMessageTemplate|.
     output_formatted_message_function_.Run(
-        web_contents, message.level,
+        web_contents.get(), message.level,
         base::StringPrintf(kConsoleMessageTemplate, message.url.spec().c_str(),
                            message.text.c_str()));
   }
@@ -123,20 +130,21 @@ void ClearSiteDataHandler::ConsoleMessagesDelegate::
 
 // static
 void ClearSiteDataHandler::HandleHeader(
-    base::RepeatingCallback<BrowserContext*()> browser_context_getter,
-    base::RepeatingCallback<WebContents*()> web_contents_getter,
+    base::WeakPtr<BrowserContext> browser_context,
+    base::WeakPtr<WebContents> web_contents,
+    const StoragePartitionConfig& storage_partition_config,
     const GURL& url,
     const std::string& header_value,
     int load_flags,
-    const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
-    const absl::optional<blink::StorageKey>& storage_key,
+    const std::optional<net::CookiePartitionKey> cookie_partition_key,
+    const std::optional<blink::StorageKey> storage_key,
     bool partitioned_state_allowed_only,
     base::OnceClosure callback) {
-  ClearSiteDataHandler handler(browser_context_getter, web_contents_getter, url,
-                               header_value, load_flags, cookie_partition_key,
-                               storage_key, partitioned_state_allowed_only,
-                               std::move(callback),
-                               std::make_unique<ConsoleMessagesDelegate>());
+  ClearSiteDataHandler handler(
+      browser_context, web_contents, storage_partition_config, url,
+      header_value, load_flags, cookie_partition_key, storage_key,
+      partitioned_state_allowed_only, std::move(callback),
+      std::make_unique<ConsoleMessagesDelegate>());
   handler.HandleHeaderAndOutputConsoleMessages();
 }
 
@@ -153,18 +161,20 @@ bool ClearSiteDataHandler::ParseHeaderForTesting(
 }
 
 ClearSiteDataHandler::ClearSiteDataHandler(
-    base::RepeatingCallback<BrowserContext*()> browser_context_getter,
-    base::RepeatingCallback<WebContents*()> web_contents_getter,
+    base::WeakPtr<BrowserContext> browser_context,
+    base::WeakPtr<WebContents> web_contents,
+    const StoragePartitionConfig& storage_partition_config,
     const GURL& url,
     const std::string& header_value,
     int load_flags,
-    const absl::optional<net::CookiePartitionKey>& cookie_partition_key,
-    const absl::optional<blink::StorageKey>& storage_key,
+    const std::optional<net::CookiePartitionKey> cookie_partition_key,
+    const std::optional<blink::StorageKey> storage_key,
     bool partitioned_state_allowed_only,
     base::OnceClosure callback,
     std::unique_ptr<ConsoleMessagesDelegate> delegate)
-    : browser_context_getter_(browser_context_getter),
-      web_contents_getter_(web_contents_getter),
+    : browser_context_(browser_context),
+      web_contents_(web_contents),
+      storage_partition_config_(storage_partition_config),
       url_(url),
       header_value_(header_value),
       load_flags_(load_flags),
@@ -173,8 +183,6 @@ ClearSiteDataHandler::ClearSiteDataHandler(
       partitioned_state_allowed_only_(partitioned_state_allowed_only),
       callback_(std::move(callback)),
       delegate_(std::move(delegate)) {
-  DCHECK(browser_context_getter_);
-  DCHECK(web_contents_getter_);
   DCHECK(delegate_);
 }
 
@@ -184,7 +192,7 @@ bool ClearSiteDataHandler::HandleHeaderAndOutputConsoleMessages() {
   bool deferred = Run();
 
   // If the redirect is deferred, wait until it is resumed.
-  // TODO(crbug.com/876931): Delay output until next frame for navigations.
+  // TODO(crbug.com/41409604): Delay output until next frame for navigations.
   if (!deferred) {
     OutputConsoleMessages();
     RunCallbackNotDeferred();
@@ -236,7 +244,7 @@ bool ClearSiteDataHandler::Run() {
       origin, clear_site_data_types, storage_buckets_to_remove,
       base::BindOnce(&ClearSiteDataHandler::TaskFinished,
                      base::TimeTicks::Now(), std::move(delegate_),
-                     web_contents_getter_, std::move(callback_)));
+                     web_contents_, std::move(callback_)));
 
   return true;
 }
@@ -254,7 +262,7 @@ bool ClearSiteDataHandler::ParseHeader(
 
   if (!base::IsStringASCII(header)) {
     delegate->AddMessage(current_url, "Must only contain ASCII characters.",
-                         blink::mojom::ConsoleMessageLevel::kError);
+                         blink::mojom::ConsoleMessageLevel::kWarning);
     LogEvent(CLEAR_SITE_DATA_NO_RECOGNIZABLE_TYPES);
     return false;
   }
@@ -265,17 +273,11 @@ bool ClearSiteDataHandler::ParseHeader(
       net::ClearSiteDataHeaderContents(header);
   std::string output_types;
 
-  if (base::FeatureList::IsEnabled(
-          net::features::kClearSiteDataWildcardSupport) &&
-      std::find(input_types.begin(), input_types.end(),
-                net::kDatatypeWildcard) != input_types.end()) {
+  if (base::Contains(input_types, net::kDatatypeWildcard)) {
     input_types.push_back(net::kDatatypeCookies);
     input_types.push_back(net::kDatatypeStorage);
     input_types.push_back(net::kDatatypeCache);
-    if (base::FeatureList::IsEnabled(
-            network::features::kClearSiteDataClientHintsSupport)) {
-      input_types.push_back(net::kDatatypeClientHints);
-    }
+    input_types.push_back(net::kDatatypeClientHints);
   }
 
   for (auto& input_type : input_types) {
@@ -305,20 +307,34 @@ bool ClearSiteDataHandler::ParseHeader(
       data_type = ClearSiteDataType::kStorage;
     } else if (input_type == net::kDatatypeCache) {
       data_type = ClearSiteDataType::kCache;
-    } else if (base::FeatureList::IsEnabled(
-                   network::features::kClearSiteDataClientHintsSupport) &&
-               input_type == net::kDatatypeClientHints) {
+    } else if (input_type == net::kDatatypeClientHints) {
       data_type = ClearSiteDataType::kClientHints;
-    } else if (base::FeatureList::IsEnabled(
-                   net::features::kClearSiteDataWildcardSupport) &&
-               input_type == net::kDatatypeWildcard) {
+    } else if (input_type == net::kDatatypePrefetchCache) {
+      data_type = ClearSiteDataType::kPrefetchCache;
+    } else if (input_type == net::kDatatypePrerenderCache) {
+      data_type = ClearSiteDataType::kPrerenderCache;
+    } else if (input_type == net::kDatatypeWildcard) {
       continue;
     } else {
       delegate->AddMessage(
           current_url,
           base::StringPrintf("Unrecognized type: %s.", input_type.c_str()),
-          blink::mojom::ConsoleMessageLevel::kError);
+          blink::mojom::ConsoleMessageLevel::kWarning);
       continue;
+    }
+
+    if (!base::FeatureList::IsEnabled(
+            blink::features::kClearSiteDataPrefetchPrerenderCache)) {
+      if (data_type == ClearSiteDataType::kPrefetchCache ||
+          data_type == ClearSiteDataType::kPrerenderCache) {
+        delegate->AddMessage(
+            current_url,
+            base::StringPrintf(
+                "prefetchCache and prerenderCache not enabled: %s.",
+                input_type.c_str()),
+            blink::mojom::ConsoleMessageLevel::kWarning);
+        continue;
+      }
     }
 
     DCHECK_NE(data_type, ClearSiteDataType::kUndefined);
@@ -333,9 +349,9 @@ bool ClearSiteDataHandler::ParseHeader(
     output_types += input_type;
   }
 
-  if (clear_site_data_types->Empty() && storage_buckets_to_remove->empty()) {
+  if (clear_site_data_types->empty() && storage_buckets_to_remove->empty()) {
     delegate->AddMessage(current_url, "No recognized types specified.",
-                         blink::mojom::ConsoleMessageLevel::kError);
+                         blink::mojom::ConsoleMessageLevel::kWarning);
     LogEvent(CLEAR_SITE_DATA_NO_RECOGNIZABLE_TYPES);
     return false;
   }
@@ -354,7 +370,7 @@ bool ClearSiteDataHandler::ParseHeader(
   }
 
   // Pretty-print which types are to be cleared.
-  // TODO(crbug.com/798760): Remove the disclaimer about cookies.
+  // TODO(crbug.com/41363015): Remove the disclaimer about cookies.
   std::string console_output =
       base::StringPrintf(kConsoleMessageCleared, output_types.c_str());
   if (clear_site_data_types->Has(ClearSiteDataType::kCookies)) {
@@ -377,28 +393,29 @@ void ClearSiteDataHandler::ExecuteClearingTask(
     const ClearSiteDataTypeSet clear_site_data_types,
     const std::set<std::string>& storage_buckets_to_remove,
     base::OnceClosure callback) {
-  ClearSiteData(browser_context_getter_, origin, clear_site_data_types,
-                storage_buckets_to_remove, true /*avoid_closing_connections*/,
-                cookie_partition_key_, storage_key_,
-                partitioned_state_allowed_only_, std::move(callback));
+  ClearSiteData(browser_context_, storage_partition_config_, origin,
+                clear_site_data_types, storage_buckets_to_remove,
+                /*avoid_closing_connections=*/true, cookie_partition_key_,
+                storage_key_, partitioned_state_allowed_only_,
+                std::move(callback));
 }
 
 // static
 void ClearSiteDataHandler::TaskFinished(
     base::TimeTicks clearing_started,
     std::unique_ptr<ConsoleMessagesDelegate> delegate,
-    base::RepeatingCallback<WebContents*()> web_contents_getter,
+    base::WeakPtr<WebContents> web_contents,
     base::OnceClosure callback) {
   DCHECK(!clearing_started.is_null());
 
-  // TODO(crbug.com/876931): Delay output until next frame for navigations.
-  delegate->OutputMessages(web_contents_getter);
+  // TODO(crbug.com/41409604): Delay output until next frame for navigations.
+  delegate->OutputMessages(web_contents);
 
   std::move(callback).Run();
 }
 
 void ClearSiteDataHandler::OutputConsoleMessages() {
-  delegate_->OutputMessages(web_contents_getter_);
+  delegate_->OutputMessages(web_contents_);
 }
 
 void ClearSiteDataHandler::RunCallbackNotDeferred() {

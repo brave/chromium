@@ -6,11 +6,9 @@
 
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
-#include "base/allocator/partition_allocator/pointers/raw_ptr.h"
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
 #include "extensions/browser/api/automation_internal/automation_event_router.h"
@@ -30,12 +28,18 @@ class Window;
 namespace ax::android {
 class AXTreeSourceAndroidTest;
 
-using AXTreeAndroidSerializer =
-    ui::AXTreeSerializer<AccessibilityInfoDataWrapper*>;
+using AXTreeAndroidSerializer = ui::AXTreeSerializer<
+    AccessibilityInfoDataWrapper*,
+    std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>,
+    ui::AXTreeUpdate*,
+    ui::AXTreeData*,
+    ui::AXNodeData>;
 
 // This class represents the accessibility tree from the focused ARC window.
 class AXTreeSourceAndroid
-    : public ui::AXTreeSource<AccessibilityInfoDataWrapper*>,
+    : public ui::AXTreeSource<AccessibilityInfoDataWrapper*,
+                              ui::AXTreeData*,
+                              ui::AXNodeData>,
       public ui::AXActionHandler {
  public:
   class Delegate {
@@ -85,6 +89,8 @@ class AXTreeSourceAndroid
     // To ensure the node re-serialized, the class must return |true| on
     // PreDispatchEvent() if the event is NOT coming from its ancestry.
     virtual void PostSerializeNode(ui::AXNodeData* out_data) const = 0;
+
+    virtual bool ShouldDestroy(AXTreeSourceAndroid* tree_source) const = 0;
   };
 
   AXTreeSourceAndroid(
@@ -105,7 +111,7 @@ class AXTreeSourceAndroid
 
   // Notify automation of result to getTextLocation.
   void NotifyGetTextLocationDataResult(const ui::AXActionData& data,
-                                       const absl::optional<gfx::Rect>& rect);
+                                       const std::optional<gfx::Rect>& rect);
 
   // Invalidates the tree serializer.
   void InvalidateTree();
@@ -122,7 +128,18 @@ class AXTreeSourceAndroid
   // virtual for testing.
   virtual bool IsRootOfNodeTree(int32_t id) const;
 
+  // Sets a virtual node, i.e., node that doesn't exist in source Android tree.
+  // This set is only effective on the current event serialization.
+  // Usually setting a node is always needed by using a Hook.
+  // Note that currently panret node should be an instance of
+  // AccessibilityWindowInfoDataWrapper.
+  void SetVirtualNode(int32_t parent_id,
+                      std::unique_ptr<AccessibilityInfoDataWrapper> child);
+
   AccessibilityInfoDataWrapper* GetFirstImportantAncestor(
+      AccessibilityInfoDataWrapper* info_data) const;
+
+  AccessibilityInfoDataWrapper* GetFirstAccessibilityFocusableAncestor(
       AccessibilityInfoDataWrapper* info_data) const;
 
   SerializationDelegate& serialization_delegate() const {
@@ -145,7 +162,9 @@ class AXTreeSourceAndroid
   bool is_input_method_window() { return is_input_method_window_; }
 
   // The window id of this tree.
-  absl::optional<int32_t> window_id() const { return window_id_; }
+  std::optional<int32_t> window_id() const { return window_id_; }
+  // The root id of this tree.
+  std::optional<int32_t> root_id() const { return root_id_; }
 
   void set_automation_event_router_for_test(
       extensions::AutomationEventRouterInterface* router) {
@@ -155,6 +174,9 @@ class AXTreeSourceAndroid
 
  private:
   friend class AXTreeSourceAndroidTest;
+
+  // Builds the map that stores relationships between nodes.
+  void BuildNodeMap(const mojom::AccessibilityEventData& event_data);
 
   // Actual implementation of NotifyAccessibilityEvent.
   void NotifyAccessibilityEventInternal(
@@ -220,8 +242,8 @@ class AXTreeSourceAndroid
   // AXActionHandlerBase:
   void PerformAction(const ui::AXActionData& data) override;
 
-  std::vector<AccessibilityInfoDataWrapper*>& GetChildren(
-      AccessibilityInfoDataWrapper* info_data) const;
+  std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>&
+  GetChildren(AccessibilityInfoDataWrapper* info_data) const;
 
   void ComputeAndCacheChildren(AccessibilityInfoDataWrapper* info_data) const;
 
@@ -232,17 +254,17 @@ class AXTreeSourceAndroid
   std::map<int32_t, int32_t> parent_map_;
 
   std::unique_ptr<AXTreeAndroidSerializer> current_tree_serializer_;
-  absl::optional<int32_t> root_id_;
-  absl::optional<int32_t> window_id_;
-  absl::optional<int32_t> android_focused_id_;
+  std::optional<int32_t> root_id_;
+  std::optional<int32_t> window_id_;
+  std::optional<int32_t> android_focused_id_;
 
   bool is_notification_;
   bool is_input_method_window_;
 
-  absl::optional<std::string> notification_key_;
+  std::optional<std::string> notification_key_;
 
   // Window corresponding this tree.
-  raw_ptr<aura::Window, ExperimentalAsh> window_;
+  raw_ptr<aura::Window, DanglingUntriaged> window_;
 
   // Cache of mapping from the *Android* window id to the last focused node id.
   std::map<int32_t, int32_t> window_id_to_last_focus_node_id_;
@@ -256,15 +278,15 @@ class AXTreeSourceAndroid
 
   // A delegate that handles accessibility actions on behalf of this tree. The
   // delegate is valid during the lifetime of this tree.
-  const raw_ptr<const Delegate, ExperimentalAsh> delegate_;
+  const raw_ptr<const Delegate> delegate_;
   // A delegate that handles unique serialization logic on behalf of this tree.
   // The delegate is valid during the lifetime of this tree.
   const std::unique_ptr<SerializationDelegate> serialization_delegate_;
 
-  raw_ptr<extensions::AutomationEventRouterInterface, ExperimentalAsh>
+  raw_ptr<extensions::AutomationEventRouterInterface>
       automation_event_router_for_test_ = nullptr;
 };
 
 }  // namespace ax::android
 
-#endif
+#endif  // SERVICES_ACCESSIBILITY_ANDROID_AX_TREE_SOURCE_ANDROID_H_

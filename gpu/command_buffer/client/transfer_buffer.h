@@ -14,9 +14,9 @@
 #include "base/containers/circular_deque.h"
 #include "base/memory/raw_ptr.h"
 #include "base/unguessable_token.h"
+#include "gpu/command_buffer/client/gpu_command_buffer_client_export.h"
 #include "gpu/command_buffer/client/ring_buffer.h"
 #include "gpu/command_buffer/common/buffer.h"
-#include "gpu/gpu_export.h"
 
 namespace gpu {
 
@@ -25,7 +25,7 @@ template <typename>
 class ScopedResultPtr;
 
 // Interface for managing the transfer buffer.
-class GPU_EXPORT TransferBufferInterface {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT TransferBufferInterface {
  public:
   TransferBufferInterface() = default;
   virtual ~TransferBufferInterface() = default;
@@ -82,7 +82,8 @@ class GPU_EXPORT TransferBufferInterface {
 };
 
 // Class that manages the transfer buffer.
-class GPU_EXPORT TransferBuffer : public TransferBufferInterface {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT TransferBuffer
+    : public TransferBufferInterface {
  public:
   TransferBuffer(CommandBufferHelper* helper);
   ~TransferBuffer() override;
@@ -179,7 +180,7 @@ class GPU_EXPORT TransferBuffer : public TransferBufferInterface {
 };
 
 // A class that will manage the lifetime of a transferbuffer allocation.
-class GPU_EXPORT ScopedTransferBufferPtr {
+class GPU_COMMAND_BUFFER_CLIENT_EXPORT ScopedTransferBufferPtr {
  public:
   ScopedTransferBufferPtr(unsigned int size,
                           CommandBufferHelper* helper,
@@ -227,7 +228,7 @@ class GPU_EXPORT ScopedTransferBufferPtr {
   }
 
   // Returns true if |memory| lies inside this buffer.
-  bool BelongsToBuffer(char* memory) const;
+  bool BelongsToBuffer(uint8_t* memory) const;
 
   void Release();
 
@@ -241,7 +242,12 @@ class GPU_EXPORT ScopedTransferBufferPtr {
  private:
   raw_ptr<void> buffer_;
   unsigned int size_;
-  raw_ptr<CommandBufferHelper> helper_;
+
+  // Found dangling on `linux-rel` in
+  // `gpu_tests.trace_integration_test.TraceIntegrationTest.
+  // WebGPUCachingTraceTest_ComputePipelineMainThread`.
+  raw_ptr<CommandBufferHelper, DanglingUntriaged> helper_;
+
   raw_ptr<TransferBufferInterface, DanglingUntriaged> transfer_buffer_;
 };
 

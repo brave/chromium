@@ -4,11 +4,10 @@
 
 #import "ios/web/public/web_state.h"
 
-#import "ios/web/public/web_client.h"
+#import <string_view>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/web/public/web_client.h"
+#import "ios/web/public/web_state_observer.h"
 
 namespace web {
 
@@ -59,13 +58,13 @@ WebState::InterfaceBinder::InterfaceBinder(WebState* web_state)
 
 WebState::InterfaceBinder::~InterfaceBinder() = default;
 
-void WebState::InterfaceBinder::AddInterface(base::StringPiece interface_name,
+void WebState::InterfaceBinder::AddInterface(std::string_view interface_name,
                                              Callback callback) {
   callbacks_.emplace(std::string(interface_name), std::move(callback));
 }
 
 void WebState::InterfaceBinder::RemoveInterface(
-    base::StringPiece interface_name) {
+    std::string_view interface_name) {
   callbacks_.erase(std::string(interface_name));
 }
 
@@ -73,8 +72,9 @@ void WebState::InterfaceBinder::BindInterface(
     mojo::GenericPendingReceiver receiver) {
   DCHECK(receiver.is_valid());
   auto it = callbacks_.find(*receiver.interface_name());
-  if (it != callbacks_.end())
+  if (it != callbacks_.end()) {
     it->second.Run(&receiver);
+  }
 
   GetWebClient()->BindInterfaceReceiverFromMainFrame(web_state_,
                                                      std::move(receiver));
@@ -82,6 +82,36 @@ void WebState::InterfaceBinder::BindInterface(
 
 WebState::InterfaceBinder* WebState::GetInterfaceBinderForMainFrame() {
   return nullptr;
+}
+
+WebState* WebState::ForceRealized() {
+  return ForceRealizedWithPolicy(RealizationPolicy::kDefault);
+}
+
+void WebState::NotifyWebStateRealized(WebStateObserverList& observers) {
+  DCHECK(IsRealized());
+
+  // base::ObserverList does not provide an easy way to iterate only on
+  // the currently registered observers on a per-call basis (the policy
+  // is only for the whole list).
+  //
+  // Emulate this by creating an iterator that is considered at the end
+  // of the base::ObserverList by successive increment. This relies on
+  // implementation details of base::ObserverList (the fact that while
+  // there is any living iterator, the list won't be compacted even if
+  // an observer is removed, and that all registered observers will be
+  // added at the end of the list).
+  auto end = observers.begin();
+  while (end != observers.end()) {
+    ++end;
+  }
+
+  // Iterate again, this time calling WebStateRealized(this) on all the
+  // pre-existing iterator. If any new observers are registered they will
+  // be added after `end` and the iteration won't reach them.
+  for (auto iter = observers.begin(); iter != end; ++iter) {
+    iter->WebStateRealized(this);
+  }
 }
 
 }  // namespace web

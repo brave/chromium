@@ -41,7 +41,7 @@ class CSSUnicodeRangeValue : public CSSValue {
   UChar32 From() const { return from_; }
   UChar32 To() const { return to_; }
 
-  String CustomCSSText() const;
+  WTF::String CustomCSSText() const;
 
   bool Equals(const CSSUnicodeRangeValue&) const;
 

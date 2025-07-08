@@ -6,35 +6,32 @@
 
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/task_environment.h"
 #include "chrome/browser/performance_manager/public/user_tuning/user_performance_tuning_manager.h"
 #include "chrome/browser/performance_manager/test_support/fake_frame_throttling_delegate.h"
 #include "chrome/browser/performance_manager/test_support/test_user_performance_tuning_manager_environment.h"
 #include "components/performance_manager/public/features.h"
 #include "components/performance_manager/public/user_tuning/prefs.h"
 #include "components/prefs/testing_pref_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class PerformanceManagerMetricsProviderDesktopTest : public testing::Test {
  protected:
   PrefService* local_state() { return &local_state_; }
 
-  void SetHighEfficiencyEnabled(bool enabled) {
+  void SetMemorySaverEnabled(bool enabled) {
     local_state()->SetInteger(
-        performance_manager::user_tuning::prefs::kHighEfficiencyModeState,
+        performance_manager::user_tuning::prefs::kMemorySaverModeState,
         static_cast<int>(enabled ? performance_manager::user_tuning::prefs::
-                                       HighEfficiencyModeState::kEnabledOnTimer
+                                       MemorySaverModeState::kEnabled
                                  : performance_manager::user_tuning::prefs::
-                                       HighEfficiencyModeState::kDisabled));
+                                       MemorySaverModeState::kDisabled));
   }
 
   void SetBatterySaverEnabled(bool enabled) {
-    local_state()->SetInteger(
-        performance_manager::user_tuning::prefs::kBatterySaverModeState,
-        static_cast<int>(enabled ? performance_manager::user_tuning::prefs::
-                                       BatterySaverModeState::kEnabled
-                                 : performance_manager::user_tuning::prefs::
-                                       BatterySaverModeState::kDisabled));
+    performance_manager::user_tuning::
+        TestUserPerformanceTuningManagerEnvironment::SetBatterySaverMode(
+            &local_state_, enabled);
   }
 
   void ExpectSingleUniqueSample(
@@ -89,7 +86,7 @@ class PerformanceManagerMetricsProviderDesktopTest : public testing::Test {
     }
   }
 
-  base::test::TaskEnvironment task_environment_{
+  content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
 
   TestingPrefServiceSimple local_state_;
@@ -101,7 +98,7 @@ class PerformanceManagerMetricsProviderDesktopTest : public testing::Test {
 };
 
 TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestNormalMode) {
-  SetHighEfficiencyEnabled(false);
+  SetMemorySaverEnabled(false);
 
   InitProvider();
   base::HistogramTester tester;
@@ -116,7 +113,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestNormalMode) {
 
 TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestMixedMode) {
   // Start in normal mode
-  SetHighEfficiencyEnabled(false);
+  SetMemorySaverEnabled(false);
 
   InitProvider();
   {
@@ -136,7 +133,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestMixedMode) {
     // should result in memory saver being reported as enabled for 50% of the
     // interval
     FastForwardBy(base::Minutes(10));
-    SetHighEfficiencyEnabled(true);
+    SetMemorySaverEnabled(true);
     FastForwardBy(base::Minutes(10));
     provider()->ProvideCurrentSessionData(nullptr);
     ExpectSingleUniqueSample(
@@ -153,7 +150,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestMixedMode) {
     provider()->ProvideCurrentSessionData(nullptr);
     ExpectSingleUniqueSample(tester,
                              performance_manager::MetricsProviderDesktop::
-                                 EfficiencyMode::kHighEfficiency,
+                                 EfficiencyMode::kMemorySaver,
                              /*battery_saver_percent=*/0,
                              /*memory_saver_percent=*/100);
   }
@@ -174,7 +171,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestMixedMode) {
 }
 
 TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestBothModes) {
-  SetHighEfficiencyEnabled(true);
+  SetMemorySaverEnabled(true);
   SetBatterySaverEnabled(true);
 
   InitProvider();
@@ -195,7 +192,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestBothModes) {
     // Disabling High-Efficiency Mode will cause the next report to be "mixed".
     // Since the time didn't advance, memory saver was off for the entire
     // interval and battery saver was on for it.
-    SetHighEfficiencyEnabled(false);
+    SetMemorySaverEnabled(false);
     provider()->ProvideCurrentSessionData(nullptr);
     ExpectSingleUniqueSample(
         tester,
@@ -219,7 +216,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestBothModes) {
     // Re-enabling High-Efficiency Mode will cause the next report to indicate
     // "mixed".
     FastForwardBy(base::Minutes(10));
-    SetHighEfficiencyEnabled(true);
+    SetMemorySaverEnabled(true);
     FastForwardBy(base::Minutes(30));
     provider()->ProvideCurrentSessionData(nullptr);
     ExpectSingleUniqueSample(
@@ -241,7 +238,7 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest, TestBothModes) {
 
 TEST_F(PerformanceManagerMetricsProviderDesktopTest,
        TestCorrectlyLoggedDuringShutdown) {
-  SetHighEfficiencyEnabled(false);
+  SetMemorySaverEnabled(false);
   SetBatterySaverEnabled(true);
 
   InitProvider();
@@ -273,4 +270,32 @@ TEST_F(PerformanceManagerMetricsProviderDesktopTest,
                              /*battery_saver_percent=*/100,
                              /*memory_saver_percent=*/0);
   }
+}
+
+TEST_F(PerformanceManagerMetricsProviderDesktopTest,
+       TestCpuThrottlingMetricRecordedWhereAvailable) {
+  InitProvider();
+  base::HistogramTester tester;
+
+  FastForwardBy(base::Minutes(5));
+  tester.ExpectTotalCount(
+      "CPU.Experimental.EstimatedFrequencyAsPercentOfMax.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
+
+  tester.ExpectTotalCount(
+      "CPU.Experimental.EstimatedFrequencyAsPercentOfLimit.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
+
+  tester.ExpectTotalCount(
+      "CPU.Experimental.CpuEstimationTaskQueuedTime.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
+  tester.ExpectTotalCount(
+      "CPU.Experimental.CpuEstimationTaskTotalTime.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
+  tester.ExpectTotalCount(
+      "CPU.Experimental.CpuEstimationTaskThreadTime.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
+  tester.ExpectTotalCount(
+      "CPU.Experimental.CpuEstimationTaskWallTime.Performance",
+      SHOULD_COLLECT_CPU_FREQUENCY_METRICS() ? 1 : 0);
 }

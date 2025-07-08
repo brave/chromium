@@ -12,14 +12,17 @@
 
 import './multidevice_feature_item.js';
 
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {recordSettingChange} from '../metrics_recorder.js';
+import {Setting} from '../mojom-webui/setting.mojom-webui.js';
 
-import {MultiDeviceBrowserProxy, MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
-import {MultiDeviceFeature, MultiDevicePageContentData, MultiDeviceSettingsMode} from './multidevice_constants.js';
-import {SettingsMultideviceFeatureItemElement} from './multidevice_feature_item.js';
+import type {MultiDeviceBrowserProxy} from './multidevice_browser_proxy.js';
+import {MultiDeviceBrowserProxyImpl} from './multidevice_browser_proxy.js';
+import type {MultiDevicePageContentData} from './multidevice_constants.js';
+import {MultiDeviceFeature, MultiDeviceSettingsMode} from './multidevice_constants.js';
+import type {SettingsMultideviceFeatureItemElement} from './multidevice_feature_item.js';
 import {MultiDeviceFeatureMixin} from './multidevice_feature_mixin.js';
 import {getTemplate} from './multidevice_smartlock_item.html.js';
 
@@ -48,12 +51,12 @@ export class SettingsMultideviceSmartlockItemElement extends
        * Authentication token provided by lock-screen-password-prompt-dialog.
        */
       authToken: {
-        type: Object,
+        type: String,
       },
     };
   }
 
-  authToken: chrome.quickUnlockPrivate.TokenInfo|undefined;
+  authToken: string|undefined;
   private browserProxy_: MultiDeviceBrowserProxy;
 
   constructor() {
@@ -106,9 +109,9 @@ export class SettingsMultideviceSmartlockItemElement extends
     const feature = event.detail.feature;
     const enabled = event.detail.enabled;
 
-    this.browserProxy_.setFeatureEnabledState(
-        feature, enabled, this.authToken!.token);
-    recordSettingChange();
+    this.browserProxy_.setFeatureEnabledState(feature, enabled, this.authToken);
+
+    recordSettingChange(Setting.kSmartLockOnOff);
   }
 }
 

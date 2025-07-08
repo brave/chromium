@@ -29,7 +29,7 @@ extern NSString* const kNavigationItemStorageVirtualURLKey;
 // Page referrer URL (std::string).
 extern NSString* const kNavigationItemStorageReferrerURLKey;
 // Page referrer URL (NSURL). Deprecated, used for backward compatibility.
-// TODO(crbug.com/696125): Remove this key.
+// TODO(crbug.com/41304278): Remove this key.
 extern NSString* const kNavigationItemStorageReferrerURLDeprecatedKey;
 // Page referrer policy (int).
 extern NSString* const kNavigationItemStorageReferrerPolicyKey;
@@ -44,14 +44,6 @@ extern NSString* const kNavigationItemStorageHTTPRequestHeadersKey;
 extern NSString* const kNavigationItemStorageSkipRepostFormConfirmationKey;
 // The user agent type (std::string).
 extern NSString* const kNavigationItemStorageUserAgentTypeKey;
-
-// Constants for histogram names.
-extern const char kNavigationItemSerializedSizeHistogram[];
-extern const char kNavigationItemSerializedVirtualURLSizeHistogram[];
-extern const char kNavigationItemSerializedURLSizeHistogram[];
-extern const char kNavigationItemSerializedReferrerURLSizeHistogram[];
-extern const char kNavigationItemSerializedTitleSizeHistogram[];
-extern const char kNavigationItemSerializedRequestHeadersSizeHistogram[];
 
 }  // namespace web
 

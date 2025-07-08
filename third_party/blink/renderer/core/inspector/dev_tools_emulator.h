@@ -5,7 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_DEV_TOOLS_EMULATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_DEV_TOOLS_EMULATOR_H_
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/public/common/widget/device_emulation_params.h"
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -26,6 +27,9 @@ class CORE_EXPORT DevToolsEmulator final
     : public GarbageCollected<DevToolsEmulator> {
  public:
   explicit DevToolsEmulator(WebViewImpl*);
+  ~DevToolsEmulator();
+  void Shutdown();
+
   void Trace(Visitor*) const;
 
   // Settings overrides.
@@ -65,6 +69,10 @@ class CORE_EXPORT DevToolsEmulator final
   void SetAutoDarkModeOverride(bool);
   void ResetAutoDarkModeOverride();
 
+  void SetAccessibilityFontScaleFactor(double scale);
+  void SetEmulatedAccessibilityFontScaleFactor(double scale);
+  void ResetEmulatedAccessibilityFontScaleFactor();
+
   bool HasViewportOverride() const { return !!viewport_override_; }
 
   // Notify the DevToolsEmulator about a scroll or scale change of the
@@ -84,6 +92,8 @@ class CORE_EXPORT DevToolsEmulator final
   gfx::Transform ResetViewportForTesting() { return ResetViewport(); }
 
  private:
+  class ScopedGlobalOverrides;
+
   void EnableMobileEmulation();
   void DisableMobileEmulation();
 
@@ -100,18 +110,23 @@ class CORE_EXPORT DevToolsEmulator final
 
   void ApplyViewportOverride(gfx::Transform*);
   gfx::Transform ComputeRootLayerTransform();
+  bool emulate_mobile_enabled() const {
+    CHECK(!global_overrides_ || device_metrics_enabled_);
+    return !!global_overrides_;
+  }
 
   WebViewImpl* web_view_;
 
+  bool is_shutdown_ = false;
   bool device_metrics_enabled_;
-  bool emulate_mobile_enabled_;
+  scoped_refptr<ScopedGlobalOverrides> global_overrides_;
   DeviceEmulationParams emulation_params_;
 
   struct ViewportOverride {
     gfx::PointF position;
     double scale;
   };
-  absl::optional<ViewportOverride> viewport_override_;
+  std::optional<ViewportOverride> viewport_override_;
 
   bool is_overlay_scrollbars_enabled_;
   bool is_orientation_event_enabled_;
@@ -149,6 +164,9 @@ class CORE_EXPORT DevToolsEmulator final
 
   bool embedder_force_dark_mode_enabled_;
   bool auto_dark_overriden_;
+
+  double embedder_accessibility_font_scale_;
+  bool accessibility_font_scale_emulation_enabled_;
 };
 
 }  // namespace blink

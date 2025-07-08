@@ -24,14 +24,15 @@ WebApkInstallServiceFactory::WebApkInstallServiceFactory()
           "WebApkInstallService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
               .Build()) {}
 
 WebApkInstallServiceFactory::~WebApkInstallServiceFactory() = default;
 
-KeyedService* WebApkInstallServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+WebApkInstallServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return new WebApkInstallService(context);
+  return std::make_unique<WebApkInstallService>(context);
 }

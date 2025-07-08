@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/c++/c++.gni")
+import("//build/config/cast.gni")
 import("//build/config/chrome_build.gni")
-import("//build/config/chromecast_build.gni")
 import("//build/config/dcheck_always_on.gni")
 import("//build/config/features.gni")
 
@@ -19,7 +19,6 @@ import("//build/config/pch.gni")
 import("//build/config/rust.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/ui.gni")
-import("//build/toolchain/goma.gni")
 if (is_android) {
   import("//build/config/android/abi.gni")
 }
@@ -47,8 +46,10 @@ if (is_android) {
 # build flags.
 config("feature_flags") {
   defines = []
+  rustflags = []
   if (dcheck_always_on) {
     defines += [ "DCHECK_ALWAYS_ON=1" ]
+    rustflags += [ "-Cdebug-assertions" ]
   }
   if (use_udev) {
     # TODO(brettw) should probably be "=1".
@@ -68,7 +69,7 @@ config("feature_flags") {
     # but they also build some targets with the Android toolchain. This ensures
     # that Android targets still build with USE_OZONE=0 in such cases.
     #
-    # TODO(crbug.com/837032): Maybe this can be cleaned up if we can avoid
+    # TODO(crbug.com/41385586): Maybe this can be cleaned up if we can avoid
     # setting use_ozone globally.
     defines += [ "USE_OZONE=1" ]
   }
@@ -90,7 +91,7 @@ config("feature_flags") {
   if (is_msan) {
     defines += [ "MEMORY_SANITIZER" ]
   }
-  if (is_ubsan || is_ubsan_vptr || is_ubsan_security) {
+  if (is_ubsan_any) {
     defines += [ "UNDEFINED_SANITIZER" ]
   }
   if (is_official_build) {
@@ -111,10 +112,6 @@ config("debug") {
     "_DEBUG",
     "DYNAMIC_ANNOTATIONS_ENABLED=1",
   ]
-
-  if (is_nacl) {
-    defines += [ "DYNAMIC_ANNOTATIONS_PREFIX=NACL_" ]
-  }
 
   if (is_win) {
     if (!enable_iterator_debugging && !use_custom_libcxx) {
@@ -138,12 +135,10 @@ config("release") {
   if (is_tsan) {
     defines += [ "DYNAMIC_ANNOTATIONS_ENABLED=1" ]
   } else {
-    defines += [ "NVALGRIND" ]
-    if (!is_nacl) {
-      # NaCl always enables dynamic annotations. Currently this value is set to
-      # 1 for all .nexes.
-      defines += [ "DYNAMIC_ANNOTATIONS_ENABLED=0" ]
-    }
+    defines += [
+      "NVALGRIND",
+      "DYNAMIC_ANNOTATIONS_ENABLED=0",
+    ]
   }
 
   if (is_ios) {
@@ -223,23 +218,23 @@ config("default_libs") {
   }
 }
 
-group("common_deps") {
-  visibility = [
-    ":executable_deps",
-    ":loadable_module_deps",
-    ":shared_library_deps",
-  ]
+_toolchain_marker_name =
+    "toolchain_marker_" + get_label_info(current_toolchain, "name")
+group(_toolchain_marker_name) {
+  # Can be used as an assert_no_deps target (assert_no_deps ignores toolchains).
+}
 
+group("common_deps_without_libcxx") {
   # WARNING: This group is a dependency of **every executable and shared
   # library**.  Please be careful adding new dependencies here.
-  public_deps = []
+  public_deps = [ ":$_toolchain_marker_name" ]
 
   if (using_sanitizer) {
     public_deps += [ "//build/config/sanitizers:deps" ]
   }
 
-  if (use_custom_libcxx) {
-    public_deps += [ "//buildtools/third_party/libc++" ]
+  if (use_libfuzzer) {
+    public_deps += [ "//build/config/sanitizers:dlclose_shim" ]
   }
 
   if (use_afl) {
@@ -252,17 +247,56 @@ group("common_deps") {
 
   if (is_fuchsia) {
     public_deps +=
-        [ "//third_party/fuchsia-sdk/sdk/build/config:runtime_library_group" ]
+        [ "//third_party/fuchsia-gn-sdk/src/config:runtime_library_group" ]
     if (is_asan) {
       public_deps += [ "//build/config/fuchsia:asan_runtime_library" ]
     }
   }
 
   if (is_win) {
+    if (build_with_chromium && is_component_build) {
+      # To enable allocator_shim for the windows component built chrome,
+      # need to make all shared libraries and also executable(i.e.chrome.exe)
+      # depend on PartitionAlloc.
+      public_deps += [ "//base/allocator/partition_allocator/src/partition_alloc:win_component_build_adapter" ]
+    }
+
     # The CRT runtime is dynamically linked in component builds and needs to
     # be present on bots that run exes or load DLLs. This also includes
     # debugging DLLs in all builds.
     data_deps = [ "//build/win:runtime_libs" ]
+
+    if (host_os == "win") {
+      # In order to ensure the ACLing is applied to every binary loaded in an
+      # app container sandbox, run the ACL step before any binary is built. We
+      # do this because the tool is subject to race conditions if a binary is
+      # placed in the out folder while it is running.
+      public_deps +=
+          [ "//build/config/win:maybe_set_appcontainer_acls($host_toolchain)" ]
+    }
+  }
+}
+
+group("common_deps") {
+  visibility = [
+    ":executable_deps",
+    ":loadable_module_deps",
+    ":shared_library_deps",
+  ]
+
+  # WARNING: This group is a dependency of **every executable and shared
+  # library**.  Please be careful adding new dependencies here.
+  public_deps = [ ":common_deps_without_libcxx" ]
+
+  if (use_custom_libcxx) {
+    public_deps += [ "//buildtools/third_party/libc++" ]
+  }
+
+  if (use_llvm_libatomic) {
+    # Certain C/C++ atomic operations require the separately built "libatomic"
+    # support library, which is not shipped with compiler-rt by default. See
+    # crbug.com/402171653 for context.
+    public_deps += [ "//third_party/compiler-rt:atomic" ]
   }
 }
 
@@ -273,7 +307,6 @@ group("executable_deps") {
     if (export_libcxxabi_from_executables) {
       public_deps += [ "//buildtools/third_party/libc++abi" ]
     }
-    public_configs = [ "//build/config/sanitizers:link_executable" ]
   }
 }
 
@@ -281,8 +314,6 @@ group("executable_deps") {
 group("loadable_module_deps") {
   if (!toolchain_for_rust_host_build_tools) {
     public_deps = [ ":common_deps" ]
-
-    public_configs = [ "//build/config/sanitizers:link_shared_library" ]
   }
 }
 
@@ -290,8 +321,6 @@ group("loadable_module_deps") {
 group("shared_library_deps") {
   if (!toolchain_for_rust_host_build_tools) {
     public_deps = [ ":common_deps" ]
-
-    public_configs = [ "//build/config/sanitizers:link_shared_library" ]
   }
 }
 
@@ -328,10 +357,10 @@ config("executable_config") {
   # If we're using the prebuilt instrumented libraries with the sanitizers, we
   # need to add ldflags to every binary to make sure they are picked up.
   if (prebuilt_instrumented_libraries_available) {
-    configs += [ "//third_party/instrumented_libraries:prebuilt_ldflags" ]
+    configs += [ "//third_party/instrumented_libs:prebuilt_ldflags" ]
   }
   if (use_locally_built_instrumented_libraries) {
-    configs += [ "//third_party/instrumented_libraries:locally_built_ldflags" ]
+    configs += [ "//third_party/instrumented_libs:locally_built_ldflags" ]
   }
 }
 
@@ -359,10 +388,10 @@ config("shared_library_config") {
   # If we're using the prebuilt instrumented libraries with the sanitizers, we
   # need to add ldflags to every binary to make sure they are picked up.
   if (prebuilt_instrumented_libraries_available) {
-    configs += [ "//third_party/instrumented_libraries:prebuilt_ldflags" ]
+    configs += [ "//third_party/instrumented_libs:prebuilt_ldflags" ]
   }
   if (use_locally_built_instrumented_libraries) {
-    configs += [ "//third_party/instrumented_libraries:locally_built_ldflags" ]
+    configs += [ "//third_party/instrumented_libs:locally_built_ldflags" ]
   }
 }
 

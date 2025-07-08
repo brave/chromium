@@ -8,6 +8,7 @@ import {
   assertExists,
   assertInstanceof,
 } from '../assert.js';
+import {queuedAsyncCallback} from '../async_job_queue.js';
 import * as dom from '../dom.js';
 import {reportError} from '../error.js';
 import * as expert from '../expert.js';
@@ -33,18 +34,31 @@ import {
   MojoEndpoint,
 } from '../mojo/util.js';
 import * as nav from '../nav.js';
+import {
+  createInstance as createPhotoModeAutoScanner,
+  PhotoModeAutoScanner,
+} from '../photo_mode_auto_scanner.js';
 import * as state from '../state.js';
 import {
   ErrorLevel,
   ErrorType,
   Facing,
   getVideoTrackSettings,
+  Mode,
   PreviewVideo,
   Resolution,
+  ViewName,
 } from '../type.js';
 import * as util from '../util.js';
 import {WaitableEvent} from '../waitable_event.js';
 
+import {
+  assertStrictPtzSettings,
+  DigitalZoomPtzController,
+  MediaStreamPtzController,
+  PtzController,
+  StrictPtzSettings,
+} from './ptz_controller.js';
 import {
   StreamConstraints,
   toMediaStreamConstraints,
@@ -58,6 +72,11 @@ export class Preview {
    * Video element to capture the stream.
    */
   private video = dom.get('#preview-video', HTMLVideoElement);
+
+  /**
+   * The scanner that scan preview for various functionalities in Photo mode.
+   */
+  private photoModeAutoScanner: PhotoModeAutoScanner|null = null;
 
   /**
    * The observer endpoint for preview metadata.
@@ -100,7 +119,7 @@ export class Preview {
   /**
    * Map from device id to constraints to reset default PTZ setting.
    */
-  private readonly deviceDefaultPTZ =
+  private readonly deviceDefaultPtz =
       new Map<string, MediaTrackConstraintSet>();
 
   private constraints: StreamConstraints|null = null;
@@ -109,12 +128,42 @@ export class Preview {
 
   private enableFaceOverlay = false;
 
+  private static ptzControllerForTest: PtzController|null = null;
+
+  /**
+   * Triggered when the screen orientation is updated.
+   */
+  private readonly orientationListener =
+      queuedAsyncCallback('keepLatest', async () => {
+        if (this.ptzController !== null) {
+          await this.ptzController.handleScreenRotationUpdated();
+          nav.close(ViewName.PTZ_PANEL);
+        }
+      });
+
+  /**
+   * PTZController for the current stream constraint. Null if PTZ is not
+   * supported.
+   */
+  private ptzController: PtzController|null = null;
+
   /**
    * @param onNewStreamNeeded Callback to request new stream.
    */
-  constructor(private readonly onNewStreamNeeded: () => Promise<void>) {
+  constructor(
+      private readonly onNewStreamNeeded: () => Promise<void>,
+      private readonly isSquareResolution: () => boolean) {
     expert.addObserver(
-        expert.ExpertOption.SHOW_METADATA, () => this.updateShowMetadata());
+        expert.ExpertOption.SHOW_METADATA,
+        queuedAsyncCallback('keepLatest', () => this.updateShowMetadata()));
+
+    // Reset the scanner timer after taking a photo.
+    state.addObserver(state.State.TAKING, (taking) => {
+      if (state.get(Mode.PHOTO) && !taking) {
+        const scanner = assertExists(this.photoModeAutoScanner);
+        scanner.restart();
+      }
+    });
   }
 
   getVideo(): PreviewVideo {
@@ -158,7 +207,7 @@ export class Preview {
     return this.constraints;
   }
 
-  private async updateFacing() {
+  private updateFacing() {
     const {facingMode} = this.getVideoTrack().getSettings();
     switch (facingMode) {
       case 'user':
@@ -173,11 +222,25 @@ export class Preview {
     }
   }
 
-  private async updatePTZ() {
+  private async updatePtz() {
     const deviceOperator = DeviceOperator.getInstance();
     const {pan, tilt, zoom} = this.getVideoTrack().getCapabilities();
+    const {deviceId} = getVideoTrackSettings(this.getVideoTrack());
+    // TODO(b/336480993): Enable digital zoom in portrait mode.
+    const isDigitalZoomSupported =
+        (await deviceOperator?.isDigitalZoomSupported(deviceId) ?? false) &&
+        !state.get(Mode.PORTRAIT);
 
-    this.isSupportPTZInternal = await (async () => {
+    if (isDigitalZoomSupported) {
+      this.isSupportPTZInternal = true;
+      const isSquare = this.isSquareResolution();
+      const aspectRatio = isSquare ? 1 : this.getResolution().aspectRatio;
+      this.ptzController =
+          await DigitalZoomPtzController.create(deviceId, aspectRatio);
+      return;
+    }
+
+    this.isSupportPTZInternal = (() => {
       if (pan === undefined && tilt === undefined && zoom === undefined) {
         return false;
       }
@@ -188,6 +251,8 @@ export class Preview {
       if (this.facing === Facing.EXTERNAL) {
         return true;
       } else if (expert.isEnabled(expert.ExpertOption.ENABLE_PTZ_FOR_BUILTIN)) {
+        // TODO(b/225112054): Remove the expert option once digital zoom is
+        // enabled by default.
         return true;
       }
 
@@ -195,13 +260,23 @@ export class Preview {
     })();
 
     if (!this.isSupportPTZInternal) {
+      this.ptzController = null;
       return;
     }
 
-    const {deviceId} = getVideoTrackSettings(this.getVideoTrack());
-    if (this.deviceDefaultPTZ.has(deviceId)) {
-      return;
+    const deviceDefaultPtz = await this.getDeviceDefaultPtz(deviceId);
+    this.ptzController = new MediaStreamPtzController(
+        this.getVideoTrack(), deviceDefaultPtz, this.vidPid);
+  }
+
+  private async getDeviceDefaultPtz(deviceId: string):
+      Promise<MediaTrackConstraintSet> {
+    if (this.deviceDefaultPtz.has(deviceId)) {
+      return assertExists(this.deviceDefaultPtz.get(deviceId));
     }
+
+    const deviceOperator = DeviceOperator.getInstance();
+    const {pan, tilt, zoom} = this.getVideoTrack().getCapabilities();
 
     const defaultConstraints: MediaTrackConstraintSet = {};
     if (deviceOperator === null) {
@@ -227,24 +302,34 @@ export class Preview {
         defaultConstraints.zoom = await deviceOperator.getZoomDefault(deviceId);
       }
     }
-    this.deviceDefaultPTZ.set(deviceId, defaultConstraints);
+    this.deviceDefaultPtz.set(deviceId, defaultConstraints);
+    return defaultConstraints;
   }
 
   /**
    * If the preview camera support PTZ controls.
    */
-  isSupportPTZ(): boolean {
+  isSupportPtz(): boolean {
     return this.isSupportPTZInternal;
   }
 
-  async resetPTZ(): Promise<void> {
+  getPtzController(): PtzController {
+    return assertExists(this.ptzController);
+  }
+
+  async resetPtz(): Promise<void> {
     if (this.streamInternal === null || !this.isSupportPTZInternal) {
       return;
     }
-    const {deviceId} = getVideoTrackSettings(this.getVideoTrack());
-    const defaultPTZ = this.deviceDefaultPTZ.get(deviceId);
-    assert(defaultPTZ !== undefined);
-    await this.getVideoTrack().applyConstraints({advanced: [defaultPTZ]});
+    assert(this.ptzController !== null);
+    await this.ptzController.resetPtz();
+  }
+
+  getZoomRatio(): number {
+    if (this.ptzController instanceof DigitalZoomPtzController) {
+      return assertExists(this.ptzController.getSettings().zoom);
+    }
+    return 1;
   }
 
   /**
@@ -282,12 +367,10 @@ export class Preview {
     this.video.srcObject = null;
     this.video = video;
     video.addEventListener('resize', () => this.onIntrinsicSizeChanged());
-    video.addEventListener(
-        'click',
-        (event) => this.onFocusClicked(assertInstanceof(event, MouseEvent)));
+    video.addEventListener('click', (event) => this.onFocusClicked(event));
     // Disable right click on video which let user show video control.
     video.addEventListener('contextmenu', (event) => event.preventDefault());
-    return this.onIntrinsicSizeChanged();
+    this.onIntrinsicSizeChanged();
   }
 
   private isStreamAlive(): boolean {
@@ -317,19 +400,25 @@ export class Preview {
       await this.setSource(this.streamInternal);
       // Use a watchdog since the stream.onended event is unreliable in the
       // recent version of Chrome. As of 55, the event is still broken.
-      this.watchdog = setInterval(() => {
+      // TODO(pihsun): Check if the comment above is still true.
+      // Using async function in setInterval here should be fine, since only
+      // the last callback will contain asynchronous code.
+      this.watchdog = setInterval(async () => {
         if (!this.isStreamAlive()) {
           this.clearWatchdog();
           const deviceOperator = DeviceOperator.getInstance();
           if (deviceOperator !== null && this.deviceId !== null) {
-            deviceOperator.dropConnection(this.deviceId);
+            await deviceOperator.dropConnection(this.deviceId);
           }
-          this.onNewStreamNeeded();
+          await this.onNewStreamNeeded();
         }
       }, 100);
-      await this.updateFacing();
+      this.updateFacing();
       this.deviceId = getVideoTrackSettings(this.getVideoTrack()).deviceId;
-      await this.updatePTZ();
+      await this.updatePtz();
+      Preview.ptzControllerForTest = this.ptzController;
+      window.screen.orientation.addEventListener(
+          'change', this.orientationListener);
 
       this.enableFaceOverlay = false;
       const deviceOperator = DeviceOperator.getInstance();
@@ -346,15 +435,25 @@ export class Preview {
                   'The camera is probably being used by another app.'));
         } else {
           this.enableFaceOverlay = true;
+          // Camera frame rotation value is updated once
+          // |setCameraFrameRotationEnabledAtSource| is called.
+          if (this.ptzController !== null) {
+            await this.ptzController.handleScreenRotationUpdated();
+          }
         }
         this.vidPid = await deviceOperator.getVidPid(deviceId);
       }
-      this.updateShowMetadata();
+      await this.updateShowMetadata();
 
       assert(
           this.onPreviewExpired === null || this.onPreviewExpired.isSignaled());
       this.onPreviewExpired = new WaitableEvent();
       state.set(state.State.STREAMING, true);
+
+      if (state.get(Mode.PHOTO)) {
+        this.photoModeAutoScanner = createPhotoModeAutoScanner(this.video);
+        this.photoModeAutoScanner.start();
+      }
     } catch (e) {
       await this.close();
       throw e;
@@ -366,19 +465,22 @@ export class Preview {
    * Closes the preview.
    */
   async close(): Promise<void> {
+    this.photoModeAutoScanner?.stop();
+    this.photoModeAutoScanner = null;
     this.clearWatchdog();
     // Pause video element to avoid black frames during transition.
     this.video.pause();
+    window.screen.orientation.removeEventListener(
+        'change', this.orientationListener);
     this.disableShowMetadata();
     this.enableFaceOverlay = false;
     if (this.streamInternal !== null && this.isStreamAlive()) {
       const track = this.getVideoTrack();
       const {deviceId} = getVideoTrackSettings(track);
       track.stop();
+      this.streamInternal.getAudioTracks()[0]?.stop();
       const deviceOperator = DeviceOperator.getInstance();
-      if (deviceOperator !== null) {
-        deviceOperator.dropConnection(deviceId);
-      }
+      await deviceOperator?.dropConnection(deviceId);
       assert(this.onPreviewExpired !== null);
     }
     this.streamInternal = null;
@@ -392,9 +494,9 @@ export class Preview {
   /**
    * Updates preview whether to show preview metadata or not.
    */
-  private updateShowMetadata() {
+  private async updateShowMetadata() {
     if (expert.isEnabled(expert.ExpertOption.SHOW_METADATA)) {
-      this.enableShowMetadata();
+      await this.enableShowMetadata();
     } else {
       this.disableShowMetadata();
     }
@@ -577,6 +679,16 @@ export class Preview {
           this.faceOverlay?.show(rects);
         };
 
+    const updatePtz = () => {
+      const ptz = this.ptzController?.getSettings();
+      showValue('#preview-ptz-pan', `Pan ${ptz?.pan?.toFixed(1) ?? '-'}`);
+      showValue('#preview-ptz-tilt', `Tilt ${ptz?.tilt?.toFixed(1) ?? '-'}`);
+      const zoomValue =
+          ptz?.zoom !== undefined ? `${ptz.zoom.toFixed(1)}x` : '-';
+      showValue('#preview-ptz-zoom', `Zoom ${zoomValue}`);
+    };
+    displayCategory('#preview-ptz', this.ptzController !== null);
+
     const callback = (metadata: CameraMetadata) => {
       showValue('#preview-resolution', resolution);
       showValue('#preview-device-name', deviceName);
@@ -609,7 +721,14 @@ export class Preview {
       }
 
       assert(metadata.entries !== undefined);
-      for (const entry of metadata.entries) {
+      // Disabling check because this code assumes that metadata.entries is
+      // either undefined or defined, but at runtime Mojo will always set this
+      // to null or defined.
+      // TODO(crbug.com/40267104): If this function only handles data
+      // from Mojo, the assertion above should be changed to null and the
+      // null error suppression can be removed.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      for (const entry of metadata.entries!) {
         if (entry.count === 0) {
           continue;
         }
@@ -626,16 +745,18 @@ export class Preview {
       // We always need to run updateFace() even if face rectangles are obsent
       // in the metadata, which may happen if there is no face detected.
       updateFace(faceMode, faceRects);
+
+      updatePtz();
     };
 
     this.metadataObserver = await deviceOperator.addMetadataObserver(
-        deviceId, callback, StreamType.PREVIEW_OUTPUT);
+        deviceId, callback, StreamType.kPreviewOutput);
   }
 
   /**
    * Hides display preview metadata on preview screen.
    */
-  private async disableShowMetadata(): Promise<void> {
+  private disableShowMetadata(): void {
     if (this.streamInternal === null || this.metadataObserver === null) {
       return;
     }
@@ -657,7 +778,7 @@ export class Preview {
   /**
    * Handles changed intrinsic size (first loaded or orientation changes).
    */
-  private async onIntrinsicSizeChanged(): Promise<void> {
+  private onIntrinsicSizeChanged(): void {
     if (this.video.videoWidth !== 0 && this.video.videoHeight !== 0) {
       nav.layoutShownViews();
     }
@@ -671,6 +792,9 @@ export class Preview {
    *     |x| and |y| are in range [0, 1).
    */
   setPointOfInterest(point: Point): Promise<void> {
+    if (this.ptzController instanceof DigitalZoomPtzController) {
+      point = this.ptzController.calculatePointOnCameraFrame(point);
+    }
     const constraints = {
       advanced: [{pointsOfInterest: [{x: point.x, y: point.y}]}],
     };
@@ -687,7 +811,17 @@ export class Preview {
     this.cancelFocus();
     const marker = Symbol();
     this.focusMarker = marker;
-    (async () => {
+    // We don't use AsyncJobQueue here since we want to call setPointOfInterest
+    // (applyConstraints) as soon as possible when user click a new focus, and
+    // applyConstraints handles multiple calls internally.
+    // From testing, all parallel applyConstraints calls resolve together when
+    // the last constraint is applied, but it's still faster than calling
+    // multiple applyConstraints sequentially.
+    //
+    // TODO(pihsun): add utility for this kind of "cooperated cancellation" (to
+    // AsyncJobQueue or as separate utility function) if there's some other
+    // place that has similar requirement.
+    void (async () => {
       try {
         // Normalize to square space coordinates by W3C spec.
         const x = event.offsetX / this.video.offsetWidth;
@@ -718,5 +852,14 @@ export class Preview {
     this.focusMarker = null;
     const aim = dom.get('#preview-focus-aim', HTMLElement);
     aim.hidden = true;
+  }
+
+  /**
+   * Returns current PTZ settings for testing.
+   */
+  static getPtzSettingsForTest(): StrictPtzSettings {
+    assert(Preview.ptzControllerForTest !== null, 'PTZ is not enabled');
+    const settings = Preview.ptzControllerForTest.getSettings();
+    return assertStrictPtzSettings(settings);
   }
 }

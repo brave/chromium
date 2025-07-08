@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -17,22 +19,24 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "chrome/browser/ash/crosapi/test_local_printer_ash.h"
+#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/printing/cups_printers_manager_factory.h"
 #include "chrome/browser/ash/printing/fake_cups_printers_manager.h"
 #include "chrome/browser/ash/printing/ipp_client_info_calculator.h"
 #include "chrome/browser/ash/printing/oauth2/authorization_zones_manager_factory.h"
 #include "chrome/browser/ash/printing/oauth2/mock_authorization_zones_manager.h"
 #include "chrome/browser/ash/printing/oauth2/status_code.h"
-#include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chrome/browser/printing/local_printer_utils_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/printing/printer_capabilities.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/crosapi/mojom/local_printer.mojom-forward.h"
 #include "chromeos/crosapi/mojom/local_printer.mojom.h"
 #include "chromeos/printing/cups_printer_status.h"
 #include "chromeos/printing/ppd_provider.h"
@@ -41,7 +45,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
 #include "content/public/browser/browser_context.h"
@@ -55,7 +58,6 @@
 #include "printing/printing_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
@@ -76,6 +78,11 @@ using testing::Return;
 namespace printing {
 
 namespace {
+
+using LocalPrintersCallback = base::OnceCallback<void(
+    std::vector<crosapi::mojom::LocalDestinationInfoPtr>)>;
+using crosapi::mojom::GetOAuthAccessTokenResultPtr;
+using printing::mojom::IppClientInfoPtr;
 
 constexpr char kPrinterUri[] = "http://localhost:80";
 const AccountId kAffiliatedUserAccountId =
@@ -99,21 +106,6 @@ void RecordGetCapability(
 
 void RecordGetEulaUrl(GURL& fetched_eula_url, const GURL& eula_url) {
   fetched_eula_url = eula_url;
-}
-
-void RecordOAuthAccessToken(
-    crosapi::mojom::GetOAuthAccessTokenResultPtr& out,
-    base::OnceClosure closure,
-    crosapi::mojom::GetOAuthAccessTokenResultPtr param) {
-  out = std::move(param);
-  std::move(closure).Run();
-}
-
-void RecordIppClientInfo(std::vector<printing::mojom::IppClientInfoPtr>& out,
-                         base::OnceClosure closure,
-                         std::vector<printing::mojom::IppClientInfoPtr> param) {
-  out = std::move(param);
-  std::move(closure).Run();
 }
 
 Printer CreateTestPrinter(const std::string& id,
@@ -156,7 +148,7 @@ class FakePpdProvider : public chromeos::PpdProvider {
  public:
   FakePpdProvider() = default;
 
-  void ResolvePpdLicense(base::StringPiece effective_make_and_model,
+  void ResolvePpdLicense(std::string_view effective_make_and_model,
                          ResolvePpdLicenseCallback cb) override {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
@@ -181,22 +173,40 @@ class FakePpdProvider : public chromeos::PpdProvider {
   ~FakePpdProvider() override = default;
 };
 
-class FakeUser : public user_manager::User {
+class FakeLocalPrintersObserver : public crosapi::mojom::LocalPrintersObserver {
  public:
-  FakeUser()
-      : user_manager::User(
-            AccountId::FromUserEmail(TestingProfile::kDefaultProfileUserName)) {
-  }
-  FakeUser(const FakeUser&) = delete;
-  FakeUser& operator=(const FakeUser&) = delete;
-  ~FakeUser() override = default;
+  FakeLocalPrintersObserver() = default;
+  ~FakeLocalPrintersObserver() override = default;
 
-  using user_manager::User::set_display_email;
-
-  // User:
-  user_manager::UserType GetType() const override {
-    return user_manager::USER_TYPE_REGULAR;
+  mojo::PendingRemote<crosapi::mojom::LocalPrintersObserver> GenerateRemote() {
+    mojo::PendingRemote<crosapi::mojom::LocalPrintersObserver> remote;
+    receiver_.Bind(remote.InitWithNewPipeAndPassReceiver());
+    return remote;
   }
+
+  // crosapi::mojom::LocalPrintersObserver:
+  void OnLocalPrintersUpdated(
+      std::vector<crosapi::mojom::LocalDestinationInfoPtr> printers) override {
+    for (const auto& printer : printers) {
+      crosapi::mojom::LocalDestinationInfoPtr local_printer =
+          crosapi::mojom::LocalDestinationInfo::New();
+      local_printer->id = printer->id;
+      local_printers_.push_back(std::move(local_printer));
+    }
+
+    if (local_printers_callback_) {
+      std::move(local_printers_callback_).Run(mojo::Clone(local_printers_));
+    }
+  }
+
+  void GetLocalPrinters(LocalPrintersCallback callback) {
+    local_printers_callback_ = std::move(callback);
+  }
+
+ private:
+  LocalPrintersCallback local_printers_callback_;
+  std::vector<crosapi::mojom::LocalDestinationInfoPtr> local_printers_;
+  mojo::Receiver<crosapi::mojom::LocalPrintersObserver> receiver_{this};
 };
 
 class TestLocalPrinterAshWithPrinterConfigurer : public TestLocalPrinterAsh {
@@ -213,7 +223,7 @@ class TestLocalPrinterAshWithPrinterConfigurer : public TestLocalPrinterAsh {
   ~TestLocalPrinterAshWithPrinterConfigurer() override = default;
 
  private:
-  const raw_ptr<ash::FakeCupsPrintersManager, ExperimentalAsh> manager_;
+  const raw_ptr<ash::FakeCupsPrintersManager> manager_;
 };
 
 // Base testing class for `LocalPrinterAsh`.  Contains the base
@@ -239,7 +249,9 @@ class LocalPrinterAshTestBase : public testing::Test {
   }
 
   void SetUsername(const std::string& username) {
-    user_.set_display_email(username);
+    fake_user_manager_->SaveUserDisplayEmail(
+        AccountId::FromUserEmail(TestingProfile::kDefaultProfileUserName),
+        username);
   }
 
   // Indicate if calls to print backend should be made using a service instead
@@ -250,25 +262,34 @@ class LocalPrinterAshTestBase : public testing::Test {
   // when using a service for print backend calls.
   virtual bool SupportFallback() = 0;
 
+  virtual std::vector<base::test::FeatureRefAndParams> FeaturesToEnable() {
+    return {};
+  }
+
   sync_preferences::TestingPrefServiceSyncable* GetPrefs() {
     return profile_.GetTestingPrefService();
   }
 
   void SetUp() override {
-    ash::ProfileHelper::Get()->SetProfileToUserMappingForTesting(&user_);
+    fake_user_manager_->AddUser(
+        AccountId::FromUserEmail(TestingProfile::kDefaultProfileUserName));
 
+    std::vector<base::test::FeatureRefAndParams> features_to_enable =
+        FeaturesToEnable();
+    std::vector<base::test::FeatureRef> features_to_disable;
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
     // Choose between running with local test runner or via a service.
     if (UseService()) {
-      feature_list_.InitAndEnableFeatureWithParameters(
+      features_to_enable.emplace_back(base::test::FeatureRefAndParams(
           features::kEnableOopPrintDrivers,
           {{ features::kEnableOopPrintDriversSandbox.name,
-             "true" }});
+             "true" }}));
     } else {
-      feature_list_.InitWithFeatureState(features::kEnableOopPrintDrivers,
-                                         false);
+      features_to_disable.push_back(features::kEnableOopPrintDrivers);
     }
 #endif
+    feature_list_.InitWithFeaturesAndParameters(features_to_enable,
+                                                features_to_disable);
 
     sandboxed_test_backend_ = base::MakeRefCounted<TestPrintBackend>();
     ppd_provider_ = base::MakeRefCounted<FakePpdProvider>();
@@ -300,6 +321,11 @@ class LocalPrinterAshTestBase : public testing::Test {
                 unsandboxed_test_remote_, unsandboxed_test_backend_,
                 /*sandboxed=*/false);
       }
+
+      // Client registration is normally covered by `PrintPreviewUI`, so mimic
+      // that here.
+      service_manager_client_id_ =
+          PrintBackendServiceManager::GetInstance().RegisterQueryClient();
 #else
       NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_OOP_PRINTING)
@@ -312,23 +338,24 @@ class LocalPrinterAshTestBase : public testing::Test {
 
   void TearDown() override {
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
+    if (UseService()) {
+      PrintBackendServiceManager::GetInstance().UnregisterClient(
+          service_manager_client_id_);
+    }
+
     PrintBackendServiceManager::ResetForTesting();
 #endif
-    ash::ProfileHelper::Get()->RemoveUserFromListForTesting(
-        user_.GetAccountId());
   }
 
  protected:
   void AddPrinter(const std::string& id,
                   const std::string& display_name,
                   const std::string& description,
-                  bool is_default,
                   bool requires_elevated_permissions) {
     auto caps = std::make_unique<PrinterSemanticCapsAndDefaults>();
     caps->papers = kPapers;
     auto basic_info = std::make_unique<PrinterBasicInfo>(
-        id, display_name, description, /*printer_status=*/0, is_default,
-        PrinterBasicInfoOptions{});
+        id, display_name, description, PrinterBasicInfoOptions{});
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
     if (SupportFallback()) {
@@ -349,6 +376,7 @@ class LocalPrinterAshTestBase : public testing::Test {
       sandboxed_print_backend()->AddValidPrinter(id, std::move(caps),
                                                  std::move(basic_info));
     }
+    sandboxed_print_backend()->SetDefaultPrinterName(id);
   }
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
@@ -375,7 +403,17 @@ class LocalPrinterAshTestBase : public testing::Test {
 
   base::test::ScopedFeatureList& feature_list() { return feature_list_; }
 
+  ash::FakeChromeUserManager* fake_user_manager() {
+    return fake_user_manager_.Get();
+  }
+
+ protected:
+  FakeLocalPrintersObserver fake_local_printers_observer_;
+
  private:
+  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
+      fake_user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
+
   // Must outlive `profile_`.
   content::BrowserTaskEnvironment task_environment_;
 
@@ -383,8 +421,7 @@ class LocalPrinterAshTestBase : public testing::Test {
   TestingProfile profile_;
   scoped_refptr<TestPrintBackend> sandboxed_test_backend_;
   scoped_refptr<TestPrintBackend> unsandboxed_test_backend_;
-  raw_ptr<ash::FakeCupsPrintersManager, ExperimentalAsh> printers_manager_ =
-      nullptr;
+  raw_ptr<ash::FakeCupsPrintersManager> printers_manager_ = nullptr;
   scoped_refptr<FakePpdProvider> ppd_provider_;
   std::unique_ptr<crosapi::LocalPrinterAsh> local_printer_ash_;
   base::test::ScopedFeatureList feature_list_;
@@ -396,9 +433,8 @@ class LocalPrinterAshTestBase : public testing::Test {
   std::unique_ptr<PrintBackendServiceTestImpl> sandboxed_print_backend_service_;
   std::unique_ptr<PrintBackendServiceTestImpl>
       unsandboxed_print_backend_service_;
+  PrintBackendServiceManager::ClientId service_manager_client_id_;
 #endif  // BUILDFLAG(ENABLE_OOP_PRINTING)
-
-  FakeUser user_;
 };
 
 // Testing class to cover `LocalPrinterAsh` handling using a local
@@ -525,8 +561,6 @@ TEST_F(LocalPrinterAshTest, GetPrinters) {
 // depending on its autoconf compatibility.
 TEST_F(LocalPrinterAshTest, GetCapabilityForNonInstalledPrinters) {
   feature_list().Reset();
-  feature_list().InitAndEnableFeature(
-      ash::features::kPrintPreviewDiscoveredPrinters);
 
   const std::string autoconf_printer_id = "printer1";
   Printer autoconf_printer =
@@ -538,14 +572,12 @@ TEST_F(LocalPrinterAshTest, GetCapabilityForNonInstalledPrinters) {
   printers_manager().AddPrinter(autoconf_printer, PrinterClass::kDiscovered);
   printers_manager().AddPrinter(non_autoconf_printer,
                                 PrinterClass::kDiscovered);
-  printers_manager().PrinterIsNotAutoconfigurable(non_autoconf_printer);
+  printers_manager().MarkPrinterAsNotAutoconfigurable(non_autoconf_printer_id);
 
   // Add printer capabilities to `test_backend_`.
   AddPrinter(autoconf_printer_id, "discovered", "description1",
-             /*is_default=*/true,
              /*requires_elevated_permissions=*/false);
   AddPrinter(non_autoconf_printer_id, "discovered", "description2",
-             /*is_default=*/true,
              /*requires_elevated_permissions=*/false);
 
   // Try to fetch capabilities for both printers but only the autoconf printer
@@ -571,10 +603,10 @@ TEST_P(LocalPrinterAshProcessScopeTest, GetCapabilityValidPrinter) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   // Add printer capabilities to `test_backend_`.
-  AddPrinter("printer1", "saved", "description1", /*is_default=*/true,
+  AddPrinter("printer1", "saved", "description1",
              /*requires_elevated_permissions=*/false);
 
   crosapi::mojom::CapabilitiesResponsePtr fetched_caps;
@@ -606,7 +638,7 @@ TEST_P(LocalPrinterAshProcessScopeTest, GetCapabilityPrinterNotInstalled) {
   printers_manager().AddPrinter(discovered_printer, PrinterClass::kDiscovered);
 
   // Add printer capabilities to `test_backend_`.
-  AddPrinter("printer1", "discovered", "description1", /*is_default=*/true,
+  AddPrinter("printer1", "discovered", "description1",
              /*requires_elevated_permissions=*/false);
 
   crosapi::mojom::CapabilitiesResponsePtr fetched_caps;
@@ -647,7 +679,7 @@ TEST_P(LocalPrinterAshProcessScopeTest, GetCapabilityUnreachablePrinter) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   crosapi::mojom::CapabilitiesResponsePtr fetched_caps;
   local_printer_ash()->GetCapability(
@@ -670,10 +702,10 @@ TEST_F(LocalPrinterAshServiceTest, GetCapabilityTerminatedService) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   // Add printer capabilities to `test_backend_`.
-  AddPrinter("printer1", "saved", "description1", /*is_default=*/true,
+  AddPrinter("printer1", "saved", "description1",
              /*requires_elevated_permissions=*/false);
 
   // Set up for service to terminate on next use.
@@ -701,10 +733,10 @@ TEST_P(LocalPrinterAshProcessScopeTest, GetCapabilityAccessDenied) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   // Add printer capabilities to `test_backend_`.
-  AddPrinter("printer1", "saved", "description1", /*is_default=*/true,
+  AddPrinter("printer1", "saved", "description1",
              /*requires_elevated_permissions=*/true);
 
   crosapi::mojom::CapabilitiesResponsePtr fetched_caps;
@@ -725,10 +757,10 @@ TEST_F(LocalPrinterAshServiceTest, GetCapabilityElevatedPermissionsSucceeds) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   // Add printer capabilities to `test_backend_`.
-  AddPrinter("printer1", "saved", "description1", /*is_default=*/true,
+  AddPrinter("printer1", "saved", "description1",
              /*requires_elevated_permissions=*/true);
 
   // Note that printer does not initially show as requiring elevated privileges.
@@ -765,7 +797,7 @@ TEST_F(LocalPrinterAshTest, FetchValidEulaUrl) {
   Printer saved_printer = CreateTestPrinterWithPpdReference(
       "printer1", "saved", "description1", ref);
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   GURL fetched_eula_url;
   local_printer_ash()->GetEulaUrl(
@@ -783,7 +815,7 @@ TEST_F(LocalPrinterAshTest, FetchNotFoundEulaUrl) {
   Printer saved_printer =
       CreateTestPrinter("printer1", "saved", "description1");
   printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
-  printers_manager().PrinterInstalled(saved_printer, /*is_automatic=*/true);
+  printers_manager().MarkInstalled(saved_printer.id());
 
   GURL fetched_eula_url;
   local_printer_ash()->GetEulaUrl(
@@ -997,11 +1029,10 @@ TEST_F(LocalPrinterAshTest, GetPolicies_Pin) {
 TEST_F(LocalPrinterAshTest, GetUsernamePerPolicy_Allowed) {
   SetUsername("user@email.com");
   GetPrefs()->SetBoolean(prefs::kPrintingSendUsernameAndFilenameEnabled, true);
-  absl::optional<std::string> username;
-  local_printer_ash()->GetUsernamePerPolicy(base::BindOnce(
-      base::BindLambdaForTesting([&](const absl::optional<std::string>& uname) {
-        username = uname;
-      })));
+  std::optional<std::string> username;
+  local_printer_ash()->GetUsernamePerPolicy(
+      base::BindOnce(base::BindLambdaForTesting(
+          [&](const std::optional<std::string>& uname) { username = uname; })));
   ASSERT_TRUE(username);
   EXPECT_EQ("user@email.com", *username);
 }
@@ -1009,12 +1040,41 @@ TEST_F(LocalPrinterAshTest, GetUsernamePerPolicy_Allowed) {
 TEST_F(LocalPrinterAshTest, GetUsernamePerPolicy_Denied) {
   SetUsername("user@email.com");
   GetPrefs()->SetBoolean(prefs::kPrintingSendUsernameAndFilenameEnabled, false);
-  absl::optional<std::string> username;
-  local_printer_ash()->GetUsernamePerPolicy(base::BindOnce(
-      base::BindLambdaForTesting([&](const absl::optional<std::string>& uname) {
-        username = uname;
-      })));
-  EXPECT_EQ(absl::nullopt, username);
+  std::optional<std::string> username;
+  local_printer_ash()->GetUsernamePerPolicy(
+      base::BindOnce(base::BindLambdaForTesting(
+          [&](const std::optional<std::string>& uname) { username = uname; })));
+  EXPECT_EQ(std::nullopt, username);
+}
+
+// Verify the LocalPrintersObserver receives the full set of local printers
+// when added or triggered.
+TEST_F(LocalPrinterAshTest, LocalPrintersObserver) {
+  Printer saved_printer =
+      CreateTestPrinter("printer1", "saved", "description1");
+  Printer enterprise_printer =
+      CreateEnterprisePrinter("printer2", "enterprise", "description2");
+  Printer automatic_printer =
+      CreateTestPrinter("printer3", "automatic", "description3");
+
+  printers_manager().AddPrinter(saved_printer, PrinterClass::kSaved);
+  printers_manager().AddPrinter(enterprise_printer, PrinterClass::kEnterprise);
+  printers_manager().AddPrinter(automatic_printer, PrinterClass::kAutomatic);
+
+  // Starting observation should return the 3 added printers.
+  local_printer_ash()->AddLocalPrintersObserver(
+      fake_local_printers_observer_.GenerateRemote(),
+      base::BindLambdaForTesting(
+          [&](std::vector<crosapi::mojom::LocalDestinationInfoPtr> printers) {
+            EXPECT_EQ(3u, printers.size());
+          }));
+
+  base::test::TestFuture<std::vector<crosapi::mojom::LocalDestinationInfoPtr>>
+      printers_future;
+  fake_local_printers_observer_.GetLocalPrinters(printers_future.GetCallback());
+
+  local_printer_ash()->OnLocalPrintersUpdated();
+  EXPECT_EQ(3u, printers_future.Get().size());
 }
 
 TEST(LocalPrinterAsh, ConfigToMojom) {
@@ -1035,23 +1095,38 @@ TEST(LocalPrinterAsh, ConfigToMojom) {
 }
 
 TEST(LocalPrinterAsh, PrinterToMojom) {
+  // Status
+  chromeos::CupsPrinterStatus status("id");
+  status.AddStatusReason(crosapi::mojom::StatusReason::Reason::kOutOfInk,
+                         crosapi::mojom::StatusReason::Severity::kWarning);
+  // Managed print options
+  chromeos::Printer::ManagedPrintOptions print_options;
+  chromeos::Printer::PrintOption<bool> color_option;
+  color_option.default_value = true;
+  color_option.allowed_values = std::vector<bool>{false, true};
+
   Printer printer("id");
   printer.set_display_name("name");
   printer.set_description("description");
+  printer.set_printer_status(status);
+  printer.set_print_job_options(print_options);
   crosapi::mojom::LocalDestinationInfoPtr mojom =
-      crosapi::LocalPrinterAsh::PrinterToMojom(printer);
+      printing::PrinterToMojom(printer);
   ASSERT_TRUE(mojom);
   EXPECT_EQ("id", mojom->id);
   EXPECT_EQ("name", mojom->name);
   EXPECT_EQ("description", mojom->description);
   EXPECT_FALSE(mojom->configured_via_policy);
+  EXPECT_EQ(printing::StatusToMojom(status), mojom->printer_status);
+  EXPECT_EQ(printing::ManagedPrintOptionsToMojom(print_options),
+            mojom->managed_print_options);
 }
 
 TEST(LocalPrinterAsh, PrinterToMojom_ConfiguredViaPolicy) {
   Printer printer("id");
   printer.set_source(Printer::SRC_POLICY);
   crosapi::mojom::LocalDestinationInfoPtr mojom =
-      crosapi::LocalPrinterAsh::PrinterToMojom(printer);
+      printing::PrinterToMojom(printer);
   ASSERT_TRUE(mojom);
   EXPECT_EQ("id", mojom->id);
   EXPECT_TRUE(mojom->configured_via_policy);
@@ -1061,8 +1136,7 @@ TEST(LocalPrinterAsh, StatusToMojom) {
   chromeos::CupsPrinterStatus status("id");
   status.AddStatusReason(crosapi::mojom::StatusReason::Reason::kOutOfInk,
                          crosapi::mojom::StatusReason::Severity::kWarning);
-  crosapi::mojom::PrinterStatusPtr mojom =
-      crosapi::LocalPrinterAsh::StatusToMojom(status);
+  crosapi::mojom::PrinterStatusPtr mojom = printing::StatusToMojom(status);
   ASSERT_TRUE(mojom);
   EXPECT_EQ("id", mojom->printer_id);
   EXPECT_EQ(status.GetTimestamp(), mojom->timestamp);
@@ -1114,6 +1188,14 @@ class LocalPrinterAshWithOAuth2Test : public testing::Test {
         std::make_unique<TestLocalPrinterAsh>(&profile_, ppd_provider_);
   }
 
+  GetOAuthAccessTokenResultPtr GetOAuthAccessToken(
+      const std::string& printer_id) {
+    base::test::TestFuture<GetOAuthAccessTokenResultPtr> future;
+    local_printer_ash()->GetOAuthAccessToken("printer_id",
+                                             future.GetCallback());
+    return future.Take();
+  }
+
  protected:
   ash::FakeCupsPrintersManager& printers_manager() {
     DCHECK(printers_manager_);
@@ -1138,23 +1220,16 @@ class LocalPrinterAshWithOAuth2Test : public testing::Test {
 
   // Must outlive `printers_manager_`.
   TestingProfile profile_;
-  raw_ptr<ash::FakeCupsPrintersManager, ExperimentalAsh> printers_manager_ =
-      nullptr;
+  raw_ptr<ash::FakeCupsPrintersManager> printers_manager_ = nullptr;
   raw_ptr<
-      testing::StrictMock<ash::printing::oauth2::MockAuthorizationZoneManager>,
-      ExperimentalAsh>
+      testing::StrictMock<ash::printing::oauth2::MockAuthorizationZoneManager>>
       auth_manager_ = nullptr;
   scoped_refptr<FakePpdProvider> ppd_provider_;
   std::unique_ptr<crosapi::LocalPrinterAsh> local_printer_ash_;
 };
 
 TEST_F(LocalPrinterAshWithOAuth2Test, GetOAuthAccessTokenUnknownPrinter) {
-  crosapi::mojom::GetOAuthAccessTokenResultPtr result;
-  base::RunLoop loop;
-  local_printer_ash()->GetOAuthAccessToken(
-      "printer_id", base::BindOnce(&RecordOAuthAccessToken, std::ref(result),
-                                   loop.QuitClosure()));
-  loop.Run();
+  const GetOAuthAccessTokenResultPtr result = GetOAuthAccessToken("printer_id");
 
   ASSERT_TRUE(result);
   EXPECT_TRUE(result->is_error());
@@ -1168,12 +1243,7 @@ TEST_F(LocalPrinterAshWithOAuth2Test, GetOAuthAccessTokenNonOAuthPrinter) {
   chromeos::CupsPrinterStatus printer_status("printer_id");
   printers_manager().SetPrinterStatus(printer_status);
 
-  crosapi::mojom::GetOAuthAccessTokenResultPtr result;
-  base::RunLoop loop;
-  local_printer_ash()->GetOAuthAccessToken(
-      "printer_id", base::BindOnce(&RecordOAuthAccessToken, std::ref(result),
-                                   loop.QuitClosure()));
-  loop.Run();
+  const GetOAuthAccessTokenResultPtr result = GetOAuthAccessToken("printer_id");
 
   ASSERT_TRUE(result);
   EXPECT_TRUE(result->is_none());
@@ -1199,12 +1269,7 @@ TEST_F(LocalPrinterAshWithOAuth2Test, GetOAuthAccessTokenOAuthConnectionError) {
             "error_message");
       });
 
-  crosapi::mojom::GetOAuthAccessTokenResultPtr result;
-  base::RunLoop loop;
-  local_printer_ash()->GetOAuthAccessToken(
-      "printer_id", base::BindOnce(&RecordOAuthAccessToken, std::ref(result),
-                                   loop.QuitClosure()));
-  loop.Run();
+  const GetOAuthAccessTokenResultPtr result = GetOAuthAccessToken("printer_id");
 
   ASSERT_TRUE(result);
   EXPECT_TRUE(result->is_error());
@@ -1229,12 +1294,7 @@ TEST_F(LocalPrinterAshWithOAuth2Test, GetOAuthAccessTokenSuccess) {
                                 "access_token");
       });
 
-  crosapi::mojom::GetOAuthAccessTokenResultPtr result;
-  base::RunLoop loop;
-  local_printer_ash()->GetOAuthAccessToken(
-      "printer_id", base::BindOnce(&RecordOAuthAccessToken, std::ref(result),
-                                   loop.QuitClosure()));
-  loop.Run();
+  const GetOAuthAccessTokenResultPtr result = GetOAuthAccessToken("printer_id");
 
   ASSERT_TRUE(result);
   ASSERT_TRUE(result->is_token());
@@ -1263,8 +1323,7 @@ class TestLocalPrinterAshWithClientInfoCalculator : public TestLocalPrinterAsh {
   }
 
  private:
-  raw_ptr<ash::printing::IppClientInfoCalculator, ExperimentalAsh>
-      client_info_calculator_;
+  raw_ptr<ash::printing::IppClientInfoCalculator> client_info_calculator_;
 };
 
 struct MockIppClientInfoCalculator : ash::printing::IppClientInfoCalculator {
@@ -1283,16 +1342,11 @@ class LocalPrinterAshWithIppClientInfoTest : public LocalPrinterAshTest {
   ~LocalPrinterAshWithIppClientInfoTest() override = default;
 
   void SetUp() override {
-    user_manager_ = new user_manager::FakeUserManager();
-    scoped_user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
-        base::WrapUnique(user_manager_.get()));
-    user_manager_->AddUserWithAffiliation(kAffiliatedUserAccountId,
-                                          /*is_affiliated*/ true);
-    user_manager_->AddUserWithAffiliation(kUnaffiliatedUserAccountId,
-                                          /*is_affiliated*/ false);
+    fake_user_manager()->AddUserWithAffiliation(kAffiliatedUserAccountId,
+                                                /*is_affiliated=*/true);
+    fake_user_manager()->AddUserWithAffiliation(kUnaffiliatedUserAccountId,
+                                                /*is_affiliated=*/false);
     SetActiveUser(kUnaffiliatedUserAccountId);
-    ash::ProfileHelper::Get()->SetProfileToUserMappingForTesting(
-        &primary_user_);
     auto ppd_provider = base::MakeRefCounted<FakePpdProvider>();
     ash::CupsPrintersManagerFactory::GetInstance()->SetTestingFactoryAndUse(
         &profile_,
@@ -1309,7 +1363,14 @@ class LocalPrinterAshWithIppClientInfoTest : public LocalPrinterAshTest {
   }
 
   void SetActiveUser(AccountId account_id) {
-    user_manager_->SwitchActiveUser(account_id);
+    fake_user_manager()->SwitchActiveUser(account_id);
+  }
+
+  std::vector<IppClientInfoPtr> GetIppClientInfo(
+      const std::string& printer_id) {
+    base::test::TestFuture<std::vector<IppClientInfoPtr>> future;
+    local_printer_ash()->GetIppClientInfo(printer_id, future.GetCallback());
+    return future.Take();
   }
 
  protected:
@@ -1327,13 +1388,9 @@ class LocalPrinterAshWithIppClientInfoTest : public LocalPrinterAshTest {
   }
 
  private:
-  raw_ptr<user_manager::FakeUserManager, ExperimentalAsh> user_manager_;
-  std::unique_ptr<user_manager::ScopedUserManager> scoped_user_manager_;
   // Must outlive `printers_manager_`.
   TestingProfile profile_;
-  FakeUser primary_user_;
-  raw_ptr<ash::FakeCupsPrintersManager, ExperimentalAsh> printers_manager_ =
-      nullptr;
+  raw_ptr<ash::FakeCupsPrintersManager> printers_manager_ = nullptr;
   NiceMock<MockIppClientInfoCalculator> client_info_calculator_;
   std::unique_ptr<crosapi::LocalPrinterAsh> local_printer_ash_;
 };
@@ -1341,12 +1398,7 @@ class LocalPrinterAshWithIppClientInfoTest : public LocalPrinterAshTest {
 // Checks that `GetIppClientInfo()` returns an empty result if called with a
 // `printer_id` that has no associated printer.
 TEST_F(LocalPrinterAshWithIppClientInfoTest, GetIppClientInfoMissingPrinter) {
-  std::vector<printing::mojom::IppClientInfoPtr> result;
-  base::RunLoop loop;
-  local_printer_ash()->GetIppClientInfo(
-      "id", base::BindOnce(&RecordIppClientInfo, std::ref(result),
-                           loop.QuitClosure()));
-  loop.Run();
+  const std::vector<IppClientInfoPtr> result = GetIppClientInfo("id");
 
   ASSERT_TRUE(result.empty());
 }
@@ -1360,17 +1412,12 @@ TEST_F(LocalPrinterAshWithIppClientInfoTest, GetIppClientInfoInsecurePrinter) {
   printer.set_source(Printer::Source::SRC_POLICY);
   printers_manager().AddPrinter(printer, PrinterClass::kSaved);
 
-  std::vector<printing::mojom::IppClientInfoPtr> result;
-  base::RunLoop loop;
   const mojom::IppClientInfoPtr expected = mojom::IppClientInfo::New(
       mojom::IppClientInfo::ClientType::kOperatingSystem, "ChromeOS",
-      absl::nullopt, "1.2.3", absl::nullopt);
+      std::nullopt, "1.2.3", std::nullopt);
   EXPECT_CALL(client_info_calculator(), GetOsInfo)
       .WillOnce(Return(ByMove(expected.Clone())));
-  local_printer_ash()->GetIppClientInfo(
-      "id", base::BindOnce(&RecordIppClientInfo, std::ref(result),
-                           loop.QuitClosure()));
-  loop.Run();
+  const std::vector<IppClientInfoPtr> result = GetIppClientInfo("id");
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0], expected);
@@ -1385,17 +1432,12 @@ TEST_F(LocalPrinterAshWithIppClientInfoTest, GetIppClientInfoUnaffiliatedUser) {
   printer.set_source(Printer::Source::SRC_POLICY);
   printers_manager().AddPrinter(printer, PrinterClass::kSaved);
 
-  std::vector<printing::mojom::IppClientInfoPtr> result;
-  base::RunLoop loop;
   const mojom::IppClientInfoPtr expected = mojom::IppClientInfo::New(
       mojom::IppClientInfo::ClientType::kOperatingSystem, "ChromeOS",
-      absl::nullopt, "1.2.3", absl::nullopt);
+      std::nullopt, "1.2.3", std::nullopt);
   EXPECT_CALL(client_info_calculator(), GetOsInfo)
       .WillOnce(Return(ByMove(expected.Clone())));
-  local_printer_ash()->GetIppClientInfo(
-      "id", base::BindOnce(&RecordIppClientInfo, std::ref(result),
-                           loop.QuitClosure()));
-  loop.Run();
+  const std::vector<IppClientInfoPtr> result = GetIppClientInfo("id");
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0], expected);
@@ -1410,17 +1452,12 @@ TEST_F(LocalPrinterAshWithIppClientInfoTest, GetIppClientInfoUnmanagedPrinter) {
   printer.set_source(Printer::Source::SRC_USER_PREFS);
   printers_manager().AddPrinter(printer, PrinterClass::kSaved);
 
-  std::vector<printing::mojom::IppClientInfoPtr> result;
-  base::RunLoop loop;
   const mojom::IppClientInfoPtr expected = mojom::IppClientInfo::New(
       mojom::IppClientInfo::ClientType::kOperatingSystem, "ChromeOS",
-      absl::nullopt, "1.2.3", absl::nullopt);
+      std::nullopt, "1.2.3", std::nullopt);
   EXPECT_CALL(client_info_calculator(), GetOsInfo)
       .WillOnce(Return(ByMove(expected.Clone())));
-  local_printer_ash()->GetIppClientInfo(
-      "id", base::BindOnce(&RecordIppClientInfo, std::ref(result),
-                           loop.QuitClosure()));
-  loop.Run();
+  const std::vector<IppClientInfoPtr> result = GetIppClientInfo("id");
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result[0], expected);
@@ -1437,22 +1474,17 @@ TEST_F(LocalPrinterAshWithIppClientInfoTest,
   printer.set_source(Printer::Source::SRC_POLICY);
   printers_manager().AddPrinter(printer, PrinterClass::kSaved);
 
-  std::vector<printing::mojom::IppClientInfoPtr> result;
-  base::RunLoop loop;
   const mojom::IppClientInfo expected_os_info =
       mojom::IppClientInfo(mojom::IppClientInfo::ClientType::kOperatingSystem,
-                           "ChromeOS", absl::nullopt, "1.2.3", absl::nullopt);
+                           "ChromeOS", std::nullopt, "1.2.3", std::nullopt);
   const mojom::IppClientInfo expected_device_info =
       mojom::IppClientInfo(mojom::IppClientInfo::ClientType::kOther, "abc",
-                           absl::nullopt, "", absl::nullopt);
+                           std::nullopt, "", std::nullopt);
   EXPECT_CALL(client_info_calculator(), GetOsInfo)
       .WillOnce(Return(ByMove(expected_os_info.Clone())));
   EXPECT_CALL(client_info_calculator(), GetDeviceInfo)
       .WillOnce(Return(ByMove(expected_device_info.Clone())));
-  local_printer_ash()->GetIppClientInfo(
-      "id", base::BindOnce(&RecordIppClientInfo, std::ref(result),
-                           loop.QuitClosure()));
-  loop.Run();
+  const std::vector<IppClientInfoPtr> result = GetIppClientInfo("id");
 
   EXPECT_THAT(result, testing::UnorderedElementsAre(
                           testing::Pointee(expected_os_info),

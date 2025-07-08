@@ -55,7 +55,7 @@ export class Camera3DeviceInfo {
    * @param videoResolutionFpses Supported available video
    *     resolutions and maximal capture fps of the video device.
    * @param fpsRanges Supported fps ranges of the video device.
-   * @param supportPTZ Is supported PTZ controls.
+   * @param builtinPtzSupport Is PTZ controls supported by the camera.
    */
   constructor(
       deviceInfo: MediaDeviceInfo,
@@ -63,7 +63,7 @@ export class Camera3DeviceInfo {
       readonly photoResolutions: ResolutionList,
       videoResolutionFpses: VideoConfig[],
       readonly fpsRanges: FpsRangeList,
-      readonly supportPTZ: boolean,
+      readonly builtinPtzSupport: boolean,
   ) {
     this.deviceId = deviceInfo.deviceId;
     // If all fps supported by the camera is lower than 24, use the maximum
@@ -97,12 +97,20 @@ export class Camera3DeviceInfo {
 
   private pairedPreviewCaptureResolutions(captureRs: Resolution[]):
       CapturePreviewPairs {
+    const previewRatios = groupResolutionRatio(this.videoResolutions);
+    const captureRatios = groupResolutionRatio(captureRs);
+
     // Filters out preview resolution greater than 1920x1080 and 1600x1200 for
     // preventing performance issue.
-    const previewRs = this.videoResolutions.filter(
-        ({width, height}) => width <= 1920 && height <= 1200);
-    const previewRatios = groupResolutionRatio(previewRs);
-    const captureRatios = groupResolutionRatio(captureRs);
+    for (const [ratio, previewResolutions] of previewRatios) {
+      const filteredResolutions = previewResolutions.filter(
+          ({width, height}) => width <= 1920 && height <= 1200);
+      // If there are no smaller resolutions for this aspect ratio, keep the
+      // original list of resolutions. See b/398045792.
+      if (filteredResolutions.length > 0) {
+        previewRatios.set(ratio, filteredResolutions);
+      }
+    }
     // Pairing preview and capture resolution with same aspect ratio.
     const pairedResolutions: CapturePreviewPairs = [];
     for (const [ratio, captureResolutions] of captureRatios) {
@@ -135,10 +143,13 @@ export class Camera3DeviceInfo {
       throw new Error('Device operation is not supported');
     }
     const facing = await deviceOperator.getCameraFacing(deviceId);
-    const supportPTZ =
-        (await deviceOperator.getPanDefault(deviceId)) !== undefined ||
-        (await deviceOperator.getTiltDefault(deviceId)) !== undefined ||
-        (await deviceOperator.getZoomDefault(deviceId)) !== undefined;
+    // Check if the camera has PTZ support, not the PTZ support through stream
+    // manipulators, by checking with USB HAL vendor tags.
+    const builtinPtzSupport =
+        !(await deviceOperator.isDigitalZoomSupported(deviceId)) &&
+        ((await deviceOperator.getPanDefault(deviceId)) !== undefined ||
+         (await deviceOperator.getTiltDefault(deviceId)) !== undefined ||
+         (await deviceOperator.getZoomDefault(deviceId)) !== undefined);
     const photoResolution = await deviceOperator.getPhotoResolutions(deviceId);
     const videoConfigs = await deviceOperator.getVideoConfigs(deviceId);
     const filteredVideoConfigs = videoConfigs.filter(videoConfigFilter);
@@ -147,6 +158,6 @@ export class Camera3DeviceInfo {
 
     return new Camera3DeviceInfo(
         deviceInfo, facing, photoResolution, filteredVideoConfigs,
-        supportedFpsRanges, supportPTZ);
+        supportedFpsRanges, builtinPtzSupport);
   }
 }

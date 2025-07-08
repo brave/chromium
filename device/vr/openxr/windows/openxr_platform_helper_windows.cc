@@ -66,19 +66,17 @@ OpenXrPlatformHelperWindows::OpenXrPlatformHelperWindows() = default;
 OpenXrPlatformHelperWindows::~OpenXrPlatformHelperWindows() = default;
 
 std::unique_ptr<OpenXrGraphicsBinding>
-OpenXrPlatformHelperWindows::GetGraphicsBinding(
-    D3D11TextureHelper* texture_helper) {
-  CHECK(texture_helper);
-
+OpenXrPlatformHelperWindows::GetGraphicsBinding() {
   return std::make_unique<OpenXrGraphicsBindingD3D11>(
-      texture_helper, weak_ptr_factory_.GetWeakPtr());
+      weak_ptr_factory_.GetWeakPtr());
 }
 
 void OpenXrPlatformHelperWindows::GetPlatformCreateInfo(
     const device::OpenXrCreateInfo& create_info,
-    PlatformCreateInfoReadyCallback callback) {
+    PlatformCreateInfoReadyCallback result_callback,
+    PlatormInitiatedShutdownCallback shutdown_callback) {
   // We have nothing we need to add to the "next" chain.
-  std::move(callback).Run(nullptr);
+  std::move(result_callback).Run(nullptr);
 }
 
 device::mojom::XRDeviceData OpenXrPlatformHelperWindows::GetXRDeviceData() {
@@ -143,8 +141,14 @@ bool OpenXrPlatformHelperWindows::IsApiAvailable() {
 }
 
 bool OpenXrPlatformHelperWindows::Initialize() {
-  // Nothing to do;
+  // Nothing to do.
   return true;
+}
+
+void OpenXrPlatformHelperWindows::PrepareForSessionShutdown(
+    base::OnceClosure shutdown_ready_callback) {
+  // Nothing to do.
+  std::move(shutdown_ready_callback).Run();
 }
 
 XrResult OpenXrPlatformHelperWindows::CreateInstance(XrInstance* instance,

@@ -21,10 +21,6 @@
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 // Mocks CRWSSLStatusUpdaterTestDataSource.
 @interface CRWSSLStatusUpdaterTestDataSource
     : NSObject <CRWSSLStatusUpdaterDataSource> {
@@ -56,7 +52,7 @@
 #pragma mark CRWSSLStatusUpdaterDataSource
 
 - (void)SSLStatusUpdater:(CRWSSLStatusUpdater*)SSLStatusUpdater
-    querySSLStatusForTrust:(base::ScopedCFTypeRef<SecTrustRef>)trust
+    querySSLStatusForTrust:(base::apple::ScopedCFTypeRef<SecTrustRef>)trust
                       host:(NSString*)host
          completionHandler:(StatusQueryHandler)completionHandler {
   _verificationCompletionHandler = [completionHandler copy];
@@ -104,7 +100,7 @@ class CRWSSLStatusUpdaterTest : public web::WebTest {
     scoped_refptr<net::X509Certificate> cert =
         net::ImportCertFromFile(net::GetTestCertsDirectory(), kCertFileName);
     ASSERT_TRUE(cert);
-    base::ScopedCFTypeRef<CFMutableArrayRef> chain(
+    base::apple::ScopedCFTypeRef<CFMutableArrayRef> chain(
         net::x509_util::CreateSecCertificateArrayForX509Certificate(
             cert.get()));
     ASSERT_TRUE(chain);
@@ -123,7 +119,8 @@ class CRWSSLStatusUpdaterTest : public web::WebTest {
     nav_manager_->AddPendingItem(
         GURL(item_url_spec), Referrer(), ui::PAGE_TRANSITION_LINK,
         web::NavigationInitiationType::BROWSER_INITIATED,
-        /*is_post_navigation=*/false, web::HttpsUpgradeType::kNone);
+        /*is_post_navigation=*/false, /*is_error_navigation=*/false,
+        web::HttpsUpgradeType::kNone);
     nav_manager_->CommitPendingItem();
   }
 
@@ -134,7 +131,7 @@ class CRWSSLStatusUpdaterTest : public web::WebTest {
   std::unique_ptr<NavigationManagerImpl> nav_manager_;
   FakeNavigationManagerDelegate fake_nav_delegate_;
   CRWSSLStatusUpdater* ssl_status_updater_;
-  base::ScopedCFTypeRef<SecTrustRef> trust_;
+  base::apple::ScopedCFTypeRef<SecTrustRef> trust_;
 };
 
 // Tests that CRWSSLStatusUpdater init returns non nil object.
@@ -196,7 +193,8 @@ TEST_F(CRWSSLStatusUpdaterTest, HttpsItemNoCert) {
   [ssl_status_updater_
       updateSSLStatusForNavigationItem:item
                           withCertHost:kHostName
-                                 trust:base::ScopedCFTypeRef<SecTrustRef>()
+                                 trust:base::apple::ScopedCFTypeRef<
+                                           SecTrustRef>()
                   hasOnlySecureContent:YES];
   // No certificate.
   EXPECT_FALSE(!!item->GetSSL().certificate);
@@ -212,7 +210,7 @@ TEST_F(CRWSSLStatusUpdaterTest, HttpsItemNoCertReverification) {
   web::NavigationItem* item = nav_manager_->GetLastCommittedItem();
   // Set SSL status manually in the way so cert re-verification is not run.
   item->GetSSL().cert_status_host = base::SysNSStringToUTF8(kHostName);
-  item->GetSSL().certificate = web::CreateCertFromTrust(trust_);
+  item->GetSSL().certificate = web::CreateCertFromTrust(trust_.get());
 
   // Make sure that item change callback was called.
   [[delegate_ expect] SSLStatusUpdater:ssl_status_updater_

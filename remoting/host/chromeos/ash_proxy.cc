@@ -4,18 +4,19 @@
 
 #include "remoting/host/chromeos/ash_proxy.h"
 
+#include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
+#include "components/prefs/pref_service.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "remoting/base/constants.h"
 #include "remoting/host/chromeos/features.h"
 #include "ui/aura/env.h"
 #include "ui/aura/scoped_window_capture_request.h"
 #include "ui/compositor/compositor.h"
-#include "ui/compositor/layer.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
 #include "ui/display/types/display_constants.h"
@@ -98,6 +99,11 @@ class DefaultAshProxy : public AshProxy {
     shell().session_controller()->RequestSignOut();
   }
 
+  bool IsScreenReaderEnabled() const override {
+    return shell().session_controller()->GetActivePrefService()->GetBoolean(
+        ash::prefs::kAccessibilitySpokenFeedbackEnabled);
+  }
+
  private:
   const display::Screen* screen() const { return display::Screen::GetScreen(); }
   // We can not return a const reference, as the ash shell has no const getter
@@ -117,15 +123,9 @@ class DefaultAshProxy : public AshProxy {
   }
 
   aura::Window* GetWindowToCaptureForId(DisplayId id) {
-    aura::Window* root_window = GetRootWindowForId(id);
-    if (base::FeatureList::IsEnabled(
-            remoting::features::kEnableCrdAdminRemoteAccess)) {
-      // Capture the uncurtained window.
-      return ash::Shell::GetContainer(
-          root_window, ash::kShellWindowId_ScreenAnimationContainer);
-    }
-
-    return root_window;
+    // Capture the uncurtained window.
+    return ash::Shell::GetContainer(
+        GetRootWindowForId(id), ash::kShellWindowId_ScreenAnimationContainer);
   }
 };
 

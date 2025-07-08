@@ -9,20 +9,15 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
-#include "build/chromeos_buildflags.h"
 #include "components/app_constants/constants.h"
 #include "components/desks_storage/core/desk_model_observer.h"
 #include "components/desks_storage/core/desk_template_util.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/ui_base_types.h"
-
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/cpp/lacros_startup_state.h"  // nogncheck
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace desks_storage {
 
@@ -32,11 +27,12 @@ FakeDeskSyncBridge::~FakeDeskSyncBridge() = default;
 
 DeskModel::GetAllEntriesResult FakeDeskSyncBridge::GetAllEntries() {
   if (!IsReady()) {
-    return GetAllEntriesResult(GetAllEntriesStatus::kFailure,
-                               std::vector<const ash::DeskTemplate*>());
+    return GetAllEntriesResult(
+        GetAllEntriesStatus::kFailure,
+        std::vector<raw_ptr<const ash::DeskTemplate, VectorExperimental>>());
   }
 
-  std::vector<const ash::DeskTemplate*> entries;
+  std::vector<raw_ptr<const ash::DeskTemplate, VectorExperimental>> entries;
 
   for (const auto& it : policy_entries_) {
     entries.push_back(it.get());
@@ -100,7 +96,8 @@ void FakeDeskSyncBridge::AddOrUpdateEntry(
                             std::move(new_entry));
     return;
   }
-  std::vector<const ash::DeskTemplate*> added_or_updated;
+  std::vector<raw_ptr<const ash::DeskTemplate, VectorExperimental>>
+      added_or_updated;
   // When a user creates a desk template locally, the desk template has `kUser`
   // as its source. Only user desk templates should be saved to Sync.
   DCHECK_EQ(ash::DeskTemplateSource::kUser, new_entry->source());
@@ -158,6 +155,10 @@ size_t FakeDeskSyncBridge::GetDeskTemplateEntryCount() const {
   return template_count + policy_entries_.size();
 }
 
+size_t FakeDeskSyncBridge::GetCoralEntryCount() const {
+  return 0u;
+}
+
 // Chrome sync does not support save and recall desks yet. Return 0 for max
 // count.
 size_t FakeDeskSyncBridge::GetMaxSaveAndRecallDeskEntryCount() const {
@@ -166,6 +167,10 @@ size_t FakeDeskSyncBridge::GetMaxSaveAndRecallDeskEntryCount() const {
 
 size_t FakeDeskSyncBridge::GetMaxDeskTemplateEntryCount() const {
   return 6u + policy_entries_.size();
+}
+
+size_t FakeDeskSyncBridge::GetMaxCoralEntryCount() const {
+  return 0u;
 }
 
 std::set<base::Uuid> FakeDeskSyncBridge::GetAllEntryUuids() const {
@@ -187,7 +192,7 @@ bool FakeDeskSyncBridge::IsReady() const {
 }
 
 bool FakeDeskSyncBridge::IsSyncing() const {
-  return false;
+  return true;
 }
 
 ash::DeskTemplate* FakeDeskSyncBridge::FindOtherEntryWithName(
@@ -208,7 +213,8 @@ const ash::DeskTemplate* FakeDeskSyncBridge::GetUserEntryByUUID(
 }
 
 void FakeDeskSyncBridge::NotifyRemoteDeskTemplateAddedOrUpdated(
-    const std::vector<const ash::DeskTemplate*>& new_entries) {
+    const std::vector<raw_ptr<const ash::DeskTemplate, VectorExperimental>>&
+        new_entries) {
   if (new_entries.empty()) {
     return;
   }

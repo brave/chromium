@@ -7,10 +7,12 @@ package org.chromium.chrome.browser.toolbar.top;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ButtonData;
-import org.chromium.chrome.browser.toolbar.ButtonDataProvider;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataProvider;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 
 import java.util.HashMap;
@@ -22,23 +24,44 @@ import java.util.Map;
  * mode toolbar.
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+@NullMarked
 public class OptionalBrowsingModeButtonController {
+
+    /** Delegate for handling the optional button on the toolbar. */
+    public interface Delegate {
+        /**
+         * Sets the optional button data.
+         *
+         * @param buttonData {@link ButtonData} needed to show the optional button. The button will
+         *     be hidden if {@code buttonData} is {@code null} or if there isn't enough space within
+         *     the toolbar.
+         */
+        void setOptionalButtonData(@Nullable ButtonData buttonData);
+
+        /** Whether the optional button is visible. */
+        boolean isOptionalButtonVisible();
+    }
+
     private final UserEducationHelper mUserEducationHelper;
     private final Map<ButtonDataProvider, ButtonDataProvider.ButtonDataObserver> mObserverMap;
-    private ButtonDataProvider mCurrentProvider;
-    private List<ButtonDataProvider> mButtonDataProviders;
+    private @Nullable ButtonDataProvider mCurrentProvider;
+    private final List<ButtonDataProvider> mButtonDataProviders;
     private final ToolbarLayout mToolbarLayout;
-    private final Supplier<Tab> mTabSupplier;
+    private final Supplier<@Nullable Tab> mTabSupplier;
+    private OptionalBrowsingModeButtonController.@Nullable Delegate mDelegate;
 
     /**
      * Creates a new OptionalBrowsingModeButtonController.
+     *
      * @param buttonDataProviders List of button data providers in precedence order.
      * @param userEducationHelper Helper for displaying in-product help on a button.
      * @param toolbarLayout Toolbar layout where buttons will be displayed.
      */
-    OptionalBrowsingModeButtonController(List<ButtonDataProvider> buttonDataProviders,
-            UserEducationHelper userEducationHelper, ToolbarLayout toolbarLayout,
-            Supplier<Tab> tabSupplier) {
+    OptionalBrowsingModeButtonController(
+            List<ButtonDataProvider> buttonDataProviders,
+            UserEducationHelper userEducationHelper,
+            ToolbarLayout toolbarLayout,
+            Supplier<@Nullable Tab> tabSupplier) {
         mButtonDataProviders = buttonDataProviders;
         mUserEducationHelper = userEducationHelper;
         mToolbarLayout = toolbarLayout;
@@ -78,6 +101,16 @@ public class OptionalBrowsingModeButtonController {
         }
 
         return currentButton.getButtonSpec().getButtonVariant();
+    }
+
+    /**
+     * Sets the delegate for the optional button. Once set, the delegate will be used to show or
+     * hide the optional button on the toolbar based on the button data.
+     *
+     * @param delegate The {@link Delegate}.
+     */
+    void setDelegate(Delegate delegate) {
+        mDelegate = delegate;
     }
 
     void updateButtonVisibility() {
@@ -128,17 +161,24 @@ public class OptionalBrowsingModeButtonController {
      */
     private void setCurrentOptionalButton(ButtonDataProvider provider, ButtonData buttonData) {
         mCurrentProvider = provider;
-        mToolbarLayout.updateOptionalButton(buttonData);
+        if (mDelegate != null) {
+            mDelegate.setOptionalButtonData(buttonData);
+        } else {
+            mToolbarLayout.updateOptionalButton(buttonData);
+        }
         // ToolbarPhone's optional button has animated transitions and it takes care of showing IPH
         // on its own.
-        if (buttonData.getButtonSpec().getIPHCommandBuilder() != null
+        if (buttonData.getButtonSpec().getIphCommandBuilder() != null
                 && !(mToolbarLayout instanceof ToolbarPhone)) {
-            mUserEducationHelper.requestShowIPH(
-                    buttonData.getButtonSpec().getIPHCommandBuilder().build());
+            mUserEducationHelper.requestShowIph(
+                    buttonData.getButtonSpec().getIphCommandBuilder().build());
         }
     }
 
     private void hideCurrentOptionalButton() {
+        if (mDelegate != null) {
+            mDelegate.setOptionalButtonData(null);
+        }
         mToolbarLayout.hideOptionalButton();
         mCurrentProvider = null;
     }

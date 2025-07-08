@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/strings/strcat.h"
 #include "base/values.h"
 #include "content/common/android/gin_java_bridge_errors.h"
 #include "content/common/android/gin_java_bridge_value.h"
@@ -32,8 +33,7 @@ GinJavaFunctionInvocationHelper::GinJavaFunctionInvocationHelper(
     const base::WeakPtr<GinJavaBridgeDispatcher>& dispatcher)
     : method_name_(method_name),
       dispatcher_(dispatcher),
-      converter_(new GinJavaBridgeValueConverter()) {
-}
+      converter_(new GinJavaBridgeValueConverter()) {}
 
 GinJavaFunctionInvocationHelper::~GinJavaFunctionInvocationHelper() {
 }
@@ -42,20 +42,25 @@ v8::Local<v8::Value> GinJavaFunctionInvocationHelper::Invoke(
     gin::Arguments* args) {
   if (!dispatcher_) {
     args->isolate()->ThrowException(v8::Exception::Error(gin::StringToV8(
-        args->isolate(), kMethodInvocationErrorMessage)));
+        args->isolate(), base::StrCat({"Error invoking ", method_name_, ": ",
+                                       kMethodInvocationErrorMessage}))));
     return v8::Undefined(args->isolate());
   }
 
   if (args->IsConstructCall()) {
     args->isolate()->ThrowException(v8::Exception::Error(gin::StringToV8(
-        args->isolate(), kMethodInvocationAsConstructorDisallowed)));
+        args->isolate(),
+        base::StrCat({"Error invoking ", method_name_, ": ",
+                      kMethodInvocationAsConstructorDisallowed}))));
     return v8::Undefined(args->isolate());
   }
 
   content::GinJavaBridgeObject* object = nullptr;
   if (!args->GetHolder(&object) || !object) {
     args->isolate()->ThrowException(v8::Exception::Error(gin::StringToV8(
-        args->isolate(), kMethodInvocationOnNonInjectedObjectDisallowed)));
+        args->isolate(),
+        base::StrCat({"Error invoking ", method_name_, ": ",
+                      kMethodInvocationOnNonInjectedObjectDisallowed}))));
     return v8::Undefined(args->isolate());
   }
 
@@ -74,12 +79,25 @@ v8::Local<v8::Value> GinJavaFunctionInvocationHelper::Invoke(
     }
   }
 
-  GinJavaBridgeError error;
-  std::unique_ptr<base::Value> result = dispatcher_->InvokeJavaMethod(
-      object->object_id(), method_name_, arguments, &error);
+  mojom::GinJavaBridgeError error =
+      mojom::GinJavaBridgeError::kGinJavaBridgeNoError;
+
+  std::unique_ptr<base::Value> result;
+  if (auto* remote = object->GetRemote()) {
+    base::Value::List result_wrapper;
+    if (remote->InvokeMethod(method_name_, std::move(arguments), &error,
+                             &result_wrapper)) {
+      if (!result_wrapper.empty()) {
+        result = base::Value::ToUniquePtrValue(result_wrapper[0].Clone());
+      }
+    } else {
+      error = mojom::GinJavaBridgeError::kGinJavaBridgeObjectIsGone;
+    }
+  }
   if (!result.get()) {
     args->isolate()->ThrowException(v8::Exception::Error(gin::StringToV8(
-        args->isolate(), GinJavaBridgeErrorToString(error))));
+        args->isolate(), base::StrCat({"Error invoking ", method_name_, ": ",
+                                       GinJavaBridgeErrorToString(error)}))));
     return v8::Undefined(args->isolate());
   }
   if (!result->is_blob()) {

@@ -6,108 +6,37 @@
 #define CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_SIGNED_WEB_BUNDLE_READER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
 #include "base/sequence_checker.h"
 #include "base/types/expected.h"
 #include "chrome/browser/web_applications/isolated_web_apps/error/unusable_swbn_file_error.h"
 #include "components/web_package/mojom/web_bundle_parser.mojom-forward.h"
-#include "components/web_package/shared_file.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
+#include "components/web_package/signed_web_bundles/signed_web_bundle_integrity_block.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_verifier.h"
 #include "net/base/net_errors.h"
 #include "services/data_decoder/public/cpp/safe_web_bundle_parser.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace network {
 struct ResourceRequest;
-}
-
-namespace web_package {
-class SignedWebBundleIntegrityBlock;
-}
+}  // namespace network
 
 namespace web_app {
-
-namespace internal {
-
-// This class is responsible for establishing and maintaining of
-// the IPC connection for parsing of the Signed Web Bundle.
-class SafeWebBundleParserConnection {
- public:
-  SafeWebBundleParserConnection(base::FilePath web_bundle_path,
-                                absl::optional<GURL> base_url);
-  ~SafeWebBundleParserConnection();
-
-  using InitCompleteCallback = base::OnceCallback<void(
-      base::expected<void, UnusableSwbnFileError> status)>;
-
-  using ReconnectCompleteCallback =
-      base::OnceCallback<void(base::expected<void, std::string> status)>;
-
-  // Please call this function before any other.
-  void Initialize(InitCompleteCallback init_complete_callback);
-
-  // Subscribes the instance of this class on OnParserDisconnected
-  // events.
-  void StartProcessingDisconnects();
-  bool is_disconnected() const { return state_ != State::kConnected; }
-  // Tries to reestablish IPC connection.
-  void Reconnect(ReconnectCompleteCallback reconnect_callback);
-
-  // The public fields below violate encapsulation. The problem is that
-  // there is no good way (so far) how to treat them. Returning
-  // const reference is currently not an option because reading
-  // is not a const function of these types (even though logically it is
-  // const).
-  // So far it is better to leave these fields in such an ugly form
-  // to pay attention to them in the nearest future.
-  // TODO(peletskyi): Make proper encapsulation here.
-  scoped_refptr<web_package::SharedFile> file_;
-  std::unique_ptr<data_decoder::SafeWebBundleParser> parser_;
-
-  // These fields we may not need after refactoring of the tests.
-  base::RepeatingClosure parser_disconnect_callback_for_testing_;
-  absl::optional<base::File::Error> reconnection_file_error_for_testing_;
-
- private:
-  enum class State {
-    kUninitialized,
-    kInitializing,
-    kConnected,
-    kDisconnected,
-    kReconnecting,
-  };
-
-  void OnFileOpened(InitCompleteCallback init_complete_callback,
-                    std::unique_ptr<base::File> file);
-
-  void OnFileDuplicated(InitCompleteCallback init_complete_callback,
-                        base::File file);
-  void OnParserDisconnected();
-  void ReconnectForFile(ReconnectCompleteCallback reconnect_callback,
-                        base::File file);
-
-  base::FilePath web_bundle_path_;
-  absl::optional<GURL> base_url_;
-  State state_ = State::kUninitialized;
-
-  SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<SafeWebBundleParserConnection> weak_ptr_factory_{this};
-};
-}  // namespace internal
 
 // This class is a reader for Signed Web Bundles.
 //
 // `Create` returns a new instance of this class.
 //
-// `StartReading` starts the process to read the Signed Web Bundle's integrity
-// block and metadata, as well as to verify that the signatures contained in the
-// integrity block sign the bundle correctly.
+// `ReadIntegrityBlock` starts the process to read the Signed Web Bundle's
+// integrity block and metadata, as well as to verify that the signatures
+// contained in the integrity block sign the bundle correctly.
 //
 // If everything is parsed successfully, then
 // the caller can make requests to responses contained in the Signed Web Bundle
@@ -121,110 +50,46 @@ class SafeWebBundleParserConnection {
 // password, and fragment before looking up the corresponding response inside
 // the Signed Web Bundle. This is the same behavior as with unsigned Web
 // Bundles (see `content::WebBundleReader`).
-//
-// Internally, this class wraps a `data_decoder::SafeWebBundleParser` with
-// support for automatic reconnection in case it disconnects while parsing
-// responses. The `SafeWebBundleParser` might disconnect, for example, if one of
-// the other `DataDecoder`s that run on the same utility process crashes, or
-// when the utility process is terminated by Android's OOM killer.
 class SignedWebBundleReader {
  public:
-  // Callers of this class can decide whether parsing the Signed Web Bundle
-  // should continue or stop after the integrity block has been read by passing
-  // an appropriate instance of this class to the
-  // `integrity_block_result_callback`. If a caller decides that parsing should
-  // stop, then metadata will not be read and the `read_error_callback` will run
-  // with an `AbortedByCaller` error.
-  class SignatureVerificationAction {
-   public:
-    enum class Type {
-      kAbort,
-      kContinueAndVerifySignatures,
-      kContinueAndSkipSignatureVerification,
-    };
-
-    static SignatureVerificationAction Abort(const std::string& abort_message);
-    static SignatureVerificationAction ContinueAndVerifySignatures();
-    static SignatureVerificationAction ContinueAndSkipSignatureVerification();
-
-    SignatureVerificationAction(const SignatureVerificationAction&);
-    ~SignatureVerificationAction();
-
-    Type type() { return type_; }
-
-    // Will CHECK if `type()` != `Type::kAbort`.
-    std::string abort_message() { return *abort_message_; }
-
-   private:
-    SignatureVerificationAction(Type type,
-                                absl::optional<std::string> abort_message);
-
-    const Type type_;
-    const absl::optional<std::string> abort_message_;
-  };
-
-  using IntegrityBlockReadResultCallback = base::OnceCallback<void(
-      web_package::SignedWebBundleIntegrityBlock integrity_block,
-      base::OnceCallback<void(SignatureVerificationAction)> callback)>;
-
-  using ReadErrorCallback = base::OnceCallback<void(
-      base::expected<void, UnusableSwbnFileError> status)>;
+  using Result = base::expected<std::unique_ptr<SignedWebBundleReader>,
+                                UnusableSwbnFileError>;
+  using CreateCallback = base::OnceCallback<void(Result)>;
 
   // Creates a new instance of this class. `base_url` is used inside the
   // `WebBundleParser` to convert relative URLs contained in the Web Bundle into
-  // absolute URLs. If `base_url` is `absl::nullopt`, then relative URLs inside
+  // absolute URLs. If `base_url` is `std::nullopt`, then relative URLs inside
   // the Web Bundle will result in an error.
-  static std::unique_ptr<SignedWebBundleReader> Create(
-      const base::FilePath& web_bundle_path,
-      const absl::optional<GURL>& base_url,
-      std::unique_ptr<
-          web_package::SignedWebBundleSignatureVerifier> signature_verifier =
-          std::make_unique<web_package::SignedWebBundleSignatureVerifier>());
+  static void Create(const base::FilePath& web_bundle_path,
+                     const std::optional<GURL>& base_url,
+                     bool verify_signatures,
+                     CreateCallback callback);
 
-  // Starts reading the Signed Web Bundle. This will invoke
-  // `integrity_block_result_callback` after reading the integrity block, which
-  // must then, based on the public keys contained in the integrity block,
-  // determine whether this class should continue with signature verification
-  // and metadata reading, or abort. In any case,
-  // `read_error_callback` will be called once reading integrity block and
-  // metadata has either succeeded, was aborted, or failed.
-  // Will CHECK if `GetState()` != `kUninitialized`.
-  void StartReading(
-      IntegrityBlockReadResultCallback integrity_block_result_callback,
-      ReadErrorCallback read_error_callback);
+  static base::AutoReset<web_package::SignedWebBundleSignatureVerifier*>
+  SetSignatureVerifierForTesting(
+      web_package::SignedWebBundleSignatureVerifier*);
 
-  // This class internally transitions through the following states:
-  //
-  // kUninitialized -> kInitializing -> kInitialized
-  //                         |
-  //                         `--------> kError
-  //
-  // If initialization fails, the callback passed to `StartReading`
-  // is called with the corresponding error, and the state changes to `kError`.
-  // Recovery from an initialization error is not possible.
-  enum class State {
-    kUninitialized,
-    kInitializing,
-    kInitialized,
-    kError,
-  };
-
-  // This class is ready to read responses from the Signed Web Bundle iff its
-  // state is `kInitialized`.
-  State GetState() const { return state_; }
+  SignedWebBundleReader() = default;
+  virtual ~SignedWebBundleReader() = default;
 
   SignedWebBundleReader(const SignedWebBundleReader&) = delete;
   SignedWebBundleReader& operator=(const SignedWebBundleReader&) = delete;
 
-  ~SignedWebBundleReader();
+  // Closes all the closable resources that the reader is using.
+  virtual void Close(base::OnceClosure callback) = 0;
+
+  virtual bool IsClosed() const = 0;
+
+  // Returns the integrity block of the Web Bundle.
+  virtual const web_package::SignedWebBundleIntegrityBlock& GetIntegrityBlock()
+      const = 0;
 
   // Returns the primary URL, as specified in the metadata of the Web Bundle.
-  // Will CHECK if `GetState()` != `kInitialized`.
-  const absl::optional<GURL>& GetPrimaryURL() const;
+  virtual const std::optional<GURL>& GetPrimaryURL() const = 0;
 
   // Returns the URLs of all exchanges contained in the Web Bundle, as specified
-  // in the metadata. Will CHECK if `GetState()` != `kInitialized`.
-  std::vector<GURL> GetEntries() const;
+  // in the metadata.
+  virtual std::vector<GURL> GetEntries() const = 0;
 
   struct ReadResponseError {
     enum class Type {
@@ -249,112 +114,21 @@ class SignedWebBundleReader {
   // Reads the status code and headers, as well as the length and offset of the
   // response body within the Web Bundle. The URL will be simplified
   // (credentials and fragment and removed, this is consistent with
-  // `content::WebBundleReader`) before matching it to a response. Will CHECK if
-  // `GetState()` != `kInitialized`.
+  // `content::WebBundleReader`) before matching it to a response.
   using ResponseCallback = base::OnceCallback<void(
       base::expected<web_package::mojom::BundleResponsePtr,
                      ReadResponseError>)>;
-  void ReadResponse(const network::ResourceRequest& resource_request,
-                    ResponseCallback callback);
+  virtual void ReadResponse(const network::ResourceRequest& resource_request,
+                            ResponseCallback callback) = 0;
 
-  // Reads the response body given a `response` read with `ReadResponse`. Will
-  // CHECK if `GetState()` != `kInitialized`.
+  // Reads the response body given a `response` read with `ReadResponse`.
   using ResponseBodyCallback = base::OnceCallback<void(net::Error net_error)>;
-  void ReadResponseBody(web_package::mojom::BundleResponsePtr response,
-                        mojo::ScopedDataPipeProducerHandle producer_handle,
-                        ResponseBodyCallback callback);
+  virtual void ReadResponseBody(
+      web_package::mojom::BundleResponsePtr response,
+      mojo::ScopedDataPipeProducerHandle producer_handle,
+      ResponseBodyCallback callback) = 0;
 
-  base::WeakPtr<SignedWebBundleReader> AsWeakPtr();
-
-  // Can be used in tests to set a callback that will be called if the
-  // underlying `SafeWebBundleParser` disconnects.
-  void SetParserDisconnectCallbackForTesting(base::RepeatingClosure callback);
-
-  // Can be used in tests to simulate an error occurring when reconnecting the
-  // parser after it has disconnected.
-  void SetReconnectionFileErrorForTesting(base::File::Error file_error);
-
- private:
-  explicit SignedWebBundleReader(
-      const base::FilePath& web_bundle_path,
-      const absl::optional<GURL>& base_url,
-      std::unique_ptr<web_package::SignedWebBundleSignatureVerifier>
-          signature_verifier);
-
-  void OnConnectionInitialized(
-      IntegrityBlockReadResultCallback integrity_block_result_callback,
-      ReadErrorCallback read_error_callback,
-      base::expected<void, UnusableSwbnFileError> init_status);
-
-  void OnIntegrityBlockParsed(
-      IntegrityBlockReadResultCallback integrity_block_result_callback,
-      ReadErrorCallback read_error_callback,
-      web_package::mojom::BundleIntegrityBlockPtr integrity_block,
-      web_package::mojom::BundleIntegrityBlockParseErrorPtr error);
-
-  void OnShouldContinueParsingAfterIntegrityBlock(
-      web_package::SignedWebBundleIntegrityBlock integrity_block,
-      ReadErrorCallback callback,
-      SignatureVerificationAction action);
-
-  void OnFileLengthRead(
-      web_package::SignedWebBundleIntegrityBlock integrity_block,
-      ReadErrorCallback callback,
-      base::expected<uint64_t, base::File::Error> file_length);
-
-  void OnSignaturesVerified(
-      const base::TimeTicks& verification_start_time,
-      uint64_t file_length,
-      ReadErrorCallback callback,
-      absl::optional<web_package::SignedWebBundleSignatureVerifier::Error>
-          verification_error);
-
-  void ReadMetadata(ReadErrorCallback callback);
-
-  void OnMetadataParsed(ReadErrorCallback callback,
-                        web_package::mojom::BundleMetadataPtr metadata,
-                        web_package::mojom::BundleMetadataParseErrorPtr error);
-
-  void FulfillWithError(ReadErrorCallback callback,
-                        UnusableSwbnFileError error);
-
-  void ReadResponseInternal(
-      web_package::mojom::BundleResponseLocationPtr location,
-      ResponseCallback callback);
-
-  void OnResponseParsed(ResponseCallback callback,
-                        web_package::mojom::BundleResponsePtr response,
-                        web_package::mojom::BundleResponseParseErrorPtr error);
-
-  // The following method is a callback for reconnection handling if the
-  // `SafeWebBundleParser` in the `SignedWebBundleParserConnection`
-  // disconnects at some point after integrity block and
-  // metadata have been read. Reconnecting to a new parser will be attempted on
-  // the next call to `ReadResponse`.
-  void OnReconnect(base::expected<void, std::string> status);
-
-  State state_ = State::kUninitialized;
-
-  std::unique_ptr<web_package::SignedWebBundleSignatureVerifier>
-      signature_verifier_;
-
-  // Integrity Block
-  absl::optional<uint64_t> integrity_block_size_in_bytes_;
-
-  // Metadata
-  absl::optional<GURL> primary_url_;
-  base::flat_map<GURL, web_package::mojom::BundleResponseLocationPtr> entries_;
-
-  // Accumulates `ReadResponse` requests while the parser is disconnected, and
-  // runs them after reconnection of the parser succeeds or fails.
-  std::vector<std::pair<web_package::mojom::BundleResponseLocationPtr,
-                        ResponseCallback>>
-      pending_read_responses_;
-
-  std::unique_ptr<internal::SafeWebBundleParserConnection> connection_;
-
-  SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<SignedWebBundleReader> weak_ptr_factory_{this};
+  virtual base::WeakPtr<SignedWebBundleReader> AsWeakPtr() = 0;
 };
 
 // This is a base class for fetching an info about a unsecure .swbn file.
@@ -384,10 +158,11 @@ class UnsecureReader {
   virtual void ReturnError(UnusableSwbnFileError error) = 0;
   virtual base::WeakPtr<UnsecureReader> GetWeakPtr() = 0;
 
-  void OnConnectionInitialized(
-      base::expected<void, UnusableSwbnFileError> init_status);
+  void OnFileOpened(base::File file);
 
-  internal::SafeWebBundleParserConnection connection_;
+  base::FilePath web_bundle_path_;
+  std::unique_ptr<data_decoder::SafeWebBundleParser> parser_;
+
   SEQUENCE_CHECKER(sequence_checker_);
 };
 
@@ -422,4 +197,4 @@ class UnsecureSignedWebBundleIdReader : public UnsecureReader {
 
 }  // namespace web_app
 
-#endif  // CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_SIGNED_WEB_BUNDLE_H_
+#endif  // CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_SIGNED_WEB_BUNDLE_READER_H_

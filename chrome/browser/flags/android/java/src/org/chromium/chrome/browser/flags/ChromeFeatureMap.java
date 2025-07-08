@@ -4,10 +4,11 @@
 
 package org.chromium.chrome.browser.flags;
 
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
 import org.chromium.base.FeatureMap;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
-import org.chromium.build.annotations.MainDex;
+import org.chromium.build.annotations.NullMarked;
 
 /**
  * Java accessor for state of Chrome-layer feature flags.
@@ -20,7 +21,7 @@ import org.chromium.build.annotations.MainDex;
  * backwards compatibility and convenience.
  */
 @JNINamespace("chrome::android")
-@MainDex
+@NullMarked
 public class ChromeFeatureMap extends FeatureMap {
     private static final ChromeFeatureMap sInstance = new ChromeFeatureMap();
 
@@ -33,9 +34,7 @@ public class ChromeFeatureMap extends FeatureMap {
         return sInstance;
     }
 
-    /**
-     * Convenience method to call {@link #isEnabledInNative(String)} statically.
-     */
+    /** Convenience method to call {@link #isEnabledInNative(String)} statically. */
     public static boolean isEnabled(String featureName) {
         return getInstance().isEnabledInNative(featureName);
     }

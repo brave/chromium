@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/cronet/testing/test_server/test_server.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/base_paths.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -81,7 +88,7 @@ std::unique_ptr<net::test_server::HttpResponse> ReturnBigDataInResponse(
                           base::CompareCase::INSENSITIVE_ASCII));
   std::string data_size_str = request.relative_url.substr(strlen(kBigDataPath));
   int64_t data_size;
-  CHECK(base::StringToInt64(base::StringPiece(data_size_str), &data_size));
+  CHECK(base::StringToInt64(std::string_view(data_size_str), &data_size));
   CHECK(data_size == static_cast<int64_t>(g_big_data_body.Get().size()));
   return std::make_unique<net::test_server::RawHttpResponse>(
       std::string(), g_big_data_body.Get());
@@ -169,27 +176,36 @@ std::unique_ptr<net::test_server::HttpResponse> CronetTestRequestHandler(
 namespace cronet {
 
 /* static */
-bool TestServer::StartServeFilesFromDirectory(
-    const base::FilePath& test_files_root) {
+bool TestServer::PrepareServeFilesFromDirectory(
+    const base::FilePath& test_files_root,
+    net::EmbeddedTestServer::Type server_type,
+    net::EmbeddedTestServer::ServerCertificate server_certificate) {
   // Shouldn't happen.
   if (g_test_server)
     return false;
 
-  g_test_server = std::make_unique<net::EmbeddedTestServer>(
-      net::EmbeddedTestServer::TYPE_HTTP);
+  g_test_server = std::make_unique<net::EmbeddedTestServer>(server_type);
   g_test_server->RegisterRequestHandler(
       base::BindRepeating(&CronetTestRequestHandler));
   g_test_server->ServeFilesFromDirectory(test_files_root);
   net::test_server::RegisterDefaultHandlers(g_test_server.get());
-  CHECK(g_test_server->Start());
+  g_test_server->SetSSLConfig(server_certificate);
   return true;
+}
+
+void TestServer::StartPrepared() {
+  CHECK(g_test_server);
+  CHECK(g_test_server->Start());
 }
 
 /* static */
 bool TestServer::Start() {
   base::FilePath src_root;
-  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root));
-  return StartServeFilesFromDirectory(src_root.Append(kTestDataRelativePath));
+  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root));
+  return StartServeFilesFromDirectory(
+      src_root.Append(kTestDataRelativePath),
+      net::test_server::EmbeddedTestServer::TYPE_HTTP,
+      net::test_server::EmbeddedTestServer::CERT_OK);
 }
 
 /* static */
@@ -283,6 +299,12 @@ void TestServer::ReleaseBigDataURL() {
 std::string TestServer::GetFileURL(const std::string& file_path) {
   DCHECK(g_test_server);
   return g_test_server->GetURL(file_path).spec();
+}
+
+void TestServer::RegisterRequestHandler(
+    net::test_server::EmbeddedTestServer::HandleRequestCallback callback) {
+  CHECK(g_test_server);
+  g_test_server->RegisterRequestHandler(callback);
 }
 
 }  // namespace cronet

@@ -2,26 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-(async function(testRunner) {
-  const {dp} = await testRunner.startBlank(
+(async function(/** @type {import('test_runner').TestRunner} */ testRunner) {
+  const {dp, session} = await testRunner.startBlank(
       'Test that clicking an attributionsrc anchor without transient user activation triggers an issue.');
 
   await dp.Audits.enable();
 
-  await dp.Runtime.evaluate({
-    expression: `
-    document.body.innerHTML = '<a href="https://a.com" attributionsrc target="_blank">Link</a>';
-  `
-  });
+  await session.evaluate(`
+    document.body.innerHTML = '<a href="https://devtools.test:8443/" attributionsrc target="_blank">Link</a>'
+  `);
 
-  const issue = dp.Audits.onceIssueAdded();
+  session.evaluate(`document.querySelector('a').click()`);
 
-  await dp.Runtime.evaluate({
-    expression: `document.querySelector('a').click()`,
-    userGesture: false,
-  });
+  const issue = await dp.Audits.onceIssueAdded();
 
-  testRunner.log(
-      (await issue).params.issue, 'Issue reported: ', ['violatingNodeId']);
+  testRunner.log(issue.params.issue, 'Issue reported: ', ['violatingNodeId']);
   testRunner.completeTest();
 })

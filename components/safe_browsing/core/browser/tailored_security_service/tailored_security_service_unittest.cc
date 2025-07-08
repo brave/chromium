@@ -16,6 +16,7 @@
 #include "base/values.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/safe_browsing/core/browser/tailored_security_service/tailored_security_service_observer_util.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "net/http/http_status_code.h"
@@ -40,14 +41,17 @@ const char kQueryTailoredSecurityServiceUrl[] =
 // TestRequest instead of a normal request.
 class TestingTailoredSecurityService : public TailoredSecurityService {
  public:
-  explicit TestingTailoredSecurityService(
+  TestingTailoredSecurityService(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      PrefService* prefs)
-      // NOTE: Simply pass null object for IdentityManager.
+      PrefService* prefs,
+      syncer::SyncService* sync_service)
+      // NOTE: Simply pass null object for IdentityManager and SyncService.
       // TailoredSecurityService's only usage of this object is to fetch access
       // tokens via RequestImpl, and TestingTailoredSecurityService deliberately
       // replaces this flow with TestRequest.
-      : TailoredSecurityService(nullptr, prefs),
+      : TailoredSecurityService(/*identity_manager=*/nullptr,
+                                /*sync_service=*/sync_service,
+                                prefs),
         url_loader_factory_(url_loader_factory) {}
   ~TestingTailoredSecurityService() override = default;
 
@@ -279,13 +283,16 @@ class TailoredSecurityServiceTest : public testing::Test {
         prefs::kEnhancedProtectionEnabledViaTailoredSecurity, false);
     prefs_.registry()->RegisterIntegerPref(
         prefs::kTailoredSecuritySyncFlowLastUserInteractionState,
-        TailoredSecurityUserInteractionState::UNSET);
+        TailoredSecurityRetryState::UNSET);
+    prefs_.registry()->RegisterIntegerPref(
+        prefs::kTailoredSecuritySyncFlowRetryState,
+        TailoredSecurityRetryState::UNSET);
     prefs_.registry()->RegisterTimePref(
         prefs::kTailoredSecuritySyncFlowLastRunTime, base::Time());
 
     tailored_security_service_ =
         std::make_unique<TestingTailoredSecurityService>(
-            test_shared_loader_factory_, &prefs_);
+            test_shared_loader_factory_, &prefs_, /*sync_service=*/nullptr);
   }
 
   void TearDown() override {
@@ -302,6 +309,10 @@ class TailoredSecurityServiceTest : public testing::Test {
   void Shutdown() { tailored_security_service_->Shutdown(); }
 
   PrefService* prefs() { return &prefs_; }
+
+  scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory() {
+    return test_shared_loader_factory_;
+  }
 
  protected:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -508,7 +519,7 @@ TEST_F(TailoredSecurityServiceTest, NotifiesSyncForDisabled) {
   tailored_security_service()->SetNotifySyncUserCallback(
       run_loop.QuitClosure());
   SetSafeBrowsingState(prefs(), SafeBrowsingState::ENHANCED_PROTECTION,
-                       /*is_esb_enabled_in_sync=*/true);
+                       /*is_esb_enabled_by_account_integration=*/true);
   prefs()->SetTime(prefs::kAccountTailoredSecurityUpdateTimestamp,
                    base::Time::Now());
   run_loop.Run();
@@ -517,86 +528,64 @@ TEST_F(TailoredSecurityServiceTest, NotifiesSyncForDisabled) {
 }
 
 TEST_F(TailoredSecurityServiceTest,
-       RetryEnabledTimestampUpdateCallbackSetsOutcomeToUnknown) {
-  scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeatures(
-      {safe_browsing::kTailoredSecurityRetryForSyncUsers}, {});
-  {
-    tailored_security_service()->SetExpectedURL(
-        GURL(kQueryTailoredSecurityServiceUrl));
-    tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
+       RetryLogicTimestampUpdateCallbackSetsStateToRetryNeeded) {
+  tailored_security_service()->SetExpectedURL(
+      GURL(kQueryTailoredSecurityServiceUrl));
+  tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
 
-    EXPECT_NE(prefs()->GetInteger(
-                  prefs::kTailoredSecuritySyncFlowLastUserInteractionState),
-              TailoredSecurityUserInteractionState::UNKNOWN);
+  EXPECT_NE(prefs()->GetInteger(prefs::kTailoredSecuritySyncFlowRetryState),
+            TailoredSecurityRetryState::RETRY_NEEDED);
 
-    tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
+  tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
 
-    EXPECT_EQ(prefs()->GetInteger(
-                  prefs::kTailoredSecuritySyncFlowLastUserInteractionState),
-              TailoredSecurityUserInteractionState::UNKNOWN);
-  }
-}
-
-TEST_F(TailoredSecurityServiceTest, RetryDisabledOutcomeRemainsUnset) {
-  scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeatures(
-      {}, {safe_browsing::kTailoredSecurityRetryForSyncUsers});
-  {
-    tailored_security_service()->SetExpectedURL(
-        GURL(kQueryTailoredSecurityServiceUrl));
-    tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
-
-    EXPECT_EQ(prefs()->GetInteger(
-                  prefs::kTailoredSecuritySyncFlowLastUserInteractionState),
-              TailoredSecurityUserInteractionState::UNSET);
-
-    tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
-
-    EXPECT_EQ(prefs()->GetInteger(
-                  prefs::kTailoredSecuritySyncFlowLastUserInteractionState),
-              TailoredSecurityUserInteractionState::UNSET);
-  }
+  EXPECT_EQ(prefs()->GetInteger(prefs::kTailoredSecuritySyncFlowRetryState),
+            TailoredSecurityRetryState::RETRY_NEEDED);
 }
 
 TEST_F(TailoredSecurityServiceTest,
-       RetryEnabledTimestampUpdateCallbackRecordsStartTime) {
-  scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeatures(
-      {safe_browsing::kTailoredSecurityRetryForSyncUsers}, {});
-  {
-    tailored_security_service()->SetExpectedURL(
-        GURL(kQueryTailoredSecurityServiceUrl));
-    tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
+       RetryLogicTimestampUpdateCallbackRecordsStartTime) {
+  tailored_security_service()->SetExpectedURL(
+      GURL(kQueryTailoredSecurityServiceUrl));
+  tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
 
-    EXPECT_NE(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
-              base::Time::Now());
+  EXPECT_NE(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
+            base::Time::Now());
 
-    tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
+  tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
 
-    EXPECT_EQ(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
-              base::Time::Now());
-  }
+  EXPECT_EQ(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
+            base::Time::Now());
 }
 
 TEST_F(TailoredSecurityServiceTest,
-       RetryDisabledTimestampUpdateCallbackDoesNotRecordStartTime) {
-  scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeatures(
-      {}, {safe_browsing::kTailoredSecurityRetryForSyncUsers});
-  {
-    tailored_security_service()->SetExpectedURL(
-        GURL(kQueryTailoredSecurityServiceUrl));
-    tailored_security_service()->SetExpectedTailoredSecurityServiceValue(true);
+       HistorySyncEnabledForUserReturnsFalseWhenSyncServiceIsNull) {
+  // One production case where the sync service is not provided to the
+  // TailoredSecurityService is on creation for a Guest profile.
+  auto tailored_security_service =
+      std::make_unique<TestingTailoredSecurityService>(
+          URLLoaderFactory(), prefs(),
+          /*sync_service=*/nullptr);
+  EXPECT_FALSE(tailored_security_service->HistorySyncEnabledForUser());
+}
 
-    EXPECT_EQ(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
-              base::Time());
-
-    tailored_security_service()->TailoredSecurityTimestampUpdateCallback();
-
-    EXPECT_EQ(prefs()->GetTime(prefs::kTailoredSecuritySyncFlowLastRunTime),
-              base::Time());
-  }
+TEST_F(TailoredSecurityServiceTest, CanQueryTailoredSecurityForUrl) {
+  // Test cases for URLs that should be allowed.
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://google.com")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://google.ae")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://google.com.bz")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://google.se")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://www.google.com")));
+  EXPECT_TRUE(
+      CanQueryTailoredSecurityForUrl(GURL("https://subdomain.google.com")));
+  // Non-standard port
+  EXPECT_TRUE(
+      CanQueryTailoredSecurityForUrl(GURL("https://www.google.com:8080")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://youtube.com")));
+  EXPECT_TRUE(CanQueryTailoredSecurityForUrl(GURL("https://www.youtube.com")));
+  // Test cases for URLs that should not be allowed.
+  EXPECT_FALSE(CanQueryTailoredSecurityForUrl(GURL("https://example.com")));
+  EXPECT_FALSE(
+      CanQueryTailoredSecurityForUrl(GURL("https://google.com.example.com")));
 }
 
 }  // namespace safe_browsing

@@ -7,6 +7,8 @@
 #include "base/android/jni_android.h"
 #include "base/memory/singleton.h"
 #include "base/task/single_thread_task_runner.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "media/base/android/media_jni_headers/MediaServerCrashListener_jni.h"
 
 namespace media {
@@ -40,7 +42,6 @@ void MediaServerCrashListener::EnsureListening() {
 
 void MediaServerCrashListener::OnMediaServerCrashDetected(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     jboolean watchdog_needs_release) {
   callback_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(on_server_crash_cb_, watchdog_needs_release));

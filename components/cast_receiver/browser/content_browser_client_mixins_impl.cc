@@ -10,26 +10,16 @@ namespace cast_receiver {
 
 // static
 std::unique_ptr<ContentBrowserClientMixins> ContentBrowserClientMixins::Create(
-    NetworkContextGetter network_content_getter) {
+    network::NetworkContextGetter network_content_getter) {
   return std::make_unique<ContentBrowserClientMixinsImpl>(
       std::move(network_content_getter));
 }
 
 ContentBrowserClientMixinsImpl::ContentBrowserClientMixinsImpl(
-    NetworkContextGetter network_context_getter)
+    network::NetworkContextGetter network_context_getter)
     : application_client_(std::move(network_context_getter)) {}
 
 ContentBrowserClientMixinsImpl::~ContentBrowserClientMixinsImpl() = default;
-
-void ContentBrowserClientMixinsImpl::AddStreamingResolutionObserver(
-    StreamingResolutionObserver* observer) {
-  application_client_.AddStreamingResolutionObserver(observer);
-}
-
-void ContentBrowserClientMixinsImpl::RemoveStreamingResolutionObserver(
-    StreamingResolutionObserver* observer) {
-  application_client_.RemoveStreamingResolutionObserver(observer);
-}
 
 void ContentBrowserClientMixinsImpl::AddApplicationStateObserver(
     ApplicationStateObserver* observer) {
@@ -49,7 +39,7 @@ void ContentBrowserClientMixinsImpl::OnWebContentsCreated(
 std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
 ContentBrowserClientMixinsImpl::CreateURLLoaderThrottles(
     const base::RepeatingCallback<content::WebContents*()>& wc_getter,
-    int frame_tree_node_id,
+    content::FrameTreeNodeId frame_tree_node_id,
     CorsExemptHeaderCallback is_cors_exempt_header_cb) {
   return application_client_.CreateURLLoaderThrottles(
       std::move(wc_getter), frame_tree_node_id,

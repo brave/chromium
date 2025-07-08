@@ -24,7 +24,6 @@ bool EnumTraits<blink::mojom::Modifier, ::liburlpattern::Modifier>::FromMojom(
       return true;
   }
   NOTREACHED();
-  return false;
 }
 
 bool StructTraits<blink::mojom::FixedPatternDataView, ::liburlpattern::Part>::
@@ -68,7 +67,6 @@ UnionTraits<blink::mojom::PatternTemplateDataView,
       return blink::mojom::PatternTemplate::Tag::kSegmentWildcard;
     case liburlpattern::PartType::kRegex:
       NOTREACHED();
-      return blink::mojom::PatternTemplate::Tag::kFixed;
   }
 }
 
@@ -126,7 +124,23 @@ bool StructTraits<
     blink::mojom::SafeUrlPatternDataView,
     ::blink::SafeUrlPattern>::Read(blink::mojom::SafeUrlPatternDataView data,
                                    ::blink::SafeUrlPattern* out) {
+  if (!data.ReadProtocol(&out->protocol)) {
+    return false;
+  }
+
+  if (!data.ReadUsername(&out->username)) {
+    return false;
+  }
+
+  if (!data.ReadPassword(&out->password)) {
+    return false;
+  }
+
   if (!data.ReadHostname(&out->hostname)) {
+    return false;
+  }
+
+  if (!data.ReadPort(&out->port)) {
     return false;
   }
 
@@ -134,6 +148,26 @@ bool StructTraits<
     return false;
   }
 
+  if (!data.ReadSearch(&out->search)) {
+    return false;
+  }
+
+  if (!data.ReadHash(&out->hash)) {
+    return false;
+  }
+
+  if (!data.ReadOptions(&out->options)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool StructTraits<blink::mojom::SafeUrlPatternOptionsDataView,
+                  ::blink::SafeUrlPatternOptions>::
+    Read(blink::mojom::SafeUrlPatternOptionsDataView data,
+         ::blink::SafeUrlPatternOptions* out) {
+  out->ignore_case = data.ignore_case();
   return true;
 }
 

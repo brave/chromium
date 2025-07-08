@@ -129,6 +129,9 @@ class COMPONENT_EXPORT(HERMES_CLIENT) FakeHermesEuiccClient
                                          std::string activation_code);
   void CreateCellularService(const dbus::ObjectPath& euicc_path,
                              const dbus::ObjectPath& carrier_profile_path);
+  // Add the default cellular APN. This is intended to simulate the
+  // auto-detecting APN in Shill.
+  void CreateDefaultModbApn(const std::string& service_path);
   void CallNotifyPropertyChanged(const dbus::ObjectPath& object_path,
                                  const std::string& property_name);
   void NotifyPropertyChanged(const dbus::ObjectPath& object_path,
@@ -144,11 +147,11 @@ class COMPONENT_EXPORT(HERMES_CLIENT) FakeHermesEuiccClient
 
   // When set, this will be returned as the result of the next attempt to
   // install a profile using an activation code.
-  absl::optional<HermesResponseStatus> next_install_profile_result_;
+  std::optional<HermesResponseStatus> next_install_profile_result_;
 
   // When set, this will be returned as the result the next time that we refresh
   // the available SM-DX profiles.
-  absl::optional<std::vector<dbus::ObjectPath>>
+  std::optional<std::vector<dbus::ObjectPath>>
       next_refresh_smdx_profiles_result_;
 
   // Queue of error code to be returned from method calls.

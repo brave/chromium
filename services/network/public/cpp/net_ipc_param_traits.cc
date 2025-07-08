@@ -4,6 +4,8 @@
 
 #include "services/network/public/cpp/net_ipc_param_traits.h"
 
+#include <string_view>
+
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_mojo_param_traits.h"
 #include "ipc/ipc_platform_file.h"
@@ -38,6 +40,8 @@ void ParamTraits<net::AuthCredentials>::Log(const param_type& p,
   l->append("<AuthCredentials>");
 }
 
+// TODO(crbug.com/408018829): convert these to mojom StructTraits
+// LINT.IfChange(CertVerifyResult)
 void ParamTraits<net::CertVerifyResult>::Write(base::Pickle* m,
                                                const param_type& p) {
   WriteParam(m, p.verified_cert);
@@ -45,10 +49,10 @@ void ParamTraits<net::CertVerifyResult>::Write(base::Pickle* m,
   WriteParam(m, p.has_sha1);
   WriteParam(m, p.public_key_hashes);
   WriteParam(m, p.is_issued_by_known_root);
-  WriteParam(m, p.is_issued_by_additional_trust_anchor);
   WriteParam(m, p.ocsp_result);
   WriteParam(m, p.scts);
   WriteParam(m, p.policy_compliance);
+  WriteParam(m, p.ct_requirement_status);
 }
 
 bool ParamTraits<net::CertVerifyResult>::Read(const base::Pickle* m,
@@ -59,10 +63,11 @@ bool ParamTraits<net::CertVerifyResult>::Read(const base::Pickle* m,
          ReadParam(m, iter, &r->has_sha1) &&
          ReadParam(m, iter, &r->public_key_hashes) &&
          ReadParam(m, iter, &r->is_issued_by_known_root) &&
-         ReadParam(m, iter, &r->is_issued_by_additional_trust_anchor) &&
          ReadParam(m, iter, &r->ocsp_result) && ReadParam(m, iter, &r->scts) &&
-         ReadParam(m, iter, &r->policy_compliance);
+         ReadParam(m, iter, &r->policy_compliance) &&
+         ReadParam(m, iter, &r->ct_requirement_status);
 }
+// LINT.ThenChange(/net/cert/cert_verify_result.h:CertVerifyResult)
 
 void ParamTraits<net::CertVerifyResult>::Log(const param_type& p,
                                              std::string* l) {
@@ -76,8 +81,8 @@ void ParamTraits<net::HashValue>::Write(base::Pickle* m, const param_type& p) {
 bool ParamTraits<net::HashValue>::Read(const base::Pickle* m,
                                        base::PickleIterator* iter,
                                        param_type* r) {
-  std::string str;
-  return ReadParam(m, iter, &str) && r->FromString(str);
+  std::string_view encoded;
+  return iter->ReadStringPiece(&encoded) && r->FromString(encoded);
 }
 
 void ParamTraits<net::HashValue>::Log(const param_type& p, std::string* l) {
@@ -106,21 +111,22 @@ void ParamTraits<net::IPEndPoint>::Log(const param_type& p, std::string* l) {
 }
 
 void ParamTraits<net::IPAddress>::Write(base::Pickle* m, const param_type& p) {
-  base::StackVector<uint8_t, 16> bytes;
+  absl::InlinedVector<uint8_t, 16> bytes;
   for (uint8_t byte : p.bytes())
-    bytes->push_back(byte);
+    bytes.push_back(byte);
   WriteParam(m, bytes);
 }
 
 bool ParamTraits<net::IPAddress>::Read(const base::Pickle* m,
                                        base::PickleIterator* iter,
                                        param_type* p) {
-  base::StackVector<uint8_t, 16> bytes;
+  absl::InlinedVector<uint8_t, 16> bytes;
   if (!ReadParam(m, iter, &bytes))
     return false;
-  if (bytes->size() > 16)
+  if (bytes.size() > 16) {
     return false;
-  *p = net::IPAddress(bytes->data(), bytes->size());
+  }
+  *p = net::IPAddress(bytes);
   return true;
 }
 
@@ -186,21 +192,21 @@ void ParamTraits<scoped_refptr<net::HttpResponseHeaders>>::Log(
   l->append("<HttpResponseHeaders>");
 }
 
-void ParamTraits<net::OCSPVerifyResult>::Write(base::Pickle* m,
-                                               const param_type& p) {
+void ParamTraits<bssl::OCSPVerifyResult>::Write(base::Pickle* m,
+                                                const param_type& p) {
   WriteParam(m, p.response_status);
   WriteParam(m, p.revocation_status);
 }
 
-bool ParamTraits<net::OCSPVerifyResult>::Read(const base::Pickle* m,
-                                              base::PickleIterator* iter,
-                                              param_type* r) {
+bool ParamTraits<bssl::OCSPVerifyResult>::Read(const base::Pickle* m,
+                                               base::PickleIterator* iter,
+                                               param_type* r) {
   return ReadParam(m, iter, &r->response_status) &&
          ReadParam(m, iter, &r->revocation_status);
 }
 
-void ParamTraits<net::OCSPVerifyResult>::Log(const param_type& p,
-                                             std::string* l) {
+void ParamTraits<bssl::OCSPVerifyResult>::Log(const param_type& p,
+                                              std::string* l) {
   l->append("<OCSPVerifyResult>");
 }
 
@@ -236,7 +242,6 @@ void ParamTraits<net::SSLInfo>::Write(base::Pickle* m, const param_type& p) {
   WriteParam(m, p.encrypted_client_hello);
   WriteParam(m, p.handshake_type);
   WriteParam(m, p.public_key_hashes);
-  WriteParam(m, p.pinning_failure_log);
   WriteParam(m, p.signed_certificate_timestamps);
   WriteParam(m, p.ct_policy_compliance);
   WriteParam(m, p.ocsp_result);
@@ -263,7 +268,6 @@ bool ParamTraits<net::SSLInfo>::Read(const base::Pickle* m,
          ReadParam(m, iter, &r->encrypted_client_hello) &&
          ReadParam(m, iter, &r->handshake_type) &&
          ReadParam(m, iter, &r->public_key_hashes) &&
-         ReadParam(m, iter, &r->pinning_failure_log) &&
          ReadParam(m, iter, &r->signed_certificate_timestamps) &&
          ReadParam(m, iter, &r->ct_policy_compliance) &&
          ReadParam(m, iter, &r->ocsp_result) &&
@@ -469,8 +473,8 @@ void ParamTraits<url::Origin>::Write(base::Pickle* m, const url::Origin& p) {
   WriteParam(m, p.GetTupleOrPrecursorTupleIfOpaque().host());
   WriteParam(m, p.GetTupleOrPrecursorTupleIfOpaque().port());
   // Note: this is somewhat asymmetric with Read() to avoid extra copies during
-  // serialization. The actual serialized wire format matches how absl::optional
-  // values are normally serialized: see `ParamTraits<absl::optional<P>>`.
+  // serialization. The actual serialized wire format matches how std::optional
+  // values are normally serialized: see `ParamTraits<std::optional<P>>`.
   const base::UnguessableToken* nonce = p.GetNonceForSerialization();
   WriteParam(m, nonce != nullptr);
   if (nonce) {
@@ -484,13 +488,13 @@ bool ParamTraits<url::Origin>::Read(const base::Pickle* m,
   std::string scheme;
   std::string host;
   uint16_t port;
-  absl::optional<base::UnguessableToken> nonce_if_opaque;
+  std::optional<base::UnguessableToken> nonce_if_opaque;
   if (!ReadParam(m, iter, &scheme) || !ReadParam(m, iter, &host) ||
       !ReadParam(m, iter, &port) || !ReadParam(m, iter, &nonce_if_opaque)) {
     return false;
   }
 
-  absl::optional<url::Origin> creation_result =
+  std::optional<url::Origin> creation_result =
       nonce_if_opaque
           ? url::Origin::UnsafelyCreateOpaqueOriginWithoutNormalization(
                 scheme, host, port, url::Origin::Nonce(*nonce_if_opaque))

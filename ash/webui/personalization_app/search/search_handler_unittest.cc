@@ -4,6 +4,7 @@
 
 #include "ash/webui/personalization_app/search/search_handler.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <string>
@@ -14,22 +15,21 @@
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/ambient/ambient_prefs.h"
 #include "ash/public/cpp/personalization_app/enterprise_policy_delegate.h"
+#include "ash/public/cpp/personalization_app/time_of_day_test_utils.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/webui/personalization_app/personalization_app_url_constants.h"
 #include "ash/webui/personalization_app/search/search.mojom-shared.h"
-#include "ash/webui/personalization_app/search/search.mojom-test-utils.h"
 #include "ash/webui/personalization_app/search/search.mojom.h"
 #include "ash/webui/personalization_app/search/search_concept.h"
 #include "ash/webui/personalization_app/search/search_tag_registry.h"
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/components/local_search_service/public/cpp/local_search_service_proxy.h"
-#include "chromeos/ash/components/local_search_service/public/mojom/index.mojom-test-utils.h"
 #include "chromeos/ash/components/test/ash_test_suite.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -165,10 +165,7 @@ class PersonalizationAppSearchHandlerTest : public AshTestBase {
  protected:
   PersonalizationAppSearchHandlerTest() {
     scoped_feature_list_.InitWithFeatures(
-        {}, {::ash::features::kTimeOfDayWallpaper,
-             ::ash::features::kFeatureManagementTimeOfDayWallpaper,
-             ::ash::features::kTimeOfDayScreenSaver,
-             ::ash::features::kFeatureManagementTimeOfDayScreenSaver});
+        {}, personalization_app::GetTimeOfDayFeatures());
   }
 
   ~PersonalizationAppSearchHandlerTest() override = default;
@@ -203,7 +200,7 @@ class PersonalizationAppSearchHandlerTest : public AshTestBase {
   std::vector<mojom::SearchResultPtr> SimulateSearchCompleted(
       uint32_t max_num_results,
       local_search_service::ResponseStatus response_status,
-      const absl::optional<std::vector<local_search_service::Result>>&
+      const std::optional<std::vector<local_search_service::Result>>&
           local_search_service_results) {
     std::vector<mojom::SearchResultPtr> result;
     base::RunLoop loop;
@@ -237,21 +234,26 @@ class PersonalizationAppSearchHandlerTest : public AshTestBase {
     test_pref_service_->SetBoolean(::ash::prefs::kDarkModeEnabled, enabled);
   }
 
+  std::vector<mojom::SearchResultPtr> Search(const std::u16string& query,
+                                             int32_t max_num_results) {
+    base::test::TestFuture<std::vector<mojom::SearchResultPtr>> future;
+    search_handler_remote_->Search(query, max_num_results,
+                                   future.GetCallback());
+    return future.Take();
+  }
+
   std::vector<mojom::SearchResultPtr> RunSearch(int message_id) {
-    std::vector<mojom::SearchResultPtr> search_results;
     std::u16string query = SearchTagRegistry::MessageIdToString(message_id);
     // Search results match better if one character is subtracted.
     query.pop_back();
-    mojom::SearchHandlerAsyncWaiter(search_handler_remote()->get())
-        .Search(query, /*max_num_results=*/kMaxNumResults, &search_results);
-    return search_results;
+    return Search(query, /*max_num_results=*/kMaxNumResults);
   }
 
   // Remove all existing search concepts saved in the registry.
   void ClearSearchTagRegistry() {
-    local_search_service::mojom::IndexAsyncWaiter(
-        search_tag_registry()->index_remote_.get())
-        .ClearIndex();
+    base::test::TestFuture<void> future;
+    search_tag_registry()->index_remote_->ClearIndex(future.GetCallback());
+    EXPECT_TRUE(future.Wait());
     search_tag_registry()->result_id_to_search_concept_.clear();
   }
 
@@ -265,15 +267,13 @@ class PersonalizationAppSearchHandlerTest : public AshTestBase {
 };
 
 TEST_F(PersonalizationAppSearchHandlerTest, AnswersPersonalizationQuery) {
-  std::vector<mojom::SearchResultPtr> search_results;
-  mojom::SearchHandlerAsyncWaiter(search_handler_remote()->get())
-      .Search(u"testing", /*max_num_results=*/kMaxNumResults, &search_results);
+  std::vector<mojom::SearchResultPtr> search_results =
+      Search(u"testing", /*max_num_results=*/kMaxNumResults);
   EXPECT_TRUE(search_results.empty());
 
   std::u16string title =
       l10n_util::GetStringUTF16(IDS_PERSONALIZATION_APP_SEARCH_RESULT_TITLE);
-  mojom::SearchHandlerAsyncWaiter(search_handler_remote()->get())
-      .Search(title, /*max_num_results=*/kMaxNumResults, &search_results);
+  search_results = Search(title, /*max_num_results=*/kMaxNumResults);
   EXPECT_EQ(search_results.size(), 1u);
   EXPECT_EQ(search_results.front()->text, title);
   EXPECT_GT(search_results.front()->relevance_score, 0.9);
@@ -309,13 +309,11 @@ TEST_F(PersonalizationAppSearchHandlerTest, ObserverFiresWhenResultsUpdated) {
 }
 
 TEST_F(PersonalizationAppSearchHandlerTest, RespondsToAltQuery) {
-  std::vector<mojom::SearchResultPtr> search_results;
   std::u16string search_query = l10n_util::GetStringUTF16(
       IDS_PERSONALIZATION_APP_SEARCH_RESULT_TITLE_ALT1);
 
-  mojom::SearchHandlerAsyncWaiter(search_handler_remote()->get())
-      .Search(search_query, /*max_num_results=*/kMaxNumResults,
-              &search_results);
+  std::vector<mojom::SearchResultPtr> search_results =
+      Search(search_query, /*max_num_results=*/kMaxNumResults);
 
   EXPECT_EQ(search_results.size(), 1u);
   EXPECT_EQ(search_results.front()->text, search_query);
@@ -436,7 +434,7 @@ TEST_F(PersonalizationAppSearchHandlerTest, HasDarkModeSearchResults) {
 TEST_F(PersonalizationAppSearchHandlerTest, SortsAndTruncatesResults) {
   ClearSearchTagRegistry();
   // Test search concepts.
-  std::vector<const SearchConcept> test_search_concepts = {
+  const std::vector<SearchConcept> test_search_concepts = {
       {
           .id = mojom::SearchConceptId::kChangeWallpaper,
           .message_id = IDS_PERSONALIZATION_APP_WALLPAPER_LABEL,
@@ -477,7 +475,7 @@ TEST_F(PersonalizationAppSearchHandlerTest, SortsAndTruncatesResults) {
   auto results = SimulateSearchCompleted(
       /*max_num_results=*/maxNumResults,
       local_search_service::ResponseStatus::kSuccess,
-      absl::make_optional(fake_local_results));
+      std::make_optional(fake_local_results));
 
   // Capped at |maxNumResults|.
   EXPECT_EQ(maxNumResults, results.size());
@@ -499,7 +497,7 @@ TEST_F(PersonalizationAppSearchHandlerTest, NoTimeOfDayWallpaperResults) {
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kTimeOfDayWallpaper;
@@ -514,7 +512,7 @@ TEST_F(PersonalizationAppSearchHandlerTest, NoAmbientModeTimeOfDayResults) {
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kAmbientModeTimeOfDay;
@@ -529,11 +527,7 @@ class PersonalizationAppSearchHandlerTimeOfDayTest
  public:
   PersonalizationAppSearchHandlerTimeOfDayTest() {
     scoped_feature_list_.InitWithFeatures(
-        {::ash::features::kTimeOfDayWallpaper,
-         ::ash::features::kFeatureManagementTimeOfDayWallpaper,
-         ::ash::features::kTimeOfDayScreenSaver,
-         ::ash::features::kFeatureManagementTimeOfDayScreenSaver},
-        {});
+        personalization_app::GetTimeOfDayFeatures(), {});
   }
 
  private:
@@ -545,7 +539,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest, TimeOfDayWallpaperSearch) {
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kTimeOfDayWallpaper;
@@ -563,7 +557,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest,
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kAmbientModeTimeOfDay;
@@ -583,7 +577,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest,
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kTimeOfDayWallpaper;
@@ -599,7 +593,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest,
   // to false. This cannot happen during a session for a given account, so no
   // need for an observer method. Log in as a non-eligible account and clear and
   // recreate the search handler to receive updates.
-  SimulateUserLogin("asdf@example.com");
+  SimulateUserLogin({"asdf@example.com"});
   ClearSearchTagRegistry();
   InitSearchHandler();
   {
@@ -608,7 +602,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest,
     std::vector<mojom::SearchResultPtr> other_search_results =
         RunSearch(IDS_PERSONALIZATION_APP_SEARCH_RESULT_CHANGE_WALLPAPER);
     auto desired_result =
-        base::ranges::find_if(other_search_results, [](const auto& result) {
+        std::ranges::find_if(other_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kChangeWallpaper;
         });
@@ -619,7 +613,7 @@ TEST_F(PersonalizationAppSearchHandlerTimeOfDayTest,
     std::vector<mojom::SearchResultPtr> time_of_day_search_results =
         RunSearch(message_id);
 
-    auto time_of_day_result = base::ranges::find_if(
+    auto time_of_day_result = std::ranges::find_if(
         time_of_day_search_results, [](const auto& result) {
           return result->search_concept_id ==
                  mojom::SearchConceptId::kAmbientModeTimeOfDay;

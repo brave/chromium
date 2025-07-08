@@ -4,19 +4,20 @@
 
 #include "chrome/browser/ash/arc/idle_manager/arc_idle_manager.h"
 
-#include "ash/components/arc/arc_browser_context_keyed_service_factory_base.h"
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/mojom/power.mojom.h"
-#include "ash/components/arc/power/arc_power_bridge.h"
-#include "ash/components/arc/session/arc_bridge_service.h"
+#include "ash/shell.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/time/time.h"
 #include "chrome/browser/ash/arc/idle_manager/arc_background_service_observer.h"
 #include "chrome/browser/ash/arc/idle_manager/arc_cpu_throttle_observer.h"
 #include "chrome/browser/ash/arc/idle_manager/arc_display_power_observer.h"
 #include "chrome/browser/ash/arc/idle_manager/arc_on_battery_observer.h"
 #include "chrome/browser/ash/arc/idle_manager/arc_window_observer.h"
 #include "chromeos/ash/components/dbus/patchpanel/patchpanel_client.h"
+#include "chromeos/ash/experiences/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/mojom/power.mojom.h"
+#include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
 
 namespace arc {
 
@@ -32,8 +33,15 @@ class DefaultDelegateImpl : public ArcIdleManager::Delegate {
   ~DefaultDelegateImpl() override = default;
 
   // ArcIdleManager::Delegate:
-  void SetInteractiveMode(ArcBridgeService* bridge, bool enable) override {
-    ArcPowerBridge::NotifyAndroidInteractiveState(bridge, enable);
+  void SetIdleState(ArcPowerBridge* arc_power_bridge,
+                    ArcBridgeService* bridge,
+                    bool enable) override {
+    if (!arc_power_bridge) {
+      return;
+    }
+    arc_power_bridge->NotifyAndroidIdleState(
+        bridge, enable ? arc::mojom::IdleState::ACTIVE
+                       : arc::mojom::IdleState::INACTIVE);
   }
 };
 
@@ -52,7 +60,7 @@ class ArcIdleManagerFactory
  private:
   friend class base::NoDestructor<ArcIdleManagerFactory>;
 
-  ArcIdleManagerFactory() = default;
+  ArcIdleManagerFactory() { DependsOn(ArcPowerBridgeFactory::GetInstance()); }
   ~ArcIdleManagerFactory() override = default;
 };
 
@@ -85,11 +93,15 @@ ArcIdleManager::ArcIdleManager(content::BrowserContext* context,
   }
   AddObserver(std::make_unique<ArcDisplayPowerObserver>());
 
-  auto* const power_bridge = ArcPowerBridge::GetForBrowserContext(context);
+  enable_delay_ = base::Milliseconds(kEnableArcIdleManagerDelayMs.Get());
+
+  arc_power_bridge_ = ArcPowerBridge::GetForBrowserContext(context);
 
   // This maybe null in unit tests.
-  if (power_bridge)
-    power_bridge->DisableAndroidIdleControl();
+  if (arc_power_bridge_) {
+    arc_power_bridge_->DisableAndroidIdleControl();
+    powerbridge_observation_.Observe(arc_power_bridge_);
+  }
 
   DCHECK(bridge_);
   bridge_->power()->AddObserver(this);
@@ -109,6 +121,12 @@ void ArcIdleManager::Shutdown() {
   // After this is done, we will no longer get connection notifications.
   bridge_->power()->RemoveObserver(this);
 
+  // No more notifications about VM resumed.
+  powerbridge_observation_.Reset();
+
+  // Won't hear about display power changes anymore.
+  display_observation_.Reset();
+
   // Safeguard against resource leak by observers.
   OnConnectionClosed();
 }
@@ -118,7 +136,13 @@ void ArcIdleManager::OnConnectionReady() {
   if (is_connected_)
     return;
   StartObservers();
-  delegate_->SetInteractiveMode(bridge_, !should_throttle());
+
+  // ash::Shell may not exist in tests.
+  if (ash::Shell::HasInstance()) {
+    display_observation_.Observe(ash::Shell::Get()->display_configurator());
+  }
+
+  delegate_->SetIdleState(arc_power_bridge_, bridge_, !should_throttle());
   is_connected_ = true;
 
   // Always reset the timer on connect.
@@ -132,6 +156,9 @@ void ArcIdleManager::OnConnectionClosed() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!is_connected_)
     return;
+
+  display_observation_.Reset();
+
   StopObservers();
   if (should_throttle()) {
     // Maybe a logout, or a systemserver crash.
@@ -139,6 +166,21 @@ void ArcIdleManager::OnConnectionClosed() {
     LogScreenOffTimer(/*toggle_timer*/ false);
   }
   is_connected_ = false;
+}
+
+void ArcIdleManager::OnPowerStateChanged(
+    chromeos::DisplayPowerState power_state) {
+  if (power_state == chromeos::DISPLAY_POWER_ALL_OFF) {
+    // Display is OFF.
+    enable_delay_ = base::TimeDelta();  // No more new timers.
+    if (enable_timer_.IsRunning()) {
+      enable_timer_.Stop();  // Doze sooner than scheduled.
+      RequestDoze(true);
+    }
+  } else {
+    // Display is ON.
+    enable_delay_ = base::Milliseconds(kEnableArcIdleManagerDelayMs.Get());
+  }
 }
 
 void ArcIdleManager::ThrottleInstance(bool should_throttle) {
@@ -150,8 +192,45 @@ void ArcIdleManager::ThrottleInstance(bool should_throttle) {
     return;
   }
   first_idle_happened_ = true;
-  LogScreenOffTimer(/*toggle_timer*/ should_throttle);
-  delegate_->SetInteractiveMode(bridge_, !should_throttle);
+  if (should_throttle) {
+    // Enable Doze mode. May need to postpone the request.
+    if (!enable_delay_.is_zero()) {
+      enable_timer_.Start(FROM_HERE, enable_delay_,
+                          base::BindOnce(&ArcIdleManager::RequestDoze,
+                                         weak_ptr_factory_.GetWeakPtr(), true));
+    } else {
+      RequestDoze(true);
+    }
+  } else {
+    bool is_running = enable_timer_.IsRunning();
+    enable_timer_.Stop();
+    if (!(is_running && !kEnableArcIdleManagerPendingIdleReactivate.Get())) {
+      // Disable Doze mode should execute immediately, otherwise app launch may
+      // be blocked.
+      RequestDoze(false);
+    }
+    // else, we had a scheduled timer to go idle, and we canceled it (i.e., we
+    // are still in active state), and we are not configured to force
+    // reactivation. So no need to request a wake up.
+  }
+}
+
+void ArcIdleManager::OnVmResumed() {
+  if (!should_throttle()) {
+    // A resume happens because there was a prior suspend.
+    // That earlier suspend counts as first-idle.
+    first_idle_happened_ = true;
+
+    // Just sync up Android state with internal state.
+    // No need for logging metrics, not a state change.
+    RequestDozeWithoutMetrics(false);
+  }
+}
+
+void ArcIdleManager::OnWillDestroyArcPowerBridge() {
+  // No more notifications about VM resumed.
+  powerbridge_observation_.Reset();
+  arc_power_bridge_ = nullptr;
 }
 
 void ArcIdleManager::LogScreenOffTimer(bool toggle_timer) {
@@ -171,6 +250,15 @@ void ArcIdleManager::LogScreenOffTimer(bool toggle_timer) {
                                   /*min=*/base::Milliseconds(1),
                                   /*max=*/base::Hours(8), /*buckets=*/100);
   }
+}
+
+void ArcIdleManager::RequestDozeWithoutMetrics(bool enabled) {
+  delegate_->SetIdleState(arc_power_bridge_, bridge_, !enabled);
+}
+
+void ArcIdleManager::RequestDoze(bool enabled) {
+  LogScreenOffTimer(/*toggle_timer*/ enabled);
+  RequestDozeWithoutMetrics(enabled);
 }
 
 }  // namespace arc

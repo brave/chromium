@@ -7,6 +7,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -98,11 +99,12 @@ TEST_F(DisplayPortObserverTest, OnNoDisplayConnected) {
   ASSERT_TRUE(CreateFakeDpConn(temp_dir_.Append("card0-DP-4"), 284, 3));
 
   // Only internal display with an id not dedicated to any DP connector
-  std::vector<DisplaySnapshot*> display_states;
+  std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>> display_states;
   auto display_state = CreateDisplaySnapshot(236, temp_dir_);
   display_states.push_back(display_state.get());
 
-  display_port_observer_->OnDisplayModeChanged(std::move(display_states));
+  display_port_observer_->OnDisplayConfigurationChanged(
+      std::move(display_states));
   task_environment_.RunUntilIdle();
 
   EXPECT_TRUE(cached_port_nums_.empty());
@@ -116,7 +118,7 @@ TEST_F(DisplayPortObserverTest, OnMultipleDisplaysConnected) {
   ASSERT_TRUE(CreateFakeDpConn(temp_dir_.Append("card0-DP-4"), 284, 3));
 
   // 2 displays on port 0 and 1 display on port 2
-  std::vector<DisplaySnapshot*> display_states;
+  std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>> display_states;
   auto display_state1 = CreateDisplaySnapshot(256, temp_dir_);
   display_states.push_back(display_state1.get());
 
@@ -126,7 +128,8 @@ TEST_F(DisplayPortObserverTest, OnMultipleDisplaysConnected) {
   auto display_state3 = CreateDisplaySnapshot(275, temp_dir_);
   display_states.push_back(display_state3.get());
 
-  display_port_observer_->OnDisplayModeChanged(std::move(display_states));
+  display_port_observer_->OnDisplayConfigurationChanged(
+      std::move(display_states));
   task_environment_.RunUntilIdle();
 
   const std::vector<uint32_t> kExpectedPortNums{0, 0, 2};

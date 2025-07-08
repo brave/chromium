@@ -22,28 +22,31 @@
 
 #include "third_party/blink/renderer/core/dom/id_target_observer.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_text_path.h"
+#include "third_party/blink/renderer/core/svg/svg_a_element.h"
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
+#include "third_party/blink/renderer/core/svg/svg_path_element.h"
+#include "third_party/blink/renderer/core/svg/svg_text_element.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
 template <>
 const SVGEnumerationMap& GetEnumerationMap<SVGTextPathMethodType>() {
-  static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSVGTextPathMethodAlign, "align"},
-      {kSVGTextPathMethodStretch, "stretch"},
-  };
+  static constexpr auto enum_items = std::to_array<const char* const>({
+      "align",
+      "stretch",
+  });
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
 
 template <>
 const SVGEnumerationMap& GetEnumerationMap<SVGTextPathSpacingType>() {
-  static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSVGTextPathSpacingAuto, "auto"},
-      {kSVGTextPathSpacingExact, "exact"},
-  };
+  static constexpr auto enum_items = std::to_array<const char* const>({
+      "auto",
+      "exact",
+  });
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
@@ -87,18 +90,13 @@ void SVGTextPathElement::SvgAttributeChanged(
     const SvgAttributeChangedParams& params) {
   const QualifiedName& attr_name = params.name;
   if (SVGURIReference::IsKnownAttribute(attr_name)) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     BuildPendingResource();
     return;
   }
 
-  if (attr_name == svg_names::kStartOffsetAttr)
-    UpdateRelativeLengthsInformation();
-
   if (attr_name == svg_names::kStartOffsetAttr ||
       attr_name == svg_names::kMethodAttr ||
       attr_name == svg_names::kSpacingAttr) {
-    SVGElement::InvalidationGuard invalidation_guard(this);
     if (LayoutObject* object = GetLayoutObject())
       MarkForLayoutAndParentResourceInvalidation(*object);
 

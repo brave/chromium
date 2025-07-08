@@ -5,13 +5,10 @@
 #include "components/update_client/update_query_params.h"
 
 #include "base/check.h"
-#include "base/feature_list.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "components/update_client/features.h"
 #include "components/update_client/update_query_params_delegate.h"
 #include "components/version_info/version_info.h"
 
@@ -36,7 +33,7 @@ const char kOs[] =
     "android";
 #elif BUILDFLAG(IS_CHROMEOS)
     "cros";
-#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#elif BUILDFLAG(IS_LINUX)
     "linux";
 #elif BUILDFLAG(IS_FUCHSIA)
     "fuchsia";
@@ -62,11 +59,11 @@ const char kArch[] =
 #elif defined(__powerpc64__)
     "ppc64";
 #elif defined(ARCH_CPU_LOONGARCH32)
-    "loongarch32";
+        "loongarch32";
 #elif defined(ARCH_CPU_LOONGARCH64)
-    "loongarch64";
+        "loongarch64";
 #elif defined(ARCH_CPU_RISCV64)
-    "riscv64";
+        "riscv64";
 #else
 #error "unknown arch"
 #endif
@@ -88,9 +85,9 @@ UpdateQueryParamsDelegate* g_delegate = nullptr;
 // static
 std::string UpdateQueryParams::Get(ProdId prod) {
   return base::StringPrintf(
-      "os=%s&arch=%s&os_arch=%s&nacl_arch=%s&prod=%s%s&acceptformat=crx3,puff",
-      kOs, kArch, base::SysInfo().OperatingSystemArchitecture().c_str(),
-      GetNaclArch(), GetProdIdString(prod),
+      "os=%s&arch=%s&os_arch=%s&prod=%s%s&acceptformat=crx3,puff", kOs, kArch,
+      base::SysInfo().OperatingSystemArchitecture().c_str(),
+      GetProdIdString(prod),
       g_delegate ? g_delegate->GetExtraParams().c_str() : "");
 }
 
@@ -117,6 +114,7 @@ const char* UpdateQueryParams::GetArch() {
   return kArch;
 }
 
+// TODO(crbug.com/40511454): Remove me.
 // static
 const char* UpdateQueryParams::GetNaclArch() {
 #if defined(ARCH_CPU_X86_FAMILY)
@@ -143,8 +141,8 @@ const char* UpdateQueryParams::GetNaclArch() {
 #elif defined(ARCH_CPU_RISCV64)
   return "riscv64";
 #else
-// NOTE: when adding new values here, please remember to update the
-// comment in the .h file about possible return values from this function.
+  // NOTE: when adding new values here, please remember to update the
+  // comment in the .h file about possible return values from this function.
 #error "You need to add support for your architecture here"
 #endif
 }

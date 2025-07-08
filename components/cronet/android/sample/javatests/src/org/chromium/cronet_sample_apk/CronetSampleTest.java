@@ -12,14 +12,12 @@ import androidx.test.runner.AndroidJUnit4;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/**
- * TBD: Write more tests for the sample app
- */
+/** TBD: Write more tests for the sample app */
 @RunWith(AndroidJUnit4.class)
 public class CronetSampleTest {
     @Test
     @SmallTest
     public void testSimple() throws Exception {
-        assertThat(1).isEqualTo(1);
+        assertThat(1 + 1).isEqualTo(2);
     }
 }

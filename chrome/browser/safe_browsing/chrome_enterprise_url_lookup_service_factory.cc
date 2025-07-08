@@ -5,18 +5,23 @@
 #include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service_factory.h"
 
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
+#include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
+#include "chrome/browser/enterprise/util/affiliation.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
-#include "chrome/browser/safe_browsing/chrome_enterprise_url_lookup_service.h"
 #include "chrome/browser/safe_browsing/chrome_user_population_helper.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/safe_browsing/verdict_cache_manager_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
+#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/core/browser/realtime/chrome_enterprise_url_lookup_service.h"
 #include "components/safe_browsing/core/browser/sync/safe_browsing_primary_account_token_fetcher.h"
 #include "components/safe_browsing/core/browser/sync/sync_utils.h"
 #include "components/safe_browsing/core/browser/verdict_cache_manager.h"
@@ -24,14 +29,45 @@
 #include "components/safe_browsing/core/common/utils.h"
 #include "content/public/browser/browser_context.h"
 #include "services/network/public/cpp/cross_thread_pending_shared_url_loader_factory.h"
+#include "url/gurl.h"
+
+namespace {
+
+// Helper function for retrieving the email associated with `profile`.
+// Makes it easier to bind a callback to
+// `enterprise_connectors::GetProfileEmail` which has multiple overloads, so
+// binding to it would require a cast.
+std::string GetProfileEmail(Profile* profile) {
+  return enterprise_connectors::GetProfileEmail(profile);
+}
+
+// TODO(crbug.com/425370101) - Remove the Android check once Android is supported.
+#if !BUILDFLAG(IS_ANDROID)
+// Helper function for retrieving the email associated with the content area.
+// Makes it easier to bind a callback to
+// `enterprise_connectors::ContentAreaUserProvider::GetUser` which has multiple
+// overloads, so binding to it would require a cast.
+std::string GetContentAreaAccountEmail(Profile* profile, GURL tab_url) {
+  return enterprise_connectors::ContentAreaUserProvider::GetUser(profile,
+                                                                 tab_url);
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+// Returns true if the policy command line switch can be used.
+bool IsCommandLineSwitchSupported() {
+  return g_browser_process && g_browser_process->browser_policy_connector()
+                                  ->IsCommandLineSwitchSupported();
+}
+
+}  // namespace
 
 namespace safe_browsing {
 
 // static
-ChromeEnterpriseRealTimeUrlLookupService*
+RealTimeUrlLookupServiceBase*
 ChromeEnterpriseRealTimeUrlLookupServiceFactory::GetForProfile(
     Profile* profile) {
-  return static_cast<ChromeEnterpriseRealTimeUrlLookupService*>(
+  return static_cast<RealTimeUrlLookupServiceBase*>(
       GetInstance()->GetServiceForBrowserContext(profile, /* create= */ true));
 }
 
@@ -49,19 +85,22 @@ ChromeEnterpriseRealTimeUrlLookupServiceFactory::
           "ChromeEnterpriseRealTimeUrlLookupService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
-              .WithGuest(ProfileSelection::kOriginalOnly)
+              // Enterprise real time URL check can be enabled in guest profile.
+              .WithGuest(ProfileSelection::kOffTheRecordOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(VerdictCacheManagerFactory::GetInstance());
   DependsOn(enterprise_connectors::ConnectorsServiceFactory::GetInstance());
   DependsOn(SafeBrowsingNavigationObserverManagerFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
+  DependsOn(policy::ManagementServiceFactory::GetInstance());
 }
 
-KeyedService*
-ChromeEnterpriseRealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
+std::unique_ptr<KeyedService> ChromeEnterpriseRealTimeUrlLookupServiceFactory::
+    BuildServiceInstanceForBrowserContext(
+        content::BrowserContext* context) const {
   if (!g_browser_process->safe_browsing_service()) {
     return nullptr;
   }
@@ -69,16 +108,30 @@ ChromeEnterpriseRealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
   auto url_loader_factory =
       std::make_unique<network::CrossThreadPendingSharedURLLoaderFactory>(
           profile->GetURLLoaderFactory());
-  return new ChromeEnterpriseRealTimeUrlLookupService(
+  return std::make_unique<ChromeEnterpriseRealTimeUrlLookupService>(
       network::SharedURLLoaderFactory::Create(std::move(url_loader_factory)),
-      VerdictCacheManagerFactory::GetForProfile(profile), profile,
+      VerdictCacheManagerFactory::GetForProfile(profile),
       base::BindRepeating(&safe_browsing::GetUserPopulationForProfile, profile),
       std::make_unique<SafeBrowsingPrimaryAccountTokenFetcher>(
           IdentityManagerFactory::GetForProfile(profile)),
       enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(
           profile),
       SafeBrowsingNavigationObserverManagerFactory::GetForBrowserContext(
-          profile));
+          profile),
+      profile->GetPrefs(),
+      /*webui_delegate=*/WebUIInfoSingleton::GetInstance(),
+      IdentityManagerFactory::GetForProfile(profile),
+      policy::ManagementServiceFactory::GetForProfile(profile),
+      profile->IsOffTheRecord(), profile->IsGuestSession(),
+      base::BindRepeating(&GetProfileEmail, profile),
+  // TODO(crbug.com/425370101) - Remove the Android check once Android is supported.
+#if BUILDFLAG(IS_ANDROID)
+      base::BindRepeating([](GURL) { return std::string(); }),
+#else
+      base::BindRepeating(&GetContentAreaAccountEmail, profile),
+#endif  // BUILDFLAG(IS_ANDROID)
+      base::BindRepeating(&enterprise_util::IsProfileAffiliated, profile),
+      /*is_command_line_switch_supported=*/IsCommandLineSwitchSupported());
 }
 
 }  // namespace safe_browsing

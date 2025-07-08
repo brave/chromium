@@ -19,7 +19,7 @@ AboutSigninInternalsFactory::AboutSigninInternalsFactory()
           "AboutSigninInternals",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOriginalOnly)
               .Build()) {
@@ -50,14 +50,14 @@ void AboutSigninInternalsFactory::RegisterProfilePrefs(
   AboutSigninInternals::RegisterPrefs(user_prefs);
 }
 
-KeyedService* AboutSigninInternalsFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AboutSigninInternalsFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
-  AboutSigninInternals* service = new AboutSigninInternals(
+  return std::make_unique<AboutSigninInternals>(
       IdentityManagerFactory::GetForProfile(profile),
       SigninErrorControllerFactory::GetForProfile(profile),
       AccountConsistencyModeManager::GetMethodForProfile(profile),
       ChromeSigninClientFactory::GetForProfile(profile),
       AccountReconcilorFactory::GetForProfile(profile));
-  return service;
 }

@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_MENU_COORDINATOR_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSIONS_MENU_COORDINATOR_H_
 
+#include "base/memory/raw_ptr.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/view_tracker.h"
 
@@ -14,7 +15,8 @@ class ExtensionsContainer;
 
 namespace views {
 class BubbleDialogDelegate;
-}
+class Widget;
+}  // namespace views
 
 // Handles the lifetime and showing/hidden state of the extensions menu bubble.
 class ExtensionsMenuCoordinator : public views::ViewObserver {

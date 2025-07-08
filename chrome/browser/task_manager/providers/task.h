@@ -9,6 +9,7 @@
 
 #include <string>
 
+#include "base/memory/weak_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "base/time/time.h"
@@ -50,14 +51,19 @@ class Task {
     /* Plugin processes last.*/
     GUEST,            /* A browser plugin guest process. */
     PLUGIN,           /* A plugin process. */
-    NACL,             /* A NativeClient loader or broker process. */
     SANDBOX_HELPER,   /* A sandbox helper process. */
     DEDICATED_WORKER, /* A dedicated worker running on the renderer process. */
     SHARED_WORKER,    /* A shared worker running on the renderer process. */
     SERVICE_WORKER,   /* A service worker running on the renderer process. */
+  };
 
-    /* Lacros task. */
-    LACROS, /* A task from lacros-chrome */
+  // Additional Type Information about a Task.
+  enum class SubType {
+    kNoSubType = 0,
+
+    /* Renderer Processes may also be marked as a specific renderer subtype. */
+    kSpareRenderer,
+    kUnknownRenderer,
   };
 
   // Create a task with the given |title| and the given favicon |icon|. This
@@ -81,8 +87,8 @@ class Task {
   // Returns if the task should be killable from the Task Manager UI.
   virtual bool IsKillable();
 
-  // Kills this task.
-  virtual void Kill();
+  // Kills this task. Returns true if the process terminates.
+  virtual bool Kill();
 
   // Will be called to let the task refresh itself between refresh cycles.
   // |update_interval| is the time since the last task manager refresh.
@@ -111,6 +117,9 @@ class Task {
   // Returns the task type.
   virtual Type GetType() const = 0;
 
+  // Returns the task subtype.
+  virtual SubType GetSubType() const;
+
   // This is the unique ID of the BrowserChildProcessHost/RenderProcessHost. It
   // is not the PID nor the handle of the process.
   // For a task that represents the browser process, the return value is 0. For
@@ -135,7 +144,7 @@ class Task {
   // embedded in a page), this returns the Task representing the parent
   // activity.
   bool HasParentTask() const;
-  virtual const Task* GetParentTask() const;
+  virtual base::WeakPtr<Task> GetParentTask() const;
 
   // Getting the Sqlite used memory (in bytes). Not all tasks reports Sqlite
   // memory, in this case a default invalid value of -1 will be returned.
@@ -174,6 +183,8 @@ class Task {
   const gfx::ImageSkia& icon() const { return icon_; }
   const base::ProcessHandle& process_handle() const { return process_handle_; }
   const base::ProcessId& process_id() const { return process_id_; }
+
+  base::WeakPtr<Task> AsWeakPtr();
 
  protected:
   // If |*result_image| is not already set, fetch the image with id
@@ -224,6 +235,8 @@ class Task {
 
   // The PID of the process on which this task is running.
   base::ProcessId process_id_;
+
+  base::WeakPtrFactory<Task> weak_ptr_factory_{this};
 };
 
 }  // namespace task_manager

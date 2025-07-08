@@ -55,7 +55,7 @@ class TestSafeBrowsingService : public SafeBrowsingService,
   // SafeBrowsingService overrides
   V4ProtocolConfig GetV4ProtocolConfig() const override;
 
-  std::string serilized_download_report();
+  std::string serialized_download_report();
   void ClearDownloadReport();
 
   // In browser tests, the following setters must be called before
@@ -86,22 +86,22 @@ class TestSafeBrowsingService : public SafeBrowsingService,
   // SafeBrowsingService overrides
   ~TestSafeBrowsingService() override;
   SafeBrowsingUIManager* CreateUIManager() override;
-#if BUILDFLAG(FULL_SAFE_BROWSING)
-  bool SendDownloadReport(
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
+  void SendDownloadReport(
       download::DownloadItem* download,
       ClientSafeBrowsingReportRequest::ReportType report_type,
       bool did_proceed,
-      absl::optional<bool> show_download_in_folder) override;
+      std::optional<bool> show_download_in_folder) override;
 #endif
 
   // ServicesDelegate::ServicesCreator:
   bool CanCreateDatabaseManager() override;
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   bool CanCreateDownloadProtectionService() override;
 #endif
   bool CanCreateIncidentReportingService() override;
   SafeBrowsingDatabaseManager* CreateDatabaseManager() override;
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   DownloadProtectionService* CreateDownloadProtectionService() override;
 #endif
   IncidentReportingService* CreateIncidentReportingService() override;

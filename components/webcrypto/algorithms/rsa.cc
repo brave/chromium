@@ -2,19 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/webcrypto/algorithms/rsa.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
 #include "base/containers/span.h"
-#include "base/strings/string_piece.h"
 #include "components/webcrypto/algorithms/asymmetric_key_util.h"
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/blink_key_handle.h"
 #include "components/webcrypto/generate_key_result.h"
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
+#include "crypto/evp.h"
+#include "crypto/keypair.h"
 #include "crypto/openssl_util.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
 #include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
@@ -50,7 +57,7 @@ struct JwkRsaInfo {
 //     present.
 //   * expected_usages must be a subset of the JWK's "key_ops" if present.
 Status ReadRsaKeyJwk(base::span<const uint8_t> key_data,
-                     base::StringPiece expected_alg,
+                     std::string_view expected_alg,
                      bool expected_extractable,
                      blink::WebCryptoKeyUsageMask expected_usages,
                      JwkRsaInfo* result) {
@@ -135,8 +142,7 @@ Status CreateRsaHashedKeyAlgorithm(
   }
 
   *key_algorithm = blink::WebCryptoKeyAlgorithm::CreateRsaHashed(
-      rsa_algorithm, modulus_length_bits, e.data(),
-      static_cast<unsigned int>(e.size()), hash_algorithm);
+      rsa_algorithm, modulus_length_bits, e, hash_algorithm);
 
   return Status::Success();
 }
@@ -225,24 +231,13 @@ Status ImportRsaPublicKey(const blink::WebCryptoAlgorithm& algorithm,
                           base::span<const uint8_t> n,
                           base::span<const uint8_t> e,
                           blink::WebCryptoKey* key) {
-  bssl::UniquePtr<BIGNUM> n_bn(BN_bin2bn(n.data(), n.size(), nullptr));
-  bssl::UniquePtr<BIGNUM> e_bn(BN_bin2bn(e.data(), e.size(), nullptr));
-  if (!n_bn || !e_bn) {
+  auto pubkey = crypto::keypair::PublicKey::FromRsaPublicKeyComponents(n, e);
+  if (!pubkey) {
     return Status::OperationError();
   }
-
-  bssl::UniquePtr<RSA> rsa(RSA_new_public_key(n_bn.get(), e_bn.get()));
-  if (!rsa) {
-    return Status::DataError();
-  }
-
-  // Create a corresponding EVP_PKEY.
-  bssl::UniquePtr<EVP_PKEY> pkey(EVP_PKEY_new());
-  if (!pkey || !EVP_PKEY_set1_RSA(pkey.get(), rsa.get()))
-    return Status::OperationError();
 
   return CreateWebCryptoRsaPublicKey(
-      std::move(pkey), algorithm.Id(),
+      bssl::UpRef(pubkey->key()), algorithm.Id(),
       algorithm.RsaHashedImportParams()->GetHash(), extractable, usages, key);
 }
 
@@ -278,23 +273,29 @@ Status RsaHashedAlgorithm::GenerateKey(
 
   // Limit the RSA key sizes to:
   //   * Multiple of 8 bits
-  //   * 256 bits to 16K bits
+  //   * 256 bits to 8K bits
   //
   // These correspond with limitations at the time there was an NSS WebCrypto
   // implementation. However in practice the upper bound is also helpful
-  // because generating large RSA keys is very slow.
-  if (modulus_length_bits < 256 || modulus_length_bits > 16384 ||
+  // because generating large RSA keys is very slow. In particular, generating
+  // keys > 8192 bits takes multiple minutes of compute time without providing
+  // any increase in realistic security level.
+  if (modulus_length_bits < 256 || modulus_length_bits > 8192 ||
       (modulus_length_bits % 8) != 0) {
     return Status::ErrorGenerateRsaUnsupportedModulus();
   }
 
-  unsigned int public_exponent = 0;
-  if (!params->ConvertPublicExponentToUnsigned(public_exponent))
+  std::optional<uint32_t> public_exponent = params->PublicExponentAsU32();
+  if (!public_exponent) {
     return Status::ErrorGenerateKeyPublicExponent();
+  }
 
-  // OpenSSL hangs when given bad public exponents. Use a whitelist.
-  if (public_exponent != 3 && public_exponent != 65537)
+  // The canonical RSA exponent is 65537, but 3 is also common. Use an allowlist
+  // because RSA key generation is a probabilistic process and may hang on
+  // invalid exponents.
+  if (*public_exponent != 3 && *public_exponent != 65537) {
     return Status::ErrorGenerateKeyPublicExponent();
+  }
 
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
@@ -302,7 +303,7 @@ Status RsaHashedAlgorithm::GenerateKey(
   bssl::UniquePtr<RSA> rsa_private_key(RSA_new());
   bssl::UniquePtr<BIGNUM> bn(BN_new());
   if (!rsa_private_key.get() || !bn.get() ||
-      !BN_set_word(bn.get(), public_exponent)) {
+      !BN_set_word(bn.get(), *public_exponent)) {
     return Status::OperationError();
   }
 
@@ -473,14 +474,16 @@ Status RsaHashedAlgorithm::ExportKeyPkcs8(const blink::WebCryptoKey& key,
                                           std::vector<uint8_t>* buffer) const {
   if (key.GetType() != blink::kWebCryptoKeyTypePrivate)
     return Status::ErrorUnexpectedKeyType();
-  return ExportPKeyPkcs8(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PrivateKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status RsaHashedAlgorithm::ExportKeySpki(const blink::WebCryptoKey& key,
                                          std::vector<uint8_t>* buffer) const {
   if (key.GetType() != blink::kWebCryptoKeyTypePublic)
     return Status::ErrorUnexpectedKeyType();
-  return ExportPKeySpki(GetEVP_PKEY(key), buffer);
+  *buffer = crypto::evp::PublicKeyToBytes(GetEVP_PKEY(key));
+  return Status::Success();
 }
 
 Status RsaHashedAlgorithm::ExportKeyJwk(const blink::WebCryptoKey& key,

@@ -2,18 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "fuchsia_web/runners/cast/pending_cast_component.h"
 
 #include <fidl/fuchsia.io/cpp/hlcpp_conversion.h>
 #include <lib/async/default.h>
 #include <lib/trace/event.h>
 
+#include <string_view>
+
 #include "base/check.h"
 #include "base/fuchsia/fuchsia_component_connect.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/process_context.h"
 #include "base/functional/bind.h"
-#include "base/strings/string_piece.h"
 #include "base/trace_event/trace_id_helper.h"
 #include "base/trace_event/typed_macros.h"
 
@@ -22,7 +28,7 @@ PendingCastComponent::PendingCastComponent(
     std::unique_ptr<base::StartupContext> startup_context,
     fidl::InterfaceRequest<fuchsia::component::runner::ComponentController>
         controller_request,
-    base::StringPiece app_id)
+    std::string_view app_id)
     : delegate_(delegate),
       app_id_(app_id),
       application_context_error_handler_(base::BindRepeating(

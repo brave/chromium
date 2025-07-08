@@ -23,7 +23,6 @@ import android.widget.ViewFlipper;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -32,7 +31,6 @@ import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
@@ -42,29 +40,18 @@ import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.ArrayList;
 
-/**
- * Unit tests for RestoreTabsCoordinator.
- */
+/** Unit tests for RestoreTabsCoordinator. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class RestoreTabsCoordinatorUnitTest {
-    @Rule
-    public JniMocker jniMocker = new JniMocker();
 
-    @Mock
-    FaviconHelper.Natives mFaviconHelperJniMock;
-    @Mock
-    private RestoreTabsMediator mMediator;
-    @Mock
-    private Profile mProfile;
-    @Mock
-    private RestoreTabsControllerDelegate mDelegate;
-    @Mock
-    private TabCreatorManager mTabCreatorManager;
-    @Mock
-    private BottomSheetController mBottomSheetController;
-    @Mock
-    private ForeignSessionHelper mForeignSessionHelper;
+    @Mock FaviconHelper.Natives mFaviconHelperJniMock;
+    @Mock private RestoreTabsMediator mMediator;
+    @Mock private Profile mProfile;
+    @Mock private RestoreTabsControllerDelegate mDelegate;
+    @Mock private TabCreatorManager mTabCreatorManager;
+    @Mock private BottomSheetController mBottomSheetController;
+    @Mock private ForeignSessionHelper mForeignSessionHelper;
 
     private RestoreTabsCoordinator mCoordinator;
     private Activity mActivity;
@@ -74,11 +61,12 @@ public class RestoreTabsCoordinatorUnitTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        jniMocker.mock(FaviconHelperJni.TEST_HOOKS, mFaviconHelperJniMock);
+        FaviconHelperJni.setInstanceForTesting(mFaviconHelperJniMock);
         when(mFaviconHelperJniMock.init()).thenReturn(1L);
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
-        mCoordinator = new RestoreTabsCoordinator(
-                mActivity, mProfile, mMediator, mTabCreatorManager, mBottomSheetController);
+        mCoordinator =
+                new RestoreTabsCoordinator(
+                        mActivity, mProfile, mMediator, mTabCreatorManager, mBottomSheetController);
         mModel = mCoordinator.getPropertyModelForTesting();
         mViewFlipperView = mCoordinator.getViewFlipperForTesting();
     }
@@ -92,7 +80,9 @@ public class RestoreTabsCoordinatorUnitTest {
     public void testRestoreTabsCoordinator_showHomeScreen() {
         mCoordinator.showHomeScreen(mForeignSessionHelper, new ArrayList<>(), mDelegate);
         verify(mMediator, times(1))
-                .showHomeScreen(any(ForeignSessionHelper.class), anyList(),
+                .showHomeScreen(
+                        any(ForeignSessionHelper.class),
+                        anyList(),
                         any(RestoreTabsControllerDelegate.class));
     }
 

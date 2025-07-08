@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/display/screen.h"
 
 #import <AppKit/AppKit.h>
@@ -14,26 +19,29 @@
 #include <memory>
 
 #include "base/apple/bridging.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
+#include "base/check_deref.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/notimplemented.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
 #include "ui/display/display.h"
 #include "ui/display/display_change_notifier.h"
+#include "ui/display/mac/screen_mac_headless.h"
 #include "ui/display/util/display_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/icc_profile.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/switches.h"
 
 extern "C" {
 Boolean CGDisplayUsesForceToGray(void);
@@ -67,7 +75,7 @@ NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
 }
 
 const std::vector<Display> DisplaysFromDisplaysMac(
-    const std::vector<DisplayMac> displays_mac) {
+    const std::vector<DisplayMac>& displays_mac) {
   std::vector<Display> displays;
 
   for (auto const& display_mac : displays_mac) {
@@ -114,8 +122,18 @@ DisplayMac BuildDisplayForScreen(NSScreen* screen) {
       screen.maximumExtendedDynamicRangeColorComponentValue;
   if (max_potential_edr_value > 1.f) {
     enable_hdr = true;
-    hdr_max_lum_relative =
-        std::max(kMinHDRCapableMaxLuminanceRelative, max_edr_value);
+#if defined(ARCH_CPU_X86_64)
+    // Disable HDR on Intel laptop screens because performance is unacceptably
+    // bad.
+    // https://crbug.com/1402882
+    if (CGDisplayIsBuiltin(display_id) && max_potential_edr_value <= 2.f) {
+      enable_hdr = false;
+    }
+#endif
+    if (enable_hdr) {
+      hdr_max_lum_relative =
+          std::max(kMinHDRCapableMaxLuminanceRelative, max_edr_value);
+    }
   }
 
   // Compute DisplayColorSpaces.
@@ -123,19 +141,20 @@ DisplayMac BuildDisplayForScreen(NSScreen* screen) {
   {
     CGColorSpaceRef cg_color_space = screen.colorSpace.CGColorSpace;
     if (cg_color_space) {
-      base::ScopedCFTypeRef<CFDataRef> cf_icc_profile(
+      base::apple::ScopedCFTypeRef<CFDataRef> cf_icc_profile(
           CGColorSpaceCopyICCData(cg_color_space));
       if (cf_icc_profile) {
-        icc_profile = gfx::ICCProfile::FromData(
-            CFDataGetBytePtr(cf_icc_profile), CFDataGetLength(cf_icc_profile));
+        icc_profile =
+            gfx::ICCProfile::FromData(CFDataGetBytePtr(cf_icc_profile.get()),
+                                      CFDataGetLength(cf_icc_profile.get()));
       }
     }
   }
   gfx::DisplayColorSpaces display_color_spaces(icc_profile.GetColorSpace(),
-                                               gfx::BufferFormat::RGBA_8888);
+                                               gfx::BufferFormat::BGRA_8888);
   if (HasForceDisplayColorProfile()) {
     if (Display::HasEnsureForcedColorProfile()) {
-      if (display_color_spaces != display.color_spaces()) {
+      if (display_color_spaces != display.GetColorSpaces()) {
         LOG(FATAL) << "The display's color space does not match the color "
                       "space that was forced by the command line. This will "
                       "cause pixel tests to fail.";
@@ -151,7 +170,7 @@ DisplayMac BuildDisplayForScreen(NSScreen* screen) {
       }
       display_color_spaces.SetHDRMaxLuminanceRelative(hdr_max_lum_relative);
     }
-    display.set_color_spaces(display_color_spaces);
+    display.SetColorSpaces(display_color_spaces);
   }
   display_color_spaces.SetSDRMaxLuminanceNits(
       gfx::ColorSpace::kDefaultSDRWhiteLevel);
@@ -166,29 +185,18 @@ DisplayMac BuildDisplayForScreen(NSScreen* screen) {
   display.set_is_monochrome(CGDisplayUsesForceToGray());
 
   // Query the display's refresh rate.
-  {
-    CVDisplayLinkRef display_link = nullptr;
-    if (CVDisplayLinkCreateWithCGDisplay(display_id, &display_link) ==
-        kCVReturnSuccess) {
-      DCHECK(display_link);
-      CVTime cv_time =
-          CVDisplayLinkGetNominalOutputVideoRefreshPeriod(display_link);
-      if (!(cv_time.flags & kCVTimeIsIndefinite)) {
-        double refresh_rate = (static_cast<double>(cv_time.timeScale) /
-                               static_cast<double>(cv_time.timeValue));
-        display.set_display_frequency(refresh_rate);
-      }
-      CVDisplayLinkRelease(display_link);
-    }
-  }
+  double refresh_rate = 1.0 / screen.minimumRefreshInterval;
+  display.set_display_frequency(refresh_rate);
 
   // CGDisplayRotation returns a double. Display::SetRotationAsDegree will
   // handle the unexpected situations were the angle is not a multiple of 90.
   display.SetRotationAsDegree(static_cast<int>(CGDisplayRotation(display_id)));
 
-  // TODO(crbug.com/1078903): Support multiple internal displays.
-  if (CGDisplayIsBuiltin(display_id))
+  // TODO(crbug.com/40129700): Support multiple internal displays.
+  // CGDisplayIsBuiltin may return -1 on [dis]connect; see crbug.com/1457025.
+  if (CGDisplayIsBuiltin(display_id) == YES) {
     SetInternalDisplayIds({display_id});
+  }
 
   display.set_label(base::SysNSStringToUTF8(screen.localizedName));
 
@@ -319,10 +327,11 @@ class ScreenMac : public Screen {
       const std::set<gfx::NativeWindow>& ignore) override {
     const NSPoint ns_point = gfx::ScreenPointToNSPoint(point);
 
-    // Note: [NSApp orderedWindows] doesn't include NSPanels.
+    // Note: NSApp.orderedWindows doesn't include NSPanels.
     for (NSWindow* window in NSApp.orderedWindows) {
-      if (ignore.count(window))
+      if (ignore.count(gfx::NativeWindow(window))) {
         continue;
+      }
 
       if (!window.onActiveSpace) {
         continue;
@@ -335,11 +344,11 @@ class ScreenMac : public Screen {
       }
 
       if (NSPointInRect(ns_point, window.frame)) {
-        return window;
+        return gfx::NativeWindow(window);
       }
     }
 
-    return nil;
+    return gfx::NativeWindow();
   }
 
   int GetNumDisplays() const override { return displays_mac_.size(); }
@@ -371,9 +380,10 @@ class ScreenMac : public Screen {
   Display GetDisplayNearestView(gfx::NativeView native_view) const override {
     NSView* view = native_view.GetNativeNSView();
     NSWindow* window = view.window;
-    if (!window)
+    if (!window) {
       return GetPrimaryDisplay();
-    return GetDisplayNearestWindow(window);
+    }
+    return GetDisplayNearestWindow(gfx::NativeWindow(window));
   }
 
   Display GetDisplayNearestPoint(const gfx::Point& point) const override {
@@ -463,10 +473,25 @@ class ScreenMac : public Screen {
     }
     // In theory, this should not be reached, but in practice, on Catalina, it
     // has been observed that -[NSScreen screens] changes before any
-    // notifications are received.
-    // https://crbug.com/1021340.
-    DLOG(ERROR) << "Value of -[NSScreen screens] changed before notification.";
+    // notifications are received. See crbug.com/1021340 and crbug.com/1352564
+    DISPLAY_LOG(DEBUG) << "-[NSScreen screens] changed before notification.";
     return BuildDisplayForScreen(screen).display;
+  }
+
+  void OnDelayedNotification() {
+    // This can only be called `delayed_notification_new_displays_` is identical
+    // to `displays_` except for HDR headroom.
+    DCHECK_EQ(delayed_notification_new_displays_.size(), displays_.size());
+    for (size_t i = 0; i < displays_.size(); ++i) {
+      DCHECK(display::Display::EqualExceptForHdrHeadroom(
+          displays_[i], delayed_notification_new_displays_[i]));
+    }
+
+    // Update `displays_` and send the notification.
+    auto old_displays = std::move(displays_);
+    displays_ = std::move(delayed_notification_new_displays_);
+    delayed_notification_new_displays_.clear();
+    change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
   }
 
   void OnNSScreensMayHaveChanged() {
@@ -476,9 +501,68 @@ class ScreenMac : public Screen {
 
     UpdateDisplays();
 
-    if (old_displays != displays_) {
-      change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+    // Determine if anything changed, and if anything besides HDR headroom
+    // changed.
+    bool all_displays_equal = true;
+    bool all_displays_equal_except_hdr_headroom = true;
+    if (displays_.size() != old_displays.size()) {
+      all_displays_equal = false;
+      all_displays_equal_except_hdr_headroom = false;
+    } else {
+      for (size_t i = 0; i < displays_.size(); ++i) {
+        if (!display::Display::EqualExceptForHdrHeadroom(displays_[i],
+                                                         old_displays[i])) {
+          all_displays_equal = false;
+          all_displays_equal_except_hdr_headroom = false;
+          break;
+        }
+        if (displays_[i] != old_displays[i]) {
+          all_displays_equal = false;
+        }
+      }
     }
+
+    if (NSScreen.screens.firstObject != primary_ns_screen_) {
+      primary_ns_screen_ = NSScreen.screens.firstObject;
+      change_notifier_.NotifyPrimaryDisplayChanged();
+    }
+
+    // If nothing changed, do no notifications.
+    if (all_displays_equal) {
+      return;
+    }
+
+#if defined(ARCH_CPU_X86_64)
+    // HDR transitions on Intel can have extremely bad performance, so limit
+    // their updates to 2 FPS.
+    constexpr auto kMinimumHdrHeadroomUpdateInterval = base::Seconds(1 / 2.f);
+#else
+    // Allow HDR headroom updates at 12 FPS. Empirically, this is the minimum
+    // framerate that doesn't feel janky.
+    constexpr auto kMinimumHdrHeadroomUpdateInterval = base::Seconds(1 / 12.f);
+#endif
+
+    // If only HDR headroom changed, start a timer to do delayed notifications
+    // (only if it has not already started).
+    if (all_displays_equal_except_hdr_headroom) {
+      delayed_notification_new_displays_ = std::move(displays_);
+      displays_ = std::move(old_displays);
+      if (!delayed_notification_timer_.IsRunning()) {
+        delayed_notification_timer_.Start(
+            FROM_HERE, kMinimumHdrHeadroomUpdateInterval,
+            base::BindOnce(&ScreenMac::OnDelayedNotification,
+                           weak_factory_.GetWeakPtr()));
+      }
+      return;
+    }
+
+    // Stop and delete any delayed notifications, because we're doing an update
+    // now.
+    delayed_notification_new_displays_.clear();
+    delayed_notification_timer_.Stop();
+
+    // Do the update.
+    change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
   }
 
   // The displays currently attached to the device. Updated by
@@ -487,12 +571,22 @@ class ScreenMac : public Screen {
 
   std::vector<Display> displays_;
 
+  NSScreen* __weak primary_ns_screen_ = nil;
+
   // The observers notified by NSScreenColorSpaceDidChangeNotification and
   // NSApplicationDidChangeScreenParametersNotification.
   id __strong screen_color_change_observer_;
   id __strong screen_params_change_observer_;
 
   DisplayChangeNotifier change_notifier_;
+
+  // If only the HDR headroom changed, throttle display notification changes to
+  // avoid choppy performance. Start`delayed_notification_timer_` to call
+  // OnDelayedNotification, which will update `displays_` to
+  // `delayed_notification_new_displays_`.
+  base::OneShotTimer delayed_notification_timer_;
+  std::vector<Display> delayed_notification_new_displays_;
+  base::WeakPtrFactory<ScreenMac> weak_factory_{this};
 };
 
 }  // namespace
@@ -500,10 +594,17 @@ class ScreenMac : public Screen {
 // static
 gfx::NativeWindow Screen::GetWindowForView(gfx::NativeView native_view) {
   NSView* view = native_view.GetNativeNSView();
-  return view.window;
+  return gfx::NativeWindow(view.window);
 }
 
 Screen* CreateNativeScreen() {
+  const base::CommandLine& command_line =
+      CHECK_DEREF(base::CommandLine::ForCurrentProcess());
+
+  if (command_line.HasSwitch(switches::kHeadless)) {
+    return new ScreenMacHeadless;
+  }
+
   return new ScreenMac;
 }
 

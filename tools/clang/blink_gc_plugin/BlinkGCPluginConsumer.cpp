@@ -19,6 +19,7 @@
 #include "RecordInfo.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/Support/TimeProfiler.h"
 
 using namespace clang;
 
@@ -88,6 +89,7 @@ BlinkGCPluginConsumer::BlinkGCPluginConsumer(
   // Only check structures in blink, cppgc and pdfium.
   options_.checked_namespaces.insert("blink");
   options_.checked_namespaces.insert("cppgc");
+  options_.checked_namespaces.insert("v8");
 
   // Add Pdfium subfolders containing GCed classes.
   options_.checked_directories.push_back("fpdfsdk/");
@@ -102,6 +104,8 @@ BlinkGCPluginConsumer::BlinkGCPluginConsumer(
 }
 
 void BlinkGCPluginConsumer::HandleTranslationUnit(ASTContext& context) {
+  llvm::TimeTraceScope TimeScope(
+      "BlinkGCPluginConsumer::HandleTranslationUnit");
   // Don't run the plugin if the compilation unit is already invalid.
   if (reporter_.hasErrorOccurred())
     return;
@@ -143,7 +147,7 @@ void BlinkGCPluginConsumer::HandleTranslationUnit(ASTContext& context) {
     json_ = 0;
   }
 
-  FindBadPatterns(context, reporter_, options_);
+  FindBadPatterns(context, reporter_, cache_, options_);
 }
 
 void BlinkGCPluginConsumer::ParseFunctionTemplates(TranslationUnitDecl* decl) {
@@ -202,7 +206,7 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
   if (CXXMethodDecl* trace = info->GetTraceMethod()) {
     if (info->IsStackAllocated())
       reporter_.TraceMethodForStackAllocatedClass(info, trace);
-    if (trace->isPure())
+    if (trace->isPureVirtual())
       reporter_.ClassDeclaresPureVirtualTrace(info, trace);
   } else if (info->RequiresTraceMethod()) {
     reporter_.ClassRequiresTraceMethod(info);
@@ -217,7 +221,7 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
   }
 
   {
-    CheckFieldsVisitor visitor(options_);
+    CheckFieldsVisitor visitor;
     if (visitor.ContainsInvalidFields(info))
       reporter_.ClassContainsInvalidFields(info, visitor.invalid_fields());
   }
@@ -272,7 +276,7 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
       reporter_.ClassContainsGCRootRefs(info, visitor.gc_root_refs());
     }
 
-    CheckForbiddenFieldsVisitor visitor(options_);
+    CheckForbiddenFieldsVisitor visitor;
     if (visitor.ContainsForbiddenFields(info)) {
       reporter_.ClassContainsForbiddenFields(info, visitor.forbidden_fields());
     }
@@ -399,7 +403,7 @@ CXXRecordDecl* BlinkGCPluginConsumer::GetLeftMostBase(
 bool BlinkGCPluginConsumer::DeclaresVirtualMethods(CXXRecordDecl* decl) {
   CXXRecordDecl::method_iterator it = decl->method_begin();
   for (; it != decl->method_end(); ++it)
-    if (it->isVirtual() && !it->isPure())
+    if (it->isVirtual() && !it->isPureVirtual())
       return true;
   return false;
 }
@@ -453,6 +457,14 @@ void BlinkGCPluginConsumer::CheckDispatch(RecordInfo* info) {
     visitor.TraverseStmt(defn->getBody());
     if (!visitor.dispatched_to_receiver())
       reporter_.MissingFinalizeDispatch(defn, info);
+  }
+
+  if (info->HasMultipleTraceDispatchMethods()) {
+    reporter_.RedundantTraceDispatchMethod(info, base);
+  }
+
+  if (info->HasMultipleFinalizeDispatchMethods()) {
+    reporter_.RedundantFinalizeDispatchMethod(info, base);
   }
 }
 

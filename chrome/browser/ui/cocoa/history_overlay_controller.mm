@@ -8,15 +8,11 @@
 
 #include <cmath>
 
+#include "base/apple/scoped_cftyperef.h"
 #include "base/check.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "chrome/grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 // Constants ///////////////////////////////////////////////////////////////////
 
@@ -78,19 +74,19 @@ const CGFloat kShieldHeightCompletionAdjust = 10;
   [super setFrameSize:newSize];
 
   if (!_shapeLayer.path || !NSEqualSizes(oldSize, newSize)) {
-    base::ScopedCFTypeRef<CGMutablePathRef> oval(CGPathCreateMutable());
+    base::apple::ScopedCFTypeRef<CGMutablePathRef> oval(CGPathCreateMutable());
     CGRect ovalRect = CGRectMake(0, 0, newSize.width, newSize.height);
-    CGPathAddEllipseInRect(oval, nullptr, ovalRect);
-    _shapeLayer.path = oval;
+    CGPathAddEllipseInRect(oval.get(), nullptr, ovalRect);
+    _shapeLayer.path = oval.get();
   }
 }
 
 - (void)setShieldAlpha:(CGFloat)shieldAlpha {
   if (shieldAlpha != _shieldAlpha) {
     _shieldAlpha = shieldAlpha;
-    base::ScopedCFTypeRef<CGColorRef> fillColor(
+    base::apple::ScopedCFTypeRef<CGColorRef> fillColor(
         CGColorCreateGenericGray(0, shieldAlpha));
-    _shapeLayer.fillColor = fillColor;
+    _shapeLayer.fillColor = fillColor.get();
   }
 }
 
@@ -127,9 +123,9 @@ const CGFloat kShieldHeightCompletionAdjust = 10;
   // When tracking the gesture, the height is constant and the alpha value
   // changes from [0.25, 0.65].
   CGFloat height = kShieldHeight;
-  CGFloat shieldAlpha = std::min(static_cast<CGFloat>(0.65),
-                                 std::max(gestureAmount,
-                                          static_cast<CGFloat>(0.25)));
+  CGFloat shieldAlpha =
+      std::min(static_cast<CGFloat>(0.65),
+               std::max(gestureAmount, static_cast<CGFloat>(0.25)));
 
   // When the gesture is very likely to be completed (90% in this case), grow
   // the semicircle's height and lock the alpha to 0.75.
@@ -144,10 +140,11 @@ const CGFloat kShieldHeightCompletionAdjust = 10;
   frame.origin.y = (NSHeight(parentFrame) / 2) - (height / 2);
 
   CGFloat width = std::min(kShieldRadius * gestureAmount, kShieldRadius);
-  if (_mode == kHistoryOverlayModeForward)
+  if (_mode == kHistoryOverlayModeForward) {
     frame.origin.x = NSMaxX(parentFrame) - width;
-  else if (_mode == kHistoryOverlayModeBack)
+  } else if (_mode == kHistoryOverlayModeBack) {
     frame.origin.x = NSMinX(parentFrame) - kShieldWidth + width;
+  }
 
   self.view.frame = frame;
   _contentView.shieldAlpha = shieldAlpha;

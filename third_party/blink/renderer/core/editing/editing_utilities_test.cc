@@ -4,20 +4,28 @@
 
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 
+#include "skia/ext/codec_utils.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 
 namespace blink {
 
-class EditingUtilitiesTest : public EditingTestBase {};
+class EditingUtilitiesTest : public EditingTestBase {
+  void SetUp() override {
+    EditingTestBase::SetUp();
+    // Skia's Fontations backend needs a PNG decoder registered.
+    skia::EnsurePNGDecoderRegistered();
+  }
+};
 
 TEST_F(EditingUtilitiesTest, ComputePositionForNodeRemovalAfterChildren) {
   SetBodyContent("<div id=a><p id=b><img id=c></p></div>");
@@ -150,6 +158,25 @@ TEST_F(EditingUtilitiesTest, IsEditablePositionWithSpan) {
   EXPECT_TRUE(IsEditablePosition(Position(target, 0)));
 }
 
+// https://issues.chromium.org/issues/41490809
+TEST_F(EditingUtilitiesTest, IsEditablePositionWithVisibleInertElement) {
+  SetBodyContent(
+      R"(<div contenteditable><span inert id="target">abc</span></div>)");
+  Element& target = *GetElementById("target");
+  EXPECT_TRUE(IsEditablePosition(Position::BeforeNode(target)));
+  EXPECT_FALSE(IsEditablePosition(Position(target.firstChild(), 0)));
+}
+
+// https://issues.chromium.org/issues/41490809
+TEST_F(EditingUtilitiesTest, IsEditablePositionWithInVisibleInertElement) {
+  SetBodyContent(
+      R"(<div contenteditable>
+        <span inert id="target" style="display: none;">abc</span></div>)");
+  Element& target = *GetElementById("target");
+  EXPECT_TRUE(IsEditablePosition(Position::BeforeNode(target)));
+  EXPECT_FALSE(IsEditablePosition(Position(target.firstChild(), 0)));
+}
+
 TEST_F(EditingUtilitiesTest, isEditablePositionWithTable) {
   // We would like to have below DOM tree without HTML, HEAD and BODY element.
   //   <table id=table><caption>foo</caption></table>
@@ -157,7 +184,7 @@ TEST_F(EditingUtilitiesTest, isEditablePositionWithTable) {
   // element. So, we build DOM tree manually.
   // Note: This is unusual HTML taken from http://crbug.com/574230
   Element* table = GetDocument().CreateRawElement(html_names::kTableTag);
-  table->setInnerHTML("<caption>foo</caption>");
+  table->SetInnerHTMLWithoutTrustedTypes("<caption>foo</caption>");
   while (GetDocument().firstChild())
     GetDocument().firstChild()->remove();
   GetDocument().AppendChild(table);
@@ -179,8 +206,7 @@ TEST_F(EditingUtilitiesTest,
       "345</div>");
   const auto& sample = *GetElementById("sample");
   const auto& text_012 = *To<Text>(sample.firstChild());
-  const auto& input =
-      ToTextControl(*GetDocument().QuerySelector(AtomicString("input")));
+  const auto& input = ToTextControl(*QuerySelector("input"));
   const auto& inner_editor = *input.InnerEditorElement();
   const auto& text_abc = *To<Text>(inner_editor.firstChild());
 
@@ -213,8 +239,7 @@ TEST_F(EditingUtilitiesTest,
       "345</div>");
   const auto& sample = *GetElementById("sample");
   const auto& text_012 = *To<Text>(sample.firstChild());
-  const auto& input =
-      ToTextControl(*GetDocument().QuerySelector(AtomicString("input")));
+  const auto& input = ToTextControl(*QuerySelector("input"));
   const auto& inner_editor = *input.InnerEditorElement();
   const auto& text_abc = *To<Text>(inner_editor.firstChild());
 
@@ -248,8 +273,7 @@ TEST_F(EditingUtilitiesTest,
       "345</div>");
   const auto& sample = *GetElementById("sample");
   const auto& text_012 = *To<Text>(sample.firstChild());
-  const auto& input =
-      ToTextControl(*GetDocument().QuerySelector(AtomicString("input")));
+  const auto& input = ToTextControl(*QuerySelector("input"));
   const auto& inner_editor = *input.InnerEditorElement();
   const auto& text_abc = *To<Text>(inner_editor.firstChild());
 
@@ -971,7 +995,7 @@ TEST_F(EditingUtilitiesTest, previousPositionOf_Backspace_TextTransform) {
 
 TEST_F(EditingUtilitiesTest, IsTabHTMLSpanElementOnDisplayNone) {
   SetBodyContent("<span style=\"display:none\">\t</span>");
-  const Node* const node = GetDocument().QuerySelector(AtomicString("span"));
+  const Node* const node = QuerySelector("span");
   EXPECT_EQ(false, IsTabHTMLSpanElement(node));
 }
 
@@ -1086,6 +1110,13 @@ TEST_F(EditingUtilitiesTest, previousPositionOf_Backspace_SurrogatePairs) {
   EXPECT_EQ(Position(node, 0),
             PreviousPositionOf(Position(node, 1),
                                PositionMoveType::kBackwardDeletion));
+}
+
+// crbug.com/1503530
+TEST_F(EditingUtilitiesTest, IsRenderedAsNonInlineTableImageOrHR) {
+  SetBodyContent("<p id='target' hidden></p>");
+  IsRenderedAsNonInlineTableImageOrHR(GetElementById("target"));
+  // Pass if no crash.
 }
 
 }  // namespace blink

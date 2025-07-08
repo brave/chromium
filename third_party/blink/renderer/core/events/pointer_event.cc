@@ -20,7 +20,8 @@ PointerEvent::PointerEvent(const AtomicString& type,
                            const PointerEventInit* initializer,
                            base::TimeTicks platform_time_stamp,
                            MouseEvent::SyntheticEventType synthetic_event_type,
-                           WebMenuSourceType menu_source_type)
+                           WebMenuSourceType menu_source_type,
+                           bool prevent_counting_as_interaction)
     : MouseEvent(type,
                  initializer,
                  platform_time_stamp,
@@ -37,8 +38,8 @@ PointerEvent::PointerEvent(const AtomicString& type,
       tangential_pressure_(0),
       twist_(0),
       is_primary_(false),
-      coalesced_events_targets_dirty_(false),
-      predicted_events_targets_dirty_(false) {
+      persistent_device_id_(0),
+      prevent_counting_as_interaction_(prevent_counting_as_interaction) {
   if (initializer->hasPointerId())
     pointer_id_ = initializer->pointerId();
   if (initializer->hasWidth())
@@ -89,8 +90,8 @@ PointerEvent::PointerEvent(const AtomicString& type,
         PointerEventUtil::TransformToAzimuthInValidRange(azimuth_angle_),
         PointerEventUtil::TransformToAltitudeInValidRange(altitude_angle_));
   }
-  if (initializer->hasDeviceId()) {
-    device_id_ = initializer->deviceId();
+  if (initializer->hasPersistentDeviceId()) {
+    persistent_device_id_ = initializer->persistentDeviceId();
   }
 }
 
@@ -138,8 +139,6 @@ double PointerEvent::offsetY() const {
 }
 
 void PointerEvent::ReceivedTarget() {
-  coalesced_events_targets_dirty_ = true;
-  predicted_events_targets_dirty_ = true;
   MouseEvent::ReceivedTarget();
 }
 
@@ -154,26 +153,16 @@ Node* PointerEvent::fromElement() const {
 HeapVector<Member<PointerEvent>> PointerEvent::getCoalescedEvents() {
   if (auto* local_dom_window = DynamicTo<LocalDOMWindow>(view())) {
     auto* document = local_dom_window->document();
-    if (document && !local_dom_window->isSecureContext()) {
+    if (document && !local_dom_window->IsSecureContext()) {
       UseCounter::Count(document,
                         WebFeature::kGetCoalescedEventsInInsecureContext);
     }
   }
 
-  if (coalesced_events_targets_dirty_) {
-    for (auto coalesced_event : coalesced_events_)
-      coalesced_event->SetTarget(target());
-    coalesced_events_targets_dirty_ = false;
-  }
   return coalesced_events_;
 }
 
 HeapVector<Member<PointerEvent>> PointerEvent::getPredictedEvents() {
-  if (predicted_events_targets_dirty_) {
-    for (auto predicted_event : predicted_events_)
-      predicted_event->SetTarget(target());
-    predicted_events_targets_dirty_ = false;
-  }
   return predicted_events_;
 }
 
@@ -194,6 +183,15 @@ void PointerEvent::Trace(Visitor* visitor) const {
 DispatchEventResult PointerEvent::DispatchEvent(EventDispatcher& dispatcher) {
   if (type().empty())
     return DispatchEventResult::kNotCanceled;  // Shouldn't happen.
+
+  if (isTrusted()) {
+    for (auto coalesced_event : coalesced_events_) {
+      coalesced_event->SetTarget(&dispatcher.GetNode());
+    }
+    for (auto predicted_event : predicted_events_) {
+      predicted_event->SetTarget(&dispatcher.GetNode());
+    }
+  }
 
   if (type() == event_type_names::kClick) {
     return MouseEvent::DispatchEvent(dispatcher);

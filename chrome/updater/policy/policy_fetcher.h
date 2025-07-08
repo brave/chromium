@@ -5,58 +5,41 @@
 #ifndef CHROME_UPDATER_POLICY_POLICY_FETCHER_H_
 #define CHROME_UPDATER_POLICY_POLICY_FETCHER_H_
 
-#include <vector>
+#include <optional>
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/sequence_checker.h"
-#include "base/task/sequenced_task_runner.h"
-#include "chrome/updater/configurator.h"
-#include "chrome/updater/device_management/dm_client.h"
-#include "chrome/updater/device_management/dm_response_validator.h"
+#include "base/time/time.h"
 #include "chrome/updater/policy/manager.h"
 #include "chrome/updater/policy/service.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "url/gurl.h"
+
+namespace policy {
+enum class PolicyFetchReason;
+}  // namespace policy
 
 namespace updater {
 
-// The PolicyFetcher handles registration and DM policy refreshes.
+class PersistedData;
+
 class PolicyFetcher : public base::RefCountedThreadSafe<PolicyFetcher> {
  public:
-  PolicyFetcher(const GURL& server_url,
-                const absl::optional<PolicyServiceProxyConfiguration>&
-                    proxy_configuration);
-  void FetchPolicies(
+  virtual void FetchPolicies(
+      policy::PolicyFetchReason reason,
       base::OnceCallback<void(int, scoped_refptr<PolicyManagerInterface>)>
-          callback);
+          callback) = 0;
 
- private:
+ protected:
   friend class base::RefCountedThreadSafe<PolicyFetcher>;
-  virtual ~PolicyFetcher();
-
-  void RegisterDevice(
-      scoped_refptr<base::SequencedTaskRunner> main_task_runner,
-      base::OnceCallback<void(bool, DMClient::RequestResult)> callback);
-  void OnRegisterDeviceRequestComplete(
-      base::OnceCallback<void(int, scoped_refptr<PolicyManagerInterface>)>
-          callback,
-      bool is_enrollment_mandatory,
-      DMClient::RequestResult result);
-
-  void FetchPolicy(
-      base::OnceCallback<void(scoped_refptr<PolicyManagerInterface>)> callback);
-  scoped_refptr<PolicyManagerInterface> OnFetchPolicyRequestComplete(
-      DMClient::RequestResult result,
-      const std::vector<PolicyValidationResult>& validation_results);
-
-  SEQUENCE_CHECKER(sequence_checker_);
-  const GURL server_url_;
-  const absl::optional<PolicyServiceProxyConfiguration>
-      policy_service_proxy_configuration_;
-  const scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner_;
+  virtual ~PolicyFetcher() = default;
 };
+
+// Creates an out-of-process policy fetcher that delegates fetch tasks to the
+// enterprise companion app.
+[[nodiscard]] scoped_refptr<PolicyFetcher> CreateOutOfProcessPolicyFetcher(
+    scoped_refptr<PersistedData> persisted_data,
+    std::optional<bool> override_is_managed_device,
+    base::TimeDelta override_ceca_connection_timeout);
 
 }  // namespace updater
 

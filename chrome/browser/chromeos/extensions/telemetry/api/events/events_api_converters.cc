@@ -5,15 +5,16 @@
 #include "chrome/browser/chromeos/extensions/telemetry/api/events/events_api_converters.h"
 
 #include <cstdint>
+#include <optional>
 
 #include "base/notreached.h"
 #include "chrome/common/chromeos/extensions/api/events.h"
 #include "chromeos/crosapi/mojom/nullable_primitives.mojom.h"
+#include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_event_service.mojom.h"
 #include "chromeos/crosapi/mojom/telemetry_keyboard_event.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace chromeos::converters {
+namespace chromeos::converters::events {
 
 namespace {
 
@@ -102,6 +103,29 @@ cx_events::ExternalDisplayEventInfo UncheckedConvertPtr(
   cx_events::ExternalDisplayEventInfo result;
 
   result.event = Convert(ptr->state);
+  result.display_info = ConvertStructPtr(std::move(ptr->display_info));
+
+  return result;
+}
+
+cx_events::ExternalDisplayInfo UncheckedConvertPtr(
+    crosapi::ProbeExternalDisplayInfoPtr input) {
+  cx_events::ExternalDisplayInfo result;
+
+  result.display_width = std::move(input->display_width);
+  result.display_height = std::move(input->display_height);
+  result.resolution_horizontal = std::move(input->resolution_horizontal);
+  result.resolution_vertical = std::move(input->resolution_vertical);
+  result.refresh_rate = std::move(input->refresh_rate);
+  result.manufacturer = std::move(input->manufacturer);
+  result.model_id = std::move(input->model_id);
+  // Not reporting serial_number for now until we get Privacy's approval.
+  // result.serial_number = std::move(input->serial_number);
+  result.manufacture_week = std::move(input->manufacture_week);
+  result.manufacture_year = std::move(input->manufacture_year);
+  result.edid_version = std::move(input->edid_version);
+  result.input_type = Convert(input->input_type);
+  result.display_name = (input->display_name);
 
   return result;
 }
@@ -133,7 +157,7 @@ cx_events::StylusGarageEventInfo UncheckedConvertPtr(
   return result;
 }
 
-absl::optional<uint32_t> UncheckedConvertPtr(crosapi::UInt32ValuePtr ptr) {
+std::optional<uint32_t> UncheckedConvertPtr(crosapi::UInt32ValuePtr ptr) {
   return ptr->value;
 }
 
@@ -161,6 +185,25 @@ cx_events::TouchpadConnectedEventInfo UncheckedConvertPtr(
   std::vector<cx_events::InputTouchButton> converted_buttons =
       ConvertVector(std::move(ptr->buttons));
   result.buttons = std::move(converted_buttons);
+  result.max_x = ptr->max_x;
+  result.max_y = ptr->max_y;
+  result.max_pressure = ptr->max_pressure;
+  return result;
+}
+
+cx_events::TouchscreenTouchEventInfo UncheckedConvertPtr(
+    crosapi::TelemetryTouchscreenTouchEventInfoPtr ptr) {
+  cx_events::TouchscreenTouchEventInfo result;
+  std::vector<cx_events::TouchPointInfo> converted_touch_points =
+      ConvertStructPtrVector<cx_events::TouchPointInfo>(
+          std::move(ptr->touch_points));
+  result.touch_points = std::move(converted_touch_points);
+  return result;
+}
+
+cx_events::TouchscreenConnectedEventInfo UncheckedConvertPtr(
+    crosapi::TelemetryTouchscreenConnectedEventInfoPtr ptr) {
+  cx_events::TouchscreenConnectedEventInfo result;
   result.max_x = ptr->max_x;
   result.max_y = ptr->max_y;
   result.max_pressure = ptr->max_pressure;
@@ -487,6 +530,10 @@ crosapi::TelemetryEventCategoryEnum Convert(cx_events::EventCategory input) {
       return crosapi::TelemetryEventCategoryEnum::kTouchpadTouch;
     case cx_events::EventCategory::kTouchpadConnected:
       return crosapi::TelemetryEventCategoryEnum::kTouchpadConnected;
+    case cx_events::EventCategory::kTouchscreenTouch:
+      return crosapi::TelemetryEventCategoryEnum::kTouchscreenTouch;
+    case cx_events::EventCategory::kTouchscreenConnected:
+      return crosapi::TelemetryEventCategoryEnum::kTouchscreenConnected;
     case cx_events::EventCategory::kStylusTouch:
       return crosapi::TelemetryEventCategoryEnum::kStylusTouch;
     case cx_events::EventCategory::kStylusConnected:
@@ -508,8 +555,20 @@ cx_events::InputTouchButtonState Convert(
   NOTREACHED();
 }
 
+cx_events::DisplayInputType Convert(crosapi::ProbeDisplayInputType input) {
+  switch (input) {
+    case crosapi::ProbeDisplayInputType::kUnmappedEnumField:
+      return cx_events::DisplayInputType::kUnknown;
+    case crosapi::ProbeDisplayInputType::kDigital:
+      return cx_events::DisplayInputType::kDigital;
+    case crosapi::ProbeDisplayInputType::kAnalog:
+      return cx_events::DisplayInputType::kAnalog;
+  }
+  NOTREACHED();
+}
+
 int Convert(uint32_t input) {
   return static_cast<int>(input);
 }
 
-}  // namespace chromeos::converters
+}  // namespace chromeos::converters::events

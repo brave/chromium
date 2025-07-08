@@ -6,9 +6,10 @@ package org.chromium.chrome.browser.tasks.tab_management;
 
 import android.content.Context;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.profiles.Profile;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,22 +17,25 @@ import java.util.List;
 /**
  * This is the coordinator for MessageCardProvider component. This component is used to build a
  * TabGridMessageCardView for each {@link MessageService.MessageType}. This coordinator manages the
- * life-cycle of all shared components and the connection between all subscribed
- * {@link MessageService}.
+ * life-cycle of all shared components and the connection between all subscribed {@link
+ * MessageService}.
  */
+@NullMarked
 public class MessageCardProviderCoordinator {
     private final MessageCardProviderMediator mMediator;
     private final List<MessageService> mMessageServices = new ArrayList<>();
 
-    MessageCardProviderCoordinator(Context context, Supplier<Boolean> isIncognitoSupplier,
+    MessageCardProviderCoordinator(
+            Context context,
+            Supplier<Profile> profileSupplier,
             MessageCardView.DismissActionProvider uiDismissActionProvider) {
-        mMediator = new MessageCardProviderMediator(
-                context, isIncognitoSupplier, uiDismissActionProvider);
+        mMediator =
+                new MessageCardProviderMediator(context, profileSupplier, uiDismissActionProvider);
     }
 
     /**
-     * Subscribes to a {@link MessageService} to get any message changes. @see
-     * MessageObserver.
+     * Subscribes to a {@link MessageService} to get any message changes. @see MessageObserver.
+     *
      * @param service The {@link MessageService} to subscribe.
      */
     public void subscribeMessageService(MessageService service) {
@@ -50,10 +54,9 @@ public class MessageCardProviderCoordinator {
     /**
      * @param messageType The {@link MessageService#mMessageType} associates with the message.
      * @return The next {@link MessageCardProviderMediator.Message} for the given messageType, if
-     *         there is any. Otherwise returns null.
+     *     there is any. Otherwise returns null.
      */
-    @Nullable
-    public MessageCardProviderMediator.Message getNextMessageItemForType(
+    public MessageCardProviderMediator.@Nullable Message getNextMessageItemForType(
             @MessageService.MessageType int messageType) {
         return mMediator.getNextMessageItemForType(messageType);
     }
@@ -67,9 +70,7 @@ public class MessageCardProviderCoordinator {
         return mMediator.isMessageShown(messageType, identifier);
     }
 
-    /**
-     * Clean up all member fields.
-     */
+    /** Clean up all member fields. */
     public void destroy() {
         for (int i = 0; i < mMessageServices.size(); i++) {
             mMessageServices.get(i).removeObserver(mMediator);

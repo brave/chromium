@@ -22,13 +22,15 @@ class ChromeReplayImpl : public ChromeDesktopImpl {
                    std::unique_ptr<DevToolsClient> websocket_client,
                    std::vector<std::unique_ptr<DevToolsEventListener>>
                        devtools_event_listeners,
-                   absl::optional<MobileDevice> mobile_device,
+                   std::optional<MobileDevice> mobile_device,
                    std::string page_load_strategy,
                    base::Process process,
                    const base::CommandLine& command,
                    base::ScopedTempDir* user_data_dir,
                    base::ScopedTempDir* extension_dir,
-                   bool network_emulation_enabled);
+                   bool network_emulation_enabled,
+                   bool autoaccept_beforeunload,
+                   bool enable_extension_targets);
   ~ChromeReplayImpl() override;
 
   // A no-op: all this does in DesktopChromeImpl is kill the Chrome process.

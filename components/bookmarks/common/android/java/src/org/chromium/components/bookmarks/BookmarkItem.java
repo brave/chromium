@@ -4,13 +4,13 @@
 
 package org.chromium.components.bookmarks;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.url_formatter.SchemeDisplay;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.url.GURL;
 
-/**
- * Contains data about a bookmark or bookmark folder.
- */
+/** Contains data about a bookmark or bookmark folder. */
+@NullMarked
 public class BookmarkItem {
     private final String mTitle;
     private final GURL mUrl;
@@ -22,11 +22,22 @@ public class BookmarkItem {
     private final long mDateAdded;
     private final boolean mRead;
     private final long mDateLastOpened;
+    private final boolean mIsAccountBookmark;
+
     private boolean mForceEditableForTesting;
 
-    public BookmarkItem(BookmarkId id, String title, GURL url, boolean isFolder,
-            BookmarkId parentId, boolean isEditable, boolean isManaged, long dateAdded,
-            boolean read, long dateLastOpened) {
+    public BookmarkItem(
+            BookmarkId id,
+            String title,
+            GURL url,
+            boolean isFolder,
+            BookmarkId parentId,
+            boolean isEditable,
+            boolean isManaged,
+            long dateAdded,
+            boolean read,
+            long dateLastOpened,
+            boolean isAccountBookmark) {
         mId = id;
         mTitle = title;
         mUrl = url;
@@ -37,6 +48,7 @@ public class BookmarkItem {
         mDateAdded = dateAdded;
         mRead = read;
         mDateLastOpened = dateLastOpened;
+        mIsAccountBookmark = isAccountBookmark;
     }
 
     /** Returns the title of the bookmark item. */
@@ -111,7 +123,12 @@ public class BookmarkItem {
         return mDateLastOpened;
     }
 
-    // TODO(https://crbug.com/1019217): Remove when BookmarkModel is stubbed in tests instead.
+    /** Returns whether the bookmark is linked to your Google account. */
+    public boolean isAccountBookmark() {
+        return mIsAccountBookmark;
+    }
+
+    // TODO(crbug.com/40655824): Remove when BookmarkModel is stubbed in tests instead.
     public void forceEditableForTesting() {
         mForceEditableForTesting = true;
     }

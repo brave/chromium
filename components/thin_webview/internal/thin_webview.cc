@@ -5,13 +5,16 @@
 #include "components/thin_webview/internal/thin_webview.h"
 
 #include "base/android/jni_android.h"
+#include "cc/input/browser_controls_offset_tag_modifications.h"
 #include "cc/input/browser_controls_state.h"
 #include "cc/slim/layer.h"
 #include "components/embedder_support/android/delegate/web_contents_delegate_android.h"
-#include "components/thin_webview/internal/jni_headers/ThinWebViewImpl_jni.h"
 #include "components/thin_webview/thin_webview_initializer.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/thin_webview/internal/jni_headers/ThinWebViewImpl_jni.h"
 
 using base::android::JavaParamRef;
 using web_contents_delegate_android::WebContentsDelegateAndroid;
@@ -41,9 +44,9 @@ ThinWebView::ThinWebView(JNIEnv* env,
       window_android_(window_android),
       web_contents_(nullptr) {}
 
-ThinWebView::~ThinWebView() {}
+ThinWebView::~ThinWebView() = default;
 
-void ThinWebView::Destroy(JNIEnv* env, const JavaParamRef<jobject>& object) {
+void ThinWebView::Destroy(JNIEnv* env) {
   delete this;
 }
 
@@ -51,12 +54,11 @@ void ThinWebView::PrimaryPageChanged(content::Page& page) {
   // Disable browser controls when used for thin webview.
   web_contents_->UpdateBrowserControlsState(cc::BrowserControlsState::kHidden,
                                             cc::BrowserControlsState::kHidden,
-                                            false);
+                                            false, std::nullopt);
 }
 
 void ThinWebView::SetWebContents(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& jweb_contents,
     const JavaParamRef<jobject>& jweb_contents_delegate) {
   content::WebContents* web_contents =
@@ -88,7 +90,6 @@ void ThinWebView::SetWebContents(content::WebContents* web_contents,
 }
 
 void ThinWebView::SizeChanged(JNIEnv* env,
-                              const JavaParamRef<jobject>& object,
                               jint width,
                               jint height) {
   view_size_ = gfx::Size(width, height);

@@ -8,9 +8,15 @@
 #include "base/callback_list.h"
 #include "base/files/file_path.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/security_interstitials/core/controller_client.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#include "components/policy/core/common/management/scoped_management_service_override_for_testing.h"
+#endif
 
 namespace content {
 class WebContents;
@@ -21,6 +27,10 @@ namespace policy {
 class PolicyMap;
 
 void GetTestDataDirectory(base::FilePath* test_data_directory);
+
+// Returns test_data_directory/dir/<file>.
+base::FilePath GetTestFilePath(const base::FilePath& dir,
+                               const base::FilePath& file);
 
 class PolicyTest : public PlatformBrowserTest {
  public:
@@ -43,7 +53,7 @@ class PolicyTest : public PlatformBrowserTest {
 
   static void SetPolicy(PolicyMap* policies,
                         const char* key,
-                        absl::optional<base::Value> value);
+                        std::optional<base::Value> value);
 
   static bool FetchSubresource(content::WebContents* web_contents,
                                const GURL& url);
@@ -68,6 +78,21 @@ class PolicyTestAppTerminationObserver {
 
   base::CallbackListSubscription terminating_subscription_;
   bool terminated_ = false;
+};
+
+class [[maybe_unused, nodiscard]] ScopedDomainEnterpriseManagement {
+ public:
+  ScopedDomainEnterpriseManagement() = default;
+  ~ScopedDomainEnterpriseManagement() = default;
+
+ private:
+// Indicate a machine is domain-joined by enterprise policy for mac and
+// windows only.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  policy::ScopedManagementServiceOverrideForTesting browser_management{
+      policy::ManagementServiceFactory::GetForPlatform(),
+      policy::EnterpriseManagementAuthority::CLOUD_DOMAIN};
+#endif
 };
 
 }  // namespace policy

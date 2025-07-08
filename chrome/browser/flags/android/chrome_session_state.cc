@@ -7,10 +7,12 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/flags/jni_headers/ChromeSessionState_jni.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "services/metrics/public/cpp/ukm_source.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/flags/jni_headers/ChromeSessionState_jni.h"
 
 using chrome::android::ActivityType;
 using chrome::android::DarkModeState;
@@ -38,12 +40,12 @@ CustomTabsVisibilityHistogram GetCustomTabsVisibleValue(
       return VISIBLE_CHROME_TAB;
     case ActivityType::kCustomTab:
     case ActivityType::kTrustedWebActivity:
+    case ActivityType::kAuthTab:
       return VISIBLE_CUSTOM_TAB;
     case ActivityType::kPreFirstTab:
       return NO_VISIBLE_TAB;
   }
   NOTREACHED();
-  return VISIBLE_CHROME_TAB;
 }
 
 ActivityType GetInitialActivityTypeForTesting() {
@@ -94,14 +96,14 @@ void RegisterActivityTypePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kLastActivityTypePref, -1);
 }
 
-absl::optional<chrome::android::ActivityType> GetActivityTypeFromLocalState(
+std::optional<chrome::android::ActivityType> GetActivityTypeFromLocalState(
     PrefService* local_state) {
   auto value = local_state->GetInteger(kLastActivityTypePref);
   if (value >= static_cast<int>(ActivityType::kTabbed) &&
       value <= static_cast<int>(ActivityType::kMaxValue)) {
     return static_cast<ActivityType>(value);
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void SaveActivityTypeToLocalState(PrefService* local_state,
@@ -113,7 +115,7 @@ MultipleUserProfilesState GetMultipleUserProfilesState() {
   static MultipleUserProfilesState multiple_user_profiles_state =
       static_cast<MultipleUserProfilesState>(
           Java_ChromeSessionState_getMultipleUserProfilesState(
-              base::android::AttachCurrentThread()));
+              jni_zero::AttachCurrentThread()));
   return multiple_user_profiles_state;
 }
 

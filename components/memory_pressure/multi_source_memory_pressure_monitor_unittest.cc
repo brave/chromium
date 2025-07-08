@@ -4,12 +4,13 @@
 
 #include "components/memory_pressure/multi_source_memory_pressure_monitor.h"
 
+#include <optional>
+
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace memory_pressure {
 
@@ -19,8 +20,15 @@ TEST(MultiSourceMemoryPressureMonitorTest, NoEvaluatorUponConstruction) {
 }
 
 TEST(MultiSourceMemoryPressureMonitorTest, RunDispatchCallback) {
+#if BUILDFLAG(IS_FUCHSIA)
+  // On Fuchsia, the previous SingleThreadTaskEnvironment was sufficient.
   base::test::SingleThreadTaskEnvironment task_environment(
       base::test::TaskEnvironment::MainThreadType::IO);
+#else
+  // On other platforms (like Mac), the full TaskEnvironment is needed for the
+  // ThreadPool.
+  base::test::TaskEnvironment task_environment;
+#endif
 
   MultiSourceMemoryPressureMonitor monitor;
   bool callback_called = false;
@@ -32,13 +40,13 @@ TEST(MultiSourceMemoryPressureMonitorTest, RunDispatchCallback) {
   auto* const aggregator = monitor.aggregator_for_testing();
 
   aggregator->OnVoteForTesting(
-      absl::nullopt, base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE);
+      std::nullopt, base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE);
   aggregator->NotifyListenersForTesting();
   EXPECT_TRUE(callback_called);
 
   // Clear vote so aggregator's destructor doesn't think there are loose voters.
   aggregator->OnVoteForTesting(
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE, absl::nullopt);
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE, std::nullopt);
 }
 
 }  // namespace memory_pressure

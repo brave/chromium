@@ -9,14 +9,10 @@
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
-using base::test::ios::WaitUntilConditionOrTimeout;
 using base::test::ios::kWaitForFileOperationTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 NSURL* testStorageFileURL() {
   NSURL* temporaryDirectory = [NSURL fileURLWithPath:NSTemporaryDirectory()];
@@ -40,12 +36,13 @@ class ArchivableCredentialStoreTest : public PlatformTest {
 
 ArchivableCredential* TestCredential() {
   return [[ArchivableCredential alloc] initWithFavicon:@"favicon"
-                                    keychainIdentifier:@"keychainIdentifier"
+                                                  gaia:nil
+                                              password:@"qwerty123"
                                                   rank:5
                                       recordIdentifier:@"recordIdentifier"
                                      serviceIdentifier:@"serviceIdentifier"
                                            serviceName:@"serviceName"
-                                                  user:@"user"
+                                              username:@"user"
                                                   note:@"note"];
 }
 
@@ -77,12 +74,13 @@ TEST_F(ArchivableCredentialStoreTest, update) {
 
   ArchivableCredential* updatedCredential =
       [[ArchivableCredential alloc] initWithFavicon:@"other_favicon"
-                                 keychainIdentifier:@"other_keychainIdentifier"
+                                               gaia:nil
+                                           password:@"Qwerty123!"
                                                rank:credential.rank + 10
                                    recordIdentifier:@"recordIdentifier"
                                   serviceIdentifier:@"other_serviceIdentifier"
                                         serviceName:@"other_serviceName"
-                                               user:@"other_user"
+                                           username:@"other_user"
                                                note:@"other_note"];
 
   [credentialStore updateCredential:updatedCredential];
@@ -157,4 +155,4 @@ TEST_F(ArchivableCredentialStoreTest, createFolder) {
   [deepFolderURL checkResourceIsReachableAndReturnError:&error];
   EXPECT_FALSE(error);
 }
-}
+}  // namespace

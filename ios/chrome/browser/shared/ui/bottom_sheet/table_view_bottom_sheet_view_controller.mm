@@ -6,17 +6,16 @@
 
 #import <Foundation/Foundation.h>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import <optional>
+#import <ostream>
+
+#import "base/check.h"
+#import "base/notreached.h"
+#import "ios/chrome/browser/shared/ui/bottom_sheet/table_view_bottom_sheet_view_controller+subclassing.h"
+#import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/ui/table_view/table_view_cells_constants.h"
 
 namespace {
-
-// Estimated base height value for the bottom sheet without the table view.
-CGFloat const kEstimatedBaseHeightForBottomSheet = 195;
-
-// Sets a custom radius for the half sheet presentation.
-CGFloat const kHalfSheetCornerRadius = 20;
 
 // Estimated row height for each cell in the table view.
 CGFloat const kTableViewEstimatedRowHeight = 75;
@@ -24,34 +23,90 @@ CGFloat const kTableViewEstimatedRowHeight = 75;
 // Radius size of the table view.
 CGFloat const kTableViewCornerRadius = 10;
 
-// TableView's width constraint multiplier in Portrait mode for iPhone only.
-CGFloat const kPortraitIPhoneTableViewWidthMultiplier = 0.95;
+// Custom detent identifier for when the bottom sheet is minimized.
+NSString* const kCustomMinimizedDetentIdentifier = @"customMinimizedDetent";
 
-// TableView's width constraint multiplier in all mode (except iPhone Portrait).
-CGFloat const kTableViewWidthMultiplier = 0.65;
-
-// Scroll view's bottom anchor constant.
-CGFloat const kScrollViewBottomAnchorConstant = 10;
-
-// Initial height's extra bottom height padding so it does not crop the cell.
-CGFloat const kInitialHeightPadding = 5;
+// Default custom detent identifier.
+NSString* const kCustomDetentIdentifier = @"customDetent";
 
 }  // namespace
 
-@interface TableViewBottomSheetViewController () {
+@interface TableViewBottomSheetViewController () <
+    UISheetPresentationControllerDelegate> {
   // Table view for the list of suggestions.
   UITableView* _tableView;
 
-  // TableView's width constraint in portrait mode.
-  NSLayoutConstraint* _portraitTableWidthConstraint;
+  // If YES: the table view is currently showing a number of rows equal to
+  // `initialNumberOfVisibleCells`. If NO: the table view is currently showing
+  // all rows.
+  BOOL _tableViewIsMinimized;
 
-  // TableView's width constraint in landscape mode.
-  NSLayoutConstraint* _landscapeTableWidthConstraint;
+  // Height constraint for the bottom sheet when showing a number of rows equal
+  // to `initialNumberOfVisibleCells`.
+  NSLayoutConstraint* _minimizedHeightConstraint;
+
+  // Height constraint for the bottom sheet when showing all suggestions.
+  NSLayoutConstraint* _heightConstraint;
+
+  // YES if the expanded bottom sheet size takes the whole screen.
+  BOOL _expandSizeTooLarge;
+
+  // Keep track of the minimized state height.
+  std::optional<CGFloat> _minimizedStateHeight;
 }
 
 @end
 
 @implementation TableViewBottomSheetViewController
+
+- (void)reloadTableViewData {
+  [_tableView reloadData];
+  [self updateHeight];
+}
+
+- (NSInteger)selectedRow {
+  return _tableView.indexPathForSelectedRow.row;
+}
+
+- (CGFloat)tableViewWidth {
+  return _tableView.frame.size.width;
+}
+
+- (UIEdgeInsets)separatorInsetForTableViewWidth:(CGFloat)tableViewWidth
+                                    atIndexPath:(NSIndexPath*)indexPath {
+  // Make separator invisible on last cell
+  CGFloat separatorLeftMargin =
+      [self isLastRow:indexPath] ? tableViewWidth : kTableViewHorizontalSpacing;
+  return UIEdgeInsetsMake(0.f, separatorLeftMargin, 0.f, 0.f);
+}
+
+- (UITableViewCellAccessoryType)accessoryType:(NSIndexPath*)indexPath {
+  return ([self selectedRow] == indexPath.row)
+             ? UITableViewCellAccessoryCheckmark
+             : UITableViewCellAccessoryNone;
+}
+
+- (void)adjustTransactionsPrimaryActionButtonHorizontalConstraints {
+  CGFloat buttonHorizontalMargin =
+      ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad
+           ? 64.0
+           : 24.0);
+
+  [self.primaryActionButton.leadingAnchor
+      constraintEqualToAnchor:(self.view.leadingAnchor)
+                     constant:buttonHorizontalMargin]
+      .active = YES;
+  [self.primaryActionButton.trailingAnchor
+      constraintEqualToAnchor:(self.view.trailingAnchor)
+                     constant:-buttonHorizontalMargin]
+      .active = YES;
+}
+
+#pragma mark - Subclassing
+
+- (UIView*)createUnderTitleView {
+  return [self createTableView];
+}
 
 - (UITableView*)createTableView {
   _tableView = [[UITableView alloc] initWithFrame:CGRectZero
@@ -66,130 +121,94 @@ CGFloat const kInitialHeightPadding = 5;
 
   _tableView.translatesAutoresizingMaskIntoConstraints = NO;
 
+  _minimizedHeightConstraint = [_tableView.heightAnchor
+      constraintEqualToConstant:kTableViewEstimatedRowHeight *
+                                [self initialNumberOfVisibleCells]];
+  _minimizedHeightConstraint.priority = UILayoutPriorityDefaultLow;
+  _heightConstraint = [_tableView.heightAnchor
+      constraintEqualToConstant:kTableViewEstimatedRowHeight * [self rowCount]];
+
+  _minimizedHeightConstraint.active = _tableViewIsMinimized;
+  _heightConstraint.active = !_tableViewIsMinimized;
+
   [self selectFirstRow];
 
   return _tableView;
 }
 
-- (void)expand:(NSInteger)numberOfRows {
-  UISheetPresentationController* presentationController =
-      self.sheetPresentationController;
-  if (@available(iOS 16, *)) {
-    // Update the bottom anchor constant value only for iPhone.
-    if ([UIDevice currentDevice].userInterfaceIdiom ==
-        UIUserInterfaceIdiomPhone) {
-      [self
-          changeScrollViewBottomAnchorConstant:kScrollViewBottomAnchorConstant];
-    }
-
-    // Expand to custom size (only available for iOS 16+).
-    CGFloat fullHeight = [self fullHeight:numberOfRows];
-
-    __weak __typeof(self) weakSelf = self;
-    auto fullHeightBlock = ^CGFloat(
-        id<UISheetPresentationControllerDetentResolutionContext> context) {
-      BOOL tooLarge = (fullHeight > context.maximumDetentValue);
-      [weakSelf setTableViewScrollEnabled:tooLarge];
-      if (tooLarge) {
-        // Reset bottom anchor constant value so there is enough space for the
-        // gradient view.
-        [self resetScrollViewBottomAnchorConstant];
-      }
-      return tooLarge ? context.maximumDetentValue : fullHeight;
-    };
-    UISheetPresentationControllerDetent* customDetentExpand =
-        [UISheetPresentationControllerDetent
-            customDetentWithIdentifier:@"customDetentExpand"
-                              resolver:fullHeightBlock];
-    NSMutableArray* currentDetents =
-        [presentationController.detents mutableCopy];
-    [currentDetents addObject:customDetentExpand];
-    presentationController.detents = [currentDetents copy];
-    [presentationController animateChanges:^{
-      presentationController.selectedDetentIdentifier = @"customDetentExpand";
-    }];
-  } else {
-    // Expand to large detent.
-    [self setTableViewScrollEnabled:YES];
-    [presentationController animateChanges:^{
-      presentationController.selectedDetentIdentifier =
-          UISheetPresentationControllerDetentIdentifierLarge;
-    }];
-  }
-
-  [self selectFirstRow];
+- (NSUInteger)rowCount {
+  NOTREACHED() << "Subclasses of TableViewBottomSheetViewController "
+                  "must implement this method.";
 }
 
-- (CGFloat)bottomSheetEstimatedHeight {
-  return kEstimatedBaseHeightForBottomSheet;
-}
-
-- (CGFloat)tableViewEstimatedRowHeight {
-  return kTableViewEstimatedRowHeight;
-}
-
-- (NSInteger)selectedRow {
-  return _tableView.indexPathForSelectedRow.row;
-}
-
-- (CGFloat)tableViewHeight {
-  return _tableView.contentSize.height;
+- (CGFloat)computeTableViewCellHeightAtIndex:(NSUInteger)index {
+  NOTREACHED() << "Subclasses of TableViewBottomSheetViewController "
+                  "must implement this method.";
 }
 
 #pragma mark - UIViewController
 
 - (void)viewDidLoad {
-  self.underTitleView = [self createTableView];
+  self.view.accessibilityViewIsModal = YES;
+
+  // If the table has too many rows for the initial state, we open bottom sheet
+  // minimized.
+  _tableViewIsMinimized = [self rowCount] > [self initialNumberOfVisibleCells];
+
+  self.underTitleView = [self createUnderTitleView];
 
   // Set the properties read by the super when constructing the
   // views in `-[ConfirmationAlertViewController viewDidLoad]`.
   self.imageHasFixedSize = YES;
   self.showsVerticalScrollIndicator = NO;
   self.showDismissBarButton = NO;
-  self.customSpacingAfterImage = 0;
   self.topAlignedLayout = YES;
-  self.scrollEnabled = NO;
   self.customScrollViewBottomInsets = 0;
-
-  [self updateCustomGradientViewHeight:0];
 
   [super viewDidLoad];
 
+  [self displayGradientView:NO];
+
   // Assign table view's width anchor now that it is in the same hierarchy as
   // the top view.
-  [self createTableViewWidthConstraint:self.view.layoutMarginsGuide];
+  [_tableView.widthAnchor
+      constraintEqualToAnchor:self.primaryActionButton.widthAnchor]
+      .active = YES;
 
-  [self setUpBottomSheet];
-}
+  [self setUpBottomSheetDetents];
 
-- (void)viewWillTransitionToSize:(CGSize)size
-       withTransitionCoordinator:
-           (id<UIViewControllerTransitionCoordinator>)coordinator {
-  [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-  [self adjustTableViewWidthConstraint];
-}
+  // Set selection to the first one.
+  [self selectFirstRow];
 
-- (void)viewWillAppear:(BOOL)animated {
-  // Update the custom detent with the correct initial height for the bottom
-  // sheet. (Initial height is not calculated properly in -viewDidLoad, but we
-  // need to setup the bottom sheet in that method so there is not a delay when
-  // showing the table view and the action buttons).
-  UISheetPresentationController* presentationController =
-      self.sheetPresentationController;
-  if (@available(iOS 16, *)) {
-    CGFloat bottomSheetHeight = [self initialHeight];
-    auto detentBlock = ^CGFloat(
-        id<UISheetPresentationControllerDetentResolutionContext> context) {
-      return bottomSheetHeight;
-    };
-    UISheetPresentationControllerDetent* customDetent =
-        [UISheetPresentationControllerDetent
-            customDetentWithIdentifier:@"customDetent"
-                              resolver:detentBlock];
-    presentationController.detents = @[ customDetent ];
-    presentationController.selectedDetentIdentifier = @"customDetent";
+  if (@available(iOS 17, *)) {
+    NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+        @[ UITraitPreferredContentSizeCategory.class ]);
+    [self registerForTraitChanges:traits
+                       withAction:@selector(updateHeightOnTraitChange)];
   }
 }
+
+- (void)viewIsAppearing:(BOOL)animated {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 170000
+  [super viewIsAppearing:animated];
+#endif
+
+  [self updateHeight];
+}
+
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  if (@available(iOS 17, *)) {
+    return;
+  }
+
+  if (self.traitCollection.preferredContentSizeCategory !=
+      previousTraitCollection.preferredContentSizeCategory) {
+    [self updateHeightOnTraitChange];
+  }
+}
+#endif
 
 #pragma mark - UITableViewDelegate
 
@@ -205,60 +224,102 @@ CGFloat const kInitialHeightPadding = 5;
       UITableViewCellAccessoryNone;
 }
 
-#pragma mark - Public
+// It is called when the table view is about to draw a cell for a particular
+// row.
+- (void)tableView:(UITableView*)tableView
+      willDisplayCell:(UITableViewCell*)cell
+    forRowAtIndexPath:(NSIndexPath*)indexPath {
+  // If only one suggestion exists, the item should not be selectable.
+  cell.userInteractionEnabled = [self rowCount] > 1;
+}
 
+#pragma mark - UIScrollViewDelegate
+
+- (void)scrollViewDidScroll:(UIScrollView*)scrollView {
+  [self displayGradientView:![self isScrolledToBottom]];
+}
+
+#pragma mark - UISheetPresentationControllerDelegate
+
+- (void)sheetPresentationControllerDidChangeSelectedDetentIdentifier:
+    (UISheetPresentationController*)sheetPresentationController
+    API_AVAILABLE(ios(16)) {
+  // Show the gradient view to let the user know that the view can be scrolled
+  // when the bottom sheet is in minimized state or if the expanded state takes
+  // more space than the screen.
+  NSString* selectedDetentIdentifier =
+      sheetPresentationController.selectedDetentIdentifier;
+  [self displayGradientView:selectedDetentIdentifier ==
+                                kCustomMinimizedDetentIdentifier ||
+                            (selectedDetentIdentifier ==
+                                 kCustomDetentIdentifier &&
+                             _expandSizeTooLarge)];
+}
+
+#pragma mark - Private
+
+// Maximum initial number of visible cells.
+- (CGFloat)initialNumberOfVisibleCells {
+  return 2.5;
+}
+
+// Select the first row in the table view.
 - (void)selectFirstRow {
   [_tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]
                           animated:NO
                     scrollPosition:UITableViewScrollPositionNone];
 }
 
-- (CGFloat)initialHeight {
-  CGFloat bottomSheetHeight = [self bottomSheetHeight];
-  if (bottomSheetHeight > 0) {
-    return bottomSheetHeight + kInitialHeightPadding;
+// Mocks cells to compute the table view height for the given number of rows.
+- (CGFloat)computeTableViewHeight:(NSUInteger)rowCount {
+  CGFloat height = 0;
+  for (NSUInteger i = 0; i < rowCount; i++) {
+    CGFloat cellHeight = [self computeTableViewCellHeightAtIndex:i];
+    height += cellHeight;
   }
-  // Return an estimated height if we can't calculate the actual height.
-  return kEstimatedBaseHeightForBottomSheet +
-         kTableViewEstimatedRowHeight * [self initialNumberOfVisibleCells];
+  return height;
 }
 
-- (CGFloat)fullHeight:(NSInteger)numberOfRows {
-  CGFloat bottomSheetHeight = [self bottomSheetHeight];
-  if (bottomSheetHeight > 0) {
-    return bottomSheetHeight;
+// Updates the bottom sheet's height.
+- (void)updateHeight {
+  BOOL useMinimizedState = _tableViewIsMinimized;
+
+  NSUInteger rowCount = [self rowCount];
+  if (rowCount) {
+    [self.view layoutIfNeeded];
+    CGFloat fullHeight = [self computeTableViewHeight:rowCount];
+    if (fullHeight > 0) {
+      // Update height constraints for the table view.
+      _heightConstraint.constant = fullHeight;
+
+      if (rowCount > [self initialNumberOfVisibleCells]) {
+        _minimizedHeightConstraint.constant =
+            [self computeTableViewHeightForMinimizedState:rowCount];
+      } else {
+        _minimizedHeightConstraint.constant = fullHeight;
+      }
+
+      // Do not use minized state if it is larger than the superview height.
+      useMinimizedState &=
+          [self initialHeight] < self.parentViewControllerHeight;
+    }
   }
 
-  // Return an estimated height for the bottom sheet while showing all rows
-  // (using estimated heights).
-  return kEstimatedBaseHeightForBottomSheet +
-         (kTableViewEstimatedRowHeight * numberOfRows);
-}
-
-- (void)setTableViewScrollEnabled:(BOOL)enabled {
-  _tableView.scrollEnabled = enabled;
-  self.scrollEnabled = enabled;
-
-  // Add gradient view to show that the user can scroll.
-  if (enabled) {
-    [self updateCustomGradientViewHeight:16];
-  }
-}
-
-- (CGFloat)initialNumberOfVisibleCells {
-  return 1;
-}
-
-#pragma mark - Private
-
-// Configures the bottom sheet's appearance and detents.
-- (void)setUpBottomSheet {
-  self.modalPresentationStyle = UIModalPresentationPageSheet;
+  // Update the custom detent with the correct initial height for the bottom
+  // sheet. (Initial height is not calculated properly in -viewDidLoad, but we
+  // need to setup the bottom sheet in that method so there is not a delay when
+  // showing the table view and the action buttons).
   UISheetPresentationController* presentationController =
       self.sheetPresentationController;
-  presentationController.prefersEdgeAttachedInCompactHeight = YES;
-  presentationController.widthFollowsPreferredContentSizeWhenEdgeAttached = YES;
-  if (@available(iOS 16, *)) {
+  presentationController.delegate = self;
+  // Setup the minimized height (if the table has more than
+  // `initialNumberOfVisibleCells` rows).
+  NSMutableArray* currentDetents = [[NSMutableArray alloc] init];
+  if (useMinimizedState) {
+    // Show gradient view when the user is in minimized state to show that the
+    // view can be scrolled.
+    [self displayGradientView:YES];
+
     CGFloat bottomSheetHeight = [self initialHeight];
     auto detentBlock = ^CGFloat(
         id<UISheetPresentationControllerDetentResolutionContext> context) {
@@ -266,48 +327,77 @@ CGFloat const kInitialHeightPadding = 5;
     };
     UISheetPresentationControllerDetent* customDetent =
         [UISheetPresentationControllerDetent
-            customDetentWithIdentifier:@"customDetent"
+            customDetentWithIdentifier:kCustomMinimizedDetentIdentifier
                               resolver:detentBlock];
-    presentationController.detents = @[ customDetent ];
-    presentationController.selectedDetentIdentifier = @"customDetent";
-  } else {
-    presentationController.detents = @[
-      [UISheetPresentationControllerDetent mediumDetent],
-      [UISheetPresentationControllerDetent largeDetent]
-    ];
+    [currentDetents addObject:customDetent];
   }
-  presentationController.preferredCornerRadius = kHalfSheetCornerRadius;
+
+  // Done calculating the height for the bottom sheet for
+  // `initialNumberOfVisibleCells` rows, disable minimized height constraint.
+  _minimizedHeightConstraint.active = NO;
+  _heightConstraint.active = YES;
+
+  // Calculate the full height of the bottom sheet with the minimized height
+  // constraint disabled.
+  __weak __typeof(self) weakSelf = self;
+  auto fullHeightBlock = ^CGFloat(
+      id<UISheetPresentationControllerDetentResolutionContext> context) {
+    return [weakSelf computeHeight:context.maximumDetentValue];
+  };
+  UISheetPresentationControllerDetent* customDetentExpand =
+      [UISheetPresentationControllerDetent
+          customDetentWithIdentifier:kCustomDetentIdentifier
+                            resolver:fullHeightBlock];
+  [currentDetents addObject:customDetentExpand];
+  presentationController.detents = currentDetents;
+  presentationController.selectedDetentIdentifier =
+      useMinimizedState ? kCustomMinimizedDetentIdentifier
+                        : kCustomDetentIdentifier;
 }
 
-// Creates the tableview's width constraints and set their initial active state.
-- (void)createTableViewWidthConstraint:(UILayoutGuide*)margins {
-  UIUserInterfaceIdiom idiom = [[UIDevice currentDevice] userInterfaceIdiom];
-  _portraitTableWidthConstraint = [_tableView.widthAnchor
-      constraintGreaterThanOrEqualToAnchor:margins.widthAnchor
-                                multiplier:
-                                    (idiom == UIUserInterfaceIdiomPad)
-                                        ? kTableViewWidthMultiplier
-                                        : kPortraitIPhoneTableViewWidthMultiplier];
-  _landscapeTableWidthConstraint = [_tableView.widthAnchor
-      constraintGreaterThanOrEqualToAnchor:margins.widthAnchor
-                                multiplier:kTableViewWidthMultiplier];
-  [self adjustTableViewWidthConstraint];
+// Returns whether the provided index path points to the last row of the table
+// view.
+- (BOOL)isLastRow:(NSIndexPath*)indexPath {
+  return NSUInteger(indexPath.row) == ([self rowCount] - 1);
 }
 
-// Change the tableview's width constraint based on the screen's orientation.
-- (void)adjustTableViewWidthConstraint {
-  BOOL isLandscape =
-      UIDeviceOrientationIsLandscape([UIDevice currentDevice].orientation);
-  _landscapeTableWidthConstraint.active = isLandscape;
-  _portraitTableWidthConstraint.active = !isLandscape;
+// Mocks the cells to calculate the real table view height in minized state.
+- (CGFloat)computeTableViewHeightForMinimizedState:(NSUInteger)rowCount {
+  CHECK(rowCount > [self initialNumberOfVisibleCells]);
+  CGFloat height = 0;
+  NSInteger count =
+      static_cast<NSInteger>(floor([self initialNumberOfVisibleCells]));
+  for (NSInteger i = 0; i <= count; i++) {
+    CGFloat cellHeight = [self computeTableViewCellHeightAtIndex:i];
+    if (i == count) {
+      CGFloat diff = abs([self initialNumberOfVisibleCells] - count);
+      height += cellHeight * diff;
+    } else {
+      height += cellHeight;
+    }
+  }
+  return height;
 }
 
-// Returns the height of the bottom sheet view.
-- (CGFloat)bottomSheetHeight {
-  return
-      [self.view
-          systemLayoutSizeFittingSize:CGSizeMake(self.view.frame.size.width, 1)]
-          .height;
+// Returns the bottom sheet's height, limited to the maximum possible height.
+- (CGFloat)computeHeight:(CGFloat)maximumDetentValue {
+  CGFloat preferredHeight = [self preferredHeightForContent];
+  _expandSizeTooLarge = (preferredHeight > maximumDetentValue);
+  return _expandSizeTooLarge ? maximumDetentValue : preferredHeight;
+}
+
+- (CGFloat)initialHeight {
+  if (!_minimizedStateHeight.has_value()) {
+    _minimizedStateHeight = [self preferredHeightForContent];
+  }
+  return _minimizedStateHeight.value();
+}
+
+// Updates the view's height properties when UITraitPreferredContentSizeCategory
+// is modified.
+- (void)updateHeightOnTraitChange {
+  _minimizedStateHeight = std::nullopt;
+  [self updateHeight];
 }
 
 @end

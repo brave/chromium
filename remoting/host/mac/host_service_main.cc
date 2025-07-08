@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "remoting/host/mac/host_service_main.h"
+
 #include <signal.h>
 #include <unistd.h>
 
 #include <iostream>
 #include <string>
+#include <string_view>
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
@@ -176,6 +179,7 @@ int HostService::RunHost() {
           LOG(ERROR) << "Too many host failures. Giving up.";
           return 1;
         }
+        // TODO: crbug.com/366071356 - use exponential backoff
         base::TimeDelta relaunch_in = kMinimumRelaunchInterval - host_lifetime;
         HOST_LOG << "Relaunching in " << relaunch_in;
         base::PlatformThread::Sleep(relaunch_in);
@@ -266,7 +270,7 @@ bool HostService::Enable() {
     HOST_LOG << "Message from chmod: " << output;
   }
 
-  if (!base::WriteFile(enabled_file_, base::StringPiece())) {
+  if (!base::WriteFile(enabled_file_, std::string_view())) {
     LOG(ERROR) << "Failed to write enabled file";
     return false;
   }
@@ -342,9 +346,8 @@ bool HostService::HostIsEnabled() {
 }
 
 }  // namespace
-}  // namespace remoting
 
-int main(int argc, char const* argv[]) {
+int Me2MeHostServiceMain(int argc, char** argv) {
   base::AtExitManager exitManager;
   base::CommandLine::Init(argc, argv);
   remoting::InitHostLogging();
@@ -383,3 +386,5 @@ int main(int argc, char const* argv[]) {
   }
   return 0;
 }
+
+}  // namespace remoting

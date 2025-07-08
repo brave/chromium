@@ -25,12 +25,9 @@ struct OwnedWindowAnchor;
 
 namespace views {
 
+class MenuControllerTest;
 class MenuItemView;
 class MenuScrollViewContainer;
-
-namespace test {
-class MenuControllerTest;
-}  // namespace test
 
 // SubmenuView is the parent of all menu items.
 //
@@ -50,9 +47,9 @@ class MenuControllerTest;
 class VIEWS_EXPORT SubmenuView : public View,
                                  public PrefixDelegate,
                                  public ScrollDelegate {
- public:
-  METADATA_HEADER(SubmenuView);
+  METADATA_HEADER(SubmenuView, View)
 
+ public:
   // Creates a SubmenuView for the specified menu item.
   explicit SubmenuView(MenuItemView* parent);
 
@@ -60,12 +57,6 @@ class VIEWS_EXPORT SubmenuView : public View,
   SubmenuView& operator=(const SubmenuView&) = delete;
 
   ~SubmenuView() override;
-
-  // Returns true if the submenu has at least one empty menu item.
-  bool HasEmptyMenuItemView() const;
-
-  // Returns true if the submenu has at least one visible child item.
-  bool HasVisibleChildren() const;
 
   // Returns the children which are menu items.
   std::vector<MenuItemView*> GetMenuItems();
@@ -85,11 +76,11 @@ class VIEWS_EXPORT SubmenuView : public View,
 
   // Positions and sizes the child views. This tiles the views vertically,
   // giving each child the available width.
-  void Layout() override;
-  gfx::Size CalculatePreferredSize() const override;
+  void Layout(PassKey) override;
 
-  // Override from View.
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  // TODO(crbug.com/40232718): Respect `available_size`.
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& /*available_size*/) const override;
 
   // Painting.
   void PaintChildren(const PaintInfo& paint_info) override;
@@ -114,8 +105,8 @@ class VIEWS_EXPORT SubmenuView : public View,
 
   // Overridden from PrefixDelegate.
   size_t GetRowCount() override;
-  absl::optional<size_t> GetSelectedRow() override;
-  void SetSelectedRow(absl::optional<size_t> row) override;
+  std::optional<size_t> GetSelectedRow() override;
+  void SetSelectedRow(std::optional<size_t> row) override;
   std::u16string GetTextForRow(size_t row) override;
 
   // Returns true if the menu is showing.
@@ -175,6 +166,7 @@ class VIEWS_EXPORT SubmenuView : public View,
   void MenuHostDestroyed();
 
   int icon_area_width() const { return icon_area_width_; }
+  int min_icon_height() const { return min_icon_height_; }
   int label_start() const { return label_start_; }
   int trailing_padding() const { return trailing_padding_; }
 
@@ -194,8 +186,9 @@ class VIEWS_EXPORT SubmenuView : public View,
     resize_open_menu_ = resize_open_menu;
   }
   MenuHost* host() { return host_; }
+  const MenuHost* host() const { return host_; }
 
-  void SetBorderColorId(absl::optional<ui::ColorId> color_id);
+  void SetBorderColorId(std::optional<ui::ColorId> color_id);
 
  protected:
   // View method. Overridden to schedule a paint. We do this so that when
@@ -205,7 +198,7 @@ class VIEWS_EXPORT SubmenuView : public View,
   void ChildPreferredSizeChanged(View* child) override;
 
  private:
-  friend class test::MenuControllerTest;
+  friend class MenuControllerTest;
 
   void SchedulePaintForDropIndicator(MenuItemView* item,
                                      MenuDelegate::DropPosition position);
@@ -237,6 +230,17 @@ class VIEWS_EXPORT SubmenuView : public View,
   // Width of a menu icon area.
   int icon_area_width_ = 0;
 
+  // The minimum height items should reserve for icons. If any item has icons,
+  // checks, or radios, this is set to kMenuCheckSize, which is also the
+  // common-case size for icons. This ensures that
+  //   * When no items have icons etc., we don't add unnecessary padding.
+  //   * When some items have icons, we make ~all items "the same size"; but --
+  //   * If any items have especially large icons, we don't add _too_ much
+  //     padding to every item.
+  // In other words, this tries to "have roughly consistent height" without
+  // incurring a lot of extra padding that makes the menu look spaced-out.
+  int min_icon_height_ = 0;
+
   // X-coordinate of where the label starts.
   int label_start_ = 0;
 
@@ -265,7 +269,7 @@ class VIEWS_EXPORT SubmenuView : public View,
 
   PrefixSelector prefix_selector_{this, this};
 
-  absl::optional<ui::ColorId> border_color_id_;
+  std::optional<ui::ColorId> border_color_id_;
 };
 
 }  // namespace views

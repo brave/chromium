@@ -15,6 +15,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/controls/progress_bar.h"
 
 namespace views {
@@ -48,12 +49,12 @@ class SearchResultPageDialogController;
 // | |                      | | +------------------------------+        | |
 // | |                      | | |`keyboard_shortcut_container_`|        | |
 // | |                      | | +------------------------------+        | |
-// | |                      | | +-------------------------------------+ | |
-// | |                      | | |`progress_bar_container_`| | |
-// | |                      | | +-------------------------------------+ | |
-// | |                      | | +---------------------------+           | |
-// | |                      | | |`system_details_container_`|           | |
-// | |                      | | +---------------------------+           | |
+// | |                      | | +------------------------------+        | |
+// | |                      | | |`progress_bar_container_`     |        | |
+// | |                      | | +------------------------------+        | |
+// | |                      | | +------------------------------+        | |
+// | |                      | | |`system_details_container_`   |        | |
+// | |                      | | +------------------------------+        | |
 // | +----------------------+ +-----------------------------------------+ |
 // +----------------------------------------------------------------------+
 //
@@ -117,6 +118,8 @@ class SearchResultPageDialogController;
 
 class ASH_EXPORT SearchResultView : public SearchResultBaseView,
                                     public SearchResultActionsViewDelegate {
+  METADATA_HEADER(SearchResultView, SearchResultBaseView)
+
  public:
   class LabelAndTag {
    public:
@@ -130,7 +133,8 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
     SearchResult::Tags GetTags() const { return tags_; }
 
    private:
-    raw_ptr<views::Label, ExperimentalAsh> label_;  // Owned by views hierarchy.
+    raw_ptr<views::Label, DanglingUntriaged>
+        label_;  // Owned by views hierarchy.
     SearchResult::Tags tags_;
   };
 
@@ -149,9 +153,6 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
     kDetails,
     kKeyboardShortcut,
   };
-
-  // Internal class name.
-  static const char kViewClassName[];
 
   SearchResultView(SearchResultListView* list_view,
                    AppListViewDelegate* view_delegate,
@@ -238,6 +239,7 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
   void UpdateBadgeIcon();
   void UpdateBigTitleContainer();
   void UpdateBigTitleSuperscriptContainer();
+  void UpdateIconAndBadgeIcon();
   void UpdateTitleContainer();
   void UpdateDetailsContainer();
   void UpdateKeyboardShortcutContainer();
@@ -258,14 +260,13 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
   void OnSelectedResultChanged();
 
   // views::View overrides:
-  const char* GetClassName() const override;
-  gfx::Size CalculatePreferredSize() const override;
-  void Layout() override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+  void Layout(PassKey) override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   void PaintButtonContents(gfx::Canvas* canvas) override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
-  void VisibilityChanged(View* starting_from, bool is_visible) override;
   void OnThemeChanged() override;
 
   // ui::EventHandler overrides:
@@ -286,45 +287,48 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
 
   bool IsInlineSearchResult();
 
+  // Uses icon view bounds to calculate the host badge view bounds.
+  gfx::Rect GetIconBadgeViewBounds(const gfx::Rect& icon_view_bounds) const;
+  gfx::Size CalculateRegularIconImageSize(
+      const gfx::ImageSkia& icon_image) const;
+
   // Parent list view. Owned by views hierarchy.
-  const raw_ptr<SearchResultListView, ExperimentalAsh> list_view_;
+  const raw_ptr<SearchResultListView> list_view_;
 
-  const raw_ptr<AppListViewDelegate, ExperimentalAsh> view_delegate_;
+  const raw_ptr<AppListViewDelegate> view_delegate_;
 
-  const raw_ptr<SearchResultPageDialogController,
-                DanglingUntriaged | ExperimentalAsh>
+  const raw_ptr<SearchResultPageDialogController, DanglingUntriaged>
       dialog_controller_;
 
-  raw_ptr<MaskedImageView, ExperimentalAsh> icon_ =
-      nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::ImageView, ExperimentalAsh> badge_icon_ =
+  raw_ptr<MaskedImageView> icon_view_ = nullptr;  // Owned by views hierarchy.
+  raw_ptr<views::ImageView> badge_icon_view_ =
       nullptr;  // Owned by views hierarchy.
 
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> text_container_ =
+  raw_ptr<views::FlexLayoutView> text_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> big_title_container_ =
+  raw_ptr<views::FlexLayoutView> big_title_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh>
-      big_title_main_text_container_ = nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh>
-      big_title_superscript_container_ = nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> body_text_container_ =
+  raw_ptr<views::FlexLayoutView> big_title_main_text_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> title_and_details_container_ =
+  raw_ptr<views::FlexLayoutView> big_title_superscript_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> title_container_ =
+  raw_ptr<views::FlexLayoutView> body_text_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> details_container_ =
+  raw_ptr<views::FlexLayoutView> title_and_details_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> keyboard_shortcut_container_ =
+  raw_ptr<views::FlexLayoutView> title_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> progress_bar_container_ =
-      nullptr;                                     // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> system_details_container_ =
+  raw_ptr<views::FlexLayoutView> details_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> left_details_container_ =
+  raw_ptr<views::FlexLayoutView> keyboard_shortcut_container_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::FlexLayoutView, ExperimentalAsh> right_details_container_ =
+  raw_ptr<views::FlexLayoutView> progress_bar_container_ =
+      nullptr;  // Owned by views hierarchy.
+  raw_ptr<views::FlexLayoutView> system_details_container_ =
+      nullptr;  // Owned by views hierarchy.
+  raw_ptr<views::FlexLayoutView> left_details_container_ =
+      nullptr;  // Owned by views hierarchy.
+  raw_ptr<views::FlexLayoutView> right_details_container_ =
       nullptr;  // Owned by views hierarchy.
 
   std::vector<LabelAndTag> big_title_label_tags_;  // Owned by views hierarchy.
@@ -337,15 +341,14 @@ class ASH_EXPORT SearchResultView : public SearchResultBaseView,
   std::vector<LabelAndTag>
       right_details_label_tags_;  // Owned by views hierarchy.
 
-  raw_ptr<views::Label, ExperimentalAsh> result_text_separator_label_ =
+  raw_ptr<views::Label> result_text_separator_label_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::Label, ExperimentalAsh> rating_separator_label_ =
+  raw_ptr<views::Label> rating_separator_label_ =
+      nullptr;                              // Owned by views hierarchy.
+  raw_ptr<views::Label> rating_ = nullptr;  // Owned by views hierarchy.
+  raw_ptr<views::ImageView> rating_star_ =
       nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::Label, ExperimentalAsh> rating_ =
-      nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::ImageView, ExperimentalAsh> rating_star_ =
-      nullptr;  // Owned by views hierarchy.
-  raw_ptr<views::ProgressBar, ExperimentalAsh> progress_bar_ = nullptr;
+  raw_ptr<views::ProgressBar, DanglingUntriaged> progress_bar_ = nullptr;
 
   // Whether the removal confirmation dialog is invoked by long press touch.
   bool confirm_remove_by_long_press_ = false;

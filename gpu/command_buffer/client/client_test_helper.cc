@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 // Tests for GLES2Implementation.
 
 #include "gpu/command_buffer/client/client_test_helper.h"
@@ -191,9 +192,11 @@ void FakeDecoderClient::CacheBlob(gpu::GpuDiskCacheType,
 void FakeDecoderClient::OnFenceSyncRelease(uint64_t) {}
 void FakeDecoderClient::OnDescheduleUntilFinished() {}
 void FakeDecoderClient::OnRescheduleAfterFinished() {}
-void FakeDecoderClient::OnSwapBuffers(uint64_t, uint32_t) {}
 void FakeDecoderClient::ScheduleGrContextCleanup() {}
 void FakeDecoderClient::SetActiveURL(GURL) {}
 void FakeDecoderClient::HandleReturnData(base::span<const uint8_t>) {}
+bool FakeDecoderClient::ShouldYield() {
+  return false;
+}
 
 }  // namespace gpu

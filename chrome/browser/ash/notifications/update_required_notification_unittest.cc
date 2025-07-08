@@ -108,7 +108,7 @@ class UpdateRequiredNotificationTest
   ScopedTestingCrosSettings scoped_testing_cros_settings_;
   std::unique_ptr<NotificationDisplayServiceTester> notification_service_;
   ScopedStubInstallAttributes scoped_stub_install_attributes_;
-  raw_ptr<FakeUpdateEngineClient, ExperimentalAsh> fake_update_engine_client_;
+  raw_ptr<FakeUpdateEngineClient, DanglingUntriaged> fake_update_engine_client_;
   std::unique_ptr<base::Version> current_version_;
   std::unique_ptr<policy::MinimumVersionPolicyHandler>
       minimum_version_policy_handler_;
@@ -325,7 +325,7 @@ TEST_F(UpdateRequiredNotificationTest, LastHourEolNotifications) {
 
   // Set local state to simulate update required timer running and one hour to
   // deadline.
-  PrefService* prefs = g_browser_process->local_state();
+  PrefService* prefs = TestingBrowserProcess::GetGlobal()->local_state();
   const base::TimeDelta delta =
       base::Days(kShortWarningInDays) - base::Hours(1);
   prefs->SetTime(prefs::kUpdateRequiredTimerStartTime,

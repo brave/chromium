@@ -4,20 +4,22 @@
 
 import 'chrome://cloud-upload/file_handler_page.js';
 
-import {DialogPage, DialogTask, OperationType, UserAction} from 'chrome://cloud-upload/cloud_upload.mojom-webui.js';
+import type {DialogTask} from 'chrome://cloud-upload/cloud_upload.mojom-webui.js';
+import {UserAction} from 'chrome://cloud-upload/cloud_upload.mojom-webui.js';
 import {CloudUploadBrowserProxy} from 'chrome://cloud-upload/cloud_upload_browser_proxy.js';
-import {AccordionTopCardElement} from 'chrome://cloud-upload/file_handler_card.js';
-import {FileHandlerPageElement} from 'chrome://cloud-upload/file_handler_page.js';
-import {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import type {AccordionTopCardElement} from 'chrome://cloud-upload/file_handler_card.js';
+import type {FileHandlerPageElement} from 'chrome://cloud-upload/file_handler_page.js';
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 
-import {CloudUploadTestBrowserProxy, ProxyOptions} from './cloud_upload_test_browser_proxy.js';
+import type {ProxyOptions} from './cloud_upload_test_browser_proxy.js';
+import {CloudUploadTestBrowserProxy} from './cloud_upload_test_browser_proxy.js';
 
 suite('<file-handler-page>', () => {
   /* Holds the <file-handler-page> app. */
-  let container: HTMLDivElement;
+  let container: HTMLElement;
   /* The <file-handler-page> app. */
   let fileHandlerPageApp: FileHandlerPageElement;
   /* The BrowserProxy element to make assertions on when mojo methods are
@@ -44,8 +46,7 @@ suite('<file-handler-page>', () => {
     });
 
     // Creates and attaches the <file-handler-page> element to the DOM tree.
-    fileHandlerPageApp =
-        document.createElement('file-handler-page') as FileHandlerPageElement;
+    fileHandlerPageApp = document.createElement('file-handler-page');
     container.appendChild(fileHandlerPageApp);
     await fileHandlerPageApp.initDynamicContent;
   }
@@ -98,9 +99,13 @@ suite('<file-handler-page>', () => {
       officeWebAppInstalled: true,
       installOfficeWebAppResult: false,
       odfsMounted: false,
-      dialogPage: DialogPage.kFileHandlerDialog,
-      operationType: OperationType.kMove,
-      localTasks: createTasks(numTasks),
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
     });
 
     assertEquals(fileHandlerPageApp.cloudProviderCards.length, 2);
@@ -132,9 +137,13 @@ suite('<file-handler-page>', () => {
       officeWebAppInstalled: false,
       installOfficeWebAppResult: false,
       odfsMounted: false,
-      dialogPage: DialogPage.kFileHandlerDialog,
-      operationType: OperationType.kMove,
-      localTasks: createTasks(numTasks),
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
     });
 
     assertEquals(fileHandlerPageApp.cloudProviderCards.length, 2);
@@ -165,9 +174,13 @@ suite('<file-handler-page>', () => {
       officeWebAppInstalled: true,
       installOfficeWebAppResult: false,
       odfsMounted: false,
-      dialogPage: DialogPage.kFileHandlerDialog,
-      operationType: OperationType.kMove,
-      localTasks: createTasks(numTasks),
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
     });
 
     assertEquals(fileHandlerPageApp.cloudProviderCards.length, 2);
@@ -199,9 +212,13 @@ suite('<file-handler-page>', () => {
       officeWebAppInstalled: false,
       installOfficeWebAppResult: false,
       odfsMounted: false,
-      dialogPage: DialogPage.kFileHandlerDialog,
-      operationType: OperationType.kMove,
-      localTasks: createTasks(numTasks),
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
     });
 
     assertEquals(fileHandlerPageApp.cloudProviderCards.length, 2);
@@ -235,9 +252,13 @@ suite('<file-handler-page>', () => {
               officeWebAppInstalled: true,
               installOfficeWebAppResult: false,
               odfsMounted: false,
-              dialogPage: DialogPage.kFileHandlerDialog,
-              operationType: OperationType.kMove,
-              localTasks: createTasks(numTasks),
+              dialogSpecificArgs: {
+                fileHandlerDialogArgs: {
+                  localTasks: createTasks(numTasks),
+                  showGoogleWorkspaceTask: true,
+                  showMicrosoftOfficeTask: true,
+                },
+              },
             });
             const accordionCard =
                 fileHandlerPageApp.$<AccordionTopCardElement>('#accordion');
@@ -282,9 +303,13 @@ suite('<file-handler-page>', () => {
               officeWebAppInstalled: false,
               installOfficeWebAppResult: false,
               odfsMounted: false,
-              dialogPage: DialogPage.kFileHandlerDialog,
-              operationType: OperationType.kMove,
-              localTasks: createTasks(numTasks),
+              dialogSpecificArgs: {
+                fileHandlerDialogArgs: {
+                  localTasks: createTasks(numTasks),
+                  showGoogleWorkspaceTask: true,
+                  showMicrosoftOfficeTask: true,
+                },
+              },
             });
             const accordionCard =
                 fileHandlerPageApp.$<AccordionTopCardElement>('#accordion');
@@ -321,14 +346,55 @@ suite('<file-handler-page>', () => {
       officeWebAppInstalled: false,
       installOfficeWebAppResult: false,
       odfsMounted: false,
-      dialogPage: DialogPage.kFileHandlerDialog,
-      operationType: OperationType.kMove,
-      localTasks: [],
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: [],
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
     });
     assertEquals(fileHandlerPageApp.cloudProviderCards.length, 2);
     assertEquals(fileHandlerPageApp.localHandlerCards.length, numTasks);
     assertFalse(!!fileHandlerPageApp.$('#accordion'));
   });
+
+  /**
+   * For each configuration of (showMicrosoftOfficeTask,showGoogleWorkspaceTask)
+   * booleans checks that the corresponding cards are conditionally shown or not
+   * shown. Note that (false,false) is not a valid configuration and is hence
+   * excluded from the array.
+   */
+  [[true, true], [true, false], [false, true]].forEach(
+      showPredefinedTasks => test(
+          `Show predefined tasks with params = ${showPredefinedTasks}`,
+          async () => {
+            const [showMicrosoftOfficeTask, showGoogleWorkspaceTask] =
+                showPredefinedTasks;
+            await setUp({
+              fileNames: ['file.docx'],
+              officeWebAppInstalled: false,
+              installOfficeWebAppResult: false,
+              odfsMounted: false,
+              dialogSpecificArgs: {
+                fileHandlerDialogArgs: {
+                  localTasks: createTasks(1),
+                  showMicrosoftOfficeTask: showMicrosoftOfficeTask!,
+                  showGoogleWorkspaceTask: showGoogleWorkspaceTask!,
+                },
+              },
+            });
+            const cloudProviderCardsCount =
+                (!showGoogleWorkspaceTask || !showMicrosoftOfficeTask) ? 1 : 2;
+            assertEquals(
+                fileHandlerPageApp.cloudProviderCards.length,
+                cloudProviderCardsCount);
+            assertEquals(fileHandlerPageApp.localHandlerCards.length, 1);
+            assertEquals(
+                !!fileHandlerPageApp.$('#onedrive'), showMicrosoftOfficeTask);
+            assertEquals(
+                !!fileHandlerPageApp.$('#drive'), showGoogleWorkspaceTask);
+          }));
 
   /**
    * Test that any selected local task gets unselected if the accordion gets
@@ -343,9 +409,13 @@ suite('<file-handler-page>', () => {
           officeWebAppInstalled: false,
           installOfficeWebAppResult: false,
           odfsMounted: false,
-          dialogPage: DialogPage.kFileHandlerDialog,
-          operationType: OperationType.kMove,
-          localTasks: createTasks(numTasks),
+          dialogSpecificArgs: {
+            fileHandlerDialogArgs: {
+              localTasks: createTasks(numTasks),
+              showGoogleWorkspaceTask: true,
+              showMicrosoftOfficeTask: true,
+            },
+          },
         });
         const accordionCard =
             fileHandlerPageApp.$<AccordionTopCardElement>('#accordion');
@@ -371,4 +441,62 @@ suite('<file-handler-page>', () => {
         assertEquals(localTaskCard.style.display, 'none');
         assertTrue(actionButton.disabled);
       });
+
+  /**
+   * Test that clicking the cancel button triggers the right
+   * `respondWithUserActionAndClose` mojo request.
+   */
+  test('Cancel', async () => {
+    const numTasks = 5;
+    await setUp({
+      fileNames: ['file.docx'],
+      officeWebAppInstalled: true,
+      installOfficeWebAppResult: false,
+      odfsMounted: false,
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
+    });
+
+    fileHandlerPageApp.$('.cancel-button').click();
+    await testProxy.handler.whenCalled('respondWithUserActionAndClose');
+    assertEquals(
+        1, testProxy.handler.getCallCount('respondWithUserActionAndClose'));
+    assertDeepEquals(
+        [UserAction.kCancel],
+        testProxy.handler.getArgs('respondWithUserActionAndClose'));
+  });
+
+  /**
+   * Test that an Escape keydown triggers the right
+   * `respondWithUserActionAndClose` mojo request.
+   */
+  test('Escape', async () => {
+    const numTasks = 5;
+    await setUp({
+      fileNames: ['file.docx'],
+      officeWebAppInstalled: true,
+      installOfficeWebAppResult: false,
+      odfsMounted: false,
+      dialogSpecificArgs: {
+        fileHandlerDialogArgs: {
+          localTasks: createTasks(numTasks),
+          showGoogleWorkspaceTask: true,
+          showMicrosoftOfficeTask: true,
+        },
+      },
+    });
+
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+    await testProxy.handler.whenCalled('respondWithUserActionAndClose');
+    assertEquals(
+        1, testProxy.handler.getCallCount('respondWithUserActionAndClose'));
+    assertDeepEquals(
+        [UserAction.kCancel],
+        testProxy.handler.getArgs('respondWithUserActionAndClose'));
+  });
 });

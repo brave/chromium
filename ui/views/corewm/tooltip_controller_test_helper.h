@@ -9,8 +9,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/aura/window_observer.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/views/corewm/tooltip_controller.h"
 #include "ui/views/corewm/tooltip_state_manager.h"
@@ -23,10 +23,6 @@ class Window;
 
 namespace base {
 class TimeDelta;
-}
-
-namespace wm {
-class TooltipObserver;
 }
 
 namespace views::corewm::test {
@@ -45,15 +41,13 @@ class TooltipControllerTestHelper : public aura::WindowObserver {
   ~TooltipControllerTestHelper() override;
 
   TooltipController* controller() { return controller_; }
+  void set_controller(TooltipController* controller) {
+    controller_ = controller;
+  }
 
   TooltipStateManager* state_manager() {
     return controller_->state_manager_.get();
   }
-
-  // Returns true if server side tooltip is enabled. The server side means
-  // tooltip is handled on ash (server) and lacros is the client.
-  // Always returns false except for Lacros.
-  bool UseServerSideTooltip();
 
   // These are mostly cover methods for TooltipController private methods.
   const std::u16string& GetTooltipText();
@@ -64,8 +58,6 @@ class TooltipControllerTestHelper : public aura::WindowObserver {
   void HideAndReset();
   void UpdateIfRequired(TooltipTrigger trigger);
   void FireHideTooltipTimer();
-  void AddObserver(wm::TooltipObserver* observer);
-  void RemoveObserver(wm::TooltipObserver* observer);
   bool IsWillShowTooltipTimerRunning();
   bool IsWillHideTooltipTimerRunning();
   bool IsTooltipVisible();
@@ -85,6 +77,8 @@ class TooltipControllerTestHelper : public aura::WindowObserver {
 
 // Trivial View subclass that lets you set the tooltip text.
 class TooltipTestView : public views::View {
+  METADATA_HEADER(TooltipTestView, views::View)
+
  public:
   TooltipTestView();
 
@@ -94,14 +88,8 @@ class TooltipTestView : public views::View {
   ~TooltipTestView() override;
 
   void set_tooltip_text(std::u16string tooltip_text) {
-    tooltip_text_ = tooltip_text;
+    SetTooltipText(tooltip_text);
   }
-
-  // Overridden from views::View
-  std::u16string GetTooltipText(const gfx::Point& p) const override;
-
- private:
-  std::u16string tooltip_text_;
 };
 
 }  // namespace views::corewm::test

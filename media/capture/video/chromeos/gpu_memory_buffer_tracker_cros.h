@@ -12,6 +12,10 @@ namespace gfx {
 class Size;
 }  // namespace gfx
 
+namespace gpu {
+class ClientSharedImage;
+}
+
 namespace media {
 
 // Tracker specifics for Chrome OS GpuMemoryBuffer.
@@ -33,15 +37,19 @@ class CAPTURE_EXPORT GpuMemoryBufferTrackerCros final
   bool IsReusableForFormat(const gfx::Size& dimensions,
                            VideoPixelFormat format,
                            const mojom::PlaneStridesPtr& strides) override;
+
   uint32_t GetMemorySizeInBytes() override;
+
   std::unique_ptr<VideoCaptureBufferHandle> GetMemoryMappedAccess() override;
+
   base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion() override;
-  mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer() override;
   gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle() override;
+
+  VideoCaptureBufferType GetBufferType() override;
 
  private:
   CameraBufferFactory buffer_factory_;
-  std::unique_ptr<gfx::GpuMemoryBuffer> buffer_;
+  scoped_refptr<gpu::ClientSharedImage> shared_image_;
 };
 
 }  // namespace media

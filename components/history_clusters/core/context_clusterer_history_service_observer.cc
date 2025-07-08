@@ -11,13 +11,17 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history_clusters/core/config.h"
 #include "components/history_clusters/core/history_clusters_util.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/site_engagement/core/site_engagement_score_provider.h"
 
 namespace history_clusters {
 
 namespace {
+
+constexpr int kEngagementScoreCacheSize = 100;
+constexpr base::TimeDelta kEngagementScoreCacheRefreshDuration =
+    base::Minutes(120);
 
 // Returns whether `visit` should be added to `cluster`.
 bool ShouldAddVisitToCluster(const history::VisitRow& new_visit,
@@ -129,7 +133,7 @@ ContextClustererHistoryServiceObserver::ContextClustererHistoryServiceObserver(
     : history_service_(history_service),
       template_url_service_(template_url_service),
       optimization_guide_decider_(optimization_guide_decider),
-      engagement_score_cache_(GetConfig().engagement_score_cache_size),
+      engagement_score_cache_(kEngagementScoreCacheSize),
       engagement_score_provider_(engagement_score_provider),
       clock_(base::DefaultClock::GetInstance()) {
   if (history_service_) {
@@ -162,7 +166,7 @@ void ContextClustererHistoryServiceObserver::OnURLVisited(
   std::u16string search_terms;
   bool is_search_normalized_url = false;
   if (template_url_service_) {
-    absl::optional<TemplateURLService::SearchMetadata> search_metadata =
+    std::optional<TemplateURLService::SearchMetadata> search_metadata =
         template_url_service_->ExtractSearchMetadata(url_row.url());
     if (search_metadata) {
       normalized_url = search_metadata->normalized_url.possibly_invalid_spec();
@@ -205,7 +209,7 @@ void ContextClustererHistoryServiceObserver::OnURLVisited(
   }
 
   // See what cluster we should add it to.
-  absl::optional<int64_t> cluster_id;
+  std::optional<int64_t> cluster_id;
 
   std::vector<history::VisitID> previous_visit_ids_to_check;
   if (new_visit.opener_visit != 0) {
@@ -239,7 +243,7 @@ void ContextClustererHistoryServiceObserver::OnURLVisited(
                                  in_progress_cluster)) {
       FinalizeCluster(*cluster_id);
 
-      cluster_id = absl::nullopt;
+      cluster_id = std::nullopt;
     }
   }
   bool is_new_cluster = !cluster_id;
@@ -306,11 +310,11 @@ void ContextClustererHistoryServiceObserver::OnURLVisited(
   }
 }
 
-void ContextClustererHistoryServiceObserver::OnURLsDeleted(
+void ContextClustererHistoryServiceObserver::OnHistoryDeletions(
     history::HistoryService* history_service,
     const history::DeletionInfo& deletion_info) {
   TRACE_EVENT0("browser",
-               "ContextClusteringHistoryServiceObserver::OnURLsDeleted");
+               "ContextClusteringHistoryServiceObserver::OnHistoryDeletions");
   ScopedVisitProcessingTimer urls_deleted_processing_timer(
       VisitProcessingStage::kUrlsDeleted);
 
@@ -328,7 +332,7 @@ void ContextClustererHistoryServiceObserver::OnURLsDeleted(
     std::string normalized_deleted_url =
         deleted_url.url().possibly_invalid_spec();
     if (template_url_service_) {
-      absl::optional<TemplateURLService::SearchMetadata> search_metadata =
+      std::optional<TemplateURLService::SearchMetadata> search_metadata =
           template_url_service_->ExtractSearchMetadata(deleted_url.url());
       if (search_metadata) {
         normalized_deleted_url =
@@ -360,10 +364,6 @@ void ContextClustererHistoryServiceObserver::CleanUpClusters() {
     return;
   }
 
-  base::UmaHistogramCounts1000(
-      "History.Clusters.ContextClusterer.NumClusters.AtCleanUp",
-      in_progress_clusters_.size());
-
   // See which clusters we need to clean up.
   base::flat_set<int64_t> clusters_to_finalize;
   for (const auto& cluster_id_and_cluster : in_progress_clusters_) {
@@ -378,13 +378,6 @@ void ContextClustererHistoryServiceObserver::CleanUpClusters() {
     FinalizeCluster(cluster_id);
   }
 
-  base::UmaHistogramCounts1000(
-      "History.Clusters.ContextClusterer.NumClusters.CleanedUp",
-      clusters_to_finalize.size());
-
-  base::UmaHistogramCounts1000(
-      "History.Clusters.ContextClusterer.NumClusters.PostCleanUp",
-      in_progress_clusters_.size());
 }
 
 void ContextClustererHistoryServiceObserver::FinalizeCluster(
@@ -484,10 +477,6 @@ ContextClustererHistoryServiceObserver::CreateClusterVisit(
 
 float ContextClustererHistoryServiceObserver::GetEngagementScore(
     const GURL& normalized_url) {
-  if (!GetConfig().use_engagement_score_cache) {
-    return engagement_score_provider_->GetScore(normalized_url);
-  }
-
   std::string visit_host = normalized_url.host();
   auto it = engagement_score_cache_.Peek(visit_host);
   if (it != engagement_score_cache_.end() &&
@@ -499,8 +488,7 @@ float ContextClustererHistoryServiceObserver::GetEngagementScore(
   engagement_score_cache_.Put(
       visit_host,
       CachedEngagementScore(
-          score,
-          clock_->Now() + GetConfig().engagement_score_cache_refresh_duration));
+          score, clock_->Now() + kEngagementScoreCacheRefreshDuration));
   return score;
 }
 

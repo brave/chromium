@@ -8,7 +8,6 @@
     Exposed=ServiceWorker
 ] interface InstallEvent : ExtendableEvent {
     constructor(DOMString type, optional ExtendableEventInit eventInitDict = {});
-    // Experimental
-    // https://github.com/yoshisatoyanagisawa/service-worker-static-routing-api
-    [RuntimeEnabled=ServiceWorkerStaticRouter, CallWith=ScriptState, RaisesException, MeasureAs=ServiceWorkerStaticRouter_RegisterRouter] Promise<undefined> registerRouter((RouterRule or sequence<RouterRule>) rules);
+    // https://w3c.github.io/ServiceWorker/#ref-for-dom-installevent-addroutes
+    [CallWith=ScriptState, RaisesException, MeasureAs=ServiceWorkerStaticRouter_AddRoutes] Promise<undefined> addRoutes((RouterRule or sequence<RouterRule>) rules);
 };

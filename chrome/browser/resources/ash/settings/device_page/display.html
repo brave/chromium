@@ -1,14 +1,17 @@
 <style include="cr-shared-style settings-shared md-select iron-flex
   iron-flex-alignment">
+  #arrangement-section {
+    border-top: none;
+  }
+
+  #arrangement-section-main {
+    padding: 0 var(--cr-section-padding);
+  }
+
   .indented {
     align-self: stretch;
     margin-inline-start: var(--cr-section-indent-padding);
     padding: 0;
-  }
-
-  #nightLightTemperatureDiv[disabled] {
-    opacity: 0.38;
-    pointer-events: none;
   }
 
   .display-tabs {
@@ -43,46 +46,69 @@
     border-top: none;
   }
 
-  #nightLightSlider {
-    flex-grow: 1;
-    margin-top: 20px;
+  #mirrorDisplayToggleButton {
+    align-self: stretch;
+    border-top: none;
+    display: flex;
   }
 
-  iron-collapse {
-   width: 100%;
+  #brightnessSliderWrapper {
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
   }
 </style>
 
+<!-- Display Shiny Performance Mode Controller -->
+<div id="displayPerformanceModeSubsection" class="settings-box"
+    hidden="[[!isDisplayPerformanceSupported_]]">
+  <div id="displayPerformanceModeLabel"
+      class="start text-area" aria-hidden="true">
+      <!-- TODO(b/326270858): Translate the label -->
+      $i18n{displayShinyPerformanceLabel}
+  </div>
+  <cr-toggle id="displayPerformanceModeToggle"
+      aria-labelledby="displayPerformanceModeLabel"
+      on-change="toggleDisplayPerformanceEnabled_">
+  </cr-toggle>
+</div>
+
 <!-- Arrangement section -->
 <template is="dom-if"
-    if="[[shouldShowArrangementSection_(displays)]]" restamp>
-  <div class="settings-box first layout vertical self-stretch underbar"
-      id="arrangement-section">
-    <h2 class="layout self-start">
-      $i18n{displayArrangementTitle}
-    </h2>
-    <div class="secondary layout self-start"
-        hidden="[[isMirrored_(displays)]]">
-      $i18n{displayArrangementText}
+    if="[[shouldShowArrangementSection(displays)]]" restamp>
+  <div class="underbar" id="arrangement-section">
+    <div class="layout vertical self-stretch" id="arrangement-section-main">
+      <h2 class="layout self-start">
+        $i18n{displayArrangementTitle}
+      </h2>
+      <div class="secondary layout self-start"
+          hidden="[[isMirrored(displays)]]">
+        $i18n{displayArrangementText}
+      </div>
+      <display-layout id="displayLayout"
+          selected-display="[[selectedDisplay]]"
+          on-select-display="onSelectDisplay_"
+          deep-link-focus-id$="[[Setting.kDisplayArrangement]]">
+      </display-layout>
     </div>
-    <display-layout id="displayLayout"
-        selected-display="[[selectedDisplay]]"
-        on-select-display="onSelectDisplay_"
-        deep-link-focus-id$="[[Setting.kDisplayArrangement]]">
-    </display-layout>
 
     <template is="dom-if"
-        if="[[showMirror_(unifiedDesktopMode_, displays)]]" restamp>
-      <div class="secondary self-start">
-        <cr-checkbox id="displayMirrorCheckbox"
-            checked="[[isMirrored_(displays)]]"
-            on-click="onMirroredClick_"
+        if="[[showMirror(unifiedDesktopMode_, displays)]]" restamp>
+      <!-- Mirror display toggle button -->
+      <div id="mirrorDisplayToggleButton" class="settings-box"
+          on-click="onMirroredClick_" actionable-row>
+        <div id="mirrorDisplayToggleLabel" class="start">
+          [[getDisplayMirrorText_(displays)]]
+        </div>
+        <cr-toggle id="mirrorDisplayToggle"
+            checked="[[isMirrored(displays)]]"
+            on-change="onMirroredClick_"
             aria-label="[[getDisplayMirrorText_(displays)]]"
             deep-link-focus-id$="[[Setting.kDisplayMirroring]]">
-          <div class="text-area">[[getDisplayMirrorText_(displays)]]</div>
-        </cr-checkbox>
+        </cr-toggle>
       </div>
     </template>
+
   </div>
 </template>
 
@@ -96,9 +122,10 @@
 
 <div id="controlsDiv" class="settings-box layout vertical first">
   <h2>[[selectedDisplay.name]]</h2>
-  <template is="dom-if" if="[[showUnifiedDesktop_(unifiedDesktopAvailable_,
-      unifiedDesktopMode_, displays)]]" restamp>
-    <div class="settings-box indented two-line">
+  <template is="dom-if" if="[[showUnifiedDesktop(unifiedDesktopAvailable_,
+      unifiedDesktopMode_, displays, isTabletMode_)]]" restamp>
+    <div class="settings-box indented two-line"
+         on-click="onUnifiedDesktopClick_" actionable-row>
       <div class="start">
         <div id="displayUnifiedDesktopCheckboxLabel">
           $i18n{displayUnifiedDesktop}
@@ -107,8 +134,9 @@
           [[getUnifiedDesktopText_(unifiedDesktopMode_)]]
         </div>
       </div>
-      <cr-toggle checked="[[unifiedDesktopMode_]]"
-          on-click="onUnifiedDesktopClick_"
+      <cr-toggle id="displayUnifiedDesktopToggle"
+          checked="[[unifiedDesktopMode_]]"
+          on-change="onUnifiedDesktopClick_"
           aria-labelledby="displayUnifiedDesktopCheckboxLabel"
           deep-link-focus-id$="[[Setting.kAllowWindowsToSpanDisplays]]">
       </cr-toggle>
@@ -133,15 +161,54 @@
     </div>
   </template>
 
-  <!-- Display zoom selection slider -->
-  <div class="settings-box indented two-line first">
-    <div class="start text-area layout vertical">
-      <div id="displayZoomTitle" aria-hidden="true">
-        $i18n{displayZoomTitle}
+  <!-- Display brightness controls -->
+  <template is="dom-if" restamp
+      if="[[showBrightnessControls_(selectedDisplay)]]">
+    <template is="dom-if" restamp
+        if="[[showAutoBrightnessToggle_(hasAmbientLightSensor_)]]">
+      <div class="settings-box indented" id="autoBrightnessToggleRow"
+          on-click="onAutoBrightnessToggleRowClicked_" actionable-row>
+        <div class="start settings-box-text">
+          <div id="autoBrightnessToggleLabel" class="start" aria-hidden="true">
+              $i18n{displayAutoBrightnessToggleLabel}
+          </div>
+          <div id="autoBrightnessToggleSubtitle" class="secondary"
+              aria-hidden="true">
+            $i18n{displayAutoBrightnessToggleSubtitle}
+          </div>
+        </div>
+        <cr-toggle id="autoBrightnessToggle"
+            checked="[[isAmbientLightSensorEnabled_]]"
+            on-change="onAutoBrightnessToggleChange_"
+            aria-labelledby="autoBrightnessToggleLabel"
+            aria-describedby="autoBrightnessToggleSubtitle">
+        </cr-toggle>
       </div>
-      <div id="displayZoomSublabel" class="secondary self-start"
+    </template>
+    <div class="settings-box indented">
+      <div id="brightnessControlsTitle" class="start" aria-hidden="true">
+        $i18n{displayBrightnessLabel}
+      </div>
+      <div id="brightnessSliderWrapper">
+        <cr-slider id="brightnessSlider" min="[[brightnessSliderMin_]]"
+            max="[[brightnessSliderMax_]]" key-press-slider-increment="10"
+            value="[[currentInternalScreenBrightness_]]"
+            on-cr-slider-value-changed="onDisplayBrightnessSliderChanged_"
+            aria-labelledby="brightnessControlsTitle">
+        </cr-slider>
+      </div>
+    </div>
+  </template>
+
+  <!-- Display zoom selection slider -->
+  <div class="settings-box indented two-line">
+    <div class="start text-area layout vertical">
+      <div id="displayZoomLabel" aria-hidden="true">
+        $i18n{displayZoomLabel}
+      </div>
+      <div id="displayZoomDescription" class="secondary self-start"
           aria-hidden="true">
-        $i18n{displayZoomSublabel}
+        $i18n{displayZoomDescription}
       </div>
       <div id="logicalResolutionText" class="secondary self-start"
           hidden$="[[!logicalResolutionText_]]" aria-hidden="true">
@@ -152,12 +219,12 @@
         selectedDisplay, prefs.cros.device_display_resolution)]]">
       <cr-policy-pref-indicator
           pref="[[prefs.cros.device_display_resolution]]"
-          icon-aria-label="$i18n{displayZoomTitle}">
+          icon-aria-label="$i18n{displayZoomLabel}">
       </cr-policy-pref-indicator>
     </template>
     <settings-slider id="displaySizeSlider"
         ticks="[[zoomValues_]]" pref="{{selectedZoomPref_}}"
-        label-aria="$i18n{displayZoomTitle}"
+        label-aria="$i18n{displayZoomLabel}"
         label-min="$i18n{displaySizeSliderMinLabel}"
         label-max="$i18n{displaySizeSliderMaxLabel}"
         disabled="[[isDisplayScaleMandatory_(
@@ -259,7 +326,7 @@
     </div>
   </template>
 
-  <template is="dom-if" if="[[showAmbientColorSetting_(
+  <template is="dom-if" if="[[showAmbientColorSetting(
       ambientColorAvailable_, selectedDisplay)]]">
     <settings-toggle-button id="ambientColor"
         class="indented hr"
@@ -290,67 +357,46 @@
       hidden$="[[!showTouchCalibrationSetting_(selectedDisplay)]]" embedded
       deep-link-focus-id$="[[Setting.kTouchscreenCalibration]]">
   </cr-link-row>
+
+
+  <template is="dom-if"
+      if="[[showExcludeInMirror_(unifiedDesktopMode_,
+      excludeDisplayInMirrorModeEnabled_,
+      prefs.settings.display.allow_exclude_display_in_mirror_mode.value,
+      displays, selectedDisplay)]]" restamp>
+    <div id="excludeDisplayToggleRow"
+        class="settings-box indented hr two-line">
+      <div class="start text-area">
+        <div id="excludeDisplayInMirrorLabel" class="start">
+          $i18n{displayExcludeInMirrorModeLabel}
+        </div>
+        <div id="excludeDisplayInMirrorSublabel" class="secondary self-start"
+            aria-hidden="true">
+          $i18n{displayExcludeInMirrorModeSublabel}
+        </div>
+      </div>
+      <cr-toggle id="excludeDisplayToggle"
+          checked="[[shouldExcludeInMirror_(selectedDisplay)]]"
+          on-change="onExcludeInMirrorClick_"
+          aria-label="$i18n{displayExcludeInMirrorModeLabel}">
+      </cr-toggle>
+    </div>
+  </template>
 </div>
 
 <!-- Night Light Settings -->
-<settings-toggle-button
-    id="nightLightToggleButton"
-    class="hr"
-    label="$i18n{displayNightLightLabel}"
-    pref="{{prefs.ash.night_light.enabled}}"
-    sub-label="$i18n{displayNightLightText}"
-    deep-link-focus-id$="[[Setting.kNightLight]]">
-</settings-toggle-button>
+<div class="hr"></div>
+<settings-display-night-light prefs="{{prefs}}"
+    is-internal-display="[[selectedDisplay.isInternal]]">
+</settings-display-night-light>
 
-<div id="nightLightSettingsDiv"
-    class="settings-box continuation start layout vertical">
-  <!-- Color temperature slider -->
-  <div id="nightLightTemperatureDiv"
-      class="settings-box indented continuation"
-      hidden$="[[!prefs.ash.night_light.enabled.value]]">
-    <div class="start text-area" id="colorTemperatureLabel">
-      $i18n{displayNightLightTemperatureLabel}
-    </div>
-    <settings-slider id="colorTemperatureSlider"
-        aria-labelledby="colorTemperatureLabel" min="0" max="100"
-        scale="100" label-min="$i18n{displayNightLightTempSliderMinLabel}"
-        label-max="$i18n{displayNightLightTempSliderMaxLabel}"
-        pref="{{prefs.ash.night_light.color_temperature}}"
-        deep-link-focus-id$="[[Setting.kNightLightColorTemperature]]">
-    </settings-slider>
+<!-- Touchscreen Mapping Experience -->
+<template is="dom-if" if="[[showTouchRemappingExperience_()]]" restamp>
+  <div class="settings-box continuation start layout vertical">
+    <cr-link-row class="hr" id="touchMapping"
+      label="$i18n{displayTouchMappingTitle}"
+      sub-label="$i18n{displayTouchMappingText}"
+      on-click="onTouchMappingClick_" embedded>
+    </cr-link-row>
   </div>
-  <!-- Schedule settings -->
-  <div class="settings-box indented">
-    <div class="start text-area" aria-hidden="true">
-      <div id="nightLightScheduleLabel" class="label">
-        $i18n{displayNightLightScheduleLabel}
-      </div>
-      <div id="nightLightScheduleSubLabel" class="secondary label"
-          hidden$="[[!nightLightScheduleSubLabel_]]">
-        [[nightLightScheduleSubLabel_]]
-      </div>
-    </div>
-    <settings-dropdown-menu
-        id="nightLightScheduleTypeDropDown"
-        class="cr-row-gap"
-        label="$i18n{displayNightLightScheduleLabel}"
-        aria-describedby="nightLightScheduleSubLabel"
-        pref="{{prefs.ash.night_light.schedule_type}}"
-        menu-options="[[scheduleTypesList_]]">
-    </settings-dropdown-menu>
-  </div>
-  <!-- Custom schedule slider -->
-  <iron-collapse id="nightLightCustomScheduleCollapse"
-      opened="[[shouldOpenCustomScheduleCollapse_]]">
-    <div class="settings-box indented continuation">
-      <div class="start text-area layout vertical">
-        <div class="settings-box continuation self-stretch">
-          <settings-scheduler-slider id="nightLightSlider" prefs="{{prefs}}"
-              pref-start-time="{{prefs.ash.night_light.custom_start_time}}"
-              pref-end-time="{{prefs.ash.night_light.custom_end_time}}">
-          </settings-scheduler-slider>
-        </div>
-      </div>
-    </div>
-  </iron-collapse>
-</div>
+</template>

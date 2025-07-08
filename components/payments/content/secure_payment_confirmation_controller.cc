@@ -5,6 +5,7 @@
 #include "components/payments/content/secure_payment_confirmation_controller.h"
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/strcat.h"
@@ -13,10 +14,14 @@
 #include "build/build_config.h"
 #include "components/payments/content/content_payment_request_delegate.h"
 #include "components/payments/content/payment_request.h"
+#include "components/payments/content/secure_payment_confirmation_app.h"
+#include "components/payments/content/secure_payment_confirmation_transaction_mode.h"
 #include "components/payments/core/currency_formatter.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/method_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/url_constants.h"
 
@@ -34,8 +39,7 @@ SecurePaymentConfirmationController::~SecurePaymentConfirmationController() =
 void SecurePaymentConfirmationController::ShowDialog() {
 #if BUILDFLAG(IS_ANDROID)
   NOTREACHED();
-#endif  // BUILDFLAG(IS_ANDROID)
-
+#else
   if (!request_ || !request_->spec())
     return;
 
@@ -51,6 +55,7 @@ void SecurePaymentConfirmationController::ShowDialog() {
 
   if (number_of_initialization_tasks_ == 0)
     SetupModelAndShowDialogIfApplicable();
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void SecurePaymentConfirmationController::
@@ -103,30 +108,33 @@ void SecurePaymentConfirmationController::
 
   model_.set_merchant_label(
       l10n_util::GetStringUTF16(IDS_SECURE_PAYMENT_CONFIRMATION_STORE_LABEL));
-  absl::optional<std::string>& payee_name =
+  std::optional<std::string>& payee_name =
       request_->spec()
           ->method_data()
           .front()
           ->secure_payment_confirmation->payee_name;
   if (payee_name.has_value()) {
     model_.set_merchant_name(
-        absl::optional<std::u16string>(base::UTF8ToUTF16(payee_name.value())));
+        std::optional<std::u16string>(base::UTF8ToUTF16(payee_name.value())));
   }
-  absl::optional<url::Origin>& origin =
+  std::optional<url::Origin>& origin =
       request_->spec()
           ->method_data()
           .front()
           ->secure_payment_confirmation->payee_origin;
   if (origin.has_value()) {
-    model_.set_merchant_origin(absl::optional<std::u16string>(
+    model_.set_merchant_origin(std::optional<std::u16string>(
         url_formatter::FormatUrlForSecurityDisplay(
             origin.value().GetURL(),
             url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC)));
   }
 
+  SecurePaymentConfirmationApp* app =
+      static_cast<SecurePaymentConfirmationApp*>(
+          request_->state()->selected_app());
+
   model_.set_instrument_label(l10n_util::GetStringUTF16(
       IDS_PAYMENT_REQUEST_PAYMENT_METHOD_SECTION_NAME));
-  PaymentApp* app = request_->state()->selected_app();
   model_.set_instrument_value(app->GetLabel());
   model_.set_instrument_icon(app->icon_bitmap());
 
@@ -172,6 +180,9 @@ void SecurePaymentConfirmationController::
   // after the dialog is created and shown to handle this, in order to keep the
   // automation codepath as close to the 'real' one as possible.
   if (request_->spc_transaction_mode() != SPCTransactionMode::NONE) {
+    // TODO(crbug.com/417426346): Once the desktop SPC controller supports the
+    // new fallback flow, it should handle SPCTransactionMode::
+    // AUTOAUTHANOTHERWAY here.
     if (request_->spc_transaction_mode() == SPCTransactionMode::AUTOACCEPT) {
       OnConfirm();
     } else if (request_->spc_transaction_mode() ==

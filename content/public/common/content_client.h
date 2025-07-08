@@ -7,11 +7,11 @@
 
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/system/message_pipe.h"
@@ -146,6 +146,8 @@ class CONTENT_EXPORT ContentClient {
     // described in the Custom Handler specification.
     // https://html.spec.whatwg.org/multipage/system-state.html#normalize-protocol-handler-parameters
     std::vector<std::pair<std::string, std::string>> predefined_handler_schemes;
+    // Registers a URL scheme as an Isolated Web App scheme.
+    std::vector<std::string> isolated_app_schemes;
 #if BUILDFLAG(IS_ANDROID)
     // Normally, non-standard schemes canonicalize to opaque origins. However,
     // Android WebView requires non-standard schemes to still be preserved.
@@ -163,8 +165,13 @@ class CONTENT_EXPORT ContentClient {
   virtual std::u16string GetLocalizedString(int message_id,
                                             const std::u16string& replacement);
 
-  // Return the contents of a resource in a StringPiece given the resource id.
-  virtual base::StringPiece GetDataResource(
+  // Returns true if GetDataResource would return non-null data for the
+  // specified |resource_id|.
+  virtual bool HasDataResource(int resource_id) const;
+
+  // Return the contents of a resource in a std::string_view given the resource
+  // id.
+  virtual std::string_view GetDataResource(
       int resource_id,
       ui::ResourceScaleFactor scale_factor);
 
@@ -185,6 +192,17 @@ class CONTENT_EXPORT ContentClient {
   // supported by the embedder.
   virtual blink::OriginTrialPolicy* GetOriginTrialPolicy();
 
+  // Cross-origin subframes are generally not allowed to display a file picker
+  // for security reasons. This method allows content embedders to specify
+  // whether a cross-origin subframe of a particular origin should be allowed to
+  // display the file picker.
+  //
+  // For example, Chrome's built-in PDF viewer may be hosted in a cross-origin
+  // subframe. To allow this viewer to function correctly, Chrome uses this
+  // method to grant it access to the file picker.
+  virtual bool IsFilePickerAllowedForCrossOriginSubframe(
+      const url::Origin& origin);
+
 #if BUILDFLAG(IS_ANDROID)
   // Returns true for clients like Android WebView that uses synchronous
   // compositor. Note setting this to true will permit synchronous IPCs from
@@ -201,6 +219,13 @@ class CONTENT_EXPORT ContentClient {
   virtual void ExposeInterfacesToBrowser(
       scoped_refptr<base::SequencedTaskRunner> io_task_runner,
       mojo::BinderMap* binders);
+
+  // Whether the embedder wants to allow default SiteInstanceGroups to be used
+  // in cases where full site isolation is not available.
+  // TODO(crbug.com/419595581): This method is here so we can disable default
+  // SiteInstanceGroups on Android WebView while still enabling the feature by
+  // default. Remove this carveout once remaining WebView issues are resolved.
+  virtual bool ShouldAllowDefaultSiteInstanceGroup();
 
  private:
   // For SetBrowserClientAlwaysAllowForTesting().
@@ -223,7 +248,7 @@ class CONTENT_EXPORT ContentClient {
   // The embedder API for participating in gpu logic.
   raw_ptr<ContentGpuClient> gpu_;
   // The embedder API for participating in renderer logic.
-  raw_ptr<ContentRendererClient, LeakedDanglingUntriaged> renderer_;
+  raw_ptr<ContentRendererClient> renderer_;
   // The embedder API for participating in utility logic.
   raw_ptr<ContentUtilityClient> utility_;
 };

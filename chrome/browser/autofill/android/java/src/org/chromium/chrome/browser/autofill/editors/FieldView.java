@@ -4,22 +4,21 @@
 
 package org.chromium.chrome.browser.autofill.editors;
 
+import org.chromium.build.annotations.NullMarked;
+
 /** The interface for editor fields that handle validation, display errors, and can be updated. */
+@NullMarked
 interface FieldView {
-    /** @return True if this field is valid. */
-    boolean isValid();
+    /**
+     * Validates the field.
+     *
+     * @return True if this field is valid.
+     */
+    boolean validate();
 
     /** @return True if this field is required. */
     boolean isRequired();
 
     /** Scrolls to and focuses the field to bring user's attention to it. */
     void scrollToAndFocus();
-
-    /**
-     * Shows '*' required field indicator according to the provided boolean flag
-     *
-     * @param showRequiredIndicator boolean flag indicating if this field should me marked with
-     *         required indicator.
-     */
-    void setShowRequiredIndicator(boolean showRequiredIndicator);
 }

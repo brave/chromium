@@ -71,8 +71,8 @@ class PowerBookmarkDatabaseImpl : public PowerBookmarkDatabase {
   bool InitSchema();
   bool CreateSchema();
 
-  absl::optional<sync_pb::PowerBookmarkSpecifics> DeserializeOrDelete(
-      const std::string& data,
+  std::optional<sync_pb::PowerBookmarkSpecifics> DeserializeOrDelete(
+      std::string_view data,
       const base::Uuid& id);
 
   std::vector<std::string> GetGUIDsForURL(

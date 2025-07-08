@@ -11,7 +11,6 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/page_load_metrics/jni_headers/PageLoadMetrics_jni.h"
 #include "components/page_load_metrics/browser/observers/core/largest_contentful_paint_handler.h"
 #include "components/page_load_metrics/browser/page_load_metrics_util.h"
 #include "content/public/browser/browser_thread.h"
@@ -19,6 +18,9 @@
 #include "content/public/browser/web_contents.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/page_load_metrics/jni_headers/PageLoadMetrics_jni.h"
 
 AndroidPageLoadMetricsObserver::AndroidPageLoadMetricsObserver() {
   network_quality_tracker_ = g_browser_process->network_quality_tracker();
@@ -150,6 +152,56 @@ void AndroidPageLoadMetricsObserver::OnLoadedResource(
                              connect_start, connect_end, request_start,
                              send_start, send_end);
   }
+}
+
+void AndroidPageLoadMetricsObserver::OnUserTimingMarkFullyLoaded(
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  DCHECK(timing.user_timing_mark_fully_loaded);
+  if (!timing.user_timing_mark_fully_loaded) {
+    return;
+  }
+  base::android::ScopedJavaLocalRef<jobject> java_web_contents =
+      GetDelegate().GetWebContents()->GetJavaWebContents();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_PageLoadMetrics_onUserTimingMarkFullyLoaded(
+      env, java_web_contents, static_cast<jlong>(navigation_id_),
+      GetDelegate().GetNavigationStart().ToUptimeMicros(),
+      static_cast<jlong>(
+          timing.user_timing_mark_fully_loaded->InMilliseconds()),
+      static_cast<jboolean>(IsPrerendering()));
+}
+
+void AndroidPageLoadMetricsObserver::OnUserTimingMarkFullyVisible(
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  DCHECK(timing.user_timing_mark_fully_visible);
+  if (!timing.user_timing_mark_fully_visible) {
+    return;
+  }
+  base::android::ScopedJavaLocalRef<jobject> java_web_contents =
+      GetDelegate().GetWebContents()->GetJavaWebContents();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_PageLoadMetrics_onUserTimingMarkFullyVisible(
+      env, java_web_contents, static_cast<jlong>(navigation_id_),
+      GetDelegate().GetNavigationStart().ToUptimeMicros(),
+      static_cast<jlong>(
+          timing.user_timing_mark_fully_visible->InMilliseconds()),
+      static_cast<jboolean>(IsPrerendering()));
+}
+
+void AndroidPageLoadMetricsObserver::OnUserTimingMarkInteractive(
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  DCHECK(timing.user_timing_mark_interactive);
+  if (!timing.user_timing_mark_interactive) {
+    return;
+  }
+  base::android::ScopedJavaLocalRef<jobject> java_web_contents =
+      GetDelegate().GetWebContents()->GetJavaWebContents();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_PageLoadMetrics_onUserTimingMarkInteractive(
+      env, java_web_contents, static_cast<jlong>(navigation_id_),
+      GetDelegate().GetNavigationStart().ToUptimeMicros(),
+      static_cast<jlong>(timing.user_timing_mark_interactive->InMilliseconds()),
+      static_cast<jboolean>(IsPrerendering()));
 }
 
 void AndroidPageLoadMetricsObserver::ReportNewNavigation(

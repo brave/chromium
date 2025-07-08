@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/grit/components_resources.h"
 #include "components/lookalikes/core/lookalike_url_ui_util.h"
@@ -124,7 +125,6 @@ void LookalikeUrlBlockingPage::CommandReceived(const std::string& command) {
     case security_interstitials::CMD_REPORT_PHISHING_ERROR:
       // Not supported by the lookalike URL warning page.
       NOTREACHED() << "Unsupported command: " << command;
-      break;
     case security_interstitials::CMD_ERROR:
     case security_interstitials::CMD_TEXT_FOUND:
     case security_interstitials::CMD_TEXT_NOT_FOUND:

@@ -85,7 +85,7 @@ class PhotoTransitionAnimationObserver : public AmbientViewDelegateObserver {
   }
 
   void Cleanup() {
-    timer_.AbandonAndStop();
+    timer_.Stop();
     scoped_observation_.Reset();
   }
 
@@ -107,7 +107,7 @@ struct VideoPlaybackStatusTestParams {
   base::OnceClosure on_complete;
   base::OnceCallback<void(std::string)> on_error;
   // Never null. Points to default clock if a testing clock was not provided.
-  raw_ptr<const base::TickClock, ExperimentalAsh> tick_clock;
+  raw_ptr<const base::TickClock> tick_clock;
 };
 
 void ScheduleVideoPlaybackStatusCheck(VideoPlaybackStatusTestParams params);

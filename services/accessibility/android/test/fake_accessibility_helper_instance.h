@@ -30,10 +30,6 @@ class FakeAccessibilityHelperInstance
   void PerformAction(
       ax::android::mojom::AccessibilityActionDataPtr action_data_ptr,
       PerformActionCallback callback) override;
-  void SetNativeChromeVoxArcSupportForFocusedWindowDeprecated(
-      bool enabled,
-      SetNativeChromeVoxArcSupportForFocusedWindowDeprecatedCallback callback)
-      override;
   void SetNativeChromeVoxArcSupportForFocusedWindow(
       bool enabled,
       SetNativeChromeVoxArcSupportForFocusedWindowCallback callback) override;
@@ -41,7 +37,6 @@ class FakeAccessibilityHelperInstance
   void RefreshWithExtraData(
       ax::android::mojom::AccessibilityActionDataPtr action_data_ptr,
       RefreshWithExtraDataCallback callback) override;
-  void SetCaptionStyle(ax::android::mojom::CaptionStylePtr style_ptr) override;
   void RequestSendAccessibilityTree(
       ax::android::mojom::AccessibilityWindowKeyPtr window_ptr) override;
 
@@ -74,4 +69,4 @@ class FakeAccessibilityHelperInstance
 
 }  // namespace arc
 
-#endif
+#endif  // SERVICES_ACCESSIBILITY_ANDROID_TEST_FAKE_ACCESSIBILITY_HELPER_INSTANCE_H_

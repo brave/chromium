@@ -26,6 +26,7 @@ class Origin;
 namespace content {
 
 class BrowserContext;
+class Page;
 class RenderFrameHost;
 class UsbChooser;
 
@@ -60,6 +61,12 @@ class CONTENT_EXPORT UsbDelegate {
       blink::mojom::WebUsbRequestDeviceOptionsPtr options,
       blink::mojom::WebUsbService::GetPermissionCallback callback) = 0;
 
+  // By returning false, allows the embedder to deny WebUSB access to documents
+  // of the given `page`. This is beyond the restrictions already enforced
+  // within content/. For example, the embedder may be displaying `page` in a
+  // context where prompting for permissions is not appropriate.
+  virtual bool PageMayUseUsb(Page& page) = 0;
+
   // Returns whether `origin` in `browser_context` has permission to request
   // access to a device.
   virtual bool CanRequestDevicePermission(BrowserContext* browser_context,
@@ -78,11 +85,12 @@ class CONTENT_EXPORT UsbDelegate {
       const std::string& guid) = 0;
 
   // Returns whether `origin` in `browser_context` has permission to access
-  // the USB device described by `device`.
+  // the USB device described by `device_info`.
   virtual bool HasDevicePermission(
       BrowserContext* browser_context,
+      RenderFrameHost* frame,
       const url::Origin& origin,
-      const device::mojom::UsbDeviceInfo& device) = 0;
+      const device::mojom::UsbDeviceInfo& device_info) = 0;
 
   // These two methods are expected to proxy to the UsbDeviceManager interface
   // owned by the embedder.

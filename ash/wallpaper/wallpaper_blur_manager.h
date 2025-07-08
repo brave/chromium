@@ -7,11 +7,12 @@
 
 #include "ash/ash_export.h"
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
+#include "ash/root_window_controller.h"
 
 namespace ash {
 
 // Handles blur state for wallpaper. ChromeOS Wallpaper may be blurred on
-// login/lock screen, and in window overview mode.
+// lock/login screen.
 class ASH_EXPORT WallpaperBlurManager {
  public:
   WallpaperBlurManager();
@@ -33,9 +34,9 @@ class ASH_EXPORT WallpaperBlurManager {
 
   // When user presses the physical lock button on device, a quick blur
   // animation shows as the device is locking. This animation may show over
-  // other forms of blur like overview mode wallpaper blur. If the user lets go
-  // of the lock button before the device is locked, the animation rolls back
-  // and should restore the prior blur state.
+  // other forms of blur. If the user lets go of the lock button before the
+  // device is locked, the animation rolls back and should restore the prior
+  // blur state.
   void RestoreWallpaperBlurForLockState(float blur,
                                         WallpaperType wallpaper_type);
 
@@ -43,9 +44,10 @@ class ASH_EXPORT WallpaperBlurManager {
     return is_wallpaper_blurred_for_lock_state_;
   }
 
-  void set_is_wallpaper_blurred_for_lock_state(bool blur) {
-    is_wallpaper_blurred_for_lock_state_ = blur;
-  }
+  bool UpdateBlurForRootWindow(aura::Window* root_window,
+                               bool lock_state_changed,
+                               bool new_root,
+                               WallpaperType wallpaper_type);
 
   // Make pixel testing more reliable by allowing wallpaper blur.
   void set_allow_blur_for_testing() { allow_blur_for_testing_ = true; }

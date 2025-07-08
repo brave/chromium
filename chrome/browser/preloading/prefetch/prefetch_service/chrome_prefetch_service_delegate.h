@@ -7,9 +7,11 @@
 
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "content/public/browser/prefetch_service_delegate.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 class BrowserContext;
@@ -30,7 +32,6 @@ class ChromePrefetchServiceDelegate : public content::PrefetchServiceDelegate {
       const ChromePrefetchServiceDelegate&) = delete;
 
   // content::PrefetchServiceDelegate
-  std::string GetMajorVersionNumber() override;
   std::string GetAcceptLanguageHeader() override;
   GURL GetDefaultPrefetchProxyHost() override;
   std::string GetAPIKey() override;
@@ -47,7 +48,11 @@ class ChromePrefetchServiceDelegate : public content::PrefetchServiceDelegate {
   bool IsBatterySaverEnabled() override;
   bool IsExtendedPreloadingEnabled() override;
   bool IsDomainInPrefetchAllowList(const GURL& referring_url) override;
+  bool IsContaminationExempt(const GURL& referring_url) override;
+  bool IsContaminationExemptPerOrigin(
+      const url::Origin& referring_origin) override;
   void OnPrefetchLikely(content::WebContents* web_contents) override;
+  void SetAcceptLanguageHeader(std::string accept_language_header) override;
 
  private:
   // The profile that |this| is associated with.
@@ -58,4 +63,4 @@ class ChromePrefetchServiceDelegate : public content::PrefetchServiceDelegate {
   std::unique_ptr<PrefetchOriginDecider> origin_decider_;
 };
 
-#endif  // CHROME_BROWSER_PRELOADING_PREFETCH_PREFETCH_PROXY_CHROME_PREFETCH_SERVICE_DELEGATE_H_
+#endif  // CHROME_BROWSER_PRELOADING_PREFETCH_PREFETCH_SERVICE_CHROME_PREFETCH_SERVICE_DELEGATE_H_

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "content/browser/metrics/histograms_internals_ui.h"
 
 #include <stddef.h>
@@ -25,6 +26,7 @@
 #include "content/public/browser/web_ui_message_handler.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 
 namespace content {
 namespace {
@@ -43,9 +45,11 @@ struct JsParams {
 void CreateAndAddHistogramsHTMLSource(BrowserContext* browser_context) {
   WebUIDataSource* source =
       WebUIDataSource::CreateAndAdd(browser_context, kChromeUIHistogramHost);
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ScriptSrc,
+      "script-src chrome://resources chrome://webui-test 'self';");
 
-  source->AddResourcePaths(
-      base::make_span(kHistogramsResources, kHistogramsResourcesSize));
+  source->AddResourcePaths(kHistogramsResources);
   source->SetDefaultResource(IDR_HISTOGRAMS_HISTOGRAMS_INTERNALS_HTML);
 }
 
@@ -128,7 +132,7 @@ void HistogramsMessageHandler::HandleStartMoninoring(
     const base::Value::List& args) {
   JsParams params = AllowJavascriptAndUnpackParams(args);
   ImportHistograms(params.include_subprocesses);
-  histogram_monitor_.StartMonitoring(params.query);
+  histogram_monitor_.StartMonitoring();
   ResolveJavascriptCallback(base::Value(params.callback_id),
                             base::Value("Success"));
 }
@@ -136,7 +140,7 @@ void HistogramsMessageHandler::HandleStartMoninoring(
 void HistogramsMessageHandler::HandleFetchDiff(const base::Value::List& args) {
   JsParams params = AllowJavascriptAndUnpackParams(args);
   ImportHistograms(params.include_subprocesses);
-  base::Value::List histograms_list = histogram_monitor_.GetDiff();
+  base::Value::List histograms_list = histogram_monitor_.GetDiff(params.query);
   ResolveJavascriptCallback(base::Value(params.callback_id),
                             std::move(histograms_list));
 }

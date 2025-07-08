@@ -5,12 +5,12 @@
 #include "third_party/blink/renderer/platform/graphics/dark_mode_filter.h"
 
 #include <cmath>
+#include <optional>
 
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/containers/lru_cache.h"
 #include "base/notreached.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/dark_mode_color_classifier.h"
@@ -76,8 +76,9 @@ sk_sp<cc::ColorFilter> GetDarkModeFilterForImageOnMainThread(
     // default frame is completely received. This will help get correct
     // classification results for incremental content received for the given
     // image.
-    if (!image->IsBitmapImage() || image->CurrentFrameIsComplete())
+    if (!image->IsBitmapImage() || image->FirstFrameIsComplete()) {
       cache->Add(rounded_src, color_filter);
+    }
   }
   return color_filter;
 }
@@ -175,7 +176,6 @@ SkColor4f DarkModeFilter::AdjustDarkenColor(
     default:
       return color;
   }
-  NOTREACHED();
 }
 
 SkColor4f DarkModeFilter::InvertColorIfNeeded(
@@ -262,12 +262,12 @@ sk_sp<cc::ColorFilter> DarkModeFilter::GetImageFilter() const {
   return immutable_.image_filter;
 }
 
-absl::optional<cc::PaintFlags> DarkModeFilter::ApplyToFlagsIfNeeded(
+std::optional<cc::PaintFlags> DarkModeFilter::ApplyToFlagsIfNeeded(
     const cc::PaintFlags& flags,
     ElementRole role,
     SkColor4f contrast_background) {
   if (!immutable_.color_filter || flags.HasShader())
-    return absl::nullopt;
+    return std::nullopt;
 
   cc::PaintFlags dark_mode_flags = flags;
   SkColor4f flags_color = flags.getColor4f();
@@ -279,7 +279,7 @@ absl::optional<cc::PaintFlags> DarkModeFilter::ApplyToFlagsIfNeeded(
       flags_color, role,
       InvertColorIfNeeded(contrast_background, ElementRole::kBackground)));
 
-  return absl::make_optional<cc::PaintFlags>(std::move(dark_mode_flags));
+  return std::make_optional<cc::PaintFlags>(std::move(dark_mode_flags));
 }
 
 bool DarkModeFilter::ShouldApplyToColor(const SkColor4f& color,
@@ -300,7 +300,6 @@ bool DarkModeFilter::ShouldApplyToColor(const SkColor4f& color,
     default:
       return false;
   }
-  NOTREACHED();
 }
 
 size_t DarkModeFilter::GetInvertedColorCacheSizeForTesting() {

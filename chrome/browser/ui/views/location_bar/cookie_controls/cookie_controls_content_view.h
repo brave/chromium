@@ -6,24 +6,34 @@
 #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_COOKIE_CONTROLS_COOKIE_CONTROLS_CONTENT_VIEW_H_
 
 #include "base/memory/raw_ptr.h"
+#include "chrome/browser/ui/views/controls/rich_hover_button.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "ui/base/interaction/element_identifier.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/vector_icon_types.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/view.h"
 
 class RichControlsContainerView;
-
 namespace views {
 class Label;
+class LabelButton;
 class ToggleButton;
 class ImageView;
+class MdTextButtonWithSpinner;
 }  // namespace views
 
 // Content view used to display the cookie Controls.
 class CookieControlsContentView : public views::View {
+  METADATA_HEADER(CookieControlsContentView, views::View)
+
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTitle);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDescription);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTrackingProtectionsButton);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToggleButton);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToggleLabel);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kThirdPartyCookiesLabel);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kFeedbackButton);
   CookieControlsContentView();
 
@@ -37,32 +47,69 @@ class CookieControlsContentView : public views::View {
   virtual void SetToggleIcon(const gfx::VectorIcon& icon);
 
   virtual void SetToggleVisible(bool visible);
+  virtual void SetCookiesRowVisible(bool visible);
+  virtual void SetTrackingProtectionsButtonVisible(bool visible);
+
+  virtual void SetCookiesLabel(const std::u16string& label);
   virtual void SetEnforcedIcon(const gfx::VectorIcon& icon,
                                const std::u16string& tooltip);
+  virtual void SetTrackingProtectionsButtonLabel(const std::u16string& label);
+
   virtual void SetEnforcedIconVisible(bool visible);
 
   virtual void SetFeedbackSectionVisibility(bool visible);
+
+  virtual void UpdateFeedbackButtonSubtitle(const std::u16string& subtitle);
+
+  virtual void SetTrackingProtectionsButtonReloadingState();
+
+  virtual views::MdTextButtonWithSpinner* GetTrackingProtectionsButton();
 
   base::CallbackListSubscription RegisterToggleButtonPressedCallback(
       base::RepeatingCallback<void(bool)> callback);
   base::CallbackListSubscription RegisterFeedbackButtonPressedCallback(
       base::RepeatingClosureList::CallbackType callback);
+  base::CallbackListSubscription
+  RegisterTrackingProtectionsButtonPressedCallback(
+      base::RepeatingCallback<void()> callback);
+
+  void PreferredSizeChanged() override;
+
+ protected:
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
 
  private:
+  friend class CookieControlsContentViewBrowserTest;
+  friend class CookieControlsContentViewTrackingProtectionUnitTest;
+
   void NotifyToggleButtonPressedCallback();
   void NotifyFeedbackButtonPressedCallback();
+  void NotifyTrackingProtectionsButtonPressedCallback();
 
+  // Used for 3PC-only UI.
   void AddContentLabels();
   void AddToggleRow();
   void AddFeedbackSection();
+  raw_ptr<RichControlsContainerView> cookies_row_ = nullptr;
+  raw_ptr<views::View> feedback_section_ = nullptr;
+  raw_ptr<RichHoverButton> feedback_button_ = nullptr;
+  raw_ptr<views::View> label_wrapper_ = nullptr;
   raw_ptr<views::Label> title_ = nullptr;
   raw_ptr<views::Label> description_ = nullptr;
-  raw_ptr<RichControlsContainerView> toggle_row_ = nullptr;
-  raw_ptr<views::ToggleButton> toggle_button_ = nullptr;
+  raw_ptr<views::Label> cookies_label_ = nullptr;
   raw_ptr<views::ImageView> enforced_icon_ = nullptr;
-  raw_ptr<views::View> feedback_section_ = nullptr;
+  raw_ptr<views::ToggleButton> toggle_button_ = nullptr;
 
   base::RepeatingCallbackList<void(bool)> toggle_button_callback_list_;
+  base::RepeatingCallbackList<void()>
+      tracking_protections_button_callback_list_;
+
+  // Used for Tracking protections UI.
+  void AddTrackingProtectionsButton();
+  raw_ptr<views::MdTextButtonWithSpinner> tracking_protections_button_ =
+      nullptr;
+
   base::RepeatingClosureList feedback_button_callback_list_;
 };
 

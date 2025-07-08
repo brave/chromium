@@ -15,6 +15,16 @@ swarming.task_accounts(
 
 swarming.pool_realm(
     name = "pools/ci",
+    user_projects = [
+        "infra",
+        "infra-experimental",
+        "v8",
+    ],
+)
+
+luci.binding(
+    realm = "pools/ci",
+    roles = "role/swarming.poolViewer",
     projects = [
         "infra",
         "infra-experimental",
@@ -26,12 +36,18 @@ swarming.pool_realm(name = "pools/try")
 
 swarming.pool_realm(
     name = "pools/tests",
-    groups = [
+    user_groups = [
         "project-chromium-ci-dev-task-accounts",
         "project-chromium-try-dev-task-accounts",
         #TODO(b/258041976): mac os vm experiments
         "chromium-swarming-dev-led-access",
     ],
+)
+
+swarming.task_triggerers(
+    builder_realm = "try",
+    pool_realm = "pools/tests",
+    groups = ["chromium-swarming-dev-led-access"],
 )
 
 swarming.task_triggerers(

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/gfx/image/image_platform.h"
 
 #import <AppKit/AppKit.h>
@@ -13,22 +18,18 @@
 #include "ui/gfx/image/image_internal.h"
 #include "ui/gfx/image/image_png_rep.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 
 // Returns a 16x16 red NSImage to visually show when a NSImage cannot be
 // created from PNG data.
 NSImage* GetErrorNSImage() {
-  NSRect rect = NSMakeRect(0, 0, 16, 16);
-  NSImage* image = [[NSImage alloc] initWithSize:rect.size];
-  [image lockFocus];
-  [[NSColor colorWithDeviceRed:1.0 green:0.0 blue:0.0 alpha:1.0] set];
-  NSRectFill(rect);
-  [image unlockFocus];
-  return image;
+  return [NSImage imageWithSize:NSMakeSize(16, 16)
+                        flipped:NO
+                 drawingHandler:^(NSRect rect) {
+                   [NSColor.redColor set];
+                   NSRectFill(rect);
+                   return YES;
+                 }];
 }
 
 }  // namespace
@@ -77,11 +78,16 @@ ImageRepCocoa* ImageRep::AsImageRepCocoa() {
 scoped_refptr<base::RefCountedMemory> Get1xPNGBytesFromNSImage(
     NSImage* nsimage) {
   DCHECK(nsimage);
+
+  // This function is to get the 1x bytes, so explicitly specify an identity
+  // transform when extracting the pixels from this NSImage to get that 1x.
+  NSDictionary<NSImageHintKey, id>* hints =
+      @{NSImageHintCTM : [NSAffineTransform transform]};
   CGImageRef cg_image = [nsimage CGImageForProposedRect:nullptr
                                                 context:nil
-                                                  hints:nil];
+                                                  hints:hints];
   if (!cg_image) {
-    // TODO(crbug.com/1271762): Look at DumpWithoutCrashing() reports to figure
+    // TODO(crbug.com/40805758): Look at DumpWithoutCrashing() reports to figure
     // out what's going on here.
     return scoped_refptr<base::RefCountedMemory>();
   }
@@ -89,15 +95,14 @@ scoped_refptr<base::RefCountedMemory> Get1xPNGBytesFromNSImage(
       [[NSBitmapImageRep alloc] initWithCGImage:cg_image];
   NSData* ns_data = [ns_bitmap representationUsingType:NSBitmapImageFileTypePNG
                                             properties:@{}];
-  const unsigned char* bytes = static_cast<const unsigned char*>(ns_data.bytes);
+  auto* bytes = static_cast<const uint8_t*>(ns_data.bytes);
   scoped_refptr<base::RefCountedBytes> refcounted_bytes(
       new base::RefCountedBytes());
-  refcounted_bytes->data().assign(bytes, bytes + ns_data.length);
+  refcounted_bytes->as_vector().assign(bytes, bytes + ns_data.length);
   return refcounted_bytes;
 }
 
-NSImage* NSImageFromPNG(const std::vector<gfx::ImagePNGRep>& image_png_reps,
-                        CGColorSpaceRef color_space) {
+NSImage* NSImageFromPNG(const std::vector<gfx::ImagePNGRep>& image_png_reps) {
   if (image_png_reps.empty()) {
     LOG(ERROR) << "Unable to decode PNG.";
     return GetErrorNSImage();
@@ -115,24 +120,6 @@ NSImage* NSImageFromPNG(const std::vector<gfx::ImagePNGRep>& image_png_reps,
       LOG(ERROR) << "Unable to decode PNG at " << image_png_rep.scale << ".";
       return GetErrorNSImage();
     }
-
-    // PNGCodec ignores colorspace related ancillary chunks (sRGB, iCCP). Ignore
-    // colorspace information when decoding directly from PNG to an NSImage so
-    // that the conversions: PNG -> SkBitmap -> NSImage and PNG -> NSImage
-    // produce visually similar results.
-    CGColorSpaceModel decoded_color_space_model =
-        CGColorSpaceGetModel(ns_image_rep.colorSpace.CGColorSpace);
-    CGColorSpaceModel color_space_model = CGColorSpaceGetModel(color_space);
-    if (decoded_color_space_model == color_space_model) {
-      NSColorSpace* ns_color_space =
-          [[NSColorSpace alloc] initWithCGColorSpace:color_space];
-      NSBitmapImageRep* ns_retagged_image_rep =
-          [ns_image_rep
-              bitmapImageRepByRetaggingWithColorSpace:ns_color_space];
-      if (ns_retagged_image_rep && ns_retagged_image_rep != ns_image_rep)
-        ns_image_rep = ns_retagged_image_rep;
-    }
-
     if (!image) {
       float scale = image_png_rep.scale;
       NSSize image_size = NSMakeSize(ns_image_rep.pixelsWide / scale,

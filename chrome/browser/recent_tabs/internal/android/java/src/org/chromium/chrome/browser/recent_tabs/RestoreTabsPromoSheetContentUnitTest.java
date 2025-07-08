@@ -12,10 +12,12 @@ import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.Scre
 import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.ScreenType.REVIEW_TABS_SCREEN;
 import static org.chromium.chrome.browser.recent_tabs.RestoreTabsProperties.VISIBLE;
 
+import android.content.Context;
 import android.view.View;
 import android.widget.ScrollView;
 
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -31,25 +33,18 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * Unit tests for the RestoreTabsPromoSheetContent class.
- */
+/** Unit tests for the RestoreTabsPromoSheetContent class. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class RestoreTabsPromoSheetContentUnitTest {
-    @Mock
-    private View mContentView;
-    @Mock
-    private BottomSheetController mBottomSheetController;
-    @Mock
-    private RecyclerView mRecyclerView;
-    @Mock
-    private View mChildView;
-    @Mock
-    private ScrollView mScrollView;
+    @Mock private View mContentView;
+    @Mock private BottomSheetController mBottomSheetController;
+    @Mock private RecyclerView mRecyclerView;
+    @Mock private View mChildView;
+    @Mock private ScrollView mScrollView;
 
     private RestoreTabsPromoSheetContent mSheetContent;
-    private PropertyModel mModel = RestoreTabsProperties.createDefaultModel();
+    private final PropertyModel mModel = RestoreTabsProperties.createDefaultModel();
 
     @Before
     public void setUp() {
@@ -110,21 +105,24 @@ public class RestoreTabsPromoSheetContentUnitTest {
 
     @Test
     public void testSheetContent_getFullHeightRatio() {
-        Assert.assertEquals(BottomSheetContent.HeightMode.WRAP_CONTENT, mSheetContent.getFullHeightRatio(), 0.05);
+        Assert.assertEquals(
+                BottomSheetContent.HeightMode.WRAP_CONTENT,
+                mSheetContent.getFullHeightRatio(),
+                0.05);
     }
 
     @Test
     public void testSheetContent_handleBackPressDeviceScreen() {
         mModel.set(CURRENT_SCREEN, DEVICE_SCREEN);
         Assert.assertTrue(mSheetContent.handleBackPress());
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
     public void testSheetContent_handleBackPressReviewTabsScreen() {
         mModel.set(CURRENT_SCREEN, REVIEW_TABS_SCREEN);
         Assert.assertTrue(mSheetContent.handleBackPress());
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
@@ -145,14 +143,14 @@ public class RestoreTabsPromoSheetContentUnitTest {
     public void testSheetContent_onBackPressedDeviceScreen() {
         mModel.set(CURRENT_SCREEN, DEVICE_SCREEN);
         mSheetContent.onBackPressed();
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
     public void testSheetContent_onBackPressedReviewTabsScreen() {
         mModel.set(CURRENT_SCREEN, REVIEW_TABS_SCREEN);
         mSheetContent.onBackPressed();
-        Assert.assertEquals(mModel.get(CURRENT_SCREEN), HOME_SCREEN);
+        Assert.assertEquals(HOME_SCREEN, mModel.get(CURRENT_SCREEN));
     }
 
     @Test
@@ -175,22 +173,31 @@ public class RestoreTabsPromoSheetContentUnitTest {
     }
 
     @Test
-    public void testSheetContent_getSheetContentDescriptionStringId() {
-        Assert.assertEquals(R.string.restore_tabs_content_description, mSheetContent.getSheetContentDescriptionStringId());
+    public void testSheetContent_getSheetContentDescription() {
+        Context context = ApplicationProvider.getApplicationContext();
+        Assert.assertEquals(
+                context.getString(R.string.restore_tabs_content_description),
+                mSheetContent.getSheetContentDescription(context));
     }
 
     @Test
     public void testSheetContent_getSheetClosedAccessibilityStringId() {
-        Assert.assertEquals(R.string.restore_tabs_sheet_closed, mSheetContent.getSheetClosedAccessibilityStringId());
+        Assert.assertEquals(
+                R.string.restore_tabs_sheet_closed,
+                mSheetContent.getSheetClosedAccessibilityStringId());
     }
 
     @Test
     public void testSheetContent_getSheetHalfHeightAccessibilityStringId() {
-        Assert.assertEquals(R.string.restore_tabs_content_description, mSheetContent.getSheetHalfHeightAccessibilityStringId());
+        Assert.assertEquals(
+                R.string.restore_tabs_content_description,
+                mSheetContent.getSheetHalfHeightAccessibilityStringId());
     }
 
     @Test
     public void testSheetContent_getSheetFullHeightAccessibilityStringId() {
-        Assert.assertEquals(R.string.restore_tabs_content_description, mSheetContent.getSheetFullHeightAccessibilityStringId());
+        Assert.assertEquals(
+                R.string.restore_tabs_content_description,
+                mSheetContent.getSheetFullHeightAccessibilityStringId());
     }
 }

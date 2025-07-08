@@ -19,6 +19,8 @@ class Printer;
 
 namespace ash {
 
+class DlcserviceClient;
+
 // These values are written to logs.  New enum values can be added, but existing
 // enums must never be renumbered or deleted and reused.
 enum class PrinterSetupResult {
@@ -48,12 +50,16 @@ enum class PrinterSetupResult {
 
   // Specific DBus errors. This must stay in sync with the DBusLibraryError
   // enum and PrinterSetupResultFromDbusErrorCode().
-  kDbusNoReply = 64,  // Expected remote response but got nothing
+  kDbusNoReply = 64,  // Deprecated
   kDbusTimeout = 65,  // Generic timeout error (c.f. dbus-protocol.h)
 
   // Printer was removed before the setup was completed (setup cancelled)
   kPrinterRemoved = 66,
-  kMaxValue = kPrinterRemoved  // Maximum value for histograms
+
+  kPrintscanmgrDbusNoReply = 67,  // No reply from printscanmgr over D-Bus.
+  kDebugdDbusNoReply = 68,        // No reply from debugd over D-Bus.
+
+  kMaxValue = kDebugdDbusNoReply  // Maximum value for histograms
 };
 
 // These values are written to logs.  New enum values can be added, but existing
@@ -73,7 +79,8 @@ using PrinterSetupCallback = base::OnceCallback<void(PrinterSetupResult)>;
 class PrinterConfigurer {
  public:
   static std::unique_ptr<PrinterConfigurer> Create(
-      scoped_refptr<chromeos::PpdProvider> ppd_provider);
+      scoped_refptr<chromeos::PpdProvider> ppd_provider,
+      DlcserviceClient* dlc_service_client);
 
   PrinterConfigurer(const PrinterConfigurer&) = delete;
   PrinterConfigurer& operator=(const PrinterConfigurer&) = delete;

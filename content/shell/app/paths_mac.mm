@@ -5,14 +5,11 @@
 #include "content/shell/app/paths_mac.h"
 
 #include "base/apple/bundle_locations.h"
+#include "base/apple/foundation_util.h"
 #include "base/base_paths.h"
-#include "base/mac/foundation_util.h"
 #include "base/path_service.h"
+#include "base/strings/sys_string_conversions.h"
 #include "content/public/common/content_paths.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace {
 
@@ -22,7 +19,7 @@ base::FilePath GetContentsPath() {
   base::PathService::Get(base::FILE_EXE, &path);
 
   // Up to Contents.
-  if (base::mac::IsBackgroundOnlyProcess()) {
+  if (base::apple::IsBackgroundOnlyProcess()) {
     // The running executable is the helper, located at:
     // Content Shell.app/Contents/Frameworks/
     // Content Shell Framework.framework/Versions/C/Helpers/Content Shell
@@ -79,13 +76,13 @@ void OverrideChildProcessPath() {
 }
 
 void OverrideSourceRootPath() {
-  // The base implementation to get base::DIR_SOURCE_ROOT assumes the current
-  // process path is the top level app path, not a nested one.
+  // The base implementation to get base::DIR_SRC_TEST_DATA_ROOT assumes the
+  // current process path is the top level app path, not a nested one.
   //
   // Going up 5 levels is needed, since frameworks path looks something like
   // src/out/foo/Content Shell.app/Contents/Framework/
   base::PathService::Override(
-      base::DIR_SOURCE_ROOT,
+      base::DIR_SRC_TEST_DATA_ROOT,
       GetFrameworksPath().DirName().DirName().DirName().DirName().DirName());
 }
 
@@ -99,4 +96,10 @@ base::FilePath GetResourcesPakFilePath() {
 
 base::FilePath GetInfoPlistPath() {
   return GetContentsPath().Append("Info.plist");
+}
+
+void OverrideBundleID() {
+  NSBundle* bundle = base::apple::OuterBundle();
+  base::apple::SetBaseBundleIDOverride(
+      base::SysNSStringToUTF8(bundle.bundleIdentifier));
 }

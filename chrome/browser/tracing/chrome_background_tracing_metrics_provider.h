@@ -32,6 +32,9 @@ class ChromeBackgroundTracingMetricsProvider
   void Init() override;
   void AsyncInit(base::OnceClosure done_callback) override;
 
+  void RecordCoreSystemProfileMetrics(
+      metrics::SystemProfileProto& system_profile_proto) override;
+
  private:
   // owned by BackgroundTracingMetricsProvider::system_profile_providers_.
   raw_ptr<MetricsProvider> av_metrics_provider_ = nullptr;

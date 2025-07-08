@@ -7,7 +7,6 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
-#include "base/strings/stringprintf.h"
 #include "build/buildflag.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/system/isolated_connection.h"
@@ -16,6 +15,7 @@
 #include "remoting/host/mojom/chromoting_host_services.mojom.h"
 
 #if BUILDFLAG(IS_WIN)
+#include "base/strings/strcat_win.h"
 #include "base/win/win_util.h"
 #endif
 
@@ -35,8 +35,8 @@ named_mojo_ipc_server::EndpointOptions CreateEndpointOptions(
     LOG(ERROR) << "Failed to get user SID string.";
     return {};
   }
-  options.security_descriptor = base::StringPrintf(
-      L"O:%lsG:%lsD:(A;;GA;;;AU)", user_sid.c_str(), user_sid.c_str());
+  options.security_descriptor =
+      base::StrCat({L"O:", user_sid, L"G:", user_sid, L"D:(A;;GA;;;AU)"});
 #endif
   return options;
 }
@@ -78,7 +78,7 @@ void ChromotingHostServicesServer::StopServer() {
 
 void ChromotingHostServicesServer::OnMessagePipeReady(
     mojo::ScopedMessagePipeHandle message_pipe,
-    base::ProcessId peer_pid,
+    std::unique_ptr<named_mojo_ipc_server::ConnectionInfo> connection_info,
     void* context,
     std::unique_ptr<mojo::IsolatedConnection> connection) {
   DCHECK(!context) << "ChromotingHostServicesServer provides no context";
@@ -86,7 +86,7 @@ void ChromotingHostServicesServer::OnMessagePipeReady(
   bind_chromoting_host_services_.Run(
       mojo::PendingReceiver<mojom::ChromotingHostServices>(
           std::move(message_pipe)),
-      peer_pid);
+      connection_info->pid);
 }
 
 }  // namespace remoting

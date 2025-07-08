@@ -7,6 +7,7 @@
 #include <inttypes.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,41 +15,29 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/remote_probe_service_strategy.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/telemetry/telemetry_api_converters.h"
 #include "chrome/common/chromeos/extensions/api/telemetry.h"
 #include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace chromeos {
 
 namespace {
-
 namespace cx_telem = api::os_telemetry;
 namespace crosapi = ::crosapi::mojom;
-
 }  // namespace
 
 // TelemetryApiFunctionBase ----------------------------------------------------
 
-TelemetryApiFunctionBase::TelemetryApiFunctionBase()
-    : remote_probe_service_strategy_(RemoteProbeServiceStrategy::Create()) {}
+TelemetryApiFunctionBase::TelemetryApiFunctionBase() = default;
 
 TelemetryApiFunctionBase::~TelemetryApiFunctionBase() = default;
 
-mojo::Remote<crosapi::TelemetryProbeService>&
-TelemetryApiFunctionBase::GetRemoteService() {
-  DCHECK(remote_probe_service_strategy_);
-  return remote_probe_service_strategy_->GetRemoteService();
+crosapi::TelemetryProbeService* TelemetryApiFunctionBase::GetRemoteService() {
+  DCHECK(RemoteProbeServiceStrategy::Get()->GetRemoteProbeService());
+  return RemoteProbeServiceStrategy::Get()->GetRemoteProbeService();
 }
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-bool TelemetryApiFunctionBase::IsCrosApiAvailable() {
-  return remote_probe_service_strategy_ != nullptr;
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
 // OsTelemetryGetAudioInfoFunction ---------------------------------------------
 
@@ -67,7 +56,7 @@ void OsTelemetryGetAudioInfoFunction::OnResult(
   }
   auto& audio_info = ptr->audio_result->get_audio_info();
 
-  auto result = converters::ConvertPtr(std::move(audio_info));
+  auto result = converters::telemetry::ConvertPtr(std::move(audio_info));
 
   Respond(ArgumentList(cx_telem::GetAudioInfo::Results::Create(result)));
 }
@@ -92,8 +81,8 @@ void OsTelemetryGetBatteryInfoFunction::OnResult(
   const bool has_permission = extension()->permissions_data()->HasAPIPermission(
       extensions::mojom::APIPermissionID::kChromeOSTelemetrySerialNumber);
 
-  cx_telem::BatteryInfo result =
-      converters::ConvertPtr(std::move(battery_info), has_permission);
+  cx_telem::BatteryInfo result = converters::telemetry::ConvertPtr(
+      std::move(battery_info), has_permission);
 
   Respond(ArgumentList(cx_telem::GetBatteryInfo::Results::Create(result)));
 }
@@ -117,9 +106,8 @@ void OsTelemetryGetNonRemovableBlockDevicesInfoFunction::OnResult(
   }
   auto& block_device_info = ptr->block_device_result->get_block_device_info();
 
-  auto infos =
-      converters::ConvertPtrVector<cx_telem::NonRemovableBlockDeviceInfo>(
-          std::move(block_device_info));
+  auto infos = converters::telemetry::ConvertPtrVector<
+      cx_telem::NonRemovableBlockDeviceInfo>(std::move(block_device_info));
   cx_telem::NonRemovableBlockDeviceInfoResponse result;
   result.device_infos = std::move(infos);
 
@@ -149,9 +137,9 @@ void OsTelemetryGetCpuInfoFunction::OnResult(
   if (cpu_info->num_total_threads) {
     result.num_total_threads = cpu_info->num_total_threads->value;
   }
-  result.architecture = converters::Convert(cpu_info->architecture);
+  result.architecture = converters::telemetry::Convert(cpu_info->architecture);
   result.physical_cpus =
-      converters::ConvertPtrVector<cx_telem::PhysicalCpuInfo>(
+      converters::telemetry::ConvertPtrVector<cx_telem::PhysicalCpuInfo>(
           std::move(cpu_info->physical_cpus));
 
   Respond(ArgumentList(cx_telem::GetCpuInfo::Results::Create(result)));
@@ -175,7 +163,7 @@ void OsTelemetryGetDisplayInfoFunction::OnResult(
   }
 
   cx_telem::DisplayInfo result;
-  result = converters::ConvertPtr(
+  result = converters::telemetry::ConvertPtr(
       std::move(ptr->display_result->get_display_info()));
 
   Respond(ArgumentList(cx_telem::GetDisplayInfo::Results::Create(result)));
@@ -202,7 +190,8 @@ void OsTelemetryGetInternetConnectivityInfoFunction::OnResult(
 
   const bool has_permission = extension()->permissions_data()->HasAPIPermission(
       extensions::mojom::APIPermissionID::kChromeOSTelemetryNetworkInformation);
-  auto result = converters::ConvertPtr(std::move(network_info), has_permission);
+  auto result = converters::telemetry::ConvertPtr(std::move(network_info),
+                                                  has_permission);
 
   Respond(ArgumentList(
       cx_telem::GetInternetConnectivityInfo::Results::Create(result)));
@@ -328,8 +317,8 @@ void OsTelemetryGetOsVersionInfoFunction::OnResult(
     return;
   }
 
-  cx_telem::OsVersionInfo result =
-      converters::ConvertPtr(std::move(system_info->os_info->os_version));
+  cx_telem::OsVersionInfo result = converters::telemetry::ConvertPtr(
+      std::move(system_info->os_info->os_version));
 
   Respond(ArgumentList(cx_telem::GetOsVersionInfo::Results::Create(result)));
 }
@@ -355,10 +344,34 @@ void OsTelemetryGetStatefulPartitionInfoFunction::OnResult(
       ptr->stateful_partition_result->get_partition_info();
 
   cx_telem::StatefulPartitionInfo result =
-      converters::ConvertPtr(std::move(stateful_part_info));
+      converters::telemetry::ConvertPtr(std::move(stateful_part_info));
 
   Respond(ArgumentList(
       cx_telem::GetStatefulPartitionInfo::Results::Create(result)));
+}
+
+// OsTelemetryGetThermalInfoFunction
+// -----------------------------------------------
+
+void OsTelemetryGetThermalInfoFunction::RunIfAllowed() {
+  auto cb = base::BindOnce(&OsTelemetryGetThermalInfoFunction::OnResult, this);
+
+  GetRemoteService()->ProbeTelemetryInfo({crosapi::ProbeCategoryEnum::kThermal},
+                                         std::move(cb));
+}
+
+void OsTelemetryGetThermalInfoFunction::OnResult(
+    crosapi::ProbeTelemetryInfoPtr ptr) {
+  if (!ptr || !ptr->thermal_result || !ptr->thermal_result->is_thermal_info()) {
+    Respond(Error("API internal error"));
+    return;
+  }
+
+  cx_telem::ThermalInfo result;
+  result = converters::telemetry::ConvertPtr(
+      std::move(ptr->thermal_result->get_thermal_info()));
+
+  Respond(ArgumentList(cx_telem::GetThermalInfo::Results::Create(result)));
 }
 
 // OsTelemetryGetTpmInfoFunction -----------------------------------------------
@@ -378,7 +391,8 @@ void OsTelemetryGetTpmInfoFunction::OnResult(
   }
   auto& tpm_info = ptr->tpm_result->get_tpm_info();
 
-  cx_telem::TpmInfo result = converters::ConvertPtr(std::move(tpm_info));
+  cx_telem::TpmInfo result =
+      converters::telemetry::ConvertPtr(std::move(tpm_info));
 
   Respond(ArgumentList(cx_telem::GetTpmInfo::Results::Create(result)));
 }
@@ -412,8 +426,8 @@ void OsTelemetryGetUsbBusInfoFunction::OnResult(
   auto bus_infos = std::move(ptr->bus_result->get_bus_devices_info());
   for (auto& info : bus_infos) {
     if (info->is_usb_bus_info()) {
-      result.devices.push_back(
-          converters::ConvertPtr(std::move(info->get_usb_bus_info())));
+      result.devices.push_back(converters::telemetry::ConvertPtr(
+          std::move(info->get_usb_bus_info())));
     }
   }
 
@@ -438,7 +452,7 @@ void OsTelemetryGetVpdInfoFunction::OnResult(
 
   const bool has_permission = extension()->permissions_data()->HasAPIPermission(
       extensions::mojom::APIPermissionID::kChromeOSTelemetrySerialNumber);
-  auto result = converters::ConvertPtr(
+  auto result = converters::telemetry::ConvertPtr(
       std::move(ptr->vpd_result->get_vpd_info()), has_permission);
 
   Respond(ArgumentList(cx_telem::GetVpdInfo::Results::Create(result)));

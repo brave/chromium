@@ -24,6 +24,8 @@ component("touch_selection") {
     "touch_selection_draggable.h",
     "touch_selection_menu_runner.cc",
     "touch_selection_menu_runner.h",
+    "touch_selection_metrics.cc",
+    "touch_selection_metrics.h",
     "ui_touch_selection_export.h",
   ]
 
@@ -40,6 +42,7 @@ component("touch_selection") {
 
   if (use_aura) {
     deps += [
+      "//cc/paint",
       "//skia:skia",
       "//ui/aura",
       "//ui/base",
@@ -59,6 +62,12 @@ component("touch_selection") {
       "touch_selection_magnifier_aura.cc",
       "touch_selection_magnifier_aura.h",
     ]
+  }
+
+  if (use_blink) {
+    sources += [ "touch_editing_controller.h" ]
+
+    deps += [ "//ui/menus" ]
   }
 }
 
@@ -97,7 +106,7 @@ test("ui_touch_selection_unittests") {
     "//ui/gfx:test_support",
   ]
 
-  data_deps = [ "//third_party/mesa_headers" ]
+  data_deps = [ "//third_party/angle:includes" ]
 
   if (use_aura) {
     deps += [ "//ui/compositor:compositor" ]

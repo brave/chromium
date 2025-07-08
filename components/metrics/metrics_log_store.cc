@@ -4,6 +4,8 @@
 
 #include "components/metrics/metrics_log_store.h"
 
+#include <string_view>
+
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service_client.h"
 #include "components/metrics/unsent_log_store_metrics_impl.h"
@@ -33,8 +35,7 @@ MetricsLogStore::MetricsLogStore(PrefService* local_state,
           UnsentLogStore::UnsentLogStoreLimits{
               storage_limits.initial_log_queue_limits.min_log_count,
               storage_limits.initial_log_queue_limits.min_queue_size_bytes,
-              // Each individual initial log can be any size.
-              /*max_log_size_bytes=*/0},
+              storage_limits.initial_log_queue_limits.max_log_size_bytes},
           signing_key,
           logs_event_manager),
       ongoing_log_queue_(std::make_unique<UnsentLogStoreMetricsImpl>(),
@@ -45,7 +46,7 @@ MetricsLogStore::MetricsLogStore(PrefService* local_state,
                          signing_key,
                          logs_event_manager) {}
 
-MetricsLogStore::~MetricsLogStore() {}
+MetricsLogStore::~MetricsLogStore() = default;
 
 void MetricsLogStore::LoadPersistedUnsentLogs() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -153,8 +154,12 @@ const std::string& MetricsLogStore::staged_log_signature() const {
   return get_staged_log_queue()->staged_log_signature();
 }
 
-absl::optional<uint64_t> MetricsLogStore::staged_log_user_id() const {
+std::optional<uint64_t> MetricsLogStore::staged_log_user_id() const {
   return get_staged_log_queue()->staged_log_user_id();
+}
+
+const LogMetadata MetricsLogStore::staged_log_metadata() const {
+  return get_staged_log_queue()->staged_log_metadata();
 }
 
 bool MetricsLogStore::has_alternate_ongoing_log_store() const {
@@ -206,7 +211,7 @@ void MetricsLogStore::StageNextLog() {
     ongoing_log_queue_.StageNextLog();
 }
 
-void MetricsLogStore::DiscardStagedLog(base::StringPiece reason) {
+void MetricsLogStore::DiscardStagedLog(std::string_view reason) {
   DCHECK(has_staged_log());
   if (initial_log_queue_.has_staged_log())
     initial_log_queue_.DiscardStagedLog(reason);

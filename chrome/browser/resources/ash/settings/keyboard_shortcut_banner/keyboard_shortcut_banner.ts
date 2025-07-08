@@ -12,11 +12,16 @@
  * keyboard shortcuts. For example, "Press Ctrl + Space" should be passed in as
  * "Press <kbd><kbd>Ctrl</kbd>+<kbd>Space</kbd></kbd>".
  */
-import 'chrome://resources/cr_elements/chromeos/cros_color_overrides.css.js';
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cros_color_overrides.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/shortcut_input_ui/shortcut_input_key.js';
 
-import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/ash/common/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import type {ShortcutLabelProperties} from 'chrome://resources/ash/common/shortcut_input_ui/shortcut_utils.js';
+import {createShortcutAppendedKeyLabel} from 'chrome://resources/ash/common/shortcut_input_ui/shortcut_utils.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './keyboard_shortcut_banner.html.js';
@@ -41,11 +46,28 @@ export class KeyboardShortcutBanner extends KeyboardShortcutBannerBase {
       body: {
         type: Array,
       },
+
+      showCustomizedShortcut_: Boolean,
+
+      shortcutLabelProperties: Array,
+
+      hideDismissButton: {
+        type: Boolean,
+        value: false,
+      },
     };
   }
 
   header: string;
-  body: string[];
+  hideDismissButton: boolean;
+  body: TrustedHTML[];
+  shortcutLabelProperties: ShortcutLabelProperties[];
+  private showCustomizedShortcut_ =
+      loadTimeData.getBoolean('isShortcutCustomizationEnabled');
+
+  static get observers() {
+    return ['createCustomizedShortcutBanner_(shortcutLabelProperties.*)'];
+  }
 
   private onDismissClick_(): void {
     getAnnouncerInstance().announce(this.i18n('shortcutBannerDismissed'));
@@ -58,11 +80,29 @@ export class KeyboardShortcutBanner extends KeyboardShortcutBannerBase {
   }
 
   private getBodyIds_(): string {
+    if (this.showCustomizedShortcut_) {
+      return 'partsContainer';
+    }
     const ids: string[] = [];
     for (let i = 0; i < this.body.length; i++) {
       ids.push(this.getIdForIndex_(i));
     }
     return ids.join(' ');
+  }
+
+  private createCustomizedShortcutBanner_(): void {
+    if (!this.showCustomizedShortcut_) {
+      return;
+    }
+    const container =
+        this.shadowRoot!.querySelector<HTMLElement>('#partsContainer');
+    assert(container);
+    container.replaceChildren();
+
+    for (const properties of this.shortcutLabelProperties) {
+      container.append(createShortcutAppendedKeyLabel(
+          properties, /* useNarrowLayout=*/ true));
+    }
   }
 }
 

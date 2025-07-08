@@ -10,26 +10,42 @@
 
 #include "base/mac/mac_util.h"
 #include "base/test/task_environment.h"
+#include "base/test/test_future.h"
 #include "testing/platform_test.h"
 #import "ui/base/test/cocoa_helper.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#include "ui/gfx/image/image_unittest_util.h"
+#include "ui/gfx/native_widget_types.h"
+#include "ui/snapshot/snapshot_mac.h"
 
 namespace ui {
 namespace {
 
-class GrabWindowSnapshotTest : public CocoaTest {
+class GrabWindowSnapshotTest : public CocoaTest,
+                               public testing::WithParamInterface<SnapshotAPI> {
  private:
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::MainThreadType::UI};
 };
 
-TEST_F(GrabWindowSnapshotTest, TestGrabWindowSnapshot) {
+INSTANTIATE_TEST_SUITE_P(Snapshot,
+                         GrabWindowSnapshotTest,
+                         ::testing::Values(SnapshotAPI::kOldAPI,
+                                           SnapshotAPI::kNewAPI));
+
+TEST_P(GrabWindowSnapshotTest, TestGrabWindowSnapshot) {
+  SnapshotAPI api = GetParam();
+  if (api == SnapshotAPI::kNewAPI && base::mac::MacOSVersion() < 14'04'00) {
+    GTEST_SKIP() << "Cannot test macOS 14.4 API on pre-14.4 macOS";
+  }
+  if (api == SnapshotAPI::kNewAPI) {
+    GTEST_SKIP() << "https://crbug.com/335449467";
+  }
+
+  ForceAPIUsageForTesting(api);
+
   // The window snapshot code uses `CGWindowListCreateImage` which requires
   // going to the windowserver. By default, unittests are run with the
   // `NSApplicationActivationPolicyProhibited` policy which prohibits
@@ -52,32 +68,31 @@ TEST_F(GrabWindowSnapshotTest, TestGrabWindowSnapshot) {
   EXPECT_TRUE([waiter wait]);
 
   // Take the snapshot.
-  gfx::Image image;
+  base::test::TestFuture<gfx::Image> future;
   gfx::Rect bounds = gfx::Rect(0, 0, window_size, window_size);
-  EXPECT_TRUE(ui::GrabWindowSnapshot(window, bounds, &image));
+  ui::GrabWindowSnapshot(gfx::NativeWindow(window), bounds,
+                         future.GetCallback());
 
-  // The call to `CGWindowListCreateImage` returned a `CGImageRef` that is
-  // wrapped in an `NSImage` (inside the returned `gfx::Image`). The image rep
-  // that results (e.g. an `NSCGImageSnapshotRep` in macOS 12) isn't anything
-  // that pixel values can be retrieved from, so do a quick-and-dirty conversion
-  // to an `NSBitmapImageRep`.
-  NSBitmapImageRep* image_rep =
-      [NSBitmapImageRep imageRepWithData:image.ToNSImage().TIFFRepresentation];
+  gfx::Image image = future.Take();
+  ASSERT_TRUE(!image.IsEmpty());
+  NSImage* ns_image = image.ToNSImage();
 
-  // Test the size.
-  EXPECT_EQ(window_size * window.backingScaleFactor, image_rep.pixelsWide);
-  EXPECT_EQ(window_size * window.backingScaleFactor, image_rep.pixelsHigh);
+  // Expect the image's size to match the size of the window, scaled
+  // appropriately. Expect exactly one representation.
+  EXPECT_EQ(window_size * window.backingScaleFactor, ns_image.size.width);
+  EXPECT_EQ(window_size * window.backingScaleFactor, ns_image.size.height);
+  EXPECT_EQ(1u, ns_image.representations.count);
 
   // Pick a pixel in the middle of the screenshot and expect it to be some
   // version of blue.
-  NSColor* color = [image_rep colorAtX:image_rep.pixelsWide / 2
-                                     y:image_rep.pixelsHigh / 2];
-  CGFloat red = 0, green = 0, blue = 0, alpha = 0;
-  [color getRed:&red green:&green blue:&blue alpha:&alpha];
-  EXPECT_LE(red, 0.2);
-  EXPECT_LE(green, 0.2);
-  EXPECT_GE(blue, 0.9);
-  EXPECT_EQ(alpha, 1);
+  SkColor color = gfx::test::GetPlatformImageColor(ns_image, window_size / 2,
+                                                   window_size / 2);
+  EXPECT_LE(SkColorGetR(color), 10u);
+  EXPECT_LE(SkColorGetG(color), 10u);
+  EXPECT_GE(SkColorGetB(color), 245u);
+  EXPECT_EQ(SkColorGetA(color), 255u);
+
+  ForceAPIUsageForTesting(SnapshotAPI::kUnspecified);
 }
 
 }  // namespace

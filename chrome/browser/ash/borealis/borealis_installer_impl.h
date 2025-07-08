@@ -12,6 +12,7 @@
 #include "base/types/expected.h"
 #include "chrome/browser/ash/borealis/borealis_installer.h"
 #include "chrome/browser/ash/borealis/borealis_metrics.h"
+#include "chrome/browser/ash/borealis/borealis_types.mojom-forward.h"
 #include "chrome/browser/ash/borealis/infra/described.h"
 
 class Profile;
@@ -21,7 +22,8 @@ namespace borealis {
 // This class is responsible for installing the Borealis VM. Currently
 // the only installation requirements for Borealis is to install the
 // relevant DLC component. The installer works closely with
-// chrome/browser/ui/views/borealis/borealis_installer_view.h.
+// chrome/browser/ui/webui/ash/borealis_installer/
+// borealis_installer_page_handler.cc.
 class BorealisInstallerImpl : public BorealisInstaller {
  public:
   explicit BorealisInstallerImpl(Profile* profile);
@@ -61,13 +63,13 @@ class BorealisInstallerImpl : public BorealisInstaller {
 
   void OnInstallComplete(
       base::expected<std::unique_ptr<InstallInfo>,
-                     Described<BorealisInstallResult>> result_or_error);
+                     Described<mojom::InstallResult>> result_or_error);
   void OnUninstallComplete(
       base::OnceCallback<void(BorealisUninstallResult)> on_uninstall_callback,
       base::expected<std::unique_ptr<InstallInfo>, BorealisUninstallResult>
           result);
 
-  raw_ptr<Profile, ExperimentalAsh> profile_;
+  raw_ptr<Profile> profile_;
   base::ObserverList<Observer> observers_;
 
   InstallingState installing_state_;

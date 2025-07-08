@@ -4,17 +4,20 @@
 
 #include "components/exo/wayland/zwp_text_input_manager.h"
 
+#include <sys/mman.h>
 #include <text-input-extension-unstable-v1-server-protocol.h>
 #include <text-input-unstable-v1-server-protocol.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol-core.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include <string_view>
+
 #include "ash/constants/ash_features.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_offset_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/exo/display.h"
@@ -23,10 +26,10 @@
 #include "components/exo/wayland/server_util.h"
 #include "components/exo/wayland/wl_seat.h"
 #include "components/exo/xkb_tracker.h"
+#include "net/base/data_url.h"
 #include "ui/base/ime/utf_offset.h"
 #include "ui/base/wayland/wayland_server_input_types.h"
 #include "ui/events/event.h"
-#include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/ozone/layout/xkb/xkb_modifier_converter.h"
 
@@ -43,21 +46,6 @@ constexpr const char* kModifierNames[] = {
     XKB_MOD_NAME_NUM,   "Mod3",
     XKB_MOD_NAME_LOGO,  "Mod5",
 };
-uint32_t keyCharToKeySym(char16_t keychar) {
-  // TODO(b/237461655): Lacros fails to handle key presses properly when the
-  // key character is not present in the keyboard layout.
-  if ((keychar >= 0x20 && keychar <= 0x7e) ||
-      (keychar >= 0xa0 && keychar <= 0xff)) {
-    return keychar;
-  }
-  // The spec also requires event.GetCharacter() <= 0x10ffff but this is
-  // always true due to the type of event.GetCharacter().
-  if (keychar >= 0x100) {
-    return keychar + 0x01000000;
-  }
-  // keysym 0 is used for unidentified events
-  return 0;
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // text_input_v1 interface:
@@ -103,11 +91,11 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
   }
 
   void SetPendingGrammarFragment(
-      const absl::optional<ui::GrammarFragment>& grammar_fragment) {
+      const std::optional<ui::GrammarFragment>& grammar_fragment) {
     pending_grammar_fragment_ = grammar_fragment;
   }
 
-  absl::optional<ui::GrammarFragment> TakeGrammarFragment() {
+  std::optional<ui::GrammarFragment> TakeGrammarFragment() {
     auto result = pending_grammar_fragment_;
     pending_grammar_fragment_.reset();
     return result;
@@ -117,7 +105,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     pending_autocorrect_info_ = autocorrect_info;
   }
 
-  absl::optional<ui::AutocorrectInfo> TakeAutocorrectInfo() {
+  std::optional<ui::AutocorrectInfo> TakeAutocorrectInfo() {
     auto result = pending_autocorrect_info_;
     pending_autocorrect_info_.reset();
     return result;
@@ -127,7 +115,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     pending_surrounding_text_offset_utf16_ = offset;
   }
 
-  absl::optional<uint32_t> TakeSurroundingTextOffsetUtf16() {
+  std::optional<uint32_t> TakeSurroundingTextOffsetUtf16() {
     auto result = pending_surrounding_text_offset_utf16_;
     pending_surrounding_text_offset_utf16_.reset();
     return result;
@@ -194,7 +182,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     wl_client_flush(client());
   }
 
-  void Commit(base::StringPiece16 text) override {
+  void Commit(std::u16string_view text) override {
     zwp_text_input_v1_send_commit_string(
         text_input_,
         serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
@@ -202,7 +190,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     wl_client_flush(client());
   }
 
-  void SetCursor(base::StringPiece16 surrounding_text,
+  void SetCursor(std::u16string_view surrounding_text,
                  const gfx::Range& selection) override {
     std::vector<size_t> offsets{selection.start(), selection.end()};
     base::UTF16ToUTF8AndAdjustOffsets(surrounding_text, &offsets);
@@ -211,14 +199,14 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
                                            static_cast<uint32_t>(offsets[0]));
   }
 
-  void DeleteSurroundingText(base::StringPiece16 surrounding_text,
+  void DeleteSurroundingText(std::u16string_view surrounding_text,
                              const gfx::Range& range) override {
     std::vector<size_t> offsets{range.GetMin(), range.GetMax()};
     base::UTF16ToUTF8AndAdjustOffsets(surrounding_text, &offsets);
     // Currently, the arguments are conflicting with spec.
     // However, the only client, Lacros, also interprets wrongly in the same
     // way so just fixing here could cause visible regression.
-    // TODO(crbug.com/1227590): Fix the behavior with versioning.
+    // TODO(crbug.com/40189286): Fix the behavior with versioning.
     zwp_text_input_v1_send_delete_surrounding_text(
         text_input_, static_cast<uint32_t>(offsets[0]),
         static_cast<uint32_t>(offsets[1] - offsets[0]));
@@ -226,24 +214,9 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
   }
 
   void SendKey(const ui::KeyEvent& event) override {
-    uint32_t keysym =
-        event.code() != ui::DomCode::NONE
-            ? xkb_tracker_->GetKeysym(
-                  ui::KeycodeConverter::DomCodeToNativeKeycode(event.code()))
-            : 0;
-    // Some artificial key events (e.g. from virtual keyboard) do not set code,
-    // so must be handled separately.
-    // https://www.x.org/releases/X11R7.6/doc/xproto/x11protocol.html#keysym_encoding
-    // suggests that we can just directly map some parts of unicode.
-    if (keysym == 0) {
-      keysym = keyCharToKeySym(event.GetCharacter());
-    }
-
-    if (keysym == 0) {
-      VLOG(0) << "Unable to find keysym for: " << event.ToString();
-    }
-
-    bool pressed = (event.type() == ui::ET_KEY_PRESSED);
+    uint32_t keysym = xkb_tracker_->GetKeysym(
+        ui::KeycodeConverter::DomCodeToNativeKeycode(event.code()));
+    bool pressed = (event.type() == ui::EventType::kKeyPressed);
     zwp_text_input_v1_send_keysym(
         text_input_, TimeTicksToMilliseconds(event.time_stamp()),
         serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
@@ -274,7 +247,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
   }
 
   void SetCompositionFromExistingText(
-      base::StringPiece16 surrounding_text,
+      std::u16string_view surrounding_text,
       const gfx::Range& cursor,
       const gfx::Range& range,
       const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override {
@@ -296,7 +269,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     wl_client_flush(client());
   }
 
-  void ClearGrammarFragments(base::StringPiece16 surrounding_text,
+  void ClearGrammarFragments(std::u16string_view surrounding_text,
                              const gfx::Range& range) override {
     if (!extended_text_input_)
       return;
@@ -312,7 +285,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     }
   }
 
-  void AddGrammarFragment(base::StringPiece16 surrounding_text,
+  void AddGrammarFragment(std::u16string_view surrounding_text,
                           const ui::GrammarFragment& fragment) override {
     if (!extended_text_input_)
       return;
@@ -329,7 +302,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     }
   }
 
-  void SetAutocorrectRange(base::StringPiece16 surrounding_text,
+  void SetAutocorrectRange(std::u16string_view surrounding_text,
                            const gfx::Range& range) override {
     if (!extended_text_input_) {
       return;
@@ -340,18 +313,10 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
       return;
     }
 
-    if (base::FeatureList::IsEnabled(
-            ash::features::kExoSurroundingTextOffset)) {
-      std::vector<size_t> offsets{range.GetMin(), range.GetMax()};
-      base::UTF16ToUTF8AndAdjustOffsets(surrounding_text, &offsets);
-      zcr_extended_text_input_v1_send_set_autocorrect_range(
-          extended_text_input_, offsets[0], offsets[1]);
-    } else {
-      // Fallback to the old implementation for transition.
-      // TODO(crbug.com/1402906): Remove once new way is widely distributed.
-      zcr_extended_text_input_v1_send_set_autocorrect_range(
-          extended_text_input_, range.GetMin(), range.GetMax());
-    }
+    std::vector<size_t> offsets{range.GetMin(), range.GetMax()};
+    base::UTF16ToUTF8AndAdjustOffsets(surrounding_text, &offsets);
+    zcr_extended_text_input_v1_send_set_autocorrect_range(
+        extended_text_input_, offsets[0], offsets[1]);
     wl_client_flush(client());
   }
 
@@ -369,6 +334,44 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
       return;
     }
 
+    // Due to the limit of wayland protocol, we should check the size of
+    // payload here.
+    static constexpr size_t kSizeLimit = 4000;
+    const size_t src_size = src.spec().size();
+    if (src_size > kSizeLimit) {
+      if (wl_resource_get_version(extended_text_input_) <
+          ZCR_EXTENDED_TEXT_INPUT_V1_INSERT_IMAGE_WITH_LARGE_URL_SINCE_VERSION) {
+        LOG(ERROR) << "Inserting image with large URL is not supported";
+        return;
+      }
+
+      std::string mime_type, charset, raw_data;
+      if (!net::DataURL::Parse(src, &mime_type, &charset, &raw_data)) {
+        LOG(ERROR) << "Failed to parse data url";
+        return;
+      }
+
+      base::ScopedFD memfd(memfd_create("inserting_image", MFD_CLOEXEC));
+      if (!memfd.get()) {
+        PLOG(ERROR) << "Failed to create memfd";
+        return;
+      }
+
+      if (!base::WriteFileDescriptor(memfd.get(), raw_data)) {
+        LOG(ERROR) << "Failed to write into memfd";
+        return;
+      }
+      if (lseek(memfd.get(), 0, SEEK_SET) != 0) {
+        LOG(ERROR) << "Failed to reset file descriptor";
+        return;
+      }
+      zcr_extended_text_input_v1_send_insert_image_with_large_url(
+          extended_text_input_, mime_type.c_str(), charset.c_str(), memfd.get(),
+          raw_data.size());
+      wl_client_flush(client());
+      return;
+    }
+
     if (wl_resource_get_version(extended_text_input_) >=
         ZCR_EXTENDED_TEXT_INPUT_V1_INSERT_IMAGE_SINCE_VERSION) {
       zcr_extended_text_input_v1_send_insert_image(extended_text_input_,
@@ -377,7 +380,7 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     }
   }
 
-  void SendPreeditStyle(base::StringPiece16 text,
+  void SendPreeditStyle(std::u16string_view text,
                         const std::vector<ui::ImeTextSpan>& spans) {
     if (spans.empty())
       return;
@@ -452,16 +455,16 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
                ZCR_EXTENDED_TEXT_INPUT_V1_CONFIRM_PREEDIT_SINCE_VERSION;
   }
 
-  raw_ptr<wl_resource, ExperimentalAsh> text_input_;
-  raw_ptr<wl_resource, ExperimentalAsh> extended_text_input_ = nullptr;
-  raw_ptr<wl_resource, ExperimentalAsh> surface_ = nullptr;
+  raw_ptr<wl_resource, DanglingUntriaged> text_input_;
+  raw_ptr<wl_resource, DanglingUntriaged> extended_text_input_ = nullptr;
+  raw_ptr<wl_resource, DanglingUntriaged> surface_ = nullptr;
 
   // Owned by Seat, which is updated before calling the callbacks of this
   // class.
-  const raw_ptr<const XkbTracker, ExperimentalAsh> xkb_tracker_;
+  const raw_ptr<const XkbTracker> xkb_tracker_;
 
   // Owned by Server, which always outlives this delegate.
-  const raw_ptr<SerialTracker, ExperimentalAsh> serial_tracker_;
+  const raw_ptr<SerialTracker> serial_tracker_;
   ui::XkbModifierConverter modifier_converter_{
       std::vector<std::string>(std::begin(kModifierNames),
                                std::end(kModifierNames))};
@@ -472,9 +475,9 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
 
   // Pending surrounding text supported flag.
   bool pending_surrounding_text_supported_ = true;
-  absl::optional<ui::GrammarFragment> pending_grammar_fragment_;
-  absl::optional<ui::AutocorrectInfo> pending_autocorrect_info_;
-  absl::optional<std::uint32_t> pending_surrounding_text_offset_utf16_;
+  std::optional<ui::GrammarFragment> pending_grammar_fragment_;
+  std::optional<ui::AutocorrectInfo> pending_autocorrect_info_;
+  std::optional<std::uint32_t> pending_surrounding_text_offset_utf16_;
 
   base::WeakPtrFactory<WaylandTextInputDelegate> weak_factory_{this};
 };
@@ -503,7 +506,7 @@ class WaylandExtendedTextInput {
 
 void SetSurroundingTextImpl(TextInput* text_input,
                             WaylandTextInputDelegate* delegate,
-                            base::StringPiece text,
+                            std::string_view text,
                             uint32_t cursor,
                             uint32_t anchor) {
   uint32_t offset_utf16 =
@@ -511,7 +514,7 @@ void SetSurroundingTextImpl(TextInput* text_input,
   auto grammar_fragment = delegate->TakeGrammarFragment();
   auto autocorrect_info = delegate->TakeAutocorrectInfo();
 
-  // TODO(crbug.com/1227590): Selection range should keep cursor/anchor
+  // TODO(crbug.com/40189286): Selection range should keep cursor/anchor
   // relationship.
   auto minmax = std::minmax(cursor, anchor);
   std::vector<size_t> offsets{minmax.first, minmax.second};
@@ -538,9 +541,7 @@ void SetSurroundingTextImpl(TextInput* text_input,
   // Original implementation did not convert the range. Guard this by the
   // feature flag to be reverted to old behavior just in case for transition
   // period.
-  // TODO(crbug.com/1402906): Remove the guard once transition is done.
-  if (autocorrect_info.has_value() &&
-      base::FeatureList::IsEnabled(ash::features::kExoSurroundingTextOffset)) {
+  if (autocorrect_info.has_value()) {
     size_t index = grammar_fragment.has_value() ? 4u : 2u;
     autocorrect_info->range = gfx::Range(offsets[index] + offset_utf16,
                                          offsets[index + 1] + offset_utf16);
@@ -572,7 +573,7 @@ void text_input_activate(wl_client* client,
   for (const char* modifier : kModifierNames) {
     char* p =
         static_cast<char*>(wl_array_add(&modifiers, ::strlen(modifier) + 1));
-    ::strcpy(p, modifier);
+    UNSAFE_TODO(::strcpy(p, modifier));
   }
   zwp_text_input_v1_send_modifiers_map(resource, &modifiers);
   wl_array_release(&modifiers);
@@ -809,7 +810,7 @@ void extended_text_input_deprecated_set_input_type(wl_client* client,
                                                    uint32_t input_mode,
                                                    uint32_t input_flags,
                                                    uint32_t learning_mode) {
-  // TODO(crbug.com/1420448) This deprecated method signature is preserved to
+  // TODO(crbug.com/40258785) This deprecated method signature is preserved to
   // maintain backwards compatibility with older client versions. Once both Exo
   // and Lacros have stabilized on the new API, delete this implementation or
   // otherwise make it impossible to call.
@@ -831,8 +832,8 @@ void extended_text_input_set_grammar_fragment_at_cursor(
   }
 
   delegate->SetPendingGrammarFragment(
-      start == end ? absl::nullopt
-                   : absl::make_optional(ui::GrammarFragment(
+      start == end ? std::nullopt
+                   : std::make_optional(ui::GrammarFragment(
                          gfx::Range(start, end), suggestion)));
 }
 
@@ -948,7 +949,7 @@ void extended_text_input_set_large_surrounding_text(wl_client* client,
   {
     text.resize(size);
     base::ScopedFD fd(raw_fd);
-    if (!base::ReadFromFD(fd.get(), text.data(), size)) {
+    if (!base::ReadFromFD(fd.get(), text)) {
       PLOG(ERROR) << "Failed to read file descriptor for surrounding text";
       return;
     }

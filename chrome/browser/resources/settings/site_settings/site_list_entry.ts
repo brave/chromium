@@ -8,15 +8,16 @@
  */
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/icons.html.js';
-import 'chrome://resources/cr_elements/policy/cr_policy_pref_indicator.js';
+import '/shared/settings/controls/cr_policy_pref_indicator.js';
 import 'chrome://resources/cr_elements/policy/cr_tooltip_icon.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import '../icons.html.js';
 import '../settings_shared.css.js';
 import '../site_favicon.js';
 
 import {FocusRowMixin} from 'chrome://resources/cr_elements/focus_row_mixin.js';
-import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {BaseMixin} from '../base_mixin.js';
@@ -27,17 +28,10 @@ import {Router} from '../router.js';
 import {ChooserType, ContentSettingsTypes, CookiesExceptionType, SITE_EXCEPTION_WILDCARD} from './constants.js';
 import {getTemplate} from './site_list_entry.html.js';
 import {SiteSettingsMixin} from './site_settings_mixin.js';
-import {SiteException} from './site_settings_prefs_browser_proxy.js';
-
-export interface SiteListEntryElement {
-  $: {
-    actionMenuButton: HTMLElement,
-    resetSite: HTMLElement,
-  };
-}
+import type {SiteException} from './site_settings_prefs_browser_proxy.js';
 
 const SiteListEntryElementBase =
-    FocusRowMixin(BaseMixin(SiteSettingsMixin(PolymerElement)));
+    FocusRowMixin(BaseMixin(SiteSettingsMixin(I18nMixin(PolymerElement))));
 
 export class SiteListEntryElement extends SiteListEntryElementBase {
   static get is() {
@@ -59,12 +53,23 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
         value: false,
       },
 
-      /**
-       * Site to display in the widget.
-       */
+      /** Site to display in the widget.*/
       model: {
         type: Object,
         observer: 'onModelChanged_',
+      },
+
+      /** Whether this entry is the only entry in the Allowed/Blocked section.*/
+      singletonEntry: {
+        type: Boolean,
+      },
+
+      /**
+       * The header for the Allowed/Blocked section this entry is in. Used for
+       * aria-label to fix cases where the screenreader hasn't already read it.
+       */
+      sectionHeader: {
+        type: String,
       },
 
       /**
@@ -103,19 +108,21 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
     };
   }
 
-  private readOnlyList: boolean;
-  model: SiteException;
-  private chooserType: ChooserType;
-  private chooserObject: object;
-  private showPolicyPrefIndicator_: boolean;
-  private allowNavigateToSiteDetail_: boolean;
-  cookiesExceptionType: CookiesExceptionType;
+  declare private readOnlyList: boolean;
+  declare model: SiteException;
+  declare private singletonEntry: boolean;
+  declare private sectionHeader: string;
+  declare private chooserType: ChooserType;
+  declare private chooserObject: object;
+  declare private showPolicyPrefIndicator_: boolean;
+  declare private allowNavigateToSiteDetail_: boolean;
+  declare cookiesExceptionType: CookiesExceptionType;
 
   private onShowTooltip_() {
     const indicator =
         this.shadowRoot!.querySelector('cr-policy-pref-indicator');
     assert(!!indicator);
-    // The tooltip text is used by an paper-tooltip contained inside the
+    // The tooltip text is used by an cr-tooltip contained inside the
     // cr-policy-pref-indicator. This text is needed here to send up to the
     // common tooltip component.
     const text = indicator.indicatorTooltip;
@@ -124,7 +131,7 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
 
   private onShowIncognitoTooltip_() {
     const tooltip = this.shadowRoot!.querySelector('#incognitoTooltip');
-    // The tooltip text is used by an paper-tooltip contained inside the
+    // The tooltip text is used by an cr-tooltip contained inside the
     // cr-policy-pref-indicator. The text is currently held in a private
     // property. This text is needed here to send up to the common tooltip
     // component.
@@ -185,12 +192,53 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
    */
   private computeDisplayName_(): string {
     if (this.model.embeddingOrigin &&
-        this.model.category === ContentSettingsTypes.COOKIES &&
-        this.model.origin.trim() === SITE_EXCEPTION_WILDCARD) {
+        ((this.model.category === ContentSettingsTypes.COOKIES &&
+          this.model.origin.trim() === SITE_EXCEPTION_WILDCARD) ||
+         this.model.category === ContentSettingsTypes.TRACKING_PROTECTION)) {
       return this.model.embeddingOrigin;
     }
     return this.model.displayName;
   }
+
+  /**
+   * Returns an appropriate aria-label for this entry. The reset (trash can)
+   * button has a different aria-label, see the HTML.
+   */
+  private computeAriaLabel_(): string {
+    if (this.singletonEntry) {
+      // Screen readers sometimes only read the grid's label (which is in
+      // site_list.html) if the grid has more than 1 row. That contains the
+      // important context of whether this site is allowed or blocked, so we
+      // explicitly add it to the aria-label here to make sure it's read.
+      return `${this.computeDisplayName_()} ${this.sectionHeader}`;
+    }
+    return this.computeDisplayName_();
+  }
+
+  /**
+   * Returns an appropriate aria-label for the remove button. This aria-label
+   * clearly indicates a site name and section header. It should help the
+   * screenreader user understand that this button will remove the site from the
+   * list. There are two lists, one for allowed sites and one for blocked sites.
+   */
+  private computeRemoveButtonAriaLabel_(): string {
+    return this.i18n(
+        'siteSettingsActionResetFromListA11y', this.computeDisplayName_(),
+        this.sectionHeader);
+  }
+
+  /**
+   * Returns an appropriate aria-label for the view button. This aria-label
+   * clearly indicates a site name and section header. It should help the
+   * screenreader user understand that this button will open a subpage for the
+   * site from the list. There are two lists, one for allowed sites and one for
+   * blocked sites.
+   */
+    private computeViewButtonAriaLabel_(): string {
+      return this.i18n(
+          'siteSettingsActionViewFromListA11y', this.computeDisplayName_(),
+          this.sectionHeader);
+   }
 
   /**
    * Returns the appropriate origin that a favicon will be fetched for.
@@ -214,7 +262,7 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
     let description = '';
 
     // If a description has been set by the handler, have it override others.
-    // TODO(crbug.com/1467504): Move all possible descriptions in to this
+    // TODO(crbug.com/40276807): Move all possible descriptions in to this
     // field C++ side so this function can be greatly simplified.
     if (this.model.description) {
       description = this.model.description;
@@ -232,20 +280,12 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
           description = loadTimeData.getString(
               'siteSettingsCookiesThirdPartyExceptionLabel');
         }
-      } else {
+      } else if (
+          this.model.category !== ContentSettingsTypes.TRACKING_PROTECTION) {
         description = loadTimeData.getStringF(
             'embeddedOnHost', this.sanitizePort(this.model.embeddingOrigin));
       }
-    } else if (this.model.category === ContentSettingsTypes.GEOLOCATION) {
-      description = loadTimeData.getString('embeddedOnAnyHost');
     }
-
-    // <if expr="chromeos_ash">
-    if (this.model.category === ContentSettingsTypes.NOTIFICATIONS &&
-        this.model.showAndroidSmsNote) {
-      description = loadTimeData.getString('androidSmsNote');
-    }
-    // </if>
 
     try {
       const url = new URL(this.model.origin);
@@ -265,6 +305,8 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
   }
 
   private onResetButtonClick_() {
+    this.fire('site-list-entry-reset-click');
+
     // Use the appropriate method to reset a chooser exception.
     if (this.chooserType !== ChooserType.NONE && this.chooserObject !== null) {
       this.browserProxy.resetChooserExceptionForSite(
@@ -283,9 +325,10 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
       return;
     }
 
-    this.fire(
-        'show-action-menu',
-        {anchor: this.$.actionMenuButton, model: this.model});
+    this.fire('show-action-menu', {
+      anchor: this.shadowRoot!.querySelector('#actionMenuButton'),
+      model: this.model,
+    });
   }
 
   private onModelChanged_() {
@@ -296,6 +339,15 @@ export class SiteListEntryElement extends SiteListEntryElementBase {
     this.browserProxy.isOriginValid(this.model.origin).then((valid) => {
       this.allowNavigateToSiteDetail_ = valid;
     });
+  }
+
+  private getActionMenuButtonLabel_() {
+    return this.i18n(
+        'siteDataPageAddSiteContextMenuLabel', this.computeDisplayName_());
+  }
+
+  setSectionHeaderForTest(sectionHeader: string) {
+    this.sectionHeader = sectionHeader;
   }
 }
 

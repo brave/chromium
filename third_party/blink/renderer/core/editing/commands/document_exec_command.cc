@@ -97,8 +97,9 @@ bool Document::execCommand(const String& command_name,
                            bool unused_bool,
                            const String& value,
                            ExceptionState& exception_state) {
-  V8UnionStringOrTrustedHTML tmp(value);
-  return execCommand(command_name, unused_bool, &tmp, exception_state);
+  V8UnionStringOrTrustedHTML* tmp =
+      MakeGarbageCollected<V8UnionStringOrTrustedHTML>(value);
+  return execCommand(command_name, unused_bool, tmp, exception_state);
 }
 
 bool Document::execCommand(const String& command_name,
@@ -132,7 +133,7 @@ bool Document::execCommand(const String& command_name,
   }
   base::AutoReset<bool> execute_scope(&is_running_exec_command_, true);
 
-  // Postpone DOM mutation events, which can execute scripts and change
+  // Postpone synchronous events, which can execute scripts and change
   // DOM tree against implementation assumption.
   EventQueueScope event_queue_scope;
   TidyUpHTMLStructure(*this);

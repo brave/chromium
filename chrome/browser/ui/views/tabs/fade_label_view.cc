@@ -4,7 +4,10 @@
 
 #include "chrome/browser/ui/views/tabs/fade_label_view.h"
 
+#include <string_view>
+
 #include "chrome/browser/ui/views/tabs/filename_elider.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/canvas.h"
 
 namespace {
@@ -20,7 +23,7 @@ void FadeLabel::SetData(const FadeLabelViewData& data) {
   data_ = data;
   std::u16string text = data.text;
   const bool is_filename = data.is_filename;
-  SetElideBehavior(is_filename ? gfx::NO_ELIDE : gfx::ELIDE_TAIL);
+  SetElideBehavior(is_filename ? gfx::NO_ELIDE : data.elide);
   if (is_filename) {
     text = TruncateFilenameToTwoLines(text);
   }
@@ -56,6 +59,9 @@ std::u16string FadeLabel::TruncateFilenameToTwoLines(
   return elider.Elide(text, text_rect);
 }
 
+BEGIN_METADATA(FadeLabel)
+END_METADATA
+
 // FadeLabelView:
 // ----------------------------------------------------------
 
@@ -73,11 +79,25 @@ FadeLabelView::FadeLabelView(int num_lines, int context, int text_style)
   fade_out_view_->SetPaintBackground(true);
 }
 
-std::u16string FadeLabelView::GetText() {
+std::u16string_view FadeLabelView::GetText() const {
   return primary_view_->GetText();
 }
 
-void FadeLabelView::SetEnabledColorId(ui::ColorId color) {
-  primary_view_->SetEnabledColorId(color);
-  fade_out_view_->SetEnabledColorId(color);
+void FadeLabelView::SetEnabledColor(ui::ColorId color) {
+  primary_view_->SetEnabledColor(color);
+  fade_out_view_->SetEnabledColor(color);
 }
+
+using FadeWrapper_Label_FadeLabelViewData =
+    FadeWrapper<views::Label, FadeLabelViewData>;
+BEGIN_TEMPLATE_METADATA(FadeWrapper_Label_FadeLabelViewData, FadeWrapper)
+END_METADATA
+
+using FadeView_FadeLabel_FadeLabel_FadeLabelViewData =
+    FadeView<FadeLabel, FadeLabel, FadeLabelViewData>;
+BEGIN_TEMPLATE_METADATA(FadeView_FadeLabel_FadeLabel_FadeLabelViewData,
+                        FadeView)
+END_METADATA
+
+BEGIN_METADATA(FadeLabelView)
+END_METADATA

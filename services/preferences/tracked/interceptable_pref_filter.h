@@ -7,16 +7,16 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/deferred_sequenced_task_runner.h"
 #include "base/values.h"
+#include "components/os_crypt/async/common/encryptor.h"
 #include "components/prefs/pref_filter.h"
 
 // A partial implementation of a PrefFilter whose FilterOnLoad call may be
 // intercepted by a FilterOnLoadInterceptor. Implementations of
 // InterceptablePrefFilter are expected to override FinalizeFilterOnLoad rather
 // than re-overriding FilterOnLoad.
-class InterceptablePrefFilter
-    : public PrefFilter,
-      public base::SupportsWeakPtr<InterceptablePrefFilter> {
+class InterceptablePrefFilter : public PrefFilter {
  public:
   // A callback to be invoked by a FilterOnLoadInterceptor when its ready to
   // hand back the |prefs| it was handed for early filtering. |prefs_altered|
@@ -47,6 +47,8 @@ class InterceptablePrefFilter
 
   void OnStoreDeletionFromDisk() override;
 
+  virtual void OnEncryptorReceived(os_crypt_async::Encryptor encryptor) = 0;
+
  private:
   // Does any extra filtering required by the implementation of this
   // InterceptablePrefFilter and hands back the |pref_store_contents| to the
@@ -55,6 +57,8 @@ class InterceptablePrefFilter
       PostFilterOnLoadCallback post_filter_on_load_callback,
       base::Value::Dict pref_store_contents,
       bool prefs_altered) = 0;
+
+  virtual base::WeakPtr<InterceptablePrefFilter> AsWeakPtr() = 0;
 
   // Callback to be invoked only once (and subsequently reset) on the next
   // FilterOnLoad event. It will be allowed to modify the |prefs| handed to

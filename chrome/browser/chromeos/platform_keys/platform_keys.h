@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,15 +16,21 @@
 #include "base/values.h"
 #include "chromeos/crosapi/mojom/keystore_error.mojom.h"
 #include "net/cert/x509_certificate.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace chromeos::platform_keys {
 
 // Supported key types.
-enum class KeyType { kRsassaPkcs1V15, kEcdsa };
+enum class KeyType { kRsassaPkcs1V15, kEcdsa, kRsaOaep };
+
+// Supported symmetric key types.
+enum class SymKeyType { kAesCbc, kHmac, kSp800Kdf };
 
 // Supported key attribute types.
-enum class KeyAttributeType { kCertificateProvisioningId, kKeyPermissions };
+enum class KeyAttributeType {
+  kCertificateProvisioningId,
+  kKeyPermissions,
+  kPlatformKeysTag
+};
 
 // Supported hash algorithms.
 enum HashAlgorithm {
@@ -34,6 +41,8 @@ enum HashAlgorithm {
   HASH_ALGORITHM_SHA512
 };
 
+enum class OperationType { kEncrypt, kDecrypt };
+
 // Supported token IDs.
 // A token is a store for keys or certs and can provide cryptographic
 // operations.
@@ -41,7 +50,7 @@ enum HashAlgorithm {
 enum class TokenId { kUser, kSystem };
 
 // The service possible statuses.
-// For every platform keys service operation callback, a status is passed
+// For every platform keys service operation callback, a status is passed,
 // signaling the success or failure of the operation.
 enum class Status {
   kSuccess,
@@ -54,7 +63,7 @@ enum class Status {
   kErrorInternal,
   kErrorKeyAttributeRetrievalFailed,
   kErrorKeyAttributeSettingFailed,
-  kErrorKeyNotAllowedForSigning,
+  kErrorKeyNotAllowedForOperation,
   kErrorKeyNotFound,
   kErrorShutDown,
   // kNetError* are for errors occurred during net::* operations.
@@ -84,13 +93,11 @@ std::string KeystoreErrorToString(crosapi::mojom::KeystoreError error);
 
 // Returns the DER encoding of the X.509 Subject Public Key Info of the public
 // key in |certificate|.
-std::string GetSubjectPublicKeyInfo(
-    const scoped_refptr<net::X509Certificate>& certificate);
-std::vector<uint8_t> GetSubjectPublicKeyInfoBlob(
+std::vector<uint8_t> GetSubjectPublicKeyInfo(
     const scoped_refptr<net::X509Certificate>& certificate);
 
 // Intersects the two certificate lists |certs1| and |certs2| and passes the
-// intersection to |callback|. The intersction preserves the order of |certs1|.
+// intersection to |callback|. The intersection preserves the order of |certs1|.
 void IntersectCertificates(
     const net::CertificateList& certs1,
     const net::CertificateList& certs2,
@@ -118,7 +125,7 @@ struct PublicKeyInfo {
   ~PublicKeyInfo();
 
   // The X.509 Subject Public Key Info of the key in DER encoding.
-  std::string public_key_spki_der;
+  std::vector<uint8_t> public_key_spki_der;
 
   // The type of the key.
   net::X509Certificate::PublicKeyType key_type =
@@ -144,9 +151,9 @@ net::X509Certificate::PublicKeyType GetKeyTypeForAlgorithm(
 
 // Builds a partial WebCrypto Algorithm object from the parameters available in
 // |key_info|. This supports both RSA and EC keys.
-// Returns absl::nullopt if the key is of an unsupported type (so not RSA or
+// Returns std::nullopt if the key is of an unsupported type (so not RSA or
 // EC).
-absl::optional<base::Value::Dict> BuildWebCrypAlgorithmDictionary(
+std::optional<base::Value::Dict> BuildWebCryptoAlgorithmDictionary(
     const PublicKeyInfo& key_info);
 
 // Builds a partial WebCrypto Algorithm object from the parameters available in
@@ -180,7 +187,7 @@ bool GetPublicKey(const scoped_refptr<net::X509Certificate>& certificate,
 // If |spki| is any other key type, returns false and does not update any
 // of the output parameters.
 // All pointer arguments must not be null.
-bool GetPublicKeyBySpki(const std::string& spki,
+bool GetPublicKeyBySpki(base::span<const uint8_t> spki,
                         net::X509Certificate::PublicKeyType* key_type,
                         size_t* key_size_bits);
 

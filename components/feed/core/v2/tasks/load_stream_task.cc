@@ -34,7 +34,6 @@
 #include "components/feed/core/v2/view_demotion.h"
 #include "components/feed/feed_feature_list.h"
 #include "net/base/net_errors.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feed {
 namespace {
@@ -58,7 +57,6 @@ feedwire::FeedQuery::RequestReason GetRequestReason(
       return feedwire::FeedQuery::APP_CLOSE_REFRESH;
     case LoadType::kLoadMore:
       NOTREACHED();
-      return feedwire::FeedQuery::MANUAL_REFRESH;
   }
 }
 
@@ -75,7 +73,8 @@ Result& Result::operator=(Result&&) = default;
 LaunchResult LoadStreamTask::LaunchResultFromNetworkInfo(
     const NetworkResponseInfo& response_info,
     bool has_parsed_body) {
-  if (response_info.status_code == 200) {
+  int status_code = response_info.status_code;
+  if (status_code == 200) {
     if (has_parsed_body) {
       // Success.
       return {LoadStreamStatus::kNoStatus,
@@ -107,6 +106,13 @@ LaunchResult LoadStreamTask::LaunchResultFromNetworkInfo(
       return {
           LoadStreamStatus::kAccountTokenFetchTimedOut,
           feedwire::DiscoverLaunchResult::NO_CARDS_FAILED_TO_GET_AUTH_TOKEN};
+  }
+  if (status_code == net::ERR_INTERNET_DISCONNECTED ||
+      status_code == net::ERR_NAME_NOT_RESOLVED ||
+      status_code == net::ERR_ADDRESS_UNREACHABLE ||
+      status_code == net::ERR_PROXY_CONNECTION_FAILED) {
+    return {LoadStreamStatus::kCannotLoadFromNetworkOffline,
+            feedwire::DiscoverLaunchResult::NO_CARDS_REQUEST_ERROR_NO_INTERNET};
   }
   return {LoadStreamStatus::kNetworkFetchFailed,
           feedwire::DiscoverLaunchResult::NO_CARDS_RESPONSE_ERROR_NON_200};
@@ -363,7 +369,6 @@ void LoadStreamTask::SendFeedQueryRequest() {
         break;
       case LoadType::kLoadMore:
         NOTREACHED();
-        break;
     }
   } else {
     // Other requests use GWS.
@@ -375,18 +380,19 @@ void LoadStreamTask::SendFeedQueryRequest() {
 
 void LoadStreamTask::QueryRequestComplete(
     FeedNetwork::QueryRequestResult result) {
-  ProcessNetworkResponse(std::move(result.response_body),
-                         std::move(result.response_info));
+  ProcessNetworkResponse<feedwire::Response>(std::move(result.response_body),
+                                             std::move(result.response_info));
 }
 
 void LoadStreamTask::QueryApiRequestComplete(
     FeedNetwork::ApiResult<feedwire::Response> result) {
-  ProcessNetworkResponse(std::move(result.response_body),
-                         std::move(result.response_info));
+  ProcessNetworkResponse<feedwire::Response>(std::move(result.response_body),
+                                             std::move(result.response_info));
 }
 
+template <typename Response>
 void LoadStreamTask::ProcessNetworkResponse(
-    std::unique_ptr<feedwire::Response> response_body,
+    std::unique_ptr<Response> response_body,
     NetworkResponseInfo response_info) {
   latencies_->StepComplete(LoadLatencyTimes::kQueryRequest);
 
@@ -417,9 +423,17 @@ void LoadStreamTask::ProcessNetworkResponse(
          feedwire::DiscoverLaunchResult::NO_CARDS_REQUEST_ERROR_OTHER});
   }
 
-  loaded_new_content_from_network_ = true;
   content_ids_ =
       feedstore::GetContentIds(response_data.model_update_request->stream_data);
+
+  // Bail out if no card is received.
+  if (content_ids_.IsEmpty()) {
+    return RequestFinished(
+        {LoadStreamStatus::kNoCardReceived,
+         feedwire::DiscoverLaunchResult::NO_CARDS_RESPONSE_ERROR_ZERO_CARDS});
+  }
+
+  loaded_new_content_from_network_ = true;
 
   stream_->GetStore().OverwriteStream(
       options_.stream_type,
@@ -447,6 +461,10 @@ void LoadStreamTask::ProcessNetworkResponse(
   if (response_data.content_lifetime) {
     feedstore::SetContentLifetime(updated_metadata, options_.stream_type,
                                   *response_data.content_lifetime);
+  }
+  if (response_data.feed_launch_cui_metadata) {
+    updated_metadata.set_feed_launch_cui_metadata(
+        *response_data.feed_launch_cui_metadata);
   }
   stream_->SetMetadata(std::move(updated_metadata));
   if (response_data.experiments)

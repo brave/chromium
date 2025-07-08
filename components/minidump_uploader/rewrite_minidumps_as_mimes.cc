@@ -9,13 +9,14 @@
 #include "base/android/build_info.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "components/crash/android/anr_build_id_provider.h"
 #include "components/crash/android/anr_skipped_reason.h"
-#include "components/minidump_uploader/minidump_uploader_jni_headers/CrashReportMimeWriter_jni.h"
 #include "components/version_info/android/channel_getter.h"
 #include "components/version_info/version_info.h"
 #include "third_party/crashpad/crashpad/handler/minidump_to_upload_parameters.h"
@@ -26,11 +27,13 @@
 #include "third_party/crashpad/crashpad/util/net/http_multipart_builder.h"
 #include "third_party/crashpad/crashpad/util/posix/signals.h"
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/minidump_uploader/minidump_uploader_jni_headers/CrashReportMimeWriter_jni.h"
+
 namespace minidump_uploader {
 
 namespace {
 
-#if BUILDFLAG(IS_ANDROID)
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
 enum class ProcessedMinidumpCounts {
@@ -41,7 +44,6 @@ enum class ProcessedMinidumpCounts {
   kUtility = 4,
   kMaxValue = kUtility
 };
-#endif  // BUILDFLAG(IS_ANDROID)
 
 bool MimeifyReportWithKeyValuePairs(
     const crashpad::CrashReportDatabase::UploadReport& report,
@@ -82,7 +84,6 @@ bool MimeifyReportWithKeyValuePairs(
         crashes_key_value_arr->push_back(kv.first);
         crashes_key_value_arr->push_back(kv.second);
       }
-#if BUILDFLAG(IS_ANDROID)
       if (kv.first == kPtypeKey) {
         const crashpad::ExceptionSnapshot* exception =
             minidump_process_snapshot.Exception();
@@ -107,7 +108,6 @@ bool MimeifyReportWithKeyValuePairs(
           }
         }
       }
-#endif  // BUILDFLAG(IS_ANDROID)
     }
   }
 
@@ -211,8 +211,6 @@ void RewriteMinidumpsAsMIMEs(const base::FilePath& src_dir,
 
       case crashpad::CrashReportDatabase::kCannotRequestUpload:
         NOTREACHED();
-        db->DeleteReport(report.uuid);
-        continue;
     }
   }
 }
@@ -225,12 +223,19 @@ void WriteAnrAsMime(crashpad::FileReader* anr_reader,
                     crashpad::FileWriterInterface* writer,
                     const std::string& version_number,
                     const std::string& build_id,
+                    const std::string& variations_string,
                     const std::string& anr_file_name) {
   crashpad::HTTPMultipartBuilder builder;
   builder.SetFormData("version", version_number);
   builder.SetFormData("product", "Chrome_Android");
-  builder.SetFormData("channel", std::string(version_info::GetChannelString(
-                                     version_info::android::GetChannel())));
+  std::string channel = std::string(
+      version_info::GetChannelString(version_info::android::GetChannel()));
+  if (channel == "stable") {
+    // Android reports require an empty string instead of "stable".
+    channel = "";
+  }
+  builder.SetFormData("channel", channel);
+
   if (build_id.empty()) {
     if (version_number == version_info::GetVersionNumber()) {
       // We have an ANR where we didn't pre-set the build ID in the process
@@ -254,9 +259,21 @@ void WriteAnrAsMime(crashpad::FileReader* anr_reader,
   builder.SetFormData("board", info->board());
   builder.SetFormData("installer_package_name", info->installer_package_name());
   builder.SetFormData("abi_name", info->abi_name());
-  builder.SetFormData("custom_themes", info->custom_themes());
   builder.SetFormData("resources_version", info->resources_version());
   builder.SetFormData("gms_core_version", info->gms_version_code());
+
+  if (!variations_string.empty()) {
+    size_t delimiter_pos = variations_string.find('\n');
+    if (delimiter_pos != std::string::npos) {
+      std::string num_experiments = variations_string.substr(0, delimiter_pos);
+      std::string experiment_list = variations_string.substr(delimiter_pos + 1);
+      builder.SetFormData("num-experiments", num_experiments);
+      builder.SetFormData("variations", experiment_list);
+    } else {
+      LOG(ERROR) << "Found a malformed variations string: "
+                 << variations_string;
+    }
+  }
 
   // The package name and version are used for deobfuscation, but will
   // only be accurate for the same version of chrome.
@@ -284,10 +301,11 @@ static void JNI_CrashReportMimeWriter_RewriteAnrsAsMIMEs(
   std::string dest_dir;
   base::android::ConvertJavaStringToUTF8(env, j_dest_dir, &dest_dir);
 
-  for (size_t i = 0; i < anr_strings.size(); i += 3) {
+  for (size_t i = 0; i < anr_strings.size(); i += 4) {
     std::string anr_proto_file_path = anr_strings.at(i);
     std::string chrome_version = anr_strings.at(i + 1);
     std::string build_id = anr_strings.at(i + 2);
+    std::string variations_string = anr_strings.at(i + 3);
     crashpad::FileWriter writer;
     crashpad::FileReader reader;
     crashpad::UUID uuid;
@@ -304,7 +322,8 @@ static void JNI_CrashReportMimeWriter_RewriteAnrsAsMIMEs(
       continue;
     }
 
-    WriteAnrAsMime(&reader, &writer, chrome_version, build_id, anr_file_name);
+    WriteAnrAsMime(&reader, &writer, chrome_version, build_id,
+                   variations_string, anr_file_name);
   }
 }
 

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/compiler_specific.h"
@@ -15,7 +16,6 @@
 #include "base/memory/raw_ptr.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 //-----------------------------------------------------------------------------
 // completion callback helper
@@ -125,6 +125,9 @@ typedef internal::TestCompletionCallbackTemplate<int>
 typedef internal::TestCompletionCallbackTemplate<int64_t>
     TestInt64CompletionCallbackBase;
 
+typedef internal::TestCompletionCallbackTemplate<int32_t>
+    TestInt32CompletionCallbackBase;
+
 class TestCompletionCallback : public TestCompletionCallbackBase {
  public:
   TestCompletionCallback() = default;
@@ -152,6 +155,20 @@ class TestInt64CompletionCallback : public TestInt64CompletionCallbackBase {
   }
 };
 
+class TestInt32CompletionCallback : public TestInt32CompletionCallbackBase {
+ public:
+  TestInt32CompletionCallback() = default;
+  TestInt32CompletionCallback(const TestInt32CompletionCallback&) = delete;
+  TestInt32CompletionCallback& operator=(const TestInt32CompletionCallback&) =
+      delete;
+  ~TestInt32CompletionCallback() override;
+
+  Int32CompletionOnceCallback callback() {
+    return base::BindOnce(&TestInt32CompletionCallback::SetResult,
+                          base::Unretained(this));
+  }
+};
+
 // Makes sure that the buffer is not referenced when the callback runs.
 class ReleaseBufferCompletionCallback: public TestCompletionCallback {
  public:
@@ -165,7 +182,7 @@ class ReleaseBufferCompletionCallback: public TestCompletionCallback {
  private:
   void SetResult(int result) override;
 
-  raw_ptr<IOBuffer, DanglingUntriaged> buffer_;
+  raw_ptr<IOBuffer> buffer_;
 };
 
 }  // namespace net

@@ -112,7 +112,7 @@ export class CrosImageCapture {
       } else {
         assert(
             photoEffects.length === 1 &&
-            photoEffects[0] === Effect.PORTRAIT_MODE);
+            photoEffects[0] === Effect.kPortraitMode);
         const portraitBlobs =
             await deviceOperator.takePortraitModePhoto(this.deviceId);
         blobs.push(...portraitBlobs);
@@ -172,7 +172,14 @@ export class CrosImageCapture {
       const parsedMetadata: Record<string, unknown> = {};
       // TODO(b/215648588): Make CameraMetadata.entries mandatory.
       assert(metadata.entries !== undefined);
-      for (const entry of metadata.entries) {
+      // Disabling check because this code assumes that metadata.entries is
+      // either undefined or defined, but at runtime Mojo will always set this
+      // to null or defined.
+      // TODO(crbug.com/40267104): If this function only handles data
+      // from Mojo, the assertion above should be changed to null and the
+      // null error suppression can be removed.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      for (const entry of metadata.entries!) {
         const key = cameraMetadataTagInverseLookup[entry.tag];
         if (key === undefined) {
           // TODO(kaihsien): Add support for vendor tags.
@@ -187,7 +194,7 @@ export class CrosImageCapture {
     };
 
     this.metadataObserver = await deviceOperator.addMetadataObserver(
-        this.deviceId, callback, StreamType.JPEG_OUTPUT);
+        this.deviceId, callback, StreamType.kJpegOutput);
   }
 
   removeMetadataObserver(): void {

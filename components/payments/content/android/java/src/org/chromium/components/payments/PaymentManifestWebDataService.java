@@ -4,13 +4,16 @@
 
 package org.chromium.components.payments;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.content_public.browser.WebContents;
 
 /** Java wrapper of the payment manifest web data service. */
 @JNINamespace("payments")
+@NullMarked
 public class PaymentManifestWebDataService {
     /** Interface for the callback to invoke when getting data from the web data service. */
     public interface PaymentManifestWebDataServiceCallback {
@@ -44,18 +47,16 @@ public class PaymentManifestWebDataService {
     public PaymentManifestWebDataService(WebContents webContents) {
         if (webContents == null || webContents.isDestroyed()) return;
 
-        mManifestWebDataServiceAndroid = PaymentManifestWebDataServiceJni.get().init(
-                PaymentManifestWebDataService.this, webContents);
+        mManifestWebDataServiceAndroid =
+                PaymentManifestWebDataServiceJni.get()
+                        .init(PaymentManifestWebDataService.this, webContents);
     }
 
-    /**
-     * Destroy this class object. It destroys the native counterpart.
-     */
+    /** Destroy this class object. It destroys the native counterpart. */
     public void destroy() {
         if (mManifestWebDataServiceAndroid == 0) return;
 
-        PaymentManifestWebDataServiceJni.get().destroy(
-                mManifestWebDataServiceAndroid, PaymentManifestWebDataService.this);
+        PaymentManifestWebDataServiceJni.get().destroy(mManifestWebDataServiceAndroid);
         mManifestWebDataServiceAndroid = 0;
     }
 
@@ -70,9 +71,8 @@ public class PaymentManifestWebDataService {
             String methodName, PaymentManifestWebDataServiceCallback callback) {
         if (mManifestWebDataServiceAndroid == 0) return false;
 
-        return PaymentManifestWebDataServiceJni.get().getPaymentMethodManifest(
-                mManifestWebDataServiceAndroid, PaymentManifestWebDataService.this, methodName,
-                callback);
+        return PaymentManifestWebDataServiceJni.get()
+                .getPaymentMethodManifest(mManifestWebDataServiceAndroid, methodName, callback);
     }
 
     /**
@@ -86,9 +86,8 @@ public class PaymentManifestWebDataService {
             String appPackageName, PaymentManifestWebDataServiceCallback callback) {
         if (mManifestWebDataServiceAndroid == 0) return false;
 
-        return PaymentManifestWebDataServiceJni.get().getPaymentWebAppManifest(
-                mManifestWebDataServiceAndroid, PaymentManifestWebDataService.this, appPackageName,
-                callback);
+        return PaymentManifestWebDataServiceJni.get()
+                .getPaymentWebAppManifest(mManifestWebDataServiceAndroid, appPackageName, callback);
     }
 
     /**
@@ -101,9 +100,9 @@ public class PaymentManifestWebDataService {
     public void addPaymentMethodManifest(String methodName, String[] appIdentifiers) {
         if (mManifestWebDataServiceAndroid == 0) return;
 
-        PaymentManifestWebDataServiceJni.get().addPaymentMethodManifest(
-                mManifestWebDataServiceAndroid, PaymentManifestWebDataService.this, methodName,
-                appIdentifiers);
+        PaymentManifestWebDataServiceJni.get()
+                .addPaymentMethodManifest(
+                        mManifestWebDataServiceAndroid, methodName, appIdentifiers);
     }
 
     /**
@@ -114,8 +113,8 @@ public class PaymentManifestWebDataService {
     public void addPaymentWebAppManifest(WebAppManifestSection[] manifest) {
         if (mManifestWebDataServiceAndroid == 0) return;
 
-        PaymentManifestWebDataServiceJni.get().addPaymentWebAppManifest(
-                mManifestWebDataServiceAndroid, PaymentManifestWebDataService.this, manifest);
+        PaymentManifestWebDataServiceJni.get()
+                .addPaymentWebAppManifest(mManifestWebDataServiceAndroid, manifest);
     }
 
     @CalledByNative
@@ -124,14 +123,21 @@ public class PaymentManifestWebDataService {
     }
 
     @CalledByNative
-    private static void addSectionToManifest(WebAppManifestSection[] manifest, int sectionIndex,
-            String id, long minVersion, int numberOfFingerprints) {
+    private static void addSectionToManifest(
+            WebAppManifestSection[] manifest,
+            int sectionIndex,
+            String id,
+            long minVersion,
+            int numberOfFingerprints) {
         manifest[sectionIndex] = new WebAppManifestSection(id, minVersion, numberOfFingerprints);
     }
 
     @CalledByNative
-    private static void addFingerprintToSection(WebAppManifestSection[] manifest, int sectionIndex,
-            int fingerprintIndex, byte[] fingerprint) {
+    private static void addFingerprintToSection(
+            WebAppManifestSection[] manifest,
+            int sectionIndex,
+            int fingerprintIndex,
+            byte[] fingerprint) {
         manifest[sectionIndex].fingerprints[fingerprintIndex] = fingerprint;
     }
 
@@ -153,17 +159,25 @@ public class PaymentManifestWebDataService {
     @NativeMethods
     interface Natives {
         long init(PaymentManifestWebDataService caller, WebContents webContents);
-        void destroy(long nativePaymentManifestWebDataServiceAndroid,
-                PaymentManifestWebDataService caller);
-        boolean getPaymentMethodManifest(long nativePaymentManifestWebDataServiceAndroid,
-                PaymentManifestWebDataService caller, String methodName,
+
+        void destroy(long nativePaymentManifestWebDataServiceAndroid);
+
+        boolean getPaymentMethodManifest(
+                long nativePaymentManifestWebDataServiceAndroid,
+                String methodName,
                 PaymentManifestWebDataServiceCallback callback);
-        boolean getPaymentWebAppManifest(long nativePaymentManifestWebDataServiceAndroid,
-                PaymentManifestWebDataService caller, String appPackageName,
+
+        boolean getPaymentWebAppManifest(
+                long nativePaymentManifestWebDataServiceAndroid,
+                String appPackageName,
                 PaymentManifestWebDataServiceCallback callback);
-        void addPaymentMethodManifest(long nativePaymentManifestWebDataServiceAndroid,
-                PaymentManifestWebDataService caller, String methodName, String[] appPackageNames);
-        void addPaymentWebAppManifest(long nativePaymentManifestWebDataServiceAndroid,
-                PaymentManifestWebDataService caller, WebAppManifestSection[] manifest);
+
+        void addPaymentMethodManifest(
+                long nativePaymentManifestWebDataServiceAndroid,
+                String methodName,
+                String[] appPackageNames);
+
+        void addPaymentWebAppManifest(
+                long nativePaymentManifestWebDataServiceAndroid, WebAppManifestSection[] manifest);
     }
 }

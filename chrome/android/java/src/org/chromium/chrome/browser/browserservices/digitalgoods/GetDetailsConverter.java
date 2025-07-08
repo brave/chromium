@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.browserservices.digitalgoods;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.browserservices.digitalgoods.DigitalGoodsConverter.checkField;
 import static org.chromium.chrome.browser.browserservices.digitalgoods.DigitalGoodsConverter.convertParcelableArray;
 import static org.chromium.chrome.browser.browserservices.digitalgoods.DigitalGoodsConverter.convertResponseCode;
@@ -11,12 +12,12 @@ import static org.chromium.chrome.browser.browserservices.digitalgoods.DigitalGo
 import android.os.Bundle;
 import android.os.Parcelable;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.browser.trusted.TrustedWebActivityCallback;
 
 import org.chromium.base.Log;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.payments.mojom.BillingResponseCode;
 import org.chromium.payments.mojom.DigitalGoods.GetDetails_Response;
 import org.chromium.payments.mojom.ItemDetails;
@@ -24,9 +25,8 @@ import org.chromium.payments.mojom.ItemType;
 import org.chromium.payments.mojom.PaymentCurrencyAmount;
 import org.chromium.url.mojom.Url;
 
-/**
- * A converter that deals with the parameters and result for GetDetails calls.
- */
+/** A converter that deals with the parameters and result for GetDetails calls. */
+@NullMarked
 public class GetDetailsConverter {
     private static final String TAG = "DigitalGoods";
 
@@ -57,9 +57,7 @@ public class GetDetailsConverter {
 
     private GetDetailsConverter() {}
 
-    /**
-     * Converts the parameters to the getDetails.
-     */
+    /** Converts the parameters to the getDetails. */
     static Bundle convertParams(String[] itemIds) {
         Bundle args = new Bundle();
         args.putStringArray(GetDetailsConverter.PARAM_GET_DETAILS_ITEM_IDS, itemIds);
@@ -73,7 +71,7 @@ public class GetDetailsConverter {
     static TrustedWebActivityCallback convertCallback(GetDetails_Response callback) {
         return new TrustedWebActivityCallback() {
             @Override
-            public void onExtraCallback(@NonNull String callbackName, @Nullable Bundle args) {
+            public void onExtraCallback(String callbackName, @Nullable Bundle args) {
                 if (!RESPONSE_COMMAND.equals(callbackName)) {
                     Log.w(TAG, "Wrong callback name given: " + callbackName + ".");
                     returnClientAppError(callback);
@@ -94,6 +92,7 @@ public class GetDetailsConverter {
 
                 int code = args.getInt(KEY_RESPONSE_CODE);
                 Parcelable[] array = args.getParcelableArray(KEY_DETAILS_LIST);
+                assert array != null;
 
                 ItemDetails[] details =
                         convertParcelableArray(array, GetDetailsConverter::convertItemDetails)
@@ -113,13 +112,13 @@ public class GetDetailsConverter {
 
         // Mandatory fields.
         PaymentCurrencyAmount price = new PaymentCurrencyAmount();
-        price.currency = item.getString(KEY_CURRENCY);
-        price.value = item.getString(KEY_VALUE);
+        price.currency = assumeNonNull(item.getString(KEY_CURRENCY));
+        price.value = assumeNonNull(item.getString(KEY_VALUE));
 
         ItemDetails result = new ItemDetails();
-        result.itemId = item.getString(KEY_ID);
-        result.title = item.getString(KEY_TITLE);
-        result.description = item.getString(KEY_DESC);
+        result.itemId = assumeNonNull(item.getString(KEY_ID));
+        result.title = assumeNonNull(item.getString(KEY_TITLE));
+        result.description = assumeNonNull(item.getString(KEY_DESC));
         result.price = price;
 
         // Optional fields.
@@ -175,10 +174,19 @@ public class GetDetailsConverter {
      * This would be used by the client app and is here only to help testing.
      */
     @VisibleForTesting
-    static Bundle createItemDetailsBundle(String id, String title, String desc, String currency,
-            String value, String type, String iconUrl, @Nullable String subsPeriod,
-            @Nullable String freeTrialPeriod, @Nullable String introPriceCurrency,
-            @Nullable String introPriceValue, @Nullable String intoPricePeriod,
+    static Bundle createItemDetailsBundle(
+            String id,
+            String title,
+            String desc,
+            String currency,
+            String value,
+            String type,
+            String iconUrl,
+            @Nullable String subsPeriod,
+            @Nullable String freeTrialPeriod,
+            @Nullable String introPriceCurrency,
+            @Nullable String introPriceValue,
+            @Nullable String intoPricePeriod,
             int introPriceCycles) {
         Bundle bundle = createItemDetailsBundle(id, title, desc, currency, value);
 
@@ -195,9 +203,7 @@ public class GetDetailsConverter {
         return bundle;
     }
 
-    /**
-     * Like the above method, but provides {@code null} for all optional parameters.
-     */
+    /** Like the above method, but provides {@code null} for all optional parameters. */
     @VisibleForTesting
     static Bundle createItemDetailsBundle(
             String id, String title, String desc, String currency, String value) {

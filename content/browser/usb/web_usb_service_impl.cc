@@ -6,22 +6,26 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
+#include "content/browser/service_worker/service_worker_usb_delegate_observer.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/document_service.h"
+#include "content/public/browser/isolated_context_util.h"
 #include "content/public/common/content_client.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/device/public/mojom/usb_device.mojom.h"
 #include "services/device/public/mojom/usb_enumeration_options.mojom.h"
 #include "services/device/public/mojom/usb_manager_client.mojom.h"
+#include "third_party/blink/public/common/features_generated.h"
 
 namespace content {
 
@@ -135,14 +139,29 @@ WebUsbServiceImpl::WebUsbServiceImpl(
       service_worker_version_(std::move(service_worker_version)),
       origin_(origin) {
   auto* delegate = GetContentClient()->browser()->GetUsbDelegate();
-  if (delegate)
+  if (delegate && render_frame_host_) {
     delegate->AddObserver(GetBrowserContext(), this);
+  } else if (service_worker_version_) {
+#if !BUILDFLAG(IS_ANDROID)
+    // For service worker case, it relies on ServiceWorkerUsbDelegateObserver to
+    // be the broker between UsbDelegate and UsbService.
+    auto context = service_worker_version_->context();
+    if (context) {
+      context->usb_delegate_observer()->RegisterUsbService(
+          service_worker_version_->registration_id(),
+          weak_factory_.GetWeakPtr());
+    }
+#else
+    NOTREACHED();
+#endif  // !BUILDFLAG(IS_ANDROID)
+  }
 }
 
 WebUsbServiceImpl::~WebUsbServiceImpl() {
   auto* delegate = GetContentClient()->browser()->GetUsbDelegate();
-  if (delegate)
+  if (delegate && render_frame_host_) {
     delegate->RemoveObserver(GetBrowserContext(), this);
+  }
 }
 
 // static
@@ -150,14 +169,15 @@ void WebUsbServiceImpl::Create(
     RenderFrameHostImpl& render_frame_host,
     mojo::PendingReceiver<blink::mojom::WebUsbService> pending_receiver) {
   if (!render_frame_host.IsFeatureEnabled(
-          blink::mojom::PermissionsPolicyFeature::kUsb)) {
+          network::mojom::PermissionsPolicyFeature::kUsb)) {
     mojo::ReportBadMessage("Permissions policy blocks access to USB.");
     return;
   }
 
   // Avoid creating the WebUsbService if there is no USB delegate to provide the
   // implementation.
-  if (!GetContentClient()->browser()->GetUsbDelegate()) {
+  UsbDelegate* delegate = GetContentClient()->browser()->GetUsbDelegate();
+  if (!delegate) {
     return;
   }
 
@@ -166,6 +186,10 @@ void WebUsbServiceImpl::Create(
     // a fenced frame. Anything getting past the renderer checks must be marked
     // as a bad request.
     mojo::ReportBadMessage("WebUSB is not allowed in a fenced frame tree.");
+    return;
+  }
+
+  if (!delegate->PageMayUseUsb(render_frame_host.GetPage())) {
     return;
   }
 
@@ -230,6 +254,20 @@ std::vector<uint8_t> WebUsbServiceImpl::GetProtectedInterfaceClasses() const {
                                               render_frame_host_, classes);
   }
 
+  // If the 'kUnrestrictedUsb' feature is enabled and the isolated context has
+  // 'kUsbUnrestricted' permission, grant access to all USB interface classes.
+  bool is_usb_unrestricted = false;
+  if (base::FeatureList::IsEnabled(blink::features::kUnrestrictedUsb)) {
+    is_usb_unrestricted =
+        render_frame_host_ &&
+        render_frame_host_->IsFeatureEnabled(
+            network::mojom::PermissionsPolicyFeature::kUsbUnrestricted) &&
+        HasIsolatedContextCapability(render_frame_host_);
+  }
+  if (is_usb_unrestricted) {
+    classes.clear();
+  }
+
   return classes;
 }
 
@@ -254,8 +292,8 @@ void WebUsbServiceImpl::OnGetDevices(
 
   std::vector<device::mojom::UsbDeviceInfoPtr> device_infos;
   for (auto& device_info : device_info_list) {
-    if (delegate->HasDevicePermission(GetBrowserContext(), origin_,
-                                      *device_info)) {
+    if (delegate->HasDevicePermission(GetBrowserContext(), render_frame_host_,
+                                      origin_, *device_info)) {
       device_infos.push_back(device_info.Clone());
     }
   }
@@ -273,7 +311,8 @@ void WebUsbServiceImpl::GetDevice(
   auto* browser_context = GetBrowserContext();
   auto* device_info = delegate->GetDeviceInfo(browser_context, guid);
   if (!device_info ||
-      !delegate->HasDevicePermission(browser_context, origin_, *device_info)) {
+      !delegate->HasDevicePermission(browser_context, render_frame_host_,
+                                     origin_, *device_info)) {
     return;
   }
 
@@ -310,7 +349,8 @@ void WebUsbServiceImpl::ForgetDevice(const std::string& guid,
     auto* browser_context = GetBrowserContext();
     auto* device_info = delegate->GetDeviceInfo(browser_context, guid);
     if (device_info &&
-        delegate->HasDevicePermission(browser_context, origin_, *device_info)) {
+        delegate->HasDevicePermission(browser_context, render_frame_host_,
+                                      origin_, *device_info)) {
       delegate->RevokeDevicePermissionWebInitiated(browser_context, origin_,
                                                    *device_info);
     }
@@ -323,6 +363,25 @@ void WebUsbServiceImpl::SetClient(
         client) {
   DCHECK(client);
   clients_.Add(std::move(client));
+#if !BUILDFLAG(IS_ANDROID)
+  if (service_worker_version_ && service_worker_version_->context()) {
+    // WebUsbService is expected to have only one DeviceManagerClient when it is
+    // for a service worker. One renderer side of a service worker has its own
+    // associated WebUsbService.
+    CHECK_EQ(1u, clients_.size());
+    // When a service worker is woken up by a device connection event, the
+    // client might not have yet registered with the WebUsbService or the
+    // WebUsbService hasn't been created yet when service worker is in running
+    // state. This is because service worker is set to running state after
+    // script evaluation but inter-processes request triggered from the script
+    // evaluation that creates WebUsbService or registers a client might not be
+    // done in the browser process. To handle this situation, pending callbacks
+    // are stored and to be processed when registering the client.
+    service_worker_version_->context()
+        ->usb_delegate_observer()
+        ->ProcessPendingCallbacks(service_worker_version_.get());
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void WebUsbServiceImpl::OnPermissionRevoked(const url::Origin& origin) {
@@ -334,21 +393,21 @@ void WebUsbServiceImpl::OnPermissionRevoked(const url::Origin& origin) {
   // permission.
   auto* delegate = GetContentClient()->browser()->GetUsbDelegate();
   auto* browser_context = GetBrowserContext();
-  base::EraseIf(device_clients_, [=](const auto& client) {
+  std::erase_if(device_clients_, [=, this](const auto& client) {
     auto* device_info =
         delegate->GetDeviceInfo(browser_context, client->device_guid());
     if (!device_info)
       return true;
 
-    return !delegate->HasDevicePermission(browser_context, origin_,
-                                          *device_info);
+    return !delegate->HasDevicePermission(browser_context, render_frame_host_,
+                                          origin_, *device_info);
   });
 }
 
 void WebUsbServiceImpl::OnDeviceAdded(
     const device::mojom::UsbDeviceInfo& device_info) {
   if (!GetContentClient()->browser()->GetUsbDelegate()->HasDevicePermission(
-          GetBrowserContext(), origin_, device_info)) {
+          GetBrowserContext(), render_frame_host_, origin_, device_info)) {
     return;
   }
   for (auto& client : clients_)
@@ -357,12 +416,12 @@ void WebUsbServiceImpl::OnDeviceAdded(
 
 void WebUsbServiceImpl::OnDeviceRemoved(
     const device::mojom::UsbDeviceInfo& device_info) {
-  base::EraseIf(device_clients_, [&device_info](const auto& client) {
+  std::erase_if(device_clients_, [&device_info](const auto& client) {
     return device_info.guid == client->device_guid();
   });
 
   if (!GetContentClient()->browser()->GetUsbDelegate()->HasDevicePermission(
-          GetBrowserContext(), origin_, device_info)) {
+          GetBrowserContext(), render_frame_host_, origin_, device_info)) {
     return;
   }
   for (auto& client : clients_)
@@ -422,7 +481,7 @@ void WebUsbServiceImpl::DecrementConnectionCount() {
 }
 
 void WebUsbServiceImpl::RemoveDeviceClient(const UsbDeviceClient* client) {
-  base::EraseIf(device_clients_, [client](const auto& this_client) {
+  std::erase_if(device_clients_, [client](const auto& this_client) {
     return client == this_client.get();
   });
 }

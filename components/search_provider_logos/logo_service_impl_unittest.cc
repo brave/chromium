@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "base/base64.h"
@@ -19,7 +20,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -30,6 +31,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/image_fetcher/core/image_decoder.h"
+#include "components/search_engines/search_engines_test_environment.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_service.h"
@@ -77,16 +79,13 @@ scoped_refptr<base::RefCountedString> EncodeBitmapAsPNG(
     const SkBitmap& bitmap) {
   scoped_refptr<base::RefCountedMemory> png_bytes =
       gfx::Image::CreateFrom1xBitmap(bitmap).As1xPNGBytes();
-  scoped_refptr<base::RefCountedString> str = new base::RefCountedString();
-  str->data().assign(png_bytes->front_as<char>(), png_bytes->size());
-  return str;
+  return base::MakeRefCounted<base::RefCountedString>(
+      std::string(base::as_string_view(*png_bytes)));
 }
 
 std::string EncodeBitmapAsPNGBase64(const SkBitmap& bitmap) {
   scoped_refptr<base::RefCountedString> png_bytes = EncodeBitmapAsPNG(bitmap);
-  std::string encoded_image_base64;
-  base::Base64Encode(png_bytes->data(), &encoded_image_base64);
-  return encoded_image_base64;
+  return base::Base64Encode(*png_bytes);
 }
 
 SkBitmap MakeBitmap(int width, int height) {
@@ -114,14 +113,11 @@ EncodedLogo EncodeLogo(const Logo& logo) {
 Logo DecodeLogo(const EncodedLogo& encoded_logo) {
   Logo logo;
   logo.image =
-      gfx::Image::CreateFrom1xPNGBytes(encoded_logo.encoded_image->front(),
-                                       encoded_logo.encoded_image->size())
-          .AsBitmap();
+      gfx::Image::CreateFrom1xPNGBytes(encoded_logo.encoded_image).AsBitmap();
   if (encoded_logo.dark_encoded_image) {
-    logo.dark_image = gfx::Image::CreateFrom1xPNGBytes(
-                          encoded_logo.dark_encoded_image->front(),
-                          encoded_logo.dark_encoded_image->size())
-                          .AsBitmap();
+    logo.dark_image =
+        gfx::Image::CreateFrom1xPNGBytes(encoded_logo.dark_encoded_image)
+            .AsBitmap();
   }
   logo.metadata = encoded_logo.metadata;
   return logo;
@@ -314,8 +310,8 @@ class FakeImageDecoder : public image_fetcher::ImageDecoder {
                    const gfx::Size& desired_image_frame_size,
                    data_decoder::DataDecoder* data_decoder,
                    image_fetcher::ImageDecodedCallback callback) override {
-    gfx::Image image = gfx::Image::CreateFrom1xPNGBytes(
-        reinterpret_cast<const uint8_t*>(image_data.data()), image_data.size());
+    gfx::Image image =
+        gfx::Image::CreateFrom1xPNGBytes(base::as_byte_span(image_data));
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), image));
   }
@@ -349,8 +345,7 @@ class SigninHelper {
 class LogoServiceImplTest : public ::testing::Test {
  protected:
   LogoServiceImplTest()
-      : template_url_service_(nullptr, 0),
-        logo_cache_(new NiceMock<MockLogoCache>()),
+      : logo_cache_(new NiceMock<MockLogoCache>()),
         shared_factory_(
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)),
@@ -364,10 +359,11 @@ class LogoServiceImplTest : public ::testing::Test {
                     GURL("https://example.com/logo.json"),
                     /*make_default=*/true);
 
-    test_clock_.SetNow(base::Time::FromJsTime(INT64_C(1388686828000)));
+    test_clock_.SetNow(
+        base::Time::FromMillisecondsSinceUnixEpoch(INT64_C(1388686828000)));
     logo_service_ = std::make_unique<LogoServiceImpl>(
         base::FilePath(), signin_helper_.identity_manager(),
-        &template_url_service_, std::make_unique<FakeImageDecoder>(),
+        &template_url_service(), std::make_unique<FakeImageDecoder>(),
         shared_factory_,
         base::BindRepeating(&LogoServiceImplTest::use_gray_background,
                             base::Unretained(this)));
@@ -408,8 +404,8 @@ class LogoServiceImplTest : public ::testing::Test {
   void GetDecodedLogo(LogoCallback cached, LogoCallback fresh);
   void GetEncodedLogo(EncodedLogoCallback cached, EncodedLogoCallback fresh);
 
-  void AddSearchEngine(base::StringPiece keyword,
-                       base::StringPiece short_name,
+  void AddSearchEngine(std::string_view keyword,
+                       std::string_view short_name,
                        const std::string& url,
                        GURL doodle_url,
                        bool make_default);
@@ -418,8 +414,15 @@ class LogoServiceImplTest : public ::testing::Test {
 
   bool use_gray_background() const { return use_gray_background_; }
 
+  TemplateURLService& template_url_service() {
+    return *search_engines_test_environment_.template_url_service();
+  }
+  const TemplateURLService& template_url_service() const {
+    return *search_engines_test_environment_.template_url_service();
+  }
+
   base::test::TaskEnvironment task_environment_;
-  TemplateURLService template_url_service_;
+  search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
   base::SimpleTestClock test_clock_;
   raw_ptr<NiceMock<MockLogoCache>, AcrossTasksDanglingUntriaged> logo_cache_;
 
@@ -478,7 +481,7 @@ void LogoServiceImplTest::SetServerResponseWhenFingerprint(
 }
 
 const GURL& LogoServiceImplTest::DoodleURL() const {
-  return template_url_service_.GetDefaultSearchProvider()->doodle_url();
+  return template_url_service().GetDefaultSearchProvider()->doodle_url();
 }
 
 void LogoServiceImplTest::GetLogo(LogoCallbacks callbacks) {
@@ -502,8 +505,8 @@ void LogoServiceImplTest::GetEncodedLogo(EncodedLogoCallback cached,
   GetLogo(std::move(callbacks));
 }
 
-void LogoServiceImplTest::AddSearchEngine(base::StringPiece keyword,
-                                          base::StringPiece short_name,
+void LogoServiceImplTest::AddSearchEngine(std::string_view keyword,
+                                          std::string_view short_name,
                                           const std::string& url,
                                           GURL doodle_url,
                                           bool make_default) {
@@ -514,9 +517,9 @@ void LogoServiceImplTest::AddSearchEngine(base::StringPiece keyword,
   search_url.doodle_url = doodle_url;
 
   TemplateURL* template_url =
-      template_url_service_.Add(std::make_unique<TemplateURL>(search_url));
+      template_url_service().Add(std::make_unique<TemplateURL>(search_url));
   if (make_default) {
-    template_url_service_.SetUserSelectedDefaultSearchProvider(template_url);
+    template_url_service().SetUserSelectedDefaultSearchProvider(template_url);
   }
 }
 
@@ -567,7 +570,7 @@ TEST_F(LogoServiceImplTest, DownloadAndCacheLogo) {
   Logo logo = GetSampleLogo(DoodleURL(), test_clock_.Now());
   SetServerResponse(ServerResponse(logo));
   logo_cache_->ExpectSetCachedLogo(&logo);
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(logo)));
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -578,7 +581,7 @@ TEST_F(LogoServiceImplTest, DownloadAndCacheLogoWithoutDarkImage) {
   Logo logo = GetSampleLogoWithoutDarkImage(DoodleURL(), test_clock_.Now());
   SetServerResponse(ServerResponse(logo));
   logo_cache_->ExpectSetCachedLogo(&logo);
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(logo)));
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -590,7 +593,7 @@ TEST_F(LogoServiceImplTest, DownloadAndCacheEncodedLogo) {
   EncodedLogo encoded_logo = EncodeLogo(logo);
   SetServerResponse(ServerResponse(logo));
   logo_cache_->ExpectSetCachedLogo(&logo);
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(encoded_logo)));
   GetEncodedLogo(cached.Get(), fresh.Get());
 }
@@ -602,7 +605,7 @@ TEST_F(LogoServiceImplTest, DownloadAndCacheEncodedLogoWithoutDarkImage) {
   EncodedLogo encoded_logo = EncodeLogo(logo);
   SetServerResponse(ServerResponse(logo));
   logo_cache_->ExpectSetCachedLogo(&logo);
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(encoded_logo)));
   GetEncodedLogo(cached.Get(), fresh.Get());
 }
@@ -614,16 +617,16 @@ TEST_F(LogoServiceImplTest, ShouldReturnDisabledWhenDSEHasNoLogo) {
   {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
-    EXPECT_CALL(cached, Run(LogoCallbackReason::DISABLED, Eq(absl::nullopt)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::DISABLED, Eq(absl::nullopt)));
+    EXPECT_CALL(cached, Run(LogoCallbackReason::DISABLED, Eq(std::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::DISABLED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 
   {
     StrictMock<MockEncodedLogoCallback> cached;
     StrictMock<MockEncodedLogoCallback> fresh;
-    EXPECT_CALL(cached, Run(LogoCallbackReason::DISABLED, Eq(absl::nullopt)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::DISABLED, Eq(absl::nullopt)));
+    EXPECT_CALL(cached, Run(LogoCallbackReason::DISABLED, Eq(std::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::DISABLED, Eq(std::nullopt)));
     GetEncodedLogo(cached.Get(), fresh.Get());
   }
 }
@@ -637,8 +640,8 @@ TEST_F(LogoServiceImplTest, EmptyCacheAndFailedDownload) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     SetServerResponse("server is borked");
-    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(absl::nullopt)));
+    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 
@@ -646,8 +649,8 @@ TEST_F(LogoServiceImplTest, EmptyCacheAndFailedDownload) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     SetServerResponse("", net::ERR_FAILED, net::HTTP_OK);
-    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 
@@ -655,8 +658,8 @@ TEST_F(LogoServiceImplTest, EmptyCacheAndFailedDownload) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     SetServerResponse("", net::OK, net::HTTP_BAD_GATEWAY);
-    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+    EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 }
@@ -677,7 +680,7 @@ TEST_F(LogoServiceImplTest, AcceptMinimalLogoResponse) {
 
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(logo)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
@@ -696,7 +699,7 @@ TEST_F(LogoServiceImplTest, ReturnCachedLogo) {
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
   EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -723,7 +726,7 @@ TEST_F(LogoServiceImplTest, ValidateCachedLogo) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(absl::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 
@@ -742,7 +745,7 @@ TEST_F(LogoServiceImplTest, ValidateCachedLogo) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(absl::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 }
@@ -766,7 +769,7 @@ TEST_F(LogoServiceImplTest, UpdateCachedLogoMetadata) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(absl::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 
@@ -779,7 +782,7 @@ TEST_F(LogoServiceImplTest, UpdateCachedLogoMetadata) {
     StrictMock<MockLogoCallback> cached;
     StrictMock<MockLogoCallback> fresh;
     EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(expected_logo)));
-    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(absl::nullopt)));
+    EXPECT_CALL(fresh, Run(LogoCallbackReason::REVALIDATED, Eq(std::nullopt)));
     GetDecodedLogo(cached.Get(), fresh.Get());
   }
 }
@@ -818,7 +821,7 @@ TEST_F(LogoServiceImplTest, InvalidateCachedLogo) {
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
   EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -836,8 +839,8 @@ TEST_F(LogoServiceImplTest, DeleteCachedLogoFromOldUrl) {
 
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -849,7 +852,7 @@ TEST_F(LogoServiceImplTest, LogoWithTTLCannotBeShownAfterExpiration) {
   SetServerResponse(ServerResponse(logo));
   LogoCallbacks callbacks;
   callbacks.on_fresh_decoded_logo_available = base::BindOnce(
-      [](LogoCallbackReason type, const absl::optional<Logo>& logo) {});
+      [](LogoCallbackReason type, const std::optional<Logo>& logo) {});
   GetLogo(std::move(callbacks));
 
   const LogoMetadata* cached_metadata = logo_cache_->GetCachedLogoMetadata();
@@ -864,7 +867,7 @@ TEST_F(LogoServiceImplTest, LogoWithoutTTLCanBeShownAfterExpiration) {
   SetServerResponse(MakeServerResponse(logo, time_to_live));
   LogoCallbacks callbacks;
   callbacks.on_fresh_decoded_logo_available = base::BindOnce(
-      [](LogoCallbackReason type, const absl::optional<Logo>& logo) {});
+      [](LogoCallbackReason type, const std::optional<Logo>& logo) {});
   GetLogo(std::move(callbacks));
 
   const LogoMetadata* cached_metadata = logo_cache_->GetCachedLogoMetadata();
@@ -888,7 +891,7 @@ TEST_F(LogoServiceImplTest, UseSoftExpiredCachedLogo) {
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
   EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(cached_logo)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -928,8 +931,8 @@ TEST_F(LogoServiceImplTest, DeleteAncientCachedLogo) {
 
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -948,8 +951,8 @@ TEST_F(LogoServiceImplTest, DeleteExpiredCachedLogo) {
 
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
-  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
+  EXPECT_CALL(fresh, Run(LogoCallbackReason::FAILED, Eq(std::nullopt)));
 
   GetDecodedLogo(cached.Get(), fresh.Get());
 }
@@ -966,7 +969,7 @@ TEST_F(LogoServiceImplTest, ClearLogoOnSignOut) {
   logo_cache_->ExpectSetCachedLogo(&logo);
   StrictMock<MockLogoCallback> cached;
   StrictMock<MockLogoCallback> fresh;
-  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+  EXPECT_CALL(cached, Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(fresh, Run(LogoCallbackReason::DETERMINED, Eq(logo)));
   GetDecodedLogo(cached.Get(), fresh.Get());
 
@@ -1034,9 +1037,8 @@ TEST_F(LogoServiceImplTest, DeleteCallbacksWhenLogoURLChanged) {
   StrictMock<MockLogoCallback> first_cached;
   StrictMock<MockLogoCallback> first_fresh;
   EXPECT_CALL(first_cached,
-              Run(LogoCallbackReason::CANCELED, Eq(absl::nullopt)));
-  EXPECT_CALL(first_fresh,
-              Run(LogoCallbackReason::CANCELED, Eq(absl::nullopt)));
+              Run(LogoCallbackReason::CANCELED, Eq(std::nullopt)));
+  EXPECT_CALL(first_fresh, Run(LogoCallbackReason::CANCELED, Eq(std::nullopt)));
   LogoCallbacks first_callbacks;
   first_callbacks.on_cached_decoded_logo_available = first_cached.Get();
   first_callbacks.on_fresh_decoded_logo_available = first_fresh.Get();
@@ -1053,7 +1055,7 @@ TEST_F(LogoServiceImplTest, DeleteCallbacksWhenLogoURLChanged) {
   StrictMock<MockLogoCallback> second_cached;
   StrictMock<MockLogoCallback> second_fresh;
   EXPECT_CALL(second_cached,
-              Run(LogoCallbackReason::DETERMINED, Eq(absl::nullopt)));
+              Run(LogoCallbackReason::DETERMINED, Eq(std::nullopt)));
   EXPECT_CALL(second_fresh, Run(LogoCallbackReason::DETERMINED, Eq(logo)));
   LogoCallbacks second_callbacks;
   second_callbacks.on_cached_decoded_logo_available = second_cached.Get();

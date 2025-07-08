@@ -28,16 +28,19 @@ OriginKeyedPermissionActionServiceFactory::
           "OriginKeyedPermissionActionService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {}
 
 OriginKeyedPermissionActionServiceFactory::
     ~OriginKeyedPermissionActionServiceFactory() = default;
 
-KeyedService*
-OriginKeyedPermissionActionServiceFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
-  return new permissions::OriginKeyedPermissionActionService();
+std::unique_ptr<KeyedService> OriginKeyedPermissionActionServiceFactory::
+    BuildServiceInstanceForBrowserContext(
+        content::BrowserContext* context) const {
+  return std::make_unique<permissions::OriginKeyedPermissionActionService>();
 }

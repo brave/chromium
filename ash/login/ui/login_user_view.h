@@ -5,6 +5,8 @@
 #ifndef ASH_LOGIN_UI_LOGIN_USER_VIEW_H_
 #define ASH_LOGIN_UI_LOGIN_USER_VIEW_H_
 
+#include <string_view>
+
 #include "ash/ash_export.h"
 #include "ash/login/ui/login_base_bubble_view.h"
 #include "ash/login/ui/login_display_style.h"
@@ -12,6 +14,7 @@
 #include "ash/public/cpp/login_types.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/display/manager/display_configurator.h"
 #include "ui/views/view.h"
 
@@ -24,6 +27,8 @@ class LoginButton;
 // various layout styles.
 class ASH_EXPORT LoginUserView : public views::View,
                                  public display::DisplayConfigurator::Observer {
+  METADATA_HEADER(LoginUserView, views::View)
+
  public:
   // TestApi is used for tests to get internal implementation details.
   class ASH_EXPORT TestApi {
@@ -33,7 +38,7 @@ class ASH_EXPORT LoginUserView : public views::View,
 
     LoginDisplayStyle display_style() const;
 
-    const std::u16string& displayed_name() const;
+    std::u16string_view displayed_name() const;
 
     views::View* user_label() const;
     views::View* tap_button() const;
@@ -45,7 +50,7 @@ class ASH_EXPORT LoginUserView : public views::View,
     bool is_opaque() const;
 
    private:
-    const raw_ptr<LoginUserView, ExperimentalAsh> view_;
+    const raw_ptr<LoginUserView, DanglingUntriaged> view_;
   };
 
   using OnTap = base::RepeatingClosure;
@@ -90,9 +95,9 @@ class ASH_EXPORT LoginUserView : public views::View,
   LoginButton* GetDropdownButton();
 
   // views::View:
-  const char* GetClassName() const override;
-  gfx::Size CalculatePreferredSize() const override;
-  void Layout() override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
+  void Layout(PassKey) override;
   void RequestFocus() override;
   views::View::Views GetChildrenInZOrder() override;
 
@@ -127,10 +132,10 @@ class ASH_EXPORT LoginUserView : public views::View,
   std::unique_ptr<HoverNotifier> hover_notifier_;
 
   LoginDisplayStyle display_style_;
-  raw_ptr<UserImage, ExperimentalAsh> user_image_ = nullptr;
-  raw_ptr<UserLabel, ExperimentalAsh> user_label_ = nullptr;
-  raw_ptr<LoginButton, ExperimentalAsh> dropdown_ = nullptr;
-  raw_ptr<TapButton, ExperimentalAsh> tap_button_ = nullptr;
+  raw_ptr<UserImage> user_image_ = nullptr;
+  raw_ptr<UserLabel> user_label_ = nullptr;
+  raw_ptr<LoginButton> dropdown_ = nullptr;
+  raw_ptr<TapButton> tap_button_ = nullptr;
 
   // True iff the view is currently opaque (ie, opacity = 1).
   bool is_opaque_ = false;

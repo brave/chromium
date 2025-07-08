@@ -40,7 +40,7 @@ function validateInterestGroup(interestGroup) {
   if (!interestGroup)
     throw 'No interest group';
 
-  if (Object.keys(interestGroup).length !== 15) {
+  if (Object.keys(interestGroup).length !== 18) {
     throw 'Wrong number of interestGroupFields ' +
         JSON.stringify(interestGroup);
   }
@@ -50,9 +50,15 @@ function validateInterestGroup(interestGroup) {
   if (!interestGroup.owner.startsWith('https://a.test'))
     throw 'Missing a.test in owner ' + interestGroup.owner;
 
+  // Note that this field is deprecated.
   if (interestGroup.useBiddingSignalsPrioritization !== true) {
     throw 'Incorrect useBiddingSignalsPrioritization ' +
         interestGroup.useBiddingSignalsPrioritization;
+  }
+
+  if (interestGroup.enableBiddingSignalsPrioritization !== true) {
+    throw 'Incorrect enableBiddingSignalsPrioritization ' +
+        interestGroup.enableBiddingSignalsPrioritization;
   }
 
   if (Object.keys(interestGroup.priorityVector).length !== 2 ||
@@ -83,12 +89,15 @@ function validateInterestGroup(interestGroup) {
     throw 'Incorrect updateUrl ' + interestGroup.updateUrl;
   }
 
-  // TODO(https://crbug.com/1420080): Remove this block and decrease number of
+  // TODO(crbug.com/40258629): Remove this block and decrease number of
   // expected keys above when removing support for dailyUpdateUrl.
   if (!interestGroup.dailyUpdateUrl.startsWith('https://a.test') ||
       !interestGroup.dailyUpdateUrl.endsWith('/not_found_update_url.json')) {
     throw 'Incorrect dailyUpdateUrl ' + interestGroup.dailyUpdateUrl;
   }
+
+  if (interestGroup.executionMode !== 'compatibility')
+    throw 'Incorrect executionMode ' + interestGroup.executionMode;
 
   if (!interestGroup.trustedBiddingSignalsURL.startsWith('https://a.test') ||
       (!interestGroup.trustedBiddingSignalsURL.includes(
@@ -115,6 +124,11 @@ function validateInterestGroup(interestGroup) {
   if (trustedBiddingSignalsKeysJson !== "[\"key1\"]") {
     throw 'Incorrect trustedBiddingSignalsKeys ' +
         trustedBiddingSignalsKeysJson;
+  }
+
+  if (interestGroup.trustedBiddingSignalsSlotSizeMode != 'none') {
+    throw 'Incorrect trustedBiddingSignalsSlotSizeMode ' +
+        interestGroup.trustedBiddingSignalsSlotSizeMode;
   }
 
   // If userBiddingSignals is passed as a JSON string instead of an object,
@@ -170,13 +184,15 @@ function validatePerBuyerSignals(perBuyerSignals) {
 function validateDirectFromSellerSignals(directFromSellerSignals) {
   const perBuyerSignalsJSON =
       JSON.stringify(directFromSellerSignals.perBuyerSignals);
-  if (perBuyerSignalsJSON !== '{"json":"for","buyer":[1]}') {
+  if (perBuyerSignalsJSON !== '{"json":"for","buyer":[1]}' &&
+      perBuyerSignalsJSON !== '{"buyer":[1],"json":"for"}') {
     throw 'Wrong directFromSellerSignals.perBuyerSignals ' +
         perBuyerSignalsJSON;
   }
   const auctionSignalsJSON =
       JSON.stringify(directFromSellerSignals.auctionSignals);
-  if (auctionSignalsJSON !== '{"json":"for","all":["parties"]}') {
+  if (auctionSignalsJSON !== '{"json":"for","all":["parties"]}' &&
+      auctionSignalsJSON !== '{"all":["parties"],"json":"for"}') {
     throw 'Wrong directFromSellerSignals.auctionSignals ' +
         auctionSignalsJSON;
   }
@@ -198,7 +214,7 @@ function validateBrowserSignals(browserSignals, isGenerateBid) {
     throw 'Wrong topLevelSeller ' + browserSignals.topLevelSeller;
 
   if (isGenerateBid) {
-    if (Object.keys(browserSignals).length !== 7) {
+    if (Object.keys(browserSignals).length !== 13) {
       throw 'Wrong number of browser signals fields ' +
           JSON.stringify(browserSignals);
     }
@@ -210,8 +226,62 @@ function validateBrowserSignals(browserSignals, isGenerateBid) {
       throw 'Wrong prevWins ' + JSON.stringify(browserSignals.prevWins);
     if (browserSignals.prevWinsMs.length !== 0)
       throw 'Wrong prevWinsMs ' + JSON.stringify(browserSignals.prevWinsMs);
+    if (browserSignals.adComponentsLimit !== 40)
+      throw 'Wrong adComponentsLimit ' + browserSignals.adComponentsLimit;
+    if (browserSignals.forDebuggingOnlyInCooldownOrLockout)
+      throw 'Wrong forDebuggingOnlyInCooldownOrLockout ' +
+          browserSignals.forDebuggingOnlyInCooldownOrLockout;
+    if (browserSignals.forDebuggingOnlySampling)
+      throw 'Wrong forDebuggingOnlySampling ' +
+          browserSignals.forDebuggingOnlySampling;
+    if (browserSignals.multiBidLimit !== 1)
+      throw 'Wrong multiBidLimit ' + browserSignals.multiBidLimit;
+    if (!('viewCounts' in browserSignals))
+      throw 'viewCounts unexpectedly not in browserSignals';
+    if (!('clickCounts' in browserSignals))
+      throw 'clickCounts unexpectedly not in browserSignals';
+    if (browserSignals.viewCounts.pastHour !== 0) {
+      throw 'Wrong browserSignals.viewCounts.pastHour ' +
+          browserSignals.viewCounts.pastHour;
+    }
+    if (browserSignals.viewCounts.pastDay !== 0) {
+      throw 'Wrong browserSignals.viewCounts.pastDay ' +
+          browserSignals.viewCounts.pastDay;
+    }
+    if (browserSignals.viewCounts.pastWeek !== 0) {
+      throw 'Wrong browserSignals.viewCounts.pastWeek ' +
+          browserSignals.viewCounts.pastWeek;
+    }
+    if (browserSignals.viewCounts.past30Days !== 0) {
+      throw 'Wrong browserSignals.viewCounts.past30Days ' +
+          browserSignals.viewCounts.past30Days;
+    }
+    if (browserSignals.viewCounts.past90Days !== 0) {
+      throw 'Wrong browserSignals.viewCounts.past90Days ' +
+          browserSignals.viewCounts.past90Days;
+    }
+    if (browserSignals.clickCounts.pastHour !== 0) {
+      throw 'Wrong browserSignals.clickCounts.pastHour ' +
+          browserSignals.clickCounts.pastHour;
+    }
+    if (browserSignals.clickCounts.pastDay !== 0) {
+      throw 'Wrong browserSignals.clickCounts.pastDay ' +
+          browserSignals.clickCounts.pastDay;
+    }
+    if (browserSignals.clickCounts.pastWeek !== 0) {
+      throw 'Wrong browserSignals.clickCounts.pastWeek ' +
+          browserSignals.clickCounts.pastWeek;
+    }
+    if (browserSignals.clickCounts.past30Days !== 0) {
+      throw 'Wrong browserSignals.clickCounts.past30Days ' +
+          browserSignals.clickCounts.past30Days;
+    }
+    if (browserSignals.clickCounts.past90Days !== 0) {
+      throw 'Wrong browserSignals.clickCounts.past90Days ' +
+          browserSignals.clickCounts.past90Days;
+    }
   } else {
-    if (Object.keys(browserSignals).length !== 15) {
+    if (Object.keys(browserSignals).length !== 16) {
       throw 'Wrong number of browser signals fields ' +
           JSON.stringify(browserSignals);
     }
@@ -237,8 +307,8 @@ function validateBrowserSignals(browserSignals, isGenerateBid) {
     }
     if (browserSignals.adCost !== 3)
       throw 'Wrong adCost ' + browserSignals.adCost;
-    if (!browserSignals.hasOwnProperty("kAnonStatus"))
-      throw 'Missing kAnonStatus';
+    if (browserSignals.reportingTimeout !== 2000)
+      throw 'Wrong reportingTimeout ' + browserSignals.reportingTimeout;
   }
 }
 

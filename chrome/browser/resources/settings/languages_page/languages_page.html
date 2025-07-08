@@ -1,4 +1,4 @@
-<style include="cr-shared-style settings-shared action-link iron-flex">
+<style include="cr-shared-style settings-shared action-link">
   cr-action-menu.complex .dropdown-item {
     min-height: 36px;
   }
@@ -25,6 +25,11 @@
     display: none;
   }
 
+  #languagesSectionHeader {
+    padding-bottom: 12px;
+    padding-top: 12px;
+  }
+
 <if expr="is_win">
   .explain-selected {
     color: var(--google-green-700);
@@ -45,7 +50,7 @@
     line-height: 20px;
   }
 
-  #uiLanguageItem iron-icon.policy {
+  #uiLanguageItem cr-icon.policy {
     margin-inline-start: 20px;
     margin-inline-end: 0;
   }
@@ -55,12 +60,14 @@
   }
 </if>
 </style>
+<settings-section page-title="$i18n{languagesCardTitle}">
 <div id="languagesSection">
   <div class="cr-row continuation">
-    <h2 class="flex">
-      $i18n{preferredLanguagesDesc}
-    </h2>
-    <cr-button id="addLanguages" class="header-aligned-button"
+    <div id="languagesSectionHeader" class="flex">
+      <div>$i18n{preferredLanguagesHeader}</div>
+      <div class="secondary">$i18n{preferredLanguagesDesc}</div>
+    </div>
+    <cr-button id="addLanguages" class="cr-button-gap header-aligned-button"
         disabled="[[!canEnableSomeSupportedLanguage_(languages)]]"
         on-click="onAddLanguagesClick_">
       $i18n{addLanguages}
@@ -73,7 +80,7 @@
           [[isTranslationTarget_(item.language.code,
           languages.translateTarget)]]" role="listitem">
         <div class="start cr-padded-text">
-          <div title="[[item.language.nativeDisplayName]]">
+          <div title="[[item.language.nativeDisplayName]]" role="none">
             [[formatIndex_(index)]]. [[item.language.displayName]]
           </div>
           <div class="target-info secondary">
@@ -124,9 +131,9 @@
           <span>
             $i18n{displayInThisLanguage}
           </span>
-          <iron-icon class="policy" icon="cr20:domain"
+          <cr-icon class="policy" icon="cr20:domain"
               hidden$="[[!detailLanguage_.language.isProhibitedLanguage]]">
-          </iron-icon>
+          </cr-icon>
         </cr-checkbox>
 </if> <!-- is_win -->
         <button class="dropdown-item" role="menuitem"
@@ -157,7 +164,6 @@
 </div>
 <template is="dom-if" if="[[showAddLanguagesDialog_]]" restamp>
   <settings-add-languages-dialog languages="[[addLanguagesDialogLanguages_]]"
-      language-helper="[[languageHelper]]"
       on-languages-added="onLanguagesAdded_"
       on-close="onAddLanguagesDialogClose_">
   </settings-add-languages-dialog>
@@ -173,3 +179,4 @@
       on-close="onRelaunchDialogClose">
   </relaunch-confirmation-dialog>
 </template>
+</settings-section>

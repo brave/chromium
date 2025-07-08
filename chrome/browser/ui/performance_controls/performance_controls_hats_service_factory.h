@@ -16,6 +16,10 @@ class PerformanceControlsHatsServiceFactory
   static PerformanceControlsHatsServiceFactory* GetInstance();
   static PerformanceControlsHatsService* GetForProfile(Profile* profile);
 
+  // Returns true if the base::Feature of any survey controlled through
+  // PerformanceControlsHatsService is enabled.
+  static bool IsAnySurveyFeatureEnabled();
+
  private:
   friend base::NoDestructor<PerformanceControlsHatsServiceFactory>;
 
@@ -23,7 +27,7 @@ class PerformanceControlsHatsServiceFactory
   ~PerformanceControlsHatsServiceFactory() override = default;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 

@@ -5,17 +5,20 @@
 #ifndef IOS_WEB_JS_MESSAGING_WEB_FRAME_IMPL_H_
 #define IOS_WEB_JS_MESSAGING_WEB_FRAME_IMPL_H_
 
-
 #include <map>
 #include <string>
 
 #include "base/cancelable_callback.h"
+#import "base/memory/raw_ptr.h"
+#import "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "ios/web/js_messaging/web_frame_internal.h"
+#import "ios/web/public/js_messaging/content_world.h"
 #include "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/web_state.h"
 #include "ios/web/public/web_state_observer.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 @class WKFrameInfo;
 
@@ -23,16 +26,17 @@ namespace web {
 
 class JavaScriptContentWorld;
 
-class WebFrameImpl : public WebFrame,
-                     public WebFrameInternal,
-                     public web::WebStateObserver {
+class WebFrameImpl final : public WebFrame,
+                           public WebFrameInternal,
+                           public web::WebStateObserver {
  public:
   // Creates a new WebFrame.
   WebFrameImpl(WKFrameInfo* frame_info,
                const std::string& frame_id,
                bool is_main_frame,
-               GURL security_origin,
-               web::WebState* web_state);
+               url::Origin security_origin,
+               web::WebState* web_state,
+               ContentWorld content_world);
 
   WebFrameImpl(const WebFrameImpl&) = delete;
   WebFrameImpl& operator=(const WebFrameImpl&) = delete;
@@ -46,7 +50,7 @@ class WebFrameImpl : public WebFrame,
   WebFrameInternal* GetWebFrameInternal() override;
   std::string GetFrameId() const override;
   bool IsMainFrame() const override;
-  GURL GetSecurityOrigin() const override;
+  url::Origin GetSecurityOrigin() const override;
   BrowserState* GetBrowserState() override;
 
   bool CallJavaScriptFunction(const std::string& name,
@@ -63,6 +67,7 @@ class WebFrameImpl : public WebFrame,
       base::OnceCallback<void(const base::Value*)> callback) override;
   bool ExecuteJavaScript(const std::u16string& script,
                          ExecuteJavaScriptCallbackWithError callback) override;
+  base::WeakPtr<WebFrame> AsWeakPtr() override;
 
   // WebFrameContentWorldAPI:
   bool CallJavaScriptFunctionInContentWorld(
@@ -75,6 +80,10 @@ class WebFrameImpl : public WebFrame,
       JavaScriptContentWorld* content_world,
       base::OnceCallback<void(const base::Value*)> callback,
       base::TimeDelta timeout) override;
+  bool ExecuteJavaScriptInContentWorld(
+      const std::u16string& script,
+      JavaScriptContentWorld* content_world,
+      ExecuteJavaScriptCallbackWithError callback) override;
 
   // WebStateObserver:
   void WebStateDestroyed(web::WebState* web_state) override;
@@ -156,9 +165,13 @@ class WebFrameImpl : public WebFrame,
   // Whether or not the receiver represents the main frame.
   bool is_main_frame_ = false;
   // The security origin associated with this frame.
-  GURL security_origin_;
+  url::Origin security_origin_;
   // The associated web state.
-  web::WebState* web_state_ = nullptr;
+  raw_ptr<web::WebState> web_state_ = nullptr;
+  // The frame's content world.
+  ContentWorld content_world_;
+
+  base::WeakPtrFactory<WebFrameImpl> weak_ptr_factory_{this};
 };
 
 }  // namespace web

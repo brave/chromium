@@ -5,49 +5,72 @@
 package org.chromium.chrome.browser.tasks.tab_management;
 
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_TYPE;
+import static org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageType.ARCHIVED_TABS_MESSAGE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_ALPHA;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_ANIMATION_STATUS;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.MESSAGE;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.NEW_TAB_TILE_DEPRECATED;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.OTHERS;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.TAB;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.TAB_GROUP;
+import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.TAB_GROUP_SYNC_ID;
 import static org.chromium.chrome.browser.tasks.tab_management.TabProperties.TAB_ID;
 
 import android.util.Pair;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.browser.tasks.pseudotab.PseudoTab;
 import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyListModel;
 import org.chromium.ui.modelutil.PropertyModel;
 
+import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.util.List;
 
-// TODO(meiliang): Rename TabListModel to CardListModel, since this ModelList not only contains
-// Tabs anymore.
 /**
- * A {@link PropertyListModel} implementation to keep information about a list of
- * {@link org.chromium.chrome.browser.tab.Tab}s.
+ * A {@link PropertyListModel} implementation to keep information about a list of {@link
+ * org.chromium.chrome.browser.tab.Tab}s.
  */
+@NullMarked
 class TabListModel extends ModelList {
-    /**
-     * Required properties for each {@link PropertyModel} managed by this {@link ModelList}.
-     */
-    static class CardProperties {
+    @IntDef({
+        AnimationStatus.SELECTED_CARD_ZOOM_IN,
+        AnimationStatus.SELECTED_CARD_ZOOM_OUT,
+        AnimationStatus.HOVERED_CARD_ZOOM_IN,
+        AnimationStatus.HOVERED_CARD_ZOOM_OUT,
+        AnimationStatus.CARD_RESTORE
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface AnimationStatus {
+        int CARD_RESTORE = 0;
+        int SELECTED_CARD_ZOOM_OUT = 1;
+        int SELECTED_CARD_ZOOM_IN = 2;
+        int HOVERED_CARD_ZOOM_OUT = 3;
+        int HOVERED_CARD_ZOOM_IN = 4;
+        int NUM_ENTRIES = 5;
+    }
+
+    /** Required properties for each {@link PropertyModel} managed by this {@link ModelList}. */
+    public static class CardProperties {
+        static final long BASE_ANIMATION_DURATION_MS = 218;
+
         /** Supported Model type within this ModelList. */
-        @IntDef({TAB, MESSAGE, NEW_TAB_TILE_DEPRECATED, OTHERS})
+        @IntDef({TAB, MESSAGE, TAB_GROUP})
         @Retention(RetentionPolicy.SOURCE)
+        @Target(ElementType.TYPE_USE)
         public @interface ModelType {
+
             int TAB = 0;
             int MESSAGE = 1;
-            int NEW_TAB_TILE_DEPRECATED = 2;
-            int OTHERS = 3;
+            int TAB_GROUP = 2;
         }
 
         /** This corresponds to {@link CardProperties.ModelType}*/
@@ -56,14 +79,17 @@ class TabListModel extends ModelList {
 
         public static final PropertyModel.WritableFloatPropertyKey CARD_ALPHA =
                 new PropertyModel.WritableFloatPropertyKey();
+        public static final PropertyModel.WritableIntPropertyKey CARD_ANIMATION_STATUS =
+                new PropertyModel.WritableIntPropertyKey();
     }
 
     /**
-     * Convert the given tab ID to an index to match during partial updates.
+     * Lookup the position of a tab by its tab ID.
+     *
      * @param tabId The tab ID to search for.
-     * @return The index within the model {@link org.chromium.ui.modelutil.SimpleList}.
+     * @return The index within the model list or {@link TabModel.INVALID_TAB_INDEX}.
      */
-    public int indexFromId(int tabId) {
+    public int indexFromTabId(int tabId) {
         for (int i = 0; i < size(); i++) {
             PropertyModel model = get(i).model;
             if (model.get(CARD_TYPE) == TAB && model.get(TAB_ID) == tabId) return i;
@@ -72,9 +98,83 @@ class TabListModel extends ModelList {
     }
 
     /**
+     * Lookup the position of a tab group by its sync ID.
+     *
+     * @param syncId The sync ID to search for.
+     * @return The index within the model list or {@link TabModel.INVALID_TAB_INDEX}.
+     */
+    public int indexFromSyncId(String syncId) {
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB_GROUP && model.get(TAB_GROUP_SYNC_ID).equals(syncId)) {
+                return i;
+            }
+        }
+        return TabModel.INVALID_TAB_INDEX;
+    }
+
+    /**
+     * Lookup a {@link PropertyModel} for the tab by its ID.
+     *
+     * @param tabId The tab ID to search for.
+     * @return The property model in the model list or null.
+     */
+    public @Nullable PropertyModel getModelFromTabId(int tabId) {
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB && model.get(TAB_ID) == tabId) return model;
+        }
+        return null;
+    }
+
+    /**
+     * Lookup a {@link PropertyModel} for the tab group by its sync ID.
+     *
+     * @param syncId The sync ID to search for.
+     * @return The property model in the model list or null.
+     */
+    public @Nullable PropertyModel getModelFromSyncId(String syncId) {
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB_GROUP && model.get(TAB_GROUP_SYNC_ID).equals(syncId)) {
+                return model;
+            }
+        }
+        return null;
+    }
+
+    /** Returns the property model of the first tab card or null if one does not exist. */
+    public @Nullable PropertyModel getFirstTabPropertyModel() {
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB) {
+                return model;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Find the Nth TAB card in the {@link TabListModel}.
+     *
      * @param n N of the Nth TAB card.
-     * @return The index of Nth TAB card in the {@link TabListModel}.
+     * @return The index of Nth TAB card in the {@link TabListModel} or TabModel.INVALID_TAB_INDEX
+     *     if not enough tabs exist.
+     */
+    public int indexOfNthTabCardOrInvalid(int n) {
+        int index = indexOfNthTabCard(n);
+        if (index < 0 || index >= size() || get(index).model.get(CARD_TYPE) != TAB) {
+            return TabModel.INVALID_TAB_INDEX;
+        }
+        return index;
+    }
+
+    /**
+     * Find the Nth TAB card in the {@link TabListModel}.
+     *
+     * @param n N of the Nth TAB card.
+     * @return The index of Nth TAB card in the {@link TabListModel} or the index after the last tab
+     *     card if {@code n} exceeds the number of tabs.
      */
     public int indexOfNthTabCard(int n) {
         if (n < 0) return TabModel.INVALID_TAB_INDEX;
@@ -82,7 +182,7 @@ class TabListModel extends ModelList {
         int lastTabIndex = TabModel.INVALID_TAB_INDEX;
         for (int i = 0; i < size(); i++) {
             PropertyModel model = get(i).model;
-            if (model.get(CARD_TYPE) == TAB) {
+            if (model.get(CARD_TYPE) == TAB || model.get(CARD_TYPE) == TAB_GROUP) {
                 if (tabCount++ == n) return i;
                 lastTabIndex = i;
             }
@@ -92,8 +192,30 @@ class TabListModel extends ModelList {
         return lastTabIndex + 1;
     }
 
+    /** Returns the filter index of a tab from its view index. */
+    public int indexOfTabCardsOrInvalid(int index) {
+        if (index < 0 || index >= size() || get(index).model.get(CARD_TYPE) != TAB) {
+            return TabModel.INVALID_TAB_INDEX;
+        }
+
+        return getTabCardCountsBefore(index);
+    }
+
+    /** Get the number of TAB_GROUP cards in the TabListModel. */
+    public int getTabGroupCardCount() {
+        int tabGroupCardCount = 0;
+        for (int i = 0; i < size(); i++) {
+            PropertyModel model = get(i).model;
+            if (model.get(CARD_TYPE) == TAB_GROUP) {
+                tabGroupCardCount++;
+            }
+        }
+        return tabGroupCardCount;
+    }
+
     /**
      * Get the number of TAB cards before the given index in TabListModel.
+     *
      * @param index The given index in TabListModel.
      * @return The number of TAB cards before the given index.
      */
@@ -132,28 +254,8 @@ class TabListModel extends ModelList {
     }
 
     /**
-     * Gets the new position of the Tab with {@link tabId} from a sorted list with MRU order.
-     * @param tabId The id of the Tab to insert into the list.
-     */
-    public int getNewPositionInMruOrderList(int tabId) {
-        long timestamp = PseudoTab.fromTabId(tabId).getTimestampMillis();
-        int pos = 0;
-        while (pos < size()) {
-            PropertyModel model = get(pos).model;
-            if (model.get(CARD_TYPE) != TAB
-                    || (PseudoTab.fromTabId(model.get(TabProperties.TAB_ID)).getTimestampMillis()
-                                    - timestamp
-                            >= 0)) {
-                pos++;
-            } else {
-                break;
-            }
-        }
-        return pos;
-    }
-
-    /**
      * Get the index that matches a message item that has the given message type.
+     *
      * @param messageType The message type to match.
      * @return The index within the model.
      */
@@ -167,9 +269,7 @@ class TabListModel extends ModelList {
         return TabModel.INVALID_TAB_INDEX;
     }
 
-    /**
-     * Get the last index of a message item.
-     */
+    /** Get the last index of a message item. */
     public int lastIndexForMessageItem() {
         for (int i = size() - 1; i >= 0; i--) {
             PropertyModel model = get(i).model;
@@ -195,15 +295,45 @@ class TabListModel extends ModelList {
         return true;
     }
 
+    @Override
+    public MVCListAdapter.ListItem removeAt(int position) {
+        if (position >= 0 && position < size()) {
+            destroyTabGroupColorViewProviderIfNotNull(get(position).model);
+        }
+        return super.removeAt(position);
+    }
+
+    @Override
+    public void clear() {
+        for (int i = 0; i < size(); i++) {
+            destroyTabGroupColorViewProviderIfNotNull(get(i).model);
+        }
+        super.clear();
+    }
+
+    private void destroyTabGroupColorViewProviderIfNotNull(PropertyModel model) {
+        if (model.get(CARD_TYPE) == TAB) {
+            @Nullable TabGroupColorViewProvider provider =
+                    model.get(TabProperties.TAB_GROUP_COLOR_VIEW_PROVIDER);
+            if (provider != null) provider.destroy();
+        }
+    }
+
     /**
-     * Sync the {@link TabListModel} with updated information. Update tab id of
-     * the item in {@code index} with the current selected {@code tab} of the group.
-     * @param selectedTab   The current selected tab in the group.
-     * @param index         The index of the item in {@link TabListModel} that needs to be updated.
+     * Sync the {@link TabListModel} with updated information. Update tab id of the item in {@code
+     * index} with the current selected {@code tab} of the group.
+     *
+     * @param selectedTab The current selected tab in the group.
+     * @param index The index of the item in {@link TabListModel} that needs to be updated.
      */
     void updateTabListModelIdForGroup(Tab selectedTab, int index) {
-        if (get(index).model.get(CARD_TYPE) != TAB) return;
-        get(index).model.set(TabProperties.TAB_ID, selectedTab.getId());
+        if (index < 0 || index >= size()) return;
+
+        PropertyModel propertyModel = get(index).model;
+        // TODO(crbug.com/398186407): Consider using getTabPropertyModel() here instead.
+        if (propertyModel.get(CARD_TYPE) != TAB) return;
+
+        propertyModel.set(TabProperties.TAB_ID, selectedTab.getId());
     }
 
     /**
@@ -234,10 +364,10 @@ class TabListModel extends ModelList {
         // Ensure the last tab is last in the model and the first tab is the first.
         assert endIndex - startIndex == tabs.size() - 1;
         for (int i = startIndex; i <= endIndex; i++) {
-            Tab curTab = tabModel.getTabAt(i);
+            Tab curTab = tabModel.getTabAtChecked(i);
             // Group should be contiguous.
             assert tabs.contains(curTab);
-            int index = indexFromId(curTab.getId());
+            int index = indexFromTabId(curTab.getId());
             if (index != TabModel.INVALID_TAB_INDEX && desIndex == TabModel.INVALID_TAB_INDEX) {
                 desIndex = index;
             } else if (index != TabModel.INVALID_TAB_INDEX
@@ -250,43 +380,57 @@ class TabListModel extends ModelList {
     }
 
     /**
-     * This method updates the information in {@link TabListModel} of the selected tab when a merge
-     * related operation happens.
-     * @param index         The index of the item in {@link TabListModel} that needs to be updated.
-     * @param isSelected    Whether the tab is selected or not in a merge related operation. If
-     *         selected, update the corresponding item in {@link TabListModel} to the selected
-     *         state. If not, restore it to original state.
+     * This method updates the information in {@link TabListModel} of the selected card when it is
+     * selected or deselected.
+     *
+     * @param index The index of the item in {@link TabListModel} that needs to be updated.
+     * @param isSelected Whether the tab is selected or not. If selected, update the corresponding
+     *     item in {@link TabListModel} to the selected state. If not, restore it to original state.
      */
-    void updateSelectedTabForMergeToGroup(int index, boolean isSelected) {
-        if (index < 0 || index >= size()) return;
+    void updateSelectedCardForSelection(int index, boolean isSelected) {
+        @Nullable PropertyModel propertyModel = getModelSupportingAnimations(index);
+        if (propertyModel == null) return;
 
-        assert get(index).model.get(CARD_TYPE) == TAB;
-
-        int status = isSelected ? ClosableTabGridView.AnimationStatus.SELECTED_CARD_ZOOM_IN
-                                : ClosableTabGridView.AnimationStatus.SELECTED_CARD_ZOOM_OUT;
-        if (get(index).model.get(TabProperties.CARD_ANIMATION_STATUS) == status) return;
-
-        get(index).model.set(TabProperties.CARD_ANIMATION_STATUS, status);
-        get(index).model.set(CARD_ALPHA, isSelected ? 0.8f : 1f);
+        int status =
+                isSelected
+                        ? AnimationStatus.SELECTED_CARD_ZOOM_IN
+                        : AnimationStatus.SELECTED_CARD_ZOOM_OUT;
+        propertyModel.set(CARD_ANIMATION_STATUS, status);
+        propertyModel.set(CARD_ALPHA, isSelected ? 0.8f : 1f);
     }
 
     /**
-     * This method updates the information in {@link TabListModel} of the hovered tab when a merge
-     * related operation happens.
-     * @param index         The index of the item in {@link TabListModel} that needs to be updated.
-     * @param isHovered     Whether the tab is hovered or not in a merge related operation. If
-     *         hovered, update the corresponding item in {@link TabListModel} to the hovered state.
-     *         If not, restore it to original state.
+     * This method updates the information in {@link TabListModel} of a card when a selected card is
+     * hovered over it or moved off the previously hovered card.
+     *
+     * @param index The index of the item in {@link TabListModel} that needs to be updated.
+     * @param isHovered Whether a card is hovered over the card represented by `index` or not. If
+     *     hovered, update the corresponding item in {@link TabListModel} to the hovered state. If
+     *     not, restore it to original state.
      */
-    void updateHoveredTabForMergeToGroup(int index, boolean isHovered) {
-        if (index < 0 || index >= size()) return;
+    void updateHoveredCardForHover(int index, boolean isHovered) {
+        @Nullable PropertyModel propertyModel = getModelSupportingAnimations(index);
+        if (propertyModel == null) return;
 
-        assert get(index).model.get(CARD_TYPE) == TAB;
+        int status =
+                isHovered
+                        ? AnimationStatus.HOVERED_CARD_ZOOM_IN
+                        : AnimationStatus.HOVERED_CARD_ZOOM_OUT;
+        propertyModel.set(CARD_ANIMATION_STATUS, status);
+    }
 
-        int status = isHovered ? ClosableTabGridView.AnimationStatus.HOVERED_CARD_ZOOM_IN
-                               : ClosableTabGridView.AnimationStatus.HOVERED_CARD_ZOOM_OUT;
-        if (get(index).model.get(TabProperties.CARD_ANIMATION_STATUS) == status) return;
+    private @Nullable PropertyModel getModelSupportingAnimations(int index) {
+        if (index < 0 || index >= size()) return null;
 
-        get(index).model.set(TabProperties.CARD_ANIMATION_STATUS, status);
+        PropertyModel model = get(index).model;
+
+        boolean isArchiveMessageCard =
+                model.get(CARD_TYPE) == MESSAGE && model.get(MESSAGE_TYPE) == ARCHIVED_TABS_MESSAGE;
+        if (isArchiveMessageCard && !ChromeFeatureList.sTabArchivalDragDropAndroid.isEnabled()) {
+            return null;
+        }
+
+        assert model.get(CARD_TYPE) == TAB || isArchiveMessageCard;
+        return model;
     }
 }

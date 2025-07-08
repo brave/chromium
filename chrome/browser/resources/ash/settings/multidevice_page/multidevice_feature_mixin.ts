@@ -7,13 +7,16 @@
  * intended to facilitate passing data between elements in the MultiDevice page
  * cleanly and concisely. It includes some constants and utility methods.
  */
+import type {I18nMixinInterface} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import type {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {I18nMixin, I18nMixinInterface} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {dedupingMixin, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {Constructor} from '../common/types.js';
 
-import {Constructor} from '../common/types.js';
-
-import {MultiDeviceFeature, MultiDeviceFeatureState, MultiDevicePageContentData, MultiDeviceSettingsMode, PhoneHubFeatureAccessStatus} from './multidevice_constants.js';
+import type {MultiDevicePageContentData} from './multidevice_constants.js';
+import {MultiDeviceFeature, MultiDeviceFeatureState, MultiDeviceSettingsMode, PhoneHubFeatureAccessStatus} from './multidevice_constants.js';
 
 export interface MultiDeviceFeatureMixinInterface extends I18nMixinInterface {
   pageContentData: MultiDevicePageContentData;
@@ -81,6 +84,13 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
           return !!this.pageContentData &&
               this.pageContentData.betterTogetherState !==
               MultiDeviceFeatureState.PROHIBITED_BY_POLICY;
+        }
+
+        /**
+         * Whether the instant hotspot rebrand feature flag is enabled
+         */
+        isInstantHotspotRebrandEnabled(): boolean {
+          return loadTimeData.getBoolean('isInstantHotspotRebrandEnabled');
         }
 
         /**
@@ -213,9 +223,9 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
             case MultiDeviceFeature.BETTER_TOGETHER_SUITE:
               return this.i18n('multideviceSetupItemHeading');
             case MultiDeviceFeature.INSTANT_TETHERING:
-              return this.i18n('multideviceInstantTetheringItemTitle');
-            case MultiDeviceFeature.MESSAGES:
-              return this.i18n('multideviceAndroidMessagesItemTitle');
+              return this.isInstantHotspotRebrandEnabled() ?
+                  this.i18n('multideviceInstantHotspotItemTitle') :
+                  this.i18n('multideviceInstantTetheringItemTitle');
             case MultiDeviceFeature.SMART_LOCK:
               return this.i18n('multideviceSmartLockItemTitle');
             case MultiDeviceFeature.PHONE_HUB:
@@ -240,11 +250,11 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
          * (i.e. [iron-iconset-svg name]:[SVG <g> tag id]) for a given feature.
          */
         getIconName(feature: MultiDeviceFeature): string {
+          const deviceIcon = 'os-settings:connected-devices-android-phone';
+
           switch (feature) {
             case MultiDeviceFeature.BETTER_TOGETHER_SUITE:
-              return 'os-settings:multidevice-better-together-suite';
-            case MultiDeviceFeature.MESSAGES:
-              return 'os-settings:multidevice-messages';
+              return deviceIcon;
             case MultiDeviceFeature.SMART_LOCK:
               return 'os-settings:multidevice-smart-lock';
             case MultiDeviceFeature.PHONE_HUB:
@@ -252,7 +262,7 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
             case MultiDeviceFeature.PHONE_HUB_NOTIFICATIONS:
             case MultiDeviceFeature.PHONE_HUB_TASK_CONTINUATION:
             case MultiDeviceFeature.ECHE:
-              return 'os-settings:multidevice-better-together-suite';
+              return deviceIcon;
             case MultiDeviceFeature.WIFI_SYNC:
               return 'os-settings:multidevice-wifi-sync';
             default:
@@ -271,8 +281,6 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
             case MultiDeviceFeature.INSTANT_TETHERING:
               return this.i18nAdvanced(
                   'multideviceInstantTetheringItemSummary');
-            case MultiDeviceFeature.MESSAGES:
-              return this.i18nAdvanced('multideviceAndroidMessagesItemSummary');
             case MultiDeviceFeature.PHONE_HUB:
               return this.i18nAdvanced('multidevicePhoneHubItemSummary');
             case MultiDeviceFeature.PHONE_HUB_CAMERA_ROLL:
@@ -309,8 +317,6 @@ export const MultiDeviceFeatureMixin = dedupingMixin(
               return this.pageContentData.betterTogetherState;
             case MultiDeviceFeature.INSTANT_TETHERING:
               return this.pageContentData.instantTetheringState;
-            case MultiDeviceFeature.MESSAGES:
-              return this.pageContentData.messagesState;
             case MultiDeviceFeature.SMART_LOCK:
               return this.pageContentData.smartLockState;
             case MultiDeviceFeature.PHONE_HUB:

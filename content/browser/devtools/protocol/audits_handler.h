@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_AUDITS_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_AUDITS_HANDLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "content/browser/devtools/protocol/audits.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -37,12 +38,12 @@ class AuditsHandler final : public DevToolsDomainHandler,
   DispatchResponse Disable() override;
   DispatchResponse Enable() override;
 
-  void OnIssueAdded(const protocol::Audits::InspectorIssue* issue);
+  void OnIssueAdded(const protocol::Audits::InspectorIssue& issue);
 
  private:
   std::unique_ptr<Audits::Frontend> frontend_;
   bool enabled_ = false;
-  RenderFrameHostImpl* host_;
+  raw_ptr<RenderFrameHostImpl> host_;
 };
 
 }  // namespace protocol

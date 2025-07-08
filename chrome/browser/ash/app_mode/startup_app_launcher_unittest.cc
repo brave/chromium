@@ -5,38 +5,36 @@
 #include "chrome/browser/ash/app_mode/startup_app_launcher.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
+#include "ash/constants/ash_switches.h"
 #include "ash/test/ash_test_helper.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/functional/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/repeating_test_future.h"
 #include "base/test/scoped_command_line.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/version.h"
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/apps/app_service/app_service_test.h"
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launch_error.h"
-#include "chrome/browser/ash/app_mode/kiosk_app_manager.h"
-#include "chrome/browser/ash/app_mode/kiosk_system_session.h"
+#include "chrome/browser/ash/app_mode/kiosk_app_launcher.h"
+#include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
 #include "chrome/browser/ash/app_mode/test_kiosk_extension_builder.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#include "chrome/browser/ash/crosapi/chrome_app_kiosk_service_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_manager.h"
-#include "chrome/browser/ash/crosapi/fake_browser_manager.h"
-#include "chrome/browser/ash/crosapi/idle_service_ash.h"
-#include "chrome/browser/ash/crosapi/test_crosapi_dependency_registry.h"
+#include "chrome/browser/ash/extensions/external_cache.h"
 #include "chrome/browser/ash/extensions/test_external_cache.h"
 #include "chrome/browser/ash/login/users/avatar/user_image_manager_impl.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
@@ -47,33 +45,45 @@
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "chrome/browser/extensions/install_tracker.h"
-#include "chrome/browser/extensions/pending_extension_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "chromeos/ash/components/login/login_state/login_state.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
-#include "chromeos/crosapi/mojom/chrome_app_kiosk_service.mojom-forward.h"
-#include "chromeos/crosapi/mojom/chrome_app_kiosk_service.mojom-shared.h"
 #include "components/account_id/account_id.h"
+#include "components/sync/model/string_ordinal.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
+#include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/test_app_window_contents.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/external_install_info.h"
+#include "extensions/browser/external_provider_interface.h"
+#include "extensions/browser/install_flag.h"
+#include "extensions/browser/pending_extension_manager.h"
 #include "extensions/browser/test_event_router.h"
+#include "extensions/browser/uninstall_reason.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 #include "extensions/common/api/app_runtime.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "test_kiosk_extension_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
 using extensions::Extension;
@@ -192,7 +202,7 @@ class AppLaunchTracker : public extensions::TestEventRouter::EventObserver {
     ASSERT_EQ(1u, event.event_args.size());
 
     const base::Value& launch_data = event.event_args[0];
-    absl::optional<bool> is_kiosk_session =
+    std::optional<bool> is_kiosk_session =
         launch_data.GetDict().FindBool("isKioskSession");
     ASSERT_TRUE(is_kiosk_session);
     EXPECT_TRUE(*is_kiosk_session);
@@ -201,7 +211,7 @@ class AppLaunchTracker : public extensions::TestEventRouter::EventObserver {
 
  private:
   const std::string app_id_;
-  raw_ptr<extensions::TestEventRouter, ExperimentalAsh> event_router_;
+  raw_ptr<extensions::TestEventRouter> event_router_;
   int kiosk_launch_count_ = 0;
 };
 
@@ -214,9 +224,11 @@ class TestKioskLoaderVisitor
  public:
   TestKioskLoaderVisitor(content::BrowserContext* browser_context,
                          extensions::ExtensionRegistry* extension_registry,
+                         extensions::ExtensionRegistrar* extension_registrar,
                          extensions::ExtensionService* extension_service)
       : browser_context_(browser_context),
         extension_registry_(extension_registry),
+        extension_registrar_(extension_registrar),
         extension_service_(extension_service) {}
   TestKioskLoaderVisitor(const TestKioskLoaderVisitor&) = delete;
   TestKioskLoaderVisitor& operator=(const TestKioskLoaderVisitor&) = delete;
@@ -235,19 +247,19 @@ class TestKioskLoaderVisitor
       return false;
     }
 
-    if (!extension_service_->pending_extension_manager()->IsIdPending(
-            extension->id())) {
+    if (!extensions::PendingExtensionManager::Get(browser_context_)
+             ->IsIdPending(extension->id())) {
       return false;
     }
 
     pending_crx_files_.erase(extension->id());
     pending_update_urls_.erase(extension->id());
-    extension_service_->OnExtensionInstalled(
+    extension_registrar_->OnExtensionInstalled(
         extension, syncer::StringOrdinal::CreateInitialOrdinal(),
         extensions::kInstallFlagInstallImmediately);
-    auto installer = extensions::CrxInstaller::CreateSilent(extension_service_);
     extensions::InstallTracker::Get(browser_context_)
-        ->OnFinishCrxInstall(*installer, extension->id(), true);
+        ->OnFinishCrxInstall(base::FilePath(), extension->id(), extension,
+                             true);
     return true;
   }
 
@@ -257,17 +269,17 @@ class TestKioskLoaderVisitor
       return false;
     }
 
-    if (!extension_service_->pending_extension_manager()->IsIdPending(
-            extension_id)) {
+    extensions::PendingExtensionManager* pending_extension_manager =
+        extensions::PendingExtensionManager::Get(browser_context_);
+    if (!pending_extension_manager->IsIdPending(extension_id)) {
       return false;
     }
 
     pending_crx_files_.erase(extension_id);
     pending_update_urls_.erase(extension_id);
-    auto installer = extensions::CrxInstaller::CreateSilent(extension_service_);
     extensions::InstallTracker::Get(browser_context_)
-        ->OnFinishCrxInstall(*installer, extension_id, false);
-    extension_service_->pending_extension_manager()->Remove(extension_id);
+        ->OnFinishCrxInstall(base::FilePath(), extension_id, nullptr, false);
+    pending_extension_manager->Remove(extension_id);
     return true;
   }
 
@@ -282,16 +294,16 @@ class TestKioskLoaderVisitor
       return false;
     }
 
-    if (!extension_service_->pending_extension_manager()->AddFromExternalFile(
-            info.extension_id, info.crx_location, info.version,
-            info.creation_flags, info.mark_acknowledged)) {
+    if (!extensions::PendingExtensionManager::Get(browser_context_)
+             ->AddFromExternalFile(info.extension_id, info.crx_location,
+                                   info.version, info.creation_flags,
+                                   info.mark_acknowledged)) {
       return false;
     }
 
     pending_crx_files_.insert(info.extension_id);
-    auto installer = extensions::CrxInstaller::CreateSilent(extension_service_);
     extensions::InstallTracker::Get(browser_context_)
-        ->OnBeginCrxInstall(*installer, info.extension_id);
+        ->OnBeginCrxInstall(info.extension_id);
     return true;
   }
   bool OnExternalExtensionUpdateUrlFound(
@@ -302,7 +314,7 @@ class TestKioskLoaderVisitor
       return false;
     }
 
-    if (!extension_service_->pending_extension_manager()
+    if (!extensions::PendingExtensionManager::Get(browser_context_)
              ->AddFromExternalUpdateUrl(
                  info.extension_id, info.install_parameter, info.update_url,
                  info.download_location, info.creation_flags,
@@ -311,9 +323,8 @@ class TestKioskLoaderVisitor
     }
 
     pending_update_urls_.insert(info.extension_id);
-    auto installer = extensions::CrxInstaller::CreateSilent(extension_service_);
     extensions::InstallTracker::Get(browser_context_)
-        ->OnBeginCrxInstall(*installer, info.extension_id);
+        ->OnBeginCrxInstall(info.extension_id);
     return true;
   }
   void OnExternalProviderReady(
@@ -332,18 +343,17 @@ class TestKioskLoaderVisitor
     }
 
     for (const auto& extension_id : removed_extensions) {
-      extension_service_->UninstallExtension(
+      extension_registrar_->UninstallExtension(
           extension_id,
           extensions::UNINSTALL_REASON_ORPHANED_EXTERNAL_EXTENSION, nullptr);
     }
   }
 
  private:
-  const raw_ptr<content::BrowserContext, ExperimentalAsh> browser_context_;
-  const raw_ptr<extensions::ExtensionRegistry, ExperimentalAsh>
-      extension_registry_;
-  const raw_ptr<extensions::ExtensionService, ExperimentalAsh>
-      extension_service_;
+  const raw_ptr<content::BrowserContext> browser_context_;
+  const raw_ptr<extensions::ExtensionRegistry> extension_registry_;
+  const raw_ptr<extensions::ExtensionRegistrar> extension_registrar_;
+  const raw_ptr<extensions::ExtensionService> extension_service_;
 
   std::set<std::string> pending_crx_files_;
   std::set<std::string> pending_update_urls_;
@@ -381,26 +391,26 @@ extensions::AppWindow* CreateAppWindow(Profile* profile,
   return app_window;
 }
 
-// This class overrides some of the behaviour of `KioskAppManager`, which is the
-// `KioskAppManagerBase` implementation for ChromeApp kiosk.
-// Notably it injects its own `ExternalCache` implementation and overrides the
-// construction on an `KioskBrowserSession` object.
-class ScopedKioskAppManagerOverrides : public KioskAppManager::Overrides {
+// This class overrides some of the behaviour of `KioskChromeAppManager`, which
+// is the `KioskAppManagerBase` implementation for ChromeApp kiosk. Notably it
+// injects its own `ExternalCache` implementation and overrides the construction
+// on an `KioskBrowserSession` object.
+class ScopedKioskAppManagerOverrides : public KioskChromeAppManager::Overrides {
  public:
   ScopedKioskAppManagerOverrides() {
-    KioskAppManager::InitializeForTesting(this);
+    KioskChromeAppManager::InitializeForTesting(this);
     CHECK(temp_dir_.CreateUniqueTempDir());
   }
 
   chromeos::TestExternalCache* external_cache() { return external_cache_; }
 
   void InitializePrimaryAppState() {
-    // Inject test kiosk app data to prevent KioskAppManager from attempting to
-    // load it.
+    // Inject test kiosk app data to prevent KioskChromeAppManager from
+    // attempting to load it.
     // TODO(tbarzic): Introducing a test KioskAppData class that overrides app
     //     data load logic, and injecting a KioskAppData object factory to
-    //     KioskAppManager would be a cleaner solution here.
-    KioskAppManager::Get()->AddAppForTest(
+    //     KioskChromeAppManager would be a cleaner solution here.
+    KioskChromeAppManager::Get()->AddAppForTest(
         kTestPrimaryAppId, AccountId::FromUserEmail(kTestUserAccount),
         GURL(kCwsUrl),
         /*required_platform_version=*/"");
@@ -412,7 +422,7 @@ class ScopedKioskAppManagerOverrides : public KioskAppManager::Overrides {
     base::Value::Dict account;
     account.Set(kAccountsPrefDeviceLocalAccountsKeyId, kTestUserAccount);
     account.Set(kAccountsPrefDeviceLocalAccountsKeyType,
-                policy::DeviceLocalAccount::TYPE_KIOSK_APP);
+                static_cast<int>(policy::DeviceLocalAccountType::kKioskApp));
     account.Set(
         kAccountsPrefDeviceLocalAccountsKeyEphemeralMode,
         static_cast<int>(policy::DeviceLocalAccount::EphemeralMode::kUnset));
@@ -467,7 +477,7 @@ class ScopedKioskAppManagerOverrides : public KioskAppManager::Overrides {
     return AssertionSuccess();
   }
 
-  // KioskAppManager::Overrides:
+  // KioskChromeAppManager::Overrides:
   std::unique_ptr<chromeos::ExternalCache> CreateExternalCache(
       chromeos::ExternalCacheDelegate* delegate,
       bool always_check_updates) override {
@@ -475,12 +485,6 @@ class ScopedKioskAppManagerOverrides : public KioskAppManager::Overrides {
         delegate, always_check_updates);
     external_cache_ = cache.get();
     return cache;
-  }
-
-  std::unique_ptr<KioskSystemSession> CreateKioskSystemSession() override {
-    EXPECT_FALSE(kiosk_system_session_initialized_);
-    kiosk_system_session_initialized_ = true;
-    return nullptr;
   }
 
  private:
@@ -498,8 +502,7 @@ class ScopedKioskAppManagerOverrides : public KioskAppManager::Overrides {
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<ScopedCrosSettingsTestHelper> accounts_settings_helper_;
 
-  raw_ptr<chromeos::TestExternalCache, ExperimentalAsh> external_cache_;
-  bool kiosk_system_session_initialized_ = false;
+  raw_ptr<chromeos::TestExternalCache, DanglingUntriaged> external_cache_;
 };
 
 TestKioskExtensionBuilder PrimaryAppBuilder() {
@@ -546,8 +549,8 @@ class StartupAppLauncherNoCreateTest
 
     UserImageManagerImpl::SkipDefaultUserImageDownloadForTesting();
     command_line_.GetProcessCommandLine()->AppendSwitch(
-        switches::kForceAppMode);
-    command_line_.GetProcessCommandLine()->AppendSwitch(switches::kAppId);
+        ::switches::kForceAppMode);
+    command_line_.GetProcessCommandLine()->AppendSwitch(::switches::kAppId);
 
     extensions::ExtensionServiceTestBase::SetUp();
 
@@ -555,7 +558,7 @@ class StartupAppLauncherNoCreateTest
 
     InitializeEmptyExtensionService();
     external_apps_loader_handler_ = std::make_unique<TestKioskLoaderVisitor>(
-        browser_context(), registry(), service());
+        browser_context(), registry(), registrar(), service());
     CreateAndInitializeKioskAppsProviders(external_apps_loader_handler_.get());
 
     extensions::TestEventRouter* event_router =
@@ -636,8 +639,8 @@ class StartupAppLauncherNoCreateTest
   void CreateAndInitializeKioskAppsProviders(TestKioskLoaderVisitor* visitor) {
     primary_app_provider_ = std::make_unique<extensions::ExternalProviderImpl>(
         visitor,
-        base::MakeRefCounted<KioskAppExternalLoader>(
-            KioskAppExternalLoader::AppClass::kPrimary),
+        base::MakeRefCounted<chromeos::KioskAppExternalLoader>(
+            chromeos::KioskAppExternalLoader::AppClass::kPrimary),
         profile(), ManifestLocation::kExternalPolicy,
         ManifestLocation::kInvalidLocation, extensions::Extension::NO_FLAGS);
     InitializeKioskAppsProvider(primary_app_provider_.get());
@@ -645,8 +648,8 @@ class StartupAppLauncherNoCreateTest
     secondary_apps_provider_ =
         std::make_unique<extensions::ExternalProviderImpl>(
             visitor,
-            base::MakeRefCounted<KioskAppExternalLoader>(
-                KioskAppExternalLoader::AppClass::kSecondary),
+            base::MakeRefCounted<chromeos::KioskAppExternalLoader>(
+                chromeos::KioskAppExternalLoader::AppClass::kSecondary),
             profile(), ManifestLocation::kExternalPref,
             ManifestLocation::kExternalPrefDownload,
             extensions::Extension::NO_FLAGS);
@@ -668,7 +671,7 @@ class StartupAppLauncherNoCreateTest
     return CreateStartupAppLauncherInternal(/*should_skip_install=*/true);
   }
 
-  void PreinstallApp(const Extension& app) { service()->AddExtension(&app); }
+  void PreinstallApp(const Extension& app) { registrar()->AddExtension(&app); }
 
   TestAppLaunchDelegate startup_launch_delegate_;
 
@@ -693,8 +696,6 @@ class StartupAppLauncherNoCreateTest
 
   std::unique_ptr<extensions::ExternalProviderImpl> primary_app_provider_;
   std::unique_ptr<extensions::ExternalProviderImpl> secondary_apps_provider_;
-
-  std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 };
 
 // Tests that extension download backoff is reduced during Chrome app Kiosk
@@ -736,6 +737,9 @@ class StartupAppLauncherTest : public StartupAppLauncherNoCreateTest {
   // testing::Test:
   void SetUp() override {
     StartupAppLauncherNoCreateTest::SetUp();
+    // Some tests depend on AppService, so wait AppService to be ready.
+    WaitForAppServiceProxyReady(
+        apps::AppServiceProxyFactory::GetForProfile(profile()));
 
     startup_app_launcher_ = CreateStartupAppLauncher();
   }
@@ -766,6 +770,10 @@ TEST_F(StartupAppLauncherTest, PrimaryAppLaunchFlow) {
   EXPECT_TRUE(external_apps_loader_handler_->pending_update_urls().empty());
 
   scoped_refptr<const Extension> primary_app = PrimaryAppBuilder().Build();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   ASSERT_TRUE(DownloadPrimaryApp(*primary_app));
 
   EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
@@ -883,7 +891,7 @@ TEST_F(StartupAppLauncherTest, PrimaryAppDownloadFailure) {
 
   histogram.ExpectUniqueSample(
       kKioskPrimaryAppInstallErrorHistogram,
-      KioskAppManager::PrimaryAppDownloadResult::kCrxFetchFailed,
+      KioskChromeAppManager::PrimaryAppDownloadResult::kCrxFetchFailed,
       /*expected_bucket_count=*/1);
 }
 
@@ -949,6 +957,9 @@ TEST_F(StartupAppLauncherTest, LaunchWithSecondaryApps) {
           .AddSecondaryExtensionWithEnabledOnLaunch(kExtraSecondaryAppId, false)
           .Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   ASSERT_TRUE(DownloadPrimaryApp(*primary_app));
 
   EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
@@ -973,9 +984,10 @@ TEST_F(StartupAppLauncherTest, LaunchWithSecondaryApps) {
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kTestPrimaryAppId));
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kSecondaryAppId));
   EXPECT_TRUE(registry()->disabled_extensions().Contains(kExtraSecondaryAppId));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
-            extensions::ExtensionPrefs::Get(browser_context())
-                ->GetDisableReasons(kExtraSecondaryAppId));
+  EXPECT_THAT(extensions::ExtensionPrefs::Get(browser_context())
+                  ->GetDisableReasons(kExtraSecondaryAppId),
+              testing::UnorderedElementsAre(
+                  extensions::disable_reason::DISABLE_USER_ACTION));
 
   EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
             LaunchState::kLaunchSucceeded);
@@ -984,9 +996,10 @@ TEST_F(StartupAppLauncherTest, LaunchWithSecondaryApps) {
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kTestPrimaryAppId));
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kSecondaryAppId));
   EXPECT_TRUE(registry()->disabled_extensions().Contains(kExtraSecondaryAppId));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
-            extensions::ExtensionPrefs::Get(browser_context())
-                ->GetDisableReasons(kExtraSecondaryAppId));
+  EXPECT_THAT(extensions::ExtensionPrefs::Get(browser_context())
+                  ->GetDisableReasons(kExtraSecondaryAppId),
+              testing::UnorderedElementsAre(
+                  extensions::disable_reason::DISABLE_USER_ACTION));
 }
 
 TEST_F(StartupAppLauncherTest, LaunchWithSecondaryExtension) {
@@ -994,6 +1007,9 @@ TEST_F(StartupAppLauncherTest, LaunchWithSecondaryExtension) {
 
   scoped_refptr<const Extension> primary_app =
       PrimaryAppBuilder().AddSecondaryExtension(kSecondaryAppId).Build();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
 
   ASSERT_TRUE(DownloadPrimaryApp(*primary_app));
 
@@ -1063,6 +1079,9 @@ TEST_F(StartupAppLauncherTest, OfflineWithPrimaryAndSecondaryAppInstalled) {
 TEST_F(StartupAppLauncherTest, OfflineInstallPreCachedExtension) {
   scoped_refptr<const Extension> primary_app = PrimaryAppBuilder().Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   ASSERT_TRUE(kiosk_app_manager_overrides().PrecachePrimaryApp(*primary_app));
 
   startup_app_launcher_->Initialize();
@@ -1086,6 +1105,9 @@ TEST_F(StartupAppLauncherTest,
        OfflineInstallPreCachedExtensionNotOfflineEnabled) {
   scoped_refptr<const Extension> primary_app =
       PrimaryAppBuilder().set_offline_enabled(false).Build();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
 
   ASSERT_TRUE(kiosk_app_manager_overrides().PrecachePrimaryApp(*primary_app));
 
@@ -1132,6 +1154,9 @@ TEST_F(StartupAppLauncherTest,
           .AddSecondaryExtension(kSecondaryAppId)
           .Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   scoped_refptr<const Extension> secondary_extension =
       SecondaryAppBuilder(kSecondaryAppId).Build();
 
@@ -1176,6 +1201,9 @@ TEST_F(StartupAppLauncherTest,
        OfflineInstallUncachedExtensionShouldForceNetwork) {
   scoped_refptr<const Extension> primary_app = PrimaryAppBuilder().Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   startup_app_launcher_->Initialize();
 
   EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
@@ -1208,6 +1236,9 @@ TEST_F(StartupAppLauncherTest, IgnoreSecondaryAppsSecondaryApps) {
 
   scoped_refptr<const Extension> primary_app =
       PrimaryAppBuilder().AddSecondaryExtension(kSecondaryAppId).Build();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
 
   ASSERT_TRUE(DownloadAndInstallPrimaryApp(*primary_app));
 
@@ -1281,6 +1312,9 @@ TEST_F(StartupAppLauncherTest,
           .AddSecondaryExtensionWithEnabledOnLaunch(kExtraSecondaryAppId, true)
           .Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   // Add the secondary app that should be disabled on startup - make it enabled
   // initially, so the test can verify the app gets disabled regardless of the
   // initial state.
@@ -1290,8 +1324,8 @@ TEST_F(StartupAppLauncherTest,
   // initially, so the test can verify the app gets enabled regardless of the
   // initial state.
   PreinstallApp(*SecondaryAppBuilder(kExtraSecondaryAppId).Build());
-  service()->DisableExtension(kExtraSecondaryAppId,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(
+      kExtraSecondaryAppId, {extensions::disable_reason::DISABLE_USER_ACTION});
 
   InitializeLauncherWithNetworkReady();
   ASSERT_TRUE(DownloadAndInstallPrimaryApp(*primary_app));
@@ -1319,11 +1353,14 @@ TEST_F(StartupAppLauncherTest,
           .AddSecondaryExtension(kExtraSecondaryAppId)
           .Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   PreinstallApp(*SecondaryAppBuilder(kSecondaryAppId).Build());
 
   PreinstallApp(*SecondaryAppBuilder(kExtraSecondaryAppId).Build());
-  service()->DisableExtension(kExtraSecondaryAppId,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(
+      kExtraSecondaryAppId, {extensions::disable_reason::DISABLE_USER_ACTION});
 
   InitializeLauncherWithNetworkReady();
   ASSERT_TRUE(DownloadAndInstallPrimaryApp(*primary_app));
@@ -1354,14 +1391,17 @@ TEST_F(StartupAppLauncherTest,
   // initially, so the test can verify the app gets enabled regardless of the
   // initial state.
   PreinstallApp(*SecondaryAppBuilder(kSecondaryAppId).Build());
-  // Disable the secodnary app for a reason different than user action - that
+  // Disable the secondary app for a reason different than user action - that
   // disable reason should not be overriden during the kiosk launch.
-  service()->DisableExtension(
-      kSecondaryAppId,
-      extensions::disable_reason::DISABLE_USER_ACTION |
-          extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY);
+  registrar()->DisableExtension(
+      kSecondaryAppId, {extensions::disable_reason::DISABLE_USER_ACTION,
+                        extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY});
 
   InitializeLauncherWithNetworkReady();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app->id());
+
   ASSERT_TRUE(DownloadAndInstallPrimaryApp(*primary_app));
 
   EXPECT_TRUE(external_apps_loader_handler_->pending_crx_files().empty());
@@ -1376,9 +1416,10 @@ TEST_F(StartupAppLauncherTest,
 
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kTestPrimaryAppId));
   EXPECT_TRUE(registry()->disabled_extensions().Contains(kSecondaryAppId));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY,
-            extensions::ExtensionPrefs::Get(browser_context())
-                ->GetDisableReasons(kSecondaryAppId));
+  EXPECT_THAT(extensions::ExtensionPrefs::Get(browser_context())
+                  ->GetDisableReasons(kSecondaryAppId),
+              testing::UnorderedElementsAre(
+                  extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY));
 }
 
 TEST_F(StartupAppLauncherTest, PrimaryAppUpdatesToDisabledOnLaunch) {
@@ -1395,6 +1436,9 @@ TEST_F(StartupAppLauncherTest, PrimaryAppUpdatesToDisabledOnLaunch) {
           .set_version("1.1")
           .Build();
 
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app_update->id());
+
   InitializeLauncherWithNetworkReady();
   ASSERT_TRUE(DownloadPrimaryApp(*primary_app_update));
   ASSERT_TRUE(FinishPrimaryAppInstall(*primary_app_update));
@@ -1407,9 +1451,10 @@ TEST_F(StartupAppLauncherTest, PrimaryAppUpdatesToDisabledOnLaunch) {
 
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kTestPrimaryAppId));
   EXPECT_TRUE(registry()->disabled_extensions().Contains(kSecondaryAppId));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
-            extensions::ExtensionPrefs::Get(browser_context())
-                ->GetDisableReasons(kSecondaryAppId));
+  EXPECT_THAT(extensions::ExtensionPrefs::Get(browser_context())
+                  ->GetDisableReasons(kSecondaryAppId),
+              testing::UnorderedElementsAre(
+                  extensions::disable_reason::DISABLE_USER_ACTION));
 }
 
 TEST_F(StartupAppLauncherTest, PrimaryAppUpdatesToEnabledOnLaunch) {
@@ -1420,14 +1465,17 @@ TEST_F(StartupAppLauncherTest, PrimaryAppUpdatesToEnabledOnLaunch) {
            .set_offline_enabled(false)
            .Build());
   PreinstallApp(*SecondaryAppBuilder(kSecondaryAppId).Build());
-  service()->DisableExtension(kSecondaryAppId,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(
+      kSecondaryAppId, {extensions::disable_reason::DISABLE_USER_ACTION});
 
   scoped_refptr<const Extension> primary_app_update =
       PrimaryAppBuilder()
           .AddSecondaryExtensionWithEnabledOnLaunch(kSecondaryAppId, true)
           .set_version("1.1")
           .Build();
+
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      primary_app_update->id());
 
   InitializeLauncherWithNetworkReady();
   ASSERT_TRUE(DownloadPrimaryApp(*primary_app_update));
@@ -1457,8 +1505,8 @@ TEST_F(StartupAppLauncherTest, SecondaryExtensionStateOnSessionRestore) {
   // Add the secondary app that should be enabled on launch - make it disabled
   // initially, and let test verify the app remains disabled during the launch.
   PreinstallApp(*SecondaryAppBuilder(kExtraSecondaryAppId).Build());
-  service()->DisableExtension(kExtraSecondaryAppId,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(
+      kExtraSecondaryAppId, {extensions::disable_reason::DISABLE_USER_ACTION});
 
   startup_app_launcher_ = CreateStartupAppLauncherForSessionRestore();
 
@@ -1505,175 +1553,5 @@ class FakeChromeKioskLaunchController : public ChromeKioskLaunchController {
   ChromeKioskInstallResult install_result_ = ChromeKioskInstallResult::kUnknown;
   ChromeKioskLaunchResult launch_result_ = ChromeKioskLaunchResult::kUnknown;
 };
-
-class StartupAppLauncherUsingLacrosTest : public testing::Test {
- public:
-  StartupAppLauncherUsingLacrosTest()
-      : fake_user_manager_(new FakeChromeUserManager()),
-        scoped_user_manager_(base::WrapUnique(fake_user_manager_.get())) {
-    scoped_feature_list_.InitWithFeatures(
-        {ash::features::kLacrosSupport, ash::features::kLacrosPrimary,
-         ash::features::kLacrosOnly,
-         ash::features::kLacrosProfileMigrationForceOff,
-         ::features::kChromeKioskEnableLacros},
-        {});
-  }
-
-  void SetUp() override {
-    ASSERT_TRUE(testing_profile_manager_.SetUp());
-    LoginState::Initialize();
-    crosapi::IdleServiceAsh::DisableForTesting();
-    profile_ = testing_profile_manager_.CreateTestingProfile("Default");
-    crosapi_manager_ = crosapi::CreateCrosapiManagerWithTestRegistry();
-    const AccountId account_id(AccountId::FromUserEmail(kTestUserAccount));
-    fake_user_manager().AddKioskAppUser(account_id);
-    fake_user_manager().LoginUser(account_id);
-    kiosk_app_manager_ = std::make_unique<KioskAppManager>();
-    kiosk_app_manager_overrides_.InitializePrimaryAppState();
-    RegisterFakeCrosapi();
-    ASSERT_TRUE(crosapi::browser_util::IsLacrosEnabledInChromeKioskSession());
-  }
-
-  void TearDown() override {
-    startup_app_launcher_.reset();
-    kiosk_app_manager_.reset();
-    crosapi_manager_.reset();
-    LoginState::Shutdown();
-  }
-
- protected:
-  KioskAppLauncher& launcher() { return *startup_app_launcher_; }
-
-  crosapi::FakeBrowserManager& fake_browser_manager() {
-    return browser_manager_;
-  }
-
-  chromeos::TestExternalCache* external_cache() {
-    return kiosk_app_manager_overrides_.external_cache();
-  }
-
-  [[nodiscard]] AssertionResult DownloadPrimaryApp(const Extension& app) {
-    return kiosk_app_manager_overrides_.DownloadPrimaryApp(app);
-  }
-
-  FakeChromeKioskLaunchController& chrome_kiosk_launch_controller() {
-    return launch_controller_;
-  }
-
-  Profile* profile() { return profile_; }
-
-  void CreateStartupAppLauncher(bool should_skip_install = false) {
-    startup_app_launcher_ = std::make_unique<StartupAppLauncher>(
-        profile(), kTestPrimaryAppId, should_skip_install,
-        &startup_launch_delegate_);
-    startup_app_launcher_->AddObserver(&startup_launch_delegate_);
-  }
-
-  void InitializeLauncherWithNetworkReady() {
-    startup_launch_delegate_.set_network_ready(true);
-    startup_app_launcher_->Initialize();
-    EXPECT_TRUE(startup_launch_delegate_.ExpectNoLaunchStateChanges());
-  }
-
-  void AdvanceUntilAppInstalling() {
-    CreateStartupAppLauncher();
-    InitializeLauncherWithNetworkReady();
-
-    ASSERT_TRUE(external_cache());
-    EXPECT_EQ(std::set<std::string>({kTestPrimaryAppId}),
-              external_cache()->pending_downloads());
-
-    ASSERT_TRUE(DownloadPrimaryApp(*PrimaryAppBuilder().Build()));
-
-    EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-              LaunchState::kInstallingApp);
-  }
-
-  void AdvanceUntilAppInstalled() {
-    chrome_kiosk_launch_controller().SetInstallResult(
-        ChromeKioskInstallResult::kSuccess);
-    AdvanceUntilAppInstalling();
-
-    EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-              LaunchState::kReadyToLaunch);
-  }
-
-  TestAppLaunchDelegate startup_launch_delegate_;
-
- private:
-  FakeChromeUserManager& fake_user_manager() { return *fake_user_manager_; }
-
-  void RegisterFakeCrosapi() {
-    crosapi::CrosapiManager::Get()
-        ->crosapi_ash()
-        ->chrome_app_kiosk_service()
-        ->BindLaunchController(launch_controller_.BindNewPipeAndPassRemote());
-  }
-
-  content::BrowserTaskEnvironment task_environment_{
-      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  TestingProfileManager testing_profile_manager_{
-      TestingBrowserProcess::GetGlobal()};
-  raw_ptr<Profile, ExperimentalAsh> profile_;
-  raw_ptr<FakeChromeUserManager, ExperimentalAsh> fake_user_manager_;
-  user_manager::ScopedUserManager scoped_user_manager_;
-  FakeChromeKioskLaunchController launch_controller_;
-  crosapi::FakeBrowserManager browser_manager_;
-
-  ScopedKioskAppManagerOverrides kiosk_app_manager_overrides_;
-  std::unique_ptr<KioskAppManager> kiosk_app_manager_;
-  std::unique_ptr<KioskAppLauncher> startup_app_launcher_;
-
-  base::test::ScopedFeatureList scoped_feature_list_;
-  std::unique_ptr<crosapi::CrosapiManager> crosapi_manager_;
-};
-
-TEST_F(StartupAppLauncherUsingLacrosTest,
-       ShouldRespectInstallSuccessFromCrosapi) {
-  chrome_kiosk_launch_controller().SetInstallResult(
-      ChromeKioskInstallResult::kSuccess);
-  AdvanceUntilAppInstalling();
-
-  EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-            LaunchState::kReadyToLaunch);
-}
-
-TEST_F(StartupAppLauncherUsingLacrosTest,
-       ShouldRespectInstallFailureFromCrosapi) {
-  chrome_kiosk_launch_controller().SetInstallResult(
-      ChromeKioskInstallResult::kPrimaryAppInstallFailed);
-  AdvanceUntilAppInstalling();
-
-  EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-            LaunchState::kLaunchFailed);
-  EXPECT_EQ(startup_launch_delegate_.launch_error(),
-            KioskAppLaunchError::Error::kUnableToInstall);
-}
-
-TEST_F(StartupAppLauncherUsingLacrosTest,
-       ShouldRespectLaunchSuccessFromCrosapi) {
-  AdvanceUntilAppInstalled();
-
-  chrome_kiosk_launch_controller().SetLaunchResult(
-      ChromeKioskLaunchResult::kSuccess);
-  launcher().LaunchApp();
-
-  EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-            LaunchState::kLaunchSucceeded);
-}
-
-TEST_F(StartupAppLauncherUsingLacrosTest,
-       ShouldRespectLaunchFailureFromCrosapi) {
-  AdvanceUntilAppInstalled();
-
-  chrome_kiosk_launch_controller().SetLaunchResult(
-      ChromeKioskLaunchResult::kUnableToLaunch);
-  launcher().LaunchApp();
-
-  EXPECT_EQ(startup_launch_delegate_.WaitForNextLaunchState(),
-            LaunchState::kLaunchFailed);
-  EXPECT_EQ(startup_launch_delegate_.launch_error(),
-            KioskAppLaunchError::Error::kUnableToLaunch);
-}
 
 }  // namespace ash

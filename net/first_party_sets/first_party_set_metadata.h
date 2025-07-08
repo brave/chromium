@@ -5,9 +5,10 @@
 #ifndef NET_FIRST_PARTY_SETS_FIRST_PARTY_SET_METADATA_H_
 #define NET_FIRST_PARTY_SETS_FIRST_PARTY_SET_METADATA_H_
 
+#include <optional>
+
 #include "net/base/net_export.h"
 #include "net/first_party_sets/first_party_set_entry.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
@@ -17,11 +18,11 @@ class NET_EXPORT FirstPartySetMetadata {
  public:
   FirstPartySetMetadata();
 
-  // `frame_entry` and `top_frame_entry` must live for the duration of the ctor;
-  // nullptr indicates that there's no First-Party Set that's associated with
-  // the current frame or the top frame, respectively, in the given context.
-  FirstPartySetMetadata(const FirstPartySetEntry* frame_entry,
-                        const FirstPartySetEntry* top_frame_entry);
+  // std::nullopt indicates that there's no First-Party Set that's associated
+  // with the current frame or the top frame, respectively, in the given
+  // context.
+  FirstPartySetMetadata(std::optional<FirstPartySetEntry> frame_entry,
+                        std::optional<FirstPartySetEntry> top_frame_entry);
 
   FirstPartySetMetadata(FirstPartySetMetadata&&);
   FirstPartySetMetadata& operator=(FirstPartySetMetadata&&);
@@ -29,12 +30,11 @@ class NET_EXPORT FirstPartySetMetadata {
   ~FirstPartySetMetadata();
 
   bool operator==(const FirstPartySetMetadata& other) const;
-  bool operator!=(const FirstPartySetMetadata& other) const;
 
-  const absl::optional<FirstPartySetEntry>& frame_entry() const {
+  const std::optional<FirstPartySetEntry>& frame_entry() const {
     return frame_entry_;
   }
-  const absl::optional<FirstPartySetEntry>& top_frame_entry() const {
+  const std::optional<FirstPartySetEntry>& top_frame_entry() const {
     return top_frame_entry_;
   }
 
@@ -43,8 +43,8 @@ class NET_EXPORT FirstPartySetMetadata {
   bool AreSitesInSameFirstPartySet() const;
 
  private:
-  absl::optional<FirstPartySetEntry> frame_entry_ = absl::nullopt;
-  absl::optional<FirstPartySetEntry> top_frame_entry_ = absl::nullopt;
+  std::optional<FirstPartySetEntry> frame_entry_ = std::nullopt;
+  std::optional<FirstPartySetEntry> top_frame_entry_ = std::nullopt;
 };
 
 NET_EXPORT std::ostream& operator<<(std::ostream& os,

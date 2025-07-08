@@ -15,18 +15,18 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.autofill.AutofillProfile;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
+import org.chromium.components.autofill.AutofillProfile;
 
 import java.util.concurrent.TimeoutException;
 
 /**
- * A payment integration test for when shipping is requested but no shipping
- * options are provided by the merchant. See crbug.com/1082630
+ * A payment integration test for when shipping is requested but no shipping options are provided by
+ * the merchant. See crbug.com/1082630
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
@@ -39,51 +39,65 @@ public class PaymentRequestNoShippingOptionsTest {
     public void setUp() throws TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         // The user has a shipping address associated with a credit card.
-        String firstAddressId = helper.setProfile(AutofillProfile.builder()
-                                                          .setFullName("Jon Doe")
-                                                          .setCompanyName("Google")
-                                                          .setStreetAddress("340 Main St")
-                                                          .setRegion("CA")
-                                                          .setLocality("Los Angeles")
-                                                          .setPostalCode("90291")
-                                                          .setCountryCode("US")
-                                                          .setPhoneNumber("555-555-5555")
-                                                          .setLanguageCode("en-US")
-                                                          .build());
-        helper.setCreditCard(new CreditCard("", "https://example.test", true, true, "Jon Doe",
-                "4111111111111111", "1111", "12", "2050", "visa", R.drawable.visa_card,
-                firstAddressId, /*serverId=*/""));
+        String firstAddressId =
+                helper.setProfile(
+                        AutofillProfile.builder()
+                                .setFullName("Jon Doe")
+                                .setCompanyName("Google")
+                                .setStreetAddress("340 Main St")
+                                .setRegion("CA")
+                                .setLocality("Los Angeles")
+                                .setPostalCode("90291")
+                                .setCountryCode("US")
+                                .setPhoneNumber("555-555-5555")
+                                .setLanguageCode("en-US")
+                                .build());
+        helper.setCreditCard(
+                new CreditCard(
+                        "",
+                        "https://example.test",
+                        true,
+                        "Jon Doe",
+                        "4111111111111111",
+                        "1111",
+                        "12",
+                        "2050",
+                        "visa",
+                        R.drawable.visa_card,
+                        firstAddressId,
+                        /* serverId= */ ""));
 
         // The user has a second address.
-        String secondAddressId = helper.setProfile(AutofillProfile.builder()
-                                                           .setFullName("Fred Doe")
-                                                           .setCompanyName("Google")
-                                                           .setStreetAddress("340 Main St")
-                                                           .setRegion("CA")
-                                                           .setLocality("Los Angeles")
-                                                           .setPostalCode("90291")
-                                                           .setCountryCode("US")
-                                                           .setPhoneNumber("555-555-5555")
-                                                           .setLanguageCode("en-US")
-                                                           .build());
+        String secondAddressId =
+                helper.setProfile(
+                        AutofillProfile.builder()
+                                .setFullName("Fred Doe")
+                                .setCompanyName("Google")
+                                .setStreetAddress("340 Main St")
+                                .setRegion("CA")
+                                .setLocality("Los Angeles")
+                                .setPostalCode("90291")
+                                .setCountryCode("US")
+                                .setPhoneNumber("555-555-5555")
+                                .setLanguageCode("en-US")
+                                .build());
 
         // Set the fist profile to have a better frecency score that the second one.
-        // TODO(crbug.com/1463732): Update Disabled Test Callsites of SetProfileUseStatsForTesting
+        // TODO(crbug.com/40922650): Update Disabled Test Callsites of SetProfileUseStatsForTesting
         // and SetCreditCardUseStatsForTesting since the underlying logic has changed.
         helper.setProfileUseStatsForTesting(firstAddressId, 10, 10);
         helper.setProfileUseStatsForTesting(secondAddressId, 0, 0);
     }
 
     /**
-     * Verifies that clicking any shipping address is invalid because there are no shipping
-     * options.
+     * Verifies that clicking any shipping address is invalid because there are no shipping options.
      */
     @Test
     @MediumTest
     @DisabledTest(message = "crbug.com/1182234")
     @Feature({"Payments"})
     public void testAllShippingAddressesInvalid() throws TimeoutException {
-        mPaymentRequestTestRule.triggerUIAndWait("buy", mPaymentRequestTestRule.getReadyForInput());
+        mPaymentRequestTestRule.triggerUiAndWait("buy", mPaymentRequestTestRule.getReadyForInput());
 
         // Focus on the shipping addresses section to enter expanded mode.
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
@@ -95,12 +109,14 @@ public class PaymentRequestNoShippingOptionsTest {
 
         mPaymentRequestTestRule.clickOnShippingAddressSuggestionOptionAndWait(
                 0, mPaymentRequestTestRule.getReadyForInput());
-        Assert.assertEquals("Can’t ship to this address. Select a different address.",
+        Assert.assertEquals(
+                "Can’t ship to this address. Select a different address.",
                 mPaymentRequestTestRule.getShippingAddressWarningLabel());
 
         mPaymentRequestTestRule.clickOnShippingAddressSuggestionOptionAndWait(
                 1, mPaymentRequestTestRule.getReadyForInput());
-        Assert.assertEquals("Can’t ship to this address. Select a different address.",
+        Assert.assertEquals(
+                "Can’t ship to this address. Select a different address.",
                 mPaymentRequestTestRule.getShippingAddressWarningLabel());
     }
 }

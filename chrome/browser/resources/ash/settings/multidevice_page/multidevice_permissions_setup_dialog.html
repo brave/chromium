@@ -23,33 +23,14 @@
     color: var(--cros-text-color-primary);
     display: flex;
     flex-direction: row;
+    font: var(--cros-title-1-font);
     gap: 8px;
     justify-content: flex-start;
   }
 
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #title {
-    font-family: 'Google Sans Medium';
-    font-size: 16px;
-    line-height: 24px;
-  }
-
-  :host-context(body.jelly-enabled) #title {
-    font: var(--cros-title-1-font);
-  }
 
   #subtitle {
     color: var(--cros-text-color-secondary);
-  }
-
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #subtitle {
-    font-family: 'Roboto';
-    font-size: 14px;
-    line-height: 20px;
-  }
-
-  :host-context(body.jelly-enabled) #subtitle {
     font: var(--cros-body-1-font);
   }
 
@@ -129,18 +110,8 @@
 
   #description {
     color: var(--cros-text-color-secondary);
-    padding-top: 24px;
-  }
-
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #description {
-    font-family: 'Roboto';
-    font-size: 13px;
-    line-height: 20px;
-  }
-
-  :host-context(body.jelly-enabled) #description {
     font: var(--cros-body-2-font);
+    padding-top: 24px;
   }
 
   #feature-description {
@@ -163,20 +134,10 @@
     color: var(--cros-text-color-secondary);
     display: flex;
     flex-direction: row;
+    font: var(--cros-body-2-font);
     gap: 20px;
     justify-content: start;
     padding-bottom: 16px;
-  }
-
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #feature-details-container {
-    font-family: 'Roboto';
-    font-size: 13px;
-    line-height: 20px;
-  }
-
-  :host-context(body.jelly-enabled) #feature-details-container {
-    font: var(--cros-body-2-font);
   }
 
   #half-container {
@@ -192,16 +153,10 @@
     color: var(--cros-text-color-secondary);
     display: flex;
     flex-direction: row;
-    font-size: 11px;
+    font: var(--cros-annotation-2-font);
     gap: 6px;
     justify-content: start;
-    line-height: 14px;
     padding-bottom: 24px;
-  }
-
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #instruction {
-    font-family: 'Roboto';
   }
 
   #screen-lock-instruction {
@@ -209,20 +164,10 @@
     color: var(--cros-text-color-secondary);
     display: flex;
     flex-direction: row;
+    font: var(--cros-body-2-font);
     gap: 8px;
     justify-content: start;
     padding-bottom: 24px;
-  }
-
-  /* TODO(b/281116317) Remove once Jelly is launched */
-  :host-context(body:not(.jelly-enabled)) #screen-lock-instruction {
-    font-family: 'Roboto';
-    font-size: 13px;
-    line-height: 20px;
-  }
-
-  :host-context(body.jelly-enabled) #screen-lock-instruction {
-    font: var(--cros-body-2-font);
   }
 
   #illustration {
@@ -280,7 +225,8 @@
 </style>
 <cr-dialog id="dialog" close-text="$i18n{close}">
   <div id="dialogTitle" slot="title">
-    <div id="title">
+    <div id="title" aria-live="[[getLiveStatus_(setupState_)]]"
+        aria-labelledby="title" aria-describedby="description">
       <template is="dom-if" if="[[didSetupAttemptFail_]]" restamp>
         <iron-icon id="failure-icon" icon="os-settings:multidevice-error">
         </iron-icon>
@@ -392,7 +338,7 @@
       </template>
       <template is="dom-if" if="[[hasCompletedSetup_]]" restamp>
         <cr-button id="doneButton" class="action-button"
-            on-click="onDoneOrCloseButtonClicked_">
+            on-click="onDoneOrCloseButtonClicked_" autofocus>
           $i18n{done}
         </cr-button>
       </template>

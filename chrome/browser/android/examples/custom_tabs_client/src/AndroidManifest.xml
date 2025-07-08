@@ -25,7 +25,7 @@
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:allowBackup="false"
-        android:theme="@style/Theme.Material3.DayNight" >
+        android:theme="@style/Theme.App.DayNight" >
 
         <activity
             android:name="org.chromium.customtabsclient.MainActivity"
@@ -52,6 +52,7 @@
             android:exported="true"/>
         <receiver android:name=".BottomBarManager"/>
         <receiver android:name=".BottomBarManager$SwipeUpReceiver"/>
+        <receiver android:name=".ContextualMenuItemReceiver"/>
 
 
         <service

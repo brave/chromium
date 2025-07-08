@@ -4,9 +4,11 @@
 
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/permissions_policy/origin_with_possible_wildcards.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/platform/web_runtime_features_base.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/permissions_policy/permissions_policy_parser.h"
@@ -14,6 +16,7 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 
 namespace blink {
@@ -43,6 +46,7 @@ class HTMLIFrameElementTest : public testing::Test {
   }
 
  protected:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   Persistent<LocalDOMWindow> window_;
   Persistent<HTMLIFrameElement> frame_element_;
@@ -156,7 +160,7 @@ TEST_F(HTMLIFrameElementTest, DefaultContainerPolicy) {
                                AtomicString("http://example.net/"));
   frame_element_->UpdateContainerPolicyForTests();
 
-  const ParsedPermissionsPolicy& container_policy =
+  const network::ParsedPermissionsPolicy& container_policy =
       frame_element_->GetFramePolicy().container_policy;
   EXPECT_EQ(0UL, container_policy.size());
 }
@@ -170,11 +174,11 @@ TEST_F(HTMLIFrameElementTest, AllowAttributeContainerPolicy) {
                                AtomicString("fullscreen"));
   frame_element_->UpdateContainerPolicyForTests();
 
-  const ParsedPermissionsPolicy& container_policy1 =
+  const network::ParsedPermissionsPolicy& container_policy1 =
       frame_element_->GetFramePolicy().container_policy;
 
   EXPECT_EQ(1UL, container_policy1.size());
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kFullscreen,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kFullscreen,
             container_policy1[0].feature);
   EXPECT_FALSE(container_policy1[0].matches_all_origins);
   EXPECT_EQ(1UL, container_policy1[0].allowed_origins.size());
@@ -185,17 +189,17 @@ TEST_F(HTMLIFrameElementTest, AllowAttributeContainerPolicy) {
                                AtomicString("payment; fullscreen"));
   frame_element_->UpdateContainerPolicyForTests();
 
-  const ParsedPermissionsPolicy& container_policy2 =
+  const network::ParsedPermissionsPolicy& container_policy2 =
       frame_element_->GetFramePolicy().container_policy;
   EXPECT_EQ(2UL, container_policy2.size());
   EXPECT_TRUE(container_policy2[0].feature ==
-                  mojom::blink::PermissionsPolicyFeature::kFullscreen ||
+                  network::mojom::PermissionsPolicyFeature::kFullscreen ||
               container_policy2[1].feature ==
-                  mojom::blink::PermissionsPolicyFeature::kFullscreen);
+                  network::mojom::PermissionsPolicyFeature::kFullscreen);
   EXPECT_TRUE(container_policy2[0].feature ==
-                  mojom::blink::PermissionsPolicyFeature::kPayment ||
+                  network::mojom::PermissionsPolicyFeature::kPayment ||
               container_policy2[1].feature ==
-                  mojom::blink::PermissionsPolicyFeature::kPayment);
+                  network::mojom::PermissionsPolicyFeature::kPayment);
   EXPECT_EQ(1UL, container_policy2[0].allowed_origins.size());
   EXPECT_EQ("http://example.net",
             container_policy2[0].allowed_origins.begin()->Serialize());
@@ -208,7 +212,7 @@ TEST_F(HTMLIFrameElementTest, AllowAttributeContainerPolicy) {
 // Test the ConstructContainerPolicy method when no attributes are set on the
 // iframe element.
 TEST_F(HTMLIFrameElementTest, ConstructEmptyContainerPolicy) {
-  ParsedPermissionsPolicy container_policy =
+  network::ParsedPermissionsPolicy container_policy =
       frame_element_->ConstructContainerPolicy();
   EXPECT_EQ(0UL, container_policy.size());
 }
@@ -218,16 +222,16 @@ TEST_F(HTMLIFrameElementTest, ConstructEmptyContainerPolicy) {
 TEST_F(HTMLIFrameElementTest, ConstructContainerPolicy) {
   frame_element_->setAttribute(html_names::kAllowAttr,
                                AtomicString("payment; usb"));
-  ParsedPermissionsPolicy container_policy =
+  network::ParsedPermissionsPolicy container_policy =
       frame_element_->ConstructContainerPolicy();
   EXPECT_EQ(2UL, container_policy.size());
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kPayment,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kPayment,
             container_policy[0].feature);
   EXPECT_FALSE(container_policy[0].matches_all_origins);
   EXPECT_EQ(1UL, container_policy[0].allowed_origins.size());
   EXPECT_TRUE(container_policy[0].allowed_origins.begin()->DoesMatchOrigin(
       GetOriginForPermissionsPolicy(frame_element_)->ToUrlOrigin()));
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kUsb,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kUsb,
             container_policy[1].feature);
   EXPECT_EQ(1UL, container_policy[1].allowed_origins.size());
   EXPECT_TRUE(container_policy[1].allowed_origins.begin()->DoesMatchOrigin(
@@ -239,10 +243,10 @@ TEST_F(HTMLIFrameElementTest, ConstructContainerPolicy) {
 TEST_F(HTMLIFrameElementTest, ConstructContainerPolicyWithAllowFullscreen) {
   frame_element_->SetBooleanAttribute(html_names::kAllowfullscreenAttr, true);
 
-  ParsedPermissionsPolicy container_policy =
+  network::ParsedPermissionsPolicy container_policy =
       frame_element_->ConstructContainerPolicy();
   EXPECT_EQ(1UL, container_policy.size());
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kFullscreen,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kFullscreen,
             container_policy[0].feature);
   EXPECT_TRUE(container_policy[0].matches_all_origins);
 }
@@ -254,16 +258,16 @@ TEST_F(HTMLIFrameElementTest, ConstructContainerPolicyWithAllowPaymentRequest) {
   frame_element_->SetBooleanAttribute(html_names::kAllowpaymentrequestAttr,
                                       true);
 
-  ParsedPermissionsPolicy container_policy =
+  network::ParsedPermissionsPolicy container_policy =
       frame_element_->ConstructContainerPolicy();
   EXPECT_EQ(2UL, container_policy.size());
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kUsb,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kUsb,
             container_policy[0].feature);
   EXPECT_FALSE(container_policy[0].matches_all_origins);
   EXPECT_EQ(1UL, container_policy[0].allowed_origins.size());
   EXPECT_TRUE(container_policy[0].allowed_origins.begin()->DoesMatchOrigin(
       GetOriginForPermissionsPolicy(frame_element_)->ToUrlOrigin()));
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kPayment,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kPayment,
             container_policy[1].feature);
 }
 
@@ -280,28 +284,27 @@ TEST_F(HTMLIFrameElementTest, ConstructContainerPolicyWithAllowAttributes) {
   frame_element_->SetBooleanAttribute(html_names::kAllowpaymentrequestAttr,
                                       true);
 
-  ParsedPermissionsPolicy container_policy =
+  network::ParsedPermissionsPolicy container_policy =
       frame_element_->ConstructContainerPolicy();
   EXPECT_EQ(3UL, container_policy.size());
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kPayment,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kPayment,
             container_policy[0].feature);
   EXPECT_FALSE(container_policy[0].matches_all_origins);
   EXPECT_EQ(1UL, container_policy[0].allowed_origins.size());
   EXPECT_TRUE(container_policy[0].allowed_origins.begin()->DoesMatchOrigin(
       GetOriginForPermissionsPolicy(frame_element_)->ToUrlOrigin()));
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kUsb,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kUsb,
             container_policy[1].feature);
   EXPECT_EQ(1UL, container_policy[1].allowed_origins.size());
   EXPECT_TRUE(container_policy[1].allowed_origins.begin()->DoesMatchOrigin(
       GetOriginForPermissionsPolicy(frame_element_)->ToUrlOrigin()));
-  EXPECT_EQ(mojom::blink::PermissionsPolicyFeature::kFullscreen,
+  EXPECT_EQ(network::mojom::PermissionsPolicyFeature::kFullscreen,
             container_policy[2].feature);
 }
 
 using HTMLIFrameElementSimTest = SimTest;
 
 TEST_F(HTMLIFrameElementSimTest, PolicyAttributeParsingError) {
-  blink::ScopedDocumentPolicyForTest sdp(true);
   SimRequest main_resource("https://example.com", "text/html");
   LoadURL("https://example.com");
   main_resource.Complete(R"(
@@ -338,6 +341,63 @@ TEST_F(HTMLIFrameElementSimTest, AllowAttributeParsingError) {
   EXPECT_TRUE(ConsoleMessages().front().StartsWith("Unrecognized feature"))
       << "Expect permissions policy parser raising error for unrecognized "
          "feature but got: "
+      << ConsoleMessages().front();
+}
+
+TEST_F(HTMLIFrameElementSimTest, Adauctionheaders_SecureContext_Allowed) {
+  SimRequest main_resource("https://example.com", "text/html");
+  LoadURL("https://example.com");
+  main_resource.Complete(R"(
+    <iframe adauctionheaders></iframe>
+  )");
+
+  EXPECT_TRUE(ConsoleMessages().empty());
+}
+
+TEST_F(HTMLIFrameElementSimTest, Adauctionheaders_InsecureContext_NotAllowed) {
+  SimRequest main_resource("http://example.com", "text/html");
+  LoadURL("http://example.com");
+  main_resource.Complete(R"(
+    <iframe adauctionheaders></iframe>
+  )");
+
+  EXPECT_EQ(ConsoleMessages().size(), 1u);
+  EXPECT_TRUE(ConsoleMessages().front().StartsWith(
+      "adAuctionHeaders: Protected Audience APIs "
+      "are only available in secure contexts."))
+      << "Unexpected error; got: " << ConsoleMessages().front();
+}
+
+TEST_F(HTMLIFrameElementSimTest, Sharedstoragewritable_SecureContext_Allowed) {
+  WebRuntimeFeaturesBase::EnableSharedStorageAPI(true);
+  SimRequest main_resource("https://example.com", "text/html");
+  LoadURL("https://example.com");
+  main_resource.Complete(R"(
+    <iframe
+      allow="shared-storage"
+      sharedstoragewritable></iframe>
+  )");
+
+  EXPECT_TRUE(ConsoleMessages().empty());
+}
+
+TEST_F(HTMLIFrameElementSimTest,
+       Sharedstoragewritable_InsecureContext_NotAllowed) {
+  WebRuntimeFeaturesBase::EnableSharedStorageAPI(true);
+  SimRequest main_resource("http://example.com", "text/html");
+  LoadURL("http://example.com");
+  main_resource.Complete(R"(
+    <iframe
+      allow="shared-storage"
+      sharedstoragewritable></iframe>
+  )");
+
+  EXPECT_EQ(ConsoleMessages().size(), 1u);
+  EXPECT_TRUE(ConsoleMessages().front().StartsWith(
+      "sharedStorageWritable: sharedStorage operations are only available in "
+      "secure contexts."))
+      << "Expect error that Shared Storage operations are not allowed in "
+         "insecure contexts but got: "
       << ConsoleMessages().front();
 }
 

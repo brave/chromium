@@ -82,6 +82,7 @@ interface BluetoothUUID
     static method getService
     attribute @@toStringTag
     method constructor
+interface Clipboard : EventTarget
 interface Navigator
     getter bluetooth
 interface Notification : EventTarget

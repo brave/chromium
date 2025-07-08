@@ -23,10 +23,6 @@ extension_repack_all_locales("packed_resources") {
 
 source_set("share") {
   sources = [
-    "share_extension_view.h",
-    "share_extension_view.mm",
-    "share_view_controller.h",
-    "share_view_controller.mm",
     "ui_util.h",
     "ui_util.mm",
   ]
@@ -34,6 +30,7 @@ source_set("share") {
   deps = [
     ":system_strings",
     "//base",
+    "//ios/chrome/common:extension_open_url",
     "//ios/chrome/common/app_group",
     "//ios/chrome/common/app_group:client",
     "//ios/chrome/common/app_group:command",
@@ -44,12 +41,38 @@ source_set("share") {
 
   frameworks = [
     "Foundation.framework",
-    "Social.framework",
     "CoreGraphics.framework",
     "MobileCoreServices.framework",
     "UIKit.framework",
     "UniformTypeIdentifiers.framework",
   ]
+  if (ios_enable_extended_share_extension) {
+    sources += [
+      "account_info.h",
+      "account_info.mm",
+      "account_picker_delegate.h",
+      "account_picker_table.h",
+      "account_picker_table.mm",
+      "extended_share_view_controller.h",
+      "extended_share_view_controller.mm",
+      "share_extension_delegate.h",
+      "share_extension_sheet.h",
+      "share_extension_sheet.mm",
+    ]
+    deps += [
+      "//build:branding_buildflags",
+      "//ios/chrome/common/ui/confirmation_alert",
+      "//ios/chrome/common/ui/elements:branded_navigation_item_title_view",
+      "//ios/chrome/share_extension/resources",
+    ]
+  } else {
+    sources += [
+      "share_extension_view.h",
+      "share_extension_view.mm",
+      "share_view_controller.h",
+      "share_view_controller.mm",
+    ]
+  }
 }
 
 generate_localizable_strings("system_strings") {

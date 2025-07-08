@@ -16,7 +16,6 @@ import androidx.test.filters.MediumTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -28,7 +27,6 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.url.GURL;
 
 import java.io.ByteArrayInputStream;
@@ -46,16 +44,12 @@ public class NetworkFetcherTaskTest {
     private HttpURLConnection mConnection;
     private Context mContext;
     private File mTempDirectory;
-
-    @Rule
-    public JniMocker jniMocker = new JniMocker();
-    @Mock
-    private NetworkFetcherTask.Natives mNativeMock;
+    @Mock private NetworkFetcherTask.Natives mNativeMock;
 
     @Before
     public void setUp() throws IOException {
         MockitoAnnotations.initMocks(this);
-        jniMocker.mock(NetworkFetcherTaskJni.TEST_HOOKS, mNativeMock);
+        NetworkFetcherTaskJni.setInstanceForTesting(mNativeMock);
 
         mContext = ContextUtils.getApplicationContext();
         mTempDirectory = new File(mContext.getFilesDir(), "tmp/");
@@ -66,7 +60,8 @@ public class NetworkFetcherTaskTest {
 
     @After
     public void tearDown() throws IOException {
-        Assert.assertTrue("Failed to cleanup temporary test files",
+        Assert.assertTrue(
+                "Failed to cleanup temporary test files",
                 FileUtils.recursivelyDeleteFile(mTempDirectory, null));
     }
 
@@ -84,9 +79,15 @@ public class NetworkFetcherTaskTest {
         OutputStream outStream = new ByteArrayOutputStream();
         when(mConnection.getOutputStream()).thenReturn(outStream);
 
-        NetworkFetcherTask.postRequest(mConnection, /** nativeNetworkFetcherTask= */ 0,
-                /** mainTaskRunner= */ 0, mock(GURL.class), "postData".getBytes(), "JSON",
-                new String[0], new String[0]);
+        NetworkFetcherTask.postRequest(
+                mConnection,
+                /* nativeNetworkFetcherTask= */ 0,
+                /* mainTaskRunner= */ 0,
+                mock(GURL.class),
+                "postData".getBytes(),
+                "JSON",
+                new String[0],
+                new String[0]);
         assertEquals("postData", outStream.toString());
         verify(mNativeMock).callResponseStartedCallback(0, 0, 200, 4);
         verify(mNativeMock).callProgressCallback(0, 0, 4);
@@ -106,8 +107,12 @@ public class NetworkFetcherTaskTest {
         when(mConnection.getInputStream())
                 .thenReturn(new ByteArrayInputStream(ApiCompatibilityUtils.getBytesUtf8("1234")));
 
-        NetworkFetcherTask.downloadToFile(mConnection, /** nativeNetworkFetcherTask= */ 0,
-                /** mainTaskRunner= */ 0, mock(GURL.class), file.getAbsolutePath());
+        NetworkFetcherTask.downloadToFile(
+                mConnection,
+                /* nativeDownloadFileTask= */ 0,
+                /* mainTaskRunner= */ 0,
+                mock(GURL.class),
+                file.getAbsolutePath());
         verify(mNativeMock).callResponseStartedCallback(0, 0, 200, 4);
         verify(mNativeMock).callProgressCallback(0, 0, 4);
         verify(mNativeMock).callDownloadToFileCompleteCallback(0, 0, 0, 4);

@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_cast_button_element.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/user_metrics_action.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
@@ -17,13 +18,14 @@
 #include "third_party/blink/renderer/modules/remoteplayback/remote_playback.h"
 #include "third_party/blink/renderer/modules/remoteplayback/remote_playback_metrics.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
+#include "ui/strings/grit/ax_strings.h"
 
 namespace blink {
 
 namespace {
 
 Element* ElementFromCenter(Element& element) {
-  DOMRect* client_rect = element.getBoundingClientRect();
+  DOMRect* client_rect = element.GetBoundingClientRect();
   int center_x =
       static_cast<int>((client_rect->left() + client_rect->right()) / 2);
   int center_y =
@@ -52,19 +54,18 @@ void MediaControlCastButtonElement::TryShowOverlay() {
   SetIsWanted(true);
   if (ElementFromCenter(*this) != &MediaElement()) {
     SetIsWanted(false);
-    return;
   }
 }
 
 void MediaControlCastButtonElement::UpdateDisplayType() {
   if (IsPlayingRemotely()) {
-    setAttribute(html_names::kAriaLabelAttr,
-                 WTF::AtomicString(
-                     GetLocale().QueryString(IDS_AX_MEDIA_CAST_ON_BUTTON)));
+    setAttribute(
+        html_names::kAriaLabelAttr,
+        AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_CAST_ON_BUTTON)));
   } else {
-    setAttribute(html_names::kAriaLabelAttr,
-                 WTF::AtomicString(
-                     GetLocale().QueryString(IDS_AX_MEDIA_CAST_OFF_BUTTON)));
+    setAttribute(
+        html_names::kAriaLabelAttr,
+        AtomicString(GetLocale().QueryString(IDS_AX_MEDIA_CAST_OFF_BUTTON)));
   }
   UpdateOverflowString();
   SetClass("on", IsPlayingRemotely());

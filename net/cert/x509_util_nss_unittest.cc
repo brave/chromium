@@ -4,6 +4,8 @@
 
 #include "net/cert/x509_util_nss.h"
 
+#include <string_view>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/time/time.h"
@@ -133,7 +135,7 @@ TEST(X509UtilTest, CreateCERTCertificateListFromX509CertificateErrors) {
   ASSERT_TRUE(ok_cert);
 
   bssl::UniquePtr<CRYPTO_BUFFER> bad_cert =
-      x509_util::CreateCryptoBuffer(base::StringPiece("invalid"));
+      x509_util::CreateCryptoBuffer(std::string_view("invalid"));
   ASSERT_TRUE(bad_cert);
 
   scoped_refptr<X509Certificate> ok_cert2(
@@ -179,7 +181,7 @@ TEST(X509UtilNSSTest, CreateCERTCertificateListFromBytes) {
 
   ScopedCERTCertificateList certs =
       x509_util::CreateCERTCertificateListFromBytes(
-          cert_data.data(), cert_data.size(), X509Certificate::FORMAT_AUTO);
+          base::as_byte_span(cert_data), X509Certificate::FORMAT_AUTO);
   ASSERT_EQ(4U, certs.size());
   EXPECT_STREQ("CN=127.0.0.1,O=Test CA,L=Mountain View,ST=California,C=US",
                certs[0]->subjectName);
@@ -405,9 +407,9 @@ TEST(X509UtilNSSTest, GetValidityTimes) {
 
   // Constants copied from x509_certificate_unittest.cc.
   EXPECT_EQ(1238192407,  // Mar 27 22:20:07 2009 GMT
-            not_before.ToDoubleT());
+            not_before.InSecondsFSinceUnixEpoch());
   EXPECT_EQ(1269728407,  // Mar 27 22:20:07 2010 GMT
-            not_after.ToDoubleT());
+            not_after.InSecondsFSinceUnixEpoch());
 }
 
 TEST(X509UtilNSSTest, GetValidityTimesOptionalArgs) {
@@ -420,13 +422,13 @@ TEST(X509UtilNSSTest, GetValidityTimesOptionalArgs) {
       x509_util::GetValidityTimes(google_cert.get(), &not_before, nullptr));
   // Constants copied from x509_certificate_unittest.cc.
   EXPECT_EQ(1238192407,  // Mar 27 22:20:07 2009 GMT
-            not_before.ToDoubleT());
+            not_before.InSecondsFSinceUnixEpoch());
 
   base::Time not_after;
   EXPECT_TRUE(
       x509_util::GetValidityTimes(google_cert.get(), nullptr, &not_after));
   EXPECT_EQ(1269728407,  // Mar 27 22:20:07 2010 GMT
-            not_after.ToDoubleT());
+            not_after.InSecondsFSinceUnixEpoch());
 }
 
 TEST(X509UtilNSSTest, CalculateFingerprint256) {

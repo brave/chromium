@@ -5,14 +5,15 @@
 #ifndef CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_OS_LEVEL_MANAGER_H_
 #define CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_OS_LEVEL_MANAGER_H_
 
+#include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
-#include "services/network/public/mojom/attribution.mojom-forward.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "content/public/browser/content_browser_client.h"
 
 namespace base {
 class Time;
@@ -25,19 +26,17 @@ class Origin;
 namespace content {
 
 struct OsRegistration;
+class WebContents;
 
 // Interface between the browser's Attribution Reporting implementation and the
 // operating system's.
 class CONTENT_EXPORT AttributionOsLevelManager {
  public:
-  enum class ApiState {
-    kDisabled,
-    kEnabled,
-  };
+  using ApiState = ContentBrowserClient::AttributionReportingOsApiState;
 
   class CONTENT_EXPORT ScopedApiStateForTesting {
    public:
-    explicit ScopedApiStateForTesting(absl::optional<ApiState>);
+    explicit ScopedApiStateForTesting(std::optional<ApiState>);
     ~ScopedApiStateForTesting();
 
     ScopedApiStateForTesting(const ScopedApiStateForTesting&) = delete;
@@ -48,20 +47,23 @@ class CONTENT_EXPORT AttributionOsLevelManager {
     ScopedApiStateForTesting& operator=(ScopedApiStateForTesting&&) = delete;
 
    private:
-    const absl::optional<ApiState> previous_;
+    const std::optional<ApiState> previous_;
   };
 
-  static network::mojom::AttributionSupport GetSupport();
+  static ApiState GetApiState();
+  static void SetApiState(std::optional<ApiState>);
 
-  static void SetApiState(absl::optional<ApiState>);
+  [[nodiscard]] static ContentBrowserClient::AttributionReportingOsRegistrars
+  GetAttributionReportingOsRegistrars(WebContents*);
 
   virtual ~AttributionOsLevelManager() = default;
 
   using RegisterCallback =
-      base::OnceCallback<void(const OsRegistration&, bool success)>;
+      base::OnceCallback<void(const OsRegistration&,
+                              const std::vector<bool>& success)>;
 
   virtual void Register(OsRegistration,
-                        bool is_debug_key_allowed,
+                        const std::vector<bool>& is_debug_key_allowed,
                         RegisterCallback) = 0;
 
   // Clears storage data with the OS.
@@ -77,7 +79,6 @@ class CONTENT_EXPORT AttributionOsLevelManager {
 
  protected:
   [[nodiscard]] static bool ShouldInitializeApiState();
-  [[nodiscard]] static bool ShouldUseOsWebSource();
 };
 
 class CONTENT_EXPORT NoOpAttributionOsLevelManager
@@ -86,7 +87,7 @@ class CONTENT_EXPORT NoOpAttributionOsLevelManager
   ~NoOpAttributionOsLevelManager() override;
 
   void Register(OsRegistration,
-                bool is_debug_key_allowed,
+                const std::vector<bool>& is_debug_key_allowed,
                 RegisterCallback) override;
 
   void ClearData(base::Time delete_begin,

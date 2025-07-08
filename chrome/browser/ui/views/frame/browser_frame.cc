@@ -12,8 +12,8 @@
 #include "base/debug/leak_annotations.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
+#include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/headless/headless_mode_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -35,6 +35,9 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/mojom/menu_source_type.mojom-forward.h"
+#include "ui/base/mojom/themes.mojom.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/font_list.h"
@@ -42,15 +45,12 @@
 #include "ui/views/widget/native_widget.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "chromeos/ui/wm/desks/desks_helper.h"
-#include "ui/aura/window.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/aura/window.h"
 #endif
 
 #if BUILDFLAG(IS_LINUX)
@@ -59,10 +59,43 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/win/titlebar_config.h"
+#include "chrome/browser/win/mica_titlebar.h"
 #endif
 
 namespace {
+#if BUILDFLAG(IS_MAC)
+// Keep in sync with web_app_frame_toolbar_browsertest.cc
+constexpr double kTitlePaddingWidthFraction = 0.1;
+#endif
+
+#if BUILDFLAG(IS_LINUX)
+// These values are used for Linux/GTK.
+constexpr int kIconTitleSpacing = 4;
+constexpr int kCaptionSpacing = 5;
+#endif
+
+// Helper to track whether a ThemeChange event has been received by the widget.
+class ThemeChangedObserver : public views::WidgetObserver {
+ public:
+  explicit ThemeChangedObserver(views::Widget* widget) {
+    widget_observation.Observe(widget);
+  }
+  ThemeChangedObserver(const ThemeChangedObserver&) = delete;
+  ThemeChangedObserver& operator=(const ThemeChangedObserver&) = delete;
+  ~ThemeChangedObserver() override = default;
+
+  // views::WidgetObserver:
+  void OnWidgetThemeChanged(views::Widget* widget) override {
+    theme_changed_ = true;
+  }
+
+  bool theme_changed() const { return theme_changed_; }
+
+ private:
+  bool theme_changed_ = false;
+  base::ScopedObservation<views::Widget, views::WidgetObserver>
+      widget_observation{this};
+};
 
 bool IsUsingLinuxSystemTheme(Profile* profile) {
 #if BUILDFLAG(IS_LINUX)
@@ -73,8 +106,8 @@ bool IsUsingLinuxSystemTheme(Profile* profile) {
 }
 
 ui::ColorProviderKey::SchemeVariant GetSchemeVariant(
-    ThemeService::BrowserColorVariant color_variant) {
-  using BCV = ThemeService::BrowserColorVariant;
+    ui::mojom::BrowserColorVariant color_variant) {
+  using BCV = ui::mojom::BrowserColorVariant;
   using SV = ui::ColorProviderKey::SchemeVariant;
   static constexpr auto kSchemeVariantMap = base::MakeFixedFlatMap<BCV, SV>({
       {BCV::kTonalSpot, SV::kTonalSpot},
@@ -101,12 +134,13 @@ BrowserFrame::BrowserFrame(BrowserView* browser_view)
   set_focus_on_creation(false);
 }
 
-BrowserFrame::~BrowserFrame() {}
+BrowserFrame::~BrowserFrame() = default;
 
 void BrowserFrame::InitBrowserFrame() {
   native_browser_frame_ =
       NativeBrowserFrameFactory::CreateNativeBrowserFrame(this, browser_view_);
-  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams();
+  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.name = "BrowserFrame";
   params.delegate = browser_view_;
   params.headless_mode = headless::IsHeadlessMode();
@@ -114,15 +148,23 @@ void BrowserFrame::InitBrowserFrame() {
   Browser* browser = browser_view_->browser();
   if (browser->is_type_picture_in_picture()) {
     params.z_order = ui::ZOrderLevel::kFloatingWindow;
-    // This doesn't change anything visually, but has the side-effect of keeping
-    // the pip window in the tab order.
-    params.remove_standard_frame = true;
     params.visible_on_all_workspaces = true;
+#if !BUILDFLAG(IS_WIN)
+    // This has the side-effect of keeping the pip window in the tab order.
+    //
+    // On all platforms, except for Windows, this doesn't change anything
+    // visually. If this is set for the Windows platform, the UI will be
+    // affected. Specifically, the title bar will not render correctly, see
+    // https://crbug.com/1456231 for more details.
+    params.remove_standard_frame = true;
+#endif  // !BUILDFLAG(IS_WIN)
   }
 
 #if BUILDFLAG(IS_OZONE)
   params.inhibit_keyboard_shortcuts =
       browser->is_type_app() || browser->is_type_app_popup();
+
+  params.session_data = browser->platform_session_data();
 #endif
 
   if (native_browser_frame_->ShouldRestorePreviousBrowserWidgetState()) {
@@ -153,7 +195,12 @@ void BrowserFrame::InitBrowserFrame() {
   }
 
   Init(std::move(params));
+
+#if BUILDFLAG(IS_LINUX)
   SelectNativeTheme();
+#else
+  SetNativeTheme(ui::NativeTheme::GetInstanceForNativeUi());
+#endif
 
   if (!native_browser_frame_->UsesNativeSystemMenu()) {
     DCHECK(non_client_view());
@@ -185,19 +232,67 @@ gfx::Rect BrowserFrame::GetBoundsForWebAppFrameToolbar(
 void BrowserFrame::LayoutWebAppWindowTitle(
     const gfx::Rect& available_space,
     views::Label& window_title_label) const {
-  // This can be invoked before |browser_frame_view_| has been set.
-  if (browser_frame_view_) {
-    browser_frame_view_->LayoutWebAppWindowTitle(available_space,
-                                                 window_title_label);
+  if (!browser_frame_view_) {
+    return;
   }
+
+  if (browser_frame_view_->browser_view() &&
+      browser_frame_view_->browser_view()->GetIsPictureInPictureType()) {
+    // Do nothing for picture in picture browsers.
+    return;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // No window titles on Chrome OS, so just hide the window title.
+  window_title_label.SetVisible(false);
+#elif BUILDFLAG(IS_MAC)
+  gfx::Rect toolbar_bounds(0, 0, browser_frame_view_->width(),
+                           available_space.height());
+  gfx::Rect title_bounds = available_space;
+
+  const int title_padding = base::ClampRound(browser_frame_view_->width() *
+                                             kTitlePaddingWidthFraction);
+  title_bounds.Inset(gfx::Insets::VH(0, title_padding));
+
+  // Center in the container and make it fit in the available space.
+  int preferred_title_width =
+      window_title_label
+          .GetPreferredSize(views::SizeBounds(window_title_label.width(), {}))
+          .width();
+  toolbar_bounds.ClampToCenteredSize(
+      gfx::Size(preferred_title_width, toolbar_bounds.height()));
+  toolbar_bounds.AdjustToFit(title_bounds);
+
+  window_title_label.SetBoundsRect(toolbar_bounds);
+  // The background of the title area is always opaquely drawn, but when in
+  // immersive fullscreen, it is drawn in a way that isn't detected by the
+  // DCHECK in Label. As such, disable the DCHECK.
+  window_title_label.SetSkipSubpixelRenderingOpacityCheck(
+      browser_view_->IsImmersiveModeEnabled());
+#elif BUILDFLAG(IS_WIN)
+  gfx::Rect bounds = available_space;
+  // If nothing has been added to the left, match native Windows 10 UWP apps
+  // that don't have window icons.
+  // TODO(crbug.com/40890502): Avoid hardcoding sizes like this.
+  constexpr int kMinimumTitleLeftBorderMargin = 11;
+  if (bounds.x() < kMinimumTitleLeftBorderMargin) {
+    bounds.SetHorizontalBounds(kMinimumTitleLeftBorderMargin, bounds.right());
+  }
+  window_title_label.SetSubpixelRenderingEnabled(false);
+  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  window_title_label.SetAutoColorReadabilityEnabled(false);
+  window_title_label.SetBoundsRect(bounds);
+#else
+  gfx::Rect bounds = available_space;
+  bounds.Inset(gfx::Insets::TLBR(0, kIconTitleSpacing, 0, kCaptionSpacing));
+  window_title_label.SetSubpixelRenderingEnabled(false);
+  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  window_title_label.SetBoundsRect(bounds);
+#endif
 }
 
 int BrowserFrame::GetTopInset() const {
   return browser_frame_view_->GetTopInset(false);
-}
-
-int BrowserFrame::GetThemeBackgroundXInset() const {
-  return browser_frame_view_->GetThemeBackgroundXInset();
 }
 
 void BrowserFrame::UpdateThrobber(bool running) {
@@ -220,18 +315,19 @@ bool BrowserFrame::ShouldDrawFrameHeader() const {
   return true;
 }
 
-void BrowserFrame::GetWindowPlacement(gfx::Rect* bounds,
-                                      ui::WindowShowState* show_state) const {
+void BrowserFrame::GetWindowPlacement(
+    gfx::Rect* bounds,
+    ui::mojom::WindowShowState* show_state) const {
   return native_browser_frame_->GetWindowPlacement(bounds, show_state);
 }
 
 content::KeyboardEventProcessingResult BrowserFrame::PreHandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->PreHandleKeyboardEvent(event);
 }
 
 bool BrowserFrame::HandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->HandleKeyboardEvent(event);
 }
 
@@ -247,14 +343,32 @@ void BrowserFrame::UserChangedTheme(BrowserThemeChangeType theme_change_type) {
     return;
   }
 
-  // When the browser theme changes, the NativeTheme may also change.
-  // In Incognito, the usage of dark or normal hinges on the browser theme.
-  if (theme_change_type == BrowserThemeChangeType::kBrowserTheme)
+  // RegenerateFrameOnThemeChange() may or may not result in an implicit call to
+  // ThemeChanged(), regardless of whether the frame was regenerated or not.
+  // Ensure that ThemeChanged() is called for this Widget if no implicit call
+  // occurred.
+  // TODO(crbug.com/40280130): The entire theme propagation system needs to be
+  // moved to scheduling theme changes rather than synchronously demanding a
+  // ThemeChange() event take place. This will reduce a ton of churn resulting
+  // from independent clients increasingly issuing theme change requests.
+  ThemeChangedObserver theme_changed_observer(this);
+  RegenerateFrameOnThemeChange(theme_change_type);
+
+  if (theme_change_type == BrowserThemeChangeType::kBrowserTheme) {
+    // When the browser theme changes, the NativeTheme may also change.
     SelectNativeTheme();
 
-  if (!RegenerateFrameOnThemeChange(theme_change_type)) {
-    // If RegenerateFrame() returns true, ThemeChanged() was implicitly called,
-    // so no need to call it explicitly.
+    // Browser theme changes are directly observed by the BrowserFrame. However
+    // the other Widgets in the frame's hierarchy may inherit this new theme
+    // information in their ColorProviderKeys and thus should also be forwarded
+    // theme change notifications.
+    Widget::Widgets widgets = GetAllOwnedWidgets(GetNativeView());
+    for (Widget* widget : widgets) {
+      widget->ThemeChanged();
+    }
+  }
+
+  if (!theme_changed_observer.theme_changed()) {
     ThemeChanged();
   }
 }
@@ -311,7 +425,9 @@ ui::ColorProviderKey::ThemeInitializerSupplier* BrowserFrame::GetCustomTheme()
                          app_controller->AppUsesWindowControlsOverlay())) {
     return app_controller->GetThemeSupplier();
   }
-  return ThemeService::GetThemeSupplierForProfile(browser->profile());
+  auto* theme_service = ThemeServiceFactory::GetForProfile(browser->profile());
+  return theme_service->UsingDeviceTheme() ? nullptr
+                                           : theme_service->GetThemeSupplier();
 }
 
 void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
@@ -325,21 +441,29 @@ void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
   // which reorders the browsers such that the ones in the current
   // workspace appear before ones in other workspaces.
   auto workspace = display::Screen::GetScreen()->GetCurrentWorkspace();
-  if (!workspace.empty())
+  if (!workspace.empty()) {
     BrowserList::MoveBrowsersInWorkspaceToFront(workspace);
+  }
 #endif
   Widget::OnNativeWidgetWorkspaceChanged();
 }
 
-void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
-                                              const gfx::Point& p,
-                                              ui::MenuSourceType source_type) {
-  if (chrome::IsRunningInForcedAppMode())
+void BrowserFrame::ShowContextMenuForViewImpl(
+    views::View* source,
+    const gfx::Point& p,
+    ui::mojom::MenuSourceType source_type) {
+  if (IsRunningInForcedAppMode()) {
     return;
+  }
 
   // Do not show context menu for Document picture-in-picture browser. Context:
   // http://b/274862709.
   if (browser_view_->browser()->is_type_picture_in_picture()) {
+    return;
+  }
+
+  // Don't show a menu if a tab drag is active. https://crbug.com/1517709
+  if (tab_drag_kind_ != TabDragKind::kNone) {
     return;
   }
 
@@ -359,6 +483,7 @@ void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
     menu_runner_->RunMenuAt(source->GetWidget(), nullptr,
                             gfx::Rect(p, gfx::Size(0, 0)),
                             views::MenuAnchorPosition::kTopLeft, source_type);
+    base::RecordAction(base::UserMetricsAction("SystemContextMenu_Opened"));
   }
 }
 
@@ -369,7 +494,7 @@ bool BrowserFrame::IsMenuRunnerRunningForTesting() const {
 ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
   // TODO(b/271137301): Refactor this class to remove chromeos specific code to
   // subclasses.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (user_manager::UserManager::IsInitialized() &&
       user_manager::UserManager::Get()->GetLoggedInUsers().size() > 1) {
     // In Multi user mode, the number of users as well as the order of users
@@ -378,8 +503,7 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
     // changes happened since the last invocation.
     menu_model_builder_.reset();
   }
-#endif
-#if BUILDFLAG(IS_CHROMEOS)
+
   auto* desks_helper = chromeos::DesksHelper::Get(GetNativeWindow());
   int current_num_desks = desks_helper ? desks_helper->GetNumberOfDesks() : -1;
   if (current_num_desks != num_desks_) {
@@ -406,16 +530,19 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
 }
 
 void BrowserFrame::SetTabDragKind(TabDragKind tab_drag_kind) {
-  if (tab_drag_kind_ == tab_drag_kind)
+  if (tab_drag_kind_ == tab_drag_kind) {
     return;
+  }
 
-  if (native_browser_frame_)
+  if (native_browser_frame_) {
     native_browser_frame_->TabDraggingKindChanged(tab_drag_kind);
+  }
 
   bool was_dragging_any = tab_drag_kind_ != TabDragKind::kNone;
   bool is_dragging_any = tab_drag_kind != TabDragKind::kNone;
-  if (was_dragging_any != is_dragging_any)
+  if (was_dragging_any != is_dragging_any) {
     browser_view_->TabDraggingStatusChanged(is_dragging_any);
+  }
 
   tab_drag_kind_ = tab_drag_kind;
 }
@@ -427,18 +554,28 @@ void BrowserFrame::OnNativeThemeUpdated(ui::NativeTheme* observed_theme) {
 ui::ColorProviderKey BrowserFrame::GetColorProviderKey() const {
   auto key = Widget::GetColorProviderKey();
 
+  key.app_controller = browser_view_->browser()->app_controller();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // ChromeOS SystemWebApps use the OS theme all the time.
+  if (ash::IsSystemWebApp(browser_view_->browser())) {
+    return key;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  const auto* theme_service =
+      ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile());
+  CHECK(theme_service);
+
   // color_mode.
-  [this, &key]() {
+  [this, &key, theme_service]() {
     // Currently the incognito browser is implemented as unthemed dark mode.
     if (IsIncognitoBrowser()) {
       key.color_mode = ui::ColorProviderKey::ColorMode::kDark;
       return;
     }
 
-    const auto* theme_service =
-        ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile());
     const auto browser_color_scheme = theme_service->GetBrowserColorScheme();
-
     if (browser_color_scheme != ThemeService::BrowserColorScheme::kSystem) {
       key.color_mode =
           browser_color_scheme == ThemeService::BrowserColorScheme::kLight
@@ -448,59 +585,74 @@ ui::ColorProviderKey BrowserFrame::GetColorProviderKey() const {
   }();
 
   // user_color.
-  [this, &key]() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    // ChromeOS SystemWebApps use the OS theme all the time.
-    if (ash::IsSystemWebApp(browser_view_->browser())) {
-      return;
-    }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-    // Incognito profiles should always fall back to the material baseline.
-    if (IsIncognitoBrowser()) {
-      key.user_color = absl::nullopt;
-      return;
-    }
-
-    const auto* theme_service =
-        ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile());
-    if (theme_service && theme_service->UsingAutogeneratedTheme()) {
+  // Device theme retains the user_color from `Widget`.
+  if (!theme_service->UsingDeviceTheme()) {
+    if (theme_service->UsingAutogeneratedTheme()) {
       key.user_color = theme_service->GetAutogeneratedThemeColor();
-      return;
+    } else if (auto user_color = theme_service->GetUserColor()) {
+      key.user_color = user_color;
     }
+  }
 
-    if (theme_service && theme_service->GetUserColor().has_value()) {
-      key.user_color = theme_service->GetUserColor();
-    }
-  }();
+  // user_color_source.
+  if (IsIncognitoBrowser()) {
+    key.user_color_source = ui::ColorProviderKey::UserColorSource::kGrayscale;
+  } else if (theme_service->UsingDeviceTheme()) {
+    key.user_color_source = ui::ColorProviderKey::UserColorSource::kAccent;
+  } else if (theme_service->GetIsGrayscale()) {
+    key.user_color_source = ui::ColorProviderKey::UserColorSource::kGrayscale;
+  } else if (theme_service->GetIsBaseline()) {
+    key.user_color_source = ui::ColorProviderKey::UserColorSource::kBaseline;
+  } else {
+    CHECK(key.user_color.has_value());
+    key.user_color_source = ui::ColorProviderKey::UserColorSource::kAccent;
+  }
 
   // scheme_variant.
-  const auto* theme_service =
-      ThemeServiceFactory::GetForProfile(browser_view_->browser()->profile());
-  ThemeService::BrowserColorVariant color_variant =
+  ui::mojom::BrowserColorVariant color_variant =
       theme_service->GetBrowserColorVariant();
-  if (color_variant != ThemeService::BrowserColorVariant::kSystem) {
+  if (!theme_service->UsingDeviceTheme() &&
+      color_variant != ui::mojom::BrowserColorVariant::kSystem) {
     key.scheme_variant = GetSchemeVariant(color_variant);
   }
 
   // frame_type.
   key.frame_type = UseCustomFrame() ? ui::ColorProviderKey::FrameType::kChromium
                                     : ui::ColorProviderKey::FrameType::kNative;
-
-  // app_controller.
-  auto* app_controller = browser_view_->browser()->app_controller();
-  key.app_controller = app_controller;
-
-  // is_grayscale.
-  // Incognito mode browser should be forced to grayscale.
-  key.is_grayscale = IsIncognitoBrowser() ||
-                     (theme_service && theme_service->GetIsGrayscale());
+#if BUILDFLAG(IS_WIN)
+  if (theme_service && theme_service->UsingDeviceTheme() && UseCustomFrame()) {
+    key.frame_style = ui::ColorProviderKey::FrameStyle::kSystem;
+  }
+#endif
 
   return key;
 }
 
 void BrowserFrame::OnMenuClosed() {
   menu_runner_.reset();
+}
+
+void BrowserFrame::SelectNativeTheme() {
+#if BUILDFLAG(IS_LINUX)
+  // Use the regular NativeTheme instance if running incognito mode, regardless
+  // of system theme (gtk, qt etc).
+  ui::NativeTheme* native_theme = ui::NativeTheme::GetInstanceForNativeUi();
+  if (IsIncognitoBrowser()) {
+    SetNativeTheme(native_theme);
+    return;
+  }
+
+  // Ignore the system theme for web apps with window-controls-overlay as the
+  // display_override so the web contents can blend with the overlay by using
+  // the developer-provided theme color for a better experience. Context:
+  // https://crbug.com/1219073.
+  const auto* linux_ui_theme =
+      ui::LinuxUiTheme::GetForWindow(GetNativeWindow());
+  SetNativeTheme(linux_ui_theme &&
+                         !browser_view_->AppUsesWindowControlsOverlay()
+                     ? linux_ui_theme->GetNativeTheme()
+                     : native_theme);
+#endif
 }
 
 void BrowserFrame::OnTouchUiChanged() {
@@ -516,32 +668,7 @@ void BrowserFrame::OnTouchUiChanged() {
   } else {
     non_client_view()->InvalidateLayout();
   }
-  GetRootView()->Layout();
-}
-
-void BrowserFrame::SelectNativeTheme() {
-  // Select between regular and Linux toolkit themes.
-  ui::NativeTheme* native_theme = ui::NativeTheme::GetInstanceForNativeUi();
-
-  // Use the regular NativeTheme instance if running incognito mode, regardless
-  // of system theme (gtk, qt etc).
-  if (IsIncognitoBrowser()) {
-    SetNativeTheme(native_theme);
-    return;
-  }
-
-#if BUILDFLAG(IS_LINUX)
-  const auto* linux_ui_theme =
-      ui::LinuxUiTheme::GetForWindow(GetNativeWindow());
-  // Ignore the system theme for web apps with window-controls-overlay as the
-  // display_override so the web contents can blend with the overlay by using
-  // the developer-provided theme color for a better experience. Context:
-  // https://crbug.com/1219073.
-  if (linux_ui_theme && !browser_view_->AppUsesWindowControlsOverlay())
-    native_theme = linux_ui_theme->GetNativeTheme();
-#endif
-
-  SetNativeTheme(native_theme);
+  GetRootView()->InvalidateLayout();
 }
 
 bool BrowserFrame::RegenerateFrameOnThemeChange(
@@ -570,8 +697,8 @@ bool BrowserFrame::RegenerateFrameOnThemeChange(
   if (need_regenerate) {
     // This is a heavyweight theme change that requires regenerating the frame
     // as well as repainting the browser window.
-    // No need to call ThemeChanged(). It will be implicitly called by
-    // FrameTypeChanged().
+    // Calling FrameTypeChanged() may or may not result in an implicit call to
+    // ThemeChanged().
     FrameTypeChanged();
     return true;
   }

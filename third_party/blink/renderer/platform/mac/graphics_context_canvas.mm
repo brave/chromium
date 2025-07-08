@@ -7,14 +7,10 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "cc/paint/paint_canvas.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 namespace blink {
 
@@ -53,7 +49,7 @@ CGContextRef GraphicsContextCanvas::CgContext() {
 
   // Allocate an offscreen and draw into that, relying on the
   // compositing step to apply skia's clip.
-  base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
+  base::apple::ScopedCFTypeRef<CGColorSpaceRef> color_space(
       CGColorSpaceCreateWithName(kCGColorSpaceSRGB));
 
   bool result = offscreen_.tryAllocN32Pixels(
@@ -67,7 +63,7 @@ CGContextRef GraphicsContextCanvas::CgContext() {
   int display_height = offscreen_.height();
   cg_context_.reset(CGBitmapContextCreate(
       offscreen_.getPixels(), offscreen_.width(), offscreen_.height(), 8,
-      offscreen_.rowBytes(), color_space,
+      offscreen_.rowBytes(), color_space.get(),
       uint32_t{kCGBitmapByteOrder32Host} | kCGImageAlphaPremultipliedFirst));
   DCHECK(cg_context_);
 
@@ -77,7 +73,8 @@ CGContextRef GraphicsContextCanvas::CgContext() {
   matrix.postScale(bitmap_scale_factor_, -bitmap_scale_factor_);
   matrix.postTranslate(0, SkIntToScalar(display_height));
 
-  CGContextConcatCTM(cg_context_, skia::SkMatrixToCGAffineTransform(matrix));
+  CGContextConcatCTM(cg_context_.get(),
+                     skia::SkMatrixToCGAffineTransform(matrix));
 
   return cg_context_.get();
 }

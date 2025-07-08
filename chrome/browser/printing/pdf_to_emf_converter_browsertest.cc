@@ -2,12 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/printing/pdf_to_emf_converter.h"
 
-#include <stdint.h>
 #include <windows.h>
 
+#include <stdint.h>
+
 #include <limits>
+#include <optional>
+#include <string_view>
 
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
@@ -26,7 +34,6 @@
 #include "printing/metafile.h"
 #include "printing/pdf_render_settings.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #ifndef NTDDI_WIN10_VB  // Windows 10.0.19041
 #error "Older Windows SDK unsupported"
@@ -43,7 +50,7 @@ constexpr size_t kHeaderSize = sizeof(ENHMETAHEADER);
 
 constexpr uint32_t kInvalidPageCount = std::numeric_limits<uint32_t>::max();
 
-const absl::optional<bool> kUseSkiaOptions[]{absl::nullopt, true, false};
+const std::optional<bool> kUseSkiaOptions[]{std::nullopt, true, false};
 
 void StartCallbackImpl(base::OnceClosure quit_closure,
                        uint32_t* page_count_out,
@@ -66,15 +73,16 @@ void GetPageCallbackImpl(base::OnceClosure quit_closure,
 // `page_number` is 0-based. Returned result has 1-based page number.
 std::string GetFileNameForPageNumber(const std::string& name, int page_number) {
   std::string ret = name;
-  ret += std::to_string(page_number + 1);
+  ret += base::NumberToString(page_number + 1);
   ret += ".emf";
   return ret;
 }
 
 std::unique_ptr<ENHMETAHEADER> GetEmfHeader(const std::string& emf_data) {
   Emf emf;
-  if (!emf.InitFromData(base::as_bytes(base::make_span(emf_data))))
+  if (!emf.InitFromData(base::as_byte_span(emf_data))) {
     return nullptr;
+  }
 
   auto meta_header = std::make_unique<ENHMETAHEADER>();
   if (GetEnhMetaFileHeader(emf.emf(), kHeaderSize, meta_header.get()) !=
@@ -86,7 +94,7 @@ std::unique_ptr<ENHMETAHEADER> GetEmfHeader(const std::string& emf_data) {
 
 void CompareEmfHeaders(const ENHMETAHEADER& expected_header,
                        const ENHMETAHEADER& actual_header) {
-  // TODO(crbug.com/781403): once the EMF generation is fixed, also compare:
+  // TODO(crbug.com/40548087): once the EMF generation is fixed, also compare:
   //  rclBounds, rclFrame, szlDevice, szlMillimeters and szlMicrometers.
   EXPECT_EQ(expected_header.iType, actual_header.iType);
   EXPECT_EQ(expected_header.nSize, actual_header.nSize);
@@ -105,13 +113,13 @@ void CompareEmfHeaders(const ENHMETAHEADER& expected_header,
 }
 
 std::string HashData(const char* data, size_t len) {
-  auto span = base::make_span(reinterpret_cast<const uint8_t*>(data), len);
-  return base::HexEncode(base::SHA1HashSpan(span));
+  return base::HexEncode(
+      base::SHA1Hash(base::span(reinterpret_cast<const uint8_t*>(data), len)));
 }
 
 class PdfToEmfConverterBrowserTest
     : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<absl::optional<bool>> {
+      public ::testing::WithParamInterface<std::optional<bool>> {
  public:
   PdfToEmfConverterBrowserTest(const PdfToEmfConverterBrowserTest&) = delete;
   PdfToEmfConverterBrowserTest& operator=(const PdfToEmfConverterBrowserTest&) =
@@ -123,8 +131,8 @@ class PdfToEmfConverterBrowserTest
 
   void RunSinglePagePdfToPostScriptConverterTest(
       const PdfRenderSettings& pdf_settings,
-      base::StringPiece input_filename,
-      base::StringPiece output_filename) {
+      std::string_view input_filename,
+      std::string_view output_filename) {
     ASSERT_TRUE(GetTestInput(input_filename));
     ASSERT_TRUE(StartPdfConverter(pdf_settings, 1));
     ASSERT_TRUE(GetPage(0));
@@ -134,7 +142,7 @@ class PdfToEmfConverterBrowserTest
     ComparePageEmfPayload();
   }
 
-  bool GetTestInput(base::StringPiece filename) {
+  bool GetTestInput(std::string_view filename) {
     base::ScopedAllowBlockingForTesting allow_blocking;
 
     if (test_data_dir_.empty())
@@ -158,7 +166,7 @@ class PdfToEmfConverterBrowserTest
     base::RunLoop run_loop;
     uint32_t page_count = kInvalidPageCount;
     pdf_converter_ = PdfConverter::StartPdfConverter(
-        test_input_, pdf_settings, /*use_skia=*/GetParam(),
+        test_input_, pdf_settings, /*use_skia=*/GetParam(), GURL(),
         base::BindOnce(&StartCallbackImpl, run_loop.QuitClosure(),
                        &page_count));
     run_loop.Run();
@@ -180,7 +188,7 @@ class PdfToEmfConverterBrowserTest
     return GetEmfData();
   }
 
-  bool GetPageExpectedEmfData(base::StringPiece filename) {
+  bool GetPageExpectedEmfData(std::string_view filename) {
     base::ScopedAllowBlockingForTesting allow_blocking;
 
     base::FilePath emf_file = test_data_dir_.AppendASCII(filename);
@@ -189,7 +197,7 @@ class PdfToEmfConverterBrowserTest
   }
 
   void ComparePageEmfHeader() {
-    // TODO(crbug.com/781403): the generated data can differ visually. Until
+    // TODO(crbug.com/40548087): the generated data can differ visually. Until
     // this is fixed only checking the output size and parts of the EMF header.
     ASSERT_EQ(expected_current_emf_data_.size(),
               actual_current_emf_data_.size());
@@ -249,7 +257,7 @@ IN_PROC_BROWSER_TEST_P(PdfToEmfConverterBrowserTest, FailureNoTempFile) {
   uint32_t page_count = kInvalidPageCount;
   std::unique_ptr<PdfConverter> pdf_converter = PdfConverter::StartPdfConverter(
       base::MakeRefCounted<base::RefCountedStaticMemory>(), PdfRenderSettings(),
-      /*use_skia=*/GetParam(),
+      /*use_skia=*/GetParam(), GURL(),
       base::BindOnce(&StartCallbackImpl, run_loop.QuitClosure(), &page_count));
   run_loop.Run();
   EXPECT_EQ(0u, page_count);
@@ -257,12 +265,13 @@ IN_PROC_BROWSER_TEST_P(PdfToEmfConverterBrowserTest, FailureNoTempFile) {
 
 IN_PROC_BROWSER_TEST_P(PdfToEmfConverterBrowserTest, FailureBadPdf) {
   scoped_refptr<base::RefCountedStaticMemory> bad_pdf_data =
-      base::MakeRefCounted<base::RefCountedStaticMemory>("0123456789", 10);
+      base::MakeRefCounted<base::RefCountedStaticMemory>(
+          base::byte_span_from_cstring("0123456789"));
 
   base::RunLoop run_loop;
   uint32_t page_count = kInvalidPageCount;
   std::unique_ptr<PdfConverter> pdf_converter = PdfConverter::StartPdfConverter(
-      bad_pdf_data, PdfRenderSettings(), /*use_skia=*/GetParam(),
+      bad_pdf_data, PdfRenderSettings(), /*use_skia=*/GetParam(), GURL(),
       base::BindOnce(&StartCallbackImpl, run_loop.QuitClosure(), &page_count));
   run_loop.Run();
   EXPECT_EQ(0u, page_count);

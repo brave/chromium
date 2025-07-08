@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/modules/webaudio/audio_context.h"
-
 #include <memory>
 
+#include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "media/base/output_device_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_audio_latency_hint.h"
 #include "third_party/blink/public/platform/web_audio_sink_descriptor.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
@@ -23,7 +21,10 @@
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/media/autoplay_policy.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
-#include "third_party/blink/renderer/platform/testing/histogram_tester.h"
+#include "third_party/blink/renderer/modules/webaudio/audio_context.h"
+#include "third_party/blink/renderer/modules/webaudio/testing/mock_web_audio_device.h"
+#include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
@@ -34,39 +35,16 @@ namespace {
 const char* const kAutoplayMetric = "WebAudio.Autoplay";
 const char* const kAutoplayCrossOriginMetric = "WebAudio.Autoplay.CrossOrigin";
 
-class MockWebAudioDeviceForAutoplayTest : public WebAudioDevice {
- public:
-  explicit MockWebAudioDeviceForAutoplayTest(double sample_rate,
-                                             int frames_per_buffer)
-      : sample_rate_(sample_rate), frames_per_buffer_(frames_per_buffer) {}
-  ~MockWebAudioDeviceForAutoplayTest() override = default;
-
-  void Start() override {}
-  void Stop() override {}
-  void Pause() override {}
-  void Resume() override {}
-  double SampleRate() override { return sample_rate_; }
-  int FramesPerBuffer() override { return frames_per_buffer_; }
-  int MaxChannelCount() override { return 2; }
-  media::OutputDeviceStatus CreateSinkAndGetDeviceStatus() override {
-    // In this test, we assume the sink creation always succeeds.
-    return media::OUTPUT_DEVICE_STATUS_OK;
-  }
-
- private:
-  double sample_rate_;
-  int frames_per_buffer_;
-};
-
 class AudioContextAutoplayTestPlatform : public TestingPlatformSupport {
  public:
   std::unique_ptr<WebAudioDevice> CreateAudioDevice(
       const WebAudioSinkDescriptor& sink_descriptor,
       unsigned number_of_output_channels,
       const WebAudioLatencyHint& latency_hint,
+      std::optional<float> context_sample_rate,
       media::AudioRendererSink::RenderCallback*) override {
-    return std::make_unique<MockWebAudioDeviceForAutoplayTest>(
-        AudioHardwareSampleRate(), AudioHardwareBufferSize());
+    return std::make_unique<MockWebAudioDevice>(AudioHardwareSampleRate(),
+                                                AudioHardwareBufferSize());
   }
 
   double AudioHardwareSampleRate() override { return 44100; }
@@ -91,8 +69,10 @@ class AudioContextAutoplayTest
     GetWindow().GetFrame()->GetSettings()->SetAutoplayPolicy(GetParam());
     ChildWindow().GetFrame()->GetSettings()->SetAutoplayPolicy(GetParam());
 
-    histogram_tester_ = std::make_unique<HistogramTester>();
+    histogram_tester_ = std::make_unique<base::HistogramTester>();
   }
+
+  void TearDown() override { MemoryCache::Get()->EvictResources(); }
 
   LocalDOMWindow& GetWindow() {
     return *helper_.LocalMainFrame()->GetFrame()->DomWindow();
@@ -116,14 +96,15 @@ class AudioContextAutoplayTest
     audio_context->RecordAutoplayMetrics();
   }
 
-  HistogramTester* GetHistogramTester() {
+  base::HistogramTester* GetHistogramTester() {
     return histogram_tester_.get();
   }
 
  private:
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<AudioContextAutoplayTestPlatform> platform_;
   frame_test_helpers::WebViewHelper helper_;
-  std::unique_ptr<HistogramTester> histogram_tester_;
+  std::unique_ptr<base::HistogramTester> histogram_tester_;
 };
 
 // Creates an AudioContext without a gesture inside a x-origin child frame.

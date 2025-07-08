@@ -7,31 +7,34 @@
  * 'os-settings-a11y-page' is the small section of advanced settings containing
  * a subpage with Accessibility settings for ChromeOS.
  */
-import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
-import '/shared/settings/controls/settings_toggle_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
+import '../controls/settings_toggle_button.js';
 import '../os_settings_page/os_settings_animated_pages.js';
 import '../os_settings_page/os_settings_subpage.js';
 import '../os_settings_page/settings_card.js';
 import '../settings_shared.css.js';
 
-import {SettingsToggleButtonElement} from '/shared/settings/controls/settings_toggle_button.js';
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteOriginMixin} from '../common/route_origin_mixin.js';
+import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {Section} from '../mojom-webui/routes.mojom-webui.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteOriginMixin} from '../route_origin_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {LanguageHelper, LanguagesModel} from '../os_languages_page/languages_types.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
 import {getTemplate} from './os_a11y_page.html.js';
-import {OsA11yPageBrowserProxy, OsA11yPageBrowserProxyImpl} from './os_a11y_page_browser_proxy.js';
+import type {OsA11yPageBrowserProxy} from './os_a11y_page_browser_proxy.js';
+import {OsA11yPageBrowserProxyImpl} from './os_a11y_page_browser_proxy.js';
 
 export interface OsSettingsA11yPageElement {
   $: {
-    a11yImageLabels: SettingsToggleButtonElement,
+    a11yImageLabelsToggle: SettingsToggleButtonElement,
   };
 }
 
@@ -71,32 +74,11 @@ export class OsSettingsA11yPageElement extends OsSettingsA11yPageElementBase {
         value: false,
       },
 
-      /**
-       * Whether to show accessibility labels settings.
-       */
-      showAccessibilityLabelsSetting_: {
-        type: Boolean,
-        value: false,
-      },
-
-      /**
-       * Whether ChromeVox page migration is enabled.
-       */
-      isAccessibilityChromeVoxPageMigrationEnabled_: {
+      isKioskOldA11ySettingsRedirectionEnabled_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean(
-              'isAccessibilityChromeVoxPageMigrationEnabled');
-        },
-      },
-
-      /**
-       * Whether the user is in kiosk mode.
-       */
-      isKioskModeActive_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('isKioskModeActive');
+              'isKioskOldA11ySettingsRedirectionEnabled');
         },
       },
 
@@ -111,28 +93,33 @@ export class OsSettingsA11yPageElement extends OsSettingsA11yPageElementBase {
       },
 
       /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
+       * Read-only reference to the languages model provided by the
+       * 'settings-languages' instance.
        */
-      supportedSettingIds: {
+      languages: {
         type: Object,
-        value: () => new Set<Setting>([
-          Setting.kA11yQuickSettings,
-          Setting.kGetImageDescriptionsFromGoogle,
-          Setting.kLiveCaption,
-        ]),
       },
+
+      languageHelper: Object,
     };
   }
 
   currentRoute: Route;
+  languages: LanguagesModel;
+  languageHelper: LanguageHelper;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kA11yQuickSettings,
+    Setting.kGetImageDescriptionsFromGoogle,
+    Setting.kLiveCaption,
+  ]);
+
   private browserProxy_: OsA11yPageBrowserProxy;
   private hasScreenReader_: boolean;
-  private isAccessibilityOSSettingsVisibilityEnabled_: boolean;
   private isGuest_: boolean;
-  private isKioskModeActive_: boolean;
+  private isKioskOldA11ySettingsRedirectionEnabled_: boolean;
   private section_: Section;
-  private showAccessibilityLabelsSetting_: boolean;
-  private isAccessibilityChromeVoxPageMigrationEnabled_: boolean;
 
   constructor() {
     super();
@@ -141,14 +128,15 @@ export class OsSettingsA11yPageElement extends OsSettingsA11yPageElementBase {
     this.route = routes.OS_ACCESSIBILITY;
 
     this.browserProxy_ = OsA11yPageBrowserProxyImpl.getInstance();
+
+    if (this.isKioskOldA11ySettingsRedirectionEnabled_) {
+      this.redirectToOldA11ySettings();
+    }
   }
 
-  override ready() {
+  override ready(): void {
     super.ready();
 
-    if (routes.MANAGE_ACCESSIBILITY) {
-      this.addFocusConfig(routes.MANAGE_ACCESSIBILITY, '#subpage-trigger');
-    }
     if (routes.A11Y_TEXT_TO_SPEECH) {
       this.addFocusConfig(
           routes.A11Y_TEXT_TO_SPEECH, '#textToSpeechSubpageTrigger');
@@ -156,32 +144,35 @@ export class OsSettingsA11yPageElement extends OsSettingsA11yPageElementBase {
     if (routes.A11Y_DISPLAY_AND_MAGNIFICATION) {
       this.addFocusConfig(
           routes.A11Y_DISPLAY_AND_MAGNIFICATION,
-          '#display-and-magnification-page-trigger');
+          '#displayAndMagnificationPageTrigger');
     }
     if (routes.A11Y_KEYBOARD_AND_TEXT_INPUT) {
       this.addFocusConfig(
           routes.A11Y_KEYBOARD_AND_TEXT_INPUT,
-          '#keyboard-and-text-input-page-trigger');
+          '#keyboardAndTextInputPageTrigger');
     }
     if (routes.A11Y_CURSOR_AND_TOUCHPAD) {
       this.addFocusConfig(
-          routes.A11Y_CURSOR_AND_TOUCHPAD, '#cursor-and-touchpad-page-trigger');
+          routes.A11Y_CURSOR_AND_TOUCHPAD, '#cursorAndTouchpadPageTrigger');
     }
     if (routes.A11Y_AUDIO_AND_CAPTIONS) {
       this.addFocusConfig(
-          routes.A11Y_AUDIO_AND_CAPTIONS, '#audio-and-captions-page-trigger');
+          routes.A11Y_AUDIO_AND_CAPTIONS, '#audioAndCaptionsPageTrigger');
     }
-
-    this.addWebUiListener(
-        'screen-reader-state-changed',
-        (hasScreenReader: boolean) =>
-            this.onScreenReaderStateChanged_(hasScreenReader));
-
-    // Enables javascript and gets the screen reader state.
-    this.browserProxy_.a11yPageReady();
   }
 
-  override currentRouteChanged(newRoute: Route, prevRoute?: Route) {
+  override connectedCallback(): void {
+    super.connectedCallback();
+
+    const updateScreenReaderState = (hasScreenReader: boolean): void => {
+      this.hasScreenReader_ = hasScreenReader;
+    };
+    this.browserProxy_.getScreenReaderState().then(updateScreenReaderState);
+    this.addWebUiListener(
+        'screen-reader-state-changed', updateScreenReaderState);
+  }
+
+  override currentRouteChanged(newRoute: Route, prevRoute?: Route): void {
     super.currentRouteChanged(newRoute, prevRoute);
 
     if (newRoute === this.route) {
@@ -189,25 +180,19 @@ export class OsSettingsA11yPageElement extends OsSettingsA11yPageElementBase {
     }
   }
 
-  private shouldShowAdditionalFeaturesLink_(isKiosk: boolean, isGuest: boolean):
-      boolean {
-    return !isKiosk && !isGuest;
-  }
-
-  private onScreenReaderStateChanged_(hasScreenReader: boolean): void {
-    this.hasScreenReader_ = hasScreenReader;
-    this.showAccessibilityLabelsSetting_ = this.hasScreenReader_;
+  private redirectToOldA11ySettings(): void {
+    Router.getInstance().navigateTo(routes.MANAGE_ACCESSIBILITY);
   }
 
   private onToggleAccessibilityImageLabels_(): void {
-    const a11yImageLabelsOn = this.$.a11yImageLabels.checked;
+    const a11yImageLabelsOn = this.$.a11yImageLabelsToggle.checked;
     if (a11yImageLabelsOn) {
       this.browserProxy_.confirmA11yImageLabels();
     }
   }
 
-  private onManageAccessibilityFeaturesClick_(): void {
-    Router.getInstance().navigateTo(routes.MANAGE_ACCESSIBILITY);
+  private onSwitchAccessSettingsClick_(): void {
+    Router.getInstance().navigateTo(routes.MANAGE_SWITCH_ACCESS_SETTINGS);
   }
 
   private onTextToSpeechClick_(): void {

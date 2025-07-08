@@ -5,14 +5,15 @@
 #ifndef COMPONENTS_SEGMENTATION_PLATFORM_PUBLIC_RESULT_H_
 #define COMPONENTS_SEGMENTATION_PLATFORM_PUBLIC_RESULT_H_
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/functional/callback_helpers.h"
-#include "base/strings/string_piece.h"
 #include "components/segmentation_platform/public/proto/prediction_result.pb.h"
 #include "components/segmentation_platform/public/trigger.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform {
 
@@ -64,7 +65,10 @@ struct AnnotatedNumericResult {
 
   // Returns the result for the given label. Null if the result failed to fetch
   // or if the label is not available in the output config.
-  absl::optional<float> GetResultForLabel(base::StringPiece label) const;
+  std::optional<float> GetResultForLabel(std::string_view label) const;
+
+  // Returns all the results, a float score for each output label.
+  base::flat_map<std::string, float> GetAllResults() const;
 
   // Various error codes such as model failed or insufficient data collection.
   PredictionStatus status;

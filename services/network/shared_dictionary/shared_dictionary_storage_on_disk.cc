@@ -11,17 +11,26 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/pattern.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_id_helper.h"
+#include "base/types/expected.h"
 #include "net/base/io_buffer.h"
+#include "services/network/public/cpp/request_destination.h"
+#include "services/network/public/mojom/shared_dictionary_error.mojom.h"
+#include "services/network/shared_dictionary/shared_dictionary_cache.h"
 #include "services/network/shared_dictionary/shared_dictionary_manager_on_disk.h"
 #include "services/network/shared_dictionary/shared_dictionary_on_disk.h"
 #include "services/network/shared_dictionary/shared_dictionary_writer_on_disk.h"
+#include "services/network/shared_dictionary/simple_url_pattern_matcher.h"
 #include "url/scheme_host_port.h"
 
 namespace network {
+
+constexpr char kCacheResultHistogramName[] =
+    "Network.SharedDictionary.DocumentRequestCacheResult";
 
 namespace {
 
@@ -43,74 +52,52 @@ void RecordMetadataReadTimeMetrics(
       time_delta);
 }
 
+std::set<mojom::RequestDestination> ToRequestDestinationSet(
+    std::string_view input) {
+  const std::vector<std::string_view> dest_strings = base::SplitStringPiece(
+      input, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::set<mojom::RequestDestination> destinations;
+  for (const auto dest_string : dest_strings) {
+    auto dest = RequestDestinationFromString(
+        dest_string, EmptyRequestDestinationOption::kUseFiveCharEmptyString);
+    if (!dest) {
+      LOG(ERROR) << "Invalid request destination string: " << dest_string;
+      continue;
+    }
+    destinations.insert(*dest);
+  }
+  return destinations;
+}
+
 }  // namespace
 
-// This is a RefCounted subclass of SharedDictionaryOnDisk. This is used to
-// share a SharedDictionaryOnDisk for multiple concurrent network requests.
-class SharedDictionaryStorageOnDisk::RefCountedSharedDictionary
-    : public SharedDictionaryOnDisk,
-      public base::RefCounted<RefCountedSharedDictionary> {
- public:
-  // `on_deleted_closure_runner` will be called when `this` is deleted.
-  RefCountedSharedDictionary(
-      size_t size,
-      const net::SHA256HashValue& hash,
-      const base::UnguessableToken& disk_cache_key_token,
-      SharedDictionaryDiskCache& disk_cahe,
-      base::OnceClosure disk_cache_error_callback,
-      base::ScopedClosureRunner on_deleted_closure_runner)
-      : SharedDictionaryOnDisk(size,
-                               hash,
-                               disk_cache_key_token,
-                               &disk_cahe,
-                               std::move(disk_cache_error_callback)),
-        on_deleted_closure_runner_(std::move(on_deleted_closure_runner)) {}
-
- private:
-  friend class RefCounted<RefCountedSharedDictionary>;
-  ~RefCountedSharedDictionary() override = default;
-
-  base::ScopedClosureRunner on_deleted_closure_runner_;
-};
-
-// This is a subclass of SharedDictionaryOnDisk. This holds a reference to a
-// RefCountedSharedDictionary.
-class SharedDictionaryStorageOnDisk::WrappedSharedDictionary
-    : public SharedDictionary {
- public:
-  explicit WrappedSharedDictionary(
-      scoped_refptr<RefCountedSharedDictionary> ref_counted_shared_dictionary)
-      : ref_counted_shared_dictionary_(
-            std::move(ref_counted_shared_dictionary)) {}
-
-  WrappedSharedDictionary(const WrappedSharedDictionary&) = delete;
-  WrappedSharedDictionary& operator=(const WrappedSharedDictionary&) = delete;
-
-  // SharedDictionary
-  int ReadAll(base::OnceCallback<void(int)> callback) override {
-    return ref_counted_shared_dictionary_->ReadAll(std::move(callback));
-  }
-  scoped_refptr<net::IOBuffer> data() const override {
-    return ref_counted_shared_dictionary_->data();
-  }
-  size_t size() const override {
-    return ref_counted_shared_dictionary_->size();
-  }
-  const net::SHA256HashValue& hash() const override {
-    return ref_counted_shared_dictionary_->hash();
-  }
-
- private:
-  scoped_refptr<RefCountedSharedDictionary> ref_counted_shared_dictionary_;
-};
+SharedDictionaryStorageOnDisk::WrappedDictionaryInfo::WrappedDictionaryInfo(
+    net::SharedDictionaryInfo info,
+    std::unique_ptr<SimpleUrlPatternMatcher> matcher)
+    : net::SharedDictionaryInfo(std::move(info)),
+      matcher_(std::move(matcher)),
+      match_dest_(ToRequestDestinationSet(match_dest_string())) {}
+SharedDictionaryStorageOnDisk::WrappedDictionaryInfo::~WrappedDictionaryInfo() =
+    default;
+SharedDictionaryStorageOnDisk::WrappedDictionaryInfo::WrappedDictionaryInfo(
+    WrappedDictionaryInfo&&) = default;
+SharedDictionaryStorageOnDisk::WrappedDictionaryInfo&
+SharedDictionaryStorageOnDisk::WrappedDictionaryInfo::operator=(
+    WrappedDictionaryInfo&&) = default;
 
 SharedDictionaryStorageOnDisk::SharedDictionaryStorageOnDisk(
     base::WeakPtr<SharedDictionaryManagerOnDisk> manager,
     const net::SharedDictionaryIsolationKey& isolation_key,
-    base::ScopedClosureRunner on_deleted_closure_runner)
+    base::ScopedClosureRunner on_deleted_closure_runner,
+    scoped_refptr<SharedDictionaryCache> dictionary_cache)
     : manager_(manager),
       isolation_key_(isolation_key),
-      on_deleted_closure_runner_(std::move(on_deleted_closure_runner)) {
+      on_deleted_closure_runner_(std::move(on_deleted_closure_runner)),
+      dictionary_cache_(dictionary_cache) {
+  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+      FROM_HERE,
+      base::BindRepeating(&SharedDictionaryStorageOnDisk::OnMemoryPressure,
+                          weak_factory_.GetWeakPtr()));
   manager_->metadata_store().GetDictionaries(
       isolation_key_,
       base::BindOnce(
@@ -129,8 +116,10 @@ SharedDictionaryStorageOnDisk::SharedDictionaryStorageOnDisk(
 
 SharedDictionaryStorageOnDisk::~SharedDictionaryStorageOnDisk() = default;
 
-std::unique_ptr<SharedDictionary>
-SharedDictionaryStorageOnDisk::GetDictionarySync(const GURL& url) {
+scoped_refptr<net::SharedDictionary>
+SharedDictionaryStorageOnDisk::GetDictionarySync(
+    const GURL& url,
+    mojom::RequestDestination destination) {
   if (!get_dictionary_called_) {
     get_dictionary_called_ = true;
     base::UmaHistogramBoolean(
@@ -141,8 +130,8 @@ SharedDictionaryStorageOnDisk::GetDictionarySync(const GURL& url) {
   if (!manager_) {
     return nullptr;
   }
-  net::SharedDictionaryInfo* info =
-      GetMatchingDictionaryFromDictionaryInfoMap(dictionary_info_map_, url);
+  net::SharedDictionaryInfo* info = GetMatchingDictionaryFromDictionaryInfoMap(
+      dictionary_info_map_, url, destination);
   if (!info) {
     return nullptr;
   }
@@ -154,62 +143,109 @@ SharedDictionaryStorageOnDisk::GetDictionarySync(const GURL& url) {
 
   manager_->UpdateDictionaryLastUsedTime(*info);
 
+  // Use the LRU cache before the active-dictionary cache so that the
+  // recentness of the hit will be counted for currently-active dictionaries.
+  scoped_refptr<net::SharedDictionary> dictionary =
+      dictionary_cache_->Get(info->disk_cache_key_token());
+  if (dictionary) {
+    CHECK_EQ(info->size(), dictionary->size());
+    CHECK(info->hash() == dictionary->hash());
+    if (destination == mojom::RequestDestination::kDocument) {
+      base::UmaHistogramEnumeration(kCacheResultHistogramName,
+                                    CacheResult::kCacheHitLRU);
+    }
+    return dictionary;
+  }
+
   auto it = dictionaries_.find(info->disk_cache_key_token());
   if (it != dictionaries_.end()) {
     CHECK_EQ(info->size(), it->second->size());
     CHECK(info->hash() == it->second->hash());
-    return std::make_unique<WrappedSharedDictionary>(it->second.get());
+    if (destination == mojom::RequestDestination::kDocument) {
+      base::UmaHistogramEnumeration(kCacheResultHistogramName,
+                                    CacheResult::kCacheHitActive);
+    }
+    return it->second.get();
   }
 
-  auto ref_counted_shared_dictionary = base::MakeRefCounted<
-      RefCountedSharedDictionary>(
-      info->size(), info->hash(), info->disk_cache_key_token(),
+  if (destination == mojom::RequestDestination::kDocument) {
+    base::UmaHistogramEnumeration(kCacheResultHistogramName,
+                                  CacheResult::kCacheMiss);
+  }
+
+  auto shared_dictionary = base::MakeRefCounted<SharedDictionaryOnDisk>(
+      info->size(), info->hash(), info->id(), info->disk_cache_key_token(),
       manager_->disk_cache(),
       base::BindOnce(
           &SharedDictionaryManagerOnDisk::MaybePostMismatchingEntryDeletionTask,
           manager_),
       base::ScopedClosureRunner(base::BindOnce(
-          &SharedDictionaryStorageOnDisk::OnRefCountedSharedDictionaryDeleted,
+          &SharedDictionaryStorageOnDisk::OnSharedDictionaryDeleted,
           weak_factory_.GetWeakPtr(), info->disk_cache_key_token())));
-  dictionaries_.emplace(info->disk_cache_key_token(),
-                        ref_counted_shared_dictionary.get());
-  return std::make_unique<WrappedSharedDictionary>(
-      std::move(ref_counted_shared_dictionary));
+  dictionaries_.emplace(info->disk_cache_key_token(), shared_dictionary.get());
+
+  if (memory_pressure_level_ ==
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
+    dictionary_cache_->Put(info->disk_cache_key_token(), destination,
+                           shared_dictionary);
+  }
+
+  return shared_dictionary;
 }
 
 void SharedDictionaryStorageOnDisk::GetDictionary(
     const GURL& url,
-    base::OnceCallback<void(std::unique_ptr<SharedDictionary>)> callback) {
+    mojom::RequestDestination destination,
+    base::OnceCallback<void(scoped_refptr<net::SharedDictionary>)> callback) {
   if (is_metadata_ready_) {
-    std::move(callback).Run(GetDictionarySync(url));
+    std::move(callback).Run(GetDictionarySync(url, destination));
     return;
   }
-  pending_get_dictionary_tasks_.emplace_back(
-      base::BindOnce(&SharedDictionaryStorageOnDisk::GetDictionary,
-                     weak_factory_.GetWeakPtr(), url, std::move(callback)));
+  pending_get_dictionary_tasks_.emplace_back(base::BindOnce(
+      &SharedDictionaryStorageOnDisk::GetDictionary, weak_factory_.GetWeakPtr(),
+      url, destination, std::move(callback)));
 }
 
-scoped_refptr<SharedDictionaryWriter>
-SharedDictionaryStorageOnDisk::CreateWriter(const GURL& url,
-                                            base::Time response_time,
-                                            base::TimeDelta expiration,
-                                            const std::string& match) {
+base::expected<scoped_refptr<SharedDictionaryWriter>,
+               mojom::SharedDictionaryError>
+SharedDictionaryStorageOnDisk::CreateWriter(
+    const GURL& url,
+    base::Time last_fetch_time,
+    base::Time response_time,
+    base::TimeDelta expiration,
+    const std::string& match,
+    const std::set<mojom::RequestDestination>& match_dest,
+    const std::string& id,
+    std::unique_ptr<SimpleUrlPatternMatcher> matcher) {
+  CHECK(matcher);
   if (!manager_) {
-    return nullptr;
+    return base::unexpected(
+        mojom::SharedDictionaryError::kWriteErrorShuttingDown);
   }
+
   return manager_->CreateWriter(
-      isolation_key_, url, response_time, expiration, match,
+      isolation_key_, url, last_fetch_time, response_time, expiration, match,
+      match_dest, id,
       base::BindOnce(&SharedDictionaryStorageOnDisk::OnDictionaryWritten,
-                     weak_factory_.GetWeakPtr()));
+                     weak_factory_.GetWeakPtr(), std::move(matcher)));
 }
 
-bool SharedDictionaryStorageOnDisk::IsAlreadyRegistered(
+bool SharedDictionaryStorageOnDisk::UpdateLastFetchTimeIfAlreadyRegistered(
     const GURL& url,
     base::Time response_time,
     base::TimeDelta expiration,
-    const std::string& match) {
-  return IsAlreadyRegisteredInDictionaryInfoMap(
-      dictionary_info_map_, url, response_time, expiration, match);
+    const std::string& match,
+    const std::set<mojom::RequestDestination>& match_dest,
+    const std::string& id,
+    base::Time last_fetch_time) {
+  WrappedDictionaryInfo* matched_info = FindRegisteredInDictionaryInfoMap(
+      dictionary_info_map_, url, response_time, expiration, match, match_dest,
+      id);
+  if (matched_info) {
+    manager_->UpdateDictionaryLastFetchTime(*matched_info, last_fetch_time);
+    return true;
+  }
+  return false;
 }
 
 void SharedDictionaryStorageOnDisk::OnDatabaseRead(
@@ -220,13 +256,22 @@ void SharedDictionaryStorageOnDisk::OnDatabaseRead(
   if (!result.has_value()) {
     return;
   }
-  std::set<base::UnguessableToken> deleted_cache_tokens;
+
   for (auto& info : result.value()) {
     const url::SchemeHostPort scheme_host_port =
         url::SchemeHostPort(info.url());
     const std::string match = info.match();
-    (dictionary_info_map_[scheme_host_port])
-        .insert(std::make_pair(match, std::move(info)));
+    std::unique_ptr<SimpleUrlPatternMatcher> matcher;
+    auto matcher_create_result =
+        SimpleUrlPatternMatcher::Create(match, info.url());
+    if (!matcher_create_result.has_value()) {
+      continue;
+    }
+    matcher = std::move(matcher_create_result.value());
+    WrappedDictionaryInfo wrapped_info(std::move(info), std::move(matcher));
+    auto key = std::make_tuple(match, wrapped_info.match_dest());
+    dictionary_info_map_[scheme_host_port].insert(
+        std::make_pair(std::move(key), std::move(wrapped_info)));
   }
 
   auto callbacks = std::move(pending_get_dictionary_tasks_);
@@ -236,14 +281,17 @@ void SharedDictionaryStorageOnDisk::OnDatabaseRead(
 }
 
 void SharedDictionaryStorageOnDisk::OnDictionaryWritten(
+    std::unique_ptr<SimpleUrlPatternMatcher> matcher,
     net::SharedDictionaryInfo info) {
-  const url::SchemeHostPort scheme_host_port = url::SchemeHostPort(info.url());
-  const std::string match = info.match();
-  (dictionary_info_map_[scheme_host_port])
-      .insert_or_assign(match, std::move(info));
+  WrappedDictionaryInfo wrapped_info(std::move(info), std::move(matcher));
+  const url::SchemeHostPort scheme_host_port =
+      url::SchemeHostPort(wrapped_info.url());
+  auto key = std::make_tuple(wrapped_info.match(), wrapped_info.match_dest());
+  dictionary_info_map_[scheme_host_port].insert_or_assign(
+      key, std::move(wrapped_info));
 }
 
-void SharedDictionaryStorageOnDisk::OnRefCountedSharedDictionaryDeleted(
+void SharedDictionaryStorageOnDisk::OnSharedDictionaryDeleted(
     const base::UnguessableToken& disk_cache_key_token) {
   dictionaries_.erase(disk_cache_key_token);
 }
@@ -262,6 +310,11 @@ void SharedDictionaryStorageOnDisk::OnDictionaryDeleted(
   }
   std::erase_if(dictionary_info_map_,
                 [](const auto& it) { return it.second.empty(); });
+}
+
+void SharedDictionaryStorageOnDisk::OnMemoryPressure(
+    base::MemoryPressureListener::MemoryPressureLevel level) {
+  memory_pressure_level_ = level;
 }
 
 }  // namespace network

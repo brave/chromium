@@ -39,9 +39,9 @@ testing::AssertionResult StatusOk(const Status& status) {
 
 void CheckDefaults(const ClientHints& client_hints) {
   EXPECT_EQ("", client_hints.architecture);
-  EXPECT_EQ(absl::nullopt, client_hints.brands);
+  EXPECT_EQ(std::nullopt, client_hints.brands);
   EXPECT_EQ("", client_hints.bitness);
-  EXPECT_EQ(absl::nullopt, client_hints.full_version_list);
+  EXPECT_EQ(std::nullopt, client_hints.full_version_list);
   EXPECT_EQ("", client_hints.model);
   EXPECT_EQ("", client_hints.platform_version);
   EXPECT_FALSE(client_hints.wow64);
@@ -260,19 +260,23 @@ TEST(ParseCapabilities, Args) {
   args.Append("enable-blink-features=val1");
   args.Append("enable-blink-features=val2,");
   args.Append("--enable-blink-features=val3");
+  args.Append("js-flags=--flag1");
+  args.Append("--js-flags=--flag2");
   base::Value::Dict caps;
   caps.SetByDottedPath("goog:chromeOptions.args", std::move(args));
 
   Status status = capabilities.Parse(caps);
   ASSERT_TRUE(status.IsOk());
 
-  ASSERT_EQ(3u, capabilities.switches.GetSize());
+  ASSERT_EQ(4u, capabilities.switches.GetSize());
   ASSERT_TRUE(capabilities.switches.HasSwitch("arg1"));
   ASSERT_TRUE(capabilities.switches.HasSwitch("arg2"));
   ASSERT_EQ("", capabilities.switches.GetSwitchValue("arg1"));
   ASSERT_EQ("val", capabilities.switches.GetSwitchValue("arg2"));
   ASSERT_EQ("val1,val2,val3",
             capabilities.switches.GetSwitchValue("enable-blink-features"));
+  ASSERT_EQ("--flag1 --flag2",
+            capabilities.switches.GetSwitchValue("js-flags"));
 }
 
 TEST(ParseCapabilities, Prefs) {
@@ -803,11 +807,24 @@ TEST(ParseCapabilities, FedcmAccountsNotBool) {
   EXPECT_FALSE(capabilities.Parse(caps).IsOk());
 }
 
+TEST(ParseCapabilities, MigrateChromeExtensionWindowType) {
+  Capabilities capabilities;
+  base::Value::Dict caps;
+  base::Value::List window_types;
+  window_types.Append("background_page");
+  caps.SetByDottedPath("goog:chromeOptions.windowTypes",
+                       base::Value(std::move(window_types)));
+  EXPECT_EQ(kOk, capabilities.Parse(caps).code());
+  EXPECT_TRUE(capabilities.enable_extension_targets);
+  EXPECT_TRUE(capabilities.window_types.find(WebViewInfo::kBackgroundPage) ==
+              capabilities.window_types.end());
+}
+
 namespace {
 
 base::Value::Dict CreateCapabilitiesDict(const std::string& mobile_emulation) {
   base::Value::Dict result;
-  absl::optional<base::Value> maybe_mobile_emulation =
+  std::optional<base::Value> maybe_mobile_emulation =
       base::JSONReader::Read(mobile_emulation);
   EXPECT_TRUE(maybe_mobile_emulation.has_value() &&
               maybe_mobile_emulation->is_dict());

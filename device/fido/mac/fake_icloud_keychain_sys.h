@@ -9,16 +9,13 @@
 #error "This header is only for Objective C++ compilation units"
 #endif
 
+#include <optional>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "device/fido/discoverable_credential_metadata.h"
 #include "device/fido/mac/icloud_keychain_sys.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
 
 @class NSWindow;
 
@@ -29,6 +26,12 @@ namespace device::fido::icloud_keychain {
 // and install it with `SetSystemInterfaceForTesting`.
 class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
  public:
+  enum class LargeBlobSupportState {
+    kNotSupported,
+    kSupportedAndEnabled,
+    kSupportedButDisabled,
+  };
+
   FakeSystemInterface();
 
   // set_auth_state sets the state that `GetAuthState` will report.
@@ -38,6 +41,13 @@ class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
   // a call to `AuthorizeAndContinue`. This must be called before
   // `AuthorizeAndContinue`.
   void set_next_auth_state(AuthState next_auth_state);
+
+  // cancel_count returns the number of times that `Cancel` has been called.
+  unsigned cancel_count() const { return cancel_count_; }
+
+  // Configure a callback that will be called during each create request.
+  void SetMakeCredentialCallback(
+      base::RepeatingCallback<void(const CtapMakeCredentialRequest&)> callback);
 
   // SetMakeCredentialResult sets the values that will be returned from the next
   // call to `MakeCredential`. If not set, `MakeCredential` will return an
@@ -49,6 +59,10 @@ class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
   // from the next `MakeCredential` call.
   void SetMakeCredentialError(int code);
 
+  // Configure a callback that will be called during each get request.
+  void SetGetAssertionCallback(
+      base::RepeatingCallback<void(const CtapGetAssertionRequest&)> callback);
+
   // SetGetAssertionResult sets the values that will be returned from the next
   // call to `GetAssertion`. If not set, `GetAssertion` will return an error.
   void SetGetAssertionResult(base::span<const uint8_t> authenticator_data,
@@ -56,10 +70,20 @@ class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
                              base::span<const uint8_t> user_id,
                              base::span<const uint8_t> credential_id);
 
+  // SetMakeCredentialError configures the `NSError` that will be returned
+  // from the next `GetAssertion` call.
+  void SetGetAssertionError(int code, std::string msg);
+
   // SetCredentials causes `GetPlatformCredentials` to simulate that the given
   // credentials are on the system. (Note that `GetPlatformCredentials` ignores
   // the requested RP ID so all credentials specified here will be returned.)
   void SetCredentials(std::vector<DiscoverableCredentialMetadata> creds);
+
+  void set_large_blob_write_success(bool did_write) {
+    large_blob_write_success_ = did_write;
+  }
+
+  void set_large_blob_read_data(std::vector<uint8_t> data);
 
   // SystemInterface:
   bool IsAvailable() const override;
@@ -76,12 +100,20 @@ class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
   void MakeCredential(
       NSWindow* window,
       CtapMakeCredentialRequest request,
+      MakeCredentialOptions options,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override;
 
   void GetAssertion(
       NSWindow* window,
       CtapGetAssertionRequest request,
+      LargeBlobAssertionInputs large_blob_inputs,
       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override;
+
+  void Cancel() override;
+
+  void set_large_blob_support_state(LargeBlobSupportState state) {
+    large_blob_support_state_ = state;
+  }
 
  protected:
   friend class base::RefCounted<SystemInterface>;
@@ -89,19 +121,31 @@ class API_AVAILABLE(macos(13.3)) FakeSystemInterface : public SystemInterface {
   ~FakeSystemInterface() override;
 
   AuthState auth_state_ = kAuthAuthorized;
-  absl::optional<AuthState> next_auth_state_;
+  std::optional<AuthState> next_auth_state_;
 
-  absl::optional<int> make_credential_error_code_;
-  absl::optional<std::vector<uint8_t>>
-      make_credential_attestation_object_bytes_;
-  absl::optional<std::vector<uint8_t>> make_credential_credential_id_;
+  base::RepeatingCallback<void(const CtapMakeCredentialRequest&)>
+      create_callback_;
+  base::RepeatingCallback<void(const CtapGetAssertionRequest&)> get_callback_;
 
-  absl::optional<std::vector<uint8_t>> get_assertion_authenticator_data_;
-  absl::optional<std::vector<uint8_t>> get_assertion_signature_;
-  absl::optional<std::vector<uint8_t>> get_assertion_user_id_;
-  absl::optional<std::vector<uint8_t>> get_assertion_credential_id_;
+  std::optional<int> make_credential_error_code_;
+  std::optional<std::vector<uint8_t>> make_credential_attestation_object_bytes_;
+  std::optional<std::vector<uint8_t>> make_credential_credential_id_;
+
+  std::optional<std::pair<int, std::string>> get_assertion_error_;
+  std::optional<std::vector<uint8_t>> get_assertion_authenticator_data_;
+  std::optional<std::vector<uint8_t>> get_assertion_signature_;
+  std::optional<std::vector<uint8_t>> get_assertion_user_id_;
+  std::optional<std::vector<uint8_t>> get_assertion_credential_id_;
+
+  unsigned cancel_count_ = 0;
 
   std::vector<DiscoverableCredentialMetadata> creds_;
+
+  LargeBlobSupportState large_blob_support_state_ =
+      LargeBlobSupportState::kNotSupported;
+
+  bool large_blob_write_success_ = false;
+  std::optional<std::vector<uint8_t>> large_blob_read_data_;
 };
 
 }  // namespace device::fido::icloud_keychain

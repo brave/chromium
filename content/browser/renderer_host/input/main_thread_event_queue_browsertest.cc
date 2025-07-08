@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
 #include <tuple>
 #include <utility>
 
@@ -11,11 +12,11 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/input/synthetic_smooth_scroll_gesture.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/content_switches.h"
@@ -145,7 +146,7 @@ class MainThreadEventQueueBrowserTest : public ContentBrowserTest {
   }
 
   void DoTouchMove() {
-    blink::SyntheticWebTouchEvent events[4];
+    std::array<blink::SyntheticWebTouchEvent, 4> events;
     events[0].PressPoint(10, 10);
     events[1].PressPoint(10, 10);
     events[1].MovePoint(0, 20, 20);

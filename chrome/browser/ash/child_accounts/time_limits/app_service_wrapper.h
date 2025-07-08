@@ -29,8 +29,7 @@ namespace gfx {
 class ImageSkia;
 }  // namespace gfx
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 class AppId;
 struct PauseAppInfo;
@@ -130,7 +129,7 @@ class AppServiceWrapper : public apps::AppRegistryCache::Observer,
   // size |size_hint_in_dp|.
   void GetAppIcon(const AppId& app_id,
                   int size_hint_in_dp,
-                  base::OnceCallback<void(absl::optional<gfx::ImageSkia>)>
+                  base::OnceCallback<void(std::optional<gfx::ImageSkia>)>
                       on_icon_ready) const;
 
   // Returns app service id for the app identified by |app_id|.
@@ -178,10 +177,9 @@ class AppServiceWrapper : public apps::AppRegistryCache::Observer,
                           apps::AppRegistryCache::Observer>
       app_registry_cache_observer_{this};
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile> profile_;
 };
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time
 
 #endif  // CHROME_BROWSER_ASH_CHILD_ACCOUNTS_TIME_LIMITS_APP_SERVICE_WRAPPER_H_

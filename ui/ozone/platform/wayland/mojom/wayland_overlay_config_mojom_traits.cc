@@ -4,13 +4,16 @@
 
 #include "ui/ozone/platform/wayland/mojom/wayland_overlay_config_mojom_traits.h"
 
+#include <string_view>
+#include <variant>
+
 #include "components/crash/core/common/crash_key.h"
 
 namespace mojo {
 
 namespace {
 
-void SetDeserializationCrashKeyString(base::StringPiece str) {
+void SetDeserializationCrashKeyString(std::string_view str) {
   static crash_reporter::CrashKeyString<128> key("wayland_deserialization");
   key.Set(str);
 }
@@ -20,10 +23,10 @@ void SetDeserializationCrashKeyString(base::StringPiece str) {
 // static
 wl::mojom::TransformUnionDataView::Tag
 UnionTraits<wl::mojom::TransformUnionDataView,
-            absl::variant<gfx::OverlayTransform, gfx::Transform>>::
+            std::variant<gfx::OverlayTransform, gfx::Transform>>::
     GetTag(
-        const absl::variant<gfx::OverlayTransform, gfx::Transform>& transform) {
-  if (absl::holds_alternative<gfx::OverlayTransform>(transform)) {
+        const std::variant<gfx::OverlayTransform, gfx::Transform>& transform) {
+  if (std::holds_alternative<gfx::OverlayTransform>(transform)) {
     return wl::mojom::TransformUnionDataView::Tag::kOverlayTransform;
   }
   return wl::mojom::TransformUnionDataView::Tag::kMatrixTransform;
@@ -31,9 +34,9 @@ UnionTraits<wl::mojom::TransformUnionDataView,
 
 // static
 bool UnionTraits<wl::mojom::TransformUnionDataView,
-                 absl::variant<gfx::OverlayTransform, gfx::Transform>>::
+                 std::variant<gfx::OverlayTransform, gfx::Transform>>::
     Read(wl::mojom::TransformUnionDataView data,
-         absl::variant<gfx::OverlayTransform, gfx::Transform>* out) {
+         std::variant<gfx::OverlayTransform, gfx::Transform>* out) {
   switch (data.tag()) {
     case wl::mojom::TransformUnionDataView::Tag::kOverlayTransform:
       gfx::OverlayTransform overlay_transform;
@@ -94,13 +97,6 @@ bool StructTraits<wl::mojom::WaylandOverlayConfigDataView,
     return false;
   if (!data.ReadPriorityHint(&out->priority_hint))
     return false;
-  if (!data.ReadRoundedClipBounds(&out->rounded_clip_bounds))
-    return false;
-  if (!data.ReadBackgroundColor(&out->background_color))
-    return false;
-  if (!data.ReadClipRect(&out->clip_rect))
-    return false;
-
   return true;
 }
 

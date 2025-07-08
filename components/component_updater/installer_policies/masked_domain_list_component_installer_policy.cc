@@ -4,29 +4,25 @@
 
 #include "components/component_updater/installer_policies/masked_domain_list_component_installer_policy.h"
 
-#include <utility>
+#include <optional>
 
 #include "base/feature_list.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/task/thread_pool.h"
 #include "base/version.h"
 #include "components/component_updater/component_installer.h"
+#include "mojo/public/cpp/base/proto_wrapper.h"
+#include "mojo/public/cpp/base/proto_wrapper_passkeys.h"
 #include "services/network/public/cpp/features.h"
-
-using component_updater::ComponentUpdateService;
 
 namespace {
 
 using ListReadyRepeatingCallback = component_updater::
     MaskedDomainListComponentInstallerPolicy::ListReadyRepeatingCallback;
-
-constexpr base::FilePath::CharType kMaskedDomainListFileName[] =
-    FILE_PATH_LITERAL("list.pb");
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the extension.
 // The extension id is: cffplpkejcbdpfnfabnjikeicbedmifn
@@ -37,20 +33,32 @@ constexpr uint8_t kMaskedDomainListPublicKeySHA256[32] = {
 
 constexpr char kMaskedDomainListManifestName[] = "Masked Domain List";
 
+constexpr char kExperimentalVersionAttributeName[] =
+    "_experimental_mdl_version";
+
 constexpr base::FilePath::CharType kMaskedDomainListRelativeInstallDir[] =
     FILE_PATH_LITERAL("MaskedDomainListPreloaded");
 
-std::string ReadFile(const base::FilePath& pb_path) {
-  std::string raw_list;
-  base::ScopedFILE file(FileToFILE(
-      base::File(pb_path, base::File::FLAG_OPEN | base::File::FLAG_READ), "r"));
-  CHECK(base::ReadStreamToString(file.get(), &raw_list));
-  return raw_list;
-}
+constexpr char kMaskedDomainListProto[] = "masked_domain_list.MaskedDomainList";
 
 }  // namespace
 
 namespace component_updater {
+
+// Helper class to read file to named proto class for mojo wrapper.
+class ReadMaskedDomainListProto {
+ public:
+  static std::optional<mojo_base::ProtoWrapper> ReadFile(
+      const base::FilePath& pb_path) {
+    auto file_contents = base::ReadFileToBytes(pb_path);
+    if (file_contents.has_value()) {
+      return mojo_base::ProtoWrapper(
+          file_contents.value(), kMaskedDomainListProto,
+          mojo_base::ProtoWrapperBytes::GetPassKey());
+    }
+    return std::nullopt;
+  }
+};
 
 MaskedDomainListComponentInstallerPolicy::
     MaskedDomainListComponentInstallerPolicy(
@@ -67,6 +75,7 @@ bool MaskedDomainListComponentInstallerPolicy::
   return true;
 }
 
+// static
 bool MaskedDomainListComponentInstallerPolicy::IsEnabled() {
   return base::FeatureList::IsEnabled(network::features::kMaskedDomainList);
 }
@@ -100,12 +109,15 @@ void MaskedDomainListComponentInstallerPolicy::ComponentReady(
     return;
   }
 
+  // Log is consumed by E2E tests. Please CC potassium-engprod@google.com if you
+  // have to change this log.
   VLOG(1) << "Masked Domain List Component ready, version "
           << version.GetString() << " in " << install_dir.value();
 
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
-      base::BindOnce(&ReadFile, GetInstalledPath(install_dir)),
+      base::BindOnce(&ReadMaskedDomainListProto::ReadFile,
+                     GetInstalledPath(install_dir)),
       base::BindOnce(on_list_ready_, version));
 }
 
@@ -124,9 +136,14 @@ base::FilePath MaskedDomainListComponentInstallerPolicy::GetRelativeInstallDir()
 
 void MaskedDomainListComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(kMaskedDomainListPublicKeySHA256,
-               kMaskedDomainListPublicKeySHA256 +
-                   std::size(kMaskedDomainListPublicKeySHA256));
+  GetPublicKeyHash(hash);
+}
+
+// static
+void MaskedDomainListComponentInstallerPolicy::GetPublicKeyHash(
+    std::vector<uint8_t>* hash) {
+  hash->assign(std::begin(kMaskedDomainListPublicKeySHA256),
+               std::end(kMaskedDomainListPublicKeySHA256));
 }
 
 std::string MaskedDomainListComponentInstallerPolicy::GetName() const {
@@ -135,7 +152,12 @@ std::string MaskedDomainListComponentInstallerPolicy::GetName() const {
 
 update_client::InstallerAttributes
 MaskedDomainListComponentInstallerPolicy::GetInstallerAttributes() const {
-  return update_client::InstallerAttributes();
+  return {
+      {
+          kExperimentalVersionAttributeName,
+          network::features::kMaskedDomainListExperimentalVersion.Get(),
+      },
+  };
 }
 
 }  // namespace component_updater

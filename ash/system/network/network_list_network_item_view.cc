@@ -4,6 +4,7 @@
 
 #include "ash/system/network/network_list_network_item_view.h"
 
+#include <optional>
 #include <string>
 
 #include "ash/constants/ash_features.h"
@@ -29,7 +30,6 @@
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -80,7 +80,6 @@ bool NetworkTypeIsConfigurable(NetworkType type) {
       return false;
   }
   NOTREACHED();
-  return false;
 }
 
 ActivationStateType GetNetworkActivationState(
@@ -98,6 +97,15 @@ bool IsCellularNetworkSimLocked(
   DCHECK(
       NetworkTypeMatchesType(network_properties->type, NetworkType::kCellular));
   return network_properties->type_state->get_cellular()->sim_locked;
+}
+
+bool IsCellularNetworkCarrierLocked(
+    const NetworkStatePropertiesPtr& network_properties) {
+  CHECK(
+      NetworkTypeMatchesType(network_properties->type, NetworkType::kCellular));
+  return network_properties->type_state->get_cellular()->sim_locked &&
+         network_properties->type_state->get_cellular()->sim_lock_type ==
+             "network-pin";
 }
 
 bool IsNetworkConnectable(const NetworkStatePropertiesPtr& network_properties) {
@@ -174,9 +182,14 @@ gfx::ImageSkia GetNetworkImageForNetwork(
     const NetworkStatePropertiesPtr& network_properties) {
   gfx::ImageSkia network_image;
 
-  if (IsCellularNetworkUnActivated(network_properties) &&
-      Shell::Get()->session_controller()->login_status() ==
-          LoginStatus::NOT_LOGGED_IN) {
+  if (NetworkTypeMatchesType(network_properties->type,
+                             NetworkType::kCellular) &&
+      IsCellularNetworkCarrierLocked(network_properties)) {
+    network_image = network_icon::GetImageForCarrierLockedNetwork(
+        color_provider, network_icon::ICON_TYPE_LIST);
+  } else if (IsCellularNetworkUnActivated(network_properties) &&
+             Shell::Get()->session_controller()->login_status() ==
+                 LoginStatus::NOT_LOGGED_IN) {
     network_image =
         network_icon::GetImageForPSimPendingActivationWhileLoggedOut(
             color_provider, network_icon::ICON_TYPE_LIST);
@@ -192,12 +205,8 @@ gfx::ImageSkia GetNetworkImageForNetwork(
       // Mobile icons which are not connecting or connected should display a
       // small "X" icon superimposed so that it is clear that they are
       // disconnected.
-      const SkColor icon_color =
-          chromeos::features::IsJellyrollEnabled()
-              ? network_icon::GetDefaultColorForIconType(
-                    color_provider, network_icon::ICON_TYPE_LIST)
-              : AshColorProvider::Get()->GetContentLayerColor(
-                    AshColorProvider::ContentLayerType::kIconColorPrimary);
+      const SkColor icon_color = network_icon::GetDefaultColorForIconType(
+          color_provider, network_icon::ICON_TYPE_LIST);
       network_image = gfx::ImageSkiaOperations::CreateSuperimposedImage(
           image, gfx::CreateVectorIcon(kNetworkMobileNotConnectedXIcon,
                                        image.height(), icon_color));
@@ -219,6 +228,10 @@ gfx::ImageSkia GetNetworkImageForNetwork(
 
 int GetCellularNetworkSubText(
     const NetworkStatePropertiesPtr& network_properties) {
+  if (IsCellularNetworkCarrierLocked(network_properties)) {
+    return IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CARRIER_LOCKED;
+  }
+
   if (IsCellularNetworkUnActivated(network_properties)) {
     if (Shell::Get()->session_controller()->login_status() ==
         LoginStatus::NOT_LOGGED_IN) {
@@ -227,10 +240,12 @@ int GetCellularNetworkSubText(
     return IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CLICK_TO_ACTIVATE;
   }
 
-  if (ShouldShowContactCarrier(network_properties))
+  if (ShouldShowContactCarrier(network_properties)) {
     return IDS_ASH_STATUS_TRAY_NETWORK_UNAVAILABLE_SIM_NETWORK;
-  if (!IsCellularNetworkSimLocked(network_properties))
+  }
+  if (!IsCellularNetworkSimLocked(network_properties)) {
     return 0;
+  }
   if (Shell::Get()->session_controller()->IsActiveUserSessionStarted()) {
     return IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CLICK_TO_UNLOCK;
   }
@@ -253,7 +268,7 @@ void NetworkListNetworkItemView::UpdateViewForNetwork(
 
   Reset();
 
-  if (chromeos::features::IsJellyrollEnabled() && !GetColorProvider()) {
+  if (!GetColorProvider()) {
     return;
   }
 
@@ -269,8 +284,8 @@ void NetworkListNetworkItemView::UpdateViewForNetwork(
     SetupNetworkSubtext();
   }
 
-  if (text_label() && chromeos::features::IsJellyEnabled()) {
-    text_label()->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  if (text_label()) {
+    text_label()->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
     TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
                                           *text_label());
   }
@@ -302,16 +317,15 @@ void NetworkListNetworkItemView::UpdateViewForNetwork(
     network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
   }
 
-  SetAccessibleName(GenerateAccessibilityLabel(label));
-  GetViewAccessibility().OverrideDescription(
-      GenerateAccessibilityDescription());
+  GetViewAccessibility().SetName(GenerateAccessibilityLabel(label));
+  GetViewAccessibility().SetDescription(GenerateAccessibilityDescription());
 }
 
 void NetworkListNetworkItemView::NetworkIconChanged() {
   DCHECK(views::IsViewClass<views::ImageView>(left_view()));
   static_cast<views::ImageView*>(left_view())
-      ->SetImage(
-          GetNetworkImageForNetwork(GetColorProvider(), network_properties_));
+      ->SetImage(ui::ImageModel::FromImageSkia(
+          GetNetworkImageForNetwork(GetColorProvider(), network_properties_)));
 }
 
 void NetworkListNetworkItemView::OnThemeChanged() {
@@ -330,24 +344,10 @@ void NetworkListNetworkItemView::SetupCellularSubtext() {
     return;
   }
 
-  if (text_label() && !chromeos::features::IsJellyEnabled()) {
-    const SkColor primary_text_color =
-        AshColorProvider::Get()->GetContentLayerColor(
-            AshColorProvider::ContentLayerType::kTextColorPrimary);
-    text_label()->SetEnabledColor(primary_text_color);
-  }
-
   SetSubText(l10n_util::GetStringUTF16(cellular_subtext_message_id));
-  if (chromeos::features::IsJellyEnabled()) {
-    sub_text_label()->SetEnabledColorId(cros_tokens::kCrosSysWarning);
-    TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosAnnotation1,
-                                          *sub_text_label());
-  } else {
-    const SkColor sub_text_color =
-        AshColorProvider::Get()->GetContentLayerColor(
-            AshColorProvider::ContentLayerType::kTextColorWarning);
-    sub_text_label()->SetEnabledColor(sub_text_color);
-  }
+  sub_text_label()->SetEnabledColor(cros_tokens::kCrosSysWarning);
+  TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosAnnotation1,
+                                        *sub_text_label());
 }
 
 void NetworkListNetworkItemView::SetupNetworkSubtext() {
@@ -361,7 +361,7 @@ void NetworkListNetworkItemView::SetupNetworkSubtext() {
     return;
   }
 
-  absl::optional<std::u16string> portal_subtext =
+  std::optional<std::u16string> portal_subtext =
       GetPortalStateSubtext(network_properties()->portal_state);
   if (portal_subtext) {
     SetWarningSubText(this, *portal_subtext);
@@ -395,9 +395,8 @@ void NetworkListNetworkItemView::AddPowerStatusView() {
       network_properties()->type_state->get_tether()->battery_percentage;
   PowerStatus::BatteryImageInfo icon_info(icon_color);
   icon_info.charge_percent = battery_percentage;
-  image_icon->SetImage(
-      PowerStatus::GetBatteryImage(icon_info, kMobileNetworkBatteryIconSize,
-                                   image_icon->GetColorProvider()));
+  image_icon->SetImage(PowerStatus::GetBatteryImageModel(
+      icon_info, kMobileNetworkBatteryIconSize));
 
   // Show the numeric battery percentage on hover.
   image_icon->SetTooltipText(base::FormatPercent(battery_percentage));
@@ -412,13 +411,13 @@ void NetworkListNetworkItemView::AddPolicyView() {
   const SkColor icon_color = AshColorProvider::Get()->GetContentLayerColor(
       AshColorProvider::ContentLayerType::kIconColorPrimary);
   controlled_icon->SetImage(
-      gfx::CreateVectorIcon(kSystemMenuBusinessIcon, icon_color));
+      ui::ImageModel::FromVectorIcon(kSystemMenuBusinessIcon, icon_color));
   AddRightView(controlled_icon.release());
 }
 
 std::u16string NetworkListNetworkItemView::GenerateAccessibilityLabel(
     const std::u16string& label) {
-  absl::optional<std::u16string> portal_subtext =
+  std::optional<std::u16string> portal_subtext =
       GetPortalStateSubtext(network_properties()->portal_state);
   if (portal_subtext) {
     return l10n_util::GetStringFUTF16(
@@ -453,7 +452,7 @@ std::u16string NetworkListNetworkItemView::GenerateAccessibilityDescription() {
   std::u16string connection_status;
 
   if (StateIsConnected(network_properties()->connection_state)) {
-    absl::optional<std::u16string> portal_subtext =
+    std::optional<std::u16string> portal_subtext =
         GetPortalStateSubtext(network_properties()->portal_state);
     if (portal_subtext) {
       connection_status = *portal_subtext;
@@ -539,6 +538,10 @@ std::u16string
 NetworkListNetworkItemView::GenerateAccessibilityDescriptionForCellular(
     const std::u16string& connection_status,
     int signal_strength) {
+  if (IsCellularNetworkCarrierLocked(network_properties())) {
+    return l10n_util::GetStringUTF16(
+        IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CARRIER_LOCKED);
+  }
   if (IsCellularNetworkUnActivated(network_properties())) {
     if (Shell::Get()->session_controller()->login_status() ==
         LoginStatus::NOT_LOGGED_IN) {
@@ -598,7 +601,7 @@ NetworkListNetworkItemView::GenerateAccessibilityDescriptionForTether(
       base::FormatPercent(battery_percentage));
 }
 
-BEGIN_METADATA(NetworkListNetworkItemView, NetworkListItemView)
+BEGIN_METADATA(NetworkListNetworkItemView)
 END_METADATA
 
 }  // namespace ash

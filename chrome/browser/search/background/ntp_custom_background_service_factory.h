@@ -29,8 +29,9 @@ class NtpCustomBackgroundServiceFactory : public ProfileKeyedServiceFactory {
   ~NtpCustomBackgroundServiceFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* profile) const override;
+  bool ServiceIsCreatedWithBrowserContext() const override;
 };
 
 #endif  // CHROME_BROWSER_SEARCH_BACKGROUND_NTP_CUSTOM_BACKGROUND_SERVICE_FACTORY_H_

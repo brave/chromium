@@ -6,78 +6,64 @@ package org.chromium.chrome.browser.tasks.tab_management;
 
 import static android.view.accessibility.AccessibilityEvent.TYPE_VIEW_FOCUSED;
 
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.ANIMATE_VISIBILITY_CHANGES;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.BOTTOM_CONTROLS_HEIGHT;
+import static org.chromium.build.NullUtil.assumeNonNull;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.BLOCK_TOUCH_INPUT;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.BOTTOM_PADDING;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.BROWSER_CONTROLS_STATE_PROVIDER;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.FETCH_VIEW_BY_INDEX_CALLBACK;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.FOCUS_TAB_INDEX_FOR_ACCESSIBILITY;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.GET_VISIBLE_RANGE_CALLBACK;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.INITIAL_SCROLL_INDEX;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.IS_INCOGNITO;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.IS_VISIBLE;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.IS_CLIP_TO_PADDING;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.IS_CONTENT_SENSITIVE;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.IS_SCROLLING_SUPPLIER_CALLBACK;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.MODE;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.SHADOW_TOP_OFFSET;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.TOP_MARGIN;
-import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.VISIBILITY_LISTENER;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.PAGE_KEY_LISTENER;
+import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerProperties.SUPPRESS_ACCESSIBILITY;
 
 import android.app.Activity;
 import android.graphics.Rect;
+import android.os.Build;
 import android.view.View;
-import android.widget.FrameLayout;
 
+import androidx.core.util.Function;
+import androidx.core.util.Pair;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.RecyclerView.OnScrollListener;
 
+import org.chromium.base.Callback;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.tab.TabUtils;
-import org.chromium.chrome.browser.theme.ThemeUtils;
-import org.chromium.chrome.tab_ui.R;
-import org.chromium.components.browser_ui.styles.ChromeColors;
-import org.chromium.ui.base.ViewUtils;
+import org.chromium.chrome.browser.tasks.tab_management.TabListCoordinator.TabListMode;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
-/**
- * ViewBinder for TabListRecyclerView.
- */
+/** ViewBinder for {@link TabListRecyclerView}. */
+@NullMarked
 class TabListContainerViewBinder {
     /**
      * Bind the given model to the given view, updating the payload in propertyKey.
+     *
      * @param model The model to use.
      * @param view The View to use.
      * @param propertyKey The key for the property to update for.
      */
     public static void bind(
             PropertyModel model, TabListRecyclerView view, PropertyKey propertyKey) {
-        if (IS_VISIBLE == propertyKey) {
-            updateMargins(model, view);
-            if (model.get(IS_VISIBLE)) {
-                view.startShowing(model.get(ANIMATE_VISIBILITY_CHANGES));
-            } else {
-                view.startHiding(model.get(ANIMATE_VISIBILITY_CHANGES));
-            }
-        } else if (IS_INCOGNITO == propertyKey) {
-            int primaryBackgroundColor = ChromeColors.getPrimaryBackgroundColor(
-                    view.getContext(), model.get(IS_INCOGNITO));
-            view.setBackgroundColor(primaryBackgroundColor);
-            view.setToolbarHairlineColor(ThemeUtils.getToolbarHairlineColor(
-                    view.getContext(), primaryBackgroundColor, model.get(IS_INCOGNITO)));
-        } else if (VISIBILITY_LISTENER == propertyKey) {
-            view.setVisibilityListener(model.get(VISIBILITY_LISTENER));
+        if (BLOCK_TOUCH_INPUT == propertyKey) {
+            view.setBlockTouchInput(model.get(BLOCK_TOUCH_INPUT));
         } else if (INITIAL_SCROLL_INDEX == propertyKey) {
-            int index = (Integer) model.get(INITIAL_SCROLL_INDEX);
+            int index = model.get(INITIAL_SCROLL_INDEX);
             int offset = computeOffset(view, model);
             // RecyclerView#scrollToPosition(int) behaves incorrectly first time after cold start.
-            ((LinearLayoutManager) view.getLayoutManager())
+            assumeNonNull((LinearLayoutManager) view.getLayoutManager())
                     .scrollToPositionWithOffset(index, offset);
-        } else if (TOP_MARGIN == propertyKey) {
-            updateMargins(model, view);
-        } else if (BOTTOM_CONTROLS_HEIGHT == propertyKey) {
-            updateMargins(model, view);
-        } else if (SHADOW_TOP_OFFSET == propertyKey) {
-            view.setShadowTopOffset(model.get(SHADOW_TOP_OFFSET));
-        } else if (BOTTOM_PADDING == propertyKey) {
-            view.setBottomPadding(model.get(BOTTOM_PADDING));
         } else if (FOCUS_TAB_INDEX_FOR_ACCESSIBILITY == propertyKey) {
             int index = model.get(FOCUS_TAB_INDEX_FOR_ACCESSIBILITY);
             RecyclerView.ViewHolder selectedViewHolder =
@@ -86,32 +72,62 @@ class TabListContainerViewBinder {
             View focusView = selectedViewHolder.itemView;
             focusView.requestFocus();
             focusView.sendAccessibilityEvent(TYPE_VIEW_FOCUSED);
+        } else if (BOTTOM_PADDING == propertyKey) {
+            int left = view.getPaddingLeft();
+            int top = view.getPaddingTop();
+            int right = view.getPaddingRight();
+            int bottom = model.get(BOTTOM_PADDING);
+            view.setPadding(left, top, right, bottom);
+        } else if (IS_CLIP_TO_PADDING == propertyKey) {
+            view.setClipToPadding(model.get(IS_CLIP_TO_PADDING));
+        } else if (FETCH_VIEW_BY_INDEX_CALLBACK == propertyKey) {
+            Callback<Function<Integer, View>> callback = model.get(FETCH_VIEW_BY_INDEX_CALLBACK);
+            callback.onResult(
+                    (Integer index) -> {
+                        RecyclerView.ViewHolder viewHolder =
+                                view.findViewHolderForAdapterPosition(index);
+                        return viewHolder == null ? null : viewHolder.itemView;
+                    });
+        } else if (GET_VISIBLE_RANGE_CALLBACK == propertyKey) {
+            Callback<Supplier<Pair<Integer, Integer>>> callback =
+                    model.get(GET_VISIBLE_RANGE_CALLBACK);
+            callback.onResult(
+                    () -> {
+                        LinearLayoutManager layoutManager =
+                                (LinearLayoutManager) view.getLayoutManager();
+                        assumeNonNull(layoutManager);
+                        int start = layoutManager.findFirstCompletelyVisibleItemPosition();
+                        int end = layoutManager.findLastCompletelyVisibleItemPosition();
+                        return new Pair<>(start, end);
+                    });
+        } else if (IS_SCROLLING_SUPPLIER_CALLBACK == propertyKey) {
+            Callback<ObservableSupplier<Boolean>> callback =
+                    model.get(IS_SCROLLING_SUPPLIER_CALLBACK);
+            ObservableSupplierImpl<Boolean> supplier = new ObservableSupplierImpl<>(false);
+            view.addOnScrollListener(
+                    new OnScrollListener() {
+                        @Override
+                        public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                            supplier.set(newState != RecyclerView.SCROLL_STATE_IDLE);
+                        }
+                    });
+            callback.onResult(supplier);
+        } else if (IS_CONTENT_SENSITIVE == propertyKey) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                view.setContentSensitivity(
+                        model.get(IS_CONTENT_SENSITIVE)
+                                ? View.CONTENT_SENSITIVITY_SENSITIVE
+                                : View.CONTENT_SENSITIVITY_NOT_SENSITIVE);
+            }
+        } else if (PAGE_KEY_LISTENER == propertyKey) {
+            view.setPageKeyListenerCallback(model.get(PAGE_KEY_LISTENER));
+        } else if (SUPPRESS_ACCESSIBILITY == propertyKey) {
+            int important =
+                    model.get(SUPPRESS_ACCESSIBILITY)
+                            ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                            : View.IMPORTANT_FOR_ACCESSIBILITY_AUTO;
+            view.setImportantForAccessibility(important);
         }
-    }
-
-    private static void updateMargins(PropertyModel model, TabListRecyclerView view) {
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) view.getLayoutParams();
-        final int oldTopMargin = params.topMargin;
-        final int oldBottomMargin = params.bottomMargin;
-        if (model.get(IS_VISIBLE)) {
-            params.topMargin = model.get(TOP_MARGIN);
-            params.bottomMargin = model.get(BOTTOM_CONTROLS_HEIGHT);
-        } else {
-            // Treat the bottom margin as 0 to avoid layout shift in tab shrink animations.
-            // IS_VISIBLE will be set to true after the tab shrink animation see
-            // {@link TabSwitcherMediator#showTabSwitcherView(boolean)}.
-            params.bottomMargin = 0;
-
-            // Leave the top margin unchanged to avoid relayouts during scrolls and for top
-            // toolbar indicators while the view is not visible. Once visible the offset will
-            // adjust accordingly.
-        }
-        if (!model.get(IS_VISIBLE)
-                || (oldTopMargin == params.topMargin && oldBottomMargin == params.bottomMargin)) {
-            return;
-        }
-
-        ViewUtils.requestLayout(view, "TabListContainerViewBinder.bind updateMargins");
     }
 
     private static int computeOffset(TabListRecyclerView view, PropertyModel model) {
@@ -130,37 +146,20 @@ class TabListContainerViewBinder {
                     .getWindowVisibleDisplayFrame(frame);
             width = frame.width();
             // Remove toolbar height from height.
-            height = frame.height()
-                    - Math.round(browserControlsStateProvider.getTopVisibleContentOffset());
+            height =
+                    frame.height()
+                            - Math.round(browserControlsStateProvider.getTopVisibleContentOffset());
         }
         if (width <= 0 || height <= 0) return 0;
 
-        @TabListCoordinator.TabListMode
-        int mode = model.get(MODE);
         LinearLayoutManager layoutManager = (LinearLayoutManager) view.getLayoutManager();
-        if (mode == TabListCoordinator.TabListMode.GRID) {
-            GridLayoutManager gridLayoutManager = (GridLayoutManager) layoutManager;
-            int cardWidth = width / gridLayoutManager.getSpanCount();
-            int cardHeight = TabUtils.deriveGridCardHeight(
-                    cardWidth, view.getContext(), browserControlsStateProvider);
-            return Math.max(0, height / 2 - cardHeight / 2);
-        }
-        if (mode == TabListCoordinator.TabListMode.CAROUSEL) {
-            return Math.max(0,
-                    width / 2
-                            - view.getContext().getResources().getDimensionPixelSize(
-                                      R.dimen.tab_carousel_card_width)
-                                    / 2);
-        }
-        if (mode == TabListCoordinator.TabListMode.LIST) {
-            // Avoid divide by 0 when there are no tabs.
-            if (layoutManager.getItemCount() == 0) return 0;
-
-            return Math.max(0,
-                    height / 2
-                            - view.computeVerticalScrollRange() / layoutManager.getItemCount() / 2);
-        }
-        assert false : "Unexpected MODE when setting INITIAL_SCROLL_INDEX.";
-        return 0;
+        assert model.get(MODE) == TabListMode.GRID;
+        GridLayoutManager gridLayoutManager = (GridLayoutManager) layoutManager;
+        assumeNonNull(gridLayoutManager);
+        int cardWidth = width / gridLayoutManager.getSpanCount();
+        int cardHeight =
+                TabUtils.deriveGridCardHeight(
+                        cardWidth, view.getContext(), browserControlsStateProvider);
+        return Math.max(0, height / 2 - cardHeight / 2);
     }
 }

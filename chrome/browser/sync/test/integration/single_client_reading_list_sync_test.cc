@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/location.h"
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/reading_list/reading_list_model_factory.h"
 #include "chrome/browser/sync/test/integration/fake_server_match_status_checker.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
@@ -10,37 +12,54 @@
 #include "components/reading_list/core/mock_reading_list_model_observer.h"
 #include "components/reading_list/core/reading_list_entry.h"
 #include "components/reading_list/core/reading_list_model.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/loopback_server/persistent_unique_client_entity.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/proto_value_conversions.h"
 #include "components/sync/protocol/reading_list_specifics.pb.h"
+#include "components/sync/test/test_matchers.h"
+#include "components/version_info/version_info.h"
 #include "content/public/test/browser_test.h"
 
-using testing::Eq;
-
 namespace {
+
+using syncer::IsEmptyLocalDataDescription;
+using syncer::MatchesDeletionOrigin;
+using syncer::MatchesLocalDataDescription;
+using syncer::MatchesLocalDataItemModel;
+using testing::ElementsAre;
+using testing::Eq;
+using testing::IsEmpty;
+
+std::set<GURL> GetReadingListURLsFromFakeServer(
+    fake_server::FakeServer* fake_server) {
+  std::vector<sync_pb::SyncEntity> entities =
+      fake_server->GetSyncEntitiesByDataType(syncer::READING_LIST);
+  std::set<GURL> urls;
+  std::transform(entities.begin(), entities.end(),
+                 std::inserter(urls, urls.begin()),
+                 [](const sync_pb::SyncEntity& entity) {
+                   return GURL(entity.specifics().reading_list().url());
+                 });
+  return urls;
+}
 
 // Checker used to block until the reading list URLs on the server match a
 // given set of expected reading list URLs.
 class ServerReadingListURLsEqualityChecker
     : public fake_server::FakeServerMatchStatusChecker {
  public:
-  explicit ServerReadingListURLsEqualityChecker(std::set<GURL> expected_urls)
+  explicit ServerReadingListURLsEqualityChecker(
+      const std::set<GURL>& expected_urls)
       : expected_urls_(std::move(expected_urls)) {}
 
   bool IsExitConditionSatisfied(std::ostream* os) override {
     *os << "Waiting for server-side reading list URLs to match expected.";
 
-    std::vector<sync_pb::SyncEntity> entities =
-        fake_server()->GetSyncEntitiesByModelType(syncer::READING_LIST);
-
-    std::set<GURL> actual_urls;
-    for (const sync_pb::SyncEntity& entity : entities) {
-      actual_urls.insert(GURL(entity.specifics().reading_list().url()));
-    }
+    const std::set<GURL> actual_urls =
+        GetReadingListURLsFromFakeServer(fake_server());
 
     testing::StringMatchResultListener result_listener;
     const bool matches = ExplainMatchResult(
@@ -60,6 +79,46 @@ class ServerReadingListURLsEqualityChecker
   const std::set<GURL> expected_urls_;
 };
 
+class LocalReadingListURLsEqualityChecker
+    : public StatusChangeChecker,
+      public testing::NiceMock<MockReadingListModelObserver> {
+ public:
+  LocalReadingListURLsEqualityChecker(ReadingListModel* model,
+                                      const base::flat_set<GURL>& expected_urls)
+      : model_(model), expected_urls_(std::move(expected_urls)) {
+    model_->AddObserver(this);
+  }
+
+  LocalReadingListURLsEqualityChecker(
+      const LocalReadingListURLsEqualityChecker&) = delete;
+  LocalReadingListURLsEqualityChecker& operator=(
+      const LocalReadingListURLsEqualityChecker&) = delete;
+
+  ~LocalReadingListURLsEqualityChecker() override {
+    model_->RemoveObserver(this);
+  }
+
+  bool IsExitConditionSatisfied(std::ostream* os) override {
+    *os << "Waiting for local reading list URLs to match the expected URLs.";
+
+    testing::StringMatchResultListener result_listener;
+    const bool matches =
+        ExplainMatchResult(testing::ContainerEq(expected_urls_),
+                           model_->GetKeys(), &result_listener);
+    *os << result_listener.str();
+    return matches;
+  }
+
+  // ReadingListModelObserver implementation.
+  void ReadingListDidApplyChanges(ReadingListModel* model) override {
+    CheckExitCondition();
+  }
+
+ private:
+  const raw_ptr<ReadingListModel> model_;
+  const base::flat_set<GURL> expected_urls_;
+};
+
 // Checker used to block until the reading set titles on the server match a
 // given set of expected reading list titles.
 class ServerReadingListTitlesEqualityChecker
@@ -73,7 +132,7 @@ class ServerReadingListTitlesEqualityChecker
     *os << "Waiting for server-side reading list titles to match expected.";
 
     std::vector<sync_pb::SyncEntity> entities =
-        fake_server()->GetSyncEntitiesByModelType(syncer::READING_LIST);
+        fake_server()->GetSyncEntitiesByDataType(syncer::READING_LIST);
 
     std::set<std::string> actual_titles;
     for (const sync_pb::SyncEntity& entity : entities) {
@@ -127,11 +186,12 @@ std::unique_ptr<syncer::LoopbackServerEntity> CreateTestReadingListEntity(
 class SingleClientReadingListSyncTest : public SyncTest {
  public:
   SingleClientReadingListSyncTest() : SyncTest(SINGLE_CLIENT) {
+#if !BUILDFLAG(IS_ANDROID)
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {syncer::kReadingListEnableDualReadingListModel,
-         syncer::kReadingListEnableSyncTransportModeUponSignIn},
+        {syncer::kReadingListEnableSyncTransportModeUponSignIn},
         /*disabled_features=*/{});
+#endif  // !BUILDFLAG(IS_ANDROID)
   }
 
   SingleClientReadingListSyncTest(const SingleClientReadingListSyncTest&) =
@@ -150,6 +210,19 @@ class SingleClientReadingListSyncTest : public SyncTest {
     return true;
   }
 
+  void SignInAndWaitForReadingListActive() {
+    ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
+    // Note: Depending on the state of feature flags (specifically
+    // kReplaceSyncPromosWithSignInPromos), ReadingList may or may not be
+    // considered selected by default.
+    GetSyncService(0)->GetUserSettings()->SetSelectedType(
+        syncer::UserSelectableType::kReadingList, true);
+    ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
+    ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
+    ASSERT_TRUE(
+        GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  }
+
   raw_ptr<ReadingListModel> model() {
     return ReadingListModelFactory::GetForBrowserContext(GetProfile(0));
   }
@@ -157,12 +230,6 @@ class SingleClientReadingListSyncTest : public SyncTest {
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
-
-// TODO(crbug.com/1455032): The following ifdef should be removed.
-// Currently Android explicitly enables Sync-the-feature upon
-// `SignInPrimaryAccount()` while the following tests are expecting the sync
-// feature to be disabled.
-#if !BUILDFLAG(IS_ANDROID)
 
 IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                        ShouldDownloadAccountDataUponSignin) {
@@ -173,11 +240,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
   ASSERT_THAT(model()->size(), Eq(0ul));
 
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-  EXPECT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  SignInAndWaitForReadingListActive();
 
   EXPECT_THAT(model()->size(), Eq(1ul));
   EXPECT_FALSE(model()->NeedsExplicitUploadToSyncServer(kUrl));
@@ -195,10 +258,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
   ASSERT_THAT(model()->size(), Eq(1ul));
 
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  SignInAndWaitForReadingListActive();
   ASSERT_THAT(model()->size(), Eq(1ul));
 
   const GURL kAccountUrl("http://account_url.com/");
@@ -218,28 +278,54 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                        ShouldDeleteTheDeletedEntryFromTheServer) {
   const GURL kUrl("http://url.com/");
+  const base::Location kLocation = FROM_HERE;
+
   fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
 
   ASSERT_TRUE(SetupClients());
-
   ASSERT_THAT(model()->size(), Eq(0ul));
-
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-  ASSERT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
-
+  SignInAndWaitForReadingListActive();
   ASSERT_THAT(model()->size(), Eq(1ul));
 
-  model()->RemoveEntryByURL(kUrl);
+  model()->RemoveEntryByURL(kUrl, kLocation);
   ASSERT_THAT(model()->size(), Eq(0ul));
   EXPECT_TRUE(ServerReadingListURLsEqualityChecker({}).Wait());
+
+  EXPECT_THAT(GetFakeServer()->GetCommittedDeletionOrigins(
+                  syncer::DataType::READING_LIST),
+              ElementsAre(MatchesDeletionOrigin(
+                  version_info::GetVersionNumber(), kLocation)));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldDeleteAllEntriesFromTheServer) {
+  const base::Location kLocation = FROM_HERE;
+
+  fake_server_->InjectEntity(
+      CreateTestReadingListEntity(GURL("http://url1.com/"), "entry_title1"));
+  fake_server_->InjectEntity(
+      CreateTestReadingListEntity(GURL("http://url2.com/"), "entry_title2"));
+
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+  SignInAndWaitForReadingListActive();
+  ASSERT_THAT(model()->size(), Eq(2ul));
+
+  model()->DeleteAllEntries(kLocation);
+  ASSERT_THAT(model()->size(), Eq(0ul));
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({}).Wait());
+
+  EXPECT_THAT(
+      GetFakeServer()->GetCommittedDeletionOrigins(
+          syncer::DataType::READING_LIST),
+      ElementsAre(
+          MatchesDeletionOrigin(version_info::GetVersionNumber(), kLocation),
+          MatchesDeletionOrigin(version_info::GetVersionNumber(), kLocation)));
 }
 
 // ChromeOS doesn't have the concept of sign-out, so this only exists on other
 // platforms.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                        ShouldDeleteAccountDataUponSignout) {
@@ -250,11 +336,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
   ASSERT_THAT(model()->size(), Eq(0ul));
 
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-  ASSERT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  SignInAndWaitForReadingListActive();
 
   ASSERT_THAT(model()->size(), Eq(1ul));
 
@@ -284,11 +366,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
   ASSERT_THAT(model()->size(), Eq(2ul));
 
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-  ASSERT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  SignInAndWaitForReadingListActive();
 
   ASSERT_THAT(model()->size(), Eq(3ul));
   ASSERT_TRUE(model()->NeedsExplicitUploadToSyncServer(kLocalUrl));
@@ -332,7 +410,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
 
 IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                        ShouldUploadAllEntriesToTheSyncServer) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+  ASSERT_TRUE(SetupClients());
   ASSERT_THAT(model()->size(), Eq(0ul));
 
   const GURL kUrlA("http://url_a.com/");
@@ -345,28 +423,424 @@ IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
                              reading_list::ADDED_VIA_CURRENT_APP,
                              /*estimated_read_time=*/base::TimeDelta());
 
-  ASSERT_THAT(model()->size(), Eq(2ul));
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
 
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
-  ASSERT_TRUE(
-      GetSyncService(0)->GetActiveDataTypes().Has(syncer::READING_LIST));
+  SignInAndWaitForReadingListActive();
 
-  ASSERT_THAT(model()->size(), Eq(2ul));
-  ASSERT_TRUE(ServerReadingListURLsEqualityChecker({}).Wait());
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
 
   model()->MarkAllForUploadToSyncServerIfNeeded();
 
-  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({{kUrlA, kUrlB}}).Wait());
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({kUrlA, kUrlB}).Wait());
   EXPECT_THAT(model()->size(), Eq(2ul));
 
   GetClient(0)->SignOutPrimaryAccount();
   EXPECT_THAT(model()->size(), Eq(0ul));
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteCreation) {
+  ASSERT_TRUE(SetupClients());
 
-#endif  // !BUILDFLAG(IS_ANDROID)
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kEntryWithCorruptId("http://EntryWithCorruptId.com/");
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptEntry =
+      CreateTestReadingListEntity(kEntryWithCorruptId, "entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptEntry->GetSpecifics();
+  // An empty entry id makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_entry_id() = "";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptEntry->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptEntry));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker(
+                  {kUrl, GURL("http://EntryWithCorruptId.com/")})
+                  .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(model(), {kUrl}).Wait());
+
+  EXPECT_THAT(model()->size(), Eq(1ul));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithEmptyUrlUponIncrementalRemoteCreation) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptEntry =
+      CreateTestReadingListEntity(GURL("http://CorruptEntry.com/"),
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptEntry->GetSpecifics();
+  // An empty URL makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_url() = "";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptEntry->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptEntry));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker({kUrl, GURL("")}).Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(model(), {kUrl}).Wait());
+
+  EXPECT_THAT(model()->size(), Eq(1ul));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithUnequalEntryIdAndUrlUponIncrementalRemoteCreation) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptEntry =
+      CreateTestReadingListEntity(GURL("http://CorruptEntry.com/"),
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptEntry->GetSpecifics();
+  // Unequal entry id and url makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_entry_id() =
+      "http://UnequalEntryIdAndUrl.com/";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptEntry->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptEntry));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker(
+                  {kUrl, GURL("http://CorruptEntry.com/")})
+                  .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(model(), {kUrl}).Wait());
+
+  EXPECT_THAT(model()->size(), Eq(1ul));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithInvalidUrlUponIncrementalRemoteCreation) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptEntry =
+      CreateTestReadingListEntity(GURL("http://CorruptEntry.com/"),
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptEntry->GetSpecifics();
+  // An invalid URL makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_url() = "CorruptEntryURL";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptEntry->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptEntry));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(
+      ServerReadingListURLsEqualityChecker({kUrl, GURL("CorruptEntryURL")})
+          .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(model(), {kUrl}).Wait());
+
+  EXPECT_THAT(model()->size(), Eq(1ul));
+}
+
+// TODO: crbug.com/41490059 - Flaky on Android
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteUpdate \
+  DISABLED_ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteUpdate
+#else
+#define MAYBE_ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteUpdate \
+  ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteUpdate
+#endif
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    MAYBE_ShouldFilterEntriesWithEmptyEntryIdUponIncrementalRemoteUpdate) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kEntryWithCorruptRemoteUpdateId(
+      "http://EntryThatWillHaveCorruptRemoteUpdate.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(
+      kEntryWithCorruptRemoteUpdateId, "entry_title"));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(1ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptRemoteUpdate =
+      CreateTestReadingListEntity(kEntryWithCorruptRemoteUpdateId,
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptRemoteUpdate->GetSpecifics();
+  // An empty entry id makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_entry_id() = "";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptRemoteUpdate->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptRemoteUpdate));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker(
+                  {kUrl, kEntryWithCorruptRemoteUpdateId})
+                  .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(
+                  model(), {kUrl, kEntryWithCorruptRemoteUpdateId})
+                  .Wait());
+
+  EXPECT_THAT(model()->size(), Eq(2ul));
+  EXPECT_THAT(model()->GetEntryByURL(kEntryWithCorruptRemoteUpdateId)->Title(),
+              Eq("entry_title"));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithEmptyUrlUponIncrementalRemoteUpdate) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kEntryWithCorruptRemoteUpdateUrl(
+      "http://EntryThatWillHaveCorruptRemoteUpdate.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(
+      kEntryWithCorruptRemoteUpdateUrl, "entry_title"));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(1ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptRemoteUpdate =
+      CreateTestReadingListEntity(kEntryWithCorruptRemoteUpdateUrl,
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptRemoteUpdate->GetSpecifics();
+  // An empty URL makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_url() = "";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptRemoteUpdate->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptRemoteUpdate));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker({kUrl, GURL("")}).Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(
+                  model(), {kUrl, kEntryWithCorruptRemoteUpdateUrl})
+                  .Wait());
+
+  EXPECT_THAT(model()->size(), Eq(2ul));
+  EXPECT_THAT(model()->GetEntryByURL(kEntryWithCorruptRemoteUpdateUrl)->Title(),
+              Eq("entry_title"));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithUnequalEntryIdAndUrlUponIncrementalRemoteUpdate) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kEntryWithCorruptRemoteUpdateId(
+      "http://EntryThatWillHaveCorruptRemoteUpdate.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(
+      kEntryWithCorruptRemoteUpdateId, "entry_title"));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(1ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptRemoteUpdate =
+      CreateTestReadingListEntity(kEntryWithCorruptRemoteUpdateId,
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptRemoteUpdate->GetSpecifics();
+  // Unequal entry id and url makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_entry_id() =
+      "http://UnequalEntryIdAndUrl.com/";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptRemoteUpdate->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptRemoteUpdate));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(ServerReadingListURLsEqualityChecker(
+                  {kUrl, kEntryWithCorruptRemoteUpdateId})
+                  .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(
+                  model(), {kUrl, kEntryWithCorruptRemoteUpdateId})
+                  .Wait());
+
+  EXPECT_THAT(model()->size(), Eq(2ul));
+  EXPECT_THAT(model()->GetEntryByURL(kEntryWithCorruptRemoteUpdateId)->Title(),
+              Eq("entry_title"));
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientReadingListSyncTest,
+    ShouldFilterEntriesWithInvalidUrlUponIncrementalRemoteUpdate) {
+  ASSERT_TRUE(SetupClients());
+
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kEntryWithCorruptRemoteUpdateUrl(
+      "http://EntryThatWillHaveCorruptRemoteUpdate.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(
+      kEntryWithCorruptRemoteUpdateUrl, "entry_title"));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->size(), Eq(1ul));
+
+  std::unique_ptr<syncer::LoopbackServerEntity> kCorruptRemoteUpdate =
+      CreateTestReadingListEntity(kEntryWithCorruptRemoteUpdateUrl,
+                                  "corrupt_entry_title");
+  sync_pb::EntitySpecifics specifics = kCorruptRemoteUpdate->GetSpecifics();
+  // An invalid URL makes it an invalid reading list specifics.
+  *specifics.mutable_reading_list()->mutable_url() = "CorruptUpdateURL";
+  ASSERT_FALSE(ReadingListEntry::IsSpecificsValid(specifics.reading_list()));
+  kCorruptRemoteUpdate->SetSpecifics(specifics);
+  fake_server_->InjectEntity(std::move(kCorruptRemoteUpdate));
+
+  const GURL kUrl("http://url.com/");
+  fake_server_->InjectEntity(CreateTestReadingListEntity(kUrl, "entry_title"));
+
+  ASSERT_TRUE(
+      ServerReadingListURLsEqualityChecker({kUrl, GURL("CorruptUpdateURL")})
+          .Wait());
+  EXPECT_TRUE(LocalReadingListURLsEqualityChecker(
+                  model(), {kUrl, kEntryWithCorruptRemoteUpdateUrl})
+                  .Wait());
+
+  EXPECT_THAT(model()->size(), Eq(2ul));
+  EXPECT_THAT(model()->GetEntryByURL(kEntryWithCorruptRemoteUpdateUrl)->Title(),
+              Eq("entry_title"));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldReturnLocalDataDescriptions) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  EXPECT_THAT(
+      GetClient(0)->GetLocalDataDescriptionAndWait(syncer::READING_LIST),
+      // Items should be sorted by syncer::LocalDataItemModel::DataId.
+      MatchesLocalDataDescription(
+          syncer::DataType::READING_LIST,
+          ElementsAre(MatchesLocalDataItemModel(
+                          kUrlA, syncer::LocalDataItemModel::PageUrlIcon(kUrlA),
+                          /*title=*/"title_a", /*subtitle=*/IsEmpty()),
+                      MatchesLocalDataItemModel(
+                          kUrlB, syncer::LocalDataItemModel::PageUrlIcon(kUrlB),
+                          /*title=*/"title_b", /*subtitle=*/IsEmpty())),
+          /*item_count=*/2u, /*domains=*/ElementsAre("url_a.com", "url_b.com"),
+          /*domain_count=*/2u));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldBatchUploadAllEntries) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  GetSyncService(0)->TriggerLocalDataMigration({syncer::READING_LIST});
+
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({kUrlA, kUrlB}).Wait());
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  GetClient(0)->SignOutPrimaryAccount();
+  EXPECT_THAT(model()->GetKeys(), ElementsAre());
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientReadingListSyncTest,
+                       ShouldBatchUploadSomeEntries) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_THAT(model()->size(), Eq(0ul));
+
+  const GURL kUrlA("http://url_a.com/");
+  model()->AddOrReplaceEntry(kUrlA, "title_a",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  const GURL kUrlB("http://url_b.com/");
+  model()->AddOrReplaceEntry(kUrlB, "title_b",
+                             reading_list::ADDED_VIA_CURRENT_APP,
+                             /*estimated_read_time=*/base::TimeDelta());
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  SignInAndWaitForReadingListActive();
+
+  ASSERT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+  ASSERT_THAT(GetReadingListURLsFromFakeServer(SyncTest::GetFakeServer()),
+              IsEmpty());
+
+  GetSyncService(0)->TriggerLocalDataMigrationForItems(
+      {{syncer::DataType::READING_LIST, {kUrlA}}});
+
+  EXPECT_TRUE(ServerReadingListURLsEqualityChecker({kUrlA}).Wait());
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlA, kUrlB));
+
+  GetClient(0)->SignOutPrimaryAccount();
+  EXPECT_THAT(model()->GetKeys(), ElementsAre(kUrlB));
+}
+
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace

@@ -57,11 +57,11 @@ class MockApiCallFlow : public OAuth2ApiCallFlow {
   MOCK_METHOD0(CreateApiCallHeaders, net::HttpRequestHeaders());
   MOCK_METHOD2(ProcessApiCallSuccess,
                void(const network::mojom::URLResponseHead* head,
-                    std::unique_ptr<std::string> body));
+                    std::optional<std::string> body));
   MOCK_METHOD3(ProcessApiCallFailure,
                void(int net_error,
                     const network::mojom::URLResponseHead* head,
-                    std::unique_ptr<std::string> body));
+                    std::optional<std::string> body));
   MOCK_METHOD1(ProcessNewAccessToken, void(const std::string& access_token));
   MOCK_METHOD1(ProcessMintAccessTokenFailure,
                void(const GoogleServiceAuthError& error));
@@ -147,10 +147,8 @@ TEST_F(OAuth2ApiCallFlowTest, ExpectedHTTPHeaders) {
   ASSERT_EQ(1u, pending.size());
   EXPECT_EQ(url, pending[0].request.url);
 
-  std::string auth_header;
-  EXPECT_TRUE(
-      pending[0].request.headers.GetHeader("Authorization", &auth_header));
-  EXPECT_EQ("Bearer access_token", auth_header);
+  EXPECT_THAT(pending[0].request.headers.GetHeader("Authorization"),
+              testing::Optional(std::string("Bearer access_token")));
   EXPECT_EQ(body, network::GetUploadData(pending[0].request));
 }
 
@@ -180,12 +178,10 @@ TEST_F(OAuth2ApiCallFlowTest, ExpectedMultipleHTTPHeaders) {
   EXPECT_EQ(url, pending[0].request.url);
 
   const auto& headers = pending[0].request.headers;
-  std::string auth_header;
-  EXPECT_TRUE(headers.GetHeader("Authorization", &auth_header));
-  EXPECT_EQ("Bearer access_token", auth_header);
-  std::string test_header_content;
-  EXPECT_TRUE(headers.GetHeader("Test-Header-Field", &test_header_content));
-  EXPECT_EQ("test content", test_header_content);
+  EXPECT_THAT(headers.GetHeader("Authorization"),
+              testing::Optional(std::string("Bearer access_token")));
+  EXPECT_THAT(headers.GetHeader("Test-Header-Field"),
+              testing::Optional(std::string("test content")));
 
   EXPECT_EQ(body, network::GetUploadData(pending[0].request));
 }

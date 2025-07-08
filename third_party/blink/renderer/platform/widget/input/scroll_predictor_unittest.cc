@@ -84,7 +84,7 @@ class ScrollPredictorTest : public testing::Test {
     auto event_with_callback = std::make_unique<EventWithCallback>(
         std::make_unique<WebCoalescedInputEvent>(std::move(event),
                                                  ui::LatencyInfo()),
-        base::TimeTicks(), base::NullCallback(), nullptr);
+        base::NullCallback(), nullptr);
     event_with_callback->original_events() = std::move(original_events_);
 
     base::TimeDelta frame_interval = base::Seconds(1.0f / display_refresh_rate);
@@ -194,24 +194,28 @@ class ScrollPredictorTest : public testing::Test {
     EXPECT_EQ(expected_type, scroll_predictor_->filter_->GetName());
   }
 
-  void InitLinearResamplingTest(bool use_frames_based_experimental_prediction) {
-    base::FieldTrialParams params;
-    params["filter"] = ::features::kPredictorNameLinearResampling;
+  void InitLinearResamplingTest() {
+    base::FieldTrialParams predictor_params;
+    predictor_params["predictor"] = ::features::kPredictorNameLinearResampling;
     base::test::FeatureRefAndParams prediction_params = {
-        features::kResamplingScrollEvents, params};
+        features::kResamplingScrollEvents, predictor_params};
 
     base::FieldTrialParams prediction_type_params;
-    prediction_type_params["mode"] =
-        use_frames_based_experimental_prediction
-            ? ::features::kPredictionTypeFramesBased
-            : ::features::kPredictionTypeTimeBased;
+    prediction_type_params["mode"] = ::features::kPredictionTypeFramesBased;
     base::test::FeatureRefAndParams experimental_prediction_params = {
         ::features::kResamplingScrollEventsExperimentalPrediction,
         prediction_type_params};
 
+    base::FieldTrialParams filter_params;
+    filter_params["filter"] = "";
+    base::test::FeatureRefAndParams resampling_and_filter = {
+        features::kFilteringScrollPrediction, filter_params};
+
     scoped_feature_list_.Reset();
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {prediction_params, experimental_prediction_params}, {});
+        {prediction_params, experimental_prediction_params,
+         resampling_and_filter},
+        {});
     scroll_predictor_ = std::make_unique<ScrollPredictor>();
 
     VerifyPredictorType(::features::kPredictorNameLinearResampling);
@@ -255,6 +259,8 @@ TEST_F(ScrollPredictorTest, ScrollResamplingStates) {
 }
 
 TEST_F(ScrollPredictorTest, ResampleGestureScrollEvents) {
+  ConfigurePredictorFieldTrialAndInitialize(features::kResamplingScrollEvents,
+                                            ::features::kPredictorNameEmpty);
   SendGestureScrollBegin();
   EXPECT_FALSE(PredictionAvailable());
 
@@ -294,6 +300,8 @@ TEST_F(ScrollPredictorTest, ResampleGestureScrollEvents) {
 }
 
 TEST_F(ScrollPredictorTest, ScrollInDifferentDirection) {
+  ConfigurePredictorFieldTrialAndInitialize(features::kResamplingScrollEvents,
+                                            ::features::kPredictorNameEmpty);
   SendGestureScrollBegin();
 
   // Scroll down.
@@ -366,6 +374,8 @@ TEST_F(ScrollPredictorTest, ScrollUpdateWithEmptyOriginalEventList) {
 }
 
 TEST_F(ScrollPredictorTest, LSQPredictorTest) {
+  ConfigureFilterFieldTrialAndInitialize(features::kFilteringScrollPrediction,
+                                         "");
   SetUpLSQPredictor();
   SendGestureScrollBegin();
 
@@ -420,38 +430,13 @@ TEST_F(ScrollPredictorTest, LSQPredictorTest) {
 }
 
 TEST_F(ScrollPredictorTest, LinearResamplingPredictorTest) {
-  // Test kResamplingScrollEventsExperimentalLatencyFixed
-  InitLinearResamplingTest(false);
+  // Test kResamplingScrollEventsExperimentalLatencyVariable
+  InitLinearResamplingTest();
   SendGestureScrollBegin();
 
   // Send 1st GSU, no prediction available.
   std::unique_ptr<WebInputEvent> gesture_update =
       CreateGestureScrollUpdate(0, 10, 10 /* ms */);
-  HandleResampleScrollEvents(gesture_update, 10 /* ms */, 30 /* Hz */);
-  EXPECT_EQ(10, static_cast<const WebGestureEvent*>(gesture_update.get())
-                    ->data.scroll_update.delta_y);
-  EXPECT_EQ(
-      WebInputEvent::GetStaticTimeStampForTests() +
-          base::Milliseconds(10 /* ms */),
-      static_cast<const WebGestureEvent*>(gesture_update.get())->TimeStamp());
-
-  // Prediction using fixed +3.3ms latency.
-  gesture_update = CreateGestureScrollUpdate(0, 10, 20 /* ms */);
-  HandleResampleScrollEvents(gesture_update, 20 /* ms */, 30 /* Hz */);
-  ASSERT_FLOAT_EQ(10 + 3.3,
-                  static_cast<const WebGestureEvent*>(gesture_update.get())
-                      ->data.scroll_update.delta_y);
-  EXPECT_EQ(
-      WebInputEvent::GetStaticTimeStampForTests() +
-          base::Milliseconds(23.3 /* ms */),
-      static_cast<const WebGestureEvent*>(gesture_update.get())->TimeStamp());
-
-  // Test kResamplingScrollEventsExperimentalLatencyVariable
-  InitLinearResamplingTest(true);
-  SendGestureScrollBegin();
-
-  // Send 1st GSU, no prediction available.
-  gesture_update = CreateGestureScrollUpdate(0, 10, 10 /* ms */);
   HandleResampleScrollEvents(gesture_update, 10 /* ms */, 60 /* Hz */);
   EXPECT_EQ(10, static_cast<const WebGestureEvent*>(gesture_update.get())
                     ->data.scroll_update.delta_y);
@@ -474,6 +459,8 @@ TEST_F(ScrollPredictorTest, LinearResamplingPredictorTest) {
 }
 
 TEST_F(ScrollPredictorTest, ScrollPredictorNotChangeScrollDirection) {
+  ConfigureFilterFieldTrialAndInitialize(features::kFilteringScrollPrediction,
+                                         "");
   SetUpLSQPredictor();
   SendGestureScrollBegin();
 
@@ -590,6 +577,5 @@ TEST_F(ScrollPredictorTest, FilteringPrediction) {
     EXPECT_NEAR(accumulated_deltas[i], GetLastAccumulatedDelta().y(), 0.00001);
   }
 }
-
 }  // namespace test
 }  // namespace blink

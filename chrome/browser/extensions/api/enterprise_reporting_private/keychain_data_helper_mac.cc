@@ -7,8 +7,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 
-#include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/strings/sys_string_conversions.h"
 
 namespace extensions {
@@ -30,17 +30,17 @@ OSStatus CreateTargetAccess(CFStringRef service_name,
     return status;
   }
 
-  base::ScopedCFTypeRef<CFArrayRef> acl_list;
+  base::apple::ScopedCFTypeRef<CFArrayRef> acl_list;
   status = SecAccessCopyACLList(*access_ref, acl_list.InitializeInto());
   if (status != noErr) {
     return status;
   }
 
-  for (CFIndex i = 0; i < CFArrayGetCount(acl_list); ++i) {
-    SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acl_list, i);
+  for (CFIndex i = 0; i < CFArrayGetCount(acl_list.get()); ++i) {
+    SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acl_list.get(), i);
 
-    base::ScopedCFTypeRef<CFArrayRef> app_list;
-    base::ScopedCFTypeRef<CFStringRef> description;
+    base::apple::ScopedCFTypeRef<CFArrayRef> app_list;
+    base::apple::ScopedCFTypeRef<CFStringRef> description;
     SecKeychainPromptSelector dummy_prompt_selector;
     status = SecACLCopyContents(acl, app_list.InitializeInto(),
                                 description.InitializeInto(),
@@ -50,9 +50,9 @@ OSStatus CreateTargetAccess(CFStringRef service_name,
     }
 
     // Replace explicit non-empty app list with void to allow any application
-    if (app_list && CFArrayGetCount(app_list)) {
-      status = SecACLSetContents(acl, /*applicationList=*/nullptr, description,
-                                 dummy_prompt_selector);
+    if (app_list && CFArrayGetCount(app_list.get())) {
+      status = SecACLSetContents(acl, /*applicationList=*/nullptr,
+                                 description.get(), dummy_prompt_selector);
       if (status != noErr) {
         return status;
       }
@@ -93,9 +93,10 @@ OSStatus WriteKeychainItem(const std::string& service_name,
        const_cast<char*>(account_name.data())}};
   SecKeychainAttributeList attribute_list = {std::size(attributes), attributes};
 
-  base::ScopedCFTypeRef<SecAccessRef> access_ref;
-  OSStatus status = CreateTargetAccess(base::SysUTF8ToCFStringRef(service_name),
-                                       access_ref.InitializeInto());
+  base::apple::ScopedCFTypeRef<SecAccessRef> access_ref;
+  OSStatus status =
+      CreateTargetAccess(base::SysUTF8ToCFStringRef(service_name).get(),
+                         access_ref.InitializeInto());
   if (status != noErr) {
     return status;
   }
@@ -107,24 +108,24 @@ OSStatus WriteKeychainItem(const std::string& service_name,
 
 OSStatus VerifyKeychainForItemUnlocked(SecKeychainItemRef item_ref,
                                        bool* unlocked) {
-  base::ScopedCFTypeRef<SecKeychainRef> keychain;
+  base::apple::ScopedCFTypeRef<SecKeychainRef> keychain;
   OSStatus status =
       SecKeychainItemCopyKeychain(item_ref, keychain.InitializeInto());
   if (status != noErr) {
     return status;
   }
 
-  return VerifyKeychainUnlocked(keychain, unlocked);
+  return VerifyKeychainUnlocked(keychain.get(), unlocked);
 }
 
 OSStatus VerifyDefaultKeychainUnlocked(bool* unlocked) {
-  base::ScopedCFTypeRef<SecKeychainRef> keychain;
+  base::apple::ScopedCFTypeRef<SecKeychainRef> keychain;
   OSStatus status = SecKeychainCopyDefault(keychain.InitializeInto());
   if (status != noErr) {
     return status;
   }
 
-  return VerifyKeychainUnlocked(keychain, unlocked);
+  return VerifyKeychainUnlocked(keychain.get(), unlocked);
 }
 
 #pragma clang diagnostic pop

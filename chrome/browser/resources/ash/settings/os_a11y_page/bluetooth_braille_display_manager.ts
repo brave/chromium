@@ -8,7 +8,8 @@
  * component to interact with a bluetooth braille display.
  */
 
-import {ChromeVoxSubpageBrowserProxy, ChromeVoxSubpageBrowserProxyImpl, DeviceEventListener, PairingEventListener} from './chromevox_subpage_browser_proxy.js';
+import type {ChromeVoxSubpageBrowserProxy, DeviceEventListener, PairingEventListener} from './chromevox_subpage_browser_proxy.js';
+import {ChromeVoxSubpageBrowserProxyImpl} from './chromevox_subpage_browser_proxy.js';
 
 export interface BluetoothBrailleDisplayListener {
   onDisplayListChanged(displays: chrome.bluetooth.Device[]): void;
@@ -72,6 +73,7 @@ export class BluetoothBrailleDisplayManager {
     'Braillino BL',
     'B2G',
     'Conny',
+    'DotPad',
     'Easy Braille EBR',
     'EL12-',
     'Esys-',
@@ -131,14 +133,14 @@ export class BluetoothBrailleDisplayManager {
         });
   }
 
-  addListener(listener: BluetoothBrailleDisplayListener) {
+  addListener(listener: BluetoothBrailleDisplayListener): void {
     this.listeners_.push(listener);
   }
 
   /**
    * Starts listening for changes and discovering bluetooth devices.
    */
-  start() {
+  start(): void {
     this.chromeVoxSubpageBrowserProxy_.addDeviceAddedListener(
         this.onDeviceAddedListener_);
     this.chromeVoxSubpageBrowserProxy_.addDeviceChangedListener(
@@ -158,7 +160,7 @@ export class BluetoothBrailleDisplayManager {
   /**
    * Stops discovering bluetooth devices and listening for changes.
    */
-  stop() {
+  stop(): void {
     this.chromeVoxSubpageBrowserProxy_.stopDiscovery();
 
     this.chromeVoxSubpageBrowserProxy_.removeDeviceAddedListener(
@@ -174,46 +176,59 @@ export class BluetoothBrailleDisplayManager {
   /**
    * Connects to the given bluetooth braille display.
    */
-  async connect(display: chrome.bluetooth.Device) {
+  async connect(display: chrome.bluetooth.Device): Promise<void> {
     if (this.preferredDisplayAddress_ === display.address ||
         !this.preferredDisplayAddress_) {
       this.connectInternal(display);
     } else {
       // Disconnect any previously connected bluetooth braille display.
-      await chrome.bluetoothPrivate.disconnectAll(
-          this.preferredDisplayAddress_);
+      try {
+        await chrome.bluetoothPrivate.disconnectAll(
+            this.preferredDisplayAddress_);
+      } catch (error) {
+        console.error(`Error disconnecting previous display: ${error}`);
+      }
       this.connectInternal(display);
     }
   }
 
-  protected async connectInternal(display: chrome.bluetooth.Device) {
+  protected async connectInternal(display: chrome.bluetooth.Device):
+      Promise<void> {
     this.preferredDisplayAddress_ = display.address;
     chrome.settingsPrivate.setPref(
         'settings.a11y.chromevox.preferred_braille_display_address',
         display.address);
 
-    if (!display.connected) {
-      await chrome.bluetoothPrivate.connect(display.address);
-    }
-
     if (!display.paired) {
       chrome.bluetoothPrivate.pair(display.address);
+    }
+
+    if (!display.connected) {
+      await chrome.bluetoothPrivate.connect(display.address);
     }
   }
 
   /**
    * Disconnects the given display and clears it from Brltty.
    */
-  disconnect(display: chrome.bluetooth.Device) {
-    chrome.bluetoothPrivate.disconnectAll(display.address);
+  async disconnect(display: chrome.bluetooth.Device): Promise<void> {
+    try {
+      await chrome.bluetoothPrivate.disconnectAll(display.address);
+    } catch (error) {
+      console.error(`Error disconnecting previous display: ${error}`);
+    }
     this.chromeVoxSubpageBrowserProxy_.updateBluetoothBrailleDisplayAddress('');
   }
 
   /**
    * Forgets the given display.
    */
-  forget(display: chrome.bluetooth.Device) {
-    chrome.bluetoothPrivate.forgetDevice(display.address);
+  async forget(display: chrome.bluetooth.Device): Promise<void> {
+    try {
+      await chrome.bluetoothPrivate.forgetDevice(display.address);
+    } catch (error) {
+      console.error(`Error forgetting previous display: ${error}`);
+    }
     this.chromeVoxSubpageBrowserProxy_.updateBluetoothBrailleDisplayAddress('');
   }
 
@@ -221,7 +236,7 @@ export class BluetoothBrailleDisplayManager {
    * Finishes pairing in response to
    * `BluetoothBrailleDisplayListener.onPincodeRequested`.
    */
-  finishPairing(display: chrome.bluetooth.Device, pincode: string) {
+  finishPairing(display: chrome.bluetooth.Device, pincode: string): void {
     chrome.bluetoothPrivate.setPairingResponse({
       response: chrome.bluetoothPrivate.PairingResponse.CONFIRM,
       device: display,
@@ -229,7 +244,8 @@ export class BluetoothBrailleDisplayManager {
     });
   }
 
-  protected async handleDevicesChanged(device?: chrome.bluetooth.Device) {
+  protected async handleDevicesChanged(device?: chrome.bluetooth.Device):
+      Promise<void> {
     const devices = await chrome.bluetooth.getDevices();
     const displayList = devices.filter(device => {
       return this.displayNamePrefixes_.some(name => {
@@ -252,7 +268,8 @@ export class BluetoothBrailleDisplayManager {
         listener => listener.onDisplayListChanged(displayList));
   }
 
-  protected handlePairing(pairingEvent: chrome.bluetoothPrivate.PairingEvent) {
+  protected handlePairing(pairingEvent: chrome.bluetoothPrivate.PairingEvent):
+      void {
     if (pairingEvent.pairing ===
         chrome.bluetoothPrivate.PairingEventType.REQUEST_PINCODE) {
       this.listeners_.forEach(
@@ -261,7 +278,7 @@ export class BluetoothBrailleDisplayManager {
   }
 
   protected handlePreferredDisplayConnectionStateChanged(
-      display: chrome.bluetooth.Device) {
+      display: chrome.bluetooth.Device): void {
     if (display.connected === this.preferredDisplayConnected_) {
       return;
     }

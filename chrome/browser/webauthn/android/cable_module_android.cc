@@ -2,14 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/webauthn/android/cable_module_android.h"
+
+#include <variant>
 
 #include "base/android/jni_array.h"
 #include "base/base64.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/no_destructor.h"
-#include "base/sys_byteorder.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/browser_process.h"
@@ -43,7 +51,6 @@
 // These "headers" actually contains function definitions and thus can only be
 // included once across Chromium.
 #include "chrome/browser/webauthn/android/jni_headers/CableAuthenticatorModuleProvider_jni.h"
-#include "chrome/browser/webauthn/android/jni_headers/PrivacySettingsFragment_jni.h"
 
 using device::cablev2::authenticator::Registration;
 
@@ -52,10 +59,6 @@ namespace authenticator {
 
 namespace {
 
-// kRootSecretPrefName is the name of a string preference that is kept in the
-// browser's local state and which stores the base64-encoded root secret for
-// the authenticator.
-const char kRootSecretPrefName[] = "webauthn.authenticator_root_secret";
 const char kSerializedPaaskFieldsName[] = "webauthn.authenticator_info";
 
 const char kWorkProfilePrefName[] = "webauthn.in_work_profile";
@@ -80,17 +83,6 @@ class SystemInterface : public RegistrationState::SystemInterface {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
     return device::cablev2::authenticator::Register(
         GetDriver(), type, std::move(on_ready), std::move(event_callback));
-  }
-
-  std::string GetRootSecret() override {
-    DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-    return g_browser_process->local_state()->GetString(kRootSecretPrefName);
-  }
-
-  void SetRootSecret(std::string secret) override {
-    DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-    g_browser_process->local_state()->SetString(kRootSecretPrefName,
-                                                std::move(secret));
   }
 
   void CanDeviceSupportCable(base::OnceCallback<void(bool)> callback) override {
@@ -129,19 +121,8 @@ class SystemInterface : public RegistrationState::SystemInterface {
     }
   }
 
-  void CalculateIdentityKey(
-      const std::array<uint8_t, 32>& secret,
-      base::OnceCallback<void(bssl::UniquePtr<EC_KEY>)> callback) override {
-    DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-    base::ThreadPool::PostTaskAndReplyWithResult(
-        FROM_HERE, {base::TaskPriority::BEST_EFFORT},
-        base::BindOnce(
-            &SystemInterface::CalculateIdentityKeyOnBackgroundSequence, secret),
-        std::move(callback));
-  }
-
   void GetPrelinkFromPlayServices(
-      base::OnceCallback<void(absl::optional<std::vector<uint8_t>>)> callback)
+      base::OnceCallback<void(std::optional<std::vector<uint8_t>>)> callback)
       override {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
     DCHECK(!prelink_callback_);
@@ -155,15 +136,6 @@ class SystemInterface : public RegistrationState::SystemInterface {
             reinterpret_cast<uintptr_t>(this)));
   }
 
-  void OnCloudMessage(std::vector<uint8_t> serialized,
-                      bool is_make_credential) override {
-    DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-    JNIEnv* const env = base::android::AttachCurrentThread();
-    Java_CableAuthenticatorModuleProvider_onCloudMessage(
-        env, base::android::ToJavaByteArray(env, serialized),
-        is_make_credential);
-  }
-
   void RefreshLocalDeviceInfo() override {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
     DeviceInfoSyncServiceFactory::GetForProfile(
@@ -174,7 +146,7 @@ class SystemInterface : public RegistrationState::SystemInterface {
   // Called when the Java code has finished getting linking information from
   // Play Services.
   void OnHavePlayServicesLinkingInformation(
-      absl::optional<std::vector<uint8_t>> cbor) {
+      std::optional<std::vector<uint8_t>> cbor) {
     DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
     std::move(prelink_callback_).Run(std::move(cbor));
   }
@@ -205,13 +177,6 @@ class SystemInterface : public RegistrationState::SystemInterface {
         base::android::AttachCurrentThread());
   }
 
-  static bssl::UniquePtr<EC_KEY> CalculateIdentityKeyOnBackgroundSequence(
-      std::array<uint8_t, 32> secret) {
-    // This runs on a worker thread because the scalar multiplication takes a
-    // few milliseconds on slower devices.
-    return device::cablev2::IdentityKey(secret);
-  }
-
   static void GetPrelinkFromPlayServicesOnBackgroundSequence(
       uintptr_t this_pointer) {
     // This runs on a worker thread because this Java function can take a
@@ -229,7 +194,7 @@ class SystemInterface : public RegistrationState::SystemInterface {
         reinterpret_cast<uintptr_t>(this));
   }
 
-  base::OnceCallback<void(absl::optional<std::vector<uint8_t>>)>
+  base::OnceCallback<void(std::optional<std::vector<uint8_t>>)>
       prelink_callback_;
   base::OnceCallback<void(bool)> work_profile_callback_;
 };
@@ -248,9 +213,8 @@ using device::cbor_extract::Stop;
 
 // PreLinkInfo reflects the linking information provided by Play Services.
 struct PreLinkInfo {
-  // All fields below are not a raw_ptr<T> because cbor_extract.cc would
-  // cast the raw_ptr<T> to a void*, skipping an AddRef() call and causing a
-  // ref-counting mismatch.
+  // RAW_PTR_EXCLUSION: cbor_extract.cc would cast the raw_ptr<T> to a void*,
+  // skipping an AddRef() call and causing a ref-counting mismatch.
   RAW_PTR_EXCLUSION const std::vector<uint8_t>* contact_id;
   RAW_PTR_EXCLUSION const std::vector<uint8_t>* pairing_id;
   RAW_PTR_EXCLUSION const std::vector<uint8_t>* secret;
@@ -295,8 +259,8 @@ GetSyncDataIfRegisteredInternal() {
     return syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NoSupport();
   }
 
-  if (state->prelink_play_services() && state->link_data_from_play_services()) {
-    absl::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> paask_info =
+  if (state->link_data_from_play_services()) {
+    std::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> paask_info =
         internal::PaaskInfoFromCBOR(*state->link_data_from_play_services());
     if (paask_info) {
       return *paask_info;
@@ -306,33 +270,7 @@ GetSyncDataIfRegisteredInternal() {
     }
   }
 
-  if (!state->device_supports_cable()) {
-    return syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NoSupport();
-  }
-
-  syncer::DeviceInfo::PhoneAsASecurityKeyInfo paask_info;
-  paask_info.tunnel_server_domain = device::cablev2::kTunnelServer.value();
-  paask_info.contact_id = *state->sync_registration()->contact_id();
-  const uint32_t pairing_id = device::cablev2::sync::IDNow();
-  paask_info.id = pairing_id;
-
-  std::array<uint8_t, device::cablev2::kPairingIDSize> pairing_id_bytes = {0};
-  static_assert(sizeof(pairing_id) <= EXTENT(pairing_id_bytes), "");
-  memcpy(pairing_id_bytes.data(), &pairing_id, sizeof(pairing_id));
-
-  paask_info.secret = device::cablev2::Derive<EXTENT(paask_info.secret)>(
-      state->secret(), pairing_id_bytes,
-      device::cablev2::DerivedValueType::kPairedSecret);
-
-  CHECK_EQ(paask_info.peer_public_key_x962.size(),
-           EC_POINT_point2oct(EC_KEY_get0_group(state->identity_key()),
-                              EC_KEY_get0_public_key(state->identity_key()),
-                              POINT_CONVERSION_UNCOMPRESSED,
-                              paask_info.peer_public_key_x962.data(),
-                              paask_info.peer_public_key_x962.size(),
-                              /*ctx=*/nullptr));
-
-  return paask_info;
+  return syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NoSupport();
 }
 
 void SetPrefIfDifferent(PrefService* state,
@@ -348,11 +286,11 @@ void SetPrefIfDifferent(PrefService* state,
 
 namespace internal {
 
-absl::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> PaaskInfoFromCBOR(
+std::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> PaaskInfoFromCBOR(
     base::span<const uint8_t> cbor) {
-  absl::optional<cbor::Value> value = cbor::Reader::Read(cbor);
+  std::optional<cbor::Value> value = cbor::Reader::Read(cbor);
   if (!value || !value->is_map()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   PreLinkInfo info;
@@ -364,7 +302,7 @@ absl::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> PaaskInfoFromCBOR(
       info.pairing_id->size() != sizeof(pairing_id) ||
       info.secret->size() != secret.size() ||
       info.peer_public_key_x962->size() != peer_public_key_x962.size()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   memcpy(&pairing_id, info.pairing_id->data(), sizeof(pairing_id));
 
@@ -376,7 +314,7 @@ absl::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> PaaskInfoFromCBOR(
   paask_info.tunnel_server_domain = device::cablev2::kTunnelServer.value();
   paask_info.contact_id = std::move(*info.contact_id);
   if (pairing_id > std::numeric_limits<uint32_t>::max()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   paask_info.id = static_cast<uint32_t>(pairing_id);
   paask_info.secret = secret;
@@ -413,7 +351,7 @@ syncer::DeviceInfo::PhoneAsASecurityKeyInfo::StatusOrInfo CacheResult(
   // encoded `PhoneAsASecurityKeyInfo`.
   constexpr char kNoSupportString[] = ",";
 
-  if (absl::get_if<syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NotReady>(
+  if (std::get_if<syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NotReady>(
           &result)) {
     const std::string previous_result_serialized_b64 =
         state->GetString(kSerializedPaaskFieldsName);
@@ -428,7 +366,7 @@ syncer::DeviceInfo::PhoneAsASecurityKeyInfo::StatusOrInfo CacheResult(
       return result;
     }
 
-    absl::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> paask_info =
+    std::optional<syncer::DeviceInfo::PhoneAsASecurityKeyInfo> paask_info =
         internal::PaaskInfoFromCBOR(base::as_bytes(
             base::span<const char>(previous_result_serialized.begin(),
                                    previous_result_serialized.end())));
@@ -437,20 +375,20 @@ syncer::DeviceInfo::PhoneAsASecurityKeyInfo::StatusOrInfo CacheResult(
     }
     return *paask_info;
   } else if (auto* paask_info =
-                 absl::get_if<syncer::DeviceInfo::PhoneAsASecurityKeyInfo>(
+                 std::get_if<syncer::DeviceInfo::PhoneAsASecurityKeyInfo>(
                      &result)) {
     SetPrefIfDifferent(
         state, kSerializedPaaskFieldsName,
         base::Base64Encode(internal::CBORFromPaaskInfo(*paask_info)));
     return result;
-  } else if (absl::get_if<
+  } else if (std::get_if<
                  syncer::DeviceInfo::PhoneAsASecurityKeyInfo::NoSupport>(
                  &result)) {
     SetPrefIfDifferent(state, kSerializedPaaskFieldsName, kNoSupportString);
     return result;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace internal
@@ -462,19 +400,14 @@ void RegisterForCloudMessages() {
 }
 
 void RegisterLocalState(PrefRegistrySimple* registry) {
-  registry->RegisterStringPref(kRootSecretPrefName, std::string());
   registry->RegisterStringPref(kSerializedPaaskFieldsName, std::string());
   registry->RegisterStringPref(kWorkProfilePrefName, std::string());
 }
 
 syncer::DeviceInfo::PhoneAsASecurityKeyInfo::StatusOrInfo
 GetSyncDataIfRegistered() {
-  if (base::FeatureList::IsEnabled(device::kWebAuthnCachePaaSK)) {
-    return internal::CacheResult(GetSyncDataIfRegisteredInternal(),
-                                 g_browser_process->local_state());
-  } else {
-    return GetSyncDataIfRegisteredInternal();
-  }
+  return internal::CacheResult(GetSyncDataIfRegisteredInternal(),
+                               g_browser_process->local_state());
 }
 
 }  // namespace authenticator
@@ -484,41 +417,11 @@ using webauthn::authenticator::SystemInterface;
 
 // JNI callbacks.
 
-static jlong JNI_CableAuthenticatorModuleProvider_GetSystemNetworkContext(
-    JNIEnv* env) {
-  static_assert(sizeof(jlong) >= sizeof(uintptr_t),
-                "Java longs are too small to contain pointers");
-  return static_cast<jlong>(reinterpret_cast<uintptr_t>(
-      SystemNetworkContextManager::GetInstance()->GetContext()));
-}
-
-static jlong JNI_CableAuthenticatorModuleProvider_GetRegistration(JNIEnv* env) {
-  static_assert(sizeof(jlong) >= sizeof(uintptr_t),
-                "Java longs are too small to contain pointers");
-  return static_cast<jlong>(reinterpret_cast<uintptr_t>(
-      webauthn::authenticator::GetRegistrationState()->linking_registration()));
-}
-
-static void JNI_CableAuthenticatorModuleProvider_FreeEvent(JNIEnv* env,
-                                                           jlong event_long) {
-  static_assert(sizeof(jlong) >= sizeof(uintptr_t),
-                "Java longs are too small to contain pointers");
-  Registration::Event* event =
-      reinterpret_cast<Registration::Event*>(event_long);
-  delete event;
-}
-
-static base::android::ScopedJavaLocalRef<jbyteArray>
-JNI_CableAuthenticatorModuleProvider_GetSecret(JNIEnv* env) {
-  return base::android::ToJavaByteArray(
-      env, webauthn::authenticator::GetRegistrationState()->secret());
-}
-
 static void JNI_CableAuthenticatorModuleProvider_OnHaveLinkingInformation(
     JNIEnv* env,
     jlong system_interface_pointer,
     const base::android::JavaParamRef<jbyteArray>& cbor_java) {
-  absl::optional<std::vector<uint8_t>> optional_cbor;
+  std::optional<std::vector<uint8_t>> optional_cbor;
 
   if (cbor_java) {
     std::vector<uint8_t> cbor;
@@ -546,14 +449,4 @@ static void JNI_CableAuthenticatorModuleProvider_OnHaveWorkProfileResult(
                          base::Unretained(reinterpret_cast<SystemInterface*>(
                              static_cast<uintptr_t>(system_interface_pointer))),
                          in_work_profile));
-}
-
-static void JNI_PrivacySettingsFragment_RevokeAllLinkedDevices(JNIEnv* env) {
-  // Invalidates the current cloud messaging (GCM) token and creates a new one.
-  // This causes the tunnel server to reject connection attempts with a 410
-  // (Gone) error. Since linking keys are derived from the root secret by using
-  // the GCM token, this also invalidates all existing linking keys.
-  webauthn::authenticator::GetRegistrationState()
-      ->linking_registration()
-      ->RotateContactID();
 }

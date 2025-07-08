@@ -16,11 +16,10 @@
 #include "chrome/browser/ash/smb_client/smb_service_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/ash/smb_shares/smb_credentials_dialog.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "storage/browser/file_system/external_mount_points.h"
 
-namespace ash {
-namespace smb_client {
+namespace ash::smb_client {
 
 namespace {
 
@@ -312,9 +311,8 @@ void SmbFsShare::SetMounterCreationCallbackForTest(
 }
 
 std::string SmbFsShare::GenerateStableMountId() const {
-  std::string hash_input = GenerateStableMountIdInput();
-  return base::ToLowerASCII(base::HexEncode(
-      crypto::SHA256HashString(hash_input).c_str(), crypto::kSHA256Length));
+  const auto input = GenerateStableMountIdInput();
+  return base::ToLowerASCII(base::HexEncode(crypto::hash::Sha256(input)));
 }
 
 std::string SmbFsShare::GenerateStableMountIdInput() const {
@@ -346,5 +344,4 @@ std::string SmbFsShare::GenerateStableMountIdInput() const {
   return base::JoinString(mount_id_hash_components, kMountIdHashSeparator);
 }
 
-}  // namespace smb_client
-}  // namespace ash
+}  // namespace ash::smb_client

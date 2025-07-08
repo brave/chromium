@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/extensions/telemetry/api/diagnostics/fake_diagnostics_service.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,6 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace chromeos {
 
@@ -69,7 +69,7 @@ void FakeDiagnosticsService::GetRoutineUpdate(
 
 void FakeDiagnosticsService::RunAcPowerRoutine(
     crosapi::DiagnosticsAcPowerStatusEnum expected_status,
-    const absl::optional<std::string>& expected_power_type,
+    const std::optional<std::string>& expected_power_type,
     RunAcPowerRoutineCallback callback) {
   actual_passed_parameters_.clear();
   actual_passed_parameters_.Set("expected_status",
@@ -140,10 +140,39 @@ void FakeDiagnosticsService::RunBatteryHealthRoutine(
       base::BindOnce(std::move(callback), run_routine_response_->Clone()));
 }
 
+void FakeDiagnosticsService::RunBluetoothDiscoveryRoutine(
+    RunBluetoothDiscoveryRoutineCallback callback) {
+  actual_passed_parameters_.clear();
+  actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kBluetoothDiscovery;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), run_routine_response_->Clone()));
+}
+
+void FakeDiagnosticsService::RunBluetoothPairingRoutine(
+    const std::string& peripheral_id,
+    RunBluetoothPairingRoutineCallback callback) {
+  actual_passed_parameters_.clear();
+  actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kBluetoothPairing;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), run_routine_response_->Clone()));
+}
+
 void FakeDiagnosticsService::RunBluetoothPowerRoutine(
     RunBluetoothPowerRoutineCallback callback) {
   actual_passed_parameters_.clear();
   actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kBluetoothPower;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), run_routine_response_->Clone()));
+}
+
+void FakeDiagnosticsService::RunBluetoothScanningRoutine(
+    uint32_t length_seconds,
+    RunBluetoothScanningRoutineCallback callback) {
+  actual_passed_parameters_.clear();
+  actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kBluetoothScanning;
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback), run_routine_response_->Clone()));
@@ -292,18 +321,10 @@ void FakeDiagnosticsService::RunNvmeSelfTestRoutine(
       base::BindOnce(std::move(callback), run_routine_response_->Clone()));
 }
 
-void FakeDiagnosticsService::RunNvmeWearLevelRoutine(
+void FakeDiagnosticsService::DEPRECATED_RunNvmeWearLevelRoutine(
     uint32_t wear_level_threshold,
-    RunNvmeWearLevelRoutineCallback callback) {
-  actual_passed_parameters_.clear();
-  actual_passed_parameters_.Set("wear_level_threshold",
-                                static_cast<int32_t>(wear_level_threshold));
-
-  actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kNvmeWearLevel;
-
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce(std::move(callback), run_routine_response_->Clone()));
+    DEPRECATED_RunNvmeWearLevelRoutineCallback callback) {
+  std::move(callback).Run(nullptr);
 }
 
 void FakeDiagnosticsService::RunPrimeSearchRoutine(
@@ -384,6 +405,14 @@ void FakeDiagnosticsService::RunAudioDriverRoutine(
     RunAudioDriverRoutineCallback callback) {
   actual_passed_parameters_.clear();
   actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kAudioDriver;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), run_routine_response_->Clone()));
+}
+
+void FakeDiagnosticsService::RunFanRoutine(RunFanRoutineCallback callback) {
+  actual_passed_parameters_.clear();
+  actual_called_routine_ = crosapi::DiagnosticsRoutineEnum::kFan;
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback), run_routine_response_->Clone()));

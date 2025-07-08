@@ -26,7 +26,7 @@ export class Dialog extends View {
 
   private readonly titleHolder: HTMLDivElement|null;
 
-  private readonly descHolder: HTMLDivElement|null;
+  protected readonly descHolder: HTMLDivElement|null;
 
   constructor(
       name: ViewName,

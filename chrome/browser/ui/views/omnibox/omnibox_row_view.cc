@@ -4,8 +4,11 @@
 
 #include "chrome/browser/ui/views/omnibox/omnibox_row_view.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/omnibox/omnibox_theme.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_header_view.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_match_cell_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_view_views.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
 #include "components/omnibox/browser/omnibox_controller.h"
@@ -19,12 +22,14 @@
 #include "ui/views/style/typography.h"
 
 DEFINE_ENUM_CONVERTERS(OmniboxPopupSelection::LineState,
-                       {OmniboxPopupSelection::FOCUSED_BUTTON_HEADER,
-                        u"FOCUSED_BUTTON_HEADER"},
                        {OmniboxPopupSelection::NORMAL, u"NORMAL"},
                        {OmniboxPopupSelection::KEYWORD_MODE, u"KEYWORD_MODE"},
                        {OmniboxPopupSelection::FOCUSED_BUTTON_ACTION,
                         u"FOCUSED_BUTTON_ACTION"},
+                       {OmniboxPopupSelection::FOCUSED_BUTTON_THUMBS_UP,
+                        u"FOCUSED_BUTTON_THUMBS_UP"},
+                       {OmniboxPopupSelection::FOCUSED_BUTTON_THUMBS_DOWN,
+                        u"FOCUSED_BUTTON_THUMBS_DOWN"},
                        {OmniboxPopupSelection::FOCUSED_BUTTON_REMOVE_SUGGESTION,
                         u"FOCUSED_BUTTON_REMOVE_SUGGESTION"})
 
@@ -33,7 +38,7 @@ struct ui::metadata::TypeConverter<OmniboxPopupSelection>
     : public ui::metadata::BaseTypeConverter<true> {
   static std::u16string ToString(
       ui::metadata::ArgType<OmniboxPopupSelection> source_value);
-  static absl::optional<OmniboxPopupSelection> FromString(
+  static std::optional<OmniboxPopupSelection> FromString(
       const std::u16string& source_value);
   static ui::metadata::ValidStrings GetValidStrings() { return {}; }
 };
@@ -48,77 +53,70 @@ std::u16string ui::metadata::TypeConverter<OmniboxPopupSelection>::ToString(
 }
 
 // static
-absl::optional<OmniboxPopupSelection> ui::metadata::TypeConverter<
+std::optional<OmniboxPopupSelection> ui::metadata::TypeConverter<
     OmniboxPopupSelection>::FromString(const std::u16string& source_value) {
   const auto values = base::SplitString(
       source_value, u"{,}", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  if (values.size() != 2)
-    return absl::nullopt;
+  if (values.size() != 2) {
+    return std::nullopt;
+  }
   // TODO(pkasting): This should be size_t, but for some reason that won't link
   // on Mac.
-  const absl::optional<uint32_t> line =
+  const std::optional<uint32_t> line =
       TypeConverter<uint32_t>::FromString(values[0]);
-  const absl::optional<OmniboxPopupSelection::LineState> state =
+  const std::optional<OmniboxPopupSelection::LineState> state =
       TypeConverter<OmniboxPopupSelection::LineState>::FromString(values[1]);
   return (line.has_value() && state.has_value())
-             ? absl::make_optional<OmniboxPopupSelection>(line.value(),
-                                                          state.value())
-             : absl::nullopt;
+             ? std::make_optional<OmniboxPopupSelection>(line.value(),
+                                                         state.value())
+             : std::nullopt;
 }
 
 OmniboxRowView::OmniboxRowView(size_t line, OmniboxPopupViewViews* popup_view)
-    : line_(line), popup_view_(popup_view) {
+    : popup_view_(popup_view) {
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical));
   result_view_ =
       AddChildView(std::make_unique<OmniboxResultView>(popup_view, line));
 }
 
-void OmniboxRowView::ShowHeader(const std::u16string& header_text,
-                                bool suggestion_group_hidden) {
+void OmniboxRowView::ShowHeader(const std::u16string& header_text) {
   // Create the header (at index 0) if it doesn't exist.
   if (header_view_ == nullptr) {
-    header_view_ = AddChildViewAt(
-        std::make_unique<OmniboxHeaderView>(popup_view_, line_), 0);
+    header_view_ =
+        AddChildViewAt(std::make_unique<OmniboxHeaderView>(popup_view_), 0);
   }
 
-  header_view_->SetHeader(header_text, suggestion_group_hidden);
+  header_view_->SetHeader(header_text);
   header_view_->SetVisible(true);
 }
 
 void OmniboxRowView::HideHeader() {
-  if (header_view_)
+  if (header_view_) {
     header_view_->SetVisible(false);
+  }
 }
 
 void OmniboxRowView::OnSelectionStateChanged() {
   result_view_->OnSelectionStateChanged();
-  if (header_view_ && header_view_->GetVisible())
-    header_view_->UpdateUI();
 }
 
 views::View* OmniboxRowView::GetActiveAuxiliaryButtonForAccessibility() const {
-  DCHECK(popup_view_->model()->GetPopupSelection().IsButtonFocused());
-  if (popup_view_->model()->GetPopupSelection().state ==
-      OmniboxPopupSelection::FOCUSED_BUTTON_HEADER) {
-    return header_view_->header_toggle_button();
-  }
-
   return result_view_->GetActiveAuxiliaryButtonForAccessibility();
 }
 
 gfx::Insets OmniboxRowView::GetInsets() const {
-  const int right_inset =
-      OmniboxFieldTrial::IsChromeRefreshSuggestHoverFillShapeEnabled() ? 16 : 0;
-  // A visible header means this is the start of a new section. Give the section
-  // that just ended an extra 4dp of padding. https://crbug.com/1076646
-  if (line_ != 0 && header_view_ && header_view_->GetVisible() &&
-      !OmniboxFieldTrial::IsChromeRefreshSuggestIconsEnabled()) {
-    return gfx::Insets::TLBR(4, 0, 0, right_inset);
+  if (result_view_->GetThemeState() == OmniboxPartState::IPH) {
+    int LRInsets = OmniboxMatchCellView::kIphOffset;
+    return gfx::Insets::TLBR(8, LRInsets, 8, LRInsets);
   }
 
-  return gfx::Insets::TLBR(0, 0, 0, right_inset);
+  if (result_view_->GetThemeState() == OmniboxPartState::TOOLBELT) {
+    return gfx::Insets::TLBR(0, 0, 0, 0);
+  }
+
+  return gfx::Insets::TLBR(0, 0, 0, 16);
 }
 
-BEGIN_METADATA(OmniboxRowView, views::View)
+BEGIN_METADATA(OmniboxRowView)
 END_METADATA

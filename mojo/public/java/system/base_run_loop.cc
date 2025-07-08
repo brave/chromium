@@ -10,6 +10,8 @@
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/task/single_thread_task_runner.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "mojo/public/java/system/system_impl_java_jni_headers/BaseRunLoop_jni.h"
 
 using base::android::JavaParamRef;
@@ -17,27 +19,18 @@ using base::android::JavaParamRef;
 namespace mojo {
 namespace android {
 
-static jlong JNI_BaseRunLoop_CreateBaseRunLoop(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& jcaller) {
+static jlong JNI_BaseRunLoop_CreateBaseRunLoop(JNIEnv* env) {
   base::SingleThreadTaskExecutor* task_executor =
       new base::SingleThreadTaskExecutor;
   return reinterpret_cast<uintptr_t>(task_executor);
 }
 
-static void JNI_BaseRunLoop_Run(JNIEnv* env,
-                                const JavaParamRef<jobject>& jcaller) {
+static void JNI_BaseRunLoop_Run(JNIEnv* env) {
   base::RunLoop().Run();
 }
 
-static void JNI_BaseRunLoop_RunUntilIdle(JNIEnv* env,
-                                         const JavaParamRef<jobject>& jcaller) {
+static void JNI_BaseRunLoop_RunUntilIdle(JNIEnv* env) {
   base::RunLoop().RunUntilIdle();
-}
-
-static void JNI_BaseRunLoop_Quit(JNIEnv* env,
-                                 const JavaParamRef<jobject>& jcaller) {
-  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 static void RunJavaRunnable(
@@ -48,7 +41,6 @@ static void RunJavaRunnable(
 
 static void JNI_BaseRunLoop_PostDelayedTask(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jcaller,
     jlong runLoopID,
     const JavaParamRef<jobject>& runnable,
     jlong delay) {
@@ -64,10 +56,7 @@ static void JNI_BaseRunLoop_PostDelayedTask(
                         base::Microseconds(delay));
 }
 
-static void JNI_BaseRunLoop_DeleteMessageLoop(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& jcaller,
-    jlong runLoopID) {
+static void JNI_BaseRunLoop_DeleteMessageLoop(JNIEnv* env, jlong runLoopID) {
   base::SingleThreadTaskExecutor* task_executor =
       reinterpret_cast<base::SingleThreadTaskExecutor*>(runLoopID);
   delete task_executor;

@@ -8,6 +8,7 @@
 
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/strings/string_view_util.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/grit/new_tab_page_instant_resources.h"
@@ -69,15 +70,17 @@ class MostVisitedIframeSourceTest : public testing::Test {
       : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP),
         response_(nullptr) {}
 
-  int GetInstantRendererPID() const { return mock_host_.GetID(); }
-  int GetNonInstantRendererPID() const { return mock_host_.GetID() + 1; }
-  int GetInvalidRendererPID() const { return mock_host_.GetID() + 2; }
+  int GetInstantRendererPID() const { return mock_host_.GetDeprecatedID(); }
+  int GetNonInstantRendererPID() const {
+    return mock_host_.GetDeprecatedID() + 1;
+  }
+  int GetInvalidRendererPID() const { return mock_host_.GetDeprecatedID() + 2; }
 
   TestMostVisitedIframeSource* source() { return source_.get(); }
 
   std::string response_string() {
     if (response_.get()) {
-      return std::string(response_->front_as<char>(), response_->size());
+      return std::string(base::as_string_view(*response_));
     }
     return "";
   }

@@ -12,7 +12,6 @@
 #include "base/check_op.h"
 #include "base/fuchsia/fuchsia_component_connect.h"
 #include "base/fuchsia/fuchsia_logging.h"
-#include "base/strings/string_piece.h"
 #include "ui/gfx/geometry/transform.h"
 
 namespace ui {
@@ -87,8 +86,8 @@ AXFuchsiaSemanticProviderImpl::AXFuchsiaSemanticProviderImpl(
 
   auto semantics_manager_client_end = base::fuchsia_component::Connect<
       fuchsia_accessibility_semantics::SemanticsManager>();
-  // TODO(crbug.com/1431519): Create a path for gracefully failing to connect to
-  // SemanticsManager instead of CHECKing.
+  // TODO(crbug.com/40263576): Create a path for gracefully failing to connect
+  // to SemanticsManager instead of CHECKing.
   CHECK(semantics_manager_client_end.is_ok())
       << base::FidlConnectionErrorMessage(semantics_manager_client_end);
   fidl::Client semantics_manager(
@@ -154,20 +153,14 @@ bool AXFuchsiaSemanticProviderImpl::Update(
     // Convert to fuchsia's transform type.
     std::array<float, 16> mat = {};
     transform.GetColMajorF(mat.data());
-    fuchsia_ui_gfx::Matrix4Value fuchsia_transform{{
-        .value = {{
-            .matrix = std::move(mat),
-        }},
-        .variable_id = 0,
-    }};
-
+    fuchsia_ui_gfx::Mat4 mat4{std::move(mat)};
     // The root node will never have an offset container, so its transform will
     // always be the identity matrix. Thus, we can safely overwrite it here.
-    node.node_to_container_transform(std::move(fuchsia_transform.value()));
+    node.node_to_container_transform(std::move(mat4));
   } else {
     auto found_not_reachable = not_reachable_.find(node.node_id().value());
     const bool is_not_reachable = found_not_reachable != not_reachable_.end();
-    const absl::optional<uint32_t> parent_node_id =
+    const std::optional<uint32_t> parent_node_id =
         GetParentForNode(node.node_id().value());
     if (is_not_reachable && parent_node_id) {
       // Connection parent -> |node| exists now.
@@ -357,14 +350,14 @@ void AXFuchsiaSemanticProviderImpl::MarkChildrenAsReachable(
   }
 }
 
-absl::optional<uint32_t> AXFuchsiaSemanticProviderImpl::GetParentForNode(
+std::optional<uint32_t> AXFuchsiaSemanticProviderImpl::GetParentForNode(
     const uint32_t node_id) {
   const auto it = nodes_.find(node_id);
   if (it != nodes_.end()) {
     if (it->second.parents.size() == 1)
       return *it->second.parents.begin();
     else
-      return absl::nullopt;
+      return std::nullopt;
   }
 
   const auto not_reachable_it = not_reachable_.find(node_id);
@@ -372,10 +365,10 @@ absl::optional<uint32_t> AXFuchsiaSemanticProviderImpl::GetParentForNode(
     if (not_reachable_it->second.size() == 1)
       return *not_reachable_it->second.begin();
     else
-      return absl::nullopt;
+      return std::nullopt;
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 AXFuchsiaSemanticProviderImpl::Batch&

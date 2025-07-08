@@ -6,6 +6,7 @@
 
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "components/device_reauth/device_authenticator.h"
 #include "components/password_manager/content/browser/keyboard_replacing_surface_visibility_controller.h"
 #include "components/password_manager/core/browser/password_credential_filler.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
@@ -13,39 +14,63 @@
 
 namespace password_manager {
 
-using ToShowVirtualKeyboard = PasswordManagerDriver::ToShowVirtualKeyboard;
+using webauthn::WebAuthnCredManDelegate;
 
 CredManController::CredManController(
     base::WeakPtr<KeyboardReplacingSurfaceVisibilityController>
-        visibility_controller)
-    : visibility_controller_(visibility_controller) {}
+        visibility_controller,
+    password_manager::PasswordManagerClient* password_client)
+    : visibility_controller_(visibility_controller),
+      password_client_(password_client),
+      authenticator_(password_client->GetDeviceAuthenticator()) {}
 
 CredManController::~CredManController() {
-  if (!visibility_controller_) {
-    return;
+  if (visibility_controller_) {
+    visibility_controller_->Reset();
   }
-  visibility_controller_->Reset();
+  if (authenticator_) {
+    authenticator_->Cancel();
+  }
 }
 
 bool CredManController::Show(
-    raw_ptr<webauthn::WebAuthnCredManDelegate> cred_man_delegate,
+    raw_ptr<WebAuthnCredManDelegate> cred_man_delegate,
     std::unique_ptr<PasswordCredentialFiller> filler,
-    raw_ptr<content::RenderWidgetHost> render_widget_host,
-    bool is_webauthn_form) {
+    base::WeakPtr<password_manager::ContentPasswordManagerDriver> frame_driver,
+    bool is_webauthn_form,
+    PasskeyDelayCallback delay_callback) {
   // webauthn forms without passkeys should show TouchToFill bottom sheet.
   if (!cred_man_delegate || !is_webauthn_form ||
-      !webauthn::WebAuthnCredManDelegate::IsCredManEnabled() ||
-      !cred_man_delegate->HasResults()) {
-    filler->Dismiss(ToShowVirtualKeyboard(false));
+      WebAuthnCredManDelegate::CredManMode() !=
+          WebAuthnCredManDelegate::CredManEnabledMode::kAllCredMan) {
     return false;
   }
-  visibility_controller_->SetVisible(render_widget_host);
+
+  switch (cred_man_delegate->HasPasskeys()) {
+    case WebAuthnCredManDelegate::State::kHasPasskeys:
+      break;
+    case WebAuthnCredManDelegate::State::kNotReady:
+      if (!delay_callback.is_null()) {
+        base::OnceCallback<void(base::OnceClosure)> notification_callback =
+            base::BindOnce(&WebAuthnCredManDelegate::
+                               RequestNotificationWhenCredentialsReady,
+                           cred_man_delegate->AsWeakPtr());
+        std::move(delay_callback).Run(std::move(notification_callback));
+        return true;
+      }
+      return false;
+    case WebAuthnCredManDelegate::State::kNoPasskeys:
+      return false;
+  }
+
+  visibility_controller_->SetVisible(std::move(frame_driver));
   filler_ = std::move(filler);
-  cred_man_delegate->SetRequestCompletionCallback(
-      base::BindRepeating(&CredManController::Dismiss, AsWeakPtr()));
-  cred_man_delegate->SetFillingCallback(
-      base::BindOnce(&CredManController::Fill, AsWeakPtr()));
-  cred_man_delegate->TriggerFullRequest();
+  cred_man_delegate->SetRequestCompletionCallback(base::BindRepeating(
+      &CredManController::Dismiss, weak_ptr_factory_.GetWeakPtr()));
+  cred_man_delegate->SetFillingCallback(base::BindOnce(
+      &CredManController::TriggerFilling, weak_ptr_factory_.GetWeakPtr()));
+  cred_man_delegate->TriggerCredManUi(
+      WebAuthnCredManDelegate::RequestPasswords(true));
   return true;
 }
 
@@ -53,23 +78,42 @@ void CredManController::Dismiss(bool success) {
   if (visibility_controller_) {
     visibility_controller_->SetShown();
   }
-  if (filler_) {
-    // If |success|, we do not need to show the keyboard. Request to show the
-    // keyboard for user convenience.
-    filler_->Dismiss(ToShowVirtualKeyboard(!success));
-  }
 }
 
-void CredManController::Fill(const std::u16string& username,
-                             const std::u16string& password) {
+void CredManController::TriggerFilling(const std::u16string& username,
+                                       const std::u16string& password) {
   if (!filler_ || !visibility_controller_) {
     return;
   }
   visibility_controller_->SetShown();
-  filler_->FillUsernameAndPassword(username, password);
-  base::UmaHistogramBoolean(
-      "PasswordManager.CredMan.PasswordFormSubmissionTriggered",
-      filler_->ShouldTriggerSubmission());
+  if (!password_client_->IsReauthBeforeFillingRequired(authenticator_.get())) {
+    FillUsernameAndPassword(username, password);
+    return;
+  }
+  authenticator_->AuthenticateWithMessage(
+      u"", base::BindOnce(&CredManController::OnReauthCompleted,
+                          base::Unretained(this), username, password));
+}
+
+void CredManController::FillUsernameAndPassword(
+    const std::u16string& username,
+    const std::u16string& password) {
+  filler_->FillUsernameAndPassword(
+      username, password,
+      base::BindOnce(base::BindOnce([](bool triggered_submission) {
+        base::UmaHistogramBoolean(
+            "PasswordManager.CredMan.PasswordFormSubmissionTriggered",
+            triggered_submission);
+      })));
+}
+
+void CredManController::OnReauthCompleted(const std::u16string& username,
+                                          const std::u16string& password,
+                                          bool auth_successful) {
+  if (!auth_successful) {
+    return;
+  }
+  FillUsernameAndPassword(username, password);
 }
 
 }  // namespace password_manager

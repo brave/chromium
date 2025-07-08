@@ -124,7 +124,7 @@ Node* DOMPatchSupport::PatchNode(Node* node,
   if (IsA<HTMLDocument>(GetDocument()))
     fragment->ParseHTML(markup, target_element);
   else
-    fragment->ParseXML(markup, target_element);
+    fragment->ParseXML(markup, target_element, IGNORE_EXCEPTION);
 
   // Compose the old list.
   ContainerNode* parent_node = node->parentNode();
@@ -436,8 +436,7 @@ DOMPatchSupport::Digest* DOMPatchSupport::CreateDigest(
   DigestValue digest_result;
 
   Node::NodeType node_type = node->getNodeType();
-  digestor.Update(
-      {reinterpret_cast<const uint8_t*>(&node_type), sizeof(node_type)});
+  digestor.Update(base::byte_span_from_ref(node_type));
   digestor.UpdateUtf8(node->nodeName());
   digestor.UpdateUtf8(node->nodeValue());
 
@@ -460,15 +459,14 @@ DOMPatchSupport::Digest* DOMPatchSupport::CreateDigest(
 
       attrs_digestor.Finish(digest_result);
       DCHECK(!attrs_digestor.has_failed());
-      digest->attrs_sha1_ =
-          Base64Encode(base::make_span(digest_result).first<10>());
+      digest->attrs_sha1_ = Base64Encode(base::span(digest_result).first<10>());
       digestor.UpdateUtf8(digest->attrs_sha1_);
     }
   }
 
   digestor.Finish(digest_result);
   DCHECK(!digestor.has_failed());
-  digest->sha1_ = Base64Encode(base::make_span(digest_result).first<10>());
+  digest->sha1_ = Base64Encode(base::span(digest_result).first<10>());
 
   if (unused_nodes_map)
     unused_nodes_map->insert(digest->sha1_, digest);

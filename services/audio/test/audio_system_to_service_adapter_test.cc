@@ -5,6 +5,7 @@
 #include "services/audio/public/cpp/audio_system_to_service_adapter.h"
 
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
@@ -206,7 +207,7 @@ class AudioSystemToServiceAdapterConnectionLossTest
       (audio_system()->*get_stream_parameters)(
           media::AudioDeviceDescription::kDefaultDeviceId,
           expectations_.GetAudioParamsCallback(
-              FROM_HERE, wait_loop.QuitClosure(), absl::nullopt));
+              FROM_HERE, wait_loop.QuitClosure(), std::nullopt));
       system_info_receiver_->reset();  // Connection loss.
       base::RunLoop().RunUntilIdle();
       wait_loop.Run();
@@ -255,7 +256,7 @@ TEST_F(AudioSystemToServiceAdapterConnectionLossTest,
     EXPECT_CALL(system_info_bind_requested_, Call()).Times(Exactly(0));
     audio_system_->GetAssociatedOutputDeviceID(
         std::string(), expectations_.GetDeviceIdCallback(
-                           FROM_HERE, wait_loop.QuitClosure(), absl::nullopt));
+                           FROM_HERE, wait_loop.QuitClosure(), std::nullopt));
     system_info_receiver_->reset();  // Connection loss.
     wait_loop.Run();
   }
@@ -267,7 +268,7 @@ TEST_F(AudioSystemToServiceAdapterConnectionLossTest,
     EXPECT_CALL(system_info_bind_requested_, Call()).Times(Exactly(1));
     audio_system_->GetAssociatedOutputDeviceID(
         std::string(), expectations_.GetDeviceIdCallback(
-                           FROM_HERE, wait_loop.QuitClosure(), absl::nullopt));
+                           FROM_HERE, wait_loop.QuitClosure(), std::nullopt));
     system_info_receiver_->reset();  // Connection loss.
     wait_loop.Run();
   }
@@ -335,7 +336,7 @@ TEST_F(AudioSystemToServiceAdapterConnectionLossTest, GetInputDeviceInfo) {
     audio_system_->GetInputDeviceInfo(
         "device-id",
         expectations_.GetInputDeviceInfoCallback(
-            FROM_HERE, wait_loop.QuitClosure(), absl::nullopt, absl::nullopt));
+            FROM_HERE, wait_loop.QuitClosure(), std::nullopt, std::nullopt));
     system_info_receiver_->reset();  // Connection loss.
     wait_loop.Run();
   }
@@ -428,7 +429,7 @@ class AudioSystemToServiceAdapterDisconnectTest : public testing::Test {
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME};
 
-  const absl::optional<std::string> valid_reply_{kValidReplyId};
+  const std::optional<std::string> valid_reply_{kValidReplyId};
   base::MockCallback<media::AudioSystem::OnDeviceIdCallback> response_received_;
 
   MockSystemInfo mock_system_info_{kResponseDelay};

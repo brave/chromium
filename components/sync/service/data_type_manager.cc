@@ -4,20 +4,7 @@
 
 #include "components/sync/service/data_type_manager.h"
 
-#include "base/notreached.h"
-
 namespace syncer {
-
-DataTypeManager::ConfigureResult::ConfigureResult() : status(UNKNOWN) {}
-
-DataTypeManager::ConfigureResult::ConfigureResult(ConfigureStatus status,
-                                                  ModelTypeSet requested_types)
-    : status(status), requested_types(requested_types) {}
-
-DataTypeManager::ConfigureResult::ConfigureResult(
-    const ConfigureResult& other) = default;
-
-DataTypeManager::ConfigureResult::~ConfigureResult() = default;
 
 // Static.
 std::string DataTypeManager::ConfigureStatusToString(ConfigureStatus status) {
@@ -26,9 +13,6 @@ std::string DataTypeManager::ConfigureStatusToString(ConfigureStatus status) {
       return "Ok";
     case ABORTED:
       return "Aborted";
-    case UNKNOWN:
-      NOTREACHED();
-      return std::string();
   }
   return std::string();
 }

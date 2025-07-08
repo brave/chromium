@@ -16,6 +16,7 @@
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -63,4 +64,30 @@ SupervisedUserBrowserUtilsTest::GetIdentityTestEnv() {
 TEST_F(SupervisedUserBrowserUtilsTest, GetAccountGivenName) {
   ASSERT_NE(nullptr, profile());
   EXPECT_EQ(kChildGivenName, supervised_user::GetAccountGivenName(*profile()));
+}
+
+enum class ExtensionsPermissionStatus { kEnabled, kDisabled };
+
+// Tests for the method AreExtensionsPermissionsEnabled.
+class SupervisedUserBrowserUtilsTestWithExtensionsPermissionsFeature
+    : public SupervisedUserBrowserUtilsTest,
+      public testing::WithParamInterface<ExtensionsPermissionStatus> {
+};
+
+TEST_F(SupervisedUserBrowserUtilsTestWithExtensionsPermissionsFeature,
+       AreExtensionsPermissionsEnabledWithSupervisedUser) {
+  profile()->AsTestingProfile()->SetIsSupervisedProfile(true);
+
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  EXPECT_TRUE(supervised_user::AreExtensionsPermissionsEnabled(profile()));
+#else
+  EXPECT_FALSE(supervised_user::AreExtensionsPermissionsEnabled(profile()));
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+}
+
+TEST_F(SupervisedUserBrowserUtilsTestWithExtensionsPermissionsFeature,
+       AreExtensionsPermissionsEnabledWithNonSupervisedUser) {
+  profile()->AsTestingProfile()->SetIsSupervisedProfile(false);
+
+  EXPECT_FALSE(supervised_user::AreExtensionsPermissionsEnabled(profile()));
 }

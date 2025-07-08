@@ -6,17 +6,20 @@ package org.chromium.chrome.browser.customtabs.features;
 
 import android.os.SystemClock;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.tab.Tab;
 
 import java.util.Locale;
@@ -26,14 +29,15 @@ import java.util.Locale;
  * and owned by C++ object. This class has the ability to record whether the current web content has
  * seen interaction when the tab is closing, as well as the timestamp when this happens.
  *
- * Note that this object's lifecycle is bounded to a {@link WebContents} but not a {@link Tab}. To
- * observe the first frame of tab load, this recorder has to attach to the web content before the
+ * <p>Note that this object's lifecycle is bounded to a {@link WebContents} but not a {@link Tab}.
+ * To observe the first frame of tab load, this recorder has to attach to the web content before the
  * first navigation for the visible frame finishes, or a pre-rendered frame become active.
- * */
+ */
 @JNINamespace("customtabs")
+@NullMarked
 public class TabInteractionRecorder {
     private static final String TAG = "CctInteraction";
-    private static TabInteractionRecorder sInstanceForTesting;
+    private static @Nullable TabInteractionRecorder sInstanceForTesting;
     private final long mNativeTabInteractionRecorder;
 
     // Do not instantiate in Java.
@@ -53,10 +57,10 @@ public class TabInteractionRecorder {
     }
 
     /**
-     * Get the TabInteractionRecorder that lives in the main web contents of the given tab.
-     * Note that the object might be come stale if the web contents of the given tab is swapped
-     * after this function is called.
-     * */
+     * Get the TabInteractionRecorder that lives in the main web contents of the given tab. Note
+     * that the object might be come stale if the web contents of the given tab is swapped after
+     * this function is called.
+     */
     public static @Nullable TabInteractionRecorder getFromTab(Tab tab) {
         if (sInstanceForTesting != null) {
             return sInstanceForTesting;
@@ -87,12 +91,15 @@ public class TabInteractionRecorder {
         boolean hadFormInteractionInActivePage = hadFormInteractionInActivePage();
         boolean hadNavigationInteraction = hadNavigationInteraction();
 
-        Log.d(TAG,
-                String.format(Locale.US,
-                        "timestamp=%d, TabInteractionRecorder.recordInteractions=%b", timestamp,
+        Log.d(
+                TAG,
+                String.format(
+                        Locale.US,
+                        "timestamp=%d, TabInteractionRecorder.recordInteractions=%b",
+                        timestamp,
                         hadInteraction));
 
-        SharedPreferencesManager pref = SharedPreferencesManager.getInstance();
+        SharedPreferencesManager pref = ChromeSharedPreferences.getInstance();
         pref.writeLong(ChromePreferenceKeys.CUSTOM_TABS_LAST_CLOSE_TIMESTAMP, timestamp);
 
         pref.writeBoolean(
@@ -117,18 +124,18 @@ public class TabInteractionRecorder {
     }
 
     private boolean hadFormInteractionInActivePage() {
-        return TabInteractionRecorderJni.get().hadFormInteractionInActivePage(
-                mNativeTabInteractionRecorder);
+        return TabInteractionRecorderJni.get()
+                .hadFormInteractionInActivePage(mNativeTabInteractionRecorder);
     }
 
     private boolean hadFormInteractionInSession() {
-        return TabInteractionRecorderJni.get().hadFormInteractionInSession(
-                mNativeTabInteractionRecorder);
+        return TabInteractionRecorderJni.get()
+                .hadFormInteractionInSession(mNativeTabInteractionRecorder);
     }
 
     private boolean hadNavigationInteraction() {
-        return TabInteractionRecorderJni.get().hadNavigationInteraction(
-                mNativeTabInteractionRecorder);
+        return TabInteractionRecorderJni.get()
+                .hadNavigationInteraction(mNativeTabInteractionRecorder);
     }
 
     /** Reset the interaction recorded. */
@@ -137,21 +144,19 @@ public class TabInteractionRecorder {
     }
 
     /**
-     * Whether there has been direct user interaction with the WebContents in the tab.
-     * For more detail see content/public/browser/web_contents_observer.h
+     * Whether there has been direct user interaction with the WebContents in the tab. For more
+     * detail see content/public/browser/web_contents_observer.h
      *
      * @return Whether there has been direct user interaction.
      */
     public boolean didGetUserInteraction() {
-        // TODO(https://crbug.com/1359540): Expose WebContentsObserver#didGetUserInteraction
+        // TODO(crbug.com/40237418): Expose WebContentsObserver#didGetUserInteraction
         return TabInteractionRecorderJni.get().didGetUserInteraction(mNativeTabInteractionRecorder);
     }
 
-    /**
-     *  Remove all the shared preferences related to tab interactions.
-     */
+    /** Remove all the shared preferences related to tab interactions. */
     public static void resetTabInteractionRecords() {
-        SharedPreferencesManager pref = SharedPreferencesManager.getInstance();
+        SharedPreferencesManager pref = ChromeSharedPreferences.getInstance();
         pref.removeKey(ChromePreferenceKeys.CUSTOM_TABS_LAST_CLOSE_TIMESTAMP);
         pref.removeKey(ChromePreferenceKeys.CUSTOM_TABS_LAST_CLOSE_TAB_INTERACTION);
     }
@@ -164,11 +169,17 @@ public class TabInteractionRecorder {
     @NativeMethods
     interface Natives {
         TabInteractionRecorder getFromTab(Tab tab);
+
         TabInteractionRecorder createForTab(Tab tab);
+
         boolean didGetUserInteraction(long nativeTabInteractionRecorderAndroid);
+
         boolean hadFormInteractionInActivePage(long nativeTabInteractionRecorderAndroid);
+
         boolean hadFormInteractionInSession(long nativeTabInteractionRecorderAndroid);
+
         boolean hadNavigationInteraction(long nativeTabInteractionRecorderAndroid);
+
         void reset(long nativeTabInteractionRecorderAndroid);
     }
 }

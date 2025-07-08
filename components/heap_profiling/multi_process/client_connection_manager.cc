@@ -21,8 +21,6 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/process_type.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -76,7 +74,6 @@ bool ShouldProfileNonRendererProcessType(Mode mode, int process_type) {
   }
 
   NOTREACHED();
-  return false;
 }
 
 void StartProfilingClientOnIOThread(
@@ -84,7 +81,8 @@ void StartProfilingClientOnIOThread(
     mojo::PendingRemote<mojom::ProfilingClient> client,
     base::ProcessId pid,
     mojom::ProcessType process_type,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
 
   if (!controller)
@@ -96,7 +94,8 @@ void StartProfilingClientOnIOThread(
 
 void StartProfilingBrowserProcessOnIOThread(
     base::WeakPtr<Controller> controller,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
 
   if (!controller)
@@ -123,10 +122,6 @@ ClientConnectionManager::~ClientConnectionManager() {
 
 void ClientConnectionManager::Start() {
   Add(this);
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
-                 content::NotificationService::AllBrowserContextsAndSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-                 content::NotificationService::AllBrowserContextsAndSources());
 
   StartProfilingExistingProcessesIfNecessary();
 }
@@ -138,7 +133,8 @@ Mode ClientConnectionManager::GetMode() {
 
 void ClientConnectionManager::StartProfilingProcess(
     base::ProcessId pid,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   mode_ = Mode::kManual;
@@ -205,7 +201,7 @@ void ClientConnectionManager::StartProfilingExistingProcessesIfNecessary() {
     if (ShouldProfileNewRenderer(iter.GetCurrentValue()) &&
         iter.GetCurrentValue()->GetProcess().Handle() !=
             base::kNullProcessHandle) {
-      StartProfilingRenderer(iter.GetCurrentValue());
+      StartProfilingRenderer(iter.GetCurrentValue(), base::DoNothing());
     }
   }
 
@@ -214,7 +210,7 @@ void ClientConnectionManager::StartProfilingExistingProcessesIfNecessary() {
     const content::ChildProcessData& data = browser_child_iter.GetData();
     if (ShouldProfileNonRendererProcessType(mode_, data.process_type) &&
         data.GetProcess().IsValid()) {
-      StartProfilingNonRendererChild(data);
+      StartProfilingNonRendererChild(data, base::DoNothing());
     }
   }
 }
@@ -224,18 +220,19 @@ void ClientConnectionManager::BrowserChildProcessLaunchedAndConnected(
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // Ensure this is only called for all non-renderer browser child processes
-  // so as not to collide with logic in ClientConnectionManager::Observe().
+  // so as not to collide with logic in OnRenderProcessHostCreated().
   DCHECK_NE(data.process_type, content::ProcessType::PROCESS_TYPE_RENDERER);
 
   if (!ShouldProfileNonRendererProcessType(mode_, data.process_type))
     return;
 
-  StartProfilingNonRendererChild(data);
+  StartProfilingNonRendererChild(data, base::DoNothing());
 }
 
 void ClientConnectionManager::StartProfilingNonRendererChild(
     const content::ChildProcessData& data,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   content::BrowserChildProcessHost* host =
@@ -262,27 +259,26 @@ void ClientConnectionManager::StartProfilingNonRendererChild(
 void ClientConnectionManager::OnRenderProcessHostCreated(
     content::RenderProcessHost* host) {
   if (ShouldProfileNewRenderer(host)) {
-    StartProfilingRenderer(host);
+    StartProfilingRenderer(host, base::DoNothing());
+    if (!host_observation_.IsObservingSource(host)) {
+      host_observation_.AddObservation(host);
+    }
   }
 }
 
-void ClientConnectionManager::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  content::RenderProcessHost* host =
-      content::Source<content::RenderProcessHost>(source).ptr();
+void ClientConnectionManager::RenderProcessExited(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
+  profiled_renderers_.erase(host);
+  host_observation_.RemoveObservation(host);
+}
 
-  // NOTIFICATION_RENDERER_PROCESS_CLOSED corresponds to death of an underlying
-  // RenderProcess. NOTIFICATION_RENDERER_PROCESS_TERMINATED corresponds to when
-  // the RenderProcessHost's lifetime is ending. Ideally, we'd only listen to
-  // the former, but if the RenderProcessHost is destroyed before the
-  // RenderProcess, then the former is never sent.
-  if ((type == content::NOTIFICATION_RENDERER_PROCESS_TERMINATED ||
-       type == content::NOTIFICATION_RENDERER_PROCESS_CLOSED)) {
-    profiled_renderers_.erase(host);
-  }
+// RenderProcessHostDestroyed() will be invoked only if RenderProcessExited()
+// was not, since we remove the observation of `host` in that function.
+void ClientConnectionManager::RenderProcessHostDestroyed(
+    content::RenderProcessHost* host) {
+  profiled_renderers_.erase(host);
+  host_observation_.RemoveObservation(host);
 }
 
 bool ClientConnectionManager::ShouldProfileNewRenderer(
@@ -306,7 +302,8 @@ bool ClientConnectionManager::ShouldProfileNewRenderer(
 
 void ClientConnectionManager::StartProfilingRenderer(
     content::RenderProcessHost* host,
-    base::OnceClosure started_profiling_closure) {
+    mojom::ProfilingService::AddProfilingClientCallback
+        started_profiling_closure) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   profiled_renderers_.insert(host);

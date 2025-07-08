@@ -6,6 +6,7 @@
 #define COMPONENTS_PREFS_PERSISTENT_PREF_STORE_H_
 
 #include "base/functional/callback.h"
+#include "components/prefs/pref_filter.h"
 #include "components/prefs/prefs_export.h"
 #include "components/prefs/writeable_pref_store.h"
 
@@ -37,7 +38,7 @@ class COMPONENTS_PREFS_EXPORT PersistentPrefStore : public WriteablePrefStore {
 
   class ReadErrorDelegate {
    public:
-    virtual ~ReadErrorDelegate() {}
+    virtual ~ReadErrorDelegate() = default;
 
     virtual void OnError(PrefReadError error) = 0;
   };
@@ -80,11 +81,28 @@ class COMPONENTS_PREFS_EXPORT PersistentPrefStore : public WriteablePrefStore {
   // Cleans preference data that may have been saved outside of the store.
   virtual void OnStoreDeletionFromDisk() = 0;
 
-  // TODO(crbug.com/942491) Remove this after fixing the bug.
+  // TODO(crbug.com/41447167) Remove this after fixing the bug.
   virtual bool IsInMemoryPrefStore() const;
 
+  // Returns whether this holds a read error delegate (can be null), passed
+  // during ReadPrefsAsync().
+  // When used in conjugation with IsInitializationComplete() and
+  // GetReadError(), this can be used to identity if there's a pending read.
+  virtual bool HasReadErrorDelegate() const = 0;
+
+  // Returns this store's filter, or nullptr if it has none.
+  virtual PrefFilter* GetFilter();
+
+  // Returns the default store filter used by SegregatedPrefStore.
+  // Returns nullptr by default.
+  virtual PrefFilter* GetDefaultStoreFilter();
+
+  // Returns the selected store filter used by SegregatedPrefStore.
+  // Returns nullptr by default.
+  virtual PrefFilter* GetSelectedStoreFilter();
+
  protected:
-  ~PersistentPrefStore() override {}
+  ~PersistentPrefStore() override = default;
 };
 
 #endif  // COMPONENTS_PREFS_PERSISTENT_PREF_STORE_H_

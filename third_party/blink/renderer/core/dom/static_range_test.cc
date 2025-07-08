@@ -18,6 +18,7 @@
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -29,6 +30,7 @@ class StaticRangeTest : public testing::Test {
   HTMLDocument& GetDocument() const;
 
  private:
+  test::TaskEnvironment task_environment_;
   ScopedNullExecutionContext execution_context_;
   Persistent<HTMLDocument> document_;
 };
@@ -47,7 +49,7 @@ HTMLDocument& StaticRangeTest::GetDocument() const {
 
 TEST_F(StaticRangeTest, SplitTextNodeRangeWithinText) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML("1234");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("1234");
   auto* old_text = To<Text>(GetDocument().body()->firstChild());
 
   auto* static_range04 = MakeGarbageCollected<StaticRange>(
@@ -118,7 +120,7 @@ TEST_F(StaticRangeTest, SplitTextNodeRangeWithinText) {
 
 TEST_F(StaticRangeTest, SplitTextNodeRangeOutsideText) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
       "<span id=\"outer\">0<span id=\"inner-left\">1</span>SPLITME<span "
       "id=\"inner-right\">2</span>3</span>");
 
@@ -233,7 +235,7 @@ TEST_F(StaticRangeTest, SplitTextNodeRangeOutsideText) {
 
 TEST_F(StaticRangeTest, InvalidToRange) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML("1234");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("1234");
   auto* old_text = To<Text>(GetDocument().body()->firstChild());
 
   auto* static_range04 = MakeGarbageCollected<StaticRange>(

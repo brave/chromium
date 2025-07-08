@@ -7,36 +7,40 @@
  * 'android-apps-subpage' is the settings subpage for managing android apps.
  */
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
 import '../settings_shared.css.js';
 
-import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
+import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import type {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {castExists} from '../assert_extras.js';
-import {DeepLinkingMixin} from '../deep_linking_mixin.js';
+import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
+import {RouteOriginMixin} from '../common/route_origin_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {RouteObserverMixin} from '../route_observer_mixin.js';
-import {Route, Router, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {Router, routes} from '../router.js';
 
-import {AndroidAppsBrowserProxyImpl, AndroidAppsInfo} from './android_apps_browser_proxy.js';
+import type {AndroidAppsInfo} from './android_apps_browser_proxy.js';
+import {AndroidAppsBrowserProxyImpl} from './android_apps_browser_proxy.js';
 import {getTemplate} from './android_apps_subpage.html.js';
 
-interface SettingsAndroidAppsSubpageElement {
+export interface SettingsAndroidAppsSubpageElement {
   $: {
     confirmDisableDialog: CrDialogElement,
   };
 }
 
-const SettingsAndroidAppsSubpageElementBase =
-    DeepLinkingMixin(RouteObserverMixin(PrefsMixin(I18nMixin(PolymerElement))));
+const GOOGLE_PLAY_STORE_URL = 'https://play.google.com/store/';
 
-class SettingsAndroidAppsSubpageElement extends
+const SettingsAndroidAppsSubpageElementBase =
+    DeepLinkingMixin(RouteOriginMixin(PrefsMixin(I18nMixin(PolymerElement))));
+
+export class SettingsAndroidAppsSubpageElement extends
     SettingsAndroidAppsSubpageElementBase {
   static get is() {
     return 'settings-android-apps-subpage' as const;
@@ -59,47 +63,58 @@ class SettingsAndroidAppsSubpageElement extends
       },
 
       dialogBody_: {
-        type: String,
-        value(this: SettingsAndroidAppsSubpageElement): string {
-          return this
-              .i18nAdvanced(
-                  'androidAppsDisableDialogMessage',
-                  {substitutions: [], tags: ['br']})
-              .toString();
+        type: Object,
+        value(this: SettingsAndroidAppsSubpageElement): TrustedHTML {
+          return this.i18nAdvanced(
+              'androidAppsDisableDialogMessage',
+              {substitutions: [], tags: ['br']});
         },
       },
 
       /** Whether Arc VM manage usb subpage should be shown. */
       isArcVmManageUsbAvailable: Boolean,
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kManageAndroidPreferences,
-          Setting.kRemovePlayStore,
-        ]),
-      },
     };
   }
 
   androidAppsInfo: AndroidAppsInfo;
   isArcVmManageUsbAvailable: boolean;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kManageAndroidPreferences,
+    Setting.kRemovePlayStore,
+  ]);
+
   private dialogBody_: string;
   private playStoreEnabled_: boolean;
 
-  override currentRouteChanged(route: Route) {
+  constructor() {
+    super();
+
+    /** RouteOriginMixin override */
+    this.route = routes.ANDROID_APPS_DETAILS;
+  }
+
+  override ready(): void {
+    super.ready();
+
+    this.addFocusConfig(
+        routes.ANDROID_APPS_DETAILS_ARC_VM_SHARED_USB_DEVICES,
+        '#manageArcvmShareUsbDevices');
+  }
+
+  override currentRouteChanged(newRoute: Route, oldRoute?: Route): void {
+    super.currentRouteChanged(newRoute, oldRoute);
+
     // Does not apply to this page.
-    if (route !== routes.ANDROID_APPS_DETAILS) {
+    if (newRoute !== this.route) {
       return;
     }
 
     this.attemptDeepLink();
   }
 
-  private onPlayStoreEnabledChanged_(enabled: boolean) {
+  private onPlayStoreEnabledChanged_(enabled: boolean): void {
     if (!enabled &&
         Router.getInstance().currentRoute === routes.ANDROID_APPS_DETAILS) {
       Router.getInstance().navigateToPreviousRoute();
@@ -153,6 +168,11 @@ class SettingsAndroidAppsSubpageElement extends
   private onSharedUsbDevicesClick_(): void {
     Router.getInstance().navigateTo(
         routes.ANDROID_APPS_DETAILS_ARC_VM_SHARED_USB_DEVICES);
+  }
+
+  private onOpenGooglePlayClick_(): void {
+    AndroidAppsBrowserProxyImpl.getInstance().openGooglePlayStore(
+        GOOGLE_PLAY_STORE_URL);
   }
 }
 

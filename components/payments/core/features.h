@@ -6,7 +6,6 @@
 #define COMPONENTS_PAYMENTS_CORE_FEATURES_H_
 
 #include "base/feature_list.h"
-#include "build/build_config.h"
 
 namespace payments {
 namespace features {
@@ -44,20 +43,8 @@ BASE_DECLARE_FEATURE(kGPayAppDynamicUpdate);
 // credential store APIs, or if it can only rely on the user-profile database.
 BASE_DECLARE_FEATURE(kSecurePaymentConfirmationUseCredentialStoreAPIs);
 
-#if !BUILDFLAG(IS_ANDROID)
-// Desktop only, if enabled PaymentHandler will use the new minimal header UX.
-// See https://crbug.com/1385136.
-BASE_DECLARE_FEATURE(kPaymentHandlerMinimalHeaderUX);
-
-// Desktop only, if enabled the Task Manager will show the PaymentHandler
-// window.
-BASE_DECLARE_FEATURE(kPaymentHandlerWindowInTaskManager);
-#endif
-
-// If enabled, the web-app manifest for already-installed service-worker apps
-// will always be refetched for every Payment Request, in order to potentially
-// refresh the icon for the app.
-BASE_DECLARE_FEATURE(kPaymentHandlerAlwaysRefreshIcon);
+// Used to enable the refreshed fallback flow for Secure Payment Confirmation.
+BASE_DECLARE_FEATURE(kSecurePaymentConfirmationFallback);
 
 }  // namespace features
 }  // namespace payments

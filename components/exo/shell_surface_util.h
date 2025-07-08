@@ -5,10 +5,11 @@
 #ifndef COMPONENTS_EXO_SHELL_SURFACE_UTIL_H_
 #define COMPONENTS_EXO_SHELL_SURFACE_UTIL_H_
 
-#include <memory>
-#include <string>
+#include <stdint.h>
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <memory>
+#include <optional>
+#include <string>
 
 namespace ui {
 class PropertyHandler;
@@ -36,13 +37,13 @@ class ShellSurfaceBase;
 // Sets the application ID to the property_handler. The application ID
 // identifies the general class of applications to which the window belongs.
 void SetShellApplicationId(ui::PropertyHandler* property_handler,
-                           const absl::optional<std::string>& id);
+                           const std::optional<std::string>& id);
 const std::string* GetShellApplicationId(const aura::Window* window);
 
 // Sets the startup ID to the property handler. The startup ID identifies the
 // application using startup notification protocol.
 void SetShellStartupId(ui::PropertyHandler* property_handler,
-                       const absl::optional<std::string>& id);
+                       const std::optional<std::string>& id);
 const std::string* GetShellStartupId(const aura::Window* window);
 
 // Shows/hides the shelf when fullscreen. If true, titlebar/shelf will show when
@@ -53,14 +54,14 @@ void SetShellUseImmersiveForFullscreen(aura::Window* window, bool value);
 // Sets the client accessibility ID for the window. The accessibility ID
 // identifies the accessibility tree provided by client.
 void SetShellClientAccessibilityId(aura::Window* window,
-                                   const absl::optional<int32_t>& id);
-const absl::optional<int32_t> GetShellClientAccessibilityId(
+                                   const std::optional<int32_t>& id);
+const std::optional<int32_t> GetShellClientAccessibilityId(
     aura::Window* window);
 
 // Sets the ClientControlledShellSurface to the property handler.
 void SetShellClientControlledShellSurface(
     ui::PropertyHandler* property_handler,
-    const absl::optional<ClientControlledShellSurface*>& shell_surface);
+    const std::optional<ClientControlledShellSurface*>& shell_surface);
 ClientControlledShellSurface* GetShellClientControlledShellSurface(
     ui::PropertyHandler* property_handler);
 
@@ -79,7 +80,7 @@ Surface* GetShellRootSurface(const aura::Window* window);
 
 // Returns the ShellSurfaceBase for the given |window|, or nullptr if no such
 // surface exists.
-ShellSurfaceBase* GetShellSurfaceBaseForWindow(aura::Window* window);
+ShellSurfaceBase* GetShellSurfaceBaseForWindow(const aura::Window* window);
 
 // Returns the target surface for the located event |event|.  If an
 // event handling is grabbed by an window, it'll first examine that
@@ -108,7 +109,7 @@ void RevokePermissionToActivate(aura::Window* window);
 bool HasPermissionToActivate(aura::Window* window);
 
 // Returns true if event is/will be consumed by IME.
-bool ConsumedByIme(aura::Window* window, const ui::KeyEvent& event);
+bool ConsumedByIme(const ui::KeyEvent& event);
 
 // Set aura::client::kSkipImeProcessing to all Surface descendants.
 void SetSkipImeProcessingToDescendentSurfaces(aura::Window* window, bool value);

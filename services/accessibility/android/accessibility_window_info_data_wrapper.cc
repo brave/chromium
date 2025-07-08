@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "services/accessibility/android/accessibility_window_info_data_wrapper.h"
+#include "base/memory/raw_ptr.h"
 
 #include "base/notreached.h"
 #include "chrome/grit/generated_resources.h"
@@ -19,6 +20,9 @@ AccessibilityWindowInfoDataWrapper::AccessibilityWindowInfoDataWrapper(
     AXTreeSourceAndroid* tree_source,
     mojom::AccessibilityWindowInfoData* window)
     : AccessibilityInfoDataWrapper(tree_source), window_ptr_(window) {}
+
+AccessibilityWindowInfoDataWrapper::~AccessibilityWindowInfoDataWrapper() =
+    default;
 
 bool AccessibilityWindowInfoDataWrapper::IsNode() const {
   return false;
@@ -104,7 +108,6 @@ void AccessibilityWindowInfoDataWrapper::PopulateAXRole(
       return;
     case mojom::AccessibilityWindowType::INVALID_ENUM_VALUE:
       NOTREACHED();
-      return;
   }
 }
 
@@ -160,7 +163,8 @@ std::string AccessibilityWindowInfoDataWrapper::ComputeAXName(
 }
 
 void AccessibilityWindowInfoDataWrapper::GetChildren(
-    std::vector<AccessibilityInfoDataWrapper*>* children) const {
+    std::vector<raw_ptr<AccessibilityInfoDataWrapper, VectorExperimental>>*
+        children) const {
   // Populate the children vector by combining the child window IDs with the
   // root node ID.
   if (window_ptr_->int_list_properties) {
@@ -187,10 +191,30 @@ void AccessibilityWindowInfoDataWrapper::GetChildren(
                       "GetChildren";
     }
   }
+
+  for (int32_t vitual_child_id : virtual_child_ids_) {
+    auto* child_node = tree_source_->GetFromId(vitual_child_id);
+    if (child_node != nullptr) {
+      children->push_back(child_node);
+    } else {
+      LOG(WARNING)
+          << "Unexpected nullptr found while populating virtual child node for "
+             "GetChildren";
+    }
+  }
 }
 
 int32_t AccessibilityWindowInfoDataWrapper::GetWindowId() const {
   return window_ptr_->window_id;
+}
+
+void AccessibilityWindowInfoDataWrapper::AddVirtualChild(int32_t child_id) {
+  if (std::ranges::find(virtual_child_ids_, child_id) !=
+      virtual_child_ids_.end()) {
+    LOG(ERROR) << "Given child id already exists as a virtual child.";
+  } else {
+    virtual_child_ids_.push_back(child_id);
+  }
 }
 
 bool AccessibilityWindowInfoDataWrapper::GetProperty(

@@ -18,6 +18,7 @@
 #include "third_party/blink/renderer/modules/webcodecs/codec_pressure_manager.h"
 #include "third_party/blink/renderer/modules/webcodecs/codec_pressure_manager_provider.h"
 #include "third_party/blink/renderer/modules/webcodecs/video_decoder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
@@ -34,10 +35,12 @@ class DecoderTemplateTest : public testing::Test {
   ~DecoderTemplateTest() override = default;
 
   typename T::ConfigType* CreateConfig();
-  typename T::InitType* CreateInit(v8::Local<v8::Function> output_callback,
-                                   v8::Local<v8::Function> error_callback);
+  typename T::InitType* CreateInit(ScriptState* script_state,
+                                   ScriptFunction* output_callback,
+                                   ScriptFunction* error_callback);
 
   T* CreateDecoder(ScriptState*, const typename T::InitType*, ExceptionState&);
+  test::TaskEnvironment task_environment_;
 };
 
 template <>
@@ -60,11 +63,14 @@ AudioDecoder* DecoderTemplateTest<AudioDecoder>::CreateDecoder(
 
 template <>
 AudioDecoderInit* DecoderTemplateTest<AudioDecoder>::CreateInit(
-    v8::Local<v8::Function> output_callback,
-    v8::Local<v8::Function> error_callback) {
+    ScriptState* script_state,
+    ScriptFunction* output_callback,
+    ScriptFunction* error_callback) {
   auto* init = MakeGarbageCollected<AudioDecoderInit>();
-  init->setOutput(V8AudioDataOutputCallback::Create(output_callback));
-  init->setError(V8WebCodecsErrorCallback::Create(error_callback));
+  init->setOutput(V8AudioDataOutputCallback::Create(
+      output_callback->ToV8Function(script_state)));
+  init->setError(V8WebCodecsErrorCallback::Create(
+      error_callback->ToV8Function(script_state)));
   return init;
 }
 
@@ -77,11 +83,14 @@ VideoDecoderConfig* DecoderTemplateTest<VideoDecoder>::CreateConfig() {
 
 template <>
 VideoDecoderInit* DecoderTemplateTest<VideoDecoder>::CreateInit(
-    v8::Local<v8::Function> output_callback,
-    v8::Local<v8::Function> error_callback) {
+    ScriptState* script_state,
+    ScriptFunction* output_callback,
+    ScriptFunction* error_callback) {
   auto* init = MakeGarbageCollected<VideoDecoderInit>();
-  init->setOutput(V8VideoFrameOutputCallback::Create(output_callback));
-  init->setError(V8WebCodecsErrorCallback::Create(error_callback));
+  init->setOutput(V8VideoFrameOutputCallback::Create(
+      output_callback->ToV8Function(script_state)));
+  init->setError(V8WebCodecsErrorCallback::Create(
+      error_callback->ToV8Function(script_state)));
   return init;
 }
 
@@ -119,11 +128,11 @@ TYPED_TEST(DecoderTemplateTest, BasicConstruction) {
   V8TestingScope v8_scope;
 
   MockFunctionScope mock_function(v8_scope.GetScriptState());
-  auto* decoder =
-      this->CreateDecoder(v8_scope.GetScriptState(),
-                          this->CreateInit(mock_function.ExpectNoCall(),
-                                           mock_function.ExpectNoCall()),
-                          v8_scope.GetExceptionState());
+  auto* decoder = this->CreateDecoder(
+      v8_scope.GetScriptState(),
+      this->CreateInit(v8_scope.GetScriptState(), mock_function.ExpectNoCall(),
+                       mock_function.ExpectNoCall()),
+      v8_scope.GetExceptionState());
   ASSERT_TRUE(decoder);
   EXPECT_FALSE(v8_scope.GetExceptionState().HadException());
 }
@@ -133,11 +142,11 @@ TYPED_TEST(DecoderTemplateTest, ResetDuringFlush) {
 
   // Create a decoder.
   MockFunctionScope mock_function(v8_scope.GetScriptState());
-  auto* decoder =
-      this->CreateDecoder(v8_scope.GetScriptState(),
-                          this->CreateInit(mock_function.ExpectNoCall(),
-                                           mock_function.ExpectNoCall()),
-                          v8_scope.GetExceptionState());
+  auto* decoder = this->CreateDecoder(
+      v8_scope.GetScriptState(),
+      this->CreateInit(v8_scope.GetScriptState(), mock_function.ExpectNoCall(),
+                       mock_function.ExpectNoCall()),
+      v8_scope.GetExceptionState());
   ASSERT_TRUE(decoder);
   ASSERT_FALSE(v8_scope.GetExceptionState().HadException());
 
@@ -188,11 +197,11 @@ TYPED_TEST(DecoderTemplateTest, ResetDuringConfigureOnWorker) {
           [&](base::OnceClosure on_done) { notify_cb = std::move(on_done); });
   // Create a decoder.
   MockFunctionScope mock_function(v8_scope.GetScriptState());
-  auto* decoder =
-      this->CreateDecoder(v8_scope.GetScriptState(),
-                          this->CreateInit(mock_function.ExpectNoCall(),
-                                           mock_function.ExpectNoCall()),
-                          v8_scope.GetExceptionState());
+  auto* decoder = this->CreateDecoder(
+      v8_scope.GetScriptState(),
+      this->CreateInit(v8_scope.GetScriptState(), mock_function.ExpectNoCall(),
+                       mock_function.ExpectNoCall()),
+      v8_scope.GetExceptionState());
   ASSERT_TRUE(decoder);
   ASSERT_FALSE(v8_scope.GetExceptionState().HadException());
 
@@ -233,11 +242,11 @@ TYPED_TEST(DecoderTemplateTest, DISABLED_NoPressureByDefault) {
 
   // Create a decoder.
   MockFunctionScope mock_function(v8_scope.GetScriptState());
-  auto* decoder =
-      this->CreateDecoder(v8_scope.GetScriptState(),
-                          this->CreateInit(mock_function.ExpectNoCall(),
-                                           mock_function.ExpectNoCall()),
-                          v8_scope.GetExceptionState());
+  auto* decoder = this->CreateDecoder(
+      v8_scope.GetScriptState(),
+      this->CreateInit(v8_scope.GetScriptState(), mock_function.ExpectNoCall(),
+                       mock_function.ExpectNoCall()),
+      v8_scope.GetExceptionState());
   ASSERT_TRUE(decoder);
   ASSERT_FALSE(v8_scope.GetExceptionState().HadException());
 

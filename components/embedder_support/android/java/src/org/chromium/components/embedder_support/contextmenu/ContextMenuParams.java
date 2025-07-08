@@ -4,23 +4,26 @@
 
 package org.chromium.components.embedder_support.contextmenu;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+
 import org.chromium.blink_public.common.ContextMenuDataMediaType;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.AdditionalNavigationParams;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.content_public.common.Referrer;
-import org.chromium.ui.base.MenuSourceType;
+import org.chromium.ui.listmenu.MenuModelBridge;
 import org.chromium.url.GURL;
 
 /**
- * A list of parameters that explain what kind of context menu to show the user.  This data is
- * generated from content/public/common/context_menu_params.h.
+ * A list of parameters that explain what kind of context menu to show the user. This data is
+ * generated from components/embedder_support/android/contextmenu/context_menu_builder.h.
  */
 @JNINamespace("context_menu")
+@NullMarked
 public class ContextMenuParams {
     private final long mNativePtr;
     private final GURL mPageUrl;
@@ -29,8 +32,9 @@ public class ContextMenuParams {
     private final String mTitleText;
     private final GURL mUnfilteredLinkUrl;
     private final GURL mSrcUrl;
-    private final Referrer mReferrer;
+    private final @Nullable Referrer mReferrer;
 
+    private final boolean mIsPage;
     private final boolean mIsAnchor;
     private final boolean mIsImage;
     private final boolean mIsVideo;
@@ -43,60 +47,57 @@ public class ContextMenuParams {
 
     private final boolean mOpenedFromHighlight;
 
+    private final boolean mOpenedFromInterestFor;
+    private final int mInterestForNodeID;
+
     private final @Nullable AdditionalNavigationParams mAdditionalNavigationParams;
+    private final MenuModelBridge mMenuModelBridge;
 
     @CalledByNative
     private long getNativePointer() {
         return mNativePtr;
     }
 
-    /**
-     * @return The URL associated with the main frame of the page that triggered the context menu.
-     */
+    /** @return The URL associated with the main frame of the page that triggered the context menu. */
     public GURL getPageUrl() {
         return mPageUrl;
     }
 
-    /**
-     * @return The link URL, if any.
-     */
+    /** @return The link URL, if any. */
     public GURL getLinkUrl() {
         return mLinkUrl;
     }
 
-    /**
-     * @return The link text, if any.
-     */
+    /** @return The link text, if any. */
     public String getLinkText() {
         return mLinkText;
     }
 
-    /**
-     * @return The title or alt attribute (if title is not available).
-     */
+    /** @return The title or alt attribute (if title is not available). */
     public String getTitleText() {
         return mTitleText;
     }
 
-    /**
-     * @return The unfiltered link URL, if any.
-     */
+    /** @return The unfiltered link URL, if any. */
     public GURL getUnfilteredLinkUrl() {
         return mUnfilteredLinkUrl;
     }
 
-    /**
-     * @return The source URL.
-     */
+    /** @return The source URL. */
     public GURL getSrcUrl() {
         return mSrcUrl;
     }
 
-    /**
-     * @return the referrer associated with the frame on which the menu is invoked
-     */
-    public Referrer getReferrer() {
+    /** @return the referrer associated with the frame on which the menu is invoked */
+    public @Nullable Referrer getReferrer() {
         return mReferrer;
+    }
+
+    /**
+     * @return Whether or not the context menu is being shown for a page.
+     */
+    public boolean isPage() {
+        return mIsPage;
     }
 
     /**
@@ -106,16 +107,12 @@ public class ContextMenuParams {
         return mIsAnchor;
     }
 
-    /**
-     * @return Whether or not the context menu is being shown for an image.
-     */
+    /** @return Whether or not the context menu is being shown for an image. */
     public boolean isImage() {
         return mIsImage;
     }
 
-    /**
-     * @return Whether or not the context menu is being shown for a video.
-     */
+    /** @return Whether or not the context menu is being shown for a video. */
     public boolean isVideo() {
         return mIsVideo;
     }
@@ -144,13 +141,11 @@ public class ContextMenuParams {
      * @return The method used to cause the context menu to be shown. For example, right mouse click
      *         or long press.
      */
-    public @MenuSourceType int getSourceType() {
+    public int getSourceType() {
         return mSourceType;
     }
 
-    /**
-     * @return Whether or not the context menu is been shown for a download item.
-     */
+    /** @return Whether or not the context menu is been shown for a download item. */
     public boolean isFile() {
         if (getSrcUrl().getScheme().equals(ContentUrlConstants.FILE_SCHEME)) {
             return true;
@@ -158,9 +153,7 @@ public class ContextMenuParams {
         return false;
     }
 
-    /**
-     * @return The valid url of a ContextMenuParams.
-     */
+    /** @return The valid url of a ContextMenuParams. */
     public GURL getUrl() {
         if (isAnchor() && !getLinkUrl().isEmpty()) {
             return getLinkUrl();
@@ -169,27 +162,63 @@ public class ContextMenuParams {
         }
     }
 
-    /**
-     * @return Whether or not the context menu was opened from highlight.
-     */
+    /** @return Whether or not the context menu was opened from highlight. */
     public boolean getOpenedFromHighlight() {
         return mOpenedFromHighlight;
     }
 
     /**
+     * @return Whether or not the context menu was opened from an element with the `interestfor`
+     *     attribute.
+     */
+    public boolean getOpenedFromInterestFor() {
+        return mOpenedFromInterestFor;
+    }
+
+    /**
+     * @return Only valid if `getOpenedFromInterestFor()` is true, and only non-zero if the
+     *     `HTMLInterestForContextMenuItemOnly` feature is enabled. With that feature enabled,
+     *     this returns the DOMNodeID for the element that should be "shown interest" in case the
+     *     "show interest" menu item is chosen by the user.
+     */
+    public int getInterestForNodeID() {
+        return mInterestForNodeID;
+    }
+
+    /**
      * @return The additional navigation params associated with this Context Menu.
      */
-    public AdditionalNavigationParams getAdditionalNavigationParams() {
+    public @Nullable AdditionalNavigationParams getAdditionalNavigationParams() {
         return mAdditionalNavigationParams;
     }
 
+    /** Returns the {@link MenuModelBridge} associated with this context menu. */
+    public MenuModelBridge getMenuModelBridge() {
+        return mMenuModelBridge;
+    }
+
     @VisibleForTesting
-    public ContextMenuParams(long nativePtr, @ContextMenuDataMediaType int mediaType, GURL pageUrl,
-            GURL linkUrl, String linkText, GURL unfilteredLinkUrl, GURL srcUrl, String titleText,
-            Referrer referrer, boolean canSaveMedia, int triggeringTouchXDp, int triggeringTouchYDp,
-            @MenuSourceType int sourceType, boolean openedFromHighlight,
+    public ContextMenuParams(
+            long nativePtr,
+            MenuModelBridge menuModelBridge,
+            @ContextMenuDataMediaType int mediaType,
+            GURL pageUrl,
+            GURL linkUrl,
+            String linkText,
+            GURL unfilteredLinkUrl,
+            GURL srcUrl,
+            String titleText,
+            @Nullable Referrer referrer,
+            boolean canSaveMedia,
+            int triggeringTouchXDp,
+            int triggeringTouchYDp,
+            int sourceType,
+            boolean openedFromHighlight,
+            boolean openedFromInterestFor,
+            int interestForNodeID,
             @Nullable AdditionalNavigationParams additionalNavigationParams) {
         mNativePtr = nativePtr;
+        mMenuModelBridge = menuModelBridge;
         mPageUrl = pageUrl;
         mLinkUrl = linkUrl;
         mLinkText = linkText;
@@ -198,6 +227,13 @@ public class ContextMenuParams {
         mSrcUrl = srcUrl;
         mReferrer = referrer;
 
+        // Note: On desktop it is necessary to also check for the case where the target is an
+        // (editable) text/ password selection. Here that is not necessary because on Clank
+        //  it will open a selection popup instead of a context menu.
+        mIsPage =
+                (mediaType == ContextMenuDataMediaType.NONE
+                        && linkUrl.isEmpty()
+                        && !openedFromHighlight);
         mIsAnchor = !linkUrl.isEmpty();
         mIsImage = mediaType == ContextMenuDataMediaType.IMAGE;
         mIsVideo = mediaType == ContextMenuDataMediaType.VIDEO;
@@ -206,22 +242,55 @@ public class ContextMenuParams {
         mTriggeringTouchYDp = triggeringTouchYDp;
         mSourceType = sourceType;
         mOpenedFromHighlight = openedFromHighlight;
+        mOpenedFromInterestFor = openedFromInterestFor;
+        mInterestForNodeID = interestForNodeID;
         mAdditionalNavigationParams = additionalNavigationParams;
     }
 
     @CalledByNative
-    private static ContextMenuParams create(long nativePtr, @ContextMenuDataMediaType int mediaType,
-            GURL pageUrl, GURL linkUrl, String linkText, GURL unfilteredLinkUrl, GURL srcUrl,
-            String titleText, GURL sanitizedReferrer, int referrerPolicy, boolean canSaveMedia,
-            int triggeringTouchXDp, int triggeringTouchYDp, @MenuSourceType int sourceType,
+    private static ContextMenuParams create(
+            long nativePtr,
+            MenuModelBridge menuModelBridge,
+            @ContextMenuDataMediaType int mediaType,
+            GURL pageUrl,
+            GURL linkUrl,
+            String linkText,
+            GURL unfilteredLinkUrl,
+            GURL srcUrl,
+            String titleText,
+            GURL sanitizedReferrer,
+            int referrerPolicy,
+            boolean canSaveMedia,
+            int triggeringTouchXDp,
+            int triggeringTouchYDp,
+            int sourceType,
             boolean openedFromHighlight,
+            boolean openedFromInterestFor,
+            int interestForNodeID,
             @Nullable AdditionalNavigationParams additionalNavigationParams) {
-        // TODO(https://crbug.com/783819): Convert Referrer to use GURL.
-        Referrer referrer = sanitizedReferrer.isEmpty()
-                ? null
-                : new Referrer(sanitizedReferrer.getSpec(), referrerPolicy);
-        return new ContextMenuParams(nativePtr, mediaType, pageUrl, linkUrl, linkText,
-                unfilteredLinkUrl, srcUrl, titleText, referrer, canSaveMedia, triggeringTouchXDp,
-                triggeringTouchYDp, sourceType, openedFromHighlight, additionalNavigationParams);
+        // TODO(crbug.com/40549331): Convert Referrer to use GURL.
+        Referrer referrer =
+                sanitizedReferrer.isEmpty()
+                        ? null
+                        : new Referrer(sanitizedReferrer.getSpec(), referrerPolicy);
+        return new ContextMenuParams(
+                nativePtr,
+                menuModelBridge,
+                mediaType,
+                pageUrl,
+                linkUrl,
+                linkText,
+                unfilteredLinkUrl,
+                srcUrl,
+                titleText,
+                referrer,
+                canSaveMedia,
+                triggeringTouchXDp,
+                triggeringTouchYDp,
+                sourceType,
+                openedFromHighlight,
+                openedFromInterestFor,
+                interestForNodeID,
+                additionalNavigationParams);
     }
 }

@@ -36,6 +36,7 @@
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/color_chooser.h"
@@ -101,10 +102,6 @@ void ColorInputType::CountUsage() {
   CountUsageIfVisible(WebFeature::kInputTypeColor);
 }
 
-const AtomicString& ColorInputType::FormControlType() const {
-  return input_type_names::kColor;
-}
-
 bool ColorInputType::SupportsRequired() const {
   return false;
 }
@@ -160,21 +157,21 @@ void ColorInputType::HandleDOMActivateEvent(Event& event) {
 
   ChromeClient* chrome_client = GetChromeClient();
   if (chrome_client && !HasOpenedPopup()) {
-    UseCounter::Count(
-        document,
-        (event.UnderlyingEvent() && event.UnderlyingEvent()->isTrusted())
-            ? WebFeature::kColorInputTypeChooserByTrustedClick
-            : WebFeature::kColorInputTypeChooserByUntrustedClick);
+    UseCounter::Count(document,
+                      event.IsFullyTrusted()
+                          ? WebFeature::kColorInputTypeChooserByTrustedClick
+                          : WebFeature::kColorInputTypeChooserByUntrustedClick);
     OpenPopupView();
   }
 
   event.SetDefaultHandled();
 }
 
-ControlPart ColorInputType::AutoAppearance() const {
-  return GetElement().FastHasAttribute(html_names::kListAttr)
-             ? kMenulistPart
-             : kSquareButtonPart;
+AppearanceValue ColorInputType::AutoAppearance() const {
+  return (!RuntimeEnabledFeatures::ColorInputDatalistLooksNormalEnabled() &&
+          GetElement().FastHasAttribute(html_names::kListAttr))
+             ? AppearanceValue::kMenulist
+             : AppearanceValue::kSquareButton;
 }
 
 void ColorInputType::OpenPopupView() {
@@ -186,6 +183,7 @@ void ColorInputType::OpenPopupView() {
     // Invalidate paint to ensure that the focus ring is removed.
     GetElement().GetLayoutObject()->SetShouldDoFullPaintInvalidation();
   }
+  GetElement().PseudoStateChanged(CSSSelector::kPseudoOpen);
 }
 
 void ColorInputType::ClosePopupView() {
@@ -194,7 +192,11 @@ void ColorInputType::ClosePopupView() {
 }
 
 bool ColorInputType::HasOpenedPopup() const {
-  return chooser_;
+  return chooser_ != nullptr;
+}
+
+bool ColorInputType::IsPickerVisible() const {
+  return chooser_ && chooser_->IsPickerVisible();
 }
 
 bool ColorInputType::ShouldRespectListAttribute() {
@@ -236,6 +238,7 @@ void ColorInputType::DidEndChooser() {
     // Invalidate paint to ensure that the focus ring is shown.
     GetElement().GetLayoutObject()->SetShouldDoFullPaintInvalidation();
   }
+  GetElement().PseudoStateChanged(CSSSelector::kPseudoOpen);
 }
 
 void ColorInputType::UpdateView() {
@@ -296,7 +299,7 @@ Vector<mojom::blink::ColorSuggestionPtr> ColorInputType::Suggestions() const {
 }
 
 AXObject* ColorInputType::PopupRootAXObject() {
-  return chooser_ ? chooser_->RootAXObject() : nullptr;
+  return chooser_ ? chooser_->RootAXObject(&GetElement()) : nullptr;
 }
 
 ColorChooserClient* ColorInputType::GetColorChooserClient() {

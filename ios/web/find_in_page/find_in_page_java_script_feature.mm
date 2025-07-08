@@ -9,10 +9,6 @@
 #import "ios/web/public/js_messaging/java_script_feature_util.h"
 #import "ios/web/public/js_messaging/web_frame.h"
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 namespace {
 const char kScriptName[] = "find_in_page_native_api";
 const char kEventListenersScriptName[] = "find_in_page_event_listeners";
@@ -62,7 +58,7 @@ FindInPageJavaScriptFeature::~FindInPageJavaScriptFeature() = default;
 bool FindInPageJavaScriptFeature::Search(
     WebFrame* frame,
     const std::string& query,
-    base::OnceCallback<void(absl::optional<int>)> callback) {
+    base::OnceCallback<void(std::optional<int>)> callback) {
   base::Value::List params;
   params.Append(query);
   params.Append(kFindInPageFindTimeout);
@@ -75,7 +71,7 @@ bool FindInPageJavaScriptFeature::Search(
 
 void FindInPageJavaScriptFeature::Pump(
     WebFrame* frame,
-    base::OnceCallback<void(absl::optional<int>)> callback) {
+    base::OnceCallback<void(std::optional<int>)> callback) {
   base::Value::List params;
   params.Append(kFindInPageFindTimeout);
   CallJavaScriptFunction(
@@ -101,9 +97,9 @@ void FindInPageJavaScriptFeature::Stop(WebFrame* frame) {
 }
 
 void FindInPageJavaScriptFeature::ProcessSearchResult(
-    base::OnceCallback<void(const absl::optional<int>)> callback,
+    base::OnceCallback<void(const std::optional<int>)> callback,
     const base::Value* result) {
-  absl::optional<int> match_count;
+  std::optional<int> match_count;
   if (result && result->is_double()) {
     // Valid match number returned. If not, match count will be 0 in order to
     // zero-out count from previous find.

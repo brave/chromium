@@ -6,15 +6,16 @@ package org.chromium.components.viz.service.frame_sinks;
 
 import android.view.Choreographer;
 
-import org.chromium.base.TraceEvent;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeMethods;
+import org.jni_zero.CalledByNative;
+import org.jni_zero.JNINamespace;
+import org.jni_zero.NativeMethods;
 
-/**
- * Provides a VSyncMonitor backed BeginFrameSource.
- */
+import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
+
+/** Provides a VSyncMonitor backed BeginFrameSource. */
 @JNINamespace("viz")
+@NullMarked
 public class ExternalBeginFrameSourceAndroid implements Choreographer.FrameCallback {
     private static final long NANOSECONDS_PER_SECOND = 1000000000;
     private static final long NANOSECONDS_PER_MICROSECOND = 1000;
@@ -83,8 +84,10 @@ public class ExternalBeginFrameSourceAndroid implements Choreographer.FrameCallb
                 // after that it asymptotically approaches the real value.
                 long lastRefreshDurationNano = frameTimeNanos - mGoodStartingPointNano;
                 float lastRefreshDurationWeight = 0.1f;
-                mRefreshPeriodNano += (long) (lastRefreshDurationWeight
-                        * (lastRefreshDurationNano - mRefreshPeriodNano));
+                mRefreshPeriodNano +=
+                        (long)
+                                (lastRefreshDurationWeight
+                                        * (lastRefreshDurationNano - mRefreshPeriodNano));
             }
             mGoodStartingPointNano = frameTimeNanos;
             mInsideVSync = true;
@@ -94,10 +97,11 @@ public class ExternalBeginFrameSourceAndroid implements Choreographer.FrameCallb
             if (!mVSyncNotificationsEnabled) {
                 return;
             }
-            ExternalBeginFrameSourceAndroidJni.get().onVSync(mNativeExternalBeginFrameSourceAndroid,
-                    ExternalBeginFrameSourceAndroid.this,
-                    frameTimeNanos / NANOSECONDS_PER_MICROSECOND,
-                    mRefreshPeriodNano / NANOSECONDS_PER_MICROSECOND);
+            ExternalBeginFrameSourceAndroidJni.get()
+                    .onVSync(
+                            mNativeExternalBeginFrameSourceAndroid,
+                            frameTimeNanos / NANOSECONDS_PER_MICROSECOND,
+                            mRefreshPeriodNano / NANOSECONDS_PER_MICROSECOND);
             postCallback();
         } finally {
             mInsideVSync = false;
@@ -111,8 +115,9 @@ public class ExternalBeginFrameSourceAndroid implements Choreographer.FrameCallb
 
     @NativeMethods
     interface Natives {
-        void onVSync(long nativeExternalBeginFrameSourceAndroid,
-                ExternalBeginFrameSourceAndroid caller, long vsyncTimeMicros,
+        void onVSync(
+                long nativeExternalBeginFrameSourceAndroid,
+                long vsyncTimeMicros,
                 long vsyncPeriodMicros);
     }
 }

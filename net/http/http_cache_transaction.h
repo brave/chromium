@@ -11,7 +11,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -28,7 +30,9 @@
 #include "net/base/net_error_details.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
+#include "net/base/tracing.h"
 #include "net/http/http_cache.h"
+#include "net/http/http_cache_util.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
@@ -69,17 +73,16 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   //    update existing cache entries, but will never create a new entry or
   //    respond using the entry read from the cache.
   enum Mode {
-    NONE            = 0,
-    READ_META       = 1 << 0,
-    READ_DATA       = 1 << 1,
-    READ            = READ_META | READ_DATA,
-    WRITE           = 1 << 2,
-    READ_WRITE      = READ | WRITE,
-    UPDATE          = READ_META | WRITE,  // READ_WRITE & ~READ_DATA
+    NONE = 0,
+    READ_META = 1 << 0,
+    READ_DATA = 1 << 1,
+    READ = READ_META | READ_DATA,
+    WRITE = 1 << 2,
+    READ_WRITE = READ | WRITE,
+    UPDATE = READ_META | WRITE,  // READ_WRITE & ~READ_DATA
   };
 
-  Transaction(RequestPriority priority,
-              HttpCache* cache);
+  Transaction(RequestPriority priority, HttpCache* cache);
 
   Transaction(const Transaction&) = delete;
   Transaction& operator=(const Transaction&) = delete;
@@ -92,8 +95,6 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   const std::string& method() const { return method_; }
 
   const std::string& key() const { return cache_key_; }
-
-  HttpCache::ActiveEntry* entry() { return entry_; }
 
   // Returns the LoadState of the writer transaction of a given ActiveEntry. In
   // other words, returns the LoadState of this transaction without asking the
@@ -119,9 +120,7 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   const NetLogWithSource& net_log() const;
 
   // Bypasses the cache lock whenever there is lock contention.
-  void BypassLockForTest() {
-    bypass_lock_for_test_ = true;
-  }
+  void BypassLockForTest() { bypass_lock_for_test_ = true; }
 
   void BypassLockAfterHeadersForTest() {
     bypass_lock_after_headers_for_test_ = true;
@@ -149,31 +148,30 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   void StopCaching() override;
   int64_t GetTotalReceivedBytes() const override;
   int64_t GetTotalSentBytes() const override;
+  int64_t GetReceivedBodyBytes() const override;
   void DoneReading() override;
   const HttpResponseInfo* GetResponseInfo() const override;
   LoadState GetLoadState() const override;
-  void SetQuicServerInfo(QuicServerInfo* quic_server_info) override;
   bool GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const override;
+  void PopulateLoadTimingInternalInfo(
+      LoadTimingInternalInfo* load_timing_internal_info) const override;
   bool GetRemoteEndpoint(IPEndPoint* endpoint) const override;
   void PopulateNetErrorDetails(NetErrorDetails* details) const override;
   void SetPriority(RequestPriority priority) override;
   void SetWebSocketHandshakeStreamCreateHelper(
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
-  void SetBeforeNetworkStartCallback(
-      BeforeNetworkStartCallback callback) override;
   void SetConnectedCallback(const ConnectedCallback& callback) override;
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
   void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
   void SetEarlyResponseHeadersCallback(
       ResponseHeadersCallback callback) override;
   void SetModifyRequestHeadersCallback(
-      base::RepeatingCallback<void(net::HttpRequestHeaders*)> callback)
-      override;
+      base::RepeatingCallback<void(HttpRequestHeaders*)> callback) override;
   void SetIsSharedDictionaryReadAllowedCallback(
       base::RepeatingCallback<bool()> callback) override;
-  int ResumeNetworkStart() override;
   ConnectionAttempts GetConnectionAttempts() const override;
   void CloseConnectionOnDestruction() override;
+  bool IsMdlMatchForMetrics() const override;
 
   // Invoked when parallel validation cannot proceed due to response failure
   // and this transaction needs to be restarted.
@@ -199,21 +197,6 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   void AddDiskCacheWriteTime(base::TimeDelta elapsed);
 
  private:
-  static const size_t kNumValidationHeaders = 2;
-  // Helper struct to pair a header name with its value, for
-  // headers used to validate cache entries.
-  struct ValidationHeaders {
-    ValidationHeaders() = default;
-
-    std::string values[kNumValidationHeaders];
-    void Reset() {
-      initialized = false;
-      for (auto& value : values)
-        value.clear();
-    }
-    bool initialized = false;
-  };
-
   struct NetworkTransactionInfo {
     NetworkTransactionInfo();
 
@@ -228,8 +211,13 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
     std::unique_ptr<LoadTimingInfo> old_network_trans_load_timing;
     int64_t total_received_bytes = 0;
     int64_t total_sent_bytes = 0;
+    int64_t received_body_bytes = 0;
     ConnectionAttempts old_connection_attempts;
     IPEndPoint old_remote_endpoint;
+    // For metrics. Can be removed when associated histograms are removed.
+    // Records whether any destroyed network transactions' ProxyInfo determined
+    // the request was to a Masked Domain List-covered domain.
+    bool previous_mdl_match_for_metrics = false;
   };
 
   enum State {
@@ -293,24 +281,35 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
     STATE_NETWORK_READ_COMPLETE,
   };
 
-  // Used for categorizing validation triggers in histograms.
-  // NOTE: This enumeration is used in histograms, so please do not add entries
-  // in the middle.
-  enum ValidationCause {
-    VALIDATION_CAUSE_UNDEFINED,
-    VALIDATION_CAUSE_VARY_MISMATCH,
-    VALIDATION_CAUSE_VALIDATE_FLAG,
-    VALIDATION_CAUSE_STALE,
-    VALIDATION_CAUSE_ZERO_FRESHNESS,
-    VALIDATION_CAUSE_MAX
+  // Action to take when restarting a transaction after a No-Vary-Search
+  // failure.
+  enum class RestartCacheEntryAction {
+    kDontErase,  // Leave the entry in the NoVarySearchCache.
+    kErase,      // Erase the entry from the NoVarySearchCache.
   };
 
-  enum MemoryEntryDataHints {
-    // If this hint is set, the caching headers indicate we can't do anything
-    // with this entry (unless we are ignoring them thanks to a loadflag),
-    // i.e. it's expired and has nothing that permits validations.
-    HINT_UNUSABLE_PER_CACHING_HEADERS = (1 << 0),
+  // Result of trying to apply No-Vary-Search to request.
+  //
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(NoVarySearchUseResult)
+  enum class NoVarySearchUseResult : uint8_t {
+    kNotApplied = 0,    // Request unsuitable, or feature disabled.
+    kNoMatch = 1,       // Not found in NoVarySearchCache.
+    kURLUnchanged = 2,  // There was a match, but the URL was identical.
+    kUsed = 3,          // Original URL was used.
+    kNotSuitable = 4,   // Unusable according to in-memory hints.
+    kNotOpenable = 5,   // Cache entry doesn't exist or couldn't be opened.
+    kReadOnlyNeedsValidation = 6,  // Validation required but write not allowed.
+    kIncompleteBody = 7,           // Cached response body was incomplete.
+    kCouldntConditionalize = 8,    // Couldn't send conditional request.
+    kValidated = 9,                // Original URL response was revalidated.
+    kUpdated = 10,                 // Original URL response was updated.
+    kCacheLockTimeout = 11,        // Failed to get cache lock; cache not used.
+    kMaxValue = kCacheLockTimeout,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/net/enums.xml:NoVarySearchUseResult)
 
   // Runs the state transition loop. Resets and calls |callback_| on exit,
   // unless the return value is ERR_IO_PENDING.
@@ -394,10 +393,6 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // Validates the entry headers against the requested range and continues with
   // the validation of the rest of the entry.  Returns a network error code.
   int ValidateEntryHeadersAndContinue();
-
-  // Returns whether the current externally conditionalized request's validation
-  // headers match the current cache entry's headers.
-  bool ExternallyConditionalizedValidationHeadersMatchEntry() const;
 
   // Called to start requests which were given an "if-modified-since" or
   // "if-none-match" validation header by the caller (NOT when the request was
@@ -487,7 +482,7 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // resumed or not.
   void DoneWithEntry(bool entry_is_complete);
 
-  // Dooms the given entry so that it will not be re-used for other requests,
+  // Dooms the given entry so that it will not be reused for other requests,
   // then calls `DoneWithEntry()`.
   //
   // This happens when network conditions have changed since the entry was
@@ -521,7 +516,7 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // between the byte range request and the cached entry.
   int DoRestartPartialRequest();
 
-  // Resets the relavant internal state to remove traces of internal processing
+  // Resets the relevant internal state to remove traces of internal processing
   // related to range requests. Deletes |partial_| if |delete_object| is true.
   void ResetPartialState(bool delete_object);
 
@@ -586,8 +581,8 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   void SaveNetworkTransactionInfo(const HttpTransaction& transaction);
 
   // Determines whether caching should be disabled for a response, given its
-  // headers.
-  bool ShouldDisableCaching(const HttpResponseHeaders& headers) const;
+  // headers. Updates the appropriate data structures.
+  bool UpdateAndReportCacheability(const HttpResponseHeaders& headers);
 
   // 304 revalidations of resources that set security headers and that get
   // forwarded might need to set these headers again to avoid being blocked.
@@ -600,6 +595,35 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   void BeginDiskCacheAccessTimeCount();
   void EndDiskCacheAccessTimeCount(DiskCacheAccessType type);
 
+  void RecordEntrySizeHistograms(const disk_cache::Entry& entry);
+
+  // Returns true if the current transaction is in-scope for No-Vary-Search
+  // treatment.
+  bool IsNoVarySearchApplicable() const;
+
+  // Returns true if the current transaction is using a URL that was rewritten
+  // by the NoVarySearchCache.
+  bool IsUsingURLFromNoVarySearchCache() const;
+
+  // Checks for a matching entry in the NoVarySearchCache. If one is found, and
+  // the URL is different, modifies `request_` to use the matching entry, and
+  // returns kUsed. Otherwise returns kNoMatch or KURLUnchanged.
+  NoVarySearchUseResult LookupRequestInNoVarySearchCache();
+
+  // Removes the used NoVarySearchCache entry from the NoVarySearchCache, sets
+  // `use_no_vary_search_cache_` to false, and restarts the transaction from the
+  // beginning.
+  [[nodiscard]] int RestartWithoutNoVarySearchCache(
+      RestartCacheEntryAction entry_action,
+      NoVarySearchUseResult restart_reason);
+
+  static std::string_view NoVarySearchUseResultToString(
+      NoVarySearchUseResult result);
+
+  // If `mutable_request_` has not been initialized, initialize it by making a
+  // shallow copy of `request_`, and then modify `request_` to point to it.
+  void EnsureMutableRequest();
+
   State next_state_{STATE_NONE};
 
   // Set when a HTTPCache transaction is pending in parallel with other IO.
@@ -608,19 +632,22 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // If a pending async HTTPCache transaction takes longer than the parallel
   // Network IO, this will store the result of the Network IO operation until
   // the cache transaction completes (or times out).
-  absl::optional<int> pending_io_result_ = absl::nullopt;
+  std::optional<int> pending_io_result_ = std::nullopt;
 
-  // Used for tracing.
-  const uint64_t trace_id_;
+  // Used for state change trace events.
+  const perfetto::Track track_for_state_change_;
 
   // Initial request with which Start() was invoked.
   raw_ptr<const HttpRequestInfo> initial_request_ = nullptr;
 
-  // `custom_request_` is assigned to `request_` after allocation. It must be
+  // `mutable_request_` is assigned to `request_` after allocation. It must be
   // declared before `request_` so that it will be destroyed afterwards to
   // prevent that pointer from dangling.
-  std::unique_ptr<HttpRequestInfo> custom_request_;
+  std::unique_ptr<HttpRequestInfo> mutable_request_;
 
+  // The request this transaction is currently processing. Always points either
+  // to `initial_request_` or `mutable_request_`. Is set back to
+  // `initial_request_` when the transaction is restarted.
   raw_ptr<const HttpRequestInfo> request_ = nullptr;
 
   std::string method_;
@@ -628,14 +655,13 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   NetLogWithSource net_log_;
   HttpRequestHeaders request_headers_copy_;
   // If extra_headers specified a "if-modified-since" or "if-none-match",
-  // |external_validation_| contains the value of those headers.
-  ValidationHeaders external_validation_;
+  // `external_validation_` contains the value of those headers.
+  std::optional<http_cache_util::ValidationHeaders> external_validation_;
   base::WeakPtr<HttpCache> cache_;
-  raw_ptr<HttpCache::ActiveEntry, AcrossTasksDanglingUntriaged> entry_ =
-      nullptr;
+  scoped_refptr<HttpCache::ActiveEntry> entry_;
   // This field is not a raw_ptr<> because it was filtered by the rewriter for:
   // #addr-of
-  RAW_PTR_EXCLUSION HttpCache::ActiveEntry* new_entry_ = nullptr;
+  scoped_refptr<HttpCache::ActiveEntry> new_entry_;
   std::unique_ptr<HttpTransaction> network_trans_;
   CompletionOnceCallback callback_;  // Consumer's callback.
   HttpResponseInfo response_;
@@ -647,7 +673,7 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // and modifies the members for future transactions. Then,
   // WriteResponseInfoToEntry() writes |updated_prefetch_response_| to the cache
   // entry if it is populated, or |response_| otherwise. Finally,
-  // WriteResponseInfoToEntry() resets this to absl::nullopt.
+  // WriteResponseInfoToEntry() resets this to std::nullopt.
   std::unique_ptr<HttpResponseInfo> updated_prefetch_response_;
 
   raw_ptr<const HttpResponseInfo, AcrossTasksDanglingUntriaged> new_response_ =
@@ -700,18 +726,18 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // UpdateCacheEntryStatus).
   HttpResponseInfo::CacheEntryStatus cache_entry_status_ =
       HttpResponseInfo::CacheEntryStatus::ENTRY_UNDEFINED;
-  ValidationCause validation_cause_ = VALIDATION_CAUSE_UNDEFINED;
   base::TimeTicks entry_lock_waiting_since_;
   base::TimeTicks first_cache_access_since_;
   base::TimeTicks send_request_since_;
   base::TimeTicks read_headers_since_;
-  base::Time open_entry_last_used_;
   base::TimeTicks last_disk_cache_access_start_time_;
   base::TimeDelta total_disk_cache_read_time_;
   base::TimeDelta total_disk_cache_write_time_;
+  base::TimeTicks first_nvs_cache_lookup_end_time_;
   bool recorded_histograms_ = false;
   bool has_opened_or_created_entry_ = false;
   bool record_entry_open_or_creation_time_ = false;
+  bool recorded_response_freshness_is_zero_ = false;
 
   NetworkTransactionInfo network_transaction_info_;
 
@@ -724,6 +750,23 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   // statistics.
   bool moved_network_transaction_to_writers_ = false;
 
+  // True if we should look up the URL in the NoVarySearchCache. Starts true if
+  // the kHttpCacheNoVarySearch feature is enabled. Set to false if the
+  // transaction needs to be restarted because the URL returned by the
+  // NoVarySearchCache was not usable.
+  bool read_no_vary_search_cache_;
+
+  // The result of applying the No-Vary-Search to the request. For UMA.
+  NoVarySearchUseResult no_vary_search_use_result_ =
+      NoVarySearchUseResult::kNotApplied;
+
+  // If an entry in the NoVarySearchCache was found to be unhelpful, this
+  // handle can be used to erase it. Only set if an entry was found in the
+  // NoVerySearchCache and hasn't been erased already. This is also used as a
+  // flag to indicate we are using a URL provided by the NoVarySearchCache.
+  std::optional<NoVarySearchCache::EraseHandle>
+      no_vary_search_cache_erase_handle_;
+
   // The helper object to use to create WebSocketHandshakeStreamBase
   // objects. Only relevant when establishing a WebSocket connection.
   // This is passed to the underlying network transaction. It is stored here in
@@ -731,7 +774,6 @@ class NET_EXPORT_PRIVATE HttpCache::Transaction : public HttpTransaction {
   raw_ptr<WebSocketHandshakeStreamBase::CreateHelper>
       websocket_handshake_stream_base_create_helper_ = nullptr;
 
-  BeforeNetworkStartCallback before_network_start_callback_;
   ConnectedCallback connected_callback_;
   RequestHeadersCallback request_headers_callback_;
   ResponseHeadersCallback early_response_headers_callback_;

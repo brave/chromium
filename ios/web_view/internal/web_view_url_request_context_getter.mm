@@ -2,35 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ios/web_view/internal/web_view_url_request_context_getter.h"
+#import "ios/web_view/internal/web_view_url_request_context_getter.h"
 
-#include <utility>
+#import <utility>
 
-#include "base/base_paths.h"
-#include "base/check.h"
-#include "base/memory/ptr_util.h"
-#include "base/memory/ref_counted.h"
-#include "base/path_service.h"
+#import "base/base_paths.h"
+#import "base/check.h"
+#import "base/memory/ptr_util.h"
+#import "base/memory/ref_counted.h"
+#import "base/path_service.h"
 #import "base/task/single_thread_task_runner.h"
-#include "base/task/thread_pool.h"
-#include "ios/components/webui/web_ui_url_constants.h"
+#import "base/task/thread_pool.h"
+#import "ios/components/webui/web_ui_url_constants.h"
 #import "ios/net/cookies/cookie_store_ios.h"
-#include "ios/web/public/browsing_data/system_cookie_store_util.h"
+#import "ios/web/public/browsing_data/system_cookie_store_util.h"
 #import "ios/web/public/web_client.h"
-#include "ios/web/webui/url_data_manager_ios_backend.h"
-#include "net/http/http_network_session.h"
-#include "net/http/transport_security_persister.h"
-#include "net/http/transport_security_state.h"
-#include "net/log/net_log.h"
-#include "net/proxy_resolution/proxy_config_service_ios.h"
-#include "net/ssl/ssl_config_service_defaults.h"
-#include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_builder.h"
-
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
+#import "ios/web/webui/url_data_manager_ios_backend.h"
+#import "net/http/http_network_session.h"
+#import "net/http/transport_security_persister.h"
+#import "net/http/transport_security_state.h"
+#import "net/log/net_log.h"
+#import "net/proxy_resolution/proxy_config_service_ios.h"
+#import "net/ssl/ssl_config_service_defaults.h"
+#import "net/traffic_annotation/network_traffic_annotation.h"
+#import "net/url_request/url_request_context.h"
+#import "net/url_request/url_request_context_builder.h"
 
 namespace ios_web_view {
 
@@ -44,10 +40,13 @@ WebViewURLRequestContextGetter::WebViewURLRequestContextGetter(
       network_task_runner_(network_task_runner),
       proxy_config_service_(
           new net::ProxyConfigServiceIOS(NO_TRAFFIC_ANNOTATION_YET)),
-      system_cookie_store_(web::CreateSystemCookieStore(browser_state)),
       protocol_handler_(
           web::URLDataManagerIOSBackend::CreateProtocolHandler(browser_state)),
-      is_shutting_down_(false) {}
+      is_shutting_down_(false) {
+  auto pair = web::CreateSystemCookieStore(browser_state);
+  system_cookie_store_ = std::move(pair.first);
+  cookie_store_handle_ = std::move(pair.second);
+}
 
 WebViewURLRequestContextGetter::~WebViewURLRequestContextGetter() = default;
 

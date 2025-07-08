@@ -13,10 +13,10 @@
 @protocol PromosManagerCommands <NSObject>
 
 // Displays an eligible promo (selected by the Promos Manager) if one exists.
-- (void)maybeDisplayPromo;
+- (void)showPromo;
 
 // Makes a request to Apple to present the user the App Store Rating Promo.
-- (void)requestAppStoreReview;
+- (void)showAppStoreReviewPrompt;
 
 // Asks the presenter to display the signin UI configured by `command`.
 - (void)showSignin:(ShowSigninCommand*)command;
@@ -24,11 +24,20 @@
 // Display WhatsNew as a promo.
 - (void)showWhatsNewPromo;
 
-// Display the choice screen as a promo.
-- (void)showChoicePromo;
-
 // Display default browser promo.
-- (void)maybeDisplayDefaultBrowserPromo;
+- (void)showDefaultBrowserPromo;
+
+// Shows the default browser promo after the user tapped Remind Me Later.
+- (void)showDefaultBrowserPromoAfterRemindMeLater;
+
+// Shows the sign-in fullscreen promo.
+- (void)showSigninPromo;
+
+// Shows BWG promo.
+- (void)showBWGPromo;
+
+// Shows the Welcome Back promo.
+- (void)showWelcomeBackPromo;
 
 @end
 

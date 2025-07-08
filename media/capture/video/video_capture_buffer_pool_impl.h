@@ -21,7 +21,7 @@
 #include "media/capture/video/video_capture_buffer_tracker_factory.h"
 #include "media/capture/video_capture_types.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "media/base/win/dxgi_device_manager.h"
@@ -47,10 +47,12 @@ class CAPTURE_EXPORT VideoCaptureBufferPoolImpl
   // VideoCaptureBufferPool implementation.
   base::UnsafeSharedMemoryRegion DuplicateAsUnsafeRegion(
       int buffer_id) override;
-  mojo::ScopedSharedBufferHandle DuplicateAsMojoBuffer(int buffer_id) override;
   std::unique_ptr<VideoCaptureBufferHandle> GetHandleForInProcessAccess(
       int buffer_id) override;
   gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle(int buffer_id) override;
+
+  VideoCaptureBufferType GetBufferType(int buffer_id) override;
+
   VideoCaptureDevice::Client::ReserveResult ReserveForProducer(
       const gfx::Size& dimensions,
       VideoPixelFormat format,
@@ -69,7 +71,6 @@ class CAPTURE_EXPORT VideoCaptureBufferPoolImpl
   void RelinquishConsumerHold(int buffer_id, int num_clients) override;
 
  private:
-  friend class base::RefCountedThreadSafe<VideoCaptureBufferPoolImpl>;
   ~VideoCaptureBufferPoolImpl() override;
 
   VideoCaptureDevice::Client::ReserveResult ReserveForProducerInternal(

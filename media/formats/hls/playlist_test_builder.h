@@ -12,6 +12,8 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
+#include "media/base/media_serializers.h"
+#include "media/base/media_serializers_base.h"
 #include "media/formats/hls/playlist.h"
 #include "media/formats/hls/source_string.h"
 #include "media/formats/hls/tags.h"
@@ -38,15 +40,15 @@ class PlaylistTestBuilder {
 
   // Appends fragments of text to the playlist, without a trailing newline.
   template <typename... T>
-  void Append(base::StringPiece text1, T&&... rem) {
-    for (auto text : {text1, base::StringPiece(rem)...}) {
+  void Append(std::string_view text1, T&&... rem) {
+    for (auto text : {text1, std::string_view(rem)...}) {
       source_.append(text);
     }
   }
 
   // Appends fragments of text to the playlist, followed by a newline.
   template <typename... T>
-  void AppendLine(base::StringPiece part1, T&&... rem) {
+  void AppendLine(std::string_view part1, T&&... rem) {
     this->Append(part1, std::forward<T>(rem)..., "\n");
   }
 
@@ -62,14 +64,24 @@ class PlaylistTestBuilder {
         std::move(fn), std::move(arg), std::move(location)));
   }
 
+  template <typename... Args>
   scoped_refptr<PlaylistT> Parse(
+      Args&&... args,
       const base::Location& from = base::Location::Current()) {
-    auto result = PlaylistT::Parse(source_, uri_, version_);
-    EXPECT_TRUE(result.has_value()) << "Error: " << from.ToString();
-    auto playlist = std::move(result).value();
-    // Ensure that playlist has expected version
-    EXPECT_EQ(playlist->GetVersion(), version_) << from.ToString();
-    return std::move(playlist);
+    auto result =
+        PlaylistT::Parse(source_, uri_, version_, std::forward<Args>(args)...);
+
+    if (!result.has_value()) {
+      EXPECT_TRUE(result.has_value())
+          << MediaSerializeForTesting(std::move(result).error())
+          << "\nFrom: " << from.ToString();
+      return nullptr;
+    } else {
+      auto playlist = std::move(result).value();
+      // Ensure that playlist has expected version
+      EXPECT_EQ(playlist->GetVersion(), version_) << from.ToString();
+      return std::move(playlist);
+    }
   }
 
  protected:
@@ -83,10 +95,11 @@ class PlaylistTestBuilder {
         PlaylistT::Parse(source_, uri_, version_, std::forward<Args>(args)...);
     ASSERT_FALSE(result.has_value()) << from.ToString();
 
-    auto actual_code = std::move(result).error().code();
-    EXPECT_EQ(actual_code, code)
-        << "Error: " << ParseStatusCodeToString(actual_code) << "\n"
-        << "Expected Error: " << ParseStatusCodeToString(code) << "\n"
+    auto actual_error = std::move(result).error();
+    ParseStatus expected_error = code;
+    EXPECT_EQ(actual_error.code(), code)
+        << "Error: " << actual_error.message() << "\n"
+        << "Expected Error: " << expected_error.message() << "\n"
         << from.ToString();
   }
 
@@ -97,8 +110,7 @@ class PlaylistTestBuilder {
     auto result =
         PlaylistT::Parse(source_, uri_, version_, std::forward<Args>(args)...);
     ASSERT_TRUE(result.has_value())
-        << "Error: "
-        << ParseStatusCodeToString(std::move(result).error().code()) << "\n"
+        << "Error: " << std::move(result).error().message() << "\n"
         << from.ToString();
     auto playlist = std::move(result).value();
 

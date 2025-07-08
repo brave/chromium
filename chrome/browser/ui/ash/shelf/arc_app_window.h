@@ -12,9 +12,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/image_decoder/image_decoder.h"
-#include "chrome/browser/ui/app_icon_loader.h"
 #include "chrome/browser/ui/ash/shelf/app_window_base.h"
 #include "chrome/browser/ui/ash/shelf/arc_app_shelf_id.h"
+#include "components/app_icon_loader/app_icon_loader.h"
 
 class AppServiceAppIconLoader;
 class ArcAppWindowDelegate;
@@ -30,8 +30,7 @@ class Widget;
 class Profile;
 
 // A ui::BaseWindow for a chromeos launcher to control ARC applications.
-class ArcAppWindow : public AppWindowBase,
-                     public AppIconLoaderDelegate {
+class ArcAppWindow : public AppWindowBase, public AppIconLoaderDelegate {
  public:
   ArcAppWindow(const arc::ArcAppShelfId& app_shelf_id,
                views::Widget* widget,
@@ -58,8 +57,11 @@ class ArcAppWindow : public AppWindowBase,
   void Close() override;
 
   // AppIconLoaderDelegate:
-  void OnAppImageUpdated(const std::string& app_id,
-                         const gfx::ImageSkia& image) override;
+  void OnAppImageUpdated(
+      const std::string& app_id,
+      const gfx::ImageSkia& image,
+      bool is_placeholder_icon,
+      const std::optional<gfx::ImageSkia>& badge_image) override;
 
  private:
   // Ensures that default app icon is set.
@@ -72,14 +74,14 @@ class ArcAppWindow : public AppWindowBase,
   const arc::ArcAppShelfId app_shelf_id_;
   // Keeps current full-screen mode.
   FullScreenMode fullscreen_mode_ = FullScreenMode::kNotDefined;
-  const raw_ptr<ArcAppWindowDelegate, ExperimentalAsh> owner_;
+  const raw_ptr<ArcAppWindowDelegate> owner_;
 
   // Set to true in case image fetch is requested. This indicates that default
   // app icon is returned in |OnAppImageUpdated|.
   bool image_fetching_ = false;
   base::OneShotTimer apply_default_image_timer_;
 
-  const raw_ptr<Profile, ExperimentalAsh> profile_;
+  const raw_ptr<Profile> profile_;
 
   // Loads the ARC app icon to the window icon keys. Nullptr once a custom icon
   // has been successfully set.
